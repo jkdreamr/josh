@@ -5,7 +5,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Your Name - CV</title>
     <style>
-        /* ... (previous styles remain the same) ... */
+        :root {
+            --bg-color: #fff;
+            --text-color: #000;
+            --highlight-color: #f0f0f0;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            background-color: var(--bg-color);
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .custom-cursor {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--text-color);
+            border-radius: 50%;
+            position: fixed;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+            transition: border-color 0.3s ease;
+        }
+
+        h1, h2, h3 {
+            color: var(--text-color);
+        }
 
         h1 {
             position: relative;
@@ -13,44 +44,72 @@
             overflow: hidden;
         }
 
-        h1::before {
-            content: attr(data-text);
+        h1::after {
+            content: '';
             position: absolute;
-            top: 0;
+            bottom: 0;
             left: 0;
             width: 100%;
-            height: 100%;
-            color: var(--bg-color);
-            overflow: hidden;
-            transition: width 0.5s ease;
+            height: 2px;
+            background-color: var(--text-color);
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
         }
 
-        h1:hover::before {
-            width: 0;
+        h1:hover::after {
+            transform: translateX(0);
         }
 
-        .scroll-animation {
+        h2 {
+            border-bottom: 2px solid var(--text-color);
+            padding-bottom: 5px;
+            transition: all 0.3s ease;
+        }
+
+        h2:hover {
+            transform: scale(1.05);
+        }
+
+        .section {
+            margin-bottom: 30px;
             opacity: 0;
-            transform: translateY(50px);
-            transition: opacity 0.5s ease, transform 0.5s ease;
+            transform: translateY(20px);
+            transition: all 0.5s ease;
         }
 
-        .scroll-animation.active {
+        .section.active {
             opacity: 1;
             transform: translateY(0);
         }
 
-        @keyframes sparkle {
-            0% { background-position: 0% 50%; }
-            100% { background-position: 100% 50%; }
+        a {
+            color: var(--text-color);
+            text-decoration: none;
+            border-bottom: 1px solid var(--text-color);
+            transition: all 0.3s ease;
         }
 
-        .sparkle {
-            background: linear-gradient(90deg, var(--bg-color) 0%, var(--text-color) 25%, var(--bg-color) 50%, var(--text-color) 75%, var(--bg-color) 100%);
-            background-size: 200% 100%;
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            animation: sparkle 2s linear infinite;
+        a:hover {
+            background-color: var(--text-color);
+            color: var(--bg-color);
+        }
+
+        .mode-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--text-color);
+            color: var(--bg-color);
+            border: none;
+            padding: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .dark-mode {
+            --bg-color: #121212;
+            --text-color: #fff;
+            --highlight-color: #2a2a2a;
         }
     </style>
 </head>
@@ -59,52 +118,82 @@
     <button class="mode-toggle" onclick="toggleDarkMode()">Toggle Dark Mode</button>
 
     <header>
-        <h1 data-text="Your Name">Your Name</h1>
+        <h1>Your Name</h1>
         <p>Web Developer | City, Country</p>
         <p>Email: your.email@example.com | Phone: (123) 456-7890</p>
     </header>
 
-    <!-- ... (rest of the HTML remains the same) ... -->
+    <section class="section">
+        <h2>About Me</h2>
+        <p>A brief summary of your professional experience and key skills.</p>
+    </section>
+
+    <section class="section">
+        <h2>Work Experience</h2>
+        <h3>Web Developer at Company Name</h3>
+        <p>January 2020 - Present</p>
+        <ul>
+            <li>Responsibility or achievement 1</li>
+            <li>Responsibility or achievement 2</li>
+            <li>Responsibility or achievement 3</li>
+        </ul>
+    </section>
+
+    <section class="section">
+        <h2>Education</h2>
+        <h3>College</h3>
+        <p><strong>Bachelor of Science in Computer Science</strong></p>
+        <p>University Name, Graduation Year</p>
+        
+        <h3>High School</h3>
+        <p><strong>High School Diploma</strong></p>
+        <p>High School Name, Graduation Year</p>
+    </section>
+
+    <section class="section">
+        <h2>Writings</h2>
+        <h3>Algorithms</h3>
+        <ul>
+            <li><a href="#" target="_blank">Algorithm Writing 1</a></li>
+            <li><a href="#" target="_blank">Algorithm Writing 2</a></li>
+        </ul>
+        
+        <h3>Web3/AI</h3>
+        <ul>
+            <li><a href="#" target="_blank">Web3/AI Writing 1</a></li>
+            <li><a href="#" target="_blank">Web3/AI Writing 2</a></li>
+        </ul>
+    </section>
+
+    <section class="section">
+        <h2>Music</h2>
+        <ul>
+            <li><a href="https://www.youtube.com/watch?v=nw2rOUypDHE" target="_blank">YouTube</a></li>
+            <li><a href="https://soundcloud.com/dreamr78" target="_blank">SoundCloud</a></li>
+            <li><a href="https://www.instagram.com/jkdreamr" target="_blank">Instagram</a></li>
+        </ul>
+    </section>
 
     <script>
         const cursor = document.querySelector('.custom-cursor');
         const sections = document.querySelectorAll('.section');
-        const textElements = document.querySelectorAll('.job p, .about-content p, .education-content p, li, h2, h3');
-        const scrollAnimations = document.querySelectorAll('.scroll-animation');
-        const h1 = document.querySelector('h1');
 
-        // ... (previous JavaScript functions remain the same) ...
+        document.addEventListener('mousemove', (e) => {
+            cursor.style.left = `${e.clientX}px`;
+            cursor.style.top = `${e.clientY}px`;
+        });
 
         function checkScroll() {
-            let scrollPosition = window.scrollY;
-
-            scrollAnimations.forEach(animation => {
-                const animationTop = animation.getBoundingClientRect().top;
+            sections.forEach(section => {
+                const sectionTop = section.getBoundingClientRect().top;
                 const windowHeight = window.innerHeight;
 
-                if (animationTop < windowHeight * 0.75) {
-                    animation.classList.add('active');
+                if (sectionTop < windowHeight * 0.75) {
+                    section.classList.add('active');
                 } else {
-                    animation.classList.remove('active');
+                    section.classList.remove('active');
                 }
             });
-
-            // Add sparkle effect to visible text
-            textElements.forEach(el => {
-                const rect = el.getBoundingClientRect();
-                if (rect.top < window.innerHeight && rect.bottom > 0) {
-                    el.classList.add('sparkle');
-                } else {
-                    el.classList.remove('sparkle');
-                }
-            });
-
-            // Special effect for h1
-            if (scrollPosition > 50) {
-                h1.style.transform = `scale(${1 - scrollPosition / 1000})`;
-            } else {
-                h1.style.transform = 'scale(1)';
-            }
         }
 
         function toggleDarkMode() {
