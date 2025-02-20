@@ -218,6 +218,11 @@
         .contact-icons img:hover {
             transform: scale(1.2);
         }
+
+        /* Add this new style to create space at the bottom */
+        .bottom-space {
+            height: 100px;
+        }
     </style>
 </head>
 <body>
@@ -350,6 +355,8 @@
         </div>
     </section>
 
+    <div class="bottom-space"></div>
+
     <footer>
         <div class="contact-icons">
             <a href="https://x.com/joshuaykoo" target="_blank"><img src="https://cdn-icons-png.flaticon.com/512/5969/5969020.png" alt="X"></a>
@@ -415,8 +422,7 @@
                         return i;
                     }
                 }
-            }
-            return -1;
+            } return -1;
         }
 
         function updateParallax() {
@@ -425,7 +431,7 @@
                 const scrollPercentage = (window.innerHeight - rect.top ) / window.innerHeight;
                 if (scrollPercentage > 0 && scrollPercentage < 1) {
                     const speed = 0.25 * (index + 1);
-                    const yOffset = (0.5 - scrollPercentage) * speed * 120;
+                    const yOffset = (0.5 - scrollPercentage) * speed * 130; // Changed from 120 to 130
                     section.style.transform = `translateY(${yOffset}px)`;
                 }
             });
