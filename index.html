@@ -433,8 +433,8 @@
                 const rect = section.getBoundingClientRect();
                 const scrollPercentage = (window.innerHeight - rect.top ) / window.innerHeight;
                 if (scrollPercentage > 0 && scrollPercentage < 1) {
-                    const speed = 0.25 * (index + 1);
-                    const yOffset = (0.5 - scrollPercentage) * speed * 130;
+                    const speed = 0.27 * (index + 1);
+                    const yOffset = (0.5 - scrollPercentage) * speed * 125;
                     section.style.transform = `translateY(${yOffset}px)`;
                 }
             });
