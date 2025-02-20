@@ -326,6 +326,7 @@
         const sections = document.querySelectorAll('.section');
         const textElements = document.querySelectorAll('.job p, .about-content p, .education-content p, li, h1, h2, h3, h4');
         const parallaxSections = document.querySelectorAll('.parallax');
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     if (!isMobile) {
         document.addEventListener('mousemove', (e) => {
             requestAnimationFrame(() => {
