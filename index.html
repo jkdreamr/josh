@@ -46,11 +46,24 @@
             border-bottom: 2px solid var(--text-color);
             padding-bottom: 5px;
             transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
         }
 
-        h2:hover {
-            transform: scale(1.05);
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        h2::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background-color: var(--text-color);
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+        }
+
+        h2:hover::after {
+            transform: translateX(0);
         }
 
         .section {
@@ -135,15 +148,15 @@
             background-color: var(--text-color);
         }
 
-        .music-embed {
-            margin-top: 20px;
+        .scroll-animation {
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.5s ease, transform 0.5s ease;
         }
 
-        .music-embed iframe {
-            width: 100%;
-            height: 315px;
-            border: none;
-            margin-bottom: 20px;
+        .scroll-animation.active {
+            opacity: 1;
+            transform: translateY(0);
         }
     </style>
 </head>
@@ -157,14 +170,14 @@
         <p>Email: your.email@example.com | Phone: (123) 456-7890</p>
     </header>
 
-    <section class="section">
+    <section class="section scroll-animation">
         <h2>About Me</h2>
         <div class="about-content">
             <p>A brief summary of your professional experience and key skills.</p>
         </div>
     </section>
 
-    <section class="section">
+    <section class="section scroll-animation">
         <h2>Work Experience</h2>
         <div class="job">
             <p class="job-title">Web Developer at Company Name</p>
@@ -185,7 +198,7 @@
         </div>
     </section>
 
-    <section class="section">
+    <section class="section scroll-animation">
         <h2>Education</h2>
         <div class="education-content">
             <h3>College</h3>
@@ -212,7 +225,7 @@
         </div>
     </section>
 
-    <section class="section">
+    <section class="section scroll-animation">
         <h2>Writings</h2>
         <h3>Algorithms</h3>
         <ul>
@@ -245,18 +258,13 @@
         </ul>
     </section>
 
-    <section class="section">
+    <section class="section scroll-animation">
         <h2>Music</h2>
-        <div class="music-embed">
-            <h3>YouTube</h3>
-            <iframe src="https://www.youtube.com/embed/nw2rOUypDHE" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
-            
-            <h3>SoundCloud</h3>
-            <iframe width="100%" height="166" scrolling="no" frameborder="no" allow="autoplay" src="https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/1144893099&color=%23ff5500&auto_play=false&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true"></iframe>
-            
-            <h3>Instagram</h3>
-            <p>Follow me on <a href="https://www.instagram.com/jkdreamr" target="_blank">Instagram</a></p>
-        </div>
+        <ul>
+            <li><a href="https://www.youtube.com/watch?v=nw2rOUypDHE" target="_blank">YouTube</a></li>
+            <li><a href="https://soundcloud.com/dreamr78" target="_blank">SoundCloud</a></li>
+            <li><a href="https://www.instagram.com/jkdreamr" target="_blank">Instagram</a></li>
+        </ul>
     </section>
 
     <section class="contact-icons">
@@ -269,6 +277,7 @@
         const cursor = document.querySelector('.custom-cursor');
         const sections = document.querySelectorAll('.section');
         const textElements = document.querySelectorAll('.job p, .about-content p, .education-content p, li, h1, h2, h3');
+        const scrollAnimations = document.querySelectorAll('.scroll-animation');
 
         document.addEventListener('mousemove', (e) => {
             requestAnimationFrame(() => {
@@ -326,13 +335,12 @@
         }
 
         function checkScroll() {
-            sections.forEach(section => {
-                const sectionTop = section.getBoundingClientRect().top;
+            scrollAnimations.forEach(animation => {
+                const animationTop = animation.getBoundingClientRect().top;
                 const windowHeight = window.innerHeight;
 
-                if (sectionTop < windowHeight * 0.75) {
-                    section.style.opacity = '1';
-                    section.style.transform = 'translateY(0)';
+                if (animationTop < windowHeight * 0.75) {
+                    animation.classList.add('active');
                 }
             });
         }
