@@ -11,6 +11,10 @@
             --highlight-color: #f0f0f0;
         }
 
+        html {
+            scroll-behavior: smooth;
+        }
+
         * {
             cursor: none !important;
         }
@@ -24,6 +28,7 @@
             margin: 0 auto;
             padding: 20px;
             transition: all 0.3s ease;
+            overflow-x: hidden;
         }
 
         .custom-cursor {
@@ -181,7 +186,8 @@
         }
 
         .parallax {
-            transition: transform 0.5s cubic-bezier(0.25, 0.1, 0.25, 1);
+            transition: transform 0.1s ease-out;
+            will-change: transform;
         }
     </style>
 </head>
@@ -320,74 +326,3 @@
                 if (element && element.textContent && !element.closest('a')) {
                     const rect = element.getBoundingClientRect();
                     const x = e.clientX - rect.left;
-                    const y = e.clientY - rect.top;
-                    const charIndex = getCharIndexFromPoint(element, x, y);
-                    
-                    if (charIndex !== -1) {
-                        const text = element.textContent;
-                        element.innerHTML = text.substring(0, charIndex) +
-                            `<span class="highlight-letter">${text[charIndex]}</span>` +
-                            text.substring(charIndex + 1);
-                    }
-                }
-                
-                // Shift line under cursor
-                textElements.forEach(el => {
-                    const rect = el.getBoundingClientRect();
-                    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-                        el.style.transform = 'translateX(10px)';
-                    } else {
-                        el.style.transform = 'translateX(0)';
-                    }
-                });
-            });
-        });
-
-        function getCharIndexFromPoint(element, x, y) {
-            const range = document.createRange();
-            const textNode = element.firstChild;
-            
-            if (textNode && textNode.nodeType === Node.TEXT_NODE) {
-                for (let i = 0; i < textNode.length; i++) {
-                    range.setStart(textNode, i);
-                    range.setEnd(textNode, i + 1);
-                    const rect = range.getBoundingClientRect();
-                    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-                        return i;
-                    }
-                }
-            }
-            return -1;
-        }
-
-        function checkScroll() {
-            scrollAnimations.forEach(animation => {
-                const animationTop = animation.getBoundingClientRect().top;
-                const windowHeight = window.innerHeight;
-
-                if (animationTop < windowHeight * 0.75) {
-                    animation.classList.add('active');
-                }
-            });
-        }
-
-        function updateParallax() {
-            parallaxSections.forEach((section, index) => {
-                const speed = 0.1 * (index + 1);
-                const yOffset = window.pageYOffset;
-                section.style.transform = `translateY(${yOffset * speed}px)`;
-            });
-        }
-
-        function toggleDarkMode() {
-            document.body.classList.toggle('dark-mode');
-        }
-
-        window.addEventListener('scroll', () => {
-            checkScroll();
-            requestAnimationFrame(updateParallax);
-        });
-        checkScroll();
-    </script>
-</body>
-</html>
