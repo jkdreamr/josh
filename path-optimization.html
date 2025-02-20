@@ -60,39 +60,39 @@
             <p>Here, we will discuss paths and their optimizations. In order to effectively examine them, however, it is useful to attribute to each path - for instance, the parabolic path of a projectile under the influence of just gravity - a number which can determine its efficiency. Call this value the action, and let a path in space be viewed as a function \(\boldsymbol{q}\) of time \(\boldsymbol{t}\). Now consider this diagram, displaying some possible paths of a projectile:</p>
             <!-- Embedded SVG for projectile paths diagram -->
             <svg width="400" height="300" viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
-                <!-- Axes -->
-                <line x1="50" y1="250" x2="350" y2="250" stroke="black" stroke-width="2" marker-end="url(#arrow)" />
-                <line x1="50" y1="250" x2="50" y2="50" stroke="black" stroke-width="2" marker-end="url(#arrow)" />
-                
-                <!-- Arrows -->
-                <defs>
-                    <marker id="arrow" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto-start-reverse">
-                        <path d="M 0 0 L 10 5 L 0 10 z" fill="black" />
-                    </marker>
-                </defs>
-                
-                <!-- Wavy Outer Shape -->
-                <path d="M 50 250 Q 100 100, 150 180 T 250 120 T 350 250 Q 250 300, 150 270 T 50 250" 
-                      fill="none" stroke="black" stroke-width="2" />
-                
-                <!-- Inner Shape -->
-                <path d="M 100 250 Q 150 180, 200 200 T 300 220 Q 250 250, 200 230 T 100 250" 
-                      fill="none" stroke="black" stroke-width="2" />
-                
-                <!-- Horizontal Line Connecting t1 to t2 -->
-                <line x1="100" y1="250" x2="300" y2="250" stroke="black" stroke-width="2" />
-                
-                <!-- Points at t1 and t2 -->
-                <circle cx="100" cy="250" r="4" fill="black" />
-                <circle cx="300" cy="250" r="4" fill="black" />
-                
-                <!-- Labels -->
-                <text x="360" y="250" font-size="14">t</text>
-                <text x="40" y="40" font-size="14">q</text>
-                <text x="90" y="270" font-size="14">t1</text>
-                <text x="290" y="270" font-size="14">t2</text>
-                <text x="200" y="220" font-size="14">q(t)</text>
-            </svg>
+        <!-- Axes -->
+        <line x1="50" y1="250" x2="350" y2="250" stroke="black" stroke-width="2" marker-end="url(#arrow)" />
+        <line x1="50" y1="250" x2="50" y2="50" stroke="black" stroke-width="2" marker-end="url(#arrow)" />
+        
+        <!-- Arrows -->
+        <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="black" />
+            </marker>
+        </defs>
+        
+        <!-- Wavy Outer Shape -->
+        <path d="M 50 250 Q 100 100, 150 180 T 250 120 T 300 250" 
+              fill="none" stroke="black" stroke-width="2" />
+        
+        <!-- Inner Shape -->
+        <path d="M 100 250 Q 150 180, 200 200 T 300 250" 
+              fill="none" stroke="black" stroke-width="2" />
+        
+        <!-- Horizontal Line Connecting t1 to t2 -->
+        <line x1="100" y1="250" x2="300" y2="250" stroke="black" stroke-width="2" />
+        
+        <!-- Points at t1 and t2 -->
+        <circle cx="100" cy="250" r="4" fill="black" />
+        <circle cx="300" cy="250" r="4" fill="black" />
+        
+        <!-- Labels -->
+        <text x="360" y="250" font-size="14">t</text>
+        <text x="40" y="40" font-size="14">q</text>
+        <text x="90" y="270" font-size="14">t1</text>
+        <text x="290" y="270" font-size="14">t2</text>
+        <text x="200" y="220" font-size="14">q(t)</text>
+    </svg>
             <p>Clearly, \(\boldsymbol{q}(\boldsymbol{t})\) seems the most reasonable - the most natural, perhaps. If we were to attribute to each of these an action value, how could we make sense of the resulting numbers? Of the process? First, we must define more intuitively what exactly the action represents. It's a value, of course, but what does it indicate? Here, we will consider the action to be a constant, measured in Joule-seconds, whose value inversely corresponds to the efficiency of a path or system; therefore, we should expect \(\boldsymbol{q}(\boldsymbol{t})\) to have the lowest action of all these options, given that it represents a minimum. In order to actually compute this minimum, given that we have a function in \(t\) as input, we will use the action functional, denoted \(S\). From this point on in the article, things may get a bit more technical, but do not lose track of the purpose: to investigate, in different instances, how nature chooses an optimal solution to its problems. Many students may be familiar with a kind example of such a process in finding the fastest route between points in a maze. Although the 10th grade biology slime mold did have to extend itself in a number of fruitless directions, the final product did indicate an intelligence able to preserve only the efficient strip of body.</p>
             <p>Returning to the action functional, which accepts a function and returns a single value, it is not difficult to compute when presented with the study of a path. Here, we can get an accurate interpretation of the action value by analogizing it to the length of a given path. Thus, our functional should be of the form</p>
             <p>\[
