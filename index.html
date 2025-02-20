@@ -5,60 +5,111 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Your Name - CV</title>
     <style>
+        :root {
+            --bg-color: #fff;
+            --text-color: #000;
+            --highlight-color: #f0f0f0;
+        }
+
         body {
             font-family: Arial, sans-serif;
             line-height: 1.6;
-            color: #000;
-            background-color: #fff;
+            color: var(--text-color);
+            background-color: var(--bg-color);
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
             transition: all 0.3s ease;
+            cursor: none;
         }
+
+        .custom-cursor {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--text-color);
+            border-radius: 50%;
+            position: fixed;
+            pointer-events: none;
+            z-index: 9999;
+            transition: all 0.1s ease;
+        }
+
         h1, h2 {
-            color: #000;
+            color: var(--text-color);
         }
+
         h2 {
-            border-bottom: 2px solid #000;
+            border-bottom: 2px solid var(--text-color);
             padding-bottom: 5px;
         }
+
         .section {
             margin-bottom: 30px;
             opacity: 0;
             transform: translateY(20px);
-            animation: fadeIn 0.5s forwards;
+            transition: all 0.5s ease;
         }
-        @keyframes fadeIn {
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
+
         .job {
             margin-bottom: 20px;
+            transition: all 0.3s ease;
         }
+
+        .job:hover {
+            transform: translateX(10px);
+        }
+
         .job-title {
             font-weight: bold;
         }
+
         .job-date {
             font-style: italic;
         }
+
         ul {
             padding-left: 20px;
         }
+
         a {
-            color: #000;
+            color: var(--text-color);
             text-decoration: none;
-            border-bottom: 1px solid #000;
+            border-bottom: 1px solid var(--text-color);
             transition: all 0.3s ease;
         }
+
         a:hover {
-            background-color: #000;
-            color: #fff;
+            background-color: var(--text-color);
+            color: var(--bg-color);
+        }
+
+        .mode-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--text-color);
+            color: var(--bg-color);
+            border: none;
+            padding: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .mode-toggle:hover {
+            transform: scale(1.1);
+        }
+
+        .dark-mode {
+            --bg-color: #121212;
+            --text-color: #fff;
+            --highlight-color: #2a2a2a;
         }
     </style>
 </head>
 <body>
+    <div class="custom-cursor"></div>
+    <button class="mode-toggle" onclick="toggleDarkMode()">Toggle Dark Mode</button>
+
     <header>
         <h1>Your Name</h1>
         <p>Web Developer | City, Country</p>
@@ -107,12 +158,32 @@
     </section>
 
     <script>
-        document.addEventListener('DOMContentLoaded', (event) => {
-            const sections = document.querySelectorAll('.section');
-            sections.forEach((section, index) => {
-                section.style.animationDelay = `${index * 0.1}s`;
-            });
+        const cursor = document.querySelector('.custom-cursor');
+        const sections = document.querySelectorAll('.section');
+
+        document.addEventListener('mousemove', (e) => {
+            cursor.style.left = e.clientX + 'px';
+            cursor.style.top = e.clientY + 'px';
         });
+
+        function checkScroll() {
+            sections.forEach(section => {
+                const sectionTop = section.getBoundingClientRect().top;
+                const windowHeight = window.innerHeight;
+
+                if (sectionTop < windowHeight * 0.75) {
+                    section.style.opacity = '1';
+                    section.style.transform = 'translateY(0)';
+                }
+            });
+        }
+
+        function toggleDarkMode() {
+            document.body.classList.toggle('dark-mode');
+        }
+
+        window.addEventListener('scroll', checkScroll);
+        checkScroll();
     </script>
 </body>
 </html>
