@@ -107,8 +107,7 @@
         }
 
         a:hover {
-            background-color: transparent;
-            color: var(--bg-color);
+            opacity: 0.7;
         }
 
         .mode-toggle {
@@ -188,6 +187,14 @@
             margin-bottom: 10px;
         }
 
+        .music-link span {
+            transition: opacity 0.3s ease;
+        }
+
+        .music-link:hover span {
+            opacity: 0.7;
+        }
+
         .contact-icons {
             position: fixed;
             bottom: 20px;
@@ -226,7 +233,7 @@
         header {
             margin-bottom: 60px; /* Added margin to header */
         }
-        
+
         @media (max-width: 768px) {
             * {
                 cursor: auto !important;
@@ -259,6 +266,7 @@
             <p>I'm a research intern at <a href="https://panteracapital.com/">Pantera Capital</a> and a scout for <a href="https://superteam.fun/Superteam/">Superteam</a>. On the side, I'm helping organize <a href="https://www.buidl.asia/">BUIDL Asia</a> and I'm an incoming intern at <a href="https://near.org/">NEAR Protocol</a>.</p> 
 
             <p>Worked previously at <a href="https://www.symbolic.capital/">Symbolic Capital</a> and founded <a href="https://alphag3n.com/">ALPHAG3N</a>.</p>
+        </div>
     </section>
 
     <section class="section parallax">
@@ -326,46 +334,48 @@
         const sections = document.querySelectorAll('.section');
         const textElements = document.querySelectorAll('.job p, .about-content p, .education-content p, li, h1, h2, h3, h4');
         const parallaxSections = document.querySelectorAll('.parallax');
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (!isMobile) {
-        document.addEventListener('mousemove', (e) => {
-            requestAnimationFrame(() => {
-                cursor.style.left = `${e.clientX}px`;
-                cursor.style.top = `${e.clientY}px`;
-                
-                // Remove previous highlights
-                document.querySelectorAll('.highlight-letter').forEach(el => {
-                    el.outerHTML = el.innerHTML;
-                });
 
-                // Highlight letter under cursor
-                const element = document.elementFromPoint(e.clientX, e.clientY);
-                if (element && element.textContent && !element.closest('a')) {
-                    const rect = element.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const y = e.clientY - rect.top;
-                    const charIndex = getCharIndexFromPoint(element, x, y);
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+        if (!isMobile) {
+            document.addEventListener('mousemove', (e) => {
+                requestAnimationFrame(() => {
+                    cursor.style.left = `${e.clientX}px`;
+                    cursor.style.top = `${e.clientY}px`;
                     
-                    if (charIndex !== -1) {
-                        const text = element.textContent;
-                        element.innerHTML = text.substring(0, charIndex) +
-                            `<span class="highlight-letter">${text[charIndex]}</span>` +
-                            text.substring(charIndex + 1);
+                    // Remove previous highlights
+                    document.querySelectorAll('.highlight-letter').forEach(el => {
+                        el.outerHTML = el.innerHTML;
+                    });
+
+                    // Highlight letter under cursor
+                    const element = document.elementFromPoint(e.clientX, e.clientY);
+                    if (element && element.textContent && !element.closest('a')) {
+                        const rect = element.getBoundingClientRect();
+                        const x = e.clientX - rect.left;
+                        const y = e.clientY - rect.top;
+                        const charIndex = getCharIndexFromPoint(element, x, y);
+                        
+                        if (charIndex !== -1) {
+                            const text = element.textContent;
+                            element.innerHTML = text.substring(0, charIndex) +
+                                `<span class="highlight-letter">${text[charIndex]}</span>` +
+                                text.substring(charIndex + 1);
+                        }
                     }
-                }
-                
-                // Shift line under cursor
-                textElements.forEach(el => {
-                    const rect = el.getBoundingClientRect();
-                    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-                        el.style.transform = 'translateX(10px)';
-                    } else {
-                        el.style.transform = 'translateX(0)';
-                    }
+                    
+                    // Shift line under cursor
+                    textElements.forEach(el => {
+                        const rect = el.getBoundingClientRect();
+                        if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                            el.style.transform = 'translateX(10px)';
+                        } else {
+                            el.style.transform = 'translateX(0)';
+                        }
+                    });
                 });
             });
-        });
-    }
+        }
 
         function getCharIndexFromPoint(element, x, y) {
             const range = document.createRange();
