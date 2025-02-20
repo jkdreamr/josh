@@ -107,7 +107,7 @@
         }
 
         a:hover {
-            background-color: var(--text-color);
+            background-color: transparent;
             color: var(--bg-color);
         }
 
@@ -226,6 +226,15 @@
         header {
             margin-bottom: 60px; /* Added margin to header */
         }
+        
+        @media (max-width: 768px) {
+            * {
+                cursor: auto !important;
+            }
+            .custom-cursor {
+                display: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -317,7 +326,7 @@
         const sections = document.querySelectorAll('.section');
         const textElements = document.querySelectorAll('.job p, .about-content p, .education-content p, li, h1, h2, h3, h4');
         const parallaxSections = document.querySelectorAll('.parallax');
-
+    if (!isMobile) {
         document.addEventListener('mousemove', (e) => {
             requestAnimationFrame(() => {
                 cursor.style.left = `${e.clientX}px`;
@@ -355,6 +364,7 @@
                 });
             });
         });
+    }
 
         function getCharIndexFromPoint(element, x, y) {
             const range = document.createRange();
