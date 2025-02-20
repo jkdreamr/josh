@@ -39,7 +39,7 @@
             align-items: center;
             font-size: 8px;
             text-align: center;
-            transition: all 0.1s ease;
+            transition: background-color 0.3s ease, color 0.3s ease;
         }
 
         h1, h2 {
@@ -200,28 +200,14 @@
         const sections = document.querySelectorAll('.section');
         const headers = document.querySelectorAll('h2');
 
-        let mouseX = 0, mouseY = 0;
-        let cursorX = 0, cursorY = 0;
-
         document.addEventListener('mousemove', (e) => {
-            mouseX = e.clientX;
-            mouseY = e.clientY;
+            cursor.style.left = `${e.clientX}px`;
+            cursor.style.top = `${e.clientY}px`;
         });
-
-        function animate() {
-            let dx = mouseX - cursorX;
-            let dy = mouseY - cursorY;
-            cursorX += dx * 0.1;
-            cursorY += dy * 0.1;
-            cursor.style.left = `${cursorX}px`;
-            cursor.style.top = `${cursorY}px`;
-            requestAnimationFrame(animate);
-        }
-        animate();
 
         headers.forEach(header => {
             header.addEventListener('mouseenter', () => {
-                cursor.textContent = header.textContent;
+                cursor.textContent = header.textContent.split(' ')[0];
                 cursor.style.backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color');
                 cursor.style.color = getComputedStyle(document.documentElement).getPropertyValue('--bg-color');
             });
