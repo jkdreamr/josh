@@ -143,6 +143,7 @@
             width: 100%;
             height: 315px;
             border: none;
+            margin-bottom: 20px;
         }
     </style>
 </head>
@@ -215,32 +216,32 @@
         <h2>Writings</h2>
         <h3>Algorithms</h3>
         <ul>
-            <li><a href="path/to/your/algorithm1.pdf" target="_blank">Algorithm Writing 1</a></li>
-            <li><a href="path/to/your/algorithm2.pdf" target="_blank">Algorithm Writing 2</a></li>
+            <li><a href="#" target="_blank">Algorithm Writing 1</a></li>
+            <li><a href="#" target="_blank">Algorithm Writing 2</a></li>
         </ul>
         
         <h3>Web3/AI</h3>
         <ul>
-            <li><a href="path/to/your/web3_1.pdf" target="_blank">Web3/AI Writing 1</a></li>
-            <li><a href="path/to/your/web3_2.pdf" target="_blank">Web3/AI Writing 2</a></li>
+            <li><a href="#" target="_blank">Web3/AI Writing 1</a></li>
+            <li><a href="#" target="_blank">Web3/AI Writing 2</a></li>
         </ul>
         
         <h3>Mathematics</h3>
         <ul>
-            <li><a href="path/to/your/math1.pdf" target="_blank">Mathematics Writing 1</a></li>
-            <li><a href="path/to/your/math2.pdf" target="_blank">Mathematics Writing 2</a></li>
+            <li><a href="#" target="_blank">Mathematics Writing 1</a></li>
+            <li><a href="#" target="_blank">Mathematics Writing 2</a></li>
         </ul>
         
         <h3>Creative Writing</h3>
         <ul>
-            <li><a href="path/to/your/creative1.pdf" target="_blank">Creative Writing 1</a></li>
-            <li><a href="path/to/your/creative2.pdf" target="_blank">Creative Writing 2</a></li>
+            <li><a href="#" target="_blank">Creative Writing 1</a></li>
+            <li><a href="#" target="_blank">Creative Writing 2</a></li>
         </ul>
         
         <h3>Other</h3>
         <ul>
-            <li><a href="path/to/your/other1.pdf" target="_blank">Other Writing 1</a></li>
-            <li><a href="path/to/your/other2.pdf" target="_blank">Other Writing 2</a></li>
+            <li><a href="#" target="_blank">Other Writing 1</a></li>
+            <li><a href="#" target="_blank">Other Writing 2</a></li>
         </ul>
     </section>
 
@@ -251,22 +252,97 @@
             <iframe src="https://www.youtube.com/embed/nw2rOUypDHE" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
             
             <h3>SoundCloud</h3>
-            <iframe width="100%" height="166" scrolling="no" frameborder="no" allow="autoplay" src="https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/YOUR_TRACK_ID&color=%23ff5500&auto_play=false&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true"></iframe>
+            <iframe width="100%" height="166" scrolling="no" frameborder="no" allow="autoplay" src="https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/1144893099&color=%23ff5500&auto_play=false&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true"></iframe>
             
             <h3>Instagram</h3>
-            <blockquote class="instagram-media" data-instgrm-captioned data-instgrm-permalink="https://www.instagram.com/jkdreamr/" data-instgrm-version="13"></blockquote>
-            <script async src="//www.instagram.com/embed.js"></script>
+            <p>Follow me on <a href="https://www.instagram.com/jkdreamr" target="_blank">Instagram</a></p>
         </div>
     </section>
 
     <section class="contact-icons">
-        <a href="https://x.com/joshuaykoo" target="_blank"><img src="path/to/x-logo.png" alt="X"></a>
-        <a href="https://www.linkedin.com/in/joshuaykoo/" target="_blank"><img src="path/to/linkedin-logo.png" alt="LinkedIn"></a>
-        <a href="https://linktr.ee/jkdreamr" target="_blank"><img src="path/to/linktree-logo.png" alt="Linktree"></a>
+        <a href="https://x.com/joshuaykoo" target="_blank"><img src="https://example.com/x-logo.png" alt="X"></a>
+        <a href="https://www.linkedin.com/in/joshuaykoo/" target="_blank"><img src="https://example.com/linkedin-logo.png" alt="LinkedIn"></a>
+        <a href="https://linktr.ee/jkdreamr" target="_blank"><img src="https://example.com/linktree-logo.png" alt="Linktree"></a>
     </section>
 
     <script>
-        // ... (The JavaScript remains the same as in the previous version) ...
+        const cursor = document.querySelector('.custom-cursor');
+        const sections = document.querySelectorAll('.section');
+        const textElements = document.querySelectorAll('.job p, .about-content p, .education-content p, li, h1, h2, h3');
+
+        document.addEventListener('mousemove', (e) => {
+            requestAnimationFrame(() => {
+                cursor.style.left = `${e.clientX}px`;
+                cursor.style.top = `${e.clientY}px`;
+                
+                // Remove previous highlights
+                document.querySelectorAll('.highlight-letter').forEach(el => {
+                    el.outerHTML = el.innerHTML;
+                });
+
+                // Highlight letter under cursor
+                const element = document.elementFromPoint(e.clientX, e.clientY);
+                if (element && element.textContent && !element.closest('a')) {
+                    const rect = element.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    const charIndex = getCharIndexFromPoint(element, x, y);
+                    
+                    if (charIndex !== -1) {
+                        const text = element.textContent;
+                        element.innerHTML = text.substring(0, charIndex) +
+                            `<span class="highlight-letter">${text[charIndex]}</span>` +
+                            text.substring(charIndex + 1);
+                    }
+                }
+                
+                // Shift line under cursor
+                textElements.forEach(el => {
+                    const rect = el.getBoundingClientRect();
+                    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                        el.style.transform = 'translateX(10px)';
+                    } else {
+                        el.style.transform = 'translateX(0)';
+                    }
+                });
+            });
+        });
+
+        function getCharIndexFromPoint(element, x, y) {
+            const range = document.createRange();
+            const textNode = element.firstChild;
+            
+            if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+                for (let i = 0; i < textNode.length; i++) {
+                    range.setStart(textNode, i);
+                    range.setEnd(textNode, i + 1);
+                    const rect = range.getBoundingClientRect();
+                    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+                        return i;
+                    }
+                }
+            }
+            return -1;
+        }
+
+        function checkScroll() {
+            sections.forEach(section => {
+                const sectionTop = section.getBoundingClientRect().top;
+                const windowHeight = window.innerHeight;
+
+                if (sectionTop < windowHeight * 0.75) {
+                    section.style.opacity = '1';
+                    section.style.transform = 'translateY(0)';
+                }
+            });
+        }
+
+        function toggleDarkMode() {
+            document.body.classList.toggle('dark-mode');
+        }
+
+        window.addEventListener('scroll', checkScroll);
+        checkScroll();
     </script>
 </body>
 </html>
