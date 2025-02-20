@@ -11,6 +11,10 @@
             --highlight-color: #f0f0f0;
         }
 
+        * {
+            cursor: none;
+        }
+
         body {
             font-family: Arial, sans-serif;
             line-height: 1.6;
@@ -20,18 +24,22 @@
             margin: 0 auto;
             padding: 20px;
             transition: all 0.3s ease;
-            cursor: none;
         }
 
         .custom-cursor {
-            width: 20px;
-            height: 20px;
+            width: 40px;
+            height: 40px;
             border: 2px solid var(--text-color);
             border-radius: 50%;
             position: fixed;
             pointer-events: none;
             z-index: 9999;
-            transition: background-color 0.3s ease, transform 0.1s ease;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 8px;
+            text-align: center;
+            transition: all 0.1s ease;
         }
 
         h1, h2 {
@@ -50,12 +58,12 @@
             transition: all 0.5s ease;
         }
 
-        .job, .summary-content, .education-content {
+        .job, .about-content, .education-content {
             margin-bottom: 20px;
             transition: all 0.3s ease;
         }
 
-        .job:hover, .summary-content:hover, .education-content:hover {
+        .job:hover, .about-content:hover, .education-content:hover {
             transform: translateX(10px);
         }
 
@@ -91,7 +99,6 @@
             color: var(--bg-color);
             border: none;
             padding: 10px;
-            cursor: none;
             transition: all 0.3s ease;
         }
 
@@ -138,8 +145,8 @@
     </header>
 
     <section class="section">
-        <h2>Summary</h2>
-        <div class="summary-content">
+        <h2>About Me</h2>
+        <div class="about-content">
             <p>A brief summary of your professional experience and key skills.</p>
         </div>
     </section>
@@ -193,21 +200,35 @@
         const sections = document.querySelectorAll('.section');
         const headers = document.querySelectorAll('h2');
 
+        let mouseX = 0, mouseY = 0;
+        let cursorX = 0, cursorY = 0;
+
         document.addEventListener('mousemove', (e) => {
-            requestAnimationFrame(() => {
-                cursor.style.left = `${e.clientX}px`;
-                cursor.style.top = `${e.clientY}px`;
-            });
+            mouseX = e.clientX;
+            mouseY = e.clientY;
         });
+
+        function animate() {
+            let dx = mouseX - cursorX;
+            let dy = mouseY - cursorY;
+            cursorX += dx * 0.1;
+            cursorY += dy * 0.1;
+            cursor.style.left = `${cursorX}px`;
+            cursor.style.top = `${cursorY}px`;
+            requestAnimationFrame(animate);
+        }
+        animate();
 
         headers.forEach(header => {
             header.addEventListener('mouseenter', () => {
+                cursor.textContent = header.textContent;
                 cursor.style.backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color');
-                cursor.style.mixBlendMode = 'difference';
+                cursor.style.color = getComputedStyle(document.documentElement).getPropertyValue('--bg-color');
             });
             header.addEventListener('mouseleave', () => {
+                cursor.textContent = '';
                 cursor.style.backgroundColor = 'transparent';
-                cursor.style.mixBlendMode = 'normal';
+                cursor.style.color = 'transparent';
             });
         });
 
