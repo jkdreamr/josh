@@ -55,13 +55,8 @@
             transition: all 0.5s ease;
         }
 
-        .job, .about-content, .education-content {
-            margin-bottom: 20px;
-            transition: all 0.3s ease;
-        }
-
-        .job:hover, .about-content:hover, .education-content:hover {
-            transform: translateX(10px);
+        .job p, .about-content p, .education-content p, li {
+            transition: transform 0.3s ease;
         }
 
         .job-title {
@@ -129,6 +124,11 @@
         .contact-icons img:hover {
             transform: scale(1.2);
         }
+
+        .highlight-letter {
+            color: var(--bg-color);
+            background-color: var(--text-color);
+        }
     </style>
 </head>
 <body>
@@ -195,25 +195,57 @@
     <script>
         const cursor = document.querySelector('.custom-cursor');
         const sections = document.querySelectorAll('.section');
-        const headers = document.querySelectorAll('h2');
+        const textElements = document.querySelectorAll('.job p, .about-content p, .education-content p, li');
 
         document.addEventListener('mousemove', (e) => {
             requestAnimationFrame(() => {
                 cursor.style.left = `${e.clientX}px`;
                 cursor.style.top = `${e.clientY}px`;
+                
+                // Highlight letter under cursor
+                const element = document.elementFromPoint(e.clientX, e.clientY);
+                if (element && element.textContent && !element.classList.contains('highlight-letter')) {
+                    const rect = element.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    const charIndex = getCharIndexFromPoint(element, x, y);
+                    
+                    if (charIndex !== -1) {
+                        const text = element.textContent;
+                        element.innerHTML = text.substring(0, charIndex) +
+                            `<span class="highlight-letter">${text[charIndex]}</span>` +
+                            text.substring(charIndex + 1);
+                    }
+                }
+                
+                // Shift line under cursor
+                textElements.forEach(el => {
+                    const rect = el.getBoundingClientRect();
+                    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                        el.style.transform = 'translateX(10px)';
+                    } else {
+                        el.style.transform = 'translateX(0)';
+                    }
+                });
             });
         });
 
-        headers.forEach(header => {
-            header.addEventListener('mouseenter', () => {
-                header.style.color = getComputedStyle(document.documentElement).getPropertyValue('--bg-color');
-                cursor.style.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--bg-color');
-            });
-            header.addEventListener('mouseleave', () => {
-                header.style.color = getComputedStyle(document.documentElement).getPropertyValue('--text-color');
-                cursor.style.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color');
-            });
-        });
+        function getCharIndexFromPoint(element, x, y) {
+            const range = document.createRange();
+            const textNode = element.firstChild;
+            
+            if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+                for (let i = 0; i < textNode.length; i++) {
+                    range.setStart(textNode, i);
+                    range.setEnd(textNode, i + 1);
+                    const rect = range.getBoundingClientRect();
+                    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+                        return i;
+                    }
+                }
+            }
+            return -1;
+        }
 
         function checkScroll() {
             sections.forEach(section => {
