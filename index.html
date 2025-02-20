@@ -55,7 +55,7 @@
             transition: all 0.5s ease;
         }
 
-        .job p, .about-content p, .education-content p, li {
+        .job p, .about-content p, .education-content p, li, h1, h2 {
             transition: transform 0.3s ease;
         }
 
@@ -195,16 +195,21 @@
     <script>
         const cursor = document.querySelector('.custom-cursor');
         const sections = document.querySelectorAll('.section');
-        const textElements = document.querySelectorAll('.job p, .about-content p, .education-content p, li');
+        const textElements = document.querySelectorAll('.job p, .about-content p, .education-content p, li, h1, h2');
 
         document.addEventListener('mousemove', (e) => {
             requestAnimationFrame(() => {
                 cursor.style.left = `${e.clientX}px`;
                 cursor.style.top = `${e.clientY}px`;
                 
+                // Remove previous highlights
+                document.querySelectorAll('.highlight-letter').forEach(el => {
+                    el.outerHTML = el.innerHTML;
+                });
+
                 // Highlight letter under cursor
                 const element = document.elementFromPoint(e.clientX, e.clientY);
-                if (element && element.textContent && !element.classList.contains('highlight-letter')) {
+                if (element && element.textContent) {
                     const rect = element.getBoundingClientRect();
                     const x = e.clientX - rect.left;
                     const y = e.clientY - rect.top;
