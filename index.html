@@ -72,7 +72,7 @@
         }
 
         .section {
-            margin-bottom: 60px; /* Increased from 30px */
+            margin-bottom: 60px;
             opacity: 0;
             transform: translateY(20px);
             transition: opacity 0.5s ease, transform 0.5s ease;
@@ -231,7 +231,16 @@
         }
 
         header {
-            margin-bottom: 60px; /* Added margin to header */
+            margin-bottom: 60px;
+        }
+
+        .copyright {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            font-size: 12px;
+            color: var(--text-color);
+            opacity: 0.7;
         }
 
         @media (max-width: 768px) {
@@ -240,6 +249,11 @@
             }
             .custom-cursor {
                 display: none;
+            }
+            .copyright {
+                position: static;
+                text-align: center;
+                margin-top: 20px;
             }
         }
     </style>
@@ -287,8 +301,6 @@
             <li><a href="manifolds.html" target="_blank">Manifolds</a></li>
             <li><a href="path-optimization.html" target="_blank">Path Optimization</a></li>
             <li><a href="probabilistic-algorithms.html" target="_blank">Probabilistic Algorithms</a></li>
-            
-            
         </ul>
         
         <h3>Creative Writing</h3>
@@ -324,6 +336,8 @@
             <a href="https://www.linkedin.com/in/joshuaykoo/" target="_blank"><img src="https://cdn-icons-png.flaticon.com/512/3536/3536505.png" alt="LinkedIn"></a>
         </div>
     </footer>
+
+    <div class="copyright">© 2025 Joshua Koo. All rights reserved.</div>
 
     <script>
         const cursor = document.querySelector('.custom-cursor');
@@ -387,11 +401,11 @@
                     }
                 }
             }
-            return -1; }
+            return -1;
+        }
 
         function updateParallax() {
-            parallaxSections.forEach((section, index) => {
-                const rect = section.getBoundingClientRect();
+            parallaxSections.forEach((section, index) => { const rect = section.getBoundingClientRect();
                 const scrollPercentage = (window.innerHeight - rect.top ) / window.innerHeight;
                 if (scrollPercentage > 0 && scrollPercentage < 1) {
                     const speed = 0.27 * (index + 1);
