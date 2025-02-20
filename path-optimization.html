@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Path Optimization</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+            color: #333;
+        }
+        h2 {
+            font-size: 1.8em;
+            margin-top: 40px;
+            margin-bottom: 15px;
+            color: #444;
+        }
+        p {
+            margin-bottom: 15px;
+            color: #666;
+        }
+        .collaboration {
+            font-style: italic;
+            color: #777;
+            margin-bottom: 20px;
+        }
+        /* Ensure MathJax rendering has no background */
+        mjx-container, .MJX-Tex {
+            background: none !important;
+            border: none !important;
+        }
+        /* Style for SVG diagram */
+        svg {
+            max-width: 100%;
+            height: auto;
+            margin: 20px 0;
+        }
+    </style>
+    <!-- MathJax for LaTeX rendering -->
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body>
+    <article>
+        <h1>Path Optimization</h1>
+        <p class="collaboration">In collaboration with Lachlan Chu</p>
+
+        <section>
+            <h2>Introduction</h2>
+            <p>Natural processes can usually be commended for their subtle efficiencies - how essential are performed, say, as well or as quickly as possible. While there do exist bees whose transportation of pollen from flower to flower is slower than that of others, we cannot overlook how the most powerful systems in existence are not those of quantum computers but ones which have remained unedited for millions of years. Consider the process of photosynthesis: light enters a specific harvesting complex perfectly suited to take advantage of a quantum mechanical principle we discovered only (relatively) recently. Its energy travels through two photosystems, producing in that time all necessary ingredients for floral survival.</p>
+            <p>Upon investigating further the smaller, more subtle elements of nature, it becomes evident that fundamental systems always function at the extrema. If a ball is thrown directly upward, it will return to the ground - if unobstructed by any external force - along the same path. This is, indeed, the fastest route. A minimum.</p>
+            <p>Here, we will discuss paths and their optimizations. In order to effectively examine them, however, it is useful to attribute to each path - for instance, the parabolic path of a projectile under the influence of just gravity - a number which can determine its efficiency. Call this value the action, and let a path in space be viewed as a function \(\boldsymbol{q}\) of time \(\boldsymbol{t}\). Now consider this diagram, displaying some possible paths of a projectile:</p>
+            <!-- Embedded SVG for projectile paths diagram -->
+            <svg width="400" height="300" viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+                <!-- Axes -->
+                <line x1="50" y1="250" x2="350" y2="250" stroke="black" stroke-width="2" marker-end="url(#arrow)" />
+                <line x1="50" y1="250" x2="50" y2="50" stroke="black" stroke-width="2" marker-end="url(#arrow)" />
+                
+                <!-- Arrows -->
+                <defs>
+                    <marker id="arrow" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="black" />
+                    </marker>
+                </defs>
+                
+                <!-- Wavy Outer Shape -->
+                <path d="M 50 250 Q 100 100, 150 180 T 250 120 T 350 250 Q 250 300, 150 270 T 50 250" 
+                      fill="none" stroke="black" stroke-width="2" />
+                
+                <!-- Inner Shape -->
+                <path d="M 100 250 Q 150 180, 200 200 T 300 220 Q 250 250, 200 230 T 100 250" 
+                      fill="none" stroke="black" stroke-width="2" />
+                
+                <!-- Horizontal Line Connecting t1 to t2 -->
+                <line x1="100" y1="250" x2="300" y2="250" stroke="black" stroke-width="2" />
+                
+                <!-- Points at t1 and t2 -->
+                <circle cx="100" cy="250" r="4" fill="black" />
+                <circle cx="300" cy="250" r="4" fill="black" />
+                
+                <!-- Labels -->
+                <text x="360" y="250" font-size="14">t</text>
+                <text x="40" y="40" font-size="14">q</text>
+                <text x="90" y="270" font-size="14">t1</text>
+                <text x="290" y="270" font-size="14">t2</text>
+                <text x="200" y="220" font-size="14">q(t)</text>
+            </svg>
+            <p>Clearly, \(\boldsymbol{q}(\boldsymbol{t})\) seems the most reasonable - the most natural, perhaps. If we were to attribute to each of these an action value, how could we make sense of the resulting numbers? Of the process? First, we must define more intuitively what exactly the action represents. It's a value, of course, but what does it indicate? Here, we will consider the action to be a constant, measured in Joule-seconds, whose value inversely corresponds to the efficiency of a path or system; therefore, we should expect \(\boldsymbol{q}(\boldsymbol{t})\) to have the lowest action of all these options, given that it represents a minimum. In order to actually compute this minimum, given that we have a function in \(t\) as input, we will use the action functional, denoted \(S\). From this point on in the article, things may get a bit more technical, but do not lose track of the purpose: to investigate, in different instances, how nature chooses an optimal solution to its problems. Many students may be familiar with a kind example of such a process in finding the fastest route between points in a maze. Although the 10th grade biology slime mold did have to extend itself in a number of fruitless directions, the final product did indicate an intelligence able to preserve only the efficient strip of body.</p>
+            <p>Returning to the action functional, which accepts a function and returns a single value, it is not difficult to compute when presented with the study of a path. Here, we can get an accurate interpretation of the action value by analogizing it to the length of a given path. Thus, our functional should be of the form</p>
+            <p>\[
+                S[q(t)]=\int_q d s,
+            \]</p>
+            <p>which indicates that we are integrating over a path \(q\) with respect to a distance metric \(d s\). Because a natural process will choose a minimum, maximum, or saddle point depending on the situation, it seems logical to commit to the following process: determine which type of extreme will be selected, then evaluate the action of all events or classes of events to compare them. There is, however, a way to get around this.</p>
+        </section>
+
+        <section>
+            <h2>Derivation of the Euler-Lagrange Equations</h2>
+            <p>First, we will rewrite our action functional. Making use of the Lagrangian, we can rewrite the integral expression to produce the correct units:</p>
+            <p>\[
+                S[q(t)]=\int_{t_1}^{t_2} L(t, q, \dot{q}) d t
+            \]</p>
+            <p>where \(\boldsymbol{L}\) has units Joules, making its integral over time measured in Joule-seconds; here, \(\boldsymbol{t}_{\mathbf{1}}\) and \(\boldsymbol{t}_{\mathbf{2}}\) are the endpoints of the path \(q\). It is accurate to assume the Lagrangian to denote a small distance along the path by some metric. We wish to demonstrate that \(\boldsymbol{q}\) does, indeed, minimize \(\boldsymbol{S}[\boldsymbol{q}]\), so we will reasonably consider infinitesimal perturbations to \(\boldsymbol{q}\). We will define this variation as</p>
+            <p>\[
+                \delta q(t):=\epsilon p(t)
+            \]</p>
+            <p>for some small \(\delta, \epsilon\) and some arbitrary function \(p(t)\). Since we want to take perturbations of \(q\), we must insist that the function \(p\) possess some of the following properties. First, it must coincide with the boundary points \(t_1\) and \(t_2\) of \(q\) such that \(p\left(t_1\right)=p\left(t_2\right)=0\). This makes sense, because otherwise \(p\) would not be a path that serves the same purpose of connecting \(t_1\) and \(t_2\). Secondly, it must be smooth for \(t_1<t<t_2\), as is \(q\). We may now rewrite (1.1) with respect to an arbitrary perturbation:</p>
+            <p>\[
+                \begin{aligned}
+                S[q+\epsilon p] & =\int_{t_1}^{t_2} L(t,(q+\epsilon p), \frac{d}{d t}(q+\epsilon p)) d t \\
+                & =\int_{t_1}^{t_2} L(t, q+\epsilon p, \dot{q}+\epsilon \dot{p}) d t .
+                \end{aligned}
+            \]</p>
+            <p>Now, having also the action functional for the perturbation, we can try to disprove that this perturbation can be the actual desired path, regardless of our choice in \(\boldsymbol{\epsilon}\) or \(\boldsymbol{p}\). Say that this is the fastest path, with the lowest action. Then, because it is a local minimum, we must also have that its derivative is zero. Using this property, we will be able to do the brunt of the derivation work. Assuming</p>
+            <p>\[
+                \frac{\partial S[q+\epsilon p]}{\partial \epsilon}=0,
+            \]</p>
+            <p>we will perform a quick Taylor expansion, noting all of this is centered around our variable of differentiation, \(\epsilon\), being set to zero. Recalling that the general form of a Taylor series for a function \(f(x, y, z)\) of three variables is:</p>
+            <p>\[
+                \begin{aligned}
+                f\left(x+\delta_1, y+\delta_2, z+\delta_3\right) \approx & f(x, y, z)+\delta_1 \frac{\partial f(x, y, z)}{\partial x}+\delta_2 \frac{\partial f(x, y, z)}{\partial y}+\delta_3 \frac{\partial f(x, y, z)}{\partial z} \\
+                & +\frac{1}{2 !} \delta_1^2 \frac{\partial^2 f(x, y, z)}{\partial x^2}+\frac{1}{2 !} \delta_2^2 \frac{\partial^2 f(x, y, z)}{\partial y^2}+\frac{1}{2 !} \delta_3^2 \frac{\partial^2 f(x, y, z)}{\partial z^2} \\
+                & +\delta_1 \delta_2 \frac{\partial^2 f(x, y, z)}{\partial x \partial y}+\delta_2 \delta_3 \frac{\partial^2 f(x, y, z)}{\partial y \partial z}+\delta_1 \delta_3 \frac{\partial^2 f(x, y, z)}{\partial x \partial z}+\cdots
+                \end{aligned}
+            \]</p>
+            <p>and that, for our purposes, terms of higher order are negligible (as they are multiplied by \(\epsilon^2\) or smaller) and will not affect the accuracy of the equation, the expanded expression is not so difficult. Our functional becomes:</p>
+            <p>\[
+                S[q+\epsilon p]=\int_{t_1}^{t_2} L(t, q, \dot{q})+\epsilon p \frac{\partial L}{\partial q}+\epsilon p \frac{\partial L}{\partial \dot{q}}+\mathcal{O}\left(\epsilon^2\right) d t .
+            \]</p>
+            <p>Consider the middle two differential terms an expanded form of</p>
+            <p>\[
+                \epsilon \frac{\partial L}{\partial \epsilon}=\epsilon\left(\frac{\partial L}{\partial t} \frac{d t}{d \epsilon}+\frac{\partial L}{\partial q} \frac{d(q+\epsilon p)}{d \epsilon}+\frac{\partial L}{\partial \dot{q}} \frac{d(\dot{q}+\epsilon \dot{p})}{d \epsilon}\right),
+            \]</p>
+            <p>sometimes called the total derivative, which yields the same result as that in (1.3). Finally, we are able to return to (1.2):</p>
+            <p>\[
+                \begin{aligned}
+                \frac{\partial S[q+\epsilon p]}{\partial \epsilon} & =\frac{\partial}{\partial \epsilon} \int_{t_1}^{t_2} L+\epsilon\left(p \frac{\partial L}{\partial q}+\dot{p} \frac{\partial L}{\partial \dot{q}}\right) d t \\
+                & =\int_{t_1}^{t_2} p \frac{\partial L}{\partial q}+\dot{p} \frac{\partial L}{\partial \dot{q}} d t
+                \end{aligned}
+            \]</p>
+            <p>which must equal zero by our earlier assumption. The transition between lines was done by (the factorization in the first line perhaps indicates this as a next step) first taking the derivative \(\frac{\partial}{\partial \epsilon}\) inside the integral. Then, we could simply dissect the integrand for any function depending on \(\epsilon\), of which there was one: \(\epsilon\). Because \(L\) and the two derivative terms exist irrespective of \(\epsilon\), the derivative \(\frac{\partial}{\partial \epsilon}\) is easily computed.</p>
+            <p>Finally, we will simplify (1.4) by expanding it through partial integration. To do this, we will consider only the second half term in the integrand, and imagine splitting the expression in (1.4) into two separate integrals with the same bounds, e.g.</p>
+            <p>\[
+                \int_{t_1}^{t_2} p \frac{\partial L}{\partial q} d t+\int_{t_1}^{t_2} \dot{p} \frac{\partial L}{\partial \dot{q}} d t .
+            \]</p>
+            <p>With partial integration on the latter, we will set</p>
+            <p>\[
+                u=\frac{\partial L}{\partial \dot{q}}, \frac{d v}{d t}=\dot{p}
+            \]</p>
+            <p>and</p>
+            <p>\[
+                \frac{d u}{d t}=\frac{d}{d t} \frac{\partial L}{\partial \dot{q}}, v=p .
+            \]</p>
+            <p>Note: I prefer to write derivatives in their full form instead of their more illogical split form, for example \(\frac{d v}{d t}=\dot{p}\) instead of \(d v=\dot{p} d t\). Now, noticing that the \(u v \mid \frac{t_2}{t_1}\) term goes to zero because \(p\left(t_1\right)-p\left(t_2\right)=0\), we have that</p>
+            <p>\[
+                \int_{t_1}^{t_2} \dot{p} \frac{\partial L}{\partial \dot{q}} d t=-\int_{t_1}^{t_2} p \frac{d}{d t} \frac{\partial L}{\partial \dot{q}} d t
+            \]</p>
+            <p>and therefore, after combining with the first half of the integral in (1.4),</p>
+            <p>\[
+                \begin{aligned}
+                \frac{\partial S[q+\epsilon p]}{\partial \epsilon} & =\int_{t_1}^{t_2} p \frac{\partial L}{\partial q}+p \frac{\partial L}{\partial \dot{q}} d t \\
+                & =\int_{t_1}^{t_2} p \frac{\partial L}{\partial q}-p \frac{d}{d t} \frac{\partial L}{\partial \dot{q}} d t \\
+                & =\int_{t_1}^{t_2} p\left(\frac{\partial L}{\partial q}-\frac{d}{d t} \frac{\partial L}{\partial \dot{q}}\right) d t .
+                \end{aligned}
+            \]</p>
+            <p>We have arrived at the end of the derivation. Because we stipulate that this perturbation - and the original path \(\boldsymbol{q}\), with \(\boldsymbol{p}=\mathbf{0}\), for that matter - is stationary, we have that the derivative is zero as expressed in (1.2). Thus, the expression in (1.5) must be zero; because \(p\) will be nonzero in all cases other than the trivial perturbation (the un-variation?), we have that</p>
+            <p>\[
+                \frac{\partial L}{\partial q}-\frac{d}{d t}\left(\frac{\partial L}{\partial \dot{q}}\right)=0 .
+            \]</p>
+            <p>The area underneath the null function is zero, and thus is the Euler-Lagrange equation.</p>
+        </section>
+
+        <section>
+            <h2>The Significance of The Euler-Lagrange Equation</h2>
+            <p>The solutions to this equation will result in the natural motions for the Lagrangian, and this can be applied across geometries with different metrics. Let us consider the upper half plane model of hyperbolic geometry, but first the Euclidean plane with which we are familiar. To show that the geodesics are straight lines, we will write the Lagrangian as the integrand of an arc length integral:</p>
+            <p>\[
+                \int_{t_1}^{t_2} \sqrt{1+\dot{q}^2} d t
+            \]</p>
+            <p>Thus, we have</p>
+            <p>\[
+                L(t, q, \dot{q})=\sqrt{1+\dot{q}^2},
+            \]</p>
+            <p>which is irrespective of \(\boldsymbol{q}\); note that \(\dot{\boldsymbol{q}}\) is still a function of \(\boldsymbol{t}\). Because of this, we need only evaluate the latter term in the E-L equation because the first goes to zero. First finding the partial, we have:</p>
+            <p>\[
+                \frac{\partial L}{\partial \dot{q}}=\frac{\dot{q}}{\sqrt{1+\dot{q}^2}}
+            \]</p>
+            <p>and then</p>
+            <p>\[
+                \frac{d}{d t}\left(\frac{\partial L}{\partial \dot{q}}\right)=\frac{\ddot{q}}{\left(1+\dot{q}^2\right)^{3 / 2}}=0
+            \]</p>
+            <p>Now, we need only to solve the differential equation. This is a second-order nonlinear ODE, which can be solved with substitution. Let \(\dot{q}=v\), such that \(\ddot{q}=\dot{v}\). Integration will now simplify things:</p>
+            <p>\[
+                \int \frac{\dot{v}}{\left(1+v^2\right)^{3 / 2}} d t=\int 0 d t
+            \]</p>
+            <p>and</p>
+            <p>\[
+                \frac{v}{\sqrt{v^2+1}}=c_1 .
+            \]</p>
+            <p>Now, isolating for \(v\) will give us</p>
+            <p>\[
+                v= \pm \frac{c_1}{\sqrt{1-c_1^2}}=\dot{q} .
+            \]</p>
+            <p>This differential equation is now trivial to solve:</p>
+            <p>\[
+                \begin{aligned}
+                q & = \pm \int \frac{c_1}{\sqrt{1-c_1^2}} d t \\
+                & = \pm \frac{c_1}{\sqrt{1-c_1^2}} t+c_2 .
+                \end{aligned}
+            \]</p>
+            <p>And this is the geodesic on the Euclidean plane. Collecting all constant terms and renaming them, we get that</p>
+            <p>\[
+                \boldsymbol{q}(\boldsymbol{t})=\boldsymbol{\alpha} \boldsymbol{t}+\boldsymbol{\beta},
+            \]</p>
+            <p>a straight line with slope \(\boldsymbol{\alpha}\) and \(\boldsymbol{q}\)-intercept \(\boldsymbol{\beta}\).</p>
+            <p>Now that we've completed the Euclidean case, let us move on to the hyperbolic upper half plane model. As known, the geodesics here are half-lines and half-circles perpendicular to the horizontal. Beginning with our distance metric, we evaluate a line integral on this model with the following integral:</p>
+            <p>\[
+                \int_{t_1}^{t_2} d s=\int_{t_1}^{t_2} \sqrt{\frac{q_1^2+q_2^2}{q_2^2}} d t .
+            \]</p>
+            <p>Consider \(\left(q_1, q_2\right)=(x, y)\). We will define for simplicity:</p>
+            <p>\[
+                L(t, q, \dot{q})=\frac{q_1{ }^2+q_2{ }^2}{q_2^2} \text { in which } t \in \mathbb{R}, q \in D, \dot{q} \in \mathbb{R}^2
+            \]</p>
+            <p>for \(D=\left\{\left(q_1, q_2\right) \in \mathbb{R}^2: q_2>0\right\}\). This Lagrangian notation is analogous \(L\left(t, q_1, q_2, \dot{q}_1, \dot{q}_2\right)\). Firstly, we will note that we are presented with an autonomous differential equation when observing the E-L equations, as \(\frac{\partial L}{\partial t}=0\). Now, we can reduce the equation to</p>
+            <p>\[
+                \frac{d}{d t}\left(\frac{\partial L}{\partial \dot{q}}\right)=0,
+            \]</p>
+            <p>indicating that \(\frac{\partial L}{\partial \dot{q}}\) is constant. In this case, the first integrals \(\boldsymbol{E}\) and \(\boldsymbol{p}\) are</p>
+            <p>\[
+                \begin{aligned}
+                & E=\frac{\dot{q}_1{ }^2+\dot{q}_2{ }^2}{q_2^2}=c_1 \\
+                & p=\frac{\dot{q}_1}{q_2^2}=c_2,
+                \end{aligned}
+            \]</p>
+            <p>respectively (perhaps it would be more accurate to write \(\boldsymbol{p}_{\boldsymbol{q}_1}\), as we are observing a conserved momentum associated with \(\frac{\partial L}{\partial \dot{q}_1}\) as \(\frac{\partial L}{\partial \dot{q}_1}=0\) for our Lagrangian, but it is indicated by the derivative). They are called first integrals because we may decrease the order of the differential equation by one to achieve a constant, indicative of an object conserved by the flow of a dynamical system. Here, we have the first component of the momentum because of the Lagrangian's invariance under \(x\)-translations and the energy by the formula:</p>
+            <p>\[
+                E=\frac{\partial \mathcal{L}}{\partial \dot{q}} \cdot \dot{q}-\mathcal{L}
+            \]</p>
+            <p>where \(\mathcal{L}\) is a time-independent Lagrangian (e.g. \(\mathcal{L}(\boldsymbol{q}, \dot{q})\) ). Assuming \(\boldsymbol{c}_2 \neq \mathbf{0}\), we may divide (2.3) by the square of (2.4) with the intent of simplifying the fractional expression in the former. We arrive, then, at:</p>
+            <p>\[
+                \frac{E}{p^2}=q_2^2 \frac{\dot{q}_1^2+\dot{q}_2^2}{\dot{q}_1^2}=\frac{c_1}{c_2^2}
+            \]</p>
+            <p>which is another constant. Letting \(\frac{\epsilon_1}{e_2}=r^2\) for some arbitrary \(r\), we get after simplification:</p>
+            <p>\[
+                r^2=q_2^2\left(1+\left(\frac{d q_2}{d q_1}\right)^2\right),
+            \]</p>
+            <p>a very familiar expression. Rewriting (2.5) such that \(L=L(t, x, y, \dot{x}, \dot{y})\), we have:</p>
+            <p>\[
+                r^2=y^2\left(1+y'^2\right) .
+            \]</p>
+            <p>Isolating the differential,</p>
+            <p>\[
+                \frac{d y}{d x}=\frac{\sqrt{r^2-y^2}}{y}
+            \]</p>
+            <p>we will divide both sides by the RHS and integrate with respect to \(x\) :</p>
+            <p>\[
+                \int \frac{y / y}{\sqrt{r^2-y^2}} d x=\int d x
+            \]</p>
+            <p>which gives us</p>
+            <p>\[
+                \int \frac{y}{\sqrt{r^2-y^2}} d y=x+C .
+            \]</p>
+            <p>This integral is trivial to solve and can be done with a simple substitution of \(u=r^2-y^2\). The resulting equality is</p>
+            <p>\[
+                -\sqrt{r^2-y^2}=x+C .
+            \]</p>
+            <p>Squaring once and rearranging terms, we have finally solved for the semicircular geodesics of the upper half plane model of hyperbolic geometry:</p>
+            <p>\[
+                r^2=(x+C)^2+y^2
+            \]</p>
+            <p>or</p>
+            <p>\[
+                \left(x-x_0\right)^2+y^2=r^2,
+            \]</p>
+            <p>defining a circle whose center is on the horizontal axis. Isolating for \(y\) and taking the square root will yield the upper half-circle.</p>
+        </section>
+    </article>
+</body>
+</html>
