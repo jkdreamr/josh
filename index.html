@@ -8,21 +8,31 @@
         body {
             font-family: Arial, sans-serif;
             line-height: 1.6;
-            color: #333;
+            color: #000;
+            background-color: #fff;
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
+            transition: all 0.3s ease;
         }
-        h1 {
-            color: #2c3e50;
+        h1, h2 {
+            color: #000;
         }
         h2 {
-            color: #3498db;
-            border-bottom: 2px solid #3498db;
+            border-bottom: 2px solid #000;
             padding-bottom: 5px;
         }
         .section {
             margin-bottom: 30px;
+            opacity: 0;
+            transform: translateY(20px);
+            animation: fadeIn 0.5s forwards;
+        }
+        @keyframes fadeIn {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
         .job {
             margin-bottom: 20px;
@@ -31,11 +41,20 @@
             font-weight: bold;
         }
         .job-date {
-            color: #7f8c8d;
             font-style: italic;
         }
         ul {
             padding-left: 20px;
+        }
+        a {
+            color: #000;
+            text-decoration: none;
+            border-bottom: 1px solid #000;
+            transition: all 0.3s ease;
+        }
+        a:hover {
+            background-color: #000;
+            color: #fff;
         }
     </style>
 </head>
@@ -79,13 +98,21 @@
     </section>
 
     <section class="section">
-        <h2>Skills</h2>
+        <h2>Writings</h2>
         <ul>
-            <li>HTML, CSS, JavaScript</li>
-            <li>React, Vue.js</li>
-            <li>Node.js, Express</li>
-            <li>Git, GitHub</li>
+            <li><a href="path/to/your/writing1.pdf" target="_blank">Title of Writing 1</a></li>
+            <li><a href="path/to/your/writing2.pdf" target="_blank">Title of Writing 2</a></li>
+            <li><a href="path/to/your/writing3.pdf" target="_blank">Title of Writing 3</a></li>
         </ul>
     </section>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', (event) => {
+            const sections = document.querySelectorAll('.section');
+            sections.forEach((section, index) => {
+                section.style.animationDelay = `${index * 0.1}s`;
+            });
+        });
+    </script>
 </body>
 </html>
