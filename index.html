@@ -27,19 +27,14 @@
         }
 
         .custom-cursor {
-            width: 40px;
-            height: 40px;
+            width: 20px;
+            height: 20px;
             border: 2px solid var(--text-color);
             border-radius: 50%;
             position: fixed;
             pointer-events: none;
             z-index: 9999;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-size: 8px;
-            text-align: center;
-            transition: background-color 0.3s ease, color 0.3s ease;
+            transition: all 0.1s ease;
         }
 
         h1, h2 {
@@ -49,6 +44,7 @@
         h2 {
             border-bottom: 2px solid var(--text-color);
             padding-bottom: 5px;
+            transition: color 0.3s ease;
         }
 
         .section {
@@ -207,35 +203,4 @@
 
         headers.forEach(header => {
             header.addEventListener('mouseenter', () => {
-                cursor.textContent = header.textContent.split(' ')[0];
-                cursor.style.backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color');
-                cursor.style.color = getComputedStyle(document.documentElement).getPropertyValue('--bg-color');
-            });
-            header.addEventListener('mouseleave', () => {
-                cursor.textContent = '';
-                cursor.style.backgroundColor = 'transparent';
-                cursor.style.color = 'transparent';
-            });
-        });
-
-        function checkScroll() {
-            sections.forEach(section => {
-                const sectionTop = section.getBoundingClientRect().top;
-                const windowHeight = window.innerHeight;
-
-                if (sectionTop < windowHeight * 0.75) {
-                    section.style.opacity = '1';
-                    section.style.transform = 'translateY(0)';
-                }
-            });
-        }
-
-        function toggleDarkMode() {
-            document.body.classList.toggle('dark-mode');
-        }
-
-        window.addEventListener('scroll', checkScroll);
-        checkScroll();
-    </script>
-</body>
-</html>
+                header.style.color = getComputedStyle(document.
