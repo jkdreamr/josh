@@ -59,6 +59,7 @@
             <p>Upon investigating further the smaller, more subtle elements of nature, it becomes evident that fundamental systems always function at the extrema. If a ball is thrown directly upward, it will return to the ground - if unobstructed by any external force - along the same path. This is, indeed, the fastest route. A minimum.</p>
             <p>Here, we will discuss paths and their optimizations. In order to effectively examine them, however, it is useful to attribute to each path - for instance, the parabolic path of a projectile under the influence of just gravity - a number which can determine its efficiency. Call this value the action, and let a path in space be viewed as a function \(\boldsymbol{q}\) of time \(\boldsymbol{t}\). Now consider this diagram, displaying some possible paths of a projectile:</p>
             <!-- Embedded SVG for projectile paths diagram -->
+            <div style="text-align: center;">
             <svg width="400" height="300" viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
         <!-- Axes -->
         <line x1="50" y1="250" x2="350" y2="250" stroke="black" stroke-width="2" marker-end="url(#arrow)" />
@@ -79,6 +80,12 @@
         <path d="M 100 250 Q 140 200, 180 190 T 260 210 T 300 250" 
               fill="none" stroke="black" stroke-width="2" />
         
+        <!-- Additional Squiggly Lines -->
+        <path d="M 100 250 Q 130 170, 170 140 T 230 160 T 300 250" 
+              fill="none" stroke="black" stroke-width="2" />
+        <path d="M 100 250 Q 110 220, 150 180 T 200 160 T 300 250" 
+              fill="none" stroke="black" stroke-width="2" />
+        
         <!-- Horizontal Line Connecting t1 to t2 -->
         <line x1="100" y1="250" x2="300" y2="250" stroke="black" stroke-width="2" />
         
@@ -93,6 +100,7 @@
         <text x="290" y="270" font-size="14">t2</text>
         <text x="200" y="220" font-size="14">q(t)</text>
     </svg>
+        </div> 
             <p>Clearly, \(\boldsymbol{q}(\boldsymbol{t})\) seems the most reasonable - the most natural, perhaps. If we were to attribute to each of these an action value, how could we make sense of the resulting numbers? Of the process? First, we must define more intuitively what exactly the action represents. It's a value, of course, but what does it indicate? Here, we will consider the action to be a constant, measured in Joule-seconds, whose value inversely corresponds to the efficiency of a path or system; therefore, we should expect \(\boldsymbol{q}(\boldsymbol{t})\) to have the lowest action of all these options, given that it represents a minimum. In order to actually compute this minimum, given that we have a function in \(t\) as input, we will use the action functional, denoted \(S\). From this point on in the article, things may get a bit more technical, but do not lose track of the purpose: to investigate, in different instances, how nature chooses an optimal solution to its problems. Many students may be familiar with a kind example of such a process in finding the fastest route between points in a maze. Although the 10th grade biology slime mold did have to extend itself in a number of fruitless directions, the final product did indicate an intelligence able to preserve only the efficient strip of body.</p>
             <p>Returning to the action functional, which accepts a function and returns a single value, it is not difficult to compute when presented with the study of a path. Here, we can get an accurate interpretation of the action value by analogizing it to the length of a given path. Thus, our functional should be of the form</p>
             <p>\[
