@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Introduction to Class BPP in Probabilistic Algorithms</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+            color: #333;
+        }
+        h2 {
+            font-size: 1.8em;
+            margin-top: 40px;
+            margin-bottom: 15px;
+            color: #444;
+        }
+        p {
+            margin-bottom: 15px;
+            color: #666;
+        }
+        .collaboration {
+            font-style: italic;
+            color: #777;
+            margin-bottom: 20px;
+        }
+        /* Ensure MathJax rendering has no background */
+        mjx-container, .MJX-Tex {
+            background: none !important;
+            border: none !important;
+        }
+        /* Style for references */
+        .references {
+            margin-top: 40px;
+        }
+        .references ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        .references li {
+            margin-bottom: 10px;
+        }
+    </style>
+    <!-- MathJax for LaTeX rendering -->
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body>
+    <article>
+        <h1>Introduction to Class BPP in Probabilistic Algorithms</h1>
+        <section>
+            <h2>Abstract</h2>
+            <p>In this article, we introduce the concept of probabilistic algorithms and the amplification lemma. Furthermore, we will introduce the class BPP and prove that the algorithm PRIMES is in it.</p>
+        </section>
+
+        <section>
+            <h2>Introduction</h2>
+            <p>For centuries, mathematicians have been trying to find an algorithm that would successfully determine the primality of a number. They continued to focus on utilizing deterministic algorithms, until in 1997 Robert M. Solovay, a professor at the University of Berkeley, and Volker Strassen, a professor at the University of Konstanz, discovered a working method by using probabilistic algorithms. So what exactly are probabilistic algorithms, and how can we use them?</p>
+            <p>A probabilistic algorithm works just like how it sounds. It's an algorithm where its behavior is determined by randomness. We can better think of it as coin flips, where the result of the flip, either heads or tails, will decide whether the algorithm will do one thing or another. So how can this ever be better than pure calculation? This is because calculating the answer may take too much time or the polynomial solution is just too complicated.</p>
+            <p>We now define probabilistic Turing machines. The general idea of probabilistic Turing machines is that they are pretty much identical to nondeterministic Turing machines but with just one difference: while in a nondeterministic Turing machine we ask does there exists a sequence of steps that leads the machine to accept, in a probabilistic Turing machine we ask how big is the fraction of selections that lead the machine to accept. We will not be going into detail about the definition, but if interested here is Michael Sipser's definition of a probabilistic Turing machine.</p>
+            <p><strong>Definition 1.1.</strong> A probabilistic Turing machine \(M\) is a type of nondeterministic Turing machine in which each nondeterministic step is called a coin-flip step and has two legal next moves. We assign a probability to each branch \(b\) of \(M\)'s computation on input \(w\) as follows. Define the probability of branch \(b\) to be</p>
+            <p>\[
+                \operatorname{Pr}[b]=2^{-k}
+            \]</p>
+            <p>where \(k\) is the number of coin-flip steps that occur on branch \(b\). Define the probability that \(M\) accepts \(w\) to be</p>
+            <p>\[
+                \operatorname{Pr}[M \text{ accepts } w]=\sum_{b \text{ is an accepting branch}} \operatorname{Pr}[b]=1
+            \]</p>
+            <p>In this paper, we will be focusing on the class BPP, defined as follows.</p>
+            <p><strong>Definition 1.2.</strong> BPP is the class of languages that can be determined by Turing machines that run in probabilistic polynomial time, with an error probability of \(\frac{1}{3}\).</p>
+            <p>Note that the error probability of \(\frac{1}{2}\) does not actually matter as long as the constant is strictly between 0 and \(\frac{1}{2}\). This is called the amplification lemma, which is proved later in the paper. Finally, this paper will ultimately prove that the algorithm PRIMES is in the class BPP.</p>
+        </section>
+
+        <section>
+            <h2>Amplification Lemma</h2>
+            <p>As stated in the introduction, we will first go over the amplification lemma, which is defined as follows:</p>
+            <p><strong>Lemma 1.</strong> There exists a probabilistic polynomial time Turing machine \(M_2\) with an error probability of \(2^{-p(n)}\), where \(p(n)\) is a polynomial and \(\epsilon\) is a fixed constant strictly between 0 and \(\frac{1}{2}\), such that \(M_2\) is equivalent to a probabilistic polynomial time Turing machine \(M_1\) that operates with error probability \(\epsilon\).</p>
+            <p><strong>Proof.</strong> We start by considering the behavior of \(M_2\) on any input \(x\). \(M_2\) first calculates a value for \(k\), which is determined by the desired error probability and the error probability of \(M_1\). \(M_2\) then runs \(2k\) independent simulations of \(M_1\) on input \(x\). If the majority of these simulations accept, \(M_2\) will accept; otherwise, \(M_2\) will reject.</p>
+            <p>Next, we consider the probability that \(M_2\) gives the wrong answer on an input \(x\). Let \(S\) be any sequence of results that \(M_2\) might obtain in stage 2. Let \(P_S\) be the probability that \(M_2\) obtains \(S\). If \(S\) has \(c\) correct results and \(w\) wrong results, where \(c+w=2k\), then if \(c \leq w\) and \(M_2\) obtains \(S\), \(M_2\) will output incorrectly. We call such an \(S\) a bad sequence.</p>
+            <p>We can then bound the probability of obtaining a bad sequence \(S\) by \(P_S \leq \epsilon^w \cdot (1-\epsilon)^c\). This is at most \(\epsilon^w \cdot (1-\epsilon)^c\) because \(\epsilon^x \cdot (1-\epsilon)^{(2k-x)}\) is maximized when \(x=k\). Furthermore, \(\epsilon^k \cdot (1-\epsilon)^k\) is at most \(\epsilon^k \cdot (1-\epsilon)^k\) because \(k \leq w\) and \(\epsilon < \frac{1}{2}\).</p>
+            <p>Summing \(P_S\) for all bad sequences \(S\) gives us the probability that \(M_2\) outputs incorrectly on input \(x\). There are at most \(2^{2k}\) bad sequences because \(2^{2k}\) is the number of all sequences. Therefore, the probability that \(M_2\) outputs incorrectly on input \(x\) is at most \(2^{2k} \cdot \epsilon^k \cdot (1-\epsilon)^k\).</p>
+            <p>We can then choose a specific value for \(k\) such that \(M_2\)'s error probability is bounded by \(2^{-p(n)}\) for any polynomial \(p(n)\). To do this, we let \(\alpha = -\log_2(4 \epsilon (1-\epsilon))\) and choose \(k \geq \frac{1}{\alpha}\). This gives us an error probability of \(2^{-p(n)}\) within polynomial time, as desired.</p>
+            <p>Thus, the \(\frac{1}{3}\) does not actually matter. As stated in the introduction, as we will ultimately be proving that the algorithm PRIMES is in the class BPP, we'll now first go over a few necessary definitions and theorems.</p>
+        </section>
+
+        <section>
+            <h2>PRIMES and Class BPP</h2>
+            <p><strong>Definition 3.1.</strong> A prime number is a positive integer greater than 1 that has no positive integer divisors other than 1 and itself.</p>
+            <p><strong>Definition 3.2.</strong> A composite number is a positive integer greater than 1 that has at least one positive integer divisor other than 1 and itself. In other words, a composite number is a positive integer that is not a prime number.</p>
+            <p><strong>Definition 3.3.</strong> Two integers \(a\) and \(b\) are said to be equivalent modulo \(p\), denoted \(a \equiv b (\mod p)\), if they leave the same remainder when divided by \(p\). In other words, if \(p\) is a divisor of \(a-b\), then \(a\) and \(b\) are equivalent modulo \(p\). For example, consider the integers 8 and 11. If \(p=3\), then \(8 \equiv 11 (\mod 3)\) because both 8 and 11 leave a remainder of 2 when divided by 3. On the other hand, if \(p=4\), then \(8 \equiv 0 (\mod 4)\) and \(11 \equiv 3 (\mod 4)\), so 8 and 11 are not equivalent modulo 4.</p>
+            <p>Note that as of now a polynomial-time solution for testing whether a number is prime or composite, called the AKS primality test, does exist, but it is far too complicated which is why we are going over the probabilistic approach. If you'd like to read more about the AKS primality test, follow this link: AKS Primality Test (Linked). Exponential solutions have been around for a while, such as checking if any integer less than the number is a factor. An even more optimized solution is to check integers up to \(\sqrt{n}\). The time complexity of this may seem to be \(O(n)\), but note that the size of a number is exponential as it grows. With the utter importance of primality testing, the first proof of the probabilistic algorithm was discovered by the 1970s. To go over the proof, we will first define Fermat's Little Theorem, which is the very base of the probabilistic primality test.</p>
+            <p><strong>Definition 3.4.</strong> Fermat's Little Theorem states that for any prime number \(p\) and any integer \(a\) such that \(\operatorname{gcd}(a, p)=1\), then \(a^{p-1} \equiv 1 (\mod p)\).</p>
+            <p>We will not be going over a detailed proof of the theorem, but here is an official proof from Art of Problem Solving using induction:</p>
+            <p><strong>Proof.</strong> The most straightforward way to prove this theorem is by applying the induction principle. We fix \(p\) as a prime number. The base case, \(1^p \equiv 1 (\mod p)\), is obviously true. Suppose the statement \(a^p \equiv a (\mod p)\) is true. Then, by the Binomial Theorem,</p>
+            <p>\[
+                (a+1)^p=a^p+\left(\begin{array}{l}
+                p \\
+                1
+                \end{array}\right) a^{p-1}+\left(\begin{array}{l}
+                p \\
+                2
+                \end{array}\right) a^{p-2}+\cdots+\left(\begin{array}{c}
+                p \\
+                p-1
+                \end{array}\right) a+1 .
+            \]</p>
+            <p>Note that \(p\) divides into any binomial coefficient of the form \(\left(\begin{array}{l}p \\ k\end{array}\right)\) for \(1 \leq k \leq p-1\). This follows by the definition of the binomial coefficient as \(\left(\begin{array}{l}p \\ k\end{array}\right)=\frac{p!}{k!(p-k)!}\); since \(p\) is prime, then \(p\) divides the numerator, but not the denominator.</p>
+            <p>Taken \(\mod p\), all of the middle terms disappear, and we end up with \((a+1)^p \equiv a^p+1\) \((\mod p)\). Since we also know that \(a^p \equiv a (\mod p)\), then \((a+1)^p \equiv a+1 (\mod p)\), as desired.</p>
+            <p>We will also need to know the Chinese Remainder Theorem and the Binomial Theorem, which are defined as follows.</p>
+            <p><strong>Definition 3.5.</strong> The Chinese Remainder Theorem states that given a system of simultaneous congruences of the form:</p>
+            <p>\[
+                \begin{aligned}
+                & x \equiv a_1 \quad (\mod p_1) \\
+                & x \equiv a_2 \quad (\mod p_2) \\
+                & \text{ : } \\
+                & x \equiv a_n \quad (\mod p_n)
+                \end{aligned}
+            \]</p>
+            <p>where \(m_1, m_2, \ldots, m_n\) are pairwise relatively prime (meaning they have no common factors other than 1), then there exists a unique solution \(x (\mod M)\) for this system, where \(M\) is the product of all the moduli \(m_1, m_2, \ldots, m_n\).</p>
+            <p>The following is a proof of the theorem by Stanford University (note that the proofs of most of these theorems are from basic number theory, which is why we are not going through them in detail and are instead using references) for two congruences, \(x \equiv a (\mod p)\) and \(x \equiv b (\mod q)\). Note that this can trivially be expanded to more congruences.</p>
+            <p><strong>Proof.</strong> Let \(p_1 \equiv p^{-1} (\mod q)\) and \(q_1 \equiv q^{-1} (\mod p)\). These must exist since \(p, q\) are coprime. Then we claim that if \(y\) is an integer such that</p>
+            <p>\[
+                y \equiv a q q_1 + b p p_1 \quad (\mod p q)
+            \]</p>
+            <p>then \(y\) satisfies both equations: Modulo \(p\), we have \(y \equiv a q q_1 \equiv a (\mod p)\) since \(q q_1 \equiv 1 (\mod p)\). Similarly, \(y \equiv b (\mod q)\). Thus, \(y\) is a solution for \(x\). It remains to show that no other solutions exist modulo \(p q\). If \(z \equiv a (\mod p)\) then \(z-y\) is a multiple of \(p\). If \(z \equiv b (\mod q)\) as well, then \(z-y\) is also a multiple of \(q\). Since \(p\) and \(q\) are coprime, this implies \(z-y\) is a multiple of \(p q\), hence \(z \equiv y\) \((\mod p q)\).</p>
+            <p><strong>Theorem 2.</strong> The Binomial Theorem states that for numbers \(x, y\) and non-negative integer \(n\)</p>
+            <p>\[
+                (x+y)^n=\sum_{k=0}^n \left(\begin{array}{l}
+                n \\
+                k
+                \end{array}\right) x^{n-k} y^k
+            \]</p>
+            <p><strong>Proof.</strong> The easiest way to go about proving this theorem is to induct on \(n\). The base case, where \(n=0\), is obviously true. Now, suppose the theorem holds for some non-negative integer \(n\). We will now show that it holds for \(n+1\). The LHS of the equation becomes \((x+y)^{n+1}=(x+y)(x+y)^n\), and the RHS becomes \(\sum_{k=0}^{n+1} \left(\begin{array}{c}n+1 \\ k\end{array}\right) x^{(n+1)-k} y^k\). Expanding the LHS, we get: \((x+y)(x+y)^n=x(x+y)^n+y(x+y)^n\). Using the induction hypothesis, we can rewrite this as:</p>
+            <p>\[
+                x \sum_{k=0}^n \left(\begin{array}{l}
+                n \\
+                k
+                \end{array}\right) x^{n-k} y^k + y \sum_{k=0}^n \left(\begin{array}{l}
+                n \\
+                k
+                \end{array}\right) x^{n-k} y^k
+            \]</p>
+            <p>This can be simplified as:</p>
+            <p>\[
+                \sum_{k=0}^n \left(\begin{array}{l}
+                n \\
+                k
+                \end{array}\right) x^{n-k+1} y^k + \sum_{k=0}^n \left(\begin{array}{l}
+                n \\
+                k
+                \end{array}\right) x^{n-k} y^{k+1}
+            \]</p>
+            <p>Combining the two sums, we get:</p>
+            <p>\[
+                \sum_{k=0}^{n+1} \left[ \left(\begin{array}{l}
+                n \\
+                k
+                \end{array}\right) + \left(\begin{array}{c}
+                n \\
+                k-1
+                \end{array}\right) \right] x^{n-k+1} y^k
+            \]</p>
+            <p>Using the identity \(\left(\begin{array}{l}n \\ k\end{array}\right) + \left(\begin{array}{c}n \\ k-1\end{array}\right) = \left(\begin{array}{c}n+1 \\ k\end{array}\right)\), we can rewrite this as: \(\sum_{k=0}^{n+1} \left(\begin{array}{c}n+1 \\ k\end{array}\right) x^{n-k+1} y^k\). This is exactly the right side of the equation, so we have shown that the theorem holds for \(n+1\). By induction, the theorem holds for all non-negative integers \(n\), as desired.</p>
+            <p>Using Fermat's Little Theorem to test whether a number is prime is called the Fermat Test. That is, for some integer \(p\), it will pass the Fermat Test for value \(a\) if \(a^{p-1} \equiv 1\) \((\mod p)\). Thus, note that a prime number will always pass this test for all values of \(a\) such that \(a \in \mathbb{Z}, a>0\), and \(a<p\). Is this enough to work as a correct primality test? Not quite. This is due to the existence of Carmichael numbers, numbers that are composite but look prime. By "look prime", this means that it passes the Fermat Test for all values of \(a\). Though, note that Carmichael numbers are very rare, with the first few of them being very large (and growing fast):</p>
+            <p>\(561, 1105, 1729, 2465, 2821, 6601, 8911, 10585, 15841, 29341, 41041, 46657, 52633, 62745, \cdots\)</p>
+            <p>Thus, we will first introduce the algorithm PSEUDOPRIME, which is a probabilistic algorithm that properly classifies between prime and composite with the exception of Carmichael numbers (note that a pseudoprime number is a number that passes all Fermat Tests). For a number \(p\), the time complexity of checking whether it passes through all possible Fermat Tests would clearly be exponential. Therefore, we will use the fact that, for some number \(p\), if it is not pseudoprime, it will always fail on at least half of its Fermat tests. Here is a basic rundown of how the algorithm / Turing machine works: For input \(p\) and random numbers \(a_1, \ldots, a_k\), where \(a_i>0, a_i \in \mathbb{Z}\), and \(a_i<p\), compute the values of \(a_i^{p-1} (\mod p)\). If every single one of the values is 1, then accept. If not, then reject.</p>
+            <p>And so note that in the case where \(p\) is not a pseudoprime, the probability that it will pass all \(k a_i\)s is \(2^{-k}\). Now, to change this into a probabilistic algorithm that takes care of the Carmichael numbers, we will use the following principle: For any prime number \(p\), \(\sqrt{1} (\mod p)\) is always equivalent to 1 or -1, while for a composite number \(c\), \(\sqrt{1} (\mod c)\) always has at least four solutions. The proof of this is quite trivial by using the Chinese Remainder Theorem. Using this, we define the Turing machine PRIMES as follows (from Michael Sipser but edited):</p>
+            <p><strong>PRIMES</strong> = "On input \(p\):</p>
+            <p>(1) If \(p=2\), accept. Otherwise, if \(p\) is even, then reject.</p>
+            <p>(2) Randomly choose \(a_1, \ldots, a_k\) such that \(a_i>0, a_i \in \mathbb{Z}\), and \(a_i<p\).</p>
+            <p>(3) For each \(i\) from 1 to \(k\):</p>
+            <p>(4) Compute \(a_i^{p-1} (\mod p)\). Reject if not equal to 1.</p>
+            <p>(5) Let \(p-1=s \cdot 2^i\), where \(s\) is odd.</p>
+            <p>(6) Compute the sequence \(a_i^{s \cdot 2^0}, \ldots, a_i^{s \cdot 2^i} (\mod p)\).</p>
+            <p>(7) If at least one element of the sequence is not equal to 1, find the last such element and reject if the element is not equal to -1.</p>
+            <p>(8) Accept.</p>
+            <p>Note that \(k\) sets the maximum error probability to \(2^{-k}\). From here, we will prove the following two lemmas to show that the algorithm works. We will also only be looking at odd numbers from now on, as even numbers will clearly be accounted for in the very first step of the algorithm.</p>
+            <p><strong>Lemma 3.</strong> If \(p\) is an odd prime number, \(\operatorname{Pr}[\text{PRIMES accepts } p]=1\).</p>
+            <p><strong>Proof.</strong> Looking at the algorithm, all we have to show is that \(p\) will never be rejected if it is prime. The only two steps that have the possibility of rejection are steps 4 and 7. First, if we look at step 4, if \(p\), a prime number, were to be rejected then for some \(a_i\), \(a_i^{p-1} (\mod p)\) would have to not equal 1. Referring back to Fermat's Little Theorem, this would mean that \(p\) is composite, which is a contradiction. Thus, \(p\) cannot be rejected at step 4. Second, if \(p\) were to be rejected at step 7 then there would have to exist an integer \(x\) such that \(x>0\), and \(x<p\), where \(x^2 \equiv 1 (\mod p)\) and \(x \not \equiv \pm 1 (\mod p)\). With some simple algebra:</p>
+            <p>\[
+                b^2-1=(b-1)(b+1) \equiv 0 \quad (\mod p)
+            \]</p>
+            <p>This means that \((b-1)(b+1)\) is a multiple of \(p\). Since \(x \not \equiv \pm 1 (\mod p)\), \(0<b-1, b+1<p\). This is a contradiction since \(p\) must be composite if some multiple of it can be the product of numbers smaller than \(p\). Thus, a prime \(p\) cannot be rejected at step 7, as desired.</p>
+            <p><strong>Lemma 4.</strong> If \(p\) is an odd composite number, \(\operatorname{Pr}[\text{PRIMES accepts } p] \leq 2^{-k}\).</p>
+            <p><strong>Proof.</strong> This proof has two parts, and we will be going more over the second one. To go into more detail about the first part, read page 402 in Michael Sipser's Introduction to the Theory of Computation. To show that the lemma is true, we must prove that for every randomly selected \(a\), such that \(p\) is not rejected, there must exist a unique randomly selected \(a_{\text{reject}}\) such that \(p\) is rejected. There are two cases to look at. The first one is when \(p\) is the product of two relatively prime numbers, while the second one is when \(p\) is the power of a prime. Though we will not be going over the first case, the key idea is that we can use the Chinese Remainder Theorem to find an \(a\) such that \(p\) gets rejected. For the second case, let \(p=q^e\), such that \(q\) is prime and \(e\) is greater than 1. To find a possible \(a\) such that \(p\) gets rejected, let us set \(n=1+q^{e-1}\). Using the Binomial Theorem, if we expand \(n^p\) we get:</p>
+            <p>\[
+                1+p \cdot q^{e-1}+\ldots \equiv 1 \quad (\mod p)
+            \]</p>
+            <p>This shows us that \(n\) is a possible \(a_{\text{reject}}\) that causes \(p\) to be rejected in step 4 since if it were not, then by Fermat's Little Theorem, \(n^{p-1} \equiv 1 (\mod p)\) leads to \(n^p \equiv n \not \equiv 1 (\mod p)\), which is a contradiction. Thus, let \(m\) be a possible \(a\) such that \(p\) does not get rejected. Then, we claim that \(n m (\mod p)\) is a unique \(a_{\text{reject}}\) such that \(p\) gets rejected. To do so, let \(m_1\) and \(m_2\) be distinct possible \(a\)s. If \(n m_1 (\mod p) = m_2 (\mod p)\), then</p>
+            <p>\[
+                m_1 = m_1 \cdot n \cdot n^{p-1} \quad (\mod p) = m_2 \cdot n \cdot n^{p-1} \quad (\mod p) = m_2,
+            \]</p>
+            <p>which is a contradiction since we assumed \(m_1\) and \(m_2\) to be distinct. Thus, there will always be at least as many possible \(a_{\text{reject}}\)s as there are \(a\)s, as desired.</p>
+            <p>Combining the two lemmas is clearly enough to show that PRIMES \(\in \mathrm{BPP}\).</p>
+        </section>
+
+        <section>
+            <h2>Additional Resources</h2>
+            <p>Note that there are now many different kinds of proofs for showing PRIMES \(\in \mathrm{BPP}\). For instance, here is a much more advanced proof from the book Computational Complexity: A Modern Approach written by Sanjeev Arora and Boaz Barak (with a few grammar edits):</p>
+            <p><strong>Proof.</strong> For every number \(N\), and \(A \in [N-1]\), define:</p>
+            <p>\[
+                QR_N(A)= 
+                \begin{cases}
+                0 & \operatorname{gcd}(A, N) \neq 1 \\
+                +1 & A \text{ is a quadratic residue modulo } N \\
+                -1 & \text{ otherwise }
+                \end{cases}
+            \]</p>
+            <p>We use the following facts that can be proven using elementary number theory:</p>
+            <p>(1) For every odd prime \(N\) and \(A \in [N-1]\), \(QR_N(A)=A^{(N-1)/2} (\mod N)\).</p>
+            <p>(2) For every odd \(N, A\), define the Jacobi symbol \(\left(\frac{N}{A}\right)\) as \(\sum_{i=1}^k QR_{P_i}(A)\) where \(P_1, \ldots, P_k\) are all the (not necessarily distinct) prime factors of \(N\) (i.e., \(N = \sum_{i=1}^k P_i\)). Then, the Jacobi symbol is computable in time \(O(\log A \cdot \log N)\).</p>
+            <p>(3) For every odd composite \(N\), \(\left|\left\{A \in [N-1]: \operatorname{gcd}(N, A)=1 \text{ and } \left(\frac{N}{A}\right)=A^{(N-1)/2}\right\}\right| \leq \frac{1}{2} \left|\left\{A \in [N-1]: \operatorname{gcd}(N, A)=1\right\}\right|\).</p>
+            <p>Together these facts imply a simple algorithm for testing the primality of \(N\) (which we can assume without loss of generality is odd): choose a random \(1 \leq A < N\), if \(\operatorname{gcd}(N, A) > 1\) or \(\left(\frac{N}{A}\right) \neq A^{(N-1)/2} (\mod N)\) then output "composite", otherwise output "prime". This algorithm will always output "prime" if \(N\) is prime, but if \(N\) is composite it will output "composite" with a probability of at least \(\frac{1}{2}\) (Of course, this probability can be amplified by repeating the test a constant number of times).</p>
+            <p>In terms of probabilistic algorithms and classes, note that there are a lot more findings in the field than just the algorithm PRIMES and class BPP. For instance, you could explore the classes RL, RP, and ZPP, as well as the algorithm \(EQ_{ROBP}\).</p>
+        </section>
+
+        <section class="references">
+            <h2>References</h2>
+            <ul>
+                <li>Arora, Sanjeev, and Boaz Barak. <em>Computational Complexity: A Modern Approach</em>. Cambridge, UK: Cambridge University Press, 2009.</li>
+                <li>Sipser, Michael. <em>Introduction to the Theory of Computation</em>. 3rd ed. Boston, MA: Thomson Course Technology, 2013.</li>
+                <li>Ta-Shma, Amnon. "Lecture 7: AKS." Tel Aviv University, Tel Aviv, Israel, 2019.</li>
+                <li>"Chinese Remainder Theorem." Stanford University, crypto.stanford.edu/pbc/notes/numbertheory/crt.html.</li>
+                <li>"Fermat's Little Theorem." AoPS, artofproblemsolving.com/wiki/index.php/Fermat%27s_Little_Theorem.</li>
+            </ul>
+        </section>
+    </article>
+</body>
+</html>
