@@ -172,9 +172,9 @@
             justify-content: center;
             gap: 20px;
             background-color: var(--bg-color);
-            padding: 10px;
-            border-radius: 20px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 10px 20px;
+            border-radius: 30px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
         }
 
         .contact-icons a {
@@ -185,8 +185,8 @@
         }
 
         .contact-icons img {
-            width: 24px;
-            height: 24px;
+            width: 30px;
+            height: 30px;
             transition: transform 0.3s ease;
         }
 
@@ -304,9 +304,9 @@
 
     <footer>
         <div class="contact-icons">
-            <a href="https://x.com/joshuaykoo" target="_blank"><img src="https://example.com/x-logo.png" alt="X"></a>
-            <a href="https://www.linkedin.com/in/joshuaykoo/" target="_blank"><img src="https://example.com/linkedin-logo.png" alt="LinkedIn"></a>
-            <a href="https://linktr.ee/jkdreamr" target="_blank"><img src="https://example.com/linktree-logo.png" alt="Linktree"></a>
+            <a href="https://x.com/joshuaykoo" target="_blank"><img src="https://cdn-icons-png.flaticon.com/512/5969/5969020.png" alt="X"></a>
+            <a href="https://www.linkedin.com/in/joshuaykoo/" target="_blank"><img src="https://cdn-icons-png.flaticon.com/512/3536/3536505.png" alt="LinkedIn"></a>
+            <a href="https://linktr.ee/jkdreamr" target="_blank"><img src="https://cdn-icons-png.flaticon.com/512/3820/3820067.png" alt="Linktree"></a>
         </div>
     </footer>
 
@@ -376,9 +376,10 @@
                 const rect = section.getBoundingClientRect();
                 const scrollPercentage = (window.innerHeight - rect.top) / window.innerHeight;
                 if (scrollPercentage > 0 && scrollPercentage < 1) {
-                    const speed = 0.2 * (index + 1);
-                    const yOffset = (0.5 - scrollPercentage) * speed * 100;
-                    section.style.transform = `translateY(${yOffset}px)`;
+                    const speed = 0.5 * (index + 1);
+                    const yOffset = (0.5 - scrollPercentage) * speed * 200;
+                    const scale = 1 + (scrollPercentage * 0.1);
+                    section.style.transform = `translateY(${yOffset}px) scale(${scale})`;
                 }
             });
         }
@@ -389,6 +390,7 @@
                 const scrollPercentage = (window.innerHeight - rect.top) / window.innerHeight;
                 if (scrollPercentage > 0.15) {
                     section.classList.add('active');
+                    section.style.opacity = scrollPercentage.toFixed(2);
                 }
             });
         }
