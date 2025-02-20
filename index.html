@@ -12,7 +12,7 @@
         }
 
         * {
-            cursor: none;
+            cursor: none !important;
         }
 
         body {
@@ -34,7 +34,8 @@
             position: fixed;
             pointer-events: none;
             z-index: 9999;
-            transition: all 0.1s ease;
+            transform: translate(-50%, -50%);
+            transition: border-color 0.3s ease;
         }
 
         h1, h2 {
@@ -197,10 +198,41 @@
         const headers = document.querySelectorAll('h2');
 
         document.addEventListener('mousemove', (e) => {
-            cursor.style.left = `${e.clientX}px`;
-            cursor.style.top = `${e.clientY}px`;
+            requestAnimationFrame(() => {
+                cursor.style.left = `${e.clientX}px`;
+                cursor.style.top = `${e.clientY}px`;
+            });
         });
 
         headers.forEach(header => {
             header.addEventListener('mouseenter', () => {
-                header.style.color = getComputedStyle(document.
+                header.style.color = getComputedStyle(document.documentElement).getPropertyValue('--bg-color');
+                cursor.style.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--bg-color');
+            });
+            header.addEventListener('mouseleave', () => {
+                header.style.color = getComputedStyle(document.documentElement).getPropertyValue('--text-color');
+                cursor.style.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color');
+            });
+        });
+
+        function checkScroll() {
+            sections.forEach(section => {
+                const sectionTop = section.getBoundingClientRect().top;
+                const windowHeight = window.innerHeight;
+
+                if (sectionTop < windowHeight * 0.75) {
+                    section.style.opacity = '1';
+                    section.style.transform = 'translateY(0)';
+                }
+            });
+        }
+
+        function toggleDarkMode() {
+            document.body.classList.toggle('dark-mode');
+        }
+
+        window.addEventListener('scroll', checkScroll);
+        checkScroll();
+    </script>
+</body>
+</html>
