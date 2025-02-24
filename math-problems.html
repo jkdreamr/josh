@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Problems - Joshua Koo</title>
+    <link rel="stylesheet" href="styles/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1 class="glitch" data-text="Mathematical Problems">Mathematical Problems</h1>
+        <section class="card fade-in-slide-up">
+            <h2 class="hover-distort-wobble">Problem 1</h2>
+            <p>Find \(\sum_{n=1}^{\infty} \left\lfloor \frac{20212021}{2^n} + \frac{1}{2} \right\rfloor\) (Recall that \(\lfloor x \rfloor\) is the greatest integer not exceeding \(x\).)</p>
+        </section>
+        <section class="card fade-in-slide-up">
+            <h2 class="hover-distort-wobble">Problem 2</h2>
+            <p>Let the complex roots of \(x^{2019} = 1\) be \(\omega_1, \omega_2, ..., \omega_{2018}\). The value of \((2 + \omega_1)(2 + \omega_2)...(2 + \omega_{2018})\) can be written as \(\frac{a^b + c}{d}\). Find \(a + b + c + d\). (Joshua Koo)</p>
+        </section>
+        <section class="card fade-in-slide-up">
+            <h2 class="hover-distort-wobble">Problem 3</h2>
+            <p>There are 987 barns in a haunted farm. In exactly one of these barns resides a ghost named Bessie, who will turn you into a cow ghost and make you invisible. Farmer John wants to figure out which one of these barns contains Bessie, so he invites \(N\) enthusiastic cows to the haunted farm. Before sending the cows into the rooms, Farmer John has a meeting with them at a nearby cafe, telling each cow to go to which barns (Note that a cow can go to multiple barns, and that no matter what they must visit all of the barns Farmer John tells them to). At exactly midnight, the cows visit all of the barns they were assigned to. Farmer John feels very tired, so he goes to his house and takes a quick nap. A few hours later, he wakes up and goes back to the farm, finding all of the cows who have not been turned into a ghost now waiting for him (Note that Farmer John knows and remembers which barns each cow visited). Farmer John is now super relieved, as he knows which barn contains Bessie.</p>
+            <ol class="fade-in-slide-up">
+                <li>Find the minimum number of cows Farmer John could have invited, \(N\), such that Farmer John would have been able to know which barn contains Bessie.</li>
+                <li>Let us travel back in time to when Farmer John is assigning the cows to the rooms, and let us assume that there are \(N\) cows invited, where \(N\) is the answer to Part (a). Farmer John now wants to know the minimum number of cows, \(M\), that will be turned into ghosts in the worst case scenario. Find \(M\).</li>
+            </ol>
+        </section>
+        <section class="card fade-in-slide-up">
+            <h2 class="hover-distort-wobble">Problem 4</h2>
+            <p>There are \(N\) marbles on a table. Alice and Bob decided to play a quick game where they take turns. In each turn, they can pick one pile and split it exactly once into two piles of any size such that the two piles do not have an equal number of marbles (Note that you cannot cut marbles). Assume that at the start of the game the \(N\) marbles are in one pile. The last person who is able to pick a pile and split it is the winner. If Alice starts, and they both play optimally, find the sum of all \(N\), where \(1 \leq N \leq 20\), such that Bob will always win.</p>
+            <p>Examples: If the game starts with 5 marbles, Bob will lose. In the first turn, Alice can pick 5 marbles and split it into piles of size 1 and 4. In the second turn, Bob should pick the pile of size 4 and split it into piles of size 1 and 3. Finally, Alice can pick the pile of size 3 and split it into piles of size 1 and 2. Note that there are now 4 piles of size 1, 1, 1, and 2. Bob cannot pick and split any of the remaining piles.</p>
+            <p>If the game starts with 2 marbles, Bob is the winner as Alice cannot pick and split the pile.</p>
+        </section>
+        <section class="card fade-in-slide-up">
+            <h2 class="hover-distort-wobble">Problem 5</h2>
+            <p>Let \(R\) be the integer closest to the largest root of the following equation: \(\frac{x}{9} - \sin\left(\frac{\pi}{6}x\right) = 0\). Find \(R\).</p>
+        </section>
+    </div>
+    <div class="cursor ripple-cursor"></div>
+    <script src="scripts/main.js"></script>
+</body>
+</html>
