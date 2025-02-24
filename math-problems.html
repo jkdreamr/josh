@@ -9,7 +9,7 @@
     <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
-        /* Additional styling to match Manifolds example within portfolio constraints */
+        /* Additional styling to match Passing example within portfolio constraints */
         body {
             font-family: 'Arial', sans-serif;
             line-height: 1.6;
@@ -28,9 +28,16 @@
             margin-bottom: 20px;
             width: 100%;
         }
-        h1, h2 {
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+            color: #fff;
+        }
+        h2 {
+            font-size: 1.8em;
             margin-top: 40px;
             margin-bottom: 15px;
+            color: #fff;
         }
         p, ol, li {
             margin-bottom: 15px;
@@ -38,8 +45,14 @@
         }
         .collaboration {
             font-style: italic;
-            color: #ccc;
+            color: #ccc; /* Lighter gray for italic text, visible on black */
             margin-bottom: 20px;
+        }
+        /* Ensure MathJax rendering has no background (included for consistency) */
+        mjx-container, .MJX-Tex {
+            background: none !important;
+            border: none !important;
+            color: #fff !important; /* Ensure MathJax text is white on black */
         }
     </style>
 </head>
