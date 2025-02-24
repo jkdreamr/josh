@@ -9,12 +9,14 @@
     <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
-        /* Additional styling to match Passing example within portfolio constraints */
+        /* Base styling to match Passing example, ensuring black background and white text */
         body {
             font-family: 'Arial', sans-serif;
             line-height: 1.6;
             background: #000;
-            color: #fff;
+            color: #fff !important; /* Explicitly set white text for body */
+            margin: 0;
+            padding: 0;
         }
         .container {
             max-width: 800px;
@@ -27,32 +29,49 @@
             padding: 20px;
             margin-bottom: 20px;
             width: 100%;
+            color: #fff !important; /* Ensure card text is white */
         }
         h1 {
             font-size: 2.5em;
             margin-bottom: 20px;
-            color: #fff;
+            color: #fff !important; /* Ensure h1 is white */
         }
         h2 {
             font-size: 1.8em;
             margin-top: 40px;
             margin-bottom: 15px;
-            color: #fff;
+            color: #fff !important; /* Ensure h2 is white */
         }
         p, ol, li {
             margin-bottom: 15px;
-            color: #fff;
+            color: #fff !important; /* Ensure paragraphs and lists are white */
         }
         .collaboration {
             font-style: italic;
-            color: #ccc; /* Lighter gray for italic text, visible on black */
+            color: #ccc !important; /* Lighter gray for italic text, visible on black */
             margin-bottom: 20px;
         }
-        /* Ensure MathJax rendering has no background (included for consistency) */
+        /* Ensure MathJax rendering is white on black */
         mjx-container, .MJX-Tex {
             background: none !important;
             border: none !important;
-            color: #fff !important; /* Ensure MathJax text is white on black */
+            color: #fff !important; /* Force MathJax text to be white */
+        }
+        /* Override any default styles that might set black text */
+        * {
+            color: #fff !important; /* Global override for any elements inheriting black text */
+        }
+        /* Remove any potential default browser or MathJax styles causing black text */
+        :not(mjx-container) {
+            color: #fff !important;
+        }
+        /* Ensure links (if any) are white or styled appropriately */
+        a {
+            color: #fff !important;
+            text-decoration: underline;
+        }
+        a:hover {
+            color: #ccc !important;
         }
     </style>
 </head>
@@ -61,7 +80,7 @@
         <h1 class="glitch" data-text="Mathematical Problems">Mathematical Problems</h1>
         <section class="card fade-in-slide-up">
             <h2 class="hover-distort-wobble">Problem 1</h2>
-            <p>Find \(\sum_{n=1}^{\infty} \left\lfloor \frac{20212021}{2^n} + \frac{1}{2} \right\rfloor\) (Recall that \(\lfloor x \rfloor\) is the greatest integer not exceeding \(x\).)</p>
+            <p>Find \(\sum_{n=1}^{\infinity} \left\lfloor \frac{20212021}{2^n} + \frac{1}{2} \right\rfloor\) (Recall that \(\lfloor x \rfloor\) is the greatest integer not exceeding \(x\).)</p>
         </section>
         <section class="card fade-in-slide-up">
             <h2 class="hover-distort-wobble">Problem 2</h2>
