@@ -395,6 +395,17 @@ class PortfolioApp {
       }
     }
     
+    // Update home button
+    const homeBtn = document.getElementById('home-btn');
+    if (homeBtn) {
+      homeBtn.style.backgroundColor = bgCard;
+      const homeSvg = homeBtn.querySelector('svg');
+      if (homeSvg) {
+        homeSvg.style.color = iconColor;
+        homeSvg.style.stroke = iconColor;
+      }
+    }
+    
     // Update search input
     const searchInput = document.getElementById('search-input') as HTMLInputElement;
     if (searchInput) {
