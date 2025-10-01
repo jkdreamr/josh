@@ -1,0 +1,1351 @@
+---
+---
+
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width" />
+		<meta name="generator" content={Astro.generator} />
+		<title>Joshua Koo</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+	</head>
+	<body>
+		<canvas id="webgl"></canvas>
+		
+		<div class="app-container">
+			<!-- Sidebar -->
+			<aside class="sidebar">
+				<div class="sidebar-header">
+					<h1 class="logo">Playlists</h1>
+				</div>
+
+				<nav class="sidebar-nav">
+					<a href="#" class="nav-item active" data-category="home">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+							<polyline points="9 22 9 12 15 12 15 22"></polyline>
+						</svg>
+						<span>Home</span>
+					</a>
+					<a href="#" class="nav-item" data-category="music">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M9 18V5l12-2v13"></path>
+							<circle cx="6" cy="18" r="3"></circle>
+							<circle cx="18" cy="16" r="3"></circle>
+						</svg>
+						<span>Music</span>
+					</a>
+					<a href="#" class="nav-item" data-category="work">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+							<path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+						</svg>
+						<span>Work</span>
+					</a>
+					<a href="#" class="nav-item" data-category="stanford">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M22 10v6M2 10l10-5 10 5-10 5z"></path>
+							<path d="M6 12v5c3 3 9 3 12 0v-5"></path>
+						</svg>
+						<span>Stanford</span>
+					</a>
+					<a href="#" class="nav-item" data-category="hobbies">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="12" cy="12" r="10"></circle>
+							<path d="M8 14s1.5 2 4 2 4-2 4-2"></path>
+							<line x1="9" y1="9" x2="9.01" y2="9"></line>
+							<line x1="15" y1="9" x2="15.01" y2="9"></line>
+						</svg>
+						<span>Hobbies</span>
+					</a>
+				</nav>
+
+				<div class="sidebar-footer">
+					<a href="mailto:joskoo@stanford.edu" class="social-link">
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+							<polyline points="22,6 12,13 2,6"></polyline>
+						</svg>
+					</a>
+					<a href="https://linkedin.com/in/joshuaykoo" target="_blank" class="social-link">
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+							<path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"/>
+						</svg>
+					</a>
+				</div>
+			</aside>
+
+			<!-- Main Content -->
+			<main class="main-content">
+				<!-- Top Bar -->
+				<div class="top-bar">
+					<div class="top-bar-left">
+						<button class="home-btn" id="home-btn">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+							<polyline points="9 22 9 12 15 12 15 22"></polyline>
+						</svg>
+					</button>
+						<div class="search-container">
+							<svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<circle cx="11" cy="11" r="8"></circle>
+								<path d="m21 21-4.35-4.35"></path>
+							</svg>
+							<input type="text" id="search-input" placeholder="What are you looking for?" />
+						</div>
+					</div>
+					<div class="top-bar-right">
+						<a href="mailto:joskoo@stanford.edu" class="top-social-link" title="Email">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+								<polyline points="22,6 12,13 2,6"></polyline>
+							</svg>
+						</a>
+						<a href="https://x.com/joshuaykoo" target="_blank" class="top-social-link" title="X (Twitter)">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+								<path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+							</svg>
+						</a>
+						<a href="https://www.instagram.com/joshuaykoo/" target="_blank" class="top-social-link" title="Instagram">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+								<path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+							</svg>
+						</a>
+						<a href="https://linkedin.com/in/joshuaykoo" target="_blank" class="top-social-link" title="LinkedIn">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+								<path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"/>
+							</svg>
+						</a>
+					</div>
+				</div>
+
+				<!-- Profile Section -->
+				<section id="home-section" class="content-section active">
+					<div class="profile-header">
+						<div class="profile-image-container">
+							<img src="/pfp-logo.png" alt="Joshua Koo" class="profile-image" />
+						</div>
+						<div class="profile-info">
+							<span class="profile-label">Profile</span>
+							<h1 class="profile-name">Joshua Koo</h1>
+							<div class="profile-stats">
+								<span>Builder, Investor, Artist</span>
+							</div>
+						</div>
+					</div>
+
+					<div class="section-header">
+						<h2>Hi, I'm Josh</h2>
+					</div>
+					<div class="content-grid">
+						<div class="content-card playlist-card" data-category="music" data-tags="music">
+							<img src="/music-playlist.png" alt="Music" class="card-image" />
+							<h3>Music</h3>
+							<p>4 links</p>
+						</div>
+						<div class="content-card playlist-card" data-category="work" data-tags="work">
+							<img src="/work-playlist.png" alt="Work" class="card-image" />
+							<h3>Work</h3>
+							<p>5 experiences</p>
+						</div>
+						<div class="content-card playlist-card" data-category="stanford" data-tags="stanford">
+							<img src="/stanford-playlist.png" alt="Stanford" class="card-image" />
+							<h3>Stanford</h3>
+							<p>8 activities</p>
+						</div>
+						<div class="content-card playlist-card" data-category="hobbies" data-tags="hobbies">
+							<img src="/interest-playlist.png" alt="Hobbies" class="card-image" />
+							<h3>Hobbies</h3>
+							<p>2 hobbies</p>
+						</div>
+					</div>
+				</section>
+
+				<!-- Projects Section -->
+				<section id="projects-section" class="content-section">
+					<div class="section-header">
+						<h2>Projects</h2>
+					</div>
+					<div class="content-grid">
+						<div class="content-card" data-tags="project interactive web">
+							<div class="card-image" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"></div>
+							<h3>Interactive Music Visualizer</h3>
+							<p>Real-time audio reactive experience</p>
+						</div>
+						<div class="content-card" data-tags="project web 3d">
+							<div class="card-image" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);"></div>
+							<h3>Cloud Portfolio</h3>
+							<p>3D interactive portfolio site</p>
+						</div>
+						<div class="content-card" data-tags="project game">
+							<div class="card-image" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);"></div>
+							<h3>Rhythm Game</h3>
+							<p>Browser-based music game</p>
+						</div>
+					</div>
+				</section>
+
+				<!-- Music Section -->
+				<section id="music-section" class="content-section">
+					<div class="playlist-header">
+						<div class="playlist-info">
+							<span class="playlist-label">Public Playlist</span>
+							<h1 class="playlist-title">Music</h1>
+							<p class="playlist-meta">joshuaykoo • 4 links</p>
+						</div>
+					</div>
+					<div class="list-view">
+						<div class="list-header">
+							<span class="col-index">#</span>
+							<span class="col-title">Title</span>
+							<span class="col-platform">Platform</span>
+						</div>
+						<a href="https://open.spotify.com/album/2ckdlSbzkVukYqvSwZIiUp?si=YstWQai4SG-yOxO346bcCg" target="_blank" class="list-item" data-tags="music spotify">
+							<span class="col-index">1</span>
+							<div class="col-title">
+								<img src="/allineed-logo.png" alt="all i need" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">all i need</span>
+									<span class="item-artist">Listen on Spotify</span>
+								</div>
+							</div>
+							<span class="col-platform">Spotify</span>
+						</a>
+						<a href="https://www.instagram.com/atkelix/" target="_blank" class="list-item" data-tags="music instagram">
+							<span class="col-index">2</span>
+							<div class="col-title">
+								<img src="/atkelix-logo.png" alt="@atkelix" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">@atkelix</span>
+									<span class="item-artist">Follow my Instagram</span>
+								</div>
+							</div>
+							<span class="col-platform">Instagram</span>
+						</a>
+						<a href="https://soundcloud.com/atkelix" target="_blank" class="list-item" data-tags="music soundcloud">
+							<span class="col-index">3</span>
+							<div class="col-title">
+								<img src="/soundcloud-logo.png" alt="Unreleased" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Unreleased</span>
+									<span class="item-artist">Follow my SoundCloud</span>
+								</div>
+							</div>
+							<span class="col-platform">SoundCloud</span>
+						</a>
+						<a href="https://www.youtube.com/watch?v=nw2rOUypDHE&list=RDnw2rOUypDHE&start_radio=1" target="_blank" class="list-item" data-tags="music youtube">
+							<span class="col-index">4</span>
+							<div class="col-title">
+								<img src="/fairytale-logo.png" alt="Fairytale" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Fairytale</span>
+									<span class="item-artist">Music Video</span>
+								</div>
+							</div>
+							<span class="col-platform">YouTube</span>
+						</a>
+					</div>
+				</section>
+
+				<!-- Work Section -->
+				<section id="work-section" class="content-section">
+					<div class="playlist-header">
+						<div class="playlist-info">
+							<span class="playlist-label">Public Playlist</span>
+							<h1 class="playlist-title">Work</h1>
+							<p class="playlist-meta">joshuaykoo • 5 experiences</p>
+						</div>
+					</div>
+					<div class="list-view">
+						<div class="list-header">
+							<span class="col-index">#</span>
+							<span class="col-title">Title</span>
+							<span class="col-platform">Duration</span>
+						</div>
+						<a href="https://near.ai/" target="_blank" class="list-item" data-tags="work intern near protocol">
+							<span class="col-index">1</span>
+							<div class="col-title">
+								<img src="/near-logo.png" alt="NEAR Protocol" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Intern</span>
+									<span class="item-artist">NEAR Protocol</span>
+								</div>
+							</div>
+							<span class="col-platform">Jun 2025 - Sep 2025</span>
+						</a>
+						<a href="https://saharaai.com/" target="_blank" class="list-item" data-tags="work intern sahara ai">
+							<span class="col-index">2</span>
+							<div class="col-title">
+								<img src="/sahara-logo.png" alt="Sahara AI" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Intern</span>
+									<span class="item-artist">Sahara AI</span>
+								</div>
+							</div>
+							<span class="col-platform">Mar 2025 - Aug 2025</span>
+						</a>
+						<a href="https://panteracapital.com/" target="_blank" class="list-item" data-tags="work intern pantera capital">
+							<span class="col-index">3</span>
+							<div class="col-title">
+								<img src="/pantera-logo.png" alt="Pantera Capital" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Intern</span>
+									<span class="item-artist">Pantera Capital</span>
+								</div>
+							</div>
+							<span class="col-platform">Feb 2025 - May 2025</span>
+						</a>
+						<a href="https://www.symbolic.capital/" target="_blank" class="list-item" data-tags="work intern symbolic capital">
+							<span class="col-index">4</span>
+							<div class="col-title">
+								<img src="/symbolic-logo.png" alt="Symbolic Capital" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Intern</span>
+									<span class="item-artist">Symbolic Capital</span>
+								</div>
+							</div>
+							<span class="col-platform">Oct 2024 - Feb 2025</span>
+						</a>
+						<a href="https://www.alphag3n.com/" target="_blank" class="list-item" data-tags="work founder ceo alphag3n">
+							<span class="col-index">5</span>
+							<div class="col-title">
+								<img src="/alphag3n-logo.png" alt="Alphag3n" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Founder and CEO</span>
+									<span class="item-artist">Alphag3n</span>
+								</div>
+							</div>
+							<span class="col-platform">Sep 2022 - Sep 2024</span>
+						</a>
+					</div>
+				</section>
+
+				<!-- Stanford Section -->
+				<section id="stanford-section" class="content-section">
+					<div class="playlist-header">
+						<div class="playlist-info">
+							<span class="playlist-label">Public Playlist</span>
+							<h1 class="playlist-title">Stanford</h1>
+							<p class="playlist-meta">joshuaykoo • 8 activities</p>
+						</div>
+					</div>
+					<div class="list-view">
+						<div class="list-header">
+							<span class="col-index">#</span>
+							<span class="col-title">Title</span>
+							<span class="col-platform">Type</span>
+						</div>
+						<div class="list-item" data-tags="stanford fraternity kappa sigma">
+							<span class="col-index">1</span>
+							<div class="col-title">
+								<img src="/kappasigma-logo.png" alt="Kappa Sigma" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Member</span>
+									<span class="item-artist">Kappa Sigma</span>
+								</div>
+							</div>
+							<span class="col-platform">Fraternity</span>
+						</div>
+						<div class="list-item" data-tags="stanford hackathon treehacks">
+							<span class="col-index">2</span>
+							<div class="col-title">
+								<img src="/treehacks-logo.png" alt="TreeHacks" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Organizer</span>
+									<span class="item-artist">TreeHacks</span>
+								</div>
+							</div>
+							<span class="col-platform">Hackathon</span>
+						</div>
+						<div class="list-item" data-tags="stanford blockchain web3">
+							<span class="col-index">3</span>
+							<div class="col-title">
+								<img src="/stanfordblockchain-logo.png" alt="Stanford Blockchain" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Head of Growth</span>
+									<span class="item-artist">Stanford Blockchain</span>
+								</div>
+							</div>
+							<span class="col-platform">Web3</span>
+						</div>
+						<div class="list-item" data-tags="stanford cultural aasa">
+							<span class="col-index">4</span>
+							<div class="col-title">
+								<img src="/aasa-logo.png" alt="AASA" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Financial Officer</span>
+									<span class="item-artist">AASA</span>
+								</div>
+							</div>
+							<span class="col-platform">Cultural</span>
+						</div>
+						<div class="list-item" data-tags="stanford entrepreneurship bases">
+							<span class="col-index">5</span>
+							<div class="col-title">
+								<img src="/bases-logo.png" alt="BASES" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Frosh Battalion</span>
+									<span class="item-artist">BASES</span>
+								</div>
+							</div>
+							<span class="col-platform">Entrepreneurship</span>
+						</div>
+						<div class="list-item" data-tags="stanford math tournament">
+							<span class="col-index">6</span>
+							<div class="col-title">
+								<img src="/stanfordmathtournament-logo.png" alt="Stanford Math Tournament" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Organizer</span>
+									<span class="item-artist">Stanford Math Tournament</span>
+								</div>
+							</div>
+							<span class="col-platform">Math</span>
+						</div>
+						<div class="list-item" data-tags="stanford music concert network">
+							<span class="col-index">7</span>
+							<div class="col-title">
+								<img src="/scn-logo.png" alt="Stanford Concert Network" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Intern</span>
+									<span class="item-artist">Stanford Concert Network</span>
+								</div>
+							</div>
+							<span class="col-platform">Music</span>
+						</div>
+						<div class="list-item" data-tags="stanford sports badminton">
+							<span class="col-index">8</span>
+							<div class="col-title">
+								<img src="/stanfordbadminton-logo.png" alt="Stanford Badminton" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Member</span>
+									<span class="item-artist">Stanford Badminton</span>
+								</div>
+							</div>
+							<span class="col-platform">Sports</span>
+						</div>
+					</div>
+				</section>
+
+				<!-- Hobbies Section -->
+				<section id="hobbies-section" class="content-section">
+					<div class="playlist-header">
+						<div class="playlist-info">
+							<span class="playlist-label">Public Playlist</span>
+							<h1 class="playlist-title">Hobbies</h1>
+							<p class="playlist-meta">joshuaykoo • 2 hobbies</p>
+						</div>
+					</div>
+					<div class="list-view">
+						<div class="list-header">
+							<span class="col-index">#</span>
+							<span class="col-title">Title</span>
+							<span class="col-platform">Category</span>
+						</div>
+						<div class="list-item" data-tags="hobby gaming clash of clans">
+							<span class="col-index">1</span>
+							<div class="col-title">
+								<img src="/clashofclans-logo.png" alt="Clash of Clans" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">Prev #6 in US</span>
+									<span class="item-artist">Clash of Clans</span>
+								</div>
+							</div>
+							<span class="col-platform">Gaming</span>
+						</div>
+						<div class="list-item" data-tags="hobby gaming go">
+							<span class="col-index">2</span>
+							<div class="col-title">
+								<img src="/go-icon.png" alt="Go" class="item-image" />
+								<div class="item-info">
+									<span class="item-name">2dan</span>
+									<span class="item-artist">Go</span>
+								</div>
+							</div>
+							<span class="col-platform">Gaming</span>
+						</div>
+					</div>
+				</section>
+
+
+				<!-- Search Results -->
+				<section id="search-results" class="content-section">
+					<div class="section-header">
+						<h2>Search Results</h2>
+					</div>
+					<div id="search-results-grid" class="list-view"></div>
+				</section>
+			</main>
+
+			<!-- Player Bar -->
+			<div class="player-bar">
+				<div class="player-info">
+					<img src="/music-playlist.png" alt="Current Section" class="player-image" id="player-image" />
+					<div class="player-details">
+						<span class="player-title" id="player-title">Music</span>
+						<span class="player-artist">
+							<span class="now-playing">
+								<span class="bar"></span>
+								<span class="bar"></span>
+								<span class="bar"></span>
+							</span>
+							Playing
+						</span>
+					</div>
+				</div>
+				<div class="player-center">
+					<div class="player-controls">
+						<button class="control-btn" id="prev-btn">
+							<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+								<path d="M3.3 1a.7.7 0 0 1 .7.7v5.15l9.95-5.744a.7.7 0 0 1 1.05.606v12.575a.7.7 0 0 1-1.05.607L4 9.149V14.3a.7.7 0 0 1-.7.7H1.7a.7.7 0 0 1-.7-.7V1.7a.7.7 0 0 1 .7-.7h1.6z"></path>
+							</svg>
+						</button>
+						<button class="control-btn play-btn" id="play-btn" title="Pause">
+							<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+								<path d="M2.7 1a.7.7 0 0 0-.7.7v12.6a.7.7 0 0 0 .7.7h2.6a.7.7 0 0 0 .7-.7V1.7a.7.7 0 0 0-.7-.7H2.7zm8 0a.7.7 0 0 0-.7.7v12.6a.7.7 0 0 0 .7.7h2.6a.7.7 0 0 0 .7-.7V1.7a.7.7 0 0 0-.7-.7h-2.6z"></path>
+							</svg>
+						</button>
+						<button class="control-btn" id="next-btn">
+							<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+								<path d="M12.7 1a.7.7 0 0 0-.7.7v5.15L2.05 1.107A.7.7 0 0 0 1 1.712v12.575a.7.7 0 0 0 1.05.607L12 9.149V14.3a.7.7 0 0 0 .7.7h1.6a.7.7 0 0 0 .7-.7V1.7a.7.7 0 0 0-.7-.7h-1.6z"></path>
+							</svg>
+						</button>
+					</div>
+					<div class="player-progress">
+						<span class="time-current" id="time-current">0:00</span>
+						<div class="progress-bar">
+							<div class="progress-bar-bg">
+								<div class="progress-bar-fill" id="progress-bar-fill"></div>
+							</div>
+						</div>
+						<span class="time-total">1:00</span>
+					</div>
+				</div>
+				<div class="player-brightness">
+					<button class="brightness-btn" id="brightness-btn">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="12" r="5"></circle>
+							<line x1="12" y1="1" x2="12" y2="3"></line>
+							<line x1="12" y1="21" x2="12" y2="23"></line>
+							<line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+							<line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+							<line x1="1" y1="12" x2="3" y2="12"></line>
+							<line x1="21" y1="12" x2="23" y2="12"></line>
+							<line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+							<line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+						</svg>
+					</button>
+					<div class="brightness-slider" id="brightness-slider">
+						<div class="brightness-track">
+							<div class="brightness-fill" id="brightness-fill"></div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<script src="../scripts/scene.ts"></script>
+		<script src="../scripts/app.ts"></script>
+
+	</body>
+</html>
+
+<style>
+	:root {
+		--bg-dark: #121212;
+		--bg-elevated: #1a1a1a;
+		--bg-card: #282828;
+		--text-primary: #ffffff;
+		--text-secondary: #b3b3b3;
+		--accent: #1db954;
+		--accent-hover: #1ed760;
+		--sidebar-width: 280px;
+	}
+
+	* {
+		margin: 0;
+		padding: 0;
+		box-sizing: border-box;
+	}
+
+	body {
+		font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+		background: var(--bg-dark);
+		color: var(--text-primary);
+		overflow: hidden;
+	}
+
+	#webgl {
+		position: fixed;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		z-index: 0;
+		opacity: 0.3;
+	}
+
+	/* App Layout */
+	.app-container {
+		position: relative;
+		z-index: 1;
+		display: flex;
+		height: 100vh;
+		overflow: hidden;
+	}
+
+	/* Sidebar */
+	.sidebar {
+		width: var(--sidebar-width);
+		background: var(--bg-dark);
+		display: flex;
+		flex-direction: column;
+		padding: 24px;
+		border-right: 1px solid rgba(255, 255, 255, 0.1);
+	}
+
+	.sidebar-header {
+		margin-bottom: 32px;
+	}
+
+	.logo {
+		font-size: 20px;
+		font-weight: 700;
+		color: var(--text-primary);
+		letter-spacing: -0.01em;
+	}
+
+	.sidebar-nav {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.nav-item {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		padding: 12px 16px;
+		color: var(--text-secondary);
+		text-decoration: none;
+		border-radius: 8px;
+		transition: all 0.2s;
+		font-weight: 500;
+	}
+
+	.nav-item:hover {
+		color: var(--text-primary);
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.nav-item.active {
+		color: var(--text-primary);
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.sidebar-footer {
+		display: flex;
+		gap: 16px;
+		padding-top: 24px;
+		border-top: 1px solid rgba(255, 255, 255, 0.1);
+	}
+
+	.social-link {
+		color: var(--text-secondary);
+		transition: color 0.2s;
+	}
+
+	.social-link:hover {
+		color: var(--accent);
+	}
+
+	/* Main Content */
+	.main-content {
+		flex: 1;
+		overflow-y: auto;
+		background: linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-dark) 100%);
+		padding-bottom: 90px;
+	}
+
+	.top-bar {
+		position: sticky;
+		top: 0;
+		z-index: 10;
+		padding: 16px 32px;
+		background: rgba(18, 18, 18, 0.9);
+		backdrop-filter: blur(10px);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.top-bar-left {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		flex: 1;
+	}
+
+	.top-bar-right {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+	}
+
+	.home-btn {
+		background: #282828;
+		border: none;
+		color: var(--text-secondary);
+		width: 44px;
+		height: 44px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		transition: all 0.2s;
+		flex-shrink: 0;
+	}
+
+	.home-btn:hover {
+		background: #3e3e3e;
+		color: var(--text-primary);
+		transform: scale(1.04);
+	}
+
+	.top-social-link {
+		color: var(--text-secondary);
+		padding: 8px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: all 0.2s;
+		text-decoration: none;
+	}
+
+	.top-social-link:hover {
+		color: var(--text-primary);
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.search-container {
+		position: relative;
+		max-width: 500px;
+		flex: 1;
+	}
+
+	.search-icon {
+		position: absolute;
+		left: 16px;
+		top: 50%;
+		transform: translateY(-50%);
+		color: var(--text-secondary);
+	}
+
+	#search-input {
+		width: 100%;
+		padding: 12px 16px 12px 48px;
+		background: var(--bg-card);
+		border: none;
+		border-radius: 24px;
+		color: var(--text-primary);
+		font-size: 14px;
+		font-family: inherit;
+		transition: all 0.2s;
+	}
+
+	#search-input:focus {
+		outline: 2px solid var(--accent);
+		background: var(--bg-elevated);
+	}
+
+	#search-input::placeholder {
+		color: var(--text-secondary);
+	}
+
+	/* Content Sections */
+	.content-section {
+		display: none;
+		padding: 32px;
+		animation: fadeIn 0.3s ease;
+	}
+
+	.content-section.active {
+		display: block;
+	}
+
+	@keyframes fadeIn {
+		from { opacity: 0; transform: translateY(20px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+
+	/* Profile Header */
+	.profile-header {
+		display: flex;
+		align-items: flex-end;
+		gap: 24px;
+		margin-bottom: 48px;
+		padding: 48px 0;
+	}
+
+	.profile-image-container {
+		position: relative;
+	}
+
+	.profile-image {
+		width: 200px;
+		height: 200px;
+		border-radius: 50%;
+		object-fit: cover;
+		box-shadow: 0 20px 60px rgba(29, 185, 84, 0.4);
+	}
+
+	.profile-info {
+		flex: 1;
+	}
+
+	.profile-label {
+		font-size: 12px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--text-secondary);
+	}
+
+	.profile-name {
+		font-size: 64px;
+		font-weight: 800;
+		margin: 8px 0 16px;
+		letter-spacing: -0.02em;
+	}
+
+	.profile-stats {
+		display: flex;
+		gap: 8px;
+		font-size: 14px;
+		color: var(--text-secondary);
+	}
+
+	/* Section Headers */
+	.section-header {
+		margin-bottom: 24px;
+	}
+
+	.section-header h2 {
+		font-size: 32px;
+		font-weight: 700;
+		letter-spacing: -0.02em;
+	}
+
+	/* Content Grid */
+	.content-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+		gap: 24px;
+	}
+
+	/* Content Cards */
+	.content-card {
+		background: var(--bg-card);
+		border-radius: 8px;
+		padding: 16px;
+		transition: all 0.3s;
+		cursor: pointer;
+	}
+
+	.content-card:hover {
+		background: #3e3e3e;
+		transform: translateY(-4px);
+	}
+
+	.card-image {
+		width: 100%;
+		aspect-ratio: 1;
+		border-radius: 4px;
+		margin-bottom: 16px;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+	}
+
+	.content-card h3 {
+		font-size: 16px;
+		font-weight: 600;
+		margin-bottom: 8px;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.content-card p {
+		font-size: 14px;
+		color: var(--text-secondary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	/* Playlist Header */
+	.playlist-header {
+		padding: 48px 0;
+		margin-bottom: 32px;
+	}
+
+	#music-section .playlist-header {
+		background: linear-gradient(180deg, #1db954 0%, rgba(29, 185, 84, 0.3) 100%);
+		margin: -32px -32px 32px -32px;
+		padding: 80px 32px 48px 32px;
+		border-radius: 8px 8px 0 0;
+	}
+
+	#work-section .playlist-header {
+		background: linear-gradient(180deg, #5B9AA0 0%, rgba(91, 154, 160, 0.3) 100%);
+		margin: -32px -32px 32px -32px;
+		padding: 80px 32px 48px 32px;
+		border-radius: 8px 8px 0 0;
+	}
+
+	#stanford-section .playlist-header {
+		background: linear-gradient(180deg, #8C1515 0%, rgba(140, 21, 21, 0.3) 100%);
+		margin: -32px -32px 32px -32px;
+		padding: 80px 32px 48px 32px;
+		border-radius: 8px 8px 0 0;
+	}
+
+	#hobbies-section .playlist-header {
+		background: linear-gradient(180deg, #D946A6 0%, rgba(217, 70, 166, 0.3) 100%);
+		margin: -32px -32px 32px -32px;
+		padding: 80px 32px 48px 32px;
+		border-radius: 8px 8px 0 0;
+	}
+
+	.playlist-label {
+		font-size: 12px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--text-secondary);
+	}
+
+	.playlist-title {
+		font-size: 72px;
+		font-weight: 800;
+		margin: 8px 0 16px;
+		letter-spacing: -0.02em;
+	}
+
+	.playlist-meta {
+		font-size: 14px;
+		color: var(--text-secondary);
+	}
+
+	/* List View */
+	.list-view {
+		margin-top: 24px;
+	}
+
+	.list-header {
+		display: grid;
+		grid-template-columns: 50px 1fr 200px;
+		gap: 16px;
+		padding: 8px 16px;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+	}
+
+	.list-item {
+		display: grid;
+		grid-template-columns: 50px 1fr 200px;
+		gap: 16px;
+		padding: 8px 16px;
+		align-items: center;
+		border-radius: 4px;
+		transition: background 0.2s;
+		text-decoration: none;
+		color: var(--text-primary);
+	}
+
+	.list-item:hover {
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.col-index {
+		text-align: center;
+		color: var(--text-secondary);
+		font-size: 14px;
+	}
+
+	.col-title {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.item-image {
+		width: 40px;
+		height: 40px;
+		border-radius: 4px;
+		flex-shrink: 0;
+	}
+
+	.item-info {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+
+	.item-name {
+		font-size: 16px;
+		font-weight: 500;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.item-artist {
+		font-size: 14px;
+		color: var(--text-secondary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.section-badge {
+		display: inline-block;
+		padding: 2px 8px;
+		background: rgba(29, 185, 84, 0.2);
+		color: var(--accent);
+		border-radius: 4px;
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.col-platform {
+		color: var(--text-secondary);
+		font-size: 14px;
+	}
+
+	/* Responsive */
+	@media (max-width: 768px) {
+		.sidebar {
+			width: 80px;
+			padding: 16px;
+		}
+
+		.sidebar-nav span,
+		.sidebar-footer {
+			display: none;
+		}
+
+		.logo {
+			font-size: 16px;
+		}
+
+		.profile-header {
+			flex-direction: column;
+			align-items: center;
+			text-align: center;
+		}
+
+		.profile-name {
+			font-size: 40px;
+		}
+
+		.content-grid {
+			grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+			gap: 16px;
+		}
+
+		.playlist-title {
+			font-size: 48px;
+		}
+
+		.list-header {
+			grid-template-columns: 40px 1fr;
+		}
+
+		.list-item {
+			grid-template-columns: 40px 1fr;
+		}
+
+		.col-platform {
+			display: none;
+		}
+	}
+
+	/* Player Bar */
+	.player-bar {
+		position: fixed;
+		bottom: 0;
+		left: 0;
+		right: 0;
+		height: 90px;
+		background: var(--bg-elevated);
+		border-top: 1px solid rgba(255, 255, 255, 0.1);
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0 16px;
+		z-index: 100;
+	}
+
+	.player-info {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		flex: 1;
+		min-width: 180px;
+	}
+
+	.player-image {
+		width: 56px;
+		height: 56px;
+		border-radius: 4px;
+		background: white;
+		flex-shrink: 0;
+		object-fit: cover;
+	}
+
+	.player-details {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 0;
+	}
+
+	.player-title {
+		font-size: 14px;
+		font-weight: 500;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.player-artist {
+		font-size: 12px;
+		color: var(--text-secondary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.now-playing {
+		display: inline-flex;
+		align-items: flex-end;
+		gap: 2px;
+		height: 12px;
+	}
+
+	.now-playing .bar {
+		width: 3px;
+		background: var(--accent);
+		border-radius: 3px;
+		animation: sound-wave 1s ease-in-out infinite;
+	}
+
+	.now-playing .bar:nth-child(1) {
+		height: 8px;
+		animation-delay: 0s;
+	}
+
+	.now-playing .bar:nth-child(2) {
+		height: 12px;
+		animation-delay: 0.2s;
+	}
+
+	.now-playing .bar:nth-child(3) {
+		height: 6px;
+		animation-delay: 0.4s;
+	}
+
+	@keyframes sound-wave {
+		0%, 100% {
+			transform: scaleY(0.5);
+		}
+		50% {
+			transform: scaleY(1);
+		}
+	}
+
+	.player-center {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+		flex: 1;
+		max-width: 700px;
+	}
+
+	.player-controls {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		justify-content: center;
+	}
+
+	.player-progress {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+	}
+
+	.time-current,
+	.time-total {
+		font-size: 11px;
+		color: var(--text-secondary);
+		min-width: 40px;
+		text-align: center;
+	}
+
+	.progress-bar {
+		flex: 1;
+		height: 12px;
+		display: flex;
+		align-items: center;
+		cursor: pointer;
+	}
+
+	.progress-bar-bg {
+		width: 100%;
+		height: 4px;
+		background: rgba(255, 255, 255, 0.3);
+		border-radius: 2px;
+		position: relative;
+		overflow: hidden;
+	}
+
+	.progress-bar-fill {
+		height: 100%;
+		background: var(--text-primary);
+		border-radius: 2px;
+		width: 0%;
+		transition: width 0.3s ease;
+	}
+
+	.progress-bar:hover .progress-bar-bg {
+		height: 6px;
+	}
+
+	.progress-bar:hover .progress-bar-fill {
+		background: var(--accent);
+	}
+
+	.control-btn {
+		background: none;
+		border: none;
+		color: var(--text-secondary);
+		cursor: pointer;
+		padding: 8px;
+		border-radius: 50%;
+		transition: all 0.2s;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.control-btn:hover {
+		color: var(--text-primary);
+		transform: scale(1.06);
+	}
+
+	.play-btn {
+		background: var(--text-primary);
+		color: var(--bg-dark);
+		width: 32px;
+		height: 32px;
+	}
+
+	.play-btn:hover {
+		transform: scale(1.06);
+		background: var(--text-primary);
+	}
+
+	.player-brightness {
+		flex: 1;
+		display: flex;
+		justify-content: flex-end;
+		align-items: center;
+		gap: 8px;
+		min-width: 180px;
+	}
+
+	.brightness-btn {
+		background: none;
+		border: none;
+		color: var(--text-secondary);
+		cursor: pointer;
+		padding: 8px;
+		border-radius: 50%;
+		transition: all 0.2s;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+	}
+
+	.brightness-btn:hover {
+		color: var(--text-primary);
+	}
+
+	.brightness-slider {
+		width: 100px;
+		opacity: 1;
+		visibility: visible;
+		transition: all 0.2s;
+	}
+
+	.brightness-track {
+		width: 100%;
+		height: 4px;
+		background: rgba(255, 255, 255, 0.3);
+		border-radius: 2px;
+		cursor: pointer;
+		position: relative;
+		display: flex;
+		align-items: center;
+	}
+
+	.brightness-fill {
+		height: 100%;
+		background: var(--text-primary);
+		border-radius: 2px;
+		width: 0%;
+		transition: width 0.1s;
+	}
+
+	.brightness-track:hover {
+		height: 6px;
+	}
+
+	.brightness-track:hover .brightness-fill {
+		background: var(--accent);
+	}
+
+	@media (max-width: 768px) {
+		.player-brightness {
+			display: none;
+		}
+	}
+
+		#visualizer-canvas {
+			display: none;
+		}
+	}
+</style>
