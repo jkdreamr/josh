@@ -461,6 +461,35 @@ class PortfolioApp {
         }
       }
     });
+    
+    // Update list headers and items for better readability in light mode
+    const listHeaders = document.querySelectorAll('.list-header');
+    listHeaders.forEach(listHeader => {
+      const cols = listHeader.querySelectorAll('span');
+      cols.forEach(col => {
+        (col as HTMLElement).style.color = textPrimary;
+      });
+    });
+    
+    // Update all list items
+    const listItems = document.querySelectorAll('.list-item');
+    listItems.forEach(item => {
+      // Update index number
+      const colIndex = item.querySelector('.col-index') as HTMLElement;
+      if (colIndex) colIndex.style.color = textPrimary;
+      
+      // Update item name (title)
+      const itemName = item.querySelector('.item-name') as HTMLElement;
+      if (itemName) itemName.style.color = textPrimary;
+      
+      // Update item artist (description)
+      const itemArtist = item.querySelector('.item-artist') as HTMLElement;
+      if (itemArtist) itemArtist.style.color = textSecondary;
+      
+      // Update platform/type column
+      const colPlatform = item.querySelector('.col-platform') as HTMLElement;
+      if (colPlatform) colPlatform.style.color = textSecondary;
+    });
   }
 
   private interpolateColor(color1: string, color2: string, factor: number): string {
