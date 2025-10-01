@@ -330,14 +330,18 @@ class PortfolioApp {
     const bgSecondary = this.interpolateColor('#1a1a1a', '#f5f5f5', lightness);
     const bgElevated = this.interpolateColor('#282828', '#ffffff', lightness);
     const bgCard = this.interpolateColor('#1a1a1a', '#f0f0f0', lightness);
-    const bgHover = this.interpolateColor('#2a2a2a', '#e0e0e0', lightness);
     
     // Text colors - from light to dark
     const textPrimary = this.interpolateColor('#ffffff', '#000000', lightness);
     const textSecondary = this.interpolateColor('#b3b3b3', '#666666', lightness);
     
+    // Icon colors - SVG strokes
+    const iconColor = this.interpolateColor('#ffffff', '#000000', lightness);
+    
     // Border colors
-    const borderColor = this.interpolateColor('rgba(255, 255, 255, 0.1)', 'rgba(0, 0, 0, 0.1)', lightness);
+    const borderColor = lightness > 0.5 
+      ? `rgba(0, 0, 0, ${0.1 * lightness})` 
+      : `rgba(255, 255, 255, ${0.1 * (1 - lightness)})`;
     
     root.style.setProperty('--bg-primary', bgPrimary);
     root.style.setProperty('--bg-secondary', bgSecondary);
@@ -346,7 +350,7 @@ class PortfolioApp {
     root.style.setProperty('--text-primary', textPrimary);
     root.style.setProperty('--text-secondary', textSecondary);
     
-    // Update specific elements
+    // Update body
     document.body.style.backgroundColor = bgPrimary;
     
     // Update sidebar
@@ -368,6 +372,42 @@ class PortfolioApp {
       playerBar.style.backgroundColor = bgElevated;
       playerBar.style.borderTop = `1px solid ${borderColor}`;
     }
+    
+    // Update all SVG icons (buttons, nav items, etc.)
+    const svgs = document.querySelectorAll('svg');
+    svgs.forEach(svg => {
+      // Skip the Spotify green accent icon
+      if (!svg.closest('.now-playing')) {
+        svg.style.color = iconColor;
+        svg.style.stroke = iconColor;
+        svg.style.fill = svg.getAttribute('fill') === 'currentColor' ? iconColor : '';
+      }
+    });
+    
+    // Update play/pause button specifically
+    const playBtn = document.getElementById('play-btn');
+    if (playBtn) {
+      playBtn.style.backgroundColor = textPrimary;
+      const playSvg = playBtn.querySelector('svg');
+      if (playSvg) {
+        playSvg.style.color = bgPrimary;
+        playSvg.style.fill = bgPrimary;
+      }
+    }
+    
+    // Update search input
+    const searchInput = document.getElementById('search-input') as HTMLInputElement;
+    if (searchInput) {
+      searchInput.style.backgroundColor = bgCard;
+      searchInput.style.color = textPrimary;
+      searchInput.style.borderColor = borderColor;
+    }
+    
+    // Update content cards
+    const cards = document.querySelectorAll('.content-card');
+    cards.forEach(card => {
+      (card as HTMLElement).style.backgroundColor = bgCard;
+    });
   }
 
   private interpolateColor(color1: string, color2: string, factor: number): string {
