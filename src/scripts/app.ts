@@ -323,35 +323,50 @@ class PortfolioApp {
 
   private applyBrightness(brightness: number): void {
     const root = document.documentElement;
+    const lightness = brightness / 100;
     
-    if (brightness === 0) {
-      // Default dark mode
-      root.style.setProperty('--bg-primary', '#121212');
-      root.style.setProperty('--bg-secondary', '#1a1a1a');
-      root.style.setProperty('--bg-elevated', '#282828');
-      root.style.setProperty('--bg-card', '#1a1a1a');
-      root.style.setProperty('--text-primary', '#ffffff');
-      root.style.setProperty('--text-secondary', '#b3b3b3');
-    } else {
-      // Gradually transition to light mode
-      const lightness = brightness / 100;
-      
-      // Background colors - from dark to light
-      const bgPrimary = this.interpolateColor('#121212', '#ffffff', lightness);
-      const bgSecondary = this.interpolateColor('#1a1a1a', '#f5f5f5', lightness);
-      const bgElevated = this.interpolateColor('#282828', '#e8e8e8', lightness);
-      const bgCard = this.interpolateColor('#1a1a1a', '#f0f0f0', lightness);
-      
-      // Text colors - from light to dark
-      const textPrimary = this.interpolateColor('#ffffff', '#000000', lightness);
-      const textSecondary = this.interpolateColor('#b3b3b3', '#666666', lightness);
-      
-      root.style.setProperty('--bg-primary', bgPrimary);
-      root.style.setProperty('--bg-secondary', bgSecondary);
-      root.style.setProperty('--bg-elevated', bgElevated);
-      root.style.setProperty('--bg-card', bgCard);
-      root.style.setProperty('--text-primary', textPrimary);
-      root.style.setProperty('--text-secondary', textSecondary);
+    // Background colors - from dark to light
+    const bgPrimary = this.interpolateColor('#121212', '#ffffff', lightness);
+    const bgSecondary = this.interpolateColor('#1a1a1a', '#f5f5f5', lightness);
+    const bgElevated = this.interpolateColor('#282828', '#ffffff', lightness);
+    const bgCard = this.interpolateColor('#1a1a1a', '#f0f0f0', lightness);
+    const bgHover = this.interpolateColor('#2a2a2a', '#e0e0e0', lightness);
+    
+    // Text colors - from light to dark
+    const textPrimary = this.interpolateColor('#ffffff', '#000000', lightness);
+    const textSecondary = this.interpolateColor('#b3b3b3', '#666666', lightness);
+    
+    // Border colors
+    const borderColor = this.interpolateColor('rgba(255, 255, 255, 0.1)', 'rgba(0, 0, 0, 0.1)', lightness);
+    
+    root.style.setProperty('--bg-primary', bgPrimary);
+    root.style.setProperty('--bg-secondary', bgSecondary);
+    root.style.setProperty('--bg-elevated', bgElevated);
+    root.style.setProperty('--bg-card', bgCard);
+    root.style.setProperty('--text-primary', textPrimary);
+    root.style.setProperty('--text-secondary', textSecondary);
+    
+    // Update specific elements
+    document.body.style.backgroundColor = bgPrimary;
+    
+    // Update sidebar
+    const sidebar = document.querySelector('.sidebar') as HTMLElement;
+    if (sidebar) {
+      sidebar.style.backgroundColor = bgSecondary;
+    }
+    
+    // Update top bar
+    const topBar = document.querySelector('.top-bar') as HTMLElement;
+    if (topBar) {
+      topBar.style.backgroundColor = bgElevated;
+      topBar.style.borderBottom = `1px solid ${borderColor}`;
+    }
+    
+    // Update player bar
+    const playerBar = document.querySelector('.player-bar') as HTMLElement;
+    if (playerBar) {
+      playerBar.style.backgroundColor = bgElevated;
+      playerBar.style.borderTop = `1px solid ${borderColor}`;
     }
   }
 
