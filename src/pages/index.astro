@@ -546,6 +546,8 @@
 		</div>
 
 		<script src="../scripts/app.ts"></script>
+		<script src="../scripts/ripple.ts"></script>
+		<script src="../scripts/commandPalette.ts"></script>
 
 	</body>
 </html>
@@ -1639,5 +1641,154 @@
 		#visualizer-canvas {
 			display: none;
 		}
+	}
+
+	/* Ripple Effect */
+	.ripple-effect {
+		position: fixed;
+		border-radius: 50%;
+		background: rgba(29, 185, 84, 0.4);
+		pointer-events: none;
+		transform: translate(-50%, -50%) scale(0);
+		animation: ripple 1s ease-out;
+		width: 100px;
+		height: 100px;
+		z-index: 9999;
+	}
+
+	@keyframes ripple {
+		to {
+			transform: translate(-50%, -50%) scale(4);
+			opacity: 0;
+		}
+	}
+
+	/* Command Palette */
+	#command-palette-overlay {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.8);
+		backdrop-filter: blur(8px);
+		z-index: 10000;
+		display: none;
+		align-items: flex-start;
+		justify-content: center;
+		padding-top: 100px;
+	}
+
+	#command-palette-overlay.active {
+		display: flex;
+	}
+
+	.command-palette {
+		width: 100%;
+		max-width: 640px;
+		background: var(--bg-elevated);
+		border-radius: 12px;
+		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+		overflow: hidden;
+		animation: slideDown 0.2s ease-out;
+	}
+
+	@keyframes slideDown {
+		from {
+			opacity: 0;
+			transform: translateY(-20px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	.command-search {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 16px 20px;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+	}
+
+	.command-search svg {
+		color: var(--text-secondary);
+		flex-shrink: 0;
+	}
+
+	#command-input {
+		flex: 1;
+		background: none;
+		border: none;
+		color: var(--text-primary);
+		font-size: 16px;
+		outline: none;
+		font-family: 'Inter', sans-serif;
+	}
+
+	#command-input::placeholder {
+		color: var(--text-secondary);
+	}
+
+	.command-search kbd {
+		background: var(--bg-card);
+		color: var(--text-secondary);
+		padding: 4px 8px;
+		border-radius: 4px;
+		font-size: 12px;
+		font-family: 'Inter', sans-serif;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+	}
+
+	.command-results {
+		max-height: 400px;
+		overflow-y: auto;
+	}
+
+	.command-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 12px 20px;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.command-item:hover,
+	.command-item.selected {
+		background: var(--bg-card);
+	}
+
+	.command-item-content {
+		flex: 1;
+	}
+
+	.command-item-name {
+		color: var(--text-primary);
+		font-size: 14px;
+		font-weight: 500;
+		margin-bottom: 2px;
+	}
+
+	.command-item-description {
+		color: var(--text-secondary);
+		font-size: 12px;
+	}
+
+	.command-item kbd {
+		background: var(--bg-card);
+		color: var(--text-secondary);
+		padding: 4px 8px;
+		border-radius: 4px;
+		font-size: 11px;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+	}
+
+	.command-empty {
+		padding: 40px 20px;
+		text-align: center;
+		color: var(--text-secondary);
+		font-size: 14px;
 	}
 </style>
