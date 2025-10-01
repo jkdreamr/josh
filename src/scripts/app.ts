@@ -16,9 +16,27 @@ class PortfolioApp {
     this.setupPlaylistCards();
     this.setupHomeButton();
     this.setupBrightness();
+    this.setupHashRouting();
     
-    // Initialize player with home state
-    this.updatePlayerTitle('Home');
+    // Initialize player with home state or hash
+    const hash = window.location.hash.slice(1);
+    if (hash && ['music', 'work', 'stanford', 'hobbies'].includes(hash)) {
+      this.switchSection(hash);
+    } else {
+      this.updatePlayerTitle('Home');
+    }
+  }
+
+  private setupHashRouting(): void {
+    // Listen for hash changes
+    window.addEventListener('hashchange', () => {
+      const hash = window.location.hash.slice(1);
+      if (hash && ['music', 'work', 'stanford', 'hobbies'].includes(hash)) {
+        this.switchSection(hash);
+      } else if (!hash) {
+        this.switchSection('home');
+      }
+    });
   }
 
   private setupNavigation(): void {
@@ -30,11 +48,9 @@ class PortfolioApp {
         const category = (item as HTMLElement).dataset.category;
         
         if (category) {
+          // Update URL hash
+          window.location.hash = category === 'home' ? '' : category;
           this.switchSection(category);
-          
-          // Update active state
-          navItems.forEach(nav => nav.classList.remove('active'));
-          item.classList.add('active');
         }
       });
     });
@@ -482,9 +498,15 @@ class PortfolioApp {
       const itemName = item.querySelector('.item-name') as HTMLElement;
       if (itemName) itemName.style.color = textPrimary;
       
-      // Update item artist (description)
+      // Update item artist (description) - darker in light mode
       const itemArtist = item.querySelector('.item-artist') as HTMLElement;
-      if (itemArtist) itemArtist.style.color = textSecondary;
+      if (itemArtist) {
+        // Make secondary text darker in light mode for better readability
+        const secondaryColor = lightness > 0.5 
+          ? this.interpolateColor('#b3b3b3', '#444444', lightness)
+          : textSecondary;
+        itemArtist.style.color = secondaryColor;
+      }
       
       // Update platform/type column
       const colPlatform = item.querySelector('.col-platform') as HTMLElement;
