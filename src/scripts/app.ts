@@ -322,33 +322,56 @@ class PortfolioApp {
   }
 
   private applyBrightness(brightness: number): void {
-    const appContainer = document.querySelector('.app-container') as HTMLElement;
-    const canvas = document.getElementById('webgl') as HTMLCanvasElement;
-    if (!appContainer) return;
+    const root = document.documentElement;
     
     if (brightness === 0) {
       // Default dark mode
-      appContainer.style.filter = 'none';
-      document.body.style.backgroundColor = '';
-      if (canvas) canvas.style.filter = 'none';
-    } else if (brightness >= 95) {
-      // Full white mode - invert everything
-      appContainer.style.filter = 'invert(1) hue-rotate(180deg)';
-      if (canvas) canvas.style.filter = 'invert(1) hue-rotate(180deg)';
-      document.body.style.backgroundColor = '#ffffff';
+      root.style.setProperty('--bg-primary', '#121212');
+      root.style.setProperty('--bg-secondary', '#1a1a1a');
+      root.style.setProperty('--bg-elevated', '#282828');
+      root.style.setProperty('--bg-card', '#1a1a1a');
+      root.style.setProperty('--text-primary', '#ffffff');
+      root.style.setProperty('--text-secondary', '#b3b3b3');
     } else {
-      // Gradual brightness increase
-      const brightnessValue = 1 + (brightness / 100) * 1.2;
-      const invertAmount = Math.max(0, (brightness - 50) / 50);
+      // Gradually transition to light mode
+      const lightness = brightness / 100;
       
-      appContainer.style.filter = `brightness(${brightnessValue}) invert(${invertAmount}) hue-rotate(${invertAmount * 180}deg)`;
-      if (canvas) {
-        canvas.style.filter = `brightness(${brightnessValue}) invert(${invertAmount}) hue-rotate(${invertAmount * 180}deg)`;
-      }
+      // Background colors - from dark to light
+      const bgPrimary = this.interpolateColor('#121212', '#ffffff', lightness);
+      const bgSecondary = this.interpolateColor('#1a1a1a', '#f5f5f5', lightness);
+      const bgElevated = this.interpolateColor('#282828', '#e8e8e8', lightness);
+      const bgCard = this.interpolateColor('#1a1a1a', '#f0f0f0', lightness);
       
-      const bgLightness = Math.floor((brightness / 100) * 50);
-      document.body.style.backgroundColor = `rgb(${bgLightness}, ${bgLightness}, ${bgLightness})`;
+      // Text colors - from light to dark
+      const textPrimary = this.interpolateColor('#ffffff', '#000000', lightness);
+      const textSecondary = this.interpolateColor('#b3b3b3', '#666666', lightness);
+      
+      root.style.setProperty('--bg-primary', bgPrimary);
+      root.style.setProperty('--bg-secondary', bgSecondary);
+      root.style.setProperty('--bg-elevated', bgElevated);
+      root.style.setProperty('--bg-card', bgCard);
+      root.style.setProperty('--text-primary', textPrimary);
+      root.style.setProperty('--text-secondary', textSecondary);
     }
+  }
+
+  private interpolateColor(color1: string, color2: string, factor: number): string {
+    const hex1 = color1.replace('#', '');
+    const hex2 = color2.replace('#', '');
+    
+    const r1 = parseInt(hex1.substring(0, 2), 16);
+    const g1 = parseInt(hex1.substring(2, 4), 16);
+    const b1 = parseInt(hex1.substring(4, 6), 16);
+    
+    const r2 = parseInt(hex2.substring(0, 2), 16);
+    const g2 = parseInt(hex2.substring(2, 4), 16);
+    const b2 = parseInt(hex2.substring(4, 6), 16);
+    
+    const r = Math.round(r1 + (r2 - r1) * factor);
+    const g = Math.round(g1 + (g2 - g1) * factor);
+    const b = Math.round(b1 + (b2 - b1) * factor);
+    
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
   }
 }
 
