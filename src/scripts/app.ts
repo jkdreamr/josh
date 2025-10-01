@@ -419,6 +419,48 @@ class PortfolioApp {
     cards.forEach(card => {
       (card as HTMLElement).style.backgroundColor = bgCard;
     });
+    
+    // Update playlist headers - make gradients more opaque in light mode
+    const playlistHeaders = document.querySelectorAll('.playlist-header');
+    playlistHeaders.forEach(header => {
+      const parent = header.parentElement;
+      if (parent) {
+        const parentId = parent.id;
+        
+        // Adjust gradient opacity based on light mode
+        if (lightness > 0.5) {
+          // Light mode - make gradients more saturated and opaque
+          if (parentId === 'music-section') {
+            (header as HTMLElement).style.background = 'linear-gradient(180deg, rgba(29, 185, 84, 0.9) 0%, rgba(29, 185, 84, 0.2) 100%)';
+          } else if (parentId === 'work-section') {
+            (header as HTMLElement).style.background = 'linear-gradient(180deg, rgba(91, 154, 160, 0.9) 0%, rgba(91, 154, 160, 0.2) 100%)';
+          } else if (parentId === 'stanford-section') {
+            (header as HTMLElement).style.background = 'linear-gradient(180deg, rgba(140, 21, 21, 0.9) 0%, rgba(140, 21, 21, 0.2) 100%)';
+          } else if (parentId === 'hobbies-section') {
+            (header as HTMLElement).style.background = 'linear-gradient(180deg, rgba(217, 70, 166, 0.9) 0%, rgba(217, 70, 166, 0.2) 100%)';
+          }
+          
+          // Ensure text is white on colored backgrounds
+          const playlistLabel = header.querySelector('.playlist-label') as HTMLElement;
+          const playlistTitle = header.querySelector('.playlist-title') as HTMLElement;
+          const playlistMeta = header.querySelector('.playlist-meta') as HTMLElement;
+          
+          if (playlistLabel) playlistLabel.style.color = '#ffffff';
+          if (playlistTitle) playlistTitle.style.color = '#ffffff';
+          if (playlistMeta) playlistMeta.style.color = 'rgba(255, 255, 255, 0.8)';
+        } else {
+          // Dark mode - reset to default
+          (header as HTMLElement).style.background = '';
+          const playlistLabel = header.querySelector('.playlist-label') as HTMLElement;
+          const playlistTitle = header.querySelector('.playlist-title') as HTMLElement;
+          const playlistMeta = header.querySelector('.playlist-meta') as HTMLElement;
+          
+          if (playlistLabel) playlistLabel.style.color = '';
+          if (playlistTitle) playlistTitle.style.color = '';
+          if (playlistMeta) playlistMeta.style.color = '';
+        }
+      }
+    });
   }
 
   private interpolateColor(color1: string, color2: string, factor: number): string {
