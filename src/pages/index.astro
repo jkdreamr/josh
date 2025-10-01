@@ -1124,18 +1124,20 @@
 			height: 20px;
 		}
 
-		/* === SIDEBAR - Bottom Navigation === */
+		/* === SIDEBAR - Compact Left Side === */
 		.sidebar {
 			position: fixed;
-			bottom: 0;
+			top: 64px;
 			left: 0;
-			right: 0;
-			width: 100%;
+			bottom: 0;
+			width: 72px;
 			height: auto;
-			padding: 0;
+			padding: 16px 8px;
 			background: var(--bg-elevated);
-			border-top: 1px solid rgba(255, 255, 255, 0.1);
-			z-index: 1000;
+			border-right: 1px solid rgba(255, 255, 255, 0.1);
+			z-index: 998;
+			display: flex;
+			flex-direction: column;
 		}
 
 		.sidebar-header {
@@ -1148,20 +1150,18 @@
 
 		.sidebar-nav {
 			display: flex;
-			justify-content: space-around;
-			align-items: center;
-			padding: 10px 0 12px;
+			flex-direction: column;
+			gap: 8px;
 			margin: 0;
-			gap: 4px;
+			padding: 0;
 		}
 
 		.nav-item {
-			flex: 1;
 			display: flex;
 			flex-direction: column;
 			align-items: center;
 			justify-content: center;
-			padding: 6px 8px;
+			padding: 10px 4px;
 			margin: 0;
 			gap: 4px;
 			border-radius: 8px;
@@ -1173,14 +1173,16 @@
 		}
 
 		.nav-item svg {
-			width: 26px;
-			height: 26px;
+			width: 24px;
+			height: 24px;
 		}
 
 		.nav-item span {
 			display: block;
-			font-size: 11px;
+			font-size: 10px;
 			font-weight: 600;
+			text-align: center;
+			line-height: 1.2;
 		}
 
 		.sidebar-footer {
@@ -1189,11 +1191,11 @@
 
 		/* === MAIN CONTENT === */
 		.main-content {
-			margin-left: 0;
+			margin-left: 72px;
 			margin-top: 0;
 			padding: 16px;
-			padding-bottom: 80px;
-			width: 100%;
+			padding-bottom: 24px;
+			width: calc(100% - 72px);
 			overflow-y: auto;
 		}
 
