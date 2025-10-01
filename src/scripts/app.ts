@@ -498,14 +498,11 @@ class PortfolioApp {
       const itemName = item.querySelector('.item-name') as HTMLElement;
       if (itemName) itemName.style.color = textPrimary;
       
-      // Update item artist (description) - darker in light mode
+      // Update item artist (description) - keep white in light mode
       const itemArtist = item.querySelector('.item-artist') as HTMLElement;
       if (itemArtist) {
-        // Make secondary text darker in light mode for better readability
-        const secondaryColor = lightness > 0.5 
-          ? this.interpolateColor('#b3b3b3', '#444444', lightness)
-          : textSecondary;
-        itemArtist.style.color = secondaryColor;
+        // Keep white for contrast against gray background
+        itemArtist.style.color = '#ffffff';
       }
       
       // Update platform/type column
