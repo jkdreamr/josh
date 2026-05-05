@@ -1,7 +1,7 @@
 {
-  "name": "stale-star",
+  "name": "josh",
   "type": "module",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
@@ -9,9 +9,6 @@
     "astro": "astro"
   },
   "dependencies": {
-    "@types/three": "^0.180.0",
-    "astro": "^5.14.1",
-    "gsap": "^3.13.0",
-    "three": "^0.180.0"
+    "astro": "^5.14.1"
   }
 }
