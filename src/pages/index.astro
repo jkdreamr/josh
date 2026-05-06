@@ -1,5 +1,66 @@
 ---
 const year = new Date().getFullYear();
+
+type Item = {
+	role?: string;
+	name: string;
+	meta?: string;
+	href?: string;
+};
+
+type Section = {
+	id: string;
+	label: string;
+	items: Item[];
+};
+
+const sections: Section[] = [
+	{
+		id: 'school',
+		label: 'school',
+		items: [
+			{ role: 'undergrad', name: 'Stanford University', meta: 'Computer Science' },
+			{ role: 'organizer', name: 'TreeHacks', meta: 'Stanford Hackathon' },
+			{ role: 'head of growth', name: 'Stanford Blockchain' },
+			{ role: 'organizer', name: 'Stanford Math Tournament' },
+			{ role: 'frosh battalion', name: 'BASES' },
+			{ role: 'financial officer', name: 'AASA' },
+			{ role: 'intern', name: 'Stanford Concert Network' },
+			{ role: 'member', name: 'Stanford Badminton' },
+			{ role: 'member', name: 'Kappa Sigma' },
+		],
+	},
+	{
+		id: 'work',
+		label: 'work',
+		items: [
+			{ role: 'intern', name: 'NEAR Protocol', meta: 'Jun 2025 — Sep 2025', href: 'https://near.ai/' },
+			{ role: 'intern', name: 'Sahara AI', meta: 'Mar 2025 — Aug 2025', href: 'https://saharaai.com/' },
+			{ role: 'intern', name: 'Pantera Capital', meta: 'Feb 2025 — May 2025', href: 'https://panteracapital.com/' },
+			{ role: 'intern', name: 'Symbolic Capital', meta: 'Oct 2024 — Feb 2025', href: 'https://www.symbolic.capital/' },
+		],
+	},
+	{
+		id: 'side-projects',
+		label: 'side projects',
+		items: [
+			{ role: 'founder & ceo', name: 'Alphag3n', meta: 'Sep 2022 — Sep 2024', href: 'https://www.alphag3n.com/' },
+			{ role: 'producer', name: '@atkelix', meta: 'making music', href: 'https://www.instagram.com/atkelix/' },
+		],
+	},
+	{
+		id: 'music',
+		label: 'music',
+		items: [
+			{ name: 'all i need', meta: 'Spotify', href: 'https://open.spotify.com/album/2ckdlSbzkVukYqvSwZIiUp?si=YstWQai4SG-yOxO346bcCg' },
+			{ name: '@atkelix', meta: 'Instagram', href: 'https://www.instagram.com/atkelix/' },
+			{ name: 'unreleased', meta: 'SoundCloud', href: 'https://soundcloud.com/atkelix' },
+			{ name: 'fairytale', meta: 'YouTube', href: 'https://www.youtube.com/watch?v=nw2rOUypDHE&list=RDnw2rOUypDHE&start_radio=1' },
+		],
+	},
+];
+
+const tagline = 'welcome to my page. I like to build and make things I actually use.';
 ---
 
 <!DOCTYPE html>
@@ -9,9 +70,9 @@ const year = new Date().getFullYear();
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="generator" content={Astro.generator} />
-		<meta name="description" content="welcome to josh. i like to build and make things i actually use." />
+		<meta name="description" content={tagline} />
 		<meta property="og:title" content="josh" />
-		<meta property="og:description" content="welcome to josh. i like to build and make things i actually use." />
+		<meta property="og:description" content={tagline} />
 		<meta property="og:type" content="website" />
 		<meta property="og:url" content="https://joshuakoo.xyz" />
 		<title>josh</title>
@@ -26,11 +87,57 @@ const year = new Date().getFullYear();
 					<span class="brand-mark">/josh/</span>
 				</header>
 
-				<p class="tagline">
-					welcome to josh. i like to build and make things i actually use.
-				</p>
+				<p class="tagline">{tagline}</p>
 
-				<nav class="links" aria-label="links">
+				<nav class="sections" aria-label="sections">
+					{sections.map((section, i) => (
+						<>
+							<button
+								type="button"
+								class="section-toggle"
+								data-target={section.id}
+								aria-expanded="false"
+								aria-controls={`panel-${section.id}`}
+							>{section.label}</button>
+							{i < sections.length - 1 && <span class="dot" aria-hidden="true">·</span>}
+						</>
+					))}
+				</nav>
+
+				<div class="panels">
+					{sections.map((section) => (
+						<div
+							id={`panel-${section.id}`}
+							class="panel"
+							role="region"
+							aria-label={section.label}
+							hidden
+						>
+							<ul class="items">
+								{section.items.map((item) => {
+									const inner = (
+										<>
+											{item.role && <span class="item-role">{item.role}</span>}
+											<span class="item-name">{item.name}</span>
+											{item.meta && <span class="item-meta">{item.meta}</span>}
+										</>
+									);
+									return (
+										<li>
+											{item.href ? (
+												<a class="item-link" href={item.href} target="_blank" rel="noopener noreferrer">{inner}</a>
+											) : (
+												<span class="item-link is-static">{inner}</span>
+											)}
+										</li>
+									);
+								})}
+							</ul>
+						</div>
+					))}
+				</div>
+
+				<nav class="links" aria-label="contact">
 					<a href="mailto:joskoo@stanford.edu">email</a>
 					<span aria-hidden="true">·</span>
 					<a href="https://x.com/joshuaykoo" target="_blank" rel="noopener noreferrer">x</a>
@@ -45,6 +152,45 @@ const year = new Date().getFullYear();
 				<span>&copy; {year} joshua koo</span>
 			</footer>
 		</main>
+
+		<script is:inline>
+			(function () {
+				const toggles = document.querySelectorAll('.section-toggle');
+				const panels = document.querySelectorAll('.panel');
+
+				function closeAll() {
+					toggles.forEach((t) => {
+						t.setAttribute('aria-expanded', 'false');
+						t.classList.remove('is-active');
+					});
+					panels.forEach((p) => {
+						p.classList.remove('is-open');
+						p.setAttribute('hidden', '');
+					});
+				}
+
+				toggles.forEach((toggle) => {
+					toggle.addEventListener('click', () => {
+						const id = toggle.getAttribute('data-target');
+						const panel = document.getElementById('panel-' + id);
+						const isOpen = toggle.getAttribute('aria-expanded') === 'true';
+						closeAll();
+						if (!isOpen && panel) {
+							toggle.setAttribute('aria-expanded', 'true');
+							toggle.classList.add('is-active');
+							panel.removeAttribute('hidden');
+							// Force reflow so the transition runs.
+							void panel.offsetWidth;
+							panel.classList.add('is-open');
+						}
+					});
+				});
+
+				document.addEventListener('keydown', (e) => {
+					if (e.key === 'Escape') closeAll();
+				});
+			})();
+		</script>
 	</body>
 </html>
 
@@ -67,14 +213,12 @@ const year = new Date().getFullYear();
 		}
 	}
 
-	* {
-		box-sizing: border-box;
-	}
+	* { box-sizing: border-box; }
 
 	html, body {
 		margin: 0;
 		padding: 0;
-		height: 100%;
+		min-height: 100%;
 	}
 
 	body {
@@ -95,7 +239,8 @@ const year = new Date().getFullYear();
 		flex-direction: column;
 		justify-content: center;
 		align-items: center;
-		padding: clamp(1.25rem, 4vw, 2.5rem);
+		padding: clamp(1.5rem, 4vw, 2.5rem) clamp(1.25rem, 4vw, 2.5rem);
+		padding-bottom: clamp(3.5rem, 8vh, 5rem);
 		position: relative;
 	}
 
@@ -105,11 +250,8 @@ const year = new Date().getFullYear();
 		align-items: center;
 		gap: clamp(1rem, 3vh, 1.75rem);
 		text-align: center;
-		max-width: 36ch;
-	}
-
-	.brand {
-		text-align: center;
+		width: 100%;
+		max-width: 42rem;
 	}
 
 	.brand-mark {
@@ -127,6 +269,132 @@ const year = new Date().getFullYear();
 		font-size: clamp(0.95rem, 1.4vw, 1.05rem);
 		color: var(--ink);
 		letter-spacing: 0.01em;
+		max-width: 32ch;
+	}
+
+	.sections {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		align-items: center;
+		gap: clamp(0.4rem, 1.5vw, 0.75rem);
+		font-size: clamp(0.95rem, 1.3vw, 1rem);
+		color: var(--muted);
+	}
+
+	.section-toggle {
+		appearance: none;
+		background: none;
+		border: 0;
+		font: inherit;
+		color: var(--ink);
+		cursor: pointer;
+		padding: 0.4rem 0.25rem;
+		min-height: 44px;
+		line-height: 1;
+		display: inline-flex;
+		align-items: center;
+		border-bottom: 1px solid transparent;
+		transition: border-color 160ms ease, color 160ms ease, opacity 160ms ease;
+	}
+
+	.section-toggle:hover,
+	.section-toggle:focus-visible {
+		border-bottom-color: var(--ink);
+		outline: none;
+	}
+
+	.section-toggle.is-active {
+		border-bottom-color: var(--ink);
+		font-weight: 500;
+	}
+
+	.dot {
+		color: var(--muted);
+		user-select: none;
+	}
+
+	.panels {
+		width: 100%;
+		display: flex;
+		justify-content: center;
+	}
+
+	.panel {
+		width: 100%;
+		max-width: 28rem;
+		opacity: 0;
+		transform: translateY(-2px);
+		transition: opacity 200ms ease, transform 200ms ease;
+	}
+
+	.panel.is-open {
+		opacity: 1;
+		transform: translateY(0);
+	}
+
+	.items {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0;
+	}
+
+	.items li {
+		border-top: 1px solid var(--rule);
+	}
+
+	.items li:last-child {
+		border-bottom: 1px solid var(--rule);
+	}
+
+	.item-link {
+		display: grid;
+		grid-template-columns: minmax(7rem, 9rem) 1fr auto;
+		align-items: baseline;
+		gap: 0.75rem;
+		padding: 0.65rem 0.25rem;
+		text-decoration: none;
+		color: var(--ink);
+		text-align: left;
+		min-height: 44px;
+		transition: background-color 160ms ease;
+	}
+
+	.item-link:hover,
+	.item-link:focus-visible {
+		background: var(--rule);
+		outline: none;
+	}
+
+	.item-link.is-static {
+		cursor: default;
+	}
+
+	.item-link.is-static:hover {
+		background: transparent;
+	}
+
+	.item-role {
+		color: var(--muted);
+		font-size: 0.85rem;
+		text-transform: lowercase;
+		letter-spacing: 0.02em;
+		white-space: nowrap;
+	}
+
+	.item-name {
+		color: var(--ink);
+		font-weight: 400;
+	}
+
+	.item-meta {
+		color: var(--muted);
+		font-size: 0.8rem;
+		white-space: nowrap;
+		justify-self: end;
 	}
 
 	.links {
@@ -143,7 +411,7 @@ const year = new Date().getFullYear();
 		color: var(--ink);
 		text-decoration: none;
 		border-bottom: 1px solid transparent;
-		padding-bottom: 1px;
+		padding: 0.25rem 0;
 		transition: border-color 160ms ease, color 160ms ease;
 	}
 
@@ -160,7 +428,7 @@ const year = new Date().getFullYear();
 
 	.footer {
 		position: absolute;
-		bottom: clamp(1.25rem, 3vh, 2rem);
+		bottom: clamp(1rem, 3vh, 1.5rem);
 		left: 50%;
 		transform: translateX(-50%);
 		font-size: 0.75rem;
@@ -174,13 +442,29 @@ const year = new Date().getFullYear();
 		color: var(--bg);
 	}
 
-	@media (max-width: 480px) {
-		.stack {
-			max-width: 28ch;
+	@media (max-width: 560px) {
+		.item-link {
+			grid-template-columns: 1fr auto;
+			grid-template-areas:
+				"role meta"
+				"name name";
+			row-gap: 0.15rem;
+			padding: 0.7rem 0.25rem;
+		}
+
+		.item-role { grid-area: role; font-size: 0.75rem; }
+		.item-meta { grid-area: meta; font-size: 0.75rem; }
+		.item-name { grid-area: name; font-size: 0.95rem; }
+	}
+
+	@media (max-width: 380px) {
+		.sections {
+			gap: 0.3rem;
+			font-size: 0.92rem;
 		}
 
 		.links {
-			gap: 0.5rem;
+			gap: 0.55rem;
 			font-size: 0.9rem;
 		}
 	}
