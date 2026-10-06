@@ -164,3 +164,7 @@
 .g-sudoku .g-sudoku-pad button.is-done {
   opacity: 0.28;
 }
+
+@media (pointer: coarse) {
+  .g-sudoku .g-sudoku-levels button { min-height: 40px; }
+}

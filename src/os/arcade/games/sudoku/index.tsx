@@ -58,7 +58,7 @@ function Play() {
     <>
       <div className="g-sudoku-levels" role="radiogroup" aria-label="Level">
         {LEVELS.map((l) => (
-          <button key={l} type="button" role="radio" aria-checked={l === level} className={l === level ? 'is-on' : ''} onMouseDown={keepFocus} onClick={() => pick(l)}>
+          <button key={l} type="button" role="radio" aria-checked={l === level} className={l === level ? 'is-on' : ''} onPointerDown={keepFocus} onClick={() => pick(l)}>
             {l}
           </button>
         ))}
@@ -277,6 +277,10 @@ function Round({ level }: { level: Level }) {
     bump();
   };
 
+  useEffect(() => {
+    if (shell.status !== 'playing') s.lastNow = 0;
+  }, [shell.status, s]);
+
   useGameLoop(
     (dt) => {
       if (!ready) return;
@@ -461,13 +465,13 @@ function Round({ level }: { level: Level }) {
             {fmtTime(secs)}
           </span>
           <div className="g-sudoku-tools">
-            <button type="button" onMouseDown={keepFocus} onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (U)">
+            <button type="button" onPointerDown={keepFocus} onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (U)">
               <Icon d={icons.undo} />
             </button>
-            <button type="button" onMouseDown={keepFocus} onClick={erase} aria-label="Erase" title="Erase (Backspace)">
+            <button type="button" onPointerDown={keepFocus} onClick={erase} aria-label="Erase" title="Erase (Backspace)">
               <Icon d={icons.erase} />
             </button>
-            <button type="button" onMouseDown={keepFocus} onClick={toggleNotes} className={notesMode ? 'is-on' : ''} aria-pressed={notesMode} aria-label="Notes" title="Notes (N)">
+            <button type="button" onPointerDown={keepFocus} onClick={toggleNotes} className={notesMode ? 'is-on' : ''} aria-pressed={notesMode} aria-label="Notes" title="Notes (N)">
               <Icon d={icons.notes} />
               <span>{notesMode ? 'on' : 'off'}</span>
             </button>
@@ -475,7 +479,7 @@ function Round({ level }: { level: Level }) {
         </div>
         <div className={`g-sudoku-pad ${notesMode ? 'is-notes' : ''}`}>
           {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => (
-            <button key={d} type="button" onMouseDown={keepFocus} onClick={() => enter(d)} className={counts[d] >= 9 ? 'is-done' : ''} aria-label={`${notesMode ? 'Note' : 'Enter'} ${d}`}>
+            <button key={d} type="button" onPointerDown={keepFocus} onClick={() => enter(d)} className={counts[d] >= 9 ? 'is-done' : ''} aria-label={`${notesMode ? 'Note' : 'Enter'} ${d}`}>
               {d}
             </button>
           ))}

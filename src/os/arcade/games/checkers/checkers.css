@@ -311,3 +311,7 @@
 .g-checkers .g-checkers-go:active {
   transform: scale(0.97);
 }
+
+@media (pointer: coarse) {
+  .g-checkers .g-checkers-seg button { min-height: 40px; }
+}

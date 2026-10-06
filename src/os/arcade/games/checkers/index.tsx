@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, sfx, useCanvas, useKeys, useShell } from '../../kit';
+import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { BLACK, RED, bestMove, colOf, colorOf, count, isKing, movesFrom, newGame, play, rowOf, sq, type Board, type Color, type Game as CheckersGame, type Level, type Move } from './checkers.ts';
 import { meta } from './meta';
@@ -13,6 +13,31 @@ const HUMAN: Color = RED;
 const STEP_MS = 190;
 const MIN_THINK_MS = 420;
 const NAMES: Record<Color, string> = { [RED]: 'red', [BLACK]: 'black' };
+type GameTimer = { remaining: number; fn: () => void };
+type PendingAI = { game: CheckersGame; id: number; started: number; move: Move | null; ready: boolean; scheduled: boolean; cleanup?: () => void };
+
+function useGameTimers() {
+  const timers = useRef<GameTimer[]>([]);
+  const later = useCallback((fn: () => void, ms: number) => {
+    timers.current.push({ remaining: Math.max(0, ms) / 1000, fn });
+  }, []);
+  useGameLoop((dt) => {
+    const due: GameTimer[] = [];
+    timers.current = timers.current.filter((timer) => {
+      timer.remaining -= dt;
+      if (timer.remaining <= 0) {
+        due.push(timer);
+        return false;
+      }
+      return true;
+    });
+    due.forEach((timer) => timer.fn());
+  });
+  useEffect(() => () => {
+    timers.current = [];
+  }, []);
+  return later;
+}
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
@@ -66,22 +91,14 @@ function Checkers() {
   const cfg = useRef({ mode: prefs.mode, level: prefs.level });
   const worker = useRef<Worker | null>(null);
   const reqId = useRef(0);
-  const timers = useRef(new Set<number>());
-
-  const later = useCallback((fn: () => void, ms: number) => {
-    const t = window.setTimeout(() => {
-      timers.current.delete(t);
-      fn();
-    }, ms);
-    timers.current.add(t);
-  }, []);
-  useEffect(
-    () => () => {
-      timers.current.forEach((t) => window.clearTimeout(t));
-      timers.current.clear();
-    },
-    [],
-  );
+  const aiTask = useRef<PendingAI | null>(null);
+  const [aiRevision, setAiRevision] = useState(0);
+  const statusRef = useRef(shell.status);
+  statusRef.current = shell.status;
+  const gameRef = useRef(game);
+  gameRef.current = game;
+  const gameOverScheduled = useRef<CheckersGame | null>(null);
+  const later = useGameTimers();
 
   const lastMove = game.history.at(-1);
   const humanTurn = phase === 'play' && game.status === 'playing' && !anim && (cfg.current.mode === '2p' || game.turn === HUMAN);
@@ -153,59 +170,85 @@ function Checkers() {
     }
     worker.current = w;
     return () => {
+      aiTask.current?.cleanup?.();
+      aiTask.current = null;
       w?.terminate();
       worker.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (phase !== 'play' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.turn === HUMAN || anim) return;
-    const id = ++reqId.current;
-    const started = performance.now();
-    setThinking(true);
-    let cancelled = false;
-    const deliver = (m: Move | null) => {
-      if (cancelled || id !== reqId.current) return;
-      later(() => {
-        if (cancelled || id !== reqId.current) return;
-        setThinking(false);
-        const legal = m && game.legal.find((x) => x.from === m.from && x.to === m.to && x.path.join() === m.path.join());
-        if (legal) commit(legal);
-      }, Math.max(0, MIN_THINK_MS - (performance.now() - started)));
-    };
-    const fallback = () => later(() => deliver(bestMove(game.board, game.turn, cfg.current.level)), 30);
-    const w = worker.current;
-    if (w) {
-      const onMessage = (e: MessageEvent<AiReply>) => {
-        if (e.data.id !== id) return;
-        w.removeEventListener('message', onMessage);
-        w.removeEventListener('error', onError);
-        deliver(e.data.move);
-      };
-      const onError = () => {
-        w.removeEventListener('message', onMessage);
-        w.removeEventListener('error', onError);
-        fallback();
-      };
-      w.addEventListener('message', onMessage);
-      w.addEventListener('error', onError);
-      const req: AiRequest = { id, board: Array.from(game.board), side: game.turn, level: cfg.current.level };
-      w.postMessage(req);
-      return () => {
-        cancelled = true;
-        w.removeEventListener('message', onMessage);
-        w.removeEventListener('error', onError);
-      };
+    let task = aiTask.current;
+    if (task && (task.game !== game || phase !== 'play' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.turn === HUMAN || anim)) {
+      task.cleanup?.();
+      aiTask.current = null;
+      task = null;
     }
-    fallback();
-    return () => {
-      cancelled = true;
-    };
-  }, [game, phase, anim, commit, later]);
+    if (shell.status !== 'playing' || phase !== 'play' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.turn === HUMAN || anim) return;
+
+    if (!task) {
+      const pending: PendingAI = { game, id: ++reqId.current, started: performance.now(), move: null, ready: false, scheduled: false };
+      task = pending;
+      aiTask.current = pending;
+      setThinking(true);
+      const receive = (move: Move | null) => {
+        if (aiTask.current !== pending || pending.ready) return;
+        pending.move = move;
+        pending.ready = true;
+        setAiRevision((revision) => revision + 1);
+      };
+      const fallback = () => {
+        later(() => {
+          if (aiTask.current === pending) receive(bestMove(game.board, game.turn, cfg.current.level));
+        }, 30);
+      };
+      const w = worker.current;
+      if (w) {
+        const remove = () => {
+          w.removeEventListener('message', onMessage);
+          w.removeEventListener('error', onError);
+          pending.cleanup = undefined;
+        };
+        const onMessage = (e: MessageEvent<AiReply>) => {
+          if (e.data.id !== pending.id || aiTask.current !== pending) return;
+          remove();
+          receive(e.data.move);
+        };
+        const onError = () => {
+          remove();
+          fallback();
+        };
+        pending.cleanup = remove;
+        w.addEventListener('message', onMessage);
+        w.addEventListener('error', onError);
+        const req: AiRequest = { id: pending.id, board: Array.from(game.board), side: game.turn, level: cfg.current.level };
+        w.postMessage(req);
+      } else fallback();
+    }
+
+    if (task?.ready && !task.scheduled) {
+      task.scheduled = true;
+      const pending = task;
+      later(() => {
+        if (aiTask.current !== pending || statusRef.current !== 'playing' || gameRef.current !== pending.game) return;
+        pending.cleanup?.();
+        aiTask.current = null;
+        setThinking(false);
+        const legal = pending.move && game.legal.find((x) => x.from === pending.move!.from && x.to === pending.move!.to && x.path.join() === pending.move!.path.join());
+        if (legal) commit(legal);
+      }, Math.max(0, MIN_THINK_MS - (performance.now() - task.started)));
+    }
+  }, [game, phase, anim, commit, later, shell.status, aiRevision]);
 
   useEffect(() => {
-    if (phase !== 'play' || game.status === 'playing') return;
+    if (phase !== 'play' || game.status === 'playing') {
+      gameOverScheduled.current = null;
+      return;
+    }
+    if (shell.status !== 'playing' || gameOverScheduled.current === game) return;
+    gameOverScheduled.current = game;
     later(() => {
+      if (statusRef.current !== 'playing' || gameRef.current !== game) return;
       const moves = Math.ceil(game.history.length / 2);
       const { mode } = cfg.current;
       if (game.status === 'draw') shell.gameOver(undefined, { title: 'draw', detail: `forty moves without progress, after ${moves} moves.` });
@@ -217,7 +260,7 @@ function Checkers() {
         shell.gameOver(mode === 'cpu' && winner === HUMAN ? moves : undefined, { title, detail });
       }
     }, 500);
-  }, [game, phase, shell, later]);
+  }, [game, phase, shell.status, shell.gameOver, later]);
 
   // Geometry: 44px status row on top, counts row below the board.
   const TOP = 44;

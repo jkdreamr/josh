@@ -130,3 +130,7 @@
 .g-lightcycles .g-lightcycles-go:active {
   transform: scale(0.97);
 }
+
+@media (pointer: coarse) {
+  .g-lightcycles .g-lightcycles-seg button { min-height: 40px; }
+}

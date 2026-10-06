@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { COLS, ROWS, bestCol, colOf, createBoard, drop, idx, isFull, rowOf, winLine, type Board, type Level, type Player } from './connect4.ts';
@@ -58,7 +58,7 @@ type State = {
   pop: number[]; // per cell landing bounce timer
   particles: Particle[];
   thinking: boolean;
-  thinkUntil: number;
+  thinkRemaining: number;
   moves: number;
   over: boolean;
 };
@@ -74,21 +74,7 @@ function ConnectFour() {
   const st = useRef<State | null>(null);
   const sizeRef = useRef(size);
   sizeRef.current = size;
-  const timers = useRef(new Set<number>());
-  const later = (fn: () => void, ms: number) => {
-    const t = window.setTimeout(() => {
-      timers.current.delete(t);
-      fn();
-    }, ms);
-    timers.current.add(t);
-  };
-  useEffect(
-    () => () => {
-      timers.current.forEach((t) => window.clearTimeout(t));
-      timers.current.clear();
-    },
-    [],
-  );
+  const gameOverDelay = useRef<{ remaining: number; finish: () => void } | null>(null);
 
   const isCpu = (p: Player) => cfg.current.mode === 'cpu' && p !== ME;
   const humanTurn = () => {
@@ -156,24 +142,30 @@ function ConnectFour() {
       const youWon = cpuMode && f.player === ME;
       sfx.play(cpuMode && !youWon ? 'lose' : 'win');
       const discs = Math.ceil(s.moves / 2);
-      later(() => {
-        const title = cpuMode ? (youWon ? 'you win' : 'computer wins') : `${NAMES[f.player]} wins`;
-        shell.gameOver(youWon ? discs : undefined, { title, detail: `four in a row after ${discs} ${discs === 1 ? 'disc' : 'discs'}.` });
-      }, 1400);
+      gameOverDelay.current = {
+        remaining: 1.4,
+        finish: () => {
+          const title = cpuMode ? (youWon ? 'you win' : 'computer wins') : `${NAMES[f.player]} wins`;
+          shell.gameOver(youWon ? discs : undefined, { title, detail: `four in a row after ${discs} ${discs === 1 ? 'disc' : 'discs'}.` });
+        },
+      };
       return;
     }
     if (isFull(s.board)) {
       s.over = true;
       s.winner = 0;
       sfx.play('select', 0.7);
-      later(() => shell.gameOver(undefined, { title: 'draw', detail: 'the board is full.' }), 900);
+      gameOverDelay.current = {
+        remaining: 0.9,
+        finish: () => shell.gameOver(undefined, { title: 'draw', detail: 'the board is full.' }),
+      };
       return;
     }
     s.turn = s.turn === 1 ? 2 : 1;
     s.cursor = f.col;
     if (isCpu(s.turn)) {
       s.thinking = true;
-      s.thinkUntil = performance.now() + 380 + Math.random() * 300;
+      s.thinkRemaining = 0.38 + Math.random() * 0.3;
     }
     setStatus(label(s));
   };
@@ -194,11 +186,12 @@ function ConnectFour() {
       pop: new Array(COLS * ROWS).fill(0),
       particles: [],
       thinking: isCpu(turn),
-      thinkUntil: performance.now() + 600,
+      thinkRemaining: 0.6,
       moves: 0,
       over: false,
     };
     st.current = s;
+    gameOverDelay.current = null;
     setStatus(label(s));
     sfx.play('select');
     setPhase('play');
@@ -251,9 +244,20 @@ function ConnectFour() {
         f.y = target;
         land(s, f);
       }
-    } else if (!s.over && isCpu(s.turn) && performance.now() >= s.thinkUntil) {
-      const c = bestCol(s.board, s.turn, cfg.current.level);
-      if (c >= 0) place(c);
+    } else if (!s.over && isCpu(s.turn)) {
+      s.thinkRemaining -= dt;
+      if (s.thinkRemaining <= 0) {
+        const c = bestCol(s.board, s.turn, cfg.current.level);
+        if (c >= 0) place(c);
+      }
+    }
+    const overDelay = gameOverDelay.current;
+    if (overDelay) {
+      overDelay.remaining -= dt;
+      if (overDelay.remaining <= 0) {
+        gameOverDelay.current = null;
+        overDelay.finish();
+      }
     }
     for (let i = 0; i < s.pop.length; i++) if (s.pop[i] > 0) s.pop[i] = Math.max(0, s.pop[i] - dt * 3.2);
     if (s.win) s.winT += dt;

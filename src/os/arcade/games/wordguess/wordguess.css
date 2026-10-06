@@ -171,3 +171,8 @@
   background: #30d158;
   box-shadow: 0 4px 14px color-mix(in srgb, #30d158 40%, transparent);
 }
+
+@media (pointer: coarse) {
+  .g-wordguess .g-wordguess-modes button,
+  .g-wordguess .g-wordguess-cta { min-height: 40px; }
+}

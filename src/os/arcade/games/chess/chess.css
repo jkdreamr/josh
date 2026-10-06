@@ -379,3 +379,8 @@
 .g-chess .g-chess-go:active {
   transform: scale(0.97);
 }
+
+@media (pointer: coarse) {
+  .g-chess .g-chess-seg button { min-height: 40px; }
+  .g-chess .g-chess-flip { width: 40px; height: 40px; }
+}

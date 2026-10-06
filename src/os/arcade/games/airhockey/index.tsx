@@ -212,6 +212,10 @@ function Play() {
   cfg.current = { mode, difficulty, menu };
 
   useEffect(() => {
+    if (shell.status !== 'playing') lastTick.current = 0;
+  }, [shell.status]);
+
+  useEffect(() => {
     const host = ref.current;
     if (!THREE || !host) return;
     const w = build(THREE, host);

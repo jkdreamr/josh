@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, sfx, useCanvas, useKeys, useShell } from '../../kit';
+import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { bestMove, type Level } from './ai.ts';
 import {
@@ -18,6 +18,31 @@ const prefs: { mode: Mode; level: Level; color: Color } = { mode: 'cpu', level: 
 const MIN_THINK_MS = 450;
 const ENDINGS = { checkmate: 'checkmate', stalemate: 'stalemate', repetition: 'draw by repetition', fifty: 'draw, fifty-move rule', insufficient: 'draw, insufficient material' } as const;
 const DRAWS = { stalemate: 'stalemate', repetition: 'threefold repetition', fifty: 'the fifty-move rule', insufficient: 'insufficient material' } as const;
+type GameTimer = { remaining: number; fn: () => void };
+type PendingAI = { game: ChessGame; id: number; started: number; from: number; to: number; promo: number; ready: boolean; scheduled: boolean; cleanup?: () => void };
+
+function useGameTimers() {
+  const timers = useRef<GameTimer[]>([]);
+  const later = useCallback((fn: () => void, ms: number) => {
+    timers.current.push({ remaining: Math.max(0, ms) / 1000, fn });
+  }, []);
+  useGameLoop((dt) => {
+    const due: GameTimer[] = [];
+    timers.current = timers.current.filter((timer) => {
+      timer.remaining -= dt;
+      if (timer.remaining <= 0) {
+        due.push(timer);
+        return false;
+      }
+      return true;
+    });
+    due.forEach((timer) => timer.fn());
+  });
+  useEffect(() => () => {
+    timers.current = [];
+  }, []);
+  return later;
+}
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
@@ -94,22 +119,14 @@ function Chess() {
   const cfg = useRef({ mode: prefs.mode, level: prefs.level, color: prefs.color });
   const worker = useRef<Worker | null>(null);
   const reqId = useRef(0);
-  const timers = useRef(new Set<number>());
-
-  const later = useCallback((fn: () => void, ms: number) => {
-    const t = window.setTimeout(() => {
-      timers.current.delete(t);
-      fn();
-    }, ms);
-    timers.current.add(t);
-  }, []);
-  useEffect(
-    () => () => {
-      timers.current.forEach((t) => window.clearTimeout(t));
-      timers.current.clear();
-    },
-    [],
-  );
+  const aiTask = useRef<PendingAI | null>(null);
+  const [aiRevision, setAiRevision] = useState(0);
+  const statusRef = useRef(shell.status);
+  statusRef.current = shell.status;
+  const gameRef = useRef(game);
+  gameRef.current = game;
+  const gameOverScheduled = useRef<ChessGame | null>(null);
+  const later = useGameTimers();
 
   const humanTurn = phase === 'play' && game.status === 'playing' && (cfg.current.mode === '2p' || game.pos.turn === cfg.current.color);
   const lastMove = game.history.at(-1)?.move;
@@ -118,24 +135,22 @@ function Chess() {
 
   const commit = useCallback(
     (m: number) => {
-      setGame((g) => {
-        if (!g.legal.includes(m)) return g;
-        const next = play(g, m);
-        setIds((ids) => nextIds(ids, g.pos, m));
-        const cap = moveCaptured(m);
-        if (next.status === 'checkmate') sfx.play(cfg.current.mode === 'cpu' && next.pos.turn === cfg.current.color ? 'lose' : 'win');
-        else if (next.status !== 'playing') sfx.play('select', 0.7);
-        else if (inCheck(next.pos)) sfx.play('blip', 1.3);
-        else if (movePromo(m)) sfx.play('coin');
-        else if (moveFlags(m) & FLAG_CASTLE) sfx.play('select');
-        else if (cap) sfx.play('hit', 1.6);
-        else sfx.play('tick', 0.7);
-        return next;
-      });
+      if (!game.legal.includes(m)) return;
+      const next = play(game, m);
+      setGame(next);
+      setIds((current) => nextIds(current, game.pos, m));
+      const cap = moveCaptured(m);
+      if (next.status === 'checkmate') sfx.play(cfg.current.mode === 'cpu' && next.pos.turn === cfg.current.color ? 'lose' : 'win');
+      else if (next.status !== 'playing') sfx.play('select', 0.7);
+      else if (inCheck(next.pos)) sfx.play('blip', 1.3);
+      else if (movePromo(m)) sfx.play('coin');
+      else if (moveFlags(m) & FLAG_CASTLE) sfx.play('select');
+      else if (cap) sfx.play('hit', 1.6);
+      else sfx.play('tick', 0.7);
       setSel(null);
       setPromo(null);
     },
-    [],
+    [game],
   );
 
   const tryMove = useCallback(
@@ -177,65 +192,90 @@ function Chess() {
     }
     worker.current = w;
     return () => {
+      aiTask.current?.cleanup?.();
+      aiTask.current = null;
       w?.terminate();
       worker.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (phase !== 'play' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.pos.turn === cfg.current.color) return;
-    const id = ++reqId.current;
-    const started = performance.now();
-    setThinking(true);
-    let cancelled = false;
-    const deliver = (from: number, to: number, promoPiece: number) => {
-      if (cancelled || id !== reqId.current) return;
-      const wait = Math.max(0, MIN_THINK_MS - (performance.now() - started));
-      later(() => {
-        if (cancelled || id !== reqId.current) return;
-        setThinking(false);
-        const m = findMove(game.legal, from, to, promoPiece);
-        if (m !== undefined) commit(m);
-      }, wait);
-    };
-    const fallback = () =>
-      later(() => {
-        const r = bestMove(game.pos, cfg.current.level, game.keys);
-        if (r) deliver(moveFrom(r.move), moveTo(r.move), movePromo(r.move));
-      }, 30);
-    const w = worker.current;
-    if (w) {
-      const onMessage = (e: MessageEvent<AiReply>) => {
-        if (e.data.id !== id) return;
-        w.removeEventListener('message', onMessage);
-        w.removeEventListener('error', onError);
-        if (e.data.from >= 0) deliver(e.data.from, e.data.to, e.data.promo);
-      };
-      const onError = () => {
-        w.removeEventListener('message', onMessage);
-        w.removeEventListener('error', onError);
-        fallback();
-      };
-      w.addEventListener('message', onMessage);
-      w.addEventListener('error', onError);
-      const req: AiRequest = { id, fen: game.history.at(-1)?.fen ?? toFenOf(game), keys: game.keys, level: cfg.current.level };
-      w.postMessage(req);
-      return () => {
-        cancelled = true;
-        w.removeEventListener('message', onMessage);
-        w.removeEventListener('error', onError);
-      };
+    let task = aiTask.current;
+    if (task && (task.game !== game || phase !== 'play' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.pos.turn === cfg.current.color)) {
+      task.cleanup?.();
+      aiTask.current = null;
+      task = null;
     }
-    fallback();
-    return () => {
-      cancelled = true;
-    };
-  }, [game, phase, commit, later]);
+    if (shell.status !== 'playing' || phase !== 'play' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.pos.turn === cfg.current.color) return;
 
-  // Game over -> shell overlay, after the last move has settled.
+    if (!task) {
+      const pending: PendingAI = { game, id: ++reqId.current, started: performance.now(), from: -1, to: -1, promo: 0, ready: false, scheduled: false };
+      task = pending;
+      aiTask.current = pending;
+      setThinking(true);
+      const receive = (from: number, to: number, promo: number) => {
+        if (aiTask.current !== pending || pending.ready) return;
+        pending.from = from;
+        pending.to = to;
+        pending.promo = promo;
+        pending.ready = true;
+        setAiRevision((revision) => revision + 1);
+      };
+      const fallback = () => {
+        later(() => {
+          if (aiTask.current !== pending) return;
+          const result = bestMove(game.pos, cfg.current.level, game.keys);
+          if (result) receive(moveFrom(result.move), moveTo(result.move), movePromo(result.move));
+          else receive(-1, -1, 0);
+        }, 30);
+      };
+      const w = worker.current;
+      if (w) {
+        const remove = () => {
+          w.removeEventListener('message', onMessage);
+          w.removeEventListener('error', onError);
+          pending.cleanup = undefined;
+        };
+        const onMessage = (e: MessageEvent<AiReply>) => {
+          if (e.data.id !== pending.id || aiTask.current !== pending) return;
+          remove();
+          receive(e.data.from, e.data.to, e.data.promo);
+        };
+        const onError = () => {
+          remove();
+          fallback();
+        };
+        pending.cleanup = remove;
+        w.addEventListener('message', onMessage);
+        w.addEventListener('error', onError);
+        const req: AiRequest = { id: pending.id, fen: game.history.at(-1)?.fen ?? toFenOf(game), keys: game.keys, level: cfg.current.level };
+        w.postMessage(req);
+      } else fallback();
+    }
+
+    if (task?.ready && !task.scheduled) {
+      task.scheduled = true;
+      const pending = task;
+      later(() => {
+        if (aiTask.current !== pending || statusRef.current !== 'playing' || gameRef.current !== pending.game) return;
+        pending.cleanup?.();
+        aiTask.current = null;
+        setThinking(false);
+        const m = findMove(game.legal, pending.from, pending.to, pending.promo);
+        if (m !== undefined) commit(m);
+      }, Math.max(0, MIN_THINK_MS - (performance.now() - task.started)));
+    }
+  }, [game, phase, commit, later, shell.status, aiRevision]);
+
   useEffect(() => {
-    if (phase !== 'play' || game.status === 'playing') return;
+    if (phase !== 'play' || game.status === 'playing') {
+      gameOverScheduled.current = null;
+      return;
+    }
+    if (shell.status !== 'playing' || gameOverScheduled.current === game) return;
+    gameOverScheduled.current = game;
     later(() => {
+      if (statusRef.current !== 'playing' || gameRef.current !== game) return;
       const { mode, color } = cfg.current;
       const winner = game.status === 'checkmate' ? (game.pos.turn === WHITE ? BLACK : WHITE) : null;
       const moves = Math.ceil(game.history.length / 2);
@@ -248,7 +288,7 @@ function Chess() {
         shell.gameOver(undefined, { title: 'draw', detail: `by ${why} after ${moves} ${moves === 1 ? 'move' : 'moves'}.` });
       }
     }, 650);
-  }, [game, phase, shell, later]);
+  }, [game, phase, shell.status, shell.gameOver, later]);
 
   useEffect(() => {
     const el = listRef.current;

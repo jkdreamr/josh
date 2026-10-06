@@ -75,3 +75,7 @@
 .g-pong .g-pong-go:active {
   transform: scale(0.97);
 }
+
+@media (pointer: coarse) {
+  .g-pong .g-pong-seg button { min-height: 40px; }
+}

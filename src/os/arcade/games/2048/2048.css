@@ -65,3 +65,7 @@
   .g-2048 .g-2048-hud { top: 58px; width: calc(100% - 24px); }
   .g-2048 .g-2048-stat { min-width: 60px; padding-inline: 7px; }
 }
+
+@media (pointer: coarse) {
+  .g-2048 .g-2048-undo { min-height: 40px; }
+}

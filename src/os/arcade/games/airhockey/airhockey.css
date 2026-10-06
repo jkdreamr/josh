@@ -156,3 +156,7 @@
     top: 84px;
   }
 }
+
+@media (pointer: coarse) {
+  .g-airhockey .g-airhockey-opt { min-height: 40px; }
+}

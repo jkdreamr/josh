@@ -112,3 +112,7 @@
 .g-connect4 .g-connect4-go:active {
   transform: scale(0.97);
 }
+
+@media (pointer: coarse) {
+  .g-connect4 .g-connect4-seg button { min-height: 40px; }
+}

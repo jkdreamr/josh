@@ -96,7 +96,7 @@ function Play() {
     <>
       <div className="g-wordguess-modes" role="radiogroup" aria-label="Mode">
         {(['daily', 'practice'] as Mode[]).map((m) => (
-          <button key={m} type="button" role="radio" aria-checked={m === mode} className={m === mode ? 'is-on' : ''} onMouseDown={keepFocus} onClick={() => pick(m)}>
+          <button key={m} type="button" role="radio" aria-checked={m === mode} className={m === mode ? 'is-on' : ''} onPointerDown={keepFocus} onClick={() => pick(m)}>
             {m}
           </button>
         ))}
@@ -114,6 +114,9 @@ function Round({ mode, onPractice }: { mode: Mode; onPractice: () => void }) {
   const [, setVersion] = useState(0);
   const [toast, setToast] = useState<Toast | null>(null);
   const daily = mode === 'daily';
+  const statusRef = useRef(shell.status);
+  statusRef.current = shell.status;
+  const pendingGuess = useRef<{ word: string; ok: boolean } | null>(null);
 
   const s = useRef<{
     today: string;
@@ -204,6 +207,35 @@ function Round({ mode, onPractice }: { mode: Mode; onPractice: () => void }) {
     say(text);
   };
 
+  const applySubmit = (word: string, ok: boolean) => {
+    if (!st.alive) return;
+    if (st.cur !== word) {
+      st.busy = false;
+      return;
+    }
+    st.busy = false;
+    if (!ok) return reject('not in word list');
+    st.busy = true;
+    const marks = score(word, st.answer);
+    st.rows.push(word);
+    st.marks.push(marks);
+    st.cur = '';
+    st.revealRow = st.rows.length - 1;
+    st.revealT0 = st.t;
+    if (daily) write(DAILY_KEY, { date: st.today, guesses: st.rows } satisfies Daily);
+    marks.forEach((m, i) =>
+      later(i * STAGGER + FLIP / 2, () => sfx.tone({ freq: m === 'correct' ? 880 : m === 'present' ? 660 : 330, dur: 0.07, type: 'triangle', vol: 0.12 })),
+    );
+    later(ROW_TIME, () => {
+      st.shown = st.rows.length;
+      st.busy = false;
+      const won = word === st.answer;
+      if (won || st.rows.length >= TRIES) finish(won);
+      bump();
+    });
+    bump();
+  };
+
   const finish = (won: boolean) => {
     st.finished = true;
     const tries = st.rows.length;
@@ -244,35 +276,23 @@ function Round({ mode, onPractice }: { mode: Mode; onPractice: () => void }) {
       }
     }
     if (!st.alive) return;
-    st.busy = false;
-    if (st.cur !== word) return;
-    if (!ok) return reject('not in word list');
-    st.busy = true;
-    const marks = score(word, st.answer);
-    st.rows.push(word);
-    st.marks.push(marks);
-    st.cur = '';
-    st.revealRow = st.rows.length - 1;
-    st.revealT0 = st.t;
-    if (daily) write(DAILY_KEY, { date: st.today, guesses: st.rows } satisfies Daily);
-    marks.forEach((m, i) =>
-      later(i * STAGGER + FLIP / 2, () => sfx.tone({ freq: m === 'correct' ? 880 : m === 'present' ? 660 : 330, dur: 0.07, type: 'triangle', vol: 0.12 })),
-    );
-    later(ROW_TIME, () => {
-      st.shown = st.rows.length;
-      st.busy = false;
-      const won = word === st.answer;
-      if (won || st.rows.length >= TRIES) finish(won);
-      bump();
-    });
-    bump();
+    if (statusRef.current !== 'playing') {
+      pendingGuess.current = { word, ok };
+      return;
+    }
+    applySubmit(word, ok);
   };
+
+  useEffect(() => {
+    const pending = pendingGuess.current;
+    if (statusRef.current !== 'playing' || !pending || !st.alive) return;
+    pendingGuess.current = null;
+    applySubmit(pending.word, pending.ok);
+  }, [shell.status, st]);
 
   // The shell reserves P for pause; in a word game it has to type a letter instead (Esc still pauses).
   const typeRef = useRef(type);
   typeRef.current = type;
-  const statusRef = useRef(shell.status);
-  statusRef.current = shell.status;
   useEffect(() => {
     const el = shell.root.current;
     if (!el) return;
@@ -378,7 +398,7 @@ function Round({ mode, onPractice }: { mode: Mode; onPractice: () => void }) {
           <span>
             {solvedIn ? `solved in ${solvedIn}/${TRIES}` : `it was ${st.answer}`}. next word in {formatWait(msUntilNextDay())}.
           </span>
-          <button type="button" className="g-wordguess-cta" onMouseDown={keepFocus} onClick={onPractice}>
+          <button type="button" className="g-wordguess-cta" onPointerDown={keepFocus} onClick={onPractice}>
             play practice
           </button>
         </div>
@@ -388,17 +408,17 @@ function Round({ mode, onPractice }: { mode: Mode; onPractice: () => void }) {
             <div key={row} className="g-wordguess-row">
               {[...row].map((k) =>
                 k === '+' ? (
-                  <button key={k} type="button" className="is-wide" onMouseDown={keepFocus} onClick={() => void submit()} aria-label="Enter">
+                  <button key={k} type="button" className="is-wide" onPointerDown={keepFocus} onClick={() => void submit()} aria-label="Enter">
                     enter
                   </button>
                 ) : k === '-' ? (
-                  <button key={k} type="button" className="is-wide" onMouseDown={keepFocus} onClick={back} aria-label="Delete">
+                  <button key={k} type="button" className="is-wide" onPointerDown={keepFocus} onClick={back} aria-label="Delete">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="M9 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6-7zM12 9.5l5 5M17 9.5l-5 5" />
                     </svg>
                   </button>
                 ) : (
-                  <button key={k} type="button" data-state={keyState[k]} onMouseDown={keepFocus} onClick={() => type(k)}>
+                  <button key={k} type="button" data-state={keyState[k]} onPointerDown={keepFocus} onClick={() => type(k)}>
                     {k}
                   </button>
                 ),
