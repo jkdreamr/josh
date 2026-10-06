@@ -15,6 +15,7 @@ export type AppId =
   | 'mail'
   | 'terminal'
   | 'coxbox'
+  | 'baduk'
   | 'photobooth'
   | 'trash'
   | 'about';

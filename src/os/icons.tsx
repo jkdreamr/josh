@@ -29,6 +29,7 @@ export type IconKind =
   | 'mail'
   | 'terminal'
   | 'coxbox'
+  | 'baduk'
   | 'photobooth'
   | 'trash'
   | 'about'
@@ -165,6 +166,14 @@ export function Glyph({ kind }: { kind: IconKind }): ReactNode {
           <circle cx="36" cy="16" r="4" fill="#fff" />
         </svg>
       );
+    case 'baduk':
+      return (
+        <svg viewBox="0 0 48 48" width="74%" height="74%" aria-hidden="true">
+          {[12, 24, 36].map((p) => <g key={p}><path d={`M${p} 8v32M8 ${p}h32`} stroke="#4f351e" strokeWidth="1.2" /></g>)}
+          <circle cx="17" cy="17" r="6.3" fill="#101111" stroke="#555" strokeWidth="1" />
+          <circle cx="31" cy="24" r="6.3" fill="#f5f0e6" stroke="#bcb4a7" strokeWidth="1" />
+        </svg>
+      );
     case 'photobooth':
       return (
         <svg viewBox="0 0 48 48" width="70%" height="70%" aria-hidden="true">
@@ -209,6 +218,7 @@ const tiles: Partial<Record<IconKind, CSSProperties>> = {
   mail: tile('linear-gradient(180deg,#5ab8ff,#1d6ff2)'),
   terminal: tile('linear-gradient(180deg,#3a3a3c,#121214)', { boxShadow: 'inset 0 0 0 1.5px rgba(255,255,255,.18)' }),
   coxbox: tile('linear-gradient(180deg,#d63b45,#8c1515)'),
+  baduk: tile('linear-gradient(145deg,#cfaa70,#8f6338)'),
   photobooth: tile('linear-gradient(180deg,#ff5f6d,#b3152a)'),
   trash: tile('transparent', { boxShadow: 'none' }),
   about: tile('linear-gradient(135deg,#ff9a8b,#a18cd1 50%,#5b8cff)'),

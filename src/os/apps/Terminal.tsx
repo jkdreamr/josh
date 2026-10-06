@@ -14,10 +14,11 @@ const dirMap: Record<string, FolderId> = { school: 'school', work: 'work', proje
 const appNames: Record<string, AppId> = {
   finder: 'finder', chrome: 'chrome', browser: 'chrome', messages: 'messages', notes: 'notes', spotify: 'spotify', soundcloud: 'soundcloud',
   instagram: 'instagram', ig: 'instagram', x: 'x', twitter: 'x', linkedin: 'linkedin', github: 'github', mail: 'mail', email: 'mail',
-  coxbox: 'coxbox', 'cox-box': 'coxbox', rowing: 'coxbox', photobooth: 'photobooth', camera: 'photobooth', trash: 'trash', about: 'about',
+  coxbox: 'coxbox', 'cox-box': 'coxbox', rowing: 'coxbox', baduk: 'baduk', go: 'baduk',
+  photobooth: 'photobooth', camera: 'photobooth', trash: 'trash', about: 'about',
 };
 
-const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'school', 'projects', 'music', 'socials', 'contact', 'neofetch', 'row', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
+const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'school', 'projects', 'music', 'socials', 'contact', 'neofetch', 'row', 'baduk', 'go', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
 
 const ART = String.raw`
        _ _
@@ -81,6 +82,7 @@ export default function Terminal(_: AppProps) {
               ['socials · contact', 'where to find me'],
               ['neofetch', 'system info'],
               ['row', 'play Cox Box'],
+              ['baduk · go', 'play 9x9 Go'],
               ['clear · history · exit', 'the usual'],
             ].map(([a, b]) => (
               <span key={a}>
@@ -189,6 +191,10 @@ export default function Terminal(_: AppProps) {
       case 'row':
         api.open('coxbox');
         return print(<span className="t-dim">attention… row!</span>);
+      case 'baduk':
+      case 'go':
+        api.open('baduk');
+        return print(<span className="t-dim">opening baduk…</span>);
       case 'date':
         return print(<span>{new Date().toString()}</span>);
       case 'echo':
