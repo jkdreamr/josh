@@ -3,6 +3,7 @@
   width: 100%;
   height: 100%;
   min-height: 0;
+  container-type: size;
   flex-direction: column;
   overflow: hidden;
   background: #111a19;
@@ -35,8 +36,8 @@
 .baduk-side footer,
 .baduk-count-panel p,
 .baduk-score-card p {
-  color: #93a09a;
-  font-size: 10px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .baduk-header h1 {
@@ -65,6 +66,7 @@
   min-height: 0;
   flex: 1;
   grid-template-columns: minmax(0, 1fr) 204px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 15px;
   padding: 15px 17px 12px;
 }
@@ -79,6 +81,9 @@
 .baduk-board {
   display: block;
   width: min(100%, calc(100vh - 170px), 520px);
+  width: min(100%, calc(100cqh - 150px), 520px);
+  height: auto;
+  max-width: 100%;
   max-height: 100%;
   overflow: visible;
   touch-action: manipulation;
@@ -95,7 +100,7 @@
 .baduk-coordinate {
   fill: #57422a;
   font-family: ui-sans-serif, system-ui, sans-serif;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   text-anchor: middle;
 }
@@ -203,8 +208,8 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #bec6bd;
-  font-size: 10px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .baduk-captures i {
@@ -275,8 +280,8 @@
 .baduk-score-card > div {
   display: flex;
   justify-content: space-between;
-  color: #c2cbc1;
-  font-size: 10px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .baduk-score-card > div b {
@@ -290,7 +295,7 @@
 
 .baduk-side footer {
   margin-top: auto;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .baduk-touch-hint,
@@ -317,7 +322,7 @@
   .baduk-header p {
     max-width: 100%;
     margin-top: 8px;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .baduk-main {
