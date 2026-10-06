@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { folders, folderById, type Entry, type FolderId } from '../data';
 import { AppIcon } from '../icons';
 import { useOS, type AppProps } from '../types';
@@ -10,6 +10,7 @@ export default function Finder({ args }: AppProps) {
   const os = useOS();
   const [folder, setFolder] = useState<FolderId>(args.folder ?? 'projects');
   const [sel, setSel] = useState<Entry | null>(null);
+  const tapType = useRef('');
 
   useEffect(() => {
     if (args.folder) {
@@ -65,7 +66,14 @@ export default function Finder({ args }: AppProps) {
               <button
                 key={e.name}
                 className={`finder-item ${sel?.name === e.name ? 'is-sel' : ''}`}
-                onClick={() => setSel(e)}
+                onPointerDown={(event) => {
+                  setSel(e);
+                  tapType.current = event.pointerType;
+                }}
+                onClick={(event) => {
+                  if (event.detail === 0) setSel(e);
+                  else if (tapType.current === 'touch') openEntry(e);
+                }}
                 onDoubleClick={() => openEntry(e)}
               >
                 <Favicon url={e.href} name={e.name} size={54} radius={14} />

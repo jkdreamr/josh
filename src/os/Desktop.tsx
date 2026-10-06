@@ -515,22 +515,116 @@ const desktopItems: DesktopItem[] = [
 
 function DesktopIcons() {
   const os = useOSLocal();
-  const [sel, setSel] = useState<string | null>(null);
+  const [sel, setSel] = useState<string[]>([]);
+  const [band, setBand] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const screenRef = useRef<HTMLDivElement | null>(null);
+  const tapType = useRef('');
+  const bandStart = useRef<{ pointerId: number; x: number; y: number; clientX: number; clientY: number; active: boolean } | null>(null);
+
+  const screenPoint = (clientX: number, clientY: number) => {
+    const screen = screenRef.current;
+    if (!screen) return { x: clientX, y: clientY };
+    const rect = screen.getBoundingClientRect();
+    return {
+      x: ((clientX - rect.left) * screen.offsetWidth) / (rect.width || 1),
+      y: ((clientY - rect.top) * screen.offsetHeight) / (rect.height || 1),
+    };
+  };
+
+  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return;
+    setSel([]);
+    if (e.button !== 0 || (e.pointerType !== 'mouse' && e.pointerType !== 'pen')) return;
+
+    const screen = e.currentTarget.closest<HTMLDivElement>('.desktop');
+    if (!screen) return;
+    screenRef.current = screen;
+    const point = screenPoint(e.clientX, e.clientY);
+    bandStart.current = { pointerId: e.pointerId, ...point, clientX: e.clientX, clientY: e.clientY, active: false };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
+    const start = bandStart.current;
+    if (!start || start.pointerId !== e.pointerId) return;
+    if (!start.active && Math.hypot(e.clientX - start.clientX, e.clientY - start.clientY) <= 3) return;
+    start.active = true;
+
+    const a = { x: start.x, y: start.y };
+    const b = screenPoint(e.clientX, e.clientY);
+    const left = Math.min(a.x, b.x);
+    const top = Math.min(a.y, b.y);
+    const right = Math.max(a.x, b.x);
+    const bottom = Math.max(a.y, b.y);
+    const screen = screenRef.current;
+    const screenRect = screen?.getBoundingClientRect();
+    const scaleX = screen && screenRect ? screen.offsetWidth / (screenRect.width || 1) : 1;
+    const scaleY = screen && screenRect ? screen.offsetHeight / (screenRect.height || 1) : 1;
+    const areaRect = e.currentTarget.getBoundingClientRect();
+    const areaLeft = screenRect ? (areaRect.left - screenRect.left) * scaleX : 0;
+    const areaTop = screenRect ? (areaRect.top - screenRect.top) * scaleY : 0;
+    const areaRight = areaLeft + areaRect.width * scaleX;
+    const areaBottom = areaTop + areaRect.height * scaleY;
+    const bandLeft = Math.max(areaLeft, left);
+    const bandTop = Math.max(areaTop, top);
+    const bandRight = Math.min(areaRight, right);
+    const bandBottom = Math.min(areaBottom, bottom);
+    const keys = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('.desk-icon'))
+      .filter((icon) => {
+        const rect = icon.getBoundingClientRect();
+        const iconLeft = screenRect ? (rect.left - screenRect.left) * scaleX : rect.left;
+        const iconTop = screenRect ? (rect.top - screenRect.top) * scaleY : rect.top;
+        const iconRight = screenRect ? (rect.right - screenRect.left) * scaleX : rect.right;
+        const iconBottom = screenRect ? (rect.bottom - screenRect.top) * scaleY : rect.bottom;
+        return iconLeft <= bandRight && iconRight >= bandLeft && iconTop <= bandBottom && iconBottom >= bandTop;
+      })
+      .map((icon) => icon.dataset.key)
+      .filter((key): key is string => Boolean(key));
+
+    setSel(keys);
+    setBand({ left: bandLeft - areaLeft, top: bandTop - areaTop, width: bandRight - bandLeft, height: bandBottom - bandTop });
+  };
+
+  const endPointer = (e: RPointerEvent<HTMLDivElement>) => {
+    if (bandStart.current?.pointerId !== e.pointerId) return;
+    bandStart.current = null;
+    setBand(null);
+  };
+
   return (
-    <div className="desk-icons" onPointerDown={(e) => e.target === e.currentTarget && setSel(null)}>
+    <div
+      className="desk-icons"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endPointer}
+      onPointerCancel={endPointer}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' || e.repeat || !sel.length) return;
+        const key = (e.target as HTMLElement).closest<HTMLElement>('.desk-icon')?.dataset.key;
+        const item = desktopItems.find((entry) => entry.key === key && sel.includes(entry.key));
+        if (!item) return;
+        e.preventDefault();
+        item.run(os);
+      }}
+    >
       {desktopItems.map((it) => (
         <button
           key={it.key}
-          className={`desk-icon ${sel === it.key ? 'is-sel' : ''}`}
-          onClick={() => {
-            setSel(it.key);
-            it.run(os);
+          data-key={it.key}
+          className={`desk-icon ${sel.includes(it.key) ? 'is-sel' : ''}`}
+          onFocus={() => setSel([it.key])}
+          onPointerDown={(e) => {
+            setSel([it.key]);
+            tapType.current = e.pointerType;
           }}
+          onClick={() => tapType.current === 'touch' && it.run(os)}
+          onDoubleClick={() => it.run(os)}
         >
           <AppIcon kind={it.icon} size={52} />
           <span>{it.label}</span>
         </button>
       ))}
+      {band && <div aria-hidden="true" className="selection-marquee" style={band} />}
     </div>
   );
 }
