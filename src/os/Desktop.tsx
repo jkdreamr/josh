@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode, type MutableRefObject } from 'react';
-import { apps, dockOrder, games, mobileDock } from './registry';
+import { apps, dockOrder, games, mobileDock, tabletDock } from './registry';
 import { AppIcon, type IconKind } from './icons';
 import { OSContext, useOS as useOSLocal, type AppId, type OpenArgs, type OSApi } from './types';
 import { folders, links, profile } from './data';
@@ -26,6 +26,7 @@ type Win = {
 
 type Props = {
   mobile: boolean;
+  tablet?: boolean;
   fullscreen: boolean;
   toggleFullscreen: () => void;
   restart: () => void;
@@ -47,7 +48,7 @@ function routeUrl(url: string): { id: AppId; args: OpenArgs } {
   return { id: 'chrome', args: { url } };
 }
 
-export default function Desktop({ mobile, fullscreen, toggleFullscreen, restart, sleep, apiRef }: Props) {
+export default function Desktop({ mobile, tablet = false, fullscreen, toggleFullscreen, restart, sleep, apiRef }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 1000, h: 625 });
   const [wins, setWins] = useState<Win[]>([]);
@@ -125,8 +126,8 @@ export default function Desktop({ mobile, fullscreen, toggleFullscreen, restart,
   );
 
   const api: OSApi = useMemo(
-    () => ({ open, close, openUrl, mobile, fullscreen, toggleFullscreen, restart, sleep, openLauncher: () => setLauncher(true) }),
-    [open, close, openUrl, mobile, fullscreen, toggleFullscreen, restart, sleep],
+    () => ({ open, close, openUrl, mobile, tablet, fullscreen, toggleFullscreen, restart, sleep, openLauncher: () => setLauncher(true) }),
+    [open, close, openUrl, mobile, tablet, fullscreen, toggleFullscreen, restart, sleep],
   );
 
   useEffect(() => {
@@ -146,6 +147,11 @@ export default function Desktop({ mobile, fullscreen, toggleFullscreen, restart,
       clearTimeout(t2);
     };
   }, []);
+
+  // On phones and iPads an app takes the whole screen, so tuck the banner away when one opens.
+  useEffect(() => {
+    if (mobile && wins.length) setToast(false);
+  }, [mobile, wins.length]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -226,7 +232,7 @@ export default function Desktop({ mobile, fullscreen, toggleFullscreen, restart,
 
   return (
     <OSContext.Provider value={api}>
-      <div ref={rootRef} className={`desktop ${mobile ? 'is-mobile' : ''} ${dragging ? 'is-dragging' : ''}`}>
+      <div ref={rootRef} className={`desktop ${mobile ? 'is-mobile' : ''} ${tablet ? 'is-tablet' : ''} ${mobile && active && apps[active.id].theme !== 'dark' ? 'sb-ink' : ''} ${dragging ? 'is-dragging' : ''}`}>
         <Wallpaper />
         {mobile ? <StatusBar /> : <MenuBar title={activeTitle} wins={wins} onFocus={focus} onClose={close} />}
 
@@ -311,6 +317,7 @@ export default function Desktop({ mobile, fullscreen, toggleFullscreen, restart,
         })}
 
         <Dock wins={wins} onFocus={focus} active={active?.id ?? null} screenW={size.w} />
+        {mobile && active && <button className="home-ind" aria-label="Go to Home Screen" onClick={() => close(active.id)} />}
 
         <div className={`toast ${toast ? 'is-on' : ''}`} role="status">
           <button
@@ -322,7 +329,7 @@ export default function Desktop({ mobile, fullscreen, toggleFullscreen, restart,
             <AppIcon kind="messages" size={34} />
             <span className="toast-text">
               <b>Josh</b>
-              <span>hey, welcome to my computer. poke around, or text me.</span>
+              <span>hey, welcome to my {mobile ? (tablet ? 'ipad' : 'phone') : 'computer'}. poke around, or text me.</span>
             </span>
             <small>now</small>
           </button>
@@ -491,12 +498,22 @@ function MenuBar({ title, wins, onFocus, onClose }: { title: string; wins: Win[]
 }
 
 function StatusBar() {
+  const os = useOSLocal();
   const now = useNow(15_000);
   return (
     <div className="statusbar">
-      <span>{now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(/\s?[AP]M/, '')}</span>
+      <span>
+        {now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(/\s?[AP]M/, '')}
+        {os.tablet && <span className="sb-date">{now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).replace(',', '')}</span>}
+      </span>
       <span className="sb-right">
-        <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx=".8" /><rect x="4.5" y="5" width="3" height="6" rx=".8" /><rect x="9" y="2.5" width="3" height="8.5" rx=".8" /><rect x="13.5" y="0" width="3" height="11" rx=".8" /></svg>
+        {os.tablet && os.fullscreen && (
+          <button className="sb-exit" onClick={os.toggleFullscreen} aria-label="Exit full screen">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
+          </button>
+        )}
+        {!os.tablet && <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx=".8" /><rect x="4.5" y="5" width="3" height="6" rx=".8" /><rect x="9" y="2.5" width="3" height="8.5" rx=".8" /><rect x="13.5" y="0" width="3" height="11" rx=".8" /></svg>}
+        <svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><path d="M8 11.6 5.7 9.3a3.3 3.3 0 0 1 4.6 0z" /><path d="M3.5 7.1a6.4 6.4 0 0 1 9 0l-1.4 1.4a4.4 4.4 0 0 0-6.2 0z" /><path d="M1.2 4.8a9.6 9.6 0 0 1 13.6 0l-1.4 1.4a7.6 7.6 0 0 0-10.8 0z" /></svg>
         <svg width="25" height="12" viewBox="0 0 28 13"><rect x=".5" y=".5" width="23" height="12" rx="3.2" fill="none" stroke="currentColor" opacity=".55" /><rect x="2.2" y="2.2" width="16.5" height="8.6" rx="1.8" fill="currentColor" /><path d="M25.2 4.4v4.2c.9-.3 1.5-1.2 1.5-2.1s-.6-1.8-1.5-2.1z" fill="currentColor" opacity=".55" /></svg>
       </span>
     </div>
@@ -634,9 +651,10 @@ function HomeScreen() {
   const os = useOSLocal();
   const now = useNow(15_000);
   const weather = useWeather();
+  const dock = os.tablet ? tabletDock : mobileDock;
   const items: { key: string; label: string; icon: IconKind; run: () => void }[] = [
-    ...dockOrder.filter((id) => !mobileDock.includes(id)).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: () => os.open(id) })),
-    ...games.filter((id) => !dockOrder.includes(id) && !mobileDock.includes(id)).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: () => os.open(id) })),
+    ...dockOrder.filter((id) => !dock.includes(id)).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: () => os.open(id) })),
+    ...games.filter((id) => !dockOrder.includes(id) && !dock.includes(id)).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: () => os.open(id) })),
     ...folders.map((f) => ({ key: f.id, label: f.label, icon: 'folder' as IconKind, run: () => os.open('finder', { folder: f.id }) })),
   ];
   return (
@@ -656,7 +674,7 @@ function HomeScreen() {
       <div className="home-grid">
         {items.map((it) => (
           <button key={it.key} className="home-app" onClick={it.run}>
-            <AppIcon kind={it.icon} size={58} />
+            <AppIcon kind={it.icon} size={os.tablet ? 68 : 58} />
             <span>{it.label}</span>
           </button>
         ))}
@@ -671,8 +689,8 @@ function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: A
   const os = useOSLocal();
   const [mouseX, setMouseX] = useState<number | null>(null);
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const ids: AppId[] = os.mobile ? mobileDock : [...dockOrder];
-  const base = os.mobile ? 58 : Math.round(Math.max(28, Math.min(46, (screenW - 80) / (ids.length + 1) - 4)));
+  const ids: AppId[] = os.mobile ? (os.tablet ? tabletDock : mobileDock) : [...dockOrder];
+  const base = os.mobile ? (os.tablet ? 62 : 58) : Math.round(Math.max(28, Math.min(46, (screenW - 80) / (ids.length + 1) - 4)));
 
   const scaleFor = (id: string) => {
     if (os.mobile || mouseX === null) return 1;

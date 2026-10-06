@@ -1250,8 +1250,8 @@ kbd {
   top: 0;
   left: 0;
   right: 0;
-  height: calc(44px + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 26px 0;
+  height: calc(44px + var(--sat));
+  padding: var(--sat) 26px 0;
   z-index: 9000;
   display: flex;
   align-items: center;
@@ -1267,7 +1267,7 @@ kbd {
 }
 .home {
   position: absolute;
-  inset: calc(48px + env(safe-area-inset-top)) 0 110px;
+  inset: calc(48px + var(--sat)) 0 110px;
   overflow-y: auto;
   padding: 6px 18px 20px;
   z-index: 1;
@@ -1335,7 +1335,7 @@ kbd {
   transform: scale(0.9);
 }
 .is-mobile .dock-wrap {
-  bottom: calc(14px + env(safe-area-inset-bottom));
+  bottom: calc(14px + var(--sab));
 }
 .is-mobile .dock {
   gap: 18px;
@@ -1350,7 +1350,7 @@ kbd {
   --tl-pad: 14px;
   left: 0 !important;
   right: 0;
-  top: calc(44px + env(safe-area-inset-top));
+  top: calc(44px + var(--sat));
   bottom: 0;
   width: auto !important;
   height: auto !important;
@@ -1859,6 +1859,9 @@ kbd {
     radial-gradient(60% 50% at 50% 0%, rgba(161, 140, 209, 0.18), transparent),
     #fff;
 }
+.newtab > * {
+  flex-shrink: 0;
+}
 .newtab h1 {
   margin: 0;
   font-size: clamp(30px, 5.6cqw, 52px);
@@ -1903,9 +1906,10 @@ kbd {
 }
 .shortcuts {
   display: grid;
-  grid-template-columns: repeat(5, 108px);
+  grid-template-columns: repeat(5, minmax(0, 108px));
   gap: 8px;
   margin-top: 30px;
+  max-width: 100%;
 }
 @container (max-width: 600px) {
   .shortcuts {
@@ -3459,4 +3463,356 @@ kbd {
   background: #fff;
   color: #111;
   font: 500 13px/1.2 system-ui, sans-serif;
+}
+
+/* ============================== phone + iPad ============================== */
+.screen {
+  --sat: env(safe-area-inset-top);
+  --sab: env(safe-area-inset-bottom);
+}
+.hh {
+  position: relative;
+  flex: none;
+  cursor: default;
+}
+.hh-device {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  animation: hhIn 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+@keyframes hhIn {
+  from {
+    opacity: 0;
+    translate: 0 36px;
+  }
+}
+.hh-shadow {
+  position: absolute;
+  inset: 5% 6% -1%;
+  border-radius: calc(var(--sr) + var(--edge));
+  background: rgba(0, 0, 0, 0.62);
+  filter: blur(34px);
+  translate: 0 26px;
+  z-index: -1;
+  pointer-events: none;
+}
+/* the metal band, seen edge-on: polished titanium / aluminum rounding into the glass */
+.hh-body {
+  position: absolute;
+  inset: 0;
+  border-radius: calc(var(--sr) + var(--edge));
+  background: linear-gradient(155deg, #efece6 0%, #a7a299 14%, #dcd8d0 30%, #8c8880 52%, #c9c4bb 70%, #77736c 86%, #e3dfd8 100%);
+  box-shadow:
+    inset 0 0 0 0.6px rgba(0, 0, 0, 0.55),
+    inset 0 0 1px 1.4px rgba(255, 255, 255, 0.6),
+    inset 0 0 0 2.6px rgba(0, 0, 0, 0.18),
+    0 1px 1px rgba(0, 0, 0, 0.35),
+    0 26px 60px -18px rgba(0, 0, 0, 0.75);
+}
+.hh-tablet .hh-body {
+  background: linear-gradient(155deg, #f4f4f6 0%, #c3c5c9 18%, #e9eaed 40%, #a9abb1 62%, #d7d8dc 82%, #f1f1f3 100%);
+}
+.hh-glass {
+  position: absolute;
+  inset: var(--band);
+  border-radius: calc(var(--sr) + var(--edge) - var(--band));
+  background: #050506;
+  box-shadow:
+    0 0 0 0.75px rgba(0, 0, 0, 0.9),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.07),
+    inset 0 0 6px rgba(0, 0, 0, 0.9);
+  overflow: hidden;
+}
+.hh .screen {
+  inset: calc(var(--edge) - var(--band));
+  border-radius: var(--sr);
+}
+.hh .screen-glare {
+  display: none;
+}
+.hh-phone .screen {
+  --sat: 10px;
+  --sab: 0px;
+}
+.hh-tablet .screen {
+  --sat: 0px;
+  --sab: 0px;
+}
+.hh-phone .hello {
+  width: 74%;
+}
+.hh-island {
+  position: absolute;
+  z-index: 50;
+  left: 0;
+  right: 0;
+  top: calc(var(--edge) - var(--band) + 11px);
+  width: 124px;
+  height: 36px;
+  margin: 0 auto;
+  border-radius: 18px;
+  background: radial-gradient(circle at calc(100% - 18px) 50%, #1c2333 0 3.5px, #0c0f16 4.5px 6px, transparent 6.5px), #000;
+  pointer-events: none;
+}
+.hh-phone.is-land .hh-island {
+  left: calc(var(--edge) - var(--band) + 11px);
+  top: 0;
+  right: auto;
+  bottom: 0;
+  width: 36px;
+  height: 124px;
+  margin: auto 0;
+  background: radial-gradient(circle at 50% 18px, #1c2333 0 3.5px, #0c0f16 4.5px 6px, transparent 6.5px), #000;
+}
+.hh-cam {
+  position: absolute;
+  z-index: 50;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 36%, #4a5876 0 1px, #151b29 1.6px, #08090d 3.4px);
+  box-shadow: 0 0 0 1px #121317;
+  pointer-events: none;
+}
+.hh-tablet.is-port .hh-cam {
+  right: calc((var(--edge) - var(--band)) / 2 - 4px);
+  top: 50%;
+  translate: 0 -50%;
+}
+.hh-tablet.is-land .hh-cam {
+  top: calc((var(--edge) - var(--band)) / 2 - 4px);
+  left: 50%;
+  translate: -50% 0;
+}
+.hh-sheen {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(118deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.025) 26%, transparent 40%);
+}
+.hh-btn {
+  position: absolute;
+  z-index: -1;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #6f6b65, #d8d4cc 45%, #9a958d);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.45);
+}
+.hh-btn.is-v {
+  width: 4px;
+}
+.hh-btn.is-h {
+  height: 4px;
+  background: linear-gradient(180deg, #6f6b65, #d8d4cc 45%, #9a958d);
+}
+.hh-tablet .hh-btn {
+  background: linear-gradient(90deg, #8e9096, #e6e7ea 45%, #a6a8ae);
+}
+.hh-tablet .hh-btn.is-h {
+  background: linear-gradient(180deg, #8e9096, #e6e7ea 45%, #a6a8ae);
+}
+/* Camera Control sits nearly flush under sapphire */
+.hh-camctl {
+  border-radius: 3px;
+  background: linear-gradient(90deg, #3c3a37, #8f8a83 50%, #4a4743) !important;
+}
+.hh-camctl.is-h {
+  background: linear-gradient(180deg, #3c3a37, #8f8a83 50%, #4a4743) !important;
+}
+.stage:not(.is-fs) .hh-phone .statusbar {
+  padding-left: 44px;
+  padding-right: 32px;
+}
+
+/* full screen: the device dissolves and its screen becomes the viewport */
+.stage.is-fs .hh-device {
+  transform: none !important;
+  animation: none;
+}
+.stage.is-fs .hh-body,
+.stage.is-fs .hh-glass {
+  background: none;
+  box-shadow: none;
+}
+.stage.is-fs .hh-shadow,
+.stage.is-fs .hh-btn,
+.stage.is-fs .hh-island,
+.stage.is-fs .hh-cam,
+.stage.is-fs .hh-sheen {
+  visibility: hidden;
+}
+.stage.is-fs .screen {
+  --sat: env(safe-area-inset-top);
+  --sab: env(safe-area-inset-bottom);
+}
+
+/* iPadOS home screen */
+.is-tablet .statusbar {
+  height: calc(30px + var(--sat));
+  padding-left: 22px;
+  padding-right: 20px;
+  font-size: 13px;
+}
+.sb-date {
+  margin-left: 6px;
+}
+.sb-exit {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.18);
+}
+.is-tablet .home {
+  inset: calc(44px + var(--sat)) 0 120px;
+  padding: 18px 56px 24px;
+}
+.is-tablet .home-widgets {
+  grid-template-columns: repeat(2, minmax(0, 330px));
+  gap: 24px;
+  margin-bottom: 36px;
+}
+.is-tablet .widget {
+  min-height: 160px;
+  border-radius: 26px;
+  padding: 18px 20px;
+}
+.is-tablet .home-grid {
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 34px 16px;
+}
+.is-tablet .home-app {
+  font-size: 12.5px;
+}
+.is-tablet .dock-wrap {
+  bottom: 16px;
+}
+.is-tablet .dock {
+  gap: 20px;
+  padding: 14px 18px;
+  border-radius: 34px;
+}
+.is-tablet .win {
+  top: calc(30px + var(--sat)) !important;
+}
+
+/* swipe-up-to-home bar shown over apps */
+.home-ind {
+  position: absolute;
+  left: 50%;
+  bottom: calc(4px + var(--sab) / 2);
+  z-index: 9600;
+  width: 150px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  translate: -50% 0;
+  background: none;
+}
+.home-ind::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  bottom: 4px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(20, 20, 22, 0.86);
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.35);
+}
+.is-tablet .home-ind {
+  width: 230px;
+}
+
+/* iOS banners drop in from the top edge */
+.is-mobile .toast {
+  top: calc(var(--sat) + 8px);
+  left: 8px;
+  right: 8px;
+  width: auto;
+  margin: 0 auto;
+  max-width: 400px;
+  transform: translateY(calc(-100% - var(--sat) - 70px));
+}
+.is-mobile .toast.is-on {
+  transform: none;
+}
+.is-mobile .toast > button {
+  border-radius: 22px;
+  padding: 12px 14px;
+}
+.hh-phone .toast {
+  top: 54px;
+}
+.is-tablet .toast {
+  top: 36px;
+  left: auto;
+  right: 12px;
+  width: 360px;
+}
+
+/* apps on phone and iPad own the whole display, status bar included */
+.is-mobile .win {
+  top: 0;
+  padding-top: calc(44px + var(--sat));
+  border-radius: 0;
+}
+.is-tablet .win {
+  top: 0 !important;
+  padding-top: calc(30px + var(--sat));
+}
+.is-mobile .win.st-opening {
+  animation: appIn 0.42s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+.is-mobile .win.st-closing {
+  animation: appOut 0.26s ease forwards;
+}
+@keyframes appIn {
+  from {
+    transform: translateY(18%) scale(0.82);
+    opacity: 0;
+    border-radius: 44px;
+  }
+}
+@keyframes appOut {
+  to {
+    transform: translateY(18%) scale(0.82);
+    opacity: 0;
+    border-radius: 44px;
+  }
+}
+.statusbar {
+  transition: color 0.3s;
+}
+.sb-ink .statusbar {
+  color: #000;
+}
+.sb-ink .sb-exit {
+  background: rgba(0, 0, 0, 0.08);
+}
+.chips::-webkit-scrollbar {
+  display: none;
+}
+.is-mobile .statusbar {
+  z-index: 9200;
+  pointer-events: none;
+}
+.is-mobile .sb-exit {
+  pointer-events: auto;
+}
+/* the laptop's display is a fixed-resolution panel, so trim the menu bar to the panel width, not the window */
+.menubar {
+  container: menubar / inline-size;
+}
+@container menubar (max-width: 640px) {
+  .desktop .menubar .mb-hide-sm {
+    display: none !important;
+  }
 }

@@ -218,17 +218,16 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   grain.wrapS = grain.wrapT = THREE.RepeatWrapping;
   grain.repeat.set(0.3, 0.3);
   const alu = keep(
-    new THREE.MeshPhysicalMaterial({ color: '#b4b6ba', metalness: 1, roughness: 0.5, roughnessMap: grain, envMapIntensity: 0.8 }),
+    new THREE.MeshPhysicalMaterial({ color: '#bcbcbd', metalness: 1, roughness: 0.46, roughnessMap: grain, envMapIntensity: 0.85 }),
   );
   const black = keep(new THREE.MeshStandardMaterial({ color: '#08080a', roughness: 0.75 }));
   const keyMat = keep(new THREE.MeshStandardMaterial({ color: '#09090b', roughness: 0.62, metalness: 0 }));
-  const glass = keep(
-    new THREE.MeshStandardMaterial({ color: '#060607', roughness: 0.22, metalness: 0, envMapIntensity: 0.07 }),
-  );
+  // Lit glass picks up the studio environment and reads as silver; the real bezel is a deep black.
+  const glass = keep(new THREE.MeshBasicMaterial({ color: '#050506' }));
   const panel = keep(new THREE.MeshStandardMaterial({ color: '#000000', roughness: 0.18, metalness: 0, envMapIntensity: 0.05 }));
   const hingeMat = keep(new THREE.MeshPhysicalMaterial({ color: '#232428', metalness: 0.8, roughness: 0.36 }));
   const padMat = keep(
-    new THREE.MeshPhysicalMaterial({ color: '#c3c5c9', metalness: 0.35, roughness: 0.32, clearcoat: 0.6, clearcoatRoughness: 0.25 }),
+    new THREE.MeshPhysicalMaterial({ color: '#a4a5a8', metalness: 0.7, roughness: 0.34, clearcoat: 0.35, clearcoatRoughness: 0.35, envMapIntensity: 0.75 }),
   );
 
   const root = new THREE.Group();
@@ -270,13 +269,13 @@ export function createLaptop(o: LaptopOptions): LaptopController {
     keep(new THREE.MeshStandardMaterial({ map: legendTex, transparent: true, roughness: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 })),
   );
   legends.rotation.x = -Math.PI / 2;
-  legends.position.set(0, BH - 0.024, KZ0 + KD / 2);
+  legends.position.set(0, BH - 0.12 + 0.035 + 0.122, KZ0 + KD / 2);
   root.add(legends);
 
   // trackpad: flush glass with a thin dark seam
   const seamShape = rrect(TPW + 0.07, TPD + 0.07, 0.64);
   seamShape.holes.push(rrect(TPW - 0.02, TPD - 0.02, 0.6));
-  const seam = new THREE.Mesh(keep(new THREE.ShapeGeometry(seamShape, 24)), keep(new THREE.MeshBasicMaterial({ color: '#2a2b2f', polygonOffset: true, polygonOffsetFactor: -2 })));
+  const seam = new THREE.Mesh(keep(new THREE.ShapeGeometry(seamShape, 24)), keep(new THREE.MeshBasicMaterial({ color: '#5d5e62', polygonOffset: true, polygonOffsetFactor: -2 })));
   seam.rotation.x = -Math.PI / 2;
   seam.position.set(0, BH + 0.001, TPZ);
   root.add(seam);
@@ -437,7 +436,7 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   key.shadow.normalBias = 0.02;
   Object.assign(key.shadow.camera, { left: -28, right: 28, top: 28, bottom: -28, near: 10, far: 120 });
   scene.add(key);
-  const rim = new THREE.DirectionalLight('#dfe8ff', 0.5);
+  const rim = new THREE.DirectionalLight('#ffffff', 0.4);
   rim.position.set(20, 18, -30);
   scene.add(rim);
 

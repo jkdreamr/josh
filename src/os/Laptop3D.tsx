@@ -8,7 +8,7 @@ export type Laptop3DHandle = {
   exitFs(swap: () => void): Promise<void>;
 };
 
-type Props = {
+export type Laptop3DProps = {
   open: boolean;
   screenOn: boolean;
   lidMs: number;
@@ -20,7 +20,7 @@ type Props = {
 };
 
 /** Photoreal WebGL MacBook. The live desktop is real DOM projected onto the display with CSS3D, so clicks hit exact pixels. */
-const Laptop3D = forwardRef<Laptop3DHandle, Props>(function Laptop3D(props, ref) {
+const Laptop3D = forwardRef<Laptop3DHandle, Laptop3DProps>(function Laptop3D(props, ref) {
   const box = useRef<HTMLDivElement>(null);
   const fsLayer = useRef<HTMLDivElement>(null);
   const src = useRef<HTMLDivElement>(null);
