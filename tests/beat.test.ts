@@ -12,8 +12,8 @@ test('pattern, tempo, swing, and key encode and decode as a compact link payload
 test('swing delays offbeat steps by swing times half of a sixteenth', () => {
   const straight = beatStepTime(1, 120, 0);
   const delayed = beatStepTime(1, 120, 40);
-  assert.equal(swingOffset(1, 120, 40), 0.025);
-  assert.equal(delayed - straight, 0.025);
+  assert.ok(Math.abs(swingOffset(1, 120, 40) - 0.025) < 1e-12);
+  assert.ok(Math.abs(delayed - straight - 0.025) < 1e-12);
   assert.equal(swingOffset(2, 120, 40), 0);
 });
 
