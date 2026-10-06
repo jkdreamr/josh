@@ -17,6 +17,25 @@ const DOCK_PAD_X = 6;
 const DOCK_SEP = 7;
 const DOCK_AMP = 0.5;
 const DOCK_RADIUS = 2.6;
+const DOCK_PAD_Y = 5;
+const DOCK_BOTTOM = 6;
+const DOCK_MAX_BASE = 46;
+
+/** Resting icon size of the Mac Dock for a given display width (the Dock shrinks on narrow displays). */
+function dockBaseFor(screenW: number, count: number, kSum: number) {
+  const fixed = 2 * DOCK_PAD_X + (count - 1) * DOCK_GAP + DOCK_SEP + DOCK_GAP;
+  return Math.floor(Math.min(DOCK_MAX_BASE, (screenW - 16 - fixed) / (count + DOCK_AMP * kSum)));
+}
+
+function dockKernelSum(count: number) {
+  let max = 0;
+  for (let p = 0; p <= count + 1e-8; p += 0.05) {
+    let sum = 0;
+    for (let i = 0; i < count; i += 1) sum += dockKernel(Math.abs(p - i));
+    max = Math.max(max, sum);
+  }
+  return max;
+}
 
 type Win = {
   id: AppId;
@@ -42,7 +61,7 @@ type Props = {
   closeLid: () => void;
   camera: boolean;
   setCamera: (on: boolean) => void;
-  apiRef?: MutableRefObject<OSApi | null>;
+  apiRef?: RefObject<OSApi | null>;
 };
 
 /** Routes a URL to the in-desktop app that best represents it. */
@@ -67,6 +86,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   const [dragging, setDragging] = useState(false);
   const [launcher, setLauncher] = useState(false);
   const [toast, setToast] = useState(false);
+  const [ctx, setCtx] = useState<{ x: number; y: number; icon?: string } | null>(null);
   const zTop = useRef(10);
   const winsRef = useRef(wins);
   winsRef.current = wins;
@@ -259,9 +279,95 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   const active = visible.length ? visible.reduce((a, b) => (a.z > b.z ? a : b)) : null;
   const activeTitle = active ? apps[active.id].title : 'Finder';
 
+  // A zoomed Mac window fills the space between the menu bar and the top of the Dock.
+  const dockCount = dockOrder.length + 1;
+  const dockTop = size.h - DOCK_BOTTOM - 2 * DOCK_PAD_Y - dockBaseFor(size.w, dockCount, dockKernelSum(dockCount)) - 4;
+
+  /** Swipe up on the home indicator: the app follows the finger, shrinking toward its icon. */
+  const startHomeSwipe = (e: RPointerEvent<HTMLButtonElement>, id: AppId) => {
+    if (e.button !== 0) return;
+    const el = rootRef.current?.querySelector<HTMLElement>(`[data-win="${id}"]`);
+    if (!el) return;
+    const btn = e.currentTarget;
+    const s = scaleOf();
+    const y0 = e.clientY;
+    const x0 = e.clientX;
+    const H = sizeRef.current.h;
+    const samples: { y: number; t: number }[] = [{ y: 0, t: e.timeStamp }];
+    let moved = false;
+    btn.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== e.pointerId) return;
+      const dy = (ev.clientY - y0) / s.y;
+      const dx = (ev.clientX - x0) / s.x;
+      if (!moved && Math.abs(dy) < 6) return;
+      moved = true;
+      samples.push({ y: dy, t: ev.timeStamp });
+      if (samples.length > 6) samples.shift();
+      const p = clamp(-dy / (H * 0.45), 0, 1);
+      const k = 1 - 0.55 * p;
+      el.style.transition = 'none';
+      el.style.transform = `translate(${dx * 0.5}px, ${Math.min(0, dy) * 0.75 + Math.max(0, dy) * 0.12}px) scale(${k})`;
+      el.style.borderRadius = `${p * 44}px`;
+    };
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId !== e.pointerId) return;
+      btn.removeEventListener('pointermove', move);
+      btn.removeEventListener('pointerup', up);
+      btn.removeEventListener('pointercancel', cancel);
+      const last = samples[samples.length - 1];
+      const first = samples.find((smp) => last.t - smp.t < 120) ?? samples[0];
+      const v = last.t > first.t ? (last.y - first.y) / (last.t - first.t) : 0;
+      if (!moved || -last.y > H * 0.16 || v < -0.5) {
+        el.style.transition = '';
+        close(id);
+        return;
+      }
+      el.style.transition = 'transform 0.4s cubic-bezier(0.2, 0.9, 0.25, 1.08), border-radius 0.4s ease';
+      el.style.transform = '';
+      el.style.borderRadius = '';
+      setTimeout(() => {
+        el.style.transition = '';
+      }, 420);
+    };
+    const cancel = (ev: PointerEvent) => {
+      if (ev.pointerId !== e.pointerId) return;
+      btn.removeEventListener('pointermove', move);
+      btn.removeEventListener('pointerup', up);
+      btn.removeEventListener('pointercancel', cancel);
+      el.style.transition = 'transform 0.4s cubic-bezier(0.2, 0.9, 0.25, 1.08), border-radius 0.4s ease';
+      el.style.transform = '';
+      el.style.borderRadius = '';
+    };
+    btn.addEventListener('pointermove', move);
+    btn.addEventListener('pointerup', up);
+    btn.addEventListener('pointercancel', cancel);
+  };
+
+  const onContextMenu = (e: RMouseEvent<HTMLDivElement>) => {
+    if (mobile) return;
+    const t = e.target as HTMLElement;
+    if (t.closest('input, textarea, [contenteditable], iframe, video')) return;
+    e.preventDefault();
+    if (t.closest('.win, .menubar, .dock-wrap, .banner, .launcher-scrim')) {
+      setCtx(null);
+      return;
+    }
+    const root = rootRef.current!;
+    const r = root.getBoundingClientRect();
+    const s = scaleOf();
+    const x = (e.clientX - r.left) / s.x;
+    const y = (e.clientY - r.top) / s.y;
+    setCtx({ x, y, icon: t.closest<HTMLElement>('.desk-icon')?.dataset.key });
+  };
+
   return (
     <OSContext.Provider value={api}>
-      <div ref={rootRef} className={`desktop ${mobile ? 'is-mobile' : ''} ${tablet ? 'is-tablet' : ''} ${mobile && active && apps[active.id].theme !== 'dark' ? 'sb-ink' : ''} ${dragging ? 'is-dragging' : ''}`}>
+      <div
+        ref={rootRef}
+        className={`desktop ${mobile ? 'is-mobile' : ''} ${tablet ? 'is-tablet' : ''} ${mobile && active && apps[active.id].theme !== 'dark' ? 'sb-ink' : ''} ${dragging ? 'is-dragging' : ''}`}
+        onContextMenu={onContextMenu}
+      >
         <Wallpaper />
         {mobile ? <StatusBar /> : <MenuBar title={activeTitle} wins={wins} onFocus={focus} onClose={close} />}
 
@@ -407,44 +513,94 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
 
 type MenuItem = { label: string; hint?: string; action?: () => void } | 'sep';
 
-function Menu({ label, items, bold, className }: { label: ReactNode; items: MenuItem[]; bold?: boolean; className?: string }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener('pointerdown', onDown);
-    return () => window.removeEventListener('pointerdown', onDown);
-  }, [open]);
+function MenuItems({ items, onPick }: { items: MenuItem[]; onPick: () => void }) {
   return (
-    <div className={`menu ${className ?? ''} ${open ? 'is-open' : ''}`} ref={ref}>
-      <button className={`menu-btn ${bold ? 'is-bold' : ''}`} onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}>
+    <>
+      {items.map((it, i) =>
+        it === 'sep' ? (
+          <hr key={i} />
+        ) : (
+          <button
+            key={i}
+            role="menuitem"
+            disabled={!it.action}
+            onClick={() => {
+              onPick();
+              it.action?.();
+            }}
+          >
+            <span>{it.label}</span>
+            {it.hint && <span className="menu-hint">{it.hint}</span>}
+          </button>
+        ),
+      )}
+    </>
+  );
+}
+
+/** One menu bar title. Menus share a single open slot so sliding across titles switches menus, like macOS. */
+function Menu({
+  id,
+  openId,
+  setOpenId,
+  label,
+  items,
+  bold,
+  className,
+}: {
+  id: string;
+  openId: string | null;
+  setOpenId: (id: string | null) => void;
+  label: ReactNode;
+  items: MenuItem[];
+  bold?: boolean;
+  className?: string;
+}) {
+  const open = openId === id;
+  return (
+    <div
+      className={`menu ${className ?? ''} ${open ? 'is-open' : ''}`}
+      data-menu={id}
+      onPointerEnter={(e) => {
+        if (e.pointerType === 'mouse' && openId !== null && openId !== id) setOpenId(id);
+      }}
+    >
+      <button
+        className={`menu-btn ${bold ? 'is-bold' : ''}`}
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          setOpenId(open ? null : id);
+        }}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
         {label}
       </button>
       {open && (
         <div className="menu-pop" role="menu">
-          {items.map((it, i) =>
-            it === 'sep' ? (
-              <hr key={i} />
-            ) : (
-              <button
-                key={i}
-                role="menuitem"
-                disabled={!it.action}
-                onClick={() => {
-                  setOpen(false);
-                  it.action?.();
-                }}
-              >
-                <span>{it.label}</span>
-                {it.hint && <kbd>{it.hint}</kbd>}
-              </button>
-            ),
-          )}
+          <MenuItems items={items} onPick={() => setOpenId(null)} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** Right-click menu on the desktop. */
+function ContextMenu({ x, y, screen, items, onClose }: { x: number; y: number; screen: { w: number; h: number }; items: MenuItem[]; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x, y });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    // Keep the menu on screen: flip left past the right edge, and never run under the Dock.
+    setPos({ x: x + w > screen.w - 6 ? Math.max(6, x - w) : x, y: clamp(y, MENU_H + 4, Math.max(MENU_H + 4, screen.h - h - 6)) });
+  }, [x, y, screen.w, screen.h]);
+  return (
+    <div ref={ref} className="menu-pop ctx-menu" role="menu" style={{ left: pos.x, top: pos.y }}>
+      <MenuItems items={items} onPick={onClose} />
     </div>
   );
 }
@@ -485,10 +641,33 @@ function MenuBar({ title, wins, onFocus, onClose }: { title: string; wins: Win[]
   const date = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   const openWins = wins.filter((w) => w.state !== 'closing');
+  const [openId, setOpenId] = useState<string | null>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (openId === null) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as HTMLElement;
+      if (!barRef.current?.contains(t) || !t.closest('.menu')) setOpenId(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenId(null);
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('blur', onKey as unknown as () => void);
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('blur', onKey as unknown as () => void);
+    };
+  }, [openId]);
+  const shared = { openId, setOpenId };
   return (
-    <div className="menubar">
+    <div className="menubar" ref={barRef}>
       <div className="mb-left">
         <Menu
+          id="logo"
+          {...shared}
           className="mb-logo"
           label={<span className="logo-mark">jk</span>}
           items={[
@@ -502,8 +681,10 @@ function MenuBar({ title, wins, onFocus, onClose }: { title: string; wins: Win[]
             { label: 'Restart…', action: os.restart },
           ]}
         />
-        <Menu bold label={title} items={[{ label: `About ${title}`, action: () => os.open('about') }, 'sep', { label: 'Hide Others' }, { label: 'Quit', action: () => wins.length && onClose(wins.reduce((a, b) => (a.z > b.z ? a : b)).id) }]} />
+        <Menu id="app" {...shared} bold label={title} items={[{ label: `About ${title}`, action: () => os.open('about') }, 'sep', { label: 'Hide Others' }, { label: 'Quit', action: () => wins.length && onClose(wins.reduce((a, b) => (a.z > b.z ? a : b)).id) }]} />
         <Menu
+          id="go"
+          {...shared}
           className="mb-hide-sm"
           label="Go"
           items={[
@@ -514,11 +695,15 @@ function MenuBar({ title, wins, onFocus, onClose }: { title: string; wins: Win[]
           ]}
         />
         <Menu
+          id="window"
+          {...shared}
           className="mb-hide-sm"
           label="Window"
           items={openWins.length ? openWins.map((w) => ({ label: apps[w.id].title, action: () => onFocus(w.id) })) : [{ label: 'No windows open' }]}
         />
         <Menu
+          id="help"
+          {...shared}
           className="mb-hide-sm"
           label="Help"
           items={[
@@ -735,21 +920,9 @@ function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: A
   const ids = useMemo(() => (os.mobile ? (os.tablet ? tabletDock : mobileDock) : [...dockOrder]), [os.mobile, os.tablet]);
   const items = useMemo(() => (os.mobile ? ids : [...ids, 'trash' as AppId]), [ids, os.mobile]);
   const count = items.length;
-  const kSum = useMemo(() => {
-    let max = 0;
-    for (let p = 0; p <= count + 1e-8; p += 0.05) {
-      let sum = 0;
-      for (let i = 0; i < count; i += 1) sum += dockKernel(Math.abs(p - i));
-      max = Math.max(max, sum);
-    }
-    return max;
-  }, [count]);
+  const kSum = useMemo(() => dockKernelSum(count), [count]);
   const fixed = 2 * DOCK_PAD_X + (count - 1) * DOCK_GAP + (os.mobile ? 0 : DOCK_SEP + DOCK_GAP);
-  const base = os.mobile
-    ? os.tablet
-      ? 62
-      : 58
-    : Math.floor(Math.min(46, (screenW - 16 - fixed) / (count + DOCK_AMP * kSum)));
+  const base = os.mobile ? (os.tablet ? 62 : 58) : dockBaseFor(screenW, count, kSum);
   const pitch = base + DOCK_GAP;
   const width0 = fixed + count * base;
   const configRef = useRef({ items, base, pitch, count, width0, screenW, reducedMotion, mobile: os.mobile });
@@ -1030,7 +1203,6 @@ function Launcher({ onClose }: { onClose: () => void }) {
               else if (e.key === 'Escape') onClose();
             }}
           />
-          <kbd>esc</kbd>
         </div>
         <ul className="launcher-list">
           {results.length === 0 && <li className="launcher-empty">No results for “{q}”</li>}
