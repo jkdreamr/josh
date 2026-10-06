@@ -327,9 +327,15 @@
     padding: 8px 10px 9px;
   }
 
+  .baduk-board-wrap {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
   .baduk-board {
-    width: min(100%, calc(100vw - 30px), calc(100dvh - 390px));
-    max-height: none;
+    width: auto;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
   }
 
   .baduk-side {

@@ -20,8 +20,11 @@ const pointPosition = (index: number, size: number) => boardStart(size) + index 
 
 function pointFromPointer(event: ReactPointerEvent<SVGSVGElement>, size: number): Point | null {
   const rect = event.currentTarget.getBoundingClientRect();
-  const x = ((event.clientX - rect.left) / rect.width) * SIZE;
-  const y = ((event.clientY - rect.top) / rect.height) * SIZE;
+  const scale = Math.min(rect.width, rect.height) / SIZE;
+  const offsetX = (rect.width - SIZE * scale) / 2;
+  const offsetY = (rect.height - SIZE * scale) / 2;
+  const x = (event.clientX - rect.left - offsetX) / scale;
+  const y = (event.clientY - rect.top - offsetY) / scale;
   const spacing = boardSpacing(size);
   const pointX = Math.round((x - boardStart(size)) / spacing);
   const pointY = Math.round((y - boardStart(size)) / spacing);

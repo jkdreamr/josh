@@ -3762,6 +3762,7 @@ kbd {
 .is-mobile .win {
   top: 0;
   padding-top: calc(44px + var(--sat));
+  padding-bottom: calc(26px + var(--sab) / 2);
   border-radius: 0;
 }
 .is-tablet .win {

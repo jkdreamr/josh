@@ -398,6 +398,10 @@ export function aiMove(state: GameState, budgetMs = 700): Point | null {
     }
   }
   const passRate = visits[passIndex] ? wins[passIndex] / visits[passIndex] : 0.5;
-  if (passRate >= bestMoveRate - 0.02 || (state.consecutivePasses > 0 && passRate >= 0.5)) return null;
+  const passWasComparedWithEveryMove = visits.every((count) => count > 0);
+  if (
+    (state.consecutivePasses > 0 && passRate >= 0.5)
+    || (passWasComparedWithEveryMove && passRate >= bestMoveRate - 0.02)
+  ) return null;
   return bestMove;
 }

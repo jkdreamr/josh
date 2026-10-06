@@ -660,9 +660,9 @@ export default function Badminton(_: AppProps) {
         <div className="badminton-controls">
           <span className="ghelp badminton-help">{os.mobile ? 'Swipe up for a Smash or Clear · Swipe down for a Drop or Net Shot' : 'Move with A/D or ←/→ · Jump with W/↑ · Hit with Space/J'}</span>
           <div className="badminton-touch-controls">
-            <button className="gpad-secondary" title="Move Left (A or Left Arrow)" onPointerDown={() => setTouch('left', true)} onPointerUp={() => setTouch('left', false)} onPointerLeave={() => setTouch('left', false)}>Left</button>
-            <button className="gpad-secondary" title="Move Right (D or Right Arrow)" onPointerDown={() => setTouch('right', true)} onPointerUp={() => setTouch('right', false)} onPointerLeave={() => setTouch('right', false)}>Right</button>
-            <button className="gpad-secondary" title="Jump (W or Up Arrow)" onPointerDown={() => setTouch('up', true)} onPointerUp={() => setTouch('up', false)} onPointerLeave={() => setTouch('up', false)}>Jump</button>
+            <button className="gpad gpad-secondary" title="Move Left (A or Left Arrow)" onPointerDown={() => setTouch('left', true)} onPointerUp={() => setTouch('left', false)} onPointerLeave={() => setTouch('left', false)}>Left</button>
+            <button className="gpad gpad-secondary" title="Move Right (D or Right Arrow)" onPointerDown={() => setTouch('right', true)} onPointerUp={() => setTouch('right', false)} onPointerLeave={() => setTouch('right', false)}>Right</button>
+            <button className="gpad gpad-secondary" title="Jump (W or Up Arrow)" onPointerDown={() => setTouch('up', true)} onPointerUp={() => setTouch('up', false)} onPointerLeave={() => setTouch('up', false)}>Jump</button>
           </div>
         </div>
         <div className="badminton-hit-controls">
