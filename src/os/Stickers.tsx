@@ -98,24 +98,8 @@ const StanfordS = () => (
 );
 
 const Near = () => (
-  <Art shape="rect" w={190} h={80} bg="#000">
-    <Mark logo={logos.nearMark} x={20} y={21} w={38} h={38} />
-    <Mark logo={logos.near} x={70} y={25} w={100} h={30} />
-  </Art>
-);
-
-const Pantera = () => (
-  <Art shape="rect" w={100} h={100} bg="#15182b">
-    <Mark logo={logos.pantera} x={6} y={6} w={88} h={88} />
-  </Art>
-);
-
-const CodeTree = () => (
-  <Art shape="rect" w={200} h={70} bg="#33bb66">
-    <polygon points="22,52 39,18 56,52" fill="#fafafa" />
-    <text x="68" y="45" fill="#fff" fontFamily={font} fontWeight="700" fontSize="24" letterSpacing="-0.3">
-      codetree
-    </text>
+  <Art shape="circle" bg="#000">
+    <Mark logo={logos.nearMark} x={25} y={25} w={50} h={50} />
   </Art>
 );
 
@@ -186,13 +170,11 @@ function Place({ s, interactive }: { s: Placed; interactive?: boolean }) {
 }
 
 const lid: Placed[] = [
-  { key: 'stanford', label: 'Stanford', el: <Stanford />, left: '7%', top: '9%', width: '24%', rot: -7 },
-  { key: 'near', label: 'NEAR Protocol', el: <Near />, left: '68%', top: '8%', width: '19%', rot: 6 },
-  { key: 'stanford-s', label: 'Stanford Cardinal', el: <StanfordS />, left: '13%', top: '36%', width: '8%', rot: 9 },
-  { key: 'codetree', label: 'CodeTree', el: <CodeTree />, left: '71%', top: '39%', width: '20%', rot: -4 },
-  { key: 'korea', label: 'Korea', el: <KoreaFlag />, left: '10%', top: '66%', width: '15%', rot: -9 },
-  { key: 'pantera', label: 'Pantera Capital', el: <Pantera />, left: '43%', top: '70%', width: '12%', rot: 4 },
-  { key: 'usa', label: 'USA', el: <UsaFlag />, left: '73%', top: '64%', width: '15%', rot: 7 },
+  { key: 'stanford', label: 'Stanford', el: <Stanford />, left: '8%', top: '10%', width: '24%', rot: -7 },
+  { key: 'near', label: 'NEAR Protocol', el: <Near />, left: '73%', top: '9%', width: '11%', rot: 8 },
+  { key: 'stanford-s', label: 'Stanford Cardinal', el: <StanfordS />, left: '14%', top: '40%', width: '8%', rot: 9 },
+  { key: 'korea', label: 'Korea', el: <KoreaFlag />, left: '12%', top: '68%', width: '15%', rot: -9 },
+  { key: 'usa', label: 'USA', el: <UsaFlag />, left: '71%', top: '62%', width: '15%', rot: 7 },
 ];
 
 export function LidStickers() {

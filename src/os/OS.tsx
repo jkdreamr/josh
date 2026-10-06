@@ -10,13 +10,54 @@ type Phase = 'off' | 'opening' | 'hello' | 'on' | 'sleep';
 const LID_MS = 1500;
 const HELLO_MS = 2700;
 
-const keyRows = [
-  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-  [1.5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.5],
-  [1.8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2.2],
-  [2.3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2.7],
-  [1, 1, 1, 1.3, 5.6, 1.3, 1, 1, 1, 1],
+type KeyDef = { a?: string; b?: string; w?: number; k?: 'c' | '2' | 'l' | 'r' | 'fn' | 'touch' };
+
+const sym = (pairs: string) => pairs.split(' ').map((p): KeyDef => ({ a: p[0], b: p[1], k: '2' }));
+const letters = (row: string) => [...row].map((b): KeyDef => ({ b, k: 'c' }));
+
+const keyRows: KeyDef[][] = [
+  [{ b: 'esc', w: 1.5, k: 'l' }, ...Array.from({ length: 12 }, (_, i): KeyDef => ({ b: `F${i + 1}`, k: 'fn' })), { k: 'touch' }],
+  [...sym('~` !1 @2 #3 $4 %5 ^6 &7 *8 (9 )0 _- +='), { b: 'delete', w: 1.5, k: 'r' }],
+  [{ b: 'tab', w: 1.5, k: 'l' }, ...letters('QWERTYUIOP'), ...sym('{[ }] |\\')],
+  [{ b: 'caps lock', w: 1.8, k: 'l' }, ...letters('ASDFGHJKL'), ...sym(':; "\''), { b: 'return', w: 1.7, k: 'r' }],
+  [{ b: 'shift', w: 2.3, k: 'l' }, ...letters('ZXCVBNM'), ...sym('<, >. ?/'), { b: 'shift', w: 2.2, k: 'r' }],
+  [
+    { b: 'fn', k: 'l' },
+    { a: '⌃', b: 'control', k: 'l' },
+    { a: '⌥', b: 'option', k: 'l' },
+    { a: '⌘', b: 'command', w: 1.25, k: 'l' },
+    { w: 5 },
+    { a: '⌘', b: 'command', w: 1.25, k: 'r' },
+    { a: '⌥', b: 'option', k: 'r' },
+  ],
 ];
+
+function Keyboard() {
+  return (
+    <div className="keyboard" aria-hidden="true">
+      {keyRows.map((row, r) => (
+        <div className="krow" key={r}>
+          {row.map((key, i) => (
+            <i key={i} className={`key k-${key.k ?? 'c'}`} style={{ flexGrow: key.w ?? 1 }}>
+              {key.a && <span className="ka">{key.a}</span>}
+              {key.b && <span className="kb">{key.b}</span>}
+            </i>
+          ))}
+          {r === keyRows.length - 1 && (
+            <span className="arrows">
+              <i className="key k-c half">◀</i>
+              <span className="updown">
+                <i className="key k-c">▲</i>
+                <i className="key k-c">▼</i>
+              </span>
+              <i className="key k-c half">▶</i>
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function Hello() {
   return (
@@ -233,6 +274,7 @@ export default function OS() {
       <div className="scene" ref={sceneRef}>
         <div className="laptop" style={laptopStyle} onClick={phase === 'sleep' ? wake : undefined}>
           <div className="lid">
+            <div className="lid-edge" aria-hidden="true" />
             <div className="lid-back" aria-hidden="true">
               <span className="lid-logo">jk</span>
               <LidStickers />
@@ -251,15 +293,13 @@ export default function OS() {
             </div>
           </div>
           <div className="base">
+            <div className="base-shadow" aria-hidden="true" />
+            <div className="hinge" aria-hidden="true" />
             <div className="base-top">
-              <div className="keyboard" aria-hidden="true">
-                {keyRows.map((row, r) => (
-                  <div className="krow" key={r}>
-                    {row.map((w, i) => (
-                      <i key={i} style={{ flexGrow: w }} />
-                    ))}
-                  </div>
-                ))}
+              <div className="deck">
+                <span className="grille" aria-hidden="true" />
+                <Keyboard />
+                <span className="grille" aria-hidden="true" />
               </div>
               <div className="trackpad" aria-hidden="true" />
             </div>
