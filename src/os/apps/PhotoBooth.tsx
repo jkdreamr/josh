@@ -89,7 +89,7 @@ export default function PhotoBooth(_: AppProps) {
             ) : (
               <>
                 <b>photo booth</b>
-                <p>snap a selfie on josh’s computer. it stays in your browser — nothing is uploaded.</p>
+                <p>snap a selfie on josh’s computer. it stays in your browser. nothing is uploaded.</p>
                 <button className="btn btn-primary" onClick={start} disabled={state === 'starting'}>
                   {state === 'starting' ? 'starting camera…' : 'turn on camera'}
                 </button>

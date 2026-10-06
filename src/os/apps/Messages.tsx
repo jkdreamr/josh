@@ -10,7 +10,7 @@ const topics: Topic[] = [
   {
     q: 'what are you working on?',
     a: [
-      "these days i'm leading Cognition's Korea efforts — we make Devin, the AI software engineer.",
+      "these days i'm leading Cognition's Korea efforts. we make Devin, the AI software engineer.",
       "before that: investment intern at CRV, ecosystem manager at NEAR, and research at Pantera Capital.",
     ],
     actions: [{ label: 'see work folder', run: (os) => os.open('finder', { folder: 'work' }) }],
@@ -27,7 +27,7 @@ const topics: Topic[] = [
     q: 'you make music?',
     a: [
       'yep. i debuted as an artist with the single “Fairytale” under Dejavu Group, a korean hip hop label.',
-      'i also release music on my own — “all i need” is on Spotify, and i post as kelix on SoundCloud.',
+      'i also release music on my own. “all i need” is on Spotify, and i post as kelix on SoundCloud.',
     ],
     actions: [
       { label: 'play on spotify', run: (os) => os.open('spotify') },
@@ -82,7 +82,7 @@ export default function Messages(_: AppProps) {
   };
 
   useEffect(() => {
-    joshSays(["hey! i'm josh 👋", 'ask me anything below — or just type.'], undefined, 300);
+    joshSays(["hey! i'm josh 👋", 'ask me anything below, or just type.'], undefined, 300);
     return () => queue.current.forEach(clearTimeout);
   }, []);
 
@@ -101,9 +101,9 @@ export default function Messages(_: AppProps) {
     if (!text) return;
     setDraft('');
     setMsgs((m) => [...m, { id: seq++, from: 'me', text }]);
-    const mailto = `mailto:${profile.email}?subject=${encodeURIComponent('hey josh — from your website')}&body=${encodeURIComponent(text)}`;
+    const mailto = `mailto:${profile.email}?subject=${encodeURIComponent('hey josh, from your website')}&body=${encodeURIComponent(text)}`;
     joshSays(
-      ["the real me isn't at this keyboard right now — want to send that straight to my inbox?"],
+      ["the real me isn't at this keyboard right now. want to send that straight to my inbox?"],
       [{ label: 'send as email', run: () => (window.location.href = mailto) }],
     );
   };

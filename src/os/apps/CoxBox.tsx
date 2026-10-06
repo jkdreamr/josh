@@ -16,8 +16,8 @@ const fmt = (s: number) => {
 
 function callFor(d: number, rate: number, strokes: number): string {
   if (strokes < 3) return 'attention… row!';
-  if (d > RACE_M - 100) return 'last hundred — empty the tank!';
-  if (d > 240 && d < 300) return 'halfway. power ten — in two… go!';
+  if (d > RACE_M - 100) return 'last hundred! empty the tank!';
+  if (d > 240 && d < 300) return 'halfway. power ten, in two… go!';
   if (rate > 42) return 'you’re rushing the slide. lengthen out.';
   if (rate < 26) return 'bring the rate up! we need more.';
   if (rate >= 31 && rate <= 37) return 'that’s it. hold this rhythm.';

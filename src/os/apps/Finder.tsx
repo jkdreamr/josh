@@ -95,7 +95,7 @@ export default function Finder({ args }: AppProps) {
                     Open {hostOf(sel.href).split('/')[0]} <ExternalIcon size={11} />
                   </button>
                 ) : (
-                  <p className="fp-note">no link — just a good memory.</p>
+                  <p className="fp-note">no link, just a good memory.</p>
                 )}
               </>
             ) : (

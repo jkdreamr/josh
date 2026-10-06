@@ -189,14 +189,14 @@ export function LidStickers() {
 
 /** Palm-rest stickers for the WebGL laptop: art plus placement on the deck in cm (x from centre, z towards the front). */
 export const palmStickers = [
-  { key: 'crv', label: 'CRV — open Work folder', el: <Crv />, x: -11.3, z: 5.6, w: 2.7, rot: -10 },
-  { key: 'cognition', label: 'Cognition — open Work folder', el: <Cognition />, x: 11.1, z: 6.1, w: 5.3, rot: 5 },
+  { key: 'crv', label: 'CRV - open Work folder', el: <Crv />, x: -11.3, z: 5.6, w: 2.7, rot: -10 },
+  { key: 'cognition', label: 'Cognition - open Work folder', el: <Cognition />, x: 11.1, z: 6.1, w: 5.3, rot: 5 },
 ] as const;
 
 export function PalmStickers({ onCrv, onCognition }: { onCrv: () => void; onCognition: () => void }) {
   const palm: Placed[] = [
-    { key: 'crv', label: 'CRV — open Work folder', el: <Crv />, left: '9%', top: '58%', width: '8.5%', rot: -10, onClick: onCrv },
-    { key: 'cognition', label: 'Cognition — open Work folder', el: <Cognition />, left: '75%', top: '61%', width: '16.5%', rot: 5, onClick: onCognition },
+    { key: 'crv', label: 'CRV - open Work folder', el: <Crv />, left: '9%', top: '58%', width: '8.5%', rot: -10, onClick: onCrv },
+    { key: 'cognition', label: 'Cognition - open Work folder', el: <Cognition />, left: '75%', top: '61%', width: '16.5%', rot: 5, onClick: onCognition },
   ];
   return (
     <div className="stickers stickers-palm">

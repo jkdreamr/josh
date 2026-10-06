@@ -59,7 +59,7 @@ export default function Terminal(_: AppProps) {
       .entries.map((e) => (
         <span key={e.name}>
           <span className="t-file">{e.name}</span>
-          {(e.role || e.meta) && <span className="t-dim"> — {[e.role, e.meta].filter(Boolean).join(', ')}</span>}
+          {(e.role || e.meta) && <span className="t-dim"> - {[e.role, e.meta].filter(Boolean).join(', ')}</span>}
         </span>
       ));
 
@@ -76,7 +76,7 @@ export default function Terminal(_: AppProps) {
             {[
               ['whoami', 'who is josh?'],
               ['ls / cd <dir>', 'look around (school, work, projects, music)'],
-              ['open <app>', 'open any app — e.g. open spotify'],
+              ['open <app>', 'open any app, e.g. open spotify'],
               ['work · school · projects · music', 'shortcuts'],
               ['socials · contact', 'where to find me'],
               ['neofetch', 'system info'],
@@ -94,7 +94,7 @@ export default function Terminal(_: AppProps) {
       case 'about':
         return print(
           <span>
-            <b>{profile.name}</b> — {linkedin.headline}. {linkedin.about}. {profile.tagline}
+            <b>{profile.name}</b>: {linkedin.headline}. {linkedin.about}. {profile.tagline}
           </span>,
         );
       case 'ls': {
@@ -168,7 +168,7 @@ export default function Terminal(_: AppProps) {
                 ['Host', 'Stanford University'],
                 ['Kernel', 'CS + Math'],
                 ['Uptime', 'since the class of ’28 started'],
-                ['Shell', 'coxswain — Stanford Varsity Rowing'],
+                ['Shell', 'coxswain, Stanford Varsity Rowing'],
                 ['CPU', "Cognition · Korea"],
                 ['Memory', 'CRV · NEAR · Pantera · CodeTree'],
                 ['Audio', 'Fairytale · all i need · kelix'],
@@ -222,7 +222,7 @@ export default function Terminal(_: AppProps) {
   return (
     <div className="term" onClick={() => window.getSelection()?.isCollapsed && inputRef.current?.focus()}>
       <header className="term-bar" data-drag>
-        guest — zsh — 80×24
+        guest - zsh - 80×24
       </header>
       <div className="term-out">
         {lines.map((l) => (
