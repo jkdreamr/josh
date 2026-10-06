@@ -10,6 +10,11 @@ const MENU_H = 26;
 const DOCK_SPACE = 78;
 const MIN_W = 320;
 const MIN_H = 220;
+const DOCK_GAP = 4;
+const DOCK_PAD_X = 6;
+const DOCK_SEP = 7;
+const DOCK_AMP = 0.5;
+const DOCK_RADIUS = 2.6;
 
 type Win = {
   id: AppId;
@@ -37,6 +42,7 @@ type Props = {
 /** Routes a URL to the in-desktop app that best represents it. */
 function routeUrl(url: string): { id: AppId; args: OpenArgs } {
   const u = url.toLowerCase();
+  if (u.includes('venmo.com/u/josdreamr')) return { id: 'venmo', args: {} };
   if (u.includes('instagram.com/atkelix')) return { id: 'instagram', args: { account: 'music' } };
   if (u.includes('instagram.com')) return { id: 'instagram', args: { account: 'personal' } };
   if (u.includes('x.com/joshuaykoo') || u.includes('twitter.com/joshuaykoo')) return { id: 'x', args: {} };
@@ -64,10 +70,13 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setSize({ w: el.offsetWidth, h: el.offsetHeight }));
+    const measure = () => {
+      sizeRef.current = { w: el.offsetWidth, h: el.offsetHeight };
+      setSize(sizeRef.current);
+    };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    sizeRef.current = { w: el.offsetWidth, h: el.offsetHeight };
-    setSize(sizeRef.current);
+    measure();
     return () => ro.disconnect();
   }, []);
 
@@ -105,12 +114,11 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
       const h = Math.round(Math.min(def.h, availH - 10));
       const n = ws.filter((x) => !x.min).length % 6;
       const x = Math.round(clamp((W - w) / 2 + n * 26, 8, W - w - 8));
-      const y = Math.round(clamp(MENU_H + (availH - h) / 2 + n * 22, MENU_H + 6, H - h - 8));
+      const y = Math.round(clamp(MENU_H + (availH - h) / 2 + n * 22, MENU_H + 6, H - h - DOCK_SPACE));
       return [...ws, { id, x, y, w, h, z, min: false, max: false, args: { ...args, nonce: Date.now() }, state: 'opening' }];
     });
   }, []);
 
-  // Greet every visitor with the intro memo in Notes.
   const greeted = useRef(false);
   useEffect(() => {
     if (greeted.current) return;
@@ -691,20 +699,162 @@ function HomeScreen() {
 
 /* ------------------------------------ dock ------------------------------------ */
 
+type DockSpring = { s: number; v: number };
+
+function dockKernel(d: number) {
+  return d >= DOCK_RADIUS ? 0 : (1 + Math.cos((Math.PI * d) / DOCK_RADIUS)) / 2;
+}
+
 function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: AppId) => void; active: AppId | null; screenW: number }) {
   const os = useOSLocal();
-  const [mouseX, setMouseX] = useState<number | null>(null);
-  const refs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const ids: AppId[] = os.mobile ? (os.tablet ? tabletDock : mobileDock) : [...dockOrder];
-  const base = os.mobile ? (os.tablet ? 62 : 58) : Math.round(Math.max(28, Math.min(46, (screenW - 80) / (ids.length + 1) - 4)));
+  const [hovered, setHovered] = useState<AppId | null>(null);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const wrapRef = useRef<HTMLElement>(null);
+  const labelRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const scaleRefs = useRef<Record<string, DockSpring>>({});
+  const pointerP = useRef<number | null>(null);
+  const hoveredRef = useRef<AppId | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const previousTime = useRef(0);
+  const ids = useMemo(() => (os.mobile ? (os.tablet ? tabletDock : mobileDock) : [...dockOrder]), [os.mobile, os.tablet]);
+  const items = useMemo(() => (os.mobile ? ids : [...ids, 'trash' as AppId]), [ids, os.mobile]);
+  const count = items.length;
+  const kSum = useMemo(() => {
+    let max = 0;
+    for (let p = 0; p <= count + 1e-8; p += 0.05) {
+      let sum = 0;
+      for (let i = 0; i < count; i += 1) sum += dockKernel(Math.abs(p - i));
+      max = Math.max(max, sum);
+    }
+    return max;
+  }, [count]);
+  const fixed = 2 * DOCK_PAD_X + (count - 1) * DOCK_GAP + (os.mobile ? 0 : DOCK_SEP + DOCK_GAP);
+  const base = os.mobile
+    ? os.tablet
+      ? 62
+      : 58
+    : Math.floor(Math.min(46, (screenW - 16 - fixed) / (count + DOCK_AMP * kSum)));
+  const pitch = base + DOCK_GAP;
+  const width0 = fixed + count * base;
+  const configRef = useRef({ items, base, pitch, count, width0, screenW, reducedMotion, mobile: os.mobile });
+  configRef.current = { items, base, pitch, count, width0, screenW, reducedMotion, mobile: os.mobile };
 
-  const scaleFor = (id: string) => {
-    if (os.mobile || mouseX === null) return 1;
-    const el = refs.current[id];
-    if (!el) return 1;
-    const r = el.getBoundingClientRect();
-    const d = Math.abs(mouseX - (r.left + r.width / 2)) / (r.width / (el.offsetWidth || 1));
-    return 1 + 0.55 * Math.max(0, 1 - d / 150);
+  const applyScale = useCallback((id: string, scale: number) => {
+    const button = itemRefs.current[id];
+    if (!button) return;
+    const size = configRef.current.base * scale;
+    button.style.width = `${size}px`;
+    const icon = button.firstElementChild as HTMLElement | null;
+    if (icon) {
+      icon.style.width = `${size}px`;
+      icon.style.height = `${size}px`;
+    }
+  }, []);
+
+  const positionLabel = useCallback(() => {
+    const label = labelRef.current;
+    const wrap = wrapRef.current;
+    const dock = dockRef.current;
+    const id = hoveredRef.current;
+    const button = id ? itemRefs.current[id] : null;
+    if (!label || !wrap || !dock || !button) return;
+    let x = 0;
+    let y = 0;
+    let node: HTMLElement | null = button;
+    while (node && node !== wrap) {
+      x += node.offsetLeft;
+      y += node.offsetTop;
+      node = node.offsetParent as HTMLElement | null;
+    }
+    const s = id ? scaleRefs.current[id]?.s ?? 1 : 1;
+    const labelWidth = label.offsetWidth;
+    const labelHeight = label.offsetHeight;
+    const wrapLeft = wrap.offsetLeft;
+    const wrapTop = wrap.offsetTop;
+    const center = wrapLeft + x + button.offsetWidth / 2;
+    const left = Math.max(6 + labelWidth / 2, Math.min(configRef.current.screenW - 6 - labelWidth / 2, center));
+    const tileTop = wrapTop + y - configRef.current.base * (s - 1);
+    const top = Math.max(MENU_H + 4, tileTop - labelHeight - 8);
+    label.style.transform = `translate3d(${left - wrapLeft - labelWidth / 2}px, ${top - wrapTop}px, 0)`;
+  }, []);
+
+  const animate = useCallback((time: number) => {
+    frameRef.current = null;
+    const dt = Math.min((time - (previousTime.current || time)) / 1000, 1 / 30);
+    previousTime.current = time;
+    const { items: currentItems, base: currentBase, pitch: currentPitch, reducedMotion: reduce } = configRef.current;
+    const p = reduce ? null : pointerP.current;
+    const stiffness = p === null ? 170 : 900;
+    const damping = 2 * Math.sqrt(stiffness);
+    const stepCount = Math.max(1, Math.ceil(dt / (1 / 120)));
+    const stepDt = dt / stepCount;
+    let moving = false;
+
+    currentItems.forEach((id, index) => {
+      const center = DOCK_PAD_X + index * currentPitch + currentBase / 2 + (id === 'trash' ? DOCK_SEP + DOCK_GAP : 0);
+      const target = p === null ? 1 : 1 + DOCK_AMP * dockKernel(Math.abs(p - center) / currentPitch);
+      const spring = (scaleRefs.current[id] ??= { s: 1, v: 0 });
+      for (let step = 0; step < stepCount; step += 1) {
+        const acceleration = stiffness * (target - spring.s) - damping * spring.v;
+        spring.v += acceleration * stepDt;
+        spring.s += spring.v * stepDt;
+      }
+      if (Math.abs(spring.s - target) < 0.001 && Math.abs(spring.v) < 0.01) {
+        spring.s = target;
+        spring.v = 0;
+      } else {
+        moving = true;
+      }
+      applyScale(id, spring.s);
+    });
+    positionLabel();
+    if (moving) frameRef.current = requestAnimationFrame(animate);
+    else previousTime.current = 0;
+  }, [applyScale, positionLabel]);
+
+  const requestAnimation = useCallback(() => {
+    if (frameRef.current === null) frameRef.current = requestAnimationFrame(animate);
+  }, [animate]);
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReducedMotion(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    if (reducedMotion) {
+      pointerP.current = null;
+      dockRef.current?.classList.remove('is-mag');
+      requestAnimation();
+    }
+  }, [reducedMotion, requestAnimation]);
+
+  useEffect(() => {
+    items.forEach((id) => applyScale(id, scaleRefs.current[id]?.s ?? 1));
+    positionLabel();
+    requestAnimation();
+  }, [applyScale, base, items, positionLabel, requestAnimation]);
+
+  useEffect(() => {
+    positionLabel();
+  }, [hovered, positionLabel]);
+
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    },
+    [],
+  );
+
+  const setHoveredItem = (id: AppId | null) => {
+    hoveredRef.current = id;
+    setHovered(id);
+    if (id) requestAnimation();
   };
 
   const click = (id: AppId) => {
@@ -714,24 +864,47 @@ function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: A
   };
 
   return (
-    <nav className="dock-wrap" aria-label="Dock">
-      <div className="dock" onPointerMove={(e) => e.pointerType === 'mouse' && setMouseX(e.clientX)} onPointerLeave={() => setMouseX(null)}>
+    <nav ref={wrapRef} className="dock-wrap" aria-label="Dock">
+      <div
+        ref={dockRef}
+        className="dock"
+        onPointerMove={(e) => {
+          if (e.pointerType !== 'mouse' || configRef.current.reducedMotion || configRef.current.mobile) return;
+          const dock = dockRef.current;
+          if (!dock) return;
+          const rect = dock.getBoundingClientRect();
+          const scale = dock.offsetWidth / rect.width || 1;
+          pointerP.current = (e.clientX - (rect.left + rect.width / 2)) * scale + configRef.current.width0 / 2;
+          dock.classList.add('is-mag');
+          requestAnimation();
+        }}
+        onPointerLeave={(e) => {
+          if (e.pointerType !== 'mouse') return;
+          pointerP.current = null;
+          dockRef.current?.classList.remove('is-mag');
+          setHoveredItem(null);
+          requestAnimation();
+        }}
+      >
+        {!os.mobile && <span className="dock-hotzone" aria-hidden="true" style={{ height: base * DOCK_AMP + 2 }} />}
         {ids.map((id) => {
-          const s = scaleFor(id);
           const running = wins.some((w) => w.id === id && w.state !== 'closing');
           return (
             <button
               key={id}
               ref={(el) => {
-                refs.current[id] = el;
+                itemRefs.current[id] = el;
               }}
               className={`dock-item ${running ? 'is-running' : ''} ${active === id ? 'is-front' : ''}`}
-              style={{ width: base * s, height: base * s }}
+              style={{ width: base, height: base }}
               onClick={() => click(id)}
+              onPointerEnter={(e) => e.pointerType === 'mouse' && setHoveredItem(id)}
+              onPointerLeave={(e) => {
+                if (e.pointerType === 'mouse' && !dockRef.current?.contains(e.relatedTarget as Node | null)) setHoveredItem(null);
+              }}
               aria-label={apps[id].title}
             >
-              <AppIcon kind={apps[id].icon} size={base * s} />
-              <span className="dock-tip">{apps[id].title}</span>
+              <AppIcon kind={apps[id].icon} size={base} />
             </button>
           );
         })}
@@ -740,18 +913,24 @@ function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: A
             <span className="dock-sep" />
             <button
               ref={(el) => {
-                refs.current.trash = el;
+                itemRefs.current.trash = el;
               }}
               className={`dock-item ${wins.some((w) => w.id === 'trash') ? 'is-running' : ''}`}
-              style={{ width: base * scaleFor('trash'), height: base * scaleFor('trash') }}
+              style={{ width: base, height: base }}
               onClick={() => click('trash')}
+              onPointerEnter={(e) => e.pointerType === 'mouse' && setHoveredItem('trash')}
+              onPointerLeave={(e) => {
+                if (e.pointerType === 'mouse' && !dockRef.current?.contains(e.relatedTarget as Node | null)) setHoveredItem(null);
+              }}
               aria-label="Trash"
             >
-              <AppIcon kind="trash" size={base * scaleFor('trash')} />
-              <span className="dock-tip">Trash</span>
+              <AppIcon kind="trash" size={base} />
             </button>
           </>
         )}
+      </div>
+      <div ref={labelRef} className={`dock-label ${hovered ? 'is-visible' : ''}`} role="tooltip">
+        {hovered ? apps[hovered].title : ''}
       </div>
     </nav>
   );

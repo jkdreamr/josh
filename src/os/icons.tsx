@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { siGithub, siInstagram, siSoundcloud, siSpotify, siX, siYoutube } from 'simple-icons';
+import { siGithub, siInstagram, siSoundcloud, siSpotify, siVenmo, siX, siYoutube } from 'simple-icons';
 
 type Glyph = { path: string };
 
@@ -26,6 +26,7 @@ export type IconKind =
   | 'x'
   | 'linkedin'
   | 'github'
+  | 'venmo'
   | 'mail'
   | 'terminal'
   | 'coxbox'
@@ -122,6 +123,8 @@ export function Glyph({ kind }: { kind: IconKind }): ReactNode {
       return <Brand icon={siX} size={30} />;
     case 'github':
       return <Brand icon={siGithub} size={36} />;
+    case 'venmo':
+      return <Brand icon={siVenmo} size={34} />;
     case 'linkedin':
       return <Brand icon={{ path: linkedinPath }} size={32} />;
     case 'messages':
@@ -206,6 +209,7 @@ const tiles: Partial<Record<IconKind, CSSProperties>> = {
   x: tile('linear-gradient(180deg,#1e1e1e,#000)'),
   linkedin: tile('linear-gradient(180deg,#1a8cd8,#0a66c2)'),
   github: tile('linear-gradient(180deg,#30363d,#0d1117)'),
+  venmo: tile('#008CFF'),
   mail: tile('linear-gradient(180deg,#5ab8ff,#1d6ff2)'),
   terminal: tile('linear-gradient(180deg,#3a3a3c,#121214)', { boxShadow: 'inset 0 0 0 1.5px rgba(255,255,255,.18)' }),
   coxbox: tile('linear-gradient(180deg,#d63b45,#8c1515)'),
