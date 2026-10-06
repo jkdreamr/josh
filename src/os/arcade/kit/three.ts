@@ -5,7 +5,7 @@ let pending: Promise<Three> | null = null;
 
 /** Lazily loads three.js once; every 3D game shares the same chunk. */
 export function loadThree(): Promise<Three> {
-  pending ??= import('three').catch((e) => {
+  pending ??= (import('./three-lib') as unknown as Promise<Three>).catch((e) => {
     pending = null;
     throw e;
   });
