@@ -86,6 +86,8 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   const [dragging, setDragging] = useState(false);
   const [launcher, setLauncher] = useState(false);
   const [toast, setToast] = useState(false);
+  const holdBanner = useRef(false);
+  const holdBannerTimer = useRef<number | null>(null);
   const [ctx, setCtx] = useState<{ x: number; y: number; icon?: string } | null>(null);
   const zTop = useRef(10);
   const winsRef = useRef(wins);
@@ -141,30 +143,61 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
           bottom: banner.offsetTop + banner.offsetHeight,
         }
       : null;
+    const getPlacement = (n: number) => {
+      const availH = H - MENU_H - DOCK_SPACE;
+      const w = Math.round(Math.min(def.w, W * 0.86));
+      let h = Math.round(Math.min(def.h, availH - 10));
+      const x = Math.round(clamp((W - w) / 2 + n * 26, 8, W - w - 8));
+      const centeredY = Math.round(clamp(MENU_H + (availH - h) / 2 + n * 22, MENU_H + 6, H - h - DOCK_SPACE));
+      let y = centeredY;
+      let shouldHoldBanner = false;
+      if (bannerBounds) {
+        const overlaps =
+          x < bannerBounds.right && x + w > bannerBounds.left && y < bannerBounds.bottom && y + h > bannerBounds.top;
+        const shiftedY = bannerBounds.bottom + 8;
+        const shiftedHeight = Math.round(Math.min(h, H - DOCK_SPACE - shiftedY));
+        if (overlaps) {
+          if (shiftedHeight >= 180) {
+            y = shiftedY;
+            h = shiftedHeight;
+          } else if (avoidBanner) {
+            shouldHoldBanner = true;
+          }
+        }
+      }
+      return { x, y, w, h, shouldHoldBanner };
+    };
+    if (avoidBanner) holdBanner.current = getPlacement(0).shouldHoldBanner;
     setWins((ws) => {
       const existing = ws.find((w) => w.id === id);
       if (existing)
         return ws.map((w) =>
           w.id === id ? { ...w, z, min: false, state: w.state === 'closing' ? 'open' : w.state, args: { ...args, nonce: Date.now() }, origin: from ?? w.origin } : w,
         );
-      const availH = H - MENU_H - DOCK_SPACE;
-      const w = Math.round(Math.min(def.w, W * 0.86));
-      const h = Math.round(Math.min(def.h, availH - 10));
-      const n = ws.filter((x) => !x.min).length % 6;
-      const x = Math.round(clamp((W - w) / 2 + n * 26, 8, W - w - 8));
-      const centeredY = Math.round(clamp(MENU_H + (availH - h) / 2 + n * 22, MENU_H + 6, H - h - DOCK_SPACE));
-      let y = centeredY;
-      if (bannerBounds) {
-        const overlaps = (top: number) =>
-          x < bannerBounds.right && x + w > bannerBounds.left && top < bannerBounds.bottom && top + h > bannerBounds.top;
-        const shiftedY = bannerBounds.bottom + 8;
-        if (overlaps(y) && shiftedY + h <= H - DOCK_SPACE) {
-          y = shiftedY;
-        }
-      }
+      const { x, y, w, h } = getPlacement(ws.filter((win) => !win.min).length % 6);
       return [...ws, { id, x, y, w, h, z, min: false, max: false, args: { ...args, nonce: Date.now() }, state: 'opening', origin: from }];
     });
   }, [mobile, tablet]);
+
+  const revealHeldBanner = useCallback(() => {
+    if (!holdBanner.current) return;
+    holdBanner.current = false;
+    if (holdBannerTimer.current !== null) {
+      window.clearTimeout(holdBannerTimer.current);
+      holdBannerTimer.current = null;
+    }
+    setToast(true);
+  }, []);
+
+  const scheduleHeldBanner = useCallback(() => {
+    if (!holdBanner.current || holdBannerTimer.current !== null) return;
+    holdBannerTimer.current = window.setTimeout(() => {
+      holdBannerTimer.current = null;
+      if (!holdBanner.current) return;
+      holdBanner.current = false;
+      setToast(true);
+    }, 600);
+  }, []);
 
   const greeted = useRef(false);
   useEffect(() => {
@@ -174,11 +207,15 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   }, [open]);
 
   const close = useCallback((id: AppId) => {
+    if (id === 'notes') revealHeldBanner();
     setWins((ws) => ws.map((w) => (w.id === id ? { ...w, state: 'closing' } : w)));
     setTimeout(() => setWins((ws) => ws.filter((w) => !(w.id === id && w.state === 'closing'))), 200);
-  }, []);
+  }, [revealHeldBanner]);
 
-  const minimize = useCallback((id: AppId) => setWins((ws) => ws.map((w) => (w.id === id ? { ...w, min: true } : w))), []);
+  const minimize = useCallback((id: AppId) => {
+    if (id === 'notes') revealHeldBanner();
+    setWins((ws) => ws.map((w) => (w.id === id ? { ...w, min: true } : w)));
+  }, [revealHeldBanner]);
   const toggleMax = useCallback((id: AppId) => setWins((ws) => ws.map((w) => (w.id === id ? { ...w, max: !w.max } : w))), []);
 
   const openUrl = useCallback(
@@ -204,9 +241,22 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
 
   // Welcome notification. The banner itself handles auto-dismiss, hover and swipes.
   useEffect(() => {
-    const t = setTimeout(() => setToast(true), 1400);
-    return () => clearTimeout(t);
-  }, []);
+    const root = rootRef.current;
+    const t = window.setTimeout(() => {
+      if (!holdBanner.current) setToast(true);
+    }, 1400);
+    root?.addEventListener('pointerdown', scheduleHeldBanner, true);
+    root?.addEventListener('keydown', scheduleHeldBanner, true);
+    return () => {
+      window.clearTimeout(t);
+      root?.removeEventListener('pointerdown', scheduleHeldBanner, true);
+      root?.removeEventListener('keydown', scheduleHeldBanner, true);
+      if (holdBannerTimer.current !== null) {
+        window.clearTimeout(holdBannerTimer.current);
+        holdBannerTimer.current = null;
+      }
+    };
+  }, [scheduleHeldBanner]);
   const dismissToast = useCallback(() => setToast(false), []);
 
   useEffect(() => {
