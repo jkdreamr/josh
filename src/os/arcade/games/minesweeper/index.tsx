@@ -69,6 +69,7 @@ function Play() {
   const lossMines = useRef<Position[]>([]);
   const winDelay = useRef<{ remaining: number; detail: string } | null>(null);
   const hudTime = useRef(0);
+  const lastNow = useRef<number | null>(null);
 
   const setBoardLevel = (next: Level) => {
     if (next === level) return;
@@ -97,7 +98,7 @@ function Play() {
       sfx.play('boom', 0.65);
     }
     if (result.won) {
-      const seconds = Math.floor(s.seconds);
+      const seconds = Math.max(1, Math.floor(s.seconds));
       const newBest = bestForLevel(s.level).submit(seconds);
       const detail = newBest
         ? `new best on ${s.level}: ${formatTime(seconds)}.`
@@ -134,13 +135,10 @@ function Play() {
     else performReveal(row, col);
   };
 
-  const positionAt = (clientX: number, clientY: number): Position | null => {
-    const canvas = ref.current;
-    if (!canvas) return null;
-    const bounds = canvas.getBoundingClientRect();
+  const positionAt = (offsetX: number, offsetY: number): Position | null => {
     const layout = layoutFor(size.w, size.h, game.current!);
-    const col = Math.floor((clientX - bounds.left - layout.x) / layout.cell);
-    const row = Math.floor((clientY - bounds.top - layout.y) / layout.cell);
+    const col = Math.floor((offsetX - layout.x) / layout.cell);
+    const row = Math.floor((offsetY - layout.y) / layout.cell);
     if (row < 0 || row >= layout.rows || col < 0 || col >= layout.cols) return null;
     return toBoardPosition(layout, row, col);
   };
@@ -162,7 +160,10 @@ function Play() {
 
   useGameLoop((dt) => {
     const s = game.current!;
-    tick(s, dt);
+    const now = performance.now();
+    const previousNow = lastNow.current;
+    lastNow.current = now;
+    tick(s, previousNow === null ? 0 : Math.min((now - previousNow) / 1000, 0.25));
     hudTime.current += dt;
     if (hudTime.current >= 0.25) {
       hudTime.current = 0;
@@ -310,7 +311,7 @@ function Play() {
       className="g-minesweeper-canvas"
       onPointerDown={(event) => {
         event.preventDefault();
-        const pos = positionAt(event.clientX, event.clientY);
+        const pos = positionAt(event.nativeEvent.offsetX, event.nativeEvent.offsetY);
         if (!pos) return;
         event.currentTarget.setPointerCapture(event.pointerId);
         const isTouch = shell.touch || event.pointerType !== 'mouse';
@@ -327,14 +328,14 @@ function Play() {
       onMouseDown={(event) => {
         mouseButtons.current.add(event.button);
         if (event.button === 1 || (mouseButtons.current.has(0) && mouseButtons.current.has(2))) {
-          const pos = positionAt(event.clientX, event.clientY);
+          const pos = positionAt(event.nativeEvent.offsetX, event.nativeEvent.offsetY);
           if (pos && !pointer.current?.chordDone) performReveal(pos[0], pos[1]);
           if (pointer.current) pointer.current.chordDone = true;
         }
       }}
       onMouseUp={(event) => { mouseButtons.current.delete(event.button); }}
       onPointerMove={(event) => {
-        const pos = positionAt(event.clientX, event.clientY);
+        const pos = positionAt(event.nativeEvent.offsetX, event.nativeEvent.offsetY);
         if (!pointer.current) {
           if (event.pointerType === 'mouse') hover.current = pos;
           return;
@@ -349,15 +350,17 @@ function Play() {
       }}
       onPointerUp={(event) => {
         if (event.pointerType === 'mouse') mouseButtons.current.delete(event.button);
+        const releasePosition = positionAt(event.nativeEvent.offsetX, event.nativeEvent.offsetY);
         const p = pointer.current;
         if (!p || p.id !== event.pointerId) return;
         pointer.current = null;
         pressedAt.current = null;
         if (p.moved || p.longDone || p.chordDone) return;
-        if (p.touch) performAction(p.row, p.col, mode === 'flag');
-        else if (event.button === 0) performReveal(p.row, p.col);
-        else if (event.button === 2) performFlag(p.row, p.col);
-        else if (event.button === 1) performReveal(p.row, p.col);
+        const [row, col] = releasePosition ?? [p.row, p.col];
+        if (p.touch) performAction(row, col, mode === 'flag');
+        else if (event.button === 0) performReveal(row, col);
+        else if (event.button === 2) performFlag(row, col);
+        else if (event.button === 1) performReveal(row, col);
       }}
       onPointerCancel={() => { pointer.current = null; pressedAt.current = null; mouseButtons.current.clear(); }}
       onPointerLeave={(event) => { if (event.pointerType === 'mouse' && !pointer.current) hover.current = null; }}
