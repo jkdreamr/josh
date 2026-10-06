@@ -30,16 +30,17 @@ test('serves alternate service courts by server score parity', () => {
 });
 
 test('rally scoring wins 22-20 from 20-all', () => {
-  let match = { ...newMatch('bwf'), points: { player: 20, cpu: 20 } };
+  let match = { ...newMatch('bwf'), game: 2 as const, games: { player: 1, cpu: 0 }, points: { player: 20, cpu: 20 } };
   match = awardPoint(match, 'player');
   assert.equal(match.matchWinner, null);
   match = awardPoint(match, 'player');
   assert.equal(match.matchWinner, 'player');
+  assert.deepEqual(match.games, { player: 2, cpu: 0 });
   assert.deepEqual(match.points, { player: 22, cpu: 20 });
 });
 
 test('a 30-29 game ends at the cap', () => {
-  const match = awardPoint({ ...newMatch('bwf'), points: { player: 29, cpu: 29 } }, 'player');
+  const match = awardPoint({ ...newMatch('bwf'), game: 2, games: { player: 1, cpu: 0 }, points: { player: 29, cpu: 29 } }, 'player');
   assert.equal(match.matchWinner, 'player');
   assert.deepEqual(match.points, { player: 30, cpu: 29 });
 });
