@@ -329,7 +329,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
             <AppIcon kind="messages" size={34} />
             <span className="toast-text">
               <b>Josh</b>
-              <span>hey, welcome to my {mobile ? (tablet ? 'ipad' : 'phone') : 'computer'}. poke around — or text me.</span>
+              <span>hey, welcome to my {mobile ? (tablet ? 'ipad' : 'phone') : 'computer'}. poke around, or text me.</span>
             </span>
             <small>now</small>
           </button>
