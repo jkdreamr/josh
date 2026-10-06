@@ -65,7 +65,8 @@ export default function Desktop({ mobile, fullscreen, toggleFullscreen, restart,
     if (!el) return;
     const ro = new ResizeObserver(() => setSize({ w: el.offsetWidth, h: el.offsetHeight }));
     ro.observe(el);
-    setSize({ w: el.offsetWidth, h: el.offsetHeight });
+    sizeRef.current = { w: el.offsetWidth, h: el.offsetHeight };
+    setSize(sizeRef.current);
     return () => ro.disconnect();
   }, []);
 
@@ -107,6 +108,14 @@ export default function Desktop({ mobile, fullscreen, toggleFullscreen, restart,
       return [...ws, { id, x, y, w, h, z, min: false, max: false, args: { ...args, nonce: Date.now() }, state: 'opening' }];
     });
   }, []);
+
+  // Greet every visitor with the intro memo in Notes.
+  const greeted = useRef(false);
+  useEffect(() => {
+    if (greeted.current) return;
+    greeted.current = true;
+    open('notes', { note: 'about' });
+  }, [open]);
 
   const close = useCallback((id: AppId) => {
     setWins((ws) => ws.map((w) => (w.id === id ? { ...w, state: 'closing' } : w)));
