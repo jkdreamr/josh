@@ -57,7 +57,18 @@ export type VerticalDirection = 'up' | 'down';
 export type CaretPoint = { offset: number; x: number; y: number; affinity?: 'upstream' | 'downstream' };
 export type CaretLine = { y: number; points: CaretPoint[] };
 export type CaretSelection = { start: number; end: number; direction: 'forward' | 'backward' | 'none' };
+export type CaretMeasurementRange = { start: number; end: number };
 const CARET_X_SNAP_TOLERANCE = 0.5;
+
+export function caretMeasurementRange(value: string, offset: number): CaretMeasurementRange {
+  const caret = Math.max(0, Math.min(value.length, Math.trunc(offset)));
+  const currentStart = value.lastIndexOf('\n', caret - 1) + 1;
+  const start = currentStart > 0 ? value.lastIndexOf('\n', currentStart - 2) + 1 : 0;
+  const currentEndIndex = value.indexOf('\n', caret);
+  const nextStart = currentEndIndex < 0 ? value.length : currentEndIndex + 1;
+  const nextEndIndex = value.indexOf('\n', nextStart);
+  return { start, end: nextEndIndex < 0 ? value.length : nextEndIndex };
+}
 
 export function groupCaretPointsByLine(points: readonly CaretPoint[], tolerance = 0.5): CaretLine[] {
   const lines: CaretLine[] = [];
@@ -69,8 +80,13 @@ export function groupCaretPointsByLine(points: readonly CaretPoint[], tolerance 
   return lines;
 }
 
-function caretLineIndex(lines: readonly CaretLine[], offset: number, preferred?: number): number {
-  if (preferred != null && lines[preferred]?.points.some((point) => point.offset === offset)) return preferred;
+function caretLineIndex(lines: readonly CaretLine[], offset: number, preferredY?: number, scrollTop = 0): number {
+  if (preferredY != null) {
+    const preferred = lines.findIndex((line) =>
+      line.points.some((point) => point.offset === offset && Math.abs(point.y + scrollTop - preferredY) <= CARET_X_SNAP_TOLERANCE),
+    );
+    if (preferred >= 0) return preferred;
+  }
   const downstream = lines.findIndex((line) =>
     line.points.some((point) => point.offset === offset && point.affinity !== 'upstream'),
   );
@@ -226,11 +242,15 @@ const MIRROR_STYLE_PROPERTIES = [
   'overflow-y',
 ] as const;
 
-function measureTextareaCaretPoints(textarea: HTMLTextAreaElement): CaretPoint[] | null {
+type MeasuredCaretPoints = { points: CaretPoint[]; range: CaretMeasurementRange };
+
+function measureTextareaCaretPoints(textarea: HTMLTextAreaElement, focus: number): MeasuredCaretPoints | null {
   if (typeof document === 'undefined' || !document.body) return null;
 
   const mirror = document.createElement('div');
   try {
+    const value = textarea.value;
+    const range = caretMeasurementRange(value, focus);
     const computed = getComputedStyle(textarea);
     const number = (property: string) => Number.parseFloat(computed.getPropertyValue(property)) || 0;
     const paddingX = number('padding-left') + number('padding-right');
@@ -256,24 +276,25 @@ function measureTextareaCaretPoints(textarea: HTMLTextAreaElement): CaretPoint[]
     mirror.style.width = `${computed.boxSizing === 'border-box' ? textarea.clientWidth + borderX : textarea.clientWidth - paddingX}px`;
     mirror.style.height = `${computed.boxSizing === 'border-box' ? textarea.clientHeight + borderY : textarea.clientHeight - paddingY}px`;
 
-    const prefix = document.createTextNode('');
-    const marker = document.createElement('span');
+    const text = document.createTextNode(value || '\u200b');
+    const caretRange = document.createRange();
     const prefixRange = document.createRange();
-    mirror.append(prefix, marker);
+    mirror.append(text);
     document.body.appendChild(mirror);
     const mirrorRect = mirror.getBoundingClientRect();
+    mirror.scrollTop = textarea.scrollTop;
+    mirror.scrollLeft = textarea.scrollLeft;
     const points: CaretPoint[] = [];
 
-    for (let offset = 0; offset <= textarea.value.length; offset += 1) {
-      prefix.data = textarea.value.slice(0, offset);
-      marker.textContent = textarea.value.slice(offset) || '\u200b';
-      mirror.scrollTop = textarea.scrollTop;
-      mirror.scrollLeft = textarea.scrollLeft;
-      const rect = marker.getClientRects()[0] ?? marker.getBoundingClientRect();
-      if (offset > 0 && textarea.value[offset - 1] !== '\n' && textarea.value[offset - 1] !== '\r') {
-        prefixRange.setStart(prefix, offset - 1);
-        prefixRange.setEnd(prefix, offset);
-        const previousRect = prefixRange.getClientRects().item(0);
+    for (let offset = range.start; offset <= range.end; offset += 1) {
+      caretRange.setStart(text, offset);
+      caretRange.collapse(true);
+      const rect = caretRange.getBoundingClientRect();
+      if (!rect.height && value.length) return null;
+      if (offset > 0 && value[offset - 1] !== '\n' && value[offset - 1] !== '\r') {
+        prefixRange.setStart(text, offset - 1);
+        prefixRange.setEnd(text, offset);
+        const previousRect = prefixRange.getBoundingClientRect();
         if (previousRect && previousRect.top < rect.top - 0.5) {
           points.push({
             offset,
@@ -285,7 +306,7 @@ function measureTextareaCaretPoints(textarea: HTMLTextAreaElement): CaretPoint[]
       }
       points.push({ offset, x: rect.left - mirrorRect.left, y: rect.top - mirrorRect.top, affinity: 'downstream' });
     }
-    return points;
+    return { points, range };
   } catch {
     return null;
   } finally {
@@ -303,7 +324,7 @@ function keepTextareaCaretVisible(textarea: HTMLTextAreaElement, point: CaretPoi
   else if (point.y > visibleBottom) textarea.scrollTop += point.y - visibleBottom;
 }
 
-type VerticalGoal = { kind: 'x'; value: number; lineIndex: number } | { kind: 'column'; value: number };
+type VerticalGoal = { kind: 'x'; value: number; lineY: number } | { kind: 'column'; value: number };
 
 function readTextareaSelection(textarea: HTMLTextAreaElement): CaretSelection {
   return {
@@ -325,21 +346,39 @@ function moveTextareaVertically(
 ): VerticalGoal {
   const selection = readTextareaSelection(textarea);
   const focus = selectionFocus(selection);
-  const points = goal?.kind === 'column' ? null : measureTextareaCaretPoints(textarea);
+  const measurement = goal?.kind === 'column' ? null : measureTextareaCaretPoints(textarea, focus);
+  const points = measurement?.points;
 
   if (points) {
     const lines = groupCaretPointsByLine(points);
-    const currentLine = caretLineIndex(lines, focus, goal?.kind === 'x' ? goal.lineIndex : undefined);
+    const currentLine = caretLineIndex(lines, focus, goal?.kind === 'x' ? goal.lineY : undefined, textarea.scrollTop);
     const currentPoint =
       lines[currentLine]?.points.find((point) => point.offset === focus && point.affinity !== 'upstream') ??
       lines[currentLine]?.points.find((point) => point.offset === focus);
     if (currentPoint) {
       const goalX = goal?.kind === 'x' ? goal.value : currentPoint.x;
       const next = findAdjacentCaretPoint(lines, currentLine, direction, goalX);
-      const nextOffset = next.point?.offset ?? (direction === 'up' ? 0 : textarea.value.length);
-      keepTextareaCaretVisible(textarea, next.point ?? points.find((point) => point.offset === nextOffset));
-      setTextareaSelection(textarea, moveCaretSelection(selection, nextOffset, extend));
-      return { kind: 'x', value: goalX, lineIndex: next.lineIndex };
+      if (next.point) {
+        const scrollTop = textarea.scrollTop;
+        keepTextareaCaretVisible(textarea, next.point);
+        setTextareaSelection(textarea, moveCaretSelection(selection, next.point.offset, extend));
+        return { kind: 'x', value: goalX, lineY: next.point.y + scrollTop };
+      }
+
+      const atDocumentEdge =
+        direction === 'up'
+          ? measurement.range.start === 0 && currentLine === 0
+          : measurement.range.end === textarea.value.length && currentLine === lines.length - 1;
+      if (atDocumentEdge) {
+        const nextOffset = direction === 'up' ? 0 : textarea.value.length;
+        const boundaryPoint =
+          points.find((point) => point.offset === nextOffset && point.affinity !== 'upstream') ??
+          points.find((point) => point.offset === nextOffset);
+        const scrollTop = textarea.scrollTop;
+        keepTextareaCaretVisible(textarea, boundaryPoint);
+        setTextareaSelection(textarea, moveCaretSelection(selection, nextOffset, extend));
+        return { kind: 'x', value: goalX, lineY: (boundaryPoint?.y ?? currentPoint.y) + scrollTop };
+      }
     }
   }
 
