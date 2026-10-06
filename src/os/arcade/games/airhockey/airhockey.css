@@ -1,0 +1,158 @@
+.g-airhockey .g-airhockey-host {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 50% 40%, #1b2230 0%, #0f131b 65%, #090b10 100%);
+  touch-action: none;
+  cursor: none;
+}
+.g-airhockey .g-airhockey-host.is-menu {
+  cursor: default;
+}
+.g-airhockey .g-airhockey-score {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.g-airhockey .g-airhockey-score strong {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  min-width: 14px;
+  text-align: center;
+}
+.g-airhockey .g-airhockey-score span {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.g-airhockey .g-airhockey-score i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.g-airhockey .g-airhockey-menu {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 14px;
+  text-align: center;
+  color: #fff;
+  background: rgba(10, 12, 18, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.g-airhockey .g-airhockey-menu h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.g-airhockey .g-airhockey-menu p {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+}
+.g-airhockey .g-airhockey-row {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.g-airhockey .g-airhockey-opt {
+  appearance: none;
+  border: 0;
+  padding: 9px 18px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 0.15s, transform 0.15s;
+}
+.g-airhockey .g-airhockey-opt:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+.g-airhockey .g-airhockey-opt:active {
+  transform: scale(0.96);
+}
+.g-airhockey .g-airhockey-opt.is-on {
+  background: var(--arcade-accent, #34c3ff);
+  color: #04202c;
+}
+.g-airhockey .g-airhockey-go {
+  margin-top: 6px;
+  padding: 11px 26px;
+  font-size: 14px;
+  background: #fff;
+  color: #0b0d12;
+}
+.g-airhockey .g-airhockey-pop {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  transform: translate(-50%, -50%);
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #fff;
+  text-shadow: 0 2px 24px rgba(52, 195, 255, 0.5);
+  pointer-events: none;
+  animation: g-airhockey-pop 1.1s ease-out forwards;
+}
+@keyframes g-airhockey-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.7);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -60%) scale(1);
+  }
+}
+.g-airhockey .g-airhockey-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 46px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
+
+/* narrow screens: clear the shell's score and control row */
+@media (max-width: 640px) {
+  .g-airhockey .g-airhockey-score {
+    top: 48px;
+  }
+  .g-airhockey .g-airhockey-hint {
+    top: 84px;
+  }
+}
