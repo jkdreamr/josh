@@ -259,7 +259,7 @@ function Play() {
           {combo.n} in a row
         </div>
       )}
-      {shell.status === 'playing' && state.current.score === 0 && <div className="g-stack-hint">{shell.touch ? 'tap to drop' : 'space or click to drop'}</div>}
+      {shell.status === 'playing' && state.current.score === 0 && <div className="g-stack-hint">{shell.touch ? 'Tap to drop' : 'Space or click to drop'}</div>}
     </>
   );
 }

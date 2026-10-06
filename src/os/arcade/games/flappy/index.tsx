@@ -112,10 +112,10 @@ function Play() {
             const m = medalFor(n);
             const next = nextMedal(n);
             const nextName = next === null ? '' : medalFor(next);
-            const more = next === null ? 'that is the top of the tree.' : `${next - n} more for ${nextName}.`;
+            const more = next === null ? 'That is the top of the tree.' : `${next - n} more for ${nextName}.`;
             shell.gameOver(n, {
-              title: m === 'none' ? undefined : `${m} medal`,
-              detail: `you cleared ${n} ${n === 1 ? 'column' : 'columns'}. ${more}`,
+              title: m === 'none' ? undefined : `${m[0].toUpperCase()}${m.slice(1)} Medal`,
+              detail: `You cleared ${n} ${n === 1 ? 'column' : 'columns'}. ${more}`,
             });
           }
         }
@@ -254,11 +254,11 @@ function Play() {
         const a = 0.55 + 0.25 * Math.sin(s.t * 4);
         c.font = `600 ${Math.max(13, Math.round(fs * 0.3))}px ${UI}`;
         c.fillStyle = `rgba(30,50,40,${a})`;
-        c.fillText(touch ? 'tap to flap' : 'space or click to flap', W / 2, Math.min(Hc - 50 * k - 30, (w.y + 70) * k));
+        c.fillText(touch ? 'Tap to flap' : 'Space or click to flap', W / 2, Math.min(Hc - 50 * k - 30, (w.y + 70) * k));
         if (best) {
           c.font = `500 ${Math.max(12, Math.round(fs * 0.24))}px ${UI}`;
           c.fillStyle = 'rgba(30,50,40,0.45)';
-          c.fillText(`best ${best}`, W / 2, Math.min(Hc - 50 * k - 8, (w.y + 70) * k + fs * 0.45));
+          c.fillText(`Best ${best}`, W / 2, Math.min(Hc - 50 * k - 8, (w.y + 70) * k + fs * 0.45));
         }
       }
 

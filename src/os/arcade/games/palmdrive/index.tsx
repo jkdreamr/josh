@@ -389,7 +389,7 @@ function Play() {
         }
       } else if (crashTimer.current > 0) {
         crashTimer.current -= dt;
-        if (crashTimer.current <= 0) shell.gameOver(score(s), { title: 'crashed', detail: `${score(s)} m down palm drive.` });
+        if (crashTimer.current <= 0) shell.gameOver(score(s), { title: 'Crashed', detail: `${score(s)} m down Palm Drive.` });
       }
       pending.current.length = 0;
 

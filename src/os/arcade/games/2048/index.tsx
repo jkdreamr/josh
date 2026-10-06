@@ -123,7 +123,7 @@ function Play() {
       s.lossDelay -= dt;
       if (s.lossDelay <= 0) {
         s.lossDelay = 0;
-        shell.gameOver(s.score, { detail: `best tile ${Math.max(...s.grid.flat())}.` });
+        shell.gameOver(s.score, { detail: `Best tile ${Math.max(...s.grid.flat())}.` });
         sfx.play('lose');
       }
     }
@@ -190,7 +190,7 @@ function Play() {
       c.fillStyle = 'rgba(255,255,255,.94)';
       c.font = '600 13px Inter, -apple-system, system-ui, sans-serif';
       c.textAlign = 'center';
-      c.fillText('you made 2048. keep going.', w / 2, Math.max(68, y0 - 14));
+      c.fillText('You made 2048. Keep going.', w / 2, Math.max(68, y0 - 14));
       c.globalAlpha = 1;
     }
     c.setTransform(size.dpr, 0, 0, size.dpr, 0, 0);
@@ -219,10 +219,10 @@ function Play() {
     />
     <div className="g-2048-hud">
       <div className="g-2048-bests">
-        <div className="g-2048-stat"><span>best</span><strong>{best.toLocaleString('en-US')}</strong></div>
-        <div className="g-2048-stat"><span>score</span><strong>{state.current.score.toLocaleString('en-US')}</strong></div>
+        <div className="g-2048-stat"><span>Best</span><strong>{best.toLocaleString('en-US')}</strong></div>
+        <div className="g-2048-stat"><span>Score</span><strong>{state.current.score.toLocaleString('en-US')}</strong></div>
       </div>
-      <button className="g-2048-undo" type="button" disabled={state.current.undoUsed || !state.current.previous} onClick={performUndo}>undo</button>
+      <button className="arcade-btn g-2048-undo" type="button" disabled={state.current.undoUsed || !state.current.previous} onClick={performUndo}>Undo</button>
     </div>
   </>;
 }

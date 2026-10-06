@@ -143,7 +143,7 @@ function Play() {
           s.over = true;
           const n = s.clearedN;
           shell.gameOver(Math.floor(w.score), {
-            detail: isNight(w.score) ? `you made it into the night and cleared ${n} obstacles.` : `you cleared ${n} ${n === 1 ? 'obstacle' : 'obstacles'}.`,
+            detail: isNight(w.score) ? `You made it into the night and cleared ${n} obstacles.` : `You cleared ${n} ${n === 1 ? 'obstacle' : 'obstacles'}.`,
           });
         }
       } else {
@@ -351,15 +351,15 @@ function Play() {
         const msg =
           status === 'ready'
             ? touch
-              ? 'tap to play'
-              : 'press space or tap to play'
+              ? 'Tap to Play'
+              : 'Press Space to Play'
             : status === 'paused'
               ? touch
-                ? 'paused · tap to resume'
-                : 'paused · press space or tap to resume'
+                ? 'Paused · Tap to Resume'
+                : 'Paused · Press Space to Resume'
               : touch
-                ? 'game over · tap to retry'
-                : 'game over · press space or tap to retry';
+                ? 'Game Over · Tap to Play Again'
+                : 'Game Over · Press Space to Play Again';
         c.font = `500 13px ${UI}`;
         c.textAlign = 'center';
         c.fillStyle = ink;
@@ -374,7 +374,7 @@ function Play() {
         c.textAlign = 'center';
         c.fillStyle = ink;
         c.globalAlpha = Math.min(1, s.hint) * 0.6;
-        c.fillText('tap to jump · swipe down to duck', W / 2, Math.min(H - 40, ground + 46));
+        c.fillText('Tap to jump, swipe down to duck', W / 2, Math.min(H - 40, ground + 46));
         c.globalAlpha = 1;
       }
     },

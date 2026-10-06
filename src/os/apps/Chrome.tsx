@@ -59,7 +59,7 @@ const display = (url: string) => (url === NEWTAB ? '' : url.replace(/^https?:\/\
 let tabSeq = 1;
 
 const shortcuts: { name: string; url: string }[] = [
-  { name: 'games', url: GAMES },
+  { name: 'Arcade', url: GAMES },
   ...folders.find((f) => f.id === 'projects')!.entries.map((e) => ({ name: e.name, url: e.href! })),
   { name: 'fairytale MV', url: links.youtube },
   { name: 'Cognition', url: 'https://cognition.ai/' },

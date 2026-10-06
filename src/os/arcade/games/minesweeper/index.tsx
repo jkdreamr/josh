@@ -7,7 +7,7 @@ import './minesweeper.css';
 
 const levelNames: Level[] = ['beginner', 'intermediate', 'expert'];
 const numberColors = ['', '#64d2ff', '#30d158', '#ff453a', '#bf5af2', '#ff9f0a', '#5ac8fa', '#f5f5f7', '#8e8e93'];
-const levelText: Record<Level, string> = { beginner: 'beginner', intermediate: 'intermediate', expert: 'expert' };
+const levelText: Record<Level, string> = { beginner: 'Beginner', intermediate: 'Intermediate', expert: 'Expert' };
 
 type Pointer = { id: number; row: number; col: number; touch: boolean; elapsed: number; longDone: boolean; moved: boolean; startX: number; startY: number; button: number; chordDone: boolean };
 type Effect = { row: number; col: number; delay: number; age: number };
@@ -207,7 +207,7 @@ function Play() {
       lossAge.current += dt;
       if (lossAge.current >= 0.9) {
         lossAge.current = null;
-        shell.gameOver(undefined, { title: 'boom', detail: `you hit a mine on ${s.level}.` });
+        shell.gameOver(undefined, { title: 'Boom', detail: `You hit a mine on ${levelText[s.level]}.` });
       }
     }
     if (winDelay.current) {
@@ -215,7 +215,7 @@ function Play() {
       if (winDelay.current.remaining <= 0) {
         const { detail } = winDelay.current;
         winDelay.current = null;
-        shell.gameOver(undefined, { title: 'cleared', detail });
+        shell.gameOver(undefined, { title: 'Cleared', detail });
       }
     }
   }, () => {
@@ -270,7 +270,7 @@ function Play() {
         }
         else if (cell.adjacent) {
           c.fillStyle = numberColors[cell.adjacent];
-          c.font = `700 ${Math.max(9, layout.cell * 0.62)}px Inter, -apple-system, system-ui, sans-serif`;
+          c.font = `700 ${Math.max(11, layout.cell * 0.62)}px Inter, -apple-system, system-ui, sans-serif`;
           c.textAlign = 'center';
           c.textBaseline = 'middle';
           c.fillText(String(cell.adjacent), x + layout.cell / 2, y + layout.cell / 2 + offset + layout.cell * 0.02);
@@ -365,17 +365,17 @@ function Play() {
       onContextMenu={(event) => event.preventDefault()}
     />
     <div className="g-minesweeper-hud">
-      <div className="g-minesweeper-levels" role="group" aria-label="Difficulty">
+      <div className="arcade-seg g-minesweeper-levels" role="group" aria-label="Difficulty">
         {levelNames.map((choice) => <button key={choice} type="button" aria-pressed={level === choice} onClick={() => setBoardLevel(choice)}>
           <span className="g-minesweeper-long">{levelText[choice]}</span>
-          <span className="g-minesweeper-short">{choice === 'beginner' ? 'easy' : choice === 'intermediate' ? 'medium' : 'hard'}</span>
+          <span className="g-minesweeper-short">{choice === 'beginner' ? 'Easy' : choice === 'intermediate' ? 'Medium' : 'Hard'}</span>
         </button>)}
       </div>
       <div className="g-minesweeper-metrics">
-        <div className="g-minesweeper-metric"><span>mines</span><strong>{game.current.mineTotal - game.current.flags}</strong></div>
-        <div className="g-minesweeper-metric"><span>time</span><strong>{formatTime(game.current.seconds)}</strong></div>
-        <div className="g-minesweeper-metric g-minesweeper-best"><span>best</span><strong>{formatTime(bestForLevel(level).best)}</strong></div>
-        {shell.touch && <button className="g-minesweeper-mode" type="button" onClick={() => setMode((current) => current === 'dig' ? 'flag' : 'dig')}>{mode}</button>}
+        <div className="g-minesweeper-metric"><span>Mines</span><strong>{game.current.mineTotal - game.current.flags}</strong></div>
+        <div className="g-minesweeper-metric"><span>Time</span><strong>{formatTime(game.current.seconds)}</strong></div>
+        <div className="g-minesweeper-metric g-minesweeper-best"><span>Best</span><strong>{formatTime(bestForLevel(level).best)}</strong></div>
+        {shell.touch && <button className="arcade-btn g-minesweeper-mode" type="button" onClick={() => setMode((current) => current === 'dig' ? 'flag' : 'dig')}>{mode === 'dig' ? 'Dig' : 'Flag'}</button>}
       </div>
     </div>
   </>;

@@ -254,7 +254,7 @@ function Play() {
           const wasSolved = m.solved;
           if (a.undo) {
             undo(m);
-            setLast({ text: 'undo', id: Date.now() });
+            setLast({ text: 'Undo', id: Date.now() });
           } else {
             apply(m, a.turn, a.record);
             if (a.record) setLast({ text: notation(a.turn), id: Date.now() });
@@ -367,10 +367,10 @@ function Play() {
           <strong>{hud.time}</strong>
           <span>{hud.moves === 1 ? '1 move' : `${hud.moves} moves`}</span>
         </div>
-        <button type="button" className="g-cube-btn" onClick={() => press(doUndo)} disabled={!playing || !m.history.length} aria-label="Undo">
+        <button type="button" className="arcade-btn" onClick={() => press(doUndo)} disabled={!playing || !m.history.length} aria-label="Undo">
           Undo
         </button>
-        <button type="button" className="g-cube-btn is-primary" onClick={() => press(doScramble)} disabled={!playing}>
+        <button type="button" className="arcade-btn arcade-btn-primary" onClick={() => press(doScramble)} disabled={!playing}>
           Scramble
         </button>
       </div>
@@ -385,7 +385,7 @@ function Play() {
         </div>
       )}
       {playing && m.scrambled && m.moves === 0 && !world.current?.queue.length && (
-        <div className="g-cube-hint">{shell.touch ? 'drag a face to turn it, drag the background to orbit' : 'drag a face or press U D L R F B, shift for prime'}</div>
+        <div className="g-cube-hint">{shell.touch ? 'Drag a face to turn it, drag the background to orbit' : 'Drag a face or press U D L R F B, Shift for prime'}</div>
       )}
     </>
   );

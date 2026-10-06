@@ -205,19 +205,19 @@ function Play() {
     }
     const holdX = left + cell * 0.25;
     const sideContentWidth = side * cell - cell * 0.5;
-    drawMiniLabel(c, 'hold', holdX, boardY + 16, cell);
+    drawMiniLabel(c, 'Hold', holdX, boardY + 16, cell);
     if (s.hold) drawMiniPiece(c, s.hold, holdX, boardY + cell * 1.2, miniCellFor(cell * 0.7, side, cell));
     const statsY = boardY + cell * 5.2;
-    const labelSize = Math.min(13, Math.max(10, cell * 0.5));
+    const labelSize = Math.min(13, Math.max(11, cell * 0.5));
     const valueSize = Math.min(22, Math.max(13, cell * 0.85));
     const statStep = labelSize + valueSize * 1.2 + labelSize * 1.7;
-    drawStat(c, 'score', String(s.score), holdX, statsY, sideContentWidth, cell);
-    drawStat(c, 'level', String(s.level), holdX, statsY + statStep, sideContentWidth, cell);
-    drawStat(c, 'lines', String(s.lines), holdX, statsY + statStep * 2, sideContentWidth, cell);
+    drawStat(c, 'Score', String(s.score), holdX, statsY, sideContentWidth, cell);
+    drawStat(c, 'Level', String(s.level), holdX, statsY + statStep, sideContentWidth, cell);
+    drawStat(c, 'Lines', String(s.lines), holdX, statsY + statStep * 2, sideContentWidth, cell);
     const nextMiniCell = miniCellFor(cell * 0.58, side, cell);
     const nextX = boardX + cell * 10 + cell * 0.25;
     const nextStep = nextMiniCell * (3.6 / 0.58);
-    drawMiniLabel(c, 'next', nextX, boardY + 16, cell);
+    drawMiniLabel(c, 'Next', nextX, boardY + 16, cell);
     s.next.slice(0, 5).forEach((p, i) => drawMiniPiece(c, p, nextX, boardY + cell * 1.2 + i * nextStep, miniCellFor(cell * (i === 0 ? 0.78 : 0.58), side, cell)));
     if (s.clearFlash > 0) {
       c.fillStyle = `rgba(255,255,255,${s.clearFlash * 0.7})`;
@@ -251,7 +251,7 @@ function Play() {
       c.fillStyle = 'rgba(255,255,255,.92)';
       c.font = '600 14px Inter, -apple-system, system-ui, sans-serif';
       c.textAlign = 'center';
-      c.fillText(`level ${s.level}`, w / 2, Math.max(68, boardY - 18));
+      c.fillText(`Level ${s.level}`, w / 2, Math.max(68, boardY - 18));
       c.globalAlpha = 1;
     }
   });
@@ -339,13 +339,13 @@ function drawBlock(c: CanvasRenderingContext2D, x: number, y: number, cell: numb
 
 function drawMiniLabel(c: CanvasRenderingContext2D, text: string, x: number, y: number, cell: number) {
   c.fillStyle = 'rgba(245,245,247,.55)';
-  c.font = `600 ${Math.min(13, Math.max(10, cell * 0.5))}px Inter, -apple-system, system-ui, sans-serif`;
+  c.font = `600 ${Math.min(13, Math.max(11, cell * 0.5))}px Inter, -apple-system, system-ui, sans-serif`;
   c.textAlign = 'left';
   c.fillText(text, x, y);
 }
 
 function drawStat(c: CanvasRenderingContext2D, label: string, value: string, x: number, y: number, width: number, cell: number) {
-  const labelSize = Math.min(13, Math.max(10, cell * 0.5));
+  const labelSize = Math.min(13, Math.max(11, cell * 0.5));
   const valueSize = Math.min(22, Math.max(13, cell * 0.85));
   drawMiniLabel(c, label, x, y, cell);
   c.fillStyle = '#f5f5f7';

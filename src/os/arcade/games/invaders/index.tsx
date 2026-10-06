@@ -56,7 +56,7 @@ function Play() {
       shell.setScore(game.score);
       if (game.ended && !round.ended) {
         round.ended = true;
-        shell.gameOver(game.score, { detail: `you held through ${game.wave} ${game.wave === 1 ? 'wave' : 'waves'}.` });
+        shell.gameOver(game.score, { detail: `You held through ${game.wave} ${game.wave === 1 ? 'wave' : 'waves'}.` });
       }
     },
     () => draw(ctx(), size.w, size.h, round, shell.touch, best),
@@ -187,13 +187,13 @@ function draw(c: CanvasRenderingContext2D | null, w: number, h: number, round: R
     c.fillStyle = '#fff';
     c.textAlign = 'center';
     c.font = '650 28px Inter, -apple-system, sans-serif';
-    c.fillText(`wave ${round.game.wave}`, 250, 350);
+    c.fillText(`Wave ${round.game.wave}`, 250, 350);
   }
   c.restore();
   c.fillStyle = 'rgba(245,245,247,0.55)';
   c.textAlign = 'center';
   c.font = '600 12px Inter, -apple-system, sans-serif';
-  c.fillText(`wave ${round.game.wave}${best === null ? '' : ` · best ${best.toLocaleString('en-US')}`}`, w / 2, 29);
+  c.fillText(`Wave ${round.game.wave}${best === null ? '' : ` · Best ${best.toLocaleString('en-US')}`}`, w / 2, 29);
   for (let i = 0; i < round.game.lives; i++) {
     c.fillStyle = '#f5f5f7';
     c.beginPath();
@@ -203,7 +203,7 @@ function draw(c: CanvasRenderingContext2D | null, w: number, h: number, round: R
   if (touch && round.game.elapsed < 2) {
     c.fillStyle = 'rgba(245,245,247,0.3)';
     c.font = '500 11px Inter, -apple-system, sans-serif';
-    c.fillText('move left or right, then fire', w / 2, h - 148);
+    c.fillText('Move left or right, then fire', w / 2, h - 148);
   }
 }
 

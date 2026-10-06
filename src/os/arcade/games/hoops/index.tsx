@@ -462,7 +462,7 @@ function Play() {
       <div ref={ref} className="g-hoops-host" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
       <div className="g-hoops-hud" aria-live="off">
         <span className={hud.low ? 'is-low' : undefined}>{hud.clock}</span>
-        <span>round {hud.round}</span>
+        <span>Round {hud.round}</span>
         <span>
           {hud.makes}/{hud.target}
         </span>
@@ -485,7 +485,7 @@ function Play() {
         </div>
       )}
       {playing && state.current.attempts === 0 && power === null && (
-        <div className="g-hoops-hint">{shell.touch ? 'swipe up to shoot, drift sideways to aim' : 'drag up to shoot, or hold space and release'}</div>
+        <div className="g-hoops-hint">{shell.touch ? 'Swipe up to shoot, drift sideways to aim' : 'Drag up to shoot, or hold Space and release'}</div>
       )}
     </>
   );

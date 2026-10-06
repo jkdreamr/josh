@@ -1,5 +1,5 @@
 .g-blocks {
-  background: radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, #bf5af2 14%, #111116), #0c0c10);
+  background: color-mix(in srgb, #bf5af2 14%, #111116);
 }
 .g-blocks .g-blocks-canvas {
   display: block;

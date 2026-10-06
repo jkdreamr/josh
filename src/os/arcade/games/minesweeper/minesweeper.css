@@ -1,5 +1,5 @@
 .g-minesweeper {
-  background: radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, #ff453a 13%, #111116), #0c0c10);
+  background: color-mix(in srgb, #ff453a 13%, #111116);
 }
 .g-minesweeper .g-minesweeper-canvas {
   display: block;
@@ -19,29 +19,7 @@
   width: min(760px, calc(100% - 24px));
   transform: translateX(-50%);
 }
-.g-minesweeper .g-minesweeper-levels {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 999px;
-  background: rgba(255,255,255,.08);
-}
-.g-minesweeper .g-minesweeper-levels button {
-  min-height: 29px;
-  padding: 0 9px;
-  border-radius: 999px;
-  color: rgba(245,245,247,.62);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
 .g-minesweeper .g-minesweeper-short { display: none; }
-.g-minesweeper .g-minesweeper-levels button[aria-pressed="true"] {
-  color: #fff;
-  background: rgba(255,255,255,.17);
-  box-shadow: 0 1px 4px rgba(0,0,0,.18);
-}
 .g-minesweeper .g-minesweeper-metrics {
   display: flex;
   align-items: center;
@@ -58,10 +36,8 @@
 .g-minesweeper .g-minesweeper-metric span {
   display: block;
   color: rgba(245,245,247,.55);
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: .06em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 500;
 }
 .g-minesweeper .g-minesweeper-metric strong {
   display: block;
@@ -71,25 +47,15 @@
 }
 .g-minesweeper .g-minesweeper-mode {
   display: none;
-  min-width: 52px;
-  min-height: 40px;
-  padding: 0 9px;
-  border-radius: 12px;
-  color: white;
-  background: rgba(255,255,255,.1);
-  font-size: 11px;
-  font-weight: 650;
+  min-width: 56px;
 }
 @media (max-width: 520px) {
   .g-minesweeper .g-minesweeper-hud { gap: 4px; width: calc(100% - 18px); }
-  .g-minesweeper .g-minesweeper-levels { gap: 0; padding: 2px; }
-  .g-minesweeper .g-minesweeper-levels button { padding: 0 6px; font-size: 10px; }
-  .g-minesweeper .g-minesweeper-metric { min-width: 43px; padding: 5px 5px; }
-  .g-minesweeper .g-minesweeper-metric span { font-size: 8px; }
+  .g-minesweeper .g-minesweeper-levels > button { padding: 0 8px; }
+  .g-minesweeper .g-minesweeper-metric { min-width: 46px; padding: 5px 5px; }
 }
 @media (hover: none) and (pointer: coarse) {
-  .g-minesweeper .g-minesweeper-mode { display: block; min-height: 44px; }
-  .g-minesweeper .g-minesweeper-levels button { min-height: 44px; }
+  .g-minesweeper .g-minesweeper-mode { display: inline-flex; }
   .g-minesweeper .g-minesweeper-long { display: none; }
   .g-minesweeper .g-minesweeper-short { display: inline; }
 }

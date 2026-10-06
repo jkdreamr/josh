@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 
 import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { LEVELS, PEERS, UNITS, boxOf, colOf, completedUnits, conflicts, generate, rowOf, type Level, type Puzzle } from './logic';
+
+const LEVEL_LABEL: Record<Level, string> = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
 import { meta } from './meta';
 import './sudoku.css';
 
@@ -56,10 +58,10 @@ function Play() {
   };
   return (
     <>
-      <div className="g-sudoku-levels" role="radiogroup" aria-label="Level">
+      <div className="arcade-seg g-sudoku-levels" role="group" aria-label="Level">
         {LEVELS.map((l) => (
-          <button key={l} type="button" role="radio" aria-checked={l === level} className={l === level ? 'is-on' : ''} onPointerDown={keepFocus} onClick={() => pick(l)}>
-            {l}
+          <button key={l} type="button" aria-pressed={l === level} onPointerDown={keepFocus} onClick={() => pick(l)}>
+            {LEVEL_LABEL[l]}
           </button>
         ))}
       </div>
@@ -300,10 +302,10 @@ function Round({ level }: { level: Level }) {
         const isBest = submit(time);
         const detail = isBest
           ? prev === null
-            ? `${level} in ${fmtTime(time)}. your first ${level} solve.`
-            : `new best on ${level}: ${fmtTime(time)}.`
-          : `${level} in ${fmtTime(time)}. best ${fmtTime(prev ?? time)}.`;
-        shell.gameOver(undefined, { title: 'solved', detail });
+            ? `${LEVEL_LABEL[level]} in ${fmtTime(time)}. Your first ${LEVEL_LABEL[level]} solve.`
+            : `New best on ${LEVEL_LABEL[level]}: ${fmtTime(time)}.`
+          : `${LEVEL_LABEL[level]} in ${fmtTime(time)}. Best ${fmtTime(prev ?? time)}.`;
+        shell.gameOver(undefined, { title: 'Solved', detail });
       }
     },
     () => {
@@ -473,7 +475,7 @@ function Round({ level }: { level: Level }) {
             </button>
             <button type="button" onPointerDown={keepFocus} onClick={toggleNotes} className={notesMode ? 'is-on' : ''} aria-pressed={notesMode} aria-label="Notes" title="Notes (N)">
               <Icon d={icons.notes} />
-              <span>{notesMode ? 'on' : 'off'}</span>
+              <span>{notesMode ? 'On' : 'Off'}</span>
             </button>
           </div>
         </div>

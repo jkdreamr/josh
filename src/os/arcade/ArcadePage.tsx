@@ -58,10 +58,8 @@ export function ArcadePage({ onOpen }: { onOpen: (id: string) => void }) {
   return (
     <div className="arcade">
       <header className="arcade-head">
-        <h1>
-          arcade<span>.</span>
-        </h1>
-        <p>{metas.length ? `${metas.length} little games, built for this computer. pick one.` : 'the cabinets are still being wheeled in. check back soon.'}</p>
+        <h1>Arcade</h1>
+        <p>{metas.length ? `${metas.length} games, made for this computer.` : 'Games are on the way.'}</p>
       </header>
       <div className="arcade-sections" onKeyDown={onGridKey}>
         {groups.map((c) => (

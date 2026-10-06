@@ -70,7 +70,7 @@ function Play() {
       shell.setScore(game.score);
       if (game.ended && !round.ended) {
         round.ended = true;
-        shell.gameOver(game.score, { detail: `you cleared ${game.level - 1} ${game.level - 1 === 1 ? 'level' : 'levels'}.` });
+        shell.gameOver(game.score, { detail: `You cleared ${game.level - 1} ${game.level - 1 === 1 ? 'level' : 'levels'}.` });
       }
     },
     () => draw(ctx(), size.w, size.h, round, best),
@@ -171,7 +171,7 @@ function draw(c: CanvasRenderingContext2D | null, w: number, h: number, round: R
     c.fill();
     c.shadowBlur = 0;
     c.fillStyle = '#101016';
-    c.font = '700 10px Inter, sans-serif';
+    c.font = '700 11px Inter, sans-serif';
     c.textAlign = 'center';
     c.fillText(drop.kind === 'wide' ? 'W' : drop.kind === 'multi' ? '3' : 'S', drop.x, drop.y + 3.5);
   }
@@ -206,13 +206,13 @@ function draw(c: CanvasRenderingContext2D | null, w: number, h: number, round: R
     c.fillStyle = '#fff';
     c.textAlign = 'center';
     c.font = '650 28px Inter, -apple-system, sans-serif';
-    c.fillText(`level ${round.game.level + 1}`, 250, 350);
+    c.fillText(`Level ${round.game.level + 1}`, 250, 350);
   }
   c.restore();
   c.fillStyle = 'rgba(245,245,247,0.55)';
   c.font = '600 12px Inter, -apple-system, sans-serif';
   c.textAlign = 'center';
-  c.fillText(`level ${round.game.level}${best === null ? '' : ` · best ${best.toLocaleString('en-US')}`}`, w / 2, 30);
+  c.fillText(`Level ${round.game.level}${best === null ? '' : ` · Best ${best.toLocaleString('en-US')}`}`, w / 2, 30);
   c.fillStyle = 'rgba(245,245,247,0.8)';
   for (let i = 0; i < round.game.lives; i++) {
     c.beginPath();
@@ -226,6 +226,6 @@ function draw(c: CanvasRenderingContext2D | null, w: number, h: number, round: R
     c.fillStyle = 'rgba(245,245,247,0.45)';
     c.font = '500 11px Inter, -apple-system, sans-serif';
     c.textAlign = 'center';
-    c.fillText(active.map((p) => `${p.kind} ${Math.ceil(p.until - round.game.time)}s`).join('  ·  '), w / 2, h - 18);
+    c.fillText(active.map((p) => `${p.kind[0].toUpperCase()}${p.kind.slice(1)} ${Math.ceil(p.until - round.game.time)}s`).join('  ·  '), w / 2, h - 18);
   }
 }

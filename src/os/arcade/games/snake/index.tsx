@@ -84,7 +84,7 @@ function Play() {
         round.death += dt;
         if (round.death > 0.55 && !round.ended) {
           round.ended = true;
-          shell.gameOver(state.score, { detail: `you grew to ${state.segments.length} ${state.segments.length === 1 ? 'link' : 'links'}.` });
+          shell.gameOver(state.score, { detail: `You grew to ${state.segments.length} ${state.segments.length === 1 ? 'link' : 'links'}.` });
         }
         return;
       }
@@ -109,7 +109,7 @@ function Play() {
           shell.setScore(state.score);
           sfx.play('win');
           round.ended = true;
-          shell.gameOver(state.score, { title: 'you win', detail: 'a perfect board. beautifully done.' });
+          shell.gameOver(state.score, { title: 'You Win', detail: 'A perfect board.' });
         }
       }
     },
@@ -255,11 +255,11 @@ function draw(c: CanvasRenderingContext2D | null, w: number, h: number, round: R
   c.fillStyle = 'rgba(245,245,247,0.48)';
   c.textAlign = 'center';
   c.font = '600 12px Inter, -apple-system, sans-serif';
-  const bestLabel = best === null ? '' : ` · best ${best.toLocaleString('en-US')}`;
-  c.fillText(`length ${state.segments.length} · ${speedForLength(state.segments.length).toFixed(1)}/s${bestLabel}`, w / 2, 31);
+  const bestLabel = best === null ? '' : ` · Best ${best.toLocaleString('en-US')}`;
+  c.fillText(`Length ${state.segments.length} · ${speedForLength(state.segments.length).toFixed(1)}/s${bestLabel}`, w / 2, 31);
   if (touch && round.elapsed < 2 && state.alive) {
     c.fillStyle = `rgba(245,245,247,${0.35 * (1 - round.elapsed / 2)})`;
     c.font = '500 12px Inter, -apple-system, sans-serif';
-    c.fillText('swipe to steer', w / 2, h - 26);
+    c.fillText('Swipe to steer', w / 2, h - 26);
   }
 }

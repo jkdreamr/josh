@@ -40,35 +40,6 @@
   align-items: center;
   gap: 8px;
 }
-.g-cube .g-cube-btn {
-  appearance: none;
-  border: 0;
-  padding: 6px 13px;
-  border-radius: 999px;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  cursor: pointer;
-  touch-action: manipulation;
-  transition: background 0.15s, transform 0.15s;
-}
-.g-cube .g-cube-btn:hover {
-  background: rgba(255, 255, 255, 0.22);
-}
-.g-cube .g-cube-btn:active {
-  transform: scale(0.96);
-}
-.g-cube .g-cube-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.g-cube .g-cube-btn.is-primary {
-  background: var(--arcade-accent, #3d8bff);
-}
 .g-cube .g-cube-last {
   position: absolute;
   left: 50%;
@@ -112,10 +83,8 @@
   transform: translateX(-50%);
   max-width: min(92%, 560px);
   padding: 4px 12px;
-  border-radius: 999px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  border-radius: 8px;
+  font-size: 12px;
   line-height: 1.5;
   text-align: center;
   color: rgba(255, 255, 255, 0.6);

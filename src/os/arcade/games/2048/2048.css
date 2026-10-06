@@ -1,5 +1,5 @@
 .g-2048 {
-  background: radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, #ff9f0a 14%, #111116), #0c0c10);
+  background: color-mix(in srgb, #ff9f0a 14%, #111116);
 }
 .g-2048 .g-2048-canvas {
   display: block;
@@ -34,10 +34,8 @@
 .g-2048 .g-2048-stat span {
   display: block;
   color: rgba(245,245,247,.55);
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: .07em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 500;
 }
 .g-2048 .g-2048-stat strong {
   display: block;
@@ -47,16 +45,7 @@
   font-variant-numeric: tabular-nums;
 }
 .g-2048 .g-2048-undo {
-  min-width: 54px;
-  min-height: 34px;
-  padding: 0 12px;
-  border-radius: 999px;
-  color: #fff;
-  background: rgba(255,255,255,.12);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.12);
   pointer-events: auto;
-  font-size: 12px;
-  font-weight: 650;
 }
 .g-2048 .g-2048-undo:disabled {
   opacity: .42;

@@ -1,6 +1,6 @@
 .g-invaders .g-invaders-canvas {
   width: 100%;
   height: 100%;
-  background: radial-gradient(120% 80% at 50% 0%, #17162c, #0c0c10 68%);
+  background: #17162c;
   touch-action: none;
 }

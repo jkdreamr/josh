@@ -32,7 +32,7 @@ const FONT = 'Inter, -apple-system, BlinkMacSystemFont, system-ui, sans-serif';
 const FLIP = 0.5;
 const STAGGER = 0.3;
 const ROW_TIME = STAGGER * (WORD - 1) + FLIP;
-const PRAISE = ['unreal', 'brilliant', 'sharp', 'nice one', 'solid', 'close one'];
+const PRAISE = ['Unreal', 'Brilliant', 'Sharp', 'Nice One', 'Solid', 'Close One'];
 const FILL: Record<Mark, string> = { correct: '#248a3d', present: '#c48a12', absent: '#3a3a40' };
 const ROWS = ['qwertyuiop', 'asdfghjkl', '+zxcvbnm-'];
 
@@ -94,10 +94,10 @@ function Play() {
   };
   return (
     <>
-      <div className="g-wordguess-modes" role="radiogroup" aria-label="Mode">
+      <div className="arcade-seg g-wordguess-modes" role="group" aria-label="Mode">
         {(['daily', 'practice'] as Mode[]).map((m) => (
-          <button key={m} type="button" role="radio" aria-checked={m === mode} className={m === mode ? 'is-on' : ''} onPointerDown={keepFocus} onClick={() => pick(m)}>
-            {m}
+          <button key={m} type="button" aria-pressed={m === mode} onPointerDown={keepFocus} onClick={() => pick(m)}>
+            {m === 'daily' ? 'Daily' : 'Practice'}
           </button>
         ))}
       </div>
@@ -214,7 +214,7 @@ function Round({ mode, onPractice }: { mode: Mode; onPractice: () => void }) {
       return;
     }
     st.busy = false;
-    if (!ok) return reject('not in word list');
+    if (!ok) return reject('Not in word list');
     st.busy = true;
     const marks = score(word, st.answer);
     st.rows.push(word);
@@ -247,9 +247,9 @@ function Round({ mode, onPractice }: { mode: Mode; onPractice: () => void }) {
       write(DAILY_KEY, { date: st.today, guesses: st.rows, counted: true } satisfies Daily);
       write(MODE_KEY, 'practice');
       detail = won
-        ? `solved in ${tries}/${TRIES}. streak ${stats.streak}. next word in ${wait}.`
-        : `the word was ${st.answer}. next word in ${wait}.`;
-    } else detail = won ? `solved in ${tries}/${TRIES}.` : `the word was ${st.answer}.`;
+        ? `Solved in ${tries}/${TRIES}. Streak ${stats.streak}. Next word in ${wait}.`
+        : `The word was ${st.answer.toUpperCase()}. Next word in ${wait}.`;
+    } else detail = won ? `Solved in ${tries}/${TRIES}.` : `The word was ${st.answer.toUpperCase()}.`;
     if (won) {
       st.bounceRow = tries - 1;
       st.bounceT0 = st.t;
@@ -259,12 +259,12 @@ function Round({ mode, onPractice }: { mode: Mode; onPractice: () => void }) {
       sfx.play('lose');
       say(st.answer.toUpperCase(), Infinity);
     }
-    later(1.7, () => shell.gameOver(undefined, { title: won ? PRAISE[tries - 1] : 'so close', detail }));
+    later(1.7, () => shell.gameOver(undefined, { title: won ? PRAISE[tries - 1] : 'So Close', detail }));
   };
 
   const submit = async () => {
     if (!canType()) return;
-    if (st.cur.length < WORD) return reject('not enough letters');
+    if (st.cur.length < WORD) return reject('Not enough letters');
     const word = st.cur;
     st.busy = true;
     let ok = ANSWER_SET.has(word);
@@ -394,12 +394,12 @@ function Round({ mode, onPractice }: { mode: Mode; onPractice: () => void }) {
       </div>
       {doneCard ? (
         <div className="g-wordguess-done">
-          <b>today's word is done</b>
+          <b>Today's word is done</b>
           <span>
-            {solvedIn ? `solved in ${solvedIn}/${TRIES}` : `it was ${st.answer}`}. next word in {formatWait(msUntilNextDay())}.
+            {solvedIn ? `Solved in ${solvedIn}/${TRIES}` : `It was ${st.answer.toUpperCase()}`}. Next word in {formatWait(msUntilNextDay())}.
           </span>
-          <button type="button" className="g-wordguess-cta" onPointerDown={keepFocus} onClick={onPractice}>
-            play practice
+          <button type="button" className="arcade-btn arcade-btn-primary g-wordguess-cta" onPointerDown={keepFocus} onClick={onPractice}>
+            Play Practice
           </button>
         </div>
       ) : (
