@@ -62,6 +62,7 @@ export type BlocksGame = {
   dropFlash: number;
   lastClear: number;
   clearedRows: number[];
+  lastLocked: Cell[];
 };
 
 function drawBag(state: BlocksGame, rand: () => number): Piece {
@@ -122,6 +123,7 @@ export function createGame(rand: () => number = Math.random): BlocksGame {
     dropFlash: 0,
     lastClear: 0,
     clearedRows: [],
+    lastLocked: [],
   };
   fillQueue(state, rand);
   spawn(state, takeNext(state, rand));
@@ -225,9 +227,8 @@ function scoreClear(state: BlocksGame, count: number) {
 export function lock(state: BlocksGame, rand: () => number = Math.random): void {
   const active = state.active;
   if (!active || state.over) return;
-  for (const [dx, dy] of cellsFor(active.type, active.rotation)) {
-    const x = active.x + dx;
-    const y = active.y + dy;
+  state.lastLocked = cellsFor(active.type, active.rotation).map(([dx, dy]): Cell => [active.x + dx, active.y + dy]);
+  for (const [x, y] of state.lastLocked) {
     if (y >= 0 && y < HEIGHT && x >= 0 && x < WIDTH) state.board[y][x] = active.type;
   }
   state.lockFlash = 0.12;

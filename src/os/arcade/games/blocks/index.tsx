@@ -182,29 +182,32 @@ function Play() {
       if (block) drawBlock(c, x, y, cell, colors[block], 1);
     }
     if (s.active) {
-      for (const [dx, dy] of cellsFor(s.active.type, s.active.rotation)) {
-        const x = s.active.x + dx;
-        const y = s.active.y + dy;
-        if (y >= 20) drawBlock(c, boardX + x * cell, boardY + (y - 20) * cell, cell, colors[s.active.type], 0.23, true);
-      }
       const gy = ghostY(s);
       for (const [dx, dy] of cellsFor(s.active.type, s.active.rotation)) {
         const y = gy + dy;
-        if (y >= 20) drawBlock(c, boardX + (s.active.x + dx) * cell, boardY + (y - 20) * cell, cell, colors[s.active.type], 0.15, true);
+        if (y >= 20) drawBlock(c, boardX + (s.active.x + dx) * cell, boardY + (y - 20) * cell, cell, colors[s.active.type], 0.3, true);
+      }
+      for (const [dx, dy] of cellsFor(s.active.type, s.active.rotation)) {
+        const x = s.active.x + dx;
+        const y = s.active.y + dy;
+        if (y >= 20) drawBlock(c, boardX + x * cell, boardY + (y - 20) * cell, cell, colors[s.active.type], 1);
       }
       if (s.dropFlash > 0) {
         c.fillStyle = `rgba(255,255,255,${s.dropFlash * 0.28})`;
         c.fillRect(boardX, boardY, cell * 10, boardH);
       }
     }
-    drawMiniLabel(c, 'hold', left + cell * 0.2, boardY + 16);
+    drawMiniLabel(c, 'hold', left + cell * 0.2, boardY + 16, cell);
     if (s.hold) drawMiniPiece(c, s.hold, left + cell * 0.2, boardY + cell * 1.2, cell * 0.7);
     const statsY = boardY + cell * 5.2;
-    drawStat(c, 'score', String(s.score), left + cell * 0.2, statsY, cell * 4.5);
-    drawStat(c, 'level', String(s.level), left + cell * 0.2, statsY + cell * 2.4, cell * 4.5);
-    drawStat(c, 'lines', String(s.lines), left + cell * 0.2, statsY + cell * 4.8, cell * 4.5);
+    const labelSize = Math.min(13, Math.max(10, cell * 0.5));
+    const valueSize = Math.min(22, Math.max(13, cell * 0.85));
+    const statStep = Math.max(cell * 2.4, labelSize + valueSize * 1.8);
+    drawStat(c, 'score', String(s.score), left + cell * 0.2, statsY, cell * 4.5, cell);
+    drawStat(c, 'level', String(s.level), left + cell * 0.2, statsY + statStep, cell * 4.5, cell);
+    drawStat(c, 'lines', String(s.lines), left + cell * 0.2, statsY + statStep * 2, cell * 4.5, cell);
     const nextX = boardX + cell * 11;
-    drawMiniLabel(c, 'next', nextX, boardY + 16);
+    drawMiniLabel(c, 'next', nextX, boardY + 16, cell);
     s.next.slice(0, 5).forEach((p, i) => drawMiniPiece(c, p, nextX, boardY + cell * (1.2 + i * 3.6), cell * (i === 0 ? 0.78 : 0.58)));
     if (s.clearFlash > 0) {
       c.fillStyle = `rgba(255,255,255,${s.clearFlash * 0.7})`;
@@ -212,7 +215,9 @@ function Play() {
     }
     if (s.lockFlash > 0) {
       c.fillStyle = `rgba(255,255,255,${s.lockFlash * 0.75})`;
-      c.fillRect(boardX, boardY, cell * 10, boardH);
+      for (const [x, y] of s.lastLocked) {
+        if (y >= 20 && y < 40) c.fillRect(boardX + x * cell, boardY + (y - 20) * cell, cell, cell);
+      }
     }
     c.restore();
     for (const p of fx.particles) {
@@ -269,7 +274,9 @@ function Play() {
         } else {
           const cells = Math.trunc((e.clientX - g.x) / cell);
           const prev = Math.trunc((g.lastX - g.x) / cell);
-          for (let i = prev; i !== cells; i += Math.sign(cells - prev)) move(state.current, Math.sign(cells - prev));
+          for (let i = prev; i !== cells; i += Math.sign(cells - prev)) {
+            if (move(state.current, Math.sign(cells - prev))) sfx.play('tick', 0.84);
+          }
           g.lastX = e.clientX;
         }
       }}
@@ -281,13 +288,18 @@ function Play() {
         const isFlick = g.fastUp && elapsed < 260;
         gesture.current = null;
         if (isFlick) performDrop();
-        else if (!moved) rotate(state.current, 1);
+        else if (!moved && rotate(state.current, 1)) sfx.play('blip', 1.2);
       }}
       onPointerCancel={() => { gesture.current = null; }}
       onContextMenu={(e) => e.preventDefault()}
     />
     {shell.touch && <button className="g-blocks-touch g-blocks-touch-left" type="button" aria-label="Hold piece" onClick={() => touchAction('hold')}>hold</button>}
-    {shell.touch && <button className="g-blocks-touch g-blocks-touch-right" type="button" aria-label="Rotate counterclockwise" onClick={() => touchAction('ccw')}>↶</button>}
+    {shell.touch && <button className="g-blocks-touch g-blocks-touch-right" type="button" aria-label="Rotate counterclockwise" onClick={() => touchAction('ccw')}>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M9 14 4 9l5-5" />
+        <path d="M4 9h8a7 7 0 1 1-5 7" />
+      </svg>
+    </button>}
   </>;
 }
 
@@ -315,18 +327,20 @@ function drawBlock(c: CanvasRenderingContext2D, x: number, y: number, cell: numb
   c.restore();
 }
 
-function drawMiniLabel(c: CanvasRenderingContext2D, text: string, x: number, y: number) {
+function drawMiniLabel(c: CanvasRenderingContext2D, text: string, x: number, y: number, cell: number) {
   c.fillStyle = 'rgba(245,245,247,.55)';
-  c.font = '600 10px Inter, -apple-system, system-ui, sans-serif';
+  c.font = `600 ${Math.min(13, Math.max(10, cell * 0.5))}px Inter, -apple-system, system-ui, sans-serif`;
   c.textAlign = 'left';
   c.fillText(text, x, y);
 }
 
-function drawStat(c: CanvasRenderingContext2D, label: string, value: string, x: number, y: number, width: number) {
-  drawMiniLabel(c, label, x, y);
+function drawStat(c: CanvasRenderingContext2D, label: string, value: string, x: number, y: number, width: number, cell: number) {
+  const labelSize = Math.min(13, Math.max(10, cell * 0.5));
+  const valueSize = Math.min(22, Math.max(13, cell * 0.85));
+  drawMiniLabel(c, label, x, y, cell);
   c.fillStyle = '#f5f5f7';
-  c.font = '600 12px Inter, -apple-system, system-ui, sans-serif';
-  c.fillText(value.length > 8 ? `${value.slice(0, 7)}…` : value, x, y + 18, width);
+  c.font = `600 ${valueSize}px Inter, -apple-system, system-ui, sans-serif`;
+  c.fillText(value.length > 8 ? `${value.slice(0, 7)}…` : value, x, y + labelSize + valueSize * 1.2, width);
 }
 
 function drawMiniPiece(c: CanvasRenderingContext2D, piece: Piece, x: number, y: number, cell: number) {

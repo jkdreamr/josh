@@ -54,6 +54,15 @@ test('hard drop returns its distance and awards two points per cell', () => {
   assert.ok(state.board.some((row) => row.includes('O')));
 });
 
+test('lock records the absolute cells of the piece that just locked', () => {
+  const state = empty('T');
+  const active = state.active!;
+  const expected = cellsFor(active.type, active.rotation).map(([dx, dy]) => [active.x + dx, active.y + dy]);
+  lock(state, fixedRand);
+  assert.equal(state.lastLocked.length, 4);
+  assert.deepEqual(state.lastLocked, expected);
+});
+
 test('line clear scores scale by level and back-to-back four line clears', () => {
   for (const [count, expected] of [[1, 200], [2, 600], [3, 1000], [4, 1600]] as const) {
     const state = empty('I');
