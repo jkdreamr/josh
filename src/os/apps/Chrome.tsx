@@ -2,11 +2,23 @@ import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react
 import { embeds, folders, links, type Entry } from '../data';
 import { useOS, type AppProps } from '../types';
 import { ExternalIcon, Favicon, hostOf, openExternal } from '../util';
+import { ArcadePage } from '../arcade/ArcadePage';
+import { GameFrame } from '../arcade/GameFrame';
+import { ArcadeHost } from '../arcade/kit/host';
+import { getMeta, hasGame } from '../arcade/manifest';
 
 type Tab = { id: number; history: string[]; idx: number; reload: number };
-type View = { kind: 'newtab' } | { kind: 'frame'; src: string; known: boolean } | { kind: 'blocked'; entry?: Entry };
+type View = { kind: 'newtab' } | { kind: 'arcade' } | { kind: 'game'; id: string } | { kind: 'frame'; src: string; known: boolean } | { kind: 'blocked'; entry?: Entry };
 
 const NEWTAB = 'chrome://newtab';
+const GAMES = 'chrome://games';
+const isInternal = (url: string) => url.startsWith('chrome://');
+
+const GamepadIcon = ({ size = 16 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M7 7h10a5 5 0 0 1 4.9 6l-.6 3a2.6 2.6 0 0 1-4.6 1.1L15 15H9l-1.7 2.1a2.6 2.6 0 0 1-4.6-1.1l-.6-3A5 5 0 0 1 7 7zM7.5 10v3M6 11.5h3M15.5 11h.01M17.5 12.5h.01" />
+  </svg>
+);
 const allEntries = folders.flatMap((f) => f.entries);
 
 function entryFor(url: string) {
@@ -16,6 +28,9 @@ function entryFor(url: string) {
 
 function resolve(url: string): View {
   if (url === NEWTAB) return { kind: 'newtab' };
+  if (url === GAMES) return { kind: 'arcade' };
+  if (url.startsWith(`${GAMES}/`)) return { kind: 'game', id: url.slice(GAMES.length + 1) };
+  if (isInternal(url)) return { kind: 'newtab' };
   const u = url.toLowerCase();
   if (u.includes('youtube.com/watch') || u.includes('youtu.be/')) {
     const id = new URL(url).searchParams.get('v') ?? url.split('/').pop() ?? '';
@@ -33,6 +48,7 @@ function resolve(url: string): View {
 function normalize(input: string): string {
   const s = input.trim();
   if (!s) return NEWTAB;
+  if (/^chrome:\/\//i.test(s)) return s.toLowerCase().replace(/\/+$/, '');
   if (/^https?:\/\//i.test(s)) return s;
   if (!/\s/.test(s) && /\.[a-z]{2,}/i.test(s)) return `https://${s}`;
   return `https://www.google.com/search?q=${encodeURIComponent(s)}`;
@@ -43,6 +59,7 @@ const display = (url: string) => (url === NEWTAB ? '' : url.replace(/^https?:\/\
 let tabSeq = 1;
 
 const shortcuts: { name: string; url: string }[] = [
+  { name: 'Arcade', url: GAMES },
   ...folders.find((f) => f.id === 'projects')!.entries.map((e) => ({ name: e.name, url: e.href! })),
   { name: 'fairytale MV', url: links.youtube },
   { name: 'Cognition', url: 'https://cognition.ai/' },
@@ -86,8 +103,10 @@ export default function Chrome({ args }: AppProps) {
     setLoading(view.kind === 'frame');
   }, [url, tab.id, tab.reload, view.kind]);
 
-  const patch = (fn: (t: Tab) => Tab) => setTabs((ts) => ts.map((t) => (t.id === tab.id ? fn(t) : t)));
-  const navigate = (to: string) => patch((t) => ({ ...t, history: [...t.history.slice(0, t.idx + 1), to], idx: t.idx + 1 }));
+  const patchTab = (id: number, fn: (t: Tab) => Tab) => setTabs((ts) => ts.map((t) => (t.id === id ? fn(t) : t)));
+  const patch = (fn: (t: Tab) => Tab) => patchTab(tab.id, fn);
+  const navigateTab = (id: number, to: string) => patchTab(id, (t) => ({ ...t, history: [...t.history.slice(0, t.idx + 1), to], idx: t.idx + 1 }));
+  const navigate = (to: string) => navigateTab(tab.id, to);
   const go = (to: string) => {
     if (to.includes('google.com/search')) {
       openExternal(to);
@@ -119,6 +138,8 @@ export default function Chrome({ args }: AppProps) {
   const titleOf = (t: Tab) => {
     const u = t.history[t.idx];
     if (u === NEWTAB) return 'New Tab';
+    if (u === GAMES) return 'Arcade';
+    if (u.startsWith(`${GAMES}/`)) return getMeta(u.slice(GAMES.length + 1))?.title ?? 'Arcade';
     const e = entryFor(u);
     if (e) return e.name;
     if (u.includes('youtube')) return 'fairytale - YouTube';
@@ -131,7 +152,15 @@ export default function Chrome({ args }: AppProps) {
         {tabs.map((t) => (
           <div key={t.id} className={`ctab ${t.id === tab.id ? 'is-cur' : ''}`}>
             <button className="ctab-main" onClick={() => setCur(t.id)}>
-              {t.history[t.idx] === NEWTAB ? <span className="ctab-dot" /> : <Favicon url={t.history[t.idx]} name={titleOf(t)} size={14} radius={3} />}
+              {t.history[t.idx] === NEWTAB ? (
+                <span className="ctab-dot" />
+              ) : t.history[t.idx].startsWith(GAMES) ? (
+                <span className="ctab-game">
+                  <GamepadIcon size={11} />
+                </span>
+              ) : (
+                <Favicon url={t.history[t.idx]} name={titleOf(t)} size={14} radius={3} />
+              )}
               <span className="ctab-title">{titleOf(t)}</span>
             </button>
             <button className="ctab-x" aria-label="Close tab" onClick={() => closeTab(t.id)}>
@@ -157,12 +186,28 @@ export default function Chrome({ args }: AppProps) {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
           <input value={addr} onChange={(e) => setAddr(e.target.value)} onFocus={(e) => e.target.select()} placeholder="Search Google or type a URL" aria-label="Address" spellCheck={false} />
         </form>
-        <button aria-label="Open in a real tab" title="Open in a real tab" disabled={url === NEWTAB} onClick={() => openExternal(url)}>
+        <button aria-label="Arcade" title="Arcade" className={url.startsWith(GAMES) ? 'is-on' : ''} onClick={() => url !== GAMES && go(GAMES)}>
+          <GamepadIcon size={17} />
+        </button>
+        <button aria-label="Open in a real tab" title="Open in a real tab" disabled={isInternal(url)} onClick={() => openExternal(url)}>
           <ExternalIcon size={14} />
         </button>
       </div>
       <div className="chrome-view">
+        {tabs.map((t) => {
+          const v = resolve(t.history[t.idx]);
+          if (v.kind !== 'game') return null;
+          const on = t.id === tab.id;
+          return (
+            <div key={`${t.id}-${t.reload}-${v.id}`} className="chrome-game" hidden={!on}>
+              <ArcadeHost.Provider value={{ active: on }}>
+                <GameFrame id={v.id} onExit={() => navigateTab(t.id, GAMES)} />
+              </ArcadeHost.Provider>
+            </div>
+          );
+        })}
         {view.kind === 'newtab' && <NewTab onGo={go} />}
+        {view.kind === 'arcade' && <ArcadePage key={tab.reload} onOpen={(id) => go(`${GAMES}/${id}`)} />}
         {view.kind === 'blocked' && <Blocked url={url} entry={view.entry} />}
         {view.kind === 'frame' && (
           <>
@@ -211,10 +256,21 @@ function NewTab({ onGo }: { onGo: (url: string) => void }) {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M20 20l-4.5-4.5" /></svg>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Google or type a URL" aria-label="Search" />
       </form>
+      {hasGame('dino') && (
+        <div className="newtab-dino">
+          <GameFrame id="dino" compact />
+        </div>
+      )}
       <div className="shortcuts">
         {shortcuts.map((s) => (
           <button key={s.name} className="shortcut" onClick={() => onGo(s.url)}>
-            <Favicon url={s.url} name={s.name} size={46} radius={23} />
+            {s.url === GAMES ? (
+              <span className="shortcut-games">
+                <GamepadIcon size={22} />
+              </span>
+            ) : (
+              <Favicon url={s.url} name={s.name} size={46} radius={23} />
+            )}
             <span>{s.name}</span>
           </button>
         ))}

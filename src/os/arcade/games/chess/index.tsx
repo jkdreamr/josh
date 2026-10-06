@@ -1,0 +1,504 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
+import type { GameProps } from '../../types';
+import { bestMove, type Level } from './ai.ts';
+import {
+  BLACK, FLAG_CASTLE, FLAG_EP, WHITE,
+  colorOf, fileOf, findMove, inCheck, isPromotion, moveCaptured, moveFlags, moveFrom, movePromo, moveTo, newGame, pieces, play, rankOf, square, squareName,
+  type Color, type Game as ChessGame, type Position,
+} from './engine.ts';
+import { meta } from './meta';
+import { BISHOP, KNIGHT, Piece, QUEEN, ROOK } from './pieces.tsx';
+import type { AiReply, AiRequest } from './worker.ts';
+import './chess.css';
+
+const MODE = defineSetting('chess:mode', PLAY_MODES, 'cpu');
+const LEVEL = defineSetting('chess:level', LEVEL_NAMES, 'normal');
+const SIDE = defineSetting('chess:side', ['white', 'black'] as const, 'white');
+const sideOptions = [
+  ['white', 'White'],
+  ['black', 'Black'],
+] as const;
+const colorOfSide = (s: 'white' | 'black'): Color => (s === 'white' ? WHITE : BLACK);
+const MIN_THINK_MS = 450;
+const ENDINGS = { checkmate: 'Checkmate', stalemate: 'Stalemate', repetition: 'Draw by repetition', fifty: 'Draw by the fifty-move rule', insufficient: 'Draw, insufficient material' } as const;
+const DRAWS = { stalemate: 'stalemate', repetition: 'threefold repetition', fifty: 'the fifty-move rule', insufficient: 'insufficient material' } as const;
+type GameTimer = { remaining: number; fn: () => void };
+type PendingAI = { game: ChessGame; id: number; started: number; from: number; to: number; promo: number; ready: boolean; scheduled: boolean; cleanup?: () => void };
+
+function useGameTimers() {
+  const timers = useRef<GameTimer[]>([]);
+  const later = useCallback((fn: () => void, ms: number) => {
+    timers.current.push({ remaining: Math.max(0, ms) / 1000, fn });
+  }, []);
+  useGameLoop((dt) => {
+    const due: GameTimer[] = [];
+    timers.current = timers.current.filter((timer) => {
+      timer.remaining -= dt;
+      if (timer.remaining <= 0) {
+        due.push(timer);
+        return false;
+      }
+      return true;
+    });
+    due.forEach((timer) => timer.fn());
+  });
+  useEffect(() => () => {
+    timers.current = [];
+  }, []);
+  return later;
+}
+
+export default function Game({ compact, onExit }: GameProps) {
+  return (
+    <GameShell meta={meta} compact={compact} onExit={onExit} lowerIsBetter formatScore={(n) => `${n} ${n === 1 ? 'move' : 'moves'}`} setup={<Setup />}>
+      <Chess />
+    </GameShell>
+  );
+}
+
+function Setup() {
+  const [mode, setMode] = useSetting(MODE);
+  const [level, setLevel] = useSetting(LEVEL);
+  const [side, setSide] = useSetting(SIDE);
+  return (
+    <>
+      <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
+      {mode === 'cpu' && <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />}
+      {mode === 'cpu' && <Segmented label="Play as" value={side} options={sideOptions} onChange={setSide} />}
+    </>
+  );
+}
+
+type Drag = { pid: number; from: number; moved: boolean };
+
+function nextIds(ids: Map<number, number>, pos: Position, m: number) {
+  const out = new Map(ids);
+  const from = moveFrom(m);
+  const to = moveTo(m);
+  const flags = moveFlags(m);
+  const id = out.get(from)!;
+  out.delete(from);
+  if (flags & FLAG_EP) out.delete(to + (pos.turn === WHITE ? -16 : 16));
+  out.set(to, id);
+  if (flags & FLAG_CASTLE) {
+    const rookFrom = to > from ? from + 3 : from - 4;
+    const rookTo = to > from ? to - 1 : to + 1;
+    const r = out.get(rookFrom)!;
+    out.delete(rookFrom);
+    out.set(rookTo, r);
+  }
+  return out;
+}
+
+const initialIds = (pos: Position) => new Map(pieces(pos).map(([sq], i) => [sq, i + 1]));
+
+function Chess() {
+  const shell = useShell();
+  const { ref: stageRef, size } = useCanvas<HTMLDivElement>();
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLOListElement | null>(null);
+  const pieceEls = useRef(new Map<number, HTMLDivElement>());
+  const [game, setGame] = useState<ChessGame>(() => newGame());
+  const [ids, setIds] = useState(() => initialIds(game.pos));
+  const [sel, setSel] = useState<number | null>(null);
+  const [cursor, setCursor] = useState<number | null>(null);
+  const [promo, setPromo] = useState<{ from: number; to: number } | null>(null);
+  const [flipped, setFlipped] = useState(() => getSetting(MODE) === 'cpu' && getSetting(SIDE) === 'black');
+  const [thinking, setThinking] = useState(false);
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const drag = useRef<Drag | null>(null);
+  const [mode] = useSetting(MODE);
+  const [levelName] = useSetting(LEVEL);
+  const [side] = useSetting(SIDE);
+  const cfg = useRef<{ mode: typeof mode; level: Level; color: Color }>({ mode: getSetting(MODE), level: levelIndex(getSetting(LEVEL)), color: colorOfSide(getSetting(SIDE)) });
+  const worker = useRef<Worker | null>(null);
+  const reqId = useRef(0);
+  const aiTask = useRef<PendingAI | null>(null);
+  const [aiRevision, setAiRevision] = useState(0);
+  const statusRef = useRef(shell.status);
+  statusRef.current = shell.status;
+  const gameRef = useRef(game);
+  gameRef.current = game;
+  const gameOverScheduled = useRef<ChessGame | null>(null);
+  const later = useGameTimers();
+
+  const humanTurn = game.status === 'playing' && (cfg.current.mode === '2p' || game.pos.turn === cfg.current.color);
+  const lastMove = game.history.at(-1)?.move;
+  const checkSq = inCheck(game.pos) ? game.pos.kings[game.pos.turn === WHITE ? 0 : 1] : -1;
+  const targets = useMemo(() => (sel === null ? new Set<number>() : new Set(game.legal.filter((m) => moveFrom(m) === sel).map(moveTo))), [sel, game.legal]);
+
+  const commit = useCallback(
+    (m: number) => {
+      if (!game.legal.includes(m)) return;
+      const next = play(game, m);
+      setGame(next);
+      setIds((current) => nextIds(current, game.pos, m));
+      const cap = moveCaptured(m);
+      if (next.status === 'checkmate') sfx.play(cfg.current.mode === 'cpu' && next.pos.turn === cfg.current.color ? 'lose' : 'win');
+      else if (next.status !== 'playing') sfx.play('select', 0.7);
+      else if (inCheck(next.pos)) sfx.play('blip', 1.3);
+      else if (movePromo(m)) sfx.play('coin');
+      else if (moveFlags(m) & FLAG_CASTLE) sfx.play('select');
+      else if (cap) sfx.play('hit', 1.6);
+      else sfx.play('tick', 0.7);
+      setSel(null);
+      setPromo(null);
+    },
+    [game],
+  );
+
+  const tryMove = useCallback(
+    (from: number, to: number) => {
+      if (isPromotion(game.legal, from, to)) {
+        setPromo({ from, to });
+        setSel(from);
+        return true;
+      }
+      const m = findMove(game.legal, from, to);
+      if (m === undefined) return false;
+      commit(m);
+      return true;
+    },
+    [game.legal, commit],
+  );
+
+  // Setup changes made on the Start card apply to the game that is about to begin.
+  useEffect(() => {
+    if (shell.status !== 'ready') return;
+    const color = colorOfSide(side);
+    cfg.current = { mode, level: levelIndex(levelName), color };
+    const g = newGame();
+    setGame(g);
+    setIds(initialIds(g.pos));
+    setFlipped(mode === 'cpu' && color === BLACK);
+    setSel(null);
+    setPromo(null);
+  }, [mode, levelName, side, shell.status]);
+
+  // Computer: a Web Worker when available, otherwise the same search on a timer.
+  useEffect(() => {
+    let w: Worker | null = null;
+    try {
+      if (typeof Worker !== 'undefined') w = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+    } catch {
+      w = null;
+    }
+    worker.current = w;
+    return () => {
+      aiTask.current?.cleanup?.();
+      aiTask.current = null;
+      w?.terminate();
+      worker.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    let task = aiTask.current;
+    if (task && (task.game !== game || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.pos.turn === cfg.current.color)) {
+      task.cleanup?.();
+      aiTask.current = null;
+      task = null;
+    }
+    if (shell.status !== 'playing' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.pos.turn === cfg.current.color) return;
+
+    if (!task) {
+      const pending: PendingAI = { game, id: ++reqId.current, started: performance.now(), from: -1, to: -1, promo: 0, ready: false, scheduled: false };
+      task = pending;
+      aiTask.current = pending;
+      setThinking(true);
+      const receive = (from: number, to: number, promo: number) => {
+        if (aiTask.current !== pending || pending.ready) return;
+        pending.from = from;
+        pending.to = to;
+        pending.promo = promo;
+        pending.ready = true;
+        setAiRevision((revision) => revision + 1);
+      };
+      const fallback = () => {
+        later(() => {
+          if (aiTask.current !== pending) return;
+          const result = bestMove(game.pos, cfg.current.level, game.keys);
+          if (result) receive(moveFrom(result.move), moveTo(result.move), movePromo(result.move));
+          else receive(-1, -1, 0);
+        }, 30);
+      };
+      const w = worker.current;
+      if (w) {
+        const remove = () => {
+          w.removeEventListener('message', onMessage);
+          w.removeEventListener('error', onError);
+          pending.cleanup = undefined;
+        };
+        const onMessage = (e: MessageEvent<AiReply>) => {
+          if (e.data.id !== pending.id || aiTask.current !== pending) return;
+          remove();
+          receive(e.data.from, e.data.to, e.data.promo);
+        };
+        const onError = () => {
+          remove();
+          fallback();
+        };
+        pending.cleanup = remove;
+        w.addEventListener('message', onMessage);
+        w.addEventListener('error', onError);
+        const req: AiRequest = { id: pending.id, fen: game.history.at(-1)?.fen ?? toFenOf(game), keys: game.keys, level: cfg.current.level };
+        w.postMessage(req);
+      } else fallback();
+    }
+
+    if (task?.ready && !task.scheduled) {
+      task.scheduled = true;
+      const pending = task;
+      later(() => {
+        if (aiTask.current !== pending || statusRef.current !== 'playing' || gameRef.current !== pending.game) return;
+        pending.cleanup?.();
+        aiTask.current = null;
+        setThinking(false);
+        const m = findMove(game.legal, pending.from, pending.to, pending.promo);
+        if (m !== undefined) commit(m);
+      }, Math.max(0, MIN_THINK_MS - (performance.now() - task.started)));
+    }
+  }, [game, commit, later, shell.status, aiRevision]);
+
+  useEffect(() => {
+    if (game.status === 'playing') {
+      gameOverScheduled.current = null;
+      return;
+    }
+    if (shell.status !== 'playing' || gameOverScheduled.current === game) return;
+    gameOverScheduled.current = game;
+    later(() => {
+      if (statusRef.current !== 'playing' || gameRef.current !== game) return;
+      const { mode, color } = cfg.current;
+      const winner = game.status === 'checkmate' ? (game.pos.turn === WHITE ? BLACK : WHITE) : null;
+      const moves = Math.ceil(game.history.length / 2);
+      if (game.status === 'checkmate') {
+        const who = mode === 'cpu' ? (winner === color ? 'You win' : 'Computer wins') : `${winner === WHITE ? 'White' : 'Black'} wins`;
+        const score = mode === 'cpu' && winner === color ? moves : undefined;
+        shell.gameOver(score, { title: 'Checkmate', detail: `${who} in ${moves} ${moves === 1 ? 'move' : 'moves'}.` });
+      } else {
+        const why = DRAWS[game.status as keyof typeof DRAWS];
+        shell.gameOver(undefined, { title: 'Draw', detail: `By ${why} after ${moves} ${moves === 1 ? 'move' : 'moves'}.` });
+      }
+    }, 650);
+  }, [game, shell.status, shell.gameOver, later]);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [game.history.length]);
+
+  // Geometry
+  const flip = flipped;
+  const colOf = (sq: number) => (flip ? 7 - fileOf(sq) : fileOf(sq));
+  const rowOf = (sq: number) => (flip ? rankOf(sq) : 7 - rankOf(sq));
+  const sqAt = (col: number, row: number) => square(flip ? 7 - col : col, flip ? row : 7 - row);
+  const TOP = 44;
+  const wide = size.w >= 540 && size.w > size.h * 0.95;
+  const panelW = wide ? Math.min(240, Math.max(170, size.w * 0.3)) : 0;
+  const panelH = wide ? 0 : 104;
+  const boardPx = Math.max(120, Math.floor(wide ? Math.min(size.h - TOP - 20, size.w - panelW - 36) : Math.min(size.w - 24, size.h - TOP - panelH - 24)));
+  const sqPx = boardPx / 8;
+
+  const squareFromEvent = (e: { clientX: number; clientY: number }) => {
+    const b = boardRef.current;
+    if (!b) return -1;
+    const r = b.getBoundingClientRect();
+    const col = Math.floor(((e.clientX - r.left) / r.width) * 8);
+    const row = Math.floor(((e.clientY - r.top) / r.height) * 8);
+    if (col < 0 || col > 7 || row < 0 || row > 7) return -1;
+    return sqAt(col, row);
+  };
+
+  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
+    if (!humanTurn || promo) return;
+    const sq = squareFromEvent(e);
+    if (sq < 0) return;
+    const pc = game.pos.board[sq];
+    setCursor(null);
+    if (pc && colorOf(pc) === game.pos.turn) {
+      setSel(sq);
+      drag.current = { pid: e.pointerId, from: sq, moved: false };
+      boardRef.current?.setPointerCapture(e.pointerId);
+      return;
+    }
+    if (sel !== null && tryMove(sel, sq)) return;
+    setSel(null);
+  };
+  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    const b = boardRef.current;
+    if (!d || d.pid !== e.pointerId || !b) return;
+    const r = b.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    if (!d.moved) {
+      const home = { x: colOf(d.from) * sqPx + sqPx / 2, y: rowOf(d.from) * sqPx + sqPx / 2 };
+      if (Math.hypot(x - home.x, y - home.y) < 5) return;
+      d.moved = true;
+      setDragFrom(d.from);
+    }
+    const el = pieceEls.current.get(ids.get(d.from) ?? -1);
+    if (el) el.style.transform = `translate(${x - sqPx / 2}px, ${y - sqPx / 2}px) scale(1.12)`;
+  };
+  const endDrag = (e: RPointerEvent<HTMLDivElement>, cancelled = false) => {
+    const d = drag.current;
+    if (!d || d.pid !== e.pointerId) return;
+    drag.current = null;
+    const el = pieceEls.current.get(ids.get(d.from) ?? -1);
+    if (el) el.style.transform = '';
+    setDragFrom(null);
+    if (!d.moved || cancelled) return;
+    const to = squareFromEvent(e);
+    if (to >= 0 && to !== d.from) {
+      if (!tryMove(d.from, to)) {
+        const pc = game.pos.board[to];
+        setSel(pc && colorOf(pc) === game.pos.turn ? to : null);
+      }
+    }
+  };
+
+  // Keyboard: arrows move a cursor, Enter or Space selects and moves, F flips.
+  useKeys((code, e) => {
+    if (e?.repeat && (code === 'Enter' || code === 'Space' || code === 'KeyF')) return;
+    if (code === 'KeyF') return setFlipped((f) => !f);
+    const dirs: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], KeyA: [-1, 0], KeyD: [1, 0], KeyW: [0, -1], KeyS: [0, 1] };
+    if (dirs[code]) {
+      const [dx, dy] = dirs[code];
+      setCursor((c) => {
+        const cur = c ?? sel ?? sqAt(4, 7);
+        const col = Math.max(0, Math.min(7, colOf(cur) + dx));
+        const row = Math.max(0, Math.min(7, rowOf(cur) + dy));
+        return sqAt(col, row);
+      });
+      return;
+    }
+    if ((code === 'Enter' || code === 'Space') && cursor !== null && humanTurn) {
+      if (promo) return;
+      const pc = game.pos.board[cursor];
+      if (sel !== null && cursor !== sel && tryMove(sel, cursor)) return;
+      if (pc && colorOf(pc) === game.pos.turn) setSel(cursor);
+      else setSel(null);
+    }
+    if (code === 'Escape' || code === 'Backspace') {
+      setSel(null);
+      setPromo(null);
+    }
+  });
+
+  const status = (() => {
+    if (game.status !== 'playing') return ENDINGS[game.status];
+    const mover = game.pos.turn === WHITE ? 'White' : 'Black';
+    const check = checkSq >= 0 ? ' · check' : '';
+    if (cfg.current.mode === 'cpu') return (thinking ? 'Computer is thinking' : 'Your move') + check;
+    return `${mover} to move${check}`;
+  })();
+
+  const squares = useMemo(() => {
+    const out: { sq: number; col: number; row: number }[] = [];
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) out.push({ sq: sqAt(col, row), col, row });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flip]);
+
+  const rows: { n: number; w?: string; b?: string }[] = [];
+  game.history.forEach((h, i) => {
+    if (i % 2 === 0) rows.push({ n: i / 2 + 1, w: h.san });
+    else rows[rows.length - 1].b = h.san;
+  });
+
+  return (
+    <div ref={stageRef} className={`g-chess-stage ${wide ? 'wide' : 'tall'}`}>
+      <div className={`g-chess-status ${thinking ? 'busy' : ''}`} aria-live="polite">
+            {thinking && <span className="g-chess-dots" aria-hidden="true" />}
+            {status}
+          </div>
+          <div className="g-chess-body" style={{ paddingTop: TOP }}>
+            <div
+              ref={boardRef}
+              className={`g-chess-board ${humanTurn ? 'live' : ''}`}
+              style={{ width: boardPx, height: boardPx }}
+              role="grid"
+              aria-label="Chess board"
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={endDrag}
+              onPointerCancel={(e) => endDrag(e, true)}
+              onContextMenu={(e) => e.preventDefault()}
+            >
+              {squares.map(({ sq, col, row }) => {
+                const light = (fileOf(sq) + rankOf(sq)) % 2 === 1;
+                const isLast = lastMove !== undefined && (moveFrom(lastMove) === sq || moveTo(lastMove) === sq);
+                const hint = targets.has(sq);
+                const capture = hint && game.pos.board[sq] !== 0;
+                const cls = ['g-chess-sq', light ? 'light' : 'dark', sel === sq ? 'sel' : '', isLast ? 'last' : '', checkSq === sq ? 'check' : '', cursor === sq ? 'cursor' : '', hint ? (capture ? 'hint capture' : 'hint') : ''].join(' ');
+                return (
+                  <div key={sq} className={cls} style={{ left: `${col * 12.5}%`, top: `${row * 12.5}%` }} role="gridcell" aria-label={squareName(sq)}>
+                    {col === 0 && <span className="g-chess-rank">{rankOf(sq) + 1}</span>}
+                    {row === 7 && <span className="g-chess-file">{'abcdefgh'[fileOf(sq)]}</span>}
+                  </div>
+                );
+              })}
+              {pieces(game.pos).map(([sq, pc]) => {
+                const id = ids.get(sq) ?? sq + 1000;
+                const dragging = dragFrom === sq;
+                return (
+                  <div
+                    key={id}
+                    ref={(el) => {
+                      if (el) pieceEls.current.set(id, el);
+                      else pieceEls.current.delete(id);
+                    }}
+                    className={`g-chess-piece ${dragging ? 'drag' : ''} ${colorOf(pc) === game.pos.turn && humanTurn ? 'own' : ''}`}
+                    style={{ transform: `translate(${colOf(sq) * 100}%, ${rowOf(sq) * 100}%)` }}
+                  >
+                    <Piece piece={pc} />
+                  </div>
+                );
+              })}
+              {promo && (
+                <div className="g-chess-promo" role="dialog" aria-label="Promote to">
+                  <span>Promote to</span>
+                  <div>
+                    {[QUEEN, ROOK, BISHOP, KNIGHT].map((t) => (
+                      <button key={t} type="button" onClick={() => commit(findMove(game.legal, promo.from, promo.to, t)!)} aria-label={['', 'pawn', 'knight', 'bishop', 'rook', 'queen', 'king'][t]}>
+                        <Piece piece={t | game.pos.turn} />
+                      </button>
+                    ))}
+                  </div>
+                  <button type="button" className="arcade-btn g-chess-cancel" onClick={() => setPromo(null)}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+            <aside className="g-chess-panel" style={wide ? { width: panelW, height: boardPx } : { height: panelH, width: boardPx }}>
+              <div className="g-chess-tools">
+                <span className="g-chess-mode">{cfg.current.mode === 'cpu' ? `vs Computer · ${levelLabel(LEVEL_NAMES[cfg.current.level])}` : '2 Players'}</span>
+                <button type="button" className="g-chess-flip" onClick={() => setFlipped((f) => !f)} aria-label="Flip Board" title="Flip Board">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M7 4v13M3.5 13.5L7 17l3.5-3.5M17 20V7M13.5 10.5L17 7l3.5 3.5" />
+                  </svg>
+                </button>
+              </div>
+              <ol ref={listRef} className="g-chess-moves" aria-label="Moves">
+                {rows.length === 0 && <li className="g-chess-empty">{cfg.current.mode === 'cpu' && cfg.current.color === BLACK ? 'White opens.' : 'White to open.'}</li>}
+                {rows.map((r) => (
+                  <li key={r.n}>
+                    <em>{r.n}.</em>
+                    <b className={r.b === undefined && r.n === rows.length ? 'cur' : ''}>{r.w}</b>
+                    <b className={r.b !== undefined && r.n === rows.length ? 'cur' : ''}>{r.b ?? ''}</b>
+                  </li>
+                ))}
+              </ol>
+            </aside>
+          </div>
+    </div>
+  );
+}
+
+function toFenOf(g: ChessGame) {
+  // The start position is the only game state without a recorded fen.
+  return g.history.length ? g.history[g.history.length - 1].fen : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+}
