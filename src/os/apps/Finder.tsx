@@ -65,7 +65,13 @@ export default function Finder({ args }: AppProps) {
               <button
                 key={e.name}
                 className={`finder-item ${sel?.name === e.name ? 'is-sel' : ''}`}
-                onClick={() => setSel(e)}
+                onPointerDown={(event) => {
+                  setSel(e);
+                  if (event.pointerType === 'touch') openEntry(e);
+                }}
+                onClick={(event) => {
+                  if (event.detail === 0) setSel(e);
+                }}
                 onDoubleClick={() => openEntry(e)}
               >
                 <Favicon url={e.href} name={e.name} size={54} radius={14} />

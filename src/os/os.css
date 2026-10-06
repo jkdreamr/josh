@@ -28,6 +28,19 @@ button {
 button:disabled {
   cursor: default;
 }
+.screen {
+  cursor: default;
+}
+.screen button {
+  cursor: default;
+}
+.screen a[href] {
+  cursor: pointer;
+}
+.screen input,
+.screen textarea {
+  cursor: text;
+}
 input,
 textarea {
   font: inherit;
@@ -751,6 +764,7 @@ kbd {
 /* desktop icons */
 .desk-icons {
   position: absolute;
+  left: 0;
   top: 40px;
   right: 14px;
   bottom: 90px;
@@ -760,6 +774,7 @@ kbd {
   align-content: flex-start;
   gap: 6px;
   z-index: 1;
+  touch-action: none;
 }
 .desk-icon {
   width: 92px;
@@ -773,6 +788,7 @@ kbd {
   font-size: 12px;
   font-weight: 500;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  cursor: default;
 }
 .desk-icon > span:last-child {
   padding: 1px 6px;
@@ -797,6 +813,14 @@ kbd {
 .desk-icon:active .icon-tile,
 .desk-icon:active .icon-bare {
   transform: scale(0.94);
+}
+.selection-marquee {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.15);
+  pointer-events: none;
 }
 
 /* icons */
@@ -1042,8 +1066,9 @@ kbd {
     width 0.12s ease-out,
     height 0.12s ease-out;
 }
-.dock-item:active .icon-tile {
-  filter: brightness(0.82);
+.dock-item:active .icon-tile,
+.dock-item:active .icon-bare {
+  filter: brightness(0.7);
 }
 .dock-item::after {
   content: '';
@@ -1521,6 +1546,7 @@ kbd {
   border-radius: 10px;
   text-align: center;
   color: #1d1d1f;
+  cursor: default;
 }
 .finder-item:hover {
   background: rgba(0, 0, 0, 0.04);
