@@ -12,6 +12,7 @@ import Terminal from './apps/Terminal';
 import CoxBox from './apps/CoxBox';
 import Baduk from './apps/Baduk';
 import Badminton from './apps/Badminton';
+import BeatPad from './apps/BeatPad';
 import PhotoBooth from './apps/PhotoBooth';
 import { Trash, About } from './apps/Misc';
 
@@ -45,6 +46,7 @@ export const apps: Record<AppId, AppDef> = {
   coxbox: { id: 'coxbox', title: 'Cox Box', icon: 'coxbox', Component: CoxBox, w: 900, h: 600, theme: 'dark', dock: true, keywords: 'rowing game play stanford erg' },
   baduk: { id: 'baduk', title: 'Baduk', icon: 'baduk', Component: Baduk, w: 620, h: 680, theme: 'dark', dock: false, keywords: 'go baduk 바둑 board game strategy' },
   badminton: { id: 'badminton', title: 'Badminton', icon: 'badminton', Component: Badminton, w: 900, h: 560, theme: 'dark', dock: false, keywords: 'badminton shuttle racket court game sport' },
+  beatpad: { id: 'beatpad', title: 'Beat Pad', icon: 'beatpad', Component: BeatPad, w: 820, h: 520, theme: 'dark', dock: false, keywords: 'beat pad music drum machine sequencer synth' },
   photobooth: { id: 'photobooth', title: 'Photo Booth', icon: 'photobooth', Component: PhotoBooth, w: 660, h: 560, theme: 'dark', dock: true, keywords: 'camera selfie photo' },
   trash: { id: 'trash', title: 'Trash', icon: 'trash', Component: Trash, w: 520, h: 330 },
   about: { id: 'about', title: 'About This Josh', icon: 'about', Component: About, w: 440, h: 520, keywords: 'about info specs' },
@@ -69,4 +71,4 @@ export const dockOrder: AppId[] = [
 
 export const mobileDock: AppId[] = ['messages', 'chrome', 'spotify', 'mail'];
 
-export const games: AppId[] = ['coxbox', 'baduk', 'badminton'];
+export const games: AppId[] = ['coxbox', 'baduk', 'badminton', 'beatpad'];

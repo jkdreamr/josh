@@ -15,10 +15,11 @@ const appNames: Record<string, AppId> = {
   finder: 'finder', chrome: 'chrome', browser: 'chrome', messages: 'messages', notes: 'notes', spotify: 'spotify', soundcloud: 'soundcloud',
   instagram: 'instagram', ig: 'instagram', x: 'x', twitter: 'x', linkedin: 'linkedin', github: 'github', mail: 'mail', email: 'mail',
   coxbox: 'coxbox', 'cox-box': 'coxbox', rowing: 'coxbox', baduk: 'baduk', go: 'baduk', badminton: 'badminton',
+  beatpad: 'beatpad', beats: 'beatpad', music: 'beatpad',
   photobooth: 'photobooth', camera: 'photobooth', trash: 'trash', about: 'about',
 };
 
-const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'school', 'projects', 'music', 'socials', 'contact', 'neofetch', 'row', 'baduk', 'go', 'badminton', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
+const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'school', 'projects', 'music', 'socials', 'contact', 'neofetch', 'row', 'baduk', 'go', 'badminton', 'beatpad', 'beats', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
 
 const ART = String.raw`
        _ _
@@ -84,6 +85,7 @@ export default function Terminal(_: AppProps) {
               ['row', 'play Cox Box'],
               ['baduk · go', 'play 9x9 Go'],
               ['badminton', 'play a rally'],
+              ['beatpad · beats · open music', 'make a loop'],
               ['clear · history · exit', 'the usual'],
             ].map(([a, b]) => (
               <span key={a}>
@@ -199,6 +201,10 @@ export default function Terminal(_: AppProps) {
       case 'badminton':
         api.open('badminton');
         return print(<span className="t-dim">opening badminton…</span>);
+      case 'beatpad':
+      case 'beats':
+        api.open('beatpad');
+        return print(<span className="t-dim">opening beat pad…</span>);
       case 'date':
         return print(<span>{new Date().toString()}</span>);
       case 'echo':

@@ -31,6 +31,7 @@ export type IconKind =
   | 'coxbox'
   | 'baduk'
   | 'badminton'
+  | 'beatpad'
   | 'photobooth'
   | 'trash'
   | 'about'
@@ -183,6 +184,19 @@ export function Glyph({ kind }: { kind: IconKind }): ReactNode {
           <ellipse cx="35" cy="37" rx="5" ry="2.3" transform="rotate(45 35 37)" fill="none" stroke="#ffd27a" strokeWidth="1.8" />
         </svg>
       );
+    case 'beatpad':
+      return (
+        <svg viewBox="0 0 48 48" width="74%" height="74%" aria-hidden="true">
+          {[0, 1, 2, 3].map((row) => (
+            <g key={row}>
+              {[0, 1, 2, 3].map((column) => (
+                <rect key={column} x={7 + column * 9} y={8 + row * 9} width="6" height="6" rx="1.5" fill={(row + column) % 3 === 0 ? '#f0c47f' : '#e9eee2'} opacity={(row + column) % 3 === 0 ? 1 : .56} />
+              ))}
+            </g>
+          ))}
+          <path d="M9 43h30" stroke="#a8d1bb" strokeLinecap="round" strokeWidth="2" />
+        </svg>
+      );
     case 'photobooth':
       return (
         <svg viewBox="0 0 48 48" width="70%" height="70%" aria-hidden="true">
@@ -229,6 +243,7 @@ const tiles: Partial<Record<IconKind, CSSProperties>> = {
   coxbox: tile('linear-gradient(180deg,#d63b45,#8c1515)'),
   baduk: tile('linear-gradient(145deg,#cfaa70,#8f6338)'),
   badminton: tile('linear-gradient(145deg,#417c73,#224844)'),
+  beatpad: tile('linear-gradient(145deg,#67584a,#322b27)'),
   photobooth: tile('linear-gradient(180deg,#ff5f6d,#b3152a)'),
   trash: tile('transparent', { boxShadow: 'none' }),
   about: tile('linear-gradient(135deg,#ff9a8b,#a18cd1 50%,#5b8cff)'),
