@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react';
 import { apps, dockOrder, games, mobileDock, tabletDock } from './registry';
 import { AppIcon, type IconKind } from './icons';
-import { OSContext, useOS as useOSLocal, type AppId, type OpenArgs, type OSApi } from './types';
+import { OSContext, useOS as useOSLocal, type AppId, type OpenArgs, type Origin, type OSApi } from './types';
 import { folders, links, profile } from './data';
 import Wallpaper from './Wallpaper';
-import { clamp, pacificTime, useNow, useWeather, type Weather } from './hooks';
+import Banner from './Banner';
+import HomeScreen, { originOf } from './HomeScreen';
+import { clamp, useNow, useWeather, type Weather } from './hooks';
 
 const MENU_H = 26;
 const DOCK_SPACE = 78;
@@ -27,6 +29,7 @@ type Win = {
   max: boolean;
   args: OpenArgs;
   state: 'opening' | 'open' | 'closing';
+  origin?: Origin;
 };
 
 type Props = {
@@ -104,21 +107,24 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
     });
   }, []);
 
-  const open = useCallback((id: AppId, args: OpenArgs = {}) => {
+  const open = useCallback((id: AppId, args: OpenArgs = {}, from?: Origin) => {
     const def = apps[id];
     const { w: W, h: H } = sizeRef.current;
     zTop.current += 1;
     const z = zTop.current;
     setWins((ws) => {
       const existing = ws.find((w) => w.id === id);
-      if (existing) return ws.map((w) => (w.id === id ? { ...w, z, min: false, state: w.state === 'closing' ? 'open' : w.state, args: { ...args, nonce: Date.now() } } : w));
+      if (existing)
+        return ws.map((w) =>
+          w.id === id ? { ...w, z, min: false, state: w.state === 'closing' ? 'open' : w.state, args: { ...args, nonce: Date.now() }, origin: from ?? w.origin } : w,
+        );
       const availH = H - MENU_H - DOCK_SPACE;
       const w = Math.round(Math.min(def.w, W * 0.86));
       const h = Math.round(Math.min(def.h, availH - 10));
       const n = ws.filter((x) => !x.min).length % 6;
       const x = Math.round(clamp((W - w) / 2 + n * 26, 8, W - w - 8));
       const y = Math.round(clamp(MENU_H + (availH - h) / 2 + n * 22, MENU_H + 6, H - h - DOCK_SPACE));
-      return [...ws, { id, x, y, w, h, z, min: false, max: false, args: { ...args, nonce: Date.now() }, state: 'opening' }];
+      return [...ws, { id, x, y, w, h, z, min: false, max: false, args: { ...args, nonce: Date.now() }, state: 'opening', origin: from }];
     });
   }, []);
 
@@ -265,10 +271,21 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
           const def = apps[w.id];
           const C = def.Component;
           const isActive = active?.id === w.id;
+          const o = w.origin;
           const style = mobile
-            ? { zIndex: w.z }
+            ? ({
+                zIndex: w.z,
+                ...(o
+                  ? {
+                      '--ox': `${o.x + o.w / 2 - size.w / 2}px`,
+                      '--oy': `${o.y + o.h / 2 - size.h / 2}px`,
+                      '--os': `${Math.max(o.w / size.w, 0.05)}`,
+                      '--or': `${(0.225 * o.w) / Math.max(o.w / size.w, 0.05)}px`,
+                    }
+                  : {}),
+              } as CSSProperties)
             : w.max
-              ? { zIndex: w.z, left: 0, top: MENU_H, width: size.w, height: size.h - MENU_H }
+              ? { zIndex: w.z, left: 0, top: MENU_H, width: size.w, height: dockTop - MENU_H }
               : { zIndex: w.z, left: w.x, top: w.y, width: w.w, height: w.h };
           return (
             <section
@@ -284,6 +301,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
                 `st-${w.state}`,
               ].join(' ')}
               style={style}
+              data-win={w.id}
               aria-label={def.title}
               aria-hidden={w.min || undefined}
               onPointerDownCapture={() => focus(w.id)}
@@ -672,42 +690,6 @@ function DesktopIcons() {
   );
 }
 
-function HomeScreen() {
-  const os = useOSLocal();
-  const now = useNow(15_000);
-  const weather = useWeather();
-  const dock = os.tablet ? tabletDock : mobileDock;
-  const items: { key: string; label: string; icon: IconKind; run: () => void }[] = [
-    ...dockOrder.filter((id) => !dock.includes(id)).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: () => os.open(id) })),
-    ...games.filter((id) => !dockOrder.includes(id) && !dock.includes(id)).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: () => os.open(id) })),
-    ...folders.map((f) => ({ key: f.id, label: f.label, icon: 'folder' as IconKind, run: () => os.open('finder', { folder: f.id }) })),
-  ];
-  return (
-    <div className="home">
-      <div className="home-widgets">
-        <div className="widget widget-clock">
-          <small>Palo Alto</small>
-          <b>{pacificTime(now)}</b>
-          <span>{weather ? `${weather.temp}° · ${weather.label}` : now.toLocaleDateString('en-US', { weekday: 'long' })}</span>
-        </div>
-        <button className="widget widget-hi" onClick={() => os.open('notes', { note: 'about' })}>
-          <small>hi, i'm</small>
-          <b>{profile.name.toLowerCase()}</b>
-          <span>cs + math @ stanford · cox · builder</span>
-        </button>
-      </div>
-      <div className="home-grid">
-        {items.map((it) => (
-          <button key={it.key} className="home-app" onClick={it.run}>
-            <AppIcon kind={it.icon} size={os.tablet ? 68 : 58} />
-            <span>{it.label}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /* ------------------------------------ dock ------------------------------------ */
 
 type DockSpring = { s: number; v: number };
@@ -868,10 +850,10 @@ function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: A
     if (id) requestAnimation();
   };
 
-  const click = (id: AppId) => {
+  const click = (id: AppId, el: HTMLElement) => {
     const w = wins.find((x) => x.id === id && x.state !== 'closing');
     if (w) onFocus(id);
-    else os.open(id);
+    else os.open(id, {}, os.mobile ? originOf(el) : undefined);
   };
 
   return (
@@ -908,7 +890,7 @@ function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: A
               }}
               className={`dock-item ${running ? 'is-running' : ''} ${active === id ? 'is-front' : ''}`}
               style={{ width: base, height: base }}
-              onClick={() => click(id)}
+              onClick={(e) => click(id, e.currentTarget)}
               onPointerEnter={(e) => e.pointerType === 'mouse' && setHoveredItem(id)}
               onPointerLeave={(e) => {
                 if (e.pointerType === 'mouse' && !dockRef.current?.contains(e.relatedTarget as Node | null)) setHoveredItem(null);
@@ -928,7 +910,7 @@ function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: A
               }}
               className={`dock-item ${wins.some((w) => w.id === 'trash') ? 'is-running' : ''}`}
               style={{ width: base, height: base }}
-              onClick={() => click('trash')}
+              onClick={(e) => click('trash', e.currentTarget)}
               onPointerEnter={(e) => e.pointerType === 'mouse' && setHoveredItem('trash')}
               onPointerLeave={(e) => {
                 if (e.pointerType === 'mouse' && !dockRef.current?.contains(e.relatedTarget as Node | null)) setHoveredItem(null);
