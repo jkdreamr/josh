@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { folders, folderById, type Entry, type FolderId } from '../data';
 import { AppIcon } from '../icons';
 import { useOS, type AppProps } from '../types';
@@ -10,6 +10,7 @@ export default function Finder({ args }: AppProps) {
   const os = useOS();
   const [folder, setFolder] = useState<FolderId>(args.folder ?? 'projects');
   const [sel, setSel] = useState<Entry | null>(null);
+  const tapType = useRef('');
 
   useEffect(() => {
     if (args.folder) {
@@ -67,10 +68,11 @@ export default function Finder({ args }: AppProps) {
                 className={`finder-item ${sel?.name === e.name ? 'is-sel' : ''}`}
                 onPointerDown={(event) => {
                   setSel(e);
-                  if (event.pointerType === 'touch') openEntry(e);
+                  tapType.current = event.pointerType;
                 }}
                 onClick={(event) => {
                   if (event.detail === 0) setSel(e);
+                  else if (tapType.current === 'touch') openEntry(e);
                 }}
                 onDoubleClick={() => openEntry(e)}
               >

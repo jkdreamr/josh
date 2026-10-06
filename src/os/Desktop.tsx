@@ -518,6 +518,7 @@ function DesktopIcons() {
   const [sel, setSel] = useState<string[]>([]);
   const [band, setBand] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const screenRef = useRef<HTMLDivElement | null>(null);
+  const tapType = useRef('');
   const bandStart = useRef<{ pointerId: number; x: number; y: number; clientX: number; clientY: number; active: boolean } | null>(null);
 
   const screenPoint = (clientX: number, clientY: number) => {
@@ -614,8 +615,9 @@ function DesktopIcons() {
           onFocus={() => setSel([it.key])}
           onPointerDown={(e) => {
             setSel([it.key]);
-            if (e.pointerType === 'touch') it.run(os);
+            tapType.current = e.pointerType;
           }}
+          onClick={() => tapType.current === 'touch' && it.run(os)}
           onDoubleClick={() => it.run(os)}
         >
           <AppIcon kind={it.icon} size={52} />

@@ -1,36 +1,18 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import Desktop from './Desktop';
+import Laptop3D, { type Laptop3DHandle } from './Laptop3D';
 import { LidStickers, PalmStickers } from './Stickers';
 import type { OSApi } from './types';
 import { useMedia } from './hooks';
+import { keyRows } from './keys';
 
 type Phase = 'off' | 'opening' | 'hello' | 'on' | 'sleep';
 
-const LID_MS = 1500;
+/** Lid travel; slow and weighted like a real hinge. The display lights up just before it settles. */
+const LID_MS = 2600;
+const LIGHT_AT = LID_MS - 350;
 const HELLO_MS = 2700;
-
-type KeyDef = { a?: string; b?: string; w?: number; k?: 'c' | '2' | 'l' | 'r' | 'fn' | 'touch' };
-
-const sym = (pairs: string) => pairs.split(' ').map((p): KeyDef => ({ a: p[0], b: p[1], k: '2' }));
-const letters = (row: string) => [...row].map((b): KeyDef => ({ b, k: 'c' }));
-
-const keyRows: KeyDef[][] = [
-  [{ b: 'esc', w: 1.5, k: 'l' }, ...Array.from({ length: 12 }, (_, i): KeyDef => ({ b: `F${i + 1}`, k: 'fn' })), { k: 'touch' }],
-  [...sym('~` !1 @2 #3 $4 %5 ^6 &7 *8 (9 )0 _- +='), { b: 'delete', w: 1.5, k: 'r' }],
-  [{ b: 'tab', w: 1.5, k: 'l' }, ...letters('QWERTYUIOP'), ...sym('{[ }] |\\')],
-  [{ b: 'caps lock', w: 1.8, k: 'l' }, ...letters('ASDFGHJKL'), ...sym(':; "\''), { b: 'return', w: 1.7, k: 'r' }],
-  [{ b: 'shift', w: 2.3, k: 'l' }, ...letters('ZXCVBNM'), ...sym('<, >. ?/'), { b: 'shift', w: 2.2, k: 'r' }],
-  [
-    { b: 'fn', k: 'l' },
-    { a: '⌃', b: 'control', k: 'l' },
-    { a: '⌥', b: 'option', k: 'l' },
-    { a: '⌘', b: 'command', w: 1.25, k: 'l' },
-    { w: 5 },
-    { a: '⌘', b: 'command', w: 1.25, k: 'r' },
-    { a: '⌥', b: 'option', k: 'r' },
-  ],
-];
 
 function Keyboard() {
   return (
@@ -75,7 +57,11 @@ export default function OS() {
   const [mounted, setMounted] = useState(false);
   const [fs, setFs] = useState(false);
   const [gen, setGen] = useState(0);
-  const [tilt, setTilt] = useState({ x: 0, y: 0 });
+  const [mode, setMode] = useState<'pending' | '3d' | 'css'>('pending');
+  const [ready, setReady] = useState(false);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const l3d = useRef<Laptop3DHandle>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<OSApi | null>(null);
@@ -98,12 +84,35 @@ export default function OS() {
     later(() => setPhase('opening'), 300);
     if (fast) later(() => setPhase('on'), 300 + LID_MS);
     else {
-      later(() => setPhase('hello'), 300 + LID_MS);
-      later(() => setPhase('on'), 300 + LID_MS + HELLO_MS);
+      later(() => setPhase('hello'), 300 + LIGHT_AT);
+      later(() => setPhase('on'), 300 + LIGHT_AT + HELLO_MS);
     }
   }, []);
 
   useEffect(() => {
+    let gl = false;
+    try {
+      const c = document.createElement('canvas');
+      gl = !!(c.getContext('webgl2') || c.getContext('webgl'));
+    } catch {
+      gl = false;
+    }
+    setMode(gl ? '3d' : 'css');
+  }, []);
+
+  useEffect(() => {
+    if (mode !== '3d' || ready) return;
+    const t = setTimeout(() => setReady(true), 5000);
+    return () => clearTimeout(t);
+  }, [mode, ready]);
+
+  useEffect(() => clearTimers, []);
+
+  // Boot once the laptop is actually on screen (the WebGL model needs its shaders compiled first).
+  const booted = useRef(false);
+  useEffect(() => {
+    if (booted.current || mode === 'pending' || (mode === '3d' && !ready)) return;
+    booted.current = true;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let seen = false;
     try {
@@ -114,8 +123,7 @@ export default function OS() {
     }
     if (reduced) setPhase('on');
     else boot(seen);
-    return clearTimers;
-  }, [boot]);
+  }, [boot, mode, ready]);
 
   useEffect(() => {
     if (phase === 'on') setMounted(true);
@@ -160,12 +168,28 @@ export default function OS() {
   };
 
   const setFullscreen = useCallback(async (next: boolean) => {
+    if (modeRef.current === '3d') {
+      const lap = l3d.current;
+      if (!lap || busy.current || next === fsRef.current) return;
+      busy.current = true;
+      try {
+        if (next) {
+          setZooming(true);
+          await lap.enterFs(() => flushSync(() => (setFs(true), setZooming(false))));
+        } else {
+          await lap.exitFs(() => flushSync(() => (setFs(false), setZooming(true))));
+          setZooming(false);
+        }
+      } finally {
+        busy.current = false;
+      }
+      return;
+    }
     const el = screenRef.current;
     const scene = sceneRef.current;
     if (!el || !scene || busy.current || next === fsRef.current) return;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     busy.current = true;
-    setTilt({ x: 0, y: 0 });
     try {
       if (next) {
         if (!reduced) {
@@ -247,32 +271,44 @@ export default function OS() {
   const wake = () => {
     if (phase !== 'sleep') return;
     setPhase('opening');
-    later(() => setPhase('on'), LID_MS);
-  };
-
-  const onMove = (e: React.PointerEvent) => {
-    if (fs || busy.current || e.pointerType !== 'mouse') return;
-    if ((e.target as HTMLElement).closest('.screen')) {
-      if (tilt.x || tilt.y) setTilt({ x: 0, y: 0 });
-      return;
-    }
-    const nx = (e.clientX / window.innerWidth) * 2 - 1;
-    const ny = (e.clientY / window.innerHeight) * 2 - 1;
-    setTilt({ x: ny, y: nx });
+    later(() => setPhase('on'), LIGHT_AT);
   };
 
   const lidOpen = phase !== 'off' && phase !== 'sleep';
-  const laptopStyle = { '--tilt-x': `${(-tilt.x * 3).toFixed(2)}deg`, '--tilt-y': `${(tilt.y * 6).toFixed(2)}deg` } as CSSProperties;
+  const openWork = () => apiRef.current?.open('finder', { folder: 'work' });
+  const screenContent = (
+    <>
+      {mode === '3d' && <span className="notch" aria-hidden="true" />}
+      {mounted && <Desktop key={gen} mobile={mobile && fs} fullscreen={fs} toggleFullscreen={toggleFullscreen} restart={restart} sleep={sleep} apiRef={apiRef} />}
+      <div className={`screen-boot ${phase === 'on' || phase === 'sleep' ? 'is-done' : ''}`} onClick={skip}>
+        {phase === 'hello' && <Hello />}
+      </div>
+      <div className="screen-glare" aria-hidden="true" />
+    </>
+  );
 
   return (
     <div
-      className={`stage phase-${phase} ${lidOpen ? 'lid-open' : 'lid-closed'} ${fs ? 'is-fs' : ''} ${zooming ? 'is-zooming' : ''} ${mobile ? 'is-mobile' : ''}`}
-      onPointerMove={onMove}
-      onPointerLeave={() => setTilt({ x: 0, y: 0 })}
+      className={`stage stage-${mode} phase-${phase} ${lidOpen ? 'lid-open' : 'lid-closed'} ${fs ? 'is-fs' : ''} ${zooming ? 'is-zooming' : ''} ${mobile ? 'is-mobile' : ''}`}
     >
       <div className="stage-glow" aria-hidden="true" />
+      {mode === '3d' && (
+        <Laptop3D
+          ref={l3d}
+          open={lidOpen}
+          screenOn={phase === 'hello' || phase === 'on'}
+          lidMs={LID_MS}
+          onPalm={openWork}
+          onBody={wake}
+          onFail={() => setMode('css')}
+          onReady={() => setReady(true)}
+        >
+          {screenContent}
+        </Laptop3D>
+      )}
+      {mode === 'css' && (
       <div className="scene" ref={sceneRef}>
-        <div className="laptop" style={laptopStyle} onClick={phase === 'sleep' ? wake : undefined}>
+        <div className="laptop" onClick={phase === 'sleep' ? wake : undefined}>
           <div className="lid">
             <div className="lid-edge" aria-hidden="true" />
             <div className="lid-back" aria-hidden="true">
@@ -283,11 +319,7 @@ export default function OS() {
               <div className="bezel">
                 <span className="notch" aria-hidden="true" />
                 <div className="screen" ref={screenRef}>
-                  {mounted && <Desktop key={gen} mobile={mobile && fs} fullscreen={fs} toggleFullscreen={toggleFullscreen} restart={restart} sleep={sleep} apiRef={apiRef} />}
-                  <div className={`screen-boot ${phase === 'on' || phase === 'sleep' ? 'is-done' : ''}`} onClick={skip}>
-                    {phase === 'hello' && <Hello />}
-                  </div>
-                  <div className="screen-glare" aria-hidden="true" />
+                  {screenContent}
                 </div>
               </div>
             </div>
@@ -303,13 +335,14 @@ export default function OS() {
               </div>
               <div className="trackpad" aria-hidden="true" />
             </div>
-            <PalmStickers onCrv={() => apiRef.current?.open('finder', { folder: 'work' })} onCognition={() => apiRef.current?.open('finder', { folder: 'work' })} />
+            <PalmStickers onCrv={openWork} onCognition={openWork} />
             <div className="base-front" aria-hidden="true">
               <span />
             </div>
           </div>
         </div>
       </div>
+      )}
 
       <div className="caption">
         {phase === 'sleep' ? (

@@ -169,7 +169,7 @@ function Place({ s, interactive }: { s: Placed; interactive?: boolean }) {
   );
 }
 
-const lid: Placed[] = [
+export const lidStickers: Placed[] = [
   { key: 'stanford', label: 'Stanford', el: <Stanford />, left: '8%', top: '10%', width: '24%', rot: -7 },
   { key: 'near', label: 'NEAR Protocol', el: <Near />, left: '73%', top: '9%', width: '11%', rot: 8 },
   { key: 'stanford-s', label: 'Stanford Cardinal', el: <StanfordS />, left: '14%', top: '40%', width: '8%', rot: 9 },
@@ -180,12 +180,18 @@ const lid: Placed[] = [
 export function LidStickers() {
   return (
     <div className="stickers stickers-lid" aria-hidden="true">
-      {lid.map((s) => (
+      {lidStickers.map((s) => (
         <Place key={s.key} s={s} />
       ))}
     </div>
   );
 }
+
+/** Palm-rest stickers for the WebGL laptop: art plus placement on the deck in cm (x from centre, z towards the front). */
+export const palmStickers = [
+  { key: 'crv', label: 'CRV — open Work folder', el: <Crv />, x: -11.3, z: 5.6, w: 2.7, rot: -10 },
+  { key: 'cognition', label: 'Cognition — open Work folder', el: <Cognition />, x: 11.1, z: 6.1, w: 5.3, rot: 5 },
+] as const;
 
 export function PalmStickers({ onCrv, onCognition }: { onCrv: () => void; onCognition: () => void }) {
   const palm: Placed[] = [
