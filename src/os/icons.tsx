@@ -29,6 +29,9 @@ export type IconKind =
   | 'mail'
   | 'terminal'
   | 'coxbox'
+  | 'baduk'
+  | 'badminton'
+  | 'beatpad'
   | 'photobooth'
   | 'trash'
   | 'about'
@@ -165,6 +168,35 @@ export function Glyph({ kind }: { kind: IconKind }): ReactNode {
           <circle cx="36" cy="16" r="4" fill="#fff" />
         </svg>
       );
+    case 'baduk':
+      return (
+        <svg viewBox="0 0 48 48" width="74%" height="74%" aria-hidden="true">
+          {[12, 24, 36].map((p) => <g key={p}><path d={`M${p} 8v32M8 ${p}h32`} stroke="#4f351e" strokeWidth="1.2" /></g>)}
+          <circle cx="17" cy="17" r="6.3" fill="#101111" stroke="#555" strokeWidth="1" />
+          <circle cx="31" cy="24" r="6.3" fill="#f5f0e6" stroke="#bcb4a7" strokeWidth="1" />
+        </svg>
+      );
+    case 'badminton':
+      return (
+        <svg viewBox="0 0 48 48" width="74%" height="74%" aria-hidden="true">
+          <path d="M13 11l15 15m-14-19L31 21m-21-5 16 16M27 28l12 12" fill="none" stroke="#fff3dd" strokeLinecap="round" strokeWidth="2.4" />
+          <path d="M10 5l5 5m-8 3 5 5m-4-11 4 4m-2 7 4 4" fill="none" stroke="#d7e0cf" strokeLinecap="round" strokeWidth="1.2" />
+          <ellipse cx="35" cy="37" rx="5" ry="2.3" transform="rotate(45 35 37)" fill="none" stroke="#ffd27a" strokeWidth="1.8" />
+        </svg>
+      );
+    case 'beatpad':
+      return (
+        <svg viewBox="0 0 48 48" width="74%" height="74%" aria-hidden="true">
+          {[0, 1, 2, 3].map((row) => (
+            <g key={row}>
+              {[0, 1, 2, 3].map((column) => (
+                <rect key={column} x={7 + column * 9} y={8 + row * 9} width="6" height="6" rx="1.5" fill={(row + column) % 3 === 0 ? '#f0c47f' : '#e9eee2'} opacity={(row + column) % 3 === 0 ? 1 : .56} />
+              ))}
+            </g>
+          ))}
+          <path d="M9 43h30" stroke="#a8d1bb" strokeLinecap="round" strokeWidth="2" />
+        </svg>
+      );
     case 'photobooth':
       return (
         <svg viewBox="0 0 48 48" width="70%" height="70%" aria-hidden="true">
@@ -209,6 +241,9 @@ const tiles: Partial<Record<IconKind, CSSProperties>> = {
   mail: tile('linear-gradient(180deg,#5ab8ff,#1d6ff2)'),
   terminal: tile('linear-gradient(180deg,#3a3a3c,#121214)', { boxShadow: 'inset 0 0 0 1.5px rgba(255,255,255,.18)' }),
   coxbox: tile('linear-gradient(180deg,#d63b45,#8c1515)'),
+  baduk: tile('linear-gradient(145deg,#cfaa70,#8f6338)'),
+  badminton: tile('linear-gradient(145deg,#417c73,#224844)'),
+  beatpad: tile('linear-gradient(145deg,#67584a,#322b27)'),
   photobooth: tile('linear-gradient(180deg,#ff5f6d,#b3152a)'),
   trash: tile('transparent', { boxShadow: 'none' }),
   about: tile('linear-gradient(135deg,#ff9a8b,#a18cd1 50%,#5b8cff)'),
