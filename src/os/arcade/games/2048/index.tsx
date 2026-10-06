@@ -22,14 +22,21 @@ type State = {
 const initial = (): State => ({ grid: createGame(), score: 0, previous: null, undoUsed: false, animation: null, won: false, toast: 0, lossDelay: 0, shaking: 0, floater: null });
 const easeCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 const easeBack = (t: number) => 1 + 2.70158 * Math.pow(t - 1, 3) + 1.70158 * Math.pow(t - 1, 2);
-const tileColor = (value: number) => {
-  if (value <= 4) return '#d9e0e8';
-  if (value <= 16) return '#ffcf91';
-  if (value <= 64) return '#ffad54';
-  if (value <= 256) return '#ff9f0a';
-  if (value <= 1024) return '#ffd166';
-  return '#ffe08a';
+const tileColors: Record<number, string> = {
+  2: '#e5e5ea',
+  4: '#d1d1d6',
+  8: '#ffb340',
+  16: '#ff9f0a',
+  32: '#ff7a45',
+  64: '#ff453a',
+  128: '#ffd60a',
+  256: '#ffcc00',
+  512: '#30d158',
+  1024: '#64d2ff',
+  2048: '#bf5af2',
 };
+const tileColor = (value: number) => tileColors[value] ?? '#5e5ce6';
+const tileTextColor = (value: number) => [2, 4, 128, 256].includes(value) ? '#1c1c1e' : '#fff';
 
 export default function Game({ compact, onExit }: GameProps) {
   return <GameShell meta={meta} compact={compact} onExit={onExit}><Play /></GameShell>;
@@ -38,10 +45,10 @@ export default function Game({ compact, onExit }: GameProps) {
 function Play() {
   const shell = useShell();
   const high = useHighScore('2048');
-  const best = Math.max(high.best ?? 0, 0);
   const [, setHudRevision] = useState(0);
   const refreshHud = () => setHudRevision((revision) => revision + 1);
   const state = useRef<State>(initial());
+  const best = Math.max(high.best ?? 0, state.current.score);
   const { ref, size, ctx } = useCanvas();
   const touch = useRef<{ id: number; x: number; y: number } | null>(null);
 
@@ -76,7 +83,6 @@ function Play() {
     s.floater = result.gained ? { amount: result.gained, time: 0 } : null;
     s.animation = fastForwarded ? null : { elapsed: 0, moves: result.moves, merges: result.moves.filter((m) => m.merged).map((m) => m.to).filter((p, i, all) => all.findIndex((q) => q[0] === p[0] && q[1] === p[1]) === i), spawn: next.position };
     shell.setScore(s.score);
-    high.submit(s.score);
     refreshHud();
     if (!s.won && s.grid.some((row) => row.some((value) => value >= 2048))) {
       s.won = true;
@@ -231,7 +237,7 @@ function drawTile(c: CanvasRenderingContext2D, x: number, y: number, size: numbe
   c.roundRect(x + pad, y + pad, size - pad * 2, size - pad * 2, Math.min(12, size * 0.17));
   c.fill();
   c.shadowBlur = 0;
-  c.fillStyle = value >= 32 ? '#fff' : '#24252a';
+  c.fillStyle = tileTextColor(value);
   c.textAlign = 'center';
   c.textBaseline = 'middle';
   const digits = String(value).length;
