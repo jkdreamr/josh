@@ -64,3 +64,4 @@ export const dockOrder: AppId[] = [
 ];
 
 export const mobileDock: AppId[] = ['messages', 'chrome', 'spotify', 'mail'];
+export const tabletDock: AppId[] = ['messages', 'chrome', 'mail', 'notes', 'spotify', 'soundcloud', 'instagram'];
