@@ -1,0 +1,10 @@
+.g-flappy {
+  background: #cfe6f5;
+}
+.g-flappy .g-flappy-canvas {
+  touch-action: none;
+}
+.g-flappy.st-ready .g-flappy-canvas,
+.g-flappy.st-over .g-flappy-canvas {
+  touch-action: manipulation;
+}
