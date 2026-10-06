@@ -841,6 +841,10 @@ kbd {
   width: 62%;
   height: 62%;
 }
+.icon-venmo > svg {
+  width: 54%;
+  height: 54%;
+}
 .icon-finder > svg,
 .icon-notes > svg {
   width: 100%;
@@ -1045,6 +1049,7 @@ kbd {
   pointer-events: none;
 }
 .dock {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: 4px;
@@ -1061,12 +1066,11 @@ kbd {
 }
 .dock-item {
   position: relative;
-  display: grid;
-  place-items: center;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
   flex: none;
-  transition:
-    width 0.12s ease-out,
-    height 0.12s ease-out;
+  overflow: visible;
 }
 .dock-item:active .icon-tile,
 .dock-item:active .icon-bare {
@@ -1075,9 +1079,11 @@ kbd {
 .dock-item::after {
   content: '';
   position: absolute;
+  left: 50%;
   bottom: -4px;
   width: 4px;
   height: 4px;
+  margin-left: -2px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.85);
   opacity: 0;
@@ -1085,24 +1091,40 @@ kbd {
 .dock-item.is-running::after {
   opacity: 1;
 }
-.dock-tip {
+.dock-hotzone {
   position: absolute;
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 3px 10px;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  pointer-events: none;
+}
+.dock.is-mag .dock-hotzone {
+  pointer-events: auto;
+}
+.dock-label {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  top: 0;
+  padding: 3px 9px;
   border-radius: 6px;
   white-space: nowrap;
   font-size: 12px;
+  line-height: 16px;
   font-weight: 500;
-  color: #1d1d1f;
-  background: rgba(240, 240, 244, 0.92);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  color: rgba(0, 0, 0, 0.85);
+  background: rgba(236, 236, 236, 0.82);
+  -webkit-backdrop-filter: blur(20px) saturate(1.8);
+  backdrop-filter: blur(20px) saturate(1.8);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.14),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.45),
+    0 3px 10px rgba(0, 0, 0, 0.18);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s;
+  transition: opacity 120ms ease;
 }
-.dock-item:hover .dock-tip {
+.dock-label.is-visible {
   opacity: 1;
 }
 .dock-sep {
@@ -1342,7 +1364,9 @@ kbd {
   padding: 12px 16px;
   border-radius: 32px;
 }
-.is-mobile .dock-tip,
+.is-mobile .dock-label {
+  display: none;
+}
 .is-mobile .dock-item::after {
   display: none;
 }
@@ -2249,6 +2273,205 @@ kbd {
 }
 .is-mobile .note-body {
   padding: 0 20px 30px;
+}
+
+/* venmo */
+.venmo {
+  container-type: size;
+  container-name: venmo;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: #1d1d1f;
+  background: #fff;
+}
+.venmo-header {
+  flex: none;
+  height: 40px;
+}
+.venmo-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(6px, 1.8cqh, 14px);
+  padding: 0 24px 22px;
+}
+.venmo-content > * {
+  width: 100%;
+  max-width: 360px;
+}
+.venmo-profile {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+.venmo-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.venmo-avatar {
+  width: 72px;
+  height: 72px;
+  margin-bottom: 2px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, #3fa9ff, #0074de);
+  font-size: 26px;
+  font-weight: 600;
+}
+.venmo-name {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+.venmo-handle {
+  color: #6e6e73;
+  font-size: 14px;
+}
+.venmo-qr-wrap {
+  flex: 0 1 276px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.venmo-qr-card {
+  position: relative;
+  flex: 0 1 auto;
+  height: min(100%, 248px);
+  max-width: 100%;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  border: 1px solid #e8eaed;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.venmo-qr-card > svg {
+  width: auto;
+  height: 100%;
+  max-height: 220px;
+  aspect-ratio: 1;
+  background: #fff;
+}
+.venmo-mark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22%;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  border-radius: 24%;
+  background: #fff;
+}
+.venmo-mark svg {
+  width: 65%;
+  height: 65%;
+}
+.venmo-caption {
+  flex: none;
+  color: #8e8e93;
+  font-size: 12px;
+}
+.venmo-tagline {
+  flex: none;
+  margin: 0;
+  color: #6e6e73;
+  font-size: 13px;
+  text-align: center;
+}
+.venmo-actions {
+  flex: none;
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+.venmo-actions button {
+  flex: 1;
+  height: 44px;
+  border-radius: 22px;
+  color: #fff;
+  background: #008cff;
+  font-size: 15px;
+  font-weight: 600;
+  transition: background 0.16s, transform 0.16s;
+}
+.venmo-actions button:hover {
+  background: #0077e0;
+}
+.venmo-actions button:active {
+  transform: scale(0.97);
+}
+.venmo-actions button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 140, 255, 0.35);
+}
+@container venmo (max-height: 460px) {
+  .venmo-header {
+    height: 30px;
+  }
+  .venmo-content {
+    gap: 4px;
+    padding: 0 16px 10px;
+  }
+  .venmo-profile {
+    flex-direction: row;
+    justify-content: center;
+    gap: 8px;
+    text-align: left;
+  }
+  .venmo-identity {
+    align-items: flex-start;
+  }
+  .venmo-avatar {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    font-size: 18px;
+  }
+  .venmo-name {
+    font-size: 16px;
+  }
+  .venmo-handle {
+    font-size: 12px;
+  }
+  .venmo-tagline {
+    display: none;
+  }
+  .venmo-qr-wrap {
+    gap: 5px;
+  }
+  .venmo-actions button {
+    height: 38px;
+  }
+}
+@container venmo (max-height: 300px) {
+  .venmo-content {
+    gap: 2px;
+    padding-bottom: 6px;
+  }
+  .venmo-caption {
+    display: none;
+  }
 }
 
 /* ============================== music ============================== */
