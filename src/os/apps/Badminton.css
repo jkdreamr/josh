@@ -1,0 +1,449 @@
+.badminton-app {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: #11191e;
+  color: #e9eee8;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.badminton-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px 9px;
+}
+
+.badminton-brand > span {
+  color: #9baaa4;
+  font-size: 8px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.badminton-brand h1 {
+  margin: 2px 0 0;
+  color: #f5f3eb;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -.03em;
+  text-transform: lowercase;
+}
+
+.badminton-format {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+  background: #182228;
+}
+
+.badminton-format button {
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #9ca9a4;
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+}
+
+.badminton-format button.is-selected {
+  background: #425a53;
+  color: #f1f5e9;
+}
+
+.badminton-scoreboard {
+  display: grid;
+  flex: none;
+  grid-template-columns: 1fr 1.3fr 1fr;
+  align-items: center;
+  gap: 12px;
+  margin: 0 14px 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 9px;
+  background: linear-gradient(110deg, #172227, #202d30 50%, #172227);
+}
+
+.badminton-player-score {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 10px;
+}
+
+.badminton-player-score.is-cpu {
+  text-align: right;
+}
+
+.badminton-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #c8d1ca;
+  font-size: 10px;
+  text-transform: lowercase;
+}
+
+.badminton-player-score.is-cpu .badminton-name {
+  justify-content: flex-end;
+}
+
+.badminton-name i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border: 1px solid #65756e;
+  border-radius: 50%;
+}
+
+.badminton-name i.is-serving {
+  border-color: #c7d68c;
+  background: #c7d68c;
+  box-shadow: 0 0 8px rgba(199,214,140,.55);
+}
+
+.badminton-name em {
+  color: #77867f;
+  font-size: 8px;
+  font-style: normal;
+}
+
+.badminton-player-score strong {
+  grid-row: span 2;
+  color: #f5f3eb;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 30px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.badminton-player-score small {
+  color: #82928a;
+  font-size: 8px;
+}
+
+.badminton-score-center {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.badminton-score-center > span,
+.badminton-score-center > small {
+  color: #92a099;
+  font-size: 8px;
+  text-transform: lowercase;
+}
+
+.badminton-score-center > b {
+  overflow: hidden;
+  max-width: 100%;
+  color: #dedfcb;
+  font-size: 10px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badminton-interval,
+.badminton-match-result {
+  position: absolute;
+  z-index: 3;
+  top: 48%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 9px 14px;
+  border: 1px solid rgba(219,228,203,.32);
+  border-radius: 7px;
+  background: rgba(18,28,32,.93);
+  color: #f2e6bc;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 16px;
+  text-align: center;
+}
+
+.badminton-match-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badminton-match-result button {
+  border: 0;
+  background: transparent;
+  color: #c9d59e;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  text-decoration: underline;
+}
+
+.badminton-stage {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  margin: 0 10px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 9px;
+  background: #17232b;
+}
+
+.badminton-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.badminton-stage-hud {
+  position: absolute;
+  right: 10px;
+  bottom: 9px;
+  display: flex;
+  gap: 9px;
+  color: rgba(243,246,235,.68);
+  font-size: 8px;
+  pointer-events: none;
+}
+
+.badminton-toolbar {
+  display: grid;
+  flex: none;
+  grid-template-columns: minmax(180px, 1fr) minmax(210px, 1.15fr) auto auto;
+  align-items: center;
+  gap: 13px;
+  padding: 10px 16px 12px;
+}
+
+.badminton-controls,
+.badminton-hit-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badminton-desktop-hint {
+  color: #9aa8a2;
+  font-size: 8px;
+  line-height: 1.7;
+}
+
+.badminton-desktop-hint b {
+  margin-left: 4px;
+  color: #c2cec3;
+  font-weight: 500;
+}
+
+.badminton-desktop-hint kbd {
+  padding: 2px 4px;
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 3px;
+  color: #e6ece3;
+  font: inherit;
+}
+
+.badminton-hit-controls {
+  align-items: stretch;
+}
+
+.badminton-hit-button {
+  display: grid;
+  min-width: 94px;
+  padding: 7px 10px;
+  border: 1px solid rgba(190,209,153,.5);
+  border-radius: 7px;
+  background: #465b4a;
+  color: #f6f4e9;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  touch-action: none;
+}
+
+.badminton-hit-button small {
+  margin-top: 3px;
+  color: #c0ccad;
+  font-size: 7px;
+}
+
+.badminton-hit-modes {
+  display: grid;
+  gap: 3px;
+}
+
+.badminton-hit-modes button {
+  padding: 3px 6px;
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 4px;
+  background: #1c282c;
+  color: #aebbb2;
+  cursor: pointer;
+  font: inherit;
+  font-size: 8px;
+  touch-action: none;
+}
+
+.badminton-difficulty {
+  display: grid;
+  gap: 3px;
+  color: #84958c;
+  font-size: 8px;
+}
+
+.badminton-difficulty select {
+  min-width: 74px;
+  padding: 5px 7px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 5px;
+  outline: none;
+  background: #1a2529;
+  color: #dce4dc;
+  font: inherit;
+  font-size: 9px;
+}
+
+.badminton-statline {
+  display: grid;
+  gap: 3px;
+  color: #87968e;
+  font-size: 8px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.badminton-statline b {
+  color: #c3cec4;
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.badminton-touch-controls {
+  display: none;
+}
+
+@media (max-width: 650px) {
+  .badminton-header {
+    padding: 9px 12px 7px;
+  }
+
+  .badminton-brand h1 {
+    font-size: 19px;
+  }
+
+  .badminton-format button {
+    padding: 6px 7px;
+    font-size: 8px;
+  }
+
+  .badminton-scoreboard {
+    gap: 5px;
+    margin: 0 7px 6px;
+    padding: 7px 8px;
+  }
+
+  .badminton-player-score {
+    column-gap: 5px;
+  }
+
+  .badminton-player-score strong {
+    font-size: 26px;
+  }
+
+  .badminton-name {
+    font-size: 9px;
+  }
+
+  .badminton-score-center > b {
+    font-size: 9px;
+  }
+
+  .badminton-score-center > span,
+  .badminton-score-center > small {
+    font-size: 7px;
+  }
+
+  .badminton-stage {
+    margin: 0 6px;
+  }
+
+  .badminton-toolbar {
+    grid-template-columns: 1fr auto auto;
+    gap: 6px;
+    padding: 7px 9px 9px;
+  }
+
+  .badminton-desktop-hint,
+  .badminton-hit-modes,
+  .badminton-statline {
+    display: none;
+  }
+
+  .badminton-touch-controls {
+    display: flex;
+    gap: 4px;
+  }
+
+  .badminton-touch-controls button {
+    min-width: 37px;
+    min-height: 35px;
+    padding: 4px 7px;
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 6px;
+    background: #1c292d;
+    color: #d3ded4;
+    font: inherit;
+    font-size: 12px;
+    touch-action: none;
+  }
+
+  .badminton-touch-controls button:last-child {
+    font-size: 8px;
+  }
+
+  .badminton-hit-controls {
+    justify-content: flex-end;
+  }
+
+  .badminton-hit-button {
+    min-width: 94px;
+    padding: 6px 9px;
+    font-size: 11px;
+  }
+
+  .badminton-difficulty {
+    font-size: 7px;
+  }
+
+  .badminton-difficulty select {
+    min-width: 64px;
+  }
+}
+
+@media (max-width: 380px) {
+  .badminton-name em {
+    display: none;
+  }
+
+  .badminton-scoreboard {
+    grid-template-columns: 1fr 1.1fr 1fr;
+  }
+
+  .badminton-hit-button small {
+    max-width: 80px;
+    font-size: 6px;
+  }
+}

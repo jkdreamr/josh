@@ -14,11 +14,11 @@ const dirMap: Record<string, FolderId> = { school: 'school', work: 'work', proje
 const appNames: Record<string, AppId> = {
   finder: 'finder', chrome: 'chrome', browser: 'chrome', messages: 'messages', notes: 'notes', spotify: 'spotify', soundcloud: 'soundcloud',
   instagram: 'instagram', ig: 'instagram', x: 'x', twitter: 'x', linkedin: 'linkedin', github: 'github', mail: 'mail', email: 'mail',
-  coxbox: 'coxbox', 'cox-box': 'coxbox', rowing: 'coxbox', baduk: 'baduk', go: 'baduk',
+  coxbox: 'coxbox', 'cox-box': 'coxbox', rowing: 'coxbox', baduk: 'baduk', go: 'baduk', badminton: 'badminton',
   photobooth: 'photobooth', camera: 'photobooth', trash: 'trash', about: 'about',
 };
 
-const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'school', 'projects', 'music', 'socials', 'contact', 'neofetch', 'row', 'baduk', 'go', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
+const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'school', 'projects', 'music', 'socials', 'contact', 'neofetch', 'row', 'baduk', 'go', 'badminton', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
 
 const ART = String.raw`
        _ _
@@ -83,6 +83,7 @@ export default function Terminal(_: AppProps) {
               ['neofetch', 'system info'],
               ['row', 'play Cox Box'],
               ['baduk · go', 'play 9x9 Go'],
+              ['badminton', 'play a rally'],
               ['clear · history · exit', 'the usual'],
             ].map(([a, b]) => (
               <span key={a}>
@@ -195,6 +196,9 @@ export default function Terminal(_: AppProps) {
       case 'go':
         api.open('baduk');
         return print(<span className="t-dim">opening baduk…</span>);
+      case 'badminton':
+        api.open('badminton');
+        return print(<span className="t-dim">opening badminton…</span>);
       case 'date':
         return print(<span>{new Date().toString()}</span>);
       case 'echo':
