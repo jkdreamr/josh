@@ -31,6 +31,9 @@ type Props = {
   toggleFullscreen: () => void;
   restart: () => void;
   sleep: () => void;
+  closeLid: () => void;
+  camera: boolean;
+  setCamera: (on: boolean) => void;
   apiRef?: MutableRefObject<OSApi | null>;
 };
 
@@ -48,7 +51,7 @@ function routeUrl(url: string): { id: AppId; args: OpenArgs } {
   return { id: 'chrome', args: { url } };
 }
 
-export default function Desktop({ mobile, tablet = false, fullscreen, toggleFullscreen, restart, sleep, apiRef }: Props) {
+export default function Desktop({ mobile, tablet = false, fullscreen, toggleFullscreen, restart, sleep, closeLid, camera, setCamera, apiRef }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 1000, h: 625 });
   const [wins, setWins] = useState<Win[]>([]);
@@ -126,8 +129,8 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   );
 
   const api: OSApi = useMemo(
-    () => ({ open, close, openUrl, mobile, tablet, fullscreen, toggleFullscreen, restart, sleep, openLauncher: () => setLauncher(true) }),
-    [open, close, openUrl, mobile, tablet, fullscreen, toggleFullscreen, restart, sleep],
+    () => ({ open, close, openUrl, mobile, tablet, fullscreen, toggleFullscreen, restart, sleep, closeLid, openLauncher: () => setLauncher(true), camera, setCamera }),
+    [open, close, openUrl, mobile, tablet, fullscreen, toggleFullscreen, restart, sleep, closeLid, camera, setCamera],
   );
 
   useEffect(() => {
@@ -436,6 +439,7 @@ function MenuBar({ title, wins, onFocus, onClose }: { title: string; wins: Win[]
             { label: os.fullscreen ? 'Exit Full Screen' : 'Enter Full Screen', hint: os.fullscreen ? 'esc' : undefined, action: os.toggleFullscreen },
             'sep',
             { label: 'Sleep', action: os.sleep },
+            ...(os.mobile ? [] : [{ label: 'Close Lid', action: os.closeLid }]),
             { label: 'Restart…', action: os.restart },
           ]}
         />
@@ -507,6 +511,7 @@ function StatusBar() {
         {os.tablet && <span className="sb-date">{now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).replace(',', '')}</span>}
       </span>
       <span className="sb-right">
+        {os.camera && <span className="sb-cam" role="img" aria-label="Camera in use" />}
         {os.tablet && os.fullscreen && (
           <button className="sb-exit" onClick={os.toggleFullscreen} aria-label="Exit full screen">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>

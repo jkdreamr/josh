@@ -90,6 +90,8 @@ export default function OS() {
   const sceneRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<OSApi | null>(null);
   const [zooming, setZooming] = useState(false);
+  const [camera, setCamera] = useState(false);
+  const [rotated, setRotated] = useState(false);
   const timers = useRef<number[]>([]);
   const fsRef = useRef(fs);
   fsRef.current = fs;
@@ -330,12 +332,67 @@ export default function OS() {
     later(() => setPhase('on'), devRef.current === 'laptop' ? LIGHT_AT : POWER_MS);
   };
 
+  /** Shut the lid by hand: the 3D hinge swings closed, then the OS sleeps. Other devices just sleep. */
+  const closeLid = useCallback(async () => {
+    if (!use3dRef.current || !l3d.current) return sleep();
+    if (busy.current) return;
+    clearTimers();
+    if (fsRef.current) {
+      await setFullscreen(false);
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    busy.current = true;
+    try {
+      await l3d.current.closeLid();
+    } finally {
+      busy.current = false;
+    }
+    setPhase('sleep');
+  }, [sleep, setFullscreen]);
+
+  /** The visitor dragged the lid: shut puts the Mac to sleep, lifting it wakes the display once the remaining travel is done. */
+  const onLid = (open: boolean, remaining: number) => {
+    if (!open) {
+      clearTimers();
+      setPhase('sleep');
+      return;
+    }
+    if (phase !== 'sleep') return;
+    setPhase('opening');
+    later(() => setPhase('on'), Math.max(120, LID_MS * remaining - 350));
+  };
+
+  /** A 3D key click during the intro skips it; otherwise the key types. */
+  const onKey = () => {
+    if (phase === 'on') return false;
+    skip();
+    return true;
+  };
+
   const lidOpen = phase !== 'off' && phase !== 'sleep';
   const openWork = () => apiRef.current?.open('finder', { folder: 'work' });
   const screenContent = (
     <>
-      {use3d && <span className="notch" aria-hidden="true" />}
-      {mounted && <Desktop key={gen} mobile={mobile} tablet={device === 'tablet'} fullscreen={fs} toggleFullscreen={toggleFullscreen} restart={restart} sleep={sleep} apiRef={apiRef} />}
+      {use3d && (
+        <span className="notch" aria-hidden="true">
+          <i className={`cam-led ${camera ? 'is-on' : ''}`} />
+        </span>
+      )}
+      {mounted && (
+        <Desktop
+          key={gen}
+          mobile={mobile}
+          tablet={device === 'tablet'}
+          fullscreen={fs}
+          toggleFullscreen={toggleFullscreen}
+          restart={restart}
+          sleep={sleep}
+          closeLid={closeLid}
+          camera={camera}
+          setCamera={setCamera}
+          apiRef={apiRef}
+        />
+      )}
       <div className={`screen-boot ${phase === 'on' || phase === 'sleep' ? 'is-done' : ''}`} onClick={skip}>
         {phase === 'hello' && <Hello />}
       </div>
@@ -354,9 +411,13 @@ export default function OS() {
           ref={l3d}
           open={lidOpen}
           screenOn={phase === 'hello' || phase === 'on'}
+          interactive={phase === 'on' || phase === 'sleep'}
           lidMs={LID_MS}
           onPalm={openWork}
           onBody={wake}
+          onKey={onKey}
+          onLid={onLid}
+          onOrbit={setRotated}
           onFail={() => setMode('css')}
           onReady={() => setReady(true)}
         >
@@ -380,7 +441,9 @@ export default function OS() {
             </div>
             <div className="lid-front">
               <div className="bezel">
-                <span className="notch" aria-hidden="true" />
+                <span className="notch" aria-hidden="true">
+                  <i className={`cam-led ${camera ? 'is-on' : ''}`} />
+                </span>
                 <div className="screen" ref={screenRef}>
                   {screenContent}
                 </div>
@@ -426,6 +489,12 @@ export default function OS() {
                 <kbd>⌘</kbd>
                 <kbd>K</kbd> to search
               </span>
+            )}
+            {use3d && rotated && (
+              <button className="cap-btn cap-reset" onClick={() => l3d.current?.resetView()}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></svg>
+                reset view
+              </button>
             )}
           </>
         ) : (

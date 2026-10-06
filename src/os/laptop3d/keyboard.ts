@@ -1,4 +1,4 @@
-import { keyRows, type KeyKind } from '../keys';
+import { keyRows, type KeyDef, type KeyKind } from '../keys';
 
 /** Keyboard footprint in cm (MacBook Pro 14"). */
 export const KW = 27.0;
@@ -7,7 +7,33 @@ const U = KW / 14.5;
 const RP = KD / 6;
 const GAP = 0.3;
 
-export type Key3 = { x: number; z: number; w: number; d: number; a?: string; b?: string; k: KeyKind | 'arrow' | 'space'; icon?: string };
+export type Key3 = { x: number; z: number; w: number; d: number; a?: string; b?: string; k: KeyKind | 'arrow' | 'space'; icon?: string; code: string };
+
+const SYMBOL_CODES: Record<string, string> = {
+  '`': 'Backquote',
+  '-': 'Minus',
+  '=': 'Equal',
+  '[': 'BracketLeft',
+  ']': 'BracketRight',
+  '\\': 'Backslash',
+  ';': 'Semicolon',
+  "'": 'Quote',
+  ',': 'Comma',
+  '.': 'Period',
+  '/': 'Slash',
+};
+const LABEL_CODES: Record<string, string> = { esc: 'Escape', delete: 'Backspace', tab: 'Tab', 'caps lock': 'CapsLock', return: 'Enter', fn: 'Fn', control: 'Control', option: 'Alt', command: 'Meta', shift: 'Shift' };
+
+/** KeyboardEvent.code for a key definition, so real key presses can light up the matching 3D key. */
+function keyCode(k: KeyDef): string {
+  if (!k.a && !k.b && !k.k) return 'Space';
+  if (k.k === 'touch') return 'Power';
+  if (k.k === 'fn') return k.b!;
+  if (k.k === 'c') return `Key${k.b}`;
+  if (k.k === '2') return /\d/.test(k.b!) ? `Digit${k.b}` : SYMBOL_CODES[k.b!] ?? k.b!;
+  const base = LABEL_CODES[k.b!] ?? k.b!;
+  return ['Control', 'Alt', 'Meta', 'Shift'].includes(base) ? `${base}${k.k === 'r' ? 'Right' : 'Left'}` : base;
+}
 
 /** Key rectangles in keyboard-local cm: x from the left edge, z from the back edge. */
 export function layoutKeys(): Key3[] {
@@ -17,7 +43,7 @@ export function layoutKeys(): Key3[] {
     const z = r * RP + RP / 2;
     for (const k of row) {
       const w = (k.w ?? 1) * U;
-      keys.push({ x: cx + w / 2, z, w: w - GAP, d: RP - GAP, a: k.a, b: k.b, k: k.b || k.a || k.k ? (k.k ?? 'c') : 'space' });
+      keys.push({ x: cx + w / 2, z, w: w - GAP, d: RP - GAP, a: k.a, b: k.b, k: k.b || k.a || k.k ? (k.k ?? 'c') : 'space', code: keyCode(k) });
       cx += w;
     }
     if (r === keyRows.length - 1) {
@@ -25,10 +51,10 @@ export function layoutKeys(): Key3[] {
       const top = r * RP + GAP / 2;
       const lowZ = top + (RP - GAP) - half / 2;
       const hw = U - GAP;
-      keys.push({ x: cx + U / 2, z: lowZ, w: hw, d: half, k: 'arrow', icon: 'left' });
-      keys.push({ x: cx + 1.5 * U, z: top + half / 2, w: hw, d: half, k: 'arrow', icon: 'up' });
-      keys.push({ x: cx + 1.5 * U, z: lowZ, w: hw, d: half, k: 'arrow', icon: 'down' });
-      keys.push({ x: cx + 2.5 * U, z: lowZ, w: hw, d: half, k: 'arrow', icon: 'right' });
+      keys.push({ x: cx + U / 2, z: lowZ, w: hw, d: half, k: 'arrow', icon: 'left', code: 'ArrowLeft' });
+      keys.push({ x: cx + 1.5 * U, z: top + half / 2, w: hw, d: half, k: 'arrow', icon: 'up', code: 'ArrowUp' });
+      keys.push({ x: cx + 1.5 * U, z: lowZ, w: hw, d: half, k: 'arrow', icon: 'down', code: 'ArrowDown' });
+      keys.push({ x: cx + 2.5 * U, z: lowZ, w: hw, d: half, k: 'arrow', icon: 'right', code: 'ArrowRight' });
     }
   });
   return keys;
