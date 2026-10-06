@@ -1,0 +1,225 @@
+/* Shared controls for the game apps, modeled on native macOS push buttons and
+   segmented controls. Put .gc-light or .gc-dark on the app root, and set --tint
+   to the app's accent color. */
+
+.gc-light {
+  --gc-text: #1d1d1f;
+  --gc-text-2: rgba(29, 29, 31, 0.62);
+  --gc-btn: #ffffff;
+  --gc-btn-press: #ededef;
+  --gc-btn-edge: 0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 0.5px 1.5px rgba(0, 0, 0, 0.14);
+  --gc-track: rgba(0, 0, 0, 0.065);
+  --gc-seg-on: #ffffff;
+  --gc-seg-on-edge: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.16);
+  --gc-field: #ffffff;
+  --gc-field-edge: inset 0 0 0 0.5px rgba(0, 0, 0, 0.2), inset 0 0.5px 1px rgba(0, 0, 0, 0.06);
+}
+
+.gc-dark {
+  --gc-text: rgba(255, 255, 255, 0.92);
+  --gc-text-2: rgba(255, 255, 255, 0.55);
+  --gc-btn: rgba(255, 255, 255, 0.16);
+  --gc-btn-press: rgba(255, 255, 255, 0.26);
+  --gc-btn-edge: inset 0 0.5px 0 rgba(255, 255, 255, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.35), 0 0.5px 1.5px rgba(0, 0, 0, 0.3);
+  --gc-track: rgba(255, 255, 255, 0.08);
+  --gc-seg-on: rgba(255, 255, 255, 0.24);
+  --gc-seg-on-edge: inset 0 0.5px 0 rgba(255, 255, 255, 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --gc-field: rgba(255, 255, 255, 0.06);
+  --gc-field-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+}
+
+.gc-light,
+.gc-dark {
+  --tint: #0a84ff;
+  --gc-font: -apple-system, BlinkMacSystemFont, Inter, 'Segoe UI', sans-serif;
+  --gc-focus: 0 0 0 3px color-mix(in srgb, var(--tint) 45%, transparent);
+}
+
+/* push button */
+.gbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--gc-btn);
+  box-shadow: var(--gc-btn-edge);
+  color: var(--gc-text);
+  font: 500 13px/1 var(--gc-font);
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  touch-action: manipulation;
+  transition: background-color 80ms linear;
+}
+.gbtn:active:not(:disabled) {
+  background: var(--gc-btn-press);
+}
+.gbtn:focus-visible {
+  outline: none;
+  box-shadow: var(--gc-btn-edge), var(--gc-focus);
+}
+.gbtn:disabled {
+  opacity: 0.4;
+}
+.gbtn-primary {
+  background: var(--tint);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 0.5px 1.5px rgba(0, 0, 0, 0.2);
+  color: #fff;
+}
+.gbtn-primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--tint) 84%, #000);
+}
+.gbtn-primary:focus-visible {
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12), var(--gc-focus);
+}
+.gbtn-destructive {
+  color: #ff453a;
+}
+.gbtn-sm {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.gbtn-lg {
+  height: 34px;
+  padding: 0 18px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+/* borderless text button, like "Show All" in macOS */
+.gbtn-plain {
+  height: auto;
+  padding: 2px 4px;
+  background: none;
+  box-shadow: none;
+  color: var(--tint);
+  font-weight: 500;
+}
+.gbtn-plain:active:not(:disabled) {
+  background: none;
+  opacity: 0.7;
+}
+
+/* segmented control: use <button aria-pressed> for each segment */
+.gseg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 8px;
+  background: var(--gc-track);
+}
+.gseg > button {
+  flex: 1 1 0;
+  height: 24px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gc-text);
+  font: 500 13px/1 var(--gc-font);
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  cursor: default;
+  touch-action: manipulation;
+}
+.gseg > button[aria-pressed='true'] {
+  background: var(--gc-seg-on);
+  box-shadow: var(--gc-seg-on-edge);
+}
+.gseg > button:focus-visible {
+  outline: none;
+  box-shadow: var(--gc-focus);
+}
+.gseg > button:disabled {
+  opacity: 0.35;
+}
+
+/* form label and text field */
+.glabel {
+  display: block;
+  margin: 0 0 6px;
+  color: var(--gc-text-2);
+  font: 500 12px/1.2 var(--gc-font);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.ginput {
+  height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--gc-field);
+  box-shadow: var(--gc-field-edge);
+  color: var(--gc-text);
+  font: 400 13px/1 var(--gc-font);
+  outline: none;
+}
+.ginput:focus {
+  box-shadow: var(--gc-field-edge), var(--gc-focus);
+}
+.ginput::placeholder {
+  color: var(--gc-text-2);
+}
+
+/* one quiet line of keyboard help, e.g. "Space to row · P for a power ten" */
+.ghelp {
+  color: var(--gc-text-2);
+  font: 400 12px/1.4 var(--gc-font);
+}
+
+/* big on-screen game controls for touch (Row, Hit, ...) */
+.gpad {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--tint);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.2), 0 1px 3px rgba(0, 0, 0, 0.25);
+  color: #fff;
+  font: 600 17px/1 var(--gc-font);
+  letter-spacing: 0;
+  text-transform: none;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+.gpad:active:not(:disabled) {
+  background: color-mix(in srgb, var(--tint) 82%, #000);
+}
+.gpad-secondary {
+  background: var(--gc-btn);
+  box-shadow: var(--gc-btn-edge);
+  color: var(--gc-text);
+}
+.gpad-secondary:active:not(:disabled) {
+  background: var(--gc-btn-press);
+}
+.gpad:focus-visible {
+  outline: none;
+  box-shadow: var(--gc-focus);
+}
+
+@media (hover: none) {
+  .gbtn {
+    height: 36px;
+  }
+  .gseg > button {
+    height: 32px;
+  }
+  .ginput {
+    height: 36px;
+    font-size: 16px;
+  }
+}

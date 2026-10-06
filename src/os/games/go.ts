@@ -359,33 +359,45 @@ function heuristic(state: GameState, point: Point): number {
 }
 
 export function aiMove(state: GameState, budgetMs = 700): Point | null {
+  if (state.phase !== 'play') return null;
   const candidates = legalMoves(state).filter((point) => !isOwnEye(state.board, state.size, indexOf(state.size, point.x, point.y), state.toPlay));
   if (!candidates.length) return null;
   const start = performance.now();
   const budget = Math.max(1, budgetMs);
-  const wins = Array<number>(candidates.length).fill(0);
-  const visits = Array<number>(candidates.length).fill(0);
+  const passIndex = 0;
+  const optionCount = candidates.length + 1;
+  const wins = Array<number>(optionCount).fill(0);
+  const visits = Array<number>(optionCount).fill(0);
+  const opponent = state.toPlay === BLACK ? WHITE : BLACK;
   let iteration = 0;
   while (performance.now() - start < budget) {
-    const candidateIndex = iteration % candidates.length;
-    const candidate = candidates[candidateIndex];
-    const nextBoard = tryPlace(state.board, state.size, candidate.x, candidate.y, state.toPlay, new Set(state.positions)).board;
-    const history = [...state.positions, boardKey(nextBoard)];
-    const finalBoard = playout(nextBoard, state.size, state.toPlay === BLACK ? WHITE : BLACK, history);
+    const optionIndex = iteration % optionCount;
+    let nextBoard: readonly Stone[] = state.board;
+    let history = state.positions;
+    const color = opponent;
+    if (optionIndex !== passIndex) {
+      const candidate = candidates[optionIndex - 1];
+      nextBoard = tryPlace(state.board, state.size, candidate.x, candidate.y, state.toPlay, new Set(state.positions)).board;
+      history = [...state.positions, boardKey(nextBoard)];
+    }
+    const finalBoard = playout(nextBoard, state.size, color, history);
     const finalScore = score({ ...state, board: finalBoard, positions: history });
     const margin = (finalScore.black - finalScore.white) * state.toPlay;
-    wins[candidateIndex] += margin > 0 ? 1 : margin === 0 ? 0.5 : 0;
-    visits[candidateIndex] += 1;
+    wins[optionIndex] += margin > 0 ? 1 : margin === 0 ? 0.5 : 0;
+    visits[optionIndex] += 1;
     iteration += 1;
   }
-  let best = 0;
-  let bestRate = -Infinity;
+  let bestMove = candidates[0];
+  let bestMoveRate = -Infinity;
   for (let index = 0; index < candidates.length; index += 1) {
-    const rate = visits[index] ? wins[index] / visits[index] : 0.5 + heuristic(state, candidates[index]) * 1e-4;
-    if (rate > bestRate) {
-      bestRate = rate;
-      best = index;
+    const optionIndex = index + 1;
+    const rate = visits[optionIndex] ? wins[optionIndex] / visits[optionIndex] : 0.5 + heuristic(state, candidates[index]) * 1e-4;
+    if (rate > bestMoveRate) {
+      bestMoveRate = rate;
+      bestMove = candidates[index];
     }
   }
-  return candidates[best] ?? candidates[0];
+  const passRate = visits[passIndex] ? wins[passIndex] / visits[passIndex] : 0.5;
+  if (passRate >= bestMoveRate - 0.02 || (state.consecutivePasses > 0 && passRate >= 0.5)) return null;
+  return bestMove;
 }

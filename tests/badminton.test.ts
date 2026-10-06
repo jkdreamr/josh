@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { awardPoint, isNetFault, newMatch, serveFault, serviceCourt, simulateLanding, solveLaunchVelocity, terminalSpeedAfter } from '../src/os/games/badminton.ts';
+import { awardPoint, createFlight, isNetFault, newMatch, serveFault, serviceCourt, simulateLanding, solveLaunchVelocity, stepFlight, terminalSpeedAfter } from '../src/os/games/badminton.ts';
 
 test('shuttle drag approaches its 6.8 m/s terminal speed', () => {
   assert.ok(Math.abs(terminalSpeedAfter(5, { x: 4, y: 10 }) - 6.8) < 0.05);
@@ -16,6 +16,18 @@ test('shooting solver lands a clear inside the opponent back boundary', () => {
 
 test('flags a net crossing below 1.524 m', () => {
   assert.equal(isNetFault({ x: -0.2, y: 1.2 }, { x: 0.2, y: 1.4 }), true);
+});
+
+test('a shuttle remains playable past the baseline and is out only when it lands', () => {
+  let flight = createFlight({ x: 6.6, y: 1 }, { vx: 6, vy: 0 }, 'player');
+  flight = stepFlight(flight, 0.1);
+  assert.ok(flight.shuttle.x > 6.7);
+  assert.equal(flight.status, 'flying');
+
+  while (flight.status === 'flying') flight = stepFlight(flight, 0.05);
+  assert.equal(flight.status, 'fault');
+  assert.equal(flight.fault, 'out');
+  assert.equal(flight.shuttle.y, 0);
 });
 
 test('serves alternate service courts by server score parity', () => {

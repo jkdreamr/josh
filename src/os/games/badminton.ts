@@ -213,7 +213,6 @@ export function stepFlight(state: FlightState, deltaSeconds: number): FlightStat
       maxSpeed: Math.max(current.maxSpeed, Math.hypot(vx, vy)),
     };
     if (isNetFault(previous, next)) return { ...current, status: 'fault', fault: 'net' };
-    if (Math.abs(next.x) > COURT_HALF_LENGTH) return { ...current, status: 'fault', fault: 'out' };
     if (next.y <= 0) {
       const fraction = previous.y > 0 ? previous.y / (previous.y - next.y) : 0;
       const landing = {

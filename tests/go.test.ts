@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { aiMove, BLACK, boardKey, newGame, pass, play, score, type GameState } from '../src/os/games/go.ts';
+import { aiMove, BLACK, boardKey, newGame, pass, play, score, WHITE, type GameState } from '../src/os/games/go.ts';
 
 function position(size: number, stones: Array<[number, number, number]>, toPlay = BLACK): GameState {
   const state = newGame(size);
@@ -64,6 +64,20 @@ test('two passes enter the dead-stone marking phase', () => {
   const afterFirst = pass(newGame());
   assert.equal(afterFirst.phase, 'play');
   assert.equal(pass(afterFirst).phase, 'mark');
+});
+
+test('AI passes after the opponent passes in a settled endgame', () => {
+  const stones: Array<[number, number, number]> = [];
+  for (let y = 0; y < 9; y += 1) {
+    for (let x = 0; x < 9; x += 1) {
+      if ((x === 0 && y === 0) || (x === 1 && y === 0) || (x === 8 && y === 8)) continue;
+      stones.push([x, y, WHITE]);
+    }
+  }
+  stones.push([0, 0, BLACK]);
+  const state = pass(position(9, stones, BLACK));
+  assert.equal(state.consecutivePasses, 1);
+  assert.equal(aiMove(state, 40), null);
 });
 
 test('scores a finished area position with 7.5 komi', () => {

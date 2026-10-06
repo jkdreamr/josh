@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { beatStepTime, changeStepPitch, createBeatState, decodeBeatState, encodeBeatState, isStepOn, PENTATONIC_KEYS, PENTATONIC_NOTES, setStepPitch, sixteenthDuration, SYNTH_TRACKS, toggleStep, TRACKS, type BeatState, type PresetName, type SynthTrack, type TrackId } from '../games/beat';
 import { useOS, type AppProps } from '../types';
+import './game-controls.css';
 import './BeatPad.css';
 
 type PresetOption = PresetName | 'custom';
@@ -13,6 +14,10 @@ type Scheduler = {
   epoch: number;
   nextStep: number;
 };
+
+function titleTrack(track: TrackId): string {
+  return track.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
 
 function makeNoise(context: AudioContext): AudioBuffer {
   const buffer = context.createBuffer(1, context.sampleRate, context.sampleRate);
@@ -314,43 +319,49 @@ export default function BeatPad({ args }: AppProps) {
     : 0;
 
   return (
-    <div className="beatpad-app">
+    <div className="beatpad-app gc-dark" style={{ '--tint': '#7c5cff' } as CSSProperties}>
       <header className="beatpad-header">
-        <div className="beatpad-brand"><span>kelix arcade</span><h1>beat pad</h1></div>
+        <div className="beatpad-brand"><h1>Beat Pad</h1></div>
         <label className="beatpad-preset">
-          <span>quick start</span>
-          <select value={preset} onChange={(event) => setPresetState(event.target.value as PresetOption)}>
-            <option value="kelix lofi">kelix lofi</option>
-            <option value="boom bap">boom bap</option>
-            <option value="house">house</option>
-            <option value="trap">trap</option>
-            {preset === 'custom' && <option value="custom">custom</option>}
+          <span className="glabel">Preset</span>
+          <select className="ginput beatpad-select" value={preset} onChange={(event) => setPresetState(event.target.value as PresetOption)}>
+            <option value="kelix lofi">Kelix Lo-Fi</option>
+            <option value="boom bap">Boom Bap</option>
+            <option value="house">House</option>
+            <option value="trap">Trap</option>
+            {preset === 'custom' && <option value="custom">Custom</option>}
           </select>
         </label>
       </header>
       <div className="beatpad-controls">
         <label className="beatpad-tempo">
-          <span>tempo <b>{state.bpm}</b></span>
+          <span className="glabel">Tempo <b>{state.bpm}</b></span>
           <input type="range" min="60" max="160" value={state.bpm} onChange={(event) => { setState((current) => ({ ...current, bpm: Number(event.target.value) })); setPreset('custom'); }} />
         </label>
         <label className="beatpad-swing">
-          <span>swing <b>{state.swing}%</b></span>
+          <span className="glabel">Swing <b>{state.swing}%</b></span>
           <input type="range" min="0" max="60" value={state.swing} onChange={(event) => { setState((current) => ({ ...current, swing: Number(event.target.value) })); setPreset('custom'); }} />
         </label>
         <label className="beatpad-key">
-          <span>key</span>
-          <select value={state.key} onChange={(event) => { setState((current) => ({ ...current, key: event.target.value as BeatState['key'] })); setPreset('custom'); }}>
+          <span className="glabel">Key</span>
+          <select className="ginput beatpad-select" value={state.key} onChange={(event) => { setState((current) => ({ ...current, key: event.target.value as BeatState['key'] })); setPreset('custom'); }}>
             {PENTATONIC_KEYS.map((key) => <option key={key} value={key}>{key}</option>)}
           </select>
         </label>
-        <button className={`beatpad-play ${playing ? 'is-playing' : ''}`} onClick={togglePlayback}>{playing ? 'stop' : 'play'} <kbd>space</kbd></button>
-        <button className="beatpad-clear" onClick={() => { stopPlayback(); setState((current) => ({ ...current, pattern: { ...current.pattern, tracks: Object.fromEntries(TRACKS.map((track) => [track, 0])) as BeatState['pattern']['tracks'] } })); setPreset('custom'); }}>clear</button>
+        <button className="gbtn gbtn-primary" aria-pressed={playing} title="Play or Stop (Space)" onClick={togglePlayback}>
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            {playing ? <rect x="4" y="3" width="3" height="10" rx="1" fill="currentColor" /> : <path d="M5 3.5v9l7-4.5z" fill="currentColor" />}
+            {playing && <rect x="9" y="3" width="3" height="10" rx="1" fill="currentColor" />}
+          </svg>
+          {playing ? 'Stop' : 'Play'}
+        </button>
+        <button className="gbtn" onClick={() => { stopPlayback(); setState((current) => ({ ...current, pattern: { ...current.pattern, tracks: Object.fromEntries(TRACKS.map((track) => [track, 0])) as BeatState['pattern']['tracks'] } })); setPreset('custom'); }}>Clear</button>
       </div>
       <main className="beatpad-workspace">
         <div className="beatpad-grid-scroll">
           <div className="beatpad-grid">
             <div className="beatpad-grid-head">
-              <span>track</span>
+              <span>Track</span>
               {Array.from({ length: 16 }, (_, step) => <span key={step} className={step % 4 === 0 ? 'is-bar' : ''}>{step % 4 === 0 ? step / 4 + 1 : '·'}</span>)}
             </div>
             {TRACKS.map((track) => {
@@ -358,8 +369,15 @@ export default function BeatPad({ args }: AppProps) {
               return (
                 <div className={`beatpad-grid-row ${isSynth && selectedTrack === track ? 'is-selected' : ''}`} key={track}>
                   <div className="beatpad-track-label">
-                    <button className="beatpad-track-name" onClick={() => { if (isSynth) setSelectedTrack(track as SynthTrack); }}>{track}</button>
-                    <button className={`beatpad-mute ${muted[track] ? 'is-muted' : ''}`} aria-label={`${muted[track] ? 'unmute' : 'mute'} ${track}`} onClick={() => setMuted((current) => ({ ...current, [track]: !current[track] }))}>{muted[track] ? 'm' : '•'}</button>
+                    {isSynth
+                      ? <button className="gbtn gbtn-plain beatpad-track-name" aria-pressed={selectedTrack === track} onClick={() => setSelectedTrack(track as SynthTrack)}>{titleTrack(track)}</button>
+                      : <span className="beatpad-track-name">{titleTrack(track)}</span>}
+                    <button className="gbtn gbtn-sm beatpad-mute" aria-label={`${muted[track] ? 'Unmute' : 'Mute'} ${titleTrack(track)}`} aria-pressed={muted[track]} title={`${muted[track] ? 'Unmute' : 'Mute'} ${titleTrack(track)}`} onClick={() => setMuted((current) => ({ ...current, [track]: !current[track] }))}>
+                      <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M2 6h3l4-3v10l-4-3H2zM11 5.2a4 4 0 0 1 0 5.6" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                        {muted[track] && <path d="m11.5 3 3 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />}
+                      </svg>
+                    </button>
                   </div>
                   {Array.from({ length: 16 }, (_, step) => {
                     const active = isStepOn(state.pattern, track, step);
@@ -400,12 +418,12 @@ export default function BeatPad({ args }: AppProps) {
           </div>
         </div>
         <div className="beatpad-pitch-row">
-          <div><b>{selectedTrack}</b><span>minor pentatonic · scroll/right-click a step to shift</span></div>
-          <div className="beatpad-pitches">
+          <div><b>{titleTrack(selectedTrack)}</b><span>Minor pentatonic · scroll or right-click a step to shift</span></div>
+          <div className="beatpad-pitches gseg">
             {scale.map((note, index) => (
               <button
                 key={note.name}
-                className={selectedPitch === index ? 'is-selected' : ''}
+                aria-pressed={selectedPitch === index}
                 onClick={() => {
                   if (selectedCell?.track === selectedTrack) {
                     setState((current) => ({ ...current, pattern: setStepPitch(current.pattern, selectedTrack, selectedCell.step, index) }));
@@ -419,10 +437,10 @@ export default function BeatPad({ args }: AppProps) {
         </div>
       </main>
       <footer className="beatpad-footer">
-        <span>16 steps · 8 tracks · all sounds synthesized live</span>
+        <span className="ghelp">Space to Play or Stop · 16 steps · 8 tracks</span>
         <div>
-          <button onClick={() => void copyLink()}>{copied ? 'link copied' : 'copy link'}</button>
-          <button className="beatpad-listen" onClick={() => os.open('spotify')}>listen to kelix →</button>
+          <button className="gbtn gbtn-sm" onClick={() => void copyLink()}>{copied ? 'Link Copied' : 'Copy Link'}</button>
+          <button className="gbtn gbtn-plain" onClick={() => os.open('spotify')}>Listen to Kelix</button>
         </div>
       </footer>
     </div>

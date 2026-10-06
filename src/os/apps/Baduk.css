@@ -7,51 +7,53 @@
   overflow: hidden;
   background: #111a19;
   color: #eee9dc;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--gc-font);
 }
 
 .baduk-header {
   display: flex;
   flex: none;
-  align-items: end;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding: 17px 21px 14px;
   border-bottom: 1px solid rgba(255,255,255,.08);
 }
 
-.baduk-eyebrow,
+.baduk-header-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.baduk-game-mode {
+  flex: none;
+}
+
 .baduk-header p,
 .baduk-side small,
 .baduk-side footer,
-.baduk-mode > span,
-.baduk-difficulty > span,
 .baduk-count-panel p,
 .baduk-score-card p {
   color: #93a09a;
   font-size: 10px;
 }
 
-.baduk-eyebrow {
-  letter-spacing: .14em;
-  text-transform: uppercase;
-}
-
 .baduk-header h1 {
-  margin: 3px 0 0;
+  margin: 0;
   color: #fbf7eb;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 25px;
-  font-weight: 500;
-  letter-spacing: -.04em;
+  font-family: var(--gc-font);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
-.baduk-header h1 span {
+.baduk-header h1 span,
+.baduk-korean {
   margin-left: 4px;
   color: #d9b77b;
-  font-family: ui-serif, Georgia, serif;
+  font-family: "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", ui-serif, Georgia, serif;
   font-size: 17px;
-  letter-spacing: .04em;
 }
 
 .baduk-header p {
@@ -85,8 +87,9 @@
 
 .baduk-grid-line {
   stroke: #392719;
-  stroke-width: 1.25;
+  stroke-width: 1px;
   shape-rendering: crispEdges;
+  vector-effect: non-scaling-stroke;
 }
 
 .baduk-coordinate {
@@ -104,8 +107,16 @@
 .baduk-board-border {
   fill: none;
   stroke: rgba(103, 69, 33, .3);
-  stroke-width: 1;
+  stroke-width: 1.5;
   pointer-events: none;
+}
+
+.baduk-win-line {
+  stroke: rgba(140, 21, 21, .62);
+  stroke-width: 2;
+  stroke-linecap: round;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
 }
 
 .baduk-dead-mark {
@@ -153,11 +164,6 @@
 .baduk-turn-card > div {
   display: grid;
   gap: 2px;
-}
-
-.baduk-turn-card small,
-.baduk-turn-card b {
-  text-transform: lowercase;
 }
 
 .baduk-turn-card b {
@@ -218,66 +224,10 @@
   gap: 6px;
 }
 
-.baduk-mode > div {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-}
-
-.baduk-mode button,
-.baduk-actions button,
-.baduk-count-button {
-  min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid rgba(255,255,255,.12);
-  border-radius: 6px;
-  background: #1a2623;
-  color: #c8d0c6;
-  cursor: pointer;
-  font: inherit;
-  font-size: 9px;
-  transition: background .15s ease, border-color .15s ease, color .15s ease;
-}
-
-.baduk-mode button.is-selected {
-  border-color: #b8965c;
-  background: #352f23;
-  color: #f2dcae;
-}
-
-.baduk-difficulty select {
-  width: 100%;
-  padding: 7px 8px;
-  border: 1px solid rgba(255,255,255,.12);
-  border-radius: 6px;
-  outline: none;
-  background: #1a2623;
-  color: #d5ded4;
-  font: inherit;
-  font-size: 10px;
-}
-
 .baduk-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 5px;
-}
-
-.baduk-actions button:hover,
-.baduk-mode button:hover:not(.is-selected),
-.baduk-count-button:hover:not(:disabled) {
-  border-color: rgba(217,183,123,.55);
-  background: #26332f;
-}
-
-.baduk-actions button:disabled,
-.baduk-count-button:disabled {
-  cursor: default;
-  opacity: .42;
-}
-
-.baduk-actions .baduk-resign {
-  color: #d99482;
 }
 
 .baduk-count-panel,
@@ -306,11 +256,8 @@
   line-height: 1.4;
 }
 
-.baduk-count-button {
-  border-color: #977c4e;
-  background: #4b3d28;
-  color: #ffedc7;
-  font-size: 10px;
+.baduk-count-panel .gbtn {
+  width: 100%;
 }
 
 .baduk-score-card {
@@ -320,7 +267,7 @@
 .baduk-score-card > strong {
   margin: 0 0 2px;
   color: #f0d59e;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 23px;
   font-weight: 500;
 }
@@ -358,18 +305,19 @@
 
 @media (max-width: 650px) {
   .baduk-header {
-    align-items: center;
+    flex-wrap: wrap;
     padding: 13px 15px 10px;
   }
 
-  .baduk-header h1 {
-    font-size: 21px;
+  .baduk-header-main {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .baduk-header p {
-    max-width: 165px;
-    font-size: 9px;
-    text-align: right;
+    max-width: 100%;
+    margin-top: 8px;
+    font-size: 10px;
   }
 
   .baduk-main {
@@ -406,10 +354,6 @@
 
   .baduk-mode {
     grid-column: 1 / -1;
-  }
-
-  .baduk-mode > div {
-    grid-template-columns: 1fr 1fr;
   }
 
   .baduk-difficulty {

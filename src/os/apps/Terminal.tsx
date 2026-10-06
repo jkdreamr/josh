@@ -14,12 +14,12 @@ const dirMap: Record<string, FolderId> = { school: 'school', work: 'work', proje
 const appNames: Record<string, AppId> = {
   finder: 'finder', chrome: 'chrome', browser: 'chrome', messages: 'messages', notes: 'notes', spotify: 'spotify', soundcloud: 'soundcloud',
   instagram: 'instagram', ig: 'instagram', x: 'x', twitter: 'x', linkedin: 'linkedin', github: 'github', mail: 'mail', email: 'mail',
-  coxbox: 'coxbox', 'cox-box': 'coxbox', rowing: 'coxbox', baduk: 'baduk', go: 'baduk', badminton: 'badminton',
+  coxbox: 'coxbox', 'cox-box': 'coxbox', rowing: 'coxbox', baduk: 'baduk', go: 'baduk', omok: 'baduk', badminton: 'badminton',
   beatpad: 'beatpad', beats: 'beatpad', music: 'beatpad',
   photobooth: 'photobooth', camera: 'photobooth', trash: 'trash', about: 'about',
 };
 
-const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'school', 'projects', 'music', 'socials', 'contact', 'neofetch', 'row', 'baduk', 'go', 'badminton', 'beatpad', 'beats', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
+const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'school', 'projects', 'music', 'socials', 'contact', 'neofetch', 'row', 'baduk', 'go', 'omok', 'badminton', 'beatpad', 'beats', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
 
 const ART = String.raw`
        _ _
@@ -126,7 +126,8 @@ export default function Terminal(_: AppProps) {
         const a = arg.toLowerCase().replace(/\.app$/, '');
         if (!a) return print(<span className="t-err">usage: open &lt;app|folder&gt;</span>);
         if (appNames[a]) {
-          api.open(appNames[a]);
+          if (a === 'omok' || a === 'go') api.open('baduk', { game: a });
+          else api.open(appNames[a]);
           return print(<span className="t-dim">opening {a}…</span>);
         }
         if (dirMap[a]) {
@@ -195,9 +196,14 @@ export default function Terminal(_: AppProps) {
         api.open('coxbox');
         return print(<span className="t-dim">attention… row!</span>);
       case 'baduk':
-      case 'go':
         api.open('baduk');
         return print(<span className="t-dim">opening baduk…</span>);
+      case 'go':
+        api.open('baduk', { game: 'go' });
+        return print(<span className="t-dim">opening go…</span>);
+      case 'omok':
+        api.open('baduk', { game: 'omok' });
+        return print(<span className="t-dim">opening omok…</span>);
       case 'badminton':
         api.open('badminton');
         return print(<span className="t-dim">opening badminton…</span>);

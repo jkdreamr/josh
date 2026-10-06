@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Keyb
 import { boatMetrics, callPower10, catchStroke, createRace, startSignal, step, type BoatMetrics, type BoatSpec, type Race, type TracePoint } from '../games/rowing';
 import { getBoard, submit, type LeaderboardResult, type RaceDistance } from '../games/leaderboard';
 import { useOS, type AppProps } from '../types';
+import './game-controls.css';
 import './CoxBox.css';
 
 type Mode = 'solo' | 'friend';
@@ -13,9 +14,9 @@ type PersonalBest = { timeMs: number; trace: TracePoint[] };
 const DEFAULT_PREFS: Preferences = { mode: 'solo', distance: 500, opponent: 'none', name: '', mute: false };
 const DISTANCES: RaceDistance[] = [500, 1000, 2000];
 const BOT_PROFILES: Record<'jv' | 'cal' | 'world', { label: string; color: string; accent: string }> = {
-  jv: { label: 'jv', color: '#6b8e7d', accent: '#e6f0e9' },
-  cal: { label: 'cal', color: '#003262', accent: '#fdb515' },
-  world: { label: 'world best', color: '#87949a', accent: '#f4f0e7' },
+  jv: { label: 'JV', color: '#6b8e7d', accent: '#e6f0e9' },
+  cal: { label: 'Cal', color: '#003262', accent: '#fdb515' },
+  world: { label: 'World Best', color: '#87949a', accent: '#f4f0e7' },
 };
 
 function formatTime(seconds: number | null | undefined, decimals = 2): string {
@@ -516,49 +517,50 @@ export default function CoxBox(_: AppProps) {
   };
 
   return (
-    <div className={`cox phase-${screen} ${os.mobile ? 'is-mobile' : ''} ${os.fullscreen ? 'is-fullscreen' : ''}`} ref={rootRef} tabIndex={0} onKeyDown={handleKeyDown}>
+    <div className={`cox gc-light phase-${screen} ${os.mobile ? 'is-mobile' : ''} ${os.fullscreen ? 'is-fullscreen' : ''}`} style={{ '--tint': '#8c1515' } as CSSProperties} ref={rootRef} tabIndex={0} onKeyDown={handleKeyDown}>
       {screen === 'setup' && (
         <div className="cox-setup">
           <div className="cox-setup-main">
             <div className="cox-brand">
               <div className="cox-brand-mark">08<span>+</span></div>
-              <div><small>stanford rowing</small><h1>cox box</h1><p>find the rhythm. take the line.</p></div>
+                <div><h1>Cox Box</h1><p>Find the rhythm. Take the line.</p></div>
             </div>
             <div className="cox-control-group">
-              <label>crew</label>
-              <div className="cox-segmented">
-                <button className={prefs.mode === 'solo' ? 'is-selected' : ''} onClick={() => updatePrefs({ mode: 'solo' })}>solo</button>
-                <button className={prefs.mode === 'friend' ? 'is-selected' : ''} onClick={() => updatePrefs({ mode: 'friend', opponent: 'none' })}>vs friend</button>
+              <span className="glabel">Crew</span>
+              <div className="gseg">
+                <button aria-pressed={prefs.mode === 'solo'} onClick={() => updatePrefs({ mode: 'solo' })}>Solo</button>
+                <button aria-pressed={prefs.mode === 'friend'} onClick={() => updatePrefs({ mode: 'friend', opponent: 'none' })}>Vs Friend</button>
               </div>
             </div>
             <div className="cox-control-group">
-              <label>distance</label>
-              <div className="cox-segmented">
-                {DISTANCES.map((distance) => <button key={distance} className={prefs.distance === distance ? 'is-selected' : ''} onClick={() => updatePrefs({ distance })}>{raceLabel(distance)}</button>)}
+              <span className="glabel">Distance</span>
+              <div className="gseg">
+                {DISTANCES.map((distance) => <button key={distance} aria-pressed={prefs.distance === distance} onClick={() => updatePrefs({ distance })}>{distance === 500 ? '500 m' : distance === 1000 ? '1,000 m' : '2,000 m'}</button>)}
               </div>
             </div>
             {prefs.mode === 'solo' && (
               <div className="cox-control-group">
-                <label>pace boat</label>
-                <div className="cox-opponents">
+                <span className="glabel">Pace Boat</span>
+                <div className="gseg">
                   {(['none', 'best', 'jv', 'cal', 'world'] as const).map((opponent) => (
                     <button
                       key={opponent}
-                      className={prefs.opponent === opponent ? 'is-selected' : ''}
+                      aria-pressed={prefs.opponent === opponent}
                       disabled={opponent === 'best' && !pbAvailable}
                       onClick={() => updatePrefs({ opponent })}
                     >
-                      {opponent === 'none' ? 'none' : opponent === 'best' ? 'your best' : BOT_PROFILES[opponent].label}
+                      {opponent === 'none' ? 'None' : opponent === 'best' ? 'Your Best' : BOT_PROFILES[opponent].label}
                     </button>
                   ))}
                 </div>
-                {prefs.opponent === 'best' && pbAvailable && <small className="cox-helper">your fastest {raceLabel(prefs.distance)} piece</small>}
+                {prefs.opponent === 'best' && pbAvailable && <small className="ghelp cox-helper">your fastest {raceLabel(prefs.distance)} piece</small>}
               </div>
             )}
             <div className="cox-control-group cox-name-field">
-              <label htmlFor="cox-name">your name</label>
+              <label className="glabel" htmlFor="cox-name">Your Name</label>
               <input
                 id="cox-name"
+                className="ginput"
                 maxLength={16}
                 value={prefs.name}
                 onChange={(event) => {
@@ -569,9 +571,9 @@ export default function CoxBox(_: AppProps) {
               />
             </div>
             <div className="cox-setup-actions">
-              <button className="cox-primary-button" onClick={beginStart}>sit ready <span>↗</span></button>
-              <button className="cox-secondary-button" onClick={() => { setBoardDistance(prefs.distance); setScreen('leaderboard'); }}>leaderboard</button>
-              <button className="cox-mute-button" onClick={() => updatePrefs({ mute: !prefs.mute })}>{prefs.mute ? 'sound off' : 'sound on'}</button>
+              <button className="gbtn gbtn-primary gbtn-lg" onClick={beginStart}>Start Race</button>
+              <button className="gbtn" onClick={() => { setBoardDistance(prefs.distance); setScreen('leaderboard'); }}>Leaderboard</button>
+              <button className="gbtn gbtn-plain" onClick={() => updatePrefs({ mute: !prefs.mute })}>{prefs.mute ? 'Sound Off' : 'Sound On'}</button>
             </div>
           </div>
           <aside className="cox-setup-side">
@@ -584,11 +586,8 @@ export default function CoxBox(_: AppProps) {
               <div className="cox-device-bottom"><i /><i /><i /></div>
             </div>
             <div className="cox-control-hint">
-              <small>controls</small>
-              {prefs.mode === 'friend' ? (
-                <p><b>p1</b> row <kbd>a</kbd> · power 10 <kbd>q</kbd><br /><b>p2</b> row <kbd>l</kbd> · power 10 <kbd>p</kbd></p>
-              ) : <p>row <kbd>space</kbd> · power 10 <kbd>p</kbd></p>}
-              <span>hold your rhythm. let the boat run.</span>
+              <p className="ghelp">{prefs.mode === 'friend' ? 'A and Q for P1 · L and P for P2' : 'Space to row · P for a power ten'}</p>
+              <span className="cox-control-note">Hold your rhythm. Let the boat run.</span>
             </div>
           </aside>
         </div>
@@ -596,21 +595,29 @@ export default function CoxBox(_: AppProps) {
 
       {screen === 'calling' && (
         <div className="cox-call-screen">
-          <header className="cox-screen-top"><span className="cox-brand-mini"><i /> cox box</span><button className="cox-mute-button" onClick={() => updatePrefs({ mute: !prefs.mute })}>{prefs.mute ? 'sound off' : 'sound on'}</button></header>
+          <header className="cox-screen-top"><span className="cox-brand-mini"><i /> Cox Box</span><button className="gbtn gbtn-plain" onClick={() => updatePrefs({ mute: !prefs.mute })}>{prefs.mute ? 'Sound Off' : 'Sound On'}</button></header>
           <div className={`cox-attention ${falseStart ? 'has-false-start' : ''}`}>
             <span className="cox-signal-light" />
-            <small>{raceLabel(prefs.distance)} · {prefs.mode === 'friend' ? 'two seats' : prefs.opponent === 'none' ? 'solo piece' : `with ${prefs.opponent === 'best' ? 'your best' : BOT_PROFILES[prefs.opponent].label}`}</small>
-            <h1>{falseStart ? 'false start.' : 'attention.'}</h1>
+            <small className="cox-call-detail">{raceLabel(prefs.distance)} · {prefs.mode === 'friend' ? 'Two Seats' : prefs.opponent === 'none' ? 'Solo Piece' : `With ${prefs.opponent === 'best' ? 'Your Best' : BOT_PROFILES[prefs.opponent].label}`}</small>
+            <h1>{falseStart ? 'False Start' : 'Attention'}</h1>
             <p>{falseStart ? 'back it down. let the boat settle.' : 'sit ready. wait for the light.'}</p>
           </div>
           <div className="cox-call-controls">
-            <span>{prefs.mode === 'friend' ? 'p1 row A · p2 row L' : 'row Space'}</span>
+            <span className="ghelp">{prefs.mode === 'friend' ? 'A and Q for P1 · L and P for P2' : 'Space to row · P for a power ten'}</span>
             {prefs.mode === 'friend' ? (
               <div className="cox-friend-buttons">
-                <button onPointerDown={rowPointer(0)}><span>row</span><kbd>A</kbd></button>
-                <button onPointerDown={rowPointer(1)}><span>row</span><kbd>L</kbd></button>
+                <div className="cox-player-touch-controls">
+                  <span className="cox-player-caption">P1</span>
+                  <button className="gpad" title="Row (A)" onPointerDown={rowPointer(0)}>Row</button>
+                </div>
+                <div className="cox-player-touch-controls" style={{ '--tint': '#003262' } as CSSProperties}>
+                  <span className="cox-player-caption">P2</span>
+                  <button className="gpad" title="Row (L)" onPointerDown={rowPointer(1)}>Row</button>
+                </div>
               </div>
-            ) : <button className="cox-row-button" onPointerDown={rowPointer(0)}><span>row</span><kbd>Space</kbd></button>}
+            ) : (
+              <button className="gpad" title="Row (Space)" onPointerDown={rowPointer(0)}>Row</button>
+            )}
           </div>
         </div>
       )}
@@ -619,15 +626,15 @@ export default function CoxBox(_: AppProps) {
         <div className={`cox-race ${prefs.mode === 'friend' ? 'is-friend-race' : ''}`}>
           {rowSignal && <div className="cox-row-signal"><i /><b>row!</b></div>}
           <header className="cox-race-head">
-            <span className="cox-brand-mini"><i /> cox box</span>
+            <span className="cox-brand-mini"><i /> Cox Box</span>
             <div className="cox-race-status"><span className="cox-live-dot" /> {raceLabel(prefs.distance)} piece</div>
-            <button className="cox-mute-button" onClick={() => updatePrefs({ mute: !prefs.mute })}>{prefs.mute ? 'sound off' : 'sound on'}</button>
+            <button className="gbtn gbtn-plain" onClick={() => updatePrefs({ mute: !prefs.mute })}>{prefs.mute ? 'Sound Off' : 'Sound On'}</button>
           </header>
           {prefs.mode === 'friend' ? (
             <div className="cox-friend-huds">
               {currentMetrics.slice(0, 2).map((row, index) => (
                 <section className={`cox-friend-hud player-${index + 1}`} key={row.name}>
-                  <header><b>{row.name}</b><span>{index === 0 ? 'a · q' : 'l · p'}</span></header>
+                  <header><b>{row.name}</b><span>P{index + 1}</span></header>
                   <MetricsPanel metrics={row} compact />
                 </section>
               ))}
@@ -658,22 +665,24 @@ export default function CoxBox(_: AppProps) {
           </div>
           <div className="cox-call-strip"><span className="cox-call-wave">≈</span><p>{callText}</p></div>
           <div className="cox-race-controls">
-            <span className="cox-key-hint">{prefs.mode === 'friend' ? 'p1: row A · power 10 Q / p2: row L · power 10 P' : 'row Space · power 10 P'}</span>
+            <span className="ghelp">{prefs.mode === 'friend' ? 'A and Q for P1 · L and P for P2' : 'Space to row · P for a power ten'}</span>
             {prefs.mode === 'friend' ? (
               <div className="cox-friend-buttons">
                 <div className="cox-player-touch-controls">
-                  <button className="cox-power-button" onPointerDown={(event) => { event.preventDefault(); triggerPower10(0); }}><span>power 10</span><kbd>Q</kbd></button>
-                  <button className="cox-row-button" onPointerDown={rowPointer(0)}><span>row</span><kbd>A</kbd></button>
+                  <span className="cox-player-caption">P1</span>
+                  <button className="gpad" title="Row (A)" onPointerDown={rowPointer(0)}>Row</button>
+                  <button className="gpad gpad-secondary" title="Power 10 (Q)" onPointerDown={(event) => { event.preventDefault(); triggerPower10(0); }}>Power 10</button>
                 </div>
-                <div className="cox-player-touch-controls">
-                  <button className="cox-power-button" onPointerDown={(event) => { event.preventDefault(); triggerPower10(1); }}><span>power 10</span><kbd>P</kbd></button>
-                  <button className="cox-row-button" onPointerDown={rowPointer(1)}><span>row</span><kbd>L</kbd></button>
+                <div className="cox-player-touch-controls" style={{ '--tint': '#003262' } as CSSProperties}>
+                  <span className="cox-player-caption">P2</span>
+                  <button className="gpad" title="Row (L)" onPointerDown={rowPointer(1)}>Row</button>
+                  <button className="gpad gpad-secondary" title="Power 10 (P)" onPointerDown={(event) => { event.preventDefault(); triggerPower10(1); }}>Power 10</button>
                 </div>
               </div>
             ) : (
               <div className="cox-solo-buttons">
-                <button className="cox-power-button" onPointerDown={(event) => { event.preventDefault(); triggerPower10(0); }}><span>power 10</span><kbd>P</kbd></button>
-                <button className="cox-row-button" onPointerDown={rowPointer(0)}><span>row</span><kbd>Space</kbd></button>
+                <button className="gpad gpad-secondary" title="Power 10 (P)" onPointerDown={(event) => { event.preventDefault(); triggerPower10(0); }}>Power 10</button>
+                <button className="gpad" title="Row (Space)" onPointerDown={rowPointer(0)}>Row</button>
               </div>
             )}
           </div>
@@ -682,9 +691,9 @@ export default function CoxBox(_: AppProps) {
 
       {screen === 'finish' && (
         <div className="cox-finish-screen">
-          <header className="cox-finish-header"><span className="cox-brand-mini"><i /> piece complete</span><button className="cox-text-button" onClick={showMenu}>menu</button></header>
+          <header className="cox-finish-header"><span className="cox-brand-mini"><i /> Race Complete</span><button className="gbtn gbtn-plain" onClick={showMenu}>Menu</button></header>
           <div className="cox-finish-scroll">
-            <div className="cox-finish-hero"><small>{raceLabel(prefs.distance)} · weigh enough</small><h1>{formatTime(ownMetrics?.finishTime)}</h1><p>that was a piece. nice work.</p></div>
+            <div className="cox-finish-hero"><small className="cox-finish-detail">{raceLabel(prefs.distance)} · Weigh Enough</small><h1>{formatTime(ownMetrics?.finishTime)}</h1><p>that was a piece. nice work.</p></div>
             <div className={`cox-results-grid ${humanCount === 2 ? 'is-dual' : ''}`}>
               {currentMetrics.slice(0, humanCount).map((row, index) => {
                 const margin = marginFor(index);
@@ -700,14 +709,14 @@ export default function CoxBox(_: AppProps) {
                       <span><small>dps</small><b>{row.dps?.toFixed(1) ?? '--'} m</b></span>
                     </div>
                     {margin && <p className="cox-margin">{margin.seconds >= 0 ? 'up' : 'down'} {Math.abs(margin.seconds).toFixed(2)} s<span>{marginLabel(Math.abs(margin.lengths) * 18)}</span></p>}
-                    <label className="cox-result-name">
-                      <span>name on the board</span>
-                      <input maxLength={16} value={names[index] ?? ''} onChange={(event) => setNames((current) => current.map((name, i) => i === index ? event.target.value.slice(0, 16) : name))} />
-                    </label>
+                    <div className="cox-result-name">
+                      <label className="glabel" htmlFor={`cox-result-name-${index}`}>Name on the Leaderboard</label>
+                      <input id={`cox-result-name-${index}`} className="ginput" maxLength={16} value={names[index] ?? ''} onChange={(event) => setNames((current) => current.map((name, i) => i === index ? event.target.value.slice(0, 16) : name))} />
+                    </div>
                     {postedEntry ? (
                       <div className="cox-posted-rank">{postedEntry.rank ? `rank ${postedEntry.rank}` : 'time posted'} · {board.scope === 'global' ? 'global' : 'on this device'}</div>
                     ) : (
-                      <button className="cox-post-button" disabled={posting === index} onClick={() => void postTime(index)}>{posting === index ? 'posting…' : 'post time'}</button>
+                      <button className="gbtn" disabled={posting === index} onClick={() => void postTime(index)}>{posting === index ? 'Posting…' : 'Post Time'}</button>
                     )}
                   </section>
                 );
@@ -715,9 +724,9 @@ export default function CoxBox(_: AppProps) {
             </div>
           </div>
           <footer className="cox-finish-actions">
-            <button className="cox-primary-button" onClick={beginStart}>again</button>
-            <button className="cox-secondary-button" onClick={showMenu}>menu</button>
-            <button className="cox-secondary-button" onClick={() => { setBoardDistance(prefs.distance); setScreen('leaderboard'); }}>leaderboard</button>
+            <button className="gbtn gbtn-primary" onClick={beginStart}>Race Again</button>
+            <button className="gbtn" onClick={showMenu}>Menu</button>
+            <button className="gbtn" onClick={() => { setBoardDistance(prefs.distance); setScreen('leaderboard'); }}>Leaderboard</button>
           </footer>
         </div>
       )}
@@ -725,12 +734,14 @@ export default function CoxBox(_: AppProps) {
       {screen === 'leaderboard' && (
         <div className="cox-board-screen">
           <header className="cox-board-header">
-            <div><span className="cox-brand-mini"><i /> race results</span><h1>leaderboard</h1></div>
-            <button className="cox-text-button" onClick={() => setScreen('setup')}>back</button>
+            <div><span className="cox-brand-mini"><i /> Race Results</span><h1>Leaderboard</h1></div>
+            <button className="gbtn gbtn-plain" onClick={() => setScreen('setup')}>Back</button>
           </header>
           <div className="cox-board-tabs">
-            {DISTANCES.map((distance) => <button key={distance} className={boardDistance === distance ? 'is-selected' : ''} onClick={() => setBoardDistance(distance)}>{raceLabel(distance)}</button>)}
-            <span className={`cox-scope-badge ${board.scope === 'global' ? 'is-global' : ''}`}>{board.scope === 'global' ? 'global' : 'on this device'}</span>
+            <div className="gseg">
+              {DISTANCES.map((distance) => <button key={distance} aria-pressed={boardDistance === distance} onClick={() => setBoardDistance(distance)}>{distance === 500 ? '500 m' : distance === 1000 ? '1,000 m' : '2,000 m'}</button>)}
+            </div>
+            <span className="ghelp cox-scope-badge">{board.scope === 'global' ? 'Global' : 'On this device'}</span>
           </div>
           <div className="cox-board-table-wrap">
             {boardLoading ? <p className="cox-board-empty">loading times…</p> : board.entries.length === 0 ? <p className="cox-board-empty">no times yet. row a piece and put one up.</p> : (
@@ -748,7 +759,7 @@ export default function CoxBox(_: AppProps) {
               </table>
             )}
           </div>
-          <footer className="cox-board-footer"><span>top ten · {raceLabel(boardDistance)}</span><button className="cox-secondary-button" onClick={() => setScreen('setup')}>back to setup</button></footer>
+          <footer className="cox-board-footer"><span>Top Ten · {raceLabel(boardDistance)}</span><button className="gbtn" onClick={() => setScreen('setup')}>Back to Setup</button></footer>
         </div>
       )}
     </div>

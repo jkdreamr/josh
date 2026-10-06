@@ -28,6 +28,7 @@ export type OpenArgs = {
   note?: string;
   account?: 'personal' | 'music';
   beat?: string;
+  game?: 'go' | 'omok';
   /** bumps on every open() call so an already-open app can react to new args */
   nonce?: number;
 };

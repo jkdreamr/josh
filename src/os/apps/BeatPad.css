@@ -7,7 +7,7 @@
   overflow: hidden;
   background: #121719;
   color: #ebece3;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--gc-font);
 }
 
 .beatpad-header {
@@ -20,22 +20,12 @@
   border-bottom: 1px solid rgba(255,255,255,.065);
 }
 
-.beatpad-brand > span,
-.beatpad-preset > span {
-  color: #95a29b;
-  font-size: 8px;
-  letter-spacing: .15em;
-  text-transform: uppercase;
-}
-
 .beatpad-brand h1 {
-  margin: 2px 0 0;
+  margin: 0;
   color: #f2efe4;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 22px;
-  font-weight: 500;
-  letter-spacing: -.035em;
-  text-transform: lowercase;
+  font-family: var(--gc-font);
+  font-size: 20px;
+  font-weight: 600;
 }
 
 .beatpad-preset {
@@ -43,18 +33,17 @@
   gap: 4px;
 }
 
-.beatpad-preset select,
-.beatpad-key select {
+.beatpad-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23b7c3bf' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 10px center;
+  background-repeat: no-repeat;
+  background-size: 12px;
+  padding-right: 30px;
+}
+
+.beatpad-preset .beatpad-select {
   min-width: 128px;
-  padding: 7px 10px;
-  border: 1px solid rgba(255,255,255,.12);
-  border-radius: 6px;
-  outline: none;
-  background: #1d2526;
-  color: #e6e8dd;
-  font: inherit;
-  font-size: 10px;
-  text-transform: lowercase;
 }
 
 .beatpad-controls {
@@ -72,8 +61,6 @@
   width: min(22%, 150px);
   gap: 5px;
   color: #9ba69d;
-  font-size: 9px;
-  text-transform: lowercase;
 }
 
 .beatpad-tempo span,
@@ -85,7 +72,8 @@
 .beatpad-tempo b,
 .beatpad-swing b {
   color: #e6e7da;
-  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -102,49 +90,10 @@
   display: grid;
   gap: 4px;
   color: #9ba69d;
-  font-size: 9px;
-  text-transform: lowercase;
 }
 
-.beatpad-key select {
+.beatpad-key .beatpad-select {
   min-width: 88px;
-  padding: 6px 7px;
-  font-size: 9px;
-}
-
-.beatpad-play,
-.beatpad-clear {
-  padding: 8px 12px;
-  border: 1px solid rgba(196,156,101,.44);
-  border-radius: 6px;
-  background: #3b3226;
-  color: #f4e9d4;
-  cursor: pointer;
-  font: inherit;
-  font-size: 10px;
-  text-transform: lowercase;
-}
-
-.beatpad-play.is-playing {
-  border-color: rgba(210,125,90,.65);
-  background: #4b2e28;
-  color: #ffd6bf;
-}
-
-.beatpad-play kbd {
-  margin-left: 4px;
-  padding: 2px 4px;
-  border: 1px solid rgba(255,255,255,.18);
-  border-radius: 3px;
-  color: #c9bda7;
-  font: inherit;
-  font-size: 8px;
-}
-
-.beatpad-clear {
-  border-color: rgba(255,255,255,.12);
-  background: #202829;
-  color: #bbc4bc;
 }
 
 .beatpad-workspace {
@@ -187,7 +136,10 @@
 .beatpad-grid-head > span:first-child {
   justify-items: start;
   padding-left: 5px;
-  text-transform: lowercase;
+}
+
+.beatpad-grid-head > span:not(:first-child) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .beatpad-grid-head > span.is-bar {
@@ -212,38 +164,16 @@
 }
 
 .beatpad-track-name {
+  min-width: 0;
   overflow: hidden;
-  padding: 0;
-  border: 0;
-  background: transparent;
   color: #c9d0c7;
-  cursor: pointer;
-  font: inherit;
-  font-size: 9px;
+  font-size: 10px;
   text-overflow: ellipsis;
-  text-transform: lowercase;
   white-space: nowrap;
 }
 
 .beatpad-mute {
-  display: grid;
-  width: 19px;
-  height: 19px;
   flex: none;
-  place-items: center;
-  padding: 0;
-  border: 1px solid rgba(255,255,255,.1);
-  border-radius: 50%;
-  background: #252d2d;
-  color: #d0bb8d;
-  cursor: pointer;
-  font: inherit;
-  font-size: 10px;
-}
-
-.beatpad-mute.is-muted {
-  color: #737e78;
-  text-decoration: line-through;
 }
 
 .beatpad-cell {
@@ -332,9 +262,8 @@
 
 .beatpad-pitch-row > div:first-child b {
   color: #d8c49a;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
-  text-transform: lowercase;
 }
 
 .beatpad-pitch-row > div:first-child span {
@@ -345,24 +274,6 @@
 .beatpad-pitches {
   display: flex;
   gap: 4px;
-}
-
-.beatpad-pitches button {
-  min-width: 31px;
-  padding: 5px 6px;
-  border: 1px solid rgba(255,255,255,.11);
-  border-radius: 4px;
-  background: #222b2c;
-  color: #aeb9ae;
-  cursor: pointer;
-  font: inherit;
-  font-size: 8px;
-}
-
-.beatpad-pitches button.is-selected {
-  border-color: #bd9a66;
-  background: #3a3328;
-  color: #f2dcae;
 }
 
 .beatpad-footer {
@@ -383,35 +294,12 @@
   gap: 12px;
 }
 
-.beatpad-footer button {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #adb8ac;
-  cursor: pointer;
-  font: inherit;
-  font-size: 9px;
-  text-transform: lowercase;
-}
-
-.beatpad-footer button:hover {
-  color: #e1c48f;
-}
-
-.beatpad-footer .beatpad-listen {
-  color: #d5b27b;
-}
-
 @media (max-width: 650px) {
   .beatpad-header {
     padding: 8px 10px 7px;
   }
 
-  .beatpad-brand h1 {
-    font-size: 19px;
-  }
-
-  .beatpad-preset select {
+  .beatpad-preset .beatpad-select {
     min-width: 116px;
   }
 
@@ -430,13 +318,8 @@
     grid-column: span 1;
   }
 
-  .beatpad-key select {
+  .beatpad-key .beatpad-select {
     min-width: 80px;
-  }
-
-  .beatpad-play,
-  .beatpad-clear {
-    padding: 7px 9px;
   }
 
   .beatpad-workspace {
@@ -456,16 +339,6 @@
 
   .beatpad-track-label {
     padding: 0 3px;
-  }
-
-  .beatpad-track-name {
-    font-size: 8px;
-  }
-
-  .beatpad-mute {
-    width: 16px;
-    height: 16px;
-    font-size: 9px;
   }
 
   .beatpad-cell {
@@ -504,22 +377,20 @@
     gap: 3px;
   }
 
-  .beatpad-pitches button {
-    min-width: 30px;
-    padding: 4px 5px;
+  .beatpad-footer {
+    flex-wrap: wrap;
+    justify-content: center;
+    padding: 7px 9px 8px;
   }
 
-  .beatpad-footer {
-    padding: 7px 9px 8px;
-    font-size: 7px;
+  .beatpad-footer .ghelp {
+    text-align: center;
   }
 
   .beatpad-footer > div {
+    width: 100%;
     gap: 7px;
-  }
-
-  .beatpad-footer button {
-    font-size: 8px;
+    justify-content: center;
   }
 }
 
@@ -528,7 +399,7 @@
     min-width: 425px;
   }
 
-  .beatpad-preset select {
+  .beatpad-preset .beatpad-select {
     min-width: 100px;
     max-width: 120px;
   }

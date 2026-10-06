@@ -15,18 +15,8 @@
   outline: none;
   background: var(--paper);
   color: var(--ink);
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--gc-font);
   font-size: 12px;
-}
-
-.cox button,
-.cox input {
-  font: inherit;
-}
-
-.cox button {
-  color: inherit;
-  touch-action: manipulation;
 }
 
 .cox-setup {
@@ -69,26 +59,18 @@
   vertical-align: top;
 }
 
-.cox-brand small,
 .cox-brand h1,
 .cox-brand p,
 .cox-brand-mini {
   margin: 0;
 }
 
-.cox-brand small {
-  color: var(--muted);
-  font-size: 9px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
 .cox-brand h1 {
   margin: 3px 0 1px;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 33px;
-  font-weight: 500;
-  letter-spacing: -0.06em;
+  font-family: var(--gc-font);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0;
   line-height: 1;
 }
 
@@ -97,92 +79,22 @@
   font-size: 10px;
 }
 
+.cox-brand small {
+  color: var(--gc-text-2);
+  font: 400 12px/1.4 var(--gc-font);
+}
+
 .cox-control-group {
   margin: 0 0 18px;
-}
-
-.cox-control-group > label,
-.cox-control-group > label:first-child {
-  display: block;
-  margin-bottom: 7px;
-  color: #6e7b7e;
-  font-size: 9px;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-}
-
-.cox-segmented {
-  display: flex;
-  gap: 5px;
-}
-
-.cox-segmented button,
-.cox-opponents button,
-.cox-board-tabs button {
-  min-height: 33px;
-  border: 1px solid #d7dcd7;
-  border-radius: 4px;
-  background: transparent;
-  color: #526267;
-  cursor: pointer;
-  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
-}
-
-.cox-segmented button {
-  min-width: 76px;
-  padding: 0 12px;
-}
-
-.cox-segmented button.is-selected,
-.cox-opponents button.is-selected,
-.cox-board-tabs button.is-selected {
-  border-color: var(--ink);
-  background: var(--ink);
-  color: white;
-}
-
-.cox-opponents {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.cox-opponents button {
-  padding: 0 10px;
-}
-
-.cox-opponents button:disabled {
-  cursor: not-allowed;
-  opacity: 0.38;
 }
 
 .cox-helper {
   display: block;
   margin-top: 7px;
-  color: var(--muted);
-  font-size: 9px;
 }
 
-.cox-name-field input,
-.cox-result-name input {
+.cox-name-field .ginput {
   width: 100%;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid #d7dcd7;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.45);
-  color: var(--ink);
-  outline: none;
-}
-
-.cox-name-field input:focus,
-.cox-result-name input:focus {
-  border-color: #71878a;
-  box-shadow: 0 0 0 2px rgba(0, 50, 98, 0.08);
-}
-
-.cox-name-field input::placeholder {
-  color: #a4adac;
 }
 
 .cox-setup-actions {
@@ -193,47 +105,7 @@
   padding-top: 8px;
 }
 
-.cox-primary-button,
-.cox-secondary-button,
-.cox-post-button {
-  min-height: 38px;
-  padding: 0 15px;
-  border: 1px solid var(--ink);
-  border-radius: 4px;
-  background: var(--ink);
-  color: #fff !important;
-  cursor: pointer;
-}
-
-.cox-primary-button {
-  display: inline-flex;
-  min-width: 135px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.cox-primary-button span {
-  color: var(--gold);
-  font-size: 16px;
-}
-
-.cox-secondary-button {
-  background: transparent;
-  color: var(--ink) !important;
-}
-
-.cox-mute-button,
-.cox-text-button {
-  padding: 5px 0;
-  border: 0;
-  background: transparent;
-  color: #657378 !important;
-  cursor: pointer;
-  font-size: 10px !important;
-}
-
-.cox-setup-actions .cox-mute-button {
+.cox-setup-actions .gbtn-plain {
   margin-left: auto;
 }
 
@@ -277,8 +149,6 @@
   margin-left: auto;
   color: #e0e2d8;
   font-size: 8px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 .cox-device-screen {
@@ -293,14 +163,13 @@
 .cox-device-screen > small {
   color: #8fa98c;
   font-size: 8px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
 }
 
 .cox-device-screen > strong {
   display: block;
   margin: 7px 0 9px;
   color: #d9edb1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 27px;
   font-weight: 500;
   letter-spacing: 0.05em;
@@ -320,6 +189,7 @@
 .cox-device-screen > div b {
   margin-right: 13px;
   color: #cee3ad;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   font-weight: 500;
 }
@@ -343,38 +213,13 @@
   border-top: 1px solid #d2d7d1;
 }
 
-.cox-control-hint kbd {
-  padding: 1px 4px;
-  border: 1px solid #d5dcd6;
-  border-radius: 3px;
-  background: #fff;
-  color: #526669;
-  font: inherit;
-  font-size: 8px;
-}
-
-.cox-control-hint > small {
-  color: #738084;
-  font-size: 9px;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-}
-
 .cox-control-hint p {
-  margin: 9px 0 7px;
-  color: #4d5d61;
-  font-size: 10px;
-  line-height: 1.8;
+  margin: 9px 0 5px;
 }
 
-.cox-control-hint p b {
-  color: var(--red);
-  font-weight: 600;
-}
-
-.cox-control-hint > span {
+.cox-control-note {
   color: #899391;
-  font-size: 9px;
+  font: 400 12px/1.4 var(--gc-font);
 }
 
 .cox-brand-mini {
@@ -382,9 +227,7 @@
   align-items: center;
   gap: 8px;
   color: #46565a;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font: 500 13px/1 var(--gc-font);
 }
 
 .cox-brand-mini i {
@@ -435,20 +278,12 @@
   box-shadow: 0 0 0 7px rgba(140, 21, 21, 0.05), 0 0 25px rgba(140, 21, 21, 0.25);
 }
 
-.cox-attention > small,
-.cox-finish-hero > small {
-  color: #758286;
-  font-size: 9px;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-}
-
 .cox-attention h1 {
   margin: 12px 0 4px;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: clamp(42px, 8vw, 75px);
-  font-weight: 500;
-  letter-spacing: -0.06em;
+  font-family: var(--gc-font);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0;
   line-height: 1;
 }
 
@@ -475,44 +310,10 @@
   font-size: 9px;
 }
 
-.cox-row-button,
-.cox-power-button {
-  border: 1px solid #c9d0cc;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.cox-call-controls > .cox-row-button {
-  display: flex;
-  width: 120px;
-  height: 55px;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--red);
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.13em;
-}
-
-.cox-row-button kbd,
-.cox-power-button kbd {
-  display: inline-flex;
-  min-width: 18px;
-  height: 18px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
-  border: 1px solid rgba(73, 90, 92, 0.18);
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.62);
-  color: #829092;
-  font-size: 8px;
-  font-family: inherit;
-  font-weight: 600;
-  letter-spacing: 0;
-  line-height: 1;
+.cox-call-detail,
+.cox-finish-detail {
+  color: #758286;
+  font: 400 12px/1.4 var(--gc-font);
 }
 
 .cox-friend-buttons {
@@ -522,28 +323,17 @@
   gap: 8px;
 }
 
-.cox-call-controls .cox-friend-buttons button {
+.cox-player-touch-controls {
   display: flex;
-  min-height: 55px;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border: 1px solid #c9d0cc;
-  border-radius: 4px;
-  background: #fff;
-  color: var(--red);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
 }
 
-.cox-call-controls .cox-friend-buttons button + button {
-  color: var(--blue);
-}
-
-.cox-call-controls .cox-friend-buttons button kbd {
-  color: #829092;
+.cox-player-caption {
+  color: var(--gc-text-2);
+  font: 500 11px/1.2 var(--gc-font);
+  text-align: center;
 }
 
 .cox-race {
@@ -597,9 +387,9 @@
   align-items: center;
   gap: 6px;
   color: #728084;
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .cox-live-dot {
@@ -646,6 +436,14 @@
   font-size: 8px;
   letter-spacing: 0.11em;
   text-transform: uppercase;
+}
+
+.cox-big-metric b,
+.cox-small-metric b,
+.cox-secondary-metrics b,
+.cox-legs-meter b,
+.cox-swing-meter b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .cox-big-metric b {
@@ -1026,105 +824,24 @@
   background: #f8f7f2;
 }
 
-.cox-key-hint {
-  color: #879396;
-  font-size: 9px;
-}
-
 .cox-solo-buttons {
   display: flex;
   align-items: center;
-  gap: 7px;
-}
-
-.cox-power-button {
-  display: inline-flex;
-  height: 35px;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 0 11px;
-  color: #758286;
-  font-size: 9px;
-}
-
-.cox-race-controls .cox-row-button {
-  min-width: 72px;
-  height: 36px;
-  border-color: var(--red);
-  background: var(--red);
-  color: white;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
+  gap: 8px;
 }
 
 .cox-race-controls .cox-friend-buttons {
-  width: min(360px, 55%);
-  gap: 6px;
-}
-
-.cox-race-controls .cox-friend-buttons button {
-  display: flex;
-  min-height: 36px;
-  align-items: center;
-  justify-content: center;
+  width: min(440px, 58%);
   gap: 8px;
-  border: 1px solid #c9d0cc;
-  border-radius: 4px;
-  background: #fff;
-  color: var(--red);
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 600;
 }
 
-.cox-race-controls .cox-friend-buttons button + button {
-  color: var(--blue);
-}
-
-.cox-race-controls .cox-friend-buttons button small {
-  color: #8a9698;
-}
-
-.cox-race-controls .cox-friend-buttons button kbd {
-  min-width: 17px;
-  height: 17px;
-  color: #8a9698;
-}
-
-.cox-player-touch-controls {
-  display: grid;
+.cox-player-touch-controls .gpad {
+  width: 100%;
   min-width: 0;
-  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1fr);
-  gap: 4px;
 }
 
-.cox-race-controls .cox-player-touch-controls button {
+.cox-race-controls .cox-friend-buttons .cox-player-touch-controls {
   min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding: 0 4px;
-}
-
-.cox-race-controls .cox-player-touch-controls .cox-power-button {
-  border-color: #c9d0cc;
-  background: #fff;
-  color: #758286 !important;
-  font-weight: 400;
-}
-
-.cox-race-controls .cox-player-touch-controls .cox-row-button {
-  border-color: var(--red);
-  background: var(--red);
-  color: #fff !important;
-}
-
-.cox-race-controls .cox-player-touch-controls:nth-child(2) .cox-row-button {
-  border-color: var(--blue);
-  background: var(--blue);
 }
 
 .cox-friend-huds {
@@ -1213,10 +930,6 @@
   flex: none;
 }
 
-.cox-text-button {
-  font-size: 10px;
-}
-
 .cox-finish-scroll {
   min-height: 0;
   flex: 1;
@@ -1232,10 +945,10 @@
 .cox-finish-hero h1 {
   margin: 3px 0 2px;
   color: var(--red);
-  font-family: Georgia, 'Times New Roman', serif;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: clamp(38px, 7vw, 58px);
   font-weight: 500;
-  letter-spacing: -0.06em;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   line-height: 1.05;
 }
@@ -1287,9 +1000,9 @@
 .cox-result-time {
   margin: 4px 0 9px;
   color: var(--ink);
-  font-family: Georgia, 'Times New Roman', serif;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 31px;
-  letter-spacing: -0.04em;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1308,8 +1021,7 @@
   gap: 3px;
 }
 
-.cox-result-stats small,
-.cox-result-name > span {
+.cox-result-stats small {
   color: #899497;
   font-size: 7px;
   letter-spacing: 0.08em;
@@ -1318,6 +1030,7 @@
 
 .cox-result-stats b {
   color: #46565a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
   font-weight: 500;
 }
@@ -1338,31 +1051,14 @@
 
 .cox-result-name {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
   margin-top: 8px;
 }
 
-.cox-result-name > span {
-  flex: none;
-}
-
-.cox-result-name input {
-  height: 29px;
+.cox-result-name .ginput {
+  flex: 1;
   min-width: 0;
-  font-size: 9px;
-}
-
-.cox-post-button {
-  width: 100%;
-  min-height: 31px;
-  margin-top: 7px;
-  font-size: 9px;
-}
-
-.cox-post-button:disabled {
-  cursor: wait;
-  opacity: 0.6;
 }
 
 .cox-posted-rank {
@@ -1381,21 +1077,16 @@
   border-top: 1px solid #dce0da;
 }
 
-.cox-finish-actions button {
-  min-height: 33px;
-  font-size: 9px;
-}
-
 .cox-board-header {
   flex: none;
 }
 
 .cox-board-header h1 {
   margin: 4px 0 0;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 29px;
-  font-weight: 500;
-  letter-spacing: -0.05em;
+  font-family: var(--gc-font);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .cox-board-tabs {
@@ -1406,25 +1097,8 @@
   margin: 16px 0 10px;
 }
 
-.cox-board-tabs button {
-  min-width: 54px;
-  min-height: 30px;
-  padding: 0 10px;
-  font-size: 9px;
-}
-
 .cox-scope-badge {
   margin-left: auto;
-  padding: 5px 7px;
-  border: 1px solid #e1e4df;
-  border-radius: 3px;
-  color: #8a9698;
-  font-size: 8px;
-}
-
-.cox-scope-badge.is-global {
-  border-color: #c9d8c9;
-  color: #50755e;
 }
 
 .cox-board-table-wrap {
@@ -1443,10 +1117,9 @@
   padding: 8px 7px;
   border-bottom: 1px solid #cfd6d0;
   color: #8a9698;
-  font-size: 8px;
-  font-weight: 400;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  font: 500 12px/1.2 var(--gc-font);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .cox-board-table td {
@@ -1455,6 +1128,12 @@
   color: #59696d;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+}
+
+.cox-board-table td:nth-child(1),
+.cox-board-table td:nth-child(3),
+.cox-board-table td:nth-child(4) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .cox-board-table td:nth-child(1) {
@@ -1490,11 +1169,6 @@
   font-size: 8px;
 }
 
-.cox-board-footer button {
-  min-height: 31px;
-  font-size: 9px;
-}
-
 @media (max-width: 700px) {
   .cox-setup {
     grid-template-columns: minmax(0, 1fr);
@@ -1522,11 +1196,11 @@
     padding-top: 12px;
   }
 
-  .cox-setup-actions .cox-primary-button {
-    min-width: 100%;
+  .cox-setup-actions .gbtn-primary {
+    flex-basis: 100%;
   }
 
-  .cox-setup-actions .cox-secondary-button {
+  .cox-setup-actions .gbtn:not(.gbtn-primary) {
     flex: 1;
   }
 
@@ -1586,32 +1260,13 @@
     padding: 6px 10px;
   }
 
-  .cox-key-hint {
-    display: none;
-  }
-
   .cox-solo-buttons {
     width: 100%;
-  }
-
-  .cox-solo-buttons .cox-power-button {
-    flex: 0 0 34%;
-    height: 43px;
-  }
-
-  .cox-race-controls .cox-row-button {
-    height: 43px;
-    flex: 1;
   }
 
   .cox-race-controls .cox-friend-buttons {
     width: 100%;
     gap: 7px;
-  }
-
-  .cox-race-controls .cox-friend-buttons button {
-    min-height: 43px;
-    flex: 1;
   }
 
   .cox-friend-hud {
@@ -1638,19 +1293,6 @@
     width: 49px;
     height: 49px;
     font-size: 17px;
-  }
-
-  .cox-brand h1 {
-    font-size: 29px;
-  }
-
-  .cox-segmented button {
-    min-width: 68px;
-  }
-
-  .cox-opponents button {
-    padding: 0 7px;
-    font-size: 9px;
   }
 
   .cox-primary-metrics {
@@ -1688,7 +1330,6 @@
     width: 6px;
   }
 
-  .cox-board-table th,
   .cox-board-table td {
     padding-right: 4px;
     padding-left: 4px;
