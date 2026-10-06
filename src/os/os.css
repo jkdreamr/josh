@@ -1859,6 +1859,9 @@ kbd {
     radial-gradient(60% 50% at 50% 0%, rgba(161, 140, 209, 0.18), transparent),
     #fff;
 }
+.newtab > * {
+  flex-shrink: 0;
+}
 .newtab h1 {
   margin: 0;
   font-size: clamp(30px, 5.6cqw, 52px);
@@ -1903,9 +1906,10 @@ kbd {
 }
 .shortcuts {
   display: grid;
-  grid-template-columns: repeat(5, 108px);
+  grid-template-columns: repeat(5, minmax(0, 108px));
   gap: 8px;
   margin-top: 30px;
+  max-width: 100%;
 }
 @container (max-width: 600px) {
   .shortcuts {
@@ -3745,21 +3749,24 @@ kbd {
 .hh-island {
   position: absolute;
   z-index: 50;
-  left: 50%;
+  left: 0;
+  right: 0;
   top: calc(var(--edge) - var(--band) + 11px);
   width: 124px;
   height: 36px;
-  translate: -50% 0;
+  margin: 0 auto;
   border-radius: 18px;
   background: radial-gradient(circle at calc(100% - 18px) 50%, #1c2333 0 3.5px, #0c0f16 4.5px 6px, transparent 6.5px), #000;
   pointer-events: none;
 }
 .hh-phone.is-land .hh-island {
   left: calc(var(--edge) - var(--band) + 11px);
-  top: 50%;
+  top: 0;
+  right: auto;
+  bottom: 0;
   width: 36px;
   height: 124px;
-  translate: 0 -50%;
+  margin: auto 0;
   background: radial-gradient(circle at 50% 18px, #1c2333 0 3.5px, #0c0f16 4.5px 6px, transparent 6.5px), #000;
 }
 .hh-cam {
