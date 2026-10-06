@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  caretMeasurementRange,
   findAdjacentVisualCaretOffset,
   groupCaretPointsByLine,
   moveCaretSelection,
@@ -10,6 +11,24 @@ import {
   selectionFocus,
   type CaretSelection,
 } from '../src/os/laptop3d/typing.ts';
+
+test('caret measurement is limited to the previous, current, and next logical lines', () => {
+  const value = Array.from({ length: 101 }, (_, index) => `line ${index}`).join('\n');
+  const offset = value.indexOf('line 50') + 4;
+  const previousLineStart = value.indexOf('line 49');
+  const nextLineStart = value.indexOf('line 51');
+  const nextLineEnd = value.indexOf('\n', nextLineStart);
+  const lastLineStart = value.lastIndexOf('\n', value.length - 1) + 1;
+  const lineBeforeLastStart = value.lastIndexOf('\n', lastLineStart - 2) + 1;
+
+  assert.deepEqual(caretMeasurementRange(value, offset), { start: previousLineStart, end: nextLineEnd });
+  assert.ok(nextLineEnd - previousLineStart < value.length / 2);
+  assert.deepEqual(caretMeasurementRange(value, 0), {
+    start: 0,
+    end: value.indexOf('\n', value.indexOf('\n') + 1),
+  });
+  assert.deepEqual(caretMeasurementRange(value, value.length), { start: lineBeforeLastStart, end: value.length });
+});
 
 test('visual caret movement chooses the closest x on the adjacent measured line', () => {
   const lines = groupCaretPointsByLine([
