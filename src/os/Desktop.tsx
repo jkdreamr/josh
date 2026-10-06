@@ -104,8 +104,8 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
       const w = Math.round(Math.min(def.w, W * 0.86));
       const h = Math.round(Math.min(def.h, availH - 10));
       const n = ws.filter((x) => !x.min).length % 6;
-      const x = Math.round(clamp((W - w) / 2 + (n - 2) * 26, 8, W - w - 8));
-      const y = Math.round(clamp(MENU_H + (availH - h) / 2 + (n - 2) * 22, MENU_H + 6, H - h - 8));
+      const x = Math.round(clamp((W - w) / 2 + n * 26, 8, W - w - 8));
+      const y = Math.round(clamp(MENU_H + (availH - h) / 2 + n * 22, MENU_H + 6, H - h - 8));
       return [...ws, { id, x, y, w, h, z, min: false, max: false, args: { ...args, nonce: Date.now() }, state: 'opening' }];
     });
   }, []);
