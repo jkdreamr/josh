@@ -106,17 +106,17 @@
   gap: 8px;
   width: min(320px, 100%);
   padding: 24px 22px 20px;
-  border-radius: 20px;
+  border-radius: 16px;
   text-align: center;
-  background: rgba(28, 28, 34, 0.78);
+  background: rgba(30, 30, 36, 0.86);
   box-shadow:
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.16),
-    0 20px 50px rgba(0, 0, 0, 0.45);
-  animation: arcadePop 0.24s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.14),
+    0 16px 40px rgba(0, 0, 0, 0.4);
+  animation: arcadePop 0.2s ease-out;
 }
 @keyframes arcadePop {
   from {
-    transform: scale(0.94);
+    transform: scale(0.97);
     opacity: 0;
   }
 }
@@ -127,7 +127,7 @@
   letter-spacing: -0.02em;
 }
 .arcade-card p {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   font-size: 13px;
   line-height: 1.45;
   color: rgba(245, 245, 247, 0.68);
@@ -143,50 +143,175 @@
   flex: none;
   width: 52px;
   height: 52px;
-  border-radius: 15px;
+  border-radius: 13px;
   color: #fff;
-  box-shadow:
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.35),
-    0 6px 16px rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
 }
-.arcade-shell .arcade-play {
+/* Controls: macOS style push buttons and segmented controls, dark by default, light inside .is-light. */
+.arcade-shell .arcade-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  min-width: 150px;
-  height: 40px;
-  padding: 0 22px;
-  border-radius: 999px;
-  font-size: 14px;
-  font-weight: 600;
+  gap: 6px;
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  color: #f5f5f7;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.12),
+    0 0 0 0.5px rgba(0, 0, 0, 0.4),
+    0 0.5px 1.5px rgba(0, 0, 0, 0.3);
+  transition: background 0.12s ease;
+}
+.arcade-shell .arcade-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+.arcade-shell .arcade-btn:active {
+  background: rgba(255, 255, 255, 0.26);
+}
+.arcade-shell .arcade-btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.arcade-shell .arcade-btn-primary {
   color: #fff;
   background: var(--accent);
   box-shadow:
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.35),
-    0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
-  transition: transform 0.12s ease, filter 0.12s ease;
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.28),
+    0 0 0 0.5px rgba(0, 0, 0, 0.3),
+    0 0.5px 1.5px rgba(0, 0, 0, 0.3);
 }
-.arcade-shell .arcade-play:hover {
-  filter: brightness(1.08);
+.arcade-shell .arcade-btn-primary:hover {
+  background: color-mix(in srgb, var(--accent) 88%, #fff);
 }
-.arcade-shell .arcade-play:active {
-  transform: scale(0.97);
+.arcade-shell .arcade-btn-primary:active {
+  background: color-mix(in srgb, var(--accent) 86%, #000);
+}
+.arcade-shell .arcade-btn-lg {
+  min-width: 160px;
+  height: 34px;
+  padding: 0 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.arcade-shell .arcade-seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+}
+.arcade-shell .arcade-seg > button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 24px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  color: rgba(245, 245, 247, 0.72);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.arcade-shell .arcade-seg > button:hover {
+  color: #f5f5f7;
+}
+.arcade-shell .arcade-seg > button[aria-pressed='true'] {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.14),
+    0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.arcade-shell .arcade-seg > button:focus-visible {
+  outline-offset: -2px;
+}
+.arcade-shell .is-light .arcade-btn,
+.arcade-shell .arcade-btn.is-light {
+  color: #1d1d1f;
+  background: #fff;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.14),
+    0 0.5px 1.5px rgba(0, 0, 0, 0.14);
+}
+.arcade-shell .is-light .arcade-btn:hover,
+.arcade-shell .arcade-btn.is-light:hover {
+  background: #f7f7f8;
+}
+.arcade-shell .is-light .arcade-btn:active,
+.arcade-shell .arcade-btn.is-light:active {
+  background: #ececef;
+}
+.arcade-shell .is-light .arcade-seg,
+.arcade-shell .arcade-seg.is-light {
+  background: rgba(0, 0, 0, 0.06);
+  box-shadow: none;
+}
+.arcade-shell .is-light .arcade-seg > button,
+.arcade-shell .arcade-seg.is-light > button {
+  color: rgba(29, 29, 31, 0.7);
+}
+.arcade-shell .is-light .arcade-seg > button:hover,
+.arcade-shell .arcade-seg.is-light > button:hover {
+  color: #1d1d1f;
+}
+.arcade-shell .is-light .arcade-seg > button[aria-pressed='true'],
+.arcade-shell .arcade-seg.is-light > button[aria-pressed='true'] {
+  color: #1d1d1f;
+  background: #fff;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.16);
+}
+@media (hover: none) and (pointer: coarse) {
+  .arcade-shell .arcade-btn {
+    height: 34px;
+    padding: 0 16px;
+    border-radius: 8px;
+  }
+  .arcade-shell .arcade-btn-lg {
+    height: 40px;
+    border-radius: 10px;
+  }
+  .arcade-shell .arcade-seg > button {
+    height: 30px;
+  }
+}
+.arcade-setup {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  margin: 2px 0 8px;
+}
+.arcade-setup .arcade-seg {
+  display: flex;
+  width: 100%;
+}
+.arcade-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  text-align: left;
+}
+.arcade-field > span {
+  padding-left: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.6);
 }
 .arcade-row {
   display: flex;
   gap: 8px;
-}
-.arcade-shell .arcade-ghost {
-  height: 32px;
-  padding: 0 16px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 500;
-  background: rgba(255, 255, 255, 0.1);
-}
-.arcade-shell .arcade-ghost:hover {
-  background: rgba(255, 255, 255, 0.16);
+  margin-top: 2px;
 }
 .arcade-final {
   display: flex;
@@ -207,11 +332,8 @@
   color: rgba(245, 245, 247, 0.6);
 }
 .arcade-final .arcade-new {
-  padding: 2px 9px;
-  border-radius: 999px;
   font-weight: 600;
-  color: #fff;
-  background: var(--accent);
+  color: color-mix(in srgb, var(--accent) 60%, #fff);
 }
 
 /* Compact (inline strip) overlays: one line, whole surface is the button. */
@@ -324,6 +446,20 @@
 .arcade-shell .arcade-ov:not(.arcade-ov-compact) {
   container: arcade-ov / size;
 }
+@container arcade-ov (max-height: 460px) {
+  .arcade-card:has(.arcade-setup) {
+    gap: 6px;
+    padding: 16px 18px 14px;
+  }
+  .arcade-card:has(.arcade-setup) > .arcade-glyph,
+  .arcade-card:has(.arcade-setup) > p {
+    display: none;
+  }
+  .arcade-card:has(.arcade-setup) h2 {
+    margin: 0;
+    font-size: 19px;
+  }
+}
 @container arcade-ov (max-height: 320px) {
   .arcade-card {
     gap: 6px;
@@ -335,6 +471,16 @@
   .arcade-card h2 {
     margin: 0;
     font-size: 19px;
+  }
+  .arcade-card .arcade-setup {
+    gap: 6px;
+    margin: 0 0 2px;
+  }
+  .arcade-card .arcade-field {
+    gap: 3px;
+  }
+  .arcade-card .arcade-row {
+    margin-top: 0;
   }
 }
 @container arcade-ov (max-height: 220px) {

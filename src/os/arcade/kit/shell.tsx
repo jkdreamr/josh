@@ -20,6 +20,8 @@ export type GameShellProps = {
   formatScore?: (score: number) => string;
   /** Remount children on restart so every round starts from fresh state (default true). */
   remount?: boolean;
+  /** Mode and difficulty controls, shown on the Start card above Play and again on the Pause card. */
+  setup?: ReactNode;
   className?: string;
   style?: CSSProperties;
 };
@@ -51,7 +53,7 @@ const isTouchDevice = () =>
  * (pause, restart, mute, back to arcade), live score, key capture and auto-pause.
  * Put the game's logic in a child component and read the shell with useShell().
  */
-export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, className, style }: GameShellProps) {
+export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, className, style }: GameShellProps) {
   const host = useContext(ArcadeHost);
   const os = useContext(OSContext);
   const root = useRef<HTMLDivElement | null>(null);
@@ -71,6 +73,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const fmt = useCallback((n: number) => (formatScore ? formatScore(n) : n.toLocaleString('en-US')), [formatScore]);
 
   useEffect(() => setTouch(!!os?.mobile || isTouchDevice()), [os?.mobile]);
+  useEffect(() => sfx.retain(), []);
 
   const focusRoot = useCallback(() => root.current?.focus({ preventScroll: true }), []);
   const start = useCallback(() => {
@@ -94,6 +97,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setStatus((s) => (s === 'playing' ? 'paused' : s));
   }, [keys]);
   const resume = useCallback(() => {
+    sfx.unlock();
     setStatus((s) => (s === 'paused' ? 'playing' : s));
     focusRoot();
   }, [focusRoot]);
@@ -173,8 +177,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       }
       e.stopPropagation();
       if (scrollKeys.has(e.code)) e.preventDefault();
-      if (st === 'ready' || st === 'over') {
-        if ((e.code === 'Enter' || e.code === 'Space') && !e.repeat) (st === 'ready' ? start : restart)();
+      if (st === 'ready' || st === 'over' || st === 'paused') {
+        if ((e.code === 'Enter' || e.code === 'Space') && !e.repeat) (st === 'ready' ? start : st === 'over' ? restart : resume)();
         return;
       }
       if (st === 'playing') keys.press(e.code, e);
@@ -225,8 +229,10 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
         role="application"
         aria-label={meta.title}
         onPointerDown={(e) => {
+          sfx.unlock();
           if (!(e.target as HTMLElement).closest('button, a, input, textarea, select')) focusRoot();
         }}
+        onKeyDown={() => sfx.unlock()}
         onMouseDown={(e) => {
           if (!(e.target as HTMLElement).closest('button, a, input, textarea, select')) e.preventDefault();
         }}
@@ -240,7 +246,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
         {!compact && (
           <div className="arcade-ctrl">
             {(status === 'playing' || status === 'paused') && (
-              <button type="button" aria-label={status === 'paused' ? 'Resume' : 'Pause'} title={status === 'paused' ? 'Resume (P)' : 'Pause (P)'} onClick={status === 'paused' ? resume : pause}>
+              <button type="button" aria-label={status === 'paused' ? 'Resume' : 'Pause'} title={status === 'paused' ? 'Resume' : 'Pause'} onClick={status === 'paused' ? resume : pause}>
                 <Icon d={status === 'paused' ? ic.play : ic.pause} />
               </button>
             )}
@@ -253,7 +259,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
               <Icon d={muted ? ic.muted : ic.sound} />
             </button>
             {onExit && (
-              <button type="button" aria-label="Back to arcade" title="Back to arcade" onClick={onExit}>
+              <button type="button" aria-label="Arcade" title="Arcade" onClick={onExit}>
                 <Icon d={ic.grid} />
               </button>
             )}
@@ -265,8 +271,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             <button type="button" className="arcade-ov arcade-ov-compact" onClick={start}>
               {glyph}
               <span>
-                <b>{meta.title}</b> {touch ? 'tap to play' : 'press space or click to play'}
-                {best !== null && <em> · best {fmt(best)}</em>}
+                <b>{meta.title}</b> {touch ? 'Tap to Play' : 'Press Space to Play'}
+                {best !== null && <em> · Best {fmt(best)}</em>}
               </span>
             </button>
           ) : (
@@ -275,10 +281,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 {glyph}
                 <h2>{meta.title}</h2>
                 <p>{meta.controls}</p>
-                <button type="button" className="arcade-play" onClick={start} ref={autoFocus}>
-                  <Icon d={ic.play} size={13} /> Play
+                {setup && <div className="arcade-setup">{setup}</div>}
+                <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={start} ref={autoFocus}>
+                  Play
                 </button>
-                {best !== null && <small>best {fmt(best)}</small>}
+                {best !== null && <small>Best {fmt(best)}</small>}
               </div>
             </div>
           ))}
@@ -288,23 +295,24 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             <button type="button" className="arcade-ov arcade-ov-compact" onClick={resume}>
               <Icon d={ic.play} />
               <span>
-                <b>paused</b> {touch ? 'tap to resume' : 'click or press P to resume'}
+                <b>Paused</b> {touch ? 'Tap to Resume' : 'Press Space to Resume'}
               </span>
             </button>
           ) : (
             <div className="arcade-ov">
               <div className="arcade-card">
-                <h2>paused</h2>
+                <h2>Paused</h2>
                 <p>{meta.controls}</p>
-                <button type="button" className="arcade-play" onClick={resume} ref={autoFocus}>
-                  <Icon d={ic.play} size={13} /> Resume
+                {setup && <div className="arcade-setup">{setup}</div>}
+                <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={resume} ref={autoFocus}>
+                  Resume
                 </button>
                 <div className="arcade-row">
-                  <button type="button" className="arcade-ghost" onClick={restart}>
-                    Restart
+                  <button type="button" className="arcade-btn" onClick={restart}>
+                    {setup ? 'New Game' : 'Restart'}
                   </button>
                   {onExit && (
-                    <button type="button" className="arcade-ghost" onClick={onExit}>
+                    <button type="button" className="arcade-btn" onClick={onExit}>
                       Arcade
                     </button>
                   )}
@@ -318,28 +326,29 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             <button type="button" className="arcade-ov arcade-ov-compact" onClick={restart}>
               <Icon d={ic.restart} />
               <span>
-                <b>{result?.title ?? 'game over'}</b>
+                <b>{result?.title ?? 'Game Over'}</b>
                 {result?.score !== undefined && ` ${fmt(result.score)}`}
-                {bestNow != null && <em> · best {fmt(bestNow)}</em>} · {touch ? 'tap' : 'space'} to retry
+                {bestNow != null && <em> · Best {fmt(bestNow)}</em>} · {touch ? 'Tap to Play Again' : 'Press Space to Play Again'}
               </span>
             </button>
           ) : (
             <div className="arcade-ov">
               <div className="arcade-card">
-                <h2>{result?.title ?? 'game over'}</h2>
+                <h2>{result?.title ?? 'Game Over'}</h2>
                 {result?.score !== undefined && (
                   <div className="arcade-final">
                     <b>{fmt(result.score)}</b>
-                    {result.isBest ? <span className="arcade-new">new best</span> : bestNow != null && <span>best {fmt(bestNow)}</span>}
+                    {result.isBest ? <span className="arcade-new">New Best</span> : bestNow != null && <span>Best {fmt(bestNow)}</span>}
                   </div>
                 )}
                 {result?.detail && <p>{result.detail}</p>}
-                <button type="button" className="arcade-play" onClick={restart} ref={autoFocus}>
-                  <Icon d={ic.restart} size={13} /> Play again
+                {setup && <div className="arcade-setup">{setup}</div>}
+                <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={restart} ref={autoFocus}>
+                  Play Again
                 </button>
                 {onExit && (
                   <div className="arcade-row">
-                    <button type="button" className="arcade-ghost" onClick={onExit}>
+                    <button type="button" className="arcade-btn" onClick={onExit}>
                       Arcade
                     </button>
                   </div>

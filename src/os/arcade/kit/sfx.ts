@@ -29,8 +29,24 @@ function audio(): AudioContext | null {
       return null;
     }
   }
-  if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
   return ctx;
+}
+
+// The context runs only while a game is mounted and the page is visible. Any user gesture inside a
+// mounted shell (Play, a tap, a key) resumes it through sfx.unlock(); nothing else does.
+let mounted = 0;
+let hidden = typeof document !== 'undefined' && document.hidden;
+
+function settle() {
+  if (!ctx) return;
+  if ((mounted === 0 || hidden) && ctx.state === 'running') void ctx.suspend().catch(() => {});
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    hidden = document.hidden;
+    settle();
+  });
 }
 
 function tone({ freq, to, dur = 0.12, type = 'square', vol = 0.18, delay = 0 }: Tone) {
@@ -88,9 +104,19 @@ export const sfx = {
   },
   tone,
   noise,
-  /** Call from a user gesture (the shell's Play button already does) so iOS allows audio. */
+  /** Call from a user gesture (the shell does on Play, taps and keys) so browsers allow audio and the context resumes. */
   unlock() {
-    if (!muted) audio();
+    if (muted || mounted === 0 || hidden) return;
+    const ac = audio();
+    if (ac && ac.state === 'suspended') void ac.resume().catch(() => {});
+  },
+  /** A game is mounted: keeps the context eligible to run. Returns the release function. */
+  retain() {
+    mounted++;
+    return () => {
+      mounted--;
+      settle();
+    };
   },
   isMuted: () => muted,
   setMuted(m: boolean) {
