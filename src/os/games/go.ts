@@ -365,7 +365,6 @@ export function aiMove(state: GameState, budgetMs = 700): Point | null {
   const budget = Math.max(1, budgetMs);
   const wins = Array<number>(candidates.length).fill(0);
   const visits = Array<number>(candidates.length).fill(0);
-  const moveLimit = state.size * state.size * 2;
   let iteration = 0;
   while (performance.now() - start < budget) {
     const candidateIndex = iteration % candidates.length;

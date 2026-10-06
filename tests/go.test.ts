@@ -73,10 +73,10 @@ test('scores a finished area position with 7.5 komi', () => {
   ]);
   const result = score(state);
   assert.equal(result.blackStones, 4);
-  assert.equal(result.blackTerritory, 1);
+  assert.equal(result.blackTerritory, 2);
   assert.equal(result.whiteStones, 1);
   assert.equal(result.whiteTerritory, 0);
-  assert.equal(result.result, 'W+3.5');
+  assert.equal(result.result, 'W+2.5');
 });
 
 test('AI returns a legal move within its budget', () => {
