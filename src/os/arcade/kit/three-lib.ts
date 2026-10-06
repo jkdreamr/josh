@@ -1,0 +1,3 @@
+// Named re-exports of the three.js classes the 3D games use, so the shared chunk stays tree-shaken with the laptop scene.
+// Add a name here when a game needs a new THREE class.
+export { BoxGeometry, BufferAttribute, BufferGeometry, CanvasTexture, CircleGeometry, Color, ConeGeometry, CylinderGeometry, DirectionalLight, DoubleSide, Float32BufferAttribute, Fog, Group, HemisphereLight, InstancedMesh, Line, LineBasicMaterial, Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, MeshPhongMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, PlaneGeometry, Quaternion, Raycaster, RepeatWrapping, RingGeometry, SRGBColorSpace, Scene, SphereGeometry, TorusGeometry, Vector2, Vector3, WebGLRenderer } from 'three';

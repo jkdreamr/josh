@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { awardPoint, COURT_HALF_LENGTH, createFlight, NET_HEIGHT, newMatch, planShot, serviceCourt, serveFault, SHORT_SERVICE_LINE, simulateLanding, stepFlight, type FlightState, type MatchFormat, type MatchState, type Side, type ShotType } from '../games/badminton';
 import { useOS, type AppProps } from '../types';
 import './game-controls.css';
@@ -392,7 +392,7 @@ function drawCourt(
 
   const serve = sim.flight === null;
   ctx.fillStyle = 'rgba(255,255,255,.64)';
-  ctx.font = '10px ui-sans-serif, sans-serif';
+  ctx.font = '12px ui-sans-serif, sans-serif';
   ctx.textAlign = 'left';
   ctx.fillText(serve ? 'side view · singles' : 'side view · rally', 13, height - 12);
 }
@@ -617,38 +617,54 @@ export default function Badminton(_: AppProps) {
   const setTouch = (key: keyof Input, value: boolean) => {
     inputRef.current[key] = value;
   };
-  const serverName = match.server === 'player' ? 'you' : 'cpu';
+  const handleHitPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    touchHitStart.current = { x: event.clientX, y: event.clientY };
+  };
+  const handleHitPointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const start = touchHitStart.current;
+    const delta = start ? event.clientY - start.y : 0;
+    const mode = inputRef.current.down ? 'down' : inputRef.current.up ? 'up' : delta > 25 ? 'down' : delta < -25 ? 'up' : 'normal';
+    startSwing(mode);
+    touchHitStart.current = null;
+  };
+  const serverName = match.server === 'player' ? 'You serve' : 'CPU serves';
   const serviceLabel = serviceCourt(match);
-  const formatName = format === 'bwf' ? 'bwf · best of 3' : 'casual · to 11';
 
   return (
     <div className={`badminton-app gc-dark ${os.mobile ? 'is-mobile' : ''}`} style={{ '--tint': '#2f7d5b' } as CSSProperties}>
       <header className="badminton-header">
         <div className="badminton-brand"><h1>Stanford Badminton</h1></div>
-        <div className="badminton-format gseg" aria-label="Match Format">
-          <button aria-pressed={format === 'casual'} onClick={() => reset('casual')}>Quick 11</button>
-          <button aria-pressed={format === 'bwf'} onClick={() => reset('bwf')}>BWF 21</button>
+        <div className="badminton-header-controls">
+          <div className="badminton-format gseg" aria-label="Match format">
+            <button aria-pressed={format === 'casual'} onClick={() => reset('casual')}>Quick 11</button>
+            <button aria-pressed={format === 'bwf'} onClick={() => reset('bwf')}>BWF 21</button>
+          </div>
+          <div className="badminton-difficulty gseg" aria-label="Opponent difficulty">
+            <button aria-pressed={difficulty === 'easy'} onClick={() => setDifficulty('easy')}>Easy</button>
+            <button aria-pressed={difficulty === 'normal'} onClick={() => setDifficulty('normal')}>Normal</button>
+            <button aria-pressed={difficulty === 'hard'} onClick={() => setDifficulty('hard')}>Hard</button>
+          </div>
         </div>
       </header>
       <section className="badminton-scoreboard">
         <div className="badminton-player-score">
-          <span className="badminton-name"><i className={match.server === 'player' ? 'is-serving' : ''} /> you</span>
+          <span className="badminton-name"><i className={match.server === 'player' ? 'is-serving' : ''} /> You</span>
           <strong>{match.points.player}</strong>
-          <small>{match.games.player} games</small>
+          <small>{match.games.player} {match.games.player === 1 ? 'game' : 'games'}</small>
         </div>
         <div className="badminton-score-center">
-          <span>game {match.game} · {match.bestOf === 3 ? 'best of 3' : 'one game'}</span>
+          <span>Game {match.game} · {match.bestOf === 3 ? 'Best of 3' : 'One game'}</span>
           <b>{call}</b>
-          <small>{match.matchWinner ? `${match.matchWinner === 'player' ? 'you' : 'cpu'} win the match` : `${serverName} serves · ${serviceLabel} court`}</small>
+          <small>{match.matchWinner ? match.matchWinner === 'player' ? 'You win the match' : 'CPU wins the match' : `${serverName} · ${serviceLabel} court`}</small>
         </div>
         <div className="badminton-player-score is-cpu">
-          <span className="badminton-name"><i className={match.server === 'cpu' ? 'is-serving' : ''} /> cpu <em>{difficulty}</em></span>
+          <span className="badminton-name"><i className={match.server === 'cpu' ? 'is-serving' : ''} /> CPU</span>
           <strong>{match.points.cpu}</strong>
-          <small>{match.games.cpu} games</small>
+          <small>{match.games.cpu} {match.games.cpu === 1 ? 'game' : 'games'}</small>
         </div>
       </section>
       {match.intervalAt11 && Math.max(match.points.player, match.points.cpu) === 11 && format === 'bwf' && !match.matchWinner && <div className="badminton-interval">interval · take a breath</div>}
-      {match.matchWinner && <div className="badminton-match-result">{match.matchWinner === 'player' ? 'you win' : 'cpu wins'} · <button className="gbtn" onClick={() => reset(format)}>Play Again</button></div>}
+      {match.matchWinner && <div className="badminton-match-result">{match.matchWinner === 'player' ? 'You win' : 'CPU wins'} · <button className="gbtn" onClick={() => reset(format)}>Play Again</button></div>}
       <div className="badminton-stage">
         <canvas ref={canvasRef} aria-label="Badminton singles rally" />
         <div className="badminton-stage-hud">
@@ -657,38 +673,28 @@ export default function Badminton(_: AppProps) {
         </div>
       </div>
       <div className="badminton-toolbar">
-        <div className="badminton-controls">
-          <span className="ghelp badminton-help">{os.mobile ? 'Swipe up for a Smash or Clear · Swipe down for a Drop or Net Shot' : 'Move with A/D or ←/→ · Jump with W/↑ · Hit with Space/J'}</span>
-          <div className="badminton-touch-controls">
-            <button className="gpad gpad-secondary" title="Move Left (A or Left Arrow)" onPointerDown={() => setTouch('left', true)} onPointerUp={() => setTouch('left', false)} onPointerLeave={() => setTouch('left', false)}>Left</button>
-            <button className="gpad gpad-secondary" title="Move Right (D or Right Arrow)" onPointerDown={() => setTouch('right', true)} onPointerUp={() => setTouch('right', false)} onPointerLeave={() => setTouch('right', false)}>Right</button>
-            <button className="gpad gpad-secondary" title="Jump (W or Up Arrow)" onPointerDown={() => setTouch('up', true)} onPointerUp={() => setTouch('up', false)} onPointerLeave={() => setTouch('up', false)}>Jump</button>
+        <span className="ghelp badminton-help">{os.mobile ? 'Swipe Hit up for a smash or clear · down for a drop or net shot' : 'Move with A/D or ←/→ · Jump with W/↑ · Hit with Space/J'}</span>
+        <div className="badminton-desktop-hit-controls">
+          <button className="gbtn" title="Hit (Space or J)" onClick={() => startSwing()}>Hit</button>
+          <button className="gbtn" title="Hold for a Drop or Net Shot" onPointerDown={() => setTouch('down', true)} onPointerUp={() => setTouch('down', false)} onPointerLeave={() => setTouch('down', false)} onPointerCancel={() => setTouch('down', false)}>Drop</button>
+          <button className="gbtn" title="Hold for a Smash or Clear" onPointerDown={() => setTouch('up', true)} onPointerUp={() => setTouch('up', false)} onPointerLeave={() => setTouch('up', false)} onPointerCancel={() => setTouch('up', false)}>Smash</button>
+        </div>
+        <div className="badminton-touch-pad">
+          <div className="badminton-movement-controls">
+            <button className="gpad gpad-secondary" title="Move Left (A or Left Arrow)" onPointerDown={() => setTouch('left', true)} onPointerUp={() => setTouch('left', false)} onPointerLeave={() => setTouch('left', false)} onPointerCancel={() => setTouch('left', false)}>Left</button>
+            <button className="gpad gpad-secondary" title="Move Right (D or Right Arrow)" onPointerDown={() => setTouch('right', true)} onPointerUp={() => setTouch('right', false)} onPointerLeave={() => setTouch('right', false)} onPointerCancel={() => setTouch('right', false)}>Right</button>
+          </div>
+          <div className="badminton-action-controls">
+            <button className="gpad gpad-secondary badminton-jump-button" title="Jump (W or Up Arrow)" onPointerDown={() => setTouch('up', true)} onPointerUp={() => setTouch('up', false)} onPointerLeave={() => setTouch('up', false)} onPointerCancel={() => setTouch('up', false)}>Jump</button>
+            <div className="badminton-hit-stack">
+              <div className="badminton-hit-modes">
+                <button className="gbtn gbtn-sm" title="Hold for a Drop or Net Shot" onPointerDown={() => setTouch('down', true)} onPointerUp={() => setTouch('down', false)} onPointerLeave={() => setTouch('down', false)} onPointerCancel={() => setTouch('down', false)}>Drop</button>
+                <button className="gbtn gbtn-sm" title="Hold for a Smash or Clear" onPointerDown={() => setTouch('up', true)} onPointerUp={() => setTouch('up', false)} onPointerLeave={() => setTouch('up', false)} onPointerCancel={() => setTouch('up', false)}>Smash</button>
+              </div>
+              <button className="gpad badminton-hit-button" title="Hit (Space or J)" onPointerDown={handleHitPointerDown} onPointerUp={handleHitPointerUp} onPointerLeave={() => { touchHitStart.current = null; }} onPointerCancel={() => { touchHitStart.current = null; }}>Hit</button>
+            </div>
           </div>
         </div>
-        <div className="badminton-hit-controls">
-          <button className="gpad badminton-hit-button" title="Hit (Space or J)" onPointerDown={(event) => { touchHitStart.current = { x: event.clientX, y: event.clientY }; }} onPointerUp={(event) => {
-            const start = touchHitStart.current;
-            const delta = start ? event.clientY - start.y : 0;
-            const mode = inputRef.current.down ? 'down' : inputRef.current.up ? 'up' : delta > 25 ? 'down' : delta < -25 ? 'up' : 'normal';
-            startSwing(mode);
-            touchHitStart.current = null;
-          }}>
-            Hit
-          </button>
-          <div className="badminton-hit-modes">
-            <button className="gbtn" title="Hold for a Drop or Net Shot" onPointerDown={() => setTouch('down', true)} onPointerUp={() => setTouch('down', false)} onPointerLeave={() => setTouch('down', false)}>Drop</button>
-            <button className="gbtn" title="Hold for a Smash or Clear" onPointerDown={() => setTouch('up', true)} onPointerUp={() => setTouch('up', false)} onPointerLeave={() => setTouch('up', false)}>Smash</button>
-          </div>
-        </div>
-        <label className="badminton-difficulty">
-          <span className="glabel">Opponent</span>
-          <select className="ginput" value={difficulty} onChange={(event) => setDifficulty(event.target.value as typeof difficulty)}>
-            <option value="easy">Easy</option>
-            <option value="normal">Normal</option>
-            <option value="hard">Hard</option>
-          </select>
-        </label>
-        <div className="badminton-statline"><span>{formatName}</span><b>{stats.duration.toFixed(1)}s · {Math.round(stats.speed)} km/h</b></div>
       </div>
     </div>
   );

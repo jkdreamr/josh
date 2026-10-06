@@ -115,35 +115,35 @@ function MetricsPanel({ metrics, compact = false }: { metrics: BoatMetrics; comp
     <div className={`cox-metrics ${compact ? 'is-compact' : ''}`}>
       <div className="cox-primary-metrics">
         <div className="cox-big-metric">
-          <small>rate</small>
+          <small>Rate</small>
           <b>{metrics.rate === null ? '--' : Math.round(metrics.rate)}</b>
           <span>spm</span>
         </div>
         <div className="cox-big-metric">
-          <small>split</small>
+          <small>Split</small>
           <b>{formatPace(metrics.split)}</b>
           <span>/500 m</span>
         </div>
-        <div className="cox-small-metric"><small>time</small><b>{formatTime(metrics.elapsed)}</b></div>
-        <div className="cox-small-metric"><small>meters</small><b>{Math.floor(metrics.distance)}</b></div>
+        <div className="cox-small-metric"><small>Time</small><b>{formatTime(metrics.elapsed)}</b></div>
+        <div className="cox-small-metric"><small>Meters</small><b>{Math.floor(metrics.distance)}</b></div>
       </div>
       <div className="cox-secondary-metrics">
-        <span><small>avg split</small><b>{formatPace(metrics.avgSplit)}</b></span>
-        <span><small>strokes</small><b>{metrics.strokes}</b></span>
-        <span><small>dps</small><b>{metrics.dps === null ? '--' : metrics.dps.toFixed(1)} m</b></span>
+        <span><small>Avg split</small><b>{metrics.distance < 50 ? '--' : formatPace(metrics.avgSplit)}</b></span>
+        <span><small>Strokes</small><b>{metrics.strokes}</b></span>
+        <span><small>Dps</small><b>{metrics.dps === null ? '--' : metrics.dps.toFixed(1)} m</b></span>
       </div>
       {!compact && (
         <div className="cox-bio-metrics">
           <div className="cox-legs-meter">
-            <span><small>legs</small><b>{Math.round(metrics.legs * 100)}%</b></span>
+            <span><small>Legs</small><b>{Math.round(metrics.legs * 100)}%</b></span>
             <i><em style={{ width: `${metrics.legs * 100}%` }} /></i>
           </div>
           <div className="cox-swing-meter">
-            <span><small>swing</small><b>{Math.round(metrics.swing * 100)}%</b></span>
+            <span><small>Swing</small><b>{Math.round(metrics.swing * 100)}%</b></span>
             <i><em style={{ width: `${metrics.swing * 100}%` }} /></i>
           </div>
           <div className="cox-power-pips" aria-label={`${metrics.power10} power tens remaining`}>
-            <small>power 10</small>
+            <small>Power 10</small>
             <span>{Array.from({ length: metrics.power10Max }, (_, i) => <i key={i} className={i < metrics.power10 ? 'is-ready' : ''} />)}</span>
             {metrics.power10Left > 0 && <b>{metrics.power10Left} left</b>}
           </div>
@@ -540,7 +540,7 @@ export default function CoxBox(_: AppProps) {
             </div>
             {prefs.mode === 'solo' && (
               <div className="cox-control-group">
-                <span className="glabel">Pace Boat</span>
+                <span className="glabel">Pace boat</span>
                 <div className="gseg">
                   {(['none', 'best', 'jv', 'cal', 'world'] as const).map((opponent) => (
                     <button
@@ -557,7 +557,7 @@ export default function CoxBox(_: AppProps) {
               </div>
             )}
             <div className="cox-control-group cox-name-field">
-              <label className="glabel" htmlFor="cox-name">Your Name</label>
+              <label className="glabel" htmlFor="cox-name">Your name</label>
               <input
                 id="cox-name"
                 className="ginput"
@@ -586,7 +586,7 @@ export default function CoxBox(_: AppProps) {
               <div className="cox-device-bottom"><i /><i /><i /></div>
             </div>
             <div className="cox-control-hint">
-              <p className="ghelp">{prefs.mode === 'friend' ? 'A and Q for P1 · L and P for P2' : 'Space to row · P for a power ten'}</p>
+              <p className="ghelp cox-keyboard-help">{prefs.mode === 'friend' ? 'A and Q for P1 · L and P for P2' : 'Space to row · P for a power ten'}</p>
               <span className="cox-control-note">Hold your rhythm. Let the boat run.</span>
             </div>
           </aside>
@@ -603,7 +603,7 @@ export default function CoxBox(_: AppProps) {
             <p>{falseStart ? 'back it down. let the boat settle.' : 'sit ready. wait for the light.'}</p>
           </div>
           <div className="cox-call-controls">
-            <span className="ghelp">{prefs.mode === 'friend' ? 'A and Q for P1 · L and P for P2' : 'Space to row · P for a power ten'}</span>
+            <span className="ghelp cox-keyboard-help">{prefs.mode === 'friend' ? 'A and Q for P1 · L and P for P2' : 'Space to row · P for a power ten'}</span>
             {prefs.mode === 'friend' ? (
               <div className="cox-friend-buttons">
                 <div className="cox-player-touch-controls">
@@ -665,7 +665,7 @@ export default function CoxBox(_: AppProps) {
           </div>
           <div className="cox-call-strip"><span className="cox-call-wave">≈</span><p>{callText}</p></div>
           <div className="cox-race-controls">
-            <span className="ghelp">{prefs.mode === 'friend' ? 'A and Q for P1 · L and P for P2' : 'Space to row · P for a power ten'}</span>
+            <span className="ghelp cox-keyboard-help">{prefs.mode === 'friend' ? 'A and Q for P1 · L and P for P2' : 'Space to row · P for a power ten'}</span>
             {prefs.mode === 'friend' ? (
               <div className="cox-friend-buttons">
                 <div className="cox-player-touch-controls">
@@ -691,33 +691,33 @@ export default function CoxBox(_: AppProps) {
 
       {screen === 'finish' && (
         <div className="cox-finish-screen">
-          <header className="cox-finish-header"><span className="cox-brand-mini"><i /> Race Complete</span><button className="gbtn gbtn-plain" onClick={showMenu}>Menu</button></header>
+          <header className="cox-finish-header"><span className="cox-brand-mini"><i /> Race Complete</span></header>
           <div className="cox-finish-scroll">
             <div className="cox-finish-hero"><small className="cox-finish-detail">{raceLabel(prefs.distance)} · Weigh Enough</small><h1>{formatTime(ownMetrics?.finishTime)}</h1><p>that was a piece. nice work.</p></div>
             <div className={`cox-results-grid ${humanCount === 2 ? 'is-dual' : ''}`}>
               {currentMetrics.slice(0, humanCount).map((row, index) => {
                 const margin = marginFor(index);
+                const displayName = row.name.charAt(0).toUpperCase() + row.name.slice(1);
                 const postedEntry = posted[index];
                 return (
                   <section className={`cox-result-card player-${index + 1}`} key={row.name}>
-                    <header><b>{row.name}</b><span>{index === 0 ? 'stanford' : 'friend'}</span></header>
+                    <header><b>{displayName}</b><span>{index === 0 ? 'Stanford' : 'Friend'}</span></header>
                     <div className="cox-result-time">{formatTime(row.finishTime)}</div>
                     <div className="cox-result-stats">
-                      <span><small>avg split</small><b>{formatPace(row.avgSplit)}</b></span>
-                      <span><small>avg rate</small><b>{Math.round((row.strokes * 60) / (row.finishTime ?? 1))}</b></span>
-                      <span><small>strokes</small><b>{row.strokes}</b></span>
-                      <span><small>dps</small><b>{row.dps?.toFixed(1) ?? '--'} m</b></span>
+                      <span><small>Avg split</small><b>{formatPace(row.avgSplit)}</b></span>
+                      <span><small>Avg rate</small><b>{Math.round((row.strokes * 60) / (row.finishTime ?? 1))}</b></span>
+                      <span><small>Strokes</small><b>{row.strokes}</b></span>
+                      <span><small>Dps</small><b>{row.dps?.toFixed(1) ?? '--'} m</b></span>
                     </div>
                     {margin && <p className="cox-margin">{margin.seconds >= 0 ? 'up' : 'down'} {Math.abs(margin.seconds).toFixed(2)} s<span>{marginLabel(Math.abs(margin.lengths) * 18)}</span></p>}
                     <div className="cox-result-name">
-                      <label className="glabel" htmlFor={`cox-result-name-${index}`}>Name on the Leaderboard</label>
-                      <input id={`cox-result-name-${index}`} className="ginput" maxLength={16} value={names[index] ?? ''} onChange={(event) => setNames((current) => current.map((name, i) => i === index ? event.target.value.slice(0, 16) : name))} />
+                      <label className="glabel" htmlFor={`cox-result-name-${index}`}>Name on the leaderboard</label>
+                      <div className="cox-post-row">
+                        <input id={`cox-result-name-${index}`} className="ginput" maxLength={16} value={names[index] ?? ''} onChange={(event) => setNames((current) => current.map((name, i) => i === index ? event.target.value.slice(0, 16) : name))} placeholder="Your name" />
+                        {!postedEntry && <button className="gbtn" disabled={posting === index} onClick={() => void postTime(index)}>{posting === index ? 'Posting…' : 'Post Time'}</button>}
+                      </div>
+                      {postedEntry && <div className="cox-posted-rank">{postedEntry.rank ? `Rank ${postedEntry.rank}` : 'Time posted'} · {board.scope === 'global' ? 'Global' : 'On this device'}</div>}
                     </div>
-                    {postedEntry ? (
-                      <div className="cox-posted-rank">{postedEntry.rank ? `rank ${postedEntry.rank}` : 'time posted'} · {board.scope === 'global' ? 'global' : 'on this device'}</div>
-                    ) : (
-                      <button className="gbtn" disabled={posting === index} onClick={() => void postTime(index)}>{posting === index ? 'Posting…' : 'Post Time'}</button>
-                    )}
                   </section>
                 );
               })}
