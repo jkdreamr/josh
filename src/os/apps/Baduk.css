@@ -1,0 +1,394 @@
+.baduk-app {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: #111a19;
+  color: #eee9dc;
+  font-family: var(--gc-font);
+}
+
+.baduk-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 17px 21px 14px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+
+.baduk-header-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.baduk-game-mode {
+  flex: none;
+}
+
+.baduk-header p,
+.baduk-side small,
+.baduk-side footer,
+.baduk-count-panel p,
+.baduk-score-card p {
+  color: #93a09a;
+  font-size: 10px;
+}
+
+.baduk-header h1 {
+  margin: 0;
+  color: #fbf7eb;
+  font-family: var(--gc-font);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.baduk-header h1 span,
+.baduk-korean {
+  margin-left: 4px;
+  color: #d9b77b;
+  font-family: "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", ui-serif, Georgia, serif;
+  font-size: 17px;
+}
+
+.baduk-header p {
+  margin: 0 0 3px;
+}
+
+.baduk-main {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) 204px;
+  gap: 15px;
+  padding: 15px 17px 12px;
+}
+
+.baduk-board-wrap {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+}
+
+.baduk-board {
+  display: block;
+  width: min(100%, calc(100vh - 170px), 520px);
+  max-height: 100%;
+  overflow: visible;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.baduk-grid-line {
+  stroke: #392719;
+  stroke-width: 1px;
+  shape-rendering: crispEdges;
+  vector-effect: non-scaling-stroke;
+}
+
+.baduk-coordinate {
+  fill: #57422a;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+.baduk-hoshi {
+  fill: #3b2818;
+}
+
+.baduk-board-border {
+  fill: none;
+  stroke: rgba(103, 69, 33, .3);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+.baduk-win-line {
+  stroke: rgba(140, 21, 21, .62);
+  stroke-width: 2;
+  stroke-linecap: round;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.baduk-dead-mark {
+  fill: none;
+  stroke: #d76a56;
+  stroke-linecap: round;
+  stroke-width: 2.4;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,.45));
+}
+
+.baduk-last-move {
+  fill: #a44731;
+  stroke: #fff6df;
+  stroke-width: 1;
+}
+
+.baduk-last-move.is-on-black {
+  fill: #f4d47d;
+  stroke: #1a1914;
+}
+
+.baduk-ghost-stone {
+  opacity: .34;
+  pointer-events: none;
+}
+
+.baduk-side {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 3px 0 0;
+}
+
+.baduk-turn-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 9px;
+  background: #182321;
+}
+
+.baduk-turn-card > div {
+  display: grid;
+  gap: 2px;
+}
+
+.baduk-turn-card b {
+  color: #f5efe2;
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.baduk-turn-stone,
+.baduk-captures i {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 50%;
+  box-shadow: 0 2px 5px rgba(0,0,0,.35);
+}
+
+.baduk-turn-stone.is-black,
+.baduk-captures i.is-black {
+  background: radial-gradient(circle at 33% 26%, #5e615e, #090a09 70%);
+}
+
+.baduk-turn-stone.is-white,
+.baduk-captures i.is-white {
+  background: radial-gradient(circle at 33% 26%, #fff, #cdc7bb 75%);
+}
+
+.baduk-captures {
+  display: grid;
+  gap: 7px;
+  padding: 0 3px;
+}
+
+.baduk-captures span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #bec6bd;
+  font-size: 10px;
+}
+
+.baduk-captures i {
+  width: 13px;
+  height: 13px;
+}
+
+.baduk-captures b {
+  margin-left: auto;
+  color: #f5efe2;
+  font-variant-numeric: tabular-nums;
+}
+
+.baduk-mode,
+.baduk-difficulty {
+  display: grid;
+  gap: 6px;
+}
+
+.baduk-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.baduk-count-panel,
+.baduk-score-card {
+  display: grid;
+  gap: 7px;
+  padding: 11px;
+  border: 1px solid rgba(217,183,123,.22);
+  border-radius: 8px;
+  background: #1b2723;
+}
+
+.baduk-count-panel > div {
+  display: grid;
+  gap: 3px;
+}
+
+.baduk-count-panel > div b {
+  color: #f2ead8;
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.baduk-count-panel p {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.baduk-count-panel .gbtn {
+  width: 100%;
+}
+
+.baduk-score-card {
+  gap: 5px;
+}
+
+.baduk-score-card > strong {
+  margin: 0 0 2px;
+  color: #f0d59e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 23px;
+  font-weight: 500;
+}
+
+.baduk-score-card > div {
+  display: flex;
+  justify-content: space-between;
+  color: #c2cbc1;
+  font-size: 10px;
+}
+
+.baduk-score-card > div b {
+  color: #f0eee7;
+  font-variant-numeric: tabular-nums;
+}
+
+.baduk-score-card p {
+  margin: 2px 0 0;
+}
+
+.baduk-side footer {
+  margin-top: auto;
+  font-size: 9px;
+}
+
+.baduk-touch-hint,
+.baduk-screenreader {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 650px) {
+  .baduk-header {
+    flex-wrap: wrap;
+    padding: 13px 15px 10px;
+  }
+
+  .baduk-header-main {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .baduk-header p {
+    max-width: 100%;
+    margin-top: 8px;
+    font-size: 10px;
+  }
+
+  .baduk-main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 9px;
+    padding: 8px 10px 9px;
+  }
+
+  .baduk-board-wrap {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .baduk-board {
+    width: auto;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  .baduk-side {
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    align-items: center;
+    gap: 7px 9px;
+    padding: 0 3px;
+  }
+
+  .baduk-turn-card {
+    padding: 7px 9px;
+  }
+
+  .baduk-turn-card b {
+    font-size: 12px;
+  }
+
+  .baduk-captures {
+    gap: 4px;
+  }
+
+  .baduk-mode {
+    grid-column: 1 / -1;
+  }
+
+  .baduk-difficulty {
+    grid-column: 1 / -1;
+  }
+
+  .baduk-actions {
+    grid-column: 1 / -1;
+  }
+
+  .baduk-side footer {
+    grid-column: 1 / -1;
+    margin: 0;
+    text-align: center;
+  }
+
+  .baduk-count-panel,
+  .baduk-score-card {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 380px) {
+  .baduk-header p {
+    max-width: 142px;
+  }
+
+  .baduk-main {
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+}

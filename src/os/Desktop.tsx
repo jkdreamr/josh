@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode, type MutableRefObject } from 'react';
-import { apps, dockOrder, mobileDock, tabletDock } from './registry';
+import { apps, dockOrder, games, mobileDock, tabletDock } from './registry';
 import { AppIcon, type IconKind } from './icons';
 import { OSContext, useOS as useOSLocal, type AppId, type OpenArgs, type OSApi } from './types';
 import { folders, links, profile } from './data';
@@ -548,6 +548,7 @@ const desktopItems: DesktopItem[] = [
   { key: 'about', label: 'about me.txt', icon: 'doc', run: (os) => os.open('notes', { note: 'about' }) },
   ...folders.map<DesktopItem>((f) => ({ key: f.id, label: f.label, icon: 'folder', run: (os) => os.open('finder', { folder: f.id }) })),
   { key: 'coxbox', label: 'Cox Box', icon: 'coxbox', run: (os) => os.open('coxbox') },
+  ...games.filter((id) => id !== 'coxbox').map<DesktopItem>((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: (os) => os.open(id) })),
 ];
 
 function DesktopIcons() {
@@ -670,8 +671,10 @@ function HomeScreen() {
   const os = useOSLocal();
   const now = useNow(15_000);
   const weather = useWeather();
+  const dock = os.tablet ? tabletDock : mobileDock;
   const items: { key: string; label: string; icon: IconKind; run: () => void }[] = [
-    ...dockOrder.filter((id) => !(os.tablet ? tabletDock : mobileDock).includes(id)).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: () => os.open(id) })),
+    ...dockOrder.filter((id) => !dock.includes(id)).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: () => os.open(id) })),
+    ...games.filter((id) => !dockOrder.includes(id) && !dock.includes(id)).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: () => os.open(id) })),
     ...folders.map((f) => ({ key: f.id, label: f.label, icon: 'folder' as IconKind, run: () => os.open('finder', { folder: f.id }) })),
   ];
   return (
@@ -945,7 +948,7 @@ type Hit = { key: string; label: string; sub: string; icon: IconKind; run: (os: 
 
 function buildIndex(): Hit[] {
   const hits: Hit[] = [];
-  for (const id of [...dockOrder, 'about' as AppId, 'trash' as AppId]) {
+  for (const id of [...dockOrder, ...games.filter((game) => !dockOrder.includes(game)), 'about' as AppId, 'trash' as AppId]) {
     const a = apps[id];
     hits.push({ key: `app-${id}`, label: a.title, sub: 'Application', icon: a.icon, run: (os) => os.open(id), hay: `${a.title} ${a.keywords ?? ''}` });
   }

@@ -82,9 +82,12 @@ export default function OS() {
   const [gen, setGen] = useState(0);
   const [mode, setMode] = useState<'pending' | '3d' | 'css'>('pending');
   const [ready, setReady] = useState(false);
+  const beatLink = useRef<string | null>(null);
   const use3d = device === 'laptop' && mode === '3d';
   const use3dRef = useRef(use3d);
   use3dRef.current = use3d;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const l3d = useRef<Laptop3DHandle>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
@@ -93,6 +96,18 @@ export default function OS() {
   const timers = useRef<number[]>([]);
   const fsRef = useRef(fs);
   fsRef.current = fs;
+
+  useEffect(() => {
+    beatLink.current = new URLSearchParams(window.location.search).get('beat');
+  }, []);
+
+  useEffect(() => {
+    if (phase !== 'on' || !mounted || !beatLink.current) return;
+    const beat = beatLink.current;
+    beatLink.current = null;
+    const timer = window.setTimeout(() => apiRef.current?.open('beatpad', { beat }), 0);
+    return () => window.clearTimeout(timer);
+  }, [phase, mounted]);
 
   const clearTimers = () => {
     timers.current.forEach((t) => clearTimeout(t));
