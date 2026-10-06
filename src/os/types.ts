@@ -44,7 +44,12 @@ export type OSApi = {
   toggleFullscreen: () => void;
   restart: () => void;
   sleep: () => void;
+  /** Shuts the lid (3D laptop) or puts the device to sleep. */
+  closeLid: () => void;
   openLauncher: () => void;
+  /** True while an app holds a live camera stream (lights the camera indicator). */
+  camera: boolean;
+  setCamera: (on: boolean) => void;
 };
 
 export const OSContext = createContext<OSApi | null>(null);

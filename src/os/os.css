@@ -204,6 +204,27 @@ kbd {
   transform: translateX(-50%);
   background: radial-gradient(circle at 35% 35%, #3b4a66, #0a0d14 70%);
 }
+/* camera in use: the green LED beside the lens */
+.cam-led {
+  position: absolute;
+  left: calc(50% + var(--lw) * 0.0095);
+  top: 50%;
+  width: calc(var(--lw) * 0.0034);
+  height: calc(var(--lw) * 0.0034);
+  min-width: 3px;
+  min-height: 3px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: #0e1a12;
+  transition: background 0.12s, box-shadow 0.12s;
+}
+.cam-led.is-on {
+  background: #4cff7a;
+  box-shadow:
+    0 0 2px #4cff7a,
+    0 0 calc(var(--lw) * 0.006) rgba(76, 255, 122, 0.75),
+    0 0 calc(var(--lw) * 0.014) rgba(76, 255, 122, 0.35);
+}
 .screen {
   position: absolute;
   inset: 0;
@@ -1286,6 +1307,15 @@ kbd {
   display: flex;
   gap: 6px;
   align-items: center;
+}
+/* iOS camera-in-use indicator */
+.sb-cam {
+  width: 7px;
+  height: 7px;
+  margin-right: 3px;
+  border-radius: 50%;
+  background: #34c759;
+  box-shadow: 0 0 4px rgba(52, 199, 89, 0.7);
 }
 .home {
   position: absolute;
@@ -3627,6 +3657,18 @@ kbd {
   position: absolute;
   inset: 0;
   overflow: clip;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.cap-reset {
+  animation: cap-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes cap-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 .l3d-gl,
 .l3d-css {
