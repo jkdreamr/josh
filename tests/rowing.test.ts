@@ -58,6 +58,20 @@ test('human pace calibration at 20, 34 and 40 spm', () => {
   assert.ok(split40 >= 83 && split40 <= 88, `40 spm: ${split40}`);
 });
 
+test('legs recover during a rest after rowing at 44 spm', () => {
+  const race = makeHuman(2000);
+  startSignal(race);
+  const interval = 60 / 44;
+  let nextCatch = 0;
+  while (boatMetrics(race, 0).strokes < 30) {
+    if (race.elapsed + 1e-9 >= nextCatch && catchStroke(race, 0) === 'caught') nextCatch += interval;
+    step(race, 1 / 240);
+  }
+  const legsAfterPiece = boatMetrics(race, 0).legs;
+  step(race, 60);
+  assert.ok(boatMetrics(race, 0).legs > legsAfterPiece);
+});
+
 test('high-rate fatigue and rushing make the crew slower', () => {
   const at30 = runPiece(30, 2000).metrics.elapsed;
   const at36 = runPiece(36, 2000).metrics.elapsed;

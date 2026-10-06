@@ -34,6 +34,16 @@ function raceLabel(distance: RaceDistance): string {
   return distance === 1000 ? '1k' : `${distance}m`;
 }
 
+function marginLabel(meters: number): string {
+  const distance = Math.abs(meters);
+  if (distance >= 4.5) return `${(distance / 18).toFixed(1)} lengths`;
+  if (distance >= 2.2) {
+    const seats = Math.max(1, Math.round(distance / 2.2));
+    return `${seats} seat${seats === 1 ? '' : 's'}`;
+  }
+  return 'by a bow ball';
+}
+
 function readPreferences(): Preferences {
   try {
     const value = JSON.parse(localStorage.getItem('coxbox-prefs') ?? 'null');
@@ -76,14 +86,24 @@ function BoatSvg({ metrics, color, accent, ghost = false }: { metrics: BoatMetri
             {metrics.phase === 'drive' && <ellipse cx={endX} cy={endY + 4} rx="5.5" ry="2.3" />}
             <line x1={50 + side * 8} y1={y} x2={endX} y2={endY} />
             <circle cx={50 + side * 8} cy={y} r="3.1" />
-            <circle className="cox-rower" cx="50" cy={y} r="5.2" />
           </g>
         );
       })}
       <path className="cox-hull" d="M50 4 C42 14 35 36 35 67 L39 195 Q50 222 61 195 L65 67 C65 36 58 14 50 4Z" fill={color} />
       <path className="cox-hull-accent" d="M50 16 L50 198" stroke={accent} />
       <path className="cox-stern" d="M40 193 Q50 203 60 193 L57 210 Q50 217 43 210Z" fill={accent} />
-      <circle className="cox-coxswain" cx="50" cy="213" r="4" />
+      {Array.from({ length: 8 }, (_, i) => {
+        const y = 27 + i * 23;
+        const shift = (progress - 0.5) * 4;
+        return (
+          <g className="cox-seat-rower" key={i} transform={`translate(0 ${shift})`}>
+            <path className="cox-rower-body" d={`M46 ${y - 1} Q50 ${y - 4} 54 ${y - 1} L53 ${y + 5} L47 ${y + 5}Z`} />
+            <circle className="cox-rower-head" cx="50" cy={y - 5} r="2.4" />
+          </g>
+        );
+      })}
+      <path className="cox-coxswain-body" d="M46 214 Q50 209 54 214 L53 220 L47 220Z" />
+      <circle className="cox-coxswain" cx="50" cy="211" r="2.7" />
       {ghost && <path className="cox-ghost-wash" d="M50 4 C42 14 35 36 35 67 L39 195 Q50 222 61 195 L65 67 C65 36 58 14 50 4Z" />}
     </svg>
   );
@@ -170,6 +190,10 @@ export default function CoxBox(_: AppProps) {
     setPrefsLoaded(true);
     setPbAvailable(Boolean(readPersonalBest(saved.distance)));
   }, []);
+
+  useEffect(() => {
+    setNames((current) => [prefs.name, current[1] || 'friend']);
+  }, [prefs.name]);
 
   useEffect(() => {
     if (window.matchMedia('(pointer: fine)').matches) rootRef.current?.focus();
@@ -390,8 +414,9 @@ export default function CoxBox(_: AppProps) {
         else if (own.lenRush < 0.999) phrase = 'rushing the slide. let it run.';
         else if (own.legs < 0.2) phrase = 'legs are going, stay long.';
         else if (own.rate !== null && own.rate > 42) phrase = 'too high, sit up and settle.';
-        else if (opponent && Math.abs(gap) > 18) phrase = gap > 0 ? "we've got open water." : `we're down two seats on ${opponent.name}, walk on them.`;
-        else if (opponent && Math.abs(gap) >= 2.2) phrase = gap > 0 ? `we're up ${Math.max(1, Math.round(gap / 2.2))} seats on ${opponent.name}.` : `we're down ${Math.max(1, Math.round(-gap / 2.2))} seats on ${opponent.name}, walk on them.`;
+        else if (opponent && Math.abs(gap) > 18) phrase = gap > 0 ? "we've got open water." : `we're down in open water to ${opponent.name}, walk on them.`;
+        else if (opponent && Math.abs(gap) >= 2.2) phrase = gap > 0 ? `we're up ${marginLabel(gap)} on ${opponent.name}.` : `we're down ${marginLabel(gap)} on ${opponent.name}, walk on them.`;
+        else if (opponent && Math.abs(gap) > 0.1) phrase = gap > 0 ? `we're up ${marginLabel(gap)} on ${opponent.name}.` : `we're down ${marginLabel(gap)} on ${opponent.name}, walk on them.`;
         else if (own.swing > 0.8) phrase = "there it is, that's swing.";
         else if (own.rate !== null && own.rate >= 31 && own.rate <= 37) phrase = "that's our base. long and strong.";
         if (callRef.current !== phrase) setCall(phrase);
@@ -438,6 +463,9 @@ export default function CoxBox(_: AppProps) {
     : ownMetrics && opponentMetrics && prefs.mode === 'friend'
       ? (ownMetrics.distance + opponentMetrics.distance) / 2
       : ownMetrics?.distance ?? 0;
+  const firstBuoy = Math.floor((camera - visibleMeters / 2) / 10);
+  const buoyMarkers = Array.from({ length: Math.ceil(visibleMeters / 10) + 2 }, (_, index) => (firstBuoy + index) * 10)
+    .filter((distance) => distance >= 0 && distance <= prefs.distance);
   const farPlayer = prefs.mode === 'friend' && Math.abs(gap) > visibleMeters * 0.85
     ? gap > 0 ? { name: opponentMetrics?.name ?? 'p2', distance: Math.abs(gap) } : { name: ownMetrics?.name ?? 'p1', distance: Math.abs(gap) }
     : null;
@@ -558,8 +586,8 @@ export default function CoxBox(_: AppProps) {
             <div className="cox-control-hint">
               <small>controls</small>
               {prefs.mode === 'friend' ? (
-                <p><b>p1</b> a to catch · q for power 10<br /><b>p2</b> l to catch · p for power 10</p>
-              ) : <p><b>space</b> to catch · <b>p</b> for power 10</p>}
+                <p><b>p1</b> row <kbd>a</kbd> · power 10 <kbd>q</kbd><br /><b>p2</b> row <kbd>l</kbd> · power 10 <kbd>p</kbd></p>
+              ) : <p>row <kbd>space</kbd> · power 10 <kbd>p</kbd></p>}
               <span>hold your rhythm. let the boat run.</span>
             </div>
           </aside>
@@ -576,10 +604,13 @@ export default function CoxBox(_: AppProps) {
             <p>{falseStart ? 'back it down. let the boat settle.' : 'sit ready. wait for the light.'}</p>
           </div>
           <div className="cox-call-controls">
-            <span>{prefs.mode === 'friend' ? 'p1 a · p2 l' : 'space to catch'}</span>
+            <span>{prefs.mode === 'friend' ? 'p1 row A · p2 row L' : 'row Space'}</span>
             {prefs.mode === 'friend' ? (
-              <div className="cox-friend-buttons"><button onPointerDown={rowPointer(0)}><small>p1 · a</small>catch</button><button onPointerDown={rowPointer(1)}><small>p2 · l</small>catch</button></div>
-            ) : <button className="cox-row-button" onPointerDown={rowPointer(0)}><small>catch</small>row</button>}
+              <div className="cox-friend-buttons">
+                <button onPointerDown={rowPointer(0)}><span>row</span><kbd>A</kbd></button>
+                <button onPointerDown={rowPointer(1)}><span>row</span><kbd>L</kbd></button>
+              </div>
+            ) : <button className="cox-row-button" onPointerDown={rowPointer(0)}><span>row</span><kbd>Space</kbd></button>}
           </div>
         </div>
       )}
@@ -605,7 +636,10 @@ export default function CoxBox(_: AppProps) {
           <div className="cox-river" ref={riverRef}>
             <div className="cox-water-glow" />
             {Array.from({ length: lanes + 1 }, (_, i) => <div className="cox-lane-line" key={i} style={{ left: `${(i / lanes) * 100}%` }} />)}
-            {Array.from({ length: lanes }, (_, i) => <div className="cox-buoy-row" key={i} style={{ left: `${(i / lanes) * 100}%`, width: `${100 / lanes}%` }} />)}
+            {buoyMarkers.flatMap((distance) => Array.from({ length: lanes + 1 }, (_, divider) => {
+              const top = riverHeight / 2 + (camera - distance) * scale;
+              return <i className={`cox-course-buoy ${distance % 250 === 0 ? 'is-major' : ''}`} key={`${distance}-${divider}`} style={{ left: `${(divider / lanes) * 100}%`, top }} />;
+            }))}
             {markers.map((value) => {
               const top = riverHeight / 2 + (camera - value) * scale;
               return <div className={`cox-distance-marker ${value === prefs.distance ? 'is-finish' : ''}`} key={value} style={{ top }}><span>{value === prefs.distance ? 'finish' : value}</span></div>;
@@ -624,22 +658,22 @@ export default function CoxBox(_: AppProps) {
           </div>
           <div className="cox-call-strip"><span className="cox-call-wave">≈</span><p>{callText}</p></div>
           <div className="cox-race-controls">
-            <span className="cox-key-hint">{prefs.mode === 'friend' ? 'p1 a · q  /  p2 l · p' : 'space to catch · p for power 10'}</span>
+            <span className="cox-key-hint">{prefs.mode === 'friend' ? 'p1: row A · power 10 Q / p2: row L · power 10 P' : 'row Space · power 10 P'}</span>
             {prefs.mode === 'friend' ? (
               <div className="cox-friend-buttons">
                 <div className="cox-player-touch-controls">
-                  <button className="cox-power-button" onPointerDown={(event) => { event.preventDefault(); triggerPower10(0); }}><small>q</small>power 10</button>
-                  <button className="cox-row-button" onPointerDown={rowPointer(0)}><small>p1 · a</small>row</button>
+                  <button className="cox-power-button" onPointerDown={(event) => { event.preventDefault(); triggerPower10(0); }}><span>power 10</span><kbd>Q</kbd></button>
+                  <button className="cox-row-button" onPointerDown={rowPointer(0)}><span>row</span><kbd>A</kbd></button>
                 </div>
                 <div className="cox-player-touch-controls">
-                  <button className="cox-power-button" onPointerDown={(event) => { event.preventDefault(); triggerPower10(1); }}><small>p</small>power 10</button>
-                  <button className="cox-row-button" onPointerDown={rowPointer(1)}><small>p2 · l</small>row</button>
+                  <button className="cox-power-button" onPointerDown={(event) => { event.preventDefault(); triggerPower10(1); }}><span>power 10</span><kbd>P</kbd></button>
+                  <button className="cox-row-button" onPointerDown={rowPointer(1)}><span>row</span><kbd>L</kbd></button>
                 </div>
               </div>
             ) : (
               <div className="cox-solo-buttons">
-                <button className="cox-power-button" onPointerDown={(event) => { event.preventDefault(); triggerPower10(0); }}>power 10</button>
-                <button className="cox-row-button" onPointerDown={rowPointer(0)}>row</button>
+                <button className="cox-power-button" onPointerDown={(event) => { event.preventDefault(); triggerPower10(0); }}><span>power 10</span><kbd>P</kbd></button>
+                <button className="cox-row-button" onPointerDown={rowPointer(0)}><span>row</span><kbd>Space</kbd></button>
               </div>
             )}
           </div>
@@ -665,7 +699,7 @@ export default function CoxBox(_: AppProps) {
                       <span><small>strokes</small><b>{row.strokes}</b></span>
                       <span><small>dps</small><b>{row.dps?.toFixed(1) ?? '--'} m</b></span>
                     </div>
-                    {margin && <p className="cox-margin">{margin.seconds >= 0 ? 'up' : 'down'} {Math.abs(margin.seconds).toFixed(2)} s<span>{Math.abs(margin.lengths).toFixed(1)} lengths · 18 m each</span></p>}
+                    {margin && <p className="cox-margin">{margin.seconds >= 0 ? 'up' : 'down'} {Math.abs(margin.seconds).toFixed(2)} s<span>{marginLabel(Math.abs(margin.lengths) * 18)}</span></p>}
                     <label className="cox-result-name">
                       <span>name on the board</span>
                       <input maxLength={16} value={names[index] ?? ''} onChange={(event) => setNames((current) => current.map((name, i) => i === index ? event.target.value.slice(0, 16) : name))} />

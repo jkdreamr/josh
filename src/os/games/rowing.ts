@@ -45,8 +45,9 @@ type Boat = BoatSpec & {
   driveElapsed: number;
   driveForce: number;
   driveEnd: number | null;
-  metabolicRate: number;
   lastCatch: number | null;
+  lastInterval: number;
+  lastDeliveredWork: number;
   lastCatchDistance: number;
   rate: number | null;
   split: number | null;
@@ -55,7 +56,6 @@ type Boat = BoatSpec & {
   intervals: number[];
   swing: number;
   wbal: number;
-  averagePower: number;
   lenRush: number;
   power10Calls: number;
   power10Left: number;
@@ -100,8 +100,9 @@ function makeBoat(spec: BoatSpec): Boat {
     driveElapsed: 0,
     driveForce: 0,
     driveEnd: null,
-    metabolicRate: 30,
     lastCatch: null,
+    lastInterval: 2,
+    lastDeliveredWork: 0,
     lastCatchDistance: 0,
     rate: null,
     split: null,
@@ -110,7 +111,6 @@ function makeBoat(spec: BoatSpec): Boat {
     intervals: [],
     swing: 0.5,
     wbal: W_PRIME_MAX,
-    averagePower: 0,
     lenRush: 1,
     power10Calls: 0,
     power10Left: 0,
@@ -158,8 +158,8 @@ function registerCatch(boat: Boat, race: Race, bot = false): void {
   }
   if (boat.wbal / W_PRIME_MAX < 0.25) work *= 0.9 + 0.4 * (boat.wbal / W_PRIME_MAX);
   const delivered = boat.wbal <= 0 ? Math.min(work, BONK_CAP * CP * interval) : work;
-  boat.averagePower = delivered / Math.max(interval, 1 / 240);
-  boat.metabolicRate = 60 / Math.max(interval, 1 / 240);
+  boat.lastInterval = Math.max(interval, STEP);
+  boat.lastDeliveredWork = delivered;
   boat.driveDuration = clamp(0.78 - 0.005 * (shownRate - 30), 0.62, 0.85);
   boat.driveElapsed = 0;
   boat.driveForce = (delivered * Math.PI) / (2 * boat.driveDuration * Math.max(boat.speed, 2));
@@ -210,7 +210,14 @@ function fixedStep(race: Race): void {
       if (boat.driveElapsed >= boat.driveDuration) boat.driveEnd = t0 + STEP;
     }
     if (boat.kind !== 'bot') {
-      const cost = boat.averagePower + A_INT * (boat.metabolicRate / 60) ** 3 - A_INT * (34 / 60) ** 3;
+      const cost = boat.lastCatch === null
+        ? 0
+        : (() => {
+            const effInterval = Math.max(boat.lastInterval, t0 - boat.lastCatch);
+            const effectivePower = boat.lastDeliveredWork / effInterval;
+            const effectiveRate = 60 / effInterval;
+            return effectivePower + A_INT * (effectiveRate / 60) ** 3 - A_INT * (34 / 60) ** 3;
+          })();
       if (cost > CP) boat.wbal -= (cost - CP) * STEP;
       else boat.wbal += (CP - cost) * STEP * (1 - boat.wbal / W_PRIME_MAX);
       boat.wbal = clamp(boat.wbal, 0, W_PRIME_MAX);

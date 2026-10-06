@@ -343,6 +343,16 @@
   border-top: 1px solid #d2d7d1;
 }
 
+.cox-control-hint kbd {
+  padding: 1px 4px;
+  border: 1px solid #d5dcd6;
+  border-radius: 3px;
+  background: #fff;
+  color: #526669;
+  font: inherit;
+  font-size: 8px;
+}
+
 .cox-control-hint > small {
   color: #738084;
   font-size: 9px;
@@ -474,21 +484,35 @@
 }
 
 .cox-call-controls > .cox-row-button {
+  display: flex;
   width: 120px;
   height: 55px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   color: var(--red);
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.13em;
 }
 
-.cox-row-button small {
-  display: block;
-  margin-bottom: 2px;
+.cox-row-button kbd,
+.cox-power-button kbd {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border: 1px solid rgba(73, 90, 92, 0.18);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.62);
   color: #829092;
   font-size: 8px;
-  font-weight: 400;
-  letter-spacing: 0.08em;
+  font-family: inherit;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1;
 }
 
 .cox-friend-buttons {
@@ -499,7 +523,11 @@
 }
 
 .cox-call-controls .cox-friend-buttons button {
+  display: flex;
   min-height: 55px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: 1px solid #c9d0cc;
   border-radius: 4px;
   background: #fff;
@@ -514,12 +542,8 @@
   color: var(--blue);
 }
 
-.cox-call-controls .cox-friend-buttons button small {
-  display: block;
-  margin-bottom: 3px;
+.cox-call-controls .cox-friend-buttons button kbd {
   color: #829092;
-  font-size: 8px;
-  font-weight: 400;
 }
 
 .cox-race {
@@ -787,8 +811,10 @@
 .cox-water-glow {
   position: absolute;
   inset: 0;
-  background: repeating-linear-gradient(0deg, transparent 0 44px, rgba(255,255,255,0.14) 44px 45px, transparent 45px 84px);
-  opacity: 0.7;
+  background:
+    radial-gradient(ellipse at 32% 30%, rgba(255,255,255,0.12), transparent 38%),
+    linear-gradient(90deg, rgba(255,255,255,0.06), transparent 24%, transparent 76%, rgba(255,255,255,0.04));
+  opacity: 0.8;
 }
 
 .cox-lane-line {
@@ -799,34 +825,24 @@
   background: rgba(249, 250, 242, 0.45);
 }
 
-.cox-buoy-row {
+.cox-course-buoy {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  overflow: hidden;
-  opacity: 0.7;
+  z-index: 1;
+  width: 6px;
+  height: 6px;
+  border: 1px solid rgba(255,255,255,0.85);
+  border-radius: 50%;
+  background: #e9e4d4;
+  box-shadow: 0 1px 2px rgba(29, 61, 65, 0.2);
   pointer-events: none;
+  transform: translate(-50%, -50%);
 }
 
-.cox-buoy-row::before,
-.cox-buoy-row::after {
-  position: absolute;
-  top: 16%;
-  bottom: 16%;
-  left: 0;
-  width: 100%;
-  content: '';
-  background-image: radial-gradient(circle, #f2bd47 0 2.3px, transparent 2.8px);
-  background-position: 0 0;
-  background-size: 70px 28px;
-}
-
-.cox-buoy-row::after {
-  top: 30%;
-  bottom: 30%;
-  opacity: 0.48;
-  background-position: 35px 0;
-  background-size: 70px 32px;
+.cox-course-buoy.is-major {
+  width: 8px;
+  height: 8px;
+  border-color: rgba(255,255,255,0.9);
+  background: #68878a;
 }
 
 .cox-distance-marker {
@@ -905,7 +921,7 @@
 .cox-coxswain {
   fill: #f2d6b0;
   stroke: #293b3f;
-  stroke-width: 1.2;
+  stroke-width: 1;
 }
 
 .cox-oar line {
@@ -918,10 +934,18 @@
   fill: #36484b;
 }
 
-.cox-oar .cox-rower {
+.cox-rower-body,
+.cox-coxswain-body {
   fill: #f2d6b0;
   stroke: #34484a;
-  stroke-width: 1;
+  stroke-width: 0.9;
+  stroke-linejoin: round;
+}
+
+.cox-rower-head {
+  fill: #f4d8b8;
+  stroke: #34484a;
+  stroke-width: 0.8;
 }
 
 .cox-oar ellipse {
@@ -1014,7 +1038,11 @@
 }
 
 .cox-power-button {
+  display: inline-flex;
   height: 35px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   padding: 0 11px;
   color: #758286;
   font-size: 9px;
@@ -1057,8 +1085,12 @@
 
 .cox-race-controls .cox-friend-buttons button small {
   color: #8a9698;
-  font-size: 8px;
-  font-weight: 400;
+}
+
+.cox-race-controls .cox-friend-buttons button kbd {
+  min-width: 17px;
+  height: 17px;
+  color: #8a9698;
 }
 
 .cox-player-touch-controls {
@@ -1070,6 +1102,9 @@
 
 .cox-race-controls .cox-player-touch-controls button {
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   gap: 2px;
   padding: 0 4px;
 }
