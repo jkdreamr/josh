@@ -598,34 +598,99 @@ kbd {
   inset: 0;
   pointer-events: none;
 }
-.wp-aurora {
-  inset: auto;
-  width: 70%;
-  height: 70%;
-  filter: blur(30px);
-  animation: drift 26s ease-in-out infinite alternate;
+.wallpaper {
+  --wp-pos: 53% 58%;
+  overflow: hidden;
+  isolation: isolate;
+  background: #6f95c4;
 }
-.wp-a1 {
-  left: -10%;
-  top: -10%;
+/* graded gradient stands in for the photo until it decodes */
+.wp-scene {
+  background: linear-gradient(180deg, #5c93cf 0%, #8db6de 40%, #c9aa7e 54%, #b4936d 78%, #a68670 100%);
+  transition: filter 2.4s ease;
 }
-.wp-a2 {
-  right: -15%;
-  top: 10%;
-  animation-duration: 34s;
-  animation-direction: alternate-reverse;
+.wp-scene picture,
+.wp-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
-@keyframes drift {
-  to {
-    transform: translate(12%, 8%) scale(1.15);
-  }
+.wp-photo {
+  object-fit: cover;
+  object-position: var(--wp-pos);
+  opacity: 0;
+  transition: opacity 0.8s ease;
 }
-.wp-sun {
-  inset: auto;
-  width: 34%;
-  aspect-ratio: 1;
-  transform: translate(-50%, -50%);
-  filter: blur(2px);
+.wallpaper.is-loaded .wp-photo {
+  opacity: 1;
+}
+.wp-dawn .wp-scene {
+  filter: brightness(0.9) saturate(0.96) contrast(1.03);
+}
+.wp-dusk .wp-scene {
+  filter: brightness(0.8) saturate(1.12) contrast(1.06);
+}
+.wp-night .wp-scene {
+  filter: brightness(0.5) saturate(0.62) contrast(1.1);
+}
+.wp-grade {
+  opacity: 0;
+  transition: opacity 2.4s ease;
+}
+.wp-grade.is-on {
+  opacity: 1;
+}
+.wp-grade > i,
+.wp-stars {
+  position: absolute;
+  inset: 0;
+}
+/* sky-only layers: the mask is the photo's sky, drawn with the same cover fit */
+.wp-sky,
+.wp-stars {
+  -webkit-mask: url('/wallpapers/memorial-church-sky.png') var(--wp-pos) / cover no-repeat;
+  mask: url('/wallpapers/memorial-church-sky.png') var(--wp-pos) / cover no-repeat;
+}
+.wp-grade-dawn .wp-tint {
+  background: linear-gradient(180deg, rgba(255, 160, 190, 0.5), rgba(255, 176, 128, 0.72));
+  mix-blend-mode: soft-light;
+}
+.wp-grade-dawn .wp-sky {
+  background: linear-gradient(180deg, #7f86d2 0%, #d6a0c6 34%, #ffc6a4 58%);
+  mix-blend-mode: color;
+  opacity: 0.8;
+}
+.wp-grade-dawn .wp-glow {
+  background: radial-gradient(ellipse 60% 50% at 76% 56%, rgba(255, 186, 140, 0.34), transparent 72%);
+  mix-blend-mode: screen;
+}
+.wp-grade-dusk .wp-tint {
+  background: linear-gradient(180deg, rgba(160, 70, 150, 0.4), rgba(255, 140, 60, 0.68));
+  mix-blend-mode: soft-light;
+}
+.wp-grade-dusk .wp-sky {
+  background: linear-gradient(180deg, #3a3786 0%, #b25390 34%, #ff9a5c 60%);
+  mix-blend-mode: color;
+  opacity: 0.88;
+}
+.wp-grade-dusk .wp-glow {
+  background: radial-gradient(ellipse 60% 50% at 22% 60%, rgba(255, 170, 90, 0.42), transparent 70%);
+  mix-blend-mode: screen;
+}
+.wp-grade-night .wp-tint {
+  background: linear-gradient(180deg, #24346f, #2c3a72);
+  mix-blend-mode: multiply;
+  opacity: 0.6;
+}
+.wp-grade-night .wp-sky {
+  background: linear-gradient(180deg, #03050f 0%, #0a1130 36%, #1a2456 60%);
+  opacity: 0.9;
+}
+/* the facade is floodlit after dark */
+.wp-grade-night .wp-glow {
+  background: radial-gradient(ellipse 26% 46% at 50% 60%, rgba(255, 178, 96, 0.5), transparent 74%);
+  mix-blend-mode: screen;
 }
 .wp-stars i {
   position: absolute;
@@ -638,15 +703,12 @@ kbd {
     opacity: 0.25;
   }
 }
-.wp-hills {
-  top: auto !important;
-  height: 46%;
-  width: 100%;
-}
-.wp-grain {
-  opacity: 0.08;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  mix-blend-mode: overlay;
+/* keeps the menu bar, desktop labels and dock legible */
+.wp-vignette {
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.22), transparent 14%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.28), transparent 22%),
+    radial-gradient(ellipse 48% 82% at 100% 36%, rgba(0, 0, 0, 0.42), transparent 76%);
 }
 
 /* menu bar */
@@ -3506,6 +3568,21 @@ kbd {
   margin: auto 0 0;
   color: #a1a1a6;
   font-size: 10.5px;
+}
+.about-credit {
+  margin: 3px 0 0;
+  color: #a1a1a6;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.about-credit a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgba(161, 161, 166, 0.5);
+  text-underline-offset: 2px;
+}
+.about-credit a:hover {
+  color: #6e6e73;
 }
 
 /* overlay-frame apps reserve space for the floating traffic lights */
