@@ -20,7 +20,6 @@ const topics: Topic[] = [
     a: ["cs + math. i'm a coxswain on the varsity rowing team, help organize TreeHacks and the Stanford Math Tournament, and play badminton when i can."],
     actions: [
       { label: 'school folder', run: (os) => os.open('finder', { folder: 'school' }) },
-      { label: 'try cox box', run: (os) => os.open('coxbox') },
     ],
   },
   {

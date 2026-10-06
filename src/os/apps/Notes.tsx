@@ -77,7 +77,6 @@ const notes: Note[] = [
       <>
         <h1>rowing</h1>
         <p>i’m a coxswain for Stanford Varsity Rowing, steering the boat, calling the race, keeping eight people in rhythm.</p>
-        <p className="note-muted">want to know what that feels like? open Cox Box on the desktop.</p>
       </>
     ),
   },
