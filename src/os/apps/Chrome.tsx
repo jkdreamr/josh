@@ -121,7 +121,7 @@ export default function Chrome({ args }: AppProps) {
     if (u === NEWTAB) return 'New Tab';
     const e = entryFor(u);
     if (e) return e.name;
-    if (u.includes('youtube')) return 'fairytale — YouTube';
+    if (u.includes('youtube')) return 'fairytale - YouTube';
     return hostOf(u);
   };
 
@@ -231,7 +231,7 @@ function Blocked({ url, entry }: { url: string; entry?: Entry }) {
       <h2>{entry?.name ?? host}</h2>
       {entry && (entry.role || entry.meta) && <p className="blocked-meta">{[entry.role, entry.meta].filter(Boolean).join(' · ')}</p>}
       {entry?.blurb && <p className="blocked-meta">{entry.blurb}</p>}
-      <p className="blocked-note">{host} doesn’t allow itself to be shown inside other websites — so here’s a door instead.</p>
+      <p className="blocked-note">{host} doesn’t allow itself to be shown inside other websites, so here’s a door instead.</p>
       <button className="btn btn-primary" onClick={() => openExternal(url)}>
         Open {host} <ExternalIcon size={11} />
       </button>

@@ -39,7 +39,7 @@ const notes: Note[] = [
         <ul className="note-list">
           {work.map((w) => (
             <li key={w.name}>
-              <b>{w.name}</b> — {w.role}
+              <b>{w.name}</b>, {w.role}
               {w.meta && w.meta !== 'now' ? <span className="note-muted"> · {w.meta}</span> : <span className="note-muted"> · now</span>}
             </li>
           ))}
@@ -57,13 +57,13 @@ const notes: Note[] = [
         <p>{linkedin.projects[0].blurb}</p>
         <ul>
           <li>
-            <a href={links.spotifyAlbum} target="_blank" rel="noreferrer">all i need</a> — Spotify
+            <a href={links.spotifyAlbum} target="_blank" rel="noreferrer">all i need</a> on Spotify
           </li>
           <li>
-            <a href={links.soundcloud} target="_blank" rel="noreferrer">kelix</a> — SoundCloud
+            <a href={links.soundcloud} target="_blank" rel="noreferrer">kelix</a> on SoundCloud
           </li>
           <li>
-            <a href={links.youtube} target="_blank" rel="noreferrer">fairytale</a> — YouTube
+            <a href={links.youtube} target="_blank" rel="noreferrer">fairytale</a> on YouTube
           </li>
         </ul>
       </>
@@ -76,7 +76,7 @@ const notes: Note[] = [
     body: () => (
       <>
         <h1>rowing</h1>
-        <p>i’m a coxswain for Stanford Varsity Rowing — steering the boat, calling the race, keeping eight people in rhythm.</p>
+        <p>i’m a coxswain for Stanford Varsity Rowing, steering the boat, calling the race, keeping eight people in rhythm.</p>
         <p className="note-muted">want to know what that feels like? open Cox Box on the desktop.</p>
       </>
     ),
@@ -114,7 +114,7 @@ const notes: Note[] = [
         </ul>
         <h2>also</h2>
         <ul>
-          <li>{linkedin.projects[1].title} — {linkedin.projects[1].blurb.toLowerCase()}</li>
+          <li>{linkedin.projects[1].title}: {linkedin.projects[1].blurb.toLowerCase()}</li>
         </ul>
       </>
     ),

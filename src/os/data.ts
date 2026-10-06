@@ -67,10 +67,10 @@ export const folders: Folder[] = [
     label: 'Work',
     entries: [
       { role: 'leading Korea efforts', name: 'Cognition', meta: 'now', href: 'https://cognition.ai/', blurb: 'the team behind Devin, the AI software engineer' },
-      { role: 'investment intern', name: 'CRV', meta: 'Jun 2026 — present', href: 'https://www.crv.com/' },
-      { role: 'ecosystem manager', name: 'NEAR Protocol', meta: 'Jun 2025 — Sep 2025', href: 'https://near.ai/' },
-      { role: 'research', name: 'Pantera Capital', meta: 'Feb 2025 — May 2025', href: 'https://panteracapital.com/' },
-      { role: 'intern', name: 'Branch and Bound (CodeTree)', meta: 'Jul 2022 — Sep 2023', href: 'https://www.codetree.ai/', embeddable: true },
+      { role: 'investment intern', name: 'CRV', meta: 'Jun 2026 - present', href: 'https://www.crv.com/' },
+      { role: 'ecosystem manager', name: 'NEAR Protocol', meta: 'Jun 2025 - Sep 2025', href: 'https://near.ai/' },
+      { role: 'research', name: 'Pantera Capital', meta: 'Feb 2025 - May 2025', href: 'https://panteracapital.com/' },
+      { role: 'intern', name: 'Branch and Bound (CodeTree)', meta: 'Jul 2022 - Sep 2023', href: 'https://www.codetree.ai/', embeddable: true },
     ],
   },
   {
