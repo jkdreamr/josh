@@ -157,13 +157,16 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
 
   // Welcome notification.
   useEffect(() => {
-    const t1 = setTimeout(() => setToast(true), 1400);
+    const t1 = setTimeout(() => {
+      if (mobile && winsRef.current.some((w) => w.state !== 'closing')) return;
+      setToast(true);
+    }, 1400);
     const t2 = setTimeout(() => setToast(false), 9800);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, []);
+  }, [mobile]);
 
   // On phones and iPads an app takes the whole screen, so tuck the banner away when one opens.
   useEffect(() => {

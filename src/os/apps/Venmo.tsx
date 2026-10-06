@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import QRCode from 'qrcode';
-import { siVenmo } from 'simple-icons';
 import { links } from '../data';
+import { venmoV } from '../icons';
 import { openExternal } from '../util';
 import type { AppProps } from '../types';
 
@@ -36,8 +36,8 @@ export default function Venmo({ args }: AppProps) {
               <path d={path} fill="#008CFF" />
             </svg>
             <span className="venmo-mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="#008CFF">
-                <path d={siVenmo.path} />
+              <svg viewBox={venmoV.viewBox} fill="#008CFF">
+                <path d={venmoV.path} />
               </svg>
             </span>
           </div>

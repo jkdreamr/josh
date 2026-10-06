@@ -841,6 +841,10 @@ kbd {
   width: 62%;
   height: 62%;
 }
+.icon-venmo > svg {
+  width: 54%;
+  height: 54%;
+}
 .icon-finder > svg,
 .icon-notes > svg {
   width: 100%;
@@ -2293,8 +2297,13 @@ kbd {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: clamp(6px, 1.8cqh, 14px);
   padding: 0 24px 22px;
+}
+.venmo-content > * {
+  width: 100%;
+  max-width: 360px;
 }
 .venmo-profile {
   flex: none;
@@ -2332,7 +2341,7 @@ kbd {
   font-size: 14px;
 }
 .venmo-qr-wrap {
-  flex: 1 1 auto;
+  flex: 0 1 276px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -2424,7 +2433,6 @@ kbd {
     padding: 0 16px 10px;
   }
   .venmo-profile {
-    align-self: stretch;
     flex-direction: row;
     justify-content: center;
     gap: 8px;
