@@ -33,6 +33,7 @@ export type OSApi = {
   close: (id: AppId) => void;
   openUrl: (url: string) => void;
   mobile: boolean;
+  tablet: boolean;
   fullscreen: boolean;
   toggleFullscreen: () => void;
   restart: () => void;

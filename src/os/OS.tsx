@@ -1,18 +1,37 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import Desktop from './Desktop';
-import Laptop3D, { type Laptop3DHandle } from './Laptop3D';
+import Handheld from './Handheld';
+import type { Laptop3DHandle, Laptop3DProps } from './Laptop3D';
 import { LidStickers, PalmStickers } from './Stickers';
 import type { OSApi } from './types';
-import { useMedia } from './hooks';
 import { keyRows } from './keys';
 
 type Phase = 'off' | 'opening' | 'hello' | 'on' | 'sleep';
+type Device = 'laptop' | 'phone' | 'tablet';
 
 /** Lid travel; slow and weighted like a real hinge. The display lights up just before it settles. */
 const LID_MS = 2600;
 const LIGHT_AT = LID_MS - 350;
 const HELLO_MS = 2700;
+/** Phones and iPads have no lid: the glass stays dark for a beat, then the display powers on. */
+const POWER_MS = 900;
+
+const NoLaptop3D = forwardRef<Laptop3DHandle, Laptop3DProps>(function NoLaptop3D({ onFail }, _ref) {
+  useEffect(() => onFail(), [onFail]);
+  return null;
+});
+/** three.js is only downloaded on computers. */
+const Laptop3D = lazy(() => import('./Laptop3D').catch(() => ({ default: NoLaptop3D })));
+
+/** The physical device a visitor is most likely holding (or sitting at). */
+function detectDevice(): Device {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const ipadOS = navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent);
+  if (ipadOS || window.matchMedia('(hover: none) and (pointer: coarse)').matches) return Math.min(w, h) < 600 ? 'phone' : 'tablet';
+  return w <= 760 ? 'phone' : 'laptop';
+}
 
 function Keyboard() {
   return (
@@ -52,15 +71,20 @@ function Hello() {
 }
 
 export default function OS() {
-  const mobile = useMedia('(max-width: 760px)');
+  const [device, setDevice] = useState<Device | null>(null);
+  const [landscape, setLandscape] = useState(false);
+  const devRef = useRef(device);
+  devRef.current = device;
+  const mobile = device === 'phone' || device === 'tablet';
   const [phase, setPhase] = useState<Phase>('off');
   const [mounted, setMounted] = useState(false);
   const [fs, setFs] = useState(false);
   const [gen, setGen] = useState(0);
   const [mode, setMode] = useState<'pending' | '3d' | 'css'>('pending');
   const [ready, setReady] = useState(false);
-  const modeRef = useRef(mode);
-  modeRef.current = mode;
+  const use3d = device === 'laptop' && mode === '3d';
+  const use3dRef = useRef(use3d);
+  use3dRef.current = use3d;
   const l3d = useRef<Laptop3DHandle>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
@@ -81,11 +105,13 @@ export default function OS() {
   const boot = useCallback((fast: boolean) => {
     clearTimers();
     setPhase('off');
+    const lap = devRef.current === 'laptop';
+    const light = lap ? LIGHT_AT : POWER_MS;
     later(() => setPhase('opening'), 300);
-    if (fast) later(() => setPhase('on'), 300 + LID_MS);
+    if (fast) later(() => setPhase('on'), 300 + (lap ? LID_MS : POWER_MS));
     else {
-      later(() => setPhase('hello'), 300 + LIGHT_AT);
-      later(() => setPhase('on'), 300 + LIGHT_AT + HELLO_MS);
+      later(() => setPhase('hello'), 300 + light);
+      later(() => setPhase('on'), 300 + light + HELLO_MS);
     }
   }, []);
 
@@ -101,17 +127,36 @@ export default function OS() {
   }, []);
 
   useEffect(() => {
-    if (mode !== '3d' || ready) return;
+    let t = 0;
+    const update = () => {
+      setDevice(detectDevice());
+      setLandscape(window.innerWidth > window.innerHeight);
+    };
+    const onResize = () => {
+      clearTimeout(t);
+      t = window.setTimeout(update, 150);
+    };
+    update();
+    window.addEventListener('resize', onResize);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!use3d || ready) return;
     const t = setTimeout(() => setReady(true), 5000);
     return () => clearTimeout(t);
-  }, [mode, ready]);
+  }, [use3d, ready]);
 
   useEffect(() => clearTimers, []);
 
   // Boot once the laptop is actually on screen (the WebGL model needs its shaders compiled first).
   const booted = useRef(false);
   useEffect(() => {
-    if (booted.current || mode === 'pending' || (mode === '3d' && !ready)) return;
+    if (booted.current || !device) return;
+    if (device === 'laptop' && (mode === 'pending' || (mode === '3d' && !ready))) return;
     booted.current = true;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let seen = false;
@@ -123,7 +168,7 @@ export default function OS() {
     }
     if (reduced) setPhase('on');
     else boot(seen);
-  }, [boot, mode, ready]);
+  }, [boot, device, mode, ready]);
 
   useEffect(() => {
     if (phase === 'on') setMounted(true);
@@ -140,6 +185,17 @@ export default function OS() {
   }, []);
 
   const busy = useRef(false);
+
+  // Switching device mid-visit (resizing a window, rotating) swaps the hardware, so drop out of full screen.
+  const lastDevice = useRef(device);
+  useEffect(() => {
+    if (lastDevice.current && lastDevice.current !== device) {
+      busy.current = false;
+      setFs(false);
+      setZooming(false);
+    }
+    lastDevice.current = device;
+  }, [device]);
 
   /** Zoom transform that makes the scene's screen fill (contain) the viewport. */
   const zoomFor = (scene: HTMLElement, screen: HTMLElement) => {
@@ -168,7 +224,7 @@ export default function OS() {
   };
 
   const setFullscreen = useCallback(async (next: boolean) => {
-    if (modeRef.current === '3d') {
+    if (use3dRef.current) {
       const lap = l3d.current;
       if (!lap || busy.current || next === fsRef.current) return;
       busy.current = true;
@@ -230,13 +286,13 @@ export default function OS() {
 
   const toggleFullscreen = useCallback(() => setFullscreen(!fsRef.current), [setFullscreen]);
 
-  // Phones get the desktop edge to edge as soon as it has booted.
+  // Phones show the home screen in the hand for a moment, then go edge to edge so taps are full size.
   useEffect(() => {
-    if (phase === 'on' && mobile && !fs) {
-      const t = setTimeout(() => setFullscreen(true), 380);
+    if (phase === 'on' && device === 'phone' && !fs) {
+      const t = setTimeout(() => setFullscreen(true), 1100);
       return () => clearTimeout(t);
     }
-  }, [phase, mobile, fs, setFullscreen]);
+  }, [phase, device, fs, setFullscreen]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -245,12 +301,12 @@ export default function OS() {
         return;
       }
       const typing = (e.target as HTMLElement)?.closest?.('input, textarea');
-      if (e.key === 'Escape' && fsRef.current && !mobile && !document.querySelector('.launcher')) setFullscreen(false);
+      if (e.key === 'Escape' && fsRef.current && devRef.current !== 'phone' && !document.querySelector('.launcher')) setFullscreen(false);
       if (!typing && e.key.toLowerCase() === 'f' && !e.metaKey && !e.ctrlKey && !e.altKey && !fsRef.current && phase === 'on') setFullscreen(true);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, mobile, skip, setFullscreen]);
+  }, [phase, skip, setFullscreen]);
 
   const restart = useCallback(() => {
     clearTimers();
@@ -271,15 +327,15 @@ export default function OS() {
   const wake = () => {
     if (phase !== 'sleep') return;
     setPhase('opening');
-    later(() => setPhase('on'), LIGHT_AT);
+    later(() => setPhase('on'), devRef.current === 'laptop' ? LIGHT_AT : POWER_MS);
   };
 
   const lidOpen = phase !== 'off' && phase !== 'sleep';
   const openWork = () => apiRef.current?.open('finder', { folder: 'work' });
   const screenContent = (
     <>
-      {mode === '3d' && <span className="notch" aria-hidden="true" />}
-      {mounted && <Desktop key={gen} mobile={mobile && fs} fullscreen={fs} toggleFullscreen={toggleFullscreen} restart={restart} sleep={sleep} apiRef={apiRef} />}
+      {use3d && <span className="notch" aria-hidden="true" />}
+      {mounted && <Desktop key={gen} mobile={mobile} tablet={device === 'tablet'} fullscreen={fs} toggleFullscreen={toggleFullscreen} restart={restart} sleep={sleep} apiRef={apiRef} />}
       <div className={`screen-boot ${phase === 'on' || phase === 'sleep' ? 'is-done' : ''}`} onClick={skip}>
         {phase === 'hello' && <Hello />}
       </div>
@@ -289,10 +345,11 @@ export default function OS() {
 
   return (
     <div
-      className={`stage stage-${mode} phase-${phase} ${lidOpen ? 'lid-open' : 'lid-closed'} ${fs ? 'is-fs' : ''} ${zooming ? 'is-zooming' : ''} ${mobile ? 'is-mobile' : ''}`}
+      className={`stage stage-${use3d ? '3d' : 'css'} device-${device ?? 'pending'} phase-${phase} ${lidOpen ? 'lid-open' : 'lid-closed'} ${fs ? 'is-fs' : ''} ${zooming ? 'is-zooming' : ''} ${mobile ? 'is-mobile' : ''}`}
     >
       <div className="stage-glow" aria-hidden="true" />
-      {mode === '3d' && (
+      {use3d && (
+        <Suspense fallback={null}>
         <Laptop3D
           ref={l3d}
           open={lidOpen}
@@ -305,8 +362,14 @@ export default function OS() {
         >
           {screenContent}
         </Laptop3D>
+        </Suspense>
       )}
-      {mode === 'css' && (
+      {(device === 'phone' || device === 'tablet') && (
+        <Handheld kind={device} landscape={landscape} onWake={wake} sceneRef={sceneRef} screenRef={screenRef}>
+          {screenContent}
+        </Handheld>
+      )}
+      {device === 'laptop' && mode === 'css' && (
       <div className="scene" ref={sceneRef}>
         <div className="laptop" onClick={phase === 'sleep' ? wake : undefined}>
           <div className="lid">
@@ -344,31 +407,33 @@ export default function OS() {
       </div>
       )}
 
-      <div className="caption">
+      {device && <div className="caption">
         {phase === 'sleep' ? (
           <button className="cap-btn cap-primary" onClick={wake}>
-            open the lid
+            {mobile ? 'wake up' : 'open the lid'}
           </button>
         ) : phase === 'on' ? (
           <>
             <span className="cap-text">
-              <b>joshua koo</b> — this is my computer. click around.
+              <b>joshua koo</b> — this is my {device === 'tablet' ? 'ipad. tap' : device === 'phone' ? 'phone. tap' : 'computer. click'} around.
             </span>
             <button className="cap-btn cap-primary" onClick={() => setFullscreen(true)}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
               full screen
             </button>
-            <span className="cap-hint">
-              <kbd>⌘</kbd>
-              <kbd>K</kbd> to search
-            </span>
+            {!mobile && (
+              <span className="cap-hint">
+                <kbd>⌘</kbd>
+                <kbd>K</kbd> to search
+              </span>
+            )}
           </>
         ) : (
           <button className="cap-btn" onClick={skip}>
             skip intro
           </button>
         )}
-      </div>
+      </div>}
     </div>
   );
 }
