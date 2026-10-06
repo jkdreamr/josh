@@ -90,6 +90,7 @@ function Round({ level }: { level: Level }) {
     history: [] as Snapshot[],
     t: 0,
     time: 0,
+    lastNow: 0,
     pops: new Map<number, number>(),
     waves: [] as Wave[],
     won: -1,
@@ -280,8 +281,12 @@ function Round({ level }: { level: Level }) {
     (dt) => {
       if (!ready) return;
       s.t += dt;
+      // The clock follows wall time (dt is clamped for animation), capped so a resume after a pause adds nothing.
+      const now = performance.now();
+      const real = s.lastNow ? Math.min((now - s.lastNow) / 1000, 0.25) : dt;
+      s.lastNow = now;
       if (s.won < 0) {
-        s.time += dt;
+        s.time += real;
         const whole = Math.floor(s.time);
         if (whole !== secs) setSecs(whole);
       } else if (!s.ended && s.t - s.won > 1.7) {
@@ -307,6 +312,7 @@ function Round({ level }: { level: Level }) {
       s.dirty = false;
       s.drawn = key;
       c.clearRect(0, 0, w, h);
+      if (Math.min(w, h) < 40) return;
       if (!s.grid.length) {
         drawSkeleton(c, w, h, s.t);
         return;

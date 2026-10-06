@@ -10,7 +10,7 @@
 }
 .g-sudoku .g-sudoku-wrap.is-tall {
   flex-direction: column;
-  justify-content: flex-start;
+  justify-content: center;
   gap: 12px;
 }
 .g-sudoku .g-sudoku-board {

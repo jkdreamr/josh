@@ -133,6 +133,12 @@
 .g-wordguess .is-touch .g-wordguess-row button {
   font-size: 17px;
 }
+.g-wordguess .is-touch .g-wordguess-row button.is-wide {
+  font-size: 12px;
+}
+.g-wordguess .g-wordguess-wrap.is-touch {
+  padding-bottom: 22px;
+}
 
 .g-wordguess .g-wordguess-done {
   display: flex;
