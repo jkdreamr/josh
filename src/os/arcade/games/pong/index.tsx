@@ -1,58 +1,30 @@
-import { useEffect, useRef, useState } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useShell } from '../../kit';
+import { useEffect, useRef } from 'react';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
 import { BALL_R, COURT, PADDLE, SERVE_DELAY, aiStep, createAi, createMatch, movePaddle, other, paddleX, steerPaddle, step, type AiLevel, type PongEvent, type Side } from './pong';
 import './pong.css';
 
-type Mode = 'cpu' | '2p';
-const LEVELS = ['easy', 'normal', 'hard'] as const;
+const MODE = defineSetting('pong:mode', PLAY_MODES, 'cpu');
+const LEVEL = defineSetting('pong:level', LEVEL_NAMES, 'normal');
 const P_COLORS = ['#0a84ff', '#ff375f'] as const;
-/** Remembered between rounds and visits. */
-const prefs: { mode: Mode; level: AiLevel } = { mode: 'cpu', level: 1 };
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} formatScore={(n) => `${n} hit rally`}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} formatScore={(n) => `${n} hit rally`} setup={<Setup />}>
       <Pong />
     </GameShell>
   );
 }
 
-function Setup({ onStart }: { onStart: (mode: Mode, level: AiLevel) => void }) {
-  const shell = useShell();
-  const [mode, setMode] = useState<Mode>(prefs.mode);
-  const [level, setLevel] = useState<AiLevel>(prefs.level);
-  const hint =
-    mode === 'cpu'
-      ? shell.touch
-        ? 'drag anywhere to move your paddle.'
-        : 'W/S or arrows, or move the mouse.'
-      : shell.touch
-        ? 'each player drags on their own half.'
-        : 'player 1: W/S. player 2: arrows.';
+function Setup() {
+  const [mode, setMode] = useSetting(MODE);
+  const [level, setLevel] = useSetting(LEVEL);
   return (
-    <div className="g-pong-setup">
-      <div className="g-pong-seg" role="radiogroup" aria-label="Mode">
-        <button type="button" role="radio" aria-checked={mode === 'cpu'} className={mode === 'cpu' ? 'on' : ''} onClick={() => setMode('cpu')}>
-          vs computer
-        </button>
-        <button type="button" role="radio" aria-checked={mode === '2p'} className={mode === '2p' ? 'on' : ''} onClick={() => setMode('2p')}>
-          2 players
-        </button>
-      </div>
-      <div className={`g-pong-seg g-pong-levels ${mode === 'cpu' ? '' : 'hidden'}`} role="radiogroup" aria-label="Difficulty">
-        {LEVELS.map((l, i) => (
-          <button key={l} type="button" role="radio" aria-checked={level === i} className={level === i ? 'on' : ''} onClick={() => setLevel(i as AiLevel)}>
-            {l}
-          </button>
-        ))}
-      </div>
-      <p className="g-pong-hint">{hint}</p>
-      <button type="button" className="g-pong-go" onClick={() => onStart(mode, level)}>
-        start
-      </button>
-    </div>
+    <>
+      <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
+      {mode === 'cpu' && <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />}
+    </>
   );
 }
 
@@ -63,11 +35,12 @@ function Pong() {
   const shell = useShell();
   const keys = useKeys();
   const { ref, size, ctx } = useCanvas();
-  const [phase, setPhase] = useState<'setup' | 'play'>('setup');
+  const [mode] = useSetting(MODE);
+  const [levelName] = useSetting(LEVEL);
   const st = useRef({
-    mode: prefs.mode,
-    level: prefs.level,
-    match: createMatch(),
+    mode: getSetting(MODE),
+    level: levelIndex(getSetting(LEVEL)) as AiLevel,
+    match: createMatch(Math.random() < 0.5 ? 0 : 1),
     ai: createAi(),
     particles: [] as Particle[],
     trail: [] as { x: number; y: number }[],
@@ -82,19 +55,15 @@ function Pong() {
     ended: false,
   }).current;
 
-  const begin = (mode: Mode, level: AiLevel) => {
-    prefs.mode = mode;
-    prefs.level = level;
+  // Setup changes made on the Start card apply to the match that is about to begin.
+  useEffect(() => {
+    if (shell.status !== 'ready') return;
     st.mode = mode;
-    st.level = level;
+    st.level = levelIndex(levelName) as AiLevel;
     st.match = createMatch(Math.random() < 0.5 ? 0 : 1);
     st.ai = createAi();
-    st.longest = 0;
-    st.ending = -1;
-    sfx.play('select');
-    setPhase('play');
-    shell.root.current?.focus({ preventScroll: true });
-  };
+    shell.invalidate();
+  }, [mode, levelName, shell.status, shell.invalidate, st]);
 
   // Pointer input: finger or mouse y steers a paddle. In 2P each half of the court owns a side.
   useEffect(() => {
@@ -107,14 +76,12 @@ function Pong() {
     };
     const sideFor = (x: number): Side => (st.mode === '2p' && x > COURT.w / 2 ? 1 : 0);
     const down = (e: PointerEvent) => {
-      if (phase !== 'play') return;
       const c = toCourt(e);
       st.pointers.set(e.pointerId, { side: sideFor(c.x), y: c.y });
       el.setPointerCapture?.(e.pointerId);
       e.preventDefault();
     };
     const move = (e: PointerEvent) => {
-      if (phase !== 'play') return;
       const c = toCourt(e);
       const p = st.pointers.get(e.pointerId);
       if (p) p.y = c.y;
@@ -135,7 +102,7 @@ function Pong() {
       el.removeEventListener('pointerleave', leave);
       st.pointers.clear();
     };
-  }, [phase, ref, st]);
+  }, [ref, st]);
 
   const burst = (x: number, y: number, color: string, n: number, speed: number) => {
     for (let i = 0; i < n; i++) {
@@ -170,7 +137,7 @@ function Pong() {
 
   useGameLoop(
     (dt) => {
-      if (phase !== 'play' || dt <= 0) return;
+      if (dt <= 0) return;
       const m = st.match;
       const sides: Side[] = st.mode === '2p' ? [0, 1] : [0];
       // Keyboard: 1P uses either cluster, 2P splits W/S and arrows.
@@ -208,9 +175,9 @@ function Pong() {
         if (st.ending < 0 && !st.ended) {
           st.ended = true;
           const w = m.winner;
-          const title = st.mode === 'cpu' ? (w === 0 ? 'you win' : 'computer wins') : `player ${w + 1} wins`;
+          const title = st.mode === 'cpu' ? (w === 0 ? 'You Win' : 'Computer Wins') : `Player ${w + 1} Wins`;
           const loser = other(w);
-          shell.gameOver(st.longest, { title, detail: `${m.score[w]} to ${m.score[loser]}. longest rally: ${st.longest} ${st.longest === 1 ? 'hit' : 'hits'}.` });
+          shell.gameOver(st.longest, { title, detail: `${m.score[w]} to ${m.score[loser]}. Longest rally: ${st.longest} ${st.longest === 1 ? 'hit' : 'hits'}.` });
         }
       }
     },
@@ -256,15 +223,9 @@ function Pong() {
       c.fillStyle = 'rgba(255,255,255,0.22)';
       c.fillText(String(m.score[0]), COURT.w / 2 - 22, 6);
       c.fillText(String(m.score[1]), COURT.w / 2 + 22, 6);
-      if (phase === 'play') {
-        c.font = `500 3.4px Inter, -apple-system, system-ui, sans-serif`;
-        c.fillStyle = 'rgba(255,255,255,0.3)';
-        c.fillText(st.mode === 'cpu' ? 'you' : 'player 1', COURT.w / 2 - 22, 30);
-        c.fillText(st.mode === 'cpu' ? `computer · ${LEVELS[st.level]}` : 'player 2', COURT.w / 2 + 22, 30);
-      }
 
       // Serve ring
-      if (phase === 'play' && m.serveIn > 0 && m.winner === null) {
+      if (m.serveIn > 0 && m.winner === null) {
         const t = m.serveIn / SERVE_DELAY;
         c.strokeStyle = `rgba(255,255,255,${0.25 * (1 - t) + 0.05})`;
         c.lineWidth = 0.6;
@@ -297,7 +258,7 @@ function Pong() {
       }
 
       // Ball
-      if (m.winner === null && (m.serveIn <= 0 || phase !== 'play')) {
+      if (m.winner === null && m.serveIn <= 0) {
         c.shadowColor = 'rgba(255,255,255,0.9)';
         c.shadowBlur = 16;
         c.fillStyle = '#fff';
@@ -318,6 +279,14 @@ function Pong() {
       c.globalAlpha = 1;
       c.restore();
 
+      // Names under the scores, in screen pixels so they stay readable at any size
+      c.font = '500 12px Inter, -apple-system, system-ui, sans-serif';
+      c.textAlign = 'center';
+      c.textBaseline = 'top';
+      c.fillStyle = 'rgba(255,255,255,0.3)';
+      c.fillText(st.mode === 'cpu' ? 'You' : 'Player 1', ox + (COURT.w / 2 - 22) * s, oy + 30 * s);
+      c.fillText(st.mode === 'cpu' ? `Computer · ${levelLabel(LEVEL_NAMES[st.level])}` : 'Player 2', ox + (COURT.w / 2 + 22) * s, oy + 30 * s);
+
       if (st.flash > 0) {
         c.globalAlpha = st.flash * 0.35;
         c.fillStyle = st.flashColor;
@@ -327,10 +296,5 @@ function Pong() {
     },
   );
 
-  return (
-    <>
-      <canvas ref={ref} className="g-pong-canvas" />
-      {phase === 'setup' && <Setup onStart={begin} />}
-    </>
-  );
+  return <canvas ref={ref} className="g-pong-canvas" />;
 }

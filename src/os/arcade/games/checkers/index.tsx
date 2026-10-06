@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useShell } from '../../kit';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { BLACK, RED, bestMove, colOf, colorOf, count, isKing, movesFrom, newGame, play, rowOf, sq, type Board, type Color, type Game as CheckersGame, type Level, type Move } from './checkers.ts';
 import { meta } from './meta';
 import type { AiReply, AiRequest } from './worker.ts';
 import './checkers.css';
 
-type Mode = 'cpu' | '2p';
-const LEVELS = ['easy', 'normal', 'hard'] as const;
-const prefs: { mode: Mode; level: Level } = { mode: 'cpu', level: 1 };
+const MODE = defineSetting('checkers:mode', PLAY_MODES, 'cpu');
+const LEVEL = defineSetting('checkers:level', LEVEL_NAMES, 'normal');
 const HUMAN: Color = RED;
 const STEP_MS = 190;
 const MIN_THINK_MS = 420;
-const NAMES: Record<Color, string> = { [RED]: 'red', [BLACK]: 'black' };
+const NAMES: Record<Color, string> = { [RED]: 'Red', [BLACK]: 'Black' };
 type GameTimer = { remaining: number; fn: () => void };
 type PendingAI = { game: CheckersGame; id: number; started: number; move: Move | null; ready: boolean; scheduled: boolean; cleanup?: () => void };
 
@@ -41,32 +40,20 @@ function useGameTimers() {
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} lowerIsBetter formatScore={(n) => `${n} ${n === 1 ? 'move' : 'moves'}`}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} lowerIsBetter formatScore={(n) => `${n} ${n === 1 ? 'move' : 'moves'}`} setup={<Setup />}>
       <Checkers />
     </GameShell>
   );
 }
 
-function Setup({ onStart }: { onStart: (mode: Mode, level: Level) => void }) {
-  const [mode, setMode] = useState<Mode>(prefs.mode);
-  const [level, setLevel] = useState<Level>(prefs.level);
-  const seg = <T,>(label: string, value: T, items: [T, string][], set: (v: T) => void, hidden = false) => (
-    <div className={`g-checkers-seg ${hidden ? 'hidden' : ''}`} role="radiogroup" aria-label={label}>
-      {items.map(([v, text]) => (
-        <button key={text} type="button" role="radio" aria-checked={value === v} className={value === v ? 'on' : ''} onClick={() => set(v)}>
-          {text}
-        </button>
-      ))}
-    </div>
-  );
+function Setup() {
+  const [mode, setMode] = useSetting(MODE);
+  const [level, setLevel] = useSetting(LEVEL);
   return (
-    <div className="g-checkers-setup">
-      {seg<Mode>('Mode', mode, [['cpu', 'vs computer'], ['2p', '2 players']], setMode)}
-      {seg<Level>('Difficulty', level, LEVELS.map((l, i) => [i as Level, l]), setLevel, mode !== 'cpu')}
-      <button type="button" className="g-checkers-go" onClick={() => onStart(mode, level)}>
-        start
-      </button>
-    </div>
+    <>
+      <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
+      {mode === 'cpu' && <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />}
+    </>
   );
 }
 
@@ -78,7 +65,6 @@ function Checkers() {
   const { ref: stageRef, size } = useCanvas<HTMLDivElement>();
   const boardRef = useRef<HTMLDivElement | null>(null);
   const moverRef = useRef<HTMLDivElement | null>(null);
-  const [phase, setPhase] = useState<'setup' | 'play'>('setup');
   const [game, setGame] = useState<CheckersGame>(() => newGame());
   const [vis, setVis] = useState<Board>(game.board);
   const [anim, setAnim] = useState<Anim | null>(null);
@@ -88,7 +74,9 @@ function Checkers() {
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [gone, setGone] = useState<number[]>([]);
   const drag = useRef<Drag | null>(null);
-  const cfg = useRef({ mode: prefs.mode, level: prefs.level });
+  const [mode] = useSetting(MODE);
+  const [levelName] = useSetting(LEVEL);
+  const cfg = useRef<{ mode: typeof mode; level: Level }>({ mode: getSetting(MODE), level: levelIndex(getSetting(LEVEL)) });
   const worker = useRef<Worker | null>(null);
   const reqId = useRef(0);
   const aiTask = useRef<PendingAI | null>(null);
@@ -101,7 +89,7 @@ function Checkers() {
   const later = useGameTimers();
 
   const lastMove = game.history.at(-1);
-  const humanTurn = phase === 'play' && game.status === 'playing' && !anim && (cfg.current.mode === '2p' || game.turn === HUMAN);
+  const humanTurn = game.status === 'playing' && !anim && (cfg.current.mode === '2p' || game.turn === HUMAN);
   const fromSquares = useMemo(() => new Set(game.legal.map((m) => m.from)), [game.legal]);
   const targets = useMemo(() => (sel === null ? new Map<number, Move>() : new Map(movesFrom(game.legal, sel).map((m) => [m.to, m]))), [sel, game.legal]);
 
@@ -147,19 +135,17 @@ function Checkers() {
     [game, later],
   );
 
-  const begin = (mode: Mode, level: Level) => {
-    Object.assign(prefs, { mode, level });
-    cfg.current = { mode, level };
+  // Setup changes made on the Start card apply to the game that is about to begin.
+  useEffect(() => {
+    if (shell.status !== 'ready') return;
+    cfg.current = { mode, level: levelIndex(levelName) };
     const g = newGame();
     setGame(g);
     setVis(g.board);
     setAnim(null);
     setSel(null);
     setGone([]);
-    sfx.play('select');
-    setPhase('play');
-    shell.root.current?.focus({ preventScroll: true });
-  };
+  }, [mode, levelName, shell.status]);
 
   useEffect(() => {
     let w: Worker | null = null;
@@ -179,12 +165,12 @@ function Checkers() {
 
   useEffect(() => {
     let task = aiTask.current;
-    if (task && (task.game !== game || phase !== 'play' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.turn === HUMAN || anim)) {
+    if (task && (task.game !== game || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.turn === HUMAN || anim)) {
       task.cleanup?.();
       aiTask.current = null;
       task = null;
     }
-    if (shell.status !== 'playing' || phase !== 'play' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.turn === HUMAN || anim) return;
+    if (shell.status !== 'playing' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.turn === HUMAN || anim) return;
 
     if (!task) {
       const pending: PendingAI = { game, id: ++reqId.current, started: performance.now(), move: null, ready: false, scheduled: false };
@@ -238,10 +224,10 @@ function Checkers() {
         if (legal) commit(legal);
       }, Math.max(0, MIN_THINK_MS - (performance.now() - task.started)));
     }
-  }, [game, phase, anim, commit, later, shell.status, aiRevision]);
+  }, [game, anim, commit, later, shell.status, aiRevision]);
 
   useEffect(() => {
-    if (phase !== 'play' || game.status === 'playing') {
+    if (game.status === 'playing') {
       gameOverScheduled.current = null;
       return;
     }
@@ -251,16 +237,16 @@ function Checkers() {
       if (statusRef.current !== 'playing' || gameRef.current !== game) return;
       const moves = Math.ceil(game.history.length / 2);
       const { mode } = cfg.current;
-      if (game.status === 'draw') shell.gameOver(undefined, { title: 'draw', detail: `forty moves without progress, after ${moves} moves.` });
+      if (game.status === 'draw') shell.gameOver(undefined, { title: 'Draw', detail: `Forty moves without progress after ${moves} moves.` });
       else {
         const winner: Color = game.status === 'red' ? RED : BLACK;
-        const title = mode === 'cpu' ? (winner === HUMAN ? 'you win' : 'computer wins') : `${NAMES[winner]} wins`;
+        const title = mode === 'cpu' ? (winner === HUMAN ? 'You Win' : 'Computer Wins') : `${NAMES[winner]} Wins`;
         const left = count(game.board, winner);
         const detail = `${left.men + left.kings} ${left.men + left.kings === 1 ? 'piece' : 'pieces'} left after ${moves} ${moves === 1 ? 'move' : 'moves'}.`;
         shell.gameOver(mode === 'cpu' && winner === HUMAN ? moves : undefined, { title, detail });
       }
     }, 500);
-  }, [game, phase, shell.status, shell.gameOver, later]);
+  }, [game, shell.status, shell.gameOver, later]);
 
   // Geometry: 44px status row on top, counts row below the board.
   const TOP = 44;
@@ -331,7 +317,6 @@ function Checkers() {
   };
 
   useKeys((code, e) => {
-    if (phase !== 'play') return;
     const dirs: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], KeyA: [-1, 0], KeyD: [1, 0], KeyW: [0, -1], KeyS: [0, 1] };
     if (dirs[code]) {
       const [dx, dy] = dirs[code];
@@ -349,11 +334,10 @@ function Checkers() {
   });
 
   const status = (() => {
-    if (phase !== 'play') return '';
-    if (game.status === 'draw') return 'draw';
+    if (game.status === 'draw') return 'Draw';
     if (game.status !== 'playing') return `${NAMES[game.status === 'red' ? RED : BLACK]} wins`;
     const must = game.legal[0]?.captured.length ? ' · capture' : '';
-    if (cfg.current.mode === 'cpu') return (thinking || game.turn !== HUMAN ? 'computer is thinking' : 'your move') + must;
+    if (cfg.current.mode === 'cpu') return (thinking || game.turn !== HUMAN ? 'Computer is thinking' : 'Your move') + must;
     return `${NAMES[game.turn]} to move${must}`;
   })();
 
@@ -363,9 +347,7 @@ function Checkers() {
 
   return (
     <div ref={stageRef} className="g-checkers-stage">
-      {phase === 'play' && (
-        <>
-          <div className={`g-checkers-status ${thinking ? 'busy' : ''}`} aria-live="polite">
+      <div className={`g-checkers-status ${thinking ? 'busy' : ''}`} aria-live="polite">
             {thinking && <span className="g-checkers-dots" aria-hidden="true" />}
             {status}
           </div>
@@ -413,17 +395,14 @@ function Checkers() {
             </div>
             <div className="g-checkers-foot" style={{ width: boardPx }}>
               <span className={`g-checkers-side red ${game.turn === RED && game.status === 'playing' ? 'on' : ''}`}>
-                <i /> {cfg.current.mode === 'cpu' ? 'you' : 'red'} <b>{red.men + red.kings}</b>
+                <i /> {cfg.current.mode === 'cpu' ? 'You' : 'Red'} <b>{red.men + red.kings}</b>
               </span>
-              <span className="g-checkers-mode">{cfg.current.mode === 'cpu' ? LEVELS[cfg.current.level] : 'pass and play'}</span>
+              <span className="g-checkers-mode">{cfg.current.mode === 'cpu' ? levelLabel(LEVEL_NAMES[cfg.current.level]) : 'Pass and Play'}</span>
               <span className={`g-checkers-side black ${game.turn === BLACK && game.status === 'playing' ? 'on' : ''}`}>
-                <b>{black.men + black.kings}</b> {cfg.current.mode === 'cpu' ? 'computer' : 'black'} <i />
+                <b>{black.men + black.kings}</b> {cfg.current.mode === 'cpu' ? 'Computer' : 'Black'} <i />
               </span>
             </div>
           </div>
-        </>
-      )}
-      {phase === 'setup' && <Setup onStart={begin} />}
     </div>
   );
 }

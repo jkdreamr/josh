@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { T } from './gl';
-import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useShell, useThree } from '../../kit';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { createGL, damp, disposeTree, type GL } from './gl';
 import { GOAL_W, L, MALLET_R, PUCK_R, TO_WIN, W, create, moveMalletTo, nudgeMallet, step, stepAI, type Difficulty, type Event, type Mode, type State } from './logic';
@@ -11,7 +11,7 @@ type Three = typeof import('three');
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} setup={<Setup />}>
       <Play />
     </GameShell>
   );
@@ -194,22 +194,43 @@ function placeCamera(w: World, twoPlayer: boolean) {
   cam.updateProjectionMatrix();
 }
 
+const MODE = defineSetting('airhockey:mode', PLAY_MODES, 'cpu');
+const LEVEL = defineSetting('airhockey:level', LEVEL_NAMES, 'normal');
+
+function Setup() {
+  const [mode, setMode] = useSetting(MODE);
+  const [level, setLevel] = useSetting(LEVEL);
+  return (
+    <>
+      <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
+      {mode === 'cpu' && <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />}
+    </>
+  );
+}
+
 function Play() {
   const shell = useShell();
   const keys = useKeys();
   const THREE = useThree();
   const { ref, size } = useCanvas<HTMLDivElement>();
   const world = useRef<World | null>(null);
-  const state = useRef<State>(create());
-  const [mode, setMode] = useState<Mode>('cpu');
-  const [difficulty, setDifficulty] = useState<Difficulty>('normal');
-  const [menu, setMenu] = useState(true);
+  const [mode] = useSetting(MODE);
+  const [difficulty] = useSetting(LEVEL);
+  const state = useRef<State>(create(getSetting(MODE) as Mode, getSetting(LEVEL) as Difficulty));
   const [score, setScore] = useState<[number, number]>([0, 0]);
   const [pop, setPop] = useState<{ text: string; id: number } | null>(null);
   const pointers = useRef(new Map<number, { side: 0 | 1; x: number; z: number }>());
   const lastTick = useRef(0);
-  const cfg = useRef({ mode, difficulty, menu });
-  cfg.current = { mode, difficulty, menu };
+  const cfg = useRef({ mode, difficulty });
+  cfg.current = { mode, difficulty };
+
+  // Setup changes made on the Start card apply to the match that is about to begin.
+  useEffect(() => {
+    if (shell.status !== 'ready') return;
+    state.current = create(mode, difficulty);
+    setScore([0, 0]);
+    shell.invalidate();
+  }, [mode, difficulty, shell.status, shell.invalidate]);
 
   useEffect(() => {
     if (shell.status !== 'playing') lastTick.current = 0;
@@ -236,14 +257,6 @@ function Play() {
     placeCamera(w, mode === '2p');
   }, [size.w, size.h, THREE, mode]);
 
-  const begin = () => {
-    state.current = create(mode, difficulty);
-    setScore([0, 0]);
-    setMenu(false);
-    sfx.play('select');
-    shell.root.current?.focus({ preventScroll: true });
-  };
-
   /** Pointer position on the table plane, in table coordinates. */
   const tablePoint = (e: React.PointerEvent<HTMLDivElement>) => {
     const w = world.current;
@@ -257,7 +270,7 @@ function Play() {
   };
 
   const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (cfg.current.menu || shell.status !== 'playing') return;
+    if (shell.status !== 'playing') return;
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     const p = tablePoint(e);
     if (!p) return;
@@ -279,7 +292,7 @@ function Play() {
       return;
     }
     // a mouse with no button down still steers the bottom mallet against the computer
-    if (e.pointerType === 'mouse' && cfg.current.mode === 'cpu' && !cfg.current.menu && shell.status === 'playing') {
+    if (e.pointerType === 'mouse' && cfg.current.mode === 'cpu' && shell.status === 'playing') {
       const p = tablePoint(e);
       if (p) pointers.current.set(-1, { side: 0, x: p.x, z: p.z });
     }
@@ -328,7 +341,7 @@ function Play() {
       const gap = lastTick.current ? (now - lastTick.current) / 1000 : dt;
       lastTick.current = now;
       const simDt = gap > 0.5 ? dt : Math.min(0.25, Math.max(dt, gap));
-      if (!cfg.current.menu && s.winner === null) {
+      if (s.winner === null) {
         const n = Math.max(1, Math.ceil(simDt / SUBSTEP));
         const h = simDt / n;
         const ev: Event = {};
@@ -351,8 +364,8 @@ function Play() {
           if (ev.win !== undefined) {
             const won = ev.win === 0;
             sfx.play(won || !you ? 'win' : 'lose');
-            const title = you ? (won ? 'You win' : 'Computer wins') : ev.win === 0 ? 'Blue wins' : 'Pink wins';
-            shell.gameOver(you ? s.score[0] : undefined, { title, detail: `${s.score[0]} to ${s.score[1]}${you ? `, ${s.difficulty} computer.` : '.'}` });
+            const title = you ? (won ? 'You Win' : 'Computer Wins') : ev.win === 0 ? 'Blue Wins' : 'Pink Wins';
+            shell.gameOver(you ? s.score[0] : undefined, { title, detail: `${s.score[0]} to ${s.score[1]}${you ? ` against the ${levelLabel(s.difficulty).toLowerCase()} computer.` : '.'}` });
           } else {
             sfx.play(ev.goal === 0 || !you ? 'coin' : 'lose', 1.2);
             setPop({ text: you ? (ev.goal === 0 ? 'Goal' : 'Computer scores') : ev.goal === 0 ? 'Blue scores' : 'Pink scores', id: Date.now() });
@@ -388,53 +401,22 @@ function Play() {
   const two = mode === '2p';
   return (
     <>
-      <div ref={ref} className={`g-airhockey-host ${menu ? 'is-menu' : ''}`} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onPointerLeave={onUp} />
-      {!menu && (
-        <div className="g-airhockey-score">
-          <i style={{ background: '#34c3ff' }} />
-          <strong>{score[0]}</strong>
-          <span>first to {TO_WIN}</span>
-          <strong>{score[1]}</strong>
-          <i style={{ background: '#ff6b8a' }} />
-        </div>
-      )}
+      <div ref={ref} className="g-airhockey-host" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onPointerLeave={onUp} />
+      <div className="g-airhockey-score">
+        <i style={{ background: '#34c3ff' }} />
+        <strong>{score[0]}</strong>
+        <span>First to {TO_WIN}</span>
+        <strong>{score[1]}</strong>
+        <i style={{ background: '#ff6b8a' }} />
+      </div>
       {pop && (
         <div key={pop.id} className="g-airhockey-pop">
           {pop.text}
         </div>
       )}
-      {playing && menu && (
-        <div className="g-airhockey-menu">
-          <h3>Pick a match</h3>
-          <div className="g-airhockey-row" role="radiogroup" aria-label="Mode">
-            <button type="button" className={`g-airhockey-opt ${!two ? 'is-on' : ''}`} onClick={() => setMode('cpu')} aria-pressed={!two}>
-              vs computer
-            </button>
-            <button type="button" className={`g-airhockey-opt ${two ? 'is-on' : ''}`} onClick={() => setMode('2p')} aria-pressed={two}>
-              2 players
-            </button>
-          </div>
-          {!two ? (
-            <div className="g-airhockey-row" role="radiogroup" aria-label="Difficulty">
-              {(['easy', 'normal', 'hard'] as Difficulty[]).map((d) => (
-                <button key={d} type="button" className={`g-airhockey-opt ${difficulty === d ? 'is-on' : ''}`} onClick={() => setDifficulty(d)} aria-pressed={difficulty === d}>
-                  {d}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <p>{shell.touch ? 'Each player drags the mallet on their half of the table.' : 'Blue uses WASD or the mouse, pink uses the arrow keys.'}</p>
-          )}
-          <div className="g-airhockey-row">
-            <button type="button" className="g-airhockey-opt g-airhockey-go" onClick={begin}>
-              Play
-            </button>
-          </div>
-        </div>
-      )}
-      {playing && !menu && state.current.score[0] + state.current.score[1] === 0 && (
+      {playing && state.current.score[0] + state.current.score[1] === 0 && (
         <div className="g-airhockey-hint">
-          {shell.touch ? (two ? 'each player drags on their own side' : 'drag to move your mallet') : two ? 'blue: WASD or mouse, pink: arrow keys' : 'move the mouse or use WASD'}
+          {shell.touch ? (two ? 'Each player drags on their own side' : 'Drag to move your mallet') : two ? 'Blue: WASD or mouse. Pink: arrow keys' : 'Move the mouse or use WASD'}
         </div>
       )}
     </>

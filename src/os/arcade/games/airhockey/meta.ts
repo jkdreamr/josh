@@ -3,7 +3,7 @@ import type { GameMeta } from '../../types';
 export const meta: GameMeta = {
   id: 'airhockey',
   title: 'Air Hockey',
-  blurb: 'First to seven on a glowing table. Take on the computer or pass the puck to a friend on the same screen.',
+  blurb: 'First to seven. Take on the computer or play a friend on the same screen.',
   category: '3d',
   players: '1-2P',
   controls: 'Drag your mallet with mouse or touch. Keyboard: WASD for the bottom player, arrows for the top player.',

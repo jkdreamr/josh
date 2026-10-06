@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useShell } from '../../kit';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { bestMove, type Level } from './ai.ts';
 import {
@@ -12,11 +12,16 @@ import { BISHOP, KNIGHT, Piece, QUEEN, ROOK } from './pieces.tsx';
 import type { AiReply, AiRequest } from './worker.ts';
 import './chess.css';
 
-type Mode = 'cpu' | '2p';
-const LEVELS = ['easy', 'normal', 'hard'] as const;
-const prefs: { mode: Mode; level: Level; color: Color } = { mode: 'cpu', level: 1, color: WHITE };
+const MODE = defineSetting('chess:mode', PLAY_MODES, 'cpu');
+const LEVEL = defineSetting('chess:level', LEVEL_NAMES, 'normal');
+const SIDE = defineSetting('chess:side', ['white', 'black'] as const, 'white');
+const sideOptions = [
+  ['white', 'White'],
+  ['black', 'Black'],
+] as const;
+const colorOfSide = (s: 'white' | 'black'): Color => (s === 'white' ? WHITE : BLACK);
 const MIN_THINK_MS = 450;
-const ENDINGS = { checkmate: 'checkmate', stalemate: 'stalemate', repetition: 'draw by repetition', fifty: 'draw, fifty-move rule', insufficient: 'draw, insufficient material' } as const;
+const ENDINGS = { checkmate: 'Checkmate', stalemate: 'Stalemate', repetition: 'Draw by repetition', fifty: 'Draw by the fifty-move rule', insufficient: 'Draw, insufficient material' } as const;
 const DRAWS = { stalemate: 'stalemate', repetition: 'threefold repetition', fifty: 'the fifty-move rule', insufficient: 'insufficient material' } as const;
 type GameTimer = { remaining: number; fn: () => void };
 type PendingAI = { game: ChessGame; id: number; started: number; from: number; to: number; promo: number; ready: boolean; scheduled: boolean; cleanup?: () => void };
@@ -46,34 +51,22 @@ function useGameTimers() {
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} lowerIsBetter formatScore={(n) => `${n} ${n === 1 ? 'move' : 'moves'}`}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} lowerIsBetter formatScore={(n) => `${n} ${n === 1 ? 'move' : 'moves'}`} setup={<Setup />}>
       <Chess />
     </GameShell>
   );
 }
 
-function Setup({ onStart }: { onStart: (mode: Mode, level: Level, color: Color) => void }) {
-  const [mode, setMode] = useState<Mode>(prefs.mode);
-  const [level, setLevel] = useState<Level>(prefs.level);
-  const [color, setColor] = useState<Color>(prefs.color);
-  const seg = <T,>(label: string, value: T, items: [T, string][], set: (v: T) => void, hidden = false) => (
-    <div className={`g-chess-seg ${hidden ? 'hidden' : ''}`} role="radiogroup" aria-label={label}>
-      {items.map(([v, text]) => (
-        <button key={text} type="button" role="radio" aria-checked={value === v} className={value === v ? 'on' : ''} onClick={() => set(v)}>
-          {text}
-        </button>
-      ))}
-    </div>
-  );
+function Setup() {
+  const [mode, setMode] = useSetting(MODE);
+  const [level, setLevel] = useSetting(LEVEL);
+  const [side, setSide] = useSetting(SIDE);
   return (
-    <div className="g-chess-setup">
-      {seg<Mode>('Mode', mode, [['cpu', 'vs computer'], ['2p', '2 players']], setMode)}
-      {seg<Level>('Difficulty', level, LEVELS.map((l, i) => [i as Level, l]), setLevel, mode !== 'cpu')}
-      {seg<Color>('Play as', color, [[WHITE, 'play white'], [BLACK, 'play black']], setColor, mode !== 'cpu')}
-      <button type="button" className="g-chess-go" onClick={() => onStart(mode, level, color)}>
-        start
-      </button>
-    </div>
+    <>
+      <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
+      {mode === 'cpu' && <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />}
+      {mode === 'cpu' && <Segmented label="Play as" value={side} options={sideOptions} onChange={setSide} />}
+    </>
   );
 }
 
@@ -106,17 +99,19 @@ function Chess() {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLOListElement | null>(null);
   const pieceEls = useRef(new Map<number, HTMLDivElement>());
-  const [phase, setPhase] = useState<'setup' | 'play'>('setup');
   const [game, setGame] = useState<ChessGame>(() => newGame());
   const [ids, setIds] = useState(() => initialIds(game.pos));
   const [sel, setSel] = useState<number | null>(null);
   const [cursor, setCursor] = useState<number | null>(null);
   const [promo, setPromo] = useState<{ from: number; to: number } | null>(null);
-  const [flipped, setFlipped] = useState(false);
+  const [flipped, setFlipped] = useState(() => getSetting(MODE) === 'cpu' && getSetting(SIDE) === 'black');
   const [thinking, setThinking] = useState(false);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const drag = useRef<Drag | null>(null);
-  const cfg = useRef({ mode: prefs.mode, level: prefs.level, color: prefs.color });
+  const [mode] = useSetting(MODE);
+  const [levelName] = useSetting(LEVEL);
+  const [side] = useSetting(SIDE);
+  const cfg = useRef<{ mode: typeof mode; level: Level; color: Color }>({ mode: getSetting(MODE), level: levelIndex(getSetting(LEVEL)), color: colorOfSide(getSetting(SIDE)) });
   const worker = useRef<Worker | null>(null);
   const reqId = useRef(0);
   const aiTask = useRef<PendingAI | null>(null);
@@ -128,7 +123,7 @@ function Chess() {
   const gameOverScheduled = useRef<ChessGame | null>(null);
   const later = useGameTimers();
 
-  const humanTurn = phase === 'play' && game.status === 'playing' && (cfg.current.mode === '2p' || game.pos.turn === cfg.current.color);
+  const humanTurn = game.status === 'playing' && (cfg.current.mode === '2p' || game.pos.turn === cfg.current.color);
   const lastMove = game.history.at(-1)?.move;
   const checkSq = inCheck(game.pos) ? game.pos.kings[game.pos.turn === WHITE ? 0 : 1] : -1;
   const targets = useMemo(() => (sel === null ? new Set<number>() : new Set(game.legal.filter((m) => moveFrom(m) === sel).map(moveTo))), [sel, game.legal]);
@@ -168,19 +163,18 @@ function Chess() {
     [game.legal, commit],
   );
 
-  const begin = (mode: Mode, level: Level, color: Color) => {
-    Object.assign(prefs, { mode, level, color });
-    cfg.current = { mode, level, color };
+  // Setup changes made on the Start card apply to the game that is about to begin.
+  useEffect(() => {
+    if (shell.status !== 'ready') return;
+    const color = colorOfSide(side);
+    cfg.current = { mode, level: levelIndex(levelName), color };
     const g = newGame();
     setGame(g);
     setIds(initialIds(g.pos));
     setFlipped(mode === 'cpu' && color === BLACK);
     setSel(null);
     setPromo(null);
-    sfx.play('select');
-    setPhase('play');
-    shell.root.current?.focus({ preventScroll: true });
-  };
+  }, [mode, levelName, side, shell.status]);
 
   // Computer: a Web Worker when available, otherwise the same search on a timer.
   useEffect(() => {
@@ -201,12 +195,12 @@ function Chess() {
 
   useEffect(() => {
     let task = aiTask.current;
-    if (task && (task.game !== game || phase !== 'play' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.pos.turn === cfg.current.color)) {
+    if (task && (task.game !== game || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.pos.turn === cfg.current.color)) {
       task.cleanup?.();
       aiTask.current = null;
       task = null;
     }
-    if (shell.status !== 'playing' || phase !== 'play' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.pos.turn === cfg.current.color) return;
+    if (shell.status !== 'playing' || cfg.current.mode !== 'cpu' || game.status !== 'playing' || game.pos.turn === cfg.current.color) return;
 
     if (!task) {
       const pending: PendingAI = { game, id: ++reqId.current, started: performance.now(), from: -1, to: -1, promo: 0, ready: false, scheduled: false };
@@ -265,10 +259,10 @@ function Chess() {
         if (m !== undefined) commit(m);
       }, Math.max(0, MIN_THINK_MS - (performance.now() - task.started)));
     }
-  }, [game, phase, commit, later, shell.status, aiRevision]);
+  }, [game, commit, later, shell.status, aiRevision]);
 
   useEffect(() => {
-    if (phase !== 'play' || game.status === 'playing') {
+    if (game.status === 'playing') {
       gameOverScheduled.current = null;
       return;
     }
@@ -280,15 +274,15 @@ function Chess() {
       const winner = game.status === 'checkmate' ? (game.pos.turn === WHITE ? BLACK : WHITE) : null;
       const moves = Math.ceil(game.history.length / 2);
       if (game.status === 'checkmate') {
-        const who = mode === 'cpu' ? (winner === color ? 'you win' : 'computer wins') : `${winner === WHITE ? 'white' : 'black'} wins`;
+        const who = mode === 'cpu' ? (winner === color ? 'You win' : 'Computer wins') : `${winner === WHITE ? 'White' : 'Black'} wins`;
         const score = mode === 'cpu' && winner === color ? moves : undefined;
-        shell.gameOver(score, { title: 'checkmate', detail: `${who} in ${moves} ${moves === 1 ? 'move' : 'moves'}.` });
+        shell.gameOver(score, { title: 'Checkmate', detail: `${who} in ${moves} ${moves === 1 ? 'move' : 'moves'}.` });
       } else {
         const why = DRAWS[game.status as keyof typeof DRAWS];
-        shell.gameOver(undefined, { title: 'draw', detail: `by ${why} after ${moves} ${moves === 1 ? 'move' : 'moves'}.` });
+        shell.gameOver(undefined, { title: 'Draw', detail: `By ${why} after ${moves} ${moves === 1 ? 'move' : 'moves'}.` });
       }
     }, 650);
-  }, [game, phase, shell.status, shell.gameOver, later]);
+  }, [game, shell.status, shell.gameOver, later]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -369,7 +363,6 @@ function Chess() {
   useKeys((code, e) => {
     if (e?.repeat && (code === 'Enter' || code === 'Space' || code === 'KeyF')) return;
     if (code === 'KeyF') return setFlipped((f) => !f);
-    if (phase !== 'play') return;
     const dirs: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], KeyA: [-1, 0], KeyD: [1, 0], KeyW: [0, -1], KeyS: [0, 1] };
     if (dirs[code]) {
       const [dx, dy] = dirs[code];
@@ -395,12 +388,11 @@ function Chess() {
   });
 
   const status = (() => {
-    if (phase !== 'play') return '';
     if (game.status !== 'playing') return ENDINGS[game.status];
-    const side = game.pos.turn === WHITE ? 'white' : 'black';
+    const mover = game.pos.turn === WHITE ? 'White' : 'Black';
     const check = checkSq >= 0 ? ' · check' : '';
-    if (cfg.current.mode === 'cpu') return (thinking ? 'computer is thinking' : 'your move') + check;
-    return `${side} to move${check}`;
+    if (cfg.current.mode === 'cpu') return (thinking ? 'Computer is thinking' : 'Your move') + check;
+    return `${mover} to move${check}`;
   })();
 
   const squares = useMemo(() => {
@@ -418,9 +410,7 @@ function Chess() {
 
   return (
     <div ref={stageRef} className={`g-chess-stage ${wide ? 'wide' : 'tall'}`}>
-      {phase === 'play' && (
-        <>
-          <div className={`g-chess-status ${thinking ? 'busy' : ''}`} aria-live="polite">
+      <div className={`g-chess-status ${thinking ? 'busy' : ''}`} aria-live="polite">
             {thinking && <span className="g-chess-dots" aria-hidden="true" />}
             {status}
           </div>
@@ -469,7 +459,7 @@ function Chess() {
               })}
               {promo && (
                 <div className="g-chess-promo" role="dialog" aria-label="Promote to">
-                  <span>promote to</span>
+                  <span>Promote to</span>
                   <div>
                     {[QUEEN, ROOK, BISHOP, KNIGHT].map((t) => (
                       <button key={t} type="button" onClick={() => commit(findMove(game.legal, promo.from, promo.to, t)!)} aria-label={['', 'pawn', 'knight', 'bishop', 'rook', 'queen', 'king'][t]}>
@@ -477,23 +467,23 @@ function Chess() {
                       </button>
                     ))}
                   </div>
-                  <button type="button" className="g-chess-cancel" onClick={() => setPromo(null)}>
-                    cancel
+                  <button type="button" className="arcade-btn g-chess-cancel" onClick={() => setPromo(null)}>
+                    Cancel
                   </button>
                 </div>
               )}
             </div>
             <aside className="g-chess-panel" style={wide ? { width: panelW, height: boardPx } : { height: panelH, width: boardPx }}>
               <div className="g-chess-tools">
-                <span className="g-chess-mode">{cfg.current.mode === 'cpu' ? `vs computer · ${LEVELS[cfg.current.level]}` : 'two players'}</span>
-                <button type="button" className="g-chess-flip" onClick={() => setFlipped((f) => !f)} aria-label="Flip board" title="Flip board (F)">
+                <span className="g-chess-mode">{cfg.current.mode === 'cpu' ? `vs Computer · ${levelLabel(LEVEL_NAMES[cfg.current.level])}` : '2 Players'}</span>
+                <button type="button" className="g-chess-flip" onClick={() => setFlipped((f) => !f)} aria-label="Flip Board" title="Flip Board">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M7 4v13M3.5 13.5L7 17l3.5-3.5M17 20V7M13.5 10.5L17 7l3.5 3.5" />
                   </svg>
                 </button>
               </div>
               <ol ref={listRef} className="g-chess-moves" aria-label="Moves">
-                {rows.length === 0 && <li className="g-chess-empty">{cfg.current.mode === 'cpu' && cfg.current.color === BLACK ? 'white opens.' : 'white to open.'}</li>}
+                {rows.length === 0 && <li className="g-chess-empty">{cfg.current.mode === 'cpu' && cfg.current.color === BLACK ? 'White opens.' : 'White to open.'}</li>}
                 {rows.map((r) => (
                   <li key={r.n}>
                     <em>{r.n}.</em>
@@ -504,9 +494,6 @@ function Chess() {
               </ol>
             </aside>
           </div>
-        </>
-      )}
-      {phase === 'setup' && <Setup onStart={begin} />}
     </div>
   );
 }

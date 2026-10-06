@@ -1,46 +1,39 @@
-import { useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useShell } from '../../kit';
+import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { COLS, ROWS, bestCol, colOf, createBoard, drop, idx, isFull, rowOf, winLine, type Board, type Level, type Player } from './connect4.ts';
 import { meta } from './meta';
 import './connect4.css';
 
 type Mode = 'cpu' | '2p';
-const LEVELS = ['easy', 'normal', 'hard'] as const;
-const prefs: { mode: Mode; level: Level; first: Player } = { mode: 'cpu', level: 1, first: 1 };
+const MODE = defineSetting('connect4:mode', PLAY_MODES, 'cpu');
+const LEVEL = defineSetting('connect4:level', LEVEL_NAMES, 'normal');
+const FIRST = defineSetting('connect4:first', ['you', 'computer'] as const, 'you');
+const firstOptions = [
+  ['you', 'You Start'],
+  ['computer', 'Computer Starts'],
+] as const;
 const COLORS: Record<Player, string> = { 1: '#ff453a', 2: '#ffd60a' };
-const NAMES: Record<Player, string> = { 1: 'red', 2: 'yellow' };
+const NAMES: Record<Player, string> = { 1: 'Red', 2: 'Yellow' };
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} lowerIsBetter formatScore={(n) => `${n} ${n === 1 ? 'disc' : 'discs'}`}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} lowerIsBetter formatScore={(n) => `${n} ${n === 1 ? 'disc' : 'discs'}`} setup={<Setup />}>
       <ConnectFour />
     </GameShell>
   );
 }
 
-function Setup({ onStart }: { onStart: (mode: Mode, level: Level, first: Player) => void }) {
-  const [mode, setMode] = useState<Mode>(prefs.mode);
-  const [level, setLevel] = useState<Level>(prefs.level);
-  const [first, setFirst] = useState<Player>(prefs.first);
-  const seg = <T,>(label: string, value: T, items: [T, string][], set: (v: T) => void, hidden = false) => (
-    <div className={`g-connect4-seg ${hidden ? 'hidden' : ''}`} role="radiogroup" aria-label={label}>
-      {items.map(([v, text]) => (
-        <button key={text} type="button" role="radio" aria-checked={value === v} className={value === v ? 'on' : ''} onClick={() => set(v)}>
-          {text}
-        </button>
-      ))}
-    </div>
-  );
+function Setup() {
+  const [mode, setMode] = useSetting(MODE);
+  const [level, setLevel] = useSetting(LEVEL);
+  const [first, setFirst] = useSetting(FIRST);
   return (
-    <div className="g-connect4-setup">
-      {seg<Mode>('Mode', mode, [['cpu', 'vs computer'], ['2p', '2 players']], setMode)}
-      {seg<Level>('Difficulty', level, LEVELS.map((l, i) => [i as Level, l]), setLevel, mode !== 'cpu')}
-      {seg<Player>('Who starts', first, [[1, 'you start'], [2, 'computer starts']], setFirst, mode !== 'cpu')}
-      <button type="button" className="g-connect4-go" onClick={() => onStart(mode, level, first)}>
-        start
-      </button>
-    </div>
+    <>
+      <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
+      {mode === 'cpu' && <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />}
+      {mode === 'cpu' && <Segmented label="First move" value={first} options={firstOptions} onChange={setFirst} />}
+    </>
   );
 }
 
@@ -68,9 +61,11 @@ const ME: Player = 1;
 function ConnectFour() {
   const shell = useShell();
   const { ref, size, ctx } = useCanvas();
-  const [phase, setPhase] = useState<'setup' | 'play'>('setup');
   const [status, setStatus] = useState('');
-  const cfg = useRef<{ mode: Mode; level: Level; first: Player }>({ ...prefs });
+  const [mode] = useSetting(MODE);
+  const [levelName] = useSetting(LEVEL);
+  const [first] = useSetting(FIRST);
+  const cfg = useRef<{ mode: Mode; level: Level; first: Player }>({ mode, level: levelIndex(levelName), first: first === 'you' ? 1 : 2 });
   const st = useRef<State | null>(null);
   const sizeRef = useRef(size);
   sizeRef.current = size;
@@ -96,7 +91,7 @@ function ConnectFour() {
 
   const label = (s: State) => {
     if (s.over) return '';
-    if (cfg.current.mode === 'cpu') return s.thinking || isCpu(s.turn) ? 'computer is thinking' : 'your move';
+    if (cfg.current.mode === 'cpu') return s.thinking || isCpu(s.turn) ? 'Computer is thinking' : 'Your move';
     return `${NAMES[s.turn]} to move`;
   };
 
@@ -145,8 +140,8 @@ function ConnectFour() {
       gameOverDelay.current = {
         remaining: 1.4,
         finish: () => {
-          const title = cpuMode ? (youWon ? 'you win' : 'computer wins') : `${NAMES[f.player]} wins`;
-          shell.gameOver(youWon ? discs : undefined, { title, detail: `four in a row after ${discs} ${discs === 1 ? 'disc' : 'discs'}.` });
+          const title = cpuMode ? (youWon ? 'You Win' : 'Computer Wins') : `${NAMES[f.player]} Wins`;
+          shell.gameOver(youWon ? discs : undefined, { title, detail: `Four in a row after ${discs} ${discs === 1 ? 'disc' : 'discs'}.` });
         },
       };
       return;
@@ -157,7 +152,7 @@ function ConnectFour() {
       sfx.play('select', 0.7);
       gameOverDelay.current = {
         remaining: 0.9,
-        finish: () => shell.gameOver(undefined, { title: 'draw', detail: 'the board is full.' }),
+        finish: () => shell.gameOver(undefined, { title: 'Draw', detail: 'The board is full.' }),
       };
       return;
     }
@@ -170,10 +165,9 @@ function ConnectFour() {
     setStatus(label(s));
   };
 
-  const begin = (mode: Mode, level: Level, first: Player) => {
-    Object.assign(prefs, { mode, level, first });
-    cfg.current = { mode, level, first };
-    const turn: Player = mode === 'cpu' ? first : 1;
+  const reset = () => {
+    cfg.current = { mode, level: levelIndex(levelName), first: first === 'you' ? 1 : 2 };
+    const turn: Player = mode === 'cpu' ? cfg.current.first : 1;
     const s: State = {
       board: createBoard(),
       turn,
@@ -193,14 +187,15 @@ function ConnectFour() {
     st.current = s;
     gameOverDelay.current = null;
     setStatus(label(s));
-    sfx.play('select');
-    setPhase('play');
-    shell.root.current?.focus({ preventScroll: true });
   };
+  // A fresh board on mount, and again when setup changes on the Start card.
+  useEffect(() => {
+    if (shell.status === 'ready' || !st.current) reset();
+  }, [mode, levelName, first, shell.status]);
 
   useKeys((code, e) => {
     const s = st.current;
-    if (phase !== 'play' || !s || !humanTurn()) return;
+    if (!s || !humanTurn()) return;
     if (code === 'ArrowLeft' || code === 'KeyA') s.cursor = (s.cursor + COLS - 1) % COLS;
     else if (code === 'ArrowRight' || code === 'KeyD') s.cursor = (s.cursor + 1) % COLS;
     else if ((code === 'Enter' || code === 'Space' || code === 'ArrowDown' || code === 'KeyS') && !e?.repeat) place(s.cursor);
@@ -226,14 +221,14 @@ function ConnectFour() {
   };
   const onPointerDown = (e: RPointerEvent<HTMLCanvasElement>) => {
     const s = st.current;
-    if (phase !== 'play' || !s || !humanTurn()) return;
+    if (!s || !humanTurn()) return;
     const c = colAt(e);
     if (c !== null) place(c);
   };
 
   const update = (dt: number) => {
     const s = st.current;
-    if (!s || phase !== 'play') return;
+    if (!s) return;
     const g = geometry();
     if (s.falling) {
       const f = s.falling;
@@ -300,7 +295,7 @@ function ConnectFour() {
     bg.addColorStop(1, '#0b0c12');
     c.fillStyle = bg;
     c.fillRect(0, 0, w, h);
-    if (!s || phase !== 'play') return;
+    if (!s) return;
     const g = geometry();
     const r = g.cell * 0.4;
     const cx = (col: number) => g.x0 + col * g.cell + g.cell / 2;
@@ -412,13 +407,12 @@ function ConnectFour() {
         onPointerDown={onPointerDown}
         aria-label="Connect Four board"
       />
-      {phase === 'play' && status && (
+      {status && (
         <div className="g-connect4-status" aria-live="polite">
           {status.includes('thinking') && <span className="g-connect4-dot" aria-hidden="true" />}
           {status}
         </div>
       )}
-      {phase === 'setup' && <Setup onStart={begin} />}
     </div>
   );
 }

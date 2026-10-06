@@ -1,45 +1,42 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useShell } from '../../kit';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { alive, createArena, roundOver, steer, step, swipeDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
 import { meta } from './meta';
 import './lightcycles.css';
 
 type Mode = '2p' | 1 | 2 | 3;
-const LEVELS = ['easy', 'normal', 'hard'] as const;
-const prefs: { mode: Mode; level: Level } = { mode: 1, level: 1 };
+const MODE = defineSetting('lightcycles:mode', PLAY_MODES, 'cpu');
+const RIVALS = defineSetting('lightcycles:rivals', ['1', '2', '3'] as const, '1');
+const LEVEL = defineSetting('lightcycles:level', LEVEL_NAMES, 'normal');
+const rivalOptions = [
+  ['1', '1 Rival'],
+  ['2', '2 Rivals'],
+  ['3', '3 Rivals'],
+] as const;
+const modeOf = (mode: 'cpu' | '2p', rivals: '1' | '2' | '3'): Mode => (mode === '2p' ? '2p' : (Number(rivals) as 1 | 2 | 3));
 const TARGET = 3;
 const COLORS = ['#32d4ff', '#ff9f0a', '#bf5af2', '#30d158'];
-const NAMES = ['player 1', 'player 2', 'rider 3', 'rider 4'];
+const NAMES = ['Player 1', 'Player 2', 'Rider 3', 'Rider 4'];
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} formatScore={(n) => `${n} cells`}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} formatScore={(n) => `${n} cells`} setup={<Setup />}>
       <Cycles />
     </GameShell>
   );
 }
 
-function Setup({ onStart }: { onStart: (mode: Mode, level: Level) => void }) {
-  const [mode, setMode] = useState<Mode>(prefs.mode);
-  const [level, setLevel] = useState<Level>(prefs.level);
-  const seg = <T,>(label: string, value: T, items: [T, string][], set: (v: T) => void, hidden = false) => (
-    <div className={`g-lightcycles-seg ${hidden ? 'hidden' : ''}`} role="radiogroup" aria-label={label}>
-      {items.map(([v, text]) => (
-        <button key={text} type="button" role="radio" aria-checked={value === v} className={value === v ? 'on' : ''} onClick={() => set(v)}>
-          {text}
-        </button>
-      ))}
-    </div>
-  );
+function Setup() {
+  const [mode, setMode] = useSetting(MODE);
+  const [rivals, setRivals] = useSetting(RIVALS);
+  const [level, setLevel] = useSetting(LEVEL);
   return (
-    <div className="g-lightcycles-setup">
-      {seg<Mode>('Mode', mode, [[1, 'vs 1'], [2, 'vs 2'], [3, 'vs 3'], ['2p', '2 players']], setMode)}
-      {seg<Level>('Difficulty', level, LEVELS.map((l, i) => [i as Level, l]), setLevel, mode === '2p')}
-      <button type="button" className="g-lightcycles-go" onClick={() => onStart(mode, level)}>
-        start
-      </button>
-    </div>
+    <>
+      <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
+      {mode === 'cpu' && <Segmented label="Rivals" value={rivals} options={rivalOptions} onChange={setRivals} />}
+      {mode === 'cpu' && <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />}
+    </>
   );
 }
 
@@ -74,9 +71,11 @@ const grid = (w: number, h: number) => {
 function Cycles() {
   const shell = useShell();
   const { ref, size, ctx } = useCanvas();
-  const [phase, setPhase] = useState<'setup' | 'play'>('setup');
   const [banner, setBanner] = useState<{ text: string; sub: string } | null>(null);
-  const cfg = useRef<{ mode: Mode; level: Level }>({ mode: prefs.mode, level: prefs.level });
+  const [playMode] = useSetting(MODE);
+  const [rivals] = useSetting(RIVALS);
+  const [levelName] = useSetting(LEVEL);
+  const cfg = useRef<{ mode: Mode; level: Level }>({ mode: modeOf(playMode, rivals), level: levelIndex(levelName) });
   const m = useRef<Match | null>(null);
   const touches = useRef(new Map<number, { x: number; y: number; rider: number }>());
   const sizeRef = useRef(size);
@@ -97,13 +96,14 @@ function Cycles() {
     match.acc = 0;
     match.particles = [];
     match.flash = 0;
-    match.banner = `round ${match.round}`;
-    match.sub = match.round === 1 ? (shell.touch ? 'swipe to turn' : cfg.current.mode === '2p' ? 'WASD vs arrows' : 'WASD or arrows to turn') : '';
+    match.banner = `Round ${match.round}`;
+    match.sub = match.round === 1 ? (shell.touch ? 'Swipe to turn' : cfg.current.mode === '2p' ? 'WASD vs arrow keys' : 'WASD or arrow keys to turn') : '';
     setBanner({ text: match.banner, sub: match.sub });
   };
 
-  const begin = (mode: Mode, level: Level) => {
-    Object.assign(prefs, { mode, level });
+  const reset = () => {
+    const mode = modeOf(playMode, rivals);
+    const level = levelIndex(levelName);
     cfg.current = { mode, level };
     const match: Match = {
       arena: createArena(2, 2, 0, 0),
@@ -126,10 +126,11 @@ function Cycles() {
     };
     m.current = match;
     startRound(match);
-    sfx.play('select');
-    setPhase('play');
-    shell.root.current?.focus({ preventScroll: true });
   };
+  // A fresh match on mount, and again when setup changes on the Start card.
+  useEffect(() => {
+    if (shell.status === 'ready' || !m.current) reset();
+  }, [playMode, rivals, levelName, shell.status]);
 
   const push = (rider: number, d: Dir) => {
     const match = m.current;
@@ -140,7 +141,6 @@ function Cycles() {
   };
 
   useKeys((code) => {
-    if (phase !== 'play') return;
     const twoP = cfg.current.mode === '2p';
     const wasd: Record<string, Dir> = { KeyW: 0, KeyD: 1, KeyS: 2, KeyA: 3 };
     const arrows: Record<string, Dir> = { ArrowUp: 0, ArrowRight: 1, ArrowDown: 2, ArrowLeft: 3 };
@@ -149,7 +149,6 @@ function Cycles() {
   });
 
   const onPointerDown = (e: RPointerEvent<HTMLCanvasElement>) => {
-    if (phase !== 'play') return;
     const el = e.currentTarget;
     const r = el.getBoundingClientRect();
     const rider = cfg.current.mode === '2p' && e.clientX - r.left > r.width / 2 ? 1 : 0;
@@ -182,7 +181,7 @@ function Cycles() {
 
   const update = (dt: number) => {
     const match = m.current;
-    if (!match || phase !== 'play') return;
+    if (!match) return;
     match.flash = Math.max(0, match.flash - dt * 2.4);
     match.shake = Math.max(0, match.shake - dt * 1.6);
     for (const p of match.particles) {
@@ -211,8 +210,8 @@ function Cycles() {
           match.phase = 'done';
           const winner = match.wins.findIndex((w) => w >= TARGET);
           const cpuMode = cfg.current.mode !== '2p';
-          const title = cpuMode ? (winner === 0 ? 'you win' : 'crashed out') : `${NAMES[winner]} wins`;
-          const detail = `${match.wins.join(' to ')} in ${match.round} rounds. longest ride: ${match.longest} cells.`;
+          const title = cpuMode ? (winner === 0 ? 'You Win' : 'Crashed Out') : `${NAMES[winner]} Wins`;
+          const detail = `${match.wins.join(' to ')} in ${match.round} rounds. Longest ride: ${match.longest} cells.`;
           shell.gameOver(cpuMode ? match.longest : undefined, { title, detail });
           return;
         }
@@ -264,7 +263,7 @@ function Cycles() {
         match.phase = 'crash';
         match.timer = 1.5;
         const twoP = cfg.current.mode === '2p';
-        match.banner = winner === null ? 'draw' : twoP || winner > 0 ? `${NAMES[winner]} takes the round` : 'you take the round';
+        match.banner = winner === null ? 'Draw' : twoP || winner > 0 ? `${NAMES[winner]} takes the round` : 'You take the round';
         match.sub = match.wins.some((w) => w >= TARGET) ? '' : `${match.wins.join(' to ')}`;
         setBanner({ text: match.banner, sub: match.sub });
         if (winner === 0 || (twoP && winner !== null)) sfx.play('coin');
@@ -283,7 +282,7 @@ function Cycles() {
     bg.addColorStop(1, '#05060b');
     c.fillStyle = bg;
     c.fillRect(0, 0, w, h);
-    if (!match || phase !== 'play') return;
+    if (!match) return;
 
     const a = match.arena;
     const cell = Math.min((w - 16) / a.w, (h - 64) / a.h);
@@ -402,14 +401,13 @@ function Cycles() {
   return (
     <div className="g-lightcycles-stage">
       <canvas ref={ref} className="g-lightcycles-canvas" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd} aria-label="Light cycle arena" />
-      {phase === 'play' && cfg.current.mode === '2p' && shell.touch && <div className="g-lightcycles-split" aria-hidden="true" />}
-      {phase === 'play' && banner && (
+      {cfg.current.mode === '2p' && shell.touch && <div className="g-lightcycles-split" aria-hidden="true" />}
+      {banner && (
         <div className="g-lightcycles-banner" key={banner.text + m.current?.round} aria-live="polite">
           <strong>{banner.text}</strong>
           {banner.sub && <span>{banner.sub}</span>}
         </div>
       )}
-      {phase === 'setup' && <Setup onStart={begin} />}
     </div>
   );
 }

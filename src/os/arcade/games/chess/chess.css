@@ -2,7 +2,7 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: radial-gradient(120% 90% at 50% 0%, #1a1a2a, #0c0c12);
+  background: #101018;
 }
 .g-chess .g-chess-status {
   position: absolute;
@@ -126,7 +126,7 @@
 .g-chess .g-chess-rank,
 .g-chess .g-chess-file {
   position: absolute;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   color: rgba(30, 34, 48, 0.5);
   pointer-events: none;
@@ -217,13 +217,6 @@
   width: 100%;
   height: 100%;
 }
-.g-chess .g-chess-cancel {
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  color: rgba(245, 245, 247, 0.7);
-  background: rgba(255, 255, 255, 0.1);
-}
 .g-chess .g-chess-panel {
   flex: none;
   display: flex;
@@ -308,79 +301,4 @@
 }
 .g-chess .g-chess-empty {
   color: rgba(245, 245, 247, 0.45);
-}
-
-/* Setup */
-.g-chess .g-chess-setup {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 16px;
-  animation: g-chess-in 0.22s ease;
-}
-@keyframes g-chess-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-}
-.g-chess .g-chess-seg {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
-}
-.g-chess .g-chess-seg.hidden {
-  visibility: hidden;
-}
-.g-chess .g-chess-seg button {
-  min-width: 72px;
-  height: 32px;
-  padding: 0 14px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 500;
-  color: rgba(245, 245, 247, 0.72);
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.g-chess .g-chess-seg button:hover {
-  color: #fff;
-}
-.g-chess .g-chess-seg button.on {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.16);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
-}
-.g-chess .g-chess-go {
-  margin-top: 4px;
-  min-width: 150px;
-  height: 40px;
-  padding: 0 22px;
-  border-radius: 999px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #fff;
-  background: var(--accent);
-  box-shadow:
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.35),
-    0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
-  transition: transform 0.12s ease, filter 0.12s ease;
-}
-.g-chess .g-chess-go:hover {
-  filter: brightness(1.08);
-}
-.g-chess .g-chess-go:active {
-  transform: scale(0.97);
-}
-
-@media (pointer: coarse) {
-  .g-chess .g-chess-seg button { min-height: 40px; }
-  .g-chess .g-chess-flip { width: 40px; height: 40px; }
 }
