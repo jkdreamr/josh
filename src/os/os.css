@@ -1983,6 +1983,14 @@ kbd {
 .chrome-game[hidden] {
   display: none;
 }
+/* A zoomed window runs under the floating dock; keep the game above it. */
+.win.is-max .chrome-game {
+  padding-bottom: 52px;
+}
+.is-mobile .win.is-max .chrome-game,
+.is-tablet .win.is-max .chrome-game {
+  padding-bottom: 0;
+}
 .arcade {
   height: 100%;
   overflow: auto;
