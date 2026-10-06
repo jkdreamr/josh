@@ -149,27 +149,17 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
         );
       const availH = H - MENU_H - DOCK_SPACE;
       const w = Math.round(Math.min(def.w, W * 0.86));
-      let h = Math.round(Math.min(def.h, availH - 10));
+      const h = Math.round(Math.min(def.h, availH - 10));
       const n = ws.filter((x) => !x.min).length % 6;
-      const centeredX = Math.round(clamp((W - w) / 2 + n * 26, 8, W - w - 8));
+      const x = Math.round(clamp((W - w) / 2 + n * 26, 8, W - w - 8));
       const centeredY = Math.round(clamp(MENU_H + (availH - h) / 2 + n * 22, MENU_H + 6, H - h - DOCK_SPACE));
-      let x = centeredX;
       let y = centeredY;
       if (bannerBounds) {
-        const overlaps = (left: number, top: number, height = h) =>
-          left < bannerBounds.right && left + w > bannerBounds.left && top < bannerBounds.bottom && top + height > bannerBounds.top;
-        if (overlaps(x, y)) {
-          const shiftedX = Math.max(8, bannerBounds.left - w - 8);
-          if (shiftedX <= W - w - 8 && !overlaps(shiftedX, y)) x = shiftedX;
-          else {
-            const shiftedY = Math.max(y, bannerBounds.bottom + 8);
-            const shiftedHeight = Math.round(Math.min(h, H - DOCK_SPACE - shiftedY));
-            if (shiftedX <= W - w - 8 && shiftedHeight >= Math.min(150, h) && !overlaps(shiftedX, shiftedY, shiftedHeight)) {
-              x = shiftedX;
-              y = shiftedY;
-              h = shiftedHeight;
-            }
-          }
+        const overlaps = (top: number) =>
+          x < bannerBounds.right && x + w > bannerBounds.left && top < bannerBounds.bottom && top + h > bannerBounds.top;
+        const shiftedY = bannerBounds.bottom + 8;
+        if (overlaps(y) && shiftedY + h <= H - DOCK_SPACE) {
+          y = shiftedY;
         }
       }
       return [...ws, { id, x, y, w, h, z, min: false, max: false, args: { ...args, nonce: Date.now() }, state: 'opening', origin: from }];
