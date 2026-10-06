@@ -1,0 +1,313 @@
+.g-checkers .g-checkers-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: radial-gradient(120% 90% at 50% 0%, #241a1c, #0e0b0c);
+}
+.g-checkers .g-checkers-status {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 55%;
+  height: 22px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.g-checkers .g-checkers-dots {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: g-checkers-pulse 1s ease-in-out infinite;
+}
+@keyframes g-checkers-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+.g-checkers .g-checkers-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px 8px;
+  box-sizing: border-box;
+}
+.g-checkers .g-checkers-board {
+  position: relative;
+  flex: none;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.12),
+    0 24px 60px rgba(0, 0, 0, 0.5);
+  touch-action: none;
+}
+.g-checkers .g-checkers-board.live {
+  cursor: pointer;
+}
+.g-checkers .g-checkers-sq {
+  position: absolute;
+  width: 12.5%;
+  height: 12.5%;
+}
+.g-checkers .g-checkers-sq.light {
+  background: #e9dfd0;
+}
+.g-checkers .g-checkers-sq.dark {
+  background: #6b4f44;
+}
+.g-checkers .g-checkers-sq.last::before,
+.g-checkers .g-checkers-sq.sel::before,
+.g-checkers .g-checkers-sq.cursor::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+.g-checkers .g-checkers-sq.last::before {
+  background: rgba(255, 214, 10, 0.22);
+}
+.g-checkers .g-checkers-sq.sel::before {
+  background: rgba(255, 214, 10, 0.45);
+}
+.g-checkers .g-checkers-sq.cursor::after {
+  box-shadow: inset 0 0 0 3px #fff;
+  border-radius: 2px;
+  z-index: 2;
+}
+.g-checkers .g-checkers-sq.pick::after {
+  content: '';
+  position: absolute;
+  inset: 6%;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+}
+.g-checkers .g-checkers-sq.hint::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 30%;
+  height: 30%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  transform: translate(-50%, -50%);
+  animation: g-checkers-hint 0.18s ease;
+}
+@keyframes g-checkers-hint {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.6);
+  }
+}
+.g-checkers .g-checkers-piece {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 12.5%;
+  height: 12.5%;
+  pointer-events: none;
+  transition: transform 0.19s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.14s ease;
+  will-change: transform;
+  z-index: 1;
+}
+.g-checkers .g-checkers-piece::before {
+  content: '';
+  position: absolute;
+  inset: 11%;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 -3px 4px rgba(0, 0, 0, 0.35),
+    inset 0 2px 3px rgba(255, 255, 255, 0.35),
+    0 2px 3px rgba(0, 0, 0, 0.35);
+}
+.g-checkers .g-checkers-piece::after {
+  content: '';
+  position: absolute;
+  inset: 26%;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.18);
+}
+.g-checkers .g-checkers-piece.red::before {
+  background: radial-gradient(circle at 40% 35%, #ff6b6b, #d9262c 70%, #a3151a);
+}
+.g-checkers .g-checkers-piece.black::before {
+  background: radial-gradient(circle at 40% 35%, #5a5a66, #26262e 70%, #121216);
+}
+.g-checkers .g-checkers-piece svg {
+  position: absolute;
+  inset: 30%;
+  width: 40%;
+  height: 40%;
+  color: rgba(255, 215, 90, 0.95);
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.4));
+  animation: g-checkers-crown 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes g-checkers-crown {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+}
+.g-checkers .g-checkers-piece.drag {
+  transition: none;
+  z-index: 3;
+}
+.g-checkers .g-checkers-piece.drag::before {
+  box-shadow:
+    inset 0 -3px 4px rgba(0, 0, 0, 0.35),
+    inset 0 2px 3px rgba(255, 255, 255, 0.35),
+    0 10px 16px rgba(0, 0, 0, 0.5);
+}
+.g-checkers .g-checkers-piece.mover {
+  z-index: 3;
+}
+.g-checkers .g-checkers-piece.mover::before {
+  box-shadow:
+    inset 0 -3px 4px rgba(0, 0, 0, 0.35),
+    inset 0 2px 3px rgba(255, 255, 255, 0.35),
+    0 8px 14px rgba(0, 0, 0, 0.45);
+}
+.g-checkers .g-checkers-piece.gone {
+  opacity: 0;
+  transform-origin: center;
+  animation: g-checkers-gone 0.14s ease forwards;
+}
+@keyframes g-checkers-gone {
+  to {
+    opacity: 0;
+  }
+}
+.g-checkers .g-checkers-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.6);
+}
+.g-checkers .g-checkers-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.2s ease;
+}
+.g-checkers .g-checkers-side.on {
+  color: #fff;
+}
+.g-checkers .g-checkers-side b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.g-checkers .g-checkers-side i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: inset 0 -1px 2px rgba(0, 0, 0, 0.4);
+}
+.g-checkers .g-checkers-side.red i {
+  background: #e0302f;
+}
+.g-checkers .g-checkers-side.black i {
+  background: #2a2a32;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+.g-checkers .g-checkers-mode {
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.4);
+}
+
+/* Setup */
+.g-checkers .g-checkers-setup {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  animation: g-checkers-in 0.22s ease;
+}
+@keyframes g-checkers-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.g-checkers .g-checkers-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+}
+.g-checkers .g-checkers-seg.hidden {
+  visibility: hidden;
+}
+.g-checkers .g-checkers-seg button {
+  min-width: 72px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.72);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.g-checkers .g-checkers-seg button:hover {
+  color: #fff;
+}
+.g-checkers .g-checkers-seg button.on {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
+}
+.g-checkers .g-checkers-go {
+  margin-top: 4px;
+  min-width: 150px;
+  height: 40px;
+  padding: 0 22px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.35),
+    0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.g-checkers .g-checkers-go:hover {
+  filter: brightness(1.08);
+}
+.g-checkers .g-checkers-go:active {
+  transform: scale(0.97);
+}
