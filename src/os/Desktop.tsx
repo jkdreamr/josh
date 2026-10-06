@@ -127,11 +127,20 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
     });
   }, []);
 
-  const open = useCallback((id: AppId, args: OpenArgs = {}, from?: Origin) => {
+  const open = useCallback((id: AppId, args: OpenArgs = {}, from?: Origin, avoidBanner = false) => {
     const def = apps[id];
     const { w: W, h: H } = sizeRef.current;
     zTop.current += 1;
     const z = zTop.current;
+    const banner = avoidBanner && !mobile && !tablet ? rootRef.current?.querySelector<HTMLElement>('.banner') : null;
+    const bannerBounds = banner
+      ? {
+          left: banner.offsetLeft,
+          top: banner.offsetTop,
+          right: banner.offsetLeft + banner.offsetWidth,
+          bottom: banner.offsetTop + banner.offsetHeight,
+        }
+      : null;
     setWins((ws) => {
       const existing = ws.find((w) => w.id === id);
       if (existing)
@@ -140,19 +149,38 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
         );
       const availH = H - MENU_H - DOCK_SPACE;
       const w = Math.round(Math.min(def.w, W * 0.86));
-      const h = Math.round(Math.min(def.h, availH - 10));
+      let h = Math.round(Math.min(def.h, availH - 10));
       const n = ws.filter((x) => !x.min).length % 6;
-      const x = Math.round(clamp((W - w) / 2 + n * 26, 8, W - w - 8));
-      const y = Math.round(clamp(MENU_H + (availH - h) / 2 + n * 22, MENU_H + 6, H - h - DOCK_SPACE));
+      const centeredX = Math.round(clamp((W - w) / 2 + n * 26, 8, W - w - 8));
+      const centeredY = Math.round(clamp(MENU_H + (availH - h) / 2 + n * 22, MENU_H + 6, H - h - DOCK_SPACE));
+      let x = centeredX;
+      let y = centeredY;
+      if (bannerBounds) {
+        const overlaps = (left: number, top: number, height = h) =>
+          left < bannerBounds.right && left + w > bannerBounds.left && top < bannerBounds.bottom && top + height > bannerBounds.top;
+        if (overlaps(x, y)) {
+          const shiftedX = Math.max(8, bannerBounds.left - w - 8);
+          if (shiftedX <= W - w - 8 && !overlaps(shiftedX, y)) x = shiftedX;
+          else {
+            const shiftedY = Math.max(y, bannerBounds.bottom + 8);
+            const shiftedHeight = Math.round(Math.min(h, H - DOCK_SPACE - shiftedY));
+            if (shiftedX <= W - w - 8 && shiftedHeight >= Math.min(150, h) && !overlaps(shiftedX, shiftedY, shiftedHeight)) {
+              x = shiftedX;
+              y = shiftedY;
+              h = shiftedHeight;
+            }
+          }
+        }
+      }
       return [...ws, { id, x, y, w, h, z, min: false, max: false, args: { ...args, nonce: Date.now() }, state: 'opening', origin: from }];
     });
-  }, []);
+  }, [mobile, tablet]);
 
   const greeted = useRef(false);
   useEffect(() => {
     if (greeted.current) return;
     greeted.current = true;
-    open('notes', { note: 'about' });
+    open('notes', { note: 'about' }, undefined, true);
   }, [open]);
 
   const close = useCallback((id: AppId) => {
@@ -502,12 +530,9 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
                     { label: 'Get Info', action: () => open('about') },
                   ]
                 : [
-                    { label: 'New Folder' },
                     { label: 'Get Info', action: () => open('about') },
-                    { label: 'Change Wallpaper…' },
                     'sep',
                     { label: 'Search…', hint: '⌘K', action: () => setLauncher(true) },
-                    { label: 'Clean Up', action: () => undefined },
                     'sep',
                     { label: 'Text Josh', action: () => open('messages') },
                     { label: 'Email Josh', action: () => open('mail') },
