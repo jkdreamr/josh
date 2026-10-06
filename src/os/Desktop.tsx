@@ -164,36 +164,36 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
     };
   }, [api, apiRef]);
 
-  // Welcome notification.
+  // Welcome notification. The banner itself handles auto-dismiss, hover and swipes.
   useEffect(() => {
-    const t1 = setTimeout(() => {
-      if (mobile && winsRef.current.some((w) => w.state !== 'closing')) return;
-      setToast(true);
-    }, 1400);
-    const t2 = setTimeout(() => setToast(false), 9800);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, [mobile]);
-
-  // On phones and iPads an app takes the whole screen, so tuck the banner away when one opens.
-  useEffect(() => {
-    if (mobile && wins.length) setToast(false);
-  }, [mobile, wins.length]);
+    const t = setTimeout(() => setToast(true), 1400);
+    return () => clearTimeout(t);
+  }, []);
+  const dismissToast = useCallback(() => setToast(false), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setLauncher((v) => !v);
-      } else if (e.key === 'Escape' && launcher) {
-        setLauncher(false);
+      } else if (e.key === 'Escape') {
+        if (launcher) setLauncher(false);
+        if (ctx) setCtx(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [launcher]);
+  }, [launcher, ctx]);
+
+  useEffect(() => {
+    if (!ctx) return;
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target as HTMLElement).closest('.ctx-menu')) setCtx(null);
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('blur', () => setCtx(null));
+    return () => window.removeEventListener('pointerdown', onDown, true);
+  }, [ctx]);
 
   const scaleOf = () => {
     const el = rootRef.current!;
@@ -358,23 +358,44 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
         })}
 
         <Dock wins={wins} onFocus={focus} active={active?.id ?? null} screenW={size.w} />
-        {mobile && active && <button className="home-ind" aria-label="Go to Home Screen" onClick={() => close(active.id)} />}
+        {mobile && active && <button className="home-ind" aria-label="Go to Home Screen" onPointerDown={(e) => startHomeSwipe(e, active.id)} />}
 
-        <div className={`toast ${toast ? 'is-on' : ''}`} role="status">
-          <button
-            onClick={() => {
-              setToast(false);
-              open('messages');
-            }}
-          >
-            <AppIcon kind="messages" size={34} />
-            <span className="toast-text">
-              <b>Josh</b>
-              <span>hey, welcome to my {mobile ? (tablet ? 'ipad' : 'phone') : 'computer'}. poke around, or text me.</span>
-            </span>
-            <small>now</small>
-          </button>
-        </div>
+        <Banner show={toast} mobile={mobile} onDismiss={dismissToast} onOpen={() => open('messages')}>
+          <AppIcon kind="messages" size={mobile ? 38 : 34} />
+          <span className="toast-text">
+            <b>Josh</b>
+            <span>hey, welcome to my {mobile ? (tablet ? 'ipad' : 'phone') : 'computer'}. poke around, or text me.</span>
+          </span>
+          <small>now</small>
+        </Banner>
+
+        {ctx && (
+          <ContextMenu
+            x={ctx.x}
+            y={ctx.y}
+            screen={{ w: size.w, h: dockTop }}
+            onClose={() => setCtx(null)}
+            items={
+              ctx.icon
+                ? [
+                    { label: 'Open', action: () => desktopItems.find((d) => d.key === ctx.icon)?.run(api) },
+                    'sep',
+                    { label: 'Get Info', action: () => open('about') },
+                  ]
+                : [
+                    { label: 'New Folder' },
+                    { label: 'Get Info', action: () => open('about') },
+                    { label: 'Change Wallpaper…' },
+                    'sep',
+                    { label: 'Search…', hint: '⌘K', action: () => setLauncher(true) },
+                    { label: 'Clean Up', action: () => undefined },
+                    'sep',
+                    { label: 'Text Josh', action: () => open('messages') },
+                    { label: 'Email Josh', action: () => open('mail') },
+                  ]
+            }
+          />
+        )}
 
         {launcher && <Launcher onClose={() => setLauncher(false)} />}
       </div>

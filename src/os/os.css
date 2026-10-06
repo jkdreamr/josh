@@ -1230,19 +1230,20 @@ kbd {
 }
 
 /* notification */
-.toast {
+.banner {
   position: absolute;
   top: 34px;
   right: 10px;
   z-index: 9500;
   width: min(340px, calc(100% - 20px));
-  transform: translateX(calc(100% + 30px));
-  transition: transform 0.55s cubic-bezier(0.2, 0.9, 0.25, 1.1);
+  touch-action: none;
+  cursor: default;
+  will-change: transform;
 }
-.toast.is-on {
-  transform: none;
+.banner:not(.is-on) {
+  pointer-events: none;
 }
-.toast > button {
+.banner-body {
   display: flex;
   gap: 10px;
   align-items: center;
@@ -1258,7 +1259,60 @@ kbd {
     0 0 0 0.5px rgba(0, 0, 0, 0.15),
     0 10px 30px rgba(0, 0, 0, 0.25);
 }
+.banner.is-dragging .banner-body {
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.15),
+    0 16px 40px rgba(0, 0, 0, 0.3);
+}
+/* macOS: a round close control appears at the banner's top-left corner on hover */
+.banner-close {
+  position: absolute;
+  z-index: 2;
+  top: -7px;
+  left: -7px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #1d1d1f;
+  background: rgba(236, 236, 240, 0.98);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.22),
+    0 2px 6px rgba(0, 0, 0, 0.2);
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+.banner-close svg {
+  width: 10px;
+  height: 10px;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  fill: none;
+}
+.banner-close:hover {
+  background: #fff;
+}
+.banner-close:active {
+  background: #d9d9de;
+}
+@media (hover: hover) {
+  .banner.is-on:hover .banner-close,
+  .banner.is-on:focus-within .banner-close {
+    opacity: 1;
+    transform: none;
+  }
+}
+.banner-close:focus-visible {
+  opacity: 1;
+  transform: none;
+}
 .toast-text {
+  min-width: 0;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1266,7 +1320,7 @@ kbd {
   font-size: 12.5px;
   line-height: 1.35;
 }
-.toast small {
+.banner small {
   align-self: flex-start;
   color: #8a8a90;
   font-size: 11px;
