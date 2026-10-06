@@ -29,7 +29,7 @@ export type AppDef = {
 
 export const apps: Record<AppId, AppDef> = {
   finder: { id: 'finder', title: 'Finder', icon: 'finder', Component: Finder, w: 780, h: 470, frame: 'overlay', dock: true, keywords: 'files folders school work projects' },
-  chrome: { id: 'chrome', title: 'Chrome', icon: 'chrome', Component: Chrome, w: 1000, h: 640, frame: 'overlay', dock: true, keywords: 'browser web internet' },
+  chrome: { id: 'chrome', title: 'Chrome', icon: 'chrome', Component: Chrome, w: 1000, h: 640, frame: 'overlay', dock: true, keywords: 'browser web internet games arcade' },
   messages: { id: 'messages', title: 'Messages', icon: 'messages', Component: Messages, w: 430, h: 580, frame: 'overlay', dock: true, keywords: 'chat text imessage talk' },
   notes: { id: 'notes', title: 'Notes', icon: 'notes', Component: Notes, w: 700, h: 470, frame: 'overlay', dock: true, keywords: 'about me bio' },
   soundcloud: { id: 'soundcloud', title: 'SoundCloud', icon: 'soundcloud', Component: SoundCloud, w: 520, h: 600, theme: 'dark', dock: true, keywords: 'music kelix listen' },

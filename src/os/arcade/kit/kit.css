@@ -1,0 +1,319 @@
+/* Arcade game shell. Games style their own content under .g-<id>. */
+.arcade-shell {
+  --accent: #7c5cff;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  outline: none;
+  color: #f5f5f7;
+  background: #0c0c10;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.arcade-stage {
+  position: absolute;
+  inset: 0;
+}
+.arcade-stage > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.arcade-shell button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.arcade-shell button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, #fff);
+  outline-offset: 2px;
+}
+
+.arcade-score {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  min-width: 34px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  background: rgba(20, 20, 26, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  pointer-events: none;
+}
+.arcade-ctrl {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(20, 20, 26, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+}
+.arcade-ctrl button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  opacity: 0.85;
+}
+.arcade-ctrl button:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.arcade-ov {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(8, 8, 12, 0.52);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: arcadeFade 0.18s ease;
+}
+@keyframes arcadeFade {
+  from {
+    opacity: 0;
+  }
+}
+.arcade-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(320px, 100%);
+  padding: 24px 22px 20px;
+  border-radius: 20px;
+  text-align: center;
+  background: rgba(28, 28, 34, 0.78);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.16),
+    0 20px 50px rgba(0, 0, 0, 0.45);
+  animation: arcadePop 0.24s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes arcadePop {
+  from {
+    transform: scale(0.94);
+    opacity: 0;
+  }
+}
+.arcade-card h2 {
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.arcade-card p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(245, 245, 247, 0.68);
+}
+.arcade-card small {
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+.arcade-glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+  color: #fff;
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.35),
+    0 6px 16px rgba(0, 0, 0, 0.3);
+}
+.arcade-shell .arcade-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 150px;
+  height: 40px;
+  padding: 0 22px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.35),
+    0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.arcade-shell .arcade-play:hover {
+  filter: brightness(1.08);
+}
+.arcade-shell .arcade-play:active {
+  transform: scale(0.97);
+}
+.arcade-row {
+  display: flex;
+  gap: 8px;
+}
+.arcade-shell .arcade-ghost {
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.1);
+}
+.arcade-shell .arcade-ghost:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+.arcade-final {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 2px 0 8px;
+}
+.arcade-final b {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+.arcade-final span {
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.6);
+}
+.arcade-final .arcade-new {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+}
+
+/* Compact (inline strip) overlays: one line, whole surface is the button. */
+.arcade-shell .arcade-ov-compact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 14px;
+  font-size: 13px;
+  text-align: left;
+  color: #f5f5f7;
+}
+.arcade-ov-compact .arcade-glyph {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+.arcade-ov-compact span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.arcade-ov-compact em {
+  font-style: normal;
+  color: rgba(245, 245, 247, 0.6);
+}
+.arcade-shell.is-compact .arcade-score {
+  top: 6px;
+  left: auto;
+  right: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+/* Touch controls */
+.arcade-touch {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 14px 14px max(26px, env(safe-area-inset-bottom));
+  pointer-events: none;
+}
+.arcade-dpad {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, 52px);
+  grid-template-rows: repeat(3, 52px);
+}
+.arcade-dpad.dpad-x {
+  grid-template-columns: repeat(2, 64px);
+  grid-template-rows: 64px;
+  gap: 10px;
+}
+.arcade-dpad.dpad-y {
+  grid-template-columns: 64px;
+  grid-template-rows: repeat(2, 64px);
+  gap: 10px;
+}
+.dpad-all .ArrowUp {
+  grid-area: 1 / 2;
+}
+.dpad-all .ArrowLeft {
+  grid-area: 2 / 1;
+}
+.dpad-all .ArrowRight {
+  grid-area: 2 / 3;
+}
+.dpad-all .ArrowDown {
+  grid-area: 3 / 2;
+}
+.arcade-btns {
+  display: flex;
+  gap: 12px;
+  margin-left: auto;
+}
+.arcade-shell .arcade-pad,
+.arcade-shell .arcade-tbtn {
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+  touch-action: none;
+  border-radius: 16px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.22);
+}
+.arcade-shell .arcade-tbtn {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 55%, rgba(255, 255, 255, 0.08));
+}
+.arcade-shell .arcade-pad:active,
+.arcade-shell .arcade-tbtn:active {
+  background: rgba(255, 255, 255, 0.3);
+}
