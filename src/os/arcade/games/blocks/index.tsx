@@ -15,6 +15,20 @@ const colors: Record<Piece, string> = {
   L: '#ff9f0a',
 };
 
+function layoutFor(w: number, h: number) {
+  const side = w >= h * 0.9 ? 5 : 3.4;
+  const cell = Math.max(4, Math.min(w / (10 + 2 * side + 0.6), (h - 78) / 20));
+  const left = (w - (10 + 2 * side) * cell) / 2;
+  const boardX = left + side * cell;
+  const boardH = 20 * cell;
+  const boardY = 52 + Math.max(0, (h - 52 - boardH) / 2);
+  return { cell, side, left, boardX, boardY, boardH };
+}
+
+function miniCellFor(size: number, side: number, cell: number) {
+  return Math.min(size, (side * cell - cell * 0.5) / 4);
+}
+
 export default function Game({ compact, onExit }: GameProps) {
   return <GameShell meta={meta} compact={compact} onExit={onExit}><Play /></GameShell>;
 }
@@ -41,7 +55,7 @@ function Play() {
   const state = useRef<BlocksGame>(createGame());
   const timing = useRef({ gravity: 0, lock: 0, dir: 0, das: 0, arr: 0, soft: 0, lines: 0 });
   const vfx = useRef({ particles: [] as { x: number; y: number; vx: number; vy: number; life: number; color: string }[], toast: 0, streak: null as { x: number; top: number; bottom: number; life: number } | null });
-  const gesture = useRef<{ id: number; x: number; y: number; lastX: number; lastY: number; verticalCells: number; time: number; moved: boolean; vertical: boolean; fastUp: boolean } | null>(null);
+  const gesture = useRef<{ id: number; x: number; y: number; lastX: number; verticalCells: number; moved: boolean; vertical: boolean } | null>(null);
 
   const performDrop = () => {
     const s = state.current;
@@ -128,10 +142,7 @@ function Play() {
       }
     } else s.lockTimer = 0;
     if (s.lines !== t.lines) {
-      const cell = Math.max(4, Math.min(size.w / 20, (size.h - 78) / 20));
-      const left = (size.w - 20 * cell) / 2;
-      const boardX = left + 5 * cell;
-      const boardY = 52 + Math.max(0, (size.h - 52 - 20 * cell) / 2);
+      const { cell, boardX, boardY } = layoutFor(size.w, size.h);
       for (const row of s.clearedRows) {
         if (row < 20) continue;
         for (let col = 0; col < 10; col++) for (let i = 0; i < 2; i++) {
@@ -158,12 +169,7 @@ function Play() {
     const s = state.current;
     c.clearRect(0, 0, w, h);
     if (!w || !h) return;
-    const cell = Math.max(4, Math.min(w / 20, Math.max(4, (h - 78) / 20)));
-    const totalW = 20 * cell;
-    const left = (w - totalW) / 2;
-    const boardX = left + 5 * cell;
-    const boardH = 20 * cell;
-    const boardY = 52 + Math.max(0, (h - 52 - boardH) / 2);
+    const { cell, side, left, boardX, boardY, boardH } = layoutFor(w, h);
     c.save();
     if (s.dropFlash > 0) c.translate(0, Math.sin(s.dropFlash * 95) * s.dropFlash * 8);
     c.fillStyle = 'rgba(255,255,255,.035)';
@@ -197,18 +203,22 @@ function Play() {
         c.fillRect(boardX, boardY, cell * 10, boardH);
       }
     }
-    drawMiniLabel(c, 'hold', left + cell * 0.2, boardY + 16, cell);
-    if (s.hold) drawMiniPiece(c, s.hold, left + cell * 0.2, boardY + cell * 1.2, cell * 0.7);
+    const holdX = left + cell * 0.25;
+    const sideContentWidth = side * cell - cell * 0.5;
+    drawMiniLabel(c, 'hold', holdX, boardY + 16, cell);
+    if (s.hold) drawMiniPiece(c, s.hold, holdX, boardY + cell * 1.2, miniCellFor(cell * 0.7, side, cell));
     const statsY = boardY + cell * 5.2;
     const labelSize = Math.min(13, Math.max(10, cell * 0.5));
     const valueSize = Math.min(22, Math.max(13, cell * 0.85));
-    const statStep = Math.max(cell * 2.4, labelSize + valueSize * 1.8);
-    drawStat(c, 'score', String(s.score), left + cell * 0.2, statsY, cell * 4.5, cell);
-    drawStat(c, 'level', String(s.level), left + cell * 0.2, statsY + statStep, cell * 4.5, cell);
-    drawStat(c, 'lines', String(s.lines), left + cell * 0.2, statsY + statStep * 2, cell * 4.5, cell);
-    const nextX = boardX + cell * 11;
+    const statStep = labelSize + valueSize * 1.2 + labelSize * 1.7;
+    drawStat(c, 'score', String(s.score), holdX, statsY, sideContentWidth, cell);
+    drawStat(c, 'level', String(s.level), holdX, statsY + statStep, sideContentWidth, cell);
+    drawStat(c, 'lines', String(s.lines), holdX, statsY + statStep * 2, sideContentWidth, cell);
+    const nextMiniCell = miniCellFor(cell * 0.58, side, cell);
+    const nextX = boardX + cell * 10 + cell * 0.25;
+    const nextStep = nextMiniCell * (3.6 / 0.58);
     drawMiniLabel(c, 'next', nextX, boardY + 16, cell);
-    s.next.slice(0, 5).forEach((p, i) => drawMiniPiece(c, p, nextX, boardY + cell * (1.2 + i * 3.6), cell * (i === 0 ? 0.78 : 0.58)));
+    s.next.slice(0, 5).forEach((p, i) => drawMiniPiece(c, p, nextX, boardY + cell * 1.2 + i * nextStep, miniCellFor(cell * (i === 0 ? 0.78 : 0.58), side, cell)));
     if (s.clearFlash > 0) {
       c.fillStyle = `rgba(255,255,255,${s.clearFlash * 0.7})`;
       for (const row of s.clearedRows) if (row >= 20) c.fillRect(boardX, boardY + (row - 20) * cell, cell * 10, cell);
@@ -253,12 +263,12 @@ function Play() {
       onPointerDown={(e) => {
         e.preventDefault();
         e.currentTarget.setPointerCapture(e.pointerId);
-        gesture.current = { id: e.pointerId, x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, verticalCells: 0, time: performance.now(), moved: false, vertical: false, fastUp: false };
+        gesture.current = { id: e.pointerId, x: e.clientX, y: e.clientY, lastX: e.clientX, verticalCells: 0, moved: false, vertical: false };
       }}
       onPointerMove={(e) => {
         const g = gesture.current;
         if (!g || g.id !== e.pointerId) return;
-        const cell = Math.max(8, Math.min(size.w / 20, (size.h - 78) / 20));
+        const cell = layoutFor(size.w, size.h).cell;
         if (Math.abs(e.clientX - g.x) + Math.abs(e.clientY - g.y) > 10) g.moved = true;
         if (!g.vertical && (e.clientY - g.y < -10 || Math.abs(e.clientY - g.y) > Math.abs(e.clientX - g.x) * 1.15)) g.vertical = true;
         if (g.vertical) {
@@ -267,10 +277,8 @@ function Play() {
             const dropped = traveledCells - g.verticalCells;
             for (let i = 0; i < dropped; i++) if (move(state.current, 0, 1)) state.current.score++;
             g.verticalCells = traveledCells;
-            g.lastY = e.clientY;
             shell.setScore(state.current.score);
           }
-          if (e.clientY - g.y < -cell * 1.4 && performance.now() - g.time < 220) g.fastUp = true;
         } else {
           const cells = Math.trunc((e.clientX - g.x) / cell);
           const prev = Math.trunc((g.lastX - g.x) / cell);
@@ -283,11 +291,13 @@ function Play() {
       onPointerUp={(e) => {
         const g = gesture.current;
         if (!g || g.id !== e.pointerId) return;
-        const elapsed = performance.now() - g.time;
+        const dx = e.clientX - g.x;
+        const dy = e.clientY - g.y;
+        const cell = layoutFor(size.w, size.h).cell;
         const moved = g.moved;
-        const isFlick = g.fastUp && elapsed < 260;
+        const hardDropGesture = dy < -Math.max(28, cell * 1.2) && Math.abs(dy) > Math.abs(dx) * 1.2;
         gesture.current = null;
-        if (isFlick) performDrop();
+        if (hardDropGesture) performDrop();
         else if (!moved && rotate(state.current, 1)) sfx.play('blip', 1.2);
       }}
       onPointerCancel={() => { gesture.current = null; }}
