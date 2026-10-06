@@ -4235,7 +4235,7 @@ kbd {
 .is-mobile .banner-body {
   border-radius: 24px;
   padding: 12px 14px;
-  background: rgba(246, 246, 250, 0.82);
+  background: rgba(246, 246, 250, 0.92);
   box-shadow:
     0 0 0 0.5px rgba(0, 0, 0, 0.1),
     0 10px 36px rgba(0, 0, 0, 0.22);

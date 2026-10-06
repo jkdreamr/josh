@@ -283,9 +283,11 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   const dockCount = dockOrder.length + 1;
   const dockTop = size.h - DOCK_BOTTOM - 2 * DOCK_PAD_Y - dockBaseFor(size.w, dockCount, dockKernelSum(dockCount)) - 4;
 
-  /** Swipe up on the home indicator: the app follows the finger, shrinking toward its icon. */
+  /** Swipe up on the home indicator: the app follows the finger, shrinking toward its icon. A plain tap closes via click. */
+  const homeSwiped = useRef(false);
   const startHomeSwipe = (e: RPointerEvent<HTMLButtonElement>, id: AppId) => {
     if (e.button !== 0) return;
+    homeSwiped.current = false;
     const el = rootRef.current?.querySelector<HTMLElement>(`[data-win="${id}"]`);
     if (!el) return;
     const btn = e.currentTarget;
@@ -302,6 +304,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
       const dx = (ev.clientX - x0) / s.x;
       if (!moved && Math.abs(dy) < 6) return;
       moved = true;
+      homeSwiped.current = true;
       samples.push({ y: dy, t: ev.timeStamp });
       if (samples.length > 6) samples.shift();
       const p = clamp(-dy / (H * 0.45), 0, 1);
@@ -318,7 +321,8 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
       const last = samples[samples.length - 1];
       const first = samples.find((smp) => last.t - smp.t < 120) ?? samples[0];
       const v = last.t > first.t ? (last.y - first.y) / (last.t - first.t) : 0;
-      if (!moved || -last.y > H * 0.16 || v < -0.5) {
+      if (!moved) return;
+      if (-last.y > H * 0.16 || v < -0.5) {
         el.style.transition = '';
         close(id);
         return;
@@ -464,7 +468,16 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
         })}
 
         <Dock wins={wins} onFocus={focus} active={active?.id ?? null} screenW={size.w} />
-        {mobile && active && <button className="home-ind" aria-label="Go to Home Screen" onPointerDown={(e) => startHomeSwipe(e, active.id)} />}
+        {mobile && active && (
+          <button
+            className="home-ind"
+            aria-label="Go to Home Screen"
+            onPointerDown={(e) => startHomeSwipe(e, active.id)}
+            onClick={() => {
+              if (!homeSwiped.current) close(active.id);
+            }}
+          />
+        )}
 
         <Banner show={toast} mobile={mobile} onDismiss={dismissToast} onOpen={() => open('messages')}>
           <AppIcon kind="messages" size={mobile ? 38 : 34} />
