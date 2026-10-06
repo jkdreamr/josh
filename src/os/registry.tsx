@@ -40,7 +40,7 @@ export const apps: Record<AppId, AppDef> = {
   github: { id: 'github', title: 'GitHub', icon: 'github', Component: GitHub, w: 720, h: 580, theme: 'dark', dock: true, keywords: 'code repos jkdreamr' },
   mail: { id: 'mail', title: 'Mail', icon: 'mail', Component: Mail, w: 580, h: 480, dock: true, keywords: 'email contact' },
   terminal: { id: 'terminal', title: 'Terminal', icon: 'terminal', Component: Terminal, w: 660, h: 420, theme: 'dark', frame: 'overlay', dock: true, keywords: 'shell zsh command line' },
-  coxbox: { id: 'coxbox', title: 'Cox Box', icon: 'coxbox', Component: CoxBox, w: 760, h: 500, theme: 'dark', dock: true, keywords: 'rowing game play stanford erg' },
+  coxbox: { id: 'coxbox', title: 'Cox Box', icon: 'coxbox', Component: CoxBox, w: 900, h: 600, theme: 'dark', dock: true, keywords: 'rowing game play stanford erg' },
   photobooth: { id: 'photobooth', title: 'Photo Booth', icon: 'photobooth', Component: PhotoBooth, w: 660, h: 560, theme: 'dark', dock: true, keywords: 'camera selfie photo' },
   trash: { id: 'trash', title: 'Trash', icon: 'trash', Component: Trash, w: 520, h: 330 },
   about: { id: 'about', title: 'About This Josh', icon: 'about', Component: About, w: 440, h: 520, keywords: 'about info specs' },
