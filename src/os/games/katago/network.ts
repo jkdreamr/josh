@@ -90,7 +90,7 @@ function poolRowsGPool(x: tf.Tensor4D): tf.Tensor2D {
   const factor = (boardSize - 14) * 0.1;
   const mean = tf.mean(x, [1, 2]) as tf.Tensor2D; // [N,C]
   const max = tf.max(x, [1, 2]) as tf.Tensor2D; // [N,C]
-  return tf.concat([mean, mean.mul(factor), max], 1) as tf.Tensor2D;
+  return tf.concat([mean, tf.mul(mean, factor), max], 1) as tf.Tensor2D;
 }
 
 function poolRowsValueHead(x: tf.Tensor4D): tf.Tensor2D {
@@ -100,7 +100,7 @@ function poolRowsValueHead(x: tf.Tensor4D): tf.Tensor2D {
   const factor1 = base * 0.1;
   const factor2 = base * base * 0.01 - 0.1;
   const mean = tf.mean(x, [1, 2]) as tf.Tensor2D; // [N,C]
-  return tf.concat([mean, mean.mul(factor1), mean.mul(factor2)], 1) as tf.Tensor2D;
+  return tf.concat([mean, tf.mul(mean, factor1), tf.mul(mean, factor2)], 1) as tf.Tensor2D;
 }
 
 type TfTrunkBlock =
@@ -296,7 +296,7 @@ export class KataGoModelV8Tf {
       const g1Out2 = bnAct(g1Out, this.g1BN, this.g1Activation);
       const g1Concat = poolRowsGPool(g1Out2); // [N, g1C*3]
       const g1Bias = tf.matMul(g1Concat, this.gpoolToBias.w) as tf.Tensor2D; // [N, p1C]
-      p1Out = p1Out.add(g1Bias.reshape([g1Bias.shape[0], 1, 1, g1Bias.shape[1]])) as tf.Tensor4D;
+      p1Out = tf.add(p1Out, tf.reshape(g1Bias, [g1Bias.shape[0], 1, 1, g1Bias.shape[1]])) as tf.Tensor4D;
       const p1Out2 = bnAct(p1Out, this.p1BN, this.p1Activation);
 
       const policy = conv2d(p1Out2, this.p2); // [N,19,19,policyOutChannels]
@@ -307,12 +307,12 @@ export class KataGoModelV8Tf {
       const v1Out2 = bnAct(v1Out, this.v1BN, this.v1Activation);
       const v1Mean = poolRowsValueHead(v1Out2); // [N,96]
       let v2Out = tf.matMul(v1Mean, this.v2.w) as tf.Tensor2D; // [N,64]
-      v2Out = v2Out.add(this.v2Bias.b) as tf.Tensor2D;
+      v2Out = tf.add(v2Out, this.v2Bias.b) as tf.Tensor2D;
       v2Out = applyActivation2D(v2Out, this.v2Activation);
       let value = tf.matMul(v2Out, this.v3.w) as tf.Tensor2D; // [N,3]
-      value = value.add(this.v3Bias.b) as tf.Tensor2D;
+      value = tf.add(value, this.v3Bias.b) as tf.Tensor2D;
       let scoreValue = tf.matMul(v2Out, this.sv3.w) as tf.Tensor2D; // [N,scoreValueChannels]
-      scoreValue = scoreValue.add(this.sv3Bias.b) as tf.Tensor2D;
+      scoreValue = tf.add(scoreValue, this.sv3Bias.b) as tf.Tensor2D;
 
       const ownership = conv2d(v1Out2, this.ownership); // [N,19,19,1]
 
@@ -334,7 +334,7 @@ export class KataGoModelV8Tf {
       const g1Out2 = bnAct(g1Out, this.g1BN, this.g1Activation);
       const g1Concat = poolRowsGPool(g1Out2);
       const g1Bias = tf.matMul(g1Concat, this.gpoolToBias.w) as tf.Tensor2D;
-      p1Out = p1Out.add(g1Bias.reshape([g1Bias.shape[0], 1, 1, g1Bias.shape[1]])) as tf.Tensor4D;
+      p1Out = tf.add(p1Out, tf.reshape(g1Bias, [g1Bias.shape[0], 1, 1, g1Bias.shape[1]])) as tf.Tensor4D;
       const p1Out2 = bnAct(p1Out, this.p1BN, this.p1Activation);
 
       const policy = conv2d(p1Out2, this.p2);
@@ -344,12 +344,12 @@ export class KataGoModelV8Tf {
       const v1Out2 = bnAct(v1Out, this.v1BN, this.v1Activation);
       const v1Mean = poolRowsValueHead(v1Out2);
       let v2Out = tf.matMul(v1Mean, this.v2.w) as tf.Tensor2D;
-      v2Out = v2Out.add(this.v2Bias.b) as tf.Tensor2D;
+      v2Out = tf.add(v2Out, this.v2Bias.b) as tf.Tensor2D;
       v2Out = applyActivation2D(v2Out, this.v2Activation);
       let value = tf.matMul(v2Out, this.v3.w) as tf.Tensor2D;
-      value = value.add(this.v3Bias.b) as tf.Tensor2D;
+      value = tf.add(value, this.v3Bias.b) as tf.Tensor2D;
       let scoreValue = tf.matMul(v2Out, this.sv3.w) as tf.Tensor2D;
-      scoreValue = scoreValue.add(this.sv3Bias.b) as tf.Tensor2D;
+      scoreValue = tf.add(scoreValue, this.sv3Bias.b) as tf.Tensor2D;
 
       return { policy, policyPass, value, scoreValue };
     });
@@ -369,12 +369,12 @@ export class KataGoModelV8Tf {
       const v1Out2 = bnAct(v1Out, this.v1BN, this.v1Activation);
       const v1Mean = poolRowsValueHead(v1Out2);
       let v2Out = tf.matMul(v1Mean, this.v2.w) as tf.Tensor2D;
-      v2Out = v2Out.add(this.v2Bias.b) as tf.Tensor2D;
+      v2Out = tf.add(v2Out, this.v2Bias.b) as tf.Tensor2D;
       v2Out = applyActivation2D(v2Out, this.v2Activation);
       let value = tf.matMul(v2Out, this.v3.w) as tf.Tensor2D;
-      value = value.add(this.v3Bias.b) as tf.Tensor2D;
+      value = tf.add(value, this.v3Bias.b) as tf.Tensor2D;
       let scoreValue = tf.matMul(v2Out, this.sv3.w) as tf.Tensor2D;
-      scoreValue = scoreValue.add(this.sv3Bias.b) as tf.Tensor2D;
+      scoreValue = tf.add(scoreValue, this.sv3Bias.b) as tf.Tensor2D;
       return { value, scoreValue };
     });
   }
@@ -382,11 +382,11 @@ export class KataGoModelV8Tf {
   private forwardTrunk(spatial: tf.Tensor4D, global: tf.Tensor2D, meta?: tf.Tensor2D): tf.Tensor4D {
     let trunk = conv2d(spatial, this.trunkConv1);
     const ginput = tf.matMul(global, this.trunkGInput.w) as tf.Tensor2D;
-    trunk = trunk.add(ginput.reshape([ginput.shape[0], 1, 1, ginput.shape[1]])) as tf.Tensor4D;
+    trunk = tf.add(trunk, tf.reshape(ginput, [ginput.shape[0], 1, 1, ginput.shape[1]])) as tf.Tensor4D;
     if (this.metaEncoder) {
       if (!meta) throw new Error('This model needs SGF metadata input');
       const metaBias = this.forwardMetaEncoder(meta);
-      trunk = trunk.add(metaBias.reshape([metaBias.shape[0], 1, 1, metaBias.shape[1]])) as tf.Tensor4D;
+      trunk = tf.add(trunk, tf.reshape(metaBias, [metaBias.shape[0], 1, 1, metaBias.shape[1]])) as tf.Tensor4D;
     }
     trunk = this.applyBlockStack(trunk, this.trunkBlocks);
     return bnAct(trunk, this.trunkTipBN, this.trunkTipActivation);
@@ -400,10 +400,10 @@ export class KataGoModelV8Tf {
   private forwardMetaEncoder(meta: tf.Tensor2D): tf.Tensor2D {
     const enc = this.metaEncoder!;
     let out = tf.matMul(meta, enc.mul1.w) as tf.Tensor2D;
-    out = out.add(enc.bias1.b) as tf.Tensor2D;
+    out = tf.add(out, enc.bias1.b) as tf.Tensor2D;
     out = applyActivation2D(out, enc.act1);
     out = tf.matMul(out, enc.mul2.w) as tf.Tensor2D;
-    out = out.add(enc.bias2.b) as tf.Tensor2D;
+    out = tf.add(out, enc.bias2.b) as tf.Tensor2D;
     out = applyActivation2D(out, enc.act2);
     return tf.matMul(out, enc.mul3.w) as tf.Tensor2D;
   }
@@ -411,7 +411,7 @@ export class KataGoModelV8Tf {
   private forwardPolicyPass(gpool: tf.Tensor2D): tf.Tensor2D {
     let pass = tf.matMul(gpool, this.passMul.w) as tf.Tensor2D;
     if (this.passBias && this.passActivation && this.passMul2) {
-      pass = pass.add(this.passBias.b) as tf.Tensor2D;
+      pass = tf.add(pass, this.passBias.b) as tf.Tensor2D;
       pass = applyActivation2D(pass, this.passActivation);
       pass = tf.matMul(pass, this.passMul2.w) as tf.Tensor2D;
     }
@@ -425,7 +425,7 @@ export class KataGoModelV8Tf {
         const b = conv2d(a, block.w1);
         const c = bnAct(b, block.midBN, block.midActivation);
         const d = conv2d(c, block.w2);
-        trunk = trunk.add(d) as tf.Tensor4D;
+        trunk = tf.add(trunk, d) as tf.Tensor4D;
         continue;
       }
 
@@ -436,10 +436,10 @@ export class KataGoModelV8Tf {
         const gpoolOut2 = bnAct(gpoolOut, block.gpoolBN, block.gpoolActivation);
         const gpoolConcat = poolRowsGPool(gpoolOut2);
         const gpoolBias = tf.matMul(gpoolConcat, block.w1r.w) as tf.Tensor2D;
-        regularOut = regularOut.add(gpoolBias.reshape([gpoolBias.shape[0], 1, 1, gpoolBias.shape[1]])) as tf.Tensor4D;
+        regularOut = tf.add(regularOut, tf.reshape(gpoolBias, [gpoolBias.shape[0], 1, 1, gpoolBias.shape[1]])) as tf.Tensor4D;
         const c = bnAct(regularOut, block.midBN, block.midActivation);
         const d = conv2d(c, block.w2);
-        trunk = trunk.add(d) as tf.Tensor4D;
+        trunk = tf.add(trunk, d) as tf.Tensor4D;
         continue;
       }
 
@@ -449,7 +449,7 @@ export class KataGoModelV8Tf {
       mid = this.applyBlockStack(mid, block.blocks);
       const c = bnAct(mid, block.postBN, block.postActivation);
       const d = conv2d(c, block.postConv);
-      trunk = trunk.add(d) as tf.Tensor4D;
+      trunk = tf.add(trunk, d) as tf.Tensor4D;
     }
     return trunk;
   }

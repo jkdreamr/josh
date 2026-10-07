@@ -10,7 +10,8 @@ import type { NetOutput } from '../src/os/games/katago/search.ts';
 
 const legacyUtil = util as typeof util & { isNullOrUndefined?: (value: unknown) => boolean };
 legacyUtil.isNullOrUndefined ??= (value) => value === null || value === undefined;
-await import('@tensorflow/tfjs-node');
+const tfNodeModule = '@tensorflow/tfjs-node';
+await import(tfNodeModule);
 
 type Action = Point | null;
 type Scenario = { name: string; actions: Action[]; state: GameState };

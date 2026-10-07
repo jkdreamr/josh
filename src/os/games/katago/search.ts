@@ -112,11 +112,9 @@ function terminalUtility(state: GameState, output: NetOutput): number {
   return winLoss + 0.15 * (2 / Math.PI) * Math.atan(margin / 3.6);
 }
 
-function rootValue(state: GameState, output: NetOutput): { ownershipBlack: Float32Array; countAhead: boolean; countBehind: boolean } {
-  const ownershipBlack = ownershipBlackFromOutput(state, output);
-  const count = score(state, deadFromOwnership(state, ownershipBlack));
-  const margin = (count.black - count.white) * state.toPlay;
-  return { ownershipBlack, countAhead: margin > 0, countBehind: margin < 0 };
+function countMargin(state: GameState, output: NetOutput, perspective: number): number {
+  const count = score(state, deadFromOwnership(state, ownershipBlackFromOutput(state, output)));
+  return (count.black - count.white) * perspective;
 }
 
 export async function search(state: GameState, evaluator: Evaluator, options: SearchOptions): Promise<SearchResult> {
@@ -189,12 +187,22 @@ export async function search(state: GameState, evaluator: Evaluator, options: Se
       chosen = candidates.find((child) => (draw -= child.visits ** 2) < 0) ?? chosen;
     }
   }
-  const rootCount = rootValue(state, rootOutput);
+  let countAhead = false;
+  let countBehind = false;
+  if (state.consecutivePasses === 1) {
+    const finalState = pass(state);
+    const finalOutput = evaluator.evaluateSymmetric
+      ? await evaluator.evaluateSymmetric(finalState)
+      : (await evaluator.evaluate([finalState]))[0]!;
+    const margin = countMargin(finalState, finalOutput, state.toPlay);
+    countAhead = margin > 0;
+    countBehind = margin < 0;
+  }
   const legalNonEye = legalMoves(state).filter((move) => !isOwnEye(state.board, state.size, pointIndex(move), state.toPlay));
   const selectedPass = chosen?.move === null;
-  const countPassWins = state.consecutivePasses === 1 && rootCount.countAhead;
+  const countPassWins = state.consecutivePasses === 1 && countAhead;
   let move = selectedPass || countPassWins ? null : chosen?.move ?? null;
-  if (!countPassWins && (rootOutput.scoreLead < 0 || (state.consecutivePasses === 1 && rootCount.countBehind)) && legalNonEye.length > 0 && move === null) {
+  if (!countPassWins && (rootOutput.scoreLead < 0 || (state.consecutivePasses === 1 && countBehind)) && legalNonEye.length > 0 && move === null) {
     const fallback = [...root.children!]
       .filter((child) => child.move && !isOwnEye(state.board, state.size, pointIndex(child.move), state.toPlay))
       .sort((a, b) => b.visits - a.visits || b.prior - a.prior)[0];

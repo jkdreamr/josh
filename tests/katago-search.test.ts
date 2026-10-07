@@ -74,6 +74,28 @@ test('passes after the opponent passes when the area count is ahead', async () =
   assert.equal(result.move, null);
 });
 
+test('uses the final board ownership instead of root ownership after the opponent passes', async () => {
+  const stones: Array<[number, number, number]> = [];
+  for (let index = 0; index < 81; index += 1) {
+    if (Math.floor(index / 9) < 5) stones.push([index % 9, Math.floor(index / 9), BLACK]);
+  }
+  const state = pass(position(stones, -BLACK));
+  const policy = new Float32Array(82);
+  policy[81] = 0.99;
+  const behindAfterPass = mockEvaluator((candidate) => ({
+    policy,
+    ownership: candidate.phase === 'mark' ? new Float32Array(81).fill(1) : new Float32Array(81),
+  }));
+  const aheadAfterPass = mockEvaluator((candidate) => ({
+    policy,
+    ownership: candidate.phase === 'mark' ? new Float32Array(81) : new Float32Array(81).fill(-1),
+  }));
+
+  assert.equal(state.toPlay, BLACK);
+  assert.notEqual((await search(state, behindAfterPass, options({ maxVisits: 1 }))).move, null);
+  assert.equal((await search(state, aheadAfterPass, options({ maxVisits: 1 }))).move, null);
+});
+
 test('never returns a positional-superko move', async () => {
   const state = position([
     [4, 4, -1],
