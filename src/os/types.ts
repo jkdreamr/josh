@@ -12,6 +12,7 @@ export type AppId =
   | 'x'
   | 'linkedin'
   | 'github'
+  | 'venmo'
   | 'mail'
   | 'terminal'
   | 'coxbox'
@@ -33,8 +34,11 @@ export type OpenArgs = {
   nonce?: number;
 };
 
+/** Screen-space rectangle (px, relative to the display) an app zooms out of and back into. */
+export type Origin = { x: number; y: number; w: number; h: number };
+
 export type OSApi = {
-  open: (id: AppId, args?: OpenArgs) => void;
+  open: (id: AppId, args?: OpenArgs, from?: Origin) => void;
   close: (id: AppId) => void;
   openUrl: (url: string) => void;
   mobile: boolean;
@@ -43,7 +47,12 @@ export type OSApi = {
   toggleFullscreen: () => void;
   restart: () => void;
   sleep: () => void;
+  /** Shuts the lid (3D laptop) or puts the device to sleep. */
+  closeLid: () => void;
   openLauncher: () => void;
+  /** True while an app holds a live camera stream (lights the camera indicator). */
+  camera: boolean;
+  setCamera: (on: boolean) => void;
 };
 
 export const OSContext = createContext<OSApi | null>(null);

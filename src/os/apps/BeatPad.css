@@ -129,8 +129,8 @@
   display: grid;
   min-height: 15px;
   place-items: center;
-  color: #74817b;
-  font-size: 8px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .beatpad-grid-head > span:first-child {
@@ -166,8 +166,8 @@
 .beatpad-track-name {
   min-width: 0;
   overflow: hidden;
-  color: #c9d0c7;
-  font-size: 10px;
+  color: var(--gc-text-2);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -267,8 +267,8 @@
 }
 
 .beatpad-pitch-row > div:first-child span {
-  color: #7f8b84;
-  font-size: 7px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .beatpad-pitches {
@@ -284,8 +284,8 @@
   gap: 8px;
   padding: 8px 18px 10px;
   border-top: 1px solid rgba(255,255,255,.06);
-  color: #7f8b84;
-  font-size: 8px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .beatpad-footer > div {
@@ -351,7 +351,7 @@
   }
 
   .beatpad-grid-head > span {
-    font-size: 7px;
+    font-size: 12px;
   }
 
   .beatpad-pitch-row {
@@ -370,7 +370,7 @@
   }
 
   .beatpad-pitch-row > div:first-child span {
-    font-size: 6px;
+    font-size: 12px;
   }
 
   .beatpad-pitches {

@@ -1,0 +1,60 @@
+.g-palmdrive .g-palmdrive-host {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #2b4a8a 0%, #7f9ed8 38%, #f3c9a0 56%, #f6b37a 64%, #f0e0c8 100%);
+  touch-action: none;
+}
+.g-palmdrive .g-palmdrive-hud {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  pointer-events: none;
+}
+.g-palmdrive .g-palmdrive-zones {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 44px;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 18px;
+  pointer-events: none;
+}
+.g-palmdrive .g-palmdrive-zones span {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.28);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.22);
+}
+.g-palmdrive .g-palmdrive-crash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: #fff;
+  animation: g-palmdrive-crash 0.5s ease-out forwards;
+}
+@keyframes g-palmdrive-crash {
+  from {
+    opacity: 0.6;
+  }
+  to {
+    opacity: 0;
+  }
+}

@@ -47,6 +47,21 @@ export function About(_: AppProps) {
         </a>
       </div>
       <p className="about-legal">™ and © {new Date().getFullYear()} joshua koo. all rights reserved.</p>
+      <p className="about-credit">
+        Wallpaper:{' '}
+        <a href="https://commons.wikimedia.org/wiki/File:Stanford_University_-_Universit%C3%A9_Stanford_-_Memorial_Church.jpg" target="_blank" rel="noreferrer">
+          Stanford Memorial Church
+        </a>{' '}
+        by{' '}
+        <a href="https://commons.wikimedia.org/wiki/User:Clementp1986" target="_blank" rel="noreferrer">
+          Clementp1986
+        </a>
+        ,{' '}
+        <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noreferrer">
+          CC BY-SA 4.0
+        </a>
+        , cropped and color graded.
+      </p>
     </div>
   );
 }

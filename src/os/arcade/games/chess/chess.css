@@ -1,0 +1,304 @@
+.g-chess .g-chess-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #101018;
+}
+.g-chess .g-chess-status {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 55%;
+  height: 22px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.g-chess .g-chess-dots {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: g-chess-pulse 1s ease-in-out infinite;
+}
+@keyframes g-chess-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+.g-chess .g-chess-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 12px 12px;
+  box-sizing: border-box;
+}
+.g-chess .g-chess-stage.tall .g-chess-body {
+  flex-direction: column;
+  gap: 10px;
+}
+.g-chess .g-chess-board {
+  position: relative;
+  flex: none;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.12),
+    0 24px 60px rgba(0, 0, 0, 0.5);
+  touch-action: none;
+}
+.g-chess .g-chess-board.live {
+  cursor: pointer;
+}
+.g-chess .g-chess-sq {
+  position: absolute;
+  width: 12.5%;
+  height: 12.5%;
+}
+.g-chess .g-chess-sq.light {
+  background: #e4e8ef;
+}
+.g-chess .g-chess-sq.dark {
+  background: #7f8ca6;
+}
+.g-chess .g-chess-sq.last::before,
+.g-chess .g-chess-sq.sel::before,
+.g-chess .g-chess-sq.check::before,
+.g-chess .g-chess-sq.cursor::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+.g-chess .g-chess-sq.last::before {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.g-chess .g-chess-sq.sel::before {
+  background: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.g-chess .g-chess-sq.check::before {
+  background: radial-gradient(circle at 50% 50%, rgba(255, 69, 58, 0.95) 0%, rgba(255, 69, 58, 0.5) 45%, transparent 75%);
+}
+.g-chess .g-chess-sq.cursor::after {
+  box-shadow: inset 0 0 0 3px #fff;
+  border-radius: 2px;
+  z-index: 2;
+}
+.g-chess .g-chess-sq.hint::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28%;
+  height: 28%;
+  border-radius: 50%;
+  background: rgba(20, 22, 40, 0.3);
+  transform: translate(-50%, -50%);
+  animation: g-chess-hint 0.18s ease;
+}
+.g-chess .g-chess-sq.hint.capture::after {
+  width: 84%;
+  height: 84%;
+  background: none;
+  box-shadow: inset 0 0 0 4px rgba(20, 22, 40, 0.3);
+}
+@keyframes g-chess-hint {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.6);
+  }
+}
+.g-chess .g-chess-rank,
+.g-chess .g-chess-file {
+  position: absolute;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(30, 34, 48, 0.5);
+  pointer-events: none;
+}
+.g-chess .g-chess-sq.dark .g-chess-rank,
+.g-chess .g-chess-sq.dark .g-chess-file {
+  color: rgba(255, 255, 255, 0.55);
+}
+.g-chess .g-chess-rank {
+  top: 2px;
+  left: 3px;
+}
+.g-chess .g-chess-file {
+  right: 3px;
+  bottom: 1px;
+}
+.g-chess .g-chess-piece {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 12.5%;
+  height: 12.5%;
+  padding: 1.6%;
+  box-sizing: border-box;
+  pointer-events: none;
+  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+  z-index: 1;
+}
+.g-chess .g-chess-piece svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 1.5px 1.5px rgba(0, 0, 0, 0.28));
+}
+.g-chess .g-chess-piece.drag {
+  transition: none;
+  z-index: 3;
+}
+.g-chess .g-chess-piece.drag svg {
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.45));
+}
+.g-chess .g-chess-promo {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(12, 12, 20, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: g-chess-fade 0.16s ease;
+}
+@keyframes g-chess-fade {
+  from {
+    opacity: 0;
+  }
+}
+.g-chess .g-chess-promo > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(245, 245, 247, 0.8);
+}
+.g-chess .g-chess-promo > div {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 16px;
+  background: rgba(28, 28, 36, 0.92);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.16),
+    0 16px 40px rgba(0, 0, 0, 0.5);
+}
+.g-chess .g-chess-promo > div button {
+  width: 56px;
+  height: 56px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.g-chess .g-chess-promo > div button:hover {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.g-chess .g-chess-promo > div button svg {
+  width: 100%;
+  height: 100%;
+}
+.g-chess .g-chess-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.g-chess .g-chess-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.1);
+}
+.g-chess .g-chess-mode {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.g-chess .g-chess-flip {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: rgba(245, 245, 247, 0.8);
+  background: rgba(255, 255, 255, 0.08);
+}
+.g-chess .g-chess-flip:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+.g-chess .g-chess-moves {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 6px 8px;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  scrollbar-width: thin;
+}
+.g-chess .g-chess-stage.tall .g-chess-moves {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 2px 10px;
+}
+.g-chess .g-chess-moves li {
+  display: grid;
+  grid-template-columns: 26px 1fr 1fr;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.g-chess .g-chess-stage.tall .g-chess-moves li {
+  grid-template-columns: auto auto auto;
+}
+.g-chess .g-chess-moves em {
+  font-style: normal;
+  color: rgba(245, 245, 247, 0.4);
+}
+.g-chess .g-chess-moves b {
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.85);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.g-chess .g-chess-moves b.cur {
+  color: #fff;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.g-chess .g-chess-empty {
+  color: rgba(245, 245, 247, 0.45);
+}

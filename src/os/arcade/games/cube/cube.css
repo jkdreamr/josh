@@ -1,0 +1,112 @@
+.g-cube .g-cube-host {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(110% 90% at 50% 30%, #2b2f3d 0%, #171922 60%, #0e0f14 100%);
+  cursor: grab;
+  touch-action: none;
+}
+.g-cube .g-cube-host.is-dragging {
+  cursor: grabbing;
+}
+.g-cube .g-cube-hud {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 5px 12px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(20, 20, 26, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.g-cube .g-cube-hud strong {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.g-cube .g-cube-hud span {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+.g-cube .g-cube-bar {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.g-cube .g-cube-last {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  font-size: 26px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+  animation: g-cube-fade 0.8s ease-out forwards;
+}
+@keyframes g-cube-fade {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.9);
+  }
+  15% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+}
+.g-cube .g-cube-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 74px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
+
+.g-cube .g-cube-scramble {
+  position: absolute;
+  left: 50%;
+  top: 50px;
+  transform: translateX(-50%);
+  max-width: min(92%, 560px);
+  padding: 4px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(20, 20, 26, 0.4);
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* narrow screens: clear the shell's score and control row */
+@media (max-width: 640px) {
+  .g-cube .g-cube-bar {
+    top: 48px;
+  }
+  .g-cube .g-cube-scramble {
+    top: 88px;
+  }
+  .g-cube .g-cube-hint {
+    top: 112px;
+  }
+}
+
+@media (pointer: coarse) {
+  .g-cube .g-cube-btn { min-height: 40px; }
+}

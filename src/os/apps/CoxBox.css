@@ -75,8 +75,8 @@
 }
 
 .cox-brand p {
-  color: #748186;
-  font-size: 10px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .cox-brand small {
@@ -289,14 +289,14 @@
 
 .cox-attention p {
   margin: 7px 0;
-  color: #68777b;
-  font-size: 11px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .cox-attention > b {
   margin-top: 8px;
   color: var(--red);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -307,12 +307,12 @@
   align-items: center;
   gap: 11px;
   color: #7b888b;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .cox-call-detail,
 .cox-finish-detail {
-  color: #758286;
+  color: var(--gc-text-2);
   font: 400 12px/1.4 var(--gc-font);
 }
 
@@ -386,7 +386,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #728084;
+  color: var(--gc-text-2);
   font-size: 12px;
   letter-spacing: 0;
   text-transform: none;
@@ -432,10 +432,11 @@
 .cox-small-metric small,
 .cox-secondary-metrics small,
 .cox-bio-metrics small {
-  color: #899497;
-  font-size: 8px;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
+  color: var(--gc-text-2);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .cox-big-metric b,
@@ -444,6 +445,7 @@
 .cox-legs-meter b,
 .cox-swing-meter b {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
 }
 
 .cox-big-metric b {
@@ -456,8 +458,8 @@
 }
 
 .cox-big-metric span {
-  color: #819093;
-  font-size: 8px;
+  color: var(--gc-text-2);
+  font-size: 11px;
 }
 
 .cox-small-metric {
@@ -489,8 +491,8 @@
 }
 
 .cox-secondary-metrics b {
-  color: #68777b;
-  font-size: 9px;
+  color: var(--gc-text-2);
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -516,8 +518,8 @@
 
 .cox-legs-meter b,
 .cox-swing-meter b {
-  color: #748286;
-  font-size: 8px;
+  color: var(--gc-text-2);
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -571,8 +573,8 @@
 
 .cox-power-pips > b {
   margin-left: 4px;
-  color: #829092;
-  font-size: 8px;
+  color: var(--gc-text-2);
+  font-size: 11px;
   font-weight: 400;
 }
 
@@ -659,10 +661,10 @@
   margin-left: 9px;
   padding: 2px 4px;
   background: rgba(243, 242, 236, 0.78);
-  color: #748286;
-  font-size: 8px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  color: var(--gc-text-2);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .cox-distance-marker.is-finish {
@@ -690,9 +692,8 @@
   padding: 2px 5px;
   border-radius: 2px;
   background: rgba(250, 249, 243, 0.8);
-  color: #3d5053;
-  font-size: 8px;
-  text-transform: lowercase;
+  color: var(--gc-text-2);
+  font-size: 11px;
 }
 
 .cox-hull-svg {
@@ -777,8 +778,8 @@
   border: 1px solid rgba(255, 255, 255, 0.7);
   border-radius: 3px;
   background: rgba(248, 249, 241, 0.88);
-  color: #405358;
-  font-size: 9px;
+  color: var(--gc-text-2);
+  font-size: 11px;
   transform: translateX(-50%);
 }
 
@@ -809,8 +810,8 @@
 
 .cox-call-strip p {
   margin: 0;
-  color: #47575a;
-  font-size: 10px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .cox-race-controls {
@@ -867,9 +868,8 @@
 
 .cox-friend-hud > header b {
   color: var(--red);
-  font-size: 9px;
-  font-weight: 600;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .cox-friend-hud.player-2 > header b {
@@ -877,8 +877,8 @@
 }
 
 .cox-friend-hud > header span {
-  color: #899497;
-  font-size: 8px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .cox-metrics.is-compact {
@@ -899,7 +899,7 @@
 .cox-metrics.is-compact .cox-big-metric small,
 .cox-metrics.is-compact .cox-small-metric small,
 .cox-metrics.is-compact .cox-secondary-metrics small {
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .cox-metrics.is-compact .cox-big-metric span,
@@ -909,7 +909,7 @@
 
 .cox-metrics.is-compact .cox-small-metric b,
 .cox-metrics.is-compact .cox-secondary-metrics b {
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .cox-metrics.is-compact .cox-secondary-metrics {
@@ -955,8 +955,8 @@
 
 .cox-finish-hero p {
   margin: 0;
-  color: #78868a;
-  font-size: 9px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .cox-results-grid {
@@ -983,14 +983,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: #627175;
-  font-size: 9px;
-  text-transform: uppercase;
+  color: var(--gc-text-2);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .cox-result-card > header b {
   color: var(--red);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .cox-result-card.player-2 > header b {
@@ -1022,16 +1022,17 @@
 }
 
 .cox-result-stats small {
-  color: #899497;
-  font-size: 7px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  color: var(--gc-text-2);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .cox-result-stats b {
-  color: #46565a;
+  color: var(--gc-text-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -1041,12 +1042,12 @@
   justify-content: space-between;
   margin: 8px 0 2px;
   color: var(--red);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .cox-margin span {
-  color: #899497;
-  font-size: 8px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 .cox-result-name {
@@ -1057,15 +1058,30 @@
 }
 
 .cox-result-name .ginput {
+  height: 28px;
   flex: 1;
   min-width: 0;
 }
 
+.cox-post-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cox-post-row .gbtn {
+  flex: none;
+}
+
 .cox-posted-rank {
   margin-top: 8px;
-  color: #637571;
-  font-size: 8px;
+  color: var(--gc-text-2);
+  font-size: 12px;
   text-align: center;
+}
+
+.cox-keyboard-help {
+  white-space: nowrap;
 }
 
 .cox-finish-actions {
@@ -1075,6 +1091,12 @@
   gap: 7px;
   padding-top: 8px;
   border-top: 1px solid #dce0da;
+}
+
+@media (min-width: 700px) {
+  .win.is-max .cox-finish-actions {
+    margin-bottom: 58px;
+  }
 }
 
 .cox-board-header {
@@ -1116,7 +1138,7 @@
 .cox-board-table th {
   padding: 8px 7px;
   border-bottom: 1px solid #cfd6d0;
-  color: #8a9698;
+  color: var(--gc-text-2);
   font: 500 12px/1.2 var(--gc-font);
   letter-spacing: 0;
   text-transform: none;
@@ -1125,8 +1147,8 @@
 .cox-board-table td {
   padding: 10px 7px;
   border-bottom: 1px solid #e2e5df;
-  color: #59696d;
-  font-size: 10px;
+  color: var(--gc-text-2);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1154,8 +1176,8 @@
   height: 100%;
   min-height: 100px;
   place-content: center;
-  color: #839093;
-  font-size: 10px;
+  color: var(--gc-text-2);
+  font-size: 12px;
   text-align: center;
 }
 
@@ -1165,8 +1187,8 @@
   align-items: center;
   justify-content: space-between;
   padding-top: 9px;
-  color: #899497;
-  font-size: 8px;
+  color: var(--gc-text-2);
+  font-size: 12px;
 }
 
 @media (max-width: 700px) {
@@ -1309,7 +1331,7 @@
 
   .cox-secondary-metrics b,
   .cox-secondary-metrics small {
-    font-size: 7px;
+    font-size: 11px;
   }
 
   .cox-bio-metrics {
@@ -1323,7 +1345,7 @@
 
   .cox-legs-meter small,
   .cox-swing-meter small {
-    font-size: 7px;
+    font-size: 11px;
   }
 
   .cox-power-pips i {
@@ -1333,6 +1355,55 @@
   .cox-board-table td {
     padding-right: 4px;
     padding-left: 4px;
-    font-size: 8px;
+    font-size: 11px;
+  }
+
+  .cox-friend-hud .cox-metrics.is-compact .cox-primary-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 12px;
+  }
+
+  .cox-friend-hud .cox-metrics.is-compact .cox-big-metric {
+    grid-template-columns: minmax(0, 1fr);
+    column-gap: 0;
+  }
+
+  .cox-friend-hud .cox-metrics.is-compact .cox-small-metric {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .cox-friend-hud .cox-metrics.is-compact .cox-small-metric b {
+    font-size: 16px;
+  }
+
+  .cox-friend-hud .cox-metrics.is-compact .cox-small-metric:nth-last-child(1) {
+    display: flex;
+  }
+
+  .cox-friend-hud .cox-metrics.is-compact .cox-secondary-metrics {
+    display: none;
+  }
+
+  .cox-friend-hud .cox-metrics.is-compact .cox-big-metric b,
+  .cox-friend-hud .cox-metrics.is-compact .cox-small-metric b {
+    white-space: nowrap;
+  }
+
+  .cox-friend-hud .cox-metrics.is-compact .cox-big-metric small,
+  .cox-friend-hud .cox-metrics.is-compact .cox-small-metric small {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+}
+
+.cox.is-mobile .cox-keyboard-help {
+  display: none;
+}
+
+@media (hover: none) {
+  .cox-keyboard-help {
+    display: none;
   }
 }
