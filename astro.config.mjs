@@ -8,4 +8,5 @@ export default defineConfig({
   integrations: [react()],
   adapter: vercel(),
   devToolbar: { enabled: false },
+  vite: { worker: { format: 'es' } },
 });

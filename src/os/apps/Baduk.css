@@ -171,6 +171,22 @@
   gap: 2px;
 }
 
+.baduk-engine-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 5px;
+  vertical-align: -2px;
+  border: 1.5px solid rgba(255,255,255,.22);
+  border-top-color: #d9b77b;
+  border-radius: 50%;
+  animation: baduk-engine-spin .8s linear infinite;
+}
+
+@keyframes baduk-engine-spin {
+  to { transform: rotate(360deg); }
+}
+
 .baduk-turn-card b {
   color: #f5efe2;
   font-size: 14px;
