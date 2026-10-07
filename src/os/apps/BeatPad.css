@@ -8,399 +8,705 @@
   background: #121719;
   color: #ebece3;
   font-family: var(--gc-font);
+  container-type: size;
+  outline: none;
 }
 
-.beatpad-header {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 12px 18px 10px;
-  border-bottom: 1px solid rgba(255,255,255,.065);
-}
-
-.beatpad-brand h1 {
-  margin: 0;
-  color: #f2efe4;
-  font-family: var(--gc-font);
-  font-size: 20px;
+.beatpad-app b {
   font-weight: 600;
 }
 
-.beatpad-preset {
-  display: grid;
-  gap: 4px;
-}
-
-.beatpad-select {
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23b7c3bf' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-position: right 10px center;
-  background-repeat: no-repeat;
-  background-size: 12px;
-  padding-right: 30px;
-}
-
-.beatpad-preset .beatpad-select {
-  min-width: 128px;
-}
-
-.beatpad-controls {
+/* toolbar */
+.beatpad-toolbar {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
   align-items: center;
-  gap: clamp(9px, 2vw, 20px);
-  padding: 10px 18px;
-  border-bottom: 1px solid rgba(255,255,255,.06);
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.065);
 }
 
-.beatpad-tempo,
-.beatpad-swing {
-  display: grid;
-  width: min(22%, 150px);
-  gap: 5px;
-  color: #9ba69d;
+.beatpad-play {
+  min-width: 70px;
+  padding: 0 10px;
 }
 
-.beatpad-tempo span,
-.beatpad-swing span {
-  display: flex;
-  justify-content: space-between;
-}
-
-.beatpad-tempo b,
-.beatpad-swing b {
-  color: #e6e7da;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+.beatpad-bpm {
+  min-width: 76px;
+  padding: 0 10px;
   font-variant-numeric: tabular-nums;
 }
 
-.beatpad-tempo input,
-.beatpad-swing input {
-  width: 100%;
-  height: 12px;
-  margin: 0;
-  accent-color: #c49c65;
-  cursor: pointer;
+.beatpad-bpm[aria-pressed='true'] {
+  background: var(--gc-btn-press);
 }
 
-.beatpad-key {
-  display: grid;
-  gap: 4px;
-  color: #9ba69d;
+.beatpad-patterns > button {
+  position: relative;
+  min-width: 28px;
+  padding: 0 8px;
 }
 
-.beatpad-key .beatpad-select {
-  min-width: 88px;
+.beatpad-patterns > button.is-empty {
+  color: var(--gc-text-2);
 }
 
+.beatpad-patterns > button[aria-pressed='true'].is-empty {
+  color: var(--gc-text);
+}
+
+.beatpad-patterns > button.is-playing::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--tint);
+  transform: translateX(-50%);
+}
+
+.beatpad-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.beatpad-icon {
+  width: 32px;
+  padding: 0;
+}
+
+/* grid */
 .beatpad-workspace {
   display: flex;
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  gap: 9px;
-  padding: 13px 17px 8px;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
 }
 
-.beatpad-grid-scroll {
-  min-height: 0;
-  flex: 1;
-  overflow: auto;
-  scrollbar-color: #394341 transparent;
-  scrollbar-width: thin;
+.beatpad-pages {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
 }
 
 .beatpad-grid {
+  --label: 112px;
   display: grid;
-  min-width: 670px;
-  grid-template-columns: 116px repeat(16, minmax(20px, 1fr));
-  gap: 4px 5px;
+  min-height: 0;
+  max-height: calc(16px + 8 * (var(--cell, 40px) * 3.2) + 8 * 3px);
+  flex: 1;
+  grid-template-columns: var(--label) repeat(var(--steps), minmax(0, 1fr));
+  grid-template-rows: 16px repeat(8, minmax(0, 1fr));
+  gap: 3px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .beatpad-grid-head,
-.beatpad-grid-row {
+.beatpad-row {
   display: contents;
 }
 
 .beatpad-grid-head > span {
-  display: grid;
-  min-height: 15px;
-  place-items: center;
+  align-self: end;
   color: var(--gc-text-2);
   font-size: 12px;
+  line-height: 1;
+  text-align: center;
 }
 
-.beatpad-grid-head > span:first-child {
-  justify-items: start;
-  padding-left: 5px;
-}
-
-.beatpad-grid-head > span:not(:first-child) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.beatpad-grid-head > span.is-bar {
+.beatpad-grid-head > span.is-beat {
   color: #c09b68;
 }
 
-.beatpad-track-label {
+.beatpad-track {
   display: flex;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  padding: 0 5px;
-  border: 1px solid rgba(255,255,255,.06);
-  border-radius: 5px;
+  padding: 0 4px 0 2px;
+  border-radius: 6px;
   background: #1a2223;
 }
 
-.beatpad-grid-row.is-selected .beatpad-track-label {
-  border-color: rgba(192,155,104,.38);
-  background: #28251f;
+.beatpad-row.is-selected .beatpad-track {
+  background: #262a28;
+  box-shadow: inset 0 0 0 1px rgba(196, 156, 101, 0.4);
 }
 
 .beatpad-track-name {
+  display: block;
   min-width: 0;
+  flex: 1;
   overflow: hidden;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
   color: var(--gc-text-2);
-  font-size: 12px;
+  font: 500 12px/1.2 var(--gc-font);
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: default;
 }
 
-.beatpad-mute {
-  flex: none;
+.beatpad-track-name[aria-pressed='true'] {
+  color: #f2efe4;
 }
 
-.beatpad-cell {
-  position: relative;
-  display: grid;
-  min-width: 0;
-  height: 28px;
-  place-items: center;
-  padding: 0;
-  border: 1px solid rgba(255,255,255,.075);
-  border-radius: 4px;
-  background: #202829;
-  color: #222;
-  cursor: pointer;
-  touch-action: manipulation;
-  transition: background .12s ease, border-color .12s ease, transform .12s ease;
+.beatpad-track-name:focus-visible {
+  outline: none;
+  box-shadow: var(--gc-focus);
 }
 
-.beatpad-cell.is-bar {
-  border-left-color: rgba(196,156,101,.38);
+.beatpad-track-short {
+  display: none;
 }
 
-.beatpad-cell.is-active {
-  border-color: rgba(230,198,141,.62);
-  background: #bc9258;
-  box-shadow: 0 2px 7px rgba(0,0,0,.22), inset 0 1px rgba(255,255,255,.22);
-}
-
-.beatpad-cell.track-snare.is-active,
-.beatpad-cell.track-clap.is-active {
-  border-color: rgba(212,137,114,.72);
-  background: #b66a52;
-}
-
-.beatpad-cell.track-hat.is-active,
-.beatpad-cell.track-open-hat.is-active {
-  border-color: rgba(162,199,180,.62);
-  background: #6d9b83;
-}
-
-.beatpad-cell.track-bass.is-active,
-.beatpad-cell.track-keys.is-active,
-.beatpad-cell.track-lead.is-active {
-  border-color: rgba(166,187,218,.65);
-  background: #758baa;
-}
-
-.beatpad-cell.is-playhead {
-  outline: 2px solid #f1d18d;
-  outline-offset: 1px;
-  z-index: 1;
-}
-
-.beatpad-cell.is-cell-selected {
-  box-shadow: 0 0 0 2px #f4dca9;
-}
-
-.beatpad-cell small {
-  overflow: hidden;
-  max-width: 100%;
-  color: rgba(20,26,26,.88);
-  font-size: 7px;
-  font-weight: 650;
-  text-overflow: clip;
-  white-space: nowrap;
-}
-
-.beatpad-pitch-row {
+.beatpad-track-switches {
   display: flex;
   flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 42px;
-  padding: 6px 9px;
-  border: 1px solid rgba(255,255,255,.07);
-  border-radius: 7px;
-  background: #171f20;
-}
-
-.beatpad-pitch-row > div:first-child {
-  display: grid;
-  min-width: 150px;
   gap: 3px;
 }
 
-.beatpad-pitch-row > div:first-child b {
-  color: #d8c49a;
+.beatpad-switch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #9ba69d;
+  font: 600 11px/1 var(--gc-font);
+  cursor: default;
+  touch-action: manipulation;
+}
+
+.beatpad-switch:focus-visible {
+  outline: none;
+  box-shadow: var(--gc-focus);
+}
+
+.beatpad-switch[aria-pressed='true'] {
+  background: #b66a52;
+  color: #fff;
+}
+
+.beatpad-switch.is-solo[aria-pressed='true'] {
+  background: #6d9b83;
+}
+
+.beatpad-cell {
+  --c: #bc9258;
+  --edge: rgba(230, 198, 141, 0.6);
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 18px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 4px;
+  background: #202829;
+  color: #222;
+  cursor: default;
+  touch-action: none;
+  transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+
+.beatpad-cell.track-snare,
+.beatpad-cell.track-clap {
+  --c: #b66a52;
+  --edge: rgba(212, 137, 114, 0.7);
+}
+
+.beatpad-cell.track-hat,
+.beatpad-cell.track-open-hat {
+  --c: #6d9b83;
+  --edge: rgba(162, 199, 180, 0.6);
+}
+
+.beatpad-cell.track-bass,
+.beatpad-cell.track-keys,
+.beatpad-cell.track-lead {
+  --c: #758baa;
+  --edge: rgba(166, 187, 218, 0.65);
+}
+
+.beatpad-cell.is-beat {
+  border-left-color: rgba(196, 156, 101, 0.38);
+}
+
+.beatpad-cell.is-on {
+  border-color: var(--edge);
+  background: var(--c);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.beatpad-cell.is-on[data-velocity='1'] {
+  background: color-mix(in srgb, var(--c) 55%, #202829);
+  border-color: color-mix(in srgb, var(--edge) 60%, transparent);
+}
+
+.beatpad-cell.is-on[data-velocity='3'] {
+  background: color-mix(in srgb, var(--c) 82%, #fff);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.35), 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.beatpad-row.is-silent .beatpad-cell.is-on {
+  opacity: 0.35;
+}
+
+.beatpad-cell.is-playhead {
+  z-index: 1;
+  outline: 2px solid #f1d18d;
+  outline-offset: 1px;
+}
+
+.beatpad-cell.is-selected {
+  box-shadow: 0 0 0 2px #f4dca9;
+}
+
+.beatpad-cell:focus-visible {
+  outline: none;
+  box-shadow: var(--gc-focus);
+}
+
+.beatpad-cell small {
+  display: none;
+  overflow: hidden;
+  max-width: 100%;
+  color: rgba(20, 26, 26, 0.85);
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
-.beatpad-pitch-row > div:first-child span {
-  color: var(--gc-text-2);
-  font-size: 12px;
+.beatpad-grid.show-notes .beatpad-cell small {
+  display: block;
 }
 
-.beatpad-pitches {
-  display: flex;
-  gap: 4px;
+.beatpad-grid:not(.show-notes) .beatpad-cell.is-on.track-bass::after,
+.beatpad-grid:not(.show-notes) .beatpad-cell.is-on.track-keys::after,
+.beatpad-grid:not(.show-notes) .beatpad-cell.is-on.track-lead::after {
+  content: '';
+  position: absolute;
+  right: 20%;
+  bottom: calc(14% + var(--pitch, 0) * 66%);
+  left: 20%;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.6);
 }
 
-.beatpad-footer {
+.beatpad-panel .gseg > button {
+  flex: 1 1 auto;
+}
+
+/* bottom bar */
+.beatpad-bar {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.065);
+}
+
+.beatpad-tabs > button {
+  padding: 0 8px;
+}
+
+.beatpad-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* panels */
+.beatpad-panel {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 18px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.065);
+  background: #171f20;
+}
+
+.beatpad-sliders {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px 18px;
+}
+
+.beatpad-panel.panel-tempo .beatpad-slider {
+  flex: 1 1 130px;
+}
+
+.beatpad-slider {
+  display: grid;
+  gap: 2px;
+}
+
+.beatpad-slider-head {
+  display: flex;
+  justify-content: space-between;
+  color: #9ba69d;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.beatpad-slider-head b {
+  color: #e6e7da;
+  font-variant-numeric: tabular-nums;
+}
+
+.beatpad-slider input {
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--tint);
+}
+
+.beatpad-field {
+  display: grid;
+  gap: 6px;
+}
+
+.beatpad-field .glabel {
+  margin: 0;
+}
+
+.beatpad-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 18px;
+}
+
+.beatpad-select-field {
+  display: grid;
+  gap: 6px;
+}
+
+.beatpad-select {
+  appearance: none;
+  min-width: 96px;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23b7c3bf' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 9px center;
+  background-repeat: no-repeat;
+  background-size: 12px;
+}
+
+.beatpad-panel-title {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 18px 10px;
-  border-top: 1px solid rgba(255,255,255,.06);
-  color: var(--gc-text-2);
-  font-size: 12px;
 }
 
-.beatpad-footer > div {
+.beatpad-panel-title b {
+  color: #f2efe4;
+  font-size: 13px;
+}
+
+.beatpad-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.beatpad-step-field {
+  width: 100%;
+}
+
+.beatpad-note {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
-@media (max-width: 650px) {
-  .beatpad-header {
-    padding: 8px 10px 7px;
-  }
+.beatpad-note b {
+  min-width: 36px;
+  color: #e6e7da;
+  font-size: 13px;
+  text-align: center;
+}
 
-  .beatpad-preset .beatpad-select {
-    min-width: 116px;
-  }
+.beatpad-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
 
-  .beatpad-controls {
-    flex-wrap: wrap;
-    gap: 7px 10px;
+.beatpad-chip {
+  min-width: 34px;
+  padding: 0 8px;
+}
+
+.beatpad-chip.is-playing {
+  background: var(--tint);
+  color: #fff;
+}
+
+.beatpad-chain-add {
+  margin-left: 6px;
+}
+
+.beatpad-pads {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.beatpad-pad {
+  min-height: 46px;
+  padding: 0 8px;
+  background: #4a4238;
+  font-size: 14px;
+}
+
+.beatpad-pad:active {
+  background: #6a5c48;
+}
+
+.beatpad-pad.track-snare,
+.beatpad-pad.track-clap {
+  background: #4f3a33;
+}
+
+.beatpad-pad.track-hat,
+.beatpad-pad.track-open-hat {
+  background: #37463f;
+}
+
+.beatpad-pad.track-bass,
+.beatpad-pad.track-keys,
+.beatpad-pad.track-lead {
+  background: #39414f;
+}
+
+.beatpad-pad.track-snare:active,
+.beatpad-pad.track-clap:active {
+  background: #b66a52;
+}
+
+.beatpad-pad.track-hat:active,
+.beatpad-pad.track-open-hat:active {
+  background: #6d9b83;
+}
+
+.beatpad-pad.track-bass:active,
+.beatpad-pad.track-keys:active,
+.beatpad-pad.track-lead:active {
+  background: #758baa;
+}
+
+.beatpad-pads-foot {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.beatpad-pads-foot .gbtn[aria-pressed='true'] {
+  background: #b23b32;
+  color: #fff;
+}
+
+/* touch */
+.is-coarse .beatpad-grid {
+  --label: 128px;
+}
+
+.is-coarse .beatpad-switch {
+  width: 24px;
+  height: 24px;
+}
+
+.is-coarse .beatpad-pad {
+  min-height: 58px;
+}
+
+.is-coarse .beatpad-slider input {
+  height: 30px;
+}
+
+/* short window: a panel takes the grid's place instead of squeezing it */
+@container (max-height: 420px) {
+  .beatpad-toolbar {
     padding: 8px 10px;
   }
 
-  .beatpad-tempo,
-  .beatpad-swing {
-    width: calc(50% - 6px);
-  }
-
-  .beatpad-key {
-    grid-column: span 1;
-  }
-
-  .beatpad-key .beatpad-select {
-    min-width: 80px;
-  }
-
   .beatpad-workspace {
-    gap: 7px;
-    padding: 8px 8px 6px;
+    padding: 8px 10px;
   }
 
-  .beatpad-grid-scroll {
-    overflow-x: auto;
+  .beatpad-bar {
+    padding: 6px 10px;
   }
 
-  .beatpad-grid {
-    min-width: 0;
-    grid-template-columns: 82px repeat(16, minmax(14px, 1fr));
-    gap: 3px;
+  .beatpad-app:has(.beatpad-panel) .beatpad-workspace {
+    display: none;
   }
 
-  .beatpad-track-label {
-    padding: 0 3px;
-  }
-
-  .beatpad-cell {
-    height: 25px;
-    border-radius: 3px;
-  }
-
-  .beatpad-cell small {
-    font-size: 6px;
-  }
-
-  .beatpad-grid-head > span {
-    font-size: 12px;
-  }
-
-  .beatpad-pitch-row {
-    flex-wrap: wrap;
-    justify-content: flex-start;
-    gap: 5px;
-    min-height: 37px;
-    padding: 5px 7px;
-  }
-
-  .beatpad-pitch-row > div:first-child {
-    min-width: 100%;
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-  }
-
-  .beatpad-pitch-row > div:first-child span {
-    font-size: 12px;
-  }
-
-  .beatpad-pitches {
-    gap: 3px;
-  }
-
-  .beatpad-footer {
-    flex-wrap: wrap;
-    justify-content: center;
-    padding: 7px 9px 8px;
-  }
-
-  .beatpad-footer .ghelp {
-    text-align: center;
-  }
-
-  .beatpad-footer > div {
-    width: 100%;
-    gap: 7px;
-    justify-content: center;
+  .beatpad-panel {
+    min-height: 0;
+    flex: 1;
+    align-content: flex-start;
+    align-items: flex-start;
+    overflow-y: auto;
+    scrollbar-width: thin;
   }
 }
 
-@media (max-width: 360px) {
-  .beatpad-grid {
-    min-width: 425px;
+@container (max-height: 260px) {
+  .beatpad-toolbar,
+  .beatpad-bar {
+    padding: 5px 10px;
   }
 
-  .beatpad-preset .beatpad-select {
-    min-width: 100px;
-    max-width: 120px;
+  .beatpad-toolbar .gbtn,
+  .beatpad-bar .gbtn {
+    height: 24px;
+    font-size: 12px;
+  }
+
+  .beatpad-toolbar .gseg > button,
+  .beatpad-bar .gseg > button {
+    height: 20px;
+    font-size: 12px;
+  }
+
+  .beatpad-workspace {
+    padding: 6px 10px;
+  }
+
+  .beatpad-grid {
+    grid-template-rows: repeat(8, minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  .beatpad-grid-head {
+    display: none;
+  }
+
+  .beatpad-cell {
+    min-height: 12px;
+  }
+}
+
+/* small window */
+@container (max-width: 560px) {
+  .beatpad-toolbar {
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .beatpad-workspace {
+    padding: 8px 10px;
+  }
+
+  .beatpad-grid,
+  .is-coarse .beatpad-grid {
+    --label: 84px;
+    gap: 2px;
+  }
+
+  .beatpad-track {
+    padding: 0 3px 0 0;
+    border-radius: 5px;
+  }
+
+  .beatpad-track-full {
+    display: none;
+  }
+
+  .beatpad-track-short {
+    display: inline;
+  }
+
+  .beatpad-switch {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+  }
+
+  .beatpad-cell {
+    border-radius: 3px;
+  }
+
+  .beatpad-bar {
+    gap: 6px;
+    padding: 6px 10px;
+  }
+
+  .beatpad-tabs > button {
+    padding: 0 7px;
+  }
+
+  .beatpad-panel {
+    gap: 8px 14px;
+    padding: 8px 10px 10px;
+  }
+
+  .beatpad-pad {
+    padding: 0 4px;
+    font-size: 13px;
+  }
+}
+
+@container (max-width: 430px) {
+  .beatpad-patterns {
+    flex: 1 1 100%;
+    order: 3;
+  }
+
+  .beatpad-tabs {
+    flex: 1 1 100%;
+  }
+
+  .beatpad-bar-right {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .beatpad-bar-right .gbtn {
+    flex: 1;
+  }
+
+  .beatpad-grid,
+  .is-coarse .beatpad-grid {
+    --label: 56px;
+  }
+
+  .beatpad-track-switches {
+    display: none;
+  }
+
+  .beatpad-track-name {
+    padding: 0 6px;
   }
 }
