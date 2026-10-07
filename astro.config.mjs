@@ -10,7 +10,6 @@ export default defineConfig({
   adapter: vercel(),
   devToolbar: { enabled: false },
   vite: {
-    optimizeDeps: { exclude: ['@tensorflow/tfjs-core'] },
     resolve: {
       alias: {
         'node-fetch': fileURLToPath(new URL('./src/os/games/katago/node-fetch-stub.ts', import.meta.url)),
