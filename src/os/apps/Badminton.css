@@ -1,346 +1,630 @@
-.badminton-app {
-  position: relative;
+.bd {
+  position: absolute;
+  inset: 0;
+  container-type: size;
   display: flex;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  background: #11191e;
-  color: #e9eee8;
-  font-family: var(--gc-font);
+  color: #f1f3ec;
+  background: #0e161c;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.badminton-header {
+.bd button {
+  font-family: inherit;
+}
+
+/* menu */
+.bd-menu,
+.bd-howto,
+.bd-summary {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  flex: none;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 18px 9px;
+  padding: 18px 20px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background:
+    radial-gradient(90% 70% at 50% 110%, rgba(43, 122, 92, 0.35), rgba(43, 122, 92, 0) 70%),
+    linear-gradient(180deg, #0d141a 0%, #15212a 100%);
 }
 
-.badminton-brand h1 {
+.bd-sheet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  margin: auto 0;
+}
+
+.bd-menu-head {
+  text-align: center;
+}
+
+.bd-menu-head h1 {
   margin: 0;
-  color: #f5f3eb;
-  font-family: var(--gc-font);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.bd-menu-head p,
+.bd-summary-head p,
+.bd-summary-note {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: rgba(241, 243, 236, 0.62);
+}
+
+.bd-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(100%, 360px);
+  transition: opacity 0.2s;
+}
+
+.bd-field.is-dim {
+  opacity: 0.45;
+}
+
+.bd-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(241, 243, 236, 0.72);
+}
+
+.bd .gseg {
+  display: flex;
+  width: 100%;
+}
+
+.bd .gseg button {
+  flex: 1;
+  min-width: 0;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.bd-menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(100%, 360px);
+  margin-top: 4px;
+}
+
+.bd-menu-actions .gbtn-primary {
+  width: 100%;
+}
+
+.bd-menu-row {
+  display: flex;
+  gap: 8px;
+}
+
+.bd-menu-row .gbtn {
+  flex: 1;
+}
+
+/* how to play */
+.bd-howto .bd-sheet {
+  gap: 12px;
+}
+
+.bd-howto h2,
+.bd-summary-head h2,
+.bd-card h2 {
+  margin: 0;
   font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.bd-howto-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  width: min(100%, 720px);
+}
+
+.bd-howto section {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.bd-howto h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
   font-weight: 600;
 }
 
-.badminton-header-controls {
+.bd-howto p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(241, 243, 236, 0.74);
+}
+
+.bd-howto-actions,
+.bd-summary-actions,
+.bd-card-actions {
   display: flex;
-  flex: none;
-  align-items: center;
   gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
 }
 
-.badminton-format,
-.badminton-difficulty {
+/* scoreboard */
+.bd-score {
   flex: none;
-}
-
-.badminton-scoreboard {
   display: grid;
-  flex: none;
-  grid-template-columns: 1fr 1.3fr 1fr;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 12px;
-  margin: 0 14px 8px;
-  padding: 8px 12px;
-  border: 1px solid rgba(255,255,255,.09);
-  border-radius: 9px;
-  background: linear-gradient(110deg, #172227, #202d30 50%, #172227);
+  gap: 10px;
+  padding: 8px 14px 6px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 
-.badminton-player-score {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  column-gap: 10px;
+.bd-team {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
 }
 
-.badminton-player-score.is-cpu {
+.bd-team.is-right {
+  align-items: flex-end;
   text-align: right;
 }
 
-.badminton-name {
-  display: flex;
+.bd-team-name {
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
-  color: var(--gc-text-2);
+  gap: 6px;
   font-size: 12px;
-}
-
-.badminton-player-score.is-cpu .badminton-name {
-  justify-content: flex-end;
-}
-
-.badminton-name i {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border: 1px solid #65756e;
-  border-radius: 50%;
-}
-
-.badminton-name i.is-serving {
-  border-color: #c7d68c;
-  background: #c7d68c;
-  box-shadow: 0 0 8px rgba(199,214,140,.55);
-}
-
-.badminton-player-score strong {
-  grid-row: span 2;
-  color: #f5f3eb;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 30px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.badminton-player-score small {
-  color: var(--gc-text-2);
-  font-size: 12px;
-}
-
-.badminton-score-center {
-  display: grid;
-  justify-items: center;
-  gap: 2px;
-  text-align: center;
-}
-
-.badminton-score-center > span,
-.badminton-score-center > small {
-  color: var(--gc-text-2);
-  font-size: 12px;
-}
-
-.badminton-score-center > b {
-  overflow: hidden;
-  max-width: 100%;
-  color: #dedfcb;
-  font-size: 12px;
-  font-weight: 550;
-  text-overflow: ellipsis;
+  font-weight: 600;
+  color: rgba(241, 243, 236, 0.7);
   white-space: nowrap;
 }
 
-.badminton-interval,
-.badminton-match-result {
-  position: absolute;
-  z-index: 3;
-  top: 48%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  padding: 9px 14px;
-  border: 1px solid rgba(219,228,203,.32);
-  border-radius: 7px;
-  background: rgba(18,28,32,.93);
-  color: #f2e6bc;
-  font-family: var(--gc-font);
-  font-size: 16px;
+.bd-serve-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffd86b;
+  box-shadow: 0 0 0 2px rgba(255, 216, 107, 0.2);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.bd-team.is-serving .bd-serve-dot {
+  opacity: 1;
+}
+
+.bd-team-points {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.bd-team-games {
+  font-size: 11px;
+  color: rgba(241, 243, 236, 0.55);
+}
+
+.bd-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 120px;
   text-align: center;
 }
 
-.badminton-match-result {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.bd-status-title {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.badminton-stage {
+.bd-status-detail {
+  font-size: 11px;
+  color: rgba(241, 243, 236, 0.58);
+  white-space: nowrap;
+  min-height: 13px;
+}
+
+.bd-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ffd86b;
+  color: #3a2a00;
+}
+
+/* court */
+.bd-stage {
   position: relative;
-  min-height: 0;
   flex: 1;
+  min-height: 0;
+  touch-action: none;
+  cursor: crosshair;
   overflow: hidden;
-  margin: 0 10px;
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 9px;
-  background: #17232b;
 }
 
-.badminton-stage canvas {
-  display: block;
+.bd-canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
+  display: block;
 }
 
-.badminton-stage-hud {
+.bd-call {
   position: absolute;
-  right: 10px;
-  bottom: 9px;
+  left: 50%;
+  top: 34%;
+  transform: translate(-50%, -50%);
   display: flex;
-  gap: 9px;
-  color: var(--gc-text-2);
-  font-size: 12px;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  text-align: center;
+  animation: bd-call 1.5s ease-out forwards;
+}
+
+.bd-call strong {
+  font-size: clamp(22px, 5cqw, 34px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.5);
+}
+
+.bd-call span {
+  font-size: 13px;
+  color: rgba(241, 243, 236, 0.8);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+}
+
+@keyframes bd-call {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -40%) scale(0.92);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  78% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.bd-zones {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   pointer-events: none;
 }
 
-.badminton-toolbar {
+.bd-zones span {
   display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(241, 243, 236, 0.5);
+}
+
+.bd-zones span + span {
+  border-left: 1px dashed rgba(255, 255, 255, 0.14);
+}
+
+.bd-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 14, 18, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.bd-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 22px;
+  min-width: 220px;
+  max-width: min(92%, 380px);
+  border-radius: 14px;
+  background: #1a262e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+.bd-card p {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(241, 243, 236, 0.7);
+}
+
+/* bottom bar */
+.bd-bar {
   flex: none;
+  display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 10px 16px 12px;
+  gap: 12px;
+  padding: 6px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.025);
 }
 
-.badminton-help {
-  max-width: 560px;
-  line-height: 1.4;
+.bd-help {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: rgba(241, 243, 236, 0.58);
+  min-width: 0;
 }
 
-.badminton-desktop-hit-controls {
-  display: flex;
+.bd-pads {
   flex: none;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px calc(10px + var(--sab, 0px));
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.bd-pad-group {
+  display: flex;
   gap: 8px;
 }
 
-.badminton-hit-button {
-  touch-action: none;
+.bd-pad {
+  width: 64px;
+  height: 58px;
+  font-size: 13px;
 }
 
-.badminton-hit-modes {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+.bd-pad-hit {
+  width: 84px;
+  background: rgba(255, 216, 107, 0.16);
+  border-color: rgba(255, 216, 107, 0.4);
 }
 
-.badminton-touch-pad {
-  display: none;
+.bd-pause {
+  flex: none;
 }
 
-@media (min-width: 700px) {
-  .win.is-max .badminton-toolbar {
-    margin-bottom: 70px;
-  }
+/* summary */
+.bd-summary-head {
+  text-align: center;
 }
 
-@media (max-width: 650px) {
-  .badminton-header {
-    display: contents;
-  }
+.bd-stats {
+  border-collapse: collapse;
+  width: min(100%, 360px);
+  font-size: 13px;
+}
 
-  .badminton-header-controls {
-    display: contents;
-  }
+.bd-stats th,
+.bd-stats td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  font-variant-numeric: tabular-nums;
+}
 
-  .badminton-brand {
-    order: 1;
-    margin: 9px 12px 4px;
-  }
+.bd-stats thead th {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(241, 243, 236, 0.62);
+  text-align: right;
+}
 
-  .badminton-format {
-    order: 2;
-    align-self: center;
-    margin: 0 12px 8px;
-  }
+.bd-stats tbody th {
+  text-align: left;
+  font-weight: 500;
+  color: rgba(241, 243, 236, 0.74);
+}
 
-  .badminton-scoreboard {
-    order: 3;
-    gap: 5px;
-    margin: 0 7px 6px;
-    padding: 7px 8px;
-  }
+.bd-stats td {
+  text-align: right;
+  font-weight: 600;
+}
 
-  .badminton-player-score {
-    column-gap: 5px;
+/* compact laptop window */
+@container (max-height: 420px) {
+  .bd-menu,
+  .bd-howto,
+  .bd-summary {
+    padding: 10px 16px;
   }
-
-  .badminton-player-score strong {
+  .bd-sheet {
+    gap: 8px;
+  }
+  .bd-menu-head h1 {
+    font-size: 19px;
+  }
+  .bd-menu-head p {
+    margin-top: 2px;
+    font-size: 12px;
+  }
+  .bd-field {
+    gap: 3px;
+  }
+  .bd-field-label {
+    font-size: 11px;
+  }
+  .bd-menu-actions {
+    flex-direction: row;
+    margin-top: 2px;
+  }
+  .bd-menu-actions .gbtn-primary {
+    flex: 1.2;
+    width: auto;
+  }
+  .bd-menu-row {
+    flex: 1;
+  }
+  .bd-howto section {
+    padding: 8px 10px;
+  }
+  .bd-howto p {
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .bd-stats th,
+  .bd-stats td {
+    padding: 3px 10px;
+    font-size: 12px;
+  }
+  .bd-team-points {
     font-size: 26px;
   }
-
-  .badminton-score-center {
-    min-width: 0;
+  .bd-score {
+    padding: 6px 12px 4px;
   }
+}
 
-  .badminton-stage {
-    order: 5;
-    flex: 1 1 0;
-    min-height: 0;
-    max-height: none;
-    aspect-ratio: auto;
-    margin: 0 6px;
+/* very small laptop window */
+@container (max-height: 250px) {
+  .bd-menu,
+  .bd-howto,
+  .bd-summary {
+    padding: 8px 14px;
   }
-
-  .badminton-difficulty {
-    order: 4;
-    align-self: center;
-    margin: 0 7px 8px;
+  .bd-sheet {
+    gap: 5px;
   }
-
-  .badminton-toolbar {
-    order: 6;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-    padding: 7px 9px 9px;
+  .bd-menu-head h1 {
+    font-size: 17px;
   }
-
-  .badminton-help {
-    max-width: none;
-    text-align: center;
-    line-height: 1.3;
-  }
-
-  .badminton-desktop-hit-controls {
+  .bd-menu-head p,
+  .bd-summary-note {
     display: none;
   }
-
-  .badminton-touch-pad {
-    display: grid;
-    grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
-    align-items: end;
+  .bd-field {
+    flex-direction: row;
+    align-items: center;
     gap: 8px;
   }
-
-  .badminton-movement-controls {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .bd-field-label {
+    width: 64px;
+    flex: none;
+  }
+  .bd-menu-actions {
+    margin-top: 2px;
+  }
+  .bd-score {
+    padding: 4px 10px 3px;
     gap: 8px;
   }
-
-  .badminton-movement-controls .gpad {
-    min-width: 0;
-    padding: 0 12px;
+  .bd-team-points {
+    font-size: 22px;
   }
-
-  .badminton-action-controls {
-    display: grid;
-    grid-template-columns: minmax(76px, .85fr) minmax(0, 1.15fr);
-    grid-template-rows: 44px 64px;
-    align-items: end;
-    gap: 8px;
+  .bd-team-name {
+    font-size: 11px;
   }
-
-  .badminton-jump-button {
-    grid-row: 1 / 3;
-    min-width: 0;
-    height: 100%;
-    padding: 0 8px;
+  .bd-status-title {
+    font-size: 13px;
   }
-
-  .badminton-hit-stack {
-    display: grid;
-    min-width: 0;
-    grid-row: 1 / 3;
-    grid-template-rows: 44px 64px;
-    gap: 8px;
+  .bd-help {
+    display: none;
   }
-
-  .badminton-hit-modes .gbtn {
-    height: 44px;
-    min-width: 0;
-    padding: 0 6px;
+  .bd-bar {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    padding: 0;
+    border: 0;
+    background: none;
   }
-
-  .badminton-hit-stack .badminton-hit-button {
-    width: 100%;
-    min-width: 0;
+  .bd-call strong {
+    font-size: 20px;
   }
+  .bd-card {
+    padding: 12px 16px;
+    gap: 6px;
+  }
+  .bd-howto h2 {
+    font-size: 16px;
+  }
+  .bd-howto section {
+    padding: 6px 8px;
+  }
+}
+
+/* phone and tablet */
+.bd.is-touch .bd-howto-grid {
+  grid-template-columns: 1fr;
+}
+
+.bd.is-touch .bd-help {
+  font-size: 12px;
+}
+
+.bd.is-phone .bd-score {
+  padding: 10px 16px 8px;
+}
+
+.bd.is-phone .bd-team-points {
+  font-size: 34px;
+}
+
+.bd.is-phone .bd-sheet {
+  gap: 16px;
+}
+
+.bd.is-phone .bd-call {
+  top: 30%;
+}
+
+.bd.is-phone .bd-menu-head h1 {
+  font-size: 28px;
+}
+
+.bd.is-phone .bd-pads {
+  gap: 8px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.bd.is-phone .bd-pad {
+  width: 58px;
+  height: 62px;
+}
+
+.bd.is-phone .bd-pad-hit {
+  width: 84px;
+}
+
+.bd.is-phone .bd-bar {
+  padding: 10px 14px calc(10px + var(--sab, 0px));
 }
