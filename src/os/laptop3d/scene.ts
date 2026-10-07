@@ -69,7 +69,7 @@ export type LaptopController = {
   enterFs(swap: () => void): Promise<void>;
   exitFs(swap: () => void): Promise<void>;
   /** Read-only view of the scene for dev tooling and tests: where a key or the lid's top edge sits on screen. */
-  inspect(): { yaw: number; pitch: number; lid: number; interactive: boolean; keyAt(code: string): { x: number; y: number } | null; lidTop(): { x: number; y: number }; hitAt(x: number, y: number): string; lidAngle(x: number, y: number): number | null; tweens: string[] };
+  inspect(): { yaw: number; pitch: number; lid: number; interactive: boolean; screen: boolean; keyAt(code: string): { x: number; y: number } | null; lidTop(): { x: number; y: number }; hitAt(x: number, y: number): string; lidAngle(x: number, y: number): number | null; tweens: string[] };
   dispose(): void;
 };
 
@@ -432,6 +432,12 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   css3d.appendChild(o.host);
   const cssObj = new CSS3DObject(css3d);
   anchor.add(cssObj);
+  let lidShown = false;
+  let shown = false;
+  let refocus: HTMLElement | null = null;
+  css3d.style.visibility = 'hidden';
+  css3d.style.pointerEvents = 'none';
+  css3d.inert = true;
 
   // ---------------------------------------------------------------- stickers
   const palmMeshes: THREE.Mesh[] = [];
@@ -495,10 +501,34 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   let W = 1, H = 1, Wd = 800;
   const P = { C: null as Pose | null, F: null as Pose | null, Z: null as Pose | null };
 
+  const dn = new THREE.Vector3(), dc = new THREE.Vector3(), toCam = new THREE.Vector3();
+  /** The projected screen has no depth test, so it is only shown while the camera is in front of the display plane. */
+  const syncDisplay = () => {
+    anchor.updateWorldMatrix(true, false);
+    dn.set(0, 0, 1).transformDirection(anchor.matrixWorld);
+    anchor.getWorldPosition(dc);
+    toCam.copy(camera.position).sub(dc);
+    const on = lidShown && dn.dot(toCam) > 0.01 * toCam.length();
+    if (on === shown) return;
+    shown = on;
+    if (!on) {
+      const a = document.activeElement;
+      refocus = a instanceof HTMLElement && css3d.contains(a) ? a : null;
+    }
+    css3d.style.visibility = on ? 'visible' : 'hidden';
+    css3d.style.pointerEvents = on ? 'auto' : 'none';
+    css3d.inert = !on;
+    if (on) {
+      const a = document.activeElement;
+      if (refocus?.isConnected && css3d.contains(refocus) && (!a || a === document.body)) refocus.focus({ preventScroll: true });
+      refocus = null;
+    }
+  };
+
   const setAngle = (a: number) => {
     angle = a;
     lid.rotation.x = Math.PI / 2 - a * DEG;
-    css3d.style.visibility = a > 14 ? 'visible' : 'hidden';
+    lidShown = a > 14;
   };
   setAngle(0);
 
@@ -676,6 +706,7 @@ export function createLaptop(o: LaptopOptions): LaptopController {
     dirty = false;
     applyCamera();
     renderer.render(scene, camera);
+    syncDisplay();
     css.render(scene, camera);
   };
   raf = requestAnimationFrame(frame);
@@ -693,6 +724,7 @@ export function createLaptop(o: LaptopOptions): LaptopController {
       if (disposed) return;
       applyCamera();
       renderer.render(scene, camera);
+      syncDisplay();
       css.render(scene, camera);
       requestAnimationFrame(() => !disposed && o.onReady());
     });
@@ -810,7 +842,7 @@ export function createLaptop(o: LaptopOptions): LaptopController {
     }
     if (hit.kind === 'key') {
       setPressed(hit.key.code, true, true);
-      o.onKey(hit.key);
+      if (shown) o.onKey(hit.key);
     } else if (hit.kind === 'lid' && interactive && !tweens.has('lid')) {
       drag.R = Math.max(2, Math.hypot(hitPoint.y - HY, hitPoint.z - HZ));
       drag.th0 = lidAngleAt(e, drag.R);
@@ -965,6 +997,7 @@ export function createLaptop(o: LaptopOptions): LaptopController {
         pitch,
         lid: angle,
         interactive,
+        screen: shown,
         tweens: [...tweens.keys()],
         lidAngle: (x, y) => {
           const r = o.container.getBoundingClientRect();
@@ -1000,6 +1033,7 @@ export function createLaptop(o: LaptopOptions): LaptopController {
       zoomT = 1;
       applyCamera();
       renderer.render(scene, camera);
+      syncDisplay();
       css.render(scene, camera);
       await flip(o.host, first, 220);
       await tween('zoom', 1, 0, 720, easeZoom, (x) => (zoomT = x));
