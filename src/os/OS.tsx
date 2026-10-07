@@ -176,15 +176,8 @@ export default function OS() {
     if (device === 'laptop' && (mode === 'pending' || (mode === '3d' && !ready))) return;
     booted.current = true;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    let seen = false;
-    try {
-      seen = sessionStorage.getItem('jk-booted') === '1';
-      sessionStorage.setItem('jk-booted', '1');
-    } catch {
-      /* storage can be unavailable in private modes */
-    }
     if (reduced) setPhase('on');
-    else boot(seen);
+    else boot(false);
   }, [boot, device, mode, ready]);
 
   useEffect(() => {
