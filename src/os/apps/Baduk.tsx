@@ -9,7 +9,8 @@ type Mode = 'computer' | 'friend';
 type GameMode = 'go' | 'omok';
 type WorkerResponse =
   | { id: number; type: 'ai'; move: Point | null }
-  | { id: number; type: 'ownership'; values: Ownership[] };
+  | { id: number; type: 'ownership'; values: Ownership[] }
+  | { type: 'engine'; status: 'loading' | 'ready' | 'failed'; backend?: string };
 
 const SIZE = 420;
 const GO_LETTERS = 'ABCDEFGHJ';
@@ -37,7 +38,7 @@ export default function Baduk({ args }: AppProps) {
   const os = useOS();
   const [game, setGame] = useState<GameState>(() => newGame(9));
   const [omok, setOmok] = useState<OmokState>(() => newOmok());
-  const [gameMode, setGameMode] = useState<GameMode>(() => typeof window !== 'undefined' && window.localStorage.getItem('baduk-game') === 'omok' ? 'omok' : 'go');
+  const [gameMode, setGameMode] = useState<GameMode>(() => args.game ?? (typeof window !== 'undefined' && window.localStorage.getItem('baduk-game') === 'omok' ? 'omok' : 'go'));
   const [mode, setMode] = useState<Mode>('computer');
   const [difficulty, setDifficulty] = useState<'easy' | 'normal'>('normal');
   const [hovered, setHovered] = useState<Point | null>(null);
@@ -46,6 +47,7 @@ export default function Baduk({ args }: AppProps) {
   const [thinking, setThinking] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisReady, setAnalysisReady] = useState(false);
+  const [engineStatus, setEngineStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const gameRef = useRef(game);
   const modeRef = useRef(mode);
   const gameModeRef = useRef(gameMode);
@@ -68,6 +70,10 @@ export default function Baduk({ args }: AppProps) {
     workerRef.current = worker;
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       const response = event.data;
+      if (response.type === 'engine') {
+        setEngineStatus(response.status);
+        return;
+      }
       if (response.id !== jobRef.current) return;
       if (response.type === 'ai') {
         setThinking(false);
@@ -97,12 +103,20 @@ export default function Baduk({ args }: AppProps) {
   }, []);
 
   useEffect(() => {
+    if (gameMode !== 'go' || mode !== 'computer') return;
+    const worker = workerRef.current;
+    if (!worker) return;
+    setEngineStatus('loading');
+    worker.postMessage({ type: 'load' });
+  }, [gameMode, mode]);
+
+  useEffect(() => {
     if (gameMode !== 'go' || mode !== 'computer' || game.phase !== 'play' || game.toPlay !== WHITE) return;
     const worker = workerRef.current;
     if (!worker) return;
     const id = ++jobRef.current;
     setThinking(true);
-    worker.postMessage({ id, type: 'ai', state: game, budgetMs: difficulty === 'easy' ? 150 : 700 });
+    worker.postMessage({ id, type: 'ai', state: game, level: difficulty === 'easy' ? 'fast' : 'strong' });
     return () => {
       if (jobRef.current === id) jobRef.current += 1;
     };
@@ -348,7 +362,7 @@ export default function Baduk({ args }: AppProps) {
           <div className="baduk-turn-card">
             {statusStone !== null && <span className={`baduk-turn-stone ${statusStone === BLACK ? 'is-black' : 'is-white'}`} />}
             <div>
-              <small>{gameMode === 'omok' ? 'Omok' : game.phase === 'mark' ? 'Mark the dead stones' : game.phase === 'resigned' ? 'Game over' : thinking ? 'Thinking' : 'Go'}</small>
+              <small>{gameMode === 'omok' ? 'Omok' : mode === 'computer' && engineStatus === 'loading' ? <><i className="baduk-engine-spinner" />Loading Engine</> : game.phase === 'mark' ? 'Mark the dead stones' : game.phase === 'resigned' ? 'Game over' : thinking ? 'Thinking' : 'Go'}</small>
               <b>{gameMode === 'omok' ? omokStatus : game.phase === 'mark' ? 'Count the board' : game.phase === 'resigned' ? 'Resigned' : game.toPlay === BLACK ? 'Black to play' : 'White to play'}</b>
             </div>
           </div>
@@ -367,8 +381,8 @@ export default function Baduk({ args }: AppProps) {
             <label className="baduk-difficulty">
               <span className="glabel">Difficulty</span>
               <select className="ginput" value={difficulty} onChange={(event) => setDifficulty(event.target.value as 'easy' | 'normal')}>
-                <option value="easy">Easy · Quick</option>
-                <option value="normal">Normal · Thoughtful</option>
+                <option value="easy">{gameMode === 'go' ? 'Fast' : 'Easy · Quick'}</option>
+                <option value="normal">{gameMode === 'go' ? 'Strong' : 'Normal · Thoughtful'}</option>
               </select>
             </label>
           )}
@@ -380,7 +394,7 @@ export default function Baduk({ args }: AppProps) {
           </div>
           {gameMode === 'go' && game.phase === 'mark' && (
             <section className="baduk-count-panel">
-              <div><small>two passes. review the board.</small><b>{analyzing ? 'reading 400 playouts…' : `${deadSet.size} stones marked dead`}</b></div>
+              <div><small>two passes. review the board.</small><b>{analyzing ? engineStatus === 'ready' ? 'reading the board…' : 'reading 400 playouts…' : `${deadSet.size} stones marked dead`}</b></div>
               <p>tap a group to toggle it, then count the board.</p>
               <button className="gbtn gbtn-primary" onClick={() => setCounted(true)} disabled={analyzing}>Count</button>
             </section>

@@ -48,6 +48,11 @@ export function About(_: AppProps) {
       </div>
       <p className="about-legal">™ and © {new Date().getFullYear()} joshua koo. all rights reserved.</p>
       <p className="about-credit">
+        Go engine:{' '}
+        <a href="https://katagotraining.org/" target="_blank" rel="noreferrer">KataGo network</a>
+        {' '}by David J Wu and contributors.
+      </p>
+      <p className="about-credit">
         Wallpaper:{' '}
         <a href="https://commons.wikimedia.org/wiki/File:Stanford_University_-_Universit%C3%A9_Stanford_-_Memorial_Church.jpg" target="_blank" rel="noreferrer">
           Stanford Memorial Church

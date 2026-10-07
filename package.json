@@ -13,6 +13,10 @@
   "dependencies": {
     "@astrojs/react": "^4.4.2",
     "@astrojs/vercel": "^8.2.11",
+    "@tensorflow/tfjs-backend-wasm": "4.22.0",
+    "@tensorflow/tfjs-backend-webgl": "4.22.0",
+    "@tensorflow/tfjs-backend-webgpu": "4.22.0",
+    "@tensorflow/tfjs-core": "4.22.0",
     "astro": "^5.18.2",
     "qrcode": "^1.5.4",
     "react": "^19.3.0",

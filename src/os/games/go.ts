@@ -106,7 +106,7 @@ export function groupStones(state: GameState, x: number, y: number): number[] {
   return state.board[index] === 0 ? [] : groupAt(state.board, state.size, index).stones;
 }
 
-function isOwnEye(board: readonly Stone[], size: number, index: number, color: Color): boolean {
+export function isOwnEye(board: readonly Stone[], size: number, index: number, color: Color): boolean {
   if (board[index] !== 0) return false;
   const orthogonal = neighbors(size, index);
   if (orthogonal.some((point) => board[point] !== color)) return false;
@@ -239,7 +239,7 @@ export function legalMoves(state: GameState): Point[] {
   return moves;
 }
 
-function territoryOwners(board: readonly Stone[], size: number): Stone[] {
+export function territoryOwners(board: readonly Stone[], size: number): Stone[] {
   const owners = [...board];
   const seen = new Set<number>();
   for (let start = 0; start < board.length; start += 1) {
