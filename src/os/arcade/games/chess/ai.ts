@@ -234,4 +234,3 @@ export function bestMove(p: Position, level: Level, keys: string[] = [], rng: ()
 }
 
 export const isMateScore = (v: number) => Math.abs(v) >= MATE - 100;
-
