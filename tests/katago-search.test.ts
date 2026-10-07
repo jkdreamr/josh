@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BLACK, boardKey, legalMoves, newGame, pass, play, type GameState } from '../src/os/games/go.ts';
-import { search, type Evaluator, type NetOutput, type SearchOptions } from '../src/os/games/katago/search.ts';
+import { FAST, search, STRONG, type Evaluator, type NetOutput, type SearchOptions } from '../src/os/games/katago/search.ts';
 
 function position(stones: Array<[number, number, number]>, toPlay = BLACK): GameState {
   const state = newGame(9);
@@ -60,6 +60,38 @@ test('does not pass while behind when the pass prior dominates', async () => {
   policy[81] = 0.99;
   const result = await search(newGame(9), mockEvaluator(() => ({ policy, scoreLead: -20 })), options({ maxVisits: 1 }));
   assert.notEqual(result.move, null);
+});
+
+test('keeps playing while far ahead before the opponent passes', async () => {
+  const state = newGame(9);
+  const enginePlayer = state.toPlay;
+  const evaluator = mockEvaluator((candidate) => {
+    const policy = new Float32Array(82);
+    policy[81] = 0.95;
+    const moves = legalMoves(candidate);
+    for (const move of moves) policy[move.y * 9 + move.x] = 0.05 / moves.length;
+    const engineStoneMargin = candidate.board.reduce(
+      (margin, stone) => margin + (stone === enginePlayer ? 1 : stone === -enginePlayer ? -1 : 0),
+      0,
+    );
+    const engineLead = 40 + engineStoneMargin;
+    const engineToPlay = candidate.toPlay === enginePlayer;
+    return {
+      policy,
+      win: engineToPlay ? 0.99 : 0.01,
+      loss: engineToPlay ? 0.01 : 0.99,
+      scoreLead: engineToPlay ? engineLead : -engineLead,
+    };
+  });
+
+  for (const mode of [
+    { name: 'Strong', searchOptions: { ...STRONG, maxVisits: 64 } },
+    { name: 'Fast', searchOptions: FAST },
+  ]) {
+    const result = await search(state, evaluator, { ...mode.searchOptions, rng: () => 0 });
+    assert.notEqual(result.move, null, `${mode.name} passed while far ahead`);
+    assert.ok(legalMoves(state).some((move) => move.x === result.move!.x && move.y === result.move!.y));
+  }
 });
 
 test('passes after the opponent passes when the area count is ahead', async () => {

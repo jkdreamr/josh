@@ -1,4 +1,4 @@
-import { BLACK, isOwnEye, legalMoves, pass, play, score, type GameState, type Point } from '../go.ts';
+import { BLACK, isOwnEye, legalMoves, pass, play, score, type Color, type GameState, type Point } from '../go.ts';
 
 export type NetOutput = {
   policy: Float32Array;
@@ -46,8 +46,18 @@ type Node = {
   children?: Node[];
 };
 
-const utility = (output: NetOutput): number => (output.win - output.loss) + 0.15 * (2 / Math.PI) * Math.atan(output.scoreLead / 3.6);
+type UtilityContext = { rootPlayer: Color; center: number };
+
 const pointIndex = (point: Point): number => point.y * 9 + point.x;
+const scoreUtility = (lead: number, player: Color, context: UtilityContext): number => {
+  const center = player === context.rootPlayer ? context.center : -context.center;
+  const f = (value: number): number => (2 / Math.PI) * Math.atan(value);
+  return 0.1 * f(lead / 3.6) + 0.3 * f((lead - center) / 3.6);
+};
+
+function utility(state: GameState, output: NetOutput, context: UtilityContext): number {
+  return (output.win - output.loss) + scoreUtility(output.scoreLead, state.toPlay, context);
+}
 
 export function deadFromOwnership(state: GameState, ownershipBlack: ArrayLike<number>, threshold = 0.7): Set<number> {
   const dead = new Set<number>();
@@ -104,12 +114,12 @@ function selectLeaf(root: Node, pending: Set<Node>): { leaf: Node; path: Node[] 
   return { leaf: node, path };
 }
 
-function terminalUtility(state: GameState, output: NetOutput): number {
+function terminalUtility(state: GameState, output: NetOutput, context: UtilityContext): number {
   const dead = deadFromOwnership(state, ownershipBlackFromOutput(state, output));
   const result = score(state, dead);
   const margin = (result.black - result.white) * state.toPlay;
   const winLoss = Math.sign(margin);
-  return winLoss + 0.15 * (2 / Math.PI) * Math.atan(margin / 3.6);
+  return winLoss + scoreUtility(margin, state.toPlay, context);
 }
 
 function countMargin(state: GameState, output: NetOutput, perspective: number): number {
@@ -124,6 +134,7 @@ export async function search(state: GameState, evaluator: Evaluator, options: Se
   const rootOutput = options.rootSymmetries && evaluator.evaluateSymmetric
     ? await evaluator.evaluateSymmetric(state)
     : (await evaluator.evaluate([state]))[0]!;
+  const utilityContext: UtilityContext = { rootPlayer: state.toPlay, center: 0.8 * rootOutput.scoreLead };
   root.output = rootOutput;
   createChildren(root, rootOutput);
   const pending = new Set<Node>();
@@ -157,7 +168,9 @@ export async function search(state: GameState, evaluator: Evaluator, options: Se
       leaf.output = output;
       const isTerminal = leaf.state.phase !== 'play';
       if (!isTerminal) createChildren(leaf, output);
-      let value = isTerminal ? terminalUtility(leaf.state, output) : utility(output);
+      let value = isTerminal
+        ? terminalUtility(leaf.state, output, utilityContext)
+        : utility(leaf.state, output, utilityContext);
       for (let index = path.length - 1; index >= 0; index -= 1) {
         const node = path[index]!;
         node.visits += 1;
@@ -171,11 +184,12 @@ export async function search(state: GameState, evaluator: Evaluator, options: Se
     if (sorted[0] && sorted[0].visits > (sorted[1]?.visits ?? 0) + remaining) stop = true;
   }
 
+  const rootQ = (child: Node): number => child.visits ? -child.valueSum / child.visits : 0;
   const children = root.children!.map((child) => ({
     move: child.move,
     visits: child.visits,
     prior: child.prior,
-    q: child.visits ? -child.valueSum / child.visits : 0,
+    q: rootQ(child),
   }));
   const sorted = [...root.children!].sort((a, b) => b.visits - a.visits || (-a.valueSum / Math.max(1, a.visits)) - (-b.valueSum / Math.max(1, b.visits)));
   let chosen = sorted[0];
@@ -207,6 +221,15 @@ export async function search(state: GameState, evaluator: Evaluator, options: Se
       .filter((child) => child.move && !isOwnEye(state.board, state.size, pointIndex(child.move), state.toPlay))
       .sort((a, b) => b.visits - a.visits || b.prior - a.prior)[0];
     move = fallback?.move ?? legalNonEye[0]!;
+  }
+  if (state.consecutivePasses === 0 && selectedPass && legalNonEye.length > 0) {
+    const passChild = root.children!.find((child) => child.move === null)!;
+    const bestNonPass = [...root.children!]
+      .filter((child) => child.move && !isOwnEye(state.board, state.size, pointIndex(child.move), state.toPlay))
+      .sort((a, b) => b.visits - a.visits || b.prior - a.prior)[0];
+    if (bestNonPass && !(bestNonPass.visits < passChild.visits && rootQ(bestNonPass) < rootQ(passChild) - 0.01)) {
+      move = bestNonPass.move;
+    }
   }
   return {
     move,
