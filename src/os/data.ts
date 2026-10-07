@@ -28,6 +28,7 @@ export const links = {
   x: 'https://x.com/joshuaykoo',
   linkedin: 'https://www.linkedin.com/in/joshuaykoo',
   github: 'https://github.com/jkdreamr',
+  venmo: 'https://venmo.com/u/josdreamr',
   instagram: 'https://www.instagram.com/joshuaykoo/',
   instagramMusic: 'https://www.instagram.com/atkelix/',
   soundcloud: 'https://soundcloud.com/atkelix',

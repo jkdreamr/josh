@@ -124,6 +124,7 @@ export default function Notes({ args }: AppProps) {
   const os = useOS();
   const [cur, setCur] = useState(args.note ?? 'about');
   const [listOpen, setListOpen] = useState(!os.mobile);
+  useEffect(() => setListOpen(!os.mobile), [os.mobile]);
   useEffect(() => {
     if (args.note) setCur(args.note);
   }, [args.nonce, args.note]);

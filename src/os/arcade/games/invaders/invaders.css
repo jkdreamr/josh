@@ -1,0 +1,6 @@
+.g-invaders .g-invaders-canvas {
+  width: 100%;
+  height: 100%;
+  background: #17162c;
+  touch-action: none;
+}
