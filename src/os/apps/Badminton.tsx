@@ -845,25 +845,23 @@ export default function Badminton(_props: AppProps) {
           </div>
           <div className="bd-field">
             <span className="bd-field-label">Opponent</span>
-            <div className="gseg" role="radiogroup" aria-label="Opponent">
-              <button type="button" role="radio" aria-checked={settings.mode === 'cpu'} className={settings.mode === 'cpu' ? 'is-on' : ''} onClick={() => updateSettings({ mode: 'cpu' })}>
+            <div className="gseg" aria-label="Opponent">
+              <button type="button" aria-pressed={settings.mode === 'cpu'} onClick={() => updateSettings({ mode: 'cpu' })}>
                 Computer
               </button>
-              <button type="button" role="radio" aria-checked={settings.mode === 'two'} className={settings.mode === 'two' ? 'is-on' : ''} onClick={() => updateSettings({ mode: 'two' })}>
+              <button type="button" aria-pressed={settings.mode === 'two'} onClick={() => updateSettings({ mode: 'two' })}>
                 Two Players
               </button>
             </div>
           </div>
           <div className={`bd-field ${settings.mode === 'two' ? 'is-dim' : ''}`}>
             <span className="bd-field-label">Difficulty</span>
-            <div className="gseg" role="radiogroup" aria-label="Difficulty">
+            <div className="gseg" aria-label="Difficulty">
               {(Object.keys(DIFFICULTY_LABEL) as Difficulty[]).map((level) => (
                 <button
                   key={level}
                   type="button"
-                  role="radio"
-                  aria-checked={settings.difficulty === level}
-                  className={settings.difficulty === level ? 'is-on' : ''}
+                  aria-pressed={settings.difficulty === level}
                   disabled={settings.mode === 'two'}
                   onClick={() => updateSettings({ difficulty: level })}
                 >
@@ -874,9 +872,9 @@ export default function Badminton(_props: AppProps) {
           </div>
           <div className="bd-field">
             <span className="bd-field-label">Length</span>
-            <div className="gseg" role="radiogroup" aria-label="Match length">
+            <div className="gseg" aria-label="Match length">
               {(Object.keys(LENGTH_LABEL) as MatchLength[]).map((length) => (
-                <button key={length} type="button" role="radio" aria-checked={settings.length === length} className={settings.length === length ? 'is-on' : ''} onClick={() => updateSettings({ length })}>
+                <button key={length} type="button" aria-pressed={settings.length === length} onClick={() => updateSettings({ length })}>
                   {LENGTH_LABEL[length]}
                 </button>
               ))}
