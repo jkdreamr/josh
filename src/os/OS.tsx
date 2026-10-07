@@ -493,10 +493,7 @@ export default function OS() {
               full screen
             </button>
             {!mobile && (
-              <span className="cap-hint">
-                <kbd>⌘</kbd>
-                <kbd>K</kbd> to search
-              </span>
+              <span className="cap-hint">press ⌘K to search</span>
             )}
             {use3d && rotated && (
               <button className="cap-btn cap-reset" onClick={() => l3d.current?.resetView()}>

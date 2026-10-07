@@ -34,8 +34,11 @@ export type OpenArgs = {
   nonce?: number;
 };
 
+/** Screen-space rectangle (px, relative to the display) an app zooms out of and back into. */
+export type Origin = { x: number; y: number; w: number; h: number };
+
 export type OSApi = {
-  open: (id: AppId, args?: OpenArgs) => void;
+  open: (id: AppId, args?: OpenArgs, from?: Origin) => void;
   close: (id: AppId) => void;
   openUrl: (url: string) => void;
   mobile: boolean;
