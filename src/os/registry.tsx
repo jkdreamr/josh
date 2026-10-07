@@ -45,7 +45,7 @@ export const apps: Record<AppId, AppDef> = {
   venmo: { id: 'venmo', title: 'Venmo', icon: 'venmo', Component: Venmo, w: 380, h: 560, frame: 'overlay', dock: true, keywords: 'venmo pay money tip send request josdreamr' },
   mail: { id: 'mail', title: 'Mail', icon: 'mail', Component: Mail, w: 580, h: 480, dock: true, keywords: 'email contact' },
   terminal: { id: 'terminal', title: 'Terminal', icon: 'terminal', Component: Terminal, w: 660, h: 420, theme: 'dark', frame: 'overlay', dock: true, keywords: 'shell zsh command line' },
-  coxbox: { id: 'coxbox', title: 'Cox Box', icon: 'coxbox', Component: CoxBox, w: 900, h: 600, theme: 'dark', dock: true, keywords: 'rowing game play stanford erg' },
+  coxbox: { id: 'coxbox', title: 'Cox Box', icon: 'coxbox', Component: CoxBox, w: 420, h: 300, theme: 'dark', dock: true, keywords: 'rowing stanford' },
   baduk: { id: 'baduk', title: 'Baduk', icon: 'baduk', Component: Baduk, w: 620, h: 680, theme: 'dark', dock: false, keywords: 'go baduk 바둑 board game strategy omok gomoku five in a row' },
   badminton: { id: 'badminton', title: 'Badminton', icon: 'badminton', Component: Badminton, w: 900, h: 560, theme: 'dark', dock: false, keywords: 'badminton shuttle racket court game sport' },
   beatpad: { id: 'beatpad', title: 'Beat Pad', icon: 'beatpad', Component: BeatPad, w: 820, h: 600, theme: 'dark', dock: false, keywords: 'beat pad music drum machine sequencer synth' },
