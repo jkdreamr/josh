@@ -118,8 +118,8 @@
 
 .beatpad-grid-head > span {
   align-self: end;
-  color: #74817b;
-  font-size: 11px;
+  color: var(--gc-text-2);
+  font-size: 12px;
   line-height: 1;
   text-align: center;
 }
@@ -153,7 +153,7 @@
   border: 0;
   border-radius: 4px;
   background: none;
-  color: #c9d0c7;
+  color: var(--gc-text-2);
   font: 500 12px/1.2 var(--gc-font);
   text-align: left;
   text-overflow: ellipsis;

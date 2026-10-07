@@ -1,0 +1,6 @@
+.g-breakout .g-breakout-canvas {
+  width: 100%;
+  height: 100%;
+  background: #21190f;
+  touch-action: none;
+}

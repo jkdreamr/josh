@@ -227,6 +227,9 @@ export default function Baduk({ args }: AppProps) {
   const end = pointPosition(boardSize - 1, boardSize);
   const board = gameMode === 'omok' ? omok.board : game.board;
   const toPlay = gameMode === 'omok' ? omok.toPlay : game.toPlay;
+  const statusStone = gameMode === 'omok'
+    ? omok.winner === 0 ? null : omok.winner === null ? omok.toPlay : omok.winner
+    : toPlay;
   const lastMove = gameMode === 'omok' ? omok.lastMove : game.lastMove;
   const letters = Array.from({ length: boardSize }, (_, index) => (gameMode === 'omok' ? OMOK_LETTERS : GO_LETTERS)[index] ?? '');
   const shownScore = gameMode === 'go' && counted ? score(game, deadSet) : null;
@@ -343,7 +346,7 @@ export default function Baduk({ args }: AppProps) {
         </div>
         <aside className="baduk-side">
           <div className="baduk-turn-card">
-            <span className={`baduk-turn-stone ${toPlay === BLACK ? 'is-black' : 'is-white'}`} />
+            {statusStone !== null && <span className={`baduk-turn-stone ${statusStone === BLACK ? 'is-black' : 'is-white'}`} />}
             <div>
               <small>{gameMode === 'omok' ? 'Omok' : game.phase === 'mark' ? 'Mark the dead stones' : game.phase === 'resigned' ? 'Game over' : thinking ? 'Thinking' : 'Go'}</small>
               <b>{gameMode === 'omok' ? omokStatus : game.phase === 'mark' ? 'Count the board' : game.phase === 'resigned' ? 'Resigned' : game.toPlay === BLACK ? 'Black to play' : 'White to play'}</b>

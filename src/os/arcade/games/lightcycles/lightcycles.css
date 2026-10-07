@@ -1,0 +1,58 @@
+.g-lightcycles .g-lightcycles-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #05060b;
+}
+.g-lightcycles .g-lightcycles-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+.g-lightcycles .g-lightcycles-split {
+  position: absolute;
+  top: 44px;
+  bottom: 20px;
+  left: 50%;
+  width: 0;
+  border-left: 1px dashed rgba(255, 255, 255, 0.14);
+  pointer-events: none;
+}
+.g-lightcycles .g-lightcycles-banner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 26px;
+  border-radius: 14px;
+  background: rgba(14, 16, 26, 0.8);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  animation: g-lightcycles-pop 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes g-lightcycles-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+}
+.g-lightcycles .g-lightcycles-banner strong {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #fff;
+  white-space: nowrap;
+}
+.g-lightcycles .g-lightcycles-banner span {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.6);
+  white-space: nowrap;
+}

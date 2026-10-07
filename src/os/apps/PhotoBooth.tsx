@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AppProps } from '../types';
+import { useOS, type AppProps } from '../types';
 
 const filters = [
   { name: 'Normal', css: 'none' },
@@ -21,10 +21,21 @@ export default function PhotoBooth(_: AppProps) {
   const [shots, setShots] = useState<string[]>([]);
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
+  const os = useOS();
+  const setCamera = useRef(os.setCamera);
+  setCamera.current = os.setCamera;
+  const alive = useRef(true);
+
+  const stop = () => {
+    stream.current?.getTracks().forEach((t) => t.stop());
+    stream.current = null;
+    setCamera.current(false);
+  };
 
   useEffect(
     () => () => {
-      stream.current?.getTracks().forEach((t) => t.stop());
+      alive.current = false;
+      stop();
     },
     [],
   );
@@ -33,7 +44,16 @@ export default function PhotoBooth(_: AppProps) {
     setState('starting');
     try {
       const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 } }, audio: false });
+      if (!alive.current) return s.getTracks().forEach((t) => t.stop());
       stream.current = s;
+      setCamera.current(true);
+      // the OS or browser can end the stream from outside the app (permissions, another tab)
+      for (const t of s.getTracks())
+        t.addEventListener('ended', () => {
+          if (stream.current !== s) return;
+          stop();
+          if (alive.current) setState('idle');
+        });
       if (video.current) {
         video.current.srcObject = s;
         await video.current.play().catch(() => undefined);

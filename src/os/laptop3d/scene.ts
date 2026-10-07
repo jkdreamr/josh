@@ -3,7 +3,8 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { CSS3DObject, CSS3DRenderer } from 'three/examples/jsm/renderers/CSS3DRenderer.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
-import { KD, KW, drawGrille, drawLegends, layoutKeys } from './keyboard';
+import { KD, KW, drawGrille, drawLegends, layoutKeys, type Key3 } from './keyboard';
+import { createSounds } from './audio';
 
 // MacBook Pro 14" proportions, in centimetres.
 const BW = 31.26;
@@ -42,6 +43,12 @@ export type LaptopOptions = {
   palm: readonly PalmPlacement[];
   onPalm: (key: string) => void;
   onBody: () => boolean;
+  /** A 3D key was clicked. */
+  onKey: (key: Key3) => void;
+  /** The visitor closed the lid by hand (open=false) or dragged it open (open=true); `remaining` is the travel left, 0..1. */
+  onLid: (open: boolean, remaining: number) => void;
+  /** The camera left (or returned to) the default front view. */
+  onOrbit: (rotated: boolean) => void;
   /** Called once shaders are compiled and the first frame is on screen. */
   onReady: () => void;
 };
@@ -49,8 +56,20 @@ export type LaptopOptions = {
 export type LaptopController = {
   setOpen(open: boolean, ms: number): Promise<void>;
   setScreenOn(on: boolean): void;
+  /** Lid drag and typing are only allowed once the OS is on or asleep. */
+  setInteractive(on: boolean): void;
+  /** Animate the lid shut by hand (same motion as a drag release). */
+  closeLid(): Promise<void>;
+  /** Ease the camera back to the front view. */
+  resetView(): Promise<void>;
+  /** Mirror a physical key press on the 3D keyboard. */
+  tapKey(code: string, down: boolean): void;
+  /** Keys that stay depressed (sticky modifiers, caps lock). */
+  setHeld(codes: readonly string[]): void;
   enterFs(swap: () => void): Promise<void>;
   exitFs(swap: () => void): Promise<void>;
+  /** Read-only view of the scene for dev tooling and tests: where a key or the lid's top edge sits on screen. */
+  inspect(): { yaw: number; pitch: number; lid: number; interactive: boolean; keyAt(code: string): { x: number; y: number } | null; lidTop(): { x: number; y: number }; hitAt(x: number, y: number): string; lidAngle(x: number, y: number): number | null; tweens: string[] };
   dispose(): void;
 };
 
@@ -87,6 +106,12 @@ export function cubicBezier(x1: number, y1: number, x2: number, y2: number) {
 const easeLid = cubicBezier(0.5, 0.02, 0.18, 1);
 const easeCam = cubicBezier(0.45, 0, 0.2, 1);
 const easeZoom = cubicBezier(0.4, 0, 0.15, 1);
+/** Lid falling shut under its own weight. */
+const easeShut = cubicBezier(0.45, 0, 0.85, 0.6);
+/** Lid springing back open after a half-hearted close. */
+const easeSpring = cubicBezier(0.2, 0.9, 0.3, 1.15);
+const KEY_TRAVEL = 0.12;
+const KEY_Y = BH - 0.12 + 0.06 + 0.035;
 
 function rrect(w: number, h: number, r: number, rb = r, cx = 0, cy = 0) {
   const s = new THREE.Shape();
@@ -254,23 +279,42 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   const keys = layoutKeys();
   const keyGeos = new Map<string, THREE.BufferGeometry>();
   const keyGroup = new THREE.Group();
+  const keyMeshes = new Map<string, THREE.Mesh>();
+  const keyDown = keep(keyMat.clone());
+  keyDown.color.set('#15151a');
+  const legendTex = keep(canvasTex(drawLegends(keys, PX), aniso));
+  const legendMat = keep(new THREE.MeshStandardMaterial({ map: legendTex, transparent: true, roughness: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
   for (const k of keys) {
     const id = `${k.w.toFixed(3)}x${k.d.toFixed(3)}`;
     let geo = keyGeos.get(id);
     if (!geo) keyGeos.set(id, (geo = keep(new RoundedBoxGeometry(k.w, 0.12, k.d, 3, 0.06))));
     const m = new THREE.Mesh(geo, keyMat);
-    m.position.set(-KW / 2 + k.x, BH - 0.12 + 0.06 + 0.035, KZ0 + k.z);
+    m.position.set(-KW / 2 + k.x, KEY_Y, KZ0 + k.z);
+    m.userData.key = k;
+    // each key carries its own slice of the legend sheet so the print travels with the cap
+    const lg = keep(new THREE.PlaneGeometry(k.w, k.d));
+    const u0 = (k.x - k.w / 2) / KW, u1 = (k.x + k.w / 2) / KW;
+    const v0 = 1 - (k.z + k.d / 2) / KD, v1 = 1 - (k.z - k.d / 2) / KD;
+    lg.setAttribute('uv', new THREE.Float32BufferAttribute([u0, v1, u1, v1, u0, v0, u1, v0], 2));
+    const legend = new THREE.Mesh(lg, legendMat);
+    legend.rotation.x = -Math.PI / 2;
+    legend.position.y = 0.062;
+    legend.userData.key = k;
+    m.add(legend);
     keyGroup.add(shadowed(m));
+    keyMeshes.set(k.code, m);
   }
   root.add(keyGroup);
-  const legendTex = keep(canvasTex(drawLegends(keys, PX), aniso));
-  const legends = new THREE.Mesh(
-    keep(new THREE.PlaneGeometry(KW, KD)),
-    keep(new THREE.MeshStandardMaterial({ map: legendTex, transparent: true, roughness: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 })),
-  );
-  legends.rotation.x = -Math.PI / 2;
-  legends.position.set(0, BH - 0.12 + 0.035 + 0.122, KZ0 + KD / 2);
-  root.add(legends);
+  // caps lock indicator
+  const capsLed = new THREE.Mesh(keep(new THREE.CircleGeometry(0.045, 16)), keep(new THREE.MeshBasicMaterial({ color: '#45e36a' })));
+  capsLed.rotation.x = -Math.PI / 2;
+  capsLed.visible = false;
+  {
+    const caps = keyMeshes.get('CapsLock')!;
+    const k = caps.userData.key as Key3;
+    capsLed.position.set(-k.w / 2 + 0.26, 0.064, -k.d / 2 + 0.26);
+    caps.add(capsLed);
+  }
 
   // trackpad: flush glass with a thin dark seam
   const seamShape = rrect(TPW + 0.07, TPD + 0.07, 0.64);
@@ -345,7 +389,8 @@ export function createLaptop(o: LaptopOptions): LaptopController {
     }),
   );
   lidGeo.translate(0, 0, -(LT - lb));
-  lid.add(shadowed(new THREE.Mesh(lidGeo, alu)));
+  const lidBack = shadowed(new THREE.Mesh(lidGeo, alu));
+  lid.add(lidBack);
   const bezel = new THREE.Mesh(keep(new THREE.ShapeGeometry(rrect(LW - 0.28, LH - 0.28, 0.84, 0.26, 0, LY0 + LH / 2), 28)), glass);
   bezel.position.z = 0.004;
   lid.add(bezel);
@@ -453,7 +498,7 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   const setAngle = (a: number) => {
     angle = a;
     lid.rotation.x = Math.PI / 2 - a * DEG;
-    css3d.style.visibility = a > 78 ? 'visible' : 'hidden';
+    css3d.style.visibility = a > 14 ? 'visible' : 'hidden';
   };
   setAngle(0);
 
@@ -547,9 +592,25 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   };
 
   const lerpPose = (a: Pose, b: Pose, t: number): Pose => ({ pos: a.pos.clone().lerp(b.pos, t), target: a.target.clone().lerp(b.target, t), off: a.off + (b.off - a.off) * t });
+  // orbit: yaw around the laptop, pitch above or below the default eye level
+  let yaw = 0;
+  let pitch = 0;
+  let yawV = 0;
+  let pitchV = 0;
+  let rotated = false;
+  const PITCH_MIN = -0.32;
+  const PITCH_MAX = 1.05;
+  const sph = new THREE.Spherical();
   const applyCamera = () => {
     if (!P.C || !P.F || !P.Z) return;
     const p = lerpPose(lerpPose(P.C, P.F, camT), P.Z, zoomT);
+    if (yaw || pitch) {
+      const off = p.pos.clone().sub(p.target);
+      sph.setFromVector3(off);
+      sph.theta += yaw;
+      sph.phi = THREE.MathUtils.clamp(sph.phi - pitch, 0.18, Math.PI / 2 + 0.12);
+      p.pos.copy(p.target).add(off.setFromSpherical(sph));
+    }
     camera.aspect = W / H;
     camera.position.copy(p.pos);
     camera.lookAt(p.target);
@@ -582,6 +643,34 @@ export function createLaptop(o: LaptopOptions): LaptopController {
         m.scale.setScalar(1 + s.cur * 0.06);
         dirty = true;
       }
+    }
+    for (const [code, s] of press) {
+      const m = keyMeshes.get(code)!;
+      const to = Math.max(s.to, held.has(code) ? 0.6 : 0);
+      if (Math.abs(s.cur - to) > 0.004) {
+        s.cur += (to - s.cur) * (to > s.cur ? 0.6 : 0.28);
+        m.position.y = KEY_Y - s.cur * KEY_TRAVEL;
+        m.material = s.cur > 0.3 ? keyDown : keyMat;
+        dirty = true;
+      } else if (to === 0 && s.to === 0) {
+        m.position.y = KEY_Y;
+        m.material = keyMat;
+        press.delete(code);
+        dirty = true;
+      }
+    }
+    if (!drag && (Math.abs(yawV) > 1e-4 || Math.abs(pitchV) > 1e-4)) {
+      yaw += yawV;
+      pitch = THREE.MathUtils.clamp(pitch + pitchV, PITCH_MIN, PITCH_MAX);
+      yawV *= 0.88;
+      pitchV *= 0.85;
+      if (Math.abs(yawV) <= 1e-4 && Math.abs(pitchV) <= 1e-4) yawV = pitchV = 0;
+      dirty = true;
+    }
+    const nowRotated = Math.abs(yaw) > 0.004 || Math.abs(pitch) > 0.004;
+    if (nowRotated !== rotated) {
+      rotated = nowRotated;
+      o.onOrbit(rotated);
     }
     if (!dirty || inFs) return;
     dirty = false;
@@ -618,26 +707,201 @@ export function createLaptop(o: LaptopOptions): LaptopController {
     ray.setFromCamera(ndc, camera);
     return ray;
   };
+  type Hit = { kind: 'key'; key: Key3 } | { kind: 'palm'; key: string } | { kind: 'lid' } | { kind: 'body' } | { kind: 'bg' };
+  const hitPoint = new THREE.Vector3();
+  const classify = (e: PointerEvent): Hit => {
+    const hit = pick(e).intersectObject(root, true)[0];
+    if (!hit) return { kind: 'bg' };
+    hitPoint.copy(hit.point);
+    let obj: THREE.Object3D | null = hit.object;
+    while (obj && obj !== root) {
+      if (obj.userData.key && typeof obj.userData.key === 'object') return { kind: 'key', key: obj.userData.key as Key3 };
+      if (obj === lid) return { kind: 'lid' };
+      obj = obj.parent;
+    }
+    if (hit.object === ground || hit.object === aoMesh) return { kind: 'bg' };
+    if (palmMeshes.includes(hit.object as THREE.Mesh)) return { kind: 'palm', key: hit.object.userData.key as string };
+    return { kind: 'body' };
+  };
+
+  // keys
+  const sounds = createSounds();
+  const press = new Map<string, { cur: number; to: number }>();
+  const held = new Set<string>();
+  const releaseTimers = new Map<string, number>();
+  const setPressed = (code: string, down: boolean, sound: boolean) => {
+    const m = keyMeshes.get(code);
+    if (!m) return;
+    const st = press.get(code) ?? { cur: 0, to: 0 };
+    if (down === (st.to === 1) && press.has(code)) return;
+    st.to = down ? 1 : 0;
+    press.set(code, st);
+    dirty = true;
+    if (sound) sounds.key(down, (m.userData.key as Key3).w > 3);
+  };
+
+  // lid
+  let interactive = false;
+  /**
+   * Where the grabbed point of the lid would sit under the pointer: the point stays `R` from the hinge axis, so the
+   * pointer ray is intersected with that cylinder (in the hinge's YZ plane). Past the arc's silhouette the nearest
+   * tangent is used, which pins the lid at its extreme instead of letting it jump.
+   */
+  const lidAngleAt = (e: PointerEvent, R: number): number | null => {
+    const { origin, direction } = pick(e).ray;
+    const oy = origin.y - HY, oz = origin.z - HZ;
+    const dy = direction.y, dz = direction.z;
+    const a = dy * dy + dz * dz;
+    if (a < 1e-9) return null;
+    const b = 2 * (oy * dy + oz * dz);
+    const c = oy * oy + oz * oz - R * R;
+    const disc = b * b - 4 * a * c;
+    const t = disc < 0 ? -b / (2 * a) : (-b - Math.sqrt(disc)) / (2 * a);
+    if (t < 0) return null;
+    return Math.atan2(oy + t * dy, oz + t * dz) / DEG;
+  };
+  let dip = 0;
+  const setDip = (v: number) => {
+    dip = v;
+    root.position.y = -dip * 0.07;
+  };
+  const thud = async () => {
+    sounds.thud();
+    await tween('dip', dip, 1, 70, (x) => x, setDip);
+    await tween('dip', 1, 0, 260, easeCam, setDip);
+  };
+  const shut = async () => {
+    const from = angle;
+    const ms = Math.max(260, 620 * (from / OPEN));
+    const cam = tween('cam', camT, 0, ms + 300, easeCam, (x) => (camT = x));
+    await tween('lid', from, 0, ms, easeShut, setAngle);
+    void thud();
+    await cam;
+  };
+  const closeLid = async () => {
+    if (angle <= 0.01) return;
+    await shut();
+    o.onLid(false, 0);
+  };
+
+  // pointer state machine: one gesture at a time, classified on pointerdown
+  type Drag = { id: number; hit: Hit; x0: number; y0: number; x: number; y: number; tm: number; vx: number; vy: number; moved: boolean; a0: number; th0: number | null; R: number; wasOpen: boolean };
+  let drag: Drag | null = null;
+  let lastUp = { t: 0, x: 0, y: 0 };
   let hover: THREE.Mesh | null = null;
-  const onMove = (e: PointerEvent) => {
-    if (inFs || o.host.contains(e.target as Node)) return;
-    const hit = pick(e).intersectObjects(palmMeshes, false)[0]?.object as THREE.Mesh | undefined;
-    if (hit !== hover) {
-      if (hover) lift.get(hover)!.to = 0;
-      hover = hit ?? null;
-      if (hover) lift.get(hover)!.to = 1;
-      o.container.style.cursor = hover ? 'pointer' : '';
+  const setHover = (m: THREE.Mesh | null) => {
+    if (m === hover) return;
+    if (hover) lift.get(hover)!.to = 0;
+    hover = m;
+    if (hover) lift.get(hover)!.to = 1;
+    o.container.style.cursor = hover ? 'pointer' : '';
+  };
+  const onDown = (e: PointerEvent) => {
+    yawV = pitchV = 0;
+    if (inFs || drag || o.host.contains(e.target as Node) || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const hit = classify(e);
+    drag = { id: e.pointerId, hit, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, tm: e.timeStamp, vx: 0, vy: 0, moved: false, a0: angle, th0: null, R: 1, wasOpen: angle > OPEN / 2 };
+    // keep focus inside the screen while clicking the hardware
+    e.preventDefault();
+    try {
+      o.container.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    if (hit.kind === 'key') {
+      setPressed(hit.key.code, true, true);
+      o.onKey(hit.key);
+    } else if (hit.kind === 'lid' && interactive && !tweens.has('lid')) {
+      drag.R = Math.max(2, Math.hypot(hitPoint.y - HY, hitPoint.z - HZ));
+      drag.th0 = lidAngleAt(e, drag.R);
     }
   };
-  const onClick = (e: MouseEvent) => {
-    if (inFs || o.host.contains(e.target as Node)) return;
-    const r = pick(e);
-    const hit = r.intersectObjects(palmMeshes, false)[0];
-    if (hit) return o.onPalm(hit.object.userData.key);
-    if (r.intersectObjects([base, lid], true).length) o.onBody();
+  const onMove = (e: PointerEvent) => {
+    if (inFs) return;
+    if (!drag) {
+      if (o.host.contains(e.target as Node)) return setHover(null);
+      setHover((pick(e).intersectObjects(palmMeshes, false)[0]?.object as THREE.Mesh | undefined) ?? null);
+      return;
+    }
+    if (e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    const now = e.timeStamp;
+    const dt = Math.max(1, now - drag.tm);
+    // px per ms, smoothed, so a flick on release carries believable momentum at any frame rate
+    const k = Math.min(1, dt / 40);
+    drag.vx += ((dx / dt) - drag.vx) * k;
+    drag.vy += ((dy / dt) - drag.vy) * k;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    drag.tm = now;
+    if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 4) {
+      drag.moved = true;
+      if (drag.hit.kind === 'lid' && drag.th0 === null) drag.hit = { kind: 'body' };
+      if (drag.hit.kind === 'lid' || drag.hit.kind === 'body' || drag.hit.kind === 'bg') o.container.style.cursor = 'grabbing';
+    }
+    if (!drag.moved) return;
+    if (drag.hit.kind === 'lid') {
+      const th = lidAngleAt(e, drag.R);
+      if (th !== null && drag.th0 !== null) setAngle(THREE.MathUtils.clamp(drag.a0 + (th - drag.th0), 0, OPEN));
+      dirty = true;
+    } else if (drag.hit.kind === 'body' || drag.hit.kind === 'bg') {
+      yaw += (-dx / W) * Math.PI * 1.3;
+      pitch = THREE.MathUtils.clamp(pitch + (dy / H) * Math.PI * 0.8, PITCH_MIN, PITCH_MAX);
+      dirty = true;
+    }
   };
+  const onUp = (e: PointerEvent) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag;
+    drag = null;
+    o.container.style.cursor = '';
+    try {
+      o.container.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    if (d.hit.kind === 'key') return setPressed(d.hit.key.code, false, e.type === 'pointerup');
+    if (e.type !== 'pointerup') {
+      if (d.hit.kind === 'lid' && d.moved) void (d.wasOpen ? tween('lid', angle, OPEN, 420, easeSpring, setAngle) : tween('lid', angle, 0, 320, easeShut, setAngle));
+      return;
+    }
+    if (d.hit.kind === 'lid' && d.moved) {
+      if (d.wasOpen) {
+        if (angle < OPEN * 0.5) void closeLid();
+        else void tween('lid', angle, OPEN, 420, easeSpring, setAngle);
+      } else if (angle > OPEN * 0.3) o.onLid(true, 1 - angle / OPEN);
+      else void tween('lid', angle, 0, 320, easeShut, setAngle).then(() => void (angle === 0 && thud()));
+      return;
+    }
+    if (d.moved) {
+      // only a flick keeps spinning; a drag that paused before release stops dead
+      if (d.hit.kind !== 'lid' && e.timeStamp - d.tm < 120) {
+        yawV = THREE.MathUtils.clamp((-d.vx * 16 / W) * Math.PI * 1.3, -0.12, 0.12);
+        pitchV = THREE.MathUtils.clamp((d.vy * 16 / H) * Math.PI * 0.8, -0.08, 0.08);
+      }
+      return;
+    }
+    yawV = pitchV = 0;
+    if (d.hit.kind === 'palm') return o.onPalm(d.hit.key);
+    if (d.hit.kind === 'lid' || d.hit.kind === 'body') return void o.onBody();
+    const now = performance.now();
+    if (now - lastUp.t < 360 && Math.hypot(e.clientX - lastUp.x, e.clientY - lastUp.y) < 8) {
+      lastUp = { t: 0, x: 0, y: 0 };
+      void resetView();
+    } else lastUp = { t: now, x: e.clientX, y: e.clientY };
+  };
+  const resetView = async () => {
+    yawV = pitchV = 0;
+    await Promise.all([tween('yaw', yaw, 0, 640, easeCam, (x) => (yaw = x)), tween('pitch', pitch, 0, 640, easeCam, (x) => (pitch = x))]);
+    yaw = pitch = 0;
+    dirty = true;
+  };
+  o.container.addEventListener('pointerdown', onDown);
   o.container.addEventListener('pointermove', onMove);
-  o.container.addEventListener('click', onClick);
+  o.container.addEventListener('pointerup', onUp);
+  o.container.addEventListener('pointercancel', onUp);
+  o.container.addEventListener('lostpointercapture', onUp);
 
   const flip = (el: HTMLElement, first: DOMRect, ms: number) => {
     const last = el.getBoundingClientRect();
@@ -658,16 +922,69 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   return {
     setOpen(open, ms) {
       const to = open ? OPEN : 0;
-      const dur = open ? ms : ms * 0.7;
-      const a = tween('lid', angle, to, dur, easeLid, setAngle);
-      const c = tween('cam', camT, open ? 1 : 0, dur, easeCam, (x) => (camT = x));
+      const full = open ? ms : ms * 0.7;
+      // a lid the visitor already moved by hand only has the remaining travel to cover
+      const a = Math.abs(to - angle) < 0.01 ? Promise.resolve() : tween('lid', angle, to, full * (Math.abs(to - angle) / OPEN), easeLid, setAngle);
+      const ct = open ? 1 : 0;
+      const c = Math.abs(ct - camT) < 0.001 ? Promise.resolve() : tween('cam', camT, ct, full * Math.abs(ct - camT), easeCam, (x) => (camT = x));
       return Promise.all([a, c]).then(() => undefined);
     },
     setScreenOn(on) {
       lightTo = on ? 1 : 0;
       dirty = true;
     },
+    setInteractive(on) {
+      interactive = on;
+    },
+    closeLid,
+    resetView,
+    tapKey(code, down) {
+      if (inFs || !keyMeshes.has(code)) return;
+      clearTimeout(releaseTimers.get(code));
+      setPressed(code, down, false);
+      // modifier keyup can be swallowed by the browser (⌘Tab), so never leave a key stuck
+      if (down) releaseTimers.set(code, window.setTimeout(() => setPressed(code, false, false), 1200));
+    },
+    setHeld(codes) {
+      held.clear();
+      for (const c of codes) {
+        held.add(c);
+        if (!press.has(c)) press.set(c, { cur: 0, to: 0 });
+      }
+      capsLed.visible = held.has('CapsLock');
+      dirty = true;
+    },
+    inspect() {
+      const toScreen = (p: THREE.Vector3) => {
+        applyCamera();
+        const v = p.clone().project(camera);
+        return { x: ((v.x + 1) / 2) * W, y: ((1 - v.y) / 2) * H };
+      };
+      return {
+        yaw,
+        pitch,
+        lid: angle,
+        interactive,
+        tweens: [...tweens.keys()],
+        lidAngle: (x, y) => {
+          const r = o.container.getBoundingClientRect();
+          return lidAngleAt({ clientX: r.left + x, clientY: r.top + y } as PointerEvent, LH);
+        },
+        hitAt: (x, y) => {
+          const r = o.container.getBoundingClientRect();
+          return classify({ clientX: r.left + x, clientY: r.top + y } as PointerEvent).kind;
+        },
+        keyAt: (code) => {
+          const m = keyMeshes.get(code);
+          return m ? toScreen(m.getWorldPosition(new THREE.Vector3())) : null;
+        },
+        lidTop: () => toScreen(lid.localToWorld(new THREE.Vector3(0, LY0 + LH - 0.12, -0.25))),
+      };
+    },
     async enterFs(swap) {
+      drag = null;
+      o.container.style.cursor = '';
+      if (rotated) await resetView();
       await tween('zoom', zoomT, 1, 640, easeZoom, (x) => (zoomT = x));
       const first = o.host.getBoundingClientRect();
       swap();
@@ -691,8 +1008,13 @@ export function createLaptop(o: LaptopOptions): LaptopController {
       disposed = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      o.container.removeEventListener('pointerdown', onDown);
       o.container.removeEventListener('pointermove', onMove);
-      o.container.removeEventListener('click', onClick);
+      o.container.removeEventListener('pointerup', onUp);
+      o.container.removeEventListener('pointercancel', onUp);
+      o.container.removeEventListener('lostpointercapture', onUp);
+      for (const t of releaseTimers.values()) clearTimeout(t);
+      sounds.dispose();
       for (const el of [o.container, css.domElement]) el.removeEventListener('scroll', unscroll);
       for (const t of tweens.values()) t.done();
       disposables.forEach((d) => d.dispose());
