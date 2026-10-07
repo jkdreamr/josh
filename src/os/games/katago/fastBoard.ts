@@ -1,5 +1,5 @@
 /* Copyright (c) 2026 Web KatRain Contributors. MIT License.
- * Ladder and area feature logic derived from KataGo, MIT.
+ * Ladder and area feature logic derived from KataGo, MIT. See ./LICENSE.md
  */
 export let BOARD_SIZE = 19;
 export let BOARD_AREA = BOARD_SIZE * BOARD_SIZE;

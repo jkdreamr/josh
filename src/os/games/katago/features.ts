@@ -1,5 +1,5 @@
 /* Copyright (c) 2026 Web KatRain Contributors. MIT License.
- * Feature and ladder logic derived from KataGo, MIT.
+ * Feature and ladder logic derived from KataGo, MIT. See ./LICENSE.md
  */
 import { BLACK, play, type Color, type GameState, type Stone } from '../go.ts';
 import { computeAreaMapV7KataGo, computeLadderedStonesV7KataGoInto, computeLadderFeaturesV7KataGoInto, computeLibertyMap, setBoardSize, type StoneColor } from './fastBoard.ts';

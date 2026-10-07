@@ -1,4 +1,4 @@
-/* Copyright (c) 2026 Web KatRain Contributors. MIT License. */
+/* Copyright (c) 2026 Web KatRain Contributors. MIT License. See ./LICENSE.md */
 import * as tf from '@tensorflow/tfjs-core';
 import type {
   ActivationKind,
