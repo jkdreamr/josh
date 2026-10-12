@@ -66,6 +66,12 @@
 .g-chess .g-chess-board.live {
   cursor: pointer;
 }
+.g-chess .g-chess-corner {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
 .g-chess .g-chess-sq {
   position: absolute;
   width: 12.5%;

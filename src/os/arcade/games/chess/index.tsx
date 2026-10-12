@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { bestMove, type Level } from './ai.ts';
 import {
-  BLACK, FLAG_CASTLE, FLAG_EP, WHITE,
-  colorOf, fileOf, findMove, inCheck, isPromotion, moveCaptured, moveFlags, moveFrom, movePromo, moveTo, newGame, pieces, play, rankOf, square, squareName,
-  type Color, type Game as ChessGame, type Position,
+  BLACK, FLAG_CASTLE, WHITE,
+  colorOf, fileOf, findMove, inCheck, isPromotion, moveCaptured, moveFlags, moveFrom, movePromo, moveTo, newGame, pieces, play, rankOf, squareName,
+  type Color, type Game as ChessGame,
 } from './engine.ts';
+import { PieceDrag, boardPoint, columnOf, initialIds, nextIds, pieceTransform, rowOf, squareAt, squareAtPoint, type BoardQuad, type DragView } from './interaction.ts';
 import { meta } from './meta';
 import { BISHOP, KNIGHT, Piece, QUEEN, ROOK } from './pieces.tsx';
 import type { AiReply, AiRequest } from './worker.ts';
@@ -70,35 +71,12 @@ function Setup() {
   );
 }
 
-type Drag = { pid: number; from: number; moved: boolean };
-
-function nextIds(ids: Map<number, number>, pos: Position, m: number) {
-  const out = new Map(ids);
-  const from = moveFrom(m);
-  const to = moveTo(m);
-  const flags = moveFlags(m);
-  const id = out.get(from)!;
-  out.delete(from);
-  if (flags & FLAG_EP) out.delete(to + (pos.turn === WHITE ? -16 : 16));
-  out.set(to, id);
-  if (flags & FLAG_CASTLE) {
-    const rookFrom = to > from ? from + 3 : from - 4;
-    const rookTo = to > from ? to - 1 : to + 1;
-    const r = out.get(rookFrom)!;
-    out.delete(rookFrom);
-    out.set(rookTo, r);
-  }
-  return out;
-}
-
-const initialIds = (pos: Position) => new Map(pieces(pos).map(([sq], i) => [sq, i + 1]));
-
 function Chess() {
   const shell = useShell();
   const { ref: stageRef, size } = useCanvas<HTMLDivElement>();
   const boardRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLOListElement | null>(null);
-  const pieceEls = useRef(new Map<number, HTMLDivElement>());
+  const corners = useRef<(HTMLSpanElement | null)[]>([]);
   const [game, setGame] = useState<ChessGame>(() => newGame());
   const [ids, setIds] = useState(() => initialIds(game.pos));
   const [sel, setSel] = useState<number | null>(null);
@@ -106,8 +84,8 @@ function Chess() {
   const [promo, setPromo] = useState<{ from: number; to: number } | null>(null);
   const [flipped, setFlipped] = useState(() => getSetting(MODE) === 'cpu' && getSetting(SIDE) === 'black');
   const [thinking, setThinking] = useState(false);
-  const [dragFrom, setDragFrom] = useState<number | null>(null);
-  const drag = useRef<Drag | null>(null);
+  const [dragView, setDragView] = useState<DragView | null>(null);
+  const drag = useRef(new PieceDrag());
   const [mode] = useSetting(MODE);
   const [levelName] = useSetting(LEVEL);
   const [side] = useSetting(SIDE);
@@ -118,6 +96,8 @@ function Chess() {
   const [aiRevision, setAiRevision] = useState(0);
   const statusRef = useRef(shell.status);
   statusRef.current = shell.status;
+  const activeRef = useRef(shell.active);
+  activeRef.current = shell.active;
   const gameRef = useRef(game);
   gameRef.current = game;
   const gameOverScheduled = useRef<ChessGame | null>(null);
@@ -130,10 +110,12 @@ function Chess() {
 
   const commit = useCallback(
     (m: number) => {
-      if (!game.legal.includes(m)) return;
-      const next = play(game, m);
+      const current = gameRef.current;
+      if (statusRef.current !== 'playing' || !activeRef.current || current.status !== 'playing' || !current.legal.includes(m)) return;
+      const next = play(current, m);
+      gameRef.current = next;
       setGame(next);
-      setIds((current) => nextIds(current, game.pos, m));
+      setIds((ids) => nextIds(ids, current.pos, m));
       const cap = moveCaptured(m);
       if (next.status === 'checkmate') sfx.play(cfg.current.mode === 'cpu' && next.pos.turn === cfg.current.color ? 'lose' : 'win');
       else if (next.status !== 'playing') sfx.play('select', 0.7);
@@ -145,22 +127,24 @@ function Chess() {
       setSel(null);
       setPromo(null);
     },
-    [game],
+    [],
   );
 
   const tryMove = useCallback(
     (from: number, to: number) => {
-      if (isPromotion(game.legal, from, to)) {
+      const current = gameRef.current;
+      if (statusRef.current !== 'playing' || !activeRef.current || current.status !== 'playing') return false;
+      if (isPromotion(current.legal, from, to)) {
         setPromo({ from, to });
         setSel(from);
         return true;
       }
-      const m = findMove(game.legal, from, to);
+      const m = findMove(current.legal, from, to);
       if (m === undefined) return false;
       commit(m);
       return true;
     },
-    [game.legal, commit],
+    [commit],
   );
 
   // Setup changes made on the Start card apply to the game that is about to begin.
@@ -291,70 +275,73 @@ function Chess() {
 
   // Geometry
   const flip = flipped;
-  const colOf = (sq: number) => (flip ? 7 - fileOf(sq) : fileOf(sq));
-  const rowOf = (sq: number) => (flip ? rankOf(sq) : 7 - rankOf(sq));
-  const sqAt = (col: number, row: number) => square(flip ? 7 - col : col, flip ? row : 7 - row);
+  const colOf = (sq: number) => columnOf(sq, flip);
+  const sqAt = (col: number, row: number) => squareAt(col, row, flip);
   const TOP = 44;
   const wide = size.w >= 540 && size.w > size.h * 0.95;
   const panelW = wide ? Math.min(240, Math.max(170, size.w * 0.3)) : 0;
   const panelH = wide ? 0 : 104;
   const boardPx = Math.max(120, Math.floor(wide ? Math.min(size.h - TOP - 20, size.w - panelW - 36) : Math.min(size.w - 24, size.h - TOP - panelH - 24)));
-  const sqPx = boardPx / 8;
 
-  const squareFromEvent = (e: { clientX: number; clientY: number }) => {
-    const b = boardRef.current;
-    if (!b) return -1;
-    const r = b.getBoundingClientRect();
-    const col = Math.floor(((e.clientX - r.left) / r.width) * 8);
-    const row = Math.floor(((e.clientY - r.top) / r.height) * 8);
-    if (col < 0 || col > 7 || row < 0 || row > 7) return -1;
-    return sqAt(col, row);
+  const pointFromEvent = (e: { clientX: number; clientY: number }) => {
+    if (corners.current.length !== 4 || corners.current.some((el) => !el)) return null;
+    const quad = corners.current.map((el) => {
+      const r = el!.getBoundingClientRect();
+      return { x: r.left, y: r.top };
+    }) as unknown as BoardQuad;
+    return boardPoint({ x: e.clientX, y: e.clientY }, quad);
   };
+  const releaseCapture = useCallback((pid: number) => {
+    const b = boardRef.current;
+    if (b?.hasPointerCapture(pid)) b.releasePointerCapture(pid);
+  }, []);
+  const cancelDrag = useCallback(() => {
+    const d = drag.current.cancel();
+    if (d) releaseCapture(d.pid);
+    setDragView(null);
+  }, [releaseCapture]);
+  useLayoutEffect(() => {
+    cancelDrag();
+  }, [shell.status, shell.active, flipped, boardPx, promo, cancelDrag]);
+  useLayoutEffect(() => () => {
+    const d = drag.current.cancel();
+    if (d) releaseCapture(d.pid);
+  }, [releaseCapture]);
 
   const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
-    if (!humanTurn || promo) return;
-    const sq = squareFromEvent(e);
+    if (shell.status !== 'playing' || !shell.active || !humanTurn || promo || drag.current.current || !e.isPrimary || e.button !== 0) return;
+    const sq = squareAtPoint(pointFromEvent(e), flip);
     if (sq < 0) return;
     const pc = game.pos.board[sq];
     setCursor(null);
     if (pc && colorOf(pc) === game.pos.turn) {
       setSel(sq);
-      drag.current = { pid: e.pointerId, from: sq, moved: false };
-      boardRef.current?.setPointerCapture(e.pointerId);
+      drag.current.begin(e.pointerId, sq, { x: e.clientX, y: e.clientY });
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        cancelDrag();
+      }
       return;
     }
     if (sel !== null && tryMove(sel, sq)) return;
     setSel(null);
   };
   const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
-    const d = drag.current;
-    const b = boardRef.current;
-    if (!d || d.pid !== e.pointerId || !b) return;
-    const r = b.getBoundingClientRect();
-    const x = e.clientX - r.left;
-    const y = e.clientY - r.top;
-    if (!d.moved) {
-      const home = { x: colOf(d.from) * sqPx + sqPx / 2, y: rowOf(d.from) * sqPx + sqPx / 2 };
-      if (Math.hypot(x - home.x, y - home.y) < 5) return;
-      d.moved = true;
-      setDragFrom(d.from);
-    }
-    const el = pieceEls.current.get(ids.get(d.from) ?? -1);
-    if (el) el.style.transform = `translate(${x - sqPx / 2}px, ${y - sqPx / 2}px) scale(1.12)`;
+    const view = drag.current.move(e.pointerId, { x: e.clientX, y: e.clientY }, pointFromEvent(e));
+    if (view) setDragView(view);
   };
   const endDrag = (e: RPointerEvent<HTMLDivElement>, cancelled = false) => {
-    const d = drag.current;
-    if (!d || d.pid !== e.pointerId) return;
-    drag.current = null;
-    const el = pieceEls.current.get(ids.get(d.from) ?? -1);
-    if (el) el.style.transform = '';
-    setDragFrom(null);
+    const d = drag.current.end(e.pointerId);
+    if (!d) return;
+    releaseCapture(d.pid);
+    setDragView(null);
     if (!d.moved || cancelled) return;
-    const to = squareFromEvent(e);
+    const to = squareAtPoint(pointFromEvent(e), flip);
     if (to >= 0 && to !== d.from) {
       if (!tryMove(d.from, to)) {
-        const pc = game.pos.board[to];
-        setSel(pc && colorOf(pc) === game.pos.turn ? to : null);
+        const pc = gameRef.current.pos.board[to];
+        setSel(pc && colorOf(pc) === gameRef.current.pos.turn ? to : null);
       }
     }
   };
@@ -369,7 +356,7 @@ function Chess() {
       setCursor((c) => {
         const cur = c ?? sel ?? sqAt(4, 7);
         const col = Math.max(0, Math.min(7, colOf(cur) + dx));
-        const row = Math.max(0, Math.min(7, rowOf(cur) + dy));
+        const row = Math.max(0, Math.min(7, rowOf(cur, flip) + dy));
         return sqAt(col, row);
       });
       return;
@@ -425,8 +412,12 @@ function Chess() {
               onPointerMove={onPointerMove}
               onPointerUp={endDrag}
               onPointerCancel={(e) => endDrag(e, true)}
+              onLostPointerCapture={(e) => endDrag(e, true)}
               onContextMenu={(e) => e.preventDefault()}
             >
+              {[[0, 0], [100, 0], [100, 100], [0, 100]].map(([left, top], i) => (
+                <span key={i} ref={(el) => { corners.current[i] = el; }} className="g-chess-corner" style={{ left: `${left}%`, top: `${top}%` }} aria-hidden="true" />
+              ))}
               {squares.map(({ sq, col, row }) => {
                 const light = (fileOf(sq) + rankOf(sq)) % 2 === 1;
                 const isLast = lastMove !== undefined && (moveFrom(lastMove) === sq || moveTo(lastMove) === sq);
@@ -442,16 +433,13 @@ function Chess() {
               })}
               {pieces(game.pos).map(([sq, pc]) => {
                 const id = ids.get(sq) ?? sq + 1000;
-                const dragging = dragFrom === sq;
+                const dragging = dragView?.from === sq;
                 return (
                   <div
                     key={id}
-                    ref={(el) => {
-                      if (el) pieceEls.current.set(id, el);
-                      else pieceEls.current.delete(id);
-                    }}
                     className={`g-chess-piece ${dragging ? 'drag' : ''} ${colorOf(pc) === game.pos.turn && humanTurn ? 'own' : ''}`}
-                    style={{ transform: `translate(${colOf(sq) * 100}%, ${rowOf(sq) * 100}%)` }}
+                    data-square={squareName(sq)}
+                    style={{ transform: pieceTransform(sq, flip, boardPx, dragView) }}
                   >
                     <Piece piece={pc} />
                   </div>
