@@ -41,7 +41,7 @@ export const BPM_MIN = 50;
 export const BPM_MAX = 220;
 export const SWING_MAX = 60;
 
-export type PresetName = 'kelix lofi' | 'boom bap' | 'house' | 'trap';
+export type PresetName = 'kelix lofi' | 'boom bap' | 'house' | 'trap' | 'reggaeton';
 export type Pitch = { name: string; frequency: number; midi: number };
 /** 0 off, 1 soft, 2 normal, 3 accent */
 export type Velocity = 0 | 1 | 2 | 3;
@@ -67,6 +67,7 @@ export type BeatState = {
   songMode: boolean;
   tracks: Record<TrackId, TrackSettings>;
   fx: Effects;
+  groove: PresetName | null;
 };
 
 export type Position = { pattern: number; step: number; songIndex: number };
@@ -220,9 +221,32 @@ const PRESETS: Record<PresetName, PresetSpec> = {
     ghosts: { hat: [5, 13, 15] },
     notes: { bass: { 0: 0, 7: 0, 10: 2, 14: 3 }, keys: { 3: 5, 11: 4 }, lead: { 2: 7, 6: 5, 10: 7, 14: 9 } },
   },
+  reggaeton: {
+    bpm: 94,
+    swing: 0,
+    root: 7,
+    scale: 'minor',
+    kit: '808',
+    fx: { filter: 50, reverb: 14, delay: 18 },
+    steps: {
+      kick: [0, 4, 8, 12],
+      snare: [3, 6, 11, 14],
+      hat: [0, 2, 4, 6, 8, 10, 12, 14],
+      'open hat': [],
+      clap: [],
+      bass: [0, 3, 6, 8, 11, 14],
+      keys: [0, 3, 8, 11],
+      lead: [2, 10, 13],
+    },
+    accents: { kick: [0, 8], snare: [3, 11] },
+    ghosts: { hat: [2, 6, 10, 14] },
+    notes: { bass: { 0: 0, 3: 0, 6: 4, 8: 5, 11: 5, 14: 4 }, keys: { 0: 2, 3: 4, 8: 3, 11: 4 }, lead: { 2: 7, 10: 9, 13: 7 } },
+  },
 };
 
-export const PRESET_NAMES: Record<PresetName, string> = { 'kelix lofi': 'Kelix Lo-Fi', 'boom bap': 'Boom Bap', house: 'House', trap: 'Trap' };
+export const PRESET_NAMES: Record<PresetName, string> = { 'kelix lofi': 'Lo-Fi', 'boom bap': 'Boom Bap', house: 'House', trap: 'Trap', reggaeton: 'Reggaeton' };
+export const GROOVES: readonly PresetName[] = ['boom bap', 'house', 'kelix lofi', 'trap', 'reggaeton'];
+const GROOVE_CODES: readonly PresetName[] = ['kelix lofi', 'boom bap', 'house', 'trap', 'reggaeton'];
 
 function patternFromSpec(spec: PresetSpec): BeatPattern {
   const pattern = emptyPattern(16);
@@ -283,6 +307,7 @@ export function createBeatState(preset: PresetName = 'kelix lofi'): BeatState {
     songMode: false,
     tracks: defaultTrackSettings(),
     fx: { ...spec.fx },
+    groove: preset,
   };
 }
 
@@ -292,6 +317,7 @@ export function createEmptyState(): BeatState {
     patterns: [emptyPattern(16), emptyPattern(16), emptyPattern(16), emptyPattern(16)],
     song: [0],
     fx: { filter: 50, reverb: 20, delay: 0 },
+    groove: null,
   };
 }
 
@@ -329,6 +355,26 @@ export function setStepDegree(pattern: BeatPattern, track: SynthTrack, step: num
   const notes = { ...pattern.notes, [track]: [...pattern.notes[track]] };
   notes[track][step] = clamped;
   return { ...pattern, notes };
+}
+
+export function recordHit(pattern: BeatPattern, track: TrackId, step: number, degree?: number): BeatPattern {
+  if (!Number.isInteger(step) || step < 0 || step >= pattern.length) return pattern;
+  const velocity = pattern.steps[track][step] || 2;
+  const synthTrack = SYNTH_TRACKS.includes(track as SynthTrack) ? (track as SynthTrack) : null;
+  const note = synthTrack && degree !== undefined
+    ? Math.max(0, Math.min(MAX_DEGREE, Math.round(degree)))
+    : null;
+  const velocityChanged = pattern.steps[track][step] !== velocity;
+  const noteChanged = synthTrack !== null && note !== null && pattern.notes[synthTrack][step] !== note;
+  if (!velocityChanged && !noteChanged) return pattern;
+  const steps = velocityChanged ? { ...pattern.steps, [track]: [...pattern.steps[track]] } : pattern.steps;
+  if (velocityChanged) steps[track][step] = velocity;
+  let notes = pattern.notes;
+  if (noteChanged && synthTrack && note !== null) {
+    notes = { ...pattern.notes, [synthTrack]: [...pattern.notes[synthTrack]] };
+    notes[synthTrack][step] = note;
+  }
+  return { ...pattern, steps, notes };
 }
 
 export function changeStepDegree(pattern: BeatPattern, track: SynthTrack, step: number, amount: number, scale: ScaleId): BeatPattern {
@@ -566,6 +612,127 @@ export function randomizePattern(state: BeatState, pattern: BeatPattern, rng: Rn
   return next;
 }
 
+/** Adds a musical variation while keeping the groove's anchors and loop intact. */
+export function remixPattern(state: BeatState, pattern: BeatPattern, rng: Rng): BeatPattern {
+  const next = clonePattern(pattern);
+  const length = pattern.length;
+  const fillStart = length - 4;
+  const degrees = degreeCount(state.scale);
+  const anchors = new Set<string>();
+  for (let bar = 0; bar < length; bar += 16) {
+    anchors.add(`kick:${bar}`);
+    for (const step of [bar + 4, bar + 12]) {
+      if (step < length) {
+        anchors.add(`snare:${step}`);
+        anchors.add(`clap:${step}`);
+      }
+    }
+  }
+  const isAnchor = (track: TrackId, step: number) => anchors.has(`${track}:${step}`);
+  const mode = pick(rng, ['thin', 'same', 'busy'] as const);
+
+  if (mode === 'busy') {
+    for (let step = 0; step < fillStart; step += 1) {
+      if (next.steps.hat[step] === 0 && chance(rng, step % 2 === 0 ? 0.5 : 0.25)) next.steps.hat[step] = 1;
+    }
+  } else if (mode === 'thin') {
+    for (let step = 1; step < fillStart; step += 2) {
+      if (next.steps.hat[step] > 0 && chance(rng, 0.5)) next.steps.hat[step] = 0;
+    }
+  } else {
+    for (let step = 0; step < fillStart; step += 1) {
+      const velocity = next.steps.hat[step];
+      if (velocity > 0 && chance(rng, 0.15)) {
+        next.steps.hat[step] = velocity === 1 ? 2 : velocity === 2 ? 1 : 3;
+      }
+    }
+  }
+
+  const kicks = Array.from({ length: fillStart }, (_, step) => step)
+    .filter((step) => pattern.steps.kick[step] > 0 && !isAnchor('kick', step));
+  for (const step of kicks) {
+    if (!chance(rng, 0.3)) continue;
+    const target = step + pick(rng, [-1, 1] as const);
+    if (target < fillStart && target >= 0 && next.steps.kick[target] === 0 && !isAnchor('kick', target)) {
+      next.steps.kick[target] = next.steps.kick[step];
+      next.steps.kick[step] = 0;
+    }
+  }
+  const kickPool = Array.from({ length: fillStart }, (_, step) => step)
+    .filter((step) => [3, 7, 10, 11, 14].includes(step % 16) && next.steps.kick[step] === 0 && !isAnchor('kick', step));
+  if (kickPool.length && chance(rng, 0.35)) next.steps.kick[pick(rng, kickPool)] = 1;
+
+  const snarePool = Array.from({ length: fillStart }, (_, step) => step)
+    .filter((step) => [7, 9, 15].includes(step % 16) && next.steps.snare[step] === 0 && !isAnchor('snare', step));
+  if (snarePool.length && chance(rng, 0.3)) next.steps.snare[pick(rng, snarePool)] = 1;
+
+  const fillTypes = ['roll', 'kick', 'hats', 'drop'] as const;
+  const fillTypeIndex = pick(rng, [0, 1, 2, 3] as const);
+  for (let attempt = 0; attempt < fillTypes.length; attempt += 1) {
+    const type = fillTypes[(fillTypeIndex + attempt) % fillTypes.length];
+    let changed = false;
+    const setFillStep = (track: TrackId, step: number, velocity: Velocity) => {
+      if (step >= length || isAnchor(track, step) || next.steps[track][step] === velocity) return;
+      next.steps[track][step] = velocity;
+      changed = true;
+    };
+    if (type === 'roll') {
+      [1, 1, 2, 3].forEach((velocity, offset) => setFillStep('snare', fillStart + offset, velocity as Velocity));
+    } else if (type === 'kick') {
+      setFillStep('kick', fillStart, 2);
+      setFillStep('snare', fillStart + 2, 2);
+      setFillStep('snare', fillStart + 3, 3);
+    } else if (type === 'hats') {
+      [1, 2, 1, 2].forEach((velocity, offset) => setFillStep('hat', fillStart + offset, velocity as Velocity));
+      setFillStep('open hat', fillStart + 3, 2);
+    } else {
+      for (let step = fillStart; step < length; step += 1) {
+        setFillStep('hat', step, 0);
+        setFillStep('open hat', step, 0);
+      }
+      setFillStep('clap', fillStart + 3, 3);
+    }
+    if (changed) break;
+  }
+
+  for (let step = 0; step < length; step += 1) {
+    if (next.steps.bass[step] && step % 16 !== 0 && chance(rng, 0.4)) {
+      next.notes.bass[step] += pick(rng, [-2, -1, 1, 2] as const);
+    }
+    if (next.steps.keys[step] && chance(rng, 0.35)) {
+      next.notes.keys[step] += pick(rng, [-2, 2] as const);
+    }
+    if (next.steps.lead[step] && chance(rng, 0.45)) {
+      next.notes.lead[step] += pick(rng, [-2, -1, 1, 2] as const);
+    }
+  }
+
+  if (chance(rng, 0.5)) {
+    const leadPool = Array.from({ length: length }, (_, step) => step).filter((step) => step % 2 === 1 && next.steps.lead[step] === 0);
+    if (leadPool.length) {
+      const step = pick(rng, leadPool);
+      let previousDegree = 7;
+      for (let previous = step - 1; previous >= 0; previous -= 1) {
+        if (next.steps.lead[previous]) {
+          previousDegree = next.notes.lead[previous];
+          break;
+        }
+      }
+      next.steps.lead[step] = pick(rng, [1, 2] as const);
+      next.notes.lead[step] = previousDegree + pick(rng, [-1, 1] as const);
+    }
+  }
+  const leadSteps = Array.from({ length }, (_, step) => step).filter((step) => next.steps.lead[step] > 0);
+  if (leadSteps.length > 2 && chance(rng, 0.3)) next.steps.lead[pick(rng, leadSteps)] = 0;
+
+  for (const track of SYNTH_TRACKS) {
+    for (let step = 0; step < length; step += 1) {
+      if (next.steps[track][step]) next.notes[track][step] = Math.max(0, Math.min(degrees - 1, next.notes[track][step]));
+    }
+  }
+  return next;
+}
+
 /* ----------------------------------- history ----------------------------------- */
 
 export const HISTORY_LIMIT = 100;
@@ -644,7 +811,7 @@ function lengthCode(length: PatternLength): number {
 
 export function encodeBeatState(state: BeatState): string {
   const bytes: number[] = [];
-  bytes.push(2, clampBpm(state.bpm), Math.max(0, Math.min(SWING_MAX, Math.round(state.swing))), state.root & 15, SCALES.indexOf(state.scale), KITS.indexOf(state.kit));
+  bytes.push(state.groove === null ? 2 : 3, clampBpm(state.bpm), Math.max(0, Math.min(SWING_MAX, Math.round(state.swing))), state.root & 15, SCALES.indexOf(state.scale), KITS.indexOf(state.kit));
   bytes.push((state.current & 3) | (state.songMode ? 16 : 0));
   bytes.push(Math.round(state.fx.filter), Math.round(state.fx.reverb), Math.round(state.fx.delay));
   bytes.push(TRACKS.reduce((mask, track, index) => mask | (state.tracks[track].muted ? 1 << index : 0), 0));
@@ -677,6 +844,7 @@ export function encodeBeatState(state: BeatState): string {
       }
     }
   });
+  if (state.groove !== null) bytes.push(GROOVE_CODES.indexOf(state.groove) + 1);
   return bytesToBase64Url(Uint8Array.from(bytes));
 }
 
@@ -703,7 +871,8 @@ class Reader {
 function decodeV2(bytes: Uint8Array): BeatState | null {
   try {
     const reader = new Reader(bytes);
-    if (reader.byte() !== 2) return null;
+    const version = reader.byte();
+    if (version !== 2 && version !== 3) return null;
     const bpm = reader.range(BPM_MIN, BPM_MAX);
     const swing = reader.range(0, SWING_MAX);
     const root = reader.range(0, 11);
@@ -743,8 +912,9 @@ function decodeV2(bytes: Uint8Array): BeatState | null {
       }
       patterns[index] = pattern;
     }
+    const groove = version === 3 ? GROOVE_CODES[reader.range(1, GROOVE_CODES.length) - 1] : null;
     if (!reader.done()) return null;
-    return { bpm, swing, root, scale, kit, patterns, current: flags & 3, song: song.length ? song : [0], songMode: (flags & 16) !== 0, tracks, fx };
+    return { bpm, swing, root, scale, kit, patterns, current: flags & 3, song: song.length ? song : [0], songMode: (flags & 16) !== 0, tracks, fx, groove };
   } catch {
     return null;
   }

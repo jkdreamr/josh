@@ -11,6 +11,7 @@ import {
   cycleVelocity,
   decodeBeatState,
   encodeBeatState,
+  GROOVES,
   isPatternEmpty,
   KIT_NAMES,
   KITS,
@@ -21,7 +22,9 @@ import {
   PRESET_NAMES,
   pushHistory,
   randomizePattern,
+  recordHit,
   redoHistory,
+  remixPattern,
   replacePattern,
   ROOT_NAMES,
   SCALE_NAMES,
@@ -51,21 +54,21 @@ import { useOS, type AppProps } from '../types';
 import './game-controls.css';
 import './BeatPad.css';
 
-type Panel = 'tempo' | 'kit' | 'track' | 'mix' | 'song' | 'pads';
+type View = 'drums' | 'melody' | 'pads' | 'song' | 'mix';
 type Cell = { track: TrackId; step: number };
 type Paint = { id: string; value: Velocity; seen: Set<string>; moved: boolean; timer: number | null };
 
-const PANELS: Array<{ id: Panel; label: string }> = [
-  { id: 'tempo', label: 'Tempo' },
-  { id: 'kit', label: 'Kit' },
-  { id: 'track', label: 'Track' },
-  { id: 'mix', label: 'Mix' },
-  { id: 'song', label: 'Song' },
+const VIEWS: Array<{ id: View; label: string }> = [
+  { id: 'drums', label: 'Drums' },
+  { id: 'melody', label: 'Melody' },
   { id: 'pads', label: 'Pads' },
+  { id: 'song', label: 'Song' },
+  { id: 'mix', label: 'Mix' },
 ];
 const STORAGE_KEY = 'beatpad.v2';
 const TRACK_NAMES: Record<TrackId, string> = { kick: 'Kick', snare: 'Snare', hat: 'Hat', 'open hat': 'Open Hat', clap: 'Clap', bass: 'Bass', keys: 'Keys', lead: 'Lead' };
-const TRACK_SHORT: Record<TrackId, string> = { ...TRACK_NAMES, 'open hat': 'Open' };
+const DRUM_TRACKS: TrackId[] = ['kick', 'snare', 'hat', 'open hat', 'clap'];
+const MELODY_TRACKS: TrackId[] = ['bass', 'keys', 'lead'];
 const DRUM_KEYS: Record<string, TrackId> = { KeyQ: 'kick', KeyW: 'snare', KeyE: 'hat', KeyR: 'open hat', KeyT: 'clap' };
 const KEYS_KEYS = ['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyJ', 'KeyK'];
 const BASS_KEYS = ['KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB', 'KeyN', 'KeyM'];
@@ -78,7 +81,8 @@ function isSynth(track: TrackId): track is SynthTrack {
 function loadSaved(): BeatState | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? decodeBeatState(raw) : null;
+    const decoded = raw ? decodeBeatState(raw) : null;
+    return decoded ? { ...decoded, groove: decoded.groove ?? null } : null;
   } catch {
     return null;
   }
@@ -101,11 +105,12 @@ type SliderProps = {
   max: number;
   onChange: (value: number) => void;
   onSettle: () => void;
+  className?: string;
 };
 
-function Slider({ label, value, display, min, max, onChange, onSettle }: SliderProps) {
+function Slider({ label, value, display, min, max, onChange, onSettle, className = '' }: SliderProps) {
   return (
-    <label className="beatpad-slider">
+    <label className={`beatpad-slider ${className}`}>
       <span className="beatpad-slider-head"><span>{label}</span><b>{display}</b></span>
       <input
         type="range"
@@ -126,28 +131,40 @@ export default function BeatPad({ args }: AppProps) {
   const os = useOS();
   const coarse = os.mobile || os.tablet;
   const incoming = useMemo(() => (args.beat ? decodeBeatState(args.beat) : null), [args.beat, args.nonce]);
-  const [history, setHistory] = useState<History<BeatState>>(() => createHistory(incoming ?? loadSaved() ?? createBeatState()));
+  const [history, setHistory] = useState<History<BeatState>>(() => createHistory(incoming ?? loadSaved() ?? createBeatState('boom bap')));
   const state = history.present;
   const pattern = state.patterns[state.current];
   const [solo, setSolo] = useState<TrackId | null>(null);
   const [selectedTrack, setSelectedTrack] = useState<TrackId>('kick');
   const [selectedCell, setSelectedCell] = useState<Cell | null>(null);
-  const [panel, setPanel] = useState<Panel | null>(coarse ? 'pads' : null);
+  const [view, setView] = useState<View>('drums');
   const [playing, setPlaying] = useState(false);
   const [recording, setRecording] = useState(false);
   const [playhead, setPlayhead] = useState<{ pattern: number; step: number; songIndex: number } | null>(null);
   const [copied, setCopied] = useState<'idle' | 'done' | 'failed'>('idle');
+  const [padLit, setPadLit] = useState<Partial<Record<TrackId, boolean>>>({});
   const [page, setPage] = useState(0);
   const [width, setWidth] = useState(800);
+  const [visualizerReady, setVisualizerReady] = useState(true);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<BeatEngine | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const analyserTapRef = useRef<AudioNode | null>(null);
+  const analyserDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const visualizerAttemptedRef = useRef(false);
   const stateRef = useRef(state);
   const soloRef = useRef(solo);
   const paintRef = useRef<Paint | null>(null);
+  const padTimersRef = useRef<Partial<Record<TrackId, number>>>({});
   const tapsRef = useRef<number[]>([]);
   const rafRef = useRef(0);
+  const animationRef = useRef<() => void>(() => undefined);
+  const lastAudioHitRef = useRef(0);
+  const lastHeadRef = useRef('');
+  const copiedTimerRef = useRef(0);
   stateRef.current = state;
   soloRef.current = solo;
 
@@ -161,9 +178,94 @@ export default function BeatPad({ args }: AppProps) {
       return replacePattern(current, target, updater(current.patterns[target]));
     }, coalesce);
   }, [commit]);
-  /** Changes which pattern is shown without adding an undo step. */
-  const setView = useCallback((index: number) => {
+  const setPatternView = useCallback((index: number) => {
     setHistory((current) => (current.present.current === index ? current : { ...current, present: { ...current.present, current: index } }));
+  }, []);
+
+  const flashPad = useCallback((track: TrackId) => {
+    setPadLit((current) => (current[track] ? current : { ...current, [track]: true }));
+    const oldTimer = padTimersRef.current[track];
+    if (oldTimer) window.clearTimeout(oldTimer);
+    padTimersRef.current[track] = window.setTimeout(() => {
+      setPadLit((current) => ({ ...current, [track]: false }));
+      padTimersRef.current[track] = undefined;
+    }, 180);
+  }, []);
+
+  const drawVisualizer = useCallback((active: boolean) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const bounds = canvas.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const canvasWidth = Math.max(1, Math.round(bounds.width * dpr));
+    const canvasHeight = Math.max(1, Math.round(bounds.height * dpr));
+    if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+    }
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.clearRect(0, 0, canvasWidth, canvasHeight);
+
+    const analyser = analyserRef.current;
+    const barCount = 16;
+    const gap = Math.max(1, Math.round(dpr));
+    const barWidth = (canvasWidth - gap * (barCount - 1)) / barCount;
+    if (!active || !analyser) {
+      canvas.dataset.level = '0';
+      context.fillStyle = 'rgba(196, 156, 101, 0.28)';
+      const idleHeight = Math.max(2 * dpr, Math.round(canvasHeight * 0.12));
+      for (let bar = 0; bar < barCount; bar += 1) {
+        context.fillRect(bar * (barWidth + gap), canvasHeight - idleHeight, barWidth, idleHeight);
+      }
+      return;
+    }
+
+    const data = analyserDataRef.current;
+    if (!data) return;
+    analyser.getByteFrequencyData(data);
+    const average = data.reduce((sum, sample) => sum + sample, 0) / Math.max(1, data.length);
+    canvas.dataset.level = String(Math.max(0, Math.min(255, Math.round(average))));
+    const availableHeight = Math.max(1, canvasHeight - 2 * dpr);
+    context.fillStyle = '#c49c65';
+    for (let bar = 0; bar < barCount; bar += 1) {
+      const start = Math.floor((bar / barCount) * data.length);
+      const end = Math.max(start + 1, Math.floor(((bar + 1) / barCount) * data.length));
+      let total = 0;
+      for (let bin = start; bin < end; bin += 1) total += data[bin] ?? 0;
+      const level = total / Math.max(1, end - start);
+      const height = Math.max(dpr, (level / 255) * availableHeight);
+      context.fillRect(bar * (barWidth + gap), canvasHeight - height, barWidth, height);
+    }
+  }, []);
+
+  useEffect(() => {
+    drawVisualizer(false);
+  }, [drawVisualizer]);
+
+  const ensureVisualizer = useCallback((engine: BeatEngine) => {
+    if (analyserRef.current) return true;
+    if (visualizerAttemptedRef.current) return false;
+    visualizerAttemptedRef.current = true;
+    try {
+      const tap = (engine as unknown as { filter?: AudioNode }).filter;
+      if (!tap) {
+        setVisualizerReady(false);
+        return false;
+      }
+      const analyser = engine.context.createAnalyser();
+      analyser.fftSize = 64;
+      tap.connect(analyser);
+      analyserRef.current = analyser;
+      analyserTapRef.current = tap;
+      analyserDataRef.current = new Uint8Array(analyser.frequencyBinCount);
+      setVisualizerReady(true);
+      return true;
+    } catch {
+      setVisualizerReady(false);
+      return false;
+    }
   }, []);
 
   const ensureEngine = useCallback((): BeatEngine => {
@@ -173,7 +275,7 @@ export default function BeatPad({ args }: AppProps) {
         getState: () => stateRef.current,
         getSolo: () => soloRef.current,
         onRecord: (patternIndex, step, track) => {
-          editPattern((target) => (stepVelocity(target, track, step) ? target : setStep(target, track, step, 2)), 'record', patternIndex);
+          editPattern((target) => recordHit(target, track, step), 'record', patternIndex);
         },
       });
       engineRef.current = engine;
@@ -181,25 +283,81 @@ export default function BeatPad({ args }: AppProps) {
     return engine;
   }, [editPattern]);
 
-  const stopPlayback = useCallback(() => {
-    engineRef.current?.stop();
-    cancelAnimationFrame(rafRef.current);
-    setPlaying(false);
-    setPlayhead(null);
+  const animationFrame = useCallback(() => {
+    const engine = engineRef.current;
+    const now = performance.now();
+    const hiddenWindow = rootRef.current?.closest('[aria-hidden="true"], .is-min');
+    if (document.visibilityState === 'hidden' || hiddenWindow) {
+      engine?.stop();
+      if (engine) engine.recording = false;
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+      setPlaying(false);
+      setRecording(false);
+      setPlayhead(null);
+      drawVisualizer(false);
+      return;
+    }
+
+    if (engine?.playing) {
+      const next = engine.playhead();
+      if (next) {
+        setPlayhead((current) => (
+          current?.pattern === next.pattern && current?.step === next.step && current?.songIndex === next.songIndex
+            ? current
+            : next
+        ));
+        const headKey = `${next.pattern}:${next.step}:${next.songIndex}`;
+        if (headKey !== lastHeadRef.current) {
+          lastHeadRef.current = headKey;
+          const current = stateRef.current;
+          const soundingPattern = current.patterns[next.pattern];
+          for (const track of TRACKS) {
+            const trackState = current.tracks[track];
+            const audible = soloRef.current ? soloRef.current === track : !trackState.muted;
+            if (audible && stepVelocity(soundingPattern, track, next.step)) flashPad(track);
+          }
+        }
+      }
+    }
+
+    const active = Boolean(engine?.playing) || now - lastAudioHitRef.current < 600;
+    drawVisualizer(active);
+    if (active) {
+      rafRef.current = requestAnimationFrame(() => animationRef.current());
+    } else {
+      rafRef.current = 0;
+    }
+  }, [drawVisualizer, flashPad]);
+  animationRef.current = animationFrame;
+
+  const requestAnimation = useCallback(() => {
+    if (!rafRef.current) rafRef.current = requestAnimationFrame(() => animationRef.current());
   }, []);
+
+  const stopPlayback = useCallback(() => {
+    const engine = engineRef.current;
+    engine?.stop();
+    if (engine) engine.recording = false;
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = 0;
+    setPlaying(false);
+    setRecording(false);
+    setPlayhead(null);
+    const recentHit = performance.now() - lastAudioHitRef.current < 600;
+    drawVisualizer(recentHit);
+    if (recentHit && document.visibilityState !== 'hidden') requestAnimation();
+  }, [drawVisualizer, requestAnimation]);
 
   const startPlayback = useCallback(() => {
     const engine = ensureEngine();
+    engine.unlock();
+    ensureVisualizer(engine);
     engine.start();
+    lastHeadRef.current = '';
     setPlaying(true);
-    const animate = () => {
-      const next = engine.playhead();
-      setPlayhead((current) => (current?.pattern === next?.pattern && current?.step === next?.step && current?.songIndex === next?.songIndex ? current : next));
-      rafRef.current = requestAnimationFrame(animate);
-    };
-    cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(animate);
-  }, [ensureEngine]);
+    requestAnimation();
+  }, [ensureEngine, ensureVisualizer, requestAnimation]);
 
   const togglePlayback = useCallback(() => {
     if (engineRef.current?.playing) stopPlayback();
@@ -207,15 +365,21 @@ export default function BeatPad({ args }: AppProps) {
   }, [startPlayback, stopPlayback]);
 
   const hit = useCallback((track: TrackId, degree?: number) => {
-    ensureEngine().hit(track, degree);
-  }, [ensureEngine]);
+    const engine = ensureEngine();
+    engine.unlock();
+    ensureVisualizer(engine);
+    engine.hit(track, degree);
+    lastAudioHitRef.current = performance.now();
+    flashPad(track);
+    requestAnimation();
+  }, [ensureEngine, ensureVisualizer, flashPad, requestAnimation]);
 
   const undo = useCallback(() => setHistory((current) => undoHistory(current)), []);
   const redo = useCallback(() => setHistory((current) => redoHistory(current)), []);
 
   useEffect(() => {
     if (!incoming) return;
-    setHistory(createHistory(incoming));
+    setHistory(createHistory({ ...incoming, groove: incoming.groove ?? null }));
     setSelectedCell(null);
   }, [incoming]);
 
@@ -245,9 +409,35 @@ export default function BeatPad({ args }: AppProps) {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const stopWhenHidden = () => {
+      if (document.visibilityState === 'hidden') stopPlayback();
+    };
+    document.addEventListener('visibilitychange', stopWhenHidden);
+    return () => document.removeEventListener('visibilitychange', stopWhenHidden);
+  }, [stopPlayback]);
+
   useEffect(() => () => {
     cancelAnimationFrame(rafRef.current);
     if (paintRef.current?.timer) window.clearTimeout(paintRef.current.timer);
+    for (const timer of Object.values(padTimersRef.current)) {
+      if (timer) window.clearTimeout(timer);
+    }
+    if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current);
+    const analyser = analyserRef.current;
+    const tap = analyserTapRef.current;
+    if (analyser && tap) {
+      try {
+        tap.disconnect(analyser);
+      } catch {
+        /* audio graph may already be closed */
+      }
+    }
+    try {
+      analyser?.disconnect();
+    } catch {
+      /* audio graph may already be closed */
+    }
     engineRef.current?.dispose();
     engineRef.current = null;
   }, []);
@@ -256,11 +446,17 @@ export default function BeatPad({ args }: AppProps) {
     if (window.matchMedia('(pointer: fine)').matches) rootRef.current?.focus({ preventScroll: true });
   }, []);
 
+  const narrow = coarse && width < 560;
   const paged = pattern.length === 32 && width < 760;
   const visibleSteps = paged ? 16 : pattern.length;
   const stepOffset = paged ? page * 16 : 0;
-  const cellWidth = (width - 24 - (width <= 430 ? 56 : width <= 560 ? 84 : coarse ? 128 : 112)) / visibleSteps;
+  const cellWidth = (width - 24 - (narrow ? 68 : coarse ? 128 : 112)) / (narrow ? 8 : visibleSteps);
   const showNotes = cellWidth >= 27;
+  const tracks = view === 'melody' ? MELODY_TRACKS : DRUM_TRACKS;
+  const steps = Array.from({ length: visibleSteps }, (_, index) => index + stepOffset);
+  const blocks = narrow
+    ? [steps.slice(0, 8), ...(visibleSteps > 8 ? [steps.slice(8, 16)] : [])]
+    : [steps];
 
   useEffect(() => {
     if (!paged) setPage(0);
@@ -268,18 +464,18 @@ export default function BeatPad({ args }: AppProps) {
 
   useEffect(() => {
     if (!playhead) return;
-    if (state.songMode && playhead.pattern !== state.current) setView(playhead.pattern);
+    if (state.songMode && playhead.pattern !== state.current) setPatternView(playhead.pattern);
     if (paged && playhead.pattern === state.current) setPage(Math.floor(playhead.step / 16));
-  }, [playhead, paged, state.songMode, state.current, setView]);
+  }, [playhead, paged, state.songMode, state.current, setPatternView]);
 
   useEffect(() => {
     if (selectedCell && selectedCell.step >= pattern.length) setSelectedCell(null);
   }, [pattern.length, selectedCell]);
 
   const selectPattern = useCallback((index: number) => {
-    setView(index);
+    setPatternView(index);
     setSelectedCell(null);
-  }, [setView]);
+  }, [setPatternView]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -310,7 +506,7 @@ export default function BeatPad({ args }: AppProps) {
       }
       if (event.code === 'Escape') {
         setSelectedCell(null);
-        setPanel(null);
+        setView('drums');
         return;
       }
       if (/^Digit[1-4]$/.test(event.code)) {
@@ -337,11 +533,11 @@ export default function BeatPad({ args }: AppProps) {
       }
       if (!selectedCell) return;
       const current = stateRef.current;
-      const target2 = current.patterns[current.current];
+      const targetPattern = current.patterns[current.current];
       const { track, step } = selectedCell;
       if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
         event.preventDefault();
-        const next = Math.max(0, Math.min(target2.length - 1, step + (event.code === 'ArrowLeft' ? -1 : 1)));
+        const next = Math.max(0, Math.min(targetPattern.length - 1, step + (event.code === 'ArrowLeft' ? -1 : 1)));
         setSelectedCell({ track, step: next });
         if (paged) setPage(Math.floor(next / 16));
       } else if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
@@ -360,8 +556,6 @@ export default function BeatPad({ args }: AppProps) {
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [togglePlayback, undo, redo, hit, selectedCell, paged, editPattern, selectPattern]);
-
-  /* ----------------------------------- grid input ----------------------------------- */
 
   const cellAt = (x: number, y: number): Cell | null => {
     const element = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-step]');
@@ -424,8 +618,6 @@ export default function BeatPad({ args }: AppProps) {
     setSelectedCell({ track, step });
   };
 
-  /* ----------------------------------- actions ----------------------------------- */
-
   const tap = () => {
     const now = performance.now();
     tapsRef.current = [...tapsRef.current.filter((time) => now - time < 2000), now];
@@ -442,27 +634,149 @@ export default function BeatPad({ args }: AppProps) {
     } catch {
       setCopied('failed');
     }
-    window.setTimeout(() => setCopied('idle'), 1800);
+    if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = window.setTimeout(() => setCopied('idle'), 1800);
   };
 
   const randomize = () => {
-    editPattern((p) => randomizePattern(stateRef.current, p, seededRng(Math.floor(Math.random() * 2 ** 31))));
+    editPattern((p) => randomizePattern(stateRef.current, p, seededRng(Math.floor(Math.random() * 2 ** 32) >>> 0)));
   };
 
-  const togglePanel = (next: Panel) => setPanel((current) => (current === next ? null : next));
-  const openTrack = (track: TrackId) => {
-    setSelectedTrack(track);
-    setPanel('track');
+  const remix = () => {
+    const seed = Math.floor(Math.random() * 2 ** 32) >>> 0;
+    editPattern((p) => remixPattern(state, p, seededRng(seed)), 'remix');
   };
+
+  const clearCurrent = () => {
+    commit((current) => {
+      const next = replacePattern(current, current.current, clearPattern(current.patterns[current.current]));
+      return next.patterns.every(isPatternEmpty) ? { ...next, groove: null } : next;
+    });
+  };
+
+  const chooseGroove = (groove: PresetName) => {
+    commit(() => createBeatState(groove));
+    setSelectedCell(null);
+    setSolo(null);
+  };
+
+  const changeTempo = (amount: number) => {
+    commit((current) => ({ ...current, bpm: clampBpm(current.bpm + amount) }), 'bpm');
+  };
+
   const toggleSolo = (track: TrackId) => setSolo((current) => (current === track ? null : track));
   const toggleMute = (track: TrackId) => commit((current) => updateTrack(current, track, { muted: !current.tracks[track].muted }));
+
+  const toggleRecording = () => {
+    const next = !recording;
+    const engine = next || engineRef.current ? ensureEngine() : null;
+    setRecording(next);
+    if (engine) engine.recording = next;
+    if (next && !engine?.playing) startPlayback();
+  };
 
   const trackSettings = state.tracks[selectedTrack];
   const selected = selectedCell && selectedCell.track === selectedTrack ? selectedCell : null;
   const selectedVelocity = selected ? stepVelocity(pattern, selected.track, selected.step) : 0;
-  const selectedNote = selected && isSynth(selected.track) ? pitchForDegree(selected.track, state.root, state.scale, pattern.notes[selected.track][selected.step]) : null;
-  const playingPattern = playhead?.pattern ?? null;
-  const steps = Array.from({ length: visibleSteps }, (_, index) => index + stepOffset);
+  const selectedNote = selected && isSynth(selected.track)
+    ? pitchForDegree(selected.track, state.root, state.scale, pattern.notes[selected.track][selected.step])
+    : null;
+  const selectedSynthTrack = selected && isSynth(selected.track) ? selected.track : null;
+  const selectedPattern = playhead?.pattern ?? null;
+  const patternHint = state.current !== 0 || state.songMode ? `Pattern ${PATTERN_NAMES[state.current]}. ` : '';
+  const hint = view === 'pads'
+    ? coarse ? 'Tap a pad to play it. Press Record to add hits to the loop.' : 'Drums Q-T, keys A-K, bass Z-M.'
+    : view === 'melody'
+      ? 'Set Key and Scale, then edit notes.'
+      : view === 'song'
+        ? 'Arrange patterns and choose playback.'
+        : view === 'mix'
+          ? 'Adjust track and effect levels.'
+          : coarse
+            ? 'Tap Play, then tap squares to edit.'
+            : 'Press Play, then click squares to edit.';
+
+  const renderGridBlock = (block: number[], blockIndex: number) => (
+    <div
+      key={`${block[0] ?? 'empty'}-${blockIndex}`}
+      className="beatpad-grid"
+      style={{ '--steps': block.length, '--tracks': tracks.length } as CSSProperties}
+    >
+      <div className="beatpad-grid-head">
+        <span className="beatpad-grid-corner" />
+        {block.map((step) => (
+          <span key={step} className={step % 4 === 0 ? 'is-beat' : ''}>
+            {step % 4 === 0 ? (step % 16) / 4 + 1 : ''}
+          </span>
+        ))}
+      </div>
+      {tracks.map((track) => {
+        const settings = state.tracks[track];
+        const silent = solo ? solo !== track : settings.muted;
+        return (
+          <div className={`beatpad-row ${selectedTrack === track ? 'is-selected' : ''} ${silent ? 'is-silent' : ''}`} key={track}>
+            <button
+              className="beatpad-track-name"
+              aria-pressed={selectedTrack === track}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => setSelectedTrack(track)}
+            >{TRACK_NAMES[track]}</button>
+            {block.map((step) => {
+              const velocity = stepVelocity(pattern, track, step);
+              const degree = isSynth(track) ? pattern.notes[track][step] : 0;
+              const isSelected = selectedCell?.track === track && selectedCell.step === step;
+              const isPlayhead = playhead?.pattern === state.current && playhead.step === step;
+              const group = Math.floor((step % 16) / 4);
+              return (
+                <button
+                  key={step}
+                  type="button"
+                  data-track={track}
+                  data-step={step}
+                  data-velocity={velocity}
+                  className={`beatpad-cell track-${track.replace(' ', '-')} ${velocity ? 'is-on' : ''} ${step % 4 === 0 ? 'is-beat' : ''} ${group % 2 ? 'is-group-alt' : ''} ${isPlayhead ? 'is-playhead' : ''} ${isPlayhead && velocity ? 'is-hit' : ''} ${isSelected ? 'is-selected' : ''}`}
+                  style={isSynth(track) ? ({ '--pitch': degree / 14 } as CSSProperties) : undefined}
+                  aria-label={`${TRACK_NAMES[track]} step ${step + 1}, ${VELOCITY_NAMES[velocity]}${isSynth(track) && velocity ? `, ${pitchForDegree(track, state.root, state.scale, degree).name}` : ''}`}
+                  aria-pressed={velocity > 0}
+                  onClick={(event) => {
+                    if (event.detail !== 0) return;
+                    setSelectedTrack(track);
+                    setSelectedCell({ track, step });
+                    editPattern((p) => setStep(p, track, step, stepVelocity(p, track, step) ? 0 : 2));
+                  }}
+                  onWheel={(event) => { if (isSynth(track)) { event.preventDefault(); onCellWheel(track, step, event.deltaY); } }}
+                  onContextMenu={(event) => { event.preventDefault(); if (isSynth(track)) onCellWheel(track, step, -1); }}
+                >
+                  {velocity > 0 && isSynth(track) && <small>{pitchForDegree(track, state.root, state.scale, degree).name}</small>}
+                </button>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const renderMixTrack = (track: TrackId) => {
+    const settings = state.tracks[track];
+    return (
+      <div className={`beatpad-mix-track ${selectedTrack === track ? 'is-selected' : ''}`} key={track}>
+        <button className="beatpad-mix-name" aria-pressed={selectedTrack === track} onClick={() => setSelectedTrack(track)}>{TRACK_NAMES[track]}</button>
+        <Slider
+          className="beatpad-volume-slider"
+          label={`${TRACK_NAMES[track]} Volume`}
+          value={settings.volume}
+          display={`${settings.volume}%`}
+          min={0}
+          max={100}
+          onChange={(volume) => commit((current) => updateTrack(current, track, { volume }), `volume-${track}`)}
+          onSettle={settle}
+        />
+        <button className="gbtn gbtn-sm beatpad-mix-toggle" aria-pressed={settings.muted} onClick={() => toggleMute(track)}>{settings.muted ? 'Muted' : 'Mute'}</button>
+        <button className="gbtn gbtn-sm beatpad-mix-toggle" aria-pressed={solo === track} onClick={() => toggleSolo(track)}>Solo</button>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -470,26 +784,33 @@ export default function BeatPad({ args }: AppProps) {
       className={`beatpad-app gc-dark ${coarse ? 'is-coarse' : ''}`}
       style={{ '--tint': '#c49c65' } as CSSProperties}
       tabIndex={-1}
-      onPointerDownCapture={() => ensureEngine().unlock()}
+      onPointerDownCapture={() => {
+        const engine = ensureEngine();
+        engine.unlock();
+        ensureVisualizer(engine);
+      }}
     >
       <header className="beatpad-toolbar">
-        <button className="gbtn gbtn-primary beatpad-play" aria-pressed={playing} title="Play or Stop (Space)" onClick={togglePlayback}>
-          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+        <button className="gbtn gbtn-primary gbtn-lg beatpad-play" aria-pressed={playing} title="Play or Stop (Space)" onClick={togglePlayback}>
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
             {playing ? <rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor" /> : <path d="M5 3.5v9l7-4.5z" fill="currentColor" />}
           </svg>
           {playing ? 'Stop' : 'Play'}
         </button>
-        <button className="gbtn beatpad-bpm" aria-pressed={panel === 'tempo'} title="Tempo and Swing" onClick={() => togglePanel('tempo')}>{state.bpm} BPM</button>
-        <div className="gseg beatpad-patterns" role="group" aria-label="Pattern">
-          {PATTERN_NAMES.map((name, index) => (
-            <button
-              key={name}
-              aria-pressed={state.current === index}
-              className={`${isPatternEmpty(state.patterns[index]) ? 'is-empty' : ''} ${playingPattern === index ? 'is-playing' : ''}`}
-              title={`Pattern ${name} (${index + 1})`}
-              onClick={() => selectPattern(index)}
-            >{name}</button>
-          ))}
+        <div className="beatpad-tempo" role="group" aria-label="Tempo">
+          <button className="gbtn beatpad-tempo-step" aria-label="Decrease tempo" disabled={state.bpm <= BPM_MIN} onClick={() => changeTempo(-1)}>−</button>
+          <span className="beatpad-tempo-value" aria-live="polite">{state.bpm} BPM</span>
+          <button className="gbtn beatpad-tempo-step" aria-label="Increase tempo" disabled={state.bpm >= BPM_MAX} onClick={() => changeTempo(1)}>+</button>
+        </div>
+        <button className="gbtn beatpad-tap" onPointerDown={(event) => { event.preventDefault(); tap(); }}>Tap Tempo</button>
+        <label className="beatpad-kit">
+          <span className="beatpad-sr-only">Kit</span>
+          <select className="ginput beatpad-select" aria-label="Kit" value={state.kit} onChange={(event) => commit((current) => ({ ...current, kit: event.target.value as BeatState['kit'] }))}>
+            {KITS.map((kit) => <option key={kit} value={kit}>{KIT_NAMES[kit]}</option>)}
+          </select>
+        </label>
+        <div className="beatpad-spectrum-slot">
+          {visualizerReady && <canvas ref={canvasRef} className="beatpad-spectrum" width="88" height="24" data-level="0" aria-label="Audio spectrum" />}
         </div>
         <div className="beatpad-toolbar-right">
           <button className="gbtn beatpad-icon" aria-label="Undo" title="Undo" disabled={!history.past.length} onClick={undo}>
@@ -498,258 +819,226 @@ export default function BeatPad({ args }: AppProps) {
           <button className="gbtn beatpad-icon" aria-label="Redo" title="Redo" disabled={!history.future.length} onClick={redo}>
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4 3 3-3 3M12.5 7H6a3 3 0 0 0 0 6h2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
-          <button className="gbtn" onClick={() => void share()}>{copied === 'done' ? 'Link Copied' : copied === 'failed' ? 'Copy Failed' : 'Share'}</button>
+          <button className="gbtn beatpad-share" onClick={() => void share()}>{copied === 'done' ? 'Link Copied' : copied === 'failed' ? 'Copy Failed' : 'Share'}</button>
         </div>
       </header>
 
-      <main className="beatpad-workspace">
-        {paged && (
-          <div className="beatpad-pages">
-            <div className="gseg" role="group" aria-label="Steps">
-              <button aria-pressed={page === 0} onClick={() => setPage(0)}>Steps 1 to 16</button>
-              <button aria-pressed={page === 1} onClick={() => setPage(1)}>Steps 17 to 32</button>
-            </div>
-          </div>
-        )}
-        <div
-          ref={gridRef}
-          className={`beatpad-grid ${showNotes ? 'show-notes' : ''}`}
-          style={{ '--steps': visibleSteps, '--cell': `${Math.round(cellWidth)}px` } as CSSProperties}
-          onPointerDown={onGridPointerDown}
-          onPointerMove={onGridPointerMove}
-          onPointerUp={endPaint}
-          onPointerCancel={endPaint}
-          onLostPointerCapture={endPaint}
-        >
-          <div className="beatpad-grid-head">
-            <span />
-            {steps.map((step) => <span key={step} className={step % 4 === 0 ? 'is-beat' : ''}>{step % 4 === 0 ? step / 4 + 1 : ''}</span>)}
-          </div>
-          {TRACKS.map((track) => {
-            const settings = state.tracks[track];
-            const silent = solo ? solo !== track : settings.muted;
-            return (
-              <div className={`beatpad-row ${selectedTrack === track ? 'is-selected' : ''} ${silent ? 'is-silent' : ''}`} key={track}>
-                <div className="beatpad-track">
-                  <button className="beatpad-track-name" aria-pressed={selectedTrack === track} title={`${TRACK_NAMES[track]} settings`} onPointerDown={(event) => event.stopPropagation()} onClick={() => openTrack(track)}>
-                    <span className="beatpad-track-full">{TRACK_NAMES[track]}</span>
-                    <span className="beatpad-track-short">{TRACK_SHORT[track]}</span>
-                  </button>
-                  <div className="beatpad-track-switches" onPointerDown={(event) => event.stopPropagation()}>
-                    <button className="beatpad-switch" aria-pressed={settings.muted} aria-label={`Mute ${TRACK_NAMES[track]}`} title="Mute" onClick={() => toggleMute(track)}>M</button>
-                    <button className="beatpad-switch is-solo" aria-pressed={solo === track} aria-label={`Solo ${TRACK_NAMES[track]}`} title="Solo" onClick={() => toggleSolo(track)}>S</button>
-                  </div>
-                </div>
-                {steps.map((step) => {
-                  const velocity = stepVelocity(pattern, track, step);
-                  const degree = isSynth(track) ? pattern.notes[track][step] : 0;
-                  const isSelected = selectedCell?.track === track && selectedCell.step === step;
-                  const isPlayhead = playhead?.pattern === state.current && playhead.step === step;
-                  return (
-                    <button
-                      key={step}
-                      type="button"
-                      data-track={track}
-                      data-step={step}
-                      data-velocity={velocity}
-                      className={`beatpad-cell track-${track.replace(' ', '-')} ${velocity ? 'is-on' : ''} ${step % 4 === 0 ? 'is-beat' : ''} ${isPlayhead ? 'is-playhead' : ''} ${isSelected ? 'is-selected' : ''}`}
-                      style={isSynth(track) ? ({ '--pitch': degree / 14 } as CSSProperties) : undefined}
-                      aria-label={`${TRACK_NAMES[track]} step ${step + 1}, ${VELOCITY_NAMES[velocity]}${isSynth(track) && velocity ? `, ${pitchForDegree(track, state.root, state.scale, degree).name}` : ''}`}
-                      aria-pressed={velocity > 0}
-                      onClick={(event) => {
-                        if (event.detail !== 0) return;
-                        setSelectedTrack(track);
-                        setSelectedCell({ track, step });
-                        editPattern((p) => setStep(p, track, step, stepVelocity(p, track, step) ? 0 : 2));
-                      }}
-                      onWheel={(event) => { if (isSynth(track)) { event.preventDefault(); onCellWheel(track, step, event.deltaY); } }}
-                      onContextMenu={(event) => { event.preventDefault(); if (isSynth(track)) onCellWheel(track, step, -1); }}
-                    >
-                      {velocity > 0 && isSynth(track) && <small>{pitchForDegree(track, state.root, state.scale, degree).name}</small>}
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })}
-        </div>
-      </main>
-
-      <nav className="beatpad-bar">
-        <div className="gseg beatpad-tabs" role="group" aria-label="Controls">
-          {PANELS.map((item) => (
-            <button key={item.id} aria-pressed={panel === item.id} onClick={() => togglePanel(item.id)}>{item.label}</button>
+      <section className="beatpad-groove-row">
+        <span className="beatpad-section-label">Grooves</span>
+        <div className="gseg beatpad-grooves" role="group" aria-label="Grooves">
+          {GROOVES.map((groove) => (
+            <button key={groove} aria-pressed={state.groove === groove} onClick={() => chooseGroove(groove)}>{PRESET_NAMES[groove]}</button>
           ))}
         </div>
-        <div className="beatpad-bar-right">
-          <button className="gbtn gbtn-sm" onClick={randomize}>Randomize</button>
-          <button className="gbtn gbtn-sm" disabled={isPatternEmpty(pattern)} onClick={() => editPattern(clearPattern)}>Clear</button>
+        <div className="beatpad-groove-actions">
+          <button className="gbtn" onClick={remix}>Remix</button>
+          <button className="gbtn" disabled={isPatternEmpty(pattern)} onClick={clearCurrent}>Clear</button>
         </div>
-      </nav>
+      </section>
 
-      {panel && (
-        <section className={`beatpad-panel panel-${panel}`} aria-label={PANELS.find((item) => item.id === panel)?.label}>
-          {panel === 'tempo' && (
-            <>
-              <Slider label="Tempo" value={state.bpm} display={`${state.bpm} BPM`} min={BPM_MIN} max={BPM_MAX} onChange={(bpm) => commit((c) => ({ ...c, bpm: clampBpm(bpm) }), 'bpm')} onSettle={settle} />
-              <Slider label="Swing" value={state.swing} display={state.swing ? `${state.swing}%` : 'Off'} min={0} max={SWING_MAX} onChange={(swing) => commit((c) => ({ ...c, swing }), 'swing')} onSettle={settle} />
-              <div className="beatpad-field">
-                <button className="gbtn" onPointerDown={(event) => { event.preventDefault(); tap(); }}>Tap Tempo</button>
-                <span className="ghelp">Tap along to set the tempo.</span>
-              </div>
-            </>
-          )}
+      <div className="beatpad-hint-nav">
+        <p className="beatpad-hint" aria-live="polite">{patternHint}{hint}</p>
+        <nav className="beatpad-view-nav" aria-label="Beat Pad Views">
+          <div className="gseg beatpad-views" role="group" aria-label="Views">
+            {VIEWS.map((item) => (
+              <button key={item.id} aria-pressed={view === item.id} onClick={() => setView(item.id)}>{item.label}</button>
+            ))}
+          </div>
+        </nav>
+      </div>
 
-          {panel === 'kit' && (
-            <>
-              <div className="beatpad-field">
-                <span className="glabel">Kit</span>
-                <div className="gseg" role="group" aria-label="Kit">
-                  {KITS.map((kit) => <button key={kit} aria-pressed={state.kit === kit} onClick={() => commit((c) => ({ ...c, kit }))}>{KIT_NAMES[kit]}</button>)}
-                </div>
+      {view === 'drums' && (
+        <main className="beatpad-content beatpad-grid-content" aria-label="Drum pattern">
+          {paged && (
+            <div className="beatpad-pages">
+              <div className="gseg" role="group" aria-label="Steps">
+                <button aria-pressed={page === 0} onClick={() => setPage(0)}>Steps 1 to 16</button>
+                <button aria-pressed={page === 1} onClick={() => setPage(1)}>Steps 17 to 32</button>
               </div>
-              <div className="beatpad-field beatpad-field-row">
-                <label className="beatpad-select-field">
-                  <span className="glabel">Key</span>
-                  <select className="ginput beatpad-select" value={state.root} onChange={(event) => commit((c) => ({ ...c, root: Number(event.target.value) }))}>
-                    {ROOT_NAMES.map((name, index) => <option key={name} value={index}>{name}</option>)}
-                  </select>
-                </label>
-                <label className="beatpad-select-field">
-                  <span className="glabel">Scale</span>
-                  <select className="ginput beatpad-select" value={state.scale} onChange={(event) => commit((c) => ({ ...c, scale: event.target.value as BeatState['scale'] }))}>
-                    {SCALES.map((scale) => <option key={scale} value={scale}>{SCALE_NAMES[scale]}</option>)}
-                  </select>
-                </label>
-                <label className="beatpad-select-field">
-                  <span className="glabel">Preset</span>
-                  <select className="ginput beatpad-select" value="" onChange={(event) => { if (event.target.value) { commit(() => createBeatState(event.target.value as PresetName)); setSelectedCell(null); } }}>
-                    <option value="">Load</option>
-                    {(Object.keys(PRESET_NAMES) as PresetName[]).map((name) => <option key={name} value={name}>{PRESET_NAMES[name]}</option>)}
-                  </select>
-                </label>
-              </div>
-            </>
-          )}
-
-          {panel === 'track' && (
-            <>
-              <div className="beatpad-panel-title">
-                <b>{TRACK_NAMES[selectedTrack]}</b>
-                <div className="beatpad-panel-actions">
-                  <button className="gbtn gbtn-sm" aria-pressed={trackSettings.muted} onClick={() => toggleMute(selectedTrack)}>{trackSettings.muted ? 'Muted' : 'Mute'}</button>
-                  <button className="gbtn gbtn-sm" aria-pressed={solo === selectedTrack} onClick={() => toggleSolo(selectedTrack)}>Solo</button>
-                  <button className="gbtn gbtn-sm" onClick={() => editPattern((p) => clearTrack(p, selectedTrack))}>Clear Track</button>
-                </div>
-              </div>
-              <div className="beatpad-sliders">
-                <Slider label="Volume" value={trackSettings.volume} display={`${trackSettings.volume}%`} min={0} max={100} onChange={(volume) => commit((c) => updateTrack(c, selectedTrack, { volume }), `volume-${selectedTrack}`)} onSettle={settle} />
-                <Slider label="Pitch" value={trackSettings.pitch} display={trackSettings.pitch === 0 ? '0' : `${signed(trackSettings.pitch)} st`} min={-12} max={12} onChange={(pitch) => commit((c) => updateTrack(c, selectedTrack, { pitch }), `pitch-${selectedTrack}`)} onSettle={settle} />
-                <Slider label="Decay" value={trackSettings.decay} display={`${trackSettings.decay}%`} min={0} max={100} onChange={(decay) => commit((c) => updateTrack(c, selectedTrack, { decay }), `decay-${selectedTrack}`)} onSettle={settle} />
-              </div>
-              {selected ? (
-                <div className="beatpad-field beatpad-field-row beatpad-step-field">
-                  <div className="beatpad-select-field">
-                    <span className="glabel">Step {selected.step + 1}</span>
-                    <div className="gseg" role="group" aria-label="Velocity">
-                      {[1, 2, 3].map((velocity) => (
-                        <button key={velocity} aria-pressed={selectedVelocity === velocity} onClick={() => editPattern((p) => setStep(p, selected.track, selected.step, velocity as Velocity))}>{VELOCITY_NAMES[velocity]}</button>
-                      ))}
-                    </div>
-                  </div>
-                  {selectedNote && isSynth(selected.track) && (
-                    <div className="beatpad-select-field">
-                      <span className="glabel">Note</span>
-                      <div className="beatpad-note">
-                        <button className="gbtn gbtn-sm" onClick={() => onCellWheel(selected.track, selected.step, 1)}>Lower</button>
-                        <b>{selectedNote.name}</b>
-                        <button className="gbtn gbtn-sm" onClick={() => onCellWheel(selected.track, selected.step, -1)}>Higher</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <span className="ghelp">Select a step to set its velocity{isSynth(selectedTrack) ? ' and note' : ''}.</span>
-              )}
-            </>
-          )}
-
-          {panel === 'mix' && (
-            <div className="beatpad-sliders">
-              <Slider label="Filter" value={state.fx.filter} display={filterLabel(state.fx.filter)} min={0} max={100} onChange={(filter) => commit((c) => ({ ...c, fx: { ...c.fx, filter } }), 'filter')} onSettle={settle} />
-              <Slider label="Reverb" value={state.fx.reverb} display={state.fx.reverb ? `${state.fx.reverb}%` : 'Off'} min={0} max={100} onChange={(reverb) => commit((c) => ({ ...c, fx: { ...c.fx, reverb } }), 'reverb')} onSettle={settle} />
-              <Slider label="Delay" value={state.fx.delay} display={state.fx.delay ? `${state.fx.delay}%` : 'Off'} min={0} max={100} onChange={(delay) => commit((c) => ({ ...c, fx: { ...c.fx, delay } }), 'delay')} onSettle={settle} />
             </div>
           )}
+          <div
+            ref={gridRef}
+            className={`beatpad-grid-layout ${narrow ? 'is-narrow' : 'is-wide'} ${showNotes ? 'show-notes' : ''}`}
+            style={{ '--label-width': narrow ? '62px' : coarse ? '128px' : '112px' } as CSSProperties}
+            onPointerDown={onGridPointerDown}
+            onPointerMove={onGridPointerMove}
+            onPointerUp={endPaint}
+            onPointerCancel={endPaint}
+            onLostPointerCapture={endPaint}
+          >
+            {blocks.map(renderGridBlock)}
+          </div>
+        </main>
+      )}
 
-          {panel === 'song' && (
-            <>
-              <div className="beatpad-field beatpad-field-row">
-                <div className="beatpad-select-field">
-                  <span className="glabel">Pattern {PATTERN_NAMES[state.current]} Length</span>
-                  <div className="gseg" role="group" aria-label="Pattern length">
-                    {PATTERN_LENGTHS.map((length) => <button key={length} aria-pressed={pattern.length === length} onClick={() => editPattern((p) => setPatternLength(p, length as PatternLength))}>{length} Steps</button>)}
-                  </div>
-                </div>
-                <div className="beatpad-select-field">
-                  <span className="glabel">Copy {PATTERN_NAMES[state.current]} To</span>
-                  <div className="gseg" role="group" aria-label="Copy pattern to">
-                    {PATTERN_NAMES.map((name, index) => (
-                      <button key={name} disabled={index === state.current} onClick={() => commit((c) => replacePattern(c, index, c.patterns[c.current]))}>{name}</button>
-                    ))}
-                  </div>
-                </div>
-                <div className="beatpad-select-field">
-                  <span className="glabel">Play</span>
-                  <div className="gseg" role="group" aria-label="Play mode">
-                    <button aria-pressed={!state.songMode} onClick={() => commit((c) => ({ ...c, songMode: false }))}>Pattern</button>
-                    <button aria-pressed={state.songMode} disabled={!state.song.length} onClick={() => commit((c) => ({ ...c, songMode: true }))}>Song</button>
-                  </div>
-                </div>
+      {view === 'melody' && (
+        <main className="beatpad-content beatpad-melody-content" aria-label="Melody pattern">
+          <div className="beatpad-melody-header">
+            <label className="beatpad-select-field">
+              <span className="beatpad-section-label">Key</span>
+              <select className="ginput beatpad-select" value={state.root} onChange={(event) => commit((current) => ({ ...current, root: Number(event.target.value) }))}>
+                {ROOT_NAMES.map((name, index) => <option key={name} value={index}>{name}</option>)}
+              </select>
+            </label>
+            <label className="beatpad-select-field">
+              <span className="beatpad-section-label">Scale</span>
+              <select className="ginput beatpad-select" value={state.scale} onChange={(event) => commit((current) => ({ ...current, scale: event.target.value as BeatState['scale'] }))}>
+                {SCALES.map((scale) => <option key={scale} value={scale}>{SCALE_NAMES[scale]}</option>)}
+              </select>
+            </label>
+          </div>
+          {paged && (
+            <div className="beatpad-pages">
+              <div className="gseg" role="group" aria-label="Steps">
+                <button aria-pressed={page === 0} onClick={() => setPage(0)}>Steps 1 to 16</button>
+                <button aria-pressed={page === 1} onClick={() => setPage(1)}>Steps 17 to 32</button>
               </div>
-              <div className="beatpad-field">
-                <span className="glabel">Song</span>
-                <div className="beatpad-chain">
-                  {state.song.map((index, position) => (
-                    <button
-                      key={position}
-                      className={`gbtn gbtn-sm beatpad-chip ${state.songMode && playhead?.songIndex === position ? 'is-playing' : ''}`}
-                      title="Remove from song"
-                      onClick={() => commit((c) => {
-                        const song = c.song.filter((_, at) => at !== position);
-                        return { ...c, song, songMode: song.length ? c.songMode : false };
-                      })}
-                    >{PATTERN_NAMES[index]}</button>
-                  ))}
-                  {state.song.length < MAX_SONG && (
-                    <div className="gseg beatpad-chain-add" role="group" aria-label="Add pattern to song">
-                      {PATTERN_NAMES.map((name, index) => <button key={name} title={`Add ${name}`} onClick={() => commit((c) => ({ ...c, song: [...c.song, index] }))}>Add {name}</button>)}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </>
+            </div>
           )}
+          <div
+            ref={gridRef}
+            className={`beatpad-grid-layout ${narrow ? 'is-narrow' : 'is-wide'} ${showNotes ? 'show-notes' : ''}`}
+            style={{ '--label-width': narrow ? '62px' : coarse ? '128px' : '112px' } as CSSProperties}
+            onPointerDown={onGridPointerDown}
+            onPointerMove={onGridPointerMove}
+            onPointerUp={endPaint}
+            onPointerCancel={endPaint}
+            onLostPointerCapture={endPaint}
+          >
+            {blocks.map(renderGridBlock)}
+          </div>
+        </main>
+      )}
 
-          {panel === 'pads' && (
-            <>
-              <div className="beatpad-pads">
-                {TRACKS.map((track) => (
-                  <button
-                    key={track}
-                    className={`gpad beatpad-pad track-${track.replace(' ', '-')}`}
-                    onPointerDown={(event) => { event.preventDefault(); hit(track); }}
-                    onKeyDown={(event) => { if (event.code === 'Enter') hit(track); }}
-                  >{TRACK_NAMES[track]}</button>
+      {view === 'pads' && (
+        <main className="beatpad-content beatpad-pads-content" aria-label="Live Pads">
+          <div className="beatpad-pads">
+            {TRACKS.map((track) => (
+              <button
+                key={track}
+                className={`gpad beatpad-pad track-${track.replace(' ', '-')} ${padLit[track] ? 'is-lit' : ''}`}
+                aria-pressed={Boolean(padLit[track])}
+                onPointerDown={(event) => { event.preventDefault(); hit(track); }}
+                onKeyDown={(event) => { if (event.code === 'Enter' || event.code === 'Space') { event.preventDefault(); hit(track); } }}
+              >{TRACK_NAMES[track]}</button>
+            ))}
+          </div>
+          <div className="beatpad-pads-foot">
+            <button className={`gbtn ${recording ? 'is-recording' : ''}`} aria-pressed={recording} onClick={toggleRecording}>{recording ? 'Recording' : 'Record'}</button>
+          </div>
+        </main>
+      )}
+
+      {view === 'song' && (
+        <main className="beatpad-content beatpad-song-content" aria-label="Song arrangement">
+          <div className="beatpad-song-pattern">
+            <span className="beatpad-section-label">Current Pattern {PATTERN_NAMES[state.current]}</span>
+            <div className="gseg beatpad-patterns" role="group" aria-label="Pattern">
+              {PATTERN_NAMES.map((name, index) => (
+                <button
+                  key={name}
+                  aria-pressed={state.current === index}
+                  className={`${isPatternEmpty(state.patterns[index]) ? 'is-empty' : ''} ${selectedPattern === index ? 'is-playing' : ''}`}
+                  title={`Pattern ${name} (${index + 1})`}
+                  onClick={() => selectPattern(index)}
+                >{name}</button>
+              ))}
+            </div>
+          </div>
+          <div className="beatpad-field-row">
+            <div className="beatpad-select-field">
+              <span className="beatpad-section-label">Pattern Length</span>
+              <div className="gseg beatpad-control-segment" role="group" aria-label="Pattern length">
+                {PATTERN_LENGTHS.map((length) => <button key={length} aria-pressed={pattern.length === length} onClick={() => editPattern((p) => setPatternLength(p, length as PatternLength))}>{length} Steps</button>)}
+              </div>
+            </div>
+            <div className="beatpad-select-field">
+              <span className="beatpad-section-label">Copy Pattern To</span>
+              <div className="gseg beatpad-control-segment" role="group" aria-label="Copy pattern to">
+                {PATTERN_NAMES.map((name, index) => (
+                  <button key={name} disabled={index === state.current} onClick={() => commit((current) => replacePattern(current, index, current.patterns[current.current]))}>{name}</button>
                 ))}
               </div>
-              <div className="beatpad-field beatpad-pads-foot">
-                <button className={`gbtn ${recording ? 'is-recording' : ''}`} aria-pressed={recording} onClick={() => setRecording((current) => !current)}>{recording ? 'Recording' : 'Record'}</button>
-                <span className="ghelp">{recording ? 'Hits land on the nearest step while the beat plays.' : coarse ? 'Tap a pad to play it.' : 'Q to T play drums, A to K play keys, Z to M play bass.'}</span>
+            </div>
+            <div className="beatpad-select-field">
+              <span className="beatpad-section-label">Play Mode</span>
+              <div className="gseg beatpad-control-segment" role="group" aria-label="Play mode">
+                <button aria-pressed={!state.songMode} onClick={() => commit((current) => ({ ...current, songMode: false }))}>Pattern</button>
+                <button aria-pressed={state.songMode} disabled={!state.song.length} onClick={() => commit((current) => ({ ...current, songMode: true }))}>Song</button>
               </div>
-            </>
-          )}
-        </section>
+            </div>
+            <button className="gbtn" onClick={randomize}>New Pattern</button>
+          </div>
+          <div className="beatpad-song-chain-field">
+            <span className="beatpad-section-label">Song Chain</span>
+            <div className="beatpad-chain">
+              {state.song.map((index, position) => (
+                <button
+                  key={position}
+                  className={`gbtn beatpad-chip ${state.songMode && playhead?.songIndex === position ? 'is-playing' : ''}`}
+                  aria-label={`Remove Pattern ${PATTERN_NAMES[index]} from song`}
+                  title={`Remove Pattern ${PATTERN_NAMES[index]}`}
+                  onClick={() => commit((current) => {
+                    const song = current.song.filter((_, at) => at !== position);
+                    return { ...current, song, songMode: song.length ? current.songMode : false };
+                  })}
+                >{PATTERN_NAMES[index]}</button>
+              ))}
+              {state.song.length < MAX_SONG && (
+                <div className="gseg beatpad-chain-add" role="group" aria-label="Add pattern to song">
+                  {PATTERN_NAMES.map((name, index) => (
+                    <button key={name} aria-label={`Add Pattern ${name}`} title={`Add Pattern ${name}`} onClick={() => commit((current) => ({ ...current, song: [...current.song, index] }))}>Add {name}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </main>
+      )}
+
+      {view === 'mix' && (
+        <main className="beatpad-content beatpad-mix-content" aria-label="Mixer">
+          <div className="beatpad-mix-effects">
+            <Slider label="Swing" value={state.swing} display={state.swing ? `${state.swing}%` : 'Off'} min={0} max={SWING_MAX} onChange={(swing) => commit((current) => ({ ...current, swing }), 'swing')} onSettle={settle} />
+            <Slider label="Filter" value={state.fx.filter} display={filterLabel(state.fx.filter)} min={0} max={100} onChange={(filter) => commit((current) => ({ ...current, fx: { ...current.fx, filter } }), 'filter')} onSettle={settle} />
+            <Slider label="Reverb" value={state.fx.reverb} display={state.fx.reverb ? `${state.fx.reverb}%` : 'Off'} min={0} max={100} onChange={(reverb) => commit((current) => ({ ...current, fx: { ...current.fx, reverb } }), 'reverb')} onSettle={settle} />
+            <Slider label="Delay" value={state.fx.delay} display={state.fx.delay ? `${state.fx.delay}%` : 'Off'} min={0} max={100} onChange={(delay) => commit((current) => ({ ...current, fx: { ...current.fx, delay } }), 'delay')} onSettle={settle} />
+          </div>
+          <div className="beatpad-mix-list">{TRACKS.map(renderMixTrack)}</div>
+          <section className="beatpad-track-detail" aria-label={`${TRACK_NAMES[selectedTrack]} settings`}>
+            <div className="beatpad-track-detail-head">
+              <b>{TRACK_NAMES[selectedTrack]}</b>
+              <button className="gbtn gbtn-sm" onClick={() => editPattern((p) => clearTrack(p, selectedTrack))}>Clear Track</button>
+            </div>
+            <div className="beatpad-track-detail-sliders">
+              <Slider label="Pitch" value={trackSettings.pitch} display={trackSettings.pitch === 0 ? '0' : `${signed(trackSettings.pitch)} st`} min={-12} max={12} onChange={(pitch) => commit((current) => updateTrack(current, selectedTrack, { pitch }), `pitch-${selectedTrack}`)} onSettle={settle} />
+              <Slider label="Decay" value={trackSettings.decay} display={`${trackSettings.decay}%`} min={0} max={100} onChange={(decay) => commit((current) => updateTrack(current, selectedTrack, { decay }), `decay-${selectedTrack}`)} onSettle={settle} />
+            </div>
+            {selected ? (
+              <div className="beatpad-selected-cell">
+                <div className="beatpad-selected-cell-title">
+                  <span>Step {selected.step + 1}</span>
+                  <span>{TRACK_NAMES[selected.track]}</span>
+                </div>
+                <div className="gseg beatpad-velocity" role="group" aria-label="Velocity">
+                  {[0, 1, 2, 3].map((velocity) => (
+                    <button key={velocity} aria-pressed={selectedVelocity === velocity} onClick={() => editPattern((p) => setStep(p, selected.track, selected.step, velocity as Velocity))}>{VELOCITY_NAMES[velocity]}</button>
+                  ))}
+                </div>
+                {selectedNote && selectedSynthTrack && (
+                  <div className="beatpad-note">
+                    <button className="gbtn gbtn-sm" onClick={() => editPattern((p) => changeStepDegree(p, selectedSynthTrack, selected.step, -1, state.scale))}>Lower</button>
+                    <b>{selectedNote.name}</b>
+                    <button className="gbtn gbtn-sm" onClick={() => editPattern((p) => changeStepDegree(p, selectedSynthTrack, selected.step, 1, state.scale))}>Higher</button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <span className="ghelp">Select a step in the grid to edit velocity or note.</span>
+            )}
+          </section>
+        </main>
       )}
     </div>
   );
