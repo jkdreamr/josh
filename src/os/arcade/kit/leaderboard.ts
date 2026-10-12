@@ -18,7 +18,7 @@ export {
 export type BoardScope = 'global' | 'device';
 export type Board = { entries: BoardEntry[]; scope: BoardScope; error?: string };
 
-const DEFAULT_ARCADE_API = '';
+const DEFAULT_ARCADE_API = 'https://josh-arcade.joshuakoo.workers.dev';
 export const ARCADE_API = ((import.meta as any).env?.PUBLIC_ARCADE_API as string | undefined) || DEFAULT_ARCADE_API;
 const DEVICE_KEY = 'arcade:boards';
 const NAME_KEY = 'arcade:name';
