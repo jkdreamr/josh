@@ -297,33 +297,35 @@ kbd {
 .hello text {
   font-family: Sacramento, 'Snell Roundhand', cursive;
   font-size: 230px;
-  fill: transparent;
+}
+.hello-ink {
+  fill: #fff;
+}
+/* A thick "pen" inside a mask paints along the glyph shapes so the word reads as one
+   uniform stroke. Stroking the glyph outlines directly left double lines and visible
+   crossings at every cursive join. */
+.hello-pen {
+  fill: none;
   stroke: #fff;
-  stroke-width: 2.2;
+  stroke-width: 42;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   stroke-dasharray: 1600;
   stroke-dashoffset: 1600;
-  animation:
-    helloDraw 2s cubic-bezier(0.55, 0.1, 0.3, 1) 0.15s forwards,
-    helloFill 0.6s ease 1.9s forwards;
+  animation: helloDraw 2s cubic-bezier(0.55, 0.1, 0.3, 1) 0.15s forwards;
 }
 @keyframes helloDraw {
   to {
     stroke-dashoffset: 0;
   }
 }
-@keyframes helloFill {
-  to {
-    fill: #fff;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .phase-hello .screen-boot {
     animation: none;
   }
-  .hello text {
+  .hello-pen {
     animation: none;
     stroke-dashoffset: 0;
-    fill: #fff;
   }
 }
 .screen-glare {
