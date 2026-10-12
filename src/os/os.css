@@ -316,6 +316,16 @@ kbd {
     fill: #fff;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .phase-hello .screen-boot {
+    animation: none;
+  }
+  .hello text {
+    animation: none;
+    stroke-dashoffset: 0;
+    fill: #fff;
+  }
+}
 .screen-glare {
   position: absolute;
   inset: 0;
@@ -847,6 +857,11 @@ kbd {
 .menu-pop button:not(:disabled):hover {
   background: #2f74f5;
   color: #fff;
+}
+.menu-pop button:not(:disabled):focus-visible {
+  background: #2f74f5;
+  color: #fff;
+  outline: none;
 }
 .menu-pop button:disabled {
   color: rgba(0, 0, 0, 0.35);
