@@ -33,10 +33,11 @@
 .beatpad-toolbar {
   display: flex;
   flex: none;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 7px;
-  padding: 8px 12px;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--beatpad-edge);
 }
 
@@ -57,14 +58,14 @@
 }
 
 .beatpad-tempo-step {
-  width: 32px;
-  min-height: 30px;
+  width: 28px;
+  min-height: 28px;
   padding: 0;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .beatpad-tempo-value {
-  min-width: 70px;
+  min-width: 60px;
   color: #f2efe4;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
@@ -74,12 +75,14 @@
 
 .beatpad-kit {
   display: flex;
-  min-width: 86px;
+  min-width: 0;
+  flex: 0 1 92px;
 }
 
 .beatpad-select {
-  min-width: 90px;
-  min-height: 34px;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
   padding: 0 27px 0 10px;
   border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 7px;
@@ -94,21 +97,25 @@
 }
 
 .beatpad-spectrum-slot {
+  box-sizing: border-box;
   display: flex;
   width: 88px;
-  height: 24px;
-  flex: none;
+  height: 30px;
+  flex: 0 0 88px;
   align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 2px;
+  border: 1px solid var(--beatpad-edge);
+  border-radius: 7px;
+  background: #0e1314;
 }
 
 .beatpad-spectrum {
   display: block;
-  width: 88px;
-  height: 24px;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
-  background: linear-gradient(to top, rgba(196, 156, 101, 0.46) 1px, transparent 1px);
-  background-position: bottom;
-  background-repeat: no-repeat;
 }
 
 .beatpad-toolbar-right {
@@ -141,10 +148,11 @@
 .beatpad-groove-row {
   display: flex;
   flex: none;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--beatpad-edge);
   background: #151c1e;
 }
@@ -162,8 +170,8 @@
 }
 
 .beatpad-grooves > button {
-  min-height: 32px;
-  padding: 0 10px;
+  min-height: 30px;
+  padding: 0 8px;
   font-size: 12px;
 }
 
@@ -174,32 +182,45 @@
 }
 
 .beatpad-groove-actions .gbtn {
-  min-height: 32px;
+  min-height: 30px;
+}
+
+.beatpad-hint-nav {
+  display: flex;
+  flex: none;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 4px;
+  border-bottom: 1px solid var(--beatpad-edge);
 }
 
 .beatpad-hint {
-  flex: none;
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
-  padding: 7px 12px;
+  overflow: hidden;
+  padding: 4px 0;
   color: #aab4ae;
-  font-size: 12px;
-  line-height: 1.3;
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .beatpad-view-nav {
   display: flex;
   flex: none;
-  padding: 0 12px 8px;
-  border-bottom: 1px solid var(--beatpad-edge);
 }
 
 .beatpad-views {
-  width: min(100%, 520px);
+  width: 260px;
 }
 
 .beatpad-views > button {
-  min-height: 32px;
-  font-size: 12px;
+  min-height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
 }
 
 .beatpad-content {
@@ -208,17 +229,17 @@
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 12px;
+  padding: 8px 12px;
   scrollbar-width: thin;
   scrollbar-color: #46504d transparent;
 }
 
 .beatpad-grid-content {
-  justify-content: center;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 6px;
 }
 
 .beatpad-pages {
@@ -238,8 +259,8 @@
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  justify-content: center;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 6px;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -260,8 +281,12 @@
   display: grid;
   min-width: 0;
   grid-template-columns: var(--label-width, 112px) repeat(var(--steps), minmax(0, 1fr));
-  grid-template-rows: 20px repeat(var(--tracks), minmax(32px, 1fr));
+  grid-template-rows: 20px repeat(var(--tracks), minmax(32px, 56px));
   gap: 3px;
+}
+
+.beatpad-grid-layout.is-wide > .beatpad-grid {
+  flex: 1;
 }
 
 .beatpad-grid-head,
@@ -814,67 +839,59 @@
 }
 
 @container (max-width: 560px) {
-  .beatpad-toolbar {
-    gap: 6px;
-    padding: 8px;
-  }
-
   .beatpad-tempo {
     gap: 2px;
   }
 
   .beatpad-tempo-value {
-    min-width: 65px;
+    min-width: 58px;
   }
 
   .beatpad-groove-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 7px;
-    padding: 8px;
-  }
-
-  .beatpad-groove-row > .beatpad-section-label {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .beatpad-groove-actions {
-    grid-column: 2;
-    grid-row: 1;
+    gap: 4px;
+    padding: 5px 8px;
   }
 
   .beatpad-grooves {
-    width: 100%;
-    grid-column: 1 / -1;
-    grid-row: 2;
+    flex: 1 1 auto;
   }
 
   .beatpad-grooves > button {
     min-width: 0;
-    padding: 0 5px;
+    min-height: 28px;
+    padding: 0 4px;
     font-size: 11px;
   }
 
-  .beatpad-hint {
-    padding: 7px 9px;
+  .beatpad-groove-actions {
+    gap: 3px;
   }
 
-  .beatpad-view-nav {
-    padding: 0 8px 7px;
+  .beatpad-groove-actions .gbtn {
+    min-height: 28px;
+    padding: 0 7px;
+    font-size: 11px;
+  }
+
+  .beatpad-hint-nav {
+    gap: 6px;
+    padding-right: 8px;
+    padding-left: 8px;
   }
 
   .beatpad-views {
-    width: 100%;
+    width: 200px;
   }
 
   .beatpad-views > button {
-    padding: 0 6px;
+    min-height: 28px;
+    padding: 0 3px;
+    font-size: 11px;
   }
 
   .beatpad-content {
-    gap: 10px;
-    padding: 9px 8px;
+    gap: 6px;
+    padding: 6px 8px;
   }
 
   .beatpad-grid-content {
@@ -970,6 +987,318 @@
   }
 }
 
+@container (max-width: 620px) {
+  .beatpad-toolbar {
+    gap: 4px;
+    padding: 5px 8px;
+  }
+
+  .beatpad-play {
+    min-width: 58px;
+    min-height: 30px;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+
+  .beatpad-play svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .beatpad-tempo-step {
+    width: 25px;
+    min-height: 28px;
+  }
+
+  .beatpad-tempo-value {
+    min-width: 54px;
+    font-size: 11px;
+  }
+
+  .beatpad-tap {
+    min-height: 30px;
+    padding: 0 7px;
+    font-size: 11px;
+  }
+
+  .beatpad-kit {
+    flex-basis: 72px;
+  }
+
+  .beatpad-select {
+    padding-right: 18px;
+    padding-left: 7px;
+    background-position: right 5px center;
+    font-size: 11px;
+  }
+
+  .beatpad-spectrum-slot {
+    width: 56px;
+    height: 28px;
+    flex-basis: 56px;
+  }
+
+  .beatpad-toolbar-right {
+    gap: 3px;
+  }
+
+  .beatpad-icon {
+    width: 30px;
+    min-height: 30px;
+  }
+
+  .beatpad-share {
+    min-height: 30px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+}
+
+@container (max-width: 500px) {
+  .beatpad-toolbar {
+    gap: 3px;
+    padding: 4px 6px;
+  }
+
+  .beatpad-play {
+    min-width: 52px;
+    min-height: 28px;
+    padding: 0 4px;
+    font-size: 11px;
+  }
+
+  .beatpad-play svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .beatpad-tempo {
+    gap: 1px;
+    padding: 1px;
+  }
+
+  .beatpad-tempo-step {
+    width: 22px;
+    min-height: 26px;
+    font-size: 12px;
+  }
+
+  .beatpad-tempo-value {
+    min-width: 46px;
+    font-size: 11px;
+  }
+
+  .beatpad-tap {
+    min-height: 28px;
+    padding: 0 5px;
+    font-size: 11px;
+  }
+
+  .beatpad-kit {
+    flex-basis: 58px;
+  }
+
+  .beatpad-select {
+    min-height: 28px;
+    padding-right: 16px;
+    padding-left: 5px;
+    background-position: right 4px center;
+    font-size: 11px;
+  }
+
+  .beatpad-spectrum-slot {
+    width: 44px;
+    height: 26px;
+    flex-basis: 44px;
+  }
+
+  .beatpad-toolbar-right {
+    gap: 2px;
+  }
+
+  .beatpad-icon {
+    width: 27px;
+    min-height: 28px;
+  }
+
+  .beatpad-share {
+    min-height: 28px;
+    padding: 0 6px;
+    font-size: 11px;
+  }
+
+  .beatpad-groove-row {
+    gap: 3px;
+    padding: 4px 6px;
+  }
+
+  .beatpad-groove-row > .beatpad-section-label {
+    font-size: 11px;
+  }
+
+  .beatpad-groove-actions {
+    gap: 2px;
+  }
+
+  .beatpad-groove-actions .gbtn {
+    padding: 0 5px;
+  }
+
+  .beatpad-grooves > button {
+    padding: 0 3px;
+  }
+
+  .beatpad-hint-nav {
+    gap: 5px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .beatpad-views {
+    width: 200px;
+  }
+
+  .beatpad-content {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+}
+
+@container (max-width: 420px) {
+  .beatpad-toolbar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .beatpad-play {
+    min-width: 74px;
+    min-height: 36px;
+    padding: 0 18px;
+    font-size: 14px;
+  }
+
+  .beatpad-play svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .beatpad-tempo-step {
+    width: 32px;
+    min-height: 30px;
+    font-size: 14px;
+  }
+
+  .beatpad-tempo-value {
+    min-width: 65px;
+    font-size: 13px;
+  }
+
+  .beatpad-tap {
+    min-height: 36px;
+    padding: 0 14px;
+    font-size: 13px;
+  }
+
+  .beatpad-kit {
+    flex-basis: 90px;
+  }
+
+  .beatpad-select {
+    min-height: 36px;
+    padding: 0 27px 0 10px;
+    background-position: right 9px center;
+    font-size: 12px;
+  }
+
+  .beatpad-spectrum-slot {
+    width: 88px;
+    height: 30px;
+    flex-basis: 88px;
+  }
+
+  .beatpad-toolbar-right {
+    margin-left: auto;
+  }
+
+  .beatpad-icon {
+    width: 34px;
+    min-height: 34px;
+  }
+
+  .beatpad-share {
+    min-height: 34px;
+    padding: 0 14px;
+    font-size: 13px;
+  }
+
+  .beatpad-groove-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px;
+    padding: 8px;
+  }
+
+  .beatpad-groove-row > .beatpad-section-label {
+    grid-column: 1;
+    grid-row: 1;
+    font-size: 12px;
+  }
+
+  .beatpad-groove-actions {
+    grid-column: 2;
+    grid-row: 1;
+    gap: 6px;
+  }
+
+  .beatpad-groove-actions .gbtn {
+    min-height: 32px;
+    padding: 0 14px;
+    font-size: 13px;
+  }
+
+  .beatpad-grooves {
+    width: 100%;
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .beatpad-grooves > button {
+    min-height: 32px;
+    padding: 0 5px;
+    font-size: 11px;
+  }
+
+  .beatpad-hint-nav {
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 8px 7px;
+  }
+
+  .beatpad-hint {
+    flex: 0 0 100%;
+    overflow: visible;
+    white-space: normal;
+  }
+
+  .beatpad-view-nav {
+    width: 100%;
+  }
+
+  .beatpad-views {
+    width: 100%;
+  }
+
+  .beatpad-views > button {
+    min-height: 32px;
+    padding: 0 6px;
+  }
+
+  .beatpad-content {
+    padding: 9px 8px;
+  }
+}
+
 @container (max-width: 360px) {
   .beatpad-toolbar-right {
     gap: 3px;
@@ -1006,13 +1335,8 @@
     padding-bottom: 5px;
   }
 
-  .beatpad-hint {
-    padding-top: 5px;
-    padding-bottom: 5px;
-  }
-
-  .beatpad-view-nav {
-    padding-bottom: 5px;
+  .beatpad-hint-nav {
+    padding-bottom: 3px;
   }
 
   .beatpad-content {
@@ -1022,8 +1346,122 @@
   }
 }
 
+@container (max-height: 360px) {
+  .beatpad-toolbar {
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .beatpad-toolbar .gbtn,
+  .beatpad-select {
+    height: 24px;
+    min-height: 24px;
+  }
+
+  .beatpad-play {
+    gap: 4px;
+  }
+
+  .beatpad-tempo-step {
+    width: 22px;
+    min-height: 22px;
+  }
+
+  .beatpad-groove-row {
+    padding-top: 1px;
+    padding-bottom: 1px;
+  }
+
+  .beatpad-groove-actions .gbtn {
+    height: 22px;
+    min-height: 22px;
+  }
+
+  .beatpad-grooves > button {
+    height: 22px;
+    min-height: 22px;
+    padding: 0 3px;
+  }
+
+  .beatpad-hint-nav {
+    padding-bottom: 1px;
+  }
+
+  .beatpad-views > button {
+    height: 22px;
+    min-height: 22px;
+  }
+
+  .beatpad-melody-header {
+    gap: 5px;
+  }
+
+  .beatpad-melody-header .beatpad-select-field {
+    gap: 1px;
+  }
+
+  .beatpad-melody-header .beatpad-select {
+    height: 20px;
+    min-height: 20px;
+  }
+
+  .beatpad-content {
+    gap: 2px;
+    padding: 0 8px;
+  }
+
+  .beatpad-grid-content,
+  .beatpad-melody-content {
+    overflow-y: hidden;
+  }
+
+  .beatpad-grid-layout.is-wide {
+    min-height: 0;
+    gap: 2px;
+  }
+
+  .beatpad-grid-layout.is-wide > .beatpad-grid {
+    min-height: 0;
+    grid-template-rows: 11px repeat(var(--tracks), minmax(18px, 1fr));
+    gap: 0;
+  }
+
+  .beatpad-grid-head,
+  .beatpad-track-name,
+  .beatpad-cell {
+    min-height: 18px;
+  }
+
+  .beatpad-track-name {
+    padding: 0 3px;
+  }
+}
+
 @container (max-height: 260px) {
   .beatpad-grid-content {
     justify-content: flex-start;
+  }
+}
+
+@media (pointer: coarse) {
+  .beatpad-toolbar .gbtn,
+  .beatpad-groove-actions .gbtn,
+  .beatpad-grooves > button,
+  .beatpad-views > button {
+    min-height: 32px;
+  }
+
+  .beatpad-tempo-step,
+  .beatpad-icon {
+    min-height: 32px;
+  }
+
+  .beatpad-cell,
+  .beatpad-track-name {
+    min-height: 32px;
+  }
+
+  .beatpad-grid-layout.is-wide > .beatpad-grid {
+    grid-template-rows: 20px repeat(var(--tracks), minmax(32px, 56px));
   }
 }

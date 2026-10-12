@@ -209,10 +209,16 @@ export default function BeatPad({ args }: AppProps) {
     context.clearRect(0, 0, canvasWidth, canvasHeight);
 
     const analyser = analyserRef.current;
+    const barCount = 16;
+    const gap = Math.max(1, Math.round(dpr));
+    const barWidth = (canvasWidth - gap * (barCount - 1)) / barCount;
     if (!active || !analyser) {
       canvas.dataset.level = '0';
-      context.fillStyle = 'rgba(196, 156, 101, 0.46)';
-      context.fillRect(0, canvasHeight - Math.max(1, dpr), canvasWidth, Math.max(1, dpr));
+      context.fillStyle = 'rgba(196, 156, 101, 0.28)';
+      const idleHeight = Math.max(2 * dpr, Math.round(canvasHeight * 0.12));
+      for (let bar = 0; bar < barCount; bar += 1) {
+        context.fillRect(bar * (barWidth + gap), canvasHeight - idleHeight, barWidth, idleHeight);
+      }
       return;
     }
 
@@ -221,9 +227,6 @@ export default function BeatPad({ args }: AppProps) {
     analyser.getByteFrequencyData(data);
     const average = data.reduce((sum, sample) => sum + sample, 0) / Math.max(1, data.length);
     canvas.dataset.level = String(Math.max(0, Math.min(255, Math.round(average))));
-    const barCount = 16;
-    const gap = Math.max(1, Math.round(dpr));
-    const barWidth = (canvasWidth - gap * (barCount - 1)) / barCount;
     const availableHeight = Math.max(1, canvasHeight - 2 * dpr);
     context.fillStyle = '#c49c65';
     for (let bar = 0; bar < barCount; bar += 1) {
@@ -236,6 +239,10 @@ export default function BeatPad({ args }: AppProps) {
       context.fillRect(bar * (barWidth + gap), canvasHeight - height, barWidth, height);
     }
   }, []);
+
+  useEffect(() => {
+    drawVisualizer(false);
+  }, [drawVisualizer]);
 
   const ensureVisualizer = useCallback((engine: BeatEngine) => {
     if (analyserRef.current) return true;
@@ -439,7 +446,7 @@ export default function BeatPad({ args }: AppProps) {
     if (window.matchMedia('(pointer: fine)').matches) rootRef.current?.focus({ preventScroll: true });
   }, []);
 
-  const narrow = width < 560;
+  const narrow = coarse && width < 560;
   const paged = pattern.length === 32 && width < 760;
   const visibleSteps = paged ? 16 : pattern.length;
   const stepOffset = paged ? page * 16 : 0;
@@ -829,15 +836,16 @@ export default function BeatPad({ args }: AppProps) {
         </div>
       </section>
 
-      <p className="beatpad-hint" aria-live="polite">{patternHint}{hint}</p>
-
-      <nav className="beatpad-view-nav" aria-label="Beat Pad Views">
-        <div className="gseg beatpad-views" role="group" aria-label="Views">
-          {VIEWS.map((item) => (
-            <button key={item.id} aria-pressed={view === item.id} onClick={() => setView(item.id)}>{item.label}</button>
-          ))}
-        </div>
-      </nav>
+      <div className="beatpad-hint-nav">
+        <p className="beatpad-hint" aria-live="polite">{patternHint}{hint}</p>
+        <nav className="beatpad-view-nav" aria-label="Beat Pad Views">
+          <div className="gseg beatpad-views" role="group" aria-label="Views">
+            {VIEWS.map((item) => (
+              <button key={item.id} aria-pressed={view === item.id} onClick={() => setView(item.id)}>{item.label}</button>
+            ))}
+          </div>
+        </nav>
+      </div>
 
       {view === 'drums' && (
         <main className="beatpad-content beatpad-grid-content" aria-label="Drum pattern">
