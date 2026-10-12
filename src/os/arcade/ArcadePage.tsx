@@ -1,6 +1,42 @@
-import type { KeyboardEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
+import { BoardList, BoardScopeNote } from './kit/board';
+import { formatBoardScore, getBoard, type Board } from './kit/leaderboard';
 import { categories, metas } from './manifest';
 import type { GameMeta } from './types';
+
+const ranked = metas.filter((m) => m.leaderboard);
+
+function Leaderboards() {
+  const [id, setId] = useState(ranked[0]?.id ?? '');
+  const [board, setBoard] = useState<Board | null>(null);
+  const game = ranked.find((m) => m.id === id);
+  useEffect(() => {
+    setBoard(null);
+    if (!game?.leaderboard) return;
+    let live = true;
+    getBoard(game.id, game.leaderboard).then((b) => live && setBoard(b));
+    return () => {
+      live = false;
+    };
+  }, [game]);
+  if (!game?.leaderboard) return null;
+  const spec = game.leaderboard;
+  return (
+    <section className="arcade-boards" aria-label="Leaderboards">
+      <div className="arcade-boards-bar">
+        <select aria-label="Game" value={id} onChange={(e) => setId(e.target.value)}>
+          {ranked.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.title}
+            </option>
+          ))}
+        </select>
+      </div>
+      <BoardScopeNote board={board} />
+      <BoardList board={board} fmt={(n) => formatBoardScore(n, spec)} />
+    </section>
+  );
+}
 
 /** Arrow keys move between tiles, using layout positions so it works at any column count. */
 function onGridKey(e: KeyboardEvent<HTMLDivElement>) {
@@ -54,13 +90,24 @@ function Tile({ g, onOpen }: { g: GameMeta; onOpen: (id: string) => void }) {
 }
 
 export function ArcadePage({ onOpen }: { onOpen: (id: string) => void }) {
+  const [boards, setBoards] = useState(false);
   const groups = categories.map((c) => ({ ...c, games: metas.filter((m) => m.category === c.id) })).filter((c) => c.games.length);
   return (
     <div className="arcade">
       <header className="arcade-head">
-        <h1>Arcade</h1>
-        <p>{metas.length ? `${metas.length} games, made for this computer.` : 'Games are on the way.'}</p>
+        <div className="arcade-head-row">
+          <h1>{boards ? 'Leaderboards' : 'Arcade'}</h1>
+          {ranked.length > 0 && (
+            <button type="button" className="arcade-pbtn" onClick={() => setBoards(!boards)}>
+              {boards ? 'All Games' : 'Leaderboards'}
+            </button>
+          )}
+        </div>
+        <p>{boards ? 'The top 100 scores for each game.' : metas.length ? `${metas.length} games, made for this computer.` : 'Games are on the way.'}</p>
       </header>
+      {boards ? (
+        <Leaderboards />
+      ) : (
       <div className="arcade-sections" onKeyDown={onGridKey}>
         {groups.map((c) => (
           <section key={c.id} className="arcade-section" aria-label={c.label}>
@@ -73,6 +120,7 @@ export function ArcadePage({ onOpen }: { onOpen: (id: string) => void }) {
           </section>
         ))}
       </div>
+      )}
     </div>
   );
 }

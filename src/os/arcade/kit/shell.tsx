@@ -5,6 +5,8 @@ import { ShellContext, type GameOverInfo, type GameStatus, type ShellApi } from 
 import { ArcadeHost } from './host';
 import { KeyState, scrollKeys } from './keys';
 import { useHighScore } from './score';
+import { NAME_MAX, savedName } from './leaderboard';
+import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMuted } from './sfx';
 import './kit.css';
 
@@ -26,7 +28,7 @@ export type GameShellProps = {
   style?: CSSProperties;
 };
 
-type Result = { score?: number; best: number | null; isBest: boolean; title?: string; detail?: string };
+type Result = { id: number; score?: number; best: number | null; isBest: boolean; title?: string; detail?: string };
 
 const Icon = ({ d, size = 14 }: { d: string; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -70,6 +72,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const statusRef = useRef(status);
   statusRef.current = status;
   const active = host.active && docVisible && seen;
+  const board = useRoundBoard(meta.id, compact ? undefined : meta.leaderboard, result?.score, result?.id);
+  const [boardOpen, setBoardOpen] = useState(false);
+  const [name, setName] = useState('');
   const fmt = useCallback((n: number) => (formatScore ? formatScore(n) : n.toLocaleString('en-US')), [formatScore]);
 
   useEffect(() => setTouch(!!os?.mobile || isTouchDevice()), [os?.mobile]);
@@ -87,6 +92,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     sfx.unlock();
     keys.clear();
     setResult(null);
+    setBoardOpen(false);
     setScoreState(null);
     setRound((r) => r + 1);
     setStatus('playing');
@@ -106,7 +112,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       if (statusRef.current === 'over') return;
       keys.clear();
       const isBest = final !== undefined && submit(final);
-      setResult({ score: final, best: null, isBest, ...info });
+      setResult({ id: Date.now(), score: final, best: null, isBest, ...info });
+      setBoardOpen(false);
+      setName(savedName());
       setStatus('over');
     },
     [keys, submit],
@@ -321,7 +329,26 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             </div>
           ))}
 
+        {status === 'over' && !compact && boardOpen && (
+          <div className="arcade-ov">
+            <div className="arcade-card arcade-lb-card">
+              <h2>Leaderboard</h2>
+              <BoardScopeNote board={board.board} />
+              <BoardList board={board.board} fmt={fmt} mine={board.mine} />
+              <div className="arcade-row">
+                <button type="button" className="arcade-btn" onClick={() => setBoardOpen(false)}>
+                  Back
+                </button>
+                <button type="button" className="arcade-btn arcade-btn-primary" onClick={restart} ref={autoFocus}>
+                  Play Again
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {status === 'over' &&
+          !boardOpen &&
           (compact ? (
             <button type="button" className="arcade-ov arcade-ov-compact" onClick={restart}>
               <Icon d={ic.restart} />
@@ -342,15 +369,53 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                   </div>
                 )}
                 {result?.detail && <p>{result.detail}</p>}
+                {board.canSubmit && (
+                  <form
+                    className="arcade-lb-form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (validName(name) && !board.busy) board.submit(name).then(() => setBoardOpen(true));
+                    }}
+                  >
+                    <span>{board.board?.scope === 'global' ? 'A Top 100 Score. Add Your Name.' : 'A Top 100 Score on This Device.'}</span>
+                    <div className="arcade-lb-field">
+                      <input
+                        className="arcade-input"
+                        type="text"
+                        aria-label="Your Name"
+                        placeholder="Your Name"
+                        maxLength={NAME_MAX}
+                        autoComplete="nickname"
+                        enterKeyHint="send"
+                        spellCheck={false}
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+                        }}
+                      />
+                      <button type="submit" className="arcade-btn" disabled={!validName(name) || board.busy}>
+                        Submit
+                      </button>
+                    </div>
+                  </form>
+                )}
                 {setup && <div className="arcade-setup">{setup}</div>}
                 <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={restart} ref={autoFocus}>
                   Play Again
                 </button>
-                {onExit && (
+                {(onExit || board.enabled) && (
                   <div className="arcade-row">
-                    <button type="button" className="arcade-btn" onClick={onExit}>
-                      Arcade
-                    </button>
+                    {board.enabled && (
+                      <button type="button" className="arcade-btn" onClick={() => setBoardOpen(true)}>
+                        Leaderboard
+                      </button>
+                    )}
+                    {onExit && (
+                      <button type="button" className="arcade-btn" onClick={onExit}>
+                        Arcade
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

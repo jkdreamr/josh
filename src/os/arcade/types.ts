@@ -1,5 +1,17 @@
 export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer';
 
+/** Opt-in global leaderboard. The server uses it to validate submissions. */
+export type LeaderboardSpec = {
+  /** 'desc' when a higher score wins, 'asc' for times where lower wins. */
+  order: 'desc' | 'asc';
+  /** Highest plausible score. Anything above it is rejected. */
+  max: number;
+  /** Lowest plausible score (default 0). Useful for times. */
+  min?: number;
+  /** 'time' shows milliseconds as seconds on the arcade home board (default 'number'). */
+  format?: 'number' | 'time';
+};
+
 export type GameMeta = {
   /** Must equal the folder name in src/os/arcade/games/<id>/. Lowercase, a-z 0-9 and dashes. */
   id: string;
@@ -17,6 +29,8 @@ export type GameMeta = {
   glyph: string;
   /** Sort order inside its category (ascending). */
   order: number;
+  /** Set to give the game a top 100 board. Leave out for games without a comparable score. */
+  leaderboard?: LeaderboardSpec;
 };
 
 export type GameProps = { compact?: boolean; onExit?: () => void };
