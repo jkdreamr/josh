@@ -7,7 +7,7 @@ import Messages from './apps/Messages';
 import Notes from './apps/Notes';
 import { SoundCloud, Spotify } from './apps/Music';
 import { Instagram, XApp, LinkedIn, GitHub } from './apps/Social';
-import Venmo from './apps/Venmo';
+import BuyMeACoffee from './apps/BuyMeACoffee';
 import Mail from './apps/Mail';
 import Terminal from './apps/Terminal';
 import CoxBox from './apps/CoxBox';
@@ -42,7 +42,7 @@ export const apps: Record<AppId, AppDef> = {
   x: { id: 'x', title: 'X', icon: 'x', Component: XApp, w: 560, h: 620, theme: 'dark', dock: true, keywords: 'twitter tweets joshuaykoo' },
   linkedin: { id: 'linkedin', title: 'LinkedIn', icon: 'linkedin', Component: LinkedIn, w: 720, h: 620, dock: true, keywords: 'resume cv experience' },
   github: { id: 'github', title: 'GitHub', icon: 'github', Component: GitHub, w: 720, h: 580, theme: 'dark', dock: true, keywords: 'code repos jkdreamr' },
-  venmo: { id: 'venmo', title: 'Venmo', icon: 'venmo', Component: Venmo, w: 380, h: 560, frame: 'overlay', dock: true, keywords: 'venmo pay money tip send request josdreamr' },
+  coffee: { id: 'coffee', title: 'Buy Me a Coffee', icon: 'coffee', Component: BuyMeACoffee, w: 380, h: 560, frame: 'overlay', dock: true, keywords: 'buy me a coffee tip support joshuakoo' },
   mail: { id: 'mail', title: 'Mail', icon: 'mail', Component: Mail, w: 580, h: 480, dock: true, keywords: 'email contact' },
   terminal: { id: 'terminal', title: 'Terminal', icon: 'terminal', Component: Terminal, w: 660, h: 420, theme: 'dark', frame: 'overlay', dock: true, keywords: 'shell zsh command line' },
   coxbox: { id: 'coxbox', title: 'Cox Box', icon: 'coxbox', Component: CoxBox, w: 420, h: 300, theme: 'dark', dock: true, keywords: 'rowing stanford' },
@@ -66,7 +66,7 @@ export const dockOrder: AppId[] = [
   'x',
   'linkedin',
   'github',
-  'venmo',
+  'coffee',
   'terminal',
   'coxbox',
   'photobooth',

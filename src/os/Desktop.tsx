@@ -67,7 +67,7 @@ type Props = {
 /** Routes a URL to the in-desktop app that best represents it. */
 function routeUrl(url: string): { id: AppId; args: OpenArgs } {
   const u = url.toLowerCase();
-  if (u.includes('venmo.com/u/josdreamr')) return { id: 'venmo', args: {} };
+  if (u.includes('buymeacoffee.com/joshuakoo')) return { id: 'coffee', args: {} };
   if (u.includes('instagram.com/atkelix')) return { id: 'instagram', args: { account: 'music' } };
   if (u.includes('instagram.com')) return { id: 'instagram', args: { account: 'personal' } };
   if (u.includes('x.com/joshuaykoo') || u.includes('twitter.com/joshuaykoo')) return { id: 'x', args: {} };

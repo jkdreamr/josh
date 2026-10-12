@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { siGithub, siInstagram, siSoundcloud, siSpotify, siX, siYoutube } from 'simple-icons';
+import { siBuymeacoffee, siGithub, siInstagram, siSoundcloud, siSpotify, siX, siYoutube } from 'simple-icons';
 
 type Glyph = { path: string };
 
@@ -10,12 +10,6 @@ function Brand({ icon, size = 56, color = '#fff', viewBox = '0 0 24 24' }: { ico
     </svg>
   );
 }
-
-// The v from the simple-icons Venmo wordmark.
-export const venmoV = {
-  path: 'M2.543 10.009C2.632 10.195 2.689 10.421 2.689 10.752C2.689 11.358 2.26 12.246 1.912 12.812L1.539 9.823L0 9.969L0.705 14.169H2.462C3.232 13.159 4.18 11.721 4.18 10.615C4.18 10.268 4.107 9.993 3.945 9.726L2.543 10.009Z',
-  viewBox: '0 9.726 4.18 4.443',
-};
 
 const linkedinPath =
   'M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.34V9h3.42v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.56V9h3.56v11.45z';
@@ -32,7 +26,7 @@ export type IconKind =
   | 'x'
   | 'linkedin'
   | 'github'
-  | 'venmo'
+  | 'coffee'
   | 'mail'
   | 'terminal'
   | 'coxbox'
@@ -133,8 +127,8 @@ export function Glyph({ kind }: { kind: IconKind }): ReactNode {
       return <Brand icon={siX} size={30} />;
     case 'github':
       return <Brand icon={siGithub} size={36} />;
-    case 'venmo':
-      return <Brand icon={venmoV} size={34} viewBox={venmoV.viewBox} />;
+    case 'coffee':
+      return <Brand icon={siBuymeacoffee} size={34} color="#000" />;
     case 'linkedin':
       return <Brand icon={{ path: linkedinPath }} size={32} />;
     case 'messages':
@@ -248,7 +242,7 @@ const tiles: Partial<Record<IconKind, CSSProperties>> = {
   x: tile('linear-gradient(180deg,#1e1e1e,#000)'),
   linkedin: tile('linear-gradient(180deg,#1a8cd8,#0a66c2)'),
   github: tile('linear-gradient(180deg,#30363d,#0d1117)'),
-  venmo: tile('#008CFF'),
+  coffee: tile('#FFDD00'),
   mail: tile('linear-gradient(180deg,#5ab8ff,#1d6ff2)'),
   terminal: tile('linear-gradient(180deg,#3a3a3c,#121214)', { boxShadow: 'inset 0 0 0 1.5px rgba(255,255,255,.18)' }),
   coxbox: tile('linear-gradient(180deg,#d63b45,#8c1515)'),
