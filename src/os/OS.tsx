@@ -176,8 +176,11 @@ export default function OS() {
     if (device === 'laptop' && (mode === 'pending' || (mode === '3d' && !ready))) return;
     booted.current = true;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduced) setPhase('on');
-    else boot(false);
+    if (reduced) {
+      clearTimers();
+      setPhase('hello');
+      later(() => setPhase('on'), HELLO_MS);
+    } else boot(false);
   }, [boot, device, mode, ready]);
 
   useEffect(() => {

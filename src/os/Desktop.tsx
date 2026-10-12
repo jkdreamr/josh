@@ -620,7 +620,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
 
 type MenuItem = { label: string; hint?: string; action?: () => void } | 'sep';
 
-function MenuItems({ items, onPick }: { items: MenuItem[]; onPick: () => void }) {
+function MenuItems({ items, onPick }: { items: MenuItem[]; onPick: (viaKeyboard: boolean) => void }) {
   return (
     <>
       {items.map((it, i) =>
@@ -631,8 +631,8 @@ function MenuItems({ items, onPick }: { items: MenuItem[]; onPick: () => void })
             key={i}
             role="menuitem"
             disabled={!it.action}
-            onClick={() => {
-              onPick();
+            onClick={(e) => {
+              onPick(e.detail === 0);
               it.action?.();
             }}
           >
@@ -650,6 +650,7 @@ function Menu({
   id,
   openId,
   setOpenId,
+  focusOnOpen,
   label,
   items,
   bold,
@@ -658,26 +659,108 @@ function Menu({
   id: string;
   openId: string | null;
   setOpenId: (id: string | null) => void;
+  focusOnOpen: { current: boolean };
   label: ReactNode;
   items: MenuItem[];
   bold?: boolean;
   className?: string;
 }) {
   const open = openId === id;
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (open && focusOnOpen.current) {
+      focusOnOpen.current = false;
+      popRef.current?.querySelector<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true });
+    }
+  }, [open]);
+
   return (
     <div
       className={`menu ${className ?? ''} ${open ? 'is-open' : ''}`}
       data-menu={id}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          e.preventDefault();
+          const bar = e.currentTarget.closest('.menubar');
+          const menus = Array.from(bar?.querySelectorAll<HTMLElement>('.menu') ?? [])
+            .map((menu) => ({ menu, button: menu.querySelector<HTMLButtonElement>('.menu-btn') }))
+            .filter((entry): entry is { menu: HTMLElement; button: HTMLButtonElement } => Boolean(entry.button && entry.button.offsetParent !== null));
+          if (!menus.length) return;
+          const current = menus.findIndex((entry) => entry.menu === e.currentTarget);
+          const direction = e.key === 'ArrowRight' ? 1 : -1;
+          const next = menus[(current + direction + menus.length) % menus.length];
+          next.button.focus({ preventScroll: true });
+          if (openId !== null) {
+            focusOnOpen.current = true;
+            setOpenId(next.menu.dataset.menu ?? null);
+          }
+          return;
+        }
+
+        if (e.target === btnRef.current) {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (open && e.key !== 'ArrowDown') {
+              setOpenId(null);
+              return;
+            }
+            if (open) {
+              popRef.current?.querySelector<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true });
+              return;
+            }
+            focusOnOpen.current = true;
+            setOpenId(id);
+          } else if (e.key === 'Escape' && open) {
+            e.preventDefault();
+            e.stopPropagation();
+            setOpenId(null);
+          }
+          return;
+        }
+
+        const pop = popRef.current;
+        if (!pop?.contains(e.target as Node)) return;
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpenId(null);
+          btnRef.current?.focus({ preventScroll: true });
+          return;
+        }
+
+        const buttons = Array.from(pop.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)'));
+        if (!buttons.length) return;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+          const direction = e.key === 'ArrowDown' ? 1 : -1;
+          const next = current < 0 ? (direction > 0 ? 0 : buttons.length - 1) : (current + direction + buttons.length) % buttons.length;
+          buttons[next]?.focus({ preventScroll: true });
+        } else if (e.key === 'Home' || e.key === 'End') {
+          e.preventDefault();
+          (e.key === 'Home' ? buttons[0] : buttons[buttons.length - 1])?.focus({ preventScroll: true });
+        }
+      }}
+      onBlur={(e) => {
+        const next = e.relatedTarget as Node | null;
+        if (open && next && !e.currentTarget.contains(next)) setOpenId(null);
+      }}
       onPointerEnter={(e) => {
         if (e.pointerType === 'mouse' && openId !== null && openId !== id) setOpenId(id);
       }}
     >
       <button
+        ref={btnRef}
         className={`menu-btn ${bold ? 'is-bold' : ''}`}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           e.preventDefault();
           setOpenId(open ? null : id);
+        }}
+        onClick={(e) => {
+          if (e.detail === 0) setOpenId(open ? null : id);
         }}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -685,8 +768,19 @@ function Menu({
         {label}
       </button>
       {open && (
-        <div className="menu-pop" role="menu">
-          <MenuItems items={items} onPick={() => setOpenId(null)} />
+        <div className="menu-pop" role="menu" ref={popRef}>
+          <MenuItems
+            items={items}
+            onPick={(viaKeyboard) => {
+              setOpenId(null);
+              if (viaKeyboard) {
+                requestAnimationFrame(() => {
+                  const a = document.activeElement;
+                  if (!a || a === document.body) btnRef.current?.focus({ preventScroll: true });
+                });
+              }
+            }}
+          />
         </div>
       )}
     </div>
@@ -764,6 +858,7 @@ function MenuBar({
   const now = useNow(15_000);
   const openWins = wins.filter((w) => w.state !== 'closing');
   const [openId, setOpenId] = useState<string | null>(null);
+  const focusOnOpen = useRef(false);
   const barRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (openId === null) return;
@@ -783,7 +878,7 @@ function MenuBar({
       window.removeEventListener('blur', onKey as unknown as () => void);
     };
   }, [openId]);
-  const shared = { openId, setOpenId };
+  const shared = { openId, setOpenId, focusOnOpen };
   return (
     <div className="menubar" ref={barRef}>
       <div className="mb-left">
