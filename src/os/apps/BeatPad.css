@@ -75,8 +75,8 @@
 
 .beatpad-kit {
   display: flex;
-  min-width: 0;
-  flex: 0 1 92px;
+  width: max-content;
+  flex: none;
 }
 
 .beatpad-select {
@@ -94,6 +94,12 @@
   color: #ebece3;
   color-scheme: dark;
   font: 500 12px/1.2 var(--gc-font);
+}
+
+.beatpad-kit .beatpad-select {
+  width: max-content;
+  min-width: calc(8ch + 3.2em);
+  field-sizing: content;
 }
 
 .beatpad-spectrum-slot {
@@ -471,7 +477,7 @@
 }
 
 .beatpad-pads-content {
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .beatpad-pads {
@@ -1021,10 +1027,6 @@
     font-size: 11px;
   }
 
-  .beatpad-kit {
-    flex-basis: 72px;
-  }
-
   .beatpad-select {
     padding-right: 18px;
     padding-left: 7px;
@@ -1057,7 +1059,7 @@
 @container (max-width: 500px) {
   .beatpad-toolbar {
     gap: 3px;
-    padding: 4px 6px;
+    padding: 4px;
   }
 
   .beatpad-play {
@@ -1094,10 +1096,6 @@
     font-size: 11px;
   }
 
-  .beatpad-kit {
-    flex-basis: 58px;
-  }
-
   .beatpad-select {
     min-height: 28px;
     padding-right: 16px;
@@ -1107,9 +1105,9 @@
   }
 
   .beatpad-spectrum-slot {
-    width: 44px;
+    width: 36px;
     height: 26px;
-    flex-basis: 44px;
+    flex-basis: 36px;
   }
 
   .beatpad-toolbar-right {
@@ -1198,10 +1196,6 @@
     min-height: 36px;
     padding: 0 14px;
     font-size: 13px;
-  }
-
-  .beatpad-kit {
-    flex-basis: 90px;
   }
 
   .beatpad-select {

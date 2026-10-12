@@ -685,16 +685,16 @@ export default function BeatPad({ args }: AppProps) {
   const selectedPattern = playhead?.pattern ?? null;
   const patternHint = state.current !== 0 || state.songMode ? `Pattern ${PATTERN_NAMES[state.current]}. ` : '';
   const hint = view === 'pads'
-    ? coarse ? 'Tap a pad to play it. Press Record to add hits to the loop.' : 'Keys Q to T play drums, A to K play keys, Z to M play bass.'
+    ? coarse ? 'Tap a pad to play it. Press Record to add hits to the loop.' : 'Drums Q-T, keys A-K, bass Z-M.'
     : view === 'melody'
-      ? 'Choose a Key and Scale, then edit notes in the grid.'
+      ? 'Set Key and Scale, then edit notes.'
       : view === 'song'
-        ? 'Arrange patterns and choose the playback mode.'
+        ? 'Arrange patterns and choose playback.'
         : view === 'mix'
-          ? 'Adjust the track and effect levels.'
+          ? 'Adjust track and effect levels.'
           : coarse
-            ? 'Tap Play, then tap squares to add or remove hits.'
-            : 'Press Play, then click squares to add or remove hits.';
+            ? 'Tap Play, then tap squares to edit.'
+            : 'Press Play, then click squares to edit.';
 
   const renderGridBlock = (block: number[], blockIndex: number) => (
     <div
