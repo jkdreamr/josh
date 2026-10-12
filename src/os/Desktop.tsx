@@ -872,13 +872,10 @@ function MenuBar({
       if (bar?.contains(document.activeElement)) bar.querySelector<HTMLButtonElement>(`.menu[data-menu="${openId}"] .menu-btn`)?.focus({ preventScroll: true });
       setOpenId(null);
     });
-    const onBlur = () => {};
     window.addEventListener('pointerdown', onDown, true);
-    window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('pointerdown', onDown, true);
       offEscape();
-      window.removeEventListener('blur', onBlur);
     };
   }, [openId]);
   const shared = { openId, setOpenId, focusOnOpen };
