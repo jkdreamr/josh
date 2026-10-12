@@ -11,6 +11,13 @@ const seeded = (seed: number) => () => {
   return seed / 4294967296;
 };
 
+const inclusiveRange = (start: number, end: number, step: number) => {
+  const values: number[] = [];
+  for (let value = start; value <= end + 1e-9; value += step) values.push(value);
+  if (values.at(-1) !== end) values.push(end);
+  return values;
+};
+
 test('shuttle drag approaches its 6.8 m/s terminal speed', () => {
   assert.ok(Math.abs(terminalSpeedAfter(5, { x: 4, y: 10 }) - 6.8) < 0.05);
 });
@@ -45,38 +52,113 @@ test('a shuttle that lands on the hitter side is an own-side fault from either e
   assert.equal(flight.fault, 'own-side');
 });
 
-test('every stroke from a clean contact clears the net and lands in from both ends', () => {
-  const random = seeded(7);
-  const contacts: Array<{ type: ShotType; start: { x: number; y: number } }> = [
-    { type: 'clear', start: { x: -5.4, y: 2.3 } },
-    { type: 'clear', start: { x: -2.6, y: 1.9 } },
-    { type: 'drop', start: { x: -4.8, y: 2.2 } },
-    { type: 'drop', start: { x: -2.4, y: 1.9 } },
-    { type: 'smash', start: { x: -3.2, y: 2.7 } },
-    { type: 'smash', start: { x: -1.6, y: 2.5 } },
-    { type: 'drive', start: { x: -3.8, y: 1.3 } },
-    { type: 'drive', start: { x: -1.4, y: 1.4 } },
-    { type: 'net', start: { x: -1, y: 0.5 } },
-    { type: 'net', start: { x: -2.1, y: 0.9 } },
-    { type: 'lift', start: { x: -1.2, y: 0.4 } },
-    { type: 'lift', start: { x: -4.5, y: 0.8 } },
-    { type: 'serve', start: { x: -2.9, y: 1.05 } },
-    { type: 'high-serve', start: { x: -2.9, y: 1.05 } },
+test('every stroke clears the net and lands in from every legal contact', () => {
+  const sweeps: Array<{ type: ShotType; minY: number; maxY: number }> = [
+    { type: 'clear', minY: 0.95, maxY: 3.2 },
+    { type: 'drop', minY: 1, maxY: 3.2 },
+    { type: 'smash', minY: 2, maxY: 3.2 },
+    { type: 'drive', minY: 0.95, maxY: 2.4 },
+    { type: 'net', minY: 0.25, maxY: 1.75 },
+    { type: 'lift', minY: 0.25, maxY: 1 },
   ];
-  for (const direction of [1, -1] as const) {
-    for (const { type, start } of contacts) {
-      for (let repeat = 0; repeat < 6; repeat += 1) {
-        const mirrored = { x: start.x * direction, y: start.y };
-        const plan = planShot(type, direction, mirrored, random);
-        assert.equal(plan.fault, undefined, `${type} planned a fault`);
-        const clearance = simulateNetClearance(mirrored, plan.velocity);
-        assert.ok(clearance !== null && clearance >= NET_HEIGHT, `${type} from ${mirrored.x},${mirrored.y} crossed at ${clearance}`);
-        const landing = simulateLanding(mirrored, plan.velocity);
-        assert.ok(landing.x * direction > 0 && Math.abs(landing.x) <= COURT_HALF_LENGTH, `${type} landed at ${landing.x}`);
-        if (type === 'serve' || type === 'high-serve') assert.ok(Math.abs(landing.x) >= SHORT_SERVICE_LINE, `${type} was short`);
+  const directions = [1, -1] as const;
+  const xs = inclusiveRange(-6.7, -0.3, 0.4);
+  let sample = 0;
+  const checkPlan = (type: ShotType, x: number, y: number, seed: number) => {
+    for (const direction of directions) {
+      const start = { x: x * direction, y };
+      const plan = planShot(type, direction, start, seeded(seed * 7919 + 12345));
+      const context = `${type} from (${start.x},${y}), direction ${direction}, seed ${seed}`;
+      assert.equal(plan.fault, undefined, `${context} planned ${plan.fault}`);
+      const clearance = simulateNetClearance(start, plan.velocity);
+      assert.ok(clearance !== null && clearance >= NET_HEIGHT, `${context} crossed at ${clearance}`);
+      const landing = simulateLanding(start, plan.velocity);
+      assert.ok(landing.x * direction > 0 && Math.abs(landing.x) <= COURT_HALF_LENGTH, `${context} landed at ${landing.x}`);
+      if (type !== 'smash') {
+        if (Math.abs(start.x) >= 0.65) assert.ok(Math.abs(landing.x - plan.targetX) <= 0.3, `${context} landed at ${landing.x}, target ${plan.targetX}`);
+      } else {
+        assert.ok(plan.type === 'smash' || plan.type === 'drive', `${context} planned ${plan.type}`);
+        if (y >= 2.4) assert.equal(plan.type, 'smash', `${context} fell back to drive`);
+        if (plan.type === 'smash') {
+          const speed = Math.hypot(plan.velocity.vx, plan.velocity.vy);
+          assert.ok(plan.velocity.vy < 0, `${context} had vy ${plan.velocity.vy}`);
+          assert.ok(speed >= 42, `${context} had speed ${speed}`);
+          assert.ok(clearance >= NET_HEIGHT + 0.1, `${context} cleared at ${clearance}`);
+        }
+      }
+      if (type === 'serve' || type === 'high-serve') {
+        assert.ok(Math.abs(landing.x) >= SHORT_SERVICE_LINE, `${context} landed short at ${landing.x}`);
+      }
+    }
+  };
+
+  for (const { type, minY, maxY } of sweeps) {
+    for (const x of xs) {
+      for (const y of inclusiveRange(minY, maxY, 0.15)) {
+        for (let repeat = 0; repeat < 4; repeat += 1) checkPlan(type, x, y, ++sample);
       }
     }
   }
+  for (const type of ['serve', 'high-serve'] as const) {
+    for (const x of inclusiveRange(-6.2, -2, 0.4)) {
+      for (let repeat = 0; repeat < 4; repeat += 1) checkPlan(type, x, 1.05, ++sample);
+    }
+  }
+});
+
+test('smashes are steep from the front and flatter from the back', () => {
+  const smashProfile = (start: { x: number; y: number }) => {
+    const depths: number[] = [];
+    const angles: number[] = [];
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const plan = planShot('smash', 1, start, seeded(seed * 7919 + 12345));
+      assert.equal(plan.type, 'smash', `smash from (${start.x},${start.y}) fell back to ${plan.type}`);
+      const landing = simulateLanding(start, plan.velocity);
+      depths.push(landing.x);
+      angles.push(Math.atan2(-plan.velocity.vy, Math.abs(plan.velocity.vx)) * 180 / Math.PI);
+    }
+    return {
+      meanDepth: depths.reduce((sum, depth) => sum + depth, 0) / depths.length,
+      meanAngle: angles.reduce((sum, angle) => sum + angle, 0) / angles.length,
+      depths,
+    };
+  };
+  const back = smashProfile({ x: -6.2, y: 2.8 });
+  for (const depth of back.depths) assert.ok(depth >= 3 && depth <= 5.6, `back-court smash landed ${depth} m past the net`);
+  assert.ok(back.meanAngle < 12, `back-court mean downward angle was ${back.meanAngle}°`);
+
+  const front = smashProfile({ x: -1, y: 3 });
+  assert.ok(front.meanAngle > 30, `front-court mean downward angle was ${front.meanAngle}°`);
+  assert.ok(front.meanDepth < 3.5, `front-court mean depth was ${front.meanDepth} m`);
+  assert.ok(front.meanAngle > back.meanAngle, `front angle ${front.meanAngle}° did not exceed back angle ${back.meanAngle}°`);
+});
+
+test('a stretched smash can still find the net', () => {
+  const start = { x: -5.5, y: 2.8 };
+  const sweep = (accuracy: number) => {
+    const depths: number[] = [];
+    let failsNet = 0;
+    let landedIn = 0;
+    for (let seed = 1; seed <= 400; seed += 1) {
+      const plan = planShot('smash', 1, start, seeded(seed * 7919 + 12345), accuracy);
+      const clearance = simulateNetClearance(start, plan.velocity);
+      if (clearance === null || clearance < NET_HEIGHT) failsNet += 1;
+      const landing = simulateLanding(start, plan.velocity);
+      depths.push(landing.x);
+      if (landing.x > 0 && Math.abs(landing.x) <= COURT_HALF_LENGTH) landedIn += 1;
+    }
+    const meanDepth = depths.reduce((sum, depth) => sum + depth, 0) / depths.length;
+    const depthDeviation = Math.sqrt(depths.reduce((sum, depth) => sum + (depth - meanDepth) ** 2, 0) / depths.length);
+    return { failsNet, landedIn, depthDeviation };
+  };
+  const stretched = sweep(0.2);
+  const clean = sweep(1);
+  assert.ok(stretched.failsNet > 0, `no stretched smash crossed low or missed the net; count ${stretched.failsNet}/400`);
+  assert.ok(stretched.landedIn >= 360, `only ${stretched.landedIn}/400 stretched smashes landed in`);
+  assert.ok(
+    stretched.depthDeviation >= clean.depthDeviation * 1.25,
+    `stretched landing-depth deviation ${stretched.depthDeviation} was less than 1.25x clean deviation ${clean.depthDeviation}`,
+  );
 });
 
 test('a stretched contact scatters more than a clean one', () => {
