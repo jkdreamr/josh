@@ -12,7 +12,7 @@ export type AppId =
   | 'x'
   | 'linkedin'
   | 'github'
-  | 'venmo'
+  | 'coffee'
   | 'mail'
   | 'terminal'
   | 'coxbox'

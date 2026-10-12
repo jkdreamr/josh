@@ -964,7 +964,7 @@ kbd {
   width: 62%;
   height: 62%;
 }
-.icon-venmo > svg {
+.icon-coffee > svg {
   width: 54%;
   height: 54%;
 }
@@ -2769,10 +2769,10 @@ kbd {
   padding: 0 20px 30px;
 }
 
-/* venmo */
-.venmo {
+/* coffee */
+.coffee {
   container-type: size;
-  container-name: venmo;
+  container-name: coffee;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -2781,11 +2781,11 @@ kbd {
   color: #1d1d1f;
   background: #fff;
 }
-.venmo-header {
+.coffee-header {
   flex: none;
   height: 40px;
 }
-.venmo-content {
+.coffee-content {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -2795,11 +2795,11 @@ kbd {
   gap: clamp(6px, 1.8cqh, 14px);
   padding: 0 24px 22px;
 }
-.venmo-content > * {
+.coffee-content > * {
   width: 100%;
   max-width: 360px;
 }
-.venmo-profile {
+.coffee-profile {
   flex: none;
   display: flex;
   flex-direction: column;
@@ -2807,34 +2807,35 @@ kbd {
   gap: 2px;
   text-align: center;
 }
-.venmo-identity {
+.coffee-identity {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
 }
-.venmo-avatar {
+.coffee-avatar {
   width: 72px;
   height: 72px;
   margin-bottom: 2px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  color: #fff;
-  background: linear-gradient(135deg, #3fa9ff, #0074de);
-  font-size: 26px;
-  font-weight: 600;
+  background: #FFDD00;
 }
-.venmo-name {
+.coffee-avatar svg {
+  width: 58%;
+  height: 58%;
+}
+.coffee-name {
   font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.025em;
 }
-.venmo-handle {
+.coffee-handle {
   color: #6e6e73;
   font-size: 14px;
 }
-.venmo-qr-wrap {
+.coffee-qr-wrap {
   flex: 0 1 276px;
   min-height: 0;
   display: flex;
@@ -2843,7 +2844,7 @@ kbd {
   justify-content: center;
   gap: 8px;
 }
-.venmo-qr-card {
+.coffee-qr-card {
   position: relative;
   flex: 0 1 auto;
   height: min(100%, 248px);
@@ -2857,14 +2858,14 @@ kbd {
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
-.venmo-qr-card > svg {
+.coffee-qr-card > svg {
   width: auto;
   height: 100%;
   max-height: 220px;
   aspect-ratio: 1;
   background: #fff;
 }
-.venmo-mark {
+.coffee-mark {
   position: absolute;
   left: 50%;
   top: 50%;
@@ -2876,29 +2877,29 @@ kbd {
   border-radius: 24%;
   background: #fff;
 }
-.venmo-mark svg {
+.coffee-mark svg {
   width: 65%;
   height: 65%;
 }
-.venmo-caption {
+.coffee-caption {
   flex: none;
   color: #8e8e93;
   font-size: 12px;
 }
-.venmo-tagline {
+.coffee-tagline {
   flex: none;
   margin: 0;
   color: #6e6e73;
   font-size: 13px;
   text-align: center;
 }
-.venmo-actions {
+.coffee-actions {
   flex: none;
   display: flex;
   gap: 10px;
   width: 100%;
 }
-.venmo-actions button {
+.coffee-actions button {
   flex: 1;
   height: 44px;
   border-radius: 22px;
@@ -2908,62 +2909,62 @@ kbd {
   font-weight: 600;
   transition: background 0.16s, transform 0.16s;
 }
-.venmo-actions button:hover {
+.coffee-actions button:hover {
   background: #0077e0;
 }
-.venmo-actions button:active {
+.coffee-actions button:active {
   transform: scale(0.97);
 }
-.venmo-actions button:focus-visible {
+.coffee-actions button:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px rgba(0, 140, 255, 0.35);
 }
-@container venmo (max-height: 460px) {
-  .venmo-header {
+@container coffee (max-height: 460px) {
+  .coffee-header {
     height: 30px;
   }
-  .venmo-content {
+  .coffee-content {
     gap: 4px;
     padding: 0 16px 10px;
   }
-  .venmo-profile {
+  .coffee-profile {
     flex-direction: row;
     justify-content: center;
     gap: 8px;
     text-align: left;
   }
-  .venmo-identity {
+  .coffee-identity {
     align-items: flex-start;
   }
-  .venmo-avatar {
+  .coffee-avatar {
     flex: none;
     width: 44px;
     height: 44px;
     margin: 0;
     font-size: 18px;
   }
-  .venmo-name {
+  .coffee-name {
     font-size: 16px;
   }
-  .venmo-handle {
+  .coffee-handle {
     font-size: 12px;
   }
-  .venmo-tagline {
+  .coffee-tagline {
     display: none;
   }
-  .venmo-qr-wrap {
+  .coffee-qr-wrap {
     gap: 5px;
   }
-  .venmo-actions button {
+  .coffee-actions button {
     height: 38px;
   }
 }
-@container venmo (max-height: 300px) {
-  .venmo-content {
+@container coffee (max-height: 300px) {
+  .coffee-content {
     gap: 2px;
     padding-bottom: 6px;
   }
-  .venmo-caption {
+  .coffee-caption {
     display: none;
   }
 }
