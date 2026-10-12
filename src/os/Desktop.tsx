@@ -677,11 +677,12 @@ function Menu({
               setOpenId(null);
               return;
             }
-            focusOnOpen.current = true;
-            setOpenId(id);
             if (open) {
               popRef.current?.querySelector<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true });
+              return;
             }
+            focusOnOpen.current = true;
+            setOpenId(id);
           } else if (e.key === 'Escape' && open) {
             e.preventDefault();
             e.stopPropagation();
