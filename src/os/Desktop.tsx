@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react';
 import { apps, dockOrder, games, mobileDock, tabletDock } from './registry';
 import { AppIcon, type IconKind } from './icons';
 import { OSContext, useOS as useOSLocal, type AppId, type OpenArgs, type Origin, type OSApi } from './types';
@@ -6,7 +6,7 @@ import { folders, links, profile } from './data';
 import Wallpaper from './Wallpaper';
 import Banner from './Banner';
 import HomeScreen, { originOf } from './HomeScreen';
-import { clamp, useNow, useWeather, type Weather } from './hooks';
+import { clamp, monthGrid, useBattery, useNow, useWeatherReport, type BatteryView, type Weather } from './hooks';
 
 const MENU_H = 26;
 const DOCK_SPACE = 78;
@@ -86,6 +86,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   const [dragging, setDragging] = useState(false);
   const [launcher, setLauncher] = useState(false);
   const [toast, setToast] = useState(false);
+  const [welcomeAt, setWelcomeAt] = useState<number | 'pending' | 'cleared'>('pending');
   const holdBanner = useRef(false);
   const holdBannerTimer = useRef<number | null>(null);
   const [ctx, setCtx] = useState<{ x: number; y: number; icon?: string } | null>(null);
@@ -258,6 +259,14 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
     };
   }, [scheduleHeldBanner]);
   const dismissToast = useCallback(() => setToast(false), []);
+  useEffect(() => {
+    if (toast) setWelcomeAt((at) => (at === 'pending' ? Date.now() : at));
+  }, [toast]);
+  const welcomeText = `hey, welcome to my ${mobile ? (tablet ? 'ipad' : 'phone') : 'computer'}. poke around, or text me.`;
+  const notices = useMemo<Notice[]>(
+    () => (typeof welcomeAt === 'number' ? [{ id: 'welcome', app: 'messages', title: 'Josh', body: welcomeText, at: welcomeAt }] : []),
+    [welcomeAt, welcomeText],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -441,7 +450,19 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
         onContextMenu={onContextMenu}
       >
         <Wallpaper />
-        {mobile ? <StatusBar /> : <MenuBar title={activeTitle} wins={wins} onFocus={focus} onClose={close} />}
+        {mobile ? <StatusBar /> : <MenuBar
+            title={activeTitle}
+            wins={wins}
+            onFocus={focus}
+            onClose={close}
+            notices={notices}
+            onOpenNotice={() => {
+              setWelcomeAt('cleared');
+              open('messages');
+            }}
+            onClearNotice={() => setWelcomeAt('cleared')}
+            onShowNotices={dismissToast}
+          />}
 
         {mobile ? <HomeScreen /> : <DesktopIcons />}
 
@@ -547,11 +568,19 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
           />
         )}
 
-        <Banner show={toast} mobile={mobile} onDismiss={dismissToast} onOpen={() => open('messages')}>
+        <Banner
+          show={toast}
+          mobile={mobile}
+          onDismiss={dismissToast}
+          onOpen={() => {
+            setWelcomeAt('cleared');
+            open('messages');
+          }}
+        >
           <AppIcon kind="messages" size={mobile ? 38 : 34} />
           <span className="toast-text">
             <b>Josh</b>
-            <span>hey, welcome to my {mobile ? (tablet ? 'ipad' : 'phone') : 'computer'}. poke around, or text me.</span>
+            <span>{welcomeText}</span>
           </span>
           <small>now</small>
         </Banner>
@@ -683,8 +712,8 @@ function ContextMenu({ x, y, screen, items, onClose }: { x: number; y: number; s
   );
 }
 
-function WeatherIcon({ icon }: { icon: Weather['icon'] }) {
-  const common = { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const };
+function WeatherIcon({ icon, size = 14 }: { icon: Weather['icon']; size?: number }) {
+  const common = { width: size, height: size, 'aria-hidden': true, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const };
   if (icon === 'sun')
     return (
       <svg {...common}>
@@ -712,12 +741,27 @@ function WeatherIcon({ icon }: { icon: Weather['icon'] }) {
   );
 }
 
-function MenuBar({ title, wins, onFocus, onClose }: { title: string; wins: Win[]; onFocus: (id: AppId) => void; onClose: (id: AppId) => void }) {
+function MenuBar({
+  title,
+  wins,
+  onFocus,
+  onClose,
+  notices,
+  onOpenNotice,
+  onClearNotice,
+  onShowNotices,
+}: {
+  title: string;
+  wins: Win[];
+  onFocus: (id: AppId) => void;
+  onClose: (id: AppId) => void;
+  notices: Notice[];
+  onOpenNotice: (id: string) => void;
+  onClearNotice: (id: string) => void;
+  onShowNotices: () => void;
+}) {
   const os = useOSLocal();
   const now = useNow(15_000);
-  const weather = useWeather();
-  const date = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   const openWins = wins.filter((w) => w.state !== 'closing');
   const [openId, setOpenId] = useState<string | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -792,12 +836,7 @@ function MenuBar({ title, wins, onFocus, onClose }: { title: string; wins: Win[]
         />
       </div>
       <div className="mb-right">
-        {weather && (
-          <span className="mb-item mb-weather" title={`${weather.label} in Palo Alto`}>
-            <WeatherIcon icon={weather.icon} />
-            {weather.temp}° <span className="mb-hide-sm">Palo Alto</span>
-          </span>
-        )}
+        <WeatherMenu {...shared} />
         <button className="mb-item mb-icon" onClick={os.toggleFullscreen} aria-label={os.fullscreen ? 'Exit full screen' : 'Full screen'} title={os.fullscreen ? 'Exit full screen (esc)' : 'Full screen'}>
           {os.fullscreen ? (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
@@ -805,21 +844,477 @@ function MenuBar({ title, wins, onFocus, onClose }: { title: string; wins: Win[]
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
           )}
         </button>
-        <span className="mb-item mb-icon mb-hide-sm" aria-hidden="true">
-          <svg width="16" height="12" viewBox="0 0 24 18" fill="currentColor"><path d="M12 3.5c3.6 0 6.9 1.4 9.4 3.7l1.6-1.7A15.8 15.8 0 0 0 12 1.2 15.8 15.8 0 0 0 1 5.5l1.6 1.7A13.4 13.4 0 0 1 12 3.5zm0 4.6c2.4 0 4.6.9 6.2 2.4l1.6-1.7A11.3 11.3 0 0 0 12 5.8c-3 0-5.8 1.2-7.8 3l1.6 1.7A9 9 0 0 1 12 8.1zm0 4.6c1.2 0 2.2.4 3 1.1L12 17l-3-3.2c.8-.7 1.8-1.1 3-1.1z" /></svg>
-        </span>
-        <span className="mb-item mb-icon mb-hide-sm" aria-hidden="true">
-          <svg width="24" height="12" viewBox="0 0 28 13"><rect x=".5" y=".5" width="23" height="12" rx="3.2" fill="none" stroke="currentColor" opacity=".55" /><rect x="2.2" y="2.2" width="16.5" height="8.6" rx="1.8" fill="currentColor" /><path d="M25.2 4.4v4.2c.9-.3 1.5-1.2 1.5-2.1s-.6-1.8-1.5-2.1z" fill="currentColor" opacity=".55" /></svg>
-        </span>
+        <WifiMenu {...shared} />
+        <BatteryMenu {...shared} />
         <button className="mb-item mb-icon" onClick={os.openLauncher} aria-label="Search">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M20 20l-4.5-4.5" /></svg>
         </button>
-        <span className="mb-item mb-clock">
-          <span className="mb-hide-sm">{date}&nbsp;&nbsp;</span>
-          {time}
-        </span>
+        <ClockMenu {...shared} now={now} notices={notices} onOpenNotice={onOpenNotice} onClearNotice={onClearNotice} onShow={onShowNotices} />
       </div>
     </div>
+  );
+}
+
+/* ------------------------------ menu bar status items ------------------------------ */
+
+type MenuSlot = { openId: string | null; setOpenId: (id: string | null) => void };
+
+type Notice = { id: string; app: IconKind; title: string; body: string; at: number };
+
+const FOCUSABLE = 'button:not(:disabled), [tabindex="0"]';
+
+/**
+ * A right-side menu bar extra. It shares the menu bar's single open slot, so it opens, switches on hover
+ * and closes exactly like the menus on the left; its panel is clamped to the screen when it opens.
+ */
+function StatusMenu({
+  id,
+  openId,
+  setOpenId,
+  label,
+  ariaLabel,
+  className,
+  triggerClass,
+  popClass,
+  popRole = 'menu',
+  onShow,
+  children,
+}: MenuSlot & {
+  id: string;
+  label: ReactNode;
+  ariaLabel: string;
+  className?: string;
+  triggerClass?: string;
+  popClass: string;
+  popRole?: 'menu' | 'dialog';
+  onShow?: () => void;
+  children: (close: () => void) => ReactNode;
+}) {
+  const open = openId === id;
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const viaKey = useRef(false);
+  const onShowRef = useRef(onShow);
+  onShowRef.current = onShow;
+  const close = useCallback(() => setOpenId(null), [setOpenId]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      setOpenId(null);
+      if (popRef.current?.contains(document.activeElement)) btnRef.current?.focus({ preventScroll: true });
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [open, setOpenId]);
+
+  useLayoutEffect(() => {
+    const pop = popRef.current;
+    if (!open || !pop) return;
+    const bar = pop.closest<HTMLElement>('.menubar');
+    const screen = bar?.parentElement;
+    if (!bar || !screen) return;
+    pop.style.left = '';
+    pop.style.right = '';
+    pop.style.maxHeight = '';
+    let x = 0;
+    let y = 0;
+    for (let el: HTMLElement | null = pop; el && el !== bar; el = el.offsetParent as HTMLElement | null) {
+      x += el.offsetLeft;
+      y += el.offsetTop;
+    }
+    const pad = 6;
+    const w = pop.offsetWidth;
+    const shift = Math.max(pad - x, Math.min(0, bar.offsetWidth - pad - (x + w)));
+    if (shift) {
+      pop.style.left = `${pop.offsetLeft + shift}px`;
+      pop.style.right = 'auto';
+    }
+    pop.style.maxHeight = `${Math.max(120, screen.offsetHeight - y - pad)}px`;
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    onShowRef.current?.();
+    if (viaKey.current) popRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus({ preventScroll: true });
+    viaKey.current = false;
+  }, [open]);
+
+  const onPopKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const items = Array.from(popRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
+    if (!items.length) return;
+    e.preventDefault();
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const next = e.key === 'ArrowDown' ? (at + 1) % items.length : (at <= 0 ? items.length : at) - 1;
+    items[next].focus({ preventScroll: true });
+  };
+
+  return (
+    <div
+      className={`menu sm-menu ${className ?? ''} ${open ? 'is-open' : ''}`}
+      data-menu={id}
+      onPointerEnter={(e) => {
+        if (e.pointerType === 'mouse' && openId !== null && openId !== id) setOpenId(id);
+      }}
+    >
+      <button
+        ref={btnRef}
+        className={`mb-item sm-trigger ${triggerClass ?? ''}`}
+        aria-label={ariaLabel}
+        aria-haspopup={popRole}
+        aria-expanded={open}
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          setOpenId(open ? null : id);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' && e.key !== ' ' && !(e.key === 'ArrowDown' && !open)) return;
+          e.preventDefault();
+          viaKey.current = !open;
+          setOpenId(open ? null : id);
+        }}
+      >
+        {label}
+      </button>
+      {open && (
+        <div ref={popRef} className={popClass} role={popRole} aria-label={ariaLabel} onKeyDown={onPopKey}>
+          {children(close)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CheckGlyph() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M1.6 5.4l2.3 2.4 4.5-5.4" />
+    </svg>
+  );
+}
+
+const WIFI_PATH =
+  'M12 3.5c3.6 0 6.9 1.4 9.4 3.7l1.6-1.7A15.8 15.8 0 0 0 12 1.2 15.8 15.8 0 0 0 1 5.5l1.6 1.7A13.4 13.4 0 0 1 12 3.5zm0 4.6c2.4 0 4.6.9 6.2 2.4l1.6-1.7A11.3 11.3 0 0 0 12 5.8c-3 0-5.8 1.2-7.8 3l1.6 1.7A9 9 0 0 1 12 8.1zm0 4.6c1.2 0 2.2.4 3 1.1L12 17l-3-3.2c.8-.7 1.8-1.1 3-1.1z';
+
+function WifiGlyph({ on, size = 16 }: { on: boolean; size?: number }) {
+  return (
+    <svg width={size} height={(size * 3) / 4} viewBox="0 0 24 18" aria-hidden="true">
+      {on ? (
+        <path d={WIFI_PATH} fill="currentColor" />
+      ) : (
+        <path d="M12 16.4L1.9 5.9a14.6 14.6 0 0 1 20.2 0z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+      )}
+    </svg>
+  );
+}
+
+function Toggle({ on, label, onChange }: { on: boolean; label: string; onChange: (on: boolean) => void }) {
+  return (
+    <button className={`sm-switch ${on ? 'is-on' : ''}`} role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)}>
+      <i />
+    </button>
+  );
+}
+
+const WIFI_NETWORKS = ['Stanford', 'eduroam', 'Stanford Visitor'];
+
+function WifiMenu(slot: MenuSlot) {
+  const [on, setOn] = useState(true);
+  const [network, setNetwork] = useState(WIFI_NETWORKS[0]);
+  return (
+    <StatusMenu
+      id="wifi"
+      {...slot}
+      triggerClass="mb-icon"
+      ariaLabel="Wi-Fi"
+      label={<WifiGlyph on={on} />}
+      popClass="menu-pop sm-pop sm-wifi"
+    >
+      {(close) => (
+        <>
+          <div className="sm-head">
+            <b>Wi-Fi</b>
+            <Toggle on={on} label="Wi-Fi" onChange={setOn} />
+          </div>
+          {on && (
+            <>
+              <hr />
+              <div className="sm-section">Known Networks</div>
+              {WIFI_NETWORKS.map((n) => (
+                <button
+                  key={n}
+                  className="sm-row"
+                  role="menuitemradio"
+                  aria-checked={n === network}
+                  onClick={() => {
+                    setNetwork(n);
+                    close();
+                  }}
+                >
+                  <span className="sm-check">{n === network && <CheckGlyph />}</span>
+                  <span className="sm-label">{n}</span>
+                  <WifiGlyph on size={14} />
+                </button>
+              ))}
+            </>
+          )}
+        </>
+      )}
+    </StatusMenu>
+  );
+}
+
+function BatteryGlyph({ battery }: { battery: BatteryView }) {
+  const fill = Math.max(1.6, 19.6 * battery.level);
+  const low = !battery.plugged && battery.percent <= 10;
+  return (
+    <svg width="24" height="12" viewBox="0 0 28 13" aria-hidden="true">
+      <rect x=".5" y=".5" width="23" height="12" rx="3.2" fill="none" stroke="currentColor" opacity=".55" />
+      <rect x="2.2" y="2.2" width={fill} height="8.6" rx={Math.min(1.8, fill / 2)} fill={low ? '#ff453a' : 'currentColor'} />
+      <path d="M25.2 4.4v4.2c.9-.3 1.5-1.2 1.5-2.1s-.6-1.8-1.5-2.1z" fill="currentColor" opacity=".55" />
+      {battery.charging && <path d="M13.6 1.3L8.2 7.4h3.4l-1.3 4.3 5.4-6.1h-3.4z" fill="#1d1d1f" stroke="#fff" strokeWidth=".7" strokeLinejoin="round" />}
+    </svg>
+  );
+}
+
+const PERCENT_KEY = 'menubar:battery-percent';
+
+function BatteryMenu(slot: MenuSlot) {
+  const battery = useBattery();
+  const [percent, setPercent] = useState(false);
+  useEffect(() => {
+    try {
+      setPercent(localStorage.getItem(PERCENT_KEY) === '1');
+    } catch {}
+  }, []);
+  const togglePercent = () => {
+    const next = !percent;
+    setPercent(next);
+    try {
+      localStorage.setItem(PERCENT_KEY, next ? '1' : '0');
+    } catch {}
+  };
+  return (
+    <StatusMenu
+      id="battery"
+      {...slot}
+      triggerClass="mb-icon"
+      ariaLabel={`Battery, ${battery.percent}%`}
+      label={
+        <>
+          {percent && <span className="sm-pct">{battery.percent}%</span>}
+          <BatteryGlyph battery={battery} />
+        </>
+      }
+      popClass="menu-pop sm-pop sm-battery"
+    >
+      {(close) => (
+        <>
+          <div className="sm-head">
+            <b>Battery</b>
+            <span className="sm-dim">{battery.percent}%</span>
+          </div>
+          <div className="sm-info">Power Source: {battery.source}</div>
+          {battery.status && <div className="sm-info">{battery.status}</div>}
+          <hr />
+          <button
+            className="sm-row"
+            role="menuitemcheckbox"
+            aria-checked={percent}
+            onClick={() => {
+              togglePercent();
+              close();
+            }}
+          >
+            <span className="sm-check">{percent && <CheckGlyph />}</span>
+            <span className="sm-label">Show Percentage</span>
+          </button>
+        </>
+      )}
+    </StatusMenu>
+  );
+}
+
+function WeatherMenu(slot: MenuSlot) {
+  const { status, report, refresh } = useWeatherReport();
+  const tone = report ? (report.icon === 'moon' ? 'night' : report.icon === 'sun' ? 'day' : 'overcast') : '';
+  return (
+    <StatusMenu
+      id="weather"
+      {...slot}
+      className={report ? '' : 'mb-hide-sm'}
+      triggerClass="sm-weather-btn"
+      ariaLabel={report ? `Weather, ${report.temp}° and ${report.label} in Palo Alto` : 'Weather in Palo Alto'}
+      label={
+        report ? (
+          <>
+            <WeatherIcon icon={report.icon} />
+            {report.temp}° <span className="mb-hide-sm">Palo Alto</span>
+          </>
+        ) : (
+          'Palo Alto'
+        )
+      }
+      popClass={`sm-panel sm-weather ${tone ? `is-${tone}` : ''}`}
+      popRole="dialog"
+      onShow={() => refresh()}
+    >
+      {() =>
+        report ? (
+          <>
+            <div className="sw-top">
+              <div>
+                <div className="sw-city">Palo Alto</div>
+                <div className="sw-temp">{report.temp}°</div>
+              </div>
+              <div className="sw-cond">
+                <WeatherIcon icon={report.icon} size={20} />
+                <div>{report.label}</div>
+                {report.high !== null && report.low !== null && (
+                  <div>
+                    H:{report.high}° L:{report.low}°
+                  </div>
+                )}
+              </div>
+            </div>
+            {report.hours.length > 0 && (
+              <div className="sw-hours">
+                {[{ label: 'Now', temp: report.temp, icon: report.icon }, ...report.hours].map((h) => (
+                  <div key={h.label} className="sw-hour">
+                    <span>{h.label}</span>
+                    <WeatherIcon icon={h.icon} size={16} />
+                    <b>{h.temp}°</b>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="sw-credit">Weather data by Open-Meteo</div>
+          </>
+        ) : status === 'failed' ? (
+          <div className="sw-state">
+            <b>Weather Unavailable</b>
+            <span>Palo Alto weather couldn’t be loaded.</span>
+            <button className="sm-push" onClick={() => refresh(true)}>
+              Try Again
+            </button>
+          </div>
+        ) : (
+          <div className="sw-state" aria-live="polite">
+            <span>Loading Weather…</span>
+          </div>
+        )
+      }
+    </StatusMenu>
+  );
+}
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function CalendarWidget({ now }: { now: Date }) {
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const today = now.getDate();
+  const name = now.toLocaleDateString('en-US', { month: 'long' });
+  return (
+    <div className="nc-card nc-cal">
+      <div className="nc-cal-head">
+        <b>{name}</b>
+        <span>{year}</span>
+      </div>
+      <table className="nc-cal-grid" aria-label={`${name} ${year}`}>
+        <thead>
+          <tr>
+            {WEEKDAYS.map((d) => (
+              <th key={d} scope="col" abbr={d}>
+                {d[0]}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {monthGrid(year, month).map((week, i) => (
+            <tr key={i}>
+              {week.map((day, j) => (
+                <td key={j} className={day === today ? 'is-today' : ''} aria-current={day === today ? 'date' : undefined}>
+                  {day ?? ''}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ago(at: number, now: number) {
+  const m = Math.floor((now - at) / 60_000);
+  if (m < 1) return 'now';
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h ago`;
+}
+
+function ClockMenu({
+  now,
+  notices,
+  onOpenNotice,
+  onClearNotice,
+  onShow,
+  ...slot
+}: MenuSlot & { now: Date; notices: Notice[]; onOpenNotice: (id: string) => void; onClearNotice: (id: string) => void; onShow: () => void }) {
+  const date = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return (
+    <StatusMenu
+      id="clock"
+      {...slot}
+      className="sm-static"
+      triggerClass="mb-clock"
+      ariaLabel={`${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}, ${time}. Notification Center`}
+      label={
+        <>
+          <span className="mb-hide-sm">{date}&nbsp;&nbsp;</span>
+          {time}
+        </>
+      }
+      popClass="sm-nc"
+      popRole="dialog"
+      onShow={onShow}
+    >
+      {(close) => (
+        <>
+          {notices.map((n) => (
+            <div key={n.id} className="nc-card nc-note">
+              <button
+                className="nc-note-open"
+                onClick={() => {
+                  close();
+                  onOpenNotice(n.id);
+                }}
+              >
+                <AppIcon kind={n.app} size={32} />
+                <span className="nc-note-text">
+                  <b>{n.title}</b>
+                  <span>{n.body}</span>
+                </span>
+                <small>{ago(n.at, now.getTime())}</small>
+              </button>
+              <button className="nc-note-close" aria-label={`Clear notification from ${n.title}`} onClick={() => onClearNotice(n.id)}>
+                <svg viewBox="0 0 10 10" aria-hidden="true">
+                  <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
+                </svg>
+              </button>
+            </div>
+          ))}
+          <CalendarWidget now={now} />
+        </>
+      )}
+    </StatusMenu>
   );
 }
 
