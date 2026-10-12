@@ -7,7 +7,8 @@ Little games that live inside the Chrome app at `chrome://games`. Each game is o
 ```ts
 // src/os/arcade/types.ts
 export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer';
-export type GameMeta = { id: string; title: string; blurb: string; category: GameCategory; players: string; controls: string; accent: string; glyph: string; order: number };
+export type LeaderboardSpec = { order: 'desc' | 'asc'; max: number; min?: number; format?: 'number' | 'time' };
+export type GameMeta = { id: string; title: string; blurb: string; category: GameCategory; players: string; controls: string; accent: string; glyph: string; order: number; leaderboard?: LeaderboardSpec };
 export type GameProps = { compact?: boolean; onExit?: () => void };
 ```
 
@@ -30,6 +31,7 @@ src/os/arcade/games/<id>/
 | `accent` | CSS color for the tile icon and shell accents |
 | `glyph` | SVG path data (`d`) for a 24x24 viewBox, drawn as a white 2px stroke |
 | `order` | sort order inside its category (lower first) |
+| `leaderboard` | optional, opts the game into a top 10 board (see Leaderboards) |
 
 `manifest.ts` reads every `games/*/meta.ts` eagerly (they are tiny) and every `games/*/index.tsx` lazily through `React.lazy`, so each game is its own chunk and downloads only when opened. Folders starting with `_` are ignored. In dev you can list them with `localStorage.setItem('arcade:dev', '1')` and a reload; `_example` then appears as "Catch".
 
@@ -101,6 +103,28 @@ function useThree(): typeof import('three') | null;   // null until loaded
 
 **loadThree / useThree** import `three` dynamically, so every 3D game shares one lazily loaded chunk and none of it lands in the initial bundle.
 
+## Leaderboards
+
+Add `leaderboard` to `meta.ts` and the game gets a top 10 board. There is nothing else to wire: the score a game passes to `shell.gameOver(score)` is the one that is ranked.
+
+```ts
+leaderboard: { order: 'desc', max: 100_000 },                              // higher wins
+leaderboard: { order: 'asc', min: 3_000, max: 3_600_000, format: 'time' }, // times in ms, lower wins
+```
+
+| field | meaning |
+| --- | --- |
+| `order` | `'desc'` when a higher score wins, `'asc'` for times. Must match the shell: `'asc'` games pass `lowerIsBetter` |
+| `max` | highest plausible score; the server rejects anything above it, so keep it generous but finite |
+| `min` | lowest plausible score (default 0), mostly for times |
+| `format` | `'time'` shows milliseconds as seconds on the arcade home board (the Game Over card uses the shell's `formatScore`) |
+
+When a round ends with a score that would make the top 10, the Game Over card shows a name field (1 to 16 characters) and Submit, plus a Leaderboard button that shows the board. The arcade home has a Leaderboards view with every opted in game.
+
+Boards are global when `/api/arcade-leaderboard` (`src/pages/api/arcade-leaderboard.ts`) can reach Upstash Redis or Vercel KV through `KV_REST_API_URL`/`KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`. Without them, or offline, scores are kept in localStorage (`arcade:boards`) and the board is labeled This Device. The server validates the game id, the score against the spec and the name, and allows a few submissions per IP per minute.
+
+Opt in only when the score is comparable across players: leave it out for games without a score, two player games, and games where a setting changes the difficulty of the score (for example a pace or level picker), unless each setting is its own game.
+
 ## Rules
 
 1. **Prefix CSS.** Every selector in your CSS starts with `.g-<id>` (the shell root carries that class). Keyframes are named `g-<id>-*`. Never style shared classes or `body`.
@@ -119,6 +143,7 @@ function useThree(): typeof import('three') | null;   // null until loaded
 - [ ] CSS selectors and keyframes prefixed `.g-<id>` / `g-<id>-`
 - [ ] Uses `useGameLoop`, `useKeys`, `useCanvas` (or `useThree`) instead of raw rAF and listeners
 - [ ] Calls `shell.gameOver(score)` and `shell.setScore()` where it has a score
+- [ ] Adds `leaderboard` to `meta.ts` if the score is comparable between players
 - [ ] Pauses cleanly: switching Chrome tabs, minimizing, hiding the browser tab all stop the loop
 - [ ] Playable with touch on phone (390x844) and iPad (820x1180)
 - [ ] No console errors, no horizontal overflow, everything released on unmount
