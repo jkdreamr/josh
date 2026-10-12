@@ -167,18 +167,72 @@ export function solveLaunchVelocity(start: Point2D, target: Point2D, angleDegree
 
 /**
  * Solves an arc to the target and, if it would clip the net, lifts the launch angle
- * until the shuttle clears the tape by a small margin.
+ * until the shuttle clears the tape by a small margin. Drag caps how far a steep arc
+ * can carry, so a deep target that stays out of reach flattens the angle instead.
  */
 export function solveClearingArc(start: Point2D, targetX: number, angleDegrees: number, margin = 0.08): { vx: number; vy: number } {
-  let angle = angleDegrees;
-  let velocity = solveLaunchVelocity(start, { x: targetX, y: 0 }, angle);
-  for (let attempt = 0; attempt < 16; attempt += 1) {
+  const target = { x: targetX, y: 0 };
+  const clears = (velocity: { vx: number; vy: number }) => {
     const clearance = simulateNetClearance(start, velocity);
-    if (clearance === null || clearance >= NET_HEIGHT + margin) break;
-    angle = Math.min(78, angle + 4);
-    velocity = solveLaunchVelocity(start, { x: targetX, y: 0 }, angle);
+    return clearance === null ? start.x * targetX >= 0 : clearance >= NET_HEIGHT + margin;
+  };
+  const miss = (velocity: { vx: number; vy: number }) => Math.abs(simulateLanding(start, velocity).x - targetX);
+  let angle = angleDegrees;
+  let velocity = solveLaunchVelocity(start, target, angle);
+  for (let attempt = 0; attempt < 16 && !clears(velocity) && angle < 86; attempt += 1) {
+    angle = Math.min(86, angle + 4);
+    velocity = solveLaunchVelocity(start, target, angle);
+  }
+  let best = miss(velocity);
+  for (let flatter = angle - 3; best > 0.2 && flatter >= 24; flatter -= 3) {
+    const candidate = solveLaunchVelocity(start, target, flatter);
+    if (!clears(candidate)) break;
+    const candidateMiss = miss(candidate);
+    if (candidateMiss < best) {
+      best = candidateMiss;
+      velocity = candidate;
+    }
   }
   return velocity;
+}
+
+const SMASH_NET_MARGIN = 0.12;
+const SMASH_FLATTEST = Math.PI / 180;
+const SMASH_STEEPEST = 70 * Math.PI / 180;
+
+function smashVelocity(direction: Direction, speed: number, downward: number): { vx: number; vy: number } {
+  return { vx: direction * speed * Math.cos(downward), vy: -speed * Math.sin(downward) };
+}
+
+/** Downward angle (radians) that puts a smash of this speed down at targetX, between 1 and 70 degrees. */
+export function solveSmashAngle(start: Point2D, direction: Direction, speed: number, targetX: number): number {
+  let flat = SMASH_FLATTEST;
+  let steep = SMASH_STEEPEST;
+  for (let iteration = 0; iteration < 22; iteration += 1) {
+    const angle = (flat + steep) / 2;
+    const depth = direction * simulateLanding(start, smashVelocity(direction, speed, angle)).x;
+    if (depth > direction * targetX) flat = angle;
+    else steep = angle;
+  }
+  return (flat + steep) / 2;
+}
+
+/** Steepest downward angle (radians) that still clears the tape by margin, or null when even the flattest smash would not. */
+export function steepestClearingSmash(start: Point2D, direction: Direction, speed: number, margin = SMASH_NET_MARGIN): number | null {
+  const clears = (angle: number) => {
+    const clearance = simulateNetClearance(start, smashVelocity(direction, speed, angle));
+    return clearance === null ? start.x * direction >= 0 : clearance >= NET_HEIGHT + margin;
+  };
+  if (!clears(SMASH_FLATTEST)) return null;
+  if (clears(SMASH_STEEPEST)) return SMASH_STEEPEST;
+  let flat = SMASH_FLATTEST;
+  let steep = SMASH_STEEPEST;
+  for (let iteration = 0; iteration < 22; iteration += 1) {
+    const angle = (flat + steep) / 2;
+    if (clears(angle)) flat = angle;
+    else steep = angle;
+  }
+  return flat;
 }
 
 export function netCrossingHeight(from: Point2D, to: Point2D): number | null {
@@ -238,18 +292,23 @@ export function planShot(type: ShotType, direction: Direction, start: Point2D, r
 
   if (actualType === 'smash') {
     // Pros exceed 100 m/s; 42 to 58 m/s keeps this playable.
-    const speed = 42 + random() * 16;
-    let targetX = direction * (2.4 + random() * 2.4 + scatter(0.4));
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      const dx = targetX - start.x;
-      const dy = -start.y;
-      const length = Math.hypot(dx, dy) || 1;
-      const velocity = { vx: dx / length * speed, vy: dy / length * speed };
-      const clearance = simulateNetClearance(start, velocity);
-      if (clearance === null || clearance >= NET_HEIGHT + 0.06 || Math.abs(targetX) >= COURT_HALF_LENGTH + 0.3) {
-        return { type: 'smash', targetX, velocity };
-      }
-      targetX += direction * 0.7;
+    const power = 42 + random() * 16;
+    const depthRoll = random();
+    // When the tape and the baseline leave no room at this pace, the nearest pace that fits is used.
+    const paces = [power, ...[42, 46, 50, 54, 58].sort((a, b) => Math.abs(a - power) - Math.abs(b - power))];
+    for (const speed of paces) {
+      const steepest = steepestClearingSmash(start, direction, speed);
+      if (steepest === null) continue;
+      // The tape sets how steep a smash can be: near the net it can kill straight down,
+      // from the back it has to fly flatter and lands mid to deep court.
+      const shortest = direction * simulateLanding(start, smashVelocity(direction, speed, steepest)).x;
+      const flattest = direction * simulateLanding(start, smashVelocity(direction, speed, SMASH_FLATTEST)).x;
+      const longest = Math.min(COURT_HALF_LENGTH - 0.45, flattest);
+      if (shortest > longest - 0.4) continue;
+      const aim = Math.min(longest - 0.15, Math.max(shortest, 0.9) + 0.3 + depthRoll * 1.5);
+      const targetX = direction * Math.min(flattest, aim + scatter(0.25));
+      const velocity = smashVelocity(direction, speed, solveSmashAngle(start, direction, speed, targetX));
+      return { type: 'smash', targetX, velocity };
     }
     actualType = 'drive';
   }
