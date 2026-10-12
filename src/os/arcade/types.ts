@@ -29,7 +29,7 @@ export type GameMeta = {
   glyph: string;
   /** Sort order inside its category (ascending). */
   order: number;
-  /** Set to give the game a top 10 board. Leave out for games without a comparable score. */
+  /** Set to give the game a top 100 board. Leave out for games without a comparable score. */
   leaderboard?: LeaderboardSpec;
 };
 

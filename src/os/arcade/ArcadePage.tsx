@@ -103,7 +103,7 @@ export function ArcadePage({ onOpen }: { onOpen: (id: string) => void }) {
             </button>
           )}
         </div>
-        <p>{boards ? 'The top 10 scores for each game.' : metas.length ? `${metas.length} games, made for this computer.` : 'Games are on the way.'}</p>
+        <p>{boards ? 'The top 100 scores for each game.' : metas.length ? `${metas.length} games, made for this computer.` : 'Games are on the way.'}</p>
       </header>
       {boards ? (
         <Leaderboards />

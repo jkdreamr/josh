@@ -7,7 +7,7 @@ export type BoardEntry = { name: string; score: number; date: string };
 export type Board = { entries: BoardEntry[]; scope: BoardScope; error?: string };
 export type Submission = { game: string; name: string; score: number };
 
-export const TOP = 10;
+export const TOP = 100;
 export const NAME_MAX = 16;
 export const API = '/api/arcade-leaderboard';
 const DEVICE_KEY = 'arcade:boards';
@@ -48,7 +48,7 @@ export function rankEntries(entries: BoardEntry[], order: LeaderboardSpec['order
     .slice(0, TOP);
 }
 
-/** True when the score would land on a top 10 board. */
+/** True when the score would land on a top 100 board. */
 export function qualifies(score: number, entries: BoardEntry[], spec: LeaderboardSpec): boolean {
   if (!plausible(score, spec)) return false;
   if (entries.length < TOP) return true;

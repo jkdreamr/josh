@@ -377,7 +377,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                       if (validName(name) && !board.busy) board.submit(name).then(() => setBoardOpen(true));
                     }}
                   >
-                    <span>{board.board?.scope === 'global' ? 'A Top 10 Score. Add Your Name.' : 'A Top 10 Score on This Device.'}</span>
+                    <span>{board.board?.scope === 'global' ? 'A Top 100 Score. Add Your Name.' : 'A Top 100 Score on This Device.'}</span>
                     <div className="arcade-lb-field">
                       <input
                         className="arcade-input"

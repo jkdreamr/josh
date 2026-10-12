@@ -49,24 +49,24 @@ test('names must be 1 to 16 characters after cleaning', () => {
   assert.equal(cleanName('a\u202eb\nc'), 'ab c');
 });
 
-test('ranking orders by score, breaks ties by earliest date and keeps the top 10', () => {
-  const list = [entry('late', 50, '2026-02-01'), entry('early', 50, '2026-01-01'), entry('top', 90), ...Array.from({ length: 12 }, (_, i) => entry(`p${i}`, i))];
+test('ranking orders by score, breaks ties by earliest date and keeps the top 100', () => {
+  const list = [entry('late', 50, '2026-02-01'), entry('early', 50, '2026-01-01'), entry('top', 90), ...Array.from({ length: TOP + 2 }, (_, i) => entry(`p${i}`, i % 40))];
   const ranked = rankEntries(list, 'desc');
   assert.equal(ranked.length, TOP);
   assert.deepEqual(ranked.slice(0, 3).map((e) => e.name), ['top', 'early', 'late']);
   assert.deepEqual(rankEntries([entry('slow', 9000), entry('fast', 4000)], 'asc').map((e) => e.name), ['fast', 'slow']);
 });
 
-test('qualifies only when the score beats the 10th place or the board has room', () => {
-  const full = Array.from({ length: 10 }, (_, i) => entry(`p${i}`, (i + 1) * 10));
+test('qualifies only when the score beats the last place or the board has room', () => {
+  const full = Array.from({ length: TOP }, (_, i) => entry(`p${i}`, (i + 1) * 10));
   assert.equal(qualifies(5, [], desc), true);
   assert.equal(qualifies(0, [], desc), false);
   assert.equal(qualifies(10, full, desc), false);
   assert.equal(qualifies(11, full, desc), true);
   assert.equal(qualifies(5000, full, desc), false);
-  const times = Array.from({ length: 10 }, (_, i) => entry(`p${i}`, 4000 + i * 1000));
-  assert.equal(qualifies(13000, times, asc), false);
-  assert.equal(qualifies(12999, times, asc), true);
+  const times = Array.from({ length: TOP }, (_, i) => entry(`p${i}`, 4000 + i * 500));
+  assert.equal(qualifies(4000 + (TOP - 1) * 500, times, asc), false);
+  assert.equal(qualifies(4000 + (TOP - 1) * 500 - 1, times, asc), true);
 });
 
 test('redis scores sort ascending for both orders', () => {

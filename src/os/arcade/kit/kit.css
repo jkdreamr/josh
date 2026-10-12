@@ -493,7 +493,7 @@
   }
 }
 
-/* Leaderboard: name field on the Game Over card and the top 10 list. */
+/* Leaderboard: name field on the Game Over card and the top 100 list. */
 .arcade-lb-form {
   display: flex;
   flex-direction: column;
@@ -550,8 +550,14 @@
   font-size: 12px !important;
 }
 .arcade-lb-list {
+  position: relative;
   width: 100%;
+  max-height: min(240px, 42cqh);
   margin: 2px 0 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
   padding: 0;
   list-style: none;
   font-size: 13px;
@@ -572,7 +578,8 @@
   background: color-mix(in srgb, var(--accent) 38%, transparent);
 }
 .arcade-lb-rank {
-  width: 18px;
+  flex: none;
+  width: 26px;
   text-align: right;
   color: rgba(245, 245, 247, 0.55);
 }

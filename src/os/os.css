@@ -5051,7 +5051,8 @@ kbd {
   background: #f6f6f8;
 }
 .arcade-boards .arcade-lb-rank {
-  width: 20px;
+  flex: none;
+  width: 28px;
   text-align: right;
   color: #80868b;
 }

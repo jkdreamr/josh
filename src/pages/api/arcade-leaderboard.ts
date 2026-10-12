@@ -6,7 +6,6 @@ declare const process: { env: Record<string, string | undefined> };
 
 export const prerender = false;
 
-const KEEP = 100;
 const RATE_LIMIT = 6;
 const RATE_WINDOW_S = 60;
 
@@ -110,7 +109,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     if (Number(count) > RATE_LIMIT) return json({ error: 'rate limited' }, 429, { 'retry-after': String(RATE_WINDOW_S) });
     const results = await pipeline(config, [
       ['ZADD', key, String(redisScore(score, spec.order)), JSON.stringify(member)],
-      ['ZREMRANGEBYRANK', key, String(KEEP), '-1'],
+      ['ZREMRANGEBYRANK', key, String(TOP), '-1'],
       ['ZRANGE', key, '0', String(TOP - 1)],
     ]);
     return json({ entries: decode(results[2], spec) });
