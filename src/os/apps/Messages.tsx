@@ -13,13 +13,13 @@ const topics: Topic[] = [
       "these days i'm leading Cognition's Korea efforts. we make Devin, the AI software engineer.",
       "before that: investment intern at CRV, ecosystem manager at NEAR, and research at Pantera Capital.",
     ],
-    actions: [{ label: 'see work folder', run: (os) => os.open('finder', { folder: 'work' }) }],
+    actions: [{ label: 'See Work Folder', run: (os) => os.open('finder', { folder: 'work' }) }],
   },
   {
     q: "what's stanford like?",
     a: ["cs + math. i'm a coxswain on the varsity rowing team, help organize TreeHacks and the Stanford Math Tournament, and play badminton when i can."],
     actions: [
-      { label: 'school folder', run: (os) => os.open('finder', { folder: 'school' }) },
+      { label: 'School Folder', run: (os) => os.open('finder', { folder: 'school' }) },
     ],
   },
   {
@@ -29,15 +29,15 @@ const topics: Topic[] = [
       'i also release music on my own. “all i need” is on Spotify, and i post as kelix on SoundCloud.',
     ],
     actions: [
-      { label: 'play on spotify', run: (os) => os.open('spotify') },
-      { label: 'soundcloud', run: (os) => os.open('soundcloud') },
-      { label: 'watch fairytale', run: (os) => os.openUrl(links.youtube) },
+      { label: 'Play on Spotify', run: (os) => os.open('spotify') },
+      { label: 'SoundCloud', run: (os) => os.open('soundcloud') },
+      { label: 'Watch Fairytale', run: (os) => os.openUrl(links.youtube) },
     ],
   },
   {
     q: 'side projects?',
     a: ['i like to build things i actually use: kookwleigh (dinners, by invitation), NOVUM, LiveX, Harbor and Verses (a songwriting surface).'],
-    actions: [{ label: 'open them in chrome', run: (os) => os.open('chrome') }],
+    actions: [{ label: 'Open Them in Chrome', run: (os) => os.open('chrome') }],
   },
   {
     q: 'fun fact?',
@@ -47,7 +47,7 @@ const topics: Topic[] = [
     q: 'how do i reach you?',
     a: [`email is best: ${profile.email}. i'm also @joshuaykoo on X and Instagram.`],
     actions: [
-      { label: 'write an email', run: (os) => os.open('mail') },
+      { label: 'Write an Email', run: (os) => os.open('mail') },
       { label: 'X', run: (os) => os.open('x') },
     ],
   },
@@ -103,7 +103,7 @@ export default function Messages(_: AppProps) {
     const mailto = `mailto:${profile.email}?subject=${encodeURIComponent('hey josh, from your website')}&body=${encodeURIComponent(text)}`;
     joshSays(
       ["the real me isn't at this keyboard right now. want to send that straight to my inbox?"],
-      [{ label: 'send as email', run: () => (window.location.href = mailto) }],
+      [{ label: 'Send as Email', run: () => (window.location.href = mailto) }],
     );
   };
 
@@ -125,7 +125,7 @@ export default function Messages(_: AppProps) {
               <div className="bubble-actions">
                 {m.actions.map((a) => (
                   <button key={a.label} onClick={() => a.run(os)}>
-                    {a.label} →
+                    {a.label}
                   </button>
                 ))}
               </div>
