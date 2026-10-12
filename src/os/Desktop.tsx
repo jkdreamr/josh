@@ -7,6 +7,7 @@ import Wallpaper from './Wallpaper';
 import Banner from './Banner';
 import HomeScreen, { originOf } from './HomeScreen';
 import { clamp, monthGrid, useBattery, useNow, useWeatherReport, type BatteryView, type Weather } from './hooks';
+import { onEscapeCapture } from './escape';
 
 const MENU_H = 26;
 const DOCK_SPACE = 78;
@@ -866,16 +867,18 @@ function MenuBar({
       const t = e.target as HTMLElement;
       if (!barRef.current?.contains(t) || !t.closest('.menu')) setOpenId(null);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpenId(null);
-    };
+    const offEscape = onEscapeCapture(window, () => {
+      const bar = barRef.current;
+      if (bar?.contains(document.activeElement)) bar.querySelector<HTMLButtonElement>(`.menu[data-menu="${openId}"] .menu-btn`)?.focus({ preventScroll: true });
+      setOpenId(null);
+    });
+    const onBlur = () => {};
     window.addEventListener('pointerdown', onDown, true);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('blur', onKey as unknown as () => void);
+    window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('pointerdown', onDown, true);
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('blur', onKey as unknown as () => void);
+      offEscape();
+      window.removeEventListener('blur', onBlur);
     };
   }, [openId]);
   const shared = { openId, setOpenId, focusOnOpen };
