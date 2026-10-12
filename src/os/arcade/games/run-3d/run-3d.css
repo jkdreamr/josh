@@ -1,0 +1,49 @@
+.g-run-3d .g-run-3d-host {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  background:
+    radial-gradient(1px 1px at 12% 18%, rgba(255, 255, 255, 0.9), transparent 60%),
+    radial-gradient(1px 1px at 28% 72%, rgba(255, 255, 255, 0.7), transparent 60%),
+    radial-gradient(1.5px 1.5px at 44% 12%, rgba(255, 255, 255, 0.85), transparent 60%),
+    radial-gradient(1px 1px at 63% 38%, rgba(255, 255, 255, 0.6), transparent 60%),
+    radial-gradient(1.5px 1.5px at 78% 22%, rgba(255, 255, 255, 0.9), transparent 60%),
+    radial-gradient(1px 1px at 88% 64%, rgba(255, 255, 255, 0.7), transparent 60%),
+    radial-gradient(1px 1px at 8% 52%, rgba(255, 255, 255, 0.6), transparent 60%),
+    radial-gradient(1.5px 1.5px at 54% 86%, rgba(255, 255, 255, 0.75), transparent 60%),
+    radial-gradient(1px 1px at 36% 44%, rgba(255, 255, 255, 0.5), transparent 60%),
+    radial-gradient(1px 1px at 94% 8%, rgba(255, 255, 255, 0.8), transparent 60%),
+    radial-gradient(120% 90% at 50% 45%, #141a3e 0%, #0a0d24 55%, #05060f 100%);
+}
+.g-run-3d .g-run-3d-zone {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(20, 22, 44, 0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
+  pointer-events: none;
+  animation: g-run-3d-zone 2.2s ease forwards;
+}
+@keyframes g-run-3d-zone {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+  12%,
+  80% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 0);
+  }
+}
