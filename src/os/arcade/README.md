@@ -20,7 +20,7 @@ src/os/arcade/games/<id>/
   *.ts         optional logic modules, workers, data
 ```
 
-| field | meaning |
+| Field | Meaning |
 | --- | --- |
 | `id` | folder name, used in the URL `chrome://games/<id>` and as the high score key |
 | `title` | tile and tab title |
@@ -114,14 +114,14 @@ leaderboard: { order: 'asc', min: 3_000, max: 3_600_000, format: 'time' }, // ti
 
 | field | meaning |
 | --- | --- |
-| `order` | `'desc'` when a higher score wins, `'asc'` for times. Must match the shell: `'asc'` games pass `lowerIsBetter` |
-| `max` | highest plausible score; the server rejects anything above it, so keep it generous but finite |
-| `min` | lowest plausible score (default 0), mostly for times |
-| `format` | `'time'` shows milliseconds as seconds on the arcade home board (the Game Over card uses the shell's `formatScore`) |
+| `Order` | `'desc'` when a higher score wins, `'asc'` for times. Must match the shell: `'asc'` games pass `lowerIsBetter` |
+| `Max` | highest plausible score; the server rejects anything above it, so keep it generous but finite |
+| `Min` | lowest plausible score (default 0), mostly for times |
+| `Format` | `'time'` shows milliseconds as seconds on the arcade home board (the Game Over card uses the shell's `formatScore`) |
 
 When a round ends with a score that would make the top 100, the Game Over card shows a name field (1 to 16 characters) and Submit, plus a Leaderboard button that shows the board. The arcade home has a Leaderboards view with every opted in game.
 
-Boards are global when `/api/arcade-leaderboard` (`src/pages/api/arcade-leaderboard.ts`) can reach Upstash Redis or Vercel KV through `KV_REST_API_URL`/`KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`. Without them, or offline, scores are kept in localStorage (`arcade:boards`) and the board is labeled This Device. The server validates the game id, the score against the spec and the name, and allows a few submissions per IP per minute.
+Global boards come from the Cloudflare Worker in `worker/`, configured through `PUBLIC_ARCADE_API` or its built-in default URL. If the API URL is empty or unavailable, scores stay in localStorage (`arcade:boards`) and the board is labeled This Device. The Worker validates the game id, score and name, and allows a few submissions per IP per minute. After opting a game in, run `npm run arcade:specs` and redeploy the Worker.
 
 Opt in only when the score is comparable across players: leave it out for games without a score, two player games, and games where a setting changes the difficulty of the score (for example a pace or level picker), unless each setting is its own game.
 

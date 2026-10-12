@@ -1,0 +1,12 @@
+{
+  "name": "josh-arcade",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-12",
+  "durable_objects": {
+    "bindings": [
+      { "name": "BOARDS", "class_name": "Boards" },
+      { "name": "ROOMS", "class_name": "Room" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Boards", "Room"] }]
+}

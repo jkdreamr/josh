@@ -1,0 +1,9 @@
+{
+  "name": "josh-arcade",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261012.1",
+    "wrangler": "4.149.0"
+  }
+}

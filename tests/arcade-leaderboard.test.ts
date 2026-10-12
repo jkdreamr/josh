@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import {
-  API,
   TOP,
   cleanName,
   deviceBoard,
@@ -12,11 +11,11 @@ import {
   getBoard,
   qualifies,
   rankEntries,
-  redisScore,
   submitScore,
   validateSubmission,
   type BoardEntry,
 } from '../src/os/arcade/kit/leaderboard.ts';
+import { generateArcadeSpecs } from '../scripts/arcade-specs.ts';
 import type { GameMeta, LeaderboardSpec } from '../src/os/arcade/types.ts';
 
 const desc: LeaderboardSpec = { order: 'desc', max: 1000 };
@@ -69,11 +68,6 @@ test('qualifies only when the score beats the last place or the board has room',
   assert.equal(qualifies(4000 + (TOP - 1) * 500 - 1, times, asc), true);
 });
 
-test('redis scores sort ascending for both orders', () => {
-  assert.ok(redisScore(90, 'desc') < redisScore(10, 'desc'));
-  assert.ok(redisScore(10, 'asc') < redisScore(90, 'asc'));
-});
-
 test('time boards format milliseconds as seconds', () => {
   assert.equal(formatBoardScore(45321, asc), '45.32s');
   assert.equal(formatBoardScore(65400, asc), '1:05.40s');
@@ -94,17 +88,28 @@ afterEach(() => {
   delete (globalThis as { localStorage?: unknown }).localStorage;
 });
 
-test('falls back to the device board when the API is unconfigured or offline', async () => {
-  globalThis.fetch = async () => new Response('{"error":"unconfigured"}', { status: 503 });
-  assert.deepEqual(await getBoard('snake', desc), { entries: [], scope: 'device' });
-  const saved = await submitScore('snake', desc, ' Josh ', 40);
+test('an empty API URL never calls fetch and keeps the device board', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response('{"entries":[]}');
+  };
+  assert.deepEqual(await getBoard('snake', desc, ''), { entries: [], scope: 'device' });
+  const saved = await submitScore('snake', desc, ' Josh ', 40, '');
   assert.equal(saved.scope, 'device');
   assert.deepEqual(saved.entries.map((e) => [e.name, e.score]), [['Josh', 40]]);
+  assert.equal(calls, 0);
+});
+
+test('falls back to the device board when the API is offline', async () => {
   globalThis.fetch = async () => {
     throw new TypeError('offline');
   };
-  await submitScore('snake', desc, 'Ana', 70);
-  const board = await getBoard('snake', desc);
+  const saved = await submitScore('snake', desc, ' Josh ', 40, 'https://arcade.test');
+  assert.equal(saved.scope, 'device');
+  assert.deepEqual(saved.entries.map((e) => [e.name, e.score]), [['Josh', 40]]);
+  await submitScore('snake', desc, 'Ana', 70, 'https://arcade.test');
+  const board = await getBoard('snake', desc, 'https://arcade.test');
   assert.equal(board.scope, 'device');
   assert.deepEqual(board.entries.map((e) => e.name), ['Ana', 'Josh']);
   assert.deepEqual(deviceBoard('cube', asc), []);
@@ -116,19 +121,24 @@ test('uses the global board when the API answers', async () => {
     calls.push({ url: String(url), body: init?.body as string | undefined });
     return Response.json({ entries: [entry('Josh', 80), { name: 'bad' }, entry('Ana', 120)] });
   };
-  const board = await getBoard('snake', desc);
+  const api = 'https://arcade.test';
+  const board = await getBoard('snake', desc, api);
   assert.equal(board.scope, 'global');
   assert.deepEqual(board.entries.map((e) => e.name), ['Ana', 'Josh']);
-  assert.equal(calls[0].url, `${API}?game=snake`);
-  const saved = await submitScore('snake', desc, 'Josh', 80);
+  assert.equal(calls[0].url, `${api}/leaderboard?game=snake`);
+  const saved = await submitScore('snake', desc, 'Josh', 80, api);
   assert.equal(saved.scope, 'global');
+  assert.equal(calls[1].url, `${api}/leaderboard`);
   assert.deepEqual(JSON.parse(calls[1].body!), { game: 'snake', name: 'Josh', score: 80 });
   assert.equal(deviceBoard('snake', desc).length, 1, 'also kept on this device');
 });
 
 test('a rejected global submission reports why and shows the device board', async () => {
-  globalThis.fetch = async () => new Response('{"error":"rate limited"}', { status: 429 });
-  const saved = await submitScore('snake', desc, 'Josh', 10);
+  globalThis.fetch = async (url) => {
+    assert.equal(String(url), 'https://arcade.test/leaderboard');
+    return new Response('{"error":"rate limited"}', { status: 429 });
+  };
+  const saved = await submitScore('snake', desc, 'Josh', 10, 'https://arcade.test');
   assert.equal(saved.scope, 'device');
   assert.match(saved.error ?? '', /Try again in a minute/);
 });
@@ -148,4 +158,9 @@ test('opted in games have sane specs that match their shells', () => {
     const src = readFileSync(join(games, m.id, 'index.tsx'), 'utf8');
     assert.equal(/<GameShell[^>]*\blowerIsBetter\b/.test(src), spec.order === 'asc', `${m.id} lowerIsBetter must match order`);
   }
+});
+
+test('committed Worker specs match the generated game metadata', async () => {
+  const committed = readFileSync(join(import.meta.dirname, '..', 'worker', 'src', 'specs.gen.ts'), 'utf8');
+  assert.equal(committed, await generateArcadeSpecs());
 });
