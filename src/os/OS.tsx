@@ -63,7 +63,14 @@ function Keyboard() {
 function Hello() {
   return (
     <svg className="hello" viewBox="0 0 640 260" aria-label="hello">
-      <text x="50%" y="62%" textAnchor="middle">
+      <defs>
+        <mask id="hello-pen" maskUnits="userSpaceOnUse" x="0" y="0" width="640" height="260">
+          <text className="hello-pen" x="50%" y="62%" textAnchor="middle">
+            hello
+          </text>
+        </mask>
+      </defs>
+      <text className="hello-ink" x="50%" y="62%" textAnchor="middle" mask="url(#hello-pen)">
         hello
       </text>
     </svg>
