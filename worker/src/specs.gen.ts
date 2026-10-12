@@ -15,3 +15,11 @@ export const LEADERBOARD_SPECS: Record<string, LeaderboardSpec> = {
   "snake": {"order":"desc","max":100000},
   "stack": {"order":"desc","max":10000},
 };
+
+export const ONLINE_SPECS: Record<string, { seats: number }> = {
+  "airhockey": {"seats":2},
+  "checkers": {"seats":2},
+  "connect4": {"seats":2},
+  "lightcycles": {"seats":4},
+  "pong": {"seats":2},
+};

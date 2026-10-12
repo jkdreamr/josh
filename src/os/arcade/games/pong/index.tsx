@@ -1,17 +1,17 @@
 import { useEffect, useRef } from 'react';
-import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
-import { BALL_R, COURT, PADDLE, SERVE_DELAY, aiStep, createAi, createMatch, movePaddle, other, paddleX, steerPaddle, step, type AiLevel, type PongEvent, type Side } from './pong';
+import { BALL_R, COURT, PADDLE, SERVE_DELAY, aiStep, createAi, createMatch, mergeGuestSnapshot, movePaddle, other, paddleX, steerPaddle, step, type AiLevel, type PongEvent, type Side } from './pong';
 import './pong.css';
 
 const MODE = defineSetting('pong:mode', PLAY_MODES, 'cpu');
 const LEVEL = defineSetting('pong:level', LEVEL_NAMES, 'normal');
 const P_COLORS = ['#0a84ff', '#ff375f'] as const;
 
-export default function Game({ compact, onExit }: GameProps) {
+export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} formatScore={(n) => `${n} hit rally`} setup={<Setup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} formatScore={(n) => `${n} hit rally`} setup={<Setup />}>
       <Pong />
     </GameShell>
   );
@@ -33,6 +33,7 @@ type View = { ox: number; oy: number; s: number };
 
 function Pong() {
   const shell = useShell();
+  const online = useOnline();
   const keys = useKeys();
   const { ref, size, ctx } = useCanvas();
   const [mode] = useSetting(MODE);
@@ -50,6 +51,9 @@ function Pong() {
     longest: 0,
     ending: -1,
     pointers: new Map<number, { side: Side; y: number }>(),
+    remoteTarget: null as number | null,
+    sendAt: 0,
+    snapshotAt: 0,
     hover: null as { side: Side; y: number } | null,
     view: { ox: 0, oy: 0, s: 1 } as View,
     ended: false,
@@ -58,12 +62,29 @@ function Pong() {
   // Setup changes made on the Start card apply to the match that is about to begin.
   useEffect(() => {
     if (shell.status !== 'ready') return;
-    st.mode = mode;
+    st.mode = online ? '2p' : mode;
     st.level = levelIndex(levelName) as AiLevel;
     st.match = createMatch(Math.random() < 0.5 ? 0 : 1);
     st.ai = createAi();
+    st.remoteTarget = null;
+    st.sendAt = 0;
+    st.snapshotAt = 0;
+    st.ended = false;
     shell.invalidate();
-  }, [mode, levelName, shell.status, shell.invalidate, st]);
+  }, [mode, levelName, shell.status, shell.invalidate, st, online?.seat]);
+
+  useEffect(() => online?.onMessage((from, data) => {
+    if (!online || !data || typeof data !== 'object') return;
+    const message = data as { game?: unknown; type?: unknown; y?: unknown; match?: unknown; events?: unknown };
+    if (message.game !== 'pong') return;
+    if (online.seat === 0 && from !== 0 && message.type === 'paddle' && typeof message.y === 'number' && Number.isFinite(message.y)) {
+      st.remoteTarget = message.y;
+    } else if (online.seat !== 0 && from === 0 && message.type === 'snapshot' && message.match && typeof message.match === 'object') {
+      st.match = mergeGuestSnapshot(st.match, message.match as typeof st.match);
+    } else if (online.seat !== 0 && from === 0 && message.type === 'events' && Array.isArray(message.events)) {
+      onEvents(message.events as PongEvent[]);
+    }
+  }), [online?.onMessage, online?.seat]);
 
   // Pointer input: finger or mouse y steers a paddle. In 2P each half of the court owns a side.
   useEffect(() => {
@@ -74,7 +95,7 @@ function Pong() {
       const { ox, oy, s } = st.view;
       return { x: (e.clientX - r.left - ox) / s, y: (e.clientY - r.top - oy) / s };
     };
-    const sideFor = (x: number): Side => (st.mode === '2p' && x > COURT.w / 2 ? 1 : 0);
+    const sideFor = (x: number): Side => online ? (online.seat === 0 ? 0 : 1) : st.mode === '2p' && x > COURT.w / 2 ? 1 : 0;
     const down = (e: PointerEvent) => {
       const c = toCourt(e);
       st.pointers.set(e.pointerId, { side: sideFor(c.x), y: c.y });
@@ -102,7 +123,7 @@ function Pong() {
       el.removeEventListener('pointerleave', leave);
       st.pointers.clear();
     };
-  }, [ref, st]);
+  }, [ref, st, online?.seat]);
 
   const burst = (x: number, y: number, color: string, n: number, speed: number) => {
     for (let i = 0; i < n; i++) {
@@ -139,7 +160,10 @@ function Pong() {
     (dt) => {
       if (dt <= 0) return;
       const m = st.match;
-      const sides: Side[] = st.mode === '2p' ? [0, 1] : [0];
+      const guest = !!online && online.seat !== 0;
+      const sides: Side[] = guest ? [1] : online ? [0] : st.mode === '2p' ? [0, 1] : [0];
+      st.sendAt += dt;
+      st.snapshotAt += dt;
       // Keyboard: 1P uses either cluster, 2P splits W/S and arrows.
       for (const side of sides) {
         const axis =
@@ -151,8 +175,26 @@ function Pong() {
         else if (axis !== 0) movePaddle(m.paddles[side], axis * 95 * dt, dt);
         else m.paddles[side].vy *= Math.max(0, 1 - dt * 14);
       }
-      if (st.mode === 'cpu') aiStep(m, 1, st.level, st.ai, dt);
-      onEvents(step(m, dt));
+      if (guest && st.sendAt >= 0.05) {
+        online!.send({ game: 'pong', type: 'paddle', y: m.paddles[1].y }, { fast: true });
+        st.sendAt %= 0.05;
+      }
+      if (online && online.seat === 0) {
+        if (st.remoteTarget !== null) steerPaddle(m.paddles[1], st.remoteTarget, dt, 420);
+        else m.paddles[1].vy *= Math.max(0, 1 - dt * 14);
+      } else if (!online && st.mode === 'cpu') aiStep(m, 1, st.level, st.ai, dt);
+      if (!guest) {
+        const events = step(m, dt);
+        onEvents(events);
+        if (online?.seat === 0 && events.length) online.send({ game: 'pong', type: 'events', events });
+        if (online?.seat === 0 && st.snapshotAt >= 0.05) {
+          online.send({ game: 'pong', type: 'snapshot', match: m }, { fast: true });
+          st.snapshotAt %= 0.05;
+        }
+      } else {
+        const target = [...st.pointers.values()].find((p) => p.side === 1) ?? (st.hover?.side === 1 ? st.hover : null);
+        if (target) m.paddles[1].y += (target.y - m.paddles[1].y) * Math.min(1, dt * 12);
+      }
 
       if (m.serveIn <= 0 && m.winner === null) {
         st.trail.push({ x: m.ball.x, y: m.ball.y });
@@ -175,9 +217,11 @@ function Pong() {
         if (st.ending < 0 && !st.ended) {
           st.ended = true;
           const w = m.winner;
-          const title = st.mode === 'cpu' ? (w === 0 ? 'You Win' : 'Computer Wins') : `Player ${w + 1} Wins`;
+          const winnerName = online?.players.find((player) => player.seat === w)?.name ?? `Player ${w + 1}`;
+          const title = online ? (online.seat === w ? 'You Win' : `${winnerName} Wins`) : st.mode === 'cpu' ? (w === 0 ? 'You Win' : 'Computer Wins') : `Player ${w + 1} Wins`;
           const loser = other(w);
-          shell.gameOver(st.longest, { title, detail: `${m.score[w]} to ${m.score[loser]}. Longest rally: ${st.longest} ${st.longest === 1 ? 'hit' : 'hits'}.` });
+          if (online) online.reportResult(online.round, w);
+          shell.gameOver(online ? undefined : st.longest, { title, detail: `${m.score[w]} to ${m.score[loser]}. Longest rally: ${st.longest} ${st.longest === 1 ? 'hit' : 'hits'}.` });
         }
       }
     },

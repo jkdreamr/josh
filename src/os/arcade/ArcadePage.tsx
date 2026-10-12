@@ -1,39 +1,74 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { BoardList, BoardScopeNote } from './kit/board';
-import { formatBoardScore, getBoard, type Board } from './kit/leaderboard';
+import { ARCADE_API, formatBoardScore, getBoard, type Board, type BoardEntry } from './kit/leaderboard';
 import { categories, metas } from './manifest';
 import type { GameMeta } from './types';
 
 const ranked = metas.filter((m) => m.leaderboard);
+const boardChoices = [
+  ...ranked.map((game) => ({ key: `score:${game.id}`, title: game.title, game, kind: 'score' as const })),
+  ...metas.filter((game) => game.online).map((game) => ({ key: `wins:${game.id}`, title: `${game.title} Online Wins`, game, kind: 'wins' as const })),
+];
+const WINS_UNAVAILABLE = 'Online wins are unavailable right now.';
+
+async function getWins(game: string): Promise<Board> {
+  if (!ARCADE_API) return { entries: [], scope: 'global', error: WINS_UNAVAILABLE };
+  try {
+    const response = await fetch(`${ARCADE_API}/wins?game=${encodeURIComponent(game)}`);
+    if (!response.ok) throw new Error('unavailable');
+    const body = (await response.json()) as { entries?: unknown };
+    if (!Array.isArray(body.entries)) throw new Error('invalid response');
+    const entries = body.entries.filter((entry): entry is BoardEntry =>
+      !!entry && typeof entry === 'object' &&
+      typeof (entry as BoardEntry).name === 'string' &&
+      Number.isFinite((entry as BoardEntry).score) &&
+      typeof (entry as BoardEntry).date === 'string',
+    );
+    return { entries, scope: 'global' };
+  } catch {
+    return { entries: [], scope: 'global', error: WINS_UNAVAILABLE };
+  }
+}
 
 function Leaderboards() {
-  const [id, setId] = useState(ranked[0]?.id ?? '');
+  const [id, setId] = useState(boardChoices[0]?.key ?? '');
   const [board, setBoard] = useState<Board | null>(null);
-  const game = ranked.find((m) => m.id === id);
+  const choice = boardChoices.find((item) => item.key === id);
   useEffect(() => {
     setBoard(null);
-    if (!game?.leaderboard) return;
+    if (!choice) return;
     let live = true;
-    getBoard(game.id, game.leaderboard).then((b) => live && setBoard(b));
+    const request = choice.kind === 'wins'
+      ? getWins(choice.game.id)
+      : getBoard(choice.game.id, choice.game.leaderboard!);
+    request.then((b) => live && setBoard(b));
     return () => {
       live = false;
     };
-  }, [game]);
-  if (!game?.leaderboard) return null;
-  const spec = game.leaderboard;
+  }, [choice]);
+  if (!choice) return null;
   return (
     <section className="arcade-boards" aria-label="Leaderboards">
       <div className="arcade-boards-bar">
         <select aria-label="Game" value={id} onChange={(e) => setId(e.target.value)}>
-          {ranked.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.title}
+          {boardChoices.map((item) => (
+            <option key={item.key} value={item.key}>
+              {item.title}
             </option>
           ))}
         </select>
       </div>
-      <BoardScopeNote board={board} />
-      <BoardList board={board} fmt={(n) => formatBoardScore(n, spec)} />
+      {choice.kind === 'wins' && board?.error ? (
+        <p className="arcade-lb-empty">{WINS_UNAVAILABLE}</p>
+      ) : (
+        <>
+          <BoardScopeNote board={board} />
+          {choice.kind === 'wins' && <div className="arcade-board-measure">Wins</div>}
+          {choice.kind === 'wins' && board && !board.entries.length
+            ? <p className="arcade-lb-empty">No Wins Yet</p>
+            : <BoardList board={board} fmt={(n) => choice.kind === 'wins' ? Math.floor(n).toLocaleString('en-US') : formatBoardScore(n, choice.game.leaderboard!)} />}
+        </>
+      )}
     </section>
   );
 }
@@ -103,7 +138,7 @@ export function ArcadePage({ onOpen }: { onOpen: (id: string) => void }) {
             </button>
           )}
         </div>
-        <p>{boards ? 'The top 100 scores for each game.' : metas.length ? `${metas.length} games, made for this computer.` : 'Games are on the way.'}</p>
+        <p>{boards ? 'Top 100 Scores and Online Wins for Each Game.' : metas.length ? `${metas.length} games, made for this computer.` : 'Games are on the way.'}</p>
       </header>
       {boards ? (
         <Leaderboards />

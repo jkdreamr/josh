@@ -10,7 +10,7 @@ export type ShellApi = {
   status: GameStatus;
   /** Bumps on every restart. Children of <GameShell> remount on restart unless remount={false}. */
   round: number;
-  /** False while the tab is hidden, the Chrome tab is in the background, or the game is off screen. */
+  /** False while inactive, except online games continue simulating in the background. */
   active: boolean;
   compact: boolean;
   /** True on touch devices (phone and iPad frames). */

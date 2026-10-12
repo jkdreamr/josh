@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { T } from './gl';
-import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell, useThree } from '../../kit';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { createGL, damp, disposeTree, type GL } from './gl';
 import { GOAL_W, L, MALLET_R, PUCK_R, TO_WIN, W, create, moveMalletTo, nudgeMallet, step, stepAI, type Difficulty, type Event, type Mode, type State } from './logic';
@@ -9,9 +9,9 @@ import './airhockey.css';
 
 type Three = typeof import('three');
 
-export default function Game({ compact, onExit }: GameProps) {
+export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} setup={<Setup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />}>
       <Play />
     </GameShell>
   );
@@ -174,7 +174,7 @@ function build(THREE: Three, host: HTMLElement): World | null {
  * Camera: a gentle perspective from the bottom player's end for single player; top-down for two players,
  * turned so the table runs along the longer side of the screen (blue on the left or bottom).
  */
-function placeCamera(w: World, twoPlayer: boolean) {
+function placeCamera(w: World, twoPlayer: boolean, flipped = false) {
   const cam = w.camera;
   const a = cam.aspect;
   if (twoPlayer) {
@@ -182,7 +182,8 @@ function placeCamera(w: World, twoPlayer: boolean) {
     const span = landscape ? Math.max(L / a, W) : Math.max(L, W * a);
     cam.fov = 50;
     const dist = span / 2 / Math.tan((cam.fov * Math.PI) / 360) + 0.35;
-    cam.up.set(landscape ? -1 : 0, 0, landscape ? 0 : -1);
+    const direction = flipped ? 1 : -1;
+    cam.up.set(landscape ? direction : 0, 0, landscape ? 0 : direction);
     cam.position.set(0, dist, 0);
     cam.lookAt(0, 0, 0);
   } else {
@@ -210,6 +211,7 @@ function Setup() {
 
 function Play() {
   const shell = useShell();
+  const online = useOnline();
   const keys = useKeys();
   const THREE = useThree();
   const { ref, size } = useCanvas<HTMLDivElement>();
@@ -221,16 +223,57 @@ function Play() {
   const [pop, setPop] = useState<{ text: string; id: number } | null>(null);
   const pointers = useRef(new Map<number, { side: 0 | 1; x: number; z: number }>());
   const lastTick = useRef(0);
-  const cfg = useRef({ mode, difficulty });
-  cfg.current = { mode, difficulty };
+  const remoteTarget = useRef<{ x: number; z: number } | null>(null);
+  const remoteState = useRef<State | null>(null);
+  const sendAt = useRef(0);
+  const snapshotAt = useRef(0);
+  const cfg = useRef({ mode: online ? '2p' as Mode : mode, difficulty });
+  cfg.current = { mode: online ? '2p' : mode, difficulty };
 
   // Setup changes made on the Start card apply to the match that is about to begin.
   useEffect(() => {
     if (shell.status !== 'ready') return;
-    state.current = create(mode, difficulty);
+    state.current = create(online ? '2p' : mode, difficulty);
+    remoteTarget.current = null;
+    remoteState.current = null;
+    sendAt.current = 0;
+    snapshotAt.current = 0;
     setScore([0, 0]);
     shell.invalidate();
-  }, [mode, difficulty, shell.status, shell.invalidate]);
+  }, [mode, difficulty, shell.status, shell.invalidate, online?.seat]);
+
+  useEffect(() => online?.onMessage((from, data) => {
+    if (!online || !data || typeof data !== 'object') return;
+    const message = data as { game?: unknown; type?: unknown; x?: unknown; z?: unknown; state?: unknown; event?: unknown };
+    if (message.game !== 'airhockey') return;
+    if (online.seat === 0 && from !== 0 && message.type === 'mallet' && typeof message.x === 'number' && typeof message.z === 'number') {
+      remoteTarget.current = { x: message.x, z: message.z };
+    } else if (online.seat !== 0 && from === 0 && message.type === 'snapshot' && message.state && typeof message.state === 'object') {
+      remoteState.current = message.state as State;
+    } else if (online.seat !== 0 && from === 0 && message.type === 'events' && message.event && typeof message.event === 'object') {
+      if (message.state && typeof message.state === 'object') remoteState.current = message.state as State;
+      const event = message.event as Event;
+      const s = state.current;
+      if (event.wall) sfx.play('tick', 0.6);
+      if (event.hit !== undefined) sfx.play('hit', 2.2);
+      if (event.goal !== undefined && remoteState.current) {
+        s.score = [...remoteState.current.score];
+        setScore((old) => old[0] === s.score[0] && old[1] === s.score[1] ? old : [s.score[0], s.score[1]]);
+        const w = world.current;
+        if (w) {
+          w.flashLife = 1;
+          (w.flash.material as T.MeshBasicMaterial).color.setHex(event.goal === 0 ? P1 : P2);
+          w.shake = 0.35;
+        }
+        if (event.win !== undefined) {
+          const winnerName = online.players.find((player) => player.seat === event.win)?.name ?? `Player ${event.win + 1}`;
+          const title = online.seat === event.win ? 'You Win' : `${winnerName} Wins`;
+          online.reportResult(online.round, event.win);
+          shell.gameOver(undefined, { title, detail: `${s.score[0]} to ${s.score[1]}.` });
+        }
+      }
+    }
+  }), [online?.onMessage, online?.seat, online?.players, shell.round, shell.gameOver]);
 
   useEffect(() => {
     if (shell.status !== 'playing') lastTick.current = 0;
@@ -242,7 +285,7 @@ function Play() {
     const w = build(THREE, host);
     if (!w) return;
     world.current = w;
-    placeCamera(w, mode === '2p');
+    placeCamera(w, mode === '2p', online?.seat === 1);
     shell.invalidate();
     return () => {
       w.dispose();
@@ -254,8 +297,8 @@ function Play() {
     const w = world.current;
     if (!w) return;
     w.resize(size.w, size.h);
-    placeCamera(w, mode === '2p');
-  }, [size.w, size.h, THREE, mode]);
+    placeCamera(w, cfg.current.mode === '2p', online?.seat === 1);
+  }, [size.w, size.h, THREE, mode, online?.seat]);
 
   /** Pointer position on the table plane, in table coordinates. */
   const tablePoint = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -277,7 +320,7 @@ function Play() {
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     // in two player mode each half of the table belongs to one player; against the computer every touch is yours
-    const side: 0 | 1 = cfg.current.mode === '2p' && p.z < 0 ? 1 : 0;
+    const side: 0 | 1 = online ? (online.seat === 0 ? 0 : 1) : cfg.current.mode === '2p' && p.z < 0 ? 1 : 0;
     if ([...pointers.current.values()].some((q) => q.side === side)) return;
     pointers.current.set(e.pointerId, { side, x: p.x, z: p.z });
   };
@@ -292,9 +335,9 @@ function Play() {
       return;
     }
     // a mouse with no button down still steers the bottom mallet against the computer
-    if (e.pointerType === 'mouse' && cfg.current.mode === 'cpu' && shell.status === 'playing') {
+    if (e.pointerType === 'mouse' && (cfg.current.mode === 'cpu' || online) && shell.status === 'playing') {
       const p = tablePoint(e);
-      if (p) pointers.current.set(-1, { side: 0, x: p.x, z: p.z });
+      if (p) pointers.current.set(-1, { side: online?.seat === 1 ? 1 : 0, x: p.x, z: p.z });
     }
   };
   const onUp = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -317,7 +360,13 @@ function Play() {
         s.mallets[0].vz = 0;
       }
     }
-    if (s.mode === '2p') {
+    if (online?.seat === 0) {
+      if (remoteTarget.current) moveMalletTo(s, 1, remoteTarget.current, dt, 9);
+      else {
+        s.mallets[1].vx = 0;
+        s.mallets[1].vz = 0;
+      }
+    } else if (s.mode === '2p' && !online) {
       if (!driven.has(1)) {
         const kx = (keys.down('ArrowRight') ? 1 : 0) - (keys.down('ArrowLeft') ? 1 : 0);
         const kz = (keys.down('ArrowDown') ? 1 : 0) - (keys.down('ArrowUp') ? 1 : 0);
@@ -335,13 +384,50 @@ function Play() {
       const w = world.current;
       const s = state.current;
       if (!w) return;
+      sendAt.current += dt;
+      snapshotAt.current += dt;
+      if (online?.seat === 1 && remoteState.current) {
+        const target = remoteState.current;
+        const t = Math.min(1, dt * 18);
+        s.puck.x += (target.puck.x - s.puck.x) * t;
+        s.puck.z += (target.puck.z - s.puck.z) * t;
+        s.puck.vx = target.puck.vx;
+        s.puck.vz = target.puck.vz;
+        s.mallets.forEach((mallet, index) => {
+          if (index === 1) return;
+          mallet.x += (target.mallets[index].x - mallet.x) * t;
+          mallet.z += (target.mallets[index].z - mallet.z) * t;
+          mallet.vx = target.mallets[index].vx;
+          mallet.vz = target.mallets[index].vz;
+        });
+        s.score = [...target.score];
+        s.freeze = target.freeze;
+        s.winner = target.winner;
+        setScore((old) => old[0] === s.score[0] && old[1] === s.score[1] ? old : [s.score[0], s.score[1]]);
+      }
+      if (online?.seat === 1) {
+        const pointer = [...pointers.current.values()].find((item) => item.side === 1);
+        if (pointer) moveMalletTo(s, 1, pointer, dt, 9);
+        else nudgeMallet(
+          s,
+          1,
+          (keys.down('ArrowRight') ? 1 : 0) - (keys.down('ArrowLeft') ? 1 : 0),
+          (keys.down('ArrowDown') ? 1 : 0) - (keys.down('ArrowUp') ? 1 : 0),
+          dt,
+        );
+        if (sendAt.current >= 0.05) {
+          const mallet = s.mallets[1];
+          online.send({ game: 'airhockey', type: 'mallet', x: mallet.x, z: mallet.z }, { fast: true });
+          sendAt.current %= 0.05;
+        }
+      }
       // simulate real elapsed time (capped) in fixed sub-steps, so slow devices play at full speed
       // and fast mallets never tunnel through the puck
       const now = performance.now();
       const gap = lastTick.current ? (now - lastTick.current) / 1000 : dt;
       lastTick.current = now;
       const simDt = gap > 0.5 ? dt : Math.min(0.25, Math.max(dt, gap));
-      if (s.winner === null) {
+      if (s.winner === null && online?.seat !== 1) {
         const n = Math.max(1, Math.ceil(simDt / SUBSTEP));
         const h = simDt / n;
         const ev: Event = {};
@@ -364,14 +450,23 @@ function Play() {
           if (ev.win !== undefined) {
             const won = ev.win === 0;
             sfx.play(won || !you ? 'win' : 'lose');
-            const title = you ? (won ? 'You Win' : 'Computer Wins') : ev.win === 0 ? 'Blue Wins' : 'Pink Wins';
-            shell.gameOver(you ? s.score[0] : undefined, { title, detail: `${s.score[0]} to ${s.score[1]}${you ? ` against the ${levelLabel(s.difficulty).toLowerCase()} computer.` : '.'}` });
+            const winnerName = online?.players.find((player) => player.seat === ev.win)?.name ?? (ev.win === 0 ? 'Blue' : 'Pink');
+            const title = online ? (online.seat === ev.win ? 'You Win' : `${winnerName} Wins`) : you ? (won ? 'You Win' : 'Computer Wins') : ev.win === 0 ? 'Blue Wins' : 'Pink Wins';
+            if (online) online.reportResult(online.round, ev.win);
+            shell.gameOver(online ? undefined : you ? s.score[0] : undefined, { title, detail: `${s.score[0]} to ${s.score[1]}${you ? ` against the ${levelLabel(s.difficulty).toLowerCase()} computer.` : '.'}` });
           } else {
             sfx.play(ev.goal === 0 || !you ? 'coin' : 'lose', 1.2);
             setPop({ text: you ? (ev.goal === 0 ? 'Goal' : 'Computer scores') : ev.goal === 0 ? 'Blue scores' : 'Pink scores', id: Date.now() });
           }
           if (you) shell.setScore(s.score[0]);
         }
+        if (online?.seat === 0 && (ev.wall || ev.hit !== undefined || ev.goal !== undefined)) {
+          online.send({ game: 'airhockey', type: 'events', event: ev, state: s });
+        }
+      }
+      if (online?.seat === 0 && snapshotAt.current >= 0.05) {
+        online.send({ game: 'airhockey', type: 'snapshot', state: s }, { fast: true });
+        snapshotAt.current %= 0.05;
       }
       // visuals
       w.puck.position.x = s.puck.x;

@@ -53,6 +53,16 @@ export function createMatch(serveTo: Side = 1): Match {
   return m;
 }
 
+export function mergeGuestSnapshot(local: Match, host: Match): Match {
+  return {
+    ...host,
+    paddles: [
+      host.paddles[0],
+      { ...host.paddles[1], y: local.paddles[1].y, vy: local.paddles[1].vy },
+    ],
+  };
+}
+
 /** Release the held ball toward `m.serveTo` at a gentle random angle. */
 export function serve(m: Match, rng: Rng = Math.random) {
   const dir = m.serveTo === 0 ? -1 : 1;

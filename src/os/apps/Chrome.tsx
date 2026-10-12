@@ -8,7 +8,7 @@ import { ArcadeHost } from '../arcade/kit/host';
 import { getMeta, hasGame } from '../arcade/manifest';
 
 type Tab = { id: number; history: string[]; idx: number; reload: number };
-type View = { kind: 'newtab' } | { kind: 'arcade' } | { kind: 'game'; id: string } | { kind: 'frame'; src: string; known: boolean } | { kind: 'blocked'; entry?: Entry };
+type View = { kind: 'newtab' } | { kind: 'arcade' } | { kind: 'game'; id: string; room?: string } | { kind: 'frame'; src: string; known: boolean } | { kind: 'blocked'; entry?: Entry };
 
 const NEWTAB = 'chrome://newtab';
 const GAMES = 'chrome://games';
@@ -29,7 +29,10 @@ function entryFor(url: string) {
 function resolve(url: string): View {
   if (url === NEWTAB) return { kind: 'newtab' };
   if (url === GAMES) return { kind: 'arcade' };
-  if (url.startsWith(`${GAMES}/`)) return { kind: 'game', id: url.slice(GAMES.length + 1) };
+  if (url.startsWith(`${GAMES}/`)) {
+    const route = new URL(url);
+    return { kind: 'game', id: route.pathname.slice(1), room: route.searchParams.get('room') ?? undefined };
+  }
   if (isInternal(url)) return { kind: 'newtab' };
   const u = url.toLowerCase();
   if (u.includes('youtube.com/watch') || u.includes('youtu.be/')) {
@@ -139,7 +142,7 @@ export default function Chrome({ args }: AppProps) {
     const u = t.history[t.idx];
     if (u === NEWTAB) return 'New Tab';
     if (u === GAMES) return 'Arcade';
-    if (u.startsWith(`${GAMES}/`)) return getMeta(u.slice(GAMES.length + 1))?.title ?? 'Arcade';
+    if (u.startsWith(`${GAMES}/`)) return getMeta(resolve(u).kind === 'game' ? (resolve(u) as Extract<View, { kind: 'game' }>).id : '')?.title ?? 'Arcade';
     const e = entryFor(u);
     if (e) return e.name;
     if (u.includes('youtube')) return 'fairytale - YouTube';
@@ -201,7 +204,7 @@ export default function Chrome({ args }: AppProps) {
           return (
             <div key={`${t.id}-${t.reload}-${v.id}`} className="chrome-game" hidden={!on}>
               <ArcadeHost.Provider value={{ active: on }}>
-                <GameFrame id={v.id} onExit={() => navigateTab(t.id, GAMES)} />
+                <GameFrame id={v.id} roomCode={v.room} onExit={() => navigateTab(t.id, GAMES)} />
               </ArcadeHost.Provider>
             </div>
           );

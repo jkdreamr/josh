@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { BLACK, RED, bestMove, colOf, colorOf, count, isKing, movesFrom, newGame, play, rowOf, sq, type Board, type Color, type Game as CheckersGame, type Level, type Move } from './checkers.ts';
 import { meta } from './meta';
@@ -38,9 +38,9 @@ function useGameTimers() {
   return later;
 }
 
-export default function Game({ compact, onExit }: GameProps) {
+export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} lowerIsBetter formatScore={(n) => `${n} ${n === 1 ? 'move' : 'moves'}`} setup={<Setup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} lowerIsBetter formatScore={(n) => `${n} ${n === 1 ? 'move' : 'moves'}`} setup={<Setup />}>
       <Checkers />
     </GameShell>
   );
@@ -62,6 +62,7 @@ type Drag = { pid: number; from: number; moved: boolean };
 
 function Checkers() {
   const shell = useShell();
+  const online = useOnline();
   const { ref: stageRef, size } = useCanvas<HTMLDivElement>();
   const boardRef = useRef<HTMLDivElement | null>(null);
   const moverRef = useRef<HTMLDivElement | null>(null);
@@ -86,10 +87,11 @@ function Checkers() {
   const gameRef = useRef(game);
   gameRef.current = game;
   const gameOverScheduled = useRef<CheckersGame | null>(null);
+  const commitRef = useRef<(move: Move) => void>(() => {});
   const later = useGameTimers();
 
   const lastMove = game.history.at(-1);
-  const humanTurn = game.status === 'playing' && !anim && (cfg.current.mode === '2p' || game.turn === HUMAN);
+  const humanTurn = game.status === 'playing' && !anim && (online ? game.turn === (online.seat === 0 ? RED : BLACK) : cfg.current.mode === '2p' || game.turn === HUMAN);
   const fromSquares = useMemo(() => new Set(game.legal.map((m) => m.from)), [game.legal]);
   const targets = useMemo(() => (sel === null ? new Map<number, Move>() : new Map(movesFrom(game.legal, sel).map((m) => [m.to, m]))), [sel, game.legal]);
 
@@ -134,18 +136,32 @@ function Checkers() {
     },
     [game, later],
   );
+  commitRef.current = commit;
 
   // Setup changes made on the Start card apply to the game that is about to begin.
   useEffect(() => {
     if (shell.status !== 'ready') return;
-    cfg.current = { mode, level: levelIndex(levelName) };
+    cfg.current = { mode: online ? '2p' : mode, level: levelIndex(levelName) };
     const g = newGame();
     setGame(g);
     setVis(g.board);
     setAnim(null);
     setSel(null);
     setGone([]);
-  }, [mode, levelName, shell.status]);
+  }, [mode, levelName, shell.status, online?.seat]);
+
+  useEffect(() => online?.onMessage((from, data) => {
+    if (!online || from === online.seat || !data || typeof data !== 'object') return;
+    const message = data as { game?: unknown; move?: unknown };
+    if (message.game !== 'checkers' || !message.move || typeof message.move !== 'object') return;
+    const move = message.move as Move;
+    const expected = gameRef.current.turn === RED ? 0 : 1;
+    if (from !== expected || !Array.isArray(move.path) || !Array.isArray(move.captured)) return;
+    const legal = gameRef.current.legal.find((candidate) =>
+      candidate.from === move.from && candidate.to === move.to && candidate.path.join() === move.path.join() && candidate.captured.join() === move.captured.join(),
+    );
+    if (legal) commitRef.current(legal);
+  }), [online?.onMessage, online?.seat]);
 
   useEffect(() => {
     let w: Worker | null = null;
@@ -237,16 +253,22 @@ function Checkers() {
       if (statusRef.current !== 'playing' || gameRef.current !== game) return;
       const moves = Math.ceil(game.history.length / 2);
       const { mode } = cfg.current;
-      if (game.status === 'draw') shell.gameOver(undefined, { title: 'Draw', detail: `Forty moves without progress after ${moves} moves.` });
+      if (game.status === 'draw') {
+        if (online) online.reportResult(online.round, null);
+        shell.gameOver(undefined, { title: 'Draw', detail: `Forty moves without progress after ${moves} moves.` });
+      }
       else {
         const winner: Color = game.status === 'red' ? RED : BLACK;
-        const title = mode === 'cpu' ? (winner === HUMAN ? 'You Win' : 'Computer Wins') : `${NAMES[winner]} Wins`;
+        const winnerSeat = winner === RED ? 0 : 1;
+        const winnerName = online?.players.find((player) => player.seat === winnerSeat)?.name ?? NAMES[winner];
+        const title = online ? (winnerSeat === online.seat ? 'You Win' : `${winnerName} Wins`) : mode === 'cpu' ? (winner === HUMAN ? 'You Win' : 'Computer Wins') : `${NAMES[winner]} Wins`;
         const left = count(game.board, winner);
         const detail = `${left.men + left.kings} ${left.men + left.kings === 1 ? 'piece' : 'pieces'} left after ${moves} ${moves === 1 ? 'move' : 'moves'}.`;
-        shell.gameOver(mode === 'cpu' && winner === HUMAN ? moves : undefined, { title, detail });
+        if (online) online.reportResult(online.round, winnerSeat);
+        shell.gameOver(!online && mode === 'cpu' && winner === HUMAN ? moves : undefined, { title, detail });
       }
     }, 500);
-  }, [game, shell.status, shell.gameOver, later]);
+  }, [game, shell.round, shell.status, shell.gameOver, later, online]);
 
   // Geometry: 44px status row on top, counts row below the board.
   const TOP = 44;
@@ -267,6 +289,7 @@ function Checkers() {
   const tryMove = (from: number, to: number) => {
     const m = movesFrom(game.legal, from).find((x) => x.to === to);
     if (!m) return false;
+    if (online) online.send({ game: 'checkers', move: m });
     commit(m);
     return true;
   };

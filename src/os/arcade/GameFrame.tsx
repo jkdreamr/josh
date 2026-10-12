@@ -28,7 +28,7 @@ function Notice({ title, body, compact, actions }: { title: string; body: string
 }
 
 /** Loads a game by id with a spinner, and shows a friendly tile instead of a blank page if it fails. */
-export function GameFrame({ id, compact, onExit }: { id: string; compact?: boolean; onExit?: () => void }) {
+export function GameFrame({ id, compact, onExit, roomCode }: { id: string; compact?: boolean; onExit?: () => void; roomCode?: string }) {
   const meta = getMeta(id);
   const [Game, setGame] = useState(() => loaders[id]);
   if (!meta || !Game)
@@ -64,7 +64,7 @@ export function GameFrame({ id, compact, onExit }: { id: string; compact?: boole
           </div>
         }
       >
-        <Game compact={compact} onExit={onExit} />
+        <Game compact={compact} onExit={onExit} roomCode={roomCode} />
       </Suspense>
     </Boundary>
   );
