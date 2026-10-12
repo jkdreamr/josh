@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelIndex, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { alive, createArena, roundOver, steer, step, swipeDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
+import { alive, cell, createArena, roundOver, steer, step, swipeDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
 import { meta } from './meta';
 import './lightcycles.css';
 
@@ -19,9 +19,9 @@ const TARGET = 3;
 const COLORS = ['#32d4ff', '#ff9f0a', '#bf5af2', '#30d158'];
 const NAMES = ['Player 1', 'Player 2', 'Rider 3', 'Rider 4'];
 
-export default function Game({ compact, onExit }: GameProps) {
+export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} formatScore={(n) => `${n} cells`} setup={<Setup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} formatScore={(n) => `${n} cells`} setup={<Setup />}>
       <Cycles />
     </GameShell>
   );
@@ -70,6 +70,7 @@ const grid = (w: number, h: number) => {
 
 function Cycles() {
   const shell = useShell();
+  const online = useOnline();
   const { ref, size, ctx } = useCanvas();
   const [banner, setBanner] = useState<{ text: string; sub: string } | null>(null);
   const [playMode] = useSetting(MODE);
@@ -81,8 +82,8 @@ function Cycles() {
   const sizeRef = useRef(size);
   sizeRef.current = size;
 
-  const riderCount = () => (cfg.current.mode === '2p' ? 2 : cfg.current.mode + 1);
-  const humans = () => (cfg.current.mode === '2p' ? 2 : 1);
+  const riderCount = () => online ? Math.max(2, Math.min(4, online.players.length)) : cfg.current.mode === '2p' ? 2 : cfg.current.mode + 1;
+  const humans = () => online ? riderCount() : cfg.current.mode === '2p' ? 2 : 1;
 
   const startRound = (match: Match) => {
     const { w, h } = sizeRef.current;
@@ -99,17 +100,18 @@ function Cycles() {
     match.banner = `Round ${match.round}`;
     match.sub = match.round === 1 ? (shell.touch ? 'Swipe to turn' : cfg.current.mode === '2p' ? 'WASD vs arrow keys' : 'WASD or arrow keys to turn') : '';
     setBanner({ text: match.banner, sub: match.sub });
+    if (online?.seat === 0) online.send({ game: 'lightcycles', type: 'round', cols: g.cols, rows: g.rows, players: riderCount(), wins: match.wins, round: match.round, speed: match.speed, longest: match.longest });
   };
 
   const reset = () => {
-    const mode = modeOf(playMode, rivals);
+    const mode = online ? '2p' : modeOf(playMode, rivals);
     const level = levelIndex(levelName);
     cfg.current = { mode, level };
     const match: Match = {
       arena: createArena(2, 2, 0, 0),
       cols: 2,
       rows: 2,
-      wins: new Array(mode === '2p' ? 2 : mode + 1).fill(0),
+      wins: new Array(online ? riderCount() : mode === '2p' ? 2 : mode + 1).fill(0),
       round: 1,
       phase: 'ready',
       timer: 0,
@@ -130,11 +132,18 @@ function Cycles() {
   // A fresh match on mount, and again when setup changes on the Start card.
   useEffect(() => {
     if (shell.status === 'ready' || !m.current) reset();
-  }, [playMode, rivals, levelName, shell.status]);
+  }, [playMode, rivals, levelName, shell.status, online?.seat, online?.players.length]);
 
   const push = (rider: number, d: Dir) => {
     const match = m.current;
     if (!match || match.phase !== 'run') return;
+    if (online) {
+      if (rider !== online.seat) return;
+      if (online.seat !== 0) {
+        online.send({ game: 'lightcycles', type: 'turn', dir: d });
+        return;
+      }
+    }
     const q = match.queue[rider];
     if (!q) return;
     if (q.length < 2 && q[q.length - 1] !== d) q.push(d);
@@ -144,14 +153,14 @@ function Cycles() {
     const twoP = cfg.current.mode === '2p';
     const wasd: Record<string, Dir> = { KeyW: 0, KeyD: 1, KeyS: 2, KeyA: 3 };
     const arrows: Record<string, Dir> = { ArrowUp: 0, ArrowRight: 1, ArrowDown: 2, ArrowLeft: 3 };
-    if (code in wasd) push(0, wasd[code]);
-    else if (code in arrows) push(twoP ? 1 : 0, arrows[code]);
+    if (code in wasd) push(online?.seat ?? 0, wasd[code]);
+    else if (code in arrows) push(online?.seat ?? (twoP ? 1 : 0), arrows[code]);
   });
 
   const onPointerDown = (e: RPointerEvent<HTMLCanvasElement>) => {
     const el = e.currentTarget;
     const r = el.getBoundingClientRect();
-    const rider = cfg.current.mode === '2p' && e.clientX - r.left > r.width / 2 ? 1 : 0;
+    const rider = online?.seat ?? (cfg.current.mode === '2p' && e.clientX - r.left > r.width / 2 ? 1 : 0);
     touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY, rider });
     el.setPointerCapture(e.pointerId);
   };
@@ -168,6 +177,76 @@ function Cycles() {
     touches.current.delete(e.pointerId);
   };
   useEffect(() => () => touches.current.clear(), []);
+
+  useEffect(() => online?.onMessage((from, data) => {
+    if (!online || from === online.seat || !data || typeof data !== 'object') return;
+    const message = data as {
+      game?: unknown; type?: unknown; dir?: unknown; cols?: unknown; rows?: unknown; players?: unknown;
+      wins?: unknown; round?: unknown; speed?: unknown; longest?: unknown; tick?: unknown; riders?: unknown;
+      crashes?: unknown; phase?: unknown; timer?: unknown; acc?: unknown; banner?: unknown; sub?: unknown;
+      lastWinner?: unknown;
+    };
+    if (message.game !== 'lightcycles') return;
+    const match = m.current;
+    if (!match) return;
+    if (online.seat === 0 && message.type === 'turn' && Number.isInteger(message.dir) && match.arena.riders[from]) {
+      const queue = match.queue[from];
+      const direction = message.dir as Dir;
+      if (queue && queue.length < 2 && queue[queue.length - 1] !== direction) queue.push(direction);
+      return;
+    }
+    if (online.seat !== 0 && message.type === 'round' && Number.isInteger(message.cols) && Number.isInteger(message.rows) && Number.isInteger(message.players)) {
+      match.cols = message.cols as number;
+      match.rows = message.rows as number;
+      match.arena = createArena(match.cols, match.rows, message.players as number, message.players as number);
+      match.wins = Array.isArray(message.wins) ? message.wins as number[] : match.wins;
+      match.round = Number(message.round) || match.round;
+      match.speed = Number(message.speed) || match.speed;
+      match.longest = Number(message.longest) || 0;
+      match.queue = match.arena.riders.map(() => []);
+      match.phase = 'ready';
+      match.timer = 1.1;
+      match.acc = 0;
+      match.banner = `Round ${match.round}`;
+      match.sub = match.round === 1 ? (shell.touch ? 'Swipe to turn' : 'WASD or arrow keys to turn') : '';
+      setBanner({ text: match.banner, sub: match.sub });
+      return;
+    }
+    if (online.seat !== 0 && message.type === 'tick' && Array.isArray(message.riders)) {
+      const arena = match.arena;
+      const riders = message.riders as { id: number; x: number; y: number; dir: Dir; next: Dir; alive: boolean }[];
+      for (const snapshot of riders) {
+        const rider = arena.riders[snapshot.id];
+        if (!rider) continue;
+        if (snapshot.x !== rider.x || snapshot.y !== rider.y) {
+          const head = cell(arena, snapshot.x, snapshot.y);
+          if (arena.cells[head] === 0) {
+            arena.cells[head] = rider.id + 1;
+            rider.trail.push(head);
+          }
+        }
+        Object.assign(rider, snapshot);
+      }
+      arena.tick = Number(message.tick) || arena.tick;
+      match.phase = message.phase === 'ready' || message.phase === 'run' || message.phase === 'crash' || message.phase === 'done' ? message.phase : match.phase;
+      match.wins = Array.isArray(message.wins) ? message.wins as number[] : match.wins;
+      match.round = Number(message.round) || match.round;
+      match.timer = Number(message.timer) || 0;
+      match.acc = Number(message.acc) || 0;
+      match.longest = Number(message.longest) || match.longest;
+      match.lastWinner = typeof message.lastWinner === 'number' ? message.lastWinner : null;
+      if (typeof message.banner === 'string') {
+        match.banner = message.banner;
+        match.sub = typeof message.sub === 'string' ? message.sub : '';
+        setBanner(match.banner ? { text: match.banner, sub: match.sub } : null);
+      }
+      const crashes = Array.isArray(message.crashes) ? message.crashes as { id: number; x: number; y: number }[] : [];
+      for (const crash of crashes) {
+        burst(match, crash.x + 0.5, crash.y + 0.5, COLORS[crash.id]);
+        sfx.play('boom');
+      }
+    }
+  }), [online?.onMessage, online?.seat, shell.touch]);
 
   const burst = (match: Match, cx: number, cy: number, color: string) => {
     for (let i = 0; i < 26; i++) {
@@ -210,9 +289,16 @@ function Cycles() {
           match.phase = 'done';
           const winner = match.wins.findIndex((w) => w >= TARGET);
           const cpuMode = cfg.current.mode !== '2p';
-          const title = cpuMode ? (winner === 0 ? 'You Win' : 'Crashed Out') : `${NAMES[winner]} Wins`;
+          const winnerName = online?.players.find((player) => player.seat === winner)?.name ?? NAMES[winner];
+          const title = online ? (winner === online.seat ? 'You Win' : `${winnerName} Wins`) : cpuMode ? (winner === 0 ? 'You Win' : 'Crashed Out') : `${NAMES[winner]} Wins`;
           const detail = `${match.wins.join(' to ')} in ${match.round} rounds. Longest ride: ${match.longest} cells.`;
-          shell.gameOver(cpuMode ? match.longest : undefined, { title, detail });
+          if (online) online.reportResult(shell.round, winner);
+          shell.gameOver(online ? undefined : cpuMode ? match.longest : undefined, { title, detail });
+          return;
+        }
+        if (online && online.seat !== 0) {
+          match.phase = 'ready';
+          match.timer = 0;
           return;
         }
         match.round++;
@@ -224,6 +310,7 @@ function Cycles() {
 
     match.acc += dt;
     const period = 1 / (match.speed + (match.round - 1) * 0.6);
+    if (online && online.seat !== 0) return;
     while (match.acc >= period && match.phase === 'run') {
       match.acc -= period;
       const a = match.arena;
@@ -268,6 +355,13 @@ function Cycles() {
         setBanner({ text: match.banner, sub: match.sub });
         if (winner === 0 || (twoP && winner !== null)) sfx.play('coin');
       }
+      if (online?.seat === 0) online.send({
+        game: 'lightcycles', type: 'tick', tick: a.tick,
+        riders: a.riders.map(({ id, x, y, dir, next, alive }) => ({ id, x, y, dir, next, alive })),
+        crashes, phase: match.phase, round: match.round, wins: match.wins, timer: match.timer,
+        acc: match.acc, speed: match.speed, longest: match.longest, banner: match.banner, sub: match.sub,
+        lastWinner: match.lastWinner,
+      });
     }
   };
 

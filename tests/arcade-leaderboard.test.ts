@@ -17,6 +17,7 @@ import {
 } from '../src/os/arcade/kit/leaderboard.ts';
 import { generateArcadeSpecs } from '../scripts/arcade-specs.ts';
 import type { GameMeta, LeaderboardSpec } from '../src/os/arcade/types.ts';
+import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
 
 const desc: LeaderboardSpec = { order: 'desc', max: 1000 };
 const asc: LeaderboardSpec = { order: 'asc', min: 3000, max: 60000, format: 'time' };
@@ -163,4 +164,5 @@ test('opted in games have sane specs that match their shells', () => {
 test('committed Worker specs match the generated game metadata', async () => {
   const committed = readFileSync(join(import.meta.dirname, '..', 'worker', 'src', 'specs.gen.ts'), 'utf8');
   assert.equal(committed, await generateArcadeSpecs());
+  assert.deepEqual(ONLINE_SPECS, Object.fromEntries(metas.filter((m) => m.online).map((m) => [m.id, m.online])));
 });

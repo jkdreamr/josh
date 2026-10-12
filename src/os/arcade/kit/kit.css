@@ -620,3 +620,132 @@
     margin: 0;
   }
 }
+
+.arcade-online-status {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 10px;
+  border-radius: 999px;
+  color: #f5f5f7;
+  background: rgba(20, 20, 26, 0.58);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+.arcade-shell .arcade-online-card {
+  width: min(350px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.arcade-online-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.74);
+}
+.arcade-online-field .arcade-input {
+  flex: none;
+  width: 100%;
+  height: 40px;
+}
+.arcade-online-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  color: rgba(245, 245, 247, 0.55);
+  font-size: 12px;
+}
+.arcade-online-divider::before,
+.arcade-online-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.arcade-online-join {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.arcade-shell .arcade-online-code-input {
+  height: 40px;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-align: center;
+}
+.arcade-room-code {
+  padding: 4px 0 2px;
+  font-size: clamp(34px, 10vw, 52px);
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  font-variant-numeric: tabular-nums;
+}
+.arcade-online-players {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 9px;
+  text-align: left;
+  background: rgba(0, 0, 0, 0.2);
+}
+.arcade-online-players > strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.arcade-online-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  font-size: 13px;
+}
+.arcade-online-player span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.arcade-online-player small {
+  font-size: 11px;
+}
+.arcade-online-players p,
+.arcade-online-card > p {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+.arcade-online-card .arcade-online-error {
+  margin: 0;
+  color: #ff6961;
+}
+.arcade-board-measure {
+  padding: 0 12px 5px;
+  text-align: right;
+  color: rgba(245, 245, 247, 0.58);
+  font-size: 12px;
+  font-weight: 600;
+}
+@media (pointer: coarse) {
+  .arcade-online-card .arcade-btn {
+    min-height: 40px;
+  }
+}
+@container arcade-ov (max-height: 440px) {
+  .arcade-shell .arcade-online-card {
+    gap: 6px;
+    padding: 16px;
+  }
+  .arcade-room-code {
+    font-size: 34px;
+  }
+}

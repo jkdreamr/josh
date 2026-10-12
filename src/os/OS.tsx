@@ -90,6 +90,7 @@ export default function OS() {
   const [mode, setMode] = useState<'pending' | '3d' | 'css'>('pending');
   const [ready, setReady] = useState(false);
   const beatLink = useRef<string | null>(null);
+  const roomInvite = useRef<{ game: string; code: string } | null>(null);
   const use3d = device === 'laptop' && mode === '3d';
   const use3dRef = useRef(use3d);
   use3dRef.current = use3d;
@@ -108,6 +109,10 @@ export default function OS() {
 
   useEffect(() => {
     beatLink.current = new URLSearchParams(window.location.search).get('beat');
+    const params = new URLSearchParams(window.location.search);
+    const game = params.get('game') ?? '';
+    const code = params.get('room') ?? '';
+    if (/^[a-z0-9-]+$/.test(game) && /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/.test(code)) roomInvite.current = { game, code };
   }, []);
 
   useEffect(() => {
@@ -115,6 +120,14 @@ export default function OS() {
     const beat = beatLink.current;
     beatLink.current = null;
     const timer = window.setTimeout(() => apiRef.current?.open('beatpad', { beat }), 0);
+    return () => window.clearTimeout(timer);
+  }, [phase, mounted]);
+
+  useEffect(() => {
+    if (phase !== 'on' || !mounted || !roomInvite.current) return;
+    const invite = roomInvite.current;
+    roomInvite.current = null;
+    const timer = window.setTimeout(() => apiRef.current?.open('chrome', { url: `chrome://games/${encodeURIComponent(invite.game)}?room=${encodeURIComponent(invite.code)}` }), 0);
     return () => window.clearTimeout(timer);
   }, [phase, mounted]);
 

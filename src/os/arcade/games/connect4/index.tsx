@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelIndex, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { COLS, ROWS, bestCol, colOf, createBoard, drop, idx, isFull, rowOf, winLine, type Board, type Level, type Player } from './connect4.ts';
 import { meta } from './meta';
@@ -16,9 +16,9 @@ const firstOptions = [
 const COLORS: Record<Player, string> = { 1: '#ff453a', 2: '#ffd60a' };
 const NAMES: Record<Player, string> = { 1: 'Red', 2: 'Yellow' };
 
-export default function Game({ compact, onExit }: GameProps) {
+export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} lowerIsBetter formatScore={(n) => `${n} ${n === 1 ? 'disc' : 'discs'}`} setup={<Setup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} lowerIsBetter formatScore={(n) => `${n} ${n === 1 ? 'disc' : 'discs'}`} setup={<Setup />}>
       <ConnectFour />
     </GameShell>
   );
@@ -60,6 +60,7 @@ const ME: Player = 1;
 
 function ConnectFour() {
   const shell = useShell();
+  const online = useOnline();
   const { ref, size, ctx } = useCanvas();
   const [status, setStatus] = useState('');
   const [mode] = useSetting(MODE);
@@ -70,11 +71,14 @@ function ConnectFour() {
   const sizeRef = useRef(size);
   sizeRef.current = size;
   const gameOverDelay = useRef<{ remaining: number; finish: () => void } | null>(null);
+  const placeRef = useRef<(col: number, remote?: boolean) => void>(() => {});
 
   const isCpu = (p: Player) => cfg.current.mode === 'cpu' && p !== ME;
   const humanTurn = () => {
     const s = st.current;
-    return !!s && !s.over && !s.falling && !isCpu(s.turn);
+    if (!s || s.over || s.falling) return false;
+    if (online) return s.turn === (online.seat === 0 ? 1 : 2);
+    return !isCpu(s.turn);
   };
 
   const geometry = () => {
@@ -95,7 +99,7 @@ function ConnectFour() {
     return `${NAMES[s.turn]} to move`;
   };
 
-  const place = (col: number) => {
+  const place = (col: number, remote = false) => {
     const s = st.current;
     if (!s || s.over || s.falling) return;
     const d = drop(s.board, col, s.turn);
@@ -103,12 +107,22 @@ function ConnectFour() {
       sfx.play('blip', 0.5);
       return;
     }
+    if (online && !remote) online.send({ game: 'connect4', col });
     s.falling = { col, row: d.row, player: s.turn, y: -1, vy: 0, done: false };
     s.hover = null;
     s.thinking = false;
     sfx.play('tick');
     setStatus('');
   };
+  placeRef.current = place;
+
+  useEffect(() => online?.onMessage((from, data) => {
+    if (!online || from === online.seat || !data || typeof data !== 'object') return;
+    const message = data as { game?: unknown; col?: unknown };
+    const s = st.current;
+    const expectedSeat = s?.turn === 1 ? 0 : 1;
+    if (message.game === 'connect4' && Number.isInteger(message.col) && from === expectedSeat) placeRef.current(message.col as number, true);
+  }), [online?.onMessage, online?.seat]);
 
   const land = (s: State, f: Falling) => {
     const d = drop(s.board, f.col, f.player)!;
@@ -140,8 +154,11 @@ function ConnectFour() {
       gameOverDelay.current = {
         remaining: 1.4,
         finish: () => {
-          const title = cpuMode ? (youWon ? 'You Win' : 'Computer Wins') : `${NAMES[f.player]} Wins`;
-          shell.gameOver(youWon ? discs : undefined, { title, detail: `Four in a row after ${discs} ${discs === 1 ? 'disc' : 'discs'}.` });
+          const winnerSeat = f.player === 1 ? 0 : 1;
+          const winnerName = online?.players.find((player) => player.seat === winnerSeat)?.name ?? NAMES[f.player];
+          const title = online ? (winnerSeat === online.seat ? 'You Win' : `${winnerName} Wins`) : cpuMode ? (youWon ? 'You Win' : 'Computer Wins') : `${NAMES[f.player]} Wins`;
+          if (online) online.reportResult(shell.round, winnerSeat);
+          shell.gameOver(online ? undefined : youWon ? discs : undefined, { title, detail: `Four in a row after ${discs} ${discs === 1 ? 'disc' : 'discs'}.` });
         },
       };
       return;
@@ -152,7 +169,10 @@ function ConnectFour() {
       sfx.play('select', 0.7);
       gameOverDelay.current = {
         remaining: 0.9,
-        finish: () => shell.gameOver(undefined, { title: 'Draw', detail: 'The board is full.' }),
+        finish: () => {
+          if (online) online.reportResult(shell.round, null);
+          shell.gameOver(undefined, { title: 'Draw', detail: 'The board is full.' });
+        },
       };
       return;
     }
@@ -166,8 +186,8 @@ function ConnectFour() {
   };
 
   const reset = () => {
-    cfg.current = { mode, level: levelIndex(levelName), first: first === 'you' ? 1 : 2 };
-    const turn: Player = mode === 'cpu' ? cfg.current.first : 1;
+    cfg.current = { mode: online ? '2p' : mode, level: levelIndex(levelName), first: first === 'you' ? 1 : 2 };
+    const turn: Player = online ? 1 : mode === 'cpu' ? cfg.current.first : 1;
     const s: State = {
       board: createBoard(),
       turn,
@@ -191,7 +211,7 @@ function ConnectFour() {
   // A fresh board on mount, and again when setup changes on the Start card.
   useEffect(() => {
     if (shell.status === 'ready' || !st.current) reset();
-  }, [mode, levelName, first, shell.status]);
+  }, [mode, levelName, first, shell.status, online?.seat]);
 
   useKeys((code, e) => {
     const s = st.current;

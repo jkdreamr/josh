@@ -31,6 +31,8 @@ export type GameMeta = {
   order: number;
   /** Set to give the game a top 100 board. Leave out for games without a comparable score. */
   leaderboard?: LeaderboardSpec;
+  /** Set to allow online rooms with this many seats. */
+  online?: { seats: number };
 };
 
-export type GameProps = { compact?: boolean; onExit?: () => void };
+export type GameProps = { compact?: boolean; onExit?: () => void; roomCode?: string };

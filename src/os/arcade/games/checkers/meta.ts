@@ -10,4 +10,5 @@ export const meta: GameMeta = {
   accent: '#ff375f',
   glyph: 'M12 12m-6 0a6 6 0 1 0 12 0a6 6 0 1 0-12 0M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0-6 0',
   order: 5,
+  online: { seats: 2 },
 };

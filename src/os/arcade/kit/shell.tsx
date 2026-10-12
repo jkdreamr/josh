@@ -5,9 +5,11 @@ import { ShellContext, type GameOverInfo, type GameStatus, type ShellApi } from 
 import { ArcadeHost } from './host';
 import { KeyState, scrollKeys } from './keys';
 import { useHighScore } from './score';
-import { NAME_MAX, savedName } from './leaderboard';
+import { ARCADE_API, NAME_MAX, savedName } from './leaderboard';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMuted } from './sfx';
+import { OnlinePanel, OnlineProvider } from './online';
+import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import './kit.css';
 
 export type GameShellProps = {
@@ -22,6 +24,8 @@ export type GameShellProps = {
   formatScore?: (score: number) => string;
   /** Remount children on restart so every round starts from fresh state (default true). */
   remount?: boolean;
+  /** Room to join automatically from an arcade invite link. */
+  roomCode?: string;
   /** Mode and difficulty controls, shown on the Start card above Play and again on the Pause card. */
   setup?: ReactNode;
   className?: string;
@@ -55,7 +59,7 @@ const isTouchDevice = () =>
  * (pause, restart, mute, back to arcade), live score, key capture and auto-pause.
  * Put the game's logic in a child component and read the shell with useShell().
  */
-export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, className, style }: GameShellProps) {
+export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, roomCode, className, style }: GameShellProps) {
   const host = useContext(ArcadeHost);
   const os = useContext(OSContext);
   const root = useRef<HTMLDivElement | null>(null);
@@ -75,6 +79,18 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const board = useRoundBoard(meta.id, compact ? undefined : meta.leaderboard, result?.score, result?.id);
   const [boardOpen, setBoardOpen] = useState(false);
   const [name, setName] = useState('');
+  const [onlineOpen, setOnlineOpen] = useState(false);
+  const [onlineName, setOnlineName] = useState(() => savedName());
+  const [onlineLink, setOnlineLink] = useState<RoomLink | null>(null);
+  const [onlineCode, setOnlineCode] = useState('');
+  const [onlineSeat, setOnlineSeat] = useState<number | null>(null);
+  const [onlineSeats, setOnlineSeats] = useState(0);
+  const [onlinePlayers, setOnlinePlayers] = useState<RoomPlayer[]>([]);
+  const [onlineTransport, setOnlineTransport] = useState<RoomTransport>('relay');
+  const [onlineBusy, setOnlineBusy] = useState(false);
+  const [onlineError, setOnlineError] = useState('');
+  const [onlineMode, setOnlineMode] = useState(false);
+  const consumedRoom = useRef<string | null>(null);
   const fmt = useCallback((n: number) => (formatScore ? formatScore(n) : n.toLocaleString('en-US')), [formatScore]);
 
   useEffect(() => setTouch(!!os?.mobile || isTouchDevice()), [os?.mobile]);
@@ -88,6 +104,87 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setStatus('playing');
     focusRoot();
   }, [keys, focusRoot]);
+
+  const leaveRoom = useCallback(() => {
+    onlineLink?.close();
+    setOnlineLink(null);
+    setOnlineCode('');
+    setOnlineSeat(null);
+    setOnlineSeats(0);
+    setOnlinePlayers([]);
+    setOnlineMode(false);
+    setOnlineOpen(false);
+    setOnlineError('');
+  }, [onlineLink]);
+
+  const connectRoom = useCallback((code: string) => {
+    setOnlineError('');
+    const link = new RoomLink(code, onlineName);
+    setOnlineLink(link);
+    setOnlineCode(code);
+    setOnlineSeat(null);
+    setOnlineSeats(meta.online?.seats ?? 0);
+    setOnlinePlayers([]);
+    link.on('welcome', (message) => {
+      setOnlineCode(message.code);
+      setOnlineSeat(message.seat);
+      setOnlineSeats(message.seats);
+      setOnlinePlayers(message.players);
+    });
+    link.on('players', setOnlinePlayers);
+    link.on('transport', setOnlineTransport);
+    link.on('start', () => {
+      setOnlineMode(true);
+      setOnlineOpen(false);
+      start();
+    });
+    link.on('closed', ({ reason }) => {
+      link.close();
+      setOnlineLink(null);
+      setOnlineSeat(null);
+      setOnlinePlayers([]);
+      setOnlineMode(false);
+      setOnlineCode('');
+      setOnlineError(reason === 'host-left' ? 'Host Left' : 'Connection Lost');
+      setOnlineOpen(true);
+      setStatus('ready');
+    });
+    return link;
+  }, [meta.online?.seats, onlineName, start]);
+
+  const makeRoom = useCallback(async () => {
+    setOnlineBusy(true);
+    setOnlineError('');
+    try {
+      const code = await createRoom(meta.id);
+      connectRoom(code);
+    } catch (error) {
+      setOnlineError(error instanceof Error ? error.message : 'Could Not Create Room');
+    } finally {
+      setOnlineBusy(false);
+    }
+  }, [connectRoom, meta.id]);
+
+  const joinRoom = useCallback((code: string) => {
+    setOnlineBusy(true);
+    setOnlineError('');
+    try {
+      connectRoom(code.toUpperCase());
+    } catch (error) {
+      setOnlineError(error instanceof Error ? error.message : 'Could Not Join Room');
+    } finally {
+      setOnlineBusy(false);
+    }
+  }, [connectRoom]);
+
+  useEffect(() => {
+    if (!roomCode || !meta.online || compact || consumedRoom.current === roomCode) return;
+    consumedRoom.current = roomCode;
+    setOnlineOpen(true);
+    joinRoom(roomCode);
+  }, [compact, joinRoom, meta.online, roomCode]);
+
+  useEffect(() => () => onlineLink?.close(), [onlineLink]);
   const restart = useCallback(() => {
     sfx.unlock();
     keys.clear();
@@ -226,8 +323,17 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       <Icon d={meta.glyph} size={compact ? 16 : 26} />
     </span>
   );
+  const canPlayOnline = !compact && !!meta.online && !!ARCADE_API;
+  const gameOnline = onlineMode && onlineLink !== null && onlineSeat !== null;
 
   return (
+    <OnlineProvider
+      link={onlineLink}
+      seat={onlineSeat ?? 0}
+      seats={onlineSeats}
+      players={onlinePlayers}
+      transport={onlineTransport}
+    >
     <ShellContext.Provider value={api}>
       <div
         ref={root}
@@ -250,6 +356,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
         </div>
 
         {score !== null && status !== 'ready' && <div className="arcade-score">{fmt(score)}</div>}
+        {gameOnline && status === 'playing' && <div className="arcade-online-status">{onlineTransport === 'direct' ? 'Direct' : 'Relayed'}</div>}
 
         {!compact && (
           <div className="arcade-ctrl">
@@ -274,7 +381,24 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
           </div>
         )}
 
-        {status === 'ready' &&
+        {status === 'ready' && onlineOpen && canPlayOnline && (
+          <OnlinePanel
+            game={meta.id}
+            code={onlineCode}
+            players={onlinePlayers}
+            seat={onlineSeat}
+            busy={onlineBusy}
+            error={onlineError}
+            name={onlineName}
+            onName={setOnlineName}
+            onCreate={makeRoom}
+            onJoin={joinRoom}
+            onStart={() => onlineLink?.start()}
+            onLeave={leaveRoom}
+          />
+        )}
+
+        {status === 'ready' && !onlineOpen &&
           (compact ? (
             <button type="button" className="arcade-ov arcade-ov-compact" onClick={start}>
               {glyph}
@@ -293,6 +417,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={start} ref={autoFocus}>
                   Play
                 </button>
+                {canPlayOnline && (
+                  <button type="button" className="arcade-btn arcade-btn-lg" onClick={() => { setOnlineError(''); setOnlineOpen(true); }}>
+                    Play Online
+                  </button>
+                )}
                 {best !== null && <small>Best {fmt(best)}</small>}
               </div>
             </div>
@@ -423,6 +552,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
           ))}
       </div>
     </ShellContext.Provider>
+    </OnlineProvider>
   );
 }
 

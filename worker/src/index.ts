@@ -1,7 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import { validateSubmission, TOP, type BoardEntry } from '../../src/os/arcade/kit/leaderboard-core.ts';
 import type { LeaderboardSpec } from '../../src/os/arcade/types.ts';
-import { LEADERBOARD_SPECS } from './specs.gen';
+import { cleanName, nameLength } from '../../src/os/arcade/kit/leaderboard-core.ts';
+import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
+import { agreedWinner, canStartRoom, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
 interface Env {
   BOARDS: DurableObjectNamespace<Boards>;
@@ -32,10 +34,26 @@ export class Boards extends DurableObject<Env> {
     super(ctx, env);
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS scores (game TEXT NOT NULL, name TEXT NOT NULL, score REAL NOT NULL, date TEXT NOT NULL)');
     this.ctx.storage.sql.exec('CREATE INDEX IF NOT EXISTS scores_game ON scores (game, score)');
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS wins (game TEXT NOT NULL, name TEXT NOT NULL, wins INTEGER NOT NULL, date TEXT NOT NULL, PRIMARY KEY (game, name))');
   }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/wins' && request.method === 'GET') {
+      const game = url.searchParams.get('game') ?? '';
+      if (!Object.hasOwn(ONLINE_SPECS, game)) return json({ error: 'unknown game' }, 404);
+      try {
+        const entries = this.ctx.storage.sql.exec<{ name: string; score: number; date: string }>(
+          'SELECT name, wins AS score, date FROM wins WHERE game = ? ORDER BY wins DESC, date ASC LIMIT ?',
+          game,
+          TOP,
+        ).toArray();
+        return json({ entries });
+      } catch {
+        return json({ error: 'unavailable' }, 503);
+      }
+    }
+
     if (url.pathname !== '/leaderboard') return json({ error: 'not found' }, 404);
 
     if (request.method === 'GET') {
@@ -87,15 +105,197 @@ export class Boards extends DurableObject<Env> {
       return json({ error: 'unavailable' }, 503);
     }
   }
+
+  recordWin(game: string, rawName: string): void {
+    if (!Object.hasOwn(ONLINE_SPECS, game) || typeof rawName !== 'string') return;
+    const name = cleanName(rawName);
+    if (nameLength(name) < 1 || nameLength(name) > 16) return;
+    this.ctx.storage.sql.exec(
+      'INSERT INTO wins (game, name, wins, date) VALUES (?, ?, 1, ?) ON CONFLICT(game, name) DO UPDATE SET wins = wins + 1, date = excluded.date',
+      game,
+      name,
+      new Date().toISOString(),
+    );
+  }
 }
 
-export class Room extends DurableObject<Env> {}
+type Attachment = { seat: number; name: string };
+type RoomResults = { reports: RoundReports; recorded: RecordedRounds };
+
+export class Room extends DurableObject<Env> {
+  private operations: Promise<unknown> = Promise.resolve();
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
+  }
+
+  open(game: string, seats: number): Promise<boolean> {
+    return this.exclusive(async () => {
+      if (await this.ctx.storage.get<RoomState>('room')) return false;
+      await this.ctx.storage.put<RoomState>('room', { game, seats, started: false });
+      await this.ctx.storage.put<RoomResults>('results', { reports: {}, recorded: [] });
+      return true;
+    });
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    return this.exclusive(() => this.join(request));
+  }
+
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
+    return this.exclusive(() => this.handleMessage(ws, message));
+  }
+
+  private async handleMessage(ws: WebSocket, message: string | ArrayBuffer) {
+    const attachment = ws.deserializeAttachment() as Attachment | null;
+    if (!attachment) return;
+    const room = await this.ctx.storage.get<RoomState>('room');
+    if (!room) return;
+    const parsed = parseRoomMessage(message, room.seats);
+    if (!parsed) return;
+
+    if (parsed.t === 'start') {
+      const players = this.players();
+      if (!canStartRoom(attachment.seat, players.length)) return;
+      room.started = true;
+      await this.ctx.storage.put('room', room);
+      this.broadcast({ t: 'start', players });
+      return;
+    }
+
+    if (parsed.t === 'msg' || parsed.t === 'signal') {
+      const packet = { t: parsed.t, from: attachment.seat, d: parsed.d };
+      if (parsed.to === undefined) this.broadcast(packet, ws);
+      else this.sendTo(parsed.to, packet, ws);
+      return;
+    }
+
+    const connected = this.players();
+    const resultState = (await this.ctx.storage.get<RoomResults>('results')) ?? { reports: {}, recorded: [] };
+    const roundKey = String(parsed.round);
+    const roundReports = resultState.reports[roundKey] ?? {};
+    roundReports[String(attachment.seat)] = parsed.winner;
+    resultState.reports[roundKey] = roundReports;
+    const winner = agreedWinner(resultState.reports, connected.map(({ seat }) => seat), parsed.round);
+    if (winner !== null && connected.some(({ seat }) => seat === winner) && markRoundRecorded(resultState.recorded, parsed.round)) {
+      await this.ctx.storage.put('results', resultState);
+      const winnerName = connected.find(({ seat }) => seat === winner)?.name;
+      if (winnerName) {
+        try {
+          await this.env.BOARDS.get(this.env.BOARDS.idFromName('global')).recordWin(room.game, winnerName);
+        } catch {
+          return;
+        }
+      }
+      return;
+    }
+    await this.ctx.storage.put('results', resultState);
+  }
+
+  async webSocketClose(ws: WebSocket) {
+    const attachment = ws.deserializeAttachment() as Attachment | null;
+    await this.exclusive(() => this.onSocketClose(ws, attachment));
+  }
+
+  async webSocketError(ws: WebSocket) {
+    const attachment = ws.deserializeAttachment() as Attachment | null;
+    await this.exclusive(() => this.onSocketClose(ws, attachment));
+  }
+
+  private exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.operations.then(operation, operation);
+    this.operations = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  private async join(request: Request): Promise<Response> {
+    if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+      return json({ error: 'websocket upgrade required' }, 400);
+    }
+    const room = await this.ctx.storage.get<RoomState>('room');
+    if (!room) return json({ error: 'room not found' }, 404);
+    if (room.started) return json({ error: 'room already started' }, 409);
+    const sockets = this.ctx.getWebSockets();
+    const seat = lowestFreeSeat(room.seats, sockets.map((socket) => (socket.deserializeAttachment() as Attachment | null)?.seat).filter((value): value is number => value !== undefined));
+    if (seat === null) return json({ error: 'room is full' }, 409);
+    const existingPlayers = sockets
+      .map((socket) => socket.deserializeAttachment() as Attachment | null)
+      .filter((value): value is Attachment => !!value)
+      .map(({ seat: playerSeat, name: playerName }) => ({ seat: playerSeat, name: playerName }));
+
+    const url = new URL(request.url);
+    const cleaned = cleanName(url.searchParams.get('name') ?? '');
+    const name = nameLength(cleaned) >= 1 && nameLength(cleaned) <= 16 ? cleaned : `Player ${seat + 1}`;
+    const code = /\/rooms\/([ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4})\/ws$/.exec(url.pathname)?.[1] ?? '';
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    server.serializeAttachment({ seat, name } satisfies Attachment);
+    this.ctx.acceptWebSocket(server);
+    const players = [...existingPlayers, { seat, name }].sort((a, b) => a.seat - b.seat);
+    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, players }));
+    this.broadcast({ t: 'players', players });
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  private players(): RoomPlayer[] {
+    return this.ctx.getWebSockets()
+      .map((socket) => socket.deserializeAttachment() as Attachment | null)
+      .filter((value): value is Attachment => !!value)
+      .map(({ seat, name }) => ({ seat, name }))
+      .sort((a, b) => a.seat - b.seat);
+  }
+
+  private broadcast(message: unknown, except?: WebSocket) {
+    const data = JSON.stringify(message);
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket === except || socket.readyState !== WebSocket.OPEN) continue;
+      try {
+        socket.send(data);
+      } catch {
+        socket.close(1011, 'send failed');
+      }
+    }
+  }
+
+  private sendTo(seat: number, message: unknown, except?: WebSocket) {
+    const socket = this.ctx.getWebSockets().find((candidate) => candidate !== except && candidate.readyState === WebSocket.OPEN && (candidate.deserializeAttachment() as Attachment | null)?.seat === seat);
+    if (!socket) return;
+    try {
+      socket.send(JSON.stringify(message));
+    } catch {
+      socket.close(1011, 'send failed');
+    }
+  }
+
+  private async onSocketClose(ws: WebSocket, attachment: Attachment | null) {
+    if (attachment?.seat === 0) {
+      this.broadcast({ t: 'closed', reason: 'host-left' }, ws);
+      for (const socket of this.ctx.getWebSockets()) socket.close(1000, 'host-left');
+      await this.ctx.storage.deleteAll();
+      return;
+    }
+    const remaining = this.ctx.getWebSockets().filter((socket) => socket !== ws && socket.readyState === WebSocket.OPEN);
+    if (!remaining.length) {
+      await this.ctx.storage.deleteAll();
+      return;
+    }
+    const players = remaining
+      .map((socket) => socket.deserializeAttachment() as Attachment | null)
+      .filter((value): value is Attachment => !!value)
+      .map(({ seat, name }) => ({ seat, name }));
+    this.broadcast({ t: 'players', players });
+  }
+}
 
 function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set('Access-Control-Allow-Origin', '*');
   headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   headers.set('Access-Control-Allow-Headers', 'content-type');
+  const webSocket = (response as Response & { webSocket?: WebSocket }).webSocket;
+  if (webSocket) return new Response(null, { status: 101, statusText: response.statusText, headers, webSocket });
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
@@ -107,8 +307,25 @@ export default {
       const id = env.BOARDS.idFromName('global');
       return withCors(await env.BOARDS.get(id).fetch(request));
     }
-    if (url.pathname === '/rooms' || url.pathname.startsWith('/rooms/')) {
-      return withCors(json({ error: 'not implemented' }, 501));
+    if (url.pathname === '/wins' && request.method === 'GET') {
+      const id = env.BOARDS.idFromName('global');
+      return withCors(await env.BOARDS.get(id).fetch(request));
+    }
+    if (url.pathname === '/rooms' && request.method === 'POST') {
+      const game = url.searchParams.get('game') ?? '';
+      const spec = Object.hasOwn(ONLINE_SPECS, game) ? ONLINE_SPECS[game] : undefined;
+      if (!spec) return withCors(json({ error: 'unknown game' }, 404));
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const code = makeRoomCode(crypto.getRandomValues(new Uint8Array(4)));
+        const room = env.ROOMS.get(env.ROOMS.idFromName(code));
+        if (await room.open(game, spec.seats)) return withCors(json({ code }));
+      }
+      return withCors(json({ error: 'could not create room' }, 503));
+    }
+    const wsPath = /^\/rooms\/([ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4})\/ws$/.exec(url.pathname);
+    if (wsPath && request.method === 'GET') {
+      const room = env.ROOMS.get(env.ROOMS.idFromName(wsPath[1]));
+      return withCors(await room.fetch(request));
     }
     return withCors(json({ error: 'not found' }, 404));
   },
