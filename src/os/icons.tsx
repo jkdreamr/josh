@@ -47,16 +47,17 @@ export type IconKind =
 
 const tile = (background: string, extra?: CSSProperties): CSSProperties => ({ background, ...extra });
 
+// Official Chrome mark: three 120° blades whose straight edges are chords
+// tangent to the inner ring, a white ring, and a blue center.
 function Chrome() {
   return (
-    <svg viewBox="0 0 48 48" width="72%" height="72%" aria-hidden="true">
-      <circle cx="24" cy="24" r="22" fill="#db4437" />
-      <path d="M24 2a22 22 0 0 1 19.05 11H24a11 11 0 0 0-9.53 5.5L4.95 13A22 22 0 0 1 24 2z" fill="#db4437" />
-      <path d="M4.95 13l9.52 16.5A11 11 0 0 0 24 35l-9.53 16.5A22 22 0 0 1 4.95 13z" fill="#0f9d58" transform="translate(0 -5.5)" />
-      <path d="M43.05 13A22 22 0 0 1 24 46L33.53 29.5A11 11 0 0 0 33.53 18.5z" fill="#ffcd40" />
-      <path d="M4.95 13L14.47 29.5A11 11 0 0 0 24 35l-9.53 11A22 22 0 0 1 4.95 13z" fill="#0f9d58" />
+    <svg viewBox="0 0 48 48" width="76%" height="76%" aria-hidden="true">
+      <circle cx="24" cy="24" r="22" fill="#ea4335" />
+      <path d="M4.95 13a22 22 0 0 1 38.1 0L32.39 29.45A10 10 0 0 0 24.52 14.01z" fill="#ea4335" />
+      <path d="M43.05 13A22 22 0 0 1 24 46L15.09 28.54a10 10 0 0 0 17.3 0.91z" fill="#fbbc04" />
+      <path d="M24 46a22 22 0 0 1-19.05-33l19.57 1.01a10 10 0 0 0-9.43 14.53z" fill="#34a853" />
       <circle cx="24" cy="24" r="10" fill="#fff" />
-      <circle cx="24" cy="24" r="8" fill="#4285f4" />
+      <circle cx="24" cy="24" r="8.5" fill="#4285f4" />
     </svg>
   );
 }
