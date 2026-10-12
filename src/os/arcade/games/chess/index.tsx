@@ -7,7 +7,7 @@ import {
   colorOf, fileOf, findMove, inCheck, isPromotion, moveCaptured, moveFlags, moveFrom, movePromo, moveTo, newGame, pieces, play, rankOf, squareName,
   type Color, type Game as ChessGame,
 } from './engine.ts';
-import { PieceDrag, boardPoint, columnOf, initialIds, nextIds, pieceTransform, rowOf, squareAt, squareAtPoint, type BoardQuad, type DragView } from './interaction.ts';
+import { PieceDrag, boardPoint, columnOf, initialIds, nextIds, pieceTransform, rowOf, squareAt, squareAtPoint, toggleSelection, type BoardQuad, type DragView } from './interaction.ts';
 import { meta } from './meta';
 import { BISHOP, KNIGHT, Piece, QUEEN, ROOK } from './pieces.tsx';
 import type { AiReply, AiRequest } from './worker.ts';
@@ -315,8 +315,9 @@ function Chess() {
     const pc = game.pos.board[sq];
     setCursor(null);
     if (pc && colorOf(pc) === game.pos.turn) {
+      const reselect = sel === sq;
       setSel(sq);
-      drag.current.begin(e.pointerId, sq, { x: e.clientX, y: e.clientY });
+      drag.current.begin(e.pointerId, sq, { x: e.clientX, y: e.clientY }, reselect);
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
       } catch {
@@ -336,6 +337,10 @@ function Chess() {
     if (!d) return;
     releaseCapture(d.pid);
     setDragView(null);
+    if (!d.moved && !cancelled && d.reselect) {
+      setSel(null);
+      return;
+    }
     if (!d.moved || cancelled) return;
     const to = squareAtPoint(pointFromEvent(e), flip);
     if (to >= 0 && to !== d.from) {
@@ -365,7 +370,7 @@ function Chess() {
       if (promo) return;
       const pc = game.pos.board[cursor];
       if (sel !== null && cursor !== sel && tryMove(sel, cursor)) return;
-      if (pc && colorOf(pc) === game.pos.turn) setSel(cursor);
+      if (pc && colorOf(pc) === game.pos.turn) setSel(toggleSelection(sel, cursor));
       else setSel(null);
     }
     if (code === 'Escape' || code === 'Backspace') {
