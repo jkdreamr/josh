@@ -254,7 +254,7 @@ function Checkers() {
       const moves = Math.ceil(game.history.length / 2);
       const { mode } = cfg.current;
       if (game.status === 'draw') {
-        if (online) online.reportResult(shell.round, null);
+        if (online) online.reportResult(online.round, null);
         shell.gameOver(undefined, { title: 'Draw', detail: `Forty moves without progress after ${moves} moves.` });
       }
       else {
@@ -264,7 +264,7 @@ function Checkers() {
         const title = online ? (winnerSeat === online.seat ? 'You Win' : `${winnerName} Wins`) : mode === 'cpu' ? (winner === HUMAN ? 'You Win' : 'Computer Wins') : `${NAMES[winner]} Wins`;
         const left = count(game.board, winner);
         const detail = `${left.men + left.kings} ${left.men + left.kings === 1 ? 'piece' : 'pieces'} left after ${moves} ${moves === 1 ? 'move' : 'moves'}.`;
-        if (online) online.reportResult(shell.round, winnerSeat);
+        if (online) online.reportResult(online.round, winnerSeat);
         shell.gameOver(!online && mode === 'cpu' && winner === HUMAN ? moves : undefined, { title, detail });
       }
     }, 500);

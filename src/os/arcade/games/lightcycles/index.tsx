@@ -292,7 +292,7 @@ function Cycles() {
           const winnerName = online?.players.find((player) => player.seat === winner)?.name ?? NAMES[winner];
           const title = online ? (winner === online.seat ? 'You Win' : `${winnerName} Wins`) : cpuMode ? (winner === 0 ? 'You Win' : 'Crashed Out') : `${NAMES[winner]} Wins`;
           const detail = `${match.wins.join(' to ')} in ${match.round} rounds. Longest ride: ${match.longest} cells.`;
-          if (online) online.reportResult(shell.round, winner);
+          if (online) online.reportResult(online.round, winner);
           shell.gameOver(online ? undefined : cpuMode ? match.longest : undefined, { title, detail });
           return;
         }

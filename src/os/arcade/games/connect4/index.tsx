@@ -157,7 +157,7 @@ function ConnectFour() {
           const winnerSeat = f.player === 1 ? 0 : 1;
           const winnerName = online?.players.find((player) => player.seat === winnerSeat)?.name ?? NAMES[f.player];
           const title = online ? (winnerSeat === online.seat ? 'You Win' : `${winnerName} Wins`) : cpuMode ? (youWon ? 'You Win' : 'Computer Wins') : `${NAMES[f.player]} Wins`;
-          if (online) online.reportResult(shell.round, winnerSeat);
+          if (online) online.reportResult(online.round, winnerSeat);
           shell.gameOver(online ? undefined : youWon ? discs : undefined, { title, detail: `Four in a row after ${discs} ${discs === 1 ? 'disc' : 'discs'}.` });
         },
       };
@@ -170,7 +170,7 @@ function ConnectFour() {
       gameOverDelay.current = {
         remaining: 0.9,
         finish: () => {
-          if (online) online.reportResult(shell.round, null);
+          if (online) online.reportResult(online.round, null);
           shell.gameOver(undefined, { title: 'Draw', detail: 'The board is full.' });
         },
       };

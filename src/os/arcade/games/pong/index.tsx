@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
-import { BALL_R, COURT, PADDLE, SERVE_DELAY, aiStep, createAi, createMatch, movePaddle, other, paddleX, steerPaddle, step, type AiLevel, type PongEvent, type Side } from './pong';
+import { BALL_R, COURT, PADDLE, SERVE_DELAY, aiStep, createAi, createMatch, mergeGuestSnapshot, movePaddle, other, paddleX, steerPaddle, step, type AiLevel, type PongEvent, type Side } from './pong';
 import './pong.css';
 
 const MODE = defineSetting('pong:mode', PLAY_MODES, 'cpu');
@@ -80,7 +80,7 @@ function Pong() {
     if (online.seat === 0 && from !== 0 && message.type === 'paddle' && typeof message.y === 'number' && Number.isFinite(message.y)) {
       st.remoteTarget = message.y;
     } else if (online.seat !== 0 && from === 0 && message.type === 'snapshot' && message.match && typeof message.match === 'object') {
-      st.match = message.match as typeof st.match;
+      st.match = mergeGuestSnapshot(st.match, message.match as typeof st.match);
     } else if (online.seat !== 0 && from === 0 && message.type === 'events' && Array.isArray(message.events)) {
       onEvents(message.events as PongEvent[]);
     }
@@ -220,7 +220,7 @@ function Pong() {
           const winnerName = online?.players.find((player) => player.seat === w)?.name ?? `Player ${w + 1}`;
           const title = online ? (online.seat === w ? 'You Win' : `${winnerName} Wins`) : st.mode === 'cpu' ? (w === 0 ? 'You Win' : 'Computer Wins') : `Player ${w + 1} Wins`;
           const loser = other(w);
-          if (online) online.reportResult(shell.round, w);
+          if (online) online.reportResult(online.round, w);
           shell.gameOver(online ? undefined : st.longest, { title, detail: `${m.score[w]} to ${m.score[loser]}. Longest rally: ${st.longest} ${st.longest === 1 ? 'hit' : 'hits'}.` });
         }
       }

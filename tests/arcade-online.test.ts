@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { advanceOnlineRound } from '../src/os/arcade/kit/online-core.ts';
 import { RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
 import { agreedWinner, canStartRoom, lowestFreeSeat, markRoundRecorded, parseRoomMessage } from '../worker/src/room-core.ts';
+
+test('online rounds advance independently from local game rounds', () => {
+  assert.equal(advanceOnlineRound(0), 1);
+  assert.equal(advanceOnlineRound(1), 2);
+  assert.equal(advanceOnlineRound(40), 41);
+});
 
 test('room seats use the lowest available seat and only the host starts with two players', () => {
   assert.equal(lowestFreeSeat(4, [0, 2]), 1);

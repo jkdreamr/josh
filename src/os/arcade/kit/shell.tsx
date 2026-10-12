@@ -9,6 +9,7 @@ import { ARCADE_API, NAME_MAX, savedName } from './leaderboard';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMuted } from './sfx';
 import { OnlinePanel, OnlineProvider } from './online';
+import { advanceOnlineRound } from './online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import './kit.css';
 
@@ -75,7 +76,6 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const keys = useMemo(() => new KeyState(), []);
   const statusRef = useRef(status);
   statusRef.current = status;
-  const active = host.active && docVisible && seen;
   const board = useRoundBoard(meta.id, compact ? undefined : meta.leaderboard, result?.score, result?.id);
   const [boardOpen, setBoardOpen] = useState(false);
   const [name, setName] = useState('');
@@ -85,11 +85,15 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [onlineCode, setOnlineCode] = useState('');
   const [onlineSeat, setOnlineSeat] = useState<number | null>(null);
   const [onlineSeats, setOnlineSeats] = useState(0);
+  const [onlineRound, setOnlineRound] = useState(0);
   const [onlinePlayers, setOnlinePlayers] = useState<RoomPlayer[]>([]);
   const [onlineTransport, setOnlineTransport] = useState<RoomTransport>('relay');
   const [onlineBusy, setOnlineBusy] = useState(false);
   const [onlineError, setOnlineError] = useState('');
   const [onlineMode, setOnlineMode] = useState(false);
+  const onlineModeRef = useRef(onlineMode);
+  onlineModeRef.current = onlineMode;
+  const active = onlineMode || (host.active && docVisible && seen);
   const consumedRoom = useRef<string | null>(null);
   const fmt = useCallback((n: number) => (formatScore ? formatScore(n) : n.toLocaleString('en-US')), [formatScore]);
 
@@ -105,13 +109,46 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     focusRoot();
   }, [keys, focusRoot]);
 
+  const restart = useCallback(() => {
+    sfx.unlock();
+    keys.clear();
+    setResult(null);
+    setBoardOpen(false);
+    setScoreState(null);
+    setRound((r) => r + 1);
+    setStatus('playing');
+    focusRoot();
+  }, [keys, focusRoot]);
+  const gameOver = useCallback(
+    (final?: number, info: GameOverInfo = {}) => {
+      if (statusRef.current === 'over') return;
+      keys.clear();
+      const isBest = final !== undefined && submit(final);
+      setResult({ id: Date.now(), score: final, best: null, isBest, ...info });
+      setBoardOpen(false);
+      setName(savedName());
+      setStatus('over');
+    },
+    [keys, submit],
+  );
+  const playAgain = useCallback(() => {
+    if (onlineModeRef.current) {
+      if (onlineSeat === 0) onlineLink?.start();
+      return;
+    }
+    restart();
+  }, [onlineLink, onlineSeat, restart]);
+
   const leaveRoom = useCallback(() => {
+    onlineModeRef.current = false;
     onlineLink?.close();
     setOnlineLink(null);
     setOnlineCode('');
     setOnlineSeat(null);
     setOnlineSeats(0);
+    setOnlineRound(0);
     setOnlinePlayers([]);
+    setOnlineTransport('relay');
     setOnlineMode(false);
     setOnlineOpen(false);
     setOnlineError('');
@@ -119,6 +156,10 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
 
   const connectRoom = useCallback((code: string) => {
     setOnlineError('');
+    onlineModeRef.current = false;
+    setOnlineMode(false);
+    setOnlineRound(0);
+    setOnlineTransport('relay');
     const link = new RoomLink(code, onlineName);
     setOnlineLink(link);
     setOnlineCode(code);
@@ -131,18 +172,42 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineSeats(message.seats);
       setOnlinePlayers(message.players);
     });
-    link.on('players', setOnlinePlayers);
+    link.on('players', (players) => {
+      setOnlinePlayers(players);
+      if (!onlineModeRef.current || players.length >= 2) return;
+      gameOver(undefined, { title: 'Opponent Left', detail: 'Your opponent left the room.' });
+      onlineModeRef.current = false;
+      link.close();
+      setOnlineLink(null);
+      setOnlineCode('');
+      setOnlineSeat(null);
+      setOnlineSeats(0);
+      setOnlinePlayers([]);
+      setOnlineTransport('relay');
+      setOnlineMode(false);
+      setOnlineOpen(false);
+    });
     link.on('transport', setOnlineTransport);
     link.on('start', () => {
-      setOnlineMode(true);
       setOnlineOpen(false);
-      start();
+      setOnlineRound((round) => advanceOnlineRound(round));
+      if (onlineModeRef.current) {
+        restart();
+      } else {
+        onlineModeRef.current = true;
+        setOnlineMode(true);
+        start();
+      }
     });
     link.on('closed', ({ reason }) => {
+      onlineModeRef.current = false;
       link.close();
       setOnlineLink(null);
       setOnlineSeat(null);
+      setOnlineSeats(0);
+      setOnlineRound(0);
       setOnlinePlayers([]);
+      setOnlineTransport('relay');
       setOnlineMode(false);
       setOnlineCode('');
       setOnlineError(reason === 'host-left' ? 'Host Left' : 'Connection Lost');
@@ -150,7 +215,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setStatus('ready');
     });
     return link;
-  }, [meta.online?.seats, onlineName, start]);
+  }, [gameOver, meta.online?.seats, onlineName, restart, start]);
 
   const makeRoom = useCallback(async () => {
     setOnlineBusy(true);
@@ -185,17 +250,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   }, [compact, joinRoom, meta.online, roomCode]);
 
   useEffect(() => () => onlineLink?.close(), [onlineLink]);
-  const restart = useCallback(() => {
-    sfx.unlock();
-    keys.clear();
-    setResult(null);
-    setBoardOpen(false);
-    setScoreState(null);
-    setRound((r) => r + 1);
-    setStatus('playing');
-    focusRoot();
-  }, [keys, focusRoot]);
   const pause = useCallback(() => {
+    if (onlineModeRef.current) return;
     keys.clear();
     setStatus((s) => (s === 'playing' ? 'paused' : s));
   }, [keys]);
@@ -204,18 +260,6 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setStatus((s) => (s === 'paused' ? 'playing' : s));
     focusRoot();
   }, [focusRoot]);
-  const gameOver = useCallback(
-    (final?: number, info: GameOverInfo = {}) => {
-      if (statusRef.current === 'over') return;
-      keys.clear();
-      const isBest = final !== undefined && submit(final);
-      setResult({ id: Date.now(), score: final, best: null, isBest, ...info });
-      setBoardOpen(false);
-      setName(savedName());
-      setStatus('over');
-    },
-    [keys, submit],
-  );
   const setScore = useCallback((n: number | null) => setScoreState(n), []);
 
   const listeners = useRef(new Set<() => void>());
@@ -229,8 +273,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
 
   // Auto-pause when the game stops being visible.
   useEffect(() => {
-    if (!active && status === 'playing') pause();
-  }, [active, status, pause]);
+    if (!onlineMode && !active && status === 'playing') pause();
+  }, [active, onlineMode, status, pause]);
   useEffect(() => {
     if (status !== 'playing') invalidate();
   }, [status, invalidate]);
@@ -269,6 +313,13 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       const st = statusRef.current;
       const onButton = t !== el && !!t.closest?.('button, a');
       if (e.code === 'Escape' || e.code === 'KeyP') {
+        if (onlineMode) {
+          if (e.code === 'KeyP') {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          return;
+        }
         if (st === 'playing' || st === 'paused') {
           e.preventDefault();
           e.stopPropagation();
@@ -283,7 +334,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       e.stopPropagation();
       if (scrollKeys.has(e.code)) e.preventDefault();
       if (st === 'ready' || st === 'over' || st === 'paused') {
-        if ((e.code === 'Enter' || e.code === 'Space') && !e.repeat) (st === 'ready' ? start : st === 'over' ? restart : resume)();
+        if ((e.code === 'Enter' || e.code === 'Space') && !e.repeat) (st === 'ready' ? start : st === 'over' ? playAgain : resume)();
         return;
       }
       if (st === 'playing') keys.press(e.code, e);
@@ -306,7 +357,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       el.removeEventListener('focusout', onOut);
       window.removeEventListener('blur', onBlur);
     };
-  }, [keys, pause, resume, start, restart]);
+  }, [keys, onlineMode, pause, playAgain, resume, start]);
 
   const api = useMemo<ShellApi>(
     () => ({ meta, status, round, active, compact, touch, keys, root, start, pause, resume, restart, gameOver, setScore, invalidate, onInvalidate }),
@@ -325,12 +376,17 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   );
   const canPlayOnline = !compact && !!meta.online && !!ARCADE_API;
   const gameOnline = onlineMode && onlineLink !== null && onlineSeat !== null;
+  const backToArcade = useCallback(() => {
+    if (onlineLink) leaveRoom();
+    onExit?.();
+  }, [leaveRoom, onExit, onlineLink]);
 
   return (
     <OnlineProvider
       link={onlineLink}
-      seat={onlineSeat ?? 0}
+      seat={onlineSeat}
       seats={onlineSeats}
+      round={onlineRound}
       players={onlinePlayers}
       transport={onlineTransport}
     >
@@ -360,12 +416,12 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
 
         {!compact && (
           <div className="arcade-ctrl">
-            {(status === 'playing' || status === 'paused') && (
+            {(status === 'playing' || status === 'paused') && !onlineMode && (
               <button type="button" aria-label={status === 'paused' ? 'Resume' : 'Pause'} title={status === 'paused' ? 'Resume' : 'Pause'} onClick={status === 'paused' ? resume : pause}>
                 <Icon d={status === 'paused' ? ic.play : ic.pause} />
               </button>
             )}
-            {status !== 'ready' && (
+            {status !== 'ready' && !onlineMode && (
               <button type="button" aria-label="Restart" title="Restart" onClick={restart}>
                 <Icon d={ic.restart} />
               </button>
@@ -374,7 +430,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
               <Icon d={muted ? ic.muted : ic.sound} />
             </button>
             {onExit && (
-              <button type="button" aria-label="Arcade" title="Arcade" onClick={onExit}>
+              <button type="button" aria-label="Arcade" title="Arcade" onClick={backToArcade}>
                 <Icon d={ic.grid} />
               </button>
             )}
@@ -449,7 +505,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     {setup ? 'New Game' : 'Restart'}
                   </button>
                   {onExit && (
-                    <button type="button" className="arcade-btn" onClick={onExit}>
+                    <button type="button" className="arcade-btn" onClick={backToArcade}>
                       Arcade
                     </button>
                   )}
@@ -468,9 +524,15 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 <button type="button" className="arcade-btn" onClick={() => setBoardOpen(false)}>
                   Back
                 </button>
-                <button type="button" className="arcade-btn arcade-btn-primary" onClick={restart} ref={autoFocus}>
-                  Play Again
-                </button>
+                {gameOnline && onlineSeat !== 0 ? (
+                  <button type="button" className="arcade-btn" onClick={leaveRoom}>
+                    Leave
+                  </button>
+                ) : (
+                  <button type="button" className="arcade-btn arcade-btn-primary" onClick={playAgain} ref={autoFocus}>
+                    Play Again
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -529,10 +591,23 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     </div>
                   </form>
                 )}
-                {setup && <div className="arcade-setup">{setup}</div>}
-                <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={restart} ref={autoFocus}>
-                  Play Again
-                </button>
+                {setup && !gameOnline && <div className="arcade-setup">{setup}</div>}
+                {gameOnline ? onlineSeat === 0 ? (
+                  <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={playAgain} ref={autoFocus}>
+                    Play Again
+                  </button>
+                ) : (
+                  <>
+                    <p>Waiting For The Host</p>
+                    <button type="button" className="arcade-btn arcade-btn-lg" onClick={leaveRoom} ref={autoFocus}>
+                      Leave
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={restart} ref={autoFocus}>
+                    Play Again
+                  </button>
+                )}
                 {(onExit || board.enabled) && (
                   <div className="arcade-row">
                     {board.enabled && (
@@ -541,7 +616,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                       </button>
                     )}
                     {onExit && (
-                      <button type="button" className="arcade-btn" onClick={onExit}>
+                      <button type="button" className="arcade-btn" onClick={backToArcade}>
                         Arcade
                       </button>
                     )}

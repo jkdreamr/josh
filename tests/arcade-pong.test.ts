@@ -1,8 +1,24 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BALL_R, COURT, PADDLE, PADDLE_SPEED, WIN_SCORE, aiStep, createAi, createMatch, movePaddle, paddleX, predictY, serve, step } from '../src/os/arcade/games/pong/pong.ts';
+import { BALL_R, COURT, PADDLE, PADDLE_SPEED, WIN_SCORE, aiStep, createAi, createMatch, mergeGuestSnapshot, movePaddle, paddleX, predictY, serve, step } from '../src/os/arcade/games/pong/pong.ts';
 
 const fixed = (v: number) => () => v;
+
+test('Pong guest snapshots preserve the local paddle', () => {
+  const local = createMatch();
+  local.paddles[1] = { y: 72, vy: 18 };
+  const host = createMatch();
+  host.paddles[0] = { y: 24, vy: -4 };
+  host.paddles[1] = { y: 51, vy: -2 };
+  host.ball.x = 111;
+
+  const merged = mergeGuestSnapshot(local, host);
+
+  assert.deepEqual(merged.paddles[1], { y: 72, vy: 18 });
+  assert.deepEqual(merged.paddles[0], { y: 24, vy: -4 });
+  assert.equal(merged.ball.x, 111);
+  assert.deepEqual(host.paddles[1], { y: 51, vy: -2 });
+});
 
 test('a new match holds the ball at center and serves after the delay', () => {
   const m = createMatch(1);

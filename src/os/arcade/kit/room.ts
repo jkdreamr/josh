@@ -150,7 +150,7 @@ export class RoomLink {
     } else if (message.t === 'start') {
       this.players = this.asPlayers(message.players);
       this.emit('start', this.players);
-      this.beginPeers();
+      if (this.peers.size === 0) this.beginPeers();
     } else if (message.t === 'msg' && Number.isInteger(message.from)) {
       this.emit('msg', { from: message.from as number, d: message.d });
     } else if (message.t === 'signal' && Number.isInteger(message.from)) {

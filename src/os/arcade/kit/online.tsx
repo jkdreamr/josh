@@ -5,6 +5,7 @@ type OnlineValue = {
   link: RoomLink;
   seat: number;
   seats: number;
+  round: number;
   players: RoomPlayer[];
   isHost: boolean;
   transport: RoomTransport;
@@ -16,13 +17,14 @@ export function OnlineProvider({
   link,
   seat,
   seats,
+  round,
   players,
   transport,
   children,
 }: Omit<OnlineValue, 'seat' | 'link' | 'isHost'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
   const value = useMemo(
-    () => link && seat !== null ? { link, seat, seats, players, isHost: seat === 0, transport } : null,
-    [link, seat, seats, players, transport],
+    () => link && seat !== null ? { link, seat, seats, round, players, isHost: seat === 0, transport } : null,
+    [link, seat, seats, round, players, transport],
   );
   return <OnlineContext.Provider value={value}>{children}</OnlineContext.Provider>;
 }
@@ -34,6 +36,7 @@ export function useOnline() {
     return {
       seat: room.seat,
       seats: room.seats,
+      round: room.round,
       players: room.players,
       isHost: room.isHost,
       transport: room.transport,

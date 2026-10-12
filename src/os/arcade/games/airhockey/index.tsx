@@ -268,7 +268,7 @@ function Play() {
         if (event.win !== undefined) {
           const winnerName = online.players.find((player) => player.seat === event.win)?.name ?? `Player ${event.win + 1}`;
           const title = online.seat === event.win ? 'You Win' : `${winnerName} Wins`;
-          online.reportResult(shell.round, event.win);
+          online.reportResult(online.round, event.win);
           shell.gameOver(undefined, { title, detail: `${s.score[0]} to ${s.score[1]}.` });
         }
       }
@@ -452,7 +452,7 @@ function Play() {
             sfx.play(won || !you ? 'win' : 'lose');
             const winnerName = online?.players.find((player) => player.seat === ev.win)?.name ?? (ev.win === 0 ? 'Blue' : 'Pink');
             const title = online ? (online.seat === ev.win ? 'You Win' : `${winnerName} Wins`) : you ? (won ? 'You Win' : 'Computer Wins') : ev.win === 0 ? 'Blue Wins' : 'Pink Wins';
-            if (online) online.reportResult(shell.round, ev.win);
+            if (online) online.reportResult(online.round, ev.win);
             shell.gameOver(online ? undefined : you ? s.score[0] : undefined, { title, detail: `${s.score[0]} to ${s.score[1]}${you ? ` against the ${levelLabel(s.difficulty).toLowerCase()} computer.` : '.'}` });
           } else {
             sfx.play(ev.goal === 0 || !you ? 'coin' : 'lose', 1.2);
