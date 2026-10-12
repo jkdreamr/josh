@@ -1,0 +1,156 @@
+.g-target-range {
+  background: #182f30;
+  container-type: size;
+}
+.g-target-range.st-ready .arcade-card > p,
+.g-target-range.st-over .arcade-card > p {
+  display: block;
+  font-size: 12px;
+}
+.g-target-range.st-over .arcade-setup {
+  display: none;
+}
+.g-target-range .g-target-range-layout {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 46px 14px 10px;
+  gap: 10px;
+}
+.g-target-range .g-target-range-hud {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 0 0 48px;
+  color: #f2ead8;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.g-target-range .g-target-range-wave {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.g-target-range .g-target-range-wave span {
+  color: #b7cac1;
+  font-size: 12px;
+}
+.g-target-range .g-target-range-wave strong {
+  font-size: 17px;
+  font-weight: 600;
+}
+.g-target-range .g-target-range-progress {
+  width: 140px;
+  max-width: 34%;
+}
+.g-target-range .g-target-range-progress strong {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.g-target-range .g-target-range-progress div {
+  height: 5px;
+  margin-top: 9px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #3c5450;
+}
+.g-target-range .g-target-range-progress i {
+  display: block;
+  height: 100%;
+  background: #e6c178;
+}
+.g-target-range .g-target-range-time {
+  min-width: 42px;
+  text-align: right;
+  font-size: 22px;
+  font-weight: 600;
+}
+.g-target-range .g-target-range-time.is-low {
+  color: #ffb59c;
+}
+.g-target-range .g-target-range-canvas {
+  display: block;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  border-radius: 12px;
+  touch-action: none;
+  cursor: crosshair;
+}
+.g-target-range .g-target-range-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 12px;
+  color: #c4d5cb;
+  font-variant-numeric: tabular-nums;
+}
+.g-target-range .g-target-range-stats strong {
+  color: #f2d389;
+  font-weight: 600;
+}
+.g-target-range .g-target-range-tip {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 12px;
+  text-align: center;
+  color: #b7cac1;
+}
+.g-target-range.is-compact .g-target-range-layout {
+  padding: 8px;
+  gap: 4px;
+}
+.g-target-range.is-compact .g-target-range-hud {
+  flex-basis: 36px;
+}
+.g-target-range.is-compact .g-target-range-tip {
+  display: none;
+}
+@container (max-width: 380px) {
+  .g-target-range .g-target-range-layout {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+  .g-target-range .g-target-range-hud {
+    gap: 10px;
+  }
+  .g-target-range .g-target-range-wave strong {
+    font-size: 15px;
+  }
+  .g-target-range .g-target-range-progress {
+    width: 108px;
+  }
+}
+@container (max-height: 280px) {
+  .g-target-range .g-target-range-layout {
+    gap: 5px;
+    padding-bottom: 6px;
+  }
+  .g-target-range .g-target-range-hud {
+    flex-basis: 36px;
+  }
+  .g-target-range .g-target-range-tip {
+    display: none;
+  }
+}
+@media (pointer: coarse) {
+  .g-target-range .g-target-range-layout {
+    padding-top: 62px;
+  }
+  .g-target-range .arcade-ctrl button {
+    width: 40px;
+    height: 40px;
+  }
+  .g-target-range .arcade-btn,
+  .g-target-range .arcade-seg > button {
+    min-height: 40px;
+  }
+  .g-target-range .arcade-btn-lg {
+    min-height: 44px;
+  }
+}
