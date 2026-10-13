@@ -6,7 +6,7 @@ import { draw } from './draw';
 import { meta } from './meta';
 import './chicken-crossing.css';
 
-const scenery = defineSetting('chicken-crossing-scenery', ['meadow', 'sunset'] as const, 'meadow');
+const scenery = defineSetting('chicken-crossing-scenery', ['meadow', 'sunset'] as const, 'meadow', { live: true });
 const directions: Direction[] = ['up', 'left', 'right', 'down'];
 const directionFor: Record<string, Direction> = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' };
 

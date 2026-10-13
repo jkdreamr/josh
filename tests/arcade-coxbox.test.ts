@@ -7,7 +7,9 @@ import {
   RIVAL_WPM,
   STALL_MS,
   accuracy,
+  CATCH_UP_MAX,
   applyProgress,
+  catchUp,
   createBot,
   createTyping,
   encodeProgress,
@@ -19,6 +21,7 @@ import {
   parseProgress,
   parseRace,
   pickPassage,
+  racePace,
   raceOver,
   rank,
   rivalField,
@@ -38,7 +41,7 @@ test('passages are plain ASCII sentences of race length', () => {
     assert.doesNotMatch(p, /\s{2}|^\s|\s$/, `stray whitespace in: ${p}`);
     assert.match(p, /^[A-Z]/, `starts with a capital: ${p}`);
     assert.match(p, /[.!?]$/, `ends with punctuation: ${p}`);
-    assert.ok(p.length >= 120 && p.length <= 200, `length ${p.length}: ${p}`);
+    assert.ok(p.length >= 240 && p.length <= 320, `length ${p.length}: ${p}`);
   }
 });
 
@@ -126,15 +129,42 @@ test('margins are called in bow balls, seats and lengths', () => {
   assert.equal(marginText(45), '2.5 lengths');
 });
 
-test('rival fields spread across their level, slowest first', () => {
+test('rival fields pack toward the top of their level, slowest first', () => {
   for (const level of RIVAL_LEVELS) {
-    const field = rivalField(level, rng(7));
-    const [lo, hi] = RIVAL_WPM[level];
-    assert.equal(field.length, 4);
-    assert.equal(new Set(field.map((f) => f.crew.name)).size, 4, 'four different crews');
-    for (const f of field) assert.ok(f.wpm >= lo && f.wpm <= hi, `${level} ${f.wpm}`);
-    for (let i = 1; i < field.length; i++) assert.ok(field[i].wpm >= field[i - 1].wpm);
+    for (let seed = 1; seed <= 20; seed++) {
+      const field = rivalField(level, rng(seed));
+      const [lo, hi] = RIVAL_WPM[level];
+      assert.equal(field.length, 4);
+      assert.equal(new Set(field.map((f) => f.crew.name)).size, 4, 'four different crews');
+      for (const f of field) assert.ok(f.wpm >= lo && f.wpm <= hi, `${level} ${f.wpm}`);
+      for (let i = 1; i < field.length; i++) assert.ok(field[i].wpm >= field[i - 1].wpm);
+      assert.ok(field[3].wpm >= lo + (hi - lo) * 0.9, `${level} leader ${field[3].wpm} sits near the top`);
+      assert.ok(field[1].wpm >= lo + (hi - lo) * 0.5, `${level} pack ${field[1].wpm} is past the middle`);
+    }
   }
+  // Each level starts where the one below it ends, so moving up is always a step.
+  for (let i = 1; i < RIVAL_LEVELS.length; i++) assert.equal(RIVAL_WPM[RIVAL_LEVELS[i]][0], RIVAL_WPM[RIVAL_LEVELS[i - 1]][1]);
+});
+
+test('rivals push when they are behind and follow a race plan', () => {
+  assert.equal(catchUp(-0.3), 1, 'no slowing down when ahead');
+  assert.equal(catchUp(0), 1);
+  assert.ok(catchUp(0.05) > 1 && catchUp(0.05) < 1 + CATCH_UP_MAX);
+  assert.equal(catchUp(0.9), 1 + CATCH_UP_MAX, 'capped');
+  assert.ok(racePace(0.02) > 1, 'quick start');
+  assert.ok(racePace(0.5) < 1, 'settle');
+  assert.ok(racePace(0.95) > racePace(0.02), 'sprint');
+  const text = PASSAGES[0];
+  const finish = (boost: number) => {
+    const bot = createBot(80, rng(3));
+    let ms = 0;
+    while (bot.doneMs === null) {
+      ms += 16;
+      stepBot(bot, text, 0.016, ms, boost);
+    }
+    return bot.doneMs!;
+  };
+  assert.ok(finish(1 + CATCH_UP_MAX) < finish(1), 'a pushing rival finishes sooner');
 });
 
 test('bots finish close to their target speed', () => {

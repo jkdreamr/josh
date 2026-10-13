@@ -8,6 +8,7 @@ import { useHighScore } from './score';
 import { ARCADE_API, NAME_MAX, boardFor, formatBoardScore, savedName } from './leaderboard';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMuted } from './sfx';
+import { isGameSetting, onSettingChange, trackSettingChange } from './settings';
 import { OnlinePanel, OnlineProvider } from './online';
 import { nextOnlineRound, parseRacePacket, raceStandings, type RaceScores } from './online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
@@ -314,7 +315,22 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     keys.clear();
     setStatus((s) => (s === 'playing' ? 'paused' : s));
   }, [keys]);
+  // Settings changed on the Pause card no longer match the round in progress, so it can only start over.
+  const setupChanges = useRef(new Map<string, string>());
+  const [setupChanged, setSetupChanged] = useState(false);
+  useEffect(() => {
+    setupChanges.current.clear();
+    setSetupChanged(false);
+  }, [status]);
+  useEffect(
+    () =>
+      onSettingChange((change) => {
+        if (statusRef.current === 'paused' && isGameSetting(change.key, meta.id)) setSetupChanged(trackSettingChange(setupChanges.current, change));
+      }),
+    [meta.id],
+  );
   const resume = useCallback(() => {
+    if (setupChanges.current.size) return;
     sfx.unlock();
     setStatus((s) => (s === 'paused' ? 'playing' : s));
     focusRoot();
@@ -393,7 +409,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       e.stopPropagation();
       if (scrollKeys.has(e.code)) e.preventDefault();
       if (st === 'ready' || st === 'over' || st === 'paused') {
-        if ((e.code === 'Enter' || e.code === 'Space') && !e.repeat) (st === 'ready' ? start : st === 'over' ? playAgain : resume)();
+        if ((e.code === 'Enter' || e.code === 'Space') && !e.repeat) (st === 'ready' ? start : st === 'over' ? playAgain : setupChanges.current.size ? restart : resume)();
         return;
       }
       if (st === 'playing') keys.press(e.code, e);
@@ -416,7 +432,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       el.removeEventListener('focusout', onOut);
       window.removeEventListener('blur', onBlur);
     };
-  }, [keys, onlineMode, pause, playAgain, resume, start]);
+  }, [keys, onlineMode, pause, playAgain, restart, resume, start]);
 
   const api = useMemo<ShellApi>(
     () => ({ meta, status, round, active, compact, touch, keys, root, start, pause, resume, restart, gameOver, setScore, invalidate, onInvalidate }),
@@ -486,7 +502,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
 
         {!compact && (
           <div className="arcade-ctrl">
-            {(status === 'playing' || status === 'paused') && !onlineMode && (
+            {(status === 'playing' || (status === 'paused' && !setupChanged)) && !onlineMode && (
               <button type="button" aria-label={status === 'paused' ? 'Resume' : 'Pause'} title={status === 'paused' ? 'Resume' : 'Pause'} onClick={status === 'paused' ? resume : pause}>
                 <Icon d={status === 'paused' ? ic.play : ic.pause} />
               </button>
@@ -568,15 +584,17 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             <div className="arcade-ov">
               <div className="arcade-card">
                 <h2>Paused</h2>
-                <p>{meta.controls}</p>
+                <p>{setupChanged ? 'New Settings Need A New Game.' : meta.controls}</p>
                 {setup && <div className="arcade-setup">{setup}</div>}
-                <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={resume} ref={autoFocus}>
-                  Resume
+                <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={setupChanged ? restart : resume} ref={autoFocus}>
+                  {setupChanged ? 'New Game' : 'Resume'}
                 </button>
                 <div className="arcade-row">
-                  <button type="button" className="arcade-btn" onClick={restart}>
-                    {setup ? 'New Game' : 'Restart'}
-                  </button>
+                  {!setupChanged && (
+                    <button type="button" className="arcade-btn" onClick={restart}>
+                      {setup ? 'New Game' : 'Restart'}
+                    </button>
+                  )}
                   {onExit && (
                     <button type="button" className="arcade-btn" onClick={backToArcade}>
                       Arcade

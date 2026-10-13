@@ -11,10 +11,12 @@ import {
   PASSAGES,
   RIVAL_LABELS,
   RIVAL_LEVELS,
+  RIVAL_WPM,
   SEAT_CREWS,
   YOU_CREW,
   accuracy,
   applyProgress,
+  catchUp,
   chaseCall,
   createBot,
   createTyping,
@@ -209,7 +211,8 @@ function useRaceClock(status: GameStatus) {
 
 function Setup() {
   const [level, setLevel] = useSetting(rivalSetting);
-  return <Segmented label="Rivals" value={level} options={levelOptions} onChange={setLevel} />;
+  const [lo, hi] = RIVAL_WPM[level];
+  return <Segmented label={`Rivals · ${lo} to ${hi} wpm`} value={level} options={levelOptions} onChange={setLevel} />;
 }
 
 export default function CoxBox({ compact, onExit, roomCode }: GameProps) {
@@ -289,16 +292,23 @@ function RaceView({ mode }: { mode: Mode }) {
     };
   }, [mode, clock, focusInput]);
 
-  // The shell focuses its root on taps and on resume; send typing back to the passage while racing.
+  // The shell focuses its root on taps; send typing back to the passage while racing. While paused the
+  // root keeps focus, so the shell's keys (Space for Resume or New Game, Esc) work as in every game.
   useEffect(() => {
     const root = shell.root.current;
     if (!root || !live) return;
     const onFocus = (e: FocusEvent) => {
-      if (e.target === root) focusInput();
+      if (e.target === root && shellRef.current.status === 'playing') focusInput();
     };
     root.addEventListener('focus', onFocus);
     return () => root.removeEventListener('focus', onFocus);
   }, [shell.root, live, focusInput]);
+
+  // Back to the passage on resume. A phone's keyboard closes on pause and only a tap reopens it, so ask again.
+  useEffect(() => {
+    if (shell.status === 'playing') focusInput();
+    if (shell.status === 'paused') setEngaged(false);
+  }, [shell.status, focusInput]);
 
   const finishSolo = useCallback((raceMs: number) => {
     const r = race.current!;
@@ -397,12 +407,6 @@ function RaceView({ mode }: { mode: Mode }) {
     if (e.key === 'Escape') {
       e.preventDefault();
       if (status === 'playing') shellRef.current.pause();
-      else if (status === 'paused') shellRef.current.resume();
-      return;
-    }
-    if (status === 'paused' && (e.key === 'Enter' || e.key === ' ')) {
-      e.preventDefault();
-      shellRef.current.resume();
       return;
     }
     if (e.key.length === 1) {
@@ -571,7 +575,9 @@ function RaceView({ mode }: { mode: Mode }) {
         for (const l of r.lanes) {
           if (!l.bot) continue;
           const before = l.bot.chars;
-          stepBot(l.bot, r.text, step, raceMs);
+          // Rivals behind you push a little harder; once you finish they row their own race.
+          const behind = r.you.doneMs === null ? (r.you.chars - l.bot.chars) / len : 0;
+          stepBot(l.bot, r.text, step, raceMs, catchUp(behind));
           l.chars = l.bot.chars;
           l.doneMs = l.bot.doneMs;
           if (l.chars !== before) {
