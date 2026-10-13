@@ -61,6 +61,9 @@ export const LEADERBOARD_SPECS: Record<string, LeaderboardSpec> = {
   "palmdrive-stadium-200cc": {"order":"asc","min":80000,"max":1800000,"format":"time","measure":"Fastest Race"},
   "palmdrive-stadium-50cc": {"order":"asc","min":80000,"max":1800000,"format":"time","measure":"Fastest Race"},
   "run-3d": {"order":"desc","max":1000000,"unit":"m"},
+  "scramble-easy": {"order":"desc","max":10000,"unit":"pts","measure":"Best Match vs Computer"},
+  "scramble-hard": {"order":"desc","max":10000,"unit":"pts","measure":"Best Match vs Computer"},
+  "scramble-normal": {"order":"desc","max":10000,"unit":"pts","measure":"Best Match vs Computer"},
   "snake": {"order":"desc","max":100000},
   "stack": {"order":"desc","max":10000},
   "sudoku-easy": {"order":"asc","min":20000,"max":86400000,"format":"time","measure":"Fastest Solve"},
@@ -95,6 +98,7 @@ export const ONLINE_SPECS: Record<string, OnlineSpec> = {
   "palmdrive": {"seats":8,"lateJoin":true},
   "pong": {"seats":2},
   "run-3d": {"seats":4},
+  "scramble": {"seats":8,"lateJoin":true},
   "snake": {"seats":4},
   "stack": {"seats":4},
 };
