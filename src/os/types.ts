@@ -15,6 +15,7 @@ export type AppId =
   | 'coffee'
   | 'mail'
   | 'terminal'
+  | 'arcade'
   | 'coxbox'
   | 'baduk'
   | 'badminton'

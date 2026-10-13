@@ -29,6 +29,7 @@ export type IconKind =
   | 'coffee'
   | 'mail'
   | 'terminal'
+  | 'arcade'
   | 'coxbox'
   | 'baduk'
   | 'badminton'
@@ -161,6 +162,15 @@ export function Glyph({ kind }: { kind: IconKind }): ReactNode {
           <rect x="22" y="31" width="16" height="3.6" rx="1.8" fill="#e6e6e6" />
         </svg>
       );
+    case 'arcade':
+      return (
+        <svg viewBox="0 0 48 48" width="74%" height="74%" aria-hidden="true">
+          <path d="M14 13h20a10 10 0 0 1 9.8 12l-1.2 6a5.2 5.2 0 0 1-9.2 2.2L30 29H18l-3.4 4.2a5.2 5.2 0 0 1-9.2-2.2l-1.2-6A10 10 0 0 1 14 13z" fill="#fff" />
+          <path d="M15 18.5v7M11.5 22h7" stroke="#5b34e0" strokeWidth="2.8" strokeLinecap="round" />
+          <circle cx="31" cy="20.5" r="2.3" fill="#ff4f7b" />
+          <circle cx="35.5" cy="24.5" r="2.3" fill="#ffc53d" />
+        </svg>
+      );
     case 'coxbox':
       return (
         <svg viewBox="0 0 48 48" width="74%" height="74%" aria-hidden="true">
@@ -245,6 +255,7 @@ const tiles: Partial<Record<IconKind, CSSProperties>> = {
   coffee: tile('#FFDD00'),
   mail: tile('linear-gradient(180deg,#5ab8ff,#1d6ff2)'),
   terminal: tile('linear-gradient(180deg,#3a3a3c,#121214)', { boxShadow: 'inset 0 0 0 1.5px rgba(255,255,255,.18)' }),
+  arcade: tile('linear-gradient(180deg,#9271ff,#5b34e0)'),
   coxbox: tile('linear-gradient(180deg,#d63b45,#8c1515)'),
   baduk: tile('linear-gradient(145deg,#cfaa70,#8f6338)'),
   badminton: tile('linear-gradient(145deg,#417c73,#224844)'),
