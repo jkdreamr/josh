@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { advanceOnlineRound } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, parseRacePacket, raceStandings } from '../src/os/arcade/kit/online-core.ts';
 import { RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
 import { agreedWinner, canStartRoom, lowestFreeSeat, markRoundRecorded, parseRoomMessage } from '../worker/src/room-core.ts';
 
@@ -103,4 +103,33 @@ test('RoomLink uses host-only relay fallback without WebRTC', async () => {
     if (originalPeerDescriptor) Object.defineProperty(globalThis, 'RTCPeerConnection', originalPeerDescriptor);
     else Reflect.deleteProperty(globalThis, 'RTCPeerConnection');
   }
+});
+
+test('score races rank the best score and wait for every seat', () => {
+  const partial = raceStandings({ 0: 120 }, [0, 1]);
+  assert.equal(partial.done, false);
+  assert.equal(partial.winner, null);
+  assert.deepEqual(partial.standings.map((s) => [s.seat, s.place]), [[0, 1], [1, null]]);
+
+  const done = raceStandings({ 0: 120, 1: 300, 2: null }, [0, 1, 2]);
+  assert.equal(done.done, true);
+  assert.equal(done.winner, 1);
+  assert.deepEqual(done.standings.map((s) => [s.seat, s.place]), [[1, 1], [0, 2], [2, null]]);
+
+  assert.equal(raceStandings({ 0: 50, 1: 50 }, [0, 1]).winner, null, 'a tie has no winner');
+  assert.equal(raceStandings({ 0: null, 1: null }, [0, 1]).winner, null, 'nobody scored');
+  assert.equal(raceStandings({ 0: 9000, 1: 7000 }, [0, 1], true).winner, 1, 'times: lower wins');
+  assert.equal(raceStandings({ 0: 10, 1: 5 }, [0]).done, false, 'a race needs two players');
+  assert.equal(raceStandings({ 0: 10, 1: 5, 2: 1 }, [0, 1]).winner, 0, 'players who left do not count');
+});
+
+test('race packets are validated', () => {
+  assert.deepEqual(parseRacePacket({ t: 'race', round: 2, score: 40 }), { t: 'race', round: 2, score: 40 });
+  assert.deepEqual(parseRacePacket({ t: 'race', round: 2, score: null }), { t: 'race', round: 2, score: null });
+  assert.equal(parseRacePacket({ t: 'race', round: 2, score: 'x' }), null);
+  assert.equal(parseRacePacket({ t: 'race', round: 1.5, score: 1 }), null);
+  assert.equal(parseRacePacket({ t: 'race', round: 1, score: Infinity }), null);
+  assert.deepEqual(parseRacePacket({ t: 'race-all', round: 3, scores: { 0: 5, 1: null, x: 2, 99: 1, 2: 'no' } }), { t: 'race-all', round: 3, scores: { 0: 5, 1: null } });
+  assert.equal(parseRacePacket(null), null);
+  assert.equal(parseRacePacket({ t: 'move', round: 1 }), null);
 });

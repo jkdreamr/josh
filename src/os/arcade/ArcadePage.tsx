@@ -1,14 +1,16 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { BoardList, BoardScopeNote } from './kit/board';
-import { ARCADE_API, formatBoardScore, getBoard, type Board, type BoardEntry } from './kit/leaderboard';
+import { appGames } from './apps';
+import { ARCADE_API, boardsOf, formatBoardScore, getBoard, type Board, type BoardEntry, type BoardInfo } from './kit/leaderboard';
 import { categories, metas } from './manifest';
 import type { GameMeta } from './types';
 
-const ranked = metas.filter((m) => m.leaderboard);
-const boardChoices = [
-  ...ranked.map((game) => ({ key: `score:${game.id}`, title: game.title, game, kind: 'score' as const })),
-  ...metas.filter((game) => game.online).map((game) => ({ key: `wins:${game.id}`, title: `${game.title} Online Wins`, game, kind: 'wins' as const })),
-];
+const owners = [...metas, ...appGames];
+type BoardChoice = { key: string; title: string; id: string } & ({ kind: 'score'; info: BoardInfo } | { kind: 'wins' });
+const boardChoices: BoardChoice[] = [
+  ...owners.flatMap((game) => boardsOf(game)).map((info): BoardChoice => ({ key: `score:${info.id}`, title: info.title, id: info.id, kind: 'score', info })),
+  ...owners.filter((game) => game.online).map((game): BoardChoice => ({ key: `wins:${game.id}`, title: `${game.title} Online Wins`, id: game.id, kind: 'wins' })),
+].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'score' ? -1 : 1) || a.title.localeCompare(b.title));
 const WINS_UNAVAILABLE = 'Online wins are unavailable right now.';
 
 async function getWins(game: string): Promise<Board> {
@@ -39,8 +41,8 @@ function Leaderboards() {
     if (!choice) return;
     let live = true;
     const request = choice.kind === 'wins'
-      ? getWins(choice.game.id)
-      : getBoard(choice.game.id, choice.game.leaderboard!);
+      ? getWins(choice.id)
+      : getBoard(choice.id, choice.info.spec);
     request.then((b) => live && setBoard(b));
     return () => {
       live = false;
@@ -51,10 +53,14 @@ function Leaderboards() {
     <section className="arcade-boards" aria-label="Leaderboards">
       <div className="arcade-boards-bar">
         <select aria-label="Game" value={id} onChange={(e) => setId(e.target.value)}>
-          {boardChoices.map((item) => (
-            <option key={item.key} value={item.key}>
-              {item.title}
-            </option>
+          {(['score', 'wins'] as const).map((kind) => (
+            <optgroup key={kind} label={kind === 'score' ? 'Top Scores' : 'Online Wins'}>
+              {boardChoices.filter((item) => item.kind === kind).map((item) => (
+                <option key={item.key} value={item.key}>
+                  {item.title}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
       </div>
@@ -64,9 +70,10 @@ function Leaderboards() {
         <>
           <BoardScopeNote board={board} />
           {choice.kind === 'wins' && <div className="arcade-board-measure">Wins</div>}
+          {choice.kind === 'score' && choice.info.spec.measure && <div className="arcade-board-measure">{choice.info.spec.measure}</div>}
           {choice.kind === 'wins' && board && !board.entries.length
             ? <p className="arcade-lb-empty">No Wins Yet</p>
-            : <BoardList board={board} fmt={(n) => choice.kind === 'wins' ? Math.floor(n).toLocaleString('en-US') : formatBoardScore(n, choice.game.leaderboard!)} />}
+            : <BoardList board={board} fmt={(n) => choice.kind === 'wins' ? Math.floor(n).toLocaleString('en-US') : formatBoardScore(n, choice.info.spec)} />}
         </>
       )}
     </section>
@@ -132,7 +139,7 @@ export function ArcadePage({ onOpen }: { onOpen: (id: string) => void }) {
       <header className="arcade-head">
         <div className="arcade-head-row">
           <h1>{boards ? 'Leaderboards' : 'Arcade'}</h1>
-          {ranked.length > 0 && (
+          {boardChoices.length > 0 && (
             <button type="button" className="arcade-pbtn" onClick={() => setBoards(!boards)}>
               {boards ? 'All Games' : 'Leaderboards'}
             </button>

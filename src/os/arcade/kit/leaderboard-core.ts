@@ -4,6 +4,34 @@ export type BoardEntry = { name: string; score: number; date: string };
 export type Submission = { game: string; name: string; score: number };
 
 export const TOP = 100;
+
+/** Anything that can own boards: an arcade game's meta, or one of the desktop game apps. */
+export type BoardOwner = { id: string; title: string; leaderboard?: LeaderboardSpec };
+/** One ranked board. `id` is what the Worker stores scores under. */
+export type BoardInfo = { id: string; title: string; spec: LeaderboardSpec; owner: string };
+
+/** The spec a single board validates against: the shared spec without its variant list. */
+function boardSpec(spec: LeaderboardSpec): LeaderboardSpec {
+  const { variants: _variants, ...rest } = spec;
+  return rest;
+}
+
+/** Every board a game owns: one, or one per variant when its spec lists variants. */
+export function boardsOf(owner: BoardOwner): BoardInfo[] {
+  const spec = owner.leaderboard;
+  if (!spec) return [];
+  if (!spec.variants) return [{ id: owner.id, title: owner.title, spec: boardSpec(spec), owner: owner.id }];
+  return Object.entries(spec.variants).map(([key, label]) => ({ id: `${owner.id}-${key}`, title: `${owner.title} · ${label}`, spec: boardSpec(spec), owner: owner.id }));
+}
+
+/** The board a finished round lands on, or null when the game has no board for it. */
+export function boardFor(owner: BoardOwner, variant?: string): BoardInfo | null {
+  const spec = owner.leaderboard;
+  if (!spec) return null;
+  if (!spec.variants) return variant === undefined ? boardsOf(owner)[0] : null;
+  if (variant === undefined || !Object.hasOwn(spec.variants, variant)) return null;
+  return boardsOf(owner).find((b) => b.id === `${owner.id}-${variant}`) ?? null;
+}
 export const NAME_MAX = 16;
 
 /** Strips control, zero width and bidi characters, collapses spaces and trims. */

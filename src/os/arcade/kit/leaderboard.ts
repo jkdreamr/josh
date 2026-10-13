@@ -4,6 +4,8 @@ import { cleanName, isEntry, rankEntries, NAME_MAX, type BoardEntry } from './le
 export {
   NAME_MAX,
   TOP,
+  boardFor,
+  boardsOf,
   cleanName,
   isEntry,
   nameLength,
@@ -12,6 +14,8 @@ export {
   rankEntries,
   validateSubmission,
   type BoardEntry,
+  type BoardInfo,
+  type BoardOwner,
   type Submission,
 } from './leaderboard-core.ts';
 
@@ -24,7 +28,7 @@ const DEVICE_KEY = 'arcade:boards';
 const NAME_KEY = 'arcade:name';
 
 export function formatBoardScore(n: number, spec: LeaderboardSpec): string {
-  if (spec.format !== 'time') return n.toLocaleString('en-US');
+  if (spec.format !== 'time') return spec.unit ? `${n.toLocaleString('en-US')} ${spec.unit}` : n.toLocaleString('en-US');
   const s = Math.floor(n / 1000);
   const m = Math.floor(s / 60);
   const cs = String(Math.floor((n % 1000) / 10)).padStart(2, '0');

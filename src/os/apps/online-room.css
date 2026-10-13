@@ -1,0 +1,139 @@
+/* Online room lobby and leaderboard card for the desktop game apps. Uses the game-controls
+   variables, so put it inside a .gc-light or .gc-dark root. */
+.oroom,
+.oboard {
+  --accent: var(--tint);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  color: var(--gc-text);
+  font: 400 13px/1.35 var(--gc-font);
+}
+.oroom-field {
+  display: flex;
+  flex-direction: column;
+}
+.oroom-field .ginput,
+.oroom-join .ginput {
+  min-width: 0;
+}
+.oroom-join,
+.oroom-row {
+  display: flex;
+  gap: 6px;
+}
+.oroom-join .ginput {
+  flex: 1 1 auto;
+}
+.oroom-row .gbtn {
+  flex: 1 1 0;
+}
+.oroom-code {
+  font: 700 30px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.18em;
+  text-align: center;
+}
+.oroom-players {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.oroom-players li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+.oroom-players span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oroom-players small {
+  color: var(--gc-text-2);
+  font-size: 11px;
+}
+.oroom-note {
+  margin: 0;
+  color: var(--gc-text-2);
+  font-size: 12px;
+}
+.oroom-error {
+  margin: 0;
+  color: #ff6961;
+  font-size: 12px;
+}
+.oboard-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.oboard-head span {
+  color: var(--gc-text-2);
+  font-size: 12px;
+}
+.oboard .gbtn-plain {
+  align-self: flex-start;
+}
+.oboard .arcade-lb-scope {
+  margin: 0;
+  color: var(--gc-text-2);
+  font-size: 12px;
+}
+.oboard .arcade-lb-empty {
+  margin: 0;
+  color: var(--gc-text-2);
+}
+.oboard .arcade-lb-list {
+  max-height: 180px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+.oboard .arcade-lb-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  padding: 0 6px;
+  border-radius: 5px;
+}
+.oboard .arcade-lb-list li:nth-child(odd) {
+  background: var(--gc-track);
+}
+.oboard .arcade-lb-list li.is-mine {
+  background: color-mix(in srgb, var(--tint) 38%, transparent);
+}
+.oboard .arcade-lb-rank {
+  flex: none;
+  width: 24px;
+  text-align: right;
+  color: var(--gc-text-2);
+}
+.oboard .arcade-lb-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oboard .arcade-lb-score {
+  font-weight: 600;
+}
+@media (pointer: coarse) {
+  .oroom .ginput,
+  .oboard .ginput {
+    height: 40px;
+    font-size: 16px;
+  }
+  .oroom .gbtn:not(.gbtn-plain),
+  .oboard .gbtn:not(.gbtn-plain) {
+    height: 40px;
+  }
+}

@@ -240,10 +240,12 @@ function Round({ mode, onPractice }: { mode: Mode; onPractice: () => void }) {
     st.finished = true;
     const tries = st.rows.length;
     let detail: string;
+    let streak: number | undefined;
     if (daily) {
       const wait = formatWait(msUntilNextDay());
       const stats = recordDaily(read<Stats>(STATS_KEY, emptyStats()), st.day, won ? tries : 0);
       write(STATS_KEY, stats);
+      if (won) streak = stats.streak;
       write(DAILY_KEY, { date: st.today, guesses: st.rows, counted: true } satisfies Daily);
       write(MODE_KEY, 'practice');
       detail = won
@@ -259,7 +261,7 @@ function Round({ mode, onPractice }: { mode: Mode; onPractice: () => void }) {
       sfx.play('lose');
       say(st.answer.toUpperCase(), Infinity);
     }
-    later(1.7, () => shell.gameOver(undefined, { title: won ? PRAISE[tries - 1] : 'So Close', detail }));
+    later(1.7, () => shell.gameOver(undefined, { title: won ? PRAISE[tries - 1] : 'So Close', detail, rank: streak }));
   };
 
   const submit = async () => {

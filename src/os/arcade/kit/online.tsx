@@ -61,6 +61,7 @@ export function OnlinePanel({
   onJoin,
   onStart,
   onLeave,
+  note,
 }: {
   game: string;
   code: string;
@@ -74,6 +75,8 @@ export function OnlinePanel({
   onJoin: (code: string) => void;
   onStart: () => void;
   onLeave: () => void;
+  /** One line under the title explaining how this game plays online. */
+  note?: string;
 }) {
   const host = seat === 0;
   const link = code ? `${location.origin}/?game=${encodeURIComponent(game)}&room=${encodeURIComponent(code)}` : '';
@@ -94,6 +97,7 @@ export function OnlinePanel({
     <div className="arcade-ov">
       <div className="arcade-card arcade-online-card">
         <h2>{code ? 'Online Room' : 'Play Online'}</h2>
+        {note && !code && <p className="arcade-online-note">{note}</p>}
         {!code ? (
           <>
             <label className="arcade-online-field">
