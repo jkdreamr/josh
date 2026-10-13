@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Pile, mulberry32 } from '../src/os/arcade/kit/party-core.ts';
 import {
+  FIRST_GAME,
   MIN_PLAYERS,
   bestTurn,
   buildTeams,
@@ -10,8 +11,10 @@ import {
   isLastTurn,
   isOver,
   leader,
-  longestToken,
+  nextOrder,
+  other,
   points,
+  roundLabel,
   scores,
   styleFor,
   toggleCard,
@@ -57,6 +60,48 @@ test('teams alternate turns and each team rotates through its own members', () =
     [1, 1, 2, 2, 3, 3, 4, 4, 5, 5],
   );
   assert.ok(order.every((t, i) => t.index === i));
+});
+
+test('Play Again hands the first turn to the other team and carries each rotation on', () => {
+  const teams = buildTeams(5); // Blue: 0, 2, 4. Gold: 1, 3.
+  const rounds = 3;
+  const game1 = Array.from({ length: rounds * 2 }, (_, i) => turnAt(i, teams, 'act', FIRST_GAME));
+  assert.deepEqual(
+    game1.map((t) => t.actor),
+    [0, 1, 2, 3, 4, 1],
+  );
+  const history = game1.map((t) => finishTurn(t, []));
+  const order = nextOrder(FIRST_GAME, history);
+  assert.equal(order.first, 1);
+  assert.deepEqual(order.skip, [3, 3]);
+  const game2 = Array.from({ length: rounds * 2 }, (_, i) => turnAt(i, teams, 'act', order));
+  assert.deepEqual(
+    game2.map((t) => t.team),
+    [1, 0, 1, 0, 1, 0],
+    'Gold opens the second game',
+  );
+  // Each team picks up with whoever was next in line: Gold had 1, 3, 1, so 3 is up; Blue had 0, 2, 4, so 0 is up.
+  assert.deepEqual(
+    game2.map((t) => t.actor),
+    [3, 0, 1, 2, 3, 4],
+  );
+  assert.deepEqual(
+    game2.map((t) => t.round),
+    [1, 1, 2, 2, 3, 3],
+  );
+  // The game still ends on the team that went second, so both teams get the same number of turns.
+  assert.equal(game2[game2.length - 1].team, other(order.first));
+  assert.equal(nextOrder(order, []).first, 0);
+  assert.equal(other(0), 1);
+  assert.equal(other(1), 0);
+});
+
+test('round labels count up, call the last round, and name a tiebreaker', () => {
+  assert.equal(roundLabel(1, 5), 'Round 1 of 5');
+  assert.equal(roundLabel(4, 5), 'Round 4 of 5');
+  assert.equal(roundLabel(5, 5), 'Last round');
+  assert.equal(roundLabel(6, 5), 'Tiebreaker');
+  assert.equal(roundLabel(1, 1), 'Round 1 of 1');
 });
 
 test('a fixed style stays put and Mix switches every round, the same for both teams', () => {
@@ -158,6 +203,16 @@ test('decks are full, unique and clean', () => {
   }
 });
 
+test('no word appears in two decks, so turning a deck off really removes it', () => {
+  const seen = new Map<string, string>();
+  for (const id of DECK_IDS)
+    for (const w of DECKS[id].words) {
+      const key = w.toLowerCase();
+      assert.ok(!seen.has(key), `${w} is in ${seen.get(key)} and ${id}`);
+      seen.set(key, id);
+    }
+});
+
 test('words come from the chosen decks only, each once, and fall back to every deck', () => {
   const animals = wordsFor(['animals']);
   assert.equal(animals.length, DECKS.animals.words.length);
@@ -189,11 +244,4 @@ test('a seeded pile never repeats a word, skipped or not, until the deck runs ou
   const a = new Pile(entries, mulberry32(7));
   const b = new Pile(entries, mulberry32(7));
   for (let i = 0; i < 20; i++) assert.equal(a.draw()?.word, b.draw()?.word);
-});
-
-test('the longest token decides how big a word can be drawn', () => {
-  assert.equal(longestToken('Penguin'), 7);
-  assert.equal(longestToken('Leaning Tower of Pisa'), 7);
-  assert.equal(longestToken('Synchronized Swimming'), 12);
-  assert.equal(longestToken('Déjà Vu'), 4);
 });

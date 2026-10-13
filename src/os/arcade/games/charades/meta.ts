@@ -3,7 +3,7 @@ import type { GameMeta } from '../../types';
 export const meta: GameMeta = {
   id: 'charades',
   title: 'Charades',
-  blurb: 'Two teams, one timer. Act it out or talk around it, then pass the phone to the other team.',
+  blurb: 'Act it out or talk around it while your team shouts guesses. Blue and Gold take turns against the clock.',
   category: 'party',
   players: '4-20P',
   controls: 'Tap Got It or Skip, or use the arrow keys. Most points after the last round wins.',

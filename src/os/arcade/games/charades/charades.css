@@ -1,18 +1,52 @@
+/* Charades: a game-show marquee on the kit's printed game night. Bungee for the big type, cream word cards, flat
+   Skip and Got It pads with a hard edge, and one rubber stamp for Time's Up and the winner. */
+@font-face {
+  font-family: 'Bungee';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/bungee.woff2') format('woff2');
+}
+
 .g-charades {
-  --g-charades-got: #22c063;
-  --g-charades-skip: #f2405a;
-  background:
-    radial-gradient(90% 60% at 50% -12%, color-mix(in srgb, #ff6b3d 26%, #17100c) 0%, transparent 70%),
-    #0f0c0b;
+  --g-charades-display: 'Bungee', 'Bricolage Grotesque', Inter, system-ui, sans-serif;
+  --g-charades-ink: #16120f;
+  --g-charades-paper: #f5efe3;
+  --g-charades-paper-edge: #c4b8a3;
+  --g-charades-got: #1f9d55;
+  --g-charades-got-edge: #10663a;
+  --g-charades-skip: #e23b54;
+  --g-charades-skip-edge: #97192e;
+  --g-charades-stamp: #ff4d3d;
+  /* Helper text a step quieter than --party-dim that still clears 4.5:1 on the dark stage. */
+  --g-charades-hint: rgba(246, 243, 238, 0.56);
+  background: #14110f;
+  /* Bungee has one weight; never fake a bold one. */
+  font-synthesis: none;
+}
+.g-charades .arcade-party {
+  --party-display: var(--g-charades-display);
+}
+/* Bungee is drawn tight and heavy already: no negative tracking, no bolder weights. */
+.g-charades .arcade-party-title,
+.g-charades .arcade-party-kicker,
+.g-charades .arcade-party .arcade-party-btn,
+.g-charades .arcade-party-card > strong,
+.g-charades .arcade-party-timer b,
+.g-charades .arcade-party-avatar {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.g-charades .arcade-party-title {
+  font-size: 28px;
+  line-height: 1.1;
 }
 
 /* Blocks inside a scrolling step keep their height; the step scrolls instead of squeezing them. */
 .g-charades .g-charades-teams,
-.g-charades .g-charades-ready,
-.g-charades .g-charades-facts,
-.g-charades .g-charades-total,
-.g-charades .g-charades-review,
+.g-charades .g-charades-brief,
 .g-charades .g-charades-tallies,
+.g-charades .g-charades-words,
 .g-charades .g-charades-rounds,
 .g-charades .g-charades-best {
   flex: none;
@@ -27,34 +61,36 @@
 }
 .g-charades .g-charades-team {
   min-width: 0;
-  padding: 10px 10px 11px;
+  padding: 12px 12px 12px;
   border-radius: 14px;
-  background: color-mix(in srgb, var(--team) 11%, rgba(255, 255, 255, 0.03));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--team) 38%, transparent);
+  background: var(--party-tile);
+  box-shadow: inset 0 3px 0 var(--team);
 }
 .g-charades .g-charades-team h3 {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 0 8px;
-  font-size: 12px;
+  margin: 0 0 10px;
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--team);
 }
 .g-charades .g-charades-team h3 em {
+  min-width: 20px;
   padding: 1px 6px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
-  color: #fff;
-  background: color-mix(in srgb, var(--team) 45%, transparent);
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--g-charades-ink);
+  background: var(--team);
 }
 .g-charades .g-charades-team ul {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -62,10 +98,9 @@
 .g-charades .g-charades-team li {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
   font-size: 14px;
-  animation: g-charades-pop 0.18s ease-out;
 }
 .g-charades .g-charades-team li span {
   min-width: 0;
@@ -76,50 +111,58 @@
 .g-charades .g-charades-team p {
   margin: 0;
   font-size: 13px;
-  color: rgba(245, 245, 247, 0.45);
+  color: var(--g-charades-hint);
 }
 
-/* Ready */
-.g-charades .g-charades-ready {
+/* Whose turn: pass the phone, then Go */
+.g-charades .g-charades-name {
+  width: 100%;
+  margin-top: -4px;
+}
+.g-charades .g-charades-name > span {
+  display: block;
+  font-size: 56px;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+.g-charades .g-charades-turn .arcade-party-sub {
+  margin-top: -6px;
+}
+.g-charades .g-charades-brief {
   min-height: 0;
-  padding: 24px 20px 22px;
+  margin-top: 6px;
+  padding: 22px 22px 24px;
 }
-.g-charades .g-charades-ready .arcade-party-avatar {
-  box-shadow:
-    0 0 0 3px rgba(255, 255, 255, 0.85),
-    0 8px 18px -6px rgba(0, 0, 0, 0.5);
+.g-charades .g-charades-brief > strong {
+  font-size: clamp(26px, 8cqmin, 36px);
 }
-.g-charades .g-charades-ready > strong {
-  font-size: clamp(26px, 8cqmin, 38px);
+.g-charades .g-charades-brief > p {
+  max-width: 300px;
+  opacity: 1;
 }
-.g-charades .g-charades-facts {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.g-charades .g-charades-facts li {
-  padding: 6px 11px;
-  border-radius: 999px;
-  font-size: 13px;
-  color: rgba(245, 245, 247, 0.75);
-  background: rgba(255, 255, 255, 0.07);
+@container arcade-party (max-height: 520px) {
+  .g-charades .g-charades-turn .arcade-party-avatar,
+  .g-charades .g-charades-turn .arcade-party-sub {
+    display: none;
+  }
+  .g-charades .g-charades-brief {
+    margin-top: 0;
+    padding: 16px 20px 18px;
+  }
 }
 
-/* The play stage: HUD, the word, and two big tap zones */
+/* The play stage: HUD, the word, and two big tap pads */
 .g-charades .g-charades-stage {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  container: g-charades-stage / size;
-  animation: g-charades-in 0.2s ease-out;
+  transition: background-color 0.3s ease;
+}
+/* The last ten seconds: the room goes a shade redder while the ring runs out. */
+.g-charades .g-charades-stage.is-low {
+  background-color: #2a1210;
 }
 .g-charades .g-charades-play {
   position: absolute;
   inset: 0;
+  z-index: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) clamp(112px, 23cqh, 190px);
@@ -127,10 +170,10 @@
     'hud hud'
     'word word'
     'skip got';
-  gap: 10px;
+  gap: 12px;
   padding: 48px 12px max(12px, env(safe-area-inset-bottom));
 }
-@container g-charades-stage (min-aspect-ratio: 1 / 1) {
+@container arcade-party (min-aspect-ratio: 1 / 1) {
   .g-charades .g-charades-play {
     grid-template-columns: minmax(96px, 21%) minmax(0, 1fr) minmax(96px, 21%);
     grid-template-rows: auto minmax(0, 1fr);
@@ -139,13 +182,16 @@
       'skip word got';
   }
 }
-@container g-charades-stage (max-height: 480px) {
+@container arcade-party (max-height: 480px) {
   .g-charades .g-charades-play {
     gap: 8px;
     padding-top: 44px;
   }
   .g-charades .g-charades-hud .arcade-party-timer {
     --size: 64px !important;
+  }
+  .g-charades .g-charades-pts b {
+    font-size: 30px;
   }
 }
 
@@ -154,33 +200,33 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 0 4px;
 }
 .g-charades .g-charades-who {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 .g-charades .g-charades-who b {
-  padding: 4px 10px;
-  border-radius: 999px;
+  padding: 5px 10px 4px;
+  border-radius: 8px;
+  font-family: var(--g-charades-display);
   font-size: 13px;
-  font-weight: 700;
-  color: #0b0b10;
-  background: var(--team);
+  font-weight: 400;
+  line-height: 1.1;
   white-space: nowrap;
+  color: var(--g-charades-ink);
+  background: var(--team);
 }
 .g-charades .g-charades-who span,
 .g-charades .g-charades-pts span {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
-  color: rgba(245, 245, 247, 0.55);
+  color: var(--party-dim);
 }
 .g-charades .g-charades-pts {
   position: relative;
@@ -188,43 +234,36 @@
   flex-direction: column;
   align-items: flex-end;
   justify-self: end;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 .g-charades .g-charades-pts b {
-  font-size: 36px;
-  font-weight: 800;
+  font-family: var(--g-charades-display);
+  font-size: 38px;
+  font-weight: 400;
   line-height: 1;
-  letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
-  animation: g-charades-bump 0.3s ease-out;
+  animation: g-charades-bump 0.24s ease-out;
 }
 .g-charades .g-charades-pts i {
   position: absolute;
-  top: 4px;
-  right: calc(100% + 6px);
+  top: 2px;
+  right: calc(100% + 8px);
+  font-family: var(--g-charades-display);
   font-size: 20px;
   font-style: normal;
-  font-weight: 800;
-  color: #4be38a;
+  color: #5ee08f;
   pointer-events: none;
-  animation: g-charades-float 0.75s ease-out forwards;
+  animation: g-charades-float 0.7s ease-out forwards;
 }
 .g-charades .g-charades-hud .arcade-party-timer {
   --size: 84px;
 }
-.g-charades .g-charades-hud .arcade-party-timer-fill {
-  stroke: var(--team);
-}
-.g-charades .g-charades-hud .arcade-party-timer.is-low .arcade-party-timer-fill {
-  stroke: #ff453a;
-}
 .g-charades .g-charades-hud .arcade-party-timer.is-low b {
-  color: #ff6b61;
   animation: g-charades-throb 1s ease-out infinite;
 }
 
-/* The word card */
+/* The word card: cream stock with ink type, sized by script to the biggest that fits without breaking a word. */
 .g-charades .g-charades-wordbox {
   grid-area: word;
   position: relative;
@@ -233,93 +272,105 @@
 }
 .g-charades .g-charades-card {
   position: absolute;
-  inset: 0;
+  inset: 0 0 5px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 34px 16px 22px;
-  border-radius: 24px;
+  padding: 44px 18px 30px;
+  border-radius: 20px;
   text-align: center;
-  color: #1c120d;
-  background:
-    radial-gradient(120% 70% at 50% 0%, #fff 0%, transparent 70%),
-    linear-gradient(175deg, #fffaf2, #f4e6d4);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
-    inset 0 -6px 0 rgba(0, 0, 0, 0.06),
-    0 0 0 3px color-mix(in srgb, var(--team) 80%, transparent),
-    0 22px 40px -18px rgba(0, 0, 0, 0.8);
-  animation: g-charades-deal 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.25);
+  color: var(--g-charades-ink);
+  background: var(--g-charades-paper);
+  outline: 1.5px solid rgba(22, 18, 15, 0.2);
+  outline-offset: -9px;
+  box-shadow: 0 5px 0 var(--g-charades-paper-edge);
+  animation: g-charades-deal 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .g-charades .g-charades-card > small {
   position: absolute;
-  top: 14px;
+  top: 20px;
   left: 0;
   right: 0;
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #d4471a;
+  color: #b0431a;
 }
-.g-charades .g-charades-card > strong {
-  max-width: 100%;
-  font-size: clamp(22px, min(calc(90cqw / (var(--len, 6) * 0.62)), 22cqh), 128px);
-  font-weight: 800;
+.g-charades .g-charades-fit {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+}
+.g-charades .g-charades-fit > strong {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  font-family: var(--g-charades-display);
+  font-size: 40px;
+  font-weight: 400;
   line-height: 1.04;
-  letter-spacing: -0.03em;
   text-wrap: balance;
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.g-charades .g-charades-nb {
+  white-space: nowrap;
 }
 .g-charades .g-charades-card.is-out {
   z-index: 2;
   color: #fff;
+  outline-color: rgba(255, 255, 255, 0.35);
   pointer-events: none;
-  animation: g-charades-out-right 0.42s cubic-bezier(0.45, 0, 0.7, 0.4) forwards;
+  animation: g-charades-out-right 0.34s cubic-bezier(0.45, 0, 0.7, 0.4) forwards;
 }
 .g-charades .g-charades-card.is-out > small {
-  color: rgba(255, 255, 255, 0.85);
+  color: #fff;
 }
 .g-charades .g-charades-card.is-out.is-got {
-  background: linear-gradient(170deg, #4be38a, #17a352);
-  box-shadow: 0 0 0 3px #4be38a, 0 0 50px rgba(75, 227, 138, 0.5);
+  background: var(--g-charades-got);
+  box-shadow: 0 5px 0 var(--g-charades-got-edge);
 }
 .g-charades .g-charades-card.is-out.is-skip {
-  background: linear-gradient(170deg, #ff6b7c, #cc2a43);
-  box-shadow: 0 0 0 3px #ff6b7c, 0 0 40px rgba(255, 77, 94, 0.4);
+  background: var(--g-charades-skip);
+  box-shadow: 0 5px 0 var(--g-charades-skip-edge);
   animation-name: g-charades-out-left;
 }
+
+/* The 3-2-1 */
 .g-charades .g-charades-card.is-count {
-  color: #f5f5f7;
-  background:
-    radial-gradient(80% 70% at 50% 40%, color-mix(in srgb, var(--team) 24%, transparent), transparent 70%),
-    rgba(255, 255, 255, 0.04);
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--team) 50%, transparent);
+  justify-content: center;
+  gap: 4px;
+  padding: 24px 16px;
+  color: var(--team);
+  background: color-mix(in srgb, var(--team) 9%, #1b1714);
+  outline-color: color-mix(in srgb, var(--team) 45%, transparent);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.45);
   animation: none;
 }
 .g-charades .g-charades-card.is-count > small {
-  color: var(--team);
-}
-.g-charades .g-charades-card.is-count > p {
-  margin: 0;
-  font-size: 13px;
+  position: static;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: rgba(245, 245, 247, 0.5);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--party-dim);
 }
 .g-charades .g-charades-card > .g-charades-beat {
-  font-size: clamp(64px, min(60cqh, 50cqw), 220px);
+  font-family: var(--g-charades-display);
+  font-size: clamp(64px, min(56cqh, 48cqw), 210px);
+  font-weight: 400;
   line-height: 1;
-  color: var(--team);
-  text-shadow: 0 0 40px color-mix(in srgb, var(--team) 50%, transparent);
-  animation: g-charades-beat 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  animation: g-charades-beat 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
+
+/* Time's Up */
 .g-charades .g-charades-stage.is-up .g-charades-card:not(.is-out) {
-  filter: grayscale(0.7) brightness(0.55);
-  transition: filter 0.3s ease;
+  filter: grayscale(0.6) brightness(0.5);
+  transition: filter 0.25s ease;
 }
 .g-charades .g-charades-stamp {
   position: absolute;
@@ -330,131 +381,196 @@
   pointer-events: none;
 }
 .g-charades .g-charades-stamp span {
-  padding: 8px 20px;
-  border: 5px solid #ff453a;
-  border-radius: 16px;
-  font-size: clamp(28px, 13cqw, 64px);
-  font-weight: 900;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+  padding: 10px 20px 8px;
+  border: 5px solid var(--g-charades-stamp);
+  border-radius: 14px;
+  font-family: var(--g-charades-display);
+  font-size: clamp(30px, 12cqw, 60px);
+  line-height: 1;
   white-space: nowrap;
-  color: #ff453a;
-  background: rgba(18, 10, 10, 0.88);
-  box-shadow: 0 14px 40px -10px rgba(255, 69, 58, 0.55);
+  color: var(--g-charades-stamp);
+  background: #17100e;
   transform: rotate(-7deg);
-  animation: g-charades-stamp 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.4);
+  animation: g-charades-stamp 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.3);
 }
 
-/* Tap zones */
+/* Tap pads: flat fills with a hard edge that presses down */
 .g-charades .g-charades-zone {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
   min-height: 0;
-  border-radius: 22px;
-  font-size: clamp(20px, 7cqmin, 30px);
-  font-weight: 800;
-  letter-spacing: -0.01em;
+  margin-bottom: 5px;
+  padding: 8px;
+  border-radius: 20px;
+  font-family: var(--g-charades-display);
+  font-size: clamp(20px, 6.5cqmin, 30px);
+  font-weight: 400;
+  line-height: 1;
   color: #fff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
   touch-action: manipulation;
-  transition: transform 0.08s ease, filter 0.12s ease, opacity 0.2s ease;
+  transition: transform 0.07s ease-out, box-shadow 0.07s ease-out, background-color 0.12s ease, opacity 0.2s ease;
 }
 .g-charades .g-charades-zone.is-skip {
   grid-area: skip;
-  background:
-    radial-gradient(90% 70% at 30% 0%, rgba(255, 255, 255, 0.22), transparent 60%),
-    linear-gradient(160deg, #ff5d70, #c9223d);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -5px 0 rgba(0, 0, 0, 0.18),
-    0 12px 26px -12px rgba(242, 64, 90, 0.7);
+  background: var(--g-charades-skip);
+  box-shadow: 0 5px 0 var(--g-charades-skip-edge);
 }
 .g-charades .g-charades-zone.is-got {
   grid-area: got;
-  background:
-    radial-gradient(90% 70% at 70% 0%, rgba(255, 255, 255, 0.22), transparent 60%),
-    linear-gradient(160deg, #36d777, #138a45);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -5px 0 rgba(0, 0, 0, 0.18),
-    0 12px 26px -12px rgba(34, 192, 99, 0.7);
+  background: var(--g-charades-got);
+  box-shadow: 0 5px 0 var(--g-charades-got-edge);
 }
-.g-charades .g-charades-zone:hover {
-  filter: brightness(1.06);
+@media (hover: hover) {
+  .g-charades .g-charades-zone.is-skip:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--g-charades-skip) 88%, #fff);
+  }
+  .g-charades .g-charades-zone.is-got:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--g-charades-got) 88%, #fff);
+  }
 }
-.g-charades .g-charades-zone:active {
-  transform: scale(0.97);
-  filter: brightness(1.15);
+.g-charades .g-charades-zone:active:not(:disabled) {
+  transform: translateY(4px);
+}
+.g-charades .g-charades-zone.is-skip:active:not(:disabled) {
+  box-shadow: 0 1px 0 var(--g-charades-skip-edge);
+}
+.g-charades .g-charades-zone.is-got:active:not(:disabled) {
+  box-shadow: 0 1px 0 var(--g-charades-got-edge);
+}
+.g-charades .g-charades-zone:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
 }
 .g-charades .g-charades-zone:disabled {
   cursor: default;
-  opacity: 0.32;
-  filter: saturate(0.5);
+  opacity: 0.28;
 }
 .g-charades .g-charades-zone svg {
-  width: clamp(28px, 9cqmin, 42px);
-  height: clamp(28px, 9cqmin, 42px);
+  width: clamp(26px, 8cqmin, 38px);
+  height: clamp(26px, 8cqmin, 38px);
 }
 .g-charades .g-charades-zone kbd {
-  font: inherit;
-  font-size: 11px;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  opacity: 0.75;
+  line-height: 1.2;
+  background: rgba(0, 0, 0, 0.26);
 }
 
-/* Feedback */
-.g-charades .g-charades-flash {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  animation: g-charades-flash 0.5s ease-out forwards;
+/* Review: both totals and the words from this turn */
+.g-charades .g-charades-tallies {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: 100%;
+  padding-bottom: 3px;
 }
-.g-charades .g-charades-flash.is-got {
-  box-shadow:
-    inset 0 0 0 3px rgba(75, 227, 138, 0.8),
-    inset 0 0 120px rgba(75, 227, 138, 0.35);
-}
-.g-charades .g-charades-flash.is-skip {
-  box-shadow:
-    inset 0 0 0 3px rgba(255, 93, 112, 0.7),
-    inset 0 0 110px rgba(255, 93, 112, 0.28);
-}
-.g-charades .g-charades-stage.is-low::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  box-shadow: inset 0 0 90px rgba(255, 69, 58, 0.32);
-  animation: g-charades-tick 1s ease-in-out infinite;
-}
-
-/* Review */
-.g-charades .g-charades-total {
+.g-charades .g-charades-tally {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 4px 0 2px;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px 10px 14px;
+  border-radius: 16px;
+  background: var(--party-tile);
+  box-shadow:
+    inset 0 3px 0 var(--team),
+    0 3px 0 var(--party-edge);
 }
-.g-charades .g-charades-total b {
-  font-size: clamp(48px, 15cqmin, 68px);
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  font-variant-numeric: tabular-nums;
-  color: var(--team);
-  animation: g-charades-bump 0.3s ease-out;
-}
-.g-charades .g-charades-total span {
+.g-charades .g-charades-tally-name {
+  font-family: var(--g-charades-display);
   font-size: 14px;
-  color: rgba(245, 245, 247, 0.6);
+  line-height: 1.1;
+  white-space: nowrap;
+  color: var(--team);
+}
+.g-charades .g-charades-tally > b {
+  font-family: var(--g-charades-display);
+  font-size: clamp(44px, 14cqmin, 64px);
+  font-weight: 400;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.g-charades .g-charades-tally > em {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--g-charades-ink);
+  background: var(--team);
+}
+.g-charades .g-charades-tally > em.is-idle {
+  font-weight: 600;
+  color: var(--party-dim);
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.14);
+}
+.g-charades .g-charades-tally > em.is-blank {
+  visibility: hidden;
+}
+.g-charades .g-charades-tally.is-win {
+  color: var(--g-charades-ink);
+  background: var(--team);
+  box-shadow: 0 4px 0 color-mix(in srgb, var(--team) 52%, #000);
+}
+.g-charades .g-charades-tally.is-win .g-charades-tally-name {
+  color: var(--g-charades-ink);
+}
+.g-charades .g-charades-winner {
+  margin: -2px 0 2px;
+  padding: 5px 10px 3px;
+  border: 3px solid currentColor;
+  border-radius: 8px;
+  font-family: var(--g-charades-display);
+  font-size: 15px;
+  font-style: normal;
+  line-height: 1.1;
+  transform: rotate(-5deg);
+  animation: g-charades-stamp-small 0.3s 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.3) both;
+}
+.g-charades .g-charades-faces {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 100%;
+  padding-left: 5px;
+}
+.g-charades .g-charades-faces .arcade-party-avatar {
+  margin-left: -5px;
+  box-shadow: 0 0 0 2px #1d1916;
+}
+.g-charades .g-charades-tally.is-win .g-charades-faces .arcade-party-avatar {
+  box-shadow: 0 0 0 2px var(--team);
+}
+
+.g-charades .g-charades-words > span {
+  justify-content: space-between;
+}
+.g-charades .g-charades-words > span small {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--g-charades-hint);
+}
+.g-charades .g-charades-none {
+  margin: 0;
+  padding: 14px;
+  border-radius: 12px;
+  font-size: 15px;
+  text-align: center;
+  color: var(--party-dim);
+  background: var(--party-tile);
 }
 .g-charades .g-charades-review {
   display: flex;
@@ -471,15 +587,18 @@
   justify-content: space-between;
   gap: 10px;
   width: 100%;
-  min-height: 46px;
+  min-height: 48px;
   padding: 6px 8px 6px 14px;
   border-radius: 12px;
   font-size: 16px;
   font-weight: 600;
   text-align: left;
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
-  transition: background 0.15s ease, box-shadow 0.15s ease;
+  background: var(--party-tile);
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.g-charades .g-charades-review button:focus-visible {
+  outline: 2px solid var(--party-ink);
+  outline-offset: 2px;
 }
 .g-charades .g-charades-review button > span {
   min-width: 0;
@@ -489,305 +608,158 @@
 }
 .g-charades .g-charades-review button.is-skip > span,
 .g-charades .g-charades-review button.is-buzzer > span {
-  color: rgba(245, 245, 247, 0.55);
+  color: var(--party-dim);
 }
 .g-charades .g-charades-review button.is-got {
-  background: rgba(34, 192, 99, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(75, 227, 138, 0.45);
+  background: rgba(31, 157, 85, 0.16);
+  box-shadow: inset 0 0 0 1.5px rgba(94, 224, 143, 0.4);
 }
 .g-charades .g-charades-review em {
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: 4px;
-  min-width: 82px;
   justify-content: center;
+  gap: 4px;
+  min-width: 84px;
   padding: 6px 10px;
   border-radius: 999px;
   font-size: 12px;
   font-style: normal;
   font-weight: 700;
-  color: rgba(245, 245, 247, 0.7);
+  color: var(--party-dim);
   background: rgba(255, 255, 255, 0.08);
 }
 .g-charades .g-charades-review .is-got em {
   color: #fff;
   background: var(--g-charades-got);
-  animation: g-charades-pop 0.2s ease-out;
 }
 .g-charades .g-charades-review .is-buzzer em {
   color: #ffc56b;
   background: rgba(255, 179, 64, 0.14);
 }
 
-/* Scoreboard */
-.g-charades .g-charades-tallies {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  width: 100%;
-}
-.g-charades .g-charades-tally {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 26px 10px 14px;
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--team) 12%, rgba(255, 255, 255, 0.03));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--team) 35%, transparent);
-}
-.g-charades .g-charades-tally.is-tagged {
-  box-shadow: inset 0 0 0 2px var(--team);
-}
-.g-charades .g-charades-tally.is-hi {
-  background: color-mix(in srgb, var(--team) 26%, rgba(255, 255, 255, 0.03));
-  box-shadow:
-    inset 0 0 0 2px var(--team),
-    0 14px 34px -14px var(--team);
-}
-.g-charades .g-charades-tally > small {
-  position: absolute;
-  top: -9px;
-  left: 50%;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  color: #0b0b10;
-  background: var(--team);
-  transform: translateX(-50%);
-}
-.g-charades .g-charades-tally-name {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--team);
-}
-.g-charades .g-charades-tally > b {
-  font-size: clamp(46px, 15cqmin, 72px);
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  font-variant-numeric: tabular-nums;
-}
-.g-charades .g-charades-tally > em {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-style: normal;
-  font-weight: 800;
-  color: #fff;
-  background: var(--g-charades-got);
-  animation: g-charades-pop 0.35s 0.15s cubic-bezier(0.2, 0.9, 0.3, 1.5) both;
-}
-.g-charades .g-charades-faces {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  max-width: 100%;
-  padding-left: 5px;
-}
-.g-charades .g-charades-faces .arcade-party-avatar {
-  margin-left: -5px;
-  box-shadow: 0 0 0 2px #17110e;
-}
-
-/* Round by round */
-.g-charades .g-charades-rounds {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0 3px;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
-.g-charades .g-charades-rounds th,
-.g-charades .g-charades-rounds td {
-  height: 28px;
-  padding: 0 10px;
-  text-align: center;
-}
-.g-charades .g-charades-rounds thead th {
-  height: 22px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--team, rgba(245, 245, 247, 0.5));
-}
-.g-charades .g-charades-rounds tbody th {
-  width: 30%;
-  border-radius: 8px 0 0 8px;
-  font-weight: 500;
-  text-align: left;
-  color: rgba(245, 245, 247, 0.5);
-  background: rgba(255, 255, 255, 0.05);
-}
-.g-charades .g-charades-rounds tbody td {
-  font-weight: 700;
-  background: rgba(255, 255, 255, 0.05);
-}
-.g-charades .g-charades-rounds tbody td:last-child {
-  border-radius: 0 8px 8px 0;
-}
-.g-charades .g-charades-rounds td.is-empty {
-  font-weight: 400;
-  color: rgba(245, 245, 247, 0.25);
-}
-.g-charades .g-charades-rounds td.is-next {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #0b0b10;
-  background: var(--team);
-}
 @container arcade-party (max-height: 480px) {
-  .g-charades .g-charades-rounds {
-    display: none;
+  .g-charades .g-charades-tally {
+    gap: 4px;
+    padding: 10px 10px 10px;
+  }
+  .g-charades .g-charades-tally > b {
+    font-size: 40px;
+  }
+  .g-charades .g-charades-tally > em {
+    padding: 3px 10px;
+  }
+  .g-charades .g-charades-done .arcade-party-actions:not(:has(.arcade-party-row)) {
+    flex-direction: row;
+  }
+  .g-charades .g-charades-done .arcade-party-actions:not(:has(.arcade-party-row)) > * {
+    flex: 1 1 0;
   }
 }
 
 /* Results */
-.g-charades .g-charades-done {
-  isolation: isolate;
-}
 .g-charades .g-charades-best {
   min-height: 0;
-  padding: 16px 18px;
+  padding: 20px 20px 22px;
 }
 .g-charades .g-charades-best > strong {
-  font-size: clamp(20px, 6cqmin, 26px);
+  font-size: clamp(22px, 6.5cqmin, 28px);
 }
-.g-charades .g-charades-confetti {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  overflow: hidden;
-  pointer-events: none;
+.g-charades .g-charades-rounds {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 4px;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
 }
-.g-charades .g-charades-confetti i {
-  position: absolute;
-  top: -16px;
-  width: 8px;
-  height: 14px;
-  border-radius: 2px;
-  opacity: 0;
-  animation: g-charades-fall 2.6s cubic-bezier(0.3, 0.2, 0.6, 1) 2 both;
+.g-charades .g-charades-rounds th,
+.g-charades .g-charades-rounds td {
+  height: 32px;
+  padding: 0 12px;
+  text-align: center;
+}
+.g-charades .g-charades-rounds thead th {
+  height: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--team, var(--party-dim));
+}
+.g-charades .g-charades-rounds tbody th {
+  width: 34%;
+  border-radius: 8px 0 0 8px;
+  font-weight: 500;
+  text-align: left;
+  color: var(--party-dim);
+  background: var(--party-tile);
+}
+.g-charades .g-charades-rounds tbody td {
+  font-weight: 700;
+  background: var(--party-tile);
+}
+.g-charades .g-charades-rounds tbody td:last-child {
+  border-radius: 0 8px 8px 0;
 }
 
-@keyframes g-charades-in {
-  from {
-    opacity: 0;
-  }
-}
-@keyframes g-charades-pop {
-  from {
-    transform: scale(0.7);
-    opacity: 0;
-  }
-}
 @keyframes g-charades-deal {
   from {
-    transform: translateY(18px) scale(0.92) rotate(-2deg);
+    transform: translateY(14px) scale(0.96);
     opacity: 0;
   }
 }
 @keyframes g-charades-out-right {
   to {
-    transform: translateX(120%) rotate(16deg);
+    transform: translateX(115%) rotate(12deg);
     opacity: 0;
   }
 }
 @keyframes g-charades-out-left {
   to {
-    transform: translateX(-120%) rotate(-16deg);
+    transform: translateX(-115%) rotate(-12deg);
     opacity: 0;
   }
 }
 @keyframes g-charades-bump {
   40% {
-    transform: scale(1.28);
+    transform: scale(1.22);
   }
 }
 @keyframes g-charades-float {
   from {
-    transform: translateY(6px) scale(0.8);
+    transform: translateY(6px);
     opacity: 0;
   }
   25% {
-    transform: translateY(0) scale(1.1);
+    transform: none;
     opacity: 1;
   }
   to {
-    transform: translateY(-22px);
+    transform: translateY(-12px);
     opacity: 0;
   }
 }
 @keyframes g-charades-beat {
   from {
-    transform: scale(1.8);
+    transform: scale(1.6);
     opacity: 0;
-  }
-  45% {
-    transform: scale(0.94);
-    opacity: 1;
   }
 }
 @keyframes g-charades-stamp {
   from {
-    transform: rotate(-7deg) scale(2.2);
+    transform: rotate(-7deg) scale(2);
     opacity: 0;
   }
 }
-@keyframes g-charades-flash {
-  to {
+@keyframes g-charades-stamp-small {
+  from {
+    transform: rotate(-5deg) scale(2.4);
     opacity: 0;
   }
 }
 @keyframes g-charades-throb {
   12% {
-    transform: scale(1.22);
+    transform: scale(1.2);
   }
   40% {
     transform: none;
-  }
-}
-@keyframes g-charades-tick {
-  50% {
-    opacity: 0.45;
-  }
-}
-@keyframes g-charades-fall {
-  0% {
-    transform: translateY(0) rotate(0deg) scale(var(--s, 1));
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(110cqh) rotate(calc(var(--r, 0deg) + 540deg)) scale(var(--s, 1));
-    opacity: 0.9;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .g-charades .g-charades-card,
-  .g-charades .g-charades-beat,
-  .g-charades .g-charades-stamp span,
-  .g-charades .g-charades-pts b,
-  .g-charades .g-charades-tally > em {
-    animation-duration: 0.01ms;
-  }
-  .g-charades .g-charades-confetti,
-  .g-charades .g-charades-stage.is-low::before {
-    display: none;
   }
 }

@@ -41,17 +41,41 @@ export function styleFor(style: Style, turn: number): TurnStyle {
   return Math.floor(turn / 2) % 2 === 0 ? 'act' : 'describe';
 }
 
+/**
+ * Who starts a game and how far each team's actor rotation has already moved. Play Again hands the first turn to the
+ * other team and carries the rotation on, so the same person doesn't open every game.
+ */
+export type Order = { first: TeamIndex; skip: readonly [number, number] };
+export const FIRST_GAME: Order = { first: 0, skip: [0, 0] };
+
 /** Teams take turns; inside a team the actor moves through its members in seating order. */
-export function turnAt(index: number, teams: Teams, style: Style): Turn {
-  const team = (index % 2) as TeamIndex;
+export function turnAt(index: number, teams: Teams, style: Style, order: Order = FIRST_GAME): Turn {
+  const team = ((index + order.first) % 2) as TeamIndex;
   const own = Math.floor(index / 2);
   const members = teams[team];
-  return { index, team, round: own + 1, actor: members.length ? members[own % members.length] : -1, style: styleFor(style, index) };
+  const at = own + Math.max(0, Math.floor(order.skip[team]));
+  return { index, team, round: own + 1, actor: members.length ? members[at % members.length] : -1, style: styleFor(style, index) };
 }
+
+/** The order for the next game: the other team opens, and each team's next actor is whoever was due. */
+export function nextOrder(order: Order, history: readonly Played[]): Order {
+  const skip: [number, number] = [order.skip[0], order.skip[1]];
+  for (const t of history) skip[t.team]++;
+  return { first: other(order.first), skip };
+}
+
+export const other = (t: TeamIndex): TeamIndex => (t === 0 ? 1 : 0);
 
 export const totalTurns = (rounds: number) => Math.max(1, Math.floor(rounds)) * 2;
 export const isOver = (played: number, rounds: number) => played >= totalTurns(rounds);
 export const isLastTurn = (index: number, rounds: number) => index >= totalTurns(rounds) - 1;
+
+/** "Round 2 of 5", "Last round", or "Tiebreaker" once a tied game plays past the rounds it was set up for. */
+export function roundLabel(round: number, rounds: number): string {
+  if (round > rounds) return 'Tiebreaker';
+  if (round === rounds && rounds > 1) return 'Last round';
+  return `Round ${round} of ${rounds}`;
+}
 
 /** A point per word guessed. Skips cost nothing. */
 export const points = (cards: readonly Card[]) => cards.reduce((n, c) => n + (c.got ? 1 : 0), 0);
@@ -93,6 +117,3 @@ export function wordsFor(decks: readonly DeckId[]): Entry[] {
     }
   return out;
 }
-
-/** The longest single word in a phrase, which decides how big it can be drawn. */
-export const longestToken = (phrase: string) => phrase.split(/\s+/).reduce((n, w) => Math.max(n, Array.from(w).length), 0);

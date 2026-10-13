@@ -13,7 +13,7 @@
   --party-display: 'Bricolage Grotesque', Inter, system-ui, sans-serif;
   --party-ink: #f6f3ee;
   --party-dim: rgba(246, 243, 238, 0.66);
-  --party-faint: rgba(246, 243, 238, 0.44);
+  --party-faint: rgba(246, 243, 238, 0.56);
   --party-tile: rgba(255, 255, 255, 0.075);
   --party-edge: rgba(0, 0, 0, 0.42);
   --party-accent-edge: color-mix(in srgb, var(--accent) 52%, #000);
@@ -25,6 +25,8 @@
   flex-direction: column;
   padding: 50px 16px max(16px, env(safe-area-inset-bottom));
   color: var(--party-ink);
+  /* Single-weight display faces (Bungee, Anton, Limelight) stay true instead of getting a fake bold. */
+  font-synthesis-weight: none;
   animation: arcade-party-in 0.18s ease-out;
 }
 /* A whisper of paper grain under everything, so flat fills don't read as plastic. */
@@ -179,6 +181,7 @@
   box-shadow: 0 1px 0 var(--party-edge);
 }
 .arcade-shell .arcade-party-btn.is-primary {
+  --party-accent-edge: color-mix(in srgb, var(--accent) 52%, #000);
   color: var(--on-accent, #fff);
   background: var(--accent);
   box-shadow: 0 3px 0 var(--party-accent-edge);
@@ -464,6 +467,7 @@
   padding: 28px 24px;
   border-radius: 20px;
   text-align: center;
+  --party-accent-edge: color-mix(in srgb, var(--accent) 52%, #000);
   color: var(--on-accent, #fff);
   background: var(--accent);
   outline: 1.5px solid color-mix(in srgb, currentColor 32%, transparent);
