@@ -392,6 +392,8 @@ function startHunt(w: World, m: Mind, prey: [number, number]) {
   m.ram = false;
 }
 
+const seen: [number, number] = [0, 0];
+
 /** Runs a bot for one tick: thinks now and then, steers every tick, dodges its own trail and the wall. */
 export function botTick(w: World, p: Player, dt: number) {
   const m = p.mind as Mind | null;
@@ -424,6 +426,20 @@ export function botTick(w: World, p: Player, dt: number) {
         target = Math.atan2(home[2] - p.y, home[1] - p.x);
       } else target = p.h;
     } else target = Number.isNaN(m.heading) ? p.h : m.heading;
+  }
+  // out in the open, a head coming at us is a head-on we lose: swerve
+  if (p.out && m.state !== 'hunt') {
+    for (const q of w.players) {
+      if (!q || q === p || !q.alive) continue;
+      seenAt(w, q.id, m.react, seen);
+      const dx = seen[0] - p.x;
+      const dy = seen[1] - p.y;
+      if (dx * dx + dy * dy > 26 * 26) continue;
+      const a = Math.atan2(dy, dx);
+      if (Math.abs(angleDiff(a, p.h)) > 1.1) continue;
+      target = a + (angleDiff(target, a) >= 0 ? 1.5 : -1.5);
+      break;
+    }
   }
   target += (m.rng() - 0.5) * L.jitter;
   // dodge: keep the wanted heading if it is clear, else the nearest clear one

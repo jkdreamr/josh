@@ -162,22 +162,30 @@ const PATTERNS: Record<Pattern, (g: G, base: string) => void> = {
     g.fillRect(-26, 30, 52, 6);
   },
   dish(g) {
-    g.lineWidth = 6;
+    // the Dish: a big bowl tipped up at the sky on a stand
+    g.save();
+    g.translate(2, -4);
+    g.rotate(-0.55);
     g.beginPath();
-    g.moveTo(0, 6);
-    g.lineTo(-14, 36);
-    g.moveTo(0, 6);
-    g.lineTo(14, 36);
-    g.stroke();
-    g.beginPath();
-    g.ellipse(0, -6, 34, 16, -0.35, 0, Math.PI);
+    g.ellipse(0, 0, 32, 16, 0, 0, Math.PI);
     g.closePath();
     g.fill();
+    g.lineWidth = 5;
     g.beginPath();
-    g.moveTo(0, -4);
-    g.lineTo(10, -34);
+    g.moveTo(0, 0);
+    g.lineTo(0, -24);
     g.stroke();
-    circle(g, 10, -36, 5);
+    circle(g, 0, -27, 5);
+    g.restore();
+    g.lineWidth = 7;
+    g.beginPath();
+    g.moveTo(4, 10);
+    g.lineTo(-8, 34);
+    g.moveTo(4, 10);
+    g.lineTo(18, 34);
+    g.moveTo(-14, 34);
+    g.lineTo(24, 34);
+    g.stroke();
   },
   axe(g) {
     g.save();

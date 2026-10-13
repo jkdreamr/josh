@@ -844,11 +844,13 @@ function recordAt(w: World, id: number, slot: number, x: number, y: number) {
 }
 
 /** Where player `id` was about `ago` seconds back (bots see the world a little late). */
-export function seenAt(w: World, id: number, ago: number): [number, number] {
+export function seenAt(w: World, id: number, ago: number, out: [number, number] = [0, 0]): [number, number] {
   const back = Math.min(HIST - 1, Math.max(0, Math.round(ago * 15)));
   const slot = (w.histAt - back + HIST * 2) % HIST;
   const i = (id * HIST + slot) * 2;
-  return [w.hist[i], w.hist[i + 1]];
+  out[0] = w.hist[i];
+  out[1] = w.hist[i + 1];
+  return out;
 }
 
 /**

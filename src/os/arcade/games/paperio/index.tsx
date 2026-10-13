@@ -300,6 +300,11 @@ function Play({ mode }: { mode: Mode }) {
     const handle = {
       ctl: () => ctl.current,
       hash: () => (ctl.current ? ownerHash(ctl.current.w) : 0),
+      /** Board cell to CSS pixels in the first view (dev automation steers the mouse with it). */
+      screen: (x: number, y: number) => {
+        const cam = st.current.cams[0];
+        return cam && view.current ? view.current.project(cam, x, y, 0) : null;
+      },
       /** Smoothed milliseconds of game work and of render submission per frame, and the resolution scale. */
       perf: () => ({ update: st.current.updateMs, render: st.current.renderMs, dpr: st.current.dpr, ema: st.current.ema * 1000 }),
       /** Runs our own head straight across another player's trail (through the normal rules). */
@@ -452,11 +457,11 @@ function Play({ mode }: { mode: Mode }) {
     setCalls((list) => [...list.filter((c) => c.view !== viewIdx), { id, text, sub, tone, view: viewIdx }]);
   }
 
-  function popAt(c: Ctl, localIdx: number, x: number, y: number, text: string, big: boolean) {
+  function popAt(localIdx: number, x: number, y: number, text: string, big: boolean) {
     const v = view.current;
     const cam = st.current.cams[localIdx];
     if (!v || !cam) return;
-    const at = v.project(cam, x, y, 8);
+    const at = v.project(cam, x, y - 6, 14);
     if (!at) return;
     const id = ++st.current.popId;
     setPops((list) => [...list.slice(-5), { id, x: at.x, y: at.y, text, big }]);
@@ -473,7 +478,7 @@ function Play({ mode }: { mode: Mode }) {
       if (localIdx < 0 || e.gained <= 0) return;
       const pct = (e.gained / w.arenaCells) * 100;
       const big = pct >= 1;
-      popAt(c, localIdx, e.x, e.y, `+${pct >= 10 ? pct.toFixed(0) : pct.toFixed(pct >= 1 ? 1 : 2)}%`, big);
+      popAt(localIdx, e.x, e.y, `+${pct >= 10 ? pct.toFixed(0) : pct.toFixed(pct >= 1 ? 1 : 2)}%`, big);
       const steps = Math.min(5, 2 + Math.floor(Math.log2(1 + pct * 4)));
       const notes = [523, 659, 784, 988, 1175, 1319];
       for (let i = 0; i < steps; i++) sfx.tone({ freq: notes[i] * (localIdx ? 0.84 : 1), dur: 0.09 + (i === steps - 1 ? 0.12 : 0), type: 'triangle', vol: 0.12 + Math.min(0.06, pct * 0.01), delay: i * 0.055 });
