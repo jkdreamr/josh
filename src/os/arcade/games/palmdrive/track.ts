@@ -9,6 +9,7 @@
 // Headings follow the karts: forward = (sin h, cos h), so h = 0 faces north and turning right lowers h.
 // The right-hand normal of a direction (tx, tz) is (-tz, tx); a positive lateral offset `d` is right of the line.
 
+/** Palm Drive's road: half its width, and where the walls stand. Other courses can be wider or narrower. */
 export const ROAD_HALF = 8;
 export const CURB = 1.1;
 /** Walls stand this far either side of the centerline; the grass between the curb and the wall is slow. */
@@ -62,6 +63,9 @@ export type Track = {
   tz: Float32Array;
   /** Signed curvature in radians per meter, positive for a right-hand bend. */
   curv: Float32Array;
+  /** Half the road's width, and how far either side of the centerline the walls stand. */
+  half: number;
+  edge: number;
 };
 
 export type Spot = { i: number; s: number; d: number; x: number; z: number; tx: number; tz: number };
@@ -88,7 +92,7 @@ function catmull(p0: P2, p1: P2, p2: P2, p3: P2, u: number): P2 {
   return mix(b1, b2, t1, t2);
 }
 
-export function buildTrack(route: [number, number][] = ROUTE, start: [number, number] = START): Track {
+export function buildTrack(route: [number, number][] = ROUTE, start: [number, number] = START, half = ROAD_HALF, edge = EDGE): Track {
   const pts = route.map(([e, n]) => fromMap(e, n));
   const dense: P2[] = [];
   const m = pts.length;
@@ -154,7 +158,7 @@ export function buildTrack(route: [number, number][] = ROUTE, start: [number, nu
     const b = (i + 1) % n;
     curv[i] = -wrapAngle(headingOf(tx[b], tz[b]) - headingOf(tx[a], tz[a])) / (2 * step);
   }
-  return { n, step, length: n * step, x, z, tx, tz, curv };
+  return { n, step, length: n * step, x, z, tx, tz, curv, half, edge };
 }
 
 export const wrapS = (t: Track, s: number) => ((s % t.length) + t.length) % t.length;
@@ -227,12 +231,23 @@ export const sOf = (t: Track, e: number, n: number) => {
   return locate(t, p.x, p.z).s;
 };
 
+/**
+ * Things on the road that are part of the course: mud slows you like grass, an oil slick spins you out, and hay
+ * bales and cows are solid. Cows wander back and forth across the road `swing` meters either side of d.
+ */
+export type HazardKind = 'mud' | 'oil' | 'hay' | 'cow';
+export type Hazard = { kind: HazardKind; s: number; d: number; r: number; swing?: number; speed?: number; phase?: number };
+/** How big each kind is unless a course says otherwise. */
+export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, cow: 1.5 };
+export const solid = (kind: HazardKind) => kind === 'hay' || kind === 'cow';
+
 export type Layout = {
   boxes: { s: number; d: number }[];
   coins: { s: number; d: number }[];
   dashes: { s: number; d: number }[];
   /** Jump ramps: the lip at s, centered d to the right, w wide. */
   ramps: { s: number; d: number; w: number }[];
+  hazards: Hazard[];
   /** Palm Drive itself, from the hairpin exit to the Oval, as [from, to] distances (Palm Drive course only). */
   palmDrive?: [number, number];
 };
@@ -265,5 +280,5 @@ export function layout(t: Track): Layout {
     { s: wrapS(t, dashes[0].s + 11), d: -1.5, w: 11 },
     { s: wrapS(t, sOf(t, 0, -80)), d: 4.6, w: 5.5 },
   ];
-  return { boxes, coins, dashes, ramps, palmDrive: [sOf(t, 2, -250), sOf(t, 0, 20)] };
+  return { boxes, coins, dashes, ramps, hazards: [], palmDrive: [sOf(t, 2, -250), sOf(t, 0, 20)] };
 }
