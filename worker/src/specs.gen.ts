@@ -59,6 +59,7 @@ export const ONLINE_SPECS: Record<string, OnlineSpec> = {
   "2048": {"seats":4},
   "airhockey": {"seats":2},
   "badminton": {"seats":2},
+  "bedwars": {"seats":8,"lateJoin":true},
   "blitz-21": {"seats":4},
   "blocks": {"seats":4},
   "breakout": {"seats":4},

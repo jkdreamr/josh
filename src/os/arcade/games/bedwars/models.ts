@@ -319,7 +319,10 @@ function skinBox(THREE: Three, w: number, h: number, d: number, u: number, v: nu
   return g;
 }
 
-/** Armor textures: dyed leather, chainmail, iron, diamond. */
+/**
+ * Armor textures in Minecraft's armor layout (64x32): dyed leather, chainmail, iron, diamond. The helmet leaves the
+ * face open and the sleeves stop above the elbow, so skins still show.
+ */
 function armorCanvas(kind: number, team: number): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = 64;
@@ -328,12 +331,17 @@ function armorCanvas(kind: number, team: number): HTMLCanvasElement {
   const base = kind === 0 ? TEAMS[team].color : kind === 1 ? '#8f8f8f' : kind === 2 ? '#d8d8d8' : '#4fe0d6';
   for (let y = 0; y < 32; y++)
     for (let x = 0; x < 64; x++) {
-      let k = 0.9 + (((x * 7 + y * 13) % 5) / 5) * 0.15;
+      let k = 0.88 + (((x * 7 + y * 13) % 5) / 5) * 0.16;
       if (kind === 1 && (x + y) % 2 === 0) k = 0.55;
-      if (kind === 0 && (x % 8 === 0 || y % 8 === 0)) k *= 0.8;
+      if (kind === 0 && (x % 8 === 0 || y % 8 === 0)) k *= 0.82;
+      if (kind >= 2 && (x % 4 === 0 || y % 6 === 0)) k *= 0.85;
       g.fillStyle = shadeHex(base, k);
       g.fillRect(x, y, 1, 1);
     }
+  // the helmet's face opening (front face is x 8..16, y 8..16)
+  g.clearRect(9, 11, 6, 5);
+  // sleeves end above the elbow (arm faces are y 20..32 from x 40)
+  g.clearRect(40, 26, 16, 6);
   return c;
 }
 
@@ -386,7 +394,6 @@ export class Avatar {
   private readonly tagCanvas: HTMLCanvasElement;
   private tagText = '';
   private armorKey = '';
-  private team: number;
 
   constructor(
     private readonly THREE: Three,
@@ -394,7 +401,6 @@ export class Avatar {
     team: number,
     seed: number,
   ) {
-    this.team = team;
     this.root = new THREE.Group();
     this.model = new THREE.Group();
     this.root.add(this.model);
@@ -444,7 +450,6 @@ export class Avatar {
     const key = `${tier}:${team}`;
     if (key === this.armorKey) return;
     this.armorKey = key;
-    this.team = team;
     for (const m of this.armorMeshes) m.removeFromParent();
     this.armorMeshes.length = 0;
     this.lowerArmor.length = 0;
@@ -460,14 +465,14 @@ export class Avatar {
       tex.minFilter = NEAREST as unknown as T.MinificationTextureFilter;
       tex.colorSpace = THREE.SRGBColorSpace;
       this.armorTex.push(tex);
-      const m = new THREE.MeshBasicMaterial({ map: tex, vertexColors: true });
+      const m = new THREE.MeshBasicMaterial({ map: tex, vertexColors: true, alphaTest: 0.5 });
       this.armorMats.push(m);
       return m;
     };
     const leather = mat(0);
     const lower = tier === 0 ? leather : mat(tier);
-    const add = (parent: T.Group, w: number, h: number, d: number, inflate: number, m: T.Material, y: number, isLower = false) => {
-      const geo = skinBox(THREE, w, h, d, 0, 0, inflate, 64, 32);
+    const add = (parent: T.Group, w: number, h: number, d: number, u: number, v: number, inflate: number, m: T.Material, y: number, isLower = false) => {
+      const geo = skinBox(THREE, w, h, d, u, v, inflate, 64, 32);
       this.geos.push(geo);
       const mesh = new THREE.Mesh(geo, m);
       mesh.position.y = y * px;
@@ -475,14 +480,14 @@ export class Avatar {
       this.armorMeshes.push(mesh);
       if (isLower) this.lowerArmor.push(mesh);
     };
-    add(this.head.pivot, 8, 8, 8, 1, leather, 4);
-    add(this.body.pivot, 8, 12, 4, 1, leather, 6);
-    add(this.armR.pivot, 4, 12, 4, 1, leather, -4);
-    add(this.armL.pivot, 4, 12, 4, 1, leather, -4);
-    add(this.legR.pivot, 4, 8, 4, 0.5, lower, -4, true);
-    add(this.legL.pivot, 4, 8, 4, 0.5, lower, -4, true);
-    add(this.legR.pivot, 4, 4, 4, 1, lower, -10, true);
-    add(this.legL.pivot, 4, 4, 4, 1, lower, -10, true);
+    add(this.head.pivot, 8, 8, 8, 0, 0, 1, leather, 4);
+    add(this.body.pivot, 8, 12, 4, 16, 16, 1, leather, 6);
+    add(this.armR.pivot, 4, 12, 4, 40, 16, 1, leather, -4);
+    add(this.armL.pivot, 4, 12, 4, 40, 16, 1, leather, -4);
+    add(this.legR.pivot, 4, 8, 4, 0, 16, 0.5, lower, -4, true);
+    add(this.legL.pivot, 4, 8, 4, 0, 16, 0.5, lower, -4, true);
+    add(this.legR.pivot, 4, 4, 4, 0, 16, 1, lower, -10, true);
+    add(this.legL.pivot, 4, 4, 4, 0, 16, 1, lower, -10, true);
   }
 
   /** What's in hand: a block, an item sprite, or nothing. Geometry and material come from a shared cache. */

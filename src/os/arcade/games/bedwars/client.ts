@@ -20,6 +20,7 @@ import {
   type Action,
   type Ev,
   type Game,
+  type MsgKind,
   type Player,
 } from './game.ts';
 import { ITEM_DEFS, blockFor, isBlockItem, isBow, type Item, type Res } from './items.ts';
@@ -37,7 +38,7 @@ export type UiPanel = 'none' | 'shop' | 'upgrades' | 'board';
 
 export type ClientSettings = { sens: number; autoSprint: boolean; touch: boolean };
 
-export type FeedLine = { id: number; k: Ev extends infer E ? (E extends { t: 'msg' } ? E['k'] : never) : never; text: string; at: number; team?: number };
+export type FeedLine = { id: number; k: MsgKind; text: string; at: number; team?: number };
 export type Title = { id: number; title: string; sub: string; color: string; until: number };
 
 export type HudSlot = { item: Item; n: number; team: number; tier: number } | null;

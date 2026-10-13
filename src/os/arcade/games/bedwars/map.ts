@@ -25,7 +25,6 @@ import {
   SANDSTONE,
   STONE,
   SX,
-  SZ,
   TALLGRASS,
   TEAMS,
   TILE_FLOOR,
@@ -172,8 +171,8 @@ export function generate(mode: Mode): { world: World; info: MapInfo } {
       put(u, TOP + 2, -6, LAMP);
     }
     // a palm in a back corner and one at the front
-    palm(world, ...at(-6, -9), TOP + 1, 6, t * 3 + 1);
-    palm(world, ...at(6, 7), TOP + 1, 5, t * 3 + 2);
+    palm(world, ...at(-6, -9), TOP + 1, 7, t * 3 + 1);
+    palm(world, ...at(6, 7), TOP + 1, 7, t * 3 + 2);
     // poppies and grass tufts
     for (let u = -U; u <= U; u++)
       for (let v = V0; v <= V1; v++) {
@@ -234,7 +233,7 @@ export function generate(mode: Mode): { world: World; info: MapInfo } {
     // the corner toward the void gets a palm
     const ox = cx < CENTER ? -3 : 3;
     const oz = cz < CENTER ? -3 : 3;
-    palm(world, cx + ox, cz + oz, TOP + 1, 5, 40 + i);
+    palm(world, cx + ox, cz + oz, TOP + 1, 6, 40 + i);
     info.gens.push({ kind: 'diamond', x: cx + 0.5, y: TOP + 1, z: cz + 0.5 });
     info.noBuild.push({ x0: cx - 1, y0: TOP + 1, z0: cz - 1, x1: cx + 2, y1: TOP + 3, z1: cz + 2 });
   });
@@ -266,14 +265,14 @@ function blob(world: World, cx: number, cz: number, r: number, top: number, dept
     }
 }
 
-/** A palm: a slightly leaning trunk and a crown of drooping fronds. */
+/** A palm: a tall, slightly leaning trunk and a crown of long drooping fronds. */
 function palm(world: World, x: number, z: number, y: number, h: number, seed: number) {
   const lean = hash(x, z, seed) < 0.5 ? 1 : -1;
   const leanX = hash(z, x, seed) < 0.5;
   let tx = x;
   let tz = z;
   for (let k = 0; k < h; k++) {
-    if (k === h - 2) {
+    if (k === h - 3) {
       if (leanX) tx += lean;
       else tz += lean;
     }
@@ -281,6 +280,7 @@ function palm(world: World, x: number, z: number, y: number, h: number, seed: nu
   }
   const ty = y + h;
   world.set(tx, ty, tz, LEAVES);
+  // four long fronds that arc down, and four short ones between them
   for (const [dx, dz] of [
     [1, 0],
     [-1, 0],
@@ -290,6 +290,7 @@ function palm(world: World, x: number, z: number, y: number, h: number, seed: nu
     world.set(tx + dx, ty, tz + dz, LEAVES);
     world.set(tx + dx * 2, ty, tz + dz * 2, LEAVES);
     world.set(tx + dx * 3, ty - 1, tz + dz * 3, LEAVES);
+    world.set(tx + dx * 4, ty - 2, tz + dz * 4, LEAVES);
   }
   for (const [dx, dz] of [
     [1, 1],
@@ -297,8 +298,8 @@ function palm(world: World, x: number, z: number, y: number, h: number, seed: nu
     [1, -1],
     [-1, -1],
   ]) {
-    world.set(tx + dx, ty, tz + dz, LEAVES);
-    world.set(tx + dx * 2, ty - 1, tz + dz * 2, LEAVES);
+    world.set(tx + dx, ty - 1, tz + dz, LEAVES);
+    world.set(tx + dx * 2, ty - 2, tz + dz * 2, LEAVES);
   }
 }
 
@@ -425,10 +426,10 @@ function mid(world: World, info: MapInfo) {
     set(x, H0 + 1, z, GLASS);
   }
   // palms on the quad corners
-  palm(world, C - 13, C - 13, T + 1, 7, 51);
-  palm(world, C + 13, C - 13, T + 1, 6, 52);
-  palm(world, C + 13, C + 13, T + 1, 7, 53);
-  palm(world, C - 13, C + 13, T + 1, 6, 54);
+  palm(world, C - 13, C - 13, T + 1, 8, 51);
+  palm(world, C + 13, C - 13, T + 1, 7, 52);
+  palm(world, C + 13, C + 13, T + 1, 8, 53);
+  palm(world, C - 13, C + 13, T + 1, 7, 54);
   info.noBuild.push({ x0: C - 3, y0: T + 1, z0: C - 3, x1: C + 4, y1: T + 26, z1: C + 4 });
 }
 

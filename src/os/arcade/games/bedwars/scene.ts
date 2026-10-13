@@ -69,7 +69,7 @@ export type View = {
   frame(f: ViewFrame): void;
   render(): void;
   /** Blocky puffs: a block breaking, a hit, an explosion, a kill effect. */
-  burst(kind: 'block' | 'crit' | 'hit' | 'boom' | 'smoke' | 'kill' | 'bed' | 'spark', x: number, y: number, z: number, opt?: { block?: number; color?: number; count?: number }): void;
+  burst(kind: 'block' | 'crit' | 'hit' | 'boom' | 'smoke' | 'kill' | 'bed' | 'spark', x: number, y: number, z: number, opt?: { block?: number; color?: number | string; count?: number }): void;
   /** Screen position of a world point in CSS pixels, or null behind the camera. */
   project(x: number, y: number, z: number): { x: number; y: number } | null;
   dispose(): void;
@@ -313,7 +313,7 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
   const npcs: { av: Avatar; x: number; y: number; z: number; yaw: number; label: T.Mesh }[] = [];
   const labelCanvas = (lines: [string, string][]) => {
     const c = document.createElement('canvas');
-    c.width = 256;
+    c.width = 384;
     c.height = 96;
     const g = c.getContext('2d')!;
     g.textAlign = 'center';
@@ -322,14 +322,14 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
       g.font = i === 0 ? '800 34px Inter, system-ui, sans-serif' : '700 24px Inter, system-ui, sans-serif';
       g.lineWidth = 6;
       g.strokeStyle = 'rgba(0,0,0,0.55)';
-      g.strokeText(text, 128, 28 + i * 40);
+      g.strokeText(text, 192, 28 + i * 40);
       g.fillStyle = color;
-      g.fillText(text, 128, 28 + i * 40);
+      g.fillText(text, 192, 28 + i * 40);
     });
     return c;
   };
   const labelTextures: T.Texture[] = [];
-  const labelGeo = new THREE.PlaneGeometry(1.9, 0.72);
+  const labelGeo = new THREE.PlaneGeometry(2.6, 0.65);
   const makeLabel = (lines: [string, string][]) => {
     const tex = new THREE.CanvasTexture(labelCanvas(lines));
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -344,7 +344,6 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
     for (const which of ['shop', 'upgrades'] as const) {
       const at = which === 'shop' ? site.shop : site.upgrades;
       const av = new Avatar(THREE, which === 'shop' ? 4 : 2, t, 1000 + t * 2 + (which === 'shop' ? 0 : 1));
-      av.setArmor(0, t);
       av.tag.visible = false;
       avatarGroup.add(av.root);
       const label = makeLabel(which === 'shop' ? [['ITEM SHOP', '#ffd23f'], ['RIGHT CLICK', '#ffffff']] : [['TEAM UPGRADES', '#7fe3ff'], ['RIGHT CLICK', '#ffffff']]);
@@ -539,8 +538,13 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
   let vmKey = '';
   let vmHeld: T.Object3D | null = null;
   let vmHeldKey = '';
+  // Minecraft's first-person chain: swing offset, then the base pose (with the swing's turns), then the item's own display transform
+  const vmBase = new THREE.Group();
+  vmBase.rotation.order = 'YZX';
+  vmRoot.add(vmBase);
   const vmItem = new THREE.Group();
-  vmRoot.add(vmItem);
+  vmItem.rotation.order = 'YXZ';
+  vmBase.add(vmItem);
 
   // ---------------------------------------------------------------------------------------------------------------
 
@@ -767,6 +771,7 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
   let armMesh: T.Mesh | null = null;
   let armForKey = '';
 
+  const D = Math.PI / 180;
   const layoutHand = (h: HandState) => {
     const empty = !h.held.item;
     // build the arm on demand from the avatar's materials
@@ -775,48 +780,57 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
       if (armMesh) armGroup.remove(armMesh);
       const src = vmAvatar.rightArm();
       armMesh = new THREE.Mesh(src.geometry, src.material);
+      armMesh.position.set(0, -0.24, 0);
       armGroup.add(armMesh);
     }
     const s = h.swing >= 0 ? h.swing : 0;
     const sq = Math.sqrt(s);
-    const swingA = Math.sin(sq * Math.PI);
-    const swingB = Math.sin(s * Math.PI);
-    const bobX = Math.sin(h.bob * Math.PI) * h.bobAmt * 0.06;
-    const bobY = -Math.abs(Math.cos(h.bob * Math.PI)) * h.bobAmt * 0.08;
-    const lower = h.equip * 0.6 + h.eat * 0.1;
-    // Minecraft's first-person transform, roughly: a little right and down, swing arcs in and down
-    vmRoot.position.set(0.56 + bobX - swingB * 0.4 * (empty ? 0.5 : 1), -0.52 + bobY - lower + Math.sin(sq * Math.PI * 2) * 0.2, -0.72 - swingB * 0.2);
-    vmRoot.rotation.set(0, 0, 0);
-    vmRoot.rotation.order = 'YXZ';
-    vmRoot.rotation.y = 0.78 - swingA * 0.35;
-    vmRoot.rotation.x = -swingA * 1.2 * (empty ? 0.6 : 1);
-    vmRoot.rotation.z = -swingB * 0.35;
-    if (h.eat > 0) {
-      vmRoot.position.x -= 0.35;
-      vmRoot.position.y += 0.2 + Math.abs(Math.sin(h.eat * 40)) * 0.05;
-    }
+    const f = Math.sin(s * s * Math.PI);
+    const f1 = Math.sin(sq * Math.PI);
+    const bobX = Math.sin(h.bob * Math.PI) * h.bobAmt * 0.05;
+    const bobY = -Math.abs(Math.cos(h.bob * Math.PI)) * h.bobAmt * 0.06;
     armGroup.visible = empty;
     vmItem.visible = !empty;
     if (empty) {
-      armGroup.position.set(0, -0.1, 0.3);
-      armGroup.rotation.set(-1.15, 0.1, 0.45);
-      armGroup.scale.setScalar(0.9);
+      // the bare arm reaches in from the lower right and punches forward
+      vmRoot.position.set(-0.3 * f1 + bobX, 0.4 * Math.sin(sq * Math.PI * 2) + bobY, -0.4 * Math.sin(s * Math.PI));
+      vmBase.position.set(0.5, -0.52 - h.equip * 0.6, -0.62);
+      vmBase.rotation.set(0, 45 * D + f1 * 70 * D, f * -20 * D);
+      armGroup.position.set(0, 0, 0);
+      armGroup.rotation.set(-62 * D, -38 * D, 18 * D);
+      armGroup.scale.setScalar(1);
+      return;
+    }
+    const item = h.held.item!;
+    const block = (isBlockItem(item) && item !== 'ladder') || item === 'tnt';
+    const bow = item.startsWith('bow');
+    vmRoot.position.set(-0.4 * f1 + bobX, 0.2 * Math.sin(sq * Math.PI * 2) + bobY, -0.2 * Math.sin(s * Math.PI));
+    vmBase.position.set(0.56, -0.52 - h.equip * 0.6, -0.72);
+    vmBase.rotation.set(f1 * -80 * D, 45 * D + f * -20 * D, f1 * -20 * D);
+    if (h.eat > 0) {
+      // bring it up to the mouth and bob
+      const k = Math.min(1, h.eat * 4);
+      vmBase.position.x -= 0.28 * k;
+      vmBase.position.y += 0.18 * k + Math.abs(Math.cos(h.eat * 40)) * 0.05 * k;
+      vmBase.rotation.y -= 0.6 * k;
+    }
+    if (block) {
+      vmItem.position.set(0, 0, 0);
+      vmItem.rotation.set(0, 45 * D, 0);
+      vmItem.scale.setScalar(0.4);
     } else {
-      const block = isBlockItem(h.held.item!) && h.held.item !== 'ladder';
-      if (block || h.held.item === 'tnt') {
-        vmItem.position.set(-0.05, 0.12, 0);
-        vmItem.rotation.set(0, 0.785, 0);
-        vmItem.scale.setScalar(0.4);
-      } else {
-        const bow = h.held.item?.startsWith('bow');
-        vmItem.position.set(0, 0.1, 0);
-        vmItem.rotation.order = 'YXZ';
-        vmItem.rotation.set(0, -1.6, 0.4);
-        vmItem.scale.setScalar(0.68);
-        if (bow) {
-          vmItem.rotation.set(0.1, -0.3 - h.draw * 0.6, -0.5);
-          vmItem.position.set(-0.25 * h.draw, 0.1, 0.1 * h.draw);
-        }
+      // item/handheld firstperson: rotation [0, -135, 25], translation [0, 4, 2] px, scale 1.7, inside a 0.4 scale
+      const k = 0.4;
+      vmItem.position.set(0, (4 / 16) * k, (2 / 16) * k);
+      vmItem.rotation.set(0, -135 * D, 25 * D);
+      vmItem.scale.setScalar(1.7 * k * 0.8);
+      if (bow) {
+        // drawn bows come in toward the middle of the screen
+        const d = h.draw;
+        vmItem.rotation.set(-8 * D * d, -135 * D - 12 * D * d, 25 * D - 18 * D * d);
+        vmItem.position.x -= 0.25 * d;
+        vmItem.position.z += 0.08 * d;
+        vmItem.position.y += Math.sin(h.draw * 60) * 0.004 * d;
       }
     }
   };

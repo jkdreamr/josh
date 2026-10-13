@@ -82,11 +82,22 @@ function Stage() {
   return <Play key={current.current.key} mode={current.current.mode} />;
 }
 
+/** Your name in solo games: the one you use online, or the campus color. */
+function myName() {
+  try {
+    const n = window.localStorage.getItem('arcade:name')?.trim();
+    if (n) return n.slice(0, 16);
+  } catch {
+    /* storage blocked */
+  }
+  return 'Cardinal';
+}
+
 function soloGame(mode: Mode, level: Level, pace: Pace): Game {
   const n = 8;
   const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
   const entrants = Array.from({ length: n }, (_, i) =>
-    i === 0 ? { name: 'You', seat: 0, ctrl: 'local' as const, skin: 0, team: 0 } : { name: names[i % names.length], seat: -1, ctrl: 'bot' as const, skin: (i * 3) % 6 },
+    i === 0 ? { name: myName(), seat: 0, ctrl: 'local' as const, skin: 0, team: 0 } : { name: names[i % names.length], seat: -1, ctrl: 'bot' as const, skin: (i * 3) % 6 },
   );
   return createGame({ mode, pace, level, entrants, seed: (Math.random() * 2 ** 31) >>> 0 });
 }
@@ -147,6 +158,8 @@ function Play({ mode }: { mode: StageMode }) {
     });
     client.attach(view);
     clientRef.current = client;
+    // dev only: lets the screenshot harness drive the camera (headless browsers have no pointer lock)
+    if (import.meta.env.DEV) (window as unknown as { __bedwars?: Client }).__bedwars = client;
     // mesh the whole map up front (a frame or two)
     view.syncChunks(1000);
     const resize = () => view.resize(host.clientWidth, host.clientHeight);
@@ -157,6 +170,7 @@ function Play({ mode }: { mode: StageMode }) {
     force((n) => n + 1);
     return () => {
       ro.disconnect();
+      if (import.meta.env.DEV) delete (window as unknown as { __bedwars?: Client }).__bedwars;
       client.dispose();
       clientRef.current = null;
       viewRef.current = null;

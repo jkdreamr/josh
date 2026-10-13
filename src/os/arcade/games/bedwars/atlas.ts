@@ -544,15 +544,22 @@ function paint(t: Tile, name: TileName) {
         }
       }
       return;
-    case 'leaves':
+    case 'leaves': {
+      // palm fronds: a rib from corner to corner with leaflets combed off it, lots of sky between
       t.clear();
-      for (let y = 0; y < 16; y++)
-        for (let x = 0; x < 16; x++) {
-          const v = r();
-          if (v < 0.22) continue;
-          t.px(x, y, v < 0.45 ? '#2f7a2c' : v < 0.75 ? '#3f8f3a' : v < 0.93 ? '#4fa246' : '#6cbd55');
+      const greens = ['#2f7a2c', '#3f8f3a', '#4fa246', '#2a6a28'];
+      for (let i = 0; i < 16; i++) {
+        t.px(i, 15 - i, '#4a7a2a');
+        for (let k = 1; k < 7; k++) {
+          if (r() < 0.18) continue;
+          const c = greens[(r() * greens.length) | 0];
+          if ((i + k) % 2 === 0) t.px(i - k, 15 - i - Math.ceil(k * 0.4), c);
+          else t.px(i + Math.ceil(k * 0.4), 15 - i + k, c);
         }
+      }
+      for (let i = 0; i < 12; i++) t.px((r() * 16) | 0, (r() * 16) | 0, '#6cbd55');
       return;
+    }
     case 'forge':
       t.noise(['#5b5b5f', '#535357', '#636367', '#4a4a4e']);
       for (let x = 0; x < 16; x++) {
