@@ -1,31 +1,61 @@
-/* Pass-the-phone group and drinking games (kit/party.tsx). Each game tints these with its --accent.
-   Each step is a size container, so sizes follow the game window (cq units), not the browser viewport. */
+/* Pass-the-phone group and drinking games (kit/party.tsx): printed game-night cards, chunky buttons and one display
+   face. Each game tints it with --accent (and --on-accent when white text doesn't read on its accent) and may swap
+   --party-display for its own face. Each step is a size container, so sizes follow the game window (cq units). */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url('/fonts/bricolage-grotesque.woff2') format('woff2');
+}
+
 .arcade-party {
+  --party-display: 'Bricolage Grotesque', Inter, system-ui, sans-serif;
+  --party-ink: #f6f3ee;
+  --party-dim: rgba(246, 243, 238, 0.66);
+  --party-faint: rgba(246, 243, 238, 0.44);
+  --party-tile: rgba(255, 255, 255, 0.075);
+  --party-edge: rgba(0, 0, 0, 0.42);
+  --party-accent-edge: color-mix(in srgb, var(--accent) 52%, #000);
+  --party-accent-text: color-mix(in srgb, var(--accent) 62%, #fff);
   position: absolute;
   inset: 0;
   container: arcade-party / size;
   display: flex;
   flex-direction: column;
   padding: 50px 16px max(16px, env(safe-area-inset-bottom));
-  animation: arcade-party-in 0.22s ease-out;
+  color: var(--party-ink);
+  animation: arcade-party-in 0.18s ease-out;
+}
+/* A whisper of paper grain under everything, so flat fills don't read as plastic. */
+.arcade-party::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 @keyframes arcade-party-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(4px);
   }
 }
 .arcade-party-body {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   width: 100%;
   max-width: 460px;
   min-height: 0;
   margin: 0 auto;
-  padding: 2px 2px 8px;
+  padding: 2px 2px 10px;
   overflow-y: auto;
   overscroll-behavior: contain;
   touch-action: pan-y;
@@ -39,17 +69,20 @@
   justify-content: safe center;
 }
 .arcade-party-actions {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex: none;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   max-width: 460px;
   margin: 10px auto 0;
+  padding-bottom: 3px;
 }
 .arcade-party-row {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
 }
 .arcade-party-row > * {
@@ -57,134 +90,195 @@
   min-width: 0;
 }
 
+/* Type */
 .arcade-party-title {
   margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
+  font-family: var(--party-display);
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.04;
+  letter-spacing: -0.025em;
   text-align: center;
   text-wrap: balance;
 }
 .arcade-party-title.is-huge {
-  font-size: clamp(30px, 9cqmin, 46px);
+  font-size: clamp(38px, 12cqmin, 60px);
   overflow-wrap: anywhere;
 }
 .arcade-party-sub {
   max-width: 360px;
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.45;
   text-align: center;
   text-wrap: pretty;
-  color: rgba(245, 245, 247, 0.66);
+  color: var(--party-dim);
 }
 .arcade-party-kicker {
-  margin: 4px 0 -6px;
-  font-size: 13px;
+  margin: 2px 0 -8px;
+  font-family: var(--party-display);
+  font-size: 16px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: rgba(245, 245, 247, 0.5);
+  letter-spacing: -0.01em;
+  color: var(--party-accent-text);
 }
 .arcade-party-drink {
-  margin: 2px 0 0;
+  margin: 4px 0 0;
   font-size: 12px;
   text-align: center;
-  color: rgba(245, 245, 247, 0.45);
+  color: var(--party-faint);
 }
 
-/* Buttons */
+/* Buttons: flat fills with a hard bottom edge that presses down. */
 .arcade-shell .arcade-party-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   width: 100%;
-  min-height: 48px;
+  min-height: 52px;
   padding: 0 18px;
-  border-radius: 13px;
-  font-size: 16px;
-  font-weight: 600;
+  border-radius: 14px;
+  font-family: var(--party-display);
+  font-size: 17px;
+  font-weight: 700;
   line-height: 1.1;
-  color: #f5f5f7;
-  background: rgba(255, 255, 255, 0.12);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
-  transition: background 0.12s ease, transform 0.08s ease;
+  letter-spacing: -0.01em;
+  color: var(--party-ink);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 3px 0 var(--party-edge);
+  transition: transform 0.07s ease-out, box-shadow 0.07s ease-out, background 0.12s ease;
 }
-.arcade-shell .arcade-party-btn:hover {
-  background: rgba(255, 255, 255, 0.18);
+@media (hover: hover) {
+  .arcade-shell .arcade-party-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
 }
 .arcade-shell .arcade-party-btn:active {
-  transform: scale(0.985);
-  background: rgba(255, 255, 255, 0.22);
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--party-edge);
 }
 .arcade-shell .arcade-party-btn.is-primary {
-  color: #fff;
+  color: var(--on-accent, #fff);
   background: var(--accent);
-  box-shadow:
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.3),
-    0 6px 18px color-mix(in srgb, var(--accent) 30%, transparent);
+  box-shadow: 0 3px 0 var(--party-accent-edge);
 }
-.arcade-shell .arcade-party-btn.is-primary:hover {
-  background: color-mix(in srgb, var(--accent) 88%, #fff);
+@media (hover: hover) {
+  .arcade-shell .arcade-party-btn.is-primary:hover {
+    background: color-mix(in srgb, var(--accent) 90%, #fff);
+  }
 }
 .arcade-shell .arcade-party-btn.is-primary:active {
-  background: color-mix(in srgb, var(--accent) 86%, #000);
+  box-shadow: 0 1px 0 var(--party-accent-edge);
 }
 .arcade-shell .arcade-party-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.38;
   pointer-events: none;
-  box-shadow: none;
 }
 @container arcade-party (max-height: 480px) {
   .arcade-party-body {
     gap: 8px;
   }
   .arcade-party-actions {
-    gap: 6px;
+    gap: 8px;
     margin-top: 8px;
   }
   .arcade-shell .arcade-party-btn {
-    min-height: 40px;
-    border-radius: 11px;
-    font-size: 15px;
+    min-height: 44px;
+    border-radius: 12px;
+    font-size: 16px;
   }
   .arcade-party-title {
-    font-size: 21px;
+    font-size: 24px;
   }
   .arcade-party-sub {
-    font-size: 13px;
+    font-size: 14px;
   }
   .arcade-party-timer {
     --size: 84px !important;
   }
   .arcade-party-card {
     gap: 6px;
-    padding: 18px 18px;
-    border-radius: 18px;
+    padding: 20px 20px;
   }
 }
 
-/* Avatars and the pass screen */
+/* Avatars */
 .arcade-party-avatar {
   display: inline-grid;
   flex: none;
   place-items: center;
   border-radius: 50%;
+  font-family: var(--party-display);
   font-weight: 700;
   line-height: 1;
   color: #fff;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.25);
 }
-.arcade-party-pass .arcade-party-avatar {
-  animation: arcade-party-bob 2.4s ease-in-out infinite;
+
+/* How to play */
+.arcade-party-how {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  margin-top: -6px;
 }
-@keyframes arcade-party-bob {
-  50% {
-    transform: translateY(-4px);
-  }
+.arcade-shell .arcade-party-how > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--party-accent-text);
+}
+.arcade-party-how > button svg {
+  transition: transform 0.16s ease;
+}
+.arcade-party-how > button[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+.arcade-party-how ol {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin: 6px 0 2px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  list-style: none;
+  counter-reset: arcade-party-step;
+  text-align: left;
+  background: var(--party-tile);
+}
+.arcade-party-how li {
+  position: relative;
+  padding-left: 28px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--party-dim);
+  counter-increment: arcade-party-step;
+}
+.arcade-party-how li::before {
+  content: counter(arcade-party-step);
+  position: absolute;
+  top: 1px;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  font-family: var(--party-display);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--on-accent, #fff);
+  background: var(--accent);
+}
+.arcade-party-how li b {
+  font-weight: 600;
+  color: var(--party-ink);
 }
 
 /* Setup fields */
@@ -192,39 +286,49 @@
 .arcade-party-option {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
   width: 100%;
   text-align: left;
 }
-.arcade-party-field > span {
+.arcade-party-field > span,
+.arcade-party-option .arcade-field > span {
   display: flex;
   align-items: center;
   gap: 6px;
   padding-left: 2px;
-  font-size: 12px;
-  font-weight: 500;
-  color: rgba(245, 245, 247, 0.6);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--party-dim);
 }
 .arcade-party-field > span em {
-  padding: 1px 6px;
+  padding: 1px 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 600;
-  color: rgba(245, 245, 247, 0.8);
+  font-variant-numeric: tabular-nums;
+  color: var(--party-ink);
   background: rgba(255, 255, 255, 0.1);
 }
 .arcade-party-option .arcade-seg {
   display: flex;
   width: 100%;
+  border-radius: 10px;
 }
-.arcade-party-option .arcade-seg > button {
+.arcade-shell .arcade-party-option .arcade-seg > button {
+  height: 34px;
   padding: 0 6px;
+  border-radius: 8px;
+}
+@media (pointer: coarse) {
+  .arcade-shell .arcade-party-option .arcade-seg > button {
+    height: 40px;
+  }
 }
 .arcade-party-field > small {
   padding-left: 2px;
-  font-size: 12px;
-  color: rgba(245, 245, 247, 0.45);
+  font-size: 13px;
+  color: var(--party-faint);
 }
 .arcade-party-field > small.is-note {
   color: #ffb340;
@@ -233,28 +337,29 @@
 .arcade-party-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 .arcade-shell .arcade-party-chips > button {
-  height: 32px;
-  padding: 0 12px;
+  height: 36px;
+  padding: 0 14px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
-  color: rgba(245, 245, 247, 0.7);
-  background: rgba(255, 255, 255, 0.07);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
-  transition: background 0.12s ease, color 0.12s ease;
+  color: var(--party-dim);
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.16);
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 }
 .arcade-shell .arcade-party-chips > button[aria-pressed='true'] {
-  color: #fff;
-  background: color-mix(in srgb, var(--accent) 70%, transparent);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.3);
+  font-weight: 600;
+  color: var(--on-accent, #fff);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 @media (pointer: coarse) {
   .arcade-shell .arcade-party-chips > button {
-    height: 38px;
-    padding: 0 14px;
+    height: 40px;
+    padding: 0 16px;
   }
 }
 
@@ -262,7 +367,7 @@
 .arcade-party-roster ul {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -270,17 +375,18 @@
 .arcade-shell .arcade-party-roster li > button {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  height: 32px;
-  padding: 0 10px 0 5px;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px 0 5px;
   border-radius: 999px;
-  font-size: 14px;
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
-  animation: arcade-party-pop 0.18s ease-out;
+  font-size: 15px;
+  background: var(--party-tile);
+  animation: arcade-party-pop 0.16s ease-out;
 }
-.arcade-shell .arcade-party-roster li > button:hover {
-  background: rgba(255, 69, 58, 0.22);
+@media (hover: hover) {
+  .arcade-shell .arcade-party-roster li > button:hover {
+    background: rgba(255, 69, 58, 0.22);
+  }
 }
 .arcade-party-roster li b {
   max-width: 140px;
@@ -294,33 +400,35 @@
 }
 @keyframes arcade-party-pop {
   from {
-    transform: scale(0.85);
+    transform: scale(0.9);
     opacity: 0;
   }
 }
 .arcade-party-add {
   display: flex;
-  gap: 6px;
+  gap: 8px;
 }
 .arcade-shell .arcade-party-add .arcade-input {
-  height: 36px;
-  font-size: 15px;
+  height: 40px;
+  border-radius: 10px;
+  font-size: 16px;
 }
 .arcade-shell .arcade-party-add .arcade-btn {
-  height: 36px;
+  height: 40px;
+  border-radius: 10px;
+  font-size: 14px;
 }
 @media (pointer: coarse) {
   .arcade-shell .arcade-party-roster li > button {
-    height: 38px;
+    height: 40px;
   }
   .arcade-shell .arcade-party-add .arcade-input,
   .arcade-shell .arcade-party-add .arcade-btn {
-    height: 42px;
-    font-size: 16px;
+    height: 44px;
   }
 }
 
-/* Big card for words, prompts and roles */
+/* Cards: a printed card with an inset border and a hard edge for thickness. */
 .arcade-party-card {
   position: relative;
   display: flex;
@@ -330,48 +438,63 @@
   gap: 10px;
   width: 100%;
   min-height: min(300px, 44cqh);
-  padding: 26px 22px;
-  border-radius: 22px;
+  padding: 28px 24px;
+  border-radius: 20px;
   text-align: center;
-  color: #fff;
-  background:
-    radial-gradient(120% 90% at 20% 0%, rgba(255, 255, 255, 0.2), transparent 60%),
-    linear-gradient(160deg, color-mix(in srgb, var(--accent) 92%, #fff), color-mix(in srgb, var(--accent) 70%, #000));
+  color: var(--on-accent, #fff);
+  background: var(--accent);
+  outline: 1.5px solid color-mix(in srgb, currentColor 32%, transparent);
+  outline-offset: -9px;
   box-shadow:
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.3),
-    0 16px 30px -14px color-mix(in srgb, var(--accent) 40%, rgba(0, 0, 0, 0.6));
-  animation: arcade-party-deal 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+    0 5px 0 var(--party-accent-edge),
+    0 20px 28px -22px rgba(0, 0, 0, 0.8);
+  animation: arcade-party-deal 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 @keyframes arcade-party-deal {
   from {
-    transform: translateY(14px) rotate(-1.5deg) scale(0.96);
+    transform: translateY(10px);
     opacity: 0;
   }
 }
 .arcade-party-card > small {
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  opacity: 0.75;
+  opacity: 0.78;
 }
 .arcade-party-card > strong {
-  font-size: clamp(21px, 6.4cqmin, 32px);
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: -0.015em;
+  font-family: var(--party-display);
+  font-size: clamp(25px, 7.4cqmin, 38px);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
   text-wrap: balance;
 }
 .arcade-party-card > p {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.4;
-  opacity: 0.85;
+  opacity: 0.86;
+}
+/* Cream card stock with ink type, for words and prompts that get read out loud. */
+.arcade-party-card.is-paper {
+  color: #1d1a16;
+  background: #f5efe3;
+  box-shadow:
+    0 5px 0 #c4b8a3,
+    0 20px 28px -22px rgba(0, 0, 0, 0.8);
+}
+.arcade-party-card.is-paper > small {
+  color: color-mix(in srgb, var(--accent) 78%, #000);
+  opacity: 1;
 }
 .arcade-party-card.is-plain {
   min-height: 0;
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  color: inherit;
+  background: var(--party-tile);
+  outline: none;
+  box-shadow: none;
 }
 
 /* Countdown */
@@ -390,56 +513,69 @@
 }
 .arcade-party-timer circle {
   fill: none;
-  stroke-width: 7;
+  stroke-width: 8;
 }
 .arcade-party-timer-track {
   stroke: rgba(255, 255, 255, 0.1);
 }
 .arcade-party-timer-fill {
-  stroke: var(--accent);
+  stroke: var(--party-timer, var(--accent));
   stroke-linecap: round;
   transition: stroke-dashoffset 1s linear, stroke 0.2s ease;
 }
 .arcade-party-timer.is-low .arcade-party-timer-fill {
   stroke: #ff453a;
 }
+.arcade-party-timer.is-low b {
+  color: #ff6b61;
+}
 .arcade-party-timer b {
-  font-size: calc(var(--size) * 0.24);
-  font-weight: 700;
+  font-family: var(--party-display);
+  font-size: calc(var(--size) * 0.26);
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
 }
 
-/* A list of players to tap, for votes and night picks */
+/* A grid of players to tap, for votes and night picks */
 .arcade-party-picks {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  gap: 8px;
+  gap: 10px;
   width: 100%;
+  padding-bottom: 3px;
 }
 .arcade-shell .arcade-party-picks > button {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 48px;
-  padding: 8px 12px 8px 8px;
-  border-radius: 13px;
-  font-size: 15px;
+  min-height: 52px;
+  padding: 8px 12px 8px 9px;
+  border-radius: 14px;
+  font-size: 16px;
   font-weight: 500;
   text-align: left;
-  background: rgba(255, 255, 255, 0.07);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
-  transition: background 0.12s ease, box-shadow 0.12s ease;
+  background: var(--party-tile);
+  box-shadow: 0 3px 0 var(--party-edge);
+  transition: transform 0.07s ease-out, box-shadow 0.07s ease-out, background 0.12s ease;
 }
-.arcade-shell .arcade-party-picks > button:hover {
-  background: rgba(255, 255, 255, 0.12);
+@media (hover: hover) {
+  .arcade-shell .arcade-party-picks > button:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+}
+.arcade-shell .arcade-party-picks > button:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--party-edge);
 }
 .arcade-shell .arcade-party-picks > button[aria-pressed='true'] {
-  background: color-mix(in srgb, var(--accent) 34%, transparent);
-  box-shadow: inset 0 0 0 2px var(--accent);
+  font-weight: 600;
+  color: var(--on-accent, #fff);
+  background: var(--accent);
+  box-shadow: 0 3px 0 var(--party-accent-edge);
 }
 .arcade-shell .arcade-party-picks > button:disabled {
-  opacity: 0.35;
+  opacity: 0.32;
   pointer-events: none;
 }
 .arcade-party-picks span {
@@ -463,10 +599,11 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px 8px 8px;
+  min-height: 46px;
+  padding: 8px 14px 8px 9px;
   border-radius: 12px;
-  font-size: 15px;
-  background: rgba(255, 255, 255, 0.06);
+  font-size: 16px;
+  background: var(--party-tile);
 }
 .arcade-party-scores li > span:not(.arcade-party-avatar) {
   flex: 1;
@@ -476,15 +613,30 @@
   white-space: nowrap;
 }
 .arcade-party-scores li > b {
+  font-family: var(--party-display);
+  font-size: 18px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
 .arcade-party-scores li.is-hi {
-  background: color-mix(in srgb, var(--accent) 26%, transparent);
-  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 70%, #fff);
+  color: var(--on-accent, #fff);
+  background: var(--accent);
 }
 .arcade-party-scores li.is-out {
   opacity: 0.45;
 }
 .arcade-party-scores li.is-out > span:not(.arcade-party-avatar) {
   text-decoration: line-through;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arcade-party,
+  .arcade-party *,
+  .arcade-party *::before,
+  .arcade-party *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
 }

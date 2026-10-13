@@ -116,9 +116,10 @@ Group games (`party`) and drinking games (`drinking`) are played on one phone pa
 usePlayers(): [string[], (players: string[]) => void];  // the roster every party game shares, in seating order
 useStored<T>(key, fallback, parse): [T, (v: T) => void]; // JSON remembered under arcade:<key> (decks, house rules)
 function PlayerList(props: { min: number; max?: number; label?: string }): JSX.Element; // add names, tap to remove
-function Screen(props: { title?; sub?; children?; actions?; onEnter?: () => void; center?: boolean }): JSX.Element;
-function PassTo(props: { name: string; index: number; note?; onReady: () => void; label?: string }): JSX.Element;
-function Big(props: { onClick; primary?; disabled? }): JSX.Element;  // full width button, Row puts them side by side
+function Screen(props: { kicker?; title?; sub?; children?; actions?; onEnter?: () => void; center?: boolean }): JSX.Element;
+function PassTo(props: { name: string; index: number; note?; onReady: () => void; label?: string; className?: string }): JSX.Element;
+function Big(props: { onClick; primary?; disabled?; quiet? }): JSX.Element;  // full width button, Row puts them side by side
+function HowToPlay(props: { steps: ReactNode[]; label?: string }): JSX.Element; // folded rules for the setup step
 function Option(props: { label; value; options; onChange }): JSX.Element; // label plus Segmented
 function Chips(props: { label?; value: T[]; options; onChange }): JSX.Element; // multi-select, keeps one on
 function useCountdown(seconds, { running?, onEnd?, tick? }): { left: number; reset(n?): void };
@@ -128,6 +129,8 @@ Avatar, playerColor, DrinkNote, shuffle, pick, Pile, listNames, sips, clock, mul
 ```
 
 A party game wraps itself in `<GameShell meta={meta} autoStart>`: its setup step is the start screen, so the shell's Start card is skipped. The rest is a `step` state machine where each step renders one keyed `<Screen>` (or `<PassTo>` before anything secret). Keying steps returns focus to the game after the button that led there unmounts, so Enter and Space keep working. Restart remounts the game back to its setup step, and the roster and settings carry over. Timers use `useCountdown`, so pausing (Esc, or hiding the window) stops the clock. Shared classes for cards, player grids and score rows (`.arcade-party-card`, `.arcade-party-picks`, `.arcade-party-scores`) live in `kit/party.css` and take the game's `--accent`.
+
+The look is printed game night: flat fills, cards with an inset border and a hard edge (`.arcade-party-card`, cream stock with `.is-paper`), buttons with a bottom edge that presses down, and Bricolage Grotesque for titles, card text and buttons. A game sets `--on-accent` when white text doesn't read on its accent, can swap `--party-display` for its own face, and `--party-timer` recolors the countdown ring. Display faces are self-hosted in `public/fonts/` (latin subsets, SIL Open Font License); declare an `@font-face` in the game's CSS and the browser only downloads it when the game shows it. Motion stays short and purposeful, and everything inside `.arcade-party` collapses to instant under `prefers-reduced-motion`.
 
 Drinking games show `<DrinkNote />` on their setup step and keep their 18+ decks off by default.
 

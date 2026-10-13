@@ -85,6 +85,7 @@ export function Avatar({ name, index, size = 28 }: { name: string; index: number
  * to the game after the button that led here disappears.
  */
 export function Screen({
+  kicker,
   title,
   sub,
   children,
@@ -93,6 +94,8 @@ export function Screen({
   className,
   center = true,
 }: {
+  /** A short line above the title, like "Pass the phone to". */
+  kicker?: ReactNode;
   title?: ReactNode;
   sub?: ReactNode;
   children?: ReactNode;
@@ -122,6 +125,7 @@ export function Screen({
       }}
     >
       <div className={`arcade-party-body ${center ? 'is-center' : ''}`}>
+        {kicker && <p className="arcade-party-kicker">{kicker}</p>}
         {title && <h2 className="arcade-party-title">{title}</h2>}
         {sub && <p className="arcade-party-sub">{sub}</p>}
         {children}
@@ -131,15 +135,15 @@ export function Screen({
   );
 }
 
-/** A big full-width button. `primary` fills it with the game's accent. */
-export function Big({ children, onClick, primary, disabled, className }: { children: ReactNode; onClick: () => void; primary?: boolean; disabled?: boolean; className?: string }) {
+/** A big full-width button. `primary` fills it with the game's accent; `quiet` skips the click when the game plays its own sound. */
+export function Big({ children, onClick, primary, disabled, quiet, className }: { children: ReactNode; onClick: () => void; primary?: boolean; disabled?: boolean; quiet?: boolean; className?: string }) {
   return (
     <button
       type="button"
       className={['arcade-party-btn', primary ? 'is-primary' : '', className ?? ''].join(' ')}
       disabled={disabled}
       onClick={() => {
-        sfx.play('select');
+        if (!quiet) sfx.play('select');
         onClick();
       }}
     >
@@ -151,11 +155,33 @@ export function Big({ children, onClick, primary, disabled, className }: { child
 /** Two or more buttons side by side. */
 export const Row = ({ children }: { children: ReactNode }) => <div className="arcade-party-row">{children}</div>;
 
+/** A "How to play" toggle for a setup step: numbered rules that stay folded until someone asks. */
+export function HowToPlay({ steps, label = 'How to play' }: { steps: readonly ReactNode[]; label?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="arcade-party-how">
+      <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {label}
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <ol>
+          {steps.map((step, i) => (
+            <li key={i}>{step}</li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 /** The handoff between secret turns: only the named player should look past this screen. */
-export function PassTo({ name, index, note, onReady, label }: { name: string; index: number; note?: ReactNode; onReady: () => void; label?: string }) {
+export function PassTo({ name, index, note, onReady, label, className }: { name: string; index: number; note?: ReactNode; onReady: () => void; label?: string; className?: string }) {
   return (
     <Screen
-      className="arcade-party-pass"
+      className={['arcade-party-pass', className ?? ''].join(' ')}
       onEnter={onReady}
       actions={
         <Big primary onClick={onReady}>
