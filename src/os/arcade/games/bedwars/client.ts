@@ -833,8 +833,8 @@ export class Client {
       return;
     }
     // adaptive resolution: drop when frames run long, climb back when there is room
-    if (this.frameAvg > 1 / 50 && this.dpr > 0.6) {
-      this.dpr = Math.max(0.6, this.dpr - 0.15);
+    if (this.frameAvg > 1 / 50 && this.dpr > 0.75) {
+      this.dpr = Math.max(0.75, this.dpr - 0.15);
       this.view?.setPixelRatio(this.dpr);
       this.dprCooldown = 1.5;
     } else if (this.frameAvg < 1 / 58 && this.dpr < this.maxDpr) {
