@@ -1,20 +1,28 @@
 import { readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { appGames } from '../src/os/arcade/apps.ts';
+import { boardsOf } from '../src/os/arcade/kit/leaderboard-core.ts';
 import type { GameMeta, LeaderboardSpec, OnlineSpec } from '../src/os/arcade/types.ts';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const gamesDir = join(root, 'src', 'os', 'arcade', 'games');
 const outputPath = join(root, 'worker', 'src', 'specs.gen.ts');
 
-export async function generateArcadeSpecs(): Promise<string> {
+/** Arcade game metas plus the desktop app games, everything the Worker serves boards and rooms for. */
+export async function boardOwners(): Promise<Pick<GameMeta, 'id' | 'title' | 'leaderboard' | 'online'>[]> {
   const ids = (await readdir(gamesDir)).filter((id) => !id.startsWith('_')).sort();
+  const metas: GameMeta[] = [];
+  for (const id of ids) metas.push(((await import(pathToFileURL(join(gamesDir, id, 'meta.ts')).href)) as { meta: GameMeta }).meta);
+  return [...metas, ...appGames];
+}
+
+export async function generateArcadeSpecs(): Promise<string> {
   const specs: [string, LeaderboardSpec][] = [];
   const onlineSpecs: [string, OnlineSpec][] = [];
-  for (const id of ids) {
-    const { meta } = (await import(pathToFileURL(join(gamesDir, id, 'meta.ts')).href)) as { meta: GameMeta };
-    if (meta.leaderboard) specs.push([meta.id, meta.leaderboard]);
-    if (meta.online) onlineSpecs.push([meta.id, meta.online]);
+  for (const owner of await boardOwners()) {
+    for (const board of boardsOf(owner)) specs.push([board.id, board.spec]);
+    if (owner.online) onlineSpecs.push([owner.id, { seats: owner.online.seats, ...(owner.online.lateJoin ? { lateJoin: true } : {}) }]);
   }
   specs.sort(([a], [b]) => a.localeCompare(b));
   onlineSpecs.sort(([a], [b]) => a.localeCompare(b));

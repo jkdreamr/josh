@@ -10,10 +10,23 @@ export type LeaderboardSpec = {
   min?: number;
   /** 'time' shows milliseconds as seconds on the arcade home board (default 'number'). */
   format?: 'number' | 'time';
+  /** Shown after the number on boards, e.g. 'pts' (ignored for times). */
+  unit?: string;
+  /** What the board ranks, shown above the list when the game title alone does not say, e.g. 'Win Margin vs Computer'. */
+  measure?: string;
+  /**
+   * Separate boards for a setting that changes how hard a score is (a level or pace picker).
+   * Each key becomes its own board `<id>-<key>` and the value is its label. The game names
+   * the board when it ends a round: `gameOver(score, { board: key })`.
+   */
+  variants?: Record<string, string>;
 };
 
-/** Online rooms. lateJoin lets players join between rounds instead of locking the room after the first start. */
-export type OnlineSpec = { seats: number; lateJoin?: boolean };
+/**
+ * Online rooms. 'match' games play each other through useOnline(); 'race' games run the same round side by side and the
+ * best score wins. Rooms lock when the host starts unless lateJoin lets players join between rounds.
+ */
+export type OnlineSpec = { seats: number; race?: boolean; lateJoin?: boolean };
 
 export type GameMeta = {
   /** Must equal the folder name in src/os/arcade/games/<id>/. Lowercase, a-z 0-9 and dashes. */

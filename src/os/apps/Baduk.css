@@ -414,3 +414,59 @@
     padding-left: 6px;
   }
 }
+
+.baduk-online {
+  display: grid;
+  gap: 4px;
+  padding: 0 3px;
+}
+
+.baduk-online span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.baduk-online i {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 50%;
+  box-shadow: 0 2px 5px rgba(0,0,0,.35);
+}
+
+.baduk-online i.is-black {
+  background: radial-gradient(circle at 33% 26%, #5e615e, #090a09 70%);
+}
+
+.baduk-online i.is-white {
+  background: radial-gradient(circle at 33% 26%, #fff, #cdc7bb 75%);
+}
+
+.baduk-online small {
+  color: var(--gc-text-2);
+  font-size: 11px;
+}
+
+.baduk-online .baduk-online-error {
+  color: #ff6961;
+}
+
+.baduk-side > .oroom,
+.baduk-side > .oboard,
+.baduk-side > .baduk-online {
+  grid-column: 1 / -1;
+}
+
+/* The side column scrolls when the online lobby or a leaderboard makes it taller than the window. */
+.baduk-side {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.baduk-mode .gseg > button {
+  padding: 0 6px;
+}

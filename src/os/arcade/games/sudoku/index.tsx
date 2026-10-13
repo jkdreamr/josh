@@ -305,7 +305,7 @@ function Round({ level }: { level: Level }) {
             ? `${LEVEL_LABEL[level]} in ${fmtTime(time)}. Your first ${LEVEL_LABEL[level]} solve.`
             : `New best on ${LEVEL_LABEL[level]}: ${fmtTime(time)}.`
           : `${LEVEL_LABEL[level]} in ${fmtTime(time)}. Best ${fmtTime(prev ?? time)}.`;
-        shell.gameOver(undefined, { title: 'Solved', detail });
+        shell.gameOver(undefined, { title: 'Solved', detail, board: level, rank: Math.max(1000, Math.round(s.time * 1000)) });
       }
     },
     () => {

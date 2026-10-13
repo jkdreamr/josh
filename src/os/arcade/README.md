@@ -7,8 +7,8 @@ Little games that live inside the Chrome app at `chrome://games`. Each game is o
 ```ts
 // src/os/arcade/types.ts
 export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer';
-export type LeaderboardSpec = { order: 'desc' | 'asc'; max: number; min?: number; format?: 'number' | 'time' };
-export type OnlineSpec = { seats: number; lateJoin?: boolean };
+export type LeaderboardSpec = { order: 'desc' | 'asc'; max: number; min?: number; format?: 'number' | 'time'; unit?: string; measure?: string; variants?: Record<string, string> };
+export type OnlineSpec = { seats: number; race?: boolean; lateJoin?: boolean };
 export type GameMeta = { id: string; title: string; blurb: string; category: GameCategory; players: string; controls: string; accent: string; glyph: string; order: number; leaderboard?: LeaderboardSpec; online?: OnlineSpec };
 export type GameProps = { compact?: boolean; onExit?: () => void; roomCode?: string };
 ```
@@ -33,7 +33,7 @@ src/os/arcade/games/<id>/
 | `glyph` | SVG path data (`d`) for a 24x24 viewBox, drawn as a white 2px stroke |
 | `order` | sort order inside its category (lower first) |
 | `leaderboard` | optional, opts the game into a top 100 board (see Leaderboards) |
-| `online` | optional, enables online rooms for `seats` players. Rooms lock when the host starts, unless `lateJoin: true` lets people join between rounds (they wait in the lobby and play the next one) |
+| `online` | optional, enables online rooms for the configured number of seats (see Online Rooms). Rooms lock when the host starts, unless `lateJoin: true` lets people join between rounds (they wait in the lobby and play the next one) |
 
 `manifest.ts` reads every `games/*/meta.ts` eagerly (they are tiny) and every `games/*/index.tsx` lazily through `React.lazy`, so each game is its own chunk and downloads only when opened. Folders starting with `_` are ignored. In dev you can list them with `localStorage.setItem('arcade:dev', '1')` and a reload; `_example` then appears as "Catch".
 
@@ -60,7 +60,7 @@ type ShellApi = {
   meta: GameMeta; status: GameStatus; round: number; active: boolean; compact: boolean; touch: boolean;
   keys: KeyState; root: RefObject<HTMLDivElement | null>;
   start(): void; pause(): void; resume(): void; restart(): void;
-  gameOver(score?: number, info?: { title?: string; detail?: string }): void;
+  gameOver(score?: number, info?: { title?: string; detail?: string; board?: string; rank?: number }): void;
   setScore(score: number | null): void;     // live score pill, null hides it
   invalidate(): void;                       // request one redraw while idle
   onInvalidate(fn: () => void): () => void;
@@ -121,12 +121,32 @@ leaderboard: { order: 'asc', min: 3_000, max: 3_600_000, format: 'time' }, // ti
 | `Max` | highest plausible score; the server rejects anything above it, so keep it generous but finite |
 | `Min` | lowest plausible score (default 0), mostly for times |
 | `Format` | `'time'` shows milliseconds as seconds on the arcade home board (the Game Over card uses the shell's `formatScore`) |
+| `Unit` | shown after the number on boards, e.g. `'m'` or `'days'` |
+| `Measure` | what the board ranks when the title does not say, e.g. `'Fastest Clear'`, shown above the list |
+| `Variants` | one board per setting that changes difficulty, e.g. `{ easy: 'Easy', hard: 'Hard' }`. Each becomes the board `<id>-<key>` |
+
+A game with `variants` names the board when it ends a round: `shell.gameOver(score, { board: 'hard' })`. A round without a valid `board` is not ranked.
+
+Games that keep their own bests (per level, or a streak) and show no score on the Game Over card pass the ranked number as `rank` instead: `shell.gameOver(undefined, { title: 'Cleared', board: 'expert', rank: ms })`. The shell ranks `rank` and formats it with the board's spec.
 
 When a round ends with a score that would make the top 100, the Game Over card shows a name field (1 to 16 characters) and Submit, plus a Leaderboard button that shows the board. The arcade home has a Leaderboards view with every opted in game.
 
 Global boards come from the Cloudflare Worker in `worker/`, configured through `PUBLIC_ARCADE_API` or its built-in default URL. If the API URL is empty or unavailable, scores stay in localStorage (`arcade:boards`) and the board is labeled This Device. The Worker validates the game id, score and name, and allows a few submissions per IP per minute. After opting a game in, run `npm run arcade:specs` and redeploy the Worker.
 
-Opt in only when the score is comparable across players: leave it out for games without a score, two player games, and games where a setting changes the difficulty of the score (for example a pace or level picker), unless each setting is its own game.
+Opt in only when the score is comparable across players: leave it out for games without a score and two player games (they get an Online Wins board instead). When a setting changes the difficulty of the score (a pace or level picker), use `variants` so each setting has its own board.
+
+Baduk (Go and Omok) and Badminton are desktop apps, not arcade games, but they share the same Worker. Their boards and rooms are listed in `src/os/arcade/apps.ts`, show up on the arcade Leaderboards page, and are written into the Worker specs by `npm run arcade:specs`.
+
+## Online Rooms
+
+`online: { seats }` adds Play Online to the Start card: create a room, share the four character code or link, and the host starts. There are two kinds:
+
+- **Match** (`online: { seats: 2 }`): players play each other. The game reads `useOnline()` for its seat, sends moves with `send()`, listens with `onMessage()` and calls `reportResult(round, winnerSeat)` when a round ends. Chess, Connect Four, Checkers, Pong, Air Hockey, Light Cycles and Cox Box work this way.
+- **Race** (`online: { seats: 4, race: true }`): every player runs their own round at the same time and the best score wins. No game code is needed: the shell collects each player's `gameOver` score, shows the standings on the Game Over card and reports the winner. Use it for games with one comparable score (a `leaderboard` without `variants`).
+
+Rooms lock once the host starts. Add `lateJoin: true` to let people join between rounds instead: a latecomer waits in the lobby and plays the next round, and wins only count the players who started that round. Cox Box uses this for eight-crew typing races.
+
+Invite links (`/?game=<id>&room=<code>`) open the game and join the room automatically. Online wins go to the game's Online Wins board when every player reports the same winner. After adding `online` to a game, run `npm run arcade:specs` and redeploy the Worker.
 
 ## Rules
 

@@ -11,4 +11,5 @@ export const meta: GameMeta = {
   glyph: 'M12 3 7.5 9.5H10L6 15h4l-3 4h10l-3-4h4l-4-5.5h2.5zM12 19v2',
   order: 5,
   leaderboard: { order: 'desc', max: 10_000 },
+  online: { seats: 4, race: true },
 };

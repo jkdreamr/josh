@@ -5153,3 +5153,10 @@ kbd {
 .arcade-boards .arcade-lb-score {
   font-weight: 600;
 }
+.arcade-boards .arcade-board-measure {
+  padding: 0 12px 5px;
+  text-align: right;
+  color: #5f6368;
+  font-size: 12px;
+  font-weight: 600;
+}
