@@ -468,7 +468,7 @@
   font-size: 15px;
   background: rgba(255, 255, 255, 0.06);
 }
-.arcade-party-scores li > span {
+.arcade-party-scores li > span:not(.arcade-party-avatar) {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -485,6 +485,6 @@
 .arcade-party-scores li.is-out {
   opacity: 0.45;
 }
-.arcade-party-scores li.is-out > span {
+.arcade-party-scores li.is-out > span:not(.arcade-party-avatar) {
   text-decoration: line-through;
 }

@@ -1,0 +1,322 @@
+.g-mafia {
+  background:
+    radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, #8b5cf6 24%, #110e18) 0%, transparent 70%),
+    #0d0b12;
+}
+
+/* Sky: a night layer and a day layer that crossfade behind every step. */
+.g-mafia .g-mafia-sky {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.g-mafia .g-mafia-sky > i {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.9s ease;
+}
+.g-mafia .g-mafia-sky[data-time='night'] > .g-mafia-night,
+.g-mafia .g-mafia-sky[data-time='day'] > .g-mafia-day {
+  opacity: 1;
+}
+/* Stars keep to the edges and the top band, clear of the text; the few in the middle stay faint. */
+.g-mafia .g-mafia-night {
+  background:
+    radial-gradient(circle at 2.5% 18%, rgba(255, 255, 255, 0.8) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 3% 46%, rgba(255, 255, 255, 0.5) 0 0.8px, transparent 1.5px),
+    radial-gradient(circle at 2.8% 76%, rgba(255, 255, 255, 0.4) 0 0.8px, transparent 1.5px),
+    radial-gradient(circle at 97% 30%, rgba(255, 255, 255, 0.75) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 96.5% 58%, rgba(255, 255, 255, 0.5) 0 0.8px, transparent 1.5px),
+    radial-gradient(circle at 97.2% 86%, rgba(255, 255, 255, 0.4) 0 0.8px, transparent 1.5px),
+    radial-gradient(circle at 14% 2.5%, rgba(255, 255, 255, 0.7) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 26% 4.5%, rgba(255, 255, 255, 0.5) 0 0.8px, transparent 1.5px),
+    radial-gradient(circle at 41% 2%, rgba(255, 255, 255, 0.8) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 52% 5%, rgba(255, 255, 255, 0.4) 0 0.8px, transparent 1.5px),
+    radial-gradient(circle at 18% 34%, rgba(255, 255, 255, 0.22) 0 0.8px, transparent 1.5px),
+    radial-gradient(circle at 83% 41%, rgba(255, 255, 255, 0.22) 0 0.8px, transparent 1.5px),
+    radial-gradient(circle at 30% 67%, rgba(255, 255, 255, 0.18) 0 0.8px, transparent 1.5px),
+    radial-gradient(circle at 71% 79%, rgba(255, 255, 255, 0.18) 0 0.8px, transparent 1.5px),
+    radial-gradient(90% 45% at 50% 0%, rgba(124, 92, 255, 0.3), transparent 72%),
+    radial-gradient(80% 40% at 50% 100%, rgba(40, 30, 110, 0.55), transparent 75%),
+    linear-gradient(180deg, #090a24 0%, #110f33 55%, #191340 100%);
+}
+/* A second set of stars that twinkles. */
+.g-mafia .g-mafia-night::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 6% 9%, #fff 0 1.1px, transparent 2px),
+    radial-gradient(circle at 33% 3.5%, rgba(255, 255, 255, 0.9) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 95% 15%, #fff 0 1px, transparent 1.8px),
+    radial-gradient(circle at 3.5% 62%, rgba(255, 255, 255, 0.8) 0 0.9px, transparent 1.6px),
+    radial-gradient(circle at 96% 44%, rgba(255, 255, 255, 0.8) 0 0.9px, transparent 1.6px);
+  animation: g-mafia-twinkle 3.2s ease-in-out infinite alternate;
+}
+/* A thin crescent moon, top left, clear of the shell's buttons. */
+.g-mafia .g-mafia-night::after {
+  content: '';
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  box-shadow: inset -7px 4px 0 0 rgba(246, 241, 255, 0.9);
+  filter: drop-shadow(0 0 8px rgba(196, 181, 253, 0.55));
+  transform: rotate(-12deg);
+}
+@keyframes g-mafia-twinkle {
+  from {
+    opacity: 0.2;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.g-mafia .g-mafia-day {
+  background:
+    radial-gradient(60% 34% at 50% -4%, rgba(255, 196, 120, 0.42), transparent 72%),
+    radial-gradient(130% 70% at 50% 0%, rgba(255, 128, 72, 0.16), transparent 72%),
+    linear-gradient(180deg, #2a1915 0%, #1d1313 58%, #150f11 100%);
+}
+
+/* Day steps run warm. */
+.g-mafia .g-mafia-sun {
+  --accent: #f08a3c;
+}
+
+/* Small copy */
+.g-mafia .g-mafia-note {
+  max-width: 380px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  text-wrap: pretty;
+  color: rgba(245, 245, 247, 0.58);
+}
+.g-mafia .g-mafia-head {
+  align-self: flex-start;
+  margin: 6px 0 -4px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(245, 245, 247, 0.5);
+}
+
+/* Big round icon for dusk, dawn and the end */
+.g-mafia .g-mafia-emblem {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  color: #fff;
+}
+.g-mafia .g-mafia-emblem.is-moon {
+  color: #f3efff;
+  background: radial-gradient(circle at 35% 30%, #4b3a9a, #1f1752);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.25),
+    0 0 36px rgba(139, 92, 246, 0.45);
+}
+.g-mafia .g-mafia-emblem.is-sun {
+  color: #fff7ea;
+  background: radial-gradient(circle at 35% 30%, #ffb26b, #d9622b);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.3),
+    0 0 36px rgba(255, 150, 70, 0.4);
+}
+
+/* At the top of a scrolling step the glow would be cut off by the scroll edge. */
+.g-mafia .g-mafia-emblem.is-top {
+  margin-top: 6px;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.3);
+}
+@container arcade-party (max-height: 480px) {
+  .g-mafia .g-mafia-emblem {
+    width: 56px;
+    height: 56px;
+  }
+  .g-mafia .g-mafia-emblem.is-top {
+    display: none;
+  }
+}
+
+/* Role cards */
+.g-mafia .g-mafia-role > svg {
+  opacity: 0.95;
+}
+.g-mafia .g-mafia-role.is-mafia {
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0 12px, transparent 12px 24px),
+    linear-gradient(160deg, #2b0e14, #110508);
+  box-shadow:
+    inset 0 0 0 1.5px #ff453a,
+    0 16px 30px -14px rgba(255, 69, 58, 0.5);
+}
+.g-mafia .g-mafia-role.is-mafia > strong,
+.g-mafia .g-mafia-role.is-mafia > svg {
+  color: #ff6b5e;
+}
+.g-mafia .g-mafia-role.is-doctor {
+  --accent: #22b07d;
+}
+.g-mafia .g-mafia-role.is-detective {
+  --accent: #d99a1e;
+}
+.g-mafia .g-mafia-role > strong {
+  font-size: clamp(30px, 9cqmin, 42px);
+}
+.g-mafia .g-mafia-role > .g-mafia-crew {
+  margin-top: 4px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-weight: 600;
+  opacity: 1;
+  background: rgba(255, 69, 58, 0.16);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 107, 94, 0.5);
+}
+
+/* Night turn */
+.g-mafia .g-mafia-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.g-mafia .g-mafia-notes li {
+  padding: 9px 12px;
+  border-radius: 11px;
+  font-size: 14px;
+  line-height: 1.35;
+  text-align: center;
+  color: rgba(245, 245, 247, 0.85);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+}
+.g-mafia .g-mafia-locked {
+  gap: 8px;
+  padding: 22px 18px;
+}
+.g-mafia .g-mafia-locked > strong {
+  overflow-wrap: anywhere;
+}
+.g-mafia .g-mafia-locked > strong.is-bad {
+  color: #ff6b5e;
+}
+.g-mafia .g-mafia-locked > strong.is-good {
+  color: #5fe0a0;
+}
+
+/* Vote: the Nobody option spans the grid */
+.g-mafia .arcade-party-picks > button.g-mafia-nobody {
+  grid-column: 1 / -1;
+  justify-content: center;
+  padding-left: 12px;
+  color: rgba(245, 245, 247, 0.8);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.g-mafia .arcade-party-picks > button.g-mafia-nobody[aria-pressed='true'] {
+  color: #fff;
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.g-mafia .arcade-party-picks > button.g-mafia-nobody > span {
+  flex: none;
+}
+
+/* Who is still in, on the day step */
+.g-mafia .g-mafia-alive {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: 420px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.g-mafia .g-mafia-alive li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 11px 0 4px;
+  border-radius: 999px;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Town log */
+.g-mafia .g-mafia-log {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px 8px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+}
+.g-mafia .g-mafia-log .g-mafia-head {
+  margin: 0;
+}
+.g-mafia .g-mafia-log ol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+  line-height: 1.35;
+  color: rgba(245, 245, 247, 0.82);
+}
+.g-mafia .g-mafia-log button {
+  align-self: flex-start;
+  min-height: 40px;
+  margin: -4px 0 -6px -6px;
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--accent) 70%, #fff);
+  background: none;
+}
+
+/* End: roles, with the mafia called out. The shared score rows stretch every span, avatars included. */
+.g-mafia .g-mafia-cast li > .arcade-party-avatar {
+  flex: none;
+  overflow: visible;
+  text-decoration: none;
+}
+.g-mafia .g-mafia-cast li > b {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(245, 245, 247, 0.7);
+}
+.g-mafia .g-mafia-cast li.is-mafia {
+  background: rgba(255, 69, 58, 0.13);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 107, 94, 0.45);
+}
+.g-mafia .g-mafia-cast li.is-mafia > b {
+  color: #ff6b5e;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-mafia .g-mafia-night::before {
+    animation: none;
+  }
+  .g-mafia .g-mafia-sky > i {
+    transition: none;
+  }
+}
