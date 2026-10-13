@@ -1,57 +1,53 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { GUARD_MS, isChunkError, reloadInto, RESUME_MS, takeResume, trackScreen } from '../src/os/reload.ts';
+import { buildOf, isLoadError, LoadError, reloadedRecently, reloadInto, RECENT_MS, RESUME_MS, tagLoad, takeResume, trackScreen } from '../src/os/reload.ts';
 
 function memory() {
   const m = new Map<string, string>();
   return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) };
 }
 
-test('a file missing after a deploy is told apart from a game that crashed', () => {
-  // What each engine actually throws when a lazily imported file 404s.
-  assert.ok(isChunkError(new TypeError('Failed to fetch dynamically imported module: https://joshuakoo.xyz/_astro/index.C_25zyHt.js')));
-  assert.ok(isChunkError(new TypeError('error loading dynamically imported module: https://joshuakoo.xyz/_astro/index.C_25zyHt.js')));
-  assert.ok(isChunkError(new TypeError('Importing a module script failed.')));
-  assert.ok(isChunkError(new Error('Unable to preload CSS for /_astro/index.zkFG34QT.css')));
-  assert.ok(!isChunkError(new TypeError("Cannot read properties of undefined (reading 'x')")));
-  assert.ok(!isChunkError(new RangeError('Maximum call stack size exceeded')));
-  assert.ok(!isChunkError(null));
-  assert.ok(!isChunkError({ message: 'Failed to fetch dynamically imported module' }), 'only real errors or strings');
+test('code that failed to load is told apart from a game that crashed', async () => {
+  // Wrapped imports are recognized whatever the browser says, including a module that threw while loading.
+  const failed = await tagLoad(() => Promise.reject(new TypeError('Load failed')))().catch((e: unknown) => e);
+  assert.ok(failed instanceof LoadError && isLoadError(failed));
+  assert.equal(await tagLoad(() => Promise.resolve(7))(), 7);
+  // Unwrapped imports fall back to what each engine says.
+  assert.ok(isLoadError(new TypeError('Failed to fetch dynamically imported module: https://joshuakoo.xyz/_astro/index.C_25zyHt.js')));
+  assert.ok(isLoadError(new TypeError('error loading dynamically imported module: https://joshuakoo.xyz/_astro/index.C_25zyHt.js')));
+  assert.ok(isLoadError(new TypeError('Importing a module script failed.')));
+  assert.ok(isLoadError(new Error('Unable to preload CSS for /_astro/index.zkFG34QT.css')));
+  assert.ok(!isLoadError(new TypeError("Cannot read properties of undefined (reading 'x')")));
+  assert.ok(!isLoadError(null));
 });
 
-test('a reload brings the visitor back to the game they were opening, once', () => {
+test('a reload comes back to the game being opened, in full screen if it was', () => {
   const store = memory();
   let reloads = 0;
-  const reload = () => reloads++;
   trackScreen(() => ({ fullscreen: true }));
-  assert.equal(reloadInto({ app: 'arcade', args: { play: 'target-range' } }, { store, now: 1_000_000, reload }), true);
+  reloadInto({ app: 'arcade', args: { play: 'target-range' } }, { store, now: 1_000_000, reload: () => reloads++ });
+  trackScreen(() => ({ fullscreen: false }));
   assert.equal(reloads, 1);
   assert.deepEqual(takeResume(store, 1_002_000), { app: 'arcade', args: { play: 'target-range' }, fullscreen: true });
   assert.equal(takeResume(store, 1_002_000), null, 'read once');
-  trackScreen(() => ({ fullscreen: false }));
 });
 
-test('a file missing from the live deploy too never loops', () => {
+test('a file still missing right after a reload is reported as a problem, not an update', () => {
   const store = memory();
-  let reloads = 0;
-  const reload = () => reloads++;
-  const resume = { app: 'chrome' as const, args: { url: 'chrome://games/dino' } };
-  assert.equal(reloadInto(resume, { store, now: 0, reload }), true);
-  assert.equal(reloadInto(resume, { store, now: GUARD_MS - 1, reload }), false, 'the reloaded page fails again: show the error instead');
-  assert.equal(reloads, 1);
-  assert.equal(reloadInto(resume, { store, now: GUARD_MS - 1, reload, force: true }), true, 'Try Again always reloads');
-  assert.equal(reloadInto(resume, { store, now: GUARD_MS * 3, reload }), true, 'a later deploy can reload again');
-  assert.equal(reloads, 3);
+  assert.equal(reloadedRecently(store, 0), false);
+  reloadInto({ app: 'chrome' }, { store, now: 10_000, reload: () => {} });
+  assert.equal(reloadedRecently(store, 10_000 + RECENT_MS - 1), true);
+  assert.equal(reloadedRecently(store, 10_000 + RECENT_MS), false);
 });
 
-test('without storage there is no loop guard, so only Try Again reloads', () => {
+test('blocked storage still reloads, just without coming back to the same place', () => {
   let reloads = 0;
-  const reload = () => reloads++;
   const blocked = { getItem: () => { throw new Error('SecurityError'); }, setItem: () => { throw new Error('SecurityError'); }, removeItem: () => {} };
-  assert.equal(reloadInto({ app: 'arcade' }, { store: null, reload }), false);
-  assert.equal(reloadInto({ app: 'arcade' }, { store: blocked, reload }), false);
-  assert.equal(reloadInto({ app: 'arcade' }, { store: blocked, reload, force: true }), true);
-  assert.equal(reloads, 1);
+  reloadInto({ app: 'arcade' }, { store: blocked, reload: () => reloads++ });
+  reloadInto({ app: 'arcade' }, { store: null, reload: () => reloads++ });
+  assert.equal(reloads, 2);
+  assert.equal(takeResume(blocked, 0), null);
+  assert.equal(reloadedRecently(blocked, 0), false);
 });
 
 test('a stale or garbled resume is ignored', () => {
@@ -62,5 +58,9 @@ test('a stale or garbled resume is ignored', () => {
   assert.equal(takeResume(store, 0), null);
   store.setItem('os:resume', JSON.stringify({ args: {}, at: 0 }));
   assert.equal(takeResume(store, 0), null, 'no app');
-  assert.equal(takeResume(null, 0), null);
+});
+
+test('the build a page runs is read from its app script', () => {
+  assert.equal(buildOf('<astro-island uid="x" component-url="/_astro/OS.ChqdTJMm.js" renderer-url="/_astro/client.js">'), '/_astro/OS.ChqdTJMm.js');
+  assert.equal(buildOf('<html></html>'), null);
 });

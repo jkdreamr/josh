@@ -1,5 +1,5 @@
 import { Component, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import { isChunkError, reloadInto, siteReachable, type Resume } from '../reload';
+import { isLoadError, reloadedRecently, reloadInto, siteState, type Resume } from '../reload';
 import { ArcadeInvite } from './kit/host';
 import { getMeta, loaders } from './manifest';
 import type { GameMeta } from './types';
@@ -38,42 +38,49 @@ function Loading({ meta, compact }: { meta: GameMeta; compact?: boolean }) {
 type FrameProps = { meta: GameMeta; compact?: boolean; onExit?: () => void; resume?: Resume };
 
 /**
- * The game's file didn't download. Nearly always the site was redeployed since this page loaded and the old file
- * is gone, so keep the spinner up and reload onto the new deploy, which reopens this game. Offline, wait instead.
+ * The game's code didn't load. Nearly always the page is older than the files the site still keeps. Never reload on
+ * our own (another window may hold a half-written message): say what happened and offer a reload that comes straight
+ * back to this game.
  */
 function Missing({ meta, compact, onExit, resume }: FrameProps) {
-  const [state, setState] = useState<'checking' | 'offline' | 'failed'>('checking');
+  const [state, setState] = useState<'checking' | 'offline' | 'down' | 'updated' | 'failed' | 'broken'>('checking');
   const live = useRef(true);
-  const check = (force: boolean) => {
+  const check = () => {
     setState('checking');
-    siteReachable().then((ok) => {
-      if (!live.current || (ok && reloadInto(resume, { force }))) return;
-      setState(ok ? 'failed' : 'offline');
-    });
+    siteState().then((site) => live.current && setState(site !== 'current' ? site : reloadedRecently() ? 'broken' : 'failed'));
   };
   useEffect(() => {
     live.current = true;
-    check(false);
+    check();
     return () => {
       live.current = false;
     };
   }, []);
   useEffect(() => {
     if (state !== 'offline') return;
-    const online = () => check(true);
-    window.addEventListener('online', online);
-    return () => window.removeEventListener('online', online);
+    window.addEventListener('online', check);
+    return () => window.removeEventListener('online', check);
   }, [state]);
 
   if (state === 'checking') return <Loading meta={meta} compact={compact} />;
+  const didnt = `${meta.title} didn't load`;
+  const reload = { label: 'Reload', run: () => reloadInto(resume) };
+  const retry = { label: 'Try again', run: check };
+  const { title, body, action } = {
+    offline: { title: didnt, body: "you're offline. connect to the internet and try again.", action: retry },
+    down: { title: didnt, body: "the site isn't answering. give it a minute and try again.", action: retry },
+    updated: { title: `${meta.title} was updated`, body: "reload to play the new version. you'll land right back here.", action: reload },
+    failed: { title: didnt, body: "the download was interrupted. reload and you'll land right back here.", action: reload },
+    broken: { title: didnt, body: "something's off on our end. give it a minute and try again.", action: { ...reload, label: 'Try again' } },
+  }[state];
   return (
     <Notice
-      title={`${meta.title} didn't load`}
-      body={state === 'offline' ? "you're offline. it'll start on its own once you're back." : 'the download failed. give it another try in a moment.'}
+      title={title}
+      body={body}
       compact={compact}
       actions={
         <>
-          <button className="btn btn-primary" onClick={() => check(true)}>Try again</button>
+          <button className="btn btn-primary" onClick={action.run}>{action.label}</button>
           {onExit && <button className="btn btn-ghost" onClick={onExit}>Back to arcade</button>}
         </>
       }
@@ -82,8 +89,8 @@ function Missing({ meta, compact, onExit, resume }: FrameProps) {
 }
 
 /**
- * Loads a game by id with a spinner. If its file is gone after a deploy, reloads the page and comes back to it
- * (`resume` says how to reopen it). If the game itself throws, offers a restart instead of a blank page.
+ * Loads a game by id with a spinner. If its code won't load, offers a reload that comes back to it (`resume` says
+ * how to reopen it). If the game itself throws, offers a restart instead of a blank page.
  */
 export function GameFrame({ id, compact, onExit, roomCode, resume }: { id: string; compact?: boolean; onExit?: () => void; roomCode?: string; resume?: Resume }) {
   const meta = getMeta(id);
@@ -100,7 +107,7 @@ export function GameFrame({ id, compact, onExit, roomCode, resume }: { id: strin
   return (
     <Boundary
       fallback={(error, retry) =>
-        isChunkError(error) ? (
+        isLoadError(error) ? (
           <Missing meta={meta} compact={compact} onExit={onExit} resume={resume} />
         ) : (
           <Notice

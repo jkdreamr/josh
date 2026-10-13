@@ -3,7 +3,7 @@ import { BLACK, groupStones, newGame, pass, play, resign, score, undo, WHITE, ty
 import { newOmok, omokAiMove, playOmok, undoOmok, type OmokState } from '../games/omok';
 import { useOS, type AppProps } from '../types';
 import { countPlay } from '../stats';
-import { reloadInto, siteReachable } from '../reload';
+import { reloadInto } from '../reload';
 import { getAppGame } from '../arcade/apps';
 import { boardFor } from '../arcade/kit/leaderboard';
 import { AppBoard, onlineAvailable, RoomPanel, useAppRoom, useInvite } from './online-room';
@@ -75,6 +75,7 @@ export default function Baduk({ args }: AppProps) {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisReady, setAnalysisReady] = useState(false);
   const [engineStatus, setEngineStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [workerGone, setWorkerGone] = useState(false);
   const [tainted, setTainted] = useState(false);
   const [gameNo, setGameNo] = useState(0);
   const omokRef = useRef(omok);
@@ -138,11 +139,10 @@ export default function Baduk({ args }: AppProps) {
       setDeadSet(dead);
       setAnalysisReady(true);
     };
-    // A worker file gone after a deploy fires a plain error event (a crash inside it is an ErrorEvent), and the
-    // computer would never move. Reload onto the new deploy and come back to this board.
+    // A worker file that is gone (this page is older than the files the site keeps) fires a plain error event; a
+    // crash inside it is an ErrorEvent. Without it the computer never moves, so offer a reload.
     worker.onerror = (event) => {
-      if (event instanceof ErrorEvent) return;
-      void siteReachable().then((ok) => ok && reloadInto({ app: 'baduk', args: { game: gameModeRef.current, room: args.room } }));
+      if (!(event instanceof ErrorEvent)) setWorkerGone(true);
     };
     return () => {
       worker.terminate();
@@ -546,10 +546,19 @@ export default function Baduk({ args }: AppProps) {
           <div className="baduk-turn-card">
             {statusStone !== null && <span className={`baduk-turn-stone ${statusStone === BLACK ? 'is-black' : 'is-white'}`} />}
             <div>
-              <small>{gameMode === 'omok' ? 'Omok' : mode === 'computer' && engineStatus === 'loading' ? <><i className="baduk-engine-spinner" />Loading Engine</> : game.phase === 'mark' ? 'Mark the dead stones' : game.phase === 'resigned' ? 'Game over' : thinking ? 'Thinking' : 'Go'}</small>
+              <small>{gameMode === 'omok' ? 'Omok' : mode === 'computer' && engineStatus === 'loading' && !workerGone ? <><i className="baduk-engine-spinner" />Loading Engine</> : game.phase === 'mark' ? 'Mark the dead stones' : game.phase === 'resigned' ? 'Game over' : thinking ? 'Thinking' : 'Go'}</small>
               <b>{gameMode === 'omok' ? omokStatus : game.phase === 'mark' ? 'Count the board' : game.phase === 'resigned' ? 'Resigned' : onlineColor !== null ? (game.toPlay === onlineColor ? 'Your move' : `${colorName(game.toPlay)} to play`) : game.toPlay === BLACK ? 'Black to play' : 'White to play'}</b>
             </div>
           </div>
+          {workerGone && gameMode === 'go' && (
+            <div className="baduk-turn-card baduk-updated" role="status">
+              <div>
+                <small>{navigator.onLine ? 'Baduk was updated' : "You're offline"}</small>
+                <b>{navigator.onLine ? 'Reload to keep playing' : 'Reconnect, then reload'}</b>
+              </div>
+              <button type="button" className="gbtn gbtn-primary" onClick={() => reloadInto({ app: 'baduk', args: { game: 'go', room: args.room } })}>Reload</button>
+            </div>
+          )}
           {gameMode === 'go' && <div className="baduk-captures">
             <span><i className="is-black" /> Black captured <b>{game.captures.black}</b></span>
             <span><i className="is-white" /> White captured <b>{game.captures.white}</b></span>
