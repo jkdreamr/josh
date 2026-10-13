@@ -32,11 +32,11 @@ export type NetEv =
   | { y: 'stole'; to: number };
 
 export type Packet =
-  | { k: 'S'; round: number; go: number; cc: string; roster: number[]; cars: Car[] }
+  | { k: 'S'; round: number; go: number; cc: string; course: string; roster: number[]; cars: Car[] }
   | { k: 's'; round: number; car: Omit<Car, 'seat'> }
   | { k: 'e'; round: number; o: number; ev: NetEv[] }
   | { k: 'end'; round: number; w: number | null; order: [number, number][] }
-  | { k: 'cfg'; round: number; cc: string };
+  | { k: 'cfg'; round: number; cc: string; course: string };
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -100,20 +100,23 @@ function unpackCar(a: unknown): Omit<Car, 'seat'> | null {
   return { x, z, y, h, v, p, f: f | 0, fin, look };
 }
 
-export const hostState = (round: number, go: number, cc: string, roster: number[], cars: Car[]) => ({
+export const hostState = (round: number, go: number, cc: string, roster: number[], cars: Car[], course = 'palm') => ({
   t: 'pk',
   r: round,
   k: 'S',
   go: r2(go),
   cc,
+  co: course,
   ro: roster,
   cars: cars.map((c) => [c.seat, ...packCar(c)]),
 });
 export const guestState = (round: number, car: Omit<Car, 'seat'>) => ({ t: 'pk', r: round, k: 's', c: packCar(car) });
 export const events = (round: number, origin: number, ev: NetEv[]) => ({ t: 'pk', r: round, k: 'e', o: origin, ev });
 export const endOf = (round: number, winner: number | null, order: [number, number][]) => ({ t: 'pk', r: round, k: 'end', w: winner, order });
-/** The host's pick for the next race, sent while the room waits so guests can see it. */
-export const configOf = (round: number, cc: string) => ({ t: 'pk', r: round, k: 'cfg', cc });
+/** The host's picks for the next race, sent while the room waits so guests can see them. */
+export const configOf = (round: number, cc: string, course = 'palm') => ({ t: 'pk', r: round, k: 'cfg', cc, co: course });
+/** A course id from a packet; older packets had none and were always Palm Drive. */
+const courseOf = (v: unknown) => (typeof v === 'string' ? v : 'palm');
 
 function parseEv(v: unknown): NetEv | null {
   if (!v || typeof v !== 'object') return null;
@@ -148,14 +151,14 @@ export function parsePacket(value: unknown): Packet | null {
       const car = unpackCar(raw.slice(1));
       if (car) cars.push({ seat: raw[0], ...car });
     }
-    return { k: 'S', round, go: p.go, cc: p.cc, roster, cars };
+    return { k: 'S', round, go: p.go, cc: p.cc, course: courseOf(p.co), roster, cars };
   }
   if (p.k === 'e') {
     if (!seatOk(p.o) || !Array.isArray(p.ev)) return null;
     const ev = p.ev.slice(0, 32).map(parseEv).filter((e): e is NetEv => e !== null);
     return { k: 'e', round, o: p.o, ev };
   }
-  if (p.k === 'cfg') return typeof p.cc === 'string' ? { k: 'cfg', round, cc: p.cc } : null;
+  if (p.k === 'cfg') return typeof p.cc === 'string' ? { k: 'cfg', round, cc: p.cc, course: courseOf(p.co) } : null;
   if (p.k === 'end') {
     if (!(p.w === null || seatOk(p.w)) || !Array.isArray(p.order)) return null;
     const order = p.order.filter((o): o is [number, number] => Array.isArray(o) && seatOk(o[0]) && num(o[1])).slice(0, 16);

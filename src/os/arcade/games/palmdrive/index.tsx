@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type Pointe
 import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
+import type { Track } from './track';
 import {
   CASH_COST,
   CCS,
@@ -33,13 +34,15 @@ import { applyFlags, carOf, configOf, endOf, events, finishOrder, guestState, ho
 import { deposit, freshGarage, fromLook, loadGarage, lookOf, paintColor, payout, saveGarage, subscribeGarage, type Garage } from './garage';
 import { CoinIcon, GarageSheet, HowToPlay, ItemIcon } from './hud';
 import { BPM, JINGLE_DONE, JINGLE_WIN, Sequencer, hz, type Note } from './music';
+import { COURSES, COURSE_IDS, isCourse, trackOf, type CourseId } from './courses';
 import { meta } from './meta';
 import './palmdrive.css';
 
 const CLASS = defineSetting('palmdrive:cc', CCS, '100cc');
 const classOptions = CCS.map((cc) => [cc, cc] as const);
-/** The leaderboard (and local best) for a class on the Palm Drive course. */
-const boardOf = (cc: Cc) => `palm-${cc}`;
+const COURSE = defineSetting('palmdrive:course', COURSE_IDS, 'palm');
+/** The leaderboard (and local best) for a course and class. */
+const boardOf = (course: CourseId, cc: Cc) => `${course}-${cc}`;
 /** The race soundtrack; the shell's mute button silences it along with everything else. */
 const MUSIC = defineSetting('palmdrive:music', ['on', 'off'] as const, 'on', { live: true });
 const musicOptions = [
@@ -92,24 +95,71 @@ export default function Game({ compact, onExit, roomCode }: GameProps) {
   );
 }
 
+type Best = ReturnType<typeof useHighScore>;
+/** Your best time on every course at every class (the same hooks in the same order every render). */
 function useBests() {
-  const b50 = useHighScore(`palmdrive-${boardOf('50cc')}`, { lowerIsBetter: true });
-  const b100 = useHighScore(`palmdrive-${boardOf('100cc')}`, { lowerIsBetter: true });
-  const b150 = useHighScore(`palmdrive-${boardOf('150cc')}`, { lowerIsBetter: true });
-  const b200 = useHighScore(`palmdrive-${boardOf('200cc')}`, { lowerIsBetter: true });
-  return { '50cc': b50, '100cc': b100, '150cc': b150, '200cc': b200 };
+  const bests = {} as Record<CourseId, Record<Cc, Best>>;
+  for (const course of COURSE_IDS) {
+    bests[course] = {} as Record<Cc, Best>;
+    for (const cc of CCS) bests[course][cc] = useHighScore(`palmdrive-${boardOf(course, cc)}`, { lowerIsBetter: true });
+  }
+  return bests;
+}
+
+/** Course cards with a little map of each track; without onChange it just shows the pick (a guest online). */
+function CoursePicker({ value, onChange }: { value: CourseId | null; onChange?: (c: CourseId) => void }) {
+  return (
+    <div className="arcade-field">
+      <span>Course{onChange ? '' : ' · picked by the host'}</span>
+      <div className="g-palmdrive-courses" role="group" aria-label="Course">
+        {COURSE_IDS.map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={`g-palmdrive-course${id === value ? ' is-on' : ''}`}
+            aria-pressed={id === value}
+            disabled={!onChange}
+            title={COURSES[id].blurb}
+            onClick={() => {
+              if (!onChange || id === value) return;
+              sfx.play('select');
+              onChange(id);
+            }}
+          >
+            <CourseMap id={id} />
+            <span>{COURSES[id].name}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CourseMap({ id }: { id: CourseId }) {
+  const m = useMemo(() => mapPath(trackOf(id)), [id]);
+  return (
+    <svg viewBox={m.box} aria-hidden="true">
+      <path d={m.d} />
+    </svg>
+  );
 }
 
 function Setup() {
   const [cc, setCc] = useSetting(CLASS);
+  const [course, setCourse] = useSetting(COURSE);
   const [music, setMusic] = useSetting(MUSIC);
-  const best = useBests()[cc].best;
+  const best = useBests()[course][cc].best;
   return (
     <>
+      <CoursePicker value={course} onChange={setCourse} />
       <Segmented label="Class" value={cc} options={classOptions} onChange={setCc} />
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
       <Extras />
-      {best !== null && <small className="g-palmdrive-best">Best at {cc}: {fmtMs(best)}</small>}
+      {best !== null && (
+        <small className="g-palmdrive-best">
+          Best on {COURSES[course].name} at {cc}: {fmtMs(best)}
+        </small>
+      )}
     </>
   );
 }
@@ -154,26 +204,31 @@ function Extras() {
 function OnlineSetup() {
   const online = useOnline();
   const [cc, setCc] = useSetting(CLASS);
+  const [course, setCourse] = useSetting(COURSE);
   const [music, setMusic] = useSetting(MUSIC);
   const [hostCc, setHostCc] = useState<Cc | null>(null);
+  const [hostCourse, setHostCourse] = useState<CourseId | null>(null);
   const host = online?.isHost ?? true;
-  // the host says its pick now, again when someone joins (the player list changes) and every couple of seconds
+  // the host says its picks now, again when someone joins (the player list changes) and every couple of seconds
   useEffect(() => {
     if (!online?.isHost) return;
-    const say = () => online.send(configOf(online.round, cc));
+    const say = () => online.send(configOf(online.round, cc, course));
     say();
     const timer = window.setInterval(say, 2000);
     return () => window.clearInterval(timer);
-  }, [online, cc]);
+  }, [online, cc, course]);
   useEffect(() => {
     if (!online || online.isHost) return;
     return online.onMessage((from, d) => {
       const p = parsePacket(d);
-      if (from === 0 && p?.k === 'cfg' && isCc(p.cc)) setHostCc(p.cc);
+      if (from !== 0 || p?.k !== 'cfg') return;
+      if (isCc(p.cc)) setHostCc(p.cc);
+      if (isCourse(p.course)) setHostCourse(p.course);
     });
   }, [online]);
   return (
     <>
+      {host ? <CoursePicker value={course} onChange={setCourse} /> : <CoursePicker value={hostCourse} />}
       {host ? (
         <Segmented label="Class" value={cc} options={classOptions} onChange={setCc} />
       ) : (
@@ -185,7 +240,7 @@ function OnlineSetup() {
           </div>
         </div>
       )}
-      {host && <small className="g-palmdrive-best">You pick the class for everyone.</small>}
+      {host && <small className="g-palmdrive-best">You pick the course and class for everyone.</small>}
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
       <Extras />
     </>
@@ -198,8 +253,10 @@ type Mode = 'idle' | 'solo' | 'online';
 function Stage() {
   const shell = useShell();
   const online = useOnline();
+  const [course] = useSetting(COURSE);
   const current = useRef<{ key: string; mode: Mode }>({ key: 'idle', mode: 'idle' });
-  if (shell.status === 'ready') current.current = { key: 'idle', mode: 'idle' };
+  // the grid behind the Start card is the course you picked
+  if (shell.status === 'ready') current.current = { key: `idle:${course}`, mode: 'idle' };
   else if (shell.status === 'playing') {
     const key = online ? `online:${online.round}` : 'solo';
     if (key !== current.current.key) current.current = { key, mode: online ? 'online' : 'solo' };
@@ -210,7 +267,7 @@ function Stage() {
 type OnlineApi = NonNullable<ReturnType<typeof useOnline>>;
 
 /** Everyone online starts in their seat's color; karts take their owner's paint and hat once their first state arrives. */
-function onlineRace(o: OnlineApi, cc: Cc, roster: number[], countdown: number, look: { color: string; hat: Hat }): Race {
+function onlineRace(o: OnlineApi, cc: Cc, course: CourseId, roster: number[], countdown: number, look: { color: string; hat: Hat }): Race {
   const racers: Racer[] = roster.map((seat) => ({
     name: o.players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`,
     color: seat === o.seat ? look.color : SEAT_COLORS[seat % SEAT_COLORS.length],
@@ -218,7 +275,7 @@ function onlineRace(o: OnlineApi, cc: Cc, roster: number[], countdown: number, l
     kind: seat === o.seat ? 'player' : 'remote',
     seat,
   }));
-  return createRace({ cc, racers, countdown, idBase: o.seat * 1_000_000 + 1 });
+  return createRace({ cc, course, racers, countdown, idBase: o.seat * 1_000_000 + 1 });
 }
 
 
@@ -295,6 +352,7 @@ function Play({ mode }: { mode: Mode }) {
   onlineRef.current = online;
   const live = mode === 'online' && !!online;
   const [cc] = useSetting(CLASS);
+  const [course] = useSetting(COURSE);
   const [music] = useSetting(MUSIC);
   // your paint and hat: on your kart now (changes on the Pause card show at once) and in what you send online
   const garage = useGarage();
@@ -311,10 +369,10 @@ function Play({ mode }: { mode: Mode }) {
   const race = useRef<Race | null>(null);
   const [raceKey, setRaceKey] = useState(0);
   if (!race.current) {
-    if (!live) race.current = soloRace(cc, undefined, lookFor(loadGarage()));
+    if (!live) race.current = soloRace(cc, undefined, lookFor(loadGarage()), course);
     else {
       const roster = [...online!.players].map((p) => p.seat).sort((a, b) => a - b);
-      race.current = onlineRace(online!, cc, roster, online!.isHost ? COUNTDOWN + HOST_LEAD : 60, lookFor(loadGarage()));
+      race.current = onlineRace(online!, cc, course, roster, online!.isHost ? COUNTDOWN + HOST_LEAD : 60, lookFor(loadGarage()));
     }
   }
   const net = useRef({
@@ -418,11 +476,11 @@ function Play({ mode }: { mode: Mode }) {
     const winner = w === null ? null : order.find(([seat]) => seat === w);
     const youWon = w !== null && w === me.seat;
     const title = me.done === null ? 'Did Not Finish' : youWon ? 'You Won' : `${ordinal(place)} Place`;
-    const head = me.done === null ? 'You ran out of time.' : `${fmtTime(me.done)} at ${r.cc}.`;
+    const head = me.done === null ? 'You ran out of time.' : `${fmtTime(me.done)} on ${COURSES[r.course].name} at ${r.cc}.`;
     const tail = (winner && !youWon ? ` ${nameOf(winner[0])} won in ${fmtTime(winner[1])}.` : '') + bankCoins(me.done === null ? 0 : place);
     sfx.play(youWon ? 'win' : me.done !== null ? 'coin' : 'lose');
-    if (me.done !== null) bests[r.cc].submit(Math.round(me.done * 1000));
-    shellRef.current.gameOver(undefined, me.done === null ? { title, detail: head + tail } : { title, detail: head + tail, board: boardOf(r.cc), rank: Math.round(me.done * 1000) });
+    if (me.done !== null) bests[r.course][r.cc].submit(Math.round(me.done * 1000));
+    shellRef.current.gameOver(undefined, me.done === null ? { title, detail: head + tail } : { title, detail: head + tail, board: boardOf(r.course, r.cc), rank: Math.round(me.done * 1000) });
   };
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
@@ -466,7 +524,7 @@ function Play({ mode }: { mode: Mode }) {
         if (o.isHost || from !== 0) return;
         if (!n.synced) {
           if (!p.roster.includes(o.seat)) return;
-          r = race.current = onlineRace(o, isCc(p.cc) ? p.cc : r.cc, p.roster, p.go, lookFor(loadGarage()));
+          r = race.current = onlineRace(o, isCc(p.cc) ? p.cc : r.cc, isCourse(p.course) ? p.course : r.course, p.roster, p.go, lookFor(loadGarage()));
           n.roster = p.roster;
           n.synced = true;
           setRaceKey((x) => x + 1);
@@ -496,7 +554,7 @@ function Play({ mode }: { mode: Mode }) {
       }
       const present = n.roster.filter((seat) => o.players.some((p) => p.seat === seat));
       const cars: Car[] = [{ seat: o.seat, ...mine }, ...present.filter((s) => s !== o.seat && n.cars.has(s)).map((s) => n.cars.get(s)!)];
-      o.send(hostState(o.round, -r.time, r.cc, n.roster, cars), { fast: n.ticks % 5 !== 0 });
+      o.send(hostState(o.round, -r.time, r.cc, n.roster, cars, r.course), { fast: n.ticks % 5 !== 0 });
       // the host calls the race once nobody still in the room is racing
       if (!n.end && r.time > 0 && present.every((s) => (s === o.seat ? mine.fin : n.cars.get(s)?.fin ?? -1) !== -1)) {
         const order = finishOrder(present.map((s) => [s, s === o.seat ? mine.fin : n.cars.get(s)!.fin]));
@@ -634,13 +692,13 @@ function Play({ mode }: { mode: Mode }) {
     const ranked = standings(r);
     const place = ranked.findIndex((x) => x.k === me) + 1;
     const ms = Math.round((me.done ?? r.time) * 1000);
-    const newBest = bests[r.cc].submit(ms);
+    const newBest = bests[r.course][r.cc].submit(ms);
     const winner = ranked[0];
     const lead = place === 1 ? (me.laps.length ? `Best lap ${fmtTime(Math.min(...me.laps))}.` : '') : `${winner.k.name} won in ${fmtTime(winner.time)}.`;
     shellRef.current.gameOver(undefined, {
       title: place === 1 ? 'You Won' : `${ordinal(place)} Place`,
-      detail: `${fmtTime(ms / 1000)} at ${r.cc}${newBest ? ', a new best' : ''}. ${lead}`.trim() + bankCoins(place),
-      board: boardOf(r.cc),
+      detail: `${fmtTime(ms / 1000)} on ${COURSES[r.course].name} at ${r.cc}${newBest ? ', a new best' : ''}. ${lead}`.trim() + bankCoins(place),
+      board: boardOf(r.course, r.cc),
       rank: ms,
     });
   }
@@ -798,7 +856,7 @@ function Play({ mode }: { mode: Mode }) {
     let banner: string | null = null;
     let lights = 0;
     if (!n.synced) banner = 'waiting for the host';
-    else if (r.time < -COUNTDOWN) banner = 'get ready';
+    else if (r.time < -COUNTDOWN) banner = COURSES[r.course].name;
     else if (r.time < 0) {
       banner = String(Math.ceil(-r.time));
       lights = COUNTDOWN + 1 - Math.ceil(-r.time);
@@ -843,7 +901,7 @@ function Play({ mode }: { mode: Mode }) {
 
   const r = race.current!;
   const playing = shell.status === 'playing';
-  const minimap = useMemo(() => mapPath(r), [raceKey]);
+  const minimap = useMemo(() => mapPath(r.track), [raceKey]);
   const board = hud.results ? standings(r) : [];
   const press = (code: string) => (e: RPointerEvent) => {
     e.preventDefault();
@@ -859,6 +917,7 @@ function Play({ mode }: { mode: Mode }) {
       <div
         ref={ref}
         className="g-palmdrive-host"
+        style={{ background: COURSES[r.course].sky }}
         onPointerDown={() => {
           if (playing && race.current && race.current.time < 0) tap.current.gas = true;
         }}
@@ -1042,8 +1101,7 @@ function Play({ mode }: { mode: Mode }) {
 const round = (n: number) => Math.round(n * 100) / 100;
 
 /** The track outline for the minimap, north up (map x is -world x). */
-function mapPath(r: Race) {
-  const t = r.track;
+function mapPath(t: Track) {
   let d = '';
   let minX = Infinity;
   let maxX = -Infinity;

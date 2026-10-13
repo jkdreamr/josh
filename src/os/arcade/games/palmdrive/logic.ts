@@ -1,6 +1,7 @@
 // Pure race rules for Palm Drive: kart physics, drifting and mini-turbos, items, CPU drivers, laps and places.
 // No DOM, no three.js. Distances are meters, times seconds; see track.ts for the axes and heading convention.
-import { CURB, EDGE, ROAD_HALF, buildTrack, deltaS, gridSpot, headingOf, layout, locate, pointAt, wrapAngle, type Layout, type Track } from './track.ts';
+import { COURSES, trackOf, type CourseId } from './courses.ts';
+import { CURB, EDGE, ROAD_HALF, deltaS, gridSpot, headingOf, locate, pointAt, wrapAngle, type Layout, type Track } from './track.ts';
 
 export const LAPS = 5;
 export const COUNTDOWN = 3;
@@ -203,6 +204,7 @@ export type Ev =
 export type Rng = () => number;
 
 export type Race = {
+  course: CourseId;
   track: Track;
   lay: Layout;
   cc: Cc;
@@ -255,13 +257,10 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 const approach = (a: number, b: number, step: number) => (a < b ? Math.min(b, a + step) : Math.max(b, a - step));
 const noInput = (): Input => ({ steer: 0, brake: false, drift: false, hop: false, use: false, back: false, fwd: false, hold: false, slam: false, cash: false });
 
-let sharedTrack: Track | null = null;
-/** The circuit is the same for every race; build it once. */
-export const theTrack = () => (sharedTrack ??= buildTrack());
-
-export function createRace(opts: { cc: Cc; racers: Racer[]; seed?: number; countdown?: number; laps?: number; idBase?: number; me?: number }): Race {
-  const track = theTrack();
-  const lay = layout(track);
+export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; seed?: number; countdown?: number; laps?: number; idBase?: number; me?: number }): Race {
+  const course = opts.course ?? 'palm';
+  const track = trackOf(course);
+  const lay = COURSES[course].layout(track);
   const seed = opts.seed ?? (Math.random() * 2 ** 32) >>> 0;
   const rand = rng32(seed);
   const karts = opts.racers.map((rc, idx): Kart => {
@@ -347,6 +346,7 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; seed?: number; count
     return { x: p.x, z: p.z, s: c.s, d: c.d, w: c.w, h: headingOf(p.tx, p.tz) };
   });
   const race: Race = {
+    course,
     track,
     lay,
     cc: opts.cc,
@@ -374,8 +374,8 @@ function newAi(pace: number, skill: number, rand: Rng): Ai {
 }
 
 /** A solo Grand Prix: seven CPU rivals ahead of you on the grid, like the first race of a cup. */
-export function soloRace(cc: Cc, seed?: number, look: { color: string; hat: Hat } = { color: PLAYER_COLOR, hat: 'cap' }) {
-  return createRace({ cc, seed, racers: [...RIVALS, { name: 'you', color: look.color, kind: 'player', hat: look.hat }] });
+export function soloRace(cc: Cc, seed?: number, look: { color: string; hat: Hat } = { color: PLAYER_COLOR, hat: 'cap' }, course: CourseId = 'palm') {
+  return createRace({ cc, seed, course, racers: [...RIVALS, { name: 'you', color: look.color, kind: 'player', hat: look.hat }] });
 }
 
 export const racing = (r: Race) => r.time >= 0;
