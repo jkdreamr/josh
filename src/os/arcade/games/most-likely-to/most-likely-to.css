@@ -1,0 +1,71 @@
+.g-most-likely-to {
+  background:
+    radial-gradient(110% 70% at 50% -10%, color-mix(in srgb, #5e8bff 24%, #0d0f16) 0%, transparent 70%),
+    #0b0c10;
+}
+.g-most-likely-to .g-most-likely-to-lead {
+  font-size: 15px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.g-most-likely-to .g-most-likely-to-card strong {
+  margin-top: -6px;
+}
+.g-most-likely-to .g-most-likely-to-card > p {
+  margin-top: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.g-most-likely-to .g-most-likely-to-count {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-top: 4px;
+  border-radius: 50%;
+  font-size: 34px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #5e8bff;
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  animation: g-most-likely-to-beat 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.4);
+}
+@keyframes g-most-likely-to-beat {
+  from {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+.g-most-likely-to .g-most-likely-to-point {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  animation: g-most-likely-to-beat 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.4);
+}
+.g-most-likely-to .g-most-likely-to-point b {
+  padding: 6px 18px;
+  border-radius: 999px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #5e8bff;
+  background: #fff;
+}
+.g-most-likely-to .g-most-likely-to-point p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  opacity: 0.9;
+}
+.g-most-likely-to .g-most-likely-to-count-note {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(245, 245, 247, 0.5);
+}

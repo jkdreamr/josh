@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 const root = join(import.meta.dirname, '..', 'src', 'os', 'arcade', 'games');
-const categories = ['arcade', 'puzzle', '3d', 'multiplayer'];
+const categories = ['arcade', 'puzzle', '3d', 'multiplayer', 'party', 'drinking'];
 const folders = existsSync(root) ? readdirSync(root).filter((f) => statSync(join(root, f)).isDirectory()) : [];
 
 function walk(dir: string): string[] {
@@ -61,7 +61,7 @@ for (const folder of folders) {
       assert.ok(typeof meta[k] === 'string' && meta[k].trim(), `meta.${k} must be a non-empty string`);
     assert.ok(categories.includes(meta.category), `category must be one of ${categories.join(', ')}`);
     assert.ok(Number.isFinite(meta.order), 'order must be a number');
-    assert.match(meta.players, /^\d(-\d)?P$/, "players looks like '1P' or '1-2P'");
+    assert.match(meta.players, /^\d{1,2}(-\d{1,2})?P$/, "players looks like '1P', '1-2P' or '3-20P'");
     assert.match(meta.glyph, /^[MmLlHhVvCcSsQqTtAaZz0-9.,\s-]+$/, 'glyph must be SVG path data');
     for (const k of ['title', 'blurb', 'controls']) assert.ok(!meta[k].includes('\u2014'), `meta.${k} must not contain an em dash`);
 

@@ -1,4 +1,4 @@
-export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer';
+export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer' | 'party' | 'drinking';
 
 /** Opt-in global leaderboard. The server uses it to validate submissions. */
 export type LeaderboardSpec = {
@@ -35,7 +35,7 @@ export type GameMeta = {
   /** One short sentence for the tile. */
   blurb: string;
   category: GameCategory;
-  /** e.g. '1P' or '1-2P' */
+  /** e.g. '1P', '1-2P' or '3-20P' */
   players: string;
   /** One-line how-to shown on the Start overlay. */
   controls: string;

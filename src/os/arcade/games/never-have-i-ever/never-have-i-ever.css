@@ -1,0 +1,36 @@
+.g-never-have-i-ever {
+  background:
+    radial-gradient(110% 70% at 50% -10%, color-mix(in srgb, #ff2d92 24%, #140d12) 0%, transparent 70%),
+    #0e0b0e;
+}
+.g-never-have-i-ever .g-never-have-i-ever-card {
+  cursor: pointer;
+}
+.g-never-have-i-ever .g-never-have-i-ever-lead {
+  font-size: 15px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.g-never-have-i-ever .g-never-have-i-ever-card strong {
+  margin-top: -6px;
+}
+.g-never-have-i-ever .g-never-have-i-ever-card p {
+  margin-top: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.g-never-have-i-ever .g-never-have-i-ever-count,
+.g-never-have-i-ever .g-never-have-i-ever-how {
+  margin: 0;
+  font-size: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: rgba(245, 245, 247, 0.5);
+}
+.g-never-have-i-ever .g-never-have-i-ever-how {
+  max-width: 340px;
+  align-self: center;
+  line-height: 1.45;
+}

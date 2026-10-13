@@ -9,6 +9,8 @@ export const categories: { id: GameCategory; label: string }[] = [
   { id: 'puzzle', label: 'Puzzles' },
   { id: '3d', label: '3D' },
   { id: 'multiplayer', label: 'Multiplayer' },
+  { id: 'party', label: 'Group Games' },
+  { id: 'drinking', label: 'Drinking Games' },
 ];
 
 const metaModules = import.meta.glob<MetaModule>(['./games/*/meta.ts', '!./games/_*/meta.ts'], { eager: true });

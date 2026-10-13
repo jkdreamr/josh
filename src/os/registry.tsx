@@ -46,7 +46,7 @@ export const apps: Record<AppId, AppDef> = {
   coffee: { id: 'coffee', title: 'Buy Me a Coffee', icon: 'coffee', Component: BuyMeACoffee, w: 380, h: 560, frame: 'overlay', dock: true, keywords: 'buy me a coffee tip support joshuakoo' },
   mail: { id: 'mail', title: 'Mail', icon: 'mail', Component: Mail, w: 580, h: 480, dock: true, keywords: 'email contact' },
   terminal: { id: 'terminal', title: 'Terminal', icon: 'terminal', Component: Terminal, w: 660, h: 420, theme: 'dark', frame: 'overlay', dock: true, keywords: 'shell zsh command line' },
-  arcade: { id: 'arcade', title: 'Arcade', icon: 'arcade', Component: Arcade, w: 920, h: 640, dock: false, keywords: 'arcade games play chrome://games leaderboards snake chess 2048 sudoku pong blocks' },
+  arcade: { id: 'arcade', title: 'Arcade', icon: 'arcade', Component: Arcade, w: 920, h: 640, dock: false, keywords: 'arcade games play chrome://games leaderboards snake chess 2048 sudoku pong blocks party group mafia imposter charades drinking kings cup' },
   coxbox: { id: 'coxbox', title: 'Cox Box', icon: 'coxbox', Component: CoxBox, w: 900, h: 620, theme: 'dark', dock: false, keywords: 'rowing stanford typing race regatta game multiplayer online wpm' },
   baduk: { id: 'baduk', title: 'Baduk', icon: 'baduk', Component: Baduk, w: 620, h: 680, theme: 'dark', dock: false, keywords: 'go baduk 바둑 board game strategy omok gomoku five in a row' },
   badminton: { id: 'badminton', title: 'Badminton', icon: 'badminton', Component: Badminton, w: 900, h: 560, theme: 'dark', dock: false, keywords: 'badminton shuttle racket court game sport' },
