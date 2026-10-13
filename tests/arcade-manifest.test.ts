@@ -13,6 +13,23 @@ function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? walk(join(dir, f)) : [join(dir, f)]));
 }
 
+/** Splits a selector list on its top-level commas, leaving the ones inside :is(), :not() and friends alone. */
+function splitSelectors(list: string) {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of list) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    if (ch === ',' && depth === 0) {
+      out.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
 /** Top-level selectors (inside @media/@supports too) and @keyframes names of a stylesheet. */
 function cssNames(css: string) {
   const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -30,7 +47,7 @@ function cssNames(css: string) {
         stack.push('frames');
       } else if (prelude.startsWith('@')) stack.push('group');
       else {
-        if (!inFrames && !stack.includes('rule')) selectors.push(...prelude.split(',').map((x) => x.trim()));
+        if (!inFrames && !stack.includes('rule')) selectors.push(...splitSelectors(prelude));
         stack.push('rule');
       }
     } else if (ch === '}') {

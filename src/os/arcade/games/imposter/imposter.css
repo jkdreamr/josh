@@ -1,53 +1,534 @@
+/* Imposter: a case file on a dark desk. Cream file cards with a tab, rubber stamps in red and blue ink, and Big
+   Shoulders Display for anything read across the table. Crew and imposter cards share one silhouette on purpose. */
+@font-face {
+  font-family: 'Big Shoulders Display';
+  font-style: normal;
+  font-weight: 500 900;
+  font-display: swap;
+  src: url('/fonts/big-shoulders-display.woff2') format('woff2');
+}
+
 .g-imposter {
-  background:
-    radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, #ff375f 22%, #141016) 0%, transparent 70%),
-    #0e0c10;
+  background: #131015;
 }
-.g-imposter .g-imposter-bad {
-  background:
-    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0 12px, transparent 12px 24px),
-    linear-gradient(160deg, #2a0f18, #120609);
-  box-shadow:
-    inset 0 0 0 1.5px #ff375f,
-    0 16px 30px -14px rgba(255, 55, 95, 0.5);
+.g-imposter .arcade-party {
+  --party-display: 'Big Shoulders Display', 'Bricolage Grotesque', Inter, system-ui, sans-serif;
+  /* A deeper stamp red than the tile pink, so white button text clears 4.5:1. */
+  --accent: #d6283f;
+  --g-imposter-paper: #f5efe3;
+  --g-imposter-ink: #1d1a16;
+  --g-imposter-pencil: #6b6157;
+  --g-imposter-red: #c41e3a;
+  --g-imposter-blue: #2346a8;
 }
-.g-imposter .g-imposter-bad strong {
-  color: #ff6b88;
+
+/* The condensed face runs small, so the kit's type steps up a size. */
+.g-imposter.arcade-shell .arcade-party-btn {
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
 }
-.g-imposter .g-imposter-word {
-  font-size: clamp(30px, 10cqmin, 46px);
+.g-imposter .arcade-party-title {
+  font-size: 38px;
+  letter-spacing: -0.01em;
+}
+.g-imposter .arcade-party-title.is-huge {
+  font-size: clamp(48px, 15cqmin, 76px);
+  line-height: 0.95;
+}
+.g-imposter .arcade-party-kicker {
+  margin-bottom: -6px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.g-imposter .arcade-party-how > button {
+  font-family: var(--party-display);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* Setup */
+.g-imposter .g-imposter-set {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
 }
 .g-imposter .g-imposter-note {
   margin: 0;
+  padding-left: 2px;
   font-size: 13px;
-  text-align: center;
-  color: rgba(245, 245, 247, 0.55);
+  line-height: 1.4;
+  color: var(--party-dim);
 }
+
+/* The case file: the kit's paper card with a folder tab on top. */
+.g-imposter .g-imposter-file {
+  margin-top: 30px;
+  padding: 22px 22px 20px;
+}
+.g-imposter .g-imposter-tab {
+  position: absolute;
+  bottom: calc(100% - 1px);
+  left: 18px;
+  max-width: calc(100% - 36px);
+  padding: 8px 16px 4px;
+  overflow: hidden;
+  border-radius: 10px 10px 0 0;
+  font-family: var(--party-display);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--g-imposter-pencil);
+  background: var(--g-imposter-paper);
+}
+.g-imposter .g-imposter-eyes {
+  align-self: stretch;
+  margin: 0 0 auto 4px;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--g-imposter-pencil);
+}
+.g-imposter .g-imposter-word {
+  max-width: 100%;
+  font-family: var(--party-display);
+  font-size: clamp(40px, 12.5cqmin, 64px);
+  font-weight: 800;
+  line-height: 0.95;
+  letter-spacing: -0.005em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  color: var(--g-imposter-ink);
+}
+.g-imposter .g-imposter-redact {
+  display: block;
+  width: min(15rem, 72cqw);
+  height: 0.66em;
+  margin: 0.14em auto;
+  border-radius: 3px;
+  background: var(--g-imposter-ink);
+  transform: rotate(-1.2deg);
+}
+.g-imposter .g-imposter-foot {
+  max-width: 32ch;
+  margin: auto 0 0;
+  padding-top: 6px;
+  font-size: 14px;
+  line-height: 1.4;
+  text-wrap: pretty;
+  color: #4d453c;
+}
+.g-imposter .g-imposter-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--party-dim);
+}
+.g-imposter .g-imposter-file .g-imposter-label {
+  color: var(--g-imposter-pencil);
+}
+
+/* Rubber stamp: a double rule, uneven ink, a few degrees off square. */
+.g-imposter .g-imposter-stamp {
+  --g-imposter-stamp: var(--g-imposter-red);
+  display: inline-block;
+  flex: none;
+  padding: 8px 14px 5px;
+  border: 3px solid var(--g-imposter-stamp);
+  border-radius: 8px;
+  font-family: var(--party-display);
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--g-imposter-stamp);
+  box-shadow:
+    inset 0 0 0 2px var(--g-imposter-paper),
+    inset 0 0 0 3.5px var(--g-imposter-stamp);
+  transform: rotate(-6deg);
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -6 4.4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -6 4.4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.g-imposter .g-imposter-stamp.is-blue {
+  --g-imposter-stamp: var(--g-imposter-blue);
+}
+.g-imposter .g-imposter-stamp.is-slam {
+  animation: g-imposter-slam 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+@keyframes g-imposter-slam {
+  0% {
+    opacity: 0;
+    transform: rotate(-15deg) scale(2.2);
+  }
+  55% {
+    opacity: 1;
+    transform: rotate(-5deg) scale(0.92);
+  }
+  78% {
+    transform: rotate(-6.5deg) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: rotate(-6deg) scale(1);
+  }
+}
+
+/* Clue round: shown to the whole table, so it reads from across it. */
 .g-imposter .g-imposter-order {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 6px;
-  max-width: 420px;
-  margin: 0;
+  gap: 8px;
+  max-width: 440px;
+  margin: 6px 0 0;
   padding: 0;
   list-style: none;
-  counter-reset: g-imposter-turn;
 }
 .g-imposter .g-imposter-order li {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 11px 0 4px;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  height: 38px;
+  padding: 0 14px 0 6px;
   border-radius: 999px;
-  font-size: 14px;
-  background: rgba(255, 255, 255, 0.07);
+  font-size: 15px;
+  background: var(--party-tile);
 }
-.g-imposter .g-imposter-order li:first-child {
-  background: color-mix(in srgb, #ff375f 30%, transparent);
-  box-shadow: inset 0 0 0 1px #ff375f;
+.g-imposter .g-imposter-order li b {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-family: var(--party-display);
+  font-size: 16px;
+  font-weight: 800;
+  background: rgba(255, 255, 255, 0.1);
 }
-.g-imposter .g-imposter-answer strong {
-  font-size: clamp(28px, 9cqmin, 40px);
+.g-imposter .g-imposter-order li span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.g-imposter .g-imposter-order li.is-first {
+  font-weight: 600;
+  color: var(--on-accent, #fff);
+  background: var(--accent);
+}
+.g-imposter .g-imposter-order li.is-first b {
+  background: rgba(0, 0, 0, 0.24);
+}
+.g-imposter .g-imposter-talk .g-imposter-note {
+  max-width: 34ch;
+  font-size: 15px;
+  text-align: center;
+  text-wrap: balance;
+}
+.g-imposter.arcade-shell .g-imposter-link {
+  min-height: 44px;
+  margin-top: -6px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+  color: var(--party-accent-text);
+  background: none;
+}
+@media (hover: hover) {
+  .g-imposter.arcade-shell .g-imposter-link:hover {
+    color: var(--party-ink);
+  }
+}
+
+/* Vote: Back stays small so a long name fits on the button that names who's going out. */
+.g-imposter .g-imposter-vote .arcade-party-row > :first-child {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 0 24px;
+}
+
+/* Verdict: the accused's file, then the stamp. */
+.g-imposter .g-imposter-verdict .g-imposter-file {
+  cursor: pointer;
+}
+.g-imposter .g-imposter-file.is-hit {
+  animation: g-imposter-jolt 0.24s 0.15s ease-out;
+}
+/* Two copies of one keyframe so every drum hit restarts the nudge. */
+.g-imposter .g-imposter-file.is-beat-a {
+  animation: g-imposter-beat-a 0.18s ease-out;
+}
+.g-imposter .g-imposter-file.is-beat-b {
+  animation: g-imposter-beat-b 0.18s ease-out;
+}
+@keyframes g-imposter-beat-a {
+  35% {
+    transform: scale(1.012);
+  }
+}
+@keyframes g-imposter-beat-b {
+  35% {
+    transform: scale(1.012);
+  }
+}
+@keyframes g-imposter-jolt {
+  30% {
+    transform: translateY(4px) scale(0.99);
+  }
+  65% {
+    transform: translateY(-1px);
+  }
+}
+.g-imposter .g-imposter-name {
+  max-width: 100%;
+  font-family: var(--party-display);
+  font-size: clamp(40px, 12cqmin, 60px);
+  font-weight: 800;
+  line-height: 0.95;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  color: var(--g-imposter-ink);
+}
+.g-imposter .g-imposter-slot {
+  display: grid;
+  place-items: center;
+  min-height: 56px;
+}
+.g-imposter .g-imposter-ruling {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.g-imposter .g-imposter-line {
+  margin: 0;
+  font-family: var(--party-display);
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.05;
+  text-align: center;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.g-imposter .g-imposter-hold {
+  height: 55px;
+}
+.g-imposter .g-imposter-guard {
+  display: contents;
+}
+
+/* Done: who won, the case file, then the session's scores. */
+.g-imposter .g-imposter-result {
+  font-size: clamp(44px, 13cqmin, 64px);
+  line-height: 0.95;
+}
+.g-imposter .g-imposter-case {
+  min-height: 0;
+  flex: none;
+  gap: 4px;
+  padding: 24px 20px 20px;
+}
+.g-imposter .g-imposter-reveal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+.g-imposter .g-imposter-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+}
+.g-imposter .g-imposter-pair > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 8px;
+}
+.g-imposter .g-imposter-pair > div + div {
+  border-left: 1.5px dashed rgba(29, 26, 22, 0.28);
+}
+.g-imposter .g-imposter-pair .g-imposter-word {
+  font-size: clamp(28px, 8.5cqmin, 42px);
+}
+.g-imposter .g-imposter-culprits {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1.5px dashed rgba(29, 26, 22, 0.28);
+}
+.g-imposter .g-imposter-culprits ul {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 16px;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.g-imposter .g-imposter-culprits li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  font-family: var(--party-display);
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--g-imposter-ink);
+}
+.g-imposter .g-imposter-culprits li span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.g-imposter .g-imposter-culprits .g-imposter-stamp {
+  font-size: 20px;
+}
+/* When the room is only now finding out who it was, the name lands a beat after the file, then the stamp. */
+.g-imposter .g-imposter-culprits.is-news ul {
+  animation: g-imposter-surface 0.24s 0.35s ease-out both;
+}
+@keyframes g-imposter-surface {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.g-imposter .g-imposter-board {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-top: 6px;
+}
+.g-imposter .g-imposter-board .g-imposter-label {
+  padding-left: 2px;
+}
+.g-imposter .g-imposter-board .arcade-party-scores li {
+  min-height: 42px;
+  padding: 6px 14px 6px 8px;
+}
+.g-imposter .g-imposter-board .arcade-party-scores em {
+  font-family: var(--party-display);
+  font-size: 17px;
+  font-style: normal;
+  font-weight: 700;
+  color: var(--party-accent-text);
+}
+.g-imposter .g-imposter-board .arcade-party-scores b {
+  min-width: 2ch;
+  text-align: right;
+}
+/* Big Shoulders draws 1 as a bare stroke, so counts and tallies use the kit face. */
+.g-imposter .g-imposter-board .arcade-party-scores b,
+.g-imposter .g-imposter-board .arcade-party-scores em,
+.g-imposter .g-imposter-order li b,
+.g-imposter .arcade-party-timer b,
+.g-imposter .arcade-party-how li::before {
+  font-family: 'Bricolage Grotesque', Inter, system-ui, sans-serif;
+}
+.g-imposter .arcade-party-avatar {
+  font-weight: 800;
+}
+
+/* Short windows (the 540x400 laptop window, phones on their side): tighter files, no decorative avatars. */
+@container arcade-party (max-height: 480px) {
+  .g-imposter .arcade-party-title {
+    font-size: 30px;
+  }
+  .g-imposter .arcade-party-title.is-huge,
+  .g-imposter .g-imposter-result {
+    font-size: 40px;
+  }
+  .g-imposter .arcade-party-kicker {
+    font-size: 17px;
+  }
+  .g-imposter .g-imposter-file {
+    margin-top: 26px;
+    padding: 14px 18px 14px;
+  }
+  .g-imposter .g-imposter-word,
+  .g-imposter .g-imposter-name {
+    font-size: 38px;
+  }
+  .g-imposter .g-imposter-foot {
+    padding-top: 2px;
+    font-size: 13px;
+  }
+  .g-imposter .g-imposter-stamp {
+    font-size: 20px;
+  }
+  .g-imposter .g-imposter-slot {
+    min-height: 44px;
+  }
+  .g-imposter .g-imposter-line {
+    font-size: 24px;
+  }
+  .g-imposter .g-imposter-hold {
+    height: 47px;
+  }
+  .g-imposter .g-imposter-talk > .arcade-party-body > .arcade-party-avatar,
+  .g-imposter .g-imposter-verdict .arcade-party-avatar,
+  .g-imposter .g-imposter-talk .arcade-party-kicker {
+    display: none;
+  }
+  .g-imposter .g-imposter-order li {
+    height: 32px;
+    font-size: 14px;
+  }
+  .g-imposter .g-imposter-order li b {
+    width: 22px;
+    height: 22px;
+    font-size: 13px;
+  }
+  .g-imposter .g-imposter-talk .g-imposter-note {
+    font-size: 14px;
+  }
+  /* The case file turns sideways, so the word and the imposter both clear the fold. */
+  .g-imposter .g-imposter-case {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    align-items: center;
+    padding: 16px 16px 14px;
+  }
+  .g-imposter .g-imposter-case .g-imposter-culprits {
+    margin: 0;
+    padding: 0 0 0 12px;
+    border-top: 0;
+    border-left: 1.5px dashed rgba(29, 26, 22, 0.28);
+  }
+  .g-imposter .g-imposter-case .g-imposter-word {
+    font-size: 34px;
+  }
+  .g-imposter .g-imposter-case .g-imposter-pair .g-imposter-word {
+    font-size: 26px;
+  }
+  .g-imposter .g-imposter-culprits li {
+    font-size: 22px;
+  }
 }

@@ -592,11 +592,14 @@
   opacity: 0.32;
   pointer-events: none;
 }
-.arcade-party-picks span {
+.arcade-party-picks span:not(.arcade-party-avatar) {
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 /* Score rows (teams, tallies) */
