@@ -142,7 +142,7 @@ Baduk (Go and Omok) and Badminton are desktop apps, not arcade games, but they s
 
 ## Online Rooms
 
-`online: { seats }` adds Play Online to the Start card: create a room, share the four character code or link, and the host starts. There are two kinds:
+`online: { seats }` adds Play Online to the Start card (and to the Pause and solo Game Over cards, which drop the round in progress): create a room, share the four character code or link, and the host starts. There are two kinds:
 
 - **Match** (`online: { seats: 2 }`): players play each other. The game reads `useOnline()` for its seat, sends moves with `send()`, listens with `onMessage()` and calls `reportResult(round, winnerSeat)` when a round ends. Chess, Connect Four, Checkers, Pong, Air Hockey, Light Cycles and Cox Box work this way.
 - **Race** (`online: { seats: 4, race: true }`): every player runs their own round at the same time and the best score wins. No game code is needed: the shell collects each player's `gameOver` score, shows the standings on the Game Over card and reports the winner. Use it for games with one comparable score (a `leaderboard` without `variants`).
