@@ -1355,9 +1355,9 @@ function StatsPanel() {
       </div>
     );
   const rows = [
-    { key: 'visits', label: 'Visits', hint: 'every load and refresh', value: summary.views[period], icon: STAT_ICONS.visits },
-    { key: 'games', label: 'Games Played', hint: 'every round, every game', value: summary.plays[period], icon: STAT_ICONS.games },
-    { key: 'visitors', label: 'Visitors', hint: 'different people', value: summary.visitors[period], icon: STAT_ICONS.visitors },
+    { key: 'visits', label: 'Visits', value: summary.views[period], icon: STAT_ICONS.visits },
+    { key: 'games', label: 'Games Played', value: summary.plays[period], icon: STAT_ICONS.games },
+    { key: 'visitors', label: 'Visitors', value: summary.visitors[period], icon: STAT_ICONS.visitors },
   ];
   const top = summary.top[period];
   const most = top[0]?.plays || 1;
@@ -1366,9 +1366,9 @@ function StatsPanel() {
     <>
       <div className="st-head">
         <b>Stats</b>
-        <span className="st-live">
+        <span className="st-live" title="People with the site open right now">
           <i />
-          Live
+          {summary.online === undefined ? 'Live' : `${formatCount(summary.online)} online now`}
         </span>
       </div>
       <div className="st-seg" role="group" aria-label="Period">
@@ -1384,10 +1384,7 @@ function StatsPanel() {
             <span className="st-icon">
               <StatGlyph d={r.icon} size={15} />
             </span>
-            <span className="st-label">
-              <b>{r.label}</b>
-              <small>{r.hint}</small>
-            </span>
+            <span className="st-label">{r.label}</span>
             <span className="st-num">{formatCount(r.value)}</span>
           </div>
         ))}

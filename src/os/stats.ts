@@ -7,6 +7,9 @@ export { formatCount, PERIODS, type StatsPeriod, type StatsSummary, type TopGame
 const VISITOR_KEY = 'stats:visitor';
 /** Coming back to the tab after this long away is a new visit. */
 const RETURN_MS = 30 * 60 * 1000;
+/** Keeps the online socket from idling out, like the arcade rooms do. */
+const KEEPALIVE_MS = 25_000;
+const RETRY_MAX_MS = 5 * 60 * 1000;
 
 let visitor: string | null = null;
 
@@ -47,13 +50,56 @@ export function countPlay(game: string) {
   if (isGameId(game)) send('/stats/play', { game, visitor: visitorId() });
 }
 
+/** Holds one socket open to the Worker while the site is open, so this visitor counts as online. Reconnects after drops. */
+function stayOnline() {
+  if (!ARCADE_API || typeof WebSocket === 'undefined') return;
+  let socket: WebSocket | null = null;
+  let retries = 0;
+  let retryTimer = 0;
+  const connect = () => {
+    window.clearTimeout(retryTimer);
+    if (socket) return;
+    let url: URL;
+    try {
+      url = new URL(ARCADE_API);
+    } catch {
+      return;
+    }
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/stats/live`;
+    url.search = new URLSearchParams({ visitor: visitorId() }).toString();
+    const ws = new WebSocket(url);
+    let keepAlive = 0;
+    socket = ws;
+    ws.addEventListener('open', () => {
+      retries = 0;
+      keepAlive = window.setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send('ping');
+      }, KEEPALIVE_MS);
+    });
+    ws.addEventListener('close', () => {
+      window.clearInterval(keepAlive);
+      socket = null;
+      retryTimer = window.setTimeout(connect, Math.min(RETRY_MAX_MS, 2000 * 2 ** retries++));
+    });
+  };
+  connect();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) connect();
+  });
+}
+
 let watching = false;
 
-/** Counts this page load (a refresh is a new load), a back/forward restore, and a return to the tab after half an hour away. */
+/**
+ * Counts this page load (a refresh is a new load), a back/forward restore, and a return to the tab after half an hour away,
+ * and keeps the visitor counted as online while the site is open in any tab.
+ */
 export function watchVisits(countNow = true) {
   if (watching || typeof window === 'undefined') return;
   watching = true;
   if (countNow) countView();
+  stayOnline();
   let hiddenAt = document.hidden ? Date.now() : 0;
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
@@ -110,7 +156,7 @@ function refreshStats() {
 }
 
 /** Site-wide totals. Fetches when mounted and every `pollMs` while mounted. */
-export function useStats(pollMs = 15_000): StatsStore & { refresh: () => void } {
+export function useStats(pollMs = 10_000): StatsStore & { refresh: () => void } {
   const snapshot = useSyncExternalStore(subscribe, () => store, () => initialStore);
   useEffect(() => {
     refreshStats();

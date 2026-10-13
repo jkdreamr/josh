@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { validateSubmission, TOP, type BoardEntry } from '../../src/os/arcade/kit/leaderboard-core.ts';
 import type { LeaderboardSpec } from '../../src/os/arcade/types.ts';
 import { cleanName, nameLength } from '../../src/os/arcade/kit/leaderboard-core.ts';
-import { dayKey, KEEP_DAYS, MAX_GAMES, parseHit, periodStarts, shiftDay, TOP_GAMES, type StatsHit, type StatsSummary, type TopGame } from '../../src/os/stats-core.ts';
+import { dayKey, isVisitorId, KEEP_DAYS, MAX_GAMES, parseHit, periodStarts, shiftDay, TOP_GAMES, type StatsHit, type StatsSummary, type TopGame } from '../../src/os/stats-core.ts';
 import { cleanText, isSession, readIndex, webhookSecret, type TgUpdate } from '../../src/os/chat-core.ts';
 import { Chat, type ChatEnv } from './chat';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
@@ -21,6 +21,9 @@ const RATE_LIMIT = 6;
 const RATE_WINDOW_MS = 60_000;
 /** Generous on purpose: a whole classroom behind one IP refreshing and replaying should all count. */
 const STATS_RATE_LIMIT = 240;
+/** Open tabs allowed per IP and in total, so a script can't fake a crowd or exhaust the object. */
+const LIVE_PER_IP = 200;
+const LIVE_MAX = 20_000;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -302,9 +305,12 @@ export class Room extends DurableObject<Env> {
   }
 }
 
+type LiveAttachment = { visitor: string; ip: string };
+
 /**
  * Site-wide counters. `daily` holds per-day counts for the rolling windows (key '' is the total, otherwise a game id),
  * `totals` holds all time counts, and visitors are anonymous ids the browser keeps in localStorage.
+ * Every open tab also holds a hibernating WebSocket here, so "online now" is the number of distinct visitors connected.
  */
 export class Stats extends DurableObject<Env> {
   private readonly hits = new Map<string, number[]>();
@@ -317,6 +323,32 @@ export class Stats extends DurableObject<Env> {
     sql.exec('CREATE TABLE IF NOT EXISTS totals (kind TEXT NOT NULL, key TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (kind, key))');
     sql.exec('CREATE TABLE IF NOT EXISTS visitors (id TEXT PRIMARY KEY, first TEXT NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS visitor_days (day TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (day, id))');
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
+  }
+
+  /** `GET /stats/live?visitor=…`: a socket the site keeps open while it is on screen or in a background tab. */
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ error: 'websocket upgrade required' }, 400);
+    const visitor = new URL(request.url).searchParams.get('visitor');
+    if (!isVisitorId(visitor)) return json({ error: 'invalid visitor' }, 400);
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+    const live = this.liveAttachments();
+    if (live.length >= LIVE_MAX || live.filter((a) => a.ip === ip).length >= LIVE_PER_IP) return json({ error: 'too many connections' }, 429);
+    const pair = new WebSocketPair();
+    const server = pair[1];
+    server.serializeAttachment({ visitor, ip } satisfies LiveAttachment);
+    this.ctx.acceptWebSocket(server);
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  /** The site only sends 'ping', which the auto-response answers without waking this object. */
+  async webSocketMessage() {}
+
+  private liveAttachments(): LiveAttachment[] {
+    return this.ctx.getWebSockets()
+      .filter((socket) => socket.readyState === WebSocket.OPEN)
+      .map((socket) => socket.deserializeAttachment() as LiveAttachment | null)
+      .filter((value): value is LiveAttachment => !!value);
   }
 
   /** Counts one visit or one game. False when the IP is over the rate limit. */
@@ -361,6 +393,7 @@ export class Stats extends DurableObject<Env> {
         TOP_GAMES,
       ).toArray();
     return {
+      online: new Set(this.liveAttachments().map((a) => a.visitor)).size,
       views: counts('view'),
       plays: counts('play'),
       visitors: {
@@ -423,6 +456,9 @@ export default {
       } catch {
         return withCors(json({ error: 'unavailable' }, 503));
       }
+    }
+    if (url.pathname === '/stats/live' && request.method === 'GET') {
+      return withCors(await env.STATS.get(env.STATS.idFromName('global')).fetch(request));
     }
     const statsPath = /^\/stats\/(view|play)$/.exec(url.pathname);
     if (statsPath && request.method === 'POST') {
