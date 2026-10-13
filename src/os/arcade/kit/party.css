@@ -171,6 +171,9 @@
 .arcade-shell .arcade-party-btn.is-primary:active {
   box-shadow: 0 1px 0 var(--party-accent-edge);
 }
+.arcade-shell .arcade-party .arcade-btn-primary {
+  color: var(--on-accent, #fff);
+}
 .arcade-shell .arcade-party-btn:disabled {
   opacity: 0.38;
   pointer-events: none;

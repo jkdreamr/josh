@@ -30,7 +30,7 @@ export const RULE_TEXT_MAX = 140;
 /** Longest rule a jack can make. */
 export const MADE_RULE_MAX = 80;
 
-/** Index 0 is the ace, 12 the king. */
+/** Index 0 is the ace, 12 the king. Each one is short enough to read out in one breath. */
 export const CLASSIC_RULES: readonly Rule[] = [
   { name: 'Waterfall', text: 'Everyone drinks, starting with you. Nobody stops until the person before them does.' },
   { name: 'You', text: 'Pick someone to drink.' },
@@ -39,13 +39,62 @@ export const CLASSIC_RULES: readonly Rule[] = [
   { name: 'Guys', text: 'Guys drink.' },
   { name: 'Girls', text: 'Girls drink.' },
   { name: 'Heaven', text: 'Last to point up drinks.' },
-  { name: 'Mate', text: 'Pick a mate. They drink whenever you do, for the rest of the game.' },
+  { name: 'Mate', text: 'Pick a mate. They drink whenever you do, all game.' },
   { name: 'Rhyme', text: 'Say a word. Go around rhyming with it. First to miss drinks.' },
-  { name: 'Categories', text: 'Pick a category. Go around naming things in it. First to miss drinks.' },
-  { name: 'Make a Rule', text: 'Make a rule everyone follows until the game ends. Break it, drink.' },
-  { name: 'Questions', text: "You're the Question Master. Anyone who answers your question drinks, until the next queen." },
-  { name: 'Kings Cup', text: 'Pour some of your drink into the cup. Whoever draws the fourth king drinks it all.' },
+  { name: 'Categories', text: 'Name a category. Go around naming things in it. First to blank drinks.' },
+  { name: 'Make a Rule', text: 'Make a rule that lasts all game. Anyone who breaks it drinks.' },
+  { name: 'Questions', text: "You're Question Master until the next queen. Anyone who answers your question drinks." },
+  { name: 'Kings Cup', text: 'Pour a splash into the cup. Whoever pulls the fourth king drinks it.' },
 ];
+
+/** Well-known rules a table can swap onto any card in the house rules. */
+export const ALTERNATE_RULES: readonly Rule[] = [
+  { name: 'Thumb Master', text: 'Thumb on the table any time, until the next one. Last to copy you drinks.' },
+  { name: 'Snake Eyes', text: 'Until the next one, anyone who looks you in the eye drinks.' },
+  { name: 'Social', text: 'Everyone drinks.' },
+  { name: 'Never Have I Ever', text: "Say something you've never done. Everyone who has, drinks." },
+  { name: 'Most Likely To', text: "Ask who's most likely to do something. Everyone points on three. Most fingers drinks." },
+  { name: 'Would You Rather', text: 'Ask a would you rather. The smaller side drinks.' },
+  { name: 'Thumb War', text: 'Pick someone for a thumb war. Loser drinks.' },
+  { name: 'Accents', text: 'Talk in an accent until your next turn. Slip up, drink.' },
+];
+
+/**
+ * Rules the game keeps track of. They follow the rule's name, not the card, so moving Mate onto a five or swapping
+ * the eight for Thumb Master moves what the table shows with it.
+ */
+export type RuleKind = 'mate' | 'make' | RoleKind;
+/** Rules someone holds until the next card with the same rule. */
+export type RoleKind = 'questions' | 'thumb' | 'snake';
+export const ROLE_TITLES: Record<RoleKind, string> = { questions: 'Question Master', thumb: 'Thumb Master', snake: 'Snake Eyes' };
+const KIND_NAMES: Record<RuleKind, readonly string[]> = {
+  mate: ['mate', 'mates', 'pick a mate', 'drinking buddy'],
+  make: ['make a rule', 'rule', 'rules', 'new rule', 'rule maker'],
+  questions: ['questions', 'question master', 'question'],
+  thumb: ['thumb master', 'thumbs', 'thumb'],
+  snake: ['snake eyes'],
+};
+const squash = (s: string) =>
+  s
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N} ]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** What the game tracks for a rule, from its name. Null for rules that are over once they're read out. */
+export function ruleKind(rule: Rule | undefined): RuleKind | null {
+  if (!rule) return null;
+  const n = squash(rule.name);
+  for (const kind of Object.keys(KIND_NAMES) as RuleKind[]) if (KIND_NAMES[kind].includes(n)) return kind;
+  return null;
+}
+export const isRole = (kind: RuleKind | null): kind is RoleKind => kind === 'questions' || kind === 'thumb' || kind === 'snake';
+
+/** The first rank (1 to 13) whose rule is of this kind, or null. */
+export function rankOfKind(rules: readonly Rule[], kind: RuleKind): number | null {
+  const i = rules.findIndex((r) => ruleKind(r) === kind);
+  return i < 0 ? null : i + 1;
+}
 
 /** Trims, folds whitespace, drops control characters and caps the length of typed text. */
 export function tidy(raw: string, max: number): string {
@@ -134,6 +183,8 @@ export function addMate(pairs: readonly Pair[], a: number, b: number): Pair[] {
 
 // The game ------------------------------------------------------------------------------------------------------
 
+export type Role = { kind: RoleKind; seat: number | null; card: Card };
+
 export type Game = {
   /** The cards around the cup, slot 0 at the top, going clockwise. Null once drawn. */
   ring: (Card | null)[];
@@ -146,10 +197,12 @@ export type Game = {
   seats: number;
   /** The seat that draws next. */
   turn: number;
-  /** Whoever drew the most recent queen (seat is null without names). */
-  master: { seat: number | null; card: Card } | null;
+  /** Who holds each role (Question Master and the like), in the order they first came up. Seat is null without names. */
+  roles: Role[];
+  /** Who drew each king, in order (null without names). */
+  kingSeats: (number | null)[];
   mates: Pair[];
-  /** Rules made with jacks. */
+  /** Rules the table made (Make a Rule), in order. */
   made: string[];
   over: boolean;
 };
@@ -164,7 +217,8 @@ export function newGame(seats: number, rng: Rng = Math.random, first = 0): Game 
     last: -1,
     seats: n,
     turn: n > 0 ? ((Math.floor(first) % n) + n) % n : 0,
-    master: null,
+    roles: [],
+    kingSeats: [],
     mates: [],
     made: [],
     over: false,
@@ -215,11 +269,18 @@ export type Drawn = {
   last: boolean;
 };
 
+/** The roles with `kind` handed to whoever drew `card`: a new holder takes over the same spot in the list. */
+function handRole(roles: readonly Role[], role: Role): Role[] {
+  const i = roles.findIndex((r) => r.kind === role.kind);
+  return i < 0 ? [...roles, role] : roles.map((r, k) => (k === i ? role : r));
+}
+
 /**
- * Draws the card in `slot`, or the next one clockwise when that slot is empty or not given.
+ * Draws the card in `slot`, or the next one clockwise when that slot is empty or not given. `rules` decide which
+ * cards hand out a role (the classic rules make the queen the Question Master).
  * Returns null once the game is over or the ring is empty.
  */
-export function draw(g: Game, slot?: number): { game: Game; drawn: Drawn } | null {
+export function draw(g: Game, slot?: number, rules: readonly Rule[] = CLASSIC_RULES): { game: Game; drawn: Drawn } | null {
   if (g.over) return null;
   const i = slot !== undefined && g.ring[slot] ? slot : nextSlot(g);
   const card = i >= 0 ? g.ring[i] : null;
@@ -229,6 +290,7 @@ export function draw(g: Game, slot?: number): { game: Game; drawn: Drawn } | nul
   const seat = g.seats > 0 ? g.turn : null;
   const kings = g.kings + (card.rank === 13 ? 1 : 0);
   const last = card.rank === 13 && kings >= LAST_KING;
+  const kind = ruleKind(ruleFor(rules, card.rank));
   const game: Game = {
     ...g,
     ring,
@@ -236,13 +298,14 @@ export function draw(g: Game, slot?: number): { game: Game; drawn: Drawn } | nul
     kings,
     last: i,
     turn: nextSeat(g.turn, g.seats),
-    master: card.rank === 12 ? { seat, card } : g.master,
+    roles: isRole(kind) ? handRole(g.roles, { kind, seat, card }) : g.roles,
+    kingSeats: card.rank === 13 ? [...g.kingSeats, seat] : g.kingSeats,
     over: last || ring.every((c) => !c),
   };
   return { game, drawn: { card, slot: i, seat, kings, last } };
 }
 
-/** Adds a rule made with a jack. Blank rules are ignored. */
+/** Adds a rule the table made. Blank rules are ignored. */
 export function makeRule(g: Game, raw: string): Game {
   const text = tidy(raw, MADE_RULE_MAX);
   return text ? { ...g, made: [...g.made, text] } : g;
@@ -254,3 +317,12 @@ export function dropRule(g: Game, index: number): Game {
 
 /** How full the cup is, 0 to 1. */
 export const cupLevel = (kings: number) => Math.max(0, Math.min(1, kings / LAST_KING));
+
+/** 'second', 'fifth', '12th', '21st'. */
+export function nth(n: number): string {
+  const words = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+  if (n >= 1 && n <= words.length) return words[n - 1];
+  const tens = n % 100;
+  const suffix = tens >= 11 && tens <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th';
+  return `${n}${suffix}`;
+}

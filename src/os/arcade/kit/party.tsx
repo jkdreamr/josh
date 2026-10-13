@@ -156,7 +156,7 @@ export function Big({ children, onClick, primary, disabled, quiet, className }: 
 export const Row = ({ children }: { children: ReactNode }) => <div className="arcade-party-row">{children}</div>;
 
 /** A "How to play" toggle for a setup step: numbered rules that stay folded until someone asks. */
-export function HowToPlay({ steps, label = 'How to play' }: { steps: readonly ReactNode[]; label?: string }) {
+export function HowToPlay({ steps, label = 'How to Play' }: { steps: readonly ReactNode[]; label?: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="arcade-party-how">

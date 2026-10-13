@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mulberry32 } from '../src/os/arcade/kit/party-core.ts';
 import {
+  ALTERNATE_RULES,
   CLASSIC_RULES,
   DECK_SIZE,
   LAST_KING,
@@ -24,9 +25,12 @@ import {
   newGame,
   nextSeat,
   nextSlot,
+  nth,
   parseRules,
+  rankOfKind,
   rankLabel,
   ruleFor,
+  ruleKind,
   rulesEdited,
   setRule,
   slotAngle,
@@ -119,6 +123,12 @@ test('the fourth king ends the game and fills the cup', () => {
   assert.ok(steps.slice(0, -1).every((s) => !s.drawn.last));
   assert.equal(game.over, true);
   assert.equal(game.kings, 4);
+  assert.equal(game.kingSeats.length, 4);
+  assert.deepEqual(
+    game.kingSeats,
+    kings.map((k) => k.drawn.seat),
+    'every king remembers who drew it',
+  );
   assert.equal(draw(game), null, 'no draws after the fourth king');
   assert.equal(cardsLeft(game) + game.drawn.length, 52);
   assert.equal(cupLevel(0), 0);
@@ -151,16 +161,53 @@ test('a queen makes the drawer the Question Master until the next queen', () => 
   const q2: Card = { id: 2, rank: 12, suit: 'clubs' };
   let g = rigged([q1, card(5), q2], 3);
   g = draw(g)!.game;
-  assert.equal(g.master?.seat, 0);
-  assert.equal(g.master?.card.id, 1);
+  assert.deepEqual(g.roles, [{ kind: 'questions', seat: 0, card: q1 }]);
   g = draw(g)!.game;
-  assert.equal(g.master?.seat, 0, 'other cards leave the Question Master alone');
+  assert.equal(g.roles[0].seat, 0, 'other cards leave the Question Master alone');
   g = draw(g)!.game;
-  assert.equal(g.master?.seat, 2);
-  assert.equal(g.master?.card.id, 2);
+  assert.deepEqual(g.roles, [{ kind: 'questions', seat: 2, card: q2 }]);
   // Without names the card still records who to look for.
   const anon = draw(rigged([q1], 0))!.game;
-  assert.deepEqual(anon.master, { seat: null, card: q1 });
+  assert.deepEqual(anon.roles, [{ kind: 'questions', seat: null, card: q1 }]);
+});
+
+test('tracked rules follow the house rules, not the card', () => {
+  const rules = setRule(setRule(parseRules(null), 8, 'Thumb Master', 'Thumb on the table.'), 12, 'Social', 'Everyone drinks.');
+  assert.equal(ruleKind(ruleFor(rules, 8)), 'thumb');
+  assert.equal(ruleKind(ruleFor(rules, 12)), null);
+  assert.equal(rankOfKind(rules, 'mate'), null, 'nobody picks mates once the eight is something else');
+  assert.equal(rankOfKind(parseRules(null), 'mate'), 8);
+  assert.equal(rankOfKind(parseRules(null), 'make'), 11);
+  const e1: Card = { id: 1, rank: 8, suit: 'hearts' };
+  const q: Card = { id: 2, rank: 12, suit: 'clubs' };
+  const e2: Card = { id: 3, rank: 8, suit: 'spades' };
+  let g = rigged([e1, q, e2], 2);
+  g = draw(g, undefined, rules)!.game;
+  g = draw(g, undefined, rules)!.game;
+  assert.deepEqual(g.roles, [{ kind: 'thumb', seat: 0, card: e1 }], 'the queen is just Social now');
+  g = draw(g, undefined, rules)!.game;
+  assert.deepEqual(g.roles, [{ kind: 'thumb', seat: 0, card: e2 }], 'the next Thumb Master takes over');
+  // Names are matched loosely, and unrelated names that share a word don't count.
+  assert.equal(ruleKind({ name: ' question   MASTER! ', text: '' }), 'questions');
+  assert.equal(ruleKind({ name: 'Snake Eyes', text: '' }), 'snake');
+  assert.equal(ruleKind({ name: 'Mates', text: '' }), 'mate');
+  assert.equal(ruleKind({ name: 'Thumb War', text: '' }), null);
+  assert.equal(ruleKind({ name: 'Rhyme', text: '' }), null);
+  assert.equal(ruleKind(undefined), null);
+});
+
+test('every rule reads out in one breath', () => {
+  for (const rule of [...CLASSIC_RULES, ...ALTERNATE_RULES]) {
+    assert.ok(rule.name.length <= RULE_NAME_MAX, rule.name);
+    assert.ok(rule.text.length <= RULE_TEXT_MAX, rule.name);
+    assert.ok(rule.text.split(/\s+/).length <= 16, `${rule.name} is too long to read out: ${rule.text}`);
+    assert.ok(!/[\u2013\u2014!]/.test(rule.name + rule.text), `${rule.name} has a dash or an exclamation mark`);
+    assert.deepEqual(parseRules([rule])[0], rule, 'library rules survive the stored-rule cleanup');
+  }
+  const names = [...CLASSIC_RULES, ...ALTERNATE_RULES].map((r) => r.name.toLowerCase());
+  assert.equal(new Set(names).size, names.length, 'no duplicate names');
+  assert.equal(ruleKind(ALTERNATE_RULES.find((r) => r.name === 'Thumb Master')), 'thumb');
+  assert.equal(ruleKind(ALTERNATE_RULES.find((r) => r.name === 'Snake Eyes')), 'snake');
 });
 
 test('mates link up and chain', () => {
@@ -242,4 +289,8 @@ test('typed text is tidied: control characters dropped, whitespace folded, lengt
   assert.equal(tidy('  Thumb\u0000\u200b  Master\n ', 24), 'Thumb Master');
   assert.equal(tidy('\u2028\u2029', 10), '');
   assert.equal(tidy('abcdef', 3), 'abc');
+});
+
+test('ordinals read naturally', () => {
+  assert.deepEqual([1, 2, 3, 10, 11, 12, 13, 21, 22, 23, 101, 111].map(nth), ['first', 'second', 'third', 'tenth', '11th', '12th', '13th', '21st', '22nd', '23rd', '101st', '111th']);
 });
