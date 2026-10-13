@@ -2,7 +2,7 @@
 // around it. buildView (scene.ts) lays the road and walls and then hands a course's builder here the scene to fill.
 import type { T } from './gl';
 import type { CourseId } from './courses';
-import { LANDMARKS, fromMap, headingOf, locate, pointAt, type Track } from './track';
+import { LANDMARKS, fromMap, headingOf, locate, pointAt, type P2, type Track } from './track';
 import type { Race } from './logic';
 
 export type Three = typeof import('three');
@@ -216,6 +216,152 @@ export function makeCow(THREE: Three, geo: { box: T.BoxGeometry; ball: T.SphereG
   return { g, legs, head };
 }
 
+/** A round sandstone planter `r` meters across the middle, with a little tree and some flowers in it. */
+export function makePlanter(THREE: Three, geo: { ball: T.SphereGeometry; wheel: T.CylinderGeometry }, r: number, rand: () => number) {
+  const g = new THREE.Group();
+  const stone = new THREE.MeshLambertMaterial({ color: 0xe2c79c });
+  const add = (geom: T.BufferGeometry, mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+    const m = new THREE.Mesh(geom, mat);
+    m.position.set(x, y, z);
+    m.scale.set(sx, sy, sz);
+    g.add(m);
+    return m;
+  };
+  // the bowl with a lip round the top, and the soil in it
+  add(new THREE.CylinderGeometry(1, 0.86, 1, 20), stone, 0, 0.45, 0, r, 0.9, r);
+  add(geo.wheel, stone, 0, 0.92, 0, r * 1.06, 0.12, r * 1.06);
+  add(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x4a3423 }), 0, 0.95, 0, r * 0.9, 0.06, r * 0.9);
+  // flowers round the edge and a young oak in the middle
+  const bloom = [0xe8486a, 0xf6d24a, 0xf3f0ea, 0xb04ad8][Math.floor(rand() * 4)];
+  const flower = new THREE.MeshLambertMaterial({ color: bloom });
+  const leaf = new THREE.MeshLambertMaterial({ color: 0x4f8a3c, flatShading: true });
+  for (let k = 0; k < 9; k++) {
+    const a = (k / 9) * Math.PI * 2 + rand() * 0.3;
+    add(geo.ball, k % 3 ? leaf : flower, Math.cos(a) * r * 0.66, 1.05, Math.sin(a) * r * 0.66, 0.26, 0.2, 0.26);
+  }
+  add(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x6b4f37 }), 0, 1.7, 0, 0.12, 1.6, 0.12);
+  add(geo.ball, leaf, 0, 2.9, 0, r * 0.7, r * 0.6, r * 0.7);
+  add(geo.ball, leaf, r * 0.25, 3.4, -r * 0.1, r * 0.45, r * 0.4, r * 0.45);
+  return g;
+}
+
+/** What every bike shares: a thin wheel, a helmet, and the colors of frames, shirts and helmets to pick from. */
+export function bikeKit(THREE: Three) {
+  const lambert = (color: number) => new THREE.MeshLambertMaterial({ color });
+  return {
+    wheel: new THREE.TorusGeometry(0.34, 0.035, 6, 22),
+    dome: new THREE.SphereGeometry(1, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+    tire: lambert(0x222226),
+    steel: lambert(0x9aa0a6),
+    skin: lambert(0xd9a77f),
+    legs: lambert(0x2f3a55),
+    frames: [0x8c1515, 0x2d6fb7, 0x2f8a4a, 0xf2c230, 0x2a2a30, 0xe8e4dc].map(lambert),
+    shirts: [0x8c1515, 0xf3f0ea, 0x2b4c7e, 0x4f8a3c, 0x9a9a9e, 0xe07a2a].map(lambert),
+    helmets: [0xe53935, 0xffffff, 0x1e88e5, 0xfdd835, 0x43a047, 0xff7043, 0x8e24aa, 0x111111].map(lambert),
+  };
+}
+
+/**
+ * A bicycle facing +z, with a rider on it unless it is parked. `pedal(a)` turns the cranks to angle `a` and keeps
+ * the rider's feet on the pedals; `wheels` spin about x.
+ */
+export function makeBike(THREE: Three, geo: { box: T.BoxGeometry; ball: T.SphereGeometry }, kit: ReturnType<typeof bikeKit>, rand: () => number, rider = true) {
+  const g = new THREE.Group();
+  const pick = <M>(list: M[]) => list[Math.floor(rand() * list.length)];
+  const frame = pick(kit.frames);
+  /** A thin bar from (y0, z0) to (y1, z1), x to the side. */
+  const rod = (parent: T.Object3D, mat: T.Material, x: number, y0: number, z0: number, y1: number, z1: number, w = 0.05) => {
+    const m = new THREE.Mesh(geo.box, mat);
+    const len = Math.hypot(y1 - y0, z1 - z0);
+    m.scale.set(w, len, w);
+    m.position.set(x, (y0 + y1) / 2, (z0 + z1) / 2);
+    m.rotation.x = Math.atan2(z1 - z0, y1 - y0);
+    parent.add(m);
+    return m;
+  };
+  const wheels: T.Group[] = [];
+  for (const z of [-0.52, 0.52]) {
+    const w = new THREE.Group();
+    const tire = new THREE.Mesh(kit.wheel, kit.tire);
+    tire.rotation.y = Math.PI / 2;
+    w.add(tire);
+    rod(w, kit.steel, 0, -0.32, 0, 0.32, 0, 0.02);
+    rod(w, kit.steel, 0, 0, -0.32, 0, 0.32, 0.02);
+    w.position.set(0, 0.34, z);
+    wheels.push(w);
+    g.add(w);
+  }
+  // the frame: down tube, seat tube, top tube, stays and fork, then the bars and the saddle
+  const BB = [0.34, 0.04] as const;
+  rod(g, frame, 0, BB[0], BB[1], 0.86, 0.4);
+  rod(g, frame, 0, BB[0], BB[1], 0.9, -0.12);
+  rod(g, frame, 0, 0.86, -0.1, 0.88, 0.4);
+  rod(g, frame, 0, BB[0], BB[1], 0.34, -0.52, 0.035);
+  rod(g, frame, 0, 0.34, -0.52, 0.86, -0.1, 0.035);
+  rod(g, frame, 0, 0.88, 0.4, 0.34, 0.52, 0.045);
+  rod(g, kit.steel, 0, 0.88, 0.4, 1.02, 0.38, 0.04);
+  const bars = new THREE.Mesh(geo.box, kit.tire);
+  bars.scale.set(0.5, 0.04, 0.04);
+  bars.position.set(0, 1.02, 0.38);
+  const saddle = new THREE.Mesh(geo.box, kit.tire);
+  saddle.scale.set(0.14, 0.05, 0.26);
+  saddle.position.set(0, 0.94, -0.13);
+  g.add(bars, saddle);
+  // the cranks, with a pedal on each end
+  const cranks = new THREE.Group();
+  cranks.position.set(0, BB[0], BB[1]);
+  for (const side of [-1, 1]) {
+    rod(cranks, kit.steel, side * 0.08, 0, 0, side * 0.17, 0, 0.03);
+    const pedal = new THREE.Mesh(geo.box, kit.tire);
+    pedal.scale.set(0.1, 0.025, 0.07);
+    pedal.position.set(side * 0.12, side * 0.17, 0);
+    cranks.add(pedal);
+  }
+  g.add(cranks);
+  const legs: T.Mesh[] = [];
+  if (rider) {
+    // leaning on the bars: body from the saddle, head with a helmet, arms down to the grips
+    const body = new THREE.Group();
+    body.position.set(0, 0.98, -0.12);
+    body.rotation.x = 0.55;
+    const torso = new THREE.Mesh(geo.box, pick(kit.shirts));
+    torso.scale.set(0.36, 0.6, 0.22);
+    torso.position.y = 0.3;
+    const head = new THREE.Mesh(geo.ball, kit.skin);
+    head.scale.setScalar(0.13);
+    head.position.set(0, 0.76, 0.02);
+    const helmet = new THREE.Mesh(kit.dome, pick(kit.helmets));
+    helmet.scale.set(0.155, 0.13, 0.18);
+    helmet.position.set(0, 0.78, 0);
+    body.add(torso, head, helmet);
+    g.add(body);
+    for (const side of [-1, 1]) {
+      rod(g, torso.material as T.Material, side * 0.2, 1.44, 0.18, 1.03, 0.38, 0.08);
+      const leg = new THREE.Mesh(geo.box, kit.legs);
+      leg.scale.set(0.13, 1, 0.13);
+      legs.push(leg);
+      g.add(leg);
+    }
+  }
+  const HIP = [1.0, -0.12] as const;
+  const pedal = (a: number) => {
+    cranks.rotation.x = a;
+    legs.forEach((leg, n) => {
+      // each foot follows its pedal round, the leg stretched from the hip down to it
+      const side = n ? 1 : -1;
+      const py = BB[0] + Math.cos(a) * 0.17 * side;
+      const pz = BB[1] + Math.sin(a) * 0.17 * side;
+      const dy = py - HIP[0];
+      const dz = pz - HIP[1];
+      leg.scale.y = Math.hypot(dy, dz);
+      leg.position.set(side * 0.1, (HIP[0] + py) / 2, (HIP[1] + pz) / 2);
+      leg.rotation.x = Math.atan2(dz, dy);
+    });
+  };
+  pedal(rand() * Math.PI * 2);
+  return { g, wheels, pedal };
+}
+
 /** Each course's colors: light, grass, curbs, walls and the banner over the start. */
 export type Look = {
   fog: [number, number, number];
@@ -230,6 +376,8 @@ export type Look = {
   banner: string;
   /** The road surface: asphalt, or dirt out at the barn. */
   road: string;
+  /** The color of the joints between paving stones, for a paved road. */
+  joints?: string;
 };
 export const LOOKS: Record<CourseId, Look> = {
   palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE', road: '#4a4a52' },
@@ -237,6 +385,7 @@ export const LOOKS: Record<CourseId, Look> = {
   barn: { fog: [0xe9e4cf, 150, 720], sky: 0xfff4dd, ground: 0x6b7a44, sun: [0xfff0d0, 1.5], field: '#c9b26a', lawn: '#88ad59', curb: ['#efe6cf', '#9a3a28'], wall: '#f3efe4', band: '#9a3a28', banner: 'RED BARN', road: '#8f6f4d' },
   dish: { fog: [0xe6e0c8, 160, 760], sky: 0xfff6e6, ground: 0x7a7448, sun: [0xfff2d8, 1.55], field: '#cdb46c', lawn: '#b0a95e', curb: ['#f2efe6', '#5d7a3a'], wall: '#d9cfb8', band: '#5d7a3a', banner: 'THE DISH', road: '#5e5d62' },
   stadium: { fog: [0xe2e8ef, 170, 760], sky: 0xf4f8ff, ground: 0x5f7a4a, sun: [0xfff4e0, 1.55], field: '#c4b98a', lawn: '#5aa04a', curb: ['#f4f1ea', '#8c1515'], wall: '#ebe6db', band: '#8c1515', banner: 'STANFORD STADIUM', road: '#4c4c54' },
+  quad: { fog: [0xf1e3c6, 150, 700], sky: 0xfff4e0, ground: 0x8a7a55, sun: [0xffecc8, 1.55], field: '#d8c39a', lawn: '#7fae58', curb: ['#f4efe4', '#8c1515'], wall: '#efe0bf', band: '#8c1515', banner: 'MAIN QUAD', road: '#c9b089', joints: '#a08766' },
 };
 
 /** What a course's scenery builder gets: the scene, the track and shared helpers. */
@@ -1384,4 +1533,349 @@ function stadium(c: Scenery) {
   foothills(c, cx, cz, { x: cx - 200, z: cz - 420 });
 }
 
-export const SCENERY: Record<CourseId, (c: Scenery) => void> = { palm: campus, lake, barn, dish, stadium };
+/** Rodin's Burghers of Calais: six weary bronze figures in long robes, standing together on a low plinth. */
+function burghers(c: Scenery, x: number, z: number, ry: number) {
+  const { THREE, scene, geo, rand } = c;
+  const bronze = new THREE.MeshLambertMaterial({ color: 0x4a3f30, flatShading: true });
+  const robe = new THREE.CylinderGeometry(0.24, 0.42, 1, 7);
+  const g = new THREE.Group();
+  const plinth = new THREE.Mesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x6f6a62 }));
+  plinth.scale.set(6.4, 0.7, 4);
+  plinth.position.y = 0.35;
+  g.add(plinth);
+  for (const [fx, fz, turn] of [[-2.2, -0.9, 0.3], [-0.8, -1.1, -0.2], [0.7, -0.8, 0.5], [2.1, -1.0, -0.4], [-1.4, 0.8, 2.6], [1.3, 0.9, -2.8]]) {
+    const fig = new THREE.Group();
+    const body = new THREE.Mesh(robe, bronze);
+    body.scale.set(1, 1.7, 1);
+    body.position.y = 0.85;
+    const head = new THREE.Mesh(geo.ball, bronze);
+    head.scale.set(0.17, 0.2, 0.18);
+    head.position.set(0, 1.86, 0.06);
+    fig.add(body, head);
+    // arms hanging, raised to the head or held out in despair, each swung from the shoulder
+    for (const side of [-1, 1]) {
+      const shoulder = new THREE.Group();
+      shoulder.position.set(side * 0.3, 1.66, 0.05);
+      const lift = rand() < 0.35 ? 2.5 : rand() < 0.5 ? 0.9 : 0.12;
+      shoulder.rotation.set(-lift, 0, side * 0.12);
+      const arm = new THREE.Mesh(geo.box, bronze);
+      arm.scale.set(0.13, 0.72, 0.13);
+      arm.position.y = -0.36;
+      shoulder.add(arm);
+      fig.add(shoulder);
+    }
+    fig.position.set(fx, 0.7, fz);
+    fig.rotation.set((rand() - 0.5) * 0.12, turn, (rand() - 0.5) * 0.1);
+    fig.scale.setScalar(1.15);
+    g.add(fig);
+  }
+  g.position.set(x, 0, z);
+  g.rotation.y = ry;
+  scene.add(g);
+}
+
+/**
+ * The Main Quad: sandstone arcades with red tile roofs facing every path, with a covered colonnade over the road
+ * where it runs between them, Memorial Church's gold mosaic at the head of the quad, the round planted circles of the
+ * inner quad, Memorial Court with Rodin's Burghers of Calais, the Oval and Palm Drive out front, bikes parked in racks,
+ * and Hoover Tower and the foothills beyond.
+ */
+function quad(c: Scenery) {
+  const { THREE, scene, t, geo, rand, clear, dummy } = c;
+  const { cx, cz } = bounds(t);
+  const K = 1.25;
+  const at = (e: number, n: number) => fromMap(e * K, n * K);
+  const stone = new THREE.MeshLambertMaterial({ color: 0xe4cfa4 });
+  const tile = new THREE.MeshLambertMaterial({ color: 0xb4553a });
+  // the undersides of the arcade roofs, lit by the light bouncing up off the paving
+  const soffit = new THREE.MeshLambertMaterial({ color: 0xc9ae80, emissive: 0x6b5a40 });
+  type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number };
+  const columns: Item[] = [];
+  const blocks: Item[] = [];
+  const palms: { x: number; z: number; hgt: number }[] = [];
+
+  // the arcade front: a sandstone band with a round arch cut out of each bay, and the windows of the halls behind
+  const arches = texture(
+    THREE,
+    canvas(128, 96, (g) => {
+      g.fillStyle = '#e4cfa4';
+      g.fillRect(0, 0, 128, 96);
+      noise(g, 128, 96, 300, 0.1, false);
+      g.fillStyle = 'rgba(110,80,45,0.3)';
+      g.fillRect(0, 0, 128, 7);
+      g.strokeStyle = '#cfb07c';
+      g.lineWidth = 8;
+      g.beginPath();
+      g.arc(64, 96, 54, Math.PI, 0);
+      g.stroke();
+      g.globalCompositeOperation = 'destination-out';
+      g.beginPath();
+      g.arc(64, 96, 50, Math.PI, 0);
+      g.fill();
+      g.globalCompositeOperation = 'source-over';
+    }),
+  );
+  arches.wrapS = THREE.RepeatWrapping;
+  const archMat = new THREE.MeshLambertMaterial({ map: arches, alphaTest: 0.5, side: THREE.DoubleSide });
+  const windows = texture(
+    THREE,
+    canvas(64, 152, (g) => {
+      g.fillStyle = '#e4cfa4';
+      g.fillRect(0, 0, 64, 152);
+      noise(g, 64, 152, 300, 0.1, false);
+      g.fillStyle = 'rgba(110,80,45,0.35)';
+      g.fillRect(0, 0, 64, 6);
+      g.fillRect(0, 84, 64, 3);
+      // a window upstairs with its sill, and an arched doorway on the ground floor
+      g.fillStyle = '#d2b789';
+      g.fillRect(19, 26, 26, 44);
+      g.fillStyle = '#3a3330';
+      g.fillRect(22, 29, 20, 37);
+      g.fillStyle = '#5d6f7a';
+      g.fillRect(24, 31, 7, 15);
+      g.fillRect(33, 31, 7, 15);
+      g.fillStyle = '#3a2a22';
+      g.beginPath();
+      g.moveTo(20, 152);
+      g.lineTo(20, 112);
+      g.arc(32, 112, 12, Math.PI, 0);
+      g.lineTo(44, 152);
+      g.fill();
+    }),
+  );
+  windows.wrapS = THREE.RepeatWrapping;
+  const hallMat = [stone, stone, stone, stone, new THREE.MeshLambertMaterial({ map: windows }), new THREE.MeshLambertMaterial({ map: windows })];
+  const prism = new THREE.CylinderGeometry(1, 1, 1, 3);
+  prism.rotateY(Math.PI / 2);
+  prism.rotateZ(Math.PI / 2);
+  /** A geometry with its u texture coordinate run over `n` repeats. */
+  const tiled = <G extends T.BufferGeometry>(g: G, n: number) => {
+    const uv = g.getAttribute('uv');
+    for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * n);
+    return g;
+  };
+
+  const COL = 3.6;
+  /**
+   * An arcade with its front along a..b and its back toward (ox, oz): columns, the arched front, the walkway ceiling
+   * and a tile roof sloping down to the path. Behind it, unless `deep` is 0, a hall that deep and `tall` high, running
+   * on past the ends of the arcade by `past` (at a's end and b's end) to fill a corner.
+   */
+  const arcade = (a: P2, b: P2, ox: number, oz: number, deep: number, tall: number, past: [number, number] = [0, 0]) => {
+    let len = Math.hypot(b.x - a.x, b.z - a.z);
+    let [ux, uz] = [(b.x - a.x) / len, (b.z - a.z) / len];
+    // run a..b so that the group's +z points away from the path
+    if (-uz * ox + ux * oz < 0) [a, b, ux, uz, past] = [b, a, -ux, -uz, [past[1], past[0]]];
+    len = Math.hypot(b.x - a.x, b.z - a.z);
+    const bays = Math.max(2, Math.round(len / 4.2));
+    const bay = len / bays;
+    const g = new THREE.Group();
+    g.position.set((a.x + b.x) / 2, 0, (a.z + b.z) / 2);
+    g.rotation.y = Math.atan2(-uz, ux);
+    for (let k = 0; k <= bays; k++) {
+      const x = a.x + ux * k * bay;
+      const z = a.z + uz * k * bay;
+      columns.push({ x, y: COL / 2, z, sx: 0.3, sy: COL, sz: 0.3 });
+      blocks.push({ x, y: COL - 0.15, z, sx: 0.75, sy: 0.3, sz: 0.75, ry: g.rotation.y }, { x, y: 0.15, z, sx: 0.7, sy: 0.3, sz: 0.7, ry: g.rotation.y });
+    }
+    const band = 0.75 * bay;
+    const front = new THREE.Mesh(tiled(new THREE.PlaneGeometry(len, band), bays), archMat);
+    front.position.y = COL + band / 2;
+    const top = COL + band;
+    const ceiling = new THREE.Mesh(geo.box, soffit);
+    ceiling.scale.set(len, 0.35, 4.2);
+    ceiling.position.set(0, top - 0.17, 2.1);
+    const roof = new THREE.Mesh(geo.box, tile);
+    roof.scale.set(len + 0.6, 0.3, 4.9);
+    roof.position.set(0, top + 0.55, 2.2);
+    roof.rotation.x = -0.25;
+    g.add(front, ceiling, roof);
+    if (deep > 0) {
+      const long = len + past[0] + past[1];
+      const hall = new THREE.Mesh(tiled(new THREE.BoxGeometry(long, tall, deep), Math.max(1, Math.round(long / 4.2))), hallMat);
+      hall.position.set((past[1] - past[0]) / 2, tall / 2, 4.2 + deep / 2);
+      const ridge = new THREE.Mesh(prism, tile);
+      ridge.scale.set(long + 0.4, 3.4, deep * 0.6);
+      ridge.position.set(hall.position.x, tall + 1.55, 4.2 + deep / 2);
+      g.add(hall, ridge);
+    }
+    scene.add(g);
+    return { g, top };
+  };
+
+  // the arcades: one along the outside of every path, running on round the outside of each corner to meet the next
+  // and stopping short of the road on the inside of one (the church stands at the head of the quad and the Oval opens
+  // out in front, so none there). Where a path runs between two halls there is a colonnade on its other side too,
+  // and a roof right over the road.
+  const off = t.edge + 3.5;
+  const curvAt = (s: number) => t.curv[Math.floor((((s % t.length) + t.length) % t.length) / t.step) % t.n];
+  const legs: [number, number][] = [];
+  let from = -1;
+  for (let i = 0; i <= t.n; i++) {
+    const straight = i < t.n && Math.abs(t.curv[i]) < 0.03;
+    if (straight && from < 0) from = i;
+    if (!straight && from >= 0) {
+      legs.push([from * t.step, i * t.step]);
+      from = -1;
+    }
+  }
+  for (const [s0, s1] of legs) {
+    const mid = pointAt(t, (s0 + s1) / 2);
+    if (s1 - s0 < 10 || Math.abs(mid.z) > 80) continue;
+    const out = insideLoop(t, mid.x - mid.tz * (t.edge + 6), mid.z + mid.tx * (t.edge + 6)) ? -1 : 1;
+    const [ox, oz] = [-mid.tz * out, mid.tx * out];
+    const half = (s1 - s0) / 2;
+    // the front line, `along` meters from the middle of the path
+    const front = (along: number, side = out): P2 => ({ x: mid.x - mid.tz * side * off + mid.tx * along, z: mid.z + mid.tx * side * off + mid.tz * along });
+    // how far past the end of the path: round the outside of a bend to the corner, short of it on the inside
+    const bend = (s: number) => {
+      const c = curvAt(s);
+      return { reach: half + 1 / Math.max(0.02, Math.abs(c)) + (Math.sign(c) === out ? -off : off), outside: Math.sign(c) !== out };
+    };
+    const ends = [bend(s0 - 10), bend(s1 + 10)];
+    // as far as that goes toward each end without crowding the road
+    const span = ends.map(({ reach }, k) => {
+      let far = 0;
+      while (far < reach) {
+        const p = front((k ? 1 : -1) * (far + 1));
+        if (!clear(p.x, p.z, 2)) break;
+        far++;
+      }
+      return far;
+    });
+    const a = front(-span[0]);
+    const b = front(span[1]);
+    // the hall behind, as deep as fits before the next path, and on round an outside corner
+    let deep = 13;
+    const back = (p: P2) => clear(p.x + ox * (4.2 + deep), p.z + oz * (4.2 + deep), 1);
+    while (deep > 4 && ![a, b, front(0)].every(back)) deep -= 3;
+    const past = ends.map(({ outside }, k) => (outside && span[k] >= ends[k].reach - 1 ? 4.2 + deep : 0)) as [number, number];
+    arcade(a, b, ox, oz, deep > 4 ? deep : 0, 9 + rand() * 2.5, past);
+    const narrow = [-half, 0, half].some((along) => {
+      const p = front(along, -out);
+      return !clear(p.x - ox * 18, p.z - oz * 18, 0);
+    });
+    if (!narrow) continue;
+    const { g, top } = arcade(front(-half, -out), front(half, -out), -ox, -oz, 0, 0);
+    // the roof over the road, from one arcade to the other
+    const ceiling = new THREE.Mesh(geo.box, soffit);
+    ceiling.scale.set(2 * half, 0.45, 2 * off);
+    ceiling.position.set(0, top + 0.1, -off);
+    const cover = new THREE.Mesh(prism, tile);
+    cover.scale.set(2 * half + 0.6, 3.8, off * 1.35);
+    cover.position.set(0, top + 1.8, -off);
+    g.add(ceiling, cover);
+  }
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 10), stone, columns);
+  instances(THREE, scene, dummy, geo.box, stone, blocks);
+
+  // Memorial Church at the head of the quad, its gold mosaic looking down the paths
+  const church = makeChurch(THREE, geo.box);
+  const head = at(11, 150);
+  church.position.set(head.x, 0, head.z);
+  church.scale.setScalar(1.25);
+  scene.add(church);
+  for (const e of [-34, 56]) {
+    for (const n of [121, 135]) {
+      const p = at(e, n);
+      if (clear(p.x, p.z, 2)) palms.push({ x: p.x, z: p.z, hgt: 10 + rand() * 2 });
+    }
+  }
+
+  // the inner quad's round planted circles: a sandstone curb, a bed of green, shrubs and a palm in each
+  const bed = new THREE.MeshLambertMaterial({ color: 0x5f9a43 });
+  const curbs: Item[] = [];
+  const shrubs: Item[] = [];
+  for (const [e, n] of [[-66, 69], [-42, 69], [-18, 69], [6, 69], [30, 69], [54, 69], [-18, 44], [6, 44], [30, 44], [54, 44]]) {
+    const p = at(e, n);
+    const rr = Math.min(7.5, Math.abs(locate(t, p.x, p.z).d) - t.edge - 2.5);
+    if (rr < 4 || !clear(p.x, p.z, rr + 1.5)) continue;
+    curbs.push({ x: p.x, y: 0.2, z: p.z, sx: rr + 0.3, sy: 0.4, sz: rr + 0.3 });
+    const green = new THREE.Mesh(new THREE.CircleGeometry(rr, 28), bed);
+    green.rotation.x = -Math.PI / 2;
+    green.position.set(p.x, 0.41, p.z);
+    scene.add(green);
+    for (let k = 0; k < 10; k++) {
+      const a = (k / 10) * Math.PI * 2 + rand() * 0.3;
+      const d = rr * (0.45 + rand() * 0.35);
+      const sz = 0.6 + rand() * 0.6;
+      shrubs.push({ x: p.x + Math.cos(a) * d, y: 0.5 + sz * 0.4, z: p.z + Math.sin(a) * d, sx: sz, sy: sz * 0.8, sz, ry: a });
+    }
+    palms.push({ x: p.x, z: p.z, hgt: 8 + rand() * 4 });
+  }
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 28), stone, curbs);
+  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 7, 5), new THREE.MeshLambertMaterial({ color: 0x3f7a35, flatShading: true }), shrubs);
+
+  // Memorial Court: two lawns either side of the path in, the Burghers of Calais between them, palms at the corners
+  const lawn = new THREE.MeshLambertMaterial({ color: 0x79ad55 });
+  for (const [e, n, w, d] of [[-50, -68, 34, 26], [20, -68, 26, 26]]) {
+    const p = at(e, n);
+    if (![[-1, -1], [1, -1], [-1, 1], [1, 1]].every(([a, b]) => clear(p.x + (a * w) / 2, p.z + (b * d) / 2, 1))) continue;
+    const m = new THREE.Mesh(geo.plane, lawn);
+    m.rotation.x = -Math.PI / 2;
+    m.scale.set(w, d, 1);
+    m.position.set(p.x, 0.03, p.z);
+    scene.add(m);
+    for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) palms.push({ x: p.x + (a * (w / 2 - 2)), z: p.z + (b * (d / 2 - 2)), hgt: 9 + rand() * 3 });
+  }
+  const court = at(-14, -66);
+  burghers(c, court.x, court.z, Math.PI);
+
+  // bikes parked in racks along the court, the way they are outside every building on campus
+  const kit = bikeKit(THREE);
+  const rack = new THREE.MeshLambertMaterial({ color: 0x8e9398 });
+  for (const [e, n, count] of [[-60, -86, 4], [10, -86, 4], [-27, 56, 3]]) {
+    for (let k = 0; k < count; k++) {
+      const p = at(e + k, n);
+      if (!clear(p.x, p.z, 1)) continue;
+      const { g } = makeBike(THREE, geo, kit, rand, false);
+      g.position.set(p.x, 0, p.z);
+      g.rotation.y = (n < 0 ? 0 : Math.PI) + (rand() - 0.5) * 0.15;
+      scene.add(g);
+      const hoop = new THREE.Mesh(geo.box, rack);
+      hoop.scale.set(0.06, 0.8, 0.06);
+      hoop.position.set(p.x, 0.4, p.z + (n < 0 ? 0.6 : -0.6));
+      scene.add(hoop);
+    }
+  }
+
+  // the Oval out front with palms round it, and Palm Drive running away south
+  const oval = at(-14, -170);
+  const ovalLawn = new THREE.Mesh(new THREE.CircleGeometry(1, 40), lawn);
+  ovalLawn.rotation.x = -Math.PI / 2;
+  ovalLawn.scale.set(30, 22, 1);
+  ovalLawn.position.set(oval.x, 0.03, oval.z);
+  scene.add(ovalLawn);
+  for (let a = 0; a < Math.PI * 2; a += Math.PI / 8) {
+    const x = oval.x + Math.cos(a) * 33;
+    const z = oval.z + Math.sin(a) * 25;
+    if (clear(x, z, 2)) palms.push({ x, z, hgt: 8 + rand() * 3 });
+  }
+  for (let n = -200; n > -460; n -= 12) {
+    for (const side of [-1, 1]) {
+      const p = at(-14 + side * 9, n);
+      palms.push({ x: p.x, z: p.z, hgt: 9 + rand() * 3 });
+    }
+  }
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x9c7b58 }), palms.map((p) => ({ x: p.x, y: p.hgt / 2, z: p.z, sx: 1, sy: p.hgt, sz: 1 })));
+  instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x3f8a4c, side: THREE.DoubleSide }), palms.map((p, i) => ({ x: p.x, y: p.hgt + 0.2, z: p.z, sx: 1.1, sy: 1.1, sz: 1.1, ry: i * 1.3 })));
+
+  // campus beyond: oaks, Hoover Tower off to the east, and the foothills with the Dish
+  const spots: { x: number; z: number; r: number }[] = [];
+  for (let n = 0; spots.length < 110 && n < 3000; n++) {
+    const a = rand() * Math.PI * 2;
+    const dist = 175 + rand() * 300;
+    const x = cx + Math.cos(a) * dist;
+    const z = cz + Math.sin(a) * dist;
+    if (clear(x, z, 30) && Math.abs(x - oval.x) > 26) spots.push({ x, z, r: 2.6 + rand() * 3 });
+  }
+  oaks(c, spots);
+  const hoover = makeHoover(THREE, geo.box);
+  const tower = at(190, 30);
+  hoover.position.set(tower.x, 0, tower.z);
+  hoover.scale.setScalar(1.3);
+  scene.add(hoover);
+  foothills(c, cx, cz, { x: cx + 260, z: cz - 430 });
+}
+
+export const SCENERY: Record<CourseId, (c: Scenery) => void> = { palm: campus, lake, barn, dish, stadium, quad };

@@ -790,6 +790,13 @@ function Play({ mode }: { mode: Mode }) {
           sfx.tone({ freq: 128, to: 92, dur: 0.6, type: 'sawtooth', vol: 0.1, delay: 0.2 });
         }
         break;
+      case 'ding':
+        // the cyclist's bell: ding-ding
+        if (mine) {
+          sfx.tone({ freq: 2093, dur: 0.16, type: 'sine', vol: 0.12 });
+          sfx.tone({ freq: 2093, dur: 0.3, type: 'sine', vol: 0.12, delay: 0.13 });
+        }
+        break;
       case 'slam':
         if (mine) sfx.tone({ freq: 240, to: 120, dur: 0.14, type: 'sawtooth', vol: 0.12 });
         break;

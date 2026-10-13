@@ -2,8 +2,8 @@
 // three.js; the scene builds each course's scenery (scene.ts) and the logic races on its track (logic.ts).
 import { EDGE, HAZARD_R, ROAD_HALF, ROUTE, START, buildTrack, layout as palmLayout, wrapS, type HazardKind, type Layout, type Track } from './track.ts';
 
-export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium';
-export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium'];
+export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium' | 'quad';
+export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium', 'quad'];
 export const isCourse = (v: unknown): v is CourseId => COURSE_IDS.includes(v as CourseId);
 
 /** How hard a course is, for the picker: narrower roads, tighter bends and more in the way as it goes up. */
@@ -108,6 +108,49 @@ const STADIUM: [number, number][] = [
   [40, 62], [-30, 64], [-80, 86], [-104, 140],
   // round the plaza and back in
   [-119, 186], [-145, 201], [-175, 198], [-199, 179], [-208, 150], [-208, 90], [-204, 10], [-176, -46],
+];
+
+/**
+ * Straight legs joined by round corners: each corner [east, north] becomes an arc of radius r tangent to both legs,
+ * so a course can turn square corners that still drive smoothly.
+ */
+function squared(corners: [number, number][], r: number): [number, number][] {
+  const out: [number, number][] = [];
+  const n = corners.length;
+  for (let i = 0; i < n; i++) {
+    const [x, y] = corners[i];
+    const [px, py] = corners[(i - 1 + n) % n];
+    const [qx, qy] = corners[(i + 1) % n];
+    const la = Math.hypot(x - px, y - py);
+    const lb = Math.hypot(qx - x, qy - y);
+    const [ax, ay, bx, by] = [(x - px) / la, (y - py) / la, (qx - x) / lb, (qy - y) / lb];
+    // how far it turns (positive to the left), how far back from the corner the arc meets the leg in, and its middle
+    const turn = Math.atan2(ax * by - ay * bx, ax * bx + ay * by);
+    const back = r * Math.tan(Math.abs(turn) / 2);
+    const side = Math.sign(turn);
+    const cx = x - ax * back - ay * r * side;
+    const cy = y - ay * back + ax * r * side;
+    const from = Math.atan2(y - ay * back - cy, x - ax * back - cx);
+    // a point every 15 degrees keeps the spline on the arc
+    const steps = Math.max(1, Math.round(Math.abs(turn) / (Math.PI / 12)));
+    for (let k = 0; k <= steps; k++) out.push([cx + Math.cos(from + (turn * k) / steps) * r, cy + Math.sin(from + (turn * k) / steps) * r]);
+  }
+  return out;
+}
+
+/**
+ * The Main Quad: paths round the outside of the quad and in through the arcades, all square corners and short
+ * straights. Along the front of Memorial Court, up the east side and in round the inner quad, out again and up to
+ * the church, a chicane in front of its mosaic, then down the west side with another dog-leg through the arcades.
+ */
+const QUAD_K = 1.25;
+const QUAD: [number, number][] = [
+  // Memorial Court, and the dog-leg in round the east side of the inner quad
+  [-95, -100], [60, -100], [60, -40], [0, -40], [0, 20], [80, 20],
+  // up the east side to the head of the quad, and the chicane in front of the church
+  [80, 100], [44, 100], [26, 85], [-4, 85], [-22, 100],
+  // down the west side, with a dog-leg in through the arcades
+  [-95, 100], [-95, 40], [-40, 40], [-40, -20], [-95, -20],
 ];
 
 export const COURSES: Record<CourseId, Course> = {
@@ -294,6 +337,57 @@ export const COURSES: Record<CourseId, Course> = {
         ],
       }),
     sky: 'linear-gradient(180deg, #1f5fbf 0%, #5d9be0 25%, #b5d3f0 38%, #e6e2d4 44%, #c9bd8a 46%, #6f9a52 47%)',
+  },
+  quad: {
+    id: 'quad',
+    name: 'Main Quad',
+    blurb: 'Square corners round the sandstone arcades, a chicane at the church, and bikes everywhere. Tight and twisty.',
+    difficulty: 3,
+    route: squared(QUAD, 22).map(([e, n]) => [e * QUAD_K, n * QUAD_K]),
+    start: [-40 * QUAD_K, -100.6 * QUAD_K],
+    half: 6.5,
+    edge: 10,
+    layout: (t) =>
+      placed(t, {
+        boxes: [48, 350, 776],
+        coins: [
+          [14, 3, 5],
+          [107, 2.5, 4],
+          [168, 0, 4],
+          [207, -2.5, 4],
+          [276, -3, 5],
+          [382, 2, 4],
+          [430, -2, 5],
+          [552, 3, 4],
+          [632, -2, 4],
+          [700, 3, 4],
+          [808, -3, 4],
+        ],
+        dashes: [
+          [522, 0],
+          [852, -2],
+        ],
+        // a dash panel straight into a jump after the chicane, and a kicker down the west side
+        ramps: [
+          [540, 0, 8],
+          [803, 3.5, 5],
+        ],
+        hazards: [
+          // round planters with a tree in each, on the inside of the corners
+          ['planter', 118, -3],
+          ['planter', 224, 2.6],
+          ['planter', 457, 2.4],
+          ['planter', 588, -2.6],
+          ['planter', 684, 2.6],
+          // and cyclists riding across, back and forth between classes
+          ['bike', 66, 0, undefined, 5, 1.1, 0],
+          ['bike', 288, 0, undefined, 5, 1.2, 2],
+          ['bike', 366, 0, undefined, 5, 1.1, 4],
+          ['bike', 512, 0, undefined, 5, 1.25, 1],
+          ['bike', 790, 0, undefined, 5, 1.15, 3],
+        ],
+      }),
+    sky: 'linear-gradient(180deg, #2a68c4 0%, #6aa3e3 24%, #bcd6ee 36%, #f1dfbf 42%, #dcc596 46%, #c9b07e 47%)',
   },
 };
 

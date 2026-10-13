@@ -449,7 +449,10 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Mud</b> slows you down like the grass. A boost or a jump gets you through.
           </li>
           <li>
-            <b>Hay bales, boulders and cows</b> are solid. Bump a cow and it spins you out. Shells break on them.
+            <b>Hay bales, boulders, planters and cows</b> are solid. Bump a cow and it spins you out. Shells break on them.
+          </li>
+          <li>
+            <b>Cyclists</b> ride across the road and back. Hit one and you spin out, so time your way past.
           </li>
           <li>A star, a Mega Mushroom or a Bullet ploughs straight through all of it.</li>
         </ul>

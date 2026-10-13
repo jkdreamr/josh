@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf } from '../src/os/arcade/games/palmdrive/courses.ts';
-import { CCS, RIVALS, createRace, soloRace, step } from '../src/os/arcade/games/palmdrive/logic.ts';
+import { CCS, RIVALS, createRace, hazardD, soloRace, step } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { meta } from '../src/os/arcade/games/palmdrive/meta.ts';
 import { configOf, hostState, parsePacket } from '../src/os/arcade/games/palmdrive/net.ts';
 import { EDGE, ROAD_HALF, deltaS, gridSpot, locate, pointAt, solid } from '../src/os/arcade/games/palmdrive/track.ts';
@@ -66,7 +66,7 @@ for (const id of COURSE_IDS) {
     }
   });
 
-  test(`${id}: mud, hay bales, boulders and cows sit on the road, clear of the start, and always leave a way past`, () => {
+  test(`${id}: mud, bales, boulders, planters, cows and bikes sit on the road, clear of the start, and always leave a way past`, () => {
     const t = trackOf(id);
     const lay = COURSES[id].layout(t);
     for (const h of lay.hazards) {
@@ -91,6 +91,27 @@ for (const id of COURSE_IDS) {
         if (!solid(h.kind) || h.swing) continue;
         const ahead = deltaS(t, p.s, h.s);
         assert.ok(ahead <= 0 || ahead > 15 || Math.abs(p.d - h.d) > h.r + 1.6, `${id} pickup at s=${p.s} d=${p.d} leads into the ${h.kind} at s=${h.s}`);
+      }
+    }
+    // anything on the move never shuts the way past, wherever it has got to, and never runs into anything else solid
+    for (const h of lay.hazards) {
+      if (!h.swing || !solid(h.kind)) continue;
+      const where = `${id} ${h.kind} at s=${h.s}`;
+      const near = lay.hazards.filter((o) => o !== h && solid(o.kind) && Math.abs(deltaS(t, h.s, o.s)) < h.r + o.r + 8);
+      for (let k = 0; k < 48; k++) {
+        const time = (k / 48) * ((Math.PI * 2) / (h.speed ?? 0.5));
+        const spans = [h, ...near].map((o) => [hazardD(o, time) - o.r, hazardD(o, time) + o.r]).sort((a, b) => a[0] - b[0]);
+        let gap = 0;
+        let reached = -t.half;
+        for (const [lo, hi] of spans) {
+          gap = Math.max(gap, lo - reached);
+          reached = Math.max(reached, hi);
+        }
+        gap = Math.max(gap, t.half - reached);
+        assert.ok(gap >= 4.5, `${where} leaves ${gap} m at t=${time}`);
+        for (const o of near) {
+          if (Math.abs(deltaS(t, h.s, o.s)) < h.r + o.r + 1) assert.ok(Math.abs(hazardD(h, time) - hazardD(o, time)) > h.r + o.r, `${where} runs into the ${o.kind}`);
+        }
       }
     }
   });
