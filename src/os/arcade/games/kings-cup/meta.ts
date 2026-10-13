@@ -3,7 +3,7 @@ import type { GameMeta } from '../../types';
 export const meta: GameMeta = {
   id: 'kings-cup',
   title: 'Kings Cup',
-  blurb: "Draw from the ring and follow the card's rule. Whoever pulls the fourth king drinks the cup.",
+  blurb: 'Draw from the ring, follow the rule. Fourth king drinks the cup.',
   category: 'drinking',
   players: '2-20P',
   controls: 'Tap the ring or press Space to draw. Tap a house rule to change it or swap in another.',

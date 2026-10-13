@@ -66,16 +66,49 @@ export function nextOrder(order: Order, history: readonly Played[]): Order {
 
 export const other = (t: TeamIndex): TeamIndex => (t === 0 ? 1 : 0);
 
+/** The Rounds choice: a fixed count, Everyone Once, or Auto (the default, shown as 5 or Everyone Once). */
+export type RoundsSetting = 'auto' | '3' | '5' | '8' | 'all';
+export const DEFAULT_ROUNDS = 5;
+
+/** Rounds for everyone to act once: one per member of the bigger team. */
+export const everyoneOnce = (players: number) => Math.max(1, buildTeams(players)[0].length);
+
+/**
+ * Rounds in a game. Everyone Once gives each member of the bigger team a turn, so nobody sits out; Auto plays five
+ * rounds, stretched to Everyone Once when a team has more than five people (eleven players or more).
+ */
+export function roundsFor(setting: string, players: number): number {
+  if (setting === 'all') return everyoneOnce(players);
+  if (setting === 'auto') return Math.max(DEFAULT_ROUNDS, everyoneOnce(players));
+  const n = Math.floor(Number(setting));
+  return Number.isFinite(n) && n >= 1 ? n : DEFAULT_ROUNDS;
+}
+
+/** The choice the Rounds control shows as picked: Auto reads as 5, or as Everyone Once once that is longer. */
+export function shownRounds(setting: RoundsSetting, players: number): Exclude<RoundsSetting, 'auto'> {
+  if (setting !== 'auto') return setting;
+  return everyoneOnce(players) > DEFAULT_ROUNDS ? 'all' : '5';
+}
+
+/** How many players never act in one game of `rounds` rounds (each team has that many turns). */
+export function sittingOut(players: number, rounds: number): number {
+  const turns = Math.max(0, Math.floor(rounds));
+  return buildTeams(players).reduce((n, team) => n + Math.max(0, team.length - turns), 0);
+}
+
 export const totalTurns = (rounds: number) => Math.max(1, Math.floor(rounds)) * 2;
 export const isOver = (played: number, rounds: number) => played >= totalTurns(rounds);
 export const isLastTurn = (index: number, rounds: number) => index >= totalTurns(rounds) - 1;
 
-/** "Round 2 of 5", "Last round", or "Tiebreaker" once a tied game plays past the rounds it was set up for. */
+/** "Round 2 of 5", "Last round", or "Tiebreaker" (then "Tiebreaker 2") once a tied game plays past its rounds. */
 export function roundLabel(round: number, rounds: number): string {
-  if (round > rounds) return 'Tiebreaker';
+  if (round > rounds) return tiebreakerName(round - rounds);
   if (round === rounds && rounds > 1) return 'Last round';
   return `Round ${round} of ${rounds}`;
 }
+
+/** The k-th tiebreaker of a game: "Tiebreaker", "Tiebreaker 2", and so on. */
+export const tiebreakerName = (k: number) => (k > 1 ? `Tiebreaker ${Math.floor(k)}` : 'Tiebreaker');
 
 /** A point per word guessed. Skips cost nothing. */
 export const points = (cards: readonly Card[]) => cards.reduce((n, c) => n + (c.got ? 1 : 0), 0);
@@ -103,12 +136,17 @@ export function bestTurn(history: readonly Played[]): Played | null {
   return best;
 }
 
-/** Every word in the chosen decks, each once (all decks when none are chosen). */
+/** The 18+ deck: off until someone turns it on. */
+export const SPICY_DECKS: readonly DeckId[] = ['dark'];
+/** Decks a new table starts with: everything but Hard Mode and the 18+ deck. */
+export const DEFAULT_DECKS: DeckId[] = DECK_IDS.filter((id) => id !== 'hard' && !SPICY_DECKS.includes(id));
+
+/** Every word in the chosen decks, each once (the default decks when none are chosen, never the 18+ one). */
 export function wordsFor(decks: readonly DeckId[]): Entry[] {
   const ids = DECK_IDS.filter((d) => decks.includes(d));
   const seen = new Set<string>();
   const out: Entry[] = [];
-  for (const deck of ids.length ? ids : DECK_IDS)
+  for (const deck of ids.length ? ids : DEFAULT_DECKS)
     for (const word of DECKS[deck].words) {
       const key = word.toLocaleLowerCase();
       if (seen.has(key)) continue;

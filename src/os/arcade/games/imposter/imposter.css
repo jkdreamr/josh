@@ -108,14 +108,20 @@
   overflow-wrap: anywhere;
   color: var(--g-imposter-ink);
 }
-.g-imposter .g-imposter-redact {
-  display: block;
-  width: min(15rem, 72cqw);
-  height: 0.66em;
-  margin: 0.14em auto;
-  border-radius: 3px;
-  background: var(--g-imposter-ink);
-  transform: rotate(-1.2deg);
+/* The secret card's word slot: one line, always the same height, so the stamp and footnote sit in the same place
+   on every card. A long word shrinks to fit the slot (--g-imposter-em is its estimated width) instead of wrapping. */
+.g-imposter .g-imposter-wordbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  height: 0.95em;
+  font-size: clamp(40px, 12.5cqmin, 64px);
+  container-type: inline-size;
+}
+.g-imposter .g-imposter-wordbox .g-imposter-word {
+  font-size: min(1em, 92cqi / var(--g-imposter-em, 4));
+  white-space: nowrap;
 }
 .g-imposter .g-imposter-foot {
   max-width: 32ch;
@@ -229,6 +235,10 @@
 }
 .g-imposter .g-imposter-order li.is-first b {
   background: rgba(0, 0, 0, 0.24);
+}
+/* The clock (or the first speaker) and who starts. One column normally; side by side in a short window. */
+.g-imposter .g-imposter-head {
+  display: contents;
 }
 .g-imposter .g-imposter-talk .g-imposter-note {
   max-width: 34ch;
@@ -349,7 +359,8 @@
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  max-width: 100%;
+  width: 100%;
+  font-size: clamp(40px, 12.5cqmin, 64px);
 }
 .g-imposter .g-imposter-pair {
   display: grid;
@@ -363,12 +374,20 @@
   gap: 4px;
   min-width: 0;
   padding: 0 8px;
+  font-size: clamp(28px, 8.5cqmin, 42px);
 }
 .g-imposter .g-imposter-pair > div + div {
   border-left: 1.5px dashed rgba(29, 26, 22, 0.28);
 }
+/* Case-file words wrap between words but never inside one: the longest word (--g-imposter-em) sets the size. */
+.g-imposter .g-imposter-reveal,
+.g-imposter .g-imposter-pair > div {
+  container-type: inline-size;
+}
+.g-imposter .g-imposter-reveal .g-imposter-word,
 .g-imposter .g-imposter-pair .g-imposter-word {
-  font-size: clamp(28px, 8.5cqmin, 42px);
+  font-size: min(1em, 92cqi / var(--g-imposter-em, 4));
+  overflow-wrap: normal;
 }
 .g-imposter .g-imposter-culprits {
   display: flex;
@@ -402,9 +421,10 @@
   color: var(--g-imposter-ink);
 }
 .g-imposter .g-imposter-culprits li span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  min-width: 0;
+  line-height: 1;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 .g-imposter .g-imposter-culprits .g-imposter-stamp {
   font-size: 20px;
@@ -473,7 +493,8 @@
     padding: 14px 18px 14px;
   }
   .g-imposter .g-imposter-word,
-  .g-imposter .g-imposter-name {
+  .g-imposter .g-imposter-name,
+  .g-imposter .g-imposter-wordbox {
     font-size: 38px;
   }
   .g-imposter .g-imposter-foot {
@@ -492,7 +513,7 @@
   .g-imposter .g-imposter-hold {
     height: 47px;
   }
-  .g-imposter .g-imposter-talk > .arcade-party-body > .arcade-party-avatar,
+  .g-imposter .g-imposter-head > .arcade-party-avatar,
   .g-imposter .g-imposter-verdict .arcade-party-avatar,
   .g-imposter .g-imposter-talk .arcade-party-kicker {
     display: none;
@@ -509,10 +530,25 @@
   .g-imposter .g-imposter-talk .g-imposter-note {
     font-size: 14px;
   }
+  .g-imposter .g-imposter-head {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    max-width: 100%;
+  }
+  .g-imposter .g-imposter-head .arcade-party-timer {
+    --size: 64px;
+  }
+  .g-imposter .g-imposter-head:has(.arcade-party-timer) .arcade-party-title {
+    min-width: 0;
+    font-size: 34px;
+    text-align: left;
+  }
   /* The case file turns sideways, so the word and the imposter both clear the fold. */
   .g-imposter .g-imposter-case {
     display: grid;
-    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
     align-items: center;
     padding: 16px 16px 14px;
   }
@@ -522,13 +558,16 @@
     border-top: 0;
     border-left: 1.5px dashed rgba(29, 26, 22, 0.28);
   }
-  .g-imposter .g-imposter-case .g-imposter-word {
+  .g-imposter .g-imposter-case .g-imposter-reveal {
     font-size: 34px;
   }
-  .g-imposter .g-imposter-case .g-imposter-pair .g-imposter-word {
+  .g-imposter .g-imposter-case .g-imposter-pair > div {
     font-size: 26px;
   }
   .g-imposter .g-imposter-culprits li {
-    font-size: 22px;
+    font-size: 20px;
+  }
+  .g-imposter .g-imposter-culprits .arcade-party-avatar {
+    display: none;
   }
 }

@@ -32,6 +32,14 @@
   font-size: 16px;
   font-weight: 700;
 }
+.g-most-likely-to .g-most-likely-to-note {
+  align-self: stretch;
+  margin: -4px 0 0;
+  padding-left: 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--party-dim);
+}
 
 /* Read: the card */
 .g-most-likely-to .g-most-likely-to-card {
@@ -91,14 +99,24 @@
   font-weight: 800;
   color: var(--party-accent-text);
 }
+/* Names give way before the count does: a long tie still shows how many titles it's on. */
 .g-most-likely-to .g-most-likely-to-lead-btn > b {
+  display: flex;
   flex: 1;
+  gap: 0.3em;
   min-width: 0;
-  overflow: hidden;
   font-size: 15px;
   font-weight: 500;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+.g-most-likely-to .g-most-likely-to-who {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+.g-most-likely-to .g-most-likely-to-n {
+  flex: none;
 }
 .g-most-likely-to .g-most-likely-to-lead-btn > svg {
   flex: none;
@@ -176,7 +194,26 @@
   }
 }
 
-/* Point: the room picks who got the most fingers */
+/* Count: skipping is possible, never inviting */
+.g-most-likely-to.arcade-shell .arcade-party-btn.g-most-likely-to-skip {
+  align-self: center;
+  width: auto;
+  min-height: 44px;
+  padding: 0 18px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--party-dim);
+  background: transparent;
+  box-shadow: none;
+}
+@media (hover: hover) {
+  .g-most-likely-to.arcade-shell .arcade-party-btn.g-most-likely-to-skip:hover {
+    color: var(--party-ink);
+    background: var(--party-tile);
+  }
+}
+
+/* Point: the room picks who got the most fingers, or everyone tied */
 .g-most-likely-to .g-most-likely-to-room {
   display: flex;
   flex: none;
@@ -185,16 +222,43 @@
   width: 100%;
   margin-top: 4px;
 }
+/* The verdict stays in view while a long list of names scrolls under it. */
 .g-most-likely-to .g-most-likely-to-ask {
+  position: sticky;
+  top: -2px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin: 0;
+  padding: 4px 0 6px;
   font-family: var(--party-display);
   font-size: 22px;
   font-weight: 800;
   line-height: 1.1;
   text-align: center;
+  /* The page color as it renders under the kit's paper grain, so the band doesn't read as a box. */
+  background: #0f1426;
 }
 .g-most-likely-to .g-most-likely-to-ask b {
   color: var(--party-accent-text);
+}
+.g-most-likely-to .g-most-likely-to-ask small {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--party-faint);
+}
+/* Nine or more names: smaller tiles, so more of the room fits before anyone scrolls. */
+.g-most-likely-to .g-most-likely-to-room.is-crowd .arcade-party-picks {
+  gap: 8px;
+}
+.g-most-likely-to.arcade-shell .g-most-likely-to-room.is-crowd .arcade-party-picks > button {
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 10px 6px 8px;
+  border-radius: 12px;
+  font-size: 15px;
 }
 
 /* Titles table */
@@ -251,5 +315,14 @@
   }
   .g-most-likely-to.arcade-shell .arcade-party-btn {
     font-size: 19px;
+  }
+}
+
+/* Short windows: the setup scrolls, so its bottom edge fades out to say so. The padding lets the last line
+   clear the fade once scrolled. */
+@container arcade-party (max-height: 480px) {
+  .g-most-likely-to .g-most-likely-to-setup .arcade-party-body {
+    padding-bottom: 22px;
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
   }
 }

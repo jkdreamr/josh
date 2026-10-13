@@ -2,18 +2,14 @@ import { useRef, useState, type ReactNode } from 'react';
 import { GameShell, defineSetting, sfx, useGameLoop, useKeys, useSetting } from '../../kit';
 import { Avatar, Big, Chips, Countdown, HowToPlay, Option, PassTo, Pile, PlayerList, Row, Screen, useCountdown, usePlayers, useStored } from '../../kit/party';
 import type { GameProps } from '../../types';
-import { canSteal, cardFor, clueOrder, deal, imposterCount, maxImposters, pairsFor, playersFor, roundPoints, secretsFor, vote, type Mode, type Round, type Secret, type VoteResult } from './logic';
+import { canSteal, cardFor, clueOrder, deal, imposterCount, inkEm, maxImposters, pairsFor, parseDecks, playersFor, roundPoints, secretsFor, vote, type Mode, type Round, type Secret, type VoteResult } from './logic';
 import { meta } from './meta';
-import { CATEGORIES, CATEGORY_IDS, type CategoryId } from './words';
+import { ADULT_IDS, CATEGORIES, CATEGORY_IDS, DEFAULT_IDS, categoryName, type CategoryId } from './words';
 import './imposter.css';
 
 const COUNT = defineSetting('imposter:count', ['1', '2', '3'] as const, '1');
 const HINT = defineSetting<Mode>('imposter:hint', ['category', 'none', 'similar'], 'category');
 const TIMER = defineSetting('imposter:timer', ['0', '120', '180', '300'] as const, '0');
-const parseDecks = (raw: unknown): CategoryId[] => {
-  const ids = Array.isArray(raw) ? CATEGORY_IDS.filter((id) => raw.includes(id)) : [];
-  return ids.length ? ids : CATEGORY_IDS;
-};
 const deckOptions = CATEGORY_IDS.map((id) => [id, CATEGORIES[id].label] as const);
 const MIN = 3;
 const NUMBER = ['', 'One', 'Two', 'Three'];
@@ -22,7 +18,19 @@ const NUMBER = ['', 'One', 'Two', 'Three'];
 const SUSPENSE = 1.75;
 const BEATS = [0.05, 0.62, 1.06, 1.4];
 /** Taps this soon after a reveal are a second tap on the skip, not a choice. */
-const GUARD_MS = 350;
+const GUARD_MS = 600;
+/** A secret card, the clue round and the case file ignore taps and Enter this long, so a slow double tap can't skip them. */
+const HOLD_MS = 800;
+
+/**
+ * Footnotes on the secret card. Every line is about as long as the others, so the imposter's card doesn't
+ * give itself away with an extra line of small print.
+ */
+const FOOT = {
+  crew: "Prove you know it. Don't give it away.",
+  category: 'You only get the category. Now bluff.',
+  none: 'No word and no category. Just bluff.',
+};
 
 type Step =
   | { s: 'setup' }
@@ -93,7 +101,7 @@ function Play() {
   const [count, setCount] = useSetting(COUNT);
   const [hint, setHint] = useSetting(HINT);
   const [timer, setTimer] = useSetting(TIMER);
-  const [decks, setDecks] = useStored<CategoryId[]>('imposter:decks', CATEGORY_IDS, parseDecks);
+  const [decks, setDecks] = useStored<CategoryId[]>('imposter:decks', DEFAULT_IDS, parseDecks);
   const [step, setStep] = useState<Step>({ s: 'setup' });
   const [table, setTable] = useState<string[]>([]);
   const [round, setRound] = useState<Round | null>(null);
@@ -192,13 +200,16 @@ function Play() {
           )}
         </div>
         <Option label="Clue Timer" value={timer} options={[['0', 'Off'], ['120', '2 Min'], ['180', '3 Min'], ['300', '5 Min']]} onChange={setTimer} />
-        <Chips label="Categories" value={decks} options={deckOptions} onChange={setDecks} />
+        <div className="g-imposter-set">
+          <Chips label="Categories" value={decks} options={deckOptions} onChange={setDecks} />
+          {decks.some((d) => ADULT_IDS.includes(d)) && <p className="g-imposter-note">After Dark is for groups who know each other well.</p>}
+        </div>
       </Screen>
     );
   }
 
   const name = (i: number) => table[i] ?? `Player ${i + 1}`;
-  const label = CATEGORIES[round.category].label;
+  const label = categoryName(round.category);
   const many = round.imposters.length > 1;
   const similar = round.decoy !== undefined;
 
@@ -222,28 +233,20 @@ function Play() {
       else toTalk();
     };
     const go = step.peek ? 'Hide and Go Back' : nextSeat < table.length ? `Hide and Pass to ${name(nextSeat)}` : 'Hide and Start';
-    const bad = card.kind === 'imposter';
+    // Crew and imposter cards share everything a neighbour can see without reading: the tab, the stamp, a word the
+    // same size in the same slot, and a footnote of the same length. Only the words themselves differ.
+    const text = card.kind === 'imposter' ? card.cover : card.word;
     return (
-      <Screen key={`see-${step.i}-${step.peek ? 'p' : ''}`} onEnter={next} actions={<Big primary onClick={next}>{go}</Big>}>
+      <Screen key={`see-${step.i}-${step.peek ? 'p' : ''}`} className="g-imposter-see" arm={HOLD_MS} onEnter={next} actions={<Big primary onClick={next}>{go}</Big>}>
         <FileCard
-          tab={bad && hint === 'none' ? 'Classified' : label}
+          tab={hint === 'none' ? 'Classified' : label}
           eyes={`Eyes only: ${name(step.i)}`}
-          stamp={<Stamp>{bad ? 'Imposter' : 'Top Secret'}</Stamp>}
-          foot={
-            !bad
-              ? 'Prove you know it without giving it away.'
-              : hint === 'none'
-                ? "You're the imposter. No word, no category. Listen, then bluff."
-                : `You're the imposter. It's something in ${label}. Listen, then bluff.`
-          }
+          stamp={<Stamp>Top Secret</Stamp>}
+          foot={card.kind === 'word' ? FOOT.crew : hint === 'none' ? FOOT.none : FOOT.category}
         >
-          {bad ? (
-            <strong className="g-imposter-word">
-              <span className="g-imposter-redact" role="img" aria-label="Redacted. You don't get the word." />
-            </strong>
-          ) : (
-            <strong className="g-imposter-word">{card.word}</strong>
-          )}
+          <div className="g-imposter-wordbox" style={{ ['--g-imposter-em' as string]: inkEm(text) }}>
+            <strong className="g-imposter-word">{text}</strong>
+          </div>
         </FileCard>
       </Screen>
     );
@@ -259,10 +262,12 @@ function Play() {
       ? `${left === 1 ? 'One player has' : `${NUMBER[left]} players have`} a different word. It might be you.`
       : `${left === 1 ? 'One imposter is' : `${NUMBER[left]} imposters are`} bluffing. ${hint === 'none' ? "They don't even know the category." : `They only know it's ${label}.`}`;
     return (
-      <Screen key="talk" className="g-imposter-talk" onEnter={toVote} actions={<Big primary onClick={toVote}>Vote</Big>}>
-        {seconds > 0 ? <Countdown left={clockRun.left} total={seconds} /> : <Avatar name={name(order[0])} index={order[0]} size={64} />}
-        <p className="arcade-party-kicker">{timeUp ? "Time's up" : out.length ? 'Another round of clues' : 'Clue round'}</p>
-        <h2 className="arcade-party-title is-huge">{timeUp ? 'Stop and Vote' : `${name(order[0])} Starts`}</h2>
+      <Screen key="talk" className="g-imposter-talk" arm={HOLD_MS} onEnter={toVote} actions={<Big primary onClick={toVote}>Vote</Big>}>
+        <div className="g-imposter-head">
+          {seconds > 0 ? <Countdown left={clockRun.left} total={seconds} /> : <Avatar name={name(order[0])} index={order[0]} size={64} />}
+          <p className="arcade-party-kicker">{timeUp ? "Time's up" : out.length ? 'Another round of clues' : 'Clue round'}</p>
+          <h2 className="arcade-party-title is-huge">{timeUp ? 'Stop and Vote' : `${name(order[0])} Starts`}</h2>
+        </div>
         <ol className="g-imposter-order" aria-label="Clue order">
           {order.map((i, k) => (
             <li key={i} className={k === 0 ? 'is-first' : undefined}>
@@ -372,6 +377,7 @@ function Play() {
     <Screen
       key="done"
       className="g-imposter-done"
+      arm={HOLD_MS}
       onEnter={() => start(table)}
       actions={
         <Row>
@@ -390,17 +396,17 @@ function Play() {
       <FileCard tab="Case closed" className="g-imposter-case">
         {similar ? (
           <div className="g-imposter-pair">
-            <div>
+            <div style={fit(round.word)}>
               <span className="g-imposter-label">Crew word</span>
               <strong className="g-imposter-word">{round.word}</strong>
             </div>
-            <div>
+            <div style={fit(round.decoy ?? '')}>
               <span className="g-imposter-label">{many ? 'Imposter word' : `${name(imps[0])}'s word`}</span>
               <strong className="g-imposter-word">{round.decoy}</strong>
             </div>
           </div>
         ) : (
-          <div className="g-imposter-reveal">
+          <div className="g-imposter-reveal" style={fit(round.word)}>
             <span className="g-imposter-label">The word</span>
             <strong className="g-imposter-word">{round.word}</strong>
           </div>
@@ -435,6 +441,9 @@ function Play() {
     </Screen>
   );
 }
+
+/** Sizes a case-file word by its longest single word, so it wraps between words and never inside one. */
+const fit = (text: string) => ({ ['--g-imposter-em' as string]: Math.max(1, ...text.split(/\s+/).map(inkEm)) });
 
 /** A cream case file with a tab, an "eyes only" line, a stamp and a footnote. Crew and imposter cards share it, so they look alike across the table. */
 function FileCard({ tab, eyes, stamp, foot, className, onClick, children }: { tab: ReactNode; eyes?: ReactNode; stamp?: ReactNode; foot?: ReactNode; className?: string; onClick?: () => void; children?: ReactNode }) {

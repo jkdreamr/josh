@@ -12,16 +12,20 @@ import {
   mafiaCount,
   mafiaTarget,
   maxMafia,
+  minPlayersFor,
   newGame,
   nightChoices,
   nightOrder,
   pickAt,
+  refusal,
   resolveNight,
   seatsOf,
   validTargets,
   voteOut,
   winner,
+  type Cast,
   type Game,
+  type MafiaWant,
   type Role,
 } from '../src/os/arcade/games/mafia/logic.ts';
 
@@ -42,7 +46,7 @@ const fixed = (over: Partial<Game> = {}): Game => ({
 
 test('auto mafia count follows the table size', () => {
   const expect: [number, number][] = [
-    [5, 1], [6, 1], [7, 2], [9, 2], [10, 3], [13, 3], [14, 4], [20, 4],
+    [5, 1], [6, 1], [7, 2], [9, 2], [10, 3], [13, 3], [15, 3], [16, 4], [20, 4],
   ];
   for (const [players, mafia] of expect) {
     assert.equal(autoMafia(players), mafia, `${players} players`);
@@ -50,20 +54,142 @@ test('auto mafia count follows the table size', () => {
   }
 });
 
-test('mafia always start as fewer than half the players', () => {
-  for (let players = 3; players <= 20; players++) {
-    for (const want of ['auto', '1', '2', '3'] as const) {
+const WANTS: MafiaWant[] = ['auto', '1', '2', '3'];
+const SPECIALS = { both: [true, true], doctor: [true, false], detective: [false, true], none: [false, false] } as const;
+/** Every table size, Mafia setting and Special Roles setting the setup step allows. */
+function* everySetup() {
+  for (let players = 5; players <= 20; players++)
+    for (const want of WANTS)
+      for (const [special, [doctor, detective]] of Object.entries(SPECIALS)) {
+        const cast: Cast = { mafia: mafiaCount(want, players), doctor, detective };
+        yield { players, want, special, cast };
+      }
+}
+
+test('the town always starts with more than twice as many players as the mafia', () => {
+  for (let players = 5; players <= 20; players++) {
+    for (const want of WANTS) {
       const m = mafiaCount(want, players);
       assert.ok(m >= 1, `${want} at ${players}`);
-      assert.ok(m * 2 < players, `${want} at ${players} gives ${m}`);
+      assert.ok(players - m > 2 * m, `${want} at ${players} gives ${m}`);
       assert.ok(m <= maxMafia(players));
     }
   }
-  assert.equal(mafiaCount('3', 5), 2);
-  assert.equal(mafiaCount('3', 6), 2);
-  assert.equal(mafiaCount('3', 7), 3);
-  assert.equal(mafiaCount('2', 5), 2);
+  assert.deepEqual(
+    [5, 6, 7, 9, 10, 12, 13, 20].map(maxMafia),
+    [1, 1, 2, 2, 3, 3, 4, 6],
+  );
+  // The settings that used to decide the game before day 1 (5 with Two, 7 with Three) and the ones where one wrong
+  // vote on day 1 ended it (6 with Two, 8 with Three) are clamped.
+  assert.equal(mafiaCount('2', 5), 1);
+  assert.equal(mafiaCount('2', 6), 1);
+  assert.equal(mafiaCount('3', 7), 2);
+  assert.equal(mafiaCount('3', 8), 2);
+  assert.equal(mafiaCount('3', 9), 2);
+  assert.equal(mafiaCount('3', 10), 3);
   assert.equal(mafiaCount('1', 12), 1);
+  // Auto never needs the clamp.
+  for (let players = 5; players <= 20; players++) assert.ok(autoMafia(players) <= maxMafia(players), `auto at ${players}`);
+  // minPlayersFor is the setup note's "Three mafia needs 10 players".
+  for (const m of [1, 2, 3, 4]) {
+    assert.equal(maxMafia(minPlayersFor(m)), m);
+    if (m > 1) assert.equal(maxMafia(minPlayersFor(m) - 1), m - 1);
+  }
+  assert.equal(minPlayersFor(2), 7);
+  assert.equal(minPlayersFor(3), 10);
+});
+
+test('no setup is decided before the town gets a real say', () => {
+  // Every table size, Mafia setting and Special Roles setting, every possible night 1 kill and every wrong day 1 vote.
+  let seed = 1;
+  for (const { players, want, special, cast } of everySetup()) {
+    const g0 = newGame(players, cast, mulberry32(seed++));
+    const label = `${players} players, Mafia ${want}, Special Roles ${special}`;
+    const mafia = seatsOf(g0.roles, 'mafia');
+    assert.equal(mafia.length, cast.mafia, label);
+    assert.equal(winner(g0.roles, g0.alive), null, label);
+    for (const victim of g0.roles.flatMap((r, i) => (r === 'mafia' ? [] : [i]))) {
+      let g = g0;
+      for (const m of mafia) g = pickAt(g, m, victim);
+      const night = endNight(g, () => 0);
+      // A kill the doctor didn't stop (or no doctor).
+      if (night.result.killed !== victim) continue;
+      // The first night's kill never hands the mafia the game: the town always gets to vote.
+      assert.equal(winner(night.game.roles, night.game.alive), null, `${label}: night 1 took seat ${victim}`);
+      // And a wrong vote on day 1 never ends it on the spot: the town gets another day.
+      for (const wrong of night.game.roles.flatMap((r, i) => (r !== 'mafia' && night.game.alive[i] ? [i] : []))) {
+        const day = voteOut(night.game, wrong);
+        assert.equal(winner(day.roles, day.alive), null, `${label}: night 1 took ${victim}, day 1 voted out ${wrong}`);
+      }
+    }
+  }
+});
+
+/**
+ * Plays a game with no table talk: the mafia, doctor and detective pick at random. A blind town votes out a random
+ * living player each day; a town that trusts its detective votes out a mafia the detective found, and otherwise
+ * anyone the detective hasn't cleared.
+ */
+function playout(players: number, cast: Cast, town: 'blind' | 'detective', rng: () => number): 'town' | 'mafia' {
+  const any = <T>(items: T[]) => items[Math.floor(rng() * items.length)];
+  let g = newGame(players, cast, rng);
+  for (let round = 0; round < players; round++) {
+    const living = nightOrder(g.alive);
+    const checked = new Set(g.findings.map((f) => f.seat));
+    for (const seat of living) {
+      const role = g.roles[seat];
+      if (role === 'villager') continue;
+      const ok = validTargets(g.roles, g.alive, seat, g.lastSaved);
+      const fresh = ok.filter((t) => !checked.has(t));
+      g = pickAt(g, seat, any(role === 'detective' && fresh.length ? fresh : ok));
+    }
+    g = endNight(g, rng).game;
+    const afterNight = winner(g.roles, g.alive);
+    if (afterNight) return afterNight;
+    const alive = nightOrder(g.alive);
+    let out = any(alive);
+    const detective = seatsOf(g.roles, 'detective').find((s) => g.alive[s]);
+    if (town === 'detective' && detective !== undefined) {
+      const found = g.findings.find((f) => f.mafia && g.alive[f.seat]);
+      const cleared = new Set(g.findings.filter((f) => !f.mafia).map((f) => f.seat));
+      const suspects = alive.filter((s) => s !== detective && !cleared.has(s));
+      out = found ? found.seat : any(suspects.length ? suspects : alive);
+    }
+    g = voteOut(g, out);
+    const afterDay = winner(g.roles, g.alive);
+    if (afterDay) return afterDay;
+  }
+  return 'mafia';
+}
+
+test('the town has a real chance at every table size and setting', () => {
+  const GAMES = 400;
+  const seen = new Set<string>();
+  let worstBlind = { rate: 1, label: '' };
+  let worstDetective = { rate: 1, label: '' };
+  for (const { players, want, special, cast } of everySetup()) {
+    const key = `${players}/${cast.mafia}/${special}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const label = `${players} players, ${cast.mafia} mafia (Mafia ${want}), Special Roles ${special}`;
+    const rate = (town: 'blind' | 'detective') => {
+      const rng = mulberry32(players * 977 + cast.mafia * 31 + special.length + (town === 'blind' ? 0 : 5000));
+      let wins = 0;
+      for (let i = 0; i < GAMES; i++) if (playout(players, cast, town, rng) === 'town') wins++;
+      return wins / GAMES;
+    };
+    const blind = rate('blind');
+    // Even voting blind, the town wins some games: no setup is a foregone conclusion.
+    assert.ok(blind >= 1 / 30, `${label}: a blind town won ${(blind * 100).toFixed(1)}%`);
+    if (blind < worstBlind.rate) worstBlind = { rate: blind, label };
+    if (cast.detective) {
+      // With a detective whose finds the town acts on, the town wins at least 1 game in 4.
+      const told = rate('detective');
+      assert.ok(told >= 1 / 4, `${label}: a town that trusts its detective won ${(told * 100).toFixed(1)}%`);
+      if (told < worstDetective.rate) worstDetective = { rate: told, label };
+    }
+  }
+  if (process.env.MAFIA_BALANCE) console.log({ worstBlind, worstDetective });
 });
 
 test('roles are dealt with the asked counts and deterministically for a seed', () => {
@@ -80,8 +206,9 @@ test('roles are dealt with the asked counts and deterministically for a seed', (
   assert.equal(count(off, 'doctor') + count(off, 'detective'), 0);
   assert.equal(count(off, 'villager'), 6);
   assert.deepEqual(assignRoles(9, { mafia: 2, doctor: true, detective: true }, mulberry32(42)), assignRoles(9, { mafia: 2, doctor: true, detective: true }, mulberry32(42)));
-  // Asking for too many mafia still keeps them a minority.
-  assert.equal(count(assignRoles(5, { mafia: 4, doctor: true, detective: true }, mulberry32(1)), 'mafia'), 2);
+  // Asking for too many mafia is clamped to maxMafia.
+  assert.equal(count(assignRoles(5, { mafia: 4, doctor: true, detective: true }, mulberry32(1)), 'mafia'), 1);
+  assert.equal(count(assignRoles(8, { mafia: 3, doctor: true, detective: true }, mulberry32(1)), 'mafia'), 2);
 });
 
 test('the deal moves the mafia around between seeds', () => {
@@ -93,7 +220,9 @@ test('the deal moves the mafia around between seeds', () => {
 test('describeCast reads naturally', () => {
   assert.equal(describeCast(7, { mafia: 2, doctor: true, detective: true }), '2 mafia, a doctor, a detective and 3 villagers.');
   assert.equal(describeCast(5, { mafia: 1, doctor: false, detective: true }), '1 mafia, a detective and 3 villagers.');
-  assert.equal(describeCast(5, { mafia: 2, doctor: true, detective: true }), '2 mafia, a doctor, a detective and 1 villager.');
+  // Clamped: 5 players can't take 2 mafia.
+  assert.equal(describeCast(5, { mafia: 2, doctor: true, detective: true }), '1 mafia, a doctor, a detective and 2 villagers.');
+  assert.equal(describeCast(10, { mafia: 3, doctor: true, detective: false }), '3 mafia, a doctor and 6 villagers.');
   assert.equal(describeCast(6, { mafia: 1, doctor: false, detective: false }), '1 mafia and 5 villagers.');
 });
 
@@ -109,7 +238,7 @@ test('night choices per role', () => {
   assert.deepEqual(validTargets(ROLES, alive, 2, 4), [0, 1, 2, 3, 6]);
   assert.deepEqual(
     nightChoices(ROLES, alive, 2, 2).filter((c) => !c.ok),
-    [{ seat: 2, ok: false }],
+    [{ seat: 2, ok: false, why: 'twice' }],
   );
   // Detective and villagers: anyone living but themself.
   assert.deepEqual(validTargets(ROLES, alive, 3), [0, 1, 2, 4, 6]);
@@ -117,6 +246,24 @@ test('night choices per role', () => {
   // The dead don't act.
   assert.deepEqual(validTargets(ROLES, alive, 5), []);
   assert.deepEqual(nightChoices(ROLES, alive, 5), []);
+});
+
+test('a refused night pick says why, the same way for every role', () => {
+  // Mafia: not themself, not their crew.
+  assert.equal(refusal(ROLES, 0, 0), 'self');
+  assert.equal(refusal(ROLES, 0, 1), 'crew');
+  assert.equal(refusal(ROLES, 0, 4), null);
+  // Doctor: themself is fine, last night's pick isn't (themself included).
+  assert.equal(refusal(ROLES, 2, 2), null);
+  assert.equal(refusal(ROLES, 2, 4, 4), 'twice');
+  assert.equal(refusal(ROLES, 2, 2, 2), 'twice');
+  // Detective and villagers: anyone but themself.
+  assert.equal(refusal(ROLES, 3, 3), 'self');
+  assert.equal(refusal(ROLES, 3, 0), null);
+  assert.equal(refusal(ROLES, 5, 5), 'self');
+  assert.equal(refusal(ROLES, 5, 1), null);
+  // nightChoices carries the reason, and ok is exactly "no reason".
+  for (const seat of [0, 2, 3, 5]) for (const c of nightChoices(ROLES, all(7), seat, 4)) assert.equal(c.ok, c.why === null);
 });
 
 test('every role sees the same grid of living players at night', () => {
@@ -131,7 +278,8 @@ test('every role sees the same grid of living players at night', () => {
       `seat ${seat} (${ROLES[seat]})`,
     );
   }
-  // Only the button states differ: the mafia's crew, the doctor's last pick, everyone else's own seat.
+  // Only which taps are refused differs (the grid draws every tile the same): the mafia's crew and themself,
+  // the doctor's last pick, everyone else's own seat.
   const off = (seat: number) => nightChoices(ROLES, alive, seat, 6).flatMap((c) => (c.ok ? [] : [c.seat]));
   assert.deepEqual(off(0), [0, 1]);
   assert.deepEqual(off(2), [6]);

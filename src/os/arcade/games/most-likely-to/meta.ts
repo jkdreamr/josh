@@ -3,7 +3,7 @@ import type { GameMeta } from '../../types';
 export const meta: GameMeta = {
   id: 'most-likely-to',
   title: 'Most Likely To',
-  blurb: 'Count down from three and everyone points at once. Most fingers drinks, and the room hands out titles.',
+  blurb: 'Three, two, one, point. Most fingers drinks.',
   category: 'drinking',
   players: '3-20P',
   controls: 'Read the card, tap Count Down, then everyone points at once. Space moves on, number keys pick a name.',

@@ -42,6 +42,52 @@
   font-weight: 700;
   letter-spacing: -0.02em;
 }
+.g-kings-cup .g-kings-cup-rules-btn svg {
+  display: none;
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+/* A long name on a phone: Rules folds to an icon (the word stays for screen readers) so Draw keeps one line. */
+@container arcade-party (max-width: 440px) {
+  .g-kings-cup .g-kings-cup-play.is-long-name .g-kings-cup-rules-btn svg {
+    display: block;
+  }
+  .g-kings-cup .g-kings-cup-play.is-long-name .g-kings-cup-rules-btn span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .g-kings-cup.arcade-shell .g-kings-cup-play.is-long-name .arcade-party-row > .g-kings-cup-rules-btn {
+    width: 52px;
+    padding: 0;
+  }
+  .g-kings-cup.arcade-shell .g-kings-cup-play.is-long-name .arcade-party-row > .is-primary {
+    padding: 0 10px;
+    text-wrap: balance;
+  }
+}
+
+/* 18+ Rules: a two-way switch with a line under it. */
+.g-kings-cup .g-kings-cup-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+}
+.g-kings-cup .g-kings-cup-note {
+  margin: 0;
+  padding-left: 2px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--party-dim);
+}
+.g-kings-cup .g-kings-cup-note.is-spicy {
+  color: #ff8a7a;
+}
 
 /* House rules */
 .g-kings-cup .g-kings-cup-rulelist {
@@ -99,6 +145,19 @@
   font-size: 13.5px;
   line-height: 1.4;
   color: var(--party-dim);
+}
+.g-kings-cup .g-kings-cup-rule em.is-spicy {
+  color: #ffb3a8;
+  background: rgba(255, 90, 70, 0.16);
+}
+/* The king's row can't be edited: no press state, a lock instead of a pen. */
+.g-kings-cup .g-kings-cup-rulelist > li.is-locked .g-kings-cup-rule {
+  cursor: default;
+}
+.g-kings-cup .g-kings-cup-rule-text small.g-kings-cup-lock-note {
+  margin-top: 2px;
+  font-weight: 600;
+  color: var(--kc-gold-text);
 }
 .g-kings-cup .g-kings-cup-rule em {
   flex: none;
@@ -199,6 +258,12 @@
   color: var(--party-ink);
   box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.32);
 }
+.g-kings-cup .g-kings-cup-swaps.is-spicy > span {
+  color: #ff8a7a;
+}
+.g-kings-cup.arcade-shell .g-kings-cup-swaps.is-spicy > button {
+  box-shadow: inset 0 0 0 1.5px rgba(255, 120, 100, 0.34);
+}
 .g-kings-cup.arcade-shell .g-kings-cup-swaps > button[aria-pressed='true'] {
   color: var(--on-accent);
   background: var(--accent);
@@ -236,6 +301,9 @@
 }
 
 /* The table: the ring around the cup, then the card and what's in play */
+.g-kings-cup .g-kings-cup-taps {
+  display: contents;
+}
 .g-kings-cup .g-kings-cup-play .arcade-party-body {
   max-width: 600px;
 }
@@ -570,9 +638,8 @@
 }
 .g-kings-cup .g-kings-cup-who > span:last-child {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 .g-kings-cup .g-kings-cup-say .g-kings-cup-warn {
   font-size: 14px;
@@ -598,7 +665,7 @@
   scroll-margin-bottom: 8px;
 }
 .g-kings-cup .g-kings-cup-mates .arcade-party-picks {
-  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 }
 .g-kings-cup.arcade-shell .g-kings-cup-mates .arcade-party-picks > button {
   min-height: 48px;

@@ -192,8 +192,9 @@ export function Dial({
 
 /** The card slotted under the board: the two extremes, big enough to read across the table. */
 function CardFace({ card }: { card: Card }) {
-  // The type shrinks so the longest word on the card still fits its half.
-  const longest = Math.max(6, ...card.flatMap((label) => label.split(/\s+/).map((w) => w.length)));
+  // The type shrinks so the longest word on the card still fits its half. A hyphen is a line break too, so
+  // "Life-changing" is sized as "Life-" over "changing", not as one long word.
+  const longest = Math.max(6, ...card.flatMap((label) => label.split(/\s+|(?<=-)/).map((w) => w.length)));
   return (
     <div className={`g-spectrum-card is-stock${stockOf(card)}`} role="group" aria-label={`${card[0]} to ${card[1]}`} style={{ ['--g-spectrum-long' as string]: longest }}>
       <span className="is-left">

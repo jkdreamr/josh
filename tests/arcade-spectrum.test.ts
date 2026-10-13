@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mulberry32, Pile } from '../src/os/arcade/kit/party-core.ts';
-import { CARDS, STOCKS, stockOf } from '../src/os/arcade/games/spectrum/cards.ts';
+import { AFTER_DARK, CARDS, STOCKS, deckFor, stockOf } from '../src/os/arcade/games/spectrum/cards.ts';
 import {
   BAND,
   DIAL,
@@ -190,10 +190,12 @@ test('together lasts 7 cards for a total out of 28, with a rating for every tota
 test('the clue tip follows where the target sits', () => {
   assert.match(clueTip(90, 'Cold', 'Hot'), /middle/);
   assert.match(clueTip(100, 'Cold', 'Hot'), /middle/);
-  assert.match(clueTip(SPAN, 'Cold', 'Hot'), /^Close to Cold\./);
-  assert.match(clueTip(DIAL - SPAN, 'Cold', 'Hot'), /^Close to Hot\./);
-  assert.match(clueTip(60, 'Cold', 'Hot'), /^Leans toward Cold\./);
-  assert.match(clueTip(125, 'Cold', 'Hot'), /^Leans toward Hot\./);
+  assert.match(clueTip(SPAN, 'Cold', 'Hot'), /^Close to “Cold”\./);
+  assert.match(clueTip(DIAL - SPAN, 'Cold', 'Hot'), /^Close to “Hot”\./);
+  assert.match(clueTip(60, 'Cold', 'Hot'), /^Leans toward “Cold”\./);
+  assert.match(clueTip(125, 'Cold', 'Hot'), /^Leans toward “Hot”\./);
+  // The extreme is quoted as printed, so a card like "Explained by magic" doesn't capitalise mid-sentence.
+  assert.equal(clueTip(125, 'Explained by science', 'Explained by magic'), 'Leans toward “Explained by magic”. Think “a bit”, not “very”.');
   for (let t = SPAN; t <= DIAL - SPAN; t += 0.5) assert.doesNotMatch(clueTip(t, 'Cold', 'Hot'), banned);
 });
 
@@ -227,7 +229,7 @@ test('a seeded match plays out: scores only grow and someone reaches the goal', 
 });
 
 test('cards: plenty, unique, short and clean, and a Pile deals each once', () => {
-  assert.ok(CARDS.length >= 110, `only ${CARDS.length} cards`);
+  assert.ok(CARDS.length >= 120, `only ${CARDS.length} cards`);
   const keys = new Set<string>();
   const words = new Set<string>();
   for (const [left, right] of CARDS) {
@@ -244,9 +246,18 @@ test('cards: plenty, unique, short and clean, and a Pile deals each once', () =>
       words.add(label.toLowerCase());
     }
   }
-  // Not every card is "Bad X / Good X": that shape gets old fast.
-  const badGood = CARDS.filter(([l, r]) => /^bad /i.test(l) && /^(good|great) /i.test(r)).length;
-  assert.ok(badGood <= 14, `${badGood} bad/good cards`);
+  // Templated cards ("Bad X / Good X", "Normal X / Weird X", "Worst X / Best X") read as filler when two come up
+  // back to back, so each shape gets a few cards at most, and no opening word starts more than four.
+  const shape = (left: RegExp, right: RegExp) => CARDS.filter(([l, r]) => left.test(l) && right.test(r)).length;
+  assert.ok(shape(/^bad /i, /^(good|great) /i) <= 4, `${shape(/^bad /i, /^(good|great) /i)} bad/good cards`);
+  assert.ok(shape(/^normal /i, /^(weird|strange) /i) <= 2, `${shape(/^normal /i, /^(weird|strange) /i)} normal/weird cards`);
+  assert.ok(shape(/^worst /i, /^(best|dream) /i) <= 2, `${shape(/^worst /i, /^(best|dream) /i)} worst/best cards`);
+  const openers = new Map<string, number>();
+  for (const [l] of CARDS) {
+    const w = l.split(' ')[0].toLowerCase();
+    openers.set(w, (openers.get(w) ?? 0) + 1);
+  }
+  for (const [w, n] of openers) assert.ok(n <= 4, `${n} cards open with "${w}"`);
   // Cards are printed on a few color stocks, steady per card and all of them in use.
   const stocks = new Set(CARDS.map(stockOf));
   assert.equal(stocks.size, STOCKS);
@@ -255,4 +266,29 @@ test('cards: plenty, unique, short and clean, and a Pile deals each once', () =>
   const seen = new Set();
   for (let i = 0; i < CARDS.length; i++) seen.add(pile.draw());
   assert.equal(seen.size, CARDS.length);
+});
+
+test('After Dark 18+ cards: off by default, only dealt when on, no repeats with the everyday deck', () => {
+  assert.equal(deckFor(false), CARDS, 'turned off, the game deals exactly the everyday deck');
+  const on = deckFor(true);
+  assert.equal(on.length, CARDS.length + AFTER_DARK.length);
+  assert.ok(AFTER_DARK.every((c) => on.includes(c)) && CARDS.every((c) => on.includes(c)));
+  assert.ok(AFTER_DARK.length >= 36, `only ${AFTER_DARK.length} After Dark cards`);
+  const labels = new Set(CARDS.flat().map((l) => l.toLowerCase()));
+  const never = /school|teen|kid|child|minor|underage|virgin|drunk|wasted|roofie|passed out|forced|grope|rape|fat|ugly|slut|whore/i;
+  for (const [left, right] of AFTER_DARK) {
+    for (const label of [left, right]) {
+      assert.ok(label.trim() === label && label.length > 0 && label.length <= 24, `label "${label}"`);
+      assert.doesNotMatch(label, banned);
+      assert.doesNotMatch(label, never, `"${label}"`);
+      assert.ok(!labels.has(label.toLowerCase()), `"${label}" is on two cards`);
+      labels.add(label.toLowerCase());
+    }
+    assert.notEqual(left.toLowerCase(), right.toLowerCase());
+  }
+  // A Pile over the full deck deals every card once, After Dark included.
+  const pile = new Pile(on, mulberry32(9));
+  const seen = new Set();
+  for (let i = 0; i < on.length; i++) seen.add(pile.draw());
+  assert.equal(seen.size, on.length);
 });

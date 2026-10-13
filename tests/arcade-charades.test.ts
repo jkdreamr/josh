@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Pile, mulberry32 } from '../src/os/arcade/kit/party-core.ts';
 import {
+  DEFAULT_DECKS,
+  DEFAULT_ROUNDS,
   FIRST_GAME,
   MIN_PLAYERS,
   bestTurn,
@@ -15,8 +17,13 @@ import {
   other,
   points,
   roundLabel,
+  roundsFor,
+  SPICY_DECKS,
   scores,
+  shownRounds,
+  sittingOut,
   styleFor,
+  tiebreakerName,
   toggleCard,
   totalTurns,
   turnAt,
@@ -101,7 +108,53 @@ test('round labels count up, call the last round, and name a tiebreaker', () => 
   assert.equal(roundLabel(4, 5), 'Round 4 of 5');
   assert.equal(roundLabel(5, 5), 'Last round');
   assert.equal(roundLabel(6, 5), 'Tiebreaker');
+  assert.equal(roundLabel(7, 5), 'Tiebreaker 2', 'a second tiebreaker is told apart from the first');
   assert.equal(roundLabel(1, 1), 'Round 1 of 1');
+  assert.equal(tiebreakerName(1), 'Tiebreaker');
+  assert.equal(tiebreakerName(3), 'Tiebreaker 3');
+});
+
+/** Seats that act at least once in a game of `rounds` rounds. */
+const actors = (players: number, rounds: number, order = FIRST_GAME) => {
+  const teams = buildTeams(players);
+  return new Set(Array.from({ length: totalTurns(rounds) }, (_, i) => turnAt(i, teams, 'act', order).actor));
+};
+
+test('Everyone Once gives every player a turn, from 4 to 20 players, in the next game too', () => {
+  for (let n = 4; n <= 20; n++) {
+    const once = roundsFor('all', n);
+    assert.equal(once, Math.ceil(n / 2), `${n} players: one round per member of the bigger team`);
+    assert.equal(actors(n, once).size, n, `${n} players: everyone acts in game one`);
+    assert.equal(sittingOut(n, once), 0);
+    // Play Again carries each team's rotation on, and everyone still gets a turn.
+    const teams = buildTeams(n);
+    const history = Array.from({ length: totalTurns(once) }, (_, i) => finishTurn(turnAt(i, teams, 'act'), []));
+    assert.equal(actors(n, once, nextOrder(FIRST_GAME, history)).size, n, `${n} players: everyone acts in game two`);
+    // The default stretches to the same guarantee: five rounds, or Everyone Once when that is longer.
+    const auto = roundsFor('auto', n);
+    assert.equal(auto, Math.max(DEFAULT_ROUNDS, once));
+    assert.equal(actors(n, auto).size, n, `${n} players: everyone acts by default`);
+    assert.equal(shownRounds('auto', n), n > 10 ? 'all' : '5', `${n} players: the default reads as ${n > 10 ? 'Everyone Once' : '5'}`);
+  }
+});
+
+test('fixed rounds stay fixed, and the setup can say who never gets a turn', () => {
+  assert.equal(roundsFor('3', 20), 3);
+  assert.equal(roundsFor('8', 4), 8);
+  assert.equal(roundsFor('nonsense', 6), DEFAULT_ROUNDS);
+  assert.equal(shownRounds('8', 20), '8');
+  assert.equal(shownRounds('all', 4), 'all');
+  for (const [n, rounds, out] of [
+    [12, 5, 2],
+    [20, 5, 10],
+    [20, 8, 4],
+    [9, 3, 3],
+    [8, 5, 0],
+    [4, 3, 0],
+  ] as const) {
+    assert.equal(sittingOut(n, rounds), out, `${n} players at ${rounds} rounds`);
+    assert.equal(actors(n, rounds).size, n - out, `${n} players at ${rounds} rounds: the count matches play`);
+  }
 });
 
 test('a fixed style stays put and Mix switches every round, the same for both teams', () => {
@@ -190,7 +243,7 @@ test('finishing a turn snapshots the cards', () => {
 });
 
 test('decks are full, unique and clean', () => {
-  assert.ok(DECK_IDS.length >= 8 && DECK_IDS.length <= 9);
+  assert.ok(DECK_IDS.length >= 8 && DECK_IDS.length <= 10);
   for (const id of DECK_IDS) {
     const { label, words } = DECKS[id];
     assert.ok(words.length >= 45, `${label} has ${words.length} words`);
@@ -213,13 +266,13 @@ test('no word appears in two decks, so turning a deck off really removes it', ()
     }
 });
 
-test('words come from the chosen decks only, each once, and fall back to every deck', () => {
+test('words come from the chosen decks only, each once, and fall back to the default decks', () => {
   const animals = wordsFor(['animals']);
   assert.equal(animals.length, DECKS.animals.words.length);
   assert.ok(animals.every((e) => e.deck === 'animals'));
-  const all = wordsFor([]);
+  const all = wordsFor(DECK_IDS);
   assert.equal(new Set(all.map((e) => e.word.toLowerCase())).size, all.length, 'no word repeats across decks');
-  assert.deepEqual(wordsFor([]), wordsFor(DECK_IDS));
+  assert.deepEqual(wordsFor([]), wordsFor(DEFAULT_DECKS));
   const two = wordsFor(['sports', 'jobs']);
   assert.ok(two.some((e) => e.deck === 'jobs') && two.some((e) => e.deck === 'sports'));
   assert.ok(!two.some((e) => e.deck === 'animals'));
@@ -244,4 +297,23 @@ test('a seeded pile never repeats a word, skipped or not, until the deck runs ou
   const a = new Pile(entries, mulberry32(7));
   const b = new Pile(entries, mulberry32(7));
   for (let i = 0; i < 20; i++) assert.equal(a.draw()?.word, b.draw()?.word);
+});
+
+test('After Dark 18+ is its own deck, off by default, and only shows up when chosen', () => {
+  assert.deepEqual([...SPICY_DECKS], ['dark']);
+  const { label, words } = DECKS.dark;
+  assert.match(label, /18\+/, 'labeled 18+ on its chip');
+  assert.ok(words.length >= 45 && words.length <= 60, `about 50 words (got ${words.length})`);
+  assert.ok(!DEFAULT_DECKS.includes('dark'), 'off for a new table');
+  assert.ok(!DEFAULT_DECKS.includes('hard'));
+  assert.ok(!wordsFor([]).some((e) => e.deck === 'dark'), 'no fallback ever deals it');
+  assert.ok(!wordsFor(DEFAULT_DECKS).some((e) => e.deck === 'dark'));
+  const dark = wordsFor(['dark']);
+  assert.equal(dark.length, words.length);
+  assert.ok(dark.every((e) => e.deck === 'dark'));
+  for (const w of words) {
+    assert.match(w, /^[A-Z0-9]/, `${w} is Title Case`);
+    // The spice guide's hard lines: nothing about minors or school, consent or cruelty.
+    assert.doesNotMatch(w, /\b(school|teen|minor|underage|student|kid|roofie|drugged|passed out|blackout|fat|ugly)\b/i, `${w} crosses a line`);
+  }
 });

@@ -1,23 +1,25 @@
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { GameShell, defineSetting, sfx, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
-import { Avatar, Big, DrinkNote, HowToPlay, Option, Pile, PlayerList, Row, Screen, listNames, usePlayers } from '../../kit/party';
+import { Avatar, Big, DrinkNote, HowToPlay, Option, Pile, PlayerList, Row, Screen, sips, usePlayers } from '../../kit/party';
 import type { GameProps } from '../../types';
 import {
   LOSER_SIPS,
+  RESUME_BEAT,
+  RESUME_BEATS,
   addLoss,
   burnAt,
   burnProfile,
   fuseLength,
-  leaders,
-  lossesOf,
+  fuseTicks,
   nextStarter,
   promptsFor,
   removeLoss,
+  standingLine,
   standings,
-  tickGap,
+  tickHeat,
+  verdict,
   type Burn,
   type Prompt,
-  type PromptMode,
   type Tally,
 } from './logic';
 import { meta } from './meta';
@@ -26,6 +28,7 @@ import './hot-potato.css';
 const PROMPTS = defineSetting('hot-potato:prompts', ['categories', 'letters', 'mix'] as const, 'mix');
 const FUSE = defineSetting('hot-potato:fuse', ['short', 'normal', 'long'] as const, 'normal');
 const LOSER = defineSetting('hot-potato:loser', ['point', 'drink'] as const, 'point');
+const DARK = defineSetting('hot-potato:after-dark', ['off', 'on'] as const, 'off');
 
 /** Seconds after the boom before anything takes a tap, so a hand mid-pass can't score the wrong person. */
 const ARM = 0.8;
@@ -44,8 +47,10 @@ const HOW: ReactNode[] = [
   <>Add names to keep score. The loser starts the next round.</>,
 ];
 
-type Step = { s: 'setup' } | { s: 'ready' } | { s: 'burn' } | { s: 'boom'; again?: boolean } | { s: 'score'; loser: string };
-type Fuse = { total: number; burn: Burn };
+type Step = { s: 'setup' } | { s: 'ready' } | { s: 'burn' } | { s: 'boom'; again?: boolean } | { s: 'scores' };
+type Fuse = { total: number; burn: Burn; ticks: number[] };
+/** The round just scored, kept until the next fuse is lit so the loser can be changed. */
+type Result = { loser: string; prompt: Prompt; round: number };
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
@@ -60,6 +65,7 @@ function Play() {
   const [mode, setMode] = useSetting(PROMPTS);
   const [fuse, setFuse] = useSetting(FUSE);
   const [rule, setRule] = useSetting(LOSER);
+  const [dark, setDark] = useSetting(DARK);
   const [step, setStep] = useState<Step>({ s: 'setup' });
   const [table, setTable] = useState<string[]>([]);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
@@ -67,24 +73,32 @@ function Play() {
   const [starter, setStarter] = useState(0);
   const [lit, setLit] = useState<Fuse | null>(null);
   const [tally, setTally] = useState<Tally>({});
-  const pile = useRef<{ mode: PromptMode; pile: Pile<Prompt> } | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
+  // Whether this round was dealt by picking a loser: they start it, holding the phone already.
+  const [picked, setPicked] = useState(false);
+  const [relight, setRelight] = useState(0);
+  const pile = useRef<{ key: string; pile: Pile<Prompt> } | null>(null);
   const last = useRef<Prompt | undefined>(undefined);
   const heat = useRef<HTMLDivElement | null>(null);
   const drinks = rule === 'drink';
 
   const draw = () => {
-    if (pile.current?.mode !== mode) pile.current = { mode, pile: new Pile(promptsFor(mode)) };
+    const spicy = dark === 'on';
+    const key = `${mode}:${spicy}`;
+    if (pile.current?.key !== key) pile.current = { key, pile: new Pile(promptsFor(mode, spicy)) };
     const p = pile.current.pile.draw(last.current);
     if (p) last.current = p;
     return p ?? null;
   };
 
-  const deal = (names: string[], lastLoser: number | null) => {
+  const deal = (names: string[], lastLoser: number | null, scored: Result | null = null) => {
     setTable(names);
     setPrompt(draw());
     setRound((r) => r + 1);
     setStarter(nextStarter(names.length, lastLoser));
     setLit(null);
+    setResult(scored);
+    setPicked(!!scored);
     setStep({ s: 'ready' });
   };
 
@@ -94,7 +108,10 @@ function Play() {
   };
 
   const light = () => {
-    setLit({ total: fuseLength(fuse), burn: burnProfile() });
+    const total = fuseLength(fuse);
+    setLit({ total, burn: burnProfile(), ticks: fuseTicks(total) });
+    setResult(null);
+    setRelight(0);
     // A match strike: a scrape of noise and a rising hiss.
     sfx.noise(0.22, 0.16);
     sfx.tone({ freq: 220, to: 900, dur: 0.2, type: 'sawtooth', vol: 0.05 });
@@ -114,24 +131,31 @@ function Play() {
     setStep({ s: 'boom' });
   };
 
+  // Picking who had it scores the round and deals the next one straight away: the loser starts it.
   const pick = (seat: number) => {
     const name = table[seat];
-    if (!name) return;
+    if (!name || !prompt) return;
     sfx.play('hit', 0.8);
     setTally((t) => addLoss(t, name));
-    setStep({ s: 'score', loser: name });
+    deal(table, seat, { loser: name, prompt, round });
   };
 
-  const undo = (name: string) => {
+  // Changed your mind about who had it: take the point back and pick again on the same boom.
+  const undo = () => {
+    if (!result) return;
     sfx.play('blip', 0.7);
-    setTally((t) => removeLoss(t, name));
+    setTally((t) => removeLoss(t, result.loser));
+    setPrompt(result.prompt);
+    last.current = result.prompt;
+    setRound(result.round);
+    setResult(null);
     setStep({ s: 'boom', again: true });
   };
 
   useKeys((code, e) => {
-    if (e?.repeat) return;
-    if (step.s === 'ready' && code === 'KeyS') skip();
-    else if (step.s === 'score' && (code === 'KeyU' || code === 'Backspace')) undo(step.loser);
+    if (e?.repeat || step.s !== 'ready') return;
+    if (code === 'KeyS') skip();
+    else if (result && (code === 'KeyU' || code === 'Backspace')) undo();
   });
 
   if (step.s === 'setup' || !prompt) {
@@ -144,7 +168,7 @@ function Play() {
           <p className="arcade-party-sub">Say something that fits the prompt, then pass the phone left. Whoever's holding it when it blows loses the round.</p>
         </header>
         <HowToPlay steps={HOW} />
-        <PlayerList min={0} />
+        <PlayerList min={0} emptyHint="Optional. Add names to keep score." />
         <Option
           label="Prompts"
           value={mode}
@@ -174,6 +198,18 @@ function Play() {
           ]}
           onChange={setRule}
         />
+        {mode !== 'letters' && (
+          <Option
+            label="After Dark 18+"
+            value={dark}
+            options={[
+              ['off', 'Off'],
+              ['on', 'On'],
+            ]}
+            onChange={setDark}
+          />
+        )}
+        {mode !== 'letters' && dark === 'on' && <p className="g-hot-potato-spice">After Dark is for groups who know each other well. Skip any prompt you like.</p>}
         {drinks && <DrinkNote />}
       </Screen>
     );
@@ -183,16 +219,20 @@ function Play() {
 
   if (step.s === 'ready' || step.s === 'burn') {
     const burning = step.s === 'burn';
+    const scored = !burning && result && named ? result : null;
     return (
       <Fragment key={`round-${round}`}>
         <div className="g-hot-potato-heat" ref={heat} aria-hidden="true" />
         <Screen
-          className="g-hot-potato-round"
-          kicker={named ? `${table[starter] ?? table[0]} starts` : `Round ${round}`}
+          className={['g-hot-potato-round', scored ? 'is-scored' : ''].join(' ')}
+          // After a pick the banner below already names the loser, who starts.
+          kicker={named && !picked ? `${table[starter] ?? table[0]} starts` : `Round ${round}`}
           onEnter={burning ? undefined : light}
           actions={
             burning ? (
-              <p className="g-hot-potato-hint">Say one, pass it left. No repeats.</p>
+              <p className="g-hot-potato-hint" role="status">
+                {relight ? `Back on in ${relight}` : 'Say one, pass it left. No repeats.'}
+              </p>
             ) : (
               <Row>
                 <Big quiet onClick={skip}>
@@ -205,9 +245,31 @@ function Play() {
             )
           }
         >
+          {scored && (
+            <div className="g-hot-potato-result" role="status">
+              <button
+                type="button"
+                className="g-hot-potato-result-main"
+                onClick={() => setStep({ s: 'scores' })}
+                aria-label={`${verdict(scored.loser, drinks)}. ${standingLine(tally, table, scored.loser, drinks)} See scores.`}
+              >
+                <Avatar name={scored.loser} index={Math.max(0, table.indexOf(scored.loser))} size={32} />
+                <span>
+                  <b>{verdict(scored.loser, drinks)}</b>
+                  <small>{standingLine(tally, table, scored.loser, drinks)}</small>
+                </span>
+                <svg width="10" height="16" viewBox="0 0 10 16" aria-hidden="true">
+                  <path d="M2.5 2.5L8 8l-5.5 5.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <button type="button" className="g-hot-potato-undo" onClick={undo}>
+                Undo
+              </button>
+            </div>
+          )}
           <div className="g-hot-potato-table">
             <Card key={`${prompt.kind}-${prompt.text}`} prompt={prompt} />
-            <Potato fuse={burning ? lit : null} heat={heat} onBoom={boom} />
+            <Potato fuse={burning ? lit : null} heat={heat} onBoom={boom} onCount={setRelight} />
           </div>
         </Screen>
       </Fragment>
@@ -230,31 +292,28 @@ function Play() {
     );
 
   const rows = standings(tally, table);
-  const next = () => deal(table, table.indexOf(step.loser));
+  const back = () => setStep({ s: 'ready' });
   return (
     <Screen
-      key={`score-${round}`}
+      key="scores"
       className="g-hot-potato-score"
       center={false}
-      kicker={`Round ${round}`}
-      title={drinks ? `${step.loser} Drinks ${LOSER_SIPS}` : `${step.loser} Takes a Point`}
-      sub={standingLine(tally, table, step.loser, drinks)}
-      onEnter={next}
+      kicker={result ? `After round ${result.round}` : undefined}
+      title={drinks ? 'Rounds Lost' : 'Scores'}
+      sub={drinks ? undefined : 'Fewest points wins.'}
+      onEnter={back}
       actions={
-        <>
-          <Big primary onClick={next}>
-            Next Round
+        <Row>
+          <Big onClick={() => setStep({ s: 'setup' })}>Change Setup</Big>
+          <Big primary onClick={back}>
+            Back
           </Big>
-          <Row>
-            <Big onClick={() => undo(step.loser)}>Undo</Big>
-            <Big onClick={() => setStep({ s: 'setup' })}>Change Setup</Big>
-          </Row>
-        </>
+        </Row>
       }
     >
       <ol className="arcade-party-scores g-hot-potato-scores" aria-label={drinks ? 'Rounds lost this session' : 'Points this session, fewest wins'}>
         {rows.map((r) => (
-          <li key={r.name} className={r.name === step.loser ? 'is-hi' : r.losses ? undefined : 'is-zero'}>
+          <li key={r.name} className={r.name === result?.loser ? 'is-hi' : r.losses ? undefined : 'is-zero'}>
             <Avatar name={r.name} index={r.seat} size={28} />
             <span>{r.name}</span>
             <b>{r.losses}</b>
@@ -263,20 +322,6 @@ function Play() {
       </ol>
     </Screen>
   );
-}
-
-/** Where the loser stands: "Sam's on 3, the most so far." (points) or "Sam's lost 3, the most so far." (drinks). */
-function standingLine(t: Tally, names: string[], loser: string, drinks: boolean): string {
-  const n = lossesOf(t, loser);
-  const top = leaders(t, names);
-  const max = top.length ? lossesOf(t, top[0]) : 0;
-  const total = names.reduce((sum, name) => sum + lossesOf(t, name), 0);
-  const one = (who: string, k: number) => (drinks ? `${who}'s lost ${k}` : `${who}'s on ${k}`);
-  const many = (who: string[], k: number) => (drinks ? `${listNames(who)} have lost ${k} each` : `${listNames(who)} are tied on ${k}`);
-  if (total <= 1) return drinks ? `${loser}'s lost the first round.` : 'Fewest points wins.';
-  if (top.length === 1 && top[0] === loser) return `${one(loser, n)}, the most so far.`;
-  if (top.includes(loser)) return `${many(top, n)}, the most so far.`;
-  return `${one(loser, n)}. ${top.length === 1 ? `${top[0]} has the most with ${max}.` : `Most so far: ${listNames(top)}, ${max} each.`}`;
 }
 
 /** The prompt on cream card stock, readable from across the circle. */
@@ -323,19 +368,32 @@ const star = (n: number, ro: number, ri: number) =>
 const SPARK_OUT = star(9, 26, 11);
 const SPARK_IN = star(9, 13, 6);
 
-function tick(left: number, tock: boolean) {
-  const near = Math.min(1, Math.max(0, 1 - left / 20));
-  sfx.tone({ freq: (tock ? 880 : 1180) * (1 + near * 0.3), dur: 0.035, type: 'square', vol: 0.08 + near * 0.08 });
+/** One tick of the fuse. `heat` comes from the tempo (0 calm, 1 frantic), never from the time left. */
+function tick(heat: number, tock: boolean) {
+  sfx.tone({ freq: (tock ? 880 : 1180) * (1 + heat * 0.3), dur: 0.035, type: 'square', vol: 0.08 + heat * 0.08 });
   // The fuse crackles now and then.
-  if (Math.random() < 0.3) sfx.noise(0.045, 0.03 + near * 0.03);
+  if (Math.random() < 0.3) sfx.noise(0.045, 0.03 + heat * 0.03);
 }
 
 /**
  * The potato with its fuse. Given a lit fuse it runs the clock: the fuse burns along its uneven profile, the spark
  * flickers, the potato warms up and twitches on every tick, and onBoom fires when the time is up. Pausing the game
- * stops all of it. `mark` draws it small with a still spark, for the setup screen.
+ * stops all of it, and coming back counts in 3-2-1 (reported through onCount) before the fuse burns again, so nobody
+ * gets the phone back mid-burn without warning. `mark` draws it small with a still spark, for the setup screen.
  */
-function Potato({ fuse = null, heat, onBoom, mark }: { fuse?: Fuse | null; heat?: RefObject<HTMLDivElement | null>; onBoom?: () => void; mark?: boolean }) {
+function Potato({
+  fuse = null,
+  heat,
+  onBoom,
+  onCount,
+  mark,
+}: {
+  fuse?: Fuse | null;
+  heat?: RefObject<HTMLDivElement | null>;
+  onBoom?: () => void;
+  onCount?: (beat: number) => void;
+  mark?: boolean;
+}) {
   const id = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const shell = useShell();
   const still = useStill();
@@ -347,10 +405,31 @@ function Potato({ fuse = null, heat, onBoom, mark }: { fuse?: Fuse | null; heat?
   const body = useRef<SVGGElement | null>(null);
   const fill = useRef<SVGPathElement | null>(null);
   const shade = useRef<SVGPathElement | null>(null);
-  const st = useRef({ t: 0, tickIn: 0.3, tock: false, wob: 0, dir: 1, done: false });
+  const st = useRef({ t: 0, next: 0, tock: false, wob: 0, kick: 1, dir: 1, done: false, hold: 0, beat: 0 });
   const boom = useRef(onBoom);
   boom.current = onBoom;
+  const counted = useRef(onCount);
+  counted.current = onCount;
+  const [beat, setBeat] = useState(0);
   const lit = !!fuse;
+  const showBeat = (n: number) => {
+    setBeat(n);
+    counted.current?.(n);
+  };
+
+  // Back from a pause mid-burn: hold the fuse for a 3-2-1 first.
+  const paused = useRef(false);
+  useEffect(() => {
+    if (!lit || st.current.done) return;
+    if (shell.status === 'paused') paused.current = true;
+    else if (shell.status === 'playing' && paused.current) {
+      paused.current = false;
+      st.current.hold = RESUME_BEATS * RESUME_BEAT;
+      st.current.beat = RESUME_BEATS;
+      showBeat(RESUME_BEATS);
+      sfx.play('tick', 1.1);
+    }
+  }, [shell.status, lit]);
 
   // Lighting removes the button that had focus; keep keys (P to pause) going to the game.
   useEffect(() => {
@@ -364,22 +443,34 @@ function Potato({ fuse = null, heat, onBoom, mark }: { fuse?: Fuse | null; heat?
     (dt) => {
       const s = st.current;
       if (!fuse || s.done || dt <= 0) return;
+      s.wob = Math.max(0, s.wob - dt * 7);
+      if (s.hold > 0) {
+        s.hold -= dt;
+        const n = Math.max(0, Math.ceil(s.hold / RESUME_BEAT - 1e-6));
+        if (n !== s.beat) {
+          s.beat = n;
+          showBeat(n);
+          if (n > 0) sfx.play('tick', n === 1 ? 1.3 : 1.1);
+        }
+        return;
+      }
       s.t += dt;
       if (s.t >= fuse.total) {
         s.done = true;
         boom.current?.();
         return;
       }
-      s.tickIn -= dt;
-      if (s.tickIn <= 0) {
-        const left = fuse.total - s.t;
-        tick(left, s.tock);
+      const ticks = fuse.ticks;
+      if (s.next < ticks.length && ticks[s.next] <= s.t) {
+        const h = tickHeat(ticks[s.next] - (s.next > 0 ? ticks[s.next - 1] : 0));
+        tick(h, s.tock);
         s.tock = !s.tock;
-        s.tickIn = tickGap(left);
         s.wob = 1;
+        s.kick = 0.7 + h * 0.6;
         s.dir = -s.dir;
+        // A long frame never fires a burst of ticks at once.
+        while (s.next < ticks.length && ticks[s.next] <= s.t) s.next++;
       }
-      s.wob = Math.max(0, s.wob - dt * 7);
     },
     () => {
       const p = geo.current;
@@ -401,7 +492,7 @@ function Potato({ fuse = null, heat, onBoom, mark }: { fuse?: Fuse | null; heat?
           e.setAttribute('cy', (Math.sin(a) * r).toFixed(1));
           e.setAttribute('r', (1.4 + Math.random() * 2.4).toFixed(1));
         }
-        body.current?.setAttribute('transform', `rotate(${(s.dir * s.wob * 2.4).toFixed(2)} 104 140)`);
+        body.current?.setAttribute('transform', `rotate(${(s.dir * s.wob * s.kick * 2.4).toFixed(2)} 104 140)`);
       }
       const h = Math.min(1, b / 0.9);
       fill.current?.setAttribute('fill', rgb(COOL, HOT, h));
@@ -464,6 +555,14 @@ function Potato({ fuse = null, heat, onBoom, mark }: { fuse?: Fuse | null; heat?
           </g>
         )}
       </g>
+      {lit && beat > 0 && (
+        <g className="g-hot-potato-relight" transform="translate(104 138)" aria-hidden="true">
+          <circle r="42" fill={PAPER} stroke={INK} strokeWidth="4" />
+          <text key={beat} y="2" textAnchor="middle" dominantBaseline="central" fill={INK}>
+            {beat}
+          </text>
+        </g>
+      )}
     </svg>
   );
 }
@@ -552,26 +651,28 @@ function Boom({
         }
       >
         <div className="g-hot-potato-aftermath">
-          <div className="g-hot-potato-blast" role="status">
-            <svg viewBox="0 0 132 104" aria-hidden="true">
-              <polygon points={BURST_OUT} fill="#ff4d1a" stroke={PAPER} strokeWidth="3" strokeLinejoin="round" />
-              <polygon points={BURST_IN} fill="#ffc83d" />
-            </svg>
-            <h2 className="g-hot-potato-boomword">Boom!</h2>
-            {!again && (
-              <div className="g-hot-potato-debris" aria-hidden="true">
-                {DEBRIS.map((d, i) => (
-                  <i
-                    key={i}
-                    className={d.fry ? 'is-fry' : undefined}
-                    style={{ ['--x' as string]: `${d.x}px`, ['--y' as string]: `${d.y}px`, ['--r' as string]: `${d.r}deg`, ['--s' as string]: d.s }}
-                  />
-                ))}
-              </div>
-            )}
+          <div className="g-hot-potato-shown">
+            <div className="g-hot-potato-blast" role="status">
+              <svg viewBox="0 0 132 104" aria-hidden="true">
+                <polygon points={BURST_OUT} fill="#ff4d1a" stroke={PAPER} strokeWidth="3" strokeLinejoin="round" />
+                <polygon points={BURST_IN} fill="#ffc83d" />
+              </svg>
+              <h2 className="g-hot-potato-boomword">Boom!</h2>
+              {!again && (
+                <div className="g-hot-potato-debris" aria-hidden="true">
+                  {DEBRIS.map((d, i) => (
+                    <i
+                      key={i}
+                      className={d.fry ? 'is-fry' : undefined}
+                      style={{ ['--x' as string]: `${d.x}px`, ['--y' as string]: `${d.y}px`, ['--r' as string]: `${d.r}deg`, ['--s' as string]: d.s }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+            {named && <Card prompt={prompt} small />}
           </div>
           <div className="g-hot-potato-after">
-            <Card prompt={prompt} small />
             {named ? (
               <>
                 <h3 className="g-hot-potato-who">Who was holding it?</h3>
@@ -586,7 +687,12 @@ function Boom({
                 </div>
               </>
             ) : (
-              <p className="arcade-party-sub g-hot-potato-verdict">{drinks ? `Whoever's holding it drinks ${LOSER_SIPS}.` : "Whoever's holding it loses this round."}</p>
+              <>
+                <Card prompt={prompt} small />
+                <p className="arcade-party-sub g-hot-potato-verdict">
+                  {drinks ? `Whoever's holding it drinks ${sips(LOSER_SIPS)}.` : "Whoever's holding it loses this round."}
+                </p>
+              </>
             )}
           </div>
         </div>

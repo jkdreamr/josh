@@ -112,8 +112,8 @@ export function markGot(m: Match, left: number, rng: Rng = Math.random): { match
   const next: Match = { ...m, cards: [...m.cards, { slip: m.slip, round, got: true }], slip: null };
   const now = roundNow(next);
   if (now === round) return { match: deal(next, rng), ended: 'none' };
-  if (now >= ROUNDS) return { match: next, ended: 'game' };
-  return { match: { ...next, carry: Math.max(0, left) }, ended: 'round' };
+  // The clock stops with `left` on it either way: a fix at the last break can reopen the round, and play goes on from there.
+  return { match: { ...next, carry: Math.max(0, left) }, ended: now >= ROUNDS ? 'game' : 'round' };
 }
 
 /** Skipped: the slip goes back in the bowl and a different one comes out when there is one. */
@@ -178,6 +178,13 @@ export function fix(m: Match, slip: number, round: number): Match {
 
 export const points = (cards: readonly Card[]) => cards.reduce((n, c) => n + (c.got ? 1 : 0), 0);
 
+/** Points in each round a turn reached, in order. More than one entry when the bowl emptied mid-turn. */
+export function pointsByRound(cards: readonly Card[]): { round: number; points: number }[] {
+  const out = new Map<number, number>();
+  for (const c of cards) out.set(c.round, (out.get(c.round) ?? 0) + (c.got ? 1 : 0));
+  return [...out].sort((a, b) => a[0] - b[0]).map(([round, n]) => ({ round, points: n }));
+}
+
 /** Points by round, then by team: table[round][team]. Includes the turn in progress when `current` is given. */
 export function scoreTable(turns: readonly Turn[], current?: { team: TeamIndex; cards: readonly Card[] }): [number, number][] {
   const table: [number, number][] = Array.from({ length: ROUNDS }, () => [0, 0] as [number, number]);
@@ -224,6 +231,25 @@ export function builtInSlips(list: readonly string[], count: number, rng: Rng = 
   return shuffle(unique, rng).slice(0, Math.max(0, Math.min(count, unique.length)));
 }
 
+/** How much of a built-in bowl comes from the 18+ list when After Dark is on. */
+export const AFTER_DARK_SHARE = 0.5;
+
+/**
+ * The built-in bowl. With no `spicy` list it is exactly builtInSlips(classic). With After Dark on, half the slips
+ * (rounded up) come from the 18+ list and the rest from the classic one, shuffled together.
+ */
+export function builtInBowl(classic: readonly string[], count: number, spicy: readonly string[] = [], rng: Rng = Math.random): string[] {
+  if (!spicy.length) return builtInSlips(classic, count, rng);
+  const hot = builtInSlips(spicy, Math.ceil(Math.max(0, count) * AFTER_DARK_SHARE), rng);
+  const taken = new Set(hot.map((s) => s.toLocaleLowerCase()));
+  const mild = builtInSlips(
+    classic.filter((s) => !taken.has(s.toLocaleLowerCase())),
+    count - hot.length,
+    rng,
+  );
+  return shuffle([...hot, ...mild], rng);
+}
+
 /** Trims, folds whitespace, drops control characters and caps the length of a typed slip. */
 export function tidySlip(raw: string): string {
   const clean = raw
@@ -244,5 +270,41 @@ export function addSlip(own: readonly string[], raw: string, max: number): AddSl
   return { ok: true, slips: [...own, slip] };
 }
 
-/** The longest single word in a slip, which decides how big it can be drawn. */
-export const longestToken = (text: string) => text.split(/\s+/).reduce((n, w) => Math.max(n, Array.from(w).length), 0);
+/** A bowl the group wrote, kept on this device so a reload or a Restart doesn't throw it away. */
+export type SavedBowl = { slips: string[]; by: string[] };
+
+/** Fewest slips worth keeping as a bowl. */
+export const SAVED_MIN = 4;
+
+/** Reads a stored bowl back, tidying every slip. Anything unusable comes back as null. */
+export function parseBowl(raw: unknown): SavedBowl | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { slips, by } = raw as { slips?: unknown; by?: unknown };
+  if (!Array.isArray(slips)) return null;
+  const clean = slips.filter((s): s is string => typeof s === 'string').map(tidySlip).filter(Boolean).slice(0, 200);
+  const names = Array.isArray(by) ? by.filter((s): s is string => typeof s === 'string' && s.trim() !== '').slice(0, 20) : [];
+  return clean.length >= SAVED_MIN ? { slips: clean, by: names } : null;
+}
+
+/** Presses closer together than this (ms) are one burst. */
+export const BURST_GAP = 600;
+/** After a step has been up this long (ms), any press counts again: a safety valve, since people do pause. */
+export const BURST_CAP = 8000;
+
+/**
+ * Taps and key presses come in bursts. A burst that began before a step appeared was meant for the step before (a
+ * frantic Got It after the buzzer), so on the steps between turns it doesn't count until it stops for a moment.
+ */
+export class Bursts {
+  private start = -Infinity;
+  private last = -Infinity;
+  /** A press at time `t` (ms). */
+  note(t: number) {
+    if (t - this.last > BURST_GAP) this.start = t;
+    this.last = t;
+  }
+  /** Whether the latest press counts on a step that appeared at `since`, at time `now`. */
+  fresh(since: number, now: number) {
+    return this.start > since || now - since >= BURST_CAP;
+  }
+}

@@ -2,19 +2,43 @@ import { Fragment, useLayoutEffect, useRef, useState, type RefObject } from 'rea
 import { GameShell, defineSetting, sfx, useKeys, useSetting, useShell } from '../../kit';
 import { Avatar, Big, DrinkNote, HowToPlay, Option, PlayerList, Screen, listNames, playerColor, usePlayers } from '../../kit/party';
 import type { GameProps } from '../../types';
-import { LENGTHS, activeRules, buildDeck, plain, stats, step, type Card, type Kind, type Part } from './logic';
+import { ADULT, DEFAULT_INTENSITY, LENGTHS, activeRules, buildDeck, plain, stats, step, type Card, type Kind, type Part } from './logic';
 import { meta } from './meta';
 import './party-mix.css';
 
-const INTENSITY = defineSetting('party-mix:intensity', ['chill', 'party', 'wild'] as const, 'party');
+const INTENSITY = defineSetting('party-mix:intensity', ['chill', 'party', 'wild', 'dark'] as const, DEFAULT_INTENSITY);
 const LENGTH = defineSetting('party-mix:length', ['short', 'normal', 'long'] as const, 'normal');
 const MIN = 2;
+/** Two taps closer than this are one double tap: the second one doesn't skip a card. */
+const DOUBLE_TAP = 400;
+const RULE_MAX = 80;
 
 const INTENSITY_NOTE = {
-  chill: 'Easy cards and small sips. Good for a slow start.',
+  chill: 'Easy cards, nothing personal. Good for a slow start.',
   party: 'The full mix, with a few cards that get personal.',
-  wild: 'Adds 18+ cards. Suggestive, never explicit.',
+  wild: '18+. Hookups, exes and dares that need a yes.',
+  dark: '18+ and frank about sex. For groups who know each other well.',
 } as const;
+
+const adult = (label: string) => (
+  <span className="g-party-mix-seg">
+    {label}
+    <small>18+</small>
+  </span>
+);
+const INTENSITY_OPTIONS = [
+  ['chill', 'Chill'],
+  ['party', 'Party'],
+  ['wild', adult('Wild')],
+  ['dark', adult('After Dark')],
+] as const;
+
+/** Typed text for a write-in rule: control characters out, whitespace folded, length capped. */
+const tidyRule = (raw: string) =>
+  Array.from(raw.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, ' ').replace(/\s+/g, ' ').trim())
+    .slice(0, RULE_MAX)
+    .join('')
+    .trim();
 
 /** Each kind of card: its label, a 24 by 24 stroke icon, and the pitch of its deal sound. */
 const KINDS: Record<Kind, { label: string; icon: string; pitch: number }> = {
@@ -72,7 +96,7 @@ function Text({ parts, names }: { parts: readonly Part[]; names: readonly string
  * Sets --fs on `inner` to the largest type size that still fits inside `box`, and again whenever the box
  * resizes or the fonts finish loading.
  */
-function useFitText(box: RefObject<HTMLElement | null>, inner: RefObject<HTMLElement | null>) {
+function useFitText(box: RefObject<HTMLElement | null>, inner: RefObject<HTMLElement | null>, content?: string) {
   useLayoutEffect(() => {
     const b = box.current;
     const el = inner.current;
@@ -103,38 +127,40 @@ function useFitText(box: RefObject<HTMLElement | null>, inner: RefObject<HTMLEle
       alive = false;
       ro.disconnect();
     };
-  }, [box, inner]);
+  }, [box, inner, content]);
 }
 
-function CardFace({ card, names, back }: { card: Card; names: readonly string[]; back: boolean }) {
+function CardFace({ card, names, back, made }: { card: Card; names: readonly string[]; back: boolean; /** A write-in rule's text, once written. */ made?: string }) {
   const kind = KINDS[card.kind];
   const box = useRef<HTMLDivElement | null>(null);
   const inner = useRef<HTMLDivElement | null>(null);
-  useFitText(box, inner);
+  useFitText(box, inner, made);
   return (
     <article className={`g-party-mix-card is-${card.kind} ${back ? 'is-back' : ''}`}>
       <header>
         <Icon d={kind.icon} />
         <span>{kind.label}</span>
-        {card.level === 3 && <em>18+</em>}
+        {card.level >= 3 && <em>18+</em>}
       </header>
       <div className="g-party-mix-panel" ref={box}>
         <div className="g-party-mix-fit" ref={inner}>
           {card.kind === 'wyr' ? (
             <>
-              <p className="g-party-mix-opt">
-                <b aria-hidden="true">1</b>
-                <span>
-                  <Text parts={card.text} names={names} />
-                </span>
-              </p>
-              <span className="g-party-mix-or">or</span>
-              <p className="g-party-mix-opt">
-                <b aria-hidden="true">2</b>
-                <span>
-                  <Text parts={card.or ?? []} names={names} />
-                </span>
-              </p>
+              <div className="g-party-mix-wyr">
+                <p className="g-party-mix-opt">
+                  <b aria-hidden="true">1</b>
+                  <span>
+                    <Text parts={card.text} names={names} />
+                  </span>
+                </p>
+                <span className="g-party-mix-or">or</span>
+                <p className="g-party-mix-opt">
+                  <b aria-hidden="true">2</b>
+                  <span>
+                    <Text parts={card.or ?? []} names={names} />
+                  </span>
+                </p>
+              </div>
               <p className="g-party-mix-foot">On three, hold up one finger or two. The smaller side drinks 1.</p>
             </>
           ) : (
@@ -142,12 +168,16 @@ function CardFace({ card, names, back }: { card: Card; names: readonly string[];
               <p className="g-party-mix-text">
                 <Text parts={card.text} names={names} />
               </p>
-              {card.kind === 'rule' && card.rule && <p className="g-party-mix-foot">Stays on for the next {card.rule.lasts} cards.</p>}
+              {card.kind === 'rule' && card.rule && (
+                <p className="g-party-mix-foot">
+                  {made && <b className="g-party-mix-made">{made}</b>}
+                  Stays on for the next {card.rule.lasts} cards.
+                </p>
+              )}
+              {card.kind === 'vote' && <p className="g-party-mix-foot">A tie means everyone tied does it.</p>}
               {card.kind === 'end' && card.rule && (
                 <p className="g-party-mix-foot">
-                  <s>
-                    <Text parts={card.rule.label} names={names} />
-                  </s>
+                  <s>{made ?? <Text parts={card.rule.label} names={names} />}</s>
                 </p>
               )}
             </>
@@ -190,8 +220,13 @@ function Play() {
   const [deal, setDeal] = useState<Deal | null>(null);
   const [at, setAt] = useState(0);
   const [back, setBack] = useState(false);
+  /** Write-in rules, by where their New Rule card sits in the deck. */
+  const [made, setMade] = useState<Record<number, string>>({});
+  const [draft, setDraft] = useState('');
   const used = useRef<Set<string> | undefined>(undefined);
-  const lastTap = useRef(0);
+  const lastNext = useRef(-Infinity);
+  /** When the tap being handled happened: a busy phone can run the handler late, so time it from the event. */
+  const tapAt = useRef<number | null>(null);
 
   const start = () => {
     if (players.length < MIN) return;
@@ -202,6 +237,8 @@ function Play() {
     setDeal({ names: players.slice(), deck });
     setAt(0);
     setBack(false);
+    setMade({});
+    setDraft('');
   };
 
   const move = (dir: 1 | -1) => {
@@ -209,6 +246,15 @@ function Play() {
     const total = deal.deck.length;
     const to = step(at, dir, total);
     if (to === at) return;
+    // One finger, one card: a double tap (on the card, the button or both) moves on once.
+    if (dir > 0) {
+      const t = tapAt.current;
+      tapAt.current = null;
+      const now = t !== null && performance.now() - t < 3000 ? t : performance.now();
+      if (now - lastNext.current < DOUBLE_TAP) return;
+      lastNext.current = now;
+    }
+    setDraft('');
     setBack(dir < 0);
     setAt(to);
     // Back turns itself off on the first card; keep the keys working when it had focus.
@@ -250,7 +296,7 @@ function Play() {
             'Add everyone in seating order. Cards call people out by name.',
             'Whoever holds the phone reads the card out loud. Tap anywhere for the next one.',
             <>
-              The color tells you the kind: a <b>Duel</b> is head to head, a <b>Vote</b> means everyone points on three, a <b>Game</b> goes around the circle.
+              The color tells you the kind: a <b>Duel</b> is head to head, a <b>Vote</b> means everyone points on three (a tie means everyone tied), a <b>Game</b> goes around the circle.
             </>,
             <>
               A <b>New Rule</b> stays on until its Rule Over card. Rules in play sit above the card.
@@ -258,22 +304,13 @@ function Play() {
             <>
               <b>Would You Rather</b>: on three, everyone holds up one finger or two. The smaller side drinks, and a tie means everyone does.
             </>,
-            'Sips, not shots. Water counts, and anyone can sit a card out.',
+            'Sips, not shots. Water counts. Anyone can pass on any card, and a card that brings someone else in needs their yes.',
           ]}
         />
         <PlayerList min={MIN} />
         <div className="g-party-mix-field">
-          <Option
-            label="Intensity"
-            value={intensity}
-            options={[
-              ['chill', 'Chill'],
-              ['party', 'Party'],
-              ['wild', 'Wild'],
-            ]}
-            onChange={setIntensity}
-          />
-          <p className={`g-party-mix-note ${intensity === 'wild' ? 'is-wild' : ''}`}>{INTENSITY_NOTE[intensity]}</p>
+          <Option label="Intensity" value={intensity} options={INTENSITY_OPTIONS} onChange={setIntensity} />
+          <p className={`g-party-mix-note ${ADULT.includes(intensity) ? 'is-wild' : ''}`}>{INTENSITY_NOTE[intensity]}</p>
         </div>
         <Option
           label="Length"
@@ -295,7 +332,8 @@ function Play() {
 
   if (at >= total) {
     const s = stats(deck, names.length);
-    const even = s.most.times === s.least.times;
+    // One card apart is a coin flip, not a story: it reads as even.
+    const even = s.most.times - s.least.times <= 1;
     // A headline only when one or two players stand out; otherwise the list says it.
     const headline = !even && s.most.seats.length <= 2;
     const order = names.map((_, i) => i).sort((a, b) => s.named[b] - s.named[a] || a - b);
@@ -334,7 +372,7 @@ function Play() {
           <div className="g-party-mix-called">
             {even ? (
               <p>
-                Everyone got called out on {s.most.times} {s.most.times === 1 ? 'card' : 'cards'}. Nobody got off easy.
+                Everyone got called out on {s.least.times === s.most.times ? s.most.times : `${s.least.times} or ${s.most.times}`} {s.most.times === 1 ? 'card' : 'cards'}. Nobody got off easy.
               </p>
             ) : (
               <>
@@ -367,15 +405,22 @@ function Play() {
   const card = deck[at];
   const rules = activeRules(deck, at);
   const last = at === total - 1;
+  const madeHere = card.write && card.rule ? made[card.rule.from] : undefined;
+  const writing = card.kind === 'rule' && card.write && !madeHere;
+  const ruleLabel = (r: Card) => {
+    const label = plain(r.rule?.label ?? [], names);
+    const text = r.write && r.rule ? made[r.rule.from] : undefined;
+    return text ? `${label}: ${text}` : label;
+  };
   return (
     <div
       className="g-party-mix-tap"
+      onClickCapture={(e) => {
+        tapAt.current = e.timeStamp;
+      }}
       onClick={(e) => {
-        if ((e.target as Element).closest?.('button, a, input')) return;
-        const now = performance.now();
-        if (now - lastTap.current < 220) return;
-        lastTap.current = now;
-        move(1);
+        if (!(e.target as Element).closest?.('button, a, input, form')) move(1);
+        tapAt.current = null;
       }}
     >
       <Screen
@@ -409,16 +454,48 @@ function Play() {
         {rules.length > 0 && (
           <ul className="g-party-mix-rules" aria-label="Rules in play">
             {rules.map((r) => (
-              <li key={r.key} title={plain(r.text, names)}>
+              <li key={r.key} title={ruleLabel(r)}>
                 <Icon d={KINDS.rule.icon} />
-                <span>{plain(r.rule?.label ?? [], names)}</span>
+                <span>{ruleLabel(r)}</span>
               </li>
             ))}
           </ul>
         )}
         <div className="g-party-mix-stage" aria-live="polite">
-          <CardFace key={at} card={card} names={names} back={back} />
+          <CardFace key={at} card={card} names={names} back={back} made={madeHere} />
         </div>
+        {writing && (
+          <form
+            className="g-party-mix-write"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const text = tidyRule(draft);
+              if (!text || !card.rule) return;
+              sfx.play('blip');
+              setMade({ ...made, [card.rule.from]: text });
+              setDraft('');
+              shell.root.current?.focus({ preventScroll: true });
+            }}
+          >
+            <input
+              className="arcade-input"
+              type="text"
+              aria-label={`${plain(card.rule?.label ?? [], names)}, written down`}
+              placeholder="Write the rule down"
+              maxLength={RULE_MAX}
+              autoComplete="off"
+              enterKeyHint="done"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Escape' && !e.metaKey && !e.ctrlKey) e.stopPropagation();
+              }}
+            />
+            <button type="submit" className="arcade-btn" disabled={!tidyRule(draft)}>
+              Add
+            </button>
+          </form>
+        )}
       </Screen>
     </div>
   );

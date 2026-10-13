@@ -59,6 +59,23 @@
   color: var(--party-faint);
 }
 
+/* Measured text (useFit): words never break inside, until a word can't fit even at the smallest size. */
+.g-fishbowl .g-fishbowl-nb {
+  white-space: nowrap;
+}
+.g-fishbowl .is-broken .g-fishbowl-nb {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.g-fishbowl .g-fishbowl-line {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.g-fishbowl .g-fishbowl-line > span {
+  display: block;
+}
+
 /* Team tags: a goldfish and a jellyfish */
 .g-fishbowl .g-fishbowl-tag {
   display: inline-flex;
@@ -269,13 +286,11 @@
   transform: translateY(2px);
   box-shadow: 0 1px 0 var(--g-fishbowl-paper-edge);
 }
-.g-fishbowl .g-fishbowl-mine button span {
-  min-width: 0;
+.g-fishbowl .g-fishbowl-mine .g-fishbowl-line {
   font-family: var(--party-display);
   font-size: 19px;
   font-weight: 650;
   line-height: 1.2;
-  overflow-wrap: anywhere;
 }
 .g-fishbowl .g-fishbowl-write .arcade-input:disabled {
   opacity: 0.5;
@@ -291,77 +306,92 @@
   }
 }
 
-/* Ready: the round's rule, big enough to read across the room */
+/* Ready: the handoff on top, the round's rule below it, big enough for the room */
 .g-fishbowl .g-fishbowl-ready .arcade-party-body {
-  gap: 8px;
+  gap: 24px;
 }
-.g-fishbowl .g-fishbowl-ready .g-fishbowl-bowl {
-  width: clamp(120px, 34cqmin, 230px);
-  height: auto;
-  margin-bottom: 8px;
+.g-fishbowl .g-fishbowl-hand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
 }
-.g-fishbowl .g-fishbowl-roundno {
-  margin: 0;
-  font-family: var(--party-display);
-  font-size: 17px;
-  font-weight: 600;
-  color: var(--g-fishbowl-aqua);
+.g-fishbowl .g-fishbowl-hand .arcade-party-kicker {
+  margin: 4px 0 -6px;
 }
-.g-fishbowl .g-fishbowl-rulename {
-  margin: 0;
-  font-family: var(--party-display);
-  font-size: clamp(46px, 15cqmin, 76px);
-  font-weight: 750;
-  line-height: 0.98;
-  letter-spacing: -0.03em;
-  text-align: center;
+.g-fishbowl .g-fishbowl-name {
+  width: 100%;
+  font-size: clamp(40px, 13cqmin, 64px);
+  line-height: 1.08;
 }
-.g-fishbowl .g-fishbowl-ruletext {
-  max-width: 340px;
-  margin: 4px 0 6px;
-  font-size: 18px;
-  line-height: 1.4;
-  text-align: center;
-  text-wrap: balance;
-  color: var(--party-dim);
+.g-fishbowl .g-fishbowl-name > span {
+  display: block;
+  white-space: nowrap;
 }
 .g-fishbowl .g-fishbowl-facts {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 6px 12px;
-  margin: 6px 0 0;
-  font-size: 14px;
+  gap: 8px 12px;
+  margin: 2px 0 0;
+  font-size: 15px;
+  text-wrap: balance;
   color: var(--party-dim);
 }
-.g-fishbowl .g-fishbowl-facts > span:not(.g-fishbowl-tag) + span::before {
-  content: '';
-  display: inline-block;
-  width: 4px;
-  height: 4px;
-  margin: 0 10px 2px 0;
-  border-radius: 50%;
-  background: var(--party-faint);
-}
-.g-fishbowl .g-fishbowl-carry {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin: 8px 0 0;
-  padding: 8px 14px 8px 8px;
-  border-radius: 999px;
-  font-size: 15px;
-  color: var(--party-ink);
-  background: color-mix(in srgb, var(--team) 14%, transparent);
-  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--team) 55%, transparent);
-}
-.g-fishbowl .g-fishbowl-carry b {
+.g-fishbowl .g-fishbowl-facts b {
   font-family: var(--party-display);
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
   color: var(--team);
+}
+.g-fishbowl .g-fishbowl-round {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 14px 18px 16px 12px;
+  border-radius: 16px;
+  background: var(--party-tile);
+}
+.g-fishbowl .g-fishbowl-stock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.g-fishbowl .g-fishbowl-stock span {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--party-dim);
+}
+.g-fishbowl .g-fishbowl-roundno {
+  margin: 0;
+  font-family: var(--party-display);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--g-fishbowl-aqua);
+}
+.g-fishbowl .g-fishbowl-rulename {
+  margin: 2px 0 0;
+  font-family: var(--party-display);
+  font-size: clamp(32px, 10cqmin, 44px);
+  font-weight: 750;
+  line-height: 1;
+  letter-spacing: -0.025em;
+}
+.g-fishbowl .g-fishbowl-ruletext {
+  margin: 6px 0 0;
+  font-size: 15px;
+  line-height: 1.4;
+  text-wrap: balance;
+  color: var(--party-dim);
 }
 
 /* Play */
@@ -498,8 +528,8 @@
 .g-fishbowl .g-fishbowl-slip {
   grid-area: 1 / 1;
   position: relative;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
   width: calc(100% - 8px);
   height: min(calc(100% - 10px), 78cqw, 520px);
   padding: 20px 22px;
@@ -518,16 +548,49 @@
 .g-fishbowl .g-fishbowl-slip.is-tilt {
   transform: rotate(0.9deg);
 }
-.g-fishbowl .g-fishbowl-slip strong {
-  max-width: 100%;
+.g-fishbowl .g-fishbowl-fit {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+/* useFit picks the size; 96px is the most it may grow to. */
+.g-fishbowl .g-fishbowl-fit > strong {
+  display: block;
+  width: 100%;
+  min-width: 0;
   font-family: var(--party-display);
-  font-size: clamp(22px, min(calc(86cqw / (var(--len, 6) * 0.56)), 26cqh), 92px);
+  font-size: 96px;
   font-weight: 700;
   line-height: 1.07;
   letter-spacing: -0.025em;
   text-align: center;
   text-wrap: balance;
-  overflow-wrap: break-word;
+}
+/* The 3-2-1: the next slip, still folded */
+.g-fishbowl .g-fishbowl-slip.is-back {
+  align-items: center;
+  justify-content: center;
+  background: var(--g-fishbowl-paper-low);
+  animation: none;
+}
+.g-fishbowl .g-fishbowl-beat {
+  font-family: var(--party-display);
+  font-size: clamp(64px, 62cqh, 200px);
+  font-weight: 750;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--g-fishbowl-ink);
+  animation: g-fishbowl-beat 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes g-fishbowl-beat {
+  from {
+    transform: scale(1.5);
+    opacity: 0;
+  }
 }
 .g-fishbowl .g-fishbowl-slip em {
   position: absolute;
@@ -640,13 +703,11 @@
 }
 
 /* Review */
-.g-fishbowl .g-fishbowl-label {
-  width: 100%;
-  margin: 4px 0 -4px;
-  padding-left: 2px;
+.g-fishbowl .g-fishbowl-list > span small {
+  margin-left: auto;
   font-size: 13px;
-  font-weight: 600;
-  color: var(--party-dim);
+  font-weight: 500;
+  color: var(--party-faint);
 }
 .g-fishbowl .g-fishbowl-rows {
   display: flex;
@@ -684,13 +745,28 @@
 .g-fishbowl .g-fishbowl-rows button:active {
   transform: translateY(2px);
 }
-.g-fishbowl .g-fishbowl-rows button span {
-  min-width: 0;
+.g-fishbowl .g-fishbowl-rows .g-fishbowl-line {
   font-family: var(--party-display);
   font-size: 17px;
   font-weight: 650;
   line-height: 1.2;
-  overflow-wrap: anywhere;
+}
+/* Face down: a skipped round 1 slip is still a secret from the other team. */
+.g-fishbowl .g-fishbowl-rows button.is-hidden {
+  background: repeating-linear-gradient(-45deg, rgba(245, 239, 227, 0.05) 0 6px, transparent 6px 12px);
+}
+.g-fishbowl .g-fishbowl-veil {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--party-faint);
+}
+.g-fishbowl .g-fishbowl-veil svg {
+  flex: none;
 }
 .g-fishbowl .g-fishbowl-rows button em {
   display: inline-flex;
@@ -875,6 +951,10 @@
   list-style: none;
 }
 .g-fishbowl .g-fishbowl-notes li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
   padding: 11px 14px 12px;
   border-radius: 12px;
   background: var(--party-tile);
@@ -884,18 +964,22 @@
   font-weight: 600;
   color: var(--party-faint);
 }
-.g-fishbowl .g-fishbowl-notes p {
-  margin: 3px 0 0;
-  font-size: 15px;
-  line-height: 1.4;
+.g-fishbowl .g-fishbowl-note {
+  flex: none;
+  font-family: var(--party-display);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
 }
-.g-fishbowl .g-fishbowl-notes b {
-  font-weight: 600;
+.g-fishbowl .g-fishbowl-notes li.is-t0 .g-fishbowl-note,
+.g-fishbowl .g-fishbowl-notes li.is-t1 .g-fishbowl-note {
   color: var(--team);
 }
-.g-fishbowl .g-fishbowl-notes q {
-  font-family: var(--party-display);
-  font-weight: 650;
+.g-fishbowl .g-fishbowl-notes p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--party-dim);
 }
 
 /* Short windows (the laptop window, phones in landscape) */
@@ -957,17 +1041,32 @@
     height: calc(100% - 8px);
     padding: 12px 18px;
   }
-  .g-fishbowl .g-fishbowl-ready .g-fishbowl-bowl {
-    width: 92px;
-    height: 81px;
-    margin-bottom: 0;
+  .g-fishbowl .g-fishbowl-ready .arcade-party-body {
+    gap: 14px;
+  }
+  .g-fishbowl .g-fishbowl-name {
+    font-size: 40px;
   }
   .g-fishbowl .g-fishbowl-rulename {
-    font-size: clamp(36px, 12cqmin, 52px);
+    font-size: 32px;
   }
   .g-fishbowl .g-fishbowl-ruletext {
-    margin: 0;
-    font-size: 16px;
+    margin-top: 4px;
+  }
+  .g-fishbowl .g-fishbowl-ready .g-fishbowl-round {
+    padding: 12px 16px 14px 10px;
+  }
+  .g-fishbowl .g-fishbowl-stock .g-fishbowl-bowl {
+    width: 64px;
+    height: 57px;
+  }
+  /* Two buttons side by side, so the scores keep the room. */
+  .g-fishbowl .g-fishbowl-done .arcade-party-actions {
+    flex-direction: row;
+  }
+  .g-fishbowl .g-fishbowl-done .arcade-party-actions > * {
+    flex: 1 1 0;
+    min-width: 0;
   }
   .g-fishbowl .g-fishbowl-head .g-fishbowl-bowl {
     width: 72px;
@@ -980,16 +1079,93 @@
   .g-fishbowl .g-fishbowl-mine button {
     min-height: 44px;
   }
-  .g-fishbowl .g-fishbowl-mine button span {
+  .g-fishbowl .g-fishbowl-mine .g-fishbowl-line {
     font-size: 17px;
   }
   .g-fishbowl .g-fishbowl-head .arcade-party-title {
     font-size: 30px;
   }
 }
+/* Landscape: the handoff and the round's rule side by side */
+@container arcade-party (max-height: 520px) and (min-width: 480px) {
+  .g-fishbowl .g-fishbowl-ready .arcade-party-body {
+    flex-direction: row;
+    align-items: center;
+    gap: 20px;
+    max-width: 700px;
+  }
+  .g-fishbowl .g-fishbowl-ready .g-fishbowl-hand,
+  .g-fishbowl .g-fishbowl-ready .g-fishbowl-round {
+    flex: 1 1 0;
+  }
+  .g-fishbowl .g-fishbowl-ready .g-fishbowl-round {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 14px 18px 16px;
+  }
+  .g-fishbowl .g-fishbowl-ready .g-fishbowl-stock {
+    flex-direction: row;
+    gap: 8px;
+  }
+  .g-fishbowl .g-fishbowl-ready .g-fishbowl-stock .g-fishbowl-bowl {
+    width: 44px;
+    height: 39px;
+  }
+  /* The final: scores beside the rounds table, so all three rounds show above the buttons. */
+  .g-fishbowl .g-fishbowl-done .arcade-party-body {
+    display: grid;
+    grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
+    align-items: start;
+    align-content: start;
+    gap: 10px 20px;
+    max-width: 700px;
+  }
+  .g-fishbowl .g-fishbowl-done .arcade-party-kicker,
+  .g-fishbowl .g-fishbowl-done .arcade-party-title,
+  .g-fishbowl .g-fishbowl-done .g-fishbowl-notes {
+    grid-column: 1 / -1;
+  }
+  .g-fishbowl .g-fishbowl-done .arcade-party-kicker {
+    margin-bottom: -6px;
+    text-align: center;
+  }
+  .g-fishbowl .g-fishbowl-done .g-fishbowl-table tbody th {
+    white-space: nowrap;
+  }
+  .g-fishbowl .g-fishbowl-done .g-fishbowl-table td {
+    width: auto;
+    padding: 0 6px 0 10px;
+  }
+  .g-fishbowl .g-fishbowl-done .g-fishbowl-table tbody th i {
+    margin-right: 8px;
+  }
+  .g-fishbowl .g-fishbowl-done .g-fishbowl-board {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .g-fishbowl .g-fishbowl-done .g-fishbowl-side {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+  }
+  .g-fishbowl .g-fishbowl-done .g-fishbowl-side b {
+    font-size: 34px;
+  }
+  .g-fishbowl .g-fishbowl-done .g-fishbowl-table th,
+  .g-fishbowl .g-fishbowl-done .g-fishbowl-table td {
+    height: 38px;
+  }
+  .g-fishbowl .g-fishbowl-done .g-fishbowl-table thead th {
+    height: 28px;
+  }
+}
 @container arcade-party (max-width: 380px) {
   .g-fishbowl .g-fishbowl-head .arcade-party-title {
     font-size: 30px;
+  }
+  .g-fishbowl .g-fishbowl-slip {
+    padding-right: 16px;
+    padding-left: 16px;
   }
   .g-fishbowl .g-fishbowl-head {
     gap: 12px;
@@ -1035,11 +1211,38 @@
     min-height: 108px;
     font-size: 26px;
   }
+  .g-fishbowl .g-fishbowl-fit > strong {
+    font-size: 128px;
+  }
+  .g-fishbowl .g-fishbowl-ready .arcade-party-body,
+  .g-fishbowl .g-fishbowl-ready .arcade-party-actions {
+    max-width: 560px;
+  }
+  .g-fishbowl .g-fishbowl-name {
+    font-size: 76px;
+  }
+  .g-fishbowl .g-fishbowl-facts {
+    font-size: 18px;
+  }
+  .g-fishbowl .g-fishbowl-facts .g-fishbowl-tag.is-chip {
+    height: 36px;
+    font-size: 18px;
+  }
+  .g-fishbowl .g-fishbowl-round {
+    gap: 22px;
+    padding: 20px 24px 22px 16px;
+  }
+  .g-fishbowl .g-fishbowl-stock .g-fishbowl-bowl {
+    width: 120px;
+    height: 106px;
+  }
+  .g-fishbowl .g-fishbowl-roundno {
+    font-size: 18px;
+  }
   .g-fishbowl .g-fishbowl-rulename {
-    font-size: clamp(46px, 13cqmin, 104px);
+    font-size: 58px;
   }
   .g-fishbowl .g-fishbowl-ruletext {
-    max-width: 440px;
-    font-size: 22px;
+    font-size: 19px;
   }
 }

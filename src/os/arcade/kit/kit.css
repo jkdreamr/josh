@@ -79,6 +79,21 @@
   opacity: 1;
   background: rgba(255, 255, 255, 0.12);
 }
+.arcade-shell .arcade-ctrl button.is-armed {
+  width: auto;
+  gap: 5px;
+  padding: 0 10px 0 8px;
+  border-radius: 999px;
+  opacity: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: #d92d20;
+}
+.arcade-ctrl button.is-armed {
+  display: inline-flex;
+  align-items: center;
+}
 
 .arcade-ov {
   position: absolute;
