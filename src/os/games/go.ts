@@ -225,18 +225,46 @@ export function undo(state: GameState): GameState | null {
   };
 }
 
-export function legalMoves(state: GameState): Point[] {
-  if (state.phase !== 'play') return [];
-  const seen = new Set(state.positions);
-  const moves: Point[] = [];
-  for (let y = 0; y < state.size; y += 1) {
-    for (let x = 0; x < state.size; x += 1) {
-      const index = indexOf(state.size, x, y);
-      if (state.board[index] !== 0) continue;
-      if (!tryPlace(state.board, state.size, x, y, state.toPlay, seen).reason) moves.push({ x, y });
+type MoveInfo = { legal: Point[]; ko: number[] };
+const moveInfoCache = new WeakMap<GameState, MoveInfo>();
+
+/** Legal moves and ko-banned points for the player to move, worked out once per state (states are never mutated). */
+function moveInfo(state: GameState): MoveInfo {
+  const cached = moveInfoCache.get(state);
+  if (cached) return cached;
+  const info: MoveInfo = { legal: [], ko: [] };
+  if (state.phase === 'play') {
+    const seen = new Set(state.positions);
+    for (let y = 0; y < state.size; y += 1) {
+      for (let x = 0; x < state.size; x += 1) {
+        const index = indexOf(state.size, x, y);
+        if (state.board[index] !== 0) continue;
+        const reason = tryPlace(state.board, state.size, x, y, state.toPlay, seen).reason;
+        if (!reason) info.legal.push({ x, y });
+        else if (reason === 'ko') info.ko.push(index);
+      }
     }
   }
-  return moves;
+  moveInfoCache.set(state, info);
+  return info;
+}
+
+/**
+ * A copy to post to the engine worker. Each undo snapshot carries the position list up to it, so a
+ * long 19x19 game would clone tens of megabytes per move; the engine only reads the current list,
+ * so the snapshots go without theirs. Not for undo.
+ */
+export function engineView(state: GameState): GameState {
+  return { ...state, past: state.past.map((snapshot) => ({ ...snapshot, positions: [] })) };
+}
+
+export function legalMoves(state: GameState): Point[] {
+  return moveInfo(state).legal.map((point) => ({ ...point }));
+}
+
+/** Empty points the player to move may not play because of (super)ko. */
+export function koBannedPoints(state: GameState): number[] {
+  return [...moveInfo(state).ko];
 }
 
 export function territoryOwners(board: readonly Stone[], size: number): Stone[] {

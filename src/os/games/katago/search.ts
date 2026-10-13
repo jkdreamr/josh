@@ -27,6 +27,13 @@ export type SearchOptions = {
 export const STRONG: SearchOptions = { maxVisits: 400, maxTimeMs: 1500, batchSize: 8, rootSymmetries: true };
 export const FAST: SearchOptions = { maxVisits: 12, maxTimeMs: 400, batchSize: 4, openingSampleMoves: 10 };
 
+/** The search presets for a board size. Bigger boards cost more per evaluation, so they get more time. */
+export function searchOptions(level: 'fast' | 'strong', size: number): SearchOptions {
+  const base = level === 'fast' ? FAST : STRONG;
+  const timeScale = size >= 19 ? 2.5 : size >= 13 ? 1.6 : 1;
+  return { ...base, maxTimeMs: Math.round(base.maxTimeMs * timeScale) };
+}
+
 export type SearchResult = {
   move: Point | null;
   visits: number;
@@ -37,22 +44,24 @@ export type SearchResult = {
 };
 
 type Node = {
-  state: GameState;
   move: Point | null;
   prior: number;
   visits: number;
   valueSum: number;
+  /** Played out the first time the search walks into the node; most children never are. */
+  state?: GameState;
   output?: NetOutput;
   children?: Node[];
 };
 
-type UtilityContext = { rootPlayer: Color; center: number };
+/** `scale` is KataGo's score utility scale, 0.4 points per line of board width (3.6 on 9x9). */
+type UtilityContext = { rootPlayer: Color; center: number; scale: number };
 
-const pointIndex = (point: Point): number => point.y * 9 + point.x;
+const pointIndex = (point: Point, size: number): number => point.y * size + point.x;
 const scoreUtility = (lead: number, player: Color, context: UtilityContext): number => {
   const center = player === context.rootPlayer ? context.center : -context.center;
   const f = (value: number): number => (2 / Math.PI) * Math.atan(value);
-  return 0.1 * f(lead / 3.6) + 0.3 * f((lead - center) / 3.6);
+  return 0.1 * f(lead / context.scale) + 0.3 * f((lead - center) / context.scale);
 };
 
 function utility(state: GameState, output: NetOutput, context: UtilityContext): number {
@@ -73,25 +82,31 @@ function ownershipBlackFromOutput(state: GameState, output: NetOutput): Float32A
 }
 
 function createChildren(node: Node, output: NetOutput): void {
-  const moves = legalMoves(node.state);
-  const passIndex = 81;
+  const state = node.state!;
+  const moves = legalMoves(state);
+  const passIndex = state.size * state.size;
   let priorSum = output.policy[passIndex] ?? 0;
-  for (const move of moves) priorSum += Math.max(0, output.policy[pointIndex(move)] ?? 0);
+  for (const move of moves) priorSum += Math.max(0, output.policy[pointIndex(move, state.size)] ?? 0);
   const uniformPrior = !(priorSum > 0);
   if (uniformPrior) priorSum = moves.length + 1;
   node.children = moves.map((move) => {
-    const value = Math.max(0, output.policy[pointIndex(move)] ?? 0);
-    return { state: play(node.state, move.x, move.y).state, move, prior: uniformPrior ? 1 / priorSum : value / priorSum, visits: 0, valueSum: 0 };
+    const value = Math.max(0, output.policy[pointIndex(move, state.size)] ?? 0);
+    return { move, prior: uniformPrior ? 1 / priorSum : value / priorSum, visits: 0, valueSum: 0 };
   });
-  const afterPass = pass(node.state);
   const passPrior = Math.max(0, output.policy[passIndex] ?? 0);
-  node.children.push({ state: afterPass, move: null, prior: uniformPrior ? 1 / priorSum : passPrior / priorSum, visits: 0, valueSum: 0 });
+  node.children.push({ move: null, prior: uniformPrior ? 1 / priorSum : passPrior / priorSum, visits: 0, valueSum: 0 });
+}
+
+function enter(parent: Node, child: Node): void {
+  if (child.state) return;
+  const state = parent.state!;
+  child.state = child.move ? play(state, child.move.x, child.move.y).state : pass(state);
 }
 
 function selectLeaf(root: Node, pending: Set<Node>): { leaf: Node; path: Node[] } | null {
   const path = [root];
   let node = root;
-  while (node.children && node.state.phase === 'play') {
+  while (node.children && node.state!.phase === 'play') {
     const available = node.children.filter((child) => !pending.has(child));
     if (!available.length) return null;
     const parentVisits = Math.sqrt(Math.max(1, node.visits));
@@ -108,6 +123,7 @@ function selectLeaf(root: Node, pending: Set<Node>): { leaf: Node; path: Node[] 
       }
     }
     if (!best) return null;
+    enter(node, best);
     node = best;
     path.push(node);
   }
@@ -134,7 +150,7 @@ export async function search(state: GameState, evaluator: Evaluator, options: Se
   const rootOutput = options.rootSymmetries && evaluator.evaluateSymmetric
     ? await evaluator.evaluateSymmetric(state)
     : (await evaluator.evaluate([state]))[0]!;
-  const utilityContext: UtilityContext = { rootPlayer: state.toPlay, center: 0.8 * rootOutput.scoreLead };
+  const utilityContext: UtilityContext = { rootPlayer: state.toPlay, center: 0.8 * rootOutput.scoreLead, scale: 0.4 * state.size };
   root.output = rootOutput;
   createChildren(root, rootOutput);
   const pending = new Set<Node>();
@@ -155,7 +171,7 @@ export async function search(state: GameState, evaluator: Evaluator, options: Se
     }
     if (!leaves.length) break;
     const uncached = leaves.filter(({ leaf }) => !leaf.output);
-    const evaluated = uncached.length ? await evaluator.evaluate(uncached.map(({ leaf }) => leaf.state)) : [];
+    const evaluated = uncached.length ? await evaluator.evaluate(uncached.map(({ leaf }) => leaf.state!)) : [];
     let evaluatedIndex = 0;
     for (let i = 0; i < leaves.length; i += 1) {
       const { leaf, path } = leaves[i]!;
@@ -166,11 +182,12 @@ export async function search(state: GameState, evaluator: Evaluator, options: Se
         node.valueSum -= 1;
       }
       leaf.output = output;
-      const isTerminal = leaf.state.phase !== 'play';
+      const leafState = leaf.state!;
+      const isTerminal = leafState.phase !== 'play';
       if (!isTerminal) createChildren(leaf, output);
       let value = isTerminal
-        ? terminalUtility(leaf.state, output, utilityContext)
-        : utility(leaf.state, output, utilityContext);
+        ? terminalUtility(leafState, output, utilityContext)
+        : utility(leafState, output, utilityContext);
       for (let index = path.length - 1; index >= 0; index -= 1) {
         const node = path[index]!;
         node.visits += 1;
@@ -212,20 +229,21 @@ export async function search(state: GameState, evaluator: Evaluator, options: Se
     countAhead = margin > 0;
     countBehind = margin < 0;
   }
-  const legalNonEye = legalMoves(state).filter((move) => !isOwnEye(state.board, state.size, pointIndex(move), state.toPlay));
+  const notOwnEye = (move: Point): boolean => !isOwnEye(state.board, state.size, pointIndex(move, state.size), state.toPlay);
+  const legalNonEye = legalMoves(state).filter(notOwnEye);
   const selectedPass = chosen?.move === null;
   const countPassWins = state.consecutivePasses === 1 && countAhead;
   let move = selectedPass || countPassWins ? null : chosen?.move ?? null;
   if (!countPassWins && (rootOutput.scoreLead < 0 || (state.consecutivePasses === 1 && countBehind)) && legalNonEye.length > 0 && move === null) {
     const fallback = [...root.children!]
-      .filter((child) => child.move && !isOwnEye(state.board, state.size, pointIndex(child.move), state.toPlay))
+      .filter((child) => child.move && notOwnEye(child.move))
       .sort((a, b) => b.visits - a.visits || b.prior - a.prior)[0];
     move = fallback?.move ?? legalNonEye[0]!;
   }
   if (state.consecutivePasses === 0 && selectedPass && legalNonEye.length > 0) {
     const passChild = root.children!.find((child) => child.move === null)!;
     const bestNonPass = [...root.children!]
-      .filter((child) => child.move && !isOwnEye(state.board, state.size, pointIndex(child.move), state.toPlay))
+      .filter((child) => child.move && notOwnEye(child.move))
       .sort((a, b) => b.visits - a.visits || b.prior - a.prior)[0];
     if (bestNonPass && !(bestNonPass.visits < passChild.visits && rootQ(bestNonPass) < rootQ(passChild) - 0.01)) {
       move = bestNonPass.move;

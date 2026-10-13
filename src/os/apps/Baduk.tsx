@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
-import { BLACK, groupStones, newGame, pass, play, resign, score, undo, WHITE, type GameState, type Ownership, type Point } from '../games/go';
+import { BLACK, engineView, groupStones, newGame, pass, play, resign, score, undo, WHITE, type GameState, type Ownership, type Point } from '../games/go';
+import { GO_LEVELS, GO_SIZES, goLevel, isGoLevel, isGoSize, type GoLevelId, type GoSize } from '../games/go-levels';
 import { newOmok, omokAiMove, playOmok, undoOmok, type OmokState } from '../games/omok';
 import { useOS, type AppProps } from '../types';
 import { countPlay } from '../stats';
-import { getAppGame } from '../arcade/apps';
+import { getAppGame, goBoardOwner } from '../arcade/apps';
 import { boardFor } from '../arcade/kit/leaderboard';
 import { AppBoard, onlineAvailable, RoomPanel, useAppRoom, useInvite } from './online-room';
 import './game-controls.css';
@@ -11,9 +12,9 @@ import './Baduk.css';
 
 type Mode = 'computer' | 'friend' | 'online';
 type Color = typeof BLACK | typeof WHITE;
-type RoomMessage = { t: 'move'; x: number; y: number } | { t: 'pass' } | { t: 'resign' } | { t: 'dead'; list: number[] } | { t: 'count'; list: number[] };
+/** `setup` goes from the host at the start of every Go round: the guest plays on the host's board size. */
+type RoomMessage = { t: 'move'; x: number; y: number } | { t: 'pass' } | { t: 'resign' } | { t: 'dead'; list: number[] } | { t: 'count'; list: number[] } | { t: 'setup'; size: GoSize; round: number };
 
-const GO_GAME = getAppGame('go')!;
 const OMOK_GAME = getAppGame('omok')!;
 /** Online: the host plays Black in odd rounds and White in even rounds, so colors swap on every rematch. */
 const onlineColorOf = (seat: number, round: number): Color => ((round % 2 === 1) === (seat === 0) ? BLACK : WHITE);
@@ -26,6 +27,7 @@ function parseRoomMessage(value: unknown, size: number): RoomMessage | null {
   const list = (v: unknown) => Array.isArray(v) && v.length <= size * size && v.every((i) => Number.isInteger(i) && i >= 0 && i < size * size) ? (v as number[]) : null;
   if (m.t === 'move') return onBoard(m.x) && onBoard(m.y) ? { t: 'move', x: m.x as number, y: m.y as number } : null;
   if (m.t === 'pass' || m.t === 'resign') return { t: m.t };
+  if (m.t === 'setup') return isGoSize(m.size) && Number.isInteger(m.round) ? { t: 'setup', size: m.size, round: m.round as number } : null;
   if (m.t === 'dead' || m.t === 'count') {
     const indices = list(m.list);
     return indices ? { t: m.t, list: indices } : null;
@@ -39,11 +41,37 @@ type WorkerResponse =
   | { type: 'engine'; status: 'loading' | 'ready' | 'failed'; backend?: string };
 
 const SIZE = 420;
-const GO_LETTERS = 'ABCDEFGHJ';
-const OMOK_LETTERS = 'ABCDEFGHJKLMNOP';
-const boardStart = (size: number) => size === 15 ? 34 : 44;
-const boardSpacing = (size: number) => size === 15 ? 25 : 41.5;
+/** Board coordinates skip I, as on a real board. */
+const LETTERS = 'ABCDEFGHJKLMNOPQRST';
+const boardStart = (size: number) => size === 9 ? 44 : size === 13 ? 38 : 34;
+const boardSpacing = (size: number) => size === 15 ? 25 : (SIZE - 2 * boardStart(size)) / (size - 1);
 const pointPosition = (index: number, size: number) => boardStart(size) + index * boardSpacing(size);
+/** 9×9 and Omok keep their roomier stones; 13×13 and 19×19 stones nearly touch, like a real board. */
+const stoneRadius = (size: number) => size === 9 ? 15.2 : size === 15 ? 10.2 : boardSpacing(size) * 0.45;
+
+function starPoints(size: number): [number, number][] {
+  if (size === 19) return [3, 9, 15].flatMap((x) => [3, 9, 15].map((y): [number, number] => [x, y]));
+  const near = size >= 13 ? 3 : 2;
+  const far = size - 1 - near;
+  const middle = (size - 1) / 2;
+  return [[near, near], [far, near], [near, far], [far, far], [middle, middle]];
+}
+
+function stored(key: string): string | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function store(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* private mode: the choice lasts for this visit */
+  }
+}
 
 function pointFromPointer(event: ReactPointerEvent<SVGSVGElement>, size: number): Point | null {
   const rect = event.currentTarget.getBoundingClientRect();
@@ -62,7 +90,15 @@ function pointFromPointer(event: ReactPointerEvent<SVGSVGElement>, size: number)
 
 export default function Baduk({ args }: AppProps) {
   const os = useOS();
-  const [game, setGame] = useState<GameState>(() => newGame(9));
+  const [goSize, setGoSize] = useState<GoSize>(() => {
+    const size = Number(stored('baduk-go-size'));
+    return isGoSize(size) ? size : 9;
+  });
+  const [goLevelId, setGoLevelId] = useState<GoLevelId>(() => {
+    const level = stored('baduk-go-level');
+    return isGoLevel(level) ? level : 'strong';
+  });
+  const [game, setGame] = useState<GameState>(() => newGame(goSize));
   const [omok, setOmok] = useState<OmokState>(() => newOmok());
   const [gameMode, setGameMode] = useState<GameMode>(() => args.game ?? (typeof window !== 'undefined' && window.localStorage.getItem('baduk-game') === 'omok' ? 'omok' : 'go'));
   const [mode, setMode] = useState<Mode>(() => (args.room ? 'online' : 'computer'));
@@ -76,14 +112,26 @@ export default function Baduk({ args }: AppProps) {
   const [engineStatus, setEngineStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [tainted, setTainted] = useState(false);
   const [gameNo, setGameNo] = useState(0);
+  /** Touch on 13×13 and 19×19: the first tap previews a stone, a second tap on the same point plays it. */
+  const [pending, setPending] = useState<Point | null>(null);
+  /** Online guest: the round whose board size the host has sent. Moves wait until it matches. */
+  const [setupRound, setSetupRound] = useState(0);
+  const goSizeRef = useRef(goSize);
+  goSizeRef.current = goSize;
+  const hostSizeRef = useRef<GoSize>(9);
   const omokRef = useRef(omok);
   omokRef.current = omok;
   const deadRef = useRef(deadSet);
   deadRef.current = deadSet;
   const room = useAppRoom(gameMode === 'omok' ? 'omok' : 'go', {
-    onStart: () => startNewGame(),
-    onEnd: () => startNewGame(),
+    onStart: (round, seat) => {
+      startNewGame();
+      if (seat === 0 && gameModeRef.current === 'go') room.send({ t: 'setup', size: goSizeRef.current, round });
+    },
+    onEnd: () => startNewGame(goSizeRef.current),
   });
+  const guestRef = useRef(false);
+  guestRef.current = room.linked && !room.isHost;
   const onlineColor: Color | null = mode === 'online' && room.status === 'playing' && room.seat !== null ? onlineColorOf(room.seat, room.round) : null;
   const onlineRef = useRef({ color: onlineColor, round: room.round, seat: room.seat });
   onlineRef.current = { color: onlineColor, round: room.round, seat: room.seat };
@@ -97,6 +145,7 @@ export default function Baduk({ args }: AppProps) {
   gameModeRef.current = gameMode;
 
   useEffect(() => countPlay('baduk'), [args.nonce]);
+  useEffect(() => setPending(null), [game]);
 
   useEffect(() => {
     if (!args.game) return;
@@ -157,11 +206,11 @@ export default function Baduk({ args }: AppProps) {
     if (!worker) return;
     const id = ++jobRef.current;
     setThinking(true);
-    worker.postMessage({ id, type: 'ai', state: game, level: difficulty === 'easy' ? 'fast' : 'strong' });
+    worker.postMessage({ id, type: 'ai', state: engineView(game), level: goLevelId });
     return () => {
       if (jobRef.current === id) jobRef.current += 1;
     };
-  }, [gameMode, mode, game, difficulty]);
+  }, [gameMode, mode, game, goLevelId]);
 
   useInvite(room, args.room, args.nonce, () => setMode('online'));
 
@@ -181,7 +230,7 @@ export default function Baduk({ args }: AppProps) {
     if (!worker) return;
     const id = ++jobRef.current;
     setAnalyzing(true);
-    worker.postMessage({ id, type: 'ownership', state: game, playouts: 400 });
+    worker.postMessage({ id, type: 'ownership', state: engineView(game), playouts: 400 });
     return () => {
       if (jobRef.current === id) jobRef.current += 1;
     };
@@ -198,8 +247,16 @@ export default function Baduk({ args }: AppProps) {
     const online = onlineRef.current;
     if (online.color === null || from === online.seat) return;
     const omokMode = gameModeRef.current === 'omok';
-    const message = parseRoomMessage(data, omokMode ? 15 : 9);
+    const message = parseRoomMessage(data, omokMode ? 15 : gameRef.current.size);
     if (!message) return;
+    if (message.t === 'setup') {
+      if (omokMode || from !== 0 || online.seat === 0) return;
+      hostSizeRef.current = message.size;
+      setSetupRound(message.round);
+      // Usually the round's empty board is already up; it may be the wrong size if this arrived after the start.
+      if (!gameRef.current.past.length && gameRef.current.size !== message.size) setGame(newGame(message.size));
+      return;
+    }
     const theirs: Color = online.color === BLACK ? WHITE : BLACK;
     if (omokMode) {
       const current = omokRef.current;
@@ -248,12 +305,13 @@ export default function Baduk({ args }: AppProps) {
     };
   }, [gameMode, mode, omok, difficulty]);
 
-  const startNewGame = () => {
+  const startNewGame = (size: GoSize = guestRef.current ? hostSizeRef.current : goSizeRef.current) => {
     countPlay('baduk');
     jobRef.current += 1;
     setTainted(false);
     setGameNo((n) => n + 1);
-    setGame(newGame(9));
+    setPending(null);
+    setGame(newGame(size));
     setOmok(newOmok());
     setDeadSet(new Set());
     setCounted(false);
@@ -263,7 +321,8 @@ export default function Baduk({ args }: AppProps) {
   };
 
   const online = mode === 'online';
-  const myTurn = (toPlay: Color) => !online || toPlay === onlineColor;
+  const sizeReady = gameMode === 'omok' || !online || room.isHost || setupRound === room.round;
+  const myTurn = (toPlay: Color) => !online || (toPlay === onlineColor && sizeReady);
 
   const placeStone = (point: Point) => {
     if (online && onlineColor === null) return;
@@ -302,7 +361,7 @@ export default function Baduk({ args }: AppProps) {
       setHovered(null);
       return;
     }
-    setHovered(pointFromPointer(event, gameMode === 'omok' ? 15 : 9));
+    setHovered(pointFromPointer(event, boardSize));
   };
 
   const undoTurn = () => {
@@ -371,16 +430,38 @@ export default function Baduk({ args }: AppProps) {
     if (room.linked) room.leave();
     setGameMode(next);
     window.localStorage.setItem('baduk-game', next);
-    startNewGame();
+    startNewGame(goSizeRef.current);
   };
 
   const switchMode = (next: Mode) => {
     if (next !== 'online' && room.linked) room.leave();
     setMode(next);
-    startNewGame();
+    startNewGame(goSizeRef.current);
   };
 
-  const boardSize = gameMode === 'omok' ? 15 : 9;
+  // Online, the host picks the size in the lobby and the guest follows; a round in play keeps its board.
+  const sizeLocked = online && (room.status === 'playing' || (room.linked && !room.isHost));
+  const switchSize = (next: GoSize) => {
+    if (sizeLocked || next === game.size) return;
+    setGoSize(next);
+    goSizeRef.current = next;
+    store('baduk-go-size', String(next));
+    startNewGame(next);
+  };
+
+  const onBoardPointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const point = pointFromPointer(event, boardSize);
+    if (!point) return;
+    const confirm = event.pointerType !== 'mouse' && gameMode === 'go' && game.phase === 'play' && boardSize >= 13;
+    if (confirm && (pending?.x !== point.x || pending?.y !== point.y)) {
+      setPending(board[point.y * boardSize + point.x] === 0 && myTurn(game.toPlay) && !thinking ? point : null);
+      return;
+    }
+    setPending(null);
+    placeStone(point);
+  };
+
+  const boardSize = gameMode === 'omok' ? 15 : game.size;
   const start = boardStart(boardSize);
   const end = pointPosition(boardSize - 1, boardSize);
   const board = gameMode === 'omok' ? omok.board : game.board;
@@ -389,12 +470,14 @@ export default function Baduk({ args }: AppProps) {
     ? omok.winner === 0 ? null : omok.winner === null ? omok.toPlay : omok.winner
     : toPlay;
   const lastMove = gameMode === 'omok' ? omok.lastMove : game.lastMove;
-  const letters = Array.from({ length: boardSize }, (_, index) => (gameMode === 'omok' ? OMOK_LETTERS : GO_LETTERS)[index] ?? '');
+  const letters = Array.from({ length: boardSize }, (_, index) => LETTERS[index] ?? '');
+  const radius = stoneRadius(boardSize);
   const shownScore = gameMode === 'go' && counted ? score(game, deadSet) : null;
-  const hoverIndex = hovered ? hovered.y * boardSize + hovered.x : -1;
-  const canHover = (!online || (onlineColor !== null && toPlay === onlineColor)) && (gameMode === 'omok'
-    ? omok.winner === null && !thinking && hovered && board[hoverIndex] === 0
-    : game.phase === 'play' && !thinking && hovered && board[hoverIndex] === 0);
+  const preview = gameMode === 'go' && pending ? pending : hovered;
+  const previewIndex = preview ? preview.y * boardSize + preview.x : -1;
+  const canHover = (!online || (onlineColor !== null && toPlay === onlineColor && sizeReady)) && (gameMode === 'omok'
+    ? omok.winner === null && !thinking && preview && board[previewIndex] === 0
+    : game.phase === 'play' && !thinking && preview && board[previewIndex] === 0);
   const colorName = (color: Color) => {
     if (onlineColor === null) return color === BLACK ? 'Black' : 'White';
     return color === onlineColor ? 'You' : room.opponent?.name ?? (color === BLACK ? 'Black' : 'White');
@@ -423,8 +506,9 @@ export default function Baduk({ args }: AppProps) {
       const board = boardFor(OMOK_GAME, difficulty);
       return board ? { board, score: omok.board.filter((stone) => stone === BLACK).length } : null;
     }
-    if (gameMode === 'go' && shownScore && shownScore.winner === BLACK) {
-      const board = boardFor(GO_GAME, difficulty === 'easy' ? 'fast' : 'strong');
+    if (gameMode === 'go' && shownScore && shownScore.winner === BLACK && isGoSize(game.size)) {
+      const owner = getAppGame(goBoardOwner(game.size));
+      const board = owner ? boardFor(owner, goLevelId) : null;
       return board ? { board, score: shownScore.margin } : null;
     }
     return null;
@@ -441,7 +525,7 @@ export default function Baduk({ args }: AppProps) {
             <button aria-pressed={gameMode === 'omok'} onClick={() => switchGame('omok')}>Omok</button>
           </div>
         </div>
-        <p>{gameMode === 'omok' ? <>omok <span className="baduk-korean">오목</span>. five in a row wins, black goes first.</> : 'Grew up playing this. 9×9, area scoring, 7.5 komi.'}</p>
+        <p>{gameMode === 'omok' ? <>omok <span className="baduk-korean">오목</span>. five in a row wins, black goes first.</> : `Grew up playing this. ${game.size}×${game.size}, area scoring, 7.5 komi.`}</p>
       </header>
       <main className="baduk-main">
         <div className="baduk-board-wrap">
@@ -449,13 +533,10 @@ export default function Baduk({ args }: AppProps) {
             className="baduk-board"
             viewBox={`0 0 ${SIZE} ${SIZE}`}
             role="img"
-            aria-label={gameMode === 'omok' ? '15 by 15 Omok board' : '9 by 9 Go board'}
+            aria-label={`${boardSize} by ${boardSize} ${gameMode === 'omok' ? 'Omok' : 'Go'} board`}
             onPointerMove={onBoardPointerMove}
             onPointerLeave={() => setHovered(null)}
-            onPointerUp={(event) => {
-              const point = pointFromPointer(event, boardSize);
-              if (point) placeStone(point);
-            }}
+            onPointerUp={onBoardPointerUp}
           >
             <defs>
               <linearGradient id="baduk-kaya" x1="0" x2="1" y1="0" y2="1">
@@ -495,7 +576,7 @@ export default function Baduk({ args }: AppProps) {
                 </g>
               );
             })}
-            {(gameMode === 'omok' ? [[3, 3], [11, 3], [3, 11], [11, 11], [7, 7]] : [[2, 2], [6, 2], [2, 6], [6, 6], [4, 4]]).map(([x, y]) => (
+            {starPoints(boardSize).map(([x, y]) => (
               <circle key={`${x}-${y}`} cx={pointPosition(x, boardSize)} cy={pointPosition(y, boardSize)} r="2.1" className="baduk-hoshi" />
             ))}
             {board.map((stone, index) => {
@@ -507,17 +588,17 @@ export default function Baduk({ args }: AppProps) {
               const isDead = gameMode === 'go' && deadSet.has(index);
               return (
                 <g key={index} className={isDead ? 'is-dead' : ''} filter="url(#baduk-stone-shadow)">
-                  <circle cx={cx} cy={cy} r={boardSize === 15 ? '10.2' : '15.2'} fill={stone === BLACK ? 'url(#baduk-black)' : 'url(#baduk-white)'} stroke={stone === BLACK ? '#050606' : '#bdb7ab'} strokeWidth="1" />
-                  {isDead && <path d={`M${cx - 5} ${cy - 5}l10 10m0-10l-10 10`} className="baduk-dead-mark" />}
-                  {lastMove?.x === x && lastMove?.y === y && <circle cx={cx} cy={cy} r={boardSize === 15 ? '3' : '4'} className={stone === BLACK ? 'baduk-last-move is-on-black' : 'baduk-last-move'} />}
+                  <circle cx={cx} cy={cy} r={radius} fill={stone === BLACK ? 'url(#baduk-black)' : 'url(#baduk-white)'} stroke={stone === BLACK ? '#050606' : '#bdb7ab'} strokeWidth="1" />
+                  {isDead && <path d={`M${cx - radius / 3} ${cy - radius / 3}l${radius / 1.5} ${radius / 1.5}m0-${radius / 1.5}l-${radius / 1.5} ${radius / 1.5}`} className="baduk-dead-mark" />}
+                  {lastMove?.x === x && lastMove?.y === y && <circle cx={cx} cy={cy} r={radius * 0.27} className={stone === BLACK ? 'baduk-last-move is-on-black' : 'baduk-last-move'} />}
                 </g>
               );
             })}
             {canHover && (
               <circle
-                cx={pointPosition(hovered!.x, boardSize)}
-                cy={pointPosition(hovered!.y, boardSize)}
-                r={boardSize === 15 ? '10' : '15'}
+                cx={pointPosition(preview!.x, boardSize)}
+                cy={pointPosition(preview!.y, boardSize)}
+                r={radius - 0.2}
                 fill={toPlay === BLACK ? '#111' : '#fff'}
                 stroke={toPlay === BLACK ? '#000' : '#999'}
                 className="baduk-ghost-stone"
@@ -539,7 +620,7 @@ export default function Baduk({ args }: AppProps) {
           <div className="baduk-turn-card">
             {statusStone !== null && <span className={`baduk-turn-stone ${statusStone === BLACK ? 'is-black' : 'is-white'}`} />}
             <div>
-              <small>{gameMode === 'omok' ? 'Omok' : mode === 'computer' && engineStatus === 'loading' ? <><i className="baduk-engine-spinner" />Loading Engine</> : game.phase === 'mark' ? 'Mark the dead stones' : game.phase === 'resigned' ? 'Game over' : thinking ? 'Thinking' : 'Go'}</small>
+              <small>{gameMode === 'omok' ? 'Omok' : mode === 'computer' && engineStatus === 'loading' ? <><i className="baduk-engine-spinner" />Loading Engine</> : game.phase === 'mark' ? 'Mark the dead stones' : game.phase === 'resigned' ? 'Game over' : thinking ? 'Thinking' : pending ? 'Tap again to place' : online && !sizeReady ? 'Setting up the board' : 'Go'}</small>
               <b>{gameMode === 'omok' ? omokStatus : game.phase === 'mark' ? 'Count the board' : game.phase === 'resigned' ? 'Resigned' : onlineColor !== null ? (game.toPlay === onlineColor ? 'Your move' : `${colorName(game.toPlay)} to play`) : game.toPlay === BLACK ? 'Black to play' : 'White to play'}</b>
             </div>
           </div>
@@ -547,6 +628,16 @@ export default function Baduk({ args }: AppProps) {
             <span><i className="is-black" /> Black captured <b>{game.captures.black}</b></span>
             <span><i className="is-white" /> White captured <b>{game.captures.white}</b></span>
           </div>}
+          {gameMode === 'go' && (
+            <div className="baduk-mode baduk-size">
+              <span className="glabel">Board</span>
+              <div className="gseg" aria-label="Board size">
+                {GO_SIZES.map((size) => (
+                  <button key={size} aria-pressed={game.size === size} disabled={sizeLocked && game.size !== size} onClick={() => switchSize(size)}>{size}×{size}</button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="baduk-mode">
             <span className="glabel">Opponent</span>
             <div className="gseg">
@@ -564,15 +655,29 @@ export default function Baduk({ args }: AppProps) {
               {room.error && <small className="baduk-online-error">{room.error}</small>}
             </div>
           ))}
-          {mode === 'computer' && (
+          {mode === 'computer' && gameMode === 'go' && (
+            <label className="baduk-difficulty">
+              <span className="glabel">Level</span>
+              <select className="ginput" value={goLevelId} onChange={(event) => {
+                const next = event.target.value as GoLevelId;
+                setGoLevelId(next);
+                store('baduk-go-level', next);
+                if (game.past.length) setTainted(true);
+              }}>
+                {GO_LEVELS.map((level, index) => <option key={level.id} value={level.id}>{index + 1} · {level.label}</option>)}
+              </select>
+              <small className="baduk-level-note">{goLevel(goLevelId).blurb}</small>
+            </label>
+          )}
+          {mode === 'computer' && gameMode === 'omok' && (
             <label className="baduk-difficulty">
               <span className="glabel">Difficulty</span>
               <select className="ginput" value={difficulty} onChange={(event) => {
                 setDifficulty(event.target.value as 'easy' | 'normal');
-                if (game.past.length || omok.past.length) setTainted(true);
+                if (omok.past.length) setTainted(true);
               }}>
-                <option value="easy">{gameMode === 'go' ? 'Fast' : 'Easy · Quick'}</option>
-                <option value="normal">{gameMode === 'go' ? 'Strong' : 'Normal · Thoughtful'}</option>
+                <option value="easy">Easy · Quick</option>
+                <option value="normal">Normal · Thoughtful</option>
               </select>
             </label>
           )}
@@ -587,7 +692,7 @@ export default function Baduk({ args }: AppProps) {
             <div className="baduk-actions">
               {gameMode === 'go' && <button className="gbtn" onClick={passTurn} disabled={game.phase !== 'play' || thinking}>Pass</button>}
               <button className="gbtn" onClick={undoTurn} disabled={gameMode === 'omok' ? !omok.past.length : !game.past.length}>Undo</button>
-              <button className="gbtn" onClick={startNewGame}>New Game</button>
+              <button className="gbtn" onClick={() => startNewGame()}>New Game</button>
               {gameMode === 'go' && <button className="gbtn gbtn-destructive" onClick={resignGame} disabled={game.phase !== 'play' || thinking}>Resign</button>}
             </div>
           )}

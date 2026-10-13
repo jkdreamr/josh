@@ -176,3 +176,34 @@ test('seeded opening sampling varies only inside its configured opening window',
   const lateSecond = await search(later, evaluator, { ...common, rng: () => 0.999999 });
   assert.deepEqual(lateFirst.move, lateSecond.move);
 });
+
+test('searches 13x13 and 19x19 positions with the pass at the end of the policy', async () => {
+  for (const size of [13, 19]) {
+    const area = size * size;
+    const evaluator: Evaluator = {
+      async evaluate(states) {
+        return states.map((candidate) => {
+          const policy = new Float32Array(area + 1);
+          for (const move of legalMoves(candidate)) policy[move.y * size + move.x] = 0.001;
+          policy[3 * size + (size - 4)] = 0.8;
+          policy[area] = 0.01;
+          return { policy, win: 0.5, loss: 0.5, noResult: 0, scoreLead: 0, ownership: new Float32Array(area) };
+        });
+      },
+    };
+    const result = await search(newGame(size), evaluator, options({ maxVisits: 16, batchSize: 4 }));
+    assert.deepEqual(result.move, { x: size - 4, y: 3 });
+    assert.equal(result.children.length, area + 1);
+  }
+});
+
+test('bigger boards get more thinking time, the same visits', async () => {
+  const { searchOptions } = await import('../src/os/games/katago/search.ts');
+  for (const level of ['fast', 'strong'] as const) {
+    const base = level === 'fast' ? FAST : STRONG;
+    assert.deepEqual(searchOptions(level, 9), base);
+    assert.ok(searchOptions(level, 13).maxTimeMs > base.maxTimeMs);
+    assert.ok(searchOptions(level, 19).maxTimeMs > searchOptions(level, 13).maxTimeMs);
+    assert.equal(searchOptions(level, 19).maxVisits, base.maxVisits);
+  }
+});
