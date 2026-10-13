@@ -399,7 +399,7 @@ export function Countdown({ left, total, size = 120, label }: { left: number; to
 
 /** The one line every drinking game shows somewhere on its setup step. */
 export function DrinkNote() {
-  return <p className="arcade-party-drink">For 21+. Sips are plenty, and water counts.</p>;
+  return <p className="arcade-party-drink">Drinking age only. Sips are plenty, and water counts.</p>;
 }
 
 /**
