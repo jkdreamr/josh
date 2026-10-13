@@ -266,66 +266,147 @@ kbd {
   position: absolute;
   inset: 0;
   z-index: 40;
-  display: grid;
-  place-items: center;
+  overflow: hidden;
   background: #000;
-  transition: opacity 0.7s ease;
-}
-.phase-hello .screen-boot {
-  background:
-    radial-gradient(80% 90% at 20% 20%, #3b2c6e 0%, transparent 60%),
-    radial-gradient(70% 80% at 80% 80%, #8a3d6b 0%, transparent 60%),
-    linear-gradient(135deg, #12102a, #2a1840);
-  animation: helloBg 2.7s ease;
+  container-type: size;
+  transition: opacity var(--boot-fade, 0.75s) cubic-bezier(0.4, 0, 0.2, 1);
 }
 .screen-boot.is-done {
   opacity: 0;
   pointer-events: none;
 }
-@keyframes helloBg {
-  from {
-    filter: brightness(0);
-  }
-  25% {
-    filter: brightness(1);
-  }
-}
+
+/* hello: the first-boot greeting, written in one pen stroke over a sky graded to the wallpaper's hour */
 .hello {
-  width: 52%;
+  --sky-top: #120f31;
+  --sky-bottom: #2b1236;
+  --glow-a: rgba(112, 90, 214, 0.55);
+  --glow-b: rgba(236, 110, 132, 0.42);
+  --glow-c: rgba(255, 136, 108, 0.4);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, var(--sky-top), var(--sky-bottom));
+  /* the backlight comes up */
+  animation: helloLight 0.9s cubic-bezier(0.25, 0.6, 0.3, 1) both;
+}
+.hello.sky-dawn {
+  --sky-top: #1b1946;
+  --sky-bottom: #47284f;
+  --glow-a: rgba(150, 140, 236, 0.5);
+  --glow-b: rgba(255, 150, 172, 0.42);
+  --glow-c: rgba(255, 196, 150, 0.36);
+}
+.hello.sky-day {
+  --sky-top: #0c2a61;
+  --sky-bottom: #1d5797;
+  --glow-a: rgba(86, 156, 246, 0.5);
+  --glow-b: rgba(112, 206, 236, 0.3);
+  --glow-c: rgba(255, 222, 170, 0.26);
+}
+.hello.sky-night {
+  --sky-top: #060a1c;
+  --sky-bottom: #111a3e;
+  --glow-a: rgba(60, 92, 200, 0.5);
+  --glow-b: rgba(116, 70, 180, 0.36);
+  --glow-c: rgba(255, 170, 96, 0.16);
+}
+/* fine grain keeps the dark gradients from banding */
+.hello::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 .07 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  pointer-events: none;
+}
+.hello-glow {
+  position: absolute;
+  animation: helloDrift 7s ease-in-out both;
+}
+.hello-glow-a {
+  left: -28%;
+  top: -42%;
+  width: 92%;
+  height: 118%;
+  background: radial-gradient(closest-side, var(--glow-a), transparent);
+}
+.hello-glow-b {
+  right: -30%;
+  bottom: -48%;
+  width: 96%;
+  height: 124%;
+  background: radial-gradient(closest-side, var(--glow-b), transparent);
+  animation-direction: reverse;
+}
+.hello-glow-c {
+  left: 6%;
+  right: 6%;
+  bottom: -64%;
+  height: 100%;
+  background: radial-gradient(closest-side, var(--glow-c), transparent);
+  animation-name: helloRise;
+}
+.hello-word {
+  position: relative;
+  z-index: 1;
+  width: 46%;
   overflow: visible;
+  transition:
+    transform var(--boot-fade, 0.75s) cubic-bezier(0.4, 0, 0.2, 1),
+    opacity calc(var(--boot-fade, 0.75s) * 0.5) cubic-bezier(0.2, 0, 0.4, 1);
 }
-.hello text {
-  font-family: Sacramento, 'Snell Roundhand', cursive;
-  font-size: 230px;
+@supports (width: 1cqw) {
+  .hello-word {
+    width: min(var(--hello-w, 46cqw), 90cqh);
+  }
 }
-.hello-ink {
-  fill: #fff;
+/* the word lifts away first, then the sky gives way to the desktop */
+.screen-boot.is-done .hello-word {
+  opacity: 0;
+  transform: scale(1.045);
 }
-/* A thick "pen" inside a mask paints along the glyph shapes so the word reads as one
-   uniform stroke. Stroking the glyph outlines directly left double lines and visible
-   crossings at every cursive join. */
 .hello-pen {
   fill: none;
   stroke: #fff;
-  stroke-width: 42;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-dasharray: 1600;
-  stroke-dashoffset: 1600;
-  animation: helloDraw 2s cubic-bezier(0.55, 0.1, 0.3, 1) 0.15s forwards;
+  animation: helloWrite var(--pen-ms) cubic-bezier(0.32, 0.08, 0.45, 1) var(--pen-delay) both;
 }
-@keyframes helloDraw {
+@keyframes helloLight {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes helloDrift {
+  from {
+    transform: translate3d(-4%, -3%, 0) scale(0.96);
+  }
+  to {
+    transform: translate3d(3%, 2%, 0) scale(1.04);
+  }
+}
+@keyframes helloRise {
+  from {
+    transform: translate3d(0, 6%, 0);
+    opacity: 0.6;
+  }
+}
+@keyframes helloWrite {
+  from {
+    stroke-dashoffset: var(--pen-from);
+  }
   to {
     stroke-dashoffset: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .phase-hello .screen-boot {
-    animation: none;
-  }
+  .hello-glow,
   .hello-pen {
     animation: none;
-    stroke-dashoffset: 0;
+  }
+  .screen-boot.is-done .hello-word {
+    transform: none;
   }
 }
 .screen-glare {
@@ -4287,8 +4368,11 @@ kbd {
   --sat: 0px;
   --sab: 0px;
 }
-.hh-phone .hello {
-  width: 74%;
+.hh.is-port .hello {
+  --hello-w: 64cqw;
+}
+.hh-phone.is-port .hello {
+  --hello-w: 74cqw;
 }
 .hh-island {
   position: absolute;
