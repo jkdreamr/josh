@@ -1,0 +1,203 @@
+// Truths and dares, mild for everyone, spicy mixed in when picked. Dares stay harmless and anyone can pass.
+// Anything that involves another person in the room asks for their yes.
+
+export const TRUTHS = {
+  mild: [
+    'What\'s the most embarrassing thing in your search history?',
+    'Who here would you call at 3am if you needed bail?',
+    'What\'s the worst gift you\'ve ever gotten, and who gave it?',
+    'What\'s the last lie you told, and who was it to?',
+    'What\'s the most childish thing you still do?',
+    'Who was your first crush, and do they know?',
+    'What\'s the worst date you\'ve ever been on?',
+    'What\'s something everyone loves that you secretly hate?',
+    'What song do you play on repeat that you\'d never admit to?',
+    'What\'s the dumbest way you\'ve ever hurt yourself?',
+    'What\'s the most trouble you\'ve ever been in?',
+    'Read out the last thing you googled.',
+    'What\'s your biggest pet peeve about someone here?',
+    'When did you last cry, and why?',
+    'What\'s a habit of yours nobody here knows about?',
+    'What\'s the most embarrassing nickname you\'ve ever had?',
+    'What\'s something you\'ve never told your parents?',
+    'Who\'s the last person you looked up online, and why?',
+    'What\'s the pettiest thing you\'ve ever done?',
+    'What\'s your most unpopular opinion?',
+    'Who here would you trust with your unlocked phone for an hour?',
+    'What\'s the cringiest thing you\'ve ever posted?',
+    'What\'s the longest you\'ve gone without showering?',
+    'What\'s a rumor you started or helped spread?',
+    'What\'s the worst thing you\'ve said in a group chat?',
+    'What was your first impression of someone here?',
+    'What\'s the most money you\'ve wasted on something dumb?',
+    'Who here would you take on a heist, and who would rat you out?',
+    'What\'s the meanest thing you\'ve ever said to someone?',
+    'What\'s a secret you\'ve kept from a friend here?',
+    'What did you do as a kid that you still feel guilty about?',
+    'Which friend here would you never introduce to your parents?',
+    'Have you ever regifted something to someone in this room?',
+    'What\'s the worst job you\'ve had, and how did it end?',
+    'What\'s the most expensive thing you\'ve ever broken?',
+    'Rank everyone here by how long they\'d survive a zombie outbreak.',
+    'What\'s the most embarrassing thing your parents caught you doing?',
+    'What\'s the weirdest thing you do when nobody else is home?',
+    'What\'s the most illegal thing you\'ve done that you\'ll admit to here?',
+    'Have you ever faked being sick to get out of plans with us?',
+  ],
+  spicy: [
+    'Who in this room would you date?',
+    'What\'s your biggest turn-off?',
+    'Who was your worst kiss, and what went wrong?',
+    'Have you ever had a crush on a friend\'s partner?',
+    'What\'s the boldest thing you\'ve done to get someone\'s attention?',
+    'Describe your type. Is anyone here close?',
+    'What\'s the strangest place you\'ve kissed someone?',
+    'Read out the last flirty text you sent.',
+    'Who here is the best looking, not counting yourself?',
+    'What\'s your most embarrassing dating app story?',
+    'How many people have you kissed?',
+    'Have you ever cheated, or been cheated on?',
+    'If you had to kiss someone here, who would it be?',
+    'What\'s the worst pickup line that actually worked on you?',
+    'When was your last first kiss, and how did it happen?',
+    'What do you notice first about someone you\'re into?',
+    'Who\'s your celebrity hall pass?',
+    'What do you find attractive that most people don\'t?',
+    'Have you ever had a dream about someone here? Who?',
+    'What\'s your own biggest red flag?',
+    'Have you ever said "I love you" without meaning it?',
+    'Have you ever ghosted someone? Why?',
+    'What\'s the most romantic thing anyone has done for you?',
+    'What\'s the longest you\'ve gone without kissing anyone?',
+    'What\'s the riskiest place you\'ve ever hooked up?',
+    'Have you ever hooked up with someone and regretted it by morning?',
+    'What\'s a romantic move you\'re secretly dying to try?',
+    'Who here would be the worst person to date, and why?',
+    'Who here has looked the best tonight?',
+    'Who was your most regrettable crush?',
+    'Have you ever been caught in the act? Doing what?',
+    'What\'s the worst way you\'ve ever been dumped?',
+    'What\'s the worst way you\'ve ever dumped someone?',
+    'Rate your last kiss out of ten. Who was it?',
+    'How deep have you gone stalking an ex\'s new partner?',
+    'Who in your phone would you text right now if there were no consequences?',
+    'Who here would you want to kiss at midnight on New Year\'s?',
+    'When did you realize way too late that someone was flirting with you?',
+    'Have you ever been someone\'s secret? How did it end?',
+    'What\'s the most embarrassing thing you\'ve done to look good for a date?',
+  ],
+} as const;
+
+export const DARES = {
+  mild: [
+    'Do an impression of someone here until someone guesses who.',
+    'Talk in an accent of the group\'s choice until your next turn.',
+    'Show everyone the last photo in your camera roll.',
+    'Sing the chorus of a song the group picks.',
+    'Speak only in questions until your next turn.',
+    'Read your last sent text out loud.',
+    'Dance with no music for 30 seconds.',
+    'Do a runway walk across the room and back.',
+    'Let the group scroll your music app for 30 seconds and judge.',
+    'Hold a plank while the group counts to 30, slowly.',
+    'Tell a joke. If nobody laughs, take a sip.',
+    'Give a 30 second pep talk to the person on your right.',
+    'Be the group\'s cat until your next turn. No words.',
+    'Try to lick your elbow.',
+    'Do the worm, or your best attempt at it.',
+    'Narrate everything you do in third person until your next turn.',
+    'Let the group pick a nickname everyone has to call you tonight.',
+    'Do sports commentary of the last minute in this room.',
+    'Show the group your screen time for this week.',
+    'Freestyle rap about the person across from you.',
+    'Sell the person on your left like an infomercial.',
+    'Take everyone\'s drink order like a waiter at a very fancy restaurant.',
+    'Text a parent "I love you" with no context.',
+    'Text the third person in your contacts a sincere compliment.',
+    'Do ten squats while saying the alphabet backwards.',
+    'Balance a spoon on your nose for ten seconds.',
+    'Do your best villain laugh.',
+    'Put an ice cube down your shirt and let it melt.',
+    'Recreate a famous meme until the group guesses it.',
+    'Let the person on your right style your hair.',
+    'Eat a spoonful of a condiment the group picks.',
+    'Call someone and sing happy birthday. It can\'t be their birthday.',
+    'Whisper everything until your next turn.',
+    'Act out your morning routine as an interpretive dance.',
+    'Give everyone here an oddly specific compliment.',
+    'Hand your phone to someone here. They get ten seconds in your camera roll.',
+    'Swap seats with someone and act like them until your next turn.',
+    'Show the group the last thing you bought online.',
+    'Let the group pick your phone wallpaper for the rest of the night.',
+    'Reenact the last argument you had, playing both sides.',
+  ],
+  spicy: [
+    'Give the person on your left a 30 second shoulder rub, if they\'re up for it.',
+    'Let the person on your right read your last DM.',
+    'Give everyone in the room your best flirty wink.',
+    'Slow dance with someone for 30 seconds. They have to say yes.',
+    'Whisper something flirty to the person on your right.',
+    'Kiss someone here on the cheek, with their okay.',
+    'Let the group write your next dating app bio.',
+    'Swap a piece of clothing with the person on your left.',
+    'Serenade someone in the room. They pick the song.',
+    'Use your best pickup line on the person across from you.',
+    'Hold eye contact with someone for 30 seconds without laughing.',
+    'Describe the best looking person here until someone guesses who.',
+    'Show the group your last dating app match, if you have one.',
+    'Do your sexiest dance move for ten seconds.',
+    'Call a friend and flirt badly with them for 30 seconds.',
+    'Text your crush. The group gets to approve the message.',
+    'Act out your signature flirting move.',
+    'Read the last text you sent an ex out loud.',
+    'Let the group send one flirty text from your phone to someone you pick.',
+    'Read a text in your most seductive voice. The group picks which.',
+    'Sit on someone\'s lap until your next turn, if they\'re up for it.',
+    'Ask someone here out like you mean it. You pick who.',
+    'Hold hands with the person on your left until your next turn, if they say yes.',
+    'Feed the person on your right a snack, slowly, if they\'re up for it.',
+    'Let the group look through your dating app for one minute.',
+    'Rate everyone\'s outfit out of ten, out loud.',
+    'Write a dating profile for the person across from you and read it out.',
+    'Do ten seconds of a strip tease. Nothing comes off.',
+    'Tell the person on your left what your first date with them would be.',
+    'Practice your best kiss on the back of your own hand.',
+    'Go on a 60 second speed date with someone here. They have to say yes.',
+    'Show the group a photo of yourself you took but never posted.',
+    'Give your best "come here" look to someone the group picks.',
+    'Let the person on your right pick your next profile picture.',
+    'Whisper your biggest turn-on to the person on your left.',
+    'Do your best impression of yourself flirting after three drinks.',
+    'Deliver a pickup line the group writes to someone you pick.',
+    'Pick two people here and plan their first date out loud.',
+    'Text a friend "I can\'t stop thinking about last night" and show the reply.',
+    'Let everyone guess your type out loud, then say who was closest.',
+  ],
+} as const;
+
+export type Kind = 'truth' | 'dare';
+export type Spice = 'mild' | 'spicy';
+export type Card = { kind: Kind; text: string; spicy: boolean };
+
+export function cardsFor(kind: Kind, spice: Spice): Card[] {
+  const set = kind === 'truth' ? TRUTHS : DARES;
+  const mild = set.mild.map((text) => ({ kind, text, spicy: false }));
+  return spice === 'spicy' ? [...mild, ...set.spicy.map((text) => ({ kind, text, spicy: true }))] : mild;
+}
+
+/** Whose turn is next, going around the circle. */
+export const nextSeat = (seat: number, players: number) => (players > 0 ? (seat + 1) % players : 0);
+
+/** What each player has done this session. */
+export type Tally = { truth: number; dare: number; chicken: number };
+export const EMPTY: Tally = { truth: 0, dare: 0, chicken: 0 };
+
+const times = (n: number) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`);
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** "2 truths, 1 dare, chickened out once", or '' before their first turn. */
+export function recordLine(r: Tally): string {
+  const parts = [r.truth ? count(r.truth, 'truth') : '', r.dare ? count(r.dare, 'dare') : '', r.chicken ? `chickened out ${times(r.chicken)}` : ''].filter(Boolean);
+  const line = parts.join(', ');
+  return line ? line[0].toUpperCase() + line.slice(1) : '';
+}

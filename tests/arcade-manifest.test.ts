@@ -6,11 +6,28 @@ import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 const root = join(import.meta.dirname, '..', 'src', 'os', 'arcade', 'games');
-const categories = ['arcade', 'puzzle', '3d', 'multiplayer'];
+const categories = ['arcade', 'puzzle', '3d', 'multiplayer', 'party', 'drinking'];
 const folders = existsSync(root) ? readdirSync(root).filter((f) => statSync(join(root, f)).isDirectory()) : [];
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? walk(join(dir, f)) : [join(dir, f)]));
+}
+
+/** Splits a selector list on its top-level commas, leaving the ones inside :is(), :not() and friends alone. */
+function splitSelectors(list: string) {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of list) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    if (ch === ',' && depth === 0) {
+      out.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
 }
 
 /** Top-level selectors (inside @media/@supports too) and @keyframes names of a stylesheet. */
@@ -30,7 +47,7 @@ function cssNames(css: string) {
         stack.push('frames');
       } else if (prelude.startsWith('@')) stack.push('group');
       else {
-        if (!inFrames && !stack.includes('rule')) selectors.push(...prelude.split(',').map((x) => x.trim()));
+        if (!inFrames && !stack.includes('rule')) selectors.push(...splitSelectors(prelude));
         stack.push('rule');
       }
     } else if (ch === '}') {
@@ -61,7 +78,7 @@ for (const folder of folders) {
       assert.ok(typeof meta[k] === 'string' && meta[k].trim(), `meta.${k} must be a non-empty string`);
     assert.ok(categories.includes(meta.category), `category must be one of ${categories.join(', ')}`);
     assert.ok(Number.isFinite(meta.order), 'order must be a number');
-    assert.match(meta.players, /^\d(-\d)?P$/, "players looks like '1P' or '1-2P'");
+    assert.match(meta.players, /^\d{1,2}(-\d{1,2})?P$/, "players looks like '1P', '1-2P' or '3-20P'");
     assert.match(meta.glyph, /^[MmLlHhVvCcSsQqTtAaZz0-9.,\s-]+$/, 'glyph must be SVG path data');
     for (const k of ['title', 'blurb', 'controls']) assert.ok(!meta[k].includes('\u2014'), `meta.${k} must not contain an em dash`);
 

@@ -1,0 +1,261 @@
+/* Truth or Dare: two decks that look nothing alike. Truths are cream index cards in blue ink, dares are red with
+   hazard tape. Rammetto One for the big words, Bricolage for anything you read out loud. */
+@font-face {
+  font-family: 'Rammetto One';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/rammetto-one.woff2') format('woff2');
+}
+
+.g-truth-or-dare {
+  --g-tod-blue: #1c3fae;
+  --g-tod-hazard: repeating-linear-gradient(-45deg, rgba(24, 6, 6, 0.6) 0 9px, transparent 9px 18px);
+  --g-tod-read: 'Bricolage Grotesque', Inter, system-ui, sans-serif;
+  background: #140d0c;
+}
+.g-truth-or-dare .arcade-party {
+  --party-display: 'Rammetto One', 'Bricolage Grotesque', Inter, sans-serif;
+  font-synthesis: none;
+}
+.g-truth-or-dare .arcade-party-title {
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+.g-truth-or-dare.arcade-shell .arcade-party-btn {
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.g-truth-or-dare.arcade-shell .arcade-party-how > button {
+  font-family: var(--g-tod-read);
+}
+.g-truth-or-dare .arcade-party-how li::before {
+  font-size: 11px;
+}
+.g-truth-or-dare .g-truth-or-dare-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+  color: var(--party-dim);
+}
+
+/* Choose */
+.g-truth-or-dare .g-truth-or-dare-name {
+  font-size: clamp(40px, 12cqmin, 58px);
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+.g-truth-or-dare .g-truth-or-dare-name.is-long {
+  font-size: clamp(28px, 8.4cqmin, 40px);
+}
+.g-truth-or-dare .g-truth-or-dare-picks {
+  display: grid;
+  flex: none;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+  margin-top: 6px;
+  padding-bottom: 5px;
+}
+.g-truth-or-dare.arcade-shell .g-truth-or-dare-picks > button {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: min(220px, 32cqh);
+  padding: 22px 10px 18px;
+  border-radius: 20px;
+  outline: 1.5px solid color-mix(in srgb, currentColor 30%, transparent);
+  outline-offset: -9px;
+  transition: transform 0.07s ease-out, box-shadow 0.07s ease-out;
+}
+.g-truth-or-dare.arcade-shell .g-truth-or-dare-picks > button:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+.g-truth-or-dare.arcade-shell .g-truth-or-dare-picks > .is-truth {
+  color: var(--g-tod-blue);
+  background: #f5efe3;
+  box-shadow: 0 5px 0 #c4b8a3;
+}
+.g-truth-or-dare.arcade-shell .g-truth-or-dare-picks > .is-dare {
+  overflow: hidden;
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 5px 0 var(--party-accent-edge);
+}
+.g-truth-or-dare.arcade-shell .g-truth-or-dare-picks > .is-truth:active {
+  transform: translateY(3px);
+  box-shadow: 0 2px 0 #c4b8a3;
+}
+.g-truth-or-dare.arcade-shell .g-truth-or-dare-picks > .is-dare:active {
+  transform: translateY(3px);
+  box-shadow: 0 2px 0 var(--party-accent-edge);
+}
+.g-truth-or-dare .g-truth-or-dare-picks > .is-dare::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 14px;
+  background: var(--g-tod-hazard);
+}
+.g-truth-or-dare .g-truth-or-dare-picks b {
+  font-family: var(--party-display);
+  font-size: clamp(28px, 8.6cqmin, 40px);
+  font-weight: 400;
+  line-height: 1;
+}
+.g-truth-or-dare .g-truth-or-dare-picks span {
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.82;
+}
+
+/* The card */
+.g-truth-or-dare .g-truth-or-dare-card {
+  flex: none;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+  min-height: min(360px, 52cqh);
+  padding: 30px 26px 20px;
+  overflow: hidden;
+  text-align: left;
+}
+.g-truth-or-dare .g-truth-or-dare-card.is-dare {
+  color: #fff;
+}
+.g-truth-or-dare .g-truth-or-dare-card.is-dare::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 16px;
+  background: var(--g-tod-hazard);
+}
+.g-truth-or-dare .g-truth-or-dare-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid color-mix(in srgb, currentColor 22%, transparent);
+}
+.g-truth-or-dare .g-truth-or-dare-card.is-truth .g-truth-or-dare-head {
+  color: var(--g-tod-blue);
+  border-bottom-color: rgba(220, 38, 38, 0.55);
+}
+.g-truth-or-dare .g-truth-or-dare-head b {
+  font-family: var(--party-display);
+  font-size: clamp(26px, 7.6cqmin, 34px);
+  font-weight: 400;
+  line-height: 1;
+}
+.g-truth-or-dare .g-truth-or-dare-head span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+.g-truth-or-dare .g-truth-or-dare-head i {
+  flex: none;
+  margin-left: auto;
+  padding: 3px 8px;
+  border: 1.5px solid currentColor;
+  border-radius: 999px;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+.g-truth-or-dare .g-truth-or-dare-card > strong {
+  flex: 1 0 auto;
+  margin-top: 18px;
+  font-family: var(--g-tod-read);
+  font-size: clamp(28px, 9cqmin, 38px);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+  text-wrap: pretty;
+  transition: opacity 0.2s ease;
+}
+.g-truth-or-dare .g-truth-or-dare-card.is-truth > strong {
+  color: #1d1a16;
+}
+.g-truth-or-dare .g-truth-or-dare-foot {
+  margin-top: 18px;
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.8;
+}
+.g-truth-or-dare .g-truth-or-dare-card.is-chicken > strong,
+.g-truth-or-dare .g-truth-or-dare-card.is-chicken .g-truth-or-dare-foot {
+  opacity: 0.32;
+}
+
+/* Chickened out: a sticker slapped across the card */
+.g-truth-or-dare .g-truth-or-dare-stamp {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  padding: 10px 22px 12px;
+  border-radius: 14px;
+  font-family: var(--party-display);
+  font-size: clamp(30px, 9cqmin, 42px);
+  line-height: 1;
+  white-space: nowrap;
+  color: #3a1d00;
+  background: #ffc53d;
+  box-shadow: 0 5px 0 #b07b00;
+  transform: translate(-50%, -50%) rotate(-9deg);
+  animation: g-truth-or-dare-slap 0.26s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+@keyframes g-truth-or-dare-slap {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) rotate(-9deg) scale(1.8);
+  }
+}
+.g-truth-or-dare .g-truth-or-dare-verdict {
+  max-width: 360px;
+  margin: 4px 0 0;
+  font-family: var(--party-display);
+  font-size: clamp(20px, 6cqmin, 26px);
+  line-height: 1.2;
+  text-align: center;
+  text-wrap: balance;
+  color: #ffc53d;
+}
+
+@container arcade-party (max-height: 480px) {
+  .g-truth-or-dare.arcade-shell .g-truth-or-dare-picks > button {
+    min-height: 120px;
+    padding: 18px 10px 12px;
+  }
+  .g-truth-or-dare .g-truth-or-dare-card {
+    min-height: 0;
+    padding: 22px 20px 14px;
+  }
+  .g-truth-or-dare .g-truth-or-dare-card > strong {
+    margin-top: 12px;
+    font-size: clamp(20px, 7cqmin, 26px);
+  }
+  .g-truth-or-dare .g-truth-or-dare-foot {
+    margin-top: 10px;
+  }
+  .g-truth-or-dare .g-truth-or-dare-name {
+    font-size: 32px;
+  }
+  .g-truth-or-dare.arcade-shell .arcade-party-btn {
+    font-size: 16px;
+  }
+}
