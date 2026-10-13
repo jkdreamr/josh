@@ -7,6 +7,7 @@ import type { Laptop3DHandle, Laptop3DProps } from './Laptop3D';
 import { LidStickers, PalmStickers } from './Stickers';
 import type { OSApi } from './types';
 import { keyRows } from './keys';
+import { countView, watchVisits } from './stats';
 import { getAppGame } from './arcade/apps';
 
 type Phase = 'off' | 'opening' | 'hello' | 'on' | 'sleep';
@@ -92,6 +93,9 @@ export default function OS() {
   const timers = useRef<number[]>([]);
   const fsRef = useRef(fs);
   fsRef.current = fs;
+
+  // The page load is a visit, and so is every restart or wake after it.
+  useEffect(() => watchVisits(), []);
 
   useEffect(() => {
     beatLink.current = new URLSearchParams(window.location.search).get('beat');
@@ -347,6 +351,7 @@ export default function OS() {
   }, [phase, skip, setFullscreen]);
 
   const restart = useCallback(() => {
+    countView();
     clearTimers();
     setMounted(false);
     setGen((g) => g + 1);
@@ -363,6 +368,7 @@ export default function OS() {
 
   const wake = () => {
     if (phase !== 'sleep') return;
+    countView();
     setPhase('opening');
     later(() => setPhase('on'), devRef.current === 'laptop' ? LIGHT_AT : POWER_MS);
   };
@@ -393,6 +399,7 @@ export default function OS() {
       return;
     }
     if (phase !== 'sleep') return;
+    countView();
     setPhase('opening');
     later(() => setPhase('on'), Math.max(120, LID_MS * remaining - 350));
   };

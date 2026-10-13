@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as R
 import { BLACK, groupStones, newGame, pass, play, resign, score, undo, WHITE, type GameState, type Ownership, type Point } from '../games/go';
 import { newOmok, omokAiMove, playOmok, undoOmok, type OmokState } from '../games/omok';
 import { useOS, type AppProps } from '../types';
+import { countPlay } from '../stats';
 import { getAppGame } from '../arcade/apps';
 import { boardFor } from '../arcade/kit/leaderboard';
 import { AppBoard, onlineAvailable, RoomPanel, useAppRoom, useInvite } from './online-room';
@@ -94,6 +95,8 @@ export default function Baduk({ args }: AppProps) {
   gameRef.current = game;
   modeRef.current = mode;
   gameModeRef.current = gameMode;
+
+  useEffect(() => countPlay('baduk'), [args.nonce]);
 
   useEffect(() => {
     if (!args.game) return;
@@ -246,6 +249,7 @@ export default function Baduk({ args }: AppProps) {
   }, [gameMode, mode, omok, difficulty]);
 
   const startNewGame = () => {
+    countPlay('baduk');
     jobRef.current += 1;
     setTainted(false);
     setGameNo((n) => n + 1);

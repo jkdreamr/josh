@@ -51,6 +51,7 @@ import {
 } from '../games/beat';
 import { BeatEngine } from '../games/beat-audio';
 import { useOS, type AppProps } from '../types';
+import { countPlay } from '../stats';
 import './game-controls.css';
 import './BeatPad.css';
 
@@ -131,6 +132,7 @@ export default function BeatPad({ args }: AppProps) {
   const os = useOS();
   const coarse = os.mobile || os.tablet;
   const incoming = useMemo(() => (args.beat ? decodeBeatState(args.beat) : null), [args.beat, args.nonce]);
+  useEffect(() => countPlay('beatpad'), [args.nonce]);
   const [history, setHistory] = useState<History<BeatState>>(() => createHistory(incoming ?? loadSaved() ?? createBeatState('boom bap')));
   const state = history.present;
   const pattern = state.patterns[state.current];
@@ -350,6 +352,7 @@ export default function BeatPad({ args }: AppProps) {
   }, [drawVisualizer, requestAnimation]);
 
   const startPlayback = useCallback(() => {
+    countPlay('beatpad');
     const engine = ensureEngine();
     engine.unlock();
     ensureVisualizer(engine);

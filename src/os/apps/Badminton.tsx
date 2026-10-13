@@ -37,6 +37,7 @@ import {
   type Side,
 } from '../games/badminton';
 import { useOS, type AppProps } from '../types';
+import { countPlay } from '../stats';
 import { getAppGame } from '../arcade/apps';
 import { boardFor } from '../arcade/kit/leaderboard';
 import { BadmintonAudio } from './badminton-audio';
@@ -171,6 +172,7 @@ export default function Badminton({ args }: AppProps) {
   const os = useOS();
   const touch = os.mobile;
   const phone = os.mobile && !os.tablet;
+  useEffect(() => countPlay('badminton'), [args.nonce]);
 
   const [settings, setSettings] = useState<Settings>(() => (args.room ? { ...loadSettings(), mode: 'online' } : loadSettings()));
   const [matchNo, setMatchNo] = useState(0);
@@ -419,6 +421,7 @@ export default function Badminton({ args }: AppProps) {
   );
 
   const startMatch = useCallback(() => {
+    countPlay('badminton');
     setMatchNo((n) => n + 1);
     const state = newMatch(settingsRef.current.length);
     const fresh = newStats();
