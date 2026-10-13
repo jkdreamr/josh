@@ -3,13 +3,13 @@ import type { GameMeta } from '../../types';
 export const meta: GameMeta = {
   id: 'palmdrive',
   title: 'Palm Drive',
-  blurb: 'Kart down Palm Drive toward Memorial Church. Grab item boxes and coins, dodge traffic and keep your three balloons.',
+  blurb: 'Kart racing on campus: three laps up Palm Drive, round the Oval and through the Arboretum. Drift for mini-turbos and throw shells and bananas.',
   category: '3d',
   players: '1-8P',
-  controls: 'Arrows or A/D steer, Space or Up uses your item. Press Up just before GO for a rocket start. On touch, tap or swipe to steer and tap the item.',
+  controls: 'Left and right steer, hold Space to drift, X uses your item and Z throws it back, Down brakes. On touch, use the buttons.',
   accent: '#d8812f',
-  glyph: 'M5 17l2-6h10l2 6M5 17h14M7 17v2M17 17v2M8 11l1.5-4h5L16 11M12 3v2',
+  glyph: 'M2.5 15h19M4 15l1.5-3h4.5M9.5 15V9.8M14 15l2.4-2.5H20M11.5 12l2.5-1.8M7.7 7.6a1.8 1.8 0 1 0 3.6 0a1.8 1.8 0 1 0-3.6 0M4.4 18a1.9 1.9 0 1 0 3.8 0a1.9 1.9 0 1 0-3.8 0M15.8 18a1.9 1.9 0 1 0 3.8 0a1.9 1.9 0 1 0-3.8 0',
   order: 2,
-  leaderboard: { order: 'desc', max: 1_000_000 },
-  online: { seats: 8, race: true },
+  leaderboard: { order: 'asc', min: 60_000, max: 1_800_000, format: 'time', measure: 'Fastest Race', variants: { '50cc': '50cc', '100cc': '100cc', '150cc': '150cc' } },
+  online: { seats: 8, lateJoin: true },
 };

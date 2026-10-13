@@ -1,167 +1,245 @@
 .g-palmdrive .g-palmdrive-host {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, #2b4a8a 0%, #7f9ed8 38%, #f3c9a0 56%, #f6b37a 64%, #f0e0c8 100%);
+  background: linear-gradient(180deg, #2f5fae 0%, #6f9bdc 22%, #b9cfe6 34%, #f3d6b4 40%, #e9c99b 46%, #7da957 47%);
   touch-action: none;
+}
+.g-palmdrive .g-palmdrive-best {
+  display: block;
+  margin-top: 4px;
+  opacity: 0.75;
 }
 .g-palmdrive .g-palmdrive-hud {
   position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 5px 11px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: #fff;
-  background: rgba(20, 20, 26, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  inset: 0;
   pointer-events: none;
-}
-.g-palmdrive .g-palmdrive-hud.is-online {
-  top: 42px;
-}
-.g-palmdrive .g-palmdrive-stats {
-  position: absolute;
-  top: 44px;
-  left: 10px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 10px 3px 6px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
   color: #fff;
-  background: rgba(20, 20, 26, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
-  pointer-events: none;
-}
-.g-palmdrive .g-palmdrive-balloons,
-.g-palmdrive .g-palmdrive-coins {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-}
-.g-palmdrive .g-palmdrive-coins {
-  gap: 4px;
-}
-.g-palmdrive .g-palmdrive-balloons svg,
-.g-palmdrive .g-palmdrive-coins svg {
-  display: block;
-}
-.g-palmdrive .g-palmdrive-balloons .is-popped {
-  opacity: 0.22;
-  filter: grayscale(1);
+  font-variant-numeric: tabular-nums;
 }
 .g-palmdrive .g-palmdrive-item {
   position: absolute;
-  top: 78px;
+  top: 10px;
   left: 10px;
   display: grid;
   place-items: center;
-  width: 54px;
-  height: 54px;
-  padding: 0;
-  border: 0;
-  border-radius: 14px;
-  color: #fff;
-  background: rgba(20, 20, 26, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55);
-  cursor: pointer;
-  touch-action: none;
+  width: 62px;
+  height: 62px;
+  border-radius: 16px;
+  background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.3), rgba(30, 30, 40, 0.55));
+  box-shadow: inset 0 0 0 3px #fff, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 .g-palmdrive .g-palmdrive-item.is-ready {
-  box-shadow: inset 0 0 0 2px #ffd23f, 0 0 14px rgba(255, 210, 63, 0.55);
+  box-shadow: inset 0 0 0 3px #ffd23f, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 16px rgba(255, 210, 63, 0.6);
 }
 .g-palmdrive .g-palmdrive-item.is-rolling svg {
-  animation: g-palmdrive-roll 0.12s linear infinite;
+  animation: g-palmdrive-roll 0.1s linear infinite;
 }
-.g-palmdrive .g-palmdrive-item.is-touch {
-  top: auto;
-  left: auto;
-  right: 16px;
-  bottom: max(26px, env(safe-area-inset-bottom));
-  width: 68px;
-  height: 68px;
-  border-radius: 50%;
-}
-.g-palmdrive .g-palmdrive-item.is-touch svg {
-  width: 38px;
-  height: 38px;
-}
-.g-palmdrive .g-palmdrive-item-empty {
-  font-size: 22px;
-  font-weight: 800;
-  opacity: 0.4;
+.g-palmdrive .g-palmdrive-item b {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  min-width: 20px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #222;
+  background: #ffd23f;
+  text-align: center;
 }
 @keyframes g-palmdrive-roll {
   from {
-    transform: translateY(-3px);
+    transform: translateY(-4px);
   }
   to {
-    transform: translateY(3px);
+    transform: translateY(4px);
   }
+}
+.g-palmdrive .g-palmdrive-time {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 800;
+  font-style: italic;
+  background: rgba(20, 20, 26, 0.45);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  text-align: center;
+}
+.g-palmdrive .g-palmdrive-time.is-online {
+  top: 42px;
+}
+.g-palmdrive .g-palmdrive-lapnote {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-top: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: #222;
+  background: #ffd23f;
+  white-space: nowrap;
+  animation: g-palmdrive-note 2.6s ease-out forwards;
+}
+@keyframes g-palmdrive-note {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+  10%,
+  80% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 0);
+  }
+}
+.g-palmdrive .g-palmdrive-map {
+  position: absolute;
+  top: 52px;
+  right: 10px;
+  width: 112px;
+  height: 128px;
+  overflow: visible;
+}
+.g-palmdrive .g-palmdrive-map-road {
+  fill: none;
+  stroke: rgba(20, 20, 26, 0.55);
+  stroke-width: 26;
+  stroke-linejoin: round;
+}
+.g-palmdrive .g-palmdrive-map-line {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 9;
+  stroke-linejoin: round;
+}
+.g-palmdrive .g-palmdrive-map circle {
+  stroke: rgba(0, 0, 0, 0.45);
+  stroke-width: 2.5;
+}
+.g-palmdrive .g-palmdrive-map circle.is-me {
+  stroke: #fff;
+  stroke-width: 4;
+}
+.g-palmdrive .g-palmdrive-lap {
+  position: absolute;
+  left: 14px;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 15px;
+  font-weight: 800;
+  font-style: italic;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+}
+.g-palmdrive .g-palmdrive-lap b {
+  font-size: 30px;
+  color: #ffd23f;
+  -webkit-text-stroke: 1px #7a4a00;
+}
+.g-palmdrive .g-palmdrive-coins {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 17px;
 }
 .g-palmdrive .g-palmdrive-place {
   position: absolute;
-  left: 14px;
-  bottom: max(18px, env(safe-area-inset-bottom));
+  right: 16px;
+  bottom: max(8px, env(safe-area-inset-bottom));
   display: flex;
   align-items: baseline;
   gap: 4px;
-  color: #fff;
-  font-weight: 800;
+  font-weight: 900;
   font-style: italic;
-  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35), 0 0 12px rgba(0, 0, 0, 0.25);
-  pointer-events: none;
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.35), 0 0 14px rgba(0, 0, 0, 0.25);
 }
 .g-palmdrive .g-palmdrive-place b {
-  font-size: 44px;
+  font-size: 54px;
   line-height: 1;
   color: #ffd23f;
-  -webkit-text-stroke: 1.5px #7a4a00;
+  -webkit-text-stroke: 2px #7a4a00;
 }
 .g-palmdrive .g-palmdrive-place span {
-  font-size: 16px;
+  font-size: 17px;
 }
-.g-palmdrive .g-palmdrive-count {
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-lap {
+  top: 82px;
+  bottom: auto;
+}
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-place {
+  top: 186px;
+  bottom: auto;
+}
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-place b {
+  font-size: 40px;
+}
+.g-palmdrive .g-palmdrive-lights {
+  position: absolute;
+  top: 16%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(20, 20, 26, 0.7);
+}
+.g-palmdrive .g-palmdrive-lights i {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #3a2222;
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.4);
+}
+.g-palmdrive .g-palmdrive-lights i.is-on {
+  background: #ff3b30;
+  box-shadow: 0 0 12px #ff3b30;
+}
+.g-palmdrive .g-palmdrive-lights i.is-go {
+  background: #34c759;
+  box-shadow: 0 0 14px #34c759;
+}
+.g-palmdrive .g-palmdrive-banner {
   position: absolute;
   top: 34%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: #fff;
-  font-size: 84px;
+  font-size: 64px;
   font-weight: 900;
   font-style: italic;
   line-height: 1;
   white-space: nowrap;
-  text-shadow: 0 4px 0 rgba(0, 0, 0, 0.3), 0 0 22px rgba(0, 0, 0, 0.25);
-  pointer-events: none;
-  animation: g-palmdrive-pop 0.9s ease-out both;
-}
-.g-palmdrive .g-palmdrive-count.is-go {
   color: #ffd23f;
   -webkit-text-stroke: 2px #7a4a00;
+  text-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  animation: g-palmdrive-pop 0.9s ease-out both;
 }
-.g-palmdrive .g-palmdrive-count.is-note {
-  font-size: 22px;
+.g-palmdrive .g-palmdrive-banner.is-count {
+  font-size: 84px;
+  color: #fff;
+  -webkit-text-stroke: 2px rgba(0, 0, 0, 0.45);
+}
+.g-palmdrive .g-palmdrive-banner.is-note {
+  font-size: 20px;
   font-style: normal;
   font-weight: 700;
   padding: 8px 16px;
   border-radius: 999px;
-  background: rgba(20, 20, 26, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  color: #fff;
+  -webkit-text-stroke: 0;
   text-shadow: none;
+  background: rgba(20, 20, 26, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   animation: none;
 }
 @keyframes g-palmdrive-pop {
@@ -173,35 +251,84 @@
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
   }
-  80% {
-    opacity: 1;
-  }
   100% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.9);
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
   }
 }
-.g-palmdrive .g-palmdrive-toast {
+.g-palmdrive .g-palmdrive-wrong {
   position: absolute;
-  top: 24%;
+  top: 46%;
   left: 50%;
-  color: #ffd23f;
-  font-size: 22px;
+  transform: translateX(-50%);
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 20px;
   font-weight: 800;
-  font-style: italic;
-  white-space: nowrap;
-  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
-  pointer-events: none;
-  animation: g-palmdrive-toast 1.2s ease-out forwards;
+  background: #d32f2f;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  animation: g-palmdrive-blink 0.8s steps(2) infinite;
 }
-@keyframes g-palmdrive-toast {
+@keyframes g-palmdrive-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+.g-palmdrive .g-palmdrive-results {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(320px, calc(100% - 32px));
+  margin: 0;
+  padding: 10px;
+  list-style: none;
+  border-radius: 16px;
+  background: rgba(20, 20, 26, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  animation: g-palmdrive-in 0.35s ease-out both;
+}
+.g-palmdrive .g-palmdrive-results li {
+  display: grid;
+  grid-template-columns: 22px 14px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.g-palmdrive .g-palmdrive-results li.is-me {
+  color: #222;
+  background: #ffd23f;
+}
+.g-palmdrive .g-palmdrive-results li span {
+  font-weight: 900;
+  font-style: italic;
+}
+.g-palmdrive .g-palmdrive-results li i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.g-palmdrive .g-palmdrive-results li em {
+  overflow: hidden;
+  font-style: normal;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.g-palmdrive .g-palmdrive-results li small {
+  font-size: 13px;
+}
+@keyframes g-palmdrive-in {
   from {
-    opacity: 1;
-    transform: translate(-50%, 0);
+    opacity: 0;
+    transform: translate(-50%, -46%);
   }
   to {
-    opacity: 0;
-    transform: translate(-50%, -24px);
+    opacity: 1;
+    transform: translate(-50%, -50%);
   }
 }
 .g-palmdrive .g-palmdrive-tag {
@@ -222,40 +349,78 @@
   pointer-events: none;
   will-change: transform;
 }
-.g-palmdrive .g-palmdrive-zones {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 46%;
-  display: flex;
-  justify-content: space-between;
-  padding: 0 18px;
-  pointer-events: none;
-}
-.g-palmdrive .g-palmdrive-zones span {
-  display: grid;
-  place-items: center;
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  color: #fff;
-  background: rgba(20, 20, 26, 0.28);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.22);
-}
-.g-palmdrive .g-palmdrive-crash {
+.g-palmdrive .g-palmdrive-flash {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: #fff;
-  animation: g-palmdrive-crash 0.5s ease-out forwards;
+  animation: g-palmdrive-flash 0.5s ease-out forwards;
 }
-@keyframes g-palmdrive-crash {
+.g-palmdrive .g-palmdrive-flash.is-hit {
+  background: rgba(255, 80, 60, 0.35);
+}
+.g-palmdrive .g-palmdrive-flash.is-bolt {
+  background: rgba(220, 235, 255, 0.85);
+}
+@keyframes g-palmdrive-flash {
   from {
-    opacity: 0.6;
+    opacity: 1;
   }
   to {
     opacity: 0;
   }
+}
+.g-palmdrive .g-palmdrive-touch {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 12px 12px max(18px, env(safe-area-inset-bottom));
+  pointer-events: none;
+}
+.g-palmdrive .g-palmdrive-steer,
+.g-palmdrive .g-palmdrive-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+.g-palmdrive .g-palmdrive-touch button {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.g-palmdrive .g-palmdrive-touch button:active {
+  background: rgba(255, 255, 255, 0.3);
+}
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-back {
+  width: 44px;
+  height: 44px;
+}
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-use {
+  width: 70px;
+  height: 70px;
+  margin-bottom: 30px;
+  background: color-mix(in srgb, var(--accent) 55%, rgba(20, 20, 26, 0.4));
+}
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-drift {
+  width: 76px;
+  height: 76px;
 }
