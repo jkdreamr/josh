@@ -14,6 +14,7 @@ import {
   isEdge,
   rankName,
   rankPlural,
+  sipsFor,
   startBus,
   startGame,
   suitName,
@@ -28,12 +29,23 @@ import { meta } from './meta';
 import './ride-the-bus.css';
 
 const MODE = defineSetting('ride-the-bus:mode', ['full', 'bus'] as const, 'full');
-const MERCY = defineSetting('ride-the-bus:mercy', ['5', '10', '0'] as const, '5');
+const MERCY = defineSetting('ride-the-bus:mercy', ['5', '10', '15'] as const, '5');
 /** How long the row takes to sweep away after a miss on the bus, in seconds. */
 const CLEAR_TIME = 0.5;
 /** On the bus a verdict moves on by itself after this long, in seconds, unless someone taps first. */
 const AUTO_RIGHT = 1.4;
-const AUTO_MISS = 2.4;
+/** A miss stays up longer, so the table can check the call against the card before the row is swept away. */
+const AUTO_MISS = 3.2;
+/**
+ * Double-tap guards, in milliseconds. Answers and Next take turns in the same spot under the player's thumb, so the
+ * second tap of a double tap would land on whichever just appeared: a call nobody made, or a verdict nobody read.
+ * Each ignores taps for this long after it shows up: past a slow double tap (400 ms) with room for touch latency, and
+ * Next also waits out the 0.2 s card turn first. Timestamps, not CSS, so reduced motion can't cut them short.
+ */
+const ANSWER_GUARD = 600;
+const NEXT_GUARD = 450;
+/** The rider reveal and getting off are reached by a tap on Next, with their own buttons in the same spot. */
+const BIG_SCREEN_ARM = 700;
 /**
  * When the turned card shows its face, in seconds: the last card on the bus turns slowly. Until then the board, the
  * button and the verdict keep the result to themselves.
@@ -49,14 +61,14 @@ const RULES: ReactNode[] = [
     then the <b>suit</b>.
   </>,
   <>
-    Card one is worth 1 sip, card four is worth 4. <b>Wrong, you drink them. Right, you hand them out.</b>
+    In order, the cards are worth 1, 2, 3 and 3 sips. <b>Wrong, you drink them. Right, you hand them out.</b>
   </>,
   <>A matching rank is always wrong: a tie is neither higher nor lower, and an edge is neither inside nor outside.</>,
   <>
     Most sips taken <b>rides the bus</b>: the same four calls, with fresh cards after every miss, until they get all four in a row.
   </>,
   <>
-    The <b>mercy rule</b> lets the rider off after 5 or 10 tries. Without it, a bad run can last all night.
+    The <b>mercy rule</b> lets the rider off after 5, 10 or 15 tries, so nobody rides all night.
   </>,
 ];
 
@@ -109,6 +121,8 @@ function Play() {
   const [revealed, setRevealed] = useState(true);
   const before = useRef<Game | null>(null);
   const revealLeft = useRef(-1);
+  /** When the verdict on screen became live (its card face up and Next showing), for the double-tap guard. */
+  const liveAt = useRef(0);
   /** Bus rides this session, by name, for the tally on the way off. */
   const [rides, setRides] = useState<Record<string, number>>({});
   const clearLeft = useRef(-1);
@@ -122,6 +136,7 @@ function Play() {
       revealLeft.current -= dt;
       if (revealLeft.current <= 0) {
         revealLeft.current = -1;
+        liveAt.current = performance.now();
         setRevealed(true);
       }
     }
@@ -185,7 +200,9 @@ function Play() {
     flipSound(slow);
     verdictSound(g.verdict.right, slow ? REVEAL_SLOW : REVEAL);
     const kind = upcoming(g);
-    const wait = g.phase !== 'bus' ? 0 : kind === 'card' ? AUTO_RIGHT : kind === 'retry' ? AUTO_MISS + (slow ? REVEAL_SLOW - REVEAL : 0) : 0;
+    // A miss on a matching rank waits for a tap: the table will want to argue that one.
+    const edge = !g.verdict.right && isEdge(g.hand, g.verdict.q);
+    const wait = g.phase !== 'bus' || edge ? 0 : kind === 'card' ? AUTO_RIGHT : kind === 'retry' ? AUTO_MISS + (slow ? REVEAL_SLOW - REVEAL : 0) : 0;
     autoLeft.current = wait || -1;
     setAuto(wait);
     before.current = game;
@@ -225,6 +242,12 @@ function Play() {
     }
   };
   next.current = onNext;
+  /** Next from a person (button, table or Enter), as opposed to the bus moving on by itself. */
+  const tapNext = (sound = false) => {
+    if (performance.now() - liveAt.current < NEXT_GUARD) return;
+    if (sound) sfx.play('select');
+    onNext();
+  };
 
   // One status line that outlives every step, so screen readers hear each verdict and reveal as it lands.
   let said = '';
@@ -252,12 +275,12 @@ function Play() {
         onEnter={() => begin(roster())}
         actions={
           <Big primary onClick={() => begin(roster())}>
-            Start
+            Deal
           </Big>
         }
       >
         <HowToPlay steps={RULES} />
-        <PlayerList min={0} />
+        <PlayerList min={0} emptyHint="Optional. With no names you ride solo." />
         <Option
           label="Mode"
           value={mode}
@@ -268,13 +291,13 @@ function Play() {
           onChange={setMode}
         />
         <p className="g-ride-the-bus-note">
-          {!players.length
-            ? mode === 'full'
-              ? 'No names, so you play solo: four cards, then the bus.'
-              : 'No names, so you play solo, straight onto the bus.'
-            : mode === 'full'
-              ? 'Everyone plays four cards, then the most sips rides.'
-              : 'Skip the warmup. Pick a rider and go.'}
+          {mode === 'bus'
+            ? players.length > 1
+              ? 'Skip the warmup. Pick a rider and go.'
+              : 'Skip the warmup and go straight to the bus.'
+            : players.length > 1
+              ? 'Everyone calls four cards, then the most sips rides.'
+              : 'Call four cards, then ride the bus.'}
         </p>
         <Option
           label="Mercy Rule"
@@ -282,7 +305,7 @@ function Play() {
           options={[
             ['5', '5 Tries'],
             ['10', '10 Tries'],
-            ['0', 'Off'],
+            ['15', '15 Tries'],
           ]}
           onChange={setMercy}
         />
@@ -346,6 +369,7 @@ function Play() {
     return out(
       <Screen
         key="results"
+        arm={BIG_SCREEN_ARM}
         className="g-ride-the-bus-results"
         kicker="Riding the bus"
         title={<Sign>{name(rider)}</Sign>}
@@ -391,6 +415,7 @@ function Play() {
     return out(
       <Screen
         key="off"
+        arm={BIG_SCREEN_ARM}
         className="g-ride-the-bus-off"
         title={<Sign>{game.mercy ? 'Mercy Rule' : 'Off the Bus'}</Sign>}
         sub={offNote(game, who)}
@@ -442,7 +467,7 @@ function Play() {
       clearing={clearing}
       auto={auto}
       onAnswer={onAnswer}
-      onNext={onNext}
+      onNext={tapNext}
     />,
   );
 }
@@ -514,8 +539,8 @@ function verdictCopy(game: Game, who: string, solo: boolean): { big: string; det
       const left = QUESTIONS - v.q - 1;
       return { big: left ? `${left} to go` : 'Four in a row', detail: `${called} ${it}` };
     }
-    if (upcoming(game) === 'mercy') return { big: `Drink ${v.sips}`, detail: `${it}${edge} That was try ${game.attempts}, so the mercy rule lets ${solo ? 'you' : who} off.` };
-    return { big: `Drink ${v.sips}`, detail: `${it}${edge} Back to card one.` };
+    if (upcoming(game) === 'mercy') return { big: `Drink ${v.sips}`, detail: `${called} ${it}${edge} That was the last try.` };
+    return { big: `Drink ${v.sips}`, detail: `${called} ${it}${edge} Back to card one.` };
   }
   if (v.right) return { big: solo ? 'Right' : `Give out ${v.sips}`, detail: `${called} ${it}` };
   return { big: `Drink ${v.sips}`, detail: `${called} ${it}${edge}` };
@@ -554,7 +579,8 @@ function TableView({
   clearing: boolean;
   auto: number;
   onAnswer: (g: Guess) => void;
-  onNext: () => void;
+  /** Moves on from the verdict; `sound` plays the tap's click. */
+  onNext: (sound?: boolean) => void;
 }) {
   const shell = useShell();
   const { verdict } = game;
@@ -615,25 +641,19 @@ function TableView({
   const lastTry = bus && face.limit > 0 && face.attempts >= face.limit;
   const ask = face.shown;
 
-  const actions = turning ? (
-    <div className="g-ride-the-bus-hold" aria-hidden="true" />
-  ) : verdict ? (
-    <div key={`next-${game.deals}-${q}`} className={`g-ride-the-bus-next ${auto ? 'is-auto' : ''}`} style={{ '--auto': `${Math.max(0.1, auto - (slow ? REVEAL_SLOW : REVEAL))}s` } as CSSProperties}>
-      <Big primary disabled={clearing} onClick={onNext}>
-        {nextLabel}
-      </Big>
-    </div>
-  ) : (
-    <div key={`answers-${game.deals}-${q}`} className={`g-ride-the-bus-answers is-${choices.length}`} role="group" aria-label={TITLES[q]}>
-      {choices.map((g, i) => (
-        <button key={g} type="button" className={`g-ride-the-bus-answer is-${g}`} onClick={() => onAnswer(g)} aria-keyshortcuts={keyFor(choices.length, i)}>
-          <AnswerIcon guess={g} />
-          <span>{ANSWER_LABEL[g]}</span>
-          {!shell.touch && <kbd aria-hidden="true">{choices.length === 2 ? (i === 0 ? '←' : '→') : i + 1}</kbd>}
-        </button>
-      ))}
-    </div>
-  );
+  // Nothing to press while a card turns or the row is swept away after a miss: an empty spot can't take a stray tap.
+  const actions =
+    turning || clearing ? (
+      <div className="g-ride-the-bus-hold" aria-hidden="true" />
+    ) : verdict ? (
+      <div key={`next-${game.deals}-${q}`} className={`g-ride-the-bus-next ${auto ? 'is-auto' : ''}`} style={{ '--auto': `${Math.max(0.1, auto - (slow ? REVEAL_SLOW : REVEAL))}s` } as CSSProperties}>
+        <Big primary quiet onClick={() => onNext(true)}>
+          {nextLabel}
+        </Big>
+      </div>
+    ) : (
+      <Answers key={`answers-${game.deals}-${q}`} q={q} choices={choices} keys={!shell.touch} onAnswer={onAnswer} />
+    );
 
   return (
     <Screen className={`g-ride-the-bus-table ${bus ? 'is-bus' : ''}`} center={false} onEnter={live ? onNext : undefined} actions={actions}>
@@ -641,14 +661,7 @@ function TableView({
       <div
         className={`g-ride-the-bus-tap ${live ? 'is-live' : ''}`}
         style={{ '--reveal': `${slow ? REVEAL_SLOW : REVEAL}s` } as CSSProperties}
-        onClick={
-          live
-            ? () => {
-                sfx.play('select');
-                onNext();
-              }
-            : undefined
-        }
+        onClick={live ? () => onNext(true) : undefined}
       >
         <div className="g-ride-the-bus-hud">
           <span className="g-ride-the-bus-who">
@@ -698,7 +711,7 @@ function TableView({
           ) : (
             <div key={`ask-${game.deals}-${ask}`} className="g-ride-the-bus-ask">
               <p className="arcade-party-kicker">
-                {bus && ask === QUESTIONS - 1 ? 'Last card' : `Card ${ask + 1} of ${QUESTIONS}`} &middot; {bus ? `a miss drinks ${ask + 1}` : sips(ask + 1)}
+                {bus && ask === QUESTIONS - 1 ? 'Last card' : `Card ${ask + 1} of ${QUESTIONS}`} &middot; {bus ? `a miss drinks ${sipsFor(ask)}` : sips(sipsFor(ask))}
               </p>
               <h2 className="arcade-party-title g-ride-the-bus-q">{TITLES[ask]}</h2>
               <p className="arcade-party-sub">{prompt(face, who, solo)}</p>
@@ -722,6 +735,34 @@ function TableView({
 }
 
 const keyFor = (n: number, i: number) => (n === 2 ? `${i === 0 ? 'ArrowLeft' : 'ArrowRight'} ${i + 1}` : String(i + 1));
+
+/**
+ * The answer buttons for one question. Mounted fresh for every question (keyed by hand and card), so a tap that
+ * arrives within ANSWER_GUARD of them appearing belongs to the button that was there before, and is dropped.
+ */
+function Answers({ q, choices, keys, onAnswer }: { q: number; choices: readonly Guess[]; keys: boolean; onAnswer: (g: Guess) => void }) {
+  const [shownAt] = useState(() => performance.now());
+  return (
+    <div className={`g-ride-the-bus-answers is-${choices.length}`} role="group" aria-label={TITLES[q]}>
+      {choices.map((g, i) => (
+        <button
+          key={g}
+          type="button"
+          className={`g-ride-the-bus-answer is-${g}`}
+          onClick={() => {
+            if (performance.now() - shownAt < ANSWER_GUARD) return;
+            onAnswer(g);
+          }}
+          aria-keyshortcuts={keyFor(choices.length, i)}
+        >
+          <AnswerIcon guess={g} />
+          <span>{ANSWER_LABEL[g]}</span>
+          {keys && <kbd aria-hidden="true">{choices.length === 2 ? (i === 0 ? '←' : '→') : i + 1}</kbd>}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /* Cards */
 

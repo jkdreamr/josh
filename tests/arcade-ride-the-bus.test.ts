@@ -4,6 +4,10 @@ import { mulberry32, shuffle } from '../src/os/arcade/kit/party-core.ts';
 import {
   ACE,
   CHOICES,
+  MERCY_DEFAULT,
+  MERCY_TRIES,
+  QUESTIONS,
+  SIP_CAP,
   SUITS,
   advance,
   answer,
@@ -150,8 +154,10 @@ test('an edge is a card that matches a rank the call depends on', () => {
   assert.ok(!isEdge([c(4)], 1), 'no card there yet');
 });
 
-test('sips match the question number', () => {
-  assert.deepEqual([0, 1, 2, 3].map(sipsFor), [1, 2, 3, 4]);
+test('sips match the question number, capped at three', () => {
+  assert.equal(SIP_CAP, 3);
+  assert.deepEqual([0, 1, 2, 3].map(sipsFor), [1, 2, 3, 3]);
+  for (let q = 0; q < QUESTIONS; q++) assert.ok(sipsFor(q) <= SIP_CAP, `card ${q + 1} costs at most ${SIP_CAP}`);
 });
 
 test('the four questions: wrong drinks, right gives, then the next player', () => {
@@ -164,7 +170,7 @@ test('the four questions: wrong drinks, right gives, then the next player', () =
   assert.equal(upcoming(g), null);
   assert.equal(advance(g, mulberry32(1)), g, 'no moving on before answering');
 
-  // Sam: right (1), wrong (2), right (3), wrong (4).
+  // Sam: right (1), wrong (2), right (3), wrong (3, the cap).
   let r = play(g, 'red');
   assert.deepEqual(r.answered.verdict, { q: 0, guess: 'red', right: true, sips: 1, card: sam[0] });
   assert.equal(answer(r.answered, 'black'), r.answered, 'a second answer is ignored');
@@ -179,7 +185,8 @@ test('the four questions: wrong drinks, right gives, then the next player', () =
   assert.equal(r.answered.verdict?.right, false);
   assert.equal(upcoming(r.answered), 'player');
   assert.deepEqual(r.answered.marks, [true, false, true, false], 'each flipped card remembers how it went');
-  assert.deepEqual(r.answered.taken, [6, 0]);
+  assert.equal(r.answered.verdict?.sips, 3, 'the suit is worth 3, not 4');
+  assert.deepEqual(r.answered.taken, [5, 0]);
   assert.deepEqual(r.answered.given, [4, 0]);
   g = r.next;
   assert.equal(g.seat, 1);
@@ -197,8 +204,8 @@ test('the four questions: wrong drinks, right gives, then the next player', () =
   g = r.next;
   r = play(g, 'diamonds');
   assert.equal(upcoming(r.answered), 'results');
-  assert.deepEqual(r.answered.taken, [6, 2]);
-  assert.deepEqual(r.answered.given, [4, 8]);
+  assert.deepEqual(r.answered.taken, [5, 2]);
+  assert.deepEqual(r.answered.given, [4, 7]);
   g = r.next;
   assert.equal(g.phase, 'results');
   assert.equal(g.seat, 0, 'most sips taken rides the bus');
@@ -291,7 +298,7 @@ test('just the bus clamps the rider to the table', () => {
 
 test('a long seeded bus ride keeps dealing valid hands until someone gets off', () => {
   const rng = mulberry32(2024);
-  let g = startBus(1, 0, rng);
+  let g = withMercy(startBus(1, 0, rng), 15);
   let steps = 0;
   while (g.phase === 'bus' && steps < 20_000) {
     // A sensible player: guess by the odds.
@@ -306,8 +313,8 @@ test('a long seeded bus ride keeps dealing valid hands until someone gets off', 
     steps++;
   }
   assert.equal(g.phase, 'off');
-  assert.ok(g.attempts >= 1);
-  assert.ok(g.busSips >= 0);
+  assert.ok(g.attempts >= 1 && g.attempts <= 15);
+  assert.ok(g.busSips >= 0 && g.busSips <= g.attempts * SIP_CAP);
 });
 
 test('the mercy rule lets the rider off after the last allowed try', () => {
@@ -328,10 +335,43 @@ test('the mercy rule lets the rider off after the last allowed try', () => {
   assert.equal(g.attempts, 3);
   assert.equal(g.busSips, 3);
   assert.equal(g.best, 0, 'never got past the first card');
-  let open = withMercy(startBus(1, 0, rng), 0);
-  for (let i = 0; i < 20; i++) {
-    open = miss(open);
-    assert.equal(upcoming(open), 'retry');
-    open = advance(open, rng);
+});
+
+test('the mercy rule offers 5, 10 or 15 tries and is never off', () => {
+  assert.deepEqual([...MERCY_TRIES], [5, 10, 15]);
+  assert.equal(MERCY_DEFAULT, 5);
+  const g = startBus(2, 0, mulberry32(3));
+  assert.equal(g.limit, MERCY_DEFAULT, 'a bus starts with the default limit');
+  assert.equal(startGame(3, mulberry32(3)).limit, MERCY_DEFAULT);
+  for (const n of MERCY_TRIES) assert.equal(withMercy(g, n).limit, n);
+  // The old "Off" setting was stored as 0. It, and anything else that isn't a positive number, means the default.
+  for (const n of [0, -3, Number.NaN]) assert.equal(withMercy(g, n).limit, MERCY_DEFAULT, `limit ${n}`);
+  assert.equal(withMercy(g, 99).limit, 15, 'never more than 15');
+  assert.equal(withMercy(g, Number.POSITIVE_INFINITY).limit, 15);
+
+  // Missing every first card, the rider is off after the limit, having drunk one sip a try.
+  const rng = mulberry32(11);
+  const miss = (x: Game) => answer(x, colorOf(x.hand[0]) === 'red' ? 'black' : 'red');
+  let bus = withMercy(startBus(1, 0, rng), 0);
+  let tries = 0;
+  while (bus.phase === 'bus' && tries < 100) {
+    bus = advance(miss(bus), rng);
+    tries++;
+  }
+  assert.equal(bus.phase, 'off');
+  assert.equal(bus.mercy, true);
+  assert.equal(tries, MERCY_DEFAULT);
+});
+
+test('a bus ride is bounded: at most 15 tries and 3 sips a try', () => {
+  const rng = mulberry32(77);
+  for (let run = 0; run < 300; run++) {
+    let g = withMercy(startBus(1, 0, rng), 15);
+    while (g.phase === 'bus') {
+      // The worst player alive: always the same answer, whatever the cards.
+      g = advance(answer(g, CHOICES[g.shown][0]), rng);
+    }
+    assert.ok(g.attempts <= 15);
+    assert.ok(g.busSips <= 15 * SIP_CAP);
   }
 });
