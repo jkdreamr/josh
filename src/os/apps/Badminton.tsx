@@ -37,6 +37,7 @@ import {
   type Side,
 } from '../games/badminton';
 import { useOS, type AppProps } from '../types';
+import { countPlay } from '../stats';
 import { BadmintonAudio } from './badminton-audio';
 import { drawScene, sceneMetrics, type AthleteView, type Impact, type LandingMark } from './badminton-draw';
 import './game-controls.css';
@@ -157,10 +158,11 @@ function kmh(speed: number) {
   return Math.round(speed * 3.6);
 }
 
-export default function Badminton(_props: AppProps) {
+export default function Badminton({ args }: AppProps) {
   const os = useOS();
   const touch = os.mobile;
   const phone = os.mobile && !os.tablet;
+  useEffect(() => countPlay('badminton'), [args.nonce]);
 
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [screen, setScreen] = useState<Screen>('menu');
@@ -378,6 +380,7 @@ export default function Badminton(_props: AppProps) {
   );
 
   const startMatch = useCallback(() => {
+    countPlay('badminton');
     const state = newMatch(settingsRef.current.length);
     const fresh = newStats();
     matchRef.current = state;

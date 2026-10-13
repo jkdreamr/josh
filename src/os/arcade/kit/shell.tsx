@@ -11,6 +11,7 @@ import { sfx, useMuted } from './sfx';
 import { OnlinePanel, OnlineProvider } from './online';
 import { advanceOnlineRound } from './online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
+import { countPlay } from '../../stats';
 import './kit.css';
 
 export type GameShellProps = {
@@ -99,17 +100,23 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
 
   useEffect(() => setTouch(!!os?.mobile || isTouchDevice()), [os?.mobile]);
   useEffect(() => sfx.retain(), []);
+  // Opening a game counts as a play, and so does every round after it. The New Tab strip counts only once someone starts it.
+  useEffect(() => {
+    if (!compact || autoStart) countPlay(meta.id);
+  }, [meta.id, compact, autoStart]);
 
   const focusRoot = useCallback(() => root.current?.focus({ preventScroll: true }), []);
   const start = useCallback(() => {
+    countPlay(meta.id);
     sfx.unlock();
     keys.clear();
     setResult(null);
     setStatus('playing');
     focusRoot();
-  }, [keys, focusRoot]);
+  }, [meta.id, keys, focusRoot]);
 
   const restart = useCallback(() => {
+    countPlay(meta.id);
     sfx.unlock();
     keys.clear();
     setResult(null);
@@ -118,7 +125,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setRound((r) => r + 1);
     setStatus('playing');
     focusRoot();
-  }, [keys, focusRoot]);
+  }, [meta.id, keys, focusRoot]);
   const gameOver = useCallback(
     (final?: number, info: GameOverInfo = {}) => {
       if (statusRef.current === 'over') return;

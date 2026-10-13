@@ -2,16 +2,20 @@ import { DurableObject } from 'cloudflare:workers';
 import { validateSubmission, TOP, type BoardEntry } from '../../src/os/arcade/kit/leaderboard-core.ts';
 import type { LeaderboardSpec } from '../../src/os/arcade/types.ts';
 import { cleanName, nameLength } from '../../src/os/arcade/kit/leaderboard-core.ts';
+import { dayKey, KEEP_DAYS, MAX_GAMES, parseHit, periodStarts, shiftDay, TOP_GAMES, type StatsHit, type StatsSummary, type TopGame } from '../../src/os/stats-core.ts';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
 import { agreedWinner, canStartRoom, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
 interface Env {
   BOARDS: DurableObjectNamespace<Boards>;
   ROOMS: DurableObjectNamespace<Room>;
+  STATS: DurableObjectNamespace<Stats>;
 }
 
 const RATE_LIMIT = 6;
 const RATE_WINDOW_MS = 60_000;
+/** Generous on purpose: a whole classroom behind one IP refreshing and replaying should all count. */
+const STATS_RATE_LIMIT = 240;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -289,6 +293,99 @@ export class Room extends DurableObject<Env> {
   }
 }
 
+/**
+ * Site-wide counters. `daily` holds per-day counts for the rolling windows (key '' is the total, otherwise a game id),
+ * `totals` holds all time counts, and visitors are anonymous ids the browser keeps in localStorage.
+ */
+export class Stats extends DurableObject<Env> {
+  private readonly hits = new Map<string, number[]>();
+  private prunedDay = '';
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    const sql = this.ctx.storage.sql;
+    sql.exec('CREATE TABLE IF NOT EXISTS daily (day TEXT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, kind, key))');
+    sql.exec('CREATE TABLE IF NOT EXISTS totals (kind TEXT NOT NULL, key TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (kind, key))');
+    sql.exec('CREATE TABLE IF NOT EXISTS visitors (id TEXT PRIMARY KEY, first TEXT NOT NULL)');
+    sql.exec('CREATE TABLE IF NOT EXISTS visitor_days (day TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (day, id))');
+  }
+
+  /** Counts one visit or one game. False when the IP is over the rate limit. */
+  record(hit: StatsHit, ip: string): boolean {
+    const now = Date.now();
+    const recent = (this.hits.get(ip) ?? []).filter((time) => now - time < RATE_WINDOW_MS);
+    if (recent.length >= STATS_RATE_LIMIT) {
+      this.hits.set(ip, recent);
+      return false;
+    }
+    if (this.hits.size > 10_000) this.hits.clear();
+    recent.push(now);
+    this.hits.set(ip, recent);
+
+    const sql = this.ctx.storage.sql;
+    const today = dayKey(new Date(now));
+    this.prune(today);
+    this.bump(today, hit.kind, '');
+    if (hit.kind === 'play') {
+      const known = sql.exec('SELECT 1 FROM totals WHERE kind = ? AND key = ?', 'play', hit.game).toArray().length > 0;
+      if (known || sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM totals WHERE kind = 'play' AND key != ''").one().n < MAX_GAMES) {
+        this.bump(today, 'play', hit.game);
+      }
+    }
+    sql.exec('INSERT OR IGNORE INTO visitors (id, first) VALUES (?, ?)', hit.visitor, today);
+    sql.exec('INSERT OR IGNORE INTO visitor_days (day, id) VALUES (?, ?)', today, hit.visitor);
+    return true;
+  }
+
+  summary(): StatsSummary {
+    const sql = this.ctx.storage.sql;
+    const starts = periodStarts(dayKey(new Date()));
+    const windowed = (kind: string, from: string) =>
+      sql.exec<{ n: number }>("SELECT COALESCE(SUM(n), 0) AS n FROM daily WHERE kind = ? AND key = '' AND day >= ?", kind, from).one().n;
+    const total = (kind: string) => sql.exec<{ n: number }>("SELECT COALESCE(SUM(n), 0) AS n FROM totals WHERE kind = ? AND key = ''", kind).one().n;
+    const counts = (kind: string) => ({ today: windowed(kind, starts.today), week: windowed(kind, starts.week), month: windowed(kind, starts.month), all: total(kind) });
+    const visitors = (from: string) => sql.exec<{ n: number }>('SELECT COUNT(DISTINCT id) AS n FROM visitor_days WHERE day >= ?', from).one().n;
+    const top = (from: string) =>
+      sql.exec<TopGame>(
+        "SELECT key AS game, SUM(n) AS plays FROM daily WHERE kind = 'play' AND key != '' AND day >= ? GROUP BY key ORDER BY plays DESC, key ASC LIMIT ?",
+        from,
+        TOP_GAMES,
+      ).toArray();
+    return {
+      views: counts('view'),
+      plays: counts('play'),
+      visitors: {
+        today: visitors(starts.today),
+        week: visitors(starts.week),
+        month: visitors(starts.month),
+        all: sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM visitors').one().n,
+      },
+      top: {
+        today: top(starts.today),
+        week: top(starts.week),
+        month: top(starts.month),
+        all: sql.exec<TopGame>("SELECT key AS game, n AS plays FROM totals WHERE kind = 'play' AND key != '' ORDER BY n DESC, key ASC LIMIT ?", TOP_GAMES).toArray(),
+      },
+      since: sql.exec<{ since: string | null }>('SELECT MIN(first) AS since FROM visitors').one().since,
+    };
+  }
+
+  private bump(day: string, kind: string, key: string) {
+    const sql = this.ctx.storage.sql;
+    sql.exec('INSERT INTO daily (day, kind, key, n) VALUES (?, ?, ?, 1) ON CONFLICT(day, kind, key) DO UPDATE SET n = n + 1', day, kind, key);
+    sql.exec('INSERT INTO totals (kind, key, n) VALUES (?, ?, 1) ON CONFLICT(kind, key) DO UPDATE SET n = n + 1', kind, key);
+  }
+
+  /** Once a day, drops the daily rows no window reaches any more. */
+  private prune(today: string) {
+    if (this.prunedDay === today) return;
+    this.prunedDay = today;
+    const cutoff = shiftDay(today, -KEEP_DAYS);
+    this.ctx.storage.sql.exec('DELETE FROM daily WHERE day < ?', cutoff);
+    this.ctx.storage.sql.exec('DELETE FROM visitor_days WHERE day < ?', cutoff);
+  }
+}
+
 function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set('Access-Control-Allow-Origin', '*');
@@ -310,6 +407,24 @@ export default {
     if (url.pathname === '/wins' && request.method === 'GET') {
       const id = env.BOARDS.idFromName('global');
       return withCors(await env.BOARDS.get(id).fetch(request));
+    }
+    if (url.pathname === '/stats' && request.method === 'GET') {
+      try {
+        return withCors(json(await env.STATS.get(env.STATS.idFromName('global')).summary()));
+      } catch {
+        return withCors(json({ error: 'unavailable' }, 503));
+      }
+    }
+    const statsPath = /^\/stats\/(view|play)$/.exec(url.pathname);
+    if (statsPath && request.method === 'POST') {
+      const hit = parseHit(statsPath[1], await request.text());
+      if (!hit) return withCors(json({ error: 'invalid body' }, 400));
+      try {
+        const counted = await env.STATS.get(env.STATS.idFromName('global')).record(hit, request.headers.get('CF-Connecting-IP') || 'unknown');
+        return withCors(counted ? json({ ok: true }) : json({ error: 'rate limited' }, 429, { 'retry-after': '60' }));
+      } catch {
+        return withCors(json({ error: 'unavailable' }, 503));
+      }
     }
     if (url.pathname === '/rooms' && request.method === 'POST') {
       const game = url.searchParams.get('game') ?? '';

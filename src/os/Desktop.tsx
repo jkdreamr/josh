@@ -7,6 +7,8 @@ import Wallpaper from './Wallpaper';
 import Banner from './Banner';
 import HomeScreen, { originOf } from './HomeScreen';
 import { clamp, monthGrid, useBattery, useNow, useWeatherReport, type BatteryView, type Weather } from './hooks';
+import { getMeta } from './arcade/manifest';
+import { formatCount, useStats, type StatsPeriod } from './stats';
 
 const MENU_H = 26;
 const DOCK_SPACE = 78;
@@ -931,6 +933,7 @@ function MenuBar({
         />
       </div>
       <div className="mb-right">
+        <StatsMenu {...shared} />
         <WeatherMenu {...shared} />
         <button className="mb-item mb-icon" onClick={os.toggleFullscreen} aria-label={os.fullscreen ? 'Exit full screen' : 'Full screen'} title={os.fullscreen ? 'Exit full screen (esc)' : 'Full screen'}>
           {os.fullscreen ? (
@@ -1304,6 +1307,130 @@ function WeatherMenu(slot: MenuSlot) {
           </div>
         )
       }
+    </StatusMenu>
+  );
+}
+
+const STAT_PERIODS: { id: StatsPeriod; label: string }[] = [
+  { id: 'today', label: 'Today' },
+  { id: 'week', label: '7 Days' },
+  { id: 'month', label: '30 Days' },
+  { id: 'all', label: 'All Time' },
+];
+
+const STAT_ICONS = {
+  chart: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+  visits: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  games: 'M6 11h4M8 9v4M15 12h.01M18 10h.01M17.3 5H6.7a4 4 0 0 0-4 3.6L2 15a3 3 0 0 0 5.4 1.8L9 15h6l1.6 1.8A3 3 0 0 0 22 15l-.7-6.4A4 4 0 0 0 17.3 5z',
+  visitors: 'M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM21 20v-1.5a3.5 3.5 0 0 0-2.6-3.4M15.5 4.1a3.5 3.5 0 0 1 0 6.8',
+};
+
+function StatGlyph({ d, size = 14 }: { d: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
+function gameTitle(id: string) {
+  return getMeta(id)?.title ?? (Object.hasOwn(apps, id) ? apps[id as AppId].title : id);
+}
+
+function StatsPanel() {
+  const { status, summary, refresh } = useStats();
+  const [period, setPeriod] = useState<StatsPeriod>('all');
+  if (!summary)
+    return status === 'failed' ? (
+      <div className="sw-state">
+        <b>Stats Unavailable</b>
+        <span>The counters couldn’t be reached.</span>
+        <button className="sm-push" onClick={refresh}>
+          Try Again
+        </button>
+      </div>
+    ) : (
+      <div className="sw-state" aria-live="polite">
+        <span>Loading Stats…</span>
+      </div>
+    );
+  const rows = [
+    { key: 'visits', label: 'Visits', hint: 'every load and refresh', value: summary.views[period], icon: STAT_ICONS.visits },
+    { key: 'games', label: 'Games Played', hint: 'every round, every game', value: summary.plays[period], icon: STAT_ICONS.games },
+    { key: 'visitors', label: 'Visitors', hint: 'different people', value: summary.visitors[period], icon: STAT_ICONS.visitors },
+  ];
+  const top = summary.top[period];
+  const most = top[0]?.plays || 1;
+  const since = summary.since ? new Date(`${summary.since}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : null;
+  return (
+    <>
+      <div className="st-head">
+        <b>Stats</b>
+        <span className="st-live">
+          <i />
+          Live
+        </span>
+      </div>
+      <div className="st-seg" role="group" aria-label="Period">
+        {STAT_PERIODS.map((p) => (
+          <button key={p.id} aria-pressed={p.id === period} onClick={() => setPeriod(p.id)}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <div className="st-rows" aria-live="polite">
+        {rows.map((r) => (
+          <div key={r.key} className={`st-row st-${r.key}`}>
+            <span className="st-icon">
+              <StatGlyph d={r.icon} size={15} />
+            </span>
+            <span className="st-label">
+              <b>{r.label}</b>
+              <small>{r.hint}</small>
+            </span>
+            <span className="st-num">{formatCount(r.value)}</span>
+          </div>
+        ))}
+      </div>
+      <div className="st-section">Most Played</div>
+      {top.length ? (
+        <ol className="st-top">
+          {top.map((g, i) => (
+            <li key={g.game}>
+              <span className="st-rank">{i + 1}</span>
+              <span className="st-game">
+                <span>{gameTitle(g.game)}</span>
+                <i style={{ width: `${Math.max(4, (g.plays / most) * 100)}%` }} />
+              </span>
+              <b>{formatCount(g.plays)}</b>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="st-empty">No games yet. Go set a record.</div>
+      )}
+      <div className="st-foot">{since ? `Counting since ${since}` : 'Counting starts now'}</div>
+    </>
+  );
+}
+
+function StatsMenu(slot: MenuSlot) {
+  return (
+    <StatusMenu
+      id="stats"
+      {...slot}
+      triggerClass="sm-stats-btn"
+      ariaLabel="Site Stats"
+      label={
+        <>
+          <StatGlyph d={STAT_ICONS.chart} size={13} />
+          <span className="mb-hide-sm">Stats</span>
+        </>
+      }
+      popClass="sm-panel sm-stats"
+      popRole="dialog"
+    >
+      {() => <StatsPanel />}
     </StatusMenu>
   );
 }
