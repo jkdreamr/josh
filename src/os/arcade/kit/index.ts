@@ -9,5 +9,5 @@ export { sfx, useMuted, type SfxName, type Tone } from './sfx';
 export { loadThree, useThree } from './three';
 export { ArcadeHost } from './host';
 export { Segmented, modeOptions, levelOptions, levelIndex, levelLabel, PLAY_MODES, LEVEL_NAMES, type SegmentedProps, type PlayMode, type LevelName } from './controls';
-export { defineSetting, useSetting, getSetting, setSetting, type Setting } from './settings';
+export { defineSetting, useSetting, getSetting, setSetting, onSettingChange, type Setting, type SettingChange } from './settings';
 export { useOnline } from './online';

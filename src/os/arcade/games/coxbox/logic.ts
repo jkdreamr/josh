@@ -171,13 +171,15 @@ export type RivalLevel = (typeof RIVAL_LEVELS)[number];
 export const RIVAL_LABELS: Record<RivalLevel, string> = { novice: 'Novice', club: 'Club', varsity: 'Varsity', olympic: 'Olympic' };
 /** Typing speed range (wpm) of the rival crews at each level. */
 export const RIVAL_WPM: Record<RivalLevel, readonly [number, number]> = {
-  novice: [18, 34],
-  club: [32, 55],
-  varsity: [52, 80],
-  olympic: [78, 115],
+  novice: [30, 50],
+  club: [50, 75],
+  varsity: [75, 105],
+  olympic: [105, 145],
 };
+/** Where the four crews sit in the level's range: a pack near the top, so the leader is always quick. */
+const FIELD = [0.35, 0.6, 0.8, 0.97];
 
-/** Four rival crews for a solo race, spread across the level's speed range, slowest first. */
+/** Four rival crews for a solo race, packed toward the top of the level's speed range, slowest first. */
 export function rivalField(level: RivalLevel, rand: () => number, count = BOTS): { crew: Crew; wpm: number }[] {
   const [lo, hi] = RIVAL_WPM[level];
   const crews = [...RIVALS];
@@ -185,10 +187,28 @@ export function rivalField(level: RivalLevel, rand: () => number, count = BOTS):
     const j = Math.floor(rand() * (i + 1));
     [crews[i], crews[j]] = [crews[j], crews[i]];
   }
-  return Array.from({ length: count }, (_, i) => ({
-    crew: crews[i % crews.length],
-    wpm: Math.round(lo + ((hi - lo) * (i + 0.25 + rand() * 0.5)) / count),
-  }));
+  return Array.from({ length: count }, (_, i) => {
+    const at = FIELD[Math.min(FIELD.length - 1, Math.round((i * (FIELD.length - 1)) / Math.max(1, count - 1)))];
+    return { crew: crews[i % crews.length], wpm: Math.round(lo + (hi - lo) * Math.min(1, at + (rand() - 0.5) * 0.06)) };
+  });
+}
+
+/** Most a rival can lift its pace when it is behind you. */
+export const CATCH_UP_MAX = 0.08;
+
+/**
+ * Pace lift for a rival that is behind you, from how far back it is (a share of the course).
+ * Rivals never slow down when they lead; they only push harder to stay in touch.
+ */
+export function catchUp(behind: number): number {
+  return 1 + Math.max(0, Math.min(CATCH_UP_MAX, behind * 0.5));
+}
+
+/** Race plan: a quick start, a settle through the middle, and a sprint over the last stretch. */
+export function racePace(progress: number): number {
+  if (progress < 0.08) return 1.06;
+  if (progress > 0.85) return 1.07;
+  return 0.985;
 }
 
 export type Bot = { wpm: number; chars: number; doneMs: number | null; wait: number; rand: () => number };
@@ -208,10 +228,13 @@ export function createBot(speed: number, rand: () => number): Bot {
   return { wpm: speed, chars: 0, doneMs: null, wait: 0.25 + rand() * 0.4, rand };
 }
 
-/** Advances a bot by dt seconds. raceMs is the race clock at the end of the step, used to stamp the finish. */
-export function stepBot(bot: Bot, text: string, dt: number, raceMs: number): void {
+/**
+ * Advances a bot by dt seconds. raceMs is the race clock at the end of the step, used to stamp the finish.
+ * boost multiplies its pace on top of the race plan (see catchUp).
+ */
+export function stepBot(bot: Bot, text: string, dt: number, raceMs: number, boost = 1): void {
   if (bot.doneMs !== null) return;
-  const base = Math.max(0.02, 60 / (bot.wpm * 5) - overhead(text));
+  const base = Math.max(0.02, 60 / (bot.wpm * 5) - overhead(text)) / (racePace(bot.chars / Math.max(1, text.length)) * boost);
   bot.wait -= dt;
   while (bot.wait <= 0 && bot.doneMs === null) {
     bot.chars++;
