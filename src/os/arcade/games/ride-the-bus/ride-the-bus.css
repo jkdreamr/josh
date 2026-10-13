@@ -1,0 +1,693 @@
+.g-ride-the-bus {
+  background:
+    radial-gradient(120% 70% at 50% -10%, color-mix(in srgb, #ff9f0a 20%, #15110c) 0%, transparent 70%),
+    radial-gradient(90% 50% at 50% 110%, rgba(255, 159, 10, 0.07), transparent 70%),
+    #0f0d0b;
+}
+
+.g-ride-the-bus .g-ride-the-bus-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  text-wrap: balance;
+  color: rgba(245, 245, 247, 0.55);
+}
+
+/* The table: a status line, the row of cards and the question */
+.g-ride-the-bus .g-ride-the-bus-hud {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 30px;
+}
+.g-ride-the-bus .g-ride-the-bus-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.g-ride-the-bus .g-ride-the-bus-who b {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-ride-the-bus .g-ride-the-bus-pills {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+}
+.g-ride-the-bus .g-ride-the-bus-pills > span {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(245, 245, 247, 0.75);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+}
+.g-ride-the-bus .g-ride-the-bus-pills > span.is-hot {
+  color: #fff;
+  background: color-mix(in srgb, #ff9f0a 30%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, #ff9f0a 80%, #fff);
+}
+
+.g-ride-the-bus .g-ride-the-bus-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(12px, 3cqh, 22px);
+  width: 100%;
+  margin-block: auto;
+}
+
+.g-ride-the-bus .g-ride-the-bus-ask {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 118px;
+  animation: g-ride-the-bus-rise 0.24s ease-out;
+}
+.g-ride-the-bus .g-ride-the-bus-ask .arcade-party-kicker {
+  margin: 0;
+  font-size: 12px;
+}
+.g-ride-the-bus .g-ride-the-bus-q {
+  font-size: clamp(26px, 8cqw, 34px);
+}
+@keyframes g-ride-the-bus-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Answers and Next share one height, so the table never jumps between them */
+.g-ride-the-bus .g-ride-the-bus-table .arcade-party-actions {
+  justify-content: flex-end;
+  min-height: 66px;
+}
+
+/* Everyone's sips so far, during the questions */
+.g-ride-the-bus .g-ride-the-bus-standings {
+  display: flex;
+  flex: none;
+  justify-content: safe center;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 2px 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+.g-ride-the-bus .g-ride-the-bus-standings::-webkit-scrollbar {
+  display: none;
+}
+.g-ride-the-bus .g-ride-the-bus-standings li {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px 0 5px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: rgba(245, 245, 247, 0.7);
+  background: rgba(255, 255, 255, 0.06);
+}
+.g-ride-the-bus .g-ride-the-bus-standings li span {
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-ride-the-bus .g-ride-the-bus-standings li b {
+  font-variant-numeric: tabular-nums;
+  color: #f5f5f7;
+}
+.g-ride-the-bus .g-ride-the-bus-standings li.is-on {
+  color: #f5f5f7;
+  background: color-mix(in srgb, #ff9f0a 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #ff9f0a 70%, transparent);
+}
+
+/* The verdict banner */
+.g-ride-the-bus .g-ride-the-bus-verdict {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: calc(100% - 12px);
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  font-size: clamp(19px, 5.6cqw, 24px);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  text-align: center;
+  color: #fff;
+  animation: g-ride-the-bus-banner 0.36s 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.3) backwards;
+}
+.g-ride-the-bus .g-ride-the-bus-verdict.is-right {
+  background: linear-gradient(160deg, #3ddc6a, #1f9e48);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.35),
+    0 8px 18px -12px rgba(48, 209, 88, 0.7);
+}
+.g-ride-the-bus .g-ride-the-bus-verdict.is-wrong {
+  background: linear-gradient(160deg, #ff5a4f, #c8261c);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.35),
+    0 8px 18px -12px rgba(255, 69, 58, 0.7);
+}
+.g-ride-the-bus .g-ride-the-bus-verdict .g-ride-the-bus-vicon {
+  flex: none;
+  width: 1.05em;
+  height: 1.05em;
+}
+@keyframes g-ride-the-bus-banner {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+}
+
+/* Cards */
+.g-ride-the-bus .g-ride-the-bus-row {
+  --gap: clamp(6px, 2.4cqw, 12px);
+  --cw: min(calc((min(100cqw, 460px) - 24px - 3 * var(--gap)) / 4), calc((100cqh - 270px) / 1.4), 112px);
+  display: flex;
+  flex: none;
+  justify-content: center;
+  gap: var(--gap);
+  padding: 8px 12px 4px;
+}
+.g-ride-the-bus .g-ride-the-bus-slot {
+  position: relative;
+  flex: none;
+  width: var(--cw);
+  height: calc(var(--cw) * 1.4);
+  perspective: calc(var(--cw) * 8);
+  animation: g-ride-the-bus-deal 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.15) backwards;
+  animation-delay: calc(var(--i) * 70ms);
+}
+.g-ride-the-bus .g-ride-the-bus-flip {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+  transform-style: preserve-3d;
+  transition: transform 0.5s cubic-bezier(0.3, 0.7, 0.3, 1.12);
+}
+.g-ride-the-bus .g-ride-the-bus-slot.is-up .g-ride-the-bus-flip {
+  transform: rotateY(0deg);
+}
+.g-ride-the-bus .g-ride-the-bus-face,
+.g-ride-the-bus .g-ride-the-bus-back {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: calc(var(--cw) * 0.1);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+.g-ride-the-bus .g-ride-the-bus-face {
+  color: #1c1c1e;
+  background: linear-gradient(180deg, #ffffff, #f0f0f3);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.25),
+    0 2px 4px rgba(0, 0, 0, 0.25),
+    0 8px 18px rgba(0, 0, 0, 0.3);
+  transition: box-shadow 0.25s ease 0.4s;
+}
+.g-ride-the-bus .g-ride-the-bus-slot.is-right .g-ride-the-bus-face {
+  box-shadow:
+    0 0 0 3px #30d158,
+    0 0 12px rgba(48, 209, 88, 0.35),
+    0 8px 18px rgba(0, 0, 0, 0.3);
+}
+.g-ride-the-bus .g-ride-the-bus-slot.is-wrong .g-ride-the-bus-face {
+  box-shadow:
+    0 0 0 3px #ff453a,
+    0 0 12px rgba(255, 69, 58, 0.35),
+    0 8px 18px rgba(0, 0, 0, 0.3);
+}
+.g-ride-the-bus .g-ride-the-bus-row:not(.is-done) .g-ride-the-bus-slot.is-wrong .g-ride-the-bus-face {
+  animation: g-ride-the-bus-shake 0.42s 0.42s ease-in-out;
+}
+.g-ride-the-bus .g-ride-the-bus-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  font-family: inherit;
+  font-weight: 700;
+}
+.g-ride-the-bus .g-ride-the-bus-svg.is-red {
+  color: #d1293d;
+}
+.g-ride-the-bus .g-ride-the-bus-court {
+  fill: currentColor;
+  fill-opacity: 0.07;
+  stroke: currentColor;
+  stroke-opacity: 0.32;
+  stroke-width: 1.2;
+}
+
+.g-ride-the-bus .g-ride-the-bus-back {
+  display: grid;
+  place-items: center;
+  border: calc(var(--cw) * 0.055) solid #fbf7f0;
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.16) 0 1.5px, transparent 1.5px 8px),
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.16) 0 1.5px, transparent 1.5px 8px),
+    linear-gradient(160deg, #ffb340, #e57a00);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.3),
+    0 2px 4px rgba(0, 0, 0, 0.25),
+    0 8px 18px rgba(0, 0, 0, 0.3);
+  transform: rotateY(180deg);
+}
+.g-ride-the-bus .g-ride-the-bus-emblem {
+  display: grid;
+  place-items: center;
+  width: 52%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  color: #e57a00;
+  background: #fbf7f0;
+  box-shadow: 0 2px 6px rgba(120, 50, 0, 0.35);
+}
+.g-ride-the-bus .g-ride-the-bus-emblem svg {
+  width: 64%;
+  height: 64%;
+}
+.g-ride-the-bus .g-ride-the-bus-slot.is-current::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: calc(var(--cw) * 0.1 + 5px);
+  box-shadow: 0 0 0 2px #ffd60a;
+  pointer-events: none;
+  animation: g-ride-the-bus-pulse 1.4s ease-in-out infinite;
+}
+
+.g-ride-the-bus .g-ride-the-bus-mark {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: #fff;
+  box-shadow: 0 0 0 2px #0f0d0b;
+  animation: g-ride-the-bus-pop 0.3s 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.4) backwards;
+}
+.g-ride-the-bus .g-ride-the-bus-mark.is-right {
+  background: #30d158;
+}
+.g-ride-the-bus .g-ride-the-bus-mark.is-wrong {
+  background: #ff453a;
+}
+.g-ride-the-bus .g-ride-the-bus-mark svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* A miss on the bus sweeps the row away before the fresh deal */
+.g-ride-the-bus .g-ride-the-bus-row.is-clearing .g-ride-the-bus-slot {
+  animation: g-ride-the-bus-sweep 0.36s ease-in forwards;
+  animation-delay: calc(var(--i) * 40ms);
+}
+
+@keyframes g-ride-the-bus-deal {
+  from {
+    opacity: 0;
+    transform: translate(calc(var(--cw) * -0.6), -28px) rotate(-8deg) scale(0.9);
+  }
+}
+@keyframes g-ride-the-bus-sweep {
+  to {
+    opacity: 0;
+    transform: translate(calc(var(--cw) * 0.5), 40px) rotate(10deg) scale(0.85);
+  }
+}
+@keyframes g-ride-the-bus-shake {
+  20% {
+    transform: translateX(-5px) rotate(-2deg);
+  }
+  45% {
+    transform: translateX(4px) rotate(1.5deg);
+  }
+  70% {
+    transform: translateX(-2px);
+  }
+}
+@keyframes g-ride-the-bus-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes g-ride-the-bus-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+}
+
+/* Answer buttons */
+.g-ride-the-bus .g-ride-the-bus-answers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  animation: g-ride-the-bus-rise 0.22s ease-out;
+}
+.g-ride-the-bus .g-ride-the-bus-answers.is-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.g-ride-the-bus .g-ride-the-bus-answer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 66px;
+  padding: 6px 10px;
+  border-radius: 16px;
+  font-size: 19px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
+  transition: background 0.12s ease, transform 0.08s ease, filter 0.12s ease;
+}
+.g-ride-the-bus .g-ride-the-bus-answer:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+.g-ride-the-bus .g-ride-the-bus-answer:active {
+  transform: scale(0.97);
+}
+.g-ride-the-bus .g-ride-the-bus-answer.is-red {
+  background: linear-gradient(170deg, #ff5465, #c8243a);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.35),
+    0 8px 20px -10px rgba(255, 69, 58, 0.7);
+}
+.g-ride-the-bus .g-ride-the-bus-answer.is-black {
+  background: linear-gradient(170deg, #3a3a3f, #141416);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+    0 8px 20px -10px rgba(0, 0, 0, 0.8);
+}
+.g-ride-the-bus .g-ride-the-bus-answer.is-red:hover,
+.g-ride-the-bus .g-ride-the-bus-answer.is-black:hover {
+  filter: brightness(1.12);
+}
+.g-ride-the-bus .g-ride-the-bus-answers.is-4 .g-ride-the-bus-answer {
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.g-ride-the-bus .g-ride-the-bus-answer > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-ride-the-bus .g-ride-the-bus-answer kbd {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  min-width: 17px;
+  padding: 1px 4px;
+  border-radius: 5px;
+  font: 600 10px/14px ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
+}
+.g-ride-the-bus .g-ride-the-bus-duo {
+  display: inline-flex;
+  gap: 1px;
+}
+.g-ride-the-bus .g-ride-the-bus-duo svg {
+  width: 18px;
+  height: 18px;
+}
+.g-ride-the-bus .g-ride-the-bus-aicon {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+.g-ride-the-bus .g-ride-the-bus-sicon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  color: #f5f5f7;
+}
+.g-ride-the-bus .g-ride-the-bus-sicon.is-red {
+  color: #ff5a6a;
+}
+
+/* Results */
+.g-ride-the-bus .g-ride-the-bus-rider {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  animation: g-ride-the-bus-bob 2.4s ease-in-out infinite;
+}
+.g-ride-the-bus .g-ride-the-bus-badge {
+  position: absolute;
+  right: -8px;
+  bottom: -6px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: #fff;
+  background: #ff9f0a;
+  box-shadow: 0 0 0 3px #0f0d0b;
+}
+.g-ride-the-bus .g-ride-the-bus-badge svg {
+  width: 20px;
+  height: 20px;
+}
+.g-ride-the-bus .g-ride-the-bus-who .g-ride-the-bus-badge.is-small {
+  position: static;
+  width: 22px;
+  height: 22px;
+  box-shadow: none;
+}
+.g-ride-the-bus .g-ride-the-bus-who .g-ride-the-bus-badge.is-small svg {
+  width: 14px;
+  height: 14px;
+}
+.g-ride-the-bus .g-ride-the-bus-caption {
+  margin: 8px 0 -4px;
+  font-size: 12px;
+}
+.g-ride-the-bus .arcade-party-scores li > small.g-ride-the-bus-tie {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(245, 245, 247, 0.75);
+  background: rgba(255, 255, 255, 0.1);
+}
+.g-ride-the-bus .arcade-party-scores li > .arcade-party-avatar {
+  flex: none;
+  overflow: visible;
+}
+.g-ride-the-bus .arcade-party-scores li > b {
+  min-width: 2ch;
+  text-align: right;
+}
+@keyframes g-ride-the-bus-bob {
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+/* Off the bus */
+.g-ride-the-bus .g-ride-the-bus-row.is-done {
+  --cw: min(calc((min(100cqw, 380px) - 24px - 3 * var(--gap)) / 4), calc((100cqh - 330px) / 1.4), 84px);
+}
+.g-ride-the-bus .g-ride-the-bus-row.is-done .g-ride-the-bus-slot {
+  animation-delay: calc(0.15s + var(--i) * 90ms);
+}
+.g-ride-the-bus .g-ride-the-bus-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+  max-width: 360px;
+}
+.g-ride-the-bus .g-ride-the-bus-stats > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px 8px;
+  border-radius: 16px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+}
+.g-ride-the-bus .g-ride-the-bus-stats b {
+  font-size: clamp(28px, 9cqmin, 40px);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: #ffb340;
+}
+.g-ride-the-bus .g-ride-the-bus-stats span {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(245, 245, 247, 0.6);
+}
+.g-ride-the-bus .g-ride-the-bus-confetti {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.g-ride-the-bus .g-ride-the-bus-confetti i {
+  position: absolute;
+  top: -16px;
+  width: 7px;
+  height: 12px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: g-ride-the-bus-fall 2s cubic-bezier(0.3, 0.5, 0.6, 1) forwards;
+}
+.g-ride-the-bus .g-ride-the-bus-confetti i.is-wide {
+  width: 11px;
+  height: 6px;
+}
+@keyframes g-ride-the-bus-fall {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--drift), 100cqh) rotate(var(--spin));
+  }
+}
+
+/* Short windows (a laptop window): tighter everything so the table fits without scrolling */
+@container arcade-party (max-height: 480px) {
+  .g-ride-the-bus .g-ride-the-bus-row {
+    --cw: min(calc((min(100cqw, 460px) - 24px - 3 * var(--gap)) / 4), calc((100cqh - 206px) / 1.4), 112px);
+  }
+  .g-ride-the-bus .g-ride-the-bus-stage {
+    gap: 10px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-hud {
+    min-height: 24px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-standings {
+    display: none;
+  }
+  .g-ride-the-bus .g-ride-the-bus-table .arcade-party-actions {
+    min-height: 54px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-ask {
+    gap: 4px;
+    min-height: 74px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-q {
+    font-size: 22px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-verdict {
+    padding: 9px 14px;
+    font-size: 18px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-answer {
+    min-height: 50px;
+    border-radius: 14px;
+    font-size: 16px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-answers.is-4 .g-ride-the-bus-answer {
+    min-height: 54px;
+    gap: 3px;
+    padding: 5px 2px;
+    font-size: 12px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-sicon {
+    width: 20px;
+    height: 20px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-answer kbd {
+    top: 5px;
+    right: 6px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-row.is-done {
+    --cw: min(calc((min(100cqw, 320px) - 24px - 3 * var(--gap)) / 4), calc((100cqh - 230px) / 1.4), 64px);
+  }
+  .g-ride-the-bus .g-ride-the-bus-stats > div {
+    padding: 6px 8px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-stats b {
+    font-size: 26px;
+  }
+}
+
+/* Tall windows (an iPad): a wider table, bigger cards, and the standings wrap instead of scrolling */
+@container arcade-party (min-width: 600px) and (min-height: 760px) {
+  .g-ride-the-bus .g-ride-the-bus-table .arcade-party-body,
+  .g-ride-the-bus .g-ride-the-bus-table .arcade-party-actions {
+    max-width: 580px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-row {
+    --cw: min(calc((min(100cqw, 580px) - 24px - 3 * var(--gap)) / 4), calc((100cqh - 300px) / 1.4), 128px);
+  }
+  .g-ride-the-bus .g-ride-the-bus-q {
+    font-size: 38px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-standings {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-ride-the-bus .g-ride-the-bus-slot,
+  .g-ride-the-bus .g-ride-the-bus-row.is-clearing .g-ride-the-bus-slot,
+  .g-ride-the-bus .g-ride-the-bus-verdict,
+  .g-ride-the-bus .g-ride-the-bus-mark,
+  .g-ride-the-bus .g-ride-the-bus-rider,
+  .g-ride-the-bus .g-ride-the-bus-slot.is-current::after {
+    animation-duration: 0.01s;
+    animation-delay: 0s;
+    animation-iteration-count: 1;
+  }
+  .g-ride-the-bus .g-ride-the-bus-flip {
+    transition-duration: 0.15s;
+  }
+  .g-ride-the-bus .g-ride-the-bus-confetti {
+    display: none;
+  }
+}

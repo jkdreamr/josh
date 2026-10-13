@@ -114,7 +114,13 @@ export function Screen({
     if (!active || active === document.body) shell.root.current?.focus({ preventScroll: true });
   }, [shell.root]);
   return (
-    <div className={['arcade-party', className ?? ''].join(' ')}>
+    <div
+      className={['arcade-party', className ?? ''].join(' ')}
+      onClick={(e) => {
+        // Tapping a player or chip shouldn't leave focus on it, or Enter would press it again instead of confirming.
+        if ((e.target as Element).closest?.('.arcade-party-picks button, .arcade-party-chips button')) shell.root.current?.focus({ preventScroll: true });
+      }}
+    >
       <div className={`arcade-party-body ${center ? 'is-center' : ''}`}>
         {title && <h2 className="arcade-party-title">{title}</h2>}
         {sub && <p className="arcade-party-sub">{sub}</p>}
