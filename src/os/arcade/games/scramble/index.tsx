@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { GameShell, MAX_DT, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
 import {
@@ -25,7 +25,7 @@ import {
   type Match,
 } from './logic';
 import { configOf, parsePacket, type Bots } from './net';
-import { TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
+import { FLUSH, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
 import { AMMO_MAX, RARITY_COLORS, WEAPONS, WOOD_MAX, lootName, reloadOf, type WeaponId } from './items';
 import { HALF } from './map';
 import { AmmoIcon, BandageIcon, EggIcon, HowToPlay, IslandArt, ShieldIcon, WeaponIcon, WoodIcon } from './hud';
@@ -250,6 +250,16 @@ function Play({ mode }: { mode: Mode }) {
   const [sticks, setSticks] = useState({ move: false, aim: false });
   const stickEls = useRef<{ move: HTMLDivElement | null; aim: HTMLDivElement | null }>({ move: null, aim: null });
   const lastAim = useRef(0);
+  /** When the match last moved on (wall seconds), so a hidden tab can catch up. */
+  const lastStep = useRef(0);
+  /**
+   * Thumbsticks or mouse: a phone or iPad starts on thumbsticks, anything else on the mouse, and either switches to
+   * whatever is actually used (a laptop with a touchscreen does both).
+   */
+  const [touchMode, setTouchMode] = useState(shell.touch);
+  const touchRef = useRef(touchMode);
+  touchRef.current = touchMode;
+  useEffect(() => setTouchMode(shell.touch), [shell.touch]);
   const soundGap = useRef(0);
 
   // floating damage numbers and name tags, moved on the DOM every frame
@@ -358,7 +368,7 @@ function Play({ mode }: { mode: Mode }) {
       const o = onlineRef.current;
       const m = match.current;
       if (!o || !m) return;
-      const next = receive(n, m, { seat: o.seat, isHost: o.isHost, round: o.round }, from, d, (seed, lvl, time, roster) => guestMatch(o.players, o.seat, seed, lvl, time, roster), clock.current);
+      const next = receive(n, m, { seat: o.seat, isHost: o.isHost, round: o.round }, from, d, (seed, lvl, time, roster) => guestMatch(o.players, o.seat, seed, lvl, time, roster), performance.now() / 1000);
       if (next !== m) {
         match.current = next;
         setViewKey((x) => x + 1);
@@ -369,7 +379,30 @@ function Play({ mode }: { mode: Mode }) {
       const m = match.current;
       if (!o || !m) return;
       const me = { seat: o.seat, isHost: o.isHost, round: o.round };
-      for (const out of tick(n, m, me, o.players.map((p) => p.seat))) o.send(out.d, { fast: out.fast });
+      const now = performance.now() / 1000;
+      // a hidden tab gets no frames, so the match carries on from here: our egg stands still but the storm still
+      // bites and the glide still lands, and a hidden host keeps the computer eggs and everyone's pickups going
+      if (document.hidden && n.synced && shellRef.current.status === 'playing') {
+        const mine = m.fighters[m.me];
+        if (mine) {
+          mine.input.fire = false;
+          mine.input.mx = 0;
+          mine.input.mz = 0;
+        }
+        mouse.current.down = false;
+        let left = Math.min(2, Math.max(0, now - lastStep.current));
+        while (left > 1e-4) {
+          const d = Math.min(MAX_DT, left);
+          step(m, d);
+          left -= d;
+          for (const e of m.events.splice(0)) share(n, e, o.seat);
+        }
+        lastStep.current = now;
+        for (const packet of flush(n, o.round, FLUSH)) o.send(packet);
+        const call = ending(n, m, me, now);
+        if (call) finishRef.current(call === 'report');
+      }
+      for (const out of tick(n, m, me, o.players.map((p) => p.seat), now)) o.send(out.d, { fast: out.fast });
     }, TICK_MS);
     return () => {
       off();
@@ -405,11 +438,11 @@ function Play({ mode }: { mode: Mode }) {
       const dy = as.y - as.oy;
       lastAim.current = assist(m, me, Math.atan2(dx, dy));
       fire = Math.hypot(dx, dy) > STICK_R * 0.5;
-    } else if (mouse.current.inside && v && !shellRef.current.touch) {
+    } else if (mouse.current.inside && v && !touchRef.current) {
       const g = v.ground(mouse.current.x, mouse.current.y, 1);
       if (g && Math.hypot(g.x - me.x, g.z - me.z) > 0.3) lastAim.current = Math.atan2(g.x - me.x, g.z - me.z);
     } else if (mx || mz) lastAim.current = Math.atan2(mx, mz);
-    if (mouse.current.down && !shellRef.current.touch) fire = true;
+    if (mouse.current.down && !touchRef.current) fire = true;
     if (keys.down('KeyF')) {
       // F: shoot at the nearest egg in sight
       const target = nearestFoe(m, me);
@@ -479,6 +512,7 @@ function Play({ mode }: { mode: Mode }) {
       const n = net.current;
       const o = onlineRef.current;
       clock.current += dt;
+      lastStep.current = performance.now() / 1000;
       if (live && !n.synced) {
         v?.frame(m, -1, dt, clock.current, { aimLine: false, overview: true });
         updateHud(m, dt);
@@ -513,7 +547,7 @@ function Play({ mode }: { mode: Mode }) {
         }
       } else if (o) {
         // the host calls it; if it never does, show what we know without reporting a winner
-        const call = ending(n, m, { seat: o.seat, isHost: o.isHost, round: o.round }, clock.current);
+        const call = ending(n, m, { seat: o.seat, isHost: o.isHost, round: o.round }, performance.now() / 1000);
         if (call) finishRef.current(call === 'report');
       }
       updateHud(m, dt);
@@ -844,14 +878,24 @@ function Play({ mode }: { mode: Mode }) {
   // -------------------------------------------------------------------------------------------------------------
   // Pointer input.
 
+  /** Whichever kind of pointer was just used becomes the way to play. */
+  const usePointer = (e: RPointerEvent<HTMLElement>) => {
+    const mouseNow = e.pointerType === 'mouse';
+    if (mouseNow === touchRef.current) {
+      touchRef.current = !mouseNow;
+      setTouchMode(!mouseNow);
+    }
+    return mouseNow;
+  };
   const onMouseMove = (e: RPointerEvent<HTMLDivElement>) => {
-    if (e.pointerType !== 'mouse' || shell.touch) return;
+    if (e.pointerType !== 'mouse') return;
+    usePointer(e);
     mouse.current.x = e.nativeEvent.offsetX;
     mouse.current.y = e.nativeEvent.offsetY;
     mouse.current.inside = true;
   };
   const onMouseDown = (e: RPointerEvent<HTMLDivElement>) => {
-    if (e.pointerType !== 'mouse' || shell.touch || shell.status !== 'playing') return;
+    if (!usePointer(e) || shell.status !== 'playing') return;
     mouse.current.x = e.nativeEvent.offsetX;
     mouse.current.y = e.nativeEvent.offsetY;
     mouse.current.inside = true;
@@ -870,6 +914,8 @@ function Play({ mode }: { mode: Mode }) {
     const r = which === 'move' ? moveStick : aimStick;
     return {
       onPointerDown: (e: RPointerEvent<HTMLDivElement>) => {
+        // a mouse over the thumbstick areas means someone is playing with a mouse after all
+        if (usePointer(e)) return;
         e.preventDefault();
         if (r.current) return;
         e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -882,6 +928,7 @@ function Play({ mode }: { mode: Mode }) {
         drawStick(which);
       },
       onPointerMove: (e: RPointerEvent<HTMLDivElement>) => {
+        if (e.pointerType === 'mouse') return void usePointer(e);
         const s = r.current;
         if (!s || s.id !== e.pointerId) return;
         s.x = e.nativeEvent.offsetX;
@@ -957,13 +1004,13 @@ function Play({ mode }: { mode: Mode }) {
     </>
   );
   const box = `${-HALF - 6} ${-HALF - 6} ${2 * HALF + 12} ${2 * HALF + 12}`;
-  const slotLabel = (i: number) => (shell.touch ? '' : String(i + 1));
+  const slotLabel = (i: number) => (touchMode ? '' : String(i + 1));
 
   return (
     <>
       <div
         ref={ref}
-        className={`g-scramble-host${shell.touch ? '' : ' is-mouse'}`}
+        className={`g-scramble-host${touchMode ? '' : ' is-mouse'}`}
         onPointerMove={onMouseMove}
         onPointerDown={onMouseDown}
         onPointerUp={onMouseUp}
@@ -998,7 +1045,7 @@ function Play({ mode }: { mode: Mode }) {
         ))}
       </div>
       {shell.status !== 'ready' && !shell.compact && (
-        <div className={`g-scramble-hud${shell.touch ? ' is-touch' : ''}${live ? ' is-online' : ''}`}>
+        <div className={`g-scramble-hud${touchMode ? ' is-touch' : ''}${live ? ' is-online' : ''}`}>
           {hud.outside && <div className="g-scramble-stormfx" aria-hidden="true" />}
           {hud.low && !hud.outside && <div className="g-scramble-lowfx" aria-hidden="true" />}
           <div className="g-scramble-top">
@@ -1045,7 +1092,7 @@ function Play({ mode }: { mode: Mode }) {
               <b>{hud.out}</b>
               {hud.watching && (
                 <span>
-                  {shell.touch ? (
+                  {touchMode ? (
                     <button type="button" className="g-scramble-watch" aria-label="Watch the previous egg" onPointerDown={(e) => { e.preventDefault(); taps.current.watch = -1; }}>
                       ‹
                     </button>
@@ -1053,7 +1100,7 @@ function Play({ mode }: { mode: Mode }) {
                     <kbd>←</kbd>
                   )}
                   watching {hud.watching}
-                  {shell.touch ? (
+                  {touchMode ? (
                     <button type="button" className="g-scramble-watch" aria-label="Watch the next egg" onPointerDown={(e) => { e.preventDefault(); taps.current.watch = 1; }}>
                       ›
                     </button>
@@ -1066,7 +1113,7 @@ function Play({ mode }: { mode: Mode }) {
           )}
           {hud.jump && (
             <button type="button" className="g-scramble-jump" {...tap('jump')}>
-              jump{!shell.touch && <kbd>Space</kbd>}
+              jump{!touchMode && <kbd>Space</kbd>}
             </button>
           )}
           {hud.busy >= 0 && (
@@ -1077,7 +1124,7 @@ function Play({ mode }: { mode: Mode }) {
           )}
           {hud.prompt && hud.phase === 'ground' && (
             <button type="button" className="g-scramble-prompt" {...tap('interact')}>
-              {!shell.touch && <kbd>E</kbd>}
+              {!touchMode && <kbd>E</kbd>}
               {hud.prompt}
             </button>
           )}
@@ -1129,17 +1176,17 @@ function Play({ mode }: { mode: Mode }) {
                   <span className={hud.wood >= WOOD_MAX ? 'is-full' : undefined} title="Wood">
                     <WoodIcon size={20} />
                     {hud.wood}
-                    {!shell.touch && <kbd>Space</kbd>}
+                    {!touchMode && <kbd>Space</kbd>}
                   </span>
                   <span className={hud.bandages ? undefined : 'is-none'} title="Bandages">
                     <BandageIcon size={20} />
                     {hud.bandages}
-                    {!shell.touch && <kbd>H</kbd>}
+                    {!touchMode && <kbd>H</kbd>}
                   </span>
                   <span className={hud.shields ? undefined : 'is-none'} title="Shield potions">
                     <ShieldIcon size={20} />
                     {hud.shields}
-                    {!shell.touch && <kbd>G</kbd>}
+                    {!touchMode && <kbd>G</kbd>}
                   </span>
                   {hud.mag >= 0 && hud.slots[hud.slot as 0 | 1]?.w && (
                     <span className="g-scramble-ammo" title="Ammo">
@@ -1167,10 +1214,10 @@ function Play({ mode }: { mode: Mode }) {
             {islandArt}
             {mapMarks(true)}
           </svg>
-          <small>{shell.touch ? 'tap to close' : 'M or click to close'}</small>
+          <small>{touchMode ? 'tap to close' : 'M or click to close'}</small>
         </div>
       )}
-      {shell.touch && playing && !net.current.over && (
+      {touchMode && playing && !net.current.over && (
         <div className="g-scramble-touch">
           <div className="g-scramble-zone is-move" {...stick('move')}>
             {sticks.move && moveStick.current && <StickArt s={moveStick.current} at={(el) => {

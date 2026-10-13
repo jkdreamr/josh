@@ -490,6 +490,11 @@ export function endMatch(m: Match, winner: number, places: [number, number, numb
     if (!f) continue;
     f.place = place;
     f.kills = kills;
+    // the host's word is final, even if the news of how an egg went out is still on its way
+    if (fid !== winner && f.phase !== 'out') {
+      f.phase = 'out';
+      f.outAt = m.time;
+    }
   }
   m.ended = true;
   m.winner = winner;
@@ -846,7 +851,7 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
 /** An egg another client owns is out, on its owner's word. */
 export function applyOut(m: Match, fid: number, by: number, w: Cause) {
   const f = m.fighters[fid];
-  if (!f || f.phase === 'out') return;
+  if (!f || f.phase === 'out' || m.ended) return;
   const place = aliveCount(m);
   f.phase = 'out';
   f.place = place;
@@ -861,7 +866,7 @@ export function applyOut(m: Match, fid: number, by: number, w: Cause) {
 /** A person left an online match: the host takes their egg out. */
 export function forfeit(m: Match, fid: number) {
   const f = m.fighters[fid];
-  if (!f || f.phase === 'out') return;
+  if (!f || f.phase === 'out' || m.ended) return;
   const place = aliveCount(m);
   f.phase = 'out';
   f.place = place;
@@ -1033,7 +1038,8 @@ function build(m: Match, f: Fighter) {
   f.buildT = BUILD_COOL;
   const wall = makeWall(wallId(f.id, f.wallSeq++), f.id, x, z, a, WALL_HP);
   m.walls.set(wall.id, wall);
-  emit(m, { t: 'wall', wall });
+  // a copy, so the news goes out with the wall as built, whatever hits it later this frame
+  emit(m, { t: 'wall', wall: { ...wall } });
   return wall;
 }
 
@@ -1099,7 +1105,8 @@ export function nearestChest(m: Match, f: Fighter, reach = CHEST_R) {
 /** What the interact key would do right now: open a chest, or pick something up (a gun swaps for the one in hand). */
 export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootItem; swap: boolean } | null {
   if (f.phase !== 'ground') return null;
-  const item = nearestLoot(m, f, PICK_R, (l) => wants(f, l.def, true) && !f.pending.has(l.id));
+  // not something we just asked the host for (an ask it turned down expires), nor what we just put down
+  const item = nearestLoot(m, f, PICK_R, (l) => wants(f, l.def, true) && !asking(m, f, l.id) && !(l.by === f.id && m.time - l.at < 3));
   const chest = nearestChest(m, f);
   if (chest >= 0) {
     const c = m.map.containers[chest];
@@ -1108,6 +1115,12 @@ export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootIt
   if (!item) return null;
   return { item, swap: item.def.kind === 'gun' && f.guns[0] !== null && f.guns[1] !== null };
 }
+
+/** True while a pickup request is waiting for the host's answer (it gives up after a second). */
+const asking = (m: Match, f: Fighter, id: number) => {
+  const at = f.pending.get(id);
+  return at !== undefined && m.clock - at < 1;
+};
 
 function interact(m: Match, f: Fighter) {
   const p = prompt(m, f);

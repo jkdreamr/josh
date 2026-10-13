@@ -379,7 +379,7 @@ test('walls cost wood, face the way you aim, stop bullets and break', () => {
   b.input.fire = true;
   run(m, 0.6);
   assert.equal(a.hp, 100, 'the wall took the bullets');
-  assert.ok(built.wall.hp < WALL_HP);
+  assert.ok(m.walls.get(built.wall.id)!.hp < WALL_HP);
   const gone = run(m, 6);
   assert.ok(gone.some((e) => e.t === 'wallgone'), 'and gave way');
   assert.equal(m.walls.size, 0);
@@ -678,7 +678,7 @@ test('events pack into packets well under the room limit, in order', () => {
 
 type Client = { seat: number; me: Me; s: Session; m: Match | null; inbox: { at: number; from: number; d: unknown }[]; gone: boolean; call: 'report' | 'quiet' | null; hurtBy: number; heard: number };
 
-function simulate(opts: { humans: number; bots: boolean; seed: number; level: Level; delay: number; loss: number; leave?: { seat: number; at: number } }) {
+function simulate(opts: { humans: number; bots: boolean; seed: number; level: Level; delay: number; loss: number; leave?: { seat: number; at: number }; stall?: { seat: number; at: number; silent: boolean } }) {
   const players: Player[] = Array.from({ length: opts.humans }, (_, seat) => ({ seat, name: `P${seat + 1}` }));
   const rng = rng32(opts.seed * 7 + 1);
   const host = hostMatch(players, 0, opts.seed, opts.level, opts.bots ? 'fill' : 'none', COUNTDOWN + 1.2);
@@ -703,7 +703,10 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
     now += DT;
     if (opts.leave && !clients[opts.leave.seat].gone && now > opts.leave.at) clients[opts.leave.seat].gone = true;
     const live = clients.filter((c) => !c.gone);
+    // a stalled client is still in the room but its game has stopped (a frozen tab); a silent one sends nothing either
+    const stalled = (c: Client) => !!opts.stall && opts.stall.seat === c.seat && now > opts.stall.at;
     for (const c of live) {
+      if (stalled(c)) continue;
       while (c.inbox.length && c.inbox[0].at <= now) {
         const msg = c.inbox.shift()!;
         c.m = receive(c.s, c.m ?? createMatch({ seed: 1, role: 'guest', level: 'normal', entrants: [], me: -1 }), c.me, msg.from, msg.d, join(c), now);
@@ -720,14 +723,14 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
     }
     if (now >= tickAt) {
       tickAt += TICK_MS / 1000;
-      for (const c of live) if (c.m) for (const out of tick(c.s, c.m, c.me, live.map((x) => x.seat))) post(c, out.d, out.fast);
+      for (const c of live) if (c.m && !(stalled(c) && opts.stall!.silent)) for (const out of tick(c.s, c.m, c.me, live.map((x) => x.seat), now)) post(c, out.d, out.fast);
     }
-    if (live.every((c) => c.call)) break;
+    if (live.every((c) => c.call || stalled(c))) break;
   }
   // let everything in flight land
   for (let i = 0; i < 40; i++) {
     now += DT;
-    for (const c of clients.filter((x) => !x.gone)) {
+    for (const c of clients.filter((x) => !x.gone && !(opts.stall && opts.stall.seat === x.seat))) {
       while (c.inbox.length && c.inbox[0].at <= now) {
         const msg = c.inbox.shift()!;
         c.m = receive(c.s, c.m!, c.me, msg.from, msg.d, join(c), now);
@@ -742,10 +745,12 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
 for (const [label, opts] of [
   ['a host, three guests and four computer eggs, with lag and lost packets', { humans: 4, bots: true, seed: 21, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
   ['eight people and no computer eggs, one of whom leaves halfway', { humans: 8, bots: false, seed: 34, level: 'normal' as Level, delay: 0.05, loss: 0.05, leave: { seat: 5, at: 40 } }],
+  ['a guest whose tab freezes on the bus (still in the room, still reporting)', { humans: 3, bots: true, seed: 8, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 2, at: 2, silent: false } }],
+  ['a guest who goes silent mid-match', { humans: 3, bots: true, seed: 13, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 1, at: 30, silent: true } }],
 ] as const) {
   test(`online: ${label}, all agree on what happened`, () => {
     const clients = simulate(opts);
-    const live = clients.filter((c) => !c.gone);
+    const live = clients.filter((c) => !c.gone && !('stall' in opts && opts.stall.seat === c.seat));
     for (const c of live) {
       assert.ok(c.s.synced && c.m, `seat ${c.seat} synced`);
       assert.equal(c.call, 'report', `seat ${c.seat} heard the host call it`);
@@ -767,16 +772,111 @@ for (const [label, opts] of [
       assert.deepEqual(m.opened, host.opened, `seat ${c.seat}: the same chests and crates open`);
       assert.deepEqual([...m.walls.keys()].sort(), [...host.walls.keys()].sort(), `seat ${c.seat}: the same walls standing`);
     }
-    assert.ok(live.slice(1).some((c) => c.hurtBy > 0), 'guests took hits decided on other clients');
+    if (!('stall' in opts)) assert.ok(live.slice(1).some((c) => c.hurtBy > 0), 'guests took hits decided on other clients');
     assert.ok(host.time > 25, `a real match (${host.time.toFixed(0)} s)`);
-    for (const c of live) assert.ok(c.heard > 10, `seat ${c.seat} heard ${c.heard} shots from other clients`);
-    if ('leave' in opts) {
-      const left = host.fighters.find((f) => f.seat === opts.leave.seat)!;
-      assert.equal(left.phase, 'out');
-      assert.equal(left.outCause, 'left');
+    if (!('stall' in opts)) for (const c of live) assert.ok(c.heard > 10, `seat ${c.seat} heard ${c.heard} shots from other clients`);
+    const gone = 'leave' in opts ? opts.leave.seat : 'stall' in opts ? opts.stall.seat : -1;
+    if (gone >= 0) {
+      const egg = host.fighters.find((f) => f.seat === gone)!;
+      assert.equal(egg.phase, 'out', 'the host took out the egg of someone who stopped playing');
+      assert.equal(egg.outCause, 'left');
+      assert.notEqual(live[0].s.end!.winner, egg.id);
     }
   });
 }
+
+test('a pickup the host turned down shows up in the prompt again a moment later', () => {
+  const g = createMatch({ seed: 2, role: 'guest', level: 'normal', entrants: [{ name: 'g', color: '#fff', kind: 'player', seat: 1 }], me: 0, countdown: 0 });
+  g.time = 5;
+  const me = g.fighters[0];
+  openSpot(g);
+  land(me, 0, 0);
+  me.guns = [{ w: 'pistol', r: 0, mag: 14 }, { w: 'smg', r: 0, mag: 30 }];
+  g.loot.set(77, { id: 77, def: { kind: 'gun', w: 'rifle', r: 3 }, x: 1.4, z: 0, by: -1, at: 0 });
+  me.input.interact = true;
+  const evs = run(g, 0.05);
+  assert.ok(evs.some((e) => e.t === 'take' && e.id === 77));
+  assert.equal(prompt(g, me), null, 'asked: waiting for the host');
+  run(g, 1.1);
+  const p = prompt(g, me);
+  assert.ok(p && 'item' in p && p.item.id === 77 && p.swap, 'no answer came, so it is offered again');
+});
+
+test('the host\'s result is final: an elimination that arrives after it changes nothing', () => {
+  const g = createMatch({ seed: 2, role: 'guest', level: 'normal', entrants: [{ name: 'a', color: '#fff', kind: 'remote', seat: 0 }, { name: 'b', color: '#fff', kind: 'player', seat: 1 }, { name: 'c', color: '#fff', kind: 'remote', seat: 2 }], me: 1, countdown: 0 });
+  for (const f of g.fighters) f.phase = 'ground';
+  applyNet(g, { y: 'o', f: 2, by: 1, w: 'smg' });
+  assert.equal(g.fighters[1].kills, 1);
+  // the result says b won with one elimination and c went out; then the news of a's crack (by b) shows up late
+  receive(newSession(true), g, { seat: 1, isHost: false, round: 1 }, 0, endOf(1, 1, [[1, 1, 2], [0, 2, 0], [2, 3, 0]]), () => g, 0);
+  assert.equal(g.fighters[0].phase, 'out', 'everyone the result places below the winner is out');
+  assert.equal(g.fighters[1].kills, 2);
+  applyNet(g, { y: 'o', f: 0, by: 1, w: 'smg' });
+  assert.equal(g.fighters[1].kills, 2, 'not counted twice');
+  assert.equal(g.fighters[0].place, 2);
+});
+
+test('the host sends what happened last before it sends the result', () => {
+  const host = hostMatch([{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }], 0, 3, 'normal', 'none', 0);
+  const s = newSession(true, host.roster);
+  s.queue.push([0, { y: 'o', f: 1, by: 0, w: 'smg' }]);
+  s.end = { winner: 0, places: [[0, 1, 1], [1, 2, 0]] };
+  s.endAt = 0;
+  const out = tick(s, host.match, { seat: 0, isHost: true, round: 1 }, [0, 1], 0).map((o) => parsePacket(o.d)!.k);
+  assert.deepEqual(out, ['S', 'e', 'end']);
+  assert.equal(s.queue.length, 0);
+});
+
+test('someone who leaves stays out, even if a newcomer takes their seat before the bus goes', () => {
+  const players = [0, 1, 2].map((seat) => ({ seat, name: `p${seat}` }));
+  const host = hostMatch(players, 0, 4, 'normal', 'fill', 4.2);
+  const s = newSession(true, host.roster);
+  const me: Me = { seat: 0, isHost: true, round: 1 };
+  tick(s, host.match, me, [0, 1, 2], 0);
+  tick(s, host.match, me, [0, 1], 0.1);
+  assert.equal(host.match.fighters[2].phase, 'out', 'out as soon as they go, countdown or not');
+  tick(s, host.match, me, [0, 1, 2], 0.2);
+  assert.equal(host.match.fighters[2].phase, 'out');
+  assert.equal(host.match.fighters[2].outCause, 'left');
+});
+
+test('a wall goes out with the health it was built with, whatever hits it the same frame', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  land(a, 0, 0);
+  land(b, 0, 2);
+  // b fires into the spot where a builds, in the same frame
+  b.guns[0] = { w: 'sniper', r: 4, mag: 4 };
+  b.slot = 0;
+  b.input.aim = 0;
+  b.input.fire = true;
+  b.x = 0;
+  b.z = -3;
+  a.input.aim = Math.PI;
+  a.input.build = true;
+  const evs = run(m, DT);
+  const built = evs.find((e) => e.t === 'wall');
+  assert.ok(built && built.t === 'wall');
+  assert.equal(built.wall.hp, WALL_HP);
+  assert.equal(toNet(built)?.y === 'wl' && (toNet(built) as { hp: number }).hp, WALL_HP);
+});
+
+test('a computer egg never picks straight back up the gun it just swapped away', () => {
+  const m = quiet();
+  const me = m.fighters[0];
+  openSpot(m);
+  land(me, 0, 0);
+  me.guns = [{ w: 'pistol', r: 0, mag: 14 }, { w: 'smg', r: 0, mag: 30 }];
+  me.slot = 0;
+  m.loot.set(50, { id: 50, def: { kind: 'gun', w: 'rifle', r: 2 }, x: 0.5, z: 0, by: -1, at: 0 });
+  me.input.interact = true;
+  const first = run(m, DT).filter((e) => e.t === 'drop').length;
+  assert.equal(first, 1);
+  for (let i = 0; i < 30; i++) me.input.interact = true, run(m, DT);
+  assert.equal(m.loot.size, 1, 'the pistol stays on the ground');
+  assert.equal(me.guns[0]!.w, 'rifle');
+});
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Odds and ends.
