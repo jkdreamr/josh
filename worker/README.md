@@ -45,4 +45,10 @@ To answer a visitor, swipe left on their message in Telegram and reply. A messag
 
 Optional Worker variables: `TELEGRAM_OWNER` changes which username can claim the bot, and `TELEGRAM_CHAT_ID` pins the chat messages go to (it overrides the claimed one, which is the way to move the bot to a different account).
 
-To test locally against a fake Telegram, see `scripts/smoke-chat.mjs`.
+### Auto-replies
+
+If a visitor's message has gone unanswered for 24 hours, Workers AI answers it (the `AI` binding), and the bot sends Josh what it said; replying to that notice reaches the visitor as usual. In Telegram, reply `/ai` to a visitor's message to have it answer right away. Auto-replies show in Messages labeled "auto-reply · AI", say up front that they are automatic, and only use facts from the site (`src/os/chat-persona.ts`). The `Chat` Durable Object's alarm runs them.
+
+They are built to stay free. Workers AI includes 10,000 Neurons a day (reset at 00:00 UTC; on the Workers Free plan, use past that fails instead of billing). Auto-replies stop for the day after 15 attempts or 5,000 Neurons, whichever comes first, counting every attempt at its worst-case cost (150 Neurons: a prompt under 3,000 tokens and an answer under 300 on the dearest model in the list). Conversations still waiting at the limit get their reply after midnight UTC. The models are tried in order (`MODELS` in `src/chat.ts`), so a retired one falls through to the next.
+
+To test locally against a fake Telegram and a stand-in for Workers AI, with a 3.6 second wait instead of a day, see `scripts/smoke-chat.mjs`.
