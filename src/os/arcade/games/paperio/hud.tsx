@@ -185,7 +185,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
 // ---------------------------------------------------------------------------------------------------------------
 // Minimap
 
-export type MiniMap = { canvas: HTMLCanvasElement; img: ImageData; tmp: HTMLCanvasElement; colors: Uint8Array; drawnAt: number };
+export type MiniMap = { canvas: HTMLCanvasElement; img: ImageData; tmp: HTMLCanvasElement; colors: Uint8Array; drawnAt: number; size: number };
 
 const MINI = 120;
 
@@ -195,20 +195,18 @@ export function createMiniMap(canvas: HTMLCanvasElement): MiniMap | null {
   const g = tmp.getContext('2d');
   if (!g) return null;
   const colors = new Uint8Array(17 * 3);
-  return { canvas, img: g.createImageData(MINI, MINI), tmp, colors, drawnAt: -1 };
+  return { canvas, img: g.createImageData(MINI, MINI), tmp, colors, drawnAt: -1, size: 0 };
 }
 
 /** Repaints the land picture (call a few times a second) and the heads (every call). */
-export function paintMiniMap(m: MiniMap, w: World, mine: number[], now: number, heads: { x: number; y: number; color: string; me: boolean }[]) {
+export function paintMiniMap(m: MiniMap, w: World, mine: number[], now: number, heads: { x: number; y: number; color: string; me: boolean }[], count = heads.length) {
   const c = m.canvas;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const size = c.clientWidth;
-  if (!size) return;
-  if (c.width !== Math.round(size * dpr)) {
-    c.width = c.height = Math.round(size * dpr);
-  }
   if (now - m.drawnAt > 0.35 || m.drawnAt < 0) {
     m.drawnAt = now;
+    // the size is read only now and then: reading layout every frame would force a reflow
+    m.size = c.clientWidth;
+    if (m.size && c.width !== Math.round(m.size * dpr)) c.width = c.height = Math.round(m.size * dpr);
     for (const p of w.players) {
       if (!p) continue;
       const hex = colorOf(p.color);
@@ -246,6 +244,7 @@ export function paintMiniMap(m: MiniMap, w: World, mine: number[], now: number, 
     }
     m.tmp.getContext('2d')?.putImageData(m.img, 0, 0);
   }
+  if (!m.size) return;
   const g = c.getContext('2d');
   if (!g) return;
   const S = c.width;
@@ -258,7 +257,8 @@ export function paintMiniMap(m: MiniMap, w: World, mine: number[], now: number, 
   g.drawImage(m.tmp, 0, 0, S, S);
   g.restore();
   const k = S / w.n;
-  for (const h of heads) {
+  for (let i = 0; i < count; i++) {
+    const h = heads[i];
     g.beginPath();
     g.arc(h.x * k, h.y * k, h.me ? 4.2 * dpr : 2.6 * dpr, 0, Math.PI * 2);
     g.fillStyle = h.me ? '#fff' : h.color;

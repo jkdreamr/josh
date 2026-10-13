@@ -215,7 +215,9 @@ function Play({ mode }: { mode: Mode }) {
   const [ready, setReady] = useState(false);
   const mini = useRef<MiniMap | null>(null);
   const miniRef = useRef<HTMLCanvasElement | null>(null);
-  const tags = useRef(new Map<string, HTMLDivElement>());
+  const tags = useRef(new Map<number, HTMLDivElement>());
+  const tagAt = useRef({ x: 0, y: 0 });
+  const miniHeads = useRef(Array.from({ length: 16 }, () => ({ x: 0, y: 0, color: '', me: false })));
   const joyEls = useRef(new Map<number, HTMLDivElement>());
   const [joys, setJoys] = useState<Joy[]>([]);
   const joyState = useRef(new Map<number, Joy>());
@@ -256,6 +258,8 @@ function Play({ mode }: { mode: Mode }) {
     popId: 0,
     version: 0,
     bannerText: '',
+    updateMs: 0,
+    renderMs: 0,
   });
   const live = mode !== 'idle';
   const twoUp = mode === '2p';
@@ -296,6 +300,8 @@ function Play({ mode }: { mode: Mode }) {
     const handle = {
       ctl: () => ctl.current,
       hash: () => (ctl.current ? ownerHash(ctl.current.w) : 0),
+      /** Smoothed milliseconds of game work and of render submission per frame, and the resolution scale. */
+      perf: () => ({ update: st.current.updateMs, render: st.current.renderMs, dpr: st.current.dpr, ema: st.current.ema * 1000 }),
       /** Runs our own head straight across another player's trail (through the normal rules). */
       cut(target: number) {
         const c = ctl.current;
@@ -679,14 +685,14 @@ function Play({ mode }: { mode: Mode }) {
       const cam = s.cams[ci];
       for (const p of w.players) {
         if (!p) continue;
-        const el = tags.current.get(`${ci}:${p.id}`);
+        const el = tags.current.get(ci * 16 + p.id);
         if (!el) continue;
         if (!p.alive) {
           el.style.opacity = '0';
           continue;
         }
         c.pose(p, s.acc / TICK, pose);
-        const at = v.project(cam, pose.x, pose.y - 4.4, 6.4);
+        const at = v.project(cam, pose.x, pose.y - 4.4, 6.4, tagAt.current);
         if (!at || at.x < cam.vx - 40 || at.x > cam.vx + cam.vw + 40 || at.y < cam.vy - 20 || at.y > cam.vy + cam.vh + 20) {
           el.style.opacity = '0';
           continue;
@@ -744,6 +750,7 @@ function Play({ mode }: { mode: Mode }) {
       const c = ctl.current;
       if (!c) return;
       const s = st.current;
+      const t0 = performance.now();
       s.clock += dt;
       s.frameDt = dt;
       // adaptive resolution: drop pixels when frames run long, win them back when there is room
@@ -794,8 +801,17 @@ function Play({ mode }: { mode: Mode }) {
       updateCams(c, dt);
       placeTags(c);
       if (mini.current && live) {
-        const heads = w.players.filter((p) => p && p.alive).map((p) => ({ x: p.x, y: p.y, color: colorOf(p.color), me: c.locals.includes(p.id) }));
-        paintMiniMap(mini.current, w, c.locals, s.clock, heads);
+        const heads = miniHeads.current;
+        let count = 0;
+        for (const p of w.players) {
+          if (!p || !p.alive || count >= heads.length) continue;
+          const hd = heads[count++];
+          hd.x = p.x;
+          hd.y = p.y;
+          hd.color = colorOf(p.color);
+          hd.me = c.locals.includes(p.id);
+        }
+        paintMiniMap(mini.current, w, c.locals, s.clock, heads, count);
       }
       s.hudIn -= dt;
       if (s.hudIn <= 0) {
@@ -817,6 +833,7 @@ function Play({ mode }: { mode: Mode }) {
           else if (text === 'go!') sfx.tone({ freq: 880, dur: 0.4, type: 'square', vol: 0.14 });
         }
       }
+      s.updateMs += (performance.now() - t0 - s.updateMs) * 0.05;
       if (!live || s.ended) return;
       if (mode === 'solo') {
         const p = w.players[c.locals[0]];
@@ -826,7 +843,9 @@ function Play({ mode }: { mode: Mode }) {
     },
     () => {
       const v = view.current;
+      const t0 = performance.now();
       if (v) v.render(st.current.cams, st.current.frameDt);
+      st.current.renderMs += (performance.now() - t0 - st.current.renderMs) * 0.05;
       st.current.frameDt = 0;
     },
     { always: mode === 'idle' },
@@ -857,8 +876,8 @@ function Play({ mode }: { mode: Mode }) {
               <div
                 key={`${ci}:${p.id}`}
                 ref={(el) => {
-                  if (el) tags.current.set(`${ci}:${p.id}`, el);
-                  else tags.current.delete(`${ci}:${p.id}`);
+                  if (el) tags.current.set(ci * 16 + p.id, el);
+                  else tags.current.delete(ci * 16 + p.id);
                 }}
                 className={`g-paperio-tag${c.locals.includes(p.id) ? ' is-me' : ''}`}
                 style={{ opacity: 0, ['--c' as string]: shade(colorOf(p.color), -0.35) }}

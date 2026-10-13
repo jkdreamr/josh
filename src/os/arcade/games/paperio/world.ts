@@ -125,11 +125,11 @@ export type World = {
   /** Applies kills, captures of others' land and wipe-outs. Guests keep a copy that only predicts their own player. */
   authority: boolean;
   events: Ev[];
-  /** Dirty rectangle of owner/trail changes since the renderer last looked (x1 < x0 when clean). */
-  dx0: number;
-  dy0: number;
-  dx1: number;
-  dy1: number;
+  /** Owner/trail changes since the renderer last looked, as one span per row: rows listed in dirtyRows. */
+  rowLo: Int32Array;
+  rowHi: Int32Array;
+  dirtyRows: Int32Array;
+  dirtyCount: number;
   /** Recent positions for bot perception: [id][slot][x, y], one sample every 4 ticks. */
   hist: Float32Array;
   histAt: number;
@@ -189,10 +189,10 @@ export function createWorld(opts: { radius?: number; seed?: number; authority?: 
     tick: 0,
     authority: opts.authority ?? true,
     events: [],
-    dx0: n,
-    dy0: n,
-    dx1: -1,
-    dy1: -1,
+    rowLo: new Int32Array(n).fill(n),
+    rowHi: new Int32Array(n).fill(-1),
+    dirtyRows: new Int32Array(n),
+    dirtyCount: 0,
     hist: new Float32Array(MAX_PLAYERS * HIST * 2),
     histAt: 0,
     rng: mulberry32(opts.seed ?? 1),
@@ -276,20 +276,46 @@ export function wrapAngle(a: number) {
 export const angleDiff = (b: number, a: number) => wrapAngle(b - a);
 
 function dirty(w: World, x0: number, y0: number, x1: number, y1: number) {
-  if (x0 < w.dx0) w.dx0 = x0;
-  if (y0 < w.dy0) w.dy0 = y0;
-  if (x1 > w.dx1) w.dx1 = x1;
-  if (y1 > w.dy1) w.dy1 = y1;
+  const n = w.n;
+  if (x0 < 0) x0 = 0;
+  if (x1 > n - 1) x1 = n - 1;
+  if (y0 < 0) y0 = 0;
+  if (y1 > n - 1) y1 = n - 1;
+  const { rowLo, rowHi } = w;
+  for (let y = y0; y <= y1; y++) {
+    if (rowHi[y] < 0) w.dirtyRows[w.dirtyCount++] = y;
+    if (x0 < rowLo[y]) rowLo[y] = x0;
+    if (x1 > rowHi[y]) rowHi[y] = x1;
+  }
 }
 
-/** Takes (and clears) the dirty rectangle, or null when nothing changed. */
+/** Visits each changed row's span once and clears the record (the renderer calls this every frame). */
+export function eachDirtyRow(w: World, fn: (y: number, x0: number, x1: number) => void) {
+  const { rowLo, rowHi, dirtyRows } = w;
+  const count = w.dirtyCount;
+  w.dirtyCount = 0;
+  for (let i = 0; i < count; i++) {
+    const y = dirtyRows[i];
+    const x0 = rowLo[y];
+    const x1 = rowHi[y];
+    rowLo[y] = w.n;
+    rowHi[y] = -1;
+    if (x1 >= x0) fn(y, x0, x1);
+  }
+}
+
+/** Takes (and clears) the bounding box of everything changed, or null when nothing did. */
 export function takeDirty(w: World): { x0: number; y0: number; x1: number; y1: number } | null {
-  if (w.dx1 < w.dx0) return null;
-  const rect = { x0: Math.max(0, w.dx0), y0: Math.max(0, w.dy0), x1: Math.min(w.n - 1, w.dx1), y1: Math.min(w.n - 1, w.dy1) };
-  w.dx0 = w.n;
-  w.dy0 = w.n;
-  w.dx1 = -1;
-  w.dy1 = -1;
+  let rect: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  eachDirtyRow(w, (y, x0, x1) => {
+    if (!rect) rect = { x0, y0: y, x1, y1: y };
+    else {
+      rect.x0 = Math.min(rect.x0, x0);
+      rect.x1 = Math.max(rect.x1, x1);
+      rect.y0 = Math.min(rect.y0, y);
+      rect.y1 = Math.max(rect.y1, y);
+    }
+  });
   return rect;
 }
 

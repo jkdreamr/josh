@@ -5,7 +5,7 @@
 import type * as T from 'three';
 import { drawSkin } from './art.ts';
 import { PALETTE, colorOf, shade, sideOf, skinOf, trailOf } from './skins.ts';
-import { HEAD, MAX_PLAYERS, takeDirty, type Ev, type Player, type World } from './world.ts';
+import { HEAD, MAX_PLAYERS, eachDirtyRow, type Ev, type Player, type World } from './world.ts';
 
 type Three = typeof import('three');
 
@@ -40,7 +40,7 @@ export type View = {
   react(w: World, e: Ev): void;
   render(cams: Cam[], dt: number): void;
   /** Cell coordinates on the board to CSS pixels inside cam's viewport (null when behind the camera). */
-  project(cam: Cam, x: number, y: number, lift: number): { x: number; y: number } | null;
+  project(cam: Cam, x: number, y: number, lift: number, out?: { x: number; y: number }): { x: number; y: number } | null;
   /** CSS pixels (relative to the canvas) to cell coordinates on the board, through cam. */
   unproject(cam: Cam, sx: number, sy: number): { x: number; y: number } | null;
   dispose(): void;
@@ -556,6 +556,94 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
     }
   }
 
+  // the dirty-row walk, without a closure per frame
+  let syncWorld: World = w;
+  let syncNow = 0;
+  let syncSwept = false;
+  let syncFrom = 0;
+  let syncTo = -1;
+  const blockDirty = new Uint8Array(m * m);
+  const blockList = new Int32Array(m * m);
+  let blockCount = 0;
+
+  /** Blocks whose summary may have changed: every block within reach (4 cells) of a changed span. */
+  function markBlocks(x0: number, y: number, x1: number) {
+    const bx0 = Math.max(0, (x0 - 4) >> 3);
+    const bx1 = Math.min(m - 1, (x1 + 4) >> 3);
+    const by0 = Math.max(0, (y - 4) >> 3);
+    const by1 = Math.min(m - 1, (y + 4) >> 3);
+    for (let by = by0; by <= by1; by++)
+      for (let bx = bx0; bx <= bx1; bx++) {
+        const b = by * m + bx;
+        if (blockDirty[b]) continue;
+        blockDirty[b] = 1;
+        blockList[blockCount++] = b;
+      }
+  }
+
+  function flushBlocks() {
+    for (let i = 0; i < blockCount; i++) {
+      const b = blockList[i];
+      blockDirty[b] = 0;
+      const by = (b / m) | 0;
+      const bx = b - by * m;
+      summarize(bx, by, bx, by);
+    }
+    blockCount = 0;
+  }
+
+  function syncRow(y: number, x0: number, x1: number) {
+    const own = syncWorld.owner;
+    const trail = syncWorld.trail;
+    const now = syncNow;
+    let first = -1;
+    let last = -1;
+    for (let x = x0; x <= x1; x++) {
+      const k = y * n + x;
+      const i = k * 4;
+      const o = own[k];
+      const t = trail[k];
+      let changed = false;
+      if (data[i] !== o) {
+        const dt = (now - data[i + 2] + 256) & 255;
+        data[i + 1] = dt < 192 ? data[i] : data[i + 1];
+        data[i] = o;
+        let d = 0;
+        if (syncSwept && stampOf[k] >= syncFrom && stampOf[k] <= syncTo) d = delay[k];
+        else if (o === 0 && deaths.length) {
+          for (let j = 0; j < deaths.length; j++) {
+            const dd = deaths[j];
+            if (dd.id + 1 !== data[i + 1]) continue;
+            d = Math.min(60, (Math.hypot(x - dd.x, y - dd.y) / 4.4) | 0);
+            break;
+          }
+        } else if (o !== 0 && spawns.length) {
+          for (let j = 0; j < spawns.length; j++) {
+            const sp = spawns[j];
+            if (sp.id + 1 !== o) continue;
+            d = Math.min(30, (Math.hypot(x - sp.x, y - sp.y) / 2.2) | 0);
+            break;
+          }
+        }
+        data[i + 2] = (now + 1 + d) & 255;
+        changed = true;
+      }
+      if (data[i + 3] !== t) {
+        data[i + 3] = t;
+        changed = true;
+      }
+      if (changed) {
+        if (first < 0) first = x;
+        last = x;
+      }
+    }
+    if (first >= 0) {
+      gridTex.addUpdateRange((y * n + first) * 4, (last - first + 1) * 4);
+      gridTex.needsUpdate = true;
+      markBlocks(first, y, last);
+    }
+  }
+
   function sync(world: World, events: readonly Ev[]) {
     deaths.length = 0;
     spawns.length = 0;
@@ -569,50 +657,14 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
       else if (e.t === 'spawn') spawns.push({ id: e.id, x: e.x, y: e.y });
     }
     const lastSweep = swept ? stamp : -1;
-    const rect = takeDirty(world);
     const now = units & 255;
-    if (rect) {
-      const own = world.owner;
-      const trail = world.trail;
-      for (let y = rect.y0; y <= rect.y1; y++) {
-        let first = -1;
-        let last = -1;
-        for (let x = rect.x0; x <= rect.x1; x++) {
-          const k = y * n + x;
-          const i = k * 4;
-          const o = own[k];
-          const t = trail[k];
-          let changed = false;
-          if (data[i] !== o) {
-            const dt = (now - data[i + 2] + 256) & 255;
-            data[i + 1] = dt < 192 ? data[i] : data[i + 1];
-            data[i] = o;
-            let d = 0;
-            if (swept && stampOf[k] >= sweepStamp && stampOf[k] <= lastSweep) d = delay[k];
-            else if (o === 0 && deaths.length) {
-              const dd = deaths.find((q) => q.id + 1 === data[i + 1]);
-              if (dd) d = Math.min(60, (Math.hypot(x - dd.x, y - dd.y) / 4.4) | 0);
-            } else if (o !== 0 && spawns.length) {
-              const s = spawns.find((q) => q.id + 1 === o);
-              if (s) d = Math.min(30, (Math.hypot(x - s.x, y - s.y) / 2.2) | 0);
-            }
-            data[i + 2] = (now + 1 + d) & 255;
-            changed = true;
-          }
-          if (data[i + 3] !== t) {
-            data[i + 3] = t;
-            changed = true;
-          }
-          if (changed) {
-            if (first < 0) first = x;
-            last = x;
-          }
-        }
-        if (first >= 0) gridTex.addUpdateRange((y * n + first) * 4, (last - first + 1) * 4);
-      }
-      gridTex.needsUpdate = true;
-      summarize((rect.x0 - 4) >> 3, (rect.y0 - 4) >> 3, (rect.x1 + 4) >> 3, (rect.y1 + 4) >> 3);
-    }
+    syncWorld = world;
+    syncNow = now;
+    syncSwept = swept;
+    syncFrom = sweepStamp;
+    syncTo = lastSweep;
+    eachDirtyRow(world, syncRow);
+    flushBlocks();
     // janitor: once an animation is long done, the old owner channel catches up so the reveal clock can wrap safely
     const rows = 24;
     for (let r = 0; r < rows; r++) {
@@ -633,9 +685,10 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
       if (first >= 0) {
         gridTex.addUpdateRange((y * n + first) * 4, (last - first + 1) * 4);
         gridTex.needsUpdate = true;
-        summarize((first - 4) >> 3, (y - 4) >> 3, (last + 4) >> 3, (y + 4) >> 3);
+        markBlocks(first, y, last);
       }
     }
+    flushBlocks();
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -645,7 +698,16 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
   const v3 = new THREE.Vector3();
   const v3b = new THREE.Vector3();
 
+  const aimed = new Float64Array(8).fill(NaN);
   function aim(cam: Cam) {
+    if (aimed[0] === cam.x && aimed[1] === cam.y && aimed[2] === cam.width && aimed[3] === cam.vw && aimed[4] === cam.vh && aimed[5] === cam.shakeX && aimed[6] === cam.shakeY) return;
+    aimed[0] = cam.x;
+    aimed[1] = cam.y;
+    aimed[2] = cam.width;
+    aimed[3] = cam.vw;
+    aimed[4] = cam.vh;
+    aimed[5] = cam.shakeX;
+    aimed[6] = cam.shakeY;
     const aspect = Math.max(0.1, cam.vw / Math.max(1, cam.vh));
     const tanHalf = Math.tan(((FOV / 2) * Math.PI) / 180);
     // distance so the visible ground width at the target matches cam.width
@@ -785,11 +847,14 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
       }
       renderer.setScissorTest(false);
     },
-    project(cam, x, y, lift) {
+    project(cam, x, y, lift, out) {
       aim(cam);
       v3.set(x - w.c, lift, y - w.c).project(camera);
       if (v3.z > 1) return null;
-      return { x: cam.vx + ((v3.x + 1) / 2) * cam.vw, y: cam.vy + ((1 - v3.y) / 2) * cam.vh };
+      const o = out ?? { x: 0, y: 0 };
+      o.x = cam.vx + ((v3.x + 1) / 2) * cam.vw;
+      o.y = cam.vy + ((1 - v3.y) / 2) * cam.vh;
+      return o;
     },
     unproject(cam, sx, sy) {
       aim(cam);
