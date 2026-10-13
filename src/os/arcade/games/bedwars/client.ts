@@ -76,6 +76,8 @@ export type ClientHooks = {
   moment?: (ev: Ev) => void;
   /** After every 20 Hz tick (online traffic goes out here). */
   onTick?: () => void;
+  /** A panel opened or closed (the host component frees or recaptures the mouse). */
+  onUi?: (ui: UiPanel) => void;
 };
 
 const scratch: Pose = { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
@@ -91,6 +93,7 @@ export class Client {
   hooks: ClientHooks;
   time = 0;
   private acc = 0;
+  private lastReal = -1;
   // look and buttons
   private lookX = 0;
   private lookY = 0;
@@ -243,14 +246,18 @@ export class Client {
     if (this.spec.active) this.flySpectator(dt, keys);
     this.handleKeys(keys);
     if (this.leftEdge) this.clickAttack();
-    this.acc += dt;
+    // the game clock follows real time even when frames run slow (the loop's dt is capped at 1/20 s)
+    const now = typeof performance !== 'undefined' ? performance.now() / 1000 : this.time;
+    const real = this.lastReal < 0 ? dt : Math.min(0.25, Math.max(0, now - this.lastReal));
+    this.lastReal = now;
+    this.acc += Math.max(dt, real);
     let n = 0;
-    while (this.acc >= TICK && n < 4) {
+    while (this.acc >= TICK && n < 6) {
       this.acc -= TICK;
       this.tick(keys);
       n++;
     }
-    if (n === 4) this.acc = 0;
+    if (n === 6) this.acc = 0;
     this.leftEdge = false;
     this.renderFrame(dt);
   }
@@ -274,33 +281,42 @@ export class Client {
     }
   }
 
-  /** Opens the shop or upgrades when near the right NPC (E or B, or a right click on it). */
+  /** Opens whichever keeper you are looking at, or else the nearest one in reach (E or B). */
   openNear(): boolean {
     const p = this.player;
     if (!p.alive) return false;
-    const g = this.game;
-    if (nearNpc(g, p, 'shop')) {
-      this.setUi('shop');
-      return true;
-    }
-    if (nearNpc(g, p, 'upgrades')) {
-      this.setUi('upgrades');
-      return true;
-    }
-    return false;
+    const which = this.npcInSight() ?? this.nearWhich();
+    if (!which) return false;
+    this.setUi(which);
+    return true;
   }
 
   setUi(ui: UiPanel) {
+    if (ui === this.ui) return;
     this.ui = ui;
     if (ui !== 'none') this.releaseAll();
+    this.hooks.onUi?.(ui);
     this.hooks.ping?.();
   }
 
-  /** Which NPC is in reach, if any. */
+  /** Which keeper is in reach (the nearer one when both are), if any. */
   nearWhich(): 'shop' | 'upgrades' | null {
     const p = this.player;
     if (!p.alive) return null;
-    return nearNpc(this.game, p, 'shop') ? 'shop' : nearNpc(this.game, p, 'upgrades') ? 'upgrades' : null;
+    const g = this.game;
+    const dist = (which: 'shop' | 'upgrades') => {
+      let d = Infinity;
+      g.info.teams.forEach((site, t) => {
+        if (!g.teams[t]?.used) return;
+        const at = which === 'shop' ? site.shop : site.upgrades;
+        d = Math.min(d, Math.hypot(p.body.x - at[0], p.body.z - at[2]));
+      });
+      return d;
+    };
+    const shop = nearNpc(g, p, 'shop') ? dist('shop') : Infinity;
+    const ups = nearNpc(g, p, 'upgrades') ? dist('upgrades') : Infinity;
+    if (shop === Infinity && ups === Infinity) return null;
+    return shop <= ups ? 'shop' : 'upgrades';
   }
 
   private moveInput(keys: KeyState): MoveInput {
@@ -508,9 +524,10 @@ export class Client {
     if (this.right && this.ui === 'none') {
       if (this.rightEdge) {
         // talk to a shop keeper first
-        if (this.npcInSight()) {
+        const npc = this.npcInSight();
+        if (npc) {
           this.rightEdge = false;
-          this.openNear();
+          this.setUi(npc);
           return;
         }
       }
@@ -559,20 +576,26 @@ export class Client {
     p.drawing = held && isBow(held) ? this.useTicks : 0;
   }
 
-  private npcInSight(): boolean {
-    const near = this.nearWhich();
-    if (!near) return false;
+  /** The keeper under the crosshair (and close enough to talk to), if any. */
+  private npcInSight(): 'shop' | 'upgrades' | null {
     const p = this.player;
     const g = this.game;
     const e = this.eye();
     const [dx, dy, dz] = lookDir(p.body.yaw, p.body.pitch);
-    for (const site of g.info.teams) {
-      for (const at of [site.shop, site.upgrades]) {
+    let best: 'shop' | 'upgrades' | null = null;
+    let bestT = 5;
+    g.info.teams.forEach((site, t) => {
+      if (!g.teams[t]?.used) return;
+      for (const which of ['shop', 'upgrades'] as const) {
+        const at = which === 'shop' ? site.shop : site.upgrades;
         const hit = rayBox(e.x, e.y, e.z, dx, dy, dz, at[0] - 0.5, at[1], at[2] - 0.5, at[0] + 0.5, at[1] + 2, at[2] + 0.5);
-        if (hit && hit.t < 5) return true;
+        if (hit && hit.t < bestT && nearNpc(g, p, which, 0.5)) {
+          bestT = hit.t;
+          best = which;
+        }
       }
-    }
-    return false;
+    });
+    return best;
   }
 
   private finishDig(t: RayHit) {

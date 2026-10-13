@@ -319,6 +319,9 @@ function Play({ mode }: { mode: StageMode }) {
       moment: (e: Ev) => {
         void e;
       },
+      onUi: (ui) => {
+        if (ui !== 'none') unlockRef.current();
+      },
       send: session ? (a, seq) => session.send(a, seq) : undefined,
       broadcast: session ? (evs) => session.broadcast(evs) : undefined,
       onTick: session ? () => session.tick() : undefined,
@@ -397,6 +400,8 @@ function Play({ mode }: { mode: StageMode }) {
       document.exitPointerLock();
     }
   }, []);
+  const unlockRef = useRef(unlock);
+  unlockRef.current = unlock;
 
   const openUi = useCallback(
     (ui: 'shop' | 'upgrades' | 'none') => {
