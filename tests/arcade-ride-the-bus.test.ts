@@ -16,6 +16,7 @@ import {
   chooseRider,
   colorOf,
   dealHand,
+  isEdge,
   isRight,
   makeDeck,
   rankPlural,
@@ -137,6 +138,18 @@ test('isRight routes each question to its check', () => {
   assert.ok(!isRight(hand, 4, 'red'));
 });
 
+test('an edge is a card that matches a rank the call depends on', () => {
+  const hand = [c(7), c(7, 'hearts'), c(12), c(3)];
+  assert.ok(isEdge(hand, 1), 'same rank as card one on higher or lower');
+  assert.ok(!isEdge(hand, 0), 'red or black has no edge');
+  assert.ok(!isEdge(hand, 3), 'the suit has no edge');
+  assert.ok(!isEdge([c(4), c(9), c(6)], 2));
+  assert.ok(isEdge([c(4), c(9), c(9, 'clubs')], 2), 'matching the second card');
+  assert.ok(isEdge([c(4), c(9), c(4, 'clubs')], 2), 'matching the first card');
+  assert.ok(!isEdge([c(4), c(5)], 1));
+  assert.ok(!isEdge([c(4)], 1), 'no card there yet');
+});
+
 test('sips match the question number', () => {
   assert.deepEqual([0, 1, 2, 3].map(sipsFor), [1, 2, 3, 4]);
 });
@@ -213,6 +226,7 @@ test('a solo game plays one hand and the only player rides', () => {
   assert.equal(bus.phase, 'bus');
   assert.equal(bus.attempts, 1);
   assert.equal(bus.busSips, 0);
+  assert.equal(bus.best, 0);
   assert.equal(bus.shown, 0);
   assert.equal(bus.hand.length, 4);
   assert.equal(boardBus(bus), bus, 'only boards from the results');
@@ -226,6 +240,7 @@ test('the bus starts over with fresh cards on any miss, and four in a row gets o
   assert.equal(g.phase, 'bus');
   assert.equal(g.seat, 2);
   assert.equal(g.attempts, 1);
+  assert.equal(g.best, 0);
   assert.deepEqual(g.hand, first);
 
   // Attempt 1: right, right, then a miss on question 3.
@@ -248,11 +263,16 @@ test('the bus starts over with fresh cards on any miss, and four in a row gets o
   assert.equal(g.attempts, 3);
   assert.deepEqual(g.hand, third);
 
+  assert.equal(g.best, 2, 'the best run so far was two right on attempt 1');
+
   // Attempt 3: all four.
   g = play(g, 'red').next;
   g = play(g, 'higher').next;
+  assert.equal(g.best, 2, 'matching the best run does not move it');
   g = play(g, 'inside').next;
+  assert.equal(g.best, 3);
   r = play(g, 'spades');
+  assert.equal(r.answered.best, 4);
   assert.equal(upcoming(r.answered), 'off');
   assert.equal(r.answered.busSips, 4, 'right answers on the bus cost nothing');
   g = r.next;
@@ -307,6 +327,7 @@ test('the mercy rule lets the rider off after the last allowed try', () => {
   assert.equal(g.mercy, true);
   assert.equal(g.attempts, 3);
   assert.equal(g.busSips, 3);
+  assert.equal(g.best, 0, 'never got past the first card');
   let open = withMercy(startBus(1, 0, rng), 0);
   for (let i = 0; i < 20; i++) {
     open = miss(open);

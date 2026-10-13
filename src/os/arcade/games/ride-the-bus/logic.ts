@@ -54,6 +54,18 @@ export function checkInsideOutside(a: Card, b: Card, card: Card, guess: Guess) {
 
 export const checkSuit = (card: Card, guess: Guess) => card.suit === guess;
 
+/**
+ * Whether card `q` landed on a rank that makes either answer wrong: the same rank as card one on higher or lower,
+ * or the same rank as either edge on inside or outside.
+ */
+export function isEdge(hand: readonly Card[], q: number): boolean {
+  const card = hand[q];
+  if (!card) return false;
+  if (q === 1) return card.rank === hand[0].rank;
+  if (q === 2) return card.rank === hand[0].rank || card.rank === hand[1].rank;
+  return false;
+}
+
 /** Whether `guess` is right for question `q` (0 to 3) of a hand. */
 export function isRight(hand: readonly Card[], q: number, guess: Guess): boolean {
   const card = hand[q];
@@ -100,6 +112,8 @@ export type Game = {
   /** Bus attempts so far, counting the one in progress, and the sips drunk on the bus. */
   attempts: number;
   busSips: number;
+  /** The rider's longest run of right answers on the bus so far (0 to 4). */
+  best: number;
   /** The mercy rule: most bus attempts before the rider gets off anyway (0 for no limit). */
   limit: number;
   /** True when the rider got off by the mercy rule instead of four in a row. */
@@ -115,7 +129,7 @@ function deal(game: Game, rng: Rng): Game {
 
 const blank = (count: number): Game => {
   const n = Math.max(1, Math.floor(count));
-  return { phase: 'questions', count: n, seat: 0, hand: [], shown: 0, verdict: null, marks: [], shoe: [], taken: Array(n).fill(0), given: Array(n).fill(0), tied: [], attempts: 0, busSips: 0, limit: 0, mercy: false, deals: 0 };
+  return { phase: 'questions', count: n, seat: 0, hand: [], shown: 0, verdict: null, marks: [], shoe: [], taken: Array(n).fill(0), given: Array(n).fill(0), tied: [], attempts: 0, busSips: 0, best: 0, limit: 0, mercy: false, deals: 0 };
 };
 
 /** A full game: four questions for every seat in order, starting with seat 0. Pass `shoe` to stack the deck. */
@@ -132,7 +146,7 @@ export function startBus(count: number, rider: number, rng: Rng = Math.random, s
 /** From the results to the bus: the rider gets a fresh hand and their first attempt. */
 export function boardBus(game: Game, rng: Rng = Math.random): Game {
   if (game.phase !== 'results') return game;
-  return deal({ ...game, phase: 'bus', attempts: 1, busSips: 0 }, rng);
+  return deal({ ...game, phase: 'bus', attempts: 1, busSips: 0, best: 0 }, rng);
 }
 
 /** Sets the mercy rule: after `limit` missed bus attempts the rider gets off anyway (0 for no limit). */
@@ -147,7 +161,7 @@ export function answer(game: Game, guess: Guess): Game {
   const sips = sipsFor(q);
   const verdict: Verdict = { q, guess, right, sips, card: game.hand[q] };
   const next: Game = { ...game, shown: q + 1, verdict, marks: [...game.marks, right] };
-  if (game.phase === 'bus') return right ? next : { ...next, busSips: game.busSips + sips };
+  if (game.phase === 'bus') return right ? { ...next, best: Math.max(game.best, q + 1) } : { ...next, busSips: game.busSips + sips };
   const bump = (list: number[]) => list.map((n, i) => (i === game.seat ? n + sips : n));
   return right ? { ...next, given: bump(game.given) } : { ...next, taken: bump(game.taken) };
 }

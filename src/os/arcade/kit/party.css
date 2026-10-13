@@ -649,6 +649,11 @@
   color: var(--on-accent, #fff);
   background: var(--accent);
 }
+/* An avatar can share the accent's color; a thin ink ring keeps it visible on accent rows and tiles. */
+.arcade-party-scores li.is-hi .arcade-party-avatar,
+.arcade-shell .arcade-party-picks > button[aria-pressed='true'] .arcade-party-avatar {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--on-accent, #000) 55%, transparent);
+}
 .arcade-party-scores li.is-out {
   opacity: 0.45;
 }

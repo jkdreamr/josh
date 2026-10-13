@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { GameShell, defineSetting, sfx, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
-import { Avatar, Big, DrinkNote, Option, PassTo, PlayerList, Row, Screen, mulberry32, sips, usePlayers } from '../../kit/party';
+import { Avatar, Big, DrinkNote, HowToPlay, Option, PlayerList, Row, Screen, listNames, sips, usePlayers } from '../../kit/party';
 import type { GameProps } from '../../types';
 import {
+  ACE,
   CHOICES,
   QUESTIONS,
   advance,
@@ -10,6 +11,7 @@ import {
   boardBus,
   cardName,
   colorOf,
+  isEdge,
   rankName,
   rankPlural,
   startBus,
@@ -29,8 +31,34 @@ const MODE = defineSetting('ride-the-bus:mode', ['full', 'bus'] as const, 'full'
 const MERCY = defineSetting('ride-the-bus:mercy', ['5', '10', '0'] as const, '5');
 /** How long the row takes to sweep away after a miss on the bus, in seconds. */
 const CLEAR_TIME = 0.5;
+/** On the bus a verdict moves on by itself after this long, in seconds, unless someone taps first. */
+const AUTO_RIGHT = 1.4;
+const AUTO_MISS = 2.4;
+/**
+ * When the turned card shows its face, in seconds: the last card on the bus turns slowly. Until then the board, the
+ * button and the verdict keep the result to themselves.
+ */
+const REVEAL = 0.2;
+const REVEAL_SLOW = 0.62;
 
-type Step = { s: 'setup' } | { s: 'pick'; seat: number | null } | { s: 'pass' } | { s: 'table' } | { s: 'results' } | { s: 'off' };
+type Step = { s: 'setup' } | { s: 'pick'; seat: number | null } | { s: 'table' } | { s: 'results' } | { s: 'off' };
+
+const RULES: ReactNode[] = [
+  <>
+    Everyone gets four face-down cards and calls them in order: <b>red or black</b>, <b>higher or lower</b> than card one, <b>inside or outside</b> the first two,
+    then the <b>suit</b>.
+  </>,
+  <>
+    Card one is worth 1 sip, card four is worth 4. <b>Wrong, you drink them. Right, you hand them out.</b>
+  </>,
+  <>A matching rank is always wrong: a tie is neither higher nor lower, and an edge is neither inside nor outside.</>,
+  <>
+    Most sips taken <b>rides the bus</b>: the same four calls, with fresh cards after every miss, until they get all four in a row.
+  </>,
+  <>
+    The <b>mercy rule</b> lets the rider off after 5 or 10 tries. Without it, a bad run can last all night.
+  </>,
+];
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
@@ -38,6 +66,32 @@ export default function Game({ compact, onExit }: GameProps) {
       <Play />
     </GameShell>
   );
+}
+
+/* Sounds: the snap of a card, then a verdict once its face shows, a horn for the rider and the stop bell to get off. */
+
+function flipSound(slow: boolean) {
+  sfx.noise(0.05, 0.1);
+  if (slow) sfx.tone({ freq: 196, to: 392, dur: REVEAL_SLOW, type: 'triangle', vol: 0.06 });
+}
+
+function verdictSound(right: boolean, delay: number) {
+  if (right) {
+    sfx.tone({ freq: 784, dur: 0.07, type: 'triangle', vol: 0.16, delay });
+    sfx.tone({ freq: 1175, dur: 0.18, type: 'triangle', vol: 0.16, delay: delay + 0.07 });
+  } else sfx.tone({ freq: 311, to: 104, dur: 0.42, type: 'triangle', vol: 0.2, delay });
+}
+
+function horn() {
+  sfx.tone({ freq: 233, dur: 0.45, type: 'square', vol: 0.05 });
+  sfx.tone({ freq: 277, dur: 0.45, type: 'square', vol: 0.05 });
+}
+
+function bell(times: number) {
+  for (let i = 0; i < times; i++) {
+    sfx.tone({ freq: 1568, dur: 0.6, type: 'sine', vol: 0.15, delay: i * 0.26 });
+    sfx.tone({ freq: 4320, dur: 0.18, type: 'sine', vol: 0.03, delay: i * 0.26 });
+  }
 }
 
 function Play() {
@@ -49,54 +103,152 @@ function Play() {
   const [table, setTable] = useState<string[]>([]);
   const [game, setGame] = useState<Game | null>(null);
   const [clearing, setClearing] = useState(false);
+  /** Seconds the verdict on screen waits before moving on by itself (0: it waits for a tap). */
+  const [auto, setAuto] = useState(0);
+  /** False while a card is turning: the table still shows the call it was made on. */
+  const [revealed, setRevealed] = useState(true);
+  const before = useRef<Game | null>(null);
+  const revealLeft = useRef(-1);
+  /** Bus rides this session, by name, for the tally on the way off. */
+  const [rides, setRides] = useState<Record<string, number>>({});
   const clearLeft = useRef(-1);
   const afterClear = useRef<Game | null>(null);
+  const autoLeft = useRef(-1);
+  const next = useRef<() => void>(() => {});
 
-  // The sweep after a miss on the bus runs on the game loop, so pausing holds it too.
+  // The card turning, the sweep after a miss and the bus's own pace all run on the game loop, so pausing holds them.
   useGameLoop((dt) => {
-    if (clearLeft.current < 0) return;
-    clearLeft.current -= dt;
-    if (clearLeft.current > 0) return;
-    clearLeft.current = -1;
-    const next = afterClear.current;
-    afterClear.current = null;
-    setClearing(false);
-    if (next) setGame(next);
+    if (revealLeft.current >= 0) {
+      revealLeft.current -= dt;
+      if (revealLeft.current <= 0) {
+        revealLeft.current = -1;
+        setRevealed(true);
+      }
+    }
+    if (clearLeft.current >= 0) {
+      clearLeft.current -= dt;
+      if (clearLeft.current <= 0) {
+        clearLeft.current = -1;
+        const g = afterClear.current;
+        afterClear.current = null;
+        setClearing(false);
+        if (g) setGame(g);
+      }
+    }
+    if (autoLeft.current >= 0) {
+      autoLeft.current -= dt;
+      if (autoLeft.current <= 0) {
+        autoLeft.current = -1;
+        next.current();
+      }
+    }
   });
 
   const name = (i: number) => table[i] ?? 'You';
   const solo = table.length < 2;
 
-  const rideBus = (names: string[], seat: number) => {
-    setTable(names);
-    setGame(withMercy(startBus(names.length, seat), Number(mercy)));
-    setStep(names.length > 1 ? { s: 'pass' } : { s: 'table' });
-  };
-
-  const begin = (names: string[]) => {
+  const settle = () => {
     setClearing(false);
     clearLeft.current = -1;
     afterClear.current = null;
+    autoLeft.current = -1;
+    setAuto(0);
+    revealLeft.current = -1;
+    setRevealed(true);
+  };
+
+  const rideBus = (names: string[], seat: number) => {
+    settle();
+    setTable(names);
+    setGame(withMercy(startBus(names.length, seat), Number(mercy)));
+    setStep({ s: 'table' });
+  };
+
+  const begin = (names: string[]) => {
+    settle();
+    setTable(names);
     if (mode === 'bus') {
-      if (names.length > 1) {
-        setTable(names);
-        setStep({ s: 'pick', seat: null });
-      } else rideBus(names, 0);
+      if (names.length > 1) setStep({ s: 'pick', seat: null });
+      else rideBus(names, 0);
       return;
     }
-    setTable(names);
     setGame(withMercy(startGame(names.length), Number(mercy)));
-    setStep(names.length > 1 ? { s: 'pass' } : { s: 'table' });
+    setStep({ s: 'table' });
   };
   const roster = () => (players.length ? players : ['You']);
 
+  const onAnswer = (guess: Guess) => {
+    if (!game || game.verdict || clearing) return;
+    const g = answer(game, guess);
+    if (!g.verdict) return;
+    const slow = slowTurn(g);
+    flipSound(slow);
+    verdictSound(g.verdict.right, slow ? REVEAL_SLOW : REVEAL);
+    const kind = upcoming(g);
+    const wait = g.phase !== 'bus' ? 0 : kind === 'card' ? AUTO_RIGHT : kind === 'retry' ? AUTO_MISS + (slow ? REVEAL_SLOW - REVEAL : 0) : 0;
+    autoLeft.current = wait || -1;
+    setAuto(wait);
+    before.current = game;
+    revealLeft.current = slow ? REVEAL_SLOW : REVEAL;
+    setRevealed(false);
+    setGame(g);
+  };
+
+  const onNext = () => {
+    if (!game?.verdict || clearing || !revealed) return;
+    autoLeft.current = -1;
+    setAuto(0);
+    const kind = upcoming(game);
+    const g = advance(game);
+    if (kind === 'retry') {
+      afterClear.current = g;
+      clearLeft.current = CLEAR_TIME;
+      setClearing(true);
+      return;
+    }
+    if (kind === 'results') {
+      horn();
+      // Playing solo there is nobody to compare with, so the one player boards straight away.
+      if (game.count < 2) setGame(boardBus(g));
+      else {
+        setGame(g);
+        setStep({ s: 'results' });
+      }
+      return;
+    }
+    setGame(g);
+    if (kind === 'off' || kind === 'mercy') {
+      bell(kind === 'off' ? 2 : 1);
+      const rider = name(game.seat);
+      setRides((r) => ({ ...r, [rider]: (r[rider] ?? 0) + 1 }));
+      setStep({ s: 'off' });
+    }
+  };
+  next.current = onNext;
+
+  // One status line that outlives every step, so screen readers hear each verdict and reveal as it lands.
+  let said = '';
+  if (game && step.s === 'table' && game.verdict && revealed) {
+    const v = verdictCopy(game, name(game.seat), solo);
+    said = `${v.big}. ${v.detail}`;
+  } else if (game && step.s === 'results') said = `${name(game.seat)} rides the bus. ${riderNote(game, name)}`;
+  else if (game && step.s === 'off') said = `${game.mercy ? 'Mercy rule' : 'Off the bus'}. ${offNote(game, solo ? 'You' : name(game.seat))}`;
+  const out = (view: ReactNode) => (
+    <>
+      {view}
+      <p className="g-ride-the-bus-sr" role="status">
+        {said}
+      </p>
+    </>
+  );
+
   if (step.s === 'setup' || (step.s !== 'pick' && !game)) {
-    return (
+    return out(
       <Screen
         key="setup"
         center={false}
-        title="Ride the Bus"
-        sub="Red or black, higher or lower, inside or outside, then the suit. Whoever drinks the most rides the bus until they get all four in a row."
+        title={<Sign>Ride the Bus</Sign>}
+        sub="Four cards each. Whoever drinks the most rides the bus."
         onEnter={() => begin(roster())}
         actions={
           <Big primary onClick={() => begin(roster())}>
@@ -104,6 +256,7 @@ function Play() {
           </Big>
         }
       >
+        <HowToPlay steps={RULES} />
         <PlayerList min={0} />
         <Option
           label="Mode"
@@ -120,8 +273,8 @@ function Play() {
               ? 'No names, so you play solo: four cards, then the bus.'
               : 'No names, so you play solo, straight onto the bus.'
             : mode === 'full'
-              ? 'Everyone answers four cards, then the thirstiest rides the bus.'
-              : 'Skip the warmup. Pick a rider and get on the bus.'}
+              ? 'Everyone plays four cards, then the most sips rides.'
+              : 'Skip the warmup. Pick a rider and go.'}
         </p>
         <Option
           label="Mercy Rule"
@@ -134,14 +287,14 @@ function Play() {
           onChange={setMercy}
         />
         <DrinkNote />
-      </Screen>
+      </Screen>,
     );
   }
 
   if (step.s === 'pick') {
     const chosen = step.seat;
     const go = () => rideBus(table, chosen ?? Math.floor(Math.random() * table.length));
-    return (
+    return out(
       <Screen
         key="pick"
         center={false}
@@ -164,6 +317,7 @@ function Play() {
               type="button"
               aria-pressed={chosen === i}
               onClick={() => {
+                sfx.play('blip');
                 setStep({ s: 'pick', seat: i });
                 // Hand focus back to the game so Enter confirms instead of pressing this button again.
                 shell.root.current?.focus({ preventScroll: true });
@@ -174,65 +328,51 @@ function Play() {
             </button>
           ))}
         </div>
-      </Screen>
+      </Screen>,
     );
   }
 
-  if (!game) return null;
-
-  if (step.s === 'pass') {
-    const bus = game.phase === 'bus';
-    return (
-      <PassTo
-        key={`pass-${game.phase}-${game.seat}`}
-        name={name(game.seat)}
-        index={game.seat}
-        note={bus ? 'You ride the bus. Four right in a row gets you off.' : 'Your turn for four cards. Everyone else, watch closely.'}
-        onReady={() => setStep({ s: 'table' })}
-      />
-    );
-  }
+  if (!game) return out(null);
 
   if (step.s === 'results') {
+    // Only a table of two or more gets here; a solo player boards straight from the last card.
     const rider = game.seat;
     // Most sips first; the rider leads any tie.
     const order = game.taken.map((n, i) => ({ n, i })).sort((a, b) => b.n - a.n || Number(b.i === rider) - Number(a.i === rider) || a.i - b.i);
     const board = () => {
       setGame(boardBus(game));
-      setStep(solo ? { s: 'table' } : { s: 'pass' });
+      setStep({ s: 'table' });
     };
-    const most = game.taken[rider] ?? 0;
-    const sub = solo
-      ? `Playing solo, so you were always getting on. You took ${sips(most)}.`
-      : game.tied.length > 1
-        ? `Tied, so the cards chose ${name(rider)}.`
-        : `Most sips taken, with ${sips(most)}.`;
-    return (
-      <Screen key="results" title={solo ? 'You Ride the Bus' : `${name(rider)} Rides the Bus`} sub={sub} onEnter={board} actions={<Big primary onClick={board}>Board the Bus</Big>}>
-        <span className="g-ride-the-bus-rider">
-          <Avatar name={name(rider)} index={rider} size={72} />
-          <BusBadge />
-        </span>
-        {!solo && (
-          <>
-            <p className="arcade-party-kicker g-ride-the-bus-caption">Sips Taken</p>
-            <ul className="arcade-party-scores" aria-label="Sips taken">
-              {order.map(({ n, i }) => (
-                <li key={i} className={i === rider ? 'is-hi' : undefined}>
-                  <Avatar name={name(i)} index={i} size={26} />
-                  <span>{name(i)}</span>
-                  {game.tied.length > 1 && game.tied.includes(i) && <small className="g-ride-the-bus-tie">Tied</small>}
-                  <b>{n}</b>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </Screen>
+    return out(
+      <Screen
+        key="results"
+        className="g-ride-the-bus-results"
+        kicker="Riding the bus"
+        title={<Sign>{name(rider)}</Sign>}
+        sub={riderNote(game, name)}
+        onEnter={board}
+        actions={
+          <Big primary onClick={board}>
+            Board the Bus
+          </Big>
+        }
+      >
+        <ul className="arcade-party-scores" aria-label="Sips taken">
+          {order.map(({ n, i }) => (
+            <li key={i} className={i === rider ? 'is-hi' : undefined}>
+              <Avatar name={name(i)} index={i} size={26} />
+              <span>{name(i)}</span>
+              {game.tied.length > 1 && game.tied.includes(i) && <small className="g-ride-the-bus-tie">Tied</small>}
+              <b>{n}</b>
+            </li>
+          ))}
+        </ul>
+      </Screen>,
     );
   }
 
   if (step.s === 'off') {
+    const who = solo ? 'You' : name(game.seat);
     const again = () => {
       if (mode === 'bus' && table.length > 1) {
         setStep({ s: 'pick', seat: game.seat });
@@ -241,19 +381,19 @@ function Play() {
       if (mode === 'bus') rideBus(table, 0);
       else begin(table);
     };
-    return (
+    const counts = Object.entries(rides).sort((a, b) => b[1] - a[1]);
+    const tonight =
+      solo || counts.reduce((n, [, c]) => n + c, 0) < 2
+        ? ''
+        : counts.length === 1
+          ? `${counts[0][0]} has ridden ${counts[0][1]} times tonight.`
+          : `Bus rides tonight: ${listNames(counts.map(([n, c]) => `${n} ${c}`))}.`;
+    return out(
       <Screen
         key="off"
-        title={game.mercy ? 'Mercy!' : 'Off the Bus!'}
-        sub={
-          game.mercy
-            ? `${solo ? 'You' : name(game.seat)} rode it ${game.attempts} tries. That's plenty, off you get.`
-            : game.attempts === 1
-            ? `${solo ? 'You' : name(game.seat)} got all four on the first try. Legend.`
-            : solo
-              ? 'All four in a row. You made it.'
-              : `${name(game.seat)} got all four in a row.`
-        }
+        className="g-ride-the-bus-off"
+        title={<Sign>{game.mercy ? 'Mercy Rule' : 'Off the Bus'}</Sign>}
+        sub={offNote(game, who)}
         onEnter={again}
         actions={
           <>
@@ -264,7 +404,6 @@ function Play() {
           </>
         }
       >
-        {!game.mercy && <Confetti />}
         <div className="g-ride-the-bus-row is-done" role="list" aria-label={game.mercy ? 'The last cards' : 'The winning cards'}>
           {game.hand.map((card, i) => (
             <Slot key={card.id} card={card} index={i} up={i < game.marks.length} mark={game.marks[i]} />
@@ -277,40 +416,51 @@ function Play() {
           </div>
           <div>
             <b>{game.busSips}</b>
-            <span>{game.busSips === 1 ? 'Sip on the Bus' : 'Sips on the Bus'}</span>
+            <span>{game.busSips === 1 ? 'Sip on the bus' : 'Sips on the bus'}</span>
           </div>
+          {game.mercy && (
+            <div>
+              <b>
+                {game.best}
+                <small>/{QUESTIONS}</small>
+              </b>
+              <span>Best run</span>
+            </div>
+          )}
         </div>
-      </Screen>
+        {tonight && <p className="g-ride-the-bus-tonight">{tonight}</p>}
+      </Screen>,
     );
   }
 
-  const onAnswer = (guess: Guess) => {
-    if (game.verdict || clearing) return;
-    const next = answer(game, guess);
-    if (!next.verdict) return;
-    sfx.play(next.verdict.right ? 'coin' : 'lose');
-    setGame(next);
-  };
-
-  const onNext = () => {
-    if (!game.verdict || clearing) return;
-    const kind = upcoming(game);
-    const next = advance(game);
-    if (kind === 'retry') {
-      afterClear.current = next;
-      clearLeft.current = CLEAR_TIME;
-      setClearing(true);
-      return;
-    }
-    if (kind === 'off' || kind === 'mercy') sfx.play('win');
-    setGame(next);
-    if (kind === 'player') setStep({ s: 'pass' });
-    else if (kind === 'results') setStep({ s: 'results' });
-    else if (kind === 'off' || kind === 'mercy') setStep({ s: 'off' });
-  };
-
-  return <TableView key={`table-${game.phase}-${game.seat}`} game={game} names={table} clearing={clearing} onAnswer={onAnswer} onNext={onNext} />;
+  return out(
+    <TableView
+      key={`table-${game.phase}-${game.seat}`}
+      game={game}
+      names={table}
+      before={revealed ? null : before.current}
+      clearing={clearing}
+      auto={auto}
+      onAnswer={onAnswer}
+      onNext={onNext}
+    />,
+  );
 }
+
+/** Why this rider: the most sips, or a tie the cards broke. */
+function riderNote(game: Game, name: (i: number) => string): string {
+  const most = game.taken[game.seat] ?? 0;
+  return game.tied.length > 1 ? `Tied on ${sips(most)}, so the cards picked ${name(game.seat)}.` : `${sips(most)}, the most at the table.`;
+}
+
+/** How the ride ended. */
+function offNote(game: Game, who: string): string {
+  if (game.mercy) return `${who} rode it for ${game.attempts} tries. That's enough, off you get.`;
+  return game.attempts === 1 ? `${who} got all four on the first try.` : `${who} got all four in a row on try ${game.attempts}.`;
+}
+
+/** The last card of a bus attempt turns slowly: true while it is asked and once it has turned. */
+const slowTurn = (game: Game) => game.phase === 'bus' && (game.verdict ? game.verdict.q : game.shown) === QUESTIONS - 1;
 
 const ANSWER_LABEL: Record<Guess, string> = {
   red: 'Red',
@@ -326,24 +476,86 @@ const ANSWER_LABEL: Record<Guess, string> = {
 };
 const TITLES = ['Red or Black?', 'Higher or Lower?', 'Inside or Outside?', 'Which Suit?'];
 
-function prompt(game: Game): string {
+function prompt(game: Game, who: string, solo: boolean): string {
   const [a, b] = game.hand;
+  const bus = game.phase === 'bus';
   switch (game.shown) {
     case 0:
-      return game.phase === 'bus' ? 'Four right in a row gets you off.' : 'Guess the color of the first card.';
-    case 1:
-      return `Than the ${rankName(a.rank)} of ${suitName(a.suit)}. A tie is wrong.`;
+      if (bus) {
+        if (game.limit && game.attempts >= game.limit) return 'Last try before the mercy rule.';
+        return game.attempts > 1 ? 'Fresh cards. Four right in a row gets you off.' : 'Four right in a row gets you off.';
+      }
+      return solo ? "Wrong, you drink. Right, you don't." : `${who}'s turn. Wrong drinks, right gives.`;
+    case 1: {
+      const than = `Than the ${rankName(a.rank)} of ${suitName(a.suit)}.`;
+      if (a.rank === ACE) return `${than} Nothing beats an ace.`;
+      if (a.rank === 2) return `${than} Nothing goes under a 2.`;
+      return `${than} A tie is wrong.`;
+    }
     case 2: {
       if (a.rank === b.rank) return `Both cards are ${rankPlural(a.rank)}, so inside can't win.`;
       const [lo, hi] = a.rank < b.rank ? [a, b] : [b, a];
       return `Of the ${rankName(lo.rank)} and the ${rankName(hi.rank)}. Matching either one is wrong.`;
     }
     default:
-      return 'One in four. Trust your gut.';
+      return bus ? "Get the suit and you're off." : 'One in four.';
   }
 }
 
-function TableView({ game, names, clearing, onAnswer, onNext }: { game: Game; names: string[]; clearing: boolean; onAnswer: (g: Guess) => void; onNext: () => void }) {
+/** The big word for the table and the line under it. */
+function verdictCopy(game: Game, who: string, solo: boolean): { big: string; detail: string } {
+  const v = game.verdict;
+  if (!v) return { big: '', detail: '' };
+  const called = `${solo ? 'You' : who} called ${ANSWER_LABEL[v.guess].toLowerCase()}.`;
+  const it = `It's the ${cardName(v.card)}.`;
+  const edge = !v.right && isEdge(game.hand, v.q) ? " Same rank, so it's wrong." : '';
+  if (game.phase === 'bus') {
+    if (v.right) {
+      const left = QUESTIONS - v.q - 1;
+      return { big: left ? `${left} to go` : 'Four in a row', detail: `${called} ${it}` };
+    }
+    if (upcoming(game) === 'mercy') return { big: `Drink ${v.sips}`, detail: `${it}${edge} That was try ${game.attempts}, so the mercy rule lets ${solo ? 'you' : who} off.` };
+    return { big: `Drink ${v.sips}`, detail: `${it}${edge} Back to card one.` };
+  }
+  if (v.right) return { big: solo ? 'Right' : `Give out ${v.sips}`, detail: `${called} ${it}` };
+  return { big: `Drink ${v.sips}`, detail: `${called} ${it}${edge}` };
+}
+
+function Stat({ label, value, of, hot }: { label: string; value: number; of?: number; hot?: boolean }) {
+  return (
+    <div className={hot ? 'is-hot' : undefined}>
+      <dt>{label}</dt>
+      <dd>
+        {value}
+        {of !== undefined && (
+          <small>
+            <span aria-hidden="true">/{of}</span>
+            <span className="g-ride-the-bus-sr"> of {of}</span>
+          </small>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+function TableView({
+  game,
+  before,
+  names,
+  clearing,
+  auto,
+  onAnswer,
+  onNext,
+}: {
+  game: Game;
+  /** The table as it was before the card now turning, until its face shows. */
+  before: Game | null;
+  names: string[];
+  clearing: boolean;
+  auto: number;
+  onAnswer: (g: Guess) => void;
+  onNext: () => void;
+}) {
   const shell = useShell();
   const { verdict } = game;
   const bus = game.phase === 'bus';
@@ -351,6 +563,10 @@ function TableView({ game, names, clearing, onAnswer, onNext }: { game: Game; na
   const choices = verdict ? [] : (CHOICES[q] ?? []);
   const who = names[game.seat] ?? 'You';
   const solo = names.length < 2;
+  // What the board and the call show: the table before the answer until the card's face is up.
+  const face = before ?? game;
+  const turning = !!verdict && !!before;
+  const live = !!verdict && !turning && !clearing;
 
   useKeys((code, e) => {
     if (e?.repeat || verdict || clearing || !choices.length) return;
@@ -383,25 +599,30 @@ function TableView({ game, names, clearing, onAnswer, onNext }: { game: Game; na
 
   const kind = upcoming(game);
   const nextLabel =
-    kind === 'card' ? 'Next Card' : kind === 'player' ? `Pass to ${names[game.seat + 1] ?? 'Next'}` : kind === 'results' ? 'Who Rides the Bus?' : kind === 'retry' ? 'Start Over' : kind === 'mercy' ? 'Mercy, Get Off' : 'Get Off the Bus';
+    kind === 'card'
+      ? 'Next Card'
+      : kind === 'player'
+        ? `Pass to ${names[game.seat + 1] ?? 'Next'}`
+        : kind === 'results'
+          ? solo
+            ? 'Board the Bus'
+            : 'Who Rides the Bus?'
+          : kind === 'retry'
+            ? 'Deal Again'
+            : 'Get Off the Bus';
+  const slow = slowTurn(game);
+  const { big, detail } = verdictCopy(game, who, solo);
+  const lastTry = bus && face.limit > 0 && face.attempts >= face.limit;
+  const ask = face.shown;
 
-  let banner = '';
-  let detail = '';
-  if (verdict) {
-    const it = `It was the ${cardName(verdict.card)}.`;
-    if (bus) {
-      banner = verdict.right ? (verdict.q === QUESTIONS - 1 ? 'Right! Four in a row.' : `Right! ${QUESTIONS - verdict.q - 1} to go.`) : `Wrong. Drink ${sips(verdict.sips)}.`;
-      detail = verdict.right ? it : `${it} Back to the first card with fresh ones.`;
-    } else {
-      banner = verdict.right ? `Right! Give out ${sips(verdict.sips)}.` : `Wrong. Drink ${sips(verdict.sips)}.`;
-      detail = verdict.right && !solo ? `${it} Hand them to anyone.` : it;
-    }
-  }
-
-  const actions = verdict ? (
-    <Big key={`next-${game.deals}-${q}`} primary disabled={clearing} onClick={onNext}>
-      {nextLabel}
-    </Big>
+  const actions = turning ? (
+    <div className="g-ride-the-bus-hold" aria-hidden="true" />
+  ) : verdict ? (
+    <div key={`next-${game.deals}-${q}`} className={`g-ride-the-bus-next ${auto ? 'is-auto' : ''}`} style={{ '--auto': `${Math.max(0.1, auto - (slow ? REVEAL_SLOW : REVEAL))}s` } as CSSProperties}>
+      <Big primary disabled={clearing} onClick={onNext}>
+        {nextLabel}
+      </Big>
+    </div>
   ) : (
     <div key={`answers-${game.deals}-${q}`} className={`g-ride-the-bus-answers is-${choices.length}`} role="group" aria-label={TITLES[q]}>
       {choices.map((g, i) => (
@@ -415,59 +636,87 @@ function TableView({ game, names, clearing, onAnswer, onNext }: { game: Game; na
   );
 
   return (
-    <Screen className="g-ride-the-bus-table" center={false} onEnter={verdict && !clearing ? onNext : undefined} actions={actions}>
-      <div className="g-ride-the-bus-hud">
-        <span className="g-ride-the-bus-who">
-          <Avatar name={who} index={game.seat} size={26} />
-          <b>{who}</b>
-          {bus && <BusBadge small />}
-        </span>
-        <span className="g-ride-the-bus-pills">
-          {bus ? (
-            <>
-              <span>Try {game.attempts}</span>
-              <span className={game.busSips ? 'is-hot' : undefined}>{sips(game.busSips)}</span>
-            </>
-          ) : (
-            <span className={game.taken[game.seat] ? 'is-hot' : undefined}>{sips(game.taken[game.seat] ?? 0)} taken</span>
-          )}
-        </span>
-      </div>
-      <div className="g-ride-the-bus-stage">
-        <div key={game.deals} className={`g-ride-the-bus-row ${clearing ? 'is-clearing' : ''}`} role="list" aria-label="Cards">
-          {Array.from({ length: QUESTIONS }, (_, i) => (
-            <Slot key={i} card={game.hand[i]} index={i} up={i < game.shown} mark={game.marks[i]} current={!verdict && i === game.shown} />
-          ))}
+    <Screen className={`g-ride-the-bus-table ${bus ? 'is-bus' : ''}`} center={false} onEnter={live ? onNext : undefined} actions={actions}>
+      {/* While a verdict shows, a tap anywhere on the table moves on; the button below does the same. */}
+      <div
+        className={`g-ride-the-bus-tap ${live ? 'is-live' : ''}`}
+        style={{ '--reveal': `${slow ? REVEAL_SLOW : REVEAL}s` } as CSSProperties}
+        onClick={
+          live
+            ? () => {
+                sfx.play('select');
+                onNext();
+              }
+            : undefined
+        }
+      >
+        <div className="g-ride-the-bus-hud">
+          <span className="g-ride-the-bus-who">
+            <Avatar name={who} index={game.seat} size={32} />
+            <b>{who}</b>
+            {bus && <BusBadge small />}
+          </span>
+          <dl className="g-ride-the-bus-board">
+            {bus ? (
+              <>
+                <Stat label={lastTry ? 'Last try' : 'Try'} value={face.attempts} of={face.limit || undefined} hot={lastTry} />
+                <Stat label="Sips" value={face.busSips} />
+                <Stat label="Best" value={face.best} of={QUESTIONS} />
+              </>
+            ) : (
+              <>
+                <Stat label="Drank" value={face.taken[face.seat] ?? 0} />
+                {!solo && <Stat label="Gave" value={face.given[face.seat] ?? 0} />}
+              </>
+            )}
+          </dl>
         </div>
-        {verdict ? (
-          <div key={`verdict-${game.deals}-${verdict.q}`} className="g-ride-the-bus-ask">
-            <p className={`g-ride-the-bus-verdict ${verdict.right ? 'is-right' : 'is-wrong'}`} role="status">
-              <VerdictIcon right={verdict.right} />
-              <span>{banner}</span>
-            </p>
-            <p className="arcade-party-sub">{detail}</p>
+        <div className="g-ride-the-bus-stage">
+          <div key={game.deals} className={`g-ride-the-bus-row ${clearing ? 'is-clearing' : ''} ${slow ? 'is-slow' : ''}`} role="list" aria-label="Cards">
+            {Array.from({ length: QUESTIONS }, (_, i) => (
+              <Slot
+                key={i}
+                card={game.hand[i]}
+                index={i}
+                up={i < game.shown}
+                mark={game.marks[i]}
+                current={!verdict && i === game.shown}
+                turned={!!verdict && !clearing && i === game.shown - 1}
+              />
+            ))}
           </div>
-        ) : (
-          <div key={`ask-${game.deals}-${q}`} className="g-ride-the-bus-ask">
-            <p className="arcade-party-kicker">
-              Card {q + 1} of {QUESTIONS} &middot; {bus ? `Miss Drinks ${q + 1}` : sips(q + 1)}
-            </p>
-            <h2 className="arcade-party-title g-ride-the-bus-q">{TITLES[q]}</h2>
-            <p className="arcade-party-sub">{prompt(game)}</p>
-          </div>
+          {verdict && !turning ? (
+            <div key={`verdict-${game.deals}-${verdict.q}`} className="g-ride-the-bus-ask">
+              <p className={`g-ride-the-bus-verdict ${verdict.right ? 'is-right' : 'is-wrong'}`} aria-hidden="true">
+                <VerdictIcon right={verdict.right} />
+                <span>{big}</span>
+              </p>
+              <p className="arcade-party-sub g-ride-the-bus-detail" aria-hidden="true">
+                {detail}
+              </p>
+            </div>
+          ) : (
+            <div key={`ask-${game.deals}-${ask}`} className="g-ride-the-bus-ask">
+              <p className="arcade-party-kicker">
+                {bus && ask === QUESTIONS - 1 ? 'Last card' : `Card ${ask + 1} of ${QUESTIONS}`} &middot; {bus ? `a miss drinks ${ask + 1}` : sips(ask + 1)}
+              </p>
+              <h2 className="arcade-party-title g-ride-the-bus-q">{TITLES[ask]}</h2>
+              <p className="arcade-party-sub">{prompt(face, who, solo)}</p>
+            </div>
+          )}
+        </div>
+        {!bus && !solo && (
+          <ol ref={standings} className="g-ride-the-bus-standings" aria-label="Sips taken so far">
+            {names.map((n, i) => (
+              <li key={n} className={i === game.seat ? 'is-on' : undefined}>
+                <Avatar name={n} index={i} size={22} />
+                <span>{n}</span>
+                <b>{face.taken[i] ?? 0}</b>
+              </li>
+            ))}
+          </ol>
         )}
       </div>
-      {!bus && !solo && (
-        <ol ref={standings} className="g-ride-the-bus-standings" aria-label="Sips taken so far">
-          {names.map((n, i) => (
-            <li key={n} className={i === game.seat ? 'is-on' : undefined}>
-              <Avatar name={n} index={i} size={20} />
-              <span>{n}</span>
-              <b>{game.taken[i] ?? 0}</b>
-            </li>
-          ))}
-        </ol>
-      )}
     </Screen>
   );
 }
@@ -494,8 +743,8 @@ const SuitIcon = ({ suit, className }: { suit: Suit; className?: string }) => (
 const L = 32;
 const C = 50;
 const R = 68;
-const T = 28;
-const B = 112;
+const T = 30;
+const B = 110;
 const at = (f: number) => T + (B - T) * f;
 const sides = (...fs: number[]): [number, number][] => fs.flatMap((f) => [[L, at(f)], [R, at(f)]] as [number, number][]);
 const PIPS: Record<number, [number, number][]> = {
@@ -520,20 +769,20 @@ function CardFace({ card }: { card: Card }) {
   const label = card.rank > 10 ? 'JQKA'[card.rank - 11] : String(card.rank);
   const corner = (
     <>
-      <text x="12" y="22" textAnchor="middle" fontSize="17" letterSpacing={label.length > 1 ? -1.4 : 0}>
+      <text x="12" y="25" textAnchor="middle" fontSize="22">
         {label}
       </text>
-      <Pip suit={card.suit} x={12} y={31} size={11} />
+      <Pip suit={card.suit} x={12} y={34} size={11} />
     </>
   );
   let middle;
-  if (card.rank === 14) middle = <Pip suit={card.suit} x={50} y={70} size={card.suit === 'spades' ? 48 : 42} />;
+  if (card.rank === ACE) middle = <Pip suit={card.suit} x={50} y={70} size={card.suit === 'spades' ? 48 : 42} />;
   else if (card.rank > 10)
     middle = (
       <>
-        <rect x="24" y="18" width="52" height="104" rx="5" className="g-ride-the-bus-court" />
+        <rect x="25" y="20" width="50" height="100" rx="4" className="g-ride-the-bus-court" />
         <Pip suit={card.suit} x={50} y={36} size={14} />
-        <text x="50" y="84" textAnchor="middle" fontSize="40">
+        <text x="50" y="87" textAnchor="middle" fontSize="50">
           {label}
         </text>
         <Pip suit={card.suit} x={50} y={104} size={14} />
@@ -551,8 +800,14 @@ function CardFace({ card }: { card: Card }) {
   );
 }
 
-function Slot({ card, index, up, mark, current }: { card?: Card; index: number; up: boolean; mark?: boolean; current?: boolean }) {
-  const cls = ['g-ride-the-bus-slot', up ? 'is-up' : '', current ? 'is-current' : '', mark === true ? 'is-right' : mark === false ? 'is-wrong' : ''].join(' ');
+function Slot({ card, index, up, mark, current, turned }: { card?: Card; index: number; up: boolean; mark?: boolean; current?: boolean; turned?: boolean }) {
+  const cls = [
+    'g-ride-the-bus-slot',
+    up ? 'is-up' : '',
+    current ? 'is-current' : '',
+    turned ? 'is-turned' : '',
+    mark === true ? 'is-right' : mark === false ? 'is-wrong' : '',
+  ].join(' ');
   return (
     <div role="listitem" className={cls} style={{ '--i': index } as CSSProperties} aria-label={up && card ? cardName(card) : `Card ${index + 1}, face down`}>
       <div className="g-ride-the-bus-flip">
@@ -590,6 +845,16 @@ const BusBadge = ({ small }: { small?: boolean }) => (
   </span>
 );
 
+/** A bus stop sign: the game's title plate, also used for whoever rides and for getting off. */
+const Sign = ({ children }: { children: ReactNode }) => (
+  <span className="g-ride-the-bus-sign">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d={BUS} fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+    <span>{children}</span>
+  </span>
+);
+
 const VerdictIcon = ({ right }: { right: boolean }) => (
   <svg className="g-ride-the-bus-vicon" viewBox="0 0 24 24" aria-hidden="true">
     <path d={right ? 'M5 12.5l4.5 4.5L19 7.5' : 'M6.5 6.5l11 11M17.5 6.5l-11 11'} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
@@ -617,38 +882,9 @@ function AnswerIcon({ guess }: { guess: Guess }) {
   if (arrow)
     return (
       <svg className="g-ride-the-bus-aicon" viewBox="0 0 24 24" aria-hidden="true">
-        <path d={arrow} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+        <path d={arrow} fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     );
-  return <SuitIcon suit={guess as Suit} className={`g-ride-the-bus-sicon ${colorOf({ id: 0, rank: 2, suit: guess as Suit }) === 'red' ? 'is-red' : ''}`} />;
-}
-
-/* Off the bus */
-
-const CONFETTI = (() => {
-  const rng = mulberry32(21);
-  const colors = ['#ff9f0a', '#ffd60a', '#30d158', '#40c8e0', '#ff375f', '#bf5af2', '#ffffff'];
-  return Array.from({ length: 26 }, (_, i) => ({
-    x: Math.round(rng() * 100),
-    delay: Math.round(rng() * 500) / 1000,
-    dur: 1.6 + Math.round(rng() * 1000) / 1000,
-    spin: Math.round(rng() * 720 - 360),
-    drift: Math.round(rng() * 80 - 40),
-    color: colors[i % colors.length],
-    wide: rng() > 0.5,
-  }));
-})();
-
-function Confetti() {
-  return (
-    <div className="g-ride-the-bus-confetti" aria-hidden="true">
-      {CONFETTI.map((p, i) => (
-        <i
-          key={i}
-          className={p.wide ? 'is-wide' : undefined}
-          style={{ left: `${p.x}%`, background: p.color, animationDelay: `${p.delay}s`, animationDuration: `${p.dur}s`, '--spin': `${p.spin}deg`, '--drift': `${p.drift}px` } as CSSProperties}
-        />
-      ))}
-    </div>
-  );
+  const suit = guess as Suit;
+  return <SuitIcon suit={suit} className={`g-ride-the-bus-sicon ${colorOf({ id: 0, rank: 2, suit }) === 'red' ? 'is-red' : ''}`} />;
 }
