@@ -236,6 +236,7 @@ export const LOOKS: Record<CourseId, Look> = {
   lake: { fog: [0xeeb08e, 120, 640], sky: 0xffd8c2, ground: 0x5d6b4a, sun: [0xffb07a, 1.4], field: '#b8a862', lawn: '#79a85a', curb: ['#f4f1ea', '#2f6fb5'], wall: '#b98b5e', band: '#2f6fb5', banner: 'LAKE LAGUNITA', road: '#4a4a52' },
   barn: { fog: [0xe9e4cf, 150, 720], sky: 0xfff4dd, ground: 0x6b7a44, sun: [0xfff0d0, 1.5], field: '#c9b26a', lawn: '#88ad59', curb: ['#efe6cf', '#9a3a28'], wall: '#f3efe4', band: '#9a3a28', banner: 'RED BARN', road: '#8f6f4d' },
   dish: { fog: [0xe6e0c8, 160, 760], sky: 0xfff6e6, ground: 0x7a7448, sun: [0xfff2d8, 1.55], field: '#cdb46c', lawn: '#b0a95e', curb: ['#f2efe6', '#5d7a3a'], wall: '#d9cfb8', band: '#5d7a3a', banner: 'THE DISH', road: '#5e5d62' },
+  stadium: { fog: [0xe2e8ef, 170, 760], sky: 0xf4f8ff, ground: 0x5f7a4a, sun: [0xfff4e0, 1.55], field: '#c4b98a', lawn: '#5aa04a', curb: ['#f4f1ea', '#8c1515'], wall: '#ebe6db', band: '#8c1515', banner: 'STANFORD STADIUM', road: '#4c4c54' },
 };
 
 /** What a course's scenery builder gets: the scene, the track and shared helpers. */
@@ -1145,4 +1146,242 @@ function dish(c: Scenery) {
   scene.add(hoover);
 }
 
-export const SCENERY: Record<CourseId, (c: Scenery) => void> = { palm: campus, lake, barn, dish };
+/**
+ * Stanford Stadium on game day: tiered stands packed with a cardinal-and-white crowd round the outside of the bowl,
+ * the football field in the middle with its end zones and goalposts, the scoreboard, light towers, a portal over the
+ * tunnel, and tailgate tents and palms out on the plaza.
+ */
+function stadium(c: Scenery) {
+  const { THREE, scene, t, geo, mats, rand, clear, dummy } = c;
+  const { cx, cz } = bounds(t);
+  const K = 0.85;
+  const concrete = new THREE.MeshLambertMaterial({ color: 0xbdb6aa });
+  const cardinal = new THREE.MeshLambertMaterial({ color: 0x8c1515 });
+  const white = new THREE.MeshLambertMaterial({ color: 0xf3f1ec });
+  const gold = new THREE.MeshLambertMaterial({ color: 0xf2c230 });
+
+  // the stands: rising tiers on the outside of the bowl, each row with its strip of cardinal seats and a crowd
+  type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number };
+  const tiers: Item[] = [];
+  const seats: Item[] = [];
+  const fans: Item[][] = [[], [], [], []];
+  const ROWS = 8;
+  const STEP = 5;
+  /** A block along the stretch of row `d` from s - STEP/2 to s + STEP/2, sized to that chord so bends leave no gaps. */
+  const chord = (s: number, d: number) => {
+    const a = pointAt(t, s - STEP / 2, d);
+    const b = pointAt(t, s + STEP / 2, d);
+    return { a, b, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, len: Math.hypot(b.x - a.x, b.z - a.z), ry: headingOf(b.x - a.x, b.z - a.z) };
+  };
+  // round from the home straight to the tunnel, so the road runs out through the portal
+  for (let s = -60; s <= 395; s += STEP) {
+    for (let row = 0; row < ROWS; row++) {
+      const p = chord(s, t.edge + 3.4 + row * 2.6);
+      if (!clear(p.x, p.z, 1.5)) continue;
+      const h = 1.1 + row * 1.25;
+      tiers.push({ x: p.x, y: h / 2, z: p.z, sx: 2.6, sy: h, sz: p.len + 0.3, ry: p.ry });
+      const seat = chord(s, t.edge + 2.6 + row * 2.6);
+      seats.push({ x: seat.x, y: h + 0.15, z: seat.z, sx: 0.9, sy: 0.3, sz: seat.len + 0.3, ry: seat.ry });
+      const f = chord(s, t.edge + 2.4 + row * 2.6);
+      for (let k = 0; k < 3; k++) {
+        if (rand() < 0.15) continue;
+        const u = (k + 0.3 + rand() * 0.4) / 3;
+        const pick = rand();
+        fans[pick < 0.45 ? 0 : pick < 0.75 ? 1 : pick < 0.88 ? 2 : 3].push({ x: f.a.x + (f.b.x - f.a.x) * u, y: h + 0.75, z: f.a.z + (f.b.z - f.a.z) * u, sx: 0.55, sy: 0.9, sz: 0.45, ry: f.ry });
+      }
+    }
+  }
+  instances(THREE, scene, dummy, geo.box, concrete, tiers);
+  instances(THREE, scene, dummy, geo.box, cardinal, seats);
+  [0x8c1515, 0xf6f4ef, 0x2a2a30, 0xe8b34a].forEach((color, i) => instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color }), fans[i]));
+
+  // the field in the middle of the bowl, running along the home straight
+  const home = pointAt(t, 60, 0);
+  const across = pointAt(t, 60, -(t.edge + 30));
+  const fx = across.x;
+  const fz = across.z;
+  const along = headingOf(home.tx, home.tz);
+  let len = 100;
+  const fits = (l: number) =>
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].every(([a, b]) => {
+      const x = fx + Math.sin(along) * (a * l) / 2 + Math.cos(along) * (b * 22);
+      const z = fz + Math.cos(along) * (a * l) / 2 - Math.sin(along) * (b * 22);
+      return clear(x, z, 1);
+    });
+  while (len > 50 && !fits(len)) len -= 5;
+  const turf = texture(
+    THREE,
+    canvas(512, 224, (g) => {
+      for (let i = 0; i < 12; i++) {
+        g.fillStyle = i % 2 ? '#3f8f3a' : '#4a9a42';
+        g.fillRect((i * 512) / 12, 0, 512 / 12 + 1, 224);
+      }
+      // end zones with STANFORD in white
+      g.fillStyle = '#8c1515';
+      g.fillRect(0, 0, 43, 224);
+      g.fillRect(469, 0, 43, 224);
+      g.fillStyle = '#fff';
+      g.font = 'bold 30px Inter, Arial, sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      for (const [x, a] of [[21, -Math.PI / 2], [491, Math.PI / 2]] as const) {
+        g.save();
+        g.translate(x, 112);
+        g.rotate(a);
+        g.fillText('STANFORD', 0, 2);
+        g.restore();
+      }
+      // yard lines, hash marks and the S at midfield
+      g.fillStyle = 'rgba(255,255,255,0.9)';
+      for (let k = 0; k <= 10; k++) g.fillRect(43 + k * 42.6 - 1, 8, 2, 208);
+      g.fillRect(43, 6, 426, 3);
+      g.fillRect(43, 215, 426, 3);
+      g.font = 'bold 64px Georgia, serif';
+      g.fillStyle = '#8c1515';
+      g.fillText('S', 256, 116);
+    }),
+  );
+  const field = new THREE.Mesh(geo.plane, new THREE.MeshLambertMaterial({ map: turf }));
+  field.rotation.set(-Math.PI / 2, 0, along - Math.PI / 2);
+  field.scale.set(len, 44, 1);
+  field.position.set(fx, 0.03, fz);
+  scene.add(field);
+  // goalposts at both ends
+  for (const end of [-1, 1]) {
+    const gx = fx + Math.sin(along) * end * (len / 2 - 1);
+    const gz = fz + Math.cos(along) * end * (len / 2 - 1);
+    const post = new THREE.Group();
+    const stem = new THREE.Mesh(geo.box, gold);
+    stem.scale.set(0.3, 3, 0.3);
+    stem.position.y = 1.5;
+    const bar = new THREE.Mesh(geo.box, gold);
+    bar.scale.set(5.6, 0.25, 0.25);
+    bar.position.y = 3;
+    post.add(stem, bar);
+    for (const side of [-1, 1]) {
+      const up = new THREE.Mesh(geo.box, gold);
+      up.scale.set(0.2, 6, 0.2);
+      up.position.set(side * 2.8, 6, 0);
+      post.add(up);
+    }
+    post.position.set(gx, 0, gz);
+    post.rotation.y = along;
+    scene.add(post);
+  }
+
+  // the scoreboard over the east end, and light towers round the rim
+  const board = pointAt(t, 190, t.edge + 30);
+  if (clear(board.x, board.z, 6)) {
+    const sb = new THREE.Group();
+    const legs = new THREE.Mesh(geo.box, mats.dark);
+    legs.scale.set(2, 16, 2);
+    legs.position.y = 8;
+    const frame = new THREE.Mesh(geo.box, cardinal);
+    frame.scale.set(26, 11, 1.4);
+    frame.position.y = 21;
+    const screen = new THREE.Mesh(
+      geo.plane,
+      new THREE.MeshBasicMaterial({
+        map: texture(
+          THREE,
+          canvas(256, 104, (g) => {
+            g.fillStyle = '#111';
+            g.fillRect(0, 0, 256, 104);
+            g.fillStyle = '#fff';
+            g.font = 'bold 30px Inter, Arial, sans-serif';
+            g.textAlign = 'center';
+            g.fillText('STANFORD', 128, 44);
+            g.fillStyle = '#f2c230';
+            g.font = 'bold 22px Inter, Arial, sans-serif';
+            g.fillText('GO CARDINAL!', 128, 82);
+          }),
+        ),
+      }),
+    );
+    screen.scale.set(24, 9.4, 1);
+    screen.position.set(0, 21, 0.75);
+    sb.add(legs, frame, screen);
+    sb.position.set(board.x, 0, board.z);
+    sb.rotation.y = headingOf(board.tz, -board.tx);
+    scene.add(sb);
+  }
+  for (const s of [-40, 120, 250, 360]) {
+    const p = pointAt(t, s, t.edge + 26);
+    if (!clear(p.x, p.z, 2)) continue;
+    const pole = new THREE.Mesh(geo.box, mats.dark);
+    pole.scale.set(0.8, 30, 0.8);
+    pole.position.set(p.x, 15, p.z);
+    const lamps = new THREE.Mesh(geo.box, new THREE.MeshBasicMaterial({ color: 0xfff6d8 }));
+    lamps.scale.set(6, 3, 0.6);
+    lamps.position.set(p.x, 30.5, p.z);
+    lamps.rotation.y = headingOf(p.tz, -p.tx);
+    scene.add(pole, lamps);
+  }
+
+  // a portal over the road where it runs out through the tunnel
+  const gate = pointAt(t, 392, 0);
+  const portal = new THREE.Group();
+  for (const side of [-1, 1]) {
+    const pillar = new THREE.Mesh(geo.box, concrete);
+    pillar.scale.set(2, 9, 2);
+    pillar.position.set(side * (t.edge + 1), 4.5, 0);
+    portal.add(pillar);
+  }
+  const beam = new THREE.Mesh(geo.box, cardinal);
+  beam.scale.set(t.edge * 2 + 4, 2.4, 1.6);
+  beam.position.y = 9.6;
+  portal.add(beam);
+  portal.position.set(gate.x, 0, gate.z);
+  portal.rotation.y = headingOf(gate.tx, gate.tz);
+  scene.add(portal);
+
+  // tailgate tents and palms out on the plaza
+  const legs: Item[] = [];
+  const canopies: Item[][] = [[], []];
+  for (let n = 0, made = 0; made < 22 && n < 900; n++) {
+    const a = rand() * Math.PI * 2;
+    const r = 30 + rand() * 170;
+    const p = fromMap((-160 + Math.cos(a) * 60) * K, (150 + Math.sin(a) * 60) * K);
+    const x = p.x + Math.cos(a) * (r - 30) * 0.4;
+    const z = p.z + Math.sin(a) * (r - 30) * 0.4;
+    if (!clear(x, z, 4)) continue;
+    const ry = rand() * Math.PI;
+    for (const [lx, lz] of [[-1.4, -1.4], [1.4, -1.4], [-1.4, 1.4], [1.4, 1.4]]) {
+      legs.push({ x: x + Math.cos(ry) * lx + Math.sin(ry) * lz, y: 1.1, z: z - Math.sin(ry) * lx + Math.cos(ry) * lz, sx: 0.1, sy: 2.2, sz: 0.1, ry });
+    }
+    // two cardinal tents for every white one
+    canopies[made % 3 ? 0 : 1].push({ x, y: 2.6, z, sx: 2.3, sy: 1, sz: 2.3, ry: ry + Math.PI / 4 });
+    made++;
+  }
+  instances(THREE, scene, dummy, geo.box, white, legs);
+  instances(THREE, scene, dummy, geo.roof, cardinal, canopies[0]);
+  instances(THREE, scene, dummy, geo.roof, white, canopies[1]);
+  const palms: { x: number; z: number; hgt: number }[] = [];
+  // along the plaza loop, stopping short of the stands at the start of the home straight
+  for (let s = 400; s < 700; s += 14) {
+    for (const side of [-1, 1]) {
+      const p = pointAt(t, s, side * (t.edge + 4));
+      if (clear(p.x, p.z, 2)) palms.push({ x: p.x, z: p.z, hgt: 9 + rand() * 3 });
+    }
+  }
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x9c7b58 }), palms.map((p) => ({ x: p.x, y: p.hgt / 2, z: p.z, sx: 1, sy: p.hgt, sz: 1 })));
+  instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x3f8a4c, side: THREE.DoubleSide }), palms.map((p, i) => ({ x: p.x, y: p.hgt + 0.2, z: p.z, sx: 1.1, sy: 1.1, sz: 1.1, ry: i * 1.3 })));
+
+  // campus beyond: oaks, Hoover Tower and the foothills with the Dish
+  const spots: { x: number; z: number; r: number }[] = [];
+  for (let n = 0; spots.length < 80 && n < 3000; n++) {
+    const a = rand() * Math.PI * 2;
+    const dist = 170 + rand() * 300;
+    const x = cx + Math.cos(a) * dist;
+    const z = cz + Math.sin(a) * dist;
+    if (clear(x, z, 8)) spots.push({ x, z, r: 2.6 + rand() * 3 });
+  }
+  oaks(c, spots);
+  const hoover = makeHoover(THREE, geo.box);
+  hoover.position.set(cx + 160, 0, cz - 320);
+  hoover.scale.setScalar(1.4);
+  scene.add(hoover);
+  foothills(c, cx, cz, { x: cx - 200, z: cz - 420 });
+}
+
+export const SCENERY: Record<CourseId, (c: Scenery) => void> = { palm: campus, lake, barn, dish, stadium };
