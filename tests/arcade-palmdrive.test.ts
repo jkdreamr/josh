@@ -10,6 +10,7 @@ import {
   COUNTDOWN,
   LAPS,
   MAX_COINS,
+  MUSHROOM_T,
   OFFROAD,
   RIVALS,
   ROLL_T,
@@ -408,11 +409,11 @@ test('the blue shell flies down the course and blows up the leader', () => {
   assert.equal(r.things.length, 0);
 });
 
-test('coins raise your top speed, most for the first ten, and stack up to fifty; hits cost coins', () => {
-  assert.equal(MAX_COINS, 50);
+test('coins raise your top speed a little each, up to ten; hits cost coins', () => {
+  assert.equal(MAX_COINS, 10);
   assert.equal(coinTop(0), 0);
-  assert.ok(Math.abs(coinTop(10) - 1.2) < 1e-9 && Math.abs(coinTop(50) - 2.8) < 1e-9);
-  assert.ok(coinTop(11) - coinTop(10) < coinTop(10) - coinTop(9), 'coins past ten add less each');
+  assert.ok(Math.abs(coinTop(5) - 0.6) < 1e-9 && Math.abs(coinTop(10) - 1.2) < 1e-9);
+  assert.equal(coinTop(15), coinTop(10), 'nothing past the cap');
   const r = race();
   const k = r.karts[0];
   // from the class top speed, along the opening straight
@@ -428,7 +429,8 @@ test('coins raise your top speed, most for the first ten, and stack up to fifty;
   assert.equal(k.coins, MAX_COINS - 3);
 });
 
-test('five coins cash in for a boost, once per press; with fewer nothing happens', () => {
+test('five coins cash in for a short boost, once per press; with fewer nothing happens', () => {
+  assert.ok(CASH_T < MUSHROOM_T / 2, 'well under a mushroom');
   const r = race();
   const k = r.karts[0];
   place(r, k, 20, 0, CLASSES['100cc'].top);
@@ -439,7 +441,7 @@ test('five coins cash in for a boost, once per press; with fewer nothing happens
   assert.ok(k.boost > CASH_T - 0.05);
   assert.equal(evs.filter((e) => e.t === 'cash').length, 1);
   assert.equal(k.input.cash, false, 'the press is used up');
-  run(r, 0.5);
+  run(r, 0.4);
   assert.ok(k.v > CLASSES['100cc'].top + coinTop(2) + 1, `the boost lifts you past top speed: ${k.v}`);
   k.input.cash = true;
   const none = run(r, 1 / 60);

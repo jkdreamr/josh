@@ -12,12 +12,12 @@ export const HOP_V = 4.2;
 export const GRAVITY = 28;
 export const REVERSE = 7;
 export const OFFROAD = 0.55;
-export const MAX_COINS = 50;
-/** Five coins buy a quick boost. */
+export const MAX_COINS = 10;
+/** Five coins buy a quick boost: a short one, well under a mushroom's. */
 export const CASH_COST = 5;
-export const CASH_T = 0.8;
-/** Top speed from coins: the first ten count most, every coin after that still helps. */
-export const coinTop = (coins: number) => 0.12 * Math.min(coins, 10) + 0.04 * Math.max(0, coins - 10);
+export const CASH_T = 0.5;
+/** Top speed from coins, a little for each. */
+export const coinTop = (coins: number) => 0.12 * Math.min(coins, MAX_COINS);
 export const BOOST_DV = 9;
 export const STAR_DV = 5;
 export const STAR_T = 7.5;
@@ -1254,8 +1254,8 @@ function think(r: Race, k: Kart, dt: number) {
   inp.brake = peak > 0 && k.v > 1.55 / peak && k.boost <= 0;
   if (Math.abs(diff) > 2.2 && k.v < 4) inp.brake = false;
 
-  // cash in a stack of coins for a boost on a straight
-  if (k.coins >= 12 && k.boost <= 0 && Math.abs(curveAhead(t, k.s, 0, 30).peak) < 0.012 && r.rand() < dt * 0.3) inp.cash = true;
+  // cash in a full purse for a boost on a straight
+  if (k.coins >= MAX_COINS && k.boost <= 0 && Math.abs(curveAhead(t, k.s, 0, 30).peak) < 0.012 && r.rand() < dt * 0.3) inp.cash = true;
 
   // tricks off ramps, and a shove for anyone driving alongside
   if (k.air && k.trickT > 0 && !k.trick && r.rand() < ai.skill * 0.25) inp.hop = true;

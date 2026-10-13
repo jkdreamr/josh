@@ -310,7 +310,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Dash panels and ramps.</b> The orange arrows boost you. Press {touch ? 'drift' : 'Space'} as you fly off a ramp for a trick and land with a boost.
           </li>
           <li>
-            <b>Coins.</b> Every coin adds a little top speed (up to 50). {touch ? 'Tap your coins' : 'Press B'} to cash in 5 for a quick boost. Getting hit drops coins.
+            <b>Coins.</b> Every coin adds a little top speed (up to 10). {touch ? 'Tap your coins' : 'Press B'} to cash in 5 for a quick boost. Getting hit drops coins.
           </li>
         </ul>
       </section>
