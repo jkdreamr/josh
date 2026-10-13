@@ -206,6 +206,7 @@ function Play({ mode }: { mode: Mode }) {
           players: () => onlineRef.current?.players ?? [],
           send: (d, opts) => onlineRef.current?.send(d, opts),
           onMessage: (fn) => o.onMessage(fn),
+          report: (winner) => onlineRef.current?.reportResult(o.round, winner),
         }
       : null;
     ctl.current = makeCtl(mode, { bots: Number(bots), level: levelIndex(levelName), length: Number(length), skin: loadLocker().pick, online: net, fill: Number(fill) });
@@ -225,6 +226,8 @@ function Play({ mode }: { mode: Mode }) {
   const [feed, setFeed] = useState<Feed[]>([]);
   const [toast, setToast] = useState<{ id: number; skin: Skin } | null>(null);
   const [flash, setFlash] = useState<{ id: number; kind: 'dead' | 'kill' | 'win' } | null>(null);
+  const [, setVersion] = useState(0);
+  const [banner, setBanner] = useState<{ text: string; count: boolean } | null>(null);
   const st = useRef({
     acc: 0,
     clock: 0,
@@ -251,6 +254,8 @@ function Play({ mode }: { mode: Mode }) {
     deathBy: null as string | null,
     won: false,
     popId: 0,
+    version: 0,
+    bannerText: '',
   });
   const live = mode !== 'idle';
   const twoUp = mode === '2p';
@@ -761,6 +766,21 @@ function Play({ mode }: { mode: Mode }) {
       if (s.hudIn <= 0) {
         s.hudIn = 1 / 8;
         updateHud(c);
+        const v = c.version?.() ?? 0;
+        if (v !== s.version) {
+          s.version = v;
+          setVersion(v);
+        }
+        // online: waiting for the host, the countdown, go!
+        const left = c.countdown?.() ?? 0;
+        const status = c.online?.status() ?? null;
+        const text = status ?? (left > 0 ? String(Math.ceil(left)) : c.online && c.elapsed() < 0.8 ? 'go!' : '');
+        if (text !== s.bannerText) {
+          s.bannerText = text;
+          setBanner(text ? { text, count: /^\d$/.test(text) } : null);
+          if (/^\d$/.test(text)) sfx.tone({ freq: 440, dur: 0.14, type: 'square', vol: 0.12 });
+          else if (text === 'go!') sfx.tone({ freq: 880, dur: 0.4, type: 'square', vol: 0.14 });
+        }
       }
       if (!live || s.ended) return;
       if (mode === 'solo') {
@@ -884,6 +904,11 @@ function Play({ mode }: { mode: Mode }) {
               </span>
             </div>
           )}
+        </div>
+      )}
+      {banner && (
+        <div key={banner.text} className={`g-paperio-banner${banner.count ? ' is-count' : ''}`} aria-live="polite">
+          {banner.text}
         </div>
       )}
       {flash && <div key={flash.id} className={`g-paperio-flash is-${flash.kind}`} onAnimationEnd={() => setFlash(null)} />}

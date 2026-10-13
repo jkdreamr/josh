@@ -412,3 +412,303 @@ test('skins unlock at their milestones and a broken save is safe', () => {
   assert.ok(parsed.have.includes(SKINS.find((s) => s.key === 'hoover')!.id), 'earned skins come back from the stats');
   assert.equal(parsed.stats.kills, 0);
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// Online: packets and a whole room in memory
+
+import { F_ALIVE, F_OUT, decodeRows, encodeRows, endPacket, helloPacket, initPacket, movePacket, opPackets, parsePacket, quant, resyncPacket, snapshotPackets, splitOp, statePacket, MAX_BYTES, type NetOp } from '../src/os/arcade/games/paperio/net.ts';
+import { GO, Track, guestCtl, hostCtl } from '../src/os/arcade/games/paperio/session.ts';
+import { botTick } from '../src/os/arcade/games/paperio/bots.ts';
+import type { Ctl, Net } from '../src/os/arcade/games/paperio/ctl.ts';
+import { mulberry32 } from '../src/os/arcade/games/paperio/world.ts';
+
+const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
+
+test('packets round trip through JSON, and junk or other games’ packets are ignored', () => {
+  const roster = [
+    { id: 0, seat: 0, name: 'josh', color: 0, skin: 4, bot: false },
+    { id: 1, seat: -1, name: 'hoover', color: 13, skin: 10, bot: true },
+  ];
+  const i = parsePacket(clone(initPacket(3, 360, 180, 2.5, roster)));
+  assert.deepEqual(i, { k: 'I', round: 3, radius: 360, duration: 180, go: 2.5, roster });
+  const ops: NetOp[] = [
+    { k: 'spawn', id: 2, cx: 100, cy: 220, h: -1.234 },
+    { k: 'cap', id: 2, runs: [10, 5, 3, 10, 20, 4, 11, 6, 2, 400, 1, 7] },
+    { k: 'die', id: 1, by: 2, cause: 'cut' },
+    { k: 'die', id: 4, by: -1, cause: 'self' },
+    { k: 'look', id: 3, color: 7, skin: 9 },
+  ];
+  const packs = opPackets(3, 17, ops);
+  assert.equal(packs.length, 1);
+  const o = parsePacket(clone(packs[0]));
+  assert.ok(o && o.k === 'O');
+  assert.equal(o.seq, 17);
+  assert.deepEqual(o.ops, ops);
+  // big captures split into pieces that each fit, and every message stays under the room cap
+  const big: NetOp = { k: 'cap', id: 5, runs: Array.from({ length: 3000 }, (_, j) => [j, (j * 7) % 600, 1 + (j % 50)]).flat() };
+  const pieces = splitOp(big);
+  assert.ok(pieces.length > 1);
+  assert.ok(pieces.slice(1).every((p) => 'more' in p));
+  const msgs = opPackets(3, 1, pieces);
+  for (const m of msgs) assert.ok(JSON.stringify(m).length < 8 * 1024, 'under 8 KB');
+  const back = msgs.flatMap((m) => (parsePacket(clone(m)) as { ops: NetOp[] }).ops);
+  assert.deepEqual(back.flatMap((p) => (p.k === 'cap' ? p.runs : [])), (big as { runs: number[] }).runs);
+  const st = parsePacket(clone(statePacket(3, 600, 12.34, 0, 40, 123456, [{ id: 1, x: 10.04, y: 20.06, h: 1.5, f: F_ALIVE | F_OUT, kills: 2, life: 3 }])));
+  assert.ok(st && st.k === 'S');
+  assert.equal(st.hash, 123456);
+  assert.deepEqual(st.heads[0], { id: 1, x: 10, y: 20.1, h: 1.5, f: 3, kills: 2, life: 3 });
+  assert.equal(parsePacket(clone(statePacket(3, 600, 1, 0, 40, null, [])))?.k, 'S');
+  const mv = parsePacket(clone(movePacket(3, 2, 99, [quant(10.123), quant(20.456), quant(11), quant(21)], 0.5, true)));
+  assert.deepEqual(mv, { k: 'M', round: 3, life: 2, seq: 99, pts: [10.12, 20.46, 11, 21], h: 0.5, dead: true });
+  assert.deepEqual(parsePacket(clone(endPacket(3, 1, [1, 0], [40.5, 3.25]))), { k: 'E', round: 3, winner: 1, order: [1, 0], pct: [40.5, 3.25] });
+  assert.deepEqual(parsePacket(clone(helloPacket(3, 5))), { k: 'H', round: 3, skin: 5 });
+  assert.deepEqual(parsePacket(clone(resyncPacket(3))), { k: 'Q', round: 3 });
+  for (const junk of [null, 5, 'x', {}, { t: 'pk', r: 1, k: 'S' }, { t: 'po', r: 1.5, k: 'Q' }, { t: 'po', r: 1, k: 'O', s: 1, o: [['c', 1, 0, -5, 3]] }, { t: 'po', r: 1, k: 'O', s: 1, o: [['d', 99, 0, 0]] }, { t: 'po', r: 1, k: 'M', l: 1, s: 1, p: [1], h: 0 }, { t: 'po', r: 1, k: 'Z', z: 1, s: 1, i: 3, of: 2, y0: 0, rows: [] }])
+    assert.equal(parsePacket(junk), null, JSON.stringify(junk));
+});
+
+test('snapshots rebuild the board exactly, in chunks under the room cap', () => {
+  const w = createWorld({ radius: 360, seed: 2 });
+  const rng = mulberry32(5);
+  for (let k = 0; k < 4000; k++) {
+    const y = Math.floor(rng() * w.n);
+    const x = Math.floor(rng() * w.n);
+    applyRuns(w, Math.floor(rng() * 6), [y, x, 1 + Math.floor(rng() * 30)].map((v, i) => (i === 2 ? Math.min(v, w.n - x) : v)));
+  }
+  const packs = snapshotPackets(1, 1, 50, w.owner, w.n);
+  assert.ok(packs.length > 1);
+  for (const p of packs) assert.ok(JSON.stringify(p).length < MAX_BYTES + 2048);
+  const grid = new Uint8Array(w.n * w.n);
+  for (const p of packs) {
+    const z = parsePacket(clone(p));
+    assert.ok(z && z.k === 'Z');
+    assert.ok(decodeRows(grid, w.n, z.y0, z.rows));
+  }
+  assert.deepEqual(grid, w.owner);
+  assert.equal(decodeRows(grid, w.n, 0, [[0, w.n + 1]]), false, 'rows must add up to the width');
+  assert.deepEqual(encodeRows(new Uint8Array([1, 1, 0, 2]), 4, 0, 0), [[1, 2, 0, 1, 2, 1]]);
+});
+
+test('remote heads are drawn between states, and late or duplicate states are dropped', () => {
+  const t = new Track();
+  const pose = { x: 0, y: 0, h: 0, alive: true, out: false };
+  t.push(1, 0, 0, 0, F_ALIVE);
+  t.push(1.1, 10, 0, 0, F_ALIVE | F_OUT);
+  t.push(1.05, 99, 99, 0, 0);
+  t.push(1.1, 99, 99, 0, 0);
+  assert.equal(t.size, 2);
+  t.sample(1.05, pose);
+  assert.ok(Math.abs(pose.x - 5) < 1e-9);
+  // a respawn far away snaps instead of sliding across the map
+  t.push(1.2, 300, 300, 0, F_ALIVE);
+  t.sample(1.15, pose);
+  assert.equal(pose.x, 300);
+});
+
+/** A room in memory: reliable messages arrive in order after a delay; fast ones can be late, out of order or lost. */
+class MemRoom {
+  now = 0;
+  players: { seat: number; name: string }[] = [];
+  private queue: { at: number; from: number; to: number; d: unknown; order: number }[] = [];
+  private listeners = new Map<number, Set<(from: number, d: unknown) => void>>();
+  private lastReliable = new Map<string, number>();
+  private n = 0;
+  rng = mulberry32(99);
+  loss = 0;
+  /** Drop the next reliable message from the host to this seat (a gap the guest must notice). */
+  dropNextTo: number | null = null;
+  reports: (number | null)[] = [];
+  bytes = 0;
+  latency = 0.04;
+  jitter = 0.03;
+
+  net(seat: number, round = 1): Net {
+    return {
+      seat,
+      round,
+      isHost: seat === 0,
+      players: () => this.players,
+      send: (d, opts) => {
+        const to = seat === 0 ? (opts?.to !== undefined ? [opts.to] : this.players.map((p) => p.seat).filter((s) => s !== 0)) : [0];
+        const text = JSON.stringify(d);
+        this.bytes += text.length;
+        assert.ok(text.length < 8 * 1024, `message under 8 KB (${text.length})`);
+        for (const r of to) {
+          if (opts?.fast) {
+            if (this.rng() < this.loss) continue;
+            this.queue.push({ at: this.now + this.latency + this.rng() * this.jitter, from: seat, to: r, d: JSON.parse(text), order: this.n++ });
+          } else {
+            if (seat === 0 && this.dropNextTo === r) {
+              this.dropNextTo = null;
+              continue;
+            }
+            const key = `${seat}>${r}`;
+            const at = Math.max(this.lastReliable.get(key) ?? 0, this.now + this.latency);
+            this.lastReliable.set(key, at);
+            this.queue.push({ at, from: seat, to: r, d: JSON.parse(text), order: this.n++ });
+          }
+        }
+      },
+      onMessage: (fn) => {
+        let set = this.listeners.get(seat);
+        if (!set) this.listeners.set(seat, (set = new Set()));
+        set.add(fn);
+        return () => set.delete(fn);
+      },
+      report: (winner) => this.reports.push(winner),
+    };
+  }
+
+  pump() {
+    this.queue.sort((a, b) => a.at - b.at || a.order - b.order);
+    while (this.queue.length && this.queue[0].at <= this.now) {
+      const m = this.queue.shift()!;
+      if (!this.players.some((p) => p.seat === m.to)) continue;
+      for (const fn of this.listeners.get(m.to) ?? []) fn(m.from, m.d);
+    }
+  }
+}
+
+/** Runs a host and guests for `secs`, each human steered by the bot brain on its own copy of the world. */
+function play(room: MemRoom, ctls: Ctl[], secs: number, steer = true) {
+  const dt = 1 / 60;
+  for (let i = 0; i < secs * 60; i++) {
+    room.now += dt;
+    for (const c of ctls) {
+      c.frame?.(dt);
+      if (steer)
+        for (const id of c.locals) {
+          const p = c.w.players[id];
+          if (p?.alive) {
+            p.mind ??= makeMind('defender', 1, mulberry32(id * 7 + 1));
+            botTick(c.w, p, dt);
+          }
+        }
+      c.tick();
+      c.w.events.length = 0;
+    }
+    room.pump();
+  }
+}
+
+/** Stops everyone and lets the last messages land. */
+function settle(room: MemRoom, ctls: Ctl[], secs = 3) {
+  const dt = 1 / 60;
+  for (let i = 0; i < secs * 60; i++) {
+    room.now += dt;
+    for (const c of ctls) c.frame?.(dt);
+    room.pump();
+  }
+}
+
+function room3(loss = 0) {
+  const room = new MemRoom();
+  room.loss = loss;
+  room.players = [
+    { seat: 0, name: 'host' },
+    { seat: 1, name: 'ana' },
+    { seat: 2, name: 'ben' },
+  ];
+  const host = hostCtl(room.net(0), { skin: 0, fill: 6, level: 1, length: 1.5, seed: 21 });
+  const guests = [guestCtl(room.net(1), { skin: 4, fill: 0, level: 1, length: 1 }), guestCtl(room.net(2), { skin: 6, fill: 0, level: 1, length: 1 })];
+  return { room, host, guests, all: [host, ...guests] };
+}
+
+test('online: guests see the same board as the host, and their own heads where they drove them', () => {
+  const { room, host, guests, all } = room3();
+  play(room, all, GO + 25);
+  for (const g of guests) assert.ok(g.online?.ready(), 'guests joined');
+  assert.equal(guests[0].w.players.length, host.w.players.length);
+  assert.equal(guests[0].w.players[guests[0].locals[0]].color, SKINS[4].color, 'a guest wears its skin color');
+  assert.equal(host.w.players[guests[0].locals[0]].skin, 4);
+  // the host walked each guest's head where the guest said it went
+  for (const g of guests) {
+    const id = g.locals[0];
+    const mine = g.w.players[id];
+    const theirs = host.w.players[id];
+    if (mine.alive && theirs.alive) assert.ok(Math.hypot(mine.x - theirs.x, mine.y - theirs.y) < 12, 'host has the guest head close to where it is');
+  }
+  settle(room, all);
+  for (const g of guests) {
+    assert.equal(ownerHash(g.w), ownerHash(host.w), 'same board after the last ops land');
+    for (const p of host.w.players) assert.equal(g.w.players[p.id].alive, p.alive, `${p.name} alive matches`);
+  }
+  const caps = host.w.players.filter((p) => p.seat > 0).map((p) => p.peak);
+  assert.ok(caps.every((pc) => pc > 0.3), 'guests captured land through the host');
+  assert.ok(room.bytes / 28 < 60_000, `bandwidth stays small (${(room.bytes / 28 / 1024).toFixed(1)} KB/s)`);
+  for (const c of all) c.dispose();
+});
+
+test('online: lost and shuffled fast packets cost nothing, a lost op is noticed and resynced', () => {
+  const { room, host, guests, all } = room3(0.3);
+  play(room, all, GO + 8);
+  // lose one reliable message to the first guest: a gap in the numbered ops
+  room.dropNextTo = 1;
+  play(room, all, 14);
+  settle(room, all, 5);
+  for (const g of guests) assert.equal(ownerHash(g.w), ownerHash(host.w), 'boards agree again');
+  for (const c of all) c.dispose();
+});
+
+test('online: cutting a guest trail kills that guest on every screen, and leavers are out for good', () => {
+  const room = new MemRoom();
+  room.players = [
+    { seat: 0, name: 'host' },
+    { seat: 1, name: 'ana' },
+  ];
+  const host = hostCtl(room.net(0), { skin: 0, fill: 0, level: 1, length: 2, seed: 8 });
+  const guest = guestCtl(room.net(1), { skin: 1, fill: 0, level: 1, length: 2 });
+  play(room, [host, guest], GO + 0.5, false);
+  assert.ok(guest.online?.ready());
+  const gid = guest.locals[0];
+  const hid = host.locals[0];
+  const gp = guest.w.players[gid];
+  // the guest heads straight out of its land for a while
+  gp.want = gp.h;
+  for (let i = 0; i < 60; i++) {
+    room.now += 1 / 60;
+    host.frame?.(1 / 60);
+    guest.frame?.(1 / 60);
+    gp.want = gp.h;
+    guest.tick();
+    host.tick();
+    room.pump();
+  }
+  settle(room, [host, guest], 0.5);
+  const target = host.w.players[gid];
+  assert.ok(target.out && target.trailLen > 0, 'the host sees the guest out with a trail');
+  // the host's head teleports across that trail (a cut)
+  const k = target.trail[Math.floor(target.trailLen / 2)];
+  const ty = Math.floor(k / host.w.n);
+  const tx = k - ty * host.w.n;
+  const hp = host.w.players[hid];
+  hp.rx = tx + 0.5;
+  hp.ry = ty - 6.5;
+  drive(host.w, hp, tx + 0.5, ty + 6.5);
+  assert.ok(!host.w.players[gid].alive);
+  settle(room, [host, guest], 1);
+  assert.ok(!guest.w.players[gid].alive, 'the guest sees itself cut');
+  assert.equal(guest.w.players[gid].cause, 'cut');
+  assert.equal(guest.w.players[hid].kills, 1);
+  // a guest who leaves is removed and never respawns
+  room.players = [{ seat: 0, name: 'host' }];
+  settle(room, [host], 5);
+  assert.equal(host.w.players[gid].respawnAt, -1);
+  assert.ok(!host.w.players[gid].alive);
+  host.dispose();
+  guest.dispose();
+});
+
+test('online: the host calls time and everyone reports the same winner', () => {
+  const { room, host, guests, all } = room3();
+  play(room, all, GO + 1.5 * 60 + 2);
+  assert.ok(host.isOver());
+  settle(room, all, 2);
+  for (const g of guests) {
+    assert.ok(g.isOver());
+    assert.deepEqual(g.online?.result().order, host.online?.result().order);
+  }
+  assert.equal(room.reports.length, 3);
+  assert.ok(room.reports.every((r) => r === room.reports[0]));
+  for (const c of all) c.dispose();
+});

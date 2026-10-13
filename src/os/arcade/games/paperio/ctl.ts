@@ -12,6 +12,8 @@ export type Net = {
   players(): { seat: number; name: string }[];
   send(d: unknown, opts?: { to?: number; fast?: boolean }): void;
   onMessage(fn: (from: number, d: unknown) => void): () => void;
+  /** Reports the round's winner (a seat) for the room's Online Wins board. */
+  report(winnerSeat: number | null): void;
 };
 
 export type OnlineInfo = {
@@ -39,6 +41,10 @@ export type Ctl = {
   respawnIn(p: Player): number | null;
   /** Once per rendered frame with real seconds (network sends and receives). */
   frame?(dt: number): void;
+  /** Seconds before the round starts moving (online countdown), 0 once it runs. */
+  countdown?(): number;
+  /** Bumps when the world or its players are replaced (a guest's round arriving). */
+  version?(): number;
   dispose(): void;
   online?: OnlineInfo;
 };
