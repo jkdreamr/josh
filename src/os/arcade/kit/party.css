@@ -68,6 +68,15 @@
 .arcade-party-body.is-center {
   justify-content: safe center;
 }
+/* A new step's buttons sit where the last step's were: ignore taps for a moment so a double tap can't skip it. */
+.arcade-party-actions {
+  animation: arcade-party-guard 0.35s step-end;
+}
+@keyframes arcade-party-guard {
+  from {
+    pointer-events: none;
+  }
+}
 .arcade-party-actions {
   position: relative;
   z-index: 1;
@@ -284,9 +293,9 @@
   width: 19px;
   height: 19px;
   border-radius: 50%;
-  font-family: var(--party-display);
   font-size: 12px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--on-accent, #fff);
   background: var(--accent);
 }
@@ -648,7 +657,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .arcade-party,
-  .arcade-party *,
+  .arcade-party *:not(.arcade-party-actions),
   .arcade-party *::before,
   .arcade-party *::after {
     animation-duration: 1ms !important;

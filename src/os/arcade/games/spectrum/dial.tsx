@@ -1,15 +1,18 @@
-// The Spectrum dial: an SVG half circle from 0 (left extreme) to 180 degrees (right extreme), with the scoring
-// bands around the hidden target and a needle the group drags, taps or nudges with the arrow keys.
-import { useId, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import type { Card } from './cards';
+// The Spectrum board: a printed half dial from 0 (left extreme) to 180 degrees (right extreme) with the card
+// slotted underneath. The scoring bands sit around the hidden target under a shutter that swings open for the
+// psychic and again for the reveal. The group drags, taps or nudges the needle with the arrow keys.
+import { useId, useRef, useState, type AnimationEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { stockOf, type Card } from './cards';
 import { DIAL, bandsAround, clampDial, type Points } from './logic';
 
 const W = 220;
-const H = 124;
+const H = 126;
 const CX = 110;
-const CY = 110;
-const R = 100;
-const NEEDLE = R - 14;
+const CY = 112;
+/** The printed face, the plate around it, and how far the needle reaches. */
+const R = 96;
+const RIM = 108;
+const NEEDLE = R - 19;
 
 const round = (n: number) => Math.round(n * 100) / 100;
 
@@ -26,35 +29,46 @@ function wedge(from: number, to: number, r: number) {
 }
 
 const half = (r: number) => `M${CX - r} ${CY}A${r} ${r} 0 0 1 ${CX + r} ${CY}Z`;
+const arc = (r: number) => `M${CX - r} ${CY}A${r} ${r} 0 0 1 ${CX + r} ${CY}`;
+/** The plate: a half disc with a bar under it, rounded at the bottom corners. */
+const PLATE = `M${CX - RIM} ${CY}A${RIM} ${RIM} 0 0 1 ${CX + RIM} ${CY}V${CY + 6}a4 4 0 0 1 -4 4H${CX - RIM + 4}a4 4 0 0 1 -4 -4Z`;
 
 const TICKS = Array.from({ length: DIAL / 5 + 1 }, (_, i) => i * 5);
+const SHUTTER_RINGS = [22, 38, 54, 70];
 
-export type BandMode = 'hidden' | 'shown' | 'reveal';
+/**
+ * The shutter over the target: `open` (the psychic's view, opens on arrival), `close` (swings shut on arrival),
+ * `closed`, or `reveal` (swings open after a beat, then calls onOpen). `shown` skips straight to open.
+ */
+export type Cover = 'open' | 'close' | 'closed' | 'reveal' | 'shown';
 
 export function Dial({
   card,
   needle,
   target,
-  bands = 'hidden',
+  cover,
   points,
   onChange,
+  onOpen,
 }: {
   card: Card;
   /** Where the needle points, or null to hide it. */
   needle: number | null;
+  /** The hidden target. Leave it out while the group guesses, so the bands aren't on the page at all. */
   target?: number;
-  bands?: BandMode;
+  cover: Cover;
   /** The points the needle earned, to outline the band it landed in. */
   points?: Points;
   /** Makes the dial draggable. */
   onChange?: (v: number) => void;
+  /** Called once the reveal has swung open. */
+  onOpen?: () => void;
 }) {
-  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
+  const clip = `g-spectrum-face-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const svg = useRef<SVGSVGElement | null>(null);
   const drag = useRef<number | null>(null);
   const [dragging, setDragging] = useState(false);
   const live = !!onChange;
-  const showBands = bands !== 'hidden' && target !== undefined;
 
   const valueAt = (e: ReactPointerEvent) => {
     const el = svg.current;
@@ -90,20 +104,23 @@ export function Dial({
     drag.current = null;
     setDragging(false);
   };
+  const opened = (e: AnimationEvent<SVGGElement>) => {
+    if (e.target === e.currentTarget && cover === 'reveal') onOpen?.();
+  };
 
-  const list = showBands ? bandsAround(target) : [];
+  const list = target === undefined ? [] : bandsAround(target);
   const hit = points && needle !== null ? list.findIndex((b) => b.points === points && needle >= b.from - 0.001 && needle <= b.to + 0.001) : -1;
   const pct = needle === null ? 50 : Math.round((needle / DIAL) * 100);
   const lean = pct === 50 ? 'Dead center' : pct < 50 ? `${100 - pct}% toward ${card[0]}` : `${pct}% toward ${card[1]}`;
 
   return (
-    <div className={`g-spectrum-dial ${live ? 'is-live' : ''} ${dragging ? 'is-dragging' : ''} is-${bands}`}>
+    <div className={`g-spectrum-dial ${live ? 'is-live' : ''} ${dragging ? 'is-dragging' : ''}`}>
       <svg
         ref={svg}
         viewBox={`0 0 ${W} ${H}`}
         role={live ? 'slider' : 'img'}
         tabIndex={live ? 0 : undefined}
-        aria-label={live ? 'Dial' : `Dial from ${card[0]} to ${card[1]}`}
+        aria-label={`Dial from ${card[0]} to ${card[1]}`}
         aria-valuemin={live ? 0 : undefined}
         aria-valuemax={live ? DIAL : undefined}
         aria-valuenow={live && needle !== null ? Math.round(needle) : undefined}
@@ -115,47 +132,30 @@ export function Dial({
         onLostPointerCapture={live ? up : undefined}
       >
         <defs>
-          <linearGradient id={`${uid}-rim`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#2b3a3a" />
-            <stop offset="1" stopColor="#0d1414" />
-          </linearGradient>
-          <radialGradient id={`${uid}-face`} cx={CX} cy={CY} r={R} gradientUnits="userSpaceOnUse">
-            <stop offset="0" stopColor="#1d4f4a" />
-            <stop offset="0.75" stopColor="#123633" />
-            <stop offset="1" stopColor="#0b2422" />
-          </radialGradient>
-          <radialGradient id={`${uid}-knob`} cx="0.38" cy="0.32" r="0.8">
-            <stop offset="0" stopColor="#5eead4" />
-            <stop offset="0.55" stopColor="#14b8a6" />
-            <stop offset="1" stopColor="#0b5f57" />
-          </radialGradient>
-          <filter id={`${uid}-shadow`} x="-50%" y="-50%" width="200%" height="200%">
-            <feDropShadow dx="0" dy="1.2" stdDeviation="1.4" floodColor="#000" floodOpacity="0.55" />
-          </filter>
+          <clipPath id={clip}>
+            <path d={half(R)} />
+          </clipPath>
         </defs>
 
-        <path d={half(R + 7)} fill={`url(#${uid}-rim)`} />
-        <path d={half(R + 7)} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="0.6" />
-        <path d={half(R)} fill={`url(#${uid}-face)`} />
-        <path d={`M${CX - R * 0.62} ${CY}A${R * 0.62} ${R * 0.62} 0 0 1 ${CX + R * 0.62} ${CY}`} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="0.8" />
-
+        <path d={PLATE} className="g-spectrum-plate-edge" transform="translate(0 3)" />
+        <path d={PLATE} className="g-spectrum-plate" />
         <g className="g-spectrum-ticks">
           {TICKS.map((v) => {
             const major = v % 45 === 0;
-            const [x1, y1] = at(v, R - (major ? 7 : 3.5));
-            const [x2, y2] = at(v, R - 0.8);
+            const [x1, y1] = at(v, R + 3);
+            const [x2, y2] = at(v, R + (major ? 9 : 6));
             return <line key={v} x1={x1} y1={y1} x2={x2} y2={y2} className={major ? 'is-major' : undefined} />;
           })}
         </g>
+        <path d={half(R)} className="g-spectrum-face" />
 
-        {showBands && (
-          <g key={`${target}-${bands}`} className="g-spectrum-bands">
+        {list.length > 0 && (
+          <g className="g-spectrum-bands" clipPath={`url(#${clip})`}>
             {list.map((b, i) => {
-              const [tx, ty] = at((b.from + b.to) / 2, R - 6.5);
-              const ring = Math.abs(i - 2);
+              const [tx, ty] = at((b.from + b.to) / 2, R - 9.5);
               return (
-                <g key={i} className={`g-spectrum-band is-p${b.points} ${i === hit ? 'is-hit' : ''}`} style={{ animationDelay: `${(2 - ring) * 0.09}s` }}>
-                  <path d={wedge(b.from, b.to, R - 0.5)} />
+                <g key={i} className={`g-spectrum-band is-p${b.points} ${i === hit ? 'is-hit' : ''}`}>
+                  <path d={wedge(b.from, b.to, R)} />
                   <text x={tx} y={ty} transform={`rotate(${round((b.from + b.to) / 2 - 90)} ${tx} ${ty})`}>
                     {b.points}
                   </text>
@@ -164,50 +164,50 @@ export function Dial({
             })}
           </g>
         )}
+        <path d={arc(R - 4.5)} className="g-spectrum-inset" />
 
-        <path d={half(R)} fill="none" stroke="rgba(0,0,0,0.45)" strokeWidth="1.6" />
-
-        <rect x={CX - R - 9} y={CY - 1} width={2 * R + 18} height="9" rx="4.5" fill={`url(#${uid}-rim)`} />
-        <rect x={CX - R - 9} y={CY - 1} width={2 * R + 18} height="9" rx="4.5" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+        <g clipPath={`url(#${clip})`}>
+          <g className={`g-spectrum-shutter is-${cover}`} onAnimationEnd={opened}>
+            <path d={half(R + 1)} className="g-spectrum-shutter-fill" />
+            {SHUTTER_RINGS.map((r) => (
+              <path key={r} d={arc(r)} className="g-spectrum-shutter-ring" />
+            ))}
+            <path d={arc(R - 4.5)} className="g-spectrum-shutter-inset" />
+          </g>
+        </g>
 
         {needle !== null && (
-          <g filter={`url(#${uid}-shadow)`}>
-            <g className="g-spectrum-needle" style={{ transform: `rotate(${round(needle - 90)}deg)` }}>
-              <path d={`M${CX - 3.2} ${CY}L${CX - 0.9} ${CY - NEEDLE}Q${CX} ${CY - NEEDLE - 1.6} ${CX + 0.9} ${CY - NEEDLE}L${CX + 3.2} ${CY}Z`} fill="#fdfcf8" />
-              {live && <circle className="g-spectrum-grip" cx={CX} cy={CY - NEEDLE + 5} r="3.6" />}
-            </g>
+          <g className="g-spectrum-needle" style={{ transform: `rotate(${round(needle - 90)}deg)` }}>
+            <path d={`M${CX - 3.4} ${CY}L${CX - 1} ${CY - NEEDLE}Q${CX} ${CY - NEEDLE - 1.8} ${CX + 1} ${CY - NEEDLE}L${CX + 3.4} ${CY}Z`} />
+            {live && <circle className="g-spectrum-grip" cx={CX} cy={CY - NEEDLE + 5} r="4.2" />}
           </g>
         )}
-        <g filter={`url(#${uid}-shadow)`}>
-          <circle cx={CX} cy={CY} r="11" fill={`url(#${uid}-knob)`} />
-        </g>
-        <circle cx={CX} cy={CY} r="11" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="0.8" />
-        <circle cx={CX} cy={CY} r="3.4" fill="#f0fdfa" opacity="0.9" />
+        <circle cx={CX} cy={CY} r="11" className="g-spectrum-cap" />
+        <circle cx={CX} cy={CY} r="3.6" className="g-spectrum-cap-dot" />
       </svg>
-      <div className="g-spectrum-ends" aria-hidden="true">
-        <span>
-          <svg width="10" height="10" viewBox="0 0 10 10">
-            <path d="M6.5 1.5L3 5l3.5 3.5" />
-          </svg>
-          {card[0]}
-        </span>
-        <span>
-          {card[1]}
-          <svg width="10" height="10" viewBox="0 0 10 10">
-            <path d="M3.5 1.5L7 5 3.5 8.5" />
-          </svg>
-        </span>
-      </div>
+      <CardFace card={card} />
     </div>
   );
 }
 
-/** The card's two extremes, big, above the dial. */
-export function CardLabels({ card }: { card: Card }) {
+/** The card slotted under the board: the two extremes, big enough to read across the table. */
+function CardFace({ card }: { card: Card }) {
+  // The type shrinks so the longest word on the card still fits its half.
+  const longest = Math.max(6, ...card.flatMap((label) => label.split(/\s+/).map((w) => w.length)));
   return (
-    <div className="g-spectrum-card" role="group" aria-label={`${card[0]} to ${card[1]}`}>
-      <span className="is-left">{card[0]}</span>
-      <span className="is-right">{card[1]}</span>
+    <div className={`g-spectrum-card is-stock${stockOf(card)}`} role="group" aria-label={`${card[0]} to ${card[1]}`} style={{ ['--g-spectrum-long' as string]: longest }}>
+      <span className="is-left">
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M7.5 2L3.5 6l4 4" />
+        </svg>
+        {card[0]}
+      </span>
+      <span className="is-right">
+        {card[1]}
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M4.5 2l4 4-4 4" />
+        </svg>
+      </span>
     </div>
   );
 }

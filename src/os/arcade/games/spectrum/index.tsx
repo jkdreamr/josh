@@ -1,9 +1,9 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { GameShell, defineSetting, sfx, useKeys, useSetting, useShell } from '../../kit';
-import { Avatar, Big, Option, PassTo, Pile, PlayerList, Row, Screen, listNames, usePlayers } from '../../kit/party';
+import { Avatar, Big, HowToPlay, Option, PassTo, Pile, PlayerList, Row, Screen, listNames, usePlayers } from '../../kit/party';
 import type { GameProps } from '../../types';
 import { CARDS, type Card } from './cards';
-import { CardLabels, Dial } from './dial';
+import { Dial } from './dial';
 import {
   MIN_PLAYERS,
   NEEDLE_START,
@@ -12,12 +12,14 @@ import {
   addPoints,
   callPoints,
   clampDial,
+  clueTip,
   makeTeams,
   otherTeam,
   psychicFor,
   randomTarget,
   rating,
   scoreGuess,
+  scoresBefore,
   startScores,
   togetherDone,
   verdict,
@@ -40,6 +42,11 @@ type Turn = { card: Card; target: number; needle: number; points: Points; team: 
 type Match = { mode: Mode; names: string[]; goal: number; first: number; turn: number; scores: [number, number]; history: Turn[] };
 type Deal = { card: Card; target: number };
 type Step = { s: 'setup' } | { s: 'pass' } | { s: 'psychic' } | { s: 'guess' } | { s: 'call' } | { s: 'reveal' } | { s: 'end' };
+
+/** The shutter swings for about a second after a short beat; a ratchet of clicks plays under it. */
+function ratchet() {
+  for (let i = 0; i < 9; i++) sfx.tone({ freq: 760 + i * 55, dur: 0.022, type: 'triangle', vol: 0.07, delay: 0.32 + i * 0.105 });
+}
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
@@ -89,10 +96,10 @@ function Play() {
     return (
       <Screen
         key="setup"
-        className="g-spectrum-screen"
+        className="g-spectrum-screen g-spectrum-setup"
         center={false}
         title="Spectrum"
-        sub="One player sees where the target hides between two extremes and gives a clue. Everyone else turns the dial."
+        sub="One player sees where the target hides and gives a clue. Everyone else turns the dial to find it."
         onEnter={ready ? go : undefined}
         actions={
           <Big primary disabled={!ready} onClick={go}>
@@ -100,6 +107,7 @@ function Play() {
           </Big>
         }
       >
+        <HowToPlay steps={m === 'teams' ? teamRules(goal) : TOGETHER_RULES} />
         <PlayerList min={min} />
         <Option
           label="Mode"
@@ -112,7 +120,7 @@ function Play() {
         />
         {m === 'teams' ? (
           <>
-            {!ready && n >= 2 && <p className="g-spectrum-note">Fewer than 4? Together works with 2 or more.</p>}
+            {!ready && n >= 2 && <p className="g-spectrum-note">Under 4 players? Together works with 2 or more.</p>}
             {ready && (
               <div className="g-spectrum-teams" aria-label="Teams">
                 {teams.map((t, i) => (
@@ -132,10 +140,9 @@ function Play() {
               ]}
               onChange={setGoal}
             />
-            {ready && <p className="g-spectrum-note">Teams sit alternating. The team that goes second starts with 1 point.</p>}
           </>
         ) : (
-          <p className="g-spectrum-note">Everyone plays on one side. {TOGETHER_CARDS} cards, and see how close to {TOGETHER_MAX} you get.</p>
+          <p className="g-spectrum-note">One team, {TOGETHER_CARDS} cards. How close to {TOGETHER_MAX} can you get?</p>
         )}
       </Screen>
     );
@@ -146,7 +153,6 @@ function Play() {
   const who = psychicFor(mm, names.length, match.turn, match.first);
   const psychic = name(who.seat);
   const teams = mm === 'teams';
-  const guessers = teams ? TEAM_NAMES[who.team] : 'Everyone';
   const over = teams ? winner(match.scores, match.goal) !== null : togetherDone(match.history.length);
   const lastTurn = match.history[match.history.length - 1];
 
@@ -154,7 +160,7 @@ function Play() {
     const points = scoreGuess(deal.target, needle);
     const cp = teams && call ? callPoints(deal.target, needle, call) : 0;
     const turn: Turn = { card: deal.card, target: deal.target, needle, points, team: who.team, seat: who.seat, call, callPts: cp };
-    sfx.play(points === 4 ? 'win' : points > 0 ? 'coin' : 'lose');
+    ratchet();
     setMatch({ ...match, scores: teams ? addPoints(match.scores, who.team, points, cp) : [match.scores[0] + points, 0], history: [...match.history, turn] });
     setStep({ s: 'reveal' });
   };
@@ -169,15 +175,14 @@ function Play() {
     dealTurn();
   };
 
-  const bar = <ScoreBar match={match} team={who.team} />;
-
   if (step.s === 'pass')
     return (
       <PassTo
         key={`pass-${match.turn}`}
+        className="g-spectrum-screen g-spectrum-arm"
         name={psychic}
         index={who.seat}
-        note={teams ? `${TEAM_NAMES[who.team]} is up. Only you look. Think of a clue.` : 'Only you look. Think of a clue.'}
+        note={teams ? `You're the psychic for ${TEAM_NAMES[who.team]}. Nobody else looks.` : "You're the psychic this round. Nobody else looks."}
         onReady={() => setStep({ s: 'psychic' })}
       />
     );
@@ -187,71 +192,67 @@ function Play() {
     return (
       <Screen
         key={`psychic-${match.turn}`}
-        className="g-spectrum-screen"
+        className="g-spectrum-screen g-spectrum-play g-spectrum-arm"
         onEnter={hide}
         actions={
           <Row>
             <Big onClick={() => setDeal({ ...deal, card: draw() })}>New Card</Big>
             <Big primary onClick={hide}>
-              Hide the Target
+              Hide Target
             </Big>
           </Row>
         }
       >
-        <p className="g-spectrum-kicker">Only {psychic} sees this</p>
-        <p className="g-spectrum-line">Give a clue that points at the 4. One idea, no numbers.</p>
-        <CardLabels card={deal.card} />
-        <div className="g-spectrum-dialbox">
-          <Dial card={deal.card} needle={null} target={deal.target} bands="shown" />
+        <p className="g-spectrum-secret">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2 6.5s2.2 3.5 6 3.5 6-3.5 6-3.5M4.2 9.2L3 11M8 10v2.2M11.8 9.2L13 11" />
+          </svg>
+          Only {psychic} looks
+        </p>
+        <Board>
+          <Dial card={deal.card} needle={null} target={deal.target} cover="open" />
+        </Board>
+        <div className="g-spectrum-tip">
+          <p>Say one thing that lands on the 4. No numbers.</p>
+          <p>{clueTip(deal.target, deal.card[0], deal.card[1])}</p>
         </div>
       </Screen>
     );
   }
 
+  const bar = (flash?: Turn, shown?: boolean) => <ScoreBar match={match} team={flash ? flash.team : who.team} flash={flash} shown={shown} />;
+
   if (step.s === 'guess')
     return (
       <GuessScreen
         key={`guess-${match.turn}`}
-        bar={bar}
+        bar={bar()}
         card={deal.card}
         needle={needle}
         setNeedle={setNeedle}
         psychic={psychic}
         seat={who.seat}
-        guessers={guessers}
+        guessers={teams ? TEAM_NAMES[who.team] : 'Everyone else'}
         onLock={() => (teams ? setStep({ s: 'call' }) : finish())}
       />
     );
 
-  if (step.s === 'call') return <CallScreen key={`call-${match.turn}`} bar={bar} card={deal.card} needle={needle} caller={otherTeam(who.team)} onCall={finish} />;
+  if (step.s === 'call') return <CallScreen key={`call-${match.turn}`} bar={bar()} card={deal.card} needle={needle} caller={otherTeam(who.team)} onCall={finish} />;
 
   if (step.s === 'reveal' && lastTurn) {
-    const pts = lastTurn.points;
-    const callers = TEAM_NAMES[otherTeam(lastTurn.team)];
     let sub: string;
     if (teams) {
-      const scored = `${TEAM_NAMES[lastTurn.team]} ${pts ? `scores ${pts}` : 'scores nothing'}.`;
-      const call = !lastTurn.call ? '' : pts === 4 ? ` Bullseye, so the ${callers} call doesn't count.` : lastTurn.callPts ? ` ${callers} called ${lastTurn.call} and got it, +1.` : ` ${callers} called ${lastTurn.call}. No point.`;
+      const pts = lastTurn.points;
+      const callers = TEAM_NAMES[otherTeam(lastTurn.team)];
+      const scored = pts ? `${TEAM_NAMES[lastTurn.team]} scores ${pts}.` : `${TEAM_NAMES[lastTurn.team]} scores nothing.`;
+      const call = !lastTurn.call ? '' : pts === 4 ? ' No call on a bullseye.' : lastTurn.callPts ? ` ${callers} called ${lastTurn.call} and gets 1.` : ` ${callers} called ${lastTurn.call}. Wrong side.`;
       sub = scored + call;
     } else {
       const played = match.history.length;
-      sub = played < TOGETHER_CARDS ? `${match.scores[0]} of a possible ${played * 4} so far.` : `That was the last card. ${match.scores[0]} of ${TOGETHER_MAX} in all.`;
+      sub = played < TOGETHER_CARDS ? `${match.scores[0]} of ${played * 4} so far.` : `That was the last card.`;
     }
     const label = over ? (teams ? 'See Who Won' : 'See Your Score') : 'Next Turn';
-    return (
-      <Screen key={`reveal-${match.turn}`} className="g-spectrum-screen g-spectrum-reveal" onEnter={next} actions={<Big primary onClick={next}>{label}</Big>}>
-        <ScoreBar match={match} team={lastTurn.team} flash={lastTurn} />
-        <h2 className={`arcade-party-title g-spectrum-verdict is-p${pts}`}>
-          {verdict(pts)}
-          <span className="g-spectrum-pts">{pts ? `+${pts}` : '0'}</span>
-        </h2>
-        <p className="g-spectrum-line">{sub}</p>
-        <CardLabels card={lastTurn.card} />
-        <div className="g-spectrum-dialbox">
-          <Dial card={lastTurn.card} needle={lastTurn.needle} target={lastTurn.target} bands="reveal" points={pts} />
-        </div>
-      </Screen>
-    );
+    return <RevealScreen key={`reveal-${match.turn}`} turn={lastTurn} bar={(shown) => bar(lastTurn, shown)} sub={sub} label={label} onNext={next} />;
   }
 
   // The end of the match.
@@ -266,46 +267,42 @@ function Play() {
   );
   if (teams) {
     const w = winner(match.scores, match.goal) ?? (match.scores[0] >= match.scores[1] ? 0 : 1);
-    const [a, b] = match.scores;
+    const lineup = makeTeams(names.length);
+    const bulls = (t: Team) => match.history.filter((h) => h.team === t && h.points === 4).length;
     return (
-      <Screen key="end" className="g-spectrum-screen" title={`${TEAM_NAMES[w]} Wins`} sub={`${Math.max(a, b)} to ${Math.min(a, b)}. Great minds, mostly thinking alike.`} onEnter={again} actions={actions}>
-        <div className={`g-spectrum-trophy is-t${w}`} aria-hidden="true">
-          <svg viewBox="0 0 48 48" width="64" height="64">
-            <path d="M15 8h18v9a9 9 0 0 1-18 0zM15 11H9v3a6 6 0 0 0 6 6M33 11h6v3a6 6 0 0 1-6 6M24 26v8M17 40h14M19 34h10v6H19z" />
-          </svg>
-        </div>
-        <ul className="arcade-party-scores" aria-label="Final scores">
-          {makeTeams(names.length).map((t, i) => (
-            <li key={i} className={`g-spectrum-row is-t${i} ${i === w ? 'is-hi' : ''}`}>
-              <i aria-hidden="true" />
-              <span>
-                {TEAM_NAMES[i]}
-                <small>{listNames(t.map(name))}</small>
-              </span>
-              <b>{match.scores[i]}</b>
-            </li>
+      <Screen key="end" className="g-spectrum-screen" kicker="Final score" title={`${TEAM_NAMES[w]} Wins`} onEnter={again} actions={actions}>
+        <div className="g-spectrum-final" role="status">
+          {([0, 1] as const).map((t) => (
+            <div key={t} className={`g-spectrum-final-team is-t${t} ${t === w ? 'is-win' : ''}`}>
+              <span className="g-spectrum-final-name">{TEAM_SHORT[t]}</span>
+              <b>{match.scores[t]}</b>
+              <small>{bulls(t) === 1 ? '1 bullseye' : `${bulls(t)} bullseyes`}</small>
+              <span className="g-spectrum-final-who">{listNames(lineup[t].map(name))}</span>
+            </div>
           ))}
-        </ul>
+        </div>
       </Screen>
     );
   }
   const total = match.scores[0];
   return (
-    <Screen key="end" className="g-spectrum-screen" center={false} onEnter={again} actions={actions}>
-      <p className="arcade-party-kicker">Your score</p>
-      <p className="g-spectrum-total">
-        <b>{total}</b>
-        <span>/ {TOGETHER_MAX}</span>
-      </p>
-      <p className="g-spectrum-rating">{rating(total)}</p>
-      <ul className="arcade-party-scores g-spectrum-history" aria-label="Every card">
+    <Screen key="end" className="g-spectrum-screen" onEnter={again} actions={actions}>
+      <div className="g-spectrum-total" role="status">
+        <p className="arcade-party-kicker">Your score</p>
+        <p className="g-spectrum-total-num">
+          <b>{total}</b>
+          <span>of {TOGETHER_MAX}</span>
+        </p>
+        <p className="g-spectrum-rating">{rating(total)}</p>
+      </div>
+      <ul className="g-spectrum-history" aria-label="Every card">
         {match.history.map((t, i) => (
-          <li key={i} className={t.points === 4 ? 'is-hi' : undefined}>
+          <li key={i}>
             <Avatar name={name(t.seat)} index={t.seat} size={24} />
             <span>
-              {t.card[0]} <em>vs</em> {t.card[1]}
+              {t.card[0]} <em>to</em> {t.card[1]}
             </span>
-            <b>{t.points}</b>
+            <b className={`g-spectrum-stamp is-p${t.points}`}>{t.points}</b>
           </li>
         ))}
       </ul>
@@ -313,29 +310,68 @@ function Play() {
   );
 }
 
-function ScoreBar({ match, team, flash }: { match: Match; team: Team; flash?: Turn }) {
+const TOGETHER_RULES = [
+  <>
+    Each turn one player is the <b>psychic</b>. They see a card with two extremes, like <b>Cold</b> and <b>Hot</b>, and where the target hides between them.
+  </>,
+  <>
+    They give one clue that lands on the target. Just past the middle on Cold to Hot? <b>A warm bath.</b>
+  </>,
+  <>Everyone else talks it over, turns the needle and locks it in.</>,
+  <>
+    The middle of the target scores <b>4</b>, the bands either side <b>3</b>, the outer ones <b>2</b>.
+  </>,
+  <>
+    Everyone plays as one team for {TOGETHER_CARDS} cards. A perfect game is {TOGETHER_MAX}.
+  </>,
+];
+
+function teamRules(goal: string) {
+  return [
+    TOGETHER_RULES[0],
+    TOGETHER_RULES[1],
+    <>The psychic's team talks it over, turns the needle and locks it in.</>,
+    TOGETHER_RULES[3],
+    <>
+      Then the other team calls <b>left</b> or <b>right</b>: which side of the needle is the target? Right call, 1 point. No call on a bullseye.
+    </>,
+    <>
+      Teams take turns, first to {goal} wins. The team going second starts on 1 to even it out.
+    </>,
+  ];
+}
+
+/** The board and the card slotted under it, sized to fit what's left of the screen. */
+function Board({ children }: { children: ReactNode }) {
+  return <div className="g-spectrum-board">{children}</div>;
+}
+
+function ScoreBar({ match, team, flash, shown = true }: { match: Match; team: Team; flash?: Turn; shown?: boolean }) {
   if (match.mode === 'together') {
     const played = match.history.length;
     const card = Math.min(TOGETHER_CARDS, flash ? played : played + 1);
+    const score = flash && !shown ? match.scores[0] - flash.points : match.scores[0];
     return (
       <div className="g-spectrum-bar">
         <span className="g-spectrum-chip">
           Card {card} of {TOGETHER_CARDS}
         </span>
-        <span className={`g-spectrum-chip is-score ${flash ? 'is-flash' : ''}`} key={flash ? played : 'score'}>
-          Score <b>{match.scores[0]}</b>
+        <span className="g-spectrum-chip">
+          Score <b>{score}</b>
+          {flash && shown && flash.points > 0 && <small>+{flash.points}</small>}
         </span>
       </div>
     );
   }
   const gain = (t: Team) => (!flash ? 0 : t === flash.team ? flash.points : flash.callPts);
+  const scores = flash && !shown ? scoresBefore(match.scores, flash.team, flash.points, flash.callPts) : match.scores;
   return (
     <div className="g-spectrum-bar" aria-label="Scores">
       {([0, 1] as const).map((t) => (
-        <span key={t} className={`g-spectrum-chip is-t${t} ${t === team ? 'is-up' : ''} ${gain(t) ? 'is-flash' : ''}`} style={{ order: t * 2 }}>
+        <span key={t} className={`g-spectrum-chip is-t${t} ${t === team ? 'is-up' : ''}`} style={{ order: t * 2 }}>
           <i aria-hidden="true" />
-          {TEAM_SHORT[t]} <b>{match.scores[t]}</b>
-          {gain(t) > 0 && <small>+{gain(t)}</small>}
+          {TEAM_SHORT[t]} <b>{scores[t]}</b>
+          {shown && gain(t) > 0 && <small>+{gain(t)}</small>}
         </span>
       ))}
       <span className="g-spectrum-goal" style={{ order: 1 }}>
@@ -371,18 +407,15 @@ function GuessScreen({
     setNeedle((v) => clampDial(v + dir * (e?.shiftKey ? 0.5 : 2)));
   });
   return (
-    <Screen key="guess" className="g-spectrum-screen" onEnter={onLock} actions={<Big primary onClick={onLock}>Lock It In</Big>}>
+    <Screen key="guess" className="g-spectrum-screen g-spectrum-play g-spectrum-arm" onEnter={onLock} actions={<Big primary onClick={onLock}>Lock It In</Big>}>
       {bar}
-      <p className="g-spectrum-clue">
-        <Avatar name={psychic} index={seat} size={24} />
-        <span>
-          <b>{psychic}'s clue:</b> say it out loud.
-        </span>
+      <p className="g-spectrum-say">
+        <Avatar name={psychic} index={seat} size={28} />
+        <span>{psychic}, say your clue</span>
       </p>
-      <CardLabels card={card} />
-      <div className="g-spectrum-dialbox">
-        <Dial card={card} needle={needle} onChange={(v) => setNeedle(() => v)} />
-      </div>
+      <Board>
+        <Dial card={card} needle={needle} cover="close" onChange={(v) => setNeedle(() => v)} />
+      </Board>
       <p className="g-spectrum-hint">
         {guessers}, {shell.touch ? 'drag or tap the dial.' : 'drag the dial or use the arrow keys.'}
       </p>
@@ -399,7 +432,7 @@ function CallScreen({ bar, card, needle, caller, onCall }: { bar: ReactNode; car
   return (
     <Screen
       key="call"
-      className="g-spectrum-screen"
+      className="g-spectrum-screen g-spectrum-play g-spectrum-arm"
       actions={
         <Row>
           <Big onClick={() => onCall('left')} className={`g-spectrum-side is-t${caller}`}>
@@ -418,13 +451,52 @@ function CallScreen({ bar, card, needle, caller, onCall }: { bar: ReactNode; car
       }
     >
       {bar}
-      <h2 className="arcade-party-title g-spectrum-ask">{TEAM_NAMES[caller]}: Left or Right?</h2>
-      <p className="g-spectrum-line">Is the target left or right of the needle? Call it correctly for 1 point.</p>
-      <CardLabels card={card} />
-      <div className="g-spectrum-dialbox">
-        <Dial card={card} needle={needle} />
-      </div>
+      <h2 className={`arcade-party-title g-spectrum-ask is-t${caller}`}>
+        <span>{TEAM_NAMES[caller]}</span> Left or Right?
+      </h2>
+      <p className="g-spectrum-line">Which side of the needle is the target? Right call, 1 point.</p>
+      <Board>
+        <Dial card={card} needle={needle} cover="closed" />
+      </Board>
     </Screen>
   );
 }
 
+function RevealScreen({ turn, bar, sub, label, onNext }: { turn: Turn; bar: (shown: boolean) => ReactNode; sub: string; label: string; onNext: () => void }) {
+  const [open, setOpen] = useState(false);
+  const show = () => {
+    if (open) return;
+    setOpen(true);
+    sfx.play(turn.points === 4 ? 'win' : turn.points > 0 ? 'coin' : 'lose');
+  };
+  // An early tap finishes the reveal instead of skipping past it.
+  const go = () => (open ? onNext() : show());
+  return (
+    <Screen
+      key="reveal"
+      className={`g-spectrum-screen g-spectrum-play g-spectrum-reveal ${open ? 'is-open' : ''}`}
+      onEnter={go}
+      actions={
+        <Big primary quiet={!open} onClick={go}>
+          {label}
+        </Big>
+      }
+    >
+      {bar(open)}
+      <div className="g-spectrum-verdict" role="status">
+        {open && (
+          <>
+            <h2 className="arcade-party-title">
+              {verdict(turn.points)}
+              <b className={`g-spectrum-stamp is-p${turn.points}`}>{turn.points ? `+${turn.points}` : '0'}</b>
+            </h2>
+            <p className="g-spectrum-line">{sub}</p>
+          </>
+        )}
+      </div>
+      <Board>
+        <Dial card={turn.card} needle={turn.needle} target={turn.target} cover={open ? 'shown' : 'reveal'} points={turn.points} onOpen={show} />
+      </Board>
+    </Screen>
+  );
+}

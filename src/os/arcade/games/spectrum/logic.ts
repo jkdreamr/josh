@@ -108,20 +108,40 @@ export function addPoints(scores: readonly [number, number], team: Team, points:
 /** Together mode is over after TOGETHER_CARDS turns. */
 export const togetherDone = (turnsPlayed: number) => turnsPlayed >= TOGETHER_CARDS;
 
-/** A playful line for a Together total out of 28. */
+/** A line for a Together total out of 28. */
 export function rating(total: number): string {
-  if (total >= 26) return 'Mind meld. Are you sharing one brain?';
-  if (total >= 21) return 'Spooky good. You finish each other\'s sentences.';
-  if (total >= 16) return 'Solid. You mostly see the world the same way.';
-  if (total >= 11) return 'Not bad. Some of you are on the same page.';
-  if (total >= 6) return 'Hmm. Did you all read different books?';
-  return 'Total chaos. Strangers at a bus stop would do better.';
+  if (total >= 26) return 'Are you sure nobody peeked?';
+  if (total >= 21) return 'Scary good. You should enter a pub quiz.';
+  if (total >= 16) return 'Solid. Mostly on the same page.';
+  if (total >= 11) return 'Some of you are on the same page.';
+  if (total >= 6) return 'Have you all met before tonight?';
+  return 'Strangers at a bus stop would beat this.';
 }
 
 /** A title for the reveal, by points scored. */
 export function verdict(points: Points): string {
-  if (points === 4) return 'Bullseye!';
+  if (points === 4) return 'Bullseye';
   if (points === 3) return 'So Close';
-  if (points === 2) return 'On the Board';
-  return 'Missed It';
+  if (points === 2) return 'Just In';
+  return 'Missed';
+}
+
+/**
+ * One line of advice for the psychic, from where the target sits: near the middle, leaning one way, or close
+ * to an end. `left` and `right` are the card's two extremes.
+ */
+export function clueTip(target: number, left: string, right: string): string {
+  const off = target - NEEDLE_START;
+  const side = off < 0 ? left : right;
+  if (Math.abs(off) <= 16) return 'Near the middle. Pick something people would argue about.';
+  if (Math.abs(off) >= 50) return `Close to ${side}. Go big, but leave a little room past it.`;
+  return `Leans toward ${side}. Think "a bit", not "very".`;
+}
+
+/** The scores before a turn's points were added, to show while the reveal is still covered. */
+export function scoresBefore(scores: readonly [number, number], team: Team, points: number, callTeamPoints = 0): [number, number] {
+  const prev: [number, number] = [scores[0], scores[1]];
+  prev[team] -= points;
+  prev[otherTeam(team)] -= callTeamPoints;
+  return prev;
 }

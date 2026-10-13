@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mulberry32, Pile } from '../src/os/arcade/kit/party-core.ts';
-import { CARDS } from '../src/os/arcade/games/spectrum/cards.ts';
+import { CARDS, STOCKS, stockOf } from '../src/os/arcade/games/spectrum/cards.ts';
 import {
   BAND,
   DIAL,
@@ -13,11 +13,13 @@ import {
   bandsAround,
   callPoints,
   clampDial,
+  clueTip,
   makeTeams,
   psychicFor,
   randomTarget,
   rating,
   scoreGuess,
+  scoresBefore,
   sideOf,
   startScores,
   togetherDone,
@@ -179,8 +181,28 @@ test('together lasts 7 cards for a total out of 28, with a rating for every tota
     lines.add(line);
   }
   assert.ok(lines.size >= 5, 'ratings vary with the score');
-  assert.equal(verdict(4), 'Bullseye!');
-  assert.notEqual(verdict(0), verdict(2));
+  const verdicts = ([0, 2, 3, 4] as const).map(verdict);
+  assert.equal(verdict(4), 'Bullseye');
+  assert.equal(new Set(verdicts).size, 4, 'every result reads differently');
+  for (const v of verdicts) assert.doesNotMatch(v, /!/, 'verdicts are said, not shouted');
+});
+
+test('the clue tip follows where the target sits', () => {
+  assert.match(clueTip(90, 'Cold', 'Hot'), /middle/);
+  assert.match(clueTip(100, 'Cold', 'Hot'), /middle/);
+  assert.match(clueTip(SPAN, 'Cold', 'Hot'), /^Close to Cold\./);
+  assert.match(clueTip(DIAL - SPAN, 'Cold', 'Hot'), /^Close to Hot\./);
+  assert.match(clueTip(60, 'Cold', 'Hot'), /^Leans toward Cold\./);
+  assert.match(clueTip(125, 'Cold', 'Hot'), /^Leans toward Hot\./);
+  for (let t = SPAN; t <= DIAL - SPAN; t += 0.5) assert.doesNotMatch(clueTip(t, 'Cold', 'Hot'), banned);
+});
+
+test('scoresBefore undoes a turn so the reveal does not spoil the score bar', () => {
+  const before: [number, number] = [3, 5];
+  const after = addPoints(before, 1, 3, 1);
+  assert.deepEqual(after, [4, 8]);
+  assert.deepEqual(scoresBefore(after, 1, 3, 1), before);
+  assert.deepEqual(scoresBefore(addPoints(before, 0, 4), 0, 4), before);
 });
 
 test('a seeded match plays out: scores only grow and someone reaches the goal', () => {
@@ -207,6 +229,7 @@ test('a seeded match plays out: scores only grow and someone reaches the goal', 
 test('cards: plenty, unique, short and clean, and a Pile deals each once', () => {
   assert.ok(CARDS.length >= 110, `only ${CARDS.length} cards`);
   const keys = new Set<string>();
+  const words = new Set<string>();
   for (const [left, right] of CARDS) {
     for (const label of [left, right]) {
       assert.ok(label.trim() === label && label.length > 0 && label.length <= 24, `label "${label}"`);
@@ -216,7 +239,18 @@ test('cards: plenty, unique, short and clean, and a Pile deals each once', () =>
     const key = `${left}|${right}`.toLowerCase();
     assert.ok(!keys.has(key), `duplicate card ${key}`);
     keys.add(key);
+    for (const label of [left, right]) {
+      assert.ok(!words.has(label.toLowerCase()), `"${label}" is on two cards`);
+      words.add(label.toLowerCase());
+    }
   }
+  // Not every card is "Bad X / Good X": that shape gets old fast.
+  const badGood = CARDS.filter(([l, r]) => /^bad /i.test(l) && /^(good|great) /i.test(r)).length;
+  assert.ok(badGood <= 14, `${badGood} bad/good cards`);
+  // Cards are printed on a few color stocks, steady per card and all of them in use.
+  const stocks = new Set(CARDS.map(stockOf));
+  assert.equal(stocks.size, STOCKS);
+  for (const c of CARDS) assert.equal(stockOf(c), stockOf([c[0], c[1]]));
   const pile = new Pile(CARDS, mulberry32(3));
   const seen = new Set();
   for (let i = 0; i < CARDS.length; i++) seen.add(pile.draw());
