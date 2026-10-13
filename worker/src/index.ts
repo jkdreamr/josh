@@ -3,7 +3,7 @@ import { validateSubmission, TOP, type BoardEntry } from '../../src/os/arcade/ki
 import type { LeaderboardSpec } from '../../src/os/arcade/types.ts';
 import { cleanName, nameLength } from '../../src/os/arcade/kit/leaderboard-core.ts';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
-import { agreedWinner, canStartRoom, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
+import { agreedWinner, beginRound, benchSeat, canJoinRoom, canStartRoom, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
 interface Env {
   BOARDS: DurableObjectNamespace<Boards>;
@@ -130,10 +130,10 @@ export class Room extends DurableObject<Env> {
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
-  open(game: string, seats: number): Promise<boolean> {
+  open(game: string, seats: number, lateJoin = false): Promise<boolean> {
     return this.exclusive(async () => {
       if (await this.ctx.storage.get<RoomState>('room')) return false;
-      await this.ctx.storage.put<RoomState>('room', { game, seats, started: false });
+      await this.ctx.storage.put<RoomState>('room', { game, seats, started: false, lateJoin });
       await this.ctx.storage.put<RoomResults>('results', { reports: {}, recorded: [] });
       return true;
     });
@@ -158,9 +158,9 @@ export class Room extends DurableObject<Env> {
     if (parsed.t === 'start') {
       const players = this.players();
       if (!canStartRoom(attachment.seat, players.length)) return;
-      room.started = true;
+      const round = beginRound(room, players.map(({ seat }) => seat));
       await this.ctx.storage.put('room', room);
-      this.broadcast({ t: 'start', players });
+      this.broadcast({ t: 'start', players, round });
       return;
     }
 
@@ -177,7 +177,7 @@ export class Room extends DurableObject<Env> {
     const roundReports = resultState.reports[roundKey] ?? {};
     roundReports[String(attachment.seat)] = parsed.winner;
     resultState.reports[roundKey] = roundReports;
-    const winner = agreedWinner(resultState.reports, connected.map(({ seat }) => seat), parsed.round);
+    const winner = agreedWinner(resultState.reports, roundSeats(room, connected.map(({ seat }) => seat), parsed.round), parsed.round);
     if (winner !== null && connected.some(({ seat }) => seat === winner) && markRoundRecorded(resultState.recorded, parsed.round)) {
       await this.ctx.storage.put('results', resultState);
       const winnerName = connected.find(({ seat }) => seat === winner)?.name;
@@ -215,7 +215,7 @@ export class Room extends DurableObject<Env> {
     }
     const room = await this.ctx.storage.get<RoomState>('room');
     if (!room) return json({ error: 'room not found' }, 404);
-    if (room.started) return json({ error: 'room already started' }, 409);
+    if (!canJoinRoom(room)) return json({ error: 'room already started' }, 409);
     const sockets = this.ctx.getWebSockets();
     const seat = lowestFreeSeat(room.seats, sockets.map((socket) => (socket.deserializeAttachment() as Attachment | null)?.seat).filter((value): value is number => value !== undefined));
     if (seat === null) return json({ error: 'room is full' }, 409);
@@ -233,8 +233,12 @@ export class Room extends DurableObject<Env> {
     const server = pair[1];
     server.serializeAttachment({ seat, name } satisfies Attachment);
     this.ctx.acceptWebSocket(server);
+    if (room.started) {
+      benchSeat(room, seat);
+      await this.ctx.storage.put('room', room);
+    }
     const players = [...existingPlayers, { seat, name }].sort((a, b) => a.seat - b.seat);
-    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, players }));
+    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, players, started: room.started }));
     this.broadcast({ t: 'players', players });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -318,7 +322,7 @@ export default {
       for (let attempt = 0; attempt < 5; attempt++) {
         const code = makeRoomCode(crypto.getRandomValues(new Uint8Array(4)));
         const room = env.ROOMS.get(env.ROOMS.idFromName(code));
-        if (await room.open(game, spec.seats)) return withCors(json({ code }));
+        if (await room.open(game, spec.seats, !!spec.lateJoin)) return withCors(json({ code }));
       }
       return withCors(json({ error: 'could not create room' }, 503));
     }

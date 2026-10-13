@@ -9,7 +9,7 @@ import { ARCADE_API, NAME_MAX, savedName } from './leaderboard';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMuted } from './sfx';
 import { OnlinePanel, OnlineProvider } from './online';
-import { advanceOnlineRound } from './online-core';
+import { nextOnlineRound } from './online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import './kit.css';
 
@@ -90,6 +90,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [onlineTransport, setOnlineTransport] = useState<RoomTransport>('relay');
   const [onlineBusy, setOnlineBusy] = useState(false);
   const [onlineError, setOnlineError] = useState('');
+  const [onlineInProgress, setOnlineInProgress] = useState(false);
   const [onlineMode, setOnlineMode] = useState(false);
   const onlineModeRef = useRef(onlineMode);
   onlineModeRef.current = onlineMode;
@@ -152,6 +153,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineMode(false);
     setOnlineOpen(false);
     setOnlineError('');
+    setOnlineInProgress(false);
   }, [onlineLink]);
 
   const connectRoom = useCallback((code: string) => {
@@ -166,11 +168,13 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineSeat(null);
     setOnlineSeats(meta.online?.seats ?? 0);
     setOnlinePlayers([]);
+    setOnlineInProgress(false);
     link.on('welcome', (message) => {
       setOnlineCode(message.code);
       setOnlineSeat(message.seat);
       setOnlineSeats(message.seats);
       setOnlinePlayers(message.players);
+      setOnlineInProgress(message.started);
     });
     link.on('players', (players) => {
       setOnlinePlayers(players);
@@ -188,9 +192,10 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineOpen(false);
     });
     link.on('transport', setOnlineTransport);
-    link.on('start', () => {
+    link.on('start', ({ round: serverRound }) => {
       setOnlineOpen(false);
-      setOnlineRound((round) => advanceOnlineRound(round));
+      setOnlineInProgress(false);
+      setOnlineRound((round) => nextOnlineRound(round, serverRound));
       if (onlineModeRef.current) {
         restart();
       } else {
@@ -443,6 +448,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             code={onlineCode}
             players={onlinePlayers}
             seat={onlineSeat}
+            seats={onlineSeats}
+            inProgress={onlineInProgress}
             busy={onlineBusy}
             error={onlineError}
             name={onlineName}

@@ -1,13 +1,15 @@
-import { AppIcon } from '../icons';
+import { GameFrame } from '../arcade/GameFrame';
+import { ArcadeHost } from '../arcade/kit/host';
 import type { AppProps } from '../types';
 import './CoxBox.css';
 
-export default function CoxBox(_: AppProps) {
+/** The Cox Box typing regatta from the arcade, full window. Invite links open here with their room code. */
+export default function CoxBox({ args }: AppProps) {
   return (
-    <div className="coxbox-placeholder">
-      <AppIcon kind="coxbox" size={72} />
-      <h1>Cox Box</h1>
-      <p>A new version is on the way.</p>
+    <div className="coxbox-app">
+      <ArcadeHost.Provider value={{ active: true }}>
+        <GameFrame id="coxbox" roomCode={args.room} />
+      </ArcadeHost.Provider>
     </div>
   );
 }

@@ -8,7 +8,8 @@ Little games that live inside the Chrome app at `chrome://games`. Each game is o
 // src/os/arcade/types.ts
 export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer';
 export type LeaderboardSpec = { order: 'desc' | 'asc'; max: number; min?: number; format?: 'number' | 'time' };
-export type GameMeta = { id: string; title: string; blurb: string; category: GameCategory; players: string; controls: string; accent: string; glyph: string; order: number; leaderboard?: LeaderboardSpec };
+export type OnlineSpec = { seats: number; lateJoin?: boolean };
+export type GameMeta = { id: string; title: string; blurb: string; category: GameCategory; players: string; controls: string; accent: string; glyph: string; order: number; leaderboard?: LeaderboardSpec; online?: OnlineSpec };
 export type GameProps = { compact?: boolean; onExit?: () => void; roomCode?: string };
 ```
 
@@ -32,7 +33,7 @@ src/os/arcade/games/<id>/
 | `glyph` | SVG path data (`d`) for a 24x24 viewBox, drawn as a white 2px stroke |
 | `order` | sort order inside its category (lower first) |
 | `leaderboard` | optional, opts the game into a top 100 board (see Leaderboards) |
-| `online` | optional, enables online rooms for the configured number of seats |
+| `online` | optional, enables online rooms for `seats` players. Rooms lock when the host starts, unless `lateJoin: true` lets people join between rounds (they wait in the lobby and play the next one) |
 
 `manifest.ts` reads every `games/*/meta.ts` eagerly (they are tiny) and every `games/*/index.tsx` lazily through `React.lazy`, so each game is its own chunk and downloads only when opened. Folders starting with `_` are ignored. In dev you can list them with `localStorage.setItem('arcade:dev', '1')` and a reload; `_example` then appears as "Catch".
 

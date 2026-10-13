@@ -82,7 +82,7 @@ export default function Terminal(_: AppProps) {
               ['work · school · projects · music', 'shortcuts'],
               ['socials · contact', 'where to find me'],
               ['neofetch', 'system info'],
-              ['row', 'open Cox Box'],
+              ['row', 'race in Cox Box'],
               ['baduk · go', 'play 9x9 Go'],
               ['badminton', 'play a rally'],
               ['beatpad · beats · open music', 'make a loop'],
@@ -194,7 +194,7 @@ export default function Terminal(_: AppProps) {
         );
       case 'row':
         api.open('coxbox');
-        return print(<span className="t-dim">opening Cox Box…</span>);
+        return print(<span className="t-dim">attention… row!</span>);
       case 'baduk':
         api.open('baduk');
         return print(<span className="t-dim">opening baduk…</span>);

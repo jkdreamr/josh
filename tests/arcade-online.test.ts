@@ -1,13 +1,43 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { advanceOnlineRound } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, nextOnlineRound } from '../src/os/arcade/kit/online-core.ts';
 import { RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
-import { agreedWinner, canStartRoom, lowestFreeSeat, markRoundRecorded, parseRoomMessage } from '../worker/src/room-core.ts';
+import { agreedWinner, beginRound, benchSeat, canJoinRoom, canStartRoom, lowestFreeSeat, markRoundRecorded, parseRoomMessage, roundSeats, type RoomState } from '../worker/src/room-core.ts';
 
 test('online rounds advance independently from local game rounds', () => {
   assert.equal(advanceOnlineRound(0), 1);
   assert.equal(advanceOnlineRound(1), 2);
   assert.equal(advanceOnlineRound(40), 41);
+  assert.equal(nextOnlineRound(0, null), 1);
+  assert.equal(nextOnlineRound(3, 7), 7, 'the server round wins so late joiners line up');
+});
+
+test('rooms lock after starting unless the game lets players join between rounds', () => {
+  const locked: RoomState = { game: 'pong', seats: 2, started: false };
+  assert.equal(canJoinRoom(locked), true);
+  beginRound(locked, [0, 1]);
+  assert.equal(canJoinRoom(locked), false);
+
+  const open: RoomState = { game: 'coxbox', seats: 8, started: false, lateJoin: true };
+  assert.equal(beginRound(open, [0, 1, 2]), 1);
+  assert.equal(canJoinRoom(open), true);
+  assert.deepEqual(open.roster, [0, 1, 2]);
+  assert.equal(beginRound(open, [0, 1, 2, 3]), 2);
+  assert.deepEqual(open.roster, [0, 1, 2, 3]);
+});
+
+test('players who join mid-round sit out that round\'s result', () => {
+  const room: RoomState = { game: 'coxbox', seats: 8, started: false, lateJoin: true };
+  const round = beginRound(room, [0, 1, 2]);
+  // Seat 2 leaves, and a newcomer takes it mid-race; seat 3 also arrives late.
+  benchSeat(room, 2);
+  assert.deepEqual(roundSeats(room, [0, 1, 2, 3], round), [0, 1]);
+  const reports = { [String(round)]: { '0': 1, '1': 1 } };
+  assert.equal(agreedWinner(reports, roundSeats(room, [0, 1, 2, 3], round), round), 1);
+  assert.equal(agreedWinner(reports, [0, 1, 2, 3], round), null, 'without the roster the newcomers would block it');
+  // Older rounds, and rooms that never recorded a roster, fall back to everyone connected.
+  assert.deepEqual(roundSeats(room, [0, 1, 3], round - 1), [0, 1, 3]);
+  assert.deepEqual(roundSeats({ game: 'pong', seats: 2, started: true }, [0, 1], 1), [0, 1]);
 });
 
 test('room seats use the lowest available seat and only the host starts with two players', () => {
@@ -87,12 +117,17 @@ test('RoomLink uses host-only relay fallback without WebRTC', async () => {
     Object.defineProperty(globalThis, 'RTCPeerConnection', { value: undefined, configurable: true });
     const link = new RoomLink('ABCD', 'Guest', 'https://arcade.test');
     const socket = FakeWebSocket.last;
+    const events: unknown[] = [];
+    link.on('welcome', (welcome) => events.push(['welcome', welcome.started]));
+    link.on('start', (start) => events.push(['start', start.round, start.players.length]));
     assert.equal(socket.url.href, 'wss://arcade.test/rooms/ABCD/ws?name=Guest');
     socket.readyState = FakeWebSocket.OPEN;
     socket.emit('open', new Event('open'));
     socket.emit('message', { data: JSON.stringify({ t: 'welcome', seat: 1, code: 'ABCD', game: 'pong', seats: 2, players: [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Guest' }] }) });
     socket.emit('message', { data: JSON.stringify({ t: 'start', players: [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Guest' }] }) });
+    socket.emit('message', { data: JSON.stringify({ t: 'start', round: 4, players: [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Guest' }] }) });
     await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(events, [['welcome', false], ['start', null, 2], ['start', 4, 2]]);
     link.send({ paddle: 0.5 }, { fast: true });
     assert.deepEqual(JSON.parse(socket.sent.at(-1)!), { t: 'msg', to: 0, d: { paddle: 0.5 } });
     assert.equal(link.transport, 'relay');

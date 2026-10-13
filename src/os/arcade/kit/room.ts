@@ -8,9 +8,11 @@ export type RoomTransport = 'direct' | 'relay';
 type Peer = { pc: RTCPeerConnection; channels: Map<'r' | 'u', RTCDataChannel>; candidates: RTCIceCandidateInit[] };
 
 type RoomEvents = {
-  welcome: { seat: number; code: string; game: string; seats: number; players: RoomPlayer[] };
+  /** started: a round is already under way (rooms that allow joining between rounds). */
+  welcome: { seat: number; code: string; game: string; seats: number; players: RoomPlayer[]; started: boolean };
   players: RoomPlayer[];
-  start: RoomPlayer[];
+  /** round: the room's shared round number, or null from a server that does not send one. */
+  start: { players: RoomPlayer[]; round: number | null };
   msg: { from: number; d: unknown };
   closed: { reason: string };
   transport: RoomTransport;
@@ -141,7 +143,7 @@ export class RoomLink {
       this.game = message.game;
       this.seats = message.seats as number;
       this.players = this.asPlayers(message.players);
-      this.emit('welcome', { seat: this.seat, code: this.code, game: this.game, seats: this.seats, players: this.players });
+      this.emit('welcome', { seat: this.seat, code: this.code, game: this.game, seats: this.seats, players: this.players, started: message.started === true });
       this.emit('players', this.players);
     } else if (message.t === 'players') {
       this.players = this.asPlayers(message.players);
@@ -149,7 +151,7 @@ export class RoomLink {
       this.updateTransport();
     } else if (message.t === 'start') {
       this.players = this.asPlayers(message.players);
-      this.emit('start', this.players);
+      this.emit('start', { players: this.players, round: Number.isSafeInteger(message.round) && (message.round as number) > 0 ? message.round as number : null });
       if (this.peers.size === 0) this.beginPeers();
     } else if (message.t === 'msg' && Number.isInteger(message.from)) {
       this.emit('msg', { from: message.from as number, d: message.d });

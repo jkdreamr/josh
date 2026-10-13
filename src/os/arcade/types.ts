@@ -12,6 +12,9 @@ export type LeaderboardSpec = {
   format?: 'number' | 'time';
 };
 
+/** Online rooms. lateJoin lets players join between rounds instead of locking the room after the first start. */
+export type OnlineSpec = { seats: number; lateJoin?: boolean };
+
 export type GameMeta = {
   /** Must equal the folder name in src/os/arcade/games/<id>/. Lowercase, a-z 0-9 and dashes. */
   id: string;
@@ -32,7 +35,7 @@ export type GameMeta = {
   /** Set to give the game a top 100 board. Leave out for games without a comparable score. */
   leaderboard?: LeaderboardSpec;
   /** Set to allow online rooms with this many seats. */
-  online?: { seats: number };
+  online?: OnlineSpec;
 };
 
 export type GameProps = { compact?: boolean; onExit?: () => void; roomCode?: string };

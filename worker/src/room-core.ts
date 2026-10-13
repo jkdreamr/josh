@@ -3,7 +3,8 @@ export const ROOM_CODE_LENGTH = 4;
 export const ROOM_MESSAGE_MAX_BYTES = 8 * 1024;
 
 export type RoomPlayer = { seat: number; name: string };
-export type RoomState = { game: string; seats: number; started: boolean };
+/** roster: seats that were in the room when the current round started. */
+export type RoomState = { game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[] };
 export type ClientRoomMessage =
   | { t: 'start' }
   | { t: 'msg'; to?: number; d: unknown }
@@ -22,6 +23,30 @@ export function lowestFreeSeat(seats: number, occupied: Iterable<number>): numbe
 }
 
 export const canStartRoom = (seat: number, playerCount: number) => seat === 0 && playerCount >= 2;
+
+/** Rooms lock once they start, unless the game lets players join between rounds. */
+export const canJoinRoom = (room: RoomState) => !room.started || !!room.lateJoin;
+
+/** Starts the next round: bumps the shared round number and remembers who is playing it. */
+export function beginRound(room: RoomState, seats: Iterable<number>): number {
+  room.started = true;
+  room.round = (room.round ?? 0) + 1;
+  room.roster = [...new Set(seats)];
+  return room.round;
+}
+
+/** Someone who takes a seat mid-round sits that round out. */
+export function benchSeat(room: RoomState, seat: number) {
+  if (room.roster) room.roster = room.roster.filter((value) => value !== seat);
+}
+
+/** Seats whose reports decide a round: everyone connected, minus anyone who joined after the round began. */
+export function roundSeats(room: RoomState, connected: Iterable<number>, round: number): number[] {
+  const seats = [...connected];
+  const roster = room.roster;
+  if (!roster || room.round !== round) return seats;
+  return seats.filter((seat) => roster.includes(seat));
+}
 
 function validSeat(seat: unknown, seats: number): seat is number {
   return Number.isInteger(seat) && (seat as number) >= 0 && (seat as number) < seats;

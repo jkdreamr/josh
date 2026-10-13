@@ -112,7 +112,10 @@ export default function OS() {
     if (phase !== 'on' || !mounted || !roomInvite.current) return;
     const invite = roomInvite.current;
     roomInvite.current = null;
-    const timer = window.setTimeout(() => apiRef.current?.open('chrome', { url: `chrome://games/${encodeURIComponent(invite.game)}?room=${encodeURIComponent(invite.code)}` }), 0);
+    const timer = window.setTimeout(() => {
+      if (invite.game === 'coxbox') apiRef.current?.open('coxbox', { room: invite.code });
+      else apiRef.current?.open('chrome', { url: `chrome://games/${encodeURIComponent(invite.game)}?room=${encodeURIComponent(invite.code)}` });
+    }, 0);
     return () => window.clearTimeout(timer);
   }, [phase, mounted]);
 

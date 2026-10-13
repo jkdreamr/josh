@@ -53,6 +53,8 @@ export function OnlinePanel({
   code,
   players,
   seat,
+  seats = 0,
+  inProgress = false,
   busy,
   error,
   name,
@@ -66,6 +68,10 @@ export function OnlinePanel({
   code: string;
   players: RoomPlayer[];
   seat: number | null;
+  /** Room size; shown next to the player count for rooms bigger than two. */
+  seats?: number;
+  /** A round is already under way; this player joins the next one. */
+  inProgress?: boolean;
   busy: boolean;
   error: string;
   name: string;
@@ -137,7 +143,7 @@ export function OnlinePanel({
               <button type="button" className="arcade-btn" onClick={onLeave}>Leave</button>
             </div>
             <div className="arcade-online-players">
-              <strong>Players</strong>
+              <strong>Players{seats > 2 && ` ${players.length}/${seats}`}</strong>
               {players.map((player) => (
                 <div key={player.seat} className="arcade-online-player">
                   <span>{player.name}</span>
@@ -152,7 +158,7 @@ export function OnlinePanel({
                 Start Game
               </button>
             ) : (
-              <p>Waiting For The Host To Start</p>
+              <p>{inProgress ? 'A Round Is In Progress. You Will Join The Next One.' : 'Waiting For The Host To Start'}</p>
             )}
           </>
         )}
