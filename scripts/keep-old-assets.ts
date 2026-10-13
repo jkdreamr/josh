@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AstroIntegration } from 'astro';
@@ -12,6 +12,9 @@ import type { AstroIntegration } from 'astro';
  * asset-history.json, published with each deploy, records when each kept file stopped being built, so files from
  * several deploys back are still found. The live site's own files are found by following its page and scripts,
  * which also covers the first deploy, before any history exists.
+ *
+ * A script older than that is answered with scripts/missing-file.js instead of a 404, which gives pages from before
+ * any of this a working Reload card in place of the dead end they would otherwise show.
  */
 
 export const HISTORY_FILE = 'asset-history.json';
@@ -21,6 +24,48 @@ export const MAX_BYTES = 64 * 1024 * 1024;
 
 /** File name to when it stopped being built (ms), or 0 for files this deploy builds itself. */
 export type History = { files: Record<string, number> };
+
+/** Where the stand-in for a missing script is published, and the header that marks its responses. */
+export const MISSING_FILE = '_missing.js';
+const MISSING_HEADER = 'x-missing-file';
+/**
+ * Vercel only reaches the routes after `filesystem` for files that don't exist. Workers are left out: a missing
+ * worker must fail to load (Baduk shows its Reload card for that), not start and throw.
+ */
+export const MISSING_ROUTE = {
+  src: '^/_astro/(?!.*worker)[^/]+\\.js$',
+  dest: `/${MISSING_FILE}`,
+  headers: { 'cache-control': 'no-store', [MISSING_HEADER]: '1' },
+};
+/**
+ * The Vercel adapter's year-long cache header for /_astro sits after the filesystem check, so it only ever lands
+ * on 404s, and a cached 404 would stick even once the file is back. Misses are never cached instead.
+ */
+export const MISS_HEADERS_ROUTE = { src: '^/_astro/', headers: { 'cache-control': 'no-store' }, continue: true };
+type Route = Record<string, unknown>;
+
+/** The Vercel routes with ours right after the filesystem check, or null if there is no such check. */
+export function withMissingRoute(routes: Route[]): Route[] | null {
+  const at = routes.findIndex((route) => route.handle === 'filesystem');
+  if (at < 0) return null;
+  // After the filesystem check, drop earlier copies of ours and header-only /_astro routes (the adapter's).
+  const rest = routes.slice(at + 1).filter((route) => route.dest !== MISSING_ROUTE.dest && !(String(route.src).startsWith('^/_astro/') && !route.dest));
+  return [...routes.slice(0, at + 1), MISSING_ROUTE, MISS_HEADERS_ROUTE, ...rest];
+}
+
+/** Arcade game titles to ids, read from each game's meta.ts, so the stand-in can reopen the game it was. */
+export function gameIds(gamesDir: string): Record<string, string> {
+  const ids: Record<string, string> = {};
+  for (const folder of existsSync(gamesDir) ? readdirSync(gamesDir) : []) {
+    const file = join(gamesDir, folder, 'meta.ts');
+    if (folder.startsWith('_') || !existsSync(file)) continue;
+    const meta = readFileSync(file, 'utf8');
+    const id = meta.match(/\bid:\s*(['"])(.*?)\1/)?.[2];
+    const title = meta.match(/\btitle:\s*(['"])(.*?)\1/)?.[2];
+    if (id && title) ids[title] = id;
+  }
+  return ids;
+}
 
 const FILE = /^[\w-]+(?:\.[\w-]+)*\.(?:m?js|css|wasm)$/;
 const REF = /(?:\.\/|\/?_astro\/)([\w-]+(?:\.[\w-]+)*\.(?:m?js|css|wasm))\b/g;
@@ -67,18 +112,33 @@ export function plan(prev: History | null, live: string[], built: string[], now:
 
 async function get(url: string): Promise<Buffer | null> {
   const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-  if (res.status === 404) return null;
+  if (res.status === 404 || res.headers.get(MISSING_HEADER)) return null;
   if (!res.ok) throw new Error(`${res.status} for ${url}`);
   return Buffer.from(await res.arrayBuffer());
 }
 
 /** Production builds pass `from` (the live site). Without it the build only records its own files. */
 export default function keepOldAssets({ from }: { from?: string }): AstroIntegration {
+  let root = process.cwd();
   return {
     name: 'keep-old-assets',
     hooks: {
+      'astro:config:done': ({ config }) => {
+        root = fileURLToPath(config.root);
+      },
       'astro:build:done': async ({ dir, logger }) => {
         const out = fileURLToPath(dir);
+        // The stand-in for missing scripts, and the route that serves it. The Vercel adapter has written its
+        // config by now (it runs first) and copies the files out after this.
+        const games = JSON.stringify(gameIds(join(root, 'src', 'os', 'arcade', 'games')));
+        writeFileSync(join(out, MISSING_FILE), readFileSync(join(root, 'scripts', 'missing-file.js'), 'utf8').replace('__GAMES__', () => games));
+        const config = join(root, '.vercel', 'output', 'config.json');
+        if (existsSync(config)) {
+          const vercel = JSON.parse(readFileSync(config, 'utf8')) as { routes?: Route[] };
+          const routes = withMissingRoute(vercel.routes ?? []);
+          if (routes) writeFileSync(config, JSON.stringify({ ...vercel, routes }, null, '\t'));
+          else logger.warn('no filesystem route in the Vercel config, so missing scripts will 404');
+        }
         const assets = join(out, '_astro');
         const built = readdirSync(assets).filter((name) => statSync(join(assets, name)).isFile());
         const now = Date.now();
