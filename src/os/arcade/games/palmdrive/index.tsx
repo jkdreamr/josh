@@ -3,11 +3,13 @@ import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHi
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
 import {
+  CCS,
   COUNTDOWN,
   ITEMS,
   boom,
   createRace,
   fmtTime,
+  isCc,
   lapOf,
   ordinal,
   pressGas,
@@ -24,17 +26,15 @@ import {
   type Race,
   type Racer,
 } from './logic';
-import { applyFlags, carOf, endOf, events, finishOrder, guestState, hostState, parsePacket, winnerOf, type Car, type NetEv } from './net';
+import { applyFlags, carOf, configOf, endOf, events, finishOrder, guestState, hostState, parsePacket, winnerOf, type Car, type NetEv } from './net';
 import { BPM, JINGLE_DONE, JINGLE_WIN, Sequencer, hz, type Note } from './music';
 import { meta } from './meta';
 import './palmdrive.css';
 
-const CLASS = defineSetting('palmdrive:cc', ['50cc', '100cc', '150cc'] as const, '100cc');
-const classOptions = [
-  ['50cc', '50cc'],
-  ['100cc', '100cc'],
-  ['150cc', '150cc'],
-] as const;
+const CLASS = defineSetting('palmdrive:cc', CCS, '100cc');
+const classOptions = CCS.map((cc) => [cc, cc] as const);
+/** The leaderboard (and local best) for a class on the Palm Drive course. */
+const boardOf = (cc: Cc) => `palm-${cc}`;
 /** The race soundtrack; the shell's mute button silences it along with everything else. */
 const MUSIC = defineSetting('palmdrive:music', ['on', 'off'] as const, 'on', { live: true });
 const musicOptions = [
@@ -48,12 +48,12 @@ const HOST_LEAD = 1.2;
 /** Once someone finishes, everyone else has this long. */
 const TIME_LIMIT = 30;
 
-// Palm Drive used to keep a best distance under its own id; races are timed per class now, and that old number
-// would read as an impossible time on the Start card.
+// Palm Drive used to keep a best distance under its own id, then three-lap race times per class. Races are five
+// laps now and timed on new boards; the old numbers would read as impossible bests on the Start card.
 try {
-  if (typeof window !== 'undefined' && window.localStorage.getItem('arcade:palmdrive-scoring') !== 'race') {
-    window.localStorage.removeItem('arcade:best:palmdrive');
-    window.localStorage.setItem('arcade:palmdrive-scoring', 'race');
+  if (typeof window !== 'undefined' && window.localStorage.getItem('arcade:palmdrive-scoring') !== 'race5') {
+    for (const id of ['palmdrive', 'palmdrive-50cc', 'palmdrive-100cc', 'palmdrive-150cc']) window.localStorage.removeItem(`arcade:best:${id}`);
+    window.localStorage.setItem('arcade:palmdrive-scoring', 'race5');
   }
 } catch {
   /* storage blocked */
@@ -63,17 +63,18 @@ const fmtMs = (ms: number) => fmtTime(ms / 1000);
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} lowerIsBetter formatScore={fmtMs} setup={<Setup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} lowerIsBetter formatScore={fmtMs} setup={<Setup />} hostSetup={<OnlineSetup />}>
       <Stage />
     </GameShell>
   );
 }
 
 function useBests() {
-  const b50 = useHighScore('palmdrive-50cc', { lowerIsBetter: true });
-  const b100 = useHighScore('palmdrive-100cc', { lowerIsBetter: true });
-  const b150 = useHighScore('palmdrive-150cc', { lowerIsBetter: true });
-  return { '50cc': b50, '100cc': b100, '150cc': b150 };
+  const b50 = useHighScore(`palmdrive-${boardOf('50cc')}`, { lowerIsBetter: true });
+  const b100 = useHighScore(`palmdrive-${boardOf('100cc')}`, { lowerIsBetter: true });
+  const b150 = useHighScore(`palmdrive-${boardOf('150cc')}`, { lowerIsBetter: true });
+  const b200 = useHighScore(`palmdrive-${boardOf('200cc')}`, { lowerIsBetter: true });
+  return { '50cc': b50, '100cc': b100, '150cc': b150, '200cc': b200 };
 }
 
 function Setup() {
@@ -85,6 +86,50 @@ function Setup() {
       <Segmented label="Class" value={cc} options={classOptions} onChange={setCc} />
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
       {best !== null && <small className="g-palmdrive-best">Best at {cc}: {fmtMs(best)}</small>}
+    </>
+  );
+}
+
+/**
+ * Settings for online races: the host picks the class for everyone (and tells the room as it changes), guests see
+ * that pick. Music is everyone's own call.
+ */
+function OnlineSetup() {
+  const online = useOnline();
+  const [cc, setCc] = useSetting(CLASS);
+  const [music, setMusic] = useSetting(MUSIC);
+  const [hostCc, setHostCc] = useState<Cc | null>(null);
+  const host = online?.isHost ?? true;
+  // the host says its pick now, again when someone joins (the player list changes) and every couple of seconds
+  useEffect(() => {
+    if (!online?.isHost) return;
+    const say = () => online.send(configOf(online.round, cc));
+    say();
+    const timer = window.setInterval(say, 2000);
+    return () => window.clearInterval(timer);
+  }, [online, cc]);
+  useEffect(() => {
+    if (!online || online.isHost) return;
+    return online.onMessage((from, d) => {
+      const p = parsePacket(d);
+      if (from === 0 && p?.k === 'cfg' && isCc(p.cc)) setHostCc(p.cc);
+    });
+  }, [online]);
+  return (
+    <>
+      {host ? (
+        <Segmented label="Class" value={cc} options={classOptions} onChange={setCc} />
+      ) : (
+        <div className="arcade-field">
+          <span>Class</span>
+          <div className="g-palmdrive-hostpick">
+            <b>{hostCc ?? '…'}</b>
+            <small>picked by the host</small>
+          </div>
+        </div>
+      )}
+      {host && <small className="g-palmdrive-best">You pick the class for everyone.</small>}
+      <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
     </>
   );
 }
@@ -116,7 +161,6 @@ function onlineRace(o: OnlineApi, cc: Cc, roster: number[], countdown: number): 
   return createRace({ cc, racers, countdown, idBase: o.seat * 1_000_000 + 1 });
 }
 
-const isCc = (v: string): v is Cc => v === '50cc' || v === '100cc' || v === '150cc';
 
 /** Plays one note of the soundtrack on the arcade synth, `delay` seconds from now. */
 function playNote(note: Note, delay: number, stepLen: number) {
@@ -213,7 +257,7 @@ function Play({ mode }: { mode: Mode }) {
     over: false,
   });
   const tap = useRef({ item: false, back: false, gas: false });
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: 3, coins: 0, item: null, uses: 0, rolling: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, item: null, uses: 0, rolling: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
@@ -270,7 +314,7 @@ function Play({ mode }: { mode: Mode }) {
     const tail = winner && !youWon ? ` ${nameOf(winner[0])} won in ${fmtTime(winner[1])}.` : '';
     sfx.play(youWon ? 'win' : me.done !== null ? 'coin' : 'lose');
     if (me.done !== null) bests[r.cc].submit(Math.round(me.done * 1000));
-    shellRef.current.gameOver(undefined, me.done === null ? { title, detail: head + tail } : { title, detail: head + tail, board: r.cc, rank: Math.round(me.done * 1000) });
+    shellRef.current.gameOver(undefined, me.done === null ? { title, detail: head + tail } : { title, detail: head + tail, board: boardOf(r.cc), rank: Math.round(me.done * 1000) });
   };
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
@@ -458,7 +502,7 @@ function Play({ mode }: { mode: Mode }) {
     shellRef.current.gameOver(undefined, {
       title: place === 1 ? 'You Won' : `${ordinal(place)} Place`,
       detail: `${fmtTime(ms / 1000)} at ${r.cc}${newBest ? ', a new best' : ''}. ${lead}`.trim(),
-      board: r.cc,
+      board: boardOf(r.cc),
       rank: ms,
     });
   }
@@ -676,6 +720,7 @@ function Play({ mode }: { mode: Mode }) {
             <span>
               Lap <b>{hud.lap}</b>/{hud.laps}
             </span>
+            <span className="g-palmdrive-cc">{r.cc}</span>
             <span className="g-palmdrive-coins">
               <CoinIcon />
               {hud.coins}

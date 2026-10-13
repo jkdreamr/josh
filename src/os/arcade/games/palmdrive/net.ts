@@ -27,7 +27,8 @@ export type Packet =
   | { k: 'S'; round: number; go: number; cc: string; roster: number[]; cars: Car[] }
   | { k: 's'; round: number; car: Omit<Car, 'seat'> }
   | { k: 'e'; round: number; o: number; ev: NetEv[] }
-  | { k: 'end'; round: number; w: number | null; order: [number, number][] };
+  | { k: 'end'; round: number; w: number | null; order: [number, number][] }
+  | { k: 'cfg'; round: number; cc: string };
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -83,6 +84,8 @@ export const hostState = (round: number, go: number, cc: string, roster: number[
 export const guestState = (round: number, car: Omit<Car, 'seat'>) => ({ t: 'pk', r: round, k: 's', c: packCar(car) });
 export const events = (round: number, origin: number, ev: NetEv[]) => ({ t: 'pk', r: round, k: 'e', o: origin, ev });
 export const endOf = (round: number, winner: number | null, order: [number, number][]) => ({ t: 'pk', r: round, k: 'end', w: winner, order });
+/** The host's pick for the next race, sent while the room waits so guests can see it. */
+export const configOf = (round: number, cc: string) => ({ t: 'pk', r: round, k: 'cfg', cc });
 
 function parseEv(v: unknown): NetEv | null {
   if (!v || typeof v !== 'object') return null;
@@ -123,6 +126,7 @@ export function parsePacket(value: unknown): Packet | null {
     const ev = p.ev.slice(0, 32).map(parseEv).filter((e): e is NetEv => e !== null);
     return { k: 'e', round, o: p.o, ev };
   }
+  if (p.k === 'cfg') return typeof p.cc === 'string' ? { k: 'cfg', round, cc: p.cc } : null;
   if (p.k === 'end') {
     if (!(p.w === null || seatOk(p.w)) || !Array.isArray(p.order)) return null;
     const order = p.order.filter((o): o is [number, number] => Array.isArray(o) && seatOk(o[0]) && num(o[1])).slice(0, 16);
