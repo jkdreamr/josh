@@ -19,9 +19,12 @@ import {
   soloRace,
   spawn,
   standings,
+  hornAt,
+  inkFrom,
   step,
   stolen,
   strike,
+  trailable,
   turboLevel,
   type Cc,
   type Ev,
@@ -323,6 +326,9 @@ type Hud = {
   /** Enough coins to cash in for a boost. */
   cashReady: boolean;
   item: Item | null;
+  /** Ink over your view (0 to 1) and a golden mushroom still running. */
+  ink: number;
+  golden: boolean;
   uses: number;
   rolling: boolean;
   /** The banana or shell is held out behind as a shield. */
@@ -391,7 +397,7 @@ function Play({ mode }: { mode: Mode }) {
   const tap = useRef({ back: false, gas: false, cash: false, slam: false });
   /** The item button was holding a banana or shell out behind last frame. */
   const holding = useRef(false);
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
@@ -504,6 +510,8 @@ function Play({ mode }: { mode: Mode }) {
       if (!r.things.some((t) => t.id === ev.id)) spawn(r, { id: ev.id, kind: ev.kind, owner: idx(from), x: ev.x, z: ev.z, y: ev.yy, vx: ev.vx, vz: ev.vz, vy: ev.vy, grace: ev.gr, target: ev.tg >= 0 ? idx(ev.tg) : -1, prog: ev.pg }, false);
     } else if (ev.y === 'gone') removeThing(r, ev.id, false);
     else if (ev.y === 'bolt') strike(r, idx(from));
+    else if (ev.y === 'ink') inkFrom(r, idx(from));
+    else if (ev.y === 'horn') hornAt(r, idx(from), ev.x, ev.z);
     else if (ev.y === 'boom') boom(r, ev.x, ev.z, idx(from));
     else if (ev.y === 'stole' && ev.to === r.karts[r.me]?.seat) stolen(r, r.karts[r.me]);
   };
@@ -597,18 +605,18 @@ function Play({ mode }: { mode: Mode }) {
         inp.fwd = keys.down('up');
         // Bananas and shells trail behind as a shield while the item button is held and fly when it is let go; other
         // items go off on the press. Z (or the back button) throws backwards right away.
-        const trailable = me.roll === 0 && (me.item === 'banana' || me.item === 'green' || me.item === 'red');
+        const trails = me.roll === 0 && trailable(me.item);
         const itemDown = keys.down('KeyX', 'KeyE', 'Enter');
         const itemPress = keys.pressed('KeyX', 'KeyE', 'Enter');
         const backPress = keys.pressed('KeyZ', 'KeyQ') || tap.current.back;
         let use = itemPress;
         if (backPress) use = true;
-        else if (trailable) use = (holding.current && !itemDown) || (itemPress && !itemDown);
+        else if (trails) use = (holding.current && !itemDown) || (itemPress && !itemDown);
         if (use) {
           inp.use = true;
           inp.back = backPress || keys.down('down');
         }
-        inp.hold = trailable && itemDown && !backPress;
+        inp.hold = trails && itemDown && !backPress;
         holding.current = inp.hold;
         if (keys.pressed('KeyC') || tap.current.slam) inp.slam = true;
         if (keys.pressed('KeyB') || tap.current.cash) inp.cash = true;
@@ -710,6 +718,8 @@ function Play({ mode }: { mode: Mode }) {
       out.push({ y: 'spawn', id: th.id, kind: th.kind, x: round(th.x), z: round(th.z), vx: round(th.vx), vz: round(th.vz), vy: round(th.vy), yy: round(th.y), tg: r.karts[th.target]?.seat ?? -1, pg: round(th.prog), gr: round(th.grace) });
     } else if (e.t === 'gone' && e.local) out.push({ y: 'gone', id: e.id });
     else if (e.t === 'bolt') out.push({ y: 'bolt' });
+    else if (e.t === 'ink') out.push({ y: 'ink' });
+    else if (e.t === 'horn') out.push({ y: 'horn', x: round(e.x), z: round(e.z) });
     else if (e.t === 'boom') out.push({ y: 'boom', x: round(e.x), z: round(e.z) });
     // our kart was slammed by someone else's: tell them they won our coin
     else if (e.t === 'slammed' && e.coin && e.k === r.me && r.karts[e.by]?.kind === 'remote') out.push({ y: 'stole', to: r.karts[e.by].seat });
@@ -742,11 +752,25 @@ function Play({ mode }: { mode: Mode }) {
         break;
       case 'use':
         if (!mine) break;
-        if (e.item === 'mushroom' || e.item === 'triple') sfx.tone({ freq: 260, to: 900, dur: 0.3, type: 'sawtooth', vol: 0.12 });
+        if (e.item === 'mushroom' || e.item === 'triple' || e.item === 'golden') sfx.tone({ freq: 260, to: 900, dur: 0.3, type: 'sawtooth', vol: 0.12 });
         else if (e.item === 'star') sfx.play('win');
-        else if (e.item === 'banana') sfx.play('jump', 0.7);
+        else if (e.item === 'banana' || e.item === 'bananas' || e.item === 'bomb') sfx.play('jump', 0.7);
         else if (e.item === 'blue') sfx.tone({ freq: 900, to: 500, dur: 0.6, type: 'triangle', vol: 0.12 });
-        else if (e.item !== 'bolt') sfx.tone({ freq: 700, to: 300, dur: 0.18, type: 'triangle', vol: 0.15 });
+        else if (e.item === 'mega') sfx.tone({ freq: 110, to: 330, dur: 0.7, type: 'square', vol: 0.12 });
+        else if (e.item === 'bullet') {
+          sfx.noise(0.4, 0.2);
+          sfx.tone({ freq: 160, to: 90, dur: 0.6, type: 'sawtooth', vol: 0.12 });
+        } else if (e.item === 'ink') sfx.tone({ freq: 500, to: 180, dur: 0.25, type: 'sine', vol: 0.15 });
+        else if (e.item === 'horn') [349, 440, 523].forEach((f) => sfx.tone({ freq: f, dur: 0.45, type: 'sawtooth', vol: 0.07 }));
+        else if (e.item !== 'bolt' && e.item !== 'coin') sfx.tone({ freq: 700, to: 300, dur: 0.18, type: 'triangle', vol: 0.15 });
+        break;
+      case 'inked':
+        if (!mine) break;
+        sfx.tone({ freq: 220, to: 120, dur: 0.3, type: 'sine', vol: 0.16 });
+        buzz(50);
+        break;
+      case 'blast':
+        if (!mine) sfx.play('boom', 1.2);
         break;
       case 'slam':
         if (mine) sfx.tone({ freq: 240, to: 120, dur: 0.14, type: 'sawtooth', vol: 0.12 });
@@ -873,6 +897,8 @@ function Play({ mode }: { mode: Mode }) {
       coins: me.coins,
       cashReady: me.coins >= CASH_COST && me.done === null,
       item: me.roll > 0 ? ITEMS[Math.floor(clock.current * 12) % ITEMS.length] : me.item,
+      ink: me.done === null ? Math.round(Math.min(1, me.ink / 1.5) * 10) / 10 : 0,
+      golden: me.goldT > 0,
       uses: me.uses,
       rolling: me.roll > 0,
       trailing: me.trail,
@@ -941,9 +967,9 @@ function Play({ mode }: { mode: Mode }) {
       {shell.status !== 'ready' && !shell.compact && (
         <div className={`g-palmdrive-hud${shell.touch ? ' is-touch' : ''}`}>
           {hud.boosting && <div className="g-palmdrive-speed" aria-hidden="true" />}
-          <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}${hud.trailing ? ' is-trailing' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}${hud.trailing ? ' behind you' : ''}` : 'No item'}>
+          <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}${hud.trailing ? ' is-trailing' : ''}${hud.golden ? ' is-golden' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}${hud.trailing ? ' behind you' : ''}` : 'No item'}>
             {hud.item ? <ItemIcon item={hud.item} /> : null}
-            {hud.item === 'triple' && !hud.rolling && hud.uses > 0 && <b>{hud.uses}</b>}
+            {!hud.rolling && hud.uses > 1 && <b>{hud.uses}</b>}
           </div>
           <div className={`g-palmdrive-time${live ? ' is-online' : ''}`}>
             {hud.time}
@@ -1048,6 +1074,13 @@ function Play({ mode }: { mode: Mode }) {
         </div>
       )}
       {flash && <div key={flash.id} className={`g-palmdrive-flash is-${flash.kind}`} onAnimationEnd={() => setFlash(null)} />}
+      {hud.ink > 0 && (
+        <div className="g-palmdrive-ink" style={{ opacity: hud.ink }} aria-hidden="true">
+          {INK_BLOTS.map(([x, y, size], i) => (
+            <i key={i} style={{ left: `${x}%`, top: `${y}%`, width: `${size}vmin`, height: `${size}vmin` }} />
+          ))}
+        </div>
+      )}
       {shell.touch && playing && (
         <div className="g-palmdrive-touch">
           <div className="g-palmdrive-steer">
@@ -1120,7 +1153,36 @@ function mapPath(t: Track) {
   return { d: `${d}Z`, box: `${(minX - pad).toFixed(0)} ${(minY - pad).toFixed(0)} ${(maxX - minX + pad * 2).toFixed(0)} ${(maxY - minY + pad * 2).toFixed(0)}` };
 }
 
-const itemName = (item: Item) => ({ banana: 'a banana', green: 'a green shell', red: 'a red shell', mushroom: 'a mushroom', triple: 'three mushrooms', star: 'a star', bolt: 'lightning', blue: 'a blue shell' })[item];
+/** Where the ink lands on your view: [left %, top %, size in vmin]. */
+const INK_BLOTS: [number, number, number][] = [
+  [8, 18, 30],
+  [62, 10, 26],
+  [30, 42, 38],
+  [72, 48, 30],
+  [4, 62, 24],
+  [48, 70, 22],
+];
+
+const ITEM_NAMES: Record<Item, string> = {
+  banana: 'a banana',
+  bananas: 'three bananas',
+  green: 'a green shell',
+  greens: 'three green shells',
+  red: 'a red shell',
+  bomb: 'a bomb',
+  mushroom: 'a mushroom',
+  triple: 'three mushrooms',
+  golden: 'a golden mushroom',
+  coin: 'a coin',
+  star: 'a star',
+  mega: 'a mega mushroom',
+  bullet: 'a bullet',
+  ink: 'ink',
+  horn: 'a horn',
+  bolt: 'lightning',
+  blue: 'a blue shell',
+};
+const itemName = (item: Item) => ITEM_NAMES[item];
 
 const Chevron = ({ d }: { d: string }) => (
   <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
