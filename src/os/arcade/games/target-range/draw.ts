@@ -1,7 +1,41 @@
-import { WAVES, type Point, type RangeState, type Shot, type Target } from './logic';
+import { patternPoint, pendulumPoint, PENDULUM, RICOCHET, waveAt, type Pattern, type Point, type RangeState, type Shot, type Target } from './logic';
 
 export type Feedback = Point & { age: number; shot: Shot };
 const colors = ['#cb6856', '#469c93', '#c79a4a'];
+
+/** Dashed tracks that show where this wave's targets travel. Pop Up has none: its targets jump. */
+function guide(c: CanvasRenderingContext2D, w: number, h: number, pattern: Pattern) {
+  const trace = (point: (u: number) => Point, from: number, to: number, steps: number) => {
+    for (let i = 0; i <= steps; i++) {
+      const p = point(from + ((to - from) * i) / steps);
+      if (i === 0) c.moveTo(p.x * w, p.y * h);
+      else c.lineTo(p.x * w, p.y * h);
+    }
+  };
+  const ring = (rx: number, ry: number) => {
+    c.moveTo(w * (0.5 + rx), h / 2);
+    c.ellipse(w / 2, h / 2, w * rx, h * ry, 0, 0, Math.PI * 2);
+  };
+  if (pattern === 'rails') {
+    for (let i = 0; i < 3; i++) {
+      c.moveTo(w * 0.17, h * (0.22 + i * 0.28));
+      c.lineTo(w * 0.83, h * (0.22 + i * 0.28));
+    }
+  } else if (pattern === 'bounce') {
+    for (let i = 0; i < 3; i++) {
+      c.moveTo(w * (0.2 + i * 0.3), h * 0.17);
+      c.lineTo(w * (0.2 + i * 0.3), h * 0.83);
+    }
+  } else if (pattern === 'carousel') ring(0.3, 0.29);
+  else if (pattern === 'spin') {
+    ring(0.3, 0.29);
+    ring(0.14, 0.13);
+  } else if (pattern === 'eight') trace((u) => patternPoint('eight', 0, u), 0, Math.PI * 2, 100);
+  else if (pattern === 'pretzel') trace((u) => patternPoint('pretzel', 0, u), 0, Math.PI * 4, 200);
+  else if (pattern === 'pendulum') {
+    for (let slot = 0; slot < 3; slot++) trace((a) => pendulumPoint(slot, a), -PENDULUM.swing, PENDULUM.swing, 40);
+  } else if (pattern === 'ricochet') c.rect(w * RICOCHET.left, h * RICOCHET.top, w * RICOCHET.width, h * RICOCHET.height);
+}
 
 function circle(c: CanvasRenderingContext2D, x: number, y: number, r: number, color: string) {
   c.fillStyle = color;
@@ -36,34 +70,28 @@ export function drawRange(
     c.fillRect(x, 0, 16, 8);
   }
 
+  const wave = waveAt(g.wave);
   c.save();
   c.strokeStyle = '#638179';
   c.globalAlpha = 0.38;
   c.lineWidth = 2;
   c.setLineDash([3, 9]);
   c.beginPath();
-  if (g.wave === 1) {
-    for (let i = 0; i < 3; i++) {
-      c.moveTo(w * 0.17, h * (0.22 + i * 0.28));
-      c.lineTo(w * 0.83, h * (0.22 + i * 0.28));
-    }
-  } else if (g.wave === 2) {
-    for (let i = 0; i < 3; i++) {
-      c.moveTo(w * (0.2 + i * 0.3), h * 0.17);
-      c.lineTo(w * (0.2 + i * 0.3), h * 0.83);
-    }
-  } else if (g.wave === 3) c.ellipse(w / 2, h / 2, w * 0.3, h * 0.29, 0, 0, Math.PI * 2);
-  else if (g.wave === 4) {
-    for (let i = 0; i <= 100; i++) {
-      const t = (i / 100) * Math.PI * 2;
-      const x = w * (0.5 + 0.29 * Math.sin(t));
-      const y = h * (0.5 + 0.29 * Math.sin(2 * t));
-      if (i === 0) c.moveTo(x, y);
-      else c.lineTo(x, y);
-    }
-  }
+  guide(c, w, h, wave.pattern);
   c.stroke();
   c.restore();
+
+  if (wave.pattern === 'pendulum') {
+    c.strokeStyle = '#8aa79c';
+    c.lineWidth = 1.5;
+    c.beginPath();
+    for (const { x, y } of targets) {
+      c.moveTo(w / 2, h * PENDULUM.pivot);
+      c.lineTo(x, y);
+    }
+    c.stroke();
+    circle(c, w / 2, h * PENDULUM.pivot, 4, '#bdae87');
+  }
 
   for (const target of targets) {
     const { x, y, radius: r, id } = target;
@@ -141,9 +169,9 @@ export function drawRange(
     c.textAlign = 'center';
     c.fillStyle = '#f3e9d2';
     c.font = '600 22px -apple-system, system-ui, sans-serif';
-    c.fillText(g.phase === 'intro' ? WAVES[g.wave].name : 'Wave Cleared', w / 2, h / 2 - 6);
+    c.fillText(g.phase === 'intro' ? wave.name : 'Wave Cleared', w / 2, h / 2 - 6);
     c.fillStyle = '#c8d7cb';
     c.font = '13px -apple-system, system-ui, sans-serif';
-    c.fillText(g.phase === 'intro' ? WAVES[g.wave].hint : `Time bonus +${g.bonus}`, w / 2, h / 2 + 20);
+    c.fillText(g.phase === 'intro' ? wave.hint : `Time bonus +${g.bonus}`, w / 2, h / 2 + 20);
   }
 }

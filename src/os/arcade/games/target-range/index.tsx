@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { defineSetting, GameShell, getSetting, Segmented, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { drawRange, type Feedback } from './draw';
-import { accuracy, createRange, localAim, multiplier, shootRange, stepRange, targetsFor, WAVES, type Point, type RangeState, type Target } from './logic';
+import { accuracy, createRange, localAim, multiplier, shootRange, stepRange, targetsFor, waveAt, type Point, type RangeState, type Target } from './logic';
 import { meta } from './meta';
 import './target-range.css';
 
@@ -73,10 +73,11 @@ function Play() {
     const event = stepRange(g, dt);
     feedback.current = feedback.current.filter((f) => (f.age += dt) < 0.8);
     if (event === 'over') {
-      sfx.play(g.won ? 'win' : 'lose');
+      sfx.play('lose');
+      const wave = waveAt(g.wave);
       shell.gameOver(g.score, {
-        title: g.won ? 'Range Complete' : 'Time Up',
-        detail: `${g.won ? 'All five waves cleared.' : `Wave ${g.wave + 1}: ${g.waveHits}/${WAVES[g.wave].goal} targets.`} ${g.hits} hits, ${g.misses} misses, ${accuracy(g)}% accuracy. Best streak: ${g.bestCombo}.`,
+        title: 'Time Up',
+        detail: `Cleared ${g.wave} ${g.wave === 1 ? 'wave' : 'waves'}. Wave ${g.wave + 1}, ${wave.name}: ${g.waveHits}/${wave.goal} targets. ${g.hits} hits, ${g.misses} misses, ${accuracy(g)}% accuracy. Best streak: ${g.bestCombo}.`,
         board: g.pace,
       });
     }
@@ -98,12 +99,12 @@ function Play() {
     return localAim(e.nativeEvent.offsetX, e.nativeEvent.offsetY, size.w, size.h);
   };
 
-  const wave = WAVES[hud.wave];
+  const wave = waveAt(hud.wave);
   return (
     <div className="g-target-range-layout">
       <div className="g-target-range-hud">
         <div className="g-target-range-wave">
-          <span>Wave {hud.wave + 1} of {WAVES.length}</span>
+          <span>Wave {hud.wave + 1}</span>
           <strong>{wave.name}</strong>
         </div>
         <div className="g-target-range-progress">
