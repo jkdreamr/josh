@@ -455,6 +455,23 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     [meta, status, round, active, compact, touch, keys, start, pause, resume, restart, gameOver, setScore, invalidate, onInvalidate],
   );
 
+  // Party games keep scores and secrets in the round, so Restart asks for a second tap within a few seconds.
+  const confirmRestart = meta.category === 'party' || meta.category === 'drinking';
+  const [restartArmed, setRestartArmed] = useState(false);
+  useEffect(() => {
+    if (!restartArmed) return;
+    const t = window.setTimeout(() => setRestartArmed(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [restartArmed]);
+  useEffect(() => setRestartArmed(false), [status, round]);
+  const restartFromBar = useCallback(() => {
+    if (confirmRestart && !restartArmed) {
+      setRestartArmed(true);
+      return;
+    }
+    setRestartArmed(false);
+    restart();
+  }, [confirmRestart, restartArmed, restart]);
   const ctl = (fn: () => void) => () => {
     fn();
     focusRoot();
@@ -524,8 +541,15 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
               </button>
             )}
             {status !== 'ready' && !onlineMode && (
-              <button type="button" aria-label="Restart" title="Restart" onClick={restart}>
+              <button
+                type="button"
+                className={restartArmed ? 'is-armed' : undefined}
+                aria-label={restartArmed ? 'Tap again to restart' : 'Restart'}
+                title={restartArmed ? 'Tap again to restart' : 'Restart'}
+                onClick={restartFromBar}
+              >
                 <Icon d={ic.restart} />
+                {restartArmed && <span className="arcade-ctrl-confirm">Restart?</span>}
               </button>
             )}
             <button type="button" aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute' : 'Mute'} onClick={ctl(() => setMuted(!muted))}>

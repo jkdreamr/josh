@@ -93,6 +93,7 @@ export function Screen({
   onEnter,
   className,
   center = true,
+  arm = 450,
 }: {
   /** A short line above the title, like "Pass the phone to". */
   kicker?: ReactNode;
@@ -104,12 +105,19 @@ export function Screen({
   className?: string;
   /** Center the body vertically (default). Lists that grow read better from the top. */
   center?: boolean;
+  /** Milliseconds after the step appears before taps, Enter or Space count, so a double press can't skip it. */
+  arm?: number;
 }) {
   const shell = useShell();
   const enter = useRef(onEnter);
   enter.current = onEnter;
+  const shownAt = useRef(0);
+  useEffect(() => {
+    shownAt.current = performance.now();
+  }, []);
   useKeys((code, e) => {
     if (e?.repeat || (code !== 'Enter' && code !== 'Space')) return;
+    if (performance.now() - shownAt.current < arm) return;
     enter.current?.();
   });
   useEffect(() => {
@@ -119,6 +127,14 @@ export function Screen({
   return (
     <div
       className={['arcade-party', className ?? ''].join(' ')}
+      onClickCapture={(e) => {
+        // A tap meant for the last step can land on this one; swallow taps until it has been up for `arm` ms.
+        // Done in JS because reduced motion (rightly) cuts every CSS animation, the old guard included.
+        if (performance.now() - shownAt.current < arm) {
+          e.stopPropagation();
+          e.preventDefault();
+        }
+      }}
       onClick={(e) => {
         // A tapped button shouldn't keep focus, or Space and Enter would press it again instead of reaching onEnter.
         if ((e.target as Element).closest?.('.arcade-party-picks button, .arcade-party-chips button, .arcade-party-actions button')) shell.root.current?.focus({ preventScroll: true });
@@ -135,6 +151,10 @@ export function Screen({
   );
 }
 
+/** When any Big was last pressed. Two presses closer than this are one double tap, not two decisions. */
+let lastBig = 0;
+const DOUBLE_TAP = 320;
+
 /** A big full-width button. `primary` fills it with the game's accent; `quiet` skips the click when the game plays its own sound. */
 export function Big({ children, onClick, primary, disabled, quiet, className }: { children: ReactNode; onClick: () => void; primary?: boolean; disabled?: boolean; quiet?: boolean; className?: string }) {
   return (
@@ -143,6 +163,9 @@ export function Big({ children, onClick, primary, disabled, quiet, className }: 
       className={['arcade-party-btn', primary ? 'is-primary' : '', className ?? ''].join(' ')}
       disabled={disabled}
       onClick={() => {
+        const now = performance.now();
+        if (now - lastBig < DOUBLE_TAP) return;
+        lastBig = now;
         if (!quiet) sfx.play('select');
         onClick();
       }}
@@ -181,6 +204,7 @@ export function HowToPlay({ steps, label = 'How to Play' }: { steps: readonly Re
 export function PassTo({ name, index, note, onReady, label, className }: { name: string; index: number; note?: ReactNode; onReady: () => void; label?: string; className?: string }) {
   return (
     <Screen
+      arm={800}
       className={['arcade-party-pass', className ?? ''].join(' ')}
       onEnter={onReady}
       actions={
