@@ -2643,6 +2643,8 @@ kbd {
   border-radius: 18px;
   font-size: 13.5px;
   line-height: 1.38;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   user-select: text;
   -webkit-user-select: text;
 }
@@ -2653,6 +2655,18 @@ kbd {
 .from-me .bubble {
   background: #0a84ff;
   color: #fff;
+}
+.bubble-row.sending .bubble {
+  opacity: 0.6;
+}
+.msg-receipt {
+  margin: 3px 4px 2px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #8a8a90;
+}
+.msg-receipt.failed {
+  color: #ff3b30;
 }
 .bubble-actions {
   display: flex;
