@@ -1,7 +1,8 @@
-import { forwardRef, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { flushSync } from 'react-dom';
 import Desktop from './Desktop';
 import Handheld from './Handheld';
+import Hello, { HELLO_MS, HELLO_WRITTEN } from './Hello';
 import type { Laptop3DHandle, Laptop3DProps } from './Laptop3D';
 import { LidStickers, PalmStickers } from './Stickers';
 import type { OSApi } from './types';
@@ -13,7 +14,8 @@ type Device = 'laptop' | 'phone' | 'tablet';
 /** Lid travel; slow and weighted like a real hinge. The display lights up just before it settles. */
 const LID_MS = 2600;
 const LIGHT_AT = LID_MS - 350;
-const HELLO_MS = 2700;
+/** The boot layer's fade to the desktop. */
+const BOOT_FADE_MS = 750;
 /** Phones and iPads have no lid: the glass stays dark for a beat, then the display powers on. */
 const POWER_MS = 900;
 
@@ -57,23 +59,6 @@ function Keyboard() {
         </div>
       ))}
     </div>
-  );
-}
-
-function Hello() {
-  return (
-    <svg className="hello" viewBox="0 0 640 260" aria-label="hello">
-      <defs>
-        <mask id="hello-pen" maskUnits="userSpaceOnUse" x="0" y="0" width="640" height="260">
-          <text className="hello-pen" x="50%" y="62%" textAnchor="middle">
-            hello
-          </text>
-        </mask>
-      </defs>
-      <text className="hello-ink" x="50%" y="62%" textAnchor="middle" mask="url(#hello-pen)">
-        hello
-      </text>
-    </svg>
   );
 }
 
@@ -138,6 +123,12 @@ export default function OS() {
   const later = (fn: () => void, ms: number) => {
     timers.current.push(window.setTimeout(fn, ms));
   };
+  /** Hello at `at`; the desktop mounts under the finished word so it is painted before the hello fades. */
+  const greet = (at: number) => {
+    later(() => setPhase('hello'), at);
+    later(() => setMounted(true), at + HELLO_WRITTEN);
+    later(() => setPhase('on'), at + HELLO_MS);
+  };
 
   const boot = useCallback((fast: boolean) => {
     clearTimers();
@@ -146,10 +137,7 @@ export default function OS() {
     const light = lap ? LIGHT_AT : POWER_MS;
     later(() => setPhase('opening'), 300);
     if (fast) later(() => setPhase('on'), 300 + (lap ? LID_MS : POWER_MS));
-    else {
-      later(() => setPhase('hello'), 300 + light);
-      later(() => setPhase('on'), 300 + light + HELLO_MS);
-    }
+    else greet(300 + light);
   }, []);
 
   useEffect(() => {
@@ -198,13 +186,23 @@ export default function OS() {
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduced) {
       clearTimers();
-      setPhase('hello');
-      later(() => setPhase('on'), HELLO_MS);
+      greet(0);
     } else boot(false);
   }, [boot, device, mode, ready]);
 
   useEffect(() => {
     if (phase === 'on') setMounted(true);
+  }, [phase]);
+
+  // The hello stays on the boot layer while it fades, so the desktop comes up through it rather than through black.
+  const [greeting, setGreeting] = useState(false);
+  useEffect(() => {
+    if (phase === 'hello') setGreeting(true);
+    else if (phase !== 'on') setGreeting(false);
+    else {
+      const t = window.setTimeout(() => setGreeting(false), BOOT_FADE_MS + 100);
+      return () => clearTimeout(t);
+    }
   }, [phase]);
 
   const skip = useCallback(() => {
@@ -346,8 +344,7 @@ export default function OS() {
     setMounted(false);
     setGen((g) => g + 1);
     setPhase('opening');
-    later(() => setPhase('hello'), 700);
-    later(() => setPhase('on'), 700 + HELLO_MS);
+    greet(700);
   }, []);
 
   const sleep = useCallback(() => {
@@ -424,8 +421,12 @@ export default function OS() {
           apiRef={apiRef}
         />
       )}
-      <div className={`screen-boot ${phase === 'on' || phase === 'sleep' ? 'is-done' : ''}`} onClick={skip}>
-        {phase === 'hello' && <Hello />}
+      <div
+        className={`screen-boot ${phase === 'on' || phase === 'sleep' ? 'is-done' : ''}`}
+        style={{ '--boot-fade': `${BOOT_FADE_MS}ms` } as CSSProperties}
+        onClick={skip}
+      >
+        {(phase === 'hello' || greeting) && <Hello />}
       </div>
       <div className="screen-glare" aria-hidden="true" />
     </>

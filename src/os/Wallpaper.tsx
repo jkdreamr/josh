@@ -5,7 +5,7 @@ type Phase = 'dawn' | 'day' | 'dusk' | 'night';
 const PHASES: Phase[] = ['dawn', 'day', 'dusk', 'night'];
 
 /** Part of the Palo Alto day the photo is graded for. */
-function phaseFor(h: number): Phase {
+export function phaseFor(h: number): Phase {
   if (h >= 5 && h < 7.5) return 'dawn';
   if (h >= 7.5 && h < 16.5) return 'day';
   if (h >= 16.5 && h < 19.5) return 'dusk';
