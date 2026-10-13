@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AstroIntegration } from 'astro';
 
 /**
@@ -29,11 +29,11 @@ export type History = { files: Record<string, number> };
 export const MISSING_FILE = '_missing.js';
 const MISSING_HEADER = 'x-missing-file';
 /**
- * Vercel only reaches the routes after `filesystem` for files that don't exist. Workers are left out: a missing
- * worker must fail to load (Baduk shows its Reload card for that), not start and throw.
+ * Vercel only reaches the routes after `filesystem` for files that don't exist. Workers (built as `*worker-<hash>.js`)
+ * are left out: a missing worker must fail to load (Baduk shows its Reload card for that), not start and throw.
  */
 export const MISSING_ROUTE = {
-  src: '^/_astro/(?!.*worker)[^/]+\\.js$',
+  src: '^/_astro/(?![^/]*worker-)[^/]+\\.js$',
   dest: `/${MISSING_FILE}`,
   headers: { 'cache-control': 'no-store', [MISSING_HEADER]: '1' },
 };
@@ -48,21 +48,23 @@ type Route = Record<string, unknown>;
 export function withMissingRoute(routes: Route[]): Route[] | null {
   const at = routes.findIndex((route) => route.handle === 'filesystem');
   if (at < 0) return null;
-  // After the filesystem check, drop earlier copies of ours and header-only /_astro routes (the adapter's).
-  const rest = routes.slice(at + 1).filter((route) => route.dest !== MISSING_ROUTE.dest && !(String(route.src).startsWith('^/_astro/') && !route.dest));
-  return [...routes.slice(0, at + 1), MISSING_ROUTE, MISS_HEADERS_ROUTE, ...rest];
+  // Routes from there to the next `handle` only run for misses. In that stretch, drop earlier copies of ours and
+  // header-only /_astro routes (the adapter's). Later phases, such as headers for files that exist, stay as they are.
+  const next = routes.findIndex((route, i) => i > at && route.handle);
+  const end = next < 0 ? routes.length : next;
+  const misses = routes.slice(at + 1, end).filter((route) => route.dest !== MISSING_ROUTE.dest && !(String(route.src).startsWith('^/_astro/') && !route.dest));
+  return [...routes.slice(0, at + 1), MISSING_ROUTE, MISS_HEADERS_ROUTE, ...misses, ...routes.slice(end)];
 }
 
-/** Arcade game titles to ids, read from each game's meta.ts, so the stand-in can reopen the game it was. */
-export function gameIds(gamesDir: string): Record<string, string> {
+/** Arcade game titles to ids, from each game's meta, so the stand-in can reopen the game it was. */
+export async function gameIds(gamesDir: string): Promise<Record<string, string>> {
   const ids: Record<string, string> = {};
   for (const folder of existsSync(gamesDir) ? readdirSync(gamesDir) : []) {
     const file = join(gamesDir, folder, 'meta.ts');
     if (folder.startsWith('_') || !existsSync(file)) continue;
-    const meta = readFileSync(file, 'utf8');
-    const id = meta.match(/\bid:\s*(['"])(.*?)\1/)?.[2];
-    const title = meta.match(/\btitle:\s*(['"])(.*?)\1/)?.[2];
-    if (id && title) ids[title] = id;
+    // Like scripts/arcade-specs.ts. A meta that won't load just reopens the arcade grid instead of its game.
+    const meta = await import(pathToFileURL(file).href).then((m: { meta?: { id?: unknown; title?: unknown } }) => m.meta, () => null);
+    if (typeof meta?.id === 'string' && typeof meta.title === 'string') ids[meta.title] = meta.id;
   }
   return ids;
 }
@@ -130,8 +132,8 @@ export default function keepOldAssets({ from }: { from?: string }): AstroIntegra
         const out = fileURLToPath(dir);
         // The stand-in for missing scripts, and the route that serves it. The Vercel adapter has written its
         // config by now (it runs first) and copies the files out after this.
-        const games = JSON.stringify(gameIds(join(root, 'src', 'os', 'arcade', 'games')));
-        writeFileSync(join(out, MISSING_FILE), readFileSync(join(root, 'scripts', 'missing-file.js'), 'utf8').replace('__GAMES__', () => games));
+        const games = JSON.stringify(await gameIds(join(root, 'src', 'os', 'arcade', 'games')));
+        writeFileSync(join(out, MISSING_FILE), readFileSync(join(root, 'scripts', 'missing-file.js'), 'utf8').replace(/__GAMES__/g, () => games));
         const config = join(root, '.vercel', 'output', 'config.json');
         if (existsSync(config)) {
           const vercel = JSON.parse(readFileSync(config, 'utf8')) as { routes?: Route[] };

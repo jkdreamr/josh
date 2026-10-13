@@ -16,58 +16,78 @@ function setText(el, text) {
   else el.textContent = text;
 }
 
-function reload(title) {
-  const id = GAMES[title];
-  try {
-    const now = Date.now();
-    sessionStorage.setItem('os:reloaded', String(now));
-    const fullscreen = !!document.querySelector('.stage.is-fs');
-    sessionStorage.setItem('os:resume', JSON.stringify({ app: 'arcade', args: id ? { play: id } : {}, fullscreen, at: now }));
-  } catch (e) {
-    // No storage: still reload, just onto the desktop.
+/** What the new code reopens after the reload: the window the card sits in, as it was. */
+function resumeFor(card, name) {
+  const win = card.closest('[data-win]');
+  const app = win && win.getAttribute('data-win');
+  if (app === 'chrome') {
+    // The address bar of a Chrome window showing a game reads chrome://games/<id>, with ?room= for online play.
+    const address = win.querySelector('input[aria-label="Address"]');
+    const url = address ? address.value : '';
+    return { app, args: url.startsWith('chrome://games/') ? { url } : {} };
   }
-  location.reload();
+  if (app === 'coxbox') {
+    const params = new URLSearchParams(location.search);
+    const room = params.get('game') === 'coxbox' ? params.get('room') : null;
+    return { app, args: room ? { room } : {} };
+  }
+  const id = GAMES[name];
+  return { app: 'arcade', args: id ? { play: id } : {} };
+}
+
+function reload(card, name) {
+  // Reloading offline would swap the whole page for the browser's error page, so check the site answers first.
+  fetch('/', { method: 'HEAD', cache: 'no-store' })
+    .then((res) => {
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      try {
+        const now = Date.now();
+        const fullscreen = !!document.querySelector('.stage.is-fs');
+        sessionStorage.setItem('os:reloaded', String(now));
+        sessionStorage.setItem('os:resume', JSON.stringify({ ...resumeFor(card, name), fullscreen, at: now }));
+      } catch (e) {
+        // No storage: still reload, just onto the desktop.
+      }
+      location.reload();
+    })
+    .catch(() => {
+      setText(card.querySelector('span'), "you're offline. connect to the internet and try again.");
+      setText(card.querySelector('.btn-primary'), 'Try again');
+    });
 }
 
 function patch(card) {
-  if (card.hasAttribute('data-reload') || !(card.textContent || '').includes(OLD_CARD)) return false;
+  if (card.hasAttribute('data-reload') || !(card.textContent || '').includes(OLD_CARD)) return;
   card.setAttribute('data-reload', '');
   const title = card.querySelector('b');
   const name = (title && title.textContent ? title.textContent : '').replace(/ didn't load$/, '');
   setText(title, `${name} was updated`);
   setText(card.querySelector('span'), "reload to play the new version. you'll land right back here.");
   const button = card.querySelector('.btn-primary');
-  if (button) {
-    setText(button, 'Reload');
-    // Capture the click before React sees it: the old Try Again would only show this card again.
-    button.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      reload(name);
-    }, true);
-  }
-  return true;
+  if (!button) return;
+  setText(button, 'Reload');
+  // Capture the click before React sees it: the old Try Again would only show this card again.
+  button.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    reload(card, name);
+  }, true);
 }
 
-if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
-  // Every missing file runs this once, so share one watcher per page.
-  const state = window.__missingFile || (window.__missingFile = { observer: null, seen: false, timer: 0 });
-  const scan = () => {
-    for (const card of document.querySelectorAll('.arcade-notice')) if (patch(card)) state.seen = true;
-  };
-  scan();
-  if (!state.observer) {
-    state.observer = new MutationObserver(scan);
-    state.observer.observe(document.body, { childList: true, subtree: true });
-  }
-  // An old page keeps watching, since any game it already failed to open can show the old card again. A new page
-  // never shows the old card, so stop once its own card has had time to appear.
-  clearTimeout(state.timer);
-  state.timer = setTimeout(() => {
-    if (state.seen || !state.observer) return;
-    state.observer.disconnect();
-    state.observer = null;
-  }, 15000);
+function scan(node) {
+  if (node.nodeType !== 1) return;
+  if (node.matches('.arcade-notice')) patch(node);
+  for (const card of node.querySelectorAll('.arcade-notice')) patch(card);
+}
+
+// Every missing file runs this, so set up one watcher per page. It stays for the page's life: a game the page
+// already failed to open can show the old card again later without asking for anything new.
+if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined' && !window.__missingFile) {
+  window.__missingFile = true;
+  scan(document.body);
+  new MutationObserver((records) => {
+    for (const record of records) for (const node of record.addedNodes) scan(node);
+  }).observe(document.body, { childList: true, subtree: true });
 }
 
 throw new Error(`Failed to fetch dynamically imported module: ${import.meta.url}`);
