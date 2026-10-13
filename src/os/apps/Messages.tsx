@@ -7,8 +7,9 @@ type Action = { label: string; run: (os: OSApi) => void };
 /**
  * A bubble. Scripted answers and chip questions stay on this device. Typed messages go to the real Josh on Telegram:
  * `idx` is their place in the live conversation once stored, `status` tracks one still on its way or one that failed.
+ * `auto` marks the AI answering for Josh when he hasn't replied in a day.
  */
-type Msg = { id: number; from: 'me' | 'josh'; text: ReactNode; t: number; actions?: Action[]; idx?: number; status?: 'sending' | 'failed' };
+type Msg = { id: number; from: 'me' | 'josh'; text: ReactNode; t: number; actions?: Action[]; idx?: number; status?: 'sending' | 'failed'; auto?: boolean };
 type Topic = { q: string; a: string[]; actions?: Action[] };
 
 const topics: Topic[] = [
@@ -109,7 +110,13 @@ export default function Messages(_: AppProps) {
     have.current = page.next;
     for (const m of page.messages) activity.current = Math.max(activity.current, m.t);
     setMsgs((list) =>
-      mergePage(list, page, from, (m, idx) => ({ id: seq++, from: m.from === 'visitor' ? 'me' : 'josh', text: m.text, t: m.t, idx }), history),
+      mergePage(
+        list,
+        page,
+        from,
+        (m, idx) => ({ id: seq++, from: m.from === 'visitor' ? 'me' : 'josh', text: m.text, t: m.t, idx, auto: m.from === 'auto' || undefined }),
+        history,
+      ),
     );
   };
 
@@ -236,6 +243,7 @@ export default function Messages(_: AppProps) {
                     ))}
                   </div>
                 )}
+                {m.auto && <small className="msg-note">auto-reply · AI</small>}
                 {i === receiptAt && <small className={`msg-receipt${m.status === 'failed' ? ' failed' : ''}`}>{receipt(m)}</small>}
               </div>
             </Fragment>

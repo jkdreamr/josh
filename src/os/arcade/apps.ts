@@ -1,3 +1,4 @@
+import { GO_LEVELS, type GoSize } from '../games/go-levels.ts';
 import type { LeaderboardSpec, OnlineSpec } from './types';
 
 /**
@@ -15,14 +16,29 @@ export type AppGame = {
   online?: OnlineSpec;
 };
 
+/** Go boards: one per board size and computer level, titled "Go · 13×13 Master" and so on. */
+const goBoards = (size: GoSize): LeaderboardSpec => ({
+  order: 'desc',
+  min: 0.5,
+  max: size * size,
+  unit: 'pts',
+  measure: 'Win Margin vs Computer',
+  variants: Object.fromEntries(GO_LEVELS.map((level) => [level.id, `${size}×${size} ${level.label}`])),
+});
+
+/** The board id owner for a Go board size. 9×9 keeps the original `go` id; online rooms use it for every size. */
+export const goBoardOwner = (size: GoSize) => (size === 9 ? 'go' : `go${size}`);
+
 export const appGames: AppGame[] = [
   {
     id: 'go',
     title: 'Go',
     app: 'baduk',
-    leaderboard: { order: 'desc', min: 0.5, max: 81, unit: 'pts', measure: 'Win Margin vs Computer', variants: { fast: 'Fast', strong: 'Strong' } },
+    leaderboard: goBoards(9),
     online: { seats: 2 },
   },
+  { id: goBoardOwner(13), title: 'Go', app: 'baduk', leaderboard: goBoards(13) },
+  { id: goBoardOwner(19), title: 'Go', app: 'baduk', leaderboard: goBoards(19) },
   {
     id: 'omok',
     title: 'Omok',

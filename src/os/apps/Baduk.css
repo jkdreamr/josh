@@ -474,3 +474,12 @@
 .baduk-mode .gseg > button {
   padding: 0 6px;
 }
+
+.baduk-size .gseg > button {
+  padding: 0 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.baduk-level-note {
+  line-height: 1.35;
+}

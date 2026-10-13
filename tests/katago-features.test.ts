@@ -98,3 +98,40 @@ test('all eight symmetry transforms are bijections', () => {
     for (let index = 0; index < 81; index += 1) assert.equal(inverse[transformed[index]!], index);
   }
 });
+
+test('encodes 13x13 and 19x19 boards at their own size', () => {
+  for (const size of [13, 19]) {
+    const played = play(newGame(size), size - 4, 3);
+    assert.equal(played.ok, true);
+    const { spatial } = encodeV7(played.state);
+    assert.equal(spatial.length, size * size * 22);
+    const index = 3 * size + size - 4;
+    assert.equal(spatial[index * 22 + 2], 1, 'the stone is in the opponent plane');
+    assert.equal(spatial[index * 22 + 9], 1, 'and is the last move');
+    let onBoard = 0;
+    for (let position = 0; position < size * size; position += 1) onBoard += spatial[position * 22]!;
+    assert.equal(onBoard, size * size);
+  }
+});
+
+test('symmetry transforms are bijections on 13x13 and 19x19', () => {
+  for (const size of [13, 19]) {
+    const area = size * size;
+    for (let symmetry = 0; symmetry < 8; symmetry += 1) {
+      const transformed = Array.from({ length: area }, (_, index) => symmetryIndex(symmetry, index, size));
+      assert.equal(new Set(transformed).size, area);
+      assert.ok(transformed.every((position) => position >= 0 && position < area));
+    }
+  }
+});
+
+test('moves the ladder planes with the board size', () => {
+  const size = 19;
+  let state = newGame(size);
+  const board = [...state.board];
+  for (const [x, y, color] of [[2, 4, BLACK], [4, 4, -1], [5, 4, BLACK], [4, 5, BLACK]] as const) board[y * size + x] = color;
+  state = { ...state, board, positions: [boardKey(board)] };
+  const { spatial } = encodeV7(state);
+  assert.equal(spatial[(4 * size + 4) * 22 + 14], 1);
+  assert.equal(spatial[(3 * size + 4) * 22 + 17], 1);
+});

@@ -1,11 +1,10 @@
 /* Copyright (c) 2026 Web KatRain Contributors. MIT License.
  * Feature and ladder logic derived from KataGo, MIT. See ./LICENSE.md
  */
-import { BLACK, play, type Color, type GameState, type Stone } from '../go.ts';
+import { BLACK, koBannedPoints, type Color, type GameState, type Stone } from '../go.ts';
 import { computeAreaMapV7KataGo, computeLadderedStonesV7KataGoInto, computeLadderFeaturesV7KataGoInto, computeLibertyMap, setBoardSize, type StoneColor } from './fastBoard.ts';
 
 export type HistoryMove = { player: Color; move: number };
-const SIZE = 9;
 const CHANNELS = 22;
 const FLIP = (color: Color): Color => color === BLACK ? -1 : 1;
 const toFastColor = (color: Stone): StoneColor => color === 1 ? 1 : color === -1 ? 2 : 0;
@@ -15,23 +14,23 @@ export function moveHistory(state: GameState): HistoryMove[] {
     const after = state.past[index + 1] ?? state;
     return {
       player: before.toPlay,
-      move: after.lastMove ? after.lastMove.y * SIZE + after.lastMove.x : -1,
+      move: after.lastMove ? after.lastMove.y * state.size + after.lastMove.x : -1,
     };
   });
 }
 
-export function symmetryIndex(symmetry: number, position: number): number {
-  const x = position % SIZE;
-  const y = Math.floor(position / SIZE);
-  const reflectedX = symmetry >= 4 ? SIZE - 1 - x : x;
+export function symmetryIndex(symmetry: number, position: number, size = 9): number {
+  const x = position % size;
+  const y = Math.floor(position / size);
+  const reflectedX = symmetry >= 4 ? size - 1 - x : x;
   let tx = reflectedX;
   let ty = y;
   switch (symmetry % 4) {
-    case 1: tx = SIZE - 1 - y; ty = reflectedX; break;
-    case 2: tx = SIZE - 1 - reflectedX; ty = SIZE - 1 - y; break;
-    case 3: tx = y; ty = SIZE - 1 - reflectedX; break;
+    case 1: tx = size - 1 - y; ty = reflectedX; break;
+    case 2: tx = size - 1 - reflectedX; ty = size - 1 - y; break;
+    case 3: tx = y; ty = size - 1 - reflectedX; break;
   }
-  return ty * SIZE + tx;
+  return ty * size + tx;
 }
 
 function boardFromState(state: GameState): Uint8Array {
@@ -39,13 +38,14 @@ function boardFromState(state: GameState): Uint8Array {
 }
 
 function koPointAfterMove(
+  size: number,
   current: readonly Stone[],
   previous: readonly Stone[] | undefined,
   move: GameState['lastMove'],
   player: Color | undefined,
 ): number {
   if (!previous || !move || !player) return -1;
-  const moveIndex = move.y * SIZE + move.x;
+  const moveIndex = move.y * size + move.x;
   if (previous[moveIndex] !== 0 || current[moveIndex] !== player) return -1;
   let changed = 0;
   let captured = -1;
@@ -61,14 +61,16 @@ function koPointAfterMove(
 }
 
 export function encodeV7(state: GameState, symmetry = 0): { spatial: Float32Array; global: Float32Array } {
-  setBoardSize(SIZE);
-  const spatial = new Float32Array(SIZE * SIZE * CHANNELS);
+  const size = state.size;
+  const area = size * size;
+  setBoardSize(size);
+  const spatial = new Float32Array(area * CHANNELS);
   const global = new Float32Array(19);
   const place = (index: number, channel: number): void => {
-    const transformed = symmetryIndex(symmetry, index);
+    const transformed = symmetryIndex(symmetry, index, size);
     spatial[transformed * CHANNELS + channel] = 1;
   };
-  for (let position = 0; position < SIZE * SIZE; position += 1) spatial[symmetryIndex(symmetry, position) * CHANNELS] = 1;
+  for (let position = 0; position < area; position += 1) spatial[symmetryIndex(symmetry, position, size) * CHANNELS] = 1;
   const board = boardFromState(state);
   const liberties = computeLibertyMap(board);
   for (let position = 0; position < board.length; position += 1) {
@@ -81,11 +83,8 @@ export function encodeV7(state: GameState, symmetry = 0): { spatial: Float32Arra
       else if (liberty === 2) place(position, 4);
       else if (liberty === 3) place(position, 5);
     }
-    if (stone === 0) {
-      const result = play(state, position % SIZE, Math.floor(position / SIZE));
-      if (!result.ok && result.reason === 'ko') place(position, 6);
-    }
   }
+  for (const position of koBannedPoints(state)) place(position, 6);
 
   const history = moveHistory(state);
   const maxTurns = state.consecutivePasses >= 2 ? 1 : 5;
@@ -101,11 +100,11 @@ export function encodeV7(state: GameState, symmetry = 0): { spatial: Float32Arra
   global[14] = state.consecutivePasses > 0 ? 1 : 0;
   global[18] = state.toPlay === 1 ? -0.5 : 0.5;
 
-  const currentLadder = new Uint8Array(81);
-  const currentWorking = new Uint8Array(81);
+  const currentLadder = new Uint8Array(area);
+  const currentWorking = new Uint8Array(area);
   const previousState = state.past.at(-1);
   const previousPreviousState = state.past.at(-2);
-  const currentKoPoint = koPointAfterMove(state.board, previousState?.board, state.lastMove, previousState?.toPlay);
+  const currentKoPoint = koPointAfterMove(size, state.board, previousState?.board, state.lastMove, previousState?.toPlay);
   computeLadderFeaturesV7KataGoInto({
     stones: board,
     koPoint: currentKoPoint,
@@ -119,22 +118,22 @@ export function encodeV7(state: GameState, symmetry = 0): { spatial: Float32Arra
     ? boardFromState(previousPreviousState as GameState)
     : previous;
   const previousKoPoint = included >= 1 && previousState
-    ? koPointAfterMove(previousState.board, previousPreviousState?.board, previousState.lastMove, previousPreviousState?.toPlay)
+    ? koPointAfterMove(size, previousState.board, previousPreviousState?.board, previousState.lastMove, previousPreviousState?.toPlay)
     : currentKoPoint;
-  const previousLadder = new Uint8Array(81);
-  const previousPreviousLadder = new Uint8Array(81);
+  const previousLadder = new Uint8Array(area);
+  const previousPreviousLadder = new Uint8Array(area);
   computeLadderedStonesV7KataGoInto({ stones: previous, koPoint: previousKoPoint, outLadderedStones: previousLadder });
   computeLadderedStonesV7KataGoInto({ stones: previousPrevious, koPoint: -1, outLadderedStones: previousPreviousLadder });
-  for (let position = 0; position < 81; position += 1) {
+  for (let position = 0; position < area; position += 1) {
     if (currentLadder[position]) place(position, 14);
     if (previousLadder[position]) place(position, 15);
     if (previousPreviousLadder[position]) place(position, 16);
     if (currentWorking[position]) place(position, 17);
   }
-  const area = computeAreaMapV7KataGo(board);
-  for (let position = 0; position < 81; position += 1) {
-    if (area[position] === toFastColor(state.toPlay)) place(position, 18);
-    else if (area[position] === toFastColor(-state.toPlay as Color)) place(position, 19);
+  const areaMap = computeAreaMapV7KataGo(board);
+  for (let position = 0; position < area; position += 1) {
+    if (areaMap[position] === toFastColor(state.toPlay)) place(position, 18);
+    else if (areaMap[position] === toFastColor(-state.toPlay as Color)) place(position, 19);
   }
   return { spatial, global };
 }

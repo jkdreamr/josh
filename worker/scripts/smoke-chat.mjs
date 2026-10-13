@@ -1,9 +1,10 @@
-// End-to-end check of Messages live chat against `wrangler dev`, with a fake Telegram API.
+// End-to-end check of Messages live chat against `wrangler dev`, with a fake Telegram API and a stand-in for Workers AI.
+// From worker/:
 //
-//   npx wrangler dev --port 8787 --var TELEGRAM_BOT_TOKEN:test-token --var TELEGRAM_API:http://127.0.0.1:8788
+//   npx wrangler dev --port 8787 -c scripts/smoke/wrangler.jsonc -c scripts/smoke/ai-stub.jsonc --persist-to <empty folder>
 //   node scripts/smoke-chat.mjs
 //
-// Uses a fresh local state, so start wrangler with --persist-to pointing at an empty folder if it ran before.
+// Needs fresh local state each run; auto-replies come after 3.6 seconds instead of a day.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -21,8 +22,8 @@ const telegram = createServer((req, res) => {
     const method = req.url.split('/').pop();
     assert.equal(req.url, `/bot${token}/${method}`);
     const body = raw ? JSON.parse(raw) : {};
-    calls.push({ method, body });
     const result = method === 'getMe' ? { id: 1, username: 'josh_test_bot' } : method === 'sendMessage' ? { message_id: nextMessage++ } : true;
+    calls.push({ method, body, result });
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ ok: true, result }));
   });
@@ -132,10 +133,55 @@ try {
   assert.equal((await fetch(`${api}/chat`, { method: 'POST', body: 'nope' })).status, 400);
   pass('bad sessions, empty text and bad bodies are rejected');
 
+  const carol = session();
+  assert.equal((await send(carol, 'is josh free to meet next week? #retired')).status, 200);
+
+  mark = calls.length;
+  const bobNote = calls.findLast((c) => c.method === 'sendMessage' && c.body.text.includes('second visitor here'));
+  const ai = fromOwner('/ai', { reply_to_message: { message_id: bobNote.result.message_id } });
+  await update(ai);
+  const bobThread = (await read(bob)).messages;
+  assert.equal(bobThread.at(-1).from, 'auto');
+  assert.match(bobThread.at(-1).text, /automatic reply.*gemma-4-26b-a4b-it, \d+ messages, system first: true/);
+  assert.ok(since(mark).some((c) => c.method === 'sendMessage' && c.body.chat_id === owner && c.body.text.startsWith('🤖 Auto-replied to #')));
+  assert.ok(since(mark).some((c) => c.method === 'setMessageReaction' && c.body.message_id === ai.message_id));
+  pass('/ai on a visitor message has the AI answer them now, and Josh sees what it said');
+
+  const spam = [];
   let limited = 0;
-  for (let i = 0; i < 25; i++) if ((await send(session(), `spam ${i}`)).status === 429) limited++;
+  for (let i = 0; i < 25; i++) {
+    const s = session();
+    const status = (await send(s, `spam ${i}`)).status;
+    if (status === 429) limited++;
+    else spam.push(s);
+  }
   assert.ok(limited > 0);
   pass('one IP sending too fast is rate limited');
+
+  // Everyone still waiting comes due 3.6 seconds after writing; give the alarms time to run.
+  await new Promise((resolve) => setTimeout(resolve, 9000));
+  const autoCount = async (s) => (await read(s)).messages.filter((m) => m.from === 'auto').length;
+  const aliceThread = (await read(alice)).messages;
+  assert.equal(aliceThread.at(-1).from, 'auto');
+  assert.equal(aliceThread.at(-2).text, 'cool');
+  assert.equal(await autoCount(bob), 1);
+  const carolThread = (await read(carol)).messages;
+  assert.match(carolThread.at(-1).text, /llama-3\.3-70b-instruct-fp8-fast/);
+  pass('after the wait, unanswered visitors get an auto-reply, falling back to the next model if one is gone');
+
+  const answered = (await Promise.all(spam.map(autoCount))).reduce((a, b) => a + b, 0);
+  // 15 attempts a day: /ai for bob, alice, carol's two (one failed), then the rest go to the earliest spam.
+  assert.equal(answered, 15 - 4);
+  assert.equal(calls.filter((c) => c.method === 'sendMessage' && c.body.text?.startsWith('🤖 Auto-replied')).length, 14);
+  const unanswered = (await Promise.all(spam.map(autoCount))).filter((n) => n === 0).length;
+  assert.equal(unanswered, spam.length - answered);
+  mark = calls.length;
+  await update(fromOwner('/ai', { reply_to_message: { message_id: 1 } }));
+  await update(fromOwner('/ai'));
+  assert.match(since(mark).findLast((c) => c.method === 'sendMessage').body.text, /all 15 auto-replies for today/);
+  await new Promise((resolve) => setTimeout(resolve, 4000));
+  assert.equal((await Promise.all(spam.map(autoCount))).reduce((a, b) => a + b, 0), answered);
+  pass("auto-replies stop at today's limit and the rest wait for tomorrow");
 
   console.log(checks.join('\n'));
 } finally {

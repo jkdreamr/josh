@@ -1,9 +1,10 @@
 import { aiMove, ownership, type GameState } from './go.ts';
 import type { Ownership, Point } from './go.ts';
+import { goLevel, isGoLevel, type GoLevelId } from './go-levels.ts';
 import type { KataGo } from './katago/engine.ts';
 
 type Request =
-  | { id: number; type: 'ai'; state: GameState; level?: 'fast' | 'strong'; budgetMs?: number }
+  | { id: number; type: 'ai'; state: GameState; level?: GoLevelId; budgetMs?: number }
   | { id: number; type: 'ownership'; state: GameState; playouts?: number };
 type Incoming = Request | { type: 'load' };
 type Response =
@@ -71,21 +72,35 @@ async function waitForEngine(): Promise<KataGo | null> {
   }
 }
 
+/** The pick levels answer in one network call; a short pause keeps them from replying instantly. */
+const PICK_MIN_MS = 350;
+
+async function engineMove(engine: KataGo, request: Request & { type: 'ai' }): Promise<Point | null> {
+  const level = goLevel(isGoLevel(request.level) ? request.level : 'strong');
+  if ('search' in level) {
+    return (await engine.genmove(request.state, level.search, { shouldStop: () => latestId !== request.id })).move;
+  }
+  const started = performance.now();
+  const move = await engine.pickmove(request.state, level.kyu);
+  const wait = PICK_MIN_MS - (performance.now() - started);
+  if (wait > 0) await new Promise((resolve) => globalThis.setTimeout(resolve, wait));
+  return move;
+}
+
 async function processRequest(request: Request): Promise<void> {
   if (request.type === 'ai') {
     const loaded = await waitForEngine();
+    // Without the network, the Monte Carlo player stands in: a short budget below Master, the long one at it.
+    const fallbackMs = request.budgetMs ?? (request.level === undefined || request.level === 'strong' ? 700 : 150);
     let move: Point | null;
     if (loaded) {
       try {
-        const result = await loaded.genmove(request.state, request.level ?? (request.budgetMs === 150 ? 'fast' : 'strong'), {
-          shouldStop: () => latestId !== request.id,
-        });
-        move = result.move;
+        move = await engineMove(loaded, request);
       } catch {
-        move = aiMove(request.state, request.budgetMs ?? (request.level === 'fast' ? 150 : 700));
+        move = aiMove(request.state, fallbackMs);
       }
     } else {
-      move = aiMove(request.state, request.budgetMs ?? (request.level === 'fast' ? 150 : 700));
+      move = aiMove(request.state, fallbackMs);
     }
     scope.postMessage({ id: request.id, type: 'ai', move });
     return;

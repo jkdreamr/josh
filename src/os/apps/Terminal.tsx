@@ -84,7 +84,7 @@ export default function Terminal(_: AppProps) {
               ['neofetch', 'system info'],
               ['arcade', 'play the arcade'],
               ['row', 'race in Cox Box'],
-              ['baduk · go', 'play 9x9 Go'],
+              ['baduk · go', 'play Go on 9x9, 13x13 or 19x19'],
               ['badminton', 'play a rally'],
               ['beatpad · beats · open music', 'make a loop'],
               ['clear · history · exit', 'the usual'],
