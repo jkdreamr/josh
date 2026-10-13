@@ -20,10 +20,10 @@ function Shell({ fill, edge }: { fill: string; edge: string }) {
   );
 }
 
-function Mushroom() {
+function Mushroom({ cap = '#e53935', edge = '#7a1512' }: { cap?: string; edge?: string }) {
   return (
     <>
-      <path d="M2.5 12.5a9.5 8.5 0 0 1 19 0z" fill="#e53935" stroke="#7a1512" strokeWidth="1" />
+      <path d="M2.5 12.5a9.5 8.5 0 0 1 19 0z" fill={cap} stroke={edge} strokeWidth="1" />
       <circle cx="8" cy="8.2" r="2" fill="#fff" />
       <circle cx="15.5" cy="7.6" r="2.4" fill="#fff" />
       <circle cx="12" cy="11" r="1.3" fill="#fff" />
@@ -34,8 +34,103 @@ function Mushroom() {
   );
 }
 
+const Banana = () => (
+  <>
+    <path d="M5 6c-1 6 2 12 9 13 3 .4 5-.6 6-2-4 1-9-1-11-5-1-2-1.4-4-1-6z" fill="#ffd640" stroke="#b98a00" strokeWidth="1.1" strokeLinejoin="round" />
+    <path d="M5 6l-1-2.2M20 17l1.3.8" stroke="#5b3b1c" strokeWidth="1.6" strokeLinecap="round" />
+  </>
+);
+
+/** Three of something, arranged like the triple mushroom. */
+const Three = ({ children }: { children: ReactNode }) => (
+  <>
+    <g transform="translate(-4 3) scale(0.6)">{children}</g>
+    <g transform="translate(13.6 3) scale(0.6)">{children}</g>
+    <g transform="translate(4.8 -2) scale(0.6)">{children}</g>
+  </>
+);
+
 export function ItemIcon({ item, size }: { item: Item; size?: number }) {
   switch (item) {
+    case 'bananas':
+      return (
+        <Svg size={size}>
+          <Three>
+            <Banana />
+          </Three>
+        </Svg>
+      );
+    case 'greens':
+      return (
+        <Svg size={size}>
+          <Three>
+            <Shell fill="#2fae4e" edge="#16632a" />
+          </Three>
+        </Svg>
+      );
+    case 'golden':
+      return (
+        <Svg size={size}>
+          <Mushroom cap="#f7c948" edge="#a26b00" />
+          <path d="M20 2.5l.8 1.8 1.8.8-1.8.8-.8 1.8-.8-1.8-1.8-.8 1.8-.8z" fill="#fff6c8" />
+        </Svg>
+      );
+    case 'mega':
+      return (
+        <Svg size={size}>
+          <g transform="translate(-1.2 -1.6) scale(1.1)">
+            <Mushroom cap="#d81b60" edge="#6d0f31" />
+          </g>
+          <path d="M19.5 15.5v-6m-2.4 2.4l2.4-2.4 2.4 2.4" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </Svg>
+      );
+    case 'coin':
+      return (
+        <Svg size={size}>
+          <circle cx="12" cy="12" r="9" fill="#f7c948" stroke="#b9860f" strokeWidth="1.6" />
+          <rect x="10.4" y="6.5" width="3.2" height="11" rx="1.6" fill="#fff3c4" stroke="#b9860f" strokeWidth="1" />
+        </Svg>
+      );
+    case 'bomb':
+      return (
+        <Svg size={size}>
+          <circle cx="11" cy="14" r="7.5" fill="#24242c" stroke="#000" strokeWidth="0.8" />
+          <circle cx="8.5" cy="11.5" r="2" fill="rgba(255,255,255,0.35)" />
+          <rect x="9.5" y="5" width="3" height="2.4" rx="0.6" fill="#ddd" />
+          <path d="M12 5c1-2.5 3-3 4.5-2" fill="none" stroke="#9a7f5c" strokeWidth="1.2" />
+          <path d="M17.5 1.2l.7 1.5 1.5.7-1.5.7-.7 1.5-.7-1.5-1.5-.7 1.5-.7z" fill="#ffb02e" />
+          <path d="M18.5 14h3.5m-1.7-1.8v3.6" stroke="#ddd" strokeWidth="1.4" strokeLinecap="round" />
+        </Svg>
+      );
+    case 'bullet':
+      return (
+        <Svg size={size}>
+          <path d="M3 7h10a6 5 0 0 1 0 10H3z" fill="#24242c" stroke="#000" strokeWidth="0.8" />
+          <path d="M3 7L1 4.5h4zM3 17L1 19.5h4z" fill="#24242c" />
+          <ellipse cx="14" cy="10.5" rx="1.5" ry="2.1" fill="#fff" />
+          <ellipse cx="17.5" cy="10.5" rx="1.3" ry="1.9" fill="#fff" />
+          <circle cx="14.6" cy="10.8" r="0.7" fill="#000" />
+          <circle cx="18" cy="10.8" r="0.6" fill="#000" />
+          <path d="M12 14.5h6" stroke="#c62828" strokeWidth="1.2" strokeLinecap="round" />
+        </Svg>
+      );
+    case 'ink':
+      return (
+        <Svg size={size}>
+          <path d="M12 2c3.5 0 6 2.6 6 6.4 0 2.4-1 3.7-2 4.6l1.4 6.5-2.8-2.6-.6 3.6-2-3-2 3-.6-3.6-2.8 2.6L8 13c-1-.9-2-2.2-2-4.6C6 4.6 8.5 2 12 2z" fill="#f4f4f8" stroke="#555" strokeWidth="0.9" strokeLinejoin="round" />
+          <ellipse cx="10" cy="9.5" rx="1.2" ry="1.8" fill="#222" />
+          <ellipse cx="14" cy="9.5" rx="1.2" ry="1.8" fill="#222" />
+          <circle cx="20" cy="18" r="2" fill="#2b2233" />
+          <circle cx="3.5" cy="16.5" r="1.4" fill="#2b2233" />
+        </Svg>
+      );
+    case 'horn':
+      return (
+        <Svg size={size}>
+          <path d="M3 9.5h4l9-6v17l-9-6H3z" fill="#f7c948" stroke="#a26b00" strokeWidth="1" strokeLinejoin="round" />
+          <path d="M18.5 8.5a5 5 0 0 1 0 7M20.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
+        </Svg>
+      );
     case 'mushroom':
       return (
         <Svg size={size}>
@@ -238,11 +333,20 @@ function Sheet({ root, title, onClose, children }: { root: HTMLElement | null; t
 
 const itemHelp = (touch: boolean): [Item, string][] => [
   ['banana', touch ? 'Drops behind you. Anyone who runs over it spins out.' : 'Drops behind you. Anyone who runs over it spins out. Hold Up as you use it to throw it ahead instead.'],
+  ['bananas', 'Three bananas, one per press. Hold them out behind you as a shield.'],
   ['green', `Flies straight and bounces off walls. Fire it ahead, or back with ${touch ? '▼' : 'Z'}.`],
+  ['greens', 'Three green shells, one per press.'],
   ['red', 'Chases the kart one place ahead of you.'],
+  ['bomb', `Lobbed up the road (or dropped back with ${touch ? '▼' : 'Z'}). It blows up when someone comes near, or when its fuse runs out.`],
   ['mushroom', 'A burst of speed. Great for cutting across the grass.'],
   ['triple', 'Three mushrooms, one per press.'],
+  ['golden', 'Boost as often as you like for a few seconds.'],
+  ['coin', 'Two coins straight into your pocket.'],
   ['star', 'Invincible and faster for a few seconds. Anyone you touch goes flying.'],
+  ['mega', 'Grow huge for a few seconds: faster, shrug off bananas and shells, and flatten anyone you touch.'],
+  ['bullet', 'Turn into a bullet that flies down the road on its own, sending karts flying.'],
+  ['ink', 'Splatters ink over everyone ahead of you.'],
+  ['horn', 'A shockwave that knocks over karts close by and wipes out items, blue shells included.'],
   ['bolt', 'Lightning shrinks every other kart and knocks their items away. Run them over while they are tiny.'],
   ['blue', 'Flies over the course and blows up whoever is in first.'],
 ];

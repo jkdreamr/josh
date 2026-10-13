@@ -50,6 +50,21 @@ export const DRAFT_BOOST = 1;
 export const TRICK_T = 0.9;
 export const RAMP_LEN = 4;
 export const RAMP_H = 0.7;
+/** Golden mushroom: boost as often as you like for this long. */
+export const GOLD_T = 7;
+/** Mega mushroom: grow big, a little faster, and flatten whoever you touch. */
+export const MEGA_T = 7.5;
+export const MEGA_DV = 2.5;
+/** Bullet: the kart flies itself down the middle of the road, bowling everyone aside. */
+export const BULLET_T = 4;
+export const BULLET_DV = 15;
+/** Ink splattered over everyone ahead. */
+export const INK_T = 4.5;
+/** The horn's shockwave. */
+export const HORN_R = 9;
+/** Bombs go off after this long, or as soon as a kart rolls up next to one. */
+export const BOMB_LIFE = 3.4;
+export const BOMB_NEAR = 3.2;
 export const GREEN_V = 42;
 export const RED_V = 40;
 export const BLUE_V = 60;
@@ -65,9 +80,13 @@ export const CLASSES: Record<Cc, { top: number; accel: number; cpu: number }> = 
 };
 export const isCc = (v: unknown): v is Cc => CCS.includes(v as Cc);
 
-export type Item = 'banana' | 'green' | 'red' | 'mushroom' | 'triple' | 'star' | 'bolt' | 'blue';
-export const ITEMS: Item[] = ['banana', 'green', 'red', 'mushroom', 'triple', 'star', 'bolt', 'blue'];
-export type ThingKind = 'banana' | 'green' | 'red' | 'blue';
+export type Item = 'banana' | 'bananas' | 'green' | 'greens' | 'red' | 'bomb' | 'mushroom' | 'triple' | 'golden' | 'coin' | 'star' | 'mega' | 'bullet' | 'ink' | 'horn' | 'bolt' | 'blue';
+export const ITEMS: Item[] = ['banana', 'bananas', 'green', 'greens', 'red', 'bomb', 'mushroom', 'triple', 'golden', 'coin', 'star', 'mega', 'bullet', 'ink', 'horn', 'bolt', 'blue'];
+export type ThingKind = 'banana' | 'green' | 'red' | 'blue' | 'bomb';
+/** Bananas and shells can be held out behind as a shield. */
+export const trailable = (item: Item | null) => item === 'banana' || item === 'bananas' || item === 'green' || item === 'greens' || item === 'red';
+/** How many goes an item gives (the golden mushroom runs on a timer instead). */
+const USES: Partial<Record<Item, number>> = { triple: 3, bananas: 3, greens: 3 };
 export type HitHow = 'spin' | 'tumble' | 'squash' | 'boom';
 
 /** hold: the item button is held (bananas and shells trail behind as a shield until it is let go). */
@@ -126,6 +145,11 @@ export type Kart = {
   draft: number;
   /** A banana or shell held out behind as a shield. */
   trail: boolean;
+  /** Golden mushroom time left once it has been started. */
+  goldT: number;
+  mega: number;
+  bullet: number;
+  ink: number;
   /** Off a ramp: airborne, the window to press for a trick, and whether one was pulled. */
   air: boolean;
   trickT: number;
@@ -199,7 +223,12 @@ export type Ev =
   | { t: 'draft'; k: number }
   | { t: 'block'; k: number; x: number; z: number }
   | { t: 'ramp'; k: number }
-  | { t: 'trick'; k: number };
+  | { t: 'trick'; k: number }
+  /** Ink and the horn as sent online, and the splats and shockwave they make (for the view and sounds). */
+  | { t: 'ink'; k: number }
+  | { t: 'inked'; k: number }
+  | { t: 'horn'; k: number; x: number; z: number }
+  | { t: 'blast'; x: number; z: number };
 
 export type Rng = () => number;
 
@@ -310,6 +339,10 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
       wobble: 0,
       draft: 0,
       trail: false,
+      goldT: 0,
+      mega: 0,
+      bullet: 0,
+      ink: 0,
       air: false,
       trickT: 0,
       trick: false,
@@ -379,7 +412,7 @@ export function soloRace(cc: Cc, seed?: number, look: { color: string; hat: Hat 
 }
 
 export const racing = (r: Race) => r.time >= 0;
-const scaleOf = (k: Kart) => (k.shrink > 0 ? 0.62 : 1);
+const scaleOf = (k: Kart) => (k.shrink > 0 ? 0.62 : k.mega > 0 ? 1.5 : 1);
 export const hurt = (k: Kart) => k.spin > 0 || k.tumble > 0;
 const local = (k: Kart) => k.kind !== 'remote';
 
@@ -465,7 +498,17 @@ function glide(r: Race, k: Kart, dt: number) {
 function drive(r: Race, k: Kart, dt: number) {
   const C = CLASSES[r.cc];
   const inp = k.input;
-  for (const key of ['boost', 'star', 'shrink', 'spin', 'tumble', 'squash', 'safe', 'dashCool', 'slamCool', 'slamT', 'wobble', 'rampCool', 'trickT'] as const) k[key] = Math.max(0, k[key] - dt);
+  const flying = k.bullet > 0;
+  for (const key of ['boost', 'star', 'shrink', 'spin', 'tumble', 'squash', 'safe', 'dashCool', 'slamCool', 'slamT', 'wobble', 'rampCool', 'trickT', 'mega', 'bullet', 'ink'] as const) k[key] = Math.max(0, k[key] - dt);
+  // a bullet hands the kart back with a little boost
+  if (flying && k.bullet === 0) k.boost = Math.max(k.boost, 0.6);
+  if (k.goldT > 0) {
+    k.goldT = Math.max(0, k.goldT - dt);
+    if (k.goldT === 0 && k.item === 'golden') {
+      k.item = null;
+      k.uses = 0;
+    }
+  }
   if (k.roll > 0) {
     k.roll = Math.max(0, k.roll - dt);
     if (k.roll === 0 && k.item) r.events.push({ t: 'got', k: k.idx, item: k.item });
@@ -475,18 +518,26 @@ function drive(r: Race, k: Kart, dt: number) {
     k.drift = 0;
     k.charge = 0;
   }
-  const want = control ? clamp(inp.steer, -1, 1) * (k.wobble > 0 ? 0.3 : 1) : 0;
+  const want = control && k.bullet <= 0 ? clamp(inp.steer, -1, 1) * (k.wobble > 0 ? 0.3 : 1) : 0;
   k.steer = approach(k.steer, want, (want === 0 ? 9 : 6) * dt);
-  k.trail = control && inp.hold && k.roll === 0 && (k.item === 'banana' || k.item === 'green' || k.item === 'red');
+  k.trail = control && inp.hold && k.roll === 0 && trailable(k.item);
+  if (k.bullet > 0) {
+    k.drift = 0;
+    k.charge = 0;
+  }
 
   let top = C.top * (k.ai ? k.ai.pace * k.ai.band * C.cpu : 1) + coinTop(k.coins);
   if (k.shrink > 0) top *= 0.72;
   if (k.star > 0) top += STAR_DV;
+  if (k.mega > 0) top += MEGA_DV;
   if (k.boost > 0) top += BOOST_DV;
-  else if (k.offroad && k.star <= 0) top *= OFFROAD;
+  else if (k.offroad && k.star <= 0 && k.mega <= 0) top *= OFFROAD;
   if (k.drift) top *= 0.985;
   if (k.wobble > 0) top *= 0.85;
-  if (!control) k.v = approach(k.v, 0, (k.tumble > 0 ? 30 : 14) * dt);
+  // ink on a CPU's visor: it drives a touch slower
+  if (k.ink > 0 && k.ai) top *= 0.93;
+  if (k.bullet > 0) k.v = approach(k.v, C.top + BULLET_DV, 40 * dt);
+  else if (!control) k.v = approach(k.v, 0, (k.tumble > 0 ? 30 : 14) * dt);
   else if (inp.brake) k.v = k.v > 0.5 ? Math.max(0, k.v - 26 * dt) : Math.max(-REVERSE, k.v - 9 * dt);
   else if (k.v < top) k.v = Math.min(top, k.v + (k.boost > 0 ? 34 : k.v < 0 ? 20 : C.accel) * dt);
   else k.v = Math.max(top, k.v - (k.offroad && k.boost <= 0 ? 24 : 8) * dt);
@@ -549,7 +600,12 @@ function drive(r: Race, k: Kart, dt: number) {
   else rate = k.steer * TURN * Math.min(1, sp / 5) * (1 - 0.3 * Math.min(1, sp / 30));
   if (k.v < 0) rate = -rate;
   if (k.spin > 0) rate = 0;
-  k.h = wrapAngle(k.h - rate * dt);
+  if (k.bullet > 0) {
+    // on rails down the middle of the road
+    const p = pointAt(r.track, k.s + 12 + k.v * 0.3, 0);
+    const diff = wrapAngle(headingOf(p.x - k.x, p.z - k.z) - k.h);
+    k.h = wrapAngle(k.h + clamp(diff, -5 * dt, 5 * dt));
+  } else k.h = wrapAngle(k.h - rate * dt);
 
   k.x += (Math.sin(k.h) * k.v + k.kx) * dt;
   k.z += (Math.cos(k.h) * k.v + k.kz) * dt;
@@ -792,7 +848,9 @@ export function standings(r: Race) {
 // ---------------------------------------------------------------------------------------------------------------
 // Karts touching karts
 
-const massOf = (k: Kart) => (k.star > 0 ? 4 : k.shrink > 0 ? 0.4 : 1);
+const massOf = (k: Kart) => (k.star > 0 || k.bullet > 0 || k.mega > 0 ? 4 : k.shrink > 0 ? 0.4 : 1);
+/** Stars and bullets send anyone they touch flying. */
+const crushes = (k: Kart) => k.star > 0 || k.bullet > 0;
 
 const slamPad = (S: Kart, V: Kart) => (!local(S) && local(V) ? SLAM_PAD : 0);
 
@@ -815,9 +873,12 @@ function bumpKarts(r: Race) {
       if (A.slamT > 0 && !A.slamHit && B.slamT <= 0 && dist < reach + slamPad(A, B)) slamLand(r, A, B, nx, nz);
       else if (B.slamT > 0 && !B.slamHit && A.slamT <= 0 && dist < reach + slamPad(B, A)) slamLand(r, B, A, -nx, -nz);
       if (dist >= reach) continue;
-      // stars flatten whoever they touch; a full-size kart squashes a shrunken one
-      if (A.star > 0 && B.star <= 0 && local(B)) hitKart(r, B, 'tumble', A.idx);
-      else if (B.star > 0 && A.star <= 0 && local(A)) hitKart(r, A, 'tumble', B.idx);
+      // stars and bullets send whoever they touch flying, a mega kart flattens them, and a full-size kart squashes
+      // a shrunken one
+      if (crushes(A) && !crushes(B) && local(B)) hitKart(r, B, 'tumble', A.idx);
+      else if (crushes(B) && !crushes(A) && local(A)) hitKart(r, A, 'tumble', B.idx);
+      else if (A.mega > 0 && B.mega <= 0 && local(B)) hitKart(r, B, 'squash', A.idx);
+      else if (B.mega > 0 && A.mega <= 0 && local(A)) hitKart(r, A, 'squash', B.idx);
       else if (A.shrink > 0 && B.shrink <= 0 && local(A)) hitKart(r, A, 'squash', B.idx);
       else if (B.shrink > 0 && A.shrink <= 0 && local(B)) hitKart(r, B, 'squash', A.idx);
       const ma = massOf(A);
@@ -847,8 +908,11 @@ function bumpKarts(r: Race) {
 
 /** Hits a kart this client simulates. Stars shrug everything off; a kart already reeling is not hit twice. */
 export function hitKart(r: Race, k: Kart, how: HitHow, by: number) {
-  if (!local(k) || k.star > 0 || k.done !== null) return false;
+  if (!local(k) || k.star > 0 || k.bullet > 0 || k.done !== null) return false;
+  // a mega kart only notices explosions, and they shrink it back down
+  if (k.mega > 0 && how !== 'boom') return false;
   if (how !== 'boom' && (hurt(k) || k.safe > 0)) return false;
+  k.mega = 0;
   k.drift = 0;
   k.charge = 0;
   k.boost = 0;
@@ -881,10 +945,10 @@ export function hitKart(r: Race, k: Kart, how: HitHow, by: number) {
 
 /** Item odds by how far back you are: leaders get defense, the back of the pack gets the big guns. */
 const ODDS: [number, Partial<Record<Item, number>>][] = [
-  [0.15, { banana: 40, green: 40, red: 12, mushroom: 8 }],
-  [0.45, { banana: 15, green: 25, red: 30, mushroom: 22, triple: 8 }],
-  [0.75, { green: 10, red: 30, mushroom: 22, triple: 22, star: 8, bolt: 3, blue: 5 }],
-  [1.01, { red: 18, mushroom: 10, triple: 26, star: 26, bolt: 12, blue: 8 }],
+  [0.15, { banana: 28, bananas: 8, green: 28, greens: 6, red: 10, mushroom: 6, coin: 10, horn: 4 }],
+  [0.45, { banana: 10, bananas: 8, green: 14, greens: 10, red: 22, bomb: 8, mushroom: 14, triple: 6, coin: 4, ink: 4 }],
+  [0.75, { greens: 6, red: 20, bomb: 8, mushroom: 12, triple: 16, golden: 6, star: 8, mega: 5, ink: 8, bolt: 3, blue: 5, horn: 3 }],
+  [1.01, { red: 10, triple: 16, golden: 12, star: 16, mega: 10, bullet: 14, bolt: 10, blue: 8, ink: 4 }],
 ];
 
 export function rollItem(r: Race, k: Kart): Item {
@@ -904,7 +968,7 @@ export function rollItem(r: Race, k: Kart): Item {
 
 export function giveItem(r: Race, k: Kart, item: Item, roll = ROLL_T) {
   k.item = item;
-  k.uses = item === 'triple' ? 3 : 1;
+  k.uses = USES[item] ?? 1;
   k.roll = roll;
   if (roll === 0) r.events.push({ t: 'got', k: k.idx, item });
 }
@@ -918,7 +982,7 @@ export function spawn(r: Race, thing: Omit<Thing, 'id' | 'i' | 'life' | 'bounces
     local: isLocal,
     ...thing,
     id: thing.id ?? r.nextId++,
-    life: thing.life ?? (thing.kind === 'banana' ? Infinity : thing.kind === 'green' ? 7 : thing.kind === 'red' ? 10 : 25),
+    life: thing.life ?? (thing.kind === 'banana' ? Infinity : thing.kind === 'green' ? 7 : thing.kind === 'red' ? 10 : thing.kind === 'bomb' ? BOMB_LIFE : 25),
   };
   r.things.push(t);
   if (r.things.length > 40) {
@@ -936,20 +1000,44 @@ export function useItem(r: Race, k: Kart): Item | null {
   const { fx, fz } = fwdOf(k);
   const back = k.input.back;
   const base = { owner: k.idx, y: 0, vy: 0, grace: 0.6, target: -1, prog: 0 };
-  if (item === 'banana') {
+  if (item === 'banana' || item === 'bananas') {
     if (k.input.fwd && !back) spawn(r, { ...base, kind: 'banana', grace: 1.2, x: k.x + fx * 2.6, z: k.z + fz * 2.6, y: 0.8, vx: fx * 20 + Math.sin(k.h) * k.v * 0.5, vz: fz * 20 + Math.cos(k.h) * k.v * 0.5, vy: 7 });
     else spawn(r, { ...base, kind: 'banana', x: k.x - fx * 2.5, z: k.z - fz * 2.5, vx: 0, vz: 0 });
-  } else if (item === 'green' || (item === 'red' && back)) {
+  } else if (item === 'bomb') {
+    // lobbed well ahead, or dropped behind
+    if (back) spawn(r, { ...base, kind: 'bomb', grace: 1.2, x: k.x - fx * 2.6, z: k.z - fz * 2.6, vx: 0, vz: 0 });
+    else spawn(r, { ...base, kind: 'bomb', grace: 0.8, x: k.x + fx * 2.6, z: k.z + fz * 2.6, y: 1, vx: fx * 24 + fx * k.v * 0.5, vz: fz * 24 + fz * k.v * 0.5, vy: 8 });
+  } else if (item === 'green' || item === 'greens' || (item === 'red' && back)) {
     const dir = back ? -1 : 1;
     spawn(r, { ...base, kind: 'green', x: k.x + fx * 2.6 * dir, z: k.z + fz * 2.6 * dir, y: 0.35, vx: fx * GREEN_V * dir, vz: fz * GREEN_V * dir });
   } else if (item === 'red') {
     const ahead = r.karts.find((o) => o.place === k.place - 1 && o.done === null);
     spawn(r, { ...base, kind: 'red', x: k.x + fx * 2.6, z: k.z + fz * 2.6, y: 0.35, vx: fx * RED_V, vz: fz * RED_V, target: ahead ? ahead.idx : -1 });
-  } else if (item === 'mushroom' || item === 'triple') {
+  } else if (item === 'mushroom' || item === 'triple' || item === 'golden') {
     k.boost = Math.max(k.boost, MUSHROOM_T);
     k.v = Math.max(k.v, CLASSES[r.cc].top * 0.9);
+    if (item === 'golden') {
+      // as many boosts as you like until the timer runs out, then it is gone
+      if (k.goldT === 0) k.goldT = GOLD_T;
+      r.events.push({ t: 'use', k: k.idx, item });
+      return item;
+    }
+  } else if (item === 'coin') {
+    k.coins = Math.min(MAX_COINS, k.coins + 2);
+    k.earned += 2;
+    r.events.push({ t: 'coin', k: k.idx });
   } else if (item === 'star') {
     k.star = STAR_T;
+  } else if (item === 'mega') {
+    k.mega = MEGA_T;
+  } else if (item === 'bullet') {
+    k.bullet = BULLET_T;
+    k.drift = 0;
+    k.charge = 0;
+  } else if (item === 'ink') {
+    inkFrom(r, k.idx);
+  } else if (item === 'horn') {
+    hornAt(r, k.idx, k.x, k.z);
   } else if (item === 'bolt') {
     r.boltAt = r.time;
     strike(r, k.idx);
@@ -965,13 +1053,35 @@ export function useItem(r: Race, k: Kart): Item | null {
   }
   r.events.push({ t: 'use', k: k.idx, item });
   if (item === 'bolt') r.events.push({ t: 'bolt', k: k.idx });
+  if (item === 'ink') r.events.push({ t: 'ink', k: k.idx });
+  if (item === 'horn') r.events.push({ t: 'horn', k: k.idx, x: k.x, z: k.z });
   return item;
+}
+
+/** Ink over every kart ahead of the user that this client drives (stars and bullets stay clean). */
+export function inkFrom(r: Race, from: number) {
+  const user = r.karts[from];
+  if (!user) return;
+  for (const o of r.karts) {
+    if (o.idx === from || !local(o) || o.done !== null || o.star > 0 || o.bullet > 0 || o.place >= user.place) continue;
+    o.ink = INK_T;
+    r.events.push({ t: 'inked', k: o.idx });
+  }
+}
+
+/** The horn: a shockwave that tumbles nearby karts this client drives and clears away every item, blue shells too. */
+export function hornAt(r: Race, from: number, x: number, z: number) {
+  for (const o of r.karts) if (o.idx !== from && Math.hypot(o.x - x, o.z - z) < HORN_R) hitKart(r, o, 'tumble', from);
+  for (const t of [...r.things]) if (Math.hypot(t.x - x, t.z - z) < HORN_R) removeThing(r, t.id, false);
+  r.events.push({ t: 'blast', x, z });
 }
 
 /** Lightning: everyone but the user (and anyone under a star) spins, shrinks and drops their item. */
 export function strike(r: Race, from: number) {
   for (const o of r.karts) {
-    if (o.idx === from || !local(o) || o.star > 0 || o.done !== null) continue;
+    if (o.idx === from || !local(o) || o.star > 0 || o.bullet > 0 || o.done !== null) continue;
+    o.mega = 0;
+    o.goldT = 0;
     o.shrink = SHRINK_T * (o.place <= 3 ? 1.2 : 0.8);
     o.spin = Math.max(o.spin, 0.6);
     o.v *= 0.5;
@@ -1008,11 +1118,11 @@ function moveThings(r: Race, dt: number) {
   for (const th of [...r.things]) {
     th.life -= dt;
     th.grace -= dt;
-    if (th.life <= 0) {
+    if (th.life <= 0 && th.kind !== 'bomb') {
       removeThing(r, th.id, th.local);
       continue;
     }
-    if (th.kind === 'banana') {
+    if (th.kind === 'banana' || th.kind === 'bomb') {
       if (th.y > 0 || th.vy !== 0) {
         th.x += th.vx * dt;
         th.z += th.vz * dt;
@@ -1031,6 +1141,15 @@ function moveThings(r: Race, dt: number) {
         const sg = Math.sign(at.d);
         th.x -= -at.tz * sg * (Math.abs(at.d) - EDGE + 0.6);
         th.z -= at.tx * sg * (Math.abs(at.d) - EDGE + 0.6);
+      }
+      if (th.kind === 'bomb') {
+        const near = th.grace <= 0 && th.y === 0 && r.karts.some((k) => k.done === null && Math.hypot(k.x - th.x, k.z - th.z) < BOMB_NEAR);
+        // the thrower's client sets it off; everyone else hears about it ('boom' and 'gone')
+        if (th.local && (th.life <= 0 || near)) {
+          removeThing(r, th.id, true);
+          r.events.push({ t: 'boom', x: th.x, z: th.z });
+          boom(r, th.x, th.z, th.owner);
+        } else if (!th.local && th.life < -2) removeThing(r, th.id, false);
       }
       continue;
     }
@@ -1116,7 +1235,7 @@ function hitThings(r: Race) {
     for (let b = a + 1; b < r.things.length; b++) {
       const A = r.things[a];
       const B = r.things[b];
-      if (A.kind === 'blue' || B.kind === 'blue' || (A.kind === 'banana' && B.kind === 'banana')) continue;
+      if (A.kind === 'blue' || B.kind === 'blue' || A.kind === 'bomb' || B.kind === 'bomb' || (A.kind === 'banana' && B.kind === 'banana')) continue;
       if (A.y > 1.2 || B.y > 1.2) continue;
       if (Math.hypot(A.x - B.x, A.z - B.z) < 1.3) {
         removeThing(r, A.id, true);
@@ -1129,7 +1248,7 @@ function hitThings(r: Race) {
     if (!local(k) || k.done !== null) continue;
     const reach = KART_R * scaleOf(k) + 0.6;
     for (const th of [...r.things]) {
-      if (th.kind === 'blue' || th.y > 1.2 + k.y) continue;
+      if (th.kind === 'blue' || th.kind === 'bomb' || th.y > 1.2 + k.y) continue;
       if (th.owner === k.idx && th.grace > 0) continue;
       if (Math.hypot(th.x - k.x, th.z - k.z) > reach) continue;
       removeThing(r, th.id, true);
@@ -1281,7 +1400,7 @@ function think(r: Race, k: Kart, dt: number) {
   else ai.held = 0;
   const behind = r.karts.some((o) => o !== k && o.done === null && deltaS(t, o.s, k.s) > 2 && deltaS(t, o.s, k.s) < 20);
   // hold a banana or shell out behind while someone is on your tail
-  inp.hold = !!k.item && k.roll === 0 && (k.item === 'banana' || k.item === 'green' || k.item === 'red') && behind && ai.skill > 0.45;
+  inp.hold = k.roll === 0 && trailable(k.item) && behind && ai.skill > 0.45;
   if (!k.item || k.roll > 0 || ai.itemT > 0) return;
   ai.itemT = 0.3 + r.rand() * 0.6;
   const aheadNear = r.karts.find((o) => o !== k && o.done === null && deltaS(t, k.s, o.s) > 3 && deltaS(t, k.s, o.s) < 32 && Math.abs(o.d - k.d) < 3);
@@ -1291,10 +1410,18 @@ function think(r: Race, k: Kart, dt: number) {
   let go = false;
   switch (k.item) {
     case 'banana':
+    case 'bananas':
       go = (behind && !inp.hold) || ai.held > 9;
       inp.back = true;
       break;
+    case 'bomb':
+      // lob it at someone up the road, or leave it for whoever is following
+      if (r.karts.some((o) => o !== k && o.done === null && deltaS(t, k.s, o.s) > 12 && deltaS(t, k.s, o.s) < 40)) go = true;
+      else if (behind) go = inp.back = true;
+      else go = ai.held > 6;
+      break;
     case 'green':
+    case 'greens':
       if (aheadNear) go = true;
       else if (behind) go = inp.back = true;
       else go = ai.held > 6;
@@ -1305,11 +1432,27 @@ function think(r: Race, k: Kart, dt: number) {
       break;
     case 'mushroom':
     case 'triple':
+    case 'golden':
       go = straight || k.offroad;
       break;
+    case 'coin':
+      go = k.coins < MAX_COINS;
+      break;
     case 'star':
+    case 'mega':
+    case 'bullet':
       go = ai.held > 0.4;
       break;
+    case 'ink':
+      go = k.place > 1 && ai.held > 0.6;
+      break;
+    case 'horn': {
+      // save it for a blue shell, or for a crowd
+      const blue = leaderFor(r) === k && r.things.some((th) => th.kind === 'blue' && Math.hypot(th.x - k.x, th.z - k.z) < 30);
+      const crowd = r.karts.filter((o) => o !== k && o.done === null && Math.hypot(o.x - k.x, o.z - k.z) < HORN_R).length;
+      go = blue || crowd >= 2 || ai.held > 12;
+      break;
+    }
     case 'bolt':
       go = ai.held > 1 + ai.skill * 2;
       break;

@@ -37,6 +37,8 @@ type KartView = {
   trail: T.Group;
   stars: T.Group;
   wind: T.Group;
+  /** The bullet the kart rides inside while a Bullet item flies it. */
+  bullet: T.Group;
   hat: T.Group;
   hatName: Hat;
   /** Swaps the hat when a kart's look changes (an online racer's garage arrives after the race is built). */
@@ -346,6 +348,28 @@ function makeKart(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: K
   for (const [x, y] of [[-1.05, 0.5], [1.05, 0.5], [-0.6, 1.5], [0.6, 1.5]]) add(wind, geo.box, shared.wind, x, y, 0.2, 0.035, 0.035, 2.6);
   wind.visible = false;
   body.add(wind);
+  // a big black bullet with white eyes and fins, hidden until a Bullet item
+  const bullet = new THREE.Group();
+  const shellMat = new THREE.MeshLambertMaterial({ color: 0x1f1f26 });
+  const barrel = new THREE.Mesh(geo.wheel, shellMat);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.scale.set(1.25, 3, 1.25);
+  barrel.position.set(0, 1, -0.2);
+  const nose = new THREE.Mesh(geo.ball, shellMat);
+  nose.scale.set(1.25, 1.25, 1.1);
+  nose.position.set(0, 1, 1.3);
+  bullet.add(barrel, nose);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(geo.ball, shared.white);
+    eye.scale.set(0.28, 0.4, 0.2);
+    eye.position.set(side * 0.45, 1.45, 2.05);
+    const fin = new THREE.Mesh(geo.box, shellMat);
+    fin.scale.set(0.12, 0.9, 0.9);
+    fin.position.set(side * 1.3, 1, -1.4);
+    bullet.add(eye, fin);
+  }
+  bullet.visible = false;
+  root.add(bullet);
   body.scale.setScalar(0.85);
   const shadow = new THREE.Mesh(geo.plane, shared.shadow);
   shadow.rotation.x = -Math.PI / 2;
@@ -353,7 +377,7 @@ function makeKart(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: K
   shadow.position.y = 0.11;
   root.add(shadow);
   const view: KartView = {
-    root, body, paint, color: new THREE.Color(color).getHex(), steer, spinners, flames, sparks, sparkMat, shadow, trail, stars, wind,
+    root, body, paint, color: new THREE.Color(color).getHex(), steer, spinners, flames, sparks, sparkMat, shadow, trail, stars, wind, bullet,
     hat: hatGroup,
     hatName: hat,
     wear(next) {
@@ -1169,11 +1193,31 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     blue: new THREE.MeshLambertMaterial({ color: 0x2f6fe4, emissive: 0x0a1e55 }),
     rim: new THREE.MeshLambertMaterial({ color: 0xffffff }),
     tip: new THREE.MeshLambertMaterial({ color: 0x5b3b1c }),
+    bomb: new THREE.MeshLambertMaterial({ color: 0x24242c }),
+    fuse: new THREE.MeshBasicMaterial({ color: 0xffb02e }),
   };
   const half = new THREE.SphereGeometry(0.5, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2);
   const bananaGeo = new THREE.TorusGeometry(0.42, 0.15, 6, 12, Math.PI * 1.15);
   const buildThing = (kind: ThingKind) => {
     const g = new THREE.Group();
+    if (kind === 'bomb') {
+      // a round black bomb with a lit fuse and a wind-up key
+      const ball = new THREE.Mesh(geo.ball, thingMats.bomb);
+      ball.scale.setScalar(0.6);
+      ball.position.y = 0.6;
+      const cap = new THREE.Mesh(geo.wheel, thingMats.rim);
+      cap.scale.set(0.18, 0.12, 0.18);
+      cap.position.y = 1.2;
+      const spark = new THREE.Mesh(geo.ball, thingMats.fuse);
+      spark.scale.setScalar(0.14);
+      spark.position.y = 1.36;
+      spark.name = 'spark';
+      const key = new THREE.Mesh(geo.ring, thingMats.rim);
+      key.scale.setScalar(0.2);
+      key.position.set(0, 0.6, -0.68);
+      g.add(ball, cap, spark, key);
+      return g;
+    }
     if (kind === 'banana') {
       const b = new THREE.Mesh(bananaGeo, thingMats.banana);
       b.rotation.set(0, 0, Math.PI * 0.95);
@@ -1229,6 +1273,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     green: Array.from({ length: 10 }, () => makeThing('green')),
     red: Array.from({ length: 8 }, () => makeThing('red')),
     blue: Array.from({ length: 2 }, () => makeThing('blue')),
+    bomb: Array.from({ length: 6 }, () => makeThing('bomb')),
   };
   const used = new Map<number, T.Group>();
 
@@ -1278,6 +1323,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
 
   let shake = 0;
   let camYaw: number | null = null;
+  /** How far the camera has pulled back to see past a bullet or a mega kart. */
+  let pull = 0;
   let fovBase = 68;
   let back = 6.6;
 
@@ -1330,8 +1377,13 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
           used.set(th.id, g);
         }
         g.position.set(th.x, th.y, th.z);
-        if (th.kind === 'banana') g.rotation.y = th.id;
+        if (th.kind === 'banana' || th.kind === 'bomb') g.rotation.y = th.id;
         else g.rotation.y = clock * (th.kind === 'blue' ? 4 : 14);
+        // a bomb's fuse fizzes, faster as it runs down
+        if (th.kind === 'bomb') {
+          const spark = g.getObjectByName('spark');
+          if (spark) spark.visible = (clock * (th.life < 1.2 ? 16 : 7)) % 1 > 0.35;
+        }
       }
       for (const [id, g] of used) {
         if (live.has(id)) continue;
@@ -1400,10 +1452,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       shake = Math.max(0, shake - dt * 1.5);
       const flip = lookBack && swing === 0 ? Math.PI : 0;
       const yaw = camYaw + swing + flip;
-      const dist = back + swing * 2.2;
+      pull = damp(pull, k.bullet > 0 ? 1 : k.mega > 0 ? 0.6 : 0, 3, dt);
+      const dist = back + swing * 2.2 + pull * 2.5;
       const jx = (Math.random() - 0.5) * shake;
       const jy = (Math.random() - 0.5) * shake;
-      camera.position.set(k.x - Math.sin(yaw) * dist + jx, 2.75 + swing * 0.8 + k.y * 0.25 + jy, k.z - Math.cos(yaw) * dist);
+      camera.position.set(k.x - Math.sin(yaw) * dist + jx, 2.75 + swing * 0.8 + pull * 1.6 + k.y * 0.25 + jy, k.z - Math.cos(yaw) * dist);
       camera.lookAt(k.x + Math.sin(camYaw + flip) * 4, 1.15 + k.y * 0.3, k.z + Math.cos(camYaw + flip) * 4);
       const fov = fovBase + (k.boost > 0 ? 9 : 0) + Math.min(5, Math.max(0, k.v - 15) * 0.3);
       if (Math.abs(camera.fov - fov) > 0.05) {
@@ -1455,6 +1508,14 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       } else if (e.t === 'block') {
         effect(e.x, 0.6, e.z, 1.2, false);
         burst(geo.box, [partMat.white], e.x, 0.6, e.z, 6, 4, 0.14, 0.4);
+      } else if (e.t === 'blast') {
+        // the horn's shockwave
+        effect(e.x, 1.2, e.z, 9, true);
+        const k = race.karts[me];
+        if (k && Math.hypot(k.x - e.x, k.z - e.z) < 20) shake = Math.max(shake, 0.6);
+      } else if (e.t === 'inked') {
+        const k = race.karts[e.k];
+        if (k) burst(geo.ball, [partMat.smoke], k.x, 1.4, k.z, 6, 2, 0.4, 0.6, 0);
       }
     },
     project(x, y, z, w, h) {
@@ -1501,7 +1562,7 @@ function syncKart(v: KartView, k: Kart, dt: number, clock: number) {
   const wobble = k.wobble > 0 ? Math.sin(clock * 34) * 0.18 : 0;
   v.body.position.y = k.y;
   v.body.rotation.set(-v.flipA, v.driftYaw + v.spinA + v.trickA, v.roll + wobble);
-  const size = k.shrink > 0 ? 0.62 : 1;
+  const size = k.shrink > 0 ? 0.62 : k.mega > 0 ? 1.5 : 1;
   const flat = k.squash > 0 ? 0.35 : 1;
   v.body.scale.set(0.85 * size * (flat < 1 ? 1.25 : 1), 0.85 * size * flat, 0.85 * size * (flat < 1 ? 1.25 : 1));
   v.shadow.scale.set(2.2 * size, 3.2 * size, 1);
@@ -1519,7 +1580,12 @@ function syncKart(v: KartView, k: Kart, dt: number, clock: number) {
     s.scale.setScalar(0.12 + Math.random() * 0.16 + level * 0.04);
   }
   v.sparkMat.color.setHex(level > 0 ? SPARK[level] : 0xfff3c0);
-  for (const g of v.trail.children) g.visible = k.trail && g.name === k.item;
+  const held = k.item === 'bananas' ? 'banana' : k.item === 'greens' ? 'green' : k.item;
+  for (const g of v.trail.children) g.visible = k.trail && g.name === held;
+  // inside a bullet the kart itself is hidden
+  v.bullet.visible = k.bullet > 0;
+  v.body.visible = k.bullet <= 0;
+  if (k.bullet > 0) v.bullet.position.y = k.y;
   const dizzy = k.spin > 0 || k.tumble > 0 || k.squash > 0;
   v.stars.visible = dizzy;
   if (dizzy) v.stars.rotation.y = clock * 7;
