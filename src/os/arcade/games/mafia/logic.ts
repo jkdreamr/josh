@@ -11,18 +11,28 @@ export const MIN_PLAYERS = 5;
 
 export const ROLE_LABEL: Record<Role, string> = { mafia: 'Mafia', doctor: 'Doctor', detective: 'Detective', villager: 'Villager' };
 
-/** Auto: 5 or 6 players get one mafia, 7 to 9 get two, 10 to 13 get three, 14 and up get four. */
+/**
+ * Auto: 5 or 6 players get one mafia, 7 to 9 get two, 10 to 15 get three, 16 and up get four. (Four at 14 or 15
+ * left a town with no special roles winning about 1 game in 20 when it voted blind; three keeps it near 1 in 6.)
+ */
 export function autoMafia(players: number): number {
-  if (players >= 14) return 4;
+  if (players >= 16) return 4;
   if (players >= 10) return 3;
   if (players >= 7) return 2;
   return 1;
 }
 
-/** The mafia always start as fewer than half the table. */
-export const maxMafia = (players: number) => Math.max(1, Math.floor((players - 1) / 2));
+/**
+ * The most mafia a table can have: the town always starts with more than twice as many players. That keeps every deal
+ * open: the first night's kill can't decide it, and a wrong vote on day 1 can't end it on the spot.
+ * 5 and 6 players get 1, 7 to 9 up to 2, 10 to 12 up to 3.
+ */
+export const maxMafia = (players: number) => Math.max(1, Math.floor((players - 1) / 3));
 
-/** How many mafia a table of `players` gets for a setting, clamped so they stay a minority. */
+/** The smallest table that can take `mafia` mafia. */
+export const minPlayersFor = (mafia: number) => Math.max(1, Math.floor(mafia)) * 3 + 1;
+
+/** How many mafia a table of `players` gets for a setting, clamped to maxMafia. */
 export function mafiaCount(want: MafiaWant, players: number): number {
   const asked = want === 'auto' ? autoMafia(players) : Math.max(1, Math.floor(Number(want)) || 1);
   return Math.min(asked, maxMafia(players));
@@ -61,20 +71,30 @@ export const seatsOf = (roles: readonly Role[], role: Role) => roles.flatMap((r,
 /** Living seats in seating order: the order the phone goes around at night. */
 export const nightOrder = (alive: readonly boolean[]) => alive.flatMap((a, i) => (a ? [i] : []));
 
-export type Choice = { seat: number; ok: boolean };
+/** Why a night pick is refused: it's you, it's your crew, or the doctor's pick from last night. */
+export type Refusal = 'self' | 'crew' | 'twice';
+export type Choice = { seat: number; ok: boolean; why: Refusal | null };
+
+/** Why `seat` can't pick `target` tonight, or null when they can. Players who are out aren't offered at all. */
+export function refusal(roles: readonly Role[], seat: number, target: number, lastSaved: number | null = null): Refusal | null {
+  const role = roles[seat];
+  if (role === 'doctor') return target === lastSaved ? 'twice' : null;
+  if (target === seat) return 'self';
+  if (role === 'mafia' && roles[target] === 'mafia') return 'crew';
+  return null;
+}
 
 /**
- * The players a seat sees on its night turn: every living player, so the grid looks the same for every role.
- * Mafia can pick living non-mafia (their crew shows disabled), the doctor anyone but last night's pick
- * (themself too), detectives and villagers anyone but themself.
+ * The players a seat sees on its night turn: every living player, drawn the same way for every role so a glance can't
+ * tell them apart. Taps on a refused seat get a short note instead. Mafia can pick living non-mafia, the doctor anyone
+ * but last night's pick (themself too), detectives and villagers anyone but themself.
  */
 export function nightChoices(roles: readonly Role[], alive: readonly boolean[], seat: number, lastSaved: number | null = null): Choice[] {
   if (!alive[seat]) return [];
-  const role = roles[seat];
-  return nightOrder(alive).map((i) => ({
-    seat: i,
-    ok: role === 'mafia' ? roles[i] !== 'mafia' : role === 'doctor' ? i !== lastSaved : i !== seat,
-  }));
+  return nightOrder(alive).map((i) => {
+    const why = refusal(roles, seat, i, lastSaved);
+    return { seat: i, ok: why === null, why };
+  });
 }
 
 /** Just the seats a player may actually pick tonight. */

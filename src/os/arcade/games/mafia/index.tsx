@@ -12,6 +12,7 @@ import {
   logLine,
   mafiaCount,
   maxMafia,
+  minPlayersFor,
   newGame,
   nightChoices,
   nightOrder,
@@ -21,6 +22,7 @@ import {
   winner,
   type Game,
   type NightResult,
+  type Refusal,
   type Role,
   type Side,
 } from './logic';
@@ -36,14 +38,13 @@ const TIMER = defineSetting('mafia:timer', ['0', '120', '180', '300'] as const, 
 type Special = 'both' | 'doctor' | 'detective' | 'none';
 
 const WORDS = ['no', 'one', 'two', 'three', 'four'];
+const COUNT_WORD: Record<string, string> = { '2': 'Two', '3': 'Three' };
+/** Seconds into a night turn before "Pass to X" arms, so a quick turn takes as long as a slow one. */
+const ARM_SECONDS = 4;
 /** Seat value the vote uses for "Nobody". */
 const NOBODY = -1;
 
 const ICON = {
-  mafia: meta.glyph,
-  doctor: 'M12 3l7 3v5.2c0 4.4-2.9 7.9-7 9.8c-4.1-1.9-7-5.4-7-9.8V6zM12 9v6M9 12h6',
-  detective: 'M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13M15.3 15.3L20.5 20.5',
-  villager: 'M3.5 11L12 4l8.5 7M6 9.2V20h12V9.2M10 20v-5.5h4V20',
   nobody: 'M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16M6.4 6.4l11.2 11.2',
 } as const;
 
@@ -70,24 +71,36 @@ const RULES: ReactNode[] = [
   <>Each morning you find out who was taken. Argue, then vote someone out. The town wins when the mafia are gone, the mafia when they match the town.</>,
 ];
 
-/** The deal card. Every role gets the same cream card and three lines, so nothing about it shows across the table. */
+/**
+ * The deal card. Every role gets the same cream card, the same fedora, a one-line title and two two-line slots,
+ * so its shape gives nothing away across the table.
+ */
 const ROLE_CARD: Record<Role, { title: string; goal: string; more: string }> = {
-  mafia: { title: 'Mafia', goal: 'Each night, pick someone to take. By day, act innocent.', more: '' },
+  mafia: { title: 'The Mafia', goal: 'Each night, pick someone to take. By day, act innocent.', more: '' },
   doctor: { title: 'The Doctor', goal: 'Each night, protect one person from the mafia. It can be you.', more: 'Never the same person two nights in a row.' },
-  detective: { title: 'The Detective', goal: 'Each night, check one person to learn if they are mafia.', more: 'Only you see the answers.' },
+  detective: { title: 'The Detective', goal: 'Each night, check one person to learn if they are mafia.', more: 'Only you see the answers, so use them well.' },
   villager: { title: 'A Villager', goal: 'No night power. Find the mafia and vote them out by day.', more: 'You still tap a name at night, so you blend in.' },
 };
 
 /** "Jo was ___." */
 const ROLE_AS: Record<Role, string> = { mafia: 'Mafia', doctor: 'the Doctor', detective: 'the Detective', villager: 'a Villager' };
 
-/** The one line that changes on a night turn. The title, grid and button are the same for everyone. */
+/**
+ * The prompt on a night turn: one short line for every role, so it never wraps differently. A refused tap and the
+ * locked-in state swap in a line of the same size.
+ */
 const ASK: Record<Role, string> = {
-  mafia: "You're with the mafia. Pick someone to take tonight.",
-  doctor: "You're the doctor. Pick someone to protect tonight.",
-  detective: "You're the detective. Pick someone to check tonight.",
-  villager: "You're a villager. Pick anyone, it changes nothing.",
+  mafia: "You're mafia. Pick someone to take.",
+  doctor: "You're the doctor. Pick who to save.",
+  detective: "You're the detective. Pick who to check.",
+  villager: "You're a villager. Pick anyone at all.",
 };
+const REFUSE: Record<Refusal, string> = {
+  self: 'Not yourself. Pick someone else.',
+  crew: 'Not your crew. Pick someone else.',
+  twice: 'Not twice in a row. Pick someone else.',
+};
+const LOCKED = 'Locked in for tonight.';
 
 type Step =
   | { s: 'setup' }
@@ -121,8 +134,11 @@ export default function Mafia({ compact, onExit }: GameProps) {
   );
 }
 
-/** Number keys pick the nth player (0 is Nobody when offered), arrows step through them. */
-function usePickKeys(options: readonly number[], sel: number | null, choose: ((seat: number) => void) | null) {
+/**
+ * Number keys pick the nth tile (0 is Nobody when offered), arrows step through them. `canStep` leaves seats out of
+ * the arrow order (a number key on one still reaches choose, which refuses it with a note).
+ */
+function usePickKeys(options: readonly number[], sel: number | null, choose: ((seat: number) => void) | null, canStep: (seat: number) => boolean = () => true) {
   useKeys((code) => {
     if (!choose || !options.length) return;
     const digit = /^(?:Digit|Numpad)(\d)$/.exec(code);
@@ -134,9 +150,10 @@ function usePickKeys(options: readonly number[], sel: number | null, choose: ((s
       return;
     }
     const dir = code === 'ArrowRight' || code === 'ArrowDown' ? 1 : code === 'ArrowLeft' || code === 'ArrowUp' ? -1 : 0;
-    if (!dir) return;
-    const at = sel === null ? (dir > 0 ? -1 : options.length) : options.indexOf(sel);
-    choose(options[(at + dir + options.length) % options.length]);
+    const steps = options.filter(canStep);
+    if (!dir || !steps.length) return;
+    const at = sel === null ? (dir > 0 ? -1 : steps.length) : steps.indexOf(sel);
+    choose(steps[(at + dir + steps.length) % steps.length]);
   });
 }
 
@@ -250,7 +267,7 @@ function Play() {
           <Option label="Special Roles" value={special} options={[['both', 'Both'], ['doctor', 'Doctor'], ['detective', 'Detective'], ['none', 'None']]} onChange={setSpecial} />
           {ready && (
             <p className="g-mafia-note">
-              {capped ? 'The mafia must stay under half, so ' : ''}
+              {capped ? `${COUNT_WORD[count] ?? count} mafia needs ${minPlayersFor(Number(count))} players, so ` : ''}
               {n} players get {describeCast(n, cast)}
             </p>
           )}
@@ -309,6 +326,7 @@ function Play() {
           game={game}
           seat={seat}
           name={name}
+          showRole={showRole}
           nextLabel={nextK < order.length ? `Pass to ${name(order[nextK])}` : 'Wake Everyone'}
           onLock={(t) => setGame((g) => (g ? pickAt(g, seat, t) : g))}
           onDone={done}
@@ -440,7 +458,7 @@ function Play() {
             ? mafiaSeats.length === 1
               ? `${name(mafiaSeats[0])} was the mafia, and the town voted them out.`
               : `${listNames(mafiaSeats.map(name))} were the mafia. The town got every one.`
-            : `${listNames(mafiaSeats.map(name))} ${mafiaSeats.length === 1 ? 'was' : 'were'} the mafia, and now nobody can outvote them.`}
+            : `${listNames(mafiaSeats.map(name))} ${mafiaSeats.length === 1 ? 'was' : 'were'} the mafia and outlasted the town.`}
         </p>
         <section className="g-mafia-cast" aria-label="Who was who">
           <h3 className="g-mafia-head">The Mafia</h3>
@@ -474,10 +492,10 @@ function Play() {
 
 function RoleCard({ role, mates }: { role: Role; mates: string[] }) {
   const card = ROLE_CARD[role];
-  const more = role === 'mafia' ? (mates.length ? `Your crew: ${listNames(mates)}.` : 'No crew. It all comes down to you.') : card.more;
+  const more = role === 'mafia' ? (mates.length ? `Your crew: ${listNames(mates)}. Nobody else knows.` : 'No crew this game. It all comes down to you.') : card.more;
   return (
     <div className="arcade-party-card is-paper g-mafia-role">
-      <Icon d={ICON[role]} size={40} />
+      <Icon d={meta.glyph} size={40} />
       <small>You are</small>
       <strong>{card.title}</strong>
       <p>{card.goal}</p>
@@ -493,14 +511,73 @@ const Photo = ({ name, index }: { name: string; index: number }) => (
   </span>
 );
 
+/** Is the doctor still in, as far as the table knows? With roles kept secret, a dead doctor might still be out there. */
+function doctorThreat(game: Game, showRole: boolean): 'none' | 'out' | 'in' {
+  const doctor = seatsOf(game.roles, 'doctor')[0];
+  if (doctor === undefined) return 'none';
+  return showRole && !game.alive[doctor] ? 'out' : 'in';
+}
+
+/** The notes box on a night turn: two short lines for every role, so the box reads the same from across the table. */
+function nightNotes(game: Game, seat: number, name: (i: number) => string, showRole: boolean): string[] {
+  const role = game.roles[seat];
+  if (role === 'mafia') {
+    const crew = seatsOf(game.roles, 'mafia').filter((m) => m !== seat && game.alive[m]);
+    if (!crew.length) {
+      const threat = doctorThreat(game, showRole);
+      return ['No crew. The pick is all yours.', threat === 'none' ? 'There is no doctor to stop you.' : threat === 'out' ? 'The doctor is out. Nobody can stop you.' : 'The doctor might get there first.'];
+    }
+    // "Eli and Gus want Ana", grouped by target so three picks still fit the box.
+    const byTarget = new Map<number, string[]>();
+    for (const m of crew) {
+      const p = game.picks[m];
+      if (p !== null && p !== undefined) byTarget.set(p, [...(byTarget.get(p) ?? []), name(m)]);
+    }
+    const wants = [...byTarget].map(([t, who]) => `${listNames(who)} ${who.length === 1 ? 'wants' : 'want'} ${name(t)}`);
+    const later = crew.filter((m) => game.picks[m] === null || game.picks[m] === undefined).map(name);
+    const after = later.length ? `${listNames(later)} ${later.length === 1 ? 'picks' : 'pick'} after you` : '';
+    return [`Your crew: ${listNames(crew.map(name))}.`, `${[wants.join(', '), after].filter(Boolean).join('. ')}.`];
+  }
+  if (role === 'doctor') {
+    const last = game.lastSaved;
+    if (last === null) return ['Protect anyone, yourself included.', 'Never the same person two nights running.'];
+    const who = last === seat ? 'yourself' : name(last);
+    return [`Last night you protected ${who}.`, game.alive[last] ? `Anyone but ${last === seat ? 'you' : who} tonight.` : 'Anyone you like tonight.'];
+  }
+  if (role === 'detective') {
+    const found = game.findings
+      .filter((f) => f.night < game.night)
+      .reverse()
+      .map((f) => `Night ${f.night}: ${name(f.seat)}${game.alive[f.seat] ? '' : ' (out)'} ${f.mafia ? 'is mafia' : 'is not mafia'}.`);
+    if (!found.length) return ['No checks yet.', 'Only you see what you find.'];
+    return found.length === 1 ? [...found, 'Only you see what you find.'] : found;
+  }
+  return ['No power tonight. Your tap does nothing.', 'Everyone taps, so nobody stands out.'];
+}
+
+/** The line on the locked-in card. Every role gets one of about the same length, in a two-line slot. */
+function lockedLine(game: Game, seat: number, target: number, name: (i: number) => string, showRole: boolean): string {
+  const role = game.roles[seat];
+  if (role === 'mafia') {
+    if (seatsOf(game.roles, 'mafia').some((m) => m !== seat && game.alive[m])) return 'Most picks wins. Ties go at random.';
+    return doctorThreat(game, showRole) === 'in' ? 'The doctor could still save them.' : 'Gone by morning. Nobody can stop it.';
+  }
+  if (role === 'doctor') return `${target === seat ? "You're" : "They're"} safe from the mafia tonight.`;
+  if (role === 'detective') return `${name(target)} ${game.roles[target] === 'mafia' ? 'is mafia' : 'is not mafia'}. Keep a straight face.`;
+  return 'It does nothing. Keep a straight face.';
+}
+
 /**
- * One player's secret night turn. Every role gets the same title, the same grid of every living player,
- * the same notes box, the same locked-in card and the same sounds, so a glance across the table can't tell them apart.
+ * One player's secret night turn. Every role gets the same title, the same one-line prompt, the same fixed notes box,
+ * the same grid of identical tiles, the same locked-in card, the same sounds and the same minimum length, so a glance
+ * (or a stopwatch) across the table can't tell them apart. A tap on someone you can't pick gets a short note in the
+ * prompt's place instead of a dimmed tile.
  */
 function NightTurn({
   game,
   seat,
   name,
+  showRole,
   nextLabel,
   onLock,
   onDone,
@@ -508,22 +585,47 @@ function NightTurn({
   game: Game;
   seat: number;
   name: (i: number) => string;
+  showRole: boolean;
   nextLabel: string;
   onLock: (target: number) => void;
   onDone: () => void;
 }) {
   const [sel, setSel] = useState<number | null>(null);
   const [locked, setLocked] = useState<number | null>(null);
+  const [nope, setNope] = useState<{ seat: number; why: Refusal; n: number } | null>(null);
+  const [armed, setArmed] = useState(false);
   const lockedAt = useRef(0);
+  const elapsed = useRef(0);
+  const fill = useRef<HTMLSpanElement>(null);
+  // The pass button arms ARM_SECONDS into the turn. It runs on the game loop, so Pause holds it too.
+  useGameLoop(
+    (dt) => {
+      if (elapsed.current >= ARM_SECONDS) return;
+      elapsed.current = Math.min(ARM_SECONDS, elapsed.current + dt);
+      if (elapsed.current >= ARM_SECONDS) setArmed(true);
+    },
+    () => {
+      if (fill.current) fill.current.style.transform = `scaleX(${elapsed.current / ARM_SECONDS})`;
+    },
+  );
+
   const role = game.roles[seat];
   const choices = nightChoices(game.roles, game.alive, seat, game.lastSaved);
-  const ok = choices.filter((c) => c.ok).map((c) => c.seat);
+  const living = choices.map((c) => c.seat);
   const choose = (t: number) => {
-    if (locked !== null || !ok.includes(t)) return;
+    if (locked !== null) return;
+    const why = choices.find((c) => c.seat === t)?.why;
+    if (why === undefined) return;
+    if (why) {
+      sfx.tone({ freq: 190, to: 150, dur: 0.08, type: 'square', vol: 0.05 });
+      setNope((o) => ({ seat: t, why, n: (o?.n ?? 0) + 1 }));
+      return;
+    }
     sfx.play('blip');
+    setNope(null);
     setSel(t);
   };
-  usePickKeys(ok, sel, locked === null ? choose : null);
+  usePickKeys(living, sel, locked === null ? choose : null, (t) => choices.some((c) => c.seat === t && c.ok));
   const lock = () => {
     if (sel === null || locked !== null) return;
     lockedAt.current = performance.now();
@@ -538,83 +640,53 @@ function NightTurn({
       onDone();
     }
   };
-  const primary = locked !== null ? done : sel !== null ? lock : undefined;
-
-  const notes: string[] = [];
-  const crew = seatsOf(game.roles, 'mafia').filter((m) => m !== seat && game.alive[m]);
-  if (role === 'mafia') {
-    const later: string[] = [];
-    for (const m of crew) {
-      const p = game.picks[m];
-      if (p === null || p === undefined) later.push(name(m));
-      else notes.push(`${name(m)} wants ${name(p)}.`);
-    }
-    if (later.length) notes.push(`${listNames(later)} ${later.length === 1 ? 'picks' : 'pick'} after you.`);
-    if (!crew.length) notes.push('No crew. The pick is all yours.');
-  }
-  if (role === 'doctor')
-    notes.push(game.lastSaved === null ? 'You can protect yourself.' : `Last night you protected ${game.lastSaved === seat ? 'yourself' : name(game.lastSaved)}.`);
-  if (role === 'detective') {
-    for (const f of game.findings)
-      if (f.night < game.night) notes.push(`Night ${f.night}: ${name(f.seat)}${game.alive[f.seat] ? '' : ' (out)'} ${f.mafia ? 'is mafia' : 'is not mafia'}.`);
-    if (!notes.length) notes.push('No checks yet.');
-  }
-  if (role === 'villager') notes.push('Everyone taps, so nobody stands out.');
-
-  const tag = (i: number) => (i === seat ? 'You' : role === 'mafia' && game.roles[i] === 'mafia' ? 'Crew' : role === 'doctor' && i === game.lastSaved ? 'Last night' : null);
-
-  const file =
-    locked === null
-      ? null
-      : role === 'mafia'
-        ? { stamp: 'Marked', line: crew.length ? 'Most picks wins. Ties are random.' : game.roles.includes('doctor') ? "Gone by morning, unless the doctor guessed right." : 'Gone by morning.' }
-        : role === 'doctor'
-          ? { stamp: 'Safe', line: `${locked === seat ? "You're" : "They're"} safe from the mafia tonight.` }
-          : role === 'detective'
-            ? game.roles[locked] === 'mafia'
-              ? { stamp: 'Mafia', line: `${name(locked)} is mafia.` }
-              : { stamp: 'Clean', line: `${name(locked)} is not mafia.` }
-            : { stamp: 'Noted', line: 'It changes nothing. Act natural.' };
+  const arming = locked !== null && !armed;
+  const primary = locked !== null ? (armed ? done : undefined) : sel !== null ? lock : undefined;
+  const notes = nightNotes(game, seat, name, showRole);
 
   return (
     <Screen
       center={false}
+      className="g-mafia-turn"
       onEnter={primary}
       actions={
-        <Big primary quiet disabled={!primary} onClick={() => primary?.()}>
-          {locked !== null ? nextLabel : sel === null ? 'Pick Someone' : `Lock In ${name(sel)}`}
+        <Big primary quiet disabled={!primary} className={arming ? 'g-mafia-arming' : undefined} onClick={() => primary?.()}>
+          {arming && <span ref={fill} className="g-mafia-arm" style={{ transform: `scaleX(${elapsed.current / ARM_SECONDS})` }} aria-hidden="true" />}
+          <span>{locked !== null ? nextLabel : sel === null ? 'Pick Someone' : `Lock In ${name(sel)}`}</span>
         </Big>
       }
     >
       <p className="arcade-party-kicker">Night {game.night}</p>
       <h2 className="arcade-party-title">{locked === null ? 'Make Your Pick' : 'Locked In'}</h2>
-      <p className="arcade-party-sub">{ASK[role]}</p>
-      <ul className="g-mafia-notes">
+      <p className={`arcade-party-sub g-mafia-ask ${nope && locked === null ? 'is-nope' : ''}`} aria-live="polite">
+        {locked !== null ? LOCKED : nope ? REFUSE[nope.why] : ASK[role]}
+      </p>
+      <ul className="g-mafia-notes" aria-label="Your notes">
         {notes.map((n) => (
           <li key={n}>{n}</li>
         ))}
       </ul>
-      {file && locked !== null ? (
+      {locked !== null ? (
         <div className="arcade-party-card is-paper g-mafia-file">
           <Photo name={name(locked)} index={locked} />
           <strong>{name(locked)}</strong>
-          <p>{file.line}</p>
-          <b className="g-mafia-stamp">{file.stamp}</b>
+          <p>{lockedLine(game, seat, locked, name, showRole)}</p>
+          <b className="g-mafia-stamp">Filed</b>
         </div>
       ) : (
         <div className="arcade-party-picks" role="group" aria-label="Players">
-          {choices.map((c) => {
-            const t = tag(c.seat);
-            return (
-              <button key={c.seat} type="button" aria-pressed={sel === c.seat} disabled={!c.ok} onClick={() => choose(c.seat)}>
-                <Avatar name={name(c.seat)} index={c.seat} size={30} />
-                <span className="g-mafia-who">
-                  <span>{name(c.seat)}</span>
-                  {t && <em>{t}</em>}
-                </span>
-              </button>
-            );
-          })}
+          {choices.map((c) => (
+            <button
+              key={c.seat}
+              type="button"
+              aria-pressed={sel === c.seat}
+              className={nope?.seat === c.seat ? `is-nope-${nope.n % 2}` : undefined}
+              onClick={() => choose(c.seat)}
+            >
+              <Avatar name={name(c.seat)} index={c.seat} size={30} />
+              <span>{name(c.seat)}</span>
+            </button>
+          ))}
         </div>
       )}
     </Screen>
