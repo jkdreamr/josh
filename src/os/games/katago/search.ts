@@ -1,4 +1,4 @@
-import { BLACK, isOwnEye, legalMoves, pass, play, score, type Color, type GameState, type Point } from '../go.ts';
+import { BLACK, isOwnEye, legalMoves, libertiesAfter, pass, play, score, type Color, type GameState, type Point } from '../go.ts';
 
 export type NetOutput = {
   policy: Float32Array;
@@ -231,14 +231,21 @@ export async function search(state: GameState, evaluator: Evaluator, options: Se
   }
   const notOwnEye = (move: Point): boolean => !isOwnEye(state.board, state.size, pointIndex(move, state.size), state.toPlay);
   const legalNonEye = legalMoves(state).filter(notOwnEye);
+  // Behind, it plays on instead of passing, but only where a stone can still matter: not in area the
+  // network already gives it (filling that gains nothing under area scoring) and not into self-atari.
+  // Kept up, either one walks its own groups into capture until the whole board is lost.
+  const stillMatters = (move: Point): boolean => notOwnEye(move)
+    && (rootOutput.ownership[pointIndex(move, state.size)] ?? 0) <= 0.8
+    && libertiesAfter(state, move.x, move.y) > 1;
   const selectedPass = chosen?.move === null;
   const countPassWins = state.consecutivePasses === 1 && countAhead;
   let move = selectedPass || countPassWins ? null : chosen?.move ?? null;
-  if (!countPassWins && (rootOutput.scoreLead < 0 || (state.consecutivePasses === 1 && countBehind)) && legalNonEye.length > 0 && move === null) {
+  if (!countPassWins && (rootOutput.scoreLead < 0 || (state.consecutivePasses === 1 && countBehind)) && move === null) {
     const fallback = [...root.children!]
-      .filter((child) => child.move && notOwnEye(child.move))
-      .sort((a, b) => b.visits - a.visits || b.prior - a.prior)[0];
-    move = fallback?.move ?? legalNonEye[0]!;
+      .filter((child) => child.move)
+      .sort((a, b) => b.visits - a.visits || b.prior - a.prior)
+      .find((child) => stillMatters(child.move!));
+    move = fallback?.move ?? null;
   }
   if (state.consecutivePasses === 0 && selectedPass && legalNonEye.length > 0) {
     const passChild = root.children!.find((child) => child.move === null)!;

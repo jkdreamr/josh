@@ -207,3 +207,58 @@ test('bigger boards get more thinking time, the same visits', async () => {
     assert.equal(searchOptions(level, 19).maxVisits, base.maxVisits);
   }
 });
+
+/** Black to play right after White passed: on an empty board Black trails by the komi. */
+const afterWhitePassed = (): GameState => ({ ...newGame(9), consecutivePasses: 1 });
+
+test('behind after the opponent passes, it passes rather than fill its own secure territory', async () => {
+  const opened = afterWhitePassed();
+  const enginePlayer = opened.toPlay;
+  const evaluator = mockEvaluator((candidate) => {
+    const policy = new Float32Array(82);
+    policy[81] = 0.9;
+    const moves = legalMoves(candidate);
+    for (const move of moves) policy[move.y * 9 + move.x] = 0.1 / moves.length;
+    // Every empty point is the engine's, yet it is behind: nothing left to play for.
+    const ownership = new Float32Array(81).fill(candidate.toPlay === enginePlayer ? 1 : -1);
+    return { policy, scoreLead: candidate.toPlay === enginePlayer ? -5 : 5, ownership };
+  });
+  const result = await search(opened, evaluator, options({ maxVisits: 8 }));
+  assert.equal(result.move, null);
+});
+
+test('behind, it still plays on where the board is not yet settled', async () => {
+  const opened = afterWhitePassed();
+  const enginePlayer = opened.toPlay;
+  const open = 4 * 9 + 4;
+  const evaluator = mockEvaluator((candidate) => {
+    const policy = new Float32Array(82);
+    policy[81] = 0.9;
+    const moves = legalMoves(candidate);
+    for (const move of moves) policy[move.y * 9 + move.x] = 0.1 / moves.length;
+    const ownership = new Float32Array(81).fill(candidate.toPlay === enginePlayer ? 1 : -1);
+    ownership[open] = 0;
+    return { policy, scoreLead: candidate.toPlay === enginePlayer ? -5 : 5, ownership };
+  });
+  const result = await search(opened, evaluator, options({ maxVisits: 8 }));
+  assert.deepEqual(result.move, { x: 4, y: 4 });
+});
+
+test('behind, it does not play into self-atari to keep the game going', async () => {
+  // Black to play after White passed. The only unsettled point, B8, is a self-atari against White's stones.
+  const stones: Array<[number, number, number]> = [[1, 0, -1], [0, 1, -1], [2, 1, -1]];
+  const state = { ...position(stones), consecutivePasses: 1 };
+  const engine = state.toPlay;
+  const inside = 1 * 9 + 1;
+  const evaluator = mockEvaluator((candidate) => {
+    const policy = new Float32Array(82);
+    policy[81] = 0.9;
+    const moves = legalMoves(candidate);
+    for (const move of moves) policy[move.y * 9 + move.x] = 0.1 / moves.length;
+    const ownership = new Float32Array(81).fill(candidate.toPlay === engine ? 1 : -1);
+    ownership[inside] = 0;
+    return { policy, scoreLead: candidate.toPlay === engine ? -5 : 5, ownership };
+  });
+  const result = await search(state, evaluator, options({ maxVisits: 8 }));
+  assert.equal(result.move, null);
+});

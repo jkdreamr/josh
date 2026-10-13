@@ -145,3 +145,13 @@ test('19x19 games play, capture and score like 9x9', () => {
   assert.equal(counted.black, 361);
   assert.equal(counted.result, 'B+353.5');
 });
+
+test('counts the liberties a move would leave its group', async () => {
+  const { libertiesAfter } = await import('../src/os/games/go.ts');
+  const state = position(9, [[1, 0, WHITE], [0, 1, WHITE], [2, 1, WHITE], [1, 2, WHITE], [4, 4, BLACK]]);
+  assert.equal(libertiesAfter(state, 1, 1), 0, 'suicide is illegal');
+  assert.equal(libertiesAfter(state, 4, 5), 6);
+  assert.equal(libertiesAfter(state, 0, 0), 0, 'a black stone at A9 would be suicide');
+  const atari = position(9, [[1, 0, WHITE], [0, 1, WHITE], [2, 1, WHITE]]);
+  assert.equal(libertiesAfter(atari, 1, 1), 1, 'self-atari');
+});

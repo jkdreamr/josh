@@ -106,6 +106,13 @@ export function groupStones(state: GameState, x: number, y: number): number[] {
   return state.board[index] === 0 ? [] : groupAt(state.board, state.size, index).stones;
 }
 
+/** Liberties of the group a stone at (x, y) would join, after its captures; 0 if the move is illegal. */
+export function libertiesAfter(state: GameState, x: number, y: number): number {
+  if (state.phase !== 'play') return 0;
+  const result = tryPlace(state.board, state.size, x, y, state.toPlay, new Set(state.positions));
+  return result.reason ? 0 : groupAt(result.board, state.size, indexOf(state.size, x, y)).liberties.size;
+}
+
 export function isOwnEye(board: readonly Stone[], size: number, index: number, color: Color): boolean {
   if (board[index] !== 0) return false;
   const orthogonal = neighbors(size, index);
