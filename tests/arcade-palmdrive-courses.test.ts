@@ -50,7 +50,7 @@ for (const id of COURSE_IDS) {
   test(`${id}: item boxes, coins, dash panels and ramps all sit on the road, and the boosts on straights`, () => {
     const t = trackOf(id);
     const lay = COURSES[id].layout(t);
-    assert.equal(lay.boxes.length, 12);
+    assert.ok(lay.boxes.length >= 12 && lay.boxes.length % 4 === 0, `${lay.boxes.length} boxes`);
     assert.ok(lay.coins.length >= 25);
     assert.ok(lay.dashes.length >= 2 && lay.ramps.length >= 1);
     for (const p of [...lay.boxes, ...lay.coins, ...lay.dashes]) assert.ok(Math.abs(p.d) <= t.half - 1.5, `${id} pickup at s=${p.s} d=${p.d}`);
@@ -66,7 +66,7 @@ for (const id of COURSE_IDS) {
     }
   });
 
-  test(`${id}: mud, hay bales and cows sit on the road, clear of the start, and always leave a way past`, () => {
+  test(`${id}: mud, hay bales, boulders and cows sit on the road, clear of the start, and always leave a way past`, () => {
     const t = trackOf(id);
     const lay = COURSES[id].layout(t);
     for (const h of lay.hazards) {
@@ -84,6 +84,14 @@ for (const id of COURSE_IDS) {
     // nothing solid right where a dash panel or a ramp sends you
     for (const p of [...lay.dashes, ...lay.ramps]) {
       for (const h of lay.hazards) if (solid(h.kind)) assert.ok(deltaS(t, p.s, h.s) < 0 || deltaS(t, p.s, h.s) > 30, `${id} ${h.kind} at s=${h.s} right after a boost at s=${p.s}`);
+    }
+    // and no coins, boxes or dash panels leading you into something solid in the same lane
+    for (const p of [...lay.coins, ...lay.boxes, ...lay.dashes]) {
+      for (const h of lay.hazards) {
+        if (!solid(h.kind) || h.swing) continue;
+        const ahead = deltaS(t, p.s, h.s);
+        assert.ok(ahead <= 0 || ahead > 15 || Math.abs(p.d - h.d) > h.r + 1.6, `${id} pickup at s=${p.s} d=${p.d} leads into the ${h.kind} at s=${h.s}`);
+      }
     }
   });
 

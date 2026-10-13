@@ -250,7 +250,7 @@ export type Race = {
   coins: Coin[];
   dashes: Dash[];
   ramps: Ramp[];
-  /** The course's mud, oil, hay bales and cows, with where each is right now. */
+  /** The course's mud, oil, hay bales, boulders and cows, with where each is right now. */
   hazards: LiveHazard[];
   rand: Rng;
   nextId: number;
@@ -812,7 +812,7 @@ function wall(r: Race, k: Kart) {
   k.offroad = Math.abs(now.d) > r.track.half + CURB * 0.6;
 }
 
-/** Mud, oil and the hay bales and cows in the way, for a kart this client drives. */
+/** Mud, oil and the hay bales, boulders and cows in the way, for a kart this client drives. */
 function hazards(r: Race, k: Kart) {
   const was = k.mud;
   k.mud = false;
@@ -1282,7 +1282,7 @@ function moveThings(r: Race, dt: number) {
     }
     th.x += th.vx * dt;
     th.z += th.vz * dt;
-    // shells break on hay bales and cows
+    // shells break on hay bales, boulders and cows
     if (r.hazards.some((h) => solid(h.kind) && Math.hypot(h.x - th.x, h.z - th.z) < h.r + 0.45)) {
       removeThing(r, th.id, th.local);
       continue;
@@ -1409,7 +1409,7 @@ function curveAhead(t: Track, s: number, from: number, to: number) {
 }
 
 /**
- * A lane (as a fraction of the road's half width) clear of the hay bales, cows and oil slicks coming up, and of the
+ * A lane (as a fraction of the road's half width) clear of the hay bales, boulders, cows and oil slicks coming up, and of the
  * puddles too when there is room, as close as it can be to the lane the kart wanted; null when nothing is in the way.
  * Cows are dodged where they will be by the time the kart gets there.
  */

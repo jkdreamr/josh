@@ -2,8 +2,8 @@
 // three.js; the scene builds each course's scenery (scene.ts) and the logic races on its track (logic.ts).
 import { EDGE, HAZARD_R, ROAD_HALF, ROUTE, START, buildTrack, layout as palmLayout, wrapS, type HazardKind, type Layout, type Track } from './track.ts';
 
-export type CourseId = 'palm' | 'lake' | 'barn';
-export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn'];
+export type CourseId = 'palm' | 'lake' | 'barn' | 'dish';
+export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish'];
 export const isCourse = (v: unknown): v is CourseId => COURSE_IDS.includes(v as CourseId);
 
 /** How hard a course is, for the picker: narrower roads, tighter bends and more in the way as it goes up. */
@@ -79,6 +79,26 @@ const BARN: [number, number][] = [
   [24, 70], [-50, 48], [-130, 72], [-200, 40], [-246, -20], [-246, -100],
 ];
 
+/**
+ * The Dish: up the foothills behind campus. Switchbacks climb to the ridge, it runs along the top past the big radio
+ * telescope, then esses wind back down. Long and narrow, with cattle on the road.
+ */
+const DISH_K = 0.82;
+const DISH: [number, number][] = [
+  // the gate, and the first leg of the switchbacks
+  [18, -205], [12, -150], [26, -114], [56, -97], [100, -96],
+  // round the east hairpin and back along the second leg
+  [150, -96], [178, -84], [190, -56], [178, -28], [150, -16], [60, -16],
+  // the west hairpin and the third leg
+  [0, -16], [-30, -4], [-43, 26], [-30, 56], [0, 68], [70, 70], [170, 72],
+  // up onto the ridge and along the top past the Dish
+  [222, 100], [230, 160], [180, 212], [80, 230], [-40, 230], [-130, 218],
+  // the esses back down the west side
+  [-178, 196], [-196, 150], [-180, 100], [-196, 48], [-174, -20], [-194, -92], [-160, -172],
+  // and round the bottom to the gate
+  [-132, -226], [-94, -262], [-44, -282], [2, -278], [22, -246],
+];
+
 export const COURSES: Record<CourseId, Course> = {
   palm: {
     id: 'palm',
@@ -141,7 +161,7 @@ export const COURSES: Record<CourseId, Course> = {
           [300, 4, 5],
           [480, -3, 5],
           [620, 3, 5],
-          [700, -3, 5],
+          [700, 3, 5],
           [860, 0, 4],
           [960, 3, 5],
           [1075, -3, 5],
@@ -172,6 +192,59 @@ export const COURSES: Record<CourseId, Course> = {
         ],
       }),
     sky: 'linear-gradient(180deg, #3d78c4 0%, #7fb0e3 24%, #cfe3ef 36%, #eedfb8 41%, #d9c38e 46%, #8fae5c 47%)',
+  },
+  dish: {
+    id: 'dish',
+    name: 'The Dish',
+    blurb: 'Switchbacks up the foothills and along the ridge past the radio telescope. Narrow, long, and the cows are out.',
+    difficulty: 3,
+    route: DISH.map(([e, n]) => [e * DISH_K, n * DISH_K]),
+    start: [16 * DISH_K, -196 * DISH_K],
+    half: 6.5,
+    edge: 10.5,
+    layout: (t) =>
+      placed(t, {
+        boxes: [95, 430, 790, 1150],
+        coins: [
+          [20, 0, 5],
+          [120, 3, 5],
+          [300, -3, 5],
+          [400, 2, 4],
+          [540, 0, 5],
+          [650, -2.5, 5],
+          [850, 2.5, 5],
+          [960, 0, 4],
+          [1060, 0, 4],
+          [1195, 2.5, 6],
+          [1300, 2, 4],
+        ],
+        dashes: [
+          [225, 0],
+          [705, 2],
+          [1100, -2],
+        ],
+        // a jump off the end of the third leg, and a kicker on the long run home
+        ramps: [
+          [520, 0, 8],
+          [1255, 2, 6],
+        ],
+        hazards: [
+          // cattle wandering over every leg of the climb, along the ridge and on the run home
+          ['cow', 290, 0, undefined, 4.2, 0.55, 0],
+          ['cow', 470, 0, undefined, 4.2, 0.6, 2],
+          ['cow', 760, 0, undefined, 4.2, 0.5, 4],
+          ['cow', 1180, 0, undefined, 4.2, 0.5, 1],
+          // puddles waiting on the inside of both hairpins, and on the climb to the ridge
+          ['mud', 183, -3.8, 2.8],
+          ['mud', 365, 3.8, 2.8],
+          ['mud', 640, 3, 3],
+          ['mud', 1000, 0, 3],
+          // boulders come down off the hillside
+          ['rock', 840, 3.5],
+          ['rock', 1220, -3.5],
+        ],
+      }),
+    sky: 'linear-gradient(180deg, #2a6fc9 0%, #6aa6e6 22%, #bcd8ee 35%, #e9dcb0 41%, #d6bd7a 46%, #b7a45c 47%)',
   },
 };
 

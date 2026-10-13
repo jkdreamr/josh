@@ -142,6 +142,80 @@ function makeHall(THREE: Three, box: T.BoxGeometry, roof: T.BufferGeometry, mats
   return g;
 }
 
+/** A Holstein's spotted hide and the rest of its colors. */
+export function cowMaterials(THREE: Three) {
+  const hide = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = '#f4f2ec';
+      g.fillRect(0, 0, 64, 64);
+      g.fillStyle = '#1d1d22';
+      const spots = scatter(11);
+      for (let i = 0; i < 7; i++) {
+        g.beginPath();
+        g.ellipse(spots() * 64, spots() * 64, 6 + spots() * 9, 5 + spots() * 7, spots() * 3, 0, Math.PI * 2);
+        g.fill();
+      }
+    }),
+  );
+  return {
+    hide: new THREE.MeshLambertMaterial({ map: hide }),
+    pink: new THREE.MeshLambertMaterial({ color: 0xf0a3a8 }),
+    hoof: new THREE.MeshLambertMaterial({ color: 0x2a2420 }),
+    horn: new THREE.MeshLambertMaterial({ color: 0xeee3c4 }),
+  };
+}
+
+/** A cow facing +z: spotted body, pink nose and udder, little horns and a tail. Its legs and head can be animated. */
+export function makeCow(THREE: Three, geo: { box: T.BoxGeometry; ball: T.SphereGeometry; cone: T.ConeGeometry }, mats: ReturnType<typeof cowMaterials>) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(geo.box, mats.hide);
+  body.scale.set(1.05, 1, 2.1);
+  body.position.y = 1.25;
+  const udder = new THREE.Mesh(geo.ball, mats.pink);
+  udder.scale.set(0.3, 0.2, 0.35);
+  udder.position.set(0, 0.72, -0.4);
+  const tail = new THREE.Mesh(geo.box, mats.hide);
+  tail.scale.set(0.08, 0.9, 0.08);
+  tail.position.set(0, 1.2, -1.07);
+  g.add(body, udder, tail);
+  const legs: T.Mesh[] = [];
+  for (const [x, z] of [[-0.35, 0.75], [0.35, 0.75], [-0.35, -0.75], [0.35, -0.75]]) {
+    const leg = new THREE.Mesh(geo.box, mats.hide);
+    leg.scale.set(0.24, 0.85, 0.24);
+    leg.position.set(x, 0.42, z);
+    const hoof = new THREE.Mesh(geo.box, mats.hoof);
+    hoof.scale.set(1.05, 0.18, 1.05);
+    hoof.position.y = -0.42;
+    leg.add(hoof);
+    legs.push(leg);
+    g.add(leg);
+  }
+  const head = new THREE.Group();
+  const skull = new THREE.Mesh(geo.box, mats.hide);
+  skull.scale.set(0.62, 0.62, 0.7);
+  const nose = new THREE.Mesh(geo.box, mats.pink);
+  nose.scale.set(0.56, 0.36, 0.25);
+  nose.position.set(0, -0.14, 0.42);
+  head.add(skull, nose);
+  for (const side of [-1, 1]) {
+    const horn = new THREE.Mesh(geo.cone, mats.horn);
+    horn.scale.set(0.08, 0.28, 0.08);
+    horn.position.set(side * 0.24, 0.42, -0.1);
+    horn.rotation.z = -side * 0.5;
+    const ear = new THREE.Mesh(geo.box, mats.hoof);
+    ear.scale.set(0.3, 0.1, 0.16);
+    ear.position.set(side * 0.42, 0.18, -0.12);
+    const eye = new THREE.Mesh(geo.ball, mats.hoof);
+    eye.scale.setScalar(0.07);
+    eye.position.set(side * 0.2, 0.1, 0.36);
+    head.add(horn, ear, eye);
+  }
+  head.position.set(0, 1.55, 1.25);
+  g.add(head);
+  return { g, legs, head };
+}
+
 /** Each course's colors: light, grass, curbs, walls and the banner over the start. */
 export type Look = {
   fog: [number, number, number];
@@ -161,6 +235,7 @@ export const LOOKS: Record<CourseId, Look> = {
   palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE', road: '#4a4a52' },
   lake: { fog: [0xeeb08e, 120, 640], sky: 0xffd8c2, ground: 0x5d6b4a, sun: [0xffb07a, 1.4], field: '#b8a862', lawn: '#79a85a', curb: ['#f4f1ea', '#2f6fb5'], wall: '#b98b5e', band: '#2f6fb5', banner: 'LAKE LAGUNITA', road: '#4a4a52' },
   barn: { fog: [0xe9e4cf, 150, 720], sky: 0xfff4dd, ground: 0x6b7a44, sun: [0xfff0d0, 1.5], field: '#c9b26a', lawn: '#88ad59', curb: ['#efe6cf', '#9a3a28'], wall: '#f3efe4', band: '#9a3a28', banner: 'RED BARN', road: '#8f6f4d' },
+  dish: { fog: [0xe6e0c8, 160, 760], sky: 0xfff6e6, ground: 0x7a7448, sun: [0xfff2d8, 1.55], field: '#cdb46c', lawn: '#b0a95e', curb: ['#f2efe6', '#5d7a3a'], wall: '#d9cfb8', band: '#5d7a3a', banner: 'THE DISH', road: '#5e5d62' },
 };
 
 /** What a course's scenery builder gets: the scene, the track and shared helpers. */
@@ -361,8 +436,8 @@ function oaks(c: Scenery, spots: { x: number; z: number; r: number }[]) {
   instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 7, 5), new THREE.MeshLambertMaterial({ color: 0x4f7d3a, flatShading: true }), spots.map((o, i) => ({ x: o.x, y: o.r * 1.5, z: o.z, sx: o.r * 1.15, sy: o.r * 0.9, sz: o.r * 1.15, ry: i })));
 }
 
-/** Golden foothills in a ring at `dist` around (cx, cz), with the Dish on one of them. */
-function foothills(c: Scenery, cx: number, cz: number, dish: { x: number; z: number }) {
+/** Golden foothills in a ring 560-720 m round (cx, cz), with the Dish up on one of them unless `dish` is null. */
+function foothills(c: Scenery, cx: number, cz: number, dish: { x: number; z: number } | null) {
   const { THREE, scene, geo, rand } = c;
   const hillMat = new THREE.MeshLambertMaterial({ color: 0xc8b06a, flatShading: true });
   const hillGeo = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
@@ -373,6 +448,7 @@ function foothills(c: Scenery, cx: number, cz: number, dish: { x: number; z: num
     hill.scale.set(110 + rand() * 90, 40 + rand() * 70, 110 + rand() * 90);
     scene.add(hill);
   }
+  if (!dish) return;
   const white = new THREE.MeshLambertMaterial({ color: 0xf2f2f0, side: THREE.DoubleSide });
   const d = new THREE.Group();
   const bowl = new THREE.Mesh(new THREE.SphereGeometry(14, 18, 8, 0, Math.PI * 2, 0, 0.9), white);
@@ -908,4 +984,165 @@ function barn(c: Scenery) {
   foothills(c, cx, cz, { x: cx + 120, z: cz + 420 });
 }
 
-export const SCENERY: Record<CourseId, (c: Scenery) => void> = { palm: campus, lake, barn };
+/**
+ * The Dish: the big radio telescope inside the loop, smaller antennas about, rolling golden hills dotted with oaks,
+ * cattle grazing, barbed wire along the road, a cattle grid by the gate and campus off in the distance.
+ */
+function dish(c: Scenery) {
+  const { THREE, scene, t, geo, rand, clear, dummy } = c;
+  const { cx, cz, rx, rz } = bounds(t);
+  const K = 0.82;
+  const white = new THREE.MeshLambertMaterial({ color: 0xf1f0ea, side: THREE.DoubleSide });
+  const steel = new THREE.MeshLambertMaterial({ color: 0xb9bcbf });
+  const concrete = new THREE.MeshLambertMaterial({ color: 0xc9c3b6 });
+
+  // the Dish: a 30 m white bowl tilted to the sky on its yoke, with the feed held out on a tripod
+  const big = roomiest(t, fromMap(90 * K, 150 * K), 60);
+  const d = new THREE.Group();
+  const pedestal = new THREE.Mesh(geo.box, concrete);
+  pedestal.scale.set(10, 6, 10);
+  pedestal.position.y = 3;
+  d.add(pedestal);
+  /** A strut from a to b (in its parent's space). */
+  const strut = (mat: T.Material, w: number, a: T.Vector3, b: T.Vector3) => {
+    const m = new THREE.Mesh(geo.box, mat);
+    m.position.copy(a).add(b).multiplyScalar(0.5);
+    m.scale.set(w, a.distanceTo(b), w);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+    return m;
+  };
+  // the yoke: an arm up from each side of the pedestal to the bowl's pivot
+  for (const side of [-1, 1]) d.add(strut(white, 2, new THREE.Vector3(side * 4, 6, 0), new THREE.Vector3(side * 11, 20, 0)));
+  const reflector = new THREE.Group();
+  const bowl = new THREE.Mesh(new THREE.SphereGeometry(22, 28, 10, 0, Math.PI * 2, 0, 0.75), white);
+  bowl.rotation.x = Math.PI;
+  bowl.position.y = 22;
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(15, 0.5, 6, 40), steel);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = 22 - 22 * Math.cos(0.75);
+  reflector.add(bowl, rim);
+  // the feed over the middle of the bowl, held up by three legs from the rim
+  const feed = new THREE.Mesh(geo.box, steel);
+  feed.scale.set(2, 2.4, 2);
+  feed.position.y = rim.position.y + 12;
+  reflector.add(feed);
+  const focus = new THREE.Vector3(0, feed.position.y - 1, 0);
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2;
+    reflector.add(strut(steel, 0.4, new THREE.Vector3(Math.cos(a) * 14.6, rim.position.y, Math.sin(a) * 14.6), focus));
+  }
+  reflector.position.y = 18;
+  reflector.rotation.x = -0.75;
+  d.add(reflector);
+  d.position.set(big.x, 0, big.z);
+  d.rotation.y = 2.2;
+  d.scale.setScalar(Math.min(1, (big.room - t.edge - 6) / 24));
+  scene.add(d);
+
+  // smaller antennas dotted about the hills outside the loop
+  for (let n = 0, made = 0; made < 4 && n < 200; n++) {
+    const a = rand() * Math.PI * 2;
+    const x = cx + Math.cos(a) * (rx + 40 + rand() * 120);
+    const z = cz + Math.sin(a) * (rz + 40 + rand() * 120);
+    if (!clear(x, z, 12)) continue;
+    const g = new THREE.Group();
+    const post = new THREE.Mesh(geo.box, white);
+    post.scale.set(1.2, 7, 1.2);
+    post.position.y = 3.5;
+    const small = new THREE.Mesh(new THREE.SphereGeometry(5, 16, 6, 0, Math.PI * 2, 0, 0.8), white);
+    small.rotation.x = Math.PI - 0.9;
+    small.position.y = 9;
+    g.add(post, small);
+    g.position.set(x, 0, z);
+    g.rotation.y = rand() * Math.PI * 2;
+    scene.add(g);
+    made++;
+  }
+
+  // rolling golden hills inside the loop and round about, clear of the road
+  const hillMat = new THREE.MeshLambertMaterial({ color: 0xc6ad66, flatShading: true });
+  const hillGeo = new THREE.SphereGeometry(1, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+  const hills: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number }[] = [];
+  for (let n = 0; hills.length < 26 && n < 600; n++) {
+    const a = rand() * Math.PI * 2;
+    const dist = rand() * (Math.max(rx, rz) + 220);
+    const x = cx + Math.cos(a) * dist;
+    const z = cz + Math.sin(a) * dist;
+    const size = 16 + rand() * 30;
+    if (!clear(x, z, size + 4) || Math.hypot(x - big.x, z - big.z) < 34) continue;
+    hills.push({ x, y: -1, z, sx: size, sy: 4 + rand() * size * 0.35, sz: size * (0.7 + rand() * 0.5), ry: rand() * 3 });
+  }
+  instances(THREE, scene, dummy, hillGeo, hillMat, hills);
+
+  // oaks scattered over the hillsides
+  const spots: { x: number; z: number; r: number }[] = [];
+  for (let n = 0; spots.length < 150 && n < 5000; n++) {
+    const a = rand() * Math.PI * 2;
+    const dist = rand() * (Math.max(rx, rz) + 380);
+    const x = cx + Math.cos(a) * dist;
+    const z = cz + Math.sin(a) * dist;
+    const r = 2.4 + rand() * 3.4;
+    // the whole crown clear of the walls and the start gantry
+    if (clear(x, z, r * 1.15 + 1.5) && Math.hypot(x - big.x, z - big.z) > 30) spots.push({ x, z, r });
+  }
+  oaks(c, spots);
+
+  // cattle grazing off the road
+  const cowMats = cowMaterials(THREE);
+  for (let n = 0, made = 0; made < 12 && n < 400; n++) {
+    const a = rand() * Math.PI * 2;
+    const dist = rand() * (Math.max(rx, rz) + 120);
+    const x = cx + Math.cos(a) * dist;
+    const z = cz + Math.sin(a) * dist;
+    if (!clear(x, z, 5) || Math.hypot(x - big.x, z - big.z) < 30) continue;
+    const { g, head } = makeCow(THREE, geo, cowMats);
+    head.rotation.x = 0.9;
+    head.position.y = 1.2;
+    g.position.set(x, 0, z);
+    g.rotation.y = rand() * Math.PI * 2;
+    scene.add(g);
+    made++;
+  }
+
+  // barbed wire on wooden posts outside the walls
+  const posts: { x: number; y: number; z: number; sx: number; sy: number; sz: number }[] = [];
+  const wires: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number }[] = [];
+  for (const side of [-1, 1]) {
+    let last: { x: number; z: number } | null = null;
+    for (let s = 0; s <= t.length; s += 7) {
+      const p = pointAt(t, s, side * (t.edge + 3));
+      const ok = clear(p.x, p.z, 2);
+      if (ok) posts.push({ x: p.x, y: 0.7, z: p.z, sx: 0.16, sy: 1.4, sz: 0.16 });
+      if (ok && last) {
+        const len = Math.hypot(p.x - last.x, p.z - last.z);
+        for (const y of [0.7, 1.2]) wires.push({ x: (p.x + last.x) / 2, y, z: (p.z + last.z) / 2, sx: 0.03, sy: 0.03, sz: len, ry: headingOf(p.x - last.x, p.z - last.z) });
+      }
+      last = ok ? p : null;
+    }
+  }
+  instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color: 0x7a5c3e }), posts);
+  instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color: 0x55575a }), wires);
+
+  // a cattle grid across the road just past the gate
+  const bars: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number }[] = [];
+  for (let k = -5; k <= 5; k++) {
+    const p = pointAt(t, 32 + k * 0.45, 0);
+    bars.push({ x: p.x, y: 0.06, z: p.z, sx: t.half * 2, sy: 0.05, sz: 0.16, ry: headingOf(p.tx, p.tz) });
+  }
+  instances(THREE, scene, dummy, geo.box, steel, bars);
+  const pit = pointAt(t, 32, 0);
+  const shade = new THREE.Mesh(geo.plane, new THREE.MeshBasicMaterial({ color: 0x1e1d1c }));
+  shade.rotation.set(-Math.PI / 2, 0, headingOf(pit.tx, pit.tz));
+  shade.scale.set(t.half * 2, 5, 1);
+  shade.position.set(pit.x, 0.05, pit.z);
+  scene.add(shade);
+
+  // the foothills beyond, and campus down below with Hoover Tower
+  foothills(c, cx, cz, null);
+  const hoover = makeHoover(THREE, geo.box);
+  hoover.position.set(cx - 120, 0, cz + 470);
+  hoover.scale.setScalar(1.5);
+  scene.add(hoover);
+}
+
+export const SCENERY: Record<CourseId, (c: Scenery) => void> = { palm: campus, lake, barn, dish };
