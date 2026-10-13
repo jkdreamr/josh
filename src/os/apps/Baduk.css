@@ -171,6 +171,10 @@
   gap: 2px;
 }
 
+.baduk-updated {
+  justify-content: space-between;
+}
+
 .baduk-engine-spinner {
   display: inline-block;
   width: 12px;

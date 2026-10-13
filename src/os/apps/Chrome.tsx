@@ -204,7 +204,7 @@ export default function Chrome({ args }: AppProps) {
           return (
             <div key={`${t.id}-${t.reload}-${v.id}`} className="chrome-game" hidden={!on}>
               <ArcadeHost.Provider value={{ active: on }}>
-                <GameFrame id={v.id} roomCode={v.room} onExit={() => navigateTab(t.id, GAMES)} />
+                <GameFrame id={v.id} roomCode={v.room} onExit={() => navigateTab(t.id, GAMES)} resume={{ app: 'chrome', args: { url: t.history[t.idx] } }} />
               </ArcadeHost.Provider>
             </div>
           );
@@ -261,7 +261,7 @@ function NewTab({ onGo }: { onGo: (url: string) => void }) {
       </form>
       {hasGame('dino') && (
         <div className="newtab-dino">
-          <GameFrame id="dino" compact />
+          <GameFrame id="dino" compact resume={{ app: 'chrome' }} />
         </div>
       )}
       <div className="shortcuts">

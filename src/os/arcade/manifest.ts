@@ -1,4 +1,5 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
+import { tagLoad } from '../reload';
 import type { GameCategory, GameMeta, GameProps } from './types';
 
 type MetaModule = { meta: GameMeta };
@@ -44,12 +45,5 @@ export const hasGame = (id: string) => metaById.has(id);
 
 /** One React.lazy component per game id; each game is its own chunk and only downloads when rendered. */
 export const loaders: Record<string, LazyExoticComponent<ComponentType<GameProps>>> = Object.fromEntries(
-  [...loaderById].map(([id, load]) => [id, lazy(load)]),
+  [...loaderById].map(([id, load]) => [id, lazy(tagLoad(load))]),
 );
-
-/** Swap in a fresh lazy component so a game that failed to download can be retried. */
-export function reloadGame(id: string) {
-  const load = loaderById.get(id);
-  if (load) loaders[id] = lazy(load);
-  return loaders[id];
-}

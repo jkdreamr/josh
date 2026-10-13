@@ -31,6 +31,8 @@ export type OpenArgs = {
   account?: 'personal' | 'music';
   beat?: string;
   game?: 'go' | 'omok';
+  /** arcade game id the Arcade app opens straight into */
+  play?: string;
   /** online room code from an invite link (Baduk, Badminton and Cox Box) */
   room?: string;
   /** bumps on every open() call so an already-open app can react to new args */

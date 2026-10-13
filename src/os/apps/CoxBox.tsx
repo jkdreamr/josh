@@ -8,7 +8,7 @@ export default function CoxBox({ args }: AppProps) {
   return (
     <div className="coxbox-app">
       <ArcadeHost.Provider value={{ active: true }}>
-        <GameFrame id="coxbox" roomCode={args.room} />
+        <GameFrame id="coxbox" roomCode={args.room} resume={{ app: 'coxbox', args: { room: args.room } }} />
       </ArcadeHost.Provider>
     </div>
   );

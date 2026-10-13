@@ -50,10 +50,10 @@ export function countPlay(game: string) {
 let watching = false;
 
 /** Counts this page load (a refresh is a new load), a back/forward restore, and a return to the tab after half an hour away. */
-export function watchVisits() {
+export function watchVisits(countNow = true) {
   if (watching || typeof window === 'undefined') return;
   watching = true;
-  countView();
+  if (countNow) countView();
   let hiddenAt = document.hidden ? Date.now() : 0;
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
