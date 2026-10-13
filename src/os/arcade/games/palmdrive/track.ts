@@ -1,13 +1,15 @@
-// The Palm Drive circuit: a closed spline through campus, sampled every couple of meters. Pure, no three.js.
+// Circuits: a closed spline through control points, sampled every couple of meters. Pure, no three.js. The other
+// courses live in courses.ts; this file has the geometry and the original Palm Drive circuit.
 //
-// One lap runs north up Palm Drive toward Memorial Church, sweeps around the Oval, turns south past Hoover Tower
-// into the Arboretum esses and comes back onto Palm Drive through a hairpin.
+// One lap of Palm Drive runs north up Palm Drive toward Memorial Church, sweeps around the Oval, turns south past
+// Hoover Tower into the Arboretum esses and comes back onto Palm Drive through a hairpin.
 //
 // World axes: +y is up and +z is north. Seen from above with north up, +x points WEST (three.js is right handed),
 // so the map points below are written as [east, north] like a normal map and flipped once in fromMap().
 // Headings follow the karts: forward = (sin h, cos h), so h = 0 faces north and turning right lowers h.
 // The right-hand normal of a direction (tx, tz) is (-tz, tx); a positive lateral offset `d` is right of the line.
 
+/** Palm Drive's road: half its width, and where the walls stand. Other courses can be wider or narrower. */
 export const ROAD_HALF = 8;
 export const CURB = 1.1;
 /** Walls stand this far either side of the centerline; the grass between the curb and the wall is slow. */
@@ -19,7 +21,7 @@ export type P2 = { x: number; z: number };
 export const fromMap = (east: number, north: number): P2 => ({ x: -east * SCALE, z: north * SCALE });
 
 /** Control points in driving order, [east, north] in map meters before scaling. */
-const ROUTE: [number, number][] = [
+export const ROUTE: [number, number][] = [
   [0, -230],
   [0, -110],
   [0, 10],
@@ -40,7 +42,7 @@ const ROUTE: [number, number][] = [
   [35, -285],
   [8, -265],
 ];
-const START: [number, number] = [0, -120];
+export const START: [number, number] = [0, -120];
 
 /** Landmarks in world coordinates (see the scene for what stands there). */
 export const LANDMARKS = {
@@ -61,6 +63,9 @@ export type Track = {
   tz: Float32Array;
   /** Signed curvature in radians per meter, positive for a right-hand bend. */
   curv: Float32Array;
+  /** Half the road's width, and how far either side of the centerline the walls stand. */
+  half: number;
+  edge: number;
 };
 
 export type Spot = { i: number; s: number; d: number; x: number; z: number; tx: number; tz: number };
@@ -87,7 +92,7 @@ function catmull(p0: P2, p1: P2, p2: P2, p3: P2, u: number): P2 {
   return mix(b1, b2, t1, t2);
 }
 
-export function buildTrack(route: [number, number][] = ROUTE, start: [number, number] = START): Track {
+export function buildTrack(route: [number, number][] = ROUTE, start: [number, number] = START, half = ROAD_HALF, edge = EDGE): Track {
   const pts = route.map(([e, n]) => fromMap(e, n));
   const dense: P2[] = [];
   const m = pts.length;
@@ -153,7 +158,7 @@ export function buildTrack(route: [number, number][] = ROUTE, start: [number, nu
     const b = (i + 1) % n;
     curv[i] = -wrapAngle(headingOf(tx[b], tz[b]) - headingOf(tx[a], tz[a])) / (2 * step);
   }
-  return { n, step, length: n * step, x, z, tx, tz, curv };
+  return { n, step, length: n * step, x, z, tx, tz, curv, half, edge };
 }
 
 export const wrapS = (t: Track, s: number) => ((s % t.length) + t.length) % t.length;
@@ -221,17 +226,30 @@ export function gridSpot(t: Track, slot: number) {
 }
 
 /** Distance along the loop of a map point (where a pickup row or a landmark sits). */
-const sOf = (t: Track, e: number, n: number) => {
+export const sOf = (t: Track, e: number, n: number) => {
   const p = fromMap(e, n);
   return locate(t, p.x, p.z).s;
 };
+
+/**
+ * Things on the road that are part of the course: mud slows you like grass, an oil slick spins you out, and hay
+ * bales and cows are solid. Cows wander back and forth across the road `swing` meters either side of d.
+ */
+export type HazardKind = 'mud' | 'oil' | 'hay' | 'cow';
+export type Hazard = { kind: HazardKind; s: number; d: number; r: number; swing?: number; speed?: number; phase?: number };
+/** How big each kind is unless a course says otherwise. */
+export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, cow: 1.5 };
+export const solid = (kind: HazardKind) => kind === 'hay' || kind === 'cow';
 
 export type Layout = {
   boxes: { s: number; d: number }[];
   coins: { s: number; d: number }[];
   dashes: { s: number; d: number }[];
-  /** Palm Drive itself, from the hairpin exit to the Oval, as [from, to] distances. */
-  palmDrive: [number, number];
+  /** Jump ramps: the lip at s, centered d to the right, w wide. */
+  ramps: { s: number; d: number; w: number }[];
+  hazards: Hazard[];
+  /** Palm Drive itself, from the hairpin exit to the Oval, as [from, to] distances (Palm Drive course only). */
+  palmDrive?: [number, number];
 };
 
 /** Item box rows, coin lines and dash panels, placed by landmark so the spline can change underneath. */
@@ -257,5 +275,10 @@ export function layout(t: Track): Layout {
     { s: sOf(t, 62, 85), d: -2.6 },
     { s: sOf(t, 0, -205), d: 3 },
   ];
-  return { boxes, coins, dashes, palmDrive: [sOf(t, 2, -250), sOf(t, 0, 20)] };
+  // a dash panel straight into a jump out of the Oval, and a kicker beside the Palm Drive straight
+  const ramps = [
+    { s: wrapS(t, dashes[0].s + 11), d: -1.5, w: 11 },
+    { s: wrapS(t, sOf(t, 0, -80)), d: 4.6, w: 5.5 },
+  ];
+  return { boxes, coins, dashes, ramps, hazards: [], palmDrive: [sOf(t, 2, -250), sOf(t, 0, 20)] };
 }

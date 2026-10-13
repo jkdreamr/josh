@@ -6,7 +6,7 @@ Little games that live inside the Chrome app at `chrome://games`, and in the Arc
 
 ```ts
 // src/os/arcade/types.ts
-export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer';
+export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer' | 'party' | 'drinking';
 export type LeaderboardSpec = { order: 'desc' | 'asc'; max: number; min?: number; format?: 'number' | 'time'; unit?: string; measure?: string; variants?: Record<string, string> };
 export type OnlineSpec = { seats: number; race?: boolean; lateJoin?: boolean };
 export type GameMeta = { id: string; title: string; blurb: string; category: GameCategory; players: string; controls: string; accent: string; glyph: string; order: number; leaderboard?: LeaderboardSpec; online?: OnlineSpec };
@@ -26,8 +26,8 @@ src/os/arcade/games/<id>/
 | `id` | folder name, used in the URL `chrome://games/<id>` and as the high score key |
 | `title` | tile and tab title |
 | `blurb` | one or two short sentences for the tile |
-| `category` | section on the arcade page: Arcade, Puzzles, 3D, Multiplayer |
-| `players` | `'1P'`, `'2P'`, `'1-2P'` |
+| `category` | section on the arcade page: Arcade, Puzzles, 3D, Multiplayer, Group Games, Drinking Games |
+| `players` | `'1P'`, `'2P'`, `'1-2P'`, or a range like `'3-20P'` for group games |
 | `controls` | one line how-to, shown on the Start and Pause cards |
 | `accent` | CSS color for the tile icon and shell accents |
 | `glyph` | SVG path data (`d`) for a 24x24 viewBox, drawn as a white 2px stroke |
@@ -84,8 +84,9 @@ function TouchControls(props: { dpad?: boolean | 'x' | 'y'; buttons?: { key: str
 const sfx: {
   play(name: 'blip' | 'select' | 'jump' | 'coin' | 'hit' | 'boom' | 'win' | 'lose' | 'tick', pitch?: number): void;
   tone(t: { freq: number; to?: number; dur?: number; type?: OscillatorType; vol?: number; delay?: number }): void;
-  noise(dur?: number, vol?: number): void;
+  noise(dur?: number, vol?: number, delay?: number): void;
   unlock(): void; isMuted(): boolean; setMuted(m: boolean): void; toggleMute(): void; subscribe(fn: () => void): () => void;
+  clock(): number | null;   // audio time in seconds while sound is on and playing
 };
 function useMuted(): [boolean, (m: boolean) => void];
 function loadThree(): Promise<typeof import('three')>;
@@ -94,7 +95,7 @@ function useThree(): typeof import('three') | null;   // null until loaded
 
 **GameShell** owns the frame every game shares: Start overlay (glyph, title, controls line, Play), Pause overlay (Esc or P, the pause button, or automatically when the game stops being visible), Game Over overlay (score, best, "new best", Play again, Arcade), the live score pill, and the top-right control row (pause, restart, mute, back to arcade). Restart remounts the children, so a round's state can live in plain refs and `useState`. Call `shell.gameOver(score)` to end a round; the shell records the best via `useHighScore`.
 
-**Settings** from `defineSetting(key, values, fallback)` (key starting with the game id, like `pong:mode`) are remembered per device and shown through the shell's `setup` slot on the Start, Pause and Game Over cards. Changing one on the Pause card swaps Resume for New Game, since the round in progress was set up the old way; switching back brings Resume back. Pass `{ live: true }` for purely cosmetic settings the game applies mid-round, such as scenery, to keep Resume.
+**Settings** from `defineSetting(key, values, fallback)` (key starting with the game id, like `pong:mode`) are remembered per device and shown through the shell's `setup` slot on the Start, Pause and Game Over cards. Changing one on the Pause card swaps Resume for New Game, since the round in progress was set up the old way; switching back brings Resume back. Pass `{ live: true }` for purely cosmetic settings the game applies mid-round, such as scenery, to keep Resume. Online games can also pass `hostSetup`: settings for the room (a speed class, a course) shown in the lobby and on the online Game Over card. The game decides who may change them (usually just the host, `useOnline().isHost`) and sends the host's choice to everyone itself.
 
 **useGameLoop** runs `update(dt)` then `render()` on `requestAnimationFrame` while the shell is `playing`. `dt` is in seconds and clamped to 1/20 s, so a stalled frame never teleports anything. It stops when the browser tab is hidden, the Chrome tab is in the background, the window is minimized or off screen, or the game is paused. While idle it still calls `render()` once after resizes and status changes. Pass `{ always: true }` for an attract loop that animates on the Start overlay.
 
@@ -104,9 +105,36 @@ function useThree(): typeof import('three') | null;   // null until loaded
 
 **TouchControls** renders an on-screen d-pad (left) and round buttons (right) on touch devices only, while playing. They feed the same `KeyState`, so `keys.down('left')` works for both. Example: `<TouchControls dpad buttons={[{ key: 'Space', label: 'jump' }]} />`. Tapping the canvas is also fine; use pointer events.
 
-**sfx** is a tiny WebAudio synth. No audio files. The mute state is shared by every game and persisted in localStorage (`arcade:muted`).
+**sfx** is a tiny WebAudio synth. No audio files. The mute state is shared by every game and persisted in localStorage (`arcade:muted`). For music, schedule notes a little ahead with `tone({ delay })` (and drums with `noise(dur, vol, delay)`) against `sfx.clock()`, which is null while muted or before the first tap, so a song never bunches up when sound comes back (Palm Drive's `music.ts` is an example).
 
 **loadThree / useThree** import `three` dynamically, so every 3D game shares one lazily loaded chunk and none of it lands in the initial bundle.
+
+## Party Kit
+
+Group games (`party`) and drinking games (`drinking`) are played on one phone passed around the room. They import their building blocks from `../../kit/party` (pure helpers also from `../../kit/party-core.ts`, so logic modules stay testable under node). `games/imposter` is the reference.
+
+```ts
+usePlayers(): [string[], (players: string[]) => void];  // the roster every party game shares, in seating order
+useStored<T>(key, fallback, parse): [T, (v: T) => void]; // JSON remembered under arcade:<key> (decks, house rules)
+function PlayerList(props: { min: number; max?: number; label?: string }): JSX.Element; // add names, tap to remove
+function Screen(props: { kicker?; title?; sub?; children?; actions?; onEnter?: () => void; center?: boolean }): JSX.Element;
+function PassTo(props: { name: string; index: number; note?; onReady: () => void; label?: string; className?: string }): JSX.Element;
+function Big(props: { onClick; primary?; disabled?; quiet? }): JSX.Element;  // full width button, Row puts them side by side
+function HowToPlay(props: { steps: ReactNode[]; label?: string }): JSX.Element; // folded rules for the setup step
+function Option(props: { label; value; options; onChange }): JSX.Element; // label plus Segmented
+function Chips(props: { label?; value: T[]; options; onChange }): JSX.Element; // multi-select, keeps one on
+function useCountdown(seconds, { running?, onEnd?, tick? }): { left: number; reset(n?): void };
+function Countdown(props: { left: number; total: number; size?: number }): JSX.Element;
+function useDeck<T>(items: readonly T[]): { card?: T; next(); back(); canBack; dealt; total }; // deals the first card at once
+// PlayerList also takes emptyHint for games where names are optional; .arcade-sr hides text from the screen but not from screen readers
+Avatar, playerColor, DrinkNote, shuffle, pick, Pile, listNames, sips, clock, mulberry32
+```
+
+A party game wraps itself in `<GameShell meta={meta} autoStart>`: its setup step is the start screen, so the shell's Start card is skipped. The rest is a `step` state machine where each step renders one keyed `<Screen>` (or `<PassTo>` before anything secret). Keying steps returns focus to the game after the button that led there unmounts, so Enter and Space keep working. Restart remounts the game back to its setup step, and the roster and settings carry over. Timers use `useCountdown`, so pausing (Esc, or hiding the window) stops the clock. Shared classes for cards, player grids and score rows (`.arcade-party-card`, `.arcade-party-picks`, `.arcade-party-scores`) live in `kit/party.css` and take the game's `--accent`.
+
+The look is printed game night: flat fills, cards with an inset border and a hard edge (`.arcade-party-card`, cream stock with `.is-paper`), buttons with a bottom edge that presses down, and Bricolage Grotesque for titles, card text and buttons. A game sets `--on-accent` to a dark ink when white on its accent falls under 4.5:1 (most bright accents do; check button text), can swap `--party-display` for its own face, and `--party-timer` recolors the countdown ring. Display faces are self-hosted in `public/fonts/` (latin subsets, SIL Open Font License); declare an `@font-face` in the game's CSS and the browser only downloads it when the game shows it. Motion stays short and purposeful, and everything inside `.arcade-party` collapses to instant under `prefers-reduced-motion`.
+
+Drinking games show `<DrinkNote />` on their setup step and keep their 18+ decks off by default.
 
 ## Leaderboards
 
@@ -141,7 +169,7 @@ Baduk (Go and Omok) and Badminton are desktop apps, not arcade games, but they s
 
 ## Online Rooms
 
-`online: { seats }` adds Play Online to the Start card: create a room, share the four character code or link, and the host starts. There are two kinds:
+`online: { seats }` adds Play Online to the Start card (and to the Pause and solo Game Over cards, which drop the round in progress): create a room, share the four character code or link, and the host starts. There are two kinds:
 
 - **Match** (`online: { seats: 2 }`): players play each other. The game reads `useOnline()` for its seat, sends moves with `send()`, listens with `onMessage()` and calls `reportResult(round, winnerSeat)` when a round ends. Chess, Connect Four, Checkers, Pong, Air Hockey, Light Cycles and Cox Box work this way.
 - **Race** (`online: { seats: 4, race: true }`): every player runs their own round at the same time and the best score wins. No game code is needed: the shell collects each player's `gameOver` score, shows the standings on the Game Over card and reports the winner. Use it for games with one comparable score (a `leaderboard` without `variants`).

@@ -64,6 +64,7 @@ export function OnlinePanel({
   onStart,
   onLeave,
   note,
+  setup,
 }: {
   game: string;
   code: string;
@@ -83,6 +84,8 @@ export function OnlinePanel({
   onLeave: () => void;
   /** One line under the title explaining how this game plays online. */
   note?: string;
+  /** Settings for the round, shown once in a room (the game decides what guests may change). */
+  setup?: ReactNode;
 }) {
   const host = seat === 0;
   const link = code ? `${location.origin}/?game=${encodeURIComponent(game)}&room=${encodeURIComponent(code)}` : '';
@@ -138,6 +141,9 @@ export function OnlinePanel({
                 Join
               </button>
             </form>
+            <button type="button" className="arcade-btn" onClick={onLeave}>
+              Back
+            </button>
           </>
         ) : (
           <>
@@ -157,6 +163,7 @@ export function OnlinePanel({
               ))}
               {players.length < 2 && <p>Waiting For Another Player</p>}
             </div>
+            {setup && <div className="arcade-setup">{setup}</div>}
             {host ? (
               <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" disabled={busy || players.length < 2} onClick={onStart}>
                 Start Game

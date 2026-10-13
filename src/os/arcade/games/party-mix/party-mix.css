@@ -1,0 +1,581 @@
+/* Party Mix: printed cards in a different stock per kind, with a cream panel for the words. Rammetto One for
+   labels and titles, Bricolage Grotesque (from the kit) for the card text. */
+@font-face {
+  font-family: 'Rammetto One';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/rammetto-one.woff2') format('woff2');
+}
+
+.g-party-mix {
+  --on-accent: #172103;
+  --pm-paper: #f6f0e4;
+  --pm-paper-edge: #c9bca5;
+  --pm-ink: #1d1a16;
+  --pm-text: 'Bricolage Grotesque', Inter, system-ui, sans-serif;
+  background:
+    radial-gradient(120% 70% at 50% -14%, color-mix(in srgb, #84c41f 14%, #11140d) 0%, transparent 68%),
+    #0e100b;
+}
+/* The shell's Pause card uses the accent too, and white doesn't read on lime. */
+.g-party-mix.arcade-shell .arcade-btn-primary {
+  color: var(--on-accent);
+}
+.g-party-mix .arcade-party {
+  --party-display: 'Rammetto One', 'Bricolage Grotesque', Inter, system-ui, sans-serif;
+  font-synthesis: none;
+}
+.g-party-mix .arcade-party-title {
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+/* Setup */
+.g-party-mix .g-party-mix-setup .arcade-party-title {
+  font-size: 34px;
+}
+.g-party-mix .g-party-mix-fan {
+  position: relative;
+  flex: none;
+  width: 180px;
+  height: 70px;
+  margin: 4px 0 8px;
+}
+.g-party-mix .g-party-mix-mini {
+  --t: #ff7417;
+  --t-ink: #2a1300;
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  display: grid;
+  place-items: start center;
+  width: 42px;
+  height: 58px;
+  margin-left: -21px;
+  padding-top: 7px;
+  border-radius: 8px;
+  color: var(--t-ink);
+  background: var(--t);
+  box-shadow: 0 3px 0 color-mix(in srgb, var(--t) 56%, #000);
+  transform: translateX(calc(var(--i) * 25px)) translateY(calc(var(--i) * var(--i) * 2px)) rotate(calc(var(--i) * 9deg));
+  animation: g-party-mix-fan 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  animation-delay: calc((var(--i) + 2) * 45ms);
+}
+.g-party-mix .g-party-mix-mini::after {
+  content: '';
+  position: absolute;
+  inset: 31px 5px 5px;
+  border-radius: 4px;
+  background: var(--pm-paper);
+}
+.g-party-mix .g-party-mix-mini svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+@keyframes g-party-mix-fan {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.g-party-mix .g-party-mix-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+}
+.g-party-mix .g-party-mix-note {
+  margin: 0;
+  padding-left: 2px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--party-dim);
+}
+.g-party-mix .g-party-mix-note.is-wild {
+  color: #ff8a7a;
+}
+
+/* The table: progress, rules in play, then the card. */
+.g-party-mix .g-party-mix-tap {
+  display: contents;
+}
+.g-party-mix .g-party-mix-table {
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+.g-party-mix .g-party-mix-table .arcade-party-body,
+.g-party-mix .g-party-mix-table .arcade-party-actions {
+  max-width: 560px;
+}
+.g-party-mix .g-party-mix-table .arcade-party-body {
+  gap: 10px;
+  overflow: hidden;
+}
+.g-party-mix .g-party-mix-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 20px;
+}
+.g-party-mix .g-party-mix-progress {
+  flex: 1 1 auto;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.g-party-mix .g-party-mix-progress > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.25s ease-out;
+}
+.g-party-mix .g-party-mix-count {
+  flex: none;
+  min-width: 52px;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--party-ink);
+}
+.g-party-mix .g-party-mix-count small {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--party-dim);
+}
+
+.g-party-mix .g-party-mix-rules {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 0 0 2px;
+  list-style: none;
+}
+.g-party-mix .g-party-mix-rules li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 30px;
+  padding: 0 11px 0 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pm-ink);
+  background: var(--pm-paper);
+  box-shadow: 0 2px 0 var(--pm-paper-edge);
+  animation: g-party-mix-pop 0.2s ease-out;
+}
+.g-party-mix .g-party-mix-rules svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.g-party-mix .g-party-mix-rules span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@keyframes g-party-mix-pop {
+  from {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+}
+
+.g-party-mix .g-party-mix-stage {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+  padding-bottom: 5px;
+  container-type: size;
+}
+
+/* The card: a colored stock per kind, label on the edge, words on a cream panel. */
+.g-party-mix .g-party-mix-card {
+  --t: #ff7417;
+  --t-ink: #2a1300;
+  --t-edge: color-mix(in srgb, var(--t) 56%, #000);
+  --panel: var(--pm-paper);
+  --panel-ink: var(--pm-ink);
+  --panel-dim: #6d6458;
+  --opt: #ece3d0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  max-height: 172cqw;
+  padding: 0 10px 10px;
+  border-radius: 22px;
+  background: var(--t);
+  box-shadow:
+    0 5px 0 var(--t-edge),
+    0 22px 30px -24px rgba(0, 0, 0, 0.9);
+  container-type: inline-size;
+  animation: g-party-mix-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* On a tablet the stage is tall: keep the card's proportions closer to a real card. */
+@container (min-width: 480px) {
+  .g-party-mix .g-party-mix-card {
+    max-height: 142cqw;
+  }
+}
+.g-party-mix .g-party-mix-card.is-back {
+  animation-name: g-party-mix-in-back;
+}
+@keyframes g-party-mix-in {
+  from {
+    opacity: 0;
+    transform: translateX(28px) rotate(1.2deg);
+  }
+}
+@keyframes g-party-mix-in-back {
+  from {
+    opacity: 0;
+    transform: translateX(-28px) rotate(-1.2deg);
+  }
+}
+.g-party-mix .g-party-mix-card > header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  min-height: clamp(44px, 15cqi, 60px);
+  padding: 0 6px 0 8px;
+  font-family: var(--party-display);
+  font-size: clamp(17px, 6.2cqi, 26px);
+  line-height: 1;
+  color: var(--t-ink);
+}
+.g-party-mix .g-party-mix-card > header svg {
+  flex: none;
+  width: 1.3em;
+  height: 1.3em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.g-party-mix .g-party-mix-card > header span {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: 0.08em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-party-mix .g-party-mix-card > header em {
+  flex: none;
+  padding: 5px 8px 4px;
+  border-radius: 7px;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--t);
+  background: var(--t-ink);
+}
+.g-party-mix .g-party-mix-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  color: var(--panel-ink);
+  background: var(--panel);
+}
+.g-party-mix .g-party-mix-fit {
+  --fs: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+  gap: calc(var(--fs) * 0.5);
+  width: 100%;
+  min-width: 0;
+  padding: clamp(14px, 6cqi, 28px) clamp(16px, 6.5cqi, 32px);
+  text-align: center;
+}
+.g-party-mix .g-party-mix-text {
+  margin: 0;
+  font-family: var(--pm-text);
+  font-size: var(--fs);
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.g-party-mix .g-party-mix-name {
+  margin: 0 -0.03em;
+  padding: 0 0.14em;
+  border-radius: 0.18em;
+  color: inherit;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--c) 52%, var(--panel));
+}
+.g-party-mix .g-party-mix-foot {
+  max-width: 34ch;
+  margin: 0;
+  font-size: max(13px, calc(var(--fs) * 0.42));
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--panel-dim);
+  text-wrap: pretty;
+}
+.g-party-mix .g-party-mix-foot s {
+  text-decoration-thickness: 2px;
+}
+
+/* Would You Rather: two options to pick between. */
+.g-party-mix .g-party-mix-opt {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  width: 100%;
+  margin: 0;
+  padding: 0.55em 0.7em 0.55em 0.55em;
+  border-radius: 12px;
+  font-family: var(--pm-text);
+  font-size: calc(var(--fs) * 0.8);
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  text-align: left;
+  text-wrap: balance;
+  background: var(--opt);
+}
+.g-party-mix .g-party-mix-opt b {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 1.45em;
+  height: 1.45em;
+  padding-top: 0.06em;
+  border-radius: 50%;
+  font-family: var(--party-display);
+  font-size: 0.72em;
+  font-weight: 400;
+  color: var(--t-ink);
+  background: var(--t);
+}
+.g-party-mix .g-party-mix-or {
+  margin: calc(var(--fs) * -0.3) 0;
+  font-family: var(--party-display);
+  font-size: max(13px, calc(var(--fs) * 0.42));
+  color: var(--panel-dim);
+}
+
+/* Stock per kind. Light stocks take dark ink, deep ones take white. */
+.g-party-mix :is(.g-party-mix-card, .g-party-mix-mini).is-give {
+  --t: #19a56e;
+  --t-ink: #03200f;
+}
+.g-party-mix :is(.g-party-mix-card, .g-party-mix-mini).is-everyone {
+  --t: #f4b50b;
+  --t-ink: #2a1f00;
+}
+.g-party-mix :is(.g-party-mix-card, .g-party-mix-mini).is-vote {
+  --t: #2f6bff;
+  --t-ink: #fff;
+}
+.g-party-mix :is(.g-party-mix-card, .g-party-mix-mini).is-duel {
+  --t: #e5304a;
+  --t-ink: #fff;
+}
+.g-party-mix :is(.g-party-mix-card, .g-party-mix-mini).is-game {
+  --t: #7c4dff;
+  --t-ink: #fff;
+}
+.g-party-mix :is(.g-party-mix-card, .g-party-mix-mini).is-wyr {
+  --t: #e0399a;
+  --t-ink: #fff;
+}
+/* Rules are the house's: cream stock, ink panel. */
+.g-party-mix .g-party-mix-card.is-rule,
+.g-party-mix .g-party-mix-card.is-end {
+  --t: var(--pm-paper);
+  --t-ink: var(--pm-ink);
+  --t-edge: var(--pm-paper-edge);
+  --panel: #22201b;
+  --panel-ink: #f6f0e4;
+  --panel-dim: rgba(246, 240, 228, 0.62);
+}
+.g-party-mix .g-party-mix-card.is-rule .g-party-mix-name,
+.g-party-mix .g-party-mix-card.is-end .g-party-mix-name {
+  background: color-mix(in srgb, var(--c) 58%, var(--panel));
+}
+
+/* Back and Next */
+.g-party-mix .g-party-mix-nav {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+.g-party-mix.arcade-shell .g-party-mix-nav .arcade-party-btn {
+  flex: 1 1 auto;
+  width: auto;
+}
+.g-party-mix.arcade-shell .g-party-mix-nav .g-party-mix-back {
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 0 18px 0 12px;
+}
+
+/* End */
+.g-party-mix .g-party-mix-recap {
+  flex: none;
+  min-height: 0;
+  gap: 16px;
+  padding: 22px 18px 18px;
+}
+.g-party-mix .g-party-mix-tally {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  width: 100%;
+  margin: 0;
+}
+.g-party-mix .g-party-mix-tally > div {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 4px;
+}
+.g-party-mix .g-party-mix-tally > div + div {
+  border-left: 1.5px dashed rgba(29, 26, 22, 0.2);
+}
+.g-party-mix .g-party-mix-tally dd {
+  margin: 0;
+  font-family: var(--party-display);
+  font-size: 34px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.g-party-mix .g-party-mix-tally dt {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6d6458;
+}
+.g-party-mix .g-party-mix-called {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding-top: 14px;
+  border-top: 1.5px dashed rgba(29, 26, 22, 0.2);
+}
+.g-party-mix .g-party-mix-called > p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+  color: #4a433a;
+}
+.g-party-mix .g-party-mix-called > p b {
+  font-family: var(--pm-text);
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--pm-ink);
+}
+.g-party-mix .g-party-mix-called ul {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.g-party-mix .g-party-mix-called li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 11px 0 5px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--pm-ink);
+  background: #ebe2cf;
+}
+.g-party-mix .g-party-mix-called li span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-party-mix .g-party-mix-called li b {
+  font-family: var(--party-display);
+  font-size: 13px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.g-party-mix .g-party-mix-called li.is-top {
+  color: var(--pm-paper);
+  background: var(--pm-ink);
+}
+
+@container arcade-party (max-height: 480px) {
+  .g-party-mix .g-party-mix-fan {
+    display: none;
+  }
+  .g-party-mix .g-party-mix-table .arcade-party-body {
+    gap: 8px;
+  }
+  .g-party-mix .g-party-mix-rules li {
+    height: 26px;
+  }
+  .g-party-mix .g-party-mix-card {
+    padding: 0 8px 8px;
+    border-radius: 18px;
+  }
+  .g-party-mix .g-party-mix-card > header {
+    min-height: 38px;
+    font-size: 17px;
+  }
+  .g-party-mix .g-party-mix-panel {
+    border-radius: 11px;
+  }
+  .g-party-mix .g-party-mix-fit {
+    padding: 10px 16px;
+  }
+  .g-party-mix .g-party-mix-tally dd {
+    font-size: 26px;
+  }
+  .g-party-mix .g-party-mix-recap {
+    gap: 10px;
+    padding: 14px 14px 12px;
+  }
+  .g-party-mix .g-party-mix-end .arcade-party-actions {
+    flex-direction: row;
+  }
+}

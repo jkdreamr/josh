@@ -1,0 +1,892 @@
+/* Ride the Bus: a dark card table, cream card stock, orange backs and a bus stop sign for the title.
+   Big Shoulders Display carries the signage: titles, calls, verdicts, the numbers on the board and the card indices. */
+@font-face {
+  font-family: 'Big Shoulders Display';
+  font-style: normal;
+  font-weight: 500 900;
+  font-display: swap;
+  src: url('/fonts/big-shoulders-display.woff2') format('woff2');
+}
+
+.g-ride-the-bus {
+  --rtb-ink: #1d1a16;
+  --rtb-paper: #fbf7ee;
+  --rtb-paper-edge: #c9bca4;
+  --rtb-pip-red: #c8252f;
+  --rtb-right: #4fd27a;
+  --rtb-wrong: #ff6b5e;
+  --rtb-table: #14110d;
+  --on-accent: #1d1a16;
+  background: var(--rtb-table);
+}
+.g-ride-the-bus .arcade-party {
+  --party-display: 'Big Shoulders Display', 'Bricolage Grotesque', Inter, system-ui, sans-serif;
+}
+
+/* The condensed face needs more size than the kit's default to carry the same weight. */
+.g-ride-the-bus .arcade-party .arcade-party-title {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+}
+.g-ride-the-bus .arcade-party .arcade-party-kicker {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.g-ride-the-bus .arcade-party .arcade-party-btn {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+.g-ride-the-bus .arcade-party .arcade-party-scores li > b {
+  font-size: 22px;
+}
+
+.g-ride-the-bus .g-ride-the-bus-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.g-ride-the-bus .g-ride-the-bus-note {
+  margin: -4px 0 0;
+  padding-left: 2px;
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--party-dim);
+}
+
+/* The bus stop sign */
+.g-ride-the-bus .g-ride-the-bus-sign {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22em;
+  max-width: 100%;
+  padding: 0.2em 0.42em 0.22em 0.32em;
+  border-radius: 12px;
+  font-size: clamp(34px, 11cqmin, 50px);
+  font-weight: 900;
+  line-height: 0.98;
+  text-align: left;
+  color: var(--rtb-ink);
+  background: var(--accent);
+  outline: 2px solid var(--rtb-ink);
+  outline-offset: -6px;
+  box-shadow: 0 4px 0 var(--party-accent-edge);
+}
+.g-ride-the-bus .g-ride-the-bus-sign > svg {
+  flex: none;
+  width: 0.78em;
+  height: 0.78em;
+}
+.g-ride-the-bus .g-ride-the-bus-sign > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.g-ride-the-bus .g-ride-the-bus-off .g-ride-the-bus-sign {
+  animation: g-ride-the-bus-sign 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.3) backwards;
+}
+@keyframes g-ride-the-bus-sign {
+  from {
+    opacity: 0;
+    transform: translateY(-14px) rotate(-5deg);
+  }
+}
+
+/* The table: the board up top, the row of cards and the call, then everyone's sips */
+.g-ride-the-bus .g-ride-the-bus-tap {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+.g-ride-the-bus .g-ride-the-bus-tap.is-live {
+  cursor: pointer;
+}
+.g-ride-the-bus .g-ride-the-bus-hud {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+}
+.g-ride-the-bus .g-ride-the-bus-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.g-ride-the-bus .g-ride-the-bus-who b {
+  overflow: hidden;
+  font-family: var(--party-display);
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-ride-the-bus .g-ride-the-bus-board {
+  display: flex;
+  flex: none;
+  gap: 16px;
+  margin: 0;
+}
+.g-ride-the-bus .g-ride-the-bus-board > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.g-ride-the-bus .g-ride-the-bus-board dt {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--party-dim);
+}
+.g-ride-the-bus .g-ride-the-bus-board dd {
+  margin: 0;
+  font-family: var(--party-display);
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.g-ride-the-bus .g-ride-the-bus-board dd small,
+.g-ride-the-bus .g-ride-the-bus-stats b small {
+  font-size: 0.6em;
+  font-weight: 700;
+  color: var(--party-faint);
+}
+.g-ride-the-bus .g-ride-the-bus-board .is-hot dt,
+.g-ride-the-bus .g-ride-the-bus-board .is-hot dd {
+  color: var(--rtb-wrong);
+}
+
+.g-ride-the-bus .g-ride-the-bus-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  margin-block: auto;
+}
+
+.g-ride-the-bus .g-ride-the-bus-ask {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 132px;
+  animation: g-ride-the-bus-rise 0.2s ease-out;
+}
+.g-ride-the-bus .g-ride-the-bus-ask .arcade-party-kicker {
+  margin: 0;
+}
+.g-ride-the-bus .arcade-party .g-ride-the-bus-q {
+  font-size: clamp(44px, 13cqw, 54px);
+}
+@keyframes g-ride-the-bus-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* The verdict lands like a stamp once the card's face shows (the table renders it at that moment) */
+.g-ride-the-bus .g-ride-the-bus-verdict {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.18em;
+  margin: 0;
+  font-family: var(--party-display);
+  font-size: clamp(46px, 14cqw, 60px);
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  animation: g-ride-the-bus-stamp 0.24s cubic-bezier(0.3, 0.8, 0.4, 1.2);
+}
+.g-ride-the-bus .g-ride-the-bus-verdict.is-right {
+  color: var(--rtb-right);
+}
+.g-ride-the-bus .g-ride-the-bus-verdict.is-wrong {
+  color: var(--rtb-wrong);
+}
+.g-ride-the-bus .g-ride-the-bus-verdict .g-ride-the-bus-vicon {
+  flex: none;
+  width: 0.72em;
+  height: 0.72em;
+}
+.g-ride-the-bus .g-ride-the-bus-detail {
+  color: var(--party-ink);
+  animation: g-ride-the-bus-rise 0.2s 0.06s ease-out backwards;
+}
+@keyframes g-ride-the-bus-stamp {
+  from {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+}
+
+/* Answers and Next share one height, so the table never jumps between them */
+.g-ride-the-bus .g-ride-the-bus-table .arcade-party-actions {
+  justify-content: flex-end;
+  min-height: 76px;
+}
+
+/* Everyone's sips so far, during the questions */
+.g-ride-the-bus .g-ride-the-bus-standings {
+  display: flex;
+  flex: none;
+  justify-content: safe center;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 2px 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+.g-ride-the-bus .g-ride-the-bus-standings::-webkit-scrollbar {
+  display: none;
+}
+.g-ride-the-bus .g-ride-the-bus-standings li {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px 0 5px;
+  border-radius: 999px;
+  font-size: 14px;
+  color: var(--party-dim);
+  background: var(--party-tile);
+}
+.g-ride-the-bus .g-ride-the-bus-standings li span {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-ride-the-bus .g-ride-the-bus-standings li b {
+  font-family: var(--party-display);
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--party-ink);
+}
+.g-ride-the-bus .g-ride-the-bus-standings li.is-on {
+  color: var(--rtb-ink);
+  background: var(--accent);
+}
+.g-ride-the-bus .g-ride-the-bus-standings li.is-on b {
+  color: var(--rtb-ink);
+}
+
+/* Cards. On a narrow table they overlap like a dealt row instead of shrinking, so each stays big enough to read.
+   The overlap tops out at a quarter of a card, which keeps every index and the roundel on the backs in view. */
+.g-ride-the-bus .g-ride-the-bus-row {
+  --avail: calc(min(100cqw, var(--row-max, 460px)) - 12px);
+  --cw: min(calc(var(--avail) / 3.25), calc((100cqh - var(--reserve, 410px)) / 1.4), var(--cw-max, 116px));
+  --step: min(calc(var(--cw) + 12px), calc((var(--avail) - var(--cw)) / 3));
+  display: flex;
+  flex: none;
+  justify-content: center;
+  padding: 14px 6px 16px;
+}
+.g-ride-the-bus .g-ride-the-bus-slot {
+  position: relative;
+  flex: none;
+  width: var(--cw);
+  height: calc(var(--cw) * 1.4);
+  perspective: calc(var(--cw) * 8);
+  transition: translate 0.2s ease-out;
+  animation: g-ride-the-bus-deal 0.38s cubic-bezier(0.2, 0.8, 0.25, 1) backwards;
+  animation-delay: calc(var(--i) * 60ms);
+}
+.g-ride-the-bus .g-ride-the-bus-slot + .g-ride-the-bus-slot {
+  margin-left: calc(var(--step) - var(--cw));
+}
+/* The card in play sits up and on top of its neighbours. */
+.g-ride-the-bus .g-ride-the-bus-slot.is-current,
+.g-ride-the-bus .g-ride-the-bus-slot.is-turned {
+  z-index: 1;
+  translate: 0 calc(var(--cw) * -0.08);
+}
+.g-ride-the-bus .g-ride-the-bus-slot.is-current .g-ride-the-bus-back {
+  box-shadow:
+    0 0 0 1px rgba(29, 26, 22, 0.28),
+    0 0 0 3px var(--accent),
+    0 6px 0 var(--party-accent-edge),
+    0 12px 16px -8px rgba(0, 0, 0, 0.6);
+}
+.g-ride-the-bus .g-ride-the-bus-flip {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+  transform-style: preserve-3d;
+  transition: transform 0.45s cubic-bezier(0.3, 0.7, 0.3, 1.1);
+}
+.g-ride-the-bus .g-ride-the-bus-slot.is-up .g-ride-the-bus-flip {
+  transform: rotateY(0deg);
+}
+/* The last card of a bus attempt: slow to start, then over. */
+.g-ride-the-bus .g-ride-the-bus-row.is-slow .g-ride-the-bus-slot:last-child .g-ride-the-bus-flip {
+  transition: transform 0.95s cubic-bezier(0.7, 0, 0.3, 1.1);
+}
+.g-ride-the-bus .g-ride-the-bus-face,
+.g-ride-the-bus .g-ride-the-bus-back {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: calc(var(--cw) * 0.09);
+  background: var(--rtb-paper);
+  box-shadow:
+    0 0 0 1px rgba(29, 26, 22, 0.28),
+    0 3px 0 var(--rtb-paper-edge),
+    0 8px 12px -6px rgba(0, 0, 0, 0.55);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+.g-ride-the-bus .g-ride-the-bus-face {
+  color: var(--rtb-ink);
+}
+.g-ride-the-bus .g-ride-the-bus-row:not(.is-done) .g-ride-the-bus-slot.is-wrong .g-ride-the-bus-face {
+  animation: g-ride-the-bus-shake 0.36s calc(var(--reveal, 0.2s) + 0.1s) ease-in-out;
+}
+.g-ride-the-bus .g-ride-the-bus-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  font-family: var(--party-display);
+  font-weight: 800;
+}
+.g-ride-the-bus .g-ride-the-bus-svg.is-red {
+  color: var(--rtb-pip-red);
+}
+.g-ride-the-bus .g-ride-the-bus-court {
+  fill: currentColor;
+  fill-opacity: 0.08;
+  stroke: currentColor;
+  stroke-opacity: 0.4;
+  stroke-width: 1.2;
+}
+
+/* The back: orange card stock printed with a lattice, a cream margin and the bus in a roundel. */
+.g-ride-the-bus .g-ride-the-bus-back {
+  display: grid;
+  place-items: center;
+  transform: rotateY(180deg);
+}
+.g-ride-the-bus .g-ride-the-bus-back::before {
+  content: '';
+  position: absolute;
+  inset: calc(var(--cw) * 0.06);
+  border-radius: calc(var(--cw) * 0.05);
+  background:
+    repeating-linear-gradient(45deg, #e98500 0 1.5px, transparent 1.5px 7px),
+    repeating-linear-gradient(-45deg, #e98500 0 1.5px, transparent 1.5px 7px),
+    var(--accent);
+  outline: 1.5px solid var(--rtb-paper);
+  outline-offset: calc(var(--cw) * -0.05);
+}
+.g-ride-the-bus .g-ride-the-bus-emblem {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  color: #c96d00;
+  background: var(--rtb-paper);
+  box-shadow: 0 0 0 1.5px #c96d00;
+}
+.g-ride-the-bus .g-ride-the-bus-emblem svg {
+  width: 62%;
+  height: 62%;
+}
+
+/* Right and wrong: a stamp on the bottom edge of each turned card */
+.g-ride-the-bus .g-ride-the-bus-mark {
+  position: absolute;
+  bottom: -12px;
+  left: 50%;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  box-shadow: 0 0 0 2.5px var(--rtb-table);
+  translate: -50% 0;
+  animation: g-ride-the-bus-pop 0.22s calc(var(--reveal, 0.2s) + 0.05s) cubic-bezier(0.2, 0.9, 0.3, 1.4) backwards;
+}
+.g-ride-the-bus .g-ride-the-bus-mark.is-right {
+  background: #1f9d4a;
+}
+.g-ride-the-bus .g-ride-the-bus-mark.is-wrong {
+  background: #e0362c;
+}
+.g-ride-the-bus .g-ride-the-bus-mark svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* A miss on the bus sweeps the row away before the fresh deal */
+.g-ride-the-bus .g-ride-the-bus-row.is-clearing .g-ride-the-bus-slot {
+  animation: g-ride-the-bus-sweep 0.34s ease-in forwards;
+  animation-delay: calc(var(--i) * 40ms);
+}
+
+@keyframes g-ride-the-bus-deal {
+  from {
+    opacity: 0;
+    transform: translate(calc(var(--cw) * -0.6), -28px) rotate(-8deg) scale(0.92);
+  }
+}
+@keyframes g-ride-the-bus-sweep {
+  to {
+    opacity: 0;
+    transform: translate(calc(var(--cw) * 0.5), 40px) rotate(10deg) scale(0.88);
+  }
+}
+@keyframes g-ride-the-bus-shake {
+  20% {
+    transform: translateX(-5px) rotate(-2deg);
+  }
+  45% {
+    transform: translateX(4px) rotate(1.5deg);
+  }
+  70% {
+    transform: translateX(-2px);
+  }
+}
+@keyframes g-ride-the-bus-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+}
+
+/* Answer buttons: printed like the cards, with a hard edge that presses down */
+.g-ride-the-bus .g-ride-the-bus-answers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+  padding-bottom: 4px;
+  animation: g-ride-the-bus-rise 0.18s ease-out;
+}
+.g-ride-the-bus .g-ride-the-bus-answers.is-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.g-ride-the-bus .g-ride-the-bus-answer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 68px;
+  padding: 6px 10px;
+  border-radius: 14px;
+  font-family: var(--party-display);
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--rtb-ink);
+  background: var(--rtb-paper);
+  box-shadow: 0 4px 0 var(--rtb-paper-edge);
+  transition:
+    translate 0.07s ease-out,
+    box-shadow 0.07s ease-out,
+    background 0.12s ease;
+}
+@media (hover: hover) {
+  .g-ride-the-bus .g-ride-the-bus-answer:hover {
+    background: #fff;
+  }
+}
+.g-ride-the-bus .g-ride-the-bus-answer:active {
+  translate: 0 3px;
+  box-shadow: 0 1px 0 var(--rtb-paper-edge);
+}
+.g-ride-the-bus .g-ride-the-bus-answer.is-red {
+  color: #fff;
+  background: #d22a3b;
+  box-shadow: 0 4px 0 #861623;
+}
+.g-ride-the-bus .g-ride-the-bus-answer.is-red:active {
+  box-shadow: 0 1px 0 #861623;
+}
+.g-ride-the-bus .g-ride-the-bus-answer.is-black {
+  color: var(--party-ink);
+  background: #2a2621;
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.14),
+    0 4px 0 #000;
+}
+.g-ride-the-bus .g-ride-the-bus-answer.is-black:active {
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.14),
+    0 1px 0 #000;
+}
+@media (hover: hover) {
+  .g-ride-the-bus .g-ride-the-bus-answer.is-red:hover {
+    background: #de3445;
+  }
+  .g-ride-the-bus .g-ride-the-bus-answer.is-black:hover {
+    background: #34302a;
+  }
+}
+.g-ride-the-bus .g-ride-the-bus-answers.is-4 .g-ride-the-bus-answer {
+  flex-direction: column;
+  gap: 6px;
+  min-height: 76px;
+  padding: 8px 2px 6px;
+  font-size: 18px;
+}
+.g-ride-the-bus .g-ride-the-bus-answer > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-ride-the-bus .g-ride-the-bus-answer kbd {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  min-width: 17px;
+  padding: 1px 4px;
+  border-radius: 5px;
+  font: 600 10px/14px ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+  color: rgba(29, 26, 22, 0.6);
+  background: rgba(29, 26, 22, 0.08);
+}
+.g-ride-the-bus .g-ride-the-bus-answer.is-red kbd,
+.g-ride-the-bus .g-ride-the-bus-answer.is-black kbd {
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(0, 0, 0, 0.25);
+}
+.g-ride-the-bus .g-ride-the-bus-duo {
+  display: inline-flex;
+  gap: 1px;
+}
+.g-ride-the-bus .g-ride-the-bus-duo svg {
+  width: 19px;
+  height: 19px;
+}
+.g-ride-the-bus .g-ride-the-bus-aicon {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+.g-ride-the-bus .g-ride-the-bus-sicon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  color: var(--rtb-ink);
+}
+.g-ride-the-bus .g-ride-the-bus-sicon.is-red {
+  color: var(--rtb-pip-red);
+}
+
+/* On the bus, Next fills while the table moves on by itself; a tap goes now. */
+.g-ride-the-bus .g-ride-the-bus-next .arcade-party-btn {
+  position: relative;
+  overflow: hidden;
+}
+.g-ride-the-bus .g-ride-the-bus-next.is-auto .arcade-party-btn::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 5px;
+  background: rgba(29, 26, 22, 0.32);
+  transform-origin: left;
+  animation: g-ride-the-bus-auto var(--auto, 1s) linear forwards;
+}
+.g-ride-the-bus:not(.st-playing) .g-ride-the-bus-next.is-auto .arcade-party-btn::after {
+  animation-play-state: paused;
+}
+@keyframes g-ride-the-bus-auto {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+/* Avatars: initials stay in the body face (a condensed letter in a circle reads thin), with a ring where they sit on orange. */
+.g-ride-the-bus .arcade-party-avatar {
+  font-family: Inter, system-ui, sans-serif;
+}
+.g-ride-the-bus .arcade-party-scores li.is-hi > .arcade-party-avatar,
+.g-ride-the-bus .g-ride-the-bus-standings li.is-on > .arcade-party-avatar {
+  box-shadow: 0 0 0 1.5px var(--rtb-ink);
+}
+
+/* The rider's badge */
+.g-ride-the-bus .g-ride-the-bus-badge {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: var(--rtb-ink);
+  background: var(--accent);
+}
+.g-ride-the-bus .g-ride-the-bus-badge svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Who rides */
+.g-ride-the-bus .g-ride-the-bus-results .arcade-party-scores li {
+  min-height: 44px;
+}
+.g-ride-the-bus .arcade-party-scores li > small.g-ride-the-bus-tie {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.1);
+}
+.g-ride-the-bus .arcade-party-scores li.is-hi > small.g-ride-the-bus-tie {
+  background: rgba(29, 26, 22, 0.14);
+}
+.g-ride-the-bus .arcade-party-scores li > b {
+  min-width: 2ch;
+  text-align: right;
+}
+
+/* Off the bus */
+.g-ride-the-bus .g-ride-the-bus-row.is-done {
+  --row-max: 400px;
+  --cw-max: 82px;
+  --reserve: 400px;
+}
+.g-ride-the-bus .g-ride-the-bus-row.is-done .g-ride-the-bus-slot {
+  animation-delay: calc(0.2s + var(--i) * 90ms);
+}
+.g-ride-the-bus .g-ride-the-bus-row.is-done .g-ride-the-bus-mark {
+  animation-delay: calc(0.45s + var(--i) * 90ms);
+}
+.g-ride-the-bus .g-ride-the-bus-stats {
+  display: flex;
+  justify-content: center;
+  gap: 32px;
+  width: 100%;
+}
+.g-ride-the-bus .g-ride-the-bus-stats > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.g-ride-the-bus .g-ride-the-bus-stats b {
+  font-family: var(--party-display);
+  font-size: 48px;
+  font-weight: 900;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--party-accent-text);
+}
+.g-ride-the-bus .g-ride-the-bus-stats span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--party-dim);
+}
+.g-ride-the-bus .g-ride-the-bus-tonight {
+  max-width: 340px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--party-dim);
+}
+
+/* Short windows (a laptop window): tighter everything so the table fits without scrolling */
+@container arcade-party (max-height: 480px) {
+  .g-ride-the-bus .arcade-party .arcade-party-title {
+    font-size: 30px;
+  }
+  .g-ride-the-bus .arcade-party .arcade-party-kicker {
+    font-size: 15px;
+  }
+  .g-ride-the-bus .arcade-party .arcade-party-btn {
+    font-size: 19px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-sign {
+    font-size: 30px;
+    border-radius: 10px;
+    outline-offset: -5px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-tap {
+    gap: 6px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-row {
+    --reserve: 236px;
+    padding: 10px 6px 12px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-stage {
+    gap: 6px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-hud {
+    min-height: 30px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-who b {
+    font-size: 21px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-board dd {
+    font-size: 22px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-board dt {
+    font-size: 11px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-standings {
+    display: none;
+  }
+  .g-ride-the-bus .g-ride-the-bus-table .arcade-party-actions {
+    min-height: 58px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-ask {
+    gap: 4px;
+    min-height: 76px;
+  }
+  .g-ride-the-bus .arcade-party .g-ride-the-bus-q {
+    font-size: 30px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-verdict {
+    font-size: 34px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-answer {
+    min-height: 50px;
+    border-radius: 12px;
+    font-size: 22px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-answers.is-4 .g-ride-the-bus-answer {
+    flex-direction: row;
+    gap: 6px;
+    min-height: 50px;
+    padding: 4px 2px;
+    font-size: 16px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-sicon {
+    width: 20px;
+    height: 20px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-answer kbd {
+    display: none;
+  }
+  .g-ride-the-bus .g-ride-the-bus-row.is-done {
+    --cw-max: 66px;
+    --reserve: 250px;
+    padding-top: 6px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-stats {
+    gap: 20px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-stats > div {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-stats b {
+    font-size: 28px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-stats span {
+    font-size: 13px;
+  }
+  /* Play Again and Change Setup side by side, so the winning row keeps its room. */
+  .g-ride-the-bus .g-ride-the-bus-off .arcade-party-actions {
+    flex-direction: row;
+  }
+  .g-ride-the-bus .g-ride-the-bus-off .arcade-party-actions > * {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+
+/* Tall windows (an iPad): a wider table, bigger cards, and the standings wrap instead of scrolling */
+@container arcade-party (min-width: 600px) and (min-height: 760px) {
+  .g-ride-the-bus .g-ride-the-bus-table .arcade-party-body,
+  .g-ride-the-bus .g-ride-the-bus-table .arcade-party-actions {
+    max-width: 720px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-row {
+    --row-max: 720px;
+    --cw-max: 168px;
+    --reserve: 500px;
+  }
+  .g-ride-the-bus .arcade-party .g-ride-the-bus-q {
+    font-size: 64px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-verdict {
+    font-size: 72px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-detail {
+    font-size: 17px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-who b {
+    font-size: 30px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-board dd {
+    font-size: 34px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-answer {
+    min-height: 80px;
+    font-size: 32px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-answers.is-4 .g-ride-the-bus-answer {
+    min-height: 92px;
+    font-size: 22px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-sicon {
+    width: 36px;
+    height: 36px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-mark {
+    width: 30px;
+    height: 30px;
+    bottom: -15px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-mark svg {
+    width: 17px;
+    height: 17px;
+  }
+  .g-ride-the-bus .g-ride-the-bus-standings {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+  .g-ride-the-bus .g-ride-the-bus-row.is-done {
+    --row-max: 460px;
+    --cw-max: 104px;
+  }
+}
+
+/* The kit stills everything inside .arcade-party; a bar that fills instantly would only mislead. */
+@media (prefers-reduced-motion: reduce) {
+  .g-ride-the-bus .g-ride-the-bus-next.is-auto .arcade-party-btn::after {
+    display: none;
+  }
+}

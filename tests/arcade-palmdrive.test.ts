@@ -3,20 +3,25 @@ import { test } from 'node:test';
 import { EDGE, LANDMARKS, ROAD_HALF, buildTrack, deltaS, gridSpot, headingOf, layout, locate, pointAt } from '../src/os/arcade/games/palmdrive/track.ts';
 import {
   BOOST_DV,
+  CASH_COST,
+  CASH_T,
+  CCS,
   CLASSES,
-  COIN_TOP,
   COUNTDOWN,
   LAPS,
   MAX_COINS,
+  MUSHROOM_T,
   OFFROAD,
   RIVALS,
   ROLL_T,
   TURBO_AT,
   TURBO_T,
+  coinTop,
   createRace,
   fmtTime,
   giveItem,
   hitKart,
+  isCc,
   lapOf,
   ordinal,
   pressGas,
@@ -32,7 +37,7 @@ import {
   type Race,
   type Racer,
 } from '../src/os/arcade/games/palmdrive/logic.ts';
-import { F_STAR, applyFlags, carOf, endOf, events, finishOrder, flagsOf, guestState, hostState, parsePacket, winnerOf } from '../src/os/arcade/games/palmdrive/net.ts';
+import { F_DRAFT, F_SLAM, F_STAR, F_TRICK, F_WOBBLE, applyFlags, carOf, configOf, endOf, events, finishOrder, flagsOf, guestState, hostState, parsePacket, winnerOf } from '../src/os/arcade/games/palmdrive/net.ts';
 
 const t = buildTrack();
 const you = (name = 'you'): Racer => ({ name, color: '#e53935', kind: 'player' });
@@ -141,7 +146,7 @@ test('the lights count down, nobody moves until GO, and a well timed gas press i
 });
 
 test('karts reach their class top speed, and steering right turns right', () => {
-  for (const cc of ['50cc', '100cc', '150cc'] as Cc[]) {
+  for (const cc of CCS) {
     const r = race(1, cc);
     run(r, 5);
     assert.ok(Math.abs(r.karts[0].v - CLASSES[cc].top) < 0.01, `${cc} top speed`);
@@ -404,13 +409,18 @@ test('the blue shell flies down the course and blows up the leader', () => {
   assert.equal(r.things.length, 0);
 });
 
-test('coins raise your top speed up to ten, and hits cost coins', () => {
+test('coins raise your top speed a little each, up to ten; hits cost coins', () => {
+  assert.equal(MAX_COINS, 10);
+  assert.equal(coinTop(0), 0);
+  assert.ok(Math.abs(coinTop(5) - 0.6) < 1e-9 && Math.abs(coinTop(10) - 1.2) < 1e-9);
+  assert.equal(coinTop(15), coinTop(10), 'nothing past the cap');
   const r = race();
   const k = r.karts[0];
-  place(r, k, 20, 0, 0);
+  // from the class top speed, along the opening straight
+  place(r, k, 20, 0, CLASSES['100cc'].top);
   k.coins = MAX_COINS;
-  run(r, 5);
-  assert.ok(Math.abs(k.v - (CLASSES['100cc'].top + MAX_COINS * COIN_TOP)) < 0.01);
+  run(r, 1.5);
+  assert.ok(!k.offroad && Math.abs(k.v - (CLASSES['100cc'].top + coinTop(MAX_COINS))) < 0.01, `speed ${k.v}`);
   const ahead = pointAt(r.track, k.prog + 4);
   r.coins = [{ x: ahead.x, z: ahead.z, t: 0 }];
   run(r, 0.5);
@@ -419,26 +429,61 @@ test('coins raise your top speed up to ten, and hits cost coins', () => {
   assert.equal(k.coins, MAX_COINS - 3);
 });
 
-test('a full field of CPU drivers races three laps at every class, inside the walls', () => {
-  for (const cc of ['50cc', '100cc', '150cc'] as Cc[]) {
+test('five coins cash in for a short boost, once per press; with fewer nothing happens', () => {
+  assert.ok(CASH_T < MUSHROOM_T / 2, 'well under a mushroom');
+  const r = race();
+  const k = r.karts[0];
+  place(r, k, 20, 0, CLASSES['100cc'].top);
+  k.coins = CASH_COST + 2;
+  k.input.cash = true;
+  const evs = run(r, 1 / 60);
+  assert.equal(k.coins, 2);
+  assert.ok(k.boost > CASH_T - 0.05);
+  assert.equal(evs.filter((e) => e.t === 'cash').length, 1);
+  assert.equal(k.input.cash, false, 'the press is used up');
+  run(r, 0.4);
+  assert.ok(k.v > CLASSES['100cc'].top + coinTop(2) + 1, `the boost lifts you past top speed: ${k.v}`);
+  k.input.cash = true;
+  const none = run(r, 1 / 60);
+  assert.equal(k.coins, 2);
+  assert.equal(none.filter((e) => e.t === 'cash').length, 0);
+});
+
+test('classes get quicker from 50cc to 200cc, and only those four are classes', () => {
+  assert.deepEqual(CCS, ['50cc', '100cc', '150cc', '200cc']);
+  for (let i = 1; i < CCS.length; i++) {
+    assert.ok(CLASSES[CCS[i]].top > CLASSES[CCS[i - 1]].top);
+    assert.ok(CLASSES[CCS[i]].accel > CLASSES[CCS[i - 1]].accel);
+  }
+  for (const cc of CCS) assert.ok(isCc(cc));
+  for (const junk of ['250cc', '', '150', null, 150, undefined]) assert.equal(isCc(junk), false);
+  assert.equal(LAPS, 5);
+});
+
+test('a full field of CPU drivers races five laps at every class, inside the walls', () => {
+  for (const cc of CCS) {
     const r = createRace({ cc, seed: 11, racers: [...RIVALS, { ...RIVALS[3], name: 'extra' }] });
     let widest = 0;
     let turbos = 0;
     let items = 0;
-    while (r.time < 400 && r.karts.some((k) => k.done === null)) {
+    let cashes = 0;
+    while (r.time < 700 && r.karts.some((k) => k.done === null)) {
       step(r, 1 / 60);
       for (const e of r.events.splice(0)) {
         if (e.t === 'turbo') turbos++;
         if (e.t === 'use') items++;
+        if (e.t === 'cash') cashes++;
       }
       for (const k of r.karts) widest = Math.max(widest, Math.abs(k.d));
     }
     assert.ok(r.karts.every((k) => k.done !== null), `${cc}: everyone finished by ${r.time}`);
     const times = r.karts.map((k) => k.done!);
     const fastest = Math.min(...times);
-    assert.ok(fastest > 60 && Math.max(...times) < 260, `${cc}: ${times.map((x) => x.toFixed(0)).join(' ')}`);
+    // five laps of a 914 m loop: about two minutes at 200cc, four at 50cc
+    assert.ok(fastest > 100 && Math.max(...times) < 320, `${cc}: ${times.map((x) => x.toFixed(0)).join(' ')}`);
     assert.ok(widest <= EDGE, `${cc}: a kart got ${widest} from the line`);
     assert.ok(turbos > 5 && items > 5, `${cc}: ${turbos} mini-turbos, ${items} items`);
+    assert.ok(cashes > 0, `${cc}: CPU drivers cash in their coins`);
     assert.ok(r.karts.every((k) => k.laps.length === LAPS));
   }
 });
@@ -449,7 +494,7 @@ test('the solo grid puts you at the back of seven rivals and the autopilot bring
   assert.equal(r.me, 7);
   assert.equal(r.karts[r.me].place, 8);
   r.karts[r.me].auto = true;
-  run(r, 200, 1 / 30);
+  run(r, 300, 1 / 30);
   assert.ok(r.karts[r.me].done !== null);
 });
 
@@ -465,6 +510,12 @@ test('online packets round trip, and junk or other games’ packets are ignored'
   assert.equal(host.cc, '150cc');
   assert.deepEqual(host.roster, [0, 3]);
   assert.equal(host.cars[1].fin, 92.5);
+  // the host's class, 200cc included, reaches the guests, in the race state and in the lobby
+  const fast = parsePacket(JSON.parse(JSON.stringify(hostState(5, 2.5, '200cc', [0], [{ seat: 0, ...car }]))));
+  assert.ok(fast && fast.k === 'S' && fast.cc === '200cc');
+  const cfg = parsePacket(JSON.parse(JSON.stringify(configOf(5, '200cc'))));
+  assert.deepEqual(cfg, { k: 'cfg', round: 5, cc: '200cc', course: 'palm' });
+  assert.equal(parsePacket({ t: 'pk', r: 5, k: 'cfg', cc: 7 }), null);
   const guest = parsePacket(JSON.parse(JSON.stringify(guestState(4, car))));
   assert.ok(guest && guest.k === 's');
   const copy = race(1).karts[0];
@@ -487,4 +538,32 @@ test('the host calls the winner from finish times; nobody wins if nobody finishe
   assert.deepEqual(finishOrder([[0, -2], [1, 95.2], [2, 91]]), [[2, 91], [1, 95.2], [0, -2]]);
   assert.equal(winnerOf([[0, -2], [1, 95.2], [2, 91]]), 2);
   assert.equal(winnerOf([[0, -2], [1, -2]]), null);
+});
+
+test('slams, tricks, wobbles, slipstreams and items held out behind travel in the kart flags', () => {
+  const r = race(2);
+  const [k, copy] = r.karts;
+  k.slamT = 0.2;
+  k.trick = true;
+  k.wobble = 0.4;
+  k.draft = 0.8;
+  for (const item of ['banana', 'green', 'red'] as const) {
+    k.item = item;
+    k.trail = true;
+    const f = flagsOf(k);
+    assert.equal(f & (F_SLAM | F_TRICK | F_WOBBLE | F_DRAFT), F_SLAM | F_TRICK | F_WOBBLE | F_DRAFT);
+    copy.item = null;
+    applyFlags(copy, f);
+    assert.ok(copy.slamT > 0 && copy.trick && copy.wobble > 0 && copy.draft > 0);
+    assert.ok(copy.trail && copy.item === item, `${item} held out behind`);
+  }
+  // an item in hand but not held out, or one that cannot trail, shows nothing behind
+  k.item = 'mushroom';
+  k.trail = false;
+  k.slamT = 0;
+  k.trick = false;
+  k.wobble = 0;
+  k.draft = 0;
+  applyFlags(copy, flagsOf(k));
+  assert.ok(!copy.trail && copy.slamT === 0 && !copy.trick && copy.wobble === 0 && copy.draft === 0);
 });

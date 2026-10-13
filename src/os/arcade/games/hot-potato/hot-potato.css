@@ -1,0 +1,461 @@
+/* Hot Potato: a firecracker label. Warm charcoal, cream prompt cards, Anton for everything shouted. */
+@font-face {
+  font-family: 'Anton';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/anton.woff2') format('woff2');
+}
+
+.g-hot-potato {
+  --on-accent: #1d0f08;
+  --g-hot-potato-ink: #24140c;
+  background: #17110e;
+}
+.g-hot-potato .arcade-party {
+  --party-display: 'Anton', 'Bricolage Grotesque', Inter, system-ui, sans-serif;
+}
+.g-hot-potato .arcade-party .arcade-party-title,
+.g-hot-potato .arcade-party .arcade-party-kicker,
+.g-hot-potato .arcade-party .arcade-party-avatar,
+.g-hot-potato .arcade-party .arcade-party-card > strong,
+.g-hot-potato .arcade-party .arcade-party-scores li > b,
+.g-hot-potato .arcade-party .arcade-party-how li::before,
+.g-hot-potato .g-hot-potato-who,
+.g-hot-potato .g-hot-potato-boomword,
+.g-hot-potato.arcade-shell .arcade-party .arcade-party-btn {
+  /* Anton has a single weight; never fake a bold. */
+  font-weight: 400;
+  font-synthesis: none;
+}
+.g-hot-potato .arcade-party .arcade-party-title {
+  font-size: 36px;
+  line-height: 1.04;
+  letter-spacing: 0.005em;
+}
+.g-hot-potato .arcade-party .arcade-party-kicker {
+  margin-bottom: -6px;
+  font-size: 18px;
+  letter-spacing: 0.02em;
+}
+.g-hot-potato.arcade-shell .arcade-party .arcade-party-btn {
+  font-size: 19px;
+  letter-spacing: 0.02em;
+}
+
+/* Setup */
+.g-hot-potato .g-hot-potato-head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-top: 2px;
+}
+.g-hot-potato .g-hot-potato-head .arcade-party-title {
+  font-size: 46px;
+}
+.g-hot-potato .g-hot-potato-pot.is-mark {
+  width: 104px;
+  margin-bottom: -4px;
+}
+
+/* A round: the prompt card and the potato */
+.g-hot-potato .g-hot-potato-heat {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: #47160b;
+}
+.g-hot-potato .g-hot-potato-table {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  width: 100%;
+}
+.g-hot-potato .arcade-party .g-hot-potato-card {
+  flex: none;
+  min-height: 0;
+  gap: 8px;
+  padding: 26px 22px 30px;
+}
+.g-hot-potato .arcade-party .g-hot-potato-card > small {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.g-hot-potato .arcade-party .g-hot-potato-card > strong {
+  max-width: 100%;
+  font-size: clamp(36px, 13cqmin, 64px);
+  line-height: 1.02;
+  letter-spacing: 0.005em;
+  overflow-wrap: break-word;
+}
+.g-hot-potato .arcade-party .g-hot-potato-card.is-letters > strong {
+  font-size: clamp(84px, 30cqmin, 164px);
+  line-height: 0.95;
+  letter-spacing: 0.06em;
+  /* Wide tracking would push the letters off center. */
+  margin-right: -0.06em;
+}
+.g-hot-potato .g-hot-potato-pot {
+  display: block;
+  flex: none;
+  width: clamp(150px, 40cqh, 340px);
+  max-width: 88%;
+  height: auto;
+  aspect-ratio: 220 / 210;
+  overflow: visible;
+}
+.g-hot-potato .g-hot-potato-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  text-align: center;
+  color: var(--party-dim);
+}
+
+/* Boom */
+.g-hot-potato .arcade-party.g-hot-potato-boom {
+  background: #2c0f07;
+  animation: g-hot-potato-shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+.g-hot-potato .arcade-party.g-hot-potato-boom.is-again {
+  animation: none;
+}
+.g-hot-potato .g-hot-potato-aftermath,
+.g-hot-potato .g-hot-potato-after {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+}
+.g-hot-potato .g-hot-potato-blast {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: min(100%, 330px);
+  aspect-ratio: 132 / 104;
+  container-type: inline-size;
+}
+.g-hot-potato .g-hot-potato-boom.is-named .g-hot-potato-blast {
+  /* With names, leave room for the people to tap. */
+  width: min(100%, 330px, 38cqh);
+}
+.g-hot-potato .g-hot-potato-blast > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  animation: g-hot-potato-pop 0.42s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+.g-hot-potato .g-hot-potato-boomword {
+  position: relative;
+  margin: 0 0 4px;
+  font-family: var(--party-display);
+  font-size: 22cqi;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--g-hot-potato-ink);
+  transform: rotate(-6deg);
+  animation: g-hot-potato-slam 0.36s 0.05s cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+.g-hot-potato .g-hot-potato-boom.is-again .g-hot-potato-blast > svg,
+.g-hot-potato .g-hot-potato-boom.is-again .g-hot-potato-boomword {
+  animation: none;
+}
+.g-hot-potato .g-hot-potato-debris {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.g-hot-potato .g-hot-potato-debris i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 13px;
+  border: 2px solid var(--g-hot-potato-ink);
+  border-radius: 48% 56% 44% 52%;
+  background: #dca466;
+  opacity: 0;
+  animation: g-hot-potato-fly 0.85s cubic-bezier(0.12, 0.7, 0.3, 1) forwards;
+}
+.g-hot-potato .g-hot-potato-debris i.is-fry {
+  width: 7px;
+  height: 24px;
+  border-radius: 2px;
+  background: #ffd25c;
+}
+.g-hot-potato .arcade-party .g-hot-potato-card.is-small {
+  gap: 2px;
+  padding: 12px 16px 14px;
+  border-radius: 16px;
+  outline-offset: -6px;
+  rotate: -1.5deg;
+}
+.g-hot-potato .arcade-party .g-hot-potato-card.is-small > small {
+  font-size: 13px;
+}
+.g-hot-potato .arcade-party .g-hot-potato-card.is-small > strong {
+  font-size: clamp(22px, 6.5cqmin, 32px);
+}
+.g-hot-potato .arcade-party .g-hot-potato-card.is-small.is-letters > strong {
+  font-size: clamp(40px, 12cqmin, 56px);
+}
+.g-hot-potato .g-hot-potato-who {
+  flex: none;
+  margin: 6px 0 -4px;
+  font-family: var(--party-display);
+  font-size: 24px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-align: center;
+}
+.g-hot-potato .g-hot-potato-picks {
+  flex: none;
+  animation: g-hot-potato-rise 0.25s 0.55s ease-out both;
+}
+.g-hot-potato .g-hot-potato-picks.is-arming {
+  pointer-events: none;
+}
+.g-hot-potato .g-hot-potato-boom.is-again .g-hot-potato-picks {
+  animation: none;
+}
+.g-hot-potato .g-hot-potato-picks kbd {
+  flex: none;
+  margin-left: auto;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font: 600 12px/1.3 Inter, system-ui, sans-serif;
+  color: var(--party-faint);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+.g-hot-potato .g-hot-potato-verdict {
+  font-size: 17px;
+  color: var(--party-ink);
+}
+.g-hot-potato .g-hot-potato-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0;
+  animation: g-hot-potato-flash 0.6s ease-out;
+}
+
+/* Score */
+.g-hot-potato .arcade-party.g-hot-potato-score .arcade-party-title {
+  font-size: clamp(38px, 11cqmin, 54px);
+  overflow-wrap: anywhere;
+}
+.g-hot-potato .g-hot-potato-scores {
+  flex: none;
+}
+.g-hot-potato .arcade-party .g-hot-potato-scores li > b {
+  font-size: 22px;
+  letter-spacing: 0.02em;
+}
+.g-hot-potato .g-hot-potato-scores li.is-zero > b {
+  color: var(--party-faint);
+}
+
+/* Landscape windows: card and potato side by side */
+@container arcade-party (min-aspect-ratio: 5 / 4) {
+  .g-hot-potato .g-hot-potato-round .arcade-party-body {
+    max-width: 760px;
+  }
+  .g-hot-potato .g-hot-potato-table {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 24px;
+  }
+  .g-hot-potato .g-hot-potato-table .g-hot-potato-pot {
+    justify-self: center;
+    width: min(100%, 56cqh, 300px);
+    max-width: none;
+  }
+  .g-hot-potato .arcade-party .g-hot-potato-card.is-letters > strong {
+    font-size: clamp(72px, 26cqh, 150px);
+  }
+  .g-hot-potato .arcade-party .g-hot-potato-card > strong {
+    font-size: clamp(30px, 10cqh, 56px);
+  }
+  /* After the boom: the blast on the left, the prompt and who had it on the right. */
+  .g-hot-potato .g-hot-potato-boom .arcade-party-body,
+  .g-hot-potato .g-hot-potato-boom .arcade-party-actions,
+  .g-hot-potato .g-hot-potato-score .arcade-party-actions {
+    max-width: 760px;
+  }
+  .g-hot-potato .g-hot-potato-aftermath {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    align-items: center;
+    gap: 20px;
+  }
+  .g-hot-potato .g-hot-potato-boom .g-hot-potato-blast,
+  .g-hot-potato .g-hot-potato-boom.is-named .g-hot-potato-blast {
+    justify-self: center;
+    width: min(100%, 300px);
+  }
+  /* One row of buttons, the primary on the right. */
+  .g-hot-potato .g-hot-potato-score .arcade-party-actions,
+  .g-hot-potato .g-hot-potato-boom:not(.is-named) .arcade-party-actions {
+    flex-direction: row-reverse;
+  }
+  .g-hot-potato .g-hot-potato-score .arcade-party-actions > *,
+  .g-hot-potato .g-hot-potato-boom .arcade-party-actions > * {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .g-hot-potato .g-hot-potato-score .arcade-party-actions > .arcade-party-row {
+    flex-grow: 2;
+  }
+}
+/* Tablets and big windows: a bigger table to read from across the room. */
+@container arcade-party (min-width: 640px) and (min-height: 860px) {
+  .g-hot-potato .g-hot-potato-round .arcade-party-body,
+  .g-hot-potato .g-hot-potato-round .arcade-party-actions {
+    max-width: 600px;
+  }
+  .g-hot-potato .g-hot-potato-table .g-hot-potato-pot {
+    width: clamp(150px, 34cqh, 420px);
+  }
+  .g-hot-potato .arcade-party .g-hot-potato-card > strong {
+    font-size: clamp(36px, 11cqmin, 80px);
+  }
+  .g-hot-potato .arcade-party .g-hot-potato-card.is-letters > strong {
+    font-size: clamp(84px, 26cqmin, 200px);
+  }
+}
+@container arcade-party (max-height: 480px) {
+  .g-hot-potato .g-hot-potato-head .arcade-party-title {
+    font-size: 36px;
+  }
+  .g-hot-potato .g-hot-potato-pot.is-mark {
+    width: 76px;
+  }
+  .g-hot-potato .arcade-party .arcade-party-title {
+    font-size: 30px;
+  }
+  .g-hot-potato .arcade-party .g-hot-potato-card {
+    padding: 18px 18px 20px;
+  }
+  .g-hot-potato.arcade-shell .arcade-party .arcade-party-btn {
+    font-size: 18px;
+  }
+  .g-hot-potato .g-hot-potato-hint {
+    min-height: 44px;
+  }
+  .g-hot-potato .g-hot-potato-boom .g-hot-potato-blast,
+  .g-hot-potato .g-hot-potato-boom.is-named .g-hot-potato-blast {
+    width: min(100%, 240px);
+  }
+  .g-hot-potato .arcade-party.g-hot-potato-score .arcade-party-title {
+    font-size: 30px;
+  }
+}
+
+@keyframes g-hot-potato-shake {
+  0% {
+    transform: none;
+  }
+  10% {
+    transform: translate(-9px, 6px) rotate(-1deg);
+  }
+  20% {
+    transform: translate(8px, -7px) rotate(1deg);
+  }
+  30% {
+    transform: translate(-7px, -4px);
+  }
+  40% {
+    transform: translate(6px, 5px) rotate(0.5deg);
+  }
+  55% {
+    transform: translate(-4px, 2px);
+  }
+  70% {
+    transform: translate(3px, -2px);
+  }
+  85% {
+    transform: translate(-1px, 1px);
+  }
+  100% {
+    transform: none;
+  }
+}
+@keyframes g-hot-potato-pop {
+  from {
+    transform: scale(0.15) rotate(-24deg);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes g-hot-potato-slam {
+  from {
+    transform: rotate(-6deg) scale(2.4);
+    opacity: 0;
+  }
+}
+@keyframes g-hot-potato-rise {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+}
+@keyframes g-hot-potato-fly {
+  from {
+    transform: translate(-50%, -50%) scale(0.3);
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  to {
+    transform: translate(calc(-50% + var(--x)), calc(-50% + var(--y))) rotate(var(--r)) scale(var(--s));
+    opacity: 0;
+  }
+}
+@keyframes g-hot-potato-flash {
+  0% {
+    opacity: 1;
+    background: #fff6de;
+  }
+  18% {
+    opacity: 0.92;
+    background: #ffc83d;
+  }
+  45% {
+    opacity: 0.55;
+    background: #ff4d1a;
+  }
+  100% {
+    opacity: 0;
+    background: #ff4d1a;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-hot-potato .g-hot-potato-flash,
+  .g-hot-potato .g-hot-potato-debris {
+    display: none;
+  }
+}

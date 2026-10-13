@@ -1,0 +1,820 @@
+/* Spectrum: a printed board game dial on a dark table. Fraunces for the display type, cream card stock, flat
+   inks, hard edges. The one big motion is the shutter swinging off the target. */
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url('/fonts/fraunces.woff2') format('woff2');
+}
+
+.g-spectrum {
+  background: #0e1a1b;
+}
+.g-spectrum .arcade-party {
+  --party-display: 'Fraunces', Georgia, serif;
+  --on-accent: #052e2a;
+  --g-spectrum-ink: #1d1a16;
+  --g-spectrum-paper: #f4ecdc;
+  --g-spectrum-plate: #24413f;
+  --g-spectrum-plate-edge: #0a1515;
+  --g-spectrum-p2: #f5c84c;
+  --g-spectrum-p3: #f08d49;
+  --g-spectrum-p4: #e2483d;
+}
+.g-spectrum .is-t0 {
+  --team: #2dd4bf;
+  --team-edge: #13786b;
+}
+.g-spectrum .is-t1 {
+  --team: #ff8a73;
+  --team-edge: #a8422f;
+}
+.g-spectrum .g-spectrum-screen .arcade-party-body {
+  gap: 12px;
+}
+/* On a tablet the board grows past the usual column so the far side of the table can read it. */
+.g-spectrum .g-spectrum-play .arcade-party-body {
+  --g-spectrum-col: 680px;
+  max-width: var(--g-spectrum-col);
+}
+.g-spectrum .arcade-party-title {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* A double tap on the last screen's button shouldn't press this one. */
+.g-spectrum .g-spectrum-arm .arcade-party-actions {
+  animation: g-spectrum-arm 0.4s step-end both;
+}
+@keyframes g-spectrum-arm {
+  from {
+    pointer-events: none;
+  }
+}
+
+/* Copy */
+.g-spectrum .g-spectrum-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+  text-wrap: pretty;
+  color: var(--party-dim);
+}
+.g-spectrum .g-spectrum-line {
+  max-width: 380px;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+  text-align: center;
+  text-wrap: pretty;
+  color: var(--party-dim);
+}
+.g-spectrum .g-spectrum-hint {
+  margin: 0;
+  font-size: 13px;
+  text-align: center;
+  color: var(--party-faint);
+}
+.g-spectrum .g-spectrum-say {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  margin: 0;
+  font-family: var(--party-display);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+.g-spectrum .g-spectrum-say span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+.g-spectrum .g-spectrum-ask {
+  font-size: 30px;
+}
+.g-spectrum .g-spectrum-ask span {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--team);
+}
+
+/* The psychic's private view */
+.g-spectrum .g-spectrum-secret {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 0;
+  padding: 7px 14px 7px 12px;
+  border-radius: 999px;
+  font-family: var(--party-display);
+  font-size: 16px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  color: var(--g-spectrum-ink);
+  background: var(--g-spectrum-paper);
+  box-shadow: 0 3px 0 #b9ad96;
+}
+.g-spectrum .g-spectrum-secret svg {
+  flex: none;
+}
+.g-spectrum .g-spectrum-secret path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.g-spectrum .g-spectrum-tip {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 14px;
+  text-align: center;
+  background: var(--party-tile);
+}
+.g-spectrum .g-spectrum-tip p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  text-wrap: pretty;
+  color: var(--party-dim);
+}
+.g-spectrum .g-spectrum-tip p:first-child {
+  text-wrap: balance;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--party-ink);
+}
+
+/* Setup: rules numbered in the same sturdy figures as the board */
+.g-spectrum .arcade-party-how li::before {
+  font-family: Inter, system-ui, sans-serif;
+  font-weight: 800;
+}
+
+/* Setup: team preview */
+.g-spectrum .g-spectrum-teams {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+.g-spectrum .g-spectrum-team {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--party-tile);
+  box-shadow: inset 3px 0 0 var(--team);
+}
+.g-spectrum .g-spectrum-team b {
+  font-family: var(--party-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--team);
+}
+.g-spectrum .g-spectrum-team span {
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  color: var(--party-dim);
+}
+
+/* The board fills the room it gets and keeps its shape, card included */
+.g-spectrum .g-spectrum-board {
+  --g-spectrum-card-h: 86px;
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 170px;
+  /* No taller than the board at full width, so the screen stays one centered group. */
+  max-height: calc((min(100cqw, var(--g-spectrum-col, 460px)) - 4px) * 126 / 220 + var(--g-spectrum-card-h));
+  container-type: size;
+}
+.g-spectrum .g-spectrum-dial {
+  display: flex;
+  flex-direction: column;
+  width: min(100cqw, calc((100cqh - var(--g-spectrum-card-h)) * 220 / 126));
+}
+.g-spectrum .g-spectrum-dial > svg {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.g-spectrum .g-spectrum-dial.is-live > svg {
+  cursor: grab;
+  touch-action: none;
+}
+.g-spectrum .g-spectrum-dial.is-dragging > svg {
+  cursor: grabbing;
+}
+.g-spectrum .g-spectrum-dial > svg:focus {
+  outline: none;
+}
+/* Keyboard focus traces the board itself. */
+.g-spectrum .g-spectrum-dial > svg:focus-visible .g-spectrum-plate {
+  stroke: var(--party-accent-text);
+  stroke-width: 2.4;
+}
+.g-spectrum .g-spectrum-plate {
+  fill: var(--g-spectrum-plate);
+}
+.g-spectrum .g-spectrum-plate-edge {
+  fill: var(--g-spectrum-plate-edge);
+}
+.g-spectrum .g-spectrum-ticks line {
+  stroke: rgba(244, 236, 220, 0.42);
+  stroke-width: 0.8;
+  stroke-linecap: round;
+}
+.g-spectrum .g-spectrum-ticks line.is-major {
+  stroke: rgba(244, 236, 220, 0.9);
+  stroke-width: 1.3;
+}
+.g-spectrum .g-spectrum-face {
+  fill: var(--g-spectrum-paper);
+}
+.g-spectrum .g-spectrum-inset {
+  fill: none;
+  stroke: rgba(29, 26, 22, 0.22);
+  stroke-width: 0.8;
+}
+.g-spectrum .g-spectrum-band path {
+  stroke: var(--g-spectrum-ink);
+  stroke-width: 0.6;
+  stroke-linejoin: round;
+}
+.g-spectrum .g-spectrum-band.is-p2 path {
+  fill: var(--g-spectrum-p2);
+}
+.g-spectrum .g-spectrum-band.is-p3 path {
+  fill: var(--g-spectrum-p3);
+}
+.g-spectrum .g-spectrum-band.is-p4 path {
+  fill: var(--g-spectrum-p4);
+}
+.g-spectrum .g-spectrum-band text {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 8.5px;
+  font-weight: 800;
+  text-anchor: middle;
+  dominant-baseline: central;
+  fill: var(--g-spectrum-ink);
+}
+.g-spectrum .g-spectrum-band.is-p4 text {
+  fill: var(--g-spectrum-paper);
+}
+.g-spectrum .g-spectrum-band.is-hit path {
+  stroke-width: 1.8;
+}
+
+/* The shutter: teal card stock over the target, hinged at the pivot */
+.g-spectrum .g-spectrum-shutter {
+  transform-origin: 110px 112px;
+}
+.g-spectrum .g-spectrum-shutter-fill {
+  fill: #14b8a6;
+}
+.g-spectrum .g-spectrum-shutter-ring {
+  fill: none;
+  stroke: rgba(5, 46, 42, 0.2);
+  stroke-width: 0.8;
+}
+.g-spectrum .g-spectrum-shutter-inset {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 0.8;
+}
+.g-spectrum .g-spectrum-shutter.is-closed {
+  transform: none;
+}
+.g-spectrum .g-spectrum-shutter.is-shown {
+  transform: rotate(180deg);
+}
+.g-spectrum .g-spectrum-shutter.is-open {
+  transform: rotate(180deg);
+  animation: g-spectrum-open 0.55s 0.12s cubic-bezier(0.6, 0, 0.3, 1) both;
+}
+.g-spectrum .g-spectrum-shutter.is-close {
+  transform: none;
+  animation: g-spectrum-close 0.42s cubic-bezier(0.5, 0, 0.3, 1) both;
+}
+.g-spectrum .g-spectrum-shutter.is-reveal {
+  transform: rotate(180deg);
+  animation: g-spectrum-open 1.05s 0.3s cubic-bezier(0.65, 0, 0.3, 1) both;
+}
+@keyframes g-spectrum-open {
+  from {
+    transform: none;
+  }
+  to {
+    transform: rotate(180deg);
+  }
+}
+@keyframes g-spectrum-close {
+  from {
+    transform: rotate(180deg);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.g-spectrum .g-spectrum-needle {
+  transform-origin: 110px 112px;
+  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.g-spectrum .g-spectrum-needle path {
+  fill: var(--g-spectrum-ink);
+}
+.g-spectrum .is-dragging .g-spectrum-needle {
+  transition: none;
+}
+.g-spectrum .g-spectrum-grip {
+  fill: var(--g-spectrum-paper);
+  stroke: var(--g-spectrum-ink);
+  stroke-width: 1.6;
+}
+.g-spectrum .g-spectrum-cap {
+  fill: var(--g-spectrum-ink);
+  stroke: var(--g-spectrum-paper);
+  stroke-width: 1.4;
+}
+.g-spectrum .g-spectrum-cap-dot {
+  fill: var(--g-spectrum-p4);
+}
+
+/* The card slotted under the board: two printed halves with the extremes */
+.g-spectrum .g-spectrum-card {
+  position: relative;
+  display: grid;
+  flex: none;
+  grid-template-columns: 1fr 1fr;
+  margin: -5px 2.5% 0;
+  overflow: hidden;
+  border-radius: 4px 4px 14px 14px;
+  container-type: inline-size;
+  color: var(--g-spectrum-ink);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.4);
+}
+.g-spectrum .g-spectrum-card::after {
+  content: '';
+  position: absolute;
+  inset: 5px 0 0 50%;
+  border-left: 1.5px dashed rgba(29, 26, 22, 0.35);
+}
+.g-spectrum .g-spectrum-card span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 62px;
+  padding: 15px 12px 11px;
+  font-family: var(--party-display);
+  font-size: clamp(11px, min(6.4cqi, (50cqi - 48px) / (var(--g-spectrum-long) * 0.74)), 34px);
+  font-weight: 750;
+  line-height: 1.04;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  background: var(--g-spectrum-left);
+}
+@container (max-width: 280px) {
+  .g-spectrum .g-spectrum-card span {
+    gap: 0;
+    padding-inline: 8px;
+  }
+  .g-spectrum .g-spectrum-card svg {
+    display: none;
+  }
+}
+.g-spectrum .g-spectrum-card .is-left {
+  padding-right: 18px;
+  text-align: left;
+}
+.g-spectrum .g-spectrum-card .is-right {
+  padding-left: 18px;
+  justify-content: flex-end;
+  text-align: right;
+  background: var(--g-spectrum-right);
+}
+.g-spectrum .g-spectrum-card svg {
+  flex: none;
+  opacity: 0.6;
+}
+.g-spectrum .g-spectrum-card svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.g-spectrum .g-spectrum-card.is-stock0 {
+  --g-spectrum-left: #9cc9f0;
+  --g-spectrum-right: #f6cf57;
+}
+.g-spectrum .g-spectrum-card.is-stock1 {
+  --g-spectrum-left: #f5a3b5;
+  --g-spectrum-right: #a6dcb9;
+}
+.g-spectrum .g-spectrum-card.is-stock2 {
+  --g-spectrum-left: #c6b6f2;
+  --g-spectrum-right: #f7a35c;
+}
+.g-spectrum .g-spectrum-card.is-stock3 {
+  --g-spectrum-left: #a9dbe9;
+  --g-spectrum-right: #f4b6c8;
+}
+.g-spectrum .g-spectrum-card.is-stock4 {
+  --g-spectrum-left: #f3e08a;
+  --g-spectrum-right: #aebbf3;
+}
+.g-spectrum .g-spectrum-card.is-stock5 {
+  --g-spectrum-left: #bcd89f;
+  --g-spectrum-right: #f5b48a;
+}
+
+/* Running scores */
+.g-spectrum .g-spectrum-bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.g-spectrum .g-spectrum-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--party-dim);
+  background: var(--party-tile);
+}
+.g-spectrum .g-spectrum-chip b {
+  font-size: 17px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--party-ink);
+}
+.g-spectrum .g-spectrum-chip i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--team);
+}
+.g-spectrum .g-spectrum-chip.is-up {
+  color: var(--g-spectrum-ink);
+  background: var(--team);
+}
+.g-spectrum .g-spectrum-chip.is-up b {
+  color: var(--g-spectrum-ink);
+}
+.g-spectrum .g-spectrum-chip.is-up i {
+  background: var(--g-spectrum-ink);
+}
+.g-spectrum .g-spectrum-chip small {
+  font-size: 13px;
+  font-weight: 800;
+  animation: g-spectrum-pop 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.4) both;
+}
+.g-spectrum .g-spectrum-goal {
+  font-size: 13px;
+  color: var(--party-faint);
+}
+@keyframes g-spectrum-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}
+
+/* Reveal */
+.g-spectrum .g-spectrum-verdict {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 84px;
+}
+.g-spectrum .g-spectrum-verdict .arcade-party-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 34px;
+  animation: g-spectrum-rise 0.22s ease-out both;
+}
+.g-spectrum .g-spectrum-verdict .g-spectrum-line {
+  animation: g-spectrum-rise 0.22s 0.08s ease-out both;
+}
+@keyframes g-spectrum-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.g-spectrum .g-spectrum-stamp {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-width: 46px;
+  height: 46px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--g-spectrum-ink);
+  background: var(--g-spectrum-p2);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.4);
+  transform: rotate(-6deg);
+}
+.g-spectrum .g-spectrum-stamp.is-p3 {
+  background: var(--g-spectrum-p3);
+}
+.g-spectrum .g-spectrum-stamp.is-p4 {
+  color: var(--g-spectrum-paper);
+  background: var(--g-spectrum-p4);
+}
+.g-spectrum .g-spectrum-stamp.is-p0 {
+  color: var(--party-dim);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: none;
+}
+.g-spectrum .g-spectrum-verdict .g-spectrum-stamp {
+  animation: g-spectrum-stamp 0.3s 0.05s cubic-bezier(0.3, 0.7, 0.4, 1.3) both;
+}
+@keyframes g-spectrum-stamp {
+  from {
+    opacity: 0;
+    transform: rotate(-14deg) scale(1.6);
+  }
+}
+
+/* Left or right call */
+.g-spectrum .arcade-party-btn.g-spectrum-side {
+  color: var(--g-spectrum-ink);
+  background: var(--team);
+  box-shadow: 0 3px 0 var(--team-edge);
+}
+.g-spectrum .arcade-party-btn.g-spectrum-side:active {
+  box-shadow: 0 1px 0 var(--team-edge);
+}
+@media (hover: hover) {
+  .g-spectrum .arcade-party-btn.g-spectrum-side:hover {
+    background: color-mix(in srgb, var(--team) 88%, #fff);
+  }
+}
+.g-spectrum .arcade-party-btn.g-spectrum-side svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* End: teams */
+.g-spectrum .g-spectrum-final {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: 100%;
+  padding-bottom: 5px;
+}
+.g-spectrum .g-spectrum-final-team {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 18px 12px 16px;
+  border-radius: 18px;
+  text-align: center;
+  background: var(--party-tile);
+}
+.g-spectrum .g-spectrum-final-team > b {
+  font-family: var(--party-display);
+  font-size: clamp(52px, 17cqmin, 84px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.g-spectrum .g-spectrum-final-name {
+  font-family: var(--party-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--team);
+}
+.g-spectrum .g-spectrum-final-team small {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--party-dim);
+}
+.g-spectrum .g-spectrum-final-who {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  color: var(--party-faint);
+}
+.g-spectrum .g-spectrum-final-team.is-win {
+  color: var(--g-spectrum-ink);
+  background: var(--team);
+  outline: 1.5px solid rgba(29, 26, 22, 0.28);
+  outline-offset: -8px;
+  box-shadow: 0 5px 0 var(--team-edge);
+  animation: g-spectrum-rise 0.3s 0.1s ease-out both;
+}
+.g-spectrum .g-spectrum-final-team.is-win .g-spectrum-final-name,
+.g-spectrum .g-spectrum-final-team.is-win small,
+.g-spectrum .g-spectrum-final-team.is-win .g-spectrum-final-who {
+  color: rgba(29, 26, 22, 0.78);
+}
+
+/* End: together */
+.g-spectrum .g-spectrum-total {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.g-spectrum .g-spectrum-total .arcade-party-kicker {
+  margin: 0;
+}
+.g-spectrum .g-spectrum-total-num {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--party-display);
+}
+.g-spectrum .g-spectrum-total-num b {
+  font-size: clamp(64px, 20cqmin, 104px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.g-spectrum .g-spectrum-total-num span {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--party-faint);
+}
+.g-spectrum .g-spectrum-rating {
+  max-width: 340px;
+  margin: 0;
+  font-family: var(--party-display);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  text-wrap: balance;
+}
+.g-spectrum .g-spectrum-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 0 0 4px;
+  list-style: none;
+}
+.g-spectrum .g-spectrum-history li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 6px 8px 6px 9px;
+  border-radius: 12px;
+  font-size: 15px;
+  background: var(--party-tile);
+}
+.g-spectrum .g-spectrum-history li > span:not(.arcade-party-avatar) {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+.g-spectrum .g-spectrum-history em {
+  font-style: normal;
+  color: var(--party-faint);
+}
+.g-spectrum .g-spectrum-history .g-spectrum-stamp {
+  min-width: 32px;
+  height: 32px;
+  font-size: 16px;
+  transform: none;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* Short windows: tighter type so the board keeps its room */
+@container arcade-party (max-height: 480px) {
+  .g-spectrum .g-spectrum-board {
+    --g-spectrum-card-h: 58px;
+    min-height: 120px;
+  }
+  .g-spectrum .g-spectrum-screen .arcade-party-body {
+    gap: 8px;
+  }
+  .g-spectrum .g-spectrum-card span {
+    min-height: 0;
+    padding: 11px 10px 7px;
+    font-size: clamp(9.5px, min(5.2cqi, (50cqi - 46px) / (var(--g-spectrum-long) * 0.74)), 20px);
+    overflow-wrap: anywhere;
+  }
+  .g-spectrum .g-spectrum-card .is-left {
+    padding-right: 16px;
+  }
+  .g-spectrum .g-spectrum-card .is-right {
+    padding-left: 16px;
+  }
+  .g-spectrum .g-spectrum-line {
+    max-width: 460px;
+    font-size: 14px;
+  }
+  .g-spectrum .g-spectrum-say {
+    font-size: 18px;
+  }
+  .g-spectrum .g-spectrum-chip {
+    height: 28px;
+  }
+  .g-spectrum .g-spectrum-verdict {
+    min-height: 60px;
+    gap: 2px;
+  }
+  .g-spectrum .g-spectrum-verdict .arcade-party-title,
+  .g-spectrum .g-spectrum-ask {
+    font-size: 24px;
+  }
+  .g-spectrum .g-spectrum-ask span {
+    display: inline;
+    font-size: inherit;
+    color: var(--team);
+  }
+  .g-spectrum .g-spectrum-stamp {
+    min-width: 36px;
+    height: 36px;
+    font-size: 17px;
+  }
+  .g-spectrum .g-spectrum-tip {
+    padding: 8px 12px;
+  }
+  .g-spectrum .g-spectrum-tip p {
+    font-size: 13px;
+  }
+  .g-spectrum .g-spectrum-final-team {
+    padding: 12px 10px;
+  }
+}
+@container arcade-party (max-height: 430px) {
+  .g-spectrum .g-spectrum-hint {
+    display: none;
+  }
+  /* The verdict line says who scored; the totals come back on the next screen. */
+  .g-spectrum .g-spectrum-reveal .g-spectrum-bar {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Arming the buttons isn't motion, so it stays when the kit collapses animations. */
+  .g-spectrum .arcade-party.g-spectrum-arm .arcade-party-actions {
+    animation-duration: 0.4s !important;
+  }
+}

@@ -9,6 +9,22 @@
   margin-top: 4px;
   opacity: 0.75;
 }
+.g-palmdrive .g-palmdrive-hostpick {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.g-palmdrive .g-palmdrive-hostpick b {
+  font-size: 14px;
+}
+.g-palmdrive .g-palmdrive-hostpick small {
+  font-size: 12px;
+  opacity: 0.6;
+}
 .g-palmdrive .g-palmdrive-hud {
   position: absolute;
   inset: 0;
@@ -30,6 +46,10 @@
 }
 .g-palmdrive .g-palmdrive-item.is-ready {
   box-shadow: inset 0 0 0 3px #ffd23f, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 16px rgba(255, 210, 63, 0.6);
+}
+/* a banana or shell held out behind: a shield ring */
+.g-palmdrive .g-palmdrive-item.is-trailing {
+  box-shadow: inset 0 0 0 3px #7fd3ff, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 16px rgba(127, 211, 255, 0.75);
 }
 .g-palmdrive .g-palmdrive-item.is-rolling svg {
   animation: g-palmdrive-roll 0.1s linear infinite;
@@ -145,11 +165,49 @@
   color: #ffd23f;
   -webkit-text-stroke: 1px #7a4a00;
 }
+.g-palmdrive .g-palmdrive-cc {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  text-shadow: none;
+  background: rgba(20, 20, 26, 0.45);
+}
 .g-palmdrive .g-palmdrive-coins {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: 17px;
+}
+.g-palmdrive .g-palmdrive-coins.is-ready {
+  color: #ffd23f;
+}
+.g-palmdrive .g-palmdrive-coins kbd {
+  margin-left: 2px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font: 800 11px/16px system-ui, sans-serif;
+  font-style: normal;
+  color: #222;
+  background: #ffd23f;
+  text-shadow: none;
+  animation: g-palmdrive-blink 1.2s steps(2) 3;
+}
+.g-palmdrive .g-palmdrive-coins.is-button {
+  padding: 3px 10px 3px 6px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.45);
+  pointer-events: auto;
+  touch-action: none;
+}
+.g-palmdrive .g-palmdrive-coins.is-button.is-ready {
+  color: #222;
+  background: #ffd23f;
+  box-shadow: 0 0 12px rgba(255, 210, 63, 0.7);
 }
 .g-palmdrive .g-palmdrive-place {
   position: absolute;
@@ -192,6 +250,10 @@
   padding: 8px 12px;
   border-radius: 999px;
   background: rgba(20, 20, 26, 0.7);
+}
+/* on phones the lap row sits up top; keep the lights clear of it */
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-lights {
+  top: 132px;
 }
 .g-palmdrive .g-palmdrive-lights i {
   width: 22px;
@@ -273,6 +335,19 @@
   50% {
     opacity: 0.35;
   }
+}
+.g-palmdrive .g-palmdrive-rear {
+  position: absolute;
+  top: 54px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(20, 20, 26, 0.55);
 }
 .g-palmdrive .g-palmdrive-results {
   position: absolute;
@@ -423,4 +498,485 @@
 .g-palmdrive .g-palmdrive-touch .g-palmdrive-drift {
   width: 76px;
   height: 76px;
+}
+.g-palmdrive .g-palmdrive-minis {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-bump {
+  width: 52px;
+  height: 52px;
+  font-size: 12px;
+}
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-use.is-trailing {
+  box-shadow: inset 0 0 0 3px #7fd3ff, 0 0 14px rgba(127, 211, 255, 0.7);
+}
+/* How to Play and Garage under the setup pickers */
+.g-palmdrive .g-palmdrive-extras {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.g-palmdrive .g-palmdrive-extras .arcade-btn {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.g-palmdrive .g-palmdrive-paintdot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.6);
+}
+.g-palmdrive .g-palmdrive-bankpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px 0 3px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #ffd23f;
+  background: rgba(0, 0, 0, 0.3);
+}
+/* How to Play: a sheet over the cards */
+.g-palmdrive .g-palmdrive-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  text-align: left;
+  background: rgba(8, 8, 12, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: arcadeFade 0.18s ease;
+}
+.g-palmdrive .g-palmdrive-sheet-card {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(30, 30, 36, 0.96);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.14),
+    0 16px 40px rgba(0, 0, 0, 0.45);
+  animation: arcadePop 0.2s ease-out;
+}
+.g-palmdrive .g-palmdrive-sheet-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.g-palmdrive .g-palmdrive-sheet-card h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.g-palmdrive .g-palmdrive-sheet-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 20px 20px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: rgba(245, 245, 247, 0.88);
+}
+.g-palmdrive .g-palmdrive-sheet-body section {
+  margin-top: 16px;
+}
+.g-palmdrive .g-palmdrive-sheet-body h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.g-palmdrive .g-palmdrive-sheet-body p {
+  margin: 0 0 8px;
+}
+.g-palmdrive .g-palmdrive-sheet-body ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+.g-palmdrive .g-palmdrive-sheet-body b {
+  color: #fff;
+}
+.g-palmdrive .g-palmdrive-lede {
+  font-size: 15px;
+  color: #fff;
+}
+.g-palmdrive .g-palmdrive-keys {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 7px 14px;
+  margin: 0;
+}
+.g-palmdrive .g-palmdrive-keys dt {
+  align-self: start;
+  justify-self: start;
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+}
+.g-palmdrive .g-palmdrive-keys dd {
+  align-self: center;
+  margin: 0;
+}
+.g-palmdrive .g-palmdrive-sheet-body .g-palmdrive-items {
+  padding-left: 0;
+  list-style: none;
+}
+.g-palmdrive .g-palmdrive-items li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.g-palmdrive .g-palmdrive-items svg {
+  flex: none;
+}
+.g-palmdrive .g-palmdrive-blue {
+  font-weight: 700;
+  color: #5cc8ff;
+}
+.g-palmdrive .g-palmdrive-orange {
+  font-weight: 700;
+  color: #ffa53a;
+}
+.g-palmdrive .g-palmdrive-purple {
+  font-weight: 700;
+  color: #d07bff;
+}
+/* the Garage sheet */
+.g-palmdrive .g-palmdrive-garage-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+.g-palmdrive .g-palmdrive-bank {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  justify-items: end;
+  gap: 2px 6px;
+}
+.g-palmdrive .g-palmdrive-bank b {
+  font-size: 30px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #ffd23f;
+}
+.g-palmdrive .g-palmdrive-bank small {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  opacity: 0.7;
+}
+.g-palmdrive .g-palmdrive-swatches {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+.g-palmdrive .g-palmdrive-hats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.g-palmdrive .g-palmdrive-swatch,
+.g-palmdrive .g-palmdrive-hat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 4px 6px;
+  border: 0;
+  border-radius: 12px;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+.g-palmdrive .g-palmdrive-swatch:hover:not(:disabled),
+.g-palmdrive .g-palmdrive-hat:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+.g-palmdrive .g-palmdrive-swatch.is-on,
+.g-palmdrive .g-palmdrive-hat.is-on {
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 2px #fff;
+}
+.g-palmdrive .g-palmdrive-swatch:disabled,
+.g-palmdrive .g-palmdrive-hat:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.g-palmdrive .g-palmdrive-swatch i {
+  width: min(30px, 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+.g-palmdrive .g-palmdrive-hat span {
+  font-size: 12px;
+  font-weight: 600;
+}
+.g-palmdrive .g-palmdrive-swatch small,
+.g-palmdrive .g-palmdrive-hat small {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffd23f;
+}
+/* HUD polish: speed lines, coin pops, place pops, tips and confetti */
+.g-palmdrive .g-palmdrive-speed {
+  position: absolute;
+  inset: -10%;
+  background:
+    repeating-conic-gradient(from 0deg at 50% 52%, rgba(255, 255, 255, 0.55) 0deg 1.1deg, transparent 1.1deg 9deg),
+    repeating-conic-gradient(from 4deg at 50% 52%, rgba(255, 255, 255, 0.35) 0deg 0.6deg, transparent 0.6deg 13deg);
+  -webkit-mask-image: radial-gradient(ellipse 58% 52% at 50% 52%, transparent 42%, #000 82%);
+  mask-image: radial-gradient(ellipse 58% 52% at 50% 52%, transparent 42%, #000 82%);
+  animation: g-palmdrive-speed 0.22s linear infinite;
+}
+@keyframes g-palmdrive-speed {
+  50% {
+    transform: rotate(2deg) scale(1.04);
+    opacity: 0.7;
+  }
+}
+.g-palmdrive .g-palmdrive-coins {
+  position: relative;
+}
+.g-palmdrive .g-palmdrive-coinpop {
+  position: absolute;
+  left: 100%;
+  top: -4px;
+  margin-left: 6px;
+  font-size: 16px;
+  font-style: italic;
+  font-weight: 900;
+  color: #ffd23f;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: g-palmdrive-coinpop 0.9s ease-out forwards;
+}
+.g-palmdrive .g-palmdrive-coinpop.is-loss {
+  color: #ff6b5e;
+}
+@keyframes g-palmdrive-coinpop {
+  from {
+    opacity: 1;
+    transform: translateY(4px) scale(1.3);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-16px) scale(1);
+  }
+}
+.g-palmdrive .g-palmdrive-place {
+  transform-origin: 100% 100%;
+  animation: g-palmdrive-placepop 0.4s ease-out;
+}
+@keyframes g-palmdrive-placepop {
+  from {
+    transform: scale(1.4);
+  }
+}
+.g-palmdrive .g-palmdrive-hint {
+  position: absolute;
+  left: 50%;
+  bottom: max(70px, 14%);
+  max-width: min(440px, calc(100% - 32px));
+  padding: 8px 16px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  color: #222;
+  background: #ffd23f;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  transform: translateX(-50%);
+  animation: g-palmdrive-hint 4.2s ease-in-out forwards;
+}
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-hint {
+  bottom: 190px;
+}
+@keyframes g-palmdrive-hint {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 10px);
+  }
+  8%,
+  88% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 0);
+  }
+}
+.g-palmdrive .g-palmdrive-confetti {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.g-palmdrive .g-palmdrive-confetti i {
+  position: absolute;
+  top: -16px;
+  width: 8px;
+  height: 13px;
+  border-radius: 2px;
+  opacity: 0;
+  animation-name: g-palmdrive-confetti;
+  animation-timing-function: cubic-bezier(0.3, 0.6, 0.6, 1);
+  animation-fill-mode: forwards;
+}
+@keyframes g-palmdrive-confetti {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0);
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--drift), 105vh) rotate(var(--spin));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-palmdrive .g-palmdrive-speed,
+  .g-palmdrive .g-palmdrive-confetti {
+    display: none;
+  }
+}
+/* the course picker: a card per course with a little map of its track */
+.g-palmdrive .g-palmdrive-courses {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.g-palmdrive .g-palmdrive-course {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+.g-palmdrive .g-palmdrive-course:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+.g-palmdrive .g-palmdrive-course.is-on {
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.g-palmdrive .g-palmdrive-course:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.g-palmdrive .g-palmdrive-course:disabled.is-on {
+  opacity: 1;
+}
+.g-palmdrive .g-palmdrive-course svg {
+  flex: none;
+  width: 34px;
+  height: 34px;
+}
+.g-palmdrive .g-palmdrive-course path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 22;
+  stroke-linejoin: round;
+}
+.g-palmdrive .g-palmdrive-course span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* how hard the course is, and how long a lap */
+.g-palmdrive .g-palmdrive-course small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+.g-palmdrive .g-palmdrive-course small.is-easy {
+  color: #7ddf8a;
+}
+.g-palmdrive .g-palmdrive-course small.is-medium {
+  color: #ffd45e;
+}
+.g-palmdrive .g-palmdrive-course small.is-hard {
+  color: #ff9f4a;
+}
+.g-palmdrive .g-palmdrive-course small.is-expert {
+  color: #ff6b6b;
+}
+/* the golden mushroom glows while it lasts */
+.g-palmdrive .g-palmdrive-item.is-golden {
+  box-shadow: inset 0 0 0 3px #ffd23f, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 20px rgba(255, 196, 0, 0.9);
+  animation: g-palmdrive-gold 0.6s ease-in-out infinite alternate;
+}
+@keyframes g-palmdrive-gold {
+  to {
+    box-shadow: inset 0 0 0 3px #fff3b0, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 8px rgba(255, 196, 0, 0.5);
+  }
+}
+/* ink splattered over your view */
+.g-palmdrive .g-palmdrive-ink {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+.g-palmdrive .g-palmdrive-ink i {
+  position: absolute;
+  border-radius: 46% 54% 52% 48% / 55% 45% 55% 45%;
+  background: radial-gradient(circle at 40% 35%, #3b2f4a 0%, #15121c 60%, rgba(21, 18, 28, 0.9) 100%);
+  box-shadow: 0 0 0 1.5vmin rgba(21, 18, 28, 0.55);
+  transform: rotate(18deg);
+}
+.g-palmdrive .g-palmdrive-ink i:nth-child(2n) {
+  border-radius: 58% 42% 40% 60% / 45% 55% 45% 55%;
+  transform: rotate(-24deg);
 }
