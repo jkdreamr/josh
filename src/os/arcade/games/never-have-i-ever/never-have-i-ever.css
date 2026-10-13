@@ -1,36 +1,152 @@
-.g-never-have-i-ever {
-  background:
-    radial-gradient(110% 70% at 50% -10%, color-mix(in srgb, #ff2d92 24%, #140d12) 0%, transparent 70%),
-    #0e0b0e;
+/* Never Have I Ever: a confession on cream card stock. Instrument Serif, italic for the lead-in, set big. */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/instrument-serif.woff2') format('woff2');
 }
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/instrument-serif-italic.woff2') format('woff2');
+}
+
+.g-never-have-i-ever {
+  --g-nhie-ink: #1d1a16;
+  --g-nhie-pink: #b0125f;
+  background: #170c13;
+}
+.g-never-have-i-ever .arcade-party {
+  --party-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --on-accent: #26040f;
+  font-synthesis: none;
+}
+
+/* Setup */
+.g-never-have-i-ever .arcade-party-title {
+  font-size: clamp(46px, 13cqmin, 60px);
+  font-weight: 400;
+  line-height: 0.96;
+  letter-spacing: -0.01em;
+}
+.g-never-have-i-ever .arcade-party-title em {
+  color: var(--accent);
+}
+.g-never-have-i-ever .g-never-have-i-ever-note {
+  align-self: stretch;
+  margin: -4px 0 0;
+  padding-left: 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--party-dim);
+}
+
+/* Serif buttons: the face has one weight, so size carries the emphasis instead of bold. */
+.g-never-have-i-ever.arcade-shell .arcade-party-btn {
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.g-never-have-i-ever.arcade-shell .arcade-party-how > button {
+  font-size: 15px;
+}
+
+/* The card */
 .g-never-have-i-ever .g-never-have-i-ever-card {
+  flex: none;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+  min-height: min(400px, 58cqh);
+  padding: 30px 28px 20px;
+  text-align: left;
+  color: var(--g-nhie-ink);
   cursor: pointer;
 }
+.g-never-have-i-ever .g-never-have-i-ever-card.is-left {
+  transform: rotate(-0.7deg);
+}
+.g-never-have-i-ever .g-never-have-i-ever-card.is-right {
+  transform: rotate(0.6deg);
+}
 .g-never-have-i-ever .g-never-have-i-ever-lead {
-  font-size: 15px;
-  font-weight: 600;
-  opacity: 0.85;
+  font-family: var(--party-display);
+  font-size: clamp(24px, 7cqmin, 32px);
+  font-style: italic;
+  line-height: 1.1;
+  color: var(--g-nhie-pink);
 }
-.g-never-have-i-ever .g-never-have-i-ever-card strong {
-  margin-top: -6px;
-}
-.g-never-have-i-ever .g-never-have-i-ever-card p {
+.g-never-have-i-ever .g-never-have-i-ever-card > strong {
+  flex: 1 0 auto;
   margin-top: 6px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 13px;
-  background: rgba(0, 0, 0, 0.18);
+  font-size: clamp(38px, 12.4cqmin, 60px);
+  font-weight: 400;
+  line-height: 1.02;
+  letter-spacing: -0.012em;
+  text-wrap: pretty;
 }
-.g-never-have-i-ever .g-never-have-i-ever-count,
-.g-never-have-i-ever .g-never-have-i-ever-how {
-  margin: 0;
-  font-size: 13px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  color: rgba(245, 245, 247, 0.5);
+.g-never-have-i-ever .g-never-have-i-ever-stamp {
+  align-self: flex-start;
+  margin: 16px 0 4px 2px;
+  padding: 3px 12px 5px;
+  border: 2px solid currentColor;
+  border-radius: 8px;
+  font-family: var(--party-display);
+  font-size: 23px;
+  font-style: italic;
+  line-height: 1;
+  color: var(--g-nhie-pink);
+  transform: rotate(-4deg);
+  animation: g-never-have-i-ever-stamp 0.24s cubic-bezier(0.3, 1.4, 0.5, 1) 0.18s both;
 }
-.g-never-have-i-ever .g-never-have-i-ever-how {
-  max-width: 340px;
-  align-self: center;
-  line-height: 1.45;
+@keyframes g-never-have-i-ever-stamp {
+  from {
+    opacity: 0;
+    transform: rotate(-4deg) scale(1.7);
+  }
+}
+.g-never-have-i-ever .g-never-have-i-ever-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(29, 26, 22, 0.16);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: rgba(29, 26, 22, 0.72);
+}
+.g-never-have-i-ever .g-never-have-i-ever-foot > span:last-child {
+  text-align: right;
+}
+
+@container arcade-party (max-height: 480px) {
+  .g-never-have-i-ever .g-never-have-i-ever-card {
+    min-height: 0;
+    padding: 20px 22px 14px;
+  }
+  .g-never-have-i-ever .g-never-have-i-ever-card > strong {
+    font-size: clamp(28px, 9cqmin, 38px);
+  }
+  .g-never-have-i-ever .g-never-have-i-ever-lead {
+    font-size: 21px;
+  }
+  .g-never-have-i-ever .g-never-have-i-ever-stamp {
+    margin-top: 10px;
+    font-size: 19px;
+  }
+  .g-never-have-i-ever .g-never-have-i-ever-foot {
+    margin-top: 12px;
+    padding-top: 8px;
+  }
+  .g-never-have-i-ever.arcade-shell .arcade-party-btn {
+    font-size: 20px;
+  }
+  .g-never-have-i-ever .arcade-party-title {
+    font-size: 40px;
+  }
 }

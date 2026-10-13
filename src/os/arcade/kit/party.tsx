@@ -235,7 +235,7 @@ export function Chips<T extends string>({ label, value, options, onChange }: { l
 }
 
 /** Edits the shared roster: add names in seating order, tap x to remove. */
-export function PlayerList({ min, max = PLAYERS_MAX, label = 'Players' }: { min: number; max?: number; label?: string }) {
+export function PlayerList({ min, max = PLAYERS_MAX, label = 'Players', emptyHint = 'Optional. Add names to take turns in order.' }: { min: number; max?: number; label?: string; /** Shown when the list is empty and names are optional. */ emptyHint?: string }) {
   const [players, setPlayers] = usePlayers();
   const [draft, setDraft] = useState('');
   const [note, setNote] = useState('');
@@ -256,7 +256,7 @@ export function PlayerList({ min, max = PLAYERS_MAX, label = 'Players' }: { min:
     (players.length < min
       ? `Add at least ${min}, in seating order.`
       : !players.length
-        ? 'Optional. Add names to take turns in order.'
+        ? emptyHint
         : players.length > cap
           ? `This game seats ${cap}. The first ${cap} play.`
           : 'In seating order. Tap a name to remove it.');
@@ -379,12 +379,17 @@ export function DrinkNote() {
 }
 
 /**
- * A draw pile with history for prompt decks: next() deals a card that hasn't come up since the last reshuffle,
- * back() steps through what was already dealt. Pass a new `items` array to start a fresh deck.
+ * A draw pile with history for prompt decks: the first card is dealt at once, next() deals one that hasn't come up
+ * since the last reshuffle, back() steps through what was already dealt. Pass a new `items` array for a fresh deck.
  */
 export function useDeck<T>(items: readonly T[]) {
   const state = useRef<{ items: readonly T[]; pile: Pile<T>; seen: T[]; pos: number } | null>(null);
-  if (!state.current || state.current.items !== items) state.current = { items, pile: new Pile(items), seen: [], pos: -1 };
+  if (!state.current || state.current.items !== items) {
+    // Deal the first card right away, so the first frame already shows it.
+    const pile = new Pile(items);
+    const first = pile.draw();
+    state.current = first === undefined ? { items, pile, seen: [], pos: -1 } : { items, pile, seen: [first], pos: 0 };
+  }
   const [, redraw] = useState(0);
   const next = useCallback(() => {
     const d = state.current;

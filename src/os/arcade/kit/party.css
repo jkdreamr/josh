@@ -90,6 +90,17 @@
   min-width: 0;
 }
 
+/* Read by screen readers, invisible on screen. */
+.arcade-party .arcade-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* Type */
 .arcade-party-title {
   margin: 0;

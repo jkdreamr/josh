@@ -124,13 +124,14 @@ function Option(props: { label; value; options; onChange }): JSX.Element; // lab
 function Chips(props: { label?; value: T[]; options; onChange }): JSX.Element; // multi-select, keeps one on
 function useCountdown(seconds, { running?, onEnd?, tick? }): { left: number; reset(n?): void };
 function Countdown(props: { left: number; total: number; size?: number }): JSX.Element;
-function useDeck<T>(items: readonly T[]): { card?: T; next(); back(); canBack; dealt; total };
+function useDeck<T>(items: readonly T[]): { card?: T; next(); back(); canBack; dealt; total }; // deals the first card at once
+// PlayerList also takes emptyHint for games where names are optional; .arcade-sr hides text from the screen but not from screen readers
 Avatar, playerColor, DrinkNote, shuffle, pick, Pile, listNames, sips, clock, mulberry32
 ```
 
 A party game wraps itself in `<GameShell meta={meta} autoStart>`: its setup step is the start screen, so the shell's Start card is skipped. The rest is a `step` state machine where each step renders one keyed `<Screen>` (or `<PassTo>` before anything secret). Keying steps returns focus to the game after the button that led there unmounts, so Enter and Space keep working. Restart remounts the game back to its setup step, and the roster and settings carry over. Timers use `useCountdown`, so pausing (Esc, or hiding the window) stops the clock. Shared classes for cards, player grids and score rows (`.arcade-party-card`, `.arcade-party-picks`, `.arcade-party-scores`) live in `kit/party.css` and take the game's `--accent`.
 
-The look is printed game night: flat fills, cards with an inset border and a hard edge (`.arcade-party-card`, cream stock with `.is-paper`), buttons with a bottom edge that presses down, and Bricolage Grotesque for titles, card text and buttons. A game sets `--on-accent` when white text doesn't read on its accent, can swap `--party-display` for its own face, and `--party-timer` recolors the countdown ring. Display faces are self-hosted in `public/fonts/` (latin subsets, SIL Open Font License); declare an `@font-face` in the game's CSS and the browser only downloads it when the game shows it. Motion stays short and purposeful, and everything inside `.arcade-party` collapses to instant under `prefers-reduced-motion`.
+The look is printed game night: flat fills, cards with an inset border and a hard edge (`.arcade-party-card`, cream stock with `.is-paper`), buttons with a bottom edge that presses down, and Bricolage Grotesque for titles, card text and buttons. A game sets `--on-accent` to a dark ink when white on its accent falls under 4.5:1 (most bright accents do; check button text), can swap `--party-display` for its own face, and `--party-timer` recolors the countdown ring. Display faces are self-hosted in `public/fonts/` (latin subsets, SIL Open Font License); declare an `@font-face` in the game's CSS and the browser only downloads it when the game shows it. Motion stays short and purposeful, and everything inside `.arcade-party` collapses to instant under `prefers-reduced-motion`.
 
 Drinking games show `<DrinkNote />` on their setup step and keep their 18+ decks off by default.
 
