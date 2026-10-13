@@ -3,7 +3,7 @@
 import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
 import { CURB, EDGE, LANDMARKS, ROAD_HALF, gridSpot, headingOf, locate, pointAt, type Track } from './track';
-import { COUNTDOWN, TURBO_AT, turboLevel, type Ev, type Kart, type Race, type ThingKind } from './logic';
+import { COUNTDOWN, RAMP_H, RAMP_LEN, TURBO_AT, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
 
 type Three = typeof import('three');
 
@@ -11,8 +11,8 @@ export type View = {
   gl: GL;
   camera: T.PerspectiveCamera;
   resize(w: number, h: number): void;
-  /** Moves everything to match the race and points the chase camera at kart `me`. */
-  frame(r: Race, me: number, dt: number, clock: number): void;
+  /** Moves everything to match the race and points the chase camera at kart `me` (or behind it). */
+  frame(r: Race, me: number, dt: number, clock: number, lookBack?: boolean): void;
   /** One-off effects for race events: puffs, blasts, camera shake. */
   react(e: Ev, r: Race, me: number): void;
   /** Screen position (CSS pixels) of a world point, or null when behind the camera. */
@@ -32,12 +32,68 @@ type KartView = {
   sparks: T.Mesh[];
   sparkMat: T.MeshBasicMaterial;
   shadow: T.Mesh;
+  /** The banana or shell held out behind, filled in once the item models exist. */
+  trail: T.Group;
+  stars: T.Group;
+  wind: T.Group;
+  hat: T.Group;
+  hatName: Hat;
+  /** Swaps the hat when a kart's look changes (an online racer's garage arrives after the race is built). */
+  wear: (hat: Hat) => void;
   roll: number;
   spinA: number;
   flipA: number;
+  trickA: number;
   driftYaw: number;
   wheelA: number;
+  smoke: number;
 };
+
+type KartGeo = { box: T.BoxGeometry; wheel: T.CylinderGeometry; ball: T.SphereGeometry; ring: T.TorusGeometry; cone: T.ConeGeometry; plane: T.PlaneGeometry };
+type KartMats = { dark: T.Material; skin: T.Material; white: T.Material; shadow: T.Material; star: T.Material; wind: T.Material; stone: T.Material; tile: T.Material; gold: T.Material; red: T.Material; green: T.Material };
+
+/** Each racer's headgear: a cardinal cap for you, a tree for Tree, a little Hoover Tower for Hoover... */
+function makeHat(THREE: Three, geo: KartGeo, m: KartMats, hat: Hat, paint: T.Material) {
+  const g = new THREE.Group();
+  g.position.set(0, 1.58, -0.26);
+  const add = (geom: T.BufferGeometry, mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+    const o = new THREE.Mesh(geom, mat);
+    o.position.set(x, y, z);
+    o.scale.set(sx, sy, sz);
+    g.add(o);
+    return o;
+  };
+  if (hat === 'cap') {
+    add(geo.ball, paint, 0, -0.04, 0, 0.36, 0.2, 0.36);
+    add(geo.box, paint, 0, -0.08, 0.3, 0.42, 0.04, 0.32);
+    add(geo.box, m.white, 0, 0.0, 0.33, 0.12, 0.12, 0.02).rotation.x = -0.3;
+  } else if (hat === 'tree') {
+    add(geo.cone, m.green, 0, 0.18, 0, 0.36, 0.4, 0.36);
+    add(geo.cone, m.green, 0, 0.42, 0, 0.27, 0.36, 0.27);
+    add(geo.cone, m.green, 0, 0.62, 0, 0.18, 0.3, 0.18);
+  } else if (hat === 'top') {
+    add(geo.wheel, m.dark, 0, -0.02, 0, 0.42, 0.04, 0.42);
+    add(geo.wheel, m.dark, 0, 0.22, 0, 0.24, 0.46, 0.24);
+    add(geo.wheel, paint, 0, 0.06, 0, 0.25, 0.08, 0.25);
+  } else if (hat === 'bow') {
+    for (const side of [-1, 1]) add(geo.ball, paint, side * 0.17, 0.02, 0.05, 0.16, 0.12, 0.07).rotation.z = side * 0.4;
+    add(geo.ball, m.white, 0, 0.02, 0.06, 0.07, 0.07, 0.07);
+  } else if (hat === 'tower') {
+    add(geo.box, m.stone, 0, 0.18, 0, 0.18, 0.42, 0.18);
+    add(geo.box, m.dark, 0, 0.34, 0, 0.2, 0.08, 0.2);
+    add(geo.ball, m.tile, 0, 0.42, 0, 0.12, 0.12, 0.12);
+  } else if (hat === 'axe') {
+    add(geo.box, m.red, 0, 0.22, -0.05, 0.05, 0.5, 0.05);
+    add(geo.box, m.white, 0.1, 0.4, -0.05, 0.2, 0.16, 0.03);
+  } else if (hat === 'dish') {
+    add(geo.box, m.white, 0, 0.1, 0, 0.04, 0.24, 0.04);
+    const bowl = add(geo.ball, m.white, 0, 0.26, 0.04, 0.24, 0.08, 0.24);
+    bowl.rotation.x = -0.6;
+  } else if (hat === 'claw') {
+    for (const side of [-1, 1]) add(geo.cone, m.red, side * 0.2, 0.12, 0, 0.08, 0.36, 0.08).rotation.z = -side * 0.5;
+  }
+  return g;
+}
 
 /** Deterministic scatter for scenery, so campus looks the same every visit. */
 function scatter(seed: number) {
@@ -221,7 +277,7 @@ function makeHall(THREE: Three, box: T.BoxGeometry, roof: T.BufferGeometry, mats
   return g;
 }
 
-function makeKart(THREE: Three, geo: { box: T.BoxGeometry; wheel: T.CylinderGeometry; ball: T.SphereGeometry; ring: T.TorusGeometry; cone: T.ConeGeometry; plane: T.PlaneGeometry }, color: string, shared: { dark: T.Material; skin: T.Material; white: T.Material; shadow: T.Material }): KartView {
+function makeKart(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: KartMats): KartView {
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
@@ -269,13 +325,45 @@ function makeKart(THREE: Three, geo: { box: T.BoxGeometry; wheel: T.CylinderGeom
     m.visible = false;
     return m;
   });
+  const hatGroup = new THREE.Group();
+  hatGroup.add(makeHat(THREE, geo, shared, hat, paint));
+  body.add(hatGroup);
+  const trail = new THREE.Group();
+  trail.position.set(0, 0.05, -1.95);
+  body.add(trail);
+  // dizzy stars over the driver's head after a hit
+  const stars = new THREE.Group();
+  stars.position.set(0, 1.95, -0.25);
+  for (let i = 0; i < 3; i++) {
+    const st = add(stars, geo.box, shared.star, Math.cos((i / 3) * Math.PI * 2) * 0.45, 0, Math.sin((i / 3) * Math.PI * 2) * 0.45, 0.16, 0.16, 0.05);
+    st.rotation.z = Math.PI / 4;
+  }
+  stars.visible = false;
+  body.add(stars);
+  // wind lines streaming past while you ride someone's slipstream
+  const wind = new THREE.Group();
+  for (const [x, y] of [[-1.05, 0.5], [1.05, 0.5], [-0.6, 1.5], [0.6, 1.5]]) add(wind, geo.box, shared.wind, x, y, 0.2, 0.035, 0.035, 2.6);
+  wind.visible = false;
+  body.add(wind);
   body.scale.setScalar(0.85);
   const shadow = new THREE.Mesh(geo.plane, shared.shadow);
   shadow.rotation.x = -Math.PI / 2;
   shadow.scale.set(2.2, 3.2, 1);
   shadow.position.y = 0.11;
   root.add(shadow);
-  return { root, body, paint, color: new THREE.Color(color).getHex(), steer, spinners, flames, sparks, sparkMat, shadow, roll: 0, spinA: 0, flipA: 0, driftYaw: 0, wheelA: 0 };
+  const view: KartView = {
+    root, body, paint, color: new THREE.Color(color).getHex(), steer, spinners, flames, sparks, sparkMat, shadow, trail, stars, wind,
+    hat: hatGroup,
+    hatName: hat,
+    wear(next) {
+      if (next === view.hatName) return;
+      view.hatName = next;
+      for (const child of [...hatGroup.children]) hatGroup.remove(child);
+      hatGroup.add(makeHat(THREE, geo, shared, next, paint));
+    },
+    roll: 0, spinA: 0, flipA: 0, trickA: 0, driftYaw: 0, wheelA: 0, smoke: 0,
+  };
+  return view;
 }
 
 const SPARK = [0, 0x4fc3ff, 0xff9d2e, 0xd36bff];
@@ -312,10 +400,17 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     tile: new THREE.MeshLambertMaterial({ color: 0xb4553a }),
     dark: new THREE.MeshLambertMaterial({ color: 0x3e3128 }),
   };
-  const kartShared = {
+  const kartShared: KartMats = {
     dark: new THREE.MeshLambertMaterial({ color: 0x1b1c22 }),
     skin: new THREE.MeshLambertMaterial({ color: 0xf2c7a0 }),
     white: new THREE.MeshLambertMaterial({ color: 0xf6f6f8 }),
+    star: new THREE.MeshBasicMaterial({ color: 0xffe14d }),
+    wind: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false }),
+    stone: new THREE.MeshLambertMaterial({ color: 0xe0c49a }),
+    tile: new THREE.MeshLambertMaterial({ color: 0xb4553a }),
+    gold: new THREE.MeshLambertMaterial({ color: 0xf7c948, emissive: 0x5a3c00 }),
+    red: new THREE.MeshLambertMaterial({ color: 0x8c1515 }),
+    green: new THREE.MeshLambertMaterial({ color: 0x2f8a3c }),
     shadow: new THREE.MeshBasicMaterial({
       map: texture(
         THREE,
@@ -508,6 +603,40 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     pad.scale.set(2.2, 4.4, 1);
     g.add(pad);
     scene.add(g);
+  }
+
+  // jump ramps: a striped wedge rising to the lip
+  {
+    const wedge = new THREE.BufferGeometry();
+    const L = RAMP_LEN;
+    const H = RAMP_H;
+    // x across (-0.5..0.5, scaled to the ramp width), z along (-L at the foot, 0 at the lip)
+    const v = [
+      -0.5, 0, -L, 0.5, 0, -L, 0.5, H, 0, -0.5, 0, -L, 0.5, H, 0, -0.5, H, 0,
+      -0.5, 0, 0, -0.5, H, 0, 0.5, H, 0, -0.5, 0, 0, 0.5, H, 0, 0.5, 0, 0,
+      -0.5, 0, -L, -0.5, H, 0, -0.5, 0, 0, 0.5, 0, -L, 0.5, 0, 0, 0.5, H, 0,
+    ];
+    const uv = [0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0.1, 1, 0.1, 0, 0, 1, 0.1, 1, 0, 0, 0, 1, 0.1, 1, 0, 0, 0, 1, 0, 1, 0.1];
+    wedge.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+    wedge.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    wedge.computeVertexNormals();
+    const rampTex = texture(
+      THREE,
+      canvas(64, 64, (g) => {
+        g.fillStyle = '#8c1515';
+        g.fillRect(0, 0, 64, 64);
+        g.fillStyle = '#fff3d6';
+        for (let i = 0; i < 4; i++) g.fillRect(0, i * 16, 64, 6);
+      }),
+    );
+    const rampMat = new THREE.MeshLambertMaterial({ map: rampTex, side: THREE.DoubleSide });
+    for (const ramp of r.ramps) {
+      const m = new THREE.Mesh(wedge, rampMat);
+      m.position.set(ramp.x, 0.04, ramp.z);
+      m.rotation.y = ramp.h;
+      m.scale.set(ramp.w, 1, 1);
+      scene.add(m);
+    }
   }
 
   // chevron boards on the outside of the tight bends
@@ -722,7 +851,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
 
   // karts
   const karts = r.karts.map((k) => {
-    const v = makeKart(THREE, geo, k.color, kartShared);
+    const v = makeKart(THREE, geo, k.color, k.hat, kartShared);
     scene.add(v.root);
     return v;
   });
@@ -738,7 +867,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   };
   const half = new THREE.SphereGeometry(0.5, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2);
   const bananaGeo = new THREE.TorusGeometry(0.42, 0.15, 6, 12, Math.PI * 1.15);
-  const makeThing = (kind: ThingKind) => {
+  const buildThing = (kind: ThingKind) => {
     const g = new THREE.Group();
     if (kind === 'banana') {
       const b = new THREE.Mesh(bananaGeo, thingMats.banana);
@@ -774,10 +903,22 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         g.scale.setScalar(1.6);
       }
     }
+    return g;
+  };
+  const makeThing = (kind: ThingKind) => {
+    const g = buildThing(kind);
     g.visible = false;
     scene.add(g);
     return g;
   };
+  // every kart can hold a banana or a shell out behind it
+  const trailKinds = ['banana', 'green', 'red'] as const;
+  for (const v of karts) for (const kind of trailKinds) {
+    const g = buildThing(kind);
+    g.name = kind;
+    g.visible = false;
+    v.trail.add(g);
+  }
   const pools: Record<ThingKind, T.Group[]> = {
     banana: Array.from({ length: 18 }, () => makeThing('banana')),
     green: Array.from({ length: 10 }, () => makeThing('green')),
@@ -797,6 +938,39 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     fx.push({ mesh, age: 0, life: blast ? 0.9 : 0.45, size });
   };
 
+  // small particles: drift smoke, dust, sparks, box shards, coins; meshes are reused and shrink away
+  type Particle = { m: T.Mesh; vx: number; vy: number; vz: number; life: number; max: number; size: number; grav: number; grow: boolean };
+  const coinGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.08, 12);
+  const partMat = {
+    smoke: new THREE.MeshBasicMaterial({ color: 0xe8e4dc, transparent: true, opacity: 0.55, depthWrite: false }),
+    dust: new THREE.MeshBasicMaterial({ color: 0xc9b07a, transparent: true, opacity: 0.6, depthWrite: false }),
+    white: new THREE.MeshBasicMaterial({ color: 0xffffff }),
+    star: kartShared.star,
+    gold: kartShared.gold,
+    spark: SPARK.slice(1).map((c) => new THREE.MeshBasicMaterial({ color: c })),
+    rainbow: [0xff5a5a, 0xffb347, 0xffe14d, 0x5ad86f, 0x4fb3ff, 0xb57bff].map((c) => new THREE.MeshBasicMaterial({ color: c })),
+  };
+  const parts: Particle[] = [];
+  const spare: T.Mesh[] = [];
+  const emit = (geom: T.BufferGeometry, mat: T.Material, x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, size: number, grav = 0, grow = false) => {
+    if (parts.length > 220) return;
+    const m = spare.pop() ?? new THREE.Mesh(geom, mat);
+    m.geometry = geom;
+    m.material = mat;
+    m.position.set(x, y, z);
+    m.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+    m.visible = true;
+    if (!m.parent) scene.add(m);
+    parts.push({ m, vx, vy, vz, life, max: life, size, grav, grow });
+  };
+  const burst = (geom: T.BufferGeometry, mats: T.Material[], x: number, y: number, z: number, n: number, speed: number, size: number, life = 0.6, grav = 14) => {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = speed * (0.5 + Math.random() * 0.5);
+      emit(geom, mats[i % mats.length], x, y, z, Math.cos(a) * sp, speed * (0.4 + Math.random() * 0.6), Math.sin(a) * sp, life * (0.7 + Math.random() * 0.5), size, grav);
+    }
+  };
+
   let shake = 0;
   let camYaw: number | null = null;
   let fovBase = 68;
@@ -814,7 +988,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       camera.fov = fovBase;
       camera.updateProjectionMatrix();
     },
-    frame(race, me, dt, clock) {
+    frame(race, me, dt, clock, lookBack = false) {
       // item boxes and coins
       race.boxes.forEach((b, i) => {
         const m = boxes[i];
@@ -860,8 +1034,40 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         used.delete(id);
       }
 
-      // karts
-      race.karts.forEach((k, i) => syncKart(karts[i], k, dt, clock));
+      // karts, with drift smoke and dust kicked up off the grass
+      race.karts.forEach((k, i) => {
+        const v = karts[i];
+        syncKart(v, k, dt, clock);
+        v.smoke -= dt;
+        if (v.smoke > 0 || k.y > 0.2 || Math.abs(k.v) < 6) return;
+        const dusty = k.offroad && k.boost <= 0;
+        if (k.drift === 0 && !dusty) return;
+        v.smoke = 0.05;
+        const rx = -Math.cos(k.h);
+        const rz = Math.sin(k.h);
+        const bx = k.x - Math.sin(k.h) * 1.1;
+        const bz = k.z - Math.cos(k.h) * 1.1;
+        for (const side of [-1, 1]) {
+          emit(geo.ball, dusty ? partMat.dust : partMat.smoke, bx + rx * side * 0.75, 0.25, bz + rz * side * 0.75, (Math.random() - 0.5) * 1.5, 1 + Math.random(), (Math.random() - 0.5) * 1.5, 0.5, dusty ? 0.45 : 0.35, 0, true);
+        }
+      });
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const p = parts[i];
+        p.life -= dt;
+        if (p.life <= 0) {
+          p.m.visible = false;
+          spare.push(p.m);
+          parts.splice(i, 1);
+          continue;
+        }
+        p.vy -= p.grav * dt;
+        p.m.position.x += p.vx * dt;
+        p.m.position.y = Math.max(0.05, p.m.position.y + p.vy * dt);
+        p.m.position.z += p.vz * dt;
+        p.m.rotation.x += dt * 6;
+        const u = p.life / p.max;
+        p.m.scale.setScalar(p.size * (p.grow ? 0.6 + (1 - u) * 1.4 : Math.min(1, u * 2.5)));
+      }
 
       // effects
       for (let i = fx.length - 1; i >= 0; i--) {
@@ -887,12 +1093,13 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         swing = (1 - u * u * (3 - 2 * u)) * Math.PI * 0.85;
       }
       shake = Math.max(0, shake - dt * 1.5);
-      const yaw = camYaw + swing;
+      const flip = lookBack && swing === 0 ? Math.PI : 0;
+      const yaw = camYaw + swing + flip;
       const dist = back + swing * 2.2;
       const jx = (Math.random() - 0.5) * shake;
       const jy = (Math.random() - 0.5) * shake;
       camera.position.set(k.x - Math.sin(yaw) * dist + jx, 2.75 + swing * 0.8 + k.y * 0.25 + jy, k.z - Math.cos(yaw) * dist);
-      camera.lookAt(k.x + Math.sin(camYaw) * 4, 1.15 + k.y * 0.3, k.z + Math.cos(camYaw) * 4);
+      camera.lookAt(k.x + Math.sin(camYaw + flip) * 4, 1.15 + k.y * 0.3, k.z + Math.cos(camYaw + flip) * 4);
       const fov = fovBase + (k.boost > 0 ? 9 : 0) + Math.min(5, Math.max(0, k.v - 15) * 0.3);
       if (Math.abs(camera.fov - fov) > 0.05) {
         camera.fov = damp(camera.fov, fov, 4, dt);
@@ -905,9 +1112,45 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         effect(e.x, 1, e.z, 7, true);
         const k = race.karts[me];
         if (k && Math.hypot(k.x - e.x, k.z - e.z) < 30) shake = 1.2;
-      } else if (e.t === 'hit' && e.k === me) shake = Math.max(shake, e.how === 'spin' ? 0.35 : 0.8);
-      else if (e.t === 'wall' && e.k === me) shake = Math.max(shake, Math.min(0.5, e.power * 0.04));
-      else if (e.t === 'bump' && e.k === me) shake = Math.max(shake, 0.25);
+      } else if (e.t === 'hit') {
+        const k = race.karts[e.k];
+        if (e.k === me) shake = Math.max(shake, e.how === 'spin' ? 0.35 : 0.8);
+        // coins pop out of a kart that gets hit
+        if (k) burst(coinGeo, [partMat.gold], k.x, 1.2, k.z, e.how === 'spin' || e.how === 'squash' ? 1 : 3, 5, 1, 0.9, 16);
+      } else if (e.t === 'wall') {
+        if (e.k === me) shake = Math.max(shake, Math.min(0.5, e.power * 0.04));
+        const k = race.karts[e.k];
+        if (k) burst(geo.box, [partMat.white, partMat.star], k.x, 0.6, k.z, 5, 4, 0.12, 0.35);
+      } else if (e.t === 'bump') {
+        if (e.k === me) shake = Math.max(shake, 0.25);
+      } else if (e.t === 'slammed') {
+        if (e.k === me || e.by === me) shake = Math.max(shake, e.k === me ? 0.6 : 0.3);
+        effect(e.x, 0.9, e.z, 1.6, false);
+        burst(geo.box, [partMat.white, partMat.star], e.x, 0.9, e.z, 10, 7, 0.16, 0.45);
+        const thief = race.karts[e.by];
+        if (thief) burst(coinGeo, [partMat.gold], e.x, 1.4, e.z, 1, 3, 1, 0.7, 12);
+      } else if (e.t === 'slam') {
+        const k = race.karts[e.k];
+        if (k) burst(geo.ball, [partMat.dust], k.x, 0.3, k.z, 4, 2, 0.3, 0.4, 0);
+      } else if (e.t === 'box') {
+        const k = race.karts[e.k];
+        if (!k) return;
+        let near = race.boxes[0];
+        for (const b of race.boxes) if (Math.hypot(b.x - k.x, b.z - k.z) < Math.hypot(near.x - k.x, near.z - k.z)) near = b;
+        burst(geo.box, partMat.rainbow, near.x, 1.2, near.z, 12, 6, 0.28, 0.7);
+      } else if (e.t === 'coin') {
+        const k = race.karts[e.k];
+        if (k) burst(geo.box, [partMat.star, partMat.gold], k.x, 1, k.z, 5, 3, 0.1, 0.4, 4);
+      } else if (e.t === 'turbo') {
+        const k = race.karts[e.k];
+        if (k) burst(geo.box, [partMat.spark[Math.max(0, Math.min(2, e.level - 1))]], k.x - Math.sin(k.h) * 1.3, 0.4, k.z - Math.cos(k.h) * 1.3, 8, 4, 0.14, 0.35, 6);
+      } else if (e.t === 'trick') {
+        const k = race.karts[e.k];
+        if (k) burst(geo.box, [partMat.star, partMat.white], k.x, k.y + 1, k.z, 10, 4, 0.16, 0.5, 2);
+      } else if (e.t === 'block') {
+        effect(e.x, 0.6, e.z, 1.2, false);
+        burst(geo.box, [partMat.white], e.x, 0.6, e.z, 6, 4, 0.14, 0.4);
+      }
     },
     project(x, y, z, w, h) {
       const v = new THREE.Vector3(x, y, z).project(camera);
@@ -919,6 +1162,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     },
     dispose() {
       for (const f of fx) (f.mesh.material as T.Material).dispose();
+      coinGeo.dispose();
+      for (const m of [partMat.smoke, partMat.dust, partMat.white, ...partMat.spark, ...partMat.rainbow]) m.dispose();
       disposeTree(scene);
       for (const g of Object.values(geo)) g.dispose();
       for (const m of Object.values(mats)) m.dispose();
@@ -933,7 +1178,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   return view;
 }
 
+const scratch = { color: 0 };
 function syncKart(v: KartView, k: Kart, dt: number, clock: number) {
+  if (k.hat !== v.hatName) v.wear(k.hat);
+  scratch.color = parseInt(k.color.slice(1), 16);
+  if (scratch.color !== v.color) v.color = scratch.color;
   v.root.position.set(k.x, 0, k.z);
   v.root.rotation.y = k.h;
   v.driftYaw = damp(v.driftYaw, k.drift * 0.38, 10, dt);
@@ -941,9 +1190,13 @@ function syncKart(v: KartView, k: Kart, dt: number, clock: number) {
   else v.spinA = v.spinA % (Math.PI * 2) > 0.2 ? v.spinA + dt * 15 : 0;
   if (k.tumble > 0) v.flipA = Math.min(Math.PI * 2, v.flipA + dt * 9);
   else v.flipA = 0;
+  // a trick off a ramp: a full spin in the air
+  if (k.trick && k.y > 0.05) v.trickA = Math.min(Math.PI * 2, v.trickA + dt * 13);
+  else if (k.y <= 0.05) v.trickA = 0;
   v.roll = damp(v.roll, -k.steer * 0.07 - k.drift * 0.06, 8, dt);
+  const wobble = k.wobble > 0 ? Math.sin(clock * 34) * 0.18 : 0;
   v.body.position.y = k.y;
-  v.body.rotation.set(-v.flipA, v.driftYaw + v.spinA, v.roll);
+  v.body.rotation.set(-v.flipA, v.driftYaw + v.spinA + v.trickA, v.roll + wobble);
   const size = k.shrink > 0 ? 0.62 : 1;
   const flat = k.squash > 0 ? 0.35 : 1;
   v.body.scale.set(0.85 * size * (flat < 1 ? 1.25 : 1), 0.85 * size * flat, 0.85 * size * (flat < 1 ? 1.25 : 1));
@@ -962,4 +1215,9 @@ function syncKart(v: KartView, k: Kart, dt: number, clock: number) {
     s.scale.setScalar(0.12 + Math.random() * 0.16 + level * 0.04);
   }
   v.sparkMat.color.setHex(level > 0 ? SPARK[level] : 0xfff3c0);
+  for (const g of v.trail.children) g.visible = k.trail && g.name === k.item;
+  const dizzy = k.spin > 0 || k.tumble > 0 || k.squash > 0;
+  v.stars.visible = dizzy;
+  if (dizzy) v.stars.rotation.y = clock * 7;
+  v.wind.visible = k.draft > 0.3 && Math.random() > 0.2;
 }

@@ -36,7 +36,7 @@ import {
   type Race,
   type Racer,
 } from '../src/os/arcade/games/palmdrive/logic.ts';
-import { F_STAR, applyFlags, carOf, configOf, endOf, events, finishOrder, flagsOf, guestState, hostState, parsePacket, winnerOf } from '../src/os/arcade/games/palmdrive/net.ts';
+import { F_DRAFT, F_SLAM, F_STAR, F_TRICK, F_WOBBLE, applyFlags, carOf, configOf, endOf, events, finishOrder, flagsOf, guestState, hostState, parsePacket, winnerOf } from '../src/os/arcade/games/palmdrive/net.ts';
 
 const t = buildTrack();
 const you = (name = 'you'): Racer => ({ name, color: '#e53935', kind: 'player' });
@@ -536,4 +536,32 @@ test('the host calls the winner from finish times; nobody wins if nobody finishe
   assert.deepEqual(finishOrder([[0, -2], [1, 95.2], [2, 91]]), [[2, 91], [1, 95.2], [0, -2]]);
   assert.equal(winnerOf([[0, -2], [1, 95.2], [2, 91]]), 2);
   assert.equal(winnerOf([[0, -2], [1, -2]]), null);
+});
+
+test('slams, tricks, wobbles, slipstreams and items held out behind travel in the kart flags', () => {
+  const r = race(2);
+  const [k, copy] = r.karts;
+  k.slamT = 0.2;
+  k.trick = true;
+  k.wobble = 0.4;
+  k.draft = 0.8;
+  for (const item of ['banana', 'green', 'red'] as const) {
+    k.item = item;
+    k.trail = true;
+    const f = flagsOf(k);
+    assert.equal(f & (F_SLAM | F_TRICK | F_WOBBLE | F_DRAFT), F_SLAM | F_TRICK | F_WOBBLE | F_DRAFT);
+    copy.item = null;
+    applyFlags(copy, f);
+    assert.ok(copy.slamT > 0 && copy.trick && copy.wobble > 0 && copy.draft > 0);
+    assert.ok(copy.trail && copy.item === item, `${item} held out behind`);
+  }
+  // an item in hand but not held out, or one that cannot trail, shows nothing behind
+  k.item = 'mushroom';
+  k.trail = false;
+  k.slamT = 0;
+  k.trick = false;
+  k.wobble = 0;
+  k.draft = 0;
+  applyFlags(copy, flagsOf(k));
+  assert.ok(!copy.trail && copy.slamT === 0 && !copy.trick && copy.wobble === 0 && copy.draft === 0);
 });

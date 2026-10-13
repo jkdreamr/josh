@@ -14,14 +14,22 @@ export const F_BOOST = 16;
 export const F_DRIFT_L = 32;
 export const F_DRIFT_R = 64;
 export const F_SQUASH = 128;
+/** Bits 8-9 hold the drift spark level and bits 10-11 the item held out behind (none, banana, green, red). */
+export const F_SLAM = 1 << 12;
+export const F_TRICK = 1 << 13;
+export const F_WOBBLE = 1 << 14;
+export const F_DRAFT = 1 << 15;
+const TRAILS = [null, 'banana', 'green', 'red'] as const;
 
-/** A kart as the network sees it. fin: finish time, -1 still racing, -2 out of time. */
-export type Car = { seat: number; x: number; z: number; y: number; h: number; v: number; p: number; f: number; fin: number };
+/** A kart as the network sees it. fin: finish time, -1 still racing, -2 out of time. look: paint and hat (garage.ts). */
+export type Car = { seat: number; x: number; z: number; y: number; h: number; v: number; p: number; f: number; fin: number; look: number };
 export type NetEv =
   | { y: 'spawn'; id: number; kind: ThingKind; x: number; z: number; vx: number; vz: number; vy: number; yy: number; tg: number; pg: number; gr: number }
   | { y: 'gone'; id: number }
   | { y: 'bolt' }
-  | { y: 'boom'; x: number; z: number };
+  | { y: 'boom'; x: number; z: number }
+  /** A slam from seat `to` landed on the sender's kart: that player pockets a coin. */
+  | { y: 'stole'; to: number };
 
 export type Packet =
   | { k: 'S'; round: number; go: number; cc: string; roster: number[]; cars: Car[] }
@@ -47,7 +55,12 @@ export function flagsOf(k: Kart) {
     (k.drift < 0 ? F_DRIFT_L : 0) |
     (k.drift > 0 ? F_DRIFT_R : 0) |
     (k.squash > 0 ? F_SQUASH : 0) |
-    (turboLevel(k.charge) << 8)
+    (turboLevel(k.charge) << 8) |
+    ((k.trail && k.item ? Math.max(0, TRAILS.indexOf(k.item as (typeof TRAILS)[number])) : 0) << 10) |
+    (k.slamT > 0 ? F_SLAM : 0) |
+    (k.trick ? F_TRICK : 0) |
+    (k.wobble > 0 ? F_WOBBLE : 0) |
+    (k.draft > 0.3 ? F_DRAFT : 0)
   );
 }
 
@@ -61,15 +74,30 @@ export function applyFlags(k: Kart, f: number) {
   k.squash = f & F_SQUASH ? 0.5 : 0;
   k.drift = f & F_DRIFT_L ? -1 : f & F_DRIFT_R ? 1 : 0;
   k.charge = [0, 0.8, 1.7, 2.7][(f >> 8) & 3];
+  const trail = TRAILS[(f >> 10) & 3];
+  k.trail = trail !== null;
+  if (trail) k.item = trail;
+  // a remote slam is live while its owner says so, and lands on us at most once
+  if (f & F_SLAM) {
+    if (k.slamT <= 0) k.slamHit = false;
+    k.slamT = Math.max(k.slamT, 0.15);
+  } else {
+    k.slamT = 0;
+    k.slamHit = false;
+  }
+  k.trick = !!(f & F_TRICK);
+  k.wobble = f & F_WOBBLE ? 0.3 : 0;
+  k.draft = f & F_DRAFT ? 0.6 : 0;
 }
 
-export const carOf = (k: Kart): Omit<Car, 'seat'> => ({ x: r2(k.x), z: r2(k.z), y: r2(k.y), h: r3(k.h), v: r1(k.v), p: r1(k.prog), f: flagsOf(k), fin: k.done === null ? -1 : r3(k.done) });
+export const carOf = (k: Kart, look = -1): Omit<Car, 'seat'> => ({ x: r2(k.x), z: r2(k.z), y: r2(k.y), h: r3(k.h), v: r1(k.v), p: r1(k.prog), f: flagsOf(k), fin: k.done === null ? -1 : r3(k.done), look });
 
-const packCar = (c: Omit<Car, 'seat'>) => [c.x, c.z, c.y, c.h, c.v, c.p, c.f, c.fin];
+const packCar = (c: Omit<Car, 'seat'>) => [c.x, c.z, c.y, c.h, c.v, c.p, c.f, c.fin, c.look];
 function unpackCar(a: unknown): Omit<Car, 'seat'> | null {
   if (!Array.isArray(a) || a.length < 8 || !a.slice(0, 8).every(num)) return null;
   const [x, z, y, h, v, p, f, fin] = a as number[];
-  return { x, z, y, h, v, p, f: f | 0, fin };
+  const look = num(a[8]) ? (a[8] as number) | 0 : -1;
+  return { x, z, y, h, v, p, f: f | 0, fin, look };
 }
 
 export const hostState = (round: number, go: number, cc: string, roster: number[], cars: Car[]) => ({
@@ -93,6 +121,7 @@ function parseEv(v: unknown): NetEv | null {
   if (e.y === 'gone') return num(e.id) ? { y: 'gone', id: e.id } : null;
   if (e.y === 'bolt') return { y: 'bolt' };
   if (e.y === 'boom') return num(e.x) && num(e.z) ? { y: 'boom', x: e.x, z: e.z } : null;
+  if (e.y === 'stole') return seatOk(e.to) ? { y: 'stole', to: e.to } : null;
   if (e.y !== 'spawn' || !KINDS.includes(e.kind as ThingKind)) return null;
   const keys = ['id', 'x', 'z', 'vx', 'vz', 'vy', 'yy', 'tg', 'pg', 'gr'] as const;
   if (!keys.every((key) => num(e[key]))) return null;

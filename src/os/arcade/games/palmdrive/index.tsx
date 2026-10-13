@@ -19,6 +19,7 @@ import {
   spawn,
   standings,
   step,
+  stolen,
   strike,
   turboLevel,
   type Cc,
@@ -209,6 +210,10 @@ type Hud = {
   item: Item | null;
   uses: number;
   rolling: boolean;
+  /** The banana or shell is held out behind as a shield. */
+  trailing: boolean;
+  /** Looking behind. */
+  rear: boolean;
   time: string;
   lights: number;
   banner: string | null;
@@ -259,8 +264,10 @@ function Play({ mode }: { mode: Mode }) {
     reported: false,
     over: false,
   });
-  const tap = useRef({ item: false, back: false, gas: false, cash: false });
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, uses: 0, rolling: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
+  const tap = useRef({ back: false, gas: false, cash: false, slam: false });
+  /** The item button was holding a banana or shell out behind last frame. */
+  const holding = useRef(false);
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, uses: 0, rolling: false, trailing: false, rear: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
@@ -271,6 +278,15 @@ function Play({ mode }: { mode: Mode }) {
   const dots = useRef(new Map<number, SVGCircleElement>());
   const tags = useRef(new Map<number, HTMLDivElement>());
   const lastLevel = useRef(0);
+  /** A short buzz on phones that can. */
+  const buzz = (ms: number) => {
+    if (!shellRef.current.touch) return;
+    try {
+      navigator.vibrate?.(ms);
+    } catch {
+      /* not allowed here */
+    }
+  };
 
   useEffect(() => {
     const host = ref.current;
@@ -337,6 +353,7 @@ function Play({ mode }: { mode: Mode }) {
     } else if (ev.y === 'gone') removeThing(r, ev.id, false);
     else if (ev.y === 'bolt') strike(r, idx(from));
     else if (ev.y === 'boom') boom(r, ev.x, ev.z, idx(from));
+    else if (ev.y === 'stole' && ev.to === r.karts[r.me]?.seat) stolen(r, r.karts[r.me]);
   };
 
   useEffect(() => {
@@ -425,16 +442,26 @@ function Play({ mode }: { mode: Mode }) {
         inp.drift = keys.down('Space', 'ShiftLeft', 'ShiftRight');
         if (keys.pressed('Space', 'ShiftLeft', 'ShiftRight')) inp.hop = true;
         inp.fwd = keys.down('up');
-        const back = keys.pressed('KeyZ', 'KeyQ') || tap.current.back;
-        const use = keys.pressed('KeyX', 'KeyE', 'Enter') || tap.current.item;
-        if (back || use) {
+        // Bananas and shells trail behind as a shield while the item button is held and fly when it is let go; other
+        // items go off on the press. Z (or the back button) throws backwards right away.
+        const trailable = me.roll === 0 && (me.item === 'banana' || me.item === 'green' || me.item === 'red');
+        const itemDown = keys.down('KeyX', 'KeyE', 'Enter');
+        const itemPress = keys.pressed('KeyX', 'KeyE', 'Enter');
+        const backPress = keys.pressed('KeyZ', 'KeyQ') || tap.current.back;
+        let use = itemPress;
+        if (backPress) use = true;
+        else if (trailable) use = (holding.current && !itemDown) || (itemPress && !itemDown);
+        if (use) {
           inp.use = true;
-          inp.back = back || keys.down('down');
+          inp.back = backPress || keys.down('down');
         }
+        inp.hold = trailable && itemDown && !backPress;
+        holding.current = inp.hold;
+        if (keys.pressed('KeyC') || tap.current.slam) inp.slam = true;
         if (keys.pressed('KeyB') || tap.current.cash) inp.cash = true;
         if (r.time < 0 && (keys.pressed('up') || tap.current.gas)) pressGas(r, me);
       }
-      tap.current = { item: false, back: false, gas: false, cash: false };
+      tap.current = { back: false, gas: false, cash: false, slam: false };
 
       step(r, dt);
       const evs = r.events.splice(0);
@@ -464,7 +491,7 @@ function Play({ mode }: { mode: Mode }) {
       if (musicRef.current === 'on' && now !== null && me && r.time >= 0 && me.done === null && !n.over) song.current!.tick(now, lapOf(r, me) === r.laps);
 
       if (v) {
-        v.frame(r, Math.max(0, r.me), dt, clock.current);
+        v.frame(r, Math.max(0, r.me), dt, clock.current, keys.down('KeyV'));
         placeOverlays(r, v);
       }
 
@@ -519,6 +546,8 @@ function Play({ mode }: { mode: Mode }) {
     } else if (e.t === 'gone' && e.local) out.push({ y: 'gone', id: e.id });
     else if (e.t === 'bolt') out.push({ y: 'bolt' });
     else if (e.t === 'boom') out.push({ y: 'boom', x: round(e.x), z: round(e.z) });
+    // our kart was slammed by someone else's: tell them they won our coin
+    else if (e.t === 'slammed' && e.coin && e.k === r.me && r.karts[e.by]?.kind === 'remote') out.push({ y: 'stole', to: r.karts[e.by].seat });
   }
 
   function react(r: Race, e: Ev) {
@@ -547,8 +576,34 @@ function Play({ mode }: { mode: Mode }) {
         else if (e.item === 'blue') sfx.tone({ freq: 900, to: 500, dur: 0.6, type: 'triangle', vol: 0.12 });
         else if (e.item !== 'bolt') sfx.tone({ freq: 700, to: 300, dur: 0.18, type: 'triangle', vol: 0.15 });
         break;
+      case 'slam':
+        if (mine) sfx.tone({ freq: 240, to: 120, dur: 0.14, type: 'sawtooth', vol: 0.12 });
+        break;
+      case 'slammed':
+        if (e.k === r.me) {
+          sfx.play('hit', 0.8);
+          setFlash({ id: Date.now(), kind: 'hit' });
+          buzz(40);
+        } else if (e.by === r.me) sfx.play(e.coin ? 'coin' : 'hit', e.coin ? 1.3 : 1.5);
+        break;
+      case 'draft':
+        if (mine) sfx.tone({ freq: 200, to: 700, dur: 0.35, type: 'triangle', vol: 0.1 });
+        break;
+      case 'block':
+        if (mine) {
+          sfx.play('tick', 0.8);
+          sfx.play('hit', 1.4);
+        }
+        break;
+      case 'ramp':
+        if (mine) sfx.play('jump', 0.9);
+        break;
+      case 'trick':
+        if (mine) sfx.play('select', 1.6);
+        break;
       case 'hit':
         if (mine) {
+          buzz(e.how === 'spin' || e.how === 'squash' ? 60 : 120);
           sfx.play(e.how === 'spin' || e.how === 'squash' ? 'hit' : 'boom');
           setFlash({ id: Date.now(), kind: 'hit' });
         }
@@ -646,6 +701,8 @@ function Play({ mode }: { mode: Mode }) {
       item: me.roll > 0 ? ITEMS[Math.floor(clock.current * 12) % ITEMS.length] : me.item,
       uses: me.uses,
       rolling: me.roll > 0,
+      trailing: me.trail,
+      rear: keys.down('KeyV') && me.done === null,
       time: fmtTime(Math.max(0, me.done ?? r.time)),
       lights,
       banner,
@@ -695,7 +752,7 @@ function Play({ mode }: { mode: Mode }) {
           ))}
       {shell.status !== 'ready' && !shell.compact && (
         <div className={`g-palmdrive-hud${shell.touch ? ' is-touch' : ''}`}>
-          <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}` : 'No item'}>
+          <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}${hud.trailing ? ' is-trailing' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}${hud.trailing ? ' behind you' : ''}` : 'No item'}>
             {hud.item ? <ItemIcon item={hud.item} /> : null}
             {hud.item === 'triple' && !hud.rolling && hud.uses > 0 && <b>{hud.uses}</b>}
           </div>
@@ -770,6 +827,7 @@ function Play({ mode }: { mode: Mode }) {
             </div>
           )}
           {hud.wrong && <div className="g-palmdrive-wrong">wrong way</div>}
+          {hud.rear && <div className="g-palmdrive-rear">behind you</div>}
           {hud.results && (
             <ol className="g-palmdrive-results" aria-label="Race Results">
               {board.map((x, i) => (
@@ -796,29 +854,33 @@ function Play({ mode }: { mode: Mode }) {
             </button>
           </div>
           <div className="g-palmdrive-actions">
-            <button
-              type="button"
-              tabIndex={-1}
-              className="g-palmdrive-back"
-              aria-label="Throw back"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                tap.current.back = true;
-              }}
-            >
-              <Chevron d="M6 9l6 6 6-6" />
-            </button>
-            <button
-              type="button"
-              tabIndex={-1}
-              className="g-palmdrive-use"
-              aria-label="Use item"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                tap.current.item = true;
-                if (race.current && race.current.time < 0) tap.current.gas = true;
-              }}
-            >
+            <div className="g-palmdrive-minis">
+              <button
+                type="button"
+                tabIndex={-1}
+                className="g-palmdrive-bump"
+                aria-label="Slam the kart beside you"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  tap.current.slam = true;
+                }}
+              >
+                bump
+              </button>
+              <button
+                type="button"
+                tabIndex={-1}
+                className="g-palmdrive-back"
+                aria-label="Throw back"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  tap.current.back = true;
+                }}
+              >
+                <Chevron d="M6 9l6 6 6-6" />
+              </button>
+            </div>
+            <button type="button" tabIndex={-1} className={`g-palmdrive-use${hud.trailing ? ' is-trailing' : ''}`} aria-label="Use item (hold to keep it behind you)" {...hold('KeyX')}>
               {hud.item && !hud.rolling ? <ItemIcon item={hud.item} size={34} /> : 'item'}
             </button>
             <button type="button" tabIndex={-1} className="g-palmdrive-drift" aria-label="Drift" {...hold('Space')}>
