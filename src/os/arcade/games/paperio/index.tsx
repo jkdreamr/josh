@@ -8,6 +8,7 @@ import { SKINS, colorOf, freshLocker, loadBests, loadLocker, record, saveLocker,
 import { HowToPlay, SkinIcon, SkinSheet, createMiniMap, paintMiniMap, type MiniMap } from './hud';
 import { TICK, drive, ownerHash, percent, ranking, type Ev } from './world';
 import { createOnline } from './session';
+import { BPM, JINGLE_CRASH, JINGLE_WIN, Sequencer, hz, midi, type Note } from './music';
 import { meta } from './meta';
 import './paperio.css';
 
@@ -15,6 +16,8 @@ const MODE = defineSetting('paperio:mode', ['solo', '2p'] as const, 'solo');
 const BOTS = defineSetting('paperio:bots', ['4', '8', '12'] as const, '8');
 const LEVEL = defineSetting('paperio:level', LEVEL_NAMES, 'normal');
 const LENGTH = defineSetting('paperio:length', ['2', '3', '5'] as const, '3');
+/** The soundtrack; the shell's mute button silences it with everything else. */
+const MUSIC = defineSetting('paperio:music', ['on', 'off'] as const, 'on', { live: true });
 /** Online: fill the room with bots up to this many players. */
 const FILL = defineSetting('paperio:fill', ['0', '8', '12'] as const, '8');
 
@@ -107,6 +110,7 @@ function Extras() {
     shell.root.current?.focus({ preventScroll: true });
   };
   const skin = skinOf(locker.pick);
+  const [music, setMusic] = useSetting(MUSIC);
   return (
     <div className="g-paperio-extras">
       <button type="button" className="arcade-btn" onClick={() => setOpen('help')}>
@@ -118,6 +122,13 @@ function Extras() {
         <span className="g-paperio-count">
           {locker.have.length}/{SKINS.length}
         </span>
+      </button>
+      <button type="button" className="arcade-btn" aria-pressed={music === 'on'} aria-label={music === 'on' ? 'Music on' : 'Music off'} onClick={() => setMusic(music === 'on' ? 'off' : 'on')}>
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+          <path d="M9 18V6l10-2v12M9 18a3 3 0 1 1-6 0a3 3 0 1 1 6 0zM19 16a3 3 0 1 1-6 0a3 3 0 1 1 6 0z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+          {music !== 'on' && <path d="M3 3l18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
+        </svg>
+        {music === 'on' ? 'Music' : 'No Music'}
       </button>
       {open === 'help' && <HowToPlay root={shell.root.current} touch={shell.touch} onClose={close} />}
       {open === 'skins' && <SkinSheet root={shell.root.current} locker={locker} onPick={(id) => saveLocker({ ...locker, pick: id })} onClose={close} />}
@@ -178,6 +189,40 @@ const STREAK = ['', '', 'double cut!', 'triple cut!', 'quad cut!', 'rampage!', '
 const deathLine = (cause: string, killer: string | null) =>
   cause === 'self' ? 'you ran into your own trail' : cause === 'head' ? (killer ? `head on with ${killer}` : 'head on') : cause === 'wiped' ? `${killer ?? 'someone'} took all your land` : cause === 'left' ? 'you left' : `${killer ?? 'someone'} cut your trail`;
 
+/** One note of the soundtrack on the arcade synth, `delay` seconds from now. */
+function playNote(note: Note, delay: number, stepLen: number) {
+  const dur = note.len * stepLen;
+  switch (note.voice) {
+    case 'lead':
+      sfx.tone({ freq: hz(note.midi), dur: dur * 0.92, type: 'triangle', vol: 0.06, delay });
+      sfx.tone({ freq: hz(note.midi + 12), dur: dur * 0.5, type: 'sine', vol: 0.015, delay });
+      break;
+    case 'pluck':
+      sfx.tone({ freq: hz(note.midi), dur: 0.09, type: 'square', vol: 0.016, delay });
+      break;
+    case 'bass':
+      sfx.tone({ freq: hz(note.midi), dur: dur * 0.9, type: 'triangle', vol: 0.15, delay });
+      break;
+    case 'kick':
+      sfx.tone({ freq: 140, to: 44, dur: 0.16, type: 'sine', vol: 0.17, delay });
+      break;
+    case 'snap':
+      sfx.noise(0.05, 0.05, delay);
+      break;
+    case 'hat':
+      sfx.noise(0.02, note.tense ? 0.014 : 0.012, delay);
+      break;
+    case 'tick':
+      sfx.tone({ freq: hz(note.midi), dur: 0.035, type: 'square', vol: 0.01, delay });
+      break;
+  }
+}
+
+function playJingle(names: string[]) {
+  const step = 60 / BPM / 4;
+  names.forEach((n, i) => sfx.tone({ freq: hz(midi(n)), dur: i === names.length - 1 ? 0.5 : 0.14, type: 'triangle', vol: 0.11, delay: 0.04 + i * step * 1.5 }));
+}
+
 function Play({ mode }: { mode: Mode }) {
   const shell = useShell();
   const shellRef = useRef(shell);
@@ -190,6 +235,11 @@ function Play({ mode }: { mode: Mode }) {
   const [length] = useSetting(LENGTH);
   const [fill] = useSetting(FILL);
   const locker = useLocker();
+  const [music] = useSetting(MUSIC);
+  const musicRef = useRef(music);
+  musicRef.current = music;
+  const song = useRef<Sequencer | null>(null);
+  song.current ??= new Sequencer(playNote);
   const { ref, size } = useCanvas<HTMLDivElement>();
   const sizeRef = useRef(size);
   sizeRef.current = size;
@@ -495,7 +545,8 @@ function Play({ mode }: { mode: Mode }) {
     if (e.t === 'win') {
       if (localIdx >= 0) {
         s.won = true;
-        sfx.play('win');
+        if (musicRef.current === 'on') playJingle(JINGLE_WIN);
+        else sfx.play('win');
         setFlash({ id: Date.now(), kind: 'win' });
         call('you own the farm!', '100% of the map', 'gold', localIdx);
       }
@@ -528,6 +579,7 @@ function Play({ mode }: { mode: Mode }) {
       buzz(120);
       setFlash({ id: Date.now(), kind: 'dead' });
       const line = deathLine(e.cause, killer && killer !== victim ? killer.name : null);
+      if (musicRef.current === 'on' && mode === 'solo') playJingle(JINGLE_CRASH);
       if (mode === 'solo') {
         s.slowUntil = s.clock + 1.25;
         s.endAt = s.clock + 1.45;
@@ -601,7 +653,8 @@ function Play({ mode }: { mode: Mode }) {
     const pa = percent(w, a.id);
     const pb = percent(w, b.id);
     const title = Math.abs(pa - pb) < 0.005 ? 'Draw' : pa > pb ? 'Player 1 Wins' : 'Player 2 Wins';
-    sfx.play('win');
+    if (musicRef.current === 'on') playJingle(JINGLE_WIN);
+    else sfx.play('win');
     shellRef.current.gameOver(undefined, { title, detail: `${fmtPct(pa)} to ${fmtPct(pb)} at the buzzer. Cuts: ${a.kills} to ${b.kills}.${unl}` });
   }
 
@@ -837,6 +890,13 @@ function Play({ mode }: { mode: Mode }) {
           if (/^\d$/.test(text)) sfx.tone({ freq: 440, dur: 0.14, type: 'square', vol: 0.12 });
           else if (text === 'go!') sfx.tone({ freq: 880, dur: 0.4, type: 'square', vol: 0.14 });
         }
+      }
+      // the soundtrack, with its tension layer while one of our heads is out with a trail
+      const audioNow = sfx.clock();
+      if (live && !s.ended && musicRef.current === 'on' && audioNow !== null && !(c.countdown?.() ?? 0)) {
+        let tense = false;
+        for (const id of c.locals) if (w.players[id]?.out) tense = true;
+        song.current!.tick(audioNow, tense);
       }
       s.updateMs += (performance.now() - t0 - s.updateMs) * 0.05;
       if (!live || s.ended) return;

@@ -712,3 +712,23 @@ test('online: the host calls time and everyone reports the same winner', () => {
   assert.ok(room.reports.every((r) => r === room.reports[0]));
   for (const c of all) c.dispose();
 });
+
+import { BPM, SONG, STEPS, Sequencer, midi } from '../src/os/arcade/games/paperio/music.ts';
+
+test('the soundtrack loops, and its tension layer only plays while you are out', () => {
+  assert.equal(midi('A4'), 69);
+  assert.equal(SONG.length, STEPS);
+  assert.ok(SONG.every((notes) => notes.every((n) => Number.isFinite(n.midi) && n.len > 0)));
+  const calm: string[] = [];
+  const tense: string[] = [];
+  new Sequencer((n) => calm.push(n.voice)).tick(10, false, 2);
+  new Sequencer((n) => tense.push(n.voice)).tick(10, true, 2);
+  assert.ok(!calm.includes('tick'));
+  assert.ok(tense.includes('tick'));
+  assert.ok(tense.length > calm.length);
+  // two seconds of music is about the right number of sixteenths
+  const steps = Math.round(2.05 / (60 / BPM / 4));
+  const seq = new Sequencer(() => {});
+  seq.tick(10, false, 2);
+  assert.ok(Math.abs(seq.step - steps) <= 1);
+});
