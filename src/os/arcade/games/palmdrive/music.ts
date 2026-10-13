@@ -1,7 +1,9 @@
-// A little chiptune for the races, played through the arcade synth: sixteen bars on a loop that speeds up for the
-// final lap, and a jingle at the flag. Pure data and a scheduler; the game hands it a function that plays a note.
+// The race soundtrack: a little house tune played through the arcade synth. Kick on every beat, offbeat bass and
+// hats, claps on two and four, chord stabs and a hook over A minor, F, C and G. Sixteen bars on a loop that speeds
+// up for the final lap, and a jingle at the flag. Pure data and a scheduler; the game hands it a function that plays
+// a note.
 
-export type Voice = 'lead' | 'bass' | 'kick' | 'hat';
+export type Voice = 'lead' | 'stab' | 'bass' | 'kick' | 'clap' | 'hat' | 'open';
 export type Note = { step: number; midi: number; len: number; voice: Voice };
 
 const PITCH: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
@@ -13,45 +15,55 @@ export function midi(name: string) {
 }
 export const hz = (n: number) => 440 * 2 ** ((n - 69) / 12);
 
-/** The tune, one bar per line: [16th note step in the bar, note, length in 16ths]. */
-const LEAD: [number, string, number][][] = [
-  [[0, 'E5', 2], [2, 'G5', 2], [4, 'C6', 2], [6, 'G5', 2], [8, 'A5', 2], [10, 'G5', 2], [12, 'E5', 4]],
-  [[0, 'D5', 2], [2, 'G5', 2], [4, 'B5', 2], [6, 'G5', 2], [8, 'A5', 2], [10, 'B5', 2], [12, 'D6', 4]],
-  [[0, 'C6', 2], [2, 'B5', 2], [4, 'A5', 2], [6, 'E5', 2], [8, 'A5', 2], [10, 'C6', 2], [12, 'E6', 4]],
-  [[0, 'F5', 2], [2, 'A5', 2], [4, 'C6', 2], [6, 'A5', 2], [8, 'G5', 2], [10, 'F5', 2], [12, 'E5', 2], [14, 'D5', 2]],
-  [[0, 'E5', 2], [2, 'G5', 2], [4, 'C6', 2], [6, 'G5', 2], [8, 'A5', 2], [10, 'G5', 2], [12, 'E5', 4]],
-  [[0, 'D5', 2], [2, 'G5', 2], [4, 'B5', 2], [6, 'G5', 2], [8, 'A5', 2], [10, 'B5', 2], [12, 'D6', 4]],
-  [[0, 'A5', 2], [2, 'C6', 2], [4, 'F6', 2], [6, 'E6', 2], [8, 'D6', 2], [10, 'C6', 2], [12, 'A5', 4]],
-  [[0, 'B5', 2], [2, 'D6', 2], [4, 'G6', 4], [8, 'F6', 2], [10, 'D6', 2], [12, 'B5', 2], [14, 'G5', 2]],
-  [[0, 'A5', 2], [2, 'C6', 2], [4, 'E6', 2], [6, 'C6', 2], [8, 'B5', 2], [10, 'A5', 2], [12, 'E5', 4]],
-  [[0, 'F5', 2], [2, 'A5', 2], [4, 'C6', 2], [6, 'F6', 2], [8, 'E6', 2], [10, 'C6', 2], [12, 'A5', 4]],
-  [[0, 'G5', 2], [2, 'C6', 2], [4, 'E6', 2], [6, 'G6', 2], [8, 'E6', 2], [10, 'C6', 2], [12, 'G5', 4]],
-  [[0, 'B5', 2], [2, 'D6', 2], [4, 'G6', 2], [6, 'D6', 2], [8, 'B5', 2], [10, 'G5', 2], [12, 'D5', 4]],
-  [[0, 'C6', 4], [4, 'B5', 2], [6, 'A5', 2], [8, 'E6', 4], [12, 'C6', 4]],
-  [[0, 'A5', 4], [4, 'G5', 2], [6, 'F5', 2], [8, 'C6', 4], [12, 'A5', 4]],
-  [[0, 'B5', 2], [2, 'D6', 2], [4, 'G6', 2], [6, 'F6', 2], [8, 'E6', 2], [10, 'D6', 2], [12, 'C6', 2], [14, 'B5', 2]],
-  [[0, 'D6', 8], [8, 'G5', 2], [10, 'A5', 2], [12, 'B5', 2], [14, 'D6', 2]],
-];
-/** Bass root and fifth for each bar. */
-const CHORDS: [string, string][] = [
-  ['C3', 'G3'], ['G2', 'D3'], ['A2', 'E3'], ['F2', 'C3'], ['C3', 'G3'], ['G2', 'D3'], ['F2', 'C3'], ['G2', 'D3'],
-  ['A2', 'E3'], ['F2', 'C3'], ['C3', 'G3'], ['G2', 'D3'], ['A2', 'E3'], ['F2', 'C3'], ['G2', 'D3'], ['G2', 'D3'],
+/** One chord per bar, round and round: stab voicing and bass root and fifth. */
+const CHORDS: { stab: string[]; root: string; fifth: string }[] = [
+  { stab: ['A3', 'C4', 'E4', 'G4'], root: 'A2', fifth: 'E3' },
+  { stab: ['A3', 'C4', 'F4'], root: 'F2', fifth: 'C3' },
+  { stab: ['G3', 'C4', 'E4'], root: 'C3', fifth: 'G3' },
+  { stab: ['G3', 'B3', 'D4'], root: 'G2', fifth: 'D3' },
 ];
 
-export const BPM = 150;
-export const STEPS = LEAD.length * 16;
+type Bar = [number, string, number][];
+/** The hook, one bar per chord: [16th step in the bar, note, length in 16ths]. */
+const HOOK: Bar[] = [
+  [[0, 'E6', 1], [2, 'E6', 1], [3, 'C6', 1], [6, 'A5', 2], [10, 'E6', 1], [11, 'D6', 1], [12, 'C6', 2], [14, 'A5', 2]],
+  [[0, 'F6', 1], [2, 'F6', 1], [3, 'C6', 1], [6, 'A5', 2], [10, 'F6', 1], [11, 'E6', 1], [12, 'C6', 2], [14, 'A5', 2]],
+  [[0, 'E6', 1], [2, 'E6', 1], [3, 'C6', 1], [6, 'G5', 2], [10, 'E6', 1], [11, 'D6', 1], [12, 'C6', 2], [14, 'G5', 2]],
+  [[0, 'D6', 1], [2, 'D6', 1], [3, 'B5', 1], [6, 'G5', 2], [10, 'D6', 1], [11, 'C6', 1], [12, 'B5', 2], [14, 'D6', 2]],
+];
+/** The answer that closes the loop, climbing higher. */
+const ANSWER: Bar[] = [
+  [[0, 'A5', 2], [2, 'C6', 2], [4, 'E6', 2], [6, 'G6', 2], [8, 'E6', 2], [10, 'C6', 1], [11, 'D6', 1], [12, 'E6', 4]],
+  [[0, 'F6', 2], [2, 'E6', 2], [4, 'C6', 2], [6, 'A5', 2], [8, 'C6', 2], [10, 'A5', 1], [11, 'C6', 1], [12, 'F6', 4]],
+  [[0, 'E6', 2], [2, 'G6', 2], [4, 'E6', 2], [6, 'C6', 2], [8, 'G5', 2], [10, 'C6', 1], [11, 'D6', 1], [12, 'E6', 4]],
+  [[0, 'D6', 2], [2, 'B5', 2], [4, 'G5', 2], [6, 'B5', 2], [8, 'D6', 4], [12, 'G6', 2], [14, 'F6', 2]],
+];
+/** Bars 1-4 are the groove on its own, 5-12 bring in the stabs and the hook, 13-16 answer it. */
+const LEAD: (Bar | null)[] = [null, null, null, null, ...HOOK, ...HOOK, ...ANSWER];
+const STABS = [2, 6, 10, 13];
+const BARS = LEAD.length;
+
+export const BPM = 124;
+export const STEPS = BARS * 16;
 /** Tempo for the final lap. */
-export const FAST = 1.15;
+export const FAST = 1.1;
 
 function build(): Note[][] {
   const at: Note[][] = Array.from({ length: STEPS }, () => []);
-  LEAD.forEach((bar, b) => {
-    for (const [st, name, len] of bar) at[b * 16 + st].push({ step: b * 16 + st, midi: midi(name), len, voice: 'lead' });
-    const [root, fifth] = CHORDS[b];
-    for (const [st, name] of [[0, root], [4, fifth], [8, root], [12, fifth]] as const) at[b * 16 + st].push({ step: b * 16 + st, midi: midi(name), len: 3, voice: 'bass' });
-    for (const st of [0, 8]) at[b * 16 + st].push({ step: b * 16 + st, midi: 0, len: 1, voice: 'kick' });
-    for (const st of [4, 12, 14]) at[b * 16 + st].push({ step: b * 16 + st, midi: 0, len: 1, voice: 'hat' });
-  });
+  const add = (step: number, voice: Voice, name: string | null, len: number) => at[step].push({ step, midi: name ? midi(name) : 0, len, voice });
+  for (let b = 0; b < BARS; b++) {
+    const o = b * 16;
+    const chord = CHORDS[b % CHORDS.length];
+    for (const st of [0, 4, 8, 12]) add(o + st, 'kick', null, 1);
+    for (const st of [4, 12]) add(o + st, 'clap', null, 1);
+    // the last bar rolls into the top of the loop
+    if (b === BARS - 1) for (const st of [13, 14, 15]) add(o + st, 'clap', null, 1);
+    for (let st = 0; st < 16; st++) add(o + st, st % 4 === 2 ? 'open' : 'hat', null, 1);
+    // offbeat bass, up to the fifth for the last hit of the bar
+    for (const st of [2, 6, 10, 14]) add(o + st, 'bass', st === 14 ? chord.fifth : chord.root, 2);
+    if (b >= 4) for (const st of STABS) for (const n of chord.stab) add(o + st, 'stab', n, 2);
+    for (const [st, name, len] of LEAD[b] ?? []) add(o + st, 'lead', name, len);
+  }
   return at;
 }
 /** Every note, grouped by the 16th step it starts on. */

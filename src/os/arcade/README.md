@@ -84,7 +84,7 @@ function TouchControls(props: { dpad?: boolean | 'x' | 'y'; buttons?: { key: str
 const sfx: {
   play(name: 'blip' | 'select' | 'jump' | 'coin' | 'hit' | 'boom' | 'win' | 'lose' | 'tick', pitch?: number): void;
   tone(t: { freq: number; to?: number; dur?: number; type?: OscillatorType; vol?: number; delay?: number }): void;
-  noise(dur?: number, vol?: number): void;
+  noise(dur?: number, vol?: number, delay?: number): void;
   unlock(): void; isMuted(): boolean; setMuted(m: boolean): void; toggleMute(): void; subscribe(fn: () => void): () => void;
   clock(): number | null;   // audio time in seconds while sound is on and playing
 };
@@ -105,7 +105,7 @@ function useThree(): typeof import('three') | null;   // null until loaded
 
 **TouchControls** renders an on-screen d-pad (left) and round buttons (right) on touch devices only, while playing. They feed the same `KeyState`, so `keys.down('left')` works for both. Example: `<TouchControls dpad buttons={[{ key: 'Space', label: 'jump' }]} />`. Tapping the canvas is also fine; use pointer events.
 
-**sfx** is a tiny WebAudio synth. No audio files. The mute state is shared by every game and persisted in localStorage (`arcade:muted`). For music, schedule notes a little ahead with `tone({ delay })` against `sfx.clock()`, which is null while muted or before the first tap, so a song never bunches up when sound comes back (Palm Drive's `music.ts` is an example).
+**sfx** is a tiny WebAudio synth. No audio files. The mute state is shared by every game and persisted in localStorage (`arcade:muted`). For music, schedule notes a little ahead with `tone({ delay })` (and drums with `noise(dur, vol, delay)`) against `sfx.clock()`, which is null while muted or before the first tap, so a song never bunches up when sound comes back (Palm Drive's `music.ts` is an example).
 
 **loadThree / useThree** import `three` dynamically, so every 3D game shares one lazily loaded chunk and none of it lands in the initial bundle.
 
