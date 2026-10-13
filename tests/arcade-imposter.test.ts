@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mulberry32 } from '../src/os/arcade/kit/party-core.ts';
-import { canSteal, cardFor, clueOrder, deal, imposterCount, maxImposters, pairsFor, playersFor, roundPoints, secretsFor, vote } from '../src/os/arcade/games/imposter/logic.ts';
-import { CATEGORIES, CATEGORY_IDS } from '../src/os/arcade/games/imposter/words.ts';
+import { COVERS, canSteal, cardFor, clueOrder, coverFor, deal, imposterCount, inkEm, maxImposters, pairsFor, parseDecks, playersFor, roundPoints, secretsFor, vote } from '../src/os/arcade/games/imposter/logic.ts';
+import { ADULT_IDS, CATEGORIES, CATEGORY_IDS, DEFAULT_IDS, categoryName } from '../src/os/arcade/games/imposter/words.ts';
 
 const clean = /^[A-Z0-9][A-Za-z0-9 '.-]*$/;
 
@@ -41,10 +41,10 @@ test('every seat can be the imposter', () => {
   assert.equal(seen.size, 5);
 });
 
-test('cards: the crew sees the word, the imposter a redacted card, or a close word that looks the same', () => {
+test('cards: the crew sees the word, the imposter a cover the same size, or a close word that looks the same', () => {
   const round = deal(5, 1, { word: 'Beach', category: 'places' }, mulberry32(3));
   const bad = round.imposters[0];
-  for (let i = 0; i < 5; i++) assert.deepEqual(cardFor(round, i), i === bad ? { kind: 'imposter' } : { kind: 'word', word: 'Beach' });
+  for (let i = 0; i < 5; i++) assert.deepEqual(cardFor(round, i), i === bad ? { kind: 'imposter', cover: coverFor('Beach') } : { kind: 'word', word: 'Beach' });
 
   const close = deal(6, 2, { word: 'Beach', decoy: 'Pool', category: 'places' }, mulberry32(9));
   assert.deepEqual([close.word, close.decoy].sort(), ['Beach', 'Pool']);
@@ -101,7 +101,7 @@ test('word lists are full, clean and never repeat across categories', () => {
       everywhere.set(w.toLowerCase(), id);
     }
   }
-  assert.equal(secretsFor([]).length, CATEGORY_IDS.reduce((n, id) => n + CATEGORIES[id].words.length, 0));
+  assert.equal(secretsFor([]).length, DEFAULT_IDS.reduce((n, id) => n + CATEGORIES[id].words.length, 0));
   assert.ok(secretsFor(['food']).every((s) => s.category === 'food'));
 });
 
@@ -114,6 +114,7 @@ test('close word pairs are distinct, clean and plentiful in every category', () 
       assert.match(a, clean, `${id}: "${a}" is clean`);
       assert.match(b, clean, `${id}: "${b}" is clean`);
       assert.notEqual(a.toLowerCase(), b.toLowerCase(), `${id}: ${a} pairs with something else`);
+      assert.ok(Math.abs(inkEm(a) - inkEm(b)) <= 2, `${id}: ${a} and ${b} are too different in length to pass at a glance`);
       const key = [a, b].map((w) => w.toLowerCase()).sort().join('|');
       assert.ok(!keys.has(key), `${id}: ${a} and ${b} appear twice`);
       keys.add(key);
@@ -121,5 +122,56 @@ test('close word pairs are distinct, clean and plentiful in every category', () 
   }
   const food = pairsFor(['food']);
   assert.ok(food.length && food.every((s) => s.category === 'food' && typeof s.decoy === 'string'));
-  assert.equal(pairsFor([]).length, CATEGORY_IDS.reduce((n, id) => n + CATEGORIES[id].pairs.length, 0));
+  assert.equal(pairsFor([]).length, DEFAULT_IDS.reduce((n, id) => n + CATEGORIES[id].pairs.length, 0));
+});
+
+test("an imposter's cover takes up as much of the card as the crew's word", () => {
+  // The estimate tracks the face: wide letters cost more than narrow ones, and longer is wider.
+  assert.ok(inkEm('Mom') > inkEm('Lil'));
+  assert.ok(inkEm('Kangaroo') > inkEm('Dog'));
+  assert.equal(inkEm(''), 0);
+  const widths = COVERS.map(inkEm);
+  assert.deepEqual(widths, [...widths].sort((a, b) => a - b), 'covers run shortest to longest');
+  const dealt = new Set(CATEGORY_IDS.flatMap((id) => [...CATEGORIES[id].words, ...CATEGORIES[id].pairs.flat()].map((w) => w.toLowerCase())));
+  const used = new Set<string>();
+  for (const cover of COVERS) {
+    assert.match(cover, /^[A-Z][A-Za-z ',]*$/, `cover "${cover}" is clean`);
+    assert.ok(!dealt.has(cover.toLowerCase()), `"${cover}" could be someone's real word`);
+    assert.match(cover, /imposter|fake|fraud|bluff|sus|you|no word/i, `"${cover}" says you're the imposter`);
+  }
+  for (const id of CATEGORY_IDS) {
+    for (const word of CATEGORIES[id].words) {
+      const cover = coverFor(word);
+      used.add(cover);
+      assert.ok(Math.abs(inkEm(cover) - inkEm(word)) <= 0.5, `${word} (${inkEm(word)}em) gets ${cover} (${inkEm(cover)}em)`);
+    }
+  }
+  assert.equal(used.size, COVERS.length, 'every cover is in use');
+});
+
+test('After Dark is 18+, off by default and only dealt when chosen', () => {
+  assert.deepEqual(ADULT_IDS, ['afterdark']);
+  assert.match(CATEGORIES.afterdark.label, /18\+/, 'the chip says 18+');
+  assert.equal(categoryName('afterdark'), 'After Dark', 'the card tab carries no badge');
+  assert.equal(categoryName('food'), 'Food');
+  assert.ok(!DEFAULT_IDS.includes('afterdark'));
+  assert.deepEqual(DEFAULT_IDS, CATEGORY_IDS.filter((id) => id !== 'afterdark'));
+  // Nothing stored, junk stored or an empty list: the default set, without After Dark.
+  for (const raw of [undefined, null, 'afterdark', [], ['nope'], 42]) assert.deepEqual(parseDecks(raw), DEFAULT_IDS);
+  assert.deepEqual(parseDecks(['afterdark']), ['afterdark']);
+  assert.deepEqual(parseDecks(['party', 'afterdark']), ['party', 'afterdark']);
+  const spicy = new Set<string>(CATEGORIES.afterdark.words);
+  assert.ok(secretsFor(DEFAULT_IDS).every((s) => !spicy.has(s.word) && s.category !== 'afterdark'));
+  assert.ok(pairsFor([]).every((s) => s.category !== 'afterdark'));
+  assert.ok(secretsFor(['afterdark']).length >= 40 && secretsFor(['afterdark']).every((s) => s.category === 'afterdark'));
+  assert.ok(pairsFor(['afterdark']).length >= 17);
+});
+
+test('After Dark stays adult, never graphic, and never about anyone underage or unwilling', () => {
+  const never = /school|teen|kid|child|minor|underage|virgin|drunk|wasted|roofie|passed out|forced|grope|rape|fat|ugly|slut|whore/i;
+  const words = [...CATEGORIES.afterdark.words, ...CATEGORIES.afterdark.pairs.flat()];
+  for (const w of words) assert.doesNotMatch(w, never, `"${w}"`);
+  // The spicy words live only in After Dark, so turning it off removes all of them.
+  const spicy = new Set(words.map((w) => w.toLowerCase()));
+  for (const id of DEFAULT_IDS) for (const w of CATEGORIES[id].words) assert.ok(!spicy.has(w.toLowerCase()), `${id}: "${w}" is also an After Dark word`);
 });
