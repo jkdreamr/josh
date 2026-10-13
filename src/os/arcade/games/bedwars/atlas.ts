@@ -30,12 +30,16 @@ const shade = (c: [number, number, number], k: number): [number, number, number]
 
 /** One tile being painted: pixel helpers in tile space. */
 class Tile {
-  constructor(
-    readonly g: Ctx,
-    readonly ox: number,
-    readonly oy: number,
-    readonly r: () => number,
-  ) {}
+  readonly g: Ctx;
+  readonly ox: number;
+  readonly oy: number;
+  readonly r: () => number;
+  constructor(g: Ctx, ox: number, oy: number, r: () => number) {
+    this.g = g;
+    this.ox = ox;
+    this.oy = oy;
+    this.r = r;
+  }
   px(x: number, y: number, c: string) {
     if (x < 0 || y < 0 || x >= T || y >= T) return;
     this.g.fillStyle = c;

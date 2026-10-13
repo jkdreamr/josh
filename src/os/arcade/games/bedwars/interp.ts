@@ -11,7 +11,10 @@ const wrap = (a: number) => {
 
 export class Track {
   private buf: Pose[] = [];
-  constructor(private readonly cap = 24) {}
+  private readonly cap: number;
+  constructor(cap = 24) {
+    this.cap = cap;
+  }
 
   /** Adds a pose; out-of-order ones (older than the newest) are dropped. */
   push(t: number, x: number, y: number, z: number, yaw: number, pitch: number) {

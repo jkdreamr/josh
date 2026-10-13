@@ -395,12 +395,9 @@ export class Avatar {
   private tagText = '';
   private armorKey = '';
 
-  constructor(
-    private readonly THREE: Three,
-    skin: number,
-    team: number,
-    seed: number,
-  ) {
+  private readonly THREE: Three;
+  constructor(THREE: Three, skin: number, team: number, seed: number) {
+    this.THREE = THREE;
     this.root = new THREE.Group();
     this.model = new THREE.Group();
     this.root.add(this.model);
