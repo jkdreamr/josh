@@ -22,8 +22,11 @@ export type LeaderboardSpec = {
   variants?: Record<string, string>;
 };
 
-/** Online rooms. 'match' games play each other through useOnline(); 'race' games run the same round side by side and the best score wins. */
-export type OnlineSpec = { seats: number; race?: boolean };
+/**
+ * Online rooms. 'match' games play each other through useOnline(); 'race' games run the same round side by side and the
+ * best score wins. Rooms lock when the host starts unless lateJoin lets players join between rounds.
+ */
+export type OnlineSpec = { seats: number; race?: boolean; lateJoin?: boolean };
 
 export type GameMeta = {
   /** Must equal the folder name in src/os/arcade/games/<id>/. Lowercase, a-z 0-9 and dashes. */

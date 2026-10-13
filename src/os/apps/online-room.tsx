@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from '../arcade/kit/board';
 import { ARCADE_API, NAME_MAX, formatBoardScore, savedName, saveName, type BoardInfo } from '../arcade/kit/leaderboard';
-import { advanceOnlineRound } from '../arcade/kit/online-core';
+import { nextOnlineRound } from '../arcade/kit/online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from '../arcade/kit/room';
 import './online-room.css';
 
@@ -84,9 +84,9 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
       }
     });
     link.on('transport', setTransport);
-    link.on('start', (list) => {
+    link.on('start', ({ players: list, round: serverRound }) => {
       if (linkRef.current !== link || link.seat === null) return;
-      roundRef.current = advanceOnlineRound(roundRef.current);
+      roundRef.current = nextOnlineRound(roundRef.current, serverRound);
       statusRef.current = 'playing';
       setStatus('playing');
       setPlayers(list);

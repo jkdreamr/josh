@@ -2,6 +2,11 @@ export function advanceOnlineRound(round: number) {
   return round + 1;
 }
 
+/** The round a start message begins: the server's shared number when it sends one, else the next local one. */
+export function nextOnlineRound(round: number, server: number | null) {
+  return server ?? advanceOnlineRound(round);
+}
+
 /** Final scores of a score race by seat. null means the player finished without a score. */
 export type RaceScores = Record<number, number | null>;
 export type RaceStanding = { seat: number; score: number | null; place: number | null };

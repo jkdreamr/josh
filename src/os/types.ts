@@ -30,7 +30,7 @@ export type OpenArgs = {
   account?: 'personal' | 'music';
   beat?: string;
   game?: 'go' | 'omok';
-  /** online room code from an invite link (Baduk and Badminton) */
+  /** online room code from an invite link (Baduk, Badminton and Cox Box) */
   room?: string;
   /** bumps on every open() call so an already-open app can react to new args */
   nonce?: number;

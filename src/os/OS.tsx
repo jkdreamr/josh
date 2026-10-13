@@ -115,7 +115,8 @@ export default function OS() {
     roomInvite.current = null;
     const app = getAppGame(invite.game);
     const timer = window.setTimeout(() => {
-      if (app?.app === 'baduk') apiRef.current?.open('baduk', { game: app.id === 'omok' ? 'omok' : 'go', room: invite.code });
+      if (invite.game === 'coxbox') apiRef.current?.open('coxbox', { room: invite.code });
+      else if (app?.app === 'baduk') apiRef.current?.open('baduk', { game: app.id === 'omok' ? 'omok' : 'go', room: invite.code });
       else if (app?.app === 'badminton') apiRef.current?.open('badminton', { room: invite.code });
       else apiRef.current?.open('chrome', { url: `chrome://games/${encodeURIComponent(invite.game)}?room=${encodeURIComponent(invite.code)}` });
     }, 0);

@@ -154,4 +154,42 @@ assert.equal(riders[3].messages.find((message) => message.t === 'welcome').seats
 pass('Light Cycles room accepts four players');
 for (const rider of riders) rider.socket.close();
 
+const raceCode = await createRoom('coxbox');
+const crews = [];
+for (let seat = 0; seat < 3; seat++) {
+  const crew = await connect(raceCode, `Crew${seat}${Date.now().toString().slice(-6)}`);
+  assert.equal((await crew.wait('welcome')).seat, seat);
+  crews.push(crew);
+}
+crews[0].send({ t: 'start' });
+const firstStart = await Promise.all(crews.map((crew) => crew.wait('start')));
+assert.deepEqual(firstStart.map((message) => message.round), [1, 1, 1]);
+pass('Cox Box start carries the shared round number');
+
+const late = await connect(raceCode, 'Latecomer');
+const lateWelcome = await late.wait('welcome');
+assert.equal(lateWelcome.seat, 3);
+assert.equal(lateWelcome.started, true);
+pass('Cox Box lets a player join while a race is under way');
+
+const raceWinner = crews[1].messages.find((message) => message.t === 'welcome').players.find((player) => player.seat === 1).name;
+const raceWins = async () => (await (await fetch(`${api}/wins?game=coxbox`)).json()).entries.find((entry) => entry.name === raceWinner)?.score ?? 0;
+for (const crew of crews) crew.send({ t: 'result', round: 1, winner: 1 });
+const deadline = Date.now() + 5000;
+while ((await raceWins()) !== 1 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+assert.equal(await raceWins(), 1);
+pass('A latecomer does not block the round they sat out');
+
+crews[0].send({ t: 'start' });
+const secondStart = await Promise.all([...crews, late].map((crew) => crew.wait('start', (message) => message.round === 2)));
+assert.ok(secondStart.every((message) => message.players.length === 4));
+pass('The latecomer races the next round');
+
+const fill = [];
+for (let seat = 4; seat < 8; seat++) fill.push(await connect(raceCode, `Fill${seat}`));
+await Promise.all(fill.map((crew) => crew.wait('welcome')));
+assert.equal(await upgradeStatus(raceCode, 'Ninth'), 409);
+pass('Cox Box rooms hold eight crews');
+for (const crew of [...fill, late, ...crews.slice(1), crews[0]]) crew.socket.close();
+
 console.log(checks.join('\n'));

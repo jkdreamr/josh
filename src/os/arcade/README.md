@@ -8,7 +8,7 @@ Little games that live inside the Chrome app at `chrome://games`. Each game is o
 // src/os/arcade/types.ts
 export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer';
 export type LeaderboardSpec = { order: 'desc' | 'asc'; max: number; min?: number; format?: 'number' | 'time'; unit?: string; measure?: string; variants?: Record<string, string> };
-export type OnlineSpec = { seats: number; race?: boolean };
+export type OnlineSpec = { seats: number; race?: boolean; lateJoin?: boolean };
 export type GameMeta = { id: string; title: string; blurb: string; category: GameCategory; players: string; controls: string; accent: string; glyph: string; order: number; leaderboard?: LeaderboardSpec; online?: OnlineSpec };
 export type GameProps = { compact?: boolean; onExit?: () => void; roomCode?: string };
 ```
@@ -33,7 +33,7 @@ src/os/arcade/games/<id>/
 | `glyph` | SVG path data (`d`) for a 24x24 viewBox, drawn as a white 2px stroke |
 | `order` | sort order inside its category (lower first) |
 | `leaderboard` | optional, opts the game into a top 100 board (see Leaderboards) |
-| `online` | optional, enables online rooms for the configured number of seats (see Online Rooms) |
+| `online` | optional, enables online rooms for the configured number of seats (see Online Rooms). Rooms lock when the host starts, unless `lateJoin: true` lets people join between rounds (they wait in the lobby and play the next one) |
 
 `manifest.ts` reads every `games/*/meta.ts` eagerly (they are tiny) and every `games/*/index.tsx` lazily through `React.lazy`, so each game is its own chunk and downloads only when opened. Folders starting with `_` are ignored. In dev you can list them with `localStorage.setItem('arcade:dev', '1')` and a reload; `_example` then appears as "Catch".
 
@@ -141,8 +141,10 @@ Baduk (Go and Omok) and Badminton are desktop apps, not arcade games, but they s
 
 `online: { seats }` adds Play Online to the Start card: create a room, share the four character code or link, and the host starts. There are two kinds:
 
-- **Match** (`online: { seats: 2 }`): players play each other. The game reads `useOnline()` for its seat, sends moves with `send()`, listens with `onMessage()` and calls `reportResult(round, winnerSeat)` when a round ends. Chess, Connect Four, Checkers, Pong, Air Hockey and Light Cycles work this way.
+- **Match** (`online: { seats: 2 }`): players play each other. The game reads `useOnline()` for its seat, sends moves with `send()`, listens with `onMessage()` and calls `reportResult(round, winnerSeat)` when a round ends. Chess, Connect Four, Checkers, Pong, Air Hockey, Light Cycles and Cox Box work this way.
 - **Race** (`online: { seats: 4, race: true }`): every player runs their own round at the same time and the best score wins. No game code is needed: the shell collects each player's `gameOver` score, shows the standings on the Game Over card and reports the winner. Use it for games with one comparable score (a `leaderboard` without `variants`).
+
+Rooms lock once the host starts. Add `lateJoin: true` to let people join between rounds instead: a latecomer waits in the lobby and plays the next round, and wins only count the players who started that round. Cox Box uses this for eight-crew typing races.
 
 Invite links (`/?game=<id>&room=<code>`) open the game and join the room automatically. Online wins go to the game's Online Wins board when every player reports the same winner. After adding `online` to a game, run `npm run arcade:specs` and redeploy the Worker.
 
