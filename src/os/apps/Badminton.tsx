@@ -37,12 +37,22 @@ import {
   type Side,
 } from '../games/badminton';
 import { useOS, type AppProps } from '../types';
+import { getAppGame } from '../arcade/apps';
+import { boardFor } from '../arcade/kit/leaderboard';
 import { BadmintonAudio } from './badminton-audio';
 import { drawScene, sceneMetrics, type AthleteView, type Impact, type LandingMark } from './badminton-draw';
+import { parseGuestMessage, parseScore, parseSnapshot, trailPoint, type NetAthlete, type NetSnapshot } from './badminton-net';
+import { AppBoard, onlineAvailable, RoomPanel, useAppRoom, useInvite } from './online-room';
 import './game-controls.css';
 import './Badminton.css';
 
-type Mode = 'cpu' | 'two';
+type Mode = 'cpu' | 'two' | 'online';
+type Role = 'host' | 'guest' | null;
+const BADMINTON = getAppGame('badminton')!;
+/** How often the host streams the court to the guest. */
+const SNAPSHOT_MS = 33;
+/** Extra swing window for the guest, whose presses reach the host one trip late. */
+const REMOTE_SWING_MS = 90;
 type Screen = 'menu' | 'howto' | 'play' | 'summary';
 type Phase = 'serve' | 'rally' | 'point' | 'interval' | 'game-end' | 'match-end';
 type Settings = { mode: Mode; difficulty: Difficulty; length: MatchLength; sound: boolean };
@@ -61,7 +71,7 @@ type Athlete = {
 };
 type Announcement = { key: number; title: string; detail: string };
 type Hud = { rally: number; shot: string };
-type Pointer = { side: Side; startX: number; startY: number; startAt: number; moved: boolean };
+type Pointer = { side: Side; startX: number; startY: number; startAt: number; moved: boolean; sentX?: number };
 type Sim = {
   clock: number;
   phase: Phase;
@@ -157,12 +167,15 @@ function kmh(speed: number) {
   return Math.round(speed * 3.6);
 }
 
-export default function Badminton(_props: AppProps) {
+export default function Badminton({ args }: AppProps) {
   const os = useOS();
   const touch = os.mobile;
   const phone = os.mobile && !os.tablet;
 
-  const [settings, setSettings] = useState<Settings>(loadSettings);
+  const [settings, setSettings] = useState<Settings>(() => (args.room ? { ...loadSettings(), mode: 'online' } : loadSettings()));
+  const [matchNo, setMatchNo] = useState(0);
+  const roleRef = useRef<Role>(null);
+  const [role, setRole] = useState<Role>(null);
   const [screen, setScreen] = useState<Screen>('menu');
   const [match, setMatch] = useState<MatchState>(() => newMatch('game'));
   const [stats, setStats] = useState<MatchStats>(newStats);
@@ -185,6 +198,17 @@ export default function Badminton(_props: AppProps) {
   const audioRef = useRef<BadmintonAudio | null>(null);
   const hudRef = useRef<Hud>({ rally: 0, shot: '' });
   const callKey = useRef(0);
+  const sendRef = useRef<(d: unknown, options?: { fast?: boolean }) => void>(() => {});
+  const pendingSnap = useRef<NetSnapshot | null>(null);
+  const lastSnapClock = useRef(-Infinity);
+  const lastSentAt = useRef(-Infinity);
+  const lastScoreAt = useRef(-Infinity);
+  /** Guest only: sends this screen's controls to the host. */
+  const pushControls = (jumped = false) => {
+    if (roleRef.current !== 'guest') return;
+    sendRef.current({ t: 'in', c: { ...controlsRef.current.b } });
+    if (jumped) sendRef.current({ t: 'jump' });
+  };
 
   matchRef.current = match;
   statsRef.current = stats;
@@ -199,8 +223,16 @@ export default function Badminton(_props: AppProps) {
   };
 
   const isCpu = useCallback((side: Side) => settingsRef.current.mode === 'cpu' && side === 'b', []);
+  const netNames = useRef<Record<Side, string>>({ a: 'Host', b: 'Guest' });
+  /** The side this screen plays online: the host is a, the guest is b. */
+  const mySide = (): Side => (roleRef.current === 'guest' ? 'b' : 'a');
   const nameOf = useCallback((side: Side, long = true) => {
     if (settingsRef.current.mode === 'cpu') return side === 'a' ? 'You' : long ? 'Computer' : 'CPU';
+    if (settingsRef.current.mode === 'online' && roleRef.current) {
+      if (side === (roleRef.current === 'guest' ? 'b' : 'a')) return 'You';
+      const name = netNames.current[side];
+      return long || name.length <= 8 ? name : `${name.slice(0, 7)}…`;
+    }
     return side === 'a' ? (long ? 'Player 1' : 'P1') : long ? 'Player 2' : 'P2';
   }, []);
 
@@ -264,13 +296,14 @@ export default function Badminton(_props: AppProps) {
       sim.phase = 'point';
       sim.phaseUntil = sim.clock + 1500;
       setPhase('point');
-      const who = nameOf(outcome.winner);
+      // Online calls go to both screens, so they name players instead of saying You.
+      const who = settingsRef.current.mode === 'online' ? netNames.current[outcome.winner] : nameOf(outcome.winner);
       if (outcome.cause === 'in') {
         announce(`Point to ${who}`, outcome.shots >= 6 ? `Rally of ${outcome.shots} shots` : `${next.points.a} to ${next.points.b}`);
       } else {
         announce(faultLabel(outcome.cause), `Point to ${who}`);
       }
-      const humanWon = settingsRef.current.mode === 'two' || outcome.winner === 'a';
+      const humanWon = settingsRef.current.mode === 'two' || outcome.winner === mySide();
       audio().point(humanWon);
     },
     [nameOf],
@@ -339,6 +372,10 @@ export default function Badminton(_props: AppProps) {
   );
 
   const continueFlow = useCallback(() => {
+    if (roleRef.current === 'guest') {
+      sendRef.current({ t: 'go' });
+      return;
+    }
     const sim = simRef.current;
     const state = matchRef.current;
     if (sim.phase === 'interval') {
@@ -361,6 +398,10 @@ export default function Badminton(_props: AppProps) {
       const athlete = sim.athletes[side];
       const controls = controlsRef.current[side];
       const intent: Intent = explicit ?? (controls.soft ? 'soft' : controls.jump || athlete.jump > 0.05 ? 'power' : 'normal');
+      if (roleRef.current === 'guest') {
+        sendRef.current({ t: 'hit', intent });
+        return;
+      }
       if (sim.phase === 'serve') {
         if (matchRef.current.server === side) launchServe(side, intent);
         return;
@@ -368,7 +409,7 @@ export default function Badminton(_props: AppProps) {
       if (sim.phase === 'rally') {
         if (sim.clock < athlete.swingStart + 110) return;
         athlete.swingStart = sim.clock;
-        athlete.swingUntil = sim.clock + SWING_MS;
+        athlete.swingUntil = sim.clock + SWING_MS + (settingsRef.current.mode === 'online' && side === 'b' ? REMOTE_SWING_MS : 0);
         athlete.intent = intent;
         return;
       }
@@ -378,6 +419,7 @@ export default function Badminton(_props: AppProps) {
   );
 
   const startMatch = useCallback(() => {
+    setMatchNo((n) => n + 1);
     const state = newMatch(settingsRef.current.length);
     const fresh = newStats();
     matchRef.current = state;
@@ -402,8 +444,39 @@ export default function Badminton(_props: AppProps) {
     setCall(null);
   };
 
+  const room = useAppRoom('badminton', {
+    onStart: (_round, seat, players) => {
+      const next: Role = seat === 0 ? 'host' : 'guest';
+      roleRef.current = next;
+      setRole(next);
+      netNames.current = { a: players.find((p) => p.seat === 0)?.name ?? 'Host', b: players.find((p) => p.seat === 1)?.name ?? 'Guest' };
+      pendingSnap.current = null;
+      lastSnapClock.current = -Infinity;
+      lastSentAt.current = -Infinity;
+      lastScoreAt.current = -Infinity;
+      startMatch();
+    },
+    onEnd: () => {
+      roleRef.current = null;
+      setRole(null);
+      quitToMenu();
+    },
+  });
+  sendRef.current = room.send;
+  useInvite(room, args.room, args.nonce, () => {
+    setSettings((current) => ({ ...current, mode: 'online' }));
+    setScreen('menu');
+  });
+
+  const leaveOnline = () => {
+    room.leave();
+    roleRef.current = null;
+    setRole(null);
+    quitToMenu();
+  };
+
   const togglePause = useCallback(() => {
-    if (screenRef.current !== 'play') return;
+    if (screenRef.current !== 'play' || settingsRef.current.mode === 'online') return;
     setPaused((current) => !current);
   }, []);
 
@@ -559,7 +632,7 @@ export default function Badminton(_props: AppProps) {
     const advancePhase = (sim: Sim) => {
       if (sim.phase !== 'point' || sim.clock < sim.phaseUntil) return;
       const state = matchRef.current;
-      const humanWon = settingsRef.current.mode === 'two' || (state.gameWinner ?? state.matchWinner) === 'a';
+      const humanWon = settingsRef.current.mode === 'two' || (state.gameWinner ?? state.matchWinner) === mySide();
       if (state.matchWinner) {
         sim.phase = 'match-end';
         setPhase('match-end');
@@ -624,6 +697,69 @@ export default function Badminton(_props: AppProps) {
       });
     };
 
+    const applyAthlete = (athlete: Athlete, snap: NetAthlete) => {
+      athlete.x = snap.x;
+      athlete.vx = snap.vx;
+      athlete.jump = snap.jump;
+      athlete.jumpVelocity = snap.jumpVelocity;
+      athlete.swingStart = snap.swingStart;
+      athlete.intent = snap.intent;
+    };
+    const athleteSnap = (athlete: Athlete): NetAthlete => ({
+      x: athlete.x,
+      vx: athlete.vx,
+      jump: athlete.jump,
+      jumpVelocity: athlete.jumpVelocity,
+      swingStart: athlete.swingStart,
+      intent: athlete.intent,
+    });
+
+    // Guest: take the host's latest court, then carry the shuttle and players forward until the next one.
+    const guestStep = (sim: Sim, state: MatchState, dt: number) => {
+      const snap = pendingSnap.current;
+      if (snap) {
+        pendingSnap.current = null;
+        if (snap.impact && snap.impact.at !== sim.impact?.at && snap.lastShot) audio().hit(snap.lastShot.type, snap.lastShot.speed);
+        const mark = snap.marks[snap.marks.length - 1];
+        if (mark && mark.at !== sim.marks[sim.marks.length - 1]?.at) {
+          if (mark.kind === 'net') audio().netCord();
+          else audio().land();
+        }
+        sim.clock = snap.clock;
+        sim.phase = snap.phase;
+        applyAthlete(sim.athletes.a, snap.a);
+        applyAthlete(sim.athletes.b, snap.b);
+        sim.flight = snap.flight;
+        sim.marks = snap.marks;
+        sim.impact = snap.impact;
+        sim.shake = snap.shake;
+        sim.rallyShots = snap.rallyShots;
+        sim.lastShot = snap.lastShot;
+        if (!sim.flight || sim.flight.status !== 'flying') sim.trail = [];
+        else sim.trail = trailPoint(sim.trail, sim.flight.shuttle);
+        return;
+      }
+      accumulator += dt;
+      while (accumulator >= STEP) {
+        accumulator -= STEP;
+        sim.clock += STEP * 1000;
+        for (const side of SIDES) {
+          const athlete = sim.athletes[side];
+          athlete.x = clampToHalf(athlete.x + athlete.vx * STEP, directionOf(side, state));
+          if (athlete.jumpVelocity !== 0 || athlete.jump > 0) {
+            athlete.jumpVelocity -= GRAVITY * STEP;
+            athlete.jump = Math.max(0, athlete.jump + athlete.jumpVelocity * STEP);
+            if (athlete.jump === 0 && athlete.jumpVelocity < 0) athlete.jumpVelocity = 0;
+          }
+        }
+        if (sim.flight && sim.flight.status === 'flying') {
+          sim.flight = stepFlight(sim.flight, STEP);
+          sim.trail = trailPoint(sim.trail, sim.flight.shuttle);
+        }
+      }
+      sim.shake = Math.max(0, sim.shake - dt * 16);
+    };
+
     const tick = (now: number) => {
       frame = requestAnimationFrame(tick);
       const sim = simRef.current;
@@ -631,6 +767,12 @@ export default function Badminton(_props: AppProps) {
       last = now;
       if (screenRef.current !== 'play') return;
       const state = matchRef.current;
+      if (roleRef.current === 'guest') {
+        guestStep(sim, state, dt);
+        syncHud(sim);
+        render(sim, matchRef.current);
+        return;
+      }
       if (!pausedRef.current) {
         accumulator += dt;
         while (accumulator >= STEP) {
@@ -641,6 +783,27 @@ export default function Badminton(_props: AppProps) {
         sim.shake = Math.max(0, sim.shake - dt * 16);
         advancePhase(sim);
         syncHud(sim);
+      }
+      if (roleRef.current === 'host' && sim.clock - lastSentAt.current >= SNAPSHOT_MS) {
+        lastSentAt.current = sim.clock;
+        const snap: NetSnapshot = {
+          t: 's',
+          clock: sim.clock,
+          phase: sim.phase,
+          a: athleteSnap(sim.athletes.a),
+          b: athleteSnap(sim.athletes.b),
+          flight: sim.flight,
+          marks: sim.marks.slice(-8),
+          impact: sim.impact,
+          shake: sim.shake,
+          rallyShots: sim.rallyShots,
+          lastShot: sim.lastShot,
+        };
+        sendRef.current(snap, { fast: true });
+        if (sim.clock - lastScoreAt.current >= 1000) {
+          lastScoreAt.current = sim.clock;
+          sendRef.current({ t: 'm', match: matchRef.current, stats: statsRef.current, phase: sim.phase, call: null });
+        }
       }
       render(sim, matchRef.current);
     };
@@ -659,7 +822,7 @@ export default function Badminton(_props: AppProps) {
       const two = settingsRef.current.mode === 'two';
       for (const [player, map] of Object.entries(KEYS) as Array<[keyof typeof KEYS, (typeof KEYS)['p1']]>) {
         for (const [action, codes] of Object.entries(map) as Array<[keyof Controls | 'hit', string[]]>) {
-          if (codes.includes(code)) return { side: two && player === 'p2' ? 'b' : 'a', action };
+          if (codes.includes(code)) return { side: two && player === 'p2' ? 'b' : settingsRef.current.mode === 'online' ? mySide() : 'a', action };
         }
       }
       return null;
@@ -685,17 +848,20 @@ export default function Badminton(_props: AppProps) {
       }
       controls[hit.action] = true;
       if (hit.action === 'jump') simRef.current.athletes[hit.side].jumpRequested = true;
+      pushControls(hit.action === 'jump');
     };
     const onKeyUp = (event: KeyboardEvent) => {
       const hit = resolve(event.code);
       if (!hit || hit.action === 'hit') return;
       controlsRef.current[hit.side][hit.action] = false;
+      pushControls();
     };
     const onBlur = () => {
       controlsRef.current = { a: newControls(), b: newControls() };
+      pushControls();
     };
     const onVisibility = () => {
-      if (document.hidden && screenRef.current === 'play') setPaused(true);
+      if (document.hidden && screenRef.current === 'play' && settingsRef.current.mode !== 'online') setPaused(true);
     };
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('keyup', onKeyUp, true);
@@ -711,11 +877,70 @@ export default function Badminton(_props: AppProps) {
 
   useEffect(() => () => audioRef.current?.dispose(), []);
 
+  // Online messages. The host takes the guest's controls; the guest takes the host's court and score.
+  useEffect(() => room.onMessage((from, data) => {
+    if (roleRef.current === 'host') {
+      if (from !== 1) return;
+      const message = parseGuestMessage(data);
+      if (!message) return;
+      const athlete = simRef.current.athletes.b;
+      if (message.t === 'in') controlsRef.current.b = { ...message.c };
+      else if (message.t === 'jump') athlete.jumpRequested = true;
+      else if (message.t === 'seek') athlete.seekX = message.x === null ? null : clampToHalf(message.x, directionOf('b', matchRef.current));
+      else if (message.t === 'hit') swing('b', message.intent);
+      else if (message.t === 'go') continueFlow();
+      return;
+    }
+    if (roleRef.current !== 'guest' || from !== 0) return;
+    const snap = parseSnapshot(data);
+    if (snap) {
+      if (snap.clock < lastSnapClock.current) return;
+      lastSnapClock.current = snap.clock;
+      pendingSnap.current = snap;
+      return;
+    }
+    const score = parseScore(data);
+    if (!score) return;
+    const before = matchRef.current;
+    matchRef.current = score.match;
+    statsRef.current = score.stats;
+    setMatch(score.match);
+    setStats(score.stats);
+    setPhase(score.phase);
+    if (score.call && score.call.key !== callKey.current) {
+      callKey.current = score.call.key;
+      setCall(score.call);
+    }
+    const scored = SIDES.find((side) => score.match.points[side] > before.points[side]);
+    if (scored && screenRef.current === 'play') audio().point(scored === 'b');
+    if (score.phase === 'match-end' && screenRef.current === 'play') {
+      audio().gameOver(score.match.matchWinner === 'b');
+      setScreen('summary');
+    }
+  }), [room.code, room.onMessage, swing, continueFlow]);
+
+  // Host: the score goes out whenever it changes.
+  useEffect(() => {
+    if (role !== 'host' || (screen !== 'play' && screen !== 'summary')) return;
+    room.send({ t: 'm', match, stats, phase, call });
+  }, [role, screen, match, stats, phase, call, room.send]);
+
+  // Both screens report the match winner; the Worker records it when they agree.
+  const reported = useRef('');
+  useEffect(() => {
+    if (!role || !match.matchWinner) return;
+    const key = `${room.code}:${room.round}`;
+    if (reported.current === key) return;
+    reported.current = key;
+    room.reportResult(match.matchWinner === 'a' ? 0 : 1);
+  }, [role, match.matchWinner, room.code, room.round, room.reportResult]);
+
   // court pointer controls: drag to move, tap to hit, flick up or down for power or soft
   const pointerSide = (clientX: number): Side | null => {
     const stage = stageRef.current;
     if (!stage) return null;
     if (settingsRef.current.mode === 'cpu') return 'a';
+    if (settingsRef.current.mode === 'online') return mySide();
     const rect = stage.getBoundingClientRect();
     return sideAt(clientX < rect.left + rect.width / 2 ? 'left' : 'right', matchRef.current);
   };
@@ -741,7 +966,12 @@ export default function Badminton(_props: AppProps) {
     if (!pointer.moved && Math.abs(event.clientX - pointer.startX) > 12) pointer.moved = true;
     if (pointer.moved) {
       const direction = directionOf(pointer.side, matchRef.current);
-      simRef.current.athletes[pointer.side].seekX = clampToHalf(worldX(event.clientX) - direction * 0.3, direction);
+      const seek = clampToHalf(worldX(event.clientX) - direction * 0.3, direction);
+      simRef.current.athletes[pointer.side].seekX = seek;
+      if (roleRef.current === 'guest' && (pointer.sentX === undefined || Math.abs(pointer.sentX - seek) > 0.04)) {
+        pointer.sentX = seek;
+        sendRef.current({ t: 'seek', x: seek });
+      }
     }
   };
   const onStagePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -749,6 +979,7 @@ export default function Badminton(_props: AppProps) {
     if (!pointer) return;
     pointersRef.current.delete(event.pointerId);
     simRef.current.athletes[pointer.side].seekX = null;
+    if (roleRef.current === 'guest' && pointer.sentX !== undefined) sendRef.current({ t: 'seek', x: null });
     if (event.type === 'pointercancel') return;
     if (!pointer.moved && performance.now() - pointer.startAt < 400) {
       const dy = event.clientY - pointer.startY;
@@ -757,20 +988,22 @@ export default function Badminton(_props: AppProps) {
   };
 
   // touch pads for the single player layout
-  const padHold = (side: Side, key: keyof Controls, down: boolean) => {
+  const padHold = (key: keyof Controls, down: boolean) => {
+    const side = settingsRef.current.mode === 'online' ? mySide() : 'a';
     controlsRef.current[side][key] = down;
     if (key === 'jump' && down) simRef.current.athletes[side].jumpRequested = true;
+    pushControls(key === 'jump' && down);
   };
   const padProps = (key: keyof Controls) => ({
     onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
-      padHold('a', key, true);
+      padHold(key, true);
       audio().unlock();
     },
-    onPointerUp: () => padHold('a', key, false),
-    onPointerCancel: () => padHold('a', key, false),
-    onLostPointerCapture: () => padHold('a', key, false),
+    onPointerUp: () => padHold(key, false),
+    onPointerCancel: () => padHold(key, false),
+    onLostPointerCapture: () => padHold(key, false),
   });
   const hitPadStart = useRef<{ y: number; at: number } | null>(null);
   const hitPadProps = {
@@ -785,7 +1018,7 @@ export default function Badminton(_props: AppProps) {
       hitPadStart.current = null;
       if (!start) return;
       const dy = event.clientY - start.y;
-      swing('a', dy < -18 ? 'power' : dy > 18 ? 'soft' : undefined);
+      swing(settingsRef.current.mode === 'online' ? mySide() : 'a', dy < -18 ? 'power' : dy > 18 ? 'soft' : undefined);
     },
     onPointerCancel: () => {
       hitPadStart.current = null;
@@ -809,6 +1042,7 @@ export default function Badminton(_props: AppProps) {
   const statusTitle = (() => {
     if (phase === 'serve') {
       if (settings.mode === 'cpu') return match.server === 'a' ? 'Your Serve' : 'Computer Serves';
+      if (settings.mode === 'online' && nameOf(match.server) === 'You') return 'Your Serve';
       return `${nameOf(match.server)} Serves`;
     }
     if (phase === 'rally' || phase === 'point') return hud.rally > 0 ? `Rally ${hud.rally}` : 'Rally';
@@ -832,6 +1066,10 @@ export default function Badminton(_props: AppProps) {
   })();
 
   const winner = match.matchWinner;
+  const online = settings.mode === 'online';
+  const winnerTitle = winner ? (settings.mode === 'cpu' ? (winner === 'a' ? 'You Win' : 'Computer Wins') : nameOf(winner) === 'You' ? 'You Win' : `${nameOf(winner)} Wins`) : '';
+  const margin = stats.a.points - stats.b.points;
+  const rankBoard = settings.mode === 'cpu' && winner === 'a' && margin >= 1 ? boardFor(BADMINTON, settings.difficulty) : null;
   const gameScores = match.history.map((game) => `${game[left]} to ${game[right]}`).join(', ');
 
   return (
@@ -846,15 +1084,20 @@ export default function Badminton(_props: AppProps) {
           <div className="bd-field">
             <span className="bd-field-label">Opponent</span>
             <div className="gseg" aria-label="Opponent">
-              <button type="button" aria-pressed={settings.mode === 'cpu'} onClick={() => updateSettings({ mode: 'cpu' })}>
+              <button type="button" aria-pressed={settings.mode === 'cpu'} onClick={() => { if (room.linked) leaveOnline(); updateSettings({ mode: 'cpu' }); }}>
                 Computer
               </button>
-              <button type="button" aria-pressed={settings.mode === 'two'} onClick={() => updateSettings({ mode: 'two' })}>
+              <button type="button" aria-pressed={settings.mode === 'two'} onClick={() => { if (room.linked) leaveOnline(); updateSettings({ mode: 'two' }); }}>
                 Two Players
               </button>
+              {onlineAvailable && (
+                <button type="button" aria-pressed={settings.mode === 'online'} onClick={() => updateSettings({ mode: 'online' })}>
+                  Online
+                </button>
+              )}
             </div>
           </div>
-          <div className={`bd-field ${settings.mode === 'two' ? 'is-dim' : ''}`}>
+          <div className={`bd-field ${settings.mode !== 'cpu' ? 'is-dim' : ''}`}>
             <span className="bd-field-label">Difficulty</span>
             <div className="gseg" aria-label="Difficulty">
               {(Object.keys(DIFFICULTY_LABEL) as Difficulty[]).map((level) => (
@@ -862,7 +1105,7 @@ export default function Badminton(_props: AppProps) {
                   key={level}
                   type="button"
                   aria-pressed={settings.difficulty === level}
-                  disabled={settings.mode === 'two'}
+                  disabled={settings.mode !== 'cpu'}
                   onClick={() => updateSettings({ difficulty: level })}
                 >
                   {DIFFICULTY_LABEL[level]}
@@ -880,10 +1123,17 @@ export default function Badminton(_props: AppProps) {
               ))}
             </div>
           </div>
+          {online && (
+            <div className="bd-field">
+              <RoomPanel room={room} title="Online Match" note="Play a friend anywhere. The host's match length is used." startLabel="Start Match" />
+            </div>
+          )}
           <div className="bd-menu-actions">
-            <button type="button" className="gbtn gbtn-primary gbtn-lg" onClick={startMatch}>
-              Start Match
-            </button>
+            {!online && (
+              <button type="button" className="gbtn gbtn-primary gbtn-lg" onClick={startMatch}>
+                Start Match
+              </button>
+            )}
             <div className="bd-menu-row">
               <button type="button" className="gbtn" onClick={() => setScreen('howto')}>
                 How to Play
@@ -923,9 +1173,11 @@ export default function Badminton(_props: AppProps) {
             <button type="button" className="gbtn" onClick={() => setScreen('menu')}>
               Back
             </button>
-            <button type="button" className="gbtn gbtn-primary" onClick={startMatch}>
-              Start Match
-            </button>
+            {!online && (
+              <button type="button" className="gbtn gbtn-primary" onClick={startMatch}>
+                Start Match
+              </button>
+            )}
           </div>
           </div>
         </div>
@@ -1017,7 +1269,7 @@ export default function Badminton(_props: AppProps) {
             )}
           </div>
 
-          {touch && settings.mode === 'cpu' ? (
+          {touch && settings.mode !== 'two' ? (
             <div className="bd-pads">
               <div className="bd-pad-group">
                 <button type="button" className="gpad bd-pad" {...padProps('left')}>
@@ -1027,9 +1279,15 @@ export default function Badminton(_props: AppProps) {
                   Right
                 </button>
               </div>
-              <button type="button" className="gbtn gbtn-sm bd-pause" onClick={togglePause} aria-label="Pause">
-                Pause
-              </button>
+              {online ? (
+                <button type="button" className="gbtn gbtn-sm bd-pause" onClick={leaveOnline}>
+                  Leave
+                </button>
+              ) : (
+                <button type="button" className="gbtn gbtn-sm bd-pause" onClick={togglePause} aria-label="Pause">
+                  Pause
+                </button>
+              )}
               <div className="bd-pad-group">
                 <button type="button" className="gpad bd-pad" {...padProps('jump')}>
                   Jump
@@ -1042,9 +1300,15 @@ export default function Badminton(_props: AppProps) {
           ) : (
             <footer className="bd-bar">
               <p className="bd-help">{helpLine}</p>
-              <button type="button" className="gbtn gbtn-sm" onClick={togglePause}>
-                {paused ? 'Resume' : 'Pause'}
-              </button>
+              {online ? (
+                <button type="button" className="gbtn gbtn-sm" onClick={leaveOnline}>
+                  Leave
+                </button>
+              ) : (
+                <button type="button" className="gbtn gbtn-sm" onClick={togglePause}>
+                  {paused ? 'Resume' : 'Pause'}
+                </button>
+              )}
             </footer>
           )}
         </>
@@ -1054,7 +1318,7 @@ export default function Badminton(_props: AppProps) {
         <div className="bd-summary">
           <div className="bd-sheet">
           <div className="bd-summary-head">
-            <h2>{settings.mode === 'cpu' ? (winner === 'a' ? 'You Win' : 'Computer Wins') : `${nameOf(winner)} Wins`}</h2>
+            <h2>{winnerTitle}</h2>
             <p>
               {bestOfThree ? `${match.games[left]} to ${match.games[right]} in games. ` : ''}
               {gameScores}
@@ -1099,14 +1363,30 @@ export default function Badminton(_props: AppProps) {
           <p className="bd-summary-note">
             Longest rally {stats.longestRally} shots over {stats.rallies} {stats.rallies === 1 ? 'rally' : 'rallies'}.
           </p>
-          <div className="bd-summary-actions">
-            <button type="button" className="gbtn gbtn-primary" onClick={startMatch}>
-              Play Again
-            </button>
-            <button type="button" className="gbtn" onClick={quitToMenu}>
-              Menu
-            </button>
-          </div>
+          {rankBoard && <AppBoard key={`${rankBoard.id}:${matchNo}`} board={rankBoard} score={margin} round={matchNo} />}
+          {online ? (
+            <div className="bd-summary-actions">
+              {room.isHost && room.linked ? (
+                <button type="button" className="gbtn gbtn-primary" onClick={room.start}>
+                  Play Again
+                </button>
+              ) : (
+                <span className="bd-help">{room.linked ? 'Waiting for the host' : 'The room has closed'}</span>
+              )}
+              <button type="button" className="gbtn" onClick={leaveOnline}>
+                Leave
+              </button>
+            </div>
+          ) : (
+            <div className="bd-summary-actions">
+              <button type="button" className="gbtn gbtn-primary" onClick={startMatch}>
+                Play Again
+              </button>
+              <button type="button" className="gbtn" onClick={quitToMenu}>
+                Menu
+              </button>
+            </div>
+          )}
           </div>
         </div>
       )}

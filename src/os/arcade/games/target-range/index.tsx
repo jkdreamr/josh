@@ -77,6 +77,7 @@ function Play() {
       shell.gameOver(g.score, {
         title: g.won ? 'Range Complete' : 'Time Up',
         detail: `${g.won ? 'All five waves cleared.' : `Wave ${g.wave + 1}: ${g.waveHits}/${WAVES[g.wave].goal} targets.`} ${g.hits} hits, ${g.misses} misses, ${accuracy(g)}% accuracy. Best streak: ${g.bestCombo}.`,
+        board: g.pace,
       });
     }
     const dx = keys.axis('left', 'right');

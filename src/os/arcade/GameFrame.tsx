@@ -1,4 +1,5 @@
 import { Component, Suspense, useState, type ReactNode } from 'react';
+import { ArcadeInvite } from './kit/host';
 import { getMeta, loaders, reloadGame } from './manifest';
 
 type BoundaryProps = { children: ReactNode; fallback: (retry: () => void) => ReactNode; onRetry: () => void };
@@ -64,7 +65,9 @@ export function GameFrame({ id, compact, onExit, roomCode }: { id: string; compa
           </div>
         }
       >
-        <Game compact={compact} onExit={onExit} roomCode={roomCode} />
+        <ArcadeInvite.Provider value={roomCode}>
+          <Game compact={compact} onExit={onExit} roomCode={roomCode} />
+        </ArcadeInvite.Provider>
       </Suspense>
     </Boundary>
   );

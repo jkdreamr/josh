@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { bestMove, type Level } from './ai.ts';
 import {
@@ -71,8 +71,16 @@ function Setup() {
   );
 }
 
+/** Online: the host plays White in odd rounds and Black in even rounds, so colors swap on every rematch. */
+const onlineColorOf = (seat: number, round: number): Color => ((round % 2 === 1) === (seat === 0) ? WHITE : BLACK);
+const seatOfColor = (color: Color, round: number) => (onlineColorOf(0, round) === color ? 0 : 1);
+
 function Chess() {
   const shell = useShell();
+  const online = useOnline();
+  const onlineColor = online ? onlineColorOf(online.seat, online.round) : null;
+  const onlineRef = useRef(online);
+  onlineRef.current = online;
   const { ref: stageRef, size } = useCanvas<HTMLDivElement>();
   const boardRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLOListElement | null>(null);
@@ -103,21 +111,26 @@ function Chess() {
   const gameOverScheduled = useRef<ChessGame | null>(null);
   const later = useGameTimers();
 
-  const humanTurn = game.status === 'playing' && (cfg.current.mode === '2p' || game.pos.turn === cfg.current.color);
+  const humanTurn = game.status === 'playing' && (onlineColor !== null ? game.pos.turn === onlineColor : cfg.current.mode === '2p' || game.pos.turn === cfg.current.color);
   const lastMove = game.history.at(-1)?.move;
   const checkSq = inCheck(game.pos) ? game.pos.kings[game.pos.turn === WHITE ? 0 : 1] : -1;
   const targets = useMemo(() => (sel === null ? new Set<number>() : new Set(game.legal.filter((m) => moveFrom(m) === sel).map(moveTo))), [sel, game.legal]);
 
   const commit = useCallback(
-    (m: number) => {
+    (m: number, remote = false) => {
       const current = gameRef.current;
       if (statusRef.current !== 'playing' || !activeRef.current || current.status !== 'playing' || !current.legal.includes(m)) return;
+      const room = onlineRef.current;
+      if (room && !remote) {
+        if (current.pos.turn !== onlineColorOf(room.seat, room.round)) return;
+        room.send({ game: 'chess', round: room.round, from: moveFrom(m), to: moveTo(m), promo: movePromo(m) });
+      }
       const next = play(current, m);
       gameRef.current = next;
       setGame(next);
       setIds((ids) => nextIds(ids, current.pos, m));
       const cap = moveCaptured(m);
-      if (next.status === 'checkmate') sfx.play(cfg.current.mode === 'cpu' && next.pos.turn === cfg.current.color ? 'lose' : 'win');
+      if (next.status === 'checkmate') sfx.play((cfg.current.mode === 'cpu' || room) && next.pos.turn === cfg.current.color ? 'lose' : 'win');
       else if (next.status !== 'playing') sfx.play('select', 0.7);
       else if (inCheck(next.pos)) sfx.play('blip', 1.3);
       else if (movePromo(m)) sfx.play('coin');
@@ -148,17 +161,32 @@ function Chess() {
   );
 
   // Setup changes made on the Start card apply to the game that is about to begin.
+  // Online rounds always start fresh with the seat's color for that round.
   useEffect(() => {
-    if (shell.status !== 'ready') return;
-    const color = colorOfSide(side);
-    cfg.current = { mode, level: levelIndex(levelName), color };
+    if (shell.status !== 'ready' && (onlineColor === null || gameRef.current.history.length > 0)) return;
+    const color = onlineColor ?? colorOfSide(side);
+    cfg.current = { mode: onlineColor !== null ? '2p' : mode, level: levelIndex(levelName), color };
     const g = newGame();
+    gameRef.current = g;
     setGame(g);
     setIds(initialIds(g.pos));
-    setFlipped(mode === 'cpu' && color === BLACK);
+    setFlipped(onlineColor !== null ? color === BLACK : mode === 'cpu' && color === BLACK);
     setSel(null);
     setPromo(null);
-  }, [mode, levelName, side, shell.status]);
+  }, [mode, levelName, side, shell.status, onlineColor]);
+
+  // The opponent's moves, checked against the legal list and whose turn it is.
+  useEffect(() => online?.onMessage((from, data) => {
+    const room = onlineRef.current;
+    if (!room || from === room.seat || !data || typeof data !== 'object') return;
+    const message = data as { game?: unknown; round?: unknown; from?: unknown; to?: unknown; promo?: unknown };
+    if (message.game !== 'chess' || message.round !== room.round) return;
+    if (!Number.isInteger(message.from) || !Number.isInteger(message.to) || !Number.isInteger(message.promo)) return;
+    const current = gameRef.current;
+    if (from !== seatOfColor(current.pos.turn, room.round)) return;
+    const m = findMove(current.legal, message.from as number, message.to as number, message.promo as number);
+    if (m !== undefined) commit(m, true);
+  }), [online?.onMessage, commit]);
 
   // Computer: a Web Worker when available, otherwise the same search on a timer.
   useEffect(() => {
@@ -252,11 +280,25 @@ function Chess() {
     }
     if (shell.status !== 'playing' || gameOverScheduled.current === game) return;
     gameOverScheduled.current = game;
+    // Report right away so a quick rematch cannot drop the result.
+    const room = onlineRef.current;
+    if (room) {
+      const winner = game.status === 'checkmate' ? (game.pos.turn === WHITE ? BLACK : WHITE) : null;
+      room.reportResult(room.round, winner === null ? null : seatOfColor(winner, room.round));
+    }
     later(() => {
       if (statusRef.current !== 'playing' || gameRef.current !== game) return;
       const { mode, color } = cfg.current;
       const winner = game.status === 'checkmate' ? (game.pos.turn === WHITE ? BLACK : WHITE) : null;
       const moves = Math.ceil(game.history.length / 2);
+      const room = onlineRef.current;
+      if (room) {
+        const winnerSeat = winner === null ? null : seatOfColor(winner, room.round);
+        const name = room.players.find((player) => player.seat === winnerSeat)?.name ?? (winner === WHITE ? 'White' : 'Black');
+        if (winnerSeat !== null) shell.gameOver(undefined, { title: 'Checkmate', detail: `${winnerSeat === room.seat ? 'You win' : `${name} wins`} in ${moves} ${moves === 1 ? 'move' : 'moves'}.` });
+        else shell.gameOver(undefined, { title: 'Draw', detail: `By ${DRAWS[game.status as keyof typeof DRAWS]} after ${moves} ${moves === 1 ? 'move' : 'moves'}.` });
+        return;
+      }
       if (game.status === 'checkmate') {
         const who = mode === 'cpu' ? (winner === color ? 'You win' : 'Computer wins') : `${winner === WHITE ? 'White' : 'Black'} wins`;
         const score = mode === 'cpu' && winner === color ? moves : undefined;
@@ -378,6 +420,7 @@ function Chess() {
     if (game.status !== 'playing') return ENDINGS[game.status];
     const mover = game.pos.turn === WHITE ? 'White' : 'Black';
     const check = checkSq >= 0 ? ' · check' : '';
+    if (onlineColor !== null) return (game.pos.turn === onlineColor ? 'Your move' : `${online?.players.find((p) => p.seat !== online.seat)?.name ?? 'Opponent'} to move`) + check;
     if (cfg.current.mode === 'cpu') return (thinking ? 'Computer is thinking' : 'Your move') + check;
     return `${mover} to move${check}`;
   })();
@@ -463,7 +506,7 @@ function Chess() {
             </div>
             <aside className="g-chess-panel" style={wide ? { width: panelW, height: boardPx } : { height: panelH, width: boardPx }}>
               <div className="g-chess-tools">
-                <span className="g-chess-mode">{cfg.current.mode === 'cpu' ? `vs Computer · ${levelLabel(LEVEL_NAMES[cfg.current.level])}` : '2 Players'}</span>
+                <span className="g-chess-mode">{onlineColor !== null ? `Online · ${onlineColor === WHITE ? 'White' : 'Black'}` : cfg.current.mode === 'cpu' ? `vs Computer · ${levelLabel(LEVEL_NAMES[cfg.current.level])}` : '2 Players'}</span>
                 <button type="button" className="g-chess-flip" onClick={() => setFlipped((f) => !f)} aria-label="Flip Board" title="Flip Board">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M7 4v13M3.5 13.5L7 17l3.5-3.5M17 20V7M13.5 10.5L17 7l3.5 3.5" />
