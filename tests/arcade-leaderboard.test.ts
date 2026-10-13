@@ -206,3 +206,21 @@ test('committed Worker specs match the generated game metadata', async () => {
   for (const m of online) assert.ok(m.online!.seats >= 2 && m.online!.seats <= 8, `${m.id} seats`);
   for (const m of metas.filter((game) => game.online?.race)) assert.ok(m.leaderboard && !m.leaderboard.variants, `${m.id} races need one comparable score`);
 });
+
+test('Go has a board for every level on every size, and 9x9 keeps the original ids', async () => {
+  const { GO_LEVELS, GO_SIZES } = await import('../src/os/games/go-levels.ts');
+  const { getAppGame, goBoardOwner } = await import('../src/os/arcade/apps.ts');
+  for (const size of GO_SIZES) {
+    const owner = getAppGame(goBoardOwner(size))!;
+    assert.ok(owner, `${size}x${size} owner`);
+    for (const level of GO_LEVELS) {
+      const board = boardFor(owner, level.id)!;
+      assert.equal(board.title, `Go · ${size}×${size} ${level.label}`);
+      assert.equal(board.spec.max, size * size);
+      assert.ok(LEADERBOARD_SPECS[board.id], `${board.id} is in the Worker specs`);
+    }
+  }
+  assert.equal(boardFor(getAppGame('go')!, 'fast')!.id, 'go-fast');
+  assert.equal(boardFor(getAppGame('go')!, 'strong')!.id, 'go-strong');
+  assert.equal(getAppGame('go13')!.online, undefined, 'online Go rooms stay on the go id for every size');
+});
