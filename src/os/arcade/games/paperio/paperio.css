@@ -628,15 +628,18 @@
 /* Start card extras */
 .g-paperio .g-paperio-extras {
   display: flex;
-  gap: 6px;
+  gap: 5px;
   justify-content: center;
-  flex-wrap: wrap;
   margin-top: 2px;
 }
 .g-paperio .g-paperio-extras .arcade-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  padding: 0 10px;
+}
+.g-paperio .g-paperio-extras .g-paperio-music[aria-pressed='false'] {
+  opacity: 0.6;
 }
 .g-paperio .g-paperio-skinicon {
   display: block;

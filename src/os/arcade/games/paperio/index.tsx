@@ -123,12 +123,11 @@ function Extras() {
           {locker.have.length}/{SKINS.length}
         </span>
       </button>
-      <button type="button" className="arcade-btn" aria-pressed={music === 'on'} aria-label={music === 'on' ? 'Music on' : 'Music off'} onClick={() => setMusic(music === 'on' ? 'off' : 'on')}>
+      <button type="button" className="arcade-btn g-paperio-music" aria-pressed={music === 'on'} aria-label={music === 'on' ? 'Music on' : 'Music off'} title={music === 'on' ? 'Music on' : 'Music off'} onClick={() => setMusic(music === 'on' ? 'off' : 'on')}>
         <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
           <path d="M9 18V6l10-2v12M9 18a3 3 0 1 1-6 0a3 3 0 1 1 6 0zM19 16a3 3 0 1 1-6 0a3 3 0 1 1 6 0z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
           {music !== 'on' && <path d="M3 3l18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
         </svg>
-        {music === 'on' ? 'Music' : 'No Music'}
       </button>
       {open === 'help' && <HowToPlay root={shell.root.current} touch={shell.touch} onClose={close} />}
       {open === 'skins' && <SkinSheet root={shell.root.current} locker={locker} onPick={(id) => saveLocker({ ...locker, pick: id })} onClose={close} />}
