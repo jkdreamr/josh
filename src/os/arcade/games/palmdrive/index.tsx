@@ -66,6 +66,24 @@ try {
 
 const fmtMs = (ms: number) => fmtTime(ms / 1000);
 
+/** Tips pop up during your first few races. */
+const HINT_RACES = 3;
+const RACES_KEY = 'arcade:palmdrive-races';
+function racesRun() {
+  try {
+    return Number(window.localStorage.getItem(RACES_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+function countRace() {
+  try {
+    window.localStorage.setItem(RACES_KEY, String(racesRun() + 1));
+  } catch {
+    /* storage blocked: the tips just keep showing */
+  }
+}
+
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
     <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} lowerIsBetter formatScore={fmtMs} setup={<Setup />} hostSetup={<OnlineSetup />}>
@@ -254,6 +272,10 @@ type Hud = {
   trailing: boolean;
   /** Looking behind. */
   rear: boolean;
+  /** Boosting or under a star: speed lines. */
+  boosting: boolean;
+  /** Finished in the top three: confetti. */
+  podium: boolean;
   time: string;
   lights: number;
   banner: string | null;
@@ -311,13 +333,27 @@ function Play({ mode }: { mode: Mode }) {
   const tap = useRef({ back: false, gas: false, cash: false, slam: false });
   /** The item button was holding a banana or shell out behind last frame. */
   const holding = useRef(false);
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, uses: 0, rolling: false, trailing: false, rear: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
   const clock = useRef(0);
   const rollTick = useRef(0);
-  const finalLapAt = useRef(-99);
+  /** The lap banner ('lap 2/5', 'final lap!') and when it went up. */
+  const lapBanner = useRef({ text: '', at: -99 });
+  const [coinPop, setCoinPop] = useState<{ id: number; text: string; loss: boolean } | null>(null);
+  const lastCoins = useRef(0);
+  const [hint, setHint] = useState<{ id: number; text: string } | null>(null);
+  const hints = useRef<{ on: boolean; seen: Set<string>; at: number; counted: boolean } | null>(null);
+  hints.current ??= { on: mode !== 'idle' && racesRun() < HINT_RACES, seen: new Set(), at: -99, counted: false };
+  /** Shows a tip once per race, during your first few races, one at a time. */
+  const showHint = (key: string, desk: string, touch: string) => {
+    const h = hints.current!;
+    if (!h.on || h.seen.has(key) || clock.current - h.at < 4.5) return;
+    h.seen.add(key);
+    h.at = clock.current;
+    setHint({ id: Date.now(), text: shellRef.current.touch ? touch : desk });
+  };
   const doneAt = useRef<number | null>(null);
   const dots = useRef(new Map<number, SVGCircleElement>());
   const tags = useRef(new Map<number, HTMLDivElement>());
@@ -629,6 +665,11 @@ function Play({ mode }: { mode: Mode }) {
         break;
       case 'go':
         sfx.tone({ freq: 880, dur: 0.5, type: 'square', vol: 0.17 });
+        if (!hints.current!.counted) {
+          hints.current!.counted = true;
+          countRace();
+        }
+        showHint('drift', 'Hold Space while you turn to drift. Let go for a boost!', 'Hold drift while you turn to slide. Let go for a boost!');
         break;
       case 'rocket':
         if (mine) sfx.tone({ freq: 300, to: 1000, dur: 0.3, type: 'sawtooth', vol: 0.12 });
@@ -637,7 +678,9 @@ function Play({ mode }: { mode: Mode }) {
         if (mine) sfx.play('select', 1.2);
         break;
       case 'got':
-        if (mine) sfx.play('blip', 1.5);
+        if (!mine) break;
+        sfx.play('blip', 1.5);
+        showHint('item', 'X uses your item. Hold X to keep a banana or shell behind you.', 'Tap item to use it. Hold it to keep a banana or shell behind you.');
         break;
       case 'use':
         if (!mine) break;
@@ -667,7 +710,9 @@ function Play({ mode }: { mode: Mode }) {
         }
         break;
       case 'ramp':
-        if (mine) sfx.play('jump', 0.9);
+        if (!mine) break;
+        sfx.play('jump', 0.9);
+        showHint('trick', 'Press Space in the air for a trick!', 'Tap drift in the air for a trick!');
         break;
       case 'trick':
         if (mine) sfx.play('select', 1.6);
@@ -707,8 +752,8 @@ function Play({ mode }: { mode: Mode }) {
       case 'lap':
         if (!mine) break;
         setLapNote({ id: Date.now(), text: fmtTime(r.karts[r.me].laps[r.karts[r.me].laps.length - 1] ?? 0) });
+        lapBanner.current = { text: e.lap === r.laps ? 'final lap!' : `lap ${e.lap}/${r.laps}`, at: clock.current };
         if (e.lap === r.laps) {
-          finalLapAt.current = clock.current;
           sfx.tone({ freq: 660, dur: 0.12, type: 'square', vol: 0.14 });
           sfx.tone({ freq: 880, dur: 0.12, type: 'square', vol: 0.14, delay: 0.14 });
           sfx.tone({ freq: 1320, dur: 0.3, type: 'square', vol: 0.14, delay: 0.28 });
@@ -761,7 +806,7 @@ function Play({ mode }: { mode: Mode }) {
       banner = 'go!';
       lights = 4;
     } else if (me.done !== null) banner = clock.current - (doneAt.current ?? 0) < 3 ? 'finish!' : null;
-    else if (clock.current - finalLapAt.current < 2) banner = 'final lap!';
+    else if (clock.current - lapBanner.current.at < 1.8) banner = lapBanner.current.text;
     const next: Hud = {
       place: me.place,
       field: r.karts.length,
@@ -774,6 +819,8 @@ function Play({ mode }: { mode: Mode }) {
       rolling: me.roll > 0,
       trailing: me.trail,
       rear: keys.down('KeyV') && me.done === null,
+      boosting: (me.boost > 0 || me.star > 0) && me.done === null && r.time > 0,
+      podium: me.done !== null && me.place <= 3,
       time: fmtTime(Math.max(0, me.done ?? r.time)),
       lights,
       banner,
@@ -781,6 +828,17 @@ function Play({ mode }: { mode: Mode }) {
       results: me.done !== null && clock.current - (doneAt.current ?? 0) >= 3,
     };
     setHud((h) => (sameHud(h, next) ? h : next));
+    const delta = me.coins - lastCoins.current;
+    lastCoins.current = me.coins;
+    if (delta !== 0 && r.time > 0) setCoinPop({ id: Date.now(), text: delta > 0 ? `+${delta}` : `−${-delta}`, loss: delta < 0 });
+    // tips for the moves that need a moment: a kart right beside you, a pocketful of coins
+    if (hints.current!.on && me.done === null && r.time > 3) {
+      if (me.coins >= CASH_COST) showHint('cash', `Press B to cash ${CASH_COST} coins for a boost.`, `Tap your coins to cash ${CASH_COST} for a boost.`);
+      const fx = Math.sin(me.h);
+      const fz = Math.cos(me.h);
+      const beside = r.karts.some((o) => o !== me && o.done === null && Math.abs((o.x - me.x) * fx + (o.z - me.z) * fz) < 2.4 && Math.abs((o.x - me.x) * -fz + (o.z - me.z) * fx) < 3.4);
+      if (beside) showHint('slam', 'Press C to slam the kart beside you!', 'Tap bump to slam the kart beside you!');
+    }
   }
 
   const r = race.current!;
@@ -823,6 +881,7 @@ function Play({ mode }: { mode: Mode }) {
           ))}
       {shell.status !== 'ready' && !shell.compact && (
         <div className={`g-palmdrive-hud${shell.touch ? ' is-touch' : ''}`}>
+          {hud.boosting && <div className="g-palmdrive-speed" aria-hidden="true" />}
           <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}${hud.trailing ? ' is-trailing' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}${hud.trailing ? ' behind you' : ''}` : 'No item'}>
             {hud.item ? <ItemIcon item={hud.item} /> : null}
             {hud.item === 'triple' && !hud.rolling && hud.uses > 0 && <b>{hud.uses}</b>}
@@ -872,16 +931,26 @@ function Play({ mode }: { mode: Mode }) {
               >
                 <CoinIcon />
                 {hud.coins}
+                {coinPop && (
+                  <em key={coinPop.id} className={`g-palmdrive-coinpop${coinPop.loss ? ' is-loss' : ''}`} onAnimationEnd={() => setCoinPop(null)}>
+                    {coinPop.text}
+                  </em>
+                )}
               </button>
             ) : (
               <span className={`g-palmdrive-coins${hud.cashReady ? ' is-ready' : ''}`}>
                 <CoinIcon />
                 {hud.coins}
                 {hud.cashReady && <kbd title={`Press B to cash ${CASH_COST} coins for a boost`}>B</kbd>}
+                {coinPop && (
+                  <em key={coinPop.id} className={`g-palmdrive-coinpop${coinPop.loss ? ' is-loss' : ''}`} onAnimationEnd={() => setCoinPop(null)}>
+                    {coinPop.text}
+                  </em>
+                )}
               </span>
             )}
           </div>
-          <div className="g-palmdrive-place">
+          <div key={hud.place} className="g-palmdrive-place">
             <b>{ordinal(hud.place)}</b>
             <span>/ {hud.field}</span>
           </div>
@@ -899,6 +968,12 @@ function Play({ mode }: { mode: Mode }) {
           )}
           {hud.wrong && <div className="g-palmdrive-wrong">wrong way</div>}
           {hud.rear && <div className="g-palmdrive-rear">behind you</div>}
+          {hint && (
+            <div key={hint.id} className="g-palmdrive-hint" role="status" onAnimationEnd={() => setHint(null)}>
+              {hint.text}
+            </div>
+          )}
+          {hud.podium && <Confetti />}
           {hud.results && (
             <ol className="g-palmdrive-results" aria-label="Race Results">
               {board.map((x, i) => (
@@ -994,3 +1069,27 @@ const Chevron = ({ d }: { d: string }) => (
     <path d={d} />
   </svg>
 );
+
+const CONFETTI = ['#ffd23f', '#e53935', '#1e88e5', '#3fae4a', '#ec407a', '#fb8c00', '#ffffff'];
+/** A burst of confetti for a podium finish. */
+function Confetti() {
+  const pieces = useMemo(
+    () =>
+      Array.from({ length: 36 }, (_, i) => ({
+        left: `${(i * 37) % 100}%`,
+        background: CONFETTI[i % CONFETTI.length],
+        animationDelay: `${((i * 53) % 90) / 100}s`,
+        animationDuration: `${2.2 + ((i * 29) % 15) / 10}s`,
+        ['--spin' as string]: `${(i % 2 ? 1 : -1) * (360 + ((i * 71) % 540))}deg`,
+        ['--drift' as string]: `${((i * 41) % 80) - 40}px`,
+      })),
+    [],
+  );
+  return (
+    <div className="g-palmdrive-confetti" aria-hidden="true">
+      {pieces.map((style, i) => (
+        <i key={i} style={style} />
+      ))}
+    </div>
+  );
+}
