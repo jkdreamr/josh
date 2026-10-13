@@ -767,7 +767,7 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
 
   // the bare arm for the first-person view, built from the avatar's right arm skin
   const armGroup = new THREE.Group();
-  vmRoot.add(armGroup);
+  vmBase.add(armGroup);
   let armMesh: T.Mesh | null = null;
   let armForKey = '';
 
@@ -796,9 +796,9 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
       vmRoot.position.set(-0.3 * f1 + bobX, 0.4 * Math.sin(sq * Math.PI * 2) + bobY, -0.4 * Math.sin(s * Math.PI));
       vmBase.position.set(0.5, -0.52 - h.equip * 0.6, -0.62);
       vmBase.rotation.set(0, 45 * D + f1 * 70 * D, f * -20 * D);
-      armGroup.position.set(0, 0, 0);
-      armGroup.rotation.set(-62 * D, -38 * D, 18 * D);
-      armGroup.scale.setScalar(1);
+      armGroup.position.set(0.16, -0.02, 0.12);
+      armGroup.rotation.set(96 * D, 8 * D, -24 * D);
+      armGroup.scale.setScalar(0.72);
       return;
     }
     const item = h.held.item!;
@@ -815,19 +815,19 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
       vmBase.rotation.y -= 0.6 * k;
     }
     if (block) {
-      vmItem.position.set(0, 0, 0);
-      vmItem.rotation.set(0, 45 * D, 0);
-      vmItem.scale.setScalar(0.4);
+      vmItem.position.set(0, 0.04, 0);
+      vmItem.rotation.set(0, 0, 0);
+      vmItem.scale.setScalar(0.24);
     } else {
       // item/handheld firstperson: rotation [0, -135, 25], translation [0, 4, 2] px, scale 1.7, inside a 0.4 scale
       const k = 0.4;
       vmItem.position.set(0, (4 / 16) * k, (2 / 16) * k);
-      vmItem.rotation.set(0, -135 * D, 25 * D);
-      vmItem.scale.setScalar(1.7 * k * 0.8);
+      vmItem.rotation.set(0, 45 * D, -25 * D);
+      vmItem.scale.setScalar(1.7 * k * 0.7);
       if (bow) {
         // drawn bows come in toward the middle of the screen
         const d = h.draw;
-        vmItem.rotation.set(-8 * D * d, -135 * D - 12 * D * d, 25 * D - 18 * D * d);
+        vmItem.rotation.set(-8 * D * d, 45 * D + 12 * D * d, -25 * D + 18 * D * d);
         vmItem.position.x -= 0.25 * d;
         vmItem.position.z += 0.08 * d;
         vmItem.position.y += Math.sin(h.draw * 60) * 0.004 * d;

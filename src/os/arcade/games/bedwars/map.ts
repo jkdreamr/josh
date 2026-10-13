@@ -193,8 +193,8 @@ export function generate(mode: Mode): { world: World; info: MapInfo } {
     world.bedDir[t] = dirOf(L.fx, L.fz);
     const [sx, sz] = at(0, -3);
     const [gx, gz] = at(0, -8);
-    const [px, pz] = at(-5, -3);
-    const [ux, uz] = at(5, -3);
+    const [px, pz] = at(-4, -2);
+    const [ux, uz] = at(4, -2);
     const site: TeamSite = {
       team: t,
       spawn: [sx + 0.5, TOP + 1, sz + 0.5],
@@ -214,8 +214,8 @@ export function generate(mode: Mode): { world: World; info: MapInfo } {
     info.teams.push(site);
     info.noBuild.push(boxAround(at, -1, -4, 1, -2, TOP + 1, TOP + 3));
     info.noBuild.push(boxAround(at, -2, -10, 2, -6, TOP + 1, TOP + 3));
-    info.noBuild.push(boxAround(at, -6, -4, -4, -2, TOP + 1, TOP + 3));
-    info.noBuild.push(boxAround(at, 4, -4, 6, -2, TOP + 1, TOP + 3));
+    info.noBuild.push(boxAround(at, -5, -3, -3, -1, TOP + 1, TOP + 3));
+    info.noBuild.push(boxAround(at, 3, -3, 5, -1, TOP + 1, TOP + 3));
   }
 
   // diamond islands on the corners

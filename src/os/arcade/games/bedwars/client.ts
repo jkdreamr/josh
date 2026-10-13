@@ -361,6 +361,8 @@ export class Client {
       this.dig = null;
       this.useTicks = 0;
     }
+    // walking away from the keeper closes the shop, like Hypixel
+    if ((this.ui === 'shop' || this.ui === 'upgrades') && (!p.alive || !nearNpc(g, p, this.ui, 1.5))) this.setUi('none');
     if (this.hurtTilt > 0) this.hurtTilt--;
     if (this.throwDelay > 0) this.throwDelay--;
 

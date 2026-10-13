@@ -234,8 +234,11 @@ function Play({ mode }: { mode: StageMode }) {
       const c = clientRef.current;
       if (!c) return;
       c.setUi(ui);
-      if (ui === 'none') lock();
-      else unlock();
+      if (ui === 'none') {
+        // the button that had focus is gone: keys go back to the game
+        shellRef.current.root.current?.focus({ preventScroll: true });
+        lock();
+      } else unlock();
       pinged.current = true;
     },
     [lock, unlock],
