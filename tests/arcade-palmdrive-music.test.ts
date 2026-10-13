@@ -13,29 +13,43 @@ test('note names map to MIDI numbers and pitches', () => {
   assert.throws(() => midi('H2'));
 });
 
-test('the song is sixteen bars of lead, bass and drums that fit their bars', () => {
+test('the song is sixteen bars of house: kick on every beat, claps on two and four, offbeat bass and hats', () => {
   assert.equal(STEPS, 256);
   assert.equal(SONG.length, STEPS);
   const all = SONG.flat();
-  for (const voice of ['lead', 'bass', 'kick', 'hat'] as const) assert.ok(all.some((n) => n.voice === voice), voice);
+  for (const voice of ['lead', 'stab', 'bass', 'kick', 'clap', 'hat', 'open'] as const) assert.ok(all.some((n) => n.voice === voice), voice);
   for (let step = 0; step < STEPS; step++) {
+    const voices = SONG[step].map((n) => n.voice);
+    const beat = step % 16;
+    assert.equal(voices.includes('kick'), beat % 4 === 0, `kick at ${step}`);
+    if (beat === 4 || beat === 12) assert.ok(voices.includes('clap'), `clap at ${step}`);
+    // a hat on every 16th, open on the offbeats, where the bass sits too
+    assert.equal(voices.filter((v) => v === 'hat' || v === 'open').length, 1, `hat at ${step}`);
+    assert.equal(voices.includes('open'), beat % 4 === 2, `open hat at ${step}`);
+    assert.equal(voices.includes('bass'), beat % 4 === 2, `bass at ${step}`);
     for (const n of SONG[step]) {
       assert.equal(n.step, step);
       assert.ok(n.len >= 1);
       if (n.voice === 'lead') {
         // melody notes stay in a singable range and never run past the end of their bar
         assert.ok(n.midi >= midi('C5') && n.midi <= midi('G6'), `lead ${n.midi} at ${step}`);
-        assert.ok((step % 16) + n.len <= 16, `lead note at ${step} runs into the next bar`);
+        assert.ok(beat + n.len <= 16, `lead note at ${step} runs into the next bar`);
       }
       if (n.voice === 'bass') assert.ok(n.midi >= midi('C2') && n.midi <= midi('G3'));
+      if (n.voice === 'stab') assert.ok(n.midi >= midi('C3') && n.midi <= midi('C5'));
     }
   }
-  // one melody note at a time, and every bar starts on the downbeat with bass and kick
-  for (let step = 0; step < STEPS; step++) assert.ok(SONG[step].filter((n) => n.voice === 'lead').length <= 1);
-  for (let bar = 0; bar < 16; bar++) {
-    const voices = SONG[bar * 16].map((n) => n.voice);
-    assert.ok(voices.includes('bass') && voices.includes('kick'), `bar ${bar + 1}`);
+  // stabs are chords, the groove opens alone and the hook comes in after it
+  for (let step = 0; step < STEPS; step++) {
+    const stabs = SONG[step].filter((n) => n.voice === 'stab').length;
+    assert.ok(stabs === 0 || stabs >= 3, `stab at ${step}`);
   }
+  const bars = (voice: string) => Array.from({ length: 16 }, (_, b) => SONG.slice(b * 16, b * 16 + 16).some((at) => at.some((n) => n.voice === voice)));
+  assert.deepEqual(bars('lead'), [false, false, false, false, ...Array(12).fill(true)]);
+  assert.deepEqual(bars('stab'), [false, false, false, false, ...Array(12).fill(true)]);
+  // the last bar rolls claps into the top of the loop
+  assert.ok([253, 254, 255].every((step) => SONG[step].some((n) => n.voice === 'clap')));
+  assert.ok(SONG.slice(0, 16).every((at, beat) => at.some((n) => n.voice === 'clap') === (beat === 4 || beat === 12)));
 });
 
 test('the melody never overlaps itself', () => {
@@ -88,7 +102,7 @@ test('the final lap plays faster', () => {
   const fast = 60 / (BPM * FAST) / 4;
   assert.ok(rec.played.every((p) => Math.abs(p.stepLen - fast) < 1e-12));
   const kicks = rec.played.filter((p) => p.note.voice === 'kick').map((p) => p.at);
-  assert.ok(Math.abs(kicks[1] - kicks[0] - 8 * fast) < 1e-6);
+  assert.ok(Math.abs(kicks[1] - kicks[0] - 4 * fast) < 1e-6);
 });
 
 test('after a pause the music picks up where it left off instead of rushing to catch up', () => {
@@ -101,8 +115,8 @@ test('after a pause the music picks up where it left off instead of rushing to c
   const after = rec.played.slice(before);
   assert.ok(after.length > 0);
   assert.ok(after[0].at >= 12, 'nothing is scheduled in the past');
-  // it carries on from the next step that has a note (odd steps are often rests)
-  assert.ok(after[0].note.step > lastStep && after[0].note.step <= lastStep + 2, `resumed at step ${after[0].note.step} after ${lastStep}`);
+  // it carries on from the next step
+  assert.equal(after[0].note.step, (lastStep + 1) % STEPS);
   // only about half a second of music, not ten seconds' worth
   assert.ok(after.filter((p) => p.note.voice === 'kick').length <= 4);
   rec.seq.reset();

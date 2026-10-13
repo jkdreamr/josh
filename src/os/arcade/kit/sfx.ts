@@ -66,7 +66,7 @@ function tone({ freq, to, dur = 0.12, type = 'square', vol = 0.18, delay = 0 }: 
   o.stop(t + dur + 0.02);
 }
 
-function noise(dur = 0.25, vol = 0.25) {
+function noise(dur = 0.25, vol = 0.25, delay = 0) {
   if (muted) return;
   const ac = audio();
   if (!ac || !master) return;
@@ -79,7 +79,7 @@ function noise(dur = 0.25, vol = 0.25) {
   g.gain.value = vol;
   src.buffer = buf;
   src.connect(g).connect(master);
-  src.start();
+  src.start(ac.currentTime + delay);
 }
 
 const presets: Record<SfxName, (p: number) => void> = {

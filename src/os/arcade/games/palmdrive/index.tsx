@@ -123,16 +123,26 @@ function playNote(note: Note, delay: number, stepLen: number) {
   const dur = note.len * stepLen;
   switch (note.voice) {
     case 'lead':
-      sfx.tone({ freq: hz(note.midi), dur: dur * 0.92, type: 'square', vol: 0.045, delay });
+      sfx.tone({ freq: hz(note.midi), dur: dur * 0.9, type: 'sawtooth', vol: 0.035, delay });
+      break;
+    case 'stab':
+      sfx.tone({ freq: hz(note.midi), dur: dur * 0.85, type: 'square', vol: 0.018, delay });
       break;
     case 'bass':
-      sfx.tone({ freq: hz(note.midi), dur: dur * 0.9, type: 'triangle', vol: 0.1, delay });
+      sfx.tone({ freq: hz(note.midi), dur: dur * 0.85, type: 'triangle', vol: 0.17, delay });
+      sfx.tone({ freq: hz(note.midi + 12), dur: dur * 0.6, type: 'square', vol: 0.02, delay });
       break;
     case 'kick':
-      sfx.tone({ freq: 150, to: 45, dur: 0.12, type: 'sine', vol: 0.13, delay });
+      sfx.tone({ freq: 150, to: 42, dur: 0.2, type: 'sine', vol: 0.22, delay });
+      break;
+    case 'clap':
+      sfx.noise(0.09, 0.09, delay);
       break;
     case 'hat':
-      sfx.tone({ freq: 7400, dur: 0.025, type: 'square', vol: 0.008, delay });
+      sfx.noise(0.025, 0.018, delay);
+      break;
+    case 'open':
+      sfx.noise(0.09, 0.035, delay);
       break;
   }
 }
