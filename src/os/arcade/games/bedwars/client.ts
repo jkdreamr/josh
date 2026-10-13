@@ -36,7 +36,7 @@ import { damp } from './gl.ts';
 export type Role = 'solo' | 'host' | 'guest';
 export type UiPanel = 'none' | 'shop' | 'upgrades' | 'board';
 
-export type ClientSettings = { sens: number; autoSprint: boolean; touch: boolean };
+export type ClientSettings = { sens: number; autoSprint: boolean; touch: boolean; killFx?: string; bedFx?: string };
 
 export type FeedLine = { id: number; k: MsgKind; text: string; at: number; team?: number };
 export type Title = { id: number; title: string; sub: string; color: string; until: number };
@@ -713,7 +713,10 @@ export class Client {
         break;
       case 'die': {
         const o = g.players[e.p];
-        v?.burst('kill', o.body.x, o.body.y, o.body.z, { color: parseInt(TEAMS[o.team].color.slice(1), 16) });
+        // your kills get your kill effect; everyone else's a small puff in the team color
+        if (e.by === me) v?.burst(this.settings.killFx === 'firework' ? 'firework' : this.settings.killFx === 'lightning' ? 'lightning' : this.settings.killFx === 'tree' ? 'tree' : 'kill', o.body.x, o.body.y, o.body.z, { color: 0x8c1515 });
+        else v?.burst('kill', o.body.x, o.body.y, o.body.z, { color: parseInt(TEAMS[o.team].color.slice(1), 16), count: 24 });
+        if (e.by === me && this.settings.killFx === 'lightning') snd.boomSound(0.6);
         if (e.p === me) {
           snd.deathSound();
           this.dig = null;
@@ -744,7 +747,9 @@ export class Client {
         break;
       case 'bed': {
         const site = g.info.teams[e.team];
-        v?.burst('bed', site.bedFoot[0], site.bedFoot[1], site.bedFoot[2], { color: parseInt(TEAMS[e.team].color.slice(1), 16) });
+        const bedFx = e.by === me ? this.settings.bedFx : 'confetti';
+        v?.burst(bedFx === 'blast' ? 'boom' : bedFx === 'axe' ? 'axe' : 'bed', site.bedFoot[0], site.bedFoot[1], site.bedFoot[2], { color: parseInt(TEAMS[e.team].color.slice(1), 16) });
+        if (bedFx === 'blast') snd.boomSound(0.8);
         snd.bedSound(e.team === p.team);
         if (e.team === p.team) this.showTitle('BED DESTROYED!', 'you will no longer respawn!', '#ff5b5b', 3.5);
         if (e.by === me) this.hooks.moment?.(e);
@@ -792,6 +797,11 @@ export class Client {
         this.pushFeed(e.k, e.text, e.team);
         break;
       case 'win':
+        if (e.team === p.team) {
+          this.showTitle('VICTORY!', `${TEAMS[p.team].name} team wins`, '#ffd23f', 4);
+          snd.levelUpSound();
+          v?.burst('firework', p.body.x, p.body.y + 2, p.body.z);
+        } else this.showTitle('GAME OVER!', e.team >= 0 ? `${TEAMS[e.team].name} team wins` : 'nobody wins this one', '#ff5b5b', 4);
         this.hooks.moment?.(e);
         this.hooks.ping?.();
         break;

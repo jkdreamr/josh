@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, Segmented, defineSetting, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
@@ -8,7 +8,9 @@ import { Client, type Hud } from './client.ts';
 import { createView, type View } from './scene.ts';
 import { CENTER, MID_TOP, type Mode } from './map.ts';
 import { TEAMS } from './blocks.ts';
-import { Crosshair, Feed, Hotbar, PlayerList, Scoreboard, ShopPanel, TitleView, UpgradesPanel } from './hud.tsx';
+import { Crosshair, Feed, Hotbar, HowToPlay, Locker, PlayerList, RecordStrip, Scoreboard, Sheet, ShopPanel, TitleView, UpgradesPanel } from './hud.tsx';
+import { AXE_NAMES, ITEM_DEFS, PICK_NAMES } from './items.ts';
+import { addGame, freshRecord, isUnlocked, loadRecord, newUnlocks, saveRecord, subscribeRecord } from './stats.ts';
 import './bedwars.css';
 
 const MODE = defineSetting('bedwars:mode', ['solo', 'doubles'] as const, 'solo');
@@ -17,6 +19,38 @@ const PACE = defineSetting('bedwars:pace', ['quick', 'classic'] as const, 'quick
 const SENS = defineSetting('bedwars:sens', ['0.5', '1', '1.5', '2'] as const, '1', { live: true });
 const SPRINT = defineSetting('bedwars:sprint', ['auto', 'manual'] as const, 'auto', { live: true });
 const FILL = defineSetting('bedwars:fill', ['bots', 'none'] as const, 'bots');
+const SKIN = defineSetting('bedwars:skin', ['0', '1', '2', '3', '4', '5'] as const, '0', { live: true });
+const KILLFX = defineSetting('bedwars:killfx', ['cardinal', 'firework', 'lightning', 'tree'] as const, 'cardinal', { live: true });
+const BEDFX = defineSetting('bedwars:bedfx', ['confetti', 'blast', 'axe'] as const, 'confetti', { live: true });
+
+const SERVER_RECORD = freshRecord();
+let recordCache = SERVER_RECORD;
+let recordFresh = false;
+subscribeRecord(() => {
+  recordFresh = false;
+});
+const getRecord = () => {
+  if (!recordFresh) {
+    recordCache = loadRecord();
+    recordFresh = true;
+  }
+  return recordCache;
+};
+/** Your record on this device, shared by the cards and the game. */
+const useRecord = () => useSyncExternalStore(subscribeRecord, getRecord, () => SERVER_RECORD);
+
+/** The equipped cosmetic, or the free one if it is locked here (a setting can outlive the record). */
+function useCosmetics() {
+  const r = useRecord();
+  const [skin] = useSetting(SKIN);
+  const [kill] = useSetting(KILLFX);
+  const [bed] = useSetting(BEDFX);
+  return {
+    skin: isUnlocked(r, 'skin', skin) ? Number(skin) : 0,
+    kill: isUnlocked(r, 'kill', kill) ? kill : 'cardinal',
+    bed: isUnlocked(r, 'bed', bed) ? bed : 'confetti',
+  };
+}
 
 const modeOptions = [
   ['solo', 'Solo'],
@@ -65,11 +99,49 @@ function Setup() {
   const shell = useShell();
   return (
     <div className="g-bedwars-setup">
+      <Extras />
       <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
       <Segmented label="Bots" value={level} options={levelOptions} onChange={setLevel} />
       <Segmented label="Pace" value={pace} options={paceOptions} onChange={setPace} />
       {!shell.touch && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
       {!shell.touch && <Segmented label="Sprint" value={sprint} options={sprintOptions} onChange={setSprint} />}
+    </div>
+  );
+}
+
+/** Your record, How to Play and the Locker, with the sheets they open over the cards. */
+function Extras() {
+  const shell = useShell();
+  const r = useRecord();
+  const [skin, setSkin] = useSetting(SKIN);
+  const [kill, setKill] = useSetting(KILLFX);
+  const [bed, setBed] = useSetting(BEDFX);
+  const [open, setOpen] = useState<'help' | 'locker' | null>(null);
+  const close = () => {
+    setOpen(null);
+    shell.root.current?.focus({ preventScroll: true });
+  };
+  return (
+    <div className="g-bedwars-extras">
+      {r.games > 0 && <RecordStrip r={r} />}
+      <div className="g-bedwars-extraBtns">
+        <button type="button" className="arcade-btn" onClick={() => setOpen('help')}>
+          How to Play
+        </button>
+        <button type="button" className="arcade-btn" onClick={() => setOpen('locker')}>
+          Locker
+        </button>
+      </div>
+      {open === 'help' && (
+        <Sheet root={shell.root.current} title="How to Play" onClose={close}>
+          <HowToPlay touch={shell.touch} />
+        </Sheet>
+      )}
+      {open === 'locker' && (
+        <Sheet root={shell.root.current} title="Locker" onClose={close}>
+          <Locker r={r} skin={skin} kill={kill} bed={bed} onSkin={(v) => setSkin(v as typeof skin)} onKill={(v) => setKill(v as typeof kill)} onBed={(v) => setBed(v as typeof bed)} />
+        </Sheet>
+      )}
     </div>
   );
 }
@@ -81,9 +153,16 @@ function OnlineSetup() {
   const [level, setLevel] = useSetting(LEVEL);
   const [pace, setPace] = useSetting(PACE);
   const [fill, setFill] = useSetting(FILL);
-  if (online && !online.isHost) return <small className="g-bedwars-hostnote">the host picks the mode, bots and pace.</small>;
+  if (online && !online.isHost)
+    return (
+      <div className="g-bedwars-setup">
+        <Extras />
+        <small className="g-bedwars-hostnote">the host picks the mode, bots and pace.</small>
+      </div>
+    );
   return (
     <div className="g-bedwars-setup">
+      <Extras />
       <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
       <Segmented label="Slots" value={fill} options={fillOptions} onChange={setFill} />
       {fill === 'bots' && <Segmented label="Bots" value={level} options={levelOptions} onChange={setLevel} />}
@@ -117,11 +196,11 @@ function myName() {
   return 'Cardinal';
 }
 
-function soloGame(mode: Mode, level: Level, pace: Pace): Game {
+function soloGame(mode: Mode, level: Level, pace: Pace, skin: number): Game {
   const n = 8;
   const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
   const entrants = Array.from({ length: n }, (_, i) =>
-    i === 0 ? { name: myName(), seat: 0, ctrl: 'local' as const, skin: 0, team: 0 } : { name: names[i % names.length], seat: -1, ctrl: 'bot' as const, skin: (i * 3) % 6 },
+    i === 0 ? { name: myName(), seat: 0, ctrl: 'local' as const, skin, team: 0 } : { name: names[i % names.length], seat: -1, ctrl: 'bot' as const, skin: (i * 3) % 6 },
   );
   return createGame({ mode, pace, level, entrants, seed: (Math.random() * 2 ** 31) >>> 0 });
 }
@@ -137,6 +216,9 @@ function Play({ mode }: { mode: StageMode }) {
   const [sens] = useSetting(SENS);
   const [sprint] = useSetting(SPRINT);
   const [fill] = useSetting(FILL);
+  const looks = useCosmetics();
+  const looksRef = useRef(looks);
+  looksRef.current = looks;
   const online = useOnline();
   const onlineRef = useRef(online);
   onlineRef.current = online;
@@ -150,6 +232,8 @@ function Play({ mode }: { mode: StageMode }) {
   const viewRef = useRef<View | null>(null);
   const [hud, setHud] = useState<Hud | null>(null);
   const [tab, setTab] = useState(false);
+  const [heldName, setHeldName] = useState<{ id: number; text: string } | null>(null);
+  const lastHeld = useRef('');
   const [locked, setLocked] = useState(false);
   const [, force] = useState(0);
   const pinged = useRef(true);
@@ -159,7 +243,7 @@ function Play({ mode }: { mode: StageMode }) {
   const idle = mode === 'idle';
   const idleAngle = useRef(0);
 
-  if (!gameRef.current && !live) gameRef.current = soloGame(modeSetting, level as Level, pace as Pace);
+  if (!gameRef.current && !live) gameRef.current = soloGame(modeSetting, level as Level, pace as Pace, looks.skin);
 
   // online: the host builds the game, guests wait for its sync
   useEffect(() => {
@@ -189,7 +273,7 @@ function Play({ mode }: { mode: StageMode }) {
       level: level as Level,
       pace: pace as Pace,
       bots: fill === 'bots',
-      skin: 0,
+      skin: looks.skin,
       botNames: names,
       onReady: (game, me) => {
         gameRef.current = game;
@@ -214,7 +298,9 @@ function Play({ mode }: { mode: StageMode }) {
     c.settings.sens = Number(sens);
     c.settings.autoSprint = sprint === 'auto';
     c.settings.touch = shell.touch;
-  }, [sens, sprint, shell.touch]);
+    c.settings.killFx = looks.kill;
+    c.settings.bedFx = looks.bed;
+  }, [sens, sprint, shell.touch, looks.kill, looks.bed]);
 
   // the view and the client
   useEffect(() => {
@@ -226,7 +312,7 @@ function Play({ mode }: { mode: StageMode }) {
     viewRef.current = view;
     const session = sessionRef.current;
     const role = !live ? 'solo' : session?.isHost ? 'host' : 'guest';
-    const client = new Client(game, live ? meRef.current : 0, role, { sens: Number(sens), autoSprint: sprint === 'auto', touch: shell.touch }, {
+    const client = new Client(game, live ? meRef.current : 0, role, { sens: Number(sens), autoSprint: sprint === 'auto', touch: shell.touch, killFx: looksRef.current.kill, bedFx: looksRef.current.bed }, {
       ping: () => {
         pinged.current = true;
       },
@@ -388,7 +474,15 @@ function Play({ mode }: { mode: StageMode }) {
       if (pinged.current || hudClock.current <= 0) {
         pinged.current = false;
         hudClock.current = 0.1;
-        setHud(c.hud());
+        const h = c.hud();
+        setHud(h);
+        // Minecraft shows the item's name over the hotbar when you switch to it
+        const s = h.slots[h.sel];
+        const key = s ? `${h.sel}:${s.item}:${s.tier}` : `${h.sel}:`;
+        if (key !== lastHeld.current) {
+          lastHeld.current = key;
+          if (s) setHeldName({ id: Date.now(), text: s.item === 'pick' ? PICK_NAMES[s.tier] : s.item === 'axe' ? AXE_NAMES[s.tier] : ITEM_DEFS[s.item].name });
+        }
       }
       // the end of the game
       const g = c.game;
@@ -416,7 +510,14 @@ function Play({ mode }: { mode: StageMode }) {
       const seats = g.players.filter((p) => p.team === g.winner && p.seat >= 0 && p.ctrl !== 'bot').map((p) => p.seat);
       o.reportResult(o.round, seats.length ? Math.min(...seats) : null);
     }
-    shellRef.current.gameOver(undefined, { title: won ? 'Victory!' : g.winner < 0 ? 'Draw' : 'Game Over', detail: won ? `${team.name} team wins! ${detail}` : detail });
+    // your record on this device, and anything it unlocked
+    const before = loadRecord();
+    const after = addGame(before, { won, kills: me.stats.kills, finals: me.stats.finals, beds: me.stats.beds, deaths: me.stats.deaths });
+    saveRecord(after);
+    const unlocked = newUnlocks(before, after);
+    const unlockLine = unlocked.length ? ` unlocked: ${unlocked.map((u) => u.name).join(', ')}! equip ${unlocked.length > 1 ? 'them' : 'it'} in the locker.` : '';
+    const streak = won && after.streak > 1 ? ` ${after.streak} wins in a row!` : '';
+    shellRef.current.gameOver(undefined, { title: won ? 'Victory!' : g.winner < 0 ? 'Draw' : 'Game Over', detail: (won ? `${team.name} team wins! ${detail}` : detail) + streak + unlockLine });
   };
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -507,6 +608,7 @@ function Play({ mode }: { mode: StageMode }) {
   const c = clientRef.current;
   const g = gameRef.current;
   const now = c?.time ?? 0;
+  const nameColors = g ? g.players.map((p) => [p.name, TEAMS[p.team].color] as [string, string]) : [];
   const playing = shell.status === 'playing' && !idle;
   const me = c?.player;
 
@@ -541,10 +643,23 @@ function Play({ mode }: { mode: StageMode }) {
         <div className="g-bedwars-hud">
           {me.alive && hud.ui === 'none' && <Crosshair />}
           <Scoreboard hud={hud} mode={g.mode} />
-          <Feed lines={c.feed} now={now} open={tab} />
+          <Feed lines={c.feed} now={now} open={tab} names={nameColors} />
           <TitleView title={c.title} now={now} />
           {me.alive && <Hotbar hud={hud} hurt={c.hurtFlash > 0} onSelect={(i) => c.select(i)} />}
-          {hud.near && hud.ui === 'none' && me.alive && <div className="g-bedwars-prompt">{shell.touch ? 'tap shop' : `press E for the ${hud.near === 'shop' ? 'item shop' : 'team upgrades'}`}</div>}
+          {hud.near && hud.ui === 'none' && me.alive && !shell.touch && <div className="g-bedwars-prompt">{`press E for the ${hud.near === 'shop' ? 'item shop' : 'team upgrades'}`}</div>}
+          {heldName && me.alive && hud.ui === 'none' && (
+            <div key={heldName.id} className="g-bedwars-itemName">
+              {heldName.text}
+            </div>
+          )}
+          {me.out && !g.over && mode === 'solo' && (
+            <div className="g-bedwars-outCard">
+              <p>you're out. watch the rest from the sky, or start over.</p>
+              <button type="button" className="arcade-btn arcade-btn-primary" onClick={() => shell.restart()}>
+                Play Again
+              </button>
+            </div>
+          )}
           {c.hurtFlash > 0 && <div className="g-bedwars-hurt" style={{ opacity: c.hurtFlash * 0.5 }} />}
           {hud.fx.blind > 0 && <div className="g-bedwars-blind" />}
           {tab && (

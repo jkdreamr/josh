@@ -69,7 +69,7 @@ export type View = {
   frame(f: ViewFrame): void;
   render(): void;
   /** Blocky puffs: a block breaking, a hit, an explosion, a kill effect. */
-  burst(kind: 'block' | 'crit' | 'hit' | 'boom' | 'smoke' | 'kill' | 'bed' | 'spark', x: number, y: number, z: number, opt?: { block?: number; color?: number | string; count?: number }): void;
+  burst(kind: 'block' | 'crit' | 'hit' | 'boom' | 'smoke' | 'kill' | 'bed' | 'spark' | 'firework' | 'lightning' | 'tree' | 'axe', x: number, y: number, z: number, opt?: { block?: number; color?: number | string; count?: number }): void;
   /** Screen position of a world point in CSS pixels, or null behind the camera. */
   project(x: number, y: number, z: number): { x: number; y: number } | null;
   dispose(): void;
@@ -466,9 +466,46 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
       }
     } else if (kind === 'smoke') {
       for (let i = 0; i < (opt.count ?? 3); i++) spawnPart(x + (R() - 0.5) * 0.3, y, z + (R() - 0.5) * 0.3, (R() - 0.5) * 0.3, 0.6 + R() * 0.5, (R() - 0.5) * 0.3, 0.6 + R() * 0.4, 0.08 + R() * 0.06, opt.color ?? '#cfcfcf', -0.5);
+    } else if (kind === 'firework') {
+      const cols = ['#ff5b5b', '#ffd23f', '#55ffff', '#55ff55', '#ff7fd0', '#ffffff'];
+      for (let i = 0; i < 90; i++) {
+        const a = R() * Math.PI * 2;
+        const e = (R() - 0.5) * Math.PI;
+        const s = 4 + R() * 3;
+        spawnPart(x, y + 3.2, z, Math.cos(a) * Math.cos(e) * s, Math.sin(e) * s + 1, Math.sin(a) * Math.cos(e) * s, 1 + R() * 0.8, 0.09, cols[(R() * cols.length) | 0], 3);
+      }
+      for (let i = 0; i < 16; i++) spawnPart(x, y + 0.5 + i * 0.18, z, 0, 0, 0, 0.3 + i * 0.02, 0.06, '#ffd27a', 0);
+    } else if (kind === 'lightning') {
+      // a jagged bolt from the sky
+      let bx = x;
+      let bz = z;
+      for (let h = 18; h > 0; h -= 0.35) {
+        bx += (R() - 0.5) * 0.5;
+        bz += (R() - 0.5) * 0.5;
+        spawnPart(bx, y + h, bz, 0, 0, 0, 0.35 + R() * 0.25, 0.16, R() < 0.7 ? '#ffffff' : '#bfe8ff', 0);
+      }
+      for (let i = 0; i < 30; i++) spawnPart(x, y + 0.2, z, (R() - 0.5) * 6, R() * 3, (R() - 0.5) * 6, 0.6, 0.08, '#fff6a0', 8);
+    } else if (kind === 'tree') {
+      // the Tree springs up where they fell
+      for (let i = 0; i < 26; i++) spawnPart(x + (R() - 0.5) * 0.2, y + i * 0.09, z + (R() - 0.5) * 0.2, 0, 0.4, 0, 1.6 + R() * 0.4, 0.12, '#6b4d2a', 0);
+      for (let i = 0; i < 90; i++) {
+        const h = R();
+        const rad = (1 - h) * 1.3;
+        const a = R() * Math.PI * 2;
+        spawnPart(x + Math.cos(a) * rad, y + 1.6 + h * 2.4, z + Math.sin(a) * rad, 0, 0.3, 0, 1.4 + R() * 0.8, 0.13, R() < 0.5 ? '#2f7a2c' : '#4fa246', 0);
+      }
+    } else if (kind === 'axe') {
+      // the Stanford Axe: a handle and a cardinal blade, rising
+      for (let i = 0; i < 18; i++) spawnPart(x + 0.5, y + 0.6 + i * 0.13, z + 0.5, 0, 1.2, 0, 1.8, 0.12, '#8a6a43', 0);
+      for (let i = 0; i < 70; i++) {
+        const u = R();
+        const v = R() * (0.4 + u * 0.6);
+        spawnPart(x + 0.5 + 0.2 + u * 0.9, y + 2.4 - v + 0.6, z + 0.5, 0, 1.2, 0, 1.8, 0.12, R() < 0.85 ? '#8c1515' : '#ffd23f', 0);
+      }
+      for (let i = 0; i < 50; i++) spawnPart(x + 0.5, y + 1, z + 0.5, (R() - 0.5) * 5, 3 + R() * 5, (R() - 0.5) * 5, 1.2, 0.08, R() < 0.5 ? '#ffd23f' : '#ffffff', 8);
     } else if (kind === 'kill') {
       const c = opt.color ?? 0x8c1515;
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < (opt.count ?? 60); i++) {
         const a = R() * Math.PI * 2;
         const s = 2 + R() * 5;
         spawnPart(x, y + 0.9 + R() * 0.6, z, Math.cos(a) * s, 2 + R() * 6, Math.sin(a) * s, 0.8 + R() * 0.8, 0.1 + R() * 0.1, R() < 0.7 ? c : 0xffffff, 9);
