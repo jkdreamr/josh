@@ -620,3 +620,27 @@ test('host entrants: humans by seat on their own islands in solo, paired in doub
   assert.deepEqual(duo.map((e) => e.team), [0, 0, 1]);
   assert.equal(duo[1].ctrl, 'local');
 });
+
+test('your record counts streaks and unlocks cosmetics at the milestones', async () => {
+  const { addGame, freshRecord, loadRecord, newUnlocks, saveRecord, isUnlocked } = await import('../src/os/arcade/games/bedwars/stats.ts');
+  let r = freshRecord();
+  assert.ok(isUnlocked(r, 'skin', '0') && !isUnlocked(r, 'skin', '1'));
+  const before = r;
+  r = addGame(r, { won: true, kills: 3, finals: 2, beds: 1, deaths: 1 });
+  assert.deepEqual(newUnlocks(before, r).map((c) => c.name), ['Coxswain']);
+  r = addGame(r, { won: true, kills: 0, finals: 0, beds: 0, deaths: 2 });
+  r = addGame(r, { won: true, kills: 0, finals: 0, beds: 4, deaths: 0 });
+  assert.equal(r.streak, 3);
+  assert.ok(isUnlocked(r, 'skin', '5'), 'a three game streak');
+  assert.ok(isUnlocked(r, 'bed', 'blast'), 'five beds');
+  r = addGame(r, { won: false, kills: 0, finals: 0, beds: 0, deaths: 1 });
+  assert.equal(r.streak, 0);
+  assert.equal(r.best, 3);
+  // storage round trip, and junk in storage reads as a fresh record
+  const mem = new Map<string, string>();
+  const store = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) };
+  saveRecord(r, store);
+  assert.deepEqual(loadRecord(store), r);
+  mem.set('arcade:bedwars-record', '{"wins": -4, "games": "x"}');
+  assert.equal(loadRecord(store).wins, 0);
+});

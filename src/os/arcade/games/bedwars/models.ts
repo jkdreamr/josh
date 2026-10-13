@@ -387,7 +387,7 @@ export class Avatar {
   private readonly lowerArmor: T.Mesh[] = [];
   private readonly geos: T.BufferGeometry[] = [];
   readonly hand: T.Group;
-  private heldKey = '';
+  heldKey = -1;
   private heldObj: T.Object3D | null = null;
   readonly tag: T.Mesh;
   private readonly tagTex: T.CanvasTexture;
@@ -488,7 +488,7 @@ export class Avatar {
   }
 
   /** What's in hand: a block, an item sprite, or nothing. Geometry and material come from a shared cache. */
-  setHeld(key: string, make: () => T.Object3D | null) {
+  setHeld(key: number, make: () => T.Object3D | null) {
     if (key === this.heldKey) return;
     this.heldKey = key;
     if (this.heldObj) this.hand.remove(this.heldObj);

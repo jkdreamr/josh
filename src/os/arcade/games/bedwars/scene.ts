@@ -6,7 +6,7 @@ import { ADDITIVE, BACK_SIDE, NEAREST, clamp, createGL, disposeTree, lerp, type 
 import { meshChunk, type Geo } from './mesher.ts';
 import { Avatar, atlasTexture, cubeGeometry, spriteGeometry, type PuppetPose } from './models.ts';
 import type { Game } from './game.ts';
-import { ITEM_DEFS, itemTile, isBlockItem, blockFor, type Item } from './items.ts';
+import { ITEMS, ITEM_DEFS, itemTile, isBlockItem, blockFor, type Item } from './items.ts';
 import { chunkKey } from './world.ts';
 
 export type HeldView = { item: Item | null; team: number; tier: number };
@@ -46,6 +46,8 @@ export type ViewFrame = {
   genIn: number[];
   /** Drop and projectile render positions come straight from the game. */
   dt: number;
+  /** Storage the crack points at, so a frame allocates nothing. */
+  crackBox: { x: number; y: number; z: number; stage: number };
 };
 
 export type Particle = { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; max: number; size: number; r: number; g: number; b: number; grav: number };
@@ -278,7 +280,8 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
     return new THREE.Mesh(spriteGeo(tile), spriteMat);
   };
   const tntGeo = cubeGeometry(THREE, 0, [TILE.tnt_top, TILE.tnt_bottom, TILE.tnt_side]);
-  const heldKey = (h: HeldView) => (h.item ? `${h.item}:${h.team}:${h.tier}` : '');
+  /** A number per held look (item, team color, tool tier), so comparing allocates nothing. */
+  const heldKey = (h: HeldView) => (h.item ? ITEMS.indexOf(h.item) * 100 + h.team * 10 + h.tier + 1 : 0);
 
   // ---------------------------------------------------------------------------------------------------------------
   // players and NPCs
@@ -301,10 +304,11 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
       m.position.set(0, -0.06, 0.08);
     } else {
       // sprites are drawn blade up and to the right: turn the plane to face sideways so the blade points out of the fist
+      // blade forward and a little up, the sprite edge-on to the side, handle in the fist
       m.scale.setScalar(0.62);
-      m.rotation.order = 'YXZ';
-      m.rotation.set(-0.9, -Math.PI / 2, 0);
-      m.position.set(0, -0.02, 0.2);
+      m.rotation.order = 'XYZ';
+      m.rotation.set(2.05, Math.PI / 2, 0);
+      m.position.set(0, 0.1, 0.33);
     }
     return m;
   };
@@ -399,12 +403,12 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
     cube.scale.setScalar(0.62);
     cube.position.set(gen.x, gen.y + 2.5, gen.z);
     scene.add(cube);
-    return { c, tex, text, cube, last: '' };
+    return { c, tex, text, cube, last: -1 };
   });
   const drawHolo = (i: number, tier: number, secs: number) => {
     const h = holos[i];
     const gen = game.gens[i];
-    const key = `${tier}:${secs}`;
+    const key = tier * 10000 + secs;
     if (key === h.last) return;
     h.last = key;
     const g = h.c.getContext('2d')!;
@@ -574,7 +578,7 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
   let vmAvatar: Avatar | null = null;
   let vmKey = '';
   let vmHeld: T.Object3D | null = null;
-  let vmHeldKey = '';
+  let vmHeldKey = -1;
   // Minecraft's first-person chain: swing offset, then the base pose (with the swing's turns), then the item's own display transform
   const vmBase = new THREE.Group();
   vmBase.rotation.order = 'YZX';
@@ -585,6 +589,11 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
 
   // ---------------------------------------------------------------------------------------------------------------
 
+  const npcPose: PuppetPose = { x: 0, y: 0, z: 0, yaw: 0, head: 0, pitch: 0, walk: 0, amount: 0, swing: -1, sneak: false, hurt: 0, invisible: false, draw: 0 };
+  const seenSet = new Set<number>();
+  const countMap = new Map<Item, number>();
+  const otherSet = new Set<number>();
+  const liveSet = new Set<number>();
   const frame = (f: ViewFrame) => {
     const { cam } = f;
     camera.position.set(cam.x, cam.y, cam.z);
@@ -600,7 +609,8 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
     cloudTex.offset.set(0, 0);
 
     // players
-    const seen = new Set<number>();
+    const seen = seenSet;
+    seen.clear();
     for (const p of f.puppets) {
       if (!p.visible) continue;
       seen.add(p.id);
@@ -612,7 +622,8 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
         scene.add(av.tag);
       }
       av.setArmor(p.armor, p.team);
-      av.setHeld(heldKey(p.held), makeHeld(p.held));
+      const hk = heldKey(p.held);
+      if (hk !== av.heldKey) av.setHeld(hk, makeHeld(p.held));
       av.setTag(p.name, TEAMS[p.team].color, p.hp);
       const d = Math.hypot(p.x - cam.x, p.z - cam.z);
       av.pose(p, camera, d < 48);
@@ -627,8 +638,12 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
       const dx = cam.x - n.x;
       const dz = cam.z - n.z;
       const close = Math.hypot(dx, dz) < 8;
-      const head = close ? Math.atan2(-dx, -dz) : n.yaw;
-      n.av.pose({ x: n.x, y: n.y, z: n.z, yaw: n.yaw, head, pitch: 0, walk: 0, amount: 0, swing: -1, sneak: false, hurt: 0, invisible: false, draw: 0 }, camera, false);
+      npcPose.x = n.x;
+      npcPose.y = n.y;
+      npcPose.z = n.z;
+      npcPose.yaw = n.yaw;
+      npcPose.head = close ? Math.atan2(-dx, -dz) : n.yaw;
+      n.av.pose(npcPose, camera, false);
       n.label.quaternion.copy(camera.quaternion);
     }
 
@@ -642,8 +657,10 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
     });
 
     // resource drops: instanced and spinning; anything else gets its own mesh
-    const counts = new Map<Item, number>();
-    const others = new Set<number>();
+    const counts = countMap;
+    counts.clear();
+    const others = otherSet;
+    others.clear();
     for (const d of game.drops) {
       const im = resMeshes.get(d.item);
       const bob = Math.sin(f.time * 2.4 + d.id) * 0.06 + 0.28;
@@ -683,7 +700,8 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
       }
 
     // projectiles
-    const live = new Set<number>();
+    const live = liveSet;
+    live.clear();
     for (const pr of game.projs) {
       live.add(pr.id);
       let o = projMeshes.get(pr.id);

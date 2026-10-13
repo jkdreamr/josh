@@ -23,12 +23,12 @@ import {
   type MsgKind,
   type Player,
 } from './game.ts';
-import { ITEM_DEFS, blockFor, isBlockItem, isBow, type Item, type Res } from './items.ts';
+import { ITEMS, ITEM_DEFS, blockFor, isBlockItem, isBow, type Item, type Res } from './items.ts';
 import { EYE, EYE_SNEAK, HEIGHT, TICK, WIDTH, bodyOverlapsCell, stepBody, type MoveInput } from './physics.ts';
 import { canBreak, raycast, rayBox, type RayHit } from './world.ts';
 import { Track, type Pose } from './interp.ts';
 import type { KeyState } from '../../kit';
-import type { Puppet, View } from './scene.ts';
+import type { Puppet, View, ViewFrame } from './scene.ts';
 import { thinkBots } from './bots.ts';
 import * as snd from './audio.ts';
 import { damp } from './gl.ts';
@@ -120,7 +120,7 @@ export class Client {
   private swingT = -1;
   private equip = 0;
   private lastSel = 0;
-  private lastHeldKey = '';
+  private lastHeldKey = -99;
   // interaction
   dig: { x: number; y: number; z: number; ticks: number; need: number } | null = null;
   private digDelay = 0;
@@ -145,6 +145,9 @@ export class Client {
   /** Spectator camera (dead or out). */
   private spec = { x: 0, y: 0, z: 0, active: false };
   private lastDeadSecs = -1;
+  /** What the view draws each frame, reused so a frame allocates nothing. */
+  private readonly frameState: ViewFrame;
+  private readonly puppetPool: Puppet[] = [];
   /** Frame time tracking for adaptive resolution. */
   private frameAvg = 1 / 60;
   private dpr = 1;
@@ -160,6 +163,18 @@ export class Client {
     const p = this.player;
     this.prev = { x: p.body.x, y: p.body.y, z: p.body.z };
     this.dpr = Math.min(typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1, 2);
+    this.frameState = {
+      game,
+      cam: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, fov: 70 },
+      puppets: [],
+      target: null,
+      crack: null,
+      crackBox: { x: 0, y: 0, z: 0, stage: 0 },
+      hand: { held: { item: null, team: 0, tier: 0 }, swing: -1, equip: 0, draw: 0, eat: 0, bob: 0, bobAmt: 0, visible: true, skin: 0, team: 0 },
+      time: 0,
+      genIn: [],
+      dt: 0,
+    };
   }
 
   get player(): Player {
@@ -726,7 +741,8 @@ export class Client {
             const vol = snd.near(o.body.x, o.body.y, o.body.z, 20);
             if (vol > 0.05) snd.hitSound(false, vol * 0.6);
           }
-          v?.burst('hit', o.body.x, o.body.y, o.body.z);
+          // no puff inside our own camera
+          if (e.p !== me) v?.burst('hit', o.body.x, o.body.y, o.body.z);
         }
         if (e.p === me) this.hooks.ping?.();
         break;
@@ -738,7 +754,7 @@ export class Client {
         const o = g.players[e.p];
         // your kills get your kill effect; everyone else's a small puff in the team color
         if (e.by === me) v?.burst(this.settings.killFx === 'firework' ? 'firework' : this.settings.killFx === 'lightning' ? 'lightning' : this.settings.killFx === 'tree' ? 'tree' : 'kill', o.body.x, o.body.y, o.body.z, { color: 0x8c1515 });
-        else v?.burst('kill', o.body.x, o.body.y, o.body.z, { color: parseInt(TEAMS[o.team].color.slice(1), 16), count: 24 });
+        else if (e.p !== me) v?.burst('kill', o.body.x, o.body.y, o.body.z, { color: parseInt(TEAMS[o.team].color.slice(1), 16), count: 24 });
         if (e.by === me && this.settings.killFx === 'lightning') snd.boomSound(0.6);
         if (e.p === me) {
           snd.deathSound();
@@ -823,7 +839,9 @@ export class Client {
         if (e.team === p.team) {
           this.showTitle('VICTORY!', `${TEAMS[p.team].name} team wins`, '#ffd23f', 4);
           snd.levelUpSound();
-          v?.burst('firework', p.body.x, p.body.y + 2, p.body.z);
+          // fireworks a little way in front of you
+          const [fx, , fz] = lookDir(p.body.yaw, 0);
+          v?.burst('firework', p.body.x + fx * 7, p.body.y + 2, p.body.z + fz * 7);
         } else this.showTitle('GAME OVER!', e.team >= 0 ? `${TEAMS[e.team].name} team wins` : 'nobody wins this one', '#ff5b5b', 4);
         this.hooks.moment?.(e);
         this.hooks.ping?.();
@@ -935,7 +953,7 @@ export class Client {
     // the hand: lower it briefly when switching items
     const held = heldItem(p);
     const tier = held === 'pick' ? p.inv.pick : held === 'axe' ? p.inv.axe : 0;
-    const key = `${held}:${tier}`;
+    const key = (held ? ITEMS.indexOf(held) : -1) * 10 + tier;
     if (p.sel !== this.lastSel || key !== this.lastHeldKey) {
       if (p.sel !== this.lastSel) this.equip = 1;
       this.lastSel = p.sel;
@@ -947,8 +965,9 @@ export class Client {
       if (this.swingT >= 1) this.swingT = -1;
     }
 
-    // puppets
-    const puppets: Puppet[] = [];
+    // puppets: the same objects every frame, refilled in place
+    const puppets = this.frameState.puppets;
+    puppets.length = 0;
     for (const o of g.players) {
       if (o.id === this.me) continue;
       const ps = this.puppets.get(o.id);
@@ -963,55 +982,89 @@ export class Client {
         ps.swingT += dt / 0.3;
         if (ps.swingT >= 1) ps.swingT = -1;
       }
-      puppets.push({
+      const pp = (this.puppetPool[o.id] ??= {
         id: o.id,
         visible: true,
-        x: scratch.x,
-        y: scratch.y,
-        z: scratch.z,
-        yaw: scratch.yaw,
-        head: scratch.yaw,
-        pitch: scratch.pitch,
-        walk: ps.walk,
-        amount: ps.amount,
-        swing: ps.swingT,
-        sneak: o.body.sneaking,
-        hurt: ps.hurtUntil > this.time ? 1 : 0,
-        invisible: o.fx.invis > 0,
-        draw: o.drawing > 0 ? Math.min(1, o.drawing / 20) : 0,
-        held: { item: o.show.item, team: o.team, tier: o.show.tier },
-        armor: o.inv.armor,
+        x: 0,
+        y: 0,
+        z: 0,
+        yaw: 0,
+        head: 0,
+        pitch: 0,
+        walk: 0,
+        amount: 0,
+        swing: -1,
+        sneak: false,
+        hurt: 0,
+        invisible: false,
+        draw: 0,
+        held: { item: null, team: o.team, tier: 0 },
+        armor: 0,
         team: o.team,
         name: o.name,
-        hp: o.hp,
+        hp: 20,
         skin: o.skin,
       });
+      pp.x = scratch.x;
+      pp.y = scratch.y;
+      pp.z = scratch.z;
+      pp.yaw = scratch.yaw;
+      pp.head = scratch.yaw;
+      pp.pitch = scratch.pitch;
+      pp.walk = ps.walk;
+      pp.amount = ps.amount;
+      pp.swing = ps.swingT;
+      pp.sneak = o.body.sneaking;
+      pp.hurt = ps.hurtUntil > this.time ? 1 : 0;
+      pp.invisible = o.fx.invis > 0;
+      pp.draw = o.drawing > 0 ? Math.min(1, o.drawing / 20) : 0;
+      pp.held.item = o.show.item;
+      pp.held.team = o.team;
+      pp.held.tier = o.show.tier;
+      pp.armor = o.inv.armor;
+      pp.team = o.team;
+      pp.name = o.name;
+      pp.hp = o.hp;
+      pp.skin = o.skin;
+      puppets.push(pp);
     }
 
-    const crack = this.dig && this.dig.need > 0 && isFinite(this.dig.need) ? { x: this.dig.x, y: this.dig.y, z: this.dig.z, stage: Math.floor((this.dig.ticks / this.dig.need) * 10) } : null;
-    const genIn = g.gens.map((gen) => gen.timer / TPS);
-    v.frame({
-      game: g,
-      cam: { x: cx, y: cy, z: cz, yaw, pitch, roll, fov: this.fov },
-      puppets,
-      target: this.target && p.alive && this.ui === 'none' ? this.target : null,
-      crack,
-      hand: {
-        held: { item: held, team: p.team, tier },
-        swing: this.swingT,
-        equip: this.equip,
-        draw: held && isBow(held) ? Math.min(1, this.useTicks / 20) : 0,
-        eat: held && !isBow(held) && this.useTicks > 0 ? this.useTicks / 32 : 0,
-        bob,
-        bobAmt: this.bobAmt * 10,
-        visible: p.alive && !this.spec.active,
-        skin: p.skin,
-        team: p.team,
-      },
-      time: this.time,
-      genIn,
-      dt,
-    });
+    const f = this.frameState;
+    if (this.dig && this.dig.need > 0 && isFinite(this.dig.need)) {
+      f.crackBox.x = this.dig.x;
+      f.crackBox.y = this.dig.y;
+      f.crackBox.z = this.dig.z;
+      f.crackBox.stage = Math.floor((this.dig.ticks / this.dig.need) * 10);
+      f.crack = f.crackBox;
+    } else f.crack = null;
+    f.genIn.length = g.gens.length;
+    for (let i = 0; i < g.gens.length; i++) f.genIn[i] = g.gens[i].timer / TPS;
+    f.game = g;
+    const cam = f.cam;
+    cam.x = cx;
+    cam.y = cy;
+    cam.z = cz;
+    cam.yaw = yaw;
+    cam.pitch = pitch;
+    cam.roll = roll;
+    cam.fov = this.fov;
+    f.target = this.target && p.alive && this.ui === 'none' ? this.target : null;
+    const h = f.hand;
+    h.held.item = held;
+    h.held.team = p.team;
+    h.held.tier = tier;
+    h.swing = this.swingT;
+    h.equip = this.equip;
+    h.draw = held && isBow(held) ? Math.min(1, this.useTicks / 20) : 0;
+    h.eat = held && !isBow(held) && this.useTicks > 0 ? this.useTicks / 32 : 0;
+    h.bob = bob;
+    h.bobAmt = this.bobAmt * 10;
+    h.visible = p.alive && !this.spec.active;
+    h.skin = p.skin;
+    h.team = p.team;
+    f.time = this.time;
+    f.dt = dt;
+    v.frame(f);
   }
 
   render() {
