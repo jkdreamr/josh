@@ -8,6 +8,8 @@ export type StatsPeriod = (typeof PERIODS)[number];
 export type PeriodCounts = Record<StatsPeriod, number>;
 export type TopGame = { game: string; plays: number };
 export type StatsSummary = {
+  /** People with the site open right now. Missing from Workers deployed before it existed. */
+  online?: number;
   views: PeriodCounts;
   plays: PeriodCounts;
   visitors: PeriodCounts;
@@ -76,6 +78,7 @@ export function isStatsSummary(v: unknown): v is StatsSummary {
   if (!v || typeof v !== 'object') return false;
   const s = v as StatsSummary;
   return (
+    (s.online === undefined || isCount(s.online)) &&
     isCounts(s.views) &&
     isCounts(s.plays) &&
     isCounts(s.visitors) &&

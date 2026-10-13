@@ -45,6 +45,7 @@ test('isGameId matches arcade folder names and app ids', () => {
 test('isStatsSummary checks the Worker response shape', () => {
   const counts = { today: 1, week: 2, month: 3, all: 4 };
   const summary: StatsSummary = {
+    online: 3,
     views: counts,
     plays: counts,
     visitors: counts,
@@ -58,6 +59,9 @@ test('isStatsSummary checks the Worker response shape', () => {
   assert.ok(!isStatsSummary({ ...summary, views: { ...counts, all: '4' } }));
   assert.ok(!isStatsSummary({ ...summary, top: { ...summary.top, all: [{ game: 'dino' }] } }));
   assert.ok(!isStatsSummary({ ...summary, since: 'yesterday' }));
+  assert.ok(isStatsSummary({ ...summary, online: undefined }), 'a Worker from before the online count still works');
+  assert.ok(!isStatsSummary({ ...summary, online: -1 }));
+  assert.ok(!isStatsSummary({ ...summary, online: '3' }));
 });
 
 test('formatCount is exact below a million and compact above', () => {
