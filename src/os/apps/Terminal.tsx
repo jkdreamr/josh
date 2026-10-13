@@ -14,12 +14,12 @@ const dirMap: Record<string, FolderId> = { school: 'school', work: 'work', proje
 const appNames: Record<string, AppId> = {
   finder: 'finder', chrome: 'chrome', browser: 'chrome', messages: 'messages', notes: 'notes', spotify: 'spotify', soundcloud: 'soundcloud',
   instagram: 'instagram', ig: 'instagram', x: 'x', twitter: 'x', linkedin: 'linkedin', github: 'github', mail: 'mail', email: 'mail',
-  coxbox: 'coxbox', 'cox-box': 'coxbox', rowing: 'coxbox', baduk: 'baduk', go: 'baduk', omok: 'baduk', badminton: 'badminton',
+  arcade: 'arcade', games: 'arcade', coxbox: 'coxbox', 'cox-box': 'coxbox', rowing: 'coxbox', baduk: 'baduk', go: 'baduk', omok: 'baduk', badminton: 'badminton',
   beatpad: 'beatpad', beats: 'beatpad', music: 'beatpad',
   photobooth: 'photobooth', camera: 'photobooth', trash: 'trash', about: 'about',
 };
 
-const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'school', 'projects', 'music', 'socials', 'contact', 'neofetch', 'row', 'baduk', 'go', 'omok', 'badminton', 'beatpad', 'beats', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
+const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'school', 'projects', 'music', 'socials', 'contact', 'neofetch', 'arcade', 'row', 'baduk', 'go', 'omok', 'badminton', 'beatpad', 'beats', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
 
 const ART = String.raw`
        _ _
@@ -82,6 +82,7 @@ export default function Terminal(_: AppProps) {
               ['work · school · projects · music', 'shortcuts'],
               ['socials · contact', 'where to find me'],
               ['neofetch', 'system info'],
+              ['arcade', 'play the arcade'],
               ['row', 'race in Cox Box'],
               ['baduk · go', 'play Go on 9x9, 13x13 or 19x19'],
               ['badminton', 'play a rally'],
@@ -192,6 +193,9 @@ export default function Terminal(_: AppProps) {
             </div>
           </div>,
         );
+      case 'arcade':
+        api.open('arcade');
+        return print(<span className="t-dim">opening the arcade…</span>);
       case 'row':
         api.open('coxbox');
         return print(<span className="t-dim">attention… row!</span>);

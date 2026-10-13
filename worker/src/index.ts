@@ -3,13 +3,18 @@ import { validateSubmission, TOP, type BoardEntry } from '../../src/os/arcade/ki
 import type { LeaderboardSpec } from '../../src/os/arcade/types.ts';
 import { cleanName, nameLength } from '../../src/os/arcade/kit/leaderboard-core.ts';
 import { dayKey, KEEP_DAYS, MAX_GAMES, parseHit, periodStarts, shiftDay, TOP_GAMES, type StatsHit, type StatsSummary, type TopGame } from '../../src/os/stats-core.ts';
+import { cleanText, isSession, readIndex, webhookSecret, type TgUpdate } from '../../src/os/chat-core.ts';
+import { Chat, type ChatEnv } from './chat';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
 import { agreedWinner, beginRound, benchSeat, canJoinRoom, canStartRoom, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
-interface Env {
+export { Chat };
+
+interface Env extends ChatEnv {
   BOARDS: DurableObjectNamespace<Boards>;
   ROOMS: DurableObjectNamespace<Room>;
   STATS: DurableObjectNamespace<Stats>;
+  CHAT: DurableObjectNamespace<Chat>;
 }
 
 const RATE_LIMIT = 6;
@@ -428,6 +433,46 @@ export default {
         return withCors(counted ? json({ ok: true }) : json({ error: 'rate limited' }, 429, { 'retry-after': '60' }));
       } catch {
         return withCors(json({ error: 'unavailable' }, 503));
+      }
+    }
+    if (url.pathname === '/chat' && (request.method === 'GET' || request.method === 'POST')) {
+      const chat = env.CHAT.get(env.CHAT.idFromName('global'));
+      try {
+        if (request.method === 'GET') {
+          const session = url.searchParams.get('s');
+          return withCors(json(await chat.read(isSession(session) ? session : null, readIndex(url.searchParams.get('after')))));
+        }
+        let body: Record<string, unknown> | null = null;
+        try {
+          body = JSON.parse(await request.text());
+        } catch {
+          /* checked below */
+        }
+        const text = cleanText(body?.text);
+        if (!isSession(body?.s) || !text) return withCors(json({ error: 'invalid body' }, 400));
+        const sent = await chat.send(body.s, text, readIndex(body.after), request.headers.get('CF-Connecting-IP') || 'unknown');
+        return withCors(json(sent.body, sent.status));
+      } catch {
+        return withCors(json({ error: 'unavailable' }, 503));
+      }
+    }
+    if (url.pathname === '/telegram') {
+      const chat = env.CHAT.get(env.CHAT.idFromName('global'));
+      const token = env.TELEGRAM_BOT_TOKEN;
+      // Open in a browser to connect the bot to this Worker and see what is left to set up.
+      if (request.method === 'GET') {
+        const report = await chat.setup(`${url.origin}/telegram`, token ? await webhookSecret(token) : '');
+        return new Response(report, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+      }
+      if (request.method === 'POST') {
+        if (!token || request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== (await webhookSecret(token))) return json({ error: 'forbidden' }, 401);
+        try {
+          await chat.update((await request.json().catch(() => null)) as TgUpdate | null);
+        } catch (err) {
+          // Still 200: Telegram would otherwise retry the same update for hours.
+          console.error(err);
+        }
+        return new Response('ok');
       }
     }
     if (url.pathname === '/rooms' && request.method === 'POST') {

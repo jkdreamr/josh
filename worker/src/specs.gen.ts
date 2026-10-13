@@ -73,7 +73,7 @@ export const ONLINE_SPECS: Record<string, OnlineSpec> = {
   "invaders": {"seats":4},
   "lightcycles": {"seats":4},
   "omok": {"seats":2},
-  "palmdrive": {"seats":4},
+  "palmdrive": {"seats":8},
   "pong": {"seats":2},
   "run-3d": {"seats":4},
   "snake": {"seats":4},
