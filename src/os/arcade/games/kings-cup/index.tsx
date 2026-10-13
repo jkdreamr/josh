@@ -1,11 +1,11 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { GameShell, sfx, useShell } from '../../kit';
-import { Avatar, Big, DrinkNote, HowToPlay, PlayerList, Row, Screen, listNames, mulberry32, useCountdown, usePlayers, useStored } from '../../kit/party';
+import { Avatar, Big, DrinkNote, HowToPlay, Option, PlayerList, Row, Screen, listNames, mulberry32, useCountdown, usePlayers, useStored } from '../../kit/party';
 import type { GameProps } from '../../types';
 import {
-  ALTERNATE_RULES,
   CLASSIC_RULES,
   DECK_SIZE,
+  KING,
   LAST_KING,
   MADE_RULE_MAX,
   ROLE_TITLES,
@@ -20,6 +20,8 @@ import {
   dropRule,
   isClassic,
   isRed,
+  isRole,
+  isSpicy,
   makeRule,
   mateGroups,
   matesOf,
@@ -28,6 +30,7 @@ import {
   nextSlot,
   nth,
   parseRules,
+  parseSpicy,
   rankLabel,
   rankName,
   rankOfKind,
@@ -36,6 +39,8 @@ import {
   rulesEdited,
   setRule,
   slotAngle,
+  stripSpicy,
+  swapsFor,
   tidy,
   type Card,
   type Drawn,
@@ -50,6 +55,11 @@ import './kings-cup.css';
 const CLASSIC = parseRules(null);
 /** How long the fourth king sits on the table before the finale. */
 const BEAT = 2.2;
+/**
+ * After a card is drawn, taps on the table are ignored this long (ms): a double tap on the ring, the cup or Draw
+ * draws one card, and a second tap can't land on whatever scrolled under the finger.
+ */
+const GUARD = 550;
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
@@ -291,7 +301,7 @@ const fieldKeys = (cancel: () => void) => (e: ReactKeyboardEvent<HTMLElement>) =
   }
 };
 
-function RuleEditor({ rank, rule, onSave, onCancel }: { rank: number; rule: Rule; onSave: (name: string, text: string) => void; onCancel: () => void }) {
+function RuleEditor({ rank, rule, spicy, onSave, onCancel }: { rank: number; rule: Rule; spicy: boolean; onSave: (name: string, text: string) => void; onCancel: () => void }) {
   const shell = useShell();
   const [name, setName] = useState(rule.name);
   const [text, setText] = useState(rule.text);
@@ -362,20 +372,26 @@ function RuleEditor({ rank, rule, onSave, onCancel }: { rank: number; rule: Rule
             }
           }}
         />
-        <div className="g-kings-cup-swaps" role="group" aria-label="Swap in a rule">
-          <span>Swap in</span>
-          {[classic, ...ALTERNATE_RULES].map((r, i) => (
-            <button
-              type="button"
-              key={r.name}
-              aria-pressed={tidy(name, RULE_NAME_MAX) === r.name && tidy(text, RULE_TEXT_MAX) === r.text}
-              className={i === 0 ? 'is-classic' : undefined}
-              onClick={() => swap(r)}
-            >
-              {r.name}
-            </button>
-          ))}
-        </div>
+        {[false, true].map((adult) => {
+          const list = swapsFor(rank, spicy).filter((r) => isSpicy(r) === adult);
+          if (!list.length) return null;
+          return (
+            <div key={String(adult)} className={`g-kings-cup-swaps ${adult ? 'is-spicy' : ''}`} role="group" aria-label={adult ? 'Swap in an 18+ rule' : 'Swap in a rule'}>
+              <span>{adult ? '18+ swaps' : 'Swap in'}</span>
+              {list.map((r) => (
+                <button
+                  type="button"
+                  key={r.name}
+                  aria-pressed={tidy(name, RULE_NAME_MAX) === r.name && tidy(text, RULE_TEXT_MAX) === r.text}
+                  className={r === classic ? 'is-classic' : undefined}
+                  onClick={() => swap(r)}
+                >
+                  {r.name}
+                </button>
+              ))}
+            </div>
+          );
+        })}
         <div className="g-kings-cup-edit-btns">
           <button type="button" className="arcade-btn" onClick={onCancel}>
             Cancel
@@ -389,20 +405,21 @@ function RuleEditor({ rank, rule, onSave, onCancel }: { rank: number; rule: Rule
   );
 }
 
-function RuleText({ rank, rule }: { rank: number; rule: Rule }) {
+function RuleText({ rank, rule, note }: { rank: number; rule: Rule; note?: string }) {
   return (
     <>
       <MiniCard rank={rank} />
       <span className="g-kings-cup-rule-text">
         <b>{rule.name}</b>
         {rule.text && <small>{rule.text}</small>}
+        {note && <small className="g-kings-cup-lock-note">{note}</small>}
       </span>
-      {!isClassic(rule, rank) && <em>House</em>}
+      {isSpicy(rule) ? <em className="is-spicy">18+</em> : !isClassic(rule, rank) && <em>House</em>}
     </>
   );
 }
 
-function HouseRules({ rules, onChange, label }: { rules: Rule[]; onChange: (rules: Rule[]) => void; label?: string }) {
+function HouseRules({ rules, spicy, onChange, label }: { rules: Rule[]; spicy: boolean; onChange: (rules: Rule[]) => void; label?: string }) {
   const [open, setOpen] = useState<number | null>(null);
   const edited = rulesEdited(rules);
   return (
@@ -411,12 +428,26 @@ function HouseRules({ rules, onChange, label }: { rules: Rule[]; onChange: (rule
       <ul className="g-kings-cup-rulelist">
         {rules.map((rule, i) => {
           const rank = i + 1;
+          // Every king fills the cup and the fourth ends the game, whatever the rule says, so the king stays put.
+          if (rank === KING)
+            return (
+              <li key={rank} className="is-locked">
+                <div className="g-kings-cup-rule" role="group" aria-label={`King: ${rule.name}. Locked, every king fills the cup.`}>
+                  <RuleText rank={rank} rule={rule} note="Locked. Every king fills the cup." />
+                  <svg className="g-kings-cup-pen" viewBox="0 0 16 16" aria-hidden="true">
+                    <rect x="3.5" y="7" width="9" height="6.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+                    <path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" fill="none" stroke="currentColor" strokeWidth="1.4" />
+                  </svg>
+                </div>
+              </li>
+            );
           return (
             <li key={rank} className={open === rank ? 'is-open' : undefined}>
               {open === rank ? (
                 <RuleEditor
                   rank={rank}
                   rule={rule}
+                  spicy={spicy}
                   onCancel={() => setOpen(null)}
                   onSave={(name, text) => {
                     sfx.play('blip');
@@ -469,19 +500,43 @@ type Step = 'setup' | 'play' | 'rules' | 'cup';
 /** The card on show, with the rule it had when it was drawn (editing the house rules counts from the next card). */
 type Current = Drawn & { n: number; rule: Rule; mateBase: Pair[]; madeRule: boolean };
 
-const HOW: ReactNode[] = [
-  <>Set an empty cup in the middle of the table. The ring of cards lives on this phone.</>,
-  <>Take turns pulling any card from the ring. Read its rule out loud and do it.</>,
-  <>
-    Some rules stick: <b>mates</b> drink together all game, and the <b>Question Master</b> rules until the next queen.
-  </>,
-  <>
-    Every <b>king</b>, pour a splash of your drink into the cup.
-  </>,
-  <>
-    Whoever pulls the <b>fourth king</b> drinks the cup. Sips are fine.
-  </>,
-];
+/** How to Play, written from the house rules in force, so a moved or swapped rule reads right. */
+function howTo(rules: readonly Rule[], spicy: boolean): ReactNode[] {
+  const sticky = rules.flatMap((rule, i) => {
+    const kind = ruleKind(rule);
+    const word = i === 0 ? 'ace' : i >= 10 ? rankName(i + 1).toLowerCase() : String(i + 1);
+    const card = (
+      <>
+        {word === 'ace' || word === '8' ? 'An' : 'A'} <b>{word}</b>
+      </>
+    );
+    if (kind === 'mate') return [<>{card} gives you a mate who drinks when you do.</>];
+    if (kind === 'make') return [<>{card} makes a rule for the rest of the game.</>];
+    if (isRole(kind)) return [<>{card} makes you {ROLE_TITLES[kind]} until the next one.</>];
+    return [];
+  });
+  return [
+    <>Set an empty cup in the middle of the table. The ring of cards lives on this phone.</>,
+    <>Take turns pulling any card from the ring. Read its rule out loud and do it.</>,
+    ...(sticky.length
+      ? [
+          <>
+            Some cards stick around.
+            {sticky.map((part, i) => (
+              <span key={i}> {part}</span>
+            ))}
+          </>,
+        ]
+      : []),
+    <>
+      Every <b>king</b>, pour a splash of your drink into the cup.
+    </>,
+    <>
+      Whoever pulls the <b>fourth king</b> drinks the cup. Sips are fine.
+    </>,
+    ...(spicy ? [<>Anyone can pass on an 18+ rule, and one that brings in someone else needs their yes.</>] : []),
+  ];
+}
 
 /** Waits a beat on the table after the fourth king, then moves on. Pausing the game holds it. */
 function Beat({ onEnd }: { onEnd: () => void }) {
@@ -489,9 +544,35 @@ function Beat({ onEnd }: { onEnd: () => void }) {
   return null;
 }
 
+/** Scrolls each scrolling box around `el` the least that shows all of it, and then as much of `extra` as fits below. */
+function reveal(el: HTMLElement, extra: HTMLElement | null) {
+  let smooth = true;
+  try {
+    smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    /* no matchMedia: jump */
+  }
+  for (let box = el.parentElement; box; box = box.parentElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(box).overflowY) && box.scrollHeight > box.clientHeight + 1) {
+      const frame = box.getBoundingClientRect();
+      const at = (n: HTMLElement) => n.getBoundingClientRect().top - frame.top + box.scrollTop;
+      const top = at(el) - 8;
+      const view = box.clientHeight;
+      let y = Math.max(0, at(el) + el.offsetHeight + 8 - view);
+      if (extra && box.contains(extra)) y = Math.max(y, at(extra) + extra.offsetHeight + 8 - view);
+      y = Math.max(0, Math.min(y, top));
+      if (Math.abs(box.scrollTop - y) > 1) box.scrollTo({ top: y, behavior: smooth ? 'smooth' : 'auto' });
+    }
+    if (box.classList.contains('arcade-party')) break;
+  }
+}
+
 function Play() {
   const [players] = usePlayers();
   const [rules, setRules] = useStored<Rule[]>('kings-cup:rules', CLASSIC, parseRules);
+  const [spicy, setSpicy] = useStored<boolean>('kings-cup:spicy', false, parseSpicy);
+  // With 18+ Rules off, any 18+ swap still saved plays as the classic rule for its card.
+  const live = useMemo(() => (spicy ? rules : stripSpicy(rules)), [rules, spicy]);
   const [step, setStep] = useState<Step>('setup');
   const [table, setTable] = useState<string[]>([]);
   const [game, setGame] = useState<Game | null>(null);
@@ -505,15 +586,26 @@ function Play() {
   const flipped = useRef(0);
   const finaleAt = useRef(0);
   const kingAt = useRef(0);
+  const lastPull = useRef(-Infinity);
+  /** When the tap being handled happened. A busy phone can run a handler late, so a timer from the event, not the handler. */
+  const tapAt = useRef<number | null>(null);
+  const stamp = () => {
+    const t = tapAt.current;
+    tapAt.current = null;
+    const now = performance.now();
+    return t !== null && now - t < 3000 ? t : now;
+  };
+  const hand = useRef<HTMLDivElement | null>(null);
   const mates = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (step !== 'play') return;
     dealt.current = deal;
     flipped.current = cur?.n ?? 0;
   });
-  // The mate picker can land below the fold on a phone: bring it up so nobody has to hunt for it.
+  // Every draw brings the card up, and the mate picker under it when there's room: the screen never stays
+  // scrolled away from what was just drawn.
   useEffect(() => {
-    if (step === 'play') mates.current?.scrollIntoView({ block: 'nearest' });
+    if (step === 'play' && cur && hand.current) reveal(hand.current, mates.current);
   }, [cur?.n, step]);
 
   const name = (seat: number) => table[seat] ?? `Player ${seat + 1}`;
@@ -530,7 +622,7 @@ function Play() {
   /** Ends the beat. A tap that lands right after the fourth king flips (a double tap on Draw) doesn't skip it. */
   const toCup = (force = false) => {
     if (step !== 'play' || !cur?.last) return;
-    if (!force && performance.now() - kingAt.current < 700) return;
+    if (!force && stamp() - kingAt.current < 700) return;
     sfx.play('win');
     finaleAt.current = performance.now();
     setStep('cup');
@@ -539,15 +631,19 @@ function Play() {
   const pull = (slot?: number) => {
     if (!game) return;
     if (cur?.last) return toCup();
-    const r = draw(game, slot, rules);
+    // A double tap (ring, cup, Draw or keys, in any mix) draws one card.
+    const now = stamp();
+    if (now - lastPull.current < GUARD) return;
+    const r = draw(game, slot, live);
     if (!r) return;
+    lastPull.current = now;
     setGame(r.game);
-    setCur({ ...r.drawn, n: r.game.drawn.length, rule: ruleFor(rules, r.drawn.card.rank), mateBase: r.game.mates, madeRule: false });
+    setCur({ ...r.drawn, n: r.game.drawn.length, rule: ruleFor(live, r.drawn.card.rank), mateBase: r.game.mates, madeRule: false });
     setDraft('');
     sfx.noise(0.06, 0.1);
     if (r.drawn.last) {
       // The fourth king: a low thud under the coin, then a beat on the table before the cup.
-      kingAt.current = performance.now();
+      kingAt.current = now;
       sfx.play('coin', 0.7);
       sfx.tone({ freq: 110, to: 52, dur: 0.7, type: 'triangle', vol: 0.22, delay: 0.05 });
       if (r.drawn.seat !== null) {
@@ -574,10 +670,29 @@ function Play() {
           </Big>
         }
       >
-        <HowToPlay steps={HOW} />
+        <HowToPlay steps={howTo(live, spicy)} />
         <PlayerList min={0} />
-        <HouseRules rules={rules} onChange={setRules} label="House Rules" />
         <DrinkNote />
+        <div className="g-kings-cup-field">
+          <Option
+            label="18+ Rules"
+            value={spicy ? 'on' : 'off'}
+            options={[
+              ['off', 'Off'],
+              ['on', 'On'],
+            ]}
+            onChange={(v) => {
+              const on = v === 'on';
+              setSpicy(on);
+              // Off means off: 18+ swaps already in the house rules go back to the classic rule.
+              if (!on && rules.some(isSpicy)) setRules(stripSpicy(rules));
+            }}
+          />
+          <p className={`g-kings-cup-note ${spicy ? 'is-spicy' : ''}`}>
+            {spicy ? 'Spicy swaps join the house rules below. For groups who know each other well.' : 'Adds spicy swaps to the house rules.'}
+          </p>
+        </div>
+        <HouseRules rules={live} spicy={spicy} onChange={setRules} label="House Rules" />
       </Screen>
     );
   }
@@ -596,7 +711,7 @@ function Play() {
           </Big>
         }
       >
-        <HouseRules rules={rules} onChange={setRules} />
+        <HouseRules rules={live} spicy={spicy} onChange={setRules} />
       </Screen>
     );
 
@@ -661,199 +776,225 @@ function Play() {
   const chosenMate = cur && cur.seat !== null && kind === 'mate' ? game.mates.find((p) => !cur.mateBase.includes(p)) : undefined;
   const groups = mateGroups(game.mates);
   // A role goes away with its rule: swap Snake Eyes out of the house rules and nobody holds it anymore.
-  const roles = game.roles.filter((r) => rankOfKind(rules, r.kind) !== null);
-  const tag = (k: 'mate' | 'make', fallback: number) => rankLabel(rankOfKind(rules, k) ?? fallback);
+  const roles = game.roles.filter((r) => rankOfKind(live, r.kind) !== null);
+  const tag = (k: 'mate' | 'make', fallback: number) => rankLabel(rankOfKind(live, k) ?? fallback);
   const last = !!cur?.last;
 
   return (
-    <Screen
-      key="play"
-      className={`g-kings-cup-play ${last ? 'is-last' : ''}`}
-      onEnter={() => pull()}
-      actions={
-        last ? (
-          <Big primary quiet onClick={() => toCup()}>
-            Drink the Cup
-          </Big>
-        ) : (
-          <Row>
-            <Big className="g-kings-cup-rules-btn" onClick={() => setStep('rules')}>
-              Rules
-            </Big>
-            <Big primary quiet onClick={() => pull()}>
-              {nextName ? `Draw for ${nextName}` : 'Draw'}
-            </Big>
-          </Row>
-        )
-      }
+    <div
+      className="g-kings-cup-taps"
+      onClickCapture={(e) => {
+        tapAt.current = e.timeStamp;
+      }}
+      onClick={() => {
+        tapAt.current = null;
+      }}
     >
-      {last && <Beat onEnd={() => toCup(true)} />}
-      <div className="g-kings-cup-table">
-        <Ring game={game} deal={deal} animate={deal !== dealt.current} onPick={pull} />
-        <div className="g-kings-cup-side">
-          <div className="g-kings-cup-hand" aria-live="polite">
-            <div className="g-kings-cup-card">
-              {cur ? (
-                <div className={`g-kings-cup-flip ${fresh ? 'is-new' : ''}`} key={cur.n}>
-                  <div className="g-kings-cup-face">
-                    <CardFace card={cur.card} />
+      <Screen
+        key="play"
+        className={`g-kings-cup-play ${last ? 'is-last' : ''} ${nextName && Array.from(nextName).length > 9 ? 'is-long-name' : ''}`}
+        onEnter={() => pull()}
+        actions={
+          last ? (
+            <Big primary quiet onClick={() => toCup()}>
+              Drink the Cup
+            </Big>
+          ) : (
+            <Row>
+              <Big className="g-kings-cup-rules-btn" onClick={() => setStep('rules')}>
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M7.5 5.5h9M7.5 10h9M7.5 14.5h9" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  <circle cx="3.8" cy="5.5" r="1.3" fill="currentColor" />
+                  <circle cx="3.8" cy="10" r="1.3" fill="currentColor" />
+                  <circle cx="3.8" cy="14.5" r="1.3" fill="currentColor" />
+                </svg>
+                <span>Rules</span>
+              </Big>
+              <Big primary quiet onClick={() => pull()}>
+                {nextName ? `Draw for ${nextName}` : 'Draw'}
+              </Big>
+            </Row>
+          )
+        }
+      >
+        {last && <Beat onEnd={() => toCup(true)} />}
+        <div
+          className="g-kings-cup-table"
+          onClickCapture={(e) => {
+            // The second tap of a double tap lands wherever the first one scrolled to: swallow it.
+            if (e.timeStamp - lastPull.current < GUARD) {
+              e.stopPropagation();
+              e.preventDefault();
+            }
+          }}
+        >
+          <Ring game={game} deal={deal} animate={deal !== dealt.current} onPick={pull} />
+          <div className="g-kings-cup-side">
+            <div className="g-kings-cup-hand" aria-live="polite" ref={hand}>
+              <div className="g-kings-cup-card">
+                {cur ? (
+                  <div className={`g-kings-cup-flip ${fresh ? 'is-new' : ''}`} key={cur.n}>
+                    <div className="g-kings-cup-face">
+                      <CardFace card={cur.card} />
+                    </div>
+                    <div className="g-kings-cup-back">
+                      <CardBack />
+                    </div>
                   </div>
-                  <div className="g-kings-cup-back">
+                ) : (
+                  <div className="g-kings-cup-back is-idle">
                     <CardBack />
                   </div>
-                </div>
-              ) : (
-                <div className="g-kings-cup-back is-idle">
-                  <CardBack />
-                </div>
-              )}
-            </div>
-            <div className={`g-kings-cup-say ${fresh ? 'is-new' : ''}`} key={cur?.n ?? 'idle'}>
-              {cur && rule ? (
-                <>
-                  <p className="g-kings-cup-who">
-                    {cur.seat !== null ? (
-                      <>
-                        <Avatar name={name(cur.seat)} index={cur.seat} size={22} />
-                        <span>{name(cur.seat)} drew</span>
-                      </>
-                    ) : (
-                      <span>{cardName(cur.card)}</span>
-                    )}
-                  </p>
-                  <h3>{rule.name}</h3>
-                  {rule.text && <p>{rule.text}</p>}
-                  {cur.card.rank === 13 && <p className="g-kings-cup-warn">{cur.last ? "That's the fourth king." : cur.kings === LAST_KING - 1 ? 'Three down. The next king drinks the cup.' : `King ${cur.kings} of ${LAST_KING}.`}</p>}
-                </>
-              ) : (
-                <>
-                  <p className="g-kings-cup-who">
-                    {nextName ? (
-                      <>
-                        <Avatar name={nextName} index={game.turn} size={22} />
-                        <span>{nextName} starts</span>
-                      </>
-                    ) : (
-                      <span>52 cards, 4 kings</span>
-                    )}
-                  </p>
-                  <h3>First Card</h3>
-                  <p>Pull any card from the ring.</p>
-                </>
-              )}
-            </div>
-          </div>
-
-          {cur && kind === 'make' && !cur.madeRule && !last && (
-            <form
-              className="g-kings-cup-make"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!tidy(draft, MADE_RULE_MAX)) return;
-                sfx.play('blip');
-                setGame(makeRule(game, draft));
-                setCur({ ...cur, madeRule: true });
-                setDraft('');
-              }}
-            >
-              <input
-                className="arcade-input"
-                type="text"
-                aria-label="The new rule"
-                placeholder="Write the rule down"
-                maxLength={MADE_RULE_MAX}
-                autoComplete="off"
-                enterKeyHint="done"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={fieldKeys(() => setDraft(''))}
-              />
-              <button type="submit" className="arcade-btn" disabled={!tidy(draft, MADE_RULE_MAX)}>
-                Add
-              </button>
-            </form>
-          )}
-
-          {cur && kind === 'mate' && cur.seat !== null && game.seats > 1 && !last && (
-            <div className="arcade-party-field g-kings-cup-mates" ref={mates}>
-              <span>Pick {name(cur.seat)}'s mate</span>
-              <div className="arcade-party-picks">
-                {table.map((p, i) => {
-                  if (i === cur.seat) return null;
-                  const already = drawerMates.includes(i);
-                  const on = !!chosenMate && chosenMate.includes(i);
-                  return (
-                    <button
-                      key={p}
-                      type="button"
-                      aria-pressed={already || on}
-                      disabled={already}
-                      onClick={() => {
-                        sfx.play('select');
-                        setGame({ ...game, mates: on ? cur.mateBase : addMate(cur.mateBase, cur.seat!, i) });
-                      }}
-                    >
-                      <Avatar name={p} index={i} size={26} />
-                      <span>{p}</span>
-                    </button>
-                  );
-                })}
+                )}
+              </div>
+              <div className={`g-kings-cup-say ${fresh ? 'is-new' : ''}`} key={cur?.n ?? 'idle'}>
+                {cur && rule ? (
+                  <>
+                    <p className="g-kings-cup-who">
+                      {cur.seat !== null ? (
+                        <>
+                          <Avatar name={name(cur.seat)} index={cur.seat} size={22} />
+                          <span>{name(cur.seat)} drew</span>
+                        </>
+                      ) : (
+                        <span>{cardName(cur.card)}</span>
+                      )}
+                    </p>
+                    <h3>{rule.name}</h3>
+                    {rule.text && <p>{rule.text}</p>}
+                    {cur.card.rank === 13 && <p className="g-kings-cup-warn">{cur.last ? "That's the fourth king." : cur.kings === LAST_KING - 1 ? 'Three down. The next king drinks the cup.' : `King ${cur.kings} of ${LAST_KING}.`}</p>}
+                  </>
+                ) : (
+                  <>
+                    <p className="g-kings-cup-who">
+                      {nextName ? (
+                        <>
+                          <Avatar name={nextName} index={game.turn} size={22} />
+                          <span>{nextName} starts</span>
+                        </>
+                      ) : (
+                        <span>52 cards, 4 kings</span>
+                      )}
+                    </p>
+                    <h3>First Card</h3>
+                    <p>Pull any card from the ring.</p>
+                  </>
+                )}
               </div>
             </div>
-          )}
 
-          <ul className="g-kings-cup-effects" aria-label="In play">
-            <li className="g-kings-cup-crowns" aria-label={`${game.kings} of ${LAST_KING} kings drawn`}>
-              {Array.from({ length: LAST_KING }, (_, i) => (
-                <CrownIcon key={i} on={i < game.kings} />
-              ))}
-            </li>
-            {roles.map((role) => (
-              <li key={role.kind}>
-                <span className={`g-kings-cup-tag ${isRed(role.card) ? 'is-red' : ''}`}>
-                  {rankLabel(role.card.rank)}
-                  <SuitIcon suit={role.card.suit} />
-                </span>
-                {role.seat !== null ? (
-                  <span>
-                    {ROLE_TITLES[role.kind]}: <b>{name(role.seat)}</b>
-                  </span>
-                ) : (
-                  <span>
-                    {ROLE_TITLES[role.kind]}: whoever drew the {rankName(role.card.rank).toLowerCase()}
-                  </span>
-                )}
-              </li>
-            ))}
-            {groups.map((g) => (
-              <li key={g.join('-')}>
-                <span className="g-kings-cup-tag">{tag('mate', 8)}</span>
-                <span>
-                  <b>{listNames(g.map(name))}</b> are mates
-                </span>
-              </li>
-            ))}
-            {game.made.map((r, i) => (
-              <li key={`${i}-${r}`} className="is-rule">
-                <span className="g-kings-cup-tag">{tag('make', 11)}</span>
-                <span>{r}</span>
-                <button
-                  type="button"
-                  aria-label={`Drop the rule: ${r}`}
-                  onClick={() => {
-                    sfx.play('hit', 1.4);
-                    setGame(dropRule(game, i));
-                  }}
-                >
-                  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-                    <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                  </svg>
+            {cur && kind === 'make' && !cur.madeRule && !last && (
+              <form
+                className="g-kings-cup-make"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!tidy(draft, MADE_RULE_MAX)) return;
+                  sfx.play('blip');
+                  setGame(makeRule(game, draft));
+                  setCur({ ...cur, madeRule: true });
+                  setDraft('');
+                }}
+              >
+                <input
+                  className="arcade-input"
+                  type="text"
+                  aria-label="The new rule"
+                  placeholder="Write the rule down"
+                  maxLength={MADE_RULE_MAX}
+                  autoComplete="off"
+                  enterKeyHint="done"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={fieldKeys(() => setDraft(''))}
+                />
+                <button type="submit" className="arcade-btn" disabled={!tidy(draft, MADE_RULE_MAX)}>
+                  Add
                 </button>
+              </form>
+            )}
+
+            {cur && kind === 'mate' && cur.seat !== null && game.seats > 1 && !last && (
+              <div className="arcade-party-field g-kings-cup-mates" ref={mates}>
+                <span>Pick {name(cur.seat)}'s mate</span>
+                <div className="arcade-party-picks">
+                  {table.map((p, i) => {
+                    if (i === cur.seat) return null;
+                    const already = drawerMates.includes(i);
+                    const on = !!chosenMate && chosenMate.includes(i);
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        aria-pressed={already || on}
+                        disabled={already}
+                        onClick={() => {
+                          sfx.play('select');
+                          setGame({ ...game, mates: on ? cur.mateBase : addMate(cur.mateBase, cur.seat!, i) });
+                        }}
+                      >
+                        <Avatar name={p} index={i} size={26} />
+                        <span>{p}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {cur.mateBase.some(([a, b]) => a !== cur.seat && b !== cur.seat) && <small>One mate each. Pick someone who has one and that pair splits up.</small>}
+              </div>
+            )}
+
+            <ul className="g-kings-cup-effects" aria-label="In play">
+              <li className="g-kings-cup-crowns" aria-label={`${game.kings} of ${LAST_KING} kings drawn`}>
+                {Array.from({ length: LAST_KING }, (_, i) => (
+                  <CrownIcon key={i} on={i < game.kings} />
+                ))}
               </li>
-            ))}
-          </ul>
+              {roles.map((role) => (
+                <li key={role.kind}>
+                  <span className={`g-kings-cup-tag ${isRed(role.card) ? 'is-red' : ''}`}>
+                    {rankLabel(role.card.rank)}
+                    <SuitIcon suit={role.card.suit} />
+                  </span>
+                  {role.seat !== null ? (
+                    <span>
+                      {ROLE_TITLES[role.kind]}: <b>{name(role.seat)}</b>
+                    </span>
+                  ) : (
+                    <span>
+                      {ROLE_TITLES[role.kind]}: whoever drew the {rankName(role.card.rank).toLowerCase()}
+                    </span>
+                  )}
+                </li>
+              ))}
+              {groups.map((g) => (
+                <li key={g.join('-')}>
+                  <span className="g-kings-cup-tag">{tag('mate', 8)}</span>
+                  <span>
+                    <b>{listNames(g.map(name))}</b> are mates
+                  </span>
+                </li>
+              ))}
+              {game.made.map((r, i) => (
+                <li key={`${i}-${r}`} className="is-rule">
+                  <span className="g-kings-cup-tag">{tag('make', 11)}</span>
+                  <span>{r}</span>
+                  <button
+                    type="button"
+                    aria-label={`Drop the rule: ${r}`}
+                    onClick={() => {
+                      sfx.play('hit', 1.4);
+                      setGame(dropRule(game, i));
+                    }}
+                  >
+                    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                      <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
-      </div>
-    </Screen>
+      </Screen>
+    </div>
   );
 }

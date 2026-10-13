@@ -1,14 +1,28 @@
 // Party Mix rules, kept pure so they run under node: which cards make a deck, in what order, who they name,
 // how long each New Rule stays on, and where Back and Next lead.
 import { shuffle, type Rng } from '../../kit/party-core.ts';
-import { CARDS, type CardType, type Level, type Template } from './cards.ts';
+import { CARDS, THEMES, themesOf, type CardType, type Level, type Template } from './cards.ts';
 
-export type Intensity = 'chill' | 'party' | 'wild';
+export type Intensity = 'chill' | 'party' | 'wild' | 'dark';
 export type Length = 'short' | 'normal' | 'long';
 export type Kind = CardType | 'end';
 
-/** The highest card level each intensity deals. */
-export const LEVELS: Record<Intensity, Level> = { chill: 1, party: 2, wild: 3 };
+/** Where a new table starts. The 18+ intensities are opt-in. */
+export const DEFAULT_INTENSITY: Intensity = 'party';
+/** The intensities that deal 18+ cards. */
+export const ADULT: readonly Intensity[] = ['wild', 'dark'];
+/** The highest card level each intensity deals. Wild and After Dark are the 18+ ones. */
+export const LEVELS: Record<Intensity, Level> = { chill: 1, party: 2, wild: 3, dark: 4 };
+/**
+ * How strongly each level is favored at each intensity (lower comes up more): the hotter the setting, the more
+ * of its own cards, with a few milder ones left in for pacing.
+ */
+export const WEIGHTS: Record<Intensity, Partial<Record<Level, number>>> = {
+  chill: { 1: 1 },
+  party: { 1: 1, 2: 0.6 },
+  wild: { 1: 1, 2: 0.8, 3: 0.4 },
+  dark: { 1: 1, 2: 1, 3: 0.55, 4: 0.3 },
+};
 /** Cards per deck, counting each New Rule and its Rule Over card. */
 export const LENGTHS: Record<Length, number> = { short: 30, normal: 50, long: 80 };
 /** New Rules per deck. */
@@ -33,6 +47,8 @@ export type Card = {
   or?: Part[];
   /** Players named, in order. A Rule Over card repeats its rule's players. */
   seats: number[];
+  /** A New Rule the named player writes on the spot, and its Rule Over card. */
+  write?: boolean;
   /** New Rule and Rule Over cards: the rule's short name, where it starts and ends in the deck, and how many cards it lasts. */
   rule?: { label: Part[]; from: number; to: number; lasts: number };
 };
@@ -66,36 +82,102 @@ export function plain(parts: readonly Part[], names: readonly string[]): string 
   return parts.map((p) => (typeof p === 'string' ? p : (names[p.seat] ?? `Player ${p.seat + 1}`))).join('');
 }
 
+/** What naming someone ahead of their turn costs a pair: once is fine now and then, twice never. */
+const EXTRA = [0, 1.5, 100];
+const pairKey = (a: number, b: number) => (a < b ? a * 1000 + b : b * 1000 + a);
+
 /**
- * Picks players fairly: everyone is named once before anyone is named again, and whoever was just named
- * goes to the back of the next round, so nobody gets picked twice in a row.
+ * Picks players fairly: everyone is named once before anyone is named again, and whoever was just named waits,
+ * so nobody gets picked twice in a row. Within that, a card goes to whoever has had the fewest of its kind
+ * (Give cards spread around, so do the risky ones), and a head-to-head card goes to the pair that has met least,
+ * never the pair that just met.
  */
 export class Picker {
-  private bag: number[] = [];
   private last = -1;
   private readonly players: number;
   private readonly rng: Rng;
+  /** Times each seat has been named. */
   readonly counts: number[];
+  /** Cards of each kind each seat has had. */
+  private readonly kinds = new Map<string, number[]>();
+  /** Times each pair has been named together, by pairKey, overall and per kind (`kind:key`). */
+  private readonly met = new Map<number | string, number>();
+  /** The last pair named together, overall and per kind. */
+  private readonly lastPair = new Map<string, number>();
   constructor(players: number, rng: Rng = Math.random) {
     this.players = players;
     this.rng = rng;
     this.counts = Array.from({ length: players }, () => 0);
   }
-  take(not: readonly number[] = []): number {
-    let i = this.bag.findIndex((s) => !not.includes(s));
-    if (i < 0) {
-      const fresh = shuffle(
-        Array.from({ length: this.players }, (_, s) => s).filter((s) => !this.bag.includes(s)),
-        this.rng,
-      );
-      const later = (s: number) => s === this.last || not.includes(s);
-      this.bag.push(...fresh.filter((s) => !later(s)), ...fresh.filter(later));
-      i = this.bag.findIndex((s) => !not.includes(s));
-    }
-    const seat = i < 0 ? 0 : this.bag.splice(i, 1)[0];
-    this.last = seat;
+  private kindCount(kind: string | undefined, seat: number) {
+    return kind === undefined ? 0 : (this.kinds.get(kind)?.[seat] ?? 0);
+  }
+  private name(seat: number, kind?: string) {
     this.counts[seat]++;
-    return seat;
+    if (kind !== undefined) {
+      const list = this.kinds.get(kind) ?? Array.from({ length: this.players }, () => 0);
+      list[seat]++;
+      this.kinds.set(kind, list);
+    }
+  }
+  /** One player for a card of `kind`, never one of `not`. */
+  take(not: readonly number[] = [], kind?: string): number {
+    const open = Array.from({ length: this.players }, (_, s) => s).filter((s) => !not.includes(s));
+    if (!open.length) return 0;
+    const low = Math.min(...open.map((s) => this.counts[s]));
+    const due = open.filter((s) => this.counts[s] === low);
+    const fresh = due.length > 1 ? due.filter((s) => s !== this.last) : due;
+    // Among those due, whoever has had the fewest cards of this kind. A fresh random draw breaks ties,
+    // so each round goes in a new order.
+    let best = fresh[0];
+    let bestK = Infinity;
+    for (const s of fresh) {
+      const k = this.kindCount(kind, s) + this.rng() * 0.5;
+      if (k < bestK) {
+        bestK = k;
+        best = s;
+      }
+    }
+    this.last = best;
+    this.name(best, kind);
+    return best;
+  }
+  /** Two different players for a card of `kind`, chosen as a pair. */
+  pair(kind?: string): [number, number] {
+    if (this.players < 2) return [0, 0];
+    const low = Math.min(...this.counts);
+    const lastAny = this.lastPair.get('*');
+    const lastKind = kind === undefined ? undefined : this.lastPair.get(kind);
+    let best: { a: number; b: number; k: number } | null = null;
+    for (let a = 0; a < this.players; a++)
+      for (let b = a + 1; b < this.players; b++) {
+        const key = pairKey(a, b);
+        // Meeting less beats strict turn order: one extra name now and then evens out, the same two
+        // facing off all night doesn't. Never the pair that just met, unless there is no other pair.
+        const k =
+          (this.met.get(`${kind}:${key}`) ?? 0) * 6 +
+          (this.met.get(key) ?? 0) * 2 +
+          (key === lastKind ? 300 : 0) +
+          (key === lastAny ? 20 : 0) +
+          EXTRA[Math.min(2, this.counts[a] - low)] +
+          EXTRA[Math.min(2, this.counts[b] - low)] +
+          (a === this.last || b === this.last ? 1 : 0) +
+          (this.kindCount(kind, a) + this.kindCount(kind, b)) * 0.5 +
+          this.rng() * 0.5;
+        if (!best || k < best.k) best = { a, b, k };
+      }
+    const { a, b } = best!;
+    const key = pairKey(a, b);
+    this.met.set(key, (this.met.get(key) ?? 0) + 1);
+    this.met.set(`${kind}:${key}`, (this.met.get(`${kind}:${key}`) ?? 0) + 1);
+    this.lastPair.set('*', key);
+    if (kind !== undefined) this.lastPair.set(kind, key);
+    // Whoever reads first is a coin flip, so the same name doesn't always lead.
+    const pair: [number, number] = this.rng() < 0.5 ? [a, b] : [b, a];
+    this.name(a, kind);
+    this.name(b, kind);
+    this.last = pair[1];
+    return pair;
   }
 }
 
@@ -183,25 +265,57 @@ export type DeckOptions = {
 
 /** Builds a full deck: a mix of types at the chosen intensity, New Rules with their Rule Over cards, and names filled in. */
 export function buildDeck({ players, intensity, length, rng = Math.random, avoid, cards = CARDS }: DeckOptions): Card[] {
-  const top = LEVELS[intensity];
-  // Lower goes first: cards at the chosen intensity come up more often, cards from the last deck wait their turn.
-  const rank = (list: Template[]) =>
-    list
-      .map((t) => ({ t, k: rng() * (top > 1 && t.level === top ? 0.6 : 1) + (avoid?.has(t.text) ? 1 : 0) }))
-      .sort((a, b) => a.k - b.k)
-      .map((x) => x.t);
-  const pool = eligible(intensity, players, cards);
-  const of = (type: CardType) => rank(pool.filter((t) => t.type === type));
-  const rules = of('rule').slice(0, RULES[length]);
+  const weights = WEIGHTS[intensity];
+  // One ranking for the whole pool, lower first: cards at the chosen intensity come up more often, cards from the
+  // last deck wait their turn.
+  const pool = eligible(intensity, players, cards)
+    .map((t) => ({ t, k: rng() * (weights[t.level] ?? 1) + (avoid?.has(t.text) ? 1 : 0) }))
+    .sort((a, b) => a.k - b.k)
+    .map((x) => x.t);
+  // Each topic shows up once a deck (a few broad ones twice), so two cards never ask the same thing.
+  const topics = new Map<string, number>();
+  const limit = new Map(THEMES.map((th) => [th.id, th.max ?? 1]));
+  const free = (t: Template) => themesOf(t).every((id) => (topics.get(id) ?? 0) < (limit.get(id) ?? 1));
+  const taken = new Set<Template>();
+  const take = (t: Template) => {
+    taken.add(t);
+    for (const id of themesOf(t)) topics.set(id, (topics.get(id) ?? 0) + 1);
+  };
+  /** Takes cards in ranked order while `room` says so: topics free first, then (when `any`, for a tiny pool) any card. */
+  const gather = (ok: (t: Template) => boolean, room: () => boolean, any = true) => {
+    for (const strict of any ? [true, false] : [true])
+      for (const t of pool) {
+        if (!room()) return;
+        if (!taken.has(t) && ok(t) && (!strict || free(t))) take(t);
+      }
+  };
+
+  gather(
+    (t) => t.type === 'rule',
+    () => taken.size < RULES[length],
+  );
+  const rules = pool.filter((t) => taken.has(t));
   const types = Object.keys(MIX) as (keyof typeof MIX)[];
-  const piles = Object.fromEntries(types.map((t) => [t, of(t)])) as Record<keyof typeof MIX, Template[]>;
   const want = quotas(
     LENGTHS[length] - rules.length * 2,
     MIX,
-    Object.fromEntries(types.map((t) => [t, piles[t].length])) as Record<keyof typeof MIX, number>,
+    Object.fromEntries(types.map((t) => [t, pool.filter((x) => x.type === t).length])) as Record<keyof typeof MIX, number>,
+  );
+  const goal = types.reduce((n, t) => n + want[t], 0);
+  const got = (type?: CardType) => [...taken].filter((t) => t.type !== 'rule' && (!type || t.type === type)).length;
+  // Each type up to its share, then whatever has a free topic makes up for a type that ran short.
+  for (const type of types)
+    gather(
+      (t) => t.type === type,
+      () => got(type) < want[type],
+      false,
+    );
+  gather(
+    (t) => t.type !== 'rule',
+    () => got() < goal,
   );
   const body = arrange(
-    types.flatMap((t) => piles[t].slice(0, want[t]).map((tpl) => ({ kind: tpl.type as Kind, tpl }))),
+    pool.filter((t) => taken.has(t) && t.type !== 'rule').map((tpl) => ({ kind: tpl.type as Kind, tpl })),
     rng,
   );
   const total = body.length + rules.length * 2;
@@ -230,11 +344,16 @@ export function buildDeck({ players, intensity, length, rng = Math.random, avoid
     const isStart = starts.has(i);
     const tpl = r === undefined ? body[next++].tpl : rules[r];
     const seats: number[] = [];
-    if (r === undefined || isStart) for (let s = 0; s < slots(tpl); s++) seats.push(pick.take(seats));
-    else seats.push(...ruleSeats[r]);
+    const kind = r === undefined || isStart ? tpl.type : 'end';
+    if (kind !== 'end') {
+      const n = slots(tpl);
+      if (n === 2) seats.push(...pick.pair(kind));
+      else if (n === 1) seats.push(pick.take([], kind));
+    } else seats.push(...ruleSeats[r!]);
     if (r !== undefined && isStart) ruleSeats[r] = seats;
-    const card: Card = { kind: r === undefined || isStart ? tpl.type : 'end', level: tpl.level, key: tpl.text, text: fill(r !== undefined && !isStart ? (tpl.end ?? '') : tpl.text, seats), seats };
+    const card: Card = { kind, level: tpl.level, key: tpl.text, text: fill(r !== undefined && !isStart ? (tpl.end ?? '') : tpl.text, seats), seats };
     if (tpl.or) card.or = fill(tpl.or, seats);
+    if (tpl.write) card.write = true;
     if (r !== undefined) card.rule = { label: fill(tpl.label ?? '', seats), from: spans[r].from, to: spans[r].to, lasts: spans[r].to - spans[r].from - 1 };
     deck.push(card);
   }
