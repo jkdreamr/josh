@@ -4,7 +4,7 @@ import type { GameProps } from '../../types';
 import { buildView, type Cam, type HeadPose, type View } from './scene';
 import { createMatch } from './match';
 import { localCtl, type Ctl, type Net } from './ctl';
-import { colorOf, freshLocker, loadBests, loadLocker, record, saveLocker, shade, skinOf, submitBest, subscribeLocker, type Locker, type Skin } from './skins';
+import { SKINS, colorOf, freshLocker, loadBests, loadLocker, record, saveLocker, shade, skinOf, submitBest, subscribeLocker, type Locker, type Skin } from './skins';
 import { HowToPlay, SkinIcon, SkinSheet, createMiniMap, paintMiniMap, type MiniMap } from './hud';
 import { TICK, drive, ownerHash, percent, ranking, type Ev } from './world';
 import { createOnline } from './session';
@@ -116,7 +116,7 @@ function Extras() {
         <SkinIcon skin={skin.id} size={18} />
         Skins
         <span className="g-paperio-count">
-          {locker.have.length}/{13}
+          {locker.have.length}/{SKINS.length}
         </span>
       </button>
       {open === 'help' && <HowToPlay root={shell.root.current} touch={shell.touch} onClose={close} />}
@@ -561,13 +561,12 @@ function Play({ mode }: { mode: Mode }) {
     const fresh = checkUnlocks(c, true);
     const peak = round2(p.peak);
     const level = levelName;
-    const newBest = submitBest(level, peak);
+    submitBest(level, peak);
     const alive = Math.max(0, (p.diedAt >= 0 ? p.diedAt : c.w.time) - p.bornAt);
     const title = s.won ? 'You Own The Farm' : s.deathCause === 'self' ? 'Caught Your Own Trail' : s.deathCause === 'head' ? 'Head On' : s.deathCause === 'wiped' ? 'Wiped Out' : s.deathBy ? `${s.deathBy} Got You` : 'Crashed';
     const bits = [`${p.kills} ${p.kills === 1 ? 'cut' : 'cuts'}`, `${clockText(alive)} alive`, s.bestRank < 99 ? `best rank #${s.bestRank}` : ''].filter(Boolean).join(' · ');
     const unl = fresh.length ? ` New skin: ${fresh.map((f) => f.name).join(', ')}.` : '';
-    const lb = newBest ? ` A new best on ${level}.` : '';
-    shellRef.current.gameOver(peak > 0 ? peak : undefined, { title, detail: `${bits}.${lb}${unl}` });
+    shellRef.current.gameOver(peak > 0 ? peak : undefined, { title, detail: `${bits}.${unl}` });
   }
 
   function endMatch(c: Ctl) {
@@ -718,7 +717,13 @@ function Play({ mode }: { mode: Mode }) {
     const mine: Mine[] = c.locals.map((id) => {
       const p = w.players[id];
       const place = placeOf(id);
-      if (p.alive && place > 0) s.bestRank = Math.min(s.bestRank, place);
+      // a place only counts once you have grown past your starting patch and nobody is level with you
+      if (p.alive && place > 0 && p.peak >= 1.5) {
+        const next = order[place];
+        const prev = order[place - 2];
+        const clear = (next === undefined || w.counts[id + 1] > w.counts[next + 1]) && (prev === undefined || w.counts[prev + 1] > w.counts[id + 1]);
+        if (clear) s.bestRank = Math.min(s.bestRank, place);
+      }
       const back = p.alive ? null : c.respawnIn(p);
       return { id, name: p.name, color: colorOf(p.color), pct: percent(w, id), place, kills: p.kills, alive: p.alive, back: back === null ? null : Math.ceil(back) };
     });

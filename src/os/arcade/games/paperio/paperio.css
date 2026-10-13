@@ -156,7 +156,7 @@
   color: rgba(42, 29, 26, 0.65);
 }
 .g-paperio .is-wide .g-paperio-me.is-split.is-v1 {
-  left: calc(50% + 14px);
+  left: calc(50% + 62px);
 }
 .g-paperio .is-tall .g-paperio-me.is-split.is-v1 {
   top: calc(50% + 8px);
@@ -274,6 +274,9 @@
   left: 50%;
   transform: translateX(-50%);
   width: 150px;
+}
+.g-paperio .g-paperio-board.is-split li:nth-child(n + 4):not(.is-me) {
+  display: none;
 }
 .g-paperio .is-tall .g-paperio-board.is-split {
   bottom: auto;
@@ -814,6 +817,10 @@
   .g-paperio .g-paperio-pct {
     font-size: 36px;
   }
+  .g-paperio .g-paperio-board.is-split {
+    width: 124px;
+    opacity: 0.92;
+  }
   .g-paperio .g-paperio-board {
     width: 138px;
   }
@@ -846,4 +853,119 @@
   .g-paperio .g-paperio-flash {
     display: none;
   }
+}
+
+/* The shell's cards on cream card stock: a cardinal Fraunces title, ink type, buttons with a hard paper edge. */
+.g-paperio .arcade-ov {
+  background: rgba(58, 36, 20, 0.34);
+}
+.g-paperio .arcade-card {
+  color: var(--g-paperio-ink);
+  background-color: var(--g-paperio-cream);
+  background-image: linear-gradient(rgba(214, 199, 168, 0.32) 1px, transparent 1px), linear-gradient(90deg, rgba(214, 199, 168, 0.32) 1px, transparent 1px);
+  background-size: 18px 18px;
+  background-position: -1px -1px;
+  box-shadow: 0 0 0 1px var(--g-paperio-edge), 0 6px 0 var(--g-paperio-edge), 0 20px 44px rgba(40, 24, 10, 0.38);
+}
+.g-paperio .arcade-card h2 {
+  font: italic 800 27px/1.1 var(--g-paperio-serif);
+  letter-spacing: -0.01em;
+  color: var(--g-paperio-cardinal);
+}
+.g-paperio .arcade-card p {
+  color: rgba(42, 29, 26, 0.74);
+}
+.g-paperio .arcade-card small {
+  color: rgba(42, 29, 26, 0.62);
+}
+.g-paperio .arcade-card .arcade-field > span {
+  font: 800 12px/1.2 var(--g-paperio-num);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(42, 29, 26, 0.62);
+}
+.g-paperio .arcade-card .arcade-seg {
+  background: rgba(42, 29, 26, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(42, 29, 26, 0.08);
+}
+.g-paperio .arcade-card .arcade-seg > button {
+  color: rgba(42, 29, 26, 0.72);
+}
+.g-paperio .arcade-card .arcade-seg > button:hover {
+  color: var(--g-paperio-ink);
+}
+.g-paperio .arcade-card .arcade-seg > button[aria-pressed='true'] {
+  color: #fff;
+  background: var(--g-paperio-cardinal);
+  box-shadow: 0 2px 0 #5a0d0d;
+}
+.g-paperio .arcade-card .arcade-btn {
+  color: var(--g-paperio-ink);
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--g-paperio-edge), 0 2px 0 var(--g-paperio-edge);
+}
+.g-paperio .arcade-card .arcade-btn:hover {
+  background: #fffaf0;
+}
+.g-paperio .arcade-card .arcade-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 0 0 1px var(--g-paperio-edge), 0 1px 0 var(--g-paperio-edge);
+}
+.g-paperio .arcade-card .arcade-btn-primary {
+  color: #fff;
+  background: #b1161c;
+  box-shadow: 0 0 0 1px #6e0d10, 0 3px 0 #6e0d10;
+}
+.g-paperio .arcade-card .arcade-btn-primary:hover {
+  background: #c01d24;
+}
+.g-paperio .arcade-card .arcade-btn-primary:active {
+  background: #a01219;
+  box-shadow: 0 0 0 1px #6e0d10, 0 1px 0 #6e0d10;
+}
+.g-paperio .arcade-card .g-paperio-count {
+  background: rgba(42, 29, 26, 0.1);
+}
+.g-paperio .arcade-final b {
+  font: 900 58px/1 var(--g-paperio-num);
+  letter-spacing: 0.01em;
+  color: var(--g-paperio-cardinal);
+}
+.g-paperio .arcade-final span {
+  color: rgba(42, 29, 26, 0.62);
+}
+.g-paperio .arcade-final .arcade-new {
+  font-weight: 700;
+  color: var(--g-paperio-palm);
+}
+.g-paperio .arcade-card .arcade-input {
+  color: var(--g-paperio-ink);
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--g-paperio-edge);
+}
+.g-paperio .arcade-card .arcade-input::placeholder {
+  color: rgba(42, 29, 26, 0.4);
+}
+.g-paperio .arcade-card .arcade-online-field,
+.g-paperio .arcade-card .arcade-online-divider {
+  color: rgba(42, 29, 26, 0.66);
+}
+.g-paperio .arcade-card .arcade-online-divider::before,
+.g-paperio .arcade-card .arcade-online-divider::after {
+  background: var(--g-paperio-edge);
+}
+.g-paperio .arcade-card .arcade-online-players {
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: inset 0 0 0 1px var(--g-paperio-edge);
+}
+.g-paperio .arcade-card .arcade-room-code {
+  font-family: var(--g-paperio-num);
+  font-weight: 900;
+  color: var(--g-paperio-cardinal);
+}
+.g-paperio .arcade-card .arcade-online-error {
+  color: var(--g-paperio-cardinal);
+}
+.g-paperio .arcade-card .arcade-lb-list li:nth-child(odd) {
+  background: rgba(42, 29, 26, 0.05);
 }
