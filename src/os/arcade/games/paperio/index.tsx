@@ -645,7 +645,8 @@ function Play({ mode }: { mode: Mode }) {
       const title = res.winner === null ? 'Draw' : res.winner === meId ? 'You Win' : `${w.players[res.winner]?.name ?? 'Someone'} Wins`;
       const myPct = percent(w, meId);
       const place = res.order.indexOf(meId) + 1;
-      shellRef.current.gameOver(undefined, { title, detail: `You finished #${place} with ${fmtPct(myPct)} and ${w.players[meId]?.kills ?? 0} cuts.${unl}` });
+      const cuts = w.players[meId]?.kills ?? 0;
+      shellRef.current.gameOver(undefined, { title, detail: `${fmtPct(myPct)} at the buzzer, #${place} on the board with bots, ${cuts} ${cuts === 1 ? 'cut' : 'cuts'}.${unl}` });
       return;
     }
     const [a, b] = c.locals.map((id) => w.players[id]);
