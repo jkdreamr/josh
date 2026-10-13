@@ -47,6 +47,10 @@
 .g-palmdrive .g-palmdrive-item.is-ready {
   box-shadow: inset 0 0 0 3px #ffd23f, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 16px rgba(255, 210, 63, 0.6);
 }
+/* a banana or shell held out behind: a shield ring */
+.g-palmdrive .g-palmdrive-item.is-trailing {
+  box-shadow: inset 0 0 0 3px #7fd3ff, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 16px rgba(127, 211, 255, 0.75);
+}
 .g-palmdrive .g-palmdrive-item.is-rolling svg {
   animation: g-palmdrive-roll 0.1s linear infinite;
 }
@@ -332,6 +336,19 @@
     opacity: 0.35;
   }
 }
+.g-palmdrive .g-palmdrive-rear {
+  position: absolute;
+  top: 54px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(20, 20, 26, 0.55);
+}
 .g-palmdrive .g-palmdrive-results {
   position: absolute;
   top: 50%;
@@ -481,4 +498,18 @@
 .g-palmdrive .g-palmdrive-touch .g-palmdrive-drift {
   width: 76px;
   height: 76px;
+}
+.g-palmdrive .g-palmdrive-minis {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-bump {
+  width: 52px;
+  height: 52px;
+  font-size: 12px;
+}
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-use.is-trailing {
+  box-shadow: inset 0 0 0 3px #7fd3ff, 0 0 14px rgba(127, 211, 255, 0.7);
 }

@@ -230,6 +230,8 @@ export type Layout = {
   boxes: { s: number; d: number }[];
   coins: { s: number; d: number }[];
   dashes: { s: number; d: number }[];
+  /** Jump ramps: the lip at s, centered d to the right, w wide. */
+  ramps: { s: number; d: number; w: number }[];
   /** Palm Drive itself, from the hairpin exit to the Oval, as [from, to] distances. */
   palmDrive: [number, number];
 };
@@ -257,5 +259,10 @@ export function layout(t: Track): Layout {
     { s: sOf(t, 62, 85), d: -2.6 },
     { s: sOf(t, 0, -205), d: 3 },
   ];
-  return { boxes, coins, dashes, palmDrive: [sOf(t, 2, -250), sOf(t, 0, 20)] };
+  // a dash panel straight into a jump out of the Oval, and a kicker beside the Palm Drive straight
+  const ramps = [
+    { s: wrapS(t, dashes[0].s + 11), d: -1.5, w: 11 },
+    { s: wrapS(t, sOf(t, 0, -80)), d: 4.6, w: 5.5 },
+  ];
+  return { boxes, coins, dashes, ramps, palmDrive: [sOf(t, 2, -250), sOf(t, 0, 20)] };
 }
