@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { EDGE, LANDMARKS, ROAD_HALF, buildTrack, deltaS, gridSpot, headingOf, layout, locate, pointAt } from '../src/os/arcade/games/palmdrive/track.ts';
 import {
   BOOST_DV,
+  CCS,
   CLASSES,
   COIN_TOP,
   COUNTDOWN,
@@ -17,6 +18,7 @@ import {
   fmtTime,
   giveItem,
   hitKart,
+  isCc,
   lapOf,
   ordinal,
   pressGas,
@@ -32,7 +34,7 @@ import {
   type Race,
   type Racer,
 } from '../src/os/arcade/games/palmdrive/logic.ts';
-import { F_STAR, applyFlags, carOf, endOf, events, finishOrder, flagsOf, guestState, hostState, parsePacket, winnerOf } from '../src/os/arcade/games/palmdrive/net.ts';
+import { F_STAR, applyFlags, carOf, configOf, endOf, events, finishOrder, flagsOf, guestState, hostState, parsePacket, winnerOf } from '../src/os/arcade/games/palmdrive/net.ts';
 
 const t = buildTrack();
 const you = (name = 'you'): Racer => ({ name, color: '#e53935', kind: 'player' });
@@ -141,7 +143,7 @@ test('the lights count down, nobody moves until GO, and a well timed gas press i
 });
 
 test('karts reach their class top speed, and steering right turns right', () => {
-  for (const cc of ['50cc', '100cc', '150cc'] as Cc[]) {
+  for (const cc of CCS) {
     const r = race(1, cc);
     run(r, 5);
     assert.ok(Math.abs(r.karts[0].v - CLASSES[cc].top) < 0.01, `${cc} top speed`);
@@ -419,13 +421,24 @@ test('coins raise your top speed up to ten, and hits cost coins', () => {
   assert.equal(k.coins, MAX_COINS - 3);
 });
 
-test('a full field of CPU drivers races three laps at every class, inside the walls', () => {
-  for (const cc of ['50cc', '100cc', '150cc'] as Cc[]) {
+test('classes get quicker from 50cc to 200cc, and only those four are classes', () => {
+  assert.deepEqual(CCS, ['50cc', '100cc', '150cc', '200cc']);
+  for (let i = 1; i < CCS.length; i++) {
+    assert.ok(CLASSES[CCS[i]].top > CLASSES[CCS[i - 1]].top);
+    assert.ok(CLASSES[CCS[i]].accel > CLASSES[CCS[i - 1]].accel);
+  }
+  for (const cc of CCS) assert.ok(isCc(cc));
+  for (const junk of ['250cc', '', '150', null, 150, undefined]) assert.equal(isCc(junk), false);
+  assert.equal(LAPS, 5);
+});
+
+test('a full field of CPU drivers races five laps at every class, inside the walls', () => {
+  for (const cc of CCS) {
     const r = createRace({ cc, seed: 11, racers: [...RIVALS, { ...RIVALS[3], name: 'extra' }] });
     let widest = 0;
     let turbos = 0;
     let items = 0;
-    while (r.time < 400 && r.karts.some((k) => k.done === null)) {
+    while (r.time < 700 && r.karts.some((k) => k.done === null)) {
       step(r, 1 / 60);
       for (const e of r.events.splice(0)) {
         if (e.t === 'turbo') turbos++;
@@ -436,7 +449,8 @@ test('a full field of CPU drivers races three laps at every class, inside the wa
     assert.ok(r.karts.every((k) => k.done !== null), `${cc}: everyone finished by ${r.time}`);
     const times = r.karts.map((k) => k.done!);
     const fastest = Math.min(...times);
-    assert.ok(fastest > 60 && Math.max(...times) < 260, `${cc}: ${times.map((x) => x.toFixed(0)).join(' ')}`);
+    // five laps of a 914 m loop: about two minutes at 200cc, four at 50cc
+    assert.ok(fastest > 100 && Math.max(...times) < 320, `${cc}: ${times.map((x) => x.toFixed(0)).join(' ')}`);
     assert.ok(widest <= EDGE, `${cc}: a kart got ${widest} from the line`);
     assert.ok(turbos > 5 && items > 5, `${cc}: ${turbos} mini-turbos, ${items} items`);
     assert.ok(r.karts.every((k) => k.laps.length === LAPS));
@@ -449,7 +463,7 @@ test('the solo grid puts you at the back of seven rivals and the autopilot bring
   assert.equal(r.me, 7);
   assert.equal(r.karts[r.me].place, 8);
   r.karts[r.me].auto = true;
-  run(r, 200, 1 / 30);
+  run(r, 300, 1 / 30);
   assert.ok(r.karts[r.me].done !== null);
 });
 
@@ -465,6 +479,12 @@ test('online packets round trip, and junk or other games’ packets are ignored'
   assert.equal(host.cc, '150cc');
   assert.deepEqual(host.roster, [0, 3]);
   assert.equal(host.cars[1].fin, 92.5);
+  // the host's class, 200cc included, reaches the guests, in the race state and in the lobby
+  const fast = parsePacket(JSON.parse(JSON.stringify(hostState(5, 2.5, '200cc', [0], [{ seat: 0, ...car }]))));
+  assert.ok(fast && fast.k === 'S' && fast.cc === '200cc');
+  const cfg = parsePacket(JSON.parse(JSON.stringify(configOf(5, '200cc'))));
+  assert.deepEqual(cfg, { k: 'cfg', round: 5, cc: '200cc' });
+  assert.equal(parsePacket({ t: 'pk', r: 5, k: 'cfg', cc: 7 }), null);
   const guest = parsePacket(JSON.parse(JSON.stringify(guestState(4, car))));
   assert.ok(guest && guest.k === 's');
   const copy = race(1).karts[0];

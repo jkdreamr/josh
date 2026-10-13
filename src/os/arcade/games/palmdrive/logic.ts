@@ -2,7 +2,7 @@
 // No DOM, no three.js. Distances are meters, times seconds; see track.ts for the axes and heading convention.
 import { CURB, EDGE, ROAD_HALF, buildTrack, deltaS, gridSpot, headingOf, layout, locate, pointAt, wrapAngle, type Layout, type Track } from './track.ts';
 
-export const LAPS = 3;
+export const LAPS = 5;
 export const COUNTDOWN = 3;
 export const KART_R = 1.05;
 export const TURN = 2.1;
@@ -32,12 +32,15 @@ export const RED_V = 40;
 export const BLUE_V = 60;
 export const BOOM_R = 7;
 
-export type Cc = '50cc' | '100cc' | '150cc';
+export type Cc = '50cc' | '100cc' | '150cc' | '200cc';
+export const CCS: Cc[] = ['50cc', '100cc', '150cc', '200cc'];
 export const CLASSES: Record<Cc, { top: number; accel: number; cpu: number }> = {
   '50cc': { top: 19, accel: 9, cpu: 0.92 },
   '100cc': { top: 23, accel: 11, cpu: 0.95 },
   '150cc': { top: 27.5, accel: 13, cpu: 0.97 },
+  '200cc': { top: 33, accel: 16, cpu: 0.97 },
 };
+export const isCc = (v: unknown): v is Cc => CCS.includes(v as Cc);
 
 export type Item = 'banana' | 'green' | 'red' | 'mushroom' | 'triple' | 'star' | 'bolt' | 'blue';
 export const ITEMS: Item[] = ['banana', 'green', 'red', 'mushroom', 'triple', 'star', 'bolt', 'blue'];
