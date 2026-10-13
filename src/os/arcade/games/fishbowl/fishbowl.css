@@ -1,0 +1,1045 @@
+/* Fishbowl: deep water blue, cream paper slips, Fraunces for anything read out loud. */
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url('/fonts/fraunces.woff2') format('woff2');
+}
+
+.g-fishbowl {
+  --g-fishbowl-paper: #f5efe3;
+  --g-fishbowl-paper-low: #ece3d1;
+  --g-fishbowl-paper-edge: #c4b8a3;
+  --g-fishbowl-ink: #1d1a16;
+  --g-fishbowl-glass: #8ccaf7;
+  --g-fishbowl-aqua: #8fcfff;
+  --g-fishbowl-stamp: #d4383d;
+  background: linear-gradient(180deg, #07111c 0%, #0a1928 100%);
+}
+.g-fishbowl .arcade-party {
+  --party-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --party-accent-text: var(--g-fishbowl-aqua);
+}
+.g-fishbowl .is-t0 {
+  --team: #ffad4a;
+}
+.g-fishbowl .is-t1 {
+  --team: #c9a2ff;
+}
+.g-fishbowl .arcade-party-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.g-fishbowl.arcade-shell .arcade-party-btn {
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+/* Blocks inside a scrolling step keep their height; the step scrolls instead of squeezing them. */
+.g-fishbowl .g-fishbowl-head,
+.g-fishbowl .g-fishbowl-teams,
+.g-fishbowl .g-fishbowl-mine,
+.g-fishbowl .g-fishbowl-rows,
+.g-fishbowl .g-fishbowl-board,
+.g-fishbowl .g-fishbowl-table,
+.g-fishbowl .g-fishbowl-notes,
+.g-fishbowl .g-fishbowl-empty,
+.g-fishbowl .g-fishbowl-roundscore,
+.g-fishbowl .g-fishbowl-bowl {
+  flex: none;
+}
+
+.g-fishbowl .g-fishbowl-hint {
+  width: 100%;
+  margin: -4px 0 0;
+  padding-left: 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--party-faint);
+}
+
+/* Team tags: a goldfish and a jellyfish */
+.g-fishbowl .g-fishbowl-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-family: var(--party-display);
+  font-weight: 650;
+  white-space: nowrap;
+  color: var(--team);
+  vertical-align: -0.12em;
+}
+.g-fishbowl .g-fishbowl-tag svg {
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+}
+.g-fishbowl .g-fishbowl-tag.is-chip {
+  height: 30px;
+  padding: 0 11px 0 8px;
+  border-radius: 999px;
+  font-size: 15px;
+  color: #1a1206;
+  background: var(--team);
+  vertical-align: middle;
+}
+
+/* The bowl */
+.g-fishbowl .g-fishbowl-bowl {
+  display: block;
+  overflow: visible;
+}
+.g-fishbowl .g-fishbowl-floor {
+  fill: rgba(0, 0, 0, 0.32);
+}
+.g-fishbowl .g-fishbowl-inside {
+  fill: rgba(140, 202, 247, 0.07);
+}
+.g-fishbowl .g-fishbowl-glass {
+  fill: none;
+  stroke: var(--g-fishbowl-glass);
+  stroke-width: 2.6;
+}
+.g-fishbowl .g-fishbowl-lip {
+  fill: #0b1c2d;
+  stroke: var(--g-fishbowl-glass);
+  stroke-width: 2.6;
+}
+.g-fishbowl .g-fishbowl-shine {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.42);
+  stroke-width: 2.8;
+  stroke-linecap: round;
+}
+.g-fishbowl .g-fishbowl-paper rect {
+  fill: var(--g-fishbowl-paper);
+  stroke: #a99b83;
+  stroke-width: 0.8;
+}
+.g-fishbowl .g-fishbowl-paper path {
+  stroke: rgba(29, 26, 22, 0.22);
+  stroke-width: 0.8;
+}
+.g-fishbowl .g-fishbowl-bowl.is-refill .g-fishbowl-drop {
+  animation: g-fishbowl-drop 0.42s cubic-bezier(0.3, 0.7, 0.4, 1) backwards;
+  animation-delay: calc(var(--i) * 22ms + 120ms);
+}
+@keyframes g-fishbowl-drop {
+  from {
+    transform: translateY(-72px);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+
+/* Setup */
+.g-fishbowl .g-fishbowl-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 2px 0 2px 2px;
+}
+.g-fishbowl .g-fishbowl-head .arcade-party-title {
+  font-size: 36px;
+  text-align: left;
+}
+.g-fishbowl .g-fishbowl-head .arcade-party-sub {
+  margin-top: 6px;
+  font-size: 14px;
+  text-align: left;
+}
+.g-fishbowl .g-fishbowl-setup .arcade-party-how {
+  align-items: flex-start;
+  margin-top: -4px;
+}
+.g-fishbowl .g-fishbowl-teams {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+.g-fishbowl .g-fishbowl-team {
+  min-width: 0;
+  padding: 10px 12px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--team) 7%, rgba(255, 255, 255, 0.04));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--team) 30%, transparent);
+}
+.g-fishbowl .g-fishbowl-team h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.g-fishbowl .g-fishbowl-team h3 em {
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--party-faint);
+}
+.g-fishbowl .g-fishbowl-team ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.g-fishbowl .g-fishbowl-team li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 14px;
+}
+.g-fishbowl .g-fishbowl-team li span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-fishbowl .g-fishbowl-team p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--party-faint);
+}
+
+/* Writing slips */
+.g-fishbowl .g-fishbowl-write .arcade-party-title {
+  overflow-wrap: anywhere;
+}
+.g-fishbowl .g-fishbowl-mine {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.g-fishbowl .g-fishbowl-mine li {
+  min-height: 52px;
+  border-radius: 6px;
+}
+.g-fishbowl .g-fishbowl-mine li.is-empty {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font-size: 14px;
+  color: var(--party-faint);
+  box-shadow: inset 0 0 0 1.5px rgba(245, 239, 227, 0.14);
+  background: repeating-linear-gradient(-45deg, rgba(245, 239, 227, 0.03) 0 6px, transparent 6px 12px);
+}
+.g-fishbowl .g-fishbowl-mine li.is-filled {
+  animation: g-fishbowl-slide 0.2s ease-out;
+}
+.g-fishbowl .g-fishbowl-mine li:nth-child(odd).is-filled {
+  transform: rotate(-0.6deg);
+}
+.g-fishbowl .g-fishbowl-mine li:nth-child(even).is-filled {
+  transform: rotate(0.5deg);
+}
+.g-fishbowl .g-fishbowl-mine button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--g-fishbowl-ink);
+  background: var(--g-fishbowl-paper);
+  box-shadow: 0 3px 0 var(--g-fishbowl-paper-edge);
+  transition:
+    transform 0.07s ease-out,
+    box-shadow 0.07s ease-out;
+}
+.g-fishbowl .g-fishbowl-mine button:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--g-fishbowl-paper-edge);
+}
+.g-fishbowl .g-fishbowl-mine button span {
+  min-width: 0;
+  font-family: var(--party-display);
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.g-fishbowl .g-fishbowl-write .arcade-input:disabled {
+  opacity: 0.5;
+}
+.g-fishbowl .g-fishbowl-mine button svg {
+  flex: none;
+  opacity: 0.5;
+}
+@keyframes g-fishbowl-slide {
+  from {
+    transform: translateY(-6px);
+    opacity: 0;
+  }
+}
+
+/* Ready: the round's rule, big enough to read across the room */
+.g-fishbowl .g-fishbowl-ready .arcade-party-body {
+  gap: 8px;
+}
+.g-fishbowl .g-fishbowl-ready .g-fishbowl-bowl {
+  width: clamp(120px, 34cqmin, 230px);
+  height: auto;
+  margin-bottom: 8px;
+}
+.g-fishbowl .g-fishbowl-roundno {
+  margin: 0;
+  font-family: var(--party-display);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--g-fishbowl-aqua);
+}
+.g-fishbowl .g-fishbowl-rulename {
+  margin: 0;
+  font-family: var(--party-display);
+  font-size: clamp(46px, 15cqmin, 76px);
+  font-weight: 750;
+  line-height: 0.98;
+  letter-spacing: -0.03em;
+  text-align: center;
+}
+.g-fishbowl .g-fishbowl-ruletext {
+  max-width: 340px;
+  margin: 4px 0 6px;
+  font-size: 18px;
+  line-height: 1.4;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--party-dim);
+}
+.g-fishbowl .g-fishbowl-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 12px;
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--party-dim);
+}
+.g-fishbowl .g-fishbowl-facts > span:not(.g-fishbowl-tag) + span::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin: 0 10px 2px 0;
+  border-radius: 50%;
+  background: var(--party-faint);
+}
+.g-fishbowl .g-fishbowl-carry {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 8px 14px 8px 8px;
+  border-radius: 999px;
+  font-size: 15px;
+  color: var(--party-ink);
+  background: color-mix(in srgb, var(--team) 14%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--team) 55%, transparent);
+}
+.g-fishbowl .g-fishbowl-carry b {
+  font-family: var(--party-display);
+  font-size: 17px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  color: var(--team);
+}
+
+/* Play */
+.g-fishbowl .g-fishbowl-play .arcade-party-body,
+.g-fishbowl .g-fishbowl-play .arcade-party-actions {
+  max-width: 560px;
+}
+.g-fishbowl .g-fishbowl-play .arcade-party-body {
+  gap: 12px;
+  padding-bottom: 8px;
+  overflow: hidden;
+}
+.g-fishbowl .g-fishbowl-top {
+  display: grid;
+  flex: none;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-areas:
+    'who timer bowl'
+    'rule rule rule';
+  align-items: center;
+  gap: 10px 8px;
+  width: 100%;
+}
+.g-fishbowl .g-fishbowl-top .arcade-party-timer {
+  grid-area: timer;
+  --size: 76px;
+}
+.g-fishbowl .g-fishbowl-play .arcade-party-timer-fill {
+  stroke: var(--team);
+}
+.g-fishbowl .g-fishbowl-play .arcade-party-timer.is-low .arcade-party-timer-fill {
+  stroke: #ff5a4f;
+}
+.g-fishbowl .g-fishbowl-who {
+  grid-area: who;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+.g-fishbowl .g-fishbowl-pts {
+  padding-left: 2px;
+  font-size: 13px;
+  white-space: nowrap;
+  color: var(--party-dim);
+}
+.g-fishbowl .g-fishbowl-pts b {
+  display: inline-block;
+  margin-right: 2px;
+  font-family: var(--party-display);
+  font-size: 22px;
+  font-weight: 750;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--party-ink);
+  animation: g-fishbowl-bump 0.24s ease-out;
+}
+@keyframes g-fishbowl-bump {
+  40% {
+    transform: scale(1.3);
+  }
+}
+.g-fishbowl .g-fishbowl-left {
+  grid-area: bowl;
+  justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.g-fishbowl .g-fishbowl-left span {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--party-dim);
+}
+.g-fishbowl .g-fishbowl-rule {
+  grid-area: rule;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 9px 14px 10px 10px;
+  border-radius: 14px;
+  background: rgba(143, 207, 255, 0.08);
+  box-shadow: inset 0 0 0 1.5px rgba(143, 207, 255, 0.22);
+}
+.g-fishbowl .g-fishbowl-rule i {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  font-family: var(--party-display);
+  font-size: 21px;
+  font-style: normal;
+  font-weight: 750;
+  color: #fff;
+  background: var(--accent);
+}
+.g-fishbowl .g-fishbowl-rule div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.g-fishbowl .g-fishbowl-rule b {
+  font-family: var(--party-display);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+.g-fishbowl .g-fishbowl-rule span {
+  font-size: 13.5px;
+  line-height: 1.3;
+  text-wrap: balance;
+  color: var(--party-dim);
+}
+
+/* The slip in the clue giver's hand */
+.g-fishbowl .g-fishbowl-desk {
+  position: relative;
+  display: grid;
+  flex: 1 1 auto;
+  place-items: center;
+  width: 100%;
+  min-height: 110px;
+  container-type: size;
+}
+.g-fishbowl .g-fishbowl-slip {
+  grid-area: 1 / 1;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: calc(100% - 8px);
+  height: min(calc(100% - 10px), 78cqw, 520px);
+  padding: 20px 22px;
+  border-radius: 5px;
+  color: var(--g-fishbowl-ink);
+  background:
+    linear-gradient(180deg, transparent calc(50% - 1px), rgba(29, 26, 22, 0.09) calc(50% - 1px), rgba(29, 26, 22, 0.09) calc(50% + 0.5px), transparent calc(50% + 0.5px)),
+    linear-gradient(180deg, var(--g-fishbowl-paper) 50%, var(--g-fishbowl-paper-low) 50%);
+  box-shadow:
+    0 4px 0 var(--g-fishbowl-paper-edge),
+    0 22px 30px -22px rgba(0, 0, 0, 0.9);
+  transform: rotate(-1.1deg);
+  container-type: size;
+  animation: g-fishbowl-pull 0.26s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+.g-fishbowl .g-fishbowl-slip.is-tilt {
+  transform: rotate(0.9deg);
+}
+.g-fishbowl .g-fishbowl-slip strong {
+  max-width: 100%;
+  font-family: var(--party-display);
+  font-size: clamp(22px, min(calc(86cqw / (var(--len, 6) * 0.56)), 26cqh), 92px);
+  font-weight: 700;
+  line-height: 1.07;
+  letter-spacing: -0.025em;
+  text-align: center;
+  text-wrap: balance;
+  overflow-wrap: break-word;
+}
+.g-fishbowl .g-fishbowl-slip em {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  padding: 3px 10px;
+  border: 2.5px solid currentColor;
+  border-radius: 6px;
+  font-family: var(--party-display);
+  font-size: 15px;
+  font-style: normal;
+  font-weight: 750;
+  transform: rotate(6deg);
+}
+.g-fishbowl .g-fishbowl-slip.is-out {
+  z-index: 2;
+  pointer-events: none;
+  animation: g-fishbowl-got 0.24s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+.g-fishbowl .g-fishbowl-slip.is-out.is-got em {
+  color: var(--accent);
+}
+.g-fishbowl .g-fishbowl-slip.is-out.is-skip {
+  animation-name: g-fishbowl-back;
+}
+.g-fishbowl .g-fishbowl-slip.is-out.is-skip em {
+  color: #6b6152;
+}
+@keyframes g-fishbowl-pull {
+  from {
+    transform: translate(26%, -48%) rotate(12deg) scale(0.3);
+    opacity: 0;
+  }
+}
+@keyframes g-fishbowl-got {
+  to {
+    transform: translate(-24%, -62%) rotate(-12deg) scale(0.5);
+    opacity: 0;
+  }
+}
+@keyframes g-fishbowl-back {
+  to {
+    transform: translate(30%, -72%) rotate(16deg) scale(0.22);
+    opacity: 0;
+  }
+}
+.g-fishbowl .g-fishbowl-stamp {
+  grid-area: 1 / 1;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.g-fishbowl .g-fishbowl-stamp span {
+  padding: 4px 16px 7px;
+  border: 4px solid currentColor;
+  border-radius: 10px;
+  font-family: var(--party-display);
+  font-size: clamp(30px, 11cqw, 54px);
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--g-fishbowl-stamp);
+  background: rgba(245, 239, 227, 0.55);
+  transform: translateY(22%) rotate(-8deg);
+  animation: g-fishbowl-stamp 0.26s cubic-bezier(0.3, 0.8, 0.3, 1.2);
+}
+@keyframes g-fishbowl-stamp {
+  from {
+    transform: translateY(22%) rotate(-8deg) scale(1.7);
+    opacity: 0;
+  }
+}
+.g-fishbowl .g-fishbowl-play.is-up .arcade-party-timer-fill {
+  opacity: 0;
+}
+.g-fishbowl .g-fishbowl-play.is-up .g-fishbowl-slip:not(.is-out) strong {
+  opacity: 0.45;
+  transition: opacity 0.3s ease;
+}
+
+/* Got It and Skip */
+.g-fishbowl .g-fishbowl-keys {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.55fr);
+  gap: 10px;
+  width: 100%;
+}
+.g-fishbowl .g-fishbowl-keys .arcade-party-btn {
+  flex-direction: column;
+  gap: 2px;
+  min-height: 84px;
+  padding: 8px 10px;
+  border-radius: 16px;
+  font-size: 22px;
+  touch-action: manipulation;
+}
+.g-fishbowl .g-fishbowl-keys .arcade-party-btn svg {
+  width: 26px;
+  height: 26px;
+}
+.g-fishbowl .g-fishbowl-keys .g-fishbowl-skip {
+  font-size: 19px;
+}
+.g-fishbowl .g-fishbowl-keys kbd {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+/* Review */
+.g-fishbowl .g-fishbowl-label {
+  width: 100%;
+  margin: 4px 0 -4px;
+  padding-left: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--party-dim);
+}
+.g-fishbowl .g-fishbowl-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+  margin: 0;
+  padding: 0 0 3px;
+  list-style: none;
+}
+.g-fishbowl .g-fishbowl-rows button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  padding: 7px 14px 7px 16px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--party-dim);
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px rgba(245, 239, 227, 0.16);
+  transition:
+    transform 0.07s ease-out,
+    box-shadow 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.g-fishbowl .g-fishbowl-rows button.is-got {
+  color: var(--g-fishbowl-ink);
+  background: var(--g-fishbowl-paper);
+  box-shadow: 0 3px 0 var(--g-fishbowl-paper-edge);
+}
+.g-fishbowl .g-fishbowl-rows button:active {
+  transform: translateY(2px);
+}
+.g-fishbowl .g-fishbowl-rows button span {
+  min-width: 0;
+  font-family: var(--party-display);
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.g-fishbowl .g-fishbowl-rows button em {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.g-fishbowl .g-fishbowl-rows button.is-got em {
+  color: #0f5c99;
+}
+
+.g-fishbowl .g-fishbowl-board {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+.g-fishbowl .g-fishbowl-side {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  padding: 11px 14px 12px;
+  border-radius: 14px;
+  background: var(--party-tile);
+  box-shadow: inset 0 3px 0 var(--team);
+}
+.g-fishbowl .g-fishbowl-side .g-fishbowl-tag {
+  font-size: 15px;
+}
+.g-fishbowl .g-fishbowl-side b {
+  font-family: var(--party-display);
+  font-size: 36px;
+  font-weight: 750;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.g-fishbowl .g-fishbowl-side em {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 700;
+  color: #1a1206;
+  background: var(--team);
+}
+.g-fishbowl .g-fishbowl-side.is-hi {
+  background: color-mix(in srgb, var(--team) 16%, transparent);
+  box-shadow:
+    inset 0 3px 0 var(--team),
+    inset 0 0 0 1.5px color-mix(in srgb, var(--team) 60%, transparent);
+}
+.g-fishbowl .g-fishbowl-side.is-hi b {
+  color: var(--team);
+}
+
+/* The bowl ran out mid-turn */
+.g-fishbowl .g-fishbowl-empty {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+}
+.g-fishbowl .g-fishbowl-empty .arcade-party-kicker {
+  margin: 0 0 4px;
+}
+.g-fishbowl .g-fishbowl-empty .arcade-party-title,
+.g-fishbowl .g-fishbowl-empty .arcade-party-sub {
+  text-align: left;
+}
+.g-fishbowl .g-fishbowl-empty .arcade-party-sub {
+  margin-top: 6px;
+}
+.g-fishbowl .g-fishbowl-roundscore {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  color: var(--party-dim);
+  background: var(--party-tile);
+}
+.g-fishbowl .g-fishbowl-roundscore > span:first-child {
+  margin-right: auto;
+  font-weight: 600;
+}
+.g-fishbowl .g-fishbowl-roundscore b {
+  margin-left: 4px;
+  font-family: var(--party-display);
+  font-size: 20px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  color: var(--party-ink);
+}
+
+/* Final */
+.g-fishbowl .g-fishbowl-done.is-t0 .arcade-party-title,
+.g-fishbowl .g-fishbowl-done.is-t1 .arcade-party-title {
+  color: var(--team);
+}
+.g-fishbowl .g-fishbowl-final {
+  width: 100%;
+  flex: none;
+}
+.g-fishbowl .g-fishbowl-done .g-fishbowl-side b {
+  font-size: 48px;
+}
+.g-fishbowl .g-fishbowl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.g-fishbowl .g-fishbowl-table th,
+.g-fishbowl .g-fishbowl-table td {
+  height: 42px;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(245, 239, 227, 0.09);
+}
+.g-fishbowl .g-fishbowl-table thead th {
+  height: 32px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--team, var(--party-faint));
+}
+.g-fishbowl .g-fishbowl-table thead th:first-child {
+  text-align: left;
+  color: var(--party-faint);
+}
+.g-fishbowl .g-fishbowl-table tbody th {
+  font-weight: 500;
+  text-align: left;
+  color: var(--party-dim);
+}
+.g-fishbowl .g-fishbowl-table tbody th i {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 10px;
+  border-radius: 50%;
+  font-family: var(--party-display);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 750;
+  color: var(--party-ink);
+  background: rgba(143, 207, 255, 0.16);
+}
+.g-fishbowl .g-fishbowl-table td {
+  width: 28%;
+  font-family: var(--party-display);
+  font-size: 19px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--party-dim);
+}
+.g-fishbowl .g-fishbowl-table td.is-more {
+  font-weight: 750;
+  color: var(--party-ink);
+}
+.g-fishbowl .g-fishbowl-notes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.g-fishbowl .g-fishbowl-notes li {
+  padding: 11px 14px 12px;
+  border-radius: 12px;
+  background: var(--party-tile);
+}
+.g-fishbowl .g-fishbowl-notes small {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--party-faint);
+}
+.g-fishbowl .g-fishbowl-notes p {
+  margin: 3px 0 0;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.g-fishbowl .g-fishbowl-notes b {
+  font-weight: 600;
+  color: var(--team);
+}
+.g-fishbowl .g-fishbowl-notes q {
+  font-family: var(--party-display);
+  font-weight: 650;
+}
+
+/* Short windows (the laptop window, phones in landscape) */
+@container arcade-party (max-height: 520px) {
+  .g-fishbowl .g-fishbowl-play .arcade-party-body {
+    gap: 8px;
+  }
+  .g-fishbowl .g-fishbowl-top {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: 'who rule timer bowl';
+    gap: 10px;
+  }
+  .g-fishbowl .g-fishbowl-top .arcade-party-timer {
+    --size: 60px !important;
+  }
+  .g-fishbowl .g-fishbowl-side {
+    padding: 8px 12px 9px;
+  }
+  .g-fishbowl .g-fishbowl-side b {
+    font-size: 28px;
+  }
+  .g-fishbowl .g-fishbowl-side em {
+    bottom: 9px;
+  }
+  .g-fishbowl .g-fishbowl-left .g-fishbowl-bowl {
+    width: 40px;
+    height: 35px;
+  }
+  .g-fishbowl .g-fishbowl-rule {
+    padding: 6px 12px 6px 7px;
+    gap: 9px;
+  }
+  .g-fishbowl .g-fishbowl-rule i {
+    width: 30px;
+    height: 30px;
+    font-size: 17px;
+  }
+  .g-fishbowl .g-fishbowl-rule b {
+    font-size: 18px;
+  }
+  .g-fishbowl .g-fishbowl-rule span {
+    font-size: 12.5px;
+  }
+  .g-fishbowl .g-fishbowl-who .g-fishbowl-tag.is-chip {
+    height: 26px;
+    font-size: 14px;
+  }
+  .g-fishbowl .g-fishbowl-keys .arcade-party-btn {
+    flex-direction: row;
+    gap: 8px;
+    min-height: 54px;
+    font-size: 19px;
+  }
+  .g-fishbowl .g-fishbowl-keys .arcade-party-btn svg {
+    width: 22px;
+    height: 22px;
+  }
+  .g-fishbowl .g-fishbowl-slip {
+    height: calc(100% - 8px);
+    padding: 12px 18px;
+  }
+  .g-fishbowl .g-fishbowl-ready .g-fishbowl-bowl {
+    width: 92px;
+    height: 81px;
+    margin-bottom: 0;
+  }
+  .g-fishbowl .g-fishbowl-rulename {
+    font-size: clamp(36px, 12cqmin, 52px);
+  }
+  .g-fishbowl .g-fishbowl-ruletext {
+    margin: 0;
+    font-size: 16px;
+  }
+  .g-fishbowl .g-fishbowl-head .g-fishbowl-bowl {
+    width: 72px;
+    height: 64px;
+  }
+  .g-fishbowl .g-fishbowl-mine {
+    gap: 8px;
+  }
+  .g-fishbowl .g-fishbowl-mine li,
+  .g-fishbowl .g-fishbowl-mine button {
+    min-height: 44px;
+  }
+  .g-fishbowl .g-fishbowl-mine button span {
+    font-size: 17px;
+  }
+  .g-fishbowl .g-fishbowl-head .arcade-party-title {
+    font-size: 30px;
+  }
+}
+@container arcade-party (max-width: 380px) {
+  .g-fishbowl .g-fishbowl-head .arcade-party-title {
+    font-size: 30px;
+  }
+  .g-fishbowl .g-fishbowl-head {
+    gap: 12px;
+  }
+}
+
+/* Tablets: a bigger clock and rule for a bigger table */
+@container arcade-party (min-width: 640px) and (min-height: 860px) {
+  .g-fishbowl .g-fishbowl-top .arcade-party-timer {
+    --size: 104px !important;
+  }
+  .g-fishbowl .g-fishbowl-left .g-fishbowl-bowl {
+    width: 76px;
+    height: 67px;
+  }
+  .g-fishbowl .g-fishbowl-left span,
+  .g-fishbowl .g-fishbowl-pts {
+    font-size: 15px;
+  }
+  .g-fishbowl .g-fishbowl-pts b {
+    font-size: 28px;
+  }
+  .g-fishbowl .g-fishbowl-who .g-fishbowl-tag.is-chip {
+    height: 36px;
+    font-size: 18px;
+  }
+  .g-fishbowl .g-fishbowl-rule {
+    padding: 12px 18px 13px 12px;
+    gap: 16px;
+  }
+  .g-fishbowl .g-fishbowl-rule i {
+    width: 48px;
+    height: 48px;
+    font-size: 26px;
+  }
+  .g-fishbowl .g-fishbowl-rule b {
+    font-size: 28px;
+  }
+  .g-fishbowl .g-fishbowl-rule span {
+    font-size: 16px;
+  }
+  .g-fishbowl .g-fishbowl-keys .arcade-party-btn {
+    min-height: 108px;
+    font-size: 26px;
+  }
+  .g-fishbowl .g-fishbowl-rulename {
+    font-size: clamp(46px, 13cqmin, 104px);
+  }
+  .g-fishbowl .g-fishbowl-ruletext {
+    max-width: 440px;
+    font-size: 22px;
+  }
+}
