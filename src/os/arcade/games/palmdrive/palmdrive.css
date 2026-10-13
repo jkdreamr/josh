@@ -513,8 +513,39 @@
 .g-palmdrive .g-palmdrive-touch .g-palmdrive-use.is-trailing {
   box-shadow: inset 0 0 0 3px #7fd3ff, 0 0 14px rgba(127, 211, 255, 0.7);
 }
-.g-palmdrive .g-palmdrive-help {
+/* How to Play and Garage under the setup pickers */
+.g-palmdrive .g-palmdrive-extras {
+  display: flex;
+  gap: 8px;
   width: 100%;
+}
+.g-palmdrive .g-palmdrive-extras .arcade-btn {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.g-palmdrive .g-palmdrive-paintdot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.6);
+}
+.g-palmdrive .g-palmdrive-bankpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px 0 3px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #ffd23f;
+  background: rgba(0, 0, 0, 0.3);
 }
 /* How to Play: a sheet over the cards */
 .g-palmdrive .g-palmdrive-sheet {
@@ -637,4 +668,87 @@
 .g-palmdrive .g-palmdrive-purple {
   font-weight: 700;
   color: #d07bff;
+}
+/* the Garage sheet */
+.g-palmdrive .g-palmdrive-garage-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+.g-palmdrive .g-palmdrive-bank {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  justify-items: end;
+  gap: 2px 6px;
+}
+.g-palmdrive .g-palmdrive-bank b {
+  font-size: 30px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #ffd23f;
+}
+.g-palmdrive .g-palmdrive-bank small {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  opacity: 0.7;
+}
+.g-palmdrive .g-palmdrive-swatches {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+.g-palmdrive .g-palmdrive-hats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.g-palmdrive .g-palmdrive-swatch,
+.g-palmdrive .g-palmdrive-hat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 4px 6px;
+  border: 0;
+  border-radius: 12px;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+.g-palmdrive .g-palmdrive-swatch:hover:not(:disabled),
+.g-palmdrive .g-palmdrive-hat:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+.g-palmdrive .g-palmdrive-swatch.is-on,
+.g-palmdrive .g-palmdrive-hat.is-on {
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 2px #fff;
+}
+.g-palmdrive .g-palmdrive-swatch:disabled,
+.g-palmdrive .g-palmdrive-hat:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.g-palmdrive .g-palmdrive-swatch i {
+  width: min(30px, 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+.g-palmdrive .g-palmdrive-hat span {
+  font-size: 12px;
+  font-weight: 600;
+}
+.g-palmdrive .g-palmdrive-swatch small,
+.g-palmdrive .g-palmdrive-hat small {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffd23f;
 }
