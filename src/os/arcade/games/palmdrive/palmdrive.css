@@ -926,9 +926,31 @@
   stroke-linejoin: round;
 }
 .g-palmdrive .g-palmdrive-course span {
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+/* how hard the course is, and how long a lap */
+.g-palmdrive .g-palmdrive-course small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+.g-palmdrive .g-palmdrive-course small.is-easy {
+  color: #7ddf8a;
+}
+.g-palmdrive .g-palmdrive-course small.is-medium {
+  color: #ffd45e;
+}
+.g-palmdrive .g-palmdrive-course small.is-hard {
+  color: #ff9f4a;
+}
+.g-palmdrive .g-palmdrive-course small.is-expert {
+  color: #ff6b6b;
 }
 /* the golden mushroom glows while it lasts */
 .g-palmdrive .g-palmdrive-item.is-golden {

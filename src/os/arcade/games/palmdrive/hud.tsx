@@ -442,6 +442,19 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         </ul>
       </section>
       <section>
+        <h3>Courses</h3>
+        <p>Each course has its own difficulty: the harder ones are narrower, twistier and have more in the way.</p>
+        <ul>
+          <li>
+            <b>Mud</b> slows you down like the grass. A boost or a jump gets you through.
+          </li>
+          <li>
+            <b>Hay bales and cows</b> are solid. Bump a cow and it spins you out. Shells break on them.
+          </li>
+          <li>A star, a Mega Mushroom or a Bullet ploughs straight through all of it.</li>
+        </ul>
+      </section>
+      <section>
         <h3>Your garage</h3>
         <p>Coins you pick up (and steal) go in your bank, plus a bonus for a podium finish. Spend them in the Garage on new paint and hats. Online, everyone sees your kart.</p>
       </section>

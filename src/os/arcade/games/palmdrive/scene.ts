@@ -1,9 +1,9 @@
-// three.js view of a Palm Drive race: the circuit, campus scenery, karts, items and effects.
-// It reads a Race every frame and never changes it.
+// three.js view of a Palm Drive race: the circuit, the hazards on it, karts, items and effects (each course's own
+// scenery is in scenery.ts). It reads a Race every frame and never changes it.
 import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
-import type { CourseId } from './courses';
-import { CURB, EDGE, LANDMARKS, ROAD_HALF, gridSpot, headingOf, locate, pointAt, type Track } from './track';
+import { CURB, gridSpot, headingOf, locate, pointAt, type Track } from './track';
+import { LOOKS, SCENERY, canvas, noise, scatter, texture } from './scenery';
 import { COUNTDOWN, RAMP_H, RAMP_LEN, TURBO_AT, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
 
 type Three = typeof import('three');
@@ -98,42 +98,6 @@ function makeHat(THREE: Three, geo: KartGeo, m: KartMats, hat: Hat, paint: T.Mat
   return g;
 }
 
-/** Deterministic scatter for scenery, so campus looks the same every visit. */
-function scatter(seed: number) {
-  let a = seed >>> 0;
-  return () => {
-    a = (Math.imul(a, 1664525) + 1013904223) >>> 0;
-    return a / 4294967296;
-  };
-}
-
-function canvas(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void) {
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  draw(c.getContext('2d')!);
-  return c;
-}
-
-function texture(THREE: Three, c: HTMLCanvasElement, repeat?: [number, number]) {
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  if (repeat) {
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(repeat[0], repeat[1]);
-  }
-  return tex;
-}
-
-const noise = (g: CanvasRenderingContext2D, w: number, h: number, n: number, alpha: number, light = true) => {
-  for (let i = 0; i < n; i++) {
-    g.fillStyle = `rgba(${light ? '255,255,255' : '0,0,0'},${Math.random() * alpha})`;
-    g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
-  }
-};
-
 /**
  * A strip along the track between lateral offsets a and b (meters, positive to the right), from s0 to s1.
  * The v texture coordinate runs one unit every vLen meters.
@@ -178,105 +142,6 @@ function fence(THREE: Three, t: Track, d: number, h: number, vLen: number) {
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
-  return g;
-}
-
-function frondGeometry(THREE: Three) {
-  // seven drooping blades radiating from the crown
-  const pos: number[] = [];
-  const blades = 7;
-  for (let i = 0; i < blades; i++) {
-    const a = (i / blades) * Math.PI * 2 + 0.3;
-    const dx = Math.cos(a);
-    const dz = Math.sin(a);
-    const len = 2.8;
-    const tip = [dx * len, -1, dz * len];
-    const mid = [dx * len * 0.5, 0.25, dz * len * 0.5];
-    const w = 0.45;
-    const px = -dz * w;
-    const pz = dx * w;
-    pos.push(0, 0, 0, mid[0] + px, mid[1], mid[2] + pz, mid[0] - px, mid[1], mid[2] - pz);
-    pos.push(mid[0] + px, mid[1], mid[2] + pz, tip[0], tip[1], tip[2], mid[0] - px, mid[1], mid[2] - pz);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.computeVertexNormals();
-  return g;
-}
-
-/** Memorial Church with its gold mosaic, framed by the Main Quad arcades. The facade faces south. */
-function makeChurch(THREE: Three, box: T.BoxGeometry) {
-  const g = new THREE.Group();
-  const stone = new THREE.MeshLambertMaterial({ color: 0xd9b98a });
-  const tile = new THREE.MeshLambertMaterial({ color: 0xb4553a });
-  const gold = new THREE.MeshLambertMaterial({ color: 0xe6c36a, emissive: 0x3a2a00 });
-  const shadow = new THREE.MeshLambertMaterial({ color: 0x5a3f2e });
-  const mesh = (geo: T.BufferGeometry, mat: T.Material, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1, ry = 0) => {
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(x, y, z);
-    m.scale.set(sx, sy, sz);
-    m.rotation.y = ry;
-    g.add(m);
-    return m;
-  };
-  const roof = new THREE.CylinderGeometry(0, 1, 1, 4, 1);
-  // long arcade wings either side, with their row of arches
-  for (const side of [-1, 1]) {
-    mesh(box, stone, side * 30, 4, 8, 34, 8, 10);
-    mesh(roof, tile, side * 30, 9.2, 8, 27, 2.6, 9, Math.PI / 4);
-    for (let a = 0; a < 7; a++) mesh(box, shadow, side * (16 + a * 4.4), 2.6, 2.9, 2.6, 4, 0.3);
-  }
-  mesh(box, stone, 0, 8, 14, 22, 16, 30);
-  mesh(roof, tile, 0, 19.5, 14, 17, 7, 24, Math.PI / 4);
-  mesh(box, stone, 0, 9.5, -2, 26, 19, 3);
-  mesh(roof, stone, 0, 22, -2, 19, 6, 2.2, Math.PI / 4);
-  mesh(box, gold, 0, 13.5, -3.7, 18, 7.5, 0.4);
-  for (const x of [-6, 0, 6]) mesh(box, shadow, x, 4, -3.7, 3.4, 6.5, 0.4);
-  mesh(new THREE.CylinderGeometry(6, 6, 6, 8), stone, 0, 26, 22);
-  mesh(new THREE.SphereGeometry(6, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), tile, 0, 29, 22);
-  return g;
-}
-
-/** Hoover Tower: a tall sandstone shaft, the open belfry and the red dome. */
-function makeHoover(THREE: Three, box: T.BoxGeometry) {
-  const g = new THREE.Group();
-  const stone = new THREE.MeshLambertMaterial({ color: 0xe0c49a });
-  const dark = new THREE.MeshLambertMaterial({ color: 0x4a3a2c });
-  const tile = new THREE.MeshLambertMaterial({ color: 0xb4553a });
-  const add = (geo: T.BufferGeometry, m: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
-    const o = new THREE.Mesh(geo, m);
-    o.position.set(x, y, z);
-    o.scale.set(sx, sy, sz);
-    g.add(o);
-  };
-  add(box, stone, 0, 6, 0, 16, 12, 16);
-  add(box, stone, 0, 26, 0, 10, 40, 10);
-  for (const [x, z, sx, sz] of [[0, 5.05, 7, 0.2], [0, -5.05, 7, 0.2], [5.05, 0, 0.2, 7], [-5.05, 0, 0.2, 7]]) add(box, dark, x, 48, z, sx, 6, sz);
-  add(box, stone, 0, 51.5, 0, 10.6, 1.2, 10.6);
-  add(new THREE.SphereGeometry(1, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), tile, 0, 52, 0, 4.6, 5.5, 4.6);
-  add(box, stone, 0, 58.5, 0, 1.2, 2.5, 1.2);
-  return g;
-}
-
-/** A sandstone campus building with a red tile hip roof. */
-function makeHall(THREE: Three, box: T.BoxGeometry, roof: T.BufferGeometry, mats: { stone: T.Material; tile: T.Material; dark: T.Material }, w: number, d: number, h: number) {
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(box, mats.stone);
-  body.scale.set(w, h, d);
-  body.position.y = h / 2;
-  const top = new THREE.Mesh(roof, mats.tile);
-  top.scale.set(w * 0.72, 4, d * 0.72);
-  top.rotation.y = Math.PI / 4;
-  top.position.y = h + 2;
-  g.add(body, top);
-  for (let x = -w / 2 + 3; x <= w / 2 - 3; x += 4) {
-    for (const side of [-1, 1]) {
-      const win = new THREE.Mesh(box, mats.dark);
-      win.scale.set(1.6, h * 0.4, 0.2);
-      win.position.set(x, h * 0.5, (side * d) / 2);
-      g.add(win);
-    }
-  }
   return g;
 }
 
@@ -399,452 +264,6 @@ const dampAngle = (a: number, b: number, k: number, dt: number) => {
   return a + d * (1 - Math.exp(-k * dt));
 };
 
-/** Each course's colors: light, grass, curbs, walls and the banner over the start. */
-type Look = {
-  fog: [number, number, number];
-  sky: number;
-  ground: number;
-  sun: [number, number];
-  field: string;
-  lawn: string;
-  curb: [string, string];
-  wall: string;
-  band: string;
-  banner: string;
-};
-const LOOKS: Record<CourseId, Look> = {
-  palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE' },
-  lake: { fog: [0xeeb08e, 120, 640], sky: 0xffd8c2, ground: 0x5d6b4a, sun: [0xffb07a, 1.4], field: '#b8a862', lawn: '#79a85a', curb: ['#f4f1ea', '#2f6fb5'], wall: '#b98b5e', band: '#2f6fb5', banner: 'LAKE LAGUNITA' },
-};
-
-/** What a course's scenery builder gets: the scene, the track and shared helpers. */
-type Scenery = {
-  THREE: Three;
-  scene: T.Scene;
-  t: Track;
-  r: Race;
-  geo: { box: T.BoxGeometry; wheel: T.CylinderGeometry; ball: T.SphereGeometry; ring: T.TorusGeometry; cone: T.ConeGeometry; plane: T.PlaneGeometry; roof: T.CylinderGeometry };
-  mats: { stone: T.MeshLambertMaterial; tile: T.MeshLambertMaterial; dark: T.MeshLambertMaterial };
-  rand: () => number;
-  /** True when (x, z) is at least `margin` outside the walls of every stretch of road. */
-  clear: (x: number, z: number, margin: number) => boolean;
-  dummy: T.Object3D;
-};
-
-/** Palm Drive: palms down the drive and round the Oval, the Arboretum, Memorial Church, Hoover Tower, the Dish. */
-function campus(c: Scenery) {
-  const { THREE, scene, t, r, geo, mats, rand, clear, dummy } = c;
-  // palms: down both sides of Palm Drive and around the Oval
-  const palms: { x: number; z: number; hgt: number }[] = [];
-  const [pd0, pd1] = r.lay.palmDrive ?? [0, 0];
-  const pdLen = (pd1 - pd0 + t.length) % t.length;
-  for (let a = 0; a < pdLen; a += 11) {
-    for (const side of [-1, 1]) {
-      const p = pointAt(t, pd0 + a, side * (EDGE + 2.6));
-      if (clear(p.x, p.z, 1.5)) palms.push({ x: p.x, z: p.z, hgt: 9 + rand() * 3 });
-    }
-  }
-  const oval = LANDMARKS.oval;
-  for (let a = 0; a < Math.PI * 2; a += Math.PI / 9) {
-    const x = oval.x + Math.cos(a) * (oval.rx + 3);
-    const z = oval.z + Math.sin(a) * (oval.rz + 3);
-    if (clear(x, z, 1.5)) palms.push({ x, z, hgt: 8 + rand() * 3 });
-  }
-  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x9c7b58 }), palms.length);
-  const crowns = new THREE.InstancedMesh(frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x3f8a4c, side: THREE.DoubleSide }), palms.length);
-  palms.forEach((p, i) => {
-    dummy.position.set(p.x, p.hgt / 2, p.z);
-    dummy.scale.set(1, p.hgt, 1);
-    dummy.rotation.set(0, 0, 0);
-    dummy.updateMatrix();
-    trunks.setMatrixAt(i, dummy.matrix);
-    dummy.position.set(p.x, p.hgt + 0.2, p.z);
-    dummy.scale.set(1.1, 1.1, 1.1);
-    dummy.rotation.set(0, i * 1.3, 0);
-    dummy.updateMatrix();
-    crowns.setMatrixAt(i, dummy.matrix);
-  });
-  scene.add(trunks, crowns);
-
-  // oaks and eucalyptus in the Arboretum, east of Palm Drive
-  const oaks: { x: number; z: number; r: number }[] = [];
-  for (let n = 0; oaks.length < 110 && n < 2000; n++) {
-    const x = -20 - rand() * 170;
-    const z = -260 + rand() * 300;
-    const near = [LANDMARKS.cantor, LANDMARKS.hoover].some((b) => Math.hypot(b.x - x, b.z - z) < 24);
-    if (!near && clear(x, z, 3.5)) oaks.push({ x, z, r: 2.2 + rand() * 2.2 });
-  }
-  for (let n = 0; oaks.length < 170 && n < 3000; n++) {
-    const a = rand() * Math.PI * 2;
-    const dist = 150 + rand() * 260;
-    const x = -20 + Math.cos(a) * dist;
-    const z = Math.sin(a) * dist;
-    if (clear(x, z, 4) && Math.hypot(x - LANDMARKS.church.x, z - LANDMARKS.church.z) > 60) oaks.push({ x, z, r: 2.5 + rand() * 3 });
-  }
-  const oakTrunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.3, 0.45, 1, 6), new THREE.MeshLambertMaterial({ color: 0x6b4f37 }), oaks.length);
-  const oakTop = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 7, 5), new THREE.MeshLambertMaterial({ color: 0x4f7d3a, flatShading: true }), oaks.length);
-  oaks.forEach((o, i) => {
-    dummy.rotation.set(0, i, 0);
-    dummy.position.set(o.x, o.r * 0.6, o.z);
-    dummy.scale.set(1, o.r * 1.2, 1);
-    dummy.updateMatrix();
-    oakTrunk.setMatrixAt(i, dummy.matrix);
-    dummy.position.set(o.x, o.r * 1.5, o.z);
-    dummy.scale.set(o.r * 1.15, o.r * 0.9, o.r * 1.15);
-    dummy.updateMatrix();
-    oakTop.setMatrixAt(i, dummy.matrix);
-  });
-  scene.add(oakTrunk, oakTop);
-
-  // landmarks
-  const church = makeChurch(THREE, geo.box);
-  church.position.set(LANDMARKS.church.x, 0, LANDMARKS.church.z);
-  church.scale.setScalar(1.25);
-  scene.add(church);
-  const hoover = makeHoover(THREE, geo.box);
-  hoover.position.set(LANDMARKS.hoover.x, 0, LANDMARKS.hoover.z);
-  scene.add(hoover);
-  const cantor = makeHall(THREE, geo.box, geo.roof, mats, 30, 16, 11);
-  cantor.position.set(LANDMARKS.cantor.x, 0, LANDMARKS.cantor.z);
-  cantor.rotation.y = Math.PI / 2;
-  scene.add(cantor);
-  for (const [x, z, w, d, h, ry] of [
-    [70, 150, 26, 14, 10, 0.2],
-    [-70, 175, 30, 14, 12, -0.1],
-    [60, 60, 24, 12, 9, Math.PI / 2],
-    [-120, 215, 26, 16, 12, 0.3],
-    [95, 230, 28, 14, 12, -0.2],
-    [-150, -60, 22, 12, 9, 1.2],
-  ]) {
-    if (!clear(x, z, Math.max(w, d) / 2 + 2)) continue;
-    const hall = makeHall(THREE, geo.box, geo.roof, mats, w, d, h);
-    hall.position.set(x, 0, z);
-    hall.rotation.y = ry;
-    scene.add(hall);
-  }
-
-  // the Oval lawn with its big red S
-  {
-    const lawn = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshLambertMaterial({ color: 0x8fca62 }));
-    lawn.rotation.x = -Math.PI / 2;
-    lawn.scale.set(oval.rx, oval.rz, 1);
-    lawn.position.set(oval.x, 0.03, oval.z);
-    scene.add(lawn);
-    const letter = texture(
-      THREE,
-      canvas(256, 256, (g) => {
-        g.fillStyle = '#8c1515';
-        g.font = 'bold 230px Georgia, serif';
-        g.textAlign = 'center';
-        g.textBaseline = 'middle';
-        g.fillText('S', 128, 140);
-      }),
-    );
-    const s = new THREE.Mesh(geo.plane, new THREE.MeshLambertMaterial({ map: letter, transparent: true, depthWrite: false }));
-    s.rotation.x = -Math.PI / 2;
-    // read the right way round from the Palm Drive end: canvas top toward the church
-    s.rotation.z = Math.PI;
-    s.scale.set(24, 24, 1);
-    s.position.set(oval.x, 0.05, oval.z);
-    scene.add(s);
-  }
-
-  // golden foothills all round, and the Dish up on one of them
-  const hillMat = new THREE.MeshLambertMaterial({ color: 0xc8b06a, flatShading: true });
-  const hillGeo = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-  for (let a = 0; a < Math.PI * 2; a += Math.PI / 14) {
-    const dist = 560 + rand() * 160;
-    const hill = new THREE.Mesh(hillGeo, hillMat);
-    hill.position.set(-20 + Math.cos(a) * dist, -4, Math.sin(a) * dist);
-    hill.scale.set(110 + rand() * 90, 40 + rand() * 70, 110 + rand() * 90);
-    scene.add(hill);
-  }
-  {
-    const dish = new THREE.Group();
-    const white = new THREE.MeshLambertMaterial({ color: 0xf2f2f0, side: THREE.DoubleSide });
-    const bowl = new THREE.Mesh(new THREE.SphereGeometry(14, 18, 8, 0, Math.PI * 2, 0, 0.9), white);
-    bowl.rotation.x = -2.2;
-    bowl.position.y = 26;
-    const stand = new THREE.Mesh(geo.box, white);
-    stand.scale.set(4, 22, 4);
-    stand.position.y = 11;
-    dish.add(bowl, stand);
-    dish.position.set(LANDMARKS.dish.x, 20, LANDMARKS.dish.z);
-    scene.add(dish);
-    const hill = new THREE.Mesh(hillGeo, hillMat);
-    hill.position.set(LANDMARKS.dish.x, -6, LANDMARKS.dish.z);
-    hill.scale.set(120, 30, 120);
-    scene.add(hill);
-  }
-  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(30, 32), new THREE.MeshBasicMaterial({ color: 0xfff0c8, fog: false }));
-  sunDisc.position.set(320, 230, -900);
-  sunDisc.lookAt(0, 0, 0);
-  scene.add(sunDisc);
-}
-
-/** Whether (x, z) is inside the loop the centerline makes. */
-function insideLoop(t: Track, x: number, z: number) {
-  let inside = false;
-  for (let i = 0, j = t.n - 1; i < t.n; j = i++) {
-    const zi = t.z[i];
-    const zj = t.z[j];
-    if (zi > z !== zj > z && x < ((t.x[j] - t.x[i]) * (z - zi)) / (zj - zi) + t.x[i]) inside = !inside;
-  }
-  return inside;
-}
-
-/** Instanced meshes from a list of transforms. */
-function instances(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.BufferGeometry, mat: T.Material, items: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number; rx?: number }[]) {
-  if (!items.length) return;
-  const mesh = new THREE.InstancedMesh(geo, mat, items.length);
-  items.forEach((it, i) => {
-    dummy.position.set(it.x, it.y, it.z);
-    dummy.scale.set(it.sx, it.sy, it.sz);
-    dummy.rotation.set(it.rx ?? 0, it.ry ?? 0, 0);
-    dummy.updateMatrix();
-    mesh.setMatrixAt(i, dummy.matrix);
-  });
-  dummy.rotation.set(0, 0, 0);
-  scene.add(mesh);
-}
-
-/** Oaks scattered where there is room. */
-function oaks(c: Scenery, spots: { x: number; z: number; r: number }[]) {
-  const { THREE, scene, dummy } = c;
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.3, 0.45, 1, 6), new THREE.MeshLambertMaterial({ color: 0x6b4f37 }), spots.map((o, i) => ({ x: o.x, y: o.r * 0.6, z: o.z, sx: 1, sy: o.r * 1.2, sz: 1, ry: i })));
-  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 7, 5), new THREE.MeshLambertMaterial({ color: 0x4f7d3a, flatShading: true }), spots.map((o, i) => ({ x: o.x, y: o.r * 1.5, z: o.z, sx: o.r * 1.15, sy: o.r * 0.9, sz: o.r * 1.15, ry: i })));
-}
-
-/** Golden foothills in a ring at `dist` around (cx, cz), with the Dish on one of them. */
-function foothills(c: Scenery, cx: number, cz: number, dish: { x: number; z: number }) {
-  const { THREE, scene, geo, rand } = c;
-  const hillMat = new THREE.MeshLambertMaterial({ color: 0xc8b06a, flatShading: true });
-  const hillGeo = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-  for (let a = 0; a < Math.PI * 2; a += Math.PI / 14) {
-    const dist = 560 + rand() * 160;
-    const hill = new THREE.Mesh(hillGeo, hillMat);
-    hill.position.set(cx + Math.cos(a) * dist, -4, cz + Math.sin(a) * dist);
-    hill.scale.set(110 + rand() * 90, 40 + rand() * 70, 110 + rand() * 90);
-    scene.add(hill);
-  }
-  const white = new THREE.MeshLambertMaterial({ color: 0xf2f2f0, side: THREE.DoubleSide });
-  const d = new THREE.Group();
-  const bowl = new THREE.Mesh(new THREE.SphereGeometry(14, 18, 8, 0, Math.PI * 2, 0, 0.9), white);
-  bowl.rotation.x = -2.2;
-  bowl.position.y = 26;
-  const stand = new THREE.Mesh(geo.box, white);
-  stand.scale.set(4, 22, 4);
-  stand.position.y = 11;
-  d.add(bowl, stand);
-  d.position.set(dish.x, 20, dish.z);
-  scene.add(d);
-  const hill = new THREE.Mesh(hillGeo, hillMat);
-  hill.position.set(dish.x, -6, dish.z);
-  hill.scale.set(120, 30, 120);
-  scene.add(hill);
-}
-
-/**
- * Lake Lagunita: water fills the loop, reeds and lily pads line the shore, sailboats and ducks are out on the water,
- * the boathouse stands on its peninsula inside the hairpin, oaks and foothills all round, and the sun is going down.
- */
-function lake(c: Scenery) {
-  const { THREE, scene, t, geo, mats, rand, clear, dummy } = c;
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minZ = Infinity;
-  let maxZ = -Infinity;
-  let cx = 0;
-  let cz = 0;
-  for (let i = 0; i < t.n; i++) {
-    minX = Math.min(minX, t.x[i]);
-    maxX = Math.max(maxX, t.x[i]);
-    minZ = Math.min(minZ, t.z[i]);
-    maxZ = Math.max(maxZ, t.z[i]);
-    cx += t.x[i] / t.n;
-    cz += t.z[i] / t.n;
-  }
-  // The water is many small tiles rather than a few huge triangles (see the ground), each kept if its middle is
-  // inside the loop; the walls and lawn along the shore hide the ragged edge.
-  const CELL = 6;
-  const pos: number[] = [];
-  const uv: number[] = [];
-  for (let x = minX; x < maxX; x += CELL) {
-    for (let z = minZ; z < maxZ; z += CELL) {
-      if (!insideLoop(t, x + CELL / 2, z + CELL / 2)) continue;
-      // wound so the tiles face up (+y)
-      const q = [x, z, x, z + CELL, x + CELL, z + CELL, x, z, x + CELL, z + CELL, x + CELL, z];
-      for (let k = 0; k < q.length; k += 2) {
-        pos.push(q[k], -0.01, q[k + 1]);
-        uv.push(q[k] / 20, q[k + 1] / 20);
-      }
-    }
-  }
-  const waterGeo = new THREE.BufferGeometry();
-  waterGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  waterGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  waterGeo.computeVertexNormals();
-  const ripples = texture(
-    THREE,
-    canvas(128, 128, (g) => {
-      g.fillStyle = '#4a7db0';
-      g.fillRect(0, 0, 128, 128);
-      g.strokeStyle = 'rgba(255,225,200,0.22)';
-      g.lineWidth = 2;
-      for (let k = 0; k < 16; k++) {
-        const x = Math.random() * 128;
-        const y = Math.random() * 128;
-        g.beginPath();
-        g.moveTo(x, y);
-        g.quadraticCurveTo(x + 9, y - 3, x + 18, y);
-        g.stroke();
-      }
-    }),
-  );
-  ripples.wrapS = ripples.wrapT = THREE.RepeatWrapping;
-  scene.add(new THREE.Mesh(waterGeo, new THREE.MeshLambertMaterial({ map: ripples })));
-
-  // reeds and cattails in clumps along the shore, and lily pads just off it
-  const reeds: Parameters<typeof instances>[5] = [];
-  const tops: Parameters<typeof instances>[5] = [];
-  const pads: Parameters<typeof instances>[5] = [];
-  const flowers: Parameters<typeof instances>[5] = [];
-  for (let s = 0; s < t.length; s += 3.5) {
-    if (rand() < 0.45) continue;
-    const p = pointAt(t, s, -(EDGE + 1.2 + rand() * 3));
-    if (!clear(p.x, p.z, 0.8) || !insideLoop(t, p.x, p.z)) continue;
-    for (let k = 0; k < 3 + Math.floor(rand() * 4); k++) {
-      const x = p.x + (rand() - 0.5) * 2.2;
-      const z = p.z + (rand() - 0.5) * 2.2;
-      const h = 1.3 + rand() * 1.4;
-      reeds.push({ x, y: h / 2, z, sx: 0.09, sy: h, sz: 0.09, rx: (rand() - 0.5) * 0.25 });
-      if (rand() < 0.4) tops.push({ x, y: h * 0.92, z, sx: 0.12, sy: 0.4, sz: 0.12 });
-    }
-    if (rand() < 0.35) {
-      const q = pointAt(t, s, -(EDGE + 5 + rand() * 9));
-      if (clear(q.x, q.z, 1) && insideLoop(t, q.x, q.z)) {
-        const size = 0.7 + rand() * 0.6;
-        pads.push({ x: q.x, y: 0.01, z: q.z, sx: size, sy: size, sz: size, rx: -Math.PI / 2 });
-        if (rand() < 0.3) flowers.push({ x: q.x + 0.2, y: 0.12, z: q.z, sx: 0.22, sy: 0.16, sz: 0.22 });
-      }
-    }
-  }
-  instances(THREE, scene, dummy, new THREE.ConeGeometry(1, 1, 4), new THREE.MeshLambertMaterial({ color: 0x5f7f3a }), reeds);
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 6), new THREE.MeshLambertMaterial({ color: 0x5a3b22 }), tops);
-  instances(THREE, scene, dummy, new THREE.CircleGeometry(1, 10), new THREE.MeshLambertMaterial({ color: 0x4f8f3f, side: THREE.DoubleSide }), pads);
-  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 8, 6), new THREE.MeshLambertMaterial({ color: 0xf6a8c8 }), flowers);
-
-  // somewhere out on the open water, well clear of the road
-  const onWater = (margin: number) => {
-    for (let n = 0; n < 400; n++) {
-      const x = minX + rand() * (maxX - minX);
-      const z = minZ + rand() * (maxZ - minZ);
-      if (insideLoop(t, x, z) && clear(x, z, margin)) return { x, z };
-    }
-    return null;
-  };
-  // sailboats with cardinal and white sails
-  const sail = new THREE.BufferGeometry();
-  sail.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 1, 0, 0, 0, 1], 3));
-  sail.computeVertexNormals();
-  const hullMat = new THREE.MeshLambertMaterial({ color: 0xf4f1ea });
-  const mastMat = new THREE.MeshLambertMaterial({ color: 0x3e3128 });
-  const sailMats = [new THREE.MeshLambertMaterial({ color: 0xfafafa, side: THREE.DoubleSide }), new THREE.MeshLambertMaterial({ color: 0xb1282a, side: THREE.DoubleSide })];
-  for (let b = 0; b < 6; b++) {
-    const at = onWater(10);
-    if (!at) break;
-    const boat = new THREE.Group();
-    const hull = new THREE.Mesh(geo.box, hullMat);
-    hull.scale.set(1.4, 0.7, 3.6);
-    hull.position.y = 0.3;
-    const mast = new THREE.Mesh(geo.box, mastMat);
-    mast.scale.set(0.12, 5.2, 0.12);
-    mast.position.set(0, 3, 0.4);
-    const sl = new THREE.Mesh(sail, sailMats[b % 2]);
-    sl.scale.set(1, 4.6, -2.6);
-    sl.position.set(0.05, 0.9, 0.35);
-    boat.add(hull, mast, sl);
-    boat.position.set(at.x, 0, at.z);
-    boat.rotation.y = rand() * Math.PI * 2;
-    scene.add(boat);
-  }
-  // mallards paddling about
-  const duck = { body: new THREE.MeshLambertMaterial({ color: 0x8a6a4a }), head: new THREE.MeshLambertMaterial({ color: 0x2f7d4a }), beak: new THREE.MeshLambertMaterial({ color: 0xf2a531 }) };
-  for (let n = 0; n < 12; n++) {
-    const at = onWater(3);
-    if (!at) break;
-    const d = new THREE.Group();
-    const body = new THREE.Mesh(geo.ball, duck.body);
-    body.scale.set(0.32, 0.22, 0.48);
-    body.position.y = 0.12;
-    const head = new THREE.Mesh(geo.ball, duck.head);
-    head.scale.setScalar(0.17);
-    head.position.set(0, 0.38, 0.36);
-    const beak = new THREE.Mesh(geo.cone, duck.beak);
-    beak.scale.set(0.06, 0.16, 0.06);
-    beak.rotation.x = Math.PI / 2;
-    beak.position.set(0, 0.36, 0.55);
-    d.add(body, head, beak);
-    d.position.set(at.x, 0, at.z);
-    d.rotation.y = rand() * Math.PI * 2;
-    scene.add(d);
-  }
-
-  // the boathouse at the middle of the hairpin, on the peninsula it wraps around
-  let apex = 0;
-  for (let i = 0; i < t.n; i++) if (t.curv[i] > t.curv[apex]) apex = i;
-  const mid = pointAt(t, apex * t.step, 1 / t.curv[apex]);
-  if (clear(mid.x, mid.z, 3)) {
-    const wood = new THREE.MeshLambertMaterial({ color: 0x9c6b43 });
-    const roofMat = new THREE.MeshLambertMaterial({ color: 0x2f5d3a });
-    const house = makeHall(THREE, geo.box, geo.roof, { stone: wood, tile: roofMat, dark: mats.dark }, 8, 6, 4.5);
-    house.position.set(mid.x, 0, mid.z);
-    house.rotation.y = headingOf(mid.tx, mid.tz);
-    scene.add(house);
-    const pole = new THREE.Mesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xdddddd }));
-    pole.scale.set(0.15, 9, 0.15);
-    pole.position.set(mid.x + 5, 4.5, mid.z);
-    const flag = new THREE.Mesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x8c1515 }));
-    flag.scale.set(0.05, 1.2, 2);
-    flag.position.set(mid.x + 5, 8.2, mid.z + 1);
-    scene.add(pole, flag);
-  }
-
-  // oaks all round outside the loop, and a row of palms behind the dam
-  const spots: { x: number; z: number; r: number }[] = [];
-  for (let n = 0; spots.length < 170 && n < 4000; n++) {
-    const a = rand() * Math.PI * 2;
-    const dist = 40 + rand() * 420;
-    const x = cx + Math.cos(a) * ((maxX - minX) / 2 + dist);
-    const z = cz + Math.sin(a) * ((maxZ - minZ) / 2 + dist);
-    if (!insideLoop(t, x, z) && clear(x, z, 4)) spots.push({ x, z, r: 2.4 + rand() * 2.8 });
-  }
-  oaks(c, spots);
-  const palms: { x: number; z: number; hgt: number }[] = [];
-  for (let s = 0; s < 120; s += 12) {
-    const p = pointAt(t, s - 40, EDGE + 3);
-    if (clear(p.x, p.z, 1.5)) palms.push({ x: p.x, z: p.z, hgt: 9 + rand() * 3 });
-  }
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x9c7b58 }), palms.map((p) => ({ x: p.x, y: p.hgt / 2, z: p.z, sx: 1, sy: p.hgt, sz: 1 })));
-  instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x3f8a4c, side: THREE.DoubleSide }), palms.map((p, i) => ({ x: p.x, y: p.hgt + 0.2, z: p.z, sx: 1.1, sy: 1.1, sz: 1.1, ry: i * 1.3 })));
-
-  // foothills and the Dish, Hoover Tower off across campus, and the sun going down in the west (+x)
-  foothills(c, cx, cz, { x: cx + 160, z: cz - 420 });
-  const hoover = makeHoover(THREE, geo.box);
-  hoover.position.set(cx - 260, 0, cz + 330);
-  hoover.scale.setScalar(1.4);
-  scene.add(hoover);
-  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(46, 40), new THREE.MeshBasicMaterial({ color: 0xffa45c, fog: false }));
-  sunDisc.position.set(cx + 820, 70, cz + 120);
-  sunDisc.lookAt(cx, 0, cz);
-  const glow = new THREE.Mesh(new THREE.RingGeometry(46, 96, 40), new THREE.MeshBasicMaterial({ color: 0xffc58a, transparent: true, opacity: 0.35, fog: false, depthWrite: false }));
-  glow.position.copy(sunDisc.position);
-  glow.lookAt(cx, 0, cz);
-  scene.add(sunDisc, glow);
-}
-
-const SCENERY: Record<CourseId, (c: Scenery) => void> = { palm: campus, lake };
-
 export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null {
   const gl = createGL(THREE, host, { alpha: true });
   if (!gl) return null;
@@ -928,14 +347,14 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   );
   lawn.wrapS = lawn.wrapT = THREE.RepeatWrapping;
   const lawnMat = new THREE.MeshLambertMaterial({ map: lawn });
-  scene.add(new THREE.Mesh(ribbon(THREE, t, ROAD_HALF, EDGE + 0.4, 0.02, 8), lawnMat));
-  scene.add(new THREE.Mesh(ribbon(THREE, t, -EDGE - 0.4, -ROAD_HALF, 0.02, 8), lawnMat));
+  scene.add(new THREE.Mesh(ribbon(THREE, t, t.half, t.edge + 0.4, 0.02, 8), lawnMat));
+  scene.add(new THREE.Mesh(ribbon(THREE, t, -t.edge - 0.4, -t.half, 0.02, 8), lawnMat));
 
   // the road, curbs, walls and the start
   const asphalt = texture(
     THREE,
     canvas(256, 256, (g) => {
-      g.fillStyle = '#4a4a52';
+      g.fillStyle = look.road;
       g.fillRect(0, 0, 256, 256);
       noise(g, 256, 256, 2200, 0.07);
       noise(g, 256, 256, 1200, 0.12, false);
@@ -946,7 +365,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   );
   asphalt.wrapS = asphalt.wrapT = THREE.RepeatWrapping;
   const roadLen = t.length / Math.round(t.length / 12);
-  scene.add(new THREE.Mesh(ribbon(THREE, t, -ROAD_HALF, ROAD_HALF, 0.04, roadLen), new THREE.MeshLambertMaterial({ map: asphalt })));
+  scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half, t.half, 0.04, roadLen), new THREE.MeshLambertMaterial({ map: asphalt })));
   const curbTex = texture(
     THREE,
     canvas(16, 64, (g) => {
@@ -959,8 +378,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   curbTex.wrapT = THREE.RepeatWrapping;
   const curbLen = t.length / Math.round(t.length / 3);
   const curbMat = new THREE.MeshLambertMaterial({ map: curbTex });
-  scene.add(new THREE.Mesh(ribbon(THREE, t, ROAD_HALF, ROAD_HALF + CURB, 0.07, curbLen), curbMat));
-  scene.add(new THREE.Mesh(ribbon(THREE, t, -ROAD_HALF - CURB, -ROAD_HALF, 0.07, curbLen), curbMat));
+  scene.add(new THREE.Mesh(ribbon(THREE, t, t.half, t.half + CURB, 0.07, curbLen), curbMat));
+  scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half - CURB, -t.half, 0.07, curbLen), curbMat));
   // sandstone walls with a cardinal red band, so the edge of the course always reads
   const wallTex = texture(
     THREE,
@@ -979,8 +398,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const wallMat = new THREE.MeshLambertMaterial({ map: wallTex, side: THREE.DoubleSide });
   const capMat = new THREE.MeshLambertMaterial({ color: look.band });
   for (const side of [-1, 1]) {
-    scene.add(new THREE.Mesh(fence(THREE, t, side * EDGE, 1.25, 3), wallMat));
-    scene.add(new THREE.Mesh(ribbon(THREE, t, side * EDGE - 0.3, side * EDGE + 0.3, 1.25, 4), capMat));
+    scene.add(new THREE.Mesh(fence(THREE, t, side * t.edge, 1.25, 3), wallMat));
+    scene.add(new THREE.Mesh(ribbon(THREE, t, side * t.edge - 0.3, side * t.edge + 0.3, 1.25, 4), capMat));
   }
   const checker = texture(
     THREE,
@@ -991,7 +410,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       }
     }),
   );
-  scene.add(new THREE.Mesh(ribbon(THREE, t, -ROAD_HALF, ROAD_HALF, 0.09, 2.4, t.length - 1.2, t.length + 1.2), new THREE.MeshBasicMaterial({ map: checker })));
+  scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half, t.half, 0.09, 2.4, t.length - 1.2, t.length + 1.2), new THREE.MeshBasicMaterial({ map: checker })));
   const lineMat = new THREE.MeshBasicMaterial({ color: 0xf2f2f2 });
   for (let slot = 0; slot < r.karts.length; slot++) {
     const g = gridSpot(t, slot);
@@ -1015,7 +434,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     for (const side of [-1, 1]) {
       const m = new THREE.Mesh(geo.box, post);
       m.scale.set(0.7, 7.2, 0.7);
-      m.position.set(side * (EDGE + 0.6), 3.6, 0);
+      m.position.set(side * (t.edge + 0.6), 3.6, 0);
       gantry.add(m);
     }
     const banner = texture(
@@ -1037,7 +456,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       }),
     );
     const beam = new THREE.Mesh(geo.box, [post, post, post, post, new THREE.MeshLambertMaterial({ map: banner }), new THREE.MeshLambertMaterial({ map: banner })]);
-    beam.scale.set(EDGE * 2 + 1.8, 1.6, 0.5);
+    beam.scale.set(t.edge * 2 + 1.8, 1.6, 0.5);
     beam.position.y = 6.6;
     gantry.add(beam);
     scene.add(gantry);
@@ -1131,7 +550,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   for (let s = 0; s < t.length; s += 9) {
     const c = t.curv[Math.floor(s / t.step) % t.n];
     if (Math.abs(c) < 0.03) continue;
-    const p = pointAt(t, s, -Math.sign(c) * (EDGE - 0.4));
+    const p = pointAt(t, s, -Math.sign(c) * (t.edge - 0.4));
     const sign = new THREE.Mesh(geo.plane, chevronMat);
     sign.scale.set(1.6, 1.6, 1);
     sign.position.set(p.x, 1.9, p.z);
@@ -1143,9 +562,164 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
 
   // the course's own scenery
   const rand = scatter(7);
-  const clear = (x: number, z: number, margin: number) => Math.abs(locate(t, x, z).d) > EDGE + margin;
+  const clear = (x: number, z: number, margin: number) => Math.abs(locate(t, x, z).d) > t.edge + margin;
   const dummy = new THREE.Object3D();
   SCENERY[r.course]({ THREE, scene, t, r, geo, mats, rand, clear, dummy });
+
+  // what the course leaves on the road: mud and oil lie flat, hay bales stand in the way and cows wander across
+  const puddle = (inner: string, rim: string, sheen: boolean) =>
+    texture(
+      THREE,
+      canvas(128, 128, (g) => {
+        // a lumpy blob of overlapping circles, darker where it is deepest
+        const blobs = scatter(inner.length * 31);
+        for (let i = 0; i < 9; i++) {
+          const a = (i / 9) * Math.PI * 2;
+          const x = 64 + Math.cos(a) * 26 * blobs();
+          const y = 64 + Math.sin(a) * 26 * blobs();
+          const rad = 30 + blobs() * 12;
+          const grad = g.createRadialGradient(x, y, rad * 0.3, x, y, rad);
+          grad.addColorStop(0, inner);
+          grad.addColorStop(0.8, rim);
+          grad.addColorStop(1, 'rgba(0,0,0,0)');
+          g.fillStyle = grad;
+          g.beginPath();
+          g.arc(x, y, rad, 0, Math.PI * 2);
+          g.fill();
+        }
+        if (sheen) {
+          // a rainbow film on the oil
+          for (const [i, c] of ['#ff5a8a', '#ffd84d', '#5ad8a6', '#5a8aff'].entries()) {
+            g.strokeStyle = c;
+            g.globalAlpha = 0.35;
+            g.lineWidth = 3;
+            g.beginPath();
+            g.ellipse(58, 60, 30 - i * 5, 18 - i * 3, 0.5, 0, Math.PI * 2);
+            g.stroke();
+          }
+          g.globalAlpha = 1;
+        } else {
+          // wet glints on the mud
+          g.fillStyle = 'rgba(255,245,225,0.35)';
+          for (let i = 0; i < 8; i++) {
+            g.beginPath();
+            g.ellipse(36 + blobs() * 56, 36 + blobs() * 56, 4 + blobs() * 7, 1.5 + blobs() * 2.5, blobs() * 3, 0, Math.PI * 2);
+            g.fill();
+          }
+        }
+      }),
+    );
+  const mudMat = new THREE.MeshLambertMaterial({ map: puddle('rgba(46,28,14,1)', 'rgba(70,44,22,0.95)', false), transparent: true, depthWrite: false });
+  const oilMat = new THREE.MeshLambertMaterial({ map: puddle('rgba(12,12,18,0.97)', 'rgba(30,30,40,0.85)', true), transparent: true, depthWrite: false });
+  const strawTex = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = '#e2bd57';
+      g.fillRect(0, 0, 64, 64);
+      for (let i = 0; i < 70; i++) {
+        g.strokeStyle = i % 3 ? 'rgba(150,110,30,0.45)' : 'rgba(255,240,170,0.6)';
+        g.lineWidth = 1;
+        g.beginPath();
+        const y = Math.random() * 64;
+        g.moveTo(0, y);
+        g.lineTo(64, y + (Math.random() - 0.5) * 6);
+        g.stroke();
+      }
+    }),
+  );
+  const strawMat = new THREE.MeshLambertMaterial({ map: strawTex });
+  const baleGeo = new THREE.CylinderGeometry(1, 1, 1, 16);
+  const hideTex = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = '#f4f2ec';
+      g.fillRect(0, 0, 64, 64);
+      g.fillStyle = '#1d1d22';
+      const spots = scatter(11);
+      for (let i = 0; i < 7; i++) {
+        g.beginPath();
+        g.ellipse(spots() * 64, spots() * 64, 6 + spots() * 9, 5 + spots() * 7, spots() * 3, 0, Math.PI * 2);
+        g.fill();
+      }
+    }),
+  );
+  const cowMats = {
+    hide: new THREE.MeshLambertMaterial({ map: hideTex }),
+    pink: new THREE.MeshLambertMaterial({ color: 0xf0a3a8 }),
+    hoof: new THREE.MeshLambertMaterial({ color: 0x2a2420 }),
+    horn: new THREE.MeshLambertMaterial({ color: 0xeee3c4 }),
+  };
+  type CowView = { g: T.Group; legs: T.Mesh[]; head: T.Group; h: number };
+  const cows: { view: CowView; i: number }[] = [];
+  r.hazards.forEach((h, i) => {
+    if (h.kind === 'mud' || h.kind === 'oil') {
+      const m = new THREE.Mesh(geo.plane, h.kind === 'mud' ? mudMat : oilMat);
+      m.rotation.set(-Math.PI / 2, 0, rand() * Math.PI * 2);
+      m.scale.set(h.r * 2.3, h.r * 2.3, 1);
+      m.position.set(h.x, 0.055 + i * 0.0004, h.z);
+      m.renderOrder = 1;
+      scene.add(m);
+    } else if (h.kind === 'hay') {
+      // a round bale on its side, rolled along the road
+      const bale = new THREE.Mesh(baleGeo, strawMat);
+      const at = pointAt(t, h.s, h.d);
+      bale.rotation.set(0, headingOf(at.tx, at.tz), Math.PI / 2, 'YXZ');
+      bale.scale.set(h.r, 1.5, h.r);
+      bale.position.set(h.x, h.r, h.z);
+      scene.add(bale);
+    } else {
+      // a Holstein: spotted body, pink nose and udder, little horns and a swishing tail
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(geo.box, cowMats.hide);
+      body.scale.set(1.05, 1, 2.1);
+      body.position.y = 1.25;
+      const udder = new THREE.Mesh(geo.ball, cowMats.pink);
+      udder.scale.set(0.3, 0.2, 0.35);
+      udder.position.set(0, 0.72, -0.4);
+      const tail = new THREE.Mesh(geo.box, cowMats.hide);
+      tail.scale.set(0.08, 0.9, 0.08);
+      tail.position.set(0, 1.2, -1.07);
+      g.add(body, udder, tail);
+      const legs: T.Mesh[] = [];
+      for (const [x, z] of [[-0.35, 0.75], [0.35, 0.75], [-0.35, -0.75], [0.35, -0.75]]) {
+        const leg = new THREE.Mesh(geo.box, cowMats.hide);
+        leg.scale.set(0.24, 0.85, 0.24);
+        leg.position.set(x, 0.42, z);
+        const hoof = new THREE.Mesh(geo.box, cowMats.hoof);
+        hoof.scale.set(1.05, 0.18, 1.05);
+        hoof.position.y = -0.42;
+        leg.add(hoof);
+        legs.push(leg);
+        g.add(leg);
+      }
+      const head = new THREE.Group();
+      const skull = new THREE.Mesh(geo.box, cowMats.hide);
+      skull.scale.set(0.62, 0.62, 0.7);
+      const nose = new THREE.Mesh(geo.box, cowMats.pink);
+      nose.scale.set(0.56, 0.36, 0.25);
+      nose.position.set(0, -0.14, 0.42);
+      head.add(skull, nose);
+      for (const side of [-1, 1]) {
+        const horn = new THREE.Mesh(geo.cone, cowMats.horn);
+        horn.scale.set(0.08, 0.28, 0.08);
+        horn.position.set(side * 0.24, 0.42, -0.1);
+        horn.rotation.z = -side * 0.5;
+        const ear = new THREE.Mesh(geo.box, cowMats.hoof);
+        ear.scale.set(0.3, 0.1, 0.16);
+        ear.position.set(side * 0.42, 0.18, -0.12);
+        const eye = new THREE.Mesh(geo.ball, cowMats.hoof);
+        eye.scale.setScalar(0.07);
+        eye.position.set(side * 0.2, 0.1, 0.36);
+        head.add(horn, ear, eye);
+      }
+      head.position.set(0, 1.55, 1.25);
+      g.add(head);
+      g.position.set(h.x, 0, h.z);
+      scene.add(g);
+      const at = pointAt(t, h.s, h.at);
+      cows.push({ view: { g, legs, head, h: headingOf(-at.tz * h.walk, at.tx * h.walk) }, i });
+    }
+  });
 
 
   // item boxes and coins
@@ -1294,6 +868,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const partMat = {
     smoke: new THREE.MeshBasicMaterial({ color: 0xe8e4dc, transparent: true, opacity: 0.55, depthWrite: false }),
     dust: new THREE.MeshBasicMaterial({ color: 0xc9b07a, transparent: true, opacity: 0.6, depthWrite: false }),
+    mud: new THREE.MeshBasicMaterial({ color: 0x5a3f24 }),
     white: new THREE.MeshBasicMaterial({ color: 0xffffff }),
     star: kartShared.star,
     gold: kartShared.gold,
@@ -1341,6 +916,19 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       camera.updateProjectionMatrix();
     },
     frame(race, me, dt, clock, lookBack = false) {
+      // cows walk across the road and turn round at the far side
+      for (const { view: cv, i } of cows) {
+        const h = race.hazards[i];
+        if (!h) continue;
+        const at = pointAt(race.track, h.s, h.at);
+        const face = headingOf(-at.tz * h.walk, at.tx * h.walk);
+        cv.h = dampAngle(cv.h, face, 3, dt);
+        cv.g.position.set(h.x, 0, h.z);
+        cv.g.rotation.y = cv.h;
+        const pace = Math.abs(Math.cos(race.time * (h.speed ?? 0.5) + (h.phase ?? 0)));
+        cv.legs.forEach((leg, n) => (leg.rotation.x = Math.sin(clock * 7 + (n % 3 ? 0 : Math.PI)) * 0.45 * pace));
+        cv.head.rotation.x = 0.15 + Math.sin(clock * 1.3 + i) * 0.12;
+      }
       // item boxes and coins
       race.boxes.forEach((b, i) => {
         const m = boxes[i];
@@ -1398,6 +986,12 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         v.smoke -= dt;
         if (v.smoke > 0 || k.y > 0.2 || Math.abs(k.v) < 6) return;
         const dusty = k.offroad && k.boost <= 0;
+        if (k.mud) {
+          // mud flies up off the back wheels
+          v.smoke = 0.04;
+          for (const side of [-1, 1]) emit(geo.ball, partMat.mud, k.x - Math.sin(k.h) * 1.2 - Math.cos(k.h) * side * 0.75, 0.3, k.z - Math.cos(k.h) * 1.2 + Math.sin(k.h) * side * 0.75, (Math.random() - 0.5) * 3 - Math.sin(k.h) * 3, 3 + Math.random() * 3, (Math.random() - 0.5) * 3 - Math.cos(k.h) * 3, 0.5, 0.16, 14);
+          return;
+        }
         if (k.drift === 0 && !dusty) return;
         v.smoke = 0.05;
         const rx = -Math.cos(k.h);
@@ -1529,7 +1123,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     dispose() {
       for (const f of fx) (f.mesh.material as T.Material).dispose();
       coinGeo.dispose();
-      for (const m of [partMat.smoke, partMat.dust, partMat.white, ...partMat.spark, ...partMat.rainbow]) m.dispose();
+      for (const m of [partMat.smoke, partMat.dust, partMat.mud, partMat.white, ...partMat.spark, ...partMat.rainbow]) m.dispose();
       // instanced trees, reeds and coins hold their own buffers too
       scene.traverse((o) => {
         if ((o as T.InstancedMesh).isInstancedMesh) (o as T.InstancedMesh).dispose();

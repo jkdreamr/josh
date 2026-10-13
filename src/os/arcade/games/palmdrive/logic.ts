@@ -1,7 +1,7 @@
 // Pure race rules for Palm Drive: kart physics, drifting and mini-turbos, items, CPU drivers, laps and places.
 // No DOM, no three.js. Distances are meters, times seconds; see track.ts for the axes and heading convention.
 import { COURSES, trackOf, type CourseId } from './courses.ts';
-import { CURB, EDGE, ROAD_HALF, deltaS, gridSpot, headingOf, locate, pointAt, wrapAngle, type Layout, type Track } from './track.ts';
+import { CURB, deltaS, solid, gridSpot, headingOf, locate, pointAt, wrapAngle, type Hazard, type Layout, type Track } from './track.ts';
 
 export const LAPS = 5;
 export const COUNTDOWN = 3;
@@ -162,6 +162,8 @@ export type Kart = {
   uses: number;
   roll: number;
   offroad: boolean;
+  /** In a mud puddle: as slow as the grass. */
+  mud: boolean;
   wrong: number;
   stuck: number;
   gas: number | null;
@@ -228,7 +230,10 @@ export type Ev =
   | { t: 'ink'; k: number }
   | { t: 'inked'; k: number }
   | { t: 'horn'; k: number; x: number; z: number }
-  | { t: 'blast'; x: number; z: number };
+  | { t: 'blast'; x: number; z: number }
+  /** Splashing into mud, and running into a cow. */
+  | { t: 'mud'; k: number }
+  | { t: 'moo'; k: number };
 
 export type Rng = () => number;
 
@@ -245,6 +250,8 @@ export type Race = {
   coins: Coin[];
   dashes: Dash[];
   ramps: Ramp[];
+  /** The course's mud, oil, hay bales and cows, with where each is right now. */
+  hazards: LiveHazard[];
   rand: Rng;
   nextId: number;
   events: Ev[];
@@ -255,6 +262,9 @@ export type Race = {
   /** Race time the last lightning struck, so two never land back to back. */
   boltAt: number;
 };
+
+/** A hazard on the road, where it is now, and which way a cow is walking (+1 to the right of the road). */
+export type LiveHazard = Hazard & { x: number; z: number; at: number; walk: number };
 
 export type Racer = { name: string; color: string; kind: Kart['kind']; seat?: number; pace?: number; skill?: number; hat?: Hat };
 
@@ -353,6 +363,7 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
       uses: 0,
       roll: 0,
       offroad: false,
+      mud: false,
       wrong: 0,
       stuck: 0,
       gas: null,
@@ -378,6 +389,10 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
     const p = pointAt(track, c.s, c.d);
     return { x: p.x, z: p.z, s: c.s, d: c.d, w: c.w, h: headingOf(p.tx, p.tz) };
   });
+  const hazards = lay.hazards.map((h): LiveHazard => {
+    const p = pointAt(track, h.s, h.d);
+    return { ...h, x: p.x, z: p.z, at: h.d, walk: 0 };
+  });
   const race: Race = {
     course,
     track,
@@ -391,6 +406,7 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
     coins,
     dashes,
     ramps,
+    hazards,
     rand,
     nextId: opts.idBase ?? 1,
     events: [],
@@ -398,8 +414,24 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
     first: null,
     boltAt: -99,
   };
+  moveHazards(race);
   rankKarts(race);
   return race;
+}
+
+/** Where across the road a hazard is at race time `time`: cows amble from side to side, the rest stay put. */
+export const hazardD = (h: Hazard, time: number) => (h.swing ? h.d + h.swing * Math.sin(time * (h.speed ?? 0.5) + (h.phase ?? 0)) : h.d);
+
+/** Cows amble across the road and back on the race clock, so every screen has them in the same place. */
+export function moveHazards(r: Race) {
+  for (const h of r.hazards) {
+    if (!h.swing) continue;
+    h.at = hazardD(h, r.time);
+    h.walk = Math.cos(r.time * (h.speed ?? 0.5) + (h.phase ?? 0)) >= 0 ? 1 : -1;
+    const p = pointAt(r.track, h.s, h.at);
+    h.x = p.x;
+    h.z = p.z;
+  }
 }
 
 function newAi(pace: number, skill: number, rand: Rng): Ai {
@@ -419,6 +451,7 @@ const local = (k: Kart) => k.kind !== 'remote';
 export function step(r: Race, dt: number) {
   const before = r.time;
   r.time += dt;
+  moveHazards(r);
   if (r.time < 0) {
     const n = Math.ceil(-r.time);
     if (n !== Math.ceil(-before) && n <= COUNTDOWN) r.events.push({ t: 'beep', n });
@@ -531,7 +564,7 @@ function drive(r: Race, k: Kart, dt: number) {
   if (k.star > 0) top += STAR_DV;
   if (k.mega > 0) top += MEGA_DV;
   if (k.boost > 0) top += BOOST_DV;
-  else if (k.offroad && k.star <= 0 && k.mega <= 0) top *= OFFROAD;
+  else if ((k.offroad || k.mud) && k.star <= 0 && k.mega <= 0) top *= OFFROAD;
   if (k.drift) top *= 0.985;
   if (k.wobble > 0) top *= 0.85;
   // ink on a CPU's visor: it drives a touch slower
@@ -540,7 +573,7 @@ function drive(r: Race, k: Kart, dt: number) {
   else if (!control) k.v = approach(k.v, 0, (k.tumble > 0 ? 30 : 14) * dt);
   else if (inp.brake) k.v = k.v > 0.5 ? Math.max(0, k.v - 26 * dt) : Math.max(-REVERSE, k.v - 9 * dt);
   else if (k.v < top) k.v = Math.min(top, k.v + (k.boost > 0 ? 34 : k.v < 0 ? 20 : C.accel) * dt);
-  else k.v = Math.max(top, k.v - (k.offroad && k.boost <= 0 ? 24 : 8) * dt);
+  else k.v = Math.max(top, k.v - ((k.offroad || k.mud) && k.boost <= 0 ? 24 : 8) * dt);
 
   if (inp.slam && control && k.y === 0 && k.slamCool === 0 && k.v > 3) slamStart(r, k);
   if (inp.cash && control && k.coins >= CASH_COST) {
@@ -591,7 +624,7 @@ function drive(r: Race, k: Kart, dt: number) {
       k.drift = 0;
       k.charge = 0;
     } else {
-      k.charge += dt * (0.7 + 0.8 * Math.max(0, k.steer * k.drift)) * (k.offroad ? 0.4 : 1);
+      k.charge += dt * (0.7 + 0.8 * Math.max(0, k.steer * k.drift)) * (k.offroad || k.mud ? 0.4 : 1);
     }
   }
 
@@ -613,6 +646,7 @@ function drive(r: Race, k: Kart, dt: number) {
   k.kx *= decay;
   k.kz *= decay;
   wall(r, k);
+  hazards(r, k);
   rideRamps(r, k);
   slipstream(r, k, dt, control);
   k.stuck = control && r.time > 1 && Math.abs(k.v) < 1.5 && !inp.brake && k.done === null ? k.stuck + dt : 0;
@@ -751,7 +785,7 @@ function rideRamps(r: Race, k: Kart) {
 function wall(r: Race, k: Kart) {
   const at = locate(r.track, k.x, k.z, k.i);
   k.i = at.i;
-  const lim = EDGE - KART_R * scaleOf(k);
+  const lim = r.track.edge - KART_R * scaleOf(k);
   if (Math.abs(at.d) > lim) {
     const sg = Math.sign(at.d);
     const nx = -at.tz * sg;
@@ -775,7 +809,49 @@ function wall(r: Race, k: Kart) {
   const now = locate(r.track, k.x, k.z, k.i);
   k.i = now.i;
   k.d = now.d;
-  k.offroad = Math.abs(now.d) > ROAD_HALF + CURB * 0.6;
+  k.offroad = Math.abs(now.d) > r.track.half + CURB * 0.6;
+}
+
+/** Mud, oil and the hay bales and cows in the way, for a kart this client drives. */
+function hazards(r: Race, k: Kart) {
+  const was = k.mud;
+  k.mud = false;
+  // in the air you sail over all of it, and stars, megas and bullets plough straight through
+  if (k.y > 0.3) return;
+  const tough = k.star > 0 || k.mega > 0 || k.bullet > 0;
+  for (const h of r.hazards) {
+    const dx = k.x - h.x;
+    const dz = k.z - h.z;
+    if (Math.abs(dx) > 9 || Math.abs(dz) > 9) continue;
+    const dist = Math.hypot(dx, dz);
+    if (h.kind === 'mud') {
+      if (dist < h.r && !tough) k.mud = true;
+      continue;
+    }
+    if (h.kind === 'oil') {
+      if (dist < h.r) hitKart(r, k, 'spin', -1);
+      continue;
+    }
+    const reach = h.r + KART_R * scaleOf(k);
+    if (tough || dist >= reach) continue;
+    // solid: pushed back out, bouncing off and losing speed for a head-on hit
+    const nx = dist > 1e-6 ? dx / dist : -Math.sin(k.h);
+    const nz = dist > 1e-6 ? dz / dist : -Math.cos(k.h);
+    k.x = h.x + nx * reach;
+    k.z = h.z + nz * reach;
+    const vx = Math.sin(k.h) * k.v + k.kx;
+    const vz = Math.cos(k.h) * k.v + k.kz;
+    const into = -(vx * nx + vz * nz);
+    if (into <= 0) continue;
+    k.kx += nx * into * 1.3;
+    k.kz += nz * into * 1.3;
+    k.v *= 1 - (0.6 * into) / (Math.hypot(vx, vz) || 1);
+    // a cow does not take kindly to it
+    if (h.kind === 'cow' && into > 3) {
+      if (hitKart(r, k, 'spin', -1)) r.events.push({ t: 'moo', k: k.idx });
+    } else if (into > 5) r.events.push({ t: 'wall', k: k.idx, power: into });
+  }
+  if (k.mud && !was) r.events.push({ t: 'mud', k: k.idx });
 }
 
 /** Puts a kart that is stuck (or lost) back on the road, facing the right way. */
@@ -1137,10 +1213,10 @@ function moveThings(r: Race, dt: number) {
       }
       const at = locate(t, th.x, th.z, th.i);
       th.i = at.i;
-      if (Math.abs(at.d) > EDGE - 0.6) {
+      if (Math.abs(at.d) > t.edge - 0.6) {
         const sg = Math.sign(at.d);
-        th.x -= -at.tz * sg * (Math.abs(at.d) - EDGE + 0.6);
-        th.z -= at.tx * sg * (Math.abs(at.d) - EDGE + 0.6);
+        th.x -= -at.tz * sg * (Math.abs(at.d) - t.edge + 0.6);
+        th.z -= at.tx * sg * (Math.abs(at.d) - t.edge + 0.6);
       }
       if (th.kind === 'bomb') {
         const near = th.grace <= 0 && th.y === 0 && r.karts.some((k) => k.done === null && Math.hypot(k.x - th.x, k.z - th.z) < BOMB_NEAR);
@@ -1206,9 +1282,14 @@ function moveThings(r: Race, dt: number) {
     }
     th.x += th.vx * dt;
     th.z += th.vz * dt;
+    // shells break on hay bales and cows
+    if (r.hazards.some((h) => solid(h.kind) && Math.hypot(h.x - th.x, h.z - th.z) < h.r + 0.45)) {
+      removeThing(r, th.id, th.local);
+      continue;
+    }
     const at = locate(t, th.x, th.z, th.i);
     th.i = at.i;
-    if (Math.abs(at.d) > EDGE - 0.5) {
+    if (Math.abs(at.d) > t.edge - 0.5) {
       if (th.kind === 'red' || th.bounces >= 5) {
         removeThing(r, th.id, th.local);
         continue;
@@ -1223,8 +1304,8 @@ function moveThings(r: Race, dt: number) {
         th.vz -= 2 * into * nz;
         th.bounces++;
       }
-      th.x -= nx * (Math.abs(at.d) - EDGE + 0.5);
-      th.z -= nz * (Math.abs(at.d) - EDGE + 0.5);
+      th.x -= nx * (Math.abs(at.d) - t.edge + 0.5);
+      th.z -= nz * (Math.abs(at.d) - t.edge + 0.5);
     }
   }
 }
@@ -1327,6 +1408,44 @@ function curveAhead(t: Track, s: number, from: number, to: number) {
   return { mean: sum / Math.max(1, n), peak };
 }
 
+/**
+ * A lane (as a fraction of the road's half width) clear of the hay bales, cows and oil slicks coming up, and of the
+ * puddles too when there is room, as close as it can be to the lane the kart wanted; null when nothing is in the way.
+ * Cows are dodged where they will be by the time the kart gets there.
+ */
+function dodgeHazard(r: Race, k: Kart, lane: number): number | null {
+  const t = r.track;
+  const v = Math.max(8, Math.abs(k.v));
+  const reach = 3 + v * 1.2;
+  const ahead: { d: number; room: number }[] = [];
+  let blocked = false;
+  for (const h of r.hazards) {
+    const ds = deltaS(t, k.s, h.s);
+    if (ds < -1 || ds > reach) continue;
+    if (h.kind === 'mud' && k.ai!.skill < 0.4) continue;
+    const d = hazardD(h, r.time + Math.max(0, ds) / v);
+    const room = h.r + KART_R + 1;
+    // a puddle with no way round it is driven through
+    if (h.kind === 'mud' && Math.max(t.half - (d + h.r), d - h.r + t.half) < 2 * KART_R + 1) continue;
+    ahead.push({ d, room });
+    if (Math.abs(d - lane * t.half) < room || (ds < reach * 0.6 && Math.abs(d - k.d) < room)) blocked = true;
+  }
+  if (!blocked) return null;
+  let best = lane;
+  let bestCost = Infinity;
+  for (let c = -0.85; c <= 0.851; c += 0.05) {
+    const at = c * t.half;
+    // how far inside anything's clearance this lane goes, then how far it strays from the lane wanted
+    const into = ahead.reduce((sum, a) => sum + Math.max(0, a.room - Math.abs(at - a.d)), 0);
+    const cost = into * 10 + Math.abs(c - lane) + Math.abs(at - k.d) * 0.05;
+    if (cost < bestCost) {
+      bestCost = cost;
+      best = c;
+    }
+  }
+  return best;
+}
+
 function think(r: Race, k: Kart, dt: number) {
   const t = r.track;
   const ai = (k.ai ??= { ...AUTO });
@@ -1342,14 +1461,17 @@ function think(r: Race, k: Kart, dt: number) {
     const at = locate(t, th.x, th.z, th.i);
     const ds = deltaS(t, k.s, at.s);
     if (ds < 3 || ds > 26) continue;
-    if (Math.abs(at.d - ai.lane * ROAD_HALF) < 2.6) ai.laneTo = at.d > 0 ? -0.55 : 0.55;
+    if (Math.abs(at.d - ai.lane * t.half) < 2.6) ai.laneTo = at.d > 0 ? -0.55 : 0.55;
   }
   ai.lane = approach(ai.lane, ai.laneTo, 0.9 * dt);
 
   const curve = curveAhead(t, k.s, 8, 40);
-  const lane = clamp(ai.lane + clamp(curve.mean * 40, -0.55, 0.55) * ai.skill, -0.82, 0.82);
-  const look = 7 + Math.abs(k.v) * 0.5;
-  const p = pointAt(t, k.s + look, lane * ROAD_HALF);
+  let lane = clamp(ai.lane + clamp(curve.mean * 40, -0.55, 0.55) * ai.skill, -0.82, 0.82);
+  const dodge = dodgeHazard(r, k, lane);
+  if (dodge !== null) lane = dodge;
+  // aim closer in while dodging, to get across in time
+  const look = dodge === null ? 7 + Math.abs(k.v) * 0.5 : 5 + Math.abs(k.v) * 0.25;
+  const p = pointAt(t, k.s + look, lane * t.half);
   const diff = wrapAngle(headingOf(p.x - k.x, p.z - k.z) - k.h);
   const need = -diff * 2.6;
   if (k.drift !== 0) {
@@ -1433,7 +1555,7 @@ function think(r: Race, k: Kart, dt: number) {
     case 'mushroom':
     case 'triple':
     case 'golden':
-      go = straight || k.offroad;
+      go = straight || k.offroad || k.mud;
       break;
     case 'coin':
       go = k.coins < MAX_COINS;

@@ -37,7 +37,7 @@ import { applyFlags, carOf, configOf, endOf, events, finishOrder, guestState, ho
 import { deposit, freshGarage, fromLook, loadGarage, lookOf, paintColor, payout, saveGarage, subscribeGarage, type Garage } from './garage';
 import { CoinIcon, GarageSheet, HowToPlay, ItemIcon } from './hud';
 import { BPM, JINGLE_DONE, JINGLE_WIN, Sequencer, hz, type Note } from './music';
-import { COURSES, COURSE_IDS, isCourse, trackOf, type CourseId } from './courses';
+import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf, type CourseId } from './courses';
 import { meta } from './meta';
 import './palmdrive.css';
 
@@ -130,7 +130,12 @@ function CoursePicker({ value, onChange }: { value: CourseId | null; onChange?: 
             }}
           >
             <CourseMap id={id} />
-            <span>{COURSES[id].name}</span>
+            <span>
+              {COURSES[id].name}
+              <small className={`is-${DIFFICULTY[COURSES[id].difficulty - 1].toLowerCase()}`}>
+                {DIFFICULTY[COURSES[id].difficulty - 1]} · {(trackOf(id).length / 1000).toFixed(1)} km
+              </small>
+            </span>
           </button>
         ))}
       </div>
@@ -771,6 +776,19 @@ function Play({ mode }: { mode: Mode }) {
         break;
       case 'blast':
         if (!mine) sfx.play('boom', 1.2);
+        break;
+      case 'mud':
+        // a squelch
+        if (mine) {
+          sfx.noise(0.16, 0.14);
+          sfx.tone({ freq: 160, to: 70, dur: 0.18, type: 'sine', vol: 0.14 });
+        }
+        break;
+      case 'moo':
+        if (mine) {
+          sfx.tone({ freq: 150, to: 128, dur: 0.22, type: 'sawtooth', vol: 0.09 });
+          sfx.tone({ freq: 128, to: 92, dur: 0.6, type: 'sawtooth', vol: 0.1, delay: 0.2 });
+        }
         break;
       case 'slam':
         if (mine) sfx.tone({ freq: 240, to: 120, dur: 0.14, type: 'sawtooth', vol: 0.12 });
