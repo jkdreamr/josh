@@ -89,6 +89,17 @@ test('hay bales are solid: a kart driving into one bounces off and never ends up
   assert.ok(near < bale.r, 'through the middle of it');
 });
 
+test('boulders up at the Dish are as solid as the bales', () => {
+  const r = createRace({ cc: '100cc', course: 'dish', seed: 5, countdown: 0, racers: [{ name: 'p0', color: '#e53935', kind: 'player' }] });
+  const k = r.karts[0];
+  const rock = find(r, 'rock');
+  place(r, k, rock.s - 12, rock.d, 22);
+  let closest = Infinity;
+  const evs = run(r, 1.5, () => (closest = Math.min(closest, Math.hypot(k.x - rock.x, k.z - rock.z))));
+  assert.ok(closest >= rock.r + KART_R - 0.05, `got within ${closest}`);
+  assert.ok(evs.some((e) => e.t === 'wall' && e.k === k.idx));
+});
+
 test('cows wander across the road and back on the race clock, the same on every screen', () => {
   const a = barn();
   const b = barn();

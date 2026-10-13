@@ -3,7 +3,7 @@
 import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
 import { CURB, gridSpot, headingOf, locate, pointAt, type Track } from './track';
-import { LOOKS, SCENERY, canvas, noise, scatter, texture } from './scenery';
+import { LOOKS, SCENERY, canvas, cowMaterials, makeCow, noise, scatter, texture } from './scenery';
 import { COUNTDOWN, RAMP_H, RAMP_LEN, TURBO_AT, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
 
 type Three = typeof import('three');
@@ -566,7 +566,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const dummy = new THREE.Object3D();
   SCENERY[r.course]({ THREE, scene, t, r, geo, mats, rand, clear, dummy });
 
-  // what the course leaves on the road: mud and oil lie flat, hay bales stand in the way and cows wander across
+  // what the course leaves on the road: mud and oil lie flat, hay bales and boulders stand in the way and cows wander across
   const puddle = (inner: string, rim: string, sheen: boolean) =>
     texture(
       THREE,
@@ -629,26 +629,9 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   );
   const strawMat = new THREE.MeshLambertMaterial({ map: strawTex });
   const baleGeo = new THREE.CylinderGeometry(1, 1, 1, 16);
-  const hideTex = texture(
-    THREE,
-    canvas(64, 64, (g) => {
-      g.fillStyle = '#f4f2ec';
-      g.fillRect(0, 0, 64, 64);
-      g.fillStyle = '#1d1d22';
-      const spots = scatter(11);
-      for (let i = 0; i < 7; i++) {
-        g.beginPath();
-        g.ellipse(spots() * 64, spots() * 64, 6 + spots() * 9, 5 + spots() * 7, spots() * 3, 0, Math.PI * 2);
-        g.fill();
-      }
-    }),
-  );
-  const cowMats = {
-    hide: new THREE.MeshLambertMaterial({ map: hideTex }),
-    pink: new THREE.MeshLambertMaterial({ color: 0xf0a3a8 }),
-    hoof: new THREE.MeshLambertMaterial({ color: 0x2a2420 }),
-    horn: new THREE.MeshLambertMaterial({ color: 0xeee3c4 }),
-  };
+  const cowMats = cowMaterials(THREE);
+  const rockGeo = new THREE.SphereGeometry(1, 7, 5);
+  const rockMat = new THREE.MeshLambertMaterial({ color: 0x8d8780, flatShading: true });
   type CowView = { g: T.Group; legs: T.Mesh[]; head: T.Group; h: number };
   const cows: { view: CowView; i: number }[] = [];
   r.hazards.forEach((h, i) => {
@@ -667,53 +650,15 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       bale.scale.set(h.r, 1.5, h.r);
       bale.position.set(h.x, h.r, h.z);
       scene.add(bale);
+    } else if (h.kind === 'rock') {
+      // a boulder down off the hillside
+      const rock = new THREE.Mesh(rockGeo, rockMat);
+      rock.scale.set(h.r * 1.1, h.r * 0.9, h.r * 1.05);
+      rock.rotation.set(rand() * 0.6, rand() * Math.PI * 2, rand() * 0.4);
+      rock.position.set(h.x, h.r * 0.55, h.z);
+      scene.add(rock);
     } else {
-      // a Holstein: spotted body, pink nose and udder, little horns and a swishing tail
-      const g = new THREE.Group();
-      const body = new THREE.Mesh(geo.box, cowMats.hide);
-      body.scale.set(1.05, 1, 2.1);
-      body.position.y = 1.25;
-      const udder = new THREE.Mesh(geo.ball, cowMats.pink);
-      udder.scale.set(0.3, 0.2, 0.35);
-      udder.position.set(0, 0.72, -0.4);
-      const tail = new THREE.Mesh(geo.box, cowMats.hide);
-      tail.scale.set(0.08, 0.9, 0.08);
-      tail.position.set(0, 1.2, -1.07);
-      g.add(body, udder, tail);
-      const legs: T.Mesh[] = [];
-      for (const [x, z] of [[-0.35, 0.75], [0.35, 0.75], [-0.35, -0.75], [0.35, -0.75]]) {
-        const leg = new THREE.Mesh(geo.box, cowMats.hide);
-        leg.scale.set(0.24, 0.85, 0.24);
-        leg.position.set(x, 0.42, z);
-        const hoof = new THREE.Mesh(geo.box, cowMats.hoof);
-        hoof.scale.set(1.05, 0.18, 1.05);
-        hoof.position.y = -0.42;
-        leg.add(hoof);
-        legs.push(leg);
-        g.add(leg);
-      }
-      const head = new THREE.Group();
-      const skull = new THREE.Mesh(geo.box, cowMats.hide);
-      skull.scale.set(0.62, 0.62, 0.7);
-      const nose = new THREE.Mesh(geo.box, cowMats.pink);
-      nose.scale.set(0.56, 0.36, 0.25);
-      nose.position.set(0, -0.14, 0.42);
-      head.add(skull, nose);
-      for (const side of [-1, 1]) {
-        const horn = new THREE.Mesh(geo.cone, cowMats.horn);
-        horn.scale.set(0.08, 0.28, 0.08);
-        horn.position.set(side * 0.24, 0.42, -0.1);
-        horn.rotation.z = -side * 0.5;
-        const ear = new THREE.Mesh(geo.box, cowMats.hoof);
-        ear.scale.set(0.3, 0.1, 0.16);
-        ear.position.set(side * 0.42, 0.18, -0.12);
-        const eye = new THREE.Mesh(geo.ball, cowMats.hoof);
-        eye.scale.setScalar(0.07);
-        eye.position.set(side * 0.2, 0.1, 0.36);
-        head.add(horn, ear, eye);
-      }
-      head.position.set(0, 1.55, 1.25);
-      g.add(head);
+      const { g, legs, head } = makeCow(THREE, geo, cowMats);
       g.position.set(h.x, 0, h.z);
       scene.add(g);
       const at = pointAt(t, h.s, h.at);
