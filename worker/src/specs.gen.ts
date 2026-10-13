@@ -77,6 +77,7 @@ export const ONLINE_SPECS: Record<string, OnlineSpec> = {
   "lightcycles": {"seats":4},
   "omok": {"seats":2},
   "palmdrive": {"seats":8,"lateJoin":true},
+  "paperio": {"seats":8,"lateJoin":true},
   "pong": {"seats":2},
   "run-3d": {"seats":4},
   "snake": {"seats":4},

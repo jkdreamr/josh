@@ -6,7 +6,6 @@
 // a few screens, and they think a few times a second, so they can be beaten and they make mistakes.
 import { GRACE, SPEED, angleDiff, seenAt, type Player, type World } from './world.ts';
 
-export const DEBUG: Record<string, number> = { head: 0, scared: 0, timeout: 0, plans: 0, noexit: 0, hunts: 0, ran: 0 };
 export type Persona = 'cautious' | 'greedy' | 'hunter' | 'defender';
 export const PERSONAS: readonly Persona[] = ['cautious', 'greedy', 'hunter', 'defender'];
 export type Level = 0 | 1 | 2;
@@ -290,9 +289,7 @@ function planLoop(w: World, p: Player, m: Mind) {
       best = [clampIn(w, ex, ey, 8), clampIn(w, ...p1, 10), clampIn(w, ...p2, 10), clampIn(w, ...p3, 8), clampIn(w, ...p4, 8)];
     }
   }
-  DEBUG.plans++;
   if (!best) {
-    DEBUG.noexit++;
     // deep inside a big land: head for its edge first
     const a = m.rng() * Math.PI * 2;
     best = [clampIn(w, p.x + Math.cos(a) * 80, p.y + Math.sin(a) * 80, 16)];
@@ -320,7 +317,6 @@ function think(w: World, p: Player, m: Mind) {
     const outFor = w.time - m.outSince;
     const scared = !blunder && (danger.trail < homeD * nerve + 6 || danger.head < 18);
     if ((scared || outFor > t.maxOut) && m.state !== 'return') {
-      DEBUG[scared ? (danger.head < 18 ? 'head' : 'scared') : 'timeout']++;
       if (home) setPath(m, [[home[1], home[2]]]);
       else setPath(m, [[(p.minX + p.maxX) / 2, (p.minY + p.maxY) / 2]]);
       m.state = 'return';
@@ -387,7 +383,6 @@ function think(w: World, p: Player, m: Mind) {
 }
 
 function startHunt(w: World, m: Mind, prey: [number, number]) {
-  DEBUG.hunts++;
   const [id, k] = prey;
   const y = (k / w.n) | 0;
   setPath(m, [[k - y * w.n + 0.5, y + 0.5]]);
@@ -422,7 +417,6 @@ export function botTick(w: World, p: Player, dt: number) {
   if (m.wi >= m.wn) {
     if (m.state === 'hunt' && !m.ram) m.state = p.out ? 'return' : 'home';
     if (p.out) {
-      DEBUG.ran++;
       // ran out of plan while still outside: aim home now
       const home = wayHome(w, p);
       if (home) {

@@ -532,7 +532,7 @@ function Play({ mode }: { mode: Mode }) {
     const bits = [`${p.kills} ${p.kills === 1 ? 'cut' : 'cuts'}`, `${clockText(alive)} alive`, s.bestRank < 99 ? `best rank #${s.bestRank}` : ''].filter(Boolean).join(' · ');
     const unl = fresh.length ? ` New skin: ${fresh.map((f) => f.name).join(', ')}.` : '';
     const lb = newBest ? ` A new best on ${level}.` : '';
-    shellRef.current.gameOver(peak > 0 ? peak : undefined, { title, detail: `${bits}.${lb}${unl}`, board: level });
+    shellRef.current.gameOver(peak > 0 ? peak : undefined, { title, detail: `${bits}.${lb}${unl}` });
   }
 
   function endMatch(c: Ctl) {
