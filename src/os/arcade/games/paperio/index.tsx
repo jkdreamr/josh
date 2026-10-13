@@ -1,0 +1,916 @@
+import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent } from 'react';
+import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import type { GameProps } from '../../types';
+import { buildView, type Cam, type HeadPose, type View } from './scene';
+import { createMatch } from './match';
+import { localCtl, type Ctl, type Net } from './ctl';
+import { colorOf, freshLocker, loadBests, loadLocker, record, saveLocker, shade, skinOf, submitBest, subscribeLocker, type Locker, type Skin } from './skins';
+import { HowToPlay, SkinIcon, SkinSheet, createMiniMap, paintMiniMap, type MiniMap } from './hud';
+import { TICK, percent, ranking, type Ev, type Player, type World } from './world';
+import { createOnline } from './session';
+import { meta } from './meta';
+import './paperio.css';
+
+const MODE = defineSetting('paperio:mode', ['solo', '2p'] as const, 'solo');
+const BOTS = defineSetting('paperio:bots', ['4', '8', '12'] as const, '8');
+const LEVEL = defineSetting('paperio:level', LEVEL_NAMES, 'normal');
+const LENGTH = defineSetting('paperio:length', ['2', '3', '5'] as const, '3');
+/** Online: fill the room with bots up to this many players. */
+const FILL = defineSetting('paperio:fill', ['0', '8', '12'] as const, '8');
+
+const modeOptions = [
+  ['solo', 'Solo'],
+  ['2p', '2 Players'],
+] as const;
+const botOptions = [
+  ['4', '4'],
+  ['8', '8'],
+  ['12', '12'],
+] as const;
+const lengthOptions = [
+  ['2', '2 min'],
+  ['3', '3 min'],
+  ['5', '5 min'],
+] as const;
+const fillOptions = [
+  ['0', 'No Bots'],
+  ['8', 'Fill to 8'],
+  ['12', 'Fill to 12'],
+] as const;
+
+const fmtPct = (n: number) => `${n.toFixed(2)}%`;
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const clockText = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+export default function Game({ compact, onExit, roomCode }: GameProps) {
+  return (
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} formatScore={fmtPct} setup={<Setup />} hostSetup={<OnlineSetup />}>
+      <Stage />
+    </GameShell>
+  );
+}
+
+const SERVER_LOCKER = freshLocker();
+const useLocker = () => useSyncExternalStore(subscribeLocker, loadLocker, () => SERVER_LOCKER);
+
+function Setup() {
+  const [mode, setMode] = useSetting(MODE);
+  const [bots, setBots] = useSetting(BOTS);
+  const [level, setLevel] = useSetting(LEVEL);
+  const [length, setLength] = useSetting(LENGTH);
+  const [bests, setBests] = useState<Record<string, number>>({});
+  useEffect(() => setBests(loadBests()), []);
+  const best = bests[level];
+  return (
+    <>
+      <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
+      <Segmented label="Bots" value={bots} options={botOptions} onChange={setBots} />
+      <Segmented label="Bots Play" value={level} options={levelOptions} onChange={setLevel} />
+      {mode === '2p' && <Segmented label="Round" value={length} options={lengthOptions} onChange={setLength} />}
+      <Extras />
+      {mode === 'solo' && best !== undefined && <small className="g-paperio-best">best on {level}: {fmtPct(best)}</small>}
+    </>
+  );
+}
+
+/** Online room settings: the host picks bots and round length for everyone. */
+function OnlineSetup() {
+  const online = useOnline();
+  const [fill, setFill] = useSetting(FILL);
+  const [length, setLength] = useSetting(LENGTH);
+  const [level, setLevel] = useSetting(LEVEL);
+  const host = online?.isHost ?? true;
+  return (
+    <>
+      {host ? (
+        <>
+          <Segmented label="Bots" value={fill} options={fillOptions} onChange={setFill} />
+          {fill !== '0' && <Segmented label="Bots Play" value={level} options={levelOptions} onChange={setLevel} />}
+          <Segmented label="Round" value={length} options={lengthOptions} onChange={setLength} />
+          <small className="g-paperio-best">you set the round for everyone</small>
+        </>
+      ) : (
+        <small className="g-paperio-best">the host sets bots and round length</small>
+      )}
+      <Extras />
+    </>
+  );
+}
+
+/** How to Play and Skins buttons, and the sheets they open over the cards. */
+function Extras() {
+  const shell = useShell();
+  const locker = useLocker();
+  const [open, setOpen] = useState<'help' | 'skins' | null>(null);
+  const close = () => {
+    setOpen(null);
+    shell.root.current?.focus({ preventScroll: true });
+  };
+  const skin = skinOf(locker.pick);
+  return (
+    <div className="g-paperio-extras">
+      <button type="button" className="arcade-btn" onClick={() => setOpen('help')}>
+        How to Play
+      </button>
+      <button type="button" className="arcade-btn" onClick={() => setOpen('skins')} aria-label={`Skins, wearing ${skin.name}`}>
+        <SkinIcon skin={skin.id} size={18} />
+        Skins
+        <span className="g-paperio-count">
+          {locker.have.length}/{13}
+        </span>
+      </button>
+      {open === 'help' && <HowToPlay root={shell.root.current} touch={shell.touch} onClose={close} />}
+      {open === 'skins' && <SkinSheet root={shell.root.current} locker={locker} onPick={(id) => saveLocker({ ...locker, pick: id })} onClose={close} />}
+    </div>
+  );
+}
+
+type Mode = 'idle' | 'solo' | '2p' | 'online';
+
+/** A fresh round for each start, restart and online round; bots playing behind the Start card. */
+function Stage() {
+  const shell = useShell();
+  const online = useOnline();
+  const [mode] = useSetting(MODE);
+  const current = useRef<{ key: string; mode: Mode }>({ key: 'idle', mode: 'idle' });
+  if (shell.status === 'ready') current.current = { key: 'idle', mode: 'idle' };
+  else if (shell.status === 'playing' && current.current.mode === 'idle') {
+    const m: Mode = online ? 'online' : mode;
+    current.current = { key: online ? `online:${online.round}` : m, mode: m };
+  } else if (shell.status === 'playing' && online && current.current.key !== `online:${online.round}`) current.current = { key: `online:${online.round}`, mode: 'online' };
+  return <Play key={current.current.key} mode={current.current.mode} />;
+}
+
+function makeCtl(mode: Mode, opts: { bots: number; level: 0 | 1 | 2; length: number; skin: number; online: Net | null; fill: number }): Ctl {
+  const seed = (Math.random() * 2 ** 31) | 0;
+  if (mode === 'online' && opts.online) return createOnline(opts.online, { skin: opts.skin, fill: opts.fill, level: opts.level, length: opts.length });
+  if (mode === 'idle') return localCtl(createMatch({ seed, humans: [], bots: 9, level: 1, respawn: false, duration: Infinity }), []);
+  if (mode === '2p') {
+    const p2skin = opts.skin === 1 ? 0 : 1;
+    const m = createMatch({
+      seed,
+      humans: [
+        { name: 'player 1', skin: opts.skin, kind: 'local', seat: -1 },
+        { name: 'player 2', skin: p2skin, kind: 'local', seat: -1 },
+      ],
+      bots: opts.bots,
+      level: opts.level,
+      respawn: true,
+      duration: opts.length * 60,
+    });
+    return localCtl(m, [0, 1]);
+  }
+  const m = createMatch({ seed, humans: [{ name: 'you', skin: opts.skin, kind: 'local', seat: -1 }], bots: opts.bots, level: opts.level, respawn: false, duration: Infinity });
+  return localCtl(m, [0]);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+
+type Row = { id: number; name: string; color: string; pct: number; me: boolean; place: number };
+type Mine = { id: number; name: string; color: string; pct: number; place: number; kills: number; alive: boolean; back: number | null };
+type Hud = { rows: Row[]; mine: Mine[]; field: number; clock: string | null; hurry: boolean };
+type Pop = { id: number; x: number; y: number; text: string; big: boolean };
+type Call = { id: number; text: string; sub: string; tone: 'good' | 'bad' | 'gold'; view: number };
+type Feed = { id: number; a: string; ac: string; b: string; bc: string; verb: string; at: number };
+type Joy = { id: number; ox: number; oy: number; x: number; y: number; player: number };
+
+const STREAK = ['', '', 'double cut!', 'triple cut!', 'quad cut!', 'rampage!', 'unstoppable!'];
+const deathLine = (cause: string, killer: string | null) =>
+  cause === 'self' ? 'you ran into your own trail' : cause === 'head' ? (killer ? `head on with ${killer}` : 'head on') : cause === 'wiped' ? `${killer ?? 'someone'} took all your land` : cause === 'left' ? 'you left' : `${killer ?? 'someone'} cut your trail`;
+
+function Play({ mode }: { mode: Mode }) {
+  const shell = useShell();
+  const shellRef = useRef(shell);
+  shellRef.current = shell;
+  const keys = useKeys();
+  const THREE = useThree();
+  const online = useOnline();
+  const [bots] = useSetting(BOTS);
+  const [levelName] = useSetting(LEVEL);
+  const [length] = useSetting(LENGTH);
+  const [fill] = useSetting(FILL);
+  const locker = useLocker();
+  const { ref, size } = useCanvas<HTMLDivElement>();
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
+  const onlineRef = useRef(online);
+  onlineRef.current = online;
+  const ctl = useRef<Ctl | null>(null);
+  if (!ctl.current) {
+    const o = online;
+    const net: Net | null = o
+      ? {
+          seat: o.seat,
+          round: o.round,
+          isHost: o.isHost,
+          players: () => onlineRef.current?.players ?? [],
+          send: (d, opts) => onlineRef.current?.send(d, opts),
+          onMessage: (fn) => o.onMessage(fn),
+        }
+      : null;
+    ctl.current = makeCtl(mode, { bots: Number(bots), level: levelIndex(levelName), length: Number(length), skin: loadLocker().pick, online: net, fill: Number(fill) });
+  }
+  const view = useRef<View | null>(null);
+  const [ready, setReady] = useState(false);
+  const mini = useRef<MiniMap | null>(null);
+  const miniRef = useRef<HTMLCanvasElement | null>(null);
+  const tags = useRef(new Map<string, HTMLDivElement>());
+  const joyEls = useRef(new Map<number, HTMLDivElement>());
+  const [joys, setJoys] = useState<Joy[]>([]);
+  const joyState = useRef(new Map<number, Joy>());
+  const mouse = useRef({ x: 0, y: 0, on: false, keyMode: false, mx: 0, my: 0 });
+  const [hud, setHud] = useState<Hud>({ rows: [], mine: [], field: 0, clock: null, hurry: false });
+  const [pops, setPops] = useState<Pop[]>([]);
+  const [calls, setCalls] = useState<Call[]>([]);
+  const [feed, setFeed] = useState<Feed[]>([]);
+  const [toast, setToast] = useState<{ id: number; skin: Skin } | null>(null);
+  const [flash, setFlash] = useState<{ id: number; kind: 'dead' | 'kill' | 'win' } | null>(null);
+  const st = useRef({
+    acc: 0,
+    clock: 0,
+    frameDt: 0,
+    hudIn: 0,
+    slowUntil: -1,
+    endAt: -1,
+    ended: false,
+    deathX: 0,
+    deathY: 0,
+    cams: [] as (Cam & { id: number; zoom: number })[],
+    shake: [0, 0],
+    poses: [] as HeadPose[],
+    rankBuf: [] as number[],
+    events: [] as Ev[],
+    dpr: 1,
+    maxDpr: 2,
+    ema: 1 / 60,
+    slowFor: 0,
+    fastFor: 0,
+    bestStreak: 0,
+    bestRank: 99,
+    deathCause: '',
+    deathBy: null as string | null,
+    won: false,
+    popId: 0,
+  });
+  const live = mode !== 'idle';
+  const twoUp = mode === '2p';
+
+  // the world view
+  useEffect(() => {
+    const host = ref.current;
+    const c = ctl.current;
+    if (!THREE || !host || !c) return;
+    const v = buildView(THREE, host, c.w);
+    if (!v) return;
+    view.current = v;
+    const s = st.current;
+    s.maxDpr = Math.min(2, window.devicePixelRatio || 1);
+    s.dpr = s.maxDpr;
+    v.resize(sizeRef.current.w, sizeRef.current.h, s.dpr);
+    setReady(true);
+    shellRef.current.invalidate();
+    return () => {
+      v.dispose();
+      view.current = null;
+    };
+  }, [THREE]);
+
+  useEffect(() => {
+    view.current?.resize(size.w, size.h, st.current.dpr);
+  }, [size.w, size.h, ready]);
+
+  useEffect(() => {
+    if (!miniRef.current) return;
+    mini.current = createMiniMap(miniRef.current);
+  }, [live]);
+
+  useEffect(() => () => ctl.current?.dispose(), []);
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Input
+
+  const playerForPoint = (x: number, y: number) => {
+    if (!twoUp) return 0;
+    const { w, h } = sizeRef.current;
+    return w >= h ? (x > w / 2 ? 1 : 0) : y > h / 2 ? 1 : 0;
+  };
+
+  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
+    if (!live) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    if (e.pointerType === 'mouse') {
+      mouse.current.on = !twoUp;
+      mouse.current.keyMode = false;
+      mouse.current.x = x;
+      mouse.current.y = y;
+      return;
+    }
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    const joy: Joy = { id: e.pointerId, ox: x, oy: y, x, y, player: playerForPoint(x, y) };
+    joyState.current.set(e.pointerId, joy);
+    setJoys([...joyState.current.values()]);
+  };
+  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
+    if (!live) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    if (e.pointerType === 'mouse') {
+      const m = mouse.current;
+      if (Math.hypot(x - m.mx, y - m.my) > 4) {
+        m.keyMode = false;
+        m.mx = x;
+        m.my = y;
+      }
+      m.on = !twoUp;
+      m.x = x;
+      m.y = y;
+      return;
+    }
+    const joy = joyState.current.get(e.pointerId);
+    if (!joy) return;
+    // the stick's origin trails the finger, so changing direction never needs a long drag back
+    const dx = x - joy.ox;
+    const dy = y - joy.oy;
+    const d = Math.hypot(dx, dy);
+    const max = 56;
+    if (d > max) {
+      joy.ox = x - (dx / d) * max;
+      joy.oy = y - (dy / d) * max;
+    }
+    joy.x = x;
+    joy.y = y;
+    const el = joyEls.current.get(joy.id);
+    if (el) {
+      el.style.transform = `translate(${joy.ox}px, ${joy.oy}px)`;
+      const knob = el.firstElementChild as HTMLElement | null;
+      if (knob) knob.style.transform = `translate(${joy.x - joy.ox}px, ${joy.y - joy.oy}px)`;
+    }
+  };
+  const onPointerEnd = (e: RPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse') return;
+    if (joyState.current.delete(e.pointerId)) setJoys([...joyState.current.values()]);
+  };
+  useEffect(() => () => joyState.current.clear(), []);
+
+  const PITCH_SIN = Math.sin((62 * Math.PI) / 180);
+  function steer(c: Ctl) {
+    const w = c.w;
+    c.locals.forEach((id, i) => {
+      const p = w.players[id];
+      if (!p || !p.alive) return;
+      let turn = 0;
+      if (twoUp) turn = i === 0 ? (keys.down('KeyD') ? 1 : 0) - (keys.down('KeyA') ? 1 : 0) : (keys.down('ArrowRight') ? 1 : 0) - (keys.down('ArrowLeft') ? 1 : 0);
+      else turn = (keys.down('right') ? 1 : 0) - (keys.down('left') ? 1 : 0);
+      if (turn !== 0) {
+        p.turn = turn;
+        p.want = NaN;
+        mouse.current.keyMode = true;
+        return;
+      }
+      p.turn = 0;
+      for (const joy of joyState.current.values()) {
+        if (joy.player !== i) continue;
+        const dx = joy.x - joy.ox;
+        const dy = joy.y - joy.oy;
+        if (Math.hypot(dx, dy) > 10) p.want = Math.atan2(dy / PITCH_SIN, dx);
+        return;
+      }
+      const m = mouse.current;
+      const v = view.current;
+      const cam = st.current.cams[i];
+      if (m.on && !m.keyMode && v && cam) {
+        const at = v.unproject(cam, m.x, m.y);
+        if (at) {
+          const dx = at.x - p.x;
+          const dy = at.y - p.y;
+          if (dx * dx + dy * dy > 8) p.want = Math.atan2(dy, dx);
+        }
+        return;
+      }
+      p.want = NaN;
+    });
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Events: sounds, callouts, the feed
+
+  const buzz = (ms: number | number[]) => {
+    if (!shellRef.current.touch) return;
+    try {
+      navigator.vibrate?.(ms);
+    } catch {
+      /* not allowed */
+    }
+  };
+
+  function call(text: string, sub: string, tone: Call['tone'], viewIdx: number) {
+    const id = ++st.current.popId;
+    setCalls((list) => [...list.filter((c) => c.view !== viewIdx), { id, text, sub, tone, view: viewIdx }]);
+  }
+
+  function popAt(c: Ctl, localIdx: number, x: number, y: number, text: string, big: boolean) {
+    const v = view.current;
+    const cam = st.current.cams[localIdx];
+    if (!v || !cam) return;
+    const at = v.project(cam, x, y, 8);
+    if (!at) return;
+    const id = ++st.current.popId;
+    setPops((list) => [...list.slice(-5), { id, x: at.x, y: at.y, text, big }]);
+  }
+
+  function react(c: Ctl, e: Ev) {
+    const w = c.w;
+    const v = view.current;
+    v?.react(w, e);
+    if (!live) return;
+    const s = st.current;
+    const localIdx = 'id' in e ? c.locals.indexOf(e.id) : -1;
+    if (e.t === 'capture') {
+      if (localIdx < 0 || e.gained <= 0) return;
+      const pct = (e.gained / w.arenaCells) * 100;
+      const big = pct >= 1;
+      popAt(c, localIdx, e.x, e.y, `+${pct >= 10 ? pct.toFixed(0) : pct.toFixed(pct >= 1 ? 1 : 2)}%`, big);
+      const steps = Math.min(5, 2 + Math.floor(Math.log2(1 + pct * 4)));
+      const notes = [523, 659, 784, 988, 1175, 1319];
+      for (let i = 0; i < steps; i++) sfx.tone({ freq: notes[i] * (localIdx ? 0.84 : 1), dur: 0.09 + (i === steps - 1 ? 0.12 : 0), type: 'triangle', vol: 0.12 + Math.min(0.06, pct * 0.01), delay: i * 0.055 });
+      if (big) buzz(18);
+      return;
+    }
+    if (e.t === 'spawn') {
+      if (localIdx >= 0 && s.clock > 0.5) {
+        sfx.play('select', 1.1);
+        call('back in!', '', 'good', localIdx);
+      }
+      return;
+    }
+    if (e.t === 'win') {
+      if (localIdx >= 0) {
+        s.won = true;
+        sfx.play('win');
+        setFlash({ id: Date.now(), kind: 'win' });
+        call('you own the farm!', '100% of the map', 'gold', localIdx);
+      }
+      return;
+    }
+    if (e.t !== 'die') return;
+    const victim = w.players[e.id];
+    const killer = e.by >= 0 ? w.players[e.by] : null;
+    const kIdx = killer ? c.locals.indexOf(killer.id) : -1;
+    if (victim && e.cause !== 'left') {
+      const verb = e.cause === 'self' ? 'crashed' : e.cause === 'head' ? 'bumped' : e.cause === 'wiped' ? 'wiped out' : 'cut';
+      const id = ++s.popId;
+      const entry: Feed = killer && killer !== victim ? { id, a: killer.name, ac: colorOf(killer.color), b: victim.name, bc: colorOf(victim.color), verb, at: s.clock } : { id, a: victim.name, ac: colorOf(victim.color), b: '', bc: '', verb, at: s.clock };
+      setFeed((list) => [...list.slice(-3), entry]);
+    }
+    if (kIdx >= 0 && killer && victim && killer !== victim) {
+      const streak = killer.streak;
+      s.bestStreak = Math.max(s.bestStreak, streak);
+      const top = streak >= 2 ? STREAK[Math.min(streak, STREAK.length - 1)] : '';
+      call(top || `you cut ${victim.name}!`, top ? `you cut ${victim.name}` : e.cause === 'wiped' ? 'took all their land' : '', streak >= 2 ? 'gold' : 'good', kIdx);
+      sfx.play('coin', 1 + Math.min(4, streak) * 0.12);
+      sfx.play('boom', 1);
+      s.shake[kIdx] = 0.55;
+      setFlash({ id: Date.now(), kind: 'kill' });
+      buzz([20, 30, 20]);
+    }
+    if (localIdx >= 0) {
+      s.shake[localIdx] = 0.8;
+      sfx.play('lose', localIdx ? 0.9 : 1);
+      buzz(120);
+      setFlash({ id: Date.now(), kind: 'dead' });
+      const line = deathLine(e.cause, killer && killer !== victim ? killer.name : null);
+      if (mode === 'solo') {
+        s.slowUntil = s.clock + 1.25;
+        s.endAt = s.clock + 1.45;
+        s.deathX = e.x;
+        s.deathY = e.y;
+        s.deathCause = e.cause;
+        s.deathBy = killer && killer !== victim ? killer.name : null;
+        call('crashed!', line, 'bad', localIdx);
+      } else call('crashed!', line, 'bad', localIdx);
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Unlocks
+
+  function checkUnlocks(c: Ctl, final: boolean) {
+    const ids = c.locals;
+    if (!ids.length) return [] as Skin[];
+    const w = c.w;
+    const s = st.current;
+    const pct = Math.max(...ids.map((id) => w.players[id]?.peak ?? 0));
+    const kills = final ? ids.reduce((n, id) => n + (w.players[id]?.kills ?? 0), 0) : 0;
+    const { locker: next, fresh } = record(loadLocker(), { pct, streak: s.bestStreak, first: s.bestRank === 1, kills, game: final });
+    if (fresh.length || final) saveLocker(next);
+    if (fresh.length && !final) {
+      setToast({ id: Date.now(), skin: fresh[0] });
+      sfx.tone({ freq: 784, dur: 0.1, type: 'triangle', vol: 0.12 });
+      sfx.tone({ freq: 1047, dur: 0.1, type: 'triangle', vol: 0.12, delay: 0.1 });
+      sfx.tone({ freq: 1568, dur: 0.22, type: 'triangle', vol: 0.12, delay: 0.2 });
+    }
+    return fresh;
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Ends
+
+  function endSolo(c: Ctl) {
+    const s = st.current;
+    if (s.ended) return;
+    s.ended = true;
+    const p = c.w.players[c.locals[0]];
+    const fresh = checkUnlocks(c, true);
+    const peak = round2(p.peak);
+    const level = levelName;
+    const newBest = submitBest(level, peak);
+    const alive = Math.max(0, (p.diedAt >= 0 ? p.diedAt : c.w.time) - p.bornAt);
+    const title = s.won ? 'You Own The Farm' : s.deathCause === 'self' ? 'Caught Your Own Trail' : s.deathCause === 'head' ? 'Head On' : s.deathCause === 'wiped' ? 'Wiped Out' : s.deathBy ? `${s.deathBy} Got You` : 'Crashed';
+    const bits = [`${p.kills} ${p.kills === 1 ? 'cut' : 'cuts'}`, `${clockText(alive)} alive`, s.bestRank < 99 ? `best rank #${s.bestRank}` : ''].filter(Boolean).join(' · ');
+    const unl = fresh.length ? ` New skin: ${fresh.map((f) => f.name).join(', ')}.` : '';
+    const lb = newBest ? ` A new best on ${level}.` : '';
+    shellRef.current.gameOver(peak > 0 ? peak : undefined, { title, detail: `${bits}.${lb}${unl}`, board: level });
+  }
+
+  function endMatch(c: Ctl) {
+    const s = st.current;
+    if (s.ended) return;
+    s.ended = true;
+    const w = c.w;
+    const fresh = checkUnlocks(c, true);
+    const unl = fresh.length ? ` New skin: ${fresh.map((f) => f.name).join(', ')}.` : '';
+    if (c.online) {
+      c.online.finish();
+      const res = c.online.result();
+      const meId = c.locals[0];
+      const title = res.winner === null ? 'Draw' : res.winner === meId ? 'You Win' : `${w.players[res.winner]?.name ?? 'Someone'} Wins`;
+      const myPct = percent(w, meId);
+      const place = res.order.indexOf(meId) + 1;
+      shellRef.current.gameOver(undefined, { title, detail: `You finished #${place} with ${fmtPct(myPct)} and ${w.players[meId]?.kills ?? 0} cuts.${unl}` });
+      return;
+    }
+    const [a, b] = c.locals.map((id) => w.players[id]);
+    const pa = percent(w, a.id);
+    const pb = percent(w, b.id);
+    const title = Math.abs(pa - pb) < 0.005 ? 'Draw' : pa > pb ? 'Player 1 Wins' : 'Player 2 Wins';
+    sfx.play('win');
+    shellRef.current.gameOver(undefined, { title, detail: `${fmtPct(pa)} to ${fmtPct(pb)} at the buzzer. Cuts: ${a.kills} to ${b.kills}.${unl}` });
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // The frame
+
+  const pose: HeadPose = { x: 0, y: 0, h: 0, alive: false, out: false };
+
+  function updateCams(c: Ctl, dt: number) {
+    const s = st.current;
+    const { w: W, h: H } = sizeRef.current;
+    const w = c.w;
+    const views = Math.max(1, c.locals.length);
+    while (s.cams.length < views) s.cams.push({ x: w.c, y: w.c, width: 100, vx: 0, vy: 0, vw: W, vh: H, shakeX: 0, shakeY: 0, id: -1, zoom: 1 });
+    s.cams.length = views;
+    const side = W >= H;
+    for (let i = 0; i < views; i++) {
+      const cam = s.cams[i];
+      if (views === 1) {
+        cam.vx = 0;
+        cam.vy = 0;
+        cam.vw = W;
+        cam.vh = H;
+      } else if (side) {
+        cam.vx = i * Math.floor(W / 2);
+        cam.vy = 0;
+        cam.vw = Math.floor(W / 2);
+        cam.vh = H;
+      } else {
+        cam.vx = 0;
+        cam.vy = i * Math.floor(H / 2);
+        cam.vw = W;
+        cam.vh = Math.floor(H / 2);
+      }
+      const short = Math.max(1, Math.min(cam.vw, cam.vh));
+      let shortCells = Math.max(100, Math.min(168, short / 4.75));
+      let tx = cam.x;
+      let ty = cam.y;
+      let zoom = 1;
+      const id = c.locals[i];
+      if (id === undefined) {
+        // attract mode: drift after whoever leads
+        const lead = ranking(w, s.rankBuf)[0];
+        const p = lead !== undefined ? w.players[lead] : null;
+        if (p) {
+          c.pose(p, 0, pose);
+          tx = pose.x;
+          ty = pose.y;
+        }
+        zoom = 1.45;
+      } else {
+        const p = w.players[id];
+        if (p && p.alive) {
+          c.pose(p, s.acc / TICK, pose);
+          const ahead = shortCells * 0.1;
+          tx = pose.x + Math.cos(pose.h) * ahead;
+          ty = pose.y + Math.sin(pose.h) * ahead;
+          zoom = 1 + 1.25 * Math.sqrt(percent(w, id) / 100);
+        } else if (mode === 'solo') {
+          tx = s.deathX;
+          ty = s.deathY;
+          zoom = 0.82;
+        }
+      }
+      const k = 1 - Math.exp(-dt * (id === undefined ? 0.8 : 7));
+      cam.x += (tx - cam.x) * k;
+      cam.y += (ty - cam.y) * k;
+      cam.zoom += (zoom - cam.zoom) * (1 - Math.exp(-dt * 2.2));
+      shortCells *= cam.zoom;
+      cam.width = shortCells * (cam.vw / short);
+      const sh = s.shake[i] ?? 0;
+      if (sh > 0) {
+        s.shake[i] = Math.max(0, sh - dt * 1.8);
+        cam.shakeX = (Math.random() - 0.5) * sh * 2.4;
+        cam.shakeY = (Math.random() - 0.5) * sh * 2.4;
+      } else cam.shakeX = cam.shakeY = 0;
+    }
+  }
+
+  function placeTags(c: Ctl) {
+    const v = view.current;
+    if (!v) return;
+    const s = st.current;
+    const w = c.w;
+    for (let ci = 0; ci < s.cams.length; ci++) {
+      const cam = s.cams[ci];
+      for (const p of w.players) {
+        if (!p) continue;
+        const el = tags.current.get(`${ci}:${p.id}`);
+        if (!el) continue;
+        if (!p.alive) {
+          el.style.opacity = '0';
+          continue;
+        }
+        c.pose(p, s.acc / TICK, pose);
+        const at = v.project(cam, pose.x, pose.y - 4.4, 6.4);
+        if (!at || at.x < cam.vx - 40 || at.x > cam.vx + cam.vw + 40 || at.y < cam.vy - 20 || at.y > cam.vy + cam.vh + 20) {
+          el.style.opacity = '0';
+          continue;
+        }
+        el.style.opacity = '1';
+        el.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
+      }
+    }
+  }
+
+  function updateHud(c: Ctl) {
+    const s = st.current;
+    const w = c.w;
+    const order = ranking(w, s.rankBuf);
+    const placeOf = (id: number) => order.indexOf(id) + 1;
+    const rows: Row[] = [];
+    for (let i = 0; i < Math.min(5, order.length); i++) {
+      const p = w.players[order[i]];
+      rows.push({ id: p.id, name: p.name, color: colorOf(p.color), pct: percent(w, p.id), me: c.locals.includes(p.id), place: i + 1 });
+    }
+    for (const id of c.locals) {
+      const place = placeOf(id);
+      if (place > 5) {
+        const p = w.players[id];
+        rows.push({ id, name: p.name, color: colorOf(p.color), pct: percent(w, id), me: true, place });
+      }
+    }
+    const mine: Mine[] = c.locals.map((id) => {
+      const p = w.players[id];
+      const place = placeOf(id);
+      if (p.alive && place > 0) s.bestRank = Math.min(s.bestRank, place);
+      const back = p.alive ? null : c.respawnIn(p);
+      return { id, name: p.name, color: colorOf(p.color), pct: percent(w, id), place, kills: p.kills, alive: p.alive, back: back === null ? null : Math.ceil(back) };
+    });
+    let clock: string | null = null;
+    let hurry = false;
+    if (Number.isFinite(c.duration)) {
+      const left = Math.max(0, c.duration - c.elapsed());
+      clock = clockText(Math.ceil(left));
+      hurry = left <= 10;
+    }
+    const next: Hud = { rows, mine, field: order.length, clock, hurry };
+    setHud((h) => (JSON.stringify(h) === JSON.stringify(next) ? h : next));
+    if (live) checkUnlocks(c, false);
+  }
+
+  useGameLoop(
+    (dt) => {
+      const c = ctl.current;
+      if (!c) return;
+      const s = st.current;
+      s.clock += dt;
+      s.frameDt = dt;
+      // adaptive resolution: drop pixels when frames run long, win them back when there is room
+      s.ema += (dt - s.ema) * 0.08;
+      if (s.ema > 1 / 44) {
+        s.slowFor += dt;
+        s.fastFor = 0;
+      } else if (s.ema < 1 / 57) {
+        s.fastFor += dt;
+        s.slowFor = 0;
+      } else s.slowFor = s.fastFor = 0;
+      if (s.slowFor > 1.2 && s.dpr > 1) {
+        s.dpr = Math.max(1, s.dpr - 0.25);
+        s.slowFor = 0;
+        view.current?.resize(sizeRef.current.w, sizeRef.current.h, s.dpr);
+      } else if (s.fastFor > 5 && s.dpr < s.maxDpr) {
+        s.dpr = Math.min(s.maxDpr, s.dpr + 0.25);
+        s.fastFor = 0;
+        view.current?.resize(sizeRef.current.w, sizeRef.current.h, s.dpr);
+      }
+      c.frame?.(dt);
+      const scale = s.clock < s.slowUntil ? 0.22 : 1;
+      s.acc += dt * scale;
+      let steps = 0;
+      while (s.acc >= TICK && steps < 5) {
+        if (live && !s.ended) steer(c);
+        c.tick();
+        s.acc -= TICK;
+        steps++;
+      }
+      if (steps === 5) s.acc = Math.min(s.acc, TICK);
+      const w = c.w;
+      const evs = s.events;
+      evs.length = 0;
+      for (let i = 0; i < w.events.length; i++) evs.push(w.events[i]);
+      w.events.length = 0;
+      for (const e of evs) react(c, e);
+      const v = view.current;
+      if (v) {
+        v.sync(w, evs);
+        const alpha = s.acc / TICK;
+        for (const p of w.players) {
+          if (!p || !p.joined) continue;
+          c.pose(p, alpha, pose);
+          v.head(p, pose, dt);
+        }
+      }
+      updateCams(c, dt);
+      placeTags(c);
+      if (mini.current && live) {
+        const heads = w.players.filter((p) => p && p.alive).map((p) => ({ x: p.x, y: p.y, color: colorOf(p.color), me: c.locals.includes(p.id) }));
+        paintMiniMap(mini.current, w, c.locals, s.clock, heads);
+      }
+      s.hudIn -= dt;
+      if (s.hudIn <= 0) {
+        s.hudIn = 1 / 8;
+        updateHud(c);
+      }
+      if (!live || s.ended) return;
+      if (mode === 'solo') {
+        const p = w.players[c.locals[0]];
+        if (s.won && s.endAt < 0) s.endAt = s.clock + 1.6;
+        if ((!p.alive || s.won) && s.endAt > 0 && s.clock >= s.endAt) endSolo(c);
+      } else if (c.isOver()) endMatch(c);
+    },
+    () => {
+      const v = view.current;
+      if (v) v.render(st.current.cams, st.current.frameDt);
+      st.current.frameDt = 0;
+    },
+    { always: mode === 'idle' },
+  );
+
+  // ---------------------------------------------------------------------------------------------------------------
+
+  const c = ctl.current;
+  const w = c.w;
+  const playing = shell.status === 'playing';
+  const views = Math.max(1, c.locals.length);
+  return (
+    <div className={`g-paperio-stage${twoUp ? ' is-split' : ''}${size.w >= size.h ? ' is-wide' : ' is-tall'}${size.h < 430 ? ' is-short' : ''}`}>
+      <div
+        ref={ref}
+        className="g-paperio-host"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerEnd}
+        onPointerCancel={onPointerEnd}
+        onContextMenu={(e) => e.preventDefault()}
+      />
+      {live &&
+        Array.from({ length: views }, (_, ci) =>
+          w.players
+            .filter((p) => p)
+            .map((p) => (
+              <div
+                key={`${ci}:${p.id}`}
+                ref={(el) => {
+                  if (el) tags.current.set(`${ci}:${p.id}`, el);
+                  else tags.current.delete(`${ci}:${p.id}`);
+                }}
+                className={`g-paperio-tag${c.locals.includes(p.id) ? ' is-me' : ''}`}
+                style={{ opacity: 0, ['--c' as string]: shade(colorOf(p.color), -0.35) }}
+              >
+                {p.name}
+              </div>
+            )),
+        )}
+      {twoUp && <div className="g-paperio-divider" aria-hidden="true" />}
+      {live && shell.status !== 'ready' && !shell.compact && (
+        <div className="g-paperio-hud">
+          {hud.mine.map((m, i) => (
+            <div key={m.id} className={`g-paperio-me is-v${i}${views > 1 ? ' is-split' : ''}`} style={{ ['--c' as string]: m.color }}>
+              <b className="g-paperio-pct">{m.pct.toFixed(2)}%</b>
+              <span className="g-paperio-meta">
+                {m.alive ? (
+                  <>
+                    <em>#{m.place}</em> of {hud.field}
+                  </>
+                ) : m.back !== null ? (
+                  <>back in {m.back}</>
+                ) : (
+                  <>out</>
+                )}
+                <i aria-label={`${m.kills} cuts`}>
+                  <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+                    <path d="M5 19L19 5M14 5h5v5" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  {m.kills}
+                </i>
+              </span>
+              {views > 1 && <small>{i === 0 ? (shell.touch ? 'player 1' : 'player 1 · A D') : shell.touch ? 'player 2' : 'player 2 · ← →'}</small>}
+            </div>
+          ))}
+          {hud.clock && <div className={`g-paperio-clock${hud.hurry ? ' is-hurry' : ''}`}>{hud.clock}</div>}
+          <ol className={`g-paperio-board${views > 1 ? ' is-split' : ''}`} aria-label="Leaderboard">
+            {hud.rows.map((r) => (
+              <li key={r.id} className={r.me ? 'is-me' : undefined} style={{ ['--c' as string]: r.color, ['--w' as string]: `${Math.max(4, Math.min(100, r.pct * 3))}%` }}>
+                <span className="g-paperio-place">{r.place}</span>
+                <span className="g-paperio-name">{r.name}</span>
+                <span className="g-paperio-val">{r.pct.toFixed(r.pct >= 10 ? 1 : 2)}%</span>
+              </li>
+            ))}
+          </ol>
+          <canvas ref={miniRef} className={`g-paperio-mini${views > 1 ? ' is-split' : ''}`} aria-hidden="true" />
+          {feed.length > 0 && (
+            <ul className="g-paperio-feed" aria-live="polite">
+              {feed.map((f) => (
+                <li key={f.id}>
+                  <b style={{ color: f.ac }}>{f.a}</b> {f.verb}
+                  {f.b && (
+                    <>
+                      {' '}
+                      <b style={{ color: f.bc }}>{f.b}</b>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {calls.map((cl) => (
+            <div key={cl.id} className={`g-paperio-call is-${cl.tone} is-v${cl.view}${views > 1 ? ' is-split' : ''}`} onAnimationEnd={() => setCalls((list) => list.filter((x) => x.id !== cl.id))}>
+              <strong>{cl.text}</strong>
+              {cl.sub && <span>{cl.sub}</span>}
+            </div>
+          ))}
+          {pops.map((p) => (
+            <div key={p.id} className={`g-paperio-pop${p.big ? ' is-big' : ''}`} style={{ left: p.x, top: p.y }} onAnimationEnd={() => setPops((list) => list.filter((x) => x.id !== p.id))}>
+              {p.text}
+            </div>
+          ))}
+          {toast && (
+            <div key={toast.id} className="g-paperio-toast" onAnimationEnd={() => setToast(null)}>
+              <SkinIcon skin={toast.skin.id} size={34} />
+              <span>
+                <small>new skin unlocked</small>
+                <b>{toast.skin.name}</b>
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      {flash && <div key={flash.id} className={`g-paperio-flash is-${flash.kind}`} onAnimationEnd={() => setFlash(null)} />}
+      {playing &&
+        joys.map((j) => (
+          <div
+            key={j.id}
+            ref={(el) => {
+              if (el) joyEls.current.set(j.id, el);
+              else joyEls.current.delete(j.id);
+            }}
+            className="g-paperio-joy"
+            style={{ transform: `translate(${j.ox}px, ${j.oy}px)` }}
+          >
+            <i />
+          </div>
+        ))}
+      {live && playing && shell.touch && hud.mine.length > 0 && st.current.clock < 4 && (
+        <div className="g-paperio-hint">{twoUp ? 'each player drags on their half' : 'drag anywhere to steer'}</div>
+      )}
+      {!ready && <div className="g-paperio-loading">unfolding the map…</div>}
+      {mode === 'idle' && <AttractShade locker={locker} />}
+    </div>
+  );
+}
+
+/** A soft paper wash over the attract-mode board so the Start card reads well. */
+function AttractShade({ locker }: { locker: Locker }) {
+  return <div className="g-paperio-attract" data-skin={locker.pick} aria-hidden="true" />;
+}
