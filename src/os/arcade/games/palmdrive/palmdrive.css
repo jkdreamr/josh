@@ -928,13 +928,13 @@
 .g-palmdrive .g-palmdrive-course span {
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  line-height: 1.15;
 }
 /* how hard the course is, and how long a lap */
 .g-palmdrive .g-palmdrive-course small {
   display: block;
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
   font-size: 11px;
   font-weight: 600;

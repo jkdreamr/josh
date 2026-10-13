@@ -2,8 +2,8 @@
 // three.js; the scene builds each course's scenery (scene.ts) and the logic races on its track (logic.ts).
 import { EDGE, HAZARD_R, ROAD_HALF, ROUTE, START, buildTrack, layout as palmLayout, wrapS, type HazardKind, type Layout, type Track } from './track.ts';
 
-export type CourseId = 'palm' | 'lake' | 'barn' | 'dish';
-export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish'];
+export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium';
+export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium'];
 export const isCourse = (v: unknown): v is CourseId => COURSE_IDS.includes(v as CourseId);
 
 /** How hard a course is, for the picker: narrower roads, tighter bends and more in the way as it goes up. */
@@ -97,6 +97,17 @@ const DISH: [number, number][] = [
   [-178, 196], [-196, 150], [-180, 100], [-196, 48], [-174, -20], [-194, -92], [-160, -172],
   // and round the bottom to the gate
   [-132, -226], [-94, -262], [-44, -282], [2, -278], [22, -246],
+];
+
+/** Stanford Stadium: round the field inside the bowl, out through the tunnel, round the plaza and back in. */
+const STADIUM_K = 0.85;
+const STADIUM: [number, number][] = [
+  // down the home straight in front of the west stand, and round the east end of the bowl
+  [-100, -62], [0, -64], [100, -62], [169, -38], [182, -6], [176, 27], [153, 53], [120, 62],
+  // back along the far side and out through the tunnel
+  [40, 62], [-30, 64], [-80, 86], [-104, 140],
+  // round the plaza and back in
+  [-119, 186], [-145, 201], [-175, 198], [-199, 179], [-208, 150], [-208, 90], [-204, 10], [-176, -46],
 ];
 
 export const COURSES: Record<CourseId, Course> = {
@@ -245,6 +256,44 @@ export const COURSES: Record<CourseId, Course> = {
         ],
       }),
     sky: 'linear-gradient(180deg, #2a6fc9 0%, #6aa6e6 22%, #bcd8ee 35%, #e9dcb0 41%, #d6bd7a 46%, #b7a45c 47%)',
+  },
+  stadium: {
+    id: 'stadium',
+    name: 'Stanford Stadium',
+    blurb: 'A short, wide sprint round the field on game day, out through the tunnel and round the tailgates.',
+    difficulty: 1,
+    route: STADIUM.map(([e, n]) => [e * STADIUM_K, n * STADIUM_K]),
+    start: [-40 * STADIUM_K, -63 * STADIUM_K],
+    half: 10,
+    edge: 15,
+    layout: (t) =>
+      placed(t, {
+        boxes: [70, 300, 590],
+        coins: [
+          [10, -5, 6],
+          [110, 5, 5],
+          [180, 0, 5],
+          [270, -5, 6],
+          [360, 5, 4],
+          [420, 0, 5],
+          [500, -4, 5],
+          [560, 4, 5],
+          [680, 0, 6],
+          [740, 5, 4],
+        ],
+        dashes: [
+          [40, -4],
+          [250, 4],
+          [600, 0],
+          [720, -4],
+        ],
+        // a big jump in front of the north stand, and a kicker beside the plaza straight
+        ramps: [
+          [330, 0, 12],
+          [640, 5, 6],
+        ],
+      }),
+    sky: 'linear-gradient(180deg, #1f5fbf 0%, #5d9be0 25%, #b5d3f0 38%, #e6e2d4 44%, #c9bd8a 46%, #6f9a52 47%)',
   },
 };
 
