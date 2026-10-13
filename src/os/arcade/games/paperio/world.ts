@@ -323,17 +323,6 @@ function pushTrail(p: Player, k: number) {
   p.trail[p.trailLen++] = k;
 }
 
-function pushRun(w: World, i: number, a: number, b: number, c: number) {
-  if (i + 3 > w.runs.length) {
-    const next = new Int32Array(w.runs.length * 2);
-    next.set(w.runs);
-    w.runs = next;
-  }
-  w.runs[i] = a;
-  w.runs[i + 1] = b;
-  w.runs[i + 2] = c;
-  return i + 3;
-}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Spawning
@@ -568,108 +557,164 @@ export function clearTrail(w: World, p: Player) {
 // Capture
 
 /**
- * Back on your land: the trail becomes land, then everything the land now closes off is claimed. A scanline flood
- * fill from the edge of your bounding box finds what is still connected to the outside; the rest is yours.
+ * Back on your land: the trail becomes land, then every region it closed off is claimed (enemy land too).
+ * Any newly enclosed region touches the new land, so fills start beside it: a scanline flood fill through cells that
+ * are not ours either reaches the edge of our bounding box or the void (outside, it stops right there) or closes up
+ * (enclosed, claimed). The work is proportional to what changes, not to how big you are.
  */
 export function capture(w: World, p: Player) {
-  const { n, owner, trail, arena, seen } = w;
+  const { n, owner, trail, seen } = w;
   const me = p.id + 1;
   const before = w.counts[me];
   w.touched.fill(0);
-  const g1 = ++w.gen;
+  const done = ++w.gen;
+  let cx0 = n;
+  let cy0 = n;
+  let cx1 = -1;
+  let cy1 = -1;
   // 1. the trail becomes land
   for (let i = 0; i < p.trailLen; i++) {
     const k = p.trail[i];
     if (trail[k] !== me) continue;
     trail[k] = 0;
     setOwner(w, k, me);
-    seen[k] = g1;
+    seen[k] = done;
     const y = (k / n) | 0;
-    growBox(p, k - y * n, y);
+    const x = k - y * n;
+    growBox(p, x, y);
+    if (x < cx0) cx0 = x;
+    if (x > cx1) cx1 = x;
+    if (y < cy0) cy0 = y;
+    if (y > cy1) cy1 = y;
   }
   const trailCells = p.trail.slice(0, p.trailLen);
-  p.trailLen = 0;
   p.out = false;
   p.streak = 0;
-  // 2. flood the outside from the box border
+  // 2. fill from beside the new land
   const x0 = Math.max(0, p.minX - 1);
   const y0 = Math.max(0, p.minY - 1);
   const x1 = Math.min(n - 1, p.maxX + 1);
   const y1 = Math.min(n - 1, p.maxY + 1);
-  const g2 = ++w.gen;
-  fillOutside(w, me, x0, y0, x1, y1, g2);
-  // 3. claim the rest, recording changed runs row by row
-  let ri = 0;
-  for (let y = y0; y <= y1; y++) {
-    let start = -1;
-    for (let x = x0; x <= x1 + 1; x++) {
-      let changed = false;
-      if (x <= x1) {
-        const k = y * n + x;
-        if (seen[k] === g1) changed = true;
-        else if (seen[k] !== g2 && owner[k] !== me && arena[k]) {
-          setOwner(w, k, me);
-          growBox(p, x, y);
-          changed = true;
+  const base = w.gen + 1;
+  let fills = 0;
+  for (let i = 0; i < trailCells.length; i++) {
+    const k = trailCells[i];
+    if (owner[k] !== me) continue;
+    for (let j = 0; j < 4; j++) {
+      const kk = j === 0 ? k - 1 : j === 1 ? k + 1 : j === 2 ? k - n : k + n;
+      if (owner[kk] === me || seen[kk] >= base) continue;
+      const stamp = base + fills++;
+      const spans = enclosed(w, me, kk, x0, y0, x1, y1, base, stamp);
+      if (spans < 0) continue;
+      // enclosed: claim it
+      const sp = w.runs;
+      for (let r = 0; r < spans; r += 3) {
+        const y = sp[r];
+        const row = y * n;
+        for (let x = sp[r + 1]; x <= sp[r + 2]; x++) {
+          const kc = row + x;
+          seen[kc] = done;
+          if (!w.arena[kc]) continue;
+          setOwner(w, kc, me);
         }
-      }
-      if (changed && start < 0) start = x;
-      else if (!changed && start >= 0) {
-        ri = pushRun(w, ri, y, start, x - start);
-        start = -1;
+        growBox(p, sp[r + 1], y);
+        growBox(p, sp[r + 2], y);
+        if (sp[r + 1] < cx0) cx0 = sp[r + 1];
+        if (sp[r + 2] > cx1) cx1 = sp[r + 2];
+        if (y < cy0) cy0 = y;
+        if (y > cy1) cy1 = y;
       }
     }
   }
-  dirty(w, x0, y0, x1, y1);
+  w.gen = base + fills;
+  p.trailLen = 0;
+  // 3. what changed, as row runs for guests
+  if (w.onOp) {
+    const out: number[] = [];
+    for (let y = cy0; y <= cy1; y++) {
+      let start = -1;
+      for (let x = cx0; x <= cx1 + 1; x++) {
+        const changed = x <= cx1 && seen[y * n + x] === done;
+        if (changed && start < 0) start = x;
+        else if (!changed && start >= 0) {
+          out.push(y, start, x - start);
+          start = -1;
+        }
+      }
+    }
+    w.onOp({ k: 'cap', id: p.id, runs: out });
+  }
+  if (cx1 >= cx0) dirty(w, cx0, cy0, cx1, cy1);
   const gained = w.counts[me] - before;
   w.events.push({ t: 'capture', id: p.id, gained, cells: trailCells, x: p.x, y: p.y });
-  if (w.onOp) w.onOp({ k: 'cap', id: p.id, runs: Array.from(w.runs.subarray(0, ri)) });
   if (w.authority) wipeCheck(w, p.id);
   const pc = percent(w, p.id);
   if (pc > p.peak) p.peak = pc;
   if (w.counts[me] >= w.arenaCells) w.events.push({ t: 'win', id: p.id });
 }
 
-function fillOutside(w: World, me: number, x0: number, y0: number, x1: number, y1: number, g: number) {
-  const { n, owner, seen, stack } = w;
+/**
+ * Scanline flood fill from `seed` through cells that are not ours. Returns -1 as soon as it touches the box edge, the
+ * void or a region an earlier fill found to be outside; otherwise the length of the span list it left in w.runs
+ * (row, first x, last x triples).
+ */
+function enclosed(w: World, me: number, seed: number, x0: number, y0: number, x1: number, y1: number, base: number, stamp: number): number {
+  const { n, owner, seen, stack, arena } = w;
   let sp = 0;
-  const seed = (k: number) => {
-    if (seen[k] !== g && owner[k] !== me) stack[sp++] = k;
-  };
-  for (let x = x0; x <= x1; x++) {
-    seed(y0 * n + x);
-    seed(y1 * n + x);
-  }
-  for (let y = y0 + 1; y < y1; y++) {
-    seed(y * n + x0);
-    seed(y * n + x1);
-  }
+  let spans = 0;
+  stack[sp++] = seed;
   while (sp > 0) {
     const k = stack[--sp];
-    if (seen[k] === g) continue;
+    const s0 = seen[k];
+    if (s0 === stamp) continue;
+    if (s0 >= base) return -1;
     const y = (k / n) | 0;
+    if (y <= y0 || y >= y1) return -1;
     const row = y * n;
     const x = k - row;
+    if (x <= x0 || x >= x1 || !arena[k]) return -1;
     let l = x;
-    while (l > x0 && seen[row + l - 1] !== g && owner[row + l - 1] !== me) l--;
+    for (;;) {
+      const kk = row + l - 1;
+      if (owner[kk] === me) break;
+      const s = seen[kk];
+      if (s === stamp) break;
+      if (s >= base || l - 1 <= x0 || !arena[kk]) return -1;
+      l--;
+    }
     let r = x;
-    while (r < x1 && seen[row + r + 1] !== g && owner[row + r + 1] !== me) r++;
-    for (let xx = l; xx <= r; xx++) seen[row + xx] = g;
+    for (;;) {
+      const kk = row + r + 1;
+      if (owner[kk] === me) break;
+      const s = seen[kk];
+      if (s === stamp) break;
+      if (s >= base || r + 1 >= x1 || !arena[kk]) return -1;
+      r++;
+    }
+    for (let xx = l; xx <= r; xx++) seen[row + xx] = stamp;
+    if (spans + 3 > w.runs.length) {
+      const next = new Int32Array(w.runs.length * 2);
+      next.set(w.runs);
+      w.runs = next;
+    }
+    w.runs[spans++] = y;
+    w.runs[spans++] = l;
+    w.runs[spans++] = r;
     for (let dy = -1; dy <= 1; dy += 2) {
-      const ny = y + dy;
-      if (ny < y0 || ny > y1) continue;
-      const nrow = ny * n;
+      const nrow = (y + dy) * n;
       let span = false;
       for (let xx = l; xx <= r; xx++) {
         const kk = nrow + xx;
-        const open = seen[kk] !== g && owner[kk] !== me;
+        const open = owner[kk] !== me && seen[kk] !== stamp;
         if (open && !span) {
+          if (sp >= stack.length) return -1;
           stack[sp++] = kk;
           span = true;
         } else if (!open) span = false;
       }
     }
   }
+  return spans;
 }
 
 /** Anyone whose land was just taken down to nothing is out. */
