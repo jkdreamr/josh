@@ -218,7 +218,7 @@
     font-size: 14px;
   }
   .arcade-party-timer {
-    --size: 84px !important;
+    --size: min(var(--size-base, 120px), 84px);
   }
   .arcade-party-card {
     gap: 6px;
@@ -522,6 +522,7 @@
 
 /* Countdown */
 .arcade-party-timer {
+  --size: var(--size-base, 120px);
   position: relative;
   display: grid;
   flex: none;
@@ -606,7 +607,7 @@
   min-width: 0;
   overflow: hidden;
   line-height: 1.15;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }

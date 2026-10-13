@@ -64,20 +64,17 @@ export const nightOrder = (alive: readonly boolean[]) => alive.flatMap((a, i) =>
 export type Choice = { seat: number; ok: boolean };
 
 /**
- * The players a seat sees on its night turn. Mafia pick among living non-mafia, the doctor anyone living
- * (themself too) but not last night's pick, which shows disabled. Detectives and villagers pick anyone else.
+ * The players a seat sees on its night turn: every living player, so the grid looks the same for every role.
+ * Mafia can pick living non-mafia (their crew shows disabled), the doctor anyone but last night's pick
+ * (themself too), detectives and villagers anyone but themself.
  */
 export function nightChoices(roles: readonly Role[], alive: readonly boolean[], seat: number, lastSaved: number | null = null): Choice[] {
   if (!alive[seat]) return [];
-  const living = nightOrder(alive);
-  switch (roles[seat]) {
-    case 'mafia':
-      return living.filter((i) => roles[i] !== 'mafia').map((i) => ({ seat: i, ok: true }));
-    case 'doctor':
-      return living.map((i) => ({ seat: i, ok: i !== lastSaved }));
-    default:
-      return living.filter((i) => i !== seat).map((i) => ({ seat: i, ok: true }));
-  }
+  const role = roles[seat];
+  return nightOrder(alive).map((i) => ({
+    seat: i,
+    ok: role === 'mafia' ? roles[i] !== 'mafia' : role === 'doctor' ? i !== lastSaved : i !== seat,
+  }));
 }
 
 /** Just the seats a player may actually pick tonight. */
@@ -183,6 +180,16 @@ export function voteOut(game: Game, seat: number | null): Game {
   if (out !== null) alive[out] = false;
   return { ...game, alive, night: game.night + 1, log: [...game.log, { phase: 'day', n: game.night, seat: out }] };
 }
+
+/** How each seat left the game (the night they were taken or the day they were voted out), or null for survivors. */
+export function fates(game: Pick<Game, 'roles' | 'log'>): (LogEntry | null)[] {
+  const out: (LogEntry | null)[] = game.roles.map(() => null);
+  for (const e of game.log) if (e.seat !== null && out[e.seat] === null) out[e.seat] = e;
+  return out;
+}
+
+/** 'Taken on night 2', 'Voted out on day 1', 'Survived'. */
+export const fateLine = (fate: LogEntry | null) => (!fate ? 'Survived' : fate.phase === 'night' ? `Taken on night ${fate.n}` : `Voted out on day ${fate.n}`);
 
 /** 'Night 1: Jo was taken.', 'Day 2: Sam (Mafia) voted out.' */
 export function logLine(entry: LogEntry, names: readonly string[], roles: readonly Role[], showRole: boolean): string {

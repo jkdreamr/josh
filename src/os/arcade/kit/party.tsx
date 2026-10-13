@@ -120,8 +120,8 @@ export function Screen({
     <div
       className={['arcade-party', className ?? ''].join(' ')}
       onClick={(e) => {
-        // Tapping a player or chip shouldn't leave focus on it, or Enter would press it again instead of confirming.
-        if ((e.target as Element).closest?.('.arcade-party-picks button, .arcade-party-chips button')) shell.root.current?.focus({ preventScroll: true });
+        // A tapped button shouldn't keep focus, or Space and Enter would press it again instead of reaching onEnter.
+        if ((e.target as Element).closest?.('.arcade-party-picks button, .arcade-party-chips button, .arcade-party-actions button')) shell.root.current?.focus({ preventScroll: true });
       }}
     >
       <div className={`arcade-party-body ${center ? 'is-center' : ''}`}>
@@ -363,10 +363,10 @@ export function Countdown({ left, total, size = 120, label }: { left: number; to
   const c = 2 * Math.PI * r;
   const frac = total > 0 ? Math.max(0, Math.min(1, left / total)) : 0;
   return (
-    <div className={`arcade-party-timer ${left <= 10 && total > 10 ? 'is-low' : ''}`} style={{ ['--size' as string]: `${size}px` }} role="timer" aria-label={label ?? `${clock(left)} left`}>
+    <div className={`arcade-party-timer ${left <= 10 && total > 10 ? 'is-low' : ''}`} style={{ ['--size-base' as string]: `${size}px` }} role="timer" aria-label={label ?? `${clock(left)} left`}>
       <svg viewBox="0 0 100 100" aria-hidden="true">
         <circle cx="50" cy="50" r={r} className="arcade-party-timer-track" />
-        <circle cx="50" cy="50" r={r} className="arcade-party-timer-fill" strokeDasharray={c} strokeDashoffset={c * (1 - frac)} />
+        <circle cx="50" cy="50" r={r} className="arcade-party-timer-fill" strokeDasharray={c} strokeDashoffset={c * (1 - frac)} opacity={frac > 0 ? 1 : 0} />
       </svg>
       <b>{total >= 60 ? clock(left) : left}</b>
     </div>

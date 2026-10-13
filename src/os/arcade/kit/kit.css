@@ -179,7 +179,7 @@
   pointer-events: none;
 }
 .arcade-shell .arcade-btn-primary {
-  color: #fff;
+  color: var(--on-accent, #fff);
   background: var(--accent);
   box-shadow:
     inset 0 0.5px 0 rgba(255, 255, 255, 0.28),

@@ -6,6 +6,8 @@ import {
   autoMafia,
   describeCast,
   endNight,
+  fateLine,
+  fates,
   logLine,
   mafiaCount,
   mafiaTarget,
@@ -114,6 +116,27 @@ test('night choices per role', () => {
   assert.deepEqual(validTargets(ROLES, alive, 4), [0, 1, 2, 3, 6]);
   // The dead don't act.
   assert.deepEqual(validTargets(ROLES, alive, 5), []);
+  assert.deepEqual(nightChoices(ROLES, alive, 5), []);
+});
+
+test('every role sees the same grid of living players at night', () => {
+  const alive = all(7);
+  alive[4] = false;
+  const living = nightOrder(alive);
+  for (const seat of living) {
+    const choices = nightChoices(ROLES, alive, seat, 6);
+    assert.deepEqual(
+      choices.map((c) => c.seat),
+      living,
+      `seat ${seat} (${ROLES[seat]})`,
+    );
+  }
+  // Only the button states differ: the mafia's crew, the doctor's last pick, everyone else's own seat.
+  const off = (seat: number) => nightChoices(ROLES, alive, seat, 6).flatMap((c) => (c.ok ? [] : [c.seat]));
+  assert.deepEqual(off(0), [0, 1]);
+  assert.deepEqual(off(2), [6]);
+  assert.deepEqual(off(3), [3]);
+  assert.deepEqual(off(5), [5]);
 });
 
 test('the mafia take their most picked target, ties broken by the rng', () => {
@@ -264,4 +287,23 @@ test('log lines with and without roles', () => {
   assert.equal(logLine({ phase: 'day', n: 1, seat: 1 }, names, ROLES, false), 'Day 1: Sam voted out.');
   assert.equal(logLine({ phase: 'day', n: 1, seat: 1 }, names, ROLES, true), 'Day 1: Sam (Mafia) voted out.');
   assert.equal(logLine({ phase: 'day', n: 4, seat: null }, names, ROLES, false), 'Day 4: Nobody voted out.');
+});
+
+test('fates say how each player left the game', () => {
+  let g = fixed();
+  g = pickAt(g, 0, 4);
+  g = pickAt(g, 1, 4);
+  g = endNight(g).game;
+  g = voteOut(g, 1);
+  g = pickAt(g, 0, 6);
+  g = endNight(g).game;
+  g = voteOut(g, null);
+  const f = fates(g);
+  assert.deepEqual(f[4], { phase: 'night', n: 1, seat: 4 });
+  assert.deepEqual(f[1], { phase: 'day', n: 1, seat: 1 });
+  assert.deepEqual(f[6], { phase: 'night', n: 2, seat: 6 });
+  assert.equal(f[0], null);
+  assert.equal(fateLine(f[4]), 'Taken on night 1');
+  assert.equal(fateLine(f[1]), 'Voted out on day 1');
+  assert.equal(fateLine(f[0]), 'Survived');
 });
