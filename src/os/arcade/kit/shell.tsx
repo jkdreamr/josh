@@ -2,14 +2,14 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSS
 import { OSContext } from '../../types';
 import type { GameMeta } from '../types';
 import { ShellContext, type GameOverInfo, type GameStatus, type ShellApi } from './context';
-import { ArcadeHost } from './host';
+import { ArcadeHost, ArcadeInvite } from './host';
 import { KeyState, scrollKeys } from './keys';
 import { useHighScore } from './score';
-import { ARCADE_API, NAME_MAX, savedName } from './leaderboard';
+import { ARCADE_API, NAME_MAX, boardFor, formatBoardScore, savedName } from './leaderboard';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMuted } from './sfx';
 import { OnlinePanel, OnlineProvider } from './online';
-import { advanceOnlineRound } from './online-core';
+import { advanceOnlineRound, parseRacePacket, raceStandings, type RaceScores } from './online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { countPlay } from '../../stats';
 import './kit.css';
@@ -34,7 +34,7 @@ export type GameShellProps = {
   style?: CSSProperties;
 };
 
-type Result = { id: number; score?: number; best: number | null; isBest: boolean; title?: string; detail?: string };
+type Result = { id: number; score?: number; best: number | null; isBest: boolean } & GameOverInfo;
 
 const Icon = ({ d, size = 14 }: { d: string; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -63,6 +63,8 @@ const isTouchDevice = () =>
  */
 export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, roomCode, className, style }: GameShellProps) {
   const host = useContext(ArcadeHost);
+  const invite = useContext(ArcadeInvite);
+  const joinCode = roomCode ?? invite;
   const os = useContext(OSContext);
   const root = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<GameStatus>(autoStart ? 'playing' : 'ready');
@@ -77,7 +79,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const keys = useMemo(() => new KeyState(), []);
   const statusRef = useRef(status);
   statusRef.current = status;
-  const board = useRoundBoard(meta.id, compact ? undefined : meta.leaderboard, result?.score, result?.id);
+  const roundBoard = useMemo(() => (compact ? null : boardFor(meta, result?.board)), [compact, meta, result?.board]);
+  const board = useRoundBoard(roundBoard?.id ?? meta.id, roundBoard?.spec, result?.rank ?? result?.score, result?.id);
   const [boardOpen, setBoardOpen] = useState(false);
   const [name, setName] = useState('');
   const [onlineOpen, setOnlineOpen] = useState(false);
@@ -94,6 +97,10 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [onlineMode, setOnlineMode] = useState(false);
   const onlineModeRef = useRef(onlineMode);
   onlineModeRef.current = onlineMode;
+  const race = !!meta.online?.race;
+  const [raceScores, setRaceScores] = useState<RaceScores>({});
+  const raceRef = useRef<{ link: RoomLink | null; seat: number | null; round: number; scores: RaceScores }>({ link: null, seat: null, round: 0, scores: {} });
+  const raceReported = useRef(-1);
   const active = onlineMode || (host.active && docVisible && seen);
   const consumedRoom = useRef<string | null>(null);
   const fmt = useCallback((n: number) => (formatScore ? formatScore(n) : n.toLocaleString('en-US')), [formatScore]);
@@ -126,6 +133,23 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setStatus('playing');
     focusRoot();
   }, [meta.id, keys, focusRoot]);
+  /** Score race: guests send their score to the host, the host shares everyone's. */
+  const applyRaceScores = useCallback((scores: RaceScores) => {
+    raceRef.current.scores = scores;
+    setRaceScores(scores);
+    const { link, seat, round } = raceRef.current;
+    if (link && seat === 0) link.send({ t: 'race-all', round, scores });
+  }, []);
+  const finishRace = useCallback((score: number | null) => {
+    const { link, seat, round, scores } = raceRef.current;
+    if (!link || seat === null) return;
+    if (seat === 0) applyRaceScores({ ...scores, [seat]: score });
+    else {
+      raceRef.current.scores = { ...scores, [seat]: score };
+      setRaceScores(raceRef.current.scores);
+      link.send({ t: 'race', round, score });
+    }
+  }, [applyRaceScores]);
   const gameOver = useCallback(
     (final?: number, info: GameOverInfo = {}) => {
       if (statusRef.current === 'over') return;
@@ -135,8 +159,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setBoardOpen(false);
       setName(savedName());
       setStatus('over');
+      if (race && onlineModeRef.current) finishRace(info.rank ?? final ?? null);
     },
-    [keys, submit],
+    [keys, submit, race, finishRace],
   );
   const playAgain = useCallback(() => {
     if (onlineModeRef.current) {
@@ -148,6 +173,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
 
   const leaveRoom = useCallback(() => {
     onlineModeRef.current = false;
+    raceRef.current = { link: null, seat: null, round: 0, scores: {} };
+    setRaceScores({});
     onlineLink?.close();
     setOnlineLink(null);
     setOnlineCode('');
@@ -168,12 +195,15 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineRound(0);
     setOnlineTransport('relay');
     const link = new RoomLink(code, onlineName);
+    raceRef.current = { link, seat: null, round: 0, scores: {} };
+    setRaceScores({});
     setOnlineLink(link);
     setOnlineCode(code);
     setOnlineSeat(null);
     setOnlineSeats(meta.online?.seats ?? 0);
     setOnlinePlayers([]);
     link.on('welcome', (message) => {
+      raceRef.current.seat = message.seat;
       setOnlineCode(message.code);
       setOnlineSeat(message.seat);
       setOnlineSeats(message.seats);
@@ -184,6 +214,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       if (!onlineModeRef.current || players.length >= 2) return;
       gameOver(undefined, { title: 'Opponent Left', detail: 'Your opponent left the room.' });
       onlineModeRef.current = false;
+      raceRef.current = { link: null, seat: null, round: 0, scores: {} };
       link.close();
       setOnlineLink(null);
       setOnlineCode('');
@@ -197,7 +228,10 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     link.on('transport', setOnlineTransport);
     link.on('start', () => {
       setOnlineOpen(false);
-      setOnlineRound((round) => advanceOnlineRound(round));
+      raceRef.current.round = advanceOnlineRound(raceRef.current.round);
+      raceRef.current.scores = {};
+      setRaceScores({});
+      setOnlineRound(raceRef.current.round);
       if (onlineModeRef.current) {
         restart();
       } else {
@@ -206,8 +240,21 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
         start();
       }
     });
+    if (race) {
+      link.on('msg', ({ from, d }) => {
+        const packet = parseRacePacket(d);
+        if (!packet || packet.round !== raceRef.current.round) return;
+        if (packet.t === 'race' && raceRef.current.seat === 0 && from !== 0) applyRaceScores({ ...raceRef.current.scores, [from]: packet.score });
+        else if (packet.t === 'race-all' && from === 0 && raceRef.current.seat !== 0) {
+          raceRef.current.scores = packet.scores;
+          setRaceScores(packet.scores);
+        }
+      });
+    }
     link.on('closed', ({ reason }) => {
       onlineModeRef.current = false;
+      raceRef.current = { link: null, seat: null, round: 0, scores: {} };
+      setRaceScores({});
       link.close();
       setOnlineLink(null);
       setOnlineSeat(null);
@@ -222,7 +269,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setStatus('ready');
     });
     return link;
-  }, [gameOver, meta.online?.seats, onlineName, restart, start]);
+  }, [applyRaceScores, gameOver, meta.online?.seats, onlineName, race, restart, start]);
 
   const makeRoom = useCallback(async () => {
     setOnlineBusy(true);
@@ -250,11 +297,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   }, [connectRoom]);
 
   useEffect(() => {
-    if (!roomCode || !meta.online || compact || consumedRoom.current === roomCode) return;
-    consumedRoom.current = roomCode;
+    if (!joinCode || !meta.online || compact || consumedRoom.current === joinCode) return;
+    consumedRoom.current = joinCode;
     setOnlineOpen(true);
-    joinRoom(roomCode);
-  }, [compact, joinRoom, meta.online, roomCode]);
+    joinRoom(joinCode);
+  }, [compact, joinRoom, meta.online, joinCode]);
 
   useEffect(() => () => onlineLink?.close(), [onlineLink]);
   const pause = useCallback(() => {
@@ -383,6 +430,17 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   );
   const canPlayOnline = !compact && !!meta.online && !!ARCADE_API;
   const gameOnline = onlineMode && onlineLink !== null && onlineSeat !== null;
+  const raceNow = race && gameOnline ? raceStandings(raceScores, onlinePlayers.map((p) => p.seat), lowerIsBetter) : null;
+  const raceDone = !!raceNow?.done;
+  const raceWinner = raceNow?.winner ?? null;
+  const boardFmt = result?.rank !== undefined && roundBoard ? (n: number) => formatBoardScore(n, roundBoard.spec) : fmt;
+
+  // Every player reports the race winner once all scores are in; the Worker records it when they agree.
+  useEffect(() => {
+    if (!raceDone || !onlineLink || raceReported.current === onlineRound) return;
+    raceReported.current = onlineRound;
+    onlineLink.reportResult(onlineRound, raceWinner);
+  }, [raceDone, raceWinner, onlineLink, onlineRound]);
   const backToArcade = useCallback(() => {
     if (onlineLink) leaveRoom();
     onExit?.();
@@ -458,6 +516,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             onJoin={joinRoom}
             onStart={() => onlineLink?.start()}
             onLeave={leaveRoom}
+            note={race ? 'A score race: everyone plays their own round at the same time and the best score wins.' : undefined}
           />
         )}
 
@@ -526,7 +585,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             <div className="arcade-card arcade-lb-card">
               <h2>Leaderboard</h2>
               <BoardScopeNote board={board.board} />
-              <BoardList board={board.board} fmt={fmt} mine={board.mine} />
+              <BoardList board={board.board} fmt={boardFmt} mine={board.mine} />
               <div className="arcade-row">
                 <button type="button" className="arcade-btn" onClick={() => setBoardOpen(false)}>
                   Back
@@ -567,6 +626,24 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                   </div>
                 )}
                 {result?.detail && <p>{result.detail}</p>}
+                {raceNow && (
+                  <ol className="arcade-race" aria-label="Race Standings">
+                    {raceNow.standings.map((entry) => (
+                      <li key={entry.seat} className={entry.seat === onlineSeat ? 'is-mine' : undefined}>
+                        <span className="arcade-race-place">{entry.place ?? '-'}</span>
+                        <span className="arcade-race-name">{onlinePlayers.find((p) => p.seat === entry.seat)?.name ?? `Player ${entry.seat + 1}`}</span>
+                        <span className="arcade-race-score">
+                          {Object.hasOwn(raceScores, entry.seat) ? (entry.score === null ? 'No Score' : fmt(entry.score)) : 'Playing'}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                {raceNow && (
+                  <small>
+                    {!raceDone ? 'Waiting For Everyone to Finish' : raceWinner === null ? 'A Tie' : raceWinner === onlineSeat ? 'You Win the Race' : `${onlinePlayers.find((p) => p.seat === raceWinner)?.name ?? 'Someone'} Wins the Race`}
+                  </small>
+                )}
                 {board.canSubmit && (
                   <form
                     className="arcade-lb-form"

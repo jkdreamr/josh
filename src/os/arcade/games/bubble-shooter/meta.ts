@@ -10,4 +10,6 @@ export const meta: GameMeta = {
   accent: '#ff375f',
   glyph: 'M2 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0M9 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0M16 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0M5.5 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0M12 21l3-5',
   order: 7,
+  leaderboard: { order: 'desc', max: 10_000_000 },
+  online: { seats: 4, race: true },
 };

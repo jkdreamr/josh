@@ -66,7 +66,7 @@ function Play() {
   const particles = useRef<{ x: number; y: number; vx: number; vy: number; age: number; life: number; color: string }[]>([]);
   const lossAge = useRef<number | null>(null);
   const lossMines = useRef<Position[]>([]);
-  const winDelay = useRef<{ remaining: number; detail: string } | null>(null);
+  const winDelay = useRef<{ remaining: number; detail: string; level: Level; ms: number } | null>(null);
   const hudTime = useRef(0);
   const lastNow = useRef<number | null>(null);
 
@@ -106,7 +106,7 @@ function Play() {
       const detail = newBest
         ? `new best on ${s.level}: ${formatTime(seconds)}.`
         : `${s.level} in ${formatTime(seconds)}. best ${formatTime(bestForLevel(s.level).best)}.`;
-      winDelay.current = { remaining: 0.7, detail };
+      winDelay.current = { remaining: 0.7, detail, level: s.level, ms: Math.max(1, Math.round(s.seconds * 1000)) };
       for (let i = 0; i < 34; i++) particles.current.push({
         x: size.w / 2,
         y: size.h / 2,
@@ -213,9 +213,9 @@ function Play() {
     if (winDelay.current) {
       winDelay.current.remaining -= dt;
       if (winDelay.current.remaining <= 0) {
-        const { detail } = winDelay.current;
+        const { detail, level: cleared, ms } = winDelay.current;
         winDelay.current = null;
-        shell.gameOver(undefined, { title: 'Cleared', detail });
+        shell.gameOver(undefined, { title: 'Cleared', detail, board: cleared, rank: ms });
       }
     }
   }, () => {

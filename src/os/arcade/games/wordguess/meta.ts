@@ -10,4 +10,5 @@ export const meta: GameMeta = {
   accent: '#30d158',
   glyph: 'M3 9h4.5v6H3zM9.75 9h4.5v6h-4.5zM16.5 9H21v6h-4.5z',
   order: 5,
+  leaderboard: { order: 'desc', max: 10_000, unit: 'days', measure: 'Daily Word Streak' },
 };

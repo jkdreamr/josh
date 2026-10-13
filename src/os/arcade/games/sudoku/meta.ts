@@ -10,4 +10,5 @@ export const meta: GameMeta = {
   accent: '#0a84ff',
   glyph: 'M4 4h16v16H4zM9.33 4v16M14.67 4v16M4 9.33h16M4 14.67h16',
   order: 4,
+  leaderboard: { order: 'asc', min: 20_000, max: 24 * 3_600_000, format: 'time', measure: 'Fastest Solve', variants: { easy: 'Easy', medium: 'Medium', hard: 'Hard' } },
 };

@@ -3,7 +3,14 @@ import type { GameMeta } from '../types';
 import type { KeyState } from './keys';
 
 export type GameStatus = 'ready' | 'playing' | 'paused' | 'over';
-export type GameOverInfo = { title?: string; detail?: string };
+export type GameOverInfo = {
+  title?: string;
+  detail?: string;
+  /** Which of meta.leaderboard.variants this round counts for (a level or pace). */
+  board?: string;
+  /** Score to rank on the leaderboard when the round shows no score of its own (games that track bests per level). */
+  rank?: number;
+};
 
 export type ShellApi = {
   meta: GameMeta;

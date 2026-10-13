@@ -15,9 +15,11 @@ import {
   validateSubmission,
   type BoardEntry,
 } from '../src/os/arcade/kit/leaderboard.ts';
-import { generateArcadeSpecs } from '../scripts/arcade-specs.ts';
+import { boardOwners, generateArcadeSpecs } from '../scripts/arcade-specs.ts';
+import { appGames } from '../src/os/arcade/apps.ts';
+import { boardFor, boardsOf } from '../src/os/arcade/kit/leaderboard-core.ts';
 import type { GameMeta, LeaderboardSpec } from '../src/os/arcade/types.ts';
-import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
+import { LEADERBOARD_SPECS, ONLINE_SPECS } from '../worker/src/specs.gen.ts';
 
 const desc: LeaderboardSpec = { order: 'desc', max: 1000 };
 const asc: LeaderboardSpec = { order: 'asc', min: 3000, max: 60000, format: 'time' };
@@ -157,12 +159,49 @@ test('opted in games have sane specs that match their shells', () => {
     assert.ok(Number.isFinite(spec.max) && spec.max > (spec.min ?? 0), m.id);
     assert.notEqual(m.category, 'multiplayer', `${m.id} scores depend on the opponent`);
     const src = readFileSync(join(games, m.id, 'index.tsx'), 'utf8');
-    assert.equal(/<GameShell[^>]*\blowerIsBetter\b/.test(src), spec.order === 'asc', `${m.id} lowerIsBetter must match order`);
+    // Games that rank with gameOver(undefined, { rank }) keep their own bests and never show the score through the shell.
+    if (!/\brank: /.test(src)) assert.equal(/<GameShell[^>]*\blowerIsBetter\b/.test(src), spec.order === 'asc', `${m.id} lowerIsBetter must match order`);
+    if (spec.variants) {
+      assert.ok(Object.keys(spec.variants).length >= 2, `${m.id} variants need at least two boards`);
+      assert.match(src, /\bboard: /, `${m.id} has variant boards, so gameOver must name one with { board }`);
+    }
   }
+});
+
+test('every board id is unique across arcade games, variants and app games', async () => {
+  const owners = await boardOwners();
+  const ownerIds = owners.map((o) => o.id);
+  assert.equal(new Set(ownerIds).size, ownerIds.length, 'owner ids must be unique');
+  const boardIds = owners.flatMap((o) => boardsOf(o).map((b) => b.id));
+  assert.equal(new Set(boardIds).size, boardIds.length, 'board ids must be unique');
+  for (const id of boardIds) assert.match(id, /^[a-z0-9]+(-[a-z0-9]+)*$/);
+  assert.deepEqual(Object.keys(LEADERBOARD_SPECS).sort(), [...boardIds].sort());
+  for (const spec of Object.values(LEADERBOARD_SPECS)) assert.equal(spec.variants, undefined, 'Worker specs are per board');
+});
+
+test('variant boards resolve only for their listed variants', () => {
+  const owner = { id: 'mines', title: 'Mines', leaderboard: { order: 'asc' as const, min: 1, max: 9, variants: { easy: 'Easy', hard: 'Hard' } } };
+  assert.deepEqual(boardsOf(owner).map((b) => [b.id, b.title]), [['mines-easy', 'Mines · Easy'], ['mines-hard', 'Mines · Hard']]);
+  assert.equal(boardFor(owner, 'hard')?.id, 'mines-hard');
+  assert.equal(boardFor(owner, 'hard')?.spec.variants, undefined);
+  assert.equal(boardFor(owner), null);
+  assert.equal(boardFor(owner, 'toString'), null);
+  const single = { id: 'snake', title: 'Snake', leaderboard: desc };
+  assert.equal(boardFor(single)?.id, 'snake');
+  assert.equal(boardFor(single, 'easy'), null);
+  assert.equal(boardFor({ id: 'x', title: 'X' }), null);
+});
+
+test('units show on number boards only', () => {
+  assert.equal(formatBoardScore(1234, { order: 'desc', max: 1e6, unit: 'm' }), '1,234 m');
+  assert.equal(formatBoardScore(61_500, { order: 'asc', max: 1e6, format: 'time', unit: 'm' }), '1:01.50s');
 });
 
 test('committed Worker specs match the generated game metadata', async () => {
   const committed = readFileSync(join(import.meta.dirname, '..', 'worker', 'src', 'specs.gen.ts'), 'utf8');
   assert.equal(committed, await generateArcadeSpecs());
-  assert.deepEqual(ONLINE_SPECS, Object.fromEntries(metas.filter((m) => m.online).map((m) => [m.id, m.online])));
+  const online = [...metas, ...appGames].filter((m) => m.online);
+  assert.deepEqual(ONLINE_SPECS, Object.fromEntries(online.map((m) => [m.id, { seats: m.online!.seats }])));
+  for (const m of online) assert.ok(m.online!.seats >= 2 && m.online!.seats <= 4, `${m.id} seats`);
+  for (const m of metas.filter((game) => game.online?.race)) assert.ok(m.leaderboard && !m.leaderboard.variants, `${m.id} races need one comparable score`);
 });

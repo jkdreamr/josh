@@ -3,10 +3,35 @@ import { BLACK, groupStones, newGame, pass, play, resign, score, undo, WHITE, ty
 import { newOmok, omokAiMove, playOmok, undoOmok, type OmokState } from '../games/omok';
 import { useOS, type AppProps } from '../types';
 import { countPlay } from '../stats';
+import { getAppGame } from '../arcade/apps';
+import { boardFor } from '../arcade/kit/leaderboard';
+import { AppBoard, onlineAvailable, RoomPanel, useAppRoom, useInvite } from './online-room';
 import './game-controls.css';
 import './Baduk.css';
 
-type Mode = 'computer' | 'friend';
+type Mode = 'computer' | 'friend' | 'online';
+type Color = typeof BLACK | typeof WHITE;
+type RoomMessage = { t: 'move'; x: number; y: number } | { t: 'pass' } | { t: 'resign' } | { t: 'dead'; list: number[] } | { t: 'count'; list: number[] };
+
+const GO_GAME = getAppGame('go')!;
+const OMOK_GAME = getAppGame('omok')!;
+/** Online: the host plays Black in odd rounds and White in even rounds, so colors swap on every rematch. */
+const onlineColorOf = (seat: number, round: number): Color => ((round % 2 === 1) === (seat === 0) ? BLACK : WHITE);
+const seatOfColor = (color: Color, round: number) => (onlineColorOf(0, round) === color ? 0 : 1);
+
+function parseRoomMessage(value: unknown, size: number): RoomMessage | null {
+  if (!value || typeof value !== 'object') return null;
+  const m = value as Record<string, unknown>;
+  const onBoard = (n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) < size;
+  const list = (v: unknown) => Array.isArray(v) && v.length <= size * size && v.every((i) => Number.isInteger(i) && i >= 0 && i < size * size) ? (v as number[]) : null;
+  if (m.t === 'move') return onBoard(m.x) && onBoard(m.y) ? { t: 'move', x: m.x as number, y: m.y as number } : null;
+  if (m.t === 'pass' || m.t === 'resign') return { t: m.t };
+  if (m.t === 'dead' || m.t === 'count') {
+    const indices = list(m.list);
+    return indices ? { t: m.t, list: indices } : null;
+  }
+  return null;
+}
 type GameMode = 'go' | 'omok';
 type WorkerResponse =
   | { id: number; type: 'ai'; move: Point | null }
@@ -40,7 +65,7 @@ export default function Baduk({ args }: AppProps) {
   const [game, setGame] = useState<GameState>(() => newGame(9));
   const [omok, setOmok] = useState<OmokState>(() => newOmok());
   const [gameMode, setGameMode] = useState<GameMode>(() => args.game ?? (typeof window !== 'undefined' && window.localStorage.getItem('baduk-game') === 'omok' ? 'omok' : 'go'));
-  const [mode, setMode] = useState<Mode>('computer');
+  const [mode, setMode] = useState<Mode>(() => (args.room ? 'online' : 'computer'));
   const [difficulty, setDifficulty] = useState<'easy' | 'normal'>('normal');
   const [hovered, setHovered] = useState<Point | null>(null);
   const [deadSet, setDeadSet] = useState<Set<number>>(() => new Set());
@@ -49,6 +74,19 @@ export default function Baduk({ args }: AppProps) {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisReady, setAnalysisReady] = useState(false);
   const [engineStatus, setEngineStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [tainted, setTainted] = useState(false);
+  const [gameNo, setGameNo] = useState(0);
+  const omokRef = useRef(omok);
+  omokRef.current = omok;
+  const deadRef = useRef(deadSet);
+  deadRef.current = deadSet;
+  const room = useAppRoom(gameMode === 'omok' ? 'omok' : 'go', {
+    onStart: () => startNewGame(),
+    onEnd: () => startNewGame(),
+  });
+  const onlineColor: Color | null = mode === 'online' && room.status === 'playing' && room.seat !== null ? onlineColorOf(room.seat, room.round) : null;
+  const onlineRef = useRef({ color: onlineColor, round: room.round, seat: room.seat });
+  onlineRef.current = { color: onlineColor, round: room.round, seat: room.seat };
   const gameRef = useRef(game);
   const modeRef = useRef(mode);
   const gameModeRef = useRef(gameMode);
@@ -125,8 +163,20 @@ export default function Baduk({ args }: AppProps) {
     };
   }, [gameMode, mode, game, difficulty]);
 
+  useInvite(room, args.room, args.nonce, () => setMode('online'));
+
+  // A guest plays whatever the host's room was made for.
+  useEffect(() => {
+    if (room.roomGame !== 'go' && room.roomGame !== 'omok') return;
+    if (room.roomGame === gameModeRef.current) return;
+    jobRef.current += 1;
+    setGameMode(room.roomGame);
+    gameModeRef.current = room.roomGame;
+  }, [room.roomGame]);
+
   useEffect(() => {
     if (gameMode !== 'go' || game.phase !== 'mark' || analysisReady) return;
+    if (mode === 'online' && !room.isHost) return;
     const worker = workerRef.current;
     if (!worker) return;
     const id = ++jobRef.current;
@@ -135,7 +185,49 @@ export default function Baduk({ args }: AppProps) {
     return () => {
       if (jobRef.current === id) jobRef.current += 1;
     };
-  }, [gameMode, game, analysisReady]);
+  }, [gameMode, game, analysisReady, mode, room.isHost]);
+
+  // Online: the host reads the board for dead stones and shares them, so both sides count the same.
+  useEffect(() => {
+    if (mode === 'online' && room.isHost && analysisReady && game.phase === 'mark') room.send({ t: 'dead', list: [...deadRef.current] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisReady]);
+
+  // The opponent's moves. Each one is checked against whose turn it is and the rules before it lands.
+  useEffect(() => room.onMessage((from, data) => {
+    const online = onlineRef.current;
+    if (online.color === null || from === online.seat) return;
+    const omokMode = gameModeRef.current === 'omok';
+    const message = parseRoomMessage(data, omokMode ? 15 : 9);
+    if (!message) return;
+    const theirs: Color = online.color === BLACK ? WHITE : BLACK;
+    if (omokMode) {
+      const current = omokRef.current;
+      if (message.t === 'move' && current.toPlay === theirs) {
+        const result = playOmok(current, message.x, message.y);
+        if (result.ok) setOmok(result.state);
+      } else if (message.t === 'resign' && current.winner === null) setOmok({ ...current, winner: online.color });
+      return;
+    }
+    const current = gameRef.current;
+    if (message.t === 'move' && current.phase === 'play' && current.toPlay === theirs) {
+      const result = play(current, message.x, message.y);
+      if (result.ok) {
+        setGame(result.state);
+        setCounted(false);
+      }
+    } else if (message.t === 'pass' && current.phase === 'play' && current.toPlay === theirs) {
+      setGame(pass(current));
+      setCounted(false);
+    } else if (message.t === 'resign' && current.phase === 'play') {
+      setGame({ ...current, phase: 'resigned', winner: online.color });
+    } else if ((message.t === 'dead' || message.t === 'count') && current.phase === 'mark') {
+      setDeadSet(new Set(message.list));
+      setAnalysisReady(true);
+      setAnalyzing(false);
+      setCounted(message.t === 'count');
+    }
+  }), [room.code, room.onMessage]);
 
   useEffect(() => {
     if (gameMode !== 'omok' || mode !== 'computer' || omok.toPlay !== WHITE || omok.winner !== null) return;
@@ -159,6 +251,8 @@ export default function Baduk({ args }: AppProps) {
   const startNewGame = () => {
     countPlay('baduk');
     jobRef.current += 1;
+    setTainted(false);
+    setGameNo((n) => n + 1);
     setGame(newGame(9));
     setOmok(newOmok());
     setDeadSet(new Set());
@@ -168,30 +262,38 @@ export default function Baduk({ args }: AppProps) {
     setAnalysisReady(false);
   };
 
+  const online = mode === 'online';
+  const myTurn = (toPlay: Color) => !online || toPlay === onlineColor;
+
   const placeStone = (point: Point) => {
+    if (online && onlineColor === null) return;
     if (gameMode === 'omok') {
-      if (thinking || omok.winner !== null) return;
+      if (thinking || omok.winner !== null || !myTurn(omok.toPlay)) return;
       const result = playOmok(omok, point.x, point.y);
-      if (result.ok) setOmok(result.state);
+      if (result.ok) {
+        setOmok(result.state);
+        if (online) room.send({ t: 'move', x: point.x, y: point.y });
+      }
       return;
     }
     if (game.phase === 'mark') {
       const group = groupStones(game, point.x, point.y);
       if (!group.length) return;
-      setDeadSet((current) => {
-        const next = new Set(current);
-        const shouldAdd = group.some((index) => !next.has(index));
-        group.forEach((index) => shouldAdd ? next.add(index) : next.delete(index));
-        return next;
-      });
+      const next = new Set(deadSet);
+      const shouldAdd = group.some((index) => !next.has(index));
+      group.forEach((index) => shouldAdd ? next.add(index) : next.delete(index));
+      setDeadSet(next);
       setCounted(false);
+      if (mode === 'computer') setTainted(true);
+      if (online) room.send({ t: 'dead', list: [...next] });
       return;
     }
-    if (thinking || game.phase !== 'play') return;
+    if (thinking || game.phase !== 'play' || !myTurn(game.toPlay)) return;
     const result = play(game, point.x, point.y);
     if (result.ok) {
       setGame(result.state);
       setCounted(false);
+      if (online) room.send({ t: 'move', x: point.x, y: point.y });
     }
   };
 
@@ -204,7 +306,9 @@ export default function Baduk({ args }: AppProps) {
   };
 
   const undoTurn = () => {
+    if (online) return;
     jobRef.current += 1;
+    setTainted(true);
     setThinking(false);
     if (gameMode === 'omok') {
       setOmok((current) => {
@@ -235,9 +339,45 @@ export default function Baduk({ args }: AppProps) {
 
   const passTurn = () => {
     if (gameMode !== 'go') return;
-    if (thinking || game.phase !== 'play') return;
+    if (thinking || game.phase !== 'play' || !myTurn(game.toPlay)) return;
     setGame(pass(game));
     setCounted(false);
+    if (online) room.send({ t: 'pass' });
+  };
+
+  const resignGame = () => {
+    if (online) {
+      if (onlineColor === null) return;
+      const winner: Color = onlineColor === BLACK ? WHITE : BLACK;
+      if (gameMode === 'omok') {
+        if (omok.winner !== null) return;
+        setOmok({ ...omok, winner });
+      } else {
+        if (game.phase !== 'play') return;
+        setGame({ ...game, phase: 'resigned', winner });
+      }
+      room.send({ t: 'resign' });
+      return;
+    }
+    setGame(resign(game));
+  };
+
+  const countBoard = () => {
+    setCounted(true);
+    if (online) room.send({ t: 'count', list: [...deadSet] });
+  };
+
+  const switchGame = (next: GameMode) => {
+    if (room.linked) room.leave();
+    setGameMode(next);
+    window.localStorage.setItem('baduk-game', next);
+    startNewGame();
+  };
+
+  const switchMode = (next: Mode) => {
+    if (next !== 'online' && room.linked) room.leave();
+    setMode(next);
+    startNewGame();
   };
 
   const boardSize = gameMode === 'omok' ? 15 : 9;
@@ -252,10 +392,43 @@ export default function Baduk({ args }: AppProps) {
   const letters = Array.from({ length: boardSize }, (_, index) => (gameMode === 'omok' ? OMOK_LETTERS : GO_LETTERS)[index] ?? '');
   const shownScore = gameMode === 'go' && counted ? score(game, deadSet) : null;
   const hoverIndex = hovered ? hovered.y * boardSize + hovered.x : -1;
-  const canHover = gameMode === 'omok'
+  const canHover = (!online || (onlineColor !== null && toPlay === onlineColor)) && (gameMode === 'omok'
     ? omok.winner === null && !thinking && hovered && board[hoverIndex] === 0
-    : game.phase === 'play' && !thinking && hovered && board[hoverIndex] === 0;
-  const omokStatus = omok.winner === 1 ? 'Black wins' : omok.winner === -1 ? 'White wins' : omok.winner === 0 ? 'Draw' : omok.toPlay === BLACK ? 'Black to play' : 'White to play';
+    : game.phase === 'play' && !thinking && hovered && board[hoverIndex] === 0);
+  const colorName = (color: Color) => {
+    if (onlineColor === null) return color === BLACK ? 'Black' : 'White';
+    return color === onlineColor ? 'You' : room.opponent?.name ?? (color === BLACK ? 'Black' : 'White');
+  };
+  const omokStatus = omok.winner === 1 || omok.winner === -1 ? `${colorName(omok.winner)} ${onlineColor === omok.winner ? 'win' : 'wins'}` : omok.winner === 0 ? 'Draw' : onlineColor !== null ? (omok.toPlay === onlineColor ? 'Your move' : `${colorName(omok.toPlay)} to play`) : omok.toPlay === BLACK ? 'Black to play' : 'White to play';
+
+  // Online results: both sides report the winner's seat once the game ends; the Worker records it when they agree.
+  const onlineWinner: Color | 0 | null | undefined = onlineColor === null
+    ? undefined
+    : gameMode === 'omok'
+      ? omok.winner === null ? undefined : omok.winner
+      : game.phase === 'resigned' && game.winner ? game.winner : shownScore ? shownScore.winner : undefined;
+  const reported = useRef('');
+  useEffect(() => {
+    if (onlineWinner === undefined) return;
+    const key = `${room.code}:${room.round}:${onlineWinner}`;
+    if (reported.current === key) return;
+    reported.current = key;
+    room.reportResult(onlineWinner === 0 ? null : seatOfColor(onlineWinner, room.round));
+  }, [onlineWinner, room.code, room.round, room.reportResult]);
+
+  // Leaderboards: a clean win against the computer, no undo and no hand-marked dead stones.
+  const ranked = (() => {
+    if (mode !== 'computer' || tainted) return null;
+    if (gameMode === 'omok' && omok.winner === BLACK) {
+      const board = boardFor(OMOK_GAME, difficulty);
+      return board ? { board, score: omok.board.filter((stone) => stone === BLACK).length } : null;
+    }
+    if (gameMode === 'go' && shownScore && shownScore.winner === BLACK) {
+      const board = boardFor(GO_GAME, difficulty === 'easy' ? 'fast' : 'strong');
+      return board ? { board, score: shownScore.margin } : null;
+    }
+    return null;
+  })();
   const lastWinPoint = omok.winLine[omok.winLine.length - 1];
 
   return (
@@ -264,8 +437,8 @@ export default function Baduk({ args }: AppProps) {
         <div className="baduk-header-main">
           <h1>Baduk <span>바둑</span></h1>
           <div className="baduk-game-mode gseg" aria-label="Game">
-            <button aria-pressed={gameMode === 'go'} onClick={() => { setGameMode('go'); window.localStorage.setItem('baduk-game', 'go'); startNewGame(); }}>Go</button>
-            <button aria-pressed={gameMode === 'omok'} onClick={() => { setGameMode('omok'); window.localStorage.setItem('baduk-game', 'omok'); startNewGame(); }}>Omok</button>
+            <button aria-pressed={gameMode === 'go'} onClick={() => switchGame('go')}>Go</button>
+            <button aria-pressed={gameMode === 'omok'} onClick={() => switchGame('omok')}>Omok</button>
           </div>
         </div>
         <p>{gameMode === 'omok' ? <>omok <span className="baduk-korean">오목</span>. five in a row wins, black goes first.</> : 'Grew up playing this. 9×9, area scoring, 7.5 komi.'}</p>
@@ -367,7 +540,7 @@ export default function Baduk({ args }: AppProps) {
             {statusStone !== null && <span className={`baduk-turn-stone ${statusStone === BLACK ? 'is-black' : 'is-white'}`} />}
             <div>
               <small>{gameMode === 'omok' ? 'Omok' : mode === 'computer' && engineStatus === 'loading' ? <><i className="baduk-engine-spinner" />Loading Engine</> : game.phase === 'mark' ? 'Mark the dead stones' : game.phase === 'resigned' ? 'Game over' : thinking ? 'Thinking' : 'Go'}</small>
-              <b>{gameMode === 'omok' ? omokStatus : game.phase === 'mark' ? 'Count the board' : game.phase === 'resigned' ? 'Resigned' : game.toPlay === BLACK ? 'Black to play' : 'White to play'}</b>
+              <b>{gameMode === 'omok' ? omokStatus : game.phase === 'mark' ? 'Count the board' : game.phase === 'resigned' ? 'Resigned' : onlineColor !== null ? (game.toPlay === onlineColor ? 'Your move' : `${colorName(game.toPlay)} to play`) : game.toPlay === BLACK ? 'Black to play' : 'White to play'}</b>
             </div>
           </div>
           {gameMode === 'go' && <div className="baduk-captures">
@@ -377,30 +550,52 @@ export default function Baduk({ args }: AppProps) {
           <div className="baduk-mode">
             <span className="glabel">Opponent</span>
             <div className="gseg">
-              <button aria-pressed={mode === 'computer'} onClick={() => { setMode('computer'); startNewGame(); }}>Vs Computer</button>
-              <button aria-pressed={mode === 'friend'} onClick={() => { setMode('friend'); startNewGame(); }}>Vs Friend</button>
+              <button aria-pressed={mode === 'computer'} onClick={() => switchMode('computer')}>{onlineAvailable ? 'Computer' : 'Vs Computer'}</button>
+              <button aria-pressed={mode === 'friend'} onClick={() => switchMode('friend')}>{onlineAvailable ? 'Friend' : 'Vs Friend'}</button>
+              {onlineAvailable && <button aria-pressed={mode === 'online'} onClick={() => switchMode('online')}>Online</button>}
             </div>
           </div>
+          {online && (room.status !== 'playing' ? (
+            <RoomPanel room={room} title={`Online ${gameMode === 'omok' ? 'Omok' : 'Go'}`} note={`Play ${gameMode === 'omok' ? 'Omok' : 'Go'} with a friend anywhere. Colors swap every game.`} />
+          ) : (
+            <div className="baduk-online">
+              <span><i className={onlineColor === BLACK ? 'is-black' : 'is-white'} /> You play {onlineColor === BLACK ? 'Black' : 'White'} vs {room.opponent?.name ?? 'Opponent'}</span>
+              <small>Room {room.code} · {room.transport === 'direct' ? 'Direct' : 'Relayed'}</small>
+              {room.error && <small className="baduk-online-error">{room.error}</small>}
+            </div>
+          ))}
           {mode === 'computer' && (
             <label className="baduk-difficulty">
               <span className="glabel">Difficulty</span>
-              <select className="ginput" value={difficulty} onChange={(event) => setDifficulty(event.target.value as 'easy' | 'normal')}>
+              <select className="ginput" value={difficulty} onChange={(event) => {
+                setDifficulty(event.target.value as 'easy' | 'normal');
+                if (game.past.length || omok.past.length) setTainted(true);
+              }}>
                 <option value="easy">{gameMode === 'go' ? 'Fast' : 'Easy · Quick'}</option>
                 <option value="normal">{gameMode === 'go' ? 'Strong' : 'Normal · Thoughtful'}</option>
               </select>
             </label>
           )}
-          <div className="baduk-actions">
-            {gameMode === 'go' && <button className="gbtn" onClick={passTurn} disabled={game.phase !== 'play' || thinking}>Pass</button>}
-            <button className="gbtn" onClick={undoTurn} disabled={gameMode === 'omok' ? !omok.past.length : !game.past.length}>Undo</button>
-            <button className="gbtn" onClick={startNewGame}>New Game</button>
-            {gameMode === 'go' && <button className="gbtn gbtn-destructive" onClick={() => setGame(resign(game))} disabled={game.phase !== 'play' || thinking}>Resign</button>}
-          </div>
+          {online ? (onlineColor !== null && (
+            <div className="baduk-actions">
+              {gameMode === 'go' && <button className="gbtn" onClick={passTurn} disabled={game.phase !== 'play' || !myTurn(game.toPlay)}>Pass</button>}
+              {room.isHost && <button className="gbtn" onClick={room.start}>New Game</button>}
+              <button className="gbtn gbtn-destructive" onClick={resignGame} disabled={gameMode === 'omok' ? omok.winner !== null : game.phase !== 'play'}>Resign</button>
+              <button className="gbtn" onClick={room.leave}>Leave</button>
+            </div>
+          )) : (
+            <div className="baduk-actions">
+              {gameMode === 'go' && <button className="gbtn" onClick={passTurn} disabled={game.phase !== 'play' || thinking}>Pass</button>}
+              <button className="gbtn" onClick={undoTurn} disabled={gameMode === 'omok' ? !omok.past.length : !game.past.length}>Undo</button>
+              <button className="gbtn" onClick={startNewGame}>New Game</button>
+              {gameMode === 'go' && <button className="gbtn gbtn-destructive" onClick={resignGame} disabled={game.phase !== 'play' || thinking}>Resign</button>}
+            </div>
+          )}
           {gameMode === 'go' && game.phase === 'mark' && (
             <section className="baduk-count-panel">
-              <div><small>two passes. review the board.</small><b>{analyzing ? engineStatus === 'ready' ? 'reading the board…' : 'reading 400 playouts…' : `${deadSet.size} stones marked dead`}</b></div>
-              <p>tap a group to toggle it, then count the board.</p>
-              <button className="gbtn gbtn-primary" onClick={() => setCounted(true)} disabled={analyzing}>Count</button>
+              <div><small>two passes. review the board.</small><b>{online && !room.isHost && !analysisReady ? 'the host is reading the board…' : analyzing ? engineStatus === 'ready' ? 'reading the board…' : 'reading 400 playouts…' : `${deadSet.size} stones marked dead`}</b></div>
+              <p>{online ? 'either player can tap a group to toggle it, then count the board.' : 'tap a group to toggle it, then count the board.'}</p>
+              <button className="gbtn gbtn-primary" onClick={countBoard} disabled={analyzing || (online && !analysisReady)}>Count</button>
             </section>
           )}
           {shownScore && (
@@ -420,6 +615,7 @@ export default function Baduk({ args }: AppProps) {
               <p>{game.winner === BLACK ? 'black' : 'white'} wins.</p>
             </section>
           )}
+          {ranked && <AppBoard key={`${ranked.board.id}:${gameNo}`} board={ranked.board} score={ranked.score} round={gameNo} />}
           <footer>{gameMode === 'omok' ? 'Black plays first · five or more in a row wins' : 'Black plays first · area scoring · 7.5 komi'}</footer>
         </aside>
       </main>
