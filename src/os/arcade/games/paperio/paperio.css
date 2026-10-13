@@ -177,6 +177,9 @@
   background: var(--g-paperio-card);
   box-shadow: 0 0 0 1px var(--g-paperio-edge), 0 3px 0 var(--g-paperio-edge);
 }
+.g-paperio .g-paperio-clock.is-online {
+  top: 40px;
+}
 .g-paperio .g-paperio-clock.is-hurry {
   color: #fff;
   background: var(--g-paperio-cardinal);
@@ -502,7 +505,7 @@
 /* online: waiting, 3 2 1, go */
 .g-paperio .g-paperio-banner {
   position: absolute;
-  top: 38%;
+  top: 28%;
   left: 50%;
   z-index: 3;
   padding: 6px 18px;
@@ -834,7 +837,10 @@
   .g-paperio .g-paperio-call,
   .g-paperio .g-paperio-pop,
   .g-paperio .g-paperio-toast,
-  .g-paperio .g-paperio-clock.is-hurry {
+  .g-paperio .g-paperio-clock.is-online {
+  top: 40px;
+}
+.g-paperio .g-paperio-clock.is-hurry {
     animation-timing-function: steps(1, end);
   }
   .g-paperio .g-paperio-flash {

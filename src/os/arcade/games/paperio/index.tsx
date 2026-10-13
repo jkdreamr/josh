@@ -6,7 +6,7 @@ import { createMatch } from './match';
 import { localCtl, type Ctl, type Net } from './ctl';
 import { colorOf, freshLocker, loadBests, loadLocker, record, saveLocker, shade, skinOf, submitBest, subscribeLocker, type Locker, type Skin } from './skins';
 import { HowToPlay, SkinIcon, SkinSheet, createMiniMap, paintMiniMap, type MiniMap } from './hud';
-import { TICK, percent, ranking, type Ev, type Player, type World } from './world';
+import { TICK, drive, ownerHash, percent, ranking, type Ev } from './world';
 import { createOnline } from './session';
 import { meta } from './meta';
 import './paperio.css';
@@ -290,6 +290,36 @@ function Play({ mode }: { mode: Mode }) {
   }, [live]);
 
   useEffect(() => () => ctl.current?.dispose(), []);
+  // dev builds only: a handle for automated checks (board hash, heads), never shipped
+  useEffect(() => {
+    if (!(import.meta as { env?: { DEV?: boolean } }).env?.DEV || mode === 'idle') return;
+    const handle = {
+      ctl: () => ctl.current,
+      hash: () => (ctl.current ? ownerHash(ctl.current.w) : 0),
+      /** Runs our own head straight across another player's trail (through the normal rules). */
+      cut(target: number) {
+        const c = ctl.current;
+        if (!c) return false;
+        const w = c.w;
+        const me = w.players[c.locals[0]];
+        const t = w.players[target];
+        if (!me || !t || !t.trailLen) return false;
+        const k = t.trail[t.trailLen >> 1];
+        const y = Math.floor(k / w.n);
+        const x = k - y * w.n;
+        me.x = me.px = me.rx = x + 0.5;
+        me.y = me.py = me.ry = y - 9.5;
+        me.y = y + 9.5;
+        drive(w, me, me.x, me.y);
+        return !t.alive;
+      },
+    };
+    (window as unknown as { __paperio?: unknown }).__paperio = handle;
+    return () => {
+      const win = window as unknown as { __paperio?: unknown };
+      if (win.__paperio === handle) delete win.__paperio;
+    };
+  }, [mode]);
 
   // ---------------------------------------------------------------------------------------------------------------
   // Input
@@ -858,7 +888,7 @@ function Play({ mode }: { mode: Mode }) {
               {views > 1 && <small>{i === 0 ? (shell.touch ? 'player 1' : 'player 1 · A D') : shell.touch ? 'player 2' : 'player 2 · ← →'}</small>}
             </div>
           ))}
-          {hud.clock && <div className={`g-paperio-clock${hud.hurry ? ' is-hurry' : ''}`}>{hud.clock}</div>}
+          {hud.clock && <div className={`g-paperio-clock${hud.hurry ? ' is-hurry' : ''}${mode === 'online' ? ' is-online' : ''}`}>{hud.clock}</div>}
           <ol className={`g-paperio-board${views > 1 ? ' is-split' : ''}`} aria-label="Leaderboard">
             {hud.rows.map((r) => (
               <li key={r.id} className={r.me ? 'is-me' : undefined} style={{ ['--c' as string]: r.color, ['--w' as string]: `${Math.max(4, Math.min(100, r.pct * 3))}%` }}>
