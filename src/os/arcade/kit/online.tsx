@@ -141,6 +141,9 @@ export function OnlinePanel({
                 Join
               </button>
             </form>
+            <button type="button" className="arcade-btn" onClick={onLeave}>
+              Back
+            </button>
           </>
         ) : (
           <>

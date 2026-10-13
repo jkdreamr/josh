@@ -140,6 +140,17 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setStatus('playing');
     focusRoot();
   }, [meta.id, keys, focusRoot]);
+  /** From the Pause or Game Over card straight to Play Online: the round in progress is dropped. */
+  const goOnline = useCallback(() => {
+    keys.clear();
+    setResult(null);
+    setBoardOpen(false);
+    setScoreState(null);
+    setRound((r) => r + 1);
+    setStatus('ready');
+    setOnlineError('');
+    setOnlineOpen(true);
+  }, [keys]);
   /** Score race: guests send their score to the host, the host shares everyone's. */
   const applyRaceScores = useCallback((scores: RaceScores) => {
     raceRef.current.scores = scores;
@@ -601,6 +612,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                       {setup ? 'New Game' : 'Restart'}
                     </button>
                   )}
+                  {canPlayOnline && (
+                    <button type="button" className="arcade-btn" onClick={goOnline}>
+                      Play Online
+                    </button>
+                  )}
                   {onExit && (
                     <button type="button" className="arcade-btn" onClick={backToArcade}>
                       Arcade
@@ -720,9 +736,16 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     </button>
                   </>
                 ) : (
-                  <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={restart} ref={autoFocus}>
-                    Play Again
-                  </button>
+                  <>
+                    <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={restart} ref={autoFocus}>
+                      Play Again
+                    </button>
+                    {canPlayOnline && (
+                      <button type="button" className="arcade-btn arcade-btn-lg" onClick={goOnline}>
+                        Play Online
+                      </button>
+                    )}
+                  </>
                 )}
                 {(onExit || board.enabled) && (
                   <div className="arcade-row">
