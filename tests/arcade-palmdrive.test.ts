@@ -3,9 +3,10 @@ import { test } from 'node:test';
 import { EDGE, LANDMARKS, ROAD_HALF, buildTrack, deltaS, gridSpot, headingOf, layout, locate, pointAt } from '../src/os/arcade/games/palmdrive/track.ts';
 import {
   BOOST_DV,
+  CASH_COST,
+  CASH_T,
   CCS,
   CLASSES,
-  COIN_TOP,
   COUNTDOWN,
   LAPS,
   MAX_COINS,
@@ -14,6 +15,7 @@ import {
   ROLL_T,
   TURBO_AT,
   TURBO_T,
+  coinTop,
   createRace,
   fmtTime,
   giveItem,
@@ -406,19 +408,43 @@ test('the blue shell flies down the course and blows up the leader', () => {
   assert.equal(r.things.length, 0);
 });
 
-test('coins raise your top speed up to ten, and hits cost coins', () => {
+test('coins raise your top speed, most for the first ten, and stack up to fifty; hits cost coins', () => {
+  assert.equal(MAX_COINS, 50);
+  assert.equal(coinTop(0), 0);
+  assert.ok(Math.abs(coinTop(10) - 1.2) < 1e-9 && Math.abs(coinTop(50) - 2.8) < 1e-9);
+  assert.ok(coinTop(11) - coinTop(10) < coinTop(10) - coinTop(9), 'coins past ten add less each');
   const r = race();
   const k = r.karts[0];
-  place(r, k, 20, 0, 0);
+  // from the class top speed, along the opening straight
+  place(r, k, 20, 0, CLASSES['100cc'].top);
   k.coins = MAX_COINS;
-  run(r, 5);
-  assert.ok(Math.abs(k.v - (CLASSES['100cc'].top + MAX_COINS * COIN_TOP)) < 0.01);
+  run(r, 1.5);
+  assert.ok(!k.offroad && Math.abs(k.v - (CLASSES['100cc'].top + coinTop(MAX_COINS))) < 0.01, `speed ${k.v}`);
   const ahead = pointAt(r.track, k.prog + 4);
   r.coins = [{ x: ahead.x, z: ahead.z, t: 0 }];
   run(r, 0.5);
   assert.equal(k.coins, MAX_COINS);
   assert.ok(hitKart(r, k, 'tumble', -1));
   assert.equal(k.coins, MAX_COINS - 3);
+});
+
+test('five coins cash in for a boost, once per press; with fewer nothing happens', () => {
+  const r = race();
+  const k = r.karts[0];
+  place(r, k, 20, 0, CLASSES['100cc'].top);
+  k.coins = CASH_COST + 2;
+  k.input.cash = true;
+  const evs = run(r, 1 / 60);
+  assert.equal(k.coins, 2);
+  assert.ok(k.boost > CASH_T - 0.05);
+  assert.equal(evs.filter((e) => e.t === 'cash').length, 1);
+  assert.equal(k.input.cash, false, 'the press is used up');
+  run(r, 0.5);
+  assert.ok(k.v > CLASSES['100cc'].top + coinTop(2) + 1, `the boost lifts you past top speed: ${k.v}`);
+  k.input.cash = true;
+  const none = run(r, 1 / 60);
+  assert.equal(k.coins, 2);
+  assert.equal(none.filter((e) => e.t === 'cash').length, 0);
 });
 
 test('classes get quicker from 50cc to 200cc, and only those four are classes', () => {
@@ -438,11 +464,13 @@ test('a full field of CPU drivers races five laps at every class, inside the wal
     let widest = 0;
     let turbos = 0;
     let items = 0;
+    let cashes = 0;
     while (r.time < 700 && r.karts.some((k) => k.done === null)) {
       step(r, 1 / 60);
       for (const e of r.events.splice(0)) {
         if (e.t === 'turbo') turbos++;
         if (e.t === 'use') items++;
+        if (e.t === 'cash') cashes++;
       }
       for (const k of r.karts) widest = Math.max(widest, Math.abs(k.d));
     }
@@ -453,6 +481,7 @@ test('a full field of CPU drivers races five laps at every class, inside the wal
     assert.ok(fastest > 100 && Math.max(...times) < 320, `${cc}: ${times.map((x) => x.toFixed(0)).join(' ')}`);
     assert.ok(widest <= EDGE, `${cc}: a kart got ${widest} from the line`);
     assert.ok(turbos > 5 && items > 5, `${cc}: ${turbos} mini-turbos, ${items} items`);
+    assert.ok(cashes > 0, `${cc}: CPU drivers cash in their coins`);
     assert.ok(r.karts.every((k) => k.laps.length === LAPS));
   }
 });

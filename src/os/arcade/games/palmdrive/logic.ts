@@ -12,8 +12,12 @@ export const HOP_V = 4.2;
 export const GRAVITY = 28;
 export const REVERSE = 7;
 export const OFFROAD = 0.55;
-export const COIN_TOP = 0.15;
-export const MAX_COINS = 10;
+export const MAX_COINS = 50;
+/** Five coins buy a quick boost. */
+export const CASH_COST = 5;
+export const CASH_T = 0.8;
+/** Top speed from coins: the first ten count most, every coin after that still helps. */
+export const coinTop = (coins: number) => 0.12 * Math.min(coins, 10) + 0.04 * Math.max(0, coins - 10);
 export const BOOST_DV = 9;
 export const STAR_DV = 5;
 export const STAR_T = 7.5;
@@ -47,7 +51,8 @@ export const ITEMS: Item[] = ['banana', 'green', 'red', 'mushroom', 'triple', 's
 export type ThingKind = 'banana' | 'green' | 'red' | 'blue';
 export type HitHow = 'spin' | 'tumble' | 'squash' | 'boom';
 
-export type Input = { steer: number; brake: boolean; drift: boolean; hop: boolean; use: boolean; back: boolean; fwd: boolean };
+/** cash: spend CASH_COST coins on a boost. */
+export type Input = { steer: number; brake: boolean; drift: boolean; hop: boolean; use: boolean; back: boolean; fwd: boolean; cash: boolean };
 export type Ai = { pace: number; skill: number; band: number; lane: number; laneTo: number; laneT: number; itemT: number; held: number; driftT: number };
 /** What the network last said about a remote kart. */
 export type NetState = { x: number; z: number; h: number; v: number; prog: number; done: number | null; flags: number; at: number };
@@ -140,6 +145,7 @@ export type Ev =
   | { t: 'bump'; k: number; power: number }
   | { t: 'wall'; k: number; power: number }
   | { t: 'coin'; k: number }
+  | { t: 'cash'; k: number }
   | { t: 'turbo'; k: number; level: number }
   | { t: 'dash'; k: number }
   | { t: 'bolt'; k: number }
@@ -199,7 +205,7 @@ export function rng32(seed: number): Rng {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const approach = (a: number, b: number, step: number) => (a < b ? Math.min(b, a + step) : Math.max(b, a - step));
-const noInput = (): Input => ({ steer: 0, brake: false, drift: false, hop: false, use: false, back: false, fwd: false });
+const noInput = (): Input => ({ steer: 0, brake: false, drift: false, hop: false, use: false, back: false, fwd: false, cash: false });
 
 let sharedTrack: Track | null = null;
 /** The circuit is the same for every race; build it once. */
@@ -322,6 +328,7 @@ export function step(r: Race, dt: number) {
       // presses during the lights do nothing (gas goes through pressGas)
       k.input.use = false;
       k.input.hop = false;
+      k.input.cash = false;
     }
     return;
   }
@@ -348,6 +355,7 @@ export function step(r: Race, dt: number) {
     if (k.input.use) useItem(r, k);
     k.input.use = false;
     k.input.hop = false;
+    k.input.cash = false;
   }
   bumpKarts(r);
   moveThings(r, dt);
@@ -402,7 +410,7 @@ function drive(r: Race, k: Kart, dt: number) {
   const want = control ? clamp(inp.steer, -1, 1) : 0;
   k.steer = approach(k.steer, want, (want === 0 ? 9 : 6) * dt);
 
-  let top = C.top * (k.ai ? k.ai.pace * k.ai.band * C.cpu : 1) + k.coins * COIN_TOP;
+  let top = C.top * (k.ai ? k.ai.pace * k.ai.band * C.cpu : 1) + coinTop(k.coins);
   if (k.shrink > 0) top *= 0.72;
   if (k.star > 0) top += STAR_DV;
   if (k.boost > 0) top += BOOST_DV;
@@ -412,6 +420,12 @@ function drive(r: Race, k: Kart, dt: number) {
   else if (inp.brake) k.v = k.v > 0.5 ? Math.max(0, k.v - 26 * dt) : Math.max(-REVERSE, k.v - 9 * dt);
   else if (k.v < top) k.v = Math.min(top, k.v + (k.boost > 0 ? 34 : k.v < 0 ? 20 : C.accel) * dt);
   else k.v = Math.max(top, k.v - (k.offroad && k.boost <= 0 ? 24 : 8) * dt);
+
+  if (inp.cash && control && k.coins >= CASH_COST) {
+    k.coins -= CASH_COST;
+    k.boost = Math.max(k.boost, CASH_T);
+    r.events.push({ t: 'cash', k: k.idx });
+  }
 
   // hop, then drift in the direction you were steering
   const sp = Math.abs(k.v);
@@ -1004,6 +1018,9 @@ function think(r: Race, k: Kart, dt: number) {
   const peak = Math.abs(curveAhead(t, k.s, 0, 20 + k.v * 0.8).peak);
   inp.brake = peak > 0 && k.v > 1.55 / peak && k.boost <= 0;
   if (Math.abs(diff) > 2.2 && k.v < 4) inp.brake = false;
+
+  // cash in a stack of coins for a boost on a straight
+  if (k.coins >= 12 && k.boost <= 0 && Math.abs(curveAhead(t, k.s, 0, 30).peak) < 0.012 && r.rand() < dt * 0.3) inp.cash = true;
 
   // keep the pack close: CPUs ease off well ahead of you and push when far behind
   const me = r.karts[r.me];

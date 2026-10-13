@@ -176,6 +176,35 @@
   gap: 4px;
   font-size: 17px;
 }
+.g-palmdrive .g-palmdrive-coins.is-ready {
+  color: #ffd23f;
+}
+.g-palmdrive .g-palmdrive-coins kbd {
+  margin-left: 2px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font: 800 11px/16px system-ui, sans-serif;
+  font-style: normal;
+  color: #222;
+  background: #ffd23f;
+  text-shadow: none;
+  animation: g-palmdrive-blink 1.2s steps(2) 3;
+}
+.g-palmdrive .g-palmdrive-coins.is-button {
+  padding: 3px 10px 3px 6px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.45);
+  pointer-events: auto;
+  touch-action: none;
+}
+.g-palmdrive .g-palmdrive-coins.is-button.is-ready {
+  color: #222;
+  background: #ffd23f;
+  box-shadow: 0 0 12px rgba(255, 210, 63, 0.7);
+}
 .g-palmdrive .g-palmdrive-place {
   position: absolute;
   right: 16px;
@@ -217,6 +246,10 @@
   padding: 8px 12px;
   border-radius: 999px;
   background: rgba(20, 20, 26, 0.7);
+}
+/* on phones the lap row sits up top; keep the lights clear of it */
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-lights {
+  top: 132px;
 }
 .g-palmdrive .g-palmdrive-lights i {
   width: 22px;

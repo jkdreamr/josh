@@ -3,6 +3,7 @@ import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHi
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
 import {
+  CASH_COST,
   CCS,
   COUNTDOWN,
   ITEMS,
@@ -203,6 +204,8 @@ type Hud = {
   lap: number;
   laps: number;
   coins: number;
+  /** Enough coins to cash in for a boost. */
+  cashReady: boolean;
   item: Item | null;
   uses: number;
   rolling: boolean;
@@ -256,8 +259,8 @@ function Play({ mode }: { mode: Mode }) {
     reported: false,
     over: false,
   });
-  const tap = useRef({ item: false, back: false, gas: false });
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, item: null, uses: 0, rolling: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
+  const tap = useRef({ item: false, back: false, gas: false, cash: false });
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, uses: 0, rolling: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
@@ -428,9 +431,10 @@ function Play({ mode }: { mode: Mode }) {
           inp.use = true;
           inp.back = back || keys.down('down');
         }
+        if (keys.pressed('KeyB') || tap.current.cash) inp.cash = true;
         if (r.time < 0 && (keys.pressed('up') || tap.current.gas)) pressGas(r, me);
       }
-      tap.current = { item: false, back: false, gas: false };
+      tap.current = { item: false, back: false, gas: false, cash: false };
 
       step(r, dt);
       const evs = r.events.splice(0);
@@ -556,6 +560,11 @@ function Play({ mode }: { mode: Mode }) {
       case 'coin':
         if (mine) sfx.play('coin', 1.1);
         break;
+      case 'cash':
+        if (!mine) break;
+        sfx.play('coin', 0.8);
+        sfx.tone({ freq: 300, to: 1000, dur: 0.25, type: 'sawtooth', vol: 0.1, delay: 0.05 });
+        break;
       case 'turbo':
         if (mine) sfx.tone({ freq: 300 + e.level * 120, to: 900 + e.level * 200, dur: 0.25, type: 'sawtooth', vol: 0.12 });
         break;
@@ -633,6 +642,7 @@ function Play({ mode }: { mode: Mode }) {
       lap: lapOf(r, me),
       laps: r.laps,
       coins: me.coins,
+      cashReady: me.coins >= CASH_COST && me.done === null,
       item: me.roll > 0 ? ITEMS[Math.floor(clock.current * 12) % ITEMS.length] : me.item,
       uses: me.uses,
       rolling: me.roll > 0,
@@ -721,10 +731,27 @@ function Play({ mode }: { mode: Mode }) {
               Lap <b>{hud.lap}</b>/{hud.laps}
             </span>
             <span className="g-palmdrive-cc">{r.cc}</span>
-            <span className="g-palmdrive-coins">
-              <CoinIcon />
-              {hud.coins}
-            </span>
+            {shell.touch ? (
+              <button
+                type="button"
+                tabIndex={-1}
+                className={`g-palmdrive-coins is-button${hud.cashReady ? ' is-ready' : ''}`}
+                aria-label={`${hud.coins} coins. Tap to cash ${CASH_COST} for a boost`}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  tap.current.cash = true;
+                }}
+              >
+                <CoinIcon />
+                {hud.coins}
+              </button>
+            ) : (
+              <span className={`g-palmdrive-coins${hud.cashReady ? ' is-ready' : ''}`}>
+                <CoinIcon />
+                {hud.coins}
+                {hud.cashReady && <kbd title={`Press B to cash ${CASH_COST} coins for a boost`}>B</kbd>}
+              </span>
+            )}
           </div>
           <div className="g-palmdrive-place">
             <b>{ordinal(hud.place)}</b>
