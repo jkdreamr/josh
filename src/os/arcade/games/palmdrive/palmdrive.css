@@ -148,6 +148,12 @@
   stroke: #fff;
   stroke-width: 4;
 }
+/* a Marguerite bus: white with a cardinal edge */
+.g-palmdrive .g-palmdrive-map-bus {
+  fill: #f2f2ee;
+  stroke: #8c1515;
+  stroke-width: 4;
+}
 .g-palmdrive .g-palmdrive-lap {
   position: absolute;
   left: 14px;
