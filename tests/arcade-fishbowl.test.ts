@@ -481,7 +481,7 @@ test('After Dark (18+): a full list, clean, no repeats, nothing shared with the 
     assert.ok(!classic.has(s.toLocaleLowerCase()), `"${s}" is also in the classic bowl`);
     assert.equal(tidySlip(s), s, `"${s}" is tidy`);
     assert.ok(Array.from(s).length <= SLIP_MAX);
-    assert.ok(!/[–—]/.test(s), `"${s}" has a dash`);
+    assert.ok(!/[\u2013\u2014]/.test(s), `"${s}" has a dash`);
     // The never list: minors and teen settings, consent, getting someone drunk, cruelty.
     assert.doesNotMatch(s, /\b(teen|teens|school|student|minor|kid|child|barely|virgin|drunk|roofie|force|forced|rape|grope|slut|whore|fat|titanic|grease|dirty dancing)\b/i, `"${s}" is on the never list`);
   }

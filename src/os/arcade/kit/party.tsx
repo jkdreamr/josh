@@ -93,7 +93,7 @@ export function Screen({
   onEnter,
   className,
   center = true,
-  arm = 450,
+  arm = 550,
 }: {
   /** A short line above the title, like "Pass the phone to". */
   kicker?: ReactNode;
@@ -105,7 +105,7 @@ export function Screen({
   className?: string;
   /** Center the body vertically (default). Lists that grow read better from the top. */
   center?: boolean;
-  /** Milliseconds after the step appears before taps, Enter or Space count, so a double press can't skip it. */
+  /** Milliseconds after the step appears before taps, Enter or Space count, so a double press can't skip it (default 550). */
   arm?: number;
 }) {
   const shell = useShell();
@@ -117,7 +117,8 @@ export function Screen({
   }, []);
   useKeys((code, e) => {
     if (e?.repeat || (code !== 'Enter' && code !== 'Space')) return;
-    if (performance.now() - shownAt.current < arm) return;
+    // Time the press itself, not when the handler got to run: a busy phone can run two quick presses' handlers far apart.
+    if ((e?.timeStamp ?? performance.now()) - shownAt.current < arm) return;
     enter.current?.();
   });
   useEffect(() => {
@@ -130,7 +131,7 @@ export function Screen({
       onClickCapture={(e) => {
         // A tap meant for the last step can land on this one; swallow taps until it has been up for `arm` ms.
         // Done in JS because reduced motion (rightly) cuts every CSS animation, the old guard included.
-        if (performance.now() - shownAt.current < arm) {
+        if (e.timeStamp - shownAt.current < arm) {
           e.stopPropagation();
           e.preventDefault();
         }
@@ -162,8 +163,8 @@ export function Big({ children, onClick, primary, disabled, quiet, className }: 
       type="button"
       className={['arcade-party-btn', primary ? 'is-primary' : '', className ?? ''].join(' ')}
       disabled={disabled}
-      onClick={() => {
-        const now = performance.now();
+      onClick={(e) => {
+        const now = e.timeStamp;
         if (now - lastBig < DOUBLE_TAP) return;
         lastBig = now;
         if (!quiet) sfx.play('select');
