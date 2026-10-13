@@ -123,6 +123,8 @@ export type Player = {
   brain?: unknown;
   /** Joined the room after this game began, or left it (shown dimmed). */
   gone: boolean;
+  /** Bumps on every respawn or teleport, so stale position reports from before it are ignored. */
+  epoch: number;
   /** What others see in hand (kept current by the host, sent to guests). */
   show: { item: Item | null; tier: number };
   /** Ticks the bow has been drawn or the apple eaten, as others see it. */
@@ -155,7 +157,7 @@ export type Ev =
   | { t: 'hurt'; p: number; hp: number; abs: number; by: number; crit: boolean; cause: DamageCause }
   | { t: 'kb'; p: number; k: Knock }
   | { t: 'die'; p: number; by: number; cause: DeathCause; final: boolean }
-  | { t: 'spawn'; p: number; x: number; y: number; z: number; yaw: number }
+  | { t: 'spawn'; p: number; x: number; y: number; z: number; yaw: number; ep: number }
   | { t: 'bed'; team: number; by: number }
   | { t: 'elim'; team: number }
   | { t: 'drop'; id: number; item: Item; n: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; gen: number }
@@ -172,7 +174,7 @@ export type Ev =
   | { t: 'msg'; k: MsgKind; text: string; team?: number; to?: number }
   | { t: 'win'; team: number }
   | { t: 'fx'; p: number; fx: Effects; absorb: number }
-  | { t: 'tp'; p: number; x: number; y: number; z: number }
+  | { t: 'tp'; p: number; x: number; y: number; z: number; ep: number }
   | { t: 'use'; p: number; item: Item }
   | { t: 'swing'; p: number }
   | { t: 'inv'; p: number }
@@ -300,6 +302,7 @@ export function addPlayer(g: Game, name: string, seat: number, ctrl: Ctrl, team:
     using: 0,
     diedAt: [site.spawn[0], site.spawn[1], site.spawn[2]],
     gone: false,
+    epoch: 0,
     show: { item: 'sword_wood', tier: 0 },
     drawing: 0,
   };
@@ -914,7 +917,8 @@ export function respawn(g: Game, p: Player) {
   p.respawn = 0;
   const mates = g.players.filter((o) => o.team === p.team && o.id < p.id).length;
   p.body = newBody(site.spawn[0] + mates * 0.6, site.spawn[1], site.spawn[2], site.yaw);
-  emit(g, { t: 'spawn', p: p.id, x: p.body.x, y: p.body.y, z: p.body.z, yaw: site.yaw });
+  p.epoch++;
+  emit(g, { t: 'spawn', p: p.id, x: p.body.x, y: p.body.y, z: p.body.z, yaw: site.yaw, ep: p.epoch });
 }
 
 /** One tick of the rules (authority only). Bots have already chosen their input. */
@@ -1029,7 +1033,8 @@ export function tickGame(g: Game) {
           o.body.z = pr.z;
           o.body.vx = o.body.vy = o.body.vz = 0;
           o.body.fallDistance = 0;
-          emit(g, { t: 'tp', p: o.id, x: r2(o.body.x), y: r2(o.body.y), z: r2(o.body.z) });
+          o.epoch++;
+          emit(g, { t: 'tp', p: o.id, x: r2(o.body.x), y: r2(o.body.y), z: r2(o.body.z), ep: o.epoch });
           damage(g, o, 5, -1, 'pearl', null);
         }
       } else if (pr.kind === 'arrow' && hit.player) {

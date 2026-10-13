@@ -734,3 +734,21 @@
     animation: none;
   }
 }
+
+.g-bedwars .g-bedwars-joining {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--g-bedwars-display);
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fff;
+  text-shadow: var(--g-bedwars-shadow);
+  background: rgba(10, 10, 14, 0.4);
+}
+.g-bedwars .g-bedwars-hostnote {
+  display: block;
+  opacity: 0.75;
+}

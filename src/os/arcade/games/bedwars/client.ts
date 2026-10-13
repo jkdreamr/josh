@@ -74,6 +74,8 @@ export type ClientHooks = {
   ping?: () => void;
   /** A kill, bed or win worth a celebration (stats and cosmetics). */
   moment?: (ev: Ev) => void;
+  /** After every 20 Hz tick (online traffic goes out here). */
+  onTick?: () => void;
 };
 
 const scratch: Pose = { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
@@ -403,6 +405,7 @@ export class Client {
         }
       }
     } else if (this.spec.active) this.spec.active = false;
+    this.hooks.onTick?.();
   }
 
   /** Guests move drops and projectiles between the host's word on them. */
@@ -464,7 +467,6 @@ export class Client {
 
   swing() {
     if (this.swingT < 0 || this.swingT > 0.5) this.swingT = 0;
-    if (!this.authority) return;
     this.player.swings++;
   }
 

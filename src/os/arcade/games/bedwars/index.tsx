@@ -3,6 +3,7 @@ import { GameShell, Segmented, defineSetting, useGameLoop, useKeys, useOnline, u
 import type { GameProps } from '../../types';
 import { meta } from './meta';
 import { createGame, type Ev, type Game, type Level, type Pace } from './game.ts';
+import { Session, type OnlineApi } from './session.ts';
 import { Client, type Hud } from './client.ts';
 import { createView, type View } from './scene.ts';
 import { CENTER, MID_TOP, type Mode } from './map.ts';
@@ -15,6 +16,7 @@ const LEVEL = defineSetting('bedwars:bots', ['easy', 'normal', 'hard'] as const,
 const PACE = defineSetting('bedwars:pace', ['quick', 'classic'] as const, 'quick');
 const SENS = defineSetting('bedwars:sens', ['0.5', '1', '1.5', '2'] as const, '1', { live: true });
 const SPRINT = defineSetting('bedwars:sprint', ['auto', 'manual'] as const, 'auto', { live: true });
+const FILL = defineSetting('bedwars:fill', ['bots', 'none'] as const, 'bots');
 
 const modeOptions = [
   ['solo', 'Solo'],
@@ -35,6 +37,10 @@ const sensOptions = [
   ['1.5', 'High'],
   ['2', 'Max'],
 ] as const;
+const fillOptions = [
+  ['bots', 'Fill with Bots'],
+  ['none', 'Humans Only'],
+] as const;
 const sprintOptions = [
   ['auto', 'Auto'],
   ['manual', 'Ctrl or WW'],
@@ -44,7 +50,7 @@ const BOT_NAMES = ['Tree', 'Hoover', 'Lagunita', 'Branner', 'Wilbur', 'Gates', '
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />}>
       <Stage />
     </GameShell>
   );
@@ -64,6 +70,24 @@ function Setup() {
       <Segmented label="Pace" value={pace} options={paceOptions} onChange={setPace} />
       {!shell.touch && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
       {!shell.touch && <Segmented label="Sprint" value={sprint} options={sprintOptions} onChange={setSprint} />}
+    </div>
+  );
+}
+
+/** Room settings: the host picks the mode, bots and pace for everyone (guests learn them when the round starts). */
+function OnlineSetup() {
+  const online = useOnline();
+  const [mode, setMode] = useSetting(MODE);
+  const [level, setLevel] = useSetting(LEVEL);
+  const [pace, setPace] = useSetting(PACE);
+  const [fill, setFill] = useSetting(FILL);
+  if (online && !online.isHost) return <small className="g-bedwars-hostnote">the host picks the mode, bots and pace.</small>;
+  return (
+    <div className="g-bedwars-setup">
+      <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
+      <Segmented label="Slots" value={fill} options={fillOptions} onChange={setFill} />
+      {fill === 'bots' && <Segmented label="Bots" value={level} options={levelOptions} onChange={setLevel} />}
+      <Segmented label="Pace" value={pace} options={paceOptions} onChange={setPace} />
     </div>
   );
 }
@@ -112,6 +136,14 @@ function Play({ mode }: { mode: StageMode }) {
   const [pace] = useSetting(PACE);
   const [sens] = useSetting(SENS);
   const [sprint] = useSetting(SPRINT);
+  const [fill] = useSetting(FILL);
+  const online = useOnline();
+  const onlineRef = useRef(online);
+  onlineRef.current = online;
+  const live = mode === 'online' && !!online;
+  const sessionRef = useRef<Session | null>(null);
+  const meRef = useRef(0);
+  const [ready, setReady] = useState(0);
   const hostRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<Client | null>(null);
   const gameRef = useRef<Game | null>(null);
@@ -127,9 +159,53 @@ function Play({ mode }: { mode: StageMode }) {
   const idle = mode === 'idle';
   const idleAngle = useRef(0);
 
-  if (!gameRef.current) {
-    gameRef.current = soloGame(modeSetting, level as Level, pace as Pace);
-  }
+  if (!gameRef.current && !live) gameRef.current = soloGame(modeSetting, level as Level, pace as Pace);
+
+  // online: the host builds the game, guests wait for its sync
+  useEffect(() => {
+    if (!live) return;
+    const api: OnlineApi = {
+      get seat() {
+        return onlineRef.current?.seat ?? 0;
+      },
+      get isHost() {
+        return !!onlineRef.current?.isHost;
+      },
+      get round() {
+        return onlineRef.current?.round ?? 0;
+      },
+      get players() {
+        return onlineRef.current?.players ?? [];
+      },
+      get transport() {
+        return onlineRef.current?.transport ?? 'relay';
+      },
+      send: (d, o) => onlineRef.current?.send(d, o),
+      onMessage: (fn) => onlineRef.current?.onMessage(fn) ?? (() => {}),
+    };
+    const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
+    const session = new Session(api, {
+      mode: modeSetting,
+      level: level as Level,
+      pace: pace as Pace,
+      bots: fill === 'bots',
+      skin: 0,
+      botNames: names,
+      onReady: (game, me) => {
+        gameRef.current = game;
+        meRef.current = me;
+        setReady((n) => n + 1);
+      },
+    });
+    sessionRef.current = session;
+    return () => {
+      session.dispose();
+      sessionRef.current = null;
+    };
+  }, [live]);
+  useEffect(() => {
+    if (online) sessionRef.current?.playersChanged(online.players);
+  }, [online?.players]);
 
   // settings that apply live
   useEffect(() => {
@@ -148,14 +224,20 @@ function Play({ mode }: { mode: StageMode }) {
     const view = createView(THREE, host, game);
     if (!view) return;
     viewRef.current = view;
-    const client = new Client(game, 0, 'solo', { sens: Number(sens), autoSprint: sprint === 'auto', touch: shell.touch }, {
+    const session = sessionRef.current;
+    const role = !live ? 'solo' : session?.isHost ? 'host' : 'guest';
+    const client = new Client(game, live ? meRef.current : 0, role, { sens: Number(sens), autoSprint: sprint === 'auto', touch: shell.touch }, {
       ping: () => {
         pinged.current = true;
       },
       moment: (e: Ev) => {
         void e;
       },
+      send: session ? (a, seq) => session.send(a, seq) : undefined,
+      broadcast: session ? (evs) => session.broadcast(evs) : undefined,
+      onTick: session ? () => session.tick() : undefined,
     });
+    if (session) session.client = client;
     client.attach(view);
     clientRef.current = client;
     // dev only: lets the screenshot harness drive the camera (headless browsers have no pointer lock)
@@ -171,11 +253,12 @@ function Play({ mode }: { mode: StageMode }) {
     return () => {
       ro.disconnect();
       if (import.meta.env.DEV) delete (window as unknown as { __bedwars?: Client }).__bedwars;
+      if (sessionRef.current) sessionRef.current.client = null;
       client.dispose();
       clientRef.current = null;
       viewRef.current = null;
     };
-  }, [THREE]);
+  }, [THREE, ready]);
 
   // pointer lock: click to capture the mouse; losing it (Esc) pauses solo games
   useEffect(() => {
@@ -307,9 +390,9 @@ function Play({ mode }: { mode: StageMode }) {
         hudClock.current = 0.1;
         setHud(c.hud());
       }
-      // the end of a solo game
+      // the end of the game
       const g = c.game;
-      if (g.over && mode === 'solo') {
+      if (g.over) {
         if (overAt.current === null) overAt.current = c.time;
         if (c.time - overAt.current > 3.5) finish(c);
       }
@@ -327,6 +410,12 @@ function Play({ mode }: { mode: StageMode }) {
     const won = g.winner === me.team;
     const team = TEAMS[me.team];
     const detail = `${me.stats.kills} kills, ${me.stats.finals} final kills, ${me.stats.beds} beds broken.${g.winner >= 0 && !won ? ` ${TEAMS[g.winner].name} won it.` : ''}`;
+    // online: everyone reports the same winner, the lowest seat of a human on the winning team (bots win as nobody)
+    const o = onlineRef.current;
+    if (live && o) {
+      const seats = g.players.filter((p) => p.team === g.winner && p.seat >= 0 && p.ctrl !== 'bot').map((p) => p.seat);
+      o.reportResult(o.round, seats.length ? Math.min(...seats) : null);
+    }
     shellRef.current.gameOver(undefined, { title: won ? 'Victory!' : g.winner < 0 ? 'Draw' : 'Game Over', detail: won ? `${team.name} team wins! ${detail}` : detail });
   };
 
@@ -416,7 +505,7 @@ function Play({ mode }: { mode: StageMode }) {
   };
 
   const c = clientRef.current;
-  const g = gameRef.current!;
+  const g = gameRef.current;
   const now = c?.time ?? 0;
   const playing = shell.status === 'playing' && !idle;
   const me = c?.player;
@@ -447,7 +536,8 @@ function Play({ mode }: { mode: StageMode }) {
         onWheel={onWheel}
         onContextMenu={(e) => e.preventDefault()}
       />
-      {playing && hud && c && me && (
+      {playing && !g && <div className="g-bedwars-joining">joining the host's game</div>}
+      {playing && hud && c && me && g && (
         <div className="g-bedwars-hud">
           {me.alive && hud.ui === 'none' && <Crosshair />}
           <Scoreboard hud={hud} mode={g.mode} />
@@ -481,7 +571,7 @@ function Play({ mode }: { mode: StageMode }) {
           )}
         </div>
       )}
-      {playing && shell.touch && c && me && hud && hud.ui === 'none' && (
+      {playing && shell.touch && c && me && g && hud && hud.ui === 'none' && (
         <div className="g-bedwars-touch">
           <div className="g-bedwars-stickZone" aria-hidden="true">
             <i style={{ transform: `translate(${c.stick.x * 34}px, ${c.stick.y * 34}px)` }} />
