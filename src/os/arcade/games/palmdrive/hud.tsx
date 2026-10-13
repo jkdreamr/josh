@@ -1,7 +1,8 @@
-// Pictures and sheets for Palm Drive's interface: item icons and the How to Play guide.
+// Pictures and sheets for Palm Drive's interface: item and hat icons, the How to Play guide and the Garage.
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { Item } from './logic';
+import { HATS, type Hat, type Item } from './logic';
+import { HAT_NAMES, HAT_PRICES, PAINTS, choosePaint, chooseHat, paintColor, type Garage } from './garage';
 
 const Svg = ({ children, size = 40 }: { children: ReactNode; size?: number }) => (
   <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
@@ -105,6 +106,87 @@ export const CoinIcon = ({ size = 18 }: { size?: number }) => (
     <rect x="10.4" y="6.5" width="3.2" height="11" rx="1.6" fill="#fff3c4" stroke="#b9860f" strokeWidth="1" />
   </svg>
 );
+
+/** A hat drawn on its own, about where it sits on a 24 unit tall head. */
+function HatShape({ hat, paint }: { hat: Hat; paint: string }) {
+  switch (hat) {
+    case 'cap':
+      return (
+        <>
+          <path d="M6 13a6 5.5 0 0 1 12 0z" fill={paint} stroke="rgba(0,0,0,0.3)" />
+          <path d="M14 12.5h7.5a1 1 0 0 1 0 2H14z" fill={paint} stroke="rgba(0,0,0,0.3)" />
+        </>
+      );
+    case 'tree':
+      return <path d="M12 1.5l3.6 5h-2l3.4 4.5h-2.3l3.3 3.5H6l3.3-3.5H7l3.4-4.5h-2z" fill="#2f8a3c" stroke="#1b5524" strokeLinejoin="round" />;
+    case 'top':
+      return (
+        <>
+          <rect x="8" y="3" width="8" height="9" rx="1" fill="#1b1c22" />
+          <rect x="8" y="9.5" width="8" height="1.6" fill={paint} />
+          <rect x="5" y="11.5" width="14" height="2" rx="1" fill="#1b1c22" />
+        </>
+      );
+    case 'bow':
+      return (
+        <>
+          <path d="M12 11L6 7.5v7zM12 11l6-3.5v7z" fill={paint} stroke="rgba(0,0,0,0.3)" strokeLinejoin="round" />
+          <circle cx="12" cy="11" r="1.6" fill="#fff" />
+        </>
+      );
+    case 'tower':
+      return (
+        <>
+          <rect x="10" y="5" width="4" height="9" fill="#e0c49a" stroke="#9c7b58" strokeWidth="0.6" />
+          <rect x="9.6" y="6.5" width="4.8" height="1.4" fill="#4a3a2c" />
+          <path d="M10 5a2 2 0 0 1 4 0z" fill="#b4553a" />
+        </>
+      );
+    case 'axe':
+      return (
+        <>
+          <rect x="11.3" y="3" width="1.4" height="11" fill="#8c1515" />
+          <path d="M12.7 3.5h3.5a2.5 2.5 0 0 1 0 5h-3.5z" fill="#d7dde2" stroke="#7d8790" strokeWidth="0.6" />
+        </>
+      );
+    case 'dish':
+      return (
+        <>
+          <rect x="11.4" y="8" width="1.2" height="6" fill="#ccd" />
+          <path d="M6 5.5a6 3 0 0 0 12 0z" fill="#f2f2f0" stroke="#9aa" strokeWidth="0.7" />
+        </>
+      );
+    case 'claw':
+      return <path d="M8.5 13C6 10 6.5 6 8 4.5c0 3 1.5 5 3 6.5zM15.5 13c2.5-3 2-7 .5-8.5 0 3-1.5 5-3 6.5z" fill="#c62828" stroke="#7a1512" strokeWidth="0.6" strokeLinejoin="round" />;
+  }
+}
+
+export const HatIcon = ({ hat, paint = '#e53935', size = 34 }: { hat: Hat; paint?: string; size?: number }) => (
+  <Svg size={size}>
+    <circle cx="12" cy="17" r="5" fill="#f6f6f8" stroke="rgba(0,0,0,0.25)" />
+    <HatShape hat={hat} paint={paint} />
+  </Svg>
+);
+
+/** Your kart as the Garage shows it: paint and hat. */
+export function KartPreview({ paint, hat }: { paint: string; hat: Hat }) {
+  return (
+    <svg viewBox="0 -8 64 48" width="168" height="126" aria-hidden="true">
+      <ellipse cx="32" cy="36" rx="25" ry="3" fill="rgba(0,0,0,0.25)" />
+      <path d="M8 29h48l-3-6H35l-3-5h-9l-3 5H11z" fill={paint} stroke="rgba(0,0,0,0.35)" strokeLinejoin="round" />
+      <rect x="22" y="15" width="7" height="9" rx="2" fill="#1b1c22" />
+      <circle cx="26" cy="12" r="5" fill="#f6f6f8" stroke="rgba(0,0,0,0.25)" />
+      {/* the hats are drawn for a head at (12, 17); this one is at (26, 12) */}
+      <g transform="translate(14 -5)">
+        <HatShape hat={hat} paint={paint} />
+      </g>
+      <circle cx="16" cy="30" r="5.5" fill="#1b1c22" />
+      <circle cx="16" cy="30" r="2" fill="#ddd" />
+      <circle cx="48" cy="30" r="5.5" fill="#1b1c22" />
+      <circle cx="48" cy="30" r="2" fill="#ddd" />
+    </svg>
+  );
+}
 
 /** A sheet over the whole game (portaled into the shell so it covers the Start and Pause cards). */
 function Sheet({ root, title, onClose, children }: { root: HTMLElement | null; title: string; onClose: () => void; children: ReactNode }) {
@@ -254,6 +336,83 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Shield.</b> Hold your banana or shell out behind you and it soaks one hit from behind.
           </li>
         </ul>
+      </section>
+      <section>
+        <h3>Your garage</h3>
+        <p>Coins you pick up (and steal) go in your bank, plus a bonus for a podium finish. Spend them in the Garage on new paint and hats. Online, everyone sees your kart.</p>
+      </section>
+    </Sheet>
+  );
+}
+
+export function GarageSheet({ root, garage, onChange, onClose }: { root: HTMLElement | null; garage: Garage; onChange: (g: Garage) => void; onClose: () => void }) {
+  const paint = paintColor(garage.paint);
+  return (
+    <Sheet root={root} title="Garage" onClose={onClose}>
+      <div className="g-palmdrive-garage-top">
+        <KartPreview paint={paint} hat={garage.hat} />
+        <div className="g-palmdrive-bank" aria-label={`${garage.bank} coins in your bank`}>
+          <CoinIcon size={22} />
+          <b>{garage.bank}</b>
+          <small>coins to spend</small>
+        </div>
+      </div>
+      <section>
+        <h3>Paint</h3>
+        <div className="g-palmdrive-swatches">
+          {PAINTS.map((p) => {
+            const owned = garage.paints.includes(p.id);
+            const next = choosePaint(garage, p.id);
+            return (
+              <button
+                key={p.id}
+                type="button"
+                className={`g-palmdrive-swatch${garage.paint === p.id ? ' is-on' : ''}`}
+                disabled={!next}
+                aria-pressed={garage.paint === p.id}
+                aria-label={owned ? `${p.id} paint` : `Buy ${p.id} paint for ${p.price} coins`}
+                onClick={() => next && onChange(next)}
+              >
+                <i style={{ background: p.color }} />
+                {!owned && (
+                  <small>
+                    <CoinIcon size={11} />
+                    {p.price}
+                  </small>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+      <section>
+        <h3>Hats</h3>
+        <div className="g-palmdrive-hats">
+          {HATS.map((h) => {
+            const owned = garage.hats.includes(h);
+            const next = chooseHat(garage, h);
+            return (
+              <button
+                key={h}
+                type="button"
+                className={`g-palmdrive-hat${garage.hat === h ? ' is-on' : ''}`}
+                disabled={!next}
+                aria-pressed={garage.hat === h}
+                aria-label={owned ? HAT_NAMES[h] : `Buy the ${HAT_NAMES[h]} for ${HAT_PRICES[h]} coins`}
+                onClick={() => next && onChange(next)}
+              >
+                <HatIcon hat={h} paint={paint} />
+                <span>{HAT_NAMES[h]}</span>
+                {!owned && (
+                  <small>
+                    <CoinIcon size={11} />
+                    {HAT_PRICES[h]}
+                  </small>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </section>
     </Sheet>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
@@ -24,12 +24,14 @@ import {
   turboLevel,
   type Cc,
   type Ev,
+  type Hat,
   type Item,
   type Race,
   type Racer,
 } from './logic';
 import { applyFlags, carOf, configOf, endOf, events, finishOrder, guestState, hostState, parsePacket, winnerOf, type Car, type NetEv } from './net';
-import { CoinIcon, HowToPlay, ItemIcon } from './hud';
+import { deposit, freshGarage, fromLook, loadGarage, lookOf, paintColor, payout, saveGarage, subscribeGarage, type Garage } from './garage';
+import { CoinIcon, GarageSheet, HowToPlay, ItemIcon } from './hud';
 import { BPM, JINGLE_DONE, JINGLE_WIN, Sequencer, hz, type Note } from './music';
 import { meta } from './meta';
 import './palmdrive.css';
@@ -88,32 +90,42 @@ function Setup() {
     <>
       <Segmented label="Class" value={cc} options={classOptions} onChange={setCc} />
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
-      <HelpButton />
+      <Extras />
       {best !== null && <small className="g-palmdrive-best">Best at {cc}: {fmtMs(best)}</small>}
     </>
   );
 }
 
-/** The How to Play button, and the guide it opens over the cards. */
-function HelpButton() {
+const SERVER_GARAGE = freshGarage();
+/** The saved garage (bank, paint, hats), shared by the cards and the race. */
+const useGarage = () => useSyncExternalStore(subscribeGarage, loadGarage, () => SERVER_GARAGE);
+const lookFor = (g: Garage): { color: string; hat: Hat } => ({ color: paintColor(g.paint), hat: g.hat });
+
+/** How to Play and the Garage, and the sheets they open over the cards. */
+function Extras() {
   const shell = useShell();
-  const [open, setOpen] = useState(false);
+  const garage = useGarage();
+  const [open, setOpen] = useState<'help' | 'garage' | null>(null);
+  const close = () => {
+    setOpen(null);
+    shell.root.current?.focus({ preventScroll: true });
+  };
   return (
-    <>
-      <button type="button" className="arcade-btn g-palmdrive-help" onClick={() => setOpen(true)}>
+    <div className="g-palmdrive-extras">
+      <button type="button" className="arcade-btn" onClick={() => setOpen('help')}>
         How to Play
       </button>
-      {open && (
-        <HowToPlay
-          root={shell.root.current}
-          touch={shell.touch}
-          onClose={() => {
-            setOpen(false);
-            shell.root.current?.focus({ preventScroll: true });
-          }}
-        />
-      )}
-    </>
+      <button type="button" className="arcade-btn" onClick={() => setOpen('garage')} aria-label={`Garage, ${garage.bank} coins to spend`}>
+        <i className="g-palmdrive-paintdot" style={{ background: paintColor(garage.paint) }} />
+        Garage
+        <span className="g-palmdrive-bankpill">
+          <CoinIcon size={13} />
+          {garage.bank}
+        </span>
+      </button>
+      {open === 'help' && <HowToPlay root={shell.root.current} touch={shell.touch} onClose={close} />}
+      {open === 'garage' && <GarageSheet root={shell.root.current} garage={garage} onChange={saveGarage} onClose={close} />}
+    </div>
   );
 }
 
@@ -157,7 +169,7 @@ function OnlineSetup() {
       )}
       {host && <small className="g-palmdrive-best">You pick the class for everyone.</small>}
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
-      <HelpButton />
+      <Extras />
     </>
   );
 }
@@ -179,10 +191,12 @@ function Stage() {
 
 type OnlineApi = NonNullable<ReturnType<typeof useOnline>>;
 
-function onlineRace(o: OnlineApi, cc: Cc, roster: number[], countdown: number): Race {
+/** Everyone online starts in their seat's color; karts take their owner's paint and hat once their first state arrives. */
+function onlineRace(o: OnlineApi, cc: Cc, roster: number[], countdown: number, look: { color: string; hat: Hat }): Race {
   const racers: Racer[] = roster.map((seat) => ({
     name: o.players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`,
-    color: SEAT_COLORS[seat % SEAT_COLORS.length],
+    color: seat === o.seat ? look.color : SEAT_COLORS[seat % SEAT_COLORS.length],
+    hat: seat === o.seat ? look.hat : 'cap',
     kind: seat === o.seat ? 'player' : 'remote',
     seat,
   }));
@@ -260,6 +274,9 @@ function Play({ mode }: { mode: Mode }) {
   const live = mode === 'online' && !!online;
   const [cc] = useSetting(CLASS);
   const [music] = useSetting(MUSIC);
+  // your paint and hat: on your kart now (changes on the Pause card show at once) and in what you send online
+  const garage = useGarage();
+  const lookRef = useRef(lookOf(garage));
   const musicRef = useRef(music);
   musicRef.current = music;
   const song = useRef<Sequencer | null>(null);
@@ -272,10 +289,10 @@ function Play({ mode }: { mode: Mode }) {
   const race = useRef<Race | null>(null);
   const [raceKey, setRaceKey] = useState(0);
   if (!race.current) {
-    if (!live) race.current = soloRace(cc);
+    if (!live) race.current = soloRace(cc, undefined, lookFor(loadGarage()));
     else {
       const roster = [...online!.players].map((p) => p.seat).sort((a, b) => a - b);
-      race.current = onlineRace(online!, cc, roster, online!.isHost ? COUNTDOWN + HOST_LEAD : 60);
+      race.current = onlineRace(online!, cc, roster, online!.isHost ? COUNTDOWN + HOST_LEAD : 60, lookFor(loadGarage()));
     }
   }
   const net = useRef({
@@ -289,6 +306,7 @@ function Play({ mode }: { mode: Mode }) {
     endSends: 0,
     reported: false,
     over: false,
+    banked: false,
   });
   const tap = useRef({ back: false, gas: false, cash: false, slam: false });
   /** The item button was holding a banana or shell out behind last frame. */
@@ -335,6 +353,15 @@ function Play({ mode }: { mode: Mode }) {
     view.current?.resize(size.w, size.h);
   }, [size.w, size.h, THREE, raceKey]);
 
+  useEffect(() => {
+    lookRef.current = lookOf(garage);
+    const r = race.current;
+    const me = r?.karts[r.me];
+    if (!me) return;
+    me.color = paintColor(garage.paint);
+    me.hat = garage.hat;
+  }, [garage, raceKey]);
+
   // ---------------------------------------------------------------------------------------------------------------
   // Online: state at 15 Hz, item events as they happen, the result from the host.
 
@@ -356,7 +383,7 @@ function Play({ mode }: { mode: Mode }) {
     const youWon = w !== null && w === me.seat;
     const title = me.done === null ? 'Did Not Finish' : youWon ? 'You Won' : `${ordinal(place)} Place`;
     const head = me.done === null ? 'You ran out of time.' : `${fmtTime(me.done)} at ${r.cc}.`;
-    const tail = winner && !youWon ? ` ${nameOf(winner[0])} won in ${fmtTime(winner[1])}.` : '';
+    const tail = (winner && !youWon ? ` ${nameOf(winner[0])} won in ${fmtTime(winner[1])}.` : '') + bankCoins(me.done === null ? 0 : place);
     sfx.play(youWon ? 'win' : me.done !== null ? 'coin' : 'lose');
     if (me.done !== null) bests[r.cc].submit(Math.round(me.done * 1000));
     shellRef.current.gameOver(undefined, me.done === null ? { title, detail: head + tail } : { title, detail: head + tail, board: boardOf(r.cc), rank: Math.round(me.done * 1000) });
@@ -370,6 +397,11 @@ function Play({ mode }: { mode: Mode }) {
     k.net = { x: car.x, z: car.z, h: car.h, v: car.v, prog: car.p, done: car.fin >= 0 ? car.fin : null, flags: car.f, at: r.time };
     k.y = car.y;
     applyFlags(k, car.f);
+    const look = car.look >= 0 ? fromLook(car.look) : null;
+    if (look) {
+      k.color = look.color;
+      k.hat = look.hat;
+    }
   };
 
   const applyEvent = (r: Race, from: number, ev: NetEv) => {
@@ -398,7 +430,7 @@ function Play({ mode }: { mode: Mode }) {
         if (o.isHost || from !== 0) return;
         if (!n.synced) {
           if (!p.roster.includes(o.seat)) return;
-          r = race.current = onlineRace(o, isCc(p.cc) ? p.cc : r.cc, p.roster, p.go);
+          r = race.current = onlineRace(o, isCc(p.cc) ? p.cc : r.cc, p.roster, p.go, lookFor(loadGarage()));
           n.roster = p.roster;
           n.synced = true;
           setRaceKey((x) => x + 1);
@@ -420,7 +452,8 @@ function Play({ mode }: { mode: Mode }) {
       if (!o || !r || !n.synced) return;
       n.ticks++;
       const me = r.karts[r.me];
-      const mine = { ...carOf(me), fin: n.dnf ? -2 : carOf(me).fin };
+      const car = carOf(me, lookRef.current);
+      const mine = { ...car, fin: n.dnf ? -2 : car.fin };
       if (!o.isHost) {
         o.send(guestState(o.round, mine), { fast: n.ticks % 5 !== 0 && mine.fin === -1 });
         return;
@@ -534,7 +567,7 @@ function Play({ mode }: { mode: Mode }) {
           n.over = true;
           me.auto = true;
           sfx.play('lose');
-          shellRef.current.gameOver(undefined, { title: 'Time Up', detail: `The race ended ${TIME_LIMIT} seconds after the first kart finished.` });
+          shellRef.current.gameOver(undefined, { title: 'Time Up', detail: `The race ended ${TIME_LIMIT} seconds after the first kart finished.${bankCoins(0)}` });
         } else if (doneAt.current !== null && clock.current - doneAt.current > 45) {
           // the host never called it: show what we know without reporting a winner
           finishOnline(finishOrder(r.karts.filter((k) => k.seat >= 0).map((k) => [k.seat, k.done ?? -1])), null, false);
@@ -544,6 +577,18 @@ function Play({ mode }: { mode: Mode }) {
     },
     () => view.current?.render(),
   );
+
+  /** This race's coins (and a podium bonus) into the garage bank, once; returns a line for the Game Over card. */
+  function bankCoins(place: number) {
+    const n = net.current;
+    const me = race.current?.karts[race.current.me];
+    if (n.banked || !me) return '';
+    n.banked = true;
+    const coins = payout(me.earned, place);
+    if (coins <= 0) return '';
+    saveGarage(deposit(loadGarage(), coins));
+    return ` +${coins} coins for your garage.`;
+  }
 
   function finishSolo(r: Race) {
     const n = net.current;
@@ -558,7 +603,7 @@ function Play({ mode }: { mode: Mode }) {
     const lead = place === 1 ? (me.laps.length ? `Best lap ${fmtTime(Math.min(...me.laps))}.` : '') : `${winner.k.name} won in ${fmtTime(winner.time)}.`;
     shellRef.current.gameOver(undefined, {
       title: place === 1 ? 'You Won' : `${ordinal(place)} Place`,
-      detail: `${fmtTime(ms / 1000)} at ${r.cc}${newBest ? ', a new best' : ''}. ${lead}`.trim(),
+      detail: `${fmtTime(ms / 1000)} at ${r.cc}${newBest ? ', a new best' : ''}. ${lead}`.trim() + bankCoins(place),
       board: boardOf(r.cc),
       rank: ms,
     });
