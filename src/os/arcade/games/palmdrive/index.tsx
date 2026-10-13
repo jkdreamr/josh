@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
@@ -29,6 +29,7 @@ import {
   type Racer,
 } from './logic';
 import { applyFlags, carOf, configOf, endOf, events, finishOrder, guestState, hostState, parsePacket, winnerOf, type Car, type NetEv } from './net';
+import { CoinIcon, HowToPlay, ItemIcon } from './hud';
 import { BPM, JINGLE_DONE, JINGLE_WIN, Sequencer, hz, type Note } from './music';
 import { meta } from './meta';
 import './palmdrive.css';
@@ -87,7 +88,31 @@ function Setup() {
     <>
       <Segmented label="Class" value={cc} options={classOptions} onChange={setCc} />
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
+      <HelpButton />
       {best !== null && <small className="g-palmdrive-best">Best at {cc}: {fmtMs(best)}</small>}
+    </>
+  );
+}
+
+/** The How to Play button, and the guide it opens over the cards. */
+function HelpButton() {
+  const shell = useShell();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="arcade-btn g-palmdrive-help" onClick={() => setOpen(true)}>
+        How to Play
+      </button>
+      {open && (
+        <HowToPlay
+          root={shell.root.current}
+          touch={shell.touch}
+          onClose={() => {
+            setOpen(false);
+            shell.root.current?.focus({ preventScroll: true });
+          }}
+        />
+      )}
     </>
   );
 }
@@ -132,6 +157,7 @@ function OnlineSetup() {
       )}
       {host && <small className="g-palmdrive-best">You pick the class for everyone.</small>}
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
+      <HelpButton />
     </>
   );
 }
@@ -921,108 +947,5 @@ const itemName = (item: Item) => ({ banana: 'a banana', green: 'a green shell', 
 const Chevron = ({ d }: { d: string }) => (
   <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d={d} />
-  </svg>
-);
-
-const Svg = ({ children, size = 40 }: { children: ReactNode; size?: number }) => (
-  <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
-    {children}
-  </svg>
-);
-
-function Shell({ fill, edge }: { fill: string; edge: string }) {
-  return (
-    <>
-      <ellipse cx="12" cy="16.5" rx="9.5" ry="3.6" fill="#fff" stroke="#9aa" strokeWidth="1" />
-      <path d="M3.5 15.5a8.5 9 0 0 1 17 0z" fill={fill} stroke={edge} strokeWidth="1" />
-      <path d="M8 15l1.2-5.2h5.6L16 15M12 6.6v3.2" fill="none" stroke="rgba(255,255,255,0.65)" strokeWidth="1.3" strokeLinejoin="round" />
-    </>
-  );
-}
-
-function Mushroom() {
-  return (
-    <>
-      <path d="M2.5 12.5a9.5 8.5 0 0 1 19 0z" fill="#e53935" stroke="#7a1512" strokeWidth="1" />
-      <circle cx="8" cy="8.2" r="2" fill="#fff" />
-      <circle cx="15.5" cy="7.6" r="2.4" fill="#fff" />
-      <circle cx="12" cy="11" r="1.3" fill="#fff" />
-      <rect x="7.5" y="12.5" width="9" height="8" rx="2.5" fill="#f6e7cf" stroke="#9a7f5c" strokeWidth="1" />
-      <rect x="10" y="14.5" width="1.2" height="2.6" rx="0.6" fill="#222" />
-      <rect x="12.8" y="14.5" width="1.2" height="2.6" rx="0.6" fill="#222" />
-    </>
-  );
-}
-
-function ItemIcon({ item, size }: { item: Item; size?: number }) {
-  switch (item) {
-    case 'mushroom':
-      return (
-        <Svg size={size}>
-          <Mushroom />
-        </Svg>
-      );
-    case 'triple':
-      return (
-        <Svg size={size}>
-          <g transform="translate(-4 3) scale(0.6)">
-            <Mushroom />
-          </g>
-          <g transform="translate(13.6 3) scale(0.6)">
-            <Mushroom />
-          </g>
-          <g transform="translate(4.8 -2) scale(0.6)">
-            <Mushroom />
-          </g>
-        </Svg>
-      );
-    case 'star':
-      return (
-        <Svg size={size}>
-          <path d="M12 2l2.9 6.6 7.1.7-5.4 4.7 1.6 7L12 17.3 5.8 21l1.6-7L2 9.3l7.1-.7z" fill="#ffd23f" stroke="#c98a00" strokeWidth="1.2" strokeLinejoin="round" />
-          <rect x="9.6" y="9.5" width="1.3" height="3" rx="0.6" fill="#222" />
-          <rect x="13.1" y="9.5" width="1.3" height="3" rx="0.6" fill="#222" />
-        </Svg>
-      );
-    case 'banana':
-      return (
-        <Svg size={size}>
-          <path d="M5 6c-1 6 2 12 9 13 3 .4 5-.6 6-2-4 1-9-1-11-5-1-2-1.4-4-1-6z" fill="#ffd640" stroke="#b98a00" strokeWidth="1.1" strokeLinejoin="round" />
-          <path d="M5 6l-1-2.2M20 17l1.3.8" stroke="#5b3b1c" strokeWidth="1.6" strokeLinecap="round" />
-        </Svg>
-      );
-    case 'green':
-      return (
-        <Svg size={size}>
-          <Shell fill="#2fae4e" edge="#16632a" />
-        </Svg>
-      );
-    case 'red':
-      return (
-        <Svg size={size}>
-          <Shell fill="#d8312a" edge="#7a1512" />
-        </Svg>
-      );
-    case 'blue':
-      return (
-        <Svg size={size}>
-          <path d="M1.5 12.5l4-2.5M22.5 12.5l-4-2.5" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />
-          <Shell fill="#2f6fe4" edge="#183f8c" />
-          <path d="M8 7.5l1-2.4 1 2.4M11 6.5l1-2.6 1 2.6M14 7.5l1-2.4 1 2.4" fill="#fff" stroke="#fff" strokeWidth="0.8" strokeLinejoin="round" />
-        </Svg>
-      );
-    case 'bolt':
-      return (
-        <Svg size={size}>
-          <path d="M13.5 2L5 13.5h6L9.5 22 19 9.5h-6.2z" fill="#ffe14d" stroke="#c98a00" strokeWidth="1.2" strokeLinejoin="round" />
-        </Svg>
-      );
-  }
-}
-
-const CoinIcon = () => (
-  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-    <circle cx="12" cy="12" r="9" fill="#f7c948" stroke="#b9860f" strokeWidth="1.6" />
-    <rect x="10.4" y="6.5" width="3.2" height="11" rx="1.6" fill="#fff3c4" stroke="#b9860f" strokeWidth="1" />
   </svg>
 );

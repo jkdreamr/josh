@@ -513,3 +513,128 @@
 .g-palmdrive .g-palmdrive-touch .g-palmdrive-use.is-trailing {
   box-shadow: inset 0 0 0 3px #7fd3ff, 0 0 14px rgba(127, 211, 255, 0.7);
 }
+.g-palmdrive .g-palmdrive-help {
+  width: 100%;
+}
+/* How to Play: a sheet over the cards */
+.g-palmdrive .g-palmdrive-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  text-align: left;
+  background: rgba(8, 8, 12, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: arcadeFade 0.18s ease;
+}
+.g-palmdrive .g-palmdrive-sheet-card {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(30, 30, 36, 0.96);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.14),
+    0 16px 40px rgba(0, 0, 0, 0.45);
+  animation: arcadePop 0.2s ease-out;
+}
+.g-palmdrive .g-palmdrive-sheet-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.g-palmdrive .g-palmdrive-sheet-card h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.g-palmdrive .g-palmdrive-sheet-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 20px 20px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: rgba(245, 245, 247, 0.88);
+}
+.g-palmdrive .g-palmdrive-sheet-body section {
+  margin-top: 16px;
+}
+.g-palmdrive .g-palmdrive-sheet-body h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.g-palmdrive .g-palmdrive-sheet-body p {
+  margin: 0 0 8px;
+}
+.g-palmdrive .g-palmdrive-sheet-body ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+.g-palmdrive .g-palmdrive-sheet-body b {
+  color: #fff;
+}
+.g-palmdrive .g-palmdrive-lede {
+  font-size: 15px;
+  color: #fff;
+}
+.g-palmdrive .g-palmdrive-keys {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 7px 14px;
+  margin: 0;
+}
+.g-palmdrive .g-palmdrive-keys dt {
+  align-self: start;
+  justify-self: start;
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+}
+.g-palmdrive .g-palmdrive-keys dd {
+  align-self: center;
+  margin: 0;
+}
+.g-palmdrive .g-palmdrive-sheet-body .g-palmdrive-items {
+  padding-left: 0;
+  list-style: none;
+}
+.g-palmdrive .g-palmdrive-items li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.g-palmdrive .g-palmdrive-items svg {
+  flex: none;
+}
+.g-palmdrive .g-palmdrive-blue {
+  font-weight: 700;
+  color: #5cc8ff;
+}
+.g-palmdrive .g-palmdrive-orange {
+  font-weight: 700;
+  color: #ffa53a;
+}
+.g-palmdrive .g-palmdrive-purple {
+  font-weight: 700;
+  color: #d07bff;
+}
