@@ -1571,8 +1571,7 @@ type DesktopItem = { key: string; label: string; icon: IconKind; run: (os: OSApi
 const desktopItems: DesktopItem[] = [
   { key: 'about', label: 'about me.txt', icon: 'doc', run: (os) => os.open('notes', { note: 'about' }) },
   ...folders.map<DesktopItem>((f) => ({ key: f.id, label: f.label, icon: 'folder', run: (os) => os.open('finder', { folder: f.id }) })),
-  { key: 'coxbox', label: 'Cox Box', icon: 'coxbox', run: (os) => os.open('coxbox') },
-  ...games.filter((id) => id !== 'coxbox').map<DesktopItem>((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: (os) => os.open(id) })),
+  ...games.map<DesktopItem>((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: (os) => os.open(id) })),
 ];
 
 function DesktopIcons() {

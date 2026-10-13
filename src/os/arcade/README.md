@@ -1,6 +1,6 @@
 # Arcade
 
-Little games that live inside the Chrome app at `chrome://games`. Each game is one folder. Adding a game never touches a shared file: drop a folder in `games/`, and the arcade grid, routing (`chrome://games/<id>`), lazy loading and code splitting pick it up automatically.
+Little games that live inside the Chrome app at `chrome://games`, and in the Arcade app on the desktop and phone home screen (`src/os/apps/Arcade.tsx`, the same page outside the browser). Each game is one folder. Adding a game never touches a shared file: drop a folder in `games/`, and the arcade grid, routing (`chrome://games/<id>`), lazy loading and code splitting pick it up automatically.
 
 ## Interface
 
