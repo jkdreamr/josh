@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { mulberry32 } from '../src/os/arcade/kit/party-core.ts';
 import {
+  AFTER_DARK_SHARE,
+  BURST_CAP,
+  BURST_GAP,
+  Bursts,
   ROUNDS,
+  SAVED_MIN,
   SLIP_MAX,
   addSlip,
   bestTurn,
@@ -10,6 +17,7 @@ import {
   bowlOf,
   bowlSize,
   buildTeams,
+  builtInBowl,
   builtInSlips,
   buzz,
   deal,
@@ -24,7 +32,9 @@ import {
   markGot,
   markSkip,
   newMatch,
+  parseBowl,
   points,
+  pointsByRound,
   replay,
   reviewRows,
   roundNow,
@@ -39,7 +49,7 @@ import {
   type Card,
   type Match,
 } from '../src/os/arcade/games/fishbowl/logic.ts';
-import { BUILT_IN } from '../src/os/arcade/games/fishbowl/slips.ts';
+import { AFTER_DARK, BUILT_IN } from '../src/os/arcade/games/fishbowl/slips.ts';
 
 test('teams alternate by seat, the first team takes the extra player', () => {
   assert.deepEqual(buildTeams(4), [
@@ -380,4 +390,129 @@ test('the built-in bowl: a good long list, sized to the table, no repeats', () =
   assert.equal(new Set(a).size, 28);
   assert.deepEqual(a, builtInSlips(BUILT_IN, 28, mulberry32(10)));
   assert.notDeepEqual(a, builtInSlips(BUILT_IN, 28, mulberry32(11)));
+});
+
+test('fixing the very last slip of the game plays on with the time that was left, not a fresh clock', () => {
+  const rng = mulberry32(21);
+  let m = deal(newMatch(2, buildTeams(4)), rng);
+  for (let k = 0; k < 4; k++) {
+    const r = markGot(m, 40 - k, rng);
+    m = r.ended === 'round' ? deal(r.match, rng) : r.match;
+  }
+  m = markGot(m, 50, rng).match;
+  const end = markGot(m, 48, rng);
+  assert.equal(end.ended, 'game');
+  assert.equal(end.match.carry, 48, 'the clock stopped on 0:48');
+  // The final break: un-mark a slip and the round reopens; the giver keeps going with 0:48.
+  const reopened = fix(end.match, end.match.cards[end.match.cards.length - 1].slip, 2);
+  assert.equal(roundNow(reopened), 2);
+  assert.equal(reopened.carry, 48, 'still 0:48 when play resumes');
+  assert.equal(deal(reopened, rng).carry, null);
+  // Ending the game closes the turn and clears the carry.
+  assert.equal(endTurn(end.match).carry, null);
+});
+
+test('a turn that carried into the next round splits its points by round', () => {
+  assert.deepEqual(pointsByRound([]), []);
+  const cards: Card[] = [
+    { slip: 0, round: 0, got: true },
+    { slip: 1, round: 0, got: true },
+    { slip: 2, round: 1, got: false },
+    { slip: 0, round: 1, got: true },
+    { slip: 1, round: 1, got: false, buzzer: true },
+  ];
+  assert.deepEqual(pointsByRound(cards), [
+    { round: 0, points: 2 },
+    { round: 1, points: 1 },
+  ]);
+  assert.deepEqual(pointsByRound([{ slip: 3, round: 2, got: false }]), [{ round: 2, points: 0 }]);
+});
+
+test('a written bowl survives a reload: stored slips come back tidy, junk comes back as nothing', () => {
+  assert.equal(parseBowl(null), null);
+  assert.equal(parseBowl('slips'), null);
+  assert.equal(parseBowl({ slips: 'Shrek' }), null);
+  assert.equal(parseBowl({ slips: ['Shrek', 'Mom'] }), null, `fewer than ${SAVED_MIN} slips is not a bowl`);
+  const bowl = parseBowl({ slips: ['  Taylor   Swift ', 'Shrek', 4, '', 'Mom', 'Kim', 'x'.repeat(90)], by: ['Josh', 7, 'Sam'] });
+  assert.deepEqual(bowl?.slips.slice(0, 4), ['Taylor Swift', 'Shrek', 'Mom', 'Kim']);
+  assert.equal(Array.from(bowl!.slips[4]).length, SLIP_MAX);
+  assert.deepEqual(bowl?.by, ['Josh', 'Sam']);
+  // Two players writing the same name is part of the game; both stay in.
+  assert.equal(parseBowl({ slips: ['Shrek', 'Shrek', 'Mom', 'Kim'] })?.slips.length, 4);
+});
+
+test('a burst of taps that started before a step appeared does not count on it until it stops', () => {
+  const b = new Bursts();
+  // A frantic Got It every 150 ms from t=0; the review appears at t=1500.
+  for (let t = 0; t <= 4000; t += 150) {
+    b.note(t);
+    if (t > 1500) assert.equal(b.fresh(1500, t), false, `mashing at ${t} ms`);
+  }
+  // A pause, then one deliberate tap: it counts.
+  b.note(4000 + BURST_GAP + 1);
+  assert.equal(b.fresh(1500, 4000 + BURST_GAP + 1), true);
+  // A burst that starts on the step counts all the way through (fixing rows, then Pass).
+  const c = new Bursts();
+  c.note(100);
+  c.note(2000);
+  c.note(2300);
+  c.note(2600);
+  assert.equal(c.fresh(1500, 2600), true);
+  // A press in the same instant the step appeared belongs to the step before.
+  const d = new Bursts();
+  d.note(1500);
+  assert.equal(d.fresh(1500, 1500), false);
+  // Safety valve: after BURST_CAP on a step, presses count again.
+  assert.equal(b.fresh(0, BURST_CAP), true);
+});
+
+const SMALL = new Set(['a', 'an', 'and', 'at', 'by', 'da', 'de', 'for', 'from', 'in', 'into', 'of', 'on', 'or', 'the', 'to', 'van', 'with']);
+const titleCase = (s: string) => s.split(' ').every((w, i) => (i > 0 && SMALL.has(w)) || !/^[a-z]/.test(w));
+
+test('every built-in slip is in Title Case', () => {
+  for (const s of [...BUILT_IN, ...AFTER_DARK]) assert.ok(titleCase(s), `"${s}" is in Title Case`);
+});
+
+test('After Dark (18+): a full list, clean, no repeats, nothing shared with the classic bowl', () => {
+  assert.ok(AFTER_DARK.length >= 75, `${AFTER_DARK.length} After Dark slips`);
+  const classic = new Set(BUILT_IN.map((s) => s.toLocaleLowerCase()));
+  assert.equal(new Set(AFTER_DARK.map((s) => s.toLocaleLowerCase())).size, AFTER_DARK.length, 'no duplicates');
+  for (const s of AFTER_DARK) {
+    assert.ok(!classic.has(s.toLocaleLowerCase()), `"${s}" is also in the classic bowl`);
+    assert.equal(tidySlip(s), s, `"${s}" is tidy`);
+    assert.ok(Array.from(s).length <= SLIP_MAX);
+    assert.ok(!/[–—]/.test(s), `"${s}" has a dash`);
+    // The never list: minors and teen settings, consent, getting someone drunk, cruelty.
+    assert.doesNotMatch(s, /\b(teen|teens|school|student|minor|kid|child|barely|virgin|drunk|roofie|force|forced|rape|grope|slut|whore|fat|titanic|grease|dirty dancing)\b/i, `"${s}" is on the never list`);
+  }
+});
+
+test('After Dark is off by default and off means the classic bowl exactly', () => {
+  const index = readFileSync(join(import.meta.dirname, '..', 'src', 'os', 'arcade', 'games', 'fishbowl', 'index.tsx'), 'utf8');
+  assert.match(index, /defineSetting\('fishbowl:heat', \['classic', 'dark'\] as const, 'classic'\)/, 'the 18+ setting defaults to classic');
+  assert.match(index, /'After Dark 18\+'/, 'the control says 18+');
+  const spicy = new Set(AFTER_DARK);
+  for (const seed of [1, 2, 3]) {
+    const off = builtInBowl(BUILT_IN, 28, [], mulberry32(seed));
+    assert.deepEqual(off, builtInSlips(BUILT_IN, 28, mulberry32(seed)), 'off is the classic deal');
+    assert.ok(off.every((s) => !spicy.has(s)), 'no 18+ slip when off');
+  }
+});
+
+test('After Dark on: half the bowl is 18+, no repeats, the right size', () => {
+  for (const [count, seed] of [
+    [20, 4],
+    [27, 5],
+    [40, 6],
+  ] as const) {
+    const bowl = builtInBowl(BUILT_IN, count, AFTER_DARK, mulberry32(seed));
+    assert.equal(bowl.length, count);
+    assert.equal(new Set(bowl).size, count);
+    const hot = bowl.filter((s) => AFTER_DARK.includes(s)).length;
+    assert.equal(hot, Math.ceil(count * AFTER_DARK_SHARE));
+    assert.equal(bowl.length - hot, bowl.filter((s) => BUILT_IN.includes(s)).length);
+  }
+  // Shuffled together, not dealt as a block.
+  const bowl = builtInBowl(BUILT_IN, 40, AFTER_DARK, mulberry32(9));
+  assert.ok(bowl.slice(0, 20).some((s) => BUILT_IN.includes(s)) && bowl.slice(0, 20).some((s) => AFTER_DARK.includes(s)));
 });
