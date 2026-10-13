@@ -118,6 +118,10 @@ export const sfx = {
       settle();
     };
   },
+  /** The audio clock in seconds while sound is on and playing, for scheduling music a little ahead; null otherwise. */
+  clock(): number | null {
+    return !muted && ctx && ctx.state === 'running' ? ctx.currentTime : null;
+  },
   isMuted: () => muted,
   setMuted(m: boolean) {
     muted = m;

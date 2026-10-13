@@ -25,6 +25,7 @@ import {
   type Racer,
 } from './logic';
 import { applyFlags, carOf, endOf, events, finishOrder, guestState, hostState, parsePacket, winnerOf, type Car, type NetEv } from './net';
+import { BPM, JINGLE_DONE, JINGLE_WIN, Sequencer, hz, type Note } from './music';
 import { meta } from './meta';
 import './palmdrive.css';
 
@@ -33,6 +34,12 @@ const classOptions = [
   ['50cc', '50cc'],
   ['100cc', '100cc'],
   ['150cc', '150cc'],
+] as const;
+/** The race soundtrack; the shell's mute button silences it along with everything else. */
+const MUSIC = defineSetting('palmdrive:music', ['on', 'off'] as const, 'on', { live: true });
+const musicOptions = [
+  ['on', 'On'],
+  ['off', 'Off'],
 ] as const;
 /** Online karts take their color from their seat. */
 const SEAT_COLORS = ['#e53935', '#1e88e5', '#3fae4a', '#fdd835', '#8e24aa', '#fb8c00', '#ec407a', '#00acc1'];
@@ -71,10 +78,12 @@ function useBests() {
 
 function Setup() {
   const [cc, setCc] = useSetting(CLASS);
+  const [music, setMusic] = useSetting(MUSIC);
   const best = useBests()[cc].best;
   return (
     <>
       <Segmented label="Class" value={cc} options={classOptions} onChange={setCc} />
+      <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
       {best !== null && <small className="g-palmdrive-best">Best at {cc}: {fmtMs(best)}</small>}
     </>
   );
@@ -109,6 +118,31 @@ function onlineRace(o: OnlineApi, cc: Cc, roster: number[], countdown: number): 
 
 const isCc = (v: string): v is Cc => v === '50cc' || v === '100cc' || v === '150cc';
 
+/** Plays one note of the soundtrack on the arcade synth, `delay` seconds from now. */
+function playNote(note: Note, delay: number, stepLen: number) {
+  const dur = note.len * stepLen;
+  switch (note.voice) {
+    case 'lead':
+      sfx.tone({ freq: hz(note.midi), dur: dur * 0.92, type: 'square', vol: 0.045, delay });
+      break;
+    case 'bass':
+      sfx.tone({ freq: hz(note.midi), dur: dur * 0.9, type: 'triangle', vol: 0.1, delay });
+      break;
+    case 'kick':
+      sfx.tone({ freq: 150, to: 45, dur: 0.12, type: 'sine', vol: 0.13, delay });
+      break;
+    case 'hat':
+      sfx.tone({ freq: 7400, dur: 0.025, type: 'square', vol: 0.008, delay });
+      break;
+  }
+}
+
+/** A short tune on the synth right away (the finish fanfare). */
+function playJingle(notes: Note[]) {
+  const stepLen = 60 / BPM / 4;
+  for (const note of notes) playNote(note, 0.05 + note.step * stepLen, stepLen);
+}
+
 type Hud = {
   place: number;
   field: number;
@@ -137,6 +171,11 @@ function Play({ mode }: { mode: Mode }) {
   onlineRef.current = online;
   const live = mode === 'online' && !!online;
   const [cc] = useSetting(CLASS);
+  const [music] = useSetting(MUSIC);
+  const musicRef = useRef(music);
+  musicRef.current = music;
+  const song = useRef<Sequencer | null>(null);
+  song.current ??= new Sequencer(playNote);
   const bests = useBests();
   const { ref, size } = useCanvas<HTMLDivElement>();
   const sizeRef = useRef(size);
@@ -362,6 +401,10 @@ function Play({ mode }: { mode: Mode }) {
       if (level > lastLevel.current) sfx.tone({ freq: 500 + level * 180, dur: 0.06, type: 'square', vol: 0.08 });
       lastLevel.current = level;
 
+      // the soundtrack runs from the green light to your finish, a notch faster on the final lap
+      const now = sfx.clock();
+      if (musicRef.current === 'on' && now !== null && me && r.time >= 0 && me.done === null && !n.over) song.current!.tick(now, lapOf(r, me) === r.laps);
+
       if (v) {
         v.frame(r, Math.max(0, r.me), dt, clock.current);
         placeOverlays(r, v);
@@ -483,7 +526,9 @@ function Play({ mode }: { mode: Mode }) {
         } else sfx.play('select', 1.4);
         break;
       case 'finish':
-        if (mine) sfx.play(r.karts[r.me].place <= 3 ? 'win' : 'coin');
+        if (!mine) break;
+        if (musicRef.current === 'on') playJingle(r.karts[r.me].place <= 3 ? JINGLE_WIN : JINGLE_DONE);
+        else sfx.play(r.karts[r.me].place <= 3 ? 'win' : 'coin');
         break;
     }
   }
