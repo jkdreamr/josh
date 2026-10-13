@@ -1,7 +1,8 @@
-// The Palm Drive circuit: a closed spline through campus, sampled every couple of meters. Pure, no three.js.
+// Circuits: a closed spline through control points, sampled every couple of meters. Pure, no three.js. The other
+// courses live in courses.ts; this file has the geometry and the original Palm Drive circuit.
 //
-// One lap runs north up Palm Drive toward Memorial Church, sweeps around the Oval, turns south past Hoover Tower
-// into the Arboretum esses and comes back onto Palm Drive through a hairpin.
+// One lap of Palm Drive runs north up Palm Drive toward Memorial Church, sweeps around the Oval, turns south past
+// Hoover Tower into the Arboretum esses and comes back onto Palm Drive through a hairpin.
 //
 // World axes: +y is up and +z is north. Seen from above with north up, +x points WEST (three.js is right handed),
 // so the map points below are written as [east, north] like a normal map and flipped once in fromMap().
@@ -19,7 +20,7 @@ export type P2 = { x: number; z: number };
 export const fromMap = (east: number, north: number): P2 => ({ x: -east * SCALE, z: north * SCALE });
 
 /** Control points in driving order, [east, north] in map meters before scaling. */
-const ROUTE: [number, number][] = [
+export const ROUTE: [number, number][] = [
   [0, -230],
   [0, -110],
   [0, 10],
@@ -40,7 +41,7 @@ const ROUTE: [number, number][] = [
   [35, -285],
   [8, -265],
 ];
-const START: [number, number] = [0, -120];
+export const START: [number, number] = [0, -120];
 
 /** Landmarks in world coordinates (see the scene for what stands there). */
 export const LANDMARKS = {
@@ -221,7 +222,7 @@ export function gridSpot(t: Track, slot: number) {
 }
 
 /** Distance along the loop of a map point (where a pickup row or a landmark sits). */
-const sOf = (t: Track, e: number, n: number) => {
+export const sOf = (t: Track, e: number, n: number) => {
   const p = fromMap(e, n);
   return locate(t, p.x, p.z).s;
 };
@@ -232,8 +233,8 @@ export type Layout = {
   dashes: { s: number; d: number }[];
   /** Jump ramps: the lip at s, centered d to the right, w wide. */
   ramps: { s: number; d: number; w: number }[];
-  /** Palm Drive itself, from the hairpin exit to the Oval, as [from, to] distances. */
-  palmDrive: [number, number];
+  /** Palm Drive itself, from the hairpin exit to the Oval, as [from, to] distances (Palm Drive course only). */
+  palmDrive?: [number, number];
 };
 
 /** Item box rows, coin lines and dash panels, placed by landmark so the spline can change underneath. */

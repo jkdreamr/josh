@@ -514,7 +514,7 @@ test('online packets round trip, and junk or other games’ packets are ignored'
   const fast = parsePacket(JSON.parse(JSON.stringify(hostState(5, 2.5, '200cc', [0], [{ seat: 0, ...car }]))));
   assert.ok(fast && fast.k === 'S' && fast.cc === '200cc');
   const cfg = parsePacket(JSON.parse(JSON.stringify(configOf(5, '200cc'))));
-  assert.deepEqual(cfg, { k: 'cfg', round: 5, cc: '200cc' });
+  assert.deepEqual(cfg, { k: 'cfg', round: 5, cc: '200cc', course: 'palm' });
   assert.equal(parsePacket({ t: 'pk', r: 5, k: 'cfg', cc: 7 }), null);
   const guest = parsePacket(JSON.parse(JSON.stringify(guestState(4, car))));
   assert.ok(guest && guest.k === 's');

@@ -2,6 +2,7 @@
 // It reads a Race every frame and never changes it.
 import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
+import type { CourseId } from './courses';
 import { CURB, EDGE, LANDMARKS, ROAD_HALF, gridSpot, headingOf, locate, pointAt, type Track } from './track';
 import { COUNTDOWN, RAMP_H, RAMP_LEN, TURBO_AT, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
 
@@ -374,306 +375,44 @@ const dampAngle = (a: number, b: number, k: number, dt: number) => {
   return a + d * (1 - Math.exp(-k * dt));
 };
 
-export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null {
-  const gl = createGL(THREE, host, { alpha: true });
-  if (!gl) return null;
-  const t = r.track;
-  const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0xf3d6b4, 140, 720);
-  const camera = new THREE.PerspectiveCamera(68, 1, 0.5, 1600);
-  scene.add(new THREE.HemisphereLight(0xfff3df, 0x6e8a4a, 1.05));
-  const sun = new THREE.DirectionalLight(0xffe4bd, 1.5);
-  sun.position.set(160, 260, -220);
-  scene.add(sun);
+/** Each course's colors: light, grass, curbs, walls and the banner over the start. */
+type Look = {
+  fog: [number, number, number];
+  sky: number;
+  ground: number;
+  sun: [number, number];
+  field: string;
+  lawn: string;
+  curb: [string, string];
+  wall: string;
+  band: string;
+  banner: string;
+};
+const LOOKS: Record<CourseId, Look> = {
+  palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE' },
+  lake: { fog: [0xeeb08e, 120, 640], sky: 0xffd8c2, ground: 0x5d6b4a, sun: [0xffb07a, 1.4], field: '#b8a862', lawn: '#79a85a', curb: ['#f4f1ea', '#2f6fb5'], wall: '#b98b5e', band: '#2f6fb5', banner: 'LAKE LAGUNITA' },
+};
 
-  const geo = {
-    box: new THREE.BoxGeometry(1, 1, 1),
-    wheel: new THREE.CylinderGeometry(1, 1, 1, 14),
-    ball: new THREE.SphereGeometry(1, 14, 10),
-    ring: new THREE.TorusGeometry(1, 0.25, 6, 14),
-    cone: new THREE.ConeGeometry(1, 1, 10),
-    plane: new THREE.PlaneGeometry(1, 1),
-    roof: new THREE.CylinderGeometry(0, 1, 1, 4, 1),
-  };
-  const mats = {
-    stone: new THREE.MeshLambertMaterial({ color: 0xd9b98a }),
-    tile: new THREE.MeshLambertMaterial({ color: 0xb4553a }),
-    dark: new THREE.MeshLambertMaterial({ color: 0x3e3128 }),
-  };
-  const kartShared: KartMats = {
-    dark: new THREE.MeshLambertMaterial({ color: 0x1b1c22 }),
-    skin: new THREE.MeshLambertMaterial({ color: 0xf2c7a0 }),
-    white: new THREE.MeshLambertMaterial({ color: 0xf6f6f8 }),
-    star: new THREE.MeshBasicMaterial({ color: 0xffe14d }),
-    wind: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false }),
-    stone: new THREE.MeshLambertMaterial({ color: 0xe0c49a }),
-    tile: new THREE.MeshLambertMaterial({ color: 0xb4553a }),
-    gold: new THREE.MeshLambertMaterial({ color: 0xf7c948, emissive: 0x5a3c00 }),
-    red: new THREE.MeshLambertMaterial({ color: 0x8c1515 }),
-    green: new THREE.MeshLambertMaterial({ color: 0x2f8a3c }),
-    shadow: new THREE.MeshBasicMaterial({
-      map: texture(
-        THREE,
-        canvas(64, 64, (g) => {
-          const grad = g.createRadialGradient(32, 32, 4, 32, 32, 31);
-          grad.addColorStop(0, 'rgba(0,0,0,0.5)');
-          grad.addColorStop(1, 'rgba(0,0,0,0)');
-          g.fillStyle = grad;
-          g.fillRect(0, 0, 64, 64);
-        }),
-      ),
-      transparent: true,
-      depthWrite: false,
-    }),
-  };
+/** What a course's scenery builder gets: the scene, the track and shared helpers. */
+type Scenery = {
+  THREE: Three;
+  scene: T.Scene;
+  t: Track;
+  r: Race;
+  geo: { box: T.BoxGeometry; wheel: T.CylinderGeometry; ball: T.SphereGeometry; ring: T.TorusGeometry; cone: T.ConeGeometry; plane: T.PlaneGeometry; roof: T.CylinderGeometry };
+  mats: { stone: T.MeshLambertMaterial; tile: T.MeshLambertMaterial; dark: T.MeshLambertMaterial };
+  rand: () => number;
+  /** True when (x, z) is at least `margin` outside the walls of every stretch of road. */
+  clear: (x: number, z: number, margin: number) => boolean;
+  dummy: T.Object3D;
+};
 
-  // golden summer grass all round, mown green inside the walls
-  const field = texture(
-    THREE,
-    canvas(128, 128, (g) => {
-      g.fillStyle = '#c4b468';
-      g.fillRect(0, 0, 128, 128);
-      noise(g, 128, 128, 900, 0.12, false);
-      noise(g, 128, 128, 600, 0.12);
-    }),
-    [260, 260],
-  );
-  // Many small cells rather than two giant triangles: clipping a huge triangle near the camera loses enough depth
-  // precision for the ground to show through the road.
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(2600, 2600, 88, 88), new THREE.MeshLambertMaterial({ map: field }));
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.05;
-  scene.add(ground);
-  const lawn = texture(
-    THREE,
-    canvas(64, 64, (g) => {
-      g.fillStyle = '#6fa94e';
-      g.fillRect(0, 0, 64, 64);
-      g.fillStyle = 'rgba(255,255,255,0.06)';
-      g.fillRect(0, 0, 64, 32);
-      noise(g, 64, 64, 300, 0.1, false);
-    }),
-  );
-  lawn.wrapS = lawn.wrapT = THREE.RepeatWrapping;
-  const lawnMat = new THREE.MeshLambertMaterial({ map: lawn });
-  scene.add(new THREE.Mesh(ribbon(THREE, t, ROAD_HALF, EDGE + 0.4, 0.02, 8), lawnMat));
-  scene.add(new THREE.Mesh(ribbon(THREE, t, -EDGE - 0.4, -ROAD_HALF, 0.02, 8), lawnMat));
-
-  // the road, curbs, walls and the start
-  const asphalt = texture(
-    THREE,
-    canvas(256, 256, (g) => {
-      g.fillStyle = '#4a4a52';
-      g.fillRect(0, 0, 256, 256);
-      noise(g, 256, 256, 2200, 0.07);
-      noise(g, 256, 256, 1200, 0.12, false);
-      g.fillStyle = 'rgba(255,255,255,0.08)';
-      g.fillRect(0, 0, 6, 256);
-      g.fillRect(250, 0, 6, 256);
-    }),
-  );
-  asphalt.wrapS = asphalt.wrapT = THREE.RepeatWrapping;
-  const roadLen = t.length / Math.round(t.length / 12);
-  scene.add(new THREE.Mesh(ribbon(THREE, t, -ROAD_HALF, ROAD_HALF, 0.04, roadLen), new THREE.MeshLambertMaterial({ map: asphalt })));
-  const curbTex = texture(
-    THREE,
-    canvas(16, 64, (g) => {
-      g.fillStyle = '#f4f1ea';
-      g.fillRect(0, 0, 16, 64);
-      g.fillStyle = '#d23a2e';
-      g.fillRect(0, 0, 16, 32);
-    }),
-  );
-  curbTex.wrapT = THREE.RepeatWrapping;
-  const curbLen = t.length / Math.round(t.length / 3);
-  const curbMat = new THREE.MeshLambertMaterial({ map: curbTex });
-  scene.add(new THREE.Mesh(ribbon(THREE, t, ROAD_HALF, ROAD_HALF + CURB, 0.07, curbLen), curbMat));
-  scene.add(new THREE.Mesh(ribbon(THREE, t, -ROAD_HALF - CURB, -ROAD_HALF, 0.07, curbLen), curbMat));
-  // sandstone walls with a cardinal red band, so the edge of the course always reads
-  const wallTex = texture(
-    THREE,
-    canvas(64, 32, (g) => {
-      g.fillStyle = '#e6cfa6';
-      g.fillRect(0, 0, 64, 32);
-      g.fillStyle = 'rgba(120,90,50,0.35)';
-      g.fillRect(0, 21, 64, 1);
-      g.fillRect(31, 22, 1, 10);
-      g.fillRect(0, 11, 64, 1);
-      g.fillStyle = '#8c1515';
-      g.fillRect(0, 0, 64, 8);
-    }),
-  );
-  wallTex.wrapS = THREE.RepeatWrapping;
-  const wallMat = new THREE.MeshLambertMaterial({ map: wallTex, side: THREE.DoubleSide });
-  const capMat = new THREE.MeshLambertMaterial({ color: 0x8c1515 });
-  for (const side of [-1, 1]) {
-    scene.add(new THREE.Mesh(fence(THREE, t, side * EDGE, 1.25, 3), wallMat));
-    scene.add(new THREE.Mesh(ribbon(THREE, t, side * EDGE - 0.3, side * EDGE + 0.3, 1.25, 4), capMat));
-  }
-  const checker = texture(
-    THREE,
-    canvas(128, 32, (g) => {
-      for (let i = 0; i < 16; i++) for (let j = 0; j < 4; j++) {
-        g.fillStyle = (i + j) % 2 ? '#111' : '#fafafa';
-        g.fillRect(i * 8, j * 8, 8, 8);
-      }
-    }),
-  );
-  scene.add(new THREE.Mesh(ribbon(THREE, t, -ROAD_HALF, ROAD_HALF, 0.09, 2.4, t.length - 1.2, t.length + 1.2), new THREE.MeshBasicMaterial({ map: checker })));
-  const lineMat = new THREE.MeshBasicMaterial({ color: 0xf2f2f2 });
-  for (let slot = 0; slot < r.karts.length; slot++) {
-    const g = gridSpot(t, slot);
-    const holder = new THREE.Group();
-    holder.position.set(g.x + Math.sin(g.h) * 1.9, 0.08, g.z + Math.cos(g.h) * 1.9);
-    holder.rotation.y = g.h;
-    const mark = new THREE.Mesh(geo.plane, lineMat);
-    mark.rotation.x = -Math.PI / 2;
-    mark.scale.set(2.4, 0.25, 1);
-    holder.add(mark);
-    scene.add(holder);
-  }
-  // the start gantry with its banner
-  {
-    const p = pointAt(t, 0);
-    const h = headingOf(p.tx, p.tz);
-    const gantry = new THREE.Group();
-    gantry.position.set(p.x, 0, p.z);
-    gantry.rotation.y = h;
-    const post = new THREE.MeshLambertMaterial({ color: 0x8c1515 });
-    for (const side of [-1, 1]) {
-      const m = new THREE.Mesh(geo.box, post);
-      m.scale.set(0.7, 7.2, 0.7);
-      m.position.set(side * (EDGE + 0.6), 3.6, 0);
-      gantry.add(m);
-    }
-    const banner = texture(
-      THREE,
-      canvas(512, 64, (g) => {
-        g.fillStyle = '#8c1515';
-        g.fillRect(0, 0, 512, 64);
-        for (let i = 0; i < 64; i++) {
-          g.fillStyle = i % 2 ? '#111' : '#fff';
-          g.fillRect(i * 8, 0, 8, 8);
-          g.fillStyle = i % 2 ? '#fff' : '#111';
-          g.fillRect(i * 8, 56, 8, 8);
-        }
-        g.fillStyle = '#fff';
-        g.font = 'bold 36px Inter, Arial, sans-serif';
-        g.textAlign = 'center';
-        g.textBaseline = 'middle';
-        g.fillText('PALM DRIVE', 256, 33);
-      }),
-    );
-    const beam = new THREE.Mesh(geo.box, [post, post, post, post, new THREE.MeshLambertMaterial({ map: banner }), new THREE.MeshLambertMaterial({ map: banner })]);
-    beam.scale.set(EDGE * 2 + 1.8, 1.6, 0.5);
-    beam.position.y = 6.6;
-    gantry.add(beam);
-    scene.add(gantry);
-  }
-
-  // dash panels
-  const dashTex = texture(
-    THREE,
-    canvas(64, 128, (g) => {
-      g.fillStyle = '#ff8a1f';
-      g.fillRect(0, 0, 64, 128);
-      g.fillStyle = '#ffe14d';
-      for (let i = 0; i < 2; i++) {
-        const y = i * 64;
-        g.beginPath();
-        g.moveTo(6, y + 10);
-        g.lineTo(32, y + 40);
-        g.lineTo(58, y + 10);
-        g.lineTo(58, y + 26);
-        g.lineTo(32, y + 56);
-        g.lineTo(6, y + 26);
-        g.closePath();
-        g.fill();
-      }
-    }),
-    [1, 2],
-  );
-  const dashMat = new THREE.MeshBasicMaterial({ map: dashTex });
-  for (const d of r.dashes) {
-    const g = new THREE.Group();
-    g.position.set(d.x, 0.09, d.z);
-    g.rotation.y = d.h;
-    const pad = new THREE.Mesh(geo.plane, dashMat);
-    pad.rotation.x = -Math.PI / 2;
-    pad.scale.set(2.2, 4.4, 1);
-    g.add(pad);
-    scene.add(g);
-  }
-
-  // jump ramps: a striped wedge rising to the lip
-  {
-    const wedge = new THREE.BufferGeometry();
-    const L = RAMP_LEN;
-    const H = RAMP_H;
-    // x across (-0.5..0.5, scaled to the ramp width), z along (-L at the foot, 0 at the lip)
-    const v = [
-      -0.5, 0, -L, 0.5, 0, -L, 0.5, H, 0, -0.5, 0, -L, 0.5, H, 0, -0.5, H, 0,
-      -0.5, 0, 0, -0.5, H, 0, 0.5, H, 0, -0.5, 0, 0, 0.5, H, 0, 0.5, 0, 0,
-      -0.5, 0, -L, -0.5, H, 0, -0.5, 0, 0, 0.5, 0, -L, 0.5, 0, 0, 0.5, H, 0,
-    ];
-    const uv = [0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0.1, 1, 0.1, 0, 0, 1, 0.1, 1, 0, 0, 0, 1, 0.1, 1, 0, 0, 0, 1, 0, 1, 0.1];
-    wedge.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
-    wedge.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-    wedge.computeVertexNormals();
-    const rampTex = texture(
-      THREE,
-      canvas(64, 64, (g) => {
-        g.fillStyle = '#8c1515';
-        g.fillRect(0, 0, 64, 64);
-        g.fillStyle = '#fff3d6';
-        for (let i = 0; i < 4; i++) g.fillRect(0, i * 16, 64, 6);
-      }),
-    );
-    const rampMat = new THREE.MeshLambertMaterial({ map: rampTex, side: THREE.DoubleSide });
-    for (const ramp of r.ramps) {
-      const m = new THREE.Mesh(wedge, rampMat);
-      m.position.set(ramp.x, 0.04, ramp.z);
-      m.rotation.y = ramp.h;
-      m.scale.set(ramp.w, 1, 1);
-      scene.add(m);
-    }
-  }
-
-  // chevron boards on the outside of the tight bends
-  const chevron = texture(
-    THREE,
-    canvas(64, 64, (g) => {
-      g.fillStyle = '#c62828';
-      g.fillRect(0, 0, 64, 64);
-      g.fillStyle = '#fff';
-      g.beginPath();
-      g.moveTo(18, 8);
-      g.lineTo(46, 32);
-      g.lineTo(18, 56);
-      g.lineTo(26, 32);
-      g.closePath();
-      g.fill();
-    }),
-  );
-  const chevronMat = new THREE.MeshLambertMaterial({ map: chevron, side: THREE.DoubleSide });
-  for (let s = 0; s < t.length; s += 9) {
-    const c = t.curv[Math.floor(s / t.step) % t.n];
-    if (Math.abs(c) < 0.03) continue;
-    const p = pointAt(t, s, -Math.sign(c) * (EDGE - 0.4));
-    const sign = new THREE.Mesh(geo.plane, chevronMat);
-    sign.scale.set(1.6, 1.6, 1);
-    sign.position.set(p.x, 1.9, p.z);
-    // face the karts coming at it; the arrow points the way the road turns
-    sign.rotation.y = headingOf(p.tx, p.tz) + Math.PI;
-    if (c < 0) sign.scale.x = -1.6;
-    scene.add(sign);
-  }
-
+/** Palm Drive: palms down the drive and round the Oval, the Arboretum, Memorial Church, Hoover Tower, the Dish. */
+function campus(c: Scenery) {
+  const { THREE, scene, t, r, geo, mats, rand, clear, dummy } = c;
   // palms: down both sides of Palm Drive and around the Oval
   const palms: { x: number; z: number; hgt: number }[] = [];
-  const rand = scatter(7);
-  const clear = (x: number, z: number, margin: number) => Math.abs(locate(t, x, z).d) > EDGE + margin;
-  const [pd0, pd1] = r.lay.palmDrive;
+  const [pd0, pd1] = r.lay.palmDrive ?? [0, 0];
   const pdLen = (pd1 - pd0 + t.length) % t.length;
   for (let a = 0; a < pdLen; a += 11) {
     for (const side of [-1, 1]) {
@@ -687,7 +426,6 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     const z = oval.z + Math.sin(a) * (oval.rz + 3);
     if (clear(x, z, 1.5)) palms.push({ x, z, hgt: 8 + rand() * 3 });
   }
-  const dummy = new THREE.Object3D();
   const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x9c7b58 }), palms.length);
   const crowns = new THREE.InstancedMesh(frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x3f8a4c, side: THREE.DoubleSide }), palms.length);
   palms.forEach((p, i) => {
@@ -818,6 +556,573 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   sunDisc.position.set(320, 230, -900);
   sunDisc.lookAt(0, 0, 0);
   scene.add(sunDisc);
+}
+
+/** Whether (x, z) is inside the loop the centerline makes. */
+function insideLoop(t: Track, x: number, z: number) {
+  let inside = false;
+  for (let i = 0, j = t.n - 1; i < t.n; j = i++) {
+    const zi = t.z[i];
+    const zj = t.z[j];
+    if (zi > z !== zj > z && x < ((t.x[j] - t.x[i]) * (z - zi)) / (zj - zi) + t.x[i]) inside = !inside;
+  }
+  return inside;
+}
+
+/** Instanced meshes from a list of transforms. */
+function instances(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.BufferGeometry, mat: T.Material, items: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number; rx?: number }[]) {
+  if (!items.length) return;
+  const mesh = new THREE.InstancedMesh(geo, mat, items.length);
+  items.forEach((it, i) => {
+    dummy.position.set(it.x, it.y, it.z);
+    dummy.scale.set(it.sx, it.sy, it.sz);
+    dummy.rotation.set(it.rx ?? 0, it.ry ?? 0, 0);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+  });
+  dummy.rotation.set(0, 0, 0);
+  scene.add(mesh);
+}
+
+/** Oaks scattered where there is room. */
+function oaks(c: Scenery, spots: { x: number; z: number; r: number }[]) {
+  const { THREE, scene, dummy } = c;
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.3, 0.45, 1, 6), new THREE.MeshLambertMaterial({ color: 0x6b4f37 }), spots.map((o, i) => ({ x: o.x, y: o.r * 0.6, z: o.z, sx: 1, sy: o.r * 1.2, sz: 1, ry: i })));
+  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 7, 5), new THREE.MeshLambertMaterial({ color: 0x4f7d3a, flatShading: true }), spots.map((o, i) => ({ x: o.x, y: o.r * 1.5, z: o.z, sx: o.r * 1.15, sy: o.r * 0.9, sz: o.r * 1.15, ry: i })));
+}
+
+/** Golden foothills in a ring at `dist` around (cx, cz), with the Dish on one of them. */
+function foothills(c: Scenery, cx: number, cz: number, dish: { x: number; z: number }) {
+  const { THREE, scene, geo, rand } = c;
+  const hillMat = new THREE.MeshLambertMaterial({ color: 0xc8b06a, flatShading: true });
+  const hillGeo = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+  for (let a = 0; a < Math.PI * 2; a += Math.PI / 14) {
+    const dist = 560 + rand() * 160;
+    const hill = new THREE.Mesh(hillGeo, hillMat);
+    hill.position.set(cx + Math.cos(a) * dist, -4, cz + Math.sin(a) * dist);
+    hill.scale.set(110 + rand() * 90, 40 + rand() * 70, 110 + rand() * 90);
+    scene.add(hill);
+  }
+  const white = new THREE.MeshLambertMaterial({ color: 0xf2f2f0, side: THREE.DoubleSide });
+  const d = new THREE.Group();
+  const bowl = new THREE.Mesh(new THREE.SphereGeometry(14, 18, 8, 0, Math.PI * 2, 0, 0.9), white);
+  bowl.rotation.x = -2.2;
+  bowl.position.y = 26;
+  const stand = new THREE.Mesh(geo.box, white);
+  stand.scale.set(4, 22, 4);
+  stand.position.y = 11;
+  d.add(bowl, stand);
+  d.position.set(dish.x, 20, dish.z);
+  scene.add(d);
+  const hill = new THREE.Mesh(hillGeo, hillMat);
+  hill.position.set(dish.x, -6, dish.z);
+  hill.scale.set(120, 30, 120);
+  scene.add(hill);
+}
+
+/**
+ * Lake Lagunita: water fills the loop, reeds and lily pads line the shore, sailboats and ducks are out on the water,
+ * the boathouse stands on its peninsula inside the hairpin, oaks and foothills all round, and the sun is going down.
+ */
+function lake(c: Scenery) {
+  const { THREE, scene, t, geo, mats, rand, clear, dummy } = c;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let cx = 0;
+  let cz = 0;
+  for (let i = 0; i < t.n; i++) {
+    minX = Math.min(minX, t.x[i]);
+    maxX = Math.max(maxX, t.x[i]);
+    minZ = Math.min(minZ, t.z[i]);
+    maxZ = Math.max(maxZ, t.z[i]);
+    cx += t.x[i] / t.n;
+    cz += t.z[i] / t.n;
+  }
+  // The water is many small tiles rather than a few huge triangles (see the ground), each kept if its middle is
+  // inside the loop; the walls and lawn along the shore hide the ragged edge.
+  const CELL = 6;
+  const pos: number[] = [];
+  const uv: number[] = [];
+  for (let x = minX; x < maxX; x += CELL) {
+    for (let z = minZ; z < maxZ; z += CELL) {
+      if (!insideLoop(t, x + CELL / 2, z + CELL / 2)) continue;
+      // wound so the tiles face up (+y)
+      const q = [x, z, x, z + CELL, x + CELL, z + CELL, x, z, x + CELL, z + CELL, x + CELL, z];
+      for (let k = 0; k < q.length; k += 2) {
+        pos.push(q[k], -0.01, q[k + 1]);
+        uv.push(q[k] / 20, q[k + 1] / 20);
+      }
+    }
+  }
+  const waterGeo = new THREE.BufferGeometry();
+  waterGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  waterGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  waterGeo.computeVertexNormals();
+  const ripples = texture(
+    THREE,
+    canvas(128, 128, (g) => {
+      g.fillStyle = '#4a7db0';
+      g.fillRect(0, 0, 128, 128);
+      g.strokeStyle = 'rgba(255,225,200,0.22)';
+      g.lineWidth = 2;
+      for (let k = 0; k < 16; k++) {
+        const x = Math.random() * 128;
+        const y = Math.random() * 128;
+        g.beginPath();
+        g.moveTo(x, y);
+        g.quadraticCurveTo(x + 9, y - 3, x + 18, y);
+        g.stroke();
+      }
+    }),
+  );
+  ripples.wrapS = ripples.wrapT = THREE.RepeatWrapping;
+  scene.add(new THREE.Mesh(waterGeo, new THREE.MeshLambertMaterial({ map: ripples })));
+
+  // reeds and cattails in clumps along the shore, and lily pads just off it
+  const reeds: Parameters<typeof instances>[5] = [];
+  const tops: Parameters<typeof instances>[5] = [];
+  const pads: Parameters<typeof instances>[5] = [];
+  const flowers: Parameters<typeof instances>[5] = [];
+  for (let s = 0; s < t.length; s += 3.5) {
+    if (rand() < 0.45) continue;
+    const p = pointAt(t, s, -(EDGE + 1.2 + rand() * 3));
+    if (!clear(p.x, p.z, 0.8) || !insideLoop(t, p.x, p.z)) continue;
+    for (let k = 0; k < 3 + Math.floor(rand() * 4); k++) {
+      const x = p.x + (rand() - 0.5) * 2.2;
+      const z = p.z + (rand() - 0.5) * 2.2;
+      const h = 1.3 + rand() * 1.4;
+      reeds.push({ x, y: h / 2, z, sx: 0.09, sy: h, sz: 0.09, rx: (rand() - 0.5) * 0.25 });
+      if (rand() < 0.4) tops.push({ x, y: h * 0.92, z, sx: 0.12, sy: 0.4, sz: 0.12 });
+    }
+    if (rand() < 0.35) {
+      const q = pointAt(t, s, -(EDGE + 5 + rand() * 9));
+      if (clear(q.x, q.z, 1) && insideLoop(t, q.x, q.z)) {
+        const size = 0.7 + rand() * 0.6;
+        pads.push({ x: q.x, y: 0.01, z: q.z, sx: size, sy: size, sz: size, rx: -Math.PI / 2 });
+        if (rand() < 0.3) flowers.push({ x: q.x + 0.2, y: 0.12, z: q.z, sx: 0.22, sy: 0.16, sz: 0.22 });
+      }
+    }
+  }
+  instances(THREE, scene, dummy, new THREE.ConeGeometry(1, 1, 4), new THREE.MeshLambertMaterial({ color: 0x5f7f3a }), reeds);
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 6), new THREE.MeshLambertMaterial({ color: 0x5a3b22 }), tops);
+  instances(THREE, scene, dummy, new THREE.CircleGeometry(1, 10), new THREE.MeshLambertMaterial({ color: 0x4f8f3f, side: THREE.DoubleSide }), pads);
+  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 8, 6), new THREE.MeshLambertMaterial({ color: 0xf6a8c8 }), flowers);
+
+  // somewhere out on the open water, well clear of the road
+  const onWater = (margin: number) => {
+    for (let n = 0; n < 400; n++) {
+      const x = minX + rand() * (maxX - minX);
+      const z = minZ + rand() * (maxZ - minZ);
+      if (insideLoop(t, x, z) && clear(x, z, margin)) return { x, z };
+    }
+    return null;
+  };
+  // sailboats with cardinal and white sails
+  const sail = new THREE.BufferGeometry();
+  sail.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 1, 0, 0, 0, 1], 3));
+  sail.computeVertexNormals();
+  const hullMat = new THREE.MeshLambertMaterial({ color: 0xf4f1ea });
+  const mastMat = new THREE.MeshLambertMaterial({ color: 0x3e3128 });
+  const sailMats = [new THREE.MeshLambertMaterial({ color: 0xfafafa, side: THREE.DoubleSide }), new THREE.MeshLambertMaterial({ color: 0xb1282a, side: THREE.DoubleSide })];
+  for (let b = 0; b < 6; b++) {
+    const at = onWater(10);
+    if (!at) break;
+    const boat = new THREE.Group();
+    const hull = new THREE.Mesh(geo.box, hullMat);
+    hull.scale.set(1.4, 0.7, 3.6);
+    hull.position.y = 0.3;
+    const mast = new THREE.Mesh(geo.box, mastMat);
+    mast.scale.set(0.12, 5.2, 0.12);
+    mast.position.set(0, 3, 0.4);
+    const sl = new THREE.Mesh(sail, sailMats[b % 2]);
+    sl.scale.set(1, 4.6, -2.6);
+    sl.position.set(0.05, 0.9, 0.35);
+    boat.add(hull, mast, sl);
+    boat.position.set(at.x, 0, at.z);
+    boat.rotation.y = rand() * Math.PI * 2;
+    scene.add(boat);
+  }
+  // mallards paddling about
+  const duck = { body: new THREE.MeshLambertMaterial({ color: 0x8a6a4a }), head: new THREE.MeshLambertMaterial({ color: 0x2f7d4a }), beak: new THREE.MeshLambertMaterial({ color: 0xf2a531 }) };
+  for (let n = 0; n < 12; n++) {
+    const at = onWater(3);
+    if (!at) break;
+    const d = new THREE.Group();
+    const body = new THREE.Mesh(geo.ball, duck.body);
+    body.scale.set(0.32, 0.22, 0.48);
+    body.position.y = 0.12;
+    const head = new THREE.Mesh(geo.ball, duck.head);
+    head.scale.setScalar(0.17);
+    head.position.set(0, 0.38, 0.36);
+    const beak = new THREE.Mesh(geo.cone, duck.beak);
+    beak.scale.set(0.06, 0.16, 0.06);
+    beak.rotation.x = Math.PI / 2;
+    beak.position.set(0, 0.36, 0.55);
+    d.add(body, head, beak);
+    d.position.set(at.x, 0, at.z);
+    d.rotation.y = rand() * Math.PI * 2;
+    scene.add(d);
+  }
+
+  // the boathouse at the middle of the hairpin, on the peninsula it wraps around
+  let apex = 0;
+  for (let i = 0; i < t.n; i++) if (t.curv[i] > t.curv[apex]) apex = i;
+  const mid = pointAt(t, apex * t.step, 1 / t.curv[apex]);
+  if (clear(mid.x, mid.z, 3)) {
+    const wood = new THREE.MeshLambertMaterial({ color: 0x9c6b43 });
+    const roofMat = new THREE.MeshLambertMaterial({ color: 0x2f5d3a });
+    const house = makeHall(THREE, geo.box, geo.roof, { stone: wood, tile: roofMat, dark: mats.dark }, 8, 6, 4.5);
+    house.position.set(mid.x, 0, mid.z);
+    house.rotation.y = headingOf(mid.tx, mid.tz);
+    scene.add(house);
+    const pole = new THREE.Mesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xdddddd }));
+    pole.scale.set(0.15, 9, 0.15);
+    pole.position.set(mid.x + 5, 4.5, mid.z);
+    const flag = new THREE.Mesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x8c1515 }));
+    flag.scale.set(0.05, 1.2, 2);
+    flag.position.set(mid.x + 5, 8.2, mid.z + 1);
+    scene.add(pole, flag);
+  }
+
+  // oaks all round outside the loop, and a row of palms behind the dam
+  const spots: { x: number; z: number; r: number }[] = [];
+  for (let n = 0; spots.length < 170 && n < 4000; n++) {
+    const a = rand() * Math.PI * 2;
+    const dist = 40 + rand() * 420;
+    const x = cx + Math.cos(a) * ((maxX - minX) / 2 + dist);
+    const z = cz + Math.sin(a) * ((maxZ - minZ) / 2 + dist);
+    if (!insideLoop(t, x, z) && clear(x, z, 4)) spots.push({ x, z, r: 2.4 + rand() * 2.8 });
+  }
+  oaks(c, spots);
+  const palms: { x: number; z: number; hgt: number }[] = [];
+  for (let s = 0; s < 120; s += 12) {
+    const p = pointAt(t, s - 40, EDGE + 3);
+    if (clear(p.x, p.z, 1.5)) palms.push({ x: p.x, z: p.z, hgt: 9 + rand() * 3 });
+  }
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x9c7b58 }), palms.map((p) => ({ x: p.x, y: p.hgt / 2, z: p.z, sx: 1, sy: p.hgt, sz: 1 })));
+  instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x3f8a4c, side: THREE.DoubleSide }), palms.map((p, i) => ({ x: p.x, y: p.hgt + 0.2, z: p.z, sx: 1.1, sy: 1.1, sz: 1.1, ry: i * 1.3 })));
+
+  // foothills and the Dish, Hoover Tower off across campus, and the sun going down in the west (+x)
+  foothills(c, cx, cz, { x: cx + 160, z: cz - 420 });
+  const hoover = makeHoover(THREE, geo.box);
+  hoover.position.set(cx - 260, 0, cz + 330);
+  hoover.scale.setScalar(1.4);
+  scene.add(hoover);
+  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(46, 40), new THREE.MeshBasicMaterial({ color: 0xffa45c, fog: false }));
+  sunDisc.position.set(cx + 820, 70, cz + 120);
+  sunDisc.lookAt(cx, 0, cz);
+  const glow = new THREE.Mesh(new THREE.RingGeometry(46, 96, 40), new THREE.MeshBasicMaterial({ color: 0xffc58a, transparent: true, opacity: 0.35, fog: false, depthWrite: false }));
+  glow.position.copy(sunDisc.position);
+  glow.lookAt(cx, 0, cz);
+  scene.add(sunDisc, glow);
+}
+
+const SCENERY: Record<CourseId, (c: Scenery) => void> = { palm: campus, lake };
+
+export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null {
+  const gl = createGL(THREE, host, { alpha: true });
+  if (!gl) return null;
+  const t = r.track;
+  const look = LOOKS[r.course];
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(...look.fog);
+  const camera = new THREE.PerspectiveCamera(68, 1, 0.5, 1600);
+  scene.add(new THREE.HemisphereLight(look.sky, look.ground, 1.05));
+  const sun = new THREE.DirectionalLight(...look.sun);
+  sun.position.set(160, 260, -220);
+  scene.add(sun);
+
+  const geo = {
+    box: new THREE.BoxGeometry(1, 1, 1),
+    wheel: new THREE.CylinderGeometry(1, 1, 1, 14),
+    ball: new THREE.SphereGeometry(1, 14, 10),
+    ring: new THREE.TorusGeometry(1, 0.25, 6, 14),
+    cone: new THREE.ConeGeometry(1, 1, 10),
+    plane: new THREE.PlaneGeometry(1, 1),
+    roof: new THREE.CylinderGeometry(0, 1, 1, 4, 1),
+  };
+  const mats = {
+    stone: new THREE.MeshLambertMaterial({ color: 0xd9b98a }),
+    tile: new THREE.MeshLambertMaterial({ color: 0xb4553a }),
+    dark: new THREE.MeshLambertMaterial({ color: 0x3e3128 }),
+  };
+  const kartShared: KartMats = {
+    dark: new THREE.MeshLambertMaterial({ color: 0x1b1c22 }),
+    skin: new THREE.MeshLambertMaterial({ color: 0xf2c7a0 }),
+    white: new THREE.MeshLambertMaterial({ color: 0xf6f6f8 }),
+    star: new THREE.MeshBasicMaterial({ color: 0xffe14d }),
+    wind: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false }),
+    stone: new THREE.MeshLambertMaterial({ color: 0xe0c49a }),
+    tile: new THREE.MeshLambertMaterial({ color: 0xb4553a }),
+    gold: new THREE.MeshLambertMaterial({ color: 0xf7c948, emissive: 0x5a3c00 }),
+    red: new THREE.MeshLambertMaterial({ color: 0x8c1515 }),
+    green: new THREE.MeshLambertMaterial({ color: 0x2f8a3c }),
+    shadow: new THREE.MeshBasicMaterial({
+      map: texture(
+        THREE,
+        canvas(64, 64, (g) => {
+          const grad = g.createRadialGradient(32, 32, 4, 32, 32, 31);
+          grad.addColorStop(0, 'rgba(0,0,0,0.5)');
+          grad.addColorStop(1, 'rgba(0,0,0,0)');
+          g.fillStyle = grad;
+          g.fillRect(0, 0, 64, 64);
+        }),
+      ),
+      transparent: true,
+      depthWrite: false,
+    }),
+  };
+
+  // golden summer grass all round, mown green inside the walls
+  const field = texture(
+    THREE,
+    canvas(128, 128, (g) => {
+      g.fillStyle = look.field;
+      g.fillRect(0, 0, 128, 128);
+      noise(g, 128, 128, 900, 0.12, false);
+      noise(g, 128, 128, 600, 0.12);
+    }),
+    [260, 260],
+  );
+  // Many small cells rather than two giant triangles: clipping a huge triangle near the camera loses enough depth
+  // precision for the ground to show through the road.
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(2600, 2600, 88, 88), new THREE.MeshLambertMaterial({ map: field }));
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.05;
+  scene.add(ground);
+  const lawn = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = look.lawn;
+      g.fillRect(0, 0, 64, 64);
+      g.fillStyle = 'rgba(255,255,255,0.06)';
+      g.fillRect(0, 0, 64, 32);
+      noise(g, 64, 64, 300, 0.1, false);
+    }),
+  );
+  lawn.wrapS = lawn.wrapT = THREE.RepeatWrapping;
+  const lawnMat = new THREE.MeshLambertMaterial({ map: lawn });
+  scene.add(new THREE.Mesh(ribbon(THREE, t, ROAD_HALF, EDGE + 0.4, 0.02, 8), lawnMat));
+  scene.add(new THREE.Mesh(ribbon(THREE, t, -EDGE - 0.4, -ROAD_HALF, 0.02, 8), lawnMat));
+
+  // the road, curbs, walls and the start
+  const asphalt = texture(
+    THREE,
+    canvas(256, 256, (g) => {
+      g.fillStyle = '#4a4a52';
+      g.fillRect(0, 0, 256, 256);
+      noise(g, 256, 256, 2200, 0.07);
+      noise(g, 256, 256, 1200, 0.12, false);
+      g.fillStyle = 'rgba(255,255,255,0.08)';
+      g.fillRect(0, 0, 6, 256);
+      g.fillRect(250, 0, 6, 256);
+    }),
+  );
+  asphalt.wrapS = asphalt.wrapT = THREE.RepeatWrapping;
+  const roadLen = t.length / Math.round(t.length / 12);
+  scene.add(new THREE.Mesh(ribbon(THREE, t, -ROAD_HALF, ROAD_HALF, 0.04, roadLen), new THREE.MeshLambertMaterial({ map: asphalt })));
+  const curbTex = texture(
+    THREE,
+    canvas(16, 64, (g) => {
+      g.fillStyle = look.curb[0];
+      g.fillRect(0, 0, 16, 64);
+      g.fillStyle = look.curb[1];
+      g.fillRect(0, 0, 16, 32);
+    }),
+  );
+  curbTex.wrapT = THREE.RepeatWrapping;
+  const curbLen = t.length / Math.round(t.length / 3);
+  const curbMat = new THREE.MeshLambertMaterial({ map: curbTex });
+  scene.add(new THREE.Mesh(ribbon(THREE, t, ROAD_HALF, ROAD_HALF + CURB, 0.07, curbLen), curbMat));
+  scene.add(new THREE.Mesh(ribbon(THREE, t, -ROAD_HALF - CURB, -ROAD_HALF, 0.07, curbLen), curbMat));
+  // sandstone walls with a cardinal red band, so the edge of the course always reads
+  const wallTex = texture(
+    THREE,
+    canvas(64, 32, (g) => {
+      g.fillStyle = look.wall;
+      g.fillRect(0, 0, 64, 32);
+      g.fillStyle = 'rgba(120,90,50,0.35)';
+      g.fillRect(0, 21, 64, 1);
+      g.fillRect(31, 22, 1, 10);
+      g.fillRect(0, 11, 64, 1);
+      g.fillStyle = look.band;
+      g.fillRect(0, 0, 64, 8);
+    }),
+  );
+  wallTex.wrapS = THREE.RepeatWrapping;
+  const wallMat = new THREE.MeshLambertMaterial({ map: wallTex, side: THREE.DoubleSide });
+  const capMat = new THREE.MeshLambertMaterial({ color: look.band });
+  for (const side of [-1, 1]) {
+    scene.add(new THREE.Mesh(fence(THREE, t, side * EDGE, 1.25, 3), wallMat));
+    scene.add(new THREE.Mesh(ribbon(THREE, t, side * EDGE - 0.3, side * EDGE + 0.3, 1.25, 4), capMat));
+  }
+  const checker = texture(
+    THREE,
+    canvas(128, 32, (g) => {
+      for (let i = 0; i < 16; i++) for (let j = 0; j < 4; j++) {
+        g.fillStyle = (i + j) % 2 ? '#111' : '#fafafa';
+        g.fillRect(i * 8, j * 8, 8, 8);
+      }
+    }),
+  );
+  scene.add(new THREE.Mesh(ribbon(THREE, t, -ROAD_HALF, ROAD_HALF, 0.09, 2.4, t.length - 1.2, t.length + 1.2), new THREE.MeshBasicMaterial({ map: checker })));
+  const lineMat = new THREE.MeshBasicMaterial({ color: 0xf2f2f2 });
+  for (let slot = 0; slot < r.karts.length; slot++) {
+    const g = gridSpot(t, slot);
+    const holder = new THREE.Group();
+    holder.position.set(g.x + Math.sin(g.h) * 1.9, 0.08, g.z + Math.cos(g.h) * 1.9);
+    holder.rotation.y = g.h;
+    const mark = new THREE.Mesh(geo.plane, lineMat);
+    mark.rotation.x = -Math.PI / 2;
+    mark.scale.set(2.4, 0.25, 1);
+    holder.add(mark);
+    scene.add(holder);
+  }
+  // the start gantry with its banner
+  {
+    const p = pointAt(t, 0);
+    const h = headingOf(p.tx, p.tz);
+    const gantry = new THREE.Group();
+    gantry.position.set(p.x, 0, p.z);
+    gantry.rotation.y = h;
+    const post = new THREE.MeshLambertMaterial({ color: look.band });
+    for (const side of [-1, 1]) {
+      const m = new THREE.Mesh(geo.box, post);
+      m.scale.set(0.7, 7.2, 0.7);
+      m.position.set(side * (EDGE + 0.6), 3.6, 0);
+      gantry.add(m);
+    }
+    const banner = texture(
+      THREE,
+      canvas(512, 64, (g) => {
+        g.fillStyle = look.band;
+        g.fillRect(0, 0, 512, 64);
+        for (let i = 0; i < 64; i++) {
+          g.fillStyle = i % 2 ? '#111' : '#fff';
+          g.fillRect(i * 8, 0, 8, 8);
+          g.fillStyle = i % 2 ? '#fff' : '#111';
+          g.fillRect(i * 8, 56, 8, 8);
+        }
+        g.fillStyle = '#fff';
+        g.font = 'bold 36px Inter, Arial, sans-serif';
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText(look.banner, 256, 33);
+      }),
+    );
+    const beam = new THREE.Mesh(geo.box, [post, post, post, post, new THREE.MeshLambertMaterial({ map: banner }), new THREE.MeshLambertMaterial({ map: banner })]);
+    beam.scale.set(EDGE * 2 + 1.8, 1.6, 0.5);
+    beam.position.y = 6.6;
+    gantry.add(beam);
+    scene.add(gantry);
+  }
+
+  // dash panels
+  const dashTex = texture(
+    THREE,
+    canvas(64, 128, (g) => {
+      g.fillStyle = '#ff8a1f';
+      g.fillRect(0, 0, 64, 128);
+      g.fillStyle = '#ffe14d';
+      for (let i = 0; i < 2; i++) {
+        const y = i * 64;
+        g.beginPath();
+        g.moveTo(6, y + 10);
+        g.lineTo(32, y + 40);
+        g.lineTo(58, y + 10);
+        g.lineTo(58, y + 26);
+        g.lineTo(32, y + 56);
+        g.lineTo(6, y + 26);
+        g.closePath();
+        g.fill();
+      }
+    }),
+    [1, 2],
+  );
+  const dashMat = new THREE.MeshBasicMaterial({ map: dashTex });
+  for (const d of r.dashes) {
+    const g = new THREE.Group();
+    g.position.set(d.x, 0.09, d.z);
+    g.rotation.y = d.h;
+    const pad = new THREE.Mesh(geo.plane, dashMat);
+    pad.rotation.x = -Math.PI / 2;
+    pad.scale.set(2.2, 4.4, 1);
+    g.add(pad);
+    scene.add(g);
+  }
+
+  // jump ramps: a striped wedge rising to the lip
+  {
+    const wedge = new THREE.BufferGeometry();
+    const L = RAMP_LEN;
+    const H = RAMP_H;
+    // x across (-0.5..0.5, scaled to the ramp width), z along (-L at the foot, 0 at the lip)
+    const v = [
+      -0.5, 0, -L, 0.5, 0, -L, 0.5, H, 0, -0.5, 0, -L, 0.5, H, 0, -0.5, H, 0,
+      -0.5, 0, 0, -0.5, H, 0, 0.5, H, 0, -0.5, 0, 0, 0.5, H, 0, 0.5, 0, 0,
+      -0.5, 0, -L, -0.5, H, 0, -0.5, 0, 0, 0.5, 0, -L, 0.5, 0, 0, 0.5, H, 0,
+    ];
+    const uv = [0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0.1, 1, 0.1, 0, 0, 1, 0.1, 1, 0, 0, 0, 1, 0.1, 1, 0, 0, 0, 1, 0, 1, 0.1];
+    wedge.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+    wedge.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    wedge.computeVertexNormals();
+    const rampTex = texture(
+      THREE,
+      canvas(64, 64, (g) => {
+        g.fillStyle = '#8c1515';
+        g.fillRect(0, 0, 64, 64);
+        g.fillStyle = '#fff3d6';
+        for (let i = 0; i < 4; i++) g.fillRect(0, i * 16, 64, 6);
+      }),
+    );
+    const rampMat = new THREE.MeshLambertMaterial({ map: rampTex, side: THREE.DoubleSide });
+    for (const ramp of r.ramps) {
+      const m = new THREE.Mesh(wedge, rampMat);
+      m.position.set(ramp.x, 0.04, ramp.z);
+      m.rotation.y = ramp.h;
+      m.scale.set(ramp.w, 1, 1);
+      scene.add(m);
+    }
+  }
+
+  // chevron boards on the outside of the tight bends
+  const chevron = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = '#c62828';
+      g.fillRect(0, 0, 64, 64);
+      g.fillStyle = '#fff';
+      g.beginPath();
+      g.moveTo(18, 8);
+      g.lineTo(46, 32);
+      g.lineTo(18, 56);
+      g.lineTo(26, 32);
+      g.closePath();
+      g.fill();
+    }),
+  );
+  const chevronMat = new THREE.MeshLambertMaterial({ map: chevron, side: THREE.DoubleSide });
+  for (let s = 0; s < t.length; s += 9) {
+    const c = t.curv[Math.floor(s / t.step) % t.n];
+    if (Math.abs(c) < 0.03) continue;
+    const p = pointAt(t, s, -Math.sign(c) * (EDGE - 0.4));
+    const sign = new THREE.Mesh(geo.plane, chevronMat);
+    sign.scale.set(1.6, 1.6, 1);
+    sign.position.set(p.x, 1.9, p.z);
+    // face the karts coming at it; the arrow points the way the road turns
+    sign.rotation.y = headingOf(p.tx, p.tz) + Math.PI;
+    if (c < 0) sign.scale.x = -1.6;
+    scene.add(sign);
+  }
+
+  // the course's own scenery
+  const rand = scatter(7);
+  const clear = (x: number, z: number, margin: number) => Math.abs(locate(t, x, z).d) > EDGE + margin;
+  const dummy = new THREE.Object3D();
+  SCENERY[r.course]({ THREE, scene, t, r, geo, mats, rand, clear, dummy });
+
 
   // item boxes and coins
   const boxTex = texture(
@@ -1164,14 +1469,13 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       for (const f of fx) (f.mesh.material as T.Material).dispose();
       coinGeo.dispose();
       for (const m of [partMat.smoke, partMat.dust, partMat.white, ...partMat.spark, ...partMat.rainbow]) m.dispose();
+      // instanced trees, reeds and coins hold their own buffers too
+      scene.traverse((o) => {
+        if ((o as T.InstancedMesh).isInstancedMesh) (o as T.InstancedMesh).dispose();
+      });
       disposeTree(scene);
       for (const g of Object.values(geo)) g.dispose();
       for (const m of Object.values(mats)) m.dispose();
-      trunks.dispose();
-      crowns.dispose();
-      oakTrunk.dispose();
-      oakTop.dispose();
-      coins.dispose();
       gl.dispose();
     },
   };
