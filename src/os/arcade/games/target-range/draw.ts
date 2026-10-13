@@ -3,8 +3,8 @@ import { patternPoint, pendulumPoint, PENDULUM, RICOCHET, waveAt, type Pattern, 
 export type Feedback = Point & { age: number; shot: Shot };
 const colors = ['#cb6856', '#469c93', '#c79a4a'];
 
-/** Dashed tracks that show where this wave's targets travel. Pop Up has none: its targets jump. */
-function guide(c: CanvasRenderingContext2D, w: number, h: number, pattern: Pattern) {
+/** The dashed track one slot's target travels. Pop Up, Darts and Hornets have none: there is no track to learn. */
+function guide(c: CanvasRenderingContext2D, w: number, h: number, pattern: Pattern, slot: number) {
   const trace = (point: (u: number) => Point, from: number, to: number, steps: number) => {
     for (let i = 0; i <= steps; i++) {
       const p = point(from + ((to - from) * i) / steps);
@@ -12,29 +12,29 @@ function guide(c: CanvasRenderingContext2D, w: number, h: number, pattern: Patte
       else c.lineTo(p.x * w, p.y * h);
     }
   };
+  const line = (x1: number, y1: number, x2: number, y2: number) => {
+    c.moveTo(w * x1, h * y1);
+    c.lineTo(w * x2, h * y2);
+  };
   const ring = (rx: number, ry: number) => {
     c.moveTo(w * (0.5 + rx), h / 2);
     c.ellipse(w / 2, h / 2, w * rx, h * ry, 0, 0, Math.PI * 2);
   };
-  if (pattern === 'rails') {
-    for (let i = 0; i < 3; i++) {
-      c.moveTo(w * 0.17, h * (0.22 + i * 0.28));
-      c.lineTo(w * 0.83, h * (0.22 + i * 0.28));
-    }
-  } else if (pattern === 'bounce') {
-    for (let i = 0; i < 3; i++) {
-      c.moveTo(w * (0.2 + i * 0.3), h * 0.17);
-      c.lineTo(w * (0.2 + i * 0.3), h * 0.83);
-    }
-  } else if (pattern === 'carousel') ring(0.3, 0.29);
-  else if (pattern === 'spin') {
-    ring(0.3, 0.29);
-    ring(0.14, 0.13);
-  } else if (pattern === 'eight') trace((u) => patternPoint('eight', 0, u), 0, Math.PI * 2, 100);
-  else if (pattern === 'pretzel') trace((u) => patternPoint('pretzel', 0, u), 0, Math.PI * 4, 200);
-  else if (pattern === 'pendulum') {
-    for (let slot = 0; slot < 3; slot++) trace((a) => pendulumPoint(slot, a), -PENDULUM.swing, PENDULUM.swing, 40);
-  } else if (pattern === 'ricochet') c.rect(w * RICOCHET.left, h * RICOCHET.top, w * RICOCHET.width, h * RICOCHET.height);
+  switch (pattern) {
+    case 'rails': return line(0.17, 0.22 + slot * 0.28, 0.83, 0.22 + slot * 0.28);
+    case 'bounce': return line(0.2 + slot * 0.3, 0.17, 0.2 + slot * 0.3, 0.83);
+    case 'trampoline': return line(0.17, 0.78, 0.83, 0.78);
+    case 'shell': return line(0.17, 0.5, 0.83, 0.5);
+    case 'carousel':
+    case 'whirlpool': return ring(0.3, 0.29);
+    case 'spin': return slot === 1 ? ring(0.14, 0.13) : ring(0.3, 0.29);
+    case 'moons': return ring(0.15, 0.14);
+    case 'eight':
+    case 'bloom': return trace((u) => patternPoint(pattern, 0, u), 0, Math.PI * 2, 120);
+    case 'pretzel': return trace((u) => patternPoint('pretzel', 0, u), 0, Math.PI * 4, 200);
+    case 'pendulum': return trace((a) => pendulumPoint(slot, a), -PENDULUM.swing, PENDULUM.swing, 40);
+    case 'ricochet': return c.rect(w * RICOCHET.left, h * RICOCHET.top, w * RICOCHET.width, h * RICOCHET.height);
+  }
 }
 
 function circle(c: CanvasRenderingContext2D, x: number, y: number, r: number, color: string) {
@@ -77,15 +77,16 @@ export function drawRange(
   c.lineWidth = 2;
   c.setLineDash([3, 9]);
   c.beginPath();
-  guide(c, w, h, wave.pattern);
+  wave.patterns.forEach((pattern, slot) => guide(c, w, h, pattern, slot));
   c.stroke();
   c.restore();
 
-  if (wave.pattern === 'pendulum') {
+  if (wave.patterns.includes('pendulum')) {
     c.strokeStyle = '#8aa79c';
     c.lineWidth = 1.5;
     c.beginPath();
-    for (const { x, y } of targets) {
+    for (const { x, y, id } of targets) {
+      if (wave.patterns[id] !== 'pendulum') continue;
       c.moveTo(w / 2, h * PENDULUM.pivot);
       c.lineTo(x, y);
     }
@@ -169,9 +170,10 @@ export function drawRange(
     c.textAlign = 'center';
     c.fillStyle = '#f3e9d2';
     c.font = '600 22px -apple-system, system-ui, sans-serif';
-    c.fillText(g.phase === 'intro' ? wave.name : 'Wave Cleared', w / 2, h / 2 - 6);
+    c.fillText(g.phase === 'intro' ? wave.name : 'Wave Cleared', w / 2, h / 2 - 6, panelW - 24);
     c.fillStyle = '#c8d7cb';
     c.font = '13px -apple-system, system-ui, sans-serif';
-    c.fillText(g.phase === 'intro' ? wave.hint : `Time bonus +${g.bonus}`, w / 2, h / 2 + 20);
+    // Mayhem hints name all three patterns, so squeeze rather than spill past the panel.
+    c.fillText(g.phase === 'intro' ? wave.hint : `Time bonus +${g.bonus}`, w / 2, h / 2 + 20, panelW - 24);
   }
 }
