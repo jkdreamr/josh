@@ -46,10 +46,3 @@ export const hasGame = (id: string) => metaById.has(id);
 export const loaders: Record<string, LazyExoticComponent<ComponentType<GameProps>>> = Object.fromEntries(
   [...loaderById].map(([id, load]) => [id, lazy(load)]),
 );
-
-/** Swap in a fresh lazy component so a game that failed to download can be retried. */
-export function reloadGame(id: string) {
-  const load = loaderById.get(id);
-  if (load) loaders[id] = lazy(load);
-  return loaders[id];
-}

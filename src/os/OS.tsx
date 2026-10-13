@@ -4,6 +4,8 @@ import Desktop from './Desktop';
 import Handheld from './Handheld';
 import Hello, { HELLO_MS, HELLO_WRITTEN } from './Hello';
 import type { Laptop3DHandle, Laptop3DProps } from './Laptop3D';
+import { apps } from './registry';
+import { takeResume, trackScreen, type Resume } from './reload';
 import { LidStickers, PalmStickers } from './Stickers';
 import type { OSApi } from './types';
 import { keyRows } from './keys';
@@ -78,6 +80,7 @@ export default function OS() {
   const [ready, setReady] = useState(false);
   const beatLink = useRef<string | null>(null);
   const roomInvite = useRef<{ game: string; code: string } | null>(null);
+  const resume = useRef<Resume | null>(null);
   const use3d = device === 'laptop' && mode === '3d';
   const use3dRef = useRef(use3d);
   use3dRef.current = use3d;
@@ -94,8 +97,14 @@ export default function OS() {
   const fsRef = useRef(fs);
   fsRef.current = fs;
 
-  // The page load is a visit, and so is every restart or wake after it.
-  useEffect(() => watchVisits(), []);
+  // The page load is a visit, and so is every restart or wake after it. A reload that picked up a new deploy
+  // mid-visit (see reload.ts) is the same visit, and comes straight back to the app it was opening.
+  useEffect(() => {
+    const back = takeResume();
+    resume.current = back && apps[back.app] ? back : null;
+    watchVisits(!resume.current);
+    trackScreen(() => ({ fullscreen: fsRef.current }));
+  }, []);
 
   useEffect(() => {
     beatLink.current = new URLSearchParams(window.location.search).get('beat');
@@ -195,7 +204,12 @@ export default function OS() {
     if (device === 'laptop' && (mode === 'pending' || (mode === '3d' && !ready))) return;
     booted.current = true;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduced) {
+    // Coming back from a reload skips the intro. Full screen waits for the lid, since it zooms from the open screen.
+    if (resume.current && (reduced || !resume.current.fullscreen)) {
+      clearTimers();
+      setPhase('on');
+    } else if (resume.current) boot(true);
+    else if (reduced) {
       clearTimers();
       greet(0);
     } else boot(false);
@@ -335,6 +349,16 @@ export default function OS() {
       return () => clearTimeout(t);
     }
   }, [phase, device, fs, setFullscreen]);
+
+  // Back from a reload onto a new deploy: full screen again if it was, then reopen what was being opened.
+  useEffect(() => {
+    if (phase !== 'on' || !mounted || !resume.current) return;
+    const { app, args, fullscreen } = resume.current;
+    resume.current = null;
+    const reopen = () => apiRef.current?.open(app, args);
+    const timer = window.setTimeout(() => (fullscreen ? setFullscreen(true).then(reopen, reopen) : reopen()), 0);
+    return () => window.clearTimeout(timer);
+  }, [phase, mounted, setFullscreen]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

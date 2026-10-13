@@ -3,6 +3,7 @@ import { BLACK, groupStones, newGame, pass, play, resign, score, undo, WHITE, ty
 import { newOmok, omokAiMove, playOmok, undoOmok, type OmokState } from '../games/omok';
 import { useOS, type AppProps } from '../types';
 import { countPlay } from '../stats';
+import { reloadInto, siteReachable } from '../reload';
 import { getAppGame } from '../arcade/apps';
 import { boardFor } from '../arcade/kit/leaderboard';
 import { AppBoard, onlineAvailable, RoomPanel, useAppRoom, useInvite } from './online-room';
@@ -136,6 +137,12 @@ export default function Baduk({ args }: AppProps) {
       });
       setDeadSet(dead);
       setAnalysisReady(true);
+    };
+    // A worker file gone after a deploy fires a plain error event (a crash inside it is an ErrorEvent), and the
+    // computer would never move. Reload onto the new deploy and come back to this board.
+    worker.onerror = (event) => {
+      if (event instanceof ErrorEvent) return;
+      void siteReachable().then((ok) => ok && reloadInto({ app: 'baduk', args: { game: gameModeRef.current, room: args.room } }));
     };
     return () => {
       worker.terminate();
