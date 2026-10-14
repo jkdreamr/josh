@@ -7,6 +7,7 @@ import { isCrit } from './combat.ts';
 import { REACH_HIT, TPS, applyAction, eyeY, heldItem, lookDir, nearNpc, placeAllowed, type Game, type Player } from './game.ts';
 import { ITEM_DEFS, OFFERS, blockFor, buy as dryBuy, priceOf, type Inventory, type Item } from './items.ts';
 import { BUILD_MAX, inBox } from './map.ts';
+import { wrapAngle } from './interp.ts';
 import { HEIGHT, WIDTH, bodyOverlapsCell } from './physics.ts';
 import { canBreak, clearLine, rayBox, raycast } from './world.ts';
 
@@ -52,6 +53,19 @@ export type Brain = {
   rng: number;
   /** Enemies we gave up on (out of reach across the void) until this tick. */
   ignore: Map<number, number>;
+  /** Islands searched for someone to hunt and found empty, until this tick. */
+  checked: Map<number, number>;
+  /** Destinations we could not get to (column key), until this tick. */
+  unreach: Map<string, number>;
+  /** Stuck resets in a row without getting anywhere, and goals given up that way with no blocks to bridge out. */
+  resets: number;
+  stranded: number;
+  /** Stranded below the island with nothing to build with: walk off and respawn like a person would. */
+  leap: boolean;
+  /** Bed defense: checks in a row without getting closer to the next cell. */
+  defendStall: number;
+  /** Bridge blocks refused in a row (someone standing there, a protected spot). */
+  refused: number;
 };
 
 const skillOf = (g: Game) => SKILLS[g.level] ?? SKILLS.normal;
@@ -93,14 +107,29 @@ function brainOf(g: Game, p: Player): Brain {
     think: p.id % 10,
     rng: (p.id * 2654435761 + g.seed) >>> 0 || 1,
     ignore: new Map(),
+    checked: new Map(),
+    unreach: new Map(),
+    resets: 0,
+    stranded: 0,
+    leap: false,
+    defendStall: 0,
+    refused: 0,
   };
   p.brain = b;
   return b;
 }
 
+/**
+ * Path planning runs inside the frame, so it gets a budget: about one long plan a tick between all the bots. A bot
+ * that finds it spent keeps its old path (or waits) and plans next tick.
+ */
+const PLAN_BUDGET = 9000;
+let planBudget = PLAN_BUDGET;
+
 /** Every bot decides its input for this tick (the rules then move it like anyone else). */
 export function thinkBots(g: Game) {
   if (g.over) return;
+  planBudget = PLAN_BUDGET;
   for (const p of g.players) {
     if (p.ctrl !== 'bot') continue;
     if (!p.alive) {
@@ -112,6 +141,10 @@ export function thinkBots(g: Game) {
         b.goal = 'shop';
         b.goalUntil = 0;
         b.defense = Math.min(b.defense, 1);
+        b.leap = false;
+        b.resets = 0;
+        b.stranded = 0;
+        b.unreach.clear();
       }
       continue;
     }
@@ -136,6 +169,8 @@ function visibleEnemies(g: Game, p: Player): Player[] {
     const d = Math.hypot(dx, dy, dz);
     if (d > 40) continue;
     if (o.fx.invis > 0 && d > 2.5) continue;
+    // It's a Trap! blinds: only what is right in front of you
+    if (p.fx.blind > 0 && d > 4) continue;
     const ahead = (dx * fx + dz * fz) / Math.max(0.01, Math.hypot(dx, dz));
     if (d > 5 && ahead < -0.2) continue;
     if (!clearLine(g.world, p.body.x, ey, p.body.z, o.body.x, o.body.y + 1.4, o.body.z)) continue;
@@ -204,7 +239,14 @@ function think(g: Game, p: Player, b: Brain) {
         b.seenSince = g.tick;
       }
       b.lastSeen = { x: best.body.x, y: best.body.y, z: best.body.z, t: g.tick };
-    } else if (b.enemy >= 0 && (!b.lastSeen || g.tick - b.lastSeen.t > TPS * 4)) b.enemy = -1;
+    } else if (b.enemy >= 0 && (!b.lastSeen || g.tick - b.lastSeen.t > TPS * 4 || p.fx.blind > 0)) b.enemy = -1;
+  }
+  // stranded with nothing to build with: off the edge, the way out a person would take
+  if (b.leap) {
+    const home = g.info.teams[p.team];
+    faceToward(p, p.body.x + (p.body.x - home.cx) * 4, p.body.y, p.body.z + (p.body.z - home.cz) * 4, sk.turn);
+    inp.forward = 1;
+    return;
   }
   const foe = b.enemy >= 0 ? g.players[b.enemy] : null;
   if (foe && foe.alive && g.tick - b.seenSince >= sk.reaction) {
@@ -222,49 +264,81 @@ function chooseGoal(g: Game, p: Player, b: Brain, sk: Skill) {
   const blocks = blockCount(p.inv);
   const team = g.teams[p.team];
   const secs = t / TPS;
-  const set = (goal: GoalKind, dest: [number, number, number] | null, ticks: number, victim = -1) => {
+  /** Takes a goal unless we just failed to get there. */
+  const set = (goal: GoalKind, dest: [number, number, number], ticks: number, victim = -1): boolean => {
+    if ((b.unreach.get(colKey(dest[0], dest[2])) ?? 0) > t) return false;
     b.goal = goal;
     b.dest = dest;
     b.goalUntil = t + ticks;
     b.victim = victim;
     b.path = [];
     b.pathFor = '';
+    return true;
   };
   // something worth buying and enough to pay for it
   const want = nextPurchase(g, p);
-  if (want) return set('shop', [site.shop[0], site.shop[1], site.shop[2]], TPS * 20);
-  if (p.inv.wallet.diamond >= 1 && nextUpgrade(g, p)) return set('upgrades', [site.upgrades[0], site.upgrades[1], site.upgrades[2]], TPS * 20);
-  if (team.bed && b.defense < 2 && blocks >= 10 && (b.defense === 0 || hasItem(p.inv, 'endstone'))) return set('defend', [site.bedFoot[0] + 0.5, site.bedFoot[1], site.bedFoot[2] + 0.5], TPS * 25);
-  if (blocks < 12 || secs < 25) return set('collect', [site.forge[0], site.forge[1], site.forge[2]], TPS * (8 + rnd(b) * 8));
+  if (want && set('shop', [site.shop[0], site.shop[1], site.shop[2]], TPS * 20)) return;
+  if (p.inv.wallet.diamond >= 1 && nextUpgrade(g, p) && set('upgrades', [site.upgrades[0], site.upgrades[1], site.upgrades[2]], TPS * 20)) return;
+  if (team.bed && b.defense < 2 && blocks >= 10 && (b.defense === 0 || hasItem(p.inv, 'endstone')) && set('defend', [site.bedFoot[0] + 0.5, site.bedFoot[1], site.bedFoot[2] + 0.5], TPS * 25)) {
+    b.defendStall = 0;
+    return;
+  }
+  if ((blocks < 12 || secs < 25) && set('collect', [site.forge[0], site.forge[1], site.forge[2]], TPS * (8 + rnd(b) * 8))) return;
   // out on an errand
   const rushReady = secs > sk.rushAt * (b.role === 'rusher' ? 1 : b.role === 'collector' ? 1.6 : 2.4);
   if (rushReady && blocks >= 20) {
     const victim = rushTarget(g, p, b);
     if (victim >= 0) {
       const vs = g.info.teams[victim];
-      return set('rush', [vs.bedFoot[0] + 0.5, vs.bedFoot[1], vs.bedFoot[2] + 0.5], TPS * 70, victim);
+      if (set('rush', [vs.bedFoot[0] + 0.5, vs.bedFoot[1], vs.bedFoot[2] + 0.5], TPS * 70, victim)) return;
     }
   }
-  // no beds left to take: go find whoever is still standing (the scoreboard says which islands)
+  // no beds left to take: go find whoever is still standing, wherever they are
   const anyBed = g.teams.some((t) => t.id !== p.team && t.used && t.bed);
   if (!anyBed && blocks >= 16 && (b.role !== 'defender' || !team.bed || secs > 300)) {
     const prey = huntTarget(g, p, b);
     if (prey >= 0) {
+      const o = nearestOf(g, p, prey);
       const vs = g.info.teams[prey];
-      return set('hunt', [vs.spawn[0], vs.spawn[1], vs.spawn[2]], TPS * 60, prey);
+      if (set('hunt', o ? [o.body.x, o.body.y, o.body.z] : [vs.spawn[0], vs.spawn[1], vs.spawn[2]], TPS * 60, prey)) return;
     }
   }
   if (b.role !== 'defender' && blocks >= 16 && secs > 40) {
     const r = rnd(b);
     if (r < 0.55) {
       const gen = nearestGen(g, p, 'diamond');
-      if (gen) return set('diamonds', [gen.x, gen.y, gen.z], TPS * 35);
+      if (gen && set('diamonds', [gen.x, gen.y, gen.z], TPS * 35)) return;
     } else if (secs > 120 && r < 0.85) {
       const gen = nearestGen(g, p, 'emerald');
-      if (gen) return set('mid', [gen.x, gen.y, gen.z], TPS * 35);
+      if (gen && set('mid', [gen.x, gen.y, gen.z], TPS * 35)) return;
     }
   }
-  return set('collect', [site.forge[0], site.forge[1], site.forge[2]], TPS * 10);
+  if (set('collect', [site.forge[0], site.forge[1], site.forge[2]], TPS * 10)) return;
+  // home is out of reach too: patrol the middle
+  const mid = nearestGen(g, p, 'emerald');
+  b.goal = 'mid';
+  b.dest = mid ? [mid.x, mid.y, mid.z] : [site.forge[0], site.forge[1], site.forge[2]];
+  b.goalUntil = t + TPS * 10;
+  b.victim = -1;
+  b.path = [];
+  b.pathFor = '';
+}
+
+const colKey = (x: number, z: number) => `${Math.floor(x)},${Math.floor(z)}`;
+
+/** The nearest living player of a team. */
+function nearestOf(g: Game, p: Player, team: number): Player | null {
+  let best: Player | null = null;
+  let bd = Infinity;
+  for (const o of g.players) {
+    if (o.team !== team || !o.alive) continue;
+    const d = Math.hypot(o.body.x - p.body.x, o.body.z - p.body.z);
+    if (d < bd) {
+      bd = d;
+      best = o;
+    }
+  }
+  return best;
 }
 
 function nearestGen(g: Game, p: Player, kind: 'diamond' | 'emerald') {
@@ -298,21 +372,25 @@ function rushTarget(g: Game, p: Player, b: Brain): number {
   return best;
 }
 
-/** The nearest island with someone alive on it. */
+/** The team with someone alive nearest to us right now (not where their island is), skipping ones we just lost. */
 function huntTarget(g: Game, p: Player, b: Brain): number {
-  const home = g.info.teams[p.team];
   let best = -1;
   let bd = Infinity;
-  for (let t = 0; t < g.teams.length; t++) {
-    if (t === p.team || !g.teams[t].used || g.teams[t].out) continue;
-    if (!g.players.some((o) => o.team === t && o.alive)) continue;
-    const s = g.info.teams[t];
-    const d = Math.hypot(s.cx - home.cx, s.cz - home.cz) + rnd(b) * 12;
-    if (d < bd) {
-      bd = d;
-      best = t;
+  const pick = (skipChecked: boolean) => {
+    for (let t = 0; t < g.teams.length; t++) {
+      if (t === p.team || !g.teams[t].used || g.teams[t].out) continue;
+      if (skipChecked && (b.checked.get(t) ?? 0) > g.tick) continue;
+      const o = nearestOf(g, p, t);
+      if (!o) continue;
+      const d = Math.hypot(o.body.x - p.body.x, o.body.z - p.body.z) + rnd(b) * 12;
+      if (d < bd) {
+        bd = d;
+        best = t;
+      }
     }
-  }
+  };
+  pick(true);
+  if (best < 0) pick(false);
   return best;
 }
 
@@ -460,9 +538,21 @@ function pursueGoal(g: Game, p: Player, b: Brain, sk: Skill) {
         return;
       }
       break;
-    case 'hunt':
-      if (d < 3 || g.teams[b.victim]?.out) b.goalUntil = g.tick;
+    case 'hunt': {
+      const prey = nearestOf(g, p, b.victim);
+      if (!prey || g.teams[b.victim]?.out) {
+        b.goalUntil = g.tick;
+        break;
+      }
+      // follow them, not their island: refresh where they are every few seconds
+      if (g.tick % (TPS * 3) === p.id % (TPS * 3)) b.dest = [prey.body.x, prey.body.y, prey.body.z];
+      if (d < 3) {
+        // got there and they are not here (out of sight, or across the void): look elsewhere for a while
+        b.checked.set(b.victim, g.tick + TPS * 30);
+        b.goalUntil = g.tick;
+      }
       break;
+    }
     case 'diamonds':
     case 'mid':
       if (d < 1.0) {
@@ -511,10 +601,8 @@ function faceToward(p: Player, x: number, y: number, z: number, maxDeg: number) 
 }
 function turn(p: Player, yaw: number, pitch: number, maxDeg: number) {
   const m = (maxDeg * Math.PI) / 180;
-  let dy = yaw - p.body.yaw;
-  while (dy > Math.PI) dy -= Math.PI * 2;
-  while (dy < -Math.PI) dy += Math.PI * 2;
-  p.body.yaw += Math.max(-m, Math.min(m, dy));
+  const dy = wrapAngle(yaw - p.body.yaw);
+  p.body.yaw = wrapAngle(p.body.yaw + Math.max(-m, Math.min(m, dy)));
   p.body.pitch += Math.max(-m, Math.min(m, pitch - p.body.pitch));
   p.body.pitch = Math.max(-1.55, Math.min(1.55, p.body.pitch));
 }
@@ -710,7 +798,18 @@ function defendBed(g: Game, p: Player, b: Brain, sk: Skill): boolean {
   const reach = (c: [number, number, number]) => Math.hypot(c[0] + 0.5 - p.body.x, c[1] + 0.5 - ey, c[2] + 0.5 - p.body.z);
   todo.sort((a, c) => reach(a) - reach(c));
   const cell = todo[0];
-  if (reach(cell) > 4.3) {
+  if (reach(cell) > 5) {
+    // walking at it and not getting anywhere (our own wall in the way): call this layer done
+    if (g.tick % 20 === 0) {
+      const moved = Math.hypot(p.body.x - b.lastX, p.body.z - b.lastZ);
+      b.lastX = p.body.x;
+      b.lastZ = p.body.z;
+      b.defendStall = moved < 0.3 ? b.defendStall + 1 : 0;
+      if (b.defendStall >= 3) {
+        b.defendStall = 0;
+        return false;
+      }
+    }
     // walk to a spot just outside the ring next to it
     let ox = cell[0] + 0.5 - bcx;
     let oz = cell[2] + 0.5 - bcz;
@@ -728,7 +827,7 @@ function defendBed(g: Game, p: Player, b: Brain, sk: Skill): boolean {
   faceToward(p, cell[0] + 0.5, cell[1] + 0.5, cell[2] + 0.5, sk.turn * 1.5);
   if (b.placeIn > 0) return true;
   b.placeIn = sk.bridge;
-  applyAction(g, p, { a: 'place', x: cell[0], y: cell[1], z: cell[2], slot: p.sel, face: 2, seq: 0 });
+  if (applyAction(g, p, { a: 'place', x: cell[0], y: cell[1], z: cell[2], slot: p.sel, face: 2, seq: 0 })) b.defendStall = 0;
   p.swings++;
   return true;
 }
@@ -758,6 +857,12 @@ function attackBed(g: Game, p: Player, b: Brain, sk: Skill): boolean {
   return mine(g, p, b, sk, best.x, best.y, best.z);
 }
 
+/** Ticks a bot takes to dig a block, the same as a person: the tool, Maniac Miner, the ground and Miner Fatigue. */
+export function botDigTicks(g: Game, p: Player, id: number, kind: 'pick' | 'axe' | 'shears' | 'none'): number {
+  const need = breakTicks(id, kind, { pick: p.inv.pick, axe: p.inv.axe, shears: p.inv.shears }, g.teams[p.team].ups.haste, p.body.onGround);
+  return Math.max(1, p.fx.fatigue > 0 ? need * 3.3 : need);
+}
+
 /** Digs a block with the right tool at Minecraft speed. Returns true while busy. */
 function mine(g: Game, p: Player, b: Brain, sk: Skill, x: number, y: number, z: number): boolean {
   const id = g.world.get(x, y, z);
@@ -775,8 +880,7 @@ function mine(g: Game, p: Player, b: Brain, sk: Skill, x: number, y: number, z: 
   const held = heldItem(p);
   const kind = held === 'pick' ? 'pick' : held === 'axe' ? 'axe' : held === 'shears' ? 'shears' : 'none';
   if (!b.dig || b.dig.x !== x || b.dig.y !== y || b.dig.z !== z) {
-    const need = breakTicks(id, kind, { pick: p.inv.pick, axe: p.inv.axe, shears: p.inv.shears }, g.teams[p.team].ups.haste, p.body.onGround);
-    b.dig = { x, y, z, t: 0, need: Math.max(1, need) };
+    b.dig = { x, y, z, t: 0, need: botDigTicks(g, p, id, kind) };
   }
   b.dig.t++;
   if (b.dig.t % 4 === 1) p.swings++;
@@ -811,6 +915,8 @@ const kindAt = new Uint8Array(N);
 const stamp = new Uint32Array(N);
 const closed = new Uint32Array(N);
 let gen = 1;
+/** Nodes the last search expanded (what it cost). */
+let lastExpanded = 0;
 
 /** A* over columns: walk on ground (stepping up one, dropping a few), bridge across air, dig through placed blocks. */
 export function findPath(g: Game, sx: number, sy: number, sz: number, tx: number, tz: number, canBridge: boolean, limit = 7000): Node[] {
@@ -935,6 +1041,7 @@ export function findPath(g: Game, sx: number, sy: number, sz: number, tx: number
       push(ni, ng + h(nx, nz));
     }
   }
+  lastExpanded = expanded;
   const path: Node[] = [];
   for (let i = best; i !== -1 && i !== start; i = from[i]) path.push({ x: i % SX, z: (i / SX) | 0, y: heightAt[i], kind: kindAt[i] as 0 | 1 | 2 });
   path.reverse();
@@ -949,11 +1056,15 @@ function noBuildAt(g: Game, x: number, y: number, z: number) {
 /** Follows (and refreshes) a path to a point: walking, bridging and digging as the path says. */
 function walkTo(g: Game, p: Player, b: Brain, x: number, y: number, z: number, sk: Skill, near: number) {
   const body = p.body;
-  const key = `${Math.floor(x)},${Math.floor(z)}`;
+  const key = colKey(x, z);
   const blocks = blockCount(p.inv);
-  if (b.pathFor !== key || g.tick - b.pathAt > TPS * 3 || !b.path.length) {
+  // fresh paths every few seconds, staggered so the bots don't all plan on the same tick, and only while the
+  // tick's planning budget lasts
+  const stale = b.pathFor !== key || g.tick - b.pathAt > TPS * 3 + ((p.id * 7) % TPS) || !b.path.length;
+  if (stale && planBudget > 0) {
     const sy = Math.round(body.y);
     b.path = findPath(g, Math.floor(body.x), sy, Math.floor(body.z), Math.floor(x), Math.floor(z), blocks > 0);
+    planBudget -= Math.max(1, lastExpanded);
     b.pathAt = g.tick;
     b.pathFor = key;
   }
@@ -969,16 +1080,23 @@ function walkTo(g: Game, p: Player, b: Brain, x: number, y: number, z: number, s
   }
   const nx = node.x + 0.5;
   const nz = node.z + 0.5;
-  // stuck: jump, then try a fresh path
+  // stuck: jump, then try a fresh path; stuck over and over, give up on getting there
   if (g.tick % 20 === 0) {
     const moved = Math.hypot(body.x - b.lastX, body.z - b.lastZ);
     b.stuck = moved < 0.3 && !b.dig ? b.stuck + 1 : 0;
+    if (moved > 1) b.resets = b.stranded = 0;
     b.lastX = body.x;
     b.lastZ = body.z;
     if (b.stuck >= 3) {
       b.path = [];
       b.stuck = 0;
       p.input.jump = true;
+      if (++b.resets >= 4) {
+        b.resets = 0;
+        b.unreach.set(key, g.tick + TPS * 30);
+        b.goalUntil = g.tick;
+        if (blocks === 0 && ++b.stranded >= 2) b.leap = true;
+      }
     }
   }
   if (node.kind === 1) {
@@ -997,9 +1115,7 @@ function walkTo(g: Game, p: Player, b: Brain, x: number, y: number, z: number, s
   b.dig = null;
   const yaw = Math.atan2(-(nx - body.x), -(nz - body.z));
   turn(p, yaw, -0.1, sk.turn * 1.2);
-  let dyaw = yaw - body.yaw;
-  while (dyaw > Math.PI) dyaw -= Math.PI * 2;
-  while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+  const dyaw = wrapAngle(yaw - body.yaw);
   p.input.forward = Math.abs(dyaw) < 0.9 ? 1 : 0.2;
   // walk carefully on narrow ground: sneak where the next step is over the void
   const nextBridge = b.path[1]?.kind === 1;
@@ -1035,8 +1151,14 @@ function bridgeTo(g: Game, p: Player, b: Brain, sk: Skill, node: Node) {
         applyAction(g, p, { a: 'place', x: node.x, y: by, z: node.z, slot: p.sel, face: 2, seq: 0 });
         p.swings++;
         b.placeIn = sk.bridge;
+        b.refused = 0;
       } else {
-        b.path = [];
+        // someone in the way or a protected spot: wait a moment, and only plan again if it keeps happening
+        b.placeIn = 6;
+        if (++b.refused >= 3) {
+          b.refused = 0;
+          b.path = [];
+        }
       }
     }
     return;

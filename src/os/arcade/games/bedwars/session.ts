@@ -2,7 +2,7 @@
 // events, positions, a score table and each guest's inventory; guests build a replica from the host's sync and
 // send their movement and actions. Lost or reordered packets are handled here: positions are newest-wins, events
 // are numbered and held until the gap fills, and a gap that lasts asks the host for a fresh sync.
-import { applyAction, createGame, type Action, type Entrant, type Ev, type Game, type Level, type Pace } from './game.ts';
+import { TPS, applyAction, createGame, type Action, type Entrant, type Ev, type Game, type Level, type Pace } from './game.ts';
 import { perTeam, teamsFor, type Mode } from './map.ts';
 import {
   EventQueue,
@@ -51,29 +51,37 @@ export type SessionOpts = {
 /** Team for the i-th human in seat order: one per island in solo, two to an island in doubles. */
 export const teamForHuman = (mode: Mode, i: number) => (mode === 'solo' ? i : Math.floor(i / 2)) % teamsFor(mode);
 
-/** The host's entrants: humans by seat, then bots on the open slots (or none). */
+/**
+ * The host's entrants: humans by seat, then bots on the open slots (or none). Without bots, humans who would all
+ * share one island get one each instead, and a lone human gets a bot to fight, so a round always has two sides.
+ */
 export function hostEntrants(mode: Mode, humans: { seat: number; name: string; skin: number }[], mySeat: number, bots: boolean, botNames: string[]): Entrant[] {
   const per = perTeam(mode);
   const n = teamsFor(mode);
   const out: Entrant[] = [];
   const used = new Array(n).fill(0);
-  humans
+  const list = humans
     .slice()
     .sort((a, b) => a.seat - b.seat)
-    .slice(0, n * per)
-    .forEach((h, i) => {
-      const team = teamForHuman(mode, i);
-      used[team]++;
-      out.push({ name: h.name, seat: h.seat, ctrl: h.seat === mySeat ? 'local' : 'remote', skin: h.skin, team });
-    });
+    .slice(0, n * per);
+  const spread = !bots && list.length <= per;
+  list.forEach((h, i) => {
+    const team = spread ? i % n : teamForHuman(mode, i);
+    used[team]++;
+    out.push({ name: h.name, seat: h.seat, ctrl: h.seat === mySeat ? 'local' : 'remote', skin: h.skin, team });
+  });
+  let k = 0;
+  const bot = (t: number) => {
+    used[t]++;
+    out.push({ name: botNames[k % botNames.length] ?? 'Bot', seat: -1, ctrl: 'bot', skin: (k * 3 + 1) % 6, team: t });
+    k++;
+  };
   if (bots) {
-    let k = 0;
-    for (let t = 0; t < n; t++)
-      while (used[t] < per) {
-        used[t]++;
-        out.push({ name: botNames[k % botNames.length], seat: -1, ctrl: 'bot', skin: (k * 3 + 1) % 6, team: t });
-        k++;
-      }
+    for (let t = 0; t < n; t++) while (used[t] < per) bot(t);
+  } else if (used.filter((c) => c > 0).length < 2) {
+    // nobody to play against: a bot takes the next island
+    const empty = used.findIndex((c) => c === 0);
+    if (empty >= 0) bot(empty);
   }
   return out;
 }
@@ -91,6 +99,8 @@ export class Session {
   private invDirty = new Set<number>();
   private ticks = 0;
   private skins = new Map<number, number>();
+  /** When each seat last got a full sync (a resync storm can't flood the host's upload). */
+  private synced = new Map<number, number>();
   // guest
   private assembler = new SyncAssembler();
   private queue = new EventQueue();
@@ -178,8 +188,8 @@ export class Session {
     this.ticks++;
     const o = this.online;
     if (o.isHost) {
-      // positions 20 times a second when direct, 10 over the relay
-      if (o.transport === 'direct' || this.ticks % 2 === 0) o.send(posPacket(o.round, g.tick, g.players.map(posEntry)), { fast: true });
+      // positions 20 times a second, direct or relayed (a relayed copy is well under a kilobyte)
+      o.send(posPacket(o.round, g.tick, g.players.map(posEntry)), { fast: true });
       if (this.ticks % 20 === 0) o.send(tablePacket(o.round, g));
       for (const id of this.invDirty) {
         const p = g.players[id];
@@ -194,7 +204,7 @@ export class Session {
       const flags = (b.sneaking ? F_SNEAK : 0) | (b.sprinting ? F_SPRINT : 0) | (b.onGround ? F_GROUND : 0);
       const r2 = (n: number) => Math.round(n * 100) / 100;
       const r3 = (n: number) => Math.round(n * 1000) / 1000;
-      if (me.alive) o.send(movePacket(o.round, me.epoch, [r2(b.x), r2(b.y), r2(b.z), r3(b.vx), r3(b.vy), r3(b.vz), r3(b.yaw), r3(b.pitch), flags], me.sel, me.swings & 0xffff, Math.min(99, me.drawing)), { fast: true });
+      if (me.alive) o.send(movePacket(o.round, me.epoch, [r2(b.x), r2(b.y), r2(b.z), r3(b.vx), r3(b.vy), r3(b.vz), r3(b.yaw), r3(b.pitch), flags], me.sel, me.swings & 0xffff, Math.min(99, me.drawing), this.ticks), { fast: true });
     }
     if (this.queue.stalled(this.clock)) {
       this.queue.clearGap();
@@ -210,13 +220,16 @@ export class Session {
     this.online.send(resyncPacket(this.online.round));
   }
 
-  /** Guests send actions; place actions are remembered until the host's inventory says it has seen them. */
+  /**
+   * Guests send actions; place actions are remembered until the host's inventory says it has seen them. The client
+   * has already taken the block off the slot, so an empty slot means the last one went down (TNT is sent first).
+   */
   send(act: Action, seq: number) {
     const o = this.online;
     if (act.a === 'place') {
       const g = this.game;
       const s = g?.players[this.me]?.inv.slots[act.slot];
-      if (s && s.item !== 'tnt') this.pending.push({ seq, slot: act.slot });
+      if (!s || s.item !== 'tnt') this.pending.push({ seq, slot: act.slot });
     }
     o.send(actPacket(o.round, seq, act));
   }
@@ -234,12 +247,19 @@ export class Session {
       if (pk.k === 'hello') {
         this.skins.set(from, pk.skin);
         const p = g?.players.find((x) => x.seat === from && x.ctrl === 'remote');
-        if (p && p.skin !== pk.skin) p.skin = pk.skin;
+        if (g && p && p.skin !== pk.skin) {
+          // everyone sees the skin they picked in the locker
+          p.skin = pk.skin;
+          g.events.push({ t: 'skin', p: p.id, skin: pk.skin });
+        }
         return;
       }
       if (!g) return;
       const p = g.players.find((x) => x.seat === from && x.ctrl === 'remote');
       if (pk.k === 'resync') {
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        if (now - (this.synced.get(from) ?? -1e9) < 1000) return;
+        this.synced.set(from, now);
         this.sendSync(from);
         return;
       }
@@ -265,6 +285,8 @@ export class Session {
         const held = p.inv.slots[p.sel]?.item ?? null;
         p.show.item = held;
         p.show.tier = held === 'pick' ? p.inv.pick : held === 'axe' ? p.inv.axe : 0;
+        // their puppet here moves on their clock, not on when packets happen to land
+        this.client?.pushRemote(p.id, pk.tk >= 0 ? pk.tk / TPS : -1);
       } else if (pk.k === 'act') {
         const ok = applyAction(g, p, pk.a, true);
         p.ack = Math.max(p.ack, pk.s);
@@ -290,11 +312,15 @@ export class Session {
         this.applyEvents(this.queue.push(pk.s, pk.e, this.clock));
         break;
       }
-      case 'pos':
+      case 'pos': {
         if (!this.game || pk.tick < this.lastPos) break;
         this.lastPos = pk.tick;
         applyPositions(this.game, pk.p, this.me);
+        // samples stamped with the host's tick, so arrival jitter never turns into stop and go
+        const c = this.client;
+        if (c) for (const e of pk.p) if (e[0] !== this.me) c.pushRemote(e[0], pk.tick / TPS);
         break;
+      }
       case 'table':
         if (this.game) applyTable(this.game, pk.tick, pk.phase, pk.gens, pk.stats);
         break;

@@ -123,7 +123,7 @@ export function itemTile(item: Item, team = 0, tier = 1): number {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Inventory: 9 hotbar slots and 9 more behind them. Resources live in a wallet.
+// Inventory: 9 hotbar slots and 9 more behind them (the inventory screen). Resources live in a wallet.
 
 export type Stack = { item: Item; n: number };
 export const SLOTS = 18;
@@ -151,29 +151,76 @@ export function freshInventory(): Inventory {
 export const countOf = (inv: Inventory, item: Item) => inv.slots.reduce((n, s) => n + (s && s.item === item ? s.n : 0), 0);
 export const hasItem = (inv: Inventory, item: Item) => inv.slots.some((s) => s?.item === item);
 
-/** Adds items, stacking first, then into the first free hotbar slot, then the back row. Returns how many did not fit. */
+/**
+ * Adds items where you can use them: topping up stacks in the hotbar, then the preferred slot, then a free hotbar
+ * slot, and only then the inventory behind it (stacks first, then free slots). Returns how many did not fit.
+ */
 export function addItem(inv: Inventory, item: Item, n: number, prefer = -1): number {
   const max = ITEM_DEFS[item].stack;
-  for (const s of inv.slots) {
-    if (n <= 0) break;
-    if (s && s.item === item && s.n < max) {
-      const k = Math.min(n, max - s.n);
-      s.n += k;
+  const top = (from: number, to: number) => {
+    for (let i = from; i < to && n > 0; i++) {
+      const s = inv.slots[i];
+      if (s && s.item === item && s.n < max) {
+        const k = Math.min(n, max - s.n);
+        s.n += k;
+        n -= k;
+      }
+    }
+  };
+  const fill = (from: number, to: number) => {
+    for (let i = from; i < to && n > 0; i++) {
+      if (inv.slots[i]) continue;
+      const k = Math.min(n, max);
+      inv.slots[i] = { item, n: k };
       n -= k;
     }
-  }
-  if (n > 0 && prefer >= 0 && prefer < SLOTS && !inv.slots[prefer]) {
-    const k = Math.min(n, max);
-    inv.slots[prefer] = { item, n: k };
-    n -= k;
-  }
-  for (let i = 0; i < SLOTS && n > 0; i++) {
-    if (inv.slots[i]) continue;
-    const k = Math.min(n, max);
-    inv.slots[i] = { item, n: k };
-    n -= k;
-  }
+  };
+  top(0, HOTBAR);
+  if (n > 0 && prefer >= 0 && prefer < SLOTS && !inv.slots[prefer]) fill(prefer, prefer + 1);
+  fill(0, HOTBAR);
+  top(HOTBAR, SLOTS);
+  fill(HOTBAR, SLOTS);
   return n;
+}
+
+/** Room for n more of an item anywhere in the inventory. */
+export const roomFor = (inv: Inventory, item: Item) => inv.slots.reduce((n, s) => n + (!s ? ITEM_DEFS[item].stack : s.item === item ? ITEM_DEFS[item].stack - s.n : 0), 0);
+
+/**
+ * Moves the stack in one slot onto another, Minecraft style: onto the same item it tops that stack up (whatever does
+ * not fit stays behind), onto anything else (or nothing) the two trade places. Returns whether anything moved.
+ */
+export function moveSlot(inv: Inventory, from: number, to: number): boolean {
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from === to || from < 0 || to < 0 || from >= SLOTS || to >= SLOTS) return false;
+  const a = inv.slots[from];
+  const b = inv.slots[to];
+  if (!a) return false;
+  if (b && b.item === a.item) {
+    const room = ITEM_DEFS[a.item].stack - b.n;
+    if (room <= 0) {
+      inv.slots[from] = b;
+      inv.slots[to] = a;
+      return true;
+    }
+    const k = Math.min(room, a.n);
+    b.n += k;
+    a.n -= k;
+    if (a.n <= 0) inv.slots[from] = null;
+    return true;
+  }
+  inv.slots[from] = b;
+  inv.slots[to] = a;
+  return true;
+}
+
+/** Shift click: a stack in the inventory goes to the hotbar (a free slot, else in place of what you hold), and back. */
+export function quickMoveTarget(inv: Inventory, from: number, held: number): number {
+  if (from < 0 || from >= SLOTS || !inv.slots[from]) return -1;
+  if (from >= HOTBAR) {
+    const free = inv.slots.findIndex((s, i) => i < HOTBAR && !s);
+    return free >= 0 ? free : held >= 0 && held < HOTBAR ? held : -1;
+  }
+  return inv.slots.findIndex((s, i) => i >= HOTBAR && !s);
 }
 
 /** Takes n of an item from a slot (or anywhere when slot is -1). Returns how many were taken. */
@@ -198,13 +245,13 @@ export function inventoryAfterDeath(inv: Inventory): Inventory {
   next.pick = inv.pick > 1 ? inv.pick - 1 : inv.pick;
   next.axe = inv.axe > 1 ? inv.axe - 1 : inv.axe;
   next.shears = inv.shears;
-  // tools go back where they were if that slot is free
+  // tools go back to their hotbar slot if they had one (and it is free), else the first free one
   const where = (item: Item) => inv.slots.findIndex((s) => s?.item === item);
   for (const item of ['pick', 'axe', 'shears'] as const) {
     const have = item === 'pick' ? next.pick > 0 : item === 'axe' ? next.axe > 0 : next.shears;
     if (!have) continue;
     const at = where(item);
-    addItem(next, item, 1, at > 0 ? at : -1);
+    addItem(next, item, 1, at > 0 && at < HOTBAR ? at : -1);
   }
   return next;
 }
@@ -313,8 +360,7 @@ export function buy(inv: Inventory, offerId: string): BuyResult {
     const woodAt = swordUpgrade ? inv.slots.findIndex((s) => s?.item === 'sword_wood') : -1;
     if (woodAt < 0) {
       // make sure it fits before paying
-      const room = inv.slots.reduce((n, s) => n + (!s ? ITEM_DEFS[give.item].stack : s.item === give.item ? ITEM_DEFS[give.item].stack - s.n : 0), 0);
-      if (room < give.n) return { ok: false, why: 'full' };
+      if (roomFor(inv, give.item) < give.n) return { ok: false, why: 'full' };
       addItem(inv, give.item, give.n);
     } else inv.slots[woodAt] = { item: give.item, n: 1 };
   } else if ('armor' in give) inv.armor = give.armor;

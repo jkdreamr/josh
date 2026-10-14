@@ -10,6 +10,7 @@ import type { Knock } from './combat.ts';
 import type { Action, Ev, Game, Player } from './game.ts';
 import { ITEMS, MAX_TRAPS, RESOURCES, SLOTS, isItem, type Inventory, type Item, type TrapKind, type UpgradeKey } from './items.ts';
 import { MODES, type Mode } from './map.ts';
+import { wrapAngle } from './interp.ts';
 
 export const NET_TAG = 'bw';
 /** Room messages are capped at 8KB; stay well under once wrapped. */
@@ -36,6 +37,8 @@ export type SyncState = {
   gens: [number, number][];
   over: boolean;
   winner: number;
+  /** The seat that reports the win online (-1: nobody, a bot won or it was a draw). */
+  winSeat?: number;
 };
 
 export type Packet =
@@ -44,7 +47,7 @@ export type Packet =
   | { k: 'pos'; round: number; tick: number; p: PosEntry[] }
   | { k: 'table'; round: number; tick: number; phase: number; gens: [number, number][]; stats: [number, number, number, number, number, number, number][] }
   | { k: 'inv'; round: number; v: number; a: number; inv: Inventory; sel: number }
-  | { k: 'move'; round: number; ep: number; b: number[]; sel: number; sw: number; dr: number }
+  | { k: 'move'; round: number; ep: number; b: number[]; sel: number; sw: number; dr: number; tk: number }
   | { k: 'act'; round: number; s: number; a: Action }
   | { k: 'resync'; round: number }
   | { k: 'hello'; round: number; skin: number }
@@ -73,7 +76,8 @@ const wrap = (round: number, k: string, rest: Record<string, unknown>) => ({ t: 
 
 export const evPacket = (round: number, s: number, e: Ev[]) => wrap(round, 'E', { s, e });
 export const posPacket = (round: number, tick: number, p: PosEntry[]) => wrap(round, 'P', { tk: tick, p });
-export const movePacket = (round: number, ep: number, b: number[], sel: number, sw: number, dr: number) => wrap(round, 'M', { ep, b, sel, sw, dr });
+/** A guest's own body. tk counts the guest's ticks, so the host can space the samples the way they were sent. */
+export const movePacket = (round: number, ep: number, b: number[], sel: number, sw: number, dr: number, tk = -1) => wrap(round, 'M', { ep, b, sel, sw, dr, tk });
 export const actPacket = (round: number, s: number, a: Action) => wrap(round, 'A', { s, a });
 export const resyncPacket = (round: number) => wrap(round, 'R', {});
 export const helloPacket = (round: number, skin: number) => wrap(round, 'H', { skin });
@@ -159,6 +163,7 @@ export function syncState(g: Game, seq: number): SyncState {
     gens: g.gens.map((x) => [x.tier, x.timer]),
     over: g.over,
     winner: g.winner,
+    winSeat: g.winSeat,
   };
 }
 
@@ -187,7 +192,16 @@ export function parsePacket(value: unknown): Packet | null {
       for (const raw of p.p.slice(0, 16)) {
         if (!Array.isArray(raw) || raw.length < 13 || !raw.slice(0, 13).every(num) || !int(raw[0])) continue;
         if (!inWorld(raw[1], raw[2], raw[3])) continue;
-        list.push(raw.slice(0, 13) as PosEntry);
+        const e = raw.slice(0, 13) as PosEntry;
+        // angles folded and clamped, and the small numbers kept small, whatever the sender says
+        e[4] = wrapAngle(e[4]);
+        e[5] = clampNum(e[5], -1.6, 1.6);
+        e[7] = Math.round(e[7]);
+        e[8] = clampInt(e[8], 0, 4);
+        e[9] = clampInt(e[9], 0, 3);
+        e[10] = clampNum(e[10], 0, 40);
+        e[12] = clampInt(e[12], 0, 99);
+        list.push(e);
       }
       return { k: 'pos', round, tick: p.tk as number, p: list };
     }
@@ -217,8 +231,12 @@ export function parsePacket(value: unknown): Packet | null {
     }
     case 'M': {
       if (!int(p.ep) || !Array.isArray(p.b) || p.b.length !== 9 || !p.b.every(num) || !int(p.sel) || !int(p.sw) || !int(p.dr)) return null;
-      if (!inWorld(p.b[0] as number, p.b[1] as number, p.b[2] as number)) return null;
-      return { k: 'move', round, ep: p.ep as number, b: p.b as number[], sel: clampInt(p.sel, 0, 8), sw: p.sw as number, dr: clampInt(p.dr, 0, 99) };
+      const b = (p.b as number[]).slice();
+      if (!inWorld(b[0], b[1], b[2])) return null;
+      // nothing moves ten blocks a tick, and pitch stops at straight up or down
+      if (Math.abs(b[3]) > 10 || Math.abs(b[4]) > 10 || Math.abs(b[5]) > 10 || Math.abs(b[7]) > 1.6) return null;
+      b[6] = wrapAngle(b[6]);
+      return { k: 'move', round, ep: p.ep as number, b, sel: clampInt(p.sel, 0, 8), sw: p.sw as number, dr: clampInt(p.dr, 0, 99), tk: Number.isSafeInteger(p.tk) && (p.tk as number) >= 0 ? (p.tk as number) : -1 };
     }
     case 'A': {
       const a = parseAction(p.a);
@@ -235,6 +253,7 @@ export function parsePacket(value: unknown): Packet | null {
 }
 
 const clampInt = (v: unknown, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v as number)));
+const clampNum = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 const UPGRADE_KEYS: UpgradeKey[] = ['sharp', 'prot', 'haste', 'forge', 'heal'];
 const TRAP_KINDS: TrapKind[] = ['trap', 'counter', 'alarm', 'fatigue'];
@@ -266,6 +285,10 @@ export function parseAction(v: unknown): Action | null {
       return int(a.slot) && bool(a.all) && (a.slot as number) >= 0 && (a.slot as number) < SLOTS ? { a: 'drop', slot: a.slot as number, all: a.all as boolean } : null;
     case 'sel':
       return int(a.slot) && (a.slot as number) >= 0 && (a.slot as number) < 9 ? { a: 'sel', slot: a.slot as number } : null;
+    case 'swap':
+      return int(a.from) && int(a.to) && (a.from as number) >= 0 && (a.from as number) < SLOTS && (a.to as number) >= 0 && (a.to as number) < SLOTS && a.from !== a.to
+        ? { a: 'swap', from: a.from as number, to: a.to as number }
+        : null;
     case 'fall':
       return num(a.d) && (a.d as number) >= 0 && (a.d as number) < 300 ? { a: 'fall', d: a.d as number } : null;
   }
@@ -333,7 +356,10 @@ export function parseEvent(v: unknown): Ev | null {
     case 'msg':
       return MSG_KINDS.includes(e.k as string) && str(e.text, 240) && (e.team === undefined || int(e.team)) && (e.to === undefined || int(e.to)) ? (e as unknown as Ev) : null;
     case 'win':
-      return has('team') ? (e as unknown as Ev) : null;
+      if (!has('team') || (e.seat !== undefined && !int(e.seat))) return null;
+      return { t: 'win', team: e.team as number, seat: e.seat === undefined ? -1 : (e.seat as number) };
+    case 'skin':
+      return int(e.p) && int(e.skin) && (e.skin as number) >= 0 && (e.skin as number) < 16 ? { t: 'skin', p: e.p as number, skin: e.skin as number } : null;
     case 'fx': {
       const f = e.fx as Record<string, unknown> | undefined;
       const keys = ['speed', 'speedLvl', 'jump', 'jumpLvl', 'invis', 'regen', 'regenLvl', 'absorb', 'blind', 'slow', 'fatigue'];
@@ -365,6 +391,7 @@ export function parseSync(json: string): SyncState | null {
   for (const p of s.players) if (!p || !bool(p.alive) || !num(p.hp) || !num(p.x) || !num(p.y) || !num(p.z) || !Array.isArray(p.stats) || !int(p.epoch)) return null;
   for (const t of s.teams) if (!t || !bool(t.bed) || !bool(t.out) || !Array.isArray(t.ups) || t.ups.length !== 5 || !Array.isArray(t.traps)) return null;
   if (!Array.isArray(s.drops) || !Array.isArray(s.projs) || !Array.isArray(s.gens)) return null;
+  if (!int(s.winSeat)) s.winSeat = -1;
   return s;
 }
 

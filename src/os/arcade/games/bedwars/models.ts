@@ -4,6 +4,7 @@ import { ATLAS_TILES, BLOCKS, TEAMS } from './blocks.ts';
 import { buildAtlas, ATLAS_PX } from './atlas.ts';
 import { tileUV } from './mesher.ts';
 import { NEAREST, NEAREST_MIP_LINEAR, type T, type Three } from './gl.ts';
+import { wrapAngle } from './interp.ts';
 
 const LIN = (v: number) => Math.pow(v, 2.2);
 
@@ -396,8 +397,11 @@ export class Avatar {
   private armorKey = '';
 
   private readonly THREE: Three;
+  /** The skin it was painted with (a change means a new model). */
+  readonly skin: number;
   constructor(THREE: Three, skin: number, team: number, seed: number) {
     this.THREE = THREE;
+    this.skin = skin;
     this.root = new THREE.Group();
     this.model = new THREE.Group();
     this.root.add(this.model);
@@ -568,9 +572,7 @@ export class Avatar {
       this.armR.pivot.rotation.x += 0.4;
       this.armL.pivot.rotation.x += 0.4;
     }
-    let hy = p.head - p.yaw;
-    while (hy > Math.PI) hy -= Math.PI * 2;
-    while (hy < -Math.PI) hy += Math.PI * 2;
+    const hy = wrapAngle(p.head - p.yaw);
     this.head.pivot.rotation.y = Math.max(-1.2, Math.min(1.2, hy));
     this.head.pivot.rotation.x = -p.pitch;
     const red = p.hurt > 0;

@@ -377,7 +377,7 @@ export const COURSES: Record<CourseId, Course> = {
     edge: 10,
     layout: (t) =>
       placed(t, {
-        boxes: [48, 350, 776],
+        boxes: [48, 350, 636],
         coins: [
           [14, 3, 5],
           [107, 2.5, 4],
@@ -387,7 +387,7 @@ export const COURSES: Record<CourseId, Course> = {
           [382, 2, 4],
           [430, -2, 5],
           [552, 3, 4],
-          [632, -2, 4],
+          [612, -2, 4],
           [700, 3, 4],
           [808, -3, 4],
         ],
@@ -412,7 +412,7 @@ export const COURSES: Record<CourseId, Course> = {
           ['bike', 288, 0, undefined, 5, 1.2, 2],
           ['bike', 366, 0, undefined, 5, 1.1, 4],
           ['bike', 512, 0, undefined, 5, 1.25, 1],
-          ['bike', 790, 0, undefined, 5, 1.15, 3],
+          ['bike', 798, 0, undefined, 5, 0.8, 3],
         ],
       }),
     sky: 'linear-gradient(180deg, #2a68c4 0%, #6aa3e3 24%, #bcd6ee 36%, #f1dfbf 42%, #dcc596 46%, #c9b07e 47%)',
