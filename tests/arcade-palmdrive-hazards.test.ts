@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CLASSES, KART_R, OFFROAD, RIVALS, createRace, hazardD, hazardV, moveHazards, spawn, step, type Ev, type Kart, type LiveHazard, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
-import { headingOf, locate, pointAt } from '../src/os/arcade/games/palmdrive/track.ts';
+import { CLASSES, KART_R, OFFROAD, RIVALS, createRace, hazardD, hazardS, hazardV, inBus, moveHazards, spawn, step, type Ev, type Kart, type LiveHazard, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
+import { BUS_LEN, deltaS, headingOf, locate, pointAt } from '../src/os/arcade/games/palmdrive/track.ts';
 
 const DT = 1 / 60;
 
 /** A race round the Red Barn, past the lights, with n hand-driven karts. */
 function barn(n = 1): Race {
   return createRace({ cc: '100cc', course: 'barn', seed: 5, countdown: 0, racers: Array.from({ length: n }, (_, i) => ({ name: `p${i}`, color: '#e53935', kind: 'player' as const })) });
+}
+
+/** The same at Hoover Nights. */
+function hoover(n = 1, seed = 5): Race {
+  return createRace({ cc: '100cc', course: 'hoover', seed, countdown: 0, racers: Array.from({ length: n }, (_, i) => ({ name: `p${i}`, color: '#e53935', kind: 'player' as const })) });
 }
 
 function place(r: Race, k: Kart, s: number, d = 0, v = 0) {
@@ -274,4 +279,166 @@ test('CPU drivers round the Main Quad steer round the planters and time their wa
   // forty laps between them, past five planters and five cyclists every lap
   assert.ok(knocks.planter <= 6, `planters ${knocks.planter}`);
   assert.ok(knocks.bike <= 8, `bikes ${knocks.bike}`);
+});
+
+test('oil spins you out; a star skates straight over it', () => {
+  const r = hoover();
+  const k = r.karts[0];
+  const oil = find(r, 'oil');
+  place(r, k, oil.s - 6, oil.d, 18);
+  const evs = run(r, 0.6);
+  assert.ok(evs.some((e) => e.t === 'hit' && e.k === k.idx && e.how === 'spin' && e.by === -1), 'spun out');
+  assert.ok(k.spin > 0 || k.safe > 0);
+  const s = hoover();
+  const t = s.karts[0];
+  t.star = 3;
+  place(s, t, oil.s - 6, oil.d, 18);
+  let near = Infinity;
+  const quiet = run(s, 0.6, () => (near = Math.min(near, Math.hypot(t.x - oil.x, t.z - oil.z))));
+  assert.ok(near < oil.r, 'right through it');
+  assert.ok(!quiet.some((e) => e.t === 'hit'));
+});
+
+test('the buses drive their laps on the race clock, the same on every screen', () => {
+  const a = hoover(1, 5);
+  const b = hoover(1, 77);
+  const buses = a.hazards.filter((h) => h.kind === 'bus');
+  assert.equal(buses.length, 2);
+  // waiting at their stops until the green light
+  const c = createRace({ cc: '100cc', course: 'hoover', seed: 5, racers: RIVALS });
+  run(c, 2);
+  assert.ok(c.time < 0);
+  for (const h of c.hazards.filter((x) => x.kind === 'bus')) assert.equal(h.along, h.s);
+  run(a, 7);
+  b.time = a.time;
+  moveHazards(b);
+  buses.forEach((h, i) => {
+    const twin = b.hazards.filter((x) => x.kind === 'bus')[i];
+    assert.deepEqual([twin.x, twin.z, twin.along, twin.tx, twin.tz], [h.x, h.z, h.along, h.tx, h.tz]);
+    assert.ok(Math.abs(deltaS(a.track, h.s, h.along) - h.drive! * a.time) < 0.01, 'steadily on from its stop');
+    assert.equal(hazardS(a.track, h, a.time), h.along);
+    // in its own lane, facing down the road
+    const at = locate(a.track, h.x, h.z);
+    assert.ok(Math.abs(at.d - h.d) < 0.2 && Math.abs(deltaS(a.track, at.s, h.along)) < 1);
+    assert.ok(Math.abs(h.tx - at.tx) < 0.05 && Math.abs(h.tz - at.tz) < 0.05);
+  });
+  // and round the lap and back past their stops
+  const bus = buses[0];
+  const lap = a.track.length / bus.drive!;
+  a.time = lap + 3;
+  moveHazards(a);
+  assert.ok(Math.abs(deltaS(a.track, bus.s, bus.along) - bus.drive! * 3) < 0.01, `round again at s=${bus.along}`);
+  assert.ok(a.hazards.filter((h) => h.kind === 'bus').every((h) => h.along >= 0 && h.along < a.track.length));
+});
+
+/** A kart driving up behind a bus, in its lane, and the bus itself. */
+function behindBus(r: Race, k: Kart, gap: number, v: number) {
+  const bus = find(r, 'bus');
+  place(r, k, bus.along - BUS_LEN / 2 - gap, bus.d, v);
+  return bus;
+}
+
+test('a bus is solid: run into the back of one and you bounce off, spin out and it honks', () => {
+  const r = hoover();
+  const k = r.karts[0];
+  const bus = behindBus(r, k, 8, 24);
+  let inside = false;
+  const evs = run(r, 1.2, () => (inside ||= inBus(bus, k.x, k.z, KART_R - 0.05) !== null));
+  assert.ok(!inside, 'never ends up inside it');
+  assert.ok(evs.some((e) => e.t === 'honk' && e.k === k.idx), 'the horn');
+  assert.ok(evs.some((e) => e.t === 'hit' && e.k === k.idx && e.how === 'spin' && e.by === -1), 'spun out');
+  assert.ok(deltaS(r.track, k.s, bus.along) > BUS_LEN / 2, 'left behind it');
+});
+
+test('a bus runs down a kart sitting in its lane and shoves it along', () => {
+  const r = hoover();
+  const k = r.karts[0];
+  const bus = find(r, 'bus');
+  // just ahead of the bus's nose, stopped with the brake on
+  r.time = 2;
+  moveHazards(r);
+  place(r, k, bus.along + BUS_LEN / 2 + 1.5, bus.d, 0);
+  k.input.brake = true;
+  const from = k.s;
+  const evs = run(r, 0.6);
+  assert.ok(evs.some((e) => e.t === 'honk' && e.k === k.idx));
+  assert.ok(deltaS(r.track, from, k.s) > 2, 'pushed on ahead');
+  assert.equal(inBus(bus, k.x, k.z, KART_R - 0.05), null);
+});
+
+test('brushing past a bus only nudges you away; passing on the free side is clear', () => {
+  const r = hoover(2);
+  const [a, b] = r.karts;
+  // the bus that comes round onto the start straight first
+  const bus = r.hazards.filter((h) => h.kind === 'bus').sort((p, q) => q.s - p.s)[0];
+  r.time = (r.track.length - bus.s + 20) / bus.drive!;
+  moveHazards(r);
+  assert.ok(bus.along > 10 && bus.along < 40, `on the straight at s=${bus.along}`);
+  // a little closer than the side of the bus, at the same speed: pushed out sideways, no spin
+  const side = -Math.sign(bus.d);
+  place(r, a, bus.along, bus.d + side * (bus.r + KART_R - 0.3), bus.drive);
+  // well out in the free lane, overtaking
+  place(r, b, bus.along - 20, -bus.d, 22);
+  const evs = run(r, 3);
+  assert.ok(!evs.some((e) => e.t === 'honk' || e.t === 'hit'), 'nobody spun');
+  assert.equal(inBus(bus, a.x, a.z, KART_R - 0.05), null, 'pushed out');
+  assert.ok(deltaS(r.track, bus.along, b.s) > BUS_LEN, 'got past');
+});
+
+test('shells break on a bus; stars, megas and bullets plough straight through one', () => {
+  const r = hoover();
+  const k = r.karts[0];
+  const bus = find(r, 'bus');
+  place(r, k, bus.along - 60, 0, 0);
+  const from = pointAt(r.track, bus.along - 16, bus.d);
+  const shell = spawn(r, { kind: 'green', owner: k.idx, x: from.x, z: from.z, y: 0.35, vx: from.tx * 42, vz: from.tz * 42, vy: 0, grace: 0, target: -1, prog: 0 });
+  run(r, 0.6);
+  assert.ok(!r.things.some((t) => t.id === shell.id), 'gone');
+  // nosing into the back of a bus: an ordinary kart is thrown back out, a star, mega or bullet drives on into it
+  for (const power of [null, 'star', 'mega', 'bullet'] as const) {
+    const s = hoover();
+    const t = s.karts[0];
+    if (power) t[power] = 3;
+    const b = find(s, 'bus');
+    place(s, t, b.along - BUS_LEN / 2 - KART_R + 0.6, b.d, 24);
+    const evs = run(s, 3 * DT);
+    if (power) {
+      assert.ok(inBus(b, t.x, t.z, 0) !== null, `${power}: still going through it`);
+      assert.ok(!evs.some((e) => e.t === 'honk' || e.t === 'hit'), `${power}: untouched`);
+    } else {
+      assert.equal(inBus(b, t.x, t.z, KART_R - 0.05), null, 'thrown out');
+      assert.ok(evs.some((e) => e.t === 'honk'));
+    }
+  }
+});
+
+test('CPU drivers get past the buses on the free side and mostly miss the oil', () => {
+  const r = createRace({ cc: '150cc', course: 'hoover', seed: 9, racers: [...RIVALS, { ...RIVALS[3], name: 'extra' }] });
+  const knocks = { bus: 0, oil: 0 };
+  const buses = r.hazards.filter((h) => h.kind === 'bus');
+  // which side of each bus each kart was on last frame, to count overtakes
+  const behind = r.karts.map(() => buses.map(() => false));
+  let passes = 0;
+  while (r.time < 600 && r.karts.some((k) => k.done === null)) {
+    step(r, DT);
+    r.karts.forEach((k, i) =>
+      buses.forEach((h, j) => {
+        const ds = deltaS(r.track, h.along, k.s);
+        if (behind[i][j] && ds > 0 && ds < 15 && k.done === null) passes++;
+        behind[i][j] = ds < 0 && ds > -15;
+      }),
+    );
+    for (const e of r.events.splice(0)) {
+      if (e.t === 'honk') knocks.bus++;
+      if (e.t === 'hit' && e.by === -1) {
+        const k = r.karts[e.k];
+        if (r.hazards.some((h) => h.kind === 'oil' && Math.hypot(h.x - k.x, h.z - k.z) < h.r + 1)) knocks.oil++;
+      }
+    }
+  }
+  assert.ok(r.karts.every((k) => k.done !== null));
+  // forty laps between them, past the buses dozens of times
+  assert.ok(passes >= 30, `${passes} passes`);
+  assert.ok(knocks.bus <= 6, `buses ${knocks.bus}`);
+  assert.ok(knocks.oil <= 10, `oil ${knocks.oil}`);
 });
