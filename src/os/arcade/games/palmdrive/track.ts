@@ -233,13 +233,14 @@ export const sOf = (t: Track, e: number, n: number) => {
 
 /**
  * Things on the road that are part of the course: mud slows you like grass, an oil slick spins you out, and hay
- * bales, boulders and cows are solid. Cows wander back and forth across the road `swing` meters either side of d.
+ * bales, boulders, planters, cows and cyclists are solid. Cows and cyclists go back and forth across the road `swing`
+ * meters either side of d.
  */
-export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'cow';
+export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike';
 export type Hazard = { kind: HazardKind; s: number; d: number; r: number; swing?: number; speed?: number; phase?: number };
 /** How big each kind is unless a course says otherwise. */
-export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, cow: 1.5 };
-export const solid = (kind: HazardKind) => kind === 'hay' || kind === 'rock' || kind === 'cow';
+export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1 };
+export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil';
 
 export type Layout = {
   boxes: { s: number; d: number }[];

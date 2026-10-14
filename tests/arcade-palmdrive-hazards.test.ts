@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CLASSES, KART_R, OFFROAD, RIVALS, createRace, hazardD, moveHazards, spawn, step, type Ev, type Kart, type LiveHazard, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
+import { CLASSES, KART_R, OFFROAD, RIVALS, createRace, hazardD, hazardV, moveHazards, spawn, step, type Ev, type Kart, type LiveHazard, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { headingOf, locate, pointAt } from '../src/os/arcade/games/palmdrive/track.ts';
 
 const DT = 1 / 60;
@@ -174,4 +174,104 @@ test('CPU drivers steer round the bales and the cow, and only some of them end u
   assert.ok(knocks.cow <= 6, `cows ${knocks.cow}`);
   // the bog goes right across the road, so everyone goes through it every lap
   assert.ok(knocks.mud >= 40 && knocks.mud <= 110, `mud ${knocks.mud}`);
+});
+
+/** A race round the Main Quad, past the lights, with n hand-driven karts. */
+function quad(n = 1): Race {
+  return createRace({ cc: '100cc', course: 'quad', seed: 5, countdown: 0, racers: Array.from({ length: n }, (_, i) => ({ name: `p${i}`, color: '#e53935', kind: 'player' as const })) });
+}
+
+test('planters on the Main Quad are solid, and shells break on them', () => {
+  const r = quad();
+  const k = r.karts[0];
+  const planter = find(r, 'planter');
+  place(r, k, planter.s - 12, planter.d, 22);
+  let closest = Infinity;
+  const evs = run(r, 1.5, () => (closest = Math.min(closest, Math.hypot(k.x - planter.x, k.z - planter.z))));
+  assert.ok(closest >= planter.r + KART_R - 0.05, `got within ${closest}`);
+  assert.ok(evs.some((e) => e.t === 'wall' && e.k === k.idx), 'a thump');
+  assert.equal(k.spin, 0, 'a planter does not spin you out');
+  const s = quad();
+  place(s, s.karts[0], planter.s - 60, 0, 0);
+  // thrown straight at it from just round the corner
+  const from = pointAt(s.track, planter.s - 14, planter.d);
+  const [dx, dz] = [planter.x - from.x, planter.z - from.z].map((v) => (v / Math.hypot(planter.x - from.x, planter.z - from.z)) * 42);
+  const shell = spawn(s, { kind: 'green', owner: 0, x: from.x, z: from.z, y: 0.35, vx: dx, vz: dz, vy: 0, grace: 0, target: -1, prog: 0 });
+  run(s, 0.6);
+  assert.ok(!s.things.some((t) => t.id === shell.id), 'the shell is gone');
+});
+
+test('cyclists ride across the road and back on the race clock, quicker than the cows, the same on every screen', () => {
+  const a = quad();
+  const b = quad();
+  const bike = find(a, 'bike');
+  const cow = find(barn(), 'cow');
+  assert.ok(bike.swing && bike.swing > 0 && bike.r < cow.r, 'smaller than a cow');
+  assert.ok(bike.swing * (bike.speed ?? 0) > 2 * cow.swing! * (cow.speed ?? 0), 'and a lot quicker across');
+  const seen = new Set<number>();
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i < 600; i++) {
+    step(a, DT);
+    lo = Math.min(lo, bike.at);
+    hi = Math.max(hi, bike.at);
+    seen.add(bike.walk);
+  }
+  b.time = a.time;
+  moveHazards(b);
+  const twin = find(b, 'bike');
+  assert.deepEqual([twin.x, twin.z, twin.at, twin.walk], [bike.x, bike.z, bike.at, bike.walk]);
+  assert.ok(hi - lo > bike.swing * 1.8, 'right across');
+  assert.deepEqual([...seen].sort(), [-1, 1], 'and back again');
+  const slope = (hazardD(bike, a.time + 0.001) - hazardD(bike, a.time - 0.001)) / 0.002;
+  assert.ok(Math.abs(hazardV(bike, a.time) - slope) < 0.01, 'its speed matches its path');
+});
+
+test('riding into a cyclist spins you out with a ding of the bell; a star ploughs on', () => {
+  const r = quad();
+  const k = r.karts[0];
+  const bike = find(r, 'bike');
+  place(r, k, bike.s - 4, bike.at, 18);
+  const evs = run(r, 0.5);
+  assert.ok(evs.some((e) => e.t === 'ding' && e.k === k.idx));
+  assert.ok(evs.some((e) => e.t === 'hit' && e.k === k.idx && e.how === 'spin' && e.by === -1));
+  assert.ok(!evs.some((e) => e.t === 'moo'));
+  const s = quad();
+  const star = s.karts[0];
+  star.star = 3;
+  const bike2 = find(s, 'bike');
+  place(s, star, bike2.s - 4, bike2.at, 18);
+  assert.ok(!run(s, 0.5).some((e) => e.t === 'ding' || e.t === 'hit'));
+});
+
+test('a cyclist riding into the side of a kart that is barely moving still knocks it spinning', () => {
+  const r = quad();
+  const k = r.karts[0];
+  const bike = find(r, 'bike');
+  // wait until the bike is crossing the middle of the road at speed, then park a kart just ahead of it
+  while (Math.abs(hazardV(bike, r.time)) < bike.swing! * (bike.speed ?? 0) * 0.95) run(r, DT);
+  const ahead = hazardV(bike, r.time) > 0 ? 1 : -1;
+  place(r, k, bike.s, bike.at + ahead * (bike.r + KART_R + 0.4), 0);
+  const evs = run(r, 0.4);
+  assert.ok(evs.some((e) => e.t === 'ding' && e.k === k.idx), 'rung');
+  assert.ok(evs.some((e) => e.t === 'hit' && e.k === k.idx && e.how === 'spin'));
+});
+
+test('CPU drivers round the Main Quad steer round the planters and time their way past the cyclists', () => {
+  const r = createRace({ cc: '150cc', course: 'quad', seed: 9, racers: [...RIVALS, { ...RIVALS[3], name: 'extra' }] });
+  const knocks = { planter: 0, bike: 0 };
+  while (r.time < 600 && r.karts.some((k) => k.done === null)) {
+    step(r, DT);
+    for (const e of r.events.splice(0)) {
+      if (e.t === 'ding') knocks.bike++;
+      if (e.t === 'wall') {
+        const k = r.karts[e.k];
+        if (r.hazards.some((h) => h.kind === 'planter' && Math.hypot(h.x - k.x, h.z - k.z) < h.r + 2)) knocks.planter++;
+      }
+    }
+  }
+  assert.ok(r.karts.every((k) => k.done !== null));
+  // forty laps between them, past five planters and five cyclists every lap
+  assert.ok(knocks.planter <= 6, `planters ${knocks.planter}`);
+  assert.ok(knocks.bike <= 8, `bikes ${knocks.bike}`);
 });
