@@ -199,7 +199,8 @@ type Hud = { rows: Row[]; mine: Mine[]; field: number; clock: string | null; hur
 type Pop = { id: number; x: number; y: number; text: string; big: boolean };
 type Call = { id: number; text: string; sub: string; tone: 'good' | 'bad' | 'gold'; view: number };
 type Feed = { id: number; a: string; ac: string; b: string; bc: string; verb: string; at: number };
-type Joy = { id: number; ox: number; oy: number; x: number; y: number; player: number };
+/** A touch joystick; `at` is when its finger last moved (the newest drag steers). */
+type Joy = { id: number; ox: number; oy: number; x: number; y: number; player: number; at: number };
 
 const STREAK = ['', '', 'double cut!', 'triple cut!', 'quad cut!', 'rampage!', 'unstoppable!'];
 const deathLine = (cause: string, killer: string | null) =>
@@ -293,6 +294,7 @@ function Play({ mode }: { mode: Mode }) {
   const [calls, setCalls] = useState<Call[]>([]);
   const [feed, setFeed] = useState<Feed[]>([]);
   const [toast, setToast] = useState<{ id: number; skin: Skin } | null>(null);
+  const [no3d, setNo3d] = useState(false);
   const [flash, setFlash] = useState<{ id: number; kind: 'dead' | 'kill' | 'win' } | null>(null);
   const [, setVersion] = useState(0);
   const [banner, setBanner] = useState<{ text: string; count: boolean } | null>(null);
@@ -306,7 +308,7 @@ function Play({ mode }: { mode: Mode }) {
     ended: false,
     deathX: 0,
     deathY: 0,
-    cams: [] as (Cam & { id: number; zoom: number })[],
+    cams: [] as (Cam & { id: number; zoom: number; lead: number })[],
     shake: [0, 0],
     poses: [] as HeadPose[],
     rankBuf: [] as number[],
@@ -316,6 +318,15 @@ function Play({ mode }: { mode: Mode }) {
     ema: 1 / 60,
     slowFor: 0,
     fastFor: 0,
+    /** After a drop in resolution: seconds left to see whether it helped, from what and how slow frames were. */
+    probe: 0,
+    probeFrom: 2,
+    probeEma: 0,
+    /** The lowest resolution that proved too slow, and how long frames must stay fast before trying it again. */
+    badDpr: Infinity,
+    retryAfter: 20,
+    /** Dropping resolution did not speed frames up: the frame rate is capped (a battery saver), so stop adapting. */
+    capped: false,
     bestStreak: 0,
     bestRank: 99,
     deathCause: '',
@@ -338,7 +349,10 @@ function Play({ mode }: { mode: Mode }) {
     const c = ctl.current;
     if (!THREE || !host || !c) return;
     const v = buildView(THREE, host, c.w);
-    if (!v) return;
+    if (!v) {
+      setNo3d(true);
+      return;
+    }
     view.current = v;
     const s = st.current;
     s.maxDpr = Math.min(2, window.devicePixelRatio || 1);
@@ -430,7 +444,7 @@ function Play({ mode }: { mode: Mode }) {
       return;
     }
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    const joy: Joy = { id: e.pointerId, ox: x, oy: y, x, y, player: playerForPoint(x, y) };
+    const joy: Joy = { id: e.pointerId, ox: x, oy: y, x, y, player: playerForPoint(x, y), at: performance.now() };
     joyState.current.set(e.pointerId, joy);
     setJoys([...joyState.current.values()]);
   };
@@ -464,6 +478,7 @@ function Play({ mode }: { mode: Mode }) {
     }
     joy.x = x;
     joy.y = y;
+    joy.at = performance.now();
     const el = joyEls.current.get(joy.id);
     if (el) {
       el.style.transform = `translate(${joy.ox}px, ${joy.oy}px)`;
@@ -493,13 +508,16 @@ function Play({ mode }: { mode: Mode }) {
         return;
       }
       p.turn = 0;
-      for (const joy of joyState.current.values()) {
-        if (joy.player !== i) continue;
-        const dx = joy.x - joy.ox;
-        const dy = joy.y - joy.oy;
-        if (Math.hypot(dx, dy) > 10) p.want = Math.atan2(dy / PITCH_SIN, dx);
-        return;
+      // the finger that moved last steers (a thumb resting on the glass never locks out the one dragging)
+      let joy: Joy | null = null;
+      let held = false;
+      for (const j of joyState.current.values()) {
+        if (j.player !== i) continue;
+        held = true;
+        if (Math.hypot(j.x - j.ox, j.y - j.oy) > 10 && (!joy || j.at > joy.at)) joy = j;
       }
+      if (joy) p.want = Math.atan2((joy.y - joy.oy) / PITCH_SIN, joy.x - joy.ox);
+      if (held) return;
       const m = mouse.current;
       const v = view.current;
       const cam = st.current.cams[i];
@@ -700,9 +718,12 @@ function Play({ mode }: { mode: Mode }) {
     const { w: W, h: H } = sizeRef.current;
     const w = c.w;
     const views = Math.max(1, c.locals.length);
-    while (s.cams.length < views) s.cams.push({ x: w.c, y: w.c, width: 100, vx: 0, vy: 0, vw: W, vh: H, shakeX: 0, shakeY: 0, id: -1, zoom: 1 });
+    while (s.cams.length < views) s.cams.push({ x: w.c, y: w.c, width: 100, vx: 0, vy: 0, vw: W, vh: H, shakeX: 0, shakeY: 0, id: -1, zoom: 1, lead: 1 });
     s.cams.length = views;
     const side = W >= H;
+    // Steering by mouse, the camera keeps the head in the middle: the cursor aims from the head, and a camera that
+    // looks ahead turns with the head, so the aim would turn too (a cursor just ahead of the cube spun it round).
+    const mouseAim = !twoUp && mouse.current.on && !mouse.current.keyMode;
     for (let i = 0; i < views; i++) {
       const cam = s.cams[i];
       if (views === 1) {
@@ -741,7 +762,8 @@ function Play({ mode }: { mode: Mode }) {
         const p = w.players[id];
         if (p && p.alive) {
           c.pose(p, s.acc / TICK, pose);
-          const ahead = shortCells * 0.1;
+          cam.lead += ((mouseAim ? 0 : 1) - cam.lead) * (1 - Math.exp(-dt / 0.3));
+          const ahead = shortCells * 0.1 * cam.lead;
           tx = pose.x + Math.cos(pose.h) * ahead;
           ty = pose.y + Math.sin(pose.h) * ahead;
           zoom = 1 + 1.25 * Math.sqrt(percent(w, id) / 100);
@@ -751,7 +773,7 @@ function Play({ mode }: { mode: Mode }) {
           zoom = 0.82;
         }
       }
-      const k = 1 - Math.exp(-dt * (id === undefined ? 0.8 : 7));
+      const k = 1 - Math.exp(-dt * (id === undefined ? 0.8 : mouseAim ? 12 : 7));
       cam.x += (tx - cam.x) * k;
       cam.y += (ty - cam.y) * k;
       cam.zoom += (zoom - cam.zoom) * (1 - Math.exp(-dt * 2.2));
@@ -835,32 +857,70 @@ function Play({ mode }: { mode: Mode }) {
     if (live) checkUnlocks(c, false);
   }
 
+  const resize = () => view.current?.resize(sizeRef.current.w, sizeRef.current.h, st.current.dpr);
+
+  /**
+   * Adaptive resolution: drop pixels when frames run long, win them back when there is room. A drop that does not
+   * make frames faster means the frame rate is capped (a battery saver at 30 fps), not held back by our pixels: it is
+   * undone and the round stops adapting. A level that proved too slow is only tried again after a long fast spell,
+   * twice as long each time, so a borderline device does not flip back and forth.
+   */
+  function adapt(dt: number) {
+    const s = st.current;
+    s.ema += (dt - s.ema) * 0.08;
+    if (s.capped) return;
+    if (s.probe > 0) {
+      s.probe -= dt;
+      if (s.probe > 0) return;
+      if (s.ema > s.probeEma * 0.9) {
+        s.dpr = s.probeFrom;
+        s.capped = true;
+        resize();
+      } else s.badDpr = Math.min(s.badDpr, s.probeFrom);
+      s.slowFor = s.fastFor = 0;
+      return;
+    }
+    if (s.ema > 1 / 44) {
+      s.slowFor += dt;
+      s.fastFor = 0;
+    } else if (s.ema < 1 / 57) {
+      s.fastFor += dt;
+      s.slowFor = 0;
+    } else s.slowFor = s.fastFor = 0;
+    if (s.slowFor > 1.2 && s.dpr > 1) {
+      s.probeFrom = s.dpr;
+      s.probeEma = s.ema;
+      s.probe = 1.5;
+      s.dpr = Math.max(1, s.dpr - 0.25);
+      s.slowFor = 0;
+      resize();
+    } else if (s.dpr < s.maxDpr) {
+      const next = Math.min(s.maxDpr, s.dpr + 0.25);
+      const retry = next >= s.badDpr - 1e-6;
+      if (s.fastFor > (retry ? s.retryAfter : 5)) {
+        if (retry) s.retryAfter *= 2;
+        s.dpr = next;
+        s.fastFor = 0;
+        resize();
+      }
+    }
+  }
+
   useGameLoop(
     (dt) => {
       const c = ctl.current;
       if (!c) return;
       const s = st.current;
+      // Nothing moves before the board can be seen: on a phone three.js may still be downloading, and a solo life
+      // could be lost blind. (Online rounds keep their own countdown so the room never waits on one page.)
+      if (live && mode !== 'online' && !view.current) {
+        s.acc = 0;
+        return;
+      }
       const t0 = performance.now();
       s.clock += dt;
       s.frameDt = dt;
-      // adaptive resolution: drop pixels when frames run long, win them back when there is room
-      s.ema += (dt - s.ema) * 0.08;
-      if (s.ema > 1 / 44) {
-        s.slowFor += dt;
-        s.fastFor = 0;
-      } else if (s.ema < 1 / 57) {
-        s.fastFor += dt;
-        s.slowFor = 0;
-      } else s.slowFor = s.fastFor = 0;
-      if (s.slowFor > 1.2 && s.dpr > 1) {
-        s.dpr = Math.max(1, s.dpr - 0.25);
-        s.slowFor = 0;
-        view.current?.resize(sizeRef.current.w, sizeRef.current.h, s.dpr);
-      } else if (s.fastFor > 5 && s.dpr < s.maxDpr) {
-        s.dpr = Math.min(s.maxDpr, s.dpr + 0.25);
-        s.fastFor = 0;
-        view.current?.resize(sizeRef.current.w, sizeRef.current.h, s.dpr);
-      }
+      adapt(dt);
       c.frame?.(dt);
       const scale = s.clock < s.slowUntil ? 0.22 : 1;
       s.acc += dt * scale;
@@ -1080,7 +1140,7 @@ function Play({ mode }: { mode: Mode }) {
       {live && playing && shell.touch && hud.mine.length > 0 && st.current.clock < 4 && (
         <div className="g-paperio-hint">{twoUp ? 'each player drags on their half' : 'drag anywhere to steer'}</div>
       )}
-      {!ready && <div className="g-paperio-loading">unfolding the map…</div>}
+      {!ready && <div className="g-paperio-loading">{no3d ? 'this browser can’t draw the farm (it needs WebGL 2)' : 'unfolding the map…'}</div>}
       {mode === 'idle' && <AttractShade locker={locker} />}
     </div>
   );
