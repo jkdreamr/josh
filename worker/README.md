@@ -52,3 +52,23 @@ If a visitor's message has gone unanswered for 24 hours, Workers AI answers it (
 They are built to stay free. Workers AI includes 10,000 Neurons a day (reset at 00:00 UTC; on the Workers Free plan, use past that fails instead of billing). Auto-replies stop for the day after 15 attempts or 5,000 Neurons, whichever comes first, counting every attempt at its worst-case cost (150 Neurons: a prompt under 3,000 tokens and an answer under 300 on the dearest model in the list). Conversations still waiting at the limit get their reply after midnight UTC. The models are tried in order (`MODELS` in `src/chat.ts`), so a retired one falls through to the next.
 
 To test locally against a fake Telegram and a stand-in for Workers AI, with a 3.6 second wait instead of a day, see `scripts/smoke-chat.mjs`.
+
+## Arcade Chat
+
+The Chat view on the arcade home is one global chat for finding someone to play with. While it is open, the site holds a hibernating WebSocket at `GET /lounge` (it sends `ping` every 25 seconds, answered by the auto-response without waking the object). On connect the `Lounge` Durable Object (migration `v4`) sends `{ t: 'welcome', messages, online }` with the newest 100 messages and how many people have the chat open, then `msg`, `online` and `cleared` as they happen. The site posts with `{ t: 'say', name, text, c }`, where `c` is the sender's own tag: it comes back on that message, or on `{ t: 'error', error, c }` when the Worker turns it down (`name`, `text`, `slow` or `repeat`). The shapes, cleaning and limits live in `src/os/arcade/lounge-core.ts`. Until the Worker is redeployed, Chat says it is unavailable.
+
+The Worker checks everything. Names are 1 to 16 characters and messages 1 to 280, after control, zero width and bidi characters are stripped and whitespace is squeezed. A connection can send 5 messages per 10 seconds, an IP 10 per 10 seconds and 30 a minute, and the same line twice in a row within a minute is dropped. An IP can hold 20 chat sockets and join 40 times a minute, with 1,000 sockets in all. Frames over 2 KB, binary frames and more than 20 frames in 10 seconds close the socket. Only the newest 100 messages are stored, and no IPs.
+
+To be able to wipe the chat, set a long random secret once from `worker/` (for example the output of `openssl rand -hex 32`):
+
+```sh
+npx wrangler secret put LOUNGE_ADMIN_TOKEN
+```
+
+Then clearing deletes every message and empties the chat on every open screen:
+
+```sh
+curl -X POST -H "Authorization: Bearer $LOUNGE_ADMIN_TOKEN" https://josh-arcade.joshuakoo.workers.dev/lounge/clear
+```
+
+It answers `{ "ok": true, "removed": <count> }`, or 401 for a wrong token. Without the secret, clearing is off (403). To test locally, start `wrangler dev` with `scripts/smoke/wrangler.jsonc`, which sets the token to `test-admin-token`, and run `node scripts/smoke-lounge.mjs` (the exact commands are at the top of that file).

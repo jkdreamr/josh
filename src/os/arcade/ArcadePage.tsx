@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { BoardList, BoardScopeNote } from './kit/board';
 import { appGames } from './apps';
+import { ArcadeChat } from './Chat';
 import { ARCADE_API, boardsOf, formatBoardScore, getBoard, type Board, type BoardEntry, type BoardInfo } from './kit/leaderboard';
 import { categories, metas } from './manifest';
 import type { GameMeta } from './types';
@@ -132,23 +133,31 @@ function Tile({ g, onOpen }: { g: GameMeta; onOpen: (id: string) => void }) {
 }
 
 export function ArcadePage({ onOpen }: { onOpen: (id: string) => void }) {
-  const [boards, setBoards] = useState(false);
+  const [view, setView] = useState<'games' | 'boards' | 'chat'>('games');
+  const toggle = (next: 'boards' | 'chat') => setView(view === next ? 'games' : next);
   const groups = categories.map((c) => ({ ...c, games: metas.filter((m) => m.category === c.id) })).filter((c) => c.games.length);
   return (
-    <div className="arcade">
+    <div className={view === 'chat' ? 'arcade is-chat' : 'arcade'}>
       <header className="arcade-head">
         <div className="arcade-head-row">
-          <h1>{boards ? 'Leaderboards' : 'Arcade'}</h1>
-          {boardChoices.length > 0 && (
-            <button type="button" className="arcade-pbtn" onClick={() => setBoards(!boards)}>
-              {boards ? 'All Games' : 'Leaderboards'}
+          <h1>{view === 'boards' ? 'Leaderboards' : view === 'chat' ? 'Chat' : 'Arcade'}</h1>
+          <div className="arcade-head-actions">
+            <button type="button" className="arcade-pbtn" onClick={() => toggle('chat')}>
+              {view === 'chat' ? 'All Games' : 'Chat'}
             </button>
-          )}
+            {boardChoices.length > 0 && (
+              <button type="button" className="arcade-pbtn" onClick={() => toggle('boards')}>
+                {view === 'boards' ? 'All Games' : 'Leaderboards'}
+              </button>
+            )}
+          </div>
         </div>
-        <p>{boards ? 'Top 100 Scores and Online Wins for Each Game.' : metas.length ? `${metas.length} games, made for this computer.` : 'Games are on the way.'}</p>
+        <p>{view === 'boards' ? 'Top 100 Scores and Online Wins for Each Game.' : view === 'chat' ? 'Find someone to play with, or just say hi. Be kind.' : metas.length ? `${metas.length} games, made for this computer.` : 'Games are on the way.'}</p>
       </header>
-      {boards ? (
+      {view === 'boards' ? (
         <Leaderboards />
+      ) : view === 'chat' ? (
+        <ArcadeChat />
       ) : (
       <div className="arcade-sections" onKeyDown={onGridKey}>
         {groups.map((c) => (
