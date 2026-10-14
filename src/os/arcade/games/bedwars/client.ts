@@ -23,7 +23,7 @@ import {
   type MsgKind,
   type Player,
 } from './game.ts';
-import { ITEMS, ITEM_DEFS, blockFor, isBlockItem, isBow, type Item, type Res } from './items.ts';
+import { ITEMS, ITEM_DEFS, blockFor, isBlockItem, isBow, moveSlot, quickMoveTarget, type Item, type Res } from './items.ts';
 import { EYE, EYE_SNEAK, HEIGHT, TICK, WIDTH, bodyOverlapsCell, stepBody, type MoveInput } from './physics.ts';
 import { canBreak, raycast, rayBox, type RayHit } from './world.ts';
 import { Track, type Pose } from './interp.ts';
@@ -34,7 +34,7 @@ import * as snd from './audio.ts';
 import { damp } from './gl.ts';
 
 export type Role = 'solo' | 'host' | 'guest';
-export type UiPanel = 'none' | 'shop' | 'upgrades' | 'board';
+export type UiPanel = 'none' | 'shop' | 'upgrades' | 'inv' | 'board';
 
 export type ClientSettings = { sens: number; autoSprint: boolean; touch: boolean; killFx?: string; bedFx?: string };
 
@@ -136,6 +136,9 @@ export class Client {
   private sprintLatch = false;
   // state shown in the HUD
   ui: UiPanel = 'none';
+  /** The inventory screen: the stack picked up (-1 for none) and the slot under the mouse. */
+  invPicked = -1;
+  invHover = -1;
   feed: FeedLine[] = [];
   title: Title | null = null;
   locked = false;
@@ -288,7 +291,16 @@ export class Client {
   }
 
   private handleKeys(keys: KeyState) {
-    for (let i = 0; i < 9; i++) if (keys.pressed(`Digit${i + 1}`)) this.select(i);
+    for (let i = 0; i < 9; i++) {
+      if (!keys.pressed(`Digit${i + 1}`)) continue;
+      if (this.ui !== 'inv') this.select(i);
+      else {
+        // Minecraft: a number key swaps the stack you picked (or point at) into that hotbar slot
+        const from = this.invPicked >= 0 ? this.invPicked : this.invHover;
+        if (from >= 0 && from !== i) this.moveItem(from, i);
+        this.invPicked = -1;
+      }
+    }
     if (this.ui !== 'none') return;
     if (keys.pressed('KeyQ')) {
       const p = this.player;
@@ -306,9 +318,44 @@ export class Client {
     return true;
   }
 
+  /** Opens the inventory screen (E away from the keepers, I anywhere, or the bag button). */
+  openInventory(): boolean {
+    if (!this.player.alive) return false;
+    this.setUi('inv');
+    return true;
+  }
+
+  /** A click on a slot in the inventory screen: pick a stack up, then put it down (or swap) where you click next. */
+  invClick(slot: number, quick = false) {
+    const p = this.player;
+    if (quick) {
+      const to = quickMoveTarget(p.inv, slot, p.sel);
+      if (to >= 0) this.moveItem(slot, to);
+      this.invPicked = -1;
+    } else if (this.invPicked < 0) {
+      if (p.inv.slots[slot]) this.invPicked = slot;
+    } else {
+      if (this.invPicked !== slot) this.moveItem(this.invPicked, slot);
+      this.invPicked = -1;
+    }
+    this.hooks.ping?.();
+  }
+
+  /** Moves a stack between slots; a guest shows it at once and the host's inventory confirms it. */
+  moveItem(from: number, to: number) {
+    const p = this.player;
+    if (!p.alive) return;
+    if (this.authority) this.act({ a: 'swap', from, to });
+    else if (moveSlot(p.inv, from, to)) this.act({ a: 'swap', from, to });
+    this.useTicks = 0;
+    this.hooks.ping?.();
+  }
+
   setUi(ui: UiPanel) {
     if (ui === this.ui) return;
     this.ui = ui;
+    this.invPicked = -1;
+    this.invHover = -1;
     if (ui !== 'none') this.releaseAll();
     this.hooks.onUi?.(ui);
     this.hooks.ping?.();

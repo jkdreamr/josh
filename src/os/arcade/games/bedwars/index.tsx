@@ -8,7 +8,7 @@ import { Client, type Hud } from './client.ts';
 import { createView, type View } from './scene.ts';
 import { CENTER, MID_TOP, type Mode } from './map.ts';
 import { TEAMS } from './blocks.ts';
-import { Crosshair, Feed, Hotbar, HowToPlay, Locker, PlayerList, RecordStrip, Scoreboard, Sheet, ShopPanel, TitleView, UpgradesPanel } from './hud.tsx';
+import { Crosshair, Feed, Hotbar, HowToPlay, InventoryPanel, Locker, PlayerList, RecordStrip, Scoreboard, Sheet, ShopPanel, TitleView, UpgradesPanel } from './hud.tsx';
 import { AXE_NAMES, ITEM_DEFS, PICK_NAMES } from './items.ts';
 import { addGame, freshRecord, isUnlocked, loadRecord, newUnlocks, saveRecord, subscribeRecord } from './stats.ts';
 import './bedwars.css';
@@ -404,7 +404,7 @@ function Play({ mode }: { mode: StageMode }) {
   unlockRef.current = unlock;
 
   const openUi = useCallback(
-    (ui: 'shop' | 'upgrades' | 'none') => {
+    (ui: 'shop' | 'upgrades' | 'inv' | 'none') => {
       const c = clientRef.current;
       if (!c) return;
       c.setUi(ui);
@@ -423,9 +423,11 @@ function Play({ mode }: { mode: StageMode }) {
     const c = clientRef.current;
     if (!c || mode === 'idle') return;
     if (code === 'Tab') e?.preventDefault();
-    if (code === 'KeyE' || code === 'KeyB') {
+    // E: the keeper you're next to, or else your inventory. B: keepers only. I: the inventory anywhere.
+    if (code === 'KeyE' || code === 'KeyB' || code === 'KeyI') {
       if (c.ui !== 'none') openUi('none');
-      else if (c.openNear()) unlock();
+      else if (code !== 'KeyI' && c.openNear()) unlock();
+      else if (code !== 'KeyB' && c.openInventory()) unlock();
     }
   });
 
@@ -673,6 +675,18 @@ function Play({ mode }: { mode: StageMode }) {
             />
           )}
           {hud.ui === 'shop' && <ShopPanel inv={me.inv} team={me.team} touch={shell.touch} onBuy={(id) => c.act({ a: 'buy', id })} onClose={() => openUi('none')} />}
+          {hud.ui === 'inv' && (
+            <InventoryPanel
+              inv={me.inv}
+              team={me.team}
+              sel={me.sel}
+              picked={c.invPicked}
+              touch={shell.touch}
+              onSlot={(i, quick) => c.invClick(i, quick)}
+              onHover={(i) => (c.invHover = i)}
+              onClose={() => openUi('none')}
+            />
+          )}
           {hud.ui === 'upgrades' && (
             <UpgradesPanel
               inv={me.inv}
@@ -695,6 +709,38 @@ function Play({ mode }: { mode: StageMode }) {
         <div className="g-bedwars-touch">
           <div className="g-bedwars-stickZone" aria-hidden="true">
             <i style={{ transform: `translate(${c.stick.x * 34}px, ${c.stick.y * 34}px)` }} />
+          </div>
+          {/* the menus sit apart from the action buttons, so those never move under your thumb */}
+          <div className="g-bedwars-tmenu">
+            {me.alive && (
+              <button
+                type="button"
+                tabIndex={-1}
+                className="g-bedwars-tm is-bag"
+                aria-label="Inventory"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (c.openInventory()) pinged.current = true;
+                }}
+              >
+                bag
+              </button>
+            )}
+            {hud.near && (
+              <button
+                type="button"
+                tabIndex={-1}
+                className="g-bedwars-tm is-shop"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (c.openNear()) pinged.current = true;
+                }}
+              >
+                {hud.near === 'shop' ? 'shop' : 'team'}
+              </button>
+            )}
           </div>
           <div className="g-bedwars-tbtns">
             <button type="button" tabIndex={-1} className="g-bedwars-tb is-attack" {...hold(() => { c.button('left', true); c.tapAttack(); }, () => c.button('left', false))}>
@@ -719,20 +765,6 @@ function Play({ mode }: { mode: StageMode }) {
             >
               crouch
             </button>
-            {hud.near && (
-              <button
-                type="button"
-                tabIndex={-1}
-                className="g-bedwars-tb is-shop"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (c.openNear()) pinged.current = true;
-                }}
-              >
-                {hud.near === 'shop' ? 'shop' : 'team'}
-              </button>
-            )}
           </div>
         </div>
       )}

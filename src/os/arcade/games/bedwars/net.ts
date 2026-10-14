@@ -266,6 +266,10 @@ export function parseAction(v: unknown): Action | null {
       return int(a.slot) && bool(a.all) && (a.slot as number) >= 0 && (a.slot as number) < SLOTS ? { a: 'drop', slot: a.slot as number, all: a.all as boolean } : null;
     case 'sel':
       return int(a.slot) && (a.slot as number) >= 0 && (a.slot as number) < 9 ? { a: 'sel', slot: a.slot as number } : null;
+    case 'swap':
+      return int(a.from) && int(a.to) && (a.from as number) >= 0 && (a.from as number) < SLOTS && (a.to as number) >= 0 && (a.to as number) < SLOTS && a.from !== a.to
+        ? { a: 'swap', from: a.from as number, to: a.to as number }
+        : null;
     case 'fall':
       return num(a.d) && (a.d as number) >= 0 && (a.d as number) < 300 ? { a: 'fall', d: a.d as number } : null;
   }

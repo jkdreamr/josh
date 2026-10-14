@@ -5,7 +5,7 @@ import { World, canBreak, raycast } from '../src/os/arcade/games/bedwars/world.t
 import { CENTER, TOP, generate, islandLayout } from '../src/os/arcade/games/bedwars/map.ts';
 import { HEIGHT, WIDTH, newBody, stepBody, type MoveInput } from '../src/os/arcade/games/bedwars/physics.ts';
 import { applyKnock, armorPoints, fallDamage, hurtFilter, meleeKnock, protectionFactor, reduceDamage, weaponDamage } from '../src/os/arcade/games/bedwars/combat.ts';
-import { GEN_INTERVAL, addItem, buy, forgeInterval, freshInventory, inventoryAfterDeath, priceOf, offerById, trapCost, upgradeCost, freshUpgrades } from '../src/os/arcade/games/bedwars/items.ts';
+import { GEN_INTERVAL, HOTBAR, SLOTS, addItem, buy, forgeInterval, freshInventory, inventoryAfterDeath, moveSlot, priceOf, offerById, quickMoveTarget, trapCost, upgradeCost, freshUpgrades } from '../src/os/arcade/games/bedwars/items.ts';
 import {
   RESPAWN_TICKS,
   TPS,
@@ -639,6 +639,89 @@ test('doubles without bots never puts everyone on one island', () => {
   for (let i = 0; i < 5; i++) tickGame(g);
   assert.equal(g.players[1].alive, false);
   assert.equal(g.over, false, 'a death with the bed standing is no win');
+});
+
+test('the inventory: buys land in the hotbar first, overflow goes behind it, and you can move it back', () => {
+  const inv = freshInventory();
+  inv.wallet.iron = 200;
+  inv.wallet.gold = 60;
+  inv.wallet.emerald = 20;
+  // a back row stack never soaks up a buy while the hotbar has room
+  inv.slots[9] = { item: 'wool', n: 20 };
+  assert.equal(buy(inv, 'wool').ok, true);
+  assert.equal(inv.slots[1]?.item, 'wool', 'new wool shows up in the hotbar');
+  assert.equal(inv.slots[1]?.n, 16);
+  assert.equal(inv.slots[9]?.n, 20, 'the stack behind is untouched');
+  assert.equal(buy(inv, 'wool').ok, true);
+  assert.equal(inv.slots[1]?.n, 32, 'hotbar stacks top up first');
+  // fill the hotbar: the next buy goes behind it, still paid for and still reachable
+  for (const id of ['pick', 'axe', 'shears', 'endstone', 'bow', 'arrow', 'gapple']) assert.equal(buy(inv, id).ok, true, id);
+  assert.ok(inv.slots.slice(0, HOTBAR).every(Boolean), 'hotbar full');
+  const iron = inv.wallet.iron;
+  assert.equal(buy(inv, 'fireball').ok, true);
+  assert.equal(inv.wallet.iron, iron - 40);
+  const at = inv.slots.findIndex((s) => s?.item === 'fireball');
+  assert.ok(at >= HOTBAR, 'in the back row');
+  // the inventory screen: pick it up and put it where the bow is (they swap)
+  const bow = inv.slots.findIndex((s) => s?.item === 'bow');
+  assert.ok(moveSlot(inv, at, bow));
+  assert.equal(inv.slots[bow]?.item, 'fireball');
+  assert.equal(inv.slots[at]?.item, 'bow');
+  // the same item tops the stack up and leaves the rest behind
+  inv.slots[12] = { item: 'wool', n: 60 };
+  assert.ok(moveSlot(inv, 12, 1));
+  assert.equal(inv.slots[1]?.n, 64);
+  assert.equal(inv.slots[12]?.n, 28);
+  assert.equal(moveSlot(inv, 3, 3), false, 'nowhere to go');
+  assert.equal(moveSlot(inv, 0, SLOTS), false, 'off the end');
+  // shift click: from the back row to a free hotbar slot, or in place of what you hold
+  inv.slots[5] = null;
+  assert.equal(quickMoveTarget(inv, 12, 2), 5);
+  inv.slots[5] = { item: 'ladder', n: 1 };
+  assert.equal(quickMoveTarget(inv, 12, 2), 2);
+  assert.equal(quickMoveTarget(inv, 2, 2) >= HOTBAR, true, 'and back again');
+  // completely full: refused, and nothing is charged
+  const full = freshInventory();
+  full.wallet.gold = 50;
+  for (let i = 1; i < SLOTS; i++) full.slots[i] = { item: 'ladder', n: 64 };
+  assert.deepEqual(buy(full, 'tnt'), { ok: false, why: 'full' });
+  assert.equal(full.wallet.gold, 50);
+});
+
+test('tools come back into the hotbar after a death, even if they sat in the back row', () => {
+  const inv = freshInventory();
+  inv.pick = 2;
+  inv.axe = 1;
+  inv.slots[10] = { item: 'pick', n: 1 };
+  inv.slots[4] = { item: 'axe', n: 1 };
+  const after = inventoryAfterDeath(inv);
+  assert.equal(after.slots[4]?.item, 'axe', 'a hotbar tool keeps its slot');
+  const pick = after.slots.findIndex((s) => s?.item === 'pick');
+  assert.ok(pick > 0 && pick < HOTBAR, `pickaxe in the hotbar, at ${pick}`);
+});
+
+test('moving stacks is an action: the host checks it, guests send it, and a full hotbar says where a buy went', () => {
+  const g = soloWithMe();
+  const me = g.players[0];
+  me.inv.slots[11] = { item: 'pearl', n: 1 };
+  assert.ok(applyAction(g, me, { a: 'swap', from: 11, to: 3 }));
+  assert.equal(me.inv.slots[3]?.item, 'pearl');
+  assert.ok(g.events.some((e) => e.t === 'inv' && e.p === me.id));
+  assert.equal(applyAction(g, me, { a: 'swap', from: 11, to: 4 }), false, 'nothing there to move');
+  assert.deepEqual(parseAction({ a: 'swap', from: 11, to: 3 }), { a: 'swap', from: 11, to: 3 });
+  assert.equal(parseAction({ a: 'swap', from: 3, to: 3 }), null);
+  assert.equal(parseAction({ a: 'swap', from: 0, to: 18 }), null);
+  // at the shop with a full hotbar
+  const site = g.info.teams[0];
+  me.body.x = site.shop[0] + 1;
+  me.body.z = site.shop[2];
+  me.body.y = site.shop[1];
+  for (let i = 1; i < HOTBAR; i++) me.inv.slots[i] = { item: 'ladder', n: 1 };
+  me.inv.wallet.iron = 10;
+  g.events.length = 0;
+  assert.ok(applyAction(g, me, { a: 'buy', id: 'wool' }));
+  assert.ok(me.inv.slots.slice(HOTBAR).some((s) => s?.item === 'wool'));
+  assert.ok(g.events.some((e) => e.t === 'msg' && e.to === me.id && /hotbar is full, so it went in your inventory/.test(e.text)));
 });
 
 test('your record counts streaks and unlocks cosmetics at the milestones', async () => {

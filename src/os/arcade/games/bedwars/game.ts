@@ -18,10 +18,13 @@ import {
   forgeInterval,
   freshInventory,
   freshUpgrades,
+  HOTBAR,
   inventoryAfterDeath,
   isBlockItem,
   isBow,
   isRes,
+  moveSlot,
+  offerById,
   takeItem,
   trapCost,
   upgradeCost,
@@ -661,6 +664,9 @@ export function nearNpc(g: Game, p: Player, which: 'shop' | 'upgrades', slack = 
 export function buyOffer(g: Game, p: Player, offerId: string, slack = 0): boolean {
   if (!p.alive || p.out) return false;
   if (!nearNpc(g, p, 'shop', slack)) return false;
+  const give = offerById(offerId)?.give;
+  const item = !give ? null : 'item' in give ? give.item : 'tool' in give ? give.tool : 'shears' in give ? 'shears' : null;
+  const behind = item ? backCount(p.inv, item) : 0;
   const r = buy(p.inv, offerId);
   if (!r.ok) {
     emit(g, { t: 'msg', k: 'deny', text: r.why === 'poor' ? "you don't have enough resources!" : r.why === 'owned' ? 'you already have that!' : r.why === 'full' ? 'your inventory is full!' : "that's not for sale.", to: p.id });
@@ -668,8 +674,13 @@ export function buyOffer(g: Game, p: Player, offerId: string, slack = 0): boolea
   }
   invChanged(g, p);
   emit(g, { t: 'msg', k: 'buy', text: `you purchased ${r.name}`, to: p.id });
+  // a full hotbar sends it to the inventory behind it: say where it went
+  if (item && p.ctrl !== 'bot' && backCount(p.inv, item) > behind) emit(g, { t: 'msg', k: 'info', text: 'your hotbar is full, so it went in your inventory.', to: p.id });
   return true;
 }
+
+/** How many of an item sit in the inventory behind the hotbar. */
+const backCount = (inv: Inventory, item: Item) => inv.slots.reduce((n, s, i) => n + (i >= HOTBAR && s?.item === item ? s.n : 0), 0);
 
 export function buyUpgrade(g: Game, p: Player, key: UpgradeKey, slack = 0): boolean {
   if (!p.alive || p.out || !nearNpc(g, p, 'upgrades', slack)) return false;
@@ -1209,6 +1220,7 @@ export type Action =
   | { a: 'trap'; kind: TrapKind }
   | { a: 'drop'; slot: number; all: boolean }
   | { a: 'sel'; slot: number }
+  | { a: 'swap'; from: number; to: number }
   | { a: 'fall'; d: number };
 
 /** Applies an action for a player. remote widens the reach checks a little for network lag. */
@@ -1244,6 +1256,11 @@ export function applyAction(g: Game, p: Player, act: Action, remote = false): bo
       return dropHeld(g, p, act.slot, act.all);
     case 'sel':
       if (act.slot >= 0 && act.slot < 9) p.sel = act.slot;
+      return true;
+    case 'swap':
+      // the inventory screen: move a stack between slots
+      if (!p.alive || p.out || !moveSlot(p.inv, act.from, act.to)) return false;
+      invChanged(g, p);
       return true;
     case 'fall':
       if (act.d > 0 && act.d < 300) landed(g, p, act.d);
