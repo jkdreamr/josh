@@ -55,6 +55,17 @@
 .g-hot-potato .g-hot-potato-head .arcade-party-title {
   font-size: 46px;
 }
+.g-hot-potato .g-hot-potato-spice {
+  flex: none;
+  width: 100%;
+  margin: -4px 0 0;
+  padding-left: 2px;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: left;
+  text-wrap: pretty;
+  color: #ffb340;
+}
 .g-hot-potato .g-hot-potato-pot.is-mark {
   width: 104px;
   margin-bottom: -4px;
@@ -123,6 +134,91 @@
   color: var(--party-dim);
 }
 
+/* The round just scored, above the next prompt: who lost, where they stand, and a way back. */
+.g-hot-potato .g-hot-potato-result {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  width: 100%;
+  animation: g-hot-potato-rise 0.25s ease-out both;
+}
+.g-hot-potato .g-hot-potato-result > button {
+  display: flex;
+  align-items: center;
+  min-height: 52px;
+  border-radius: 14px;
+  background: var(--party-tile);
+  box-shadow: 0 3px 0 var(--party-edge);
+  transition: transform 0.07s ease-out, box-shadow 0.07s ease-out, background 0.12s ease;
+}
+.g-hot-potato .g-hot-potato-result > button:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--party-edge);
+}
+.g-hot-potato .g-hot-potato-result > button:focus-visible {
+  outline: 2px solid var(--party-ink);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  .g-hot-potato .g-hot-potato-result > button:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+}
+.g-hot-potato .g-hot-potato-result-main {
+  flex: 1 1 auto;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 12px 8px 10px;
+  text-align: left;
+}
+.g-hot-potato .g-hot-potato-result-main > span:not(.arcade-party-avatar) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.g-hot-potato .g-hot-potato-result-main b {
+  font-family: var(--party-display);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1.12;
+  letter-spacing: 0.01em;
+  text-wrap: balance;
+  font-synthesis: none;
+}
+.g-hot-potato .g-hot-potato-result-main small {
+  font-size: 13px;
+  line-height: 1.3;
+  text-wrap: pretty;
+  color: var(--party-dim);
+}
+.g-hot-potato .g-hot-potato-result-main > svg {
+  flex: none;
+  color: var(--party-faint);
+}
+.g-hot-potato .g-hot-potato-undo {
+  flex: none;
+  justify-content: center;
+  min-width: 68px;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 600;
+}
+/* With the result up, the potato gives it the room. */
+.g-hot-potato .g-hot-potato-round.is-scored .g-hot-potato-pot {
+  width: clamp(130px, 32cqh, 300px);
+}
+
+/* The 3-2-1 when a paused fuse comes back */
+.g-hot-potato .g-hot-potato-relight text {
+  font-family: var(--party-display);
+  font-size: 58px;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: g-hot-potato-beat 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
 /* Boom */
 .g-hot-potato .arcade-party.g-hot-potato-boom {
   background: #2c0f07;
@@ -132,6 +228,7 @@
   animation: none;
 }
 .g-hot-potato .g-hot-potato-aftermath,
+.g-hot-potato .g-hot-potato-shown,
 .g-hot-potato .g-hot-potato-after {
   display: flex;
   flex: none;
@@ -296,10 +393,9 @@
   .g-hot-potato .arcade-party .g-hot-potato-card > strong {
     font-size: clamp(30px, 10cqh, 56px);
   }
-  /* After the boom: the blast on the left, the prompt and who had it on the right. */
+  /* After the boom: the blast (and, with names, the prompt) on the left, who had it on the right. */
   .g-hot-potato .g-hot-potato-boom .arcade-party-body,
-  .g-hot-potato .g-hot-potato-boom .arcade-party-actions,
-  .g-hot-potato .g-hot-potato-score .arcade-party-actions {
+  .g-hot-potato .g-hot-potato-boom .arcade-party-actions {
     max-width: 760px;
   }
   .g-hot-potato .g-hot-potato-aftermath {
@@ -308,23 +404,32 @@
     align-items: center;
     gap: 20px;
   }
+  /* With names the list can run long: the blast and the prompt stay pinned in view while it scrolls. */
+  .g-hot-potato .g-hot-potato-boom.is-named .g-hot-potato-aftermath {
+    align-items: start;
+  }
+  .g-hot-potato .g-hot-potato-boom.is-named .g-hot-potato-shown {
+    position: sticky;
+    top: 6px;
+  }
+  .g-hot-potato .g-hot-potato-boom.is-named .g-hot-potato-who {
+    margin-top: 0;
+  }
   .g-hot-potato .g-hot-potato-boom .g-hot-potato-blast,
   .g-hot-potato .g-hot-potato-boom.is-named .g-hot-potato-blast {
     justify-self: center;
     width: min(100%, 300px);
   }
   /* One row of buttons, the primary on the right. */
-  .g-hot-potato .g-hot-potato-score .arcade-party-actions,
   .g-hot-potato .g-hot-potato-boom:not(.is-named) .arcade-party-actions {
     flex-direction: row-reverse;
   }
-  .g-hot-potato .g-hot-potato-score .arcade-party-actions > *,
   .g-hot-potato .g-hot-potato-boom .arcade-party-actions > * {
     flex: 1 1 0;
     min-width: 0;
   }
-  .g-hot-potato .g-hot-potato-score .arcade-party-actions > .arcade-party-row {
-    flex-grow: 2;
+  .g-hot-potato .g-hot-potato-round.is-scored .g-hot-potato-table .g-hot-potato-pot {
+    width: min(100%, 42cqh, 260px);
   }
 }
 /* Tablets and big windows: a bigger table to read from across the room. */
@@ -365,6 +470,15 @@
   .g-hot-potato .g-hot-potato-boom .g-hot-potato-blast,
   .g-hot-potato .g-hot-potato-boom.is-named .g-hot-potato-blast {
     width: min(100%, 240px);
+  }
+  .g-hot-potato .g-hot-potato-boom.is-named .g-hot-potato-blast {
+    width: min(100%, 200px);
+  }
+  .g-hot-potato .g-hot-potato-result > button {
+    min-height: 46px;
+  }
+  .g-hot-potato .g-hot-potato-result-main {
+    padding-block: 5px;
   }
   .g-hot-potato .arcade-party.g-hot-potato-score .arcade-party-title {
     font-size: 30px;
@@ -412,6 +526,12 @@
 @keyframes g-hot-potato-slam {
   from {
     transform: rotate(-6deg) scale(2.4);
+    opacity: 0;
+  }
+}
+@keyframes g-hot-potato-beat {
+  from {
+    transform: scale(1.6);
     opacity: 0;
   }
 }

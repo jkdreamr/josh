@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bootFiles, KEEP_MS, plan, refsIn } from '../scripts/keep-old-assets.ts';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { bootFiles, gameIds, KEEP_MS, MISS_HEADERS_ROUTE, MISSING_ROUTE, plan, refsIn, withMissingRoute } from '../scripts/keep-old-assets.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -41,4 +43,32 @@ test('keeps the files the live site serves and this build drops, newest first, f
 test('the first deploy, with no history yet, keeps what the live site serves', () => {
   const { keep } = plan(null, ['game.v1.js', 'worker-v1.js'], ['game.v2.js'], 5);
   assert.deepEqual(keep.map(([name]) => name).sort(), ['game.v1.js', 'worker-v1.js']);
+});
+
+test('missing scripts get the stand-in, and no miss is ever cached', () => {
+  const adapter = [{ handle: 'filesystem' }, { src: '^/_astro/(.*)$', headers: { 'cache-control': 'public, max-age=31536000, immutable' }, continue: true }];
+  const routes = withMissingRoute(adapter)!;
+  assert.deepEqual(routes, [adapter[0], MISSING_ROUTE, MISS_HEADERS_ROUTE], "the adapter's year-long header only reached 404s");
+  assert.deepEqual(withMissingRoute(routes), routes, 'running twice changes nothing');
+  const before = { src: '^/(.*)$', headers: { a: '1' }, continue: true };
+  const spa = { src: '/(.*)', dest: '/index.html' };
+  assert.deepEqual(withMissingRoute([before, ...adapter, spa]), [before, adapter[0], MISSING_ROUTE, MISS_HEADERS_ROUTE, spa], 'other routes stay put');
+  // Headers for files that exist live in a later phase, which is left alone.
+  const hit = [{ handle: 'hit' }, { src: '^/_astro/(.*)$', headers: { 'cache-control': 'public, max-age=31536000, immutable' }, continue: true }];
+  assert.deepEqual(withMissingRoute([...adapter, ...hit]), [adapter[0], MISSING_ROUTE, MISS_HEADERS_ROUTE, ...hit]);
+  assert.equal(withMissingRoute([spa]), null);
+});
+
+test('the stand-in answers for missing scripts, but not workers or stylesheets', () => {
+  const route = new RegExp(MISSING_ROUTE.src);
+  for (const path of ['/_astro/index.C_25zyHt.js', '/_astro/three-lib.aH_0GXA1.js', '/_astro/engine-QSwNVl-p.js', '/_astro/useWorker.D1a2b3c4.js']) assert.ok(route.test(path), path);
+  for (const path of ['/_astro/go.worker-Ddpv7D29.js', '/_astro/gen.worker-rxYuO-Dh.js', '/_astro/worker-CKJnDZNG.js', '/_astro/index.zkFG34QT.css', '/_astro/a/b.js', '/index.js']) assert.ok(!route.test(path), path);
+});
+
+test('every arcade game title maps to its id, so a reload can reopen it', async () => {
+  const ids = await gameIds(join(import.meta.dirname, '..', 'src', 'os', 'arcade', 'games'));
+  assert.equal(ids['Target Range'], 'target-range');
+  assert.equal(ids['Void Run'], 'run-3d');
+  assert.ok(!Object.values(ids).includes('example'), 'folders starting with _ are skipped');
+  assert.equal(Object.keys(ids).length, readdirSync(join(import.meta.dirname, '..', 'src', 'os', 'arcade', 'games')).filter((f) => !f.startsWith('_')).length, 'every game');
 });

@@ -38,7 +38,74 @@
   font-size: 13px;
   line-height: 1.45;
   text-align: center;
+  text-wrap: pretty;
   color: var(--party-dim);
+}
+/* A note that belongs to the control above it sits under it, aligned like the field. */
+.g-truth-or-dare .g-truth-or-dare-note.is-field {
+  align-self: stretch;
+  margin-top: -4px;
+  padding-left: 2px;
+  text-align: left;
+}
+
+/* Back at setup mid-game: the session's running jokes, on a cream slip */
+.g-truth-or-dare .g-truth-or-dare-session {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 14px;
+  color: #1d1a16;
+  background: #f5efe3;
+  box-shadow: 0 3px 0 #c4b8a3;
+}
+.g-truth-or-dare .g-truth-or-dare-session p {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.3;
+}
+.g-truth-or-dare .g-truth-or-dare-session b {
+  flex: none;
+  font-family: var(--party-display);
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--g-tod-blue);
+}
+.g-truth-or-dare .g-truth-or-dare-session span {
+  min-width: 0;
+  font-weight: 600;
+}
+
+/* Quiet text buttons: Draw Another is free and Change Setup is rare, so neither competes with the real choices. */
+.g-truth-or-dare.arcade-shell .arcade-party-btn.g-truth-or-dare-link {
+  align-self: center;
+  width: auto;
+  min-height: 40px;
+  margin-bottom: -2px;
+  padding: 0 16px;
+  font-family: var(--g-tod-read);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--party-dim);
+  background: transparent;
+  box-shadow: none;
+}
+@media (pointer: coarse) {
+  .g-truth-or-dare.arcade-shell .arcade-party-btn.g-truth-or-dare-link {
+    min-height: 44px;
+  }
+}
+@media (hover: hover) {
+  .g-truth-or-dare.arcade-shell .arcade-party-btn.g-truth-or-dare-link:hover {
+    color: var(--party-ink);
+    background: var(--party-tile);
+  }
 }
 
 /* Choose */
@@ -197,9 +264,12 @@
   font-weight: 500;
   opacity: 0.8;
 }
-.g-truth-or-dare .g-truth-or-dare-card.is-chicken > strong,
-.g-truth-or-dare .g-truth-or-dare-card.is-chicken .g-truth-or-dare-foot {
+.g-truth-or-dare .g-truth-or-dare-card.is-chicken > strong {
   opacity: 0.32;
+}
+/* The verdict under the card says it now; keep the line's space so the card doesn't jump. */
+.g-truth-or-dare .g-truth-or-dare-card.is-chicken .g-truth-or-dare-foot {
+  visibility: hidden;
 }
 
 /* Chickened out: a sticker slapped across the card */
@@ -255,7 +325,20 @@
   .g-truth-or-dare .g-truth-or-dare-name {
     font-size: 32px;
   }
+  /* The name is big enough on its own; the tiles need the room. */
+  .g-truth-or-dare .g-truth-or-dare-choose .arcade-party-avatar {
+    display: none;
+  }
   .g-truth-or-dare.arcade-shell .arcade-party-btn {
     font-size: 16px;
+  }
+}
+
+/* Short windows: the setup scrolls, so its bottom edge fades out to say so. The padding lets the last line
+   clear the fade once scrolled. */
+@container arcade-party (max-height: 480px) {
+  .g-truth-or-dare .g-truth-or-dare-setup .arcade-party-body {
+    padding-bottom: 22px;
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
   }
 }

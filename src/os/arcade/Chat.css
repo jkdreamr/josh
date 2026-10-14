@@ -1,0 +1,290 @@
+/* Arcade home: the global chat (Chat.tsx), and the header buttons that open it and the leaderboards. */
+.arcade-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* The chat fills the page under the header; only its message list scrolls. */
+.arcade.is-chat {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 24px;
+}
+.arcade.is-chat > .arcade-head {
+  flex: none;
+  width: 100%;
+}
+.arcade-chat {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
+  max-width: 920px;
+  min-height: 300px;
+  margin: 22px auto 0;
+  /* Room for a phone keyboard while typing (see useKeyboardLift). */
+  padding-bottom: var(--chat-keyboard, 0px);
+  overflow: hidden;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.arcade-chat input {
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  outline: none;
+  font: inherit;
+  color: #202124;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+.arcade-chat input:focus {
+  box-shadow: inset 0 0 0 2px #1a73e8;
+}
+.arcade-chat input::placeholder {
+  color: #80868b;
+}
+.arcade-chat-bar,
+.arcade-chat-compose {
+  flex: none;
+  background: #f8f8fa;
+}
+.arcade-chat-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+  font-size: 13px;
+  color: #5f6368;
+}
+.arcade-chat-here {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.arcade-chat-here i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #bdc1c6;
+}
+.arcade-chat-here.is-live i {
+  background: #1e8e3e;
+  box-shadow: 0 0 0 3px rgba(30, 142, 62, 0.16);
+}
+.arcade-chat-here.is-reconnecting i {
+  background: #f9ab00;
+}
+.arcade-chat-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.arcade-chat-name input {
+  width: 10em;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.arcade-chat-body {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.arcade-chat-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 4px 0 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.arcade-chat-day {
+  margin: 14px 0 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+  color: #80868b;
+}
+.arcade-chat-msg {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  column-gap: 10px;
+  padding: 1px 18px;
+}
+.arcade-chat-msg.is-first {
+  margin-top: 12px;
+}
+.arcade-chat-avatar {
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-top: 2px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--name);
+}
+.arcade-chat-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  line-height: 1.35;
+}
+.arcade-chat-meta b {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--name);
+}
+.arcade-chat-meta time {
+  flex: none;
+  font-size: 11.5px;
+  color: #80868b;
+}
+.arcade-chat-text {
+  grid-column: 2;
+  margin: 0;
+  /* Clips anything drawn outside the line, like stacked accents. */
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #202124;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.arcade-chat-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.arcade-chat-empty {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  font-size: 14px;
+  text-align: center;
+  color: #5f6368;
+}
+.arcade-chat-empty p {
+  margin: 0;
+}
+.arcade-chat-jump {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  background: #1a73e8;
+  box-shadow: 0 4px 14px rgba(26, 115, 232, 0.3);
+  transform: translateX(-50%);
+}
+.arcade-chat-compose {
+  padding: 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.07);
+}
+.arcade-chat-notice {
+  margin: 0 4px 8px;
+  font-size: 12.5px;
+  color: #c5221f;
+}
+.arcade-chat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.arcade-chat-row input {
+  flex: 1 1 auto;
+  height: 40px;
+  padding: 0 12px;
+  font-size: 14px;
+}
+.arcade-chat-left {
+  flex: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #80868b;
+}
+.arcade-chat-send {
+  flex: none;
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: #1a73e8;
+}
+.arcade-chat-send:not(:disabled):active {
+  background: #1765cc;
+}
+.arcade-chat-send:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.arcade-chat-send:focus-visible,
+.arcade-chat-jump:focus-visible {
+  outline: 2px solid #8ab4f8;
+  outline-offset: 2px;
+}
+/* Phones and iPads: 16px text so iOS doesn't zoom into the box, and taller tap targets. */
+@media (pointer: coarse) {
+  .arcade-chat input {
+    font-size: 16px;
+  }
+  .arcade-chat-name input {
+    height: 36px;
+  }
+  .arcade-chat-row input,
+  .arcade-chat-send {
+    height: 44px;
+  }
+}
+@container (max-width: 600px) {
+  .arcade.is-chat {
+    padding-bottom: 12px;
+  }
+  .arcade-chat {
+    min-height: 260px;
+    margin-top: 16px;
+    border-radius: 14px;
+  }
+  .arcade-chat-bar {
+    padding-left: 12px;
+  }
+  .arcade-chat-name input {
+    width: 8.5em;
+  }
+  .arcade-chat-msg {
+    padding: 1px 12px;
+  }
+}

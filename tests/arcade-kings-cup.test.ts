@@ -5,7 +5,9 @@ import {
   ALTERNATE_RULES,
   CLASSIC_RULES,
   DECK_SIZE,
+  KING,
   LAST_KING,
+  SPICY_RULES,
   MADE_RULE_MAX,
   RULE_NAME_MAX,
   RULE_TEXT_MAX,
@@ -17,9 +19,11 @@ import {
   dropRule,
   isClassic,
   isRed,
+  isSpicy,
   makeDeck,
   makeRule,
   mateGroups,
+  mateOf,
   matesOf,
   nearestSlot,
   newGame,
@@ -27,6 +31,7 @@ import {
   nextSlot,
   nth,
   parseRules,
+  parseSpicy,
   rankOfKind,
   rankLabel,
   ruleFor,
@@ -34,6 +39,8 @@ import {
   rulesEdited,
   setRule,
   slotAngle,
+  stripSpicy,
+  swapsFor,
   tidy,
   type Card,
   type Game,
@@ -197,32 +204,109 @@ test('tracked rules follow the house rules, not the card', () => {
 });
 
 test('every rule reads out in one breath', () => {
-  for (const rule of [...CLASSIC_RULES, ...ALTERNATE_RULES]) {
+  for (const rule of [...CLASSIC_RULES, ...ALTERNATE_RULES, ...SPICY_RULES]) {
     assert.ok(rule.name.length <= RULE_NAME_MAX, rule.name);
     assert.ok(rule.text.length <= RULE_TEXT_MAX, rule.name);
     assert.ok(rule.text.split(/\s+/).length <= 16, `${rule.name} is too long to read out: ${rule.text}`);
     assert.ok(!/[\u2013\u2014!]/.test(rule.name + rule.text), `${rule.name} has a dash or an exclamation mark`);
     assert.deepEqual(parseRules([rule])[0], rule, 'library rules survive the stored-rule cleanup');
   }
-  const names = [...CLASSIC_RULES, ...ALTERNATE_RULES].map((r) => r.name.toLowerCase());
+  const names = [...CLASSIC_RULES, ...ALTERNATE_RULES, ...SPICY_RULES].map((r) => r.name.toLowerCase());
   assert.equal(new Set(names).size, names.length, 'no duplicate names');
   assert.equal(ruleKind(ALTERNATE_RULES.find((r) => r.name === 'Thumb Master')), 'thumb');
   assert.equal(ruleKind(ALTERNATE_RULES.find((r) => r.name === 'Snake Eyes')), 'snake');
 });
 
-test('mates link up and chain', () => {
+test('mates come in pairs: a new mate splits the old pair instead of chaining', () => {
   let pairs = addMate([], 0, 2);
   assert.deepEqual(pairs, [[0, 2]]);
   assert.deepEqual(addMate(pairs, 1, 1), pairs, 'nobody mates themselves');
   assert.deepEqual(addMate(pairs, 2, 0), pairs, 'no duplicate pairs');
   pairs = addMate(pairs, 3, 1);
   assert.deepEqual(mateGroups(pairs), [[0, 2], [1, 3]]);
+  // 2 picks 3: both old pairs split, 0 and 1 are on their own.
   pairs = addMate(pairs, 2, 3);
-  assert.deepEqual(mateGroups(pairs), [[0, 1, 2, 3]]);
-  assert.deepEqual(matesOf(pairs, 3), [0, 1, 2]);
-  assert.deepEqual(addMate(pairs, 0, 3), pairs, 'already in the same chain');
+  assert.deepEqual(mateGroups(pairs), [[2, 3]]);
+  assert.deepEqual(matesOf(pairs, 3), [2]);
+  assert.equal(mateOf(pairs, 2), 3);
+  assert.equal(mateOf(pairs, 0), null);
   assert.deepEqual(matesOf(pairs, 5), []);
   assert.deepEqual(mateGroups([]), []);
+  // However the eights fall, nobody ever drinks with more than one mate.
+  const rng = mulberry32(5);
+  let p: ReturnType<typeof addMate> = [];
+  for (let k = 0; k < 500; k++) {
+    p = addMate(p, Math.floor(rng() * 8), Math.floor(rng() * 8));
+    assert.ok(mateGroups(p).every((g) => g.length === 2));
+    for (let s = 0; s < 8; s++) assert.ok(matesOf(p, s).length <= 1);
+  }
+});
+
+test('the king always fills the cup: its rule cannot be edited or stored away', () => {
+  const classic = parseRules(null);
+  assert.deepEqual(setRule(classic, KING, 'Social', 'Everyone drinks.'), classic);
+  const stored = parseRules(CLASSIC_RULES.map((r, i) => (i === KING - 1 ? { name: 'Social', text: 'Everyone drinks.' } : r)));
+  assert.deepEqual(ruleFor(stored, KING), CLASSIC_RULES[KING - 1]);
+  assert.equal(rulesEdited(stored), false);
+  // And the fourth king still ends the game whatever the other rules say.
+  const wild = CLASSIC_RULES.map((_, i) => ({ name: `Rule ${i}`, text: '' }));
+  const { steps } = playOut(newGame(3, mulberry32(11)));
+  assert.equal(steps[steps.length - 1].drawn.card.rank, KING);
+  assert.equal(parseRules(wild)[KING - 1].name, 'Kings Cup');
+});
+
+test('Waterfall stays a few seconds, and Guys and Girls have ungendered swaps on offer first', () => {
+  assert.match(CLASSIC_RULES[0].text, /few seconds/);
+  assert.equal(CLASSIC_RULES[4].name, 'Guys');
+  assert.equal(CLASSIC_RULES[5].name, 'Girls');
+  for (const rank of [5, 6]) {
+    const swaps = swapsFor(rank);
+    assert.deepEqual(swaps[0], CLASSIC_RULES[rank - 1], 'the classic rule comes first');
+    assert.doesNotMatch(swaps[1].name + swaps[1].text, /\b(guys|girls|men|women|boys|ladies)\b/i, 'then one without a gender');
+  }
+  for (let rank = 1; rank <= 13; rank++) {
+    const names = swapsFor(rank).map((r) => r.name);
+    assert.equal(new Set(names).size, names.length, `rank ${rank} lists each swap once`);
+  }
+});
+
+test('18+ swaps: off by default, offered only when 18+ Rules is on, and gone again when it is off', () => {
+  assert.equal(parseSpicy(undefined), false);
+  assert.equal(parseSpicy(null), false);
+  assert.equal(parseSpicy('true'), false);
+  assert.equal(parseSpicy(1), false);
+  assert.equal(parseSpicy(true), true);
+  assert.ok(SPICY_RULES.length >= 8);
+  for (let rank = 1; rank <= 13; rank++) {
+    assert.ok(!swapsFor(rank).some(isSpicy), `rank ${rank}: no 18+ swaps when off`);
+    if (rank !== KING) assert.ok(SPICY_RULES.every((r) => swapsFor(rank, true).includes(r)), `rank ${rank}: every 18+ swap when on`);
+  }
+  // No 18+ rule shares a name with the everyday ones.
+  for (const r of SPICY_RULES) assert.ok(![...CLASSIC_RULES, ...ALTERNATE_RULES].some((x) => x.name.toLowerCase() === r.name.toLowerCase()));
+  // Turning it off puts the classic rule back on any card that had an 18+ swap; house rules of the table's own stay.
+  let rules = setRule(parseRules(null), 3, SPICY_RULES[0].name, SPICY_RULES[0].text);
+  rules = setRule(rules, 7, 'Thumb Master', ALTERNATE_RULES.find((r) => r.name === 'Thumb Master')!.text);
+  const off = stripSpicy(rules);
+  assert.deepEqual(off[2], CLASSIC_RULES[2]);
+  assert.equal(off[6].name, 'Thumb Master');
+  assert.ok(!off.some(isSpicy));
+  // 18+ swaps aren't tracked as roles, mates or made rules.
+  for (const r of SPICY_RULES) assert.equal(ruleKind(r), null, r.name);
+});
+
+test('18+ swaps: frank, never over the line, and anyone else involved has to say yes', () => {
+  for (const r of SPICY_RULES) {
+    const all = `${r.name} ${r.text}`;
+    // Never, at any setting: minors or school settings, coercion or intoxication, nudity past swimwear,
+    // sending anything outside the room, mocking bodies or identities, heavy drinking.
+    assert.doesNotMatch(all, /\b(high school|school|teen\w*|underage|minor|student|teacher|passed out|blackout|unconscious|forced?|naked|nude|nudes|underwear off|send|text|post|call|fat|ugly|slut|whore|chug|bottoms up)\b|\b(?<!body )shots?\b/i, all);
+    // A body shot is one sip.
+    if (/body shot/i.test(all)) assert.match(r.text, /\bsip\b/);
+    // Clothing only comes off with a floor.
+    if (/\b(strip|layer|clothing|take off)\b/i.test(all)) assert.match(all, /swimwear|swimsuit/i, `${r.name} keeps it at swimwear`);
+    // Touch, laps, kisses and body shots need the other person's yes, in the same words every time.
+    if (/\b(kiss|lap|collarbone|body shot|touch|hold)\b/i.test(all)) assert.match(r.text, /if they say yes/, `${r.name} asks first`);
+  }
 });
 
 test('jacks make rules that can be dropped', () => {

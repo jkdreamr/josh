@@ -1,7 +1,8 @@
 // Secret words by category. Everyone but the imposter sees one; the imposter may see its category.
 // A good word has several angles to clue from (Pizza: slice, delivery, Friday, Italy) and nobody at the table
 // has to ask what it means. `pairs` feed Close Word mode: the crew gets one word, the imposter the other, so both
-// should share most of their clues and split on a few (Beach and Pool: towels and sun, but sand or chlorine).
+// should share most of their clues and split on a few (Beach and Pool: towels and sun, but sand or chlorine), and
+// run about the same length, so a glance at someone else's card doesn't show a word much longer than yours.
 
 export const CATEGORIES = {
   food: {
@@ -16,8 +17,8 @@ export const CATEGORIES = {
     pairs: [
       ['Pancakes', 'Waffles'], ['Ketchup', 'Mustard'], ['Coffee', 'Tea'], ['Burger', 'Hot Dog'], ['Ice Cream', 'Frozen Yogurt'],
       ['Donut', 'Bagel'], ['Tacos', 'Burritos'], ['Croissant', 'Baguette'], ['Cupcake', 'Muffin'], ['Spaghetti', 'Ramen'],
-      ['French Fries', 'Onion Rings'], ['Lobster', 'Crab'], ['Lemonade', 'Iced Tea'], ['Peanut Butter', 'Nutella'], ['Cereal', 'Oatmeal'],
-      ['Strawberry', 'Cherry'], ['Honey', 'Maple Syrup'], ['Mac and Cheese', 'Grilled Cheese'], ['Popcorn', 'Nachos'], ['Fried Chicken', 'Chicken Nuggets'],
+      ['French Fries', 'Onion Rings'], ['Lobster', 'Crab'], ['Lemonade', 'Iced Tea'], ['Peanut Butter', 'Cream Cheese'], ['Cereal', 'Oatmeal'],
+      ['Strawberry', 'Cherry'], ['Honey', 'Syrup'], ['Mac and Cheese', 'Grilled Cheese'], ['Popcorn', 'Nachos'], ['Fried Chicken', 'Chicken Nuggets'],
     ],
   },
   animals: {
@@ -46,10 +47,10 @@ export const CATEGORIES = {
       'Water Park',
     ],
     pairs: [
-      ['Beach', 'Pool'], ['Airport', 'Train Station'], ['Library', 'Bookstore'], ['Zoo', 'Aquarium'], ['Museum', 'Art Gallery'],
+      ['Beach', 'Pool'], ['Airport', 'Harbor'], ['Library', 'Bookstore'], ['Zoo', 'Farm'], ['Museum', 'Art Gallery'],
       ['Hotel', 'Hostel'], ['Nightclub', 'Karaoke Bar'], ['Casino', 'Arcade'], ['Cruise Ship', 'Pirate Ship'], ['Prison', 'High School'],
       ['Haunted House', 'Cemetery'], ['Space Station', 'Submarine'], ['Barbershop', 'Nail Salon'], ['Courtroom', 'Classroom'], ['Laundromat', 'Car Wash'],
-      ['Amusement Park', 'Water Park'], ['Coffee Shop', 'Bakery'], ['Hospital', 'Vet Clinic'], ['Gym', 'Yoga Studio'],
+      ['Theme Park', 'Water Park'], ['Coffee Shop', 'Bakery'], ['Hospital', 'Vet Clinic'], ['Gym', 'Spa'],
     ],
   },
   jobs: {
@@ -62,10 +63,10 @@ export const CATEGORIES = {
       'Delivery Driver', 'Real Estate Agent', 'Police Officer',
     ],
     pairs: [
-      ['Doctor', 'Nurse'], ['Chef', 'Baker'], ['Pilot', 'Flight Attendant'], ['Lawyer', 'Judge'], ['Firefighter', 'Police Officer'],
-      ['Plumber', 'Electrician'], ['Barista', 'Bartender'], ['Magician', 'Clown'], ['Detective', 'Spy'], ['Teacher', 'Librarian'],
+      ['Doctor', 'Nurse'], ['Chef', 'Baker'], ['Pilot', 'Astronaut'], ['Lawyer', 'Judge'], ['Firefighter', 'Police Officer'],
+      ['Plumber', 'Electrician'], ['Barista', 'Bartender'], ['Magician', 'Clown'], ['Detective', 'Secret Agent'], ['Teacher', 'Librarian'],
       ['Photographer', 'Influencer'], ['Actor', 'Singer'], ['Hairdresser', 'Tattoo Artist'], ['Taxi Driver', 'Bus Driver'], ['Lifeguard', 'Swim Coach'],
-      ['Personal Trainer', 'Yoga Teacher'], ['DJ', 'Radio Host'], ['Zookeeper', 'Vet'], ['Architect', 'Builder'],
+      ['Personal Trainer', 'Yoga Teacher'], ['DJ', 'MC'], ['Zookeeper', 'Park Ranger'], ['Architect', 'Builder'],
     ],
   },
   sports: {
@@ -74,18 +75,18 @@ export const CATEGORIES = {
       'Soccer', 'Basketball', 'Tennis', 'Golf', 'Rowing', 'Surfing', 'Skiing', 'Boxing', 'Baseball', 'Volleyball',
       'Bowling', 'Swimming', 'Chess', 'Poker', 'Badminton', 'Ping Pong', 'Hockey', 'Skateboarding', 'Yoga', 'Marathon',
       'Rock Climbing', 'Fencing', 'Wrestling', 'Archery', 'Cycling', 'Karate', 'Darts', 'Snowboarding', 'Figure Skating', 'Gymnastics',
-      'Football', 'Cricket', 'Sumo', 'Mini Golf', 'Horse Racing', 'Pickleball', 'Dodgeball', 'Go Karts', 'Hide and Seek', 'Monopoly',
+      'American Football', 'Cricket', 'Sumo', 'Mini Golf', 'Horse Racing', 'Pickleball', 'Dodgeball', 'Go Karts', 'Hide and Seek', 'Monopoly',
       'Jenga', 'Twister', 'Uno', 'Laser Tag', 'Tug of War',
     ],
     pairs: [
-      ['Tennis', 'Badminton'], ['Football', 'Rugby'], ['Basketball', 'Volleyball'], ['Skiing', 'Snowboarding'], ['Surfing', 'Skateboarding'],
-      ['Boxing', 'Wrestling'], ['Baseball', 'Cricket'], ['Golf', 'Mini Golf'], ['Ping Pong', 'Air Hockey'], ['Hockey', 'Figure Skating'],
+      ['Tennis', 'Badminton'], ['Super Bowl', 'World Cup'], ['Basketball', 'Volleyball'], ['Skiing', 'Sledding'], ['Surfing', 'Sailing'],
+      ['Boxing', 'Wrestling'], ['Baseball', 'Cricket'], ['Golf', 'Mini Golf'], ['Ping Pong', 'Air Hockey'], ['Hockey', 'Lacrosse'],
       ['Chess', 'Checkers'], ['Poker', 'Blackjack'], ['Yoga', 'Pilates'], ['Darts', 'Archery'], ['Bowling', 'Curling'],
-      ['Laser Tag', 'Paintball'], ['Hide and Seek', 'Tag'], ['Rowing', 'Kayaking'],
+      ['Laser Tag', 'Paintball'], ['Hide and Seek', 'Capture the Flag'], ['Rowing', 'Kayaking'],
     ],
   },
   home: {
-    label: 'Stuff',
+    label: 'Everyday Things',
     words: [
       'Toothbrush', 'Fridge', 'Couch', 'Pillow', 'Microwave', 'Mirror', 'TV Remote', 'Blender', 'Vacuum', 'Bathtub',
       'Toaster', 'Umbrella', 'Doorbell', 'Candle', 'Alarm Clock', 'Washing Machine', 'Coffee Mug', 'Frying Pan', 'Hair Dryer', 'Toilet Paper',
@@ -94,8 +95,8 @@ export const CATEGORIES = {
       'Bubble Wrap', 'Rubber Duck', 'Selfie Stick',
     ],
     pairs: [
-      ['Couch', 'Bed'], ['Pillow', 'Blanket'], ['Microwave', 'Oven'], ['Toothbrush', 'Hairbrush'], ['TV Remote', 'Game Controller'],
-      ['Vacuum', 'Broom'], ['Bathtub', 'Shower'], ['Umbrella', 'Raincoat'], ['Candle', 'Flashlight'], ['Washing Machine', 'Dishwasher'],
+      ['Couch', 'Bed'], ['Pillow', 'Blanket'], ['Microwave', 'Toaster Oven'], ['Toothbrush', 'Hairbrush'], ['TV Remote', 'Joystick'],
+      ['Vacuum', 'Broom'], ['Bathtub', 'Shower'], ['Umbrella', 'Raincoat'], ['Candle', 'Flashlight'], ['Washing Machine', 'Clothes Dryer'],
       ['Coffee Mug', 'Wine Glass'], ['Hair Dryer', 'Leaf Blower'], ['Toilet Paper', 'Paper Towels'], ['Laptop', 'Tablet'], ['Sunglasses', 'Glasses'],
       ['Backpack', 'Suitcase'], ['Socks', 'Gloves'], ['Flip Flops', 'Slippers'], ['Duct Tape', 'Glue'], ['Lighter', 'Matches'],
     ],
@@ -110,10 +111,10 @@ export const CATEGORIES = {
       'Survivor', 'Love Island', 'Shark Tank', 'The Bachelor',
     ],
     pairs: [
-      ['Titanic', 'The Notebook'], ['Frozen', 'Moana'], ['Star Wars', 'Star Trek'], ['Harry Potter', 'Lord of the Rings'], ['The Lion King', 'The Jungle Book'],
-      ['Jurassic Park', 'King Kong'], ['Shrek', 'Kung Fu Panda'], ['Finding Nemo', 'The Little Mermaid'], ['Home Alone', 'Elf'], ['Mean Girls', 'Clueless'],
-      ['The Matrix', 'Inception'], ['Top Gun', 'Fast and Furious'], ['Rocky', 'Karate Kid'], ['Grease', 'High School Musical'], ['The Office', 'Parks and Rec'],
-      ['The Simpsons', 'Family Guy'], ['Squid Game', 'The Hunger Games'], ['Survivor', 'Love Island'], ['Breaking Bad', 'Ozark'], ['Ghostbusters', 'Men in Black'],
+      ['The Notebook', 'Dirty Dancing'], ['Frozen', 'Moana'], ['Star Wars', 'Star Trek'], ['Harry Potter', 'Lord of the Rings'], ['The Lion King', 'The Jungle Book'],
+      ['Jurassic Park', 'King Kong'], ['Shrek', 'Trolls'], ['Finding Nemo', 'Lilo and Stitch'], ['Home Alone', 'The Grinch'], ['Mean Girls', 'Clueless'],
+      ['The Matrix', 'Inception'], ['Fast and Furious', 'Mission Impossible'], ['Rocky', 'Karate Kid'], ['Grease', 'Hairspray'], ['The Office', 'Parks and Rec'],
+      ['The Simpsons', 'Family Guy'], ['Squid Game', 'Hunger Games'], ['Survivor', 'Love Island'], ['Breaking Bad', 'The Sopranos'], ['Ghostbusters', 'Men in Black'],
     ],
   },
   characters: {
@@ -127,7 +128,7 @@ export const CATEGORIES = {
     ],
     pairs: [
       ['Batman', 'Iron Man'], ['Mario', 'Sonic'], ['Gandalf', 'Dumbledore'], ['Santa Claus', 'Easter Bunny'], ['Dracula', 'Frankenstein'],
-      ['Cinderella', 'Rapunzel'], ['Darth Vader', 'Voldemort'], ['Elsa', 'Jack Frost'], ['Homer Simpson', 'Peter Griffin'], ['Mickey Mouse', 'Bugs Bunny'],
+      ['Cinderella', 'Rapunzel'], ['Darth Vader', 'Voldemort'], ['Elsa', 'Ariel'], ['Homer Simpson', 'Peter Griffin'], ['Mickey Mouse', 'Bugs Bunny'],
       ['Winnie the Pooh', 'Paddington'], ['Captain Hook', 'Jack Sparrow'], ['The Grinch', 'Scrooge'], ['Tarzan', 'Mowgli'], ['Robin Hood', 'Zorro'],
       ['King Kong', 'Godzilla'], ['Thor', 'Zeus'], ['The Joker', 'Pennywise'], ['Barbie', 'Ken'], ['Hulk', 'Shrek'],
       ['Sherlock Holmes', 'Scooby-Doo'],
@@ -143,26 +144,26 @@ export const CATEGORIES = {
       'Cramming',
     ],
     pairs: [
-      ['Midterm', 'Pop Quiz'], ['Office Hours', 'Tutoring'], ['Frat Party', 'Formal'], ['Roommate', 'RA'], ['Spring Break', 'Study Abroad'],
-      ['Professor', 'TA'], ['Graduation', 'Orientation'], ['Internship', 'Part-Time Job'], ['Career Fair', 'Job Interview'], ['Dining Hall', 'Food Court'],
-      ['Tailgate', 'Homecoming'], ['Dorm Room', 'Apartment'], ['Hackathon', 'All-Nighter'], ['Sorority', 'Fraternity'], ['Extra Credit', 'Curve'],
-      ['Student Loans', 'Tuition'], ['Group Project', 'Lab Partner'], ['Syllabus', 'Textbook'],
+      ['Midterm', 'Pop Quiz'], ['Office Hours', 'Tutoring'], ['Frat Party', 'Formal'], ['Roommate', 'Neighbor'], ['Spring Break', 'Study Abroad'],
+      ['Professor', 'Tutor'], ['Graduation', 'Orientation'], ['Internship', 'Part-Time Job'], ['Career Fair', 'Job Interview'], ['Dining Hall', 'Food Court'],
+      ['Tailgate', 'Homecoming'], ['Dorm Room', 'Apartment'], ['Hackathon', 'All-Nighter'], ['Sorority', 'Fraternity'], ['Extra Credit', 'Bonus Question'],
+      ['Student Loans', 'Credit Card Debt'], ['Group Project', 'Lab Partner'], ['Syllabus', 'Textbook'],
     ],
   },
   party: {
     label: 'Party',
     words: [
-      'Karaoke', 'Beer Pong', 'Dance Floor', 'Playlist', 'Confetti', 'Costume Party', 'Hangover', 'Red Cup', 'Photo Booth', 'Disco Ball',
+      'Karaoke', 'Musical Chairs', 'Dance Floor', 'Playlist', 'Confetti', 'Costume Party', 'Party Crasher', 'Potluck', 'Photo Booth', 'Disco Ball',
       'Balloons', 'Surprise Party', 'Afterparty', 'Glow Sticks', 'Pool Party', 'Bonfire', 'House Party', 'Limbo', 'Truth or Dare', 'Pinata',
-      'Keg', 'Fog Machine', 'Wine Night', 'Game Night', 'Sleepover', 'Party Hat', 'Flip Cup', 'Bouncer', 'Guest List', 'Hot Tub',
-      'Slow Dance', 'Rooftop', 'Toga Party', 'Chips and Dip', 'Noise Complaint', 'Last Call', 'Drunk Text', 'Uber Home', 'Plus One', 'Bachelorette',
+      'Conga Line', 'Fog Machine', 'Murder Mystery', 'Game Night', 'Sleepover', 'Party Hat', 'Silent Disco', 'Bouncer', 'Guest List', 'Hot Tub',
+      'Slow Dance', 'Rooftop', 'Toga Party', 'Chips and Dip', 'Noise Complaint', 'Secret Santa', 'Gender Reveal', 'Baby Shower', 'Plus One', 'Bachelorette',
       "New Year's Eve", 'Halloween', 'Sparklers',
     ],
     pairs: [
-      ['Karaoke', 'Open Mic'], ['Beer Pong', 'Flip Cup'], ['Afterparty', 'Pregame'], ['Pool Party', 'Hot Tub'], ['Bonfire', 'Barbecue'],
-      ['Truth or Dare', 'Never Have I Ever'], ['Game Night', 'Trivia Night'], ['Prom', 'Wedding Reception'], ['Disco Ball', 'Strobe Light'], ['Glow Sticks', 'Sparklers'],
-      ['Limbo', 'Twister'], ["New Year's Eve", 'Fourth of July'], ['Pinata', 'Birthday Cake'], ['Dance Floor', 'Mosh Pit'], ['Costume Party', 'Halloween'],
-      ['Bouncer', 'Bartender'], ['Hangover', 'Food Coma'],
+      ['Karaoke', 'Open Mic'], ['Musical Chairs', 'Hot Potato'], ['Housewarming', 'Dinner Party'], ['Pool Party', 'Hot Tub'], ['Bonfire', 'Barbecue'],
+      ['Truth or Dare', 'Never Have I Ever'], ['Game Night', 'Trivia Night'], ['Prom', 'Gala'], ['Disco Ball', 'Strobe Light'], ['Glow Sticks', 'Sparklers'],
+      ['Limbo', 'Twister'], ["New Year's Eve", 'Fourth of July'], ['Pinata', 'Balloons'], ['Dance Floor', 'Mosh Pit'], ['Costume Party', 'Halloween'],
+      ['Bouncer', 'Doorman'], ['Baby Shower', 'Bridal Shower'],
     ],
   },
   travel: {
@@ -181,7 +182,37 @@ export const CATEGORIES = {
       ['Disney World', 'Universal Studios'], ['Road Trip', 'Train Ride'], ['Souvenir', 'Postcard'],
     ],
   },
-} as const satisfies Record<string, { label: string; words: readonly string[]; pairs: readonly (readonly [string, string])[] }>;
+  // Off by default and labeled 18+ on its chip; the card's tab just says After Dark. Adult, never graphic:
+  // say what, not how. Every word has a few angles to clue from (Handcuffs: police, keys, fuzzy, bedpost).
+  afterdark: {
+    label: 'After Dark 18+',
+    tab: 'After Dark',
+    adult: true,
+    words: [
+      'Hickey', 'Walk of Shame', 'Lingerie', 'Handcuffs', 'Skinny Dipping', 'Booty Call', 'One-Night Stand', 'Strip Poker', 'Friends With Benefits', 'Sexting',
+      'Nudes', 'Dating App', 'Pillow Talk', 'Lap Dance', 'Strip Club', 'Vibrator', 'Condom', 'Threesome', 'Roleplay', 'Safe Word',
+      'Blindfold', 'Whipped Cream', 'Massage Oil', 'Quickie', 'Mile High Club', 'Situationship', 'Body Count', 'Dirty Talk', 'Sugar Daddy', 'Pole Dancing',
+      'Honeymoon', 'Kama Sutra', 'Fifty Shades', 'Sex Tape', 'OnlyFans', 'Netflix and Chill', 'Spanking', 'Edible Underwear', 'Love Hotel', 'Cuffing Season',
+      'Bedroom Eyes',
+    ],
+    pairs: [
+      ['Hickey', 'Lipstick'], ['Walk of Shame', 'Stride of Pride'], ['Lingerie', 'Pajamas'], ['Handcuffs', 'Blindfold'], ['Skinny Dipping', 'Streaking'],
+      ['Booty Call', 'Hookup'], ['One-Night Stand', 'Summer Fling'], ['Strip Poker', 'Naked Twister'], ['Sexting', 'Phone Sex'], ['Dating App', 'Blind Date'],
+      ['Lap Dance', 'Pole Dance'], ['Vibrator', 'Massage Gun'], ['Threesome', 'Swingers Party'], ['Roleplay', 'Cosplay'], ['Whipped Cream', 'Chocolate Sauce'],
+      ['Quickie', 'Nooner'], ['Mile High Club', 'Backseat'], ['Honeymoon', 'Dirty Weekend'], ['Sugar Daddy', 'Cougar'], ['Fifty Shades', 'Magic Mike'],
+      ['Sex Tape', 'OnlyFans'], ['Netflix and Chill', 'Coffee at My Place'],
+    ],
+  },
+} as const satisfies Record<string, { label: string; tab?: string; adult?: boolean; words: readonly string[]; pairs: readonly (readonly [string, string])[] }>;
 
 export type CategoryId = keyof typeof CATEGORIES;
 export const CATEGORY_IDS = Object.keys(CATEGORIES) as CategoryId[];
+/** Categories that only play when someone turns them on: labeled 18+ and never in the default set. */
+export const ADULT_IDS = CATEGORY_IDS.filter((id) => (CATEGORIES[id] as { adult?: boolean }).adult);
+/** What a new table plays with: every category but the 18+ ones. */
+export const DEFAULT_IDS = CATEGORY_IDS.filter((id) => !ADULT_IDS.includes(id));
+/** The category's name on the card's tab and in the clue round (no 18+ badge there; the chip carries it). */
+export const categoryName = (id: CategoryId) => {
+  const c = CATEGORIES[id] as { label: string; tab?: string };
+  return c.tab ?? c.label;
+};

@@ -24,6 +24,7 @@ import {
   isCc,
   lapOf,
   ordinal,
+  pacer,
   pressGas,
   rankKarts,
   rollItem,
@@ -498,6 +499,27 @@ test('the solo grid puts you at the back of seven rivals and the autopilot bring
   assert.ok(r.karts[r.me].done !== null);
 });
 
+test('CPU drivers keep pace with the leading person, solo or online with bots in the field', () => {
+  const solo = soloRace('100cc', 4);
+  assert.equal(pacer(solo), solo.karts[solo.me], 'solo, that is you');
+
+  // Online, a bot is a CPU driver on the host, next to its own kart and a guest's.
+  const r = createRace({ cc: '100cc', seed: 3, countdown: 0, racers: [{ ...you('host'), seat: 0 }, { name: 'guest', color: '#1e88e5', kind: 'remote', seat: 1 }, { ...RIVALS[0], seat: 2 }] });
+  const [host, guest, bot] = r.karts;
+  assert.ok(bot.ai && !host.ai && !guest.ai, 'only the bot has a CPU driver');
+  assert.deepEqual(r.karts.map((k) => k.seat), [0, 1, 2]);
+  host.prog = 100;
+  guest.prog = 400;
+  bot.prog = 200;
+  assert.equal(pacer(r), guest, 'whoever leads among people, on any screen');
+  step(r, 1 / 60);
+  assert.ok(bot.ai!.band > 1, 'a bot behind the leader pushes');
+  guest.prog = 40;
+  step(r, 1 / 60);
+  assert.equal(pacer(r), host);
+  assert.ok(bot.ai!.band < 1, 'a bot well ahead of every person eases off');
+});
+
 test('online packets round trip, and junk or other games’ packets are ignored', () => {
   const r = race(2);
   const k = r.karts[0];
@@ -514,7 +536,7 @@ test('online packets round trip, and junk or other games’ packets are ignored'
   const fast = parsePacket(JSON.parse(JSON.stringify(hostState(5, 2.5, '200cc', [0], [{ seat: 0, ...car }]))));
   assert.ok(fast && fast.k === 'S' && fast.cc === '200cc');
   const cfg = parsePacket(JSON.parse(JSON.stringify(configOf(5, '200cc'))));
-  assert.deepEqual(cfg, { k: 'cfg', round: 5, cc: '200cc' });
+  assert.deepEqual(cfg, { k: 'cfg', round: 5, cc: '200cc', course: 'palm' });
   assert.equal(parsePacket({ t: 'pk', r: 5, k: 'cfg', cc: 7 }), null);
   const guest = parsePacket(JSON.parse(JSON.stringify(guestState(4, car))));
   assert.ok(guest && guest.k === 's');

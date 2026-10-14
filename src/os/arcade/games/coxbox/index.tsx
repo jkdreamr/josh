@@ -4,6 +4,7 @@ import type { GameProps } from '../../types';
 import { meta } from './meta';
 import {
   ATTENTION_MS,
+  BOT_CREWS,
   CALLS,
   COUNTDOWN_MS,
   COURSE_METERS,
@@ -16,6 +17,7 @@ import {
   YOU_CREW,
   accuracy,
   applyProgress,
+  botSpeeds,
   catchUp,
   chaseCall,
   createBot,
@@ -55,6 +57,8 @@ const GO_FLASH_MS = 900;
 const recentPassages: number[] = [];
 /** Rival crew names are lowercase on the water; capitalize them where they start a sentence. */
 const capitalize = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
+/** Online bots are the rival crews, named in the room like people. */
+const BOT_NAMES = BOT_CREWS.map((crew) => capitalize(crew.name));
 
 type Mode = 'idle' | 'solo' | 'online';
 type Stage = 'idle' | 'waiting' | 'sit' | 'attention' | 'go' | 'race' | 'finished';
@@ -129,18 +133,20 @@ function choosePassage() {
 
 type OnlineApi = NonNullable<ReturnType<typeof useOnline>>;
 
-function onlineLanes(online: OnlineApi): Lane[] {
-  return [...online.players]
-    .sort((a, b) => a.seat - b.seat)
-    .slice(0, MAX_RACERS)
-    .map((p) => lane(`seat:${p.seat}`, p.name, p.seat === online.seat ? YOU_CREW : SEAT_CREWS[p.seat % SEAT_CREWS.length], p.seat === online.seat, p.seat));
+function onlineLanes(online: OnlineApi, level: RivalLevel): Lane[] {
+  const people = online.players.map((p) => lane(`seat:${p.seat}`, p.name, p.seat === online.seat ? YOU_CREW : SEAT_CREWS[p.seat % SEAT_CREWS.length], p.seat === online.seat, p.seat));
+  // Bots row in the host's race, in their own crews' colors; everyone else sees them through the host's packets.
+  const rand = rng(Math.floor(Math.random() * 2 ** 32));
+  const speeds = botSpeeds(level, online.bots.length, rand);
+  const bots = online.bots.map((b, i) => lane(`seat:${b.seat}`, b.name, BOT_CREWS[i % BOT_CREWS.length], false, b.seat, online.isHost ? createBot(speeds[i], rand) : null));
+  return [...people, ...bots].sort((a, b) => (a.seat ?? 0) - (b.seat ?? 0)).slice(0, MAX_RACERS);
 }
 
 function createRace(mode: Mode, online: OnlineApi | null, level: RivalLevel): Race {
   let lanes: Lane[];
   let passage: number | null = choosePassage();
   if (mode === 'online' && online) {
-    lanes = onlineLanes(online);
+    lanes = onlineLanes(online, level);
     if (!online.isHost) passage = null;
   } else {
     const rand = rng(Math.floor(Math.random() * 2 ** 32));
@@ -215,9 +221,18 @@ function Setup() {
   return <Segmented label={`Rivals · ${lo} to ${hi} wpm`} value={level} options={levelOptions} onChange={setLevel} />;
 }
 
+/** Online, the host picks how fast the bots row (the host's race runs them). */
+function OnlineSetup() {
+  const online = useOnline();
+  const [level, setLevel] = useSetting(rivalSetting);
+  if (!online?.isHost || !online.bots.length) return null;
+  const [lo, hi] = RIVAL_WPM[level];
+  return <Segmented label={`Bots · ${lo} to ${hi} wpm`} value={level} options={levelOptions} onChange={setLevel} />;
+}
+
 export default function CoxBox({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} formatScore={formatWpm}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} botNames={BOT_NAMES} formatScore={formatWpm}>
       <Stage />
     </GameShell>
   );
@@ -439,7 +454,7 @@ function RaceView({ mode }: { mode: Mode }) {
       let l = r.lanes.find((x) => x.seat === row.seat);
       if (!l) {
         const you = !!o && row.seat === o.seat;
-        const name = o?.players.find((p) => p.seat === row.seat)?.name ?? 'rower';
+        const name = o?.players.find((p) => p.seat === row.seat)?.name ?? o?.bots.find((b) => b.seat === row.seat)?.name ?? 'rower';
         l = you ? r.you : lane(`seat:${row.seat}`, name, SEAT_CREWS[row.seat % SEAT_CREWS.length], false, row.seat);
         l.seat = row.seat;
       }
@@ -466,7 +481,7 @@ function RaceView({ mode }: { mode: Mode }) {
       if (from === o.seat || r.goAt === null) return;
       const m = parseProgress(d);
       const l = r.lanes.find((x) => x.seat === from);
-      if (!m || m.r !== o.round || !l || r.over) return;
+      if (!m || m.r !== o.round || !l || l.bot || r.over) return;
       const before = l.chars;
       const errors = l.errors;
       const row = { seat: from, chars: l.chars, errors: l.errors, doneMs: l.doneMs, out: l.out, lastMoveMs: l.lastMoveMs };
@@ -502,7 +517,7 @@ function RaceView({ mode }: { mode: Mode }) {
       if (r.passage === null || r.goAt === null) return;
       const raceMs = now - r.goAt;
       for (const l of r.lanes) {
-        if (!l.you && !l.out && !o.players.some((p) => p.seat === l.seat && p.name === l.name)) l.out = true;
+        if (!l.you && !l.bot && !l.out && !o.players.some((p) => p.seat === l.seat && p.name === l.name)) l.out = true;
       }
       const rows: NetRacer[] = r.lanes.map((l) => ({ seat: l.seat ?? 0, chars: l.chars, errors: l.errors, doneMs: l.doneMs, out: l.out }));
       const ending = !r.over && raceMs > 0 && (r.forceEnd || raceOver(r.lanes, raceMs));
@@ -570,13 +585,15 @@ function RaceView({ mode }: { mode: Mode }) {
         }
       }
 
-      if (r.mode === 'solo' && raceMs > 0) {
+      // Bots row on this screen in a solo race, and on the host's online, which tells everyone else where they are.
+      if ((r.mode === 'solo' || (r.mode === 'online' && onlineRef.current?.isHost)) && raceMs > 0) {
         const step = Math.min(1, Math.max(0, Math.min(now - r.lastClock, raceMs) / 1000));
+        // Bots behind the leading rower push a little harder; once everyone has finished they row their own race.
+        const lead = Math.max(-1, ...r.lanes.filter((l) => !l.bot && l.doneMs === null && !l.out).map((l) => l.chars));
         for (const l of r.lanes) {
           if (!l.bot) continue;
           const before = l.bot.chars;
-          // Rivals behind you push a little harder; once you finish they row their own race.
-          const behind = r.you.doneMs === null ? (r.you.chars - l.bot.chars) / len : 0;
+          const behind = lead < 0 ? 0 : (lead - l.bot.chars) / len;
           stepBot(l.bot, r.text, step, raceMs, catchUp(behind));
           l.chars = l.bot.chars;
           l.doneMs = l.bot.doneMs;

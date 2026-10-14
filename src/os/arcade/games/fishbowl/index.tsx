@@ -1,8 +1,9 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { GameShell, defineSetting, sfx, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
-import { Avatar, Big, Countdown, HowToPlay, Option, PassTo, PlayerList, Screen, clock, mulberry32, useCountdown, usePlayers } from '../../kit/party';
+import { Avatar, Big, Countdown, HowToPlay, Option, PassTo, PlayerList, Screen, clock, listNames, mulberry32, useCountdown, usePlayers, useStored } from '../../kit/party';
 import type { GameProps } from '../../types';
 import {
+  Bursts,
   MIN_PLAYERS,
   ROUNDS,
   SLIP_MAX,
@@ -11,7 +12,7 @@ import {
   bowlNow,
   bowlSize,
   buildTeams,
-  builtInSlips,
+  builtInBowl,
   buzz,
   deal,
   endTurn,
@@ -20,11 +21,12 @@ import {
   giverOf,
   isOver,
   leader,
-  longestToken,
   markGot,
   markSkip,
   newMatch,
+  parseBowl,
   points,
+  pointsByRound,
   replay,
   reviewRows,
   roundNow,
@@ -33,15 +35,19 @@ import {
   totals,
   toughest,
   type Match,
+  type SavedBowl,
   type TeamIndex,
 } from './logic';
 import { meta } from './meta';
-import { BUILT_IN } from './slips';
+import { AFTER_DARK, BUILT_IN } from './slips';
 import './fishbowl.css';
 
-const SOURCE = defineSetting('fishbowl:slips', ['write', 'builtin'] as const, 'write');
+const SOURCE = defineSetting('fishbowl:slips', ['write', 'builtin', 'last'] as const, 'write');
+type Source = (typeof SOURCE.values)[number];
 const EACH = defineSetting('fishbowl:each', ['3', '4', '5'] as const, '3');
 const TIME = defineSetting('fishbowl:time', ['30', '45', '60'] as const, '45');
+/** The 18+ mix-in for the built-in bowl. Off unless the group turns it on. */
+const HEAT = defineSetting('fishbowl:heat', ['classic', 'dark'] as const, 'classic');
 
 const TEAMS = [{ name: 'Goldfish' }, { name: 'Jellyfish' }] as const;
 const teamClass = (t: TeamIndex) => `is-t${t}`;
@@ -52,25 +58,26 @@ const RULES = [
   { name: 'Act It Out', rule: 'No words, no sounds. Just act.' },
 ] as const;
 
-/** How many characters wide a slip's text sizes itself for: its longest word, or a share of the whole for long slips. */
-const slipLen = (text: string) => Math.max(6, longestToken(text), Math.ceil(Array.from(text).length / 3));
-
-/** How long the Time stamp stays up before the review. */
+/** How long the Time stamp stays up before the review, and each beat of the 3-2-1 before a turn (seconds). */
 const HOLD = 1.5;
+const BEAT = 0.7;
+/** Milliseconds a step between turns ignores taps and keys, so a frantic Got It can't skip it. */
+const ARM = 1000;
 
 type Step =
   | { s: 'setup' }
   | { s: 'pass-write'; i: number }
   | { s: 'write'; i: number }
-  | { s: 'pass' }
   | { s: 'ready' }
+  | { s: 'count' }
   | { s: 'play' }
   | { s: 'up'; round: number }
   | { s: 'review'; round: number }
   | { s: 'break'; round: number }
   | { s: 'done' };
 
-type Fx = { n: number; got: boolean; text: string };
+/** The slip flying out after Got It or Skip, drawn at the size it had in hand. */
+type Fx = { n: number; got: boolean; text: string; size: string; broken: boolean };
 
 export default function Game({ compact, onExit }: GameProps) {
   return (
@@ -83,23 +90,41 @@ export default function Game({ compact, onExit }: GameProps) {
 function Play() {
   const { touch } = useShell();
   const [players] = usePlayers();
-  const [source, setSource] = useSetting(SOURCE);
+  const [sourceSetting, setSource] = useSetting(SOURCE);
+  const [saved, setSaved] = useStored<SavedBowl | null>('fishbowl:bowl', null, parseBowl);
   const [eachSetting, setEach] = useSetting(EACH);
   const [time, setTime] = useSetting(TIME);
+  const [heat, setHeat] = useSetting(HEAT);
   const [step, setStep] = useState<Step>({ s: 'setup' });
   const [table, setTable] = useState<string[]>([]);
   const [written, setWritten] = useState<string[][]>([]);
   const [slips, setSlips] = useState<string[]>([]);
   const [match, setMatch] = useState<Match | null>(null);
   const [fx, setFx] = useState<Fx | null>(null);
+  const [beat, setBeat] = useState(3);
   const fxN = useRef(0);
   const lastTap = useRef(0);
   const streak = useRef(0);
   const hold = useRef(0);
+  const countIn = useRef({ t: 0, beat: 0 });
+  const slipText = useRef<HTMLElement | null>(null);
+  const fresh = useBursts();
+  const shownAt = useRef(0);
+  const playAt = useRef(0);
 
+  const source: Source = sourceSetting === 'last' && !saved ? 'write' : sourceSetting;
   const seconds = Number(time);
   const each = Number(eachSetting);
   const name = (seat: number) => table[seat] ?? `Player ${seat + 1}`;
+
+  // Every new step notes when it appeared, so a burst of taps that started on the step before can be told apart.
+  useLayoutEffect(() => {
+    shownAt.current = performance.now();
+  }, [step]);
+  /** Wraps a between-turns action so only a press that started on this step runs it. */
+  const guarded = (fn: () => void) => () => {
+    if (fresh(shownAt.current)) fn();
+  };
 
   const timeUp = () => {
     if (!match) return;
@@ -114,23 +139,40 @@ function Play() {
     onEnd: timeUp,
   });
 
-  // The Time stamp holds for a beat before the review, and waits while the game is paused.
+  // The 3-2-1 before a turn, and the Time stamp's hold before the review. Both wait while the game is paused.
   useGameLoop((dt) => {
-    if (step.s !== 'up') return;
-    hold.current += dt;
-    if (hold.current >= HOLD) {
-      hold.current = -Infinity;
-      setStep({ s: 'review', round: step.round });
+    if (step.s === 'up') {
+      hold.current += dt;
+      if (hold.current >= HOLD) {
+        hold.current = -Infinity;
+        setStep({ s: 'review', round: step.round });
+      }
+    } else if (step.s === 'count') {
+      const c = countIn.current;
+      if (c.beat <= 0) return;
+      c.t += dt;
+      const n = 3 - Math.floor(c.t / BEAT);
+      if (n <= 0) {
+        c.beat = 0;
+        go();
+      } else if (n !== c.beat) {
+        c.beat = n;
+        setBeat(n);
+        sfx.play('tick', n === 1 ? 1.3 : 1.1);
+      }
     }
   });
 
   const mark = (got: boolean) => {
     if (step.s !== 'play' || !match || match.slip === null) return;
     if (!got && bowlNow(match).length < 2) return;
+    // Presses still coming from before the slip showed (mashing through the 3-2-1) never score it.
+    if (!fresh(playAt.current)) return;
     const now = performance.now();
     if (now - lastTap.current < 160) return;
     lastTap.current = now;
-    setFx({ n: ++fxN.current, got, text: slips[match.slip] ?? '' });
+    const el = slipText.current;
+    setFx({ n: ++fxN.current, got, text: slips[match.slip] ?? '', size: el?.style.fontSize ?? '', broken: !!el?.classList.contains('is-broken') });
     if (!got) {
       sfx.noise(0.09, 0.05);
       sfx.tone({ freq: 380, to: 240, dur: 0.12, type: 'triangle', vol: 0.12 });
@@ -152,33 +194,44 @@ function Play() {
 
   useKeys((code, e) => {
     if (e?.repeat || step.s !== 'play') return;
-    if (code === 'ArrowRight') mark(true);
+    if (code === 'ArrowRight' || code === 'Space' || code === 'Enter') mark(true);
     else if (code === 'ArrowLeft') mark(false);
   });
 
   const begin = (names: string[], bowl: string[]) => {
     setSlips(bowl);
     setMatch(newMatch(bowl.length, buildTeams(names.length), 0));
-    setStep({ s: 'pass' });
+    setStep({ s: 'ready' });
   };
 
   const start = () => {
     const names = players.slice();
     setTable(names);
     setFx(null);
-    if (source === 'builtin') begin(names, builtInSlips(BUILT_IN, bowlSize(names.length)));
+    if (source === 'builtin') begin(names, builtInBowl(BUILT_IN, bowlSize(names.length), heat === 'dark' ? AFTER_DARK : []));
+    else if (source === 'last' && saved) begin(names, saved.slips);
     else {
       setWritten(names.map(() => []));
       setStep({ s: 'pass-write', i: 0 });
     }
   };
 
-  const playOn = () => {
+  /** 3, 2, 1, then the first slip comes out. Carried time stays on the clock. */
+  const startCount = () => {
     if (!match) return;
     if (match.carry === null) clockRun.reset(seconds);
+    countIn.current = { t: 0, beat: 3 };
+    setBeat(3);
     streak.current = 0;
     setFx(null);
+    sfx.play('tick', 1.1);
+    setStep({ s: 'count' });
+  };
+
+  const go = () => {
+    if (!match) return;
     setMatch(deal(match));
+    playAt.current = performance.now();
     sfx.tone({ freq: 520, to: 1040, dur: 0.18, type: 'square', vol: 0.11 });
     setStep({ s: 'play' });
   };
@@ -194,6 +247,17 @@ function Play() {
     const n = players.length;
     const ready = n >= MIN_PLAYERS;
     const short = MIN_PLAYERS - n;
+    const sources: (readonly [Source, string])[] = saved
+      ? [
+          ['write', 'Write Our Own'],
+          ['builtin', 'Built-in'],
+          ['last', 'Last Bowl'],
+        ]
+      : [
+          ['write', 'Write Our Own'],
+          ['builtin', 'Built-in Bowl'],
+        ];
+    const writers = saved ? (saved.by.length > 4 ? `${saved.by.slice(0, 3).join(', ')} and ${saved.by.length - 3} more` : listNames(saved.by)) : '';
     return (
       <Screen
         key="setup"
@@ -202,7 +266,7 @@ function Play() {
         onEnter={ready ? start : undefined}
         actions={
           <Big primary disabled={!ready} onClick={start}>
-            {!ready ? `Add ${short} More ${short === 1 ? 'Player' : 'Players'}` : source === 'builtin' ? 'Fill the Bowl' : 'Write the Slips'}
+            {!ready ? `Add ${short} More ${short === 1 ? 'Player' : 'Players'}` : source === 'builtin' ? 'Fill the Bowl' : source === 'last' ? 'Use the Last Bowl' : 'Write the Slips'}
           </Big>
         }
       >
@@ -227,16 +291,12 @@ function Play() {
         />
         <PlayerList min={MIN_PLAYERS} />
         {n > 0 && <TeamsPreview names={players} />}
-        <Option
-          label="Slips"
-          value={source}
-          options={[
-            ['write', 'Write Our Own'],
-            ['builtin', 'Use the Built-in Bowl'],
-          ]}
-          onChange={setSource}
-        />
-        {source === 'write' ? (
+        <Option label="Slips" value={source} options={sources} onChange={setSource} />
+        {source === 'last' && saved ? (
+          <p className="g-fishbowl-hint">
+            The {saved.slips.length} slips {writers ? `${writers} wrote` : 'written'} last time. Nobody has to type.
+          </p>
+        ) : source === 'write' ? (
           <Option
             label="Slips Each"
             value={eachSetting}
@@ -248,7 +308,22 @@ function Play() {
             onChange={setEach}
           />
         ) : (
-          <p className="g-fishbowl-hint">{bowlSize(Math.max(n, MIN_PLAYERS))} slips of famous people, characters, places and things. Nobody has to type.</p>
+          <>
+            <Option
+              label="Built-in Bowl"
+              value={heat}
+              options={[
+                ['classic', 'Classic'],
+                ['dark', 'After Dark 18+'],
+              ]}
+              onChange={setHeat}
+            />
+            <p className="g-fishbowl-hint">
+              {heat === 'dark'
+                ? `${bowlSize(Math.max(n, MIN_PLAYERS))} slips, half of them 18+: hookups, kinks and steamy movie scenes. For groups who know each other well.`
+                : `${bowlSize(Math.max(n, MIN_PLAYERS))} slips of famous people, characters, places and things. Nobody has to type.`}
+            </p>
+          </>
         )}
         <Option
           label="Turn Time"
@@ -274,7 +349,10 @@ function Play() {
     const done = () => {
       if ((written[i]?.length ?? 0) < each) return;
       if (!last) return setStep({ s: 'pass-write', i: i + 1 });
-      begin(table, written.flat());
+      const bowl = written.flat();
+      // Kept on this device, so a reload or a Restart can deal the same bowl without anyone writing again.
+      setSaved({ slips: bowl, by: table.slice() });
+      begin(table, bowl);
     };
     const teams = buildTeams(table.length);
     return (
@@ -297,84 +375,73 @@ function Play() {
   const round = roundNow(match);
   const count = match.count;
 
-  /* Handoff to the clue giver */
-  if (step.s === 'pass') {
-    const firstTurn = match.turns.length === 0 && match.cards.length === 0;
-    return (
-      <PassTo
-        key={`pass-${match.turns.length}`}
-        className={`g-fishbowl-pass ${teamClass(team)}`}
-        name={name(giver)}
-        index={giver}
-        note={
-          <>
-            {firstTurn ? `${count} slips in the bowl. ` : ''}You give clues for <TeamTag t={team} />. Nobody else looks at the screen.
-          </>
-        }
-        onReady={() => setStep({ s: 'ready' })}
-      />
-    );
-  }
-
-  /* Ready: the round's rule, big */
+  /* The phone goes to the clue giver, with the round's rule big enough for the room. */
   if (step.s === 'ready') {
     const left = bowlNow(match).length;
     const carry = match.carry !== null;
     const rule = RULES[Math.min(round, ROUNDS - 1)];
+    const startIt = guarded(startCount);
     return (
       <Screen
         key={`ready-${match.turns.length}-${round}`}
         className={`g-fishbowl-ready ${teamClass(team)}`}
-        onEnter={playOn}
+        arm={ARM}
+        onEnter={startIt}
         actions={
-          <Big primary quiet onClick={playOn}>
+          <Big primary quiet onClick={startIt}>
             {carry ? `Start With ${clock(clockRun.left)}` : 'Start the Clock'}
           </Big>
         }
       >
-        <Bowl left={left} total={count} size={136} refill={left === count} />
-        <p className="g-fishbowl-roundno">
-          Round {round + 1} of {ROUNDS}
-        </p>
-        <h2 className="g-fishbowl-rulename">{rule.name}</h2>
-        <p className="g-fishbowl-ruletext">{rule.rule}</p>
-        {carry ? (
-          <p className="g-fishbowl-carry">
-            <Avatar name={name(giver)} index={giver} size={22} />
-            <span>
-              {name(giver)} keeps <b>{clock(clockRun.left)}</b> from round {round}
-            </span>
-          </p>
-        ) : (
+        <div className="g-fishbowl-hand">
+          <Avatar name={name(giver)} index={giver} size={52} />
+          <p className="arcade-party-kicker">{carry ? 'Still your turn' : 'Pass the phone to'}</p>
+          <FitName text={name(giver)} />
           <p className="g-fishbowl-facts">
             <TeamTag t={team} chip />
-            <span>{name(giver)} gives clues</span>
-            <span>{seconds} sec</span>
+            {carry ? (
+              <span>
+                Keeps <b>{clock(clockRun.left)}</b>
+              </span>
+            ) : (
+              <span>{seconds} sec to give clues</span>
+            )}
           </p>
-        )}
+        </div>
+        <div className="g-fishbowl-round">
+          <div className="g-fishbowl-stock">
+            <Bowl left={left} total={count} size={88} refill={left === count} />
+            <span>{left} in the bowl</span>
+          </div>
+          <div>
+            <p className="g-fishbowl-roundno">
+              Round {round + 1} of {ROUNDS}
+            </p>
+            <h3 className="g-fishbowl-rulename">{rule.name}</h3>
+            <p className="g-fishbowl-ruletext">{rule.rule}</p>
+          </div>
+        </div>
       </Screen>
     );
   }
 
-  /* Play */
-  if (step.s === 'play' || step.s === 'up') {
+  /* Play: the 3-2-1, the slips, and the Time stamp when the clock runs out */
+  if (step.s === 'count' || step.s === 'play' || step.s === 'up') {
     const live = step.s === 'play';
     const playRound = step.s === 'up' ? step.round : round;
     const rule = RULES[Math.min(playRound, ROUNDS - 1)];
     const left = bowlNow(match).length;
     const lastOne = left < 2;
     // When time runs out the slip in hand goes back in the bowl as the last card; it stays on screen under the stamp.
-    const inHand = live ? match.slip : (match.cards[match.cards.length - 1]?.slip ?? null);
+    const inHand = live ? match.slip : step.s === 'up' ? (match.cards[match.cards.length - 1]?.slip ?? null) : null;
     const text = inHand !== null ? (slips[inHand] ?? '') : '';
     const slipKey = live ? match.cards.length : match.cards.length - 1;
     const pts = points(match.cards);
-    const len = slipLen(text);
     return (
       <Screen
         key={`play-${match.turns.length}`}
-        className={`g-fishbowl-play ${teamClass(team)} ${live ? '' : 'is-up'}`}
+        className={`g-fishbowl-play ${teamClass(team)} ${step.s === 'up' ? 'is-up' : ''}`}
         center={false}
-        onEnter={live ? () => mark(true) : undefined}
         actions={
           <div className="g-fishbowl-keys">
             <button type="button" className="arcade-party-btn g-fishbowl-skip" disabled={!live || lastOne} onMouseDown={(e) => e.preventDefault()} onClick={() => mark(false)}>
@@ -382,14 +449,14 @@ function Play() {
                 <path d="M9 7L4.5 11.5 9 16M5 11.5h9.5a5 5 0 0 1 0 10H12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <span>{lastOne ? 'Last Slip' : 'Skip'}</span>
-              {!touch && !lastOne && <kbd>Left</kbd>}
+              {!touch && !lastOne && <kbd>← key</kbd>}
             </button>
             <button type="button" className="arcade-party-btn is-primary g-fishbowl-got" disabled={!live} onMouseDown={(e) => e.preventDefault()} onClick={() => mark(true)}>
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <span>Got It</span>
-              {!touch && <kbd>Right or Space</kbd>}
+              {!touch && <kbd>→ or Space</kbd>}
             </button>
           </div>
         }
@@ -415,25 +482,26 @@ function Play() {
           </div>
         </div>
         <div className="g-fishbowl-desk">
-          {text && (
-            <div key={`slip-${slipKey}`} className={`g-fishbowl-slip ${slipKey % 2 ? 'is-tilt' : ''}`} style={{ ['--len' as string]: len }}>
-              <strong>{text}</strong>
+          {step.s === 'count' ? (
+            <div className="g-fishbowl-slip is-back" role="status" aria-label={`First slip in ${beat}`}>
+              <span key={beat} className="g-fishbowl-beat" aria-hidden="true">
+                {beat}
+              </span>
             </div>
+          ) : (
+            text && <Slip key={`slip-${slipKey}`} text={text} tilt={slipKey % 2 === 1} textRef={slipText} />
           )}
           {fx && live && (
-            <div
-              key={`out-${fx.n}`}
-              className={`g-fishbowl-slip is-out ${fx.got ? 'is-got' : 'is-skip'}`}
-              aria-hidden="true"
-              style={{
-                ['--len' as string]: slipLen(fx.text),
-              }}
-            >
-              <strong>{fx.text}</strong>
+            <div key={`out-${fx.n}`} className={`g-fishbowl-slip is-out ${fx.got ? 'is-got' : 'is-skip'}`} aria-hidden="true">
+              <div className="g-fishbowl-fit">
+                <strong className={fx.broken ? 'is-broken' : undefined} style={{ fontSize: fx.size || undefined }}>
+                  <Words text={fx.text} />
+                </strong>
+              </div>
               <em>{fx.got ? 'Got It' : 'Back In'}</em>
             </div>
           )}
-          {!live && (
+          {step.s === 'up' && (
             <div className="g-fishbowl-stamp" role="status">
               <span>Time's Up</span>
             </div>
@@ -451,18 +519,21 @@ function Play() {
     const nextGiver = giverOf(teams, match.turns.length + 1, match.first);
     const sc = totals(scoreTable(match.turns, { team, cards: match.cards }));
     const now = roundNow(match);
-    const next = () => {
+    const split = pointsByRound(match.cards);
+    const next = guarded(() => {
       if (over) return finish(after);
       setMatch(after);
-      setStep({ s: 'pass' });
-    };
+      setStep({ s: 'ready' });
+    });
     return (
       <Screen
         key={`review-${match.turns.length}`}
         className={`g-fishbowl-review ${teamClass(team)}`}
         center={false}
+        arm={ARM}
         kicker="Time's up"
         title={`${pts} for ${TEAMS[team].name}`}
+        sub={split.length > 1 ? `${listNames(split.map((r) => `${r.points} in round ${r.round + 1}`))}.` : undefined}
         onEnter={next}
         actions={
           <Big primary onClick={next}>
@@ -471,7 +542,7 @@ function Play() {
         }
       >
         <Board scores={sc} plus={{ team, n: pts }} />
-        <Rows match={match} round={step.round} slips={slips} onFix={(slip) => setMatch(fix(match, slip, step.round))} />
+        <Rows match={match} round={step.round} slips={slips} who={name(giver)} split={split.length > 1} onFix={(slip) => setMatch(fix(match, slip, step.round))} />
         <p className="g-fishbowl-hint">
           {over
             ? 'That was the last slip of the game.'
@@ -491,22 +562,23 @@ function Play() {
     const over = now >= ROUNDS;
     const roundScores = scoreTable(match.turns, { team, cards: match.cards })[r];
     const left = clock(clockRun.left);
-    const go = () => {
+    const go = guarded(() => {
       if (over) finish(endTurn(match));
-      else if (reopened) playOn();
+      else if (reopened) startCount();
       else {
         sfx.play('select');
         setStep({ s: 'ready' });
       }
-    };
+    });
     return (
       <Screen
         key={`break-${r}`}
         className={`g-fishbowl-break ${teamClass(team)}`}
         center={false}
+        arm={ARM}
         onEnter={go}
         actions={
-          <Big primary quiet={!over && !reopened} onClick={go}>
+          <Big primary quiet={!over} onClick={go}>
             {over ? 'See Who Won' : reopened ? `Keep Going With ${left}` : `On to Round ${now + 1}`}
           </Big>
         }
@@ -529,7 +601,7 @@ function Play() {
             </span>
           ))}
         </div>
-        <Rows match={match} round={r} slips={slips} onFix={(slip) => setMatch(fix(match, slip, r))} />
+        <Rows match={match} round={r} slips={slips} who={name(giver)} split={pointsByRound(match.cards).length > 1} onFix={(slip) => setMatch(fix(match, slip, r))} />
       </Screen>
     );
   }
@@ -540,16 +612,18 @@ function Play() {
   const win = leader(sc);
   const best = bestTurn(match.turns);
   const tough = toughest(match.turns);
-  const again = () => {
+  const again = guarded(() => {
     setFx(null);
     setMatch(replay(match));
-    setStep({ s: 'pass' });
-  };
+    setStep({ s: 'ready' });
+  });
+  const change = guarded(() => setStep({ s: 'setup' }));
   return (
     <Screen
       key="done"
       className={`g-fishbowl-done ${win === null ? '' : teamClass(win)}`}
       center={false}
+      arm={ARM}
       kicker="After three rounds"
       title={win === null ? "It's a Tie" : `${TEAMS[win].name} Win`}
       onEnter={again}
@@ -558,7 +632,7 @@ function Play() {
           <Big primary onClick={again}>
             Play This Bowl Again
           </Big>
-          <Big onClick={() => setStep({ s: 'setup' })}>Change Setup</Big>
+          <Big onClick={change}>Change Setup</Big>
         </>
       }
     >
@@ -595,24 +669,158 @@ function Play() {
       {(best || tough) && (
         <ul className="g-fishbowl-notes">
           {best && (
-            <li>
+            <li className={teamClass(best.turn.team)}>
               <small>Best turn</small>
-              <p className={teamClass(best.turn.team)}>
-                <b>{name(best.turn.giver)}</b> got {best.points} in one turn
+              <FitText text={name(best.turn.giver)} className="g-fishbowl-note" />
+              <p>
+                {best.points} {best.points === 1 ? 'slip' : 'slips'} for {TEAMS[best.turn.team].name}
               </p>
             </li>
           )}
           {tough && (
             <li>
               <small>Hardest slip</small>
-              <p>
-                <q>{slips[tough.slip]}</q>, skipped {tough.skips} times
-              </p>
+              <FitText text={slips[tough.slip] ?? ''} className="g-fishbowl-note" />
+              <p>Skipped {tough.skips} times</p>
             </li>
           )}
         </ul>
       )}
     </Screen>
+  );
+}
+
+/**
+ * Notes every tap and action key inside the game into a Bursts tracker (see logic.ts). Returns a check: does the press
+ * in progress belong to a step that appeared at `since`?
+ */
+function useBursts() {
+  const shell = useShell();
+  const bursts = useRef(new Bursts());
+  useEffect(() => {
+    const el = shell.root.current;
+    if (!el) return;
+    const tap = () => bursts.current.note(performance.now());
+    const key = (e: KeyboardEvent) => {
+      if (!e.repeat && (e.code === 'Enter' || e.code === 'NumpadEnter' || e.code === 'Space' || e.code === 'ArrowLeft' || e.code === 'ArrowRight')) tap();
+    };
+    // Capture, so the press is noted before any button or key handler acts on it.
+    el.addEventListener('pointerdown', tap, true);
+    el.addEventListener('keydown', key, true);
+    return () => {
+      el.removeEventListener('pointerdown', tap, true);
+      el.removeEventListener('keydown', key, true);
+    };
+  }, [shell.root]);
+  return useCallback((since: number) => bursts.current.fresh(since, performance.now()), []);
+}
+
+/**
+ * Sizes text to the largest font size, up to its CSS size (and `tall` times its box's height), at which every word
+ * fits its box on one line. Only when even `min` px can't hold the longest word does it let words break, as a last
+ * resort (`is-broken`). With `tall` the text must also fit the box's height. Refits when the box resizes or a font loads.
+ */
+function useFit(ref: RefObject<HTMLElement | null>, text: string, { min = 12, tall = 0 }: { min?: number; tall?: number } = {}) {
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const box = el?.parentElement;
+    if (!el || !box) return;
+    let size = '';
+    const fit = () => {
+      const w = box.clientWidth;
+      const h = box.clientHeight;
+      size = `${w}x${tall ? h : 0}`;
+      if (!w) return;
+      el.style.fontSize = '';
+      el.classList.remove('is-broken');
+      const css = parseFloat(getComputedStyle(el).fontSize) || 16;
+      const top = tall && h ? Math.max(min, Math.min(css, h * tall)) : css;
+      const fits = (px: number) => {
+        el.style.fontSize = `${px}px`;
+        return el.scrollWidth <= w + 1 && (!tall || el.offsetHeight <= h + 1);
+      };
+      const largest = () => {
+        if (fits(top)) return true;
+        if (!fits(min)) return false;
+        let lo = min;
+        let hi = top;
+        for (let i = 0; i < 9; i++) {
+          const mid = (lo + hi) / 2;
+          if (fits(mid)) lo = mid;
+          else hi = mid;
+        }
+        el.style.fontSize = `${Math.floor(lo)}px`;
+        return true;
+      };
+      if (largest()) return;
+      // At the smallest size, so the word breaks as few times as it can.
+      el.classList.add('is-broken');
+      el.style.fontSize = `${min}px`;
+    };
+    fit();
+    const ro =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            if (`${box.clientWidth}x${tall ? box.clientHeight : 0}` !== size) fit();
+          });
+    ro?.observe(box);
+    const fonts = typeof document !== 'undefined' ? document.fonts : undefined;
+    fonts?.addEventListener?.('loadingdone', fit);
+    return () => {
+      ro?.disconnect();
+      fonts?.removeEventListener?.('loadingdone', fit);
+    };
+  }, [ref, text, min, tall]);
+}
+
+/** A slip's text: it wraps between words but never inside one, not even at a hyphen (Spider-Man, Jean-Claude). */
+const Words = ({ text }: { text: string }) => (
+  <>
+    {text.split(' ').map((w, i) => (
+      <Fragment key={i}>
+        {i > 0 && ' '}
+        <span className="g-fishbowl-nb">{w}</span>
+      </Fragment>
+    ))}
+  </>
+);
+
+/** The slip in the clue giver's hand, as big as the paper allows. */
+function Slip({ text, tilt, textRef }: { text: string; tilt: boolean; textRef: RefObject<HTMLElement | null> }) {
+  useFit(textRef, text, { min: 12, tall: 0.5 });
+  return (
+    <div className={`g-fishbowl-slip ${tilt ? 'is-tilt' : ''}`}>
+      <div className="g-fishbowl-fit">
+        <strong ref={textRef}>
+          <Words text={text} />
+        </strong>
+      </div>
+    </div>
+  );
+}
+
+/** A line of slip or name text that shrinks to keep its longest word whole. Sized by its CSS font size. */
+function FitText({ text, className }: { text: string; className?: string }) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useFit(ref, text);
+  return (
+    <span className={['g-fishbowl-line', className ?? ''].join(' ')}>
+      <span ref={ref}>
+        <Words text={text} />
+      </span>
+    </span>
+  );
+}
+
+/** The next clue giver's name, as big as one line allows. */
+function FitName({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useFit(ref, text, { min: 22 });
+  return (
+    <h2 className="arcade-party-title g-fishbowl-name">
+      <span ref={ref}>{text}</span>
+    </h2>
   );
 }
 
@@ -623,10 +831,24 @@ function Write({ name, max, slips, onChange, next, onDone }: { name: string; max
   const [note, setNote] = useState('');
   const input = useRef<HTMLInputElement | null>(null);
   const full = slips.length >= max;
+  const fullNow = useRef(full);
+  fullNow.current = full;
   useEffect(() => {
     if (full) shell.root.current?.focus({ preventScroll: true });
     else input.current?.focus({ preventScroll: true });
   }, [full, shell.root]);
+  // The second tap of a double tap on the handoff lands here and pulls focus off the field, which closes the phone's
+  // keyboard. For a moment after the step appears, focus that falls back to the game goes straight back to the field.
+  useEffect(() => {
+    const root = shell.root.current;
+    if (!root) return;
+    const shown = performance.now();
+    const back = (e: FocusEvent) => {
+      if (e.target === root && !fullNow.current && performance.now() - shown < 1500) input.current?.focus({ preventScroll: true });
+    };
+    root.addEventListener('focusin', back);
+    return () => root.removeEventListener('focusin', back);
+  }, [shell.root]);
   const add = () => {
     const r = addSlip(slips, draft, max);
     if (!r.ok) return setNote(r.reason);
@@ -700,7 +922,7 @@ function Write({ name, max, slips, onChange, next, onDone }: { name: string; max
                   onChange(slips.filter((_, j) => j !== k));
                 }}
               >
-                <span>{s}</span>
+                <FitText text={s} />
                 <svg width="12" height="12" viewBox="0 0 10 10" aria-hidden="true">
                   <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
                 </svg>
@@ -717,41 +939,66 @@ function Write({ name, max, slips, onChange, next, onDone }: { name: string; max
   );
 }
 
-/** This turn's slips in one round, as paper strips: tap to flip between guessed and back in the bowl. */
-function Rows({ match, round, slips, onFix }: { match: Match; round: number; slips: string[]; onFix: (slip: number) => void }) {
+/**
+ * This turn's slips in one round, as paper strips: tap to flip between guessed and back in the bowl. In round 1 a slip
+ * that goes back in the bowl is still a secret from the other team, so it stays face down until someone taps it.
+ */
+function Rows({ match, round, slips, who, split, onFix }: { match: Match; round: number; slips: string[]; who: string; split: boolean; onFix: (slip: number) => void }) {
+  const [shown, setShown] = useState<ReadonlySet<number>>(() => new Set());
   const rows = reviewRows(match.cards, round);
-  if (!rows.length) return <p className="g-fishbowl-label">Nothing came out of the bowl this turn.</p>;
+  if (!rows.length) return <p className="g-fishbowl-hint">Nothing came out of the bowl this turn.</p>;
+  const show = (slip: number) => setShown(new Set(shown).add(slip));
   return (
-    <>
-      <p className="g-fishbowl-label">This turn. Tap a slip to fix it.</p>
+    <div className="arcade-party-field g-fishbowl-list">
+      <span>
+        {split ? `${who}'s round ${round + 1} slips` : `${who}'s slips`}
+        <small>Tap one to fix it</small>
+      </span>
       <ul className="g-fishbowl-rows" aria-label="Slips this turn">
-        {rows.map((row) => (
-          <li key={row.slip}>
-            <button
-              type="button"
-              aria-pressed={row.got}
-              className={row.got ? 'is-got' : undefined}
-              // A tap shouldn't leave focus here, or Enter would flip the slip again instead of moving on.
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                sfx.play(row.got ? 'blip' : 'coin', row.got ? 0.7 : 1);
-                onFix(row.slip);
-              }}
-            >
-              <span>{slips[row.slip]}</span>
-              <em>
-                {row.got && (
-                  <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-                    <path d="M2.5 6.2l2.4 2.4 4.6-5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
+        {rows.map((row) => {
+          const what = row.got ? 'Got It' : row.buzzer ? 'At the Buzzer' : row.skips > 1 ? `Skipped ${row.skips}x` : 'Skipped';
+          const hidden = round === 0 && !row.got && !shown.has(row.slip);
+          return (
+            <li key={row.slip}>
+              <button
+                type="button"
+                aria-pressed={hidden ? undefined : row.got}
+                aria-label={hidden ? `Hidden slip, ${what.toLowerCase()}. Show it.` : undefined}
+                className={row.got ? 'is-got' : hidden ? 'is-hidden' : undefined}
+                // A tap shouldn't leave focus here, or Enter would flip the slip again instead of moving on.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  show(row.slip);
+                  if (hidden) return sfx.play('blip', 1.2);
+                  sfx.play(row.got ? 'blip' : 'coin', row.got ? 0.7 : 1);
+                  onFix(row.slip);
+                }}
+              >
+                {hidden ? (
+                  <span className="g-fishbowl-veil">
+                    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                      <circle cx="12" cy="12" r="2.8" fill="currentColor" />
+                    </svg>
+                    Tap to show
+                  </span>
+                ) : (
+                  <FitText text={slips[row.slip] ?? ''} />
                 )}
-                {row.got ? 'Got It' : row.buzzer ? 'At the Buzzer' : row.skips > 1 ? `Skipped ${row.skips}x` : 'Skipped'}
-              </em>
-            </button>
-          </li>
-        ))}
+                <em>
+                  {row.got && (
+                    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                      <path d="M2.5 6.2l2.4 2.4 4.6-5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                  {what}
+                </em>
+              </button>
+            </li>
+          );
+        })}
       </ul>
-    </>
+    </div>
   );
 }
 

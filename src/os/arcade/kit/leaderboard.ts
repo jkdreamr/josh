@@ -1,5 +1,5 @@
 import type { LeaderboardSpec } from '../types';
-import { cleanName, isEntry, rankEntries, NAME_MAX, type BoardEntry } from './leaderboard-core.ts';
+import { cleanName, isEntry, parseBoardTops, rankEntries, topsOf, NAME_MAX, type BoardEntry } from './leaderboard-core.ts';
 
 export {
   NAME_MAX,
@@ -75,6 +75,42 @@ export async function getBoard(game: string, spec: LeaderboardSpec, api = ARCADE
     return { entries: rankEntries(await readEntries(res), spec.order), scope: 'global' };
   } catch {
     return { entries: deviceBoard(game, spec), scope: 'device' };
+  }
+}
+
+export const WINS_UNAVAILABLE = 'Online wins are unavailable right now.';
+
+/** A game's Online Wins board (`score` is the number of wins). Wins only exist on the Worker, so there is no device board. */
+export async function getWins(game: string, api = ARCADE_API): Promise<Board> {
+  if (!api) return { entries: [], scope: 'global', error: WINS_UNAVAILABLE };
+  try {
+    const res = await fetch(`${api}/wins?game=${encodeURIComponent(game)}`);
+    if (!res.ok) throw new Error('unavailable');
+    return { entries: await readEntries(res), scope: 'global' };
+  } catch {
+    return { entries: [], scope: 'global', error: WINS_UNAVAILABLE };
+  }
+}
+
+/** The best few of every board for the Leaderboards cards. `wins` is null when Online Wins are unavailable. */
+export type BoardTopsResult = { scope: BoardScope; boards: Record<string, BoardEntry[]>; wins: Record<string, BoardEntry[]> | null };
+
+/**
+ * The best few entries of every score board in `specs` and every Online Wins board in `online`, in one request.
+ * If the API is unavailable, or the deployed Worker predates GET /leaderboard/top, the score boards come from this device.
+ */
+export async function getBoardTops(specs: Record<string, LeaderboardSpec>, online: readonly string[], api = ARCADE_API): Promise<BoardTopsResult> {
+  const orders = Object.fromEntries(Object.entries(specs).map(([id, spec]) => [id, spec.order]));
+  const device = (): BoardTopsResult => ({ scope: 'device', boards: topsOf(readDevice(), orders), wins: null });
+  if (!api) return device();
+  try {
+    const res = await fetch(`${api}/leaderboard/top`);
+    if (!res.ok) throw new Error('unavailable');
+    const tops = parseBoardTops(await res.json(), orders, online);
+    if (!tops) throw new Error('bad response');
+    return { scope: 'global', ...tops };
+  } catch {
+    return device();
   }
 }
 

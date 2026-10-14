@@ -3,7 +3,7 @@ import type { GameMeta } from '../../types';
 export const meta: GameMeta = {
   id: 'party-mix',
   title: 'Party Mix',
-  blurb: 'Every card calls someone out by name. Duels, votes, challenges and rules that stick around.',
+  blurb: 'Challenges, duels and votes that call everyone out by name.',
   category: 'drinking',
   players: '2-20P',
   controls: 'Read each card out loud. Tap anywhere or press Space for the next one, Left to go back.',

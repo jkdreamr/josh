@@ -5,22 +5,27 @@ import {
   BURN_END,
   FUSES,
   LOSER_SIPS,
+  RESUME_BEAT,
+  RESUME_BEATS,
   TICK_MAX,
   TICK_MIN,
   addLoss,
   burnAt,
   burnProfile,
   fuseLength,
+  fuseTicks,
   leaders,
   lossesOf,
   nextStarter,
   promptsFor,
   removeLoss,
+  standingLine,
   standings,
-  tickGap,
+  tickHeat,
+  verdict,
   type FuseSetting,
 } from '../src/os/arcade/games/hot-potato/logic.ts';
-import { CATEGORIES, LETTERS } from '../src/os/arcade/games/hot-potato/prompts.ts';
+import { AFTER_DARK, CATEGORIES, LETTERS } from '../src/os/arcade/games/hot-potato/prompts.ts';
 
 test('fuse lengths stay inside each setting and cover the range', () => {
   const rng = mulberry32(3);
@@ -33,7 +38,10 @@ test('fuse lengths stay inside each setting and cover the range', () => {
   }
   assert.ok(FUSES.short[0] < FUSES.normal[0] && FUSES.normal[0] < FUSES.long[0]);
   assert.ok(FUSES.short[1] < FUSES.normal[1] && FUSES.normal[1] < FUSES.long[1]);
-  assert.deepEqual(FUSES.normal, [15, 40]);
+  assert.deepEqual(FUSES.normal, [10, 40]);
+  assert.deepEqual(FUSES.long, [15, 60]);
+  // No setting has a long guaranteed-safe opening: even Long can blow while the second person is talking.
+  for (const setting of Object.keys(FUSES) as FuseSetting[]) assert.ok(FUSES[setting][0] <= 15, `${setting} can go early`);
 });
 
 test('the fuse burns forward from 0 and stops short, at a different stub each round', () => {
@@ -80,27 +88,93 @@ test('the fuse display is not linear, so the time left cannot be read off it', (
   assert.deepEqual(burnProfile(mulberry32(9)), burnProfile(mulberry32(9)));
 });
 
-test('ticks speed up as the end nears, with jitter, inside sane bounds', () => {
-  const rng = mulberry32(21);
-  const avg = (left: number) => {
-    let sum = 0;
-    for (let i = 0; i < 400; i++) sum += tickGap(left, rng);
-    return sum / 400;
-  };
-  const far = avg(40);
-  const mid = avg(10);
-  const near = avg(3);
-  const last = avg(0.5);
-  assert.ok(far > mid && mid > near && near > last, `slows to speeds: ${far.toFixed(2)} ${mid.toFixed(2)} ${near.toFixed(2)} ${last.toFixed(2)}`);
-  assert.ok(far > 0.7 && far < 1.1, 'about once a second with plenty left');
-  assert.ok(last < 0.25, 'a fast rattle at the very end');
-  const spread = new Set(Array.from({ length: 50 }, () => tickGap(10, rng).toFixed(3)));
-  assert.ok(spread.size > 20, 'never a metronome');
-  for (const left of [-5, 0, 0.01, 1, 5, 24, 60, 1e6, Number.NaN]) {
-    for (let i = 0; i < 50; i++) {
-      const g = tickGap(left, rng);
-      assert.ok(g >= TICK_MIN && g <= TICK_MAX, `gap ${g} for ${left}s left`);
+test('the fuse ticks on a schedule of its own, inside sane bounds', () => {
+  for (let seed = 1; seed <= 200; seed++) {
+    const total = fuseLength('normal', mulberry32(seed));
+    const ticks = fuseTicks(total, mulberry32(seed * 31));
+    assert.ok(ticks.length > 3, 'ticks from start to boom');
+    assert.ok(ticks[0] >= 0.2 && ticks[0] <= 0.45, 'the first tick comes right after the match');
+    assert.ok(ticks[ticks.length - 1] < total, 'nothing ticks after the boom');
+    for (let i = 1; i < ticks.length; i++) {
+      const gap = ticks[i] - ticks[i - 1];
+      assert.ok(gap >= TICK_MIN - 1e-9 && gap <= TICK_MAX + 1e-9, `gap ${gap}`);
     }
+  }
+  // The ticks up to any moment are the same whatever the fuse length: the schedule never looks at the time left.
+  for (let seed = 1; seed <= 50; seed++) {
+    const short = fuseTicks(12, mulberry32(seed));
+    const long = fuseTicks(55, mulberry32(seed));
+    assert.deepEqual(long.slice(0, short.length), short);
+    assert.ok(long[short.length] >= 12);
+  }
+  assert.deepEqual(fuseTicks(0, mulberry32(1)), []);
+  assert.deepEqual(fuseTicks(Number.NaN, mulberry32(1)), []);
+  // Same seed, same ticks; different seeds, a different rhythm.
+  assert.deepEqual(fuseTicks(30, mulberry32(5)), fuseTicks(30, mulberry32(5)));
+  assert.notDeepEqual(fuseTicks(30, mulberry32(5)), fuseTicks(30, mulberry32(6)));
+  // Sound heat comes from the tempo: fast ticks run hot, slow ones calm, always 0 to 1.
+  assert.equal(tickHeat(TICK_MAX), 0);
+  assert.equal(tickHeat(TICK_MIN), 1);
+  assert.ok(tickHeat(0.3) > tickHeat(0.6));
+  for (const g of [-1, 0, 0.5, 9, Number.NaN]) assert.ok(tickHeat(g) >= 0 && tickHeat(g) <= 1);
+  assert.equal(RESUME_BEATS, 3);
+  assert.ok(RESUME_BEATS * RESUME_BEAT <= 2, 'the count-in after a pause is short');
+});
+
+/** Pearson correlation. */
+function corr(xs: readonly number[], ys: readonly number[]): number {
+  const n = xs.length;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0;
+  let sxx = 0;
+  let syy = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (xs[i] - mx) * (ys[i] - my);
+    sxx += (xs[i] - mx) ** 2;
+    syy += (ys[i] - my) ** 2;
+  }
+  return sxy / Math.sqrt(sxx * syy);
+}
+const mean = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+test('simulated rounds: the ticks give away neither the time left nor the fuse length, and still build', () => {
+  for (const setting of Object.keys(FUSES) as FuseSetting[]) {
+    const gaps: number[] = [];
+    const lefts: number[] = [];
+    const firstGaps: number[] = [];
+    const totals: number[] = [];
+    const opening: number[] = [];
+    const closing: number[] = [];
+    const lastTwo: number[] = [];
+    for (let seed = 1; seed <= 1500; seed++) {
+      // Each round exactly as the game plays it: a fuse length, then its ticks.
+      const rng = mulberry32(seed * 7919 + setting.length);
+      const total = fuseLength(setting, rng);
+      const ticks = fuseTicks(total, rng);
+      for (let i = 0; i + 1 < ticks.length; i++) {
+        const gap = ticks[i + 1] - ticks[i];
+        const left = total - ticks[i];
+        gaps.push(gap);
+        lefts.push(left);
+        if (ticks[i] < 3) opening.push(gap);
+        if (left < 3) closing.push(gap);
+        if (left < 2) lastTwo.push(gap);
+      }
+      firstGaps.push(ticks[1] - ticks[0]);
+      totals.push(total);
+    }
+    // The old fuse ticked as a function of the time left (correlation about 0.9): the last seconds were audible.
+    const r = corr(gaps, lefts);
+    assert.ok(r < 0.3, `${setting}: tick gap vs time left correlates at ${r.toFixed(3)}`);
+    // The old Short fuse's opening speed gave its length away (about 0.75).
+    const opener = corr(firstGaps, totals);
+    assert.ok(Math.abs(opener) < 0.1, `${setting}: opening tick vs fuse length correlates at ${opener.toFixed(3)}`);
+    // In the last two seconds a slow tick is common, so a calm stretch is no promise of time.
+    const slow = lastTwo.filter((g) => g > 0.4).length / lastTwo.length;
+    assert.ok(slow > 0.2, `${setting}: ${(slow * 100).toFixed(0)}% of ticks in the last 2 s are slow`);
+    // Tension still builds: on average the closing seconds tick much faster than the opening ones.
+    assert.ok(mean(closing) < mean(opening) * 0.75, `${setting}: closing ${mean(closing).toFixed(2)} s vs opening ${mean(opening).toFixed(2)} s`);
   }
 });
 
@@ -141,6 +215,10 @@ test('prompt content is full, varied and clean', () => {
     assert.doesNotMatch(c, /[\u2013\u2014.!]$|[\u2013\u2014]/, `"${c}" has no dashes or end punctuation`);
   }
   for (const l of LETTERS) assert.match(l, /^[A-Z]{1,4}$/, `"${l}" is one to four capital letters`);
+  // Varied shapes and topics, not a list of "Things that..." and dogs.
+  const things = CATEGORIES.filter((c) => /^Things\b/.test(c)).length;
+  assert.ok(things <= CATEGORIES.length * 0.15, `${things} categories start with "Things"`);
+  assert.ok(CATEGORIES.filter((c) => /\bdogs?\b/i.test(c)).length <= 1, 'one dog prompt is plenty');
   assert.ok(LETTERS.includes('ING') && LETTERS.includes('TION') && LETTERS.includes('OU'));
 });
 
@@ -200,4 +278,56 @@ test('the loser starts the next round, otherwise anyone can', () => {
   assert.equal(seen.size, 5);
   const fallback = nextStarter(3, 7, rng);
   assert.ok(fallback >= 0 && fallback < 3, 'a stale seat falls back to random');
+});
+
+test('the round result names the loser once, then says where they stand', () => {
+  const names = ['Josh', 'Sam', 'Christopher Lee', 'Jordan', 'Bo'];
+  assert.equal(verdict('Sam', false), 'Sam takes a point');
+  assert.equal(verdict('Sam', true), `Sam drinks ${LOSER_SIPS} sips`);
+  let t = addLoss({}, 'Christopher Lee');
+  assert.equal(standingLine(t, names, 'Christopher Lee', false), 'Fewest points wins.');
+  assert.equal(standingLine(t, names, 'Christopher Lee', true), 'First boom of the night.');
+  t = addLoss(t, 'Christopher Lee');
+  assert.equal(standingLine(t, names, 'Christopher Lee', false), "That's 2, the most so far.");
+  assert.equal(standingLine(t, names, 'Christopher Lee', true), '2 lost, the most so far.');
+  t = addLoss(addLoss(t, 'Sam'), 'Sam');
+  assert.equal(standingLine(t, names, 'Sam', false), "That's 2, level with Christopher Lee for the most.");
+  t = addLoss(addLoss(t, 'Bo'), 'Bo');
+  assert.equal(standingLine(t, names, 'Bo', false), "That's 2, tied with 2 others for the most.");
+  t = addLoss(t, 'Josh');
+  assert.equal(standingLine(t, names, 'Josh', false), "That's 1. 3 players are on 2, the most.");
+  t = addLoss(t, 'Sam');
+  assert.equal(standingLine(t, names, 'Josh', false), "That's 1. Sam is on 3, the most.");
+  assert.equal(standingLine(t, names, 'Josh', true), '1 lost so far. Sam has lost 3, the most.');
+  t = addLoss(t, 'Bo');
+  assert.equal(standingLine(t, names, 'Josh', false), "That's 1. Sam and Bo are on 3, the most.");
+  assert.equal(standingLine(t, names, 'Josh', true), '1 lost so far. Sam and Bo have lost 3 each.');
+  for (const name of names) for (const drinks of [false, true]) assert.doesNotMatch(standingLine(t, names, name, drinks) + verdict(name, drinks), /[\u2013\u2014]/);
+});
+
+test('After Dark 18+ mixes its categories in only when turned on', () => {
+  assert.ok(AFTER_DARK.length >= 35 && AFTER_DARK.length <= 50, `about 40 (got ${AFTER_DARK.length})`);
+  assert.equal(new Set(AFTER_DARK.map((c) => c.toLowerCase())).size, AFTER_DARK.length, 'no duplicates inside After Dark');
+  const base = new Set(CATEGORIES.map((c) => c.toLowerCase()));
+  for (const c of AFTER_DARK) {
+    assert.ok(!base.has(c.toLowerCase()), `"${c}" is in both tiers`);
+    assert.match(c, /^[A-Z]/, `"${c}" starts with a capital`);
+    assert.notEqual(c, c.toUpperCase(), `"${c}" is sentence case`);
+    assert.ok(c.length <= 40, `"${c}" fits on the card`);
+    assert.doesNotMatch(c, /[\u2013\u2014.!]$|[\u2013\u2014]/, `"${c}" has no dashes or end punctuation`);
+    // The spice guide's hard lines: nothing about minors or school, consent or cruelty.
+    assert.doesNotMatch(c, /\b(school|teen|minor|underage|student|roofie|drugged|passed out|blackout|fat|ugly)\b/i, `"${c}" crosses a line`);
+  }
+  // Off (the default): exactly the usual prompts, none of them spicy.
+  for (const mode of ['categories', 'letters', 'mix'] as const) {
+    assert.deepEqual(promptsFor(mode, false), promptsFor(mode));
+    assert.ok(!promptsFor(mode).some((p) => p.spicy));
+  }
+  // On: the usual categories plus every After Dark one, marked. Letters has nothing to spice.
+  const on = promptsFor('mix', true);
+  assert.equal(on.length, promptsFor('mix').length + AFTER_DARK.length);
+  assert.equal(on.filter((p) => p.spicy).length, AFTER_DARK.length);
+  assert.ok(on.filter((p) => p.spicy).every((p) => p.kind === 'category'));
+  assert.equal(promptsFor('categories', true).length, CATEGORIES.length + AFTER_DARK.length);
+  assert.deepEqual(promptsFor('letters', true), promptsFor('letters'));
 });

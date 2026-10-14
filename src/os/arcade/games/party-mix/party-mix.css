@@ -100,6 +100,27 @@
 .g-party-mix .g-party-mix-note.is-wild {
   color: #ff8a7a;
 }
+/* The 18+ levels carry the mark on the control itself, under the name. */
+.g-party-mix .g-party-mix-seg {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  line-height: 1;
+}
+.g-party-mix .g-party-mix-seg small {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #ff8a7a;
+}
+.g-party-mix.arcade-shell .arcade-party-option .arcade-seg > button {
+  padding: 0 4px;
+}
+.g-party-mix.arcade-shell .arcade-party-option .arcade-seg > button[aria-pressed='true'] .g-party-mix-seg small {
+  color: #ffb3a8;
+}
 
 /* The table: progress, rules in play, then the card. */
 .g-party-mix .g-party-mix-tap {
@@ -212,7 +233,7 @@
   width: 100%;
   min-height: 0;
   padding-bottom: 5px;
-  container-type: size;
+  container: pm-stage / size;
 }
 
 /* The card: a colored stock per kind, label on the edge, words on a cream panel. */
@@ -356,7 +377,14 @@
   text-decoration-thickness: 2px;
 }
 
-/* Would You Rather: two options to pick between. */
+/* Would You Rather: two options to pick between, stacked, or side by side on a wide, short card. */
+.g-party-mix .g-party-mix-wyr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--fs) * 0.5);
+  width: 100%;
+}
 .g-party-mix .g-party-mix-opt {
   display: flex;
   align-items: center;
@@ -393,6 +421,62 @@
   font-family: var(--party-display);
   font-size: max(13px, calc(var(--fs) * 0.42));
   color: var(--panel-dim);
+}
+
+@container pm-stage (min-aspect-ratio: 4/3) {
+  .g-party-mix .g-party-mix-wyr {
+    flex-direction: row;
+    align-items: stretch;
+    gap: calc(var(--fs) * 0.35);
+  }
+  .g-party-mix .g-party-mix-opt {
+    flex: 1 1 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.35em;
+    min-width: 0;
+    padding: 0.6em 0.5em;
+    text-align: center;
+  }
+  .g-party-mix .g-party-mix-or {
+    align-self: center;
+    margin: 0;
+  }
+}
+
+/* A write-in rule's text on its card, and the box to type it into below. */
+.g-party-mix .g-party-mix-made {
+  display: block;
+  margin-bottom: 0.3em;
+  font-family: var(--pm-text);
+  font-size: 1.25em;
+  font-weight: 800;
+  line-height: 1.2;
+  color: var(--panel-ink);
+  overflow-wrap: anywhere;
+}
+.g-party-mix .g-party-mix-write {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  width: 100%;
+  cursor: auto;
+}
+.g-party-mix.arcade-shell .g-party-mix-write .arcade-input,
+.g-party-mix.arcade-shell .g-party-mix-write .arcade-btn {
+  height: 44px;
+  border-radius: 10px;
+  font-size: 16px;
+}
+.g-party-mix.arcade-shell .g-party-mix-write .arcade-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.g-party-mix.arcade-shell .g-party-mix-write .arcade-btn {
+  flex: none;
+  padding: 0 18px;
 }
 
 /* Stock per kind. Light stocks take dark ink, deep ones take white. */

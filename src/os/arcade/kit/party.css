@@ -79,6 +79,14 @@
     pointer-events: none;
   }
 }
+/* The phone is changing hands here: a slow double tap on the last screen must not open the next player's secret. */
+.arcade-party-pass .arcade-party-actions {
+  animation-duration: 0.8s;
+}
+/* Paused: hide the step entirely, so a secret on screen never shows through the overlay. */
+.arcade-shell.st-paused:has(.arcade-party) .arcade-stage {
+  visibility: hidden;
+}
 .arcade-party-actions {
   position: relative;
   z-index: 1;
@@ -200,33 +208,6 @@
 .arcade-shell .arcade-party-btn:disabled {
   opacity: 0.38;
   pointer-events: none;
-}
-@container arcade-party (max-height: 480px) {
-  .arcade-party-body {
-    gap: 8px;
-  }
-  .arcade-party-actions {
-    gap: 8px;
-    margin-top: 8px;
-  }
-  .arcade-shell .arcade-party-btn {
-    min-height: 44px;
-    border-radius: 12px;
-    font-size: 16px;
-  }
-  .arcade-party-title {
-    font-size: 24px;
-  }
-  .arcade-party-sub {
-    font-size: 14px;
-  }
-  .arcade-party-timer {
-    --size: min(var(--size-base, 120px), 84px);
-  }
-  .arcade-party-card {
-    gap: 6px;
-    padding: 20px 20px;
-  }
 }
 
 /* Avatars */
@@ -568,7 +549,7 @@
 /* A grid of players to tap, for votes and night picks */
 .arcade-party-picks {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
   gap: 10px;
   width: 100%;
   padding-bottom: 3px;
@@ -663,6 +644,35 @@
 }
 .arcade-party-scores li.is-out > span:not(.arcade-party-avatar) {
   text-decoration: line-through;
+}
+
+/* Short windows. Last in the file so it wins over the base rules above. */
+@container arcade-party (max-height: 480px) {
+  .arcade-party-body {
+    gap: 8px;
+  }
+  .arcade-party-actions {
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .arcade-shell .arcade-party-btn {
+    min-height: 44px;
+    border-radius: 12px;
+    font-size: 16px;
+  }
+  .arcade-party-title {
+    font-size: 24px;
+  }
+  .arcade-party-sub {
+    font-size: 14px;
+  }
+  .arcade-party-timer {
+    --size: min(var(--size-base, 120px), 84px);
+  }
+  .arcade-party-card {
+    gap: 6px;
+    padding: 20px 20px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
