@@ -7,7 +7,7 @@ import { countPlay } from '../stats';
 import { reloadInto } from '../reload';
 import { getAppGame, goBoardOwner } from '../arcade/apps';
 import { boardFor } from '../arcade/kit/leaderboard';
-import { AppBoard, onlineAvailable, RoomPanel, useAppRoom, useInvite } from './online-room';
+import { AppBoard, onlineAvailable, RoomPanel, useAppRoom, useInvite, usePlayingRoom } from './online-room';
 import './game-controls.css';
 import './Baduk.css';
 
@@ -132,6 +132,7 @@ export default function Baduk({ args }: AppProps) {
     },
     onEnd: () => startNewGame(goSizeRef.current),
   });
+  usePlayingRoom(gameMode === 'omok' ? 'omok' : 'go', room);
   const guestRef = useRef(false);
   guestRef.current = room.linked && !room.isHost;
   const onlineColor: Color | null = mode === 'online' && room.status === 'playing' && room.seat !== null ? onlineColorOf(room.seat, room.round) : null;

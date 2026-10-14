@@ -1,0 +1,592 @@
+/* Chained: six circles of ledges around a stone core, climbed on one chain. */
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url('/fonts/fraunces.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/instrument-serif-italic.woff2') format('woff2');
+}
+
+.g-chained {
+  --ink: #ff9e6e;
+  --display: 'Fraunces', Georgia, serif;
+  --voice: 'Instrument Serif', Georgia, serif;
+}
+.g-chained .g-chained-skies {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #1b0806;
+}
+.g-chained .g-chained-sky {
+  position: absolute;
+  inset: 0;
+}
+.g-chained .g-chained-host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+.g-chained .g-chained-sky.is-in {
+  animation: g-chained-skyin 1.6s ease forwards;
+}
+@keyframes g-chained-skyin {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.g-chained .g-chained-host canvas {
+  position: relative;
+}
+
+/* the Start card */
+.g-chained .g-chained-note {
+  display: block;
+  max-width: 34ch;
+  margin: -2px auto 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(245, 245, 247, 0.7);
+  text-align: center;
+}
+.g-chained .g-chained-best {
+  display: block;
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.75);
+}
+.g-chained .g-chained-extras {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+.g-chained .g-chained-hostpick {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.g-chained .g-chained-hostpick b {
+  font-size: 14px;
+}
+.g-chained .g-chained-hostpick small {
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.6);
+}
+
+/* the top line: the clock and the mode */
+.g-chained .g-chained-top {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(10, 8, 14, 0.42);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  pointer-events: none;
+}
+.g-chained .g-chained-time {
+  font-family: var(--display);
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #fff;
+}
+.g-chained .g-chained-modetag {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.g-chained .g-chained-ready {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--voice);
+  font-size: 28px;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  animation: g-chained-breathe 1.2s ease-in-out infinite;
+}
+@keyframes g-chained-breathe {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* the circle cards */
+.g-chained .g-chained-cardwrap {
+  position: absolute;
+  top: 18%;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  animation: g-chained-card 3.6s ease forwards;
+}
+@keyframes g-chained-card {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 10px);
+  }
+  10%,
+  82% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+}
+.g-chained .g-chained-zonecard {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  color: #fff;
+  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.7);
+}
+.g-chained .g-chained-zonecard-numeral {
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.4em;
+  margin-left: 0.4em;
+  color: var(--ink);
+}
+.g-chained .g-chained-zonecard h3 {
+  margin: 2px 0 0;
+  font-family: var(--display);
+  font-size: clamp(26px, 6vmin, 40px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+}
+.g-chained .g-chained-zonecard p {
+  margin: 6px 0 0;
+  font-family: var(--voice);
+  font-size: clamp(15px, 3.2vmin, 20px);
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* the altimeter */
+.g-chained .g-chained-alti {
+  position: absolute;
+  top: 56px;
+  right: 14px;
+  bottom: 24px;
+  width: 22px;
+  pointer-events: none;
+}
+.g-chained .g-chained-alti-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 11px;
+  background: rgba(8, 6, 12, 0.45);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+.g-chained .g-chained-alti-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: color-mix(in srgb, var(--band) 18%, transparent);
+  border-top: 0.5px solid rgba(255, 255, 255, 0.1);
+}
+.g-chained .g-chained-alti-band.is-here {
+  background: color-mix(in srgb, var(--band) 36%, transparent);
+}
+.g-chained .g-chained-alti-band span {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  text-align: center;
+  font-family: var(--display);
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.55);
+}
+.g-chained .g-chained-alti-band.is-here span {
+  color: #fff;
+}
+.g-chained .g-chained-alti-lava {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(255, 140, 60, 0.9), rgba(255, 60, 20, 0.95));
+  box-shadow: 0 0 10px rgba(255, 110, 40, 0.8);
+}
+.g-chained .g-chained-alti-tick {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  margin-top: -1px;
+  background: rgba(255, 255, 255, 0.35);
+}
+.g-chained .g-chained-alti-tick.is-lit {
+  background: #fff;
+  box-shadow: 0 0 6px #fff;
+}
+.g-chained .g-chained-alti-tick.is-goal {
+  height: 3px;
+  background: rgba(255, 240, 200, 0.6);
+}
+.g-chained .g-chained-alti-soul {
+  position: absolute;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.9);
+  transition: top 0.14s linear;
+}
+.g-chained .g-chained-alti-soul.is-me {
+  width: 13px;
+  height: 13px;
+  margin: -6.5px 0 0 -6.5px;
+  z-index: 1;
+}
+.g-chained .g-chained-alti-soul.is-burned {
+  opacity: 0.3;
+}
+
+/* the chain, bottom left */
+.g-chained .g-chained-team {
+  position: absolute;
+  left: 14px;
+  bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 60px);
+  pointer-events: none;
+}
+.g-chained .g-chained-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px 4px 6px;
+  border-radius: 999px;
+  background: rgba(10, 8, 14, 0.46);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 12px;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.g-chained .g-chained-chip.is-active {
+  box-shadow: inset 0 0 0 1.5px var(--soul);
+  transform: translateY(-2px);
+}
+.g-chained .g-chained-chip.is-burned {
+  opacity: 0.5;
+}
+.g-chained .g-chained-chip i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--soul);
+  box-shadow: 0 0 8px var(--soul);
+}
+.g-chained .g-chained-chip b {
+  font-weight: 600;
+}
+.g-chained .g-chained-chip small {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+.g-chained .g-chained-chip-link {
+  display: none;
+}
+.g-chained .g-chained-team-hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  padding-left: 2px;
+}
+@media (max-width: 560px) {
+  .g-chained .g-chained-chip small {
+    display: none;
+  }
+  .g-chained .g-chained-team-hint {
+    display: none;
+  }
+}
+
+/* toasts and tags */
+.g-chained .g-chained-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 22%;
+  transform: translateX(-50%);
+  max-width: min(78%, 420px);
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: rgba(10, 8, 14, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
+  pointer-events: none;
+  animation: g-chained-toast 3.2s ease forwards;
+}
+.g-chained .g-chained-toast.is-tip {
+  font-family: var(--voice);
+  font-size: 16px;
+}
+.g-chained .g-chained-toast.is-warn {
+  color: #ffd9b0;
+}
+@keyframes g-chained-toast {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  10%,
+  80% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -4px);
+  }
+}
+.g-chained .g-chained-windtag {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--voice);
+  font-size: 15px;
+  color: rgba(223, 230, 255, 0.85);
+  pointer-events: none;
+}
+.g-chained .g-chained-windtag.is-gust {
+  color: #fff;
+  animation: g-chained-breathe 0.5s ease-in-out infinite;
+}
+.g-chained .g-chained-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(10, 8, 14, 0.5);
+  box-shadow: inset 0 0 0 1px var(--soul);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* vignettes */
+.g-chained .g-chained-heat {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 110%, rgba(255, 90, 30, 0.75) 0%, rgba(255, 90, 30, 0.25) 40%, transparent 70%);
+  animation: g-chained-breathe 0.8s ease-in-out infinite;
+}
+.g-chained .g-chained-fade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: #050308;
+}
+.g-chained .g-chained-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+.g-chained .g-chained-flash.is-strain {
+  box-shadow: inset 0 0 80px rgba(255, 255, 255, 0.55);
+  animation: g-chained-flash 0.45s ease-out forwards;
+}
+.g-chained .g-chained-flash.is-burn {
+  background: rgba(255, 120, 40, 0.5);
+  animation: g-chained-flash 0.7s ease-out forwards;
+}
+.g-chained .g-chained-flash.is-beacon {
+  box-shadow: inset 0 0 120px rgba(255, 255, 255, 0.35);
+  animation: g-chained-flash 0.9s ease-out forwards;
+}
+@keyframes g-chained-flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* the How to Play sheet */
+.g-chained .g-chained-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  text-align: left;
+  background: rgba(8, 6, 10, 0.62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.g-chained .g-chained-sheet-card {
+  width: min(560px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  background: #16121a;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+  color: #f5f5f7;
+  overflow: hidden;
+}
+.g-chained .g-chained-sheet-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.1);
+}
+.g-chained .g-chained-sheet-card h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 600;
+}
+.g-chained .g-chained-sheet-body {
+  overflow: auto;
+  padding: 4px 16px 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  overscroll-behavior: contain;
+}
+.g-chained .g-chained-sheet-body section {
+  margin-top: 14px;
+}
+.g-chained .g-chained-sheet-body h3 {
+  margin: 0 0 6px;
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 600;
+  color: #ffb98a;
+}
+.g-chained .g-chained-sheet-body p {
+  margin: 6px 0;
+}
+.g-chained .g-chained-sheet-body ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.g-chained .g-chained-sheet-body li {
+  margin: 4px 0;
+}
+.g-chained .g-chained-sheet-body b {
+  color: #fff;
+}
+.g-chained .g-chained-lede {
+  font-family: var(--voice);
+  font-size: 17px;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.9);
+}
+.g-chained .g-chained-keys {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.g-chained .g-chained-keys dt {
+  justify-self: start;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.g-chained .g-chained-keys dd {
+  margin: 0;
+}
+.g-chained .g-chained-circles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.g-chained .g-chained-circles li {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 8px;
+  align-items: start;
+}
+.g-chained .g-chained-circles li span {
+  display: inline-grid;
+  place-items: center;
+  height: 28px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 22%, transparent);
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.g-chained .g-chained-circles li p {
+  margin: 1px 0 0;
+  color: rgba(245, 245, 247, 0.75);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-chained .g-chained-cardwrap,
+  .g-chained .g-chained-toast,
+  .g-chained .g-chained-sky.is-in {
+    animation-duration: 0.01s;
+  }
+  .g-chained .g-chained-ready,
+  .g-chained .g-chained-heat,
+  .g-chained .g-chained-windtag.is-gust {
+    animation: none;
+  }
+}

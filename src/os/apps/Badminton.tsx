@@ -43,7 +43,7 @@ import { boardFor } from '../arcade/kit/leaderboard';
 import { BadmintonAudio } from './badminton-audio';
 import { drawScene, sceneMetrics, type AthleteView, type Impact, type LandingMark } from './badminton-draw';
 import { parseGuestMessage, parseScore, parseSnapshot, trailPoint, type NetAthlete, type NetSnapshot } from './badminton-net';
-import { AppBoard, onlineAvailable, RoomPanel, useAppRoom, useInvite } from './online-room';
+import { AppBoard, onlineAvailable, RoomPanel, useAppRoom, useInvite, usePlayingRoom } from './online-room';
 import './game-controls.css';
 import './Badminton.css';
 
@@ -466,6 +466,7 @@ export default function Badminton({ args }: AppProps) {
     },
   });
   sendRef.current = room.send;
+  usePlayingRoom('badminton', room);
   useInvite(room, args.room, args.nonce, () => {
     setSettings((current) => ({ ...current, mode: 'online' }));
     setScreen('menu');

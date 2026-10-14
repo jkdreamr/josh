@@ -635,7 +635,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
       </section>
       <section>
         <h3>Online</h3>
-        <p>Up to eight friends in one room. The host picks whether computer eggs fill the island up to twenty and how sharp they are.</p>
+        <p>Up to eight friends in one room. The host adds computer eggs with Bots, then picks whether more fill the island up to twenty and how sharp they are.</p>
       </section>
     </Sheet>
   );

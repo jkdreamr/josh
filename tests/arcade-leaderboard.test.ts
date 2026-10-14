@@ -158,7 +158,8 @@ test('opted in games have sane specs that match their shells', () => {
     assert.ok(spec.order === 'asc' || spec.order === 'desc', m.id);
     assert.ok(Number.isFinite(spec.max) && spec.max > (spec.min ?? 0), m.id);
     // Cox Box ranks typing speed, which is the same score whoever you race.
-    if (m.id !== 'coxbox') assert.notEqual(m.category, 'multiplayer', `${m.id} scores depend on the opponent`);
+    // Paper.io ranks only solo rounds against computer players at a fixed field and level, so scores compare across players (like Go's and Badminton's vs-computer boards).
+    if (m.id !== 'coxbox' && m.id !== 'paperio') assert.notEqual(m.category, 'multiplayer', `${m.id} scores depend on the opponent`);
     const src = readFileSync(join(games, m.id, 'index.tsx'), 'utf8');
     // Games that rank with gameOver(undefined, { rank }) keep their own bests and never show the score through the shell.
     if (!/\brank: /.test(src)) assert.equal(/<GameShell[^>]*\blowerIsBetter\b/.test(src), spec.order === 'asc', `${m.id} lowerIsBetter must match order`);
@@ -202,8 +203,10 @@ test('committed Worker specs match the generated game metadata', async () => {
   const committed = readFileSync(join(import.meta.dirname, '..', 'worker', 'src', 'specs.gen.ts'), 'utf8');
   assert.equal(committed, await generateArcadeSpecs());
   const online = [...metas, ...appGames].filter((m) => m.online);
-  assert.deepEqual(ONLINE_SPECS, Object.fromEntries(online.map((m) => [m.id, { seats: m.online!.seats, ...(m.online!.lateJoin ? { lateJoin: true } : {}) }])));
+  assert.deepEqual(ONLINE_SPECS, Object.fromEntries(online.map((m) => [m.id, { seats: m.online!.seats, ...(m.online!.lateJoin ? { lateJoin: true } : {}), ...(m.online!.bots ? { bots: true } : {}) }])));
   for (const m of online) assert.ok(m.online!.seats >= 2 && m.online!.seats <= 8, `${m.id} seats`);
+  // Bots fill empty seats beside people, so they need a room with more than two seats, and a game that plays them.
+  for (const m of online.filter((game) => game.online!.bots)) assert.ok(m.online!.seats > 2 && !m.online!.race, `${m.id} bots`);
   for (const m of metas.filter((game) => game.online?.race)) assert.ok(m.leaderboard && !m.leaderboard.variants, `${m.id} races need one comparable score`);
 });
 

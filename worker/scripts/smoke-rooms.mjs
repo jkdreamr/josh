@@ -6,8 +6,8 @@ const api = process.env.ARCADE_API ?? 'http://127.0.0.1:8787';
 const checks = [];
 const pass = (message) => checks.push(`PASS ${message}`);
 
-async function createRoom(game) {
-  const response = await fetch(`${api}/rooms?game=${encodeURIComponent(game)}`, { method: 'POST' });
+async function createRoom(game, listed = false) {
+  const response = await fetch(`${api}/rooms?game=${encodeURIComponent(game)}${listed ? '&public=1' : ''}`, { method: 'POST' });
   assert.equal(response.status, 200, `create ${game} room`);
   const { code } = await response.json();
   assert.match(code, /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/);
@@ -101,6 +101,7 @@ const hostName = `Smoke${Date.now().toString().slice(-8)}`;
 const host = await connect(code, hostName);
 const hostWelcome = await host.wait('welcome');
 assert.equal(hostWelcome.seat, 0);
+assert.equal(hostWelcome.bots, undefined, 'Pong rooms offer no bots');
 const guest = await connect(code, 'Guest');
 const guestWelcome = await guest.wait('welcome');
 assert.equal(guestWelcome.seat, 1);
@@ -110,9 +111,11 @@ pass('Pong room assigns seats 0 and 1');
 assert.equal(await upgradeStatus(code, 'Third'), 409);
 pass('Third Pong player receives HTTP 409');
 
+host.send({ t: 'bots', n: 1 });
 guest.send({ t: 'start' });
 await new Promise((resolve) => setTimeout(resolve, 100));
 assert.equal(host.messages.some((message) => message.t === 'start'), false);
+assert.equal(host.messages.filter((message) => message.t === 'players').length, 2, 'bots are ignored in a game without them');
 host.send({ t: 'start' });
 await Promise.all([host.wait('start'), guest.wait('start')]);
 pass('Guest start is ignored and host start is broadcast');
@@ -191,5 +194,113 @@ await Promise.all(fill.map((crew) => crew.wait('welcome')));
 assert.equal(await upgradeStatus(raceCode, 'Ninth'), 409);
 pass('Cox Box rooms hold eight crews');
 for (const crew of [...fill, late, ...crews.slice(1), crews[0]]) crew.socket.close();
+
+const botCode = await createRoom('lightcycles');
+const botHost = await connect(botCode, `BotHost${Date.now().toString().slice(-6)}`);
+assert.deepEqual((await botHost.wait('welcome')).bots, []);
+botHost.send({ t: 'bots', n: 2 });
+assert.deepEqual((await botHost.wait('players', (message) => message.bots?.length === 2)).bots, [1, 2]);
+pass('Light Cycles host adds two bots in the lowest empty seats');
+
+const botGuest = await connect(botCode, 'BotGuest');
+const botGuestWelcome = await botGuest.wait('welcome');
+assert.equal(botGuestWelcome.seat, 1);
+assert.deepEqual(botGuestWelcome.bots, [2, 3]);
+pass('A guest takes the seat a bot had, and the bot moves along');
+
+botGuest.send({ t: 'bots', n: 0 });
+botGuest.send({ t: 'bots', n: 9 });
+await new Promise((resolve) => setTimeout(resolve, 100));
+assert.equal(botHost.messages.filter((message) => message.t === 'players').at(-1).bots.length, 2);
+pass('Only the host sets the bots, within the room');
+
+botHost.send({ t: 'start' });
+const botStarts = await Promise.all([botHost, botGuest].map((client) => client.wait('start')));
+assert.deepEqual(botStarts.map((message) => message.bots), [[2, 3], [2, 3]]);
+pass('The start names the seats the bots play');
+
+for (const client of [botHost, botGuest]) client.send({ t: 'result', round: 1, winner: 3 });
+await new Promise((resolve) => setTimeout(resolve, 150));
+const lightWins = (await (await fetch(`${api}/wins?game=lightcycles`)).json()).entries;
+assert.equal(lightWins.some((entry) => entry.name === 'BotGuest'), false);
+pass('A round a bot wins counts for nobody');
+for (const client of [botGuest, botHost]) client.socket.close();
+
+const soloCode = await createRoom('palmdrive');
+const soloHost = await connect(soloCode, 'SoloHost');
+await soloHost.wait('welcome');
+soloHost.send({ t: 'start' });
+await new Promise((resolve) => setTimeout(resolve, 100));
+assert.equal(soloHost.messages.some((message) => message.t === 'start'), false);
+soloHost.send({ t: 'bots', n: 7 });
+await soloHost.wait('players', (message) => message.bots?.length === 7);
+soloHost.send({ t: 'start' });
+assert.deepEqual((await soloHost.wait('start')).bots, [1, 2, 3, 4, 5, 6, 7]);
+const latecomer = await connect(soloCode, 'Latecomer');
+const latecomerWelcome = await latecomer.wait('welcome');
+assert.equal(latecomerWelcome.seat, 1);
+assert.equal(latecomerWelcome.started, true);
+assert.deepEqual(latecomerWelcome.bots, [2, 3, 4, 5, 6, 7]);
+pass('A host alone races seven bots, and someone can still join for the next race');
+for (const client of [latecomer, soloHost]) client.socket.close();
+
+const openRooms = async (game) => {
+  const response = await fetch(`${api}/rooms${game ? `?game=${game}` : ''}`);
+  assert.equal(response.status, 200);
+  return (await response.json()).rooms;
+};
+const listedCode = await createRoom('lightcycles', true);
+const privateCode = await createRoom('lightcycles');
+assert.equal((await openRooms('lightcycles')).some((room) => room.code === listedCode), false, 'not before its host is in');
+const publicHost = await connect(listedCode, 'PublicHost');
+assert.equal((await publicHost.wait('welcome')).listed, true);
+const privateHost = await connect(privateCode, 'PrivateHost');
+assert.equal((await privateHost.wait('welcome')).listed, false);
+const listedNow = (await openRooms('lightcycles')).find((room) => room.code === listedCode);
+assert.deepEqual(listedNow, { code: listedCode, game: 'lightcycles', host: 'PublicHost', players: 1, bots: 0, seats: 4, started: false, lateJoin: false });
+assert.ok((await openRooms()).some((room) => room.code === listedCode), 'and on the list of every game');
+assert.equal((await openRooms('lightcycles')).some((room) => room.code === privateCode), false);
+assert.equal((await fetch(`${api}/rooms?game=nope`)).status, 404);
+pass('A public room is listed once its host is in; a private one never is');
+
+publicHost.send({ t: 'listed', on: false });
+await publicHost.wait('players', (message) => message.listed === false);
+assert.equal((await openRooms('lightcycles')).some((room) => room.code === listedCode), false);
+privateHost.send({ t: 'listed', on: true });
+await privateHost.wait('players', (message) => message.listed === true);
+assert.ok((await openRooms('lightcycles')).some((room) => room.code === privateCode));
+pass('The host can make a room public or private at any time');
+
+const stranger = await connect(privateCode, 'Stranger');
+await stranger.wait('welcome');
+stranger.send({ t: 'listed', on: false });
+privateHost.send({ t: 'bots', n: 1 });
+await privateHost.wait('players', (message) => message.bots?.length === 1);
+const busy = (await openRooms('lightcycles')).find((room) => room.code === privateCode);
+assert.equal(busy.players, 2);
+assert.equal(busy.bots, 1);
+pass('Only the host changes it, and the list follows who is in');
+
+privateHost.send({ t: 'start' });
+await stranger.wait('start');
+await new Promise((resolve) => setTimeout(resolve, 100));
+assert.equal((await openRooms('lightcycles')).some((room) => room.code === privateCode), false);
+pass('A match that locks its room leaves the list when it starts');
+
+const lateCode = await createRoom('coxbox', true);
+const lateHost = await connect(lateCode, 'LateHost');
+await lateHost.wait('welcome');
+lateHost.send({ t: 'bots', n: 2 });
+await lateHost.wait('players', (message) => message.bots?.length === 2);
+lateHost.send({ t: 'start' });
+await lateHost.wait('start');
+await new Promise((resolve) => setTimeout(resolve, 100));
+const lateListing = (await openRooms('coxbox')).find((room) => room.code === lateCode);
+assert.equal(lateListing?.started, true, 'a race people can join between rounds stays listed');
+lateHost.socket.close();
+await new Promise((resolve) => setTimeout(resolve, 200));
+assert.equal((await openRooms('coxbox')).some((room) => room.code === lateCode), false);
+pass('A room that people can join late stays listed, and leaves when its host does');
+for (const client of [stranger, privateHost, publicHost]) client.socket.close();
 
 console.log(checks.join('\n'));

@@ -856,7 +856,7 @@ type Client = { seat: number; me: Me; s: Session; m: Match | null; inbox: { at: 
 function simulate(opts: { humans: number; bots: boolean; seed: number; level: Level; delay: number; loss: number; leave?: { seat: number; at: number }; stall?: { seat: number; at: number; silent: boolean } }) {
   const players: Player[] = Array.from({ length: opts.humans }, (_, seat) => ({ seat, name: `P${seat + 1}` }));
   const rng = rng32(opts.seed * 7 + 1);
-  const host = hostMatch(players, 0, opts.seed, opts.level, opts.bots ? 'fill' : 'none', COUNTDOWN + 1.2);
+  const host = hostMatch(players, 0, opts.seed, opts.level, opts.bots ? MAX_FIGHTERS : 0, COUNTDOWN + 1.2);
   const clients: Client[] = players.map((p) => ({ seat: p.seat, me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], gone: false, call: null, hurtBy: 0, heard: 0 }));
   autopilot(host.match, host.match.fighters[host.match.me]);
   let now = 0;
@@ -992,8 +992,23 @@ test('the host\'s result is final: an elimination that arrives after it changes 
   assert.equal(g.fighters[0].place, 2);
 });
 
+test('the host adds as many computer eggs as it asks for, twenty eggs at most', () => {
+  const two = [{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }];
+  assert.deepEqual(hostMatch(two, 0, 5, 'normal', 3, 0).roster, [0, 1, -1, -1, -1]);
+  assert.deepEqual(hostMatch(two, 0, 5, 'normal', 0, 0).roster, [0, 1]);
+  const five = [0, 1, 2, 3, 4].map((seat) => ({ seat, name: `p${seat}` }));
+  assert.deepEqual(hostMatch(five, 0, 5, 'normal', 3, 0).roster, [0, 1, 2, 3, 4, -1, -1, -1], 'just the room\'s bots');
+  // Fill to 20 asks for as many as there are places
+  const full = hostMatch(five, 0, 5, 'normal', MAX_FIGHTERS, 0);
+  assert.equal(full.match.fighters.length, MAX_FIGHTERS, 'bots fill the places left, no more');
+  assert.deepEqual(full.roster, [0, 1, 2, 3, 4, ...Array(MAX_FIGHTERS - 5).fill(-1)]);
+  assert.ok(full.match.fighters.slice(5).every((f) => f.kind === 'bot'));
+  assert.equal(new Set(full.match.fighters.map((f) => f.color)).size, MAX_FIGHTERS, 'every egg its own color');
+  assert.equal(new Set(full.match.fighters.map((f) => f.name)).size, MAX_FIGHTERS, 'and its own name');
+});
+
 test('the host sends what happened last before it sends the result', () => {
-  const host = hostMatch([{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }], 0, 3, 'normal', 'none', 0);
+  const host = hostMatch([{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }], 0, 3, 'normal', 0, 0);
   const s = newSession(true, host.roster);
   s.queue.push([0, { y: 'o', f: 1, by: 0, w: 'smg' }]);
   s.end = { winner: 0, places: [[0, 1, 1], [1, 2, 0]] };
@@ -1005,7 +1020,7 @@ test('the host sends what happened last before it sends the result', () => {
 
 test('someone who leaves stays out, even if a newcomer takes their seat before the bus goes', () => {
   const players = [0, 1, 2].map((seat) => ({ seat, name: `p${seat}` }));
-  const host = hostMatch(players, 0, 4, 'normal', 'fill', 4.2);
+  const host = hostMatch(players, 0, 4, 'normal', 5, 4.2);
   const s = newSession(true, host.roster);
   const me: Me = { seat: 0, isHost: true, round: 1 };
   tick(s, host.match, me, [0, 1, 2], 0);
@@ -1018,7 +1033,7 @@ test('someone who leaves stays out, even if a newcomer takes their seat before t
 
 test('a guest slow to load gets a while to send its first report; one that reports and then goes quiet does not', () => {
   const players = [0, 1, 2].map((seat) => ({ seat, name: `p${seat}` }));
-  const host = hostMatch(players, 0, 4, 'normal', 'fill', 4.2);
+  const host = hostMatch(players, 0, 4, 'normal', MAX_FIGHTERS, 4.2);
   const s = newSession(true, host.roster);
   const me: Me = { seat: 0, isHost: true, round: 1 };
   const present = [0, 1, 2];
@@ -1039,7 +1054,7 @@ test('a guest slow to load gets a while to send its first report; one that repor
  */
 function pair() {
   const players: Player[] = [{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }];
-  const host = hostMatch(players, 0, 4, 'normal', 'none', 0);
+  const host = hostMatch(players, 0, 4, 'normal', 0, 0);
   const h = host.match;
   const g = guestMatch(players, 1, 4, 'normal', 0, host.roster);
   const hs = newSession(true, host.roster);
@@ -1596,7 +1611,7 @@ test('ponds slow you down and cornfields hide you', () => {
 
 test('a host’s report of twenty eggs fits well inside one room message, and new holdings travel', () => {
   const players = Array.from({ length: 8 }, (_, seat) => ({ seat, name: `P${seat}` }));
-  const h = hostMatch(players, 0, 3, 'normal', 'fill', 3);
+  const h = hostMatch(players, 0, 3, 'normal', MAX_FIGHTERS, 3);
   assert.equal(h.roster.length, 20);
   assert.equal(h.roster.filter((s) => s < 0).length, 12);
   const big = { x: -158.88, z: 157.77, y: 54.9, aim: -3.14, vx: -12.5, vz: 12.5, phase: 'ground' as const, hp: 99.9, shield: 99.9, w: 'pan' as const, r: 4, flags: 255 };
@@ -1653,8 +1668,8 @@ test('the scene only uses three.js classes the shared chunk exports', () => {
   }
 });
 
-test('meta: eight seats with late joining, and a board per level', () => {
-  assert.deepEqual(meta.online, { seats: 8, lateJoin: true });
+test('meta: eight seats with late joining and bots, and a board per level', () => {
+  assert.deepEqual(meta.online, { seats: 8, lateJoin: true, bots: true });
   assert.deepEqual(Object.keys(meta.leaderboard!.variants!), [...LEVELS]);
   assert.equal(noInput().slot, -1);
 });
