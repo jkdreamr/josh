@@ -5,6 +5,7 @@ import {
   EDGE,
   GRACE,
   HIT,
+  SPEED,
   START_R,
   TICK,
   addPlayer,
@@ -275,6 +276,104 @@ test('the arena wall stops heads; they slide along it', () => {
     const d = Math.hypot(a.x - w.c, a.y - w.c);
     assert.ok(d <= w.r - EDGE + 1e-6, `inside the wall (${d})`);
   }
+});
+
+test('a walk between points rounded to hundredths lands exactly on the end cell, however the corners tie', () => {
+  // online samples are rounded to 0.01, so segments can end exactly on a grid corner; these two used to step past
+  // the end cell and walk a seven cell wide trail all the way to the edge of the map
+  const cases: [[number, number], [number, number]][] = [
+    [[460.7, 437.5], [461, 436]],
+    [[440.7, 461.5], [441, 460]],
+  ];
+  for (const [[x0, y0], [x1, y1]] of cases) {
+    const w = createWorld({ seed: 3 });
+    const p = addPlayer(w, { name: 'guest', color: 0, kind: 'remote' });
+    spawnAt(w, p, 300, 300);
+    p.x = p.rx = x0;
+    p.y = p.ry = y0;
+    const steps = p.steps;
+    drive(w, p, x1, y1);
+    assert.equal(p.cell, Math.floor(y1) * w.n + Math.floor(x1), `${x0},${y0} -> ${x1},${y1} ends on its cell`);
+    assert.equal(p.steps - steps, Math.abs(Math.floor(x1) - Math.floor(x0)) + Math.abs(Math.floor(y1) - Math.floor(y0)));
+    assert.ok(p.trailLen < 60, `a short trail (${p.trailLen})`);
+  }
+  // and a long diagonal still visits a 4-connected path cell by cell to its end
+  const w = createWorld({ seed: 3 });
+  const p = addPlayer(w, { name: 'guest', color: 0, kind: 'remote' });
+  spawnAt(w, p, 300, 300);
+  p.x = p.rx = 400.25;
+  p.y = p.ry = 400.75;
+  const steps = p.steps;
+  drive(w, p, 437.5, 351);
+  assert.equal(p.cell, 351 * w.n + 437);
+  assert.equal(p.steps - steps, 37 + 49);
+});
+
+/** Drives a head straight at the east wall from inside, at `approach` radians off straight in, then `slide` more ticks. */
+function toWall(approach: number, slide: number) {
+  const w = world();
+  const a = addPlayer(w, { name: 'a', color: 0, kind: 'local' });
+  const c = Math.floor(w.c);
+  spawnAt(w, a, c + 60, c, approach);
+  a.want = approach;
+  for (let i = 0; i < 600 && Math.hypot(a.x - w.c, a.y - w.c) < w.r - EDGE - 1e-3; i++) {
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+  }
+  for (let i = 0; i < slide; i++) {
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+  }
+  return { w, a };
+}
+
+test('turning back off the wall curves away from it instead of reversing over the trail along it', () => {
+  for (const slide of [10, 20, 40]) {
+    const { w, a } = toWall(0.5, slide);
+    assert.ok(a.alive && a.out);
+    assert.ok(Math.hypot(a.x - w.c, a.y - w.c) > w.r - EDGE - 0.01, 'on the wall');
+    // the mouse points back the way we came: the short turn goes through "straight into the wall"
+    a.want = -2.2;
+    for (let i = 0; i < 60 && a.alive; i++) {
+      advance(w, a, TICK);
+      drive(w, a, a.x, a.y);
+    }
+    assert.ok(a.alive, `still alive after sliding ${slide} ticks (${a.cause})`);
+    assert.ok(Math.hypot(a.x - w.c, a.y - w.c) < w.r - EDGE - 8, 'it came off the wall');
+  }
+  // with nothing behind it on the wall, the short way is fine and it keeps it
+  const { w, a } = toWall(0.15, 0);
+  a.want = -1.4;
+  for (let i = 0; i < 60 && a.alive; i++) {
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+  }
+  assert.ok(a.alive);
+});
+
+test('a head that runs into the wall keeps its speed along it', () => {
+  const { w, a } = toWall(0.7, 0);
+  a.want = NaN;
+  a.turn = 0;
+  let moved = 0;
+  for (let i = 0; i < 120; i++) {
+    const x = a.x;
+    const y = a.y;
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+    if (i >= 60) moved += Math.hypot(a.x - x, a.y - y);
+    assert.ok(Math.hypot(a.x - w.c, a.y - w.c) <= w.r - EDGE + 1e-6);
+  }
+  assert.ok(moved >= 0.9 * SPEED, `slides on at ${moved.toFixed(1)} cells a second`);
+  assert.ok(a.alive);
+  // pointing straight out of the arena, it settles against the wall instead of jittering on its own trail
+  const b = toWall(0.3, 0);
+  for (let i = 0; i < 600; i++) {
+    b.a.want = Math.atan2(b.a.y - b.w.c, b.a.x - b.w.c) + 0.02;
+    advance(b.w, b.a, TICK);
+    drive(b.w, b.a, b.a.x, b.a.y);
+  }
+  assert.ok(b.a.alive, `held against the wall (${b.a.cause})`);
 });
 
 test('guests mirror the host: runs and deaths applied in order give the same board', () => {

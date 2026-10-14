@@ -448,26 +448,67 @@ export function findSpawn(w: World, rng: () => number = w.rng, minFree = 0.75): 
 // ---------------------------------------------------------------------------------------------------------------
 // Movement
 
-/** Turns toward `want` (or by the keyboard) and moves the head one step; the wall of the arena stops it. */
+/** Below this angle between the heading and "straight into the wall", a head on the wall slides slower. */
+const WALL_EASE = 0.45;
+
+/** Sliding back along the wall on side `back` would reach own trail old enough to kill by the time the head got there. */
+function wallTrailBehind(w: World, p: Player, a0: number, back: number) {
+  const me = p.id + 1;
+  const lim = w.r - EDGE;
+  for (let k = 2; k <= 16; k += 2) {
+    const a = a0 + (back * k) / lim;
+    for (let r = lim; r >= lim - 2; r -= 2) {
+      const x = Math.floor(w.c + Math.cos(a) * r);
+      const y = Math.floor(w.c + Math.sin(a) * r);
+      if (x < 0 || y < 0 || x >= w.n || y >= w.n) continue;
+      const kk = y * w.n + x;
+      if (w.trail[kk] === me && w.trailAt[kk] < p.steps + k - GRACE) return true;
+    }
+  }
+  return false;
+}
+
+/** Turns toward `want` (or by the keyboard) and moves the head one step; at the arena wall it slides along it. */
 export function advance(w: World, p: Player, dt: number, speed = SPEED) {
   p.px = p.x;
   p.py = p.y;
   p.ph = p.h;
   const maxTurn = TURN * dt;
+  const lim = w.r - EDGE;
+  const ox0 = p.x - w.c;
+  const oy0 = p.y - w.c;
+  const pinned = ox0 * ox0 + oy0 * oy0 >= (lim - 1e-3) * (lim - 1e-3);
   if (p.want === p.want) {
-    const d = angleDiff(p.want, p.h);
+    let d = angleDiff(p.want, p.h);
+    if (pinned && d !== 0) {
+      // On the wall, a turn through "straight into it" reverses the slide. When that would run back over the trail
+      // just laid along the wall, go round the other way instead, curving off the wall as the head would in the open.
+      const a0 = Math.atan2(oy0, ox0);
+      const dn = angleDiff(a0, p.h);
+      if (dn !== 0 && dn > 0 === d > 0 && Math.abs(dn) < Math.abs(d) && wallTrailBehind(w, p, a0, dn > 0 ? 1 : -1)) d -= (d > 0 ? 1 : -1) * Math.PI * 2;
+    }
     p.h = wrapAngle(p.h + (d > maxTurn ? maxTurn : d < -maxTurn ? -maxTurn : d));
   } else if (p.turn !== 0) p.h = wrapAngle(p.h + p.turn * maxTurn);
-  let nx = p.x + Math.cos(p.h) * speed * dt;
-  let ny = p.y + Math.sin(p.h) * speed * dt;
+  const step = speed * dt;
+  let nx = p.x + Math.cos(p.h) * step;
+  let ny = p.y + Math.sin(p.h) * step;
   const ox = nx - w.c;
   const oy = ny - w.c;
-  const lim = w.r - EDGE;
-  const d2 = ox * ox + oy * oy;
-  if (d2 > lim * lim) {
-    const s = lim / Math.sqrt(d2);
-    nx = w.c + ox * s;
-    ny = w.c + oy * s;
+  if (ox * ox + oy * oy > lim * lim) {
+    // Slide along the wall at full speed rather than grinding to a halt against it. Only a heading close to straight
+    // into the wall slows down, smoothly, so a head held there settles instead of jittering back and forth.
+    const a0 = Math.atan2(oy0, ox0);
+    const off = angleDiff(p.h, a0);
+    const face = Math.abs(off);
+    const dir = off >= 0 ? 1 : -1;
+    const a1 = a0 + (dir * step * Math.min(1, face / WALL_EASE)) / lim;
+    nx = w.c + Math.cos(a1) * lim;
+    ny = w.c + Math.sin(a1) * lim;
+    // with nobody steering, the head turns to run along the wall instead of facing into it
+    if (p.want !== p.want && p.turn === 0 && face > 0.05 && face < Math.PI / 2) {
+      const d = angleDiff(a1 + (dir * Math.PI) / 2, p.h);
+      p.h = wrapAngle(p.h + (d > maxTurn ? maxTurn : d < -maxTurn ? -maxTurn : d));
+    }
   }
   p.x = nx;
   p.y = ny;
@@ -497,9 +538,12 @@ export function drive(w: World, p: Player, x: number, y: number) {
   const tdy = dy !== 0 ? Math.abs(1 / dy) : Infinity;
   let tmx = dx > 0 ? (cx + 1 - x0) * tdx : dx < 0 ? (x0 - cx) * tdx : Infinity;
   let tmy = dy > 0 ? (cy + 1 - y0) * tdy : dy < 0 ? (y0 - cy) * tdy : Infinity;
-  let guard = 0;
-  while ((cx !== ex || cy !== ey) && guard++ < 2048) {
-    if (tmx < tmy) {
+  // Exactly as many steps as cells between the ends, and never past the end column or row: a segment ending on a
+  // grid corner (online samples are rounded to hundredths) can tie the two crossings, and a step the wrong way there
+  // would never find the end cell again.
+  let left = Math.abs(ex - cx) + Math.abs(ey - cy);
+  while (left-- > 0) {
+    if (cy === ey || (cx !== ex && tmx < tmy)) {
       cx += sx;
       tmx += tdx;
     } else {
