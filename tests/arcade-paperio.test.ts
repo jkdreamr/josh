@@ -534,7 +534,7 @@ test('skins unlock at their milestones and a broken save is safe', () => {
 // ---------------------------------------------------------------------------------------------------------------
 // Online: packets and a whole room in memory
 
-import { F_ALIVE, F_OUT, decodeRows, encodeRows, endPacket, helloPacket, initPacket, movePacket, opPackets, parsePacket, quant, resyncPacket, snapshotPackets, splitOp, statePacket, MAX_BYTES, type NetOp } from '../src/os/arcade/games/paperio/net.ts';
+import { F_ALIVE, F_OUT, decodeRows, encodeRows, endPacket, helloPacket, initPacket, movePacket, opPackets, parsePacket, pausePacket, quant, resyncPacket, snapshotPackets, splitOp, statePacket, MAX_BYTES, type NetOp } from '../src/os/arcade/games/paperio/net.ts';
 import { GO, Track, guestCtl, hostCtl } from '../src/os/arcade/games/paperio/session.ts';
 import { botTick } from '../src/os/arcade/games/paperio/bots.ts';
 import type { Ctl, Net } from '../src/os/arcade/games/paperio/ctl.ts';
@@ -581,6 +581,9 @@ test('packets round trip through JSON, and junk or other games’ packets are ig
   assert.deepEqual(parsePacket(clone(endPacket(3, 1, [1, 0], [40.5, 3.25]))), { k: 'E', round: 3, winner: 1, order: [1, 0], pct: [40.5, 3.25] });
   assert.deepEqual(parsePacket(clone(helloPacket(3, 5))), { k: 'H', round: 3, skin: 5 });
   assert.deepEqual(parsePacket(clone(resyncPacket(3))), { k: 'Q', round: 3 });
+  assert.deepEqual(parsePacket(clone(pausePacket(3, true))), { k: 'P', round: 3, away: true });
+  assert.deepEqual(parsePacket(clone(pausePacket(3, false))), { k: 'P', round: 3, away: false });
+  assert.equal(parsePacket({ t: 'po', r: 3, k: 'P', a: 2 }), null);
   for (const junk of [null, 5, 'x', {}, { t: 'pk', r: 1, k: 'S' }, { t: 'po', r: 1.5, k: 'Q' }, { t: 'po', r: 1, k: 'O', s: 1, o: [['c', 1, 0, -5, 3]] }, { t: 'po', r: 1, k: 'O', s: 1, o: [['d', 99, 0, 0]] }, { t: 'po', r: 1, k: 'M', l: 1, s: 1, p: [1], h: 0 }, { t: 'po', r: 1, k: 'Z', z: 1, s: 1, i: 3, of: 2, y0: 0, rows: [] }])
     assert.equal(parsePacket(junk), null, JSON.stringify(junk));
 });
@@ -687,12 +690,25 @@ class MemRoom {
   }
 }
 
+/**
+ * Rounds whose result is showing. Like the game: once a round is over the page asks for the result once, the shell
+ * shows it, and the loop stops, so that page never runs another frame or tick of the round.
+ */
+const shown = new WeakSet<Ctl>();
+function endIfOver(c: Ctl) {
+  if (shown.has(c) || !c.isOver()) return;
+  shown.add(c);
+  c.online?.finish();
+  c.online?.result();
+}
+
 /** Runs a host and guests for `secs`, each human steered by the bot brain on its own copy of the world. */
 function play(room: MemRoom, ctls: Ctl[], secs: number, steer = true) {
   const dt = 1 / 60;
   for (let i = 0; i < secs * 60; i++) {
     room.now += dt;
     for (const c of ctls) {
+      if (shown.has(c)) continue;
       c.frame?.(dt);
       if (steer)
         for (const id of c.locals) {
@@ -704,6 +720,7 @@ function play(room: MemRoom, ctls: Ctl[], secs: number, steer = true) {
         }
       c.tick();
       c.w.events.length = 0;
+      endIfOver(c);
     }
     room.pump();
   }
@@ -714,7 +731,11 @@ function settle(room: MemRoom, ctls: Ctl[], secs = 3) {
   const dt = 1 / 60;
   for (let i = 0; i < secs * 60; i++) {
     room.now += dt;
-    for (const c of ctls) c.frame?.(dt);
+    for (const c of ctls) {
+      if (shown.has(c)) continue;
+      c.frame?.(dt);
+      endIfOver(c);
+    }
     room.pump();
   }
 }
@@ -817,17 +838,82 @@ test('online: cutting a guest trail kills that guest on every screen, and leaver
   guest.dispose();
 });
 
-test('online: the host calls time and everyone reports the same winner', () => {
+test('online: the host calls time and everyone reports the same winner, though its loop stops at once', () => {
   const { room, host, guests, all } = room3();
   play(room, all, GO + 1.5 * 60 + 2);
   assert.ok(host.isOver());
+  assert.ok(shown.has(host), 'the host page showed its result and ran no more frames');
   settle(room, all, 2);
   for (const g of guests) {
-    assert.ok(g.isOver());
+    assert.ok(g.isOver(), 'the end reached the guest');
     assert.deepEqual(g.online?.result().order, host.online?.result().order);
+    assert.equal(g.online?.result().winner, host.online?.result().winner);
   }
   assert.equal(room.reports.length, 3);
   assert.ok(room.reports.every((r) => r === room.reports[0]));
+  for (const c of all) c.dispose();
+});
+
+test('online: a round the host ends itself reaches everyone too', () => {
+  const { room, host, guests, all } = room3();
+  play(room, all, GO + 4);
+  host.online!.finish();
+  assert.ok(host.isOver());
+  shown.add(host);
+  settle(room, all, 1);
+  for (const g of guests) assert.ok(g.isOver());
+  assert.equal(room.reports.length, 3);
+  for (const c of all) c.dispose();
+});
+
+test('online: while the host page is hidden, everyone holds still, then carries on from there', () => {
+  const { room, host, guests, all } = room3();
+  play(room, all, GO + 6);
+  host.online!.setAway(true);
+  // a hidden page runs no frames or ticks, but its messages still arrive; let what is on the way land first
+  play(room, guests, 0.5);
+  const g = guests[0];
+  const id = g.locals[0];
+  const mine = g.w.players[id];
+  const seen = host.w.players[id];
+  const before = { elapsed: g.elapsed(), land: [...g.w.counts], x: mine.x, y: mine.y, hx: seen.x, hy: seen.y, hash: ownerHash(host.w) };
+  play(room, guests, 20);
+  for (const gc of guests) assert.equal(gc.online?.status(), 'the host stepped away');
+  assert.ok(Math.abs(g.elapsed() - before.elapsed) < 1e-9, 'the round clock holds');
+  assert.deepEqual([...g.w.counts], before.land, 'nobody claims anything');
+  assert.deepEqual([mine.x, mine.y], [before.x, before.y], 'our own head waits too');
+  assert.deepEqual([seen.x, seen.y, ownerHash(host.w)], [before.hx, before.hy, before.hash], 'the host walked nothing meanwhile');
+  host.online!.setAway(false);
+  play(room, all, 6);
+  for (const gc of guests) assert.equal(gc.online?.status(), null);
+  assert.ok(g.elapsed() > before.elapsed + 5, 'the clock runs again');
+  settle(room, all);
+  for (const gc of guests) assert.equal(ownerHash(gc.w), ownerHash(host.w), 'same board after the pause');
+  for (const c of all) c.dispose();
+});
+
+test('online: a host that goes quiet without a word (a phone asleep) also holds everyone after a moment', () => {
+  const { room, guests, all } = room3();
+  play(room, all, GO + 4);
+  const g = guests[0];
+  const t0 = g.elapsed();
+  play(room, guests, 5);
+  assert.ok(g.elapsed() - t0 < 1.3, `guests stop soon after the host goes quiet (${(g.elapsed() - t0).toFixed(2)} s)`);
+  assert.equal(g.online?.status(), 'waiting for the host');
+  play(room, all, 2);
+  assert.equal(g.online?.status(), null);
+  for (const c of all) c.dispose();
+});
+
+test('online: someone who joins mid round is sent nothing of it (they play the next one)', () => {
+  const { room, all } = room3();
+  play(room, all, GO + 2);
+  room.players.push({ seat: 3, name: 'cy' });
+  let got = 0;
+  const off = room.net(3).onMessage(() => got++);
+  play(room, all, 4);
+  assert.equal(got, 0);
+  off();
   for (const c of all) c.dispose();
 });
 

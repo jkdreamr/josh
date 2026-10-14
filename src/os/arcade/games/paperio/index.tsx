@@ -343,6 +343,14 @@ function Play({ mode }: { mode: Mode }) {
   }, [live]);
 
   useEffect(() => () => ctl.current?.dispose(), []);
+  // Online rounds never pause, but a hidden page's loop stops all the same: a hidden host tells everyone to hold still.
+  useEffect(() => {
+    if (mode !== 'online') return;
+    const onVisible = () => ctl.current?.online?.setAway(document.hidden);
+    onVisible();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [mode]);
   // dev builds only: a handle for automated checks (board hash, heads), never shipped
   useEffect(() => {
     if (!(import.meta as { env?: { DEV?: boolean } }).env?.DEV || mode === 'idle') return;

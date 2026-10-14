@@ -21,6 +21,7 @@ import {
   movePacket,
   opPackets,
   parsePacket,
+  pausePacket,
   quant,
   resyncPacket,
   snapshotPackets,
@@ -28,6 +29,7 @@ import {
   statePacket,
   type HeadState,
   type NetOp,
+  type Packet,
   type RosterEntry,
   type SnapPlayer,
 } from './net.ts';
@@ -58,6 +60,8 @@ export const GO = 3;
 export const DELAY = 0.1;
 const STATE_EVERY = 1 / 20;
 const HASH_EVERY = 1;
+/** A guest that hears nothing from the host for this long holds still: the host's round has stopped (a phone asleep). */
+const SILENT = 1;
 
 export type OnlineOpts = { skin: number; fill: number; level: Level; length: number; seed?: number };
 
@@ -176,10 +180,12 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
   let clock = 0;
   let stateIn = 0;
   let hashIn = 0;
-  let endSends = 0;
-  let endIn = 0;
-  let reported = false;
   let result: { winner: number | null; order: number[]; winnerSeat: number | null } | null = null;
+  /** The host's page is hidden, so its round is not running: guests hold still, and their moves wait here. */
+  let away = false;
+  let held: { id: number; pk: Extract<Packet, { k: 'M' }> }[] = [];
+  // Everyone this round is for (late joiners sit it out, so none of it goes their way).
+  const roundSeats = seats.map((s) => s.seat).filter((seat) => seat !== net.seat);
 
   // the board so far, as ops in the order it was built
   for (const p of w.players) {
@@ -199,43 +205,34 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
   const roster = (): RosterEntry[] => w.players.map((p) => ({ id: p.id, seat: p.seat, name: p.name, color: p.color, skin: p.skin, bot: p.kind === 'bot' }));
   const snapPlayers = (): SnapPlayer[] => w.players.map((p) => ({ id: p.id, alive: p.alive, x: p.x, y: p.y, h: p.h, out: p.out, life: lives[p.id] }));
 
+  /** To every seat playing this round that is still in the room. */
+  function sendAll(pk: unknown, fast = false) {
+    const here = net.players();
+    for (const seat of roundSeats) if (here.some((p) => p.seat === seat)) net.send(pk, fast ? { to: seat, fast } : { to: seat });
+  }
+
   function flush() {
     if (!pending.length) return;
     const ops = pending.flatMap((op) => splitOp(op));
     pending = [];
     const first = seq + 1;
     seq += ops.length;
-    for (const pk of opPackets(round, first, ops)) net.send(pk);
+    for (const pk of opPackets(round, first, ops)) sendAll(pk);
   }
 
-  function sendSnapshot(to: number) {
+  /** Once the round is over: the result, the last ops, then the end for everyone, right away (the loop stops now). */
+  function conclude() {
+    if (!m.over || result) return;
+    const order = standings(m);
+    const winnerSeat = m.winner === null ? null : (w.players[m.winner]?.seat ?? null);
+    result = { winner: m.winner, order, winnerSeat: winnerSeat !== null && winnerSeat >= 0 ? winnerSeat : null };
     flush();
-    snap++;
-    for (const pk of snapshotPackets(round, snap, seq, w.owner, w.n, snapPlayers())) net.send(pk, { to });
+    sendAll(endPacket(round, result.winner, result.order, result.order.map((id) => percent(w, id))));
+    net.report(result.winnerSeat);
   }
 
-  const off = net.onMessage((from, d) => {
-    const pk = parsePacket(d);
-    if (!pk || pk.round !== round || from === net.seat) return;
-    const id = bySeat.get(from);
-    if (pk.k === 'H') {
-      if (id === undefined) return;
-      const p = w.players[id];
-      if (p.skin !== pk.skin) {
-        p.skin = pk.skin;
-        p.color = lookFor(w, id, pk.skin);
-        pending.push({ k: 'look', id, color: p.color, skin: p.skin });
-      }
-      flush();
-      net.send(initPacket(round, w.r, m.opts.duration, go, roster()), { to: from });
-      sendSnapshot(from);
-      return;
-    }
-    if (pk.k === 'Q') {
-      if (id !== undefined) sendSnapshot(from);
-      return;
-    }
-    if (pk.k !== 'M' || id === undefined || go > 0 || m.over) return;
+  /** Walks a guest's reported path through the rules. */
+  function applyMove(id: number, pk: Extract<Packet, { k: 'M' }>) {
     const p = w.players[id];
     if (!p || p.kind !== 'remote' || pk.life !== lives[id]) return;
     const count = pk.pts.length / 2;
@@ -259,6 +256,43 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
       if (!p.alive) break;
     }
     if (pk.dead && p.alive) kill(w, p, -1, 'self');
+  }
+
+  function sendSnapshot(to: number) {
+    flush();
+    snap++;
+    for (const pk of snapshotPackets(round, snap, seq, w.owner, w.n, snapPlayers())) net.send(pk, { to });
+  }
+
+  const off = net.onMessage((from, d) => {
+    const pk = parsePacket(d);
+    if (!pk || pk.round !== round || from === net.seat) return;
+    const id = bySeat.get(from);
+    if (pk.k === 'H') {
+      if (id === undefined) return;
+      const p = w.players[id];
+      if (p.skin !== pk.skin) {
+        p.skin = pk.skin;
+        p.color = lookFor(w, id, pk.skin);
+        pending.push({ k: 'look', id, color: p.color, skin: p.skin });
+      }
+      flush();
+      net.send(initPacket(round, w.r, m.opts.duration, go, roster()), { to: from });
+      sendSnapshot(from);
+      if (away) net.send(pausePacket(round, true), { to: from });
+      return;
+    }
+    if (pk.k === 'Q') {
+      if (id !== undefined) sendSnapshot(from);
+      return;
+    }
+    if (pk.k !== 'M' || id === undefined || go > 0 || m.over) return;
+    // while the host is away nothing moves; the few moves already on their way are walked when it is back
+    if (away) {
+      if (held.length < 600) held.push({ id, pk });
+      return;
+    }
+    applyMove(id, pk);
   });
 
   const heads: HeadState[] = [];
@@ -270,6 +304,7 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
     duration: m.opts.duration,
     elapsed: () => m.elapsed,
     tick() {
+      if (away) return;
       if (go > 0) {
         go = Math.max(0, go - TICK);
         return;
@@ -277,6 +312,7 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
       if (m.over) return;
       // bots and the host's own head move here; remote heads moved as their reports came in
       matchTick(m);
+      conclude();
     },
     frame(dt) {
       clock += dt;
@@ -292,11 +328,6 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
         }
       }
       for (const id of gone) w.players[id].respawnAt = -1;
-      if (m.over && !result) {
-        const order = standings(m);
-        const winnerSeat = m.winner === null ? null : (w.players[m.winner]?.seat ?? null);
-        result = { winner: m.winner, order, winnerSeat: winnerSeat !== null && winnerSeat >= 0 ? winnerSeat : null };
-      }
       flush();
       stateIn -= dt;
       hashIn -= dt;
@@ -309,19 +340,7 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
         }
         const hash = hashIn <= 0 ? ownerHash(w) : null;
         if (hashIn <= 0) hashIn = HASH_EVERY;
-        net.send(statePacket(round, w.tick, m.elapsed, go, seq, hash, heads), { fast: true });
-      }
-      if (result && endSends < 4) {
-        endIn -= dt;
-        if (endIn <= 0) {
-          endIn = 0.4;
-          endSends++;
-          net.send(endPacket(round, result.winner, result.order, result.order.map((id) => percent(w, id))));
-        }
-        if (!reported) {
-          reported = true;
-          net.report(result.winnerSeat);
-        }
+        sendAll(statePacket(round, w.tick, m.elapsed, go, seq, hash, heads), true);
       }
     },
     isOver: () => m.over,
@@ -345,9 +364,24 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
       ready: () => true,
       finish() {
         if (!m.over) finish(m);
+        conclude();
       },
-      result: () => result ?? { winner: m.winner, order: standings(m), winnerSeat: null },
+      result() {
+        conclude();
+        return result ?? { winner: m.winner, order: standings(m), winnerSeat: null };
+      },
       status: () => null,
+      setAway(on) {
+        if (on === away || result) return;
+        away = on;
+        flush();
+        sendAll(pausePacket(round, on));
+        if (!on) {
+          const list = held;
+          held = [];
+          for (const h of list) if (!m.over) applyMove(h.id, h.pk);
+        }
+      },
     },
   };
 }
@@ -386,8 +420,14 @@ export function guestCtl(net: Net, opts: OnlineOpts): Ctl {
   let snapLoaded = false;
   let result: { winner: number | null; order: number[]; winnerSeat: number | null } | null = null;
   let ended = false;
+  /** The host said its page is hidden; and when its last state arrived (silence means the same thing). */
+  let hostAway = false;
+  let stateAt = -1;
   const ghostOff = new Float64Array(16).fill(-1);
   const pose = posePlaceholder();
+
+  /** Holding still: the host's round is not running, so nothing here may move either. */
+  const held = () => hostAway || (snapLoaded && stateAt >= 0 && clock - stateAt > SILENT);
 
   function setup(roster: RosterEntry[], radius: number) {
     w = createWorld({ radius, authority: false });
@@ -544,8 +584,14 @@ export function guestCtl(net: Net, opts: OnlineOpts): Ctl {
       if (snapAt.got.size === snapAt.parts) loadSnapshot();
       return;
     }
+    if (pk.k === 'P') {
+      hostAway = pk.away;
+      if (!hostAway) stateAt = clock;
+      return;
+    }
     if (pk.k === 'S') {
       if (!inited) return;
+      stateAt = clock;
       const t = pk.tick / 60;
       if (hostClock < 0 || Math.abs(hostClock - t) > 0.5) hostClock = t;
       else if (t > hostClock) hostClock += (t - hostClock) * 0.15;
@@ -624,7 +670,7 @@ export function guestCtl(net: Net, opts: OnlineOpts): Ctl {
     },
     elapsed: () => elapsed,
     tick() {
-      if (!inited) return;
+      if (!inited || held()) return;
       if (go > 0) {
         go = Math.max(0, go - TICK);
         return;
@@ -735,7 +781,9 @@ export function guestCtl(net: Net, opts: OnlineOpts): Ctl {
       ready: () => inited && snapLoaded,
       finish() {},
       result: () => result ?? { winner: null, order: [], winnerSeat: null },
-      status: () => (!inited || !snapLoaded ? 'waiting for the host' : gapSince >= 0 && clock - gapSince > 0.6 ? 'catching up' : null),
+      status: () =>
+        ended ? null : !inited || !snapLoaded ? 'waiting for the host' : hostAway ? 'the host stepped away' : held() ? 'waiting for the host' : gapSince >= 0 && clock - gapSince > 0.6 ? 'catching up' : null,
+      setAway() {},
     },
   };
 }

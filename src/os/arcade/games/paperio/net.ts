@@ -7,6 +7,7 @@
 //   S  state     host -> all,   fast       every head (position, heading, flags), the clock, a board hash now and then
 //   Z  snapshot  host -> guest, reliable   the whole board as row runs, in chunks, for joiners and anyone out of step
 //   E  end       host -> all,   reliable   who won
+//   P  pause     host -> all,   reliable   the host's page is hidden (its round is not running): hold still until it is back
 //   H  hello     guest -> host, reliable   I am here (and my skin); answered with I and Z
 //   M  move      guest -> host, fast       my last three positions, numbered, so a lost packet costs nothing
 //   Q  resync    guest -> host, reliable   please send a snapshot
@@ -31,6 +32,7 @@ export type Packet =
   | { k: 'S'; round: number; tick: number; elapsed: number; go: number; seq: number; hash: number | null; heads: HeadState[] }
   | { k: 'Z'; round: number; snap: number; seq: number; part: number; parts: number; y0: number; rows: number[][]; players: SnapPlayer[] }
   | { k: 'E'; round: number; winner: number | null; order: number[]; pct: number[] }
+  | { k: 'P'; round: number; away: boolean }
   | { k: 'H'; round: number; skin: number }
   | { k: 'M'; round: number; life: number; seq: number; pts: number[]; h: number; dead: boolean }
   | { k: 'Q'; round: number };
@@ -193,6 +195,7 @@ export function decodeRows(into: Uint8Array, n: number, y0: number, rows: number
 }
 
 export const endPacket = (round: number, winner: number | null, order: number[], pct: number[]) => ({ t: 'po', r: round, k: 'E', w: winner, o: order, c: pct.map((p) => Math.round(p * 100)) });
+export const pausePacket = (round: number, away: boolean) => ({ t: 'po', r: round, k: 'P', a: away ? 1 : 0 });
 export const helloPacket = (round: number, skin: number) => ({ t: 'po', r: round, k: 'H', sk: skin });
 /** pts: the last few positions, oldest first, as [x, y] pairs; `seq` numbers the newest. */
 export const movePacket = (round: number, life: number, seq: number, pts: number[], h: number, dead: boolean) => ({ t: 'po', r: round, k: 'M', l: life, s: seq, p: pts.map(q100), h: Math.round(h * 1000), ...(dead ? { d: 1 } : {}) });
@@ -291,6 +294,8 @@ export function parsePacket(value: unknown): Packet | null {
       const pct = p.c.filter(int).slice(0, 16).map((v) => v / 100);
       return { k: 'E', round, winner: p.w as number | null, order, pct };
     }
+    case 'P':
+      return p.a === 0 || p.a === 1 ? { k: 'P', round, away: p.a === 1 } : null;
     case 'H':
       return int(p.sk) && (p.sk as number) >= 0 && (p.sk as number) < 64 ? { k: 'H', round, skin: p.sk as number } : null;
     case 'M': {

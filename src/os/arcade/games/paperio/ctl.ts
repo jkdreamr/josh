@@ -24,6 +24,8 @@ export type OnlineInfo = {
   result(): { winner: number | null; order: number[]; winnerSeat: number | null };
   /** A line for the HUD while something is off (waiting for the host, catching up). */
   status(): string | null;
+  /** This page was hidden or shown. A hidden host's round stops, so it tells everyone to hold still. */
+  setAway(away: boolean): void;
 };
 
 export type Ctl = {
