@@ -4,6 +4,7 @@ import type { AppId, AppProps } from './types';
 import Finder from './apps/Finder';
 import Chrome from './apps/Chrome';
 import Messages from './apps/Messages';
+import Lounge from './apps/Lounge';
 import Notes from './apps/Notes';
 import { SoundCloud, Spotify } from './apps/Music';
 import { Instagram, XApp, LinkedIn, GitHub } from './apps/Social';
@@ -28,6 +29,8 @@ export type AppDef = {
   /** 'overlay' lets the app draw under the title bar (traffic lights float over its own header) */
   frame?: 'standard' | 'overlay';
   theme?: 'light' | 'dark';
+  /** On a computer, opened next to a game it docks down the right edge at this width, out of the game's way. */
+  side?: number;
   dock?: boolean;
   keywords?: string;
 };
@@ -36,6 +39,7 @@ export const apps: Record<AppId, AppDef> = {
   finder: { id: 'finder', title: 'Finder', icon: 'finder', Component: Finder, w: 780, h: 470, frame: 'overlay', dock: true, keywords: 'files folders school work projects' },
   chrome: { id: 'chrome', title: 'Chrome', icon: 'chrome', Component: Chrome, w: 1000, h: 640, frame: 'overlay', dock: true, keywords: 'browser web internet games arcade' },
   messages: { id: 'messages', title: 'Messages', icon: 'messages', Component: Messages, w: 430, h: 580, frame: 'overlay', dock: true, keywords: 'chat text imessage talk' },
+  lounge: { id: 'lounge', title: 'Lounge', icon: 'lounge', Component: Lounge, w: 900, h: 600, side: 380, theme: 'dark', dock: true, keywords: 'chat global arcade lounge channels players friends find a game lfg ideas talk' },
   notes: { id: 'notes', title: 'Notes', icon: 'notes', Component: Notes, w: 700, h: 470, frame: 'overlay', dock: true, keywords: 'about me bio' },
   soundcloud: { id: 'soundcloud', title: 'SoundCloud', icon: 'soundcloud', Component: SoundCloud, w: 520, h: 600, theme: 'dark', dock: true, keywords: 'music kelix listen' },
   spotify: { id: 'spotify', title: 'Spotify', icon: 'spotify', Component: Spotify, w: 460, h: 560, theme: 'dark', dock: true, keywords: 'music album all i need listen' },
@@ -60,6 +64,7 @@ export const dockOrder: AppId[] = [
   'finder',
   'chrome',
   'messages',
+  'lounge',
   'notes',
   'mail',
   'spotify',

@@ -192,9 +192,13 @@ Add `bots: true` to `online` and the lobby (and the online Game Over card, betwe
 
 Invite links (`/?game=<id>&room=<code>`) open the game and join the room automatically. Online wins go to the game's Online Wins board when every player reports the same winner. After adding `online` to a game, run `npm run arcade:specs` and redeploy the Worker.
 
-## Chat
+## Lounge
 
-The arcade home's header also opens Chat (`Chat.tsx`): one global chat for everyone in the arcade, so people can find someone to play with and share a room code. It connects only while it is open, through `LoungeLink` in `lounge.ts` (reconnects with backoff, pings to stay open), to the Worker's `Lounge` object, and shows the newest 100 messages and how many people are here. Messages are plain text from a name of 1 to 16 characters, the same name the leaderboards and rooms remember. The Worker cleans, checks and rate limits everything (`lounge-core.ts`, shared with it); see `worker/README.md` for the protocol, the limits and how to wipe the chat.
+The arcade's global chat is the Lounge, an app of its own (`src/os/apps/Lounge.tsx`) so it can stay open next to a game. It opens from the Dock, from the arcade header, and from the chat button in every game's control bar; on a computer, opened next to a game it docks down the right edge and slides the game window aside (`side` in `registry.tsx`, `placement.ts`), and on a phone it opens over the game with a back button to it. It has three channels (#general, #find-a-game and #ideas, in `lounge-core.ts`), a list of who's here, typing notes, unread counts per channel, and an unread badge on its Dock icon and on the games' chat button while you play.
+
+Who's here shows what each person is playing. `GameShell` reports its game with `usePlayingReport` (`playing.ts`), and the Go, Omok and Badminton apps with `usePlayingRoom`; the window most recently in front wins. A room is shown too while it is public, with Join next to it. Share in Lounge, in every online lobby, opens the Lounge on #find-a-game with the room attached: the message then shows the game, whether the room is still open (from Open Rooms) and Join. Joining opens arcade games in the Arcade app and the others in their own app.
+
+It connects only while the app is open (minimized included), through `LoungeLink` in `lounge.ts` (reconnects with backoff, pings to stay open), to the Worker's `Lounge` object. Messages are plain text from a name of 1 to 16 characters, the same name the leaderboards and rooms remember. The Worker cleans, checks and rate limits everything (`lounge-core.ts`, shared with it); see `worker/README.md` for the protocol, the limits and how to wipe the chat.
 
 ## Rules
 

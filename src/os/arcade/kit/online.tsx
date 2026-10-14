@@ -59,12 +59,12 @@ export function useOnline() {
 
 /**
  * Public rooms someone can join now, for one game or every game, asked again every few seconds while the page is
- * visible. Null until the first answer, and whenever Open Rooms can't be reached (a Worker from before them included).
+ * visible (and `on`). Null until the first answer, and whenever Open Rooms can't be reached (a Worker from before them included).
  */
-export function useOpenRooms(game?: string, every = 6000): OpenRoom[] | null {
+export function useOpenRooms(game?: string, every = 6000, on = true): OpenRoom[] | null {
   const [rooms, setRooms] = useState<OpenRoom[] | null>(null);
   useEffect(() => {
-    if (!ARCADE_API) return;
+    if (!ARCADE_API || !on) return;
     let live = true;
     let timer = 0;
     const load = async () => {
@@ -83,7 +83,7 @@ export function useOpenRooms(game?: string, every = 6000): OpenRoom[] | null {
       live = false;
       window.clearTimeout(timer);
     };
-  }, [game, every]);
+  }, [game, every, on]);
   return rooms;
 }
 
@@ -185,6 +185,7 @@ export function OnlinePanel({
   onBots,
   onListed,
   onLeave,
+  onShare,
   note,
   setup,
 }: {
@@ -215,6 +216,8 @@ export function OnlinePanel({
   /** Host only: make the room public or private. */
   onListed?: (on: boolean) => void;
   onLeave: () => void;
+  /** Shares the room in the Lounge, to find people to play with. */
+  onShare?: () => void;
   /** One line under the title explaining how this game plays online. */
   note?: string;
   /** Settings for the round, shown once in a room (the game decides what guests may change). */
@@ -292,6 +295,7 @@ export function OnlinePanel({
             <div className="arcade-room-code" aria-label={`Room Code ${code}`}>{code}</div>
             <div className="arcade-row">
               <button type="button" className="arcade-btn" onClick={copyLink}>{copied ? 'Copied' : 'Copy Link'}</button>
+              {onShare && <button type="button" className="arcade-btn" onClick={onShare}>Share in Lounge</button>}
               <button type="button" className="arcade-btn" onClick={onLeave}>Leave</button>
             </div>
             <div className="arcade-online-players">

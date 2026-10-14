@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from '../arcade/kit/board';
 import { ARCADE_API, NAME_MAX, formatBoardScore, savedName, saveName, type BoardInfo } from '../arcade/kit/leaderboard';
 import { ROOM_VISIBILITY, useOpenRooms, type RoomVisibility } from '../arcade/kit/online';
 import { nextOnlineRound, openRoomLine } from '../arcade/kit/online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from '../arcade/kit/room';
 import { useSetting } from '../arcade/kit/settings';
+import { usePlayingReport } from '../arcade/playing';
+import { OSContext } from '../types';
 import './online-room.css';
 
 /**
@@ -203,8 +205,14 @@ function OpenRoomRows({ room }: { room: AppRoom }) {
   );
 }
 
+/** Tells the Lounge this app's game is open, with the room while it's public so people there can join. */
+export function usePlayingRoom(game: string, room: AppRoom) {
+  usePlayingReport(game, room.linked && room.listed && room.code ? room.code : null);
+}
+
 /** Lobby for an app room: name, create or join with a code, then the code, players and Start. */
 export function RoomPanel({ room, title, note, startLabel = 'Start Game' }: { room: AppRoom; title: string; note?: string; startLabel?: string }) {
+  const os = useContext(OSContext);
   const [joinCode, setJoinCode] = useState('');
   const [copied, setCopied] = useState(false);
   const link = room.code ? `${location.origin}/?game=${encodeURIComponent(room.game)}&room=${encodeURIComponent(room.code)}` : '';
@@ -262,6 +270,11 @@ export function RoomPanel({ room, title, note, startLabel = 'Start Game' }: { ro
           <div className="oroom-code" aria-label={`Room Code ${room.code}`}>{room.code}</div>
           <div className="oroom-row">
             <button type="button" className="gbtn" onClick={copyLink}>{copied ? 'Copied' : 'Copy Link'}</button>
+            {os && (
+              <button type="button" className="gbtn" onClick={() => os.open('lounge', { invite: { game: room.game, code: room.code } })}>
+                Share in Lounge
+              </button>
+            )}
             <button type="button" className="gbtn" onClick={room.leave}>Leave</button>
           </div>
           <ul className="oroom-players" aria-label="Players">

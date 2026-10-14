@@ -13,6 +13,8 @@ import { BotStepper, OnlinePanel, OnlineProvider, ROOM_VISIBILITY, VisibilityPic
 import { botPlayers, nextOnlineRound, parseRacePacket, raceStandings, type RaceScores } from './online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { countPlay } from '../../stats';
+import { useBadge } from '../../badges';
+import { usePlayingReport } from '../playing';
 import './kit.css';
 
 export type GameShellProps = {
@@ -60,6 +62,7 @@ const ic = {
   sound: 'M4 9.5h3.5L12 5.5v13l-4.5-4H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11',
   muted: 'M4 9.5h3.5L12 5.5v13l-4.5-4H4zM16.5 9.5l5 5M21.5 9.5l-5 5',
   grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
+  chat: 'M20 12.5a7.5 7.5 0 0 1-11 6.6L4 20.5l1.4-4.6A7.5 7.5 0 1 1 20 12.5z',
 };
 
 /** Focus without scrolling: the laptop screen is projected HTML and must never scroll. */
@@ -113,6 +116,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const roundBotsRef = useRef<number[]>([]);
   /** Whether the room is listed in Open Rooms (null: the server doesn't say), and the kind of room Create Room makes. */
   const [onlineListed, setOnlineListed] = useState<boolean | null>(null);
+  // The Lounge shows what you're playing, and your room while it's public, so people there can join you.
+  usePlayingReport(compact ? null : meta.id, onlineLink && onlineListed && onlineCode ? onlineCode : null);
+  const loungeUnread = useBadge('lounge');
   const [visibility, setVisibility] = useSetting(ROOM_VISIBILITY);
   /** How many bots this game's rooms start with when this player hosts: the last number they picked. */
   const botsSetting = useMemo(() => defineSetting(`${meta.id}:bots`, BOT_COUNTS, String(Math.max(0, Math.min(15, Math.floor(defaultBots))))), [meta.id, defaultBots]);
@@ -604,6 +610,12 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             <button type="button" aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute' : 'Mute'} onClick={ctl(() => setMuted(!muted))}>
               <Icon d={muted ? ic.muted : ic.sound} />
             </button>
+            {/* The Lounge opens next to the game (over it on a phone), so you can chat while you play. */}
+            {os && (
+              <button type="button" className={loungeUnread ? 'has-dot' : undefined} aria-label={loungeUnread ? `Lounge, ${loungeUnread} unread` : 'Lounge'} title="Lounge" onClick={() => os.open('lounge')}>
+                <Icon d={ic.chat} />
+              </button>
+            )}
             {onExit && (
               <button type="button" aria-label="Arcade" title="Arcade" onClick={backToArcade}>
                 <Icon d={ic.grid} />
@@ -634,6 +646,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             onBots={setBots}
             onListed={setListed}
             onLeave={leaveRoom}
+            onShare={os && onlineCode ? () => os.open('lounge', { invite: { game: meta.id, code: onlineCode } }) : undefined}
             note={race ? 'A score race: everyone plays their own round at the same time and the best score wins.' : undefined}
             setup={hostSetup}
           />

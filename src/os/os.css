@@ -5297,6 +5297,28 @@ kbd {
 .arcade-pbtn:active {
   background: #ececee;
 }
+.arcade-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.arcade-lounge-btn {
+  gap: 6px;
+  padding-left: 11px;
+}
+.arcade-lounge-count {
+  min-width: 17px;
+  height: 17px;
+  margin-right: -6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #ff3b30;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 17px;
+  text-align: center;
+}
 .arcade-boards {
   max-width: 560px;
   margin: 22px auto 0;
@@ -5365,4 +5387,33 @@ kbd {
 }
 .arcade-boards .arcade-lb-score {
   font-weight: 600;
+}
+
+/* A window sliding aside for a panel that just docked next to it (the Lounge beside a game). */
+.win.is-gliding {
+  transition:
+    left 0.38s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.32s cubic-bezier(0.3, 0.7, 0.2, 1),
+    opacity 0.28s ease,
+    box-shadow 0.2s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .win.is-gliding {
+    transition: none;
+  }
+}
+.dock-badge {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: #ff3b30;
+  color: #fff;
+  font: 600 11.5px/19px -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
 }
