@@ -215,9 +215,9 @@ type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
 type Feed = { id: number; text: string; mine: boolean; until: number };
 type Pop = { el: HTMLDivElement | null; x: number; y: number; z: number; age: number; live: boolean };
-/** `toss` is how far a touch throw goes, and `tossBy` the game clock it gives up at if it can't go yet. */
-type Taps = { build: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossBy: number };
-const noTaps = (): Taps => ({ build: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossBy: 0 });
+/** `toss` is how far a touch throw goes, `tossAim` which way, and `tossBy` the match clock it gives up at if it can't go yet. */
+type Taps = { build: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number };
+const noTaps = (): Taps => ({ build: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0 });
 
 const BUSY_TEXT: Record<UseId, string> = { bandage: 'bandaging', medkit: 'using a medkit', mini: 'drinking a mini shield', shield: 'drinking a shield potion', coffee: 'drinking coffee' };
 /** A name with its article, for the kill feed: "with a pistol", "with an smg", "with hot sauce". */
@@ -477,7 +477,8 @@ function Play({ mode }: { mode: Mode }) {
     const tossing = throwing(me);
     let fire = false;
     const as = aimStick.current;
-    if (as && Math.hypot(as.x - as.ox, as.y - as.oy) > 10) {
+    const drag = !!as && Math.hypot(as.x - as.ox, as.y - as.oy) > 10;
+    if (drag) {
       const dx = as.x - as.ox;
       const dy = as.y - as.oy;
       const len = Math.hypot(dx, dy);
@@ -489,17 +490,20 @@ function Play({ mode }: { mode: Mode }) {
       if (g && Math.hypot(g.x - me.x, g.z - me.z) > 0.3) lastAim.current = Math.atan2(g.x - me.x, g.z - me.z);
       inp.reach = g ? Math.hypot(g.x - me.x, g.z - me.z) : 0;
     } else {
-      // a touch throw just let go of still goes where the right thumb aimed it
-      if ((mx || mz) && t.toss <= 0) lastAim.current = Math.atan2(mx, mz);
+      if (mx || mz) lastAim.current = Math.atan2(mx, mz);
       if (!as) inp.reach = 0;
     }
     // a click too quick for a frame still fires (or throws) once
     if ((mouse.current.down || mouse.current.clicked) && !touchRef.current) fire = true;
-    if (t.toss > 0) {
+    // a touch throw goes where the right thumb aimed it. One let go of during the throw cooldown waits it out (for a
+    // moment), and a new drag of the right thumb keeps the aim line until it goes.
+    const toss = tossing && t.toss > 0 && m.clock < t.tossBy ? t.toss : 0;
+    const go = toss > 0 && (!drag || me.fireT <= dt);
+    if (go) {
       fire = true;
-      inp.reach = t.toss;
+      inp.reach = toss;
     }
-    inp.aim = lastAim.current;
+    inp.aim = go ? t.tossAim : lastAim.current;
     inp.fire = fire && me.phase === 'ground';
     if (keys.pressed('Digit1')) inp.slot = 0;
     if (keys.pressed('Digit2')) inp.slot = 1;
@@ -523,9 +527,9 @@ function Play({ mode }: { mode: Mode }) {
     } else if (space || t.build) inp.build = true;
     mouse.current.clicked = false;
     taps.current = noTaps();
-    // a touch throw let go of during the throw cooldown waits it out (for a moment)
-    if (t.toss > 0 && tossing && me.fireT > dt && clock.current < t.tossBy) {
-      taps.current.toss = t.toss;
+    if (toss && me.fireT > dt) {
+      taps.current.toss = toss;
+      taps.current.tossAim = t.tossAim;
       taps.current.tossBy = t.tossBy;
     }
   }
@@ -1052,9 +1056,11 @@ function Play({ mode }: { mode: Mode }) {
       // with a throwable out, letting go of the right thumb throws it, as far as the thumb was pushed
       if (throwNow && which === 'aim' && s) {
         const len = Math.hypot(s.x - s.ox, s.y - s.oy);
-        if (len > 14 && throwing(match.current?.fighters[match.current.me])) {
+        const m = match.current;
+        if (len > 14 && m && throwing(m.fighters[m.me])) {
           taps.current.toss = tossReach(len);
-          taps.current.tossBy = clock.current + TOSS_WAIT;
+          taps.current.tossAim = lastAim.current;
+          taps.current.tossBy = m.clock + TOSS_WAIT;
         }
       }
       r.current = null;
