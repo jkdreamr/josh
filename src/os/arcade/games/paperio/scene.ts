@@ -271,13 +271,15 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
   canvas.style.touchAction = 'none';
   host.appendChild(canvas);
   let lost = false;
+  let restored = false;
   const onLost = (e: Event) => {
     e.preventDefault();
     lost = true;
   };
+  // A restored context starts with empty textures: the next render uploads both grids whole (see render()).
   const onRestored = () => {
     lost = false;
-    gridTex.needsUpdate = true;
+    restored = true;
   };
   canvas.addEventListener('webglcontextlost', onLost);
   canvas.addEventListener('webglcontextrestored', onRestored);
@@ -461,8 +463,11 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
   // Effects: paper confetti and capture rings
 
   const MAX_BITS = 320;
+  const white = new THREE.Color(0xffffff);
   const bitMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
   const bitsMesh = new THREE.InstancedMesh(geo.bit, bitMat, MAX_BITS);
+  // per-instance colors from the start, so the first burst never swaps in a new shader program mid-round
+  bitsMesh.setColorAt(0, white);
   bitsMesh.frustumCulled = false;
   bitsMesh.count = 0;
   scene.add(bitsMesh);
@@ -470,7 +475,6 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
   const dummy = new THREE.Object3D();
   const tmpColor = new THREE.Color();
   const palette = PALETTE.map((c) => new THREE.Color(c));
-  const white = new THREE.Color(0xffffff);
   const rings: Ring[] = [];
   for (let i = 0; i < 6; i++) {
     const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false });
@@ -555,7 +559,9 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
         fromX[kk] = fromX[k];
         fromY[kk] = fromY[k];
         const yy = (kk / n) | 0;
-        const d = Math.hypot(kk - yy * n - fromX[k], yy - fromY[k]);
+        const ex = kk - yy * n - fromX[k];
+        const ey = yy - fromY[k];
+        const d = Math.sqrt(ex * ex + ey * ey);
         delay[kk] = Math.min(56, (d / 4.8) | 0);
         queue[tail++] = kk;
       }
@@ -620,14 +626,18 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
           for (let j = 0; j < deaths.length; j++) {
             const dd = deaths[j];
             if (dd.id + 1 !== data[i + 1]) continue;
-            d = Math.min(60, (Math.hypot(x - dd.x, y - dd.y) / 4.4) | 0);
+            const ex = x - dd.x;
+            const ey = y - dd.y;
+            d = Math.min(60, (Math.sqrt(ex * ex + ey * ey) / 4.4) | 0);
             break;
           }
         } else if (o !== 0 && spawns.length) {
           for (let j = 0; j < spawns.length; j++) {
             const sp = spawns[j];
             if (sp.id + 1 !== o) continue;
-            d = Math.min(30, (Math.hypot(x - sp.x, y - sp.y) / 2.2) | 0);
+            const ex = x - sp.x;
+            const ey = y - sp.y;
+            d = Math.min(30, (Math.sqrt(ex * ex + ey * ey) / 2.2) | 0);
             break;
           }
         }
@@ -695,6 +705,9 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
       }
     }
     flushBlocks();
+    // a big change (a large capture or death) uploads each texture once whole rather than row by row
+    if (gridTex.updateRanges.length > 96) gridTex.clearUpdateRanges();
+    if (coarseTex.updateRanges.length > 96) coarseTex.clearUpdateRanges();
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -834,7 +847,20 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
         r.mesh.scale.set(s, 1, s);
         r.mat.opacity = 0.75 * (1 - k);
       }
-      if (lost) return;
+      if (lost) {
+        // nothing uploads while the context is gone: keep the update lists from growing
+        gridTex.clearUpdateRanges();
+        coarseTex.clearUpdateRanges();
+        return;
+      }
+      if (restored) {
+        // the restored context has fresh, empty textures: upload all of both (no ranges means the whole texture)
+        restored = false;
+        gridTex.clearUpdateRanges();
+        coarseTex.clearUpdateRanges();
+        gridTex.needsUpdate = true;
+        coarseTex.needsUpdate = true;
+      }
       if (cams.length === 1) {
         const c = cams[0];
         renderer.setScissorTest(false);
