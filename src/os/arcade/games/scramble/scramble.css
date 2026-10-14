@@ -681,6 +681,7 @@
 .g-scramble .g-scramble-hud.is-touch .g-scramble-feed {
   top: 152px;
   width: min(210px, 55vw);
+  transition: opacity 0.15s;
 }
 .g-scramble .g-scramble-hud.is-touch .g-scramble-feed li {
   font-size: 11px;
@@ -802,6 +803,12 @@
   .g-scramble .g-scramble-hud.is-touch .g-scramble-prompt {
     top: auto;
     bottom: calc(50% + 20px);
+  }
+}
+/* where that runs into the kill feed, the feed steps aside while the prompt is up */
+@container ((max-width: 520px) and (max-height: 660px)) or ((max-height: 460px) and (max-width: 640px)) {
+  .g-scramble .g-scramble-hud.is-touch:has(> .g-scramble-prompt) .g-scramble-feed {
+    opacity: 0;
   }
 }
 
