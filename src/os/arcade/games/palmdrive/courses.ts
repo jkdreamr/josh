@@ -2,8 +2,8 @@
 // three.js; the scene builds each course's scenery (scene.ts) and the logic races on its track (logic.ts).
 import { EDGE, HAZARD_R, ROAD_HALF, ROUTE, START, buildTrack, layout as palmLayout, wrapS, type HazardKind, type Layout, type Track } from './track.ts';
 
-export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium' | 'quad' | 'hoover';
-export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium', 'quad', 'hoover'];
+export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium' | 'quad' | 'hoover' | 'golf';
+export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium', 'quad', 'hoover', 'golf'];
 export const isCourse = (v: unknown): v is CourseId => COURSE_IDS.includes(v as CourseId);
 
 /** How hard a course is, for the picker: narrower roads, tighter bends and more in the way as it goes up. */
@@ -42,6 +42,12 @@ function placed(
     hazards?: [HazardKind, number, number, number?, number?, number?, number?][];
     /** Buses: [where it waits for the green light, its lane d, meters a second]. */
     buses?: [number, number, number][];
+    /** Golf carts driving laps, the same way. */
+    carts?: [number, number, number][];
+    /** Golf balls: [s, d where they land, every so many seconds, the first at, the tee: [along, across] from there]. */
+    balls?: [number, number, number, number, number, number][];
+    /** Ponds beside the road: [s, d of the middle, radius]. */
+    ponds?: [number, number, number][];
   },
 ): Layout {
   // a narrow road packs its row of boxes a little closer together
@@ -54,6 +60,9 @@ function placed(
     hazards: [
       ...(spec.hazards ?? []).map(([kind, s, d, r, swing, speed, phase]) => ({ kind, s: wrapS(t, s), d, r: r ?? HAZARD_R[kind], swing, speed, phase })),
       ...(spec.buses ?? []).map(([s, d, drive]) => ({ kind: 'bus' as const, s: wrapS(t, s), d, r: HAZARD_R.bus, drive })),
+      ...(spec.carts ?? []).map(([s, d, drive]) => ({ kind: 'cart' as const, s: wrapS(t, s), d, r: HAZARD_R.cart, drive })),
+      ...(spec.balls ?? []).map(([s, d, every, phase, along, across]) => ({ kind: 'ball' as const, s: wrapS(t, s), d, r: HAZARD_R.ball, every, phase, tee: [along, across] as [number, number] })),
+      ...(spec.ponds ?? []).map(([s, d, r]) => ({ kind: 'water' as const, s: wrapS(t, s), d, r })),
     ],
   };
 }
@@ -179,6 +188,25 @@ const HOOVER: [number, number][] = [
   // down the west side through the kink, and round onto the straight
   [-128, 75], [-140, 63], [-144, 47], [-144, 29], [-144, -8], [-144, -26], [-153, -48], [-160, -70],
   [-160, -90], [-160, -110], [-155, -130], [-140, -145],
+];
+
+/**
+ * The Stanford Golf Course: off the first tee past the clubhouse with the driving range alongside, through the bunkers,
+ * round the island green's pond, the dog-leg esses on the back nine and down the 18th fairway home. The loop round the
+ * pond is points on a circle, so the water keeps an even distance from the road.
+ */
+const GOLF_K = 0.9;
+const GOLF: [number, number][] = [
+  // the first tee, past the clubhouse and the driving range, and the long sweeper north
+  [-200, -160], [-60, -165], [80, -160], [160, -132], [200, -75],
+  // the bunker esses
+  [205, -10], [180, 45],
+  // round the island green's pond
+  [192, 102], [192, 148], [169, 187], [130, 210], [84, 210], [45, 187], [22, 148],
+  // the dog-leg esses on the back nine
+  [14, 100], [-24, 66], [-76, 84], [-120, 140],
+  // and down the 18th fairway home
+  [-180, 140], [-215, 90], [-232, 10], [-238, -70], [-224, -132],
 ];
 
 export const COURSES: Record<CourseId, Course> = {
@@ -471,6 +499,112 @@ export const COURSES: Record<CourseId, Course> = {
         ],
       }),
     sky: 'linear-gradient(180deg, #03061a 0%, #0a1434 22%, #16264e 36%, #2a3a68 43%, #22325e 46%, #121a2a 47%)',
+  },
+  golf: {
+    id: 'golf',
+    name: 'Stanford Golf Course',
+    blurb: 'Golf carts and golfers crossing, balls raining down off the tees, bunkers, water and an island green. The wildest yet.',
+    difficulty: 4,
+    route: GOLF.map(([e, n]) => [e * GOLF_K, n * GOLF_K]),
+    start: [-120 * GOLF_K, -163 * GOLF_K],
+    half: 6.5,
+    edge: 10,
+    layout: (t) => {
+      // Three carts drive their rounds in the right-hand lane a third of a lap apart, so the left is always clear.
+      // Everything that crosses the road keeps time with them: a whole number of crossings between one cart and the
+      // next, timed to be over on the far side whenever one comes by.
+      const cartV = 9;
+      const third = t.length / 3;
+      const every = third / cartV;
+      // (a group walking together keeps time with the one at the front, at s0)
+      const across = (kind: 'golfer' | 'cart', s: number, n: number, swing: number, size?: number, s0 = s): [HazardKind, number, number, number?, number?, number?, number?] => {
+        const speed = (2 * Math.PI * n) / every;
+        const pass = ((((s0 - 180) % third) + third) % third) / cartV;
+        return [kind, s, 0, size, swing, speed, -Math.PI / 2 - speed * pass];
+      };
+      return placed(t, {
+        boxes: [22, 285, 600, 812],
+        coins: [
+          [52, 3, 4],
+          [175, -3, 5],
+          [262, -2.5, 4],
+          [320, 0, 4],
+          [425, 3, 5],
+          [515, 0, 3],
+          [624, 2.5, 4],
+          [700, -2.5, 4],
+          [785, 0, 4],
+          [862, -3, 4],
+          [958, 3, 4],
+          [1040, -3, 5],
+          [1075, 3, 4],
+        ],
+        // boosts and jumps keep to the middle of the road, out of the carts' lanes; the jump down the 18th clears the
+        // fairway bunker
+        dashes: [
+          [160, 0],
+          [828, 0],
+          [1065, 0],
+        ],
+        ramps: [
+          [535, 0, 4.5],
+          [846, 0, 5.5],
+        ],
+        hazards: [
+          // the bunker esses, a bunker on each apex so the line slaloms, more on the apexes of the back nine, and one in
+          // the middle of the 18th fairway that the jump clears
+          ['sand', 310, -3.6],
+          ['sand', 348, 3.6],
+          ['sand', 388, -3.6],
+          ['sand', 662, 3.6],
+          ['sand', 752, -3.6],
+          ['sand', 858, 0, 3],
+          ['sand', 1028, -3.6],
+          // carts crossing the road on the cart paths, and back
+          across('cart', 205, 6, 4.8, 1.2),
+          across('cart', 775, 6, 4.8, 1.2),
+          // golfers walking across with their bags: a pair to the second tee, a foursome on the way to the island green
+          // (one behind the other, in step), and a couple more on the back nine
+          across('golfer', 255, 3, 4.6),
+          across('golfer', 256.6, 3, 4.6, undefined, 255),
+          ...[498, 499.6, 501.2, 502.8].map((at) => across('golfer', at, 3, 4.6, undefined, 498)),
+          across('golfer', 690, 4, 4.6),
+          across('golfer', 972, 3, 4.6),
+          // the flagsticks where the road crosses two greens
+          ['pin', 725, -2.6],
+          ['pin', 1006, -2.4],
+        ],
+        carts: [
+          [180, 3.8, cartV],
+          [180 + third, 3.8, cartV],
+          [180 + 2 * third, 3.8, cartV],
+        ],
+        // balls driven onto the road: four from the driving range across the first straight, more down the 18th,
+        // and one off each of the tees in between
+        balls: [
+          [45, 1.8, 4, 0.4, -6, 26],
+          [75, -2.4, 4, 1.4, -6, 26],
+          [105, 0.6, 4, 2.4, -6, 26],
+          [135, -1.8, 4, 3.4, -6, 26],
+          [230, 2, 5, 1.5, 20, 32],
+          [455, 1.8, 5.5, 0.8, -15, 30],
+          [580, -1.5, 5, 3.3, -10, 30],
+          [640, -1, 4.5, 2.2, 10, -30],
+          [880, 1.6, 4.5, 0.2, -12, 30],
+          [905, -2, 5, 2.6, -12, 30],
+          [935, 1, 4.5, 1.1, -12, 30],
+          [965, -1.5, 5, 3.9, -12, 30],
+        ],
+        // the island green's pond on the inside of the loop, and the water down the left of the 18th
+        ponds: [
+          [402.2, -62.56, 53.96],
+          [915, -38.6, 30],
+          [929, -38.6, 30],
+          [943, -38.6, 30],
+        ],
+      });
+    },
+    sky: 'linear-gradient(180deg, #3a7fd0 0%, #85b8ea 24%, #d3e5f1 36%, #f6e3b6 42%, #e9cf96 46%, #5d9a3c 47%)',
   },
 };
 

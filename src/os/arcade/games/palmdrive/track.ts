@@ -232,18 +232,129 @@ export const sOf = (t: Track, e: number, n: number) => {
 };
 
 /**
- * Things on the road that are part of the course: mud slows you like grass, an oil slick spins you out, and hay
- * bales, boulders, planters, cows, cyclists and buses are solid. Cows and cyclists go back and forth across the road
- * `swing` meters either side of d. A bus (the Marguerite shuttle) drives laps in its lane at d, `drive` meters a
- * second, from s at the green light; its r is half its width.
+ * Things on the road that are part of the course: mud and sand slow you like grass, an oil slick spins you out, and
+ * hay bales, boulders, planters, cows, cyclists, buses, golf carts, golfers and flagsticks are solid. Cows, cyclists,
+ * golfers and carts on a cart path go back and forth across the road `swing` meters either side of d. A bus (the
+ * Marguerite shuttle) or a golf cart can instead drive laps in its lane at d, `drive` meters a second, from s at the
+ * green light; its r is half its width.
+ *
+ * A golf ball lands on the road at (s, d) every `every` seconds, first at race time `phase`, hit from a tee `tee`
+ * ([along, across]) from there; its r is the ball's size. Water is a pond: a circle of radius r centered (s, d) off the
+ * road, whose edge comes up to the shoulder (see shoreOf).
  */
-export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus';
-export type Hazard = { kind: HazardKind; s: number; d: number; r: number; swing?: number; speed?: number; phase?: number; drive?: number };
+export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus' | 'cart' | 'golfer' | 'ball' | 'sand' | 'water' | 'pin';
+export type Hazard = {
+  kind: HazardKind;
+  s: number;
+  d: number;
+  r: number;
+  swing?: number;
+  speed?: number;
+  phase?: number;
+  drive?: number;
+  every?: number;
+  tee?: [number, number];
+};
 /** How big each kind is unless a course says otherwise. */
-export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1, bus: 1.3 };
-/** A bus is this long, nose to tail. */
+export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1, bus: 1.3, cart: 0.8, golfer: 0.8, ball: 0.55, sand: 2.8, water: 20, pin: 0.5 };
+/** A bus is this long, nose to tail, and so is a golf cart. */
 export const BUS_LEN = 9.6;
-export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil';
+export const CART_LEN = 3.1;
+/** Something that drives laps of the course in its own lane, collided with as a box. */
+export const drives = (h: Hazard) => (h.kind === 'bus' || h.kind === 'cart') && !!h.drive;
+/** How long a bus or a driving cart is. */
+export const lengthOf = (h: Hazard) => (h.kind === 'bus' ? BUS_LEN : CART_LEN);
+/** Things you bounce off (or that spin you out when you run into them); the rest you drive through or over. */
+export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil' && kind !== 'sand' && kind !== 'water' && kind !== 'ball';
+
+/** A golf ball flies this long from the tee, its shadow shows on the road this long before it lands. */
+export const BALL_FLIGHT = 2;
+export const BALL_WARN = 1.3;
+/** It bonks a kart that is there this close to touchdown, either side, and then bounces on and rolls away. */
+export const BALL_WINDOW = 0.15;
+export const BALL_ROLL = 1.8;
+/** Seconds since a ball last landed at time `time` (always 0 or more, less than `every`). */
+export const ballSince = (h: Hazard, time: number) => {
+  const every = h.every ?? 5;
+  return (((time - (h.phase ?? 0)) % every) + every) % every;
+};
+/** Seconds from `time` to the nearest touchdown, negative while the ball is still coming down. */
+export function ballNear(h: Hazard, time: number) {
+  const since = ballSince(h, time);
+  const every = h.every ?? 5;
+  return since < every / 2 ? since : since - every;
+}
+/** Whether a ball touches down at the spot at some time between t0 and t1. */
+export function ballDue(h: Hazard, t0: number, t1: number) {
+  const every = h.every ?? 5;
+  const next = t0 + ((every - ballSince(h, t0)) % every);
+  return next <= t1;
+}
+
+/**
+ * How far it is from the centerline to the water on each side, at every point of the track (Infinity where there is
+ * no pond). A pond bites into the shoulder past the curb but never onto the road; where it comes inside the wall line
+ * there is no wall, just a low stone lip at the water's edge.
+ */
+export function shoreOf(t: Track, hazards: Hazard[]) {
+  const left = new Float32Array(t.n).fill(Infinity);
+  const right = new Float32Array(t.n).fill(Infinity);
+  const ponds = hazards.filter((h) => h.kind === 'water').map((h) => ({ ...pointAt(t, h.s, h.d), r: h.r }));
+  if (!ponds.length) return null;
+  for (let i = 0; i < t.n; i++) {
+    const nx = -t.tz[i];
+    const nz = t.tx[i];
+    for (const p of ponds) {
+      const ox = t.x[i] - p.x;
+      const oz = t.z[i] - p.z;
+      const far = ox * ox + oz * oz;
+      if (far > (p.r + t.edge + 6) ** 2) continue;
+      // where the line across the road meets the pond: d^2 + 2 d (n . o) + |o|^2 - r^2 = 0
+      const b = nx * ox + nz * oz;
+      const disc = b * b - (far - p.r * p.r);
+      if (disc < 0) continue;
+      if (far <= p.r * p.r) {
+        // the centerline itself is under water
+        left[i] = 0;
+        right[i] = 0;
+        continue;
+      }
+      const root = Math.sqrt(disc);
+      const near = [-b - root, -b + root];
+      for (const d of near) {
+        if (d > 0) right[i] = Math.min(right[i], d);
+        else left[i] = Math.min(left[i], -d);
+      }
+    }
+  }
+  return { left, right };
+}
+export type Shore = NonNullable<ReturnType<typeof shoreOf>>;
+
+/** The stretches of wall left out because a pond comes inside the wall line there: [side (1 right, -1 left), from, to]. */
+export function wallGaps(t: Track, shore: Shore | null) {
+  const gaps: [number, number, number][] = [];
+  if (!shore) return gaps;
+  for (const side of [-1, 1]) {
+    const w = side < 0 ? shore.left : shore.right;
+    const wet = (i: number) => w[((i % t.n) + t.n) % t.n] < t.edge + 0.3;
+    // start from a dry spot so a gap is never split over the start line
+    let i0 = 0;
+    while (i0 < t.n && wet(i0)) i0++;
+    if (i0 === t.n) continue;
+    let from = -1;
+    for (let k = 1; k <= t.n; k++) {
+      const i = i0 + k;
+      if (wet(i) && from < 0) from = i;
+      if (!wet(i) && from >= 0) {
+        // a sample more either way, so the wall stops just short of the water
+        gaps.push([side, (from - 1) * t.step, i * t.step]);
+        from = -1;
+      }
+    }
+  }
+  return gaps;
+}
 
 export type Layout = {
   boxes: { s: number; d: number }[];

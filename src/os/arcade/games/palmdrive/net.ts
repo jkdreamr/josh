@@ -22,6 +22,8 @@ export const F_DRAFT = 1 << 15;
 export const F_MEGA = 1 << 16;
 export const F_BULLET = 1 << 17;
 export const F_INK = 1 << 18;
+/** In a pond, waiting to be fished out. */
+export const F_SUNK = 1 << 19;
 const TRAILS = [null, 'banana', 'green', 'red'] as const;
 /** What a held-out item looks like from outside: three bananas are a banana, three greens a green. */
 const trailKind = (item: Item | null) => (item === 'bananas' ? 'banana' : item === 'greens' ? 'green' : item);
@@ -71,7 +73,8 @@ export function flagsOf(k: Kart) {
     (k.draft > 0.3 ? F_DRAFT : 0) |
     (k.mega > 0 ? F_MEGA : 0) |
     (k.bullet > 0 ? F_BULLET : 0) |
-    (k.ink > 0 ? F_INK : 0)
+    (k.ink > 0 ? F_INK : 0) |
+    (k.sunk > 0 ? F_SUNK : 0)
   );
 }
 
@@ -102,6 +105,7 @@ export function applyFlags(k: Kart, f: number) {
   k.mega = f & F_MEGA ? 1 : 0;
   k.bullet = f & F_BULLET ? 1 : 0;
   k.ink = f & F_INK ? 1 : 0;
+  k.sunk = f & F_SUNK ? 0.7 : 0;
 }
 
 export const carOf = (k: Kart, look = -1): Omit<Car, 'seat'> => ({ x: r2(k.x), z: r2(k.z), y: r2(k.y), h: r3(k.h), v: r1(k.v), p: r1(k.prog), f: flagsOf(k), fin: k.done === null ? -1 : r3(k.done), look });

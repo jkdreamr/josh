@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CLASSES, KART_R, OFFROAD, RIVALS, createRace, hazardD, hazardS, hazardV, inBus, moveHazards, spawn, step, type Ev, type Kart, type LiveHazard, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
-import { BUS_LEN, deltaS, headingOf, locate, pointAt } from '../src/os/arcade/games/palmdrive/track.ts';
+import { CLASSES, KART_R, OFFROAD, RIVALS, SPLASH_T, createRace, hazardD, hazardS, hazardV, inBus, moveHazards, spawn, step, type Ev, type Kart, type LiveHazard, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
+import { BALL_WINDOW, BUS_LEN, CART_LEN, ballDue, ballNear, ballSince, deltaS, headingOf, locate, pointAt, wrapAngle } from '../src/os/arcade/games/palmdrive/track.ts';
 
 const DT = 1 / 60;
 
@@ -469,4 +469,248 @@ test('CPU drivers get past the buses on the free side and mostly miss the oil', 
   assert.ok(passes >= 30, `${passes} passes`);
   assert.ok(knocks.bus <= 6, `buses ${knocks.bus}`);
   assert.ok(knocks.oil <= 10, `oil ${knocks.oil}`);
+});
+
+/** A race round the golf course, past the lights, with n hand-driven karts. */
+function golf(n = 1, seed = 5): Race {
+  return createRace({ cc: '100cc', course: 'golf', seed, countdown: 0, racers: Array.from({ length: n }, (_, i) => ({ name: `p${i}`, color: '#e53935', kind: 'player' as const })) });
+}
+
+test('a bunker slows you like mud, with a puff of sand on the way in; a star blasts straight through', () => {
+  const r = golf();
+  const k = r.karts[0];
+  const bunker = find(r, 'sand', (h) => h.d === 0);
+  const top = CLASSES['100cc'].top;
+  place(r, k, bunker.s - 4, 0, top);
+  const evs = run(r, 0.25);
+  assert.ok(k.mud && k.sand, 'in the sand');
+  assert.ok(k.v < top - 3, `slowed to ${k.v}`);
+  assert.equal(evs.filter((e) => e.t === 'sand' && e.k === k.idx).length, 1);
+  assert.ok(!evs.some((e) => e.t === 'mud'), 'sand, not mud');
+  const s = golf();
+  const t = s.karts[0];
+  t.star = 3;
+  place(s, t, bunker.s - 4, 0, top);
+  run(s, 0.25);
+  assert.ok(!t.mud && !t.sand && t.v > top, 'a star is not slowed');
+});
+
+/** A kart on the island green's loop, out on the grass on the inside and turned toward the pond. */
+function wide(r: Race, k: Kart, s = 470, v = 14) {
+  place(r, k, s, -7.2, v);
+  const p = pointAt(r.track, s);
+  k.h = headingOf(p.tx, p.tz) + 0.6;
+}
+
+test('run wide into a pond and you splash, sit there a moment and are fished out onto the road facing the right way', () => {
+  const r = golf();
+  const k = r.karts[0];
+  wide(r, k);
+  const evs = run(r, 0.6);
+  assert.equal(evs.filter((e) => e.t === 'splash' && e.k === k.idx).length, 1, 'one splash');
+  assert.ok(k.sunk > 0 && k.v === 0, 'in the water');
+  const wet = { x: k.x, z: k.z };
+  // it goes nowhere while it waits, and can't use an item
+  k.item = 'mushroom';
+  k.uses = 1;
+  k.input.use = true;
+  run(r, 0.2);
+  assert.equal(k.item, 'mushroom');
+  assert.ok(Math.hypot(k.x - wet.x, k.z - wet.z) < 0.01, 'stays put');
+  const out: Ev[] = [];
+  while (k.sunk > 0 && r.time < 5) out.push(...run(r, DT));
+  const left = r.time;
+  assert.ok(!out.some((e) => e.t === 'splash'), 'no second splash');
+  assert.equal(k.sunk, 0, 'fished out');
+  // back on the road, facing down it, with a moment's grace
+  const at = locate(r.track, k.x, k.z);
+  assert.ok(Math.abs(at.d) <= 4.01, `set down on the road at d=${at.d}`);
+  assert.ok(Math.abs(wrapAngle(k.h - headingOf(at.tx, at.tz))) < 0.05, 'facing the right way');
+  assert.ok(k.safe > 0);
+  assert.ok(left > 1 && left < 0.6 + 0.2 + SPLASH_T, `out after ${left}`);
+  // it costs the wait and a start from a standstill: a couple of seconds
+  assert.ok(SPLASH_T >= 1 && SPLASH_T <= 1.6);
+  assert.ok(k.v < 3, `starting again at ${k.v}`);
+});
+
+test('flying over the edge of a pond keeps you dry, and a pond never reaches a kart on the road', () => {
+  const r = golf();
+  const k = r.karts[0];
+  wide(r, k);
+  k.y = 1.2;
+  k.vy = 3;
+  const evs = run(r, 0.15);
+  assert.ok(!evs.some((e) => e.t === 'splash'), 'over the water');
+  // right on the curb on the inside of the loop, all the way round: dry
+  const s = golf();
+  const t = s.karts[0];
+  for (let at = 395; at < 610; at += 5) {
+    place(s, t, at, -s.track.half - 0.5, 18);
+    assert.ok(!run(s, 2 * DT).some((e) => e.t === 'splash'), `wet on the curb at s=${at}`);
+  }
+});
+
+test('golf balls come down on the race clock, the same on every screen, with a window either side of touchdown', () => {
+  const a = golf();
+  const ball = find(a, 'ball');
+  const every = ball.every!;
+  // touchdowns at phase + n * every
+  for (let n = 0; n < 4; n++) {
+    const when = (ball.phase ?? 0) + n * every;
+    assert.ok(Math.abs(ballNear(ball, when)) < 1e-9);
+    assert.ok(Math.abs(ballNear(ball, when - 0.1) + 0.1) < 1e-9, 'still coming down');
+    assert.ok(Math.abs(ballNear(ball, when + 0.1) - 0.1) < 1e-9, 'bouncing away');
+    assert.ok(ballDue(ball, when - 0.5, when + 0.5) && !ballDue(ball, when + 0.5, when + every - 0.5));
+  }
+  assert.ok(ballSince(ball, 3.3) >= 0 && ballSince(ball, 3.3) < every);
+});
+
+/** The next race time a ball comes down after `from`. */
+const nextLanding = (h: LiveHazard, from: number) => from + ((h.every! - ballSince(h, from)) % h.every!);
+
+test('a golf ball landing on your kart bonks it into a spin; between balls, high in the air or under a star it is harmless', () => {
+  for (const how of ['bonk', 'between', 'air', 'star'] as const) {
+    const r = golf();
+    const k = r.karts[0];
+    const ball = find(r, 'ball', (h) => h.s > 800);
+    const due = nextLanding(ball, 2);
+    // parked on the spot a moment before it lands (or halfway between two balls)
+    r.time = how === 'between' ? due + ball.every! / 2 - 0.4 : due - 0.4;
+    place(r, k, ball.s, ball.d, 0);
+    k.input.brake = true;
+    if (how === 'star') k.star = 3;
+    const evs =
+      how === 'air'
+        ? // sailing over it off a jump
+          run(r, 0.8, () => {
+            k.y = 1.6;
+            k.vy = 0;
+            place(r, k, ball.s, ball.d, 0);
+          })
+        : run(r, 0.8);
+    const bonked = evs.some((e) => e.t === 'plink' && e.k === k.idx) && evs.some((e) => e.t === 'hit' && e.k === k.idx && e.how === 'spin');
+    assert.equal(bonked, how === 'bonk', how);
+  }
+  // a kart beside the spot, out of reach, is fine
+  const r = golf();
+  const k = r.karts[0];
+  const ball = find(r, 'ball', (h) => h.s > 800);
+  r.time = nextLanding(ball, 2) - 0.4;
+  place(r, k, ball.s, ball.d - Math.sign(ball.d || 1) * (ball.r + KART_R + 0.3), 0);
+  k.input.brake = true;
+  assert.ok(!run(r, 0.8).some((e) => e.t === 'plink'));
+  assert.ok(BALL_WINDOW > 0.1 && BALL_WINDOW < 0.3);
+});
+
+test('golfers walk across with their bags on the race clock: run into one and you spin out and they shout fore', () => {
+  const a = golf();
+  const b = golf();
+  const g = find(a, 'golfer');
+  assert.ok(g.swing && g.swing > 0 && (g.speed ?? 0) <= 0.7, 'walking');
+  run(a, 5);
+  b.time = a.time;
+  moveHazards(b);
+  const twin = find(b, 'golfer');
+  assert.deepEqual([twin.x, twin.z, twin.at, twin.walk], [g.x, g.z, g.at, g.walk]);
+  // a foursome crosses together, one behind the other
+  const lead = find(a, 'golfer', (h) => h.s > 490 && h.s < 500);
+  const four = a.hazards.filter((h) => h.kind === 'golfer' && h.phase === lead.phase && h.speed === lead.speed);
+  assert.equal(four.length, 4);
+  for (const h of four) assert.equal(h.at, four[0].at);
+  const r = golf();
+  const k = r.karts[0];
+  const walker = find(r, 'golfer');
+  place(r, k, walker.s - 4, walker.at, 18);
+  const evs = run(r, 0.5);
+  assert.ok(evs.some((e) => e.t === 'fore' && e.k === k.idx), 'fore!');
+  assert.ok(evs.some((e) => e.t === 'hit' && e.k === k.idx && e.how === 'spin' && e.by === -1));
+});
+
+test('golf carts drive their rounds like the buses: run into the back of one and you spin out to its beep-beep', () => {
+  const a = golf(1, 5);
+  const b = golf(1, 77);
+  const carts = a.hazards.filter((h) => h.kind === 'cart' && h.drive);
+  assert.equal(carts.length, 3);
+  run(a, 6);
+  b.time = a.time;
+  moveHazards(b);
+  carts.forEach((h, i) => {
+    const twin = b.hazards.filter((x) => x.kind === 'cart' && x.drive)[i];
+    assert.deepEqual([twin.x, twin.z, twin.along], [h.x, h.z, h.along]);
+    assert.ok(Math.abs(deltaS(a.track, h.s, h.along) - h.drive! * a.time) < 0.01);
+  });
+  const r = golf();
+  const k = r.karts[0];
+  const cart = find(r, 'cart', (h) => !!h.drive);
+  place(r, k, cart.along - CART_LEN / 2 - 8, cart.d, 22);
+  let inside = false;
+  const evs = run(r, 1.2, () => (inside ||= inBus(cart, k.x, k.z, KART_R - 0.05) !== null));
+  assert.ok(!inside, 'never ends up inside it');
+  assert.ok(evs.some((e) => e.t === 'toot' && e.k === k.idx), 'beep-beep');
+  assert.ok(!evs.some((e) => e.t === 'honk'), 'a cart is not a bus');
+  assert.ok(evs.some((e) => e.t === 'hit' && e.k === k.idx && e.how === 'spin'));
+  assert.ok(CART_LEN < BUS_LEN / 2);
+});
+
+test('carts crossing on the cart paths go back and forth, and running into one spins you out too', () => {
+  const r = golf();
+  const cart = find(r, 'cart', (h) => !!h.swing);
+  let lo = Infinity;
+  let hi = -Infinity;
+  run(r, (Math.PI * 2) / (cart.speed ?? 1), () => {
+    lo = Math.min(lo, cart.at);
+    hi = Math.max(hi, cart.at);
+  });
+  assert.ok(hi - lo > cart.swing! * 1.8, 'right across');
+  const s = golf();
+  const k = s.karts[0];
+  const c2 = find(s, 'cart', (h) => !!h.swing);
+  place(s, k, c2.s - 4, c2.at, 18);
+  const evs = run(s, 0.5);
+  assert.ok(evs.some((e) => e.t === 'toot' && e.k === k.idx));
+  assert.ok(evs.some((e) => e.t === 'hit' && e.k === k.idx && e.how === 'spin'));
+});
+
+test('flagsticks are solid but small: a thump, no spin, and shells break on them', () => {
+  const r = golf();
+  const k = r.karts[0];
+  const pin = find(r, 'pin');
+  assert.ok(pin.r <= 0.6);
+  place(r, k, pin.s - 12, pin.d, 22);
+  let closest = Infinity;
+  const evs = run(r, 1.2, () => (closest = Math.min(closest, Math.hypot(k.x - pin.x, k.z - pin.z))));
+  assert.ok(closest >= pin.r + KART_R - 0.05, `got within ${closest}`);
+  assert.ok(evs.some((e) => e.t === 'wall' && e.k === k.idx));
+  assert.equal(k.spin, 0);
+  const s = golf();
+  place(s, s.karts[0], pin.s - 60, 0, 0);
+  const from = pointAt(s.track, pin.s - 14, pin.d);
+  const [dx, dz] = [pin.x - from.x, pin.z - from.z].map((v) => (v / Math.hypot(pin.x - from.x, pin.z - from.z)) * 42);
+  const shell = spawn(s, { kind: 'green', owner: 0, x: from.x, z: from.z, y: 0.35, vx: dx, vz: dz, vy: 0, grace: 0, target: -1, prog: 0 });
+  run(s, 0.6);
+  assert.ok(!s.things.some((th) => th.id === shell.id), 'the shell is gone');
+});
+
+test('CPU drivers round the golf course mostly miss the carts, golfers, balls and flagsticks, and stay out of the water', () => {
+  const r = createRace({ cc: '150cc', course: 'golf', seed: 9, racers: [...RIVALS, { ...RIVALS[3], name: 'extra' }] });
+  const knocks = { toot: 0, fore: 0, plink: 0, splash: 0, pin: 0, sand: 0 };
+  while (r.time < 600 && r.karts.some((k) => k.done === null)) {
+    step(r, DT);
+    for (const e of r.events.splice(0)) {
+      if (e.t === 'toot' || e.t === 'fore' || e.t === 'plink' || e.t === 'splash' || e.t === 'sand') knocks[e.t]++;
+      if (e.t === 'wall') {
+        const k = r.karts[e.k];
+        if (r.hazards.some((h) => h.kind === 'pin' && Math.hypot(h.x - k.x, h.z - k.z) < h.r + 2)) knocks.pin++;
+      }
+    }
+  }
+  assert.ok(r.karts.every((k) => k.done !== null));
+  // forty laps between them, past three carts on their rounds, two crossings, eight golfers and a dozen balls a lap
+  assert.ok(knocks.toot <= 8, `carts ${knocks.toot}`);
+  assert.ok(knocks.fore <= 8, `golfers ${knocks.fore}`);
+  assert.ok(knocks.plink <= 10, `balls ${knocks.plink}`);
+  assert.ok(knocks.pin <= 6, `flagsticks ${knocks.pin}`);
+  assert.ok(knocks.splash <= 2, `splashes ${knocks.splash}`);
+  // seven bunkers a lap: they get some of it, not most
+  assert.ok(knocks.sand <= 120, `bunkers ${knocks.sand}`);
 });

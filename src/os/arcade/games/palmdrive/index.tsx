@@ -443,7 +443,7 @@ function Play({ mode }: { mode: Mode }) {
   };
   const doneAt = useRef<number | null>(null);
   const dots = useRef(new Map<number, SVGCircleElement>());
-  /** Minimap markers for the buses, by hazard index. */
+  /** Minimap markers for the buses and golf carts, by hazard index. */
   const busDots = useRef(new Map<number, SVGRectElement>());
   const tags = useRef(new Map<number, HTMLDivElement>());
   const lastLevel = useRef(0);
@@ -845,6 +845,38 @@ function Play({ mode }: { mode: Mode }) {
           sfx.tone({ freq: 330, dur: 0.42, type: 'sawtooth', vol: 0.09, delay: 0.22 });
         }
         break;
+      case 'toot':
+        // a golf cart's little horn: beep-beep
+        if (mine) {
+          sfx.tone({ freq: 988, dur: 0.1, type: 'square', vol: 0.07 });
+          sfx.tone({ freq: 988, dur: 0.14, type: 'square', vol: 0.07, delay: 0.15 });
+        }
+        break;
+      case 'fore':
+        // a golfer's shout, up and down
+        if (mine) {
+          sfx.tone({ freq: 420, to: 760, dur: 0.16, type: 'sawtooth', vol: 0.09 });
+          sfx.tone({ freq: 760, to: 520, dur: 0.38, type: 'sawtooth', vol: 0.09, delay: 0.15 });
+        }
+        break;
+      case 'plink':
+        // a golf ball off your helmet
+        if (mine) {
+          sfx.tone({ freq: 2600, to: 1700, dur: 0.12, type: 'sine', vol: 0.16 });
+          sfx.tone({ freq: 3400, dur: 0.08, type: 'triangle', vol: 0.07, delay: 0.03 });
+        }
+        break;
+      case 'splash':
+        // into the pond
+        if (mine) {
+          sfx.noise(0.5, 0.22);
+          sfx.tone({ freq: 300, to: 80, dur: 0.45, type: 'sine', vol: 0.16 });
+          buzz(80);
+        }
+        break;
+      case 'sand':
+        if (mine) sfx.noise(0.14, 0.09);
+        break;
       case 'slam':
         if (mine) sfx.tone({ freq: 240, to: 120, dur: 0.14, type: 'sawtooth', vol: 0.12 });
         break;
@@ -1061,20 +1093,20 @@ function Play({ mode }: { mode: Mode }) {
             <path d={minimap.d} className="g-palmdrive-map-line" />
             {r.hazards.map(
               (h, i) =>
-                h.kind === 'bus' && (
+                (h.kind === 'bus' || h.kind === 'cart') && (
                   <rect
                     key={`bus${i}`}
                     ref={(el) => {
                       if (el) busDots.current.set(i, el);
                       else busDots.current.delete(i);
                     }}
-                    x={-8}
-                    y={-8}
-                    width={16}
-                    height={16}
+                    x={h.kind === 'bus' ? -8 : -6}
+                    y={h.kind === 'bus' ? -8 : -6}
+                    width={h.kind === 'bus' ? 16 : 12}
+                    height={h.kind === 'bus' ? 16 : 12}
                     rx={3}
                     transform={`translate(${-h.x} ${-h.z})`}
-                    className="g-palmdrive-map-bus"
+                    className={h.kind === 'bus' ? 'g-palmdrive-map-bus' : 'g-palmdrive-map-cart'}
                   />
                 ),
             )}

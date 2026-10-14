@@ -460,6 +460,21 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           <li>
             <b>The Marguerite buses</b> drive their rounds slower than you, each in its own lane. Pass on the free side: run into one and you spin out. Shells break on them too.
           </li>
+          <li>
+            <b>Golf carts</b> drive their rounds like the buses, and more cross the road on the cart paths. Run into one and you spin out.
+          </li>
+          <li>
+            <b>Golfers</b> walk across the road with their bags, sometimes four at a time. Hit one and you spin out.
+          </li>
+          <li>
+            <b>Golf balls</b> come down on the road. Watch for a shadow growing under a <b>!</b> and steer clear: one on your head spins you out.
+          </li>
+          <li>
+            <b>Bunkers</b> slow you down like mud. A jump carries you over the one on the 18th.
+          </li>
+          <li>
+            <b>Water.</b> Run wide into a pond and you splash in, and lose a couple of seconds being fished out.
+          </li>
           <li>A star, a Mega Mushroom or a Bullet ploughs straight through all of it.</li>
         </ul>
       </section>

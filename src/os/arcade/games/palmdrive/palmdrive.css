@@ -154,6 +154,12 @@
   stroke: #8c1515;
   stroke-width: 4;
 }
+/* a golf cart: white with a green edge */
+.g-palmdrive .g-palmdrive-map-cart {
+  fill: #f4f3ee;
+  stroke: #2f6b3a;
+  stroke-width: 3.5;
+}
 .g-palmdrive .g-palmdrive-lap {
   position: absolute;
   left: 14px;
