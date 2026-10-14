@@ -9,8 +9,9 @@ export type RoomPlayer = { seat: number; name: string };
  * roster: seats that were in the room when the current round started.
  * allowBots: the game can fill empty seats with bots; bots: how many the host asked for (see botSeats).
  * listed: a public room, which the arcade's Open Rooms lists while someone can join it (see roomListing).
+ * inLobby: the room's line is in Open Rooms right now, so only rooms that were listed ever need to take it out.
  */
-export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; allowBots?: boolean; bots?: number; listed?: boolean };
+export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; allowBots?: boolean; bots?: number; listed?: boolean; inLobby?: boolean };
 export type ClientRoomMessage =
   | { t: 'start' }
   | { t: 'bots'; n: number }

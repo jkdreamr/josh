@@ -293,17 +293,23 @@ export class Room extends DurableObject<Env> {
 
   /**
    * Keeps the room's line in the arcade's Open Rooms right: there, with an alarm to refresh it, while the room is
-   * public and someone can join; gone otherwise. Open Rooms is a convenience, so a room carries on if it fails.
+   * public and someone can join; gone otherwise. Rooms that aren't listed never call Open Rooms, so the one Lobby only
+   * hears from public rooms. Open Rooms is a convenience, so a room carries on if it fails.
    */
   private async publish(room: RoomState, players: RoomPlayer[]) {
     if (!room.code) return;
     const listing = roomListing(room, players, this.lineup(room, players).bots?.length ?? 0);
+    if (!listing && !room.inLobby) return;
     try {
       const lobby = this.env.LOBBY.get(this.env.LOBBY.idFromName('global'));
       if (listing) await lobby.put(listing);
       else await lobby.drop(room.code);
     } catch {
-      /* listed again on the next change or refresh */
+      /* listed again on the next change or refresh, or dropped once nobody refreshes it */
+    }
+    if (!!listing !== !!room.inLobby) {
+      room.inLobby = !!listing;
+      await this.ctx.storage.put('room', room);
     }
     if (listing && (await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + LISTING_REFRESH_MS);
     else if (!listing) await this.ctx.storage.deleteAlarm();
@@ -364,7 +370,7 @@ export class Room extends DurableObject<Env> {
   /** The room is over: off Open Rooms, and everything it kept is gone. */
   private async close() {
     const room = await this.ctx.storage.get<RoomState>('room');
-    if (room?.code) {
+    if (room?.code && room.inLobby) {
       try {
         await this.env.LOBBY.get(this.env.LOBBY.idFromName('global')).drop(room.code);
       } catch {
