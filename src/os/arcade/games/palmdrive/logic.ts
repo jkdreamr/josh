@@ -1487,6 +1487,14 @@ function curveAhead(t: Track, s: number, from: number, to: number) {
   return { mean: sum / Math.max(1, n), peak };
 }
 
+/** How far across the road (to its right) a kart heads for every meter it goes along it. */
+function acrossRoad(t: Track, k: Kart) {
+  const tx = t.tx[k.i];
+  const tz = t.tz[k.i];
+  const along = Math.sin(k.h) * tx + Math.cos(k.h) * tz;
+  return (Math.cos(k.h) * tx - Math.sin(k.h) * tz) / Math.max(0.3, along);
+}
+
 /**
  * A lane (as a fraction of the road's half width) clear of the bales, boulders, planters, cows, bikes, buses and oil
  * slicks coming up, and of the puddles too when there is room, as close as it can be to the lane the kart wanted; null
@@ -1605,10 +1613,20 @@ function think(r: Race, k: Kart, dt: number) {
   const peak = Math.abs(curveAhead(t, k.s, 0, 20 + k.v * 0.8).peak);
   inp.brake = peak > 0 && k.v > 1.55 / peak && k.boost <= 0;
   if (dodge) {
-    // a swerve round something in the way turns the kart as much as a bend does, boost or not, and with no clean way
-    // past yet it eases off and waits for one
-    const swerve = (2 * Math.abs(lane * t.half - k.d)) / Math.max(4, dodge.ds) ** 2;
-    if (k.v > 1.55 / (peak + swerve) || (!dodge.clear && dodge.ds < 4 + k.v * 0.5 && k.v > 9)) inp.brake = true;
+    // a swerve round something in the way turns the kart as much as a bend does, and with no clean way past yet it
+    // eases off and waits for one. On a boost it doesn't brake for bends, any more than it does anywhere else, unless
+    // the thing in the way sits on one and it has to make the bend on its line round it. And on a boost it judges the
+    // swerve by the way it is heading: out of a drift it is still angled across the road, and at a boost's speed that
+    // carries it a long way on toward whatever it is getting round
+    const ds = Math.max(4, dodge.ds);
+    let bend = peak;
+    let slope = 0;
+    if (k.boost > 0) {
+      bend = Math.abs(curveAhead(t, k.s, dodge.ds - 4, dodge.ds + 4).peak) > 0.02 ? Math.abs(curveAhead(t, k.s, 0, dodge.ds + 4).peak) : 0;
+      slope = acrossRoad(t, k);
+    }
+    const swerve = (2 * Math.abs(lane * t.half - k.d - slope * ds)) / ds ** 2;
+    if ((bend + swerve > 0 && k.v > 1.55 / (bend + swerve)) || (!dodge.clear && dodge.ds < 4 + k.v * 0.5 && k.v > 9)) inp.brake = true;
   }
   if (Math.abs(diff) > 2.2 && k.v < 4) inp.brake = false;
 
@@ -1671,9 +1689,14 @@ function think(r: Race, k: Kart, dt: number) {
       break;
     case 'mushroom':
     case 'triple':
-    case 'golden':
-      go = (straight && !dodge) || k.offroad || k.mud;
+    case 'golden': {
+      // on a straight with nothing in the way; but an item in hand means no new one from the boxes, so after a few
+      // seconds' wait a shorter straight will do (some courses are all short straights), and something up the road
+      // with a clean way past it, or a way off yet, is no reason to wait
+      const soon = ai.held > 3 && (straight || Math.abs(curveAhead(t, k.s, 0, 15).peak) < 0.012) && (!dodge || dodge.clear || dodge.ds > 30);
+      go = (straight && !dodge) || soon || k.offroad || k.mud;
       break;
+    }
     case 'coin':
       go = k.coins < MAX_COINS;
       break;
