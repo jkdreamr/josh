@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelIndex, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { alive, cell, createArena, roundOver, steer, step, swipeDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
+import { alive, cell, createArena, riderSeats, roundOver, steer, step, swipeDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
 import { meta } from './meta';
 import './lightcycles.css';
 
@@ -21,10 +21,18 @@ const NAMES = ['Player 1', 'Player 2', 'Rider 3', 'Rider 4'];
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} formatScore={(n) => `${n} cells`} setup={<Setup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} formatScore={(n) => `${n} cells`} setup={<Setup />} hostSetup={<OnlineSetup />}>
       <Cycles />
     </GameShell>
   );
+}
+
+/** Online, the host picks how well the bots ride (the host's game drives them). */
+function OnlineSetup() {
+  const online = useOnline();
+  const [level, setLevel] = useSetting(LEVEL);
+  if (!online?.isHost || !online.bots.length) return null;
+  return <Segmented label="Bot Level" value={level} options={levelOptions} onChange={setLevel} />;
 }
 
 function Setup() {
@@ -60,6 +68,11 @@ type Match = {
   sub: string;
   longest: number;
   lastWinner: number | null;
+  /** Online: the seat riding each rider id, and which of those seats are bots. */
+  seats: number[];
+  bots: number[];
+  /** Online: the room round this match was set up for. */
+  onlineRound: number;
 };
 
 const grid = (w: number, h: number) => {
@@ -82,15 +95,27 @@ function Cycles() {
   const sizeRef = useRef(size);
   sizeRef.current = size;
 
-  const riderCount = () => online ? Math.max(2, Math.min(4, online.players.length)) : cfg.current.mode === '2p' ? 2 : cfg.current.mode + 1;
-  const humans = () => online ? riderCount() : cfg.current.mode === '2p' ? 2 : 1;
+  const riderCount = (match: Match) => online ? Math.max(2, Math.min(4, match.seats.length)) : cfg.current.mode === '2p' ? 2 : cfg.current.mode + 1;
+  const humans = (match: Match) => online ? riderCount(match) : cfg.current.mode === '2p' ? 2 : 1;
+  /** The rider this player steers: online it follows their seat. */
+  const mine = () => (online ? m.current?.seats.indexOf(online.seat) ?? -1 : 0);
+  const nameOf = (match: Match, id: number) => {
+    if (!online) return NAMES[id];
+    const seat = match.seats[id];
+    return online.players.find((p) => p.seat === seat)?.name ?? online.bots.find((b) => b.seat === seat)?.name ?? NAMES[id];
+  };
+  /** Bots ride as computer riders on the host, which runs the arena for everyone. */
+  const markBots = (match: Match) => {
+    for (const r of match.arena.riders) r.cpu = match.bots.includes(match.seats[r.id]);
+  };
 
   const startRound = (match: Match) => {
     const { w, h } = sizeRef.current;
     const g = grid(Math.max(1, w - 16), Math.max(1, h - 64));
     match.cols = g.cols;
     match.rows = g.rows;
-    match.arena = createArena(g.cols, g.rows, riderCount(), humans());
+    match.arena = createArena(g.cols, g.rows, riderCount(match), humans(match));
+    if (online) markBots(match);
     match.queue = match.arena.riders.map(() => []);
     match.phase = 'ready';
     match.timer = 1.1;
@@ -100,18 +125,19 @@ function Cycles() {
     match.banner = `Round ${match.round}`;
     match.sub = match.round === 1 ? (shell.touch ? 'Swipe to turn' : cfg.current.mode === '2p' ? 'WASD vs arrow keys' : 'WASD or arrow keys to turn') : '';
     setBanner({ text: match.banner, sub: match.sub });
-    if (online?.seat === 0) online.send({ game: 'lightcycles', type: 'round', cols: g.cols, rows: g.rows, players: riderCount(), wins: match.wins, round: match.round, speed: match.speed, longest: match.longest });
+    if (online?.seat === 0) online.send({ game: 'lightcycles', type: 'round', cols: g.cols, rows: g.rows, players: riderCount(match), seats: match.seats, bots: match.bots, wins: match.wins, round: match.round, speed: match.speed, longest: match.longest });
   };
 
   const reset = () => {
     const mode = online ? '2p' : modeOf(playMode, rivals);
     const level = levelIndex(levelName);
     cfg.current = { mode, level };
+    const seats = online ? riderSeats(online.players.map((p) => p.seat), online.bots.map((b) => b.seat)) : [];
     const match: Match = {
       arena: createArena(2, 2, 0, 0),
       cols: 2,
       rows: 2,
-      wins: new Array(online ? riderCount() : mode === '2p' ? 2 : mode + 1).fill(0),
+      wins: new Array(online ? Math.max(2, seats.length) : mode === '2p' ? 2 : mode + 1).fill(0),
       round: 1,
       phase: 'ready',
       timer: 0,
@@ -125,20 +151,24 @@ function Cycles() {
       sub: '',
       longest: 0,
       lastWinner: null,
+      seats,
+      bots: online ? online.bots.map((b) => b.seat).filter((seat) => seats.includes(seat)) : [],
+      onlineRound: online?.round ?? 0,
     };
     m.current = match;
     startRound(match);
   };
-  // A fresh match on mount, and again when setup changes on the Start card.
+  // A fresh match on mount, and again when setup or the room changes on the Start card. Online, the host sets the
+  // match up again as the room starts, with the people and bots who are playing it, and guests follow its round packet.
   useEffect(() => {
-    if (shell.status === 'ready' || !m.current) reset();
-  }, [playMode, rivals, levelName, shell.status, online?.seat, online?.players.length]);
+    if (shell.status === 'ready' || !m.current || (online?.isHost && m.current.onlineRound !== online.round)) reset();
+  }, [playMode, rivals, levelName, shell.status, online?.seat, online?.players.length, online?.bots.length, online?.round]);
 
   const push = (rider: number, d: Dir) => {
     const match = m.current;
     if (!match || match.phase !== 'run') return;
     if (online) {
-      if (rider !== online.seat) return;
+      if (rider < 0 || rider !== mine()) return;
       if (online.seat !== 0) {
         online.send({ game: 'lightcycles', type: 'turn', dir: d });
         return;
@@ -153,14 +183,14 @@ function Cycles() {
     const twoP = cfg.current.mode === '2p';
     const wasd: Record<string, Dir> = { KeyW: 0, KeyD: 1, KeyS: 2, KeyA: 3 };
     const arrows: Record<string, Dir> = { ArrowUp: 0, ArrowRight: 1, ArrowDown: 2, ArrowLeft: 3 };
-    if (code in wasd) push(online?.seat ?? 0, wasd[code]);
-    else if (code in arrows) push(online?.seat ?? (twoP ? 1 : 0), arrows[code]);
+    if (code in wasd) push(online ? mine() : 0, wasd[code]);
+    else if (code in arrows) push(online ? mine() : twoP ? 1 : 0, arrows[code]);
   });
 
   const onPointerDown = (e: RPointerEvent<HTMLCanvasElement>) => {
     const el = e.currentTarget;
     const r = el.getBoundingClientRect();
-    const rider = online?.seat ?? (cfg.current.mode === '2p' && e.clientX - r.left > r.width / 2 ? 1 : 0);
+    const rider = online ? mine() : cfg.current.mode === '2p' && e.clientX - r.left > r.width / 2 ? 1 : 0;
     touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY, rider });
     el.setPointerCapture(e.pointerId);
   };
@@ -181,7 +211,7 @@ function Cycles() {
   useEffect(() => online?.onMessage((from, data) => {
     if (!online || from === online.seat || !data || typeof data !== 'object') return;
     const message = data as {
-      game?: unknown; type?: unknown; dir?: unknown; cols?: unknown; rows?: unknown; players?: unknown;
+      game?: unknown; type?: unknown; dir?: unknown; cols?: unknown; rows?: unknown; players?: unknown; seats?: unknown; bots?: unknown;
       wins?: unknown; round?: unknown; speed?: unknown; longest?: unknown; tick?: unknown; riders?: unknown;
       crashes?: unknown; phase?: unknown; timer?: unknown; acc?: unknown; banner?: unknown; sub?: unknown;
       lastWinner?: unknown;
@@ -189,16 +219,22 @@ function Cycles() {
     if (message.game !== 'lightcycles') return;
     const match = m.current;
     if (!match) return;
-    if (online.seat === 0 && message.type === 'turn' && Number.isInteger(message.dir) && match.arena.riders[from]) {
-      const queue = match.queue[from];
+    const id = match.seats.indexOf(from);
+    if (online.seat === 0 && message.type === 'turn' && Number.isInteger(message.dir) && match.arena.riders[id] && !match.arena.riders[id].cpu) {
+      const queue = match.queue[id];
       const direction = message.dir as Dir;
       if (queue && queue.length < 2 && queue[queue.length - 1] !== direction) queue.push(direction);
       return;
     }
     if (online.seat !== 0 && message.type === 'round' && Number.isInteger(message.cols) && Number.isInteger(message.rows) && Number.isInteger(message.players)) {
+      const seatList = (v: unknown) => (Array.isArray(v) ? v.filter((seat): seat is number => Number.isInteger(seat) && seat >= 0 && seat < 16) : null);
       match.cols = message.cols as number;
       match.rows = message.rows as number;
+      // Hosts from before bots sent no seats: riders were seats 0, 1, 2 and so on.
+      match.seats = seatList(message.seats) ?? Array.from({ length: message.players as number }, (_, i) => i);
+      match.bots = seatList(message.bots) ?? [];
       match.arena = createArena(match.cols, match.rows, message.players as number, message.players as number);
+      markBots(match);
       match.wins = Array.isArray(message.wins) ? message.wins as number[] : match.wins;
       match.round = Number(message.round) || match.round;
       match.speed = Number(message.speed) || match.speed;
@@ -289,10 +325,10 @@ function Cycles() {
           match.phase = 'done';
           const winner = match.wins.findIndex((w) => w >= TARGET);
           const cpuMode = cfg.current.mode !== '2p';
-          const winnerName = online?.players.find((player) => player.seat === winner)?.name ?? NAMES[winner];
-          const title = online ? (winner === online.seat ? 'You Win' : `${winnerName} Wins`) : cpuMode ? (winner === 0 ? 'You Win' : 'Crashed Out') : `${NAMES[winner]} Wins`;
+          const winnerSeat = match.seats[winner] ?? null;
+          const title = online ? (winnerSeat === online.seat ? 'You Win' : `${nameOf(match, winner)} Wins`) : cpuMode ? (winner === 0 ? 'You Win' : 'Crashed Out') : `${NAMES[winner]} Wins`;
           const detail = `${match.wins.join(' to ')} in ${match.round} rounds. Longest ride: ${match.longest} cells.`;
-          if (online) online.reportResult(online.round, winner);
+          if (online) online.reportResult(online.round, winnerSeat);
           shell.gameOver(online ? undefined : cpuMode ? match.longest : undefined, { title, detail });
           return;
         }
@@ -350,7 +386,7 @@ function Cycles() {
         match.phase = 'crash';
         match.timer = 1.5;
         const twoP = cfg.current.mode === '2p';
-        match.banner = winner === null ? 'Draw' : twoP || winner > 0 ? `${NAMES[winner]} takes the round` : 'You take the round';
+        match.banner = winner === null ? 'Draw' : online ? `${nameOf(match, winner)} takes the round` : twoP || winner > 0 ? `${NAMES[winner]} takes the round` : 'You take the round';
         match.sub = match.wins.some((w) => w >= TARGET) ? '' : `${match.wins.join(' to ')}`;
         setBanner({ text: match.banner, sub: match.sub });
         if (winner === 0 || (twoP && winner !== null)) sfx.play('coin');

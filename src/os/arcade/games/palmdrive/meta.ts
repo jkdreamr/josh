@@ -44,5 +44,5 @@ export const meta: GameMeta = {
       'quad-200cc': 'Main Quad 200cc',
     },
   },
-  online: { seats: 8, lateJoin: true },
+  online: { seats: 8, lateJoin: true, bots: true },
 };

@@ -681,7 +681,7 @@ type Client = { seat: number; me: Me; s: Session; m: Match | null; inbox: { at: 
 function simulate(opts: { humans: number; bots: boolean; seed: number; level: Level; delay: number; loss: number; leave?: { seat: number; at: number }; stall?: { seat: number; at: number; silent: boolean } }) {
   const players: Player[] = Array.from({ length: opts.humans }, (_, seat) => ({ seat, name: `P${seat + 1}` }));
   const rng = rng32(opts.seed * 7 + 1);
-  const host = hostMatch(players, 0, opts.seed, opts.level, opts.bots ? 'fill' : 'none', COUNTDOWN + 1.2);
+  const host = hostMatch(players, 0, opts.seed, opts.level, opts.bots ? MAX_FIGHTERS : 0, COUNTDOWN + 1.2);
   const clients: Client[] = players.map((p) => ({ seat: p.seat, me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], gone: false, call: null, hurtBy: 0, heard: 0 }));
   autopilot(host.match, host.match.fighters[host.match.me]);
   let now = 0;
@@ -816,8 +816,20 @@ test('the host\'s result is final: an elimination that arrives after it changes 
   assert.equal(g.fighters[0].place, 2);
 });
 
+test('the host adds as many computer eggs as the room has bots, eight eggs at most', () => {
+  const two = [{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }];
+  assert.deepEqual(hostMatch(two, 0, 5, 'normal', 3, 0).roster, [0, 1, -1, -1, -1]);
+  assert.deepEqual(hostMatch(two, 0, 5, 'normal', 0, 0).roster, [0, 1]);
+  const five = [0, 1, 2, 3, 4].map((seat) => ({ seat, name: `p${seat}` }));
+  const full = hostMatch(five, 0, 5, 'normal', 7, 0);
+  assert.equal(full.match.fighters.length, MAX_FIGHTERS, 'bots fill the places left, no more');
+  assert.deepEqual(full.roster, [0, 1, 2, 3, 4, -1, -1, -1]);
+  assert.ok(full.match.fighters.slice(5).every((f) => f.kind === 'bot'));
+  assert.equal(new Set(full.match.fighters.map((f) => f.color)).size, MAX_FIGHTERS, 'every egg its own color');
+});
+
 test('the host sends what happened last before it sends the result', () => {
-  const host = hostMatch([{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }], 0, 3, 'normal', 'none', 0);
+  const host = hostMatch([{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }], 0, 3, 'normal', 0, 0);
   const s = newSession(true, host.roster);
   s.queue.push([0, { y: 'o', f: 1, by: 0, w: 'smg' }]);
   s.end = { winner: 0, places: [[0, 1, 1], [1, 2, 0]] };
@@ -829,7 +841,7 @@ test('the host sends what happened last before it sends the result', () => {
 
 test('someone who leaves stays out, even if a newcomer takes their seat before the bus goes', () => {
   const players = [0, 1, 2].map((seat) => ({ seat, name: `p${seat}` }));
-  const host = hostMatch(players, 0, 4, 'normal', 'fill', 4.2);
+  const host = hostMatch(players, 0, 4, 'normal', 5, 4.2);
   const s = newSession(true, host.roster);
   const me: Me = { seat: 0, isHost: true, round: 1 };
   tick(s, host.match, me, [0, 1, 2], 0);
@@ -904,8 +916,8 @@ test('the scene only uses three.js classes the shared chunk exports', () => {
   }
 });
 
-test('meta: eight seats with late joining, and a board per level', () => {
-  assert.deepEqual(meta.online, { seats: 8, lateJoin: true });
+test('meta: eight seats with late joining and bots, and a board per level', () => {
+  assert.deepEqual(meta.online, { seats: 8, lateJoin: true, bots: true });
   assert.deepEqual(Object.keys(meta.leaderboard!.variants!), [...LEVELS]);
   assert.equal(noInput().slot, -1);
 });
