@@ -3,7 +3,7 @@ import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOpti
 import type { GameProps } from '../../types';
 import { buildView, type Cam, type HeadPose, type View } from './scene';
 import { RANKED_BOTS, createMatch, rankedBoard } from './match';
-import { localCtl, type Ctl, type Net } from './ctl';
+import { keyAim, localCtl, type Ctl, type Net } from './ctl';
 import { SKINS, colorOf, freshLocker, loadBests, loadLocker, record, saveLocker, shade, skinOf, submitBest, subscribeLocker, type Locker, type Skin } from './skins';
 import { HowToPlay, SkinIcon, SkinSheet, createMiniMap, paintMiniMap, type MiniMap } from './hud';
 import { TICK, drive, ownerHash, percent, ranking, type Ev } from './world';
@@ -508,16 +508,18 @@ function Play({ mode }: { mode: Mode }) {
     c.locals.forEach((id, i) => {
       const p = w.players[id];
       if (!p || !p.alive) return;
-      let turn = 0;
-      if (twoUp) turn = i === 0 ? (keys.down('KeyD') ? 1 : 0) - (keys.down('KeyA') ? 1 : 0) : (keys.down('ArrowRight') ? 1 : 0) - (keys.down('ArrowLeft') ? 1 : 0);
-      else turn = (keys.down('right') ? 1 : 0) - (keys.down('left') ? 1 : 0);
-      if (turn !== 0) {
-        p.turn = turn;
-        p.want = NaN;
+      p.turn = 0;
+      // keys point the way (up is north), as in Paper.io 2; while any is held the mouse waits until it moves again
+      const aim = !twoUp
+        ? keyAim(keys.down('up'), keys.down('down'), keys.down('left'), keys.down('right'))
+        : i === 0
+          ? keyAim(keys.down('KeyW'), keys.down('KeyS'), keys.down('KeyA'), keys.down('KeyD'))
+          : keyAim(keys.down('ArrowUp'), keys.down('ArrowDown'), keys.down('ArrowLeft'), keys.down('ArrowRight'));
+      if (aim !== null) {
+        p.want = aim;
         mouse.current.keyMode = true;
         return;
       }
-      p.turn = 0;
       // the finger that moved last steers (a thumb resting on the glass never locks out the one dragging)
       let joy: Joy | null = null;
       let held = false;
@@ -1090,7 +1092,7 @@ function Play({ mode }: { mode: Mode }) {
                   {m.kills}
                 </i>
               </span>
-              {views > 1 && <small>{i === 0 ? (shell.touch ? 'player 1' : 'player 1 · A D') : shell.touch ? 'player 2' : 'player 2 · ← →'}</small>}
+              {views > 1 && <small>{i === 0 ? (shell.touch ? 'player 1' : 'player 1 · WASD') : shell.touch ? 'player 2' : 'player 2 · arrows'}</small>}
             </div>
           ))}
           {hud.clock && <div className={`g-paperio-clock${hud.hurry ? ' is-hurry' : ''}${mode === 'online' ? ' is-online' : ''}`}>{hud.clock}</div>}

@@ -8,6 +8,7 @@ import {
   SPEED,
   START_R,
   TICK,
+  TURN,
   addPlayer,
   advance,
   applyDeath,
@@ -988,4 +989,48 @@ test('the soundtrack loops, and its tension layer only plays while you are out',
   const seq = new Sequencer(() => {});
   seq.tick(10, false, 2);
   assert.ok(Math.abs(seq.step - steps) <= 1);
+});
+
+import { keyAim } from '../src/os/arcade/games/paperio/ctl.ts';
+
+test('arrow keys and WASD point the way, like Paper.io 2: up is north, neighbours go diagonal, opposites cancel', () => {
+  const near = (a: number | null, b: number) => a !== null && Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) < 1e-9;
+  assert.equal(keyAim(false, false, false, false), null, 'no key held: the mouse or a finger steers');
+  assert.ok(near(keyAim(false, false, false, true), 0), 'right is east');
+  assert.ok(near(keyAim(false, true, false, false), Math.PI / 2), 'down is south (board y grows down the screen)');
+  assert.ok(near(keyAim(false, false, true, false), Math.PI), 'left is west');
+  assert.ok(near(keyAim(true, false, false, false), -Math.PI / 2), 'up is north');
+  assert.ok(near(keyAim(true, false, false, true), -Math.PI / 4), 'up and right is north east');
+  assert.ok(near(keyAim(false, true, true, false), (3 * Math.PI) / 4), 'down and left is south west');
+  assert.ok(Number.isNaN(keyAim(false, false, true, true)), 'left with right cancels: straight on');
+  assert.ok(Number.isNaN(keyAim(true, true, false, false)), 'up with down cancels: straight on');
+  assert.ok(near(keyAim(true, false, true, true), -Math.PI / 2), 'three keys leave the odd one out');
+});
+
+test('a held key swings the head round to that heading at the turn rate, and letting go keeps it', () => {
+  const w = world();
+  const a = addPlayer(w, { name: 'a', color: 0, kind: 'local' });
+  const c = Math.floor(w.c);
+  spawnAt(w, a, c, c, 0);
+  // heading east, hold left: a U-turn arc, never an instant reverse
+  a.want = keyAim(false, false, true, false) as number;
+  advance(w, a, TICK);
+  assert.ok(Math.abs(Math.atan2(Math.sin(a.h), Math.cos(a.h))) <= TURN * TICK + 1e-9, 'one tick turns no more than the turn rate');
+  let ticks = 1;
+  while (Math.abs(Math.atan2(Math.sin(a.h - Math.PI), Math.cos(a.h - Math.PI))) > 1e-9 && ticks < 600) {
+    advance(w, a, TICK);
+    ticks++;
+  }
+  assert.ok(Math.abs(ticks * TICK - Math.PI / TURN) < 2 * TICK, `half a circle takes pi / TURN seconds (${ticks} ticks)`);
+  // still held: it stays on west instead of circling
+  for (let i = 0; i < 30; i++) advance(w, a, TICK);
+  assert.ok(Math.abs(Math.atan2(Math.sin(a.h - Math.PI), Math.cos(a.h - Math.PI))) < 1e-9, 'holding a key settles on its heading');
+  // a quick tap of up turns part of the way, and letting go keeps the heading reached
+  a.want = keyAim(true, false, false, false) as number;
+  for (let i = 0; i < 3; i++) advance(w, a, TICK);
+  const tapped = a.h;
+  assert.ok(Math.abs(Math.atan2(Math.sin(tapped - Math.PI), Math.cos(tapped - Math.PI)) - 3 * TURN * TICK) < 1e-6, 'a tap turns by its length');
+  a.want = NaN;
+  for (let i = 0; i < 30; i++) advance(w, a, TICK);
+  assert.ok(Math.abs(a.h - tapped) < 1e-12, 'released: straight on, no snapping to the key');
 });
