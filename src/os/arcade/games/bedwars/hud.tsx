@@ -147,13 +147,13 @@ export function Scoreboard({ hud, mode }: { hud: Hud; mode: string }) {
           </li>
         ))}
       </ul>
-      <p>
+      <p className="g-bedwars-stat">
         Kills: <b className="is-green">{hud.stats.kills}</b>
       </p>
-      <p>
+      <p className="g-bedwars-stat">
         Final Kills: <b className="is-green">{hud.stats.finals}</b>
       </p>
-      <p>
+      <p className="g-bedwars-stat">
         Beds Broken: <b className="is-green">{hud.stats.beds}</b>
       </p>
       <footer>joshuakoo.com</footer>
