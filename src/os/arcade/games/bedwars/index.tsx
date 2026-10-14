@@ -483,8 +483,8 @@ function Play({ mode, onDetach }: { mode: StageMode; onDetach: () => void }) {
 
   const lock = useCallback(() => {
     const host = hostRef.current;
-    // the mouse gets captured; fingers never need it
-    if (!host || inputRef.current === 'touch' || document.pointerLockElement === host) return;
+    // the mouse gets captured while playing; fingers never need it
+    if (!host || inputRef.current === 'touch' || shellRef.current.status !== 'playing' || document.pointerLockElement === host) return;
     try {
       const r = (host.requestPointerLock as (o?: unknown) => Promise<void> | void).call(host, { unadjustedMovement: true });
       if (r && typeof (r as Promise<void>).catch === 'function')
@@ -543,7 +543,7 @@ function Play({ mode, onDetach }: { mode: StageMode; onDetach: () => void }) {
     if (!root) return;
     const onKey = (e: KeyboardEvent) => {
       const c = clientRef.current;
-      if (!c || e.code !== 'Escape' || c.ui === 'none') return;
+      if (!c || e.code !== 'Escape' || c.ui === 'none' || shellRef.current.status !== 'playing') return;
       e.preventDefault();
       e.stopPropagation();
       openUi('none');
