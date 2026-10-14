@@ -63,9 +63,13 @@ To test locally against a fake Telegram and a stand-in for Workers AI, with a 3.
 
 ## Arcade Chat
 
-The Chat view on the arcade home is one global chat for finding someone to play with. While it is open, the site holds a hibernating WebSocket at `GET /lounge` (it sends `ping` every 25 seconds, answered by the auto-response without waking the object). On connect the `Lounge` Durable Object (migration `v4`) sends `{ t: 'welcome', messages, online }` with the newest 100 messages and how many people have the chat open, then `msg`, `online` and `cleared` as they happen. The site posts with `{ t: 'say', name, text, c }`, where `c` is the sender's own tag: it comes back on that message, or on `{ t: 'error', error, c }` when the Worker turns it down (`name`, `text`, `slow` or `repeat`). The shapes, cleaning and limits live in `src/os/arcade/lounge-core.ts`. Until the Worker is redeployed, Chat says it is unavailable.
+The Lounge app is one global chat for finding someone to play with. While it is open, the site holds a hibernating WebSocket at `GET /lounge?v=2&name=<name>&game=<id>&room=<code>` (it sends `ping` every 25 seconds, answered by the auto-response without waking the object). On connect the `Lounge` Durable Object (migration `v4`) sends `{ t: 'welcome', v: 2, you, messages, members, online }`: the newest 100 messages of each channel (`general`, `find-a-game`, `ideas`), everyone here as `{ id, name?, game?, room? }`, and which of them you are. Then it sends `msg` (with the sender's member id as `by`), `join`, `member` (someone picked a name or started or stopped playing), `leave`, `typing` (`{ ch, id }`) and `cleared` as they happen.
 
-The Worker checks everything. Names are 1 to 16 characters and messages 1 to 280, after control, zero width and bidi characters are stripped and whitespace is squeezed. A connection can send 5 messages per 10 seconds, an IP 10 per 10 seconds and 30 a minute, and the same line twice in a row within a minute is dropped. An IP can hold 20 chat sockets and join 40 times a minute, with 1,000 sockets in all. Frames over 2 KB, binary frames and more than 20 frames in 10 seconds close the socket. Only the newest 100 messages are stored, and no IPs.
+The site posts with `{ t: 'say', ch, name, text, c, invite? }`, where `invite` is a room to share (`{ game, code }`, a game with online rooms) and `c` is the sender's own tag: it comes back on that message, or on `{ t: 'error', error, c }` when the Worker turns it down (`name`, `text`, `channel`, `invite`, `slow` or `repeat`). It sends `{ t: 'me', name?, game?, room? }` when its name or game changes, and `{ t: 'typing', ch }` at most every 3 seconds while someone types. A room only shows on a member when it is a game with online rooms (the site only sends public ones). The shapes, cleaning and limits live in `src/os/arcade/lounge-core.ts`. Until the Worker is redeployed, the Lounge says it is unavailable.
+
+A socket without `v=2` (a tab open from before the Lounge app) gets #general only, as before: `{ t: 'welcome', messages, online }`, then `msg`, `online` and `cleared`, and it can only post there. The first time the object starts after this deploy it adds the `ch` and `invite` columns to its table; everything said before is in #general.
+
+The Worker checks everything. Names are 1 to 16 characters and messages 1 to 280, after control, zero width and bidi characters are stripped and whitespace is squeezed. A connection can send 5 messages per 10 seconds, an IP 10 per 10 seconds and 30 a minute, and the same line twice in a row within a minute is dropped. A connection can change its name or game 5 times per 10 seconds and say it is typing once every 2 seconds (only with a name); past that they are ignored. An IP can hold 20 chat sockets and join 40 times a minute, with 1,000 sockets in all. Frames over 2 KB, binary frames and more than 20 frames in 10 seconds close the socket. Only the newest 100 messages of each channel are stored, and no IPs.
 
 To be able to wipe the chat, set a long random secret once from `worker/` (for example the output of `openssl rand -hex 32`):
 
@@ -73,10 +77,10 @@ To be able to wipe the chat, set a long random secret once from `worker/` (for e
 npx wrangler secret put LOUNGE_ADMIN_TOKEN
 ```
 
-Then clearing deletes every message and empties the chat on every open screen:
+Then clearing deletes every message and empties the chat on every open screen (add `?ch=ideas` to clear one channel):
 
 ```sh
 curl -X POST -H "Authorization: Bearer $LOUNGE_ADMIN_TOKEN" https://josh-arcade.joshuakoo.workers.dev/lounge/clear
 ```
 
-It answers `{ "ok": true, "removed": <count> }`, or 401 for a wrong token. Without the secret, clearing is off (403). To test locally, start `wrangler dev` with `scripts/smoke/wrangler.jsonc`, which sets the token to `test-admin-token`, and run `node scripts/smoke-lounge.mjs` (the exact commands are at the top of that file).
+It answers `{ "ok": true, "removed": <count> }`, 401 for a wrong token, or 404 for a channel that doesn't exist. Without the secret, clearing is off (403). To test locally, start `wrangler dev` with `scripts/smoke/wrangler.jsonc`, which sets the token to `test-admin-token`, and run `node scripts/smoke-lounge.mjs` (the exact commands are at the top of that file).

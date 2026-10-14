@@ -79,6 +79,22 @@
   opacity: 1;
   background: rgba(255, 255, 255, 0.12);
 }
+/* Unread messages in the Lounge. */
+.arcade-ctrl button.has-dot {
+  position: relative;
+  opacity: 1;
+}
+.arcade-ctrl button.has-dot::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff3b30;
+  box-shadow: 0 0 0 1.5px rgba(20, 20, 26, 0.9);
+}
 .arcade-shell .arcade-ctrl button.is-armed {
   width: auto;
   gap: 5px;

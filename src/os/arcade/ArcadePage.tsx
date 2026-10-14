@@ -1,7 +1,7 @@
 import { useContext, useState, type KeyboardEvent } from 'react';
+import { badgeLabel, useBadge } from '../badges';
 import { OSContext } from '../types';
 import { roomApp } from './apps';
-import { ArcadeChat } from './Chat';
 import { Leaderboards, leaderboardCards as boardChoices } from './Leaderboards';
 import { categories, getMeta, metas } from './manifest';
 import { OpenRooms } from './OpenRooms';
@@ -60,9 +60,10 @@ function Tile({ g, onOpen }: { g: GameMeta; onOpen: (id: string) => void }) {
 
 /** `onOpen` opens an arcade game, and with `room` joins that online room in it. */
 export function ArcadePage({ onOpen }: { onOpen: (id: string, room?: string) => void }) {
-  const [view, setView] = useState<'games' | 'boards' | 'chat'>('games');
-  const toggle = (next: 'boards' | 'chat') => setView(view === next ? 'games' : next);
+  const [boards, setBoards] = useState(false);
   const os = useContext(OSContext);
+  /** Messages waiting in the Lounge, when it's open somewhere. */
+  const unread = useBadge('lounge');
   // An open room's game opens right here, unless it lives in a desktop app of its own (Go, Omok, Badminton).
   const joinRoom = (game: string, code: string) => {
     if (getMeta(game)) return onOpen(game, code);
@@ -71,27 +72,36 @@ export function ArcadePage({ onOpen }: { onOpen: (id: string, room?: string) => 
   };
   const groups = categories.map((c) => ({ ...c, games: metas.filter((m) => m.category === c.id) })).filter((c) => c.games.length);
   return (
-    <div className={view === 'chat' ? 'arcade is-chat' : 'arcade'}>
+    <div className="arcade">
       <header className="arcade-head">
         <div className="arcade-head-row">
-          <h1>{view === 'boards' ? 'Leaderboards' : view === 'chat' ? 'Chat' : 'Arcade'}</h1>
+          <h1>{boards ? 'Leaderboards' : 'Arcade'}</h1>
           <div className="arcade-head-actions">
-            <button type="button" className="arcade-pbtn" onClick={() => toggle('chat')}>
-              {view === 'chat' ? 'All Games' : 'Chat'}
-            </button>
+            {/* The chat is an app of its own, so it can stay open next to a game. */}
+            {os && (
+              <button type="button" className="arcade-pbtn arcade-lounge-btn" aria-label={unread ? `Lounge, ${unread} unread` : 'Lounge'} onClick={() => os.open('lounge')}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M20 12.5a7.5 7.5 0 0 1-11 6.6L4 20.5l1.4-4.6A7.5 7.5 0 1 1 20 12.5z" />
+                </svg>
+                Lounge
+                {unread > 0 && (
+                  <b className="arcade-lounge-count" aria-hidden="true">
+                    {badgeLabel(unread)}
+                  </b>
+                )}
+              </button>
+            )}
             {boardChoices.length > 0 && (
-              <button type="button" className="arcade-pbtn" onClick={() => toggle('boards')}>
-                {view === 'boards' ? 'All Games' : 'Leaderboards'}
+              <button type="button" className="arcade-pbtn" onClick={() => setBoards(!boards)}>
+                {boards ? 'All Games' : 'Leaderboards'}
               </button>
             )}
           </div>
         </div>
-        <p>{view === 'boards' ? 'Top 100 Scores and Online Wins for Each Game.' : view === 'chat' ? 'Find someone to play with, or just say hi. Be kind.' : metas.length ? `${metas.length} games, made for this computer.` : 'Games are on the way.'}</p>
+        <p>{boards ? 'Top 100 Scores and Online Wins for Each Game.' : metas.length ? `${metas.length} games, made for this computer.` : 'Games are on the way.'}</p>
       </header>
-      {view === 'boards' ? (
+      {boards ? (
         <Leaderboards />
-      ) : view === 'chat' ? (
-        <ArcadeChat />
       ) : (
       <div className="arcade-sections" onKeyDown={onGridKey}>
         <OpenRooms onJoin={joinRoom} />

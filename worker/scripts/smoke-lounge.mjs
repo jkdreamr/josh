@@ -3,7 +3,10 @@
 //   npx wrangler dev --port 8787 -c scripts/smoke/wrangler.jsonc -c scripts/smoke/ai-stub.jsonc --persist-to <empty folder>
 //   node scripts/smoke-lounge.mjs
 //
-// The smoke config sets LOUNGE_ADMIN_TOKEN, which this uses to start from an empty chat. Takes about 25 seconds:
+// The first half talks like a tab from before channels (no `?v=2`): #general only, with a head count. The second half
+// talks like the Lounge app: channels, who's here and what they're playing, typing, and shared rooms.
+//
+// The smoke config sets LOUNGE_ADMIN_TOKEN, which this uses to start from an empty chat. Takes about 30 seconds:
 // it waits out the rate limit window once. wrangler dev passes CF-Connecting-IP through, so a client can stand in
 // for someone on another network (Cloudflare sets that header itself in production).
 import assert from 'node:assert/strict';
@@ -19,10 +22,12 @@ const welcome = (event) => event.t === 'welcome';
 const people = [];
 let tags = 0;
 
-function connect(ip) {
+/** A chat socket. `query` (like `{ v: 2, name: 'Ann' }`) goes on the URL, the way the Lounge app connects. */
+function connect(ip, query = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL('/lounge', api);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
     const socket = new WebSocket(url, ip ? { headers: { 'CF-Connecting-IP': ip } } : undefined);
     const events = [];
     const raw = [];
@@ -36,9 +41,9 @@ function connect(ip) {
         socket.send(typeof value === 'string' || value instanceof Uint8Array ? value : JSON.stringify(value));
       },
       /** Sends a message and resolves with what the Worker says about it: the message, or an error. */
-      say(name, text) {
+      say(name, text, extra = {}) {
         const c = `s${++tags}`;
-        client.send({ t: 'say', name, text, c });
+        client.send({ t: 'say', name, text, c, ...extra });
         return client.wait((event) => event.c === c && (event.t === 'msg' || event.t === 'error'));
       },
       /** The first event from index `from` on that matches. */
@@ -257,6 +262,132 @@ try {
   bo.socket.close();
   await ann.wait((event) => event.t === 'online' && event.n === before - 1, { from: leaving });
   pass('leaving updates how many are here');
+
+  // The Lounge app: `?v=2`, channels, members, typing and shared rooms.
+  assert.equal((await clear(`Bearer ${token}`)).status, 200);
+  await sleep(300);
+  const current = { v: 2 };
+  const quiet = (client, from, ms = 400) => sleep(ms).then(() => client.events.slice(from));
+  const ann2 = await connect('192.0.2.1', { ...current, name: '  Ann\u0000 ', game: 'lightcycles', room: 'ABCD' });
+  const annIn = await ann2.wait(welcome);
+  assert.equal(annIn.v, 2);
+  assert.match(annIn.you, /^[a-z0-9]{4,16}$/);
+  assert.deepEqual(annIn.messages, []);
+  assert.deepEqual(annIn.members.find((m) => m.id === annIn.you), { id: annIn.you, name: 'Ann', game: 'lightcycles', room: 'ABCD' });
+  assert.equal(annIn.online, annIn.members.length);
+  const legacy = await connect('192.0.2.2');
+  const legacyIn = await legacy.wait(welcome);
+  assert.equal(legacyIn.v, undefined);
+  assert.equal(legacyIn.members, undefined);
+  await ann2.wait((event) => event.t === 'join');
+  const bo2 = await connect('192.0.2.3', current);
+  const boIn = await bo2.wait(welcome);
+  const boJoin = await ann2.wait((event) => event.t === 'join' && event.m.id === boIn.you);
+  assert.deepEqual(boJoin.m, { id: boIn.you });
+  assert.ok(boIn.members.some((m) => m.id === annIn.you && m.name === 'Ann'));
+  await legacy.wait((event) => event.t === 'online' && event.n === legacyIn.online + 1);
+  pass("joining tells everyone who's here and what they're playing, and old tabs still get a head count");
+
+  const general = await ann2.say('Ann', 'hi all', { ch: 'general' });
+  const lfg = await ann2.say('Ann', 'anyone for light cycles?', { ch: 'find-a-game', invite: { game: 'lightcycles', code: 'ABCD' } });
+  const ideas = await ann2.say('Ann', 'more racing games please', { ch: 'ideas' });
+  assert.deepEqual([general.m.ch, lfg.m.ch, ideas.m.ch], ['general', 'find-a-game', 'ideas']);
+  assert.deepEqual(lfg.m.invite, { game: 'lightcycles', code: 'ABCD' });
+  assert.equal(general.by, annIn.you);
+  const boSaw = await bo2.wait((event) => event.t === 'msg' && event.m.id === ideas.m.id);
+  assert.deepEqual(boSaw, { t: 'msg', m: ideas.m, by: annIn.you });
+  await legacy.wait((event) => event.t === 'msg' && event.m.id === general.m.id);
+  assert.deepEqual(legacy.events.filter((event) => event.t === 'msg').map((event) => event.m.id), [general.m.id]);
+  assert.equal((await legacy.say('Old', 'from an old tab', { ch: 'ideas' })).error, 'channel');
+  const oldTab = await legacy.say('Old', 'from an old tab');
+  assert.equal(oldTab.m.ch, 'general');
+  await ann2.wait((event) => event.t === 'msg' && event.m.id === oldTab.m.id);
+  pass('messages go to their channel, and an old tab only sees and posts in #general');
+
+  assert.equal((await bo2.say('Bo', 'nowhere', { ch: 'random' })).error, 'channel');
+  assert.equal((await bo2.say('Bo', 'join me', { ch: 'find-a-game', invite: { game: 'not-a-game', code: 'ABCD' } })).error, 'invite');
+  assert.equal((await bo2.say('Bo', 'join me', { ch: 'find-a-game', invite: { game: 'lightcycles', code: 'abcd' } })).error, 'invite');
+  assert.equal((await bo2.say('Bo', 'join me', { ch: 'find-a-game', invite: 'ABCD' })).error, 'invite');
+  pass('a message needs a real channel, and a shared room needs a game with online rooms and a real code');
+
+  const cy2 = await connect('192.0.2.4', current);
+  const cyIn = await cy2.wait(welcome);
+  assert.deepEqual(cyIn.messages.map((m) => [m.ch, m.text]), [
+    ['general', 'hi all'],
+    ['find-a-game', 'anyone for light cycles?'],
+    ['ideas', 'more racing games please'],
+    ['general', 'from an old tab'],
+  ]);
+  assert.deepEqual(cyIn.messages[1].invite, { game: 'lightcycles', code: 'ABCD' });
+  pass('someone joining later gets every channel, shared rooms included');
+
+  let at = bo2.events.length;
+  ann2.send({ t: 'me', name: 'Ann', game: 'snake' });
+  const changed = await bo2.wait((event) => event.t === 'member' && event.m.id === annIn.you, { from: at });
+  assert.deepEqual(changed.m, { id: annIn.you, name: 'Ann', game: 'snake' });
+  await ann2.wait((event) => event.t === 'member' && event.m.game === 'snake');
+  at = bo2.events.length;
+  ann2.send({ t: 'me', name: 'Ann', game: 'snake' });
+  assert.deepEqual((await quiet(bo2, at)).filter((event) => event.t === 'member'), []);
+  ann2.send({ t: 'me', name: 'x'.repeat(17), game: 'Not A Game', room: 'ABCD' });
+  assert.deepEqual((await bo2.wait((event) => event.t === 'member' && !event.m.name, { from: at })).m, { id: annIn.you });
+  at = bo2.events.length;
+  ann2.send({ t: 'me', name: 'Ann', game: 'not-a-game', room: 'ABCD' });
+  assert.deepEqual((await bo2.wait((event) => event.t === 'member', { from: at })).m, { id: annIn.you, name: 'Ann', game: 'not-a-game' });
+  // Three changes so far, so two more fit in the ten seconds.
+  at = bo2.events.length;
+  for (let i = 0; i < 6; i++) ann2.send({ t: 'me', name: `Ann ${i}` });
+  assert.deepEqual(
+    (await quiet(bo2, at)).filter((event) => event.t === 'member').map((event) => event.m.name),
+    ['Ann 0', 'Ann 1'],
+  );
+  pass('changing a name or game tells everyone once, drops what is malformed, and only so often');
+
+  at = bo2.events.length;
+  ann2.send({ t: 'typing', ch: 'ideas' });
+  assert.deepEqual(await bo2.wait((event) => event.t === 'typing', { from: at }), { t: 'typing', ch: 'ideas', id: annIn.you });
+  await cy2.wait((event) => event.t === 'typing');
+  ann2.send({ t: 'typing', ch: 'ideas' });
+  ann2.send({ t: 'typing', ch: 'nowhere' });
+  const unnamed = cy2.events.length;
+  bo2.send({ t: 'typing', ch: 'general' });
+  assert.equal((await quiet(bo2, at)).filter((event) => event.t === 'typing').length, 1);
+  assert.deepEqual((await quiet(ann2, 0, 0)).filter((event) => event.t === 'typing'), []);
+  assert.deepEqual((await quiet(cy2, unnamed, 0)).filter((event) => event.t === 'typing'), []);
+  assert.deepEqual(legacy.events.filter((event) => event.t === 'typing' || event.t === 'member'), []);
+  pass('typing shows to everyone else, for someone with a name, at most every two seconds');
+
+  // Each channel keeps its own newest 100: fill #general from fresh addresses and #ideas still has its line.
+  for (let i = 0; i < 21; i++) {
+    const person = await connect(`192.0.2.${100 + i}`, current);
+    await person.wait(welcome);
+    for (let j = 0; j < 5; j++) assert.equal((await person.say(`Fill ${i}`, `fill ${i}.${j}`, { ch: 'general' })).t, 'msg');
+    person.socket.close();
+  }
+  const dee2 = await connect('192.0.2.5', current);
+  const deeIn = await dee2.wait(welcome);
+  const byChannel = (ch) => deeIn.messages.filter((m) => m.ch === ch).map((m) => m.text);
+  assert.equal(byChannel('general').length, 100);
+  assert.deepEqual([byChannel('general')[0], byChannel('general').at(-1)], ['fill 1.0', 'fill 20.4']);
+  assert.deepEqual(byChannel('ideas'), ['more racing games please']);
+  assert.deepEqual(byChannel('find-a-game'), ['anyone for light cycles?']);
+  pass('each channel keeps its own newest 100 messages');
+
+  at = ann2.events.length;
+  bo2.socket.close();
+  assert.deepEqual(await ann2.wait((event) => event.t === 'leave', { from: at }), { t: 'leave', id: boIn.you });
+  pass('leaving tells everyone who left');
+
+  assert.equal((await fetch(`${api}/lounge/clear?ch=random`, { method: 'POST', headers: { authorization: `Bearer ${token}` } })).status, 404);
+  at = ann2.events.length;
+  const legacyFrom = legacy.events.length;
+  const ideasCleared = await fetch(`${api}/lounge/clear?ch=ideas`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+  assert.deepEqual(await ideasCleared.json(), { ok: true, removed: 1 });
+  assert.deepEqual(await ann2.wait((event) => event.t === 'cleared', { from: at }), { t: 'cleared', ch: 'ideas' });
+  assert.deepEqual((await quiet(legacy, legacyFrom)).filter((event) => event.t === 'cleared'), []);
+  const rest = await connect('192.0.2.6', current);
+  assert.deepEqual([...new Set((await rest.wait(welcome)).messages.map((m) => m.ch))], ['find-a-game', 'general']);
+  pass('one channel can be cleared on its own, and old tabs only hear about #general');
 
   console.log(checks.join('\n'));
 } finally {

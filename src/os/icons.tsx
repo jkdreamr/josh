@@ -18,6 +18,7 @@ export type IconKind =
   | 'finder'
   | 'chrome'
   | 'messages'
+  | 'lounge'
   | 'notes'
   | 'soundcloud'
   | 'spotify'
@@ -138,6 +139,16 @@ export function Glyph({ kind }: { kind: IconKind }): ReactNode {
           <path d="M24 7C13.5 7 5 14.2 5 23c0 5 2.7 9.4 7 12.4-.4 2.6-1.7 4.8-3.6 6.6 4 0 7.5-1.5 10-3.6 1.8.4 3.6.6 5.6.6 10.5 0 19-7.2 19-16S34.5 7 24 7z" fill="#fff" />
         </svg>
       );
+    case 'lounge':
+      return (
+        <svg viewBox="0 0 48 48" width="76%" height="76%" aria-hidden="true">
+          <path d="M28 6H11a7 7 0 0 0-7 7v8.5a7 7 0 0 0 7 7h.8V35l7-6.5H28a7 7 0 0 0 7-7V13a7 7 0 0 0-7-7z" fill="#fff" opacity=".5" />
+          <path d="M21 17h16a7 7 0 0 1 7 7v8a7 7 0 0 1-7 7h-.4v6.5l-7.2-6.5H21a7 7 0 0 1-7-7v-8a7 7 0 0 1 7-7z" fill="#fff" />
+          <circle cx="23" cy="28" r="2.1" fill="#c04fbf" />
+          <circle cx="29" cy="28" r="2.1" fill="#c04fbf" />
+          <circle cx="35" cy="28" r="2.1" fill="#c04fbf" />
+        </svg>
+      );
     case 'mail':
       return (
         <svg viewBox="0 0 48 48" width="68%" height="68%" aria-hidden="true">
@@ -244,6 +255,7 @@ const tiles: Partial<Record<IconKind, CSSProperties>> = {
   finder: tile('#fff'),
   chrome: tile('linear-gradient(180deg,#ffffff,#e9edf3)'),
   messages: tile('linear-gradient(180deg,#6af07b,#16c03d)'),
+  lounge: tile('linear-gradient(160deg,#8f7dff 0%,#c04fbf 62%,#f0609e 100%)'),
   notes: tile('#fff'),
   soundcloud: tile('linear-gradient(180deg,#ff8a2b,#ff4d00)'),
   spotify: tile('linear-gradient(180deg,#232323,#060606)'),
