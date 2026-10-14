@@ -149,3 +149,11 @@ export function placeOf(w: World, id: number, buf: number[] = []): number {
 }
 
 export const pctOf = percent;
+
+/** Solo games against this many bots are ranked on the global boards, one board per bot level: everyone there faces the same field. */
+export const RANKED_BOTS = 8;
+
+/** The leaderboard a finished round counts for (its bot level), or null when it is not a ranked solo game. */
+export function rankedBoard(mode: string, bots: number, level: string): string | null {
+  return mode === 'solo' && bots === RANKED_BOTS ? level : null;
+}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as
 import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type Cam, type HeadPose, type View } from './scene';
-import { createMatch } from './match';
+import { RANKED_BOTS, createMatch, rankedBoard } from './match';
 import { localCtl, type Ctl, type Net } from './ctl';
 import { SKINS, colorOf, freshLocker, loadBests, loadLocker, record, saveLocker, shade, skinOf, submitBest, subscribeLocker, type Locker, type Skin } from './skins';
 import { HowToPlay, SkinIcon, SkinSheet, createMiniMap, paintMiniMap, type MiniMap } from './hud';
@@ -30,6 +30,17 @@ const botOptions = [
   ['8', '8'],
   ['12', '12'],
 ] as const;
+/** Solo: the standard field is the ranked one, and says so. */
+const soloBotOptions = botOptions.map(([v, label]) =>
+  Number(v) === RANKED_BOTS
+    ? ([
+        v,
+        <>
+          {label} <em className="g-paperio-ranked">ranked</em>
+        </>,
+      ] as const)
+    : ([v, label] as const),
+);
 const lengthOptions = [
   ['2', '2 min'],
   ['3', '3 min'],
@@ -64,14 +75,20 @@ function Setup() {
   const [bests, setBests] = useState<Record<string, number>>({});
   useEffect(() => setBests(loadBests()), []);
   const best = bests[level];
+  const solo = mode === 'solo';
   return (
     <>
       <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
-      <Segmented label="Bots" value={bots} options={botOptions} onChange={setBots} />
+      <Segmented label="Bots" value={bots} options={solo ? soloBotOptions : botOptions} onChange={setBots} />
       <Segmented label="Bots Play" value={level} options={levelOptions} onChange={setLevel} />
       {mode === '2p' && <Segmented label="Round" value={length} options={lengthOptions} onChange={setLength} />}
       <Extras />
-      {mode === 'solo' && best !== undefined && <small className="g-paperio-best">best on {level}: {fmtPct(best)}</small>}
+      {solo && (
+        <small className="g-paperio-best">
+          {best !== undefined && <>best on {level}: {fmtPct(best)} · </>}
+          {rankedBoard(mode, Number(bots), level) ? `ranked on the ${level} board` : `${RANKED_BOTS} bots is the ranked game`}
+        </small>
+      )}
     </>
   );
 }
@@ -312,6 +329,8 @@ function Play({ mode }: { mode: Mode }) {
   });
   const live = mode !== 'idle';
   const twoUp = mode === '2p';
+  // what this round was set up with (the settings can change on the Pause card)
+  const setup = useRef({ bots: Number(bots), level: levelName });
 
   // the world view
   useEffect(() => {
@@ -631,13 +650,17 @@ function Play({ mode }: { mode: Mode }) {
     const p = c.w.players[c.locals[0]];
     const fresh = checkUnlocks(c, true);
     const peak = round2(p.peak);
-    const level = levelName;
-    submitBest(level, peak);
+    const { level, bots: field } = setup.current;
+    // one best per bot level on this device, and a global board for the standard field (never one best for all)
+    const isNew = submitBest(level, peak);
+    const variant = rankedBoard(mode, field, level);
     const alive = Math.max(0, (p.diedAt >= 0 ? p.diedAt : c.w.time) - p.bornAt);
     const title = s.won ? 'You Own The Farm' : s.deathCause === 'self' ? 'Caught Your Own Trail' : s.deathCause === 'head' ? 'Head On' : s.deathCause === 'wiped' ? 'Wiped Out' : s.deathBy ? `${s.deathBy} Got You` : 'Crashed';
     const bits = [`${p.kills} ${p.kills === 1 ? 'cut' : 'cuts'}`, `${clockText(alive)} alive`, s.bestRank < 99 ? `best rank #${s.bestRank}` : ''].filter(Boolean).join(' · ');
     const unl = fresh.length ? ` New skin: ${fresh.map((f) => f.name).join(', ')}.` : '';
-    shellRef.current.gameOver(peak > 0 ? peak : undefined, { title, detail: `${bits}.${unl}` });
+    const ranked = variant ? `Ranked on the ${level} board.` : `Not ranked: ${RANKED_BOTS} bots is the ranked game.`;
+    const detail = `${fmtPct(peak)} of the farm at your peak${isNew ? `, a new best on ${level}` : ''}. ${bits}. ${ranked}${unl}`;
+    shellRef.current.gameOver(undefined, variant ? { title, detail, board: variant, rank: peak } : { title, detail });
   }
 
   function endMatch(c: Ctl) {

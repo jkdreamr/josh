@@ -659,6 +659,23 @@
   margin-top: 2px;
   opacity: 0.75;
 }
+.g-paperio .g-paperio-ranked {
+  margin-left: 3px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+  color: #6e4b00;
+  background: #ffe7a8;
+}
+.g-paperio .arcade-seg > button[aria-pressed='true'] .g-paperio-ranked {
+  color: var(--g-paperio-cardinal);
+  background: #fff;
+}
 
 /* sheets */
 .g-paperio .g-paperio-sheet {

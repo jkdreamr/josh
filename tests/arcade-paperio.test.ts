@@ -28,7 +28,10 @@ import {
   type World,
 } from '../src/os/arcade/games/paperio/world.ts';
 import { botNames, makeMind, personas, wayHome, type Mind } from '../src/os/arcade/games/paperio/bots.ts';
-import { assignColors, createMatch, finish, matchTick, standings } from '../src/os/arcade/games/paperio/match.ts';
+import { RANKED_BOTS, assignColors, createMatch, finish, matchTick, rankedBoard, standings } from '../src/os/arcade/games/paperio/match.ts';
+import { meta } from '../src/os/arcade/games/paperio/meta.ts';
+import { boardFor, plausible } from '../src/os/arcade/kit/leaderboard-core.ts';
+import { readFileSync } from 'node:fs';
 import { SKINS, earned, freshLocker, parseLocker, record } from '../src/os/arcade/games/paperio/skins.ts';
 
 /** A small arena with players already placed. */
@@ -541,6 +544,27 @@ test('a timed match ends at the buzzer with the biggest human on top', () => {
   const colors = assignColors([0, 0], 5, () => 0.5);
   assert.notEqual(colors.humans[0], colors.humans[1], 'two humans never share a color');
   assert.equal(new Set([...colors.humans, ...colors.bots]).size, 7);
+});
+
+test('only solo games against the standard field of bots are ranked, one board per bot level', () => {
+  for (const level of ['easy', 'normal', 'hard']) {
+    assert.equal(rankedBoard('solo', RANKED_BOTS, level), level);
+    assert.equal(boardFor(meta, level)?.id, `paperio-${level}`);
+  }
+  for (const bots of [4, 12]) assert.equal(rankedBoard('solo', bots, 'normal'), null, `${bots} bots is practice`);
+  for (const mode of ['2p', 'online', 'idle']) assert.equal(rankedBoard(mode, RANKED_BOTS, 'normal'), null, `${mode} is not ranked`);
+  assert.deepEqual(Object.keys(meta.leaderboard?.variants ?? {}), ['easy', 'normal', 'hard'], 'one board per bot level');
+  // the standard field is what a new player gets, and it is one of the choices
+  const src = readFileSync(new URL('../src/os/arcade/games/paperio/index.tsx', import.meta.url), 'utf8');
+  const setting = /defineSetting\('paperio:bots', \[([^\]]*)\] as const, '(\d+)'\)/.exec(src);
+  assert.ok(setting, 'the bots setting');
+  assert.equal(Number(setting[2]), RANKED_BOTS);
+  assert.ok(setting[1].includes(`'${RANKED_BOTS}'`));
+  // any life fits the board: the starting patch is the least you can hold, the whole map the most
+  const m = createMatch({ seed: 4, humans: [{ name: 'you', skin: 0, kind: 'local', seat: -1 }], bots: RANKED_BOTS, level: 1, respawn: false, duration: Infinity });
+  const spec = boardFor(meta, 'normal')!.spec;
+  assert.ok(plausible(Math.round(m.w.players[0].peak * 100) / 100, spec));
+  assert.ok(plausible(100, spec) && !plausible(100.01, spec) && !plausible(0, spec));
 });
 
 test('skins unlock at their milestones and a broken save is safe', () => {
