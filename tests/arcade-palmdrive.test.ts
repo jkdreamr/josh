@@ -24,6 +24,7 @@ import {
   isCc,
   lapOf,
   ordinal,
+  pacer,
   pressGas,
   rankKarts,
   rollItem,
@@ -496,6 +497,27 @@ test('the solo grid puts you at the back of seven rivals and the autopilot bring
   r.karts[r.me].auto = true;
   run(r, 300, 1 / 30);
   assert.ok(r.karts[r.me].done !== null);
+});
+
+test('CPU drivers keep pace with the leading person, solo or online with bots in the field', () => {
+  const solo = soloRace('100cc', 4);
+  assert.equal(pacer(solo), solo.karts[solo.me], 'solo, that is you');
+
+  // Online, a bot is a CPU driver on the host, next to its own kart and a guest's.
+  const r = createRace({ cc: '100cc', seed: 3, countdown: 0, racers: [{ ...you('host'), seat: 0 }, { name: 'guest', color: '#1e88e5', kind: 'remote', seat: 1 }, { ...RIVALS[0], seat: 2 }] });
+  const [host, guest, bot] = r.karts;
+  assert.ok(bot.ai && !host.ai && !guest.ai, 'only the bot has a CPU driver');
+  assert.deepEqual(r.karts.map((k) => k.seat), [0, 1, 2]);
+  host.prog = 100;
+  guest.prog = 400;
+  bot.prog = 200;
+  assert.equal(pacer(r), guest, 'whoever leads among people, on any screen');
+  step(r, 1 / 60);
+  assert.ok(bot.ai!.band > 1, 'a bot behind the leader pushes');
+  guest.prog = 40;
+  step(r, 1 / 60);
+  assert.equal(pacer(r), host);
+  assert.ok(bot.ai!.band < 1, 'a bot well ahead of every person eases off');
 });
 
 test('online packets round trip, and junk or other games’ packets are ignored', () => {

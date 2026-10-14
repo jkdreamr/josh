@@ -1,85 +1,8 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
-import { BoardList, BoardScopeNote } from './kit/board';
-import { appGames } from './apps';
+import { useState, type KeyboardEvent } from 'react';
 import { ArcadeChat } from './Chat';
-import { ARCADE_API, boardsOf, formatBoardScore, getBoard, type Board, type BoardEntry, type BoardInfo } from './kit/leaderboard';
+import { Leaderboards, leaderboardCards as boardChoices } from './Leaderboards';
 import { categories, metas } from './manifest';
 import type { GameMeta } from './types';
-
-const owners = [...metas, ...appGames];
-type BoardChoice = { key: string; title: string; id: string } & ({ kind: 'score'; info: BoardInfo } | { kind: 'wins' });
-const boardChoices: BoardChoice[] = [
-  ...owners.flatMap((game) => boardsOf(game)).map((info): BoardChoice => ({ key: `score:${info.id}`, title: info.title, id: info.id, kind: 'score', info })),
-  ...owners.filter((game) => game.online).map((game): BoardChoice => ({ key: `wins:${game.id}`, title: `${game.title} Online Wins`, id: game.id, kind: 'wins' })),
-].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'score' ? -1 : 1) || a.title.localeCompare(b.title));
-const WINS_UNAVAILABLE = 'Online wins are unavailable right now.';
-
-async function getWins(game: string): Promise<Board> {
-  if (!ARCADE_API) return { entries: [], scope: 'global', error: WINS_UNAVAILABLE };
-  try {
-    const response = await fetch(`${ARCADE_API}/wins?game=${encodeURIComponent(game)}`);
-    if (!response.ok) throw new Error('unavailable');
-    const body = (await response.json()) as { entries?: unknown };
-    if (!Array.isArray(body.entries)) throw new Error('invalid response');
-    const entries = body.entries.filter((entry): entry is BoardEntry =>
-      !!entry && typeof entry === 'object' &&
-      typeof (entry as BoardEntry).name === 'string' &&
-      Number.isFinite((entry as BoardEntry).score) &&
-      typeof (entry as BoardEntry).date === 'string',
-    );
-    return { entries, scope: 'global' };
-  } catch {
-    return { entries: [], scope: 'global', error: WINS_UNAVAILABLE };
-  }
-}
-
-function Leaderboards() {
-  const [id, setId] = useState(boardChoices[0]?.key ?? '');
-  const [board, setBoard] = useState<Board | null>(null);
-  const choice = boardChoices.find((item) => item.key === id);
-  useEffect(() => {
-    setBoard(null);
-    if (!choice) return;
-    let live = true;
-    const request = choice.kind === 'wins'
-      ? getWins(choice.id)
-      : getBoard(choice.id, choice.info.spec);
-    request.then((b) => live && setBoard(b));
-    return () => {
-      live = false;
-    };
-  }, [choice]);
-  if (!choice) return null;
-  return (
-    <section className="arcade-boards" aria-label="Leaderboards">
-      <div className="arcade-boards-bar">
-        <select aria-label="Game" value={id} onChange={(e) => setId(e.target.value)}>
-          {(['score', 'wins'] as const).map((kind) => (
-            <optgroup key={kind} label={kind === 'score' ? 'Top Scores' : 'Online Wins'}>
-              {boardChoices.filter((item) => item.kind === kind).map((item) => (
-                <option key={item.key} value={item.key}>
-                  {item.title}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-      </div>
-      {choice.kind === 'wins' && board?.error ? (
-        <p className="arcade-lb-empty">{WINS_UNAVAILABLE}</p>
-      ) : (
-        <>
-          <BoardScopeNote board={board} />
-          {choice.kind === 'wins' && <div className="arcade-board-measure">Wins</div>}
-          {choice.kind === 'score' && choice.info.spec.measure && <div className="arcade-board-measure">{choice.info.spec.measure}</div>}
-          {choice.kind === 'wins' && board && !board.entries.length
-            ? <p className="arcade-lb-empty">No Wins Yet</p>
-            : <BoardList board={board} fmt={(n) => choice.kind === 'wins' ? Math.floor(n).toLocaleString('en-US') : formatBoardScore(n, choice.info.spec)} />}
-        </>
-      )}
-    </section>
-  );
-}
 
 /** Arrow keys move between tiles, using layout positions so it works at any column count. */
 function onGridKey(e: KeyboardEvent<HTMLDivElement>) {

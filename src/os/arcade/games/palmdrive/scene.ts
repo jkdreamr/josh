@@ -2,8 +2,8 @@
 // scenery is in scenery.ts). It reads a Race every frame and never changes it.
 import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
-import { CURB, gridSpot, headingOf, locate, pointAt, type Track } from './track';
-import { LOOKS, SCENERY, canvas, cowMaterials, makeCow, noise, scatter, texture } from './scenery';
+import { BUS_LEN, CURB, gridSpot, headingOf, locate, pointAt, wrapAngle, type Track } from './track';
+import { LOOKS, SCENERY, bikeKit, canvas, cowMaterials, makeBike, makeBus, makeCow, makePlanter, noise, scatter, texture } from './scenery';
 import { COUNTDOWN, RAMP_H, RAMP_LEN, TURBO_AT, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
 
 type Three = typeof import('three');
@@ -356,6 +356,21 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     canvas(256, 256, (g) => {
       g.fillStyle = look.road;
       g.fillRect(0, 0, 256, 256);
+      if (look.joints) {
+        // paving stones in courses across the road, each course set half a stone over from the last
+        const rows = 10;
+        for (let row = 0; row < rows; row++) {
+          const y = (row * 256) / rows;
+          for (let col = -1; col < 8; col++) {
+            const x = col * 32 + (row % 2) * 16;
+            g.fillStyle = `rgba(${row % 3 ? '255,255,255' : '0,0,0'},${0.03 + ((row * 7 + col * 3) % 5) * 0.012})`;
+            g.fillRect(x, y, 32, 256 / rows);
+            g.fillStyle = look.joints;
+            g.fillRect(x, y, 2, 256 / rows);
+          }
+          g.fillRect(0, y, 256, 2);
+        }
+      }
       noise(g, 256, 256, 2200, 0.07);
       noise(g, 256, 256, 1200, 0.12, false);
       g.fillStyle = 'rgba(255,255,255,0.08)';
@@ -377,7 +392,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   );
   curbTex.wrapT = THREE.RepeatWrapping;
   const curbLen = t.length / Math.round(t.length / 3);
-  const curbMat = new THREE.MeshLambertMaterial({ map: curbTex });
+  // after dark the curbs glow a little, so the edge of the road always reads
+  const curbMat = new THREE.MeshLambertMaterial({ map: curbTex, ...(look.night ? { emissive: 0xffffff, emissiveMap: curbTex, emissiveIntensity: 0.35 } : {}) });
   scene.add(new THREE.Mesh(ribbon(THREE, t, t.half, t.half + CURB, 0.07, curbLen), curbMat));
   scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half - CURB, -t.half, 0.07, curbLen), curbMat));
   // sandstone walls with a cardinal red band, so the edge of the course always reads
@@ -396,7 +412,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   );
   wallTex.wrapS = THREE.RepeatWrapping;
   const wallMat = new THREE.MeshLambertMaterial({ map: wallTex, side: THREE.DoubleSide });
-  const capMat = new THREE.MeshLambertMaterial({ color: look.band });
+  const capMat = look.night ? new THREE.MeshBasicMaterial({ color: look.band }) : new THREE.MeshLambertMaterial({ color: look.band });
   for (const side of [-1, 1]) {
     scene.add(new THREE.Mesh(fence(THREE, t, side * t.edge, 1.25, 3), wallMat));
     scene.add(new THREE.Mesh(ribbon(THREE, t, side * t.edge - 0.3, side * t.edge + 0.3, 1.25, 4), capMat));
@@ -455,7 +471,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         g.fillText(look.banner, 256, 33);
       }),
     );
-    const beam = new THREE.Mesh(geo.box, [post, post, post, post, new THREE.MeshLambertMaterial({ map: banner }), new THREE.MeshLambertMaterial({ map: banner })]);
+    const face = look.night ? new THREE.MeshBasicMaterial({ map: banner }) : new THREE.MeshLambertMaterial({ map: banner });
+    const beam = new THREE.Mesh(geo.box, [post, post, post, post, face, face]);
     beam.scale.set(t.edge * 2 + 1.8, 1.6, 0.5);
     beam.position.y = 6.6;
     gantry.add(beam);
@@ -546,7 +563,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       g.fill();
     }),
   );
-  const chevronMat = new THREE.MeshLambertMaterial({ map: chevron, side: THREE.DoubleSide });
+  // reflective, so they still show up at night
+  const chevronMat = look.night ? new THREE.MeshBasicMaterial({ map: chevron, side: THREE.DoubleSide }) : new THREE.MeshLambertMaterial({ map: chevron, side: THREE.DoubleSide });
   for (let s = 0; s < t.length; s += 9) {
     const c = t.curv[Math.floor(s / t.step) % t.n];
     if (Math.abs(c) < 0.03) continue;
@@ -566,7 +584,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const dummy = new THREE.Object3D();
   SCENERY[r.course]({ THREE, scene, t, r, geo, mats, rand, clear, dummy });
 
-  // what the course leaves on the road: mud and oil lie flat, hay bales and boulders stand in the way and cows wander across
+  // what the course leaves on the road: mud and oil lie flat, bales, boulders and planters stand in the way, cows
+  // and cyclists cross it and buses drive their rounds
   const puddle = (inner: string, rim: string, sheen: boolean) =>
     texture(
       THREE,
@@ -610,7 +629,9 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       }),
     );
   const mudMat = new THREE.MeshLambertMaterial({ map: puddle('rgba(46,28,14,1)', 'rgba(70,44,22,0.95)', false), transparent: true, depthWrite: false });
-  const oilMat = new THREE.MeshLambertMaterial({ map: puddle('rgba(12,12,18,0.97)', 'rgba(30,30,40,0.85)', true), transparent: true, depthWrite: false });
+  const oilTex = puddle('rgba(12,12,18,0.97)', 'rgba(30,30,40,0.85)', true);
+  // after dark its rainbow sheen shines, so a slick still stands out on the road
+  const oilMat = new THREE.MeshLambertMaterial({ map: oilTex, transparent: true, depthWrite: false, ...(look.night ? { emissive: 0xffffff, emissiveMap: oilTex, emissiveIntensity: 0.9 } : {}) });
   const strawTex = texture(
     THREE,
     canvas(64, 64, (g) => {
@@ -634,6 +655,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const rockMat = new THREE.MeshLambertMaterial({ color: 0x8d8780, flatShading: true });
   type CowView = { g: T.Group; legs: T.Mesh[]; head: T.Group; h: number };
   const cows: { view: CowView; i: number }[] = [];
+  let kit: ReturnType<typeof bikeKit> | null = null;
+  type BikeView = { g: T.Group; wheels: T.Group[]; pedal: (a: number) => void; h: number; crank: number };
+  const bikes: { view: BikeView; i: number }[] = [];
+  const buses: { g: T.Group; wheels: T.Mesh[]; i: number }[] = [];
   r.hazards.forEach((h, i) => {
     if (h.kind === 'mud' || h.kind === 'oil') {
       const m = new THREE.Mesh(geo.plane, h.kind === 'mud' ? mudMat : oilMat);
@@ -657,11 +682,33 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       rock.rotation.set(rand() * 0.6, rand() * Math.PI * 2, rand() * 0.4);
       rock.position.set(h.x, h.r * 0.55, h.z);
       scene.add(rock);
+    } else if (h.kind === 'planter') {
+      const planter = makePlanter(THREE, geo, h.r, rand);
+      planter.position.set(h.x, 0, h.z);
+      planter.rotation.y = rand() * Math.PI * 2;
+      scene.add(planter);
+    } else if (h.kind === 'bike') {
+      // a cyclist on the way to class, a little bigger than life so it reads at speed
+      kit ??= bikeKit(THREE);
+      const { g, wheels, pedal } = makeBike(THREE, geo, kit, rand);
+      const at = pointAt(t, h.along, h.at);
+      const face = headingOf(-at.tz * h.walk, at.tx * h.walk);
+      g.scale.setScalar(1.15);
+      g.position.set(h.x, 0, h.z);
+      g.rotation.set(0, face, 0, 'YXZ');
+      scene.add(g);
+      bikes.push({ view: { g, wheels, pedal, h: face, crank: 0 }, i });
+    } else if (h.kind === 'bus') {
+      const bus = makeBus(THREE, geo, BUS_LEN, h.r);
+      bus.g.position.set(h.x, 0, h.z);
+      bus.g.rotation.y = headingOf(h.tx, h.tz);
+      scene.add(bus.g);
+      buses.push({ ...bus, i });
     } else {
       const { g, legs, head } = makeCow(THREE, geo, cowMats);
       g.position.set(h.x, 0, h.z);
       scene.add(g);
-      const at = pointAt(t, h.s, h.at);
+      const at = pointAt(t, h.along, h.at);
       cows.push({ view: { g, legs, head, h: headingOf(-at.tz * h.walk, at.tx * h.walk) }, i });
     }
   });
@@ -865,7 +912,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       for (const { view: cv, i } of cows) {
         const h = race.hazards[i];
         if (!h) continue;
-        const at = pointAt(race.track, h.s, h.at);
+        const at = pointAt(race.track, h.along, h.at);
         const face = headingOf(-at.tz * h.walk, at.tx * h.walk);
         cv.h = dampAngle(cv.h, face, 3, dt);
         cv.g.position.set(h.x, 0, h.z);
@@ -873,6 +920,31 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         const pace = Math.abs(Math.cos(race.time * (h.speed ?? 0.5) + (h.phase ?? 0)));
         cv.legs.forEach((leg, n) => (leg.rotation.x = Math.sin(clock * 7 + (n % 3 ? 0 : Math.PI)) * 0.45 * pace));
         cv.head.rotation.x = 0.15 + Math.sin(clock * 1.3 + i) * 0.12;
+      }
+      // cyclists pedal across, leaning round as they turn back at the far side
+      for (const { view: bv, i } of bikes) {
+        const h = race.hazards[i];
+        if (!h) continue;
+        const at = pointAt(race.track, h.along, h.at);
+        const face = headingOf(-at.tz * h.walk, at.tx * h.walk);
+        const was = bv.h;
+        bv.h = dampAngle(bv.h, face, 5, dt);
+        const turn = dt > 0 ? wrapAngle(bv.h - was) / dt : 0;
+        bv.g.position.set(h.x, 0, h.z);
+        bv.g.rotation.set(0, bv.h, Math.max(-0.4, Math.min(0.4, -turn * 0.12)));
+        const pace = Math.abs(Math.cos(race.time * (h.speed ?? 0.5) + (h.phase ?? 0)));
+        bv.crank += dt * (2 + 9 * pace);
+        bv.pedal(bv.crank);
+        for (const w of bv.wheels) w.rotation.x = bv.crank * 2.4;
+      }
+      // buses drive on round the lap, facing the way the road runs
+      for (const b of buses) {
+        const h = race.hazards[b.i];
+        if (!h) continue;
+        b.g.position.set(h.x, 0, h.z);
+        b.g.rotation.y = headingOf(h.tx, h.tz);
+        const roll = ((h.drive ?? 0) * Math.max(0, race.time)) / 0.52;
+        for (const w of b.wheels) w.rotation.x = roll;
       }
       // item boxes and coins
       race.boxes.forEach((b, i) => {

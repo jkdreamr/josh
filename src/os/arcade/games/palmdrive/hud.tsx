@@ -449,7 +449,16 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Mud</b> slows you down like the grass. A boost or a jump gets you through.
           </li>
           <li>
-            <b>Hay bales, boulders and cows</b> are solid. Bump a cow and it spins you out. Shells break on them.
+            <b>Hay bales, boulders, planters and cows</b> are solid. Bump a cow and it spins you out. Shells break on them.
+          </li>
+          <li>
+            <b>Cyclists</b> ride across the road and back. Hit one and you spin out, so time your way past.
+          </li>
+          <li>
+            <b>Oil slicks</b> spin you out. Steer round them: they sit right on the best line.
+          </li>
+          <li>
+            <b>The Marguerite buses</b> drive their rounds slower than you, each in its own lane. Pass on the free side: run into one and you spin out. Shells break on them too.
           </li>
           <li>A star, a Mega Mushroom or a Bullet ploughs straight through all of it.</li>
         </ul>

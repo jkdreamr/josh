@@ -2,8 +2,8 @@
 // three.js; the scene builds each course's scenery (scene.ts) and the logic races on its track (logic.ts).
 import { EDGE, HAZARD_R, ROAD_HALF, ROUTE, START, buildTrack, layout as palmLayout, wrapS, type HazardKind, type Layout, type Track } from './track.ts';
 
-export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium';
-export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium'];
+export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium' | 'quad' | 'hoover';
+export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium', 'quad', 'hoover'];
 export const isCourse = (v: unknown): v is CourseId => COURSE_IDS.includes(v as CourseId);
 
 /** How hard a course is, for the picker: narrower roads, tighter bends and more in the way as it goes up. */
@@ -40,6 +40,8 @@ function placed(
     ramps: [number, number, number][];
     /** [kind, s, d, size], and for cows how far they wander, how fast and when they set off. */
     hazards?: [HazardKind, number, number, number?, number?, number?, number?][];
+    /** Buses: [where it waits for the green light, its lane d, meters a second]. */
+    buses?: [number, number, number][];
   },
 ): Layout {
   // a narrow road packs its row of boxes a little closer together
@@ -49,7 +51,10 @@ function placed(
     coins: spec.coins.flatMap(([s, d, count]) => Array.from({ length: count }, (_, k) => ({ s: wrapS(t, s + k * 3.2), d }))),
     dashes: spec.dashes.map(([s, d]) => ({ s: wrapS(t, s), d })),
     ramps: spec.ramps.map(([s, d, w]) => ({ s: wrapS(t, s), d, w })),
-    hazards: (spec.hazards ?? []).map(([kind, s, d, r, swing, speed, phase]) => ({ kind, s: wrapS(t, s), d, r: r ?? HAZARD_R[kind], swing, speed, phase })),
+    hazards: [
+      ...(spec.hazards ?? []).map(([kind, s, d, r, swing, speed, phase]) => ({ kind, s: wrapS(t, s), d, r: r ?? HAZARD_R[kind], swing, speed, phase })),
+      ...(spec.buses ?? []).map(([s, d, drive]) => ({ kind: 'bus' as const, s: wrapS(t, s), d, r: HAZARD_R.bus, drive })),
+    ],
   };
 }
 
@@ -108,6 +113,72 @@ const STADIUM: [number, number][] = [
   [40, 62], [-30, 64], [-80, 86], [-104, 140],
   // round the plaza and back in
   [-119, 186], [-145, 201], [-175, 198], [-199, 179], [-208, 150], [-208, 90], [-204, 10], [-176, -46],
+];
+
+/**
+ * Straight legs joined by round corners: each corner [east, north] becomes an arc of radius r tangent to both legs,
+ * so a course can turn square corners that still drive smoothly.
+ */
+function squared(corners: [number, number][], r: number): [number, number][] {
+  const out: [number, number][] = [];
+  const n = corners.length;
+  for (let i = 0; i < n; i++) {
+    const [x, y] = corners[i];
+    const [px, py] = corners[(i - 1 + n) % n];
+    const [qx, qy] = corners[(i + 1) % n];
+    const la = Math.hypot(x - px, y - py);
+    const lb = Math.hypot(qx - x, qy - y);
+    const [ax, ay, bx, by] = [(x - px) / la, (y - py) / la, (qx - x) / lb, (qy - y) / lb];
+    // how far it turns (positive to the left), how far back from the corner the arc meets the leg in, and its middle
+    const turn = Math.atan2(ax * by - ay * bx, ax * bx + ay * by);
+    const back = r * Math.tan(Math.abs(turn) / 2);
+    const side = Math.sign(turn);
+    const cx = x - ax * back - ay * r * side;
+    const cy = y - ay * back + ax * r * side;
+    const from = Math.atan2(y - ay * back - cy, x - ax * back - cx);
+    // a point every 15 degrees keeps the spline on the arc
+    const steps = Math.max(1, Math.round(Math.abs(turn) / (Math.PI / 12)));
+    for (let k = 0; k <= steps; k++) out.push([cx + Math.cos(from + (turn * k) / steps) * r, cy + Math.sin(from + (turn * k) / steps) * r]);
+  }
+  return out;
+}
+
+/**
+ * The Main Quad: paths round the outside of the quad and in through the arcades, all square corners and short
+ * straights. Along the front of Memorial Court, up the east side and in round the inner quad, out again and up to
+ * the church, a chicane in front of its mosaic, then down the west side with another dog-leg through the arcades.
+ */
+const QUAD_K = 1.25;
+const QUAD: [number, number][] = [
+  // Memorial Court, and the dog-leg in round the east side of the inner quad
+  [-95, -100], [60, -100], [60, -40], [0, -40], [0, 20], [80, 20],
+  // up the east side to the head of the quad, and the chicane in front of the church
+  [80, 100], [44, 100], [26, 85], [-4, 85], [-22, 100],
+  // down the west side, with a dog-leg in through the arcades
+  [-95, 100], [-95, 40], [-40, 40], [-40, -20], [-95, -20],
+];
+
+/**
+ * Hoover Nights: campus after dark. A fast run east toward Hoover Tower into a pair of hairpins, a sweeper north, a
+ * hairpin round the fountain, esses across the quad and a quick run home down the west side. The points are close
+ * together so the hairpins keep an even radius.
+ */
+const HOOVER: [number, number][] = [
+  // the start straight, and the first hairpin round the east end
+  [-120, -150], [-101, -150], [-81, -150], [72, -150], [92, -150], [112, -150], [129, -151],
+  [149, -144], [162, -126], [162, -105], [150, -89], [130, -82], [110, -82],
+  // back west and round the second hairpin
+  [70, -82], [51, -82], [30, -74], [19, -59], [19, -36], [29, -21], [49, -13], [70, -14],
+  // the sweeper north to the tower
+  [110, -14], [129, -11], [145, -2], [159, 11], [167, 28], [170, 46], [170, 66],
+  // the hairpin round the fountain, and out to the west
+  [169, 85], [162, 106], [147, 117], [125, 117], [110, 106], [103, 86], [103, 71],
+  [101, 56], [97, 40], [86, 28], [68, 22], [48, 22], [28, 22],
+  // esses across the quad and along the north side
+  [10, 27], [-3, 40], [-15, 61], [-28, 74], [-46, 79], [-89, 78], [-111, 79],
+  // down the west side through the kink, and round onto the straight
+  [-128, 75], [-140, 63], [-144, 47], [-144, 29], [-144, -8], [-144, -26], [-153, -48], [-160, -70],
+  [-160, -90], [-160, -110], [-155, -130], [-140, -145],
 ];
 
 export const COURSES: Record<CourseId, Course> = {
@@ -294,6 +365,112 @@ export const COURSES: Record<CourseId, Course> = {
         ],
       }),
     sky: 'linear-gradient(180deg, #1f5fbf 0%, #5d9be0 25%, #b5d3f0 38%, #e6e2d4 44%, #c9bd8a 46%, #6f9a52 47%)',
+  },
+  quad: {
+    id: 'quad',
+    name: 'Main Quad',
+    blurb: 'Square corners round the sandstone arcades, a chicane at the church, and bikes everywhere. Tight and twisty.',
+    difficulty: 3,
+    route: squared(QUAD, 22).map(([e, n]) => [e * QUAD_K, n * QUAD_K]),
+    start: [-40 * QUAD_K, -100.6 * QUAD_K],
+    half: 6.5,
+    edge: 10,
+    layout: (t) =>
+      placed(t, {
+        boxes: [48, 350, 776],
+        coins: [
+          [14, 3, 5],
+          [107, 2.5, 4],
+          [168, 0, 4],
+          [207, -2.5, 4],
+          [276, -3, 5],
+          [382, 2, 4],
+          [430, -2, 5],
+          [552, 3, 4],
+          [632, -2, 4],
+          [700, 3, 4],
+          [808, -3, 4],
+        ],
+        dashes: [
+          [522, 0],
+          [852, -2],
+        ],
+        // a dash panel straight into a jump after the chicane, and a kicker down the west side
+        ramps: [
+          [540, 0, 8],
+          [803, 3.5, 5],
+        ],
+        hazards: [
+          // round planters with a tree in each, on the inside of the corners
+          ['planter', 118, -3],
+          ['planter', 224, 2.6],
+          ['planter', 457, 2.4],
+          ['planter', 588, -2.6],
+          ['planter', 684, 2.6],
+          // and cyclists riding across, back and forth between classes
+          ['bike', 66, 0, undefined, 5, 1.1, 0],
+          ['bike', 288, 0, undefined, 5, 1.2, 2],
+          ['bike', 366, 0, undefined, 5, 1.1, 4],
+          ['bike', 512, 0, undefined, 5, 1.25, 1],
+          ['bike', 790, 0, undefined, 5, 1.15, 3],
+        ],
+      }),
+    sky: 'linear-gradient(180deg, #2a68c4 0%, #6aa3e3 24%, #bcd6ee 36%, #f1dfbf 42%, #dcc596 46%, #c9b07e 47%)',
+  },
+  hoover: {
+    id: 'hoover',
+    name: 'Hoover Nights',
+    blurb: 'Campus after dark round Hoover Tower: the narrowest road, three hairpins, oil on the apexes and the Marguerite out on its rounds.',
+    difficulty: 4,
+    route: HOOVER,
+    start: [-60, -150],
+    half: 6,
+    edge: 9.5,
+    layout: (t) =>
+      placed(t, {
+        boxes: [60, 262, 410, 815],
+        coins: [
+          [20, -3, 5],
+          [120, 3, 5],
+          [240, 0, 5],
+          [440, -2.5, 5],
+          [636, 0, 4],
+          [690, 3, 5],
+          [755, -2, 4],
+          [866, 2.5, 4],
+          [960, 0, 5],
+          [1005, 2.5, 5],
+          [1075, -3, 5],
+        ],
+        // boosts and jumps keep to the middle of the road, out of the buses' lanes
+        dashes: [
+          [30, 0],
+          [505, 0],
+          [705, 0],
+          [900, 0],
+        ],
+        ramps: [
+          [528, 0, 4],
+          [922, 0, 4],
+        ],
+        hazards: [
+          // oil on the apex of every hairpin and corner, and on the line through the sweeper and the esses
+          ['oil', 188, -3.5],
+          ['oil', 342, 3.5],
+          ['oil', 466, -3.5],
+          ['oil', 585, -3.5],
+          ['oil', 664, 3.4],
+          ['oil', 788, -3.7, 2.1],
+          ['oil', 873, -3.5],
+          ['oil', 1045, -3.5],
+        ],
+        // two Marguerite shuttles half a lap apart, one in each outside lane, so one side is always clear
+        buses: [
+          [430, 3.4, 11],
+          [990, -3.4, 11],
+        ],
+      }),
+    sky: 'linear-gradient(180deg, #03061a 0%, #0a1434 22%, #16264e 36%, #2a3a68 43%, #22325e 46%, #121a2a 47%)',
   },
 };
 
