@@ -1,10 +1,10 @@
-// three.js view of a Scramble match: the island, the eggs, the bus, the storm, loot, walls, bullets and effects.
-// It reads a Match every frame and never changes it. Only classes kit/three-lib.ts exports are used.
+// three.js view of a Scramble match: the island, the eggs, the bus, the storm, loot, walls, bullets, throwables and
+// effects. It reads a Match every frame and never changes it. Only classes kit/three-lib.ts exports are used.
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
-import { BEACH, BUSH_R, BUS_Y, CHEST_HD, CHEST_HW, CRATE_HALF, HALF, WALL_H, busAt } from './map';
-import { CRATE_HP, F_BANDAGE, F_RELOAD, F_SHIELDING, WALL_HALF, WALL_HP, WALL_THICK, concealed, held, type Ev, type Fighter, type LootItem, type Match } from './logic';
-import { RARITY_COLORS, WEAPONS, type LootDef, type WeaponId } from './items';
+import { BARREL_R, BEACH, BUSH_R, BUS_Y, CHEST_HD, CHEST_HW, CRATE_HALF, HALF, SUPPLY_FALL, SUPPLY_HALF, busAt, type Building } from './map';
+import { BARREL, CRATE_HP, F_DRINKING, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, WALL_HALF, WALL_HP, WALL_THICK, concealed, held, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Toss, type Zone } from './logic';
+import { MELEE, RARITY_COLORS, WEAPONS, isMelee, isThrow, isWeapon, type LootDef, type UseId } from './items';
 
 type Three = typeof import('three');
 
@@ -33,16 +33,32 @@ export type View = {
 
 const GROUND_VIEW = 14;
 const DROP_VIEW = 34;
-const BUS_VIEW = 62;
-const OVERVIEW = 95;
+const BUS_VIEW = 54;
+/** The bus is drawn this much bigger than life, so it reads from up high. */
+const BUS_SCALE = 1.35;
+const OVERVIEW = 150;
+/** Loot is drawn while the camera is this close (from higher up it's specks). */
+const LOOT_VIEW = 40;
 const TILT = (58 * Math.PI) / 180;
 const FOV = 42;
+const HALF_FOV = ((FOV / 2) * Math.PI) / 180;
+/**
+ * The ground in frame, per meter the camera stands back: how far it reaches past the point looked at up the screen
+ * (north, which the tilt sees farther) and down it, and how wide it gets along the top edge (times the aspect).
+ */
+const FRAME_N = Math.sin(TILT) / Math.tan(TILT - HALF_FOV) - Math.cos(TILT);
+const FRAME_S = Math.cos(TILT) - Math.sin(TILT) / Math.tan(TILT + HALF_FOV);
+const FRAME_W = (Math.sin(TILT) * Math.tan(HALF_FOV)) / (Math.sin(TILT) - Math.tan(HALF_FOV) * Math.cos(TILT));
 /** three's GreaterDepth constant, by value: three-lib.ts exports classes, not constants. */
 const GREATER_DEPTH = 6 as T.DepthModes;
 
 const AMMO_COLORS = { light: 0xf2c94c, heavy: 0x6fcf97, shells: 0xeb5757, rockets: 0xbb6bd9 } as const;
 const ROOF_COLORS = [0xb5523b, 0x4f6d8f, 0x6f8b4e, 0x8b5e83];
 const WALL_COLORS = [0xf1e6d2, 0xd9c7a8, 0xe8dccb, 0xcfd6dc];
+const CONTAINER_COLORS = [0xc0392b, 0x2e86de, 0x27ae60, 0xe67e22, 0x8e44ad];
+const WAREHOUSE_COLORS = [0x9aa5b1, 0x8d9aa6, 0xa7b0b8, 0x7f8c97];
+/** Glow under a pickup, by how good it is (the rarity colors). */
+const USE_GLOW: Record<UseId, number> = { bandage: 1, medkit: 2, mini: 2, shield: 3, coffee: 4 };
 
 function canvas(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void) {
   const c = document.createElement('canvas');
@@ -93,7 +109,7 @@ function grassTexture(THREE: Three) {
         g.fill();
       }
     }),
-    [26, 26],
+    [42, 42],
   );
 }
 
@@ -109,7 +125,7 @@ function sandTexture(THREE: Three) {
         g.fillRect(rnd() * 128, rnd() * 128, 1.5, 1.5);
       }
     }),
-    [30, 30],
+    [48, 48],
   );
 }
 
@@ -152,6 +168,31 @@ function crateTexture(THREE: Three) {
       g.stroke();
       g.fillStyle = 'rgba(255,255,255,0.12)';
       for (let y = 18; y < 120; y += 22) g.fillRect(12, y, 104, 2);
+    }),
+  );
+}
+
+function supplyTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(128, 128, (g) => {
+      g.fillStyle = '#2f7de1';
+      g.fillRect(0, 0, 128, 128);
+      g.fillStyle = '#ffd23d';
+      g.fillRect(0, 0, 128, 12);
+      g.fillRect(0, 116, 128, 12);
+      g.fillRect(0, 0, 12, 128);
+      g.fillRect(116, 0, 12, 128);
+      g.fillStyle = '#ffffff';
+      g.beginPath();
+      g.moveTo(64, 30);
+      g.lineTo(96, 84);
+      g.lineTo(32, 84);
+      g.closePath();
+      g.fill();
+      g.fillStyle = '#2f7de1';
+      g.fillRect(60, 46, 8, 22);
+      g.fillRect(60, 72, 8, 7);
     }),
   );
 }
@@ -221,12 +262,13 @@ type EggView = {
   body: T.Group;
   skin: T.MeshLambertMaterial;
   hand: T.Group;
-  guns: Map<WeaponId | 'spatula', { group: T.Group; stripe: T.Mesh | null }>;
+  guns: Map<Held, { group: T.Group; stripe: T.Mesh | null }>;
   shadow: T.Mesh;
   glider: T.Group;
   heal: T.Group;
   ring: T.Mesh;
   ghost: T.Mesh;
+  backPan: T.Group;
   walk: number;
   swing: number;
   recoil: number;
@@ -243,7 +285,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const water = 0x3aa6d4;
   scene.background = new THREE.Color(water);
   scene.fog = new THREE.Fog(water, 160, 520);
-  const camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 900);
+  const camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 1200);
   scene.add(new THREE.HemisphereLight(0xfff6e4, 0x5f7f45, 1.1));
   const sun = new THREE.DirectionalLight(0xfff0d6, 1.35);
   sun.position.set(-40, 90, 30);
@@ -267,8 +309,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     mats.push(x);
     return x;
   };
+  const instanced: T.InstancedMesh[] = [];
   const lambert = (color: number, extra: Partial<T.MeshLambertMaterialParameters> = {}) => mat(new THREE.MeshLambertMaterial({ color, ...extra }));
   const basic = (color: number, extra: Partial<T.MeshBasicMaterialParameters> = {}) => mat(new THREE.MeshBasicMaterial({ color, ...extra }));
+  const many = (g: T.BufferGeometry, material: T.Material, count: number) => {
+    const im = new THREE.InstancedMesh(g, material, Math.max(1, count));
+    if (count === 0) im.visible = false;
+    instanced.push(im);
+    return im;
+  };
 
   const G = {
     box: geo(new THREE.BoxGeometry(1, 1, 1)),
@@ -277,10 +326,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     rock: geo(new THREE.SphereGeometry(1, 6, 4)),
     cyl: geo(new THREE.CylinderGeometry(1, 1, 1, 12)),
     cone: geo(new THREE.ConeGeometry(1, 1, 12, 1, true)),
+    pine: geo(new THREE.ConeGeometry(1, 1, 8)),
+    stalk: geo(new THREE.ConeGeometry(0.15, 2.3, 5)),
     egg: geo(eggGeometry(THREE)),
     cap: geo(new THREE.SphereGeometry(1, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2)),
     band: geo(new THREE.TorusGeometry(1, 0.12, 6, 24)),
+    wire: geo(new THREE.TorusGeometry(1, 0.06, 4, 16)),
     disc: geo(new THREE.CircleGeometry(1, 24)),
+    bigDisc: geo(new THREE.CircleGeometry(1, 48)),
     plane: geo(new THREE.PlaneGeometry(1, 1)),
     ring: geo(new THREE.RingGeometry(0.72, 1, 28)),
   };
@@ -289,15 +342,20 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     shadow: basic(0x000000, { map: blob, transparent: true, depthWrite: false }),
     dark: lambert(0x2b2d33),
     metal: lambert(0x5b616b),
+    steel: lambert(0xc9d0d8),
     wood: lambert(0x8a5a2b),
+    tan: lambert(0xb89a6a),
+    olive: lambert(0x5d6b3a),
     cream: lambert(0xfff3df),
     white: lambert(0xffffff),
     black: basic(0x15161a),
     red: lambert(0xe53935),
     green: basic(0x3fd17a),
     blue: basic(0x4aa8ff, { transparent: true, opacity: 0.55, depthWrite: false }),
+    orange: basic(0xff9f43, { transparent: true, opacity: 0.6, depthWrite: false }),
     gold: lambert(0xffc83d, { emissive: 0x6a4a00 }),
     tracer: basic(0xfff1a8),
+    bolt: basic(0x8a5a2b),
     rocket: lambert(0xfffaf0),
     flash: basic(0xffe27a, { transparent: true, opacity: 0.9, depthWrite: false }),
     aim: basic(0xffffff, { transparent: true, opacity: 0.32, depthWrite: false }),
@@ -306,9 +364,16 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     ghost: basic(0xffffff, { transparent: true, opacity: 0.38, depthWrite: false, depthFunc: GREATER_DEPTH }),
     launcher: lambert(0x5a7a3a),
     potion: lambert(0x3f8cff, { emissive: 0x0b2a66 }),
+    mini: lambert(0x6fb6ff, { emissive: 0x0b2a66 }),
+    coffee: lambert(0x7a4a2a),
     yolk: lambert(0xffc93c, { emissive: 0x4a3000 }),
     eggWhite: lambert(0xfffbf2),
     spatula: lambert(0xd8dde3),
+    pan: lambert(0x23252b),
+    grenade: lambert(0x5f8f3a),
+    flour: lambert(0xf3eee2),
+    sauce: lambert(0xd2321e, { emissive: 0x3a0800 }),
+    leaf: lambert(0x3f9a4a),
   };
   const rarity = RARITY_COLORS.map((c) => lambert(parseInt(c.slice(1), 16), { emissive: parseInt(c.slice(1), 16), emissiveIntensity: 0.25 }));
   const rarityGlow = RARITY_COLORS.map((c) => basic(parseInt(c.slice(1), 16), { transparent: true, opacity: 0.75, depthWrite: false, side: THREE.DoubleSide }));
@@ -326,7 +391,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   // ---------------------------------------------------------------------------------------------------------------
   // The island.
 
-  const sea = new THREE.Mesh(geo(new THREE.PlaneGeometry(1800, 1800)), lambert(water));
+  const sea = new THREE.Mesh(geo(new THREE.PlaneGeometry(2400, 2400)), lambert(water));
   sea.rotation.x = -Math.PI / 2;
   sea.position.y = -0.7;
   scene.add(sea);
@@ -334,7 +399,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   shore.rotation.x = -Math.PI / 2;
   shore.position.y = -0.62;
   scene.add(shore);
-  const block = new THREE.Mesh(geo(new THREE.BoxGeometry(2 * HALF, 1.3, 2 * HALF)), lambert(0xe9d7a6, { map: keep(sandTexture(THREE)) }));
+  const sandTex = keep(sandTexture(THREE));
+  const block = new THREE.Mesh(geo(new THREE.BoxGeometry(2 * HALF, 1.3, 2 * HALF)), lambert(0xe9d7a6, { map: sandTex }));
   block.position.y = -0.65;
   scene.add(block);
   const grass = new THREE.Mesh(geo(new THREE.PlaneGeometry(2 * (HALF - BEACH), 2 * (HALF - BEACH))), lambert(0xffffff, { map: keep(grassTexture(THREE)) }));
@@ -342,70 +408,205 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   grass.position.y = 0.005;
   scene.add(grass);
 
-  // buildings: a plank floor, walls with doorways, and a roof that lifts away while you're inside
+  // ponds: a sandy rim, the water, and a few lily pads
+  const pondWater = lambert(0x4cb3dc, { transparent: true, opacity: 0.88, emissive: 0x0b3a52 });
+  const rimMat = lambert(0xd8c690);
+  const padMat = lambert(0x4f9a3c);
+  for (const p of map.ponds) {
+    const rim = new THREE.Mesh(G.bigDisc, rimMat);
+    rim.rotation.x = -Math.PI / 2;
+    rim.position.set(p.x, 0.012, p.z);
+    rim.scale.setScalar(p.r + 1.1);
+    scene.add(rim);
+    const pool = new THREE.Mesh(G.bigDisc, pondWater);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(p.x, 0.03, p.z);
+    pool.scale.setScalar(p.r);
+    scene.add(pool);
+    const rnd = scatter(Math.round(p.x * 31 + p.z * 7) >>> 0);
+    for (let i = 0; i < 4; i++) {
+      const a = rnd() * Math.PI * 2;
+      const d = p.r * (0.3 + rnd() * 0.55);
+      const pad = new THREE.Mesh(G.disc, padMat);
+      pad.rotation.x = -Math.PI / 2;
+      pad.position.set(p.x + Math.cos(a) * d, 0.05, p.z + Math.sin(a) * d);
+      pad.scale.setScalar(0.45 + rnd() * 0.3);
+      scene.add(pad);
+    }
+  }
+
+  // cornfields: a patch of tilled earth and rows of tall stalks
+  const soilMat = lambert(0x8a6a3a);
+  const stalkSpots: { x: number; z: number }[] = [];
+  const cornRnd = scatter(23);
+  for (const f of map.fields) {
+    const soil = new THREE.Mesh(G.plane, soilMat);
+    soil.rotation.x = -Math.PI / 2;
+    soil.position.set(f.x, 0.015, f.z);
+    soil.scale.set(f.hw * 2, f.hd * 2, 1);
+    scene.add(soil);
+    for (let x = f.x - f.hw + 0.5; x <= f.x + f.hw - 0.4; x += 0.9) for (let z = f.z - f.hd + 0.5; z <= f.z + f.hd - 0.4; z += 0.8) stalkSpots.push({ x: x + (cornRnd() - 0.5) * 0.35, z: z + (cornRnd() - 0.5) * 0.3 });
+  }
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+  const shade = (rnd: () => number, base: number, spread: number) => color.setHex(base).offsetHSL((rnd() - 0.5) * spread * 0.2, 0, (rnd() - 0.5) * spread * 0.2);
+  const stalks = many(G.stalk, lambert(0xffffff, { flatShading: true }), stalkSpots.length);
+  stalkSpots.forEach((p, i) => {
+    dummy.position.set(p.x, 1.15, p.z);
+    dummy.rotation.set((cornRnd() - 0.5) * 0.16, cornRnd() * 6, (cornRnd() - 0.5) * 0.16);
+    dummy.scale.set(1, 0.85 + cornRnd() * 0.3, 1);
+    dummy.updateMatrix();
+    stalks.setMatrixAt(i, dummy.matrix);
+    stalks.setColorAt(i, shade(cornRnd, cornRnd() < 0.3 ? 0xc9b245 : 0x7fa83a, 1));
+  });
+  scene.add(stalks);
+
+  // buildings: a floor, walls with doorways, and (all but the ruins) a roof that lifts away while you're inside
   const floorTex = keep(planksTexture(THREE, '#c9935a', '#9c6b3a', [1, 1]));
-  const wallMats = WALL_COLORS.map((c) => lambert(c));
-  const roofs: { mesh: T.Mesh; mat: T.MeshLambertMaterial; fade: number }[] = [];
-  map.buildings.forEach((b) => {
-    const tex = floorTex.clone();
-    keep(tex);
-    tex.repeat.set(b.w / 4, b.d / 4);
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.wrapT = THREE.RepeatWrapping;
-    tex.needsUpdate = true;
-    const floor = new THREE.Mesh(G.plane, lambert(0xffffff, { map: tex }));
+  const concrete = lambert(0x9aa1a6);
+  const dirt = lambert(0xb9ad93);
+  const wallColor = (b: Building, rnd: () => number) => {
+    switch (b.kind) {
+      case 'house':
+        return color.setHex(WALL_COLORS[b.look % WALL_COLORS.length]);
+      case 'farm':
+        return color.setHex(0xb5432f);
+      case 'shed':
+        return color.setHex(0x9c6b3a);
+      case 'warehouse':
+        return color.setHex(WAREHOUSE_COLORS[b.look % WAREHOUSE_COLORS.length]);
+      case 'container':
+        return color.setHex(CONTAINER_COLORS[b.look % CONTAINER_COLORS.length]);
+      case 'ruin':
+        return shade(rnd, 0xa39e93, 0.7);
+      case 'coop':
+        return color.setHex(0xfff1c9);
+    }
+  };
+  const roofColor = (b: Building) => {
+    switch (b.kind) {
+      case 'farm':
+        return 0x7a2a1f;
+      case 'shed':
+        return 0x6b4a2a;
+      case 'warehouse':
+        return 0x6f7c88;
+      case 'container':
+        return CONTAINER_COLORS[b.look % CONTAINER_COLORS.length];
+      case 'coop':
+        return 0xf5b301;
+      default:
+        return ROOF_COLORS[b.look % ROOF_COLORS.length];
+    }
+  };
+  const wallCount = map.buildings.reduce((n, b) => n + b.walls.length, 0);
+  const buildingWalls = many(G.box, lambert(0xffffff), wallCount);
+  const wallRnd = scatter(17);
+  let wi = 0;
+  const roofs: { mesh: T.Mesh; mats: T.MeshLambertMaterial[]; fade: number; at: number }[] = [];
+  map.buildings.forEach((b, bi) => {
+    const floorMat =
+      b.kind === 'warehouse' || b.kind === 'container'
+        ? concrete
+        : b.kind === 'ruin'
+          ? dirt
+          : (() => {
+              const tex = keep(floorTex.clone());
+              tex.repeat.set(b.w / 4, b.d / 4);
+              tex.wrapS = THREE.RepeatWrapping;
+              tex.wrapT = THREE.RepeatWrapping;
+              tex.needsUpdate = true;
+              return lambert(0xffffff, { map: tex });
+            })();
+    const floor = new THREE.Mesh(G.plane, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(b.x, 0.02, b.z);
     floor.scale.set(b.w, b.d, 1);
     scene.add(floor);
     for (const w of b.walls) {
-      const wall = new THREE.Mesh(G.box, wallMats[b.look % wallMats.length]);
-      wall.position.set(w.x, WALL_H / 2, w.z);
-      wall.scale.set(w.hw * 2, WALL_H, w.hd * 2);
-      scene.add(wall);
+      dummy.position.set(w.x, b.h / 2, w.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(w.hw * 2, b.h, w.hd * 2);
+      dummy.updateMatrix();
+      buildingWalls.setMatrixAt(wi, dummy.matrix);
+      buildingWalls.setColorAt(wi, wallColor(b, wallRnd));
+      wi++;
     }
-    const roofMat = lambert(ROOF_COLORS[b.look % ROOF_COLORS.length], { transparent: true, opacity: 1 });
+    if (!b.roof) return;
+    const special = b.kind === 'coop';
+    const roofMat = lambert(roofColor(b), special ? { transparent: true, opacity: 1, emissive: 0x5a3c00 } : { transparent: true, opacity: 1 });
     const roof = new THREE.Mesh(G.box, roofMat);
-    roof.position.set(b.x, WALL_H + 0.25, b.z);
-    roof.scale.set(b.w + 0.9, 0.5, b.d + 0.9);
+    const flat = b.kind === 'warehouse' || b.kind === 'container';
+    roof.position.set(b.x, b.h + (flat ? 0.12 : 0.25), b.z);
+    roof.scale.set(b.w + (flat ? 0.3 : 0.9), flat ? 0.24 : 0.5, b.d + (flat ? 0.3 : 0.9));
     scene.add(roof);
-    const ridge = new THREE.Mesh(G.box, roofMat);
-    ridge.position.set(0, 0.9, 0);
-    ridge.scale.set(1 / (b.w + 0.9) * (b.w * 0.7), 1, 1 / (b.d + 0.9) * (b.d * 0.5));
-    roof.add(ridge);
-    roofs.push({ mesh: roof, mat: roofMat, fade: 1 });
+    if (!flat) {
+      const ridge = new THREE.Mesh(G.box, roofMat);
+      ridge.position.set(0, 0.9, 0);
+      ridge.scale.set((1 / (b.w + 0.9)) * (b.w * 0.7), 1, (1 / (b.d + 0.9)) * (b.d * 0.5));
+      roof.add(ridge);
+    }
+    const mats = [roofMat];
+    if (special) {
+      // a golden egg on top, so the Golden Coop stands out from anywhere (it lifts away with the roof)
+      const eggMat = lambert(0xffc83d, { emissive: 0x6a4a00, transparent: true, opacity: 1 });
+      const top = new THREE.Mesh(G.egg, eggMat);
+      top.position.set(0, 1.4, 0);
+      top.scale.set(1.6 / (b.w + 0.9), 3, 1.6 / (b.d + 0.9));
+      roof.add(top);
+      mats.push(eggMat);
+    }
+    roofs.push({ mesh: roof, mats, fade: 1, at: bi });
   });
+  scene.add(buildingWalls);
 
-  const dummy = new THREE.Object3D();
-  const color = new THREE.Color();
-  const shade = (rnd: () => number, base: number, spread: number) => color.setHex(base).offsetHSL((rnd() - 0.5) * spread * 0.2, 0, (rnd() - 0.5) * spread * 0.2);
-
-  // trees: a trunk and two round crowns each
+  // trees: round ones (a trunk and two crowns) and pines (a trunk and two cones)
   const treeRnd = scatter(3);
-  const trunks = new THREE.InstancedMesh(geo(new THREE.CylinderGeometry(0.32, 0.48, 1, 7)), lambert(0x8a6240), Math.max(1, map.trees.length));
-  const crowns = new THREE.InstancedMesh(G.lowBall, lambert(0xffffff, { flatShading: true }), Math.max(1, map.trees.length * 2));
+  const pine = map.trees.map(() => treeRnd() < 0.35);
+  const pines = pine.filter(Boolean).length;
+  const trunks = many(geo(new THREE.CylinderGeometry(0.32, 0.48, 1, 7)), lambert(0x8a6240), map.trees.length);
+  const crowns = many(G.lowBall, lambert(0xffffff, { flatShading: true }), (map.trees.length - pines) * 2);
+  const cones = many(G.pine, lambert(0xffffff, { flatShading: true }), pines * 2);
+  let ci = 0;
+  let pi = 0;
   map.trees.forEach((t, i) => {
     dummy.position.set(t.x, 1.6, t.z);
     dummy.rotation.set(0, 0, 0);
     dummy.scale.set(1, 3.2, 1);
     dummy.updateMatrix();
     trunks.setMatrixAt(i, dummy.matrix);
+    if (pine[i]) {
+      const big = 1.9 + treeRnd() * 0.5;
+      dummy.position.set(t.x, 3.6, t.z);
+      dummy.rotation.set(0, treeRnd() * 6, 0);
+      dummy.scale.set(big, 3.2, big);
+      dummy.updateMatrix();
+      cones.setMatrixAt(pi, dummy.matrix);
+      // a light touch: dark greens go black with much jitter
+      cones.setColorAt(pi++, shade(treeRnd, 0x2f7a3e, 0.3));
+      dummy.position.set(t.x, 5.3, t.z);
+      dummy.scale.set(big * 0.7, 2.6, big * 0.7);
+      dummy.updateMatrix();
+      cones.setMatrixAt(pi, dummy.matrix);
+      cones.setColorAt(pi++, shade(treeRnd, 0x3f8a4a, 0.3));
+      return;
+    }
     const big = 1.7 + treeRnd() * 0.5;
     dummy.position.set(t.x, 3.7, t.z);
     dummy.rotation.set(0, treeRnd() * 6, 0);
     dummy.scale.set(big, big * 0.9, big);
     dummy.updateMatrix();
-    crowns.setMatrixAt(i * 2, dummy.matrix);
-    crowns.setColorAt(i * 2, shade(treeRnd, 0x3f8f3a, 1));
+    crowns.setMatrixAt(ci, dummy.matrix);
+    crowns.setColorAt(ci++, shade(treeRnd, 0x3f8f3a, 1));
     dummy.position.set(t.x + (treeRnd() - 0.5) * 0.6, 4.9, t.z + (treeRnd() - 0.5) * 0.6);
     dummy.scale.set(big * 0.68, big * 0.62, big * 0.68);
     dummy.updateMatrix();
-    crowns.setMatrixAt(i * 2 + 1, dummy.matrix);
-    crowns.setColorAt(i * 2 + 1, shade(treeRnd, 0x56a648, 1));
+    crowns.setMatrixAt(ci, dummy.matrix);
+    crowns.setColorAt(ci++, shade(treeRnd, 0x56a648, 1));
   });
-  scene.add(trunks, crowns);
+  scene.add(trunks, crowns, cones);
 
-  const rocks = new THREE.InstancedMesh(G.rock, lambert(0xffffff, { flatShading: true }), Math.max(1, map.rocks.length));
+  const rocks = many(G.rock, lambert(0xffffff, { flatShading: true }), map.rocks.length);
   map.rocks.forEach((r, i) => {
     const rnd = scatter(r.look + 1);
     dummy.position.set(r.x, r.r * 0.35, r.z);
@@ -418,7 +619,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   scene.add(rocks);
 
   const bushRnd = scatter(9);
-  const bushes = new THREE.InstancedMesh(geo(new THREE.SphereGeometry(1, 9, 7)), lambert(0xffffff, { flatShading: true }), Math.max(1, map.bushes.length));
+  const bushes = many(geo(new THREE.SphereGeometry(1, 9, 7)), lambert(0xffffff, { flatShading: true }), map.bushes.length);
   map.bushes.forEach((b, i) => {
     dummy.position.set(b.x, 0.95, b.z);
     dummy.rotation.set(0, bushRnd() * 6, 0);
@@ -429,16 +630,19 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   });
   scene.add(bushes);
 
-  // crates break; chests open
+  // crates break; chests open; barrels go up
   const crateList = map.containers.filter((c) => c.kind === 'crate');
   const chestList = map.containers.filter((c) => c.kind === 'chest');
-  const crates = new THREE.InstancedMesh(G.box, lambert(0xffffff, { map: keep(crateTexture(THREE)) }), Math.max(1, crateList.length));
+  const barrelList = map.containers.filter((c) => c.kind === 'barrel');
+  const crates = many(G.box, lambert(0xffffff, { map: keep(crateTexture(THREE)) }), crateList.length);
   const crateShake = new Map<number, number>();
-  const chestBase = new THREE.InstancedMesh(G.box, lambert(0xffffff), Math.max(1, chestList.length));
-  const chestLid = new THREE.InstancedMesh(G.box, lambert(0xffffff), Math.max(1, chestList.length));
+  const chestBase = many(G.box, lambert(0xffffff), chestList.length);
+  const chestLid = many(G.box, lambert(0xffffff), chestList.length);
   const chestGlowMat = basic(0xffd75e, { transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
-  const chestGlow = new THREE.InstancedMesh(G.ring, chestGlowMat, Math.max(1, chestList.length));
-  scene.add(crates, chestBase, chestLid, chestGlow);
+  const chestGlow = many(G.ring, chestGlowMat, chestList.length);
+  const barrels = many(G.cyl, lambert(0xffffff), barrelList.length);
+  const barrelBands = many(G.cyl, lambert(0xf2c94c), barrelList.length * 2);
+  scene.add(crates, chestBase, chestLid, chestGlow, barrels, barrelBands);
   const chestState = chestList.map(() => -1);
   const placeChests = (force: boolean) => {
     chestList.forEach((c, i) => {
@@ -450,7 +654,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       dummy.scale.set(CHEST_HW * 2, 0.64, CHEST_HD * 2);
       dummy.updateMatrix();
       chestBase.setMatrixAt(i, dummy.matrix);
-      chestBase.setColorAt(i, color.setHex(open ? 0x8a6a2a : 0xd99a2b));
+      // the Golden Coop's chest is golden with a white lid
+      chestBase.setColorAt(i, color.setHex(open ? 0x8a6a2a : c.gold ? 0xffd23d : 0xd99a2b));
       if (open) {
         dummy.position.set(c.x, 0.85, c.z - c.face * CHEST_HD * 0.95);
         dummy.rotation.set(c.face * -1.2, 0, 0);
@@ -458,10 +663,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       dummy.scale.set(CHEST_HW * 2.06, 0.3, CHEST_HD * 2.06);
       dummy.updateMatrix();
       chestLid.setMatrixAt(i, dummy.matrix);
-      chestLid.setColorAt(i, color.setHex(open ? 0x7a5a22 : 0xffc83d));
+      chestLid.setColorAt(i, color.setHex(open ? 0x7a5a22 : c.gold ? 0xfff6dc : 0xffc83d));
       dummy.rotation.set(-Math.PI / 2, 0, 0);
       dummy.position.set(c.x, 0.04, c.z);
-      dummy.scale.setScalar(open ? 0 : 1.5);
+      dummy.scale.setScalar(open ? 0 : c.gold ? 2.1 : 1.5);
       dummy.updateMatrix();
       chestGlow.setMatrixAt(i, dummy.matrix);
     });
@@ -487,23 +692,86 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     });
     crates.instanceMatrix.needsUpdate = true;
     if (crates.instanceColor) crates.instanceColor.needsUpdate = true;
+    barrelList.forEach((c, i) => {
+      const gone = m.opened[c.id];
+      const shake = crateShake.get(c.id) ?? -9;
+      const jiggle = clock - shake < 0.18 ? Math.sin((clock - shake) * 80) * 0.05 : 0;
+      dummy.rotation.set(0, 0, jiggle);
+      dummy.position.set(c.x, 0.6, c.z);
+      dummy.scale.set(gone ? 0 : BARREL_R, gone ? 0 : 1.2, gone ? 0 : BARREL_R);
+      dummy.updateMatrix();
+      barrels.setMatrixAt(i, dummy.matrix);
+      // redder as it takes damage, so a hurt barrel looks ready to go
+      const hp = Math.max(0, m.crateHp[c.id] / BARREL.hp);
+      barrels.setColorAt(i, color.setRGB(0.85, 0.2 + hp * 0.12, 0.15 + hp * 0.04));
+      for (const [k, y] of [
+        [0, 0.3],
+        [1, 0.9],
+      ] as const) {
+        dummy.position.set(c.x, y, c.z);
+        dummy.scale.set(gone ? 0 : BARREL_R + 0.03, gone ? 0 : 0.1, gone ? 0 : BARREL_R + 0.03);
+        dummy.updateMatrix();
+        barrelBands.setMatrixAt(i * 2 + k, dummy.matrix);
+      }
+    });
+    barrels.instanceMatrix.needsUpdate = true;
+    barrelBands.instanceMatrix.needsUpdate = true;
+    if (barrels.instanceColor) barrels.instanceColor.needsUpdate = true;
   };
   placeCrates(0);
+
+  // supply drops: a blue crate under a balloon that floats down, with a beam of light from where it will land
+  const supplyMat = lambert(0xffffff, { map: keep(supplyTexture(THREE)) });
+  const supplyOpen = lambert(0x50607a);
+  const beamMat = basic(0x7fc4ff, { transparent: true, opacity: 0.22, depthWrite: false });
+  const supplies = map.drops.map((id) => {
+    const c = map.containers[id];
+    const group = new THREE.Group();
+    const box = add(group, G.box, supplyMat, 0, SUPPLY_HALF, 0, SUPPLY_HALF * 2, SUPPLY_HALF * 2, SUPPLY_HALF * 2);
+    const balloon = new THREE.Group();
+    add(balloon, G.ball, lambert(0xff5a5a), 0, 6, 0, 1.7, 2, 1.7);
+    add(balloon, G.ball, M.white, 0, 6, 0, 1.72, 0.35, 1.72);
+    for (const [x, z] of [
+      [-0.8, -0.8],
+      [0.8, -0.8],
+      [-0.8, 0.8],
+      [0.8, 0.8],
+    ]) {
+      const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, SUPPLY_HALF * 2, z), new THREE.Vector3(x * 0.4, 4.3, z * 0.4)]);
+      geos.push(g);
+      balloon.add(new THREE.Line(g, mat(new THREE.LineBasicMaterial({ color: 0x333333 }))));
+    }
+    group.add(balloon);
+    const glow = new THREE.Mesh(G.ring, basic(0x7fc4ff, { transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide }));
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.y = 0.05;
+    glow.scale.setScalar(2.3);
+    group.add(glow);
+    group.position.set(c.x, 0, c.z);
+    group.visible = false;
+    scene.add(group);
+    const beam = new THREE.Mesh(G.cyl, beamMat);
+    beam.position.set(c.x, 40, c.z);
+    beam.scale.set(0.7, 80, 0.7);
+    beam.visible = false;
+    scene.add(beam);
+    return { c, group, box, balloon, glow, beam };
+  });
 
   // ---------------------------------------------------------------------------------------------------------------
   // The storm: a purple wall, a tint over everything outside it, and a white ring where it is headed.
 
-  const stormWall = new THREE.Mesh(geo(new THREE.CylinderGeometry(1, 1, 90, 120, 1, true)), basic(0x8a4dff, { transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }));
+  const stormWall = new THREE.Mesh(geo(new THREE.CylinderGeometry(1, 1, 90, 160, 1, true)), basic(0x8a4dff, { transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }));
   stormWall.position.y = 44;
   stormWall.renderOrder = 3;
   scene.add(stormWall);
-  const tint = freeRing(THREE, 120);
+  const tint = freeRing(THREE, 160);
   geos.push(tint.geometry);
   const stormTint = new THREE.Mesh(tint.geometry, basic(0x7a3cf0, { transparent: true, opacity: 0.26, depthWrite: false, side: THREE.DoubleSide }));
   stormTint.position.y = 0.12;
   stormTint.renderOrder = 2;
   scene.add(stormTint);
-  const nextRing = freeRing(THREE, 120);
+  const nextRing = freeRing(THREE, 160);
   geos.push(nextRing.geometry);
   const nextMesh = new THREE.Mesh(nextRing.geometry, basic(0xffffff, { transparent: true, opacity: 0.75, depthWrite: false, side: THREE.DoubleSide }));
   nextMesh.position.y = 0.14;
@@ -525,68 +793,155 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     [1.1, 2.6],
   ])
     add(bus, G.cyl, M.dark, x, -1.25, z, 0.55, 0.4, 0.55).rotation.z = Math.PI / 2;
-  add(bus, G.ball, lambert(0x8a4dff), 0, 9, 0, 4.2, 4.8, 4.2);
+  add(bus, G.ball, lambert(0x8a4dff), 0, 8.4, 0, 3.2, 3.7, 3.2);
   for (const [x, z] of [
     [-1.3, -3.6],
     [1.3, -3.6],
     [-1.3, 3.6],
     [1.3, 3.6],
   ]) {
-    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, 1.3, z), new THREE.Vector3(x * 0.6, 5.2, z * 0.25)]);
+    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, 1.3, z), new THREE.Vector3(x * 0.6, 5.3, z * 0.25)]);
     geos.push(g);
     bus.add(new THREE.Line(g, mat(new THREE.LineBasicMaterial({ color: 0x333333 }))));
   }
+  bus.scale.setScalar(BUS_SCALE);
   scene.add(bus);
 
   // ---------------------------------------------------------------------------------------------------------------
-  // Guns: a few boxes each, with a stripe in the rarity's color.
+  // What eggs hold: guns (a few boxes each, with a stripe in the rarity's color), kitchen tools and throwables.
+  // The muzzle points along +z.
 
-  const gunGeo = {
-    stock: G.box,
-    barrel: G.cyl,
+  const barrel = (g: T.Group, material: T.Material, x: number, y: number, z: number, r: number, len: number) => {
+    const o = add(g, G.cyl, material, x, y, z, r, len, r);
+    o.rotation.x = Math.PI / 2;
+    return o;
   };
-  function gunModel(w: WeaponId | 'spatula'): { group: T.Group; stripe: T.Mesh | null } {
+  function gunModel(w: Held): { group: T.Group; stripe: T.Mesh | null } {
     const g = new THREE.Group();
-    if (w === 'spatula') {
-      add(g, G.box, M.wood, 0, 0, 0.1, 0.06, 0.06, 0.6);
-      add(g, G.box, M.spatula, 0, 0, 0.55, 0.32, 0.03, 0.34);
-      return { group: g, stripe: null };
-    }
-    let stripe: T.Mesh;
+    let stripe: T.Mesh | null = null;
     switch (w) {
+      case 'spatula':
+        add(g, G.box, M.wood, 0, 0, 0.1, 0.06, 0.06, 0.6);
+        add(g, G.box, M.spatula, 0, 0, 0.55, 0.32, 0.03, 0.34);
+        break;
+      case 'whisk':
+        add(g, G.box, M.steel, 0, 0, 0.12, 0.06, 0.06, 0.5);
+        for (let k = 0; k < 3; k++) {
+          const loop = add(g, G.wire, M.steel, 0, 0, 0.58, 0.13, 0.26, 0.13);
+          loop.rotation.set(Math.PI / 2, (k * Math.PI) / 3, 0);
+        }
+        break;
+      case 'knife':
+        add(g, G.box, M.dark, 0, 0, 0.05, 0.07, 0.08, 0.32);
+        add(g, G.box, M.steel, 0, 0.01, 0.55, 0.03, 0.14, 0.7);
+        break;
+      case 'cleaver':
+        add(g, G.box, M.wood, 0, 0, 0.05, 0.07, 0.08, 0.34);
+        add(g, G.box, M.steel, 0, 0.09, 0.42, 0.04, 0.34, 0.42);
+        break;
+      case 'pan':
+        add(g, G.box, M.dark, 0, 0, 0.12, 0.06, 0.05, 0.5);
+        add(g, G.cyl, M.pan, 0, 0, 0.66, 0.34, 0.08, 0.34);
+        break;
+      case 'pin':
+        barrel(g, M.tan, 0, 0, 0.45, 0.13, 0.8);
+        barrel(g, M.wood, 0, 0, -0.05, 0.05, 0.24);
+        barrel(g, M.wood, 0, 0, 0.95, 0.05, 0.24);
+        break;
+      case 'grenade':
+        add(g, G.egg, M.grenade, 0, -0.1, 0.25, 0.22, 0.2, 0.22);
+        add(g, G.box, M.metal, 0, 0.2, 0.25, 0.08, 0.06, 0.08);
+        break;
+      case 'flour':
+        add(g, G.ball, M.flour, 0, 0, 0.28, 0.2, 0.22, 0.2);
+        add(g, G.cyl, M.tan, 0, 0.22, 0.28, 0.06, 0.08, 0.06);
+        break;
+      case 'sauce':
+        add(g, G.cyl, M.sauce, 0, 0, 0.28, 0.1, 0.34, 0.1);
+        add(g, G.cyl, M.leaf, 0, 0.23, 0.28, 0.05, 0.12, 0.05);
+        break;
       case 'pistol':
-        add(g, gunGeo.stock, M.dark, 0, 0, 0.12, 0.12, 0.14, 0.42);
-        add(g, gunGeo.stock, M.dark, 0, -0.14, 0, 0.1, 0.22, 0.12);
-        stripe = add(g, gunGeo.stock, rarity[0], 0, 0.08, 0.12, 0.13, 0.03, 0.34);
+        add(g, G.box, M.dark, 0, 0, 0.12, 0.12, 0.14, 0.42);
+        add(g, G.box, M.dark, 0, -0.14, 0, 0.1, 0.22, 0.12);
+        stripe = add(g, G.box, rarity[0], 0, 0.08, 0.12, 0.13, 0.03, 0.34);
+        break;
+      case 'revolver':
+        barrel(g, M.metal, 0, 0.04, 0.36, 0.05, 0.5);
+        barrel(g, M.dark, 0, 0.0, 0.08, 0.1, 0.16);
+        add(g, G.box, M.wood, 0, -0.15, -0.04, 0.1, 0.24, 0.12);
+        stripe = add(g, G.box, rarity[0], 0, 0.1, 0.08, 0.06, 0.03, 0.2);
         break;
       case 'smg':
-        add(g, gunGeo.stock, M.dark, 0, 0, 0.18, 0.14, 0.17, 0.62);
-        add(g, gunGeo.stock, M.metal, 0, -0.18, 0.2, 0.08, 0.26, 0.1);
-        add(g, gunGeo.stock, M.dark, 0, -0.12, -0.06, 0.1, 0.2, 0.1);
-        stripe = add(g, gunGeo.stock, rarity[0], 0, 0.1, 0.18, 0.15, 0.03, 0.5);
+        add(g, G.box, M.dark, 0, 0, 0.18, 0.14, 0.17, 0.62);
+        add(g, G.box, M.metal, 0, -0.18, 0.2, 0.08, 0.26, 0.1);
+        add(g, G.box, M.dark, 0, -0.12, -0.06, 0.1, 0.2, 0.1);
+        stripe = add(g, G.box, rarity[0], 0, 0.1, 0.18, 0.15, 0.03, 0.5);
+        break;
+      case 'micro':
+        add(g, G.box, M.dark, 0, 0, 0.12, 0.13, 0.16, 0.4);
+        add(g, G.box, M.metal, 0, -0.2, 0.06, 0.07, 0.3, 0.08);
+        barrel(g, M.metal, 0, 0.02, 0.38, 0.035, 0.16);
+        stripe = add(g, G.box, rarity[0], 0, 0.09, 0.12, 0.14, 0.03, 0.3);
         break;
       case 'rifle':
-        add(g, gunGeo.stock, M.dark, 0, 0, 0.3, 0.12, 0.16, 1.05);
-        add(g, gunGeo.stock, M.metal, 0, -0.17, 0.3, 0.08, 0.24, 0.12);
-        add(g, gunGeo.stock, M.dark, 0, 0.14, 0.2, 0.06, 0.1, 0.3);
-        stripe = add(g, gunGeo.stock, rarity[0], 0, 0.09, 0.45, 0.13, 0.03, 0.5);
+        add(g, G.box, M.dark, 0, 0, 0.3, 0.12, 0.16, 1.05);
+        add(g, G.box, M.metal, 0, -0.17, 0.3, 0.08, 0.24, 0.12);
+        add(g, G.box, M.dark, 0, 0.14, 0.2, 0.06, 0.1, 0.3);
+        stripe = add(g, G.box, rarity[0], 0, 0.09, 0.45, 0.13, 0.03, 0.5);
+        break;
+      case 'burst':
+        add(g, G.box, M.tan, 0, 0, 0.22, 0.14, 0.2, 0.78);
+        barrel(g, M.dark, 0, 0.03, 0.72, 0.04, 0.3);
+        add(g, G.box, M.dark, 0, 0.16, 0.25, 0.05, 0.08, 0.5);
+        add(g, G.box, M.metal, 0, -0.16, 0.0, 0.08, 0.2, 0.12);
+        stripe = add(g, G.box, rarity[0], 0, 0.11, 0.35, 0.15, 0.03, 0.3);
+        break;
+      case 'scout':
+        add(g, G.box, M.olive, 0, 0, 0.25, 0.11, 0.14, 0.9);
+        barrel(g, M.metal, 0, 0.02, 0.85, 0.035, 0.4);
+        barrel(g, M.dark, 0, 0.15, 0.25, 0.05, 0.3);
+        stripe = add(g, G.box, rarity[0], 0, 0.08, 0.05, 0.12, 0.03, 0.3);
+        break;
+      case 'lmg':
+        add(g, G.box, M.dark, 0, 0, 0.3, 0.16, 0.2, 1.0);
+        barrel(g, M.metal, 0, 0.03, 0.95, 0.05, 0.5);
+        add(g, G.box, M.olive, 0, -0.2, 0.25, 0.2, 0.22, 0.26);
+        add(g, G.box, M.metal, 0, -0.2, 0.95, 0.03, 0.3, 0.03).rotation.x = 0.4;
+        stripe = add(g, G.box, rarity[0], 0, 0.11, 0.35, 0.17, 0.03, 0.5);
         break;
       case 'shotgun':
-        add(g, gunGeo.stock, M.wood, 0, -0.02, 0, 0.13, 0.16, 0.45);
-        add(g, gunGeo.barrel, M.dark, 0, 0.03, 0.48, 0.07, 0.75, 0.07).rotation.x = Math.PI / 2;
-        stripe = add(g, gunGeo.stock, rarity[0], 0, -0.06, 0.4, 0.12, 0.08, 0.28);
+        add(g, G.box, M.wood, 0, -0.02, 0, 0.13, 0.16, 0.45);
+        barrel(g, M.dark, 0, 0.03, 0.48, 0.07, 0.75);
+        stripe = add(g, G.box, rarity[0], 0, -0.06, 0.4, 0.12, 0.08, 0.28);
+        break;
+      case 'auto':
+        add(g, G.box, M.dark, 0, 0, 0.15, 0.15, 0.18, 0.6);
+        barrel(g, M.metal, 0, 0.03, 0.62, 0.06, 0.4);
+        barrel(g, M.metal, 0, -0.18, 0.25, 0.14, 0.12).rotation.set(0, 0, Math.PI / 2);
+        stripe = add(g, G.box, rarity[0], 0, 0.1, 0.15, 0.16, 0.03, 0.4);
+        break;
+      case 'double':
+        add(g, G.box, M.wood, 0, -0.03, 0, 0.13, 0.15, 0.42);
+        barrel(g, M.dark, -0.045, 0.04, 0.5, 0.05, 0.72);
+        barrel(g, M.dark, 0.045, 0.04, 0.5, 0.05, 0.72);
+        stripe = add(g, G.box, rarity[0], 0, -0.05, 0.3, 0.14, 0.06, 0.12);
         break;
       case 'sniper':
-        add(g, gunGeo.stock, M.dark, 0, 0, 0.2, 0.11, 0.14, 0.75);
-        add(g, gunGeo.barrel, M.metal, 0, 0.02, 0.85, 0.035, 0.7, 0.035).rotation.x = Math.PI / 2;
-        add(g, gunGeo.barrel, M.dark, 0, 0.16, 0.25, 0.06, 0.38, 0.06).rotation.x = Math.PI / 2;
-        stripe = add(g, gunGeo.stock, rarity[0], 0, 0.08, 0.05, 0.12, 0.03, 0.3);
+        add(g, G.box, M.dark, 0, 0, 0.2, 0.11, 0.14, 0.75);
+        barrel(g, M.metal, 0, 0.02, 0.85, 0.035, 0.7);
+        barrel(g, M.dark, 0, 0.16, 0.25, 0.06, 0.38);
+        stripe = add(g, G.box, rarity[0], 0, 0.08, 0.05, 0.12, 0.03, 0.3);
+        break;
+      case 'crossbow':
+        add(g, G.box, M.wood, 0, 0, 0.2, 0.1, 0.12, 0.75);
+        add(g, G.box, M.dark, 0, 0.02, 0.56, 0.9, 0.05, 0.06);
+        add(g, G.box, M.bolt, 0, 0.08, 0.4, 0.03, 0.03, 0.7);
+        stripe = add(g, G.box, rarity[0], 0, -0.07, 0.1, 0.11, 0.04, 0.3);
         break;
       case 'launcher':
-        add(g, gunGeo.barrel, M.launcher, 0, 0.05, 0.3, 0.17, 1.1, 0.17).rotation.x = Math.PI / 2;
-        add(g, gunGeo.stock, M.dark, 0, -0.16, 0.2, 0.08, 0.24, 0.12);
-        stripe = add(g, gunGeo.barrel, rarity[0], 0, 0.05, 0.75, 0.18, 0.12, 0.18);
-        stripe.rotation.x = Math.PI / 2;
+        barrel(g, M.launcher, 0, 0.05, 0.3, 0.17, 1.1);
+        add(g, G.box, M.dark, 0, -0.16, 0.2, 0.08, 0.24, 0.12);
+        stripe = barrel(g, rarity[0], 0, 0.05, 0.75, 0.18, 0.12);
         break;
     }
     return { group: g, stripe };
@@ -610,6 +965,13 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const hand = new THREE.Group();
     hand.position.set(0.24, 0.78, 0.48);
     body.add(hand);
+    // a frying pan slung across the back stops bullets from behind
+    const backPan = new THREE.Group();
+    add(backPan, G.cyl, M.pan, 0, 0, 0, 0.36, 0.06, 0.36);
+    add(backPan, G.box, M.dark, 0, 0, 0.48, 0.06, 0.05, 0.4);
+    backPan.position.set(0, 0.9, -0.5);
+    backPan.rotation.set(Math.PI / 2 - 0.25, 0, 0);
+    body.add(backPan);
     const shadow = new THREE.Mesh(G.disc, M.shadow);
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 0.03;
@@ -630,7 +992,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       glider.add(new THREE.Line(g, mat(new THREE.LineBasicMaterial({ color: 0x444444 }))));
     }
     root.add(glider);
-    // a cross over the head while bandaging, a blue ring while drinking shield
+    // a cross over the head while healing; a ring while drinking shield (blue) or coffee (orange)
     const heal = new THREE.Group();
     heal.position.y = 2.15;
     add(heal, G.box, M.green, 0, 0, 0, 0.42, 0.12, 0.12);
@@ -644,7 +1006,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     ghost.renderOrder = 20;
     body.add(ghost);
     scene.add(root);
-    return { root, body, skin, hand, guns: new Map(), shadow, glider, heal, ring, ghost, walk: 0, swing: 0, recoil: 0, lean: 0 };
+    return { root, body, skin, hand, guns: new Map(), shadow, glider, heal, ring, ghost, backPan, walk: 0, swing: 0, recoil: 0, lean: 0 };
   });
 
   // the aim line from your gun, and where you'll land while gliding
@@ -663,11 +1025,13 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   function lootModel(def: LootDef): T.Object3D {
     const g = new THREE.Group();
     switch (def.kind) {
-      case 'gun': {
+      case 'gun':
+      case 'melee':
+      case 'throw': {
         const gun = gunModel(def.w);
-        if (gun.stripe) gun.stripe.material = rarity[def.r] ?? rarity[0];
-        gun.group.scale.setScalar(1.25);
-        gun.group.rotation.set(0, 0, Math.PI / 2.4);
+        if (gun.stripe && def.kind === 'gun') gun.stripe.material = rarity[def.r] ?? rarity[0];
+        gun.group.scale.setScalar(def.kind === 'throw' ? 1.6 : 1.25);
+        gun.group.rotation.set(0, 0, def.kind === 'throw' ? 0 : Math.PI / 2.4);
         g.add(gun.group);
         break;
       }
@@ -675,14 +1039,43 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         add(g, G.box, ammoMat[def.a], 0, 0, 0, 0.5, 0.32, 0.36);
         add(g, G.box, M.dark, 0, 0.17, 0, 0.52, 0.04, 0.38);
         break;
-      case 'bandage':
-        add(g, G.box, M.white, 0, 0, 0, 0.5, 0.18, 0.36);
-        add(g, G.box, M.red, 0, 0.1, 0, 0.3, 0.02, 0.09);
-        add(g, G.box, M.red, 0, 0.1, 0, 0.09, 0.02, 0.3);
+      case 'use':
+        switch (def.w) {
+          case 'bandage':
+            add(g, G.box, M.white, 0, 0, 0, 0.5, 0.18, 0.36);
+            add(g, G.box, M.red, 0, 0.1, 0, 0.3, 0.02, 0.09);
+            add(g, G.box, M.red, 0, 0.1, 0, 0.09, 0.02, 0.3);
+            break;
+          case 'medkit':
+            add(g, G.box, M.white, 0, 0, 0, 0.62, 0.42, 0.42);
+            add(g, G.box, M.red, 0, 0, 0.215, 0.36, 0.11, 0.01);
+            add(g, G.box, M.red, 0, 0, 0.215, 0.11, 0.3, 0.01);
+            add(g, G.box, M.dark, 0, 0.27, 0, 0.24, 0.06, 0.06);
+            break;
+          case 'mini':
+            add(g, G.ball, M.mini, 0, -0.05, 0, 0.18, 0.2, 0.18);
+            add(g, G.cyl, M.white, 0, 0.18, 0, 0.06, 0.1, 0.06);
+            break;
+          case 'shield':
+            add(g, G.cyl, M.potion, 0, 0, 0, 0.18, 0.42, 0.18);
+            add(g, G.cyl, M.white, 0, 0.27, 0, 0.08, 0.14, 0.08);
+            break;
+          case 'coffee':
+            add(g, G.cyl, M.cream, 0, 0, 0, 0.16, 0.38, 0.16);
+            add(g, G.cyl, M.coffee, 0, 0.21, 0, 0.17, 0.06, 0.17);
+            add(g, G.cyl, M.coffee, 0, -0.02, 0, 0.165, 0.12, 0.165);
+            break;
+        }
         break;
-      case 'shield':
-        add(g, G.cyl, M.potion, 0, 0, 0, 0.18, 0.42, 0.18);
-        add(g, G.cyl, M.white, 0, 0.27, 0, 0.08, 0.14, 0.08);
+      case 'scope':
+        barrel(g, M.dark, 0, 0, 0, 0.12, 0.5);
+        barrel(g, rarity[Math.min(4, def.lv + 1)], 0, 0, 0.26, 0.14, 0.04);
+        barrel(g, rarity[Math.min(4, def.lv + 1)], 0, 0, -0.26, 0.14, 0.04);
+        break;
+      case 'pack':
+        add(g, G.box, rarity[Math.min(4, def.lv + 1)], 0, 0, 0, 0.5, 0.5, 0.3);
+        add(g, G.cap, rarity[Math.min(4, def.lv + 1)], 0, 0.25, 0, 0.25, 0.14, 0.15);
+        add(g, G.box, M.dark, 0, -0.05, 0.16, 0.36, 0.2, 0.04);
         break;
       case 'wood':
         for (let i = 0; i < 3; i++) add(g, G.box, M.wood, 0, i * 0.13 - 0.1, (i - 1) * 0.06, 0.7, 0.11, 0.2).rotation.y = i * 0.4;
@@ -690,14 +1083,32 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     }
     return g;
   }
+  function glowFor(def: LootDef) {
+    switch (def.kind) {
+      case 'gun':
+        return rarityGlow[def.r] ?? rarityGlow[0];
+      case 'ammo':
+        return ammoGlow[def.a];
+      case 'use':
+        return rarityGlow[USE_GLOW[def.w]];
+      case 'scope':
+      case 'pack':
+        return rarityGlow[Math.min(4, def.lv + 1)];
+      case 'melee':
+        return rarityGlow[2];
+      case 'throw':
+        return rarityGlow[3];
+      default:
+        return rarityGlow[0];
+    }
+  }
   function lootView(l: LootItem): LootView {
     const group = new THREE.Group();
     group.position.set(l.x, 0, l.z);
-    const glowMat = l.def.kind === 'gun' ? rarityGlow[l.def.r] ?? rarityGlow[0] : l.def.kind === 'ammo' ? ammoGlow[l.def.a] : l.def.kind === 'shield' ? rarityGlow[2] : l.def.kind === 'bandage' ? rarityGlow[1] : rarityGlow[0];
-    const glow = new THREE.Mesh(G.ring, glowMat);
+    const glow = new THREE.Mesh(G.ring, glowFor(l.def));
     glow.rotation.x = -Math.PI / 2;
     glow.position.y = 0.04;
-    glow.scale.setScalar(l.def.kind === 'gun' ? 0.75 : 0.5);
+    glow.scale.setScalar(l.def.kind === 'gun' || l.def.kind === 'melee' ? 0.75 : 0.5);
     group.add(glow);
     const model = lootModel(l.def);
     model.position.y = 0.45;
@@ -717,6 +1128,13 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const tracerGeo = geo(new THREE.BoxGeometry(0.08, 0.08, 1));
   const rockets: T.Mesh[] = [];
 
+  // things thrown, and the clouds and puddles they leave
+  const tossViews = new Map<Toss, T.Group>();
+  const zoneViews = new Map<Zone, { group: T.Group; mat: T.MeshBasicMaterial | T.MeshLambertMaterial; flames: T.Mesh[] }>();
+  const flourMat = (): T.MeshLambertMaterial => lambert(0xffffff, { emissive: 0x8a8578, transparent: true, opacity: 0.85, depthWrite: false });
+  const sauceMat = (): T.MeshBasicMaterial => basic(0xd2321e, { transparent: true, opacity: 0.75, depthWrite: false });
+  const flameMat = basic(0xffa53a, { transparent: true, opacity: 0.85, depthWrite: false });
+
   // effects: pooled bits that fly and fade, flashes, yolk puddles
   const parts: Particle[] = [];
   const partMat = {
@@ -730,8 +1148,13 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     smoke: basic(0x777777, { transparent: true, opacity: 0.55, depthWrite: false }),
     yolk: M.yolk,
     purple: basic(0xb48cff),
+    flour: basic(0xfaf6ec, { transparent: true, opacity: 0.8, depthWrite: false }),
+    sauce: basic(0xd2321e),
+    metal: lambert(0xc9d0d8),
+    red: lambert(0xd8432f),
+    splash: basic(0xbfe6f5, { transparent: true, opacity: 0.8, depthWrite: false }),
   };
-  for (let i = 0; i < 260; i++) {
+  for (let i = 0; i < 320; i++) {
     const mesh = new THREE.Mesh(G.box, partMat.dust);
     mesh.visible = false;
     scene.add(mesh);
@@ -761,7 +1184,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const flashes: { mesh: T.Mesh; life: number; max: number; grow: number }[] = [];
   const flashMat = M.flash;
   const boomMat = basic(0xff8a2a, { transparent: true, opacity: 0.85, depthWrite: false });
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 28; i++) {
     const mesh = new THREE.Mesh(G.ball, flashMat);
     mesh.visible = false;
     scene.add(mesh);
@@ -793,7 +1216,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const shown = f.phase !== 'out' && f.phase !== 'bus' && !hidden;
     v.root.visible = shown;
     if (!shown) return;
-    v.root.position.set(f.x, f.y, f.z);
+    // wading through a pond sinks an egg to its middle
+    v.root.position.set(f.x, f.y - (f.wet && f.phase === 'ground' ? 0.45 : 0), f.z);
     v.body.rotation.y = f.aim;
     const speed = Math.hypot(f.vx, f.vz);
     if (f.phase === 'ground' && speed > 0.4) v.walk += dt * speed * 2.2;
@@ -808,12 +1232,12 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     v.body.rotation.x = (mx * fx + mz * fz) * v.lean;
     v.body.rotation.z = -(mx * fz - mz * fx) * v.lean;
     v.glider.visible = f.phase === 'drop';
-    v.shadow.visible = f.phase === 'ground' || f.y < 25;
+    v.shadow.visible = (f.phase === 'ground' && !f.wet) || (f.phase === 'drop' && f.y < 25);
     v.shadow.position.y = 0.03 - f.y;
     v.shadow.scale.setScalar(0.85 * (1 + f.y * 0.02));
     // what it holds
     const h = held(f);
-    const key = h.w ?? 'spatula';
+    const key = h.w;
     for (const [k, g] of v.guns) g.group.visible = k === key && f.phase === 'ground';
     let gun = v.guns.get(key);
     if (!gun && f.phase === 'ground') {
@@ -822,24 +1246,117 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       v.guns.set(key, gun);
     }
     if (gun?.stripe) gun.stripe.material = rarity[h.r] ?? rarity[0];
+    const melee = isMelee(key);
     v.recoil = Math.max(0, v.recoil - dt * 6);
     v.swing = Math.max(0, v.swing - dt * 5);
     v.hand.position.z = 0.48 - v.recoil * 0.18;
-    v.hand.rotation.y = key === 'spatula' ? -Math.sin(v.swing * Math.PI) * 1.6 : 0;
-    v.hand.rotation.x = key === 'spatula' ? -0.4 : (f.kind === 'remote' ? f.show.flags & F_RELOAD : f.reloadT > 0) ? 0.7 : 0;
-    // flash red when hit; the shield and bandage show while in use
+    v.hand.rotation.y = melee ? -Math.sin(v.swing * Math.PI) * 1.6 : 0;
+    v.hand.rotation.x = melee ? -0.4 : isThrow(key) ? -0.9 + v.swing * 1.4 : (f.kind === 'remote' ? f.show.flags & F_RELOAD : f.reloadT > 0) ? 0.7 : 0;
+    const pan = f.kind === 'remote' ? (f.show.flags & F_PAN) !== 0 : MELEE[f.melee].blocks === true;
+    v.backPan.visible = pan && key !== 'pan' && f.phase === 'ground';
+    // flash red when hit; healing, shield and coffee show while in use
     const hit = f.hitT > 0;
     v.skin.emissive.setHex(hit ? 0xff3b30 : 0x000000);
     v.skin.emissiveIntensity = hit ? 0.55 : 0;
-    const using = f.kind === 'remote' ? (f.show.flags & F_BANDAGE ? 'bandage' : f.show.flags & F_SHIELDING ? 'shield' : null) : f.using;
-    v.heal.visible = using === 'bandage';
+    const flags = f.kind === 'remote' ? f.show.flags : 0;
+    const using = f.kind === 'remote' ? (flags & F_HEALING ? 'heal' : flags & F_SHIELDING ? 'shield' : flags & F_DRINKING ? 'coffee' : null) : f.using === 'bandage' || f.using === 'medkit' ? 'heal' : f.using === 'mini' || f.using === 'shield' ? 'shield' : f.using === 'coffee' ? 'coffee' : null;
+    v.heal.visible = using === 'heal';
     if (v.heal.visible) v.heal.rotation.y = clock * 4;
-    v.ring.visible = using === 'shield';
+    v.ring.visible = using === 'shield' || using === 'coffee';
     if (v.ring.visible) {
+      v.ring.material = using === 'coffee' ? M.orange : M.blue;
       v.ring.position.y = 0.4 + ((clock * 1.4) % 1) * 1.3;
       v.ring.scale.setScalar(0.85 - ((clock * 1.4) % 1) * 0.25);
     }
     v.ghost.visible = focus && f.phase === 'ground';
+  }
+
+  function syncTosses(m: Match, clock: number) {
+    for (const [t, g] of tossViews) {
+      if (!m.tosses.includes(t)) {
+        scene.remove(g);
+        tossViews.delete(t);
+      }
+    }
+    for (const t of m.tosses) {
+      let g = tossViews.get(t);
+      if (!g) {
+        g = new THREE.Group();
+        // drawn big enough to see coming
+        const model = gunModel(t.k).group;
+        model.position.set(0, 0, -0.28 * 2.4);
+        model.scale.setScalar(2.4);
+        g.add(model);
+        scene.add(g);
+        tossViews.set(t, g);
+      }
+      const p = tossAt(t, m.time);
+      g.position.set(p.x, p.y, p.z);
+      if (!t.landed) g.rotation.set(clock * 9, clock * 5, 0);
+      else {
+        g.rotation.set(0, 0, 0);
+        // a grenade on the ground blinks faster as it gets close
+        const left = t.fuse - m.time;
+        g.scale.setScalar(left < 1 && Math.sin(clock * (left < 0.5 ? 40 : 22)) > 0 ? 1.15 : 1);
+      }
+    }
+  }
+
+  function syncZones(m: Match, clock: number, focus: Fighter | undefined) {
+    for (const [z, v] of zoneViews) {
+      if (!m.zones.includes(z)) {
+        scene.remove(v.group);
+        zoneViews.delete(z);
+      }
+    }
+    for (const z of m.zones) {
+      let v = zoneViews.get(z);
+      if (!v) {
+        const group = new THREE.Group();
+        group.position.set(z.x, 0, z.z);
+        const flames: T.Mesh[] = [];
+        let material: T.MeshBasicMaterial | T.MeshLambertMaterial;
+        if (z.k === 'flour') {
+          material = flourMat();
+          const rnd = scatter(Math.round(z.x * 13 + z.z * 7 + z.from * 100) >>> 0);
+          // soft puffs: a big one in the middle, a ring round it, and a few on top
+          add(group, G.ball, material, 0, 1.6, 0, z.r * 0.62, 2.6, z.r * 0.62);
+          for (let i = 0; i < 10; i++) {
+            const a = (i / 10) * Math.PI * 2 + rnd() * 0.5;
+            const d = z.r * (0.5 + rnd() * 0.3);
+            const s = z.r * (0.3 + rnd() * 0.14);
+            add(group, G.ball, material, Math.cos(a) * d, 0.9 + rnd() * 1.4, Math.sin(a) * d, s, s * 0.75, s);
+          }
+          for (let i = 0; i < 4; i++) {
+            const a = rnd() * Math.PI * 2;
+            const d = z.r * rnd() * 0.4;
+            add(group, G.ball, material, Math.cos(a) * d, 2.8 + rnd(), Math.sin(a) * d, z.r * 0.28, z.r * 0.2, z.r * 0.28);
+          }
+        } else {
+          material = sauceMat();
+          const pool = add(group, G.disc, material, 0, 0.06, 0, z.r, z.r, z.r);
+          pool.rotation.x = -Math.PI / 2;
+          for (let i = 0; i < 7; i++) {
+            const a = (i / 7) * Math.PI * 2;
+            const d = z.r * (i === 0 ? 0 : 0.6);
+            flames.push(add(group, G.pine, flameMat, Math.cos(a) * d, 0.5, Math.sin(a) * d, 0.35, 1, 0.35));
+          }
+        }
+        scene.add(group);
+        v = { group, mat: material, flames };
+        zoneViews.set(z, v);
+      }
+      // in quickly, out slowly; a cloud you're inside thins so you can see your way
+      const life = Math.min(1, (m.time - z.from) / 0.5, (z.until - m.time) / 2);
+      const inside = !!focus && Math.hypot(focus.x - z.x, focus.z - z.z) < z.r;
+      v.mat.opacity = Math.max(0, life) * (z.k === 'flour' ? (inside ? 0.45 : 0.9) : 0.75);
+      v.group.scale.setScalar(z.k === 'flour' ? 0.6 + Math.min(1, (m.time - z.from) / 0.6) * 0.4 : 1);
+      if (z.k === 'flour') v.group.rotation.y = (m.time - z.from) * 0.15;
+      v.flames.forEach((fl, i) => {
+        fl.scale.set(0.35, 0.7 + Math.abs(Math.sin(clock * 9 + i * 1.7)) * 0.9 * Math.max(0, life), 0.35);
+        fl.position.y = fl.scale.y / 2 + 0.05;
+      });
+    }
   }
 
   const view: View = {
@@ -860,17 +1377,20 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       let tz = 0;
       let want = OVERVIEW;
       if (!opts.overview && focus) {
-        // something high up shows nearer the top of the screen than the ground under it, so look past it a little
+        // something high up shows nearer the top of the screen than the ground under it, so look past the ground
+        // (north) to keep it in the middle: all the way for the bus, most of the way for a glider, which keeps its
+        // landing spot in view below it
         if (focus.phase === 'bus') {
           const p = busAt(map.bus, m.time);
           tx = p.x;
-          tz = p.z + BUS_Y / Math.tan(TILT);
-          want = BUS_VIEW;
+          tz = p.z - (BUS_Y + 3 * BUS_SCALE) / Math.tan(TILT);
+          // a tall, narrow screen would otherwise pull far back to fit the width, leaving the bus a speck
+          const aspect = width / height;
+          want = aspect < 1 ? (BUS_VIEW * aspect) / Math.max(aspect, 0.8) : BUS_VIEW;
         } else {
           tx = focus.x;
-          tz = focus.z + focus.y / Math.tan(TILT);
-          const h = held(focus);
-          want = focus.phase === 'drop' ? DROP_VIEW + (focus.y / BUS_Y) * 20 : GROUND_VIEW + (h.w ? WEAPONS[h.w].zoom : 0);
+          tz = focus.z - (focus.y * 0.8) / Math.tan(TILT);
+          want = focus.phase === 'drop' ? DROP_VIEW + (focus.y / BUS_Y) * 20 : GROUND_VIEW + viewOf(focus);
         }
       }
       if (!cam.ready) {
@@ -892,7 +1412,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       camera.lookAt(cam.x + jx, 0, cam.z + jz);
       // haze only far past what's in frame
       fog.near = dist + 80;
-      fog.far = dist + 520;
+      fog.far = dist + 560;
 
       // the bus flies its route and away
       const busT = m.time;
@@ -907,12 +1427,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
 
       // roofs lift off the building you're in
       const inside = focus && focus.phase === 'ground' ? focus.inside : -1;
-      roofs.forEach((r, i) => {
-        r.fade = damp(r.fade, i === inside ? 0.08 : 1, 10, dt);
-        r.mat.opacity = r.fade;
-        r.mat.depthWrite = r.fade > 0.98;
+      for (const r of roofs) {
+        r.fade = damp(r.fade, r.at === inside ? 0.08 : 1, 10, dt);
+        for (const x of r.mats) {
+          x.opacity = r.fade;
+          x.depthWrite = r.fade > 0.98;
+        }
         r.mesh.visible = r.fade > 0.03;
-      });
+      }
 
       // the storm
       const s = m.storm;
@@ -926,17 +1448,37 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         stormWall.position.set(s.x, 44, s.z);
         stormWall.scale.set(Math.max(0.05, s.r), 1, Math.max(0.05, s.r));
         stormTint.position.set(s.x, 0.12, s.z);
-        tint.set(Math.max(0, s.r), 700);
+        tint.set(Math.max(0, s.r), 900);
         stormTint.visible = onLand;
         const showNext = s.next.r < s.r - 0.5 || s.shrinking;
         nextMesh.visible = showNext && s.next.r > 0.3;
         nextMesh.position.set(nx, 0.14, nz);
-        nextRing.set(Math.max(0, s.next.r - 0.22), s.next.r + 0.22);
+        nextRing.set(Math.max(0, s.next.r - 0.3), s.next.r + 0.3);
       }
 
       placeChests(false);
       placeCrates(clock);
       chestGlowMat.opacity = 0.35 + Math.sin(clock * 4) * 0.2;
+
+      // supply drops float down under their balloons, then sit with a beam over them until someone opens them
+      for (const sp of supplies) {
+        const c = sp.c;
+        const coming = m.time >= c.at - SUPPLY_FALL;
+        const opened = m.opened[c.id];
+        sp.group.visible = coming;
+        sp.beam.visible = coming && !opened;
+        if (!coming) continue;
+        const u = Math.max(0, Math.min(1, (c.at - m.time) / SUPPLY_FALL));
+        sp.group.position.y = u * 46;
+        sp.group.rotation.y = u * 3;
+        sp.balloon.visible = u > 0;
+        sp.glow.visible = u === 0 && !opened;
+        sp.glow.scale.setScalar(2.3 + Math.sin(clock * 4) * 0.15);
+        sp.box.material = opened ? supplyOpen : supplyMat;
+        sp.box.scale.y = opened ? SUPPLY_HALF * 1.2 : SUPPLY_HALF * 2;
+        sp.box.position.y = opened ? SUPPLY_HALF * 0.6 : SUPPLY_HALF;
+        beamMat.opacity = 0.16 + Math.sin(clock * 3) * 0.06;
+      }
 
       // eggs
       m.fighters.forEach((f, i) => {
@@ -945,18 +1487,22 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         const isFocus = i === focusId;
         syncEgg(v, f, dt, clock, isFocus, !isFocus && concealed(m, f, focus));
       });
+      syncTosses(m, clock);
+      syncZones(m, clock, focus);
 
       // aim line and landing marker
       const me = focus && opts.aimLine ? focus : null;
       const hm = me ? held(me) : null;
-      aimLine.visible = !!me && me.phase === 'ground' && !!hm?.w;
-      if (aimLine.visible && me && hm?.w) {
-        const len = Math.min(WEAPONS[hm.w].range, 26);
+      const aimGun = hm && isWeapon(hm.w) ? hm.w : null;
+      const aimThrow = !!hm && isThrow(hm.w);
+      aimLine.visible = !!me && me.phase === 'ground' && (!!aimGun || aimThrow);
+      if (aimLine.visible && me) {
+        const len = aimGun ? Math.min(WEAPONS[aimGun].range, 26) : Math.min(20, me.input.reach > 0 ? me.input.reach : 14);
         const fx = Math.sin(me.aim);
         const fz = Math.cos(me.aim);
         aimLine.position.set(me.x + fx * (0.9 + len / 2), 0.95, me.z + fz * (0.9 + len / 2));
         aimLine.rotation.set(-Math.PI / 2, 0, me.aim);
-        aimLine.scale.set(0.05, len, 1);
+        aimLine.scale.set(aimThrow ? 0.09 : 0.05, len, 1);
       }
       landMark.visible = !!focus && focus.phase === 'drop';
       if (landMark.visible && focus) {
@@ -964,8 +1510,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         landMark.scale.setScalar(1.2 + Math.sin(clock * 6) * 0.15);
       }
 
-      // loot near the camera, once it's close enough to make out (from the sky it's specks)
-      const reach = cam.view < 30 ? cam.view + 12 : -1;
+      // loot in frame (with a little to spare), once it's close enough to make out (from the sky it's specks)
+      const showLoot = cam.view < LOOT_VIEW;
+      const lootN = dist * FRAME_N + 3;
+      const lootS = dist * FRAME_S + 3;
+      const lootW = dist * FRAME_W * aspect + 3;
       for (const [id, lv] of lootViews) {
         if (!m.loot.has(id)) {
           scene.remove(lv.group);
@@ -973,7 +1522,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         }
       }
       for (const l of m.loot.values()) {
-        const near = Math.abs(l.x - cam.x) < reach * 1.6 && Math.abs(l.z - cam.z) < reach * 1.6;
+        const near = showLoot && Math.abs(l.x - cam.x) < lootW && l.z - cam.z > -lootN && l.z - cam.z < lootS;
         let lv = lootViews.get(l.id);
         if (!near) {
           if (lv) lv.group.visible = false;
@@ -1040,11 +1589,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           tracers.push(tr);
         }
         ti++;
-        const len = Math.min(2.4, b.traveled - 0.5);
+        // a crossbow bolt is a short brown arrow; everything else a streak of light
+        const bolt = b.w === 'crossbow';
+        const len = bolt ? 0.9 : Math.min(2.4, b.traveled - 0.5);
         tr.visible = true;
+        tr.material = bolt ? M.bolt : M.tracer;
         tr.position.set(b.x - (b.dx * len) / 2, 1.0, b.z - (b.dz * len) / 2);
         tr.rotation.set(0, Math.atan2(b.dx, b.dz), 0);
-        tr.scale.set(1, 1, len);
+        tr.scale.set(bolt ? 0.7 : 1, bolt ? 0.7 : 1, len);
       }
       for (let i = ti; i < tracers.length; i++) tracers[i].visible = false;
       for (let i = ri; i < rockets.length; i++) rockets[i].visible = false;
@@ -1081,21 +1633,32 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         case 'shot': {
           const v = eggs[e.f];
           const f = m.fighters[e.f];
+          const cls = WEAPONS[e.w].cls;
           if (v) v.recoil = 1;
-          if (f && near(f.x, f.z) && e.w !== 'launcher') flash(f.x + Math.sin(e.a) * 1.2, 0.95, f.z + Math.cos(e.a) * 1.2, e.w === 'shotgun' ? 0.32 : 0.2, 0.05, 0, flashMat);
-          if (e.f === focus) shake = Math.max(shake, e.w === 'sniper' || e.w === 'shotgun' || e.w === 'launcher' ? 0.35 : 0.08);
+          if (f && near(f.x, f.z) && e.w !== 'launcher' && e.w !== 'crossbow') flash(f.x + Math.sin(e.a) * 1.2, 0.95, f.z + Math.cos(e.a) * 1.2, cls === 'shotgun' ? 0.32 : e.w === 'micro' ? 0.15 : 0.2, 0.05, 0, flashMat);
+          if (e.f === focus) shake = Math.max(shake, cls === 'shotgun' || cls === 'sniper' || e.w === 'launcher' || e.w === 'revolver' ? 0.35 : 0.08);
           break;
         }
-        case 'swing': {
+        case 'swing':
+        case 'throw': {
           const v = eggs[e.f];
           if (v) v.swing = 1;
           break;
         }
+        case 'zone':
+          if (!near(e.x, e.z)) break;
+          if (e.k === 'flour') burst(e.x, 1, e.z, 24, 7, 0.4, 0.8, [partMat.flour], 3);
+          else burst(e.x, 0.6, e.z, 18, 5, 0.18, 0.6, [partMat.sauce, partMat.fire]);
+          break;
         case 'thud':
           if (!near(e.x, e.z)) break;
           if (e.what === 'egg') burst(e.x, 1, e.z, 4, 3, 0.09, 0.35, [partMat.shell]);
-          else if (e.what === 'tree') burst(e.x, 1, e.z, 4, 3, 0.1, 0.4, [partMat.wood, partMat.leaf]);
+          else if (e.what === 'pan') {
+            burst(e.x, 1, e.z, 6, 5, 0.07, 0.3, [partMat.spark, partMat.metal]);
+            flash(e.x, 1, e.z, 0.25, 0.06, 0, flashMat);
+          } else if (e.what === 'tree') burst(e.x, 1, e.z, 4, 3, 0.1, 0.4, [partMat.wood, partMat.leaf]);
           else if (e.what === 'rock') burst(e.x, 1, e.z, 4, 3, 0.09, 0.35, [partMat.stone, partMat.dust]);
+          else if (e.what === 'barrel') burst(e.x, 1, e.z, 4, 3, 0.09, 0.35, [partMat.red, partMat.metal]);
           else burst(e.x, 1, e.z, 4, 3, 0.1, 0.35, [partMat.wood, partMat.dust]);
           break;
         case 'hit':
@@ -1106,7 +1669,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           break;
         case 'smash':
           if (!near(e.x, e.z)) break;
-          burst(e.x, 1, e.z, 4, 3, 0.12, 0.4, [partMat.wood]);
+          burst(e.x, 1, e.z, 4, 3, 0.12, 0.4, map.containers[e.id]?.kind === 'barrel' && e.kind === 'crate' ? [partMat.red, partMat.metal] : [partMat.wood]);
           if (e.kind === 'crate') crateShake.set(e.id, now);
           break;
         case 'harvest':
@@ -1122,7 +1685,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           break;
         case 'opened': {
           const c = map.containers[e.c];
-          if (c && near(c.x, c.z)) burst(c.x, 1, c.z, c.kind === 'crate' ? 18 : 12, c.kind === 'crate' ? 6 : 4, 0.2, 0.8, c.kind === 'crate' ? [partMat.wood] : [partMat.spark, M.gold]);
+          if (!c || !near(c.x, c.z)) break;
+          if (c.kind === 'crate') burst(c.x, 1, c.z, 18, 6, 0.2, 0.8, [partMat.wood]);
+          else if (c.kind === 'barrel') burst(c.x, 0.8, c.z, 20, 8, 0.22, 0.9, [partMat.red, partMat.metal, partMat.fire]);
+          else burst(c.x, 1, c.z, c.kind === 'supply' ? 22 : 12, 4, 0.2, 0.8, [partMat.spark, M.gold]);
           break;
         }
         case 'wall':
@@ -1130,7 +1696,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           break;
         case 'land': {
           const f = m.fighters[e.f];
-          if (f && near(f.x, f.z)) burst(f.x, 0.2, f.z, 10, 3, 0.25, 0.5, [partMat.dust], 2);
+          if (f && near(f.x, f.z)) burst(f.x, 0.2, f.z, 10, 3, 0.25, 0.5, f.wet ? [partMat.splash] : [partMat.dust], 2);
           break;
         }
         case 'out': {
@@ -1185,14 +1751,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       for (const g of geos) g.dispose();
       for (const x of mats) x.dispose();
       for (const t of textures) t.dispose();
-      trunks.dispose();
-      crowns.dispose();
-      rocks.dispose();
-      bushes.dispose();
-      crates.dispose();
-      chestBase.dispose();
-      chestLid.dispose();
-      chestGlow.dispose();
+      for (const im of instanced) im.dispose();
       gl.dispose();
     },
   };

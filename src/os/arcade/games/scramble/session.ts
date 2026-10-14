@@ -1,7 +1,7 @@
 // One client's side of an online Scramble match: what it does with each message from the room, what it sends on its
 // regular tick, the events it queues and flushes, and when the match is over. Pure, so a whole room can be simulated
 // in a test; index.tsx connects it to the real room.
-import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, applyState, botNames, createMatch, endMatch, forfeit, owned, type Entrant, type Ev, type Level, type Match } from './logic.ts';
+import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, applyOut, applyState, botNames, createMatch, endMatch, forfeit, owned, type Entrant, type Ev, type Level, type Match } from './logic.ts';
 import { BUS_Y, stormEnd } from './map.ts';
 import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv, type State } from './net.ts';
 
@@ -12,6 +12,11 @@ export const TICK_MS = 66;
 export const END_PAUSE = 2.2;
 /** Seconds without a report from a guest before the host takes its egg out (a closed laptop, a frozen tab). */
 export const STALE = 15;
+/**
+ * Extra seconds a guest gets for its first report: a slow phone can take a while to build the island before it starts
+ * sending (and one that never does is still put off the bus with everyone else).
+ */
+export const FIRST_GRACE = 30;
 /** Seconds past the bus leaving land by which every egg is down; one still in the air has stopped playing. */
 const DOWN_BY = 4 + BUS_Y / FALL + 4;
 
@@ -22,7 +27,7 @@ export type Player = { seat: number; name: string };
 const nameOf = (players: Player[], seat: number) => players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`;
 
 /**
- * The host's match: everyone in the room by seat, then as many computer eggs as the room has bots (eight eggs at most).
+ * The host's match: everyone in the room by seat, then as many computer eggs as the host asks for (twenty eggs at most).
  * `roster` is each fighter's seat (-1 for a computer egg), which the host sends with every state.
  */
 export function hostMatch(players: Player[], mySeat: number, seed: number, level: Level, bots: number, countdown: number): { match: Match; roster: number[] } {
@@ -116,7 +121,13 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
       for (const ev of evs) {
         if (me.isHost) {
           const actor = actorOf(ev);
-          if (actor < 0 || m.fighters[actor]?.seat !== from) continue;
+          const f = m.fighters[actor];
+          if (actor < 0 || f?.seat !== from) continue;
+          // an egg we took out for leaving or going quiet plays no more, whatever its owner still sends
+          if (f.phase === 'out' && f.outCause === 'left') continue;
+        } else if (origin === 0 && ev.y === 'o' && ev.f === m.me && ev.w === 'left') {
+          // the host has taken our egg out (we went quiet, or never landed): it is out here too
+          applyOut(m, m.me, -1, 'left');
         }
         if (applyNet(m, ev) && me.isHost) s.queue.push([from, ev]);
       }
@@ -148,7 +159,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
   for (const seat of s.roster) if (seat >= 0 && !present.includes(seat)) s.left.add(seat);
   for (const f of m.fighters) {
     if (f.seat < 0 || f.kind !== 'remote' || f.phase === 'out' || m.ended) continue;
-    const quiet = clock - (s.heard.get(f.id) ?? s.firstTick) > STALE;
+    const quiet = clock - (s.heard.get(f.id) ?? s.firstTick + FIRST_GRACE) > STALE;
     const aloft = (f.phase === 'bus' || f.phase === 'drop') && m.time > m.map.bus.off + DOWN_BY;
     if (s.left.has(f.seat) || quiet || aloft) forfeit(m, f.id);
   }
