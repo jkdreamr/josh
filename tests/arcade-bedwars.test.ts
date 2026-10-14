@@ -621,6 +621,26 @@ test('host entrants: humans by seat on their own islands in solo, paired in doub
   assert.equal(duo[1].ctrl, 'local');
 });
 
+test('doubles without bots never puts everyone on one island', () => {
+  const two = [{ seat: 0, name: 'a', skin: 0 }, { seat: 1, name: 'b', skin: 0 }];
+  assert.deepEqual(hostEntrants('doubles', two, 0, false, []).map((e) => e.team), [0, 1], 'two friends play each other');
+  const four = [...two, { seat: 2, name: 'c', skin: 0 }, { seat: 3, name: 'd', skin: 0 }];
+  assert.deepEqual(hostEntrants('doubles', four, 0, false, []).map((e) => e.team), [0, 0, 1, 1], 'four make two pairs');
+  // a lone human (everyone else left before the start) gets a bot to fight
+  const lone = hostEntrants('doubles', [two[0]], 0, false, ['x']);
+  assert.deepEqual(lone.map((e) => [e.team, e.ctrl]), [
+    [0, 'local'],
+    [1, 'bot'],
+  ]);
+  // and the game it makes has two sides, so a death does not hand out a win
+  const g = createGame({ mode: 'doubles', pace: 'quick', level: 'normal', entrants: hostEntrants('doubles', two, 0, false, []), seed: 3 });
+  assert.equal(g.teams.filter((t) => t.used).length, 2);
+  g.players[1].body.y = -200;
+  for (let i = 0; i < 5; i++) tickGame(g);
+  assert.equal(g.players[1].alive, false);
+  assert.equal(g.over, false, 'a death with the bed standing is no win');
+});
+
 test('your record counts streaks and unlocks cosmetics at the milestones', async () => {
   const { addGame, freshRecord, loadRecord, newUnlocks, saveRecord, isUnlocked } = await import('../src/os/arcade/games/bedwars/stats.ts');
   let r = freshRecord();

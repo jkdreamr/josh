@@ -51,29 +51,37 @@ export type SessionOpts = {
 /** Team for the i-th human in seat order: one per island in solo, two to an island in doubles. */
 export const teamForHuman = (mode: Mode, i: number) => (mode === 'solo' ? i : Math.floor(i / 2)) % teamsFor(mode);
 
-/** The host's entrants: humans by seat, then bots on the open slots (or none). */
+/**
+ * The host's entrants: humans by seat, then bots on the open slots (or none). Without bots, humans who would all
+ * share one island get one each instead, and a lone human gets a bot to fight, so a round always has two sides.
+ */
 export function hostEntrants(mode: Mode, humans: { seat: number; name: string; skin: number }[], mySeat: number, bots: boolean, botNames: string[]): Entrant[] {
   const per = perTeam(mode);
   const n = teamsFor(mode);
   const out: Entrant[] = [];
   const used = new Array(n).fill(0);
-  humans
+  const list = humans
     .slice()
     .sort((a, b) => a.seat - b.seat)
-    .slice(0, n * per)
-    .forEach((h, i) => {
-      const team = teamForHuman(mode, i);
-      used[team]++;
-      out.push({ name: h.name, seat: h.seat, ctrl: h.seat === mySeat ? 'local' : 'remote', skin: h.skin, team });
-    });
+    .slice(0, n * per);
+  const spread = !bots && list.length <= per;
+  list.forEach((h, i) => {
+    const team = spread ? i % n : teamForHuman(mode, i);
+    used[team]++;
+    out.push({ name: h.name, seat: h.seat, ctrl: h.seat === mySeat ? 'local' : 'remote', skin: h.skin, team });
+  });
+  let k = 0;
+  const bot = (t: number) => {
+    used[t]++;
+    out.push({ name: botNames[k % botNames.length] ?? 'Bot', seat: -1, ctrl: 'bot', skin: (k * 3 + 1) % 6, team: t });
+    k++;
+  };
   if (bots) {
-    let k = 0;
-    for (let t = 0; t < n; t++)
-      while (used[t] < per) {
-        used[t]++;
-        out.push({ name: botNames[k % botNames.length], seat: -1, ctrl: 'bot', skin: (k * 3 + 1) % 6, team: t });
-        k++;
-      }
+    for (let t = 0; t < n; t++) while (used[t] < per) bot(t);
+  } else if (used.filter((c) => c > 0).length < 2) {
+    // nobody to play against: a bot takes the next island
+    const empty = used.findIndex((c) => c === 0);
+    if (empty >= 0) bot(empty);
   }
   return out;
 }
