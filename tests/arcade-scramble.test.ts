@@ -15,6 +15,7 @@ import {
   STORM_R0,
   SUPPLY_FALL,
   WALL_T,
+  buildingAt,
   busAt,
   coverAt,
   generateMap,
@@ -30,6 +31,7 @@ import {
   stormEnd,
   walkCells,
   type Building,
+  type Door,
   type GameMap,
 } from '../src/os/arcade/games/scramble/map.ts';
 import {
@@ -57,12 +59,14 @@ import {
   botNames,
   canSee,
   castRay,
+  clearLine,
   concealed,
   createMatch,
   damageCrate,
   dropId,
   held,
   hurt,
+  makeWall,
   noInput,
   panBlocks,
   prompt,
@@ -139,6 +143,7 @@ test('the island is the same for a seed and different between seeds', () => {
 });
 
 const KIND_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 2, farm: 2, house: 9, shed: 7, ruin: 4 };
+const DOOR_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 3, farm: 3, house: 2, shed: 1, container: 1 };
 /** Total wall length a building would have with no gaps at all (corners counted once), as its walls are laid out. */
 const fullWalls = (b: Building) => 2 * (b.w + WALL_T) + 2 * (b.d - WALL_T);
 const wallLength = (b: Building) => b.walls.reduce((s, w) => s + 2 * Math.max(w.hw, w.hd), 0);
@@ -160,6 +165,7 @@ test('every island has all its buildings, each with the doorways it should have,
       if (b.kind === 'warehouse') assert.ok(Math.abs(gaps - 2 * 6 - DOOR) < 0.31, `seed ${seed}: two loading doors and a side door`);
       if (b.kind === 'farm') assert.ok(Math.abs(gaps + (b.d - WALL_T - DOOR) - 3 * DOOR) < 0.31, `seed ${seed}: three doors and a door between the rooms`);
       if (b.kind === 'container') assert.ok(Math.abs(gaps - (b.w > b.d ? b.d - WALL_T : b.w + WALL_T)) < 0.31, 'open at one end');
+      if (b.kind !== 'ruin') assert.equal(b.doors.length, DOOR_COUNTS[b.kind], `seed ${seed}: the ways out of a ${b.kind} are on record`);
     }
     const roofed = m.buildings.filter((b) => b.kind !== 'container');
     for (const [i, a] of roofed.entries()) for (const b of roofed.slice(i + 1)) assert.ok(Math.abs(a.x - b.x) >= (a.w + b.w) / 2 + 7 || Math.abs(a.z - b.z) >= (a.d + b.d) / 2 + 7, 'buildings keep apart');
@@ -1063,6 +1069,91 @@ test('a computer egg never picks straight back up the gun it just swapped away',
   for (let i = 0; i < 30; i++) me.input.interact = true, run(m, DT);
   assert.equal(m.loot.size, 1, 'the pistol stays on the ground');
   assert.equal(me.guns[0]!.w, 'rifle');
+});
+
+test('a computer egg sent for a gun takes that gun, not whatever lies nearer', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  land(a, 0, 0);
+  land(b, 100, 100);
+  autopilot(m, a);
+  a.melee = 'pan';
+  a.guns = [{ w: 'smg', r: 1, mag: 30 }, { w: 'rifle', r: 1, mag: 30 }];
+  a.slot = 1;
+  m.loot.set(1, { id: 1, def: { kind: 'gun', w: 'sniper', r: 4 }, x: 0, z: 5, by: -1, at: 0 });
+  // a whisk on the way, in reach of the sniper
+  m.loot.set(2, { id: 2, def: { kind: 'melee', w: 'whisk' }, x: 0, z: 3.6, by: -1, at: 0 });
+  run(m, 5);
+  assert.equal(a.melee, 'pan');
+  assert.deepEqual(a.guns.map((g) => g?.w), ['sniper', 'rifle'], 'the sniper in place of the weaker SMG');
+});
+
+/** The first building of a kind (whose doorway passes `ok`), and that doorway. */
+function doorOf(m: Match, kind: Building['kind'], ok: (d: Door) => boolean = () => true) {
+  const i = m.map.buildings.findIndex((b) => b.kind === kind && ok(b.doors[0]));
+  assert.ok(i >= 0, `a ${kind}`);
+  return { b: m.map.buildings[i], i, door: m.map.buildings[i].doors[0] };
+}
+/** The spot `k` meters out through a doorway (in, for less than 0). */
+const through = (d: Door, k: number) => ({ x: d.x + d.ox * k, z: d.z + d.oz * k });
+
+test('a computer egg under fire builds a wall in the open, but never indoors', () => {
+  const m = quiet(3);
+  const [a, b] = m.fighters;
+  autopilot(m, a);
+  a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  a.ammo.heavy = 90;
+  // inside a shipping container, with someone shooting in through its open end
+  const c = doorOf(m, 'container', (d) => {
+    const [p, q] = [through(d, -2), through(d, 10)];
+    return clearLine(m, p.x, p.z, q.x, q.z) && coverAt(m.map, q.x, q.z) < 0;
+  });
+  land(a, through(c.door, -2).x, through(c.door, -2).z);
+  land(b, through(c.door, 10).x, through(c.door, 10).z);
+  const hot = (seconds: number) =>
+    run(m, seconds, () => {
+      a.hitT = 0.25;
+      a.hp = 60;
+      b.hp = 100;
+    });
+  assert.ok(!hot(2).some((e) => e.t === 'wall'), 'no wall shuts it in');
+  assert.equal(a.ai!.target, b.id, 'it was fighting');
+  assert.equal(buildingAt(m.map, a.x, a.z), c.i, 'still inside');
+  openSpot(m);
+  land(a, 0, 0);
+  land(b, 0, 12);
+  assert.ok(hot(2).some((e) => e.t === 'wall' && e.wall.f === a.id), 'out in the open it builds');
+});
+
+test('a computer egg walled into a shipping container breaks out, and leaves a shed by its doorway', () => {
+  const m = quiet(3);
+  const [a, b] = m.fighters;
+  land(b, 0, 0);
+  autopilot(m, a);
+  const ai = a.ai!;
+  // keep it set on a goal outside
+  const goTo = (x: number, z: number) => {
+    ai.think = 1e9;
+    ai.goal = 'roam';
+    ai.gx = x;
+    ai.gz = z;
+  };
+  const c = doorOf(m, 'container');
+  land(a, through(c.door, -2).x, through(c.door, -2).z);
+  const id = 999;
+  m.walls.set(id, makeWall(id, b.id, through(c.door, 0.4).x, through(c.door, 0.4).z, Math.atan2(c.door.ox, c.door.oz), WALL_HP));
+  goTo(through(c.door, 6).x, through(c.door, 6).z);
+  run(m, 8);
+  assert.ok(!m.walls.has(id), 'the wall is down');
+  assert.notEqual(buildingAt(m.map, a.x, a.z), c.i, 'and the egg is out');
+  // a shed with the way it wants to go behind its back wall
+  const s = doorOf(m, 'shed');
+  const back = { x: s.b.x - s.door.ox * (s.b.w / 2 + 8), z: s.b.z - s.door.oz * (s.b.d / 2 + 8) };
+  land(a, s.b.x - s.door.ox * 1.5, s.b.z - s.door.oz * 1.5);
+  goTo(back.x, back.z);
+  run(m, 15);
+  assert.ok(Math.hypot(a.x - back.x, a.z - back.z) < 2.5, `got round to (${back.x}, ${back.z}), at (${a.x.toFixed(1)}, ${a.z.toFixed(1)})`);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------

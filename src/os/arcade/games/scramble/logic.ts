@@ -44,6 +44,7 @@ import {
   DROP_BASE,
   POND_SLOW,
   SUPPLY_FALL,
+  WALL_T,
   buildingAt,
   busAt,
   coverAt,
@@ -59,6 +60,7 @@ import {
   solidsNear,
   stormAt,
   type Container,
+  type Door,
   type GameMap,
   type Obb,
   type Solid,
@@ -161,6 +163,11 @@ export type Ai = {
   lastZ: number;
   detourT: number;
   detourA: number;
+  /** Knocking down the wall or crate in our way, for this long, swinging this way. */
+  smashT: number;
+  smashA: number;
+  /** The doorway we're on our way out through. */
+  exit: Door | null;
   err: number;
   errT: number;
   burst: number;
@@ -505,6 +512,9 @@ function newAi(m: Match, f: Fighter): Ai {
     lastZ: f.z,
     detourT: 0,
     detourA: 0,
+    smashT: 0,
+    smashA: 0,
+    exit: null,
     err: 0,
     errT: 0,
     burst: 0,
@@ -1447,12 +1457,16 @@ function flourBetween(m: Match, x0: number, z0: number, x1: number, z1: number) 
 // -------------------------------------------------------------------------------------------------------------------
 // Building.
 
-/** Builds a wall in front of an egg, square to where it aims (snapped to eighths of a turn). */
+/** Where a wall built from (x, z) stands: WALL_DIST ahead, square to the aim (snapped to eighths of a turn). */
+function wallSpot(x: number, z: number, aim: number) {
+  const a = r2(Math.round(aim / (Math.PI / 4)) * (Math.PI / 4));
+  return { a, x: r2(x + Math.sin(a) * WALL_DIST), z: r2(z + Math.cos(a) * WALL_DIST) };
+}
+
+/** Builds a wall in front of an egg. */
 function build(m: Match, f: Fighter) {
   if (f.wood < WALL_COST || f.buildT > 0) return null;
-  const a = r2(Math.round(f.aim / (Math.PI / 4)) * (Math.PI / 4));
-  const x = r2(f.x + Math.sin(a) * WALL_DIST);
-  const z = r2(f.z + Math.cos(a) * WALL_DIST);
+  const { a, x, z } = wallSpot(f.x, f.z, f.aim);
   if (Math.abs(x) > EDGE || Math.abs(z) > EDGE) return null;
   f.wood -= WALL_COST;
   f.buildT = BUILD_COOL;
@@ -1856,6 +1870,7 @@ function think(m: Match, f: Fighter, dt: number) {
   ai.strafeT -= dt;
   ai.buildCool = Math.max(0, ai.buildCool - dt);
   ai.swapCool = Math.max(0, ai.swapCool - dt);
+  ai.smashT = Math.max(0, ai.smashT - dt);
   ai.tossCool -= dt;
   ai.think -= dt;
   if (ai.think <= 0) {
@@ -1928,13 +1943,13 @@ function think(m: Match, f: Fighter, dt: number) {
       if (f.slot !== SLOT_THROW && ai.react <= 0 && aligned && d < reach && ai.burst > 0 && clearLine(m, f.x, f.z, tgt.x, tgt.z)) inp.fire = true;
     }
     // a wall between us when it gets hot
-    if (L.build && !ai.toss && ai.buildCool <= 0 && f.wood >= WALL_COST && f.hitT > 0 && f.hp + f.shield < 130 && d > 7) {
+    if (L.build && !ai.toss && ai.buildCool <= 0 && f.wood >= WALL_COST && f.hitT > 0 && f.hp + f.shield < 130 && d > 7 && !shutsIn(m, f, ideal)) {
       inp.build = true;
       inp.aim = ideal;
       ai.buildCool = L.build * (0.7 + m.rng() * 0.6);
     }
     if (outside) {
-      steer(m, f, ai, s.x, s.z, dt, 1);
+      head(m, f, ai, s.x, s.z, dt, 1);
     } else if (burn) {
       away(burn);
     } else {
@@ -1978,17 +1993,26 @@ function think(m: Match, f: Fighter, dt: number) {
   if (burn) away(burn);
   else if (f.using && !outside) {
     // stand still behind cover while it takes
-  } else steer(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : 0.4);
+  } else head(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : 0.4);
   inp.aim = Math.hypot(f.vx, f.vz) > 0.5 ? Math.atan2(f.vx, f.vz) : f.aim;
+  if (ai.smashT > 0) {
+    // knock down what's in the way
+    inp.slot = SLOT_MELEE;
+    inp.aim = ai.smashA;
+    inp.fire = true;
+  }
 
   if (ai.goal === 'loot') {
     const l = m.loot.get(ai.item);
     if (!l) ai.think = 0;
     else if (Math.hypot(l.x - f.x, l.z - f.z) < PICK_R - 0.2 && (l.def.kind === 'gun' || l.def.kind === 'melee')) {
-      // swap our weaker gun for it
-      if (l.def.kind === 'gun') inp.slot = f.guns[0] === null ? 0 : f.guns[1] === null ? 1 : gunValue(f.guns[0]) <= gunValue(f.guns[1]) ? 0 : 1;
-      inp.interact = true;
-      ai.think = 0;
+      // take just what we came for, swapping our weaker gun for it once that's in hand
+      const weaker = gunValue(f.guns[0]) <= gunValue(f.guns[1]) ? 0 : 1;
+      if (l.def.kind === 'gun' && f.guns[0] && f.guns[1] && f.slot !== weaker) inp.slot = weaker;
+      else {
+        requestTake(m, f, l);
+        ai.think = 0;
+      }
     }
   } else if (ai.goal === 'chest') {
     const c = m.map.containers[ai.chest];
@@ -2129,6 +2153,42 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   }
 }
 
+/** Would a wall built aiming this way shut us in or block a way in? Never indoors, on a building, or by a doorway. */
+function shutsIn(m: Match, f: Fighter, aim: number) {
+  const w = wallSpot(f.x, f.z, aim);
+  return m.map.buildings.some(
+    (b) =>
+      (Math.abs(f.x - b.x) < b.w / 2 && Math.abs(f.z - b.z) < b.d / 2) ||
+      (Math.abs(w.x - b.x) < b.w / 2 + 1 && Math.abs(w.z - b.z) < b.d / 2 + 1) ||
+      b.doors.some((dr) => Math.hypot(w.x - dr.x, w.z - dr.z) < WALL_HALF + dr.w / 2 + 1.2),
+  );
+}
+
+/** Steers toward a goal. From inside a building the goal isn't in, that's out through a doorway first. */
+function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, stop: number) {
+  const b = f.inside >= 0 ? m.map.buildings[f.inside] : undefined;
+  if (b && buildingAt(m.map, tx, tz) !== f.inside) {
+    // the doorway that makes the shortest way there, one in sight if there is one
+    let best = Infinity;
+    for (const dr of b.doors) {
+      const d = Math.hypot(dr.x - f.x, dr.z - f.z) + Math.hypot(tx - dr.x, tz - dr.z) + (clearLine(m, f.x, f.z, dr.x - dr.ox, dr.z - dr.oz) ? 0 : 20);
+      if (d < best) {
+        ai.exit = dr;
+        best = d;
+      }
+    }
+  } else if (b || (ai.exit && Math.hypot(f.x - ai.exit.x, f.z - ai.exit.z) >= 1.5)) ai.exit = null;
+  const door = ai.exit;
+  if (!door) return steer(m, f, ai, tx, tz, dt, stop);
+  // square in front of it (or through it), straight out; off to one side, line up in front of it first
+  const across = (f.x - door.x) * door.oz - (f.z - door.z) * door.ox;
+  const k = !b || Math.abs(across) < Math.max(0.3, door.w / 2 - FIGHTER_R - 0.1) ? 1.5 : -1.2;
+  steer(m, f, ai, door.x + door.ox * k, door.z + door.oz * k, dt, 0);
+}
+
+/** The roofed building whose outer walls stand round a point, or -1. */
+const roomAt = (m: Match, x: number, z: number) => m.map.buildings.findIndex((b) => b.roof && Math.abs(x - b.x) < (b.w + WALL_T) / 2 && Math.abs(z - b.z) < (b.d + WALL_T) / 2);
+
 /** Walks a computer player toward a point, feeling its way around whatever is in the way. */
 function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, stop: number) {
   const inp = f.input;
@@ -2144,14 +2204,16 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
     ai.detourT -= dt;
     a = ai.detourA;
   } else {
-    // try straight on, then ever wider either side
+    // try straight on, then ever wider either side, and never into a building (doorways too) the point isn't in
     const look = Math.min(2.4, d);
+    const into = roomAt(m, tx, tz);
     for (const turn of [0, 0.5, -0.5, 1, -1, 1.5, -1.5, 2.2, -2.2]) {
       const b = a + turn;
       const ex = Math.sin(b);
       const ez = Math.cos(b);
       const side = 0.45;
-      const blocked = [-side, 0, side].some((o) => castRay(m, f.x + ez * o, f.z - ex * o, ex, ez, look, f.id, false) !== null);
+      const room = roomAt(m, f.x + ex * look, f.z + ez * look);
+      const blocked = (room >= 0 && room !== f.inside && room !== into) || [-side, 0, side].some((o) => castRay(m, f.x + ez * o, f.z - ex * o, ex, ez, look, f.id, false) !== null);
       if (!blocked) {
         a = b;
         break;
@@ -2168,8 +2230,15 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
     ai.lastX = f.x;
     ai.lastZ = f.z;
     if (moved < 0.8 && ai.detourT <= 0) {
-      ai.detourT = 0.7 + m.rng() * 0.6;
-      ai.detourA = a + (m.rng() < 0.5 ? 1 : -1) * (1.2 + m.rng() * 1.4);
+      // a wall someone built or a crate: break through it; anything else, go round
+      const hit = castRay(m, f.x, f.z, inp.mx, inp.mz, 1.8, f.id, false);
+      if (hit && (hit.what === 'built' || hit.what === 'crate')) {
+        ai.smashT = 1;
+        ai.smashA = a;
+      } else {
+        ai.detourT = 0.7 + m.rng() * 0.6;
+        ai.detourA = a + (m.rng() < 0.5 ? 1 : -1) * (1.2 + m.rng() * 1.4);
+      }
     }
   }
 }

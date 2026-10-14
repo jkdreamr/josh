@@ -36,7 +36,9 @@ export type Rock = Circle & { look: number };
  * a roof hides what's inside from anyone outside (ruins have none). `h` is how tall the walls are drawn.
  */
 export type BuildingKind = 'house' | 'farm' | 'shed' | 'warehouse' | 'container' | 'ruin' | 'coop';
-export type Building = { kind: BuildingKind; x: number; z: number; w: number; d: number; walls: Box[]; look: number; roof: boolean; h: number };
+export type Building = { kind: BuildingKind; x: number; z: number; w: number; d: number; walls: Box[]; doors: Door[]; look: number; roof: boolean; h: number };
+/** A way in through the outer walls: the middle of the opening, the way out (one step along x or z), and how wide it is. */
+export type Door = { x: number; z: number; ox: number; oz: number; w: number };
 export type LootSpawn = { id: number; def: LootDef; x: number; z: number };
 /**
  * Crates and barrels break when shot or smacked (a barrel blows up); chests and supply drops open with the interact
@@ -134,15 +136,25 @@ function wallLine(walls: Box[], alongX: boolean, cx: number, cz: number, len: nu
   }
 }
 
-/** Four walls round a w by d floor. Sides: 0 north (-z), 1 south (+z), 2 west (-x), 3 east (+x). */
+/** Four walls round a w by d floor, and the doorways through them. Sides: 0 north (-z), 1 south (+z), 2 west (-x), 3 east (+x). */
 function shell(walls: Box[], x: number, z: number, w: number, d: number, gaps: Gap[][]) {
+  const doors: Door[] = [];
   for (let side = 0; side < 4; side++) {
     const alongX = side < 2;
     const len = alongX ? w + WALL_T : d - WALL_T;
     const cx = alongX ? x : side === 2 ? x - w / 2 : x + w / 2;
     const cz = alongX ? (side === 0 ? z - d / 2 : z + d / 2) : z;
     wallLine(walls, alongX, cx, cz, len, gaps[side] ?? []);
+    // an opening ends where the walls either side of it begin
+    const room = ((alongX ? w : d) - WALL_T) / 2;
+    for (const [u, width] of gaps[side] ?? []) {
+      const lo = Math.max(-room, u - width / 2);
+      const hi = Math.min(room, u + width / 2);
+      const mid = (lo + hi) / 2;
+      doors.push({ x: alongX ? cx + mid : cx, z: alongX ? cz : cz + mid, ox: alongX ? 0 : side === 2 ? -1 : 1, oz: alongX ? (side === 0 ? -1 : 1) : 0, w: hi - lo });
+    }
   }
+  return doors;
 }
 
 /** Where along a wall `span` long a doorway `width` wide goes, at least a meter from either corner. */
@@ -370,8 +382,8 @@ export function generateMap(seed: number): GameMap {
     });
   };
 
-  const build = (kind: BuildingKind, x: number, z: number, w: number, d: number, walls: Box[], look: number, h: number) => {
-    map.buildings.push({ kind, x, z, w, d, walls, look, roof: kind !== 'ruin', h });
+  const build = (kind: BuildingKind, x: number, z: number, w: number, d: number, walls: Box[], doors: Door[], look: number, h: number) => {
+    map.buildings.push({ kind, x, z, w, d, walls, doors, look, roof: kind !== 'ruin', h });
     return map.buildings[map.buildings.length - 1];
   };
 
@@ -407,14 +419,12 @@ export function generateMap(seed: number): GameMap {
           const first = Math.floor(rng() * 4);
           const second = (first + 1 + Math.floor(rng() * 3)) % 4;
           for (const s of [first, second]) gaps[s].push([doorAt(rng, s < 2 ? w : d, DOOR), DOOR]);
-          shell(walls, x, z, w, d, gaps);
-          build('house', x, z, w, d, walls, Math.floor(rng() * 4), WALL_H);
+          build('house', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), WALL_H);
           furnish({ x, z, w, d }, true);
         } else if (kind === 'shed') {
           const s = Math.floor(rng() * 4);
           gaps[s].push([Math.round((rng() * 2 - 1) * 2) / 2, DOOR]);
-          shell(walls, x, z, w, d, gaps);
-          build('shed', x, z, w, d, walls, Math.floor(rng() * 4), 2.8);
+          build('shed', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), 2.8);
           if (rng() < 0.5) addContainer('crate', x, z, 1, 'crate');
           else addSpot(x, z);
         } else if (kind === 'ruin') {
@@ -427,8 +437,7 @@ export function generateMap(seed: number): GameMap {
               gaps[s].push([r1((rng() * 2 - 1) * (span / 2 - width / 2 - 0.5)), width]);
             }
           }
-          shell(walls, x, z, w, d, gaps);
-          build('ruin', x, z, w, d, walls, Math.floor(rng() * 4), 2.2);
+          build('ruin', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), 2.2);
           addSpot(x, z);
           if (rng() < 0.4) {
             const q = quads({ x, z, w, d })[Math.floor(rng() * 4)];
@@ -438,8 +447,7 @@ export function generateMap(seed: number): GameMap {
           // the Golden Coop: one way in (from the south, so nothing hides the chest behind a wall), a golden chest at
           // the back and good things either side
           gaps[1].push([Math.round((rng() * 2 - 1) * 2 * 2) / 2, DOOR]);
-          shell(walls, x, z, w, d, gaps);
-          build('coop', x, z, w, d, walls, 0, 3.6);
+          build('coop', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), 0, 3.6);
           map.coop = map.buildings.length - 1;
           addContainer('chest', x, z - (d / 2 - 1.7), 1, 'gold');
           addSpot(x - w / 4, z + 1.5, 'crate');
@@ -463,8 +471,7 @@ export function generateMap(seed: number): GameMap {
         for (const s of [e0, e1]) gaps[s].push([Math.round((rng() * 2 - 1) * (endSpan / 2 - wide / 2 - 1.5) * 2) / 2, wide]);
         const long = rot ? (rng() < 0.5 ? 2 : 3) : rng() < 0.5 ? 0 : 1;
         gaps[long].push([doorAt(rng, rot ? d : w, DOOR), DOOR]);
-        shell(walls, x, z, w, d, gaps);
-        build('warehouse', x, z, w, d, walls, Math.floor(rng() * 4), 4.4);
+        build('warehouse', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), 4.4);
         // rows of crates with a lane down the middle, loot between, and a chest in one corner
         for (const a of [-7.5, 0, 7.5])
           for (const b of [-4.6, 4.6]) {
@@ -502,9 +509,9 @@ export function generateMap(seed: number): GameMap {
         const lo = bigC - x - bigW / 2 + DOOR / 2 + 1;
         const hi = bigC - x + bigW / 2 - DOOR / 2 - 1;
         gaps[rng() < 0.5 ? 0 : 1].push([Math.round((lo + rng() * (hi - lo)) * 2) / 2, DOOR]);
-        shell(walls, x, z, w, d, gaps);
+        const doors = shell(walls, x, z, w, d, gaps);
         wallLine(walls, false, px, z, d - WALL_T, [[doorAt(rng, d, DOOR), DOOR]]);
-        build('farm', x, z, w, d, walls, Math.floor(rng() * 4), 3.4);
+        build('farm', x, z, w, d, walls, doors, Math.floor(rng() * 4), 3.4);
         addSpot(smallC, z - d / 4);
         addSpot(smallC, z + d / 4);
         furnish({ x: bigC, z, w: bigW, d }, true);
@@ -530,8 +537,7 @@ export function generateMap(seed: number): GameMap {
         const gaps = sides();
         const open = along ? (rng() < 0.5 ? 2 : 3) : rng() < 0.5 ? 0 : 1;
         gaps[open].push([0, 20]);
-        shell(walls, cx, cz, w, d, gaps);
-        build('container', cx, cz, w, d, walls, Math.floor(rng() * 5), 2.7);
+        build('container', cx, cz, w, d, walls, shell(walls, cx, cz, w, d, gaps), Math.floor(rng() * 5), 2.7);
         if (rng() < 0.55) addSpot(cx, cz);
       }
       barrelsAround(x, z, hw, hd, 2 + Math.floor(rng() * 2));
