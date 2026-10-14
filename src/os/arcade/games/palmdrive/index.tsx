@@ -829,6 +829,13 @@ function Play({ mode }: { mode: Mode }) {
           sfx.tone({ freq: 128, to: 92, dur: 0.6, type: 'sawtooth', vol: 0.1, delay: 0.2 });
         }
         break;
+      case 'ding':
+        // the cyclist's bell: ding-ding
+        if (mine) {
+          sfx.tone({ freq: 2093, dur: 0.16, type: 'sine', vol: 0.12 });
+          sfx.tone({ freq: 2093, dur: 0.3, type: 'sine', vol: 0.12, delay: 0.13 });
+        }
+        break;
       case 'slam':
         if (mine) sfx.tone({ freq: 240, to: 120, dur: 0.14, type: 'sawtooth', vol: 0.12 });
         break;
@@ -1092,7 +1099,8 @@ function Play({ mode }: { mode: Mode }) {
               </span>
             )}
           </div>
-          <div key={hud.place} className="g-palmdrive-place">
+          {/* keys share one namespace with the banner and hint beside it, so each gets a prefix */}
+          <div key={`place-${hud.place}`} className="g-palmdrive-place">
             <b>{ordinal(hud.place)}</b>
             <span>/ {hud.field}</span>
           </div>
@@ -1104,14 +1112,14 @@ function Play({ mode }: { mode: Mode }) {
             </div>
           )}
           {hud.banner && (
-            <div key={hud.banner} className={`g-palmdrive-banner${/^\d$/.test(hud.banner) ? ' is-count' : ''}${hud.banner.length > 12 ? ' is-note' : ''}`}>
+            <div key={`banner-${hud.banner}`} className={`g-palmdrive-banner${/^\d$/.test(hud.banner) ? ' is-count' : ''}${hud.banner.length > 12 ? ' is-note' : ''}`}>
               {hud.banner}
             </div>
           )}
           {hud.wrong && <div className="g-palmdrive-wrong">wrong way</div>}
           {hud.rear && <div className="g-palmdrive-rear">behind you</div>}
           {hint && (
-            <div key={hint.id} className="g-palmdrive-hint" role="status" onAnimationEnd={() => setHint(null)}>
+            <div key={`hint-${hint.id}`} className="g-palmdrive-hint" role="status" onAnimationEnd={() => setHint(null)}>
               {hint.text}
             </div>
           )}
