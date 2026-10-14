@@ -316,6 +316,37 @@
   -webkit-backdrop-filter: blur(10px);
   animation: none;
 }
+/* what joins in this lap, under the lap banner */
+.g-palmdrive .g-palmdrive-lapnote {
+  position: absolute;
+  top: calc(34% + 50px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 7px 16px;
+  border-radius: 999px;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: g-palmdrive-note 0.7s ease-out both;
+}
+@keyframes g-palmdrive-note {
+  0%,
+  30% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
 @keyframes g-palmdrive-pop {
   0% {
     opacity: 0;

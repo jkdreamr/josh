@@ -4,7 +4,7 @@ import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf } from '../src/os/ar
 import { CCS, CLASSES, KART_R, RIVALS, WET, createRace, hazardD, soloRace, step } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { meta } from '../src/os/arcade/games/palmdrive/meta.ts';
 import { configOf, hostState, parsePacket } from '../src/os/arcade/games/palmdrive/net.ts';
-import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, CURB, EDGE, ROAD_HALF, ballSince, deltaS, gridSpot, lengthOf, locate, pointAt, shoreOf, solid, wallGaps, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
+import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, gridSpot, lengthOf, locate, pointAt, shoreOf, solid, wallGaps, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
 
 /** The widest stretch of road left clear between things standing across it, given as [from, to] lateral spans. */
 function widest(t: Track, spans: [number, number][]) {
@@ -171,7 +171,7 @@ for (const id of COURSE_IDS) {
     }
   });
 
-  test(`${id}: ponds come up to the shoulder but never onto the road, and the wall opens up only where one does`, () => {
+  test(`${id}: ponds come right up to the curb but never onto the road, and the wall opens up only where one does`, () => {
     const t = trackOf(id);
     const lay = COURSES[id].layout(t);
     const ponds = lay.hazards.filter((h) => h.kind === 'water');
@@ -183,8 +183,8 @@ for (const id of COURSE_IDS) {
     }
     assert.ok(shore);
     for (let i = 0; i < t.n; i++) {
-      // a meter of grass at least between the curb and the water, all the way round
-      for (const w of [shore.left[i], shore.right[i]]) assert.ok(w > t.half + CURB + 0.9, `${id} water ${w.toFixed(2)} m from the line at s=${i * t.step}`);
+      // never onto the road: a kart whose middle is up to half a meter past the edge of the road is dry
+      for (const w of [shore.left[i], shore.right[i]]) assert.ok(w - WET > t.half + 0.5, `${id} water ${w.toFixed(2)} m from the line at s=${i * t.step}`);
     }
     for (const h of ponds) {
       const where = `${id} pond at s=${h.s}`;
@@ -202,6 +202,12 @@ for (const id of COURSE_IDS) {
     // the wall is left out where the water comes inside it, and only there
     const gaps = wallGaps(t, shore);
     assert.ok(gaps.length > 0);
+    // and wherever it is left out, the water comes right up to the curb somewhere: run a wheel over and you are in
+    for (const [side, from, to] of gaps) {
+      let closest = Infinity;
+      for (let s = from; deltaS(t, s, to) > 0; s += t.step) closest = Math.min(closest, (side < 0 ? shore.left : shore.right)[Math.floor(wrapS(t, s) / t.step) % t.n]);
+      assert.ok(Math.abs(closest - (t.half + 1.2)) <= 0.2, `${id} water comes within ${closest.toFixed(2)} m of the line between s=${from} and ${to}`);
+    }
     for (let i = 0; i < t.n; i++) {
       for (const side of [-1, 1]) {
         const w = side < 0 ? shore.left[i] : shore.right[i];

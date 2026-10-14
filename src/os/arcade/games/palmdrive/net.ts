@@ -105,7 +105,9 @@ export function applyFlags(k: Kart, f: number) {
   k.mega = f & F_MEGA ? 1 : 0;
   k.bullet = f & F_BULLET ? 1 : 0;
   k.ink = f & F_INK ? 1 : 0;
-  k.sunk = f & F_SUNK ? 0.7 : 0;
+  // in the water: the fall plays out here from when we first hear of it (glide counts it down)
+  if (!(f & F_SUNK)) k.sunk = 0;
+  else if (k.sunk <= 0) k.sunk = Infinity;
 }
 
 export const carOf = (k: Kart, look = -1): Omit<Car, 'seat'> => ({ x: r2(k.x), z: r2(k.z), y: r2(k.y), h: r3(k.h), v: r1(k.v), p: r1(k.prog), f: flagsOf(k), fin: k.done === null ? -1 : r3(k.done), look });

@@ -10,6 +10,21 @@ export const isCourse = (v: unknown): v is CourseId => COURSE_IDS.includes(v as 
 export const DIFFICULTY = ['Easy', 'Medium', 'Hard', 'Expert'] as const;
 export type Difficulty = 1 | 2 | 3 | 4;
 
+/**
+ * How the race itself gets harder with the course, past what is on the road. pace: the CPUs' top speed, on top of
+ * their own and the class's. band: how far the CPUs ease off when well ahead of you and push when well behind
+ * ([slowest, fastest, over how many meters]); on the harder courses they hardly ease off at all. harsh: how much longer
+ * a spin, a squash or a tumble lasts, whatever the cause. rocket: how often the CPUs nail a rocket start (times their
+ * skill). fallT and fallCoins: what going into the water costs (seconds before you are back on the road, and coins).
+ */
+export type Tier = { pace: number; band: [number, number, number]; harsh: number; rocket: number; fallT: number; fallCoins: number };
+export const TIER: Record<Difficulty, Tier> = {
+  1: { pace: 0.97, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1 },
+  2: { pace: 0.98, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1 },
+  3: { pace: 0.985, band: [0.93, 1.09, 500], harsh: 1.15, rocket: 0.75, fallT: 1.5, fallCoins: 2 },
+  4: { pace: 1.03, band: [0.97, 1.1, 450], harsh: 1.3, rocket: 0.9, fallT: 1.7, fallCoins: 3 },
+};
+
 export type Course = {
   id: CourseId;
   name: string;
@@ -25,6 +40,10 @@ export type Course = {
   layout: (t: Track) => Layout;
   /** The sky behind the 3D view (the canvas is transparent). */
   sky: string;
+  /** Anything about the course's tier (see TIER) that differs from its difficulty's. */
+  tier?: Partial<Tier>;
+  /** A line for the lap banner on the laps where something joins in (see Hazard.lap). */
+  laps?: Record<number, string>;
 };
 
 /**
@@ -38,14 +57,17 @@ function placed(
     coins: [number, number, number][];
     dashes: [number, number][];
     ramps: [number, number, number][];
-    /** [kind, s, d, size], and for cows how far they wander, how fast and when they set off. */
-    hazards?: [HazardKind, number, number, number?, number?, number?, number?][];
+    /** [kind, s, d, size], and for cows how far they wander, how fast and when they set off; then the lap it joins in. */
+    hazards?: [HazardKind, number, number, number?, number?, number?, number?, number?][];
     /** Buses: [where it waits for the green light, its lane d, meters a second]. */
     buses?: [number, number, number][];
     /** Golf carts driving laps, the same way. */
     carts?: [number, number, number][];
-    /** Golf balls: [s, d where they land, every so many seconds, the first at, the tee: [along, across] from there]. */
-    balls?: [number, number, number, number, number, number][];
+    /**
+     * Golf balls: [s, d where they land, every so many seconds, the first at, the tee: [along, across] from there],
+     * and the lap they start on if not the first.
+     */
+    balls?: [number, number, number, number, number, number, number?][];
     /** Ponds beside the road: [s, d of the middle, radius]. */
     ponds?: [number, number, number][];
   },
@@ -58,10 +80,10 @@ function placed(
     dashes: spec.dashes.map(([s, d]) => ({ s: wrapS(t, s), d })),
     ramps: spec.ramps.map(([s, d, w]) => ({ s: wrapS(t, s), d, w })),
     hazards: [
-      ...(spec.hazards ?? []).map(([kind, s, d, r, swing, speed, phase]) => ({ kind, s: wrapS(t, s), d, r: r ?? HAZARD_R[kind], swing, speed, phase })),
+      ...(spec.hazards ?? []).map(([kind, s, d, r, swing, speed, phase, lap]) => ({ kind, s: wrapS(t, s), d, r: r ?? HAZARD_R[kind], swing, speed, phase, ...(lap ? { lap } : {}) })),
       ...(spec.buses ?? []).map(([s, d, drive]) => ({ kind: 'bus' as const, s: wrapS(t, s), d, r: HAZARD_R.bus, drive })),
       ...(spec.carts ?? []).map(([s, d, drive]) => ({ kind: 'cart' as const, s: wrapS(t, s), d, r: HAZARD_R.cart, drive })),
-      ...(spec.balls ?? []).map(([s, d, every, phase, along, across]) => ({ kind: 'ball' as const, s: wrapS(t, s), d, r: HAZARD_R.ball, every, phase, tee: [along, across] as [number, number] })),
+      ...(spec.balls ?? []).map(([s, d, every, phase, along, across, lap]) => ({ kind: 'ball' as const, s: wrapS(t, s), d, r: HAZARD_R.ball, every, phase, tee: [along, across] as [number, number], ...(lap ? { lap } : {}) })),
       ...(spec.ponds ?? []).map(([s, d, r]) => ({ kind: 'water' as const, s: wrapS(t, s), d, r })),
     ],
   };
@@ -262,6 +284,9 @@ export const COURSES: Record<CourseId, Course> = {
     start: [-150 * BARN_K, -160.5 * BARN_K],
     half: 7,
     edge: 11.5,
+    // the CPUs know their way round the bales and the bog, which makes the barn the harder of the two Medium courses
+    // at the Medium pace: a touch slower keeps it Medium
+    tier: { pace: 0.965 },
     layout: (t) =>
       placed(t, {
         boxes: [60, 560, 795],
@@ -365,6 +390,8 @@ export const COURSES: Record<CourseId, Course> = {
     start: [-40 * STADIUM_K, -63 * STADIUM_K],
     half: 10,
     edge: 15,
+    // a short sprint on a wide road keeps the field bunched up, so the CPUs go a touch easier to leave it Easy
+    tier: { pace: 0.955 },
     layout: (t) =>
       placed(t, {
         boxes: [70, 300, 590],
@@ -517,10 +544,10 @@ export const COURSES: Record<CourseId, Course> = {
       const third = t.length / 3;
       const every = third / cartV;
       // (a group walking together keeps time with the one at the front, at s0)
-      const across = (kind: 'golfer' | 'cart', s: number, n: number, swing: number, size?: number, s0 = s): [HazardKind, number, number, number?, number?, number?, number?] => {
+      const across = (kind: 'golfer' | 'cart', s: number, n: number, swing: number, size?: number, s0 = s, lap?: number): [HazardKind, number, number, number?, number?, number?, number?, number?] => {
         const speed = (2 * Math.PI * n) / every;
         const pass = ((((s0 - 180) % third) + third) % third) / cartV;
-        return [kind, s, 0, size, swing, speed, -Math.PI / 2 - speed * pass];
+        return [kind, s, 0, size, swing, speed, -Math.PI / 2 - speed * pass, lap];
       };
       return placed(t, {
         boxes: [22, 285, 600, 812],
@@ -570,6 +597,8 @@ export const COURSES: Record<CourseId, Course> = {
           ...[498, 499.6, 501.2, 502.8].map((at) => across('golfer', at, 3, 4.6, undefined, 498)),
           across('golfer', 690, 4, 4.6),
           across('golfer', 972, 3, 4.6),
+          // and from the last lap the gallery that has been watching by the 18th green walks across it, all four
+          ...[1016, 1017.6, 1019.2, 1020.8].map((at) => across('golfer', at, 3, 4.6, undefined, 1016, 5)),
           // the flagsticks where the road crosses two greens
           ['pin', 725, -2.6],
           ['pin', 1006, -2.4],
@@ -580,7 +609,8 @@ export const COURSES: Record<CourseId, Course> = {
           [180 + 2 * third, 3.8, cartV],
         ],
         // balls driven onto the road: four from the driving range across the first straight, more down the 18th,
-        // and one off each of the tees in between
+        // and one off each of the tees in between. From the third lap the whole range is hitting (four more across the
+        // rest of the straight), and on the last lap two more come down on the approach to the 18th green
         balls: [
           [45, 1.8, 4, 0.4, -6, 26],
           [75, -2.4, 4, 1.4, -6, 26],
@@ -594,19 +624,32 @@ export const COURSES: Record<CourseId, Course> = {
           [905, -2, 5, 2.6, -12, 30],
           [935, 1, 4.5, 1.1, -12, 30],
           [965, -1.5, 5, 3.9, -12, 30],
+          [178, 0, 4, 0.9, -6, 26, 3],
+          [200, 2.2, 4, 2.9, -6, 26, 3],
+          [215, -2.6, 4.5, 1.7, -6, 26, 3],
+          [245, 1, 4, 3.7, -6, 26, 3],
+          [985, 1.6, 4, 0.7, -12, 30, 5],
+          [995, -1, 4.5, 2.2, -12, 30, 5],
         ],
-        // the island green's pond on the inside of the loop, and the water down the left of the 18th
+        // the island green's pond on the inside of the loop, and the water down the left of the 18th: right up to the
+        // curb, so one wheel over and you are in
         ponds: [
-          [402.2, -62.56, 53.96],
-          [915, -38.6, 30],
-          [929, -38.6, 30],
-          [943, -38.6, 30],
+          [402.57, -62.54, 54.9],
+          [915, -37.7, 30],
+          [929, -37.7, 30],
+          [943, -37.7, 30],
         ],
       });
     },
     sky: 'linear-gradient(180deg, #3a7fd0 0%, #85b8ea 24%, #d3e5f1 36%, #f6e3b6 42%, #e9cf96 46%, #5d9a3c 47%)',
+    // a good line misses most of what is on the road here, so the CPUs need a touch more pace to keep up with one
+    tier: { pace: 1.04 },
+    laps: { 3: 'The range opens up', 5: 'The gallery at the 18th' },
   },
 };
+
+/** A course's tier: its difficulty's, with anything the course sets itself. */
+export const tierOf = (id: CourseId): Tier => ({ ...TIER[COURSES[id].difficulty], ...COURSES[id].tier });
 
 const tracks = new Map<CourseId, Track>();
 /** Each course's circuit, built once. */

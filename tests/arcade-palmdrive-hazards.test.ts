@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CLASSES, KART_R, OFFROAD, RIVALS, SPLASH_T, createRace, hazardD, hazardS, hazardV, inBus, moveHazards, spawn, step, type Ev, type Kart, type LiveHazard, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
+import { CLASSES, DROP_WINDOW, KART_R, OFFROAD, RIVALS, WET, createRace, hazardD, hazardS, hazardV, inBus, moveHazards, rescue, spawn, step, type Ev, type Kart, type LiveHazard, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { BALL_WINDOW, BUS_LEN, CART_LEN, ballDue, ballNear, ballSince, deltaS, headingOf, locate, pointAt, wrapAngle } from '../src/os/arcade/games/palmdrive/track.ts';
 
 const DT = 1 / 60;
@@ -281,13 +281,15 @@ test('CPU drivers round the Main Quad steer round the planters and time their wa
   assert.ok(knocks.bike <= 8, `bikes ${knocks.bike}`);
 });
 
-test('a CPU on a boost brakes for a swerve it cannot make, but not for the bend on the way to it', () => {
+test('a CPU with a clean line past something keeps its foot down; it brakes only for a swerve it cannot make, or with no way past', () => {
   /** Whether a lone CPU coming out of the corner before the planter on the west side, lined up on it at speed, brakes. */
-  const brakes = (boost: number, across = 0) => {
+  const brakes = (boost: number, across = 0, wall = false, v = 34) => {
     const r = createRace({ cc: '200cc', course: 'quad', seed: 5, countdown: 0, racers: [RIVALS[0]] });
     const [k] = r.karts;
     const planter = find(r, 'planter', (h) => Math.abs(h.s - 588) < 1);
-    place(r, k, planter.s - 22, planter.d, 34);
+    // (or a row of them right across the road, with no way through)
+    if (wall) r.hazards.push(...[-4.5, 0, 4.5].map((d) => ({ ...planter, d, at: d, ...pointAt(r.track, planter.s, d) })));
+    place(r, k, planter.s - 22, planter.d, v);
     // turned `across` radians off the line of the road, toward the planter's side of it
     const p = pointAt(r.track, k.s);
     const side = Math.sign(planter.d);
@@ -296,17 +298,31 @@ test('a CPU on a boost brakes for a swerve it cannot make, but not for the bend 
     step(r, DT);
     return k.input.brake;
   };
-  assert.equal(brakes(0), true, 'off a boost it slows for the corner and the swerve together');
-  assert.equal(brakes(1), false, 'on a boost the corner is no reason to brake, and the swerve past the planter is an easy one');
+  // lined up on one on a straight, with a clean way round it: no braking, on a boost or off it
+  for (const boost of [0, 1]) {
+    const r = createRace({ cc: '200cc', course: 'palm', seed: 5, countdown: 0, racers: [RIVALS[0]] });
+    const [k] = r.karts;
+    const p = pointAt(r.track, 70, 0);
+    r.hazards.push({ kind: 'planter', s: 70, d: 0, r: 1.6, x: p.x, z: p.z, along: 70, at: 0, tx: p.tx, tz: p.tz, walk: 0 });
+    place(r, k, 48, 0, 34);
+    k.boost = boost;
+    step(r, DT);
+    assert.equal(k.input.brake, false, `a clean line past a planter on a straight (boost ${boost})`);
+  }
+  // coming out of a corner at the Quad lined up on a planter, with a clean line round it: it used to brake for the
+  // swerve and the corner together; now only as it would for the corner alone, which it takes at 30 m/s
+  assert.equal(brakes(0, 0, false, 30), false, 'no braking for the planter on the way out of the corner');
+  assert.equal(brakes(1), false, 'nor on a boost');
   assert.equal(brakes(1, 0.45), true, 'but angled across the road at a boost\'s speed it cannot straighten up in time');
-  // oil on the apex of a bend at Hoover Nights: on a boost it still slows to make the bend on a line round the slick
+  assert.equal(brakes(0, 0, true), true, 'and with no way past at all it slows and waits for one');
+  // oil on the apex of a bend at Hoover Nights, with a clean line round it: it keeps its foot down
   const r = createRace({ cc: '200cc', course: 'hoover', seed: 5, countdown: 0, racers: [RIVALS[0]] });
   const [k] = r.karts;
   const oil = find(r, 'oil', (h) => Math.abs(h.s - 664) < 1);
   place(r, k, oil.s - 24, oil.d, 38);
   k.boost = 1;
   step(r, DT);
-  assert.equal(k.input.brake, true, 'slows for oil on a bend');
+  assert.equal(k.input.brake, false, 'no braking for oil it has a line round');
 });
 
 test('oil spins you out; a star skates straight over it', () => {
@@ -505,12 +521,16 @@ function wide(r: Race, k: Kart, s = 470, v = 14) {
 test('run wide into a pond and you splash, sit there a moment and are fished out onto the road facing the right way', () => {
   const r = golf();
   const k = r.karts[0];
+  k.coins = 5;
   wide(r, k);
   const evs = run(r, 0.6);
   assert.equal(evs.filter((e) => e.t === 'splash' && e.k === k.idx).length, 1, 'one splash');
   assert.ok(k.sunk > 0 && k.v === 0, 'in the water');
+  // it costs coins, three on an Expert course
+  assert.equal(r.tier.fallCoins, 3);
+  assert.equal(k.coins, 2);
   const wet = { x: k.x, z: k.z };
-  // it goes nowhere while it waits, and can't use an item
+  // it goes nowhere while it waits, and can't use an item, but keeps it
   k.item = 'mushroom';
   k.uses = 1;
   k.input.use = true;
@@ -522,15 +542,106 @@ test('run wide into a pond and you splash, sit there a moment and are fished out
   const left = r.time;
   assert.ok(!out.some((e) => e.t === 'splash'), 'no second splash');
   assert.equal(k.sunk, 0, 'fished out');
-  // back on the road, facing down it, with a moment's grace
+  assert.equal(k.item, 'mushroom', 'the item stays dry');
+  // back on the road, well clear of the water and facing down it, with a moment's grace
   const at = locate(r.track, k.x, k.z);
-  assert.ok(Math.abs(at.d) <= 4.01, `set down on the road at d=${at.d}`);
+  assert.ok(Math.abs(at.d) <= r.track.half - 1.5 + 0.01, `set down on the road at d=${at.d}`);
+  const shore = r.shore!.left[Math.floor(at.s / r.track.step)];
+  assert.ok(-at.d < shore - WET - 3 + 0.01, `set down ${(shore + at.d).toFixed(1)} m from the water`);
   assert.ok(Math.abs(wrapAngle(k.h - headingOf(at.tx, at.tz))) < 0.05, 'facing the right way');
   assert.ok(k.safe > 0);
-  assert.ok(left > 1 && left < 0.6 + 0.2 + SPLASH_T, `out after ${left}`);
-  // it costs the wait and a start from a standstill: a couple of seconds
-  assert.ok(SPLASH_T >= 1 && SPLASH_T <= 1.6);
+  assert.ok(left > 1 && left < 0.6 + 0.2 + r.tier.fallT, `out after ${left}`);
+  // on Expert it costs the wait, a start from a standstill and the coins: about three seconds
+  assert.ok(r.tier.fallT >= 1.5 && r.tier.fallT <= 2);
   assert.ok(k.v < 3, `starting again at ${k.v}`);
+});
+
+test('a banana held out behind goes in the water with you', () => {
+  const r = golf();
+  const k = r.karts[0];
+  k.item = 'banana';
+  k.uses = 1;
+  k.input.hold = true;
+  run(r, 0.1);
+  assert.ok(k.trail, 'held out');
+  wide(r, k);
+  run(r, 0.6);
+  assert.ok(k.sunk > 0);
+  assert.equal(k.item, null);
+});
+
+test('tap drift just as you are set back down for a drop start; too soon and nothing happens', () => {
+  for (const when of ['before', 'after', 'early', 'never'] as const) {
+    const r = golf();
+    const k = r.karts[0];
+    wide(r, k);
+    run(r, 0.6);
+    assert.ok(k.sunk > 0, when);
+    // run until the moment to press, then tap
+    const at = { before: 0.1, after: -0.1, early: 0.6, never: -1 }[when];
+    while (k.sunk > Math.max(at, 0) + 1e-9) run(r, DT);
+    if (at < 0 && when === 'after') run(r, -at);
+    if (when !== 'never') k.input.hop = true;
+    const evs = run(r, 0.6);
+    const boosted = evs.some((e) => e.t === 'turbo' && e.k === k.idx);
+    assert.equal(boosted, when === 'before' || when === 'after', when);
+    if (boosted) assert.ok(k.v > 12, `${when}: away at ${k.v.toFixed(1)}`);
+  }
+  // and mashing drift all the way through the fall spoils it, like jumping the lights
+  const m = golf();
+  const mk = m.karts[0];
+  wide(m, mk);
+  run(m, 0.6);
+  assert.ok(mk.sunk > 0, 'mash');
+  let mashed = false;
+  for (let i = 0; i < 40; i++) {
+    mk.input.hop = true;
+    mashed = run(m, 0.1).some((e) => e.t === 'turbo' && e.k === mk.idx) || mashed;
+  }
+  assert.ok(!mashed, 'mashing gave a drop start');
+  assert.ok(DROP_WINDOW >= 0.2 && DROP_WINDOW <= 0.3);
+});
+
+test('set back down where nothing is about to come through: never in front of a cart, under a ball or among golfers', () => {
+  const r = golf();
+  const k = r.karts[0];
+  r.time = 30;
+  moveHazards(r);
+  // right where a cart driving its rounds is, in its lane
+  const cart = find(r, 'cart', (h) => !!h.drive);
+  k.s = cart.along;
+  k.d = cart.d;
+  rescue(r, k);
+  const at = locate(r.track, k.x, k.z);
+  const ahead = deltaS(r.track, cart.along, at.s);
+  assert.ok(Math.abs(at.d - cart.d) > cart.r + KART_R + 1 || ahead > CART_LEN / 2 + 12 || ahead < -(CART_LEN / 2 + 6), `beside the cart: ${ahead.toFixed(1)} m on, d=${at.d.toFixed(1)}`);
+  // right where a ball is about to come down
+  const s = golf();
+  const ball = find(s, 'ball', (h) => h.s > 800);
+  s.time = 2 + ((ball.every! - ballSince(ball, 2)) % ball.every!) - 0.5;
+  moveHazards(s);
+  const t = s.karts[0];
+  t.s = ball.s - 2;
+  t.d = ball.d;
+  rescue(s, t);
+  const sat = locate(s.track, t.x, t.z);
+  assert.ok(Math.abs(sat.d - ball.d) > ball.r + KART_R + 1 || deltaS(s.track, sat.s, ball.s) < -2 || deltaS(s.track, sat.s, ball.s) > 12, 'not under the ball');
+  // and with nothing about, just where it went off
+  const q = golf();
+  q.time = 1;
+  moveHazards(q);
+  const u = q.karts[0];
+  let free = -1;
+  for (let at = 100; at < q.track.length - 50 && free < 0; at += 5) {
+    if (q.hazards.every((h) => Math.abs(deltaS(q.track, at, h.along)) > 25)) free = at;
+  }
+  assert.ok(free >= 0, 'somewhere on the lap with nothing about');
+  u.s = free;
+  u.d = 2;
+  rescue(q, u);
+  const uat = locate(q.track, u.x, u.z);
+  assert.ok(Math.abs(deltaS(q.track, free, uat.s)) < 0.5 && Math.abs(uat.d - 2) < 0.1, `moved from ${free}, 2 to ${uat.s.toFixed(1)}, ${uat.d.toFixed(2)}`);
+  assert.ok(k.safe > 0 && t.safe > 0);
 });
 
 test('flying over the edge of a pond keeps you dry, and a pond never reaches a kart on the road', () => {

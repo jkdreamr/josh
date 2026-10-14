@@ -241,6 +241,9 @@ export const sOf = (t: Track, e: number, n: number) => {
  * A golf ball lands on the road at (s, d) every `every` seconds, first at race time `phase`, hit from a tee `tee`
  * ([along, across]) from there; its r is the ball's size. Water is a pond: a circle of radius r centered (s, d) off the
  * road, whose edge comes up to the shoulder (see shoreOf).
+ *
+ * Some only join in later in the race: a hazard with a `lap` is there for a kart from that lap of its own on (each
+ * kart's own lap, so every screen agrees about every kart); until then it is drawn standing by, out of the way.
  */
 export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus' | 'cart' | 'golfer' | 'ball' | 'sand' | 'water' | 'pin';
 export type Hazard = {
@@ -254,6 +257,7 @@ export type Hazard = {
   drive?: number;
   every?: number;
   tee?: [number, number];
+  lap?: number;
 };
 /** How big each kind is unless a course says otherwise. */
 export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1, bus: 1.3, cart: 0.8, golfer: 0.8, ball: 0.55, sand: 2.8, water: 20, pin: 0.5 };
@@ -264,6 +268,8 @@ export const CART_LEN = 3.1;
 export const drives = (h: Hazard) => (h.kind === 'bus' || h.kind === 'cart') && !!h.drive;
 /** How long a bus or a driving cart is. */
 export const lengthOf = (h: Hazard) => (h.kind === 'bus' ? BUS_LEN : CART_LEN);
+/** Whether a hazard is there yet for a kart on lap `lap` (see `lap` above). */
+export const awake = (h: Hazard, lap: number) => !h.lap || lap >= h.lap;
 /** Things you bounce off (or that spin you out when you run into them); the rest you drive through or over. */
 export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil' && kind !== 'sand' && kind !== 'water' && kind !== 'ball';
 

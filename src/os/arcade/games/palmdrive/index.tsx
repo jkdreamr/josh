@@ -361,6 +361,8 @@ type Hud = {
   time: string;
   lights: number;
   banner: string | null;
+  /** A line under the lap banner when something joins in on that lap. */
+  note: string | null;
   wrong: boolean;
   results: boolean;
 };
@@ -420,14 +422,14 @@ function Play({ mode }: { mode: Mode }) {
   const tap = useRef({ back: false, gas: false, cash: false, slam: false });
   /** The item button was holding a banana or shell out behind last frame. */
   const holding = useRef(false);
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, note: null, wrong: false, results: false });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
   const clock = useRef(0);
   const rollTick = useRef(0);
-  /** The lap banner ('lap 2/5', 'final lap!') and when it went up. */
-  const lapBanner = useRef({ text: '', at: -99 });
+  /** The lap banner ('lap 2/5', 'final lap!'), the course's line about what is new that lap, and when it went up. */
+  const lapBanner = useRef<{ text: string; note: string | null; at: number }>({ text: '', note: null, at: -99 });
   const [coinPop, setCoinPop] = useState<{ id: number; text: string; loss: boolean } | null>(null);
   const lastCoins = useRef(0);
   const [hint, setHint] = useState<{ id: number; text: string } | null>(null);
@@ -939,7 +941,7 @@ function Play({ mode }: { mode: Mode }) {
       case 'lap':
         if (!mine) break;
         setLapNote({ id: Date.now(), text: fmtTime(r.karts[r.me].laps[r.karts[r.me].laps.length - 1] ?? 0) });
-        lapBanner.current = { text: e.lap === r.laps ? 'final lap!' : `lap ${e.lap}/${r.laps}`, at: clock.current };
+        lapBanner.current = { text: e.lap === r.laps ? 'final lap!' : `lap ${e.lap}/${r.laps}`, note: COURSES[r.course].laps?.[e.lap] ?? null, at: clock.current };
         if (e.lap === r.laps) {
           sfx.tone({ freq: 660, dur: 0.12, type: 'square', vol: 0.14 });
           sfx.tone({ freq: 880, dur: 0.12, type: 'square', vol: 0.14, delay: 0.14 });
@@ -987,6 +989,7 @@ function Play({ mode }: { mode: Mode }) {
     const me = r.karts[r.me];
     if (!me) return;
     let banner: string | null = null;
+    let note: string | null = null;
     let lights = 0;
     if (!n.synced) banner = 'waiting for the host';
     else if (r.time < -COUNTDOWN) banner = COURSES[r.course].name;
@@ -997,7 +1000,10 @@ function Play({ mode }: { mode: Mode }) {
       banner = 'go!';
       lights = 4;
     } else if (me.done !== null) banner = clock.current - (doneAt.current ?? 0) < 3 ? 'finish!' : null;
-    else if (clock.current - lapBanner.current.at < 1.8) banner = lapBanner.current.text;
+    else if (clock.current - lapBanner.current.at < (lapBanner.current.note ? 3 : 1.8)) {
+      banner = lapBanner.current.text;
+      note = lapBanner.current.note;
+    }
     const next: Hud = {
       place: me.place,
       field: r.karts.length,
@@ -1017,6 +1023,7 @@ function Play({ mode }: { mode: Mode }) {
       time: fmtTime(Math.max(0, me.done ?? r.time)),
       lights,
       banner,
+      note,
       wrong: me.wrong > 1.2 && me.done === null,
       results: me.done !== null && clock.current - (doneAt.current ?? 0) >= 3,
     };
@@ -1178,6 +1185,11 @@ function Play({ mode }: { mode: Mode }) {
           {hud.banner && (
             <div key={`banner-${hud.banner}`} className={`g-palmdrive-banner${/^\d$/.test(hud.banner) ? ' is-count' : ''}${hud.banner.length > 12 ? ' is-note' : ''}`}>
               {hud.banner}
+            </div>
+          )}
+          {hud.banner && hud.note && (
+            <div key={`note-${hud.note}`} className="g-palmdrive-lapnote">
+              {hud.note}
             </div>
           )}
           {hud.wrong && <div className="g-palmdrive-wrong">wrong way</div>}

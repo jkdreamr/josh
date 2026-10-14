@@ -2,9 +2,9 @@
 // scenery is in scenery.ts). It reads a Race every frame and never changes it.
 import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
-import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, ballSince, deltaS, gridSpot, headingOf, locate, pointAt, wallGaps, wrapAngle, type Track } from './track';
+import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, deltaS, gridSpot, headingOf, locate, pointAt, wallGaps, wrapAngle, type Track } from './track';
 import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, noise, scatter, swingAt, texture, waterTexture } from './scenery';
-import { COUNTDOWN, RAMP_H, RAMP_LEN, SPLASH_T, TURBO_AT, hazardV, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
+import { COUNTDOWN, RAMP_H, RAMP_LEN, TURBO_AT, hazardV, hurt, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
 
 type Three = typeof import('three');
 
@@ -1154,6 +1154,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       camera.updateProjectionMatrix();
     },
     frame(race, me, dt, clock, lookBack = false) {
+      // what has joined in yet goes by the lap this screen's kart is on
+      const lapNow = race.karts[me]?.lap ?? 1;
       // cows walk across the road and turn round at the far side
       for (const { view: cv, i } of cows) {
         const h = race.hazards[i];
@@ -1214,6 +1216,16 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       for (const gv of golfers) {
         const h = race.hazards[gv.i];
         if (!h) continue;
+        if (!awake(h, lapNow)) {
+          // a gallery waiting its turn: stood watching from behind the wall until its lap comes round
+          const side = pointAt(race.track, h.along, -(race.track.edge + 1.4));
+          gv.h = headingOf(-side.tz, side.tx);
+          gv.g.position.set(side.x, 0, side.z);
+          gv.g.rotation.y = gv.h;
+          gv.legs.forEach((leg) => (leg.rotation.x = 0));
+          gv.arms.forEach((arm) => (arm.rotation.x = 0));
+          continue;
+        }
         const at = pointAt(race.track, h.along, h.at);
         gv.h = dampAngle(gv.h, headingOf(-at.tz * h.walk, at.tx * h.walk), 3, dt);
         gv.g.position.set(h.x, 0, h.z);
@@ -1228,6 +1240,12 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       for (const b of balls) {
         const h = race.hazards[b.i];
         if (!h) continue;
+        if (!awake(h, lapNow)) {
+          // a tee that hasn't started hitting onto the road yet: the golfer stands addressing the ball
+          b.swing(0);
+          b.ball.visible = b.streak.visible = b.shadow.visible = b.mark.visible = false;
+          continue;
+        }
         const every = h.every ?? 5;
         const since = ballSince(h, race.time);
         const until = every - since;
@@ -1363,7 +1381,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       // karts, with drift smoke and dust kicked up off the grass
       race.karts.forEach((k, i) => {
         const v = karts[i];
-        syncKart(v, k, dt, clock);
+        syncKart(v, k, dt, clock, race.tier.fallT);
         v.smoke -= dt;
         if (k.sunk > 0) {
           // bubbles while it is under
@@ -1560,8 +1578,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
 }
 
 const scratch = { color: 0 };
-function syncKart(v: KartView, k: Kart, dt: number, clock: number) {
+function syncKart(v: KartView, k: Kart, dt: number, clock: number, fallT: number) {
   if (k.hat !== v.hatName) v.wear(k.hat);
+  // a moment's grace after a hit or being set back on the road: the kart blinks
+  v.root.visible = !(k.safe > 0 && !hurt(k) && Math.floor(clock * 15) % 2 === 1);
   scratch.color = parseInt(k.color.slice(1), 16);
   if (scratch.color !== v.color) v.color = scratch.color;
   v.root.position.set(k.x, 0, k.z);
@@ -1579,7 +1599,7 @@ function syncKart(v: KartView, k: Kart, dt: number, clock: number) {
   // in a pond: down under the water, then hauled up out of it on a line and set back on the road
   let sink = 0;
   if (k.sunk > 0) {
-    const u = 1 - Math.min(1, k.sunk / SPLASH_T);
+    const u = 1 - Math.min(1, k.sunk / fallT);
     sink = u < 0.25 ? -1.3 * (u / 0.25) : u < 0.7 ? -1.3 + Math.sin(clock * 9) * 0.05 : -1.3 + 3.8 * ((u - 0.7) / 0.3);
     v.line.visible = u > 0.55;
     if (v.line.visible) {
