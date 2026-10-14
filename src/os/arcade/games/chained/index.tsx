@@ -517,7 +517,7 @@ function Play({ kind }: { kind: Kind }) {
       } else {
         sfx.play('lose');
         const z = ZONES[zoneIndex(teamHeight(g, mine))];
-        shellRef.current.gameOver(undefined, { title: `${rival} Won the Race`, detail: `They stood on the way out at ${fmtTime(time)}. You were ${gap} m below, in ${z.name}.` });
+        shellRef.current.gameOver(undefined, { title: `${rival === 'The shades' ? 'The Shades' : rival} Won the Race`, detail: `They stood on the way out at ${fmtTime(time)}. You were ${gap} m below, in ${z.name}.` });
       }
       if (live && onlineRef.current) onlineRef.current.reportResult(onlineRef.current.round, winner >= 0 ? winnerSeat(g, winner) : null);
       return;
@@ -936,7 +936,7 @@ function Play({ kind }: { kind: Kind }) {
   const g = game.current!;
   /** More than one soul to steer: the swap key, the halo and the "steering" chip. */
   const solo = !(team && !live) && steerable(g).length > 1;
-  const leadWord = hud.race ? (Math.abs(hud.race.lead) < 1 ? 'level' : `${Math.abs(Math.round(hud.race.lead))} m ${hud.race.lead > 0 ? 'ahead' : 'behind'}`) : '';
+  const leadWord = !hud.race ? '' : Math.abs(hud.race.lead) < 1 ? 'level' : shell.touch ? `${hud.race.lead > 0 ? '+' : '-'}${Math.abs(Math.round(hud.race.lead))} m` : `${Math.abs(Math.round(hud.race.lead))} m ${hud.race.lead > 0 ? 'ahead' : 'behind'}`;
   const skyOf = (zone: number) => {
     const p = ZONES[zone].palette.sky;
     return `linear-gradient(180deg, ${p[0]} 0%, ${p[1]} 55%, ${p[2]} 100%)`;

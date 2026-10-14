@@ -136,6 +136,24 @@
 .g-chained .g-chained-lead.is-behind {
   background: rgba(232, 74, 60, 0.42);
 }
+.g-chained .g-chained-lead,
+.g-chained .g-chained-modetag,
+.g-chained .g-chained-time {
+  white-space: nowrap;
+}
+/* phones: the bar sits at the top left, clear of the shell's buttons, and the chains move up under it, clear of the touch controls */
+@media (max-width: 560px) {
+  .g-chained .g-chained-top {
+    left: 10px;
+    transform: none;
+    max-width: calc(100% - 140px);
+    gap: 7px;
+    padding: 4px 10px;
+  }
+  .g-chained .g-chained-time {
+    font-size: 14px;
+  }
+}
 .g-chained .g-chained-ready {
   position: absolute;
   top: 50%;
@@ -375,8 +393,23 @@
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
 }
 @media (max-width: 560px) {
+  /* phones: the chains sit under the top bar, clear of the touch controls */
+  .g-chained .g-chained-team {
+    left: 10px;
+    bottom: auto;
+    top: 50px;
+    gap: 4px;
+    max-width: calc(100% - 70px);
+  }
+  .g-chained .g-chained-chip {
+    padding: 3px 7px 3px 5px;
+    font-size: 11px;
+  }
   .g-chained .g-chained-chip small {
     display: none;
+  }
+  .g-chained .g-chained-vs {
+    font-size: 13px;
   }
   .g-chained .g-chained-team-hint {
     display: none;
