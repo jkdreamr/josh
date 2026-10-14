@@ -135,6 +135,13 @@
 .g-scramble .g-scramble-pill.is-kills {
   color: #ffd75e;
 }
+.g-scramble .g-scramble-pill.is-gear {
+  gap: 4px;
+  padding: 4px 9px 4px 7px;
+}
+.g-scramble .g-scramble-pill.is-gear b {
+  font-size: 13px;
+}
 .g-scramble .g-scramble-storm {
   position: absolute;
   top: 12px;
@@ -274,6 +281,25 @@
   color: #fff;
   background: rgba(255, 255, 255, 0.18);
 }
+.g-scramble .g-scramble-leave {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #1b1c22;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+.g-scramble .g-scramble-leave kbd {
+  color: #fff;
+  background: rgba(20, 20, 26, 0.75);
+}
 .g-scramble .g-scramble-jump {
   position: absolute;
   bottom: max(12%, 120px);
@@ -399,6 +425,12 @@
 .g-scramble .g-scramble-bar.is-shield span {
   font-size: 9px;
 }
+.g-scramble .g-scramble-bar.is-boost {
+  height: 5px;
+}
+.g-scramble .g-scramble-bar.is-boost i {
+  background: linear-gradient(90deg, #ffc46b, #ff8a00);
+}
 .g-scramble .g-scramble-slots {
   display: flex;
   gap: 6px;
@@ -452,20 +484,48 @@
   font-size: 10px;
   opacity: 0.75;
 }
+/* how many of the throwable in hand, and a dot when there's another kind to switch to */
+.g-scramble .g-scramble-count {
+  position: absolute;
+  right: 5px;
+  bottom: 2px;
+  font-size: 12px;
+  font-weight: 800;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+.g-scramble .g-scramble-more {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0.8;
+}
 .g-scramble .g-scramble-mats {
   display: grid;
-  grid-template-columns: auto auto;
+  grid-template-columns: repeat(4, auto);
   gap: 3px 10px;
   font-size: 13px;
   font-weight: 800;
 }
-.g-scramble .g-scramble-mats span {
+.g-scramble .g-scramble-mats span,
+.g-scramble .g-scramble-mats button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
-.g-scramble .g-scramble-mats span.is-none {
+.g-scramble .g-scramble-mats button {
+  padding: 0;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  cursor: pointer;
+}
+.g-scramble .g-scramble-mats .is-none {
   opacity: 0.45;
 }
 .g-scramble .g-scramble-mats span.is-full {
@@ -573,6 +633,13 @@
 }
 .g-scramble .g-scramble-stick.is-firing i {
   background: rgba(255, 120, 110, 0.9);
+}
+/* a throwable out: the push sets how far it goes and letting go throws it */
+.g-scramble .g-scramble-stick.is-tossing {
+  box-shadow: inset 0 0 0 3px rgba(255, 196, 80, 0.9);
+}
+.g-scramble .g-scramble-stick.is-tossing i {
+  background: rgba(255, 214, 120, 0.92);
 }
 .g-scramble .g-scramble-buttons {
   position: absolute;
@@ -691,6 +758,7 @@
 @container (max-height: 460px) {
   .g-scramble .g-scramble-buttons {
     bottom: 10px;
+    grid-template-columns: repeat(3, 52px);
   }
   .g-scramble .g-scramble-hud.is-touch .g-scramble-bottom {
     flex-direction: row;
@@ -709,8 +777,9 @@
   .g-scramble .g-scramble-hud.is-touch .g-scramble-feed li:nth-last-child(n + 3) {
     display: none;
   }
+  /* nothing else sits at the bottom on the bus, and the bus itself is in the middle */
   .g-scramble .g-scramble-hud.is-touch .g-scramble-jump {
-    bottom: 70px;
+    bottom: 12px;
   }
 }
 
@@ -751,6 +820,12 @@
 @container (max-width: 470px) {
   .g-scramble .g-scramble-hud:not(.is-touch) .g-scramble-mats {
     display: none;
+  }
+}
+/* a phone held upright: the news down the right side runs where the out card would be, so the card sits lower */
+@container (max-width: 520px) and (min-height: 461px) {
+  .g-scramble .g-scramble-out {
+    top: 36%;
   }
 }
 
@@ -871,6 +946,16 @@
   padding: 2px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.08);
+}
+.g-scramble .g-scramble-guns small {
+  font-size: 12px;
+  opacity: 0.7;
+}
+.g-scramble .g-scramble-sub {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
 }
 
 @media (prefers-reduced-motion: reduce) {

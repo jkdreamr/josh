@@ -12,6 +12,11 @@ export const TICK_MS = 66;
 export const END_PAUSE = 2.2;
 /** Seconds without a report from a guest before the host takes its egg out (a closed laptop, a frozen tab). */
 export const STALE = 15;
+/**
+ * Extra seconds a guest gets for its first report: a slow phone can take a while to build the island before it starts
+ * sending (and one that never does is still put off the bus with everyone else).
+ */
+export const FIRST_GRACE = 30;
 /** Seconds past the bus leaving land by which every egg is down; one still in the air has stopped playing. */
 const DOWN_BY = 4 + BUS_Y / FALL + 4;
 
@@ -22,7 +27,7 @@ export type Player = { seat: number; name: string };
 const nameOf = (players: Player[], seat: number) => players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`;
 
 /**
- * The host's match: everyone in the room by seat, then computer eggs to make eight when the host wants them.
+ * The host's match: everyone in the room by seat, then computer eggs to make twenty when the host wants them.
  * `roster` is each fighter's seat (-1 for a computer egg), which the host sends with every state.
  */
 export function hostMatch(players: Player[], mySeat: number, seed: number, level: Level, bots: Bots, countdown: number): { match: Match; roster: number[] } {
@@ -148,7 +153,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
   for (const seat of s.roster) if (seat >= 0 && !present.includes(seat)) s.left.add(seat);
   for (const f of m.fighters) {
     if (f.seat < 0 || f.kind !== 'remote' || f.phase === 'out' || m.ended) continue;
-    const quiet = clock - (s.heard.get(f.id) ?? s.firstTick) > STALE;
+    const quiet = clock - (s.heard.get(f.id) ?? s.firstTick + FIRST_GRACE) > STALE;
     const aloft = (f.phase === 'bus' || f.phase === 'drop') && m.time > m.map.bus.off + DOWN_BY;
     if (s.left.has(f.seat) || quiet || aloft) forfeit(m, f.id);
   }
