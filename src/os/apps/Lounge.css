@@ -491,6 +491,131 @@
   transform: translateX(-50%);
 }
 
+/* #find-a-game's open rooms, above the chat. */
+.lounge-rooms {
+  flex: none;
+  margin: 10px 16px 0;
+  overflow: hidden;
+  border: 1px solid var(--lg-line);
+  border-radius: 10px;
+  background: var(--lg-panel);
+}
+.lounge:not(.is-wide) .lounge-rooms {
+  margin: 8px 10px 0;
+}
+.lounge-rooms-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px 9px 12px;
+  border: 0;
+  background: none;
+  color: var(--lg-dim);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.lounge-rooms-head:hover {
+  color: var(--lg-text);
+}
+.lounge-rooms-head i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lg-faint);
+}
+.lounge-rooms-head i.is-live {
+  background: var(--lg-green);
+  box-shadow: 0 0 0 3px rgba(46, 158, 95, 0.22);
+}
+.lounge-rooms-head b {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--lg-on);
+  color: var(--lg-text);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.lounge-rooms-head svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  transition: transform 0.15s;
+}
+.lounge-rooms:not(.is-open) .lounge-rooms-head svg {
+  transform: rotate(-90deg);
+}
+.lounge-rooms-note {
+  margin: 0;
+  padding: 0 12px 12px;
+  color: var(--lg-faint);
+  font-size: 12.5px;
+}
+.lounge-room-list {
+  max-height: 214px;
+  margin: 0;
+  padding: 0 6px 6px;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  scrollbar-width: thin;
+}
+.lounge-room {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 8px;
+}
+.lounge-room:hover {
+  background: var(--lg-hover);
+}
+.lounge-room .lounge-invite-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+.lounge-room-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.lounge-room-text b,
+.lounge-room-text em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lounge-room-text b {
+  font-weight: 650;
+}
+.lounge-room-text small {
+  color: var(--lg-dim);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.lounge-room-text em {
+  color: var(--lg-dim);
+  font-size: 12px;
+  font-style: normal;
+}
+.lounge-room-yours {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 7px;
+  background: var(--lg-on);
+  color: var(--lg-dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 /* ---- writing ---- */
 .lounge-compose {
   flex: none;
