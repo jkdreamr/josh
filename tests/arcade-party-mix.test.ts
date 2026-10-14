@@ -2,8 +2,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mulberry32 } from '../src/os/arcade/kit/party-core.ts';
-import { CARDS, type Template } from '../src/os/arcade/games/party-mix/cards.ts';
+import { CARDS, CONSENT, THEMES, themesOf, type Template } from '../src/os/arcade/games/party-mix/cards.ts';
 import {
+  ADULT,
+  DEFAULT_INTENSITY,
   LENGTHS,
   LEVELS,
   LIFETIME,
@@ -27,25 +29,26 @@ import {
   type Length,
 } from '../src/os/arcade/games/party-mix/logic.ts';
 
-const INTENSITIES: Intensity[] = ['chill', 'party', 'wild'];
+const INTENSITIES: Intensity[] = ['chill', 'party', 'wild', 'dark'];
 const LENGTH_IDS: Length[] = ['short', 'normal', 'long'];
 const names = (n: number) => Array.from({ length: n }, (_, i) => `P${i}`);
 const allText = (t: Template) => [t.text, t.or, t.label, t.end].filter((s): s is string => !!s);
 
-test('content: about 150 cards across every type and level', () => {
-  assert.ok(CARDS.length >= 150, `${CARDS.length} cards`);
+test('content: over 250 cards across every type and level, with a full top tier', () => {
+  assert.ok(CARDS.length >= 250, `${CARDS.length} cards`);
   for (const type of ['challenge', 'give', 'everyone', 'vote', 'duel', 'game', 'rule', 'wyr'] as const) {
     const of = CARDS.filter((c) => c.type === type);
     assert.ok(of.length >= 12, `${type} has ${of.length} cards`);
-    for (const level of [1, 2, 3] as const) assert.ok(of.some((c) => c.level === level), `${type} has a level ${level} card`);
+    for (const level of [1, 2, 3, 4] as const) assert.ok(of.some((c) => c.level === level), `${type} has a level ${level} card`);
   }
+  assert.ok(CARDS.filter((c) => c.level === 4).length >= 80, 'After Dark has its own deck, not a handful');
 });
 
 test('content: no dashes, tidy sentences, unique cards', () => {
   const seen = new Set<string>();
   for (const c of CARDS) {
     for (const s of allText(c)) {
-      assert.doesNotMatch(s, /[–—]/, `"${s}" has no long dashes`);
+      assert.doesNotMatch(s, /[\u2013\u2014]/, `"${s}" has no long dashes`);
       assert.doesNotMatch(s, /\s{2}|^\s|\s$/, `"${s}" has tidy spaces`);
       assert.doesNotMatch(s, /!/, `"${s}" doesn't shout`);
       assert.ok(s.length <= 130, `"${s}" fits on a card`);
@@ -85,7 +88,8 @@ test('content: every placeholder fills with two players', () => {
 test('content: sips stay small, nobody is told to chug, and water shows up', () => {
   for (const c of CARDS)
     for (const s of allText(c)) {
-      assert.doesNotMatch(s, /\b(chug|shot|shots|finish your|down your|waterfall|bottoms up)\b/i, `"${s}" keeps it to sips`);
+      assert.doesNotMatch(s, /\b(chug|finish your|down your|waterfall|bottoms up)\b|\b(?<!body )shots?\b/i, `"${s}" keeps it to sips`);
+      if (/body shot/i.test(s)) assert.match(s, /\ba sip\b/i, `"${s}" is one sip`);
       for (const m of s.matchAll(/\b(?:drinks?|gives? out|hand out|hands out|give)\s+(\d+)/gi)) assert.ok(Number(m[1]) <= 3, `"${s}" asks for ${m[1]}`);
       for (const m of s.matchAll(/(\d+) sips?/g)) assert.ok(Number(m[1]) <= 3, `"${s}" asks for ${m[1]} sips`);
     }
@@ -119,6 +123,8 @@ test('picker: pairs are two different players', () => {
     const a = pick.take();
     const b = pick.take([a]);
     assert.notEqual(a, b);
+    const [c, d] = pick.pair('duel');
+    assert.notEqual(c, d);
   }
 });
 
@@ -158,13 +164,13 @@ test('decks: the right length and intensity for any table', () => {
     const tag = `${intensity}/${length}/${players}p`;
     assert.equal(deck.length, LENGTHS[length], `${tag} length`);
     assert.ok(deck.every((c) => c.level <= LEVELS[intensity]), `${tag} stays at its intensity`);
-    if (players < 3) assert.ok(!deck.some((c) => c.kind === 'vote'), `${tag} has no votes`);
+    if (players < 3) assert.ok(!deck.some((c) => c.kind === 'vote' || c.kind === 'give'), `${tag} has no votes or Give cards`);
     assert.ok(OPENERS.includes(deck[0].kind), `${tag} opens on a named card`);
     assert.ok(!hasTriple(deck.map((c) => c.kind)), `${tag} has no triples`);
     const keys = deck.filter((c) => c.kind !== 'end').map((c) => c.key);
     assert.equal(new Set(keys).size, keys.length, `${tag} deals each card once`);
     const kinds = new Set(deck.map((c) => c.kind));
-    for (const k of ['challenge', 'give', 'everyone', 'duel', 'game', 'wyr', 'rule', 'end'] as Kind[]) assert.ok(kinds.has(k), `${tag} has a ${k}`);
+    for (const k of ['challenge', 'everyone', 'duel', 'game', 'wyr', 'rule', 'end', ...(players >= 3 ? (['give'] as Kind[]) : [])] as Kind[]) assert.ok(kinds.has(k), `${tag} has a ${k}`);
     for (const c of deck) {
       assert.equal(new Set(c.seats).size, c.seats.length, `${tag} names distinct players on a card`);
       assert.ok(c.seats.every((s) => s >= 0 && s < players));
@@ -242,7 +248,7 @@ test('decks are repeatable with a seed, and the next deck skips the last one', (
 
 test('a long chill deck for two still has enough cards', () => {
   const pool = eligible('chill', 2);
-  assert.ok(!pool.some((c) => c.type === 'vote'));
+  assert.ok(!pool.some((c) => c.type === 'vote' || c.type === 'give'));
   assert.ok(pool.filter((c) => c.type !== 'rule').length >= LENGTHS.long - RULES.long * 2);
   assert.ok(pool.filter((c) => c.type === 'rule').length >= RULES.long);
 });
@@ -266,4 +272,149 @@ test('stats count cards, duels, rules and who got named the most', () => {
   assert.deepEqual(s.most, { seats: [0], times: 3 });
   assert.deepEqual(s.least, { seats: [3], times: 0 });
   assert.deepEqual(names(2), ['P0', 'P1']);
+});
+
+// The 18+ tiers -----------------------------------------------------------------------------------------------
+
+const textOf = (c: Template) => allText(c).join(' ');
+
+test('18+: off by default, Wild only at Wild and up, After Dark only at After Dark', () => {
+  assert.ok(!ADULT.includes(DEFAULT_INTENSITY), 'a new table starts without 18+ cards');
+  assert.ok(LEVELS[DEFAULT_INTENSITY] < 3);
+  assert.deepEqual([...ADULT].sort(), ['dark', 'wild']);
+  for (const players of [2, 3, 8]) {
+    assert.ok(!eligible('chill', players).some((c) => c.level > 1));
+    assert.ok(!eligible('party', players).some((c) => c.level > 2), 'Party deals no 18+ card');
+    assert.ok(!eligible('wild', players).some((c) => c.level > 3), 'Wild deals no After Dark card');
+    assert.ok(eligible('dark', players).some((c) => c.level === 4));
+  }
+  // Turning 18+ off gives back exactly the cards Party always dealt.
+  const party = eligible('party', 6).map((c) => c.text);
+  assert.deepEqual(party, CARDS.filter((c) => c.level <= 2 && (c.min ?? 2) <= 6).map((c) => c.text));
+});
+
+test('18+: After Dark leans hard into its own cards, Wild into its own', () => {
+  const share = (intensity: Intensity, length: Length, level: number) => {
+    let hit = 0;
+    let n = 0;
+    for (let seed = 0; seed < 60; seed++) {
+      const deck = buildDeck({ players: 6, intensity, length, rng: mulberry32(seed) });
+      hit += deck.filter((c) => c.kind !== 'end' && c.level >= level).length;
+      n += deck.filter((c) => c.kind !== 'end').length;
+    }
+    return hit / n;
+  };
+  for (const length of LENGTH_IDS) {
+    assert.ok(share('dark', length, 3) > 0.5, `After Dark ${length}: mostly 18+ (${share('dark', length, 3).toFixed(2)})`);
+    assert.ok(share('dark', length, 4) > 0.3, `After Dark ${length}: its own tier leads (${share('dark', length, 4).toFixed(2)})`);
+  }
+});
+
+test('18+: anything that brings in another person waits for their yes, in the same words', () => {
+  assert.equal(CONSENT, 'if they say yes');
+  const touch = /\b(lap|kiss (anyone|someone|them|\{p2\})|collarbone|body shot|shoulder rub|hold \{p2\}'s hand|slow dance)\b|\bwhisper [^.]*\b(ear|person)\b/i;
+  for (const c of CARDS.filter((x) => x.type !== 'wyr' && x.level >= 3)) {
+    const t = textOf(c);
+    // An empty chair can't say no.
+    if (touch.test(t) && !/empty chair/.test(t)) assert.ok(t.includes(CONSENT), `"${c.text}" asks first`);
+  }
+});
+
+test('18+: frank, never over the line', () => {
+  for (const c of CARDS.filter((x) => x.level >= 3)) {
+    const t = textOf(c);
+    // Minors and school settings, coercion or intoxication used against anyone, slurs and body shaming.
+    assert.doesNotMatch(t, /\b(high school|school|teens?|teenager|underage|minor|student|teacher|passed out|blackout|blacked out|unconscious|roofie|forced?|without asking|fat|ugly|slut|whore|retard)\b/i, t);
+    // Nobody undresses past swimwear.
+    assert.doesNotMatch(t, /\b(naked|nude in|topless|bottomless|strip naked|underwear off)\b/i, t);
+    if (/\b(item of clothing|strip tease|layer)\b/i.test(t)) assert.match(t, /swimwear|shoes and (socks|jewelry)/i, `"${t}" has a floor`);
+    // Nothing is sent, posted or called out of the room (a would you rather can imagine it, a card can't ask for it).
+    if (c.type !== 'wyr') assert.doesNotMatch(t, /(^|[.,:]\s|\}\s)(text|call|send|post|dm|message|record|film|photograph)\b/i, `"${t}" keeps it in the room`);
+  }
+});
+
+test('rules that limit talking or phones leave the card reader alone', () => {
+  for (const c of CARDS.filter((x) => x.type === 'rule')) {
+    if (/\b(anyone's name|names?|sentences?|statements?|phones?)\b/i.test(c.text))
+      assert.match(c.text, /reading a card|except|card reading/i, `"${c.text}" has to let the reader read`);
+  }
+  // A rule written on the spot gets a box to write it in, on its card and its Rule Over card.
+  const writes = CARDS.filter((c) => c.write);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].type, 'rule');
+  for (let seed = 0; seed < 200; seed++) {
+    const deck = buildDeck({ players: 4, intensity: 'chill', length: 'long', rng: mulberry32(seed) });
+    const start = deck.findIndex((c) => c.write && c.kind === 'rule');
+    if (start < 0) continue;
+    assert.equal(deck[deck[start].rule!.to].write, true);
+    return;
+  }
+  assert.fail('no deck dealt the write-in rule');
+});
+
+test('themes: no topic repeats in a deck beyond its limit, deck after deck', () => {
+  const max = new Map(THEMES.map((t) => [t.id, t.max ?? 1]));
+  for (const intensity of INTENSITIES)
+    for (const length of LENGTH_IDS)
+      for (const players of [2, 3, 8]) {
+        let avoid: Set<string> | undefined;
+        for (let seed = 0; seed < 25; seed++) {
+          const deck = buildDeck({ players, intensity, length, rng: mulberry32(seed * 31 + players), avoid });
+          avoid = new Set(deck.map((c) => c.key));
+          const seen = new Map<string, number>();
+          for (const c of deck.filter((x) => x.kind !== 'end')) {
+            const tpl = CARDS.find((t) => t.text === c.key)!;
+            for (const id of themesOf(tpl)) seen.set(id, (seen.get(id) ?? 0) + 1);
+          }
+          for (const [id, n] of seen) assert.ok(n <= max.get(id)!, `${intensity}/${length}/${players}p seed ${seed}: "${id}" ${n} times`);
+        }
+      }
+  // The topics the playtest caught twice in one Wild deck each belong to a theme now.
+  for (const phrase of ['best kisser', 'biggest flirt', 'pickup line', 'worst date', 'exes']) assert.ok(themesOf({ text: phrase }).length > 0, phrase);
+  // Categories is one game among many, not half of them.
+  const games = CARDS.filter((c) => c.type === 'game');
+  assert.ok(games.filter((c) => c.text.startsWith('Categories')).length / games.length < 0.3);
+});
+
+test('duels: pairs are balanced and never meet twice running', () => {
+  const key = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+  for (const players of [3, 4, 5, 8]) {
+    let maxSum = 0;
+    let decks = 0;
+    let evenSum = 0;
+    for (let seed = 1; seed <= 300; seed++) {
+      const deck = buildDeck({ players, intensity: 'wild', length: 'long', rng: mulberry32(seed) });
+      const duels = deck.filter((c) => c.kind === 'duel');
+      const met = new Map<string, number>();
+      let prev = '';
+      for (const d of duels) {
+        const k = key(d.seats[0], d.seats[1]);
+        assert.notEqual(k, prev, `${players}p seed ${seed}: the same two duel back to back`);
+        prev = k;
+        met.set(k, (met.get(k) ?? 0) + 1);
+      }
+      const pairs = (players * (players - 1)) / 2;
+      const even = Math.ceil(duels.length / pairs);
+      const most = Math.max(...met.values());
+      assert.ok(most <= even + 1, `${players}p seed ${seed}: one pair met ${most} times in ${duels.length} duels`);
+      maxSum += most;
+      evenSum += even;
+      decks++;
+    }
+    // With three players, ten duels split 4, 3, 3 at best: the busiest pair stays at an even share on average.
+    assert.ok(maxSum / decks <= evenSum / decks + 0.25, `${players}p: busiest pair ${(maxSum / decks).toFixed(2)} vs even ${(evenSum / decks).toFixed(2)}`);
+  }
+});
+
+test('Give cards spread around the table instead of piling on one player', () => {
+  let spread = 0;
+  let decks = 0;
+  for (let seed = 1; seed <= 300; seed++) {
+    const deck = buildDeck({ players: 3, intensity: 'party', length: 'long', rng: mulberry32(seed) });
+    const gives = [0, 0, 0];
+    for (const c of deck) if (c.kind === 'give') gives[c.seats[0]]++;
+    spread += Math.max(...gives) - Math.min(...gives);
+    decks++;
+  }
+  assert.ok(spread / decks < 1.6, `average spread ${(spread / decks).toFixed(2)}`);
 });

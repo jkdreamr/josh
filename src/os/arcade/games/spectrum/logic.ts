@@ -128,14 +128,15 @@ export function verdict(points: Points): string {
 
 /**
  * One line of advice for the psychic, from where the target sits: near the middle, leaning one way, or close
- * to an end. `left` and `right` are the card's two extremes.
+ * to an end. `left` and `right` are the card's two extremes, quoted as printed so they don't read as part of the
+ * sentence ("Leans toward “Explained by magic”").
  */
 export function clueTip(target: number, left: string, right: string): string {
   const off = target - NEEDLE_START;
-  const side = off < 0 ? left : right;
+  const side = `“${off < 0 ? left : right}”`;
   if (Math.abs(off) <= 16) return 'Near the middle. Pick something people would argue about.';
   if (Math.abs(off) >= 50) return `Close to ${side}. Go big, but leave a little room past it.`;
-  return `Leans toward ${side}. Think "a bit", not "very".`;
+  return `Leans toward ${side}. Think “a bit”, not “very”.`;
 }
 
 /** The scores before a turn's points were added, to show while the reveal is still covered. */

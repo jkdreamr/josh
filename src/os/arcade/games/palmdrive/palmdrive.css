@@ -148,6 +148,12 @@
   stroke: #fff;
   stroke-width: 4;
 }
+/* a Marguerite bus: white with a cardinal edge */
+.g-palmdrive .g-palmdrive-map-bus {
+  fill: #f2f2ee;
+  stroke: #8c1515;
+  stroke-width: 4;
+}
 .g-palmdrive .g-palmdrive-lap {
   position: absolute;
   left: 14px;
@@ -877,4 +883,106 @@
   .g-palmdrive .g-palmdrive-confetti {
     display: none;
   }
+}
+/* the course picker: a card per course with a little map of its track */
+.g-palmdrive .g-palmdrive-courses {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.g-palmdrive .g-palmdrive-course {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+.g-palmdrive .g-palmdrive-course:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+.g-palmdrive .g-palmdrive-course.is-on {
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.g-palmdrive .g-palmdrive-course:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.g-palmdrive .g-palmdrive-course:disabled.is-on {
+  opacity: 1;
+}
+.g-palmdrive .g-palmdrive-course svg {
+  flex: none;
+  width: 34px;
+  height: 34px;
+}
+.g-palmdrive .g-palmdrive-course path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 22;
+  stroke-linejoin: round;
+}
+.g-palmdrive .g-palmdrive-course span {
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.15;
+}
+/* how hard the course is, and how long a lap */
+.g-palmdrive .g-palmdrive-course small {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+.g-palmdrive .g-palmdrive-course small.is-easy {
+  color: #7ddf8a;
+}
+.g-palmdrive .g-palmdrive-course small.is-medium {
+  color: #ffd45e;
+}
+.g-palmdrive .g-palmdrive-course small.is-hard {
+  color: #ff9f4a;
+}
+.g-palmdrive .g-palmdrive-course small.is-expert {
+  color: #ff6b6b;
+}
+/* the golden mushroom glows while it lasts */
+.g-palmdrive .g-palmdrive-item.is-golden {
+  box-shadow: inset 0 0 0 3px #ffd23f, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 20px rgba(255, 196, 0, 0.9);
+  animation: g-palmdrive-gold 0.6s ease-in-out infinite alternate;
+}
+@keyframes g-palmdrive-gold {
+  to {
+    box-shadow: inset 0 0 0 3px #fff3b0, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 8px rgba(255, 196, 0, 0.5);
+  }
+}
+/* ink splattered over your view */
+.g-palmdrive .g-palmdrive-ink {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+.g-palmdrive .g-palmdrive-ink i {
+  position: absolute;
+  border-radius: 46% 54% 52% 48% / 55% 45% 55% 45%;
+  background: radial-gradient(circle at 40% 35%, #3b2f4a 0%, #15121c 60%, rgba(21, 18, 28, 0.9) 100%);
+  box-shadow: 0 0 0 1.5vmin rgba(21, 18, 28, 0.55);
+  transform: rotate(18deg);
+}
+.g-palmdrive .g-palmdrive-ink i:nth-child(2n) {
+  border-radius: 58% 42% 40% 60% / 45% 55% 45% 55%;
+  transform: rotate(-24deg);
 }

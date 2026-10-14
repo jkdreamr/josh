@@ -8,9 +8,9 @@ import { useHighScore } from './score';
 import { ARCADE_API, NAME_MAX, boardFor, formatBoardScore, savedName } from './leaderboard';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMuted } from './sfx';
-import { isGameSetting, onSettingChange, trackSettingChange } from './settings';
-import { OnlinePanel, OnlineProvider } from './online';
-import { nextOnlineRound, parseRacePacket, raceStandings, type RaceScores } from './online-core';
+import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange } from './settings';
+import { BotStepper, OnlinePanel, OnlineProvider } from './online';
+import { botPlayers, nextOnlineRound, parseRacePacket, raceStandings, type RaceScores } from './online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { countPlay } from '../../stats';
 import './kit.css';
@@ -36,11 +36,17 @@ export type GameShellProps = {
    * where the host picks them for everyone. The game sends the host's choice with its own messages.
    */
   hostSetup?: ReactNode;
+  /** Names for online bots in seat order (games with `online.bots`); the rest are Bot 1, Bot 2 and so on. */
+  botNames?: readonly string[];
+  /** Bots a host's room starts with until they pick a number of their own, which is remembered (default none). */
+  defaultBots?: number;
   className?: string;
   style?: CSSProperties;
 };
 
 type Result = { id: number; score?: number; best: number | null; isBest: boolean } & GameOverInfo;
+/** A room holds sixteen seats at most, so a host never asks for more bots than that. */
+const BOT_COUNTS = Array.from({ length: 16 }, (_, i) => String(i));
 
 const Icon = ({ d, size = 14 }: { d: string; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -67,7 +73,7 @@ const isTouchDevice = () =>
  * (pause, restart, mute, back to arcade), live score, key capture and auto-pause.
  * Put the game's logic in a child component and read the shell with useShell().
  */
-export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, roomCode, className, style }: GameShellProps) {
+export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, botNames, defaultBots = 0, roomCode, className, style }: GameShellProps) {
   const host = useContext(ArcadeHost);
   const invite = useContext(ArcadeInvite);
   const joinCode = roomCode ?? invite;
@@ -101,6 +107,12 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [onlineBusy, setOnlineBusy] = useState(false);
   const [onlineError, setOnlineError] = useState('');
   const [onlineInProgress, setOnlineInProgress] = useState(false);
+  /** Seats bots would take if the host started now (null: this room has no bots), and the ones playing this round. */
+  const [onlineBots, setOnlineBots] = useState<number[] | null>(null);
+  const [roundBots, setRoundBots] = useState<number[]>([]);
+  const roundBotsRef = useRef<number[]>([]);
+  /** How many bots this game's rooms start with when this player hosts: the last number they picked. */
+  const botsSetting = useMemo(() => defineSetting(`${meta.id}:bots`, BOT_COUNTS, String(Math.max(0, Math.min(15, Math.floor(defaultBots))))), [meta.id, defaultBots]);
   const [onlineMode, setOnlineMode] = useState(false);
   const onlineModeRef = useRef(onlineMode);
   onlineModeRef.current = onlineMode;
@@ -189,6 +201,12 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     restart();
   }, [onlineLink, onlineSeat, restart]);
 
+  const clearBots = useCallback(() => {
+    roundBotsRef.current = [];
+    setRoundBots([]);
+    setOnlineBots(null);
+  }, []);
+
   const leaveRoom = useCallback(() => {
     onlineModeRef.current = false;
     raceRef.current = { link: null, seat: null, round: 0, scores: {} };
@@ -205,7 +223,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineOpen(false);
     setOnlineError('');
     setOnlineInProgress(false);
-  }, [onlineLink]);
+    clearBots();
+  }, [clearBots, onlineLink]);
 
   const connectRoom = useCallback((code: string) => {
     setOnlineError('');
@@ -222,6 +241,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineSeats(meta.online?.seats ?? 0);
     setOnlinePlayers([]);
     setOnlineInProgress(false);
+    clearBots();
     link.on('welcome', (message) => {
       raceRef.current.seat = message.seat;
       setOnlineCode(message.code);
@@ -229,10 +249,15 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineSeats(message.seats);
       setOnlinePlayers(message.players);
       setOnlineInProgress(message.started);
+      setOnlineBots(message.bots);
+      const remembered = Math.min(Number(getSetting(botsSetting)), message.seats - 1);
+      if (message.seat === 0 && message.bots && remembered > 0) link.setBots(remembered);
     });
+    link.on('bots', setOnlineBots);
     link.on('players', (players) => {
       setOnlinePlayers(players);
-      if (!onlineModeRef.current || players.length >= 2) return;
+      // Bots keep playing a round that someone leaves; it ends only when nobody is left to play against.
+      if (!onlineModeRef.current || players.length + roundBotsRef.current.length >= 2) return;
       gameOver(undefined, { title: 'Opponent Left', detail: 'Your opponent left the room.' });
       onlineModeRef.current = false;
       raceRef.current = { link: null, seat: null, round: 0, scores: {} };
@@ -245,11 +270,14 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineTransport('relay');
       setOnlineMode(false);
       setOnlineOpen(false);
+      clearBots();
     });
     link.on('transport', setOnlineTransport);
-    link.on('start', ({ round: serverRound }) => {
+    link.on('start', ({ round: serverRound, bots }) => {
       setOnlineOpen(false);
       setOnlineInProgress(false);
+      roundBotsRef.current = bots;
+      setRoundBots(bots);
       raceRef.current.round = nextOnlineRound(raceRef.current.round, serverRound);
       raceRef.current.scores = {};
       setRaceScores({});
@@ -289,9 +317,10 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineError(reason === 'host-left' ? 'Host Left' : 'Connection Lost');
       setOnlineOpen(true);
       setStatus('ready');
+      clearBots();
     });
     return link;
-  }, [applyRaceScores, gameOver, meta.online?.seats, onlineName, race, restart, start]);
+  }, [applyRaceScores, botsSetting, clearBots, gameOver, meta.online?.seats, onlineName, race, restart, start]);
 
   const makeRoom = useCallback(async () => {
     setOnlineBusy(true);
@@ -455,6 +484,23 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     [meta, status, round, active, compact, touch, keys, start, pause, resume, restart, gameOver, setScore, invalidate, onInvalidate],
   );
 
+  // Party games keep scores and secrets in the round, so Restart asks for a second tap within a few seconds.
+  const confirmRestart = meta.category === 'party' || meta.category === 'drinking';
+  const [restartArmed, setRestartArmed] = useState(false);
+  useEffect(() => {
+    if (!restartArmed) return;
+    const t = window.setTimeout(() => setRestartArmed(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [restartArmed]);
+  useEffect(() => setRestartArmed(false), [status, round]);
+  const restartFromBar = useCallback(() => {
+    if (confirmRestart && !restartArmed) {
+      setRestartArmed(true);
+      return;
+    }
+    setRestartArmed(false);
+    restart();
+  }, [confirmRestart, restartArmed, restart]);
   const ctl = (fn: () => void) => () => {
     fn();
     focusRoot();
@@ -467,6 +513,17 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   );
   const canPlayOnline = !compact && !!meta.online && !!ARCADE_API;
   const gameOnline = onlineMode && onlineLink !== null && onlineSeat !== null;
+  // Games see this round's bots while it is under way and the lobby's between rounds. Names are keyed by their text,
+  // so a list written inline in the game's JSX does not count as a change every render.
+  const botNameKey = botNames?.join('\n') ?? '';
+  const lobbyBots = useMemo(() => (onlineBots ? botPlayers(onlineBots, botNameKey ? botNameKey.split('\n') : []) : null), [onlineBots, botNameKey]);
+  const playingBots = useMemo(() => botPlayers(roundBots, botNameKey ? botNameKey.split('\n') : []), [roundBots, botNameKey]);
+  const gameBots = onlineMode && status === 'playing' ? playingBots : lobbyBots ?? playingBots;
+  const setBots = useCallback((n: number) => {
+    setSetting(botsSetting, String(n));
+    onlineLink?.setBots(n);
+  }, [botsSetting, onlineLink]);
+  const hostBots = gameOnline && onlineSeat === 0 && lobbyBots ? <BotStepper count={lobbyBots.length} max={Math.max(0, onlineSeats - onlinePlayers.length)} onChange={setBots} /> : null;
   const raceNow = race && gameOnline ? raceStandings(raceScores, onlinePlayers.map((p) => p.seat), lowerIsBetter) : null;
   const raceDone = !!raceNow?.done;
   const raceWinner = raceNow?.winner ?? null;
@@ -490,6 +547,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       seats={onlineSeats}
       round={onlineRound}
       players={onlinePlayers}
+      bots={gameBots}
       transport={onlineTransport}
     >
     <ShellContext.Provider value={api}>
@@ -524,8 +582,15 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
               </button>
             )}
             {status !== 'ready' && !onlineMode && (
-              <button type="button" aria-label="Restart" title="Restart" onClick={restart}>
+              <button
+                type="button"
+                className={restartArmed ? 'is-armed' : undefined}
+                aria-label={restartArmed ? 'Tap again to restart' : 'Restart'}
+                title={restartArmed ? 'Tap again to restart' : 'Restart'}
+                onClick={restartFromBar}
+              >
                 <Icon d={ic.restart} />
+                {restartArmed && <span className="arcade-ctrl-confirm">Restart?</span>}
               </button>
             )}
             <button type="button" aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute' : 'Mute'} onClick={ctl(() => setMuted(!muted))}>
@@ -544,6 +609,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             game={meta.id}
             code={onlineCode}
             players={onlinePlayers}
+            bots={lobbyBots}
             seat={onlineSeat}
             seats={onlineSeats}
             inProgress={onlineInProgress}
@@ -554,6 +620,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             onCreate={makeRoom}
             onJoin={joinRoom}
             onStart={() => onlineLink?.start()}
+            onBots={setBots}
             onLeave={leaveRoom}
             note={race ? 'A score race: everyone plays their own round at the same time and the best score wins.' : undefined}
             setup={hostSetup}
@@ -723,7 +790,12 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                   </form>
                 )}
                 {setup && !gameOnline && <div className="arcade-setup">{setup}</div>}
-                {hostSetup && gameOnline && <div className="arcade-setup">{hostSetup}</div>}
+                {gameOnline && (hostBots || hostSetup) && (
+                  <div className="arcade-setup">
+                    {hostBots}
+                    {hostSetup}
+                  </div>
+                )}
                 {gameOnline ? onlineSeat === 0 ? (
                   <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={playAgain} ref={autoFocus}>
                     Play Again

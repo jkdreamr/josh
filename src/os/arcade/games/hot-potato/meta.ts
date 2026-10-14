@@ -3,7 +3,7 @@ import type { GameMeta } from '../../types';
 export const meta: GameMeta = {
   id: 'hot-potato',
   title: 'Hot Potato',
-  blurb: 'The phone is the bomb. Say a word that fits the prompt and pass it on before the fuse runs out.',
+  blurb: 'The phone is the bomb. Name one and pass it before it blows.',
   category: 'party',
   players: '3-20P',
   controls: 'Say a word that fits, then pass the phone left. Whoever holds it at the boom loses the round.',

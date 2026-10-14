@@ -1,0 +1,888 @@
+/* Scramble: an egg battle royale. Every selector starts with .g-scramble. */
+@font-face {
+  font-family: 'Bungee';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/bungee.woff2') format('woff2');
+}
+
+.g-scramble .g-scramble-host {
+  position: absolute;
+  inset: 0;
+  background: #3aa6d4;
+  touch-action: none;
+}
+.g-scramble .g-scramble-host.is-mouse {
+  cursor: crosshair;
+}
+.g-scramble .g-scramble-best {
+  display: block;
+  margin-top: 4px;
+  opacity: 0.75;
+}
+.g-scramble .g-scramble-extras {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.g-scramble .g-scramble-hostpick {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.g-scramble .g-scramble-hostpick b {
+  font-size: 14px;
+}
+.g-scramble .g-scramble-hostpick small {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+/* name tags and damage numbers, placed every frame */
+.g-scramble .g-scramble-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  max-width: 120px;
+  overflow: hidden;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #fff;
+  background: color-mix(in srgb, var(--tag) 78%, #000);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+  will-change: transform;
+}
+.g-scramble .g-scramble-pops {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+}
+.g-scramble .g-scramble-pop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font: 400 20px/1 'Bungee', system-ui, sans-serif;
+  color: #fff;
+  -webkit-text-stroke: 1.5px rgba(0, 0, 0, 0.55);
+  paint-order: stroke fill;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
+  will-change: transform, opacity;
+}
+.g-scramble .g-scramble-pop.is-shield {
+  color: #8fd0ff;
+}
+
+/* the heads-up display */
+.g-scramble .g-scramble-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  container-type: size;
+  pointer-events: none;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+.g-scramble .g-scramble-hud button {
+  pointer-events: auto;
+}
+.g-scramble .g-scramble-hud kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font: 800 11px/17px system-ui, sans-serif;
+  text-align: center;
+  color: #1b1c22;
+  background: rgba(255, 255, 255, 0.9);
+}
+.g-scramble .g-scramble-top {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  gap: 6px;
+}
+.g-scramble .g-scramble-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 11px 4px 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  background: rgba(20, 20, 26, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.g-scramble .g-scramble-pill b {
+  font-size: 15px;
+  font-weight: 800;
+}
+.g-scramble .g-scramble-pill.is-kills {
+  color: #ffd75e;
+}
+.g-scramble .g-scramble-storm {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: rgba(20, 20, 26, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.g-scramble .g-scramble-hud.is-online .g-scramble-storm {
+  top: 44px;
+}
+.g-scramble .g-scramble-storm.is-moving {
+  background: rgba(122, 60, 240, 0.8);
+  animation: g-scramble-throb 1.2s ease-in-out infinite;
+}
+@keyframes g-scramble-throb {
+  50% {
+    box-shadow: 0 0 0 4px rgba(122, 60, 240, 0.3);
+  }
+}
+.g-scramble .g-scramble-map {
+  position: absolute;
+  top: 52px;
+  right: 10px;
+  width: 124px;
+  height: 124px;
+  border-radius: 12px;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.8),
+    0 3px 10px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.g-scramble .g-scramble-feed {
+  position: absolute;
+  top: 186px;
+  right: 10px;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  width: min(260px, 60vw);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.g-scramble .g-scramble-feed li {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: rgba(20, 20, 26, 0.55);
+  animation: g-scramble-in 0.25s ease-out;
+}
+.g-scramble .g-scramble-feed li.is-mine {
+  color: #1b1c22;
+  background: rgba(255, 215, 94, 0.92);
+}
+@keyframes g-scramble-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+}
+.g-scramble .g-scramble-banner {
+  position: absolute;
+  top: 26%;
+  left: 50%;
+  max-width: 92%;
+  transform: translate(-50%, -50%);
+  font: 400 34px/1.1 'Bungee', system-ui, sans-serif;
+  text-align: center;
+  color: #fff;
+  -webkit-text-stroke: 2px rgba(40, 10, 80, 0.8);
+  paint-order: stroke fill;
+  text-shadow: 0 4px 0 rgba(40, 10, 80, 0.45);
+  animation: g-scramble-pop 0.35s ease-out;
+}
+.g-scramble .g-scramble-banner.is-count {
+  font-size: 76px;
+}
+.g-scramble .g-scramble-banner.is-note {
+  font-size: 22px;
+}
+@keyframes g-scramble-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.4);
+  }
+}
+.g-scramble .g-scramble-out {
+  position: absolute;
+  top: 18%;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  max-width: 92%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+.g-scramble .g-scramble-out b {
+  padding: 6px 14px;
+  border-radius: 10px;
+  font-size: 17px;
+  font-weight: 800;
+  background: rgba(20, 20, 26, 0.7);
+}
+.g-scramble .g-scramble-out span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  background: rgba(20, 20, 26, 0.55);
+}
+.g-scramble .g-scramble-watch {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  font-size: 24px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+}
+.g-scramble .g-scramble-jump {
+  position: absolute;
+  bottom: max(12%, 120px);
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 28px;
+  border: 0;
+  border-radius: 999px;
+  font: 400 22px/1 'Bungee', system-ui, sans-serif;
+  color: #fff;
+  background: #7b3fd1;
+  box-shadow:
+    inset 0 -4px 0 rgba(0, 0, 0, 0.25),
+    0 6px 18px rgba(0, 0, 0, 0.3);
+  transform: translateX(-50%);
+  cursor: pointer;
+  animation: g-scramble-bounce 1s ease-in-out infinite;
+}
+@keyframes g-scramble-bounce {
+  50% {
+    transform: translateX(-50%) translateY(-4px);
+  }
+}
+.g-scramble .g-scramble-busy {
+  position: absolute;
+  bottom: 168px;
+  left: 50%;
+  display: grid;
+  gap: 4px;
+  width: 160px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.g-scramble .g-scramble-busy i {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(20, 20, 26, 0.45);
+}
+.g-scramble .g-scramble-prompt {
+  position: absolute;
+  bottom: 132px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 90%;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.72);
+  transform: translateX(-50%);
+  cursor: pointer;
+  animation: g-scramble-rise 0.2s ease-out;
+}
+@keyframes g-scramble-rise {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
+.g-scramble .g-scramble-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  transform: translateX(-50%);
+}
+.g-scramble .g-scramble-bars {
+  display: grid;
+  gap: 4px;
+  width: 168px;
+}
+.g-scramble .g-scramble-bar {
+  position: relative;
+  height: 16px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: rgba(20, 20, 26, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.g-scramble .g-scramble-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 5px;
+  transition: width 0.15s ease-out;
+}
+.g-scramble .g-scramble-bar.is-hp i {
+  background: linear-gradient(#7bea83, #3fbf5f);
+}
+.g-scramble .g-scramble-bar.is-hp.is-low i {
+  background: linear-gradient(#ff8a80, #e53935);
+}
+.g-scramble .g-scramble-bar.is-shield {
+  height: 11px;
+}
+.g-scramble .g-scramble-bar.is-shield i {
+  background: linear-gradient(#9fd4ff, #3f8cff);
+}
+.g-scramble .g-scramble-bar span {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6);
+}
+.g-scramble .g-scramble-bar.is-shield span {
+  font-size: 9px;
+}
+.g-scramble .g-scramble-slots {
+  display: flex;
+  gap: 6px;
+}
+.g-scramble .g-scramble-slot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 52px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  color: #fff;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--rarity, #8e98a6) 55%, transparent), color-mix(in srgb, var(--rarity, #8e98a6) 25%, rgba(20, 20, 26, 0.6))),
+    rgba(20, 20, 26, 0.55);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+}
+.g-scramble .g-scramble-slot.is-empty {
+  background: rgba(20, 20, 26, 0.35);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.1);
+}
+.g-scramble .g-scramble-slot.is-on {
+  box-shadow:
+    inset 0 0 0 2.5px #fff,
+    0 0 12px rgba(255, 255, 255, 0.35);
+  transform: translateY(-4px);
+}
+.g-scramble .g-scramble-slot small {
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  font-size: 10px;
+  font-weight: 800;
+  opacity: 0.75;
+}
+.g-scramble .g-scramble-slot em {
+  position: absolute;
+  bottom: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+.g-scramble .g-scramble-slot em span {
+  font-size: 10px;
+  opacity: 0.75;
+}
+.g-scramble .g-scramble-mats {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 3px 10px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.g-scramble .g-scramble-mats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.g-scramble .g-scramble-mats span.is-none {
+  opacity: 0.45;
+}
+.g-scramble .g-scramble-mats span.is-full {
+  color: #ffd75e;
+}
+.g-scramble .g-scramble-mats kbd {
+  min-width: 0;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 13px;
+  opacity: 0.8;
+}
+.g-scramble .g-scramble-mats small {
+  font-size: 10px;
+  opacity: 0.7;
+}
+.g-scramble .g-scramble-stormfx {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(122, 60, 240, 0.12) 40%, rgba(90, 30, 200, 0.55));
+  animation: g-scramble-throb2 1s ease-in-out infinite;
+}
+@keyframes g-scramble-throb2 {
+  50% {
+    opacity: 0.7;
+  }
+}
+.g-scramble .g-scramble-lowfx {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(229, 57, 53, 0.4));
+  animation: g-scramble-throb2 0.9s ease-in-out infinite;
+}
+
+/* the island map, big */
+.g-scramble .g-scramble-bigmap {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 50px 16px 16px;
+  background: rgba(8, 8, 12, 0.6);
+  cursor: pointer;
+}
+.g-scramble .g-scramble-bigmap svg {
+  width: min(78vmin, 560px);
+  height: min(78vmin, 560px);
+  border-radius: 16px;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85);
+}
+.g-scramble .g-scramble-bigmap small {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* touch: a thumbstick wherever each thumb lands, and a few buttons */
+.g-scramble .g-scramble-touch {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  container-type: size;
+}
+.g-scramble .g-scramble-zone {
+  position: absolute;
+  top: 34%;
+  bottom: 0;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.g-scramble .g-scramble-zone.is-move {
+  left: 0;
+  width: 50%;
+}
+.g-scramble .g-scramble-zone.is-aim {
+  right: 0;
+  width: 50%;
+}
+.g-scramble .g-scramble-stick {
+  position: absolute;
+  width: 104px;
+  height: 104px;
+  margin: -52px 0 0 -52px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.45);
+  pointer-events: none;
+}
+.g-scramble .g-scramble-stick i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+.g-scramble .g-scramble-stick.is-firing {
+  box-shadow: inset 0 0 0 3px rgba(255, 90, 80, 0.85);
+}
+.g-scramble .g-scramble-stick.is-firing i {
+  background: rgba(255, 120, 110, 0.9);
+}
+.g-scramble .g-scramble-buttons {
+  position: absolute;
+  right: 10px;
+  bottom: 124px;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: repeat(2, 52px);
+  gap: 8px;
+}
+.g-scramble .g-scramble-buttons button {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.55);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.3);
+  touch-action: none;
+}
+.g-scramble .g-scramble-buttons button.is-none {
+  opacity: 0.45;
+}
+
+/* touch HUD: tighter, and clear of the thumbs */
+.g-scramble .g-scramble-hud.is-touch .g-scramble-map {
+  top: 50px;
+  width: 92px;
+  height: 92px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-feed {
+  top: 152px;
+  width: min(210px, 55vw);
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-feed li {
+  font-size: 11px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-top {
+  top: 46px;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-storm {
+  top: 12px;
+  left: 10px;
+  transform: none;
+}
+.g-scramble .g-scramble-hud.is-touch.is-online .g-scramble-storm {
+  top: 44px;
+}
+.g-scramble .g-scramble-hud.is-online.is-touch .g-scramble-top {
+  top: 78px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-bottom {
+  z-index: 4;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-mats {
+  display: none;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-bars {
+  width: 150px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-slot {
+  width: 50px;
+  height: 46px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-slot em {
+  top: auto;
+  right: 4px;
+  bottom: 1px;
+  left: auto;
+  transform: none;
+  font-size: 11px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-slot em span {
+  font-size: 9px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-prompt {
+  /* just under your egg, where the camera keeps it */
+  top: calc(50% + 34px);
+  bottom: auto;
+  z-index: 4;
+  padding: 10px 16px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-busy {
+  top: calc(50% - 82px);
+  bottom: auto;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-banner {
+  font-size: 24px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-banner.is-count {
+  font-size: 60px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-banner.is-note {
+  font-size: 17px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-jump {
+  z-index: 4;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-out {
+  z-index: 4;
+}
+
+/* short screens, like a phone on its side: one row along the bottom, buttons in the corner */
+@container (max-height: 460px) {
+  .g-scramble .g-scramble-buttons {
+    bottom: 10px;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-bottom {
+    flex-direction: row;
+    align-items: flex-end;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-map {
+    width: 72px;
+    height: 72px;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-top {
+    flex-direction: row;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-feed {
+    top: 128px;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-feed li:nth-last-child(n + 3) {
+    display: none;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-jump {
+    bottom: 70px;
+  }
+}
+
+/* short and narrow, like a phone's browser view: the buttons stack up the right edge, clear of the slots */
+@container (max-height: 460px) and (max-aspect-ratio: 1 / 1) {
+  .g-scramble .g-scramble-buttons {
+    top: 50%;
+    bottom: auto;
+    grid-template-columns: 44px;
+    gap: 6px;
+    transform: translateY(-50%);
+  }
+  .g-scramble .g-scramble-buttons button {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* narrow windows, like the laptop's smallest (the HUD measures itself) */
+@container (max-width: 600px) {
+  .g-scramble .g-scramble-bottom {
+    gap: 8px;
+  }
+  .g-scramble .g-scramble-bars {
+    width: 118px;
+  }
+  .g-scramble .g-scramble-slot {
+    width: 50px;
+  }
+  .g-scramble .g-scramble-mats {
+    font-size: 12px;
+  }
+  .g-scramble .g-scramble-feed {
+    top: 182px;
+    width: min(200px, 50cqw);
+  }
+}
+@container (max-width: 470px) {
+  .g-scramble .g-scramble-hud:not(.is-touch) .g-scramble-mats {
+    display: none;
+  }
+}
+
+/* How to Play: a sheet over the cards */
+.g-scramble .g-scramble-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  text-align: left;
+  background: rgba(8, 8, 12, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: arcadeFade 0.18s ease;
+}
+.g-scramble .g-scramble-sheet-card {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(30, 30, 36, 0.96);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.14),
+    0 16px 40px rgba(0, 0, 0, 0.45);
+  animation: arcadePop 0.2s ease-out;
+}
+.g-scramble .g-scramble-sheet-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.g-scramble .g-scramble-sheet-card h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.g-scramble .g-scramble-sheet-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 20px 20px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: rgba(245, 245, 247, 0.88);
+}
+.g-scramble .g-scramble-sheet-body section {
+  margin-top: 16px;
+}
+.g-scramble .g-scramble-sheet-body h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #b48cff;
+}
+.g-scramble .g-scramble-sheet-body p {
+  margin: 0 0 8px;
+}
+.g-scramble .g-scramble-sheet-body ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+.g-scramble .g-scramble-sheet-body b {
+  color: #fff;
+}
+.g-scramble .g-scramble-lede {
+  font-size: 15px;
+  color: #fff;
+}
+.g-scramble .g-scramble-small {
+  margin-top: 8px;
+  font-size: 12px;
+  opacity: 0.75;
+}
+.g-scramble .g-scramble-keys {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 7px 14px;
+  margin: 0;
+}
+.g-scramble .g-scramble-keys dt {
+  align-self: start;
+  justify-self: start;
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+}
+.g-scramble .g-scramble-keys dd {
+  align-self: center;
+  margin: 0;
+}
+.g-scramble .g-scramble-sheet-body .g-scramble-guns {
+  padding-left: 0;
+  list-style: none;
+}
+.g-scramble .g-scramble-guns li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.g-scramble .g-scramble-guns svg {
+  flex: none;
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-scramble .g-scramble-storm.is-moving,
+  .g-scramble .g-scramble-stormfx,
+  .g-scramble .g-scramble-lowfx,
+  .g-scramble .g-scramble-jump {
+    animation: none;
+  }
+  .g-scramble .g-scramble-banner,
+  .g-scramble .g-scramble-feed li,
+  .g-scramble .g-scramble-prompt {
+    animation-duration: 0.01s;
+  }
+}

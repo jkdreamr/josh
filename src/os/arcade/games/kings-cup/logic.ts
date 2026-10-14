@@ -32,14 +32,14 @@ export const MADE_RULE_MAX = 80;
 
 /** Index 0 is the ace, 12 the king. Each one is short enough to read out in one breath. */
 export const CLASSIC_RULES: readonly Rule[] = [
-  { name: 'Waterfall', text: 'Everyone drinks, starting with you. Nobody stops until the person before them does.' },
+  { name: 'Waterfall', text: 'Everyone drinks, starting with you. You stop after a few seconds, then each person in turn.' },
   { name: 'You', text: 'Pick someone to drink.' },
   { name: 'Me', text: 'You drink.' },
   { name: 'Floor', text: 'Last to touch the floor drinks.' },
   { name: 'Guys', text: 'Guys drink.' },
   { name: 'Girls', text: 'Girls drink.' },
   { name: 'Heaven', text: 'Last to point up drinks.' },
-  { name: 'Mate', text: 'Pick a mate. They drink whenever you do, all game.' },
+  { name: 'Mate', text: 'Pick a mate. They drink whenever you do, until one of you gets a new one.' },
   { name: 'Rhyme', text: 'Say a word. Go around rhyming with it. First to miss drinks.' },
   { name: 'Categories', text: 'Name a category. Go around naming things in it. First to blank drinks.' },
   { name: 'Make a Rule', text: 'Make a rule that lasts all game. Anyone who breaks it drinks.' },
@@ -47,8 +47,13 @@ export const CLASSIC_RULES: readonly Rule[] = [
   { name: 'Kings Cup', text: 'Pour a splash into the cup. Whoever pulls the fourth king drinks it.' },
 ];
 
+/** The king's rank. Its rule never changes: every king fills the cup, and the fourth ends the game. */
+export const KING = 13;
+
 /** Well-known rules a table can swap onto any card in the house rules. */
 export const ALTERNATE_RULES: readonly Rule[] = [
+  { name: 'Jive', text: 'Do a dance move. The next person repeats it and adds one. First to slip drinks.' },
+  { name: 'Taller', text: 'Everyone taller than you drinks. Close calls go back to back.' },
   { name: 'Thumb Master', text: 'Thumb on the table any time, until the next one. Last to copy you drinks.' },
   { name: 'Snake Eyes', text: 'Until the next one, anyone who looks you in the eye drinks.' },
   { name: 'Social', text: 'Everyone drinks.' },
@@ -58,6 +63,44 @@ export const ALTERNATE_RULES: readonly Rule[] = [
   { name: 'Thumb War', text: 'Pick someone for a thumb war. Loser drinks.' },
   { name: 'Accents', text: 'Talk in an accent until your next turn. Slip up, drink.' },
 ];
+
+/** Swaps without a gender in them, offered first on the cards that have one (Guys and Girls). */
+const UNGENDERED: Record<number, string> = { 5: 'Jive', 6: 'Taller' };
+
+/**
+ * 18+ swaps, offered only when the table turns on 18+ Rules. Frank, never graphic, everyone stays at swimsuit level
+ * or more, and anything that brings in someone else waits for their yes.
+ */
+export const SPICY_RULES: readonly Rule[] = [
+  { name: 'Spicy Never Have I Ever', text: "Say something spicy you've never done. Everyone who has, drinks." },
+  { name: 'Body Shot', text: "Take a sip off someone's collarbone, if they say yes. No takers? Just drink." },
+  { name: 'Truth or Strip a Layer', text: "Answer the table's question or lose a layer. Shoes count, and nobody goes past swimwear." },
+  { name: 'Seven Minutes of Silence', text: "Sit on someone's lap for seven minutes, if they say yes. Speak and drink." },
+  { name: 'Sexy Voice', text: 'Talk in your sexiest voice until your next turn. Break character, drink.' },
+  { name: 'O Face', text: 'Show the table your O face for three full seconds, or drink.' },
+  { name: 'Kiss or Drink', text: 'Kiss anyone on the cheek, if they say yes. No takers? Drink.' },
+  { name: 'Hot Seat', text: 'Everyone asks you one spicy question. Skip one and drink.' },
+  { name: 'Body Count', text: 'Everyone guesses your body count. Confirm it, deny it or drink.' },
+  { name: 'Spicy Most Likely To', text: "Ask who's most likely to do something spicy. Point on three. Most fingers drinks." },
+];
+
+/** The stored 18+ Rules switch: on only when it was explicitly turned on. */
+export const parseSpicy = (raw: unknown): boolean => raw === true;
+
+const same = (a: Rule, b: Rule) => a.name === b.name && a.text === b.text;
+/** True for a rule from the 18+ set, word for word. */
+export const isSpicy = (rule: Rule) => SPICY_RULES.some((r) => same(r, rule));
+/** The rules with every 18+ swap put back to the classic rule for its card. */
+export const stripSpicy = (rules: readonly Rule[]): Rule[] => parseRules(rules).map((r, i) => (isSpicy(r) ? CLASSIC_RULES[i] : r));
+
+/** The swaps offered for one card: its classic rule first, then ungendered ones where it fits, then the rest. */
+export function swapsFor(rank: number, spicy = false): Rule[] {
+  const classic = CLASSIC_RULES[rank - 1];
+  if (!classic) return [];
+  const first = ALTERNATE_RULES.filter((r) => r.name === UNGENDERED[rank]);
+  const out = [classic, ...first, ...ALTERNATE_RULES.filter((r) => !first.includes(r)), ...(spicy ? SPICY_RULES : [])];
+  return out.filter((r, i) => out.findIndex((x) => x.name === r.name) === i);
+}
 
 /**
  * Rules the game keeps track of. They follow the rule's name, not the card, so moving Mate onto a five or swapping
@@ -108,7 +151,7 @@ export function tidy(raw: string, max: number): string {
 /** The rule for one rank, cleaned up. A blank or missing name falls back to the classic rule for that rank. */
 function cleanRule(raw: unknown, i: number): Rule {
   const classic = CLASSIC_RULES[i];
-  if (!raw || typeof raw !== 'object') return classic;
+  if (!raw || typeof raw !== 'object' || i === KING - 1) return classic;
   const { name, text } = raw as { name?: unknown; text?: unknown };
   const n = typeof name === 'string' ? tidy(name, RULE_NAME_MAX) : '';
   if (!n) return classic;
@@ -124,7 +167,7 @@ export function parseRules(raw: unknown): Rule[] {
 /** The rule for a rank (1 is the ace, 13 the king). */
 export const ruleFor = (rules: readonly Rule[], rank: number): Rule => rules[rank - 1] ?? CLASSIC_RULES[rank - 1];
 
-/** A copy of the rules with one rank changed. A blank name puts the classic rule back. */
+/** A copy of the rules with one rank changed. A blank name puts the classic rule back. The king can't change. */
 export function setRule(rules: readonly Rule[], rank: number, name: string, text: string): Rule[] {
   const out = parseRules(rules);
   if (rank < 1 || rank > 13) return out;
@@ -140,7 +183,7 @@ export const rulesEdited = (rules: readonly Rule[]) => rules.some((r, i) => !isC
 
 // Mates ---------------------------------------------------------------------------------------------------------
 
-/** Two seats that drink together. Mates chain: a mate of your mate drinks too. */
+/** Two seats that drink together. Mates come in pairs: nobody has more than one. */
 export type Pair = readonly [number, number];
 
 /** Groups of seats linked by mate pairs (two or more each), in the order they first appeared. */
@@ -175,10 +218,19 @@ export function matesOf(pairs: readonly Pair[], seat: number): number[] {
   return mateGroups(pairs).find((g) => g.includes(seat))?.filter((s) => s !== seat) ?? [];
 }
 
-/** Links two seats. Picking yourself or someone already in your group changes nothing. */
+/** The seat paired with `seat`, or null. */
+export const mateOf = (pairs: readonly Pair[], seat: number): number | null => {
+  const p = pairs.find(([x, y]) => x === seat || y === seat);
+  return p ? (p[0] === seat ? p[1] : p[0]) : null;
+};
+
+/**
+ * Pairs two seats. Mates come in pairs, so anyone who already had a mate loses them to the new pair (otherwise mates
+ * chain until half the table drinks on every card). Picking yourself or your own mate changes nothing.
+ */
 export function addMate(pairs: readonly Pair[], a: number, b: number): Pair[] {
-  if (a === b || a < 0 || b < 0 || matesOf(pairs, a).includes(b)) return pairs.slice();
-  return [...pairs, [Math.min(a, b), Math.max(a, b)]];
+  if (a === b || a < 0 || b < 0 || mateOf(pairs, a) === b) return pairs.slice();
+  return [...pairs.filter(([x, y]) => x !== a && y !== a && x !== b && y !== b), [Math.min(a, b), Math.max(a, b)]];
 }
 
 // The game ------------------------------------------------------------------------------------------------------

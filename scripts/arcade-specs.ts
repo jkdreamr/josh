@@ -22,7 +22,7 @@ export async function generateArcadeSpecs(): Promise<string> {
   const onlineSpecs: [string, OnlineSpec][] = [];
   for (const owner of await boardOwners()) {
     for (const board of boardsOf(owner)) specs.push([board.id, board.spec]);
-    if (owner.online) onlineSpecs.push([owner.id, { seats: owner.online.seats, ...(owner.online.lateJoin ? { lateJoin: true } : {}) }]);
+    if (owner.online) onlineSpecs.push([owner.id, { seats: owner.online.seats, ...(owner.online.lateJoin ? { lateJoin: true } : {}), ...(owner.online.bots ? { bots: true } : {}) }]);
   }
   specs.sort(([a], [b]) => a.localeCompare(b));
   onlineSpecs.sort(([a], [b]) => a.localeCompare(b));

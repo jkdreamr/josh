@@ -3,6 +3,7 @@ import { GameShell, defineSetting, sfx, useGameLoop, useKeys, useSetting, useShe
 import { Avatar, Big, Chips, Countdown, HowToPlay, Option, Pile, PlayerList, Row, Screen, useCountdown, usePlayers, useStored } from '../../kit/party';
 import type { GameProps } from '../../types';
 import {
+  DEFAULT_DECKS,
   FIRST_GAME,
   MIN_PLAYERS,
   bestTurn,
@@ -15,7 +16,11 @@ import {
   nextOrder,
   points,
   roundLabel,
+  roundsFor,
   scores,
+  shownRounds,
+  sittingOut,
+  tiebreakerName,
   toggleCard,
   turnAt,
   wordsFor,
@@ -23,6 +28,7 @@ import {
   type Entry,
   type Order,
   type Played,
+  type RoundsSetting,
   type TeamIndex,
   type Teams,
   type TurnStyle,
@@ -33,8 +39,8 @@ import './charades.css';
 
 const STYLE = defineSetting('charades:style', ['act', 'describe', 'mix'] as const, 'act');
 const TIME = defineSetting('charades:time', ['30', '60', '90'] as const, '60');
-const ROUNDS = defineSetting('charades:rounds', ['3', '5', '8'] as const, '5');
-const DEFAULT_DECKS = DECK_IDS.filter((id) => id !== 'hard');
+// Auto is the default: five rounds, or Everyone Once when the teams are bigger than five.
+const ROUNDS = defineSetting<RoundsSetting>('charades:rounds', ['auto', '3', '5', '8', 'all'], 'auto');
 const parseDecks = (raw: unknown): DeckId[] => {
   const ids = Array.isArray(raw) ? DECK_IDS.filter((id) => raw.includes(id)) : [];
   return ids.length ? ids : DEFAULT_DECKS;
@@ -61,7 +67,7 @@ const STYLES: Record<TurnStyle, { label: string; hud: string; past: string; rule
 
 const HOW = [
   <>
-    Seats alternate between <b>Blue</b> and <b>Gold</b>. Teams take turns, and everyone gets a go.
+    Seats alternate between <b>Blue</b> and <b>Gold</b>. Teams take turns, and each team rotates who's up.
   </>,
   <>On your turn, hold the phone so only you can see it. Get your team to say the word before the buzzer.</>,
   <>
@@ -76,6 +82,11 @@ const HOW = [
 /** Seconds per beat of the 3-2-1, and how long Time's Up stays before the review. */
 const BEAT = 0.7;
 const HOLD = 1.6;
+/**
+ * Milliseconds the review, the next turn and the results ignore taps, Enter and Space. Someone still hammering Got It
+ * after the buzzer must not pass the phone on or start the next actor's clock.
+ */
+const ARM = 1000;
 
 type Step = { s: 'setup' } | { s: 'turn' } | { s: 'count' } | { s: 'play' } | { s: 'up' } | { s: 'review' } | { s: 'done' };
 
@@ -115,7 +126,7 @@ function Play() {
   const word = useRef<HTMLElement | null>(null);
 
   const seconds = Number(time);
-  const rounds = Number(roundsSetting);
+  const rounds = roundsFor(roundsSetting, table.length);
   const total = rounds + extra;
   const teams: Teams = useMemo(() => buildTeams(table.length), [table.length]);
   const turn = turnAt(history.length, teams, style, order);
@@ -254,8 +265,9 @@ function Play() {
         {n > 0 && <TeamList names={players} teams={buildTeams(n)} />}
         <Option label="Style" value={style} options={[['act', 'Act It Out'], ['describe', 'Describe It'], ['mix', 'Mix']]} onChange={setStyle} />
         <Option label="Turn Time" value={time} options={[['30', '30 Sec'], ['60', '60 Sec'], ['90', '90 Sec']]} onChange={setTime} />
-        <Option label="Rounds" value={roundsSetting} options={[['3', '3'], ['5', '5'], ['8', '8']]} onChange={setRounds} />
+        <RoundsPick players={n} value={roundsSetting} onChange={setRounds} />
         <Chips label="Decks" value={decks} options={deckOptions} onChange={setDecks} />
+        {decks.includes('dark') && <p className="g-charades-spice">After Dark is for groups who know each other well. Skip is always free.</p>}
       </Screen>
     );
   }
@@ -269,6 +281,7 @@ function Play() {
       <Screen
         key={`turn-${turn.index}`}
         className="g-charades-turn"
+        arm={ARM}
         onEnter={startCount}
         actions={
           <Big primary onClick={startCount}>
@@ -356,6 +369,7 @@ function Play() {
       <Screen
         key={`review-${turn.index}`}
         center={false}
+        arm={ARM}
         kicker={where}
         title={lead === null ? 'All Tied Up' : `${TEAMS[lead].name} Leads`}
         onEnter={next}
@@ -380,6 +394,14 @@ function Play() {
                     className={c.got ? 'is-got' : c.buzzer ? 'is-buzzer' : 'is-skip'}
                     // A tap leaves focus on the game, so Enter still passes the phone instead of flipping this word back.
                     onMouseDown={(e) => e.preventDefault()}
+                    // From the keyboard, Space fixes the focused word and Enter still passes the phone. Capture phase,
+                    // because the shell stops Enter on a focused button before it bubbles back up to React.
+                    onKeyDownCapture={(e) => {
+                      if (e.key !== 'Enter') return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!e.repeat) next();
+                    }}
                     onClick={() => {
                       sfx.play(c.got ? 'blip' : 'coin', c.got ? 0.7 : 1);
                       setCards(toggleCard(cards, i));
@@ -415,6 +437,7 @@ function Play() {
       key={`done-${history.length}`}
       className="g-charades-done"
       center={false}
+      arm={ARM}
       kicker={extra ? `After ${rounds} rounds and ${extra === 1 ? 'a tiebreaker' : `${extra} tiebreakers`}` : `After ${played} rounds`}
       title={win === null ? "It's a Tie" : `${TEAMS[win].name} Wins`}
       sub={games > 1 ? `Tonight so far: Blue ${series[0]}, Gold ${series[1]}.` : undefined}
@@ -446,11 +469,13 @@ function Play() {
           <small>Best turn</small>
           <strong>{name(best.actor)}</strong>
           <p>
-            {best.points} {best.points === 1 ? 'point' : 'points'} for {TEAMS[best.team].short} in {best.round > rounds ? 'the tiebreaker' : `round ${best.round}`}, {STYLES[best.style].past}.
+            {best.points} {best.points === 1 ? 'point' : 'points'} for {TEAMS[best.team].short} in{' '}
+            {best.round <= rounds ? `round ${best.round}` : extra > 1 ? tiebreakerName(best.round - rounds).toLowerCase() : 'the tiebreaker'},{' '}
+            {STYLES[best.style].past}.
           </p>
         </div>
       )}
-      <Rounds history={history} first={order.first} />
+      <Rounds history={history} first={order.first} rounds={rounds} extra={extra} />
     </Screen>
   );
 }
@@ -608,7 +633,7 @@ function Tallies({
   );
 }
 
-function Rounds({ history, first }: { history: Played[]; first: TeamIndex }) {
+function Rounds({ history, first, rounds, extra }: { history: Played[]; first: TeamIndex; rounds: number; extra: number }) {
   const rows = Math.ceil(history.length / 2);
   return (
     <table className="g-charades-rounds" aria-label="Points by round">
@@ -625,7 +650,7 @@ function Rounds({ history, first }: { history: Played[]; first: TeamIndex }) {
       <tbody>
         {Array.from({ length: rows }, (_, r) => (
           <tr key={r}>
-            <th scope="row">{r + 1}</th>
+            <th scope="row">{r < rounds ? r + 1 : extra > 1 ? `Tiebreaker ${r + 1 - rounds}` : 'Tiebreaker'}</th>
             {([0, 1] as const).map((t) => {
               const played = history[r * 2 + ((t + first) % 2)];
               return <td key={t}>{played ? played.points : '·'}</td>;
@@ -634,6 +659,37 @@ function Rounds({ history, first }: { history: Played[]; first: TeamIndex }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+/** The Rounds choice, with a line saying what it means for this table: who sits out, or that everyone acts. */
+function RoundsPick({ players, value, onChange }: { players: number; value: RoundsSetting; onChange: (v: RoundsSetting) => void }) {
+  const shown = shownRounds(value, players);
+  const rounds = roundsFor(value, players);
+  const out = sittingOut(players, rounds);
+  const note =
+    players < MIN_PLAYERS
+      ? null
+      : shown === 'all'
+        ? `${rounds} ${rounds === 1 ? 'round' : 'rounds'} with ${players} players, so everyone acts.`
+        : out > 0
+          ? `At ${rounds} rounds, ${out} ${out === 1 ? 'player never gets' : 'players never get'} a turn.`
+          : null;
+  return (
+    <div className="g-charades-roundpick">
+      <Option
+        label="Rounds"
+        value={shown}
+        options={[
+          ['3', '3'],
+          ['5', '5'],
+          ['8', '8'],
+          ['all', 'Everyone Once'],
+        ]}
+        onChange={onChange}
+      />
+      {note && <small className={out > 0 ? 'is-note' : undefined}>{note}</small>}
+    </div>
   );
 }
 

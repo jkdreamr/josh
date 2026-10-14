@@ -150,3 +150,22 @@
     font-size: 40px;
   }
 }
+
+/* Short windows: the setup scrolls, so its bottom edge fades out to say so. The padding lets the last line
+   clear the fade once scrolled. */
+@container arcade-party (max-height: 480px) {
+  .g-never-have-i-ever .g-never-have-i-ever-setup .arcade-party-body {
+    padding-bottom: 22px;
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+  }
+  /* The title and How to Play carry it here; the sub makes way so the deck and mode choices fit. */
+  .g-never-have-i-ever .g-never-have-i-ever-setup .arcade-party-sub {
+    display: none;
+  }
+  .g-never-have-i-ever .g-never-have-i-ever-setup .arcade-party-title {
+    font-size: 36px;
+  }
+  .g-never-have-i-ever.arcade-shell .g-never-have-i-ever-setup .arcade-party-chips > button {
+    height: 36px;
+  }
+}

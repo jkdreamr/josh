@@ -1,27 +1,30 @@
 // Hot Potato rules, kept pure so they run under node: the fuse length, how the fuse looks as it burns (never a
-// straight line, so nobody can read the time left off it), how fast it ticks, the prompt piles and the loss tally.
-import type { Rng } from '../../kit/party-core.ts';
-import { CATEGORIES, LETTERS } from './prompts.ts';
+// straight line, so nobody can read the time left off it), when it ticks (never a countdown either), the prompt
+// piles and the loss tally.
+import { listNames, sips, type Rng } from '../../kit/party-core.ts';
+import { AFTER_DARK, CATEGORIES, LETTERS } from './prompts.ts';
 
 export type PromptKind = 'category' | 'letters';
-export type Prompt = { kind: PromptKind; text: string };
+/** `spicy` marks an After Dark 18+ category. */
+export type Prompt = { kind: PromptKind; text: string; spicy?: true };
 export type PromptMode = 'categories' | 'letters' | 'mix';
 export type FuseSetting = 'short' | 'normal' | 'long';
 
-/** Fuse length range in seconds for each setting. */
+/** Fuse length range in seconds for each setting. The ranges overlap and start low, so no opening is ever safe. */
 export const FUSES: Record<FuseSetting, readonly [number, number]> = {
-  short: [10, 25],
-  normal: [15, 40],
-  long: [25, 60],
+  short: [6, 25],
+  normal: [10, 40],
+  long: [15, 60],
 };
 
 /** Sips for whoever is holding it, in the Drinks rule. */
 export const LOSER_SIPS = 2;
 
-/** Every prompt for a mode. */
-export function promptsFor(mode: PromptMode): Prompt[] {
+/** Every prompt for a mode. After Dark (off unless asked for) mixes its 18+ categories in with the others. */
+export function promptsFor(mode: PromptMode, afterDark = false): Prompt[] {
   const out: Prompt[] = [];
   if (mode !== 'letters') for (const text of CATEGORIES) out.push({ kind: 'category', text });
+  if (mode !== 'letters' && afterDark) for (const text of AFTER_DARK) out.push({ kind: 'category', text, spicy: true });
   if (mode !== 'categories') for (const text of LETTERS) out.push({ kind: 'letters', text });
   return out;
 }
@@ -76,18 +79,42 @@ export function burnAt(burn: Burn, p: number): number {
   return burn[burn.length - 1][1];
 }
 
-export const TICK_MIN = 0.1;
+export const TICK_MIN = 0.12;
 export const TICK_MAX = 1.1;
 
 /**
- * Seconds until the next tick with `left` seconds on the fuse: a steady tick while there's plenty of time, speeding
- * up over the last 20 seconds or so, always with some jitter so nobody can count it down.
+ * When the fuse ticks, in seconds after it was lit, for a fuse of `total` seconds. The tempo has a life of its own:
+ * it lurches between rushes and lulls of random length from the first tick, and drifts faster the longer the fuse
+ * burns. None of it looks at the time left: the ticks up to any moment are the same whatever the fuse length, so a
+ * fast rattle can mean a second to go or thirty, and the opening pace says nothing about how long the fuse is.
  */
-export function tickGap(left: number, rng: Rng = Math.random): number {
-  const l = Math.max(0, Number.isFinite(left) ? left : 0);
-  const base = 0.14 + 0.8 * Math.min(1, l / 24) ** 0.8;
-  return Math.min(TICK_MAX, Math.max(TICK_MIN, base * (0.75 + rng() * 0.5)));
+export function fuseTicks(total: number, rng: Rng = Math.random): number[] {
+  const end = Math.max(0, Number.isFinite(total) ? total : 0);
+  const pace = 0.6 + rng() * 0.4;
+  const drift = 20 + rng() * 25;
+  const out: number[] = [];
+  let t = 0.2 + rng() * 0.25;
+  let mood = 1;
+  let moodEnd = 0;
+  while (t < end) {
+    out.push(t);
+    if (t >= moodEnd) {
+      const r = rng();
+      mood = r < 0.35 ? 0.38 + rng() * 0.22 : r < 0.75 ? 0.85 + rng() * 0.25 : 1.15 + rng() * 0.3;
+      moodEnd = t + 1.2 + rng() * 3.3;
+    }
+    const base = pace * Math.max(0.55, Math.exp(-t / drift));
+    t += Math.min(TICK_MAX, Math.max(TICK_MIN, base * mood * (0.82 + rng() * 0.36)));
+  }
+  return out;
 }
+
+/** How hot a tick sounds (0 calm to 1 frantic), from the gap since the last one. */
+export const tickHeat = (gap: number) => Math.min(1, Math.max(0, (0.9 - (Number.isFinite(gap) ? gap : 0.9)) / 0.72));
+
+/** Beats of the count-in when a paused fuse comes back, and seconds per beat. */
+export const RESUME_BEATS = 3;
+export const RESUME_BEAT = 0.6;
 
 /** Who starts a round: whoever lost the last one, or anyone at random. */
 export function nextStarter(players: number, lastLoser: number | null, rng: Rng = Math.random): number {
@@ -129,4 +156,28 @@ export function standings(t: Tally, names: readonly string[]): Standing[] {
 export function leaders(t: Tally, names: readonly string[]): string[] {
   const max = Math.max(0, ...names.map((n) => lossesOf(t, n)));
   return max > 0 ? names.filter((n) => lossesOf(t, n) === max) : [];
+}
+
+/** What the loser of a round owes: "Sam takes a point" or "Sam drinks 2 sips". */
+export const verdict = (loser: string, drinks: boolean) => (drinks ? `${loser} drinks ${sips(LOSER_SIPS)}` : `${loser} takes a point`);
+
+/**
+ * Where the loser now stands, after the verdict that already named them: "That's 3, the most so far." with points,
+ * "3 lost, the most so far." with drinks.
+ */
+export function standingLine(t: Tally, names: readonly string[], loser: string, drinks: boolean): string {
+  const n = lossesOf(t, loser);
+  const top = leaders(t, names);
+  const max = top.length ? lossesOf(t, top[0]) : 0;
+  const total = names.reduce((sum, name) => sum + lossesOf(t, name), 0);
+  if (total <= 1) return drinks ? 'First boom of the night.' : 'Fewest points wins.';
+  const mine = drinks ? `${n} lost` : `That's ${n}`;
+  if (top.length === 1 && top[0] === loser) return `${mine}, the most so far.`;
+  if (top.includes(loser)) {
+    const others = top.filter((name) => name !== loser);
+    return `${mine}, ${others.length === 1 ? `level with ${others[0]}` : `tied with ${others.length} others`} for the most.`;
+  }
+  const who = top.length <= 2 ? listNames(top) : `${top.length} players`;
+  if (drinks) return `${n} lost so far. ${who} ${top.length === 1 ? 'has' : 'have'} lost ${max}${top.length === 1 ? ', the most' : ' each'}.`;
+  return `${mine}. ${who} ${top.length === 1 ? 'is' : 'are'} on ${max}, the most.`;
 }

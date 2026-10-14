@@ -4,7 +4,7 @@
 // the host). Items travel as events: whoever throws something announces it, every client simulates it, and only
 // the kart it hits decides that it was hit, then says the item is gone. The host picks the class, the GO time and
 // the grid, and calls the result once everyone is home.
-import { turboLevel, type Kart, type ThingKind } from './logic.ts';
+import { turboLevel, type Item, type Kart, type ThingKind } from './logic.ts';
 
 export const F_SPIN = 1;
 export const F_TUMBLE = 2;
@@ -19,7 +19,12 @@ export const F_SLAM = 1 << 12;
 export const F_TRICK = 1 << 13;
 export const F_WOBBLE = 1 << 14;
 export const F_DRAFT = 1 << 15;
+export const F_MEGA = 1 << 16;
+export const F_BULLET = 1 << 17;
+export const F_INK = 1 << 18;
 const TRAILS = [null, 'banana', 'green', 'red'] as const;
+/** What a held-out item looks like from outside: three bananas are a banana, three greens a green. */
+const trailKind = (item: Item | null) => (item === 'bananas' ? 'banana' : item === 'greens' ? 'green' : item);
 
 /** A kart as the network sees it. fin: finish time, -1 still racing, -2 out of time. look: paint and hat (garage.ts). */
 export type Car = { seat: number; x: number; z: number; y: number; h: number; v: number; p: number; f: number; fin: number; look: number };
@@ -29,21 +34,24 @@ export type NetEv =
   | { y: 'bolt' }
   | { y: 'boom'; x: number; z: number }
   /** A slam from seat `to` landed on the sender's kart: that player pockets a coin. */
-  | { y: 'stole'; to: number };
+  | { y: 'stole'; to: number }
+  /** Ink from the sender over everyone ahead of it, and the sender's horn going off at (x, z). */
+  | { y: 'ink' }
+  | { y: 'horn'; x: number; z: number };
 
 export type Packet =
-  | { k: 'S'; round: number; go: number; cc: string; roster: number[]; cars: Car[] }
+  | { k: 'S'; round: number; go: number; cc: string; course: string; roster: number[]; cars: Car[] }
   | { k: 's'; round: number; car: Omit<Car, 'seat'> }
   | { k: 'e'; round: number; o: number; ev: NetEv[] }
   | { k: 'end'; round: number; w: number | null; order: [number, number][] }
-  | { k: 'cfg'; round: number; cc: string };
+  | { k: 'cfg'; round: number; cc: string; course: string };
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const seatOk = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) < 16;
-const KINDS: readonly ThingKind[] = ['banana', 'green', 'red', 'blue'];
+const KINDS: readonly ThingKind[] = ['banana', 'green', 'red', 'blue', 'bomb'];
 
 export function flagsOf(k: Kart) {
   return (
@@ -56,11 +64,14 @@ export function flagsOf(k: Kart) {
     (k.drift > 0 ? F_DRIFT_R : 0) |
     (k.squash > 0 ? F_SQUASH : 0) |
     (turboLevel(k.charge) << 8) |
-    ((k.trail && k.item ? Math.max(0, TRAILS.indexOf(k.item as (typeof TRAILS)[number])) : 0) << 10) |
+    ((k.trail && k.item ? Math.max(0, TRAILS.indexOf(trailKind(k.item) as (typeof TRAILS)[number])) : 0) << 10) |
     (k.slamT > 0 ? F_SLAM : 0) |
     (k.trick ? F_TRICK : 0) |
     (k.wobble > 0 ? F_WOBBLE : 0) |
-    (k.draft > 0.3 ? F_DRAFT : 0)
+    (k.draft > 0.3 ? F_DRAFT : 0) |
+    (k.mega > 0 ? F_MEGA : 0) |
+    (k.bullet > 0 ? F_BULLET : 0) |
+    (k.ink > 0 ? F_INK : 0)
   );
 }
 
@@ -88,6 +99,9 @@ export function applyFlags(k: Kart, f: number) {
   k.trick = !!(f & F_TRICK);
   k.wobble = f & F_WOBBLE ? 0.3 : 0;
   k.draft = f & F_DRAFT ? 0.6 : 0;
+  k.mega = f & F_MEGA ? 1 : 0;
+  k.bullet = f & F_BULLET ? 1 : 0;
+  k.ink = f & F_INK ? 1 : 0;
 }
 
 export const carOf = (k: Kart, look = -1): Omit<Car, 'seat'> => ({ x: r2(k.x), z: r2(k.z), y: r2(k.y), h: r3(k.h), v: r1(k.v), p: r1(k.prog), f: flagsOf(k), fin: k.done === null ? -1 : r3(k.done), look });
@@ -100,20 +114,23 @@ function unpackCar(a: unknown): Omit<Car, 'seat'> | null {
   return { x, z, y, h, v, p, f: f | 0, fin, look };
 }
 
-export const hostState = (round: number, go: number, cc: string, roster: number[], cars: Car[]) => ({
+export const hostState = (round: number, go: number, cc: string, roster: number[], cars: Car[], course = 'palm') => ({
   t: 'pk',
   r: round,
   k: 'S',
   go: r2(go),
   cc,
+  co: course,
   ro: roster,
   cars: cars.map((c) => [c.seat, ...packCar(c)]),
 });
 export const guestState = (round: number, car: Omit<Car, 'seat'>) => ({ t: 'pk', r: round, k: 's', c: packCar(car) });
 export const events = (round: number, origin: number, ev: NetEv[]) => ({ t: 'pk', r: round, k: 'e', o: origin, ev });
 export const endOf = (round: number, winner: number | null, order: [number, number][]) => ({ t: 'pk', r: round, k: 'end', w: winner, order });
-/** The host's pick for the next race, sent while the room waits so guests can see it. */
-export const configOf = (round: number, cc: string) => ({ t: 'pk', r: round, k: 'cfg', cc });
+/** The host's picks for the next race, sent while the room waits so guests can see them. */
+export const configOf = (round: number, cc: string, course = 'palm') => ({ t: 'pk', r: round, k: 'cfg', cc, co: course });
+/** A course id from a packet; older packets had none and were always Palm Drive. */
+const courseOf = (v: unknown) => (typeof v === 'string' ? v : 'palm');
 
 function parseEv(v: unknown): NetEv | null {
   if (!v || typeof v !== 'object') return null;
@@ -122,6 +139,8 @@ function parseEv(v: unknown): NetEv | null {
   if (e.y === 'bolt') return { y: 'bolt' };
   if (e.y === 'boom') return num(e.x) && num(e.z) ? { y: 'boom', x: e.x, z: e.z } : null;
   if (e.y === 'stole') return seatOk(e.to) ? { y: 'stole', to: e.to } : null;
+  if (e.y === 'ink') return { y: 'ink' };
+  if (e.y === 'horn') return num(e.x) && num(e.z) ? { y: 'horn', x: e.x, z: e.z } : null;
   if (e.y !== 'spawn' || !KINDS.includes(e.kind as ThingKind)) return null;
   const keys = ['id', 'x', 'z', 'vx', 'vz', 'vy', 'yy', 'tg', 'pg', 'gr'] as const;
   if (!keys.every((key) => num(e[key]))) return null;
@@ -148,14 +167,14 @@ export function parsePacket(value: unknown): Packet | null {
       const car = unpackCar(raw.slice(1));
       if (car) cars.push({ seat: raw[0], ...car });
     }
-    return { k: 'S', round, go: p.go, cc: p.cc, roster, cars };
+    return { k: 'S', round, go: p.go, cc: p.cc, course: courseOf(p.co), roster, cars };
   }
   if (p.k === 'e') {
     if (!seatOk(p.o) || !Array.isArray(p.ev)) return null;
     const ev = p.ev.slice(0, 32).map(parseEv).filter((e): e is NetEv => e !== null);
     return { k: 'e', round, o: p.o, ev };
   }
-  if (p.k === 'cfg') return typeof p.cc === 'string' ? { k: 'cfg', round, cc: p.cc } : null;
+  if (p.k === 'cfg') return typeof p.cc === 'string' ? { k: 'cfg', round, cc: p.cc, course: courseOf(p.co) } : null;
   if (p.k === 'end') {
     if (!(p.w === null || seatOk(p.w)) || !Array.isArray(p.order)) return null;
     const order = p.order.filter((o): o is [number, number] => Array.isArray(o) && seatOk(o[0]) && num(o[1])).slice(0, 16);

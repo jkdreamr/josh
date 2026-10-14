@@ -193,6 +193,19 @@ export function rivalField(level: RivalLevel, rand: () => number, count = BOTS):
   });
 }
 
+/** Crews for online bots, one per bot in seat order: the solo rivals and one more, enough to fill a room of eight. */
+export const BOT_CREWS: readonly Crew[] = [...RIVALS, { name: 'dartmouth', hull: '#00693e', blade: '#00693e', tip: '#ffffff' }];
+
+/** Speeds for a room's bots at a level: the rival field's spread, dealt out in random order. */
+export function botSpeeds(level: RivalLevel, count: number, rand: () => number): number[] {
+  const speeds = rivalField(level, rand, count).map((rival) => rival.wpm);
+  for (let i = speeds.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [speeds[i], speeds[j]] = [speeds[j], speeds[i]];
+  }
+  return speeds;
+}
+
 /** Most a rival can lift its pace when it is behind you. */
 export const CATCH_UP_MAX = 0.08;
 

@@ -36,7 +36,7 @@ export const DECKS = {
     label: 'Jobs',
     words: [
       'Doctor', 'Dentist', 'Teacher', 'Firefighter', 'Police Officer', 'Chef', 'Pilot', 'Astronaut', 'Lifeguard', 'Plumber',
-      'Electrician', 'Mechanic', 'Tattoo Artist', 'Farmer', 'Fisherman', 'Mail Carrier', 'Pizza Delivery', 'Bus Driver', 'Waiter', 'Barista',
+      'Electrician', 'Mechanic', 'Tattoo Artist', 'Farmer', 'Dog Walker', 'Mail Carrier', 'Delivery Driver', 'Bus Driver', 'Waiter', 'Barista',
       'Magician', 'Clown', 'Photographer', 'Painter', 'Sculptor', 'DJ', 'Ballet Dancer', 'Stunt Double', 'News Anchor', 'Weather Reporter',
       'Referee', 'Personal Trainer', 'Bouncer', 'Surgeon', 'Vet', 'Zookeeper', 'Librarian', 'Judge', 'Detective', 'Spy',
       'Air Traffic Controller', 'Construction Worker', 'Window Washer', 'Lumberjack', 'Beekeeper', 'Flight Attendant', 'Tour Guide', 'Auctioneer', 'Mime', 'Influencer',
@@ -90,6 +90,17 @@ export const DECKS = {
       'Daylight Saving Time', 'Leap Year', 'Black Hole', 'Evolution', 'Photosynthesis', 'Wi-Fi', 'Autocorrect', 'Software Update', 'Group Chat', 'Left on Read',
       'Ghosting', 'Buffering', 'Jet Lag', 'Hindsight', 'Dad Joke', 'Butterfly Effect', 'Infinity', 'Opposite Day', 'Plot Twist', 'Spoiler Alert',
       'Cliffhanger', 'Muscle Memory', 'Second Wind', 'Gut Feeling', "Murphy's Law", 'Stage Fright', 'Elevator Music', 'The Floor Is Lava', "Beginner's Luck", 'Main Character Energy',
+    ],
+  },
+  // Off by default and labeled 18+ on its chip. Adult, never graphic: say what, not how.
+  dark: {
+    label: 'After Dark 18+',
+    words: [
+      'Walk of Shame', 'Lap Dance', 'Skinny Dipping', 'Awkward First Kiss', 'Booty Call', 'Sneaking Out at Dawn', 'Body Shot', 'Strip Poker', 'Pole Dancing', 'Fuzzy Handcuffs',
+      'Hickey', 'Blindfold', 'Bachelorette Party', 'Striptease', 'Sexting', 'Sending Nudes', 'One Night Stand', 'Friends With Benefits', 'Netflix and Chill', 'Pillow Talk',
+      'Dirty Talk', 'Make-Out Session', 'Mile High Club', 'Fifty Shades of Grey', 'Magic Mike', 'Swipe Right', 'Body Count', 'Threesome', 'Caught in the Act', 'Texting Your Ex at 2 AM',
+      'Shower for Two', 'Unhooking a Bra', 'Kama Sutra', 'Sugar Daddy', 'Cougar', 'Climbing Out a Window', 'Faking It', 'Vibrator', 'Edible Underwear', 'Massage Oil',
+      'Lingerie', 'Thirst Trap', 'Beer Goggles', 'Nude Beach', 'Safe Word', 'Dominatrix', 'Buying Condoms', 'Squeaky Bed', 'Wardrobe Malfunction', 'Bedroom Eyes',
     ],
   },
 } as const satisfies Record<string, { label: string; words: readonly string[] }>;

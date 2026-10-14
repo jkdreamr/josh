@@ -48,6 +48,11 @@ export function createArena(w: number, h: number, count: number, cpuFrom: number
   return a;
 }
 
+/** Online riders: one per seat in the room, people and bots alike, in seat order. Rider ids index this list. */
+export function riderSeats(people: readonly number[], bots: readonly number[], max = 4): number[] {
+  return [...new Set([...people, ...bots])].sort((a, b) => a - b).slice(0, max);
+}
+
 /** Queue a turn. Reversing into your own trail is ignored. */
 export function steer(r: Rider, d: Dir) {
   if (!r.alive || d === opposite(r.dir)) return;

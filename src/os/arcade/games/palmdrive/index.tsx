@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type Pointe
 import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
+import type { Track } from './track';
 import {
   CASH_COST,
   CCS,
@@ -15,17 +16,22 @@ import {
   ordinal,
   pressGas,
   removeThing,
+  RIVALS,
   soloRace,
   spawn,
   standings,
+  hornAt,
+  inkFrom,
   step,
   stolen,
   strike,
+  trailable,
   turboLevel,
   type Cc,
   type Ev,
   type Hat,
   type Item,
+  type Kart,
   type Race,
   type Racer,
 } from './logic';
@@ -33,13 +39,15 @@ import { applyFlags, carOf, configOf, endOf, events, finishOrder, guestState, ho
 import { deposit, freshGarage, fromLook, loadGarage, lookOf, paintColor, payout, saveGarage, subscribeGarage, type Garage } from './garage';
 import { CoinIcon, GarageSheet, HowToPlay, ItemIcon } from './hud';
 import { BPM, JINGLE_DONE, JINGLE_WIN, Sequencer, hz, type Note } from './music';
+import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf, type CourseId } from './courses';
 import { meta } from './meta';
 import './palmdrive.css';
 
 const CLASS = defineSetting('palmdrive:cc', CCS, '100cc');
 const classOptions = CCS.map((cc) => [cc, cc] as const);
-/** The leaderboard (and local best) for a class on the Palm Drive course. */
-const boardOf = (cc: Cc) => `palm-${cc}`;
+const COURSE = defineSetting('palmdrive:course', COURSE_IDS, 'palm');
+/** The leaderboard (and local best) for a course and class. */
+const boardOf = (course: CourseId, cc: Cc) => `${course}-${cc}`;
 /** The race soundtrack; the shell's mute button silences it along with everything else. */
 const MUSIC = defineSetting('palmdrive:music', ['on', 'off'] as const, 'on', { live: true });
 const musicOptions = [
@@ -48,6 +56,8 @@ const musicOptions = [
 ] as const;
 /** Online karts take their color from their seat. */
 const SEAT_COLORS = ['#e53935', '#1e88e5', '#3fae4a', '#fdd835', '#8e24aa', '#fb8c00', '#ec407a', '#00acc1'];
+/** Online bots are the CPU drivers from solo races, quickest first. */
+const BOT_NAMES = RIVALS.map((rival) => rival.name);
 /** The host gives everyone a moment to get its first packet before the lights start. */
 const HOST_LEAD = 1.2;
 /** Once someone finishes, everyone else has this long. */
@@ -86,30 +96,82 @@ function countRace() {
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} lowerIsBetter formatScore={fmtMs} setup={<Setup />} hostSetup={<OnlineSetup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} lowerIsBetter formatScore={fmtMs} setup={<Setup />} hostSetup={<OnlineSetup />} botNames={BOT_NAMES}>
       <Stage />
     </GameShell>
   );
 }
 
+type Best = ReturnType<typeof useHighScore>;
+/** Your best time on every course at every class (the same hooks in the same order every render). */
 function useBests() {
-  const b50 = useHighScore(`palmdrive-${boardOf('50cc')}`, { lowerIsBetter: true });
-  const b100 = useHighScore(`palmdrive-${boardOf('100cc')}`, { lowerIsBetter: true });
-  const b150 = useHighScore(`palmdrive-${boardOf('150cc')}`, { lowerIsBetter: true });
-  const b200 = useHighScore(`palmdrive-${boardOf('200cc')}`, { lowerIsBetter: true });
-  return { '50cc': b50, '100cc': b100, '150cc': b150, '200cc': b200 };
+  const bests = {} as Record<CourseId, Record<Cc, Best>>;
+  for (const course of COURSE_IDS) {
+    bests[course] = {} as Record<Cc, Best>;
+    for (const cc of CCS) bests[course][cc] = useHighScore(`palmdrive-${boardOf(course, cc)}`, { lowerIsBetter: true });
+  }
+  return bests;
+}
+
+/** Course cards with a little map of each track; without onChange it just shows the pick (a guest online). */
+function CoursePicker({ value, onChange }: { value: CourseId | null; onChange?: (c: CourseId) => void }) {
+  return (
+    <div className="arcade-field">
+      <span>Course{onChange ? '' : ' · picked by the host'}</span>
+      <div className="g-palmdrive-courses" role="group" aria-label="Course">
+        {COURSE_IDS.map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={`g-palmdrive-course${id === value ? ' is-on' : ''}`}
+            aria-pressed={id === value}
+            disabled={!onChange}
+            title={COURSES[id].blurb}
+            onClick={() => {
+              if (!onChange || id === value) return;
+              sfx.play('select');
+              onChange(id);
+            }}
+          >
+            <CourseMap id={id} />
+            <span>
+              {COURSES[id].name}
+              <small className={`is-${DIFFICULTY[COURSES[id].difficulty - 1].toLowerCase()}`}>
+                {DIFFICULTY[COURSES[id].difficulty - 1]} · {(trackOf(id).length / 1000).toFixed(1)} km
+              </small>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CourseMap({ id }: { id: CourseId }) {
+  const m = useMemo(() => mapPath(trackOf(id)), [id]);
+  return (
+    <svg viewBox={m.box} aria-hidden="true">
+      <path d={m.d} />
+    </svg>
+  );
 }
 
 function Setup() {
   const [cc, setCc] = useSetting(CLASS);
+  const [course, setCourse] = useSetting(COURSE);
   const [music, setMusic] = useSetting(MUSIC);
-  const best = useBests()[cc].best;
+  const best = useBests()[course][cc].best;
   return (
     <>
+      <CoursePicker value={course} onChange={setCourse} />
       <Segmented label="Class" value={cc} options={classOptions} onChange={setCc} />
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
       <Extras />
-      {best !== null && <small className="g-palmdrive-best">Best at {cc}: {fmtMs(best)}</small>}
+      {best !== null && (
+        <small className="g-palmdrive-best">
+          Best on {COURSES[course].name} at {cc}: {fmtMs(best)}
+        </small>
+      )}
     </>
   );
 }
@@ -154,26 +216,31 @@ function Extras() {
 function OnlineSetup() {
   const online = useOnline();
   const [cc, setCc] = useSetting(CLASS);
+  const [course, setCourse] = useSetting(COURSE);
   const [music, setMusic] = useSetting(MUSIC);
   const [hostCc, setHostCc] = useState<Cc | null>(null);
+  const [hostCourse, setHostCourse] = useState<CourseId | null>(null);
   const host = online?.isHost ?? true;
-  // the host says its pick now, again when someone joins (the player list changes) and every couple of seconds
+  // the host says its picks now, again when someone joins (the player list changes) and every couple of seconds
   useEffect(() => {
     if (!online?.isHost) return;
-    const say = () => online.send(configOf(online.round, cc));
+    const say = () => online.send(configOf(online.round, cc, course));
     say();
     const timer = window.setInterval(say, 2000);
     return () => window.clearInterval(timer);
-  }, [online, cc]);
+  }, [online, cc, course]);
   useEffect(() => {
     if (!online || online.isHost) return;
     return online.onMessage((from, d) => {
       const p = parsePacket(d);
-      if (from === 0 && p?.k === 'cfg' && isCc(p.cc)) setHostCc(p.cc);
+      if (from !== 0 || p?.k !== 'cfg') return;
+      if (isCc(p.cc)) setHostCc(p.cc);
+      if (isCourse(p.course)) setHostCourse(p.course);
     });
   }, [online]);
   return (
     <>
+      {host ? <CoursePicker value={course} onChange={setCourse} /> : <CoursePicker value={hostCourse} />}
       {host ? (
         <Segmented label="Class" value={cc} options={classOptions} onChange={setCc} />
       ) : (
@@ -185,7 +252,7 @@ function OnlineSetup() {
           </div>
         </div>
       )}
-      {host && <small className="g-palmdrive-best">You pick the class for everyone.</small>}
+      {host && <small className="g-palmdrive-best">You pick the course and class for everyone.</small>}
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
       <Extras />
     </>
@@ -198,8 +265,10 @@ type Mode = 'idle' | 'solo' | 'online';
 function Stage() {
   const shell = useShell();
   const online = useOnline();
+  const [course] = useSetting(COURSE);
   const current = useRef<{ key: string; mode: Mode }>({ key: 'idle', mode: 'idle' });
-  if (shell.status === 'ready') current.current = { key: 'idle', mode: 'idle' };
+  // the grid behind the Start card is the course you picked
+  if (shell.status === 'ready') current.current = { key: `idle:${course}`, mode: 'idle' };
   else if (shell.status === 'playing') {
     const key = online ? `online:${online.round}` : 'solo';
     if (key !== current.current.key) current.current = { key, mode: online ? 'online' : 'solo' };
@@ -209,16 +278,26 @@ function Stage() {
 
 type OnlineApi = NonNullable<ReturnType<typeof useOnline>>;
 
-/** Everyone online starts in their seat's color; karts take their owner's paint and hat once their first state arrives. */
-function onlineRace(o: OnlineApi, cc: Cc, roster: number[], countdown: number, look: { color: string; hat: Hat }): Race {
-  const racers: Racer[] = roster.map((seat) => ({
-    name: o.players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`,
-    color: seat === o.seat ? look.color : SEAT_COLORS[seat % SEAT_COLORS.length],
-    hat: seat === o.seat ? look.hat : 'cap',
-    kind: seat === o.seat ? 'player' : 'remote',
-    seat,
-  }));
-  return createRace({ cc, racers, countdown, idBase: o.seat * 1_000_000 + 1 });
+/** Everyone in an online race, people and bots, in seat order (the order of the grid). */
+const racersOf = (o: OnlineApi) => [...new Set([...o.players.map((p) => p.seat), ...o.bots.map((b) => b.seat)])].sort((a, b) => a - b);
+
+/**
+ * Everyone online starts in their seat's color; karts take their owner's paint and hat once their first state arrives.
+ * Bots race as the CPU drivers they are named after: the host drives them and everyone else sees them through its packets.
+ */
+function onlineRace(o: OnlineApi, cc: Cc, course: CourseId, roster: number[], countdown: number, look: { color: string; hat: Hat }): Race {
+  const racers: Racer[] = roster.map((seat) => {
+    const bot = o.bots.findIndex((b) => b.seat === seat);
+    if (bot >= 0) return { ...RIVALS[bot % RIVALS.length], name: o.bots[bot].name, kind: o.isHost ? 'cpu' : 'remote', seat };
+    return {
+      name: o.players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`,
+      color: seat === o.seat ? look.color : SEAT_COLORS[seat % SEAT_COLORS.length],
+      hat: seat === o.seat ? look.hat : 'cap',
+      kind: seat === o.seat ? 'player' : 'remote',
+      seat,
+    };
+  });
+  return createRace({ cc, course, racers, countdown, idBase: o.seat * 1_000_000 + 1 });
 }
 
 
@@ -266,6 +345,9 @@ type Hud = {
   /** Enough coins to cash in for a boost. */
   cashReady: boolean;
   item: Item | null;
+  /** Ink over your view (0 to 1) and a golden mushroom still running. */
+  ink: number;
+  golden: boolean;
   uses: number;
   rolling: boolean;
   /** The banana or shell is held out behind as a shield. */
@@ -295,6 +377,7 @@ function Play({ mode }: { mode: Mode }) {
   onlineRef.current = online;
   const live = mode === 'online' && !!online;
   const [cc] = useSetting(CLASS);
+  const [course] = useSetting(COURSE);
   const [music] = useSetting(MUSIC);
   // your paint and hat: on your kart now (changes on the Pause card show at once) and in what you send online
   const garage = useGarage();
@@ -311,18 +394,22 @@ function Play({ mode }: { mode: Mode }) {
   const race = useRef<Race | null>(null);
   const [raceKey, setRaceKey] = useState(0);
   if (!race.current) {
-    if (!live) race.current = soloRace(cc, undefined, lookFor(loadGarage()));
-    else {
-      const roster = [...online!.players].map((p) => p.seat).sort((a, b) => a - b);
-      race.current = onlineRace(online!, cc, roster, online!.isHost ? COUNTDOWN + HOST_LEAD : 60, lookFor(loadGarage()));
-    }
+    if (!live) race.current = soloRace(cc, undefined, lookFor(loadGarage()), course);
+    else race.current = onlineRace(online!, cc, course, racersOf(online!), online!.isHost ? COUNTDOWN + HOST_LEAD : 60, lookFor(loadGarage()));
   }
   const net = useRef({
     synced: !live || online!.isHost,
     ticks: 0,
-    roster: live ? [...online!.players].map((p) => p.seat).sort((a, b) => a - b) : [],
+    roster: live ? racersOf(online!) : [],
+    /** On the host: the bots it drives this race, and those still out on the course when time ran out. */
+    bots: new Set(live && online!.isHost ? online!.bots.map((b) => b.seat) : []),
+    botsOut: new Set<number>(),
     cars: new Map<number, Car>(),
-    outbox: [] as NetEv[],
+    /**
+     * Item events to send, in the order they happened, in runs by the seat of the kart that made them (this player's,
+     * or a bot the host drives).
+     */
+    outbox: [] as [number, NetEv[]][],
     dnf: false,
     end: null as { w: number | null; order: [number, number][] } | null,
     endSends: 0,
@@ -333,7 +420,7 @@ function Play({ mode }: { mode: Mode }) {
   const tap = useRef({ back: false, gas: false, cash: false, slam: false });
   /** The item button was holding a banana or shell out behind last frame. */
   const holding = useRef(false);
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
@@ -356,6 +443,8 @@ function Play({ mode }: { mode: Mode }) {
   };
   const doneAt = useRef<number | null>(null);
   const dots = useRef(new Map<number, SVGCircleElement>());
+  /** Minimap markers for the buses, by hazard index. */
+  const busDots = useRef(new Map<number, SVGRectElement>());
   const tags = useRef(new Map<number, HTMLDivElement>());
   const lastLevel = useRef(0);
   /** A short buzz on phones that can. */
@@ -418,11 +507,11 @@ function Play({ mode }: { mode: Mode }) {
     const winner = w === null ? null : order.find(([seat]) => seat === w);
     const youWon = w !== null && w === me.seat;
     const title = me.done === null ? 'Did Not Finish' : youWon ? 'You Won' : `${ordinal(place)} Place`;
-    const head = me.done === null ? 'You ran out of time.' : `${fmtTime(me.done)} at ${r.cc}.`;
+    const head = me.done === null ? 'You ran out of time.' : `${fmtTime(me.done)} on ${COURSES[r.course].name} at ${r.cc}.`;
     const tail = (winner && !youWon ? ` ${nameOf(winner[0])} won in ${fmtTime(winner[1])}.` : '') + bankCoins(me.done === null ? 0 : place);
     sfx.play(youWon ? 'win' : me.done !== null ? 'coin' : 'lose');
-    if (me.done !== null) bests[r.cc].submit(Math.round(me.done * 1000));
-    shellRef.current.gameOver(undefined, me.done === null ? { title, detail: head + tail } : { title, detail: head + tail, board: boardOf(r.cc), rank: Math.round(me.done * 1000) });
+    if (me.done !== null) bests[r.course][r.cc].submit(Math.round(me.done * 1000));
+    shellRef.current.gameOver(undefined, me.done === null ? { title, detail: head + tail } : { title, detail: head + tail, board: boardOf(r.course, r.cc), rank: Math.round(me.done * 1000) });
   };
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
@@ -446,8 +535,14 @@ function Play({ mode }: { mode: Mode }) {
       if (!r.things.some((t) => t.id === ev.id)) spawn(r, { id: ev.id, kind: ev.kind, owner: idx(from), x: ev.x, z: ev.z, y: ev.yy, vx: ev.vx, vz: ev.vz, vy: ev.vy, grace: ev.gr, target: ev.tg >= 0 ? idx(ev.tg) : -1, prog: ev.pg }, false);
     } else if (ev.y === 'gone') removeThing(r, ev.id, false);
     else if (ev.y === 'bolt') strike(r, idx(from));
+    else if (ev.y === 'ink') inkFrom(r, idx(from));
+    else if (ev.y === 'horn') hornAt(r, idx(from), ev.x, ev.z);
     else if (ev.y === 'boom') boom(r, ev.x, ev.z, idx(from));
-    else if (ev.y === 'stole' && ev.to === r.karts[r.me]?.seat) stolen(r, r.karts[r.me]);
+    else if (ev.y === 'stole') {
+      // the coin goes to the kart whose slam it was, if this client drives it: this player's, or a bot on the host
+      const k = r.karts.find((x) => x.seat === ev.to);
+      if (k && (k.idx === r.me || k.kind === 'cpu')) stolen(r, k);
+    }
   };
 
   useEffect(() => {
@@ -466,7 +561,7 @@ function Play({ mode }: { mode: Mode }) {
         if (o.isHost || from !== 0) return;
         if (!n.synced) {
           if (!p.roster.includes(o.seat)) return;
-          r = race.current = onlineRace(o, isCc(p.cc) ? p.cc : r.cc, p.roster, p.go, lookFor(loadGarage()));
+          r = race.current = onlineRace(o, isCc(p.cc) ? p.cc : r.cc, isCourse(p.course) ? p.course : r.course, p.roster, p.go, lookFor(loadGarage()));
           n.roster = p.roster;
           n.synced = true;
           setRaceKey((x) => x + 1);
@@ -494,12 +589,21 @@ function Play({ mode }: { mode: Mode }) {
         o.send(guestState(o.round, mine), { fast: n.ticks % 5 !== 0 && mine.fin === -1 });
         return;
       }
-      const present = n.roster.filter((seat) => o.players.some((p) => p.seat === seat));
-      const cars: Car[] = [{ seat: o.seat, ...mine }, ...present.filter((s) => s !== o.seat && n.cars.has(s)).map((s) => n.cars.get(s)!)];
-      o.send(hostState(o.round, -r.time, r.cc, n.roster, cars), { fast: n.ticks % 5 !== 0 });
-      // the host calls the race once nobody still in the room is racing
-      if (!n.end && r.time > 0 && present.every((s) => (s === o.seat ? mine.fin : n.cars.get(s)?.fin ?? -1) !== -1)) {
-        const order = finishOrder(present.map((s) => [s, s === o.seat ? mine.fin : n.cars.get(s)!.fin]));
+      const present = n.roster.filter((seat) => !n.bots.has(seat) && o.players.some((p) => p.seat === seat));
+      // bots run out of time like everyone else, 30 seconds after the first kart home
+      const bots = r.karts.filter((k) => k.kind === 'cpu' && n.bots.has(k.seat));
+      if (r.first !== null && r.time - r.first > TIME_LIMIT) for (const k of bots) if (k.done === null) n.botsOut.add(k.seat);
+      const botCar = (k: Kart): Car => {
+        const car = carOf(k);
+        return { seat: k.seat, ...car, fin: n.botsOut.has(k.seat) ? -2 : car.fin };
+      };
+      const botCars = bots.map(botCar);
+      const cars: Car[] = [{ seat: o.seat, ...mine }, ...present.filter((s) => s !== o.seat && n.cars.has(s)).map((s) => n.cars.get(s)!), ...botCars];
+      o.send(hostState(o.round, -r.time, r.cc, n.roster, cars, r.course), { fast: n.ticks % 5 !== 0 });
+      // the host calls the race once nobody still in the room, and no bot, is racing
+      const fins: [number, number][] = [...present.map((s): [number, number] => [s, s === o.seat ? mine.fin : n.cars.get(s)?.fin ?? -1]), ...botCars.map((c): [number, number] => [c.seat, c.fin])];
+      if (!n.end && r.time > 0 && fins.every(([, fin]) => fin !== -1)) {
+        const order = finishOrder(fins);
         n.end = { w: winnerOf(order), order };
         finishRef.current(order, n.end.w);
       }
@@ -539,18 +643,18 @@ function Play({ mode }: { mode: Mode }) {
         inp.fwd = keys.down('up');
         // Bananas and shells trail behind as a shield while the item button is held and fly when it is let go; other
         // items go off on the press. Z (or the back button) throws backwards right away.
-        const trailable = me.roll === 0 && (me.item === 'banana' || me.item === 'green' || me.item === 'red');
+        const trails = me.roll === 0 && trailable(me.item);
         const itemDown = keys.down('KeyX', 'KeyE', 'Enter');
         const itemPress = keys.pressed('KeyX', 'KeyE', 'Enter');
         const backPress = keys.pressed('KeyZ', 'KeyQ') || tap.current.back;
         let use = itemPress;
         if (backPress) use = true;
-        else if (trailable) use = (holding.current && !itemDown) || (itemPress && !itemDown);
+        else if (trails) use = (holding.current && !itemDown) || (itemPress && !itemDown);
         if (use) {
           inp.use = true;
           inp.back = backPress || keys.down('down');
         }
-        inp.hold = trailable && itemDown && !backPress;
+        inp.hold = trails && itemDown && !backPress;
         holding.current = inp.hold;
         if (keys.pressed('KeyC') || tap.current.slam) inp.slam = true;
         if (keys.pressed('KeyB') || tap.current.cash) inp.cash = true;
@@ -566,7 +670,7 @@ function Play({ mode }: { mode: Mode }) {
         if (live) outgoing(r, e);
       }
       if (live && o && n.outbox.length) {
-        o.send(events(o.round, o.seat, n.outbox.splice(0)));
+        for (const [origin, evs] of n.outbox.splice(0)) o.send(events(o.round, origin, evs));
       }
 
       // roulette ticks and the spark color clicking up while you drift
@@ -634,27 +738,37 @@ function Play({ mode }: { mode: Mode }) {
     const ranked = standings(r);
     const place = ranked.findIndex((x) => x.k === me) + 1;
     const ms = Math.round((me.done ?? r.time) * 1000);
-    const newBest = bests[r.cc].submit(ms);
+    const newBest = bests[r.course][r.cc].submit(ms);
     const winner = ranked[0];
     const lead = place === 1 ? (me.laps.length ? `Best lap ${fmtTime(Math.min(...me.laps))}.` : '') : `${winner.k.name} won in ${fmtTime(winner.time)}.`;
     shellRef.current.gameOver(undefined, {
       title: place === 1 ? 'You Won' : `${ordinal(place)} Place`,
-      detail: `${fmtTime(ms / 1000)} at ${r.cc}${newBest ? ', a new best' : ''}. ${lead}`.trim() + bankCoins(place),
-      board: boardOf(r.cc),
+      detail: `${fmtTime(ms / 1000)} on ${COURSES[r.course].name} at ${r.cc}${newBest ? ', a new best' : ''}. ${lead}`.trim() + bankCoins(place),
+      board: boardOf(r.course, r.cc),
       rank: ms,
     });
   }
 
   function outgoing(r: Race, e: Ev) {
-    const out = net.current.outbox;
+    const me = r.karts[r.me]?.seat ?? 0;
+    // an event goes out under the kart that made it: ours, or on the host a bot it drives
+    const by = (k: number) => (k === r.me || r.karts[k]?.kind === 'cpu' ? r.karts[k].seat : me);
+    const send = (seat: number, ev: NetEv) => {
+      const out = net.current.outbox;
+      const run = out[out.length - 1];
+      if (run && run[0] === seat) run[1].push(ev);
+      else out.push([seat, [ev]]);
+    };
     if (e.t === 'spawn' && e.thing.local) {
       const th = e.thing;
-      out.push({ y: 'spawn', id: th.id, kind: th.kind, x: round(th.x), z: round(th.z), vx: round(th.vx), vz: round(th.vz), vy: round(th.vy), yy: round(th.y), tg: r.karts[th.target]?.seat ?? -1, pg: round(th.prog), gr: round(th.grace) });
-    } else if (e.t === 'gone' && e.local) out.push({ y: 'gone', id: e.id });
-    else if (e.t === 'bolt') out.push({ y: 'bolt' });
-    else if (e.t === 'boom') out.push({ y: 'boom', x: round(e.x), z: round(e.z) });
-    // our kart was slammed by someone else's: tell them they won our coin
-    else if (e.t === 'slammed' && e.coin && e.k === r.me && r.karts[e.by]?.kind === 'remote') out.push({ y: 'stole', to: r.karts[e.by].seat });
+      send(by(th.owner), { y: 'spawn', id: th.id, kind: th.kind, x: round(th.x), z: round(th.z), vx: round(th.vx), vz: round(th.vz), vy: round(th.vy), yy: round(th.y), tg: r.karts[th.target]?.seat ?? -1, pg: round(th.prog), gr: round(th.grace) });
+    } else if (e.t === 'gone' && e.local) send(me, { y: 'gone', id: e.id });
+    else if (e.t === 'bolt') send(by(e.k), { y: 'bolt' });
+    else if (e.t === 'ink') send(by(e.k), { y: 'ink' });
+    else if (e.t === 'horn') send(by(e.k), { y: 'horn', x: round(e.x), z: round(e.z) });
+    else if (e.t === 'boom') send(me, { y: 'boom', x: round(e.x), z: round(e.z) });
+    // a kart we drive was slammed by someone else's: tell them they won its coin
+    else if (e.t === 'slammed' && e.coin && (e.k === r.me || r.karts[e.k]?.kind === 'cpu') && r.karts[e.by]?.kind === 'remote') send(by(e.k), { y: 'stole', to: r.karts[e.by].seat });
   }
 
   function react(r: Race, e: Ev) {
@@ -684,11 +798,52 @@ function Play({ mode }: { mode: Mode }) {
         break;
       case 'use':
         if (!mine) break;
-        if (e.item === 'mushroom' || e.item === 'triple') sfx.tone({ freq: 260, to: 900, dur: 0.3, type: 'sawtooth', vol: 0.12 });
+        if (e.item === 'mushroom' || e.item === 'triple' || e.item === 'golden') sfx.tone({ freq: 260, to: 900, dur: 0.3, type: 'sawtooth', vol: 0.12 });
         else if (e.item === 'star') sfx.play('win');
-        else if (e.item === 'banana') sfx.play('jump', 0.7);
+        else if (e.item === 'banana' || e.item === 'bananas' || e.item === 'bomb') sfx.play('jump', 0.7);
         else if (e.item === 'blue') sfx.tone({ freq: 900, to: 500, dur: 0.6, type: 'triangle', vol: 0.12 });
-        else if (e.item !== 'bolt') sfx.tone({ freq: 700, to: 300, dur: 0.18, type: 'triangle', vol: 0.15 });
+        else if (e.item === 'mega') sfx.tone({ freq: 110, to: 330, dur: 0.7, type: 'square', vol: 0.12 });
+        else if (e.item === 'bullet') {
+          sfx.noise(0.4, 0.2);
+          sfx.tone({ freq: 160, to: 90, dur: 0.6, type: 'sawtooth', vol: 0.12 });
+        } else if (e.item === 'ink') sfx.tone({ freq: 500, to: 180, dur: 0.25, type: 'sine', vol: 0.15 });
+        else if (e.item === 'horn') [349, 440, 523].forEach((f) => sfx.tone({ freq: f, dur: 0.45, type: 'sawtooth', vol: 0.07 }));
+        else if (e.item !== 'bolt' && e.item !== 'coin') sfx.tone({ freq: 700, to: 300, dur: 0.18, type: 'triangle', vol: 0.15 });
+        break;
+      case 'inked':
+        if (!mine) break;
+        sfx.tone({ freq: 220, to: 120, dur: 0.3, type: 'sine', vol: 0.16 });
+        buzz(50);
+        break;
+      case 'blast':
+        if (!mine) sfx.play('boom', 1.2);
+        break;
+      case 'mud':
+        // a squelch
+        if (mine) {
+          sfx.noise(0.16, 0.14);
+          sfx.tone({ freq: 160, to: 70, dur: 0.18, type: 'sine', vol: 0.14 });
+        }
+        break;
+      case 'moo':
+        if (mine) {
+          sfx.tone({ freq: 150, to: 128, dur: 0.22, type: 'sawtooth', vol: 0.09 });
+          sfx.tone({ freq: 128, to: 92, dur: 0.6, type: 'sawtooth', vol: 0.1, delay: 0.2 });
+        }
+        break;
+      case 'ding':
+        // the cyclist's bell: ding-ding
+        if (mine) {
+          sfx.tone({ freq: 2093, dur: 0.16, type: 'sine', vol: 0.12 });
+          sfx.tone({ freq: 2093, dur: 0.3, type: 'sine', vol: 0.12, delay: 0.13 });
+        }
+        break;
+      case 'honk':
+        // the bus's two-tone horn
+        if (mine) {
+          sfx.tone({ freq: 415, dur: 0.24, type: 'sawtooth', vol: 0.08 });
+          sfx.tone({ freq: 330, dur: 0.42, type: 'sawtooth', vol: 0.09, delay: 0.22 });
+        }
         break;
       case 'slam':
         if (mine) sfx.tone({ freq: 240, to: 120, dur: 0.14, type: 'sawtooth', vol: 0.12 });
@@ -769,6 +924,10 @@ function Play({ mode }: { mode: Mode }) {
 
   /** Minimap dots and online name tags, moved straight on the DOM every frame. */
   function placeOverlays(r: Race, v: View) {
+    for (const [i, el] of busDots.current) {
+      const h = r.hazards[i];
+      if (h) el.setAttribute('transform', `translate(${-h.x} ${-h.z})`);
+    }
     for (const k of r.karts) {
       const dot = dots.current.get(k.idx);
       if (dot) {
@@ -798,7 +957,7 @@ function Play({ mode }: { mode: Mode }) {
     let banner: string | null = null;
     let lights = 0;
     if (!n.synced) banner = 'waiting for the host';
-    else if (r.time < -COUNTDOWN) banner = 'get ready';
+    else if (r.time < -COUNTDOWN) banner = COURSES[r.course].name;
     else if (r.time < 0) {
       banner = String(Math.ceil(-r.time));
       lights = COUNTDOWN + 1 - Math.ceil(-r.time);
@@ -815,6 +974,8 @@ function Play({ mode }: { mode: Mode }) {
       coins: me.coins,
       cashReady: me.coins >= CASH_COST && me.done === null,
       item: me.roll > 0 ? ITEMS[Math.floor(clock.current * 12) % ITEMS.length] : me.item,
+      ink: me.done === null ? Math.round(Math.min(1, me.ink / 1.5) * 10) / 10 : 0,
+      golden: me.goldT > 0,
       uses: me.uses,
       rolling: me.roll > 0,
       trailing: me.trail,
@@ -843,7 +1004,7 @@ function Play({ mode }: { mode: Mode }) {
 
   const r = race.current!;
   const playing = shell.status === 'playing';
-  const minimap = useMemo(() => mapPath(r), [raceKey]);
+  const minimap = useMemo(() => mapPath(r.track), [raceKey]);
   const board = hud.results ? standings(r) : [];
   const press = (code: string) => (e: RPointerEvent) => {
     e.preventDefault();
@@ -859,13 +1020,14 @@ function Play({ mode }: { mode: Mode }) {
       <div
         ref={ref}
         className="g-palmdrive-host"
+        style={{ background: COURSES[r.course].sky }}
         onPointerDown={() => {
           if (playing && race.current && race.current.time < 0) tap.current.gas = true;
         }}
       />
       {live &&
         r.karts
-          .filter((k) => k.kind === 'remote')
+          .filter((k) => k.idx !== r.me && k.seat >= 0)
           .map((k) => (
             <div
               key={k.idx}
@@ -882,9 +1044,9 @@ function Play({ mode }: { mode: Mode }) {
       {shell.status !== 'ready' && !shell.compact && (
         <div className={`g-palmdrive-hud${shell.touch ? ' is-touch' : ''}`}>
           {hud.boosting && <div className="g-palmdrive-speed" aria-hidden="true" />}
-          <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}${hud.trailing ? ' is-trailing' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}${hud.trailing ? ' behind you' : ''}` : 'No item'}>
+          <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}${hud.trailing ? ' is-trailing' : ''}${hud.golden ? ' is-golden' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}${hud.trailing ? ' behind you' : ''}` : 'No item'}>
             {hud.item ? <ItemIcon item={hud.item} /> : null}
-            {hud.item === 'triple' && !hud.rolling && hud.uses > 0 && <b>{hud.uses}</b>}
+            {!hud.rolling && hud.uses > 1 && <b>{hud.uses}</b>}
           </div>
           <div className={`g-palmdrive-time${live ? ' is-online' : ''}`}>
             {hud.time}
@@ -897,6 +1059,25 @@ function Play({ mode }: { mode: Mode }) {
           <svg className="g-palmdrive-map" viewBox={minimap.box} aria-hidden="true">
             <path d={minimap.d} className="g-palmdrive-map-road" />
             <path d={minimap.d} className="g-palmdrive-map-line" />
+            {r.hazards.map(
+              (h, i) =>
+                h.kind === 'bus' && (
+                  <rect
+                    key={`bus${i}`}
+                    ref={(el) => {
+                      if (el) busDots.current.set(i, el);
+                      else busDots.current.delete(i);
+                    }}
+                    x={-8}
+                    y={-8}
+                    width={16}
+                    height={16}
+                    rx={3}
+                    transform={`translate(${-h.x} ${-h.z})`}
+                    className="g-palmdrive-map-bus"
+                  />
+                ),
+            )}
             {r.karts
               .slice()
               .sort((a, b) => (a.idx === r.me ? 1 : 0) - (b.idx === r.me ? 1 : 0))
@@ -950,7 +1131,8 @@ function Play({ mode }: { mode: Mode }) {
               </span>
             )}
           </div>
-          <div key={hud.place} className="g-palmdrive-place">
+          {/* keys share one namespace with the banner and hint beside it, so each gets a prefix */}
+          <div key={`place-${hud.place}`} className="g-palmdrive-place">
             <b>{ordinal(hud.place)}</b>
             <span>/ {hud.field}</span>
           </div>
@@ -962,14 +1144,14 @@ function Play({ mode }: { mode: Mode }) {
             </div>
           )}
           {hud.banner && (
-            <div key={hud.banner} className={`g-palmdrive-banner${/^\d$/.test(hud.banner) ? ' is-count' : ''}${hud.banner.length > 12 ? ' is-note' : ''}`}>
+            <div key={`banner-${hud.banner}`} className={`g-palmdrive-banner${/^\d$/.test(hud.banner) ? ' is-count' : ''}${hud.banner.length > 12 ? ' is-note' : ''}`}>
               {hud.banner}
             </div>
           )}
           {hud.wrong && <div className="g-palmdrive-wrong">wrong way</div>}
           {hud.rear && <div className="g-palmdrive-rear">behind you</div>}
           {hint && (
-            <div key={hint.id} className="g-palmdrive-hint" role="status" onAnimationEnd={() => setHint(null)}>
+            <div key={`hint-${hint.id}`} className="g-palmdrive-hint" role="status" onAnimationEnd={() => setHint(null)}>
               {hint.text}
             </div>
           )}
@@ -989,6 +1171,13 @@ function Play({ mode }: { mode: Mode }) {
         </div>
       )}
       {flash && <div key={flash.id} className={`g-palmdrive-flash is-${flash.kind}`} onAnimationEnd={() => setFlash(null)} />}
+      {hud.ink > 0 && (
+        <div className="g-palmdrive-ink" style={{ opacity: hud.ink }} aria-hidden="true">
+          {INK_BLOTS.map(([x, y, size], i) => (
+            <i key={i} style={{ left: `${x}%`, top: `${y}%`, width: `${size}vmin`, height: `${size}vmin` }} />
+          ))}
+        </div>
+      )}
       {shell.touch && playing && (
         <div className="g-palmdrive-touch">
           <div className="g-palmdrive-steer">
@@ -1042,8 +1231,7 @@ function Play({ mode }: { mode: Mode }) {
 const round = (n: number) => Math.round(n * 100) / 100;
 
 /** The track outline for the minimap, north up (map x is -world x). */
-function mapPath(r: Race) {
-  const t = r.track;
+function mapPath(t: Track) {
   let d = '';
   let minX = Infinity;
   let maxX = -Infinity;
@@ -1062,7 +1250,36 @@ function mapPath(r: Race) {
   return { d: `${d}Z`, box: `${(minX - pad).toFixed(0)} ${(minY - pad).toFixed(0)} ${(maxX - minX + pad * 2).toFixed(0)} ${(maxY - minY + pad * 2).toFixed(0)}` };
 }
 
-const itemName = (item: Item) => ({ banana: 'a banana', green: 'a green shell', red: 'a red shell', mushroom: 'a mushroom', triple: 'three mushrooms', star: 'a star', bolt: 'lightning', blue: 'a blue shell' })[item];
+/** Where the ink lands on your view: [left %, top %, size in vmin]. */
+const INK_BLOTS: [number, number, number][] = [
+  [8, 18, 30],
+  [62, 10, 26],
+  [30, 42, 38],
+  [72, 48, 30],
+  [4, 62, 24],
+  [48, 70, 22],
+];
+
+const ITEM_NAMES: Record<Item, string> = {
+  banana: 'a banana',
+  bananas: 'three bananas',
+  green: 'a green shell',
+  greens: 'three green shells',
+  red: 'a red shell',
+  bomb: 'a bomb',
+  mushroom: 'a mushroom',
+  triple: 'three mushrooms',
+  golden: 'a golden mushroom',
+  coin: 'a coin',
+  star: 'a star',
+  mega: 'a mega mushroom',
+  bullet: 'a bullet',
+  ink: 'ink',
+  horn: 'a horn',
+  bolt: 'lightning',
+  blue: 'a blue shell',
+};
+const itemName = (item: Item) => ITEM_NAMES[item];
 
 const Chevron = ({ d }: { d: string }) => (
   <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

@@ -43,16 +43,6 @@
   letter-spacing: -0.02em;
 }
 
-/* A double tap on the last screen's button shouldn't press this one. */
-.g-spectrum .g-spectrum-arm .arcade-party-actions {
-  animation: g-spectrum-arm 0.4s step-end both;
-}
-@keyframes g-spectrum-arm {
-  from {
-    pointer-events: none;
-  }
-}
-
 /* Copy */
 .g-spectrum .g-spectrum-note {
   margin: 0;
@@ -540,6 +530,44 @@
 .g-spectrum .g-spectrum-verdict .g-spectrum-line {
   animation: g-spectrum-rise 0.22s 0.08s ease-out both;
 }
+/* Who scored, then the other team's call: stacked, or side by side in a short window. */
+.g-spectrum .g-spectrum-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+/* The other team's left or right call, with the same arrow as the button they pressed. */
+.g-spectrum .g-spectrum-called {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: 0;
+  padding: 5px 14px 5px 8px;
+  border-radius: 999px;
+  font-size: 15px;
+  line-height: 1.3;
+  color: var(--party-dim);
+  background: var(--party-tile);
+  animation: g-spectrum-rise 0.22s 0.14s ease-out both;
+}
+.g-spectrum .g-spectrum-called svg {
+  flex: none;
+  color: var(--team);
+}
+.g-spectrum .g-spectrum-called path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.g-spectrum .g-spectrum-called b {
+  font-weight: 700;
+  color: var(--team);
+}
 @keyframes g-spectrum-rise {
   from {
     opacity: 0;
@@ -782,6 +810,15 @@
   .g-spectrum .g-spectrum-ask {
     font-size: 24px;
   }
+  .g-spectrum .g-spectrum-result {
+    flex-flow: row wrap;
+    justify-content: center;
+    gap: 2px 10px;
+  }
+  .g-spectrum .g-spectrum-called {
+    padding: 3px 12px 3px 6px;
+    font-size: 14px;
+  }
   .g-spectrum .g-spectrum-ask span {
     display: inline;
     font-size: inherit;
@@ -809,12 +846,5 @@
   /* The verdict line says who scored; the totals come back on the next screen. */
   .g-spectrum .g-spectrum-reveal .g-spectrum-bar {
     display: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* Arming the buttons isn't motion, so it stays when the kit collapses animations. */
-  .g-spectrum .arcade-party.g-spectrum-arm .arcade-party-actions {
-    animation-duration: 0.4s !important;
   }
 }

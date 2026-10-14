@@ -3,7 +3,7 @@ import type { GameMeta } from '../../types';
 export const meta: GameMeta = {
   id: 'imposter',
   title: 'Imposter',
-  blurb: 'Everyone gets the secret word except the imposter. Give one-word clues and vote out the faker.',
+  blurb: 'Everyone knows the secret word except one faker. Find them.',
   category: 'party',
   players: '3-20P',
   controls: 'Pass the phone so each player sees their word in secret. Go around giving clues, then vote.',

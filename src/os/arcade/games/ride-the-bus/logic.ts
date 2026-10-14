@@ -17,8 +17,15 @@ export const CHOICES: readonly (readonly Guess[])[] = [['red', 'black'], ['highe
 
 export const colorOf = (card: Card): Color => (card.suit === 'hearts' || card.suit === 'diamonds' ? 'red' : 'black');
 
-/** Wrong drinks this many, right gives this many: the question number, 1 to 4. */
-export const sipsFor = (q: number) => q + 1;
+/** No single call is worth more than this many sips. */
+export const SIP_CAP = 3;
+/** Wrong drinks this many, right gives this many: the question number, capped at 3, so cards one to four are 1, 2, 3, 3. */
+export const sipsFor = (q: number) => Math.min(q + 1, SIP_CAP);
+
+/** The mercy rule's choices: the rider gets off after this many bus attempts, four in a row or not. There is no "never". */
+export const MERCY_TRIES = [5, 10, 15] as const;
+export const MERCY_DEFAULT = 5;
+const MERCY_MAX = MERCY_TRIES[MERCY_TRIES.length - 1];
 
 /** A fresh, ordered 52 card deck. */
 export function makeDeck(): Card[] {
@@ -114,7 +121,7 @@ export type Game = {
   busSips: number;
   /** The rider's longest run of right answers on the bus so far (0 to 4). */
   best: number;
-  /** The mercy rule: most bus attempts before the rider gets off anyway (0 for no limit). */
+  /** The mercy rule: most bus attempts before the rider gets off anyway (1 to 15, never unlimited). */
   limit: number;
   /** True when the rider got off by the mercy rule instead of four in a row. */
   mercy: boolean;
@@ -129,7 +136,7 @@ function deal(game: Game, rng: Rng): Game {
 
 const blank = (count: number): Game => {
   const n = Math.max(1, Math.floor(count));
-  return { phase: 'questions', count: n, seat: 0, hand: [], shown: 0, verdict: null, marks: [], shoe: [], taken: Array(n).fill(0), given: Array(n).fill(0), tied: [], attempts: 0, busSips: 0, best: 0, limit: 0, mercy: false, deals: 0 };
+  return { phase: 'questions', count: n, seat: 0, hand: [], shown: 0, verdict: null, marks: [], shoe: [], taken: Array(n).fill(0), given: Array(n).fill(0), tied: [], attempts: 0, busSips: 0, best: 0, limit: MERCY_DEFAULT, mercy: false, deals: 0 };
 };
 
 /** A full game: four questions for every seat in order, starting with seat 0. Pass `shoe` to stack the deck. */
@@ -149,8 +156,14 @@ export function boardBus(game: Game, rng: Rng = Math.random): Game {
   return deal({ ...game, phase: 'bus', attempts: 1, busSips: 0, best: 0 }, rng);
 }
 
-/** Sets the mercy rule: after `limit` missed bus attempts the rider gets off anyway (0 for no limit). */
-export const withMercy = (game: Game, limit: number): Game => ({ ...game, limit: Math.max(0, Math.floor(limit) || 0) });
+/**
+ * Sets the mercy rule: after `limit` bus attempts the rider gets off anyway. Kept between 1 and 15; anything that
+ * isn't a positive number (an old "off" setting stored as 0, say) means the default, never an endless bus.
+ */
+export function withMercy(game: Game, limit: number): Game {
+  const n = Math.floor(limit);
+  return { ...game, limit: n > 0 ? Math.min(n, MERCY_MAX) : MERCY_DEFAULT };
+}
 
 /** Answers the current question: flips the card and settles the sips. Ignored while a verdict is showing. */
 export function answer(game: Game, guess: Guess): Game {
@@ -172,7 +185,7 @@ export function upcoming(game: Game): 'card' | 'player' | 'results' | 'retry' | 
   if (game.phase === 'questions') return game.shown < QUESTIONS ? 'card' : game.seat + 1 < game.count ? 'player' : 'results';
   if (game.phase === 'bus') {
     if (game.verdict.right) return game.shown < QUESTIONS ? 'card' : 'off';
-    return game.limit > 0 && game.attempts >= game.limit ? 'mercy' : 'retry';
+    return game.attempts >= game.limit ? 'mercy' : 'retry';
   }
   return null;
 }

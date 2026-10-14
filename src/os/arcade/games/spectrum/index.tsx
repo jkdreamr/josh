@@ -2,7 +2,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { GameShell, defineSetting, sfx, useKeys, useSetting, useShell } from '../../kit';
 import { Avatar, Big, HowToPlay, Option, PassTo, Pile, PlayerList, Row, Screen, listNames, usePlayers } from '../../kit/party';
 import type { GameProps } from '../../types';
-import { CARDS, type Card } from './cards';
+import { CARDS, deckFor, type Card } from './cards';
 import { Dial } from './dial';
 import {
   MIN_PLAYERS,
@@ -34,9 +34,15 @@ import './spectrum.css';
 
 const MODE = defineSetting('spectrum:mode', ['teams', 'together'] as const, 'teams');
 const GOAL = defineSetting('spectrum:goal', ['10', '15'] as const, '10');
+const DARK = defineSetting('spectrum:dark', ['off', 'on'] as const, 'off');
 
 const TEAM_NAMES = ['Teal Team', 'Coral Team'] as const;
 const TEAM_SHORT = ['Teal', 'Coral'] as const;
+
+/** Steps where a double tap would skip something (the target, the guess, the call, the final score) ignore taps and Enter this long. */
+const ARM = 800;
+/** Once the shutter is open, the result stays up at least this long before Next counts. */
+const SETTLE = 600;
 
 type Turn = { card: Card; target: number; needle: number; points: Points; team: Team; seat: number; call?: Side; callPts: 0 | 1 };
 type Match = { mode: Mode; names: string[]; goal: number; first: number; turn: number; scores: [number, number]; history: Turn[] };
@@ -60,16 +66,19 @@ function Play() {
   const [players] = usePlayers();
   const [mode, setMode] = useSetting(MODE);
   const [goal, setGoal] = useSetting(GOAL);
+  const [dark, setDark] = useSetting(DARK);
   const [step, setStep] = useState<Step>({ s: 'setup' });
   const [match, setMatch] = useState<Match | null>(null);
   const [deal, setDeal] = useState<Deal | null>(null);
   const [needle, setNeedle] = useState(NEEDLE_START);
-  const pile = useRef<Pile<Card> | null>(null);
+  const pile = useRef<{ dark: boolean; pile: Pile<Card> } | null>(null);
   const last = useRef<Card | undefined>(undefined);
+  const spicy = useRef(false);
 
   const draw = (): Card => {
-    if (!pile.current) pile.current = new Pile(CARDS);
-    const card = pile.current.draw(last.current) ?? CARDS[0];
+    // A new pile only when After Dark flips, so cards don't repeat across matches until the deck runs out.
+    if (pile.current?.dark !== spicy.current) pile.current = { dark: spicy.current, pile: new Pile(deckFor(spicy.current)) };
+    const card = pile.current.pile.draw(last.current) ?? CARDS[0];
     last.current = card;
     return card;
   };
@@ -81,6 +90,7 @@ function Play() {
   };
 
   const start = (names: string[], m: Mode) => {
+    spicy.current = dark === 'on';
     const first = m === 'teams' ? (Math.random() < 0.5 ? 0 : 1) : Math.floor(Math.random() * names.length);
     setMatch({ mode: m, names, goal: Number(goal), first, turn: 0, scores: m === 'teams' ? startScores(first as Team) : [0, 0], history: [] });
     dealTurn();
@@ -144,6 +154,16 @@ function Play() {
         ) : (
           <p className="g-spectrum-note">One team, {TOGETHER_CARDS} cards. How close to {TOGETHER_MAX} can you get?</p>
         )}
+        <Option
+          label="After Dark 18+"
+          value={dark}
+          options={[
+            ['off', 'Off'],
+            ['on', 'On'],
+          ]}
+          onChange={setDark}
+        />
+        {dark === 'on' && <p className="g-spectrum-note">After Dark is for groups who know each other well. The psychic can skip any card with New Card.</p>}
       </Screen>
     );
   }
@@ -179,7 +199,7 @@ function Play() {
     return (
       <PassTo
         key={`pass-${match.turn}`}
-        className="g-spectrum-screen g-spectrum-arm"
+        className="g-spectrum-screen"
         name={psychic}
         index={who.seat}
         note={teams ? `You're the psychic for ${TEAM_NAMES[who.team]}. Nobody else looks.` : "You're the psychic this round. Nobody else looks."}
@@ -192,7 +212,8 @@ function Play() {
     return (
       <Screen
         key={`psychic-${match.turn}`}
-        className="g-spectrum-screen g-spectrum-play g-spectrum-arm"
+        className="g-spectrum-screen g-spectrum-play"
+        arm={ARM}
         onEnter={hide}
         actions={
           <Row>
@@ -241,18 +262,29 @@ function Play() {
 
   if (step.s === 'reveal' && lastTurn) {
     let sub: string;
+    let called: ReactNode = null;
     if (teams) {
       const pts = lastTurn.points;
-      const callers = TEAM_NAMES[otherTeam(lastTurn.team)];
-      const scored = pts ? `${TEAM_NAMES[lastTurn.team]} scores ${pts}.` : `${TEAM_NAMES[lastTurn.team]} scores nothing.`;
-      const call = !lastTurn.call ? '' : pts === 4 ? ' No call on a bullseye.' : lastTurn.callPts ? ` ${callers} called ${lastTurn.call} and gets 1.` : ` ${callers} called ${lastTurn.call}. Wrong side.`;
-      sub = scored + call;
+      sub = pts ? `${TEAM_NAMES[lastTurn.team]} scores ${pts}.` : `${TEAM_NAMES[lastTurn.team]} scores nothing.`;
+      if (lastTurn.call) {
+        // Named with the button's own word, so "called Right" can't be read as "called it right".
+        const callers = otherTeam(lastTurn.team);
+        const outcome = pts === 4 ? "Doesn't count on a bullseye." : lastTurn.callPts ? 'Correct, +1.' : 'Wrong side.';
+        called = (
+          <p className={`g-spectrum-called is-t${callers}`}>
+            <Chevron side={lastTurn.call} />
+            <span>
+              {TEAM_SHORT[callers]} called <b>{lastTurn.call === 'left' ? 'Left' : 'Right'}</b>. {outcome}
+            </span>
+          </p>
+        );
+      }
     } else {
       const played = match.history.length;
       sub = played < TOGETHER_CARDS ? `${match.scores[0]} of ${played * 4} so far.` : `That was the last card.`;
     }
     const label = over ? (teams ? 'See Who Won' : 'See Your Score') : 'Next Turn';
-    return <RevealScreen key={`reveal-${match.turn}`} turn={lastTurn} bar={(shown) => bar(lastTurn, shown)} sub={sub} label={label} onNext={next} />;
+    return <RevealScreen key={`reveal-${match.turn}`} turn={lastTurn} bar={(shown) => bar(lastTurn, shown)} sub={sub} called={called} label={label} onNext={next} />;
   }
 
   // The end of the match.
@@ -270,7 +302,7 @@ function Play() {
     const lineup = makeTeams(names.length);
     const bulls = (t: Team) => match.history.filter((h) => h.team === t && h.points === 4).length;
     return (
-      <Screen key="end" className="g-spectrum-screen" kicker="Final score" title={`${TEAM_NAMES[w]} Wins`} onEnter={again} actions={actions}>
+      <Screen key="end" className="g-spectrum-screen" arm={ARM} kicker="Final score" title={`${TEAM_NAMES[w]} Wins`} onEnter={again} actions={actions}>
         <div className="g-spectrum-final" role="status">
           {([0, 1] as const).map((t) => (
             <div key={t} className={`g-spectrum-final-team is-t${t} ${t === w ? 'is-win' : ''}`}>
@@ -286,7 +318,7 @@ function Play() {
   }
   const total = match.scores[0];
   return (
-    <Screen key="end" className="g-spectrum-screen" onEnter={again} actions={actions}>
+    <Screen key="end" className="g-spectrum-screen" arm={ARM} onEnter={again} actions={actions}>
       <div className="g-spectrum-total" role="status">
         <p className="arcade-party-kicker">Your score</p>
         <p className="g-spectrum-total-num">
@@ -407,7 +439,7 @@ function GuessScreen({
     setNeedle((v) => clampDial(v + dir * (e?.shiftKey ? 0.5 : 2)));
   });
   return (
-    <Screen key="guess" className="g-spectrum-screen g-spectrum-play g-spectrum-arm" onEnter={onLock} actions={<Big primary onClick={onLock}>Lock It In</Big>}>
+    <Screen key="guess" className="g-spectrum-screen g-spectrum-play" arm={ARM} onEnter={onLock} actions={<Big primary onClick={onLock}>Lock It In</Big>}>
       {bar}
       <p className="g-spectrum-say">
         <Avatar name={psychic} index={seat} size={28} />
@@ -423,29 +455,37 @@ function GuessScreen({
   );
 }
 
+/** The arrow on the Left and Right buttons, and on the line that reports the call. */
+function Chevron({ side }: { side: Side }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <path d={side === 'left' ? 'M10 3L5 8l5 5' : 'M6 3l5 5-5 5'} />
+    </svg>
+  );
+}
+
 function CallScreen({ bar, card, needle, caller, onCall }: { bar: ReactNode; card: Card; needle: number; caller: Team; onCall: (side: Side) => void }) {
+  // An arrow still held or nudged a beat after Lock It In belongs to the guessers, not the call.
+  const [shownAt] = useState(() => performance.now());
   useKeys((code, e) => {
-    if (e?.repeat) return;
+    if (e?.repeat || performance.now() - shownAt < ARM) return;
     if (code === 'ArrowLeft' || code === 'KeyA') onCall('left');
     else if (code === 'ArrowRight' || code === 'KeyD') onCall('right');
   });
   return (
     <Screen
       key="call"
-      className="g-spectrum-screen g-spectrum-play g-spectrum-arm"
+      className="g-spectrum-screen g-spectrum-play"
+      arm={ARM}
       actions={
         <Row>
           <Big onClick={() => onCall('left')} className={`g-spectrum-side is-t${caller}`}>
-            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M10 3L5 8l5 5" />
-            </svg>
+            <Chevron side="left" />
             Left
           </Big>
           <Big onClick={() => onCall('right')} className={`g-spectrum-side is-t${caller}`}>
             Right
-            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M6 3l5 5-5 5" />
-            </svg>
+            <Chevron side="right" />
           </Big>
         </Row>
       }
@@ -462,23 +502,30 @@ function CallScreen({ bar, card, needle, caller, onCall }: { bar: ReactNode; car
   );
 }
 
-function RevealScreen({ turn, bar, sub, label, onNext }: { turn: Turn; bar: (shown: boolean) => ReactNode; sub: string; label: string; onNext: () => void }) {
+function RevealScreen({ turn, bar, sub, called, label, onNext }: { turn: Turn; bar: (shown: boolean) => ReactNode; sub: string; called: ReactNode; label: string; onNext: () => void }) {
   const [open, setOpen] = useState(false);
+  const openedAt = useRef(0);
   const show = () => {
-    if (open) return;
+    if (openedAt.current) return;
+    openedAt.current = performance.now();
     setOpen(true);
     sfx.play(turn.points === 4 ? 'win' : turn.points > 0 ? 'coin' : 'lose');
   };
-  // An early tap finishes the reveal instead of skipping past it.
-  const go = () => (open ? onNext() : show());
+  // A tap before the shutter opens finishes the reveal. After it opens, the result stays up a moment, so the second
+  // tap of a double tap can't skip it.
+  const go = () => {
+    if (!openedAt.current) show();
+    else if (performance.now() - openedAt.current >= SETTLE) onNext();
+  };
   return (
     <Screen
       key="reveal"
       className={`g-spectrum-screen g-spectrum-play g-spectrum-reveal ${open ? 'is-open' : ''}`}
+      arm={ARM}
       onEnter={go}
       actions={
         <Big primary quiet={!open} onClick={go}>
-          {label}
+          {open ? label : 'Reveal'}
         </Big>
       }
     >
@@ -490,7 +537,10 @@ function RevealScreen({ turn, bar, sub, label, onNext }: { turn: Turn; bar: (sho
               {verdict(turn.points)}
               <b className={`g-spectrum-stamp is-p${turn.points}`}>{turn.points ? `+${turn.points}` : '0'}</b>
             </h2>
-            <p className="g-spectrum-line">{sub}</p>
+            <div className="g-spectrum-result">
+              <p className="g-spectrum-line">{sub}</p>
+              {called}
+            </div>
           </>
         )}
       </div>

@@ -2,6 +2,11 @@ export function advanceOnlineRound(round: number) {
   return round + 1;
 }
 
+/** Bots in seat order, named from the game's list or Bot 1, Bot 2 and so on, so every player sees the same names. */
+export function botPlayers(seats: readonly number[], names: readonly string[] = []): { seat: number; name: string }[] {
+  return seats.map((seat, i) => ({ seat, name: names[i] ?? `Bot ${i + 1}` }));
+}
+
 /** The round a start message begins: the server's shared number when it sends one, else the next local one. */
 export function nextOnlineRound(round: number, server: number | null) {
   return server ?? advanceOnlineRound(round);

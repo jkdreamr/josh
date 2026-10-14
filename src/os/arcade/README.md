@@ -8,7 +8,7 @@ Little games that live inside the Chrome app at `chrome://games`, and in the Arc
 // src/os/arcade/types.ts
 export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer' | 'party' | 'drinking';
 export type LeaderboardSpec = { order: 'desc' | 'asc'; max: number; min?: number; format?: 'number' | 'time'; unit?: string; measure?: string; variants?: Record<string, string> };
-export type OnlineSpec = { seats: number; race?: boolean; lateJoin?: boolean };
+export type OnlineSpec = { seats: number; race?: boolean; lateJoin?: boolean; bots?: boolean };
 export type GameMeta = { id: string; title: string; blurb: string; category: GameCategory; players: string; controls: string; accent: string; glyph: string; order: number; leaderboard?: LeaderboardSpec; online?: OnlineSpec };
 export type GameProps = { compact?: boolean; onExit?: () => void; roomCode?: string };
 ```
@@ -33,9 +33,9 @@ src/os/arcade/games/<id>/
 | `glyph` | SVG path data (`d`) for a 24x24 viewBox, drawn as a white 2px stroke |
 | `order` | sort order inside its category (lower first) |
 | `leaderboard` | optional, opts the game into a top 100 board (see Leaderboards) |
-| `online` | optional, enables online rooms for the configured number of seats (see Online Rooms). Rooms lock when the host starts, unless `lateJoin: true` lets people join between rounds (they wait in the lobby and play the next one) |
+| `online` | optional, enables online rooms for the configured number of seats (see Online Rooms). Rooms lock when the host starts, unless `lateJoin: true` lets people join between rounds (they wait in the lobby and play the next one). `bots: true` lets the host fill empty seats with computer players (see Bots) |
 
-`manifest.ts` reads every `games/*/meta.ts` eagerly (they are tiny) and every `games/*/index.tsx` lazily through `React.lazy`, so each game is its own chunk and downloads only when opened. A deploy renames the chunks it changed, so production builds keep a week of older chunks alongside their own (`scripts/keep-old-assets.ts`) and a page left open across a deploy keeps playing its own version. If a chunk is still missing (a tab older than that), `GameFrame` says so and offers a Reload that comes straight back to the game (hosts pass `resume` to say how, see `src/os/reload.ts`); it never reloads on its own. A game that throws while running gets a Restart card instead. Folders starting with `_` are ignored. In dev you can list them with `localStorage.setItem('arcade:dev', '1')` and a reload; `_example` then appears as "Catch".
+`manifest.ts` reads every `games/*/meta.ts` eagerly (they are tiny) and every `games/*/index.tsx` lazily through `React.lazy`, so each game is its own chunk and downloads only when opened. A deploy renames the chunks it changed, so production builds keep a week of older chunks alongside their own (`scripts/keep-old-assets.ts`) and a page left open across a deploy keeps playing its own version. If a chunk is still missing (a tab older than that), the server answers with `scripts/missing-file.js` and `GameFrame` says so and offers a Reload that comes straight back to the game (hosts pass `resume` to say how, see `src/os/reload.ts`); it never reloads on its own. The stand-in also gives pages from before any of this (they show an older "didn't load" card) the same Reload. A game that throws while running gets a Restart card instead. Folders starting with `_` are ignored. In dev you can list them with `localStorage.setItem('arcade:dev', '1')` and a reload; `_example` then appears as "Catch".
 
 `compact` is true when the game renders in a small strip (the New Tab dino strip renders the game with id `dino` in compact mode). The shell hides its control row and uses slim one-line overlays. `onExit` returns to the arcade grid; the shell wires it to the back button.
 
@@ -51,6 +51,10 @@ function GameShell(props: {
   formatScore?: (n: number) => string;
   remount?: boolean;              // remount children on restart (default true)
   roomCode?: string;              // join an online room from an invite link
+  setup?: ReactNode;              // settings on the Start, Pause and Game Over cards
+  hostSetup?: ReactNode;          // settings for online rooms, in the lobby and on the online Game Over card
+  botNames?: readonly string[];   // names for online bots in seat order (default Bot 1, Bot 2...)
+  defaultBots?: number;           // bots a host's room starts with until they pick their own number
   className?: string; style?: CSSProperties;
 }): JSX.Element;
 
@@ -117,7 +121,7 @@ Group games (`party`) and drinking games (`drinking`) are played on one phone pa
 usePlayers(): [string[], (players: string[]) => void];  // the roster every party game shares, in seating order
 useStored<T>(key, fallback, parse): [T, (v: T) => void]; // JSON remembered under arcade:<key> (decks, house rules)
 function PlayerList(props: { min: number; max?: number; label?: string }): JSX.Element; // add names, tap to remove
-function Screen(props: { kicker?; title?; sub?; children?; actions?; onEnter?: () => void; center?: boolean }): JSX.Element;
+function Screen(props: { kicker?; title?; sub?; children?; actions?; onEnter?: () => void; center?: boolean; arm?: number }): JSX.Element;
 function PassTo(props: { name: string; index: number; note?; onReady: () => void; label?: string; className?: string }): JSX.Element;
 function Big(props: { onClick; primary?; disabled?; quiet? }): JSX.Element;  // full width button, Row puts them side by side
 function HowToPlay(props: { steps: ReactNode[]; label?: string }): JSX.Element; // folded rules for the setup step
@@ -130,7 +134,7 @@ function useDeck<T>(items: readonly T[]): { card?: T; next(); back(); canBack; d
 Avatar, playerColor, DrinkNote, shuffle, pick, Pile, listNames, sips, clock, mulberry32
 ```
 
-A party game wraps itself in `<GameShell meta={meta} autoStart>`: its setup step is the start screen, so the shell's Start card is skipped. The rest is a `step` state machine where each step renders one keyed `<Screen>` (or `<PassTo>` before anything secret). Keying steps returns focus to the game after the button that led there unmounts, so Enter and Space keep working. Restart remounts the game back to its setup step, and the roster and settings carry over. Timers use `useCountdown`, so pausing (Esc, or hiding the window) stops the clock. Shared classes for cards, player grids and score rows (`.arcade-party-card`, `.arcade-party-picks`, `.arcade-party-scores`) live in `kit/party.css` and take the game's `--accent`.
+A party game wraps itself in `<GameShell meta={meta} autoStart>`: its setup step is the start screen, so the shell's Start card is skipped. The rest is a `step` state machine where each step renders one keyed `<Screen>` (or `<PassTo>` before anything secret). Keying steps returns focus to the game after the button that led there unmounts, so Enter and Space keep working. Restart remounts the game back to its setup step, and the roster and settings carry over. A new step ignores taps, Enter and Space for its first `arm` ms (550 by default, 800 on `PassTo`), and `Big` drops a second press within 320 ms, both timed from the event itself, so a double tap can't skip a step or flash a secret. The guard is JS rather than CSS because reduced motion cuts every animation. Party and drinking games also ask for a second tap on the shell's Restart, and pausing hides the stage. Timers use `useCountdown`, so pausing (Esc, or hiding the window) stops the clock. Shared classes for cards, player grids and score rows (`.arcade-party-card`, `.arcade-party-picks`, `.arcade-party-scores`) live in `kit/party.css` and take the game's `--accent`.
 
 The look is printed game night: flat fills, cards with an inset border and a hard edge (`.arcade-party-card`, cream stock with `.is-paper`), buttons with a bottom edge that presses down, and Bricolage Grotesque for titles, card text and buttons. A game sets `--on-accent` to a dark ink when white on its accent falls under 4.5:1 (most bright accents do; check button text), can swap `--party-display` for its own face, and `--party-timer` recolors the countdown ring. Display faces are self-hosted in `public/fonts/` (latin subsets, SIL Open Font License); declare an `@font-face` in the game's CSS and the browser only downloads it when the game shows it. Motion stays short and purposeful, and everything inside `.arcade-party` collapses to instant under `prefers-reduced-motion`.
 
@@ -159,13 +163,13 @@ A game with `variants` names the board when it ends a round: `shell.gameOver(sco
 
 Games that keep their own bests (per level, or a streak) and show no score on the Game Over card pass the ranked number as `rank` instead: `shell.gameOver(undefined, { title: 'Cleared', board: 'expert', rank: ms })`. The shell ranks `rank` and formats it with the board's spec.
 
-When a round ends with a score that would make the top 100, the Game Over card shows a name field (1 to 16 characters) and Submit, plus a Leaderboard button that shows the board. The arcade home has a Leaderboards view with every opted in game.
+When a round ends with a score that would make the top 100, the Game Over card shows a name field (1 to 16 characters) and Submit, plus a Leaderboard button that shows the board. The arcade home has a Leaderboards view (`Leaderboards.tsx`): a card per opted in game with its top 3, grouped by category, and a Top Scores / Online Wins switch. A game with `variants` shows one board at a time, with chips to switch (a menu when there are more than four) and the one with the most entries first. Opening a card shows that board's top 100. The cards load from one request, `GET /leaderboard/top`; if that fails (or the Worker predates it) they show this device's boards, labeled This Device.
 
 Global boards come from the Cloudflare Worker in `worker/`, configured through `PUBLIC_ARCADE_API` or its built-in default URL. If the API URL is empty or unavailable, scores stay in localStorage (`arcade:boards`) and the board is labeled This Device. The Worker validates the game id, score and name, and allows a few submissions per IP per minute. After opting a game in, run `npm run arcade:specs` and redeploy the Worker.
 
 Opt in only when the score is comparable across players: leave it out for games without a score and two player games (they get an Online Wins board instead). When a setting changes the difficulty of the score (a pace or level picker), use `variants` so each setting has its own board.
 
-Baduk (Go and Omok) and Badminton are desktop apps, not arcade games, but they share the same Worker. Their boards and rooms are listed in `src/os/arcade/apps.ts`, show up on the arcade Leaderboards page, and are written into the Worker specs by `npm run arcade:specs`.
+Baduk (Go and Omok) and Badminton are desktop apps, not arcade games, but they share the same Worker. Their boards and rooms are listed in `src/os/arcade/apps.ts`, show up on the arcade Leaderboards page (their cards' colors and glyphs live in `leaderboard-cards.ts`, and Go's three board sizes share one card), and are written into the Worker specs by `npm run arcade:specs`.
 
 ## Online Rooms
 
@@ -176,7 +180,17 @@ Baduk (Go and Omok) and Badminton are desktop apps, not arcade games, but they s
 
 Rooms lock once the host starts. Add `lateJoin: true` to let people join between rounds instead: a latecomer waits in the lobby and plays the next round, and wins only count the players who started that round. Cox Box uses this for eight-crew typing races.
 
+### Bots
+
+Add `bots: true` to `online` and the lobby (and the online Game Over card, between rounds) gives the host a Bots stepper. Bots fill the seats nobody holds: the room lists them by name, a host can start with just bots to play against, and someone who joins takes a bot's seat (the bot moves to another free seat, or sits out once the room is full of people). The host's last count is remembered per game; `defaultBots` sets where it starts (Scramble fills to eight).
+
+`useOnline().bots` lists the bots as `{ seat, name }`: the ones playing this round while it is under way, otherwise the ones the host has added so far, so a lobby setting can appear only when there are bots to tune. The host's game drives them like its computer players and shares them through its own messages; everyone else just shows them. Bots send nothing, never report results and never block a round's result, and a round a bot wins counts for nobody's Online Wins. Name them with `botNames` (Palm Drive's are its CPU drivers, Cox Box's the rival crews). Light Cycles, Cox Box, Palm Drive and Scramble have bots; two-seat games have no empty seat to fill, and score races have no computer players.
+
 Invite links (`/?game=<id>&room=<code>`) open the game and join the room automatically. Online wins go to the game's Online Wins board when every player reports the same winner. After adding `online` to a game, run `npm run arcade:specs` and redeploy the Worker.
+
+## Chat
+
+The arcade home's header also opens Chat (`Chat.tsx`): one global chat for everyone in the arcade, so people can find someone to play with and share a room code. It connects only while it is open, through `LoungeLink` in `lounge.ts` (reconnects with backoff, pings to stay open), to the Worker's `Lounge` object, and shows the newest 100 messages and how many people are here. Messages are plain text from a name of 1 to 16 characters, the same name the leaderboards and rooms remember. The Worker cleans, checks and rate limits everything (`lounge-core.ts`, shared with it); see `worker/README.md` for the protocol, the limits and how to wipe the chat.
 
 ## Rules
 
