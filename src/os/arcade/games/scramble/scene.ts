@@ -41,6 +41,14 @@ const OVERVIEW = 150;
 const LOOT_VIEW = 40;
 const TILT = (58 * Math.PI) / 180;
 const FOV = 42;
+const HALF_FOV = ((FOV / 2) * Math.PI) / 180;
+/**
+ * The ground in frame, per meter the camera stands back: how far it reaches past the point looked at up the screen
+ * (north, which the tilt sees farther) and down it, and how wide it gets along the top edge (times the aspect).
+ */
+const FRAME_N = Math.sin(TILT) / Math.tan(TILT - HALF_FOV) - Math.cos(TILT);
+const FRAME_S = Math.cos(TILT) - Math.sin(TILT) / Math.tan(TILT + HALF_FOV);
+const FRAME_W = (Math.sin(TILT) * Math.tan(HALF_FOV)) / (Math.sin(TILT) - Math.tan(HALF_FOV) * Math.cos(TILT));
 /** three's GreaterDepth constant, by value: three-lib.ts exports classes, not constants. */
 const GREATER_DEPTH = 6 as T.DepthModes;
 
@@ -1502,8 +1510,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         landMark.scale.setScalar(1.2 + Math.sin(clock * 6) * 0.15);
       }
 
-      // loot near the camera, once it's close enough to make out (from the sky it's specks)
-      const reach = cam.view < LOOT_VIEW ? cam.view + 12 : -1;
+      // loot in frame (with a little to spare), once it's close enough to make out (from the sky it's specks)
+      const showLoot = cam.view < LOOT_VIEW;
+      const lootN = dist * FRAME_N + 3;
+      const lootS = dist * FRAME_S + 3;
+      const lootW = dist * FRAME_W * aspect + 3;
       for (const [id, lv] of lootViews) {
         if (!m.loot.has(id)) {
           scene.remove(lv.group);
@@ -1511,7 +1522,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         }
       }
       for (const l of m.loot.values()) {
-        const near = Math.abs(l.x - cam.x) < reach * 1.6 && Math.abs(l.z - cam.z) < reach * 1.6;
+        const near = showLoot && Math.abs(l.x - cam.x) < lootW && l.z - cam.z > -lootN && l.z - cam.z < lootS;
         let lv = lootViews.get(l.id);
         if (!near) {
           if (lv) lv.group.visible = false;

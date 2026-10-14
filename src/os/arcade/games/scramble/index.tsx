@@ -30,7 +30,7 @@ import {
 } from './logic';
 import { configOf, parsePacket, type Bots } from './net';
 import { END_PAUSE, FLUSH, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
-import { MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
+import { MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { HALF, SUPPLY_FALL } from './map';
 import { AmmoIcon, EggIcon, HowToPlay, IslandArt, PackIcon, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon } from './hud';
 import { meta } from './meta';
@@ -53,6 +53,8 @@ const STICK_R = 52;
 const randomSeed = () => Math.floor(Math.random() * 0x7fffffff);
 /** How far a touch throw goes for how far the right thumb is pushed (pixels from where it came down). */
 const tossReach = (len: number) => THROW.min + Math.max(0, Math.min(1, (len - 12) / (STICK_R - 12))) * (THROW.max - THROW.min);
+/** Seconds a touch throw let go of too soon after the last one waits to go. */
+const TOSS_WAIT = 0.8;
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
@@ -181,7 +183,7 @@ type Hud = {
   slot: number;
   slots: [Slot, Slot];
   melee: MeleeId;
-  /** The throwable in the throw slot, how many, and how many kinds we carry. */
+  /** The throwable in the throw slot, how many (-1 when it's someone else's egg), and how many kinds we carry. */
   toss: { w: ThrowId; n: number; kinds: number } | null;
   mag: number;
   reserve: number;
@@ -213,8 +215,9 @@ type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
 type Feed = { id: number; text: string; mine: boolean; until: number };
 type Pop = { el: HTMLDivElement | null; x: number; y: number; z: number; age: number; live: boolean };
-type Taps = { build: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number };
-const noTaps = (): Taps => ({ build: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0 });
+/** `toss` is how far a touch throw goes, and `tossBy` the game clock it gives up at if it can't go yet. */
+type Taps = { build: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossBy: number };
+const noTaps = (): Taps => ({ build: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossBy: 0 });
 
 const BUSY_TEXT: Record<UseId, string> = { bandage: 'bandaging', medkit: 'using a medkit', mini: 'drinking a mini shield', shield: 'drinking a shield potion', coffee: 'drinking coffee' };
 /** A name with its article, for the kill feed: "with a pistol", "with an smg", "with hot sauce". */
@@ -450,9 +453,11 @@ function Play({ mode }: { mode: Mode }) {
 
   const throwing = (f: Fighter | undefined) => !!f && owned(f) && f.phase === 'ground' && f.slot === SLOT_THROW && THROW_IDS.some((k) => f.throws[k] > 0);
 
-  function readInput(m: Match, me: Fighter, v: View | null) {
+  function readInput(m: Match, me: Fighter, v: View | null, dt: number) {
     const inp = me.input;
     const t = taps.current;
+    // Enter and left/right taps only count once you're out (leave, watch another egg): drop any made before then
+    keys.pressed('Enter', 'left', 'right');
     // walking: keys, or the left thumb
     let mx = keys.axis('left', 'right');
     let mz = keys.axis('up', 'down');
@@ -484,7 +489,8 @@ function Play({ mode }: { mode: Mode }) {
       if (g && Math.hypot(g.x - me.x, g.z - me.z) > 0.3) lastAim.current = Math.atan2(g.x - me.x, g.z - me.z);
       inp.reach = g ? Math.hypot(g.x - me.x, g.z - me.z) : 0;
     } else {
-      if (mx || mz) lastAim.current = Math.atan2(mx, mz);
+      // a touch throw just let go of still goes where the right thumb aimed it
+      if ((mx || mz) && t.toss <= 0) lastAim.current = Math.atan2(mx, mz);
       if (!as) inp.reach = 0;
     }
     // a click too quick for a frame still fires (or throws) once
@@ -517,6 +523,11 @@ function Play({ mode }: { mode: Mode }) {
     } else if (space || t.build) inp.build = true;
     mouse.current.clicked = false;
     taps.current = noTaps();
+    // a touch throw let go of during the throw cooldown waits it out (for a moment)
+    if (t.toss > 0 && tossing && me.fireT > dt && clock.current < t.tossBy) {
+      taps.current.toss = t.toss;
+      taps.current.tossBy = t.tossBy;
+    }
   }
 
   /** On a touchscreen, a near miss with the right thumb snaps onto the egg it was meant for. */
@@ -555,7 +566,7 @@ function Play({ mode }: { mode: Mode }) {
         return;
       }
       const me = m.fighters[m.me];
-      if (me && me.phase !== 'out' && !n.over) readInput(m, me, v);
+      if (me && me.phase !== 'out' && !n.over) readInput(m, me, v, dt);
       else watchInput(m);
       if (keys.pressed('KeyM')) setBigMap((b) => !b);
 
@@ -920,8 +931,9 @@ function Play({ mode }: { mode: Mode }) {
     const g = own && focus.slot < 2 ? focus.guns[focus.slot] : null;
     const slots: [Slot, Slot] = own ? [focus.guns[0] ? { ...focus.guns[0] } : null, focus.guns[1] ? { ...focus.guns[1] } : null] : [isWeapon(h.w) ? { w: h.w, r: h.r, mag: -1 } : null, null];
     const kinds = THROW_IDS.filter((k) => focus.throws[k] > 0).length;
-    const toss = own && kinds > 0 ? { w: focus.throws[focus.pick] > 0 ? focus.pick : THROW_IDS.find((k) => focus.throws[k] > 0)!, n: 0, kinds } : null;
-    if (toss) toss.n = focus.throws[toss.w];
+    // someone else's egg: only what's in hand shows, not how many
+    const toss = own && kinds > 0 ? { w: focus.throws[focus.pick] > 0 ? focus.pick : THROW_IDS.find((k) => focus.throws[k] > 0)!, n: 0, kinds } : !own && isThrow(h.w) ? { w: h.w, n: -1, kinds: 1 } : null;
+    if (toss && own) toss.n = focus.throws[toss.w];
     const s = m.storm;
     const outside = Math.hypot(focus.x - s.x, focus.z - s.z) > s.r && focus.phase === 'ground';
     let storm = '';
@@ -963,7 +975,7 @@ function Play({ mode }: { mode: Mode }) {
       hp: Math.ceil(focus.hp),
       shield: Math.ceil(focus.shield),
       boost: own ? Math.ceil(focus.boost) : 0,
-      slot: own ? focus.slot : isWeapon(h.w) ? 0 : SLOT_MELEE,
+      slot: own ? focus.slot : isWeapon(h.w) ? 0 : isThrow(h.w) ? SLOT_THROW : SLOT_MELEE,
       slots,
       melee: own ? focus.melee : isMelee(h.w) ? h.w : 'spatula',
       toss,
@@ -1040,7 +1052,10 @@ function Play({ mode }: { mode: Mode }) {
       // with a throwable out, letting go of the right thumb throws it, as far as the thumb was pushed
       if (throwNow && which === 'aim' && s) {
         const len = Math.hypot(s.x - s.ox, s.y - s.oy);
-        if (len > 14 && throwing(match.current?.fighters[match.current.me])) taps.current.toss = tossReach(len);
+        if (len > 14 && throwing(match.current?.fighters[match.current.me])) {
+          taps.current.toss = tossReach(len);
+          taps.current.tossBy = clock.current + TOSS_WAIT;
+        }
       }
       r.current = null;
       setSticks((v) => ({ ...v, [which]: false }));
@@ -1312,7 +1327,7 @@ function Play({ mode }: { mode: Mode }) {
                   const g = i < 2 ? hud.slots[i as 0 | 1] : null;
                   const on = hud.slot === i;
                   const empty = (i < 2 && !g) || (i === SLOT_THROW && !hud.toss);
-                  const label = i < 2 ? (g ? WEAPONS[g.w].name : 'Empty slot') : i === SLOT_MELEE ? MELEE[hud.melee].name : hud.toss ? `${hud.toss.n} ${hud.toss.n === 1 ? THROWS[hud.toss.w].name : THROWS[hud.toss.w].plural}` : 'Nothing to throw';
+                  const label = i < 2 ? (g ? WEAPONS[g.w].name : 'Empty slot') : i === SLOT_MELEE ? MELEE[hud.melee].name : hud.toss ? (hud.toss.n < 0 ? THROWS[hud.toss.w].name : `${hud.toss.n} ${hud.toss.n === 1 ? THROWS[hud.toss.w].name : THROWS[hud.toss.w].plural}`) : 'Nothing to throw';
                   return (
                     <button
                       key={i}
@@ -1334,7 +1349,7 @@ function Play({ mode }: { mode: Mode }) {
                       {i === SLOT_THROW && hud.toss && (
                         <>
                           <WeaponIcon w={hud.toss.w} size={28} />
-                          <b className="g-scramble-count">{hud.toss.n}</b>
+                          {hud.toss.n >= 0 && <b className="g-scramble-count">{hud.toss.n}</b>}
                           {hud.toss.kinds > 1 && <i className="g-scramble-more" aria-hidden="true" />}
                         </>
                       )}
