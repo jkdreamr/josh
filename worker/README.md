@@ -26,6 +26,10 @@ npx wrangler deploy
 
 After changing which games opt in to leaderboards, online rooms or bots (including the app games in `src/os/arcade/apps.ts`), run `npm run arcade:specs` from the repository root and redeploy the Worker. Until it is redeployed, the deployed Worker rejects scores and rooms for games it does not know: scores then stay on the player's device and Create Room shows an error. Rooms only offer bots once the Worker knows the game allows them; until then the lobby simply has no Bots stepper.
 
+## Leaderboards
+
+Scores and online wins live in the `Boards` Durable Object. A game's Game Over card reads and submits with `GET /leaderboard?game=<board>` and `POST /leaderboard`, and Online Wins boards are `GET /wins?game=<game>` (top 100 each). The arcade's Leaderboards cards read `GET /leaderboard/top` once: the best 3 entries (`?n=` asks for 1 to 10) of every score board and every Online Wins board, as `{ "boards": { "<board>": [{ "name", "score", "date" }] }, "wins": { "<game>": [...] } }`, with empty boards as empty lists. Until the Worker is redeployed with it, that route 404s: the score cards then show the visitor's own scores, labeled This Device (opening one still loads its global top 100), and Online Wins say they are unavailable.
+
 ## Open Rooms
 
 Public rooms are listed for strangers to join. `POST /rooms?game=<id>&public=1` makes a public room, and the host can switch any room with `{ t: 'listed', on }` on its socket; `welcome` and `players` say whether the room is public (`listed`). Each room keeps its own line in the `Lobby` Durable Object (migration `v4`): it adds the line once its host is in, updates it as people come and go, refreshes it every minute from an alarm, and removes it when the room fills with people, starts in a game nobody can join mid-game, goes private, or closes. Lines nobody refreshed for three minutes are dropped. `GET /rooms` (optionally `?game=<id>`) lists up to 40 open rooms, the ones still gathering first. Until the Worker is redeployed, Open Rooms stay hidden and new rooms are private.

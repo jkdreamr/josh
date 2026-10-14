@@ -99,12 +99,12 @@ function makeChurch(THREE: Three, box: T.BoxGeometry) {
   return g;
 }
 
-/** Hoover Tower: a tall sandstone shaft, the open belfry and the red dome. */
-function makeHoover(THREE: Three, box: T.BoxGeometry) {
+/** Hoover Tower: a tall sandstone shaft, the open belfry and the red dome; floodlit, its belfry glows at night. */
+function makeHoover(THREE: Three, box: T.BoxGeometry, lit = false) {
   const g = new THREE.Group();
-  const stone = new THREE.MeshLambertMaterial({ color: 0xe0c49a });
-  const dark = new THREE.MeshLambertMaterial({ color: 0x4a3a2c });
-  const tile = new THREE.MeshLambertMaterial({ color: 0xb4553a });
+  const stone = new THREE.MeshLambertMaterial({ color: 0xe0c49a, emissive: lit ? 0x5a4428 : 0x000000 });
+  const dark = lit ? new THREE.MeshBasicMaterial({ color: 0xffe0a0 }) : new THREE.MeshLambertMaterial({ color: 0x4a3a2c });
+  const tile = new THREE.MeshLambertMaterial({ color: 0xb4553a, emissive: lit ? 0x6a2410 : 0x000000 });
   const add = (geo: T.BufferGeometry, m: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
     const o = new THREE.Mesh(geo, m);
     o.position.set(x, y, z);
@@ -117,6 +117,8 @@ function makeHoover(THREE: Three, box: T.BoxGeometry) {
   add(box, stone, 0, 51.5, 0, 10.6, 1.2, 10.6);
   add(new THREE.SphereGeometry(1, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), tile, 0, 52, 0, 4.6, 5.5, 4.6);
   add(box, stone, 0, 58.5, 0, 1.2, 2.5, 1.2);
+  // a red warning light on the very top
+  if (lit) add(box, new THREE.MeshBasicMaterial({ color: 0xff3a2a }), 0, 60.2, 0, 0.6, 0.6, 0.6);
   return g;
 }
 
@@ -362,6 +364,137 @@ export function makeBike(THREE: Three, geo: { box: T.BoxGeometry; ball: T.Sphere
   return { g, wheels, pedal };
 }
 
+/**
+ * The Marguerite, Stanford's free shuttle, facing +z: white with a cardinal stripe, its windows lit from inside,
+ * MARGUERITE on the sign over the windshield, headlights throwing light on the road ahead and red tail lights.
+ * `len` and `half` are its length and half its width; its wheels come back with it, to roll as it drives.
+ */
+export function makeBus(THREE: Three, geo: { box: T.BoxGeometry; wheel: T.CylinderGeometry; plane: T.PlaneGeometry }, len: number, half: number) {
+  const g = new THREE.Group();
+  const w = half * 2;
+  // a little light of its own, so it still reads white at night
+  const white = new THREE.MeshLambertMaterial({ color: 0xf2f2ee, emissive: 0x3a3a38 });
+  const cardinal = new THREE.MeshLambertMaterial({ color: 0x8c1515, emissive: 0x2a0606 });
+  const black = new THREE.MeshLambertMaterial({ color: 0x1c1d22 });
+  const box = (mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+    const m = new THREE.Mesh(geo.box, mat);
+    m.position.set(x, y, z);
+    m.scale.set(sx, sy, sz);
+    g.add(m);
+    return m;
+  };
+  const panel = (mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, ry: number) => {
+    const m = new THREE.Mesh(geo.plane, mat);
+    m.position.set(x, y, z);
+    m.scale.set(sx, sy, 1);
+    m.rotation.y = ry;
+    g.add(m);
+    return m;
+  };
+  box(white, 0, 1.75, 0, w, 2.6, len);
+  box(white, 0, 3.12, 0, w - 0.2, 0.16, len - 0.4);
+  box(white, 0, 3.32, -len * 0.15, w * 0.55, 0.3, len * 0.3);
+  // the cardinal stripe down both sides and round the back
+  for (const side of [-1, 1]) box(cardinal, side * (half + 0.01), 1.05, 0, 0.04, 0.42, len + 0.02);
+  box(cardinal, 0, 1.05, -len / 2 - 0.01, w + 0.02, 0.42, 0.04);
+  box(black, 0, 0.62, len / 2 + 0.05, w + 0.04, 0.34, 0.16);
+  box(black, 0, 0.62, -len / 2 - 0.05, w + 0.04, 0.34, 0.16);
+  // windows down each side, warm with the lights on inside and a few riders in silhouette
+  const glass = texture(
+    THREE,
+    canvas(256, 32, (c) => {
+      const glow = c.createLinearGradient(0, 0, 0, 32);
+      glow.addColorStop(0, '#ffe6b0');
+      glow.addColorStop(1, '#d8a960');
+      c.fillStyle = glow;
+      c.fillRect(0, 0, 256, 32);
+      const heads = scatter(5);
+      c.fillStyle = 'rgba(40,30,30,0.65)';
+      for (let i = 0; i < 9; i++) {
+        const x = 8 + heads() * 240;
+        c.beginPath();
+        c.arc(x, 18, 5, 0, Math.PI * 2);
+        c.fillRect(x - 7, 22, 14, 10);
+        c.fill();
+      }
+      c.fillStyle = '#2a2a30';
+      for (let x = 0; x <= 256; x += 32) c.fillRect(x - 2, 0, 4, 32);
+      c.fillRect(0, 0, 256, 3);
+      c.fillRect(0, 29, 256, 3);
+    }),
+  );
+  const windows = new THREE.MeshBasicMaterial({ map: glass });
+  for (const side of [-1, 1]) panel(windows, side * (half + 0.02), 2.25, -0.3, len - 1.8, 1.05, side * (Math.PI / 2));
+  // the windshield and the sign over it
+  panel(new THREE.MeshBasicMaterial({ color: 0x3a4660 }), 0, 2.15, len / 2 + 0.02, w - 0.3, 1.3, 0);
+  const sign = texture(
+    THREE,
+    canvas(256, 40, (c) => {
+      c.fillStyle = '#111';
+      c.fillRect(0, 0, 256, 40);
+      c.fillStyle = '#ffb63a';
+      c.font = 'bold 28px Inter, Arial, sans-serif';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText('MARGUERITE', 128, 22);
+    }),
+  );
+  panel(new THREE.MeshBasicMaterial({ map: sign }), 0, 2.95, len / 2 + 0.03, w - 0.5, 0.32, 0);
+  // headlights, a pool of their light on the road ahead, and tail lights
+  const lamp = new THREE.MeshBasicMaterial({ color: 0xfff4d0 });
+  const tail = new THREE.MeshBasicMaterial({ color: 0xff2a1e });
+  for (const side of [-1, 1]) {
+    box(lamp, side * (half - 0.35), 0.95, len / 2 + 0.03, 0.45, 0.24, 0.06);
+    box(tail, side * (half - 0.25), 1.45, -len / 2 - 0.03, 0.3, 0.5, 0.06);
+  }
+  const beam = new THREE.Mesh(
+    geo.plane,
+    new THREE.MeshBasicMaterial({
+      map: texture(
+        THREE,
+        // the top of the canvas is the end nearest the bus (the plane lies flat with its top toward -z)
+        canvas(64, 128, (c) => {
+          const fade = c.createLinearGradient(0, 0, 0, 128);
+          fade.addColorStop(0, 'rgba(255,240,200,0.55)');
+          fade.addColorStop(1, 'rgba(255,240,200,0)');
+          c.fillStyle = fade;
+          c.beginPath();
+          c.moveTo(18, 0);
+          c.lineTo(46, 0);
+          c.lineTo(64, 128);
+          c.lineTo(0, 128);
+          c.closePath();
+          c.fill();
+        }),
+      ),
+      transparent: true,
+      depthWrite: false,
+    }),
+  );
+  beam.rotation.x = -Math.PI / 2;
+  beam.scale.set(w + 1.6, 12, 1);
+  beam.position.set(0, 0.08, len / 2 + 6);
+  beam.renderOrder = 2;
+  g.add(beam);
+  // four wheels with silver hubs
+  const wheels: T.Mesh[] = [];
+  const hub = new THREE.MeshLambertMaterial({ color: 0xb8bcc2 });
+  for (const z of [len / 2 - 1.7, -len / 2 + 1.9]) {
+    for (const side of [-1, 1]) {
+      const wheel = new THREE.Mesh(geo.wheel, black);
+      wheel.scale.set(0.52, 0.34, 0.52);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(side * (half - 0.12), 0.52, z);
+      const cap = new THREE.Mesh(geo.wheel, hub);
+      cap.scale.set(0.6, 1.05, 0.6);
+      wheel.add(cap);
+      wheels.push(wheel);
+      g.add(wheel);
+    }
+  }
+  return { g, wheels };
+}
+
 /** Each course's colors: light, grass, curbs, walls and the banner over the start. */
 export type Look = {
   fog: [number, number, number];
@@ -378,6 +511,8 @@ export type Look = {
   road: string;
   /** The color of the joints between paving stones, for a paved road. */
   joints?: string;
+  /** After dark: the curbs, wall tops, signs and oil slicks glow a little so the edges and hazards always read. */
+  night?: boolean;
 };
 export const LOOKS: Record<CourseId, Look> = {
   palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE', road: '#4a4a52' },
@@ -386,6 +521,8 @@ export const LOOKS: Record<CourseId, Look> = {
   dish: { fog: [0xe6e0c8, 160, 760], sky: 0xfff6e6, ground: 0x7a7448, sun: [0xfff2d8, 1.55], field: '#cdb46c', lawn: '#b0a95e', curb: ['#f2efe6', '#5d7a3a'], wall: '#d9cfb8', band: '#5d7a3a', banner: 'THE DISH', road: '#5e5d62' },
   stadium: { fog: [0xe2e8ef, 170, 760], sky: 0xf4f8ff, ground: 0x5f7a4a, sun: [0xfff4e0, 1.55], field: '#c4b98a', lawn: '#5aa04a', curb: ['#f4f1ea', '#8c1515'], wall: '#ebe6db', band: '#8c1515', banner: 'STANFORD STADIUM', road: '#4c4c54' },
   quad: { fog: [0xf1e3c6, 150, 700], sky: 0xfff4e0, ground: 0x8a7a55, sun: [0xffecc8, 1.55], field: '#d8c39a', lawn: '#7fae58', curb: ['#f4efe4', '#8c1515'], wall: '#efe0bf', band: '#8c1515', banner: 'MAIN QUAD', road: '#c9b089', joints: '#a08766' },
+  // cool moonlight, low enough to read as night with the road and karts still clear
+  hoover: { fog: [0x22325e, 80, 470], sky: 0x8d9fdc, ground: 0x2a3150, sun: [0xb4c8ff, 0.8], field: '#33402c', lawn: '#3b5734', curb: ['#f4f1ea', '#d9a52e'], wall: '#c9c0b0', band: '#ffc53d', banner: 'HOOVER NIGHTS', road: '#4e4e58', night: true },
 };
 
 /** What a course's scenery builder gets: the scene, the track and shared helpers. */
@@ -1878,4 +2015,201 @@ function quad(c: Scenery) {
   foothills(c, cx, cz, { x: cx + 260, z: cz - 430 });
 }
 
-export const SCENERY: Record<CourseId, (c: Scenery) => void> = { palm: campus, lake, barn, dish, stadium, quad };
+/** A soft round glow, bright in the middle and fading out: pools of lamplight on the road and the like. */
+function glowTexture(THREE: Three, rgb: string, alpha: number) {
+  return texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      const grad = g.createRadialGradient(32, 32, 2, 32, 32, 31);
+      grad.addColorStop(0, `rgba(${rgb},${alpha})`);
+      grad.addColorStop(0.55, `rgba(${rgb},${alpha * 0.45})`);
+      grad.addColorStop(1, `rgba(${rgb},0)`);
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
+    }),
+  );
+}
+
+/**
+ * Hoover Nights: campus after dark. Hoover Tower floodlit with its belfry aglow, straight ahead down the start, a lit
+ * fountain inside the hairpin north of it, sandstone halls with their windows lit, lamp posts all along the road
+ * throwing pools of light across it, uplit palms down the start straight and oaks in silhouette, a Marguerite stop
+ * where each bus waits for the start, Memorial Church off across campus, and the moon and the stars.
+ */
+function hoover(c: Scenery) {
+  const { THREE, scene, t, r, geo, mats, rand, clear, dummy } = c;
+  const { cx, cz, rx, rz } = bounds(t);
+  type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number; rx?: number };
+  const flat = -Math.PI / 2;
+
+  // Hoover Tower beyond the hairpins at the end of the start straight, floodlit from its base
+  const foot = roomiest(t, fromMap(245, -115), 20);
+  const tower = makeHoover(THREE, geo.box, true);
+  tower.position.set(foot.x, 0, foot.z);
+  tower.scale.setScalar(Math.min(1.3, (foot.room - t.edge - 2) / 11.3));
+  scene.add(tower);
+  const glow = new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,214,150', 0.5), transparent: true, depthWrite: false });
+  const flood = new THREE.Mesh(geo.plane, glow);
+  flood.rotation.x = flat;
+  flood.scale.set(36, 36, 1);
+  flood.position.set(foot.x, 0.03, foot.z);
+  scene.add(flood);
+
+  // a fountain lit up in the plaza inside the hairpin north of the tower
+  const plaza = roomiest(t, fromMap(136, 86), 14);
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(5.5, 6, 0.8, 28), new THREE.MeshLambertMaterial({ color: 0xd9c4a0, emissive: 0x2a2014 }));
+  basin.position.set(plaza.x, 0.4, plaza.z);
+  const water = new THREE.Mesh(new THREE.CircleGeometry(5, 28), new THREE.MeshBasicMaterial({ color: 0x6fb4ff }));
+  water.rotation.x = flat;
+  water.position.set(plaza.x, 0.82, plaza.z);
+  const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.7, 4, 10), new THREE.MeshBasicMaterial({ color: 0xd8ecff, transparent: true, opacity: 0.75 }));
+  jet.position.set(plaza.x, 2.8, plaza.z);
+  const pool = new THREE.Mesh(geo.plane, glow);
+  pool.rotation.x = flat;
+  pool.scale.set(26, 26, 1);
+  pool.position.set(plaza.x, 0.03, plaza.z);
+  scene.add(basin, water, jet, pool);
+
+  // lamp posts down alternate sides of the road, each with a glowing head and a pool of light across the road
+  const posts: Item[] = [];
+  const arms: Item[] = [];
+  const heads: Item[] = [];
+  const pools: Item[] = [];
+  let side = 1;
+  for (let s = 6; s < t.length - 4; s += 23) {
+    side = -side;
+    const base = pointAt(t, s, side * (t.edge + 0.9));
+    if (!clear(base.x, base.z, 0.4)) continue;
+    const ry = headingOf(base.tx, base.tz);
+    const head = pointAt(t, s, side * (t.edge - 0.7));
+    const pool = pointAt(t, s, side * (t.edge - 4.5));
+    posts.push({ x: base.x, y: 3.2, z: base.z, sx: 0.2, sy: 6.4, sz: 0.2 });
+    arms.push({ x: (base.x + head.x) / 2, y: 6.35, z: (base.z + head.z) / 2, sx: 1.8, sy: 0.12, sz: 0.12, ry });
+    heads.push({ x: head.x, y: 6.2, z: head.z, sx: 0.9, sy: 0.2, sz: 0.5, ry });
+    pools.push({ x: pool.x, y: 0.075, z: pool.z, sx: 12, sy: 12, sz: 1, rx: flat });
+  }
+  const metal = new THREE.MeshLambertMaterial({ color: 0x30333c });
+  instances(THREE, scene, dummy, geo.box, metal, posts);
+  instances(THREE, scene, dummy, geo.box, metal, arms);
+  instances(THREE, scene, dummy, geo.box, new THREE.MeshBasicMaterial({ color: 0xfff0c8 }), heads);
+  instances(THREE, scene, dummy, geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,222,160', 0.34), transparent: true, depthWrite: false }), pools);
+
+  // sandstone halls round the course with their long sides to the road, most of their windows lit (but none down the
+  // start straight, to keep the view of the tower)
+  const lit = new THREE.MeshBasicMaterial({ color: 0xffd98a });
+  const unlit = new THREE.MeshLambertMaterial({ color: 0x23262e });
+  const hallMats = { stone: new THREE.MeshLambertMaterial({ color: 0xd9b98a, emissive: 0x1e160c }), tile: mats.tile, dark: lit };
+  const fits = (x: number, z: number, ax: number, az: number, w: number, d: number) =>
+    [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]].every(([a, b]) => clear(x + (ax * a * w) / 2 - (az * b * d) / 2, z + (az * a * w) / 2 + (ax * b * d) / 2, 2.5)) && Math.hypot(x - foot.x, z - foot.z) > 30 && Math.hypot(x - plaza.x, z - plaza.z) > 20;
+  const hall = (x: number, z: number, ry: number, w: number, d: number, h: number) => {
+    const g = makeHall(THREE, geo.box, geo.roof, hallMats, w, d, h);
+    g.children.forEach((o) => {
+      if ((o as T.Mesh).material === lit && rand() < 0.3) (o as T.Mesh).material = unlit;
+    });
+    g.position.set(x, 0, z);
+    g.rotation.y = ry;
+    scene.add(g);
+  };
+  for (let s = 158; s < t.length - 80; s += 64) {
+    for (const sd of [-1, 1]) {
+      const w = 22 + rand() * 12;
+      const d = 11 + rand() * 4;
+      const p = pointAt(t, s, sd * (t.edge + 7 + d / 2));
+      if (fits(p.x, p.z, p.tx, p.tz, w, d)) hall(p.x, p.z, headingOf(p.tx, p.tz) - Math.PI / 2, w, d, 9 + rand() * 5);
+    }
+  }
+
+  // uplit palms down both sides of the start straight
+  const palms: { x: number; z: number; hgt: number }[] = [];
+  for (let s = -40; s < 140; s += 15) {
+    for (const sd of [-1, 1]) {
+      const p = pointAt(t, s, sd * (t.edge + 3));
+      if (clear(p.x, p.z, 1.5)) palms.push({ x: p.x, z: p.z, hgt: 9 + rand() * 3 });
+    }
+  }
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x6b5440, emissive: 0x2a1c0e }), palms.map((p) => ({ x: p.x, y: p.hgt / 2, z: p.z, sx: 1, sy: p.hgt, sz: 1 })));
+  instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x2f5a3a, emissive: 0x0e2414, side: THREE.DoubleSide }), palms.map((p, i) => ({ x: p.x, y: p.hgt + 0.2, z: p.z, sx: 1.1, sy: 1.1, sz: 1.1, ry: i * 1.3 })));
+  instances(THREE, scene, dummy, geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,214,150', 0.45), transparent: true, depthWrite: false }), palms.map((p) => ({ x: p.x, y: 0.05, z: p.z, sx: 4, sy: 4, sz: 1, rx: flat })));
+
+  // oaks in silhouette further out
+  const spots: { x: number; z: number; r: number }[] = [];
+  for (let n = 0; spots.length < 110 && n < 4000; n++) {
+    const a = rand() * Math.PI * 2;
+    const dist = 30 + rand() * 360;
+    const x = cx + Math.cos(a) * (rx + dist);
+    const z = cz + Math.sin(a) * (rz + dist);
+    if (clear(x, z, 5)) spots.push({ x, z, r: 2.4 + rand() * 3 });
+  }
+  oaks(c, spots);
+
+  // a Marguerite stop on the kerb where each bus waits for the start
+  const sign = texture(
+    THREE,
+    canvas(128, 64, (g) => {
+      g.fillStyle = '#8c1515';
+      g.fillRect(0, 0, 128, 64);
+      g.fillStyle = '#fff';
+      g.font = 'bold 17px Inter, Arial, sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText('MARGUERITE', 64, 24);
+      g.font = 'bold 12px Inter, Arial, sans-serif';
+      g.fillText('SHUTTLE STOP', 64, 45);
+    }),
+  );
+  const signMat = new THREE.MeshBasicMaterial({ map: sign, side: THREE.DoubleSide });
+  const shelterMat = new THREE.MeshLambertMaterial({ color: 0x5a5e68 });
+  for (const h of r.hazards) {
+    if (h.kind !== 'bus') continue;
+    const at = pointAt(t, h.s, Math.sign(h.d) * (t.edge + 2.4));
+    if (!clear(at.x, at.z, 1.2)) continue;
+    const stop = new THREE.Group();
+    const part = (mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+      const m = new THREE.Mesh(geo.box, mat);
+      m.position.set(x, y, z);
+      m.scale.set(sx, sy, sz);
+      stop.add(m);
+    };
+    part(shelterMat, 0, 2.6, 0, 1.8, 0.14, 4.2);
+    part(shelterMat, 0.8, 1.3, 0, 0.12, 2.6, 4.2);
+    for (const z of [-2, 2]) part(shelterMat, -0.8, 1.3, z, 0.12, 2.6, 0.12);
+    part(new THREE.MeshLambertMaterial({ color: 0x6b4f37 }), 0.4, 0.5, 0, 0.5, 0.1, 3);
+    part(lit, 0, 2.5, 0, 1.5, 0.06, 3.8);
+    const board = new THREE.Mesh(geo.plane, signMat);
+    // facing the road, on the open side
+    board.position.set(-0.8, 3.4, 2.3);
+    board.scale.set(1.6, 0.8, 1);
+    board.rotation.y = -Math.PI / 2;
+    stop.add(board);
+    stop.position.set(at.x, 0, at.z);
+    // the open side faces the road
+    stop.rotation.y = headingOf(at.tx, at.tz) + (h.d > 0 ? Math.PI : 0);
+    scene.add(stop);
+  }
+
+  // Memorial Church off across campus, the foothills beyond, and the moon and the stars
+  const church = makeChurch(THREE, geo.box);
+  church.position.set(cx - 60, 0, cz + rz + 180);
+  church.scale.setScalar(1.25);
+  scene.add(church);
+  foothills(c, cx, cz, null);
+  const moon = new THREE.Mesh(new THREE.CircleGeometry(24, 32), new THREE.MeshBasicMaterial({ color: 0xf6f2dc, fog: false }));
+  moon.position.set(cx - 520, 320, cz + 640);
+  moon.lookAt(cx, 0, cz);
+  const halo = new THREE.Mesh(geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '190,208,255', 0.4), transparent: true, fog: false, depthWrite: false }));
+  halo.scale.set(170, 170, 1);
+  // just behind the moon
+  halo.position.set(cx + (moon.position.x - cx) * 1.01, moon.position.y * 1.01, cz + (moon.position.z - cz) * 1.01);
+  halo.lookAt(cx, 0, cz);
+  scene.add(moon, halo);
+  const stars: Item[] = [];
+  for (let n = 0; n < 320; n++) {
+    const a = rand() * Math.PI * 2;
+    const up = 0.08 + Math.pow(rand(), 0.7) * 1.2;
+    const size = 0.9 + rand() * rand() * 2.6;
+    stars.push({ x: cx + Math.cos(a) * Math.cos(up) * 1100, y: Math.sin(up) * 1100, z: cz + Math.sin(a) * Math.cos(up) * 1100, sx: size, sy: size, sz: size });
+  }
+  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 6, 4), new THREE.MeshBasicMaterial({ color: 0xeef2ff, fog: false }), stars);
+}
+
+export const SCENERY: Record<CourseId, (c: Scenery) => void> = { palm: campus, lake, barn, dish, stadium, quad, hoover };

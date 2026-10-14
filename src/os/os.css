@@ -5301,12 +5301,6 @@ kbd {
   max-width: 560px;
   margin: 22px auto 0;
 }
-.arcade-boards-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
 .arcade-boards select {
   height: 28px;
   min-width: 180px;
@@ -5370,12 +5364,5 @@ kbd {
   white-space: nowrap;
 }
 .arcade-boards .arcade-lb-score {
-  font-weight: 600;
-}
-.arcade-boards .arcade-board-measure {
-  padding: 0 12px 5px;
-  text-align: right;
-  color: #5f6368;
-  font-size: 12px;
   font-weight: 600;
 }

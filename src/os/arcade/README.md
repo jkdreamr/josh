@@ -163,13 +163,13 @@ A game with `variants` names the board when it ends a round: `shell.gameOver(sco
 
 Games that keep their own bests (per level, or a streak) and show no score on the Game Over card pass the ranked number as `rank` instead: `shell.gameOver(undefined, { title: 'Cleared', board: 'expert', rank: ms })`. The shell ranks `rank` and formats it with the board's spec.
 
-When a round ends with a score that would make the top 100, the Game Over card shows a name field (1 to 16 characters) and Submit, plus a Leaderboard button that shows the board. The arcade home has a Leaderboards view with every opted in game.
+When a round ends with a score that would make the top 100, the Game Over card shows a name field (1 to 16 characters) and Submit, plus a Leaderboard button that shows the board. The arcade home has a Leaderboards view (`Leaderboards.tsx`): a card per opted in game with its top 3, grouped by category, and a Top Scores / Online Wins switch. A game with `variants` shows one board at a time, with chips to switch (a menu when there are more than four) and the one with the most entries first. Opening a card shows that board's top 100. The cards load from one request, `GET /leaderboard/top`; if that fails (or the Worker predates it) they show this device's boards, labeled This Device.
 
 Global boards come from the Cloudflare Worker in `worker/`, configured through `PUBLIC_ARCADE_API` or its built-in default URL. If the API URL is empty or unavailable, scores stay in localStorage (`arcade:boards`) and the board is labeled This Device. The Worker validates the game id, score and name, and allows a few submissions per IP per minute. After opting a game in, run `npm run arcade:specs` and redeploy the Worker.
 
 Opt in only when the score is comparable across players: leave it out for games without a score and two player games (they get an Online Wins board instead). When a setting changes the difficulty of the score (a pace or level picker), use `variants` so each setting has its own board.
 
-Baduk (Go and Omok) and Badminton are desktop apps, not arcade games, but they share the same Worker. Their boards and rooms are listed in `src/os/arcade/apps.ts`, show up on the arcade Leaderboards page, and are written into the Worker specs by `npm run arcade:specs`.
+Baduk (Go and Omok) and Badminton are desktop apps, not arcade games, but they share the same Worker. Their boards and rooms are listed in `src/os/arcade/apps.ts`, show up on the arcade Leaderboards page (their cards' colors and glyphs live in `leaderboard-cards.ts`, and Go's three board sizes share one card), and are written into the Worker specs by `npm run arcade:specs`.
 
 ## Online Rooms
 

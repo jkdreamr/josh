@@ -443,6 +443,8 @@ function Play({ mode }: { mode: Mode }) {
   };
   const doneAt = useRef<number | null>(null);
   const dots = useRef(new Map<number, SVGCircleElement>());
+  /** Minimap markers for the buses, by hazard index. */
+  const busDots = useRef(new Map<number, SVGRectElement>());
   const tags = useRef(new Map<number, HTMLDivElement>());
   const lastLevel = useRef(0);
   /** A short buzz on phones that can. */
@@ -836,6 +838,13 @@ function Play({ mode }: { mode: Mode }) {
           sfx.tone({ freq: 2093, dur: 0.3, type: 'sine', vol: 0.12, delay: 0.13 });
         }
         break;
+      case 'honk':
+        // the bus's two-tone horn
+        if (mine) {
+          sfx.tone({ freq: 415, dur: 0.24, type: 'sawtooth', vol: 0.08 });
+          sfx.tone({ freq: 330, dur: 0.42, type: 'sawtooth', vol: 0.09, delay: 0.22 });
+        }
+        break;
       case 'slam':
         if (mine) sfx.tone({ freq: 240, to: 120, dur: 0.14, type: 'sawtooth', vol: 0.12 });
         break;
@@ -915,6 +924,10 @@ function Play({ mode }: { mode: Mode }) {
 
   /** Minimap dots and online name tags, moved straight on the DOM every frame. */
   function placeOverlays(r: Race, v: View) {
+    for (const [i, el] of busDots.current) {
+      const h = r.hazards[i];
+      if (h) el.setAttribute('transform', `translate(${-h.x} ${-h.z})`);
+    }
     for (const k of r.karts) {
       const dot = dots.current.get(k.idx);
       if (dot) {
@@ -1046,6 +1059,25 @@ function Play({ mode }: { mode: Mode }) {
           <svg className="g-palmdrive-map" viewBox={minimap.box} aria-hidden="true">
             <path d={minimap.d} className="g-palmdrive-map-road" />
             <path d={minimap.d} className="g-palmdrive-map-line" />
+            {r.hazards.map(
+              (h, i) =>
+                h.kind === 'bus' && (
+                  <rect
+                    key={`bus${i}`}
+                    ref={(el) => {
+                      if (el) busDots.current.set(i, el);
+                      else busDots.current.delete(i);
+                    }}
+                    x={-8}
+                    y={-8}
+                    width={16}
+                    height={16}
+                    rx={3}
+                    transform={`translate(${-h.x} ${-h.z})`}
+                    className="g-palmdrive-map-bus"
+                  />
+                ),
+            )}
             {r.karts
               .slice()
               .sort((a, b) => (a.idx === r.me ? 1 : 0) - (b.idx === r.me ? 1 : 0))
