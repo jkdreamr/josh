@@ -8,6 +8,7 @@ import {
   SPEED,
   START_R,
   TICK,
+  TURN,
   addPlayer,
   advance,
   applyDeath,
@@ -988,4 +989,122 @@ test('the soundtrack loops, and its tension layer only plays while you are out',
   const seq = new Sequencer(() => {});
   seq.tick(10, false, 2);
   assert.ok(Math.abs(seq.step - steps) <= 1);
+});
+
+import { keyAim } from '../src/os/arcade/games/paperio/ctl.ts';
+
+test('arrow keys and WASD point the way, like Paper.io 2: up is north, neighbours go diagonal, opposites cancel', () => {
+  const near = (a: number | null, b: number) => a !== null && Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) < 1e-9;
+  assert.equal(keyAim(false, false, false, false), null, 'no key held: the mouse or a finger steers');
+  assert.ok(near(keyAim(false, false, false, true), 0), 'right is east');
+  assert.ok(near(keyAim(false, true, false, false), Math.PI / 2), 'down is south (board y grows down the screen)');
+  assert.ok(near(keyAim(false, false, true, false), Math.PI), 'left is west');
+  assert.ok(near(keyAim(true, false, false, false), -Math.PI / 2), 'up is north');
+  assert.ok(near(keyAim(true, false, false, true), -Math.PI / 4), 'up and right is north east');
+  assert.ok(near(keyAim(false, true, true, false), (3 * Math.PI) / 4), 'down and left is south west');
+  assert.ok(Number.isNaN(keyAim(false, false, true, true)), 'left with right cancels: straight on');
+  assert.ok(Number.isNaN(keyAim(true, true, false, false)), 'up with down cancels: straight on');
+  assert.ok(near(keyAim(true, false, true, true), -Math.PI / 2), 'three keys leave the odd one out');
+});
+
+test('a held key swings the head round to that heading at the turn rate, and letting go keeps it', () => {
+  const w = world();
+  const a = addPlayer(w, { name: 'a', color: 0, kind: 'local' });
+  const c = Math.floor(w.c);
+  spawnAt(w, a, c, c, 0);
+  // heading east, hold left: a U-turn arc, never an instant reverse
+  a.want = keyAim(false, false, true, false) as number;
+  advance(w, a, TICK);
+  assert.ok(Math.abs(Math.atan2(Math.sin(a.h), Math.cos(a.h))) <= TURN * TICK + 1e-9, 'one tick turns no more than the turn rate');
+  let ticks = 1;
+  while (Math.abs(Math.atan2(Math.sin(a.h - Math.PI), Math.cos(a.h - Math.PI))) > 1e-9 && ticks < 600) {
+    advance(w, a, TICK);
+    ticks++;
+  }
+  assert.ok(Math.abs(ticks * TICK - Math.PI / TURN) < 2 * TICK, `half a circle takes pi / TURN seconds (${ticks} ticks)`);
+  // still held: it stays on west instead of circling
+  for (let i = 0; i < 30; i++) advance(w, a, TICK);
+  assert.ok(Math.abs(Math.atan2(Math.sin(a.h - Math.PI), Math.cos(a.h - Math.PI))) < 1e-9, 'holding a key settles on its heading');
+  // a quick tap of up turns part of the way, and letting go keeps the heading reached
+  a.want = keyAim(true, false, false, false) as number;
+  for (let i = 0; i < 3; i++) advance(w, a, TICK);
+  const tapped = a.h;
+  assert.ok(Math.abs(Math.atan2(Math.sin(tapped - Math.PI), Math.cos(tapped - Math.PI)) - 3 * TURN * TICK) < 1e-6, 'a tap turns by its length');
+  a.want = NaN;
+  for (let i = 0; i < 30; i++) advance(w, a, TICK);
+  assert.ok(Math.abs(a.h - tapped) < 1e-12, 'released: straight on, no snapping to the key');
+});
+
+import { steerKeys } from '../src/os/arcade/games/paperio/ctl.ts';
+
+test('who steers with which keys: alone the arrows and WASD both work, split screen gives WASD to player 1 and the arrows to player 2', () => {
+  assert.deepEqual(steerKeys(0, false), ['up', 'down', 'left', 'right']);
+  // the solo names are the kit's aliases, which cover both the arrows and WASD
+  const kit = readFileSync(new URL('../src/os/arcade/kit/keys.ts', import.meta.url), 'utf8');
+  for (const [alias, arrow, letter] of [['up', 'ArrowUp', 'KeyW'], ['down', 'ArrowDown', 'KeyS'], ['left', 'ArrowLeft', 'KeyA'], ['right', 'ArrowRight', 'KeyD']]) {
+    assert.match(kit, new RegExp(`${alias}: \\['${arrow}', '${letter}'\\]`), `${alias} covers ${arrow} and ${letter}`);
+  }
+  assert.deepEqual(steerKeys(0, true), ['KeyW', 'KeyS', 'KeyA', 'KeyD']);
+  assert.deepEqual(steerKeys(1, true), ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+  const p1 = new Set(steerKeys(0, true));
+  assert.ok(steerKeys(1, true).every((k) => !p1.has(k)), 'the two players never share a key');
+});
+
+/** Runs a head to the north wall and along it eastward, laying trail on the wall behind it. */
+function slideAlongNorthWall() {
+  const w = world();
+  const a = addPlayer(w, { name: 'a', color: 0, kind: 'local' });
+  const c = Math.floor(w.c);
+  spawnAt(w, a, c - 30, c - 60, -Math.PI / 2);
+  a.want = -Math.PI / 3;
+  for (let i = 0; i < 150 && a.alive; i++) {
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+  }
+  assert.ok(a.alive && a.out, 'sliding along the wall with trail behind');
+  assert.ok(Math.hypot(a.x - w.c, a.y - w.c) >= w.r - EDGE - 1e-3, 'pinned to the wall');
+  return { w, a };
+}
+
+test('a held key aimed back through the wall turns one way round, never flipping every tick', () => {
+  const { w, a } = slideAlongNorthWall();
+  // north west: the short way turns into the wall and back over the trail just laid, so the head goes the long way
+  a.want = (-3 * Math.PI) / 4;
+  let flips = 0;
+  let first = 0;
+  let last = 0;
+  for (let i = 0; i < 240 && a.alive; i++) {
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+    const dh = Math.atan2(Math.sin(a.h - a.ph), Math.cos(a.h - a.ph));
+    if (Math.abs(dh) < 1e-9) continue;
+    const s = dh > 0 ? 1 : -1;
+    if (!first) first = s;
+    if (last && s !== last) flips++;
+    last = s;
+  }
+  assert.equal(first, 1, 'the first turn goes the long way, clockwise, off the wall');
+  assert.equal(flips, 0, 'and it keeps turning that way until it gets there');
+});
+
+test('a head left facing straight into the wall slides off along it instead of parking', () => {
+  const w = world();
+  const a = addPlayer(w, { name: 'a', color: 0, kind: 'local' });
+  const c = Math.floor(w.c);
+  spawnAt(w, a, c + 70, c, 0);
+  a.want = 0;
+  for (let i = 0; i < 90; i++) {
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+  }
+  assert.ok(Math.hypot(a.x - w.c, a.y - w.c) >= w.r - EDGE - 1e-3, 'held square against the east wall');
+  // let go (or hold left and right together): nobody steers
+  a.want = NaN;
+  const x0 = a.x;
+  const y0 = a.y;
+  for (let i = 0; i < 120 && a.alive; i++) {
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+  }
+  assert.ok(Math.hypot(a.x - x0, a.y - y0) > 40, `it moves on along the wall (${Math.hypot(a.x - x0, a.y - y0).toFixed(1)} cells in 2 s)`);
 });

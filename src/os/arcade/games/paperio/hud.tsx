@@ -131,10 +131,10 @@ export function HowToPlay({ root, touch, online = false, onClose }: { root: HTML
             <>
               <dt>mouse</dt>
               <dd>Your cube steers toward the pointer</dd>
-              <dt>A D or ← →</dt>
-              <dd>Turn left and right</dd>
+              <dt>WASD or arrows</dt>
+              <dd>Head that way: up is up the screen, and two keys together go diagonally. Let go to keep going straight</dd>
               <dt>2 players</dt>
-              <dd>Player 1 turns with A and D, player 2 with the arrow keys</dd>
+              <dd>Player 1 steers with WASD, player 2 with the arrow keys</dd>
               <dt>Esc</dt>
               <dd>{online ? 'Online rounds keep going, there is no pause' : 'Pause'}</dd>
             </>

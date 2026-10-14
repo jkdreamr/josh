@@ -51,6 +51,29 @@ export type Ctl = {
   online?: OnlineInfo;
 };
 
+/**
+ * Arrow keys and WASD the way Paper.io 2 reads them: each key names a direction on the screen (up is north, and the
+ * camera never turns), two neighbouring keys aim between them, and the head swings round toward that heading at the
+ * usual turn rate. Letting go keeps the heading the head has reached. Returns the heading to aim at, NaN while held
+ * keys cancel out (left with right: the head runs straight on), or null when no key is held (the mouse or a finger
+ * steers instead).
+ */
+export function keyAim(up: boolean, down: boolean, left: boolean, right: boolean): number | null {
+  if (!up && !down && !left && !right) return null;
+  const x = (right ? 1 : 0) - (left ? 1 : 0);
+  const y = (down ? 1 : 0) - (up ? 1 : 0);
+  return x || y ? Math.atan2(y, x) : NaN;
+}
+
+/**
+ * The up, down, left and right keys that steer local player `i`. Alone, the kit's aliases cover both the arrows and
+ * WASD; in split screen player 1 has WASD and player 2 the arrows.
+ */
+export function steerKeys(i: number, split: boolean): readonly [string, string, string, string] {
+  if (!split) return ['up', 'down', 'left', 'right'];
+  return i === 0 ? ['KeyW', 'KeyS', 'KeyA', 'KeyD'] : ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+}
+
 export function lerpPose(p: Player, alpha: number, out: Pose) {
   out.x = p.px + (p.x - p.px) * alpha;
   out.y = p.py + (p.y - p.py) * alpha;

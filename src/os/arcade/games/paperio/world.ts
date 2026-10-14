@@ -60,8 +60,12 @@ export type Player = {
   ry: number;
   /** Keyboard turn, -1 left, 0, 1 right. */
   turn: number;
-  /** Heading to steer toward (mouse, joystick, bots), NaN for none. */
+  /** Heading to steer toward (keys, mouse, joystick, bots), NaN for none. */
   want: number;
+  /** The way round (1 or -1, 0 for none) a turn chose at the wall to stay off its own trail, held until it arrives. */
+  wallTurn: number;
+  /** The heading wanted when that was last checked (a real change of aim drops the held way round). */
+  wallWant: number;
   /** Outside your land with a trail behind you. */
   out: boolean;
   /** Cells walked since spawning: stamps trail age. */
@@ -236,6 +240,8 @@ export function addPlayer(w: World, opts: { name: string; color: number; skin?: 
     ry: w.c,
     turn: 0,
     want: NaN,
+    wallTurn: 0,
+    wallWant: NaN,
     out: false,
     steps: 0,
     cell: 0,
@@ -367,6 +373,7 @@ export function spawnAt(w: World, p: Player, cx: number, cy: number, h = 0) {
   p.h = p.ph = h;
   p.want = NaN;
   p.turn = 0;
+  p.wallTurn = 0;
   p.cell = cy * n + cx;
   p.bornAt = w.time;
   p.diedAt = -1;
@@ -450,6 +457,8 @@ export function findSpawn(w: World, rng: () => number = w.rng, minFree = 0.75): 
 
 /** Below this angle between the heading and "straight into the wall", a head on the wall slides slower. */
 const WALL_EASE = 0.45;
+/** An aim that moves more than this (radians) between ticks is a new aim, and drops a way round held at the wall. */
+const WALL_LATCH = 0.5;
 
 /** Sliding back along the wall on side `back` would reach own trail old enough to kill by the time the head got there. */
 function wallTrailBehind(w: World, p: Player, a0: number, back: number) {
@@ -480,15 +489,28 @@ export function advance(w: World, p: Player, dt: number, speed = SPEED) {
   const pinned = ox0 * ox0 + oy0 * oy0 >= (lim - 1e-3) * (lim - 1e-3);
   if (p.want === p.want) {
     let d = angleDiff(p.want, p.h);
-    if (pinned && d !== 0) {
+    if (p.wallTurn !== 0 && Math.abs(angleDiff(p.want, p.wallWant)) > WALL_LATCH) p.wallTurn = 0;
+    if (p.wallTurn !== 0) {
+      // Keep going round the way chosen at the wall. Deciding afresh every tick turned it straight back the moment
+      // the turn lifted the head off the wall, so a held key or a still pointer wobbled along the wall for seconds.
+      if (d !== 0 && d > 0 !== p.wallTurn > 0) d += p.wallTurn * Math.PI * 2;
+    } else if (pinned && d !== 0) {
       // On the wall, a turn through "straight into it" reverses the slide. When that would run back over the trail
       // just laid along the wall, go round the other way instead, curving off the wall as the head would in the open.
       const a0 = Math.atan2(oy0, ox0);
       const dn = angleDiff(a0, p.h);
-      if (dn !== 0 && dn > 0 === d > 0 && Math.abs(dn) < Math.abs(d) && wallTrailBehind(w, p, a0, dn > 0 ? 1 : -1)) d -= (d > 0 ? 1 : -1) * Math.PI * 2;
+      if (dn !== 0 && dn > 0 === d > 0 && Math.abs(dn) < Math.abs(d) && wallTrailBehind(w, p, a0, dn > 0 ? 1 : -1)) {
+        d -= (d > 0 ? 1 : -1) * Math.PI * 2;
+        p.wallTurn = d > 0 ? 1 : -1;
+      }
     }
+    p.wallWant = p.want;
+    if (d <= maxTurn && d >= -maxTurn) p.wallTurn = 0;
     p.h = wrapAngle(p.h + (d > maxTurn ? maxTurn : d < -maxTurn ? -maxTurn : d));
-  } else if (p.turn !== 0) p.h = wrapAngle(p.h + p.turn * maxTurn);
+  } else {
+    p.wallTurn = 0;
+    if (p.turn !== 0) p.h = wrapAngle(p.h + p.turn * maxTurn);
+  }
   const step = speed * dt;
   let nx = p.x + Math.cos(p.h) * step;
   let ny = p.y + Math.sin(p.h) * step;
@@ -500,12 +522,16 @@ export function advance(w: World, p: Player, dt: number, speed = SPEED) {
     const a0 = Math.atan2(oy0, ox0);
     const off = angleDiff(p.h, a0);
     const face = Math.abs(off);
-    const dir = off >= 0 ? 1 : -1;
+    const idle = p.want !== p.want && p.turn === 0;
+    let dir = off >= 0 ? 1 : -1;
+    // square on with nobody steering, it leaves on the side without its own trail along the wall
+    if (idle && face <= 0.05 && wallTrailBehind(w, p, a0, dir)) dir = -dir;
     const a1 = a0 + (dir * step * Math.min(1, face / WALL_EASE)) / lim;
     nx = w.c + Math.cos(a1) * lim;
     ny = w.c + Math.sin(a1) * lim;
-    // with nobody steering, the head turns to run along the wall instead of facing into it
-    if (p.want !== p.want && p.turn === 0 && face > 0.05 && face < Math.PI / 2) {
+    // with nobody steering, the head turns to run along the wall instead of facing into it (a head that settled
+    // square on used to stay parked there, and a Paper.io head never stops)
+    if (idle && face < Math.PI / 2) {
       const d = angleDiff(a1 + (dir * Math.PI) / 2, p.h);
       p.h = wrapAngle(p.h + (d > maxTurn ? maxTurn : d < -maxTurn ? -maxTurn : d));
     }
