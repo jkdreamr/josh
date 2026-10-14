@@ -588,13 +588,20 @@ function enter(w: World, p: Player, k: number, x: number, y: number) {
   }
 }
 
-/** Lays trail with the disc brush around a cell, never over land of your own or another trail. */
+/**
+ * Lays trail with the disc brush around a cell, never over land of your own or another trail. A guest's own head
+ * draws over the trails it only sees drawn for others: the host cuts them there, and a gap in our band would let the
+ * predicted capture leak out.
+ */
 function stamp(w: World, p: Player, k: number, x: number, y: number) {
   const me = p.id + 1;
   const { trail, owner, arena, trailAt, brush } = w;
+  const overGhosts = !w.authority && p.kind !== 'ghost';
   for (let i = 0; i < brush.length; i++) {
     const kk = k + brush[i];
-    if (!arena[kk] || owner[kk] === me || trail[kk] !== 0) continue;
+    if (!arena[kk] || owner[kk] === me) continue;
+    const t = trail[kk];
+    if (t !== 0 && !(overGhosts && t !== me && w.players[t - 1]?.kind === 'ghost')) continue;
     trail[kk] = me;
     trailAt[kk] = p.steps;
     pushTrail(p, kk);

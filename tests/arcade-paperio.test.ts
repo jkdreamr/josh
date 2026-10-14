@@ -376,6 +376,35 @@ test('a head that runs into the wall keeps its speed along it', () => {
   assert.ok(b.a.alive, `held against the wall (${b.a.cause})`);
 });
 
+test('a guest predicts the whole capture when its loop cuts through a trail it only sees drawn', () => {
+  // the same loop on the host (which kills the owner of the crossed trail) and on a guest's copy (which only draws it)
+  const result = (authority: boolean) => {
+    const w = createWorld({ radius: 120, seed: 7, authority });
+    const a = addPlayer(w, { name: 'a', color: 0, kind: 'local' });
+    const b = addPlayer(w, { name: 'b', color: 1, kind: authority ? 'local' : 'ghost' });
+    const c = Math.floor(w.c);
+    spawnAt(w, a, c - 50, c);
+    spawnAt(w, b, c + 10, c + 70);
+    // b's trail runs north across where a's loop will go (a guest draws it where b is seen out)
+    if (!authority) b.out = true;
+    walk(w, b, [[c + 10.5, c - 40.5]]);
+    assert.ok(b.out && b.trailLen > 100);
+    walk(w, a, [
+      [c - 20.5, c - 30.5],
+      [c + 40.5, c - 30.5],
+      [c + 40.5, c + 30.5],
+      [c - 20.5, c + 30.5],
+      [c - 50.5, c + 0.5],
+    ]);
+    assert.ok(a.alive && !a.out);
+    return { pct: percent(w, 0), middle: ownerAt(w, c + 20, c) };
+  };
+  const host = result(true);
+  const guest = result(false);
+  assert.equal(guest.middle, 1, 'the middle of the loop is predicted ours');
+  assert.ok(Math.abs(host.pct - guest.pct) < 0.2, `host ${host.pct.toFixed(2)}% vs guest ${guest.pct.toFixed(2)}%`);
+});
+
 test('guests mirror the host: runs and deaths applied in order give the same board', () => {
   const host = world();
   const guest = createWorld({ radius: 120, seed: 1, authority: false });
