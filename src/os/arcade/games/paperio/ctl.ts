@@ -65,6 +65,15 @@ export function keyAim(up: boolean, down: boolean, left: boolean, right: boolean
   return x || y ? Math.atan2(y, x) : NaN;
 }
 
+/**
+ * The up, down, left and right keys that steer local player `i`. Alone, the kit's aliases cover both the arrows and
+ * WASD; in split screen player 1 has WASD and player 2 the arrows.
+ */
+export function steerKeys(i: number, split: boolean): readonly [string, string, string, string] {
+  if (!split) return ['up', 'down', 'left', 'right'];
+  return i === 0 ? ['KeyW', 'KeyS', 'KeyA', 'KeyD'] : ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+}
+
 export function lerpPose(p: Player, alpha: number, out: Pose) {
   out.x = p.px + (p.x - p.px) * alpha;
   out.y = p.py + (p.y - p.py) * alpha;

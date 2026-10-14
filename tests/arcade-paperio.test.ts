@@ -1034,3 +1034,77 @@ test('a held key swings the head round to that heading at the turn rate, and let
   for (let i = 0; i < 30; i++) advance(w, a, TICK);
   assert.ok(Math.abs(a.h - tapped) < 1e-12, 'released: straight on, no snapping to the key');
 });
+
+import { steerKeys } from '../src/os/arcade/games/paperio/ctl.ts';
+
+test('who steers with which keys: alone the arrows and WASD both work, split screen gives WASD to player 1 and the arrows to player 2', () => {
+  assert.deepEqual(steerKeys(0, false), ['up', 'down', 'left', 'right']);
+  // the solo names are the kit's aliases, which cover both the arrows and WASD
+  const kit = readFileSync(new URL('../src/os/arcade/kit/keys.ts', import.meta.url), 'utf8');
+  for (const [alias, arrow, letter] of [['up', 'ArrowUp', 'KeyW'], ['down', 'ArrowDown', 'KeyS'], ['left', 'ArrowLeft', 'KeyA'], ['right', 'ArrowRight', 'KeyD']]) {
+    assert.match(kit, new RegExp(`${alias}: \\['${arrow}', '${letter}'\\]`), `${alias} covers ${arrow} and ${letter}`);
+  }
+  assert.deepEqual(steerKeys(0, true), ['KeyW', 'KeyS', 'KeyA', 'KeyD']);
+  assert.deepEqual(steerKeys(1, true), ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+  const p1 = new Set(steerKeys(0, true));
+  assert.ok(steerKeys(1, true).every((k) => !p1.has(k)), 'the two players never share a key');
+});
+
+/** Runs a head to the north wall and along it eastward, laying trail on the wall behind it. */
+function slideAlongNorthWall() {
+  const w = world();
+  const a = addPlayer(w, { name: 'a', color: 0, kind: 'local' });
+  const c = Math.floor(w.c);
+  spawnAt(w, a, c - 30, c - 60, -Math.PI / 2);
+  a.want = -Math.PI / 3;
+  for (let i = 0; i < 150 && a.alive; i++) {
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+  }
+  assert.ok(a.alive && a.out, 'sliding along the wall with trail behind');
+  assert.ok(Math.hypot(a.x - w.c, a.y - w.c) >= w.r - EDGE - 1e-3, 'pinned to the wall');
+  return { w, a };
+}
+
+test('a held key aimed back through the wall turns one way round, never flipping every tick', () => {
+  const { w, a } = slideAlongNorthWall();
+  // north west: the short way turns into the wall and back over the trail just laid, so the head goes the long way
+  a.want = (-3 * Math.PI) / 4;
+  let flips = 0;
+  let first = 0;
+  let last = 0;
+  for (let i = 0; i < 240 && a.alive; i++) {
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+    const dh = Math.atan2(Math.sin(a.h - a.ph), Math.cos(a.h - a.ph));
+    if (Math.abs(dh) < 1e-9) continue;
+    const s = dh > 0 ? 1 : -1;
+    if (!first) first = s;
+    if (last && s !== last) flips++;
+    last = s;
+  }
+  assert.equal(first, 1, 'the first turn goes the long way, clockwise, off the wall');
+  assert.equal(flips, 0, 'and it keeps turning that way until it gets there');
+});
+
+test('a head left facing straight into the wall slides off along it instead of parking', () => {
+  const w = world();
+  const a = addPlayer(w, { name: 'a', color: 0, kind: 'local' });
+  const c = Math.floor(w.c);
+  spawnAt(w, a, c + 70, c, 0);
+  a.want = 0;
+  for (let i = 0; i < 90; i++) {
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+  }
+  assert.ok(Math.hypot(a.x - w.c, a.y - w.c) >= w.r - EDGE - 1e-3, 'held square against the east wall');
+  // let go (or hold left and right together): nobody steers
+  a.want = NaN;
+  const x0 = a.x;
+  const y0 = a.y;
+  for (let i = 0; i < 120 && a.alive; i++) {
+    advance(w, a, TICK);
+    drive(w, a, a.x, a.y);
+  }
+  assert.ok(Math.hypot(a.x - x0, a.y - y0) > 40, `it moves on along the wall (${Math.hypot(a.x - x0, a.y - y0).toFixed(1)} cells in 2 s)`);
+});

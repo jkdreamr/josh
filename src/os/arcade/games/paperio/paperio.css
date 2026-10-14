@@ -149,11 +149,16 @@
   font-style: normal;
 }
 .g-paperio .g-paperio-me small {
-  margin-top: 3px;
-  font: 700 12px/1 var(--g-paperio-num);
+  margin-top: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font: 700 12px/1.1 var(--g-paperio-num);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: rgba(42, 29, 26, 0.65);
+  color: rgba(42, 29, 26, 0.8);
+  /* a card chip, so the label reads over dark land as well as the paper floor */
+  background: var(--g-paperio-card);
+  box-shadow: 0 0 0 1px var(--g-paperio-edge);
 }
 .g-paperio .is-wide .g-paperio-me.is-split.is-v1 {
   left: calc(50% + 62px);

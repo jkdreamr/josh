@@ -3,7 +3,7 @@ import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOpti
 import type { GameProps } from '../../types';
 import { buildView, type Cam, type HeadPose, type View } from './scene';
 import { RANKED_BOTS, createMatch, rankedBoard } from './match';
-import { keyAim, localCtl, type Ctl, type Net } from './ctl';
+import { keyAim, localCtl, steerKeys, type Ctl, type Net } from './ctl';
 import { SKINS, colorOf, freshLocker, loadBests, loadLocker, record, saveLocker, shade, skinOf, submitBest, subscribeLocker, type Locker, type Skin } from './skins';
 import { HowToPlay, SkinIcon, SkinSheet, createMiniMap, paintMiniMap, type MiniMap } from './hud';
 import { TICK, drive, ownerHash, percent, ranking, type Ev } from './world';
@@ -510,11 +510,8 @@ function Play({ mode }: { mode: Mode }) {
       if (!p || !p.alive) return;
       p.turn = 0;
       // keys point the way (up is north), as in Paper.io 2; while any is held the mouse waits until it moves again
-      const aim = !twoUp
-        ? keyAim(keys.down('up'), keys.down('down'), keys.down('left'), keys.down('right'))
-        : i === 0
-          ? keyAim(keys.down('KeyW'), keys.down('KeyS'), keys.down('KeyA'), keys.down('KeyD'))
-          : keyAim(keys.down('ArrowUp'), keys.down('ArrowDown'), keys.down('ArrowLeft'), keys.down('ArrowRight'));
+      const [ku, kd, kl, kr] = steerKeys(i, twoUp);
+      const aim = keyAim(keys.down(ku), keys.down(kd), keys.down(kl), keys.down(kr));
       if (aim !== null) {
         p.want = aim;
         mouse.current.keyMode = true;
