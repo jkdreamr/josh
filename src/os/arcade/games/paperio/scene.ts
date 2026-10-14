@@ -522,7 +522,9 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
   const stampOf = new Uint32Array(n * n);
   let stamp = 1;
   const queue = new Int32Array(n * n);
-  const dist = new Uint16Array(n * n);
+  // the trail cell each claimed cell is nearest to, carried through the fill: round, even wavefronts
+  const fromX = new Int16Array(n * n);
+  const fromY = new Int16Array(n * n);
   const deaths: { id: number; x: number; y: number }[] = [];
   const spawns: { id: number; x: number; y: number }[] = [];
   let janitorRow = 0;
@@ -538,18 +540,22 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
       const k = seeds[i];
       if (own[k] !== v || stampOf[k] === stamp) continue;
       stampOf[k] = stamp;
-      dist[k] = 0;
+      const y = (k / n) | 0;
+      fromX[k] = k - y * n;
+      fromY[k] = y;
       delay[k] = 0;
       queue[tail++] = k;
     }
     while (head < tail) {
       const k = queue[head++];
-      const d = dist[k] + 1;
       for (let i = 0; i < 4; i++) {
         const kk = i === 0 ? k - 1 : i === 1 ? k + 1 : i === 2 ? k - n : k + n;
         if (kk < 0 || kk >= n * n || stampOf[kk] === stamp || own[kk] !== v || data[kk * 4] === v) continue;
         stampOf[kk] = stamp;
-        dist[kk] = d;
+        fromX[kk] = fromX[k];
+        fromY[kk] = fromY[k];
+        const yy = (kk / n) | 0;
+        const d = Math.hypot(kk - yy * n - fromX[k], yy - fromY[k]);
         delay[kk] = Math.min(56, (d / 4.8) | 0);
         queue[tail++] = kk;
       }

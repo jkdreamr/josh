@@ -526,6 +526,7 @@ function Play({ mode }: { mode: Mode }) {
     if (e.t === 'capture') {
       if (localIdx < 0 || e.gained <= 0) return;
       const pct = (e.gained / w.arenaCells) * 100;
+      if (pct < 0.01) return;
       const big = pct >= 1;
       popAt(localIdx, e.x, e.y, `+${pct >= 10 ? pct.toFixed(0) : pct.toFixed(pct >= 1 ? 1 : 2)}%`, big);
       const steps = Math.min(5, 2 + Math.floor(Math.log2(1 + pct * 4)));
