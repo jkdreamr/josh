@@ -50,7 +50,7 @@ import {
 } from '../src/os/arcade/games/chained/logic.ts';
 import { configOf, endOf, events, guestState, hostState, parsePacket, reportOf, syncClock } from '../src/os/arcade/games/chained/net.ts';
 import { BPM, SONGS, STEPS, Sequencer, hz, midi } from '../src/os/arcade/games/chained/music.ts';
-import { climb } from './chained-bot.ts';
+import { climb } from '../src/os/arcade/games/chained/shade.ts';
 
 const DT = 1 / 60;
 const idle: Input = { side: 0, fwd: 0, jump: false, hold: false };
@@ -568,7 +568,7 @@ test('in Normal mode burning sends the team back to the floor; in Beginner, back
     b.grounded = false;
     b.ground = -1;
     step(g, DT);
-    assert.ok(b.burned >= 0 && g.respawn, 'burned and a respawn is coming');
+    assert.ok(b.burned >= 0 && g.respawn[0], 'burned and a respawn is coming');
     run(g, 1.6);
     assert.equal(b.burned, -1);
     const home = lv.checkpoints[mode === 'normal' ? 0 : 2];
@@ -650,7 +650,7 @@ test('a guest never decides respawns or the result on its own, and takes the hos
   me.grounded = false;
   me.ground = -1;
   step(g, DT);
-  assert.ok(me.burned >= 0 && g.respawn === null, 'burned, but waiting for the host');
+  assert.ok(me.burned >= 0 && g.respawn[0] === null, 'burned, but waiting for the host');
   scheduleRespawn(g, 0, g.time + 0.2);
   run(g, 0.5);
   assert.equal(me.burned, -1);
@@ -692,7 +692,7 @@ test('a careful pair of souls can climb all the way out in Normal mode', () => {
   assert.ok(g.won !== null, `never got out: reached ${Math.max(...g.souls.map((s) => s.best)).toFixed(1)} m of ${TOP}`);
   assert.ok(time < 600, `took ${fmtTime(time)}`);
   assert.ok(g.lit.every(Boolean), 'lit every beacon on the way');
-  assert.equal(g.zone, ZONES.length - 1);
+  assert.equal(g.zones[0], ZONES.length - 1);
 });
 
 test('a careful pair of souls can climb out in Beginner mode without ever needing a beacon', () => {

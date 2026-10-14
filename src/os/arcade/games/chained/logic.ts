@@ -31,14 +31,17 @@ import {
   type Pose,
 } from './level.ts';
 
-export type Mode = 'normal' | 'beginner' | 'lava';
-export const MODES = ['normal', 'beginner', 'lava'] as const;
+export type Mode = 'normal' | 'beginner' | 'lava' | 'race';
+export const MODES = ['normal', 'beginner', 'lava', 'race'] as const;
 export const isMode = (v: unknown): v is Mode => (MODES as readonly string[]).includes(v as string);
 export const MODE_INFO: Record<Mode, { label: string; blurb: string }> = {
   normal: { label: 'Normal', blurb: 'No checkpoints. A fall only costs you height. Lava is just scenery.' },
   beginner: { label: 'Beginner', blurb: 'A beacon at every circle. Fall too far and the team starts again from the last one.' },
   lava: { label: 'Lava', blurb: 'The lava rises from the start. Touch it and the whole team is done.' },
+  race: { label: 'Race', blurb: 'Two chains on one tower. The first team to stand on the way out wins. A fall only costs height.' },
 };
+/** The modes with a leaderboard: a race depends on who you race. */
+export const RANKED_MODES = ['normal', 'beginner', 'lava'] as const;
 
 export const SUB = 1 / 120;
 export const COYOTE = 0.1;
@@ -91,18 +94,27 @@ export const WIND_GROUND = 5;
 /** Time before the souls can move. */
 export const COUNTDOWN = 1.2;
 export const MAX_SOULS = 4;
+/** A race is two teams; a climb is one. */
+export const MAX_TEAMS = 2;
 
 export type Surface = 'stone' | 'ice' | 'metal' | 'none';
 export type Input = { side: -1 | 0 | 1; fwd: -1 | 0 | 1; jump: boolean; hold: boolean };
 export const idle = (): Input => ({ side: 0, fwd: 0, jump: false, hold: false });
 
 export type SoulKind = 'local' | 'remote';
+/** Who moves a soul: a person at a keyboard, or the shades (the game's own climbers in a race). */
+export type Driver = 'human' | 'shade';
 export type Soul = {
   idx: number;
+  /** The seat of whoever owns this soul online, -1 for a shade. */
   seat: number;
   name: string;
   color: string;
   kind: SoulKind;
+  team: number;
+  driver: Driver;
+  /** Run speed as a share of a full run (the shades climb slower on the easier settings). */
+  pace: number;
   x: number;
   y: number;
   z: number;
@@ -165,10 +177,10 @@ export type Ev =
   | { t: 'crumble'; id: number; phase: 'warn' | 'fall' }
   | { t: 'spring'; i: number }
   | { t: 'checkpoint'; cp: number; i: number }
-  | { t: 'zone'; zone: number }
+  | { t: 'zone'; zone: number; team: number }
   | { t: 'burn'; i: number }
-  | { t: 'respawn'; cp: number }
-  | { t: 'win'; time: number }
+  | { t: 'respawn'; cp: number; team: number }
+  | { t: 'win'; time: number; team: number }
   | { t: 'lose'; height: number }
   | { t: 'gust'; dir: number; phase: 'build' | 'gust' };
 
@@ -176,8 +188,11 @@ export type Game = {
   mode: Mode;
   level: Level;
   souls: Soul[];
-  /** Soul indexes in chain order. */
+  /** Every soul in chain order, team by team. */
   chain: number[];
+  /** Each team's souls in chain order. A climb has one team; a race has two. */
+  chains: number[][];
+  teams: number;
   /** Decides respawns and the result (solo, shared keyboard, or the host online). */
   authority: boolean;
   /** One player climbing both souls: the lava gives them more time. */
@@ -187,18 +202,24 @@ export type Game = {
   /** The team's checkpoint and which beacons have been lit. */
   cp: number;
   lit: boolean[];
-  zone: number;
+  /** The circle each team has reached. */
+  zones: number[];
   crumbles: Map<number, number>;
-  respawn: { cp: number; at: number } | null;
+  /** A pending respawn per team. */
+  respawn: ({ cp: number; at: number } | null)[];
   won: number | null;
+  /** The team that climbed out first. */
+  winner: number | null;
   lost: { height: number } | null;
   gustPhase: 'calm' | 'build' | 'gust';
   events: Ev[];
   acc: number;
   started: boolean;
+  /** Called once per frame before the substeps: the shades decide their inputs here. */
+  drivers: ((g: Game, dt: number) => void)[];
 };
 
-export type SoulSpec = { seat: number; name: string; color: string; kind: SoulKind };
+export type SoulSpec = { seat: number; name: string; color: string; kind: SoulKind; team?: number; driver?: Driver; pace?: number };
 
 export function createGame(opts: { mode: Mode; souls: SoulSpec[]; authority?: boolean; countdown?: number; level?: Level; solo?: boolean }): Game {
   const level = opts.level ?? buildLevel();
@@ -211,6 +232,9 @@ export function createGame(opts: { mode: Mode; souls: SoulSpec[]; authority?: bo
       name: spec.name,
       color: spec.color,
       kind: spec.kind,
+      team: Math.max(0, Math.min(MAX_TEAMS - 1, spec.team ?? 0)),
+      driver: spec.driver ?? 'human',
+      pace: Math.max(0.5, Math.min(1, spec.pace ?? 1)),
       x: at.x,
       y: at.y,
       z: at.z,
@@ -248,26 +272,32 @@ export function createGame(opts: { mode: Mode; souls: SoulSpec[]; authority?: bo
       net: null,
     };
   });
+  const teams = Math.max(1, ...souls.map((s) => s.team + 1));
+  const chains = Array.from({ length: teams }, (_, t) => souls.filter((s) => s.team === t).map((s) => s.idx));
   return {
     mode: opts.mode,
     level,
     souls,
-    chain: souls.map((s) => s.idx),
+    chain: chains.flat(),
+    chains,
+    teams,
     authority: opts.authority ?? true,
     solo: !!opts.solo,
     time: -(opts.countdown ?? COUNTDOWN),
     lava: LAVA_Y,
     cp: 0,
     lit: level.checkpoints.map((_, i) => i === 0),
-    zone: 0,
+    zones: chains.map(() => 0),
     crumbles: new Map(),
-    respawn: null,
+    respawn: chains.map(() => null),
     won: null,
+    winner: null,
     lost: null,
     gustPhase: 'calm',
     events: [],
     acc: 0,
     started: false,
+    drivers: [],
   };
 }
 
@@ -289,6 +319,12 @@ export const radiusOf = (s: { x: number; z: number }) => Math.hypot(s.x, s.z);
 export const angleOf = (s: { x: number; z: number }) => Math.atan2(s.z, s.x);
 export const heightOf = (g: Game) => Math.max(...g.souls.map((s) => s.y));
 export const teamBest = (g: Game) => Math.max(...g.souls.map((s) => s.best));
+/** How high a team's highest soul is right now. */
+export const teamHeight = (g: Game, team: number) => Math.max(...g.chains[team].map((i) => g.souls[i].y));
+/** The chain a soul is on. */
+export const chainOf = (g: Game, idx: number) => g.chains[g.souls[idx].team];
+/** A team's souls that are still climbing (not burned), in chain order. */
+export const liveOf = (g: Game, team: number) => g.chains[team].filter((i) => g.souls[i].burned < 0);
 
 export function fmtTime(seconds: number) {
   const ms = Math.max(0, Math.round(seconds * 1000));
@@ -355,20 +391,21 @@ function landing(g: Game, s: Soul, yPrev: number, t0: number, t1: number): Platf
   return best;
 }
 
-export function scheduleRespawn(g: Game, cp: number, at = g.time + RESPAWN_T) {
-  if (g.respawn && g.respawn.at <= at) return;
-  g.respawn = { cp, at };
+export function scheduleRespawn(g: Game, cp: number, at = g.time + RESPAWN_T, team = 0) {
+  const pending = g.respawn[team];
+  if (pending && pending.at <= at) return;
+  g.respawn[team] = { cp, at };
 }
 
-/** Puts the team on a beacon, standing still. */
-export function doRespawn(g: Game, cp: number) {
-  g.respawn = null;
+/** Puts a team on a beacon, standing still. In a climb the crumbled ledges come back too; in a race they are shared. */
+export function doRespawn(g: Game, cp: number, team = 0) {
+  g.respawn[team] = null;
   g.cp = Math.max(g.cp, cp);
-  g.crumbles.clear();
-  const live = g.chain;
-  live.forEach((idx, slot) => {
+  if (g.teams === 1) g.crumbles.clear();
+  const slots = g.chain.length;
+  (g.chains[team] ?? []).forEach((idx) => {
     const s = g.souls[idx];
-    const at = spawnAt(g.level, cp, slot, live.length);
+    const at = spawnAt(g.level, cp, g.chain.indexOf(idx), slots);
     s.x = at.x;
     s.y = at.y;
     s.z = at.z;
@@ -384,7 +421,7 @@ export function doRespawn(g: Game, cp: number) {
     s.finished = false;
     s.face = at.a + (DIR < 0 ? Math.PI / 2 : -Math.PI / 2);
   });
-  g.events.push({ t: 'respawn', cp });
+  g.events.push({ t: 'respawn', cp, team });
 }
 
 /** Marks a soul burned: it stops where it is until the team respawns (or the climb is lost). */
@@ -396,7 +433,7 @@ export function burn(g: Game, s: Soul) {
   s.ground = -1;
   g.events.push({ t: 'burn', i: s.idx });
   if (g.mode === 'lava') lose(g);
-  else if (g.authority) scheduleRespawn(g, g.mode === 'beginner' ? g.cp : 0);
+  else if (g.authority) scheduleRespawn(g, g.mode === 'beginner' ? g.cp : 0, g.time + RESPAWN_T, s.team);
 }
 
 export function lose(g: Game) {
@@ -405,10 +442,11 @@ export function lose(g: Game) {
   g.events.push({ t: 'lose', height: g.lost.height });
 }
 
-export function win(g: Game, time = g.time) {
+export function win(g: Game, time = g.time, team = 0) {
   if (g.won !== null || g.lost) return;
   g.won = time;
-  g.events.push({ t: 'win', time });
+  g.winner = team;
+  g.events.push({ t: 'win', time, team });
 }
 
 /** A remote soul's report. flags: 1 grounded, 2 finished, 4 burned, 8 hanging. */
@@ -467,8 +505,8 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
   const accel = !s.grounded ? AIR_ACCEL : ice ? ICE_ACCEL : ACCEL;
   const friction = !s.grounded ? AIR_FRICTION : ice ? ICE_FRICTION : FRICTION;
   if (dl > 0.01) {
-    const tx = dx * RUN;
-    const tz = dz * RUN;
+    const tx = dx * RUN * s.pace;
+    const tz = dz * RUN * s.pace;
     const ex = tx - s.vx;
     const ez = tz - s.vz;
     const el = Math.hypot(ex, ez);
@@ -592,16 +630,16 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
   s.squash = Math.max(0, s.squash - dt * 4);
   s.best = Math.max(s.best, s.y);
 
-  // the zone the team has reached
+  // the circle the team has reached
   const zone = zoneIndex(s.y);
-  if (s.grounded && zone > g.zone) {
-    g.zone = zone;
-    ev.push({ t: 'zone', zone });
+  if (s.grounded && zone > g.zones[s.team]) {
+    g.zones[s.team] = zone;
+    ev.push({ t: 'zone', zone, team: s.team });
   }
 
   // lava
   if (s.y < g.lava + 0.08 && moving) burn(g, s);
-  else if (g.authority && g.mode === 'beginner' && moving && s.y < g.level.checkpoints[g.cp].y - FALL_TOO_FAR) scheduleRespawn(g, g.cp, g.time + 0.5);
+  else if (g.authority && g.mode === 'beginner' && moving && s.y < g.level.checkpoints[g.cp].y - FALL_TOO_FAR) scheduleRespawn(g, g.cp, g.time + 0.5, s.team);
 }
 
 /** Puts a soul down on a ledge and does what the ledge does: springs launch, crumbles start, beacons light. */
@@ -791,10 +829,12 @@ function moveRemote(g: Game, s: Soul, dt: number) {
 }
 
 /** Souls in the chain, in order, skipping anyone who burned. */
-const links = (g: Game) => g.chain.filter((i) => g.souls[i].burned < 0);
-
+/** Every chain in turn: the chains of a race never touch. */
 function solveChain(g: Game, dt: number) {
-  const live = links(g);
+  for (let team = 0; team < g.teams; team++) solveLinks(g, liveOf(g, team), dt);
+}
+
+function solveLinks(g: Game, live: number[], dt: number) {
   for (const i of live) {
     const s = g.souls[i];
     s.cx = s.cy = s.cz = 0;
@@ -1053,7 +1093,9 @@ function substep(g: Game, dt: number) {
   g.lava = lavaAt(g.mode, g.time, g.solo);
   if (g.lost) return;
 
-  if (g.respawn && g.time >= g.respawn.at) doRespawn(g, g.respawn.cp);
+  g.respawn.forEach((r, team) => {
+    if (r && g.time >= r.at) doRespawn(g, r.cp, team);
+  });
 
   for (const [id, at] of g.crumbles) {
     const t = g.time - at;
@@ -1075,15 +1117,18 @@ function substep(g: Game, dt: number) {
     if (w.phase !== 'calm' && heightOf(g) > WIND_FROM - 6) g.events.push({ t: 'gust', dir: w.dir, phase: w.phase });
   }
 
-  // the way out: everyone standing on the top ledge
+  // the way out: a whole team standing on the top ledge (in a race, the first one)
   if (g.authority && g.won === null && g.time > 0) {
-    const live = links(g);
-    if (live.length === g.chain.length && live.every((i) => g.souls[i].finished)) win(g);
+    for (let team = 0; team < g.teams && g.won === null; team++) {
+      const live = liveOf(g, team);
+      if (live.length === g.chains[team].length && live.every((i) => g.souls[i].finished)) win(g, g.time, team);
+    }
   }
 }
 
 /** Advances the game by dt seconds in fixed substeps. Events pile up in g.events for the caller to drain. */
 export function step(g: Game, dt: number) {
+  for (const drive of g.drivers) drive(g, dt);
   g.acc += Math.min(dt, 0.25);
   let n = 0;
   while (g.acc >= SUB && n++ < 40) {
@@ -1098,12 +1143,36 @@ export const standingOn = (g: Game, s: Soul) => (s.grounded && s.ground >= 0 ? g
 /** A soul's angle and radius, for the camera and the HUD. */
 export const cylOf = (s: { x: number; z: number }) => ({ a: Math.atan2(s.z, s.x), r: Math.hypot(s.x, s.z) });
 
+/** A soul to seat: whose it is (its owner's seat, -1 for a shade), its team and place on the chain, and whether it is a player's second soul. */
+export type Seating = { seat: number; team: number; slot: number; shade: boolean; second: boolean };
+
+/**
+ * Who climbs what, from the seats in a room. A climb puts one soul per seat on one chain, in seat order. A race fills
+ * team A with the first two seats and team B with the next two: a seat alone on its team climbs both of its souls,
+ * and a team with nobody on it is the shades. Every client builds the same list, so souls can travel by index.
+ */
+export function seatSouls(roster: number[], mode: Mode): Seating[] {
+  const seats = [...new Set(roster)].sort((a, b) => a - b).slice(0, MAX_SOULS);
+  if (mode !== 'race') return seats.map((seat, slot) => ({ seat, team: 0, slot, shade: false, second: false }));
+  const out: Seating[] = [];
+  for (let team = 0; team < MAX_TEAMS; team++) {
+    const own = seats.slice(team * 2, team * 2 + 2);
+    for (let slot = 0; slot < 2; slot++) {
+      if (own.length === 0) out.push({ seat: -1, team, slot, shade: true, second: false });
+      else if (own.length === 1) out.push({ seat: own[0], team, slot, shade: false, second: slot === 1 });
+      else out.push({ seat: own[slot], team, slot, shade: false, second: false });
+    }
+  }
+  return out;
+}
+
 /** Souls this one is chained to. */
 export function neighbours(g: Game, idx: number): Soul[] {
-  const k = g.chain.indexOf(idx);
+  const chain = chainOf(g, idx);
+  const k = chain.indexOf(idx);
   const out: Soul[] = [];
-  if (k > 0) out.push(g.souls[g.chain[k - 1]]);
-  if (k >= 0 && k + 1 < g.chain.length) out.push(g.souls[g.chain[k + 1]]);
+  if (k > 0) out.push(g.souls[chain[k - 1]]);
+  if (k >= 0 && k + 1 < chain.length) out.push(g.souls[chain[k + 1]]);
   return out;
 }
 
