@@ -34,23 +34,34 @@ import {
   LAVA_DELAY,
   LAVA_RISE,
   LAVA_RISE_SOLO,
+  MODES,
+  RANKED_MODES,
+  RESPAWN_T,
   WIND_FROM,
   applyRemote,
+  chainOf,
   createGame,
   crumbleState,
   fmtTime,
+  isMode,
   lavaAt,
+  liveOf,
+  neighbours,
   over,
   scheduleRespawn,
+  seatSouls,
   step,
+  teamHeight,
   windAt,
+  type Driver,
   type Game,
   type Input,
+  type Mode,
   type Soul,
 } from '../src/os/arcade/games/chained/logic.ts';
-import { configOf, endOf, events, guestState, hostState, parsePacket, reportOf, syncClock } from '../src/os/arcade/games/chained/net.ts';
+import { configOf, endOf, events, guestState, hostState, parsePacket, reportOf, syncClock, type NetEv } from '../src/os/arcade/games/chained/net.ts';
 import { BPM, SONGS, STEPS, Sequencer, hz, midi } from '../src/os/arcade/games/chained/music.ts';
-import { climb } from '../src/os/arcade/games/chained/shade.ts';
+import { DT as SHADE_DT, SHADE_INFO, SHADE_LEVELS, attachShades, climb, createShade, driveShade, type ShadeLevel } from '../src/os/arcade/games/chained/shade.ts';
 
 const DT = 1 / 60;
 const idle: Input = { side: 0, fwd: 0, jump: false, hold: false };
@@ -59,6 +70,23 @@ const spec = (seat: number, kind: 'local' | 'remote' = 'local') => ({ seat, name
 /** A game past the countdown with n local souls. */
 function game(n = 2, mode: 'normal' | 'beginner' | 'lava' = 'normal', level?: Level): Game {
   return createGame({ mode, souls: Array.from({ length: n }, (_, i) => spec(i)), countdown: 0, level });
+}
+
+type Who = { team: number; driver?: Driver; pace?: number };
+/** Two souls for one team: a pair of players, or a pair of shades at a pace. */
+const pair = (team: number, driver?: Driver, pace?: number): Who[] => [
+  { team, driver, pace },
+  { team, driver, pace },
+];
+/** A race past the countdown: local souls from `who`, two per team by default, team 0 first. */
+function race(opts: { mode?: Mode; level?: Level; who?: Who[] } = {}): Game {
+  const who = opts.who ?? [...pair(0), ...pair(1)];
+  return createGame({ mode: opts.mode ?? 'race', souls: who.map((w, i) => ({ ...spec(i), ...w })), countdown: 0, level: opts.level });
+}
+/** Steps a game frame by frame, the way the shell does, until it is decided or the limit is up. */
+function playOut(g: Game, limit = 900) {
+  while (g.won === null && !g.lost && g.time < limit) step(g, SHADE_DT);
+  return g;
 }
 
 /** Puts a soul on a ledge at arc offset `off` metres from its centre (positive is onwards up the climb), standing still. */
@@ -453,7 +481,7 @@ test('a sharp fall yanks a soul standing near the edge off it, and leaves one st
     run(g, 1.2);
     return { g, a, b };
   };
-  const near = dropNear(0.25);
+  const near = dropNear(0.1);
   assert.ok(!near.a.grounded || near.a.ground !== ledge.id, 'pulled off the rim');
   assert.ok(near.g.events.some((e) => e.t === 'yank' || e.t === 'taut'));
   const far = dropNear(2.2);
@@ -462,7 +490,8 @@ test('a sharp fall yanks a soul standing near the edge off it, and leaves one st
 
 test('two souls hanging off one standing soul drag it, unless it keeps walking', () => {
   const lv = buildLevel();
-  const ledge = lv.platforms.find((p) => p.kind === 'checkpoint')!;
+  // a beacon with nothing in the drop beneath it, so both souls hang free instead of landing on a lower ledge
+  const ledge = lv.checkpoints.find((p) => p.cp === 3)!;
   const hang = (walk: boolean) => {
     const g = game(3, 'normal', lv);
     const [a, b, c] = g.souls;
@@ -707,9 +736,258 @@ test('a careful pair of souls stays ahead of the lava', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
+// the race: two chains on one tower
+
+test('a race puts each team on its own chain, and a climb has one chain and one respawn', () => {
+  const g = race();
+  assert.deepEqual(g.chains, [[0, 1], [2, 3]]);
+  assert.deepEqual(g.chain, [0, 1, 2, 3]);
+  assert.equal(g.teams, 2);
+  assert.deepEqual(g.respawn, [null, null]);
+  assert.deepEqual(g.zones, [0, 0]);
+  assert.deepEqual(chainOf(g, 3), [2, 3]);
+  assert.deepEqual(g.souls.map((s) => [s.team, s.driver, s.pace]), [[0, 'human', 1], [0, 'human', 1], [1, 'human', 1], [1, 'human', 1]]);
+  // teams keep chain order even when the specs interleave them
+  const mixed = race({ who: [{ team: 0 }, { team: 1 }, { team: 0 }, { team: 1 }] });
+  assert.deepEqual(mixed.chains, [[0, 2], [1, 3]]);
+  assert.deepEqual(mixed.chain, [0, 2, 1, 3]);
+  const one = game(2);
+  assert.deepEqual(one.chains, [[0, 1]]);
+  assert.deepEqual(one.chain, [0, 1]);
+  assert.equal(one.teams, 1);
+  assert.deepEqual(one.respawn, [null]);
+});
+
+test('the chain only couples a team: a soul hanging off its partner never tugs the rival chain', () => {
+  const lv = buildLevel();
+  const g = race({ level: lv });
+  const [a, b, c, d] = g.souls;
+  const ledge = lv.route[6];
+  put(g, a, ledge, 0.8);
+  put(g, b, ledge, 0.8);
+  b.y -= 2;
+  outTo(b, ledge.r1 + 1.2);
+  b.grounded = false;
+  b.ground = -1;
+  // the other team stands on a ledge 20 m further up, well beyond the chain
+  const far = lv.route.find((p) => p.kind === 'stone' && p.y > ledge.y + 20 && p.span * (p.r0 + 1.2) > 1)!;
+  put(g, c, far, -0.4);
+  put(g, d, far, 0.4);
+  const before = [c, d].map((s) => [s.x, s.y, s.z]);
+  run(g, 1);
+  assert.ok(b.hanging && !b.grounded, 'b hangs off a');
+  assert.ok(a.grounded && a.ground === ledge.id, 'a holds');
+  assert.deepEqual([c, d].map((s) => [s.x, s.y, s.z]), before, 'the rival team did not move at all');
+  assert.ok(c.grounded && d.grounded && !c.taut && !d.taut);
+  assert.deepEqual(neighbours(g, 0).map((s) => s.idx), [1]);
+  assert.deepEqual(neighbours(g, 1).map((s) => s.idx), [0]);
+  assert.deepEqual(neighbours(g, 2).map((s) => s.idx), [3]);
+});
+
+test('the first team standing on the way out wins the race, and the tower freezes for everyone', () => {
+  const lv = buildLevel();
+  const g = race({ level: lv });
+  const [a, , c, d] = g.souls;
+  g.time = 100;
+  put(g, c, lv.goal, 0);
+  put(g, d, lv.goal, 1.5);
+  run(g, 0.5);
+  assert.ok(g.won !== null && Math.abs(g.won - 100) < 0.1, `won at ${g.won}`);
+  assert.equal(g.winner, 1);
+  assert.equal(teamHeight(g, 1), TOP);
+  assert.ok(g.events.some((e) => e.t === 'win' && e.team === 1));
+  assert.ok(g.events.some((e) => e.t === 'zone' && e.zone === 5 && e.team === 1));
+  const x = a.x;
+  run(g, 1, (g) => (g.souls[0].input = { side: 1, fwd: 0, jump: false, hold: false }));
+  assert.equal(a.x, x, 'the other team cannot move on');
+  assert.ok(g.won !== null && g.won < 100.1 && g.winner === 1, 'and the result stands');
+});
+
+test('a burned team in a race goes back to the floor on its own, and the crumbled ledges stay out', () => {
+  const lv = buildLevel();
+  const crumble = lv.platforms.find((p) => p.kind === 'crumble')!;
+  const g = race({ level: lv });
+  const [a, , c, d] = g.souls;
+  const ledge = lv.route[4];
+  put(g, c, ledge);
+  put(g, d, ledge, 1);
+  g.crumbles.set(crumble.id, g.time);
+  const home = [a.x, a.y, a.z];
+  d.y = -3;
+  d.grounded = false;
+  d.ground = -1;
+  step(g, DT);
+  assert.ok(d.burned >= 0 && g.events.some((e) => e.t === 'burn' && e.i === 3));
+  assert.ok(g.respawn[1] && g.respawn[1].cp === 0, 'team 1 is going back to the floor');
+  assert.equal(g.respawn[0], null, 'team 0 is not');
+  assert.deepEqual(liveOf(g, 1), [2]);
+  run(g, RESPAWN_T + 0.1);
+  assert.equal(d.burned, -1);
+  for (const s of [c, d]) assert.ok(s.grounded && s.ground === lv.floor.id && s.y === lv.floor.y, 'team 1 is back on the floor');
+  assert.deepEqual([a.x, a.y, a.z], home, 'team 0 kept its place');
+  assert.ok(g.events.some((e) => e.t === 'respawn' && e.team === 1) && !g.events.some((e) => e.t === 'respawn' && e.team === 0));
+  assert.ok(g.crumbles.has(crumble.id), 'a shared ledge is not put back by a rival respawn');
+  // a climb has nobody else on the tower, so its ledges come back with the team
+  const h = game(2, 'normal', lv);
+  h.crumbles.set(crumble.id, h.time);
+  h.souls[1].y = -3;
+  h.souls[1].grounded = false;
+  h.souls[1].ground = -1;
+  run(h, RESPAWN_T + 0.1);
+  assert.equal(h.souls[1].burned, -1);
+  assert.equal(h.crumbles.size, 0);
+});
+
+test('each team keeps its own circle: the rival reaching a higher one does not change yours', () => {
+  const lv = buildLevel();
+  const g = race({ level: lv });
+  const [, , c, d] = g.souls;
+  const high = lv.route.find((p) => p.kind === 'stone' && zoneIndex(p.y) === 3 && p.span * (p.r0 + 1.2) > 1)!;
+  put(g, c, high, -0.4);
+  put(g, d, high, 0.4);
+  run(g, 0.5);
+  assert.equal(g.zones[1], 3);
+  assert.equal(g.zones[0], 0);
+  assert.ok(g.events.some((e) => e.t === 'zone' && e.zone === 3 && e.team === 1));
+  assert.ok(!g.events.some((e) => e.t === 'zone' && e.team === 0));
+});
+
+test('a race keeps the lava where it is and has no leaderboard', () => {
+  assert.equal(lavaAt('race', 100), lavaAt('normal', 100));
+  assert.equal(lavaAt('race', 100), lavaAt('race', 0));
+  assert.ok(MODES.includes('race') && isMode('race'));
+  assert.ok(!(RANKED_MODES as readonly string[]).includes('race'));
+});
+
+test('seats fill a climb in order, and a race two by two, with the shades taking an empty team', () => {
+  const seating = (roster: number[], mode: Mode) => seatSouls(roster, mode).map((s) => [s.seat, s.team, s.slot, s.shade, s.second]);
+  assert.deepEqual(seating([2, 0, 1], 'normal'), [
+    [0, 0, 0, false, false],
+    [1, 0, 1, false, false],
+    [2, 0, 2, false, false],
+  ]);
+  assert.deepEqual(seating([0, 1, 2, 3], 'race'), [
+    [0, 0, 0, false, false],
+    [1, 0, 1, false, false],
+    [2, 1, 0, false, false],
+    [3, 1, 1, false, false],
+  ]);
+  // three players: the one alone on team 1 climbs both of its souls
+  assert.deepEqual(seating([0, 1, 2], 'race'), [
+    [0, 0, 0, false, false],
+    [1, 0, 1, false, false],
+    [2, 1, 0, false, false],
+    [2, 1, 1, false, true],
+  ]);
+  assert.deepEqual(seating([0, 1], 'race'), [
+    [0, 0, 0, false, false],
+    [1, 0, 1, false, false],
+    [-1, 1, 0, true, false],
+    [-1, 1, 1, true, false],
+  ]);
+  assert.deepEqual(seating([0], 'race'), [
+    [0, 0, 0, false, false],
+    [0, 0, 1, false, true],
+    [-1, 1, 0, true, false],
+    [-1, 1, 1, true, false],
+  ]);
+  assert.deepEqual(seating([], 'race'), [
+    [-1, 0, 0, true, false],
+    [-1, 0, 1, true, false],
+    [-1, 1, 0, true, false],
+    [-1, 1, 1, true, false],
+  ]);
+  assert.deepEqual(seating([1, 1, 0, 0], 'race'), seating([0, 1], 'race'), 'a seat listed twice is one seat');
+  assert.deepEqual(seating([0, 0, 1], 'normal'), seating([0, 1], 'normal'));
+  assert.equal(seating([0, 1, 2, 3, 4], 'race').length, 4, 'a fifth seat does not climb');
+});
+
+test('four souls spawn on the floor at their own spots, a stride apart', () => {
+  const g = race();
+  for (const s of g.souls) assert.ok(s.grounded && s.ground === g.level.floor.id && s.y === g.level.floor.y, `soul ${s.idx} stands on the floor`);
+  for (let i = 0; i < g.souls.length; i++)
+    for (let j = i + 1; j < g.souls.length; j++) {
+      const d = Math.hypot(g.souls[i].x - g.souls[j].x, g.souls[i].z - g.souls[j].z);
+      assert.ok(d >= 0.9, `souls ${i} and ${j} are ${d.toFixed(2)} m apart`);
+    }
+  run(g, 0.5);
+  for (const s of g.souls) assert.ok(s.grounded && s.ground === g.level.floor.id, 'and they stay there');
+});
+
+test('the even and swift shades climb out on their own', () => {
+  const lv = buildLevel();
+  for (const level of ['even', 'swift'] as const) {
+    const g = race({ mode: 'normal', level: lv, who: pair(0, 'shade', SHADE_INFO[level].pace) });
+    const shades = attachShades(g, level);
+    assert.equal(shades.length, 1);
+    assert.equal(g.drivers.length, 1);
+    playOut(g);
+    assert.ok(g.won !== null, `${level}: never got out, reached ${Math.max(...g.souls.map((s) => s.best)).toFixed(1)} m of ${TOP} by ${fmtTime(g.time)}`);
+    assert.ok(g.won < 600, `${level} took ${fmtTime(g.won)}`);
+  }
+});
+
+test('the shades climb out on their own at every setting, and the swift ones are quicker than the slow', () => {
+  const lv = buildLevel();
+  const times = {} as Record<ShadeLevel, number>;
+  for (const level of SHADE_LEVELS) {
+    const g = race({ mode: 'normal', level: lv, who: pair(0, 'shade', SHADE_INFO[level].pace) });
+    const shades = attachShades(g, level);
+    assert.equal(shades.length, 1);
+    assert.equal(g.drivers.length, 1);
+    playOut(g);
+    assert.ok(g.won !== null, `${level}: never got out, reached ${Math.max(...g.souls.map((s) => s.best)).toFixed(1)} m of ${TOP} by ${fmtTime(g.time)}`);
+    times[level] = g.won;
+  }
+  assert.ok(times.swift < times.slow, `swift ${fmtTime(times.swift)} against slow ${fmtTime(times.slow)}`);
+});
+
+test('shades racing shades: the swift team wins, and the same race plays out the same way twice', () => {
+  const lv = buildLevel();
+  const play = () => {
+    const g = race({ level: lv, who: [...pair(0, 'shade', SHADE_INFO.slow.pace), ...pair(1, 'shade', SHADE_INFO.swift.pace)] });
+    const shades = [createShade(g, 0, 'slow'), createShade(g, 1, 'swift')];
+    while (g.won === null && g.time < 900) {
+      for (const sh of shades) driveShade(g, sh, SHADE_DT);
+      step(g, SHADE_DT);
+    }
+    return g;
+  };
+  const first = play();
+  assert.ok(first.won !== null, `nobody got out: ${first.souls.map((s) => s.best.toFixed(1)).join(', ')} m`);
+  assert.equal(first.winner, 1);
+  const again = play();
+  assert.equal(again.winner, first.winner);
+  assert.equal(again.won, first.won);
+  assert.deepEqual(
+    again.souls.map((s) => [s.x, s.y, s.z]),
+    first.souls.map((s) => [s.x, s.y, s.z]),
+  );
+});
+
+test('a shade steers only its own chain', () => {
+  const g = race({ who: [...pair(0), ...pair(1, 'shade')] });
+  const held: Input = { side: 1, fwd: 0, jump: false, hold: false };
+  g.souls[0].input = held;
+  g.souls[1].input = { ...held };
+  const before = g.souls.map((s) => s.input);
+  const sh = createShade(g, 1, 'swift');
+  driveShade(g, sh, SHADE_DT);
+  assert.equal(g.souls[0].input, held, 'the same object, untouched');
+  assert.deepEqual(g.souls[1].input, held);
+  assert.ok(g.souls[2].input !== before[2] && g.souls[3].input !== before[3], 'its own souls got fresh inputs');
+  // attachShades only picks up the team made of shades, and the players keep their inputs through its frames
+  const shades = attachShades(g, 'even');
+  assert.deepEqual(shades.map((s) => s.team), [1]);
+  assert.equal(g.drivers.length, 1);
+  run(g, 0.5);
+  assert.ok(g.souls[0].input === held && g.souls[1].input.side === 1);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
 // packets
 
-test('soul reports round trip through host and guest packets', () => {
+test('soul reports travel by index through host and guest packets', () => {
   const g = game(2);
   const s = g.souls[0];
   s.x = 1.23456;
@@ -717,34 +995,57 @@ test('soul reports round trip through host and guest packets', () => {
   s.grounded = false;
   s.hanging = true;
   const rep = reportOf(s);
+  assert.equal(rep.i, 0);
   assert.equal(rep.x, 1.23);
   assert.equal(rep.vy, -3.33);
   assert.equal(rep.flags, 8);
-  const guest = parsePacket(JSON.parse(JSON.stringify(guestState(3, rep))));
-  assert.deepEqual(guest, { k: 's', round: 3, soul: rep });
-  const host = parsePacket(JSON.parse(JSON.stringify(hostState(3, 12.345, 2, 'lava', [0, 1, 2], [{ seat: 0, ...rep }, { seat: 2, ...reportOf(g.souls[1]) }]))));
+  const other = reportOf(g.souls[1]);
+  assert.equal(other.i, 1);
+  const guest = parsePacket(JSON.parse(JSON.stringify(guestState(3, [rep, other]))));
+  assert.deepEqual(guest, { k: 's', round: 3, souls: [rep, other] });
+  const host = parsePacket(JSON.parse(JSON.stringify(hostState(3, 12.345, 2, 'race', 'even', [0, 1, 2], [rep, { ...other, i: 3 }]))));
   assert.ok(host && host.k === 'S');
   if (host && host.k === 'S') {
     assert.equal(host.time, 12.35);
     assert.equal(host.cp, 2);
-    assert.equal(host.mode, 'lava');
+    assert.equal(host.mode, 'race');
+    assert.equal(host.shades, 'even');
     assert.deepEqual(host.roster, [0, 1, 2]);
-    assert.equal(host.souls.length, 2);
-    assert.equal(host.souls[1].seat, 2);
-    assert.deepEqual(host.souls[0], { seat: 0, ...rep });
+    assert.deepEqual(host.souls, [rep, { ...other, i: 3 }]);
   }
+  // an index past the last soul is dropped, a repeated index keeps the first report, and no souls is no packet
+  assert.deepEqual(parsePacket(guestState(3, [{ ...rep, i: 4 }, other])), { k: 's', round: 3, souls: [other] });
+  assert.deepEqual(parsePacket(guestState(3, [{ ...rep, i: -1 }, other])), { k: 's', round: 3, souls: [other] });
+  assert.deepEqual(parsePacket(guestState(3, [rep, { ...other, i: 0 }])), { k: 's', round: 3, souls: [rep] });
+  assert.equal(parsePacket(guestState(3, [{ ...rep, i: 4 }])), null);
+  const empty = parsePacket(hostState(3, 1, 0, 'normal', 'slow', [0], [{ ...rep, i: 7 }]));
+  assert.ok(empty && empty.k === 'S' && empty.souls.length === 0, 'a host packet may carry no souls');
+  assert.equal(parsePacket(hostState(3, 1, 0, 'normal', 'blazing' as never, [0], [rep])), null, 'a host packet with a bad shades level is dropped');
 });
 
 test('events, results and the host pick survive the wire and bad packets are dropped', () => {
-  const ev = parsePacket(JSON.parse(JSON.stringify(events(2, 1, [{ y: 'crumble', id: 14, at: 33.2 }, { y: 'burn' }, { y: 'respawn', cp: 3, at: 40 }, { y: 'cp', cp: 2 }, { y: 'fell' }, { y: 'nope' } as never]))));
+  const sent: NetEv[] = [
+    { y: 'crumble', id: 14, at: 33.2 },
+    { y: 'burn', i: 2 },
+    { y: 'respawn', cp: 3, at: 40, team: 1 },
+    { y: 'cp', cp: 2, i: 0 },
+    { y: 'fell', team: 0 },
+  ];
+  const bad = [{ y: 'burn', i: 4 }, { y: 'fell', team: 2 }, { y: 'respawn', cp: 1, at: 5 }, { y: 'cp', cp: 1 }, { y: 'nope' }] as never[];
+  const ev = parsePacket(JSON.parse(JSON.stringify(events(2, 1, [...sent, ...bad]))));
   assert.ok(ev && ev.k === 'e');
   if (ev && ev.k === 'e') {
     assert.equal(ev.o, 1);
-    assert.deepEqual(ev.ev, [{ y: 'crumble', id: 14, at: 33.2 }, { y: 'burn' }, { y: 'respawn', cp: 3, at: 40 }, { y: 'cp', cp: 2 }, { y: 'fell' }]);
+    assert.deepEqual(ev.ev, sent);
   }
-  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(endOf(5, true, 187.654, 120)))), { k: 'end', round: 5, won: true, time: 187.65, height: 120 });
-  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(configOf(1, 'beginner')))), { k: 'cfg', round: 1, mode: 'beginner' });
-  assert.equal(parsePacket(configOf(1, 'nightmare' as never)), null);
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(endOf(5, true, 187.654, 120, 1)))), { k: 'end', round: 5, won: true, time: 187.65, height: 120, winner: 1 });
+  assert.deepEqual(parsePacket(endOf(5, false, 60, 33.333)), { k: 'end', round: 5, won: false, time: 60, height: 33.33, winner: 0 });
+  assert.deepEqual(parsePacket({ t: 'ch', r: 5, k: 'end', w: true, tm: 1, h: 1 }), { k: 'end', round: 5, won: true, time: 1, height: 1, winner: 0 }, 'no winner on the wire means team 0');
+  assert.deepEqual(parsePacket(endOf(5, true, 1, 1, 7)), { k: 'end', round: 5, won: true, time: 1, height: 1, winner: 1 }, 'a winner past the last team is clamped');
+  assert.deepEqual(parsePacket(endOf(5, false, 1, 1, -5)), { k: 'end', round: 5, won: false, time: 1, height: 1, winner: -1 });
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(configOf(1, 'race', 'slow')))), { k: 'cfg', round: 1, mode: 'race', shades: 'slow' });
+  assert.equal(parsePacket(configOf(1, 'nightmare' as never, 'even')), null);
+  assert.equal(parsePacket(configOf(1, 'race', 'blazing' as never)), null, 'a cfg with a bad shades level is dropped');
   assert.equal(parsePacket({ t: 'pk', r: 1, k: 'S' }), null, 'a Palm Drive packet is not ours');
   assert.equal(parsePacket({ t: 'ch', r: 1, k: 's', so: [1, 2] }), null);
   assert.equal(parsePacket({ t: 'ch', r: 'x', k: 'end' }), null);

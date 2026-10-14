@@ -69,14 +69,16 @@ export const CRUMBLE_FALL = 1.6;
 export const CRUMBLE_BACK = 5;
 export const CRUMBLE_G = 12;
 /** A standing soul holds against the chain pulling slower than this; a faster pull drags it. */
-export const GRIP_V = 1.2;
+export const GRIP_V = 2.5;
 /** How much of a yank a standing soul takes against a soul in the air (1), in position and in speed. */
-export const YANK_W = 0.5;
+export const YANK_W = 0.4;
 export const YANK_K = 0.8;
 /** The chain never kicks a soul faster than this in one substep (a teleport or a late packet is not a yank). */
 export const CHAIN_KICK = 12;
 /** Nor move one further than this in one substep: a big stretch is taken up over a few. */
 export const CHAIN_STEP = 0.2;
+/** A jump that tops out this far inside a slab still lands on it. */
+export const LEDGE_GRAB = 0.4;
 /** A soul in the air this far below a rim, and this close to it, pulls itself up onto the ledge. */
 export const MANTLE_H = 1.15;
 export const MANTLE_REACH = 0.6;
@@ -84,6 +86,9 @@ export const MANTLE_REACH = 0.6;
 export const SOUL_H = 0.9;
 /** Two or more souls hanging off a standing one slide it toward the edge this fast (m/s). */
 export const OVERLOAD = 1.6;
+/** A soul swinging on the chain settles at this rate (per second) and never swings sideways faster than this (m/s). */
+export const SWING_DAMP = 3.5;
+export const SWING_MAX = 7;
 export const WIND_FROM = 98;
 export const WIND_CYCLE = 9;
 export const WIND_BUILD = 5.5;
@@ -599,6 +604,19 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
     if (p) landOn(g, s, p, t1, moving, wasGrounded);
     else if (moving) mantle(g, s, dx, dz);
   }
+  // a jump that tops out just inside a slab lands on it rather than falling back through: a generous ledge
+  if (!s.grounded && s.vy <= 0 && s.vy > -4 && s.burned < 0) {
+    const r2 = Math.hypot(s.x, s.z);
+    for (const p of level.platforms) {
+      if (p.kind === 'floor' || p.y + p.amp < s.y || p.y - p.amp - LEDGE_GRAB > s.y) continue;
+      if (r2 < p.r0 || r2 > p.r1 || !landable(g, p)) continue;
+      const q = pose(p, t1, scratch);
+      if (s.y >= q.y || s.y < q.y - LEDGE_GRAB || !over(p, q.a, s.x, s.z)) continue;
+      s.y = q.y;
+      landOn(g, s, p, t1, moving, false);
+      break;
+    }
+  }
   // the pad in the middle of a spring ledge
   if (s.grounded && moving && level.platforms[s.ground].kind === 'spring') {
     const p = level.platforms[s.ground];
@@ -685,13 +703,24 @@ function mantle(g: Game, s: Soul, dx: number, dz: number): boolean {
     if (p.y + p.amp < s.y || p.y - p.amp - MANTLE_H - 0.5 > s.y) continue;
     const q = pose(p, g.time, scratch);
     if (s.y > q.y - 0.05 || s.y < q.y - MANTLE_H) continue;
-    const rr = Math.min(p.r1, Math.max(p.r0, r));
-    const da = Math.min(p.span, Math.max(-p.span, angDiff(ang, q.a)));
+    let rr = Math.min(p.r1, Math.max(p.r0, r));
+    let da = Math.min(p.span, Math.max(-p.span, angDiff(ang, q.a)));
+    const inside = r >= p.r0 && r <= p.r1 && Math.abs(angDiff(ang, q.a)) <= p.span;
+    if (inside) {
+      // under the slab (swung in on the chain): the way up is over the nearest rim
+      if (!s.hanging && !s.taut) continue;
+      const dOut = p.r1 - r;
+      const dIn = p.r0 > R_CORE + 0.5 ? r - p.r0 : Infinity;
+      const dSide = (p.span - Math.abs(da)) * r;
+      if (dOut <= dIn && dOut <= dSide) rr = p.r1;
+      else if (dIn <= dSide) rr = p.r0;
+      else da = da >= 0 ? p.span : -p.span;
+    }
     const ex = Math.cos(q.a + da) * rr;
     const ez = Math.sin(q.a + da) * rr;
     const dist = Math.hypot(ex - s.x, ez - s.z);
-    if (dist > MANTLE_REACH || dist < 0.02) continue;
-    if (!s.hanging && !s.taut && (dx * (ex - s.x) + dz * (ez - s.z)) / dist < 0.4) continue;
+    if (dist > (inside ? MANTLE_REACH + 0.6 : MANTLE_REACH) || (!inside && dist < 0.02)) continue;
+    if (!s.hanging && !s.taut && (dx * (ex - s.x) + dz * (ez - s.z)) / Math.max(dist, 1e-3) < 0.4) continue;
     // up and a step in from the rim
     const mid = (p.r0 + p.r1) / 2;
     const ix = Math.cos(q.a) * mid - ex;
@@ -982,18 +1011,31 @@ function solveLinks(g: Game, live: number[], dt: number) {
     if (!s.grounded) {
       s.vx *= 0.995;
       s.vz *= 0.995;
+      // a soul swinging on a taut chain loses its sideways swing quickly and never whips round faster than it runs
+      // and a half (the jump itself, up and down, is left alone)
+      if (s.taut || c > 0) {
+        const settle = Math.exp(-SWING_DAMP * dt);
+        s.vx *= settle;
+        s.vz *= settle;
+        const sw = Math.hypot(s.vx, s.vz);
+        if (sw > SWING_MAX) {
+          s.vx *= SWING_MAX / sw;
+          s.vz *= SWING_MAX / sw;
+        }
+      }
     }
     clampRadius(s);
     slabSides(g, s);
   }
 
-  // hanging: in the air on a taut chain with a neighbour well above
+  // hanging: in the air on a taut chain with a neighbour well above. It takes a clear drop to start hanging and a
+  // clear rise (or a slack second) to stop, so a soul being hauled past the threshold does not flicker.
   for (let k = 0; k < live.length; k++) {
     const s = g.souls[live[k]];
     if (s.kind !== 'local') continue;
-    const up = (live[k - 1] !== undefined && g.souls[live[k - 1]].y - s.y > 1) || (live[k + 1] !== undefined && g.souls[live[k + 1]].y - s.y > 1);
+    const above = (by: number) => (live[k - 1] !== undefined && g.souls[live[k - 1]].y - s.y > by) || (live[k + 1] !== undefined && g.souls[live[k + 1]].y - s.y > by);
     // a swing on the chain goes slack for a moment at the top: still hanging
-    const hanging = !s.grounded && up && g.time - s.tautAt < 0.5 && s.vy < 6;
+    const hanging = !s.grounded && (s.hanging ? s.vy < 9 && above(0.35) && g.time - s.tautAt < 0.9 : s.vy < 6 && above(1) && g.time - s.tautAt < 0.5);
     if (hanging && !s.hanging) g.events.push({ t: 'hang', i: s.idx });
     s.hanging = hanging;
   }

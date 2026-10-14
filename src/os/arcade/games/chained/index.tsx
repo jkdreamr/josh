@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { TOP, ZONES, buildLevel, zoneIndex } from './level';
-import { COUNTDOWN, FALL_TOO_FAR, LAVA_DELAY, MODES, MODE_INFO, RESPAWN_T, applyRemote, createGame, doRespawn, fmtTime, lose, scheduleRespawn, step, win, type Ev, type Game, type Input, type Mode, type SoulSpec } from './logic';
+import { COUNTDOWN, FALL_TOO_FAR, LAVA_DELAY, MODES, MODE_INFO, RANKED_MODES, RESPAWN_T, applyRemote, createGame, doRespawn, fmtTime, liveOf, lose, scheduleRespawn, seatSouls, step, teamHeight, win, type Ev, type Game, type Input, type Mode, type Seating, type Soul, type SoulSpec } from './logic';
 import { JINGLE_BEACON, JINGLE_BURN, JINGLE_OUT, Sequencer, hz, type Note } from './music';
-import { configOf, endOf, events, guestState, hostState, parsePacket, reportOf, syncClock, type NetEv, type SeatReport } from './net';
+import { configOf, endOf, events, guestState, hostState, parsePacket, reportOf, syncClock, type NetEv, type SoulReport } from './net';
+import { SHADE_INFO, SHADE_LEVELS, SHADE_NAMES, attachShades, createShade, driveShade, type ShadeLevel } from './shade';
 import { buildView, type View } from './scene';
 import { Altimeter, HowToPlay, TeamStrip, ZoneCard, type SoulChip } from './hud';
 import { meta } from './meta';
@@ -14,7 +15,10 @@ const MODE = defineSetting('chained:mode', MODES, 'normal');
 const PARTIES = ['solo', 'local'] as const;
 const PARTY = defineSetting('chained:party', PARTIES, 'solo');
 const MUSIC = defineSetting('chained:music', ['on', 'off'] as const, 'on', { live: true });
+const SHADES = defineSetting('chained:shades', SHADE_LEVELS, 'even');
 const modeOptions = MODES.map((m) => [m, MODE_INFO[m].label] as const);
+const shadeOptions = SHADE_LEVELS.map((l) => [l, SHADE_INFO[l].label] as const);
+type RankedMode = (typeof RANKED_MODES)[number];
 const partyOptions = [
   ['solo', 'One Player'],
   ['local', 'Two on This Keyboard'],
@@ -23,12 +27,16 @@ const musicOptions = [
   ['on', 'On'],
   ['off', 'Off'],
 ] as const;
-/** Souls take their colour from their seat online, and these two on your own. */
-const SEAT_COLORS = ['#e84a3c', '#3b8bea', '#48b35a', '#f2c230'];
+/** Souls take their colour from their team and their place on its chain. */
+const TEAM_COLORS = [
+  ['#e84a3c', '#3b8bea'],
+  ['#48b35a', '#f2c230'],
+];
 const SOLO_NAMES = ['Ember', 'Ash'];
 const LOCAL_NAMES = ['Player 1', 'Player 2'];
 /** The leaderboard (and local best) for a mode, solo or as a team. */
-const boardOf = (team: boolean, mode: Mode) => `${team ? 'team' : 'solo'}-${mode}`;
+const boardOf = (team: boolean, mode: RankedMode) => `${team ? 'team' : 'solo'}-${mode}`;
+const isRanked = (mode: Mode): mode is RankedMode => (RANKED_MODES as readonly string[]).includes(mode);
 /** The host gives everyone a moment to get its first packet before the climb starts. */
 const HOST_LEAD = 1.5;
 /** Tips pop up during your first few climbs. */
@@ -64,7 +72,7 @@ type Best = ReturnType<typeof useHighScore>;
 /** Your best time on every board (the same hooks in the same order every render). */
 function useBests() {
   const bests: Record<string, Best> = {};
-  for (const team of [false, true]) for (const mode of MODES) bests[boardOf(team, mode)] = useHighScore(`chained-${boardOf(team, mode)}`, { lowerIsBetter: true });
+  for (const team of [false, true]) for (const mode of RANKED_MODES) bests[boardOf(team, mode)] = useHighScore(`chained-${boardOf(team, mode)}`, { lowerIsBetter: true });
   return bests;
 }
 
@@ -91,17 +99,24 @@ function Setup() {
   const [mode, setMode] = useSetting(MODE);
   const [party, setParty] = useSetting(PARTY);
   const [music, setMusic] = useSetting(MUSIC);
+  const [shades, setShades] = useSetting(SHADES);
   const bests = useBests();
   const team = party === 'local' && !shell.touch;
-  const best = bests[boardOf(team, mode)].best;
+  const best = isRanked(mode) ? bests[boardOf(team, mode)].best : null;
   return (
     <>
       <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
       <small className="g-chained-note">{MODE_INFO[mode].blurb}</small>
       {!shell.touch && <Segmented label="Souls" value={party} options={partyOptions} onChange={setParty} />}
+      {mode === 'race' && (
+        <>
+          <Segmented label="Shades" value={shades} options={shadeOptions} onChange={setShades} />
+          <small className="g-chained-note">{team ? 'The two of you race the shades, a pair of souls the game climbs. ' : 'You race the shades, a pair of souls the game climbs. '}{SHADE_INFO[shades].blurb}</small>
+        </>
+      )}
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
       <Extras />
-      {best !== null && (
+      {best !== null && isRanked(mode) && (
         <small className="g-chained-best">
           Best {team ? 'as a team' : 'on your own'} in {MODE_INFO[mode].label}: {fmtMs(best)}
         </small>
@@ -115,22 +130,36 @@ function OnlineSetup() {
   const online = useOnline();
   const [mode, setMode] = useSetting(MODE);
   const [music, setMusic] = useSetting(MUSIC);
-  const [hostMode, setHostMode] = useState<Mode | null>(null);
+  const [shades, setShades] = useSetting(SHADES);
+  const [hostPick, setHostPick] = useState<{ mode: Mode; shades: ShadeLevel } | null>(null);
   const host = online?.isHost ?? true;
   useEffect(() => {
     if (!online?.isHost) return;
-    const say = () => online.send(configOf(online.round, mode));
+    const say = () => online.send(configOf(online.round, mode, shades));
     say();
     const timer = window.setInterval(say, 2000);
     return () => window.clearInterval(timer);
-  }, [online, mode]);
+  }, [online, mode, shades]);
   useEffect(() => {
     if (!online || online.isHost) return;
     return online.onMessage((from, d) => {
       const p = parsePacket(d);
-      if (from === 0 && p?.k === 'cfg') setHostMode(p.mode);
+      if (from === 0 && p?.k === 'cfg') setHostPick({ mode: p.mode, shades: p.shades });
     });
   }, [online]);
+  const shown = host ? mode : hostPick?.mode ?? mode;
+  const shownShades = host ? shades : hostPick?.shades ?? shades;
+  const seats = online?.players.length ?? 1;
+  const seating =
+    shown !== 'race'
+      ? 'Everyone climbs on one chain, in seat order.'
+      : seats >= 4
+        ? 'Seats 1 and 2 climb one chain, seats 3 and 4 the other.'
+        : seats === 3
+          ? 'Seats 1 and 2 climb one chain. Seat 3 climbs both souls of the other, swapping between them.'
+          : seats === 2
+            ? 'The two of you climb one chain against the shades.'
+            : 'On your own you climb both souls of your chain against the shades. More players join as seats fill.';
   return (
     <>
       {host ? (
@@ -139,13 +168,28 @@ function OnlineSetup() {
         <div className="arcade-field">
           <span>Mode</span>
           <div className="g-chained-hostpick">
-            <b>{hostMode ? MODE_INFO[hostMode].label : '…'}</b>
+            <b>{hostPick ? MODE_INFO[hostPick.mode].label : '…'}</b>
             <small>picked by the host</small>
           </div>
         </div>
       )}
-      <small className="g-chained-note">{MODE_INFO[host ? mode : hostMode ?? mode].blurb}</small>
-      {host && <small className="g-chained-note">Everyone climbs on one chain, in seat order. You pick the mode.</small>}
+      <small className="g-chained-note">{MODE_INFO[shown].blurb}</small>
+      {shown === 'race' &&
+        (host ? (
+          <Segmented label="Shades" value={shades} options={shadeOptions} onChange={setShades} />
+        ) : (
+          <div className="arcade-field">
+            <span>Shades</span>
+            <div className="g-chained-hostpick">
+              <b>{SHADE_INFO[shownShades].label}</b>
+              <small>picked by the host</small>
+            </div>
+          </div>
+        ))}
+      <small className="g-chained-note">
+        {seating}
+        {host ? ' You pick the mode.' : ''}
+      </small>
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
       <Extras />
     </>
@@ -169,14 +213,38 @@ function Stage() {
 
 type OnlineApi = NonNullable<ReturnType<typeof useOnline>>;
 
-/** The souls on an online chain, in seat order; yours is the one you move. */
-function onlineSouls(o: OnlineApi, roster: number[]): SoulSpec[] {
-  return roster.map((seat) => ({
-    seat,
-    name: o.players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`,
-    color: SEAT_COLORS[seat % SEAT_COLORS.length],
-    kind: seat === o.seat ? 'local' : 'remote',
-  }));
+/** The souls in an online room from its seating: yours are the ones you move, and the host moves the shades. */
+function onlineSouls(o: OnlineApi, seating: Seating[], shades: ShadeLevel): SoulSpec[] {
+  return seating.map((seat) => {
+    if (seat.shade) return { seat: -1, name: SHADE_NAMES[seat.slot], color: TEAM_COLORS[seat.team][seat.slot], kind: o.isHost ? 'local' : 'remote', team: seat.team, driver: 'shade', pace: SHADE_INFO[shades].pace };
+    const name = o.players.find((p) => p.seat === seat.seat)?.name ?? `Player ${seat.seat + 1}`;
+    return { seat: seat.seat, name: seat.second ? `${name} II` : name, color: TEAM_COLORS[seat.team][seat.slot], kind: seat.seat === o.seat ? 'local' : 'remote', team: seat.team, driver: 'human' };
+  });
+}
+
+/** The souls of a climb on this machine: one player with two souls, or two players with one each, and the shades in a race. */
+function localSouls(seating: Seating[], coop: boolean, shades: ShadeLevel): SoulSpec[] {
+  return seating.map((seat) => {
+    if (seat.shade) return { seat: -1, name: SHADE_NAMES[seat.slot], color: TEAM_COLORS[seat.team][seat.slot], kind: 'local', team: seat.team, driver: 'shade', pace: SHADE_INFO[shades].pace };
+    return { seat: seat.seat, name: (coop ? LOCAL_NAMES : SOLO_NAMES)[seat.slot], color: TEAM_COLORS[seat.team][seat.slot], kind: 'local', team: seat.team, driver: 'human' };
+  });
+}
+
+/** The souls you steer: your own, never the shades. */
+const steerable = (g: Game) => g.souls.filter((s) => s.kind === 'local' && s.driver === 'human');
+/** Your team, the one the camera and the HUD follow. */
+const myTeam = (g: Game) => steerable(g)[0]?.team ?? 0;
+/** How to call the other chain in a race. */
+function rivalName(g: Game) {
+  const souls = (g.chains[1 - myTeam(g)] ?? []).map((i) => g.souls[i]);
+  if (!souls.length || souls.every((s) => s.driver === 'shade')) return 'The shades';
+  const names = [...new Set(souls.map((s) => s.name.replace(/ II$/, '')))];
+  return names.length === 1 ? names[0] : `${names[0]} and ${names[1]}`;
+}
+/** The seat the room records as the winner: the first player on the winning team, or nobody when the shades won. */
+function winnerSeat(g: Game, team: number) {
+  const human = (g.chains[team] ?? []).map((i) => g.souls[i]).find((s) => s.driver === 'human');
+  return human ? human.seat : null;
 }
 
 /** Plays one note of the soundtrack on the arcade synth, `delay` seconds from now. */
@@ -241,6 +309,8 @@ type Hud = {
   wind: 'calm' | 'build' | 'gust';
   countdown: number;
   started: boolean;
+  /** A race: the rival chain, its name and how many metres you lead by (negative when behind). */
+  race: { rivals: SoulChip[]; name: string; lead: number } | null;
 };
 
 const soloInput = (keys: ReturnType<typeof useKeys>): Input => ({
@@ -276,8 +346,10 @@ function Play({ kind }: { kind: Kind }) {
   const [mode] = useSetting(MODE);
   const [party] = useSetting(PARTY);
   const [music] = useSetting(MUSIC);
+  const [shades] = useSetting(SHADES);
   const musicRef = useRef(music);
   musicRef.current = music;
+  /** Two people on this keyboard (or, online, more than one soul on the chain): the lava gives a lone climber more time. */
   const team = live || (party === 'local' && !shell.touch);
   const bests = useBests();
   const { ref, size } = useCanvas<HTMLDivElement>();
@@ -288,31 +360,37 @@ function Play({ kind }: { kind: Kind }) {
   const [gameKey, setGameKey] = useState(0);
   if (!game.current) {
     if (!live) {
-      const names = team ? LOCAL_NAMES : SOLO_NAMES;
-      game.current = createGame({ mode, souls: [0, 1].map((i) => ({ seat: i, name: names[i], color: SEAT_COLORS[i], kind: 'local' as const })), level: LEVEL, countdown: COUNTDOWN, solo: !team });
+      // a climb is two souls on one chain; a race seats two souls per team, the shades on the other chain
+      const souls = mode === 'race' ? localSouls(seatSouls(team ? [0, 1] : [0], mode), team, shades) : [0, 1].map((i) => ({ seat: i, name: (team ? LOCAL_NAMES : SOLO_NAMES)[i], color: TEAM_COLORS[0][i], kind: 'local' as const }));
+      game.current = createGame({ mode, souls, level: LEVEL, countdown: COUNTDOWN, solo: !team });
+      attachShades(game.current, shades, 7 + shell.round);
     } else {
       const roster = [...online!.players].map((p) => p.seat).sort((a, b) => a - b);
-      game.current = createGame({ mode, souls: onlineSouls(online!, roster), level: LEVEL, authority: online!.isHost, countdown: online!.isHost ? COUNTDOWN + HOST_LEAD : 60 });
+      game.current = createGame({ mode, souls: onlineSouls(online!, seatSouls(roster, mode), shades), level: LEVEL, authority: online!.isHost, countdown: online!.isHost ? COUNTDOWN + HOST_LEAD : 60 });
+      attachShades(game.current, shades, 7 + online!.round);
     }
   }
   const net = useRef({
     synced: !live || online!.isHost,
     ticks: 0,
     roster: live ? [...online!.players].map((p) => p.seat).sort((a, b) => a - b) : [],
-    reports: new Map<number, SeatReport>(),
+    shades,
+    reports: new Map<number, SoulReport>(),
     outbox: [] as NetEv[],
-    respawnSent: -1,
-    end: null as { won: boolean; time: number; height: number } | null,
+    respawnSent: [] as number[],
+    end: null as { won: boolean; time: number; height: number; winner: number } | null,
     endSends: 0,
     over: false,
   });
   const song = useRef<Sequencer | null>(null);
   song.current ??= new Sequencer(playNote);
-  const active = useRef(0);
+  /** The soul you are steering (an index into g.souls), when you have more than one. */
+  const active = useRef(-1);
+  const leadSign = useRef(0);
   const tap = useRef({ swap: false });
   const clock = useRef(0);
   const hudTick = useRef(0);
-  const [hud, setHud] = useState<Hud>(() => ({ time: '0:00.00', zone: 0, cp: 0, lit: LEVEL.checkpoints.map((_, i) => i === 0), lava: -3, souls: [], active: 0, heat: 0, fade: 0, wind: 'calm', countdown: 1, started: false }));
+  const [hud, setHud] = useState<Hud>(() => ({ time: '0:00.00', zone: 0, cp: 0, lit: LEVEL.checkpoints.map((_, i) => i === 0), lava: -3, souls: [], active: 0, heat: 0, fade: 0, wind: 'calm', countdown: 1, started: false, race: null }));
   const [card, setCard] = useState<{ id: number; zone: number } | null>(null);
   const [toast, setToast] = useState<{ id: number; text: string; kind: 'tip' | 'note' | 'warn' } | null>(null);
   const [flash, setFlash] = useState<{ id: number; kind: 'strain' | 'burn' | 'beacon' } | null>(null);
@@ -376,9 +454,27 @@ function Play({ kind }: { kind: Kind }) {
       get game() {
         return game.current;
       },
-      beacon: (cp: number) => {
+      beacon: (cp: number, team = 0) => {
         const g = game.current;
-        if (g) doRespawn(g, cp);
+        if (g) doRespawn(g, cp, team);
+      },
+      // runs the simulation ahead by a few seconds, so a playtest can sample a whole climb quickly
+      tick: (seconds: number) => {
+        const g = game.current;
+        if (!g) return;
+        for (let t = 0; t < seconds; t += 1 / 60) {
+          step(g, 1 / 60);
+          for (const e of g.events.splice(0)) react(g, e);
+          clock.current += 1 / 60;
+          view.current?.frame(g, focusOf(g), 1 / 60, clock.current, team && !live);
+        }
+      },
+      // lets the shades climb your chain too, so a playtest can watch a whole climb or race
+      auto: (level: ShadeLevel = 'swift') => {
+        const g = game.current;
+        if (!g) return;
+        const sh = createShade(g, myTeam(g), level, 3);
+        g.drivers.push((game, dt) => driveShade(game, sh, dt));
       },
     };
     return () => {
@@ -386,28 +482,47 @@ function Play({ kind }: { kind: Kind }) {
     };
   }, [kind]);
 
-  /** Which souls the camera frames: the one you steer first. */
+  /** The souls you steer, with the one you are steering right now made current. */
+  function owned(g: Game): Soul[] {
+    const own = steerable(g);
+    if (!own.some((s) => s.idx === active.current)) active.current = own[0]?.idx ?? 0;
+    return own;
+  }
+
+  /** Which souls the camera frames: the one you steer first, then the rest of your chain. */
   function focusOf(g: Game): number[] {
-    if (live) {
-      const me = g.souls.findIndex((s) => s.kind === 'local');
-      const k = g.chain.indexOf(me);
-      const near = [g.chain[k - 1], g.chain[k + 1]].filter((i): i is number => i !== undefined);
-      return [Math.max(0, me), ...near];
-    }
-    if (team) return [0, 1];
-    return [active.current, 1 - active.current];
+    const own = owned(g);
+    const chain = g.chains[own[0]?.team ?? 0] ?? g.chain;
+    if (!own.length) return chain;
+    const lead = active.current;
+    return [lead, ...chain.filter((i) => i !== lead)];
   }
 
   // ---------------------------------------------------------------------------------------------------------------
   // Online: souls at 15 Hz, crumbles and respawns as events, the result from the host.
 
-  const finish = (won: boolean, time: number, height: number) => {
+  const finish = (won: boolean, time: number, height: number, winner: number) => {
     const n = net.current;
     if (n.over) return;
     n.over = true;
     const g = game.current!;
     const ms = Math.round(time * 1000);
-    if (won) {
+    if (g.mode === 'race') {
+      const mine = myTeam(g);
+      const rival = rivalName(g);
+      const gap = Math.max(0, Math.round(Math.abs(teamHeight(g, mine) - teamHeight(g, 1 - mine))));
+      if (winner === mine) {
+        playJingle(JINGLE_OUT);
+        shellRef.current.gameOver(undefined, { title: 'You Won the Race', detail: `Out in ${fmtTime(time)}, with ${rival === 'The shades' ? 'the shades' : rival} ${gap} m below you.` });
+      } else {
+        sfx.play('lose');
+        const z = ZONES[zoneIndex(teamHeight(g, mine))];
+        shellRef.current.gameOver(undefined, { title: `${rival} Won the Race`, detail: `They stood on the way out at ${fmtTime(time)}. You were ${gap} m below, in ${z.name}.` });
+      }
+      if (live && onlineRef.current) onlineRef.current.reportResult(onlineRef.current.round, winner >= 0 ? winnerSeat(g, winner) : null);
+      return;
+    }
+    if (won && isRanked(g.mode)) {
       const newBest = bests[boardOf(team, g.mode)].submit(ms);
       playJingle(JINGLE_OUT);
       shellRef.current.gameOver(undefined, {
@@ -436,16 +551,21 @@ function Play({ kind }: { kind: Kind }) {
       let g = game.current!;
       if (p.k === 's') {
         if (!o.isHost || from === 0) return;
-        n.reports.set(from, { seat: from, ...p.soul });
-        const s = g.souls.find((x) => x.seat === from && x.kind === 'remote');
-        if (s) applyRemote(g, s, p.soul);
+        // a guest moves only the souls seated to it
+        for (const r of p.souls) {
+          const s = g.souls[r.i];
+          if (!s || s.kind !== 'remote' || s.seat !== from) continue;
+          n.reports.set(r.i, r);
+          applyRemote(g, s, r);
+        }
       } else if (p.k === 'S') {
         if (o.isHost || from !== 0) return;
         if (!n.synced) {
           if (!p.roster.includes(o.seat)) return;
-          g = game.current = createGame({ mode: p.mode, souls: onlineSouls(o, p.roster), level: LEVEL, authority: false, countdown: 0 });
+          g = game.current = createGame({ mode: p.mode, souls: onlineSouls(o, seatSouls(p.roster, p.mode), p.shades), level: LEVEL, authority: false, countdown: 0 });
           g.time = p.time;
           n.roster = p.roster;
+          n.shades = p.shades;
           n.synced = true;
           setGameKey((x) => x + 1);
         } else g.time = syncClock(g.time, p.time);
@@ -454,9 +574,8 @@ function Play({ kind }: { kind: Kind }) {
           for (let i = 0; i <= p.cp && i < g.lit.length; i++) g.lit[i] = true;
         }
         for (const r of p.souls) {
-          if (r.seat === o.seat) continue;
-          const s = g.souls.find((x) => x.seat === r.seat && x.kind === 'remote');
-          if (s) applyRemote(g, s, r);
+          const s = g.souls[r.i];
+          if (s && s.kind === 'remote') applyRemote(g, s, r);
         }
       } else if (p.k === 'e') {
         if (p.o === o.seat) return;
@@ -464,10 +583,10 @@ function Play({ kind }: { kind: Kind }) {
         if (o.isHost) o.send(d);
       } else if (p.k === 'end') {
         if (from !== 0 || o.isHost || n.end) return;
-        n.end = { won: p.won, time: p.time, height: p.height };
-        if (p.won) win(g, p.time);
+        n.end = { won: p.won, time: p.time, height: p.height, winner: p.winner };
+        if (p.won) win(g, p.time, Math.max(0, p.winner));
         else lose(g);
-        finishRef.current(p.won, p.time, p.height);
+        finishRef.current(p.won, p.time, p.height, p.winner);
       }
     });
     const timer = window.setInterval(() => {
@@ -475,28 +594,34 @@ function Play({ kind }: { kind: Kind }) {
       const g = game.current;
       if (!o || !g || !n.synced) return;
       n.ticks++;
-      const me = g.souls.find((s) => s.kind === 'local');
-      if (!me) return;
+      // every soul this client moves: yours, and on the host the shades too
+      const mine = g.souls.filter((s) => s.kind === 'local');
+      if (!mine.length) return;
       if (!o.isHost) {
-        o.send(guestState(o.round, reportOf(me)), { fast: n.ticks % 5 !== 0 });
+        o.send(guestState(o.round, mine.map(reportOf)), { fast: n.ticks % 5 !== 0 });
         return;
       }
-      const present = n.roster.filter((seat) => o.players.some((p) => p.seat === seat));
-      const souls: SeatReport[] = [{ seat: o.seat, ...reportOf(me) }, ...present.filter((s) => s !== o.seat && n.reports.has(s)).map((s) => n.reports.get(s)!)];
-      o.send(hostState(o.round, g.time, g.cp, g.mode, n.roster, souls), { fast: n.ticks % 5 !== 0 });
-      // the host watches everyone for a fall too far below the beacon
-      if (g.mode === 'beginner' && !g.respawn && g.time > 0) {
-        const low = Math.min(...g.souls.filter((s) => s.burned < 0).map((s) => s.y));
-        if (low < g.level.checkpoints[g.cp].y - FALL_TOO_FAR) scheduleRespawn(g, g.cp, g.time + 0.5);
+      const present = new Set(o.players.map((p) => p.seat));
+      const souls: SoulReport[] = [...mine.map(reportOf), ...g.souls.filter((s) => s.kind === 'remote' && present.has(s.seat) && n.reports.has(s.idx)).map((s) => n.reports.get(s.idx)!)];
+      o.send(hostState(o.round, g.time, g.cp, g.mode, n.shades, n.roster, souls), { fast: n.ticks % 5 !== 0 });
+      // the host watches every team for a fall too far below the beacon
+      if (g.mode === 'beginner' && g.time > 0) {
+        for (let t = 0; t < g.teams; t++) {
+          if (g.respawn[t]) continue;
+          const alive = liveOf(g, t).map((i) => g.souls[i].y);
+          if (alive.length && Math.min(...alive) < g.level.checkpoints[g.cp].y - FALL_TOO_FAR) scheduleRespawn(g, g.cp, g.time + 0.5, t);
+        }
       }
-      if (g.respawn && n.respawnSent !== g.respawn.at) {
-        n.respawnSent = g.respawn.at;
-        o.send(events(o.round, o.seat, [{ y: 'respawn', cp: g.respawn.cp, at: g.respawn.at }]));
-      }
-      if (!n.end && (g.won !== null || g.lost)) n.end = { won: g.won !== null, time: g.won ?? g.time, height: g.lost?.height ?? TOP };
+      g.respawn.forEach((r, t) => {
+        if (r && n.respawnSent[t] !== r.at) {
+          n.respawnSent[t] = r.at;
+          o.send(events(o.round, o.seat, [{ y: 'respawn', cp: r.cp, at: r.at, team: t }]));
+        }
+      });
+      if (!n.end && (g.won !== null || g.lost)) n.end = { won: g.won !== null, time: g.won ?? g.time, height: g.lost?.height ?? TOP, winner: g.winner ?? -1 };
       if (n.end && n.endSends < 4) {
         n.endSends++;
-        o.send(endOf(o.round, n.end.won, n.end.time, n.end.height));
+        o.send(endOf(o.round, n.end.won, n.end.time, n.end.height, n.end.winner));
       }
     }, 66);
     return () => {
@@ -513,18 +638,18 @@ function Play({ kind }: { kind: Kind }) {
       }
     } else if (ev.y === 'respawn') {
       g.cp = Math.max(g.cp, ev.cp);
-      scheduleRespawn(g, ev.cp, ev.at);
+      scheduleRespawn(g, ev.cp, ev.at, ev.team);
     } else if (ev.y === 'cp') {
       if (ev.cp > g.cp) {
         g.cp = ev.cp;
         g.lit[ev.cp] = true;
-        react(g, { t: 'checkpoint', cp: ev.cp, i: g.souls.findIndex((s) => s.seat === from) });
+        react(g, { t: 'checkpoint', cp: ev.cp, i: Math.min(ev.i, g.souls.length - 1) });
       }
     } else if (ev.y === 'fell') {
-      if (g.authority && g.mode === 'beginner') scheduleRespawn(g, g.cp, g.time + 0.5);
+      if (g.authority && g.mode === 'beginner') scheduleRespawn(g, g.cp, g.time + 0.5, ev.team);
     } else if (ev.y === 'burn') {
-      const s = g.souls.find((x) => x.seat === from);
-      if (s && s.burned < 0) applyRemote(g, s, { x: s.x, y: s.y, z: s.z, vx: 0, vy: 0, vz: 0, flags: 4 });
+      const s = g.souls[ev.i];
+      if (s && s.kind === 'remote' && (s.seat === from || from === 0) && s.burned < 0) applyRemote(g, s, { x: s.x, y: s.y, z: s.z, vx: 0, vy: 0, vz: 0, flags: 4 });
     }
   }
 
@@ -545,23 +670,20 @@ function Play({ kind }: { kind: Kind }) {
         v?.frame(g, focusOf(g), dt, clock.current, false);
         return;
       }
-      // input
-      if (live) {
-        const me = g.souls.find((s) => s.kind === 'local');
-        if (me) me.input = soloInput(keys);
-      } else if (team) {
+      // input: two on this keyboard steer a soul each; otherwise you steer one of your souls and swap between them
+      const own = owned(g);
+      if (team && !live) {
         g.souls[0].input = p1Input(keys);
         g.souls[1].input = p2Input(keys);
       } else {
-        if ((keys.pressed('ShiftLeft', 'ShiftRight', 'KeyQ', 'KeyE') || tap.current.swap) && g.won === null && !g.lost) {
-          const other = 1 - active.current;
-          if (g.souls[other].burned < 0) {
-            active.current = other;
+        if (own.length > 1 && (keys.pressed('ShiftLeft', 'ShiftRight', 'KeyQ', 'KeyE') || tap.current.swap) && g.won === null && !g.lost) {
+          const next = own[(own.findIndex((s) => s.idx === active.current) + 1) % own.length];
+          if (next.burned < 0) {
+            active.current = next.idx;
             sfx.play('select', 0.9);
           }
         }
-        g.souls[active.current].input = soloInput(keys);
-        g.souls[1 - active.current].input = noInput;
+        for (const s of own) s.input = s.idx === active.current ? soloInput(keys) : noInput;
       }
       tap.current.swap = false;
 
@@ -575,7 +697,7 @@ function Play({ kind }: { kind: Kind }) {
       // the soundtrack: from the first step to the last, and a heartbeat when the lava is close
       const now = sfx.clock();
       if (musicRef.current === 'on' && now !== null && g.time >= 0 && g.won === null && !g.lost) {
-        const low = Math.min(...g.souls.filter((s) => s.burned < 0).map((s) => s.y));
+        const low = lowOf(g);
         const danger = g.mode === 'lava' && g.time > LAVA_DELAY - 2 ? Math.max(0, Math.min(1, 1 - (low - g.lava) / 10)) : 0;
         song.current!.tick(now, v?.zone ?? zoneIndex(low), danger);
       }
@@ -587,28 +709,36 @@ function Play({ kind }: { kind: Kind }) {
 
       // the end of the climb
       if (!live) {
-        if (g.won !== null) finish(true, g.won, TOP);
-        else if (g.lost) finish(false, g.time, g.lost.height);
+        if (g.won !== null) finish(true, g.won, TOP, g.winner ?? 0);
+        else if (g.lost) finish(false, g.time, g.lost.height, -1);
       } else if (!n.over) {
-        if (g.won !== null && onlineRef.current?.isHost) finish(true, g.won, TOP);
-        else if (g.lost) finish(false, g.time, g.lost.height);
+        if (g.won !== null && onlineRef.current?.isHost) finish(true, g.won, TOP, g.winner ?? 0);
+        else if (g.lost) finish(false, g.time, g.lost.height, -1);
       }
       updateHud(g, dt);
     },
     () => view.current?.render(),
   );
 
+  /** The lowest soul still climbing on your chain. */
+  function lowOf(g: Game) {
+    const alive = liveOf(g, myTeam(g)).map((i) => g.souls[i].y);
+    return alive.length ? Math.min(...alive) : teamHeight(g, myTeam(g));
+  }
+
   function outgoing(g: Game, e: Ev) {
     const out = net.current.outbox;
     if (e.t === 'crumble' && e.phase === 'warn') out.push({ y: 'crumble', id: e.id, at: g.crumbles.get(e.id) ?? g.time });
-    else if (e.t === 'burn' && g.souls[e.i]?.kind === 'local') out.push({ y: 'burn' });
-    else if (e.t === 'checkpoint' && g.souls[e.i]?.kind === 'local') out.push({ y: 'cp', cp: e.cp });
+    else if (e.t === 'burn' && g.souls[e.i]?.kind === 'local') out.push({ y: 'burn', i: e.i });
+    else if (e.t === 'checkpoint' && g.souls[e.i]?.kind === 'local') out.push({ y: 'cp', cp: e.cp, i: e.i });
   }
 
   function react(g: Game, e: Ev) {
     const v = view.current;
     const s = 'i' in e ? g.souls[e.i] : undefined;
-    const mine = !s || s.kind === 'local';
+    const us = myTeam(g);
+    const mine = !s || (s.kind === 'local' && s.driver === 'human');
+    const ours = 'team' in e ? e.team === us : !s || s.team === us;
     switch (e.t) {
       case 'go':
         sfx.tone({ freq: 660, dur: 0.16, type: 'square', vol: 0.1 });
@@ -617,7 +747,8 @@ function Play({ kind }: { kind: Kind }) {
           hints.current!.counted = true;
           countClimb();
         }
-        if (!team && !live) showHint('swap', shellRef.current.touch ? 'You steer one soul at a time. Tap swap to steer the other.' : 'You steer one soul at a time. Shift swaps to the other.');
+        if (steerable(g).length > 1) showHint('swap', shellRef.current.touch ? 'You steer one soul at a time. Tap swap to steer the other.' : 'You steer one soul at a time. Shift swaps to the other.');
+        if (g.mode === 'race') showHint('race', `${rivalName(g)} climb the same tower. First chain with both souls on the way out wins.`);
         break;
       case 'jump':
         if (mine) sfx.play('jump', 0.85 + (s?.idx ?? 0) * 0.08);
@@ -648,15 +779,17 @@ function Play({ kind }: { kind: Kind }) {
         }
         break;
       case 'yank':
+        if (!ours) break;
         sfx.tone({ freq: 230, to: 70, dur: 0.16, type: 'sawtooth', vol: 0.14 });
         sfx.noise(0.08, 0.1);
         if (mine) setFlash({ id: ++nextId.current, kind: 'strain' });
         break;
       case 'hang':
+        if (!ours) break;
         sfx.tone({ freq: 320, to: 260, dur: 0.14, type: 'triangle', vol: 0.06 });
         if (!hintTimers.current.hanging) {
           hintTimers.current.hanging = true;
-          showHint('hang', team || live ? 'A soul is hanging. Whoever is standing: walk away from the edge to haul them up.' : 'Your other soul is hanging. Walk away from the edge to haul it up, or swap and climb.');
+          showHint('hang', steerable(g).length > 1 && !team ? 'Your other soul is hanging. Walk away from the edge to haul it up, or swap and climb.' : 'A soul is hanging. Whoever is standing: walk away from the edge to haul them up.');
         }
         break;
       case 'crumble':
@@ -673,12 +806,14 @@ function Play({ kind }: { kind: Kind }) {
         sfx.tone({ freq: 220, to: 880, dur: 0.26, type: 'sine', vol: 0.15 });
         break;
       case 'checkpoint':
+        if (!ours) break;
         playJingle(JINGLE_BEACON);
         setFlash({ id: ++nextId.current, kind: 'beacon' });
         if (g.mode === 'beginner') note(`Beacon ${e.cp} lit. The team starts here now.`);
         else note(`Beacon ${e.cp} lit.`);
         break;
       case 'zone':
+        if (!ours) break;
         sfx.tone({ freq: 110, dur: 1.4, type: 'sine', vol: 0.22 });
         sfx.tone({ freq: 220, dur: 1.0, type: 'triangle', vol: 0.06 });
         sfx.tone({ freq: 165, dur: 0.8, type: 'sine', vol: 0.05, delay: 0.1 });
@@ -689,6 +824,11 @@ function Play({ kind }: { kind: Kind }) {
         else if (e.zone === 5) showHint('stars', 'The wind gusts in cycles up here. Cross the long gaps in the calm.');
         break;
       case 'burn':
+        if (!ours) {
+          sfx.noise(0.3, 0.1);
+          note(`${rivalName(g)} fell into the lava.`);
+          break;
+        }
         sfx.noise(0.6, 0.3);
         sfx.tone({ freq: 400, to: 60, dur: 0.5, type: 'sawtooth', vol: 0.2 });
         playJingle(JINGLE_BURN);
@@ -696,6 +836,7 @@ function Play({ kind }: { kind: Kind }) {
         if (g.mode !== 'lava') fadeAt.current = g.time + RESPAWN_T;
         break;
       case 'respawn':
+        if (!ours) break;
         sfx.tone({ freq: 520, to: 780, dur: 0.22, type: 'triangle', vol: 0.1 });
         fadeAt.current = null;
         note(e.cp === 0 ? 'Back at the bottom.' : `Back at beacon ${e.cp}.`);
@@ -713,13 +854,15 @@ function Play({ kind }: { kind: Kind }) {
     v?.react(e, g);
   }
 
+  /** Name tags over the souls you do not steer: the others online, and the shades. */
+  const tagged = (s: Soul) => !(s.kind === 'local' && s.driver === 'human');
   function placeTags(g: Game, v: View) {
-    if (!live) return;
+    if (!live && g.mode !== 'race') return;
     const { w, h } = sizeRef.current;
     for (const s of g.souls) {
       const el = tags.current.get(s.idx);
       if (!el) continue;
-      const p = s.kind === 'local' || s.burned >= 0 ? null : v.tagOf(s.idx, w, h);
+      const p = !tagged(s) || s.burned >= 0 ? null : v.tagOf(s.idx, w, h);
       if (!p || p.x < -40 || p.x > w + 40 || p.y < -20 || p.y > h + 20) el.style.display = 'none';
       else {
         el.style.display = '';
@@ -733,26 +876,44 @@ function Play({ kind }: { kind: Kind }) {
     if (hudTick.current > 0) return;
     hudTick.current = 1 / 8;
     const v = view.current;
-    const zone = v?.zone ?? zoneIndex(Math.max(...g.souls.map((s) => s.y)));
+    const us = myTeam(g);
+    const own = owned(g);
+    const zone = v?.zone ?? zoneIndex(teamHeight(g, us));
     if (zone !== skyZone.current) {
       skyZone.current = zone;
       setSky((list) => [...list.slice(-1), { id: ++nextId.current, zone }]);
     }
-    const low = Math.min(...g.souls.filter((s) => s.burned < 0).map((s) => s.y));
+    const low = lowOf(g);
     const heat = g.mode === 'lava' ? Math.max(0, Math.min(1, 1 - (low - g.lava) / 7)) : 0;
     let fade = 0;
-    if (g.respawn) fade = Math.max(0, Math.min(1, 1 - (g.respawn.at - g.time) / RESPAWN_T));
-    const souls: SoulChip[] = g.chain.map((idx) => {
+    const pending = g.respawn[us];
+    if (pending) fade = Math.max(0, Math.min(1, 1 - (pending.at - g.time) / RESPAWN_T));
+    const chip = (idx: number, rival: boolean): SoulChip => {
       const s = g.souls[idx];
       return {
         idx: s.idx,
         name: s.name,
         color: s.color,
         y: s.y,
-        me: live ? s.kind === 'local' : !team && s.idx === active.current,
+        me: !rival && (team && !live ? false : own.length > 1 ? s.idx === active.current : s.kind === 'local' && s.driver === 'human'),
+        rival,
         state: s.burned >= 0 ? 'burned' : s.hanging ? 'hanging' : s.finished ? 'out' : s.grounded ? 'climbing' : 'air',
       };
-    });
+    };
+    const souls = (g.chains[us] ?? g.chain).map((idx) => chip(idx, false));
+    let race: Hud['race'] = null;
+    if (g.mode === 'race' && g.teams > 1) {
+      const them = 1 - us;
+      const lead = teamHeight(g, us) - teamHeight(g, them);
+      race = { rivals: g.chains[them].map((idx) => chip(idx, true)), name: rivalName(g), lead };
+      // the lead changing hands is a moment
+      const sign = Math.abs(lead) < 1.5 ? leadSign.current : Math.sign(lead);
+      if (g.started && g.won === null && sign !== leadSign.current && g.time > 3) {
+        if (sign > 0) note('You have the lead.');
+        else if (sign < 0) note(`${race.name} ${race.name === 'The shades' ? 'have' : 'has'} the lead.`, 'warn');
+      }
+      leadSign.current = sign;
+    }
     const next: Hud = {
       time: fmtTime(Math.max(0, g.won ?? g.time)),
       zone,
@@ -766,13 +927,16 @@ function Play({ kind }: { kind: Kind }) {
       wind: g.gustPhase,
       countdown: g.time < 0 ? -g.time : 0,
       started: g.started,
+      race,
     };
     setHud(next);
   }
 
   const playing = shell.status === 'playing' && kind !== 'idle';
   const g = game.current!;
-  const solo = !team && !live;
+  /** More than one soul to steer: the swap key, the halo and the "steering" chip. */
+  const solo = !(team && !live) && steerable(g).length > 1;
+  const leadWord = hud.race ? (Math.abs(hud.race.lead) < 1 ? 'level' : `${Math.abs(Math.round(hud.race.lead))} m ${hud.race.lead > 0 ? 'ahead' : 'behind'}`) : '';
   const skyOf = (zone: number) => {
     const p = ZONES[zone].palette.sky;
     return `linear-gradient(180deg, ${p[0]} 0%, ${p[1]} 55%, ${p[2]} 100%)`;
@@ -791,6 +955,7 @@ function Play({ kind }: { kind: Kind }) {
           <div className="g-chained-top" style={{ ['--ink' as string]: ZONES[hud.zone].palette.ink }}>
             <span className="g-chained-time">{hud.time}</span>
             <span className="g-chained-modetag">{MODE_INFO[g.mode].label}</span>
+            {hud.race && hud.started && <span className={`g-chained-lead${hud.race.lead >= 1 ? ' is-ahead' : hud.race.lead <= -1 ? ' is-behind' : ''}`}>{leadWord}</span>}
           </div>
           {hud.countdown > 0 && !live && <div className="g-chained-ready">ready</div>}
           {live && !net.current.synced && <div className="g-chained-ready">waiting for the host</div>}
@@ -799,8 +964,8 @@ function Play({ kind }: { kind: Kind }) {
               <ZoneCard zone={card.zone} />
             </div>
           )}
-          <Altimeter souls={hud.souls} lava={hud.lava} lit={hud.lit} checkpoints={LEVEL.checkpoints} mode={g.mode} zone={hud.zone} />
-          <TeamStrip souls={hud.souls} active={hud.active} solo={solo} touch={shell.touch} />
+          <Altimeter souls={hud.race ? [...hud.race.rivals, ...hud.souls] : hud.souls} lava={hud.lava} lit={hud.lit} checkpoints={LEVEL.checkpoints} mode={g.mode} zone={hud.zone} />
+          <TeamStrip souls={hud.souls} rivals={hud.race?.rivals} active={hud.active} solo={solo} touch={shell.touch} />
           {toast && (
             <div key={toast.id} className={`g-chained-toast is-${toast.kind}`} onAnimationEnd={() => setToast(null)}>
               {toast.text}
@@ -810,22 +975,20 @@ function Play({ kind }: { kind: Kind }) {
           {hud.heat > 0 && <div className="g-chained-heat" style={{ opacity: hud.heat }} aria-hidden="true" />}
           {hud.fade > 0 && <div className="g-chained-fade" style={{ opacity: hud.fade }} aria-hidden="true" />}
           {flash && <div key={flash.id} className={`g-chained-flash is-${flash.kind}`} onAnimationEnd={() => setFlash(null)} aria-hidden="true" />}
-          {live &&
-            g.souls
-              .filter((s) => s.kind === 'remote')
-              .map((s) => (
-                <div
-                  key={s.idx}
-                  className="g-chained-tag"
-                  style={{ ['--soul' as string]: s.color }}
-                  ref={(el) => {
-                    if (el) tags.current.set(s.idx, el);
-                    else tags.current.delete(s.idx);
-                  }}
-                >
-                  {s.name}
-                </div>
-              ))}
+          {(live || g.mode === 'race') &&
+            g.souls.filter(tagged).map((s) => (
+              <div
+                key={s.idx}
+                className="g-chained-tag"
+                style={{ ['--soul' as string]: s.color }}
+                ref={(el) => {
+                  if (el) tags.current.set(s.idx, el);
+                  else tags.current.delete(s.idx);
+                }}
+              >
+                {s.name}
+              </div>
+            ))}
           <TouchControls dpad buttons={solo ? [{ key: 'Space', label: 'jump' }, { key: 'KeyQ', label: 'swap' }] : [{ key: 'Space', label: 'jump' }]} />
         </>
       )}

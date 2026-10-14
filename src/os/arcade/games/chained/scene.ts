@@ -3,7 +3,7 @@
 import type { T } from './gl';
 import { clamp, createGL, damp, disposeTree, lerp, type GL } from './gl';
 import { CHAIN_L, LAVA_Y, R_CORE, R_FLOOR, R_MAX, TOP, ZONES, pose, zoneIndex, type Level, type Palette, type Platform } from './level';
-import { crumbleState, windAt, type CrumbleState, type Ev, type Game, type Soul } from './logic';
+import { crumbleState, liveOf, windAt, type CrumbleState, type Ev, type Game, type Soul } from './logic';
 
 type Three = typeof import('three');
 
@@ -167,6 +167,10 @@ type SoulView = {
   head: T.Mesh;
   eyes: T.Mesh[];
   eyeMat: T.MeshBasicMaterial;
+  /** This soul's own materials, faded when it is a rival (mats.chain and mats.darkIron are shared). */
+  cloakMat: T.MeshLambertMaterial;
+  darkMat: T.MeshLambertMaterial;
+  skinMat: T.MeshLambertMaterial;
   arms: [T.Group, T.Group];
   legs: [T.Group, T.Group];
   shackle: T.Object3D;
@@ -181,9 +185,16 @@ type SoulView = {
   lean: number;
   flail: number;
   burnScale: number;
+  /** A visual offset that eases away after a mantle, so the step up onto a ledge does not pop. */
+  ox: number;
+  oy: number;
+  oz: number;
+  /** 0 for a soul on the viewer's team, 1 for a rival drawn as a shade. */
+  ghost: number;
 };
 
-type Rope = { points: Float32Array; prev: Float32Array; n: number };
+/** A verlet rope between two shackles. `held` is set every frame its pair still exists. */
+type Rope = { points: Float32Array; prev: Float32Array; n: number; held: boolean };
 
 type Beacon = { p: Platform; orb: T.Mesh; orbMat: T.MeshBasicMaterial; ring: T.Mesh; ringMat: T.MeshBasicMaterial; lit: boolean; flare: number };
 type Moving = { p: Platform; mesh: T.Object3D; parts?: T.Object3D[] };
@@ -843,9 +854,10 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     const body = new THREE.Group();
     root.add(body);
     const c = new THREE.Color(color);
-    const cloakMat = flat(c.getHex());
-    const darkMat = flat(c.clone().multiplyScalar(0.55).getHex());
-    const skin = flat('#f1e4d2');
+    // transparent from the start, so fading a rival into a shade never switches materials
+    const cloakMat = flat(c.getHex(), { transparent: true });
+    const darkMat = flat(c.clone().multiplyScalar(0.55).getHex(), { transparent: true });
+    const skin = flat('#f1e4d2', { transparent: true });
     const cloak = new THREE.Mesh(geo.cone, cloakMat);
     cloak.position.y = 0.42;
     cloak.scale.set(0.34, 0.84, 0.34);
@@ -917,11 +929,12 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     glow.scale.setScalar(0.9);
     scene.add(glow);
     scene.add(root);
-    return { root, body, cloak, head, eyes, eyeMat, arms, legs, shackle, lantern, lanternMat, halo, haloMat, glow, glowMat, color: c, stride: 0, lean: 0, flail: 0, burnScale: 1 };
+    return { root, body, cloak, head, eyes, eyeMat, cloakMat, darkMat, skinMat: skin, arms, legs, shackle, lantern, lanternMat, halo, haloMat, glow, glowMat, color: c, stride: 0, lean: 0, flail: 0, burnScale: 1, ghost: 0, ox: 0, oy: 0, oz: 0 };
   };
 
   const ROPE_N = 16;
-  const ropes: Rope[] = [];
+  /** One rope per pair of neighbours on a chain, keyed `${team}:${k}`. */
+  const ropes = new Map<string, Rope>();
   const LINKS_MAX = 3 * (ROPE_N - 1);
   const linkMesh = new THREE.InstancedMesh(geo.link, mats.chain, LINKS_MAX);
   linkMesh.frustumCulled = false;
@@ -939,6 +952,8 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
   const X = new THREE.Vector3(1, 0, 0);
+  const eyeWarm = new THREE.Color('#fff1b8');
+  const eyeCool = new THREE.Color('#cfd6ff');
   const cam = { a: 0, r: 0, y: 0, tx: 0, ty: 0, tz: 0, dist: 9.5, shake: 0, init: false, fallDip: 0 };
   let pal = paletteAt(0);
   let bellSwing = 0;
@@ -964,13 +979,25 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     return best;
   };
 
-  function syncSoul(g: Game, s: Soul, sv: SoulView, dt: number, clock: number, lead: boolean, idx: number) {
+  function syncSoul(g: Game, s: Soul, sv: SoulView, dt: number, clock: number, lead: boolean, rival: boolean, idx: number) {
     const burned = s.burned >= 0;
+    // a rival fades toward a shade: translucent, cool eyed, with a dimmer lantern
+    sv.ghost = damp(sv.ghost, rival ? 1 : 0, 6, dt);
+    const ghost = sv.ghost > 0.01 ? sv.ghost : 0;
+    const fade = 1 - 0.42 * ghost;
+    sv.cloakMat.opacity = fade;
+    sv.darkMat.opacity = fade;
+    sv.skinMat.opacity = fade;
+    sv.eyeMat.color.copy(eyeWarm).lerp(eyeCool, ghost);
     sv.burnScale = damp(sv.burnScale, burned ? 0 : 1, 10, dt);
     sv.root.visible = sv.burnScale > 0.02;
     sv.glow.visible = sv.root.visible;
     const speed = Math.hypot(s.vx, s.vz);
-    sv.root.position.set(s.x, s.y, s.z);
+    const ease = Math.exp(-13 * dt);
+    sv.ox *= ease;
+    sv.oy *= ease;
+    sv.oz *= ease;
+    sv.root.position.set(s.x + sv.ox, s.y + sv.oy, s.z + sv.oz);
     sv.root.rotation.y = -s.face;
     // squash on landing, stretch in the air
     const sq = s.grounded ? 1 - s.squash * 0.28 + Math.abs(Math.sin(sv.stride * 2)) * 0.03 * Math.min(1, speed / 3) : 1 + clamp(Math.abs(s.vy) * 0.012, 0, 0.14);
@@ -996,9 +1023,10 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     const blink = Math.sin(clock * 1.7 + idx * 1.3) > 0.985;
     for (const e of sv.eyes) e.scale.set(0.035, blink ? 0.006 : 0.035, 0.035);
     // the lantern breathes
-    sv.lanternMat.color.copy(sv.color).lerp(color.set('#ffd9a0'), 0.6 + Math.sin(clock * 5 + idx) * 0.08);
-    // the halo for the steered soul
-    sv.haloMat.opacity = damp(sv.haloMat.opacity, lead && g.souls.filter((x) => x.kind === 'local').length > 1 ? 0.75 : 0, 8, dt);
+    sv.lanternMat.color.copy(sv.color).lerp(color.set('#ffd9a0'), 0.6 + Math.sin(clock * 5 + idx) * 0.08).multiplyScalar(1 - 0.45 * ghost);
+    // the halo for the steered soul, only when more than one soul here is a person's (never on a rival)
+    const steered = lead && !rival && g.souls.filter((x) => x.kind === 'local' && x.driver === 'human').length > 1;
+    sv.haloMat.opacity = damp(sv.haloMat.opacity, steered ? 0.75 : 0, 8, dt);
     sv.halo.rotation.z += dt * 0.8;
     sv.halo.scale.setScalar(0.28 + Math.sin(clock * 3) * 0.02);
     // the pool of light under the soul
@@ -1008,7 +1036,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       sv.glow.position.set(s.x, gy + 0.02, s.z);
       const h = clamp(s.y - gy, 0, 6);
       sv.glow.scale.setScalar(0.9 + h * 0.12);
-      sv.glowMat.opacity = (0.28 - h * 0.035) * sv.burnScale;
+      sv.glowMat.opacity = (0.28 - h * 0.035) * sv.burnScale * (1 - 0.6 * ghost);
     } else sv.glow.visible = false;
   }
 
@@ -1072,43 +1100,50 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
   }
 
   function syncRopes(g: Game, dt: number) {
-    const live = g.chain.filter((i) => g.souls[i].burned < 0);
     let count = 0;
-    for (let k = 0; k + 1 < live.length; k++) {
-      const a = soulViews[live[k]];
-      const b = soulViews[live[k + 1]];
-      if (!a || !b) continue;
-      let rope = ropes[k];
-      a.shackle.getWorldPosition(v3);
-      b.shackle.getWorldPosition(v3b);
-      if (!rope) {
-        rope = { points: new Float32Array(ROPE_N * 3), prev: new Float32Array(ROPE_N * 3), n: ROPE_N };
-        for (let i = 0; i < ROPE_N; i++) {
-          const t = i / (ROPE_N - 1);
-          rope.points[i * 3] = lerp(v3.x, v3b.x, t);
-          rope.points[i * 3 + 1] = lerp(v3.y, v3b.y, t);
-          rope.points[i * 3 + 2] = lerp(v3.z, v3b.z, t);
+    for (const rope of ropes.values()) rope.held = false;
+    // chain by chain: the ropes of a race never cross from one team to the other
+    for (let team = 0; team < g.chains.length; team++) {
+      const live = liveOf(g, team);
+      for (let k = 0; k + 1 < live.length; k++) {
+        const a = soulViews[live[k]];
+        const b = soulViews[live[k + 1]];
+        if (!a || !b) continue;
+        const key = `${team}:${k}`;
+        let rope = ropes.get(key);
+        a.shackle.getWorldPosition(v3);
+        b.shackle.getWorldPosition(v3b);
+        if (!rope) {
+          rope = { points: new Float32Array(ROPE_N * 3), prev: new Float32Array(ROPE_N * 3), n: ROPE_N, held: true };
+          for (let i = 0; i < ROPE_N; i++) {
+            const t = i / (ROPE_N - 1);
+            rope.points[i * 3] = lerp(v3.x, v3b.x, t);
+            rope.points[i * 3 + 1] = lerp(v3.y, v3b.y, t);
+            rope.points[i * 3 + 2] = lerp(v3.z, v3b.z, t);
+          }
+          rope.prev.set(rope.points);
+          ropes.set(key, rope);
         }
-        rope.prev.set(rope.points);
-        ropes[k] = rope;
-      }
-      stepRope(rope, v3.x, v3.y, v3.z, v3b.x, v3b.y, v3b.z, dt, g);
-      for (let i = 0; i < ROPE_N - 1; i++) {
-        const i3 = i * 3;
-        v3c.set(rope.points[i3 + 3] - rope.points[i3], rope.points[i3 + 4] - rope.points[i3 + 1], rope.points[i3 + 5] - rope.points[i3 + 2]);
-        const len = v3c.length() || 1e-6;
-        v3c.divideScalar(len);
-        q4.setFromUnitVectors(X, v3c);
-        q4b.setFromAxisAngle(v3c, (i % 2) * Math.PI * 0.5);
-        q4.premultiply(q4b);
-        dummy.position.set((rope.points[i3] + rope.points[i3 + 3]) / 2, (rope.points[i3 + 1] + rope.points[i3 + 4]) / 2, (rope.points[i3 + 2] + rope.points[i3 + 5]) / 2);
-        dummy.quaternion.copy(q4);
-        dummy.scale.set(Math.min(1.6, len / 0.22), 1, 1);
-        dummy.updateMatrix();
-        linkMesh.setMatrixAt(count++, dummy.matrix);
+        rope.held = true;
+        stepRope(rope, v3.x, v3.y, v3.z, v3b.x, v3b.y, v3b.z, dt, g);
+        for (let i = 0; i < ROPE_N - 1; i++) {
+          const i3 = i * 3;
+          v3c.set(rope.points[i3 + 3] - rope.points[i3], rope.points[i3 + 4] - rope.points[i3 + 1], rope.points[i3 + 5] - rope.points[i3 + 2]);
+          const len = v3c.length() || 1e-6;
+          v3c.divideScalar(len);
+          q4.setFromUnitVectors(X, v3c);
+          q4b.setFromAxisAngle(v3c, (i % 2) * Math.PI * 0.5);
+          q4.premultiply(q4b);
+          dummy.position.set((rope.points[i3] + rope.points[i3 + 3]) / 2, (rope.points[i3 + 1] + rope.points[i3 + 4]) / 2, (rope.points[i3 + 2] + rope.points[i3 + 5]) / 2);
+          dummy.quaternion.copy(q4);
+          dummy.scale.set(Math.min(1.6, len / 0.22), 1, 1);
+          dummy.updateMatrix();
+          linkMesh.setMatrixAt(count++, dummy.matrix);
+        }
       }
     }
-    ropes.length = Math.max(0, live.length - 1);
+    // drop the ropes whose pair is gone (a soul burned, or the game changed)
+    for (const [key, rope] of ropes) if (!rope.held) ropes.delete(key);
     linkMesh.count = count;
     linkMesh.instanceMatrix.needsUpdate = true;
   }
@@ -1422,7 +1457,8 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     },
     frame(g, focus, dt, clock, split = false) {
       while (soulViews.length < g.souls.length) soulViews.push(makeSoul(g.souls[soulViews.length].color));
-      g.souls.forEach((s, i) => syncSoul(g, s, soulViews[i], dt, clock, focus[0] === i && !split, i));
+      const myTeam = g.souls[focus[0]]?.team ?? 0;
+      g.souls.forEach((s, i) => syncSoul(g, s, soulViews[i], dt, clock, focus[0] === i && !split, s.team !== myTeam, i));
       syncRopes(g, dt);
       syncCamera(g, focus, dt, split);
       syncPalette(g, dt);
@@ -1441,6 +1477,13 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
         if (e.hard) cam.shake = Math.max(cam.shake, 0.7);
       } else if (e.t === 'mantle') {
         const s = soulAt(e.i);
+        const sv = soulViews[e.i];
+        if (sv) {
+          // start the model where it was and let it ease up onto the ledge
+          sv.ox = sv.root.position.x - s.x;
+          sv.oy = sv.root.position.y - s.y;
+          sv.oz = sv.root.position.z - s.z;
+        }
         burst(s.x, s.y + 0.05, s.z, 4, [0.6, 0.55, 0.5], 0.8, 0.08, 0.6);
       } else if (e.t === 'taut') {
         if (e.speed > 3) {
@@ -1479,12 +1522,20 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
         burst(s.x, s.y, s.z, 10, [1, 0.5, 0.15], 3, 0.12, 1.5);
         cam.shake = Math.max(cam.shake, 0.9);
       } else if (e.t === 'win') {
-        const s = g.souls[0];
-        for (let i = 0; i < 3; i++) burst(s.x, s.y + 1.5 + i, s.z, 14, [1, 0.9, 0.6], 3, 0.08, 1.4);
+        // the burst is shared out over the winning team
+        const team = g.chains[e.team] ?? [];
+        const n = Math.max(3, Math.floor(16 / Math.max(1, team.length)));
+        for (const i of team) {
+          const s = soulAt(i);
+          for (let j = 0; j < 3; j++) burst(s.x, s.y + 1.5 + j, s.z, n, [1, 0.9, 0.6], 3, 0.08, 1.4);
+        }
         won = true;
         bellSwing = 1;
       } else if (e.t === 'respawn') {
-        for (const s of g.souls) burst(s.x, s.y + 0.5, s.z, 8, [0.8, 0.9, 1], 1.5, 0.08, 1);
+        for (const i of g.chains[e.team] ?? []) {
+          const s = soulAt(i);
+          burst(s.x, s.y + 0.5, s.z, 8, [0.8, 0.9, 1], 1.5, 0.08, 1);
+        }
       }
     },
     project(x, y, z, w, h) {

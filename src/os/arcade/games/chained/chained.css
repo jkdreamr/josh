@@ -118,6 +118,24 @@
   text-transform: uppercase;
   color: var(--ink);
 }
+/* the race: how far ahead or behind your chain is */
+.g-chained .g-chained-lead {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background 0.4s ease;
+}
+.g-chained .g-chained-lead.is-ahead {
+  background: rgba(72, 179, 90, 0.42);
+}
+.g-chained .g-chained-lead.is-behind {
+  background: rgba(232, 74, 60, 0.42);
+}
 .g-chained .g-chained-ready {
   position: absolute;
   top: 50%;
@@ -279,6 +297,10 @@
 .g-chained .g-chained-alti-soul.is-burned {
   opacity: 0.3;
 }
+.g-chained .g-chained-alti-soul.is-rival {
+  background: rgba(10, 8, 14, 0.55);
+  box-shadow: inset 0 0 0 2.5px var(--soul), 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
 
 /* the chain, bottom left */
 .g-chained .g-chained-team {
@@ -334,6 +356,23 @@
   font-size: 11px;
   color: rgba(255, 255, 255, 0.55);
   padding-left: 2px;
+}
+/* the rival chain in a race: hollow dots, a quieter chip */
+.g-chained .g-chained-chip.is-rival {
+  background: rgba(10, 8, 14, 0.3);
+  color: rgba(255, 255, 255, 0.82);
+}
+.g-chained .g-chained-chip.is-rival i {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--soul);
+}
+.g-chained .g-chained-vs {
+  font-family: var(--voice);
+  font-size: 15px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.62);
+  padding: 0 3px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
 }
 @media (max-width: 560px) {
   .g-chained .g-chained-chip small {
