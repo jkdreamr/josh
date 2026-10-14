@@ -53,6 +53,24 @@ export const LANDMARKS = {
   dish: { x: 230, z: -390 },
 };
 
+/**
+ * What lies past the edge of the road on one side: a wall, or a drop (water, a pit, or out of bounds on the golf course).
+ * Run a kart's middle over the brink of a drop and you fall in, and the crane fishes you out.
+ */
+export type Past = 'wall' | 'water' | 'pit' | 'ob';
+/** The codes the track stores them by (pastLo, pastHi). */
+export const PASTS: readonly Past[] = ['wall', 'water', 'pit', 'ob'];
+/**
+ * A stretch of a course's edge, from s0 to s1, on one side (-1 left, 1 right) or both (0): what lies past it, and where.
+ * For a drop `at` is the brink the kart's middle may not cross (by default a little past the edge of the road, see
+ * Tier.brink); for a wall, where the wall stands (by default the course's wall line).
+ */
+export type EdgeSpan = [s0: number, s1: number, side: -1 | 0 | 1, past: Past, at?: number];
+/** In the water: how far over the edge of a pond the kart's middle has to go (golf: the water's edge is the brink plus this). */
+export const WET = 0.6;
+/** Half a kart's width, more or less: how close its middle can come to a wall. */
+export const KART_R = 1.05;
+
 export type Track = {
   n: number;
   step: number;
@@ -66,6 +84,14 @@ export type Track = {
   /** Half the road's width, and how far either side of the centerline the walls stand. */
   half: number;
   edge: number;
+  /**
+   * The edge on each side at every sample, as signed lateral offsets (lo left, negative; hi right), and what lies past
+   * it (codes into PASTS): the walls by default, a brink where the road drops away.
+   */
+  lo: Float32Array;
+  hi: Float32Array;
+  pastLo: Uint8Array;
+  pastHi: Uint8Array;
 };
 
 export type Spot = { i: number; s: number; d: number; x: number; z: number; tx: number; tz: number };
@@ -158,8 +184,60 @@ export function buildTrack(route: [number, number][] = ROUTE, start: [number, nu
     const b = (i + 1) % n;
     curv[i] = -wrapAngle(headingOf(tx[b], tz[b]) - headingOf(tx[a], tz[a])) / (2 * step);
   }
-  return { n, step, length: n * step, x, z, tx, tz, curv, half, edge };
+  return { n, step, length: n * step, x, z, tx, tz, curv, half, edge, lo: new Float32Array(n).fill(-edge), hi: new Float32Array(n).fill(edge), pastLo: new Uint8Array(n), pastHi: new Uint8Array(n) };
 }
+
+/** The edge on one side (1 right, -1 left) at s: how far out it is (a positive distance) and what lies past it. */
+export function edgeAt(t: Track, s: number, side: number): { lim: number; past: Past } {
+  const w = wrapS(t, s) / t.step;
+  const i = Math.floor(w) % t.n;
+  const j = (i + 1) % t.n;
+  const u = w - Math.floor(w);
+  const a = side > 0 ? t.hi[i] : -t.lo[i];
+  const b = side > 0 ? t.hi[j] : -t.lo[j];
+  const pa = (side > 0 ? t.pastHi : t.pastLo)[i];
+  const pb = (side > 0 ? t.pastHi : t.pastLo)[j];
+  // (where a wall gives way to water or a drop the limit is the nearer sample's, not a blend of the two: a blend stands
+  // the wall further in for half a sample before the water, where before there was none)
+  const near = u < 0.5 ? i : j;
+  return { lim: pa === pb ? a + (b - a) * u : near === i ? a : b, past: PASTS[(side > 0 ? t.pastHi : t.pastLo)[near]] };
+}
+
+/** Whether the road drops away on that side (1 right, -1 left) at sample i. */
+export const dropAt = (t: Track, i: number, side: number) => (side > 0 ? t.pastHi : t.pastLo)[((i % t.n) + t.n) % t.n] !== 0;
+
+/**
+ * The runs of the edge with the same thing past them, on each side: [side (-1 left, 1 right), from, to, what]. A run
+ * never splits over the start line (`to` can be past the end of the lap); a side that is all one thing is one run from 0
+ * to the length of the lap.
+ */
+export function edgeRuns(t: Track): [number, number, number, Past][] {
+  const runs: [number, number, number, Past][] = [];
+  for (const side of [-1, 1]) {
+    const past = side < 0 ? t.pastLo : t.pastHi;
+    const at = (i: number) => past[((i % t.n) + t.n) % t.n];
+    // start where the edge changes, so no run is split over the start line
+    let i0 = 0;
+    while (i0 < t.n && at(i0) === at(i0 + t.n - 1)) i0++;
+    if (i0 === t.n) {
+      runs.push([side, 0, t.length, PASTS[at(0)]]);
+      continue;
+    }
+    let from = i0;
+    for (let k = 1; k <= t.n; k++) {
+      const i = i0 + k;
+      if (at(i) === at(i - 1)) continue;
+      // (each run reaches halfway to the next sample, where the edge changes)
+      runs.push([side, (from - 0.5) * t.step, (i - 0.5) * t.step, PASTS[at(i - 1)]]);
+      from = i;
+    }
+  }
+  return runs;
+}
+/** The stretches of edge with a wall: [side, from, to]. */
+export const wallRuns = (t: Track) => edgeRuns(t).filter((run) => run[3] === 'wall').map(([side, from, to]): [number, number, number] => [side, from, to]);
+/** The stretches where the road drops away: [side, from, to, what]. */
+export const openRuns = (t: Track) => edgeRuns(t).filter((run) => run[3] !== 'wall');
 
 export const wrapS = (t: Track, s: number) => ((s % t.length) + t.length) % t.length;
 /** Shortest signed distance along the loop from s0 to s1. */
@@ -242,10 +320,13 @@ export const sOf = (t: Track, e: number, n: number) => {
  * ([along, across]) from there; its r is the ball's size. Water is a pond: a circle of radius r centered (s, d) off the
  * road, whose edge comes up to the shoulder (see shoreOf).
  *
+ * A statue stands solid in the road. A trench is a hole right across it, `len` long from s and `w` either side of d,
+ * with steel plates over the rest of the road (see Course in courses.ts): drop into it and you are put back at `back`.
+ *
  * Some only join in later in the race: a hazard with a `lap` is there for a kart from that lap of its own on (each
  * kart's own lap, so every screen agrees about every kart); until then it is drawn standing by, out of the way.
  */
-export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus' | 'cart' | 'golfer' | 'ball' | 'sand' | 'water' | 'pin';
+export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus' | 'cart' | 'golfer' | 'ball' | 'sand' | 'water' | 'pin' | 'statue' | 'trench';
 export type Hazard = {
   kind: HazardKind;
   s: number;
@@ -258,9 +339,13 @@ export type Hazard = {
   every?: number;
   tee?: [number, number];
   lap?: number;
+  /** A trench across the road: `len` meters long from s, `w` either side of d, and the s you are put back at (`back`). */
+  len?: number;
+  w?: number;
+  back?: number;
 };
 /** How big each kind is unless a course says otherwise. */
-export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1, bus: 1.3, cart: 0.8, golfer: 0.8, ball: 0.55, sand: 2.8, water: 20, pin: 0.5 };
+export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1, bus: 1.3, cart: 0.8, golfer: 0.8, ball: 0.55, sand: 2.8, water: 20, pin: 0.5, statue: 1.4, trench: 2 };
 /** A bus is this long, nose to tail, and so is a golf cart. */
 export const BUS_LEN = 9.6;
 export const CART_LEN = 3.1;
@@ -271,7 +356,12 @@ export const lengthOf = (h: Hazard) => (h.kind === 'bus' ? BUS_LEN : CART_LEN);
 /** Whether a hazard is there yet for a kart on lap `lap` (see `lap` above). */
 export const awake = (h: Hazard, lap: number) => !h.lap || lap >= h.lap;
 /** Things you bounce off (or that spin you out when you run into them); the rest you drive through or over. */
-export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil' && kind !== 'sand' && kind !== 'water' && kind !== 'ball';
+export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil' && kind !== 'sand' && kind !== 'water' && kind !== 'ball' && kind !== 'trench';
+/** Whether a kart's middle at (s, d) is over a trench (a hole across the road). */
+export const inTrench = (t: Track, h: Hazard, s: number, d: number) => {
+  const ds = deltaS(t, h.s, s);
+  return ds >= 0 && ds <= (h.len ?? 0) && Math.abs(d - h.d) < (h.w ?? h.r);
+};
 
 /** A golf ball flies this long from the tee, its shadow shows on the road this long before it lands. */
 export const BALL_FLIGHT = 2;
@@ -336,31 +426,6 @@ export function shoreOf(t: Track, hazards: Hazard[]) {
   return { left, right };
 }
 export type Shore = NonNullable<ReturnType<typeof shoreOf>>;
-
-/** The stretches of wall left out because a pond comes inside the wall line there: [side (1 right, -1 left), from, to]. */
-export function wallGaps(t: Track, shore: Shore | null) {
-  const gaps: [number, number, number][] = [];
-  if (!shore) return gaps;
-  for (const side of [-1, 1]) {
-    const w = side < 0 ? shore.left : shore.right;
-    const wet = (i: number) => w[((i % t.n) + t.n) % t.n] < t.edge + 0.3;
-    // start from a dry spot so a gap is never split over the start line
-    let i0 = 0;
-    while (i0 < t.n && wet(i0)) i0++;
-    if (i0 === t.n) continue;
-    let from = -1;
-    for (let k = 1; k <= t.n; k++) {
-      const i = i0 + k;
-      if (wet(i) && from < 0) from = i;
-      if (!wet(i) && from >= 0) {
-        // a sample more either way, so the wall stops just short of the water
-        gaps.push([side, (from - 1) * t.step, i * t.step]);
-        from = -1;
-      }
-    }
-  }
-  return gaps;
-}
 
 export type Layout = {
   boxes: { s: number; d: number }[];

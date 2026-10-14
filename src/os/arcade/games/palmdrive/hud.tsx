@@ -461,7 +461,14 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Oil slicks</b> spin you out. Steer round them: they sit right on the best line.
           </li>
           <li>
-            <b>The Marguerite buses</b> drive their rounds slower than you, each in its own lane. Pass on the free side: run into one and you spin out. Shells break on them too.
+            <b>No wall means a drop.</b> Where a striped lip with amber studs takes the place of the wall, run wide and you go over, into water or a pit, and the night
+            crew&apos;s crane fishes you out: about three seconds and three coins on Expert, though you keep your item. Tap drift as you touch down for a boost.
+          </li>
+          <li>
+            <b>The trench</b> across the causeway at Hoover Nights: jump it off the ramp at speed, or take a steel plate either side of the hole.
+          </li>
+          <li>
+            <b>The Marguerite buses</b> drive their rounds slower than you, both in the right-hand lane. Pass on the left: run into one and you spin out. Shells break on them too.
           </li>
           <li>
             <b>Golf carts</b> drive their rounds like the buses, and more cross the road on the cart paths. Run into one and you spin out.
@@ -476,7 +483,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Bunkers</b> slow you down like mud. A jump carries you over the one on the 18th.
           </li>
           <li>
-            <b>Water.</b> Run wide into a pond and you splash in: you lose three coins and about three seconds being fished out, though you keep your item. Tap drift just as you are set back down for a boost.
+            <b>Water</b> on the golf course comes right up to the road behind its red stakes: the same as a drop, and a giant ball retriever fishes you out.
           </li>
           <li>A star, a Mega Mushroom or a Bullet ploughs straight through all of it.</li>
         </ul>

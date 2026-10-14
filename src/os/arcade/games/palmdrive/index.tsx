@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type Pointe
 import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
-import type { Track } from './track';
+import { openRuns, pointAt, type Past, type Track } from './track';
 import {
   CASH_COST,
   CCS,
   COUNTDOWN,
+  FALL_CARRY,
+  FALL_SINK,
   ITEMS,
   boom,
   createRace,
@@ -46,8 +48,8 @@ import './palmdrive.css';
 const CLASS = defineSetting('palmdrive:cc', CCS, '100cc');
 const classOptions = CCS.map((cc) => [cc, cc] as const);
 const COURSE = defineSetting('palmdrive:course', COURSE_IDS, 'palm');
-/** The leaderboard (and local best) for a course and class. */
-const boardOf = (course: CourseId, cc: Cc) => `${course}-${cc}`;
+/** The leaderboard (and local best) for a course and class (a course rebuilt since has a board of its own). */
+const boardOf = (course: CourseId, cc: Cc) => `${COURSES[course].board ?? course}-${cc}`;
 /** The race soundtrack; the shell's mute button silences it along with everything else. */
 const MUSIC = defineSetting('palmdrive:music', ['on', 'off'] as const, 'on', { live: true });
 const musicOptions = [
@@ -449,6 +451,8 @@ function Play({ mode }: { mode: Mode }) {
   const busDots = useRef(new Map<number, SVGRectElement>());
   const tags = useRef(new Map<number, HTMLDivElement>());
   const lastLevel = useRef(0);
+  /** The crane is hauling your kart back (for the winch's whirr). */
+  const winching = useRef(false);
   /** A short buzz on phones that can. */
   const buzz = (ms: number) => {
     if (!shellRef.current.touch) return;
@@ -683,6 +687,10 @@ function Play({ mode }: { mode: Mode }) {
           sfx.play('tick', 1.6);
         }
       }
+      // the crane's winch whirring as it hauls you back
+      const carrying = !!me && me.sunk > 0 && 1 - me.sunk / r.tier.fallT >= FALL_SINK;
+      if (carrying && !winching.current) sfx.tone({ freq: 180, to: 460, dur: FALL_CARRY * r.tier.fallT, type: 'sawtooth', vol: 0.045 });
+      winching.current = carrying;
       const level = me && me.drift ? turboLevel(me.charge) : 0;
       if (level > lastLevel.current) sfx.tone({ freq: 500 + level * 180, dur: 0.06, type: 'square', vol: 0.08 });
       lastLevel.current = level;
@@ -869,13 +877,31 @@ function Play({ mode }: { mode: Mode }) {
         }
         break;
       case 'splash':
-        // into the pond
+        // into the water
         if (mine) {
           sfx.noise(0.5, 0.22);
           sfx.tone({ freq: 300, to: 80, dur: 0.45, type: 'sine', vol: 0.16 });
           buzz(80);
         }
         break;
+      case 'fall':
+        // down into a pit: a thud and a clatter
+        if (mine) {
+          sfx.tone({ freq: 110, to: 38, dur: 0.4, type: 'sine', vol: 0.24 });
+          sfx.noise(0.3, 0.16, 0.05);
+          buzz(90);
+        }
+        break;
+      case 'set':
+        // set back down on the road: pop
+        if (mine) sfx.tone({ freq: 520, to: 980, dur: 0.09, type: 'square', vol: 0.09 });
+        break;
+      case 'sank': {
+        // something thrown over the edge, close by: plop
+        const k = r.karts[r.me];
+        if (k && Math.hypot(k.x - e.x, k.z - e.z) < 40) sfx.tone({ freq: e.kind === 'water' ? 620 : 240, to: e.kind === 'water' ? 180 : 90, dur: 0.16, type: 'sine', vol: 0.07 });
+        break;
+      }
       case 'sand':
         if (mine) sfx.noise(0.14, 0.09);
         break;
@@ -1097,6 +1123,9 @@ function Play({ mode }: { mode: Mode }) {
           </div>
           <svg className="g-palmdrive-map" viewBox={minimap.box} aria-hidden="true">
             <path d={minimap.d} className="g-palmdrive-map-road" />
+            {minimap.edges.map((e, i) => (
+              <path key={`edge${i}`} d={e.d} className={`g-palmdrive-map-edge is-${e.past}`} />
+            ))}
             <path d={minimap.d} className="g-palmdrive-map-line" />
             {r.hazards.map(
               (h, i) =>
@@ -1291,7 +1320,17 @@ function mapPath(t: Track) {
     maxY = Math.max(maxY, y);
   }
   const pad = 22;
-  return { d: `${d}Z`, box: `${(minX - pad).toFixed(0)} ${(minY - pad).toFixed(0)} ${(maxX - minX + pad * 2).toFixed(0)} ${(maxY - minY + pad * 2).toFixed(0)}` };
+  // where the road drops away, a stroke along that side of it: blue for water, orange for a pit, white dashes out of bounds
+  const edges = openRuns(t).map(([side, from, to, past]) => {
+    let e = '';
+    const n = Math.max(1, Math.ceil((to - from) / 4));
+    for (let k = 0; k <= n; k++) {
+      const p = pointAt(t, from + ((to - from) * k) / n, side * 17);
+      e += `${k ? 'L' : 'M'}${(-p.x).toFixed(1)} ${(-p.z).toFixed(1)}`;
+    }
+    return { d: e, past: past as Past };
+  });
+  return { d: `${d}Z`, edges, box: `${(minX - pad).toFixed(0)} ${(minY - pad).toFixed(0)} ${(maxX - minX + pad * 2).toFixed(0)} ${(maxY - minY + pad * 2).toFixed(0)}` };
 }
 
 /** Where the ink lands on your view: [left %, top %, size in vmin]. */

@@ -4,7 +4,7 @@ import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf } from '../src/os/ar
 import { CCS, CLASSES, KART_R, RIVALS, WET, createRace, hazardD, soloRace, step } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { meta } from '../src/os/arcade/games/palmdrive/meta.ts';
 import { configOf, hostState, parsePacket } from '../src/os/arcade/games/palmdrive/net.ts';
-import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, gridSpot, lengthOf, locate, pointAt, shoreOf, solid, wallGaps, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
+import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, dropAt, gridSpot, lengthOf, locate, openRuns, pointAt, shoreOf, solid, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
 
 /** The widest stretch of road left clear between things standing across it, given as [from, to] lateral spans. */
 function widest(t: Track, spans: [number, number][]) {
@@ -29,7 +29,8 @@ test('the course list and its ids agree', () => {
   assert.deepEqual([trackOf('palm').half, trackOf('palm').edge], [ROAD_HALF, EDGE]);
   for (const id of COURSE_IDS) {
     const t = trackOf(id);
-    assert.ok(t.half >= 5.5 && t.half <= 11 && t.edge - t.half >= 3.5, `${id} road ${t.half}/${t.edge}`);
+    // (the walls at least a kart's width and a half past the edge of the road)
+    assert.ok(t.half >= 5.5 && t.half <= 11 && t.edge - t.half >= 2.5, `${id} road ${t.half}/${t.edge}`);
   }
   for (const junk of ['', 'moon', null, 3]) assert.equal(isCourse(junk), false);
 });
@@ -39,19 +40,28 @@ for (const id of COURSE_IDS) {
     const t = trackOf(id);
     assert.equal(trackOf(id), t, 'built once');
     assert.ok(t.length > 600 && t.length < 1400, `length ${t.length}`);
-    // stretches far apart along the lap stay clear of each other's walls
-    let closest = Infinity;
+    // stretches far apart along the lap stay clear of each other: each one's edge toward the other (its wall, or the
+    // brink where it drops away), and 4 m between them
+    const limit = (i: number, side: number) => (side > 0 ? t.hi[i] : -t.lo[i]);
+    const toward = (i: number, j: number) => ((t.x[j] - t.x[i]) * -t.tz[i] + (t.z[j] - t.z[i]) * t.tx[i] >= 0 ? 1 : -1);
+    let short = Infinity;
     for (let i = 0; i < t.n; i++) {
       for (let j = i + 1; j < t.n; j++) {
         if (Math.min(j - i, t.n - (j - i)) * t.step < 70) continue;
-        closest = Math.min(closest, Math.hypot(t.x[i] - t.x[j], t.z[i] - t.z[j]));
+        const gap = Math.hypot(t.x[i] - t.x[j], t.z[i] - t.z[j]) - limit(i, toward(i, j)) - limit(j, toward(j, i)) - 4;
+        short = Math.min(short, gap);
       }
     }
-    assert.ok(closest > 2 * t.edge + 4, `closest stretches ${closest}`);
-    // any tighter and the inside wall would fold over itself
+    assert.ok(short > 0, `${id}: two stretches come within ${(short + 4).toFixed(1)} m of each other's edges`);
+    // any tighter and the edge on the inside would fold over itself (with room to spare for the drop's lip)
+    for (let i = 0; i < t.n; i++) {
+      const radius = 1 / Math.max(1e-9, Math.abs(t.curv[i]));
+      assert.ok(radius > limit(i, Math.sign(t.curv[i]) || 1) + 3, `${id}: a ${radius.toFixed(1)} m bend at s=${(i * t.step).toFixed(0)}`);
+    }
+    // a bend tighter than a hairpin's 18 m only where the course is Expert, the walls everywhere else
     let tightest = Infinity;
     for (let i = 0; i < t.n; i++) tightest = Math.min(tightest, 1 / Math.max(1e-9, Math.abs(t.curv[i])));
-    assert.ok(tightest > 18, `tightest bend ${tightest}`);
+    assert.ok(tightest > (COURSES[id].difficulty === 4 ? 12 : 18), `tightest bend ${tightest}`);
     // index 0 is the start line
     const start = COURSES[id].start;
     const sp = { x: -start[0] * 0.8, z: start[1] * 0.8 };
@@ -64,7 +74,9 @@ for (const id of COURSE_IDS) {
     assert.ok(lay.boxes.length >= 12 && lay.boxes.length % 4 === 0, `${lay.boxes.length} boxes`);
     assert.ok(lay.coins.length >= 25);
     assert.ok(lay.dashes.length >= 2 && lay.ramps.length >= 1);
-    for (const p of [...lay.boxes, ...lay.coins, ...lay.dashes]) assert.ok(Math.abs(p.d) <= t.half - 1.5, `${id} pickup at s=${p.s} d=${p.d}`);
+    // (coins can be bait out on the curb where the road drops away, within reach of a kart still on the road)
+    const bait = (p: { s: number; d: number }) => lay.coins.includes(p) && dropAt(t, Math.round(p.s / t.step), Math.sign(p.d));
+    for (const p of [...lay.boxes, ...lay.coins, ...lay.dashes]) assert.ok(Math.abs(p.d) <= t.half - (bait(p) ? 0.5 : 1.5), `${id} pickup at s=${p.s} d=${p.d}`);
     for (const ramp of lay.ramps) assert.ok(Math.abs(ramp.d) + ramp.w / 2 <= t.half + 0.5, `${id} ramp at s=${ramp.s}`);
     const curv = (s: number) => Math.abs(t.curv[Math.floor(s / t.step) % t.n]);
     for (const p of [...lay.dashes, ...lay.ramps]) {
@@ -178,7 +190,8 @@ for (const id of COURSE_IDS) {
     const shore = shoreOf(t, lay.hazards);
     if (!ponds.length) {
       assert.equal(shore, null, `${id} has no water`);
-      assert.deepEqual(wallGaps(t, shore), [], `${id} has its walls all the way round`);
+      // walls all the way round but where the course itself says the road drops away
+      if (!COURSES[id].edges) assert.deepEqual(openRuns(t), [], `${id} has its walls all the way round`);
       return;
     }
     assert.ok(shore);
@@ -200,8 +213,8 @@ for (const id of COURSE_IDS) {
       assert.ok(wet >= 12, `${where} can be driven into along ${wet} m`);
     }
     // the wall is left out where the water comes inside it, and only there
-    const gaps = wallGaps(t, shore);
-    assert.ok(gaps.length > 0);
+    const gaps = openRuns(t);
+    assert.ok(gaps.length > 0 && gaps.every(([, , , past]) => past === 'water'));
     // and wherever it is left out, the water comes right up to the curb somewhere: run a wheel over and you are in
     for (const [side, from, to] of gaps) {
       let closest = Infinity;
@@ -211,9 +224,13 @@ for (const id of COURSE_IDS) {
     for (let i = 0; i < t.n; i++) {
       for (const side of [-1, 1]) {
         const w = side < 0 ? shore.left[i] : shore.right[i];
-        const open = gaps.some(([sd, from, to]) => sd === side && deltaS(t, from, i * t.step) >= 0 && deltaS(t, i * t.step, to) >= 0);
-        if (w < t.edge) assert.ok(open, `${id} wall stands in the water at s=${i * t.step}`);
+        const open = dropAt(t, i, side);
+        // (where the water is inside where a wall would hold a kart anyway; a little past that the wall stands as ever)
+        if (w - WET < t.edge - KART_R) assert.ok(open, `${id} wall stands in the water at s=${i * t.step}`);
+        else assert.ok(!open, `${id} wall missing at s=${i * t.step} with the water held off by it anyway`);
         if (open) assert.ok(w < t.edge + 3, `${id} wall missing at s=${i * t.step} with the water ${w.toFixed(1)} m out`);
+        // and you are in once your middle is WET short of the water
+        if (open) assert.ok(Math.abs((side > 0 ? t.hi[i] : -t.lo[i]) - (w - WET)) < 1e-4, `${id} brink at s=${i * t.step}`);
       }
     }
   });
@@ -304,6 +321,6 @@ test('solo races and online state carry the course; old packets mean Palm Drive'
 
 test('every course has a leaderboard at every class', () => {
   const variants = meta.leaderboard?.variants ?? {};
-  for (const id of COURSE_IDS) for (const cc of CCS) assert.ok(variants[`${id}-${cc}`]?.includes(COURSES[id].name), `${id}-${cc}`);
+  for (const id of COURSE_IDS) for (const cc of CCS) assert.ok(variants[`${COURSES[id].board ?? id}-${cc}`]?.includes(COURSES[id].name), `${id}-${cc}`);
   assert.equal(Object.keys(variants).length, COURSE_IDS.length * CCS.length);
 });
