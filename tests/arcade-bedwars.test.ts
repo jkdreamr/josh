@@ -43,6 +43,7 @@ import {
 import { applyEvent, buildReplica } from '../src/os/arcade/games/bedwars/replica.ts';
 import { Session, hostEntrants, type OnlineApi } from '../src/os/arcade/games/bedwars/session.ts';
 import { RemoteClock, Track, wrapAngle } from '../src/os/arcade/games/bedwars/interp.ts';
+import { DprGovernor } from '../src/os/arcade/games/bedwars/gl.ts';
 
 const still: MoveInput = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false };
 const bots = (n: number): Entrant[] => Array.from({ length: n }, (_, i) => ({ name: `bot${i}`, seat: -1, ctrl: 'bot' as const, skin: 0 }));
@@ -823,6 +824,26 @@ test('forge piles stay put, thrown items go after five minutes, and the host get
   them.hurtTicks = 0;
   them.body.x = me.body.x + 3.9;
   assert.equal(applyAction(h, me, { a: 'hit', target: them.id, crit: false }), false, 'but not against a bot stepped right here');
+});
+
+test('adaptive resolution drops for a slow GPU but not for a browser capping the frame rate', () => {
+  const run = (frame: (g: DprGovernor) => number, secs: number, g = new DprGovernor(2)) => {
+    for (let t = 0; t < secs; ) {
+      const dt = frame(g);
+      g.frame(dt);
+      t += dt;
+    }
+    return g;
+  };
+  assert.equal(run(() => 1 / 30, 60).dpr, 2, 'energy saver at 30 Hz: stays sharp');
+  assert.equal(run(() => 1 / 50 + 0.0003, 60).dpr, 2, 'a 50 Hz screen too');
+  assert.equal(run(() => 1 / 60, 60).dpr, 2);
+  const gpu = run((g) => Math.max(1 / 60, 0.04 * (g.dpr / 2) ** 2), 60);
+  assert.ok(gpu.dpr < 1.6 && gpu.avg < 0.022, `fill bound: ${gpu.dpr} at ${(gpu.avg * 1000).toFixed(1)} ms`);
+  // capped, then the cap lifts and the GPU struggles: it drops after all
+  const both = run(() => 1 / 30, 30);
+  run((g) => Math.max(1 / 60, 0.025 * (g.dpr / 2) ** 2), 30, both);
+  assert.ok(both.dpr < 2);
 });
 
 test('host entrants: humans by seat on their own islands in solo, paired in doubles, bots on the rest', () => {

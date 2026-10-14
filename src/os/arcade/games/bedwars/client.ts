@@ -32,7 +32,7 @@ import type { KeyState } from '../../kit';
 import type { Puppet, View, ViewFrame } from './scene.ts';
 import { thinkBots } from './bots.ts';
 import * as snd from './audio.ts';
-import { damp } from './gl.ts';
+import { DprGovernor, damp } from './gl.ts';
 
 export type Role = 'solo' | 'host' | 'guest';
 export type UiPanel = 'none' | 'shop' | 'upgrades' | 'inv' | 'board';
@@ -162,11 +162,8 @@ export class Client {
   /** Block break sounds this frame: a blast breaks dozens at once, and a few voices say it as well as all of them. */
   private breakSfx = 0;
   private breakFx = 0;
-  /** Frame time tracking for adaptive resolution. */
-  private frameAvg = 1 / 60;
-  private dpr = 1;
-  private dprCooldown = 0;
-  maxDpr = 2;
+  /** Adaptive resolution. */
+  private readonly res: DprGovernor;
 
   constructor(game: Game, me: number, role: Role, settings: ClientSettings, hooks: ClientHooks = {}) {
     this.game = game;
@@ -176,7 +173,7 @@ export class Client {
     this.hooks = hooks;
     const p = this.player;
     this.prev = { x: p.body.x, y: p.body.y, z: p.body.z };
-    this.dpr = Math.min(typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1, 2);
+    this.res = new DprGovernor(Math.min(typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1, 2));
     this.frameState = {
       game,
       cam: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, fov: 70 },
@@ -200,7 +197,7 @@ export class Client {
 
   attach(view: View) {
     this.view = view;
-    view.setPixelRatio(this.dpr);
+    view.setPixelRatio(this.res.dpr);
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -988,29 +985,15 @@ export class Client {
   // rendering
 
   private trackFrameTime(dt: number) {
-    if (dt <= 0) return;
-    this.frameAvg += (dt - this.frameAvg) * 0.05;
-    if (this.dprCooldown > 0) {
-      this.dprCooldown -= dt;
-      return;
-    }
-    // adaptive resolution: drop when frames run long, climb back when there is room
-    if (this.frameAvg > 1 / 50 && this.dpr > 0.75) {
-      this.dpr = Math.max(0.75, this.dpr - 0.15);
-      this.view?.setPixelRatio(this.dpr);
-      this.dprCooldown = 1.5;
-    } else if (this.frameAvg < 1 / 58 && this.dpr < this.maxDpr) {
-      this.dpr = Math.min(this.maxDpr, this.dpr + 0.1);
-      this.view?.setPixelRatio(this.dpr);
-      this.dprCooldown = 4;
-    }
+    const dpr = this.res.frame(dt);
+    if (dpr !== null) this.view?.setPixelRatio(dpr);
   }
 
   get pixelRatio() {
-    return this.dpr;
+    return this.res.dpr;
   }
   get frameMs() {
-    return this.frameAvg * 1000;
+    return this.res.avg * 1000;
   }
 
   private flySpectator(dt: number, keys: KeyState) {
