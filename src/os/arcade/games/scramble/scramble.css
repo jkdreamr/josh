@@ -644,11 +644,11 @@
 .g-scramble .g-scramble-buttons {
   position: absolute;
   right: 10px;
-  bottom: 124px;
+  /* just above the bars, which sit on the home bar's inset when there is one */
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 114px);
   z-index: 4;
   display: grid;
-  /* two rows of three, so the top row stays clear of the pick-up prompt under your egg */
-  grid-template-columns: repeat(3, 52px);
+  grid-template-columns: repeat(2, 52px);
   gap: 8px;
 }
 .g-scramble .g-scramble-buttons button {
@@ -759,6 +759,7 @@
 @container (max-height: 460px) {
   .g-scramble .g-scramble-buttons {
     bottom: 10px;
+    grid-template-columns: repeat(3, 52px);
   }
   /* centered, or slid left just clear of the buttons: half the row (188px) + the buttons (182px) + 8px */
   .g-scramble .g-scramble-hud.is-touch .g-scramble-bottom {
@@ -785,22 +786,22 @@
   }
 }
 
-/* short and narrow, like a phone's browser view: the buttons stack up the right edge, clear of the slots */
-@container (max-height: 460px) and (max-aspect-ratio: 1 / 1) {
+/* short and narrow, like a phone's browser view: no room for the row and the buttons side by side,
+   so the row stays centered and the buttons sit on top of it (a column up the side would reach the map) */
+@container (max-height: 460px) and (max-width: 575px) {
   .g-scramble .g-scramble-buttons {
-    top: 50%;
-    bottom: auto;
-    grid-template-columns: 44px;
-    gap: 6px;
-    transform: translateY(-50%);
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 56px);
   }
-  .g-scramble .g-scramble-buttons button {
-    width: 44px;
-    height: 44px;
-  }
-  /* the buttons are up the side here, so the row stays centered */
   .g-scramble .g-scramble-hud.is-touch .g-scramble-bottom {
     left: 50%;
+  }
+}
+
+/* phones: the buttons reach in under your egg, so the pick-up prompt sits just over it instead */
+@container (max-width: 520px) or ((max-height: 460px) and (max-width: 640px)) {
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-prompt {
+    top: auto;
+    bottom: calc(50% + 20px);
   }
 }
 
@@ -844,9 +845,9 @@
   .g-scramble .g-scramble-out {
     top: 36%;
   }
-  /* the buttons sit just above the bars, so on a short screen the pick-up prompt stays off their top row */
+  /* two rows of three, so they stay low, under the pick-up prompt over your egg */
   .g-scramble .g-scramble-buttons {
-    bottom: 112px;
+    grid-template-columns: repeat(3, 52px);
   }
 }
 
