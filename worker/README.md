@@ -26,6 +26,10 @@ npx wrangler deploy
 
 After changing which games opt in to leaderboards or online rooms (including the app games in `src/os/arcade/apps.ts`), run `npm run arcade:specs` from the repository root and redeploy the Worker. Until it is redeployed, the deployed Worker rejects scores and rooms for games it does not know: scores then stay on the player's device and Create Room shows an error.
 
+## Leaderboards
+
+Scores and online wins live in the `Boards` Durable Object. A game's Game Over card reads and submits with `GET /leaderboard?game=<board>` and `POST /leaderboard`, and Online Wins boards are `GET /wins?game=<game>` (top 100 each). The arcade's Leaderboards cards read `GET /leaderboard/top` once: the best 3 entries (`?n=` asks for 1 to 10) of every score board and every Online Wins board, as `{ "boards": { "<board>": [{ "name", "score", "date" }] }, "wins": { "<game>": [...] } }`, with empty boards as empty lists. Until the Worker is redeployed with it, that route 404s: the score cards then show the visitor's own scores, labeled This Device (opening one still loads its global top 100), and Online Wins say they are unavailable.
+
 ## Site Stats
 
 The menu bar Stats panel reads `GET /stats`. The site counts with `POST /stats/view` (every page load, refresh, back/forward restore, return to the tab after 30 minutes, in-OS restart or wake) and `POST /stats/play` (opening a game and every round started). Both take a small JSON body sent as `text/plain`, so browsers skip the CORS preflight. Counts live in the `Stats` Durable Object (migration `v2`); days roll over at midnight Pacific. For "online now", every open tab holds a hibernating WebSocket at `GET /stats/live?visitor=<id>` (it sends `ping` every 25 seconds, answered by the auto-response without waking the object), and the count is the number of distinct visitors connected. Until the Worker is redeployed, the panel shows Stats Unavailable.

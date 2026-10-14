@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { validateSubmission, TOP, type BoardEntry } from '../../src/os/arcade/kit/leaderboard-core.ts';
+import { previewSize, validateSubmission, TOP, type BoardEntry, type BoardTops } from '../../src/os/arcade/kit/leaderboard-core.ts';
 import type { LeaderboardSpec } from '../../src/os/arcade/types.ts';
 import { cleanName, nameLength } from '../../src/os/arcade/kit/leaderboard-core.ts';
 import { dayKey, isVisitorId, KEEP_DAYS, MAX_GAMES, parseHit, periodStarts, shiftDay, TOP_GAMES, type StatsHit, type StatsSummary, type TopGame } from '../../src/os/stats-core.ts';
@@ -31,12 +31,17 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers },
   });
 
-function boardEntries(sql: SqlStorage, game: string, spec: LeaderboardSpec): BoardEntry[] {
+function boardEntries(sql: SqlStorage, game: string, spec: LeaderboardSpec, limit = TOP): BoardEntry[] {
   const direction = spec.order === 'desc' ? 'DESC' : 'ASC';
   return sql.exec<BoardEntry>(
-    `SELECT name, score, date FROM scores WHERE game = ? ORDER BY score ${direction}, date ASC LIMIT ${TOP}`,
+    `SELECT name, score, date FROM scores WHERE game = ? ORDER BY score ${direction}, date ASC LIMIT ?`,
     game,
+    limit,
   ).toArray();
+}
+
+function winEntries(sql: SqlStorage, game: string, limit = TOP): BoardEntry[] {
+  return sql.exec<BoardEntry>('SELECT name, wins AS score, date FROM wins WHERE game = ? ORDER BY wins DESC, date ASC LIMIT ?', game, limit).toArray();
 }
 
 export class Boards extends DurableObject<Env> {
@@ -55,12 +60,22 @@ export class Boards extends DurableObject<Env> {
       const game = url.searchParams.get('game') ?? '';
       if (!Object.hasOwn(ONLINE_SPECS, game)) return json({ error: 'unknown game' }, 404);
       try {
-        const entries = this.ctx.storage.sql.exec<{ name: string; score: number; date: string }>(
-          'SELECT name, wins AS score, date FROM wins WHERE game = ? ORDER BY wins DESC, date ASC LIMIT ?',
-          game,
-          TOP,
-        ).toArray();
-        return json({ entries });
+        return json({ entries: winEntries(this.ctx.storage.sql, game) });
+      } catch {
+        return json({ error: 'unavailable' }, 503);
+      }
+    }
+
+    // The arcade's Leaderboards cards: the best few of every board in one request (`?n=`, 3 by default, at most 10).
+    if (url.pathname === '/leaderboard/top' && request.method === 'GET') {
+      const n = previewSize(url.searchParams.get('n'));
+      const sql = this.ctx.storage.sql;
+      try {
+        const tops: BoardTops = {
+          boards: Object.fromEntries(Object.entries(LEADERBOARD_SPECS).map(([game, spec]) => [game, boardEntries(sql, game, spec, n)])),
+          wins: Object.fromEntries(Object.keys(ONLINE_SPECS).map((game) => [game, winEntries(sql, game, n)])),
+        };
+        return json(tops);
       } catch {
         return json({ error: 'unavailable' }, 503);
       }
@@ -447,6 +462,10 @@ export default {
       return withCors(await env.BOARDS.get(id).fetch(request));
     }
     if (url.pathname === '/wins' && request.method === 'GET') {
+      const id = env.BOARDS.idFromName('global');
+      return withCors(await env.BOARDS.get(id).fetch(request));
+    }
+    if (url.pathname === '/leaderboard/top' && request.method === 'GET') {
       const id = env.BOARDS.idFromName('global');
       return withCors(await env.BOARDS.get(id).fetch(request));
     }
