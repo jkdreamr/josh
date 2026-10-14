@@ -180,6 +180,10 @@ Baduk (Go and Omok) and Badminton are desktop apps, not arcade games, but they s
 
 Rooms lock once the host starts. Add `lateJoin: true` to let people join between rounds instead: a latecomer waits in the lobby and plays the next round, and wins only count the players who started that round. Cox Box uses this for eight-crew typing races.
 
+### Public Rooms
+
+Every room is private or public, for every game with `online` (arcade games through the shell, and Go, Omok and Badminton through `apps/online-room.tsx`), so a new game gets it for free. The Play Online card and the app lobbies offer Private (join with the code or link) or Public, remembered per device, and the host can switch a room either way from its lobby (and between rounds in games people can join late). A public room is listed in Open Rooms while its host is in it and someone can still join: until people fill every seat (bots step aside), and after the start only if the game has `lateJoin`. Open Rooms shows on the arcade home above the games (each tile opens the game and joins, or the game's own app for Go, Omok and Badminton) and on each game's Play Online card. `useOpenRooms(game?)` reads the list (`GET /rooms`), refreshing every few seconds while the page is visible.
+
 ### Bots
 
 Add `bots: true` to `online` and the lobby (and the online Game Over card, between rounds) gives the host a Bots stepper. Bots fill the seats nobody holds: the room lists them by name, a host can start with just bots to play against, and someone who joins takes a bot's seat (the bot moves to another free seat, or sits out once the room is full of people). The host's last count is remembered per game; `defaultBots` sets where it starts (Scramble fills to eight).

@@ -8,8 +8,8 @@ import { useHighScore } from './score';
 import { ARCADE_API, NAME_MAX, boardFor, formatBoardScore, savedName } from './leaderboard';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMuted } from './sfx';
-import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange } from './settings';
-import { BotStepper, OnlinePanel, OnlineProvider } from './online';
+import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange, useSetting } from './settings';
+import { BotStepper, OnlinePanel, OnlineProvider, ROOM_VISIBILITY, VisibilityPicker } from './online';
 import { botPlayers, nextOnlineRound, parseRacePacket, raceStandings, type RaceScores } from './online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { countPlay } from '../../stats';
@@ -111,6 +111,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [onlineBots, setOnlineBots] = useState<number[] | null>(null);
   const [roundBots, setRoundBots] = useState<number[]>([]);
   const roundBotsRef = useRef<number[]>([]);
+  /** Whether the room is listed in Open Rooms (null: the server doesn't say), and the kind of room Create Room makes. */
+  const [onlineListed, setOnlineListed] = useState<boolean | null>(null);
+  const [visibility, setVisibility] = useSetting(ROOM_VISIBILITY);
   /** How many bots this game's rooms start with when this player hosts: the last number they picked. */
   const botsSetting = useMemo(() => defineSetting(`${meta.id}:bots`, BOT_COUNTS, String(Math.max(0, Math.min(15, Math.floor(defaultBots))))), [meta.id, defaultBots]);
   const [onlineMode, setOnlineMode] = useState(false);
@@ -205,6 +208,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     roundBotsRef.current = [];
     setRoundBots([]);
     setOnlineBots(null);
+    setOnlineListed(null);
   }, []);
 
   const leaveRoom = useCallback(() => {
@@ -254,6 +258,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       if (message.seat === 0 && message.bots && remembered > 0) link.setBots(remembered);
     });
     link.on('bots', setOnlineBots);
+    link.on('listed', setOnlineListed);
     link.on('players', (players) => {
       setOnlinePlayers(players);
       // Bots keep playing a round that someone leaves; it ends only when nobody is left to play against.
@@ -326,14 +331,14 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineBusy(true);
     setOnlineError('');
     try {
-      const code = await createRoom(meta.id);
+      const code = await createRoom(meta.id, { listed: visibility === 'public' });
       connectRoom(code);
     } catch (error) {
       setOnlineError(error instanceof Error ? error.message : 'Could Not Create Room');
     } finally {
       setOnlineBusy(false);
     }
-  }, [connectRoom, meta.id]);
+  }, [connectRoom, meta.id, visibility]);
 
   const joinRoom = useCallback((code: string) => {
     setOnlineBusy(true);
@@ -524,6 +529,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     onlineLink?.setBots(n);
   }, [botsSetting, onlineLink]);
   const hostBots = gameOnline && onlineSeat === 0 && lobbyBots ? <BotStepper count={lobbyBots.length} max={Math.max(0, onlineSeats - onlinePlayers.length)} onChange={setBots} /> : null;
+  const setListed = useCallback((on: boolean) => onlineLink?.setListed(on), [onlineLink]);
+  // Between rounds of a game people can join late, the host can still open the room up (or close it).
+  const hostListed = gameOnline && onlineSeat === 0 && meta.online?.lateJoin && onlineListed !== null ? <VisibilityPicker value={onlineListed ? 'public' : 'private'} onChange={(v) => setListed(v === 'public')} /> : null;
   const raceNow = race && gameOnline ? raceStandings(raceScores, onlinePlayers.map((p) => p.seat), lowerIsBetter) : null;
   const raceDone = !!raceNow?.done;
   const raceWinner = raceNow?.winner ?? null;
@@ -610,6 +618,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             code={onlineCode}
             players={onlinePlayers}
             bots={lobbyBots}
+            listed={onlineListed}
+            visibility={visibility}
             seat={onlineSeat}
             seats={onlineSeats}
             inProgress={onlineInProgress}
@@ -617,10 +627,12 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             error={onlineError}
             name={onlineName}
             onName={setOnlineName}
+            onVisibility={setVisibility}
             onCreate={makeRoom}
             onJoin={joinRoom}
             onStart={() => onlineLink?.start()}
             onBots={setBots}
+            onListed={setListed}
             onLeave={leaveRoom}
             note={race ? 'A score race: everyone plays their own round at the same time and the best score wins.' : undefined}
             setup={hostSetup}
@@ -790,8 +802,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                   </form>
                 )}
                 {setup && !gameOnline && <div className="arcade-setup">{setup}</div>}
-                {gameOnline && (hostBots || hostSetup) && (
+                {gameOnline && (hostListed || hostBots || hostSetup) && (
                   <div className="arcade-setup">
+                    {hostListed}
                     {hostBots}
                     {hostSetup}
                   </div>

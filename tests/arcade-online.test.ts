@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { advanceOnlineRound, botPlayers, nextOnlineRound, parseRacePacket, raceStandings } from '../src/os/arcade/kit/online-core.ts';
-import { RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
-import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, lowestFreeSeat, markRoundRecorded, parseRoomMessage, roundSeats, type RoomState } from '../worker/src/room-core.ts';
+import { roomApp } from '../src/os/arcade/apps.ts';
+import { advanceOnlineRound, botPlayers, nextOnlineRound, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
+import { createRoom, listRooms, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
+import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, lowestFreeSeat, markRoundRecorded, parseRoomMessage, roomListing, roundSeats, sortListings, type RoomState } from '../worker/src/room-core.ts';
 
 /** A stand-in for the browser's WebSocket: records what RoomLink sends and lets a test play the server's side. */
 class FakeWebSocket {
@@ -234,4 +235,100 @@ test('race packets are validated', () => {
   assert.deepEqual(parseRacePacket({ t: 'race-all', round: 3, scores: { 0: 5, 1: null, x: 2, 99: 1, 2: 'no' } }), { t: 'race-all', round: 3, scores: { 0: 5, 1: null } });
   assert.equal(parseRacePacket(null), null);
   assert.equal(parseRacePacket({ t: 'move', round: 1 }), null);
+});
+
+test('a public room is listed while its host is in and someone can still join', () => {
+  const room: RoomState = { code: 'ABCD', game: 'palmdrive', seats: 8, started: false, lateJoin: true, listed: true };
+  const host = { seat: 0, name: 'Josh' };
+  assert.deepEqual(roomListing(room, [host], 3), { code: 'ABCD', game: 'palmdrive', host: 'Josh', players: 1, bots: 3, seats: 8, started: false, lateJoin: true });
+  assert.equal(roomListing({ ...room, listed: false }, [host], 0), null, 'private rooms stay off the list');
+  assert.equal(roomListing(room, [{ seat: 1, name: 'Sam' }], 0), null, 'not without its host');
+  const full = Array.from({ length: 8 }, (_, seat) => ({ seat, name: `P${seat}` }));
+  assert.equal(roomListing(room, full, 0), null, 'not when people fill every seat');
+  assert.equal(roomListing({ ...room, started: true }, [host], 0)?.started, true, 'a race people can join late stays listed');
+  assert.equal(roomListing({ code: 'WXYZ', game: 'chess', seats: 2, started: true, listed: true }, [host], 0), null, 'a match under way locks the room');
+  assert.equal(roomListing({ ...room, code: undefined }, [host], 0), null, 'rooms from before codes were kept');
+});
+
+test('open rooms list the ones still gathering first, then the busiest', () => {
+  const base = { game: 'snake', host: 'h', bots: 0, seats: 4, lateJoin: false };
+  const rooms: OpenRoom[] = [
+    { ...base, code: 'AAAA', players: 1, started: true, lateJoin: true },
+    { ...base, code: 'BBBB', players: 1, started: false },
+    { ...base, code: 'CCCC', players: 3, started: false },
+  ];
+  assert.deepEqual(sortListings(rooms).map((r) => r.code), ['CCCC', 'BBBB', 'AAAA']);
+});
+
+test('only the host makes a room public, and the message is checked', () => {
+  assert.deepEqual(parseRoomMessage('{"t":"listed","on":true}', 4), { t: 'listed', on: true });
+  assert.deepEqual(parseRoomMessage('{"t":"listed","on":false}', 4), { t: 'listed', on: false });
+  assert.equal(parseRoomMessage('{"t":"listed","on":1}', 4), null);
+  assert.equal(parseRoomMessage('{"t":"listed"}', 4), null);
+});
+
+test('open rooms from the Worker are checked before the arcade shows them', () => {
+  const good = { code: 'ABCD', game: 'lightcycles', host: 'Josh', players: 2, bots: 1, seats: 4, started: false, lateJoin: false };
+  assert.deepEqual(parseOpenRooms({ rooms: [good] }), [good]);
+  assert.deepEqual(parseOpenRooms({ rooms: [{ ...good, code: 'abcd' }, { ...good, game: '../x' }, { ...good, players: 5 }, { ...good, seats: 1 }, { ...good, host: 3 }, null] }), []);
+  assert.deepEqual(parseOpenRooms({ rooms: [{ ...good, started: 'yes', lateJoin: 1 }] }), [{ ...good, started: false, lateJoin: false }]);
+  assert.equal(parseOpenRooms({ rooms: Array.from({ length: OPEN_ROOMS_MAX + 5 }, () => good) }).length, OPEN_ROOMS_MAX);
+  assert.deepEqual(parseOpenRooms(null), []);
+  assert.deepEqual(parseOpenRooms({ rooms: 'none' }), []);
+  assert.equal(openRoomLine(good), '2/4 · 1 Bot');
+  assert.equal(openRoomLine({ ...good, bots: 0, started: true }), '2/4 · Playing');
+});
+
+test('invite links and Open Rooms open each game where it lives', () => {
+  assert.deepEqual(roomApp('chess', 'ABCD'), { app: 'chrome', args: { url: 'chrome://games/chess?room=ABCD' } });
+  assert.deepEqual(roomApp('coxbox', 'ABCD'), { app: 'coxbox', args: { room: 'ABCD' } });
+  assert.deepEqual(roomApp('omok', 'ABCD'), { app: 'baduk', args: { game: 'omok', room: 'ABCD' } });
+  assert.deepEqual(roomApp('go', 'ABCD'), { app: 'baduk', args: { game: 'go', room: 'ABCD' } });
+  assert.deepEqual(roomApp('badminton', 'ABCD'), { app: 'badminton', args: { room: 'ABCD' } });
+});
+
+test('rooms are made public on request, and Open Rooms are read from the Worker', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  try {
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(input)}`);
+      if (String(input).includes('/rooms?game=pong&public=1') || String(input).endsWith('/rooms?game=pong')) {
+        if (init?.method === 'POST') return new Response(JSON.stringify({ code: 'QRST' }));
+      }
+      return new Response(JSON.stringify({ rooms: [{ code: 'QRST', game: 'pong', host: 'Josh', players: 1, bots: 0, seats: 2, started: false, lateJoin: false }] }));
+    }) as typeof fetch;
+    assert.equal(await createRoom('pong', { listed: true }, 'https://arcade.test'), 'QRST');
+    assert.equal(await createRoom('pong', {}, 'https://arcade.test/'), 'QRST');
+    assert.equal((await listRooms('pong', 'https://arcade.test'))[0].host, 'Josh');
+    await listRooms(undefined, 'https://arcade.test');
+    assert.deepEqual(calls, [
+      'POST https://arcade.test/rooms?game=pong&public=1',
+      'POST https://arcade.test/rooms?game=pong',
+      'GET https://arcade.test/rooms?game=pong',
+      'GET https://arcade.test/rooms',
+    ]);
+    globalThis.fetch = (async () => new Response('{}', { status: 404 })) as typeof fetch;
+    await assert.rejects(listRooms('pong', 'https://arcade.test'), 'a Worker from before Open Rooms');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('RoomLink follows whether the room is public, and the host can change it', async () => {
+  await withFakeRoom(async () => {
+    const link = new RoomLink('LMNP', 'Host', 'https://arcade.test');
+    const socket = FakeWebSocket.last;
+    const seen: boolean[] = [];
+    link.on('listed', (on) => seen.push(on));
+    socket.open();
+    socket.receive({ t: 'welcome', seat: 0, code: 'LMNP', game: 'pong', seats: 2, players: [{ seat: 0, name: 'Host' }], listed: false, started: false });
+    link.setListed(true);
+    assert.deepEqual(JSON.parse(socket.sent.at(-1)!), { t: 'listed', on: true });
+    socket.receive({ t: 'players', players: [{ seat: 0, name: 'Host' }], listed: true });
+    socket.receive({ t: 'players', players: [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Guest' }], listed: true });
+    assert.deepEqual(seen, [false, true], 'only changes are announced');
+    assert.equal(link.listed, true);
+    link.close();
+  });
 });

@@ -210,7 +210,7 @@ export default function Chrome({ args }: AppProps) {
           );
         })}
         {view.kind === 'newtab' && <NewTab onGo={go} />}
-        {view.kind === 'arcade' && <ArcadePage key={tab.reload} onOpen={(id) => go(`${GAMES}/${id}`)} />}
+        {view.kind === 'arcade' && <ArcadePage key={tab.reload} onOpen={(id, room) => go(`${GAMES}/${id}${room ? `?room=${encodeURIComponent(room)}` : ''}`)} />}
         {view.kind === 'blocked' && <Blocked url={url} entry={view.entry} />}
         {view.kind === 'frame' && (
           <>
