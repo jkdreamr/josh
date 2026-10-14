@@ -65,6 +65,8 @@ export default function Game({ compact, onExit, roomCode }: GameProps) {
 }
 
 const SERVER_LOCKER = freshLocker();
+/** The skin the round in progress was dealt (a pick on the Pause card shows from the next round). */
+const ROUND = { skin: -1 };
 const useLocker = () => useSyncExternalStore(subscribeLocker, loadLocker, () => SERVER_LOCKER);
 
 function Setup() {
@@ -120,6 +122,7 @@ function OnlineSetup() {
 /** How to Play and Skins buttons, and the sheets they open over the cards. */
 function Extras() {
   const shell = useShell();
+  const online = useOnline();
   const locker = useLocker();
   const [open, setOpen] = useState<'help' | 'skins' | null>(null);
   const close = () => {
@@ -146,8 +149,8 @@ function Extras() {
           {music !== 'on' && <path d="M3 3l18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
         </svg>
       </button>
-      {open === 'help' && <HowToPlay root={shell.root.current} touch={shell.touch} onClose={close} />}
-      {open === 'skins' && <SkinSheet root={shell.root.current} locker={locker} onPick={(id) => saveLocker({ ...locker, pick: id })} onClose={close} />}
+      {open === 'help' && <HowToPlay root={shell.root.current} touch={shell.touch} online={!!online} onClose={close} />}
+      {open === 'skins' && <SkinSheet root={shell.root.current} locker={locker} roundPick={shell.status === 'paused' && ROUND.skin >= 0 ? ROUND.skin : null} onPick={(id) => saveLocker({ ...locker, pick: id })} onClose={close} />}
     </div>
   );
 }
@@ -193,14 +196,17 @@ function makeCtl(mode: Mode, opts: { bots: number; level: 0 | 1 | 2; length: num
 
 // ---------------------------------------------------------------------------------------------------------------
 
-type Row = { id: number; name: string; color: string; pct: number; me: boolean; place: number };
+type Row = { id: number; name: string; color: string; dark: string; pct: number; me: boolean; place: number };
 type Mine = { id: number; name: string; color: string; pct: number; place: number; kills: number; alive: boolean; back: number | null };
 type Hud = { rows: Row[]; mine: Mine[]; field: number; clock: string | null; hurry: boolean };
-type Pop = { id: number; x: number; y: number; text: string; big: boolean };
-type Call = { id: number; text: string; sub: string; tone: 'good' | 'bad' | 'gold'; view: number };
+// Callouts, pops, the feed and the toast leave on the game clock (`until`), not only when their animation ends: with
+// reduced motion there is no animation to end.
+type Pop = { id: number; x: number; y: number; text: string; big: boolean; until: number };
+type Call = { id: number; text: string; sub: string; tone: 'good' | 'bad' | 'gold'; view: number; until: number };
 type Feed = { id: number; a: string; ac: string; b: string; bc: string; verb: string; at: number };
 /** A touch joystick; `at` is when its finger last moved (the newest drag steers). */
 type Joy = { id: number; ox: number; oy: number; x: number; y: number; player: number; at: number };
+const FEED_FOR = 6;
 
 const STREAK = ['', '', 'double cut!', 'triple cut!', 'quad cut!', 'rampage!', 'unstoppable!'];
 const deathLine = (cause: string, killer: string | null) =>
@@ -276,7 +282,9 @@ function Play({ mode }: { mode: Mode }) {
           report: (winner) => onlineRef.current?.reportResult(o.round, winner),
         }
       : null;
-    ctl.current = makeCtl(mode, { bots: Number(bots), level: levelIndex(levelName), length: Number(length), skin: loadLocker().pick, online: net, fill: Number(fill) });
+    const skin = loadLocker().pick;
+    if (mode !== 'idle') ROUND.skin = skin;
+    ctl.current = makeCtl(mode, { bots: Number(bots), level: levelIndex(levelName), length: Number(length), skin, online: net, fill: Number(fill) });
   }
   const view = useRef<View | null>(null);
   const [ready, setReady] = useState(false);
@@ -293,7 +301,8 @@ function Play({ mode }: { mode: Mode }) {
   const [pops, setPops] = useState<Pop[]>([]);
   const [calls, setCalls] = useState<Call[]>([]);
   const [feed, setFeed] = useState<Feed[]>([]);
-  const [toast, setToast] = useState<{ id: number; skin: Skin } | null>(null);
+  const [toast, setToast] = useState<{ id: number; skin: Skin; until: number } | null>(null);
+  const [hintGone, setHintGone] = useState(false);
   const [no3d, setNo3d] = useState(false);
   const [flash, setFlash] = useState<{ id: number; kind: 'dead' | 'kill' | 'win' } | null>(null);
   const [, setVersion] = useState(0);
@@ -327,6 +336,7 @@ function Play({ mode }: { mode: Mode }) {
     retryAfter: 20,
     /** Dropping resolution did not speed frames up: the frame rate is capped (a battery saver), so stop adapting. */
     capped: false,
+    hintGone: false,
     bestStreak: 0,
     bestRank: 99,
     deathCause: '',
@@ -548,7 +558,8 @@ function Play({ mode }: { mode: Mode }) {
 
   function call(text: string, sub: string, tone: Call['tone'], viewIdx: number) {
     const id = ++st.current.popId;
-    setCalls((list) => [...list.filter((c) => c.view !== viewIdx), { id, text, sub, tone, view: viewIdx }]);
+    const until = st.current.clock + 1.9;
+    setCalls((list) => [...list.filter((c) => c.view !== viewIdx), { id, text, sub, tone, view: viewIdx, until }]);
   }
 
   function popAt(localIdx: number, x: number, y: number, text: string, big: boolean) {
@@ -558,7 +569,8 @@ function Play({ mode }: { mode: Mode }) {
     const at = v.project(cam, x, y - 6, 14);
     if (!at) return;
     const id = ++st.current.popId;
-    setPops((list) => [...list.slice(-5), { id, x: at.x, y: at.y, text, big }]);
+    const until = st.current.clock + 1.2;
+    setPops((list) => [...list.slice(-5), { id, x: at.x, y: at.y, text, big, until }]);
   }
 
   function react(c: Ctl, e: Ev) {
@@ -604,7 +616,9 @@ function Play({ mode }: { mode: Mode }) {
     if (victim && e.cause !== 'left') {
       const verb = e.cause === 'self' ? 'crashed' : e.cause === 'head' ? 'bumped' : e.cause === 'wiped' ? 'wiped out' : 'cut';
       const id = ++s.popId;
-      const entry: Feed = killer && killer !== victim ? { id, a: killer.name, ac: colorOf(killer.color), b: victim.name, bc: colorOf(victim.color), verb, at: s.clock } : { id, a: victim.name, ac: colorOf(victim.color), b: '', bc: '', verb, at: s.clock };
+      // names in a deep shade of their color, readable on the cream card whatever the color
+      const ink = (q: { color: number }) => shade(colorOf(q.color), -0.45);
+      const entry: Feed = killer && killer !== victim ? { id, a: killer.name, ac: ink(killer), b: victim.name, bc: ink(victim), verb, at: s.clock } : { id, a: victim.name, ac: ink(victim), b: '', bc: '', verb, at: s.clock };
       setFeed((list) => [...list.slice(-3), entry]);
     }
     if (kIdx >= 0 && killer && victim && killer !== victim) {
@@ -650,7 +664,7 @@ function Play({ mode }: { mode: Mode }) {
     const { locker: next, fresh } = record(loadLocker(), { pct, streak: s.bestStreak, first: s.bestRank === 1, kills, game: final });
     if (fresh.length || final) saveLocker(next);
     if (fresh.length && !final) {
-      setToast({ id: Date.now(), skin: fresh[0] });
+      setToast({ id: Date.now(), skin: fresh[0], until: s.clock + 3.4 });
       sfx.tone({ freq: 784, dur: 0.1, type: 'triangle', vol: 0.12 });
       sfx.tone({ freq: 1047, dur: 0.1, type: 'triangle', vol: 0.12, delay: 0.1 });
       sfx.tone({ freq: 1568, dur: 0.22, type: 'triangle', vol: 0.12, delay: 0.2 });
@@ -823,13 +837,13 @@ function Play({ mode }: { mode: Mode }) {
     const rows: Row[] = [];
     for (let i = 0; i < Math.min(5, order.length); i++) {
       const p = w.players[order[i]];
-      rows.push({ id: p.id, name: p.name, color: colorOf(p.color), pct: percent(w, p.id), me: c.locals.includes(p.id), place: i + 1 });
+      rows.push({ id: p.id, name: p.name, color: colorOf(p.color), dark: shade(colorOf(p.color), -0.35), pct: percent(w, p.id), me: c.locals.includes(p.id), place: i + 1 });
     }
     for (const id of c.locals) {
       const place = placeOf(id);
       if (place > 5) {
         const p = w.players[id];
-        rows.push({ id, name: p.name, color: colorOf(p.color), pct: percent(w, id), me: true, place });
+        rows.push({ id, name: p.name, color: colorOf(p.color), dark: shade(colorOf(p.color), -0.35), pct: percent(w, id), me: true, place });
       }
     }
     const mine: Mine[] = c.locals.map((id) => {
@@ -855,6 +869,16 @@ function Play({ mode }: { mode: Mode }) {
     const next: Hud = { rows, mine, field: order.length, clock, hurry };
     setHud((h) => (JSON.stringify(h) === JSON.stringify(next) ? h : next));
     if (live) checkUnlocks(c, false);
+    // callouts and friends that are done (their animation may never end: reduced motion turns it off)
+    const now = s.clock;
+    setCalls((list) => (list.some((x) => x.until <= now) ? list.filter((x) => x.until > now) : list));
+    setPops((list) => (list.some((x) => x.until <= now) ? list.filter((x) => x.until > now) : list));
+    setFeed((list) => (list.some((x) => x.at + FEED_FOR <= now) ? list.filter((x) => x.at + FEED_FOR > now) : list));
+    setToast((t) => (t && t.until <= now ? null : t));
+    if (!s.hintGone && now >= 4) {
+      s.hintGone = true;
+      setHintGone(true);
+    }
   }
 
   const resize = () => view.current?.resize(sizeRef.current.w, sizeRef.current.h, st.current.dpr);
@@ -1015,7 +1039,7 @@ function Play({ mode }: { mode: Mode }) {
   const playing = shell.status === 'playing';
   const views = Math.max(1, c.locals.length);
   return (
-    <div className={`g-paperio-stage${twoUp ? ' is-split' : ''}${size.w >= size.h ? ' is-wide' : ' is-tall'}${size.h < 430 ? ' is-short' : ''}`}>
+    <div className={`g-paperio-stage${twoUp ? ' is-split' : ''}${size.w >= size.h ? ' is-wide' : ' is-tall'}${size.h < 430 ? ' is-short' : ''}${size.w < 640 ? ' is-narrow' : ''}`}>
       <div
         ref={ref}
         className="g-paperio-host"
@@ -1072,7 +1096,7 @@ function Play({ mode }: { mode: Mode }) {
           {hud.clock && <div className={`g-paperio-clock${hud.hurry ? ' is-hurry' : ''}${mode === 'online' ? ' is-online' : ''}`}>{hud.clock}</div>}
           <ol className={`g-paperio-board${views > 1 ? ' is-split' : ''}`} aria-label="Leaderboard">
             {hud.rows.map((r) => (
-              <li key={r.id} className={r.me ? 'is-me' : undefined} style={{ ['--c' as string]: r.color, ['--w' as string]: `${Math.max(4, Math.min(100, r.pct * 3))}%` }}>
+              <li key={r.id} className={r.me ? 'is-me' : undefined} style={{ ['--c' as string]: r.color, ['--cd' as string]: r.dark, ['--w' as string]: `${Math.max(4, Math.min(100, r.pct * 3))}%` }}>
                 <span className="g-paperio-place">{r.place}</span>
                 <span className="g-paperio-name">{r.name}</span>
                 <span className="g-paperio-val">{r.pct.toFixed(r.pct >= 10 ? 1 : 2)}%</span>
@@ -1137,7 +1161,7 @@ function Play({ mode }: { mode: Mode }) {
             <i />
           </div>
         ))}
-      {live && playing && shell.touch && hud.mine.length > 0 && st.current.clock < 4 && (
+      {live && playing && shell.touch && hud.mine.length > 0 && !hintGone && (
         <div className="g-paperio-hint">{twoUp ? 'each player drags on their half' : 'drag anywhere to steer'}</div>
       )}
       {!ready && <div className="g-paperio-loading">{no3d ? 'this browser can’t draw the farm (it needs WebGL 2)' : 'unfolding the map…'}</div>}

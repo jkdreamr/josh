@@ -28,17 +28,19 @@ export function Sheet({ root, title, onClose, children }: { root: HTMLElement | 
   done.current = onClose;
   useEffect(() => {
     close.current?.focus({ preventScroll: true });
-    // keys stay in the sheet: Escape closes it, nothing reaches the game behind
+    if (!root) return;
+    // keys stay in the sheet: Escape closes it, nothing reaches the game behind (the shell listens on the same root,
+    // after this capture listener). Cmd, Ctrl and Alt combos pass, so site shortcuts like Cmd+K still work.
     const onKey = (e: KeyboardEvent) => {
-      if (!root?.contains(e.target as Node)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       e.stopPropagation();
       if (e.key === 'Escape') {
         e.preventDefault();
         done.current();
       }
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    root.addEventListener('keydown', onKey, true);
+    return () => root.removeEventListener('keydown', onKey, true);
   }, [root]);
   if (!root) return null;
   return createPortal(
@@ -67,12 +69,15 @@ export function Sheet({ root, title, onClose, children }: { root: HTMLElement | 
   );
 }
 
-export function SkinSheet({ root, locker, onPick, onClose }: { root: HTMLElement | null; locker: Locker; onPick: (id: number) => void; onClose: () => void }) {
+/** `roundPick`: on the Pause card, the skin the round in progress wears (a new pick shows from the next round). */
+export function SkinSheet({ root, locker, roundPick = null, onPick, onClose }: { root: HTMLElement | null; locker: Locker; roundPick?: number | null; onPick: (id: number) => void; onClose: () => void }) {
   const have = new Set(locker.have);
   const s = locker.stats;
+  const later = roundPick !== null && roundPick !== locker.pick;
   return (
     <Sheet root={root} title="Skins" onClose={onClose}>
       <p className="g-paperio-lede">Your cube and your color. Hit the milestones to unlock more, they stay on this device.</p>
+      {roundPick !== null && <p className="g-paperio-note">{later ? 'Your new pick shows from the next round.' : 'A new pick shows from the next round.'}</p>}
       <div className="g-paperio-skins">
         {SKINS.map((skin) => {
           const owned = have.has(skin.id);
@@ -89,7 +94,7 @@ export function SkinSheet({ root, locker, onPick, onClose }: { root: HTMLElement
             >
               <SkinIcon skin={skin.id} size={52} />
               <b>{skin.name}</b>
-              <small>{owned ? (on ? 'wearing' : 'tap to wear') : unlockText(skin.unlock)}</small>
+              <small>{owned ? (on ? (later ? 'next round' : 'wearing') : 'tap to wear') : unlockText(skin.unlock)}</small>
             </button>
           );
         })}
@@ -108,7 +113,7 @@ export function SkinSheet({ root, locker, onPick, onClose }: { root: HTMLElement
   );
 }
 
-export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; touch: boolean; onClose: () => void }) {
+export function HowToPlay({ root, touch, online = false, onClose }: { root: HTMLElement | null; touch: boolean; online?: boolean; onClose: () => void }) {
   return (
     <Sheet root={root} title="How to Play" onClose={onClose}>
       <p className="g-paperio-lede">Grab as much of the farm as you can. You start on a small patch of your own color.</p>
@@ -131,7 +136,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>2 players</dt>
               <dd>Player 1 turns with A and D, player 2 with the arrow keys</dd>
               <dt>Esc</dt>
-              <dd>Pause</dd>
+              <dd>{online ? 'Online rounds keep going, there is no pause' : 'Pause'}</dd>
             </>
           )}
         </dl>

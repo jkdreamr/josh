@@ -158,6 +158,10 @@
 .g-paperio .is-wide .g-paperio-me.is-split.is-v1 {
   left: calc(50% + 62px);
 }
+/* a narrow window (the laptop's Arcade window): player 2's numbers sit under the shell's control row */
+.g-paperio .is-wide.is-narrow .g-paperio-me.is-split.is-v1 {
+  top: 50px;
+}
 .g-paperio .is-tall .g-paperio-me.is-split.is-v1 {
   top: calc(50% + 8px);
 }
@@ -233,9 +237,10 @@
   opacity: 0.28;
   transition: width 0.4s ease;
 }
+/* white text sits on a deep shade of the color (--cd), readable on gold and green as well as on cardinal */
 .g-paperio .g-paperio-board li.is-me {
   color: #fff;
-  background: var(--c);
+  background: var(--cd, var(--c));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 60%, #000), 0 2px 0 color-mix(in srgb, var(--c) 60%, #000);
 }
 .g-paperio .g-paperio-board li.is-me::before {
@@ -251,10 +256,10 @@
   font-weight: 900;
   font-size: 12px;
   color: #fff;
-  background: var(--c);
+  background: var(--cd, var(--c));
 }
 .g-paperio .is-me .g-paperio-place {
-  color: var(--c);
+  color: var(--cd, var(--c));
   background: #fff;
 }
 .g-paperio .g-paperio-name {
@@ -284,6 +289,10 @@
   left: auto;
   right: 8px;
   transform: translateY(-50%);
+}
+/* a short split screen keeps only the two players' own rows, so the board never covers the middle */
+.g-paperio .is-short .g-paperio-board.is-split li:not(.is-me) {
+  display: none;
 }
 
 /* minimap */
@@ -335,7 +344,6 @@
 }
 .g-paperio .g-paperio-feed b {
   font-weight: 900;
-  filter: brightness(0.85);
 }
 @keyframes g-paperio-feed {
   0% {
@@ -405,6 +413,10 @@
 .g-paperio .g-paperio-call.is-split strong {
   font-size: 26px;
 }
+/* short stages: under the leaderboard (and the skin toast) rather than over it */
+.g-paperio .is-short .g-paperio-call:not(.is-split) {
+  top: max(24%, 148px);
+}
 @keyframes g-paperio-call {
   0% {
     opacity: 0;
@@ -462,10 +474,11 @@
 }
 
 /* new skin */
+/* new skin: under your own numbers at the top left, clear of the leaderboard, callouts and the online clock */
 .g-paperio .g-paperio-toast {
   position: absolute;
-  top: 52px;
-  left: 50%;
+  top: 92px;
+  left: 12px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -473,7 +486,6 @@
   border-radius: 12px;
   background: var(--g-paperio-card);
   box-shadow: 0 0 0 1px var(--g-paperio-edge), 0 4px 0 var(--g-paperio-edge), 0 10px 24px rgba(42, 29, 26, 0.25);
-  transform: translateX(-50%);
   animation: g-paperio-toast 3.4s ease forwards;
 }
 .g-paperio .g-paperio-toast span {
@@ -492,16 +504,16 @@
 @keyframes g-paperio-toast {
   0% {
     opacity: 0;
-    transform: translate(-50%, -16px);
+    transform: translateX(-16px);
   }
   10%,
   85% {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: none;
   }
   100% {
     opacity: 0;
-    transform: translate(-50%, -8px);
+    transform: translateY(-8px);
   }
 }
 
@@ -675,6 +687,54 @@
 .g-paperio .arcade-seg > button[aria-pressed='true'] .g-paperio-ranked {
   color: var(--g-paperio-cardinal);
   background: #fff;
+}
+.g-paperio .g-paperio-note {
+  margin: 0 0 8px;
+  font-weight: 700;
+  color: var(--g-paperio-cardinal);
+}
+@media (hover: none) and (pointer: coarse) {
+  .g-paperio .g-paperio-extras .arcade-btn,
+  .g-paperio .g-paperio-sheet-card header .arcade-btn {
+    min-height: 40px;
+  }
+  .g-paperio .g-paperio-extras .g-paperio-music {
+    min-width: 40px;
+    justify-content: center;
+  }
+}
+/* the laptop's small Arcade window: a tighter setup so Play, Resume and Play Again stay in view */
+@container arcade-ov (max-height: 340px) {
+  .g-paperio .arcade-card .arcade-setup {
+    gap: 4px;
+  }
+  .g-paperio .arcade-card .arcade-setup .arcade-field {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+  .g-paperio .arcade-card .arcade-setup .arcade-field > span {
+    flex: none;
+    width: 66px;
+    padding: 0;
+  }
+  .g-paperio .arcade-card .arcade-setup .arcade-seg > button {
+    height: 22px;
+  }
+  .g-paperio .arcade-card .g-paperio-extras {
+    margin-top: 0;
+  }
+  .g-paperio .arcade-card .g-paperio-extras .arcade-btn {
+    height: 26px;
+    min-height: 0;
+  }
+  .g-paperio .arcade-card .g-paperio-best {
+    display: none;
+  }
+  /* while the name field for a top score is up, it and Play Again come first; the settings return after */
+  .g-paperio .arcade-card:has(.arcade-lb-form) .arcade-setup {
+    display: none;
+  }
 }
 
 /* sheets */
@@ -860,14 +920,17 @@
   }
 }
 
+/* Reduced motion: callouts, pops, the toast, the feed and the touch hint show still and stay readable (the game
+   takes them away on its own clock), the hurry clock does not pulse and nothing flashes. */
 @media (prefers-reduced-motion: reduce) {
   .g-paperio .g-paperio-call,
   .g-paperio .g-paperio-pop,
   .g-paperio .g-paperio-toast,
-  .g-paperio .g-paperio-clock.is-online {
-  top: 40px;
-}
-.g-paperio .g-paperio-clock.is-hurry {
+  .g-paperio .g-paperio-feed li,
+  .g-paperio .g-paperio-hint {
+    animation-name: none !important;
+  }
+  .g-paperio .g-paperio-clock.is-hurry {
     animation-timing-function: steps(1, end);
   }
   .g-paperio .g-paperio-flash {
