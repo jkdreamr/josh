@@ -647,7 +647,8 @@
   bottom: 124px;
   z-index: 4;
   display: grid;
-  grid-template-columns: repeat(2, 52px);
+  /* two rows of three, so the top row stays clear of the pick-up prompt under your egg */
+  grid-template-columns: repeat(3, 52px);
   gap: 8px;
 }
 .g-scramble .g-scramble-buttons button {
@@ -758,9 +759,10 @@
 @container (max-height: 460px) {
   .g-scramble .g-scramble-buttons {
     bottom: 10px;
-    grid-template-columns: repeat(3, 52px);
   }
+  /* centered, or slid left just clear of the buttons: half the row (188px) + the buttons (182px) + 8px */
   .g-scramble .g-scramble-hud.is-touch .g-scramble-bottom {
+    left: min(50%, calc(100% - 378px));
     flex-direction: row;
     align-items: flex-end;
   }
@@ -796,10 +798,25 @@
     width: 44px;
     height: 44px;
   }
+  /* the buttons are up the side here, so the row stays centered */
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-bottom {
+    left: 50%;
+  }
 }
 
-/* narrow windows, like the laptop's smallest (the HUD measures itself) */
-@container (max-width: 600px) {
+/* narrower windows (the HUD measures itself): the items fold into two columns so the bottom row fits,
+   and the gear pills wrap rather than run under the storm timer */
+@container (max-width: 750px) {
+  .g-scramble .g-scramble-mats {
+    grid-template-columns: repeat(2, auto);
+  }
+  .g-scramble .g-scramble-hud:not(.is-touch) .g-scramble-top {
+    flex-wrap: wrap;
+    max-width: calc(50% - 96px);
+  }
+}
+/* narrow windows, like the laptop's smallest */
+@container (max-width: 640px) {
   .g-scramble .g-scramble-bottom {
     gap: 8px;
   }
@@ -817,7 +834,7 @@
     width: min(200px, 50cqw);
   }
 }
-@container (max-width: 470px) {
+@container (max-width: 550px) {
   .g-scramble .g-scramble-hud:not(.is-touch) .g-scramble-mats {
     display: none;
   }
@@ -826,6 +843,10 @@
 @container (max-width: 520px) and (min-height: 461px) {
   .g-scramble .g-scramble-out {
     top: 36%;
+  }
+  /* the buttons sit just above the bars, so on a short screen the pick-up prompt stays off their top row */
+  .g-scramble .g-scramble-buttons {
+    bottom: 112px;
   }
 }
 
