@@ -27,7 +27,7 @@ import {
   type Player,
   type World,
 } from '../src/os/arcade/games/paperio/world.ts';
-import { botNames, makeMind, personas, wayHome } from '../src/os/arcade/games/paperio/bots.ts';
+import { botNames, makeMind, personas, wayHome, type Mind } from '../src/os/arcade/games/paperio/bots.ts';
 import { assignColors, createMatch, finish, matchTick, standings } from '../src/os/arcade/games/paperio/match.ts';
 import { SKINS, earned, freshLocker, parseLocker, record } from '../src/os/arcade/games/paperio/skins.ts';
 
@@ -469,6 +469,25 @@ test('bots run home when a head gets near their trail, and see other heads late'
   assert.equal(new Set(botNames(20, () => 0.7)).size, 20);
   const mix = personas(4, () => 0.2);
   assert.equal(new Set(mix).size, 4, 'the first four bots are one of each');
+});
+
+test('bots never circle a waypoint forever: a short dip out of their land still ends the loop', () => {
+  // seed 1 used to leave a cautious bot circling a waypoint on its own land for the rest of the game
+  const m = createMatch({ seed: 1, humans: [], bots: 12, level: 0, respawn: false, duration: Infinity });
+  const since = new Float64Array(16).fill(-1);
+  let worst = 0;
+  for (let i = 0; i < 60 * 200; i++) {
+    matchTick(m);
+    m.w.events.length = 0;
+    for (const p of m.w.players) {
+      const mind = p.mind as Mind;
+      if (p.alive && mind.state === 'loop' && !mind.left && !p.out) {
+        if (since[p.id] < 0) since[p.id] = m.w.time;
+        worst = Math.max(worst, m.w.time - since[p.id]);
+      } else since[p.id] = -1;
+    }
+  }
+  assert.ok(worst < 10, `longest wait at home on an unfinished loop: ${worst.toFixed(1)} s`);
 });
 
 test('a timed match ends at the buzzer with the biggest human on top', () => {

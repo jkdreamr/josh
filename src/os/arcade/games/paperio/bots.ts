@@ -36,6 +36,9 @@ export type Mind = {
   /** Steering is re-checked every few ticks. */
   probeIn: number;
   heading: number;
+  /** Closest this bot has come to its current waypoint, and when: a waypoint it cannot close on is skipped. */
+  near: number;
+  nearAt: number;
   rng: () => number;
 };
 
@@ -71,6 +74,8 @@ export function makeMind(persona: Persona, level: Level, rng: () => number): Min
     left: false,
     probeIn: 0,
     heading: NaN,
+    near: Infinity,
+    nearAt: 0,
     rng,
   };
 }
@@ -215,7 +220,13 @@ function setPath(m: Mind, pts: [number, number][]) {
     m.wy[i] = pts[i][1];
   }
   m.wi = 0;
+  m.near = Infinity;
 }
+
+/** A waypoint counts as reached this close: no tighter than the head's turning circle (SPEED / TURN, 8.5 cells). */
+const REACH = 10;
+/** Seconds a bot keeps aiming at a waypoint it is not getting any closer to (circling it) before moving on. */
+const STALL = 1.5;
 
 /** Somewhere on our own land a few cells away, to wander to between loops. */
 function homeSpot(w: World, p: Player, m: Mind): [number, number] {
@@ -336,8 +347,8 @@ function think(w: World, p: Player, m: Mind) {
     }
     return;
   }
-  // at home: still on the way out of a planned loop, or back from one
-  if (m.state === 'loop' && !m.left) return;
+  // at home: still on the way out of a planned loop (while there is plan left to follow), or back from one
+  if (m.state === 'loop' && !m.left && m.wi < m.wn) return;
   if (m.state !== 'home' && m.state !== 'hunt') {
     m.state = 'home';
     m.dwell = (m.persona === 'greedy' ? 0.1 : m.persona === 'cautious' ? 0.5 : 0.3) + m.rng() * 0.6;
@@ -399,6 +410,11 @@ export function botTick(w: World, p: Player, dt: number) {
   const m = p.mind as Mind | null;
   if (!m || !p.alive) return;
   const L = LEVEL[m.level];
+  // a dip out of our land shorter than a think still counts as having left (else the loop never ends)
+  if (p.out && !m.left) {
+    m.left = true;
+    m.outSince = w.time;
+  }
   m.wait -= dt;
   if (m.wait <= 0) {
     m.wait = L.think * (0.75 + m.rng() * 0.5);
@@ -409,8 +425,19 @@ export function botTick(w: World, p: Player, dt: number) {
   while (m.wi < m.wn) {
     const dx = m.wx[m.wi] - p.x;
     const dy = m.wy[m.wi] - p.y;
-    if (dx * dx + dy * dy < 36) {
+    const d2 = dx * dx + dy * dy;
+    if (d2 < REACH * REACH) {
       m.wi++;
+      m.near = Infinity;
+      continue;
+    }
+    const d = Math.sqrt(d2);
+    if (d < m.near - 2) {
+      m.near = d;
+      m.nearAt = w.time;
+    } else if (w.time - m.nearAt > STALL) {
+      m.wi++;
+      m.near = Infinity;
       continue;
     }
     target = Math.atan2(dy, dx);
