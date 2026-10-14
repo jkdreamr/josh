@@ -1,3 +1,5 @@
+import type { OpenRoom } from '../../src/os/arcade/kit/online-core.ts';
+
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const ROOM_CODE_LENGTH = 4;
 export const ROOM_MESSAGE_MAX_BYTES = 8 * 1024;
@@ -6,11 +8,13 @@ export type RoomPlayer = { seat: number; name: string };
 /**
  * roster: seats that were in the room when the current round started.
  * allowBots: the game can fill empty seats with bots; bots: how many the host asked for (see botSeats).
+ * listed: a public room, which the arcade's Open Rooms lists while someone can join it (see roomListing).
  */
-export type RoomState = { game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; allowBots?: boolean; bots?: number };
+export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; allowBots?: boolean; bots?: number; listed?: boolean };
 export type ClientRoomMessage =
   | { t: 'start' }
   | { t: 'bots'; n: number }
+  | { t: 'listed'; on: boolean }
   | { t: 'msg'; to?: number; d: unknown }
   | { t: 'signal'; to: number; d: unknown }
   | { t: 'result'; round: number; winner: number | null };
@@ -35,6 +39,25 @@ export function botSeats(seats: number, people: Iterable<number>, bots: number):
   const free: number[] = [];
   for (let seat = 0; seat < seats && free.length < bots; seat++) if (!taken.has(seat)) free.push(seat);
   return free;
+}
+
+/** A public room refreshes its line in Open Rooms this often; a line nobody refreshes for LISTING_TTL_MS is dropped. */
+export const LISTING_REFRESH_MS = 60_000;
+export const LISTING_TTL_MS = 3 * 60_000;
+
+/**
+ * The room's line in the arcade's Open Rooms, or null when it doesn't belong there: private, without its host, full of
+ * people (bots step aside, so they never fill it), or under way in a game nobody can join mid-game.
+ */
+export function roomListing(room: RoomState, players: RoomPlayer[], bots: number): OpenRoom | null {
+  const host = players.find((player) => player.seat === 0);
+  if (!room.listed || !room.code || !host || players.length >= room.seats || (room.started && !room.lateJoin)) return null;
+  return { code: room.code, game: room.game, host: host.name, players: players.length, bots, seats: room.seats, started: room.started, lateJoin: !!room.lateJoin };
+}
+
+/** Open Rooms order: rooms still gathering first, then the busiest, then the newest code for a stable order. */
+export function sortListings(rooms: OpenRoom[]): OpenRoom[] {
+  return [...rooms].sort((a, b) => Number(a.started) - Number(b.started) || b.players - a.players || a.code.localeCompare(b.code));
 }
 
 /** Only the host starts, and only with someone to play: another person or a bot. */
@@ -83,6 +106,7 @@ export function parseRoomMessage(raw: string | ArrayBuffer, seats: number): Clie
   if (message.t === 'start') return { t: 'start' };
   // Up to every seat but the host's.
   if (message.t === 'bots') return Number.isInteger(message.n) && (message.n as number) >= 0 && (message.n as number) < seats ? { t: 'bots', n: message.n as number } : null;
+  if (message.t === 'listed') return typeof message.on === 'boolean' ? { t: 'listed', on: message.on } : null;
   if (message.t === 'msg') {
     if (!Object.hasOwn(message, 'd')) return null;
     if (message.to === undefined) return { t: 'msg', d: message.d };

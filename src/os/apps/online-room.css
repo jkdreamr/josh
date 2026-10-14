@@ -137,3 +137,12 @@
     height: 40px;
   }
 }
+/* Open rooms for the app's game, each with a Join button. */
+.oroom-open {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.oroom-open .oroom-players li {
+  min-height: 30px;
+}

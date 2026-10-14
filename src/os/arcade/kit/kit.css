@@ -786,6 +786,22 @@
 .arcade-online-player.is-bot {
   color: rgba(245, 245, 247, 0.7);
 }
+/* A line under the Private / Public choice saying who can join. */
+.arcade-online-hint {
+  margin: -2px 0 0;
+  padding-left: 2px;
+  text-align: left;
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.6);
+}
+/* This game's open rooms on the Play Online card, each with a Join button. */
+.arcade-online-open .arcade-online-player small {
+  color: rgba(245, 245, 247, 0.6);
+}
+.arcade-shell .arcade-online-open .arcade-btn {
+  height: 26px;
+  padding: 0 12px;
+}
 .arcade-online-players p,
 .arcade-online-card > p {
   margin: 4px 0 0;

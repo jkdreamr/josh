@@ -1,4 +1,5 @@
 import { ARCADE_API } from './leaderboard.ts';
+import { parseOpenRooms, type OpenRoom } from './online-core.ts';
 
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const ICE_SERVERS = [{ urls: 'stun:stun.cloudflare.com:3478' }, { urls: 'stun:stun.l.google.com:19302' }];
@@ -16,6 +17,8 @@ type RoomEvents = {
   players: RoomPlayer[];
   /** Seats bots would take if the host started now; only rooms for games that allow bots send them. */
   bots: number[];
+  /** Whether the room is public (listed in the arcade's Open Rooms); servers from before public rooms never say. */
+  listed: boolean;
   /** round: the room's shared round number, or null from a server that does not send one. bots: the seats bots play this round. */
   start: { players: RoomPlayer[]; round: number | null; bots: number[] };
   msg: { from: number; d: unknown };
@@ -30,13 +33,22 @@ export function makeRoomCode(bytes: ArrayLike<number>): string {
   return Array.from({ length: 4 }, (_, i) => ROOM_CODE_ALPHABET[bytes[i] % ROOM_CODE_ALPHABET.length]).join('');
 }
 
-export async function createRoom(game: string, api = ARCADE_API): Promise<string> {
+/** A new room's code. A public room shows up in the arcade's Open Rooms for anyone to join. */
+export async function createRoom(game: string, { listed = false }: { listed?: boolean } = {}, api = ARCADE_API): Promise<string> {
   if (!api) throw new Error('Online Play Is Unavailable');
-  const response = await fetch(`${api.replace(/\/+$/, '')}/rooms?game=${encodeURIComponent(game)}`, { method: 'POST' });
+  const response = await fetch(`${api.replace(/\/+$/, '')}/rooms?game=${encodeURIComponent(game)}${listed ? '&public=1' : ''}`, { method: 'POST' });
   if (!response.ok) throw new Error('Could Not Create A Room');
   const body = (await response.json()) as { code?: unknown };
   if (typeof body.code !== 'string' || !/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/.test(body.code)) throw new Error('Invalid Room Code');
   return body.code;
+}
+
+/** Public rooms someone can join now, for one game or every game. Throws when Open Rooms can't be reached. */
+export async function listRooms(game?: string, api = ARCADE_API): Promise<OpenRoom[]> {
+  if (!api) throw new Error('Online Play Is Unavailable');
+  const response = await fetch(`${api.replace(/\/+$/, '')}/rooms${game ? `?game=${encodeURIComponent(game)}` : ''}`);
+  if (!response.ok) throw new Error('Open Rooms Are Unavailable');
+  return parseOpenRooms(await response.json());
 }
 
 export class RoomLink {
@@ -48,6 +60,8 @@ export class RoomLink {
   players: RoomPlayer[] = [];
   /** Seats bots would take if the host started now, or null when the room has no bots. */
   bots: number[] | null = null;
+  /** Whether the room is public, or null from a server that does not say. */
+  listed: boolean | null = null;
   private readonly socket: WebSocket;
   private readonly listeners = new Map<keyof RoomEvents, Set<Listener<never>>>();
   private readonly peers = new Map<number, Peer>();
@@ -91,6 +105,11 @@ export class RoomLink {
   /** Host only: how many bots should fill the empty seats. */
   setBots(n: number) {
     this.sendSocket({ t: 'bots', n });
+  }
+
+  /** Host only: list the room in the arcade's Open Rooms, or take it off. */
+  setListed(on: boolean) {
+    this.sendSocket({ t: 'listed', on });
   }
 
   reportResult(round: number, winner: number | null) {
@@ -159,6 +178,7 @@ export class RoomLink {
       this.emit('welcome', { seat: this.seat, code: this.code, game: this.game, seats: this.seats, players: this.players, started: message.started === true, bots: this.bots });
       this.emit('players', this.players);
       if (this.bots) this.emit('bots', this.bots);
+      this.takeListed(message.listed);
     } else if (message.t === 'players') {
       this.players = this.asPlayers(message.players);
       this.emit('players', this.players);
@@ -166,6 +186,7 @@ export class RoomLink {
         this.bots = this.asSeats(message.bots);
         this.emit('bots', this.bots);
       }
+      this.takeListed(message.listed);
       this.updateTransport();
     } else if (message.t === 'start') {
       this.players = this.asPlayers(message.players);
@@ -303,6 +324,12 @@ export class RoomLink {
     return value.filter((player): player is RoomPlayer =>
       !!player && typeof player === 'object' && Number.isInteger((player as RoomPlayer).seat) && typeof (player as RoomPlayer).name === 'string',
     ).map(({ seat, name }) => ({ seat, name }));
+  }
+
+  private takeListed(value: unknown) {
+    if (typeof value !== 'boolean' || value === this.listed) return;
+    this.listed = value;
+    this.emit('listed', value);
   }
 
   /** Bot seats from the server: whole numbers inside the room, each once, in order. */

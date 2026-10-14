@@ -2466,6 +2466,22 @@ kbd {
   line-height: 1.4;
   color: #5f6368;
 }
+/* Open Rooms: room tiles above the games, with a Join pill in the game's color. */
+.arcade-open-more {
+  margin-top: 10px;
+}
+.arcade-open-tile .arcade-tile-text {
+  flex: 1 1 auto;
+}
+.arcade-open-join {
+  flex: none;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+}
 @container (max-width: 600px) {
   .arcade {
     padding: 28px 16px 32px;

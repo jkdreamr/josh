@@ -4,17 +4,20 @@ import type { LeaderboardSpec } from '../../src/os/arcade/types.ts';
 import { cleanName, nameLength } from '../../src/os/arcade/kit/leaderboard-core.ts';
 import { dayKey, isVisitorId, KEEP_DAYS, MAX_GAMES, parseHit, periodStarts, shiftDay, TOP_GAMES, type StatsHit, type StatsSummary, type TopGame } from '../../src/os/stats-core.ts';
 import { cleanText, isSession, readIndex, webhookSecret, type TgUpdate } from '../../src/os/chat-core.ts';
+import type { OnlineSpec } from '../../src/os/arcade/types.ts';
 import { Chat, type ChatEnv } from './chat';
+import { Lobby } from './lobby';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
-import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
+import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, LISTING_REFRESH_MS, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, roomListing, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
-export { Chat };
+export { Chat, Lobby };
 
 interface Env extends ChatEnv {
   BOARDS: DurableObjectNamespace<Boards>;
   ROOMS: DurableObjectNamespace<Room>;
   STATS: DurableObjectNamespace<Stats>;
   CHAT: DurableObjectNamespace<Chat>;
+  LOBBY: DurableObjectNamespace<Lobby>;
 }
 
 const RATE_LIMIT = 6;
@@ -142,10 +145,11 @@ export class Room extends DurableObject<Env> {
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
-  open(game: string, seats: number, lateJoin = false, bots = false): Promise<boolean> {
+  /** listed: a public room, shown in the arcade's Open Rooms once its host is in. */
+  open(code: string, game: string, spec: OnlineSpec, listed = false): Promise<boolean> {
     return this.exclusive(async () => {
       if (await this.ctx.storage.get<RoomState>('room')) return false;
-      await this.ctx.storage.put<RoomState>('room', { game, seats, started: false, lateJoin, ...(bots ? { allowBots: true, bots: 0 } : {}) });
+      await this.ctx.storage.put<RoomState>('room', { code, game, seats: spec.seats, started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: 0 } : {}), ...(listed ? { listed: true } : {}) });
       await this.ctx.storage.put<RoomResults>('results', { reports: {}, recorded: [] });
       return true;
     });
@@ -157,6 +161,14 @@ export class Room extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
     return this.exclusive(() => this.handleMessage(ws, message));
+  }
+
+  /** While the room is listed, its line in Open Rooms is refreshed every minute, so it never goes stale. */
+  async alarm() {
+    await this.exclusive(async () => {
+      const room = await this.ctx.storage.get<RoomState>('room');
+      if (room) await this.publish(room, this.players());
+    });
   }
 
   private async handleMessage(ws: WebSocket, message: string | ArrayBuffer) {
@@ -173,14 +185,20 @@ export class Room extends DurableObject<Env> {
       const round = beginRound(room, lineup.players.map(({ seat }) => seat));
       await this.ctx.storage.put('room', room);
       this.broadcast({ t: 'start', ...lineup, round });
+      await this.publish(room, lineup.players);
       return;
     }
 
-    if (parsed.t === 'bots') {
-      if (attachment.seat !== 0 || !room.allowBots) return;
-      room.bots = parsed.n;
+    if (parsed.t === 'bots' || parsed.t === 'listed') {
+      if (attachment.seat !== 0) return;
+      if (parsed.t === 'bots') {
+        if (!room.allowBots) return;
+        room.bots = parsed.n;
+      } else room.listed = parsed.on;
       await this.ctx.storage.put('room', room);
-      this.broadcast({ t: 'players', ...this.lineup(room, this.players()) });
+      const lineup = this.lineup(room, this.players());
+      this.broadcast({ t: 'players', ...lineup });
+      await this.publish(room, lineup.players);
       return;
     }
 
@@ -260,12 +278,35 @@ export class Room extends DurableObject<Env> {
     const lineup = this.lineup(room, [...existingPlayers, { seat, name }].sort((a, b) => a.seat - b.seat));
     server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, ...lineup, started: room.started }));
     this.broadcast({ t: 'players', ...lineup });
+    await this.publish(room, lineup.players);
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  /** Who is in the room, plus the seats bots would take if the host started now (rooms that allow bots). */
-  private lineup(room: RoomState, players: RoomPlayer[]): { players: RoomPlayer[]; bots?: number[] } {
-    return room.allowBots ? { players, bots: botSeats(room.seats, players.map(({ seat }) => seat), room.bots ?? 0) } : { players };
+  /**
+   * Who is in the room, the seats bots would take if the host started now (rooms that allow bots), and whether the
+   * room is public.
+   */
+  private lineup(room: RoomState, players: RoomPlayer[]): { players: RoomPlayer[]; bots?: number[]; listed: boolean } {
+    const listed = !!room.listed;
+    return room.allowBots ? { players, bots: botSeats(room.seats, players.map(({ seat }) => seat), room.bots ?? 0), listed } : { players, listed };
+  }
+
+  /**
+   * Keeps the room's line in the arcade's Open Rooms right: there, with an alarm to refresh it, while the room is
+   * public and someone can join; gone otherwise. Open Rooms is a convenience, so a room carries on if it fails.
+   */
+  private async publish(room: RoomState, players: RoomPlayer[]) {
+    if (!room.code) return;
+    const listing = roomListing(room, players, this.lineup(room, players).bots?.length ?? 0);
+    try {
+      const lobby = this.env.LOBBY.get(this.env.LOBBY.idFromName('global'));
+      if (listing) await lobby.put(listing);
+      else await lobby.drop(room.code);
+    } catch {
+      /* listed again on the next change or refresh */
+    }
+    if (listing && (await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + LISTING_REFRESH_MS);
+    else if (!listing) await this.ctx.storage.deleteAlarm();
   }
 
   private players(): RoomPlayer[] {
@@ -302,12 +343,12 @@ export class Room extends DurableObject<Env> {
     if (attachment?.seat === 0) {
       this.broadcast({ t: 'closed', reason: 'host-left' }, ws);
       for (const socket of this.ctx.getWebSockets()) socket.close(1000, 'host-left');
-      await this.ctx.storage.deleteAll();
+      await this.close();
       return;
     }
     const remaining = this.ctx.getWebSockets().filter((socket) => socket !== ws && socket.readyState === WebSocket.OPEN);
     if (!remaining.length) {
-      await this.ctx.storage.deleteAll();
+      await this.close();
       return;
     }
     const players = remaining
@@ -317,6 +358,21 @@ export class Room extends DurableObject<Env> {
       .sort((a, b) => a.seat - b.seat);
     const room = await this.ctx.storage.get<RoomState>('room');
     this.broadcast({ t: 'players', ...(room ? this.lineup(room, players) : { players }) });
+    if (room) await this.publish(room, players);
+  }
+
+  /** The room is over: off Open Rooms, and everything it kept is gone. */
+  private async close() {
+    const room = await this.ctx.storage.get<RoomState>('room');
+    if (room?.code) {
+      try {
+        await this.env.LOBBY.get(this.env.LOBBY.idFromName('global')).drop(room.code);
+      } catch {
+        /* the line expires on its own */
+      }
+    }
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
   }
 }
 
@@ -526,14 +582,25 @@ export default {
         return new Response('ok');
       }
     }
+    // Open Rooms: public rooms someone can join now, for one game (?game=) or all of them.
+    if (url.pathname === '/rooms' && request.method === 'GET') {
+      const game = url.searchParams.get('game');
+      if (game !== null && !Object.hasOwn(ONLINE_SPECS, game)) return withCors(json({ error: 'unknown game' }, 404));
+      try {
+        return withCors(json({ rooms: await env.LOBBY.get(env.LOBBY.idFromName('global')).list(game) }));
+      } catch {
+        return withCors(json({ error: 'unavailable' }, 503));
+      }
+    }
     if (url.pathname === '/rooms' && request.method === 'POST') {
       const game = url.searchParams.get('game') ?? '';
       const spec = Object.hasOwn(ONLINE_SPECS, game) ? ONLINE_SPECS[game] : undefined;
       if (!spec) return withCors(json({ error: 'unknown game' }, 404));
+      const listed = url.searchParams.get('public') === '1';
       for (let attempt = 0; attempt < 5; attempt++) {
         const code = makeRoomCode(crypto.getRandomValues(new Uint8Array(4)));
         const room = env.ROOMS.get(env.ROOMS.idFromName(code));
-        if (await room.open(game, spec.seats, !!spec.lateJoin, !!spec.bots)) return withCors(json({ code }));
+        if (await room.open(code, game, spec, listed)) return withCors(json({ code }));
       }
       return withCors(json({ error: 'could not create room' }, 503));
     }

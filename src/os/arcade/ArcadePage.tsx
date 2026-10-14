@@ -1,8 +1,10 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useContext, useEffect, useState, type KeyboardEvent } from 'react';
+import { OSContext } from '../types';
 import { BoardList, BoardScopeNote } from './kit/board';
-import { appGames } from './apps';
+import { appGames, roomApp } from './apps';
+import { OpenRooms } from './OpenRooms';
 import { ARCADE_API, boardsOf, formatBoardScore, getBoard, type Board, type BoardEntry, type BoardInfo } from './kit/leaderboard';
-import { categories, metas } from './manifest';
+import { categories, getMeta, metas } from './manifest';
 import type { GameMeta } from './types';
 
 const owners = [...metas, ...appGames];
@@ -131,8 +133,16 @@ function Tile({ g, onOpen }: { g: GameMeta; onOpen: (id: string) => void }) {
   );
 }
 
-export function ArcadePage({ onOpen }: { onOpen: (id: string) => void }) {
+/** `onOpen` opens an arcade game, and with `room` joins that online room in it. */
+export function ArcadePage({ onOpen }: { onOpen: (id: string, room?: string) => void }) {
   const [boards, setBoards] = useState(false);
+  const os = useContext(OSContext);
+  // An open room's game opens right here, unless it lives in a desktop app of its own (Go, Omok, Badminton).
+  const joinRoom = (game: string, code: string) => {
+    if (getMeta(game)) return onOpen(game, code);
+    const { app, args } = roomApp(game, code);
+    os?.open(app, args);
+  };
   const groups = categories.map((c) => ({ ...c, games: metas.filter((m) => m.category === c.id) })).filter((c) => c.games.length);
   return (
     <div className="arcade">
@@ -151,6 +161,7 @@ export function ArcadePage({ onOpen }: { onOpen: (id: string) => void }) {
         <Leaderboards />
       ) : (
       <div className="arcade-sections" onKeyDown={onGridKey}>
+        <OpenRooms onJoin={joinRoom} />
         {groups.map((c) => (
           <section key={c.id} className="arcade-section" aria-label={c.label}>
             <h2>{c.label}</h2>

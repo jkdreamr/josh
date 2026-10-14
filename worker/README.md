@@ -26,6 +26,10 @@ npx wrangler deploy
 
 After changing which games opt in to leaderboards, online rooms or bots (including the app games in `src/os/arcade/apps.ts`), run `npm run arcade:specs` from the repository root and redeploy the Worker. Until it is redeployed, the deployed Worker rejects scores and rooms for games it does not know: scores then stay on the player's device and Create Room shows an error. Rooms only offer bots once the Worker knows the game allows them; until then the lobby simply has no Bots stepper.
 
+## Open Rooms
+
+Public rooms are listed for strangers to join. `POST /rooms?game=<id>&public=1` makes a public room, and the host can switch any room with `{ t: 'listed', on }` on its socket; `welcome` and `players` say whether the room is public (`listed`). Each room keeps its own line in the `Lobby` Durable Object (migration `v4`): it adds the line once its host is in, updates it as people come and go, refreshes it every minute from an alarm, and removes it when the room fills with people, starts in a game nobody can join mid-game, goes private, or closes. Lines nobody refreshed for three minutes are dropped. `GET /rooms` (optionally `?game=<id>`) lists up to 40 open rooms, the ones still gathering first. Until the Worker is redeployed, Open Rooms stay hidden and new rooms are private.
+
 ## Site Stats
 
 The menu bar Stats panel reads `GET /stats`. The site counts with `POST /stats/view` (every page load, refresh, back/forward restore, return to the tab after 30 minutes, in-OS restart or wake) and `POST /stats/play` (opening a game and every round started). Both take a small JSON body sent as `text/plain`, so browsers skip the CORS preflight. Counts live in the `Stats` Durable Object (migration `v2`); days roll over at midnight Pacific. For "online now", every open tab holds a hibernating WebSocket at `GET /stats/live?visitor=<id>` (it sends `ping` every 25 seconds, answered by the auto-response without waking the object), and the count is the number of distinct visitors connected. Until the Worker is redeployed, the panel shows Stats Unavailable.
