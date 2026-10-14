@@ -1,10 +1,11 @@
 // The Worker as scripts/smoke-chat.mjs runs it: a fake Telegram on :8788, Workers AI swapped for ./ai-stub.ts,
 // and auto-replies after 3.6 seconds instead of a day. Durable Objects match ../../wrangler.jsonc.
+// scripts/smoke-lounge.mjs runs against it too, clearing the arcade chat with the LOUNGE_ADMIN_TOKEN below.
 {
   "name": "josh-arcade-smoke",
   "main": "../../src/index.ts",
   "compatibility_date": "2026-10-12",
-  "vars": { "TELEGRAM_BOT_TOKEN": "test-token", "TELEGRAM_API": "http://127.0.0.1:8788", "AUTO_REPLY_HOURS": "0.001" },
+  "vars": { "TELEGRAM_BOT_TOKEN": "test-token", "TELEGRAM_API": "http://127.0.0.1:8788", "AUTO_REPLY_HOURS": "0.001", "LOUNGE_ADMIN_TOKEN": "test-admin-token" },
   "services": [{ "binding": "AI", "service": "ai-stub" }],
   "durable_objects": {
     "bindings": [
@@ -12,6 +13,7 @@
       { "name": "ROOMS", "class_name": "Room" },
       { "name": "STATS", "class_name": "Stats" },
       { "name": "CHAT", "class_name": "Chat" },
+      { "name": "LOUNGE", "class_name": "Lounge" },
       { "name": "LOBBY", "class_name": "Lobby" }
     ]
   },
@@ -19,6 +21,7 @@
     { "tag": "v1", "new_sqlite_classes": ["Boards", "Room"] },
     { "tag": "v2", "new_sqlite_classes": ["Stats"] },
     { "tag": "v3", "new_sqlite_classes": ["Chat"] },
-    { "tag": "v4", "new_sqlite_classes": ["Lobby"] }
+    { "tag": "v4", "new_sqlite_classes": ["Lounge"] },
+    { "tag": "v5", "new_sqlite_classes": ["Lobby"] }
   ]
 }

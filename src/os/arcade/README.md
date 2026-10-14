@@ -192,6 +192,10 @@ Add `bots: true` to `online` and the lobby (and the online Game Over card, betwe
 
 Invite links (`/?game=<id>&room=<code>`) open the game and join the room automatically. Online wins go to the game's Online Wins board when every player reports the same winner. After adding `online` to a game, run `npm run arcade:specs` and redeploy the Worker.
 
+## Chat
+
+The arcade home's header also opens Chat (`Chat.tsx`): one global chat for everyone in the arcade, so people can find someone to play with and share a room code. It connects only while it is open, through `LoungeLink` in `lounge.ts` (reconnects with backoff, pings to stay open), to the Worker's `Lounge` object, and shows the newest 100 messages and how many people are here. Messages are plain text from a name of 1 to 16 characters, the same name the leaderboards and rooms remember. The Worker cleans, checks and rate limits everything (`lounge-core.ts`, shared with it); see `worker/README.md` for the protocol, the limits and how to wipe the chat.
+
 ## Rules
 
 1. **Prefix CSS.** Every selector in your CSS starts with `.g-<id>` (the shell root carries that class). Keyframes are named `g-<id>-*`. Never style shared classes or `body`.

@@ -5,18 +5,21 @@ import { cleanName, nameLength } from '../../src/os/arcade/kit/leaderboard-core.
 import { dayKey, isVisitorId, KEEP_DAYS, MAX_GAMES, parseHit, periodStarts, shiftDay, TOP_GAMES, type StatsHit, type StatsSummary, type TopGame } from '../../src/os/stats-core.ts';
 import { cleanText, isSession, readIndex, webhookSecret, type TgUpdate } from '../../src/os/chat-core.ts';
 import type { OnlineSpec } from '../../src/os/arcade/types.ts';
+import { sameSecret } from '../../src/os/arcade/lounge-core.ts';
 import { Chat, type ChatEnv } from './chat';
 import { Lobby } from './lobby';
+import { Lounge, type LoungeEnv } from './lounge';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
 import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, LISTING_REFRESH_MS, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, roomListing, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
-export { Chat, Lobby };
+export { Chat, Lobby, Lounge };
 
-interface Env extends ChatEnv {
+interface Env extends ChatEnv, LoungeEnv {
   BOARDS: DurableObjectNamespace<Boards>;
   ROOMS: DurableObjectNamespace<Room>;
   STATS: DurableObjectNamespace<Stats>;
   CHAT: DurableObjectNamespace<Chat>;
+  LOUNGE: DurableObjectNamespace<Lounge>;
   LOBBY: DurableObjectNamespace<Lobby>;
 }
 
@@ -605,6 +608,20 @@ export default {
           console.error(err);
         }
         return new Response('ok');
+      }
+    }
+    if (url.pathname === '/lounge' && request.method === 'GET') {
+      return withCors(await env.LOUNGE.get(env.LOUNGE.idFromName('global')).fetch(request));
+    }
+    // For Josh: wipes the arcade chat. Off unless the LOUNGE_ADMIN_TOKEN secret is set.
+    if (url.pathname === '/lounge/clear' && request.method === 'POST') {
+      if (!env.LOUNGE_ADMIN_TOKEN) return json({ error: 'disabled' }, 403);
+      const given = /^Bearer\s+(\S+)$/i.exec(request.headers.get('Authorization') ?? '')?.[1] ?? '';
+      if (!(await sameSecret(given, env.LOUNGE_ADMIN_TOKEN))) return json({ error: 'forbidden' }, 401);
+      try {
+        return json({ ok: true, removed: await env.LOUNGE.get(env.LOUNGE.idFromName('global')).clear() });
+      } catch {
+        return json({ error: 'unavailable' }, 503);
       }
     }
     // Open Rooms: public rooms someone can join now, for one game (?game=) or all of them.
