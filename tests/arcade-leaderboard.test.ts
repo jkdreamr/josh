@@ -158,7 +158,8 @@ test('opted in games have sane specs that match their shells', () => {
     assert.ok(spec.order === 'asc' || spec.order === 'desc', m.id);
     assert.ok(Number.isFinite(spec.max) && spec.max > (spec.min ?? 0), m.id);
     // Cox Box ranks typing speed, which is the same score whoever you race.
-    if (m.id !== 'coxbox') assert.notEqual(m.category, 'multiplayer', `${m.id} scores depend on the opponent`);
+    // Paper.io ranks only solo rounds against computer players at a fixed field and level, so scores compare across players (like Go's and Badminton's vs-computer boards).
+    if (m.id !== 'coxbox' && m.id !== 'paperio') assert.notEqual(m.category, 'multiplayer', `${m.id} scores depend on the opponent`);
     const src = readFileSync(join(games, m.id, 'index.tsx'), 'utf8');
     // Games that rank with gameOver(undefined, { rank }) keep their own bests and never show the score through the shell.
     if (!/\brank: /.test(src)) assert.equal(/<GameShell[^>]*\blowerIsBetter\b/.test(src), spec.order === 'asc', `${m.id} lowerIsBetter must match order`);
