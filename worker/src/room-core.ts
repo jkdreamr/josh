@@ -3,10 +3,14 @@ export const ROOM_CODE_LENGTH = 4;
 export const ROOM_MESSAGE_MAX_BYTES = 8 * 1024;
 
 export type RoomPlayer = { seat: number; name: string };
-/** roster: seats that were in the room when the current round started. */
-export type RoomState = { game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[] };
+/**
+ * roster: seats that were in the room when the current round started.
+ * allowBots: the game can fill empty seats with bots; bots: how many the host asked for (see botSeats).
+ */
+export type RoomState = { game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; allowBots?: boolean; bots?: number };
 export type ClientRoomMessage =
   | { t: 'start' }
+  | { t: 'bots'; n: number }
   | { t: 'msg'; to?: number; d: unknown }
   | { t: 'signal'; to: number; d: unknown }
   | { t: 'result'; round: number; winner: number | null };
@@ -22,7 +26,19 @@ export function lowestFreeSeat(seats: number, occupied: Iterable<number>): numbe
   return null;
 }
 
-export const canStartRoom = (seat: number, playerCount: number) => seat === 0 && playerCount >= 2;
+/**
+ * Seats the bots take: the lowest seats no person holds, as many as the host asked for and as fit. Someone who joins
+ * takes the lowest free seat as usual, so a bot steps aside for them (into another free seat, or out of a full room).
+ */
+export function botSeats(seats: number, people: Iterable<number>, bots: number): number[] {
+  const taken = new Set(people);
+  const free: number[] = [];
+  for (let seat = 0; seat < seats && free.length < bots; seat++) if (!taken.has(seat)) free.push(seat);
+  return free;
+}
+
+/** Only the host starts, and only with someone to play: another person or a bot. */
+export const canStartRoom = (seat: number, playerCount: number, botCount = 0) => seat === 0 && playerCount + botCount >= 2;
 
 /** Rooms lock once they start, unless the game lets players join between rounds. */
 export const canJoinRoom = (room: RoomState) => !room.started || !!room.lateJoin;
@@ -65,6 +81,8 @@ export function parseRoomMessage(raw: string | ArrayBuffer, seats: number): Clie
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const message = value as Record<string, unknown>;
   if (message.t === 'start') return { t: 'start' };
+  // Up to every seat but the host's.
+  if (message.t === 'bots') return Number.isInteger(message.n) && (message.n as number) >= 0 && (message.n as number) < seats ? { t: 'bots', n: message.n as number } : null;
   if (message.t === 'msg') {
     if (!Object.hasOwn(message, 'd')) return null;
     if (message.to === undefined) return { t: 'msg', d: message.d };

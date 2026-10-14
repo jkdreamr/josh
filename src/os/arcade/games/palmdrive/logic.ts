@@ -1446,6 +1446,13 @@ function dodgeHazard(r: Race, k: Kart, lane: number): number | null {
   return best;
 }
 
+/** Who the CPUs keep pace with: the furthest kart a person drives (you, solo; whoever leads them online). */
+export function pacer(r: Race): Kart | null {
+  let best: Kart | null = null;
+  for (const k of r.karts) if (k.kind !== 'cpu' && (!best || k.prog > best.prog)) best = k;
+  return best;
+}
+
 function think(r: Race, k: Kart, dt: number) {
   const t = r.track;
   const ai = (k.ai ??= { ...AUTO });
@@ -1512,9 +1519,9 @@ function think(r: Race, k: Kart, dt: number) {
     if (beside) inp.slam = true;
   }
 
-  // keep the pack close: CPUs ease off well ahead of you and push when far behind
-  const me = r.karts[r.me];
-  if (k.ai && me && me !== k) ai.band = clamp(1 + (me.prog - k.prog) / 600, 0.9, 1.08);
+  // keep the pack close: CPUs ease off well ahead of the leading driver who isn't one (you, solo) and push when far behind
+  const lead = pacer(r);
+  if (k.ai && lead && lead !== k) ai.band = clamp(1 + (lead.prog - k.prog) / 600, 0.9, 1.08);
 
   // items
   ai.itemT -= dt;

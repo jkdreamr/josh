@@ -6,7 +6,7 @@ import { dayKey, isVisitorId, KEEP_DAYS, MAX_GAMES, parseHit, periodStarts, shif
 import { cleanText, isSession, readIndex, webhookSecret, type TgUpdate } from '../../src/os/chat-core.ts';
 import { Chat, type ChatEnv } from './chat';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
-import { agreedWinner, beginRound, benchSeat, canJoinRoom, canStartRoom, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
+import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
 export { Chat };
 
@@ -142,10 +142,10 @@ export class Room extends DurableObject<Env> {
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
-  open(game: string, seats: number, lateJoin = false): Promise<boolean> {
+  open(game: string, seats: number, lateJoin = false, bots = false): Promise<boolean> {
     return this.exclusive(async () => {
       if (await this.ctx.storage.get<RoomState>('room')) return false;
-      await this.ctx.storage.put<RoomState>('room', { game, seats, started: false, lateJoin });
+      await this.ctx.storage.put<RoomState>('room', { game, seats, started: false, lateJoin, ...(bots ? { allowBots: true, bots: 0 } : {}) });
       await this.ctx.storage.put<RoomResults>('results', { reports: {}, recorded: [] });
       return true;
     });
@@ -168,11 +168,19 @@ export class Room extends DurableObject<Env> {
     if (!parsed) return;
 
     if (parsed.t === 'start') {
-      const players = this.players();
-      if (!canStartRoom(attachment.seat, players.length)) return;
-      const round = beginRound(room, players.map(({ seat }) => seat));
+      const lineup = this.lineup(room, this.players());
+      if (!canStartRoom(attachment.seat, lineup.players.length, lineup.bots?.length)) return;
+      const round = beginRound(room, lineup.players.map(({ seat }) => seat));
       await this.ctx.storage.put('room', room);
-      this.broadcast({ t: 'start', players, round });
+      this.broadcast({ t: 'start', ...lineup, round });
+      return;
+    }
+
+    if (parsed.t === 'bots') {
+      if (attachment.seat !== 0 || !room.allowBots) return;
+      room.bots = parsed.n;
+      await this.ctx.storage.put('room', room);
+      this.broadcast({ t: 'players', ...this.lineup(room, this.players()) });
       return;
     }
 
@@ -249,10 +257,15 @@ export class Room extends DurableObject<Env> {
       benchSeat(room, seat);
       await this.ctx.storage.put('room', room);
     }
-    const players = [...existingPlayers, { seat, name }].sort((a, b) => a.seat - b.seat);
-    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, players, started: room.started }));
-    this.broadcast({ t: 'players', players });
+    const lineup = this.lineup(room, [...existingPlayers, { seat, name }].sort((a, b) => a.seat - b.seat));
+    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, ...lineup, started: room.started }));
+    this.broadcast({ t: 'players', ...lineup });
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** Who is in the room, plus the seats bots would take if the host started now (rooms that allow bots). */
+  private lineup(room: RoomState, players: RoomPlayer[]): { players: RoomPlayer[]; bots?: number[] } {
+    return room.allowBots ? { players, bots: botSeats(room.seats, players.map(({ seat }) => seat), room.bots ?? 0) } : { players };
   }
 
   private players(): RoomPlayer[] {
@@ -300,8 +313,10 @@ export class Room extends DurableObject<Env> {
     const players = remaining
       .map((socket) => socket.deserializeAttachment() as Attachment | null)
       .filter((value): value is Attachment => !!value)
-      .map(({ seat, name }) => ({ seat, name }));
-    this.broadcast({ t: 'players', players });
+      .map(({ seat, name }) => ({ seat, name }))
+      .sort((a, b) => a.seat - b.seat);
+    const room = await this.ctx.storage.get<RoomState>('room');
+    this.broadcast({ t: 'players', ...(room ? this.lineup(room, players) : { players }) });
   }
 }
 
@@ -518,7 +533,7 @@ export default {
       for (let attempt = 0; attempt < 5; attempt++) {
         const code = makeRoomCode(crypto.getRandomValues(new Uint8Array(4)));
         const room = env.ROOMS.get(env.ROOMS.idFromName(code));
-        if (await room.open(game, spec.seats, !!spec.lateJoin)) return withCors(json({ code }));
+        if (await room.open(game, spec.seats, !!spec.lateJoin, !!spec.bots)) return withCors(json({ code }));
       }
       return withCors(json({ error: 'could not create room' }, 503));
     }

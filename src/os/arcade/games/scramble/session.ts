@@ -3,7 +3,7 @@
 // in a test; index.tsx connects it to the real room.
 import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, applyState, botNames, createMatch, endMatch, forfeit, owned, type Entrant, type Ev, type Level, type Match } from './logic.ts';
 import { BUS_Y, stormEnd } from './map.ts';
-import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type Bots, type NetEv, type State } from './net.ts';
+import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv, type State } from './net.ts';
 
 /** How often queued events go out. State goes out on its own tick, about 15 times a second. */
 export const FLUSH = 0.05;
@@ -22,14 +22,14 @@ export type Player = { seat: number; name: string };
 const nameOf = (players: Player[], seat: number) => players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`;
 
 /**
- * The host's match: everyone in the room by seat, then computer eggs to make eight when the host wants them.
+ * The host's match: everyone in the room by seat, then as many computer eggs as the room has bots (eight eggs at most).
  * `roster` is each fighter's seat (-1 for a computer egg), which the host sends with every state.
  */
-export function hostMatch(players: Player[], mySeat: number, seed: number, level: Level, bots: Bots, countdown: number): { match: Match; roster: number[] } {
+export function hostMatch(players: Player[], mySeat: number, seed: number, level: Level, bots: number, countdown: number): { match: Match; roster: number[] } {
   const seats = players.map((p) => p.seat).sort((a, b) => a - b).slice(0, MAX_FIGHTERS);
   const names = botNames(seed);
   const entrants: Entrant[] = seats.map((seat, i) => ({ name: nameOf(players, seat), color: FIGHTER_COLORS[i], kind: seat === mySeat ? 'player' : 'remote', seat }));
-  if (bots === 'fill') for (let i = entrants.length, b = 0; i < MAX_FIGHTERS; i++, b++) entrants.push({ name: names[b], color: FIGHTER_COLORS[i], kind: 'bot', seat: -1 });
+  for (let b = 0; b < bots && entrants.length < MAX_FIGHTERS; b++) entrants.push({ name: names[b], color: FIGHTER_COLORS[entrants.length], kind: 'bot', seat: -1 });
   const match = createMatch({ seed, role: 'host', level, entrants, me: entrants.findIndex((e) => e.seat === mySeat), countdown });
   return { match, roster: entrants.map((e) => e.seat) };
 }

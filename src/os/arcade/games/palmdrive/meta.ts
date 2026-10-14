@@ -40,5 +40,5 @@ export const meta: GameMeta = {
       'stadium-200cc': 'Stanford Stadium 200cc',
     },
   },
-  online: { seats: 8, lateJoin: true },
+  online: { seats: 8, lateJoin: true, bots: true },
 };

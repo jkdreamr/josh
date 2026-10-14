@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  BOT_CREWS,
   MAX_RACE_MS,
   PASSAGES,
   RIVAL_LEVELS,
@@ -9,6 +10,7 @@ import {
   accuracy,
   CATCH_UP_MAX,
   applyProgress,
+  botSpeeds,
   catchUp,
   createBot,
   createTyping,
@@ -31,6 +33,7 @@ import {
   typeKey,
   wordAt,
   wpm,
+  YOU_CREW,
 } from '../src/os/arcade/games/coxbox/logic.ts';
 
 test('passages are plain ASCII sentences of race length', () => {
@@ -144,6 +147,22 @@ test('rival fields pack toward the top of their level, slowest first', () => {
   }
   // Each level starts where the one below it ends, so moving up is always a step.
   for (let i = 1; i < RIVAL_LEVELS.length; i++) assert.equal(RIVAL_WPM[RIVAL_LEVELS[i]][0], RIVAL_WPM[RIVAL_LEVELS[i - 1]][1]);
+});
+
+test('online bots row as the rival crews, at speeds spread over their level', () => {
+  assert.equal(BOT_CREWS.length, 7, 'enough crews to fill a room of eight around one person');
+  assert.equal(new Set(BOT_CREWS.map((crew) => crew.name)).size, BOT_CREWS.length);
+  assert.ok(!BOT_CREWS.some((crew) => crew.name === YOU_CREW.name));
+  for (const level of RIVAL_LEVELS) {
+    const [lo, hi] = RIVAL_WPM[level];
+    for (let count = 0; count <= 7; count++) {
+      const speeds = botSpeeds(level, count, rng(count + 1));
+      assert.equal(speeds.length, count);
+      for (const speed of speeds) assert.ok(speed >= lo && speed <= hi, `${level} ${speed}`);
+    }
+  }
+  // The same field as the solo rivals, dealt out in random order.
+  assert.deepEqual([...botSpeeds('club', 4, rng(9))].sort((a, b) => a - b), rivalField('club', rng(9), 4).map((rival) => rival.wpm));
 });
 
 test('rivals push when they are behind and follow a race plan', () => {

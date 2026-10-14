@@ -6,6 +6,7 @@ import {
   COUNTDOWN,
   FIGHTER_COLORS,
   LEVELS,
+  MAX_FIGHTERS,
   aliveCount,
   angleDiff,
   canSee,
@@ -24,7 +25,7 @@ import {
   type Level,
   type Match,
 } from './logic';
-import { configOf, parsePacket, type Bots } from './net';
+import { configOf, parsePacket } from './net';
 import { FLUSH, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
 import { AMMO_MAX, RARITY_COLORS, WEAPONS, WOOD_MAX, lootName, reloadOf, type WeaponId } from './items';
 import { HALF } from './map';
@@ -33,15 +34,10 @@ import { meta } from './meta';
 import './scramble.css';
 
 const LEVEL = defineSetting('scramble:level', LEVELS, 'normal');
-const BOTS = defineSetting('scramble:bots', ['fill', 'none'] as const, 'fill');
 const levelOptions = [
   ['easy', 'Easy'],
   ['normal', 'Normal'],
   ['hard', 'Hard'],
-] as const;
-const botOptions = [
-  ['fill', 'Fill to 8'],
-  ['none', 'None'],
 ] as const;
 /** The host gives everyone a moment to get its first packet before the countdown. */
 const HOST_LEAD = 1.2;
@@ -50,7 +46,7 @@ const randomSeed = () => Math.floor(Math.random() * 0x7fffffff);
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} defaultBots={MAX_FIGHTERS - 1}>
       <Stage />
     </GameShell>
   );
@@ -97,49 +93,46 @@ function Extras() {
   );
 }
 
-/** Settings for online matches: the host picks for everyone and tells the room as they change; guests see the picks. */
+/**
+ * Settings for online matches. The room's bots are its computer eggs (the host adds them in the room, and they fill
+ * every empty place unless the host takes some away); the host picks how sharp they are and tells the room.
+ */
 function OnlineSetup() {
   const online = useOnline();
   const [level, setLevel] = useSetting(LEVEL);
-  const [bots, setBots] = useSetting(BOTS);
-  const [picked, setPicked] = useState<{ bots: Bots; level: Level } | null>(null);
+  const [picked, setPicked] = useState<Level | null>(null);
   const host = online?.isHost ?? true;
+  const bots = online?.bots.length ?? 0;
   useEffect(() => {
     if (!online?.isHost) return;
-    const say = () => online.send(configOf(online.round, bots, level));
+    const say = () => online.send(configOf(online.round, online.bots.length ? 'fill' : 'none', level));
     say();
     const timer = window.setInterval(say, 2000);
     return () => window.clearInterval(timer);
-  }, [online, bots, level]);
+  }, [online, level]);
   useEffect(() => {
     if (!online || online.isHost) return;
     return online.onMessage((from, d) => {
       const p = parsePacket(d);
       if (from !== 0 || !p) return;
-      if (p.k === 'cfg') setPicked({ bots: p.bots, level: p.level });
-      // joining while a match is on: the host's state says how it was set up
-      else if (p.k === 'S') {
-        const bots: Bots = p.roster.includes(-1) ? 'fill' : 'none';
-        setPicked((x) => (x && x.bots === bots && x.level === p.level ? x : { bots, level: p.level }));
-      }
+      // joining while a match is on, the host's state says how it was set up
+      if (p.k === 'cfg' || p.k === 'S') setPicked(p.level);
     });
   }, [online]);
   return (
     <>
-      {host ? (
-        <>
-          <Segmented label="Computer Eggs" value={bots} options={botOptions} onChange={setBots} />
-          {bots === 'fill' && <Segmented label="How Sharp" value={level} options={levelOptions} onChange={setLevel} />}
-        </>
-      ) : (
-        <div className="arcade-field">
-          <span>Computer Eggs</span>
-          <div className="g-scramble-hostpick">
-            <b>{picked ? (picked.bots === 'fill' ? `fill to 8, ${picked.level}` : 'none') : '…'}</b>
-            <small>picked by the host</small>
+      {bots > 0 &&
+        (host ? (
+          <Segmented label="How Sharp" value={level} options={levelOptions} onChange={setLevel} />
+        ) : (
+          <div className="arcade-field">
+            <span>How Sharp</span>
+            <div className="g-scramble-hostpick">
+              <b>{picked ?? '…'}</b>
+              <small>picked by the host</small>
+            </div>
           </div>
-        </div>
-      )}
+        ))}
       <Extras />
     </>
   );
@@ -213,7 +206,6 @@ function Play({ mode }: { mode: Mode }) {
   onlineRef.current = online;
   const live = mode === 'online' && !!online;
   const [level] = useSetting(LEVEL);
-  const [bots] = useSetting(BOTS);
   const bests = useBests();
   const { ref, size } = useCanvas<HTMLDivElement>();
   const sizeRef = useRef(size);
@@ -226,7 +218,7 @@ function Play({ mode }: { mode: Mode }) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
     else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0]);
     else if (online!.isHost) {
-      const h = hostMatch(online!.players, online!.seat, randomSeed(), level, bots, COUNTDOWN + HOST_LEAD);
+      const h = hostMatch(online!.players, online!.seat, randomSeed(), level, online!.bots.length, COUNTDOWN + HOST_LEAD);
       match.current = h.match;
       net.current.roster = h.roster;
     } else match.current = waitingMatch(level);
