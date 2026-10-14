@@ -19,7 +19,7 @@ export { NAME_MAX };
 /** The channels, in the order they're listed. Each keeps its own newest HISTORY messages. */
 export const CHANNELS = [
   { id: 'general', topic: 'Hang out and say hi.' },
-  { id: 'find-a-game', topic: 'Looking for players? Share your room here.' },
+  { id: 'find-a-game', topic: 'Rooms you can join are up top. Share yours, or ask around.' },
   { id: 'ideas', topic: 'Games you want next, and anything that broke.' },
 ] as const;
 export type ChannelId = (typeof CHANNELS)[number]['id'];

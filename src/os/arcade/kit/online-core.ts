@@ -25,9 +25,16 @@ export function parseOpenRooms(body: unknown): OpenRoom[] {
   return rooms;
 }
 
+const botCount = (room: OpenRoom) => (room.bots ? (room.bots === 1 ? '1 Bot' : `${room.bots} Bots`) : '');
+
 /** How full an open room is, for its line in Open Rooms: "2/8 · 3 Bots · Playing". */
 export function openRoomLine(room: OpenRoom): string {
-  return [`${room.players}/${room.seats}`, room.bots ? (room.bots === 1 ? '1 Bot' : `${room.bots} Bots`) : '', room.started ? 'Playing' : ''].filter(Boolean).join(' · ');
+  return [`${room.players}/${room.seats}`, botCount(room), room.started ? 'Playing' : ''].filter(Boolean).join(' · ');
+}
+
+/** An open room's line in the Lounge's list, saying what joining it means: "1/4 · 2 Bots · Waiting for players". */
+export function openRoomDetail(room: OpenRoom): string {
+  return [`${room.players}/${room.seats}`, botCount(room), room.started ? 'Playing, join for the next round' : 'Waiting for players'].filter(Boolean).join(' · ');
 }
 
 /** Bots in seat order, named from the game's list or Bot 1, Bot 2 and so on, so every player sees the same names. */

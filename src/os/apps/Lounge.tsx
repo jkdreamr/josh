@@ -16,7 +16,7 @@ import {
 import { getAppGame, roomApp } from '../arcade/apps';
 import { savedName, saveName } from '../arcade/kit/leaderboard';
 import { useOpenRooms } from '../arcade/kit/online';
-import { openRoomLine, type OpenRoom } from '../arcade/kit/online-core';
+import { openRoomDetail, openRoomLine, type OpenRoom } from '../arcade/kit/online-core';
 import {
   CHANNELS,
   cleanLine,
@@ -71,6 +71,8 @@ const NOTICES: Record<LoungeReject['error'] | 'waiting', string> = {
 };
 const READ_KEY = 'lounge:read';
 const CHANNEL_KEY = 'lounge:channel';
+/** Whether #find-a-game's Open Rooms list is folded away. */
+const ROOMS_KEY = 'lounge:rooms';
 const NO_TYPING: LoungeState['typing'] = {};
 
 const nameColor = (name: string) => COLORS[lineHash(name.toLowerCase()) % COLORS.length];
@@ -112,6 +114,23 @@ function loadChannel(): ChannelId {
 function saveChannel(ch: ChannelId) {
   try {
     localStorage.setItem(CHANNEL_KEY, ch);
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadRoomsOpen(): boolean {
+  try {
+    return localStorage.getItem(ROOMS_KEY) !== 'closed';
+  } catch {
+    return true;
+  }
+}
+
+function saveRoomsOpen(open: boolean) {
+  try {
+    if (open) localStorage.removeItem(ROOMS_KEY);
+    else localStorage.setItem(ROOMS_KEY, 'closed');
   } catch {
     /* ignore */
   }
@@ -216,6 +235,58 @@ const PEOPLE = 'M16 19v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 17.5V19M10 
 const PENCIL = 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4';
 const SEND = 'M5 12h13M12 5l7 7-7 7';
 const CLOSE = 'M6 6l12 12M18 6L6 18';
+const CHEVRON = 'M6 9l6 6 6-6';
+
+/** #find-a-game's live list: every public room where someone is waiting, with Join (your own room says so instead). */
+function OpenRoomsPanel({ rooms, mine, onJoin }: { rooms: OpenRoom[] | null; mine?: string; onJoin: (invite: LoungeInvite) => void }) {
+  const [open, setOpen] = useState(loadRoomsOpen);
+  const count = rooms?.length ?? 0;
+  const toggle = () => {
+    setOpen(!open);
+    saveRoomsOpen(!open);
+  };
+  return (
+    <section className={`lounge-rooms ${open ? 'is-open' : ''}`} aria-label="Open Rooms">
+      <button type="button" className="lounge-rooms-head" aria-expanded={open} onClick={toggle}>
+        <i className={count ? 'is-live' : undefined} aria-hidden="true" />
+        <span>Open Rooms</span>
+        {rooms && <b>{count}</b>}
+        <Glyph d={CHEVRON} />
+      </button>
+      {open &&
+        (rooms === null ? (
+          <p className="lounge-rooms-note">Looking for rooms…</p>
+        ) : count === 0 ? (
+          <p className="lounge-rooms-note">Nobody's waiting right now. Make a room public from Play Online in any game and it shows up here.</p>
+        ) : (
+          <ul className="lounge-room-list">
+            {rooms.map((room) => {
+              const look = gameLook(room.game);
+              const title = look?.title ?? room.game;
+              return (
+                <li key={room.code} className="lounge-room" style={{ ['--accent' as string]: look?.accent ?? '#636366' }}>
+                  <span className="lounge-invite-icon">{look && <Glyph d={look.glyph} />}</span>
+                  <span className="lounge-room-text">
+                    <b>
+                      {title} <small>{room.host}'s room</small>
+                    </b>
+                    <em>{openRoomDetail(room)}</em>
+                  </span>
+                  {room.code === mine ? (
+                    <span className="lounge-room-yours">Your Room</span>
+                  ) : (
+                    <button type="button" className="lounge-join is-small" aria-label={`Join ${room.host}'s ${title} room`} onClick={() => onJoin({ game: room.game, code: room.code })}>
+                      Join
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        ))}
+    </section>
+  );
+}
 
 /** A room shared in a message: the game, whether it's still open (when Open Rooms knows), and Join. */
 function InviteCard({ invite, at, now, rooms, onJoin }: { invite: LoungeInvite; at: number; now: number; rooms: OpenRoom[] | null; onJoin: (invite: LoungeInvite) => void }) {
@@ -458,9 +529,10 @@ export default function Lounge({ args }: AppProps) {
   const looking = win.active && !win.min && pageVisible && atBottom && status === 'live';
   const total = shownChannels.reduce((sum, c) => sum + (looking && c.id === view ? 0 : unread[c.id]), 0);
 
-  // Shared rooms show whether they're still open while any in this channel are recent enough to join.
+  // Open rooms: #find-a-game lists them, and shared rooms say whether they're still open. Asked only while on screen.
+  const roomsShown = view === INVITE_CHANNEL;
   const recentInvites = channelMessages.some((m) => m.invite && Date.now() - m.t < INVITE_FRESH_MS);
-  const rooms = useOpenRooms(undefined, 10_000, recentInvites);
+  const rooms = useOpenRooms(undefined, win.active ? 6000 : 15_000, !win.min && pageVisible && status !== 'unavailable' && (roomsShown || recentInvites));
   const onJoin = useCallback((room: LoungeInvite) => joinRoom(os, room), [os]);
 
   useKeyboardLift(rootRef, typingHere && coarse);
@@ -718,6 +790,7 @@ export default function Lounge({ args }: AppProps) {
         </header>
 
         <div className="lounge-body">
+          {roomsShown && status !== 'unavailable' && <OpenRoomsPanel rooms={rooms} mine={playing?.room} onJoin={onJoin} />}
           {status === 'reconnecting' && <p className="lounge-status">Reconnecting…</p>}
           {status === 'unavailable' ? (
             <div className="lounge-empty">

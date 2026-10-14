@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
-import { advanceOnlineRound, botPlayers, nextOnlineRound, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, botPlayers, nextOnlineRound, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
 import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, lowestFreeSeat, markRoundRecorded, parseRoomMessage, roomListing, roundSeats, sortListings, type RoomState } from '../worker/src/room-core.ts';
 
@@ -277,6 +277,8 @@ test('open rooms from the Worker are checked before the arcade shows them', () =
   assert.deepEqual(parseOpenRooms({ rooms: 'none' }), []);
   assert.equal(openRoomLine(good), '2/4 · 1 Bot');
   assert.equal(openRoomLine({ ...good, bots: 0, started: true }), '2/4 · Playing');
+  assert.equal(openRoomDetail(good), '2/4 · 1 Bot · Waiting for players');
+  assert.equal(openRoomDetail({ ...good, bots: 3, started: true }), '2/4 · 3 Bots · Playing, join for the next round');
 });
 
 test('invite links and Open Rooms open each game where it lives', () => {
