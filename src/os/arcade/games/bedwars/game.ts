@@ -175,7 +175,8 @@ export type Ev =
   | { t: 'tier'; kind: 'diamond' | 'emerald'; tier: number }
   | { t: 'phase'; kind: PhaseKind }
   | { t: 'msg'; k: MsgKind; text: string; team?: number; to?: number }
-  | { t: 'win'; team: number }
+  | { t: 'win'; team: number; seat: number }
+  | { t: 'skin'; p: number; skin: number }
   | { t: 'fx'; p: number; fx: Effects; absorb: number }
   | { t: 'tp'; p: number; x: number; y: number; z: number; ep: number }
   | { t: 'use'; p: number; item: Item }
@@ -201,6 +202,8 @@ export type Game = {
   events: Ev[];
   nextId: number;
   winner: number;
+  /** Online: the seat everyone reports as the winner (the lowest human seat still in the room on the winning team). */
+  winSeat: number;
   over: boolean;
   seed: number;
   /** True on the machine that runs the rules (solo or the online host). */
@@ -247,6 +250,7 @@ export function createGame(opts: { mode: Mode; pace: Pace; level: Level; entrant
     events: [],
     nextId: 1,
     winner: -1,
+    winSeat: -1,
     over: false,
     seed: (opts.seed ?? 1234567) >>> 0,
     authority: opts.authority ?? true,
@@ -577,7 +581,10 @@ function checkTeams(g: Game) {
   if (!g.over && left.length <= 1 && g.teams.some((t) => t.used)) {
     g.over = true;
     g.winner = left.length === 1 ? left[0].id : -1;
-    emit(g, { t: 'win', team: g.winner });
+    // the host names the seat, so everyone reports the same one even after a teammate left and a bot took over
+    const seats = g.players.filter((p) => p.team === g.winner && p.seat >= 0 && p.ctrl !== 'bot' && !p.gone).map((p) => p.seat);
+    g.winSeat = seats.length ? Math.min(...seats) : -1;
+    emit(g, { t: 'win', team: g.winner, seat: g.winSeat });
   }
 }
 
@@ -987,7 +994,8 @@ export function tickGame(g: Game) {
   for (let i = g.drops.length - 1; i >= 0; i--) {
     const d = g.drops[i];
     stepDrop(w, d);
-    if (d.y < VOID_Y - 10 || (d.gen < 0 && d.age > 5 * 60 * TPS)) {
+    // dropped items go after five minutes; forge and generator piles stay (feeding them keeps them fresh)
+    if (d.y < VOID_Y - 10 || (d.gen === -1 && d.age > 5 * 60 * TPS)) {
       g.drops.splice(i, 1);
       emit(g, { t: 'pick', id: d.id, p: -1, item: d.item, n: 0 });
       continue;
@@ -1191,7 +1199,8 @@ function tickClock(g: Game) {
     emit(g, { t: 'msg', k: 'phase', text: 'GAME OVER > time is up. nobody wins this one.' });
     g.over = true;
     g.winner = -1;
-    emit(g, { t: 'win', team: -1 });
+    g.winSeat = -1;
+    emit(g, { t: 'win', team: -1, seat: -1 });
   }
 }
 
@@ -1240,8 +1249,11 @@ export function applyAction(g: Game, p: Player, act: Action, remote = false): bo
       if (!ok && remote) emit(g, { t: 'block', x: act.x, y: act.y, z: act.z, id: g.world.get(act.x, act.y, act.z), by: -1, placed: g.world.isPlaced(act.x, act.y, act.z), was: AIR });
       return ok;
     }
-    case 'hit':
-      return attack(g, p, act.target, act.crit, slack);
+    case 'hit': {
+      // the host swings at guests drawn a tenth of a second in the past: the same kind of allowance guests get
+      const lag = remote ? slack : g.players[act.target]?.ctrl === 'remote' ? 0.75 : 0;
+      return attack(g, p, act.target, act.crit, lag);
+    }
     case 'shoot':
       return shoot(g, p, act.charge, act.yaw, act.pitch);
     case 'use':

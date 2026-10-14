@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { AIR, BED_FOOT, BED_HEAD, CS, CX, CY, CZ, END_STONE, GRASS, OBSIDIAN, PLANKS, WOOL, breakTicks, isPlayerBlock } from '../src/os/arcade/games/bedwars/blocks.ts';
+import { AIR, BED_FOOT, BED_HEAD, CS, CX, CY, CZ, END_STONE, GRASS, OBSIDIAN, PLANKS, TALLGRASS, WOOL, breakTicks, isPlayerBlock } from '../src/os/arcade/games/bedwars/blocks.ts';
 import { World, canBreak, raycast } from '../src/os/arcade/games/bedwars/world.ts';
 import { CENTER, TOP, generate, islandLayout } from '../src/os/arcade/games/bedwars/map.ts';
 import { HEIGHT, WIDTH, newBody, stepBody, type MoveInput } from '../src/os/arcade/games/bedwars/physics.ts';
@@ -14,7 +14,10 @@ import {
   breakBlock,
   createGame,
   damage,
+  destroyBed,
+  placeAllowed,
   placeBlock,
+  spawnDrop,
   tickGame,
   timeline,
   type Entrant,
@@ -37,9 +40,9 @@ import {
   syncPackets,
   syncState,
 } from '../src/os/arcade/games/bedwars/net.ts';
-import { buildReplica } from '../src/os/arcade/games/bedwars/replica.ts';
+import { applyEvent, buildReplica } from '../src/os/arcade/games/bedwars/replica.ts';
 import { Session, hostEntrants, type OnlineApi } from '../src/os/arcade/games/bedwars/session.ts';
-import { Track } from '../src/os/arcade/games/bedwars/interp.ts';
+import { RemoteClock, Track, wrapAngle } from '../src/os/arcade/games/bedwars/interp.ts';
 
 const still: MoveInput = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false };
 const bots = (n: number): Entrant[] => Array.from({ length: n }, (_, i) => ({ name: `bot${i}`, seat: -1, ctrl: 'bot' as const, skin: 0 }));
@@ -474,7 +477,7 @@ test('traps work on bots: blindness hides anyone past a few blocks, miner fatigu
 test('packets round trip through the parser and reject junk', () => {
   const g = soloWithMe();
   const p = parsePacket(JSON.parse(JSON.stringify(movePacket(3, 2, [1, 2, 3, 0, 0, 0, 0.5, -0.2, 9], 4, 10, 0))));
-  assert.deepEqual(p, { k: 'move', round: 3, ep: 2, b: [1, 2, 3, 0, 0, 0, 0.5, -0.2, 9], sel: 4, sw: 10, dr: 0 });
+  assert.deepEqual(p, { k: 'move', round: 3, ep: 2, b: [1, 2, 3, 0, 0, 0, 0.5, -0.2, 9], sel: 4, sw: 10, dr: 0, tk: -1 });
   const act = parsePacket(JSON.parse(JSON.stringify(actPacket(3, 9, { a: 'place', x: 1, y: 2, z: 3, slot: 1, face: 2, seq: 9 }))));
   assert.equal(act?.k, 'act');
   assert.equal(parseAction({ a: 'place', x: 1.5, y: 2, z: 3, slot: 1, face: 2, seq: 1 }), null, 'fractional coordinates');
@@ -586,7 +589,7 @@ function fakeRoom(seats: number[], lossy: boolean) {
 test('host and guests stay in step through lost and reordered fast packets', () => {
   const room = fakeRoom([0, 1, 2], true);
   const ready = new Map<number, { game: Game; me: number }>();
-  const fake = (time: () => number) => ({ get time() { return time(); }, onEvent() {}, hooks: {} }) as never;
+  const fake = (time: () => number) => ({ get time() { return time(); }, onEvent() {}, pushRemote() {}, hooks: {} }) as never;
   let clock = 0;
   const sessions = [0, 1, 2].map((seat) => {
     const s = new Session(room.api(seat), {
@@ -642,6 +645,184 @@ test('host and guests stay in step through lost and reordered fast packets', () 
   void hostEntrants;
   void CHUNK;
   void HEIGHT;
+});
+
+test('one hostile packet cannot hang anyone: angles fold in one step, wild bodies are refused', () => {
+  const huge = parsePacket({ t: 'bw', r: 1, k: 'M', ep: 0, b: [10, 40, 10, 0, 0, 0, 1e17, 0, 8], sel: 0, sw: 0, dr: 0 });
+  assert.ok(huge?.k === 'move' && Math.abs(huge.b[6]) <= Math.PI, 'yaw folded');
+  assert.equal(parsePacket({ t: 'bw', r: 1, k: 'M', ep: 0, b: [10, 40, 10, 1e17, 0, 0, 0, 0, 8], sel: 0, sw: 0, dr: 0 }), null, 'a body moving 1e17 blocks a tick');
+  assert.equal(parsePacket({ t: 'bw', r: 1, k: 'M', ep: 0, b: [10, 40, 10, 0, 0, 0, 0, 9, 8], sel: 0, sw: 0, dr: 0 }), null, 'pitch past straight down');
+  const pos = parsePacket({ t: 'bw', r: 1, k: 'P', tk: 5, p: [[0, 10, 40, 10, -1e17, 50, 0, 3, 99, 99, 1e9, 0, 1e9]] });
+  assert.ok(pos?.k === 'pos');
+  const [, , , , yaw, pitch, , , tier, armor, hp, , drawing] = pos.p[0];
+  assert.ok(Math.abs(yaw) <= Math.PI && pitch === 1.6 && tier === 4 && armor === 3 && hp === 40 && drawing === 99);
+  assert.ok(Math.abs(wrapAngle(1e17)) <= Math.PI);
+  assert.ok(Math.abs(wrapAngle(7) - (7 - 2 * Math.PI)) < 1e-12);
+  // a track holding a huge angle still samples (it used to spin forever)
+  const t = new Track();
+  t.push(0, 0, 0, 0, 0, 0);
+  t.push(0.1, 0, 0, 0, 1e17, 0);
+  const out = { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+  assert.ok(t.sample(0.05, out));
+});
+
+test('puppets play back on the sender\'s clock, so uneven packets still move evenly', () => {
+  // someone walking at 4.3 blocks a second, reported 20 times a second, landing up to 15 ms late, drawn at 60 fps
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const arrivals: { at: number; sent: number }[] = [];
+  for (let k = 0; k < 400; k++) arrivals.push({ sent: k / 20, at: k / 20 + 0.042 + rnd() * 0.015 });
+  arrivals.sort((a, b) => a.at - b.at);
+  const run = (stamped: boolean) => {
+    const tr = new Track();
+    const clock = new RemoteClock();
+    const out = { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+    let i = 0;
+    let body = 0;
+    let tickAt = 0;
+    let last = -1;
+    let bad = 0;
+    let n = 0;
+    for (let f = 0; f < 19 * 60; f++) {
+      const now = f / 60;
+      while (i < arrivals.length && arrivals[i].at <= now) {
+        body = arrivals[i].sent * 4.3;
+        if (stamped) tr.push(clock.local(arrivals[i].sent, arrivals[i].at), body, 0, 0, 0, 0);
+        i++;
+      }
+      // the old way: whatever the body holds, sampled every local tick
+      for (; !stamped && tickAt <= now; tickAt += 0.05) tr.push(tickAt, body, 0, 0, 0, 0);
+      tr.sample(now - 0.1, out);
+      if (f > 120) {
+        const v = ((out.x - last) * 60) / 4.3;
+        n++;
+        if (v < 0.5 || v > 1.5) bad++;
+      }
+      last = out.x;
+    }
+    return bad / n;
+  };
+  assert.ok(run(false) > 0.1, 'local stamps stop and lurch');
+  assert.equal(run(true), 0, 'sender stamps never do');
+});
+
+test('the host names the winning seat, even after a teammate left and a bot took over', () => {
+  const g = createGame({ mode: 'doubles', pace: 'quick', level: 'normal', entrants: hostEntrants('doubles', [0, 1, 2, 3].map((seat) => ({ seat, name: `p${seat}`, skin: 0 })), 0, false, []), seed: 3 });
+  assert.deepEqual(g.players.map((p) => p.team), [0, 0, 1, 1]);
+  // seat 2 leaves; a bot plays on for them
+  g.players[2].ctrl = 'bot';
+  g.players[2].gone = true;
+  destroyBed(g, 0, 3);
+  for (const p of g.players.filter((x) => x.team === 0)) {
+    damage(g, p, 1000, -1, 'void', null);
+  }
+  assert.ok(g.over);
+  assert.equal(g.winner, 1);
+  assert.equal(g.winSeat, 3, 'the human still there');
+  const win = g.events.find((e) => e.t === 'win');
+  assert.deepEqual(win, { t: 'win', team: 1, seat: 3 });
+  // guests take the host's word for it
+  const back = parseEvent(JSON.parse(JSON.stringify(win)));
+  assert.deepEqual(back, win);
+  assert.deepEqual(parseEvent({ t: 'win', team: 2 }), { t: 'win', team: 2, seat: -1 }, 'an older host');
+  const guest = buildReplica(syncState(g, 0), 1).game;
+  guest.over = false;
+  applyEvent(guest, back!, 1);
+  assert.equal(guest.winSeat, 3);
+});
+
+test('the host keeps up with its guests: positions every tick, one sync a second per seat, skins for everyone', () => {
+  const sent: { d: Record<string, unknown>; to?: number }[] = [];
+  const listeners: ((from: number, d: unknown) => void)[] = [];
+  const api: OnlineApi = {
+    seat: 0,
+    isHost: true,
+    round: 1,
+    players: [
+      { seat: 0, name: 'host' },
+      { seat: 1, name: 'guest' },
+    ],
+    transport: 'relay',
+    send: (d, o = {}) => void sent.push({ d: d as Record<string, unknown>, to: o.to }),
+    onMessage: (fn) => {
+      listeners.push(fn);
+      return () => {};
+    },
+  };
+  let game: Game | null = null;
+  const s = new Session(api, { mode: 'solo', level: 'normal', pace: 'quick', bots: true, skin: 0, botNames: ['a'], onReady: (g) => (game = g) });
+  s.client = { time: 0, onEvent() {}, pushRemote() {}, hooks: {} } as never;
+  sent.length = 0;
+  for (let i = 0; i < 4; i++) s.tick();
+  assert.equal(sent.filter((x) => x.d.k === 'P').length, 4, 'relayed or not, 20 a second');
+  // a resync storm gets one answer
+  sent.length = 0;
+  for (let i = 0; i < 50; i++) for (const fn of listeners) fn(1, { t: 'bw', r: 1, k: 'R' });
+  assert.equal(sent.filter((x) => x.d.k === 'S' && x.d.i === 0).length, 1);
+  // the locker skin a guest says hello with reaches everyone
+  for (const fn of listeners) fn(1, { t: 'bw', r: 1, k: 'H', skin: 4 });
+  const g = game as Game | null;
+  assert.ok(g);
+  const guest = g.players.find((p) => p.seat === 1)!;
+  assert.equal(guest.skin, 4);
+  assert.ok(g.events.some((e) => e.t === 'skin' && e.p === guest.id && e.skin === 4));
+  s.dispose();
+});
+
+test('a guest remembers placing the last block of a stack, so a stale inventory cannot hand it back', () => {
+  const sent: unknown[] = [];
+  const api: OnlineApi = { seat: 1, isHost: false, round: 1, players: [], transport: 'direct', send: (d) => void sent.push(d), onMessage: () => () => {} };
+  const s = new Session(api, { mode: 'solo', level: 'normal', pace: 'quick', bots: true, skin: 0, botNames: [], onReady: () => {} });
+  const g = soloWithMe();
+  s.game = g;
+  s.me = 0;
+  const me = g.players[0];
+  // the client already took the last wool off the slot
+  me.inv.slots[2] = null;
+  s.send({ a: 'place', x: 1, y: 2, z: 3, slot: 2, face: 2, seq: 7 }, 7);
+  // an inventory the host sent before it saw the placement still has that wool
+  const inv = freshInventory();
+  inv.slots[2] = { item: 'wool', n: 1 };
+  (s as unknown as { receive: (from: number, d: unknown) => void }).receive(0, { t: 'bw', r: 1, k: 'I', v: 5, a: 6, sl: inv.slots.map((x) => (x ? [0, x.n] : 0)), w: [0, 0, 0, 0], ar: 0, pk: 0, ax: 0, sh: 0, sel: 2 });
+  assert.equal(me.inv.slots[2], null, 'still gone');
+  s.dispose();
+});
+
+test('a guest\'s block follows the host\'s rules: tufts and poppies give way, protected spots and people do not', () => {
+  const g = soloWithMe();
+  const site = g.info.teams[0];
+  const [x, y, z] = [Math.floor(site.spawn[0]) + 2, site.spawn[1], Math.floor(site.spawn[2]) + 2];
+  g.world.set(x, y, z, TALLGRASS);
+  if (g.world.get(x, y - 1, z) === AIR) g.world.set(x, y - 1, z, GRASS);
+  assert.ok(placeAllowed(g, x, y, z, WOOL, 0), 'a tuft gives way');
+  const box = g.info.noBuild[0];
+  assert.equal(placeAllowed(g, box.x0, box.y0, box.z0, WOOL, 0), false, 'protected');
+  const me = g.players[0];
+  assert.equal(placeAllowed(g, Math.floor(me.body.x), Math.floor(me.body.y), Math.floor(me.body.z), WOOL, 1), false, 'someone stands there');
+});
+
+test('forge piles stay put, thrown items go after five minutes, and the host gets a little reach against lag', () => {
+  const g = soloWithMe();
+  const pile = spawnDrop(g, 'iron', 48, 5, 200, 5, 0, 0, 0, -10);
+  const thrown = spawnDrop(g, 'wool', 3, 7, 200, 7, 0, 0, 0, -1);
+  pile.age = thrown.age = 5 * 60 * TPS + 1;
+  pile.rest = thrown.rest = true;
+  pile.vy = thrown.vy = 0;
+  g.players.forEach((p) => (p.body.y = 300));
+  tickGame(g);
+  assert.ok(g.drops.includes(pile), 'the forge pile stays');
+  assert.ok(!g.drops.includes(thrown), 'the dropped wool is gone');
+  // the host swings at a guest drawn a moment in the past
+  const h = createGame({ mode: 'solo', pace: 'quick', level: 'normal', entrants: [{ name: 'host', seat: 0, ctrl: 'local', skin: 0, team: 0 }, { name: 'guest', seat: 1, ctrl: 'remote', skin: 0, team: 1 }], seed: 4 });
+  const [me, them] = h.players;
+  them.body.x = me.body.x + 3.9;
+  them.body.z = me.body.z;
+  them.body.y = me.body.y;
+  assert.ok(applyAction(h, me, { a: 'hit', target: them.id, crit: false }), 'a hit at the edge counts against a lagged guest');
+  them.ctrl = 'bot';
+  them.hurtTicks = 0;
+  them.body.x = me.body.x + 3.9;
+  assert.equal(applyAction(h, me, { a: 'hit', target: them.id, crit: false }), false, 'but not against a bot stepped right here');
 });
 
 test('host entrants: humans by seat on their own islands in solo, paired in doubles, bots on the rest', () => {

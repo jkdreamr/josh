@@ -612,15 +612,28 @@ export function createView(THREE: Three, host: HTMLElement, game: Game): View | 
     const seen = seenSet;
     seen.clear();
     for (const p of f.puppets) {
-      if (!p.visible) continue;
       seen.add(p.id);
       let av = avatars.get(p.id);
+      if (!p.visible) {
+        // dead for a moment: keep the model for the respawn (painting a new one costs a few frames)
+        if (av) {
+          av.root.visible = false;
+          av.tag.visible = false;
+        }
+        continue;
+      }
+      if (av && av.skin !== p.skin) {
+        av.dispose();
+        avatars.delete(p.id);
+        av = undefined;
+      }
       if (!av) {
         av = new Avatar(THREE, p.skin, p.team, p.id * 31 + 7);
         avatars.set(p.id, av);
         avatarGroup.add(av.root);
         scene.add(av.tag);
       }
+      av.root.visible = true;
       av.setArmor(p.armor, p.team);
       const hk = heldKey(p.held);
       if (hk !== av.heldKey) av.setHeld(hk, makeHeld(p.held));

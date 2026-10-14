@@ -484,17 +484,18 @@ export function Sheet({ root, title, onClose, children }: { root: HTMLElement | 
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     close.current?.focus({ preventScroll: true });
-    // keys stay in the sheet: Escape closes it, and nothing reaches the game behind
+    if (!root) return;
+    // keys stay in the sheet: Escape closes it, and nothing reaches the game behind (caught on the game's own root,
+    // on the way down, before the shell sees it)
     const onKey = (e: KeyboardEvent) => {
-      if (!root?.contains(e.target as Node)) return;
       e.stopPropagation();
       if (e.key === 'Escape') {
         e.preventDefault();
         done.current();
       }
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    root.addEventListener('keydown', onKey, true);
+    return () => root.removeEventListener('keydown', onKey, true);
   }, [root]);
   if (!root) return null;
   return createPortal(
@@ -512,7 +513,7 @@ export function Sheet({ root, title, onClose, children }: { root: HTMLElement | 
       <div className="g-bedwars-sheet-card">
         <header>
           <h2>{title}</h2>
-          <button type="button" ref={close} className="arcade-btn" onClick={onClose}>
+          <button type="button" ref={close} className="arcade-btn g-bedwars-done" onClick={onClose}>
             Done
           </button>
         </header>
@@ -545,13 +546,14 @@ export function RecordStrip({ r }: { r: StatRecord }) {
   );
 }
 
-export function HowToPlay({ touch }: { touch: boolean }) {
+export function HowToPlay({ touch, mouse }: { touch: boolean; mouse: boolean }) {
+  const both = touch && mouse;
   return (
     <>
       <p className="g-bedwars-lede">Protect your bed, break everyone else's. While your bed stands you come back five seconds after you die. Once it's gone, your next death is final. Last team standing wins.</p>
-      <section>
-        <h3>Controls</h3>
-        {touch ? (
+      {touch && (
+        <section>
+          <h3>{both ? 'Touch' : 'Controls'}</h3>
           <dl className="g-bedwars-keys">
             <dt>left side</dt>
             <dd>drag to walk (you sprint on your own)</dd>
@@ -570,12 +572,16 @@ export function HowToPlay({ touch }: { touch: boolean }) {
             <dt>shop, team</dt>
             <dd>show up when you're next to a keeper</dd>
           </dl>
-        ) : (
+        </section>
+      )}
+      {(mouse || !touch) && (
+        <section>
+          <h3>{both ? 'Keyboard and mouse' : 'Controls'}</h3>
           <dl className="g-bedwars-keys">
             <dt>click</dt>
             <dd>captures the mouse (Esc lets it go)</dd>
             <dt>WASD, Space</dt>
-            <dd>walk and jump. you sprint on your own (switch to Ctrl or double tap W in the settings)</dd>
+            <dd>walk and jump. you sprint on your own (or double tap W, if you switch Sprint in the settings)</dd>
             <dt>Shift</dt>
             <dd>crouch. you can't walk off an edge while crouched</dd>
             <dt>left click</dt>
@@ -591,8 +597,8 @@ export function HowToPlay({ touch }: { touch: boolean }) {
             <dt>Tab</dt>
             <dd>everyone's kills and beds</dd>
           </dl>
-        )}
-      </section>
+        </section>
+      )}
       <section>
         <h3>Resources</h3>
         <ul>

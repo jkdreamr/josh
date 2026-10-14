@@ -82,3 +82,21 @@ export class Track {
     return true;
   }
 }
+
+/**
+ * Moves a sender's clock onto ours, so snapshots play back spaced the way they were sent rather than the way they
+ * happened to land. The smallest gap seen (our time minus theirs) is the quickest a report makes it here; it creeps up
+ * slowly in case the route got longer, and starts over when the sender stalled (its clock stood still while ours ran).
+ */
+export class RemoteClock {
+  offset = 0;
+  private set = false;
+  /** Our time for a report stamped `remote` (seconds on the sender's clock) that arrived at our time `now`. */
+  local(remote: number, now: number): number {
+    const d = now - remote;
+    if (!this.set || d < this.offset || d - this.offset > 1) this.offset = d;
+    else this.offset += (d - this.offset) * 0.01;
+    this.set = true;
+    return remote + this.offset;
+  }
+}

@@ -397,8 +397,11 @@ export class Avatar {
   private armorKey = '';
 
   private readonly THREE: Three;
+  /** The skin it was painted with (a change means a new model). */
+  readonly skin: number;
   constructor(THREE: Three, skin: number, team: number, seed: number) {
     this.THREE = THREE;
+    this.skin = skin;
     this.root = new THREE.Group();
     this.model = new THREE.Group();
     this.root.add(this.model);

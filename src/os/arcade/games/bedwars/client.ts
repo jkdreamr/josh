@@ -14,6 +14,7 @@ import {
   lookDir,
   nearNpc,
   nextPhase,
+  placeAllowed,
   stepDrop,
   stepProj,
   tickGame,
@@ -26,7 +27,7 @@ import {
 import { ITEMS, ITEM_DEFS, blockFor, isBlockItem, isBow, moveSlot, quickMoveTarget, type Item, type Res } from './items.ts';
 import { EYE, EYE_SNEAK, HEIGHT, TICK, WIDTH, bodyOverlapsCell, stepBody, type MoveInput } from './physics.ts';
 import { canBreak, raycast, rayBox, type RayHit } from './world.ts';
-import { Track, type Pose } from './interp.ts';
+import { RemoteClock, Track, wrapAngle, type Pose } from './interp.ts';
 import type { KeyState } from '../../kit';
 import type { Puppet, View, ViewFrame } from './scene.ts';
 import { thinkBots } from './bots.ts';
@@ -82,7 +83,15 @@ export type ClientHooks = {
 
 const scratch: Pose = { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
 
-type PuppetState = { track: Track; walk: number; amount: number; lx: number; lz: number; swings: number; swingT: number; hurtUntil: number; delay: number };
+/**
+ * Someone else's body as this machine draws it. Bodies stepped here (bots on the authority) are sampled every tick on
+ * the local clock; bodies reported over the network are sampled when a report arrives, stamped with the sender's clock
+ * moved onto ours, so packets that land unevenly still play back evenly.
+ */
+type PuppetState = { track: Track; walk: number; amount: number; lx: number; lz: number; swings: number; swingT: number; hurtUntil: number; delay: number; clock: RemoteClock };
+
+/** No keys held: the host's world running with its tab hidden. */
+const NO_KEYS = { down: () => false, pressed: () => false } as unknown as KeyState;
 
 export class Client {
   readonly game: Game;
@@ -102,7 +111,6 @@ export class Client {
   private leftEdge = false;
   private rightEdge = false;
   private rightUp = false;
-  ctrl = false;
   /** Touch: the stick (-1..1) and sticky crouch. */
   stick = { x: 0, y: 0 };
   touchSneak = false;
@@ -151,6 +159,9 @@ export class Client {
   /** What the view draws each frame, reused so a frame allocates nothing. */
   private readonly frameState: ViewFrame;
   private readonly puppetPool: Puppet[] = [];
+  /** Block break sounds this frame: a blast breaks dozens at once, and a few voices say it as well as all of them. */
+  private breakSfx = 0;
+  private breakFx = 0;
   /** Frame time tracking for adaptive resolution. */
   private frameAvg = 1 / 60;
   private dpr = 1;
@@ -251,13 +262,14 @@ export class Client {
 
   update(dt: number, keys: KeyState) {
     this.time += dt;
+    this.breakSfx = this.breakFx = 0;
     this.trackFrameTime(dt);
     const p = this.player;
     // mouse look happens every frame, straight onto the body
     const sens = (0.15 * Math.PI) / 180 * this.settings.sens;
     if (this.lookX || this.lookY) {
       const b = p.body;
-      b.yaw -= this.lookX * sens;
+      b.yaw = wrapAngle(b.yaw - this.lookX * sens);
       b.pitch = Math.max(-1.5697, Math.min(1.5697, b.pitch - this.lookY * sens));
       this.lookX = this.lookY = 0;
     }
@@ -278,6 +290,26 @@ export class Client {
     if (n === 6) this.acc = 0;
     this.leftEdge = false;
     this.renderFrame(dt);
+  }
+
+  /**
+   * The online host with its tab hidden: no frames come, but the room still needs the rules, the bots and the traffic.
+   * Runs the ticks real time asks for (at most a second's worth per call) with nothing pressed and nothing drawn.
+   */
+  background(now: number) {
+    if (!this.authority) return;
+    const real = this.lastReal < 0 ? 0 : Math.min(1, Math.max(0, now - this.lastReal));
+    this.lastReal = now;
+    this.time += real;
+    this.acc += real;
+    this.releaseAll();
+    let n = 0;
+    while (this.acc >= TICK && n < 20) {
+      this.acc -= TICK;
+      this.tick(NO_KEYS);
+      n++;
+    }
+    if (n === 20) this.acc = 0;
   }
 
   /** Advances time and draws without running the game (the start card's orbit). */
@@ -395,7 +427,8 @@ export class Client {
       }
     }
     const sneak = keys.down('ShiftLeft', 'ShiftRight') || this.touchSneak;
-    // sprint: always on (the default, like a toggle-sprint mod), or double tap W, or hold Ctrl
+    // sprint: always on (the default, like a toggle-sprint mod), or double tap W (Ctrl belongs to the browser:
+    // Ctrl+W closes the tab)
     const w = keys.down('KeyW', 'ArrowUp');
     if (w && !this.wDown) {
       if (this.time - this.wLastTap < 0.3) this.sprintLatch = true;
@@ -403,7 +436,7 @@ export class Client {
     }
     this.wDown = w;
     if (forward <= 0) this.sprintLatch = false;
-    const sprint = this.settings.autoSprint || this.settings.touch || this.ctrl || this.sprintLatch;
+    const sprint = this.settings.autoSprint || this.settings.touch || this.sprintLatch;
     return { forward, strafe, jump: keys.down('Space') || this.touchJump, sneak, sprint: sprint && forward > 0.8 };
   }
 
@@ -455,15 +488,14 @@ export class Client {
       for (const e of evs) this.onEvent(e);
       if (this.role === 'host') this.hooks.broadcast?.(evs);
     }
-    // samples for the puppets
+    // samples for the puppets this machine moves (reported bodies are sampled as their reports arrive)
     for (const o of g.players) {
       if (o.id === this.me) continue;
-      let ps = this.puppets.get(o.id);
-      if (!ps) {
-        ps = { track: new Track(), walk: 0, amount: 0, lx: o.body.x, lz: o.body.z, swings: o.swings, swingT: -1, hurtUntil: 0, delay: o.ctrl === 'bot' && this.authority ? 0.06 : 0.1 };
-        this.puppets.set(o.id, ps);
+      const ps = this.puppetOf(o);
+      if (this.authority && o.ctrl !== 'remote') {
+        ps.delay = 0.06;
+        ps.track.push(this.time, o.body.x, o.body.y, o.body.z, o.body.yaw, o.body.pitch);
       }
-      ps.track.push(this.time, o.body.x, o.body.y, o.body.z, o.body.yaw, o.body.pitch);
       if (o.swings !== ps.swings) {
         ps.swings = o.swings;
         ps.swingT = 0;
@@ -484,6 +516,25 @@ export class Client {
       }
     } else if (this.spec.active) this.spec.active = false;
     this.hooks.onTick?.();
+  }
+
+  private puppetOf(o: Player): PuppetState {
+    let ps = this.puppets.get(o.id);
+    if (!ps) {
+      ps = { track: new Track(), walk: 0, amount: 0, lx: o.body.x, lz: o.body.z, swings: o.swings, swingT: -1, hurtUntil: 0, delay: 0.1, clock: new RemoteClock() };
+      this.puppets.set(o.id, ps);
+    }
+    return ps;
+  }
+
+  /** A network report of someone else's body, stamped with the sender's clock in seconds (-1: unknown, use ours). */
+  pushRemote(id: number, remoteT: number) {
+    const o = this.game.players[id];
+    if (!o || id === this.me) return;
+    const ps = this.puppetOf(o);
+    ps.delay = 0.1;
+    const t = remoteT >= 0 ? ps.clock.local(remoteT, this.time) : this.time;
+    ps.track.push(t, o.body.x, o.body.y, o.body.z, o.body.yaw, o.body.pitch);
   }
 
   /** Guests move drops and projectiles between the host's word on them. */
@@ -700,9 +751,13 @@ export class Client {
         this.swing();
         return;
       }
-      // put it down now; the host confirms or takes it back
+      // put it down now (by the host's rules, so it sticks); the host confirms or takes it back
       const placeId = this.ladderId(block, t.face);
-      if (placeId < 0 || g.world.get(x, y, z) !== AIR) return;
+      if (placeId < 0) return;
+      if (!placeAllowed(g, x, y, z, placeId, p.id)) {
+        this.noBuildNotice(x, y, z);
+        return;
+      }
       g.world.set(x, y, z, placeId, true);
       const s = p.inv.slots[p.sel];
       if (s) {
@@ -715,13 +770,16 @@ export class Client {
       return;
     }
     if (this.act({ a: 'place', x, y, z, slot: p.sel, face: t.face, seq: 0 })) this.swing();
-    else if (held !== 'tnt') {
-      for (const b of g.info.noBuild)
-        if (x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1) {
-          this.notice("you can't place blocks here!");
-          break;
-        }
-    }
+    else if (held !== 'tnt') this.noBuildNotice(x, y, z);
+  }
+
+  /** Says so when a block was refused because the spot is protected (generators, shops, spawns). */
+  private noBuildNotice(x: number, y: number, z: number) {
+    for (const b of this.game.info.noBuild)
+      if (x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1) {
+        this.notice("you can't place blocks here!");
+        return;
+      }
   }
 
   private ladderId(block: number, face: number) {
@@ -738,6 +796,11 @@ export class Client {
   showTitle(title: string, sub: string, color: string, secs: number) {
     this.title = { id: (this.title?.id ?? 0) + 1, title, sub, color, until: this.time + secs };
     this.hooks.ping?.();
+  }
+
+  /** A line in the chat from the game itself. */
+  say(text: string) {
+    this.pushFeed('info', text);
   }
 
   private pushFeed(k: FeedLine['k'], text: string, team?: number) {
@@ -762,8 +825,12 @@ export class Client {
           if (e.by !== me || this.authority) {
             const was = e.was;
             if (was !== AIR) {
-              snd.blockSound(BLOCKS[was].sound, 'break', vol);
-              v?.burst('block', e.x, e.y, e.z, { block: was });
+              // a blast's dozens of breaks: a few voices and smaller puffs (the boom says the rest)
+              if (vol > 0.02 && this.breakSfx < 4) {
+                this.breakSfx++;
+                snd.blockSound(BLOCKS[was].sound, 'break', vol);
+              }
+              v?.burst('block', e.x, e.y, e.z, this.breakFx++ < 12 ? { block: was } : { block: was, count: 3 });
             }
           }
         } else if (e.by !== me || this.authority) snd.blockSound(BLOCKS[e.id].sound, 'place', vol);
@@ -822,14 +889,20 @@ export class Client {
           this.spec.active = false;
           this.showTitle('RESPAWNED!', '', '#55ff55', 1.4);
           snd.teleportSound();
-        } else this.puppets.get(e.p)?.track.snap(this.time, e.x, e.y, e.z, e.yaw, 0);
+        } else {
+          const ps = this.puppets.get(e.p);
+          ps?.track.snap(this.time - ps.delay, e.x, e.y, e.z, e.yaw, 0);
+        }
         this.hooks.ping?.();
         break;
       case 'tp':
         if (e.p === me) {
           this.prev = { x: e.x, y: e.y, z: e.z };
           snd.teleportSound();
-        } else this.puppets.get(e.p)?.track.snap(this.time, e.x, e.y, e.z, g.players[e.p].body.yaw, 0);
+        } else {
+          const ps = this.puppets.get(e.p);
+          ps?.track.snap(this.time - ps.delay, e.x, e.y, e.z, g.players[e.p].body.yaw, 0);
+        }
         break;
       case 'bed': {
         const site = g.info.teams[e.team];
@@ -902,6 +975,7 @@ export class Client {
         break;
       case 'phase':
       case 'traps':
+      case 'skin':
       case 'swing':
       case 'drop':
       case 'dropn':
@@ -1018,17 +1092,7 @@ export class Client {
     for (const o of g.players) {
       if (o.id === this.me) continue;
       const ps = this.puppets.get(o.id);
-      if (!ps || !o.alive || !ps.track.sample(this.time - ps.delay, scratch)) continue;
-      const moved = Math.hypot(scratch.x - ps.lx, scratch.z - ps.lz);
-      ps.lx = scratch.x;
-      ps.lz = scratch.z;
-      const speed = dt > 0 ? moved / dt : 0;
-      ps.amount = damp(ps.amount, Math.min(1, speed / 4.3), 12, dt);
-      ps.walk += ps.amount * dt * 20 * 0.95;
-      if (ps.swingT >= 0) {
-        ps.swingT += dt / 0.3;
-        if (ps.swingT >= 1) ps.swingT = -1;
-      }
+      if (!ps) continue;
       const pp = (this.puppetPool[o.id] ??= {
         id: o.id,
         visible: true,
@@ -1052,6 +1116,25 @@ export class Client {
         hp: 20,
         skin: o.skin,
       });
+      if (!o.alive) {
+        // dead with a bed: the view keeps the model hidden for the respawn; out for good, it lets it go
+        if (o.out) continue;
+        pp.visible = false;
+        puppets.push(pp);
+        continue;
+      }
+      if (!ps.track.sample(this.time - ps.delay, scratch)) continue;
+      pp.visible = true;
+      const moved = Math.hypot(scratch.x - ps.lx, scratch.z - ps.lz);
+      ps.lx = scratch.x;
+      ps.lz = scratch.z;
+      const speed = dt > 0 ? moved / dt : 0;
+      ps.amount = damp(ps.amount, Math.min(1, speed / 4.3), 12, dt);
+      ps.walk += ps.amount * dt * 20 * 0.95;
+      if (ps.swingT >= 0) {
+        ps.swingT += dt / 0.3;
+        if (ps.swingT >= 1) ps.swingT = -1;
+      }
       pp.x = scratch.x;
       pp.y = scratch.y;
       pp.z = scratch.z;

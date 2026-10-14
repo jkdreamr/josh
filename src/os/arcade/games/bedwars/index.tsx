@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, Segmented, defineSetting, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
@@ -77,7 +77,7 @@ const fillOptions = [
 ] as const;
 const sprintOptions = [
   ['auto', 'Auto'],
-  ['manual', 'Ctrl or WW'],
+  ['manual', 'Double Tap W'],
 ] as const;
 
 const BOT_NAMES = ['Tree', 'Hoover', 'Lagunita', 'Branner', 'Wilbur', 'Gates', 'Meyer', 'Coho', 'Treehouse', 'Roble', 'Toyon', 'Arrillaga', 'Florence', 'Stern', 'Mirrielees'];
@@ -90,28 +90,45 @@ export default function Game({ compact, onExit, roomCode }: GameProps) {
   );
 }
 
+/** Is there a mouse or trackpad (a touchscreen laptop has both)? */
+const finePointer = () => typeof window !== 'undefined' && !!window.matchMedia?.('(any-pointer: fine)').matches;
+
+/** Which controls this device has: touch where the shell sees a touchscreen, mouse wherever there is a fine pointer. */
+function useInputs() {
+  const shell = useShell();
+  const fine = useMemo(finePointer, []);
+  return { touch: shell.touch, mouse: !shell.touch || fine };
+}
+
 function Setup() {
   const [mode, setMode] = useSetting(MODE);
   const [level, setLevel] = useSetting(LEVEL);
   const [pace, setPace] = useSetting(PACE);
   const [sens, setSens] = useSetting(SENS);
   const [sprint, setSprint] = useSetting(SPRINT);
-  const shell = useShell();
+  const inputs = useInputs();
   return (
     <div className="g-bedwars-setup">
+      {inputs.touch && !inputs.mouse && <TouchNote />}
       <Extras />
       <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
       <Segmented label="Bots" value={level} options={levelOptions} onChange={setLevel} />
       <Segmented label="Pace" value={pace} options={paceOptions} onChange={setPace} />
-      {!shell.touch && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
-      {!shell.touch && <Segmented label="Sprint" value={sprint} options={sprintOptions} onChange={setSprint} />}
+      {inputs.mouse && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
+      {inputs.mouse && <Segmented label="Sprint" value={sprint} options={sprintOptions} onChange={setSprint} />}
     </div>
   );
+}
+
+/** The card's controls line is about keys and the mouse; on a phone or tablet, this says what the thumbs do. */
+function TouchNote() {
+  return <p className="g-bedwars-touchNote">on touch: drag the left side to walk and the right side to look. How to Play has every button.</p>;
 }
 
 /** Your record, How to Play and the Locker, with the sheets they open over the cards. */
 function Extras() {
   const shell = useShell();
+  const inputs = useInputs();
   const r = useRecord();
   const [skin, setSkin] = useSetting(SKIN);
   const [kill, setKill] = useSetting(KILLFX);
@@ -134,7 +151,7 @@ function Extras() {
       </div>
       {open === 'help' && (
         <Sheet root={shell.root.current} title="How to Play" onClose={close}>
-          <HowToPlay touch={shell.touch} />
+          <HowToPlay touch={inputs.touch} mouse={inputs.mouse} />
         </Sheet>
       )}
       {open === 'locker' && (
@@ -153,15 +170,18 @@ function OnlineSetup() {
   const [level, setLevel] = useSetting(LEVEL);
   const [pace, setPace] = useSetting(PACE);
   const [fill, setFill] = useSetting(FILL);
+  const inputs = useInputs();
   if (online && !online.isHost)
     return (
       <div className="g-bedwars-setup">
+        {inputs.touch && !inputs.mouse && <TouchNote />}
         <Extras />
         <small className="g-bedwars-hostnote">the host picks the mode, bots and pace.</small>
       </div>
     );
   return (
     <div className="g-bedwars-setup">
+      {inputs.touch && !inputs.mouse && <TouchNote />}
       <Extras />
       <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
       <Segmented label="Slots" value={fill} options={fillOptions} onChange={setFill} />
@@ -177,12 +197,17 @@ function Stage() {
   const shell = useShell();
   const online = useOnline();
   const current = useRef<{ key: string; mode: StageMode }>({ key: 'idle', mode: 'idle' });
-  if (shell.status === 'ready') current.current = { key: 'idle', mode: 'idle' };
-  else if (shell.status === 'playing') {
-    const key = online ? `online:${online.round}` : 'solo';
+  /** An online round the host carries on offline after everyone else left: it keeps its key (and its game). */
+  const detached = useRef('');
+  if (shell.status === 'ready') {
+    current.current = { key: 'idle', mode: 'idle' };
+    detached.current = '';
+  } else if (shell.status === 'playing') {
+    const key = online ? `online:${online.round}` : detached.current && detached.current === current.current.key ? detached.current : 'solo';
     if (key !== current.current.key) current.current = { key, mode: online ? 'online' : 'solo' };
   }
-  return <Play key={current.current.key} mode={current.current.mode} />;
+  const key = current.current.key;
+  return <Play key={key} mode={current.current.mode} onDetach={() => (detached.current = key)} />;
 }
 
 /** Your name in solo games: the one you use online, or the campus color. */
@@ -205,7 +230,7 @@ function soloGame(mode: Mode, level: Level, pace: Pace, skin: number): Game {
   return createGame({ mode, pace, level, entrants, seed: (Math.random() * 2 ** 31) >>> 0 });
 }
 
-function Play({ mode }: { mode: StageMode }) {
+function Play({ mode, onDetach }: { mode: StageMode; onDetach: () => void }) {
   const shell = useShell();
   const shellRef = useRef(shell);
   shellRef.current = shell;
@@ -242,12 +267,26 @@ function Play({ mode }: { mode: StageMode }) {
   const overAt = useRef<number | null>(null);
   const idle = mode === 'idle';
   const idleAngle = useRef(0);
+  /** Everyone else left an online round and the host plays on against the bots, offline. */
+  const [detached, setDetached] = useState(false);
+  const soloLike = mode === 'solo' || detached;
+  const soloRef = useRef(soloLike);
+  soloRef.current = soloLike;
+  /** Touch or mouse, by what the player last used (a touchscreen laptop's mouse still aims and fights). */
+  const [input, setInput] = useState<'touch' | 'mouse'>(() => (shell.touch && !finePointer() ? 'touch' : 'mouse'));
+  const touch = input === 'touch';
+  const inputRef = useRef(input);
+  inputRef.current = input;
+  const lastFrame = useRef(0);
+  const roundRef = useRef(0);
+  const knobRef = useRef<HTMLElement>(null);
 
   if (!gameRef.current && !live) gameRef.current = soloGame(modeSetting, level as Level, pace as Pace, looks.skin);
 
   // online: the host builds the game, guests wait for its sync
   useEffect(() => {
     if (!live) return;
+    roundRef.current = onlineRef.current?.round ?? 0;
     const api: OnlineApi = {
       get seat() {
         return onlineRef.current?.seat ?? 0;
@@ -264,7 +303,13 @@ function Play({ mode }: { mode: StageMode }) {
       get transport() {
         return onlineRef.current?.transport ?? 'relay';
       },
-      send: (d, o) => onlineRef.current?.send(d, o),
+      send: (d, o) => {
+        try {
+          onlineRef.current?.send(d, o);
+        } catch {
+          /* a full or closed channel: the next packet tries again, and the frame goes on */
+        }
+      },
       onMessage: (fn) => onlineRef.current?.onMessage(fn) ?? (() => {}),
     };
     const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
@@ -290,6 +335,30 @@ function Play({ mode }: { mode: StageMode }) {
   useEffect(() => {
     if (online) sessionRef.current?.playersChanged(online.players);
   }, [online?.players]);
+  // The shell closes the room when nobody else is left in it. The host's round has bots in it, so it plays on offline:
+  // the players who left are bots already or become bots now, and the shell is told to keep playing.
+  const wasHost = useRef(false);
+  useEffect(() => {
+    if (online) {
+      wasHost.current = online.isHost;
+      return;
+    }
+    const g = gameRef.current;
+    if (mode !== 'online' || detached || !wasHost.current || !g || g.over || shellRef.current.status !== 'over') return;
+    for (const p of g.players)
+      if (p.ctrl === 'remote') {
+        p.ctrl = 'bot';
+        p.gone = true;
+      }
+    const c = clientRef.current;
+    if (c) {
+      c.hooks.send = c.hooks.broadcast = c.hooks.onTick = undefined;
+      c.say('everyone else left, so this one is offline now. the bots play on.');
+    }
+    setDetached(true);
+    onDetach();
+    shellRef.current.start();
+  }, [online]);
 
   // settings that apply live
   useEffect(() => {
@@ -297,10 +366,10 @@ function Play({ mode }: { mode: StageMode }) {
     if (!c) return;
     c.settings.sens = Number(sens);
     c.settings.autoSprint = sprint === 'auto';
-    c.settings.touch = shell.touch;
+    c.settings.touch = touch;
     c.settings.killFx = looks.kill;
     c.settings.bedFx = looks.bed;
-  }, [sens, sprint, shell.touch, looks.kill, looks.bed]);
+  }, [sens, sprint, touch, looks.kill, looks.bed]);
 
   // the view and the client
   useEffect(() => {
@@ -312,15 +381,22 @@ function Play({ mode }: { mode: StageMode }) {
     viewRef.current = view;
     const session = sessionRef.current;
     const role = !live ? 'solo' : session?.isHost ? 'host' : 'guest';
-    const client = new Client(game, live ? meRef.current : 0, role, { sens: Number(sens), autoSprint: sprint === 'auto', touch: shell.touch, killFx: looksRef.current.kill, bedFx: looksRef.current.bed }, {
+    const client = new Client(game, live ? meRef.current : 0, role, { sens: Number(sens), autoSprint: sprint === 'auto', touch, killFx: looksRef.current.kill, bedFx: looksRef.current.bed }, {
       ping: () => {
         pinged.current = true;
       },
       moment: (e: Ev) => {
-        void e;
+        // report the winner the moment it is known (this also runs with the tab hidden)
+        if (e.t === 'win') reportRef.current();
       },
       onUi: (ui) => {
         if (ui !== 'none') unlockRef.current();
+        else {
+          // a panel that closed on its own (a death, walking away) took the focused button with it: keys come home
+          const root = shellRef.current.root.current;
+          const at = document.activeElement;
+          if (root && (!at || at === document.body)) root.focus({ preventScroll: true });
+        }
       },
       send: session ? (a, seq) => session.send(a, seq) : undefined,
       broadcast: session ? (evs) => session.broadcast(evs) : undefined,
@@ -333,7 +409,11 @@ function Play({ mode }: { mode: StageMode }) {
     if (import.meta.env.DEV) (window as unknown as { __bedwars?: Client }).__bedwars = client;
     // mesh the whole map up front (a frame or two)
     view.syncChunks(1000);
-    const resize = () => view.resize(host.clientWidth, host.clientHeight);
+    const resize = () => {
+      view.resize(host.clientWidth, host.clientHeight);
+      // a resize clears the canvas: draw again even while paused or over
+      shellRef.current.invalidate();
+    };
     resize();
     const ro = new ResizeObserver(resize);
     ro.observe(host);
@@ -349,6 +429,31 @@ function Play({ mode }: { mode: StageMode }) {
     };
   }, [THREE, ready]);
 
+  // The online host's tab hidden or minimized: no frames, but the room still needs the world to go on. A worker's beat
+  // (page timers slow to a crawl in hidden tabs) runs the rules, the bots and the traffic whenever frames stop.
+  useEffect(() => {
+    const c = clientRef.current;
+    if (!live || !c || !sessionRef.current?.isHost) return;
+    const beat = () => {
+      const now = performance.now();
+      if (now - lastFrame.current < 250 || shellRef.current.status !== 'playing') return;
+      c.background(now / 1000);
+    };
+    let worker: Worker | null = null;
+    try {
+      worker = new Worker(new URL('./ticker.worker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = beat;
+      worker.postMessage(50);
+    } catch {
+      worker = null;
+    }
+    const timer = worker ? 0 : window.setInterval(beat, 50);
+    return () => {
+      worker?.terminate();
+      window.clearInterval(timer);
+    };
+  }, [THREE, ready, live]);
+
   // pointer lock: click to capture the mouse; losing it (Esc) pauses solo games
   useEffect(() => {
     const onChange = () => {
@@ -360,7 +465,7 @@ function Play({ mode }: { mode: StageMode }) {
       if (!now) {
         c?.releaseAll();
         if (unlockOnPurpose.current) unlockOnPurpose.current = false;
-        else if (mode === 'solo' && shellRef.current.status === 'playing' && !c?.game.over) shellRef.current.pause();
+        else if (soloRef.current && shellRef.current.status === 'playing' && !c?.game.over) shellRef.current.pause();
       }
     };
     document.addEventListener('pointerlockchange', onChange);
@@ -378,7 +483,8 @@ function Play({ mode }: { mode: StageMode }) {
 
   const lock = useCallback(() => {
     const host = hostRef.current;
-    if (!host || shellRef.current.touch || document.pointerLockElement === host) return;
+    // the mouse gets captured; fingers never need it
+    if (!host || inputRef.current === 'touch' || document.pointerLockElement === host) return;
     try {
       const r = (host.requestPointerLock as (o?: unknown) => Promise<void> | void).call(host, { unadjustedMovement: true });
       if (r && typeof (r as Promise<void>).catch === 'function')
@@ -431,27 +537,19 @@ function Play({ mode }: { mode: StageMode }) {
     }
   });
 
-  // Escape closes the shop instead of pausing; Ctrl is sprint (the shell lets Ctrl combos through)
+  // Escape closes a panel instead of pausing: caught on the way down to the shell's own key handling
   useEffect(() => {
     const root = shell.root.current;
     if (!root) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!root.contains(e.target as Node)) return;
       const c = clientRef.current;
-      if (!c) return;
-      if (e.code === 'ControlLeft' || e.code === 'ControlRight') c.ctrl = e.type === 'keydown';
-      if (e.type === 'keydown' && e.code === 'Escape' && c.ui !== 'none') {
-        e.preventDefault();
-        e.stopPropagation();
-        openUi('none');
-      }
+      if (!c || e.code !== 'Escape' || c.ui === 'none') return;
+      e.preventDefault();
+      e.stopPropagation();
+      openUi('none');
     };
-    window.addEventListener('keydown', onKey, true);
-    window.addEventListener('keyup', onKey, true);
-    return () => {
-      window.removeEventListener('keydown', onKey, true);
-      window.removeEventListener('keyup', onKey, true);
-    };
+    root.addEventListener('keydown', onKey, true);
+    return () => root.removeEventListener('keydown', onKey, true);
   }, [shell.root, openUi]);
 
   useGameLoop(
@@ -473,6 +571,7 @@ function Play({ mode }: { mode: StageMode }) {
         c.preview(dt);
         return;
       }
+      lastFrame.current = performance.now();
       c.update(dt, keys);
       setTab(keys.down('Tab'));
       v.syncChunks(4);
@@ -491,41 +590,67 @@ function Play({ mode }: { mode: StageMode }) {
           if (s) setHeldName({ id: Date.now(), text: s.item === 'pick' ? PICK_NAMES[s.tier] : s.item === 'axe' ? AXE_NAMES[s.tier] : ITEM_DEFS[s.item].name });
         }
       }
-      // the end of the game
+      // the end of the game: the result goes in at once, the card after a few seconds of celebration (real time)
       const g = c.game;
       if (g.over) {
-        if (overAt.current === null) overAt.current = c.time;
-        if (c.time - overAt.current > 3.5) finish(c);
+        reportRef.current();
+        const now = performance.now() / 1000;
+        if (overAt.current === null) overAt.current = now;
+        if (now - overAt.current > 3.5) finish();
       }
     },
     () => clientRef.current?.render(),
     { always: idle },
   );
 
-  const finished = useRef(false);
-  const finish = (c: Client) => {
-    if (finished.current) return;
-    finished.current = true;
-    const g = c.game;
-    const me = c.player;
+  // Online: everyone reports the seat the host named (the lowest human seat still in the room on the winning team; a
+  // bot's win counts for nobody), for the round this game was started in.
+  const reported = useRef(false);
+  const reportRef = useRef(() => {});
+  reportRef.current = () => {
+    const g = gameRef.current;
+    const o = onlineRef.current;
+    if (reported.current || !g?.over || mode !== 'online' || detached || !o) return;
+    reported.current = true;
+    o.reportResult(roundRef.current, g.winSeat >= 0 ? g.winSeat : null);
+  };
+  // your record on this device, and anything it unlocked (once, even if the round is left before the card shows)
+  const settled = useRef<{ title: string; detail: string } | null>(null);
+  const settleRef = useRef(() => settled.current);
+  settleRef.current = () => {
+    const g = gameRef.current;
+    if (settled.current || !g?.over) return settled.current;
+    const me = g.players[mode === 'online' ? meRef.current : 0];
+    if (!me) return null;
     const won = g.winner === me.team;
     const team = TEAMS[me.team];
     const detail = `${me.stats.kills} kills, ${me.stats.finals} final kills, ${me.stats.beds} beds broken.${g.winner >= 0 && !won ? ` ${TEAMS[g.winner].name} won it.` : ''}`;
-    // online: everyone reports the same winner, the lowest seat of a human on the winning team (bots win as nobody)
-    const o = onlineRef.current;
-    if (live && o) {
-      const seats = g.players.filter((p) => p.team === g.winner && p.seat >= 0 && p.ctrl !== 'bot').map((p) => p.seat);
-      o.reportResult(o.round, seats.length ? Math.min(...seats) : null);
-    }
-    // your record on this device, and anything it unlocked
     const before = loadRecord();
     const after = addGame(before, { won, kills: me.stats.kills, finals: me.stats.finals, beds: me.stats.beds, deaths: me.stats.deaths });
     saveRecord(after);
     const unlocked = newUnlocks(before, after);
     const unlockLine = unlocked.length ? ` unlocked: ${unlocked.map((u) => u.name).join(', ')}! equip ${unlocked.length > 1 ? 'them' : 'it'} in the locker.` : '';
     const streak = won && after.streak > 1 ? ` ${after.streak} wins in a row!` : '';
-    shellRef.current.gameOver(undefined, { title: won ? 'Victory!' : g.winner < 0 ? 'Draw' : 'Game Over', detail: (won ? `${team.name} team wins! ${detail}` : detail) + streak + unlockLine });
+    settled.current = { title: won ? 'Victory!' : g.winner < 0 ? 'Draw' : 'Game Over', detail: (won ? `${team.name} team wins! ${detail}` : detail) + streak + unlockLine };
+    return settled.current;
   };
+  const finished = useRef(false);
+  const finish = () => {
+    if (finished.current) return;
+    finished.current = true;
+    reportRef.current();
+    const r = settleRef.current();
+    if (r) shellRef.current.gameOver(undefined, r);
+  };
+  // the next round started (or the game closed) before the card: the result and the record still count
+  useEffect(
+    () => () => {
+      if (!gameRef.current?.over || finished.current) return;
+      reportRef.current();
+      settleRef.current();
+    },
+    [],
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // mouse and touch on the game view
@@ -579,7 +704,8 @@ function Play({ mode }: { mode: StageMode }) {
         const m = Math.hypot(dx, dy);
         c.stick.x = m > 1 ? dx / m : dx;
         c.stick.y = m > 1 ? dy / m : dy;
-        pinged.current = true;
+        // the knob moves on its own: no need to redraw the whole HUD for it
+        if (knobRef.current) knobRef.current.style.transform = `translate(${c.stick.x * 34}px, ${c.stick.y * 34}px)`;
       } else if (e.pointerId === t.look) {
         c.look((e.clientX - t.lx) * 2.2, (e.clientY - t.ly) * 2.2);
         t.lx = e.clientX;
@@ -600,6 +726,7 @@ function Play({ mode }: { mode: StageMode }) {
       if (e.pointerId === t.stick) {
         t.stick = null;
         c.stick.x = c.stick.y = 0;
+        if (knobRef.current) knobRef.current.style.transform = '';
       }
       if (e.pointerId === t.look) t.look = null;
       return;
@@ -611,6 +738,12 @@ function Play({ mode }: { mode: StageMode }) {
     if (!c || idle || c.ui !== 'none') return;
     c.wheel(e.deltaY);
   };
+
+  // out for good in solo: the mouse comes back so the card's Play Again can be clicked
+  const isOut = !!clientRef.current?.player.out;
+  useEffect(() => {
+    if (isOut && soloLike && !gameRef.current?.over) unlock();
+  }, [isOut, soloLike, unlock]);
 
   const c = clientRef.current;
   const g = gameRef.current;
@@ -634,7 +767,15 @@ function Play({ mode }: { mode: StageMode }) {
   });
 
   return (
-    <div className={`g-bedwars-stage${shell.touch ? ' is-touch' : ''}`}>
+    <div
+      className={`g-bedwars-stage${touch ? ' is-touch' : ''}`}
+      onPointerDownCapture={(e) => {
+        const m = e.pointerType === 'touch' ? 'touch' : e.pointerType === 'mouse' ? 'mouse' : null;
+        if (!m || m === inputRef.current) return;
+        inputRef.current = m;
+        setInput(m);
+      }}
+    >
       <div
         ref={hostRef}
         className="g-bedwars-host"
@@ -653,13 +794,13 @@ function Play({ mode }: { mode: StageMode }) {
           <Feed lines={c.feed} now={now} open={tab} names={nameColors} />
           <TitleView title={c.title} now={now} />
           {me.alive && <Hotbar hud={hud} hurt={c.hurtFlash > 0} onSelect={(i) => c.select(i)} />}
-          {hud.near && hud.ui === 'none' && me.alive && !shell.touch && <div className="g-bedwars-prompt">{`press E for the ${hud.near === 'shop' ? 'item shop' : 'team upgrades'}`}</div>}
+          {hud.near && hud.ui === 'none' && me.alive && !touch && <div className="g-bedwars-prompt">{`press E for the ${hud.near === 'shop' ? 'item shop' : 'team upgrades'}`}</div>}
           {heldName && me.alive && hud.ui === 'none' && (
             <div key={heldName.id} className="g-bedwars-itemName">
               {heldName.text}
             </div>
           )}
-          {me.out && !g.over && mode === 'solo' && (
+          {me.out && !g.over && soloLike && (
             <div className="g-bedwars-outCard">
               <p>you're out. watch the rest from the sky, or start over.</p>
               <button type="button" className="arcade-btn arcade-btn-primary" onClick={() => shell.restart()}>
@@ -674,14 +815,14 @@ function Play({ mode }: { mode: StageMode }) {
               rows={g.players.map((p) => ({ name: p.name, team: p.team, alive: p.alive, out: p.out, kills: p.stats.kills, finals: p.stats.finals, beds: p.stats.beds, bot: p.ctrl === 'bot' }))}
             />
           )}
-          {hud.ui === 'shop' && <ShopPanel inv={me.inv} team={me.team} touch={shell.touch} onBuy={(id) => c.act({ a: 'buy', id })} onClose={() => openUi('none')} />}
+          {hud.ui === 'shop' && <ShopPanel inv={me.inv} team={me.team} touch={touch} onBuy={(id) => c.act({ a: 'buy', id })} onClose={() => openUi('none')} />}
           {hud.ui === 'inv' && (
             <InventoryPanel
               inv={me.inv}
               team={me.team}
               sel={me.sel}
               picked={c.invPicked}
-              touch={shell.touch}
+              touch={touch}
               onSlot={(i, quick) => c.invClick(i, quick)}
               onHover={(i) => (c.invHover = i)}
               onClose={() => openUi('none')}
@@ -692,23 +833,32 @@ function Play({ mode }: { mode: StageMode }) {
               inv={me.inv}
               ups={g.teams[me.team].ups}
               traps={g.teams[me.team].traps}
-              touch={shell.touch}
+              touch={touch}
               onBuy={(key) => c.act({ a: 'upg', key })}
               onTrap={(kind) => c.act({ a: 'trap', kind })}
               onClose={() => openUi('none')}
             />
           )}
-          {!shell.touch && !locked && hud.ui === 'none' && !g.over && (
-            <button type="button" className="g-bedwars-clickToPlay" onClick={lock}>
+          {!touch && !locked && hud.ui === 'none' && !g.over && !(me.out && soloLike) && (
+            <button
+              type="button"
+              className="g-bedwars-clickToPlay"
+              // never takes focus: keys stay with the game once the mouse is captured
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                shellRef.current.root.current?.focus({ preventScroll: true });
+                lock();
+              }}
+            >
               click to play
             </button>
           )}
         </div>
       )}
-      {playing && shell.touch && c && me && g && hud && hud.ui === 'none' && (
+      {playing && touch && c && me && g && hud && hud.ui === 'none' && (
         <div className="g-bedwars-touch">
           <div className="g-bedwars-stickZone" aria-hidden="true">
-            <i style={{ transform: `translate(${c.stick.x * 34}px, ${c.stick.y * 34}px)` }} />
+            <i ref={knobRef} />
           </div>
           {/* the menus sit apart from the action buttons, so those never move under your thumb */}
           <div className="g-bedwars-tmenu">
