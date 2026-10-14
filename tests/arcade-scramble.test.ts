@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { AMMO_BOX, BOOST, MELEE, THROWS, USES, WALL_COST, WEAPONS, WEAPON_IDS, WOOD_MAX, ammoCap, damageOf, parseLoot, rng32, rollLoot, useCap, type LootDef } from '../src/os/arcade/games/scramble/items.ts';
+import { AMMO_BOX, AMMO_TYPES, BOOST, MAX_PACK, MELEE, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, WOOD_MAX, ammoCap, damageOf, parseLoot, rng32, rollLoot, throwCap, useCap, type LootDef } from '../src/os/arcade/games/scramble/items.ts';
 import {
   BEACH,
   BUS_Y,
@@ -82,7 +82,7 @@ import {
   type Match,
 } from '../src/os/arcade/games/scramble/logic.ts';
 import { applyNet, configOf, endOf, guestState, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
-import { FIRST_GRACE, FLUSH, STALE, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
+import { END_PAUSE, FIRST_GRACE, FLUSH, STALE, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
 
 const DT = 1 / 60;
@@ -1033,6 +1033,120 @@ test('a guest slow to load gets a while to send its first report; one that repor
   assert.equal(host.match.fighters[2].phase, 'out', 'but not forever');
 });
 
+/**
+ * A host and one guest on bare grass a few seconds in: the host's egg 8 m east of the guest's. `toHost` and
+ * `toGuest` pass on whatever has happened on that side since, through the room.
+ */
+function pair() {
+  const players: Player[] = [{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }];
+  const host = hostMatch(players, 0, 4, 'normal', 'none', 0);
+  const h = host.match;
+  const g = guestMatch(players, 1, 4, 'normal', 0, host.roster);
+  const hs = newSession(true, host.roster);
+  const gs = newSession(true, host.roster);
+  const hMe: Me = { seat: 0, isHost: true, round: 1 };
+  const gMe: Me = { seat: 1, isHost: false, round: 1 };
+  for (const m of [h, g]) {
+    m.time = 5;
+    openSpot(m);
+    land(m.fighters[0], 8, 0);
+    land(m.fighters[1], 0, 0);
+  }
+  const send = (s: Session, m: Match, seat: number) => {
+    for (const e of m.events.splice(0)) share(s, e, seat);
+    return flush(s, 1, FLUSH).map((p) => JSON.parse(JSON.stringify(p)));
+  };
+  const toHost = (clock = 0) => send(gs, g, 1).forEach((p) => receive(hs, h, hMe, 1, p, () => h, clock));
+  const toGuest = (clock = 0) => send(hs, h, 0).forEach((p) => receive(gs, g, gMe, 0, p, () => g, clock));
+  return { h, g, hs, gs, hMe, gMe, toHost, toGuest };
+}
+
+/** Puts a gun in an egg's hand, aimed east, trigger held. */
+function aimEast(f: Fighter, w: 'rifle' | 'crossbow') {
+  f.guns[0] = { w, r: 0, mag: WEAPONS[w].mag };
+  f.slot = 0;
+  f.fireT = 0;
+  f.reloadT = 0;
+  f.input.aim = Math.PI / 2;
+  f.input.fire = true;
+}
+
+test('a guest the host takes out for going quiet hears it is out, and nothing it sent after that counts', () => {
+  const { h, g, hs, gs, hMe, gMe, toHost, toGuest } = pair();
+  const mine = g.fighters[1];
+  tick(hs, h, hMe, [0, 1], 0);
+  receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(mine)))), () => h, 0.1);
+  // the guest's phone locks for longer than STALE; when it wakes it fires before the news reaches it
+  tick(hs, h, hMe, [0, 1], STALE + 1);
+  assert.equal(h.fighters[1].outCause, 'left');
+  aimEast(mine, 'rifle');
+  for (let i = 0; i < 30 && !g.events.some((e) => e.t === 'hit'); i++) step(g, DT);
+  assert.ok(g.events.some((e) => e.t === 'hit' && e.to === 0), 'it hit the host on its own screen');
+  toHost(STALE + 2);
+  assert.equal(h.fighters[0].hp, 100, 'but not on the host');
+  assert.equal(hs.queue.length, 0, 'and nobody else hears of it');
+  toGuest(STALE + 2);
+  assert.equal(mine.phase, 'out', 'the host told it it is out');
+  assert.equal(mine.outCause, 'left');
+  for (const e of g.events.splice(0)) share(gs, e, 1);
+  assert.equal(gs.queue.length, 0, 'news it does not send back');
+  // it still hears the result like everyone else
+  step(h, DT);
+  ending(hs, h, hMe, STALE + 3);
+  for (const out of tick(hs, h, hMe, [0, 1], STALE + 3)) receive(gs, g, gMe, 0, JSON.parse(JSON.stringify(out.d)), () => g, STALE + 3);
+  assert.equal(ending(gs, g, gMe, STALE + 3 + END_PAUSE + 0.1), 'report');
+  assert.equal(gs.end?.winner, 0);
+  assert.equal(mine.place, 2);
+
+  // an egg that cracked the ordinary way still lands the shot it fired just before
+  const b = pair();
+  aimEast(b.g.fighters[1], 'rifle');
+  step(b.g, DT);
+  b.g.fighters[1].input.fire = false;
+  hurt(b.g, b.g.fighters[1], 500, 0, 'smg', false);
+  for (let i = 0; i < 30 && !b.g.events.some((e) => e.t === 'hit'); i++) step(b.g, DT);
+  b.toHost();
+  assert.equal(b.h.fighters[1].phase, 'out');
+  assert.ok(b.h.fighters[0].hp < 100, 'the bullet in flight still counts');
+});
+
+test('a pickup the host hands to a guest whose egg has just cracked goes back on the ground for everyone', () => {
+  const { h, g, toHost, toGuest } = pair();
+  const mine = g.fighters[1];
+  for (const m of [h, g]) m.loot.set(5, { id: 5, def: { kind: 'gun', w: 'sniper', r: 4 }, x: 0, z: 0.5, by: -1, at: 0 });
+  step(g, DT);
+  assert.ok(g.events.some((e) => e.t === 'take' && e.id === 5));
+  // shot dead before the host's answer comes back; the host still sees it standing when the ask arrives
+  hurt(g, mine, 500, 0, 'rifle', false);
+  toHost();
+  assert.ok(!h.loot.has(5), 'the host said yes');
+  toGuest();
+  toHost();
+  const snipers = (m: Match) => [...m.loot.values()].filter((l) => l.def.kind === 'gun' && l.def.w === 'sniper').map((l) => l.id);
+  assert.equal(snipers(h).length, 1, 'the sniper is on the ground again');
+  assert.deepEqual(snipers(g), snipers(h));
+  assert.deepEqual([...g.loot.keys()].sort(), [...h.loot.keys()].sort(), 'the same loot on both');
+});
+
+test('online, a crossbow shot keeps its shooter hidden on everyone else’s screen too', () => {
+  const { h, g, toHost } = pair();
+  const mine = g.fighters[1];
+  const copy = h.fighters[1];
+  // the host's copy of the guest stands in a bush
+  copy.bush = 0;
+  assert.ok(concealed(h, copy, h.fighters[0]));
+  aimEast(mine, 'crossbow');
+  step(g, DT);
+  assert.ok(g.events.some((e) => e.t === 'shot' && e.w === 'crossbow'));
+  toHost();
+  assert.ok(h.bullets.length > 0, 'the bolt flies on the host');
+  assert.ok(concealed(h, copy, h.fighters[0]), 'and the shooter stays hidden');
+  aimEast(mine, 'rifle');
+  step(g, DT);
+  toHost();
+  assert.ok(!concealed(h, copy, h.fighters[0]), 'a rifle gives it away');
+});
+
 test('a wall goes out with the health it was built with, whatever hits it the same frame', () => {
   const m = quiet();
   const [a, b] = m.fighters;
@@ -1446,6 +1560,18 @@ test('scopes let you see farther, backpacks carry more, and whatever doesn’t f
   run(m, 0.05);
   assert.equal(me.pack, 2);
   assert.ok(ammoCap('light', 2) > ammoCap('light', 0) && useCap('bandage', 2) > useCap('bandage', 0));
+});
+
+test('every backpack level carries more of everything than the one below it', () => {
+  const caps: [string, (pack: number) => number][] = [
+    ...AMMO_TYPES.map((a): [string, (pack: number) => number] => [a, (p) => ammoCap(a, p)]),
+    ...USE_IDS.map((u): [string, (pack: number) => number] => [u, (p) => useCap(u, p)]),
+    ...THROW_IDS.map((k): [string, (pack: number) => number] => [k, (p) => throwCap(k, p)]),
+  ];
+  for (const [name, cap] of caps) for (let p = 1; p <= MAX_PACK; p++) assert.ok(cap(p) > cap(p - 1), `${name}: ${cap(p - 1)} at level ${p - 1}, ${cap(p)} at level ${p}`);
+  // 40% more a level, worked in whole numbers
+  assert.deepEqual([0, 1, 2, 3].map((p) => ammoCap('heavy', p)), [90, 126, 162, 198]);
+  assert.deepEqual([0, 1, 2, 3].map((p) => useCap('medkit', p)), [2, 3, 4, 5]);
 });
 
 test('ponds slow you down and cornfields hide you', () => {

@@ -1159,7 +1159,7 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   emit(m, { t: 'out', f: f.id, by, w, place });
 }
 
-/** An egg another client owns is out, on its owner's word. */
+/** An egg another client owns is out, on its owner's word (or ours, on the host's word that it took us out). */
 export function applyOut(m: Match, fid: number, by: number, w: Cause) {
   const f = m.fighters[fid];
   if (!f || f.phase === 'out' || m.ended) return;
@@ -1624,7 +1624,11 @@ export function applyTook(m: Match, fid: number, id: number, def: LootDef) {
   const f = m.fighters[fid];
   if (!f) return;
   f.pending.delete(id);
-  if (owned(f) && f.phase === 'ground') give(m, f, def);
+  if (owned(f)) {
+    if (f.phase === 'ground') give(m, f, def);
+    // cracked while the host was saying yes: it goes back down where we fell, for anyone to pick up
+    else dropItem(m, f, def, f.x, f.z);
+  }
   emit(m, { t: 'took', f: fid, id, def, net: true });
 }
 

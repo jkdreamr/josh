@@ -1,7 +1,7 @@
 // One client's side of an online Scramble match: what it does with each message from the room, what it sends on its
 // regular tick, the events it queues and flushes, and when the match is over. Pure, so a whole room can be simulated
 // in a test; index.tsx connects it to the real room.
-import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, applyState, botNames, createMatch, endMatch, forfeit, owned, type Entrant, type Ev, type Level, type Match } from './logic.ts';
+import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, applyOut, applyState, botNames, createMatch, endMatch, forfeit, owned, type Entrant, type Ev, type Level, type Match } from './logic.ts';
 import { BUS_Y, stormEnd } from './map.ts';
 import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type Bots, type NetEv, type State } from './net.ts';
 
@@ -121,7 +121,13 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
       for (const ev of evs) {
         if (me.isHost) {
           const actor = actorOf(ev);
-          if (actor < 0 || m.fighters[actor]?.seat !== from) continue;
+          const f = m.fighters[actor];
+          if (actor < 0 || f?.seat !== from) continue;
+          // an egg we took out for leaving or going quiet plays no more, whatever its owner still sends
+          if (f.phase === 'out' && f.outCause === 'left') continue;
+        } else if (origin === 0 && ev.y === 'o' && ev.f === m.me && ev.w === 'left') {
+          // the host has taken our egg out (we went quiet, or never landed): it is out here too
+          applyOut(m, m.me, -1, 'left');
         }
         if (applyNet(m, ev) && me.isHost) s.queue.push([from, ev]);
       }

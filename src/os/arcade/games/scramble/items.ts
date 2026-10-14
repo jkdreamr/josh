@@ -213,9 +213,12 @@ export const WALL_COST = 10;
 export const SCOPES = ['1x', '2x', '4x', '8x'] as const;
 export const SCOPE_VIEW = [0, 5, 11, 18] as const;
 export const MAX_SCOPE = 3;
-/** Backpack levels 0..3: each holds 40% more ammo, consumables and throwables than none. */
+/**
+ * Backpack levels 0..3: each adds 40% to the ammo, consumables and throwables an egg can carry, rounded up so every
+ * level adds some (worked in whole numbers, which keeps it exact).
+ */
 export const MAX_PACK = 3;
-export const capOf = (base: number, pack: number) => Math.round(base * (1 + 0.4 * clampInt(pack, 0, MAX_PACK)));
+export const capOf = (base: number, pack: number) => base + Math.ceil((base * 4 * clampInt(pack, 0, MAX_PACK)) / 10);
 
 export const AMMO_BASE: Record<Ammo, number> = { light: 150, heavy: 90, shells: 30, rockets: 6 };
 export const ammoCap = (a: Ammo, pack: number) => capOf(AMMO_BASE[a], pack);

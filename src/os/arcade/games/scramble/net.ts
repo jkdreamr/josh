@@ -4,7 +4,7 @@
 // computer players and sends everyone the whole match. Things that happen (shots, hits, drops, walls, pickups) travel
 // as events: a guest sends its own to the host, and the host applies them and passes them on to everyone else, in the
 // order it applied them, together with its own. Guests ask the host for pickups and chests and hear back who got them.
-import { isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
+import { WEAPONS, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import {
   CAUSES,
   HELD,
@@ -225,7 +225,8 @@ export function applyNet(m: Match, e: NetEv): boolean {
   switch (e.y) {
     case 's':
       if (!f || owned(f)) return false;
-      f.firedAt = m.clock;
+      // a silent shot keeps the shooter hidden here too, as it does on the shooter's own screen
+      if (!WEAPONS[e.w].silent) f.firedAt = m.clock;
       fire(m, e.f, e.w, e.r, e.x, e.z, e.a, e.s, e.k, false);
       m.events.push({ t: 'shot', f: e.f, w: e.w, r: e.r, x: e.x, z: e.z, a: e.a, s: e.s, k: e.k, net: true });
       return true;
