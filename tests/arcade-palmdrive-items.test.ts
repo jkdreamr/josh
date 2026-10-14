@@ -304,3 +304,14 @@ test('a CPU out in front saves its horn for the blue shell coming for it', () =>
   assert.ok(!evs.some((e) => e.t === 'boom'), 'the blue shell never went off');
   assert.equal(cpu.tumble, 0);
 });
+
+test('a CPU never sits for long on a mushroom, even round the Main Quad with its short straights and cyclists', () => {
+  for (const s of [120, 180, 600]) {
+    const r = createRace({ cc: '150cc', course: 'quad', seed: 5, countdown: 0, racers: [RIVALS[3]] });
+    const [cpu] = r.karts;
+    place(r, cpu, s, 0, 25);
+    giveItem(r, cpu, 'mushroom', 0);
+    const evs = run(r, 8);
+    assert.ok(evs.some((e) => e.t === 'use' && e.k === cpu.idx && e.item === 'mushroom'), `handed one at s=${s}, it used it`);
+  }
+});

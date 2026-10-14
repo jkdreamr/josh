@@ -1,7 +1,10 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useContext, useState, type KeyboardEvent } from 'react';
+import { OSContext } from '../types';
+import { roomApp } from './apps';
 import { ArcadeChat } from './Chat';
 import { Leaderboards, leaderboardCards as boardChoices } from './Leaderboards';
-import { categories, metas } from './manifest';
+import { categories, getMeta, metas } from './manifest';
+import { OpenRooms } from './OpenRooms';
 import type { GameMeta } from './types';
 
 /** Arrow keys move between tiles, using layout positions so it works at any column count. */
@@ -55,9 +58,17 @@ function Tile({ g, onOpen }: { g: GameMeta; onOpen: (id: string) => void }) {
   );
 }
 
-export function ArcadePage({ onOpen }: { onOpen: (id: string) => void }) {
+/** `onOpen` opens an arcade game, and with `room` joins that online room in it. */
+export function ArcadePage({ onOpen }: { onOpen: (id: string, room?: string) => void }) {
   const [view, setView] = useState<'games' | 'boards' | 'chat'>('games');
   const toggle = (next: 'boards' | 'chat') => setView(view === next ? 'games' : next);
+  const os = useContext(OSContext);
+  // An open room's game opens right here, unless it lives in a desktop app of its own (Go, Omok, Badminton).
+  const joinRoom = (game: string, code: string) => {
+    if (getMeta(game)) return onOpen(game, code);
+    const { app, args } = roomApp(game, code);
+    os?.open(app, args);
+  };
   const groups = categories.map((c) => ({ ...c, games: metas.filter((m) => m.category === c.id) })).filter((c) => c.games.length);
   return (
     <div className={view === 'chat' ? 'arcade is-chat' : 'arcade'}>
@@ -83,6 +94,7 @@ export function ArcadePage({ onOpen }: { onOpen: (id: string) => void }) {
         <ArcadeChat />
       ) : (
       <div className="arcade-sections" onKeyDown={onGridKey}>
+        <OpenRooms onJoin={joinRoom} />
         {groups.map((c) => (
           <section key={c.id} className="arcade-section" aria-label={c.label}>
             <h2>{c.label}</h2>

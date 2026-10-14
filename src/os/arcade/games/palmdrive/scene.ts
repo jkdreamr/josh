@@ -2,7 +2,7 @@
 // scenery is in scenery.ts). It reads a Race every frame and never changes it.
 import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
-import { BUS_LEN, CURB, gridSpot, headingOf, locate, pointAt, wrapAngle, type Track } from './track';
+import { BUS_LEN, CURB, deltaS, gridSpot, headingOf, locate, pointAt, wrapAngle, type Track } from './track';
 import { LOOKS, SCENERY, bikeKit, canvas, cowMaterials, makeBike, makeBus, makeCow, makePlanter, noise, scatter, texture } from './scenery';
 import { COUNTDOWN, RAMP_H, RAMP_LEN, TURBO_AT, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
 
@@ -1067,7 +1067,23 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const dist = back + swing * 2.2 + pull * 2.5;
       const jx = (Math.random() - 0.5) * shake;
       const jy = (Math.random() - 0.5) * shake;
-      camera.position.set(k.x - Math.sin(yaw) * dist + jx, 2.75 + swing * 0.8 + pull * 1.6 + k.y * 0.25 + jy, k.z - Math.cos(yaw) * dist);
+      let cx = k.x - Math.sin(yaw) * dist;
+      let cz = k.z - Math.cos(yaw) * dist;
+      // never out past the wall: up against it facing across the road (after a spin, say) the camera would be out
+      // among the scenery behind it, so it comes in toward the kart until it is over the wall, and up a little to
+      // look down over the kart rather than into the back of it
+      let lift = 0;
+      if (swing === 0) {
+        const road = race.track;
+        const at = locate(road, cx, cz, k.i);
+        if (Math.abs(at.d) > road.edge && Math.abs(at.d - k.d) > 0.01 && Math.abs(deltaS(road, k.s, at.s)) < 15) {
+          const f = Math.min(1, Math.max(0, (Math.sign(at.d) * road.edge - k.d) / (at.d - k.d)));
+          cx = k.x + (cx - k.x) * f;
+          cz = k.z + (cz - k.z) * f;
+          lift = (1 - f) * 1.6;
+        }
+      }
+      camera.position.set(cx + jx, 2.75 + swing * 0.8 + pull * 1.6 + lift + k.y * 0.25 + jy, cz);
       camera.lookAt(k.x + Math.sin(camYaw + flip) * 4, 1.15 + k.y * 0.3, k.z + Math.cos(camYaw + flip) * 4);
       const fov = fovBase + (k.boost > 0 ? 9 : 0) + Math.min(5, Math.max(0, k.v - 15) * 0.3);
       if (Math.abs(camera.fov - fov) > 0.05) {

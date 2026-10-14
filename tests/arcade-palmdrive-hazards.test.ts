@@ -281,6 +281,34 @@ test('CPU drivers round the Main Quad steer round the planters and time their wa
   assert.ok(knocks.bike <= 8, `bikes ${knocks.bike}`);
 });
 
+test('a CPU on a boost brakes for a swerve it cannot make, but not for the bend on the way to it', () => {
+  /** Whether a lone CPU coming out of the corner before the planter on the west side, lined up on it at speed, brakes. */
+  const brakes = (boost: number, across = 0) => {
+    const r = createRace({ cc: '200cc', course: 'quad', seed: 5, countdown: 0, racers: [RIVALS[0]] });
+    const [k] = r.karts;
+    const planter = find(r, 'planter', (h) => Math.abs(h.s - 588) < 1);
+    place(r, k, planter.s - 22, planter.d, 34);
+    // turned `across` radians off the line of the road, toward the planter's side of it
+    const p = pointAt(r.track, k.s);
+    const side = Math.sign(planter.d);
+    k.h = headingOf(p.tx * Math.cos(across) - p.tz * side * Math.sin(across), p.tz * Math.cos(across) + p.tx * side * Math.sin(across));
+    k.boost = boost;
+    step(r, DT);
+    return k.input.brake;
+  };
+  assert.equal(brakes(0), true, 'off a boost it slows for the corner and the swerve together');
+  assert.equal(brakes(1), false, 'on a boost the corner is no reason to brake, and the swerve past the planter is an easy one');
+  assert.equal(brakes(1, 0.45), true, 'but angled across the road at a boost\'s speed it cannot straighten up in time');
+  // oil on the apex of a bend at Hoover Nights: on a boost it still slows to make the bend on a line round the slick
+  const r = createRace({ cc: '200cc', course: 'hoover', seed: 5, countdown: 0, racers: [RIVALS[0]] });
+  const [k] = r.karts;
+  const oil = find(r, 'oil', (h) => Math.abs(h.s - 664) < 1);
+  place(r, k, oil.s - 24, oil.d, 38);
+  k.boost = 1;
+  step(r, DT);
+  assert.equal(k.input.brake, true, 'slows for oil on a bend');
+});
+
 test('oil spins you out; a star skates straight over it', () => {
   const r = hoover();
   const k = r.karts[0];
