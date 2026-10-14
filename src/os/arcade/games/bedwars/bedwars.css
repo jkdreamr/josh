@@ -19,6 +19,8 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
+  /* the HUD sizes itself to the game, not the window (the arcade window on a laptop is small in a wide page) */
+  container: g-bedwars-stage / size;
 }
 .g-bedwars .g-bedwars-host {
   position: absolute;
@@ -296,6 +298,7 @@
   margin: 0;
   font-family: var(--g-bedwars-display);
   font-size: clamp(40px, 9vw, 84px);
+  font-size: clamp(30px, 9cqw, 84px);
   font-weight: 900;
   letter-spacing: 0.02em;
   line-height: 1;
@@ -304,6 +307,7 @@
 .g-bedwars .g-bedwars-title p {
   margin: 8px 0 0;
   font-size: clamp(14px, 2.6vw, 20px);
+  font-size: clamp(13px, 2.6cqw, 20px);
   font-weight: 600;
 }
 @keyframes g-bedwars-title {
@@ -358,13 +362,13 @@
   }
 }
 
-/* shop and upgrades */
+/* shop and upgrades (clear of the shell's control row at the top right, so a close never lands on Arcade) */
 .g-bedwars .g-bedwars-panelWrap {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 12px;
+  padding: 52px 12px 12px;
   background: rgba(0, 0, 0, 0.35);
   pointer-events: auto;
   text-shadow: none;
@@ -397,14 +401,19 @@
   margin-left: auto;
 }
 .g-bedwars .g-bedwars-close {
-  width: 34px;
-  height: 34px;
+  flex: none;
+  width: 40px;
+  height: 40px;
   border-radius: 8px;
   color: #fff;
   background: rgba(255, 255, 255, 0.08);
 }
 .g-bedwars .g-bedwars-close:hover {
   background: var(--g-bedwars-cardinal);
+}
+.g-bedwars .g-bedwars-panel.is-touch .g-bedwars-close {
+  width: 48px;
+  height: 48px;
 }
 .g-bedwars .g-bedwars-tabs {
   display: flex;
@@ -560,6 +569,94 @@
   margin-right: 8px;
   color: #ff9a9a;
 }
+/* the inventory screen: the back nine over the hotbar */
+.g-bedwars .g-bedwars-panel.is-inv {
+  width: min(500px, 100%);
+}
+.g-bedwars .g-bedwars-gear {
+  margin: -4px 0 8px;
+  font-size: 12px;
+  color: #b9b9c0;
+}
+.g-bedwars .g-bedwars-invGrid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 50px));
+  justify-content: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.g-bedwars .g-bedwars-invGrid.is-hotbar {
+  margin-top: 10px;
+  background: rgba(140, 21, 21, 0.22);
+}
+.g-bedwars .g-bedwars-cell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 4px;
+  color: #fff;
+  text-shadow: var(--g-bedwars-shadow);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.07);
+  touch-action: manipulation;
+}
+.g-bedwars .g-bedwars-cell:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.g-bedwars .g-bedwars-cell.is-sel {
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.6);
+}
+.g-bedwars .g-bedwars-cell.is-picked {
+  background: rgba(255, 210, 63, 0.35);
+  box-shadow: inset 0 0 0 3px var(--g-bedwars-gold);
+}
+.g-bedwars .g-bedwars-cell b {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.g-bedwars .g-bedwars-cell kbd {
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  font: 600 9px Inter, system-ui, sans-serif;
+  color: rgba(255, 255, 255, 0.45);
+}
+.g-bedwars .g-bedwars-cell .g-bedwars-icon {
+  width: 70%;
+  height: auto;
+}
+@container g-bedwars-stage (max-width: 460px) {
+  /* nine 40px slots across a phone */
+  .g-bedwars .g-bedwars-panelWrap.is-inv {
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+  .g-bedwars .g-bedwars-panel.is-inv {
+    padding: 10px 4px;
+  }
+  .g-bedwars .g-bedwars-panel.is-inv header {
+    padding: 0 6px;
+  }
+  .g-bedwars .g-bedwars-invGrid {
+    gap: 1px;
+    padding: 2px;
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+  }
+}
+.g-bedwars .g-bedwars-invHint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  text-align: center;
+  color: #c9c9cf;
+}
 .g-bedwars .g-bedwars-panel-hint {
   margin: 10px 0 0;
   font-size: 11px;
@@ -700,48 +797,36 @@
 .g-bedwars .g-bedwars-tb.is-on {
   background: rgba(255, 255, 255, 0.35);
 }
-.g-bedwars .g-bedwars-tb.is-shop {
-  grid-column: span 2;
-  width: auto;
+/* bag and shop: above the stick, away from the action buttons */
+.g-bedwars .g-bedwars-tmenu {
+  position: absolute;
+  left: 14px;
+  bottom: 236px;
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.g-bedwars .g-bedwars-tm {
+  min-width: 56px;
   height: 44px;
+  padding: 0 14px;
   border-radius: 999px;
-  background: rgba(255, 210, 63, 0.8);
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.55);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.25);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.g-bedwars .g-bedwars-tm.is-shop {
+  min-width: 72px;
+  background: rgba(255, 210, 63, 0.85);
   color: #222;
-}
-.g-bedwars .is-touch .g-bedwars-board {
-  top: 48px;
-  min-width: 0;
-  width: 128px;
-  font-size: 11px;
-  line-height: 1.3;
-}
-.g-bedwars .is-touch .g-bedwars-board ul {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  column-gap: 2px;
-}
-.g-bedwars .is-touch .g-bedwars-board li {
-  padding: 0 6px;
-  gap: 3px;
-}
-.g-bedwars .is-touch .g-bedwars-board li span,
-.g-bedwars .is-touch .g-bedwars-board li small,
-.g-bedwars .is-touch .g-bedwars-board footer,
-.g-bedwars .is-touch .g-bedwars-board .g-bedwars-board-sub {
-  display: none;
-}
-.g-bedwars .is-touch .g-bedwars-board p {
-  padding: 0 8px;
 }
 .g-bedwars .is-touch .g-bedwars-itemName {
   bottom: 88px;
-}
-.g-bedwars .is-touch .g-bedwars-board header {
-  font-size: 15px;
-}
-.g-bedwars .is-touch .g-bedwars-slot {
-  width: 38px;
-  height: 38px;
 }
 .g-bedwars .is-touch .g-bedwars-feed {
   bottom: auto;
@@ -750,8 +835,47 @@
   max-width: 52%;
   font-size: 11px;
 }
+/* touch slots stay at least 40px (nine of them and their gaps fit across a 390px phone) */
+.g-bedwars .is-touch .g-bedwars-slots {
+  gap: 2px;
+  padding: 2px;
+}
+.g-bedwars .is-touch .g-bedwars-slot {
+  width: 40px;
+  height: 40px;
+}
 
-@media (max-width: 560px) {
+/* A small game (the arcade window on a laptop, a phone) gets the compact HUD: sized to the game, not the window */
+@container g-bedwars-stage (max-width: 760px) or (max-height: 460px) {
+  .g-bedwars .g-bedwars-board {
+    top: 48px;
+    min-width: 0;
+    width: 128px;
+    font-size: 11px;
+    line-height: 1.3;
+  }
+  .g-bedwars .g-bedwars-board header {
+    font-size: 15px;
+  }
+  .g-bedwars .g-bedwars-board ul {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 2px;
+    margin: 4px 0;
+  }
+  .g-bedwars .g-bedwars-board li {
+    padding: 0 6px;
+    gap: 3px;
+  }
+  .g-bedwars .g-bedwars-board li span,
+  .g-bedwars .g-bedwars-board li small,
+  .g-bedwars .g-bedwars-board footer,
+  .g-bedwars .g-bedwars-board .g-bedwars-board-sub {
+    display: none;
+  }
+  .g-bedwars .g-bedwars-board p {
+    padding: 0 8px;
+  }
   .g-bedwars .g-bedwars-slot {
     width: 36px;
     height: 36px;
@@ -759,17 +883,6 @@
   .g-bedwars .g-bedwars-slot .g-bedwars-icon {
     width: 26px;
     height: 26px;
-  }
-  .g-bedwars .g-bedwars-board {
-    min-width: 120px;
-    font-size: 10px;
-  }
-  .g-bedwars .g-bedwars-board header {
-    font-size: 14px;
-  }
-  .g-bedwars .g-bedwars-board footer,
-  .g-bedwars .g-bedwars-board .g-bedwars-board-sub {
-    display: none;
   }
   .g-bedwars .g-bedwars-hearts {
     max-width: 150px;
@@ -785,6 +898,91 @@
   .g-bedwars .g-bedwars-wallet .g-bedwars-icon {
     width: 16px;
     height: 16px;
+  }
+  .g-bedwars .g-bedwars-feed {
+    bottom: 92px;
+    font-size: 11px;
+  }
+  .g-bedwars .g-bedwars-prompt {
+    bottom: 92px;
+    font-size: 12px;
+  }
+  .g-bedwars .g-bedwars-itemName {
+    bottom: 80px;
+  }
+  .g-bedwars .g-bedwars-clickToPlay {
+    font-size: 18px;
+  }
+}
+/* short: the score rows wait in the Tab list, and the pill sits above the hotbar */
+@container g-bedwars-stage (max-height: 340px) {
+  .g-bedwars .g-bedwars-board {
+    line-height: 1.2;
+  }
+  .g-bedwars .g-bedwars-board header {
+    padding: 2px 8px;
+    font-size: 13px;
+  }
+  .g-bedwars .g-bedwars-board .g-bedwars-stat {
+    display: none;
+  }
+  .g-bedwars .g-bedwars-clickToPlay {
+    top: 30%;
+  }
+  .g-bedwars .g-bedwars-panelWrap {
+    padding-bottom: 6px;
+  }
+  .g-bedwars .g-bedwars-invGrid {
+    grid-template-columns: repeat(9, minmax(0, 42px));
+  }
+  .g-bedwars .g-bedwars-invGrid.is-hotbar {
+    margin-top: 6px;
+  }
+  .g-bedwars .g-bedwars-panel {
+    padding: 8px 10px;
+  }
+  .g-bedwars .g-bedwars-panel header {
+    margin-bottom: 4px;
+  }
+  .g-bedwars .g-bedwars-panel h2 {
+    font-size: 20px;
+  }
+  .g-bedwars .g-bedwars-gear {
+    margin: 0 0 4px;
+  }
+  .g-bedwars .g-bedwars-invHint,
+  .g-bedwars .g-bedwars-panel-hint {
+    display: none;
+  }
+}
+/* a tablet: bigger slots, so they stay big inside the scaled iPad frame */
+@container g-bedwars-stage (min-width: 600px) and (min-height: 600px) {
+  .g-bedwars .is-touch .g-bedwars-slot {
+    width: 50px;
+    height: 50px;
+  }
+}
+/* a phone held sideways: everything in reach of a thumb, nothing above the top bar */
+@container g-bedwars-stage (max-height: 460px) {
+  .g-bedwars .is-touch .g-bedwars-tbtns {
+    right: 10px;
+    bottom: 12px;
+    grid-template-columns: 50px 50px;
+    gap: 8px;
+  }
+  .g-bedwars .is-touch .g-bedwars-tb {
+    width: 50px;
+    height: 50px;
+    font-size: 12px;
+  }
+  .g-bedwars .is-touch .g-bedwars-stickZone {
+    bottom: 16px;
+  }
+  .g-bedwars .is-touch .g-bedwars-tmenu {
+    bottom: 132px;
+  }
+  .g-bedwars .is-touch .g-bedwars-itemName {
+    bottom: 80px;
   }
 }
 
@@ -812,6 +1010,21 @@
 .g-bedwars .g-bedwars-hostnote {
   display: block;
   opacity: 0.75;
+}
+.g-bedwars .g-bedwars-touchNote {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.8;
+}
+.g-bedwars .g-bedwars-done {
+  min-width: 72px;
+  min-height: 40px;
+}
+@media (pointer: coarse) {
+  .g-bedwars .g-bedwars-done {
+    min-height: 48px;
+  }
 }
 
 /* start card extras: record, how to play, locker */

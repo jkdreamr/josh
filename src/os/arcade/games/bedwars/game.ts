@@ -18,10 +18,13 @@ import {
   forgeInterval,
   freshInventory,
   freshUpgrades,
+  HOTBAR,
   inventoryAfterDeath,
   isBlockItem,
   isBow,
   isRes,
+  moveSlot,
+  offerById,
   takeItem,
   trapCost,
   upgradeCost,
@@ -172,7 +175,8 @@ export type Ev =
   | { t: 'tier'; kind: 'diamond' | 'emerald'; tier: number }
   | { t: 'phase'; kind: PhaseKind }
   | { t: 'msg'; k: MsgKind; text: string; team?: number; to?: number }
-  | { t: 'win'; team: number }
+  | { t: 'win'; team: number; seat: number }
+  | { t: 'skin'; p: number; skin: number }
   | { t: 'fx'; p: number; fx: Effects; absorb: number }
   | { t: 'tp'; p: number; x: number; y: number; z: number; ep: number }
   | { t: 'use'; p: number; item: Item }
@@ -198,6 +202,8 @@ export type Game = {
   events: Ev[];
   nextId: number;
   winner: number;
+  /** Online: the seat everyone reports as the winner (the lowest human seat still in the room on the winning team). */
+  winSeat: number;
   over: boolean;
   seed: number;
   /** True on the machine that runs the rules (solo or the online host). */
@@ -244,6 +250,7 @@ export function createGame(opts: { mode: Mode; pace: Pace; level: Level; entrant
     events: [],
     nextId: 1,
     winner: -1,
+    winSeat: -1,
     over: false,
     seed: (opts.seed ?? 1234567) >>> 0,
     authority: opts.authority ?? true,
@@ -574,7 +581,10 @@ function checkTeams(g: Game) {
   if (!g.over && left.length <= 1 && g.teams.some((t) => t.used)) {
     g.over = true;
     g.winner = left.length === 1 ? left[0].id : -1;
-    emit(g, { t: 'win', team: g.winner });
+    // the host names the seat, so everyone reports the same one even after a teammate left and a bot took over
+    const seats = g.players.filter((p) => p.team === g.winner && p.seat >= 0 && p.ctrl !== 'bot' && !p.gone).map((p) => p.seat);
+    g.winSeat = seats.length ? Math.min(...seats) : -1;
+    emit(g, { t: 'win', team: g.winner, seat: g.winSeat });
   }
 }
 
@@ -661,6 +671,9 @@ export function nearNpc(g: Game, p: Player, which: 'shop' | 'upgrades', slack = 
 export function buyOffer(g: Game, p: Player, offerId: string, slack = 0): boolean {
   if (!p.alive || p.out) return false;
   if (!nearNpc(g, p, 'shop', slack)) return false;
+  const give = offerById(offerId)?.give;
+  const item = !give ? null : 'item' in give ? give.item : 'tool' in give ? give.tool : 'shears' in give ? 'shears' : null;
+  const behind = item ? backCount(p.inv, item) : 0;
   const r = buy(p.inv, offerId);
   if (!r.ok) {
     emit(g, { t: 'msg', k: 'deny', text: r.why === 'poor' ? "you don't have enough resources!" : r.why === 'owned' ? 'you already have that!' : r.why === 'full' ? 'your inventory is full!' : "that's not for sale.", to: p.id });
@@ -668,8 +681,13 @@ export function buyOffer(g: Game, p: Player, offerId: string, slack = 0): boolea
   }
   invChanged(g, p);
   emit(g, { t: 'msg', k: 'buy', text: `you purchased ${r.name}`, to: p.id });
+  // a full hotbar sends it to the inventory behind it: say where it went
+  if (item && p.ctrl !== 'bot' && backCount(p.inv, item) > behind) emit(g, { t: 'msg', k: 'info', text: 'your hotbar is full, so it went in your inventory.', to: p.id });
   return true;
 }
+
+/** How many of an item sit in the inventory behind the hotbar. */
+const backCount = (inv: Inventory, item: Item) => inv.slots.reduce((n, s, i) => n + (i >= HOTBAR && s?.item === item ? s.n : 0), 0);
 
 export function buyUpgrade(g: Game, p: Player, key: UpgradeKey, slack = 0): boolean {
   if (!p.alive || p.out || !nearNpc(g, p, 'upgrades', slack)) return false;
@@ -976,7 +994,8 @@ export function tickGame(g: Game) {
   for (let i = g.drops.length - 1; i >= 0; i--) {
     const d = g.drops[i];
     stepDrop(w, d);
-    if (d.y < VOID_Y - 10 || (d.gen < 0 && d.age > 5 * 60 * TPS)) {
+    // dropped items go after five minutes; forge and generator piles stay (feeding them keeps them fresh)
+    if (d.y < VOID_Y - 10 || (d.gen === -1 && d.age > 5 * 60 * TPS)) {
       g.drops.splice(i, 1);
       emit(g, { t: 'pick', id: d.id, p: -1, item: d.item, n: 0 });
       continue;
@@ -1180,7 +1199,8 @@ function tickClock(g: Game) {
     emit(g, { t: 'msg', k: 'phase', text: 'GAME OVER > time is up. nobody wins this one.' });
     g.over = true;
     g.winner = -1;
-    emit(g, { t: 'win', team: -1 });
+    g.winSeat = -1;
+    emit(g, { t: 'win', team: -1, seat: -1 });
   }
 }
 
@@ -1209,6 +1229,7 @@ export type Action =
   | { a: 'trap'; kind: TrapKind }
   | { a: 'drop'; slot: number; all: boolean }
   | { a: 'sel'; slot: number }
+  | { a: 'swap'; from: number; to: number }
   | { a: 'fall'; d: number };
 
 /** Applies an action for a player. remote widens the reach checks a little for network lag. */
@@ -1228,8 +1249,11 @@ export function applyAction(g: Game, p: Player, act: Action, remote = false): bo
       if (!ok && remote) emit(g, { t: 'block', x: act.x, y: act.y, z: act.z, id: g.world.get(act.x, act.y, act.z), by: -1, placed: g.world.isPlaced(act.x, act.y, act.z), was: AIR });
       return ok;
     }
-    case 'hit':
-      return attack(g, p, act.target, act.crit, slack);
+    case 'hit': {
+      // the host swings at guests drawn a tenth of a second in the past: the same kind of allowance guests get
+      const lag = remote ? slack : g.players[act.target]?.ctrl === 'remote' ? 0.75 : 0;
+      return attack(g, p, act.target, act.crit, lag);
+    }
     case 'shoot':
       return shoot(g, p, act.charge, act.yaw, act.pitch);
     case 'use':
@@ -1244,6 +1268,11 @@ export function applyAction(g: Game, p: Player, act: Action, remote = false): bo
       return dropHeld(g, p, act.slot, act.all);
     case 'sel':
       if (act.slot >= 0 && act.slot < 9) p.sel = act.slot;
+      return true;
+    case 'swap':
+      // the inventory screen: move a stack between slots
+      if (!p.alive || p.out || !moveSlot(p.inv, act.from, act.to)) return false;
+      invChanged(g, p);
       return true;
     case 'fall':
       if (act.d > 0 && act.d < 300) landed(g, p, act.d);

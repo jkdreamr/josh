@@ -6,11 +6,15 @@ import { TEAMS, TILE } from './blocks.ts';
 import { iconURL } from './atlas.ts';
 import {
   ARMOR_NAMES,
+  AXE_NAMES,
+  HOTBAR,
   OFFERS,
+  PICK_NAMES,
   QUICK_BUY,
   RESOURCES,
   RES_COLOR,
   SHOP_CATS,
+  SLOTS,
   TRAPS,
   UPGRADES,
   blockFor,
@@ -143,13 +147,13 @@ export function Scoreboard({ hud, mode }: { hud: Hud; mode: string }) {
           </li>
         ))}
       </ul>
-      <p>
+      <p className="g-bedwars-stat">
         Kills: <b className="is-green">{hud.stats.kills}</b>
       </p>
-      <p>
+      <p className="g-bedwars-stat">
         Final Kills: <b className="is-green">{hud.stats.finals}</b>
       </p>
-      <p>
+      <p className="g-bedwars-stat">
         Beds Broken: <b className="is-green">{hud.stats.beds}</b>
       </p>
       <footer>joshuakoo.com</footer>
@@ -228,7 +232,7 @@ export function ShopPanel({ inv, team, onBuy, onClose, touch }: { inv: Inventory
     <Panel title="Item Shop" onClose={onClose} wallet={inv.wallet} touch={touch}>
       <nav className="g-bedwars-tabs" role="tablist">
         {SHOP_CATS.map((c) => (
-          <button key={c.id} type="button" role="tab" aria-selected={cat === c.id} className={cat === c.id ? 'is-on' : ''} onClick={() => setCat(c.id)}>
+          <button key={c.id} type="button" role="tab" aria-selected={cat === c.id} className={cat === c.id ? 'is-on' : ''} onMouseDown={noFocus} onClick={() => setCat(c.id)}>
             <Icon src={catIcon(c.id, team)} size={24} />
             <span>{c.name}</span>
           </button>
@@ -281,7 +285,7 @@ function OfferCard({ o, inv, team, onBuy }: { o: Offer; inv: Inventory; team: nu
   const can = !!price && inv.wallet[price.res] >= price.cost;
   const n = 'item' in o.give ? o.give.n : 1;
   return (
-    <button type="button" className={`g-bedwars-offer${owned ? ' is-owned' : can ? ' is-can' : ' is-cant'}`} onClick={() => !owned && onBuy(o.id)} disabled={owned} title={o.desc}>
+    <button type="button" className={`g-bedwars-offer${owned ? ' is-owned' : can ? ' is-can' : ' is-cant'}`} onMouseDown={noFocus} onClick={() => !owned && onBuy(o.id)} disabled={owned} title={o.desc}>
       <span className="g-bedwars-offer-icon">
         <Icon src={offerIcon(o, inv, team)} size={36} />
         {n > 1 && <b>{n}</b>}
@@ -308,7 +312,7 @@ export function UpgradesPanel({ inv, ups, traps, onBuy, onTrap, onClose, touch }
           const cost = upgradeCost(ups, u.key);
           const can = cost !== null && inv.wallet.diamond >= cost;
           return (
-            <button key={u.key} type="button" className={`g-bedwars-up${cost === null ? ' is-owned' : can ? ' is-can' : ' is-cant'}`} onClick={() => cost !== null && onBuy(u.key)} disabled={cost === null}>
+            <button key={u.key} type="button" className={`g-bedwars-up${cost === null ? ' is-owned' : can ? ' is-can' : ' is-cant'}`} onMouseDown={noFocus} onClick={() => cost !== null && onBuy(u.key)} disabled={cost === null}>
               <Icon src={iconURL({ tile: TILE[u.tile] })} size={36} />
               <span className="g-bedwars-up-text">
                 <b>{u.name}</b>
@@ -338,7 +342,7 @@ export function UpgradesPanel({ inv, ups, traps, onBuy, onTrap, onClose, touch }
         {TRAPS.map((t) => {
           const can = traps.length < 3 && inv.wallet.diamond >= trapCost(traps.length);
           return (
-            <button key={t.kind} type="button" className={`g-bedwars-up${can ? ' is-can' : ' is-cant'}`} onClick={() => onTrap(t.kind)} title={t.desc}>
+            <button key={t.kind} type="button" className={`g-bedwars-up${can ? ' is-can' : ' is-cant'}`} onMouseDown={noFocus} onClick={() => onTrap(t.kind)} title={t.desc}>
               <Icon src={iconURL({ tile: TILE[t.tile] })} size={30} />
               <span className="g-bedwars-up-text">
                 <b>{t.name}</b>
@@ -360,13 +364,10 @@ export function UpgradesPanel({ inv, ups, traps, onBuy, onTrap, onClose, touch }
   );
 }
 
-function Panel({ title, children, onClose, wallet, touch, only }: { title: string; children: ReactNode; onClose: () => void; wallet: Record<Res, number>; touch: boolean; only?: Res }) {
-  useEffect(() => {
-    // nothing to set up: Escape and E are handled by the game
-  }, []);
+function Panel({ title, children, onClose, wallet, touch, only, kind }: { title: string; children: ReactNode; onClose: () => void; wallet: Record<Res, number>; touch: boolean; only?: Res; kind?: string }) {
   return (
-    <div className="g-bedwars-panelWrap" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
-      <section className={`g-bedwars-panel${touch ? ' is-touch' : ''}`} role="dialog" aria-label={title}>
+    <div className={`g-bedwars-panelWrap${kind ? ` is-${kind}` : ''}`} onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
+      <section className={`g-bedwars-panel${touch ? ' is-touch' : ''}${kind ? ` is-${kind}` : ''}`} role="dialog" aria-label={title}>
         <header>
           <h2>{title}</h2>
           <div className="g-bedwars-wallet is-panel">
@@ -377,7 +378,7 @@ function Panel({ title, children, onClose, wallet, touch, only }: { title: strin
               </span>
             ))}
           </div>
-          <button type="button" className="g-bedwars-close" onClick={onClose} aria-label="Close">
+          <button type="button" className="g-bedwars-close" onClick={onClose} onMouseDown={noFocus} aria-label="Close">
             ✕
           </button>
         </header>
@@ -385,6 +386,57 @@ function Panel({ title, children, onClose, wallet, touch, only }: { title: strin
         {!touch && <p className="g-bedwars-panel-hint">esc or e to close</p>}
       </section>
     </div>
+  );
+}
+
+/** A click never parks focus on a panel button, so Space and Enter can't press it again. */
+const noFocus = (e: { preventDefault: () => void }) => e.preventDefault();
+
+/**
+ * The inventory screen: the nine slots behind the hotbar above the hotbar itself, Minecraft style. Pick a stack up,
+ * then put it down (or swap it) where you click next; shift click sends it across, 1 to 9 swap into the hotbar.
+ */
+export function InventoryPanel({ inv, team, sel, picked, touch, onSlot, onHover, onClose }: { inv: Inventory; team: number; sel: number; picked: number; touch: boolean; onSlot: (i: number, quick: boolean) => void; onHover: (i: number) => void; onClose: () => void }) {
+  const cell = (i: number) => {
+    const s = inv.slots[i];
+    const tier = s?.item === 'pick' ? inv.pick : s?.item === 'axe' ? inv.axe : 0;
+    return (
+      <button
+        key={i}
+        type="button"
+        className={`g-bedwars-cell${i === sel ? ' is-sel' : ''}${i === picked ? ' is-picked' : ''}${s ? '' : ' is-empty'}`}
+        aria-label={s ? `${s.item} ${s.n}` : `${i < HOTBAR ? `hotbar ${i + 1}` : 'slot'}, empty`}
+        aria-pressed={i === picked}
+        onMouseDown={noFocus}
+        onClick={(e) => onSlot(i, e.shiftKey)}
+        onPointerEnter={() => onHover(i)}
+        onPointerLeave={() => onHover(-1)}
+      >
+        <SlotIcon s={s ? { item: s.item, n: s.n, team, tier } : null} />
+        {i < HOTBAR && <kbd>{i + 1}</kbd>}
+      </button>
+    );
+  };
+  const back = Array.from({ length: SLOTS - HOTBAR }, (_, k) => cell(HOTBAR + k));
+  const bar = Array.from({ length: HOTBAR }, (_, k) => cell(k));
+  const gear = [`${ARMOR_NAMES[inv.armor]} armor`, inv.pick ? PICK_NAMES[inv.pick] : '', inv.axe ? AXE_NAMES[inv.axe] : '', inv.shears ? 'Shears' : ''].filter(Boolean).join(' · ');
+  const hint =
+    picked >= 0
+      ? `now ${touch ? 'tap' : 'click'} where it goes.`
+      : touch
+        ? 'tap an item to pick it up, then tap where it goes.'
+        : 'click an item, then where it goes. shift click sends it across, 1 to 9 swap it into the hotbar.';
+  return (
+    <Panel title="Inventory" onClose={onClose} wallet={inv.wallet} touch={touch} kind="inv">
+      <p className="g-bedwars-gear">{gear}</p>
+      <div className="g-bedwars-invGrid" role="group" aria-label="Inventory">
+        {back}
+      </div>
+      <div className="g-bedwars-invGrid is-hotbar" role="group" aria-label="Hotbar">
+        {bar}
+      </div>
+      <p className="g-bedwars-invHint">{hint}</p>
+    </Panel>
   );
 }
 
@@ -432,17 +484,18 @@ export function Sheet({ root, title, onClose, children }: { root: HTMLElement | 
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     close.current?.focus({ preventScroll: true });
-    // keys stay in the sheet: Escape closes it, and nothing reaches the game behind
+    if (!root) return;
+    // keys stay in the sheet: Escape closes it, and nothing reaches the game behind (caught on the game's own root,
+    // on the way down, before the shell sees it)
     const onKey = (e: KeyboardEvent) => {
-      if (!root?.contains(e.target as Node)) return;
       e.stopPropagation();
       if (e.key === 'Escape') {
         e.preventDefault();
         done.current();
       }
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    root.addEventListener('keydown', onKey, true);
+    return () => root.removeEventListener('keydown', onKey, true);
   }, [root]);
   if (!root) return null;
   return createPortal(
@@ -460,7 +513,7 @@ export function Sheet({ root, title, onClose, children }: { root: HTMLElement | 
       <div className="g-bedwars-sheet-card">
         <header>
           <h2>{title}</h2>
-          <button type="button" ref={close} className="arcade-btn" onClick={onClose}>
+          <button type="button" ref={close} className="arcade-btn g-bedwars-done" onClick={onClose}>
             Done
           </button>
         </header>
@@ -493,13 +546,14 @@ export function RecordStrip({ r }: { r: StatRecord }) {
   );
 }
 
-export function HowToPlay({ touch }: { touch: boolean }) {
+export function HowToPlay({ touch, mouse }: { touch: boolean; mouse: boolean }) {
+  const both = touch && mouse;
   return (
     <>
       <p className="g-bedwars-lede">Protect your bed, break everyone else's. While your bed stands you come back five seconds after you die. Once it's gone, your next death is final. Last team standing wins.</p>
-      <section>
-        <h3>Controls</h3>
-        {touch ? (
+      {touch && (
+        <section>
+          <h3>{both ? 'Touch' : 'Controls'}</h3>
           <dl className="g-bedwars-keys">
             <dt>left side</dt>
             <dd>drag to walk (you sprint on your own)</dd>
@@ -513,13 +567,21 @@ export function HowToPlay({ touch }: { touch: boolean }) {
             <dd>toggles; you can't walk off an edge while crouched</dd>
             <dt>hotbar</dt>
             <dd>tap a slot to hold it</dd>
+            <dt>bag</dt>
+            <dd>your inventory: tap an item, then tap where it goes</dd>
+            <dt>shop, team</dt>
+            <dd>show up when you're next to a keeper</dd>
           </dl>
-        ) : (
+        </section>
+      )}
+      {(mouse || !touch) && (
+        <section>
+          <h3>{both ? 'Keyboard and mouse' : 'Controls'}</h3>
           <dl className="g-bedwars-keys">
             <dt>click</dt>
             <dd>captures the mouse (Esc lets it go)</dd>
             <dt>WASD, Space</dt>
-            <dd>walk and jump. you sprint on your own (switch to Ctrl or double tap W in the settings)</dd>
+            <dd>walk and jump. you sprint on your own (or double tap W, if you switch Sprint in the settings)</dd>
             <dt>Shift</dt>
             <dd>crouch. you can't walk off an edge while crouched</dd>
             <dt>left click</dt>
@@ -528,13 +590,15 @@ export function HowToPlay({ touch }: { touch: boolean }) {
             <dd>place blocks, draw the bow, eat, drink, throw, talk to the shop keepers</dd>
             <dt>1 to 9, wheel</dt>
             <dd>pick from the hotbar. Q drops what you hold</dd>
-            <dt>E or B</dt>
-            <dd>open the shop or team upgrades when you're next to the keeper</dd>
+            <dt>E</dt>
+            <dd>the shop or team upgrades next to a keeper, your inventory anywhere else</dd>
+            <dt>I</dt>
+            <dd>your inventory, anywhere. click an item, then where it goes</dd>
             <dt>Tab</dt>
             <dd>everyone's kills and beds</dd>
           </dl>
-        )}
-      </section>
+        </section>
+      )}
       <section>
         <h3>Resources</h3>
         <ul>

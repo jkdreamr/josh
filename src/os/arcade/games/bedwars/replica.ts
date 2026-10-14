@@ -10,7 +10,7 @@ import { F_ALIVE, F_GROUND, F_INVIS, F_SNEAK, F_SPRINT, type PosEntry, type Sync
 
 /** Builds a guest's replica from a sync: the same map and roster, then every change the host has seen. */
 export function buildReplica(s: SyncState, mySeat: number): { game: Game; me: number } {
-  const entrants = s.roster.map((r) => ({ name: r.name, seat: r.seat, ctrl: (r.seat === mySeat && !r.bot ? 'local' : 'remote') as 'local' | 'remote', skin: r.skin, team: r.team }));
+  const entrants = s.roster.map((r) => ({ name: r.name, seat: r.seat, ctrl: (r.seat === mySeat && !r.bot ? 'local' : r.bot ? 'bot' : 'remote') as 'local' | 'remote' | 'bot', skin: r.skin, team: r.team }));
   const g = createGame({ mode: s.mode, pace: s.pace, level: s.level, entrants, seed: s.seed, authority: false });
   // createGame spreads entrants over teams itself; trust the host's assignment
   s.roster.forEach((r, i) => {
@@ -38,6 +38,7 @@ export function applySync(g: Game, s: SyncState) {
   g.phase = s.phase;
   g.over = s.over;
   g.winner = s.winner;
+  g.winSeat = s.winSeat ?? -1;
   const UP: UpgradeKey[] = ['sharp', 'prot', 'haste', 'forge', 'heal'];
   s.teams.forEach((t, i) => {
     const team = g.teams[i];
@@ -50,6 +51,8 @@ export function applySync(g: Game, s: SyncState) {
   s.players.forEach((sp, i) => {
     const p = g.players[i];
     if (!p) return;
+    const r = s.roster[i];
+    if (r) p.skin = r.skin;
     p.alive = sp.alive;
     p.out = sp.out;
     p.respawn = sp.respawn;
@@ -188,7 +191,13 @@ export function applyEvent(g: Game, e: Ev, me: number) {
     case 'win':
       g.over = true;
       g.winner = e.team;
+      g.winSeat = e.seat;
       break;
+    case 'skin': {
+      const p = P(e.p);
+      if (p) p.skin = e.skin;
+      break;
+    }
     case 'fx': {
       const p = P(e.p);
       if (!p) break;
