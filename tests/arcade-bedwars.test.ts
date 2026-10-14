@@ -21,7 +21,7 @@ import {
   type Game,
 } from '../src/os/arcade/games/bedwars/game.ts';
 import { meshChunk } from '../src/os/arcade/games/bedwars/mesher.ts';
-import { SKILLS, defenseCells, findPath, nextPurchase, thinkBots } from '../src/os/arcade/games/bedwars/bots.ts';
+import { SKILLS, botDigTicks, defenseCells, findPath, nextPurchase, thinkBots } from '../src/os/arcade/games/bedwars/bots.ts';
 import {
   CHUNK,
   EventQueue,
@@ -430,6 +430,42 @@ test('bots only fight who they can see and miss when their aim is off', () => {
   }
   assert.equal(me.hp, 20);
   void bot;
+});
+
+test('bot-only games end with a winner, not the draw clock (the last bots hunt each other down)', () => {
+  for (const level of ['easy', 'hard'] as const)
+    for (const seed of [1, 3]) {
+      const g = createGame({ mode: 'solo', pace: 'quick', level, entrants: bots(8), seed });
+      const end = g.phases.find((ph) => ph.kind === 'end')!.at;
+      while (!g.over && g.tick < end + TPS) {
+        thinkBots(g);
+        tickGame(g);
+        g.events.length = 0;
+      }
+      assert.ok(g.over && g.winner >= 0, `${level} seed ${seed}: winner ${g.winner} at ${Math.round(g.tick / TPS)}s`);
+    }
+});
+
+test('traps work on bots: blindness hides anyone past a few blocks, miner fatigue slows their digging', () => {
+  for (const blind of [false, true]) {
+    const g = createGame({ mode: 'solo', pace: 'quick', level: 'normal', entrants: [{ name: 'me', seat: 0, ctrl: 'local', skin: 0, team: 1 }, { name: 'b', seat: -1, ctrl: 'bot', skin: 0, team: 0 }], seed: 4 });
+    const [me, bot] = g.players;
+    const fx = -Math.sin(bot.body.yaw);
+    const fz = -Math.cos(bot.body.yaw);
+    if (blind) bot.fx.blind = 200;
+    for (let i = 0; i < 12; i++) {
+      me.body.x = bot.body.x + fx * 6;
+      me.body.z = bot.body.z + fz * 6;
+      me.body.y = bot.body.y;
+      thinkBots(g);
+    }
+    assert.equal((bot.brain as { enemy: number }).enemy, blind ? -1 : me.id, blind ? 'blind: nobody in sight' : 'sees you six blocks ahead');
+  }
+  const g = soloWithMe();
+  const bot = g.players[1];
+  const plain = botDigTicks(g, bot, END_STONE, 'none');
+  bot.fx.fatigue = 100;
+  assert.ok(Math.abs(botDigTicks(g, bot, END_STONE, 'none') - plain * 3.3) < 1e-9, 'three times slower and then some');
 });
 
 // ---------------------------------------------------------------------------------------------------------------

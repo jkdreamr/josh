@@ -3,11 +3,10 @@
 
 export type Pose = { t: number; x: number; y: number; z: number; yaw: number; pitch: number };
 
-const wrap = (a: number) => {
-  while (a > Math.PI) a -= Math.PI * 2;
-  while (a < -Math.PI) a += Math.PI * 2;
-  return a;
-};
+const TAU = Math.PI * 2;
+/** An angle folded into -PI..PI in one step (a loop would never finish on a huge value from a bad packet). */
+export const wrapAngle = (a: number) => (Number.isFinite(a) ? a - TAU * Math.floor((a + Math.PI) / TAU) : 0);
+const wrap = wrapAngle;
 
 export class Track {
   private buf: Pose[] = [];
