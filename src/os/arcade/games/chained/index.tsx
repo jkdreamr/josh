@@ -21,7 +21,7 @@ const shadeOptions = SHADE_LEVELS.map((l) => [l, SHADE_INFO[l].label] as const);
 type RankedMode = (typeof RANKED_MODES)[number];
 const partyOptions = [
   ['solo', 'One Player'],
-  ['local', 'Two on This Keyboard'],
+  ['local', 'Two Players'],
 ] as const;
 const musicOptions = [
   ['on', 'On'],
@@ -108,12 +108,15 @@ function Setup() {
   return (
     <>
       <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
-      <small className="g-chained-note">{MODE_INFO[mode].blurb}</small>
+      {mode !== 'race' && <small className="g-chained-note">{MODE_INFO[mode].blurb}</small>}
       {!shell.touch && <Segmented label="Souls" value={party} options={partyOptions} onChange={setParty} />}
       {mode === 'race' && (
         <>
           <Segmented label="Shades" value={shades} options={shadeOptions} onChange={setShades} />
-          <small className="g-chained-note">{team ? 'The two of you race the shades, a pair of souls the game climbs. ' : 'You race the shades, a pair of souls the game climbs. '}{SHADE_INFO[shades].blurb}</small>
+          <small className="g-chained-note">
+            {team ? 'The two of you race the shades. ' : 'You race the shades, swapping between your souls. '}
+            {SHADE_INFO[shades].blurb}
+          </small>
         </>
       )}
       <Segmented label="Music" value={music} options={musicOptions} onChange={setMusic} />
@@ -871,15 +874,20 @@ function Play({ kind }: { kind: Kind }) {
   function placeTags(g: Game, v: View) {
     if (!live && g.mode !== 'race') return;
     const { w, h } = sizeRef.current;
+    const shown: { el: HTMLDivElement; x: number; y: number }[] = [];
     for (const s of g.souls) {
       const el = tags.current.get(s.idx);
       if (!el) continue;
       const p = !tagged(s) || s.burned >= 0 ? null : v.tagOf(s.idx, w, h);
       if (!p || p.x < -40 || p.x > w + 40 || p.y < -20 || p.y > h + 20) el.style.display = 'none';
-      else {
-        el.style.display = '';
-        el.style.transform = `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px) translate(-50%, -100%)`;
-      }
+      else shown.push({ el, x: p.x, y: p.y - 8 });
+    }
+    // tags that would land on one another stack upward instead
+    shown.sort((a, b) => b.y - a.y);
+    for (let i = 1; i < shown.length; i++) for (let j = 0; j < i; j++) if (Math.abs(shown[i].x - shown[j].x) < 90 && Math.abs(shown[i].y - shown[j].y) < 20) shown[i].y = shown[j].y - 20;
+    for (const t of shown) {
+      t.el.style.display = '';
+      t.el.style.transform = `translate(${t.x.toFixed(1)}px, ${t.y.toFixed(1)}px) translate(-50%, -100%)`;
     }
   }
 
@@ -974,7 +982,7 @@ function Play({ kind }: { kind: Kind }) {
             <span className="g-chained-modetag">{MODE_INFO[g.mode].label}</span>
             {hud.race && hud.started && <span className={`g-chained-lead${hud.race.lead >= 1 ? ' is-ahead' : hud.race.lead <= -1 ? ' is-behind' : ''}`}>{leadWord}</span>}
           </div>
-          {hud.countdown > 0 && (!live || net.current.synced) && (g.mode === 'race' ? <div key={Math.ceil(hud.countdown)} className="g-chained-ready is-count">{Math.ceil(hud.countdown)}</div> : !live && <div className="g-chained-ready">ready</div>)}
+          {hud.countdown > 0 && (!live || net.current.synced) && (g.mode === 'race' ? <div key={`count-${Math.ceil(hud.countdown)}`} className="g-chained-ready is-count">{Math.ceil(hud.countdown)}</div> : !live && <div className="g-chained-ready">ready</div>)}
           {live && !net.current.synced && <div className="g-chained-ready">waiting for the host</div>}
           {card && (
             <div key={card.id} className="g-chained-cardwrap" onAnimationEnd={() => setCard(null)}>
