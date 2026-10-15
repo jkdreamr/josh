@@ -6,14 +6,16 @@ export const ROOM_MESSAGE_MAX_BYTES = 8 * 1024;
 
 export type RoomPlayer = { seat: number; name: string };
 /**
- * roster: seats that were in the room when the current round started.
+ * started: a round is under way (false again once it ends: see endRound).
+ * roster: seats that were in the room when the current round started; roundBots: how many bots play it.
  * allowBots: the game can fill empty seats with bots; bots: how many the host asked for (see botSeats).
  * listed: a public room, which the arcade's Open Rooms lists while someone can join it (see roomListing).
  * inLobby: the room's line is in Open Rooms right now, so only rooms that were listed ever need to take it out.
  */
-export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; allowBots?: boolean; bots?: number; listed?: boolean; inLobby?: boolean };
+export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; roundBots?: number; allowBots?: boolean; bots?: number; listed?: boolean; inLobby?: boolean };
 export type ClientRoomMessage =
   | { t: 'start' }
+  | { t: 'over'; round: number }
   | { t: 'bots'; n: number }
   | { t: 'listed'; on: boolean }
   | { t: 'msg'; to?: number; d: unknown }
@@ -64,15 +66,37 @@ export function sortListings(rooms: OpenRoom[]): OpenRoom[] {
 /** Only the host starts, and only with someone to play: another person or a bot. */
 export const canStartRoom = (seat: number, playerCount: number, botCount = 0) => seat === 0 && playerCount + botCount >= 2;
 
-/** Rooms lock once they start, unless the game lets players join between rounds. */
+/** Anyone can join between rounds; while one is under way, only games that let people join mid-round take them. */
 export const canJoinRoom = (room: RoomState) => !room.started || !!room.lateJoin;
 
-/** Starts the next round: bumps the shared round number and remembers who is playing it. */
-export function beginRound(room: RoomState, seats: Iterable<number>): number {
+/** Starts the next round: bumps the shared round number and remembers who is playing it, bots included. */
+export function beginRound(room: RoomState, seats: Iterable<number>, bots = 0): number {
   room.started = true;
   room.round = (room.round ?? 0) + 1;
   room.roster = [...new Set(seats)];
+  room.roundBots = bots;
   return room.round;
+}
+
+/**
+ * Ends the round under way (only that one: a late word about an older round changes nothing), so the room takes
+ * people again and a public room goes back on Open Rooms. True when it ended one.
+ */
+export function endRound(room: RoomState, round = room.round): boolean {
+  if (!room.started || round !== room.round) return false;
+  room.started = false;
+  return true;
+}
+
+/** A round goes on while it has someone to play against: two people, or one and a bot. */
+export const roundPlayable = (room: RoomState, people: number) => people + (room.roundBots ?? 0) >= 2;
+
+/**
+ * Who takes over when the host leaves: the person in the lowest seat, the one who has been in the room longest unless
+ * someone left and a newcomer took their seat. Null when nobody is left.
+ */
+export function nextHost(players: RoomPlayer[]): RoomPlayer | null {
+  return players.reduce<RoomPlayer | null>((best, player) => (best === null || player.seat < best.seat ? player : best), null);
 }
 
 /** Someone who takes a seat mid-round sits that round out. */
@@ -105,6 +129,7 @@ export function parseRoomMessage(raw: string | ArrayBuffer, seats: number): Clie
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const message = value as Record<string, unknown>;
   if (message.t === 'start') return { t: 'start' };
+  if (message.t === 'over') return Number.isSafeInteger(message.round) && (message.round as number) >= 0 ? { t: 'over', round: message.round as number } : null;
   // Up to every seat but the host's.
   if (message.t === 'bots') return Number.isInteger(message.n) && (message.n as number) >= 0 && (message.n as number) < seats ? { t: 'bots', n: message.n as number } : null;
   if (message.t === 'listed') return typeof message.on === 'boolean' ? { t: 'listed', on: message.on } : null;

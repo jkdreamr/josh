@@ -2,6 +2,8 @@ import { ARCADE_API } from './leaderboard.ts';
 import { parseOpenRooms, type OpenRoom } from './online-core.ts';
 
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+/** The room protocol this client speaks: 2 follows a host hand-off when the host leaves (see the 'host' event). */
+export const ROOM_PROTOCOL = 2;
 const ICE_SERVERS = [{ urls: 'stun:stun.cloudflare.com:3478' }, { urls: 'stun:stun.l.google.com:19302' }];
 
 export type RoomPlayer = { seat: number; name: string };
@@ -10,11 +12,18 @@ type Peer = { pc: RTCPeerConnection; channels: Map<'r' | 'u', RTCDataChannel>; c
 
 type RoomEvents = {
   /**
-   * started: a round is already under way (rooms that allow joining between rounds).
+   * started: a round is already under way (rooms that allow joining between rounds). round: the room's latest round.
    * bots: seats bots would take if the host started now, or null when the room has no bots (see the bots event).
    */
-  welcome: { seat: number; code: string; game: string; seats: number; players: RoomPlayer[]; started: boolean; bots: number[] | null };
+  welcome: { seat: number; code: string; game: string; seats: number; players: RoomPlayer[]; started: boolean; round: number; bots: number[] | null };
   players: RoomPlayer[];
+  /** Whether a round is under way, when the room says it changed: a round ends, or one stops for want of players. */
+  started: boolean;
+  /**
+   * The host left and the person in seat `from` took over as host (seat 0; `seat` is this player's own seat now).
+   * Any round under way is over, since the host's game was running it.
+   */
+  host: { from: number; seat: number; players: RoomPlayer[] };
   /** Seats bots would take if the host started now; only rooms for games that allow bots send them. */
   bots: number[];
   /** Whether the room is public (listed in the arcade's Open Rooms); servers from before public rooms never say. */
@@ -76,7 +85,7 @@ export class RoomLink {
     const base = new URL(api);
     base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
     base.pathname = `${base.pathname.replace(/\/+$/, '')}/rooms/${encodeURIComponent(this.code)}/ws`;
-    base.search = new URLSearchParams({ name }).toString();
+    base.search = new URLSearchParams({ name, v: String(ROOM_PROTOCOL) }).toString();
     this.socket = new WebSocket(base);
     this.socket.addEventListener('open', this.onOpen);
     this.socket.addEventListener('message', this.onSocketMessage);
@@ -116,6 +125,11 @@ export class RoomLink {
     this.sendSocket({ t: 'result', round, winner });
   }
 
+  /** Host only: the round is over, so the room takes people again (and a public one goes back on Open Rooms). */
+  endRound(round: number) {
+    this.sendSocket({ t: 'over', round });
+  }
+
   send(d: unknown, options: { to?: number; fast?: boolean } = {}) {
     const label = options.fast ? 'u' : 'r';
     const payload = JSON.stringify(d);
@@ -151,8 +165,7 @@ export class RoomLink {
     this.socket.removeEventListener('close', this.onSocketClose);
     this.socket.removeEventListener('error', this.onSocketError);
     this.socket.close();
-    for (const peer of this.peers.values()) peer.pc.close();
-    this.peers.clear();
+    this.dropPeers();
   }
 
   private readonly onOpen = () => {
@@ -175,24 +188,33 @@ export class RoomLink {
       this.seats = message.seats as number;
       this.players = this.asPlayers(message.players);
       this.bots = Array.isArray(message.bots) ? this.asSeats(message.bots) : null;
-      this.emit('welcome', { seat: this.seat, code: this.code, game: this.game, seats: this.seats, players: this.players, started: message.started === true, bots: this.bots });
+      const round = Number.isSafeInteger(message.round) && (message.round as number) > 0 ? message.round as number : 0;
+      this.emit('welcome', { seat: this.seat, code: this.code, game: this.game, seats: this.seats, players: this.players, started: message.started === true, round, bots: this.bots });
       this.emit('players', this.players);
       if (this.bots) this.emit('bots', this.bots);
       this.takeListed(message.listed);
-    } else if (message.t === 'players') {
+    } else if (message.t === 'players' || (message.t === 'host' && Number.isInteger(message.from))) {
       this.players = this.asPlayers(message.players);
+      if (message.t === 'host') {
+        const from = message.from as number;
+        if (this.seat === from) this.seat = 0;
+        // Every direct link ran through the old host; the next round connects everyone to the new one.
+        this.dropPeers();
+        if (this.seat !== null) this.emit('host', { from, seat: this.seat, players: this.players });
+      } else this.dropPeers(this.players);
       this.emit('players', this.players);
       if (Array.isArray(message.bots)) {
         this.bots = this.asSeats(message.bots);
         this.emit('bots', this.bots);
       }
       this.takeListed(message.listed);
+      if (typeof message.started === 'boolean') this.emit('started', message.started);
       this.updateTransport();
     } else if (message.t === 'start') {
       this.players = this.asPlayers(message.players);
       const bots = this.asSeats(message.bots);
       this.emit('start', { players: this.players, round: Number.isSafeInteger(message.round) && (message.round as number) > 0 ? message.round as number : null, bots });
-      if (this.peers.size === 0) this.beginPeers();
+      void this.beginPeers();
     } else if (message.t === 'msg' && Number.isInteger(message.from)) {
       this.emit('msg', { from: message.from as number, d: message.d });
     } else if (message.t === 'signal' && Number.isInteger(message.from)) {
@@ -210,13 +232,32 @@ export class RoomLink {
     if (!this.closed) this.setTransport('relay');
   };
 
+  /** The host connects directly to everyone it has no link with yet: the first round, newcomers, a new host's guests. */
   private async beginPeers() {
     if (typeof RTCPeerConnection === 'undefined' || this.seat === null) {
       this.setTransport('relay');
       return;
     }
     if (this.seat === 0) {
-      for (const player of this.players) if (player.seat !== 0) await this.offerTo(player.seat);
+      for (const player of this.players) {
+        if (player.seat === 0) continue;
+        const peer = this.peers.get(player.seat);
+        // A link that failed gets a fresh try each round; one that's up or still connecting is left alone.
+        if (peer && (peer.pc.connectionState === 'failed' || peer.pc.connectionState === 'closed')) {
+          peer.pc.close();
+          this.peers.delete(player.seat);
+        } else if (peer) continue;
+        await this.offerTo(player.seat);
+      }
+    }
+  }
+
+  /** Closes the direct links: all of them, or those to anyone no longer among `keep` (a newcomer may take their seat). */
+  private dropPeers(keep?: RoomPlayer[]) {
+    for (const [seat, peer] of this.peers) {
+      if (keep?.some((player) => player.seat === seat)) continue;
+      peer.pc.close();
+      this.peers.delete(seat);
     }
   }
 
@@ -236,9 +277,16 @@ export class RoomLink {
   }
 
   private async receiveSignal(from: number, value: unknown) {
-    const peer = this.createPeer(from);
-    if (!peer || !value || typeof value !== 'object') return;
+    if (!value || typeof value !== 'object') return;
     const signal = value as Record<string, unknown>;
+    // A new offer for a link that's already set up means the host started over (a new host, or a retry): so do we.
+    const stale = this.peers.get(from);
+    if (signal.type === 'offer' && stale?.pc.remoteDescription) {
+      stale.pc.close();
+      this.peers.delete(from);
+    }
+    const peer = this.createPeer(from);
+    if (!peer) return;
     try {
       if (typeof signal.candidate === 'string') {
         const candidate = signal as unknown as RTCIceCandidateInit;

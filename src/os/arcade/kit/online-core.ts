@@ -89,3 +89,82 @@ export function parseRacePacket(value: unknown): { t: 'race'; round: number; sco
   }
   return { t: 'race-all', round, scores };
 }
+
+/** Game messages travel as { '~r': round, d } so each lands in the round it was sent for. */
+const ROUND_TAG = '~r';
+/** The most messages held for a round that hasn't started here yet. */
+const HELD_MAX = 512;
+type Held = { from: number; round: number; d: unknown };
+
+export function tagRound(round: number, d: unknown) {
+  return { [ROUND_TAG]: round, d };
+}
+
+/**
+ * Hands game messages to the round they belong to. The host's first messages of a round can arrive (over a direct link)
+ * before this player's own start does (over the room's socket), or before the round's fresh game has subscribed; those
+ * wait until it has. Messages from a finished round are dropped. A player between rounds or sitting one out (not
+ * `live`) gets everything as it comes, and so does anything untagged or sent from round 0 (before any round), so
+ * clients that don't tag still work.
+ */
+export class RoundRouter {
+  round = 0;
+  /** A round is starting here and its game hasn't subscribed yet. */
+  holding = false;
+  private held: Held[] = [];
+  private readonly listeners = new Set<(from: number, d: unknown) => void>();
+
+  listen(listener: (from: number, d: unknown) => void): () => void {
+    this.listeners.add(listener);
+    // A game that subscribes late still gets what waited for it, once every listener that's subscribing now is in.
+    if (!this.holding && this.held.some((m) => m.round === this.round)) queueMicrotask(() => this.flush());
+    return () => this.listeners.delete(listener);
+  }
+
+  /** Where this player is joining: the room's latest round, for a latecomer. */
+  join(round: number) {
+    this.round = round;
+    this.holding = false;
+    this.held = [];
+  }
+
+  /** A round starts here: its messages wait until release(), and older rounds' are gone. */
+  begin(round: number) {
+    this.round = round;
+    this.holding = true;
+    this.held = this.held.filter((m) => m.round >= round);
+  }
+
+  /** The round's game is subscribed: hand it what arrived early. */
+  release() {
+    this.holding = false;
+    this.flush();
+  }
+
+  receive(from: number, raw: unknown, live: boolean) {
+    const tagged = !!raw && typeof raw === 'object' && Object.hasOwn(raw, ROUND_TAG) && Object.hasOwn(raw, 'd');
+    if (!tagged) return this.deliver(from, raw);
+    const round = (raw as Record<string, unknown>)[ROUND_TAG];
+    const d = (raw as { d: unknown }).d;
+    if (!Number.isSafeInteger(round) || !live || round === 0) return this.deliver(from, d);
+    const r = round as number;
+    if (r < this.round) return;
+    if (r > this.round || this.holding || !this.listeners.size) {
+      if (this.held.length >= HELD_MAX) this.held.shift();
+      this.held.push({ from, round: r, d });
+      return;
+    }
+    this.deliver(from, d);
+  }
+
+  private flush() {
+    if (this.holding || !this.listeners.size) return;
+    const now = this.held.filter((m) => m.round === this.round);
+    this.held = this.held.filter((m) => m.round > this.round);
+    for (const m of now) this.deliver(m.from, m.d);
+  }
+
+  private deliver(from: number, d: unknown) {
+    for (const listener of [...this.listeners]) listener(from, d);
+  }
+}

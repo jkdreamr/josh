@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
-import { advanceOnlineRound, botPlayers, nextOnlineRound, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, botPlayers, nextOnlineRound, RoundRouter, tagRound, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
-import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, lowestFreeSeat, markRoundRecorded, parseRoomMessage, roomListing, roundSeats, sortListings, type RoomState } from '../worker/src/room-core.ts';
+import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, lowestFreeSeat, markRoundRecorded, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, sortListings, type RoomState } from '../worker/src/room-core.ts';
 
 /** A stand-in for the browser's WebSocket: records what RoomLink sends and lets a test play the server's side. */
 class FakeWebSocket {
@@ -81,6 +81,35 @@ test('rooms lock after starting unless the game lets players join between rounds
   assert.deepEqual(open.roster, [0, 1, 2]);
   assert.equal(beginRound(open, [0, 1, 2, 3]), 2);
   assert.deepEqual(open.roster, [0, 1, 2, 3]);
+});
+
+test('a room takes people again once its round is over, whatever the game', () => {
+  const room: RoomState = { game: 'pong', seats: 2, started: false };
+  const round = beginRound(room, [0, 1]);
+  assert.equal(canJoinRoom(room), false, 'not mid-match');
+  assert.equal(endRound(room, round - 1), false, 'word about an older round changes nothing');
+  assert.equal(canJoinRoom(room), false);
+  assert.equal(endRound(room, round), true);
+  assert.equal(canJoinRoom(room), true, 'someone can take the empty seat for the next match');
+  assert.equal(endRound(room, round), false, 'and it ends once');
+  assert.equal(beginRound(room, [0, 1]), round + 1);
+  assert.equal(canJoinRoom(room), false);
+  assert.deepEqual(parseRoomMessage('{"t":"over","round":3}', 2), { t: 'over', round: 3 });
+  assert.equal(parseRoomMessage('{"t":"over","round":-1}', 2), null);
+  assert.equal(parseRoomMessage('{"t":"over"}', 2), null);
+});
+
+test('a round goes on while there is someone to play against, and the lowest seat takes over from a host', () => {
+  const room: RoomState = { game: 'lightcycles', seats: 4, started: false, allowBots: true, bots: 2 };
+  beginRound(room, [0, 1], 2);
+  assert.equal(room.roundBots, 2);
+  assert.equal(roundPlayable(room, 1), true, 'one rider and two bots');
+  const duel: RoomState = { game: 'pong', seats: 2, started: false };
+  beginRound(duel, [0, 1]);
+  assert.equal(roundPlayable(duel, 1), false);
+  assert.equal(roundPlayable(duel, 2), true);
+  assert.deepEqual(nextHost([{ seat: 3, name: 'C' }, { seat: 1, name: 'A' }, { seat: 2, name: 'B' }]), { seat: 1, name: 'A' });
+  assert.equal(nextHost([]), null);
 });
 
 test('players who join mid-round sit out that round\'s result', () => {
@@ -168,7 +197,7 @@ test('RoomLink uses host-only relay fallback without WebRTC', async () => {
     const events: unknown[] = [];
     link.on('welcome', (welcome) => events.push(['welcome', welcome.started]));
     link.on('start', (start) => events.push(['start', start.round, start.players.length]));
-    assert.equal(socket.url.href, 'wss://arcade.test/rooms/ABCD/ws?name=Guest');
+    assert.equal(socket.url.href, 'wss://arcade.test/rooms/ABCD/ws?name=Guest&v=2', 'names the protocol, so the room can hand it the host role');
     socket.readyState = FakeWebSocket.OPEN;
     socket.emit('open', new Event('open'));
     socket.emit('message', { data: JSON.stringify({ t: 'welcome', seat: 1, code: 'ABCD', game: 'pong', seats: 2, players: [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Guest' }] }) });
@@ -204,6 +233,37 @@ test('RoomLink follows the bots a room offers and the ones each round starts wit
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.deepEqual(seen, [['welcome', []], ['bots', []], ['bots', [1, 2]], ['bots', [2, 3]], ['start', [2, 3]]]);
     assert.deepEqual(link.bots, [2, 3]);
+    link.close();
+  });
+});
+
+test('RoomLink follows a host hand-off, round ends and the round a latecomer walks into', async () => {
+  await withFakeRoom(async () => {
+    const link = new RoomLink('HOST', 'Bea', 'https://arcade.test');
+    const socket = FakeWebSocket.last;
+    const seen: unknown[] = [];
+    link.on('welcome', (welcome) => seen.push(['welcome', welcome.round, welcome.started]));
+    link.on('host', (host) => seen.push(['host', host.from, host.seat]));
+    link.on('started', (started) => seen.push(['started', started]));
+    link.on('players', (players) => seen.push(['players', players.map((p) => p.seat)]));
+    socket.open();
+    socket.receive({ t: 'welcome', seat: 2, code: 'HOST', game: 'coxbox', seats: 8, players: [{ seat: 0, name: 'Ann' }, { seat: 1, name: 'Cy' }, { seat: 2, name: 'Bea' }], started: true, round: 3 });
+    socket.receive({ t: 'players', players: [{ seat: 0, name: 'Ann' }, { seat: 1, name: 'Cy' }, { seat: 2, name: 'Bea' }], started: false });
+    // Ann leaves: Cy, in the lowest seat, hosts now.
+    socket.receive({ t: 'host', from: 1, players: [{ seat: 0, name: 'Cy' }, { seat: 2, name: 'Bea' }], started: false });
+    assert.equal(link.seat, 2);
+    // Then Cy leaves too: Bea takes over.
+    socket.receive({ t: 'host', from: 2, players: [{ seat: 0, name: 'Bea' }], started: false });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(link.seat, 0);
+    assert.deepEqual(seen, [
+      ['welcome', 3, true], ['players', [0, 1, 2]],
+      ['players', [0, 1, 2]], ['started', false],
+      ['host', 1, 2], ['players', [0, 2]], ['started', false],
+      ['host', 2, 0], ['players', [0]], ['started', false],
+    ]);
+    link.endRound(4);
+    assert.deepEqual(JSON.parse(socket.sent.at(-1)!), { t: 'over', round: 4 });
     link.close();
   });
 });
@@ -333,4 +393,37 @@ test('RoomLink follows whether the room is public, and the host can change it', 
     assert.equal(link.listed, true);
     link.close();
   });
+});
+
+test('game messages land in the round they were sent for', async () => {
+  const router = new RoundRouter();
+  const got: string[] = [];
+  const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+  let stop = router.listen((from, d) => got.push(`old:${from}:${d}`));
+  router.join(0);
+  router.receive(0, tagRound(0, 'lobby'), false);
+  router.begin(1);
+  router.release();
+  router.receive(0, tagRound(1, 'r1'), true);
+  router.receive(0, 'untagged', true);
+  // The host's next round overtakes this player's own start: it waits for the next game instead of hitting this one.
+  router.receive(0, tagRound(2, 'early'), true);
+  assert.deepEqual(got, ['old:0:lobby', 'old:0:r1', 'old:0:untagged']);
+  router.begin(2);
+  router.receive(0, tagRound(2, 'while mounting'), true);
+  router.receive(0, tagRound(1, 'stale'), true);
+  stop();
+  stop = router.listen((from, d) => got.push(`new:${from}:${d}`));
+  router.release();
+  router.receive(0, tagRound(2, 'live'), true);
+  assert.deepEqual(got.slice(3), ['new:0:early', 'new:0:while mounting', 'new:0:live']);
+  // Someone sitting a round out sees it as it comes.
+  router.receive(0, tagRound(5, 'spectating'), false);
+  assert.equal(got.at(-1), 'new:0:spectating');
+  // A game that subscribes late still gets what waited for it.
+  stop();
+  router.receive(1, tagRound(2, 'nobody listening'), true);
+  router.listen((from, d) => got.push(`late:${from}:${d}`));
+  await tick();
+  assert.equal(got.at(-1), 'late:1:nobody listening');
 });

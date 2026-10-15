@@ -2,12 +2,14 @@ import { createContext, useContext, useEffect, useId, useMemo, useState, type Re
 import { Segmented } from './controls';
 import { defineSetting } from './settings';
 import { ARCADE_API } from './leaderboard';
-import { openRoomLine, type OpenRoom } from './online-core';
+import { openRoomLine, tagRound, type OpenRoom, type RoundRouter } from './online-core';
 import { listRooms, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { sfx } from './sfx';
 
 type OnlineValue = {
   link: RoomLink;
+  /** Game messages, each handed to the round it was sent for. */
+  router: RoundRouter;
   seat: number;
   seats: number;
   round: number;
@@ -22,6 +24,7 @@ const OnlineContext = createContext<OnlineValue | null>(null);
 
 export function OnlineProvider({
   link,
+  router,
   seat,
   seats,
   round,
@@ -31,8 +34,8 @@ export function OnlineProvider({
   children,
 }: Omit<OnlineValue, 'seat' | 'link' | 'isHost'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
   const value = useMemo(
-    () => link && seat !== null ? { link, seat, seats, round, players, bots, isHost: seat === 0, transport } : null,
-    [link, seat, seats, round, players, bots, transport],
+    () => link && seat !== null ? { link, router, seat, seats, round, players, bots, isHost: seat === 0, transport } : null,
+    [link, router, seat, seats, round, players, bots, transport],
   );
   return <OnlineContext.Provider value={value}>{children}</OnlineContext.Provider>;
 }
@@ -49,9 +52,9 @@ export function useOnline() {
       bots: room.bots,
       isHost: room.isHost,
       transport: room.transport,
-      send: (d: unknown, options?: { to?: number; fast?: boolean }) => room.link.send(d, options),
-      onMessage: (listener: (from: number, d: unknown) => void) =>
-        room.link.on('msg', ({ from, d }) => listener(from, d)),
+      // Tagged with the round this player is in at the moment it's sent, which a game that kept an old handle still gets.
+      send: (d: unknown, options?: { to?: number; fast?: boolean }) => room.link.send(tagRound(room.router.round, d), options),
+      onMessage: (listener: (from: number, d: unknown) => void) => room.router.listen(listener),
       reportResult: (round: number, winner: number | null) => room.link.reportResult(round, winner),
     };
   }, [room]);
@@ -164,6 +167,30 @@ export function BotStepper({ count, max, onChange, disabled }: { count: number; 
   );
 }
 
+/** The room's code with Copy Link, Share in Lounge and Leave: in the room's lobby, and on its Game Over card. */
+export function RoomCode({ game, code, onShare, onLeave }: { game: string; code: string; onShare?: () => void; onLeave: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(`${location.origin}/?game=${encodeURIComponent(game)}&room=${encodeURIComponent(code)}`);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      return;
+    }
+  };
+  return (
+    <div className="arcade-room">
+      <div className="arcade-room-code" aria-label={`Room Code ${code}`}>{code}</div>
+      <div className="arcade-row">
+        <button type="button" className="arcade-btn" onClick={copyLink}>{copied ? 'Copied' : 'Copy Link'}</button>
+        {onShare && <button type="button" className="arcade-btn" onClick={onShare}>Share in Lounge</button>}
+        <button type="button" className="arcade-btn" onClick={onLeave}>Leave</button>
+      </div>
+    </div>
+  );
+}
+
 export function OnlinePanel({
   game,
   code,
@@ -188,6 +215,7 @@ export function OnlinePanel({
   onShare,
   note,
   setup,
+  lastCode = '',
 }: {
   game: string;
   code: string;
@@ -222,24 +250,17 @@ export function OnlinePanel({
   note?: string;
   /** Settings for the round, shown once in a room (the game decides what guests may change). */
   setup?: ReactNode;
+  /** The room this player just lost touch with, filled in so they can join it again. */
+  lastCode?: string;
 }) {
   const host = seat === 0;
   const botCount = bots?.length ?? 0;
   const stepper = host && bots && onBots ? <BotStepper count={botCount} max={Math.max(0, seats - players.length)} onChange={onBots} disabled={busy} /> : null;
   const publicity = host && listed !== null && onListed ? <VisibilityPicker value={listed ? 'public' : 'private'} onChange={(v) => onListed(v === 'public')} /> : null;
-  const link = code ? `${location.origin}/?game=${encodeURIComponent(game)}&room=${encodeURIComponent(code)}` : '';
-  const [joinCode, setJoinCode] = useState('');
-  const [copied, setCopied] = useState(false);
-
-  const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      return;
-    }
-  };
+  const [joinCode, setJoinCode] = useState(lastCode);
+  useEffect(() => {
+    if (lastCode) setJoinCode(lastCode);
+  }, [lastCode]);
 
   return (
     <div className="arcade-ov">
@@ -282,7 +303,7 @@ export function OnlinePanel({
                 onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^ABCDEFGHJKMNPQRSTUVWXYZ23456789]/g, '').slice(0, 4))}
               />
               <button type="submit" className="arcade-btn" disabled={busy || joinCode.length !== 4}>
-                Join
+                {lastCode && joinCode === lastCode ? 'Rejoin' : 'Join'}
               </button>
             </form>
             <OpenRoomList game={game} busy={busy} onJoin={onJoin} />
@@ -292,12 +313,7 @@ export function OnlinePanel({
           </>
         ) : (
           <>
-            <div className="arcade-room-code" aria-label={`Room Code ${code}`}>{code}</div>
-            <div className="arcade-row">
-              <button type="button" className="arcade-btn" onClick={copyLink}>{copied ? 'Copied' : 'Copy Link'}</button>
-              {onShare && <button type="button" className="arcade-btn" onClick={onShare}>Share in Lounge</button>}
-              <button type="button" className="arcade-btn" onClick={onLeave}>Leave</button>
-            </div>
+            <RoomCode game={game} code={code} onShare={onShare} onLeave={onLeave} />
             <div className="arcade-online-players">
               <strong>Players{seats > 2 && ` ${players.length + botCount}/${seats}`}</strong>
               {players.map((player) => (
