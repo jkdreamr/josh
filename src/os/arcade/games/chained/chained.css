@@ -166,6 +166,31 @@
   pointer-events: none;
   animation: g-chained-breathe 1.2s ease-in-out infinite;
 }
+/* the race's count: a numeral that lands and fades each second */
+.g-chained .g-chained-ready.is-count {
+  font-family: var(--display);
+  font-size: 84px;
+  font-weight: 700;
+  color: #fff;
+  animation: g-chained-count 1s ease-out both;
+}
+@keyframes g-chained-count {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.6);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.94);
+  }
+}
 @keyframes g-chained-breathe {
   0%,
   100% {

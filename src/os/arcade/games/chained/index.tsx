@@ -39,6 +39,8 @@ const boardOf = (team: boolean, mode: RankedMode) => `${team ? 'team' : 'solo'}-
 const isRanked = (mode: Mode): mode is RankedMode => (RANKED_MODES as readonly string[]).includes(mode);
 /** The host gives everyone a moment to get its first packet before the climb starts. */
 const HOST_LEAD = 1.5;
+/** A race counts down from three. */
+const RACE_COUNTDOWN = 3.2;
 /** Tips pop up during your first few climbs. */
 const HINT_CLIMBS = 3;
 const CLIMBS_KEY = 'arcade:chained-climbs';
@@ -362,11 +364,11 @@ function Play({ kind }: { kind: Kind }) {
     if (!live) {
       // a climb is two souls on one chain; a race seats two souls per team, the shades on the other chain
       const souls = mode === 'race' ? localSouls(seatSouls(team ? [0, 1] : [0], mode), team, shades) : [0, 1].map((i) => ({ seat: i, name: (team ? LOCAL_NAMES : SOLO_NAMES)[i], color: TEAM_COLORS[0][i], kind: 'local' as const }));
-      game.current = createGame({ mode, souls, level: LEVEL, countdown: COUNTDOWN, solo: !team });
+      game.current = createGame({ mode, souls, level: LEVEL, countdown: mode === 'race' ? RACE_COUNTDOWN : COUNTDOWN, solo: !team });
       attachShades(game.current, shades, 7 + shell.round);
     } else {
       const roster = [...online!.players].map((p) => p.seat).sort((a, b) => a - b);
-      game.current = createGame({ mode, souls: onlineSouls(online!, seatSouls(roster, mode), shades), level: LEVEL, authority: online!.isHost, countdown: online!.isHost ? COUNTDOWN + HOST_LEAD : 60 });
+      game.current = createGame({ mode, souls: onlineSouls(online!, seatSouls(roster, mode), shades), level: LEVEL, authority: online!.isHost, countdown: online!.isHost ? (mode === 'race' ? RACE_COUNTDOWN : COUNTDOWN) + HOST_LEAD : 60 });
       attachShades(game.current, shades, 7 + online!.round);
     }
   }
@@ -387,6 +389,8 @@ function Play({ kind }: { kind: Kind }) {
   /** The soul you are steering (an index into g.souls), when you have more than one. */
   const active = useRef(-1);
   const leadSign = useRef(0);
+  /** The last second counted down out loud. */
+  const tickAt = useRef(-1);
   const tap = useRef({ swap: false });
   const clock = useRef(0);
   const hudTick = useRef(0);
@@ -688,6 +692,14 @@ function Play({ kind }: { kind: Kind }) {
       tap.current.swap = false;
 
       step(g, dt);
+      // a race counts down out loud
+      if (g.mode === 'race' && g.time < 0 && g.time > -RACE_COUNTDOWN) {
+        const left = Math.ceil(-g.time);
+        if (left !== tickAt.current) {
+          tickAt.current = left;
+          sfx.tone({ freq: 520, dur: 0.09, type: 'square', vol: 0.07 });
+        }
+      }
       for (const e of g.events.splice(0)) {
         react(g, e);
         if (live) outgoing(g, e);
@@ -741,7 +753,7 @@ function Play({ kind }: { kind: Kind }) {
     const ours = 'team' in e ? e.team === us : !s || s.team === us;
     switch (e.t) {
       case 'go':
-        sfx.tone({ freq: 660, dur: 0.16, type: 'square', vol: 0.1 });
+        sfx.tone({ freq: g.mode === 'race' ? 880 : 660, dur: g.mode === 'race' ? 0.28 : 0.16, type: 'square', vol: 0.1 });
         setCard({ id: ++nextId.current, zone: 0 });
         if (!hints.current!.counted) {
           hints.current!.counted = true;
@@ -909,8 +921,13 @@ function Play({ kind }: { kind: Kind }) {
       // the lead changing hands is a moment
       const sign = Math.abs(lead) < 1.5 ? leadSign.current : Math.sign(lead);
       if (g.started && g.won === null && sign !== leadSign.current && g.time > 3) {
-        if (sign > 0) note('You have the lead.');
-        else if (sign < 0) note(`${race.name} ${race.name === 'The shades' ? 'have' : 'has'} the lead.`, 'warn');
+        if (sign > 0) {
+          note('You have the lead.');
+          sfx.tone({ freq: 880, to: 1320, dur: 0.18, type: 'triangle', vol: 0.09 });
+        } else if (sign < 0) {
+          note(`${race.name} ${race.name === 'The shades' ? 'have' : 'has'} the lead.`, 'warn');
+          sfx.tone({ freq: 440, to: 330, dur: 0.22, type: 'triangle', vol: 0.09 });
+        }
       }
       leadSign.current = sign;
     }
@@ -957,7 +974,7 @@ function Play({ kind }: { kind: Kind }) {
             <span className="g-chained-modetag">{MODE_INFO[g.mode].label}</span>
             {hud.race && hud.started && <span className={`g-chained-lead${hud.race.lead >= 1 ? ' is-ahead' : hud.race.lead <= -1 ? ' is-behind' : ''}`}>{leadWord}</span>}
           </div>
-          {hud.countdown > 0 && !live && <div className="g-chained-ready">ready</div>}
+          {hud.countdown > 0 && (!live || net.current.synced) && (g.mode === 'race' ? <div key={Math.ceil(hud.countdown)} className="g-chained-ready is-count">{Math.ceil(hud.countdown)}</div> : !live && <div className="g-chained-ready">ready</div>)}
           {live && !net.current.synced && <div className="g-chained-ready">waiting for the host</div>}
           {card && (
             <div key={card.id} className="g-chained-cardwrap" onAnimationEnd={() => setCard(null)}>
