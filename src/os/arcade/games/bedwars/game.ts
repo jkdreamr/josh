@@ -44,6 +44,8 @@ export const RESPAWN_TICKS = 5 * TPS;
 export const REACH_BLOCK = 4.5;
 export const REACH_HIT = 3;
 export const SHOP_RANGE = 4.5;
+/** How far from a forge pile a teammate can stand and still share it (picking up reaches about 1.3 blocks). */
+export const SPLIT_RANGE = 2.5;
 
 export type Pace = 'quick' | 'classic';
 export type Level = 'easy' | 'normal' | 'hard';
@@ -165,6 +167,7 @@ export type Ev =
   | { t: 'elim'; team: number }
   | { t: 'drop'; id: number; item: Item; n: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; gen: number }
   | { t: 'dropn'; id: number; n: number }
+  /** A drop is gone (p -1 when it just vanished). A forge pile shared at the forge sends one per player who got it, same id. */
   | { t: 'pick'; id: number; p: number; item: Item; n: number }
   | { t: 'proj'; id: number; kind: ProjKind; owner: number; x: number; y: number; z: number; vx: number; vy: number; vz: number }
   | { t: 'pgone'; id: number; x: number; y: number; z: number; hit: number }
@@ -1009,6 +1012,12 @@ export function tickGame(g: Game) {
       invChanged(g, p);
       g.drops.splice(i, 1);
       emit(g, { t: 'pick', id: d.id, p: p.id, item: d.item, n: d.n });
+      // your own forge splits, like Hypixel: teammates standing at it get the same
+      for (const q of forgeSharers(g, d, p)) {
+        q.inv.wallet[d.item as Res] += d.n;
+        invChanged(g, q);
+        emit(g, { t: 'pick', id: d.id, p: q.id, item: d.item, n: d.n });
+      }
       break;
     }
   }
@@ -1088,6 +1097,21 @@ function feed(g: Game, item: Item, x: number, y: number, z: number, cap: number,
     return;
   }
   spawnDrop(g, item, 1, x + (rand(g) - 0.5) * 0.3, y, z + (rand(g) - 0.5) * 0.3, 0, 0.1, 0, gen);
+}
+
+/** The team whose island forge made this pile, or -1 (map generators are gen 0 and up, thrown items -1). */
+export const forgeTeam = (d: Drop) => (d.gen <= -10 ? -10 - d.gen : -1);
+
+/** Is a player standing at a forge pile? A little wider than the pickup box, at about the same height. */
+export const atPile = (p: Player, d: Drop) => Math.hypot(p.body.x - d.x, p.body.z - d.z) <= SPLIT_RANGE && d.y >= p.body.y - 1.5 && d.y <= p.body.y + 2.3;
+
+/**
+ * Who else gets a forge pile someone just picked up: when it is their own team's forge, every other living teammate
+ * (bots too) standing at it. Map generators, thrown items and an enemy raiding your forge are never shared.
+ */
+export function forgeSharers(g: Game, d: Drop, picker: Player): Player[] {
+  if (!isRes(d.item) || forgeTeam(d) !== picker.team) return [];
+  return g.players.filter((q) => q.id !== picker.id && q.team === picker.team && q.alive && !q.out && atPile(q, d));
 }
 
 /** A flying bridge egg lays wool under its path. */

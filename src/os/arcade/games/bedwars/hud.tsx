@@ -603,7 +603,7 @@ export function HowToPlay({ touch, mouse }: { touch: boolean; mouse: boolean }) 
         <h3>Resources</h3>
         <ul>
           <li>
-            <b style={{ color: RES_COLOR.iron }}>iron</b> and <b style={{ color: RES_COLOR.gold }}>gold</b> pile up at your island's forge, under the red tile roof.
+            <b style={{ color: RES_COLOR.iron }}>iron</b> and <b style={{ color: RES_COLOR.gold }}>gold</b> pile up at your island's forge, under the red tile roof. teammates standing at the forge all get what one of you picks up.
           </li>
           <li>
             <b style={{ color: RES_COLOR.diamond }}>diamonds</b> spawn on the corner islands and buy team upgrades.
