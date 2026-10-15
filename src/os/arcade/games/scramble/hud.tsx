@@ -410,7 +410,7 @@ const GUN_HELP: Record<WeaponId, string> = {
   shotgun: 'Nine pellets. Huge up close, weak far off.',
   auto: 'Fires as fast as you pull, a little weaker a shot.',
   double: 'Two barrels, then a reload. Brutal at arm’s length.',
-  sniper: 'A hundred a hit, and you see much farther holding it.',
+  sniper: 'Two hits crack an egg with no shield, and you see much farther holding it.',
   crossbow: 'Silent: firing it doesn’t give away your bush.',
   launcher: 'Lobs an egg that bursts on impact and flattens walls.',
 };
@@ -556,7 +556,8 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <b style={{ color: RARITY_COLORS[i] }}>{name}</b>
               {i < RARITY_NAMES.length - 1 ? ', ' : '.'}
             </span>
-          ))}
+          ))}{' '}
+          No gun cracks an egg at full health with one shot.
         </p>
         {GUN_GROUPS.map(([cls, title]) => (
           <div key={cls}>

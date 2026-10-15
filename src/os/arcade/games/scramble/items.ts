@@ -77,20 +77,20 @@ export type WeaponSpec = {
 };
 
 export const WEAPONS: Record<WeaponId, WeaponSpec> = {
-  pistol: { name: 'pistol', cls: 'pistol', dmg: 22, rate: 4.5, mag: 14, reload: 1.3, spread: 0.035, speed: 120, range: 50, ammo: 'light', pellets: 1, wallMult: 1, move: 1, zoom: 0 },
-  revolver: { name: 'hand cannon', cls: 'pistol', dmg: 46, rate: 1.7, mag: 7, reload: 2, spread: 0.02, speed: 160, range: 62, ammo: 'heavy', pellets: 1, wallMult: 1.2, move: 1, zoom: 2 },
-  smg: { name: 'SMG', cls: 'smg', dmg: 13, rate: 11, mag: 30, reload: 1.9, spread: 0.1, speed: 110, range: 38, ammo: 'light', pellets: 1, wallMult: 1, move: 1, zoom: 0 },
-  micro: { name: 'micro SMG', cls: 'smg', dmg: 10, rate: 16, mag: 24, reload: 1.6, spread: 0.14, speed: 105, range: 30, ammo: 'light', pellets: 1, wallMult: 1, move: 1.04, zoom: 0 },
-  rifle: { name: 'rifle', cls: 'rifle', dmg: 27, rate: 5.5, mag: 30, reload: 2.3, spread: 0.045, speed: 140, range: 70, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.96, zoom: 2 },
-  burst: { name: 'burst rifle', cls: 'rifle', dmg: 25, rate: 1.9, mag: 30, reload: 2.4, spread: 0.03, speed: 150, range: 75, ammo: 'heavy', pellets: 1, burst: { n: 3, gap: 0.075 }, wallMult: 1, move: 0.96, zoom: 3 },
-  scout: { name: 'scout rifle', cls: 'sniper', dmg: 48, rate: 2.2, mag: 10, reload: 2.5, spread: 0.01, speed: 190, range: 100, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.94, zoom: 8 },
-  lmg: { name: 'machine gun', cls: 'heavy', dmg: 21, rate: 9.5, mag: 80, reload: 4.6, spread: 0.09, speed: 135, range: 65, ammo: 'heavy', pellets: 1, wallMult: 1.3, move: 0.82, zoom: 2 },
-  shotgun: { name: 'pump shotgun', cls: 'shotgun', dmg: 11, rate: 1.1, mag: 6, reload: 2.6, spread: 0.24, speed: 95, range: 22, ammo: 'shells', pellets: 9, falloff: { near: 7, far: 20, min: 0.35 }, wallMult: 1, move: 0.96, zoom: 0 },
-  auto: { name: 'auto shotgun', cls: 'shotgun', dmg: 8.5, rate: 3.3, mag: 8, reload: 3, spread: 0.22, speed: 95, range: 20, ammo: 'shells', pellets: 6, falloff: { near: 6, far: 18, min: 0.35 }, wallMult: 1, move: 0.95, zoom: 0 },
-  double: { name: 'double barrel', cls: 'shotgun', dmg: 12, rate: 5, mag: 2, reload: 2.3, spread: 0.3, speed: 90, range: 16, ammo: 'shells', pellets: 10, falloff: { near: 5, far: 14, min: 0.3 }, wallMult: 1, move: 0.98, zoom: 0 },
-  sniper: { name: 'sniper', cls: 'sniper', dmg: 100, rate: 0.65, mag: 4, reload: 3, spread: 0.004, speed: 240, range: 130, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.9, zoom: 14 },
-  crossbow: { name: 'crossbow', cls: 'sniper', dmg: 82, rate: 1, mag: 1, reload: 1.5, spread: 0.006, speed: 85, range: 90, ammo: 'heavy', pellets: 1, silent: true, wallMult: 1, move: 0.96, zoom: 6 },
-  launcher: { name: 'egg launcher', cls: 'heavy', dmg: 80, rate: 0.6, mag: 1, reload: 2.8, spread: 0.015, speed: 48, range: 80, ammo: 'rockets', pellets: 1, splash: 4.5, wallMult: 3, move: 0.9, zoom: 4 },
+  pistol: { name: 'pistol', cls: 'pistol', dmg: 16, rate: 4.5, mag: 14, reload: 1.3, spread: 0.035, speed: 120, range: 50, ammo: 'light', pellets: 1, wallMult: 1, move: 1, zoom: 0 },
+  revolver: { name: 'hand cannon', cls: 'pistol', dmg: 33, rate: 1.7, mag: 7, reload: 2, spread: 0.02, speed: 160, range: 62, ammo: 'heavy', pellets: 1, wallMult: 1.2, move: 1, zoom: 2 },
+  smg: { name: 'SMG', cls: 'smg', dmg: 11, rate: 11, mag: 30, reload: 1.9, spread: 0.1, speed: 110, range: 38, ammo: 'light', pellets: 1, wallMult: 1, move: 1, zoom: 0 },
+  micro: { name: 'micro SMG', cls: 'smg', dmg: 8, rate: 16, mag: 24, reload: 1.6, spread: 0.14, speed: 105, range: 30, ammo: 'light', pellets: 1, wallMult: 1, move: 1.04, zoom: 0 },
+  rifle: { name: 'rifle', cls: 'rifle', dmg: 20, rate: 5.5, mag: 30, reload: 2.3, spread: 0.045, speed: 140, range: 70, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.96, zoom: 2 },
+  burst: { name: 'burst rifle', cls: 'rifle', dmg: 19, rate: 1.9, mag: 30, reload: 2.4, spread: 0.03, speed: 150, range: 75, ammo: 'heavy', pellets: 1, burst: { n: 3, gap: 0.075 }, wallMult: 1, move: 0.96, zoom: 3 },
+  scout: { name: 'scout rifle', cls: 'sniper', dmg: 34, rate: 2.2, mag: 10, reload: 2.5, spread: 0.01, speed: 190, range: 100, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.94, zoom: 8 },
+  lmg: { name: 'machine gun', cls: 'heavy', dmg: 16, rate: 9, mag: 80, reload: 4.6, spread: 0.09, speed: 135, range: 65, ammo: 'heavy', pellets: 1, wallMult: 1.3, move: 0.82, zoom: 2 },
+  shotgun: { name: 'pump shotgun', cls: 'shotgun', dmg: 8, rate: 1.1, mag: 6, reload: 2.6, spread: 0.24, speed: 95, range: 22, ammo: 'shells', pellets: 9, falloff: { near: 7, far: 20, min: 0.35 }, wallMult: 1, move: 0.96, zoom: 0 },
+  auto: { name: 'auto shotgun', cls: 'shotgun', dmg: 7, rate: 3, mag: 8, reload: 3, spread: 0.22, speed: 95, range: 20, ammo: 'shells', pellets: 6, falloff: { near: 6, far: 18, min: 0.35 }, wallMult: 1, move: 0.95, zoom: 0 },
+  double: { name: 'double barrel', cls: 'shotgun', dmg: 7, rate: 4, mag: 2, reload: 2.3, spread: 0.3, speed: 90, range: 16, ammo: 'shells', pellets: 10, falloff: { near: 5, far: 14, min: 0.3 }, wallMult: 1, move: 0.98, zoom: 0 },
+  sniper: { name: 'sniper', cls: 'sniper', dmg: 70, rate: 0.6, mag: 4, reload: 3, spread: 0.004, speed: 240, range: 130, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.9, zoom: 14 },
+  crossbow: { name: 'crossbow', cls: 'sniper', dmg: 60, rate: 1, mag: 1, reload: 1.5, spread: 0.006, speed: 85, range: 90, ammo: 'heavy', pellets: 1, silent: true, wallMult: 1, move: 0.96, zoom: 6 },
+  launcher: { name: 'egg launcher', cls: 'heavy', dmg: 60, rate: 0.6, mag: 1, reload: 2.8, spread: 0.015, speed: 48, range: 80, ammo: 'rockets', pellets: 1, splash: 4.5, wallMult: 4, move: 0.9, zoom: 4 },
 };
 
 export const RARITY_NAMES = ['common', 'uncommon', 'rare', 'epic', 'legendary'] as const;
