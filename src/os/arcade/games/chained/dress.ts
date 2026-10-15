@@ -64,19 +64,22 @@ export function quad(out: Tri, a: number[], b: number[], c: number[], d: number[
 export function sector(out: Tri, a0: number, a1: number, r0: number, r1: number, y0: number, y1: number, top: RGB, side: RGB, opts: { inner?: boolean; segs?: number; local?: boolean } = {}) {
   const segs = opts.segs ?? Math.max(2, Math.ceil(((a1 - a0) * r1) / 0.7));
   const P = (a: number, r: number, y: number) => [Math.cos(a) * r, y, Math.sin(a) * r];
+  // the corners are listed clockwise seen from outside (the angle grows toward +z), so each face is handed to quad
+  // reversed to wind counter clockwise and face out
+  const face = (a: number[], b: number[], c: number[], d: number[], color: RGB, k: number) => quad(out, a, d, c, b, color, k);
   for (let i = 0; i < segs; i++) {
     const s0 = a0 + ((a1 - a0) * i) / segs;
     const s1 = a0 + ((a1 - a0) * (i + 1)) / segs;
     // top and bottom
-    quad(out, P(s0, r0, y1), P(s0, r1, y1), P(s1, r1, y1), P(s1, r0, y1), top, 1);
-    quad(out, P(s0, r0, y0), P(s1, r0, y0), P(s1, r1, y0), P(s0, r1, y0), side, 0.5);
+    face(P(s0, r0, y1), P(s0, r1, y1), P(s1, r1, y1), P(s1, r0, y1), top, 1);
+    face(P(s0, r0, y0), P(s1, r0, y0), P(s1, r1, y0), P(s0, r1, y0), side, 0.55);
     // outer and inner
-    quad(out, P(s0, r1, y0), P(s1, r1, y0), P(s1, r1, y1), P(s0, r1, y1), side, 0.9);
-    if (opts.inner !== false) quad(out, P(s0, r0, y0), P(s0, r0, y1), P(s1, r0, y1), P(s1, r0, y0), side, 0.75);
+    face(P(s0, r1, y0), P(s1, r1, y0), P(s1, r1, y1), P(s0, r1, y1), side, 0.9);
+    if (opts.inner !== false) face(P(s0, r0, y0), P(s0, r0, y1), P(s1, r0, y1), P(s1, r0, y0), side, 0.75);
   }
   // the two ends
-  quad(out, P(a0, r0, y0), P(a0, r0, y1), P(a0, r1, y1), P(a0, r1, y0), side, 0.8);
-  quad(out, P(a1, r0, y0), P(a1, r1, y0), P(a1, r1, y1), P(a1, r0, y1), side, 0.8);
+  face(P(a0, r0, y0), P(a0, r0, y1), P(a0, r1, y1), P(a0, r1, y0), side, 0.8);
+  face(P(a1, r0, y0), P(a1, r1, y0), P(a1, r1, y1), P(a1, r0, y1), side, 0.8);
 }
 
 /**
