@@ -409,6 +409,8 @@ function Play({ kind }: { kind: Kind }) {
   hints.current ??= { on: kind !== 'idle' && climbsRun() < HINT_CLIMBS, seen: new Set(), at: -99, counted: false };
   const toastAt = useRef(-99);
   const fadeAt = useRef<number | null>(null);
+  /** The black of a respawn clears over a moment after the team lands on the beacon. */
+  const fadeOut = useRef(-99);
   const tags = useRef(new Map<number, HTMLDivElement>());
   const hintTimers = useRef({ hanging: false, swap: false });
 
@@ -616,7 +618,7 @@ function Play({ kind }: { kind: Kind }) {
         for (let t = 0; t < g.teams; t++) {
           if (g.respawn[t]) continue;
           const alive = liveOf(g, t).map((i) => g.souls[i].y);
-          if (alive.length && Math.min(...alive) < g.level.checkpoints[g.cp].y - FALL_TOO_FAR) scheduleRespawn(g, g.cp, g.time + 0.5, t);
+          if (alive.length && Math.min(...alive) < g.level.checkpoints[g.cp].y - FALL_TOO_FAR) scheduleRespawn(g, g.cp, g.time + RESPAWN_T * 0.6, t);
         }
       }
       g.respawn.forEach((r, t) => {
@@ -653,7 +655,7 @@ function Play({ kind }: { kind: Kind }) {
         react(g, { t: 'checkpoint', cp: ev.cp, i: Math.min(ev.i, g.souls.length - 1) });
       }
     } else if (ev.y === 'fell') {
-      if (g.authority && g.mode === 'beginner') scheduleRespawn(g, g.cp, g.time + 0.5, ev.team);
+      if (g.authority && g.mode === 'beginner') scheduleRespawn(g, g.cp, g.time + RESPAWN_T * 0.6, ev.team);
     } else if (ev.y === 'burn') {
       const s = g.souls[ev.i];
       if (s && s.kind === 'remote' && (s.seat === from || from === 0) && s.burned < 0) applyRemote(g, s, { x: s.x, y: s.y, z: s.z, vx: 0, vy: 0, vz: 0, flags: 4 });
@@ -779,7 +781,10 @@ function Play({ kind }: { kind: Kind }) {
         }
         break;
       case 'mantle':
-        sfx.tone({ freq: 240, to: 380, dur: 0.09, type: 'triangle', vol: 0.09 });
+        if (e.grab) {
+          sfx.tone({ freq: 170, to: 110, dur: 0.05, type: 'triangle', vol: mine ? 0.12 : 0.06 });
+          sfx.noise(0.03, mine ? 0.06 : 0.03);
+        } else sfx.tone({ freq: 240, to: 380, dur: 0.09, type: 'triangle', vol: 0.09 });
         break;
       case 'step':
         if (e.surface === 'metal') sfx.tone({ freq: 640 + Math.random() * 60, dur: 0.02, type: 'square', vol: mine ? 0.03 : 0.015 });
@@ -854,6 +859,7 @@ function Play({ kind }: { kind: Kind }) {
         if (!ours) break;
         sfx.tone({ freq: 520, to: 780, dur: 0.22, type: 'triangle', vol: 0.1 });
         fadeAt.current = null;
+        fadeOut.current = g.time + 0.3;
         note(e.cp === 0 ? 'Back at the bottom.' : `Back at beacon ${e.cp}.`);
         break;
       case 'gust':
@@ -908,6 +914,7 @@ function Play({ kind }: { kind: Kind }) {
     let fade = 0;
     const pending = g.respawn[us];
     if (pending) fade = Math.max(0, Math.min(1, 1 - (pending.at - g.time) / RESPAWN_T));
+    else if (fadeOut.current > g.time) fade = Math.max(0, Math.min(1, (fadeOut.current - g.time) / 0.3));
     const chip = (idx: number, rival: boolean): SoulChip => {
       const s = g.souls[idx];
       return {
