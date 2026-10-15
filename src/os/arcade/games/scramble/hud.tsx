@@ -2,7 +2,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AMMO_BOX, BOOST, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, type Ammo, type GunClass, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
-import { HALF, type Building, type GameMap } from './map';
+import { HALF, type Building, type Door, type GameMap } from './map';
 import type { Held } from './logic';
 
 const Svg = ({ children, size = 28, label }: { children: ReactNode; size?: number; label?: string }) => (
@@ -309,6 +309,24 @@ export function EggIcon({ size = 16 }: { size?: number }) {
 
 const MAP_ROOF: Record<Building['kind'], string> = { house: '#b5523b', farm: '#8b2f23', shed: '#7a5534', warehouse: '#6f7c88', container: '#4f6d8f', ruin: '#a39e93', coop: '#f5b301' };
 
+/**
+ * A doorway on the map: a light tab through the wall that pokes out the way in, or a dark band across a shipping
+ * container's open end.
+ */
+function DoorMark({ b, d }: { b: Building; d: Door }) {
+  const open = b.kind === 'container';
+  // from `lo` inside the wall line to `hi` outside it, and this wide along the wall
+  const lo = open ? -1.6 : -1;
+  const hi = open ? 0.3 : 3.2;
+  const wide = open ? d.w + 0.5 : Math.max(3, d.w + 0.4);
+  const mid = (lo + hi) / 2;
+  const x = d.x + d.ox * mid;
+  const z = d.z + d.oz * mid;
+  const hw = d.ox ? (hi - lo) / 2 : wide / 2;
+  const hd = d.ox ? wide / 2 : (hi - lo) / 2;
+  return <rect x={x - hw} y={z - hd} width={hw * 2} height={hd * 2} fill={open ? '#1d2025' : b.kind === 'ruin' ? '#e4dccb' : '#fff6d6'} />;
+}
+
 /** The island drawn in map coordinates (x right, north up), for the minimap and the big map. */
 export function IslandArt({ map }: { map: GameMap }) {
   const coop = map.buildings[map.coop];
@@ -332,6 +350,7 @@ export function IslandArt({ map }: { map: GameMap }) {
       {map.buildings.map((b, i) => (
         <rect key={`b${i}`} x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={MAP_ROOF[b.kind]} stroke={b.kind === 'ruin' ? 'none' : '#f1e6d2'} strokeWidth="1" />
       ))}
+      {map.buildings.map((b, i) => b.doors.map((d, k) => <DoorMark key={`d${i}-${k}`} b={b} d={d} />))}
       {coop && <path d={star(coop.x, coop.z, 9)} fill="#ffd23d" stroke="#7a4a00" strokeWidth="1.4" strokeLinejoin="round" />}
     </>
   );
@@ -410,7 +429,7 @@ const GUN_HELP: Record<WeaponId, string> = {
   shotgun: 'Nine pellets. Huge up close, weak far off.',
   auto: 'Fires as fast as you pull, a little weaker a shot.',
   double: 'Two barrels, then a reload. Brutal at arm’s length.',
-  sniper: 'A hundred a hit, and you see much farther holding it.',
+  sniper: 'Two hits crack an egg with no shield, and you see much farther holding it.',
   crossbow: 'Silent: firing it doesn’t give away your bush.',
   launcher: 'Lobs an egg that bursts on impact and flattens walls.',
 };
@@ -525,10 +544,13 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Houses, farmhouses and sheds.</b> Loot inside, often a chest. The roof lifts off while you're in, and nobody outside can see you.
           </li>
           <li>
+            <b>Doors.</b> Every way in has a bright frame, a lamp, a porch and an awning sticking out from the roof, and shows as a light tab on the map. Walk up to a door, or line up with one, and the roof thins so you can peek in.
+          </li>
+          <li>
             <b>Warehouses.</b> Full of crates, with a chest in a corner and barrels outside.
           </li>
           <li>
-            <b>Shipping containers.</b> Rows of them, each open at one end. Good cover, and sometimes something inside.
+            <b>Shipping containers.</b> Rows of them, each open at one end, where the doors swing wide and it's dark inside (a dark band on the map). Good cover, and sometimes something inside.
           </li>
           <li>
             <b>The Golden Coop.</b> The gold-roofed building with a star on the map. One way in, and a golden chest at the back full of legendary gear.
@@ -556,7 +578,8 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <b style={{ color: RARITY_COLORS[i] }}>{name}</b>
               {i < RARITY_NAMES.length - 1 ? ', ' : '.'}
             </span>
-          ))}
+          ))}{' '}
+          No gun cracks an egg at full health with one shot.
         </p>
         {GUN_GROUPS.map(([cls, title]) => (
           <div key={cls}>

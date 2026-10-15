@@ -4,7 +4,7 @@
 // computer players and sends everyone the whole match. Things that happen (shots, hits, drops, walls, pickups) travel
 // as events: a guest sends its own to the host, and the host applies them and passes them on to everyone else, in the
 // order it applied them, together with its own. Guests ask the host for pickups and chests and hear back who got them.
-import { WEAPONS, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
+import { MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import {
   CAUSES,
   HELD,
@@ -76,6 +76,15 @@ const int = (v: unknown): v is number => Number.isInteger(v);
 const fid = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) < MAX_FIGHTERS;
 const seat = (v: unknown): v is number => int(v) && (v as number) >= -1 && (v as number) < 16;
 const isCause = (v: unknown): v is Cause => CAUSES.includes(v as Cause);
+/**
+ * The most one hit from another client can do: a legendary bullet or pellet, a swing, or a grenade right on top. The
+ * rest (the storm, hot sauce, barrels) each client works out for its own egg, so never arrives as a hit.
+ */
+export function hitCap(w: Cause) {
+  if (isWeapon(w)) return Math.round(damageOf(w, MAX_RARITY));
+  if (isMelee(w)) return MELEE[w].dmg;
+  return w === 'grenade' ? (THROWS.grenade.dmg ?? 0) : 0;
+}
 /** Loot and wall ids: whole numbers well inside what JSON carries exactly. */
 const id = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) < 1e9;
 
@@ -186,7 +195,7 @@ function parseEv(v: unknown): NetEv | null {
         ? { y: 'th', f: e.f, k: e.k, x: e.x, z: e.z, lx: e.lx, lz: e.lz, ft: e.ft }
         : null;
     case 'd':
-      return fid(e.f) && fid(e.to) && num(e.d) && e.d > 0 && e.d <= 400 && isCause(e.w) && num(e.x) && num(e.z) ? { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z } : null;
+      return fid(e.f) && fid(e.to) && num(e.d) && isCause(e.w) && e.d > 0 && e.d <= hitCap(e.w) && num(e.x) && num(e.z) ? { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z } : null;
     case 'm':
       return fid(e.f) && (e.k === 'wall' || e.k === 'crate') && id(e.id) && num(e.d) && e.d > 0 && e.d <= 1000 ? { y: 'm', f: e.f, k: e.k, id: e.id, d: e.d } : null;
     case 'b':
