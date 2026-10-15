@@ -174,6 +174,30 @@ export function buildingAt(map: GameMap, x: number, z: number) {
   return -1;
 }
 
+/** How far out from a doorway you can still peek in through it. */
+export const PEEK = 8;
+
+/**
+ * The roofed building a point outside it looks into through a doorway, or -1: standing at a door, or lined up with one
+ * up to PEEK meters out, in a wedge that widens away from it. The nearest door wins. The view thins that roof.
+ */
+export function peekAt(map: GameMap, x: number, z: number) {
+  let best = -1;
+  let near = Infinity;
+  for (let i = 0; i < map.buildings.length; i++) {
+    const b = map.buildings[i];
+    if (!b.roof || Math.abs(x - b.x) > b.w / 2 + PEEK || Math.abs(z - b.z) > b.d / 2 + PEEK) continue;
+    for (const d of b.doors) {
+      const out = (x - d.x) * d.ox + (z - d.z) * d.oz;
+      const side = Math.abs((x - d.x) * d.oz - (z - d.z) * d.ox);
+      if (out < -0.6 || out > PEEK || out >= near || side > d.w / 2 + 1.2 + Math.max(0, out) * 0.3) continue;
+      best = i;
+      near = out;
+    }
+  }
+  return best;
+}
+
 /** The bush hiding a point, or -1. */
 export function bushAt(map: GameMap, x: number, z: number) {
   for (let i = 0; i < map.bushes.length; i++) {

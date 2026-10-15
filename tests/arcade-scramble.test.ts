@@ -10,6 +10,7 @@ import {
   DROP_BASE,
   EDGE,
   HALF,
+  PEEK,
   POND_SLOW,
   STORM_PHASES,
   STORM_R0,
@@ -19,6 +20,7 @@ import {
   busAt,
   coverAt,
   generateMap,
+  peekAt,
   pushBox,
   pushCircle,
   pushObb,
@@ -182,6 +184,41 @@ test('every island has all its buildings, each with the doorways it should have,
     assert.equal(kinds('chest').filter((c) => c.gold).length, 1, 'one golden chest, in the Golden Coop');
     assert.ok(kinds('barrel').length >= 16, 'barrels about');
     assert.equal(kinds('supply').length, 3);
+  }
+});
+
+test('standing at a doorway, or lined up with one a few steps out, peeks into that building, and nowhere else does', () => {
+  const out = (d: Door, k: number, side = 0) => ({ x: d.x + d.ox * k + Math.abs(d.oz) * side, z: d.z + d.oz * k + Math.abs(d.ox) * side });
+  for (let seed = 1; seed <= 25; seed++) {
+    const m = generateMap(seed);
+    m.buildings.forEach((b, i) => {
+      for (const d of b.doors) {
+        if (!b.roof) {
+          const p = out(d, 1);
+          assert.notEqual(peekAt(m, p.x, p.z), i, 'a ruin has no roof to peek under');
+          continue;
+        }
+        for (const [k, side] of [[0, 0], [1.2, 0], [1.5, d.w / 2 + 0.8], [4, d.w / 2 + 1.5]]) {
+          const p = out(d, k, side);
+          const at = peekAt(m, p.x, p.z);
+          // in a yard of containers, the next one's open end can be nearer
+          if (b.kind === 'container') assert.ok(at >= 0 && m.buildings[at].kind === 'container', `seed ${seed}: peeking into a container`);
+          else assert.equal(at, i, `seed ${seed}: ${k} m out from a ${b.kind}'s door`);
+        }
+        const far = out(d, 6);
+        assert.ok(peekAt(m, far.x, far.z) >= 0, `seed ${seed}: lined up with a door from six meters`);
+        const beyond = out(d, PEEK + 1);
+        assert.notEqual(peekAt(m, beyond.x, beyond.z), i, 'too far to peek in');
+      }
+      // three meters out from the middle of a wall with no door in it, you can't see in
+      if (!b.roof || b.kind === 'container') return;
+      for (const [ox, oz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        if (b.doors.some((d) => d.ox === ox && d.oz === oz)) continue;
+        const x = b.x + ox * (b.w / 2 + 3);
+        const z = b.z + oz * (b.d / 2 + 3);
+        assert.notEqual(peekAt(m, x, z), i, `seed ${seed}: no peeking into a ${b.kind} through a blank wall`);
+      }
+    });
   }
 });
 
