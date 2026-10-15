@@ -10,7 +10,7 @@ import { Chat, type ChatEnv } from './chat';
 import { Lobby } from './lobby';
 import { Lounge, type LoungeEnv } from './lounge';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
-import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, LISTING_REFRESH_MS, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, roomListing, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
+import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, LISTING_REFRESH_MS, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
 export { Chat, Lobby, Lounge };
 
@@ -152,7 +152,10 @@ export class Boards extends DurableObject<Env> {
   }
 }
 
-type Attachment = { seat: number; name: string };
+/** v: the room protocol the client speaks; 2 and up follow a host hand-off (older clients only know the room closing). */
+type Attachment = { seat: number; name: string; v?: number };
+/** Clients that follow a host hand-off: when one of these is left without a host, the next one takes over. */
+const HANDOFF_VERSION = 2;
 type RoomResults = { reports: RoundReports; recorded: RecordedRounds };
 
 export class Room extends DurableObject<Env> {
@@ -200,10 +203,20 @@ export class Room extends DurableObject<Env> {
     if (parsed.t === 'start') {
       const lineup = this.lineup(room, this.players());
       if (!canStartRoom(attachment.seat, lineup.players.length, lineup.bots?.length)) return;
-      const round = beginRound(room, lineup.players.map(({ seat }) => seat));
+      const round = beginRound(room, lineup.players.map(({ seat }) => seat), lineup.bots?.length ?? 0);
       await this.ctx.storage.put('room', room);
       this.broadcast({ t: 'start', ...lineup, round });
       await this.publish(room, lineup.players);
+      return;
+    }
+
+    // The host's game says the round is over: the room takes people again (and goes back on Open Rooms) until the next.
+    if (parsed.t === 'over') {
+      if (attachment.seat !== 0 || !endRound(room, parsed.round)) return;
+      await this.ctx.storage.put('room', room);
+      const players = this.players();
+      this.broadcast({ t: 'players', ...this.lineup(room, players), started: false });
+      await this.publish(room, players);
       return;
     }
 
@@ -272,30 +285,29 @@ export class Room extends DurableObject<Env> {
     const room = await this.ctx.storage.get<RoomState>('room');
     if (!room) return json({ error: 'room not found' }, 404);
     if (!canJoinRoom(room)) return json({ error: 'room already started' }, 409);
+    // A socket on its way out keeps its seat until it has gone, so nobody is ever given a seat someone still holds.
     const sockets = this.ctx.getWebSockets();
     const seat = lowestFreeSeat(room.seats, sockets.map((socket) => (socket.deserializeAttachment() as Attachment | null)?.seat).filter((value): value is number => value !== undefined));
     if (seat === null) return json({ error: 'room is full' }, 409);
-    const existingPlayers = sockets
-      .map((socket) => socket.deserializeAttachment() as Attachment | null)
-      .filter((value): value is Attachment => !!value)
-      .map(({ seat: playerSeat, name: playerName }) => ({ seat: playerSeat, name: playerName }));
+    const existingPlayers = this.players();
 
     const url = new URL(request.url);
     const cleaned = cleanName(url.searchParams.get('name') ?? '');
     const name = nameLength(cleaned) >= 1 && nameLength(cleaned) <= 16 ? cleaned : `Player ${seat + 1}`;
+    const version = Number(url.searchParams.get('v'));
     const code = /\/rooms\/([ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4})\/ws$/.exec(url.pathname)?.[1] ?? '';
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    server.serializeAttachment({ seat, name } satisfies Attachment);
+    server.serializeAttachment({ seat, name, ...(Number.isSafeInteger(version) && version > 1 ? { v: version } : {}) } satisfies Attachment);
     this.ctx.acceptWebSocket(server);
     if (room.started) {
       benchSeat(room, seat);
       await this.ctx.storage.put('room', room);
     }
     const lineup = this.lineup(room, [...existingPlayers, { seat, name }].sort((a, b) => a.seat - b.seat));
-    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, ...lineup, started: room.started }));
-    this.broadcast({ t: 'players', ...lineup });
+    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, ...lineup, started: room.started, round: room.round ?? 0 }));
+    this.broadcast({ t: 'players', ...lineup, started: room.started });
     await this.publish(room, lineup.players);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -333,8 +345,10 @@ export class Room extends DurableObject<Env> {
     else if (!listing) await this.ctx.storage.deleteAlarm();
   }
 
+  /** People in the room: open sockets, in seat order. */
   private players(): RoomPlayer[] {
     return this.ctx.getWebSockets()
+      .filter((socket) => socket.readyState === WebSocket.OPEN)
       .map((socket) => socket.deserializeAttachment() as Attachment | null)
       .filter((value): value is Attachment => !!value)
       .map(({ seat, name }) => ({ seat, name }))
@@ -363,26 +377,45 @@ export class Room extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Someone left. The room carries on while anyone is in it: when the host goes, the person in the lowest seat takes
+   * over as host (seat 0) and any round under way ends, since the host's game ran it; when a guest goes, the round
+   * ends only if nobody is left to play against. Clients from before hand-offs can't follow one, so a room with any of
+   * them still closes when its host leaves.
+   */
   private async onSocketClose(ws: WebSocket, attachment: Attachment | null) {
-    if (attachment?.seat === 0) {
+    const remaining = this.ctx.getWebSockets().filter((socket) => socket !== ws && socket.readyState === WebSocket.OPEN);
+    const seated = remaining
+      .map((socket) => ({ socket, seat: socket.deserializeAttachment() as Attachment | null }))
+      .filter((entry): entry is { socket: WebSocket; seat: Attachment } => !!entry.seat);
+    const room = await this.ctx.storage.get<RoomState>('room');
+    if (!seated.length || !room) {
+      await this.close();
+      return;
+    }
+    if (attachment?.seat === 0 && seated.some(({ seat }) => (seat.v ?? 1) < HANDOFF_VERSION)) {
       this.broadcast({ t: 'closed', reason: 'host-left' }, ws);
       for (const socket of this.ctx.getWebSockets()) socket.close(1000, 'host-left');
       await this.close();
       return;
     }
-    const remaining = this.ctx.getWebSockets().filter((socket) => socket !== ws && socket.readyState === WebSocket.OPEN);
-    if (!remaining.length) {
-      await this.close();
-      return;
+    let from: number | null = null;
+    if (attachment?.seat === 0) {
+      const next = nextHost(seated.map(({ seat }) => seat))!;
+      const entry = seated.find(({ seat }) => seat.seat === next.seat)!;
+      from = next.seat;
+      entry.seat = { ...entry.seat, seat: 0 };
+      entry.socket.serializeAttachment(entry.seat);
+      endRound(room);
     }
-    const players = remaining
-      .map((socket) => socket.deserializeAttachment() as Attachment | null)
-      .filter((value): value is Attachment => !!value)
-      .map(({ seat, name }) => ({ seat, name }))
-      .sort((a, b) => a.seat - b.seat);
-    const room = await this.ctx.storage.get<RoomState>('room');
-    this.broadcast({ t: 'players', ...(room ? this.lineup(room, players) : { players }) });
-    if (room) await this.publish(room, players);
+    const players = seated.map(({ seat: { seat, name } }) => ({ seat, name })).sort((a, b) => a.seat - b.seat);
+    // Benched latecomers aren't in the round, so they don't keep it going.
+    const inRound = room.roster ? players.filter(({ seat }) => room.roster!.includes(seat)).length : players.length;
+    if (from === null && room.started && !roundPlayable(room, inRound)) endRound(room);
+    await this.ctx.storage.put('room', room);
+    const lineup = { ...this.lineup(room, players), started: room.started };
+    this.broadcast(from === null ? { t: 'players', ...lineup } : { t: 'host', from, ...lineup }, ws);
+    await this.publish(room, players);
   }
 
   /** The room is over: off Open Rooms, and everything it kept is gone. */

@@ -14,11 +14,13 @@ async function createRoom(game, listed = false) {
   return code;
 }
 
-function connect(code, name) {
+/** v: the room protocol; clients from before host hand-offs send none. */
+function connect(code, name, v) {
   return new Promise((resolve, reject) => {
     const url = new URL(`/rooms/${code}/ws`, api);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     url.searchParams.set('name', name);
+    if (v) url.searchParams.set('v', String(v));
     const socket = new WebSocket(url);
     const messages = [];
     const waiters = new Set();
@@ -96,6 +98,12 @@ async function waitForWins(name, expected) {
   throw new Error(`online win did not reach ${expected}`);
 }
 
+const openRooms = async (game) => {
+  const response = await fetch(`${api}/rooms${game ? `?game=${game}` : ''}`);
+  assert.equal(response.status, 200);
+  return (await response.json()).rooms;
+};
+
 const code = await createRoom('pong');
 const hostName = `Smoke${Date.now().toString().slice(-8)}`;
 const host = await connect(code, hostName);
@@ -142,8 +150,66 @@ pass('Agreed online win records once despite repeated reports');
 
 host.socket.close();
 await guest.wait('closed');
-pass('Host disconnect notifies the guest');
+pass('A host leaving closes the room for clients from before hand-offs');
 guest.socket.close();
+
+const duelCode = await createRoom('pong');
+const duelHost = await connect(duelCode, 'DuelHost', 2);
+await duelHost.wait('welcome');
+const duelGuest = await connect(duelCode, 'DuelGuest', 2);
+await duelGuest.wait('welcome');
+duelHost.send({ t: 'start' });
+await duelGuest.wait('start');
+const beforeOver = duelHost.messages.length;
+duelGuest.send({ t: 'over', round: 1 });
+await new Promise((resolve) => setTimeout(resolve, 100));
+assert.equal(duelHost.messages.slice(beforeOver).some((message) => message.t === 'players'), false, 'only the host ends a round');
+const guestBefore = duelGuest.messages.length;
+duelHost.send({ t: 'over', round: 1 });
+await duelGuest.wait('players', (message) => message.started === false && duelGuest.messages.indexOf(message) >= guestBefore);
+duelGuest.socket.close();
+await duelHost.wait('players', (message) => message.players.length === 1);
+const duelNext = await connect(duelCode, 'DuelNext', 2);
+const duelNextWelcome = await duelNext.wait('welcome');
+assert.deepEqual([duelNextWelcome.seat, duelNextWelcome.started, duelNextWelcome.round], [1, false, 1]);
+pass('Between matches the host stays in the room and someone new can take the empty seat');
+
+duelHost.send({ t: 'start' });
+await duelNext.wait('start', (message) => message.round === 2);
+duelNext.socket.close();
+const stopped = await duelHost.wait('players', (message) => message.players.length === 1 && message.started === false && duelHost.messages.indexOf(message) > duelHost.messages.findLastIndex((m) => m.t === 'start'));
+assert.equal(stopped.players[0].name, 'DuelHost');
+const duelLate = await connect(duelCode, 'DuelLate', 2);
+assert.equal((await duelLate.wait('welcome')).seat, 1);
+pass('A match nobody is left to play ends, and the room opens again');
+for (const client of [duelLate, duelHost]) client.socket.close();
+
+const handCode = await createRoom('lightcycles', true);
+const hands = [];
+for (const name of ['HandAnn', 'HandBo', 'HandCy']) {
+  const client = await connect(handCode, name, 2);
+  await client.wait('welcome');
+  hands.push(client);
+}
+hands[0].send({ t: 'start' });
+await Promise.all(hands.map((client) => client.wait('start')));
+hands[0].socket.close();
+const handoffs = await Promise.all(hands.slice(1).map((client) => client.wait('host')));
+assert.deepEqual(handoffs.map((message) => [message.from, message.started, message.players.map((player) => `${player.seat}:${player.name}`).join(' ')]), [
+  [1, false, '0:HandBo 2:HandCy'],
+  [1, false, '0:HandBo 2:HandCy'],
+]);
+await new Promise((resolve) => setTimeout(resolve, 100));
+assert.equal((await openRooms('lightcycles')).find((room) => room.code === handCode)?.host, 'HandBo');
+pass('When the host leaves, the next player hosts the room and it stays open');
+
+hands[2].send({ t: 'start' });
+await new Promise((resolve) => setTimeout(resolve, 100));
+assert.equal(hands[2].messages.filter((message) => message.t === 'start').length, 1, 'the old seat numbers carry no host rights');
+hands[1].send({ t: 'start' });
+assert.equal((await hands[2].wait('start', (message) => message.round === 2)).players.length, 2);
+pass('The new host starts the next round');
+for (const client of hands.slice(1)) client.socket.close();
 
 const lightCode = await createRoom('lightcycles');
 const riders = [];
@@ -244,11 +310,6 @@ assert.deepEqual(latecomerWelcome.bots, [2, 3, 4, 5, 6, 7]);
 pass('A host alone races seven bots, and someone can still join for the next race');
 for (const client of [latecomer, soloHost]) client.socket.close();
 
-const openRooms = async (game) => {
-  const response = await fetch(`${api}/rooms${game ? `?game=${game}` : ''}`);
-  assert.equal(response.status, 200);
-  return (await response.json()).rooms;
-};
 const listedCode = await createRoom('lightcycles', true);
 const privateCode = await createRoom('lightcycles');
 assert.equal((await openRooms('lightcycles')).some((room) => room.code === listedCode), false, 'not before its host is in');
