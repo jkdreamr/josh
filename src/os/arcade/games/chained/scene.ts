@@ -1,11 +1,12 @@
 // three.js view of a climb: the tower and its six circles, the souls, the chain, the lava and the weather. It reads
 // a Game every frame and never changes it.
+import type { Dress, Frame, Geo, Mats } from './decor';
+import { DRESSERS } from './decor/index';
+import { geometryOf, hexToRgb, mixHex, scatter, sector, shade, tri, vary, type Three } from './dress';
 import type { T } from './gl';
 import { clamp, createGL, damp, disposeTree, lerp, type GL } from './gl';
 import { CHAIN_L, LAVA_Y, R_CORE, R_FLOOR, R_MAX, TOP, ZONES, pose, zoneIndex, type Level, type Palette, type Platform } from './level';
 import { crumbleState, liveOf, windAt, type CrumbleState, type Ev, type Game, type Soul } from './logic';
-
-type Three = typeof import('three');
 
 export type View = {
   gl: GL;
@@ -27,27 +28,7 @@ export type View = {
 };
 
 // ---------------------------------------------------------------------------------------------------------------
-// little helpers
-
-/** Deterministic scatter, so the tower is dressed the same every visit. */
-function scatter(seed: number) {
-  let a = seed >>> 0;
-  return () => {
-    a = (Math.imul(a, 1664525) + 1013904223) >>> 0;
-    return a / 4294967296;
-  };
-}
-
-const hexToRgb = (hex: string): [number, number, number] => {
-  const n = parseInt(hex.slice(1), 16);
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
-};
-const mixHex = (a: string, b: string, t: number) => {
-  const ca = hexToRgb(a);
-  const cb = hexToRgb(b);
-  const c = ca.map((v, i) => Math.round(lerp(v, cb[i], t) * 255));
-  return `#${c.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
-};
+// the palette at a height (the geometry and colour helpers live in dress.ts)
 
 /** The palette at a height: each circle's own, blended over the three metres either side of a door. */
 export function paletteAt(y: number): { palette: Palette; zone: number; blend: number } {
@@ -84,67 +65,6 @@ export function paletteAt(y: number): { palette: Palette; zone: number; blend: n
     },
   };
 }
-
-type Tri = { pos: number[]; nor: number[]; col: number[] };
-const tri = (): Tri => ({ pos: [], nor: [], col: [] });
-
-function quad(out: Tri, a: number[], b: number[], c: number[], d: number[], color: [number, number, number], shade = 1) {
-  // a b c d counter clockwise seen from outside; normal from the first three
-  const ux = b[0] - a[0];
-  const uy = b[1] - a[1];
-  const uz = b[2] - a[2];
-  const vx = c[0] - a[0];
-  const vy = c[1] - a[1];
-  const vz = c[2] - a[2];
-  let nx = uy * vz - uz * vy;
-  let ny = uz * vx - ux * vz;
-  let nz = ux * vy - uy * vx;
-  const l = Math.hypot(nx, ny, nz) || 1;
-  nx /= l;
-  ny /= l;
-  nz /= l;
-  for (const p of [a, b, c, a, c, d]) {
-    out.pos.push(p[0], p[1], p[2]);
-    out.nor.push(nx, ny, nz);
-    out.col.push(color[0] * shade, color[1] * shade, color[2] * shade);
-  }
-}
-
-/**
- * A ledge: a sector of a ring between two radii and two heights, with flat shaded faces. Built in world space around
- * the tower axis, or around angle 0 when `local` (for ledges that move).
- */
-function sector(out: Tri, a0: number, a1: number, r0: number, r1: number, y0: number, y1: number, top: [number, number, number], side: [number, number, number], opts: { inner?: boolean; segs?: number; local?: boolean } = {}) {
-  const segs = opts.segs ?? Math.max(2, Math.ceil(((a1 - a0) * r1) / 0.7));
-  const P = (a: number, r: number, y: number) => [Math.cos(a) * r, y, Math.sin(a) * r];
-  for (let i = 0; i < segs; i++) {
-    const s0 = a0 + ((a1 - a0) * i) / segs;
-    const s1 = a0 + ((a1 - a0) * (i + 1)) / segs;
-    // top and bottom
-    quad(out, P(s0, r0, y1), P(s0, r1, y1), P(s1, r1, y1), P(s1, r0, y1), top, 1);
-    quad(out, P(s0, r0, y0), P(s1, r0, y0), P(s1, r1, y0), P(s0, r1, y0), side, 0.5);
-    // outer and inner
-    quad(out, P(s0, r1, y0), P(s1, r1, y0), P(s1, r1, y1), P(s0, r1, y1), side, 0.9);
-    if (opts.inner !== false) quad(out, P(s0, r0, y0), P(s0, r0, y1), P(s1, r0, y1), P(s1, r0, y0), side, 0.75);
-  }
-  // the two ends
-  quad(out, P(a0, r0, y0), P(a0, r0, y1), P(a0, r1, y1), P(a0, r1, y0), side, 0.8);
-  quad(out, P(a1, r0, y0), P(a1, r1, y0), P(a1, r1, y1), P(a1, r0, y1), side, 0.8);
-}
-
-function geometryOf(THREE: Three, t: Tri) {
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(t.pos, 3));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(t.nor, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(t.col, 3));
-  return geo;
-}
-
-const shade = (c: [number, number, number], k: number): [number, number, number] => [c[0] * k, c[1] * k, c[2] * k];
-const vary = (c: [number, number, number], rng: () => number, amount = 0.08): [number, number, number] => {
-  const k = 1 + (rng() - 0.5) * amount * 2;
-  return [clamp(c[0] * k, 0, 1), clamp(c[1] * k, 0, 1), clamp(c[2] * k, 0, 1)];
-};
 
 type Particles = {
   mesh: T.InstancedMesh;
@@ -228,7 +148,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
 
   const rng = scatter(99);
   const disposables: { dispose(): void }[] = [];
-  const geo = {
+  const geo: Geo = {
     box: new THREE.BoxGeometry(1, 1, 1),
     ball: new THREE.SphereGeometry(1, 10, 8),
     cone: new THREE.ConeGeometry(1, 1, 8),
@@ -249,7 +169,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     disposables.push(m);
     return m;
   };
-  const mats = {
+  const mats: Mats = {
     iron: flat('#2b2e36'),
     darkIron: flat('#1b1d23'),
     bone: flat('#d9cfb8'),
@@ -265,7 +185,10 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     cloud: flat('#cfd6ff', { transparent: true, opacity: 0.55 }),
     star: basic('#ffffff'),
     chain: flat('#3a3d46'),
+    // the vertex coloured stone of the core and the merged static mesh
+    stone: new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }),
   };
+  disposables.push(mats.stone);
 
   // -------------------------------------------------------------------------------------------------------------
   // the tower core, the shaft around it and the sky
@@ -295,9 +218,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     coreGeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     coreGeo.computeVertexNormals();
   }
-  const coreMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-  disposables.push(coreMat);
-  const core = new THREE.Mesh(coreGeo, coreMat);
+  const core = new THREE.Mesh(coreGeo, mats.stone);
   scene.add(core);
   // a spire at the very top
   const spire = new THREE.Mesh(geo.cone, flat(ZONES[5].palette.core));
@@ -416,12 +337,6 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
   const beacons: Beacon[] = [];
   const decor = new THREE.Group();
   scene.add(decor);
-  const icicles: { x: number; y: number; z: number; s: number }[] = [];
-  const candles: T.Mesh[] = [];
-  const flames: { mesh: T.Mesh; seed: number }[] = [];
-  const ghosts: { mesh: T.Mesh; x: number; y: number; z: number; seed: number }[] = [];
-  const gears: T.Group[] = [];
-  const shards: { mesh: T.Mesh; a: number; r: number; y: number; seed: number }[] = [];
 
   const stoneOf = (p: Platform): [[number, number, number], [number, number, number]] => {
     const pal = ZONES[p.zone].palette;
@@ -445,7 +360,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       const t = tri();
       const iron = hexToRgb('#3a3d46');
       sector(t, -p.span, p.span, p.r0, p.r1, -p.h * 0.6, 0, shade(iron, 1.1), iron, { local: true });
-      const mesh = new THREE.Mesh(geometryOf(THREE, t), coreMat.clone());
+      const mesh = new THREE.Mesh(geometryOf(THREE, t), mats.stone.clone());
       disposables.push(mesh.geometry, mesh.material as T.Material);
       (mesh.material as T.MeshLambertMaterial).vertexColors = true;
       const rim = new THREE.Mesh(geo.box, mats.gold);
@@ -463,7 +378,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       // a stone slab hung on rods from an iron rail above
       const t = tri();
       sector(t, -p.span, p.span, p.r0, p.r1, -p.h, 0, light, dark, { local: true });
-      const slab = new THREE.Mesh(geometryOf(THREE, t), coreMat.clone());
+      const slab = new THREE.Mesh(geometryOf(THREE, t), mats.stone.clone());
       disposables.push(slab.geometry, slab.material as T.Material);
       const group = new THREE.Group();
       group.add(slab);
@@ -497,7 +412,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       const t = tri();
       const cracked = shade(light, 0.85);
       sector(t, p.a - p.span, p.a + p.span, p.r0, p.r1, y0, p.y, cracked, shade(dark, 0.85));
-      const mat = coreMat.clone();
+      const mat = mats.stone.clone();
       mat.transparent = true;
       disposables.push(mat);
       const mesh = new THREE.Mesh(geometryOf(THREE, t), mat);
@@ -521,11 +436,6 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     if (p.kind === 'ice') {
       const ice = hexToRgb('#bfe6f8');
       sector(statics, p.a - p.span, p.a + p.span, p.r0, p.r1, y0, p.y, vary(ice, rng, 0.05), shade(hexToRgb('#7fb6d3'), 0.9));
-      // icicles underneath
-      for (let i = 0; i < 2 + Math.floor(rng() * 3); i++) {
-        const ia = p.a + (rng() - 0.5) * p.span * 1.8;
-        icicles.push({ x: Math.cos(ia) * (p.r1 - 0.15), y: y0, z: Math.sin(ia) * (p.r1 - 0.15), s: 0.4 + rng() * 0.9 });
-      }
     } else if (p.kind === 'goal') {
       const pale = hexToRgb('#cfd6ee');
       sector(statics, p.a - p.span, p.a + p.span, p.r0, p.r1, y0, p.y, pale, shade(hexToRgb('#7c86ad'), 0.9));
@@ -564,233 +474,51 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       beacons.push({ p, orb, orbMat, ring, ringMat, lit: false, flare: 0 });
     }
   }
-  const staticMesh = new THREE.Mesh(geometryOf(THREE, statics), coreMat);
-  scene.add(staticMesh);
-
-  // the gate at the top: an arch over the way out, and a bell under it
-  const goal = level.goal;
-  {
-    const archGeo = new THREE.TorusGeometry(2.4, 0.22, 8, 24, Math.PI);
-    disposables.push(archGeo);
-    const arch = new THREE.Mesh(archGeo, flat('#cfd6ee'));
-    const ga = goal.a;
-    const gr = goal.r0 + 2.3;
-    arch.position.set(Math.cos(ga) * gr, goal.y + 0.2, Math.sin(ga) * gr);
-    arch.rotation.y = -ga + Math.PI / 2;
-    decor.add(arch);
-    for (const side of [-1, 1]) {
-      const col = new THREE.Mesh(geo.rod, flat('#b9c2e3'));
-      const ca = ga + (side * 2.4) / gr;
-      col.position.set(Math.cos(ca) * gr, goal.y + 1.2, Math.sin(ca) * gr);
-      col.scale.set(0.24, 2.4, 0.24);
-      decor.add(col);
-    }
-  }
-  const bell = new THREE.Group();
-  {
-    const cup = new THREE.Mesh(geo.cone, mats.gold);
-    cup.scale.set(0.55, 0.8, 0.55);
-    cup.position.y = -0.5;
-    const lip = new THREE.Mesh(geo.ring, mats.gold);
-    lip.rotation.x = Math.PI / 2;
-    lip.scale.setScalar(0.5);
-    lip.position.y = -0.88;
-    bell.add(cup, lip);
-    const ga = goal.a;
-    const gr = goal.r0 + 2.3;
-    bell.position.set(Math.cos(ga) * gr, goal.y + 2.5, Math.sin(ga) * gr);
-    decor.add(bell);
-  }
 
   // -------------------------------------------------------------------------------------------------------------
-  // dressing each circle
+  // dressing each circle: one module per circle under decor/, each with its own group, rng and per frame hooks
 
-  const onCore = (a: number, y: number, out = 0) => new THREE.Vector3(Math.cos(a) * (R_CORE + out), y, Math.sin(a) * (R_CORE + out));
-  const addTorch = (a: number, y: number) => {
-    const bracket = new THREE.Mesh(geo.box, mats.iron);
-    bracket.position.copy(onCore(a, y, 0.3));
-    bracket.rotation.y = -a;
-    bracket.scale.set(0.5, 0.08, 0.08);
-    const stick = new THREE.Mesh(geo.rod, mats.wood);
-    stick.position.copy(onCore(a, y + 0.22, 0.5));
-    stick.scale.set(0.05, 0.5, 0.05);
-    const flame = new THREE.Mesh(geo.cone, mats.flame);
-    flame.position.copy(onCore(a, y + 0.62, 0.5));
-    flame.scale.set(0.16, 0.42, 0.16);
-    const coreF = new THREE.Mesh(geo.cone, mats.flameCore);
-    coreF.position.copy(onCore(a, y + 0.56, 0.5));
-    coreF.scale.set(0.08, 0.22, 0.08);
-    decor.add(bracket, stick, flame, coreF);
-    flames.push({ mesh: flame, seed: rng() * 10 });
+  const hooks: ((f: Frame) => void)[] = [];
+  /** The core wall's surface radius at a height: the cylinder's taper, plus its bump, so decor sits just proud of it. */
+  const coreR = (y: number) => R_CORE * lerp(1.12, 1.02, clamp((y + 30) / (coreTop + 30), 0, 1)) * 1.045;
+  const onCore = (a: number, y: number, out = 0) => {
+    const r = coreR(y) + out;
+    return new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r);
   };
-  const chainsDecor: T.InstancedMesh[] = [];
-  const addHangingChain = (a: number, y: number, len: number, out = 0.4) => {
-    const n = Math.max(2, Math.round(len / 0.2));
-    const im = new THREE.InstancedMesh(geo.link, mats.chain, n);
-    const d = new THREE.Object3D();
-    for (let i = 0; i < n; i++) {
-      d.position.copy(onCore(a, y - i * 0.2, out));
-      d.rotation.set(0, -a + (i % 2) * Math.PI * 0.5, 0);
-      d.updateMatrix();
-      im.setMatrixAt(i, d.matrix);
-    }
-    im.instanceMatrix.needsUpdate = true;
-    decor.add(im);
-    chainsDecor.push(im);
+  const track = <X extends T.BufferGeometry | T.Material>(x: X): X => {
+    disposables.push(x);
+    return x;
   };
-  // circle by circle, round the core
-  for (const p of level.platforms) {
-    if (p.kind === 'floor') continue;
-    const z = ZONES[p.zone].id;
-    const r = rng();
-    if (z === 'pit') {
-      if (r < 0.45) addTorch(p.a + (rng() - 0.5) * p.span, p.y + 1.6);
-      if (r > 0.7) addHangingChain(p.a + p.span * 0.9, p.y + 3 + rng() * 2, 1.5 + rng() * 3);
-      if (rng() < 0.25) {
-        // a skull or two on the ledge
-        const skull = new THREE.Mesh(geo.ball, mats.bone);
-        const sa = p.a + (rng() - 0.5) * p.span * 1.4;
-        const sr = p.r0 + 0.5 + rng() * 0.8;
-        skull.position.set(Math.cos(sa) * sr, p.y + 0.14, Math.sin(sa) * sr);
-        skull.scale.set(0.16, 0.14, 0.17);
-        decor.add(skull);
-      }
-    } else if (z === 'catacombs') {
-      if (r < 0.5) {
-        // a niche with a skull in it
-        const niche = new THREE.Mesh(geo.box, mats.darkIron);
-        const na = p.a + (rng() - 0.5) * p.span;
-        niche.position.copy(onCore(na, p.y + 1.4, 0.05));
-        niche.rotation.y = -na;
-        niche.scale.set(0.12, 0.6, 0.5);
-        const skull = new THREE.Mesh(geo.ball, mats.bone);
-        skull.position.copy(onCore(na, p.y + 1.3, 0.2));
-        skull.scale.set(0.16, 0.15, 0.17);
-        decor.add(niche, skull);
-      }
-      if (r > 0.6) {
-        const ghost = new THREE.Mesh(geo.ball, mats.ghost);
-        const gaz = p.a + (rng() - 0.5) * p.span * 2;
-        const gr = p.r1 + 0.8 + rng() * 1.5;
-        ghost.scale.setScalar(0.14);
-        decor.add(ghost);
-        ghosts.push({ mesh: ghost, x: Math.cos(gaz) * gr, y: p.y + 1.2 + rng() * 2, z: Math.sin(gaz) * gr, seed: rng() * 10 });
-      }
-    } else if (z === 'forge') {
-      if (r < 0.35) {
-        // a girder out from the core above the ledge
-        const girder = new THREE.Mesh(geo.box, mats.iron);
-        const ga = p.a + (rng() - 0.5) * p.span;
-        const gl2 = 2.5 + rng() * 2;
-        const mid = onCore(ga, p.y + 3.2 + rng(), gl2 / 2);
-        girder.position.copy(mid);
-        girder.rotation.y = -ga;
-        girder.scale.set(gl2, 0.18, 0.18);
-        decor.add(girder);
-      } else if (r < 0.6) {
-        const gear = new THREE.Group();
-        const ring = new THREE.Mesh(geo.ring, mats.iron);
-        ring.scale.setScalar(0.6);
-        gear.add(ring);
-        for (let i = 0; i < 4; i++) {
-          const spoke = new THREE.Mesh(geo.box, mats.iron);
-          spoke.rotation.z = (i * Math.PI) / 4;
-          spoke.scale.set(1.3, 0.1, 0.08);
-          gear.add(spoke);
-        }
-        const ga = p.a + (rng() - 0.5) * p.span;
-        gear.position.copy(onCore(ga, p.y + 2 + rng() * 1.5, 0.12));
-        gear.rotation.y = -ga + Math.PI / 2;
-        decor.add(gear);
-        gears.push(gear);
-      } else if (r < 0.8) {
-        const vent = new THREE.Mesh(geo.plane, mats.vent);
-        const va = p.a + (rng() - 0.5) * p.span;
-        vent.position.copy(onCore(va, p.y + 0.9 + rng(), 0.08));
-        vent.rotation.y = -va + Math.PI / 2;
-        vent.scale.set(0.5, 0.18, 1);
-        decor.add(vent);
-      }
-    } else if (z === 'frost') {
-      if (r < 0.4) {
-        // a crystal on the core
-        const crystal = new THREE.Mesh(geo.cone, mats.ice);
-        const ca = p.a + (rng() - 0.5) * p.span * 1.5;
-        crystal.position.copy(onCore(ca, p.y + 1 + rng() * 2, 0.25));
-        crystal.rotation.z = Math.PI / 2 + (rng() - 0.5) * 0.8;
-        crystal.rotation.y = -ca;
-        crystal.scale.set(0.18, 0.7 + rng() * 0.6, 0.18);
-        decor.add(crystal);
-      }
-    } else if (z === 'cathedral') {
-      if (r < 0.5) {
-        // a window of coloured glass in the core
-        const pane = new THREE.Mesh(geo.plane, mats.glass[Math.floor(rng() * mats.glass.length)]);
-        const wa = p.a + (rng() - 0.5) * p.span;
-        pane.position.copy(onCore(wa, p.y + 2.2 + rng() * 1.5, 0.07));
-        pane.rotation.y = -wa + Math.PI / 2;
-        pane.scale.set(0.5, 1.4, 1);
-        const top = new THREE.Mesh(geo.disc, pane.material);
-        top.position.copy(onCore(wa, p.y + 2.9 + (pane.position.y - p.y - 2.2), 0.07));
-        top.rotation.y = -wa + Math.PI / 2;
-        top.scale.setScalar(0.25);
-        decor.add(pane, top);
-      } else if (r < 0.8) {
-        const candle = new THREE.Mesh(geo.rod, mats.bone);
-        const ca = p.a + (rng() - 0.5) * p.span * 1.6;
-        const cr = p.r0 + 0.4 + rng() * 0.5;
-        candle.position.set(Math.cos(ca) * cr, p.y + 0.14, Math.sin(ca) * cr);
-        candle.scale.set(0.05, 0.28, 0.05);
-        const flame = new THREE.Mesh(geo.cone, mats.flame);
-        flame.position.set(Math.cos(ca) * cr, p.y + 0.36, Math.sin(ca) * cr);
-        flame.scale.set(0.05, 0.12, 0.05);
-        decor.add(candle, flame);
-        candles.push(candle);
-        flames.push({ mesh: flame, seed: rng() * 10 });
-      }
-      if (rng() < 0.3) {
-        // an arch and a column against the core
-        const archGeo = new THREE.TorusGeometry(0.9, 0.1, 6, 16, Math.PI);
-        disposables.push(archGeo);
-        const arch = new THREE.Mesh(archGeo, mats.stoneGrey);
-        const aa = p.a + (rng() - 0.5) * p.span;
-        arch.position.copy(onCore(aa, p.y + 2.4, 0.12));
-        arch.rotation.y = -aa + Math.PI / 2;
-        decor.add(arch);
-        for (const side of [-1, 1]) {
-          const col = new THREE.Mesh(geo.rod, mats.stoneGrey);
-          col.position.copy(onCore(aa + (side * 0.9) / R_CORE, p.y + 1.2, 0.12));
-          col.scale.set(0.1, 2.4, 0.1);
-          decor.add(col);
-        }
-      }
-    } else if (z === 'stars') {
-      if (r < 0.6) {
-        const shard = new THREE.Mesh(geo.box, flat(ZONES[5].palette.stone[1]));
-        const sa = p.a + (rng() - 0.5) * 1.2;
-        const sr = p.r1 + 2 + rng() * 5;
-        shard.scale.set(0.4 + rng() * 0.8, 0.3 + rng() * 0.4, 0.4 + rng() * 0.8);
-        shard.rotation.set(rng(), rng(), rng());
-        decor.add(shard);
-        shards.push({ mesh: shard, a: sa, r: sr, y: p.y + (rng() - 0.5) * 4, seed: rng() * 10 });
-      }
-    }
-  }
-  // icicles as one instanced mesh
-  const icicleMesh = new THREE.InstancedMesh(geo.cone, mats.ice, Math.max(1, icicles.length));
-  {
-    const d = new THREE.Object3D();
-    icicles.forEach((ic, i) => {
-      d.position.set(ic.x, ic.y - ic.s / 2, ic.z);
-      d.rotation.set(Math.PI, 0, 0);
-      d.scale.set(0.08 + ic.s * 0.06, ic.s, 0.08 + ic.s * 0.06);
-      d.updateMatrix();
-      icicleMesh.setMatrixAt(i, d.matrix);
-    });
-    icicleMesh.count = icicles.length;
-    icicleMesh.instanceMatrix.needsUpdate = true;
-    decor.add(icicleMesh);
-  }
+  ZONES.forEach((zone, zi) => {
+    const group = new THREE.Group();
+    scene.add(group);
+    const dress: Dress = {
+      THREE,
+      level,
+      zone,
+      zi,
+      palette: zone.palette,
+      platforms: level.platforms.filter((p) => p.zone === zi && p.kind !== 'floor'),
+      rng: scatter(101 + zi),
+      lite,
+      statics,
+      group,
+      geo,
+      mats,
+      flat,
+      basic,
+      track,
+      coreR,
+      onCore,
+      animate: (fn) => {
+        hooks.push(fn);
+      },
+    };
+    DRESSERS[zone.id](dress);
+  });
+  // the static mesh last, so the modules' additions are in it
+  const staticMesh = new THREE.Mesh(geometryOf(THREE, statics), mats.stone);
+  scene.add(staticMesh);
 
   // -------------------------------------------------------------------------------------------------------------
   // weather: one instanced mesh per kind, recycled around the camera
@@ -956,7 +684,6 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
   const eyeCool = new THREE.Color('#cfd6ff');
   const cam = { a: 0, r: 0, y: 0, tx: 0, ty: 0, tz: 0, dist: 9.5, shake: 0, init: false, fallDip: 0 };
   let pal = paletteAt(0);
-  let bellSwing = 0;
   let won = false;
   let camZone = 0;
 
@@ -1312,21 +1039,6 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       b.ringMat.color.set(glow);
       b.ring.scale.setScalar(0.5 + (1 - b.flare) * 4);
     }
-    for (const f of flames) {
-      const k = 1 + Math.sin(clock * 11 + f.seed) * 0.18 + Math.sin(clock * 23 + f.seed * 2) * 0.1;
-      f.mesh.scale.y = (f.mesh.scale.x > 0.1 ? 0.42 : 0.12) * k;
-      f.mesh.rotation.z = Math.sin(clock * 7 + f.seed) * 0.12;
-    }
-    for (const gh of ghosts) {
-      gh.mesh.position.set(gh.x + Math.sin(clock * 0.7 + gh.seed) * 0.6, gh.y + Math.sin(clock * 1.1 + gh.seed) * 0.4, gh.z + Math.cos(clock * 0.5 + gh.seed) * 0.6);
-      (gh.mesh.material as T.MeshBasicMaterial).opacity = 0.45 + Math.sin(clock * 2 + gh.seed) * 0.25;
-    }
-    for (const gear of gears) gear.rotation.z += dt * 0.6;
-    for (const sh of shards) {
-      const a = sh.a + clock * 0.03;
-      sh.mesh.position.set(Math.cos(a) * sh.r, sh.y + Math.sin(clock * 0.5 + sh.seed) * 0.4, Math.sin(a) * sh.r);
-      sh.mesh.rotation.y += dt * 0.2;
-    }
     clouds.rotation.y += dt * 0.004;
     // the lava
     const lv = g.lava;
@@ -1349,11 +1061,9 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     }
     bubbles.count = bc;
     bubbles.instanceMatrix.needsUpdate = true;
-    // the bell swings once the climb is won
-    if (bellSwing > 0) {
-      bellSwing = Math.max(0, bellSwing - dt * 0.25);
-      bell.rotation.z = Math.sin(clock * 6) * 0.5 * bellSwing;
-    }
+    // the circles' own animation: flames, ghosts, gears, shards, the bell
+    const frame: Frame = { g, dt, clock, camY: cam.ty, camA: cam.a, lava: g.lava, won };
+    for (const fn of hooks) fn(frame);
   }
 
   function syncCamera(g: Game, focus: number[], dt: number, split: boolean) {
@@ -1464,10 +1174,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       syncPalette(g, dt);
       syncLedges(g, dt, clock);
       syncParticles(g, dt, clock);
-      if (g.won !== null && !won) {
-        won = true;
-        bellSwing = 1;
-      }
+      if (g.won !== null) won = true;
     },
     react(e, g) {
       const soulAt = (i: number) => g.souls[i];
@@ -1497,7 +1204,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
         const c = crumblies.find((x) => x.p.id === e.id);
         if (c) {
           for (let i = 0; i < 6; i++) {
-            const mesh = new THREE.Mesh(geo.box, coreMat);
+            const mesh = new THREE.Mesh(geo.box, mats.stone);
             const a = c.p.a + (Math.random() - 0.5) * c.p.span * 2;
             const r = c.p.r0 + Math.random() * (c.p.r1 - c.p.r0);
             mesh.position.set(Math.cos(a) * r, c.p.y - 0.2, Math.sin(a) * r);
@@ -1530,7 +1237,6 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
           for (let j = 0; j < 3; j++) burst(s.x, s.y + 1.5 + j, s.z, n, [1, 0.9, 0.6], 3, 0.08, 1.4);
         }
         won = true;
-        bellSwing = 1;
       } else if (e.t === 'respawn') {
         for (const i of g.chains[e.team] ?? []) {
           const s = soulAt(i);
