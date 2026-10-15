@@ -202,13 +202,19 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     },
     [keys, submit, race, finishRace],
   );
+  /** Changes the card that is up, for a round that goes on after this player is out. */
+  const updateOver = useCallback((info: GameOverInfo) => {
+    setResult((r) => (!r || (r.title === info.title && r.detail === info.detail && r.wait === info.wait) ? r : { ...r, title: info.title, detail: info.detail, wait: info.wait }));
+  }, []);
+  const wait = result?.wait;
   const playAgain = useCallback(() => {
     if (onlineModeRef.current) {
-      if (onlineSeat === 0) onlineLink?.start();
+      // a round still going on for others has to end before the next one starts
+      if (onlineSeat === 0 && !wait) onlineLink?.start();
       return;
     }
     restart();
-  }, [onlineLink, onlineSeat, restart]);
+  }, [onlineLink, onlineSeat, restart, wait]);
 
   const clearBots = useCallback(() => {
     roundBotsRef.current = [];
@@ -491,8 +497,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   }, [keys, onlineMode, pause, playAgain, restart, resume, start]);
 
   const api = useMemo<ShellApi>(
-    () => ({ meta, status, round, active, compact, touch, keys, root, start, pause, resume, restart, gameOver, setScore, invalidate, onInvalidate }),
-    [meta, status, round, active, compact, touch, keys, start, pause, resume, restart, gameOver, setScore, invalidate, onInvalidate],
+    () => ({ meta, status, round, active, compact, touch, keys, root, start, pause, resume, restart, gameOver, updateOver, setScore, invalidate, onInvalidate }),
+    [meta, status, round, active, compact, touch, keys, start, pause, resume, restart, gameOver, updateOver, setScore, invalidate, onInvalidate],
   );
 
   // Party games keep scores and secrets in the round, so Restart asks for a second tap within a few seconds.
@@ -734,7 +740,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     Leave
                   </button>
                 ) : (
-                  <button type="button" className="arcade-btn arcade-btn-primary" onClick={playAgain} ref={autoFocus}>
+                  <button type="button" className="arcade-btn arcade-btn-primary" disabled={gameOnline && !!wait} onClick={playAgain} ref={autoFocus}>
                     Play Again
                   </button>
                 )}
@@ -823,9 +829,12 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                   </div>
                 )}
                 {gameOnline ? onlineSeat === 0 ? (
-                  <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={playAgain} ref={autoFocus}>
-                    Play Again
-                  </button>
+                  <>
+                    {wait && <p>{wait}</p>}
+                    <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" disabled={!!wait} onClick={playAgain} ref={autoFocus}>
+                      Play Again
+                    </button>
+                  </>
                 ) : (
                   <>
                     <p>Waiting For The Host</p>
