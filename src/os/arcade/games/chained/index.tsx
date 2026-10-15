@@ -513,7 +513,7 @@ function Play({ kind }: { kind: Kind }) {
       const gap = Math.max(0, Math.round(Math.abs(teamHeight(g, mine) - teamHeight(g, 1 - mine))));
       if (winner === mine) {
         playJingle(JINGLE_OUT);
-        shellRef.current.gameOver(undefined, { title: 'You Won the Race', detail: `Out in ${fmtTime(time)}, with ${rival === 'The shades' ? 'the shades' : rival} ${gap} m below you.` });
+        shellRef.current.gameOver(undefined, { title: 'You Won the Race', detail: `Out in ${fmtTime(time)}, with ${rival === 'The shades' ? 'the shades' : rival} ${gap < 2 ? 'right behind you' : `${gap} m below you`}.` });
       } else {
         sfx.play('lose');
         const z = ZONES[zoneIndex(teamHeight(g, mine))];
