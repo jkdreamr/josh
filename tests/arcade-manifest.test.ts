@@ -1,12 +1,14 @@
 // Checks every game folder against the arcade contract (see src/os/arcade/README.md). Runs under plain node.
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 const root = join(import.meta.dirname, '..', 'src', 'os', 'arcade', 'games');
 const categories = ['arcade', 'puzzle', '3d', 'multiplayer', 'party', 'drinking'];
+const kit = join(root, '..', 'kit');
+const types = join(root, '..', 'types');
 const folders = existsSync(root) ? readdirSync(root).filter((f) => statSync(join(root, f)).isDirectory()) : [];
 
 function walk(dir: string): string[] {
@@ -90,8 +92,13 @@ for (const folder of folders) {
       const text = readFileSync(file, 'utf8');
       if (/\.(tsx?|css)$/.test(file)) assert.ok(!text.includes('\u2014'), `${file} contains an em dash`);
       if (/\.(tsx?)$/.test(file)) {
-        for (const m of text.matchAll(/from ['"](\.\.\/[^'"]+)['"]/g))
-          assert.ok(m[1].startsWith('../../kit') || m[1].startsWith('../../types'), `${file} may only import ../../kit and ../../types from outside its folder (got ${m[1]})`);
+        for (const m of text.matchAll(/from ['"](\.\.\/[^'"]+)['"]/g)) {
+          // a file in a subfolder may reach back up into its own game folder; anything further must be the kit or types
+          const target = resolve(dirname(file), m[1]);
+          const inside = target.startsWith(dir + sep);
+          const shared = [kit, types].some((s) => target === s || target.startsWith(s + sep));
+          assert.ok(inside || shared, `${file} may only import ../../kit and ../../types from outside its folder (got ${m[1]})`);
+        }
       }
       if (!file.endsWith('.css')) continue;
       const { selectors, keyframes } = cssNames(text);
