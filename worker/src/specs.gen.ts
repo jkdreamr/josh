@@ -114,6 +114,7 @@ export const ONLINE_SPECS: Record<string, OnlineSpec> = {
   "chicken-crossing": {"seats":4},
   "connect4": {"seats":2},
   "coxbox": {"seats":8,"lateJoin":true,"bots":true},
+  "crazy-eights": {"seats":4,"bots":true},
   "cube": {"seats":4},
   "dino": {"seats":4},
   "dots-boxes": {"seats":4,"bots":true},
