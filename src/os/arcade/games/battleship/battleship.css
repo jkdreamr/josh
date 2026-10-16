@@ -1,0 +1,495 @@
+.g-battleship-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: #e7f0fb;
+  font-family: inherit;
+  pointer-events: none;
+}
+
+.g-battleship-status {
+  position: absolute;
+  z-index: 5;
+  max-width: min(60%, 360px);
+  overflow: hidden;
+  padding: 5px 12px;
+  border: 1px solid rgba(182, 208, 235, 0.16);
+  border-radius: 999px;
+  background: rgba(5, 18, 34, 0.84);
+  color: #dce9f7;
+  font-size: 14px;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.g-battleship-board-wrap {
+  position: absolute;
+  pointer-events: none;
+}
+
+.g-battleship-caption {
+  position: absolute;
+  top: -32px;
+  left: 0;
+  width: 100%;
+  overflow: hidden;
+  color: #bacbde;
+  font-size: 14px;
+  line-height: 16px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.g-battleship-board {
+  position: absolute;
+  display: grid;
+  grid-template-columns: repeat(10, var(--cell));
+  grid-template-rows: repeat(10, var(--cell));
+  gap: 1px;
+  width: calc(var(--cell) * 10 + 9px);
+  height: calc(var(--cell) * 10 + 9px);
+  overflow: visible;
+  border-radius: 2px;
+  background: rgba(224, 239, 255, 0.14);
+  box-shadow: 0 0 0 1px rgba(180, 209, 239, 0.22);
+  container-type: inline-size;
+  isolation: isolate;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.g-battleship-board .g-battleship-cell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(145deg, #0b2342 0%, #071629 100%);
+  color: inherit;
+  cursor: default;
+  outline: none;
+  touch-action: none;
+}
+
+.g-battleship-board .g-battleship-cell.sunk {
+  background: transparent;
+}
+
+.g-battleship-board.active .g-battleship-cell {
+  cursor: crosshair;
+}
+
+.g-battleship-board.placing .g-battleship-cell {
+  cursor: grab;
+}
+
+.g-battleship-cell:disabled {
+  opacity: 1;
+}
+
+.g-battleship-cell.aimed,
+.g-battleship-cell.hovered {
+  background: #163b61;
+}
+
+.g-battleship-marker {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 20%;
+  height: 20%;
+  min-width: 3px;
+  min-height: 3px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.g-battleship-cell.miss .g-battleship-marker {
+  background: #c7d7e8;
+}
+
+.g-battleship-cell.miss .g-battleship-marker::after {
+  position: absolute;
+  inset: -70%;
+  border: 1px solid rgba(199, 215, 232, 0.7);
+  border-radius: 50%;
+  animation: g-battleship-ripple 560ms ease-out both;
+  content: '';
+}
+
+.g-battleship-cell.hit,
+.g-battleship-cell.sunk {
+  z-index: 3;
+}
+
+.g-battleship-cell.hit .g-battleship-marker,
+.g-battleship-cell.sunk .g-battleship-marker {
+  width: 36%;
+  height: 36%;
+  min-width: 4px;
+  min-height: 4px;
+  background: #f07855;
+  box-shadow: inset 0 0 0 1px rgba(255, 219, 203, 0.5);
+}
+
+.g-battleship-cell.hit .g-battleship-marker::after,
+.g-battleship-cell.sunk .g-battleship-marker::after {
+  position: absolute;
+  inset: -55%;
+  border: 1px solid rgba(240, 120, 85, 0.66);
+  border-radius: 50%;
+  animation: g-battleship-burst 340ms ease-out both;
+  content: '';
+}
+
+.g-battleship-cell.last {
+  box-shadow: inset 0 0 0 1px rgba(255, 242, 198, 0.86);
+}
+
+.g-battleship-cell.aimed::after,
+.g-battleship-cell.hovered::after {
+  position: absolute;
+  z-index: 4;
+  inset: 18%;
+  border: 1px solid rgba(205, 230, 255, 0.72);
+  border-radius: 50%;
+  content: '';
+  pointer-events: none;
+}
+
+.g-battleship-coordinate-col,
+.g-battleship-coordinate-row {
+  position: absolute;
+  display: none;
+  color: #c5d6e8;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 12px;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.g-battleship-coordinate-col {
+  top: -15px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.g-battleship-coordinate-row {
+  top: 50%;
+  left: -15px;
+  transform: translateY(-50%);
+}
+
+.g-battleship-hull {
+  position: relative;
+  z-index: 2;
+  display: block;
+  align-self: stretch;
+  justify-self: stretch;
+  min-width: 0;
+  min-height: 0;
+  margin: calc(var(--cell) * 0.11) calc(var(--cell) * 0.06);
+  overflow: hidden;
+  border: 1px solid rgba(187, 206, 222, 0.6);
+  border-radius: 3px;
+  background: linear-gradient(155deg, #a0aebb 0%, #697b8b 34%, #485c6c 72%, #344858 100%);
+  box-shadow: inset 0 1px rgba(239, 247, 255, 0.42), inset 0 -2px rgba(11, 26, 39, 0.52), 0 1px 2px rgba(0, 0, 0, 0.36);
+  clip-path: polygon(0 50%, 9% 0, 96% 0, 100% 7%, 100% 93%, 96% 100%, 9% 100%);
+  pointer-events: none;
+}
+
+.g-battleship-hull.vertical {
+  margin: calc(var(--cell) * 0.06) calc(var(--cell) * 0.11);
+  clip-path: polygon(50% 0, 100% 9%, 100% 96%, 93% 100%, 7% 100%, 0 96%, 0 9%);
+}
+
+.g-battleship-hull.horizontal {
+  clip-path: polygon(0 50%, 9% 0, 96% 0, 100% 7%, 100% 93%, 96% 100%, 9% 100%);
+}
+
+.g-battleship-deck {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.g-battleship-deck::after {
+  position: absolute;
+  display: none;
+  border-radius: 2px;
+  background: rgba(220, 230, 239, 0.32);
+  content: '';
+}
+
+.g-battleship-hull.horizontal .g-battleship-deck::after {
+  top: 48%;
+  right: 8%;
+  left: 13%;
+  height: 1px;
+}
+
+.g-battleship-hull.vertical .g-battleship-deck::after {
+  top: 13%;
+  bottom: 8%;
+  left: 48%;
+  width: 1px;
+}
+
+.g-battleship-superstructure {
+  position: absolute;
+  z-index: 1;
+  display: none;
+  border: 1px solid rgba(224, 233, 241, 0.62);
+  border-radius: 2px;
+  background: linear-gradient(150deg, #b9c6d0, #748797 74%);
+  box-shadow: inset 0 1px rgba(249, 252, 255, 0.48), 0 1px 1px rgba(7, 16, 25, 0.4);
+}
+
+.g-battleship-hull.horizontal .g-battleship-superstructure.forward {
+  top: 19%;
+  left: 34%;
+  width: 15%;
+  height: 62%;
+}
+
+.g-battleship-hull.horizontal .g-battleship-superstructure.aft {
+  top: 28%;
+  left: 58%;
+  width: 11%;
+  height: 44%;
+}
+
+.g-battleship-hull.vertical .g-battleship-superstructure.forward {
+  top: 34%;
+  left: 19%;
+  width: 62%;
+  height: 15%;
+}
+
+.g-battleship-hull.vertical .g-battleship-superstructure.aft {
+  top: 58%;
+  left: 28%;
+  width: 44%;
+  height: 11%;
+}
+
+@container (min-width: 189px) {
+  .g-battleship-hull.detailed .g-battleship-deck::after,
+  .g-battleship-hull.detailed .g-battleship-superstructure {
+    display: block;
+  }
+}
+
+.g-battleship-hull.selected {
+  outline: 1px solid rgba(220, 237, 255, 0.9);
+  outline-offset: 1px;
+}
+
+.g-battleship-hull.dragging {
+  opacity: 0.72;
+}
+
+.g-battleship-hull.ghost {
+  background: linear-gradient(145deg, rgba(84, 160, 132, 0.72), rgba(37, 103, 84, 0.72));
+  border-style: dashed;
+}
+
+.g-battleship-hull.ghost.invalid {
+  background: linear-gradient(145deg, rgba(194, 99, 82, 0.78), rgba(124, 50, 45, 0.78));
+  border-color: #f0a18f;
+}
+
+.g-battleship-hull.sunk {
+  background: linear-gradient(145deg, #713e3d 0%, #4b282c 54%, #2c2029 100%);
+  border-color: rgba(194, 117, 103, 0.74);
+  box-shadow: inset 0 1px rgba(244, 177, 153, 0.2), inset 0 -2px rgba(20, 13, 18, 0.5);
+}
+
+.g-battleship-hull.sunk .g-battleship-deck::after {
+  background: rgba(236, 149, 128, 0.38);
+}
+
+.g-battleship-hull.sunk .g-battleship-superstructure {
+  border-color: rgba(223, 150, 135, 0.62);
+  background: linear-gradient(150deg, #a46d68, #633a42 74%);
+}
+
+.g-battleship-place-tools {
+  position: absolute;
+  display: grid;
+  width: 142px;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.g-battleship-place-tools .arcade-btn,
+.g-battleship-fire {
+  min-height: 38px;
+  padding: 7px 10px;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.g-battleship-place-tools .arcade-btn:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.g-battleship-fire {
+  position: absolute;
+  z-index: 5;
+  width: 120px;
+  min-height: 50px;
+  pointer-events: auto;
+}
+
+.g-battleship-cover {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 20px;
+  background: #071629;
+  text-align: center;
+  pointer-events: auto;
+}
+
+.g-battleship-cover h2 {
+  margin: 0;
+  color: #e7f0fb;
+  font-size: clamp(16px, 3vw, 22px);
+  font-weight: 600;
+}
+
+.g-battleship-cover p {
+  max-width: 300px;
+  margin: 0;
+  color: #bacbde;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.g-battleship-cover .arcade-btn {
+  min-width: 112px;
+  min-height: 44px;
+  padding: 8px 16px;
+  font-size: 14px;
+}
+
+.g-battleship-cover .arcade-btn:disabled {
+  opacity: 0.52;
+}
+
+.g-battleship-board.has-hit {
+  animation: g-battleship-shake 120ms ease-out;
+}
+
+@container (min-width: 260px) {
+  .g-battleship-coordinate-col,
+  .g-battleship-coordinate-row {
+    display: block;
+  }
+}
+
+.g-battleship-stage.compact-height .g-battleship-caption,
+.g-battleship-stage.compact-height .g-battleship-coordinate-col,
+.g-battleship-stage.compact-height .g-battleship-coordinate-row {
+  display: none;
+}
+
+.g-battleship-stage.status-below .g-battleship-caption {
+  display: none;
+}
+
+.g-battleship-stage.short-window .g-battleship-caption {
+  display: none;
+}
+
+.g-battleship-stage.compact-height .g-battleship-place-tools {
+  gap: 4px;
+}
+
+.g-battleship-stage.compact-height .g-battleship-place-tools .arcade-btn {
+  min-height: 30px;
+  padding: 4px 6px;
+  font-size: 14px;
+}
+
+.g-battleship-stage.compact-height .g-battleship-fire {
+  min-height: 40px;
+}
+
+@media (min-height: 220px) {
+  .g-battleship-stage.portrait .g-battleship-place-tools {
+    display: flex;
+    width: min(330px, calc(100% - 20px));
+    gap: 8px;
+  }
+
+  .g-battleship-stage.portrait .g-battleship-place-tools .arcade-btn {
+    flex: 1;
+    min-width: 0;
+    min-height: 50px;
+    padding: 6px 4px;
+    font-size: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-battleship-cell.miss .g-battleship-marker::after,
+  .g-battleship-cell.hit .g-battleship-marker::after,
+  .g-battleship-cell.sunk .g-battleship-marker::after,
+  .g-battleship-board.has-hit {
+    animation-duration: 1ms;
+  }
+}
+
+@keyframes g-battleship-ripple {
+  from {
+    opacity: 0.8;
+    transform: scale(0.35);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+@keyframes g-battleship-burst {
+  from {
+    opacity: 0.8;
+    transform: scale(0.45);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+}
+
+@keyframes g-battleship-shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+
+  35% {
+    transform: translateX(-1px);
+  }
+
+  70% {
+    transform: translateX(1px);
+  }
+}

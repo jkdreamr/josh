@@ -5,12 +5,12 @@
 .g-chicken-crossing .g-chicken-crossing-play {
   position: absolute;
   inset: 0;
-  background: #e6ebdb;
-  color: #364533;
+  background: #8fae76;
+  color: #fff;
 }
 .g-chicken-crossing .g-chicken-crossing-field {
   position: absolute;
-  inset: 48px 0 47px;
+  inset: 0;
   overflow: hidden;
 }
 .g-chicken-crossing .g-chicken-crossing-field canvas {
@@ -18,82 +18,97 @@
   width: 100%;
   height: 100%;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .g-chicken-crossing .g-chicken-crossing-info {
   position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 9px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 20px);
+  padding: 4px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 12px;
   line-height: 16px;
-  font-weight: 500;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: rgba(20, 20, 26, 0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
   pointer-events: none;
+  transition: background-color 0.2s;
 }
-.g-chicken-crossing .g-chicken-crossing-touch .g-chicken-crossing-field {
-  bottom: 207px;
+.g-chicken-crossing .g-chicken-crossing-info.is-hurry {
+  background: rgba(176, 58, 46, 0.82);
+}
+.g-chicken-crossing .g-chicken-crossing-toast {
+  position: absolute;
+  left: 50%;
+  top: 50px;
+  z-index: 2;
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 650;
+  color: #2f3a2c;
+  background: rgba(255, 253, 241, 0.92);
+  box-shadow: 0 2px 10px rgba(30, 40, 30, 0.18);
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: g-chicken-crossing-toast 2.2s ease both;
+}
+@keyframes g-chicken-crossing-toast {
+  0% { opacity: 0; transform: translate(-50%, -6px); }
+  12%, 80% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, 0); }
 }
 .g-chicken-crossing .g-chicken-crossing-touch .g-chicken-crossing-info {
-  bottom: 165px;
-}
-.g-chicken-crossing .arcade-touch {
-  justify-content: center;
-  padding: 8px 10px max(12px, env(safe-area-inset-bottom));
-}
-.g-chicken-crossing .arcade-dpad {
-  grid-template-columns: repeat(3, 44px);
-  grid-template-rows: repeat(3, 44px);
-  gap: 6px;
-}
-.g-chicken-crossing .arcade-pad {
-  color: #364533;
-  border-radius: 12px;
-  background: #f7f9f2;
-  box-shadow: 0 1px 2px #34452b25, inset 0 0 0 1px #a7b09e;
-}
-.g-chicken-crossing .arcade-pad:active {
-  background: #ccd8bc;
-}
-.g-chicken-crossing .arcade-ctrl {
-  border-radius: 9px;
-  background: #3f4b3d;
-}
-.g-chicken-crossing .arcade-score {
-  color: #364533;
-  background: #f7f9f2;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  font-size: 13px;
+  padding: 6px 14px;
 }
 .g-chicken-crossing:has(.g-chicken-crossing-touch) .arcade-ctrl button {
   width: 44px;
   height: 44px;
 }
-.g-chicken-crossing .g-chicken-crossing-touch .g-chicken-crossing-field {
-  top: 62px;
-}
 .g-chicken-crossing:has(.g-chicken-crossing-touch) .arcade-btn-lg {
   min-height: 44px;
 }
-.g-chicken-crossing.is-compact .g-chicken-crossing-field {
-  inset: 0;
+.g-chicken-crossing .g-chicken-crossing-touch .g-chicken-crossing-toast {
+  top: 70px;
 }
-.g-chicken-crossing.is-compact .g-chicken-crossing-info {
+.g-chicken-crossing.is-compact .g-chicken-crossing-info,
+.g-chicken-crossing.is-compact .g-chicken-crossing-toast {
   display: none;
 }
 @container g-chicken-crossing (max-height: 200px) {
-  .g-chicken-crossing .g-chicken-crossing-play:not(.g-chicken-crossing-touch) .g-chicken-crossing-field {
-    top: 44px;
-    bottom: 26px;
-  }
-  .g-chicken-crossing .g-chicken-crossing-play:not(.g-chicken-crossing-touch) .g-chicken-crossing-info {
-    flex-direction: row;
-    gap: 12px;
-    justify-content: center;
+  .g-chicken-crossing .g-chicken-crossing-info {
     bottom: 5px;
     font-size: 11px;
+    line-height: 14px;
+    padding: 2px 10px;
   }
-  .g-chicken-crossing.is-compact .g-chicken-crossing-play:not(.g-chicken-crossing-touch) .g-chicken-crossing-field {
-    inset: 0;
+  .g-chicken-crossing .g-chicken-crossing-toast {
+    top: 44px;
+    font-size: 13px;
+    padding: 3px 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-chicken-crossing .g-chicken-crossing-toast {
+    animation: none;
+  }
+}
+@media (pointer: coarse) {
+  .g-chicken-crossing.arcade-shell .arcade-seg > button,
+  .g-chicken-crossing.arcade-shell .arcade-btn {
+    min-height: 40px;
   }
 }
