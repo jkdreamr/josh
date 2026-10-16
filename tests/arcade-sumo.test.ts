@@ -23,6 +23,7 @@ const simulateEightBotMatch = (level: Level, seed: number) => {
   const world = createWorld(entries(8, level), seed);
   const random = rng(seed + 100);
   const roundDurations: number[] = [];
+  let roundDraws = 0;
   const lastNear = world.cars.map(() => -Infinity);
   const maxSteps = 600 * 60;
   for (let t = 0; t < maxSteps && matchWinner(world) === null; t++) {
@@ -49,9 +50,13 @@ const simulateEightBotMatch = (level: Level, seed: number) => {
         assert.ok(elapsed - lastNear[car.id] <= 1, `level ${level}, seed ${seed}, car ${car.id} fell without a nearby car in the previous second`);
       }
     }
-    for (const event of events) if (event.type === 'round') roundDurations.push(world.fightTime);
+    for (const event of events) {
+      if (event.type !== 'round') continue;
+      roundDurations.push(world.fightTime);
+      if (event.winner === null) roundDraws++;
+    }
   }
-  return { world, roundDurations };
+  return { world, roundDurations, roundDraws };
 };
 
 test('cars spawn inside and apart, face the centre, and stay still during the countdown', () => {
@@ -251,15 +256,20 @@ test('seeded bots stay on the float alone and the normal bot match finishes clea
 test('natural eight-bot matches finish quickly across levels and seeds', () => {
   for (let level: Level = 0; level <= 2; level = (level + 1) as Level) {
     const durations: number[] = [];
-    for (const seed of [201, 202, 203]) {
-      const { world, roundDurations } = simulateEightBotMatch(level, seed);
+    let draws = 0;
+    for (const seed of Array.from({ length: 10 }, (_, index) => 201 + index)) {
+      const { world, roundDurations, roundDraws } = simulateEightBotMatch(level, seed);
       assert.ok(matchWinner(world) !== null, `level ${level}, seed ${seed} did not finish`);
       assert.ok(roundDurations.length >= 3, `level ${level}, seed ${seed} resolved fewer than three rounds`);
       durations.push(...roundDurations);
+      draws += roundDraws;
     }
     const capped = durations.filter((duration) => duration >= 100).length;
     const mean = durations.reduce((sum, duration) => sum + duration, 0) / durations.length;
+    const drawRate = draws / durations.length;
     assert.ok(mean < 45, `level ${level} mean round length was ${mean.toFixed(1)}s`);
+    assert.ok(mean > 10, `level ${level} mean fight time was only ${mean.toFixed(1)}s`);
+    assert.ok(drawRate < 0.15, `level ${level} draw rate was ${draws}/${durations.length}`);
     assert.ok(capped / durations.length < 0.1, `level ${level} cap rate was ${capped}/${durations.length}`);
   }
 });
