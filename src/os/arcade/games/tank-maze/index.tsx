@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { createWorld, fitBoard, mulberry32, noInput, spawnRound, stickInput, step, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
+import { createWorld, fitBoard, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
-import { endPacket, inputPacket, parsePacket, roundPacket, statePacket, type NetEvent, type RoundPacket } from './net.ts';
+import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket, type NetEvent, type RoundPacket } from './net.ts';
 import { meta } from './meta';
 import './tank-maze.css';
 
@@ -162,9 +162,8 @@ function TankMaze() {
   const nameOf = (match: Match, id: number) => {
     if (!online) return NAMES[id];
     const seat = match.seats[id];
-    const p = online.players.find((pl) => pl.seat === seat);
-    if (p) return match.departed.has(seat) ? `${p.name} (Bot)` : p.name;
-    return online.bots.find((b) => b.seat === seat)?.name ?? `Bot ${id}`;
+    const name = seatNames(match.seats, online.players, online.bots)[id] ?? `Seat ${seat}`;
+    return match.departed.has(seat) && online.players.some((pl) => pl.seat === seat) ? `${name} (Bot)` : name;
   };
 
   const applyEvents = (match: Match, events: NetEvent[]) => {
@@ -352,11 +351,14 @@ function TankMaze() {
     return -1;
   };
 
+  /** Pointer position in the canvas's logical pixels: a framed device scales the canvas down on screen. */
+  const canvasPoint = (e: RPointerEvent<HTMLCanvasElement>) => {
+    return toCanvas(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect(), sizeRef.current);
+  };
+
   const onPointerDown = (e: RPointerEvent<HTMLCanvasElement>) => {
     if (!touch) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - r.left;
-    const y = e.clientY - r.top;
+    const { x, y } = canvasPoint(e);
     const zi = zoneFor(x, y);
     if (zi < 0) return;
     const player = humanIds(m.current!)[zi];
@@ -372,9 +374,9 @@ function TankMaze() {
   const onPointerMove = (e: RPointerEvent<HTMLCanvasElement>) => {
     const s = sticks.current.get(e.pointerId);
     if (!s) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    s.x = e.clientX - r.left;
-    s.y = e.clientY - r.top;
+    const p = canvasPoint(e);
+    s.x = p.x;
+    s.y = p.y;
   };
   const onPointerEnd = (e: RPointerEvent<HTMLCanvasElement>) => {
     sticks.current.delete(e.pointerId);
@@ -509,9 +511,9 @@ function TankMaze() {
   );
 
   const seatName = (match: Match, seat: number) => {
-    const p = online?.players.find((pl) => pl.seat === seat);
-    if (p) return match.departed.has(seat) ? `${p.name} (Bot)` : p.name;
-    return online?.bots.find((b) => b.seat === seat)?.name ?? `Seat ${seat}`;
+    const id = match.seats.indexOf(seat);
+    if (id >= 0) return nameOf(match, id);
+    return online?.players.find((pl) => pl.seat === seat)?.name ?? online?.bots.find((b) => b.seat === seat)?.name ?? `Seat ${seat}`;
   };
 
   const applyRoundPacket = (match: Match, pkt: RoundPacket) => {

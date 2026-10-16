@@ -19,12 +19,13 @@ import {
   spawnRound,
   step,
   stickInput,
+  toCanvas,
   touchLayout,
   traceShot,
   type Maze,
 } from '../src/os/arcade/games/tank-maze/logic.ts';
-import { makeMemory, think } from '../src/os/arcade/games/tank-maze/bots.ts';
-import { endPacket, inputPacket, parsePacket, roundPacket, statePacket } from '../src/os/arcade/games/tank-maze/net.ts';
+import { makeMemory, STANDOFF, think } from '../src/os/arcade/games/tank-maze/bots.ts';
+import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket } from '../src/os/arcade/games/tank-maze/net.ts';
 
 const fire: TankInput = { turn: 0, move: 0, fire: true };
 const idle: TankInput = { turn: 0, move: 0, fire: false };
@@ -423,6 +424,64 @@ test('full bot-vs-bot matches finish in bounded time on every level', () => {
   }
 });
 
+test('bots break standoffs: rounds with an idle tank still finish', () => {
+  // An idle human (or one who walked away) used to leave bots parked, trading bank shots that came back
+  // and cancelled their own next shell, or holding a mine they never dropped, so the round never ended.
+  const dims = [[12, 6], [10, 6], [8, 6], [6, 9]];
+  for (const level of [0, 1, 2] as const) {
+    for (const count of [3, 4]) {
+      for (let seed = 1; seed <= 4; seed++) {
+        const [cols, rows] = dims[seed % dims.length];
+        const w = createWorld({ cols, rows, seed: seed * 13 + count, count, target: 3 });
+        const mems = w.tanks.map(() => makeMemory());
+        const rngs = w.tanks.map((_, i) => mulberry32(seed * 100 + i));
+        let steps = 0;
+        let roundStart = 0;
+        let round = w.round;
+        let worst = 0;
+        while (w.phase !== 'done' && steps - roundStart < 60 * 90) {
+          step(w, w.tanks.map((t) => (t.id === 0 ? idle : think(w, t.id, level, mems[t.id], rngs[t.id]))));
+          steps++;
+          if (w.round !== round) {
+            worst = Math.max(worst, (steps - roundStart) / 60);
+            roundStart = steps;
+            round = w.round;
+          }
+        }
+        assert.ok(w.phase === 'done', `level ${level} ${count}P seed ${seed}: round stalled (scores ${w.scores})`);
+        assert.ok(worst < 60, `level ${level} ${count}P seed ${seed}: a round took ${worst.toFixed(1)} s`);
+      }
+    }
+  }
+});
+
+test('a bot holding a mine next to an idle enemy drops it', () => {
+  const w = createWorld({ cols: 8, rows: 6, seed: 5, count: 2, target: 3 });
+  intoPlay(w);
+  w.tanks[0].x = 3.5;
+  w.tanks[0].y = 2.5;
+  w.tanks[1].x = 2.5;
+  w.tanks[1].y = 2.5;
+  w.tanks[1].a = 0; // facing the enemy, so it is never "behind"
+  w.tanks[1].special = 'mine';
+  const mem = makeMemory();
+  const rng = mulberry32(3);
+  const dropped = runUntil(w, () => w.mines.length > 0, 60 * 8, () => [idle, think(w, 1, 1, mem, rng)]);
+  assert.ok(dropped >= 0, 'mine never dropped');
+});
+
+test('a parked bot charges after the standoff timeout', () => {
+  const w = createWorld({ cols: 8, rows: 6, seed: 9, count: 2, target: 3 });
+  intoPlay(w);
+  const mem = makeMemory();
+  const rng = mulberry32(1);
+  think(w, 1, 1, mem, rng);
+  w.time += STANDOFF + 0.1;
+  think(w, 1, 1, mem, rng);
+  assert.ok(mem.pushUntil > w.time, 'standoff did not start a charge');
+  assert.equal(mem.shot, null, 'no shooting while charging');
+});
+
 // -----------------------------------------------------------------------------------------------------------------
 // stickInput
 
@@ -520,6 +579,17 @@ test('end packet champ rides along while winner stays null', () => {
   assert.equal(parsePacket({ game: 'tank-maze', type: 'end', room: 1, winner: null, champ: 9, scores: [0], rounds: 1 }), null);
 });
 
+test('seatNames gives a bot that takes over a departed seat a fresh number', () => {
+  // host + guest + two room bots; the guest left, so their seat has no player and no listed bot
+  const names = seatNames([0, 1, 2, 3], [{ seat: 0, name: 'Josh' }], [{ seat: 2, name: 'Bot 1' }, { seat: 3, name: 'Bot 2' }]);
+  assert.deepEqual(names, ['Josh', 'Bot 3', 'Bot 1', 'Bot 2']);
+  assert.equal(new Set(names).size, names.length);
+  // two seats left at once still get distinct names, and a player named like a bot is never shared
+  const two = seatNames([0, 1, 2, 3], [{ seat: 0, name: 'Bot 3' }], [{ seat: 3, name: 'Bot 1' }]);
+  assert.deepEqual(two, ['Bot 3', 'Bot 2', 'Bot 4', 'Bot 1']);
+  assert.deepEqual(seatNames([0, 1], [{ seat: 0, name: 'A' }, { seat: 1, name: 'B' }], []), ['A', 'B']);
+});
+
 test('malformed packets are rejected', () => {
   assert.equal(parsePacket(null), null);
   assert.equal(parsePacket('x'), null);
@@ -598,6 +668,23 @@ test('fitBoard stays inside the board and clear of the control pill', () => {
     const overlap = f.ox + bw > r.x && f.ox < r.x + r.w && f.oy + bh > r.y && f.oy < r.y + r.h;
     assert.ok(!overlap, `${w}x${h}: maze under the control pill`);
   }
+});
+
+test('toCanvas maps a scaled-down canvas back to logical pixels', () => {
+  // Framed iPad: the canvas draws at 820x1078 but shows at 670x881, and the bottom stick lives in
+  // logical pixels, so an unscaled touch on the lower band missed it.
+  const size = { w: 820, h: 1078 };
+  const rect = { left: 75, top: 150, width: 670, height: 881 };
+  const lay = touchLayout(size.w, size.h, 2, true);
+  const bottom = lay.zones.find((z) => !z.flip)!;
+  const inZone = (p: { x: number; y: number }) => p.x >= bottom.x && p.x < bottom.x + bottom.w && p.y >= bottom.y && p.y < bottom.y + bottom.h;
+  const cx = rect.left + 240;
+  const cy = rect.top + rect.height - 40;
+  assert.ok(inZone(toCanvas(cx, cy, rect, size)), 'scaled touch lands in the bottom zone');
+  assert.ok(!inZone({ x: cx - rect.left, y: cy - rect.top }), 'the old unscaled math misses it');
+  const corner = toCanvas(rect.left + rect.width, rect.top + rect.height, rect, size);
+  assert.deepEqual(corner, { x: 820, y: 1078 });
+  assert.deepEqual(toCanvas(10, 20, { left: 0, top: 0, width: 820, height: 1078 }, size), { x: 10, y: 20 });
 });
 
 test('touchLayout keeps touch zones off the board', () => {

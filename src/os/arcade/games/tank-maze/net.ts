@@ -208,3 +208,21 @@ export function parsePacket(value: unknown): Packet | null {
   }
   return null;
 }
+
+/**
+ * Names for every tank, by match slot: the player in the seat, else the room bot listed for it, else
+ * the next free "Bot N". A seat whose player left mid-match has neither, so the bot that takes it over
+ * gets a number no one else in the match is using.
+ */
+export function seatNames(seats: readonly number[], players: readonly { seat: number; name: string }[], bots: readonly { seat: number; name: string }[]): string[] {
+  const named = seats.map((seat) => players.find((p) => p.seat === seat)?.name ?? bots.find((b) => b.seat === seat)?.name ?? null);
+  const used = new Set(named.filter((n): n is string => n !== null));
+  let n = 1;
+  return named.map((name) => {
+    if (name !== null) return name;
+    while (used.has(`Bot ${n}`)) n++;
+    const fresh = `Bot ${n}`;
+    used.add(fresh);
+    return fresh;
+  });
+}

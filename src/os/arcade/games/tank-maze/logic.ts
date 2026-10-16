@@ -862,6 +862,14 @@ export function touchLayout(
   return { hud, board, zones, portrait };
 }
 
+/** A client point in the canvas's logical pixels, for a canvas drawn at `size` but shown at `rect`'s size. */
+export function toCanvas(clientX: number, clientY: number, rect: { left: number; top: number; width: number; height: number }, size: { w: number; h: number }) {
+  return {
+    x: ((clientX - rect.left) * size.w) / (rect.width || size.w),
+    y: ((clientY - rect.top) * size.h) / (rect.height || size.h),
+  };
+}
+
 /**
  * Touch stick -> TankInput. The stick is a desired heading plus magnitude (0..1): the tank turns
  * toward it and drives when roughly aligned; a stick pointed almost behind reverses instead of U-turning.

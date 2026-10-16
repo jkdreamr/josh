@@ -1,6 +1,6 @@
 // Computer tank brains for Tank Maze. Pure module, no DOM.
 // A bot only ever produces a TankInput; it reads the same visible state a player sees.
-import { bfs, cellOf, predictShell, traceShot, type Rng, type TankInput, type World } from './logic.ts';
+import { bfs, cellOf, predictShell, SHELL_SPEED, traceShot, type Rng, type TankInput, type World } from './logic.ts';
 
 const wrapA = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -15,11 +15,24 @@ export type BotMemory = {
   /** Aim point for the current leg (doorway midpoint or enemy position), refreshed at replan. */
   ax: number;
   ay: number;
+  /** The next cell's center, steered for once the tank reaches the doorway. */
+  bx: number;
+  by: number;
   /** A firing solution to align on, or null. */
   shot: number | null;
   shotAt: number;
   shotX: number;
   shotY: number;
+  /** Time the current shot needs to reach its target; a bot waits that long before firing again. */
+  shotTime: number;
+  /** Where the tank has been sitting since `anchorAt`, to notice a standoff. */
+  anchorX: number;
+  anchorY: number;
+  anchorAt: number;
+  /** Until then the bot stops trading shots and drives at its target. */
+  pushUntil: number;
+  /** When the tank picked up the mine it is holding, or -1. */
+  mineAt: number;
 };
 
 export const makeMemory = (): BotMemory => ({
@@ -32,19 +45,37 @@ export const makeMemory = (): BotMemory => ({
   dodge: { turn: 0, move: 0, fire: false },
   ax: 0,
   ay: 0,
+  bx: 0,
+  by: 0,
   shot: null,
   shotAt: -9,
   shotX: 0,
   shotY: 0,
+  shotTime: 0,
+  anchorX: NaN,
+  anchorY: NaN,
+  anchorAt: 0,
+  pushUntil: -1,
+  mineAt: -1,
 });
 
+/** Seconds a bot may sit in one spot before it breaks a standoff by charging. */
+export const STANDOFF = 5;
+/** Seconds the charge lasts. */
+const PUSH = 2.5;
+
 /** Steer the tank toward a point: turn to the heading, drive when roughly aligned. */
-const steerTo = (t: { x: number; y: number; a: number }, x: number, y: number): TankInput => {
+const steerTo = (t: { x: number; y: number; a: number }, x: number, y: number, bx = x, by = y): TankInput => {
   const input: TankInput = { turn: 0, move: 0, fire: false };
-  // Sitting on the waypoint: the heading to it is noise, so just push through to the next cell.
+  // Sitting on the waypoint: the heading to it is noise, so head for the cell beyond it instead
+  // (driving straight on from a doorway reached at an angle grinds into the wall beside it).
   if (Math.hypot(x - t.x, y - t.y) < 0.35) {
-    input.move = 1;
-    return input;
+    if (Math.hypot(bx - t.x, by - t.y) < 0.35) {
+      input.move = 1;
+      return input;
+    }
+    x = bx;
+    y = by;
   }
   const want = Math.atan2(y - t.y, x - t.x);
   const err = wrapA(want - t.a);
@@ -140,6 +171,9 @@ function pickShot(w: World, id: number, level: 0 | 1 | 2, rng: Rng): number | nu
   return bestAngle;
 }
 
+/** Does this tank have a shell in flight younger than `secs`? */
+const ownShellIn = (w: World, id: number, secs: number) => w.shells.some((s) => s.owner === id && s.age < secs);
+
 /** Distance the closest predicted shell path point comes to the tank, within `secs`. */
 function threat(w: World, id: number, secs: number): number {
   const t = w.tanks[id];
@@ -226,6 +260,22 @@ export function think(w: World, id: number, level: 0 | 1 | 2, memory: BotMemory,
   const foe = nearestEnemy(w, id);
   if (foe < 0) return idle;
 
+  // Standoff: parked in one spot too long (trading shots that cancel out, or stuck on a corner),
+  // so stop shooting for a moment and drive at the target.
+  if (!(Math.hypot(t.x - memory.anchorX, t.y - memory.anchorY) < 0.6)) {
+    memory.anchorX = t.x;
+    memory.anchorY = t.y;
+    memory.anchorAt = now;
+  } else if (now - memory.anchorAt > STANDOFF) {
+    memory.pushUntil = now + PUSH;
+    memory.anchorAt = now;
+    memory.shot = null;
+    memory.path = [];
+    memory.nextThink = now;
+  }
+  if (t.special === 'mine' && memory.mineAt < 0) memory.mineAt = now;
+  if (t.special !== 'mine') memory.mineAt = -1;
+
   // Heavy planning (path, firing solution) is throttled; steering itself is recomputed every step so
   // the bang-bang turn doesn't oscillate around its deadband between replans.
   const me = cellOf(w.maze, t.x, t.y);
@@ -246,20 +296,23 @@ export function think(w: World, id: number, level: 0 | 1 | 2, memory: BotMemory,
       memory.path = pathTo(w, me, goal);
     }
     if (me === goal || !memory.path.length) {
-      memory.ax = w.tanks[foe].x;
-      memory.ay = w.tanks[foe].y;
+      memory.ax = memory.bx = w.tanks[foe].x;
+      memory.ay = memory.by = w.tanks[foe].y;
     } else {
       // Aim at the doorway between this cell and the next (the midpoint of their centers): driving at
       // the next cell's center grinds on the wall beside the opening and the tank never crosses.
       const next = memory.path[1];
       memory.ax = (me % w.maze.cols + (next % w.maze.cols)) / 2 + 0.5;
       memory.ay = (((me / w.maze.cols) | 0) + ((next / w.maze.cols) | 0)) / 2 + 0.5;
+      memory.bx = (next % w.maze.cols) + 0.5;
+      memory.by = ((next / w.maze.cols) | 0) + 0.5;
     }
 
     // Firing solution (sloppy on Easy).
-    let shot = pickShot(w, id, level, rng);
+    let shot = now < memory.pushUntil ? null : pickShot(w, id, level, rng);
     if (shot !== null && level === 0) shot += (rng() - 0.5) * 0.3;
     memory.shot = shot;
+    memory.shotTime = shot === null ? 0 : traceShot(w, t.x, t.y, shot, level === 2 ? 3 : level === 1 ? 1 : 0, 20, id).len / SHELL_SPEED;
     memory.shotAt = now;
     memory.shotX = t.x;
     memory.shotY = t.y;
@@ -267,10 +320,12 @@ export function think(w: World, id: number, level: 0 | 1 | 2, memory: BotMemory,
 
   // Specials: use them sensibly.
   if (t.special === 'mine') {
-    const input = steerTo(t, memory.ax, memory.ay);
-    // Drop it in a corridor while an enemy is roughly behind us.
+    const input = steerTo(t, memory.ax, memory.ay, memory.bx, memory.by);
+    // Drop it in a corridor while an enemy is roughly behind us, or right on top of one, or once it
+    // has been held a while: holding a mine means no shells, so a bot that never drops it never shoots.
     const behind = wrapA(Math.atan2(w.tanks[foe].y - t.y, w.tanks[foe].x - t.x) - t.a);
-    if (Math.abs(behind) > 2.1) input.fire = true;
+    const close = Math.hypot(w.tanks[foe].x - t.x, w.tanks[foe].y - t.y) < 1.2;
+    if (Math.abs(behind) > 2.1 || close || now - memory.mineAt > 6) input.fire = true;
     return input;
   }
 
@@ -279,7 +334,7 @@ export function think(w: World, id: number, level: 0 | 1 | 2, memory: BotMemory,
 
   if (t.special === 'laser') {
     const res = shotHits(w, id, t.a, 5);
-    const input = steerTo(t, memory.ax, memory.ay);
+    const input = steerTo(t, memory.ax, memory.ay, memory.bx, memory.by);
     if (res >= 0) {
       input.fire = true;
       return input;
@@ -299,7 +354,7 @@ export function think(w: World, id: number, level: 0 | 1 | 2, memory: BotMemory,
   if (memory.shot !== null) {
     const err = wrapA(memory.shot - t.a);
     const tol = level === 0 ? 0.18 : level === 1 ? 0.12 : 0.08;
-    const input = steerTo(t, memory.ax, memory.ay);
+    const input = steerTo(t, memory.ax, memory.ay, memory.bx, memory.by);
     // Turning toward the shot wins over steering while the error is large.
     if (Math.abs(err) > tol) {
       input.turn = err > 0 ? 1 : -1;
@@ -310,6 +365,9 @@ export function think(w: World, id: number, level: 0 | 1 | 2, memory: BotMemory,
       // a small turn ago, and a shot that now comes back to us first is never taken.
       if (level > 0 && shotHits(w, id, t.a, level === 2 ? 3 : 1) === -2) {
         memory.shot = null;
+      } else if (ownShellIn(w, id, memory.shotTime + 0.15)) {
+        // Wait for the last shell to land: firing again down a line that comes back on itself
+        // just cancels the shell already on its way.
       } else if (level === 0 ? rng() < 0.5 : true) {
         input.fire = true;
       }
@@ -318,5 +376,5 @@ export function think(w: World, id: number, level: 0 | 1 | 2, memory: BotMemory,
     return input;
   }
 
-  return steerTo(t, memory.ax, memory.ay);
+  return steerTo(t, memory.ax, memory.ay, memory.bx, memory.by);
 }
