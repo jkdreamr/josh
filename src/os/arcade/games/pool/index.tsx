@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as RPointer
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { chooseShot, type Level } from './ai.ts';
+import { guestSync, shootPressed } from './sync.ts';
 import { HEAD_X, L, R, W, POCKETS, canPlace, clampPlace, groupOf, legalTargets, newGame, pocketFor, remaining, resolve, startShot, stepSim, traceAim, validGame, type Game, type Group, type Seat, type Shot, type Sim } from './logic.ts';
 import { meta } from './meta';
 import { ballColor, drawBalls, drawCue, drawGuide, drawHandRing, drawPower, drawTable, freshSpins, layout, roll, tableBox, tableTransform, toTable, type Sink, type Spin3 } from './render.ts';
@@ -72,7 +73,9 @@ function Pool() {
   const [levelName] = useSetting(LEVEL);
   const opener: Seat = online ? ((online.round % 2) as Seat) : ((shell.round % 2) as Seat);
   const gameRef = useRef<Game>(newGame((Math.random() * 2 ** 31) >>> 0, opener));
-  const [ready, setReady] = useState(!online || online.isHost);
+  // The first online round starts in the game that was already up before the room, so the guest's table is synced per round.
+  const [syncedRound, setSyncedRound] = useState<number | null>(null);
+  const ready = !online || online.isHost || syncedRound === online.round;
   const sim = useRef<{ sim: Sim; shot: Shot; from: Game; seen: number } | null>(null);
   const queued = useRef<Game | null>(null);
   const spins = useRef<Spin3[]>(freshSpins());
@@ -97,6 +100,35 @@ function Pool() {
   sizeRef.current = size.h;
   const statusRef = useRef(shell.status);
   statusRef.current = shell.status;
+  // A phone or iPad frame is scaled down to fit; touch controls grow by the same factor so they stay finger sized.
+  const [tapU, setTapU] = useState(1);
+  useEffect(() => {
+    const el = shell.root.current;
+    if (!el || !shell.touch) {
+      setTapU(1);
+      return;
+    }
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+        const u = k > 0.2 && k < 0.99 ? Math.min(2, 1 / k) : 1;
+        el.style.setProperty('--g-pool-u', u.toFixed(3));
+        setTapU(u);
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+      el.style.removeProperty('--g-pool-u');
+    };
+  }, [shell.touch]);
 
   const later = (fn: () => void, s: number) => timers.current.push({ left: s, fn });
   const say = (text: string) => setToast({ text, id: performance.now() });
@@ -175,8 +207,15 @@ function Pool() {
   // Host deals; a guest asks until the table arrives.
   useEffect(() => {
     if (!online) return;
-    if (online.isHost) sendState(gameRef.current);
-    else {
+    if (online.isHost) {
+      if (gameRef.current.shots === 0 && !sim.current) {
+        gameRef.current = newGame((Math.random() * 2 ** 31) >>> 0, opener);
+        spins.current = freshSpins();
+        resetTurn();
+        refresh();
+      }
+      sendState(gameRef.current);
+    } else {
       const ask = () => {
         if (!readyRef.current) {
           online.send({ game: 'pool', t: 'hello' });
@@ -185,7 +224,7 @@ function Pool() {
       };
       ask();
     }
-  }, [online?.seat]);
+  }, [online?.seat, online?.round]);
   const readyRef = useRef(ready);
   readyRef.current = ready;
 
@@ -268,17 +307,20 @@ function Pool() {
           }
         } else if (from === 0 && m.t === 'state' && validGame(m.g)) {
           const next = m.g;
-          if (!readyRef.current) {
+          const act = guestSync(g, next, readyRef.current, !!sim.current);
+          if (act === 'adopt') {
             gameRef.current = next;
-            setReady(true);
+            readyRef.current = true;
+            setSyncedRound(online.round);
+            queued.current = null;
+            remote.current = null;
+            spins.current = freshSpins();
             resetTurn();
             refresh();
             if (next.phase === 'over') finish(next);
-            return;
-          }
-          if (next.shots < g.shots) return;
-          if (sim.current) queued.current = next;
-          else if (next.shots > g.shots || next.phase !== g.phase) apply(next, g);
+          } else if (act === 'queue') queued.current = next;
+          else if (act === 'apply') apply(next, g);
+          return;
         } else if (from === 0 && m.t === 'play' && m.n === g.shots && !sim.current) {
           const shot = cleanShot(g, m.shot);
           if (shot) begin(shot);
@@ -363,6 +405,7 @@ function Pool() {
   useGameLoop(
     (dt) => {
       clock.current += dt;
+      const fire = shootPressed(keys, humanTurn() && statusRef.current === 'playing');
       timers.current = timers.current.filter((t) => {
         t.left -= dt;
         if (t.left > 0) return true;
@@ -417,7 +460,7 @@ function Pool() {
         aim.current.kb = Math.min(1, Math.max(0.05, aim.current.kb + pw * 0.7 * dt));
         aim.current.kbOn = true;
       }
-      if (keys.pressed('action')) shoot(shotNow(aim.current.kb));
+      if (fire) shoot(shotNow(aim.current.kb));
       if (online && clock.current - sentAim.current > 0.09) {
         sentAim.current = clock.current;
         const p = place.current;
@@ -568,7 +611,7 @@ function Pool() {
   const spinAt = v.side
     ? cardTop + 140 <= size.h
       ? { left: box.x + box.w + 12 + v.panelW / 2 - 22, top: Math.min(size.h - 56, box.y + box.h - 52) }
-      : { left: box.x - v.panelW / 2 - 34, top: Math.max(2, cardTop - 48) } : { left: box.x + box.w / 2 - 22, top: box.y + box.h + 12 };
+      : { left: box.x - v.panelW / 2 - 34, top: Math.max(2, cardTop - 48) } : { left: box.x + box.w / 2 - 22, top: box.y + box.h + 12 + (tapU - 1) * 22 };
 
   return (
     <div className={`g-pool-stage ${v.side ? 'is-side' : 'is-row'} ${size.h < 220 ? 'is-tight' : ''}`}>
