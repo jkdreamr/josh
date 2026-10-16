@@ -317,7 +317,7 @@ function Battleship() {
   const finishLocal = (s: GameState, winner: number) => {
     if (s.endWinner !== null) return;
     s.endWinner = winner;
-    s.endRevealFleet = s.fleets[opposite(winner)];
+    s.endRevealFleet = s.fleets[opposite(s.viewer)];
     s.turn = winner;
     s.phase = 'battle';
     s.status = winner === 0 ? (s.mode === '2p' ? 'player 1 wins' : 'you win') : (s.mode === '2p' ? 'player 2 wins' : 'computer wins');
