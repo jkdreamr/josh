@@ -17,15 +17,15 @@ const HOLE_LIMIT = 150 * 120;
 const AIM_TICKS = 84;
 const humanOptions = [
   ['1', 'Solo'],
-  ['2', '2 Players'],
-  ['3', '3 Players'],
-  ['4', '4 Players'],
+  ['2', '2'],
+  ['3', '3'],
+  ['4', '4'],
 ] as const;
 const cpuOptions = [
-  ['0', 'No Computer'],
-  ['1', '1 Computer'],
-  ['2', '2 Computers'],
-  ['3', '3 Computers'],
+  ['0', 'None'],
+  ['1', '1'],
+  ['2', '2'],
+  ['3', '3'],
 ] as const;
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
