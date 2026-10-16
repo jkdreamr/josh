@@ -398,13 +398,13 @@ function DotsBoxes() {
     const s = m.current;
     if (!s?.think) return;
     const id = s.think.id;
-    const req: AiRequest = { id, rows: s.game.rows, cols: s.game.cols, lines: s.game.lines, level: s.level, seed: (Math.random() * 2 ** 31) | 0, ms: 420 };
+    const req: AiRequest = { id, rows: s.game.rows, cols: s.game.cols, lines: s.game.lines, level: s.level, seed: (Math.random() * 2 ** 31) | 0, ms: 300 };
     const w = worker.current;
     if (w && !sync) {
       w.postMessage(req);
       return;
     }
-    window.setTimeout(() => receiveAi({ id, line: chooseMove(req, req.level, Math.random, 300) }), 0);
+    window.setTimeout(() => receiveAi({ id, line: chooseMove(req, req.level, Math.random, 250) }), 0);
   }
 
   function receiveAi(reply: AiReply) {
@@ -462,10 +462,14 @@ function DotsBoxes() {
   const pointLine = (e: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }, reach: number) => {
     const s = m.current;
     if (!s) return -1;
-    const r = e.currentTarget.getBoundingClientRect();
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    // the laptop and iPad frames scale the page, so map screen pixels back to the canvas's own CSS pixels
+    const sx = el.clientWidth ? r.width / el.clientWidth : 1;
+    const sy = el.clientHeight ? r.height / el.clientHeight : 1;
     const g = geometry();
-    const x = (e.clientX - r.left - g.x0) / g.cell;
-    const y = (e.clientY - r.top - g.y0) / g.cell;
+    const x = ((e.clientX - r.left) / sx - g.x0) / g.cell;
+    const y = ((e.clientY - r.top) / sy - g.y0) / g.cell;
     return lineAt(geo(s.game.rows, s.game.cols), s.game.lines, x, y, reach);
   };
   const onPointerMove = (e: RPointerEvent<HTMLCanvasElement>) => {
@@ -507,7 +511,7 @@ function DotsBoxes() {
     if (drivesTurn(s)) {
       if (!s.think || s.think.moves !== s.game.moves) {
         const quick = s.streak > 0;
-        s.think = { id: ++reqId.current, moves: s.game.moves, wait: quick ? 0.25 + Math.random() * 0.15 : 0.5 + Math.random() * 0.3, line: null };
+        s.think = { id: ++reqId.current, moves: s.game.moves, wait: quick ? 0.2 + Math.random() * 0.1 : 0.35 + Math.random() * 0.25, line: null };
         askAi();
         redraw();
       } else {
