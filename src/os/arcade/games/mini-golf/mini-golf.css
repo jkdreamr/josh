@@ -16,8 +16,6 @@
   top: 10px;
   left: 10px;
   max-width: calc(100% - 190px);
-  overflow: hidden;
-  text-overflow: ellipsis;
   display: flex;
   gap: 10px;
   align-items: center;
@@ -32,6 +30,15 @@
   pointer-events: none;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+.g-mini-golf .g-mini-golf-top span {
+  flex: none;
+}
+.g-mini-golf .g-mini-golf-top .g-mini-golf-hole {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .g-mini-golf .g-mini-golf-top span + span::before {
   content: '';

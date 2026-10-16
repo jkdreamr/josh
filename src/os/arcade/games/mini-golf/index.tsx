@@ -663,7 +663,7 @@ function Golf() {
       {m && h && (
         <div className="g-mini-golf-top" aria-live="off">
           <span>Hole {m.hole + 1}</span>
-          <span>{h.name}</span>
+          <span className="g-mini-golf-hole">{h.name}</span>
           <span>Par {h.par}</span>
           {left !== null && left <= 30 && s?.phase === 'play' && <span className="is-low">{left}s</span>}
         </div>
