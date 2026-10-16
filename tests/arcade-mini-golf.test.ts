@@ -116,7 +116,7 @@ test('computer golfers play every hole sensibly', () => {
       strokes += Math.min(n, MAX_STROKES);
     }
     assert.ok(strokes <= TOTAL_PAR + (level === 'easy' ? 24 : level === 'normal' ? 14 : 8), `${level} took ${strokes}`);
-    assert.ok(strokes >= 12, `${level} is not superhuman (${strokes})`);
+    assert.ok(strokes >= 16, `${level} is not superhuman (${strokes})`);
   }
 });
 

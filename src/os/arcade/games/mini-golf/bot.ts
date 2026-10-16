@@ -100,9 +100,9 @@ export function rng(seed: number) {
 }
 
 const NOISE: Record<Level, { a: number; p: number; pick: number }> = {
-  easy: { a: 0.09, p: 0.14, pick: 4 },
-  normal: { a: 0.04, p: 0.07, pick: 2 },
-  hard: { a: 0.016, p: 0.03, pick: 1 },
+  easy: { a: 0.13, p: 0.22, pick: 4 },
+  normal: { a: 0.085, p: 0.15, pick: 2 },
+  hard: { a: 0.05, p: 0.09, pick: 1 },
 };
 
 function score(h: Hole, from: Ball, end: Ball) {
@@ -116,11 +116,16 @@ export function* planner(h: Hole, ball: Ball, t: number, level: Level, seed: num
   const rand = rng(seed);
   const base = Math.atan2(h.cup.z - ball.z, h.cup.x - ball.x);
   const tried: { s: number; a: number; p: number }[] = [];
+  // People putt at the hole and lag it close; banks and blasts are a last resort.
+  const human = (a: number, p: number) => {
+    const dev = Math.abs(Math.atan2(Math.sin(a - base), Math.cos(a - base)));
+    return dev * 1.2 + p * 0.6;
+  };
   const A = 56;
   const powers = [0.15, 0.22, 0.3, 0.38, 0.47, 0.57, 0.68, 0.8, 0.92, 1];
   for (let i = 0; i < A; i++) {
     const a = base + ((i / A) * 2 - 1) * Math.PI;
-    for (const p of powers) tried.push({ s: score(h, ball, simulate(h, strike(ball, a, p, t))), a, p });
+    for (const p of powers) tried.push({ s: score(h, ball, simulate(h, strike(ball, a, p, t))) + human(a, p), a, p });
     yield;
   }
   tried.sort((x, y) => x.s - y.s);
@@ -130,15 +135,17 @@ export function* planner(h: Hole, ball: Ball, t: number, level: Level, seed: num
     for (let k = 0; k < 10; k++) {
       const a = c.a + (rand() - 0.5) * 0.08;
       const p = Math.min(1, Math.max(0.08, c.p + (rand() - 0.5) * 0.08));
-      tried.push({ s: score(h, ball, simulate(h, strike(ball, a, p, t))), a, p });
+      tried.push({ s: score(h, ball, simulate(h, strike(ball, a, p, t))) + human(a, p), a, p });
     }
     yield;
   }
   tried.sort((x, y) => x.s - y.s);
   const n = NOISE[level];
   const pick = tried[Math.min(tried.length - 1, Math.floor(rand() * n.pick))];
-  const gauss = () => (rand() + rand() + rand() - 1.5) / 1.5;
-  return { angle: pick.a + gauss() * n.a, power: Math.min(1, Math.max(0.06, pick.p * (1 + gauss() * n.p))) };
+  const gauss = () => (rand() + rand() + rand() - 1.5) / 0.5;
+  // Near-full putts are easy to max out by hand, so they wobble less.
+  const slop = pick.p > 0.88 ? 0.25 : 1;
+  return { angle: pick.a + gauss() * n.a, power: Math.min(1, Math.max(0.06, pick.p * (1 + gauss() * n.p * slop))) };
 }
 
 export function planNow(h: Hole, ball: Ball, t: number, level: Level, seed: number): Plan {
