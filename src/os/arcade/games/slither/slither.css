@@ -180,26 +180,53 @@
   color: rgba(255, 255, 255, 0.72);
   font-size: 12px;
 }
-.g-slither-swatch {
+.g-slither-setup {
+  display: contents;
+}
+.g-slither-setup-skins > .g-slither-swatch {
   display: inline-grid;
   width: 34px;
   height: 34px;
   place-items: center;
   border: 2px solid rgba(255, 255, 255, 0.2);
   border-radius: 50%;
-  background: var(--skin);
-  color: #10211e;
+  background: radial-gradient(circle at 34% 30%, var(--skin-light) 0 18%, var(--skin) 58%);
+  box-shadow: inset 0 -3px 5px rgba(0, 0, 0, 0.18);
   cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease;
 }
-.g-slither-swatch[aria-pressed='true'] {
+.g-slither-setup-skins > .g-slither-swatch:hover {
+  transform: scale(1.06);
+}
+.g-slither-setup-skins > .g-slither-swatch[aria-pressed='true'] {
   border-color: #fff;
-  box-shadow: 0 0 0 2px rgba(54, 211, 153, 0.42);
+  box-shadow: inset 0 -3px 5px rgba(0, 0, 0, 0.18), 0 0 0 2px rgba(54, 211, 153, 0.5);
 }
 .g-slither-swatch > span {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.75);
+  background: #10211e;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.g-slither-swatch[aria-pressed='true'] > span {
+  opacity: 0.78;
+}
+@media (hover: none) and (pointer: coarse) {
+  .g-slither-setup-skins {
+    gap: 6px;
+  }
+  .g-slither-setup-skins > .g-slither-swatch {
+    width: 44px;
+    height: 44px;
+  }
+  .g-slither-setup-skins > .g-slither-swatch:hover {
+    transform: none;
+  }
+  .g-slither-setup .arcade-seg.g-slither-seg > button {
+    height: 44px;
+  }
 }
 .g-slither-stage.is-compact .g-slither-board {
   right: 6px;

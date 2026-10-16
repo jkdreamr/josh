@@ -10,7 +10,7 @@ import {
   wrapAngle, type World,
 } from '../src/os/arcade/games/slither/world.ts';
 import {
-  applyHeadState, applyOps, loadSnapshot, makeRoster, resultRows, standings, syncRoster, takeOverSeats, winnerSeat,
+  applyHeadState, applyOps, loadSnapshot, makeRoster, resultRows, standings, startsSoloRound, syncRoster, takeOverSeats, winnerSeat,
 } from '../src/os/arcade/games/slither/session.ts';
 import { overlayLayout } from '../src/os/arcade/games/slither/render.ts';
 
@@ -357,4 +357,13 @@ test('a full 16-snake bot-thinking tick stays within budget', () => {
   }
   const elapsed = performance.now() - start;
   assert.ok(elapsed < 1500, `60 complete ticks with 15 bot decisions took ${elapsed.toFixed(1)}ms`);
+});
+
+test('resume after a pause keeps the solo round while play and play again start fresh', () => {
+  assert.equal(startsSoloRound('paused', 'playing', true), false);
+  assert.equal(startsSoloRound('ready', 'playing', false), true);
+  assert.equal(startsSoloRound(null, 'playing', false), true);
+  assert.equal(startsSoloRound('over', 'playing', true), true);
+  assert.equal(startsSoloRound('paused', 'playing', false), true);
+  assert.equal(startsSoloRound('playing', 'paused', true), false);
 });
