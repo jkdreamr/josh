@@ -15,7 +15,7 @@
   position: absolute;
   top: 10px;
   left: 10px;
-  max-width: calc(100% - 200px);
+  max-width: calc(100% - 190px);
   overflow: hidden;
   text-overflow: ellipsis;
   display: flex;
@@ -270,5 +270,17 @@
   100% {
     opacity: 0;
     transform: translate(-50%, -58%);
+  }
+}
+@media (pointer: coarse) {
+  .g-mini-golf .arcade-ctrl button {
+    width: 40px;
+    height: 40px;
+  }
+  .g-mini-golf .arcade-seg button {
+    min-height: 40px;
+  }
+  .g-mini-golf .g-mini-golf-top {
+    max-width: calc(100% - 240px);
   }
 }
