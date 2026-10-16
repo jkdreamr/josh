@@ -86,6 +86,7 @@ export const LEADERBOARD_SPECS: Record<string, LeaderboardSpec> = {
   "scramble-hard": {"order":"desc","max":10000,"unit":"pts","measure":"Best Match vs Computer"},
   "scramble-normal": {"order":"desc","max":10000,"unit":"pts","measure":"Best Match vs Computer"},
   "snake": {"order":"desc","max":100000},
+  "solitaire": {"order":"desc","max":20000},
   "stack": {"order":"desc","max":10000},
   "sudoku-easy": {"order":"asc","min":20000,"max":86400000,"format":"time","measure":"Fastest Solve"},
   "sudoku-hard": {"order":"asc","min":20000,"max":86400000,"format":"time","measure":"Fastest Solve"},
@@ -124,5 +125,6 @@ export const ONLINE_SPECS: Record<string, OnlineSpec> = {
   "run-3d": {"seats":4},
   "scramble": {"seats":8,"lateJoin":true,"bots":true},
   "snake": {"seats":4},
+  "solitaire": {"seats":4},
   "stack": {"seats":4},
 };
