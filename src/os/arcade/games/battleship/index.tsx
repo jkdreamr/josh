@@ -1194,11 +1194,11 @@ function getGeometry(w: number, h: number, phase: Phase, top: number) {
     }
     const cell = Math.floor(Math.max(18, Math.min((w - 24) / 10, (available - 65) / 10)));
     const side = cell * 10 + 9;
-    const placeY = top + Math.max(4, (available - side - 56) / 2);
+    const placeY = top + Math.max(4, (available - side - 62) / 2);
     return {
       portrait: true, targetCell: cell, targetX: 0, targetY: 0, ownCell: cell, ownX: 0, ownY: 0,
       placeCell: cell, placeX: Math.max(16, (w - side) / 2), placeY,
-      toolsX: Math.max(10, (w - 330) / 2), toolsY: Math.min(placeY + side + 12, top + available - 46),
+      toolsX: Math.max(10, (w - 330) / 2), toolsY: Math.min(placeY + side + 12, top + available - 52),
       fireX: 0, fireY: 0,
     };
   }
