@@ -16,6 +16,7 @@ import {
   makeCard,
   move,
   parseDeal,
+  redealFor,
   pileCards,
   score,
   shuffled,
@@ -284,4 +285,24 @@ test('card utilities, pile access, and clock formatting expose stable values', (
   assert.deepEqual(TABLEAU, ['t0', 't1', 't2', 't3', 't4', 't5', 't6']);
   assert.equal(clock(125), '2:05');
   assert.equal(clock(9), '0:09');
+});
+
+test('a draw picked on the start card redeals the same untouched shuffle', () => {
+  const one = deal(4242, 1);
+  const three = redealFor(one, 3);
+  assert.ok(three);
+  assert.equal(three.draw, 3);
+  assert.equal(three.seed, one.seed);
+  assert.deepEqual(three.tab, one.tab);
+  assert.deepEqual(three.stock, one.stock);
+  const drawn = drawStock(three);
+  assert.ok(drawn);
+  assert.equal(drawn.waste.length, 3);
+  assert.equal(redealFor(three, 3), null);
+});
+
+test('a deal already played is never redealt for a new draw', () => {
+  const played = drawStock(deal(77, 1));
+  assert.ok(played);
+  assert.equal(redealFor(played, 3), null);
 });
