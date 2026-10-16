@@ -32,7 +32,7 @@ const COLORS = ['#0a84ff', '#ff453a', '#30d158', '#ff9f0a'];
 const LOCAL_NAMES = ['Blue', 'Red', 'Green', 'Orange'];
 const CPU_NAMES = ['Pip', 'Moss', 'Juno'];
 const GAME = 'dots-boxes';
-const SIDE = { top: 12, bottom: 12, left: 172, right: 16 };
+const SIDE = { top: 12, bottom: 12, left: 184, right: 172 };
 const STACK = { top: 50, bottom: 62, left: 22, right: 22 };
 const fit = (m: typeof SIDE, w: number, h: number, rows: number, cols: number) =>
   Math.min(120, (w - m.left - m.right) / cols, (h - m.top - m.bottom) / rows);
@@ -717,9 +717,9 @@ function DotsBoxes() {
         aria-label="Dots and Boxes board"
       />
       {status && (
-        <div className="g-dots-boxes-status" aria-live="polite">
+        <div className={`g-dots-boxes-status${side ? ' is-side' : ''}`} aria-live="polite">
           {dot && <span className={`g-dots-boxes-status-dot${thinking ? ' is-thinking' : ''}`} style={{ ['--c' as string]: dot }} aria-hidden="true" />}
-          {status}
+          <span className="g-dots-boxes-status-text">{status}</span>
         </div>
       )}
       {s && (

@@ -25,6 +25,14 @@
   pointer-events: none;
   white-space: nowrap;
 }
+.g-dots-boxes .g-dots-boxes-status.is-side {
+  max-width: 168px;
+}
+.g-dots-boxes .g-dots-boxes-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .g-dots-boxes .g-dots-boxes-status-dot {
   width: 8px;
   height: 8px;
