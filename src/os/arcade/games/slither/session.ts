@@ -222,3 +222,16 @@ export function resultRows(world: World): [number, number, number, number][] {
     return [snake.id, snake.seat, Math.round(snake.mass * 10) / 10, snake.kills];
   });
 }
+
+type ShellStatus = 'ready' | 'playing' | 'paused' | 'over';
+
+/** A solo round starts fresh on Play or Play Again, but Resume after a pause keeps the round in progress. */
+export function startsSoloRound(previous: ShellStatus | null, status: ShellStatus, hasWorld: boolean): boolean {
+  return status === 'playing' && (!hasWorld || previous !== 'paused');
+}
+
+/** CSS size that still renders at least `min` px when a framed device scales the whole screen down. */
+export function touchTarget(renderedWidth: number, layoutWidth: number, min = 44): number {
+  const scale = layoutWidth > 0 && renderedWidth > 0 ? renderedWidth / layoutWidth : 1;
+  return Math.ceil(min / Math.min(1, scale));
+}

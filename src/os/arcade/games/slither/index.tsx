@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   GameShell, LEVEL_NAMES, Segmented, defineSetting, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell,
 } from '../../kit';
@@ -15,7 +15,7 @@ import {
   type Input, type Level, type World,
 } from './world.ts';
 import {
-  applyHeadState, applyOps, loadSnapshot, makeRoster, resultRows, syncRoster, winnerOf, winnerSeat,
+  applyHeadState, applyOps, loadSnapshot, makeRoster, resultRows, startsSoloRound, syncRoster, touchTarget, winnerOf, winnerSeat,
 } from './session.ts';
 import './slither.css';
 
@@ -50,12 +50,23 @@ export default function Game({ compact, onExit, roomCode }: GameProps) {
   );
 }
 
+function useTargetSize() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState(44);
+  useLayoutEffect(() => {
+    const field = ref.current?.querySelector<HTMLElement>('.arcade-seg');
+    if (field) setSize(touchTarget(field.getBoundingClientRect().width, field.offsetWidth));
+  }, []);
+  return { ref, style: { '--g-slither-target': `${size}px` } as CSSProperties };
+}
+
 function Setup() {
   const [level, setLevel] = useSetting(LEVEL);
   const [skin, setSkin] = useSetting(SKIN);
+  const target = useTargetSize();
   return (
-    <>
-      <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />
+    <div className="g-slither-setup" ref={target.ref} style={target.style}>
+      <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} className="g-slither-seg" />
       <div className="g-slither-setup-skins">
         <span>Skin</span>
         {SKINS.map((item, i) => (
@@ -63,7 +74,7 @@ function Setup() {
             key={item.name}
             type="button"
             className="g-slither-swatch"
-            style={{ '--skin': item.color } as CSSProperties}
+            style={{ '--skin': item.color, '--skin-light': item.light } as CSSProperties}
             aria-label={`${item.name} Skin`}
             aria-pressed={skin === String(i)}
             onClick={() => setSkin(String(i) as typeof skin)}
@@ -72,7 +83,7 @@ function Setup() {
           </button>
         ))}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -80,12 +91,13 @@ function OnlineSetup() {
   const online = useOnline();
   const [level, setLevel] = useSetting(LEVEL);
   const [duration, setDuration] = useSetting(DURATION);
+  const target = useTargetSize();
   if (!online?.isHost) return null;
   return (
-    <>
-      <Segmented label="Bot Level" value={level} options={levelOptions} onChange={setLevel} />
-      <Segmented label="Round" value={duration} options={durationOptions} onChange={setDuration} />
-    </>
+    <div className="g-slither-setup" ref={target.ref} style={target.style}>
+      <Segmented label="Bot Level" value={level} options={levelOptions} onChange={setLevel} className="g-slither-seg" />
+      <Segmented label="Round" value={duration} options={durationOptions} onChange={setDuration} className="g-slither-seg" />
+    </div>
   );
 }
 
@@ -213,7 +225,10 @@ function Play() {
     for (const part of snapshotPackets(world, room.round, 1)) sendToRoom(part);
   };
 
+  const previousStatus = useRef<typeof shell.status | null>(null);
   useEffect(() => {
+    const previous = previousStatus.current;
+    previousStatus.current = shell.status;
     if (shell.status !== 'playing') return;
     const room = onlineRef.current;
     if (room) {
@@ -230,6 +245,7 @@ function Play() {
       }
       return;
     }
+    if (!startsSoloRound(previous, shell.status, !!worldRef.current && roundRef.current === -1)) return;
     const world = createSoloWorld((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0, Number(skinName));
     worldRef.current = world;
     roundRef.current = -1;
