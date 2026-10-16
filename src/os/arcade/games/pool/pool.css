@@ -199,3 +199,38 @@
   width: 9px;
   height: 9px;
 }
+/* Touch: finger-sized controls, grown by --g-pool-u (set from the scale of a phone or iPad frame) so they stay that way on screen. */
+@media (pointer: coarse) {
+  .g-pool .arcade-ctrl button {
+    width: calc(44px * var(--g-pool-u, 1));
+    height: calc(44px * var(--g-pool-u, 1));
+  }
+  .g-pool .arcade-ctrl svg {
+    width: calc(16px * var(--g-pool-u, 1));
+    height: calc(16px * var(--g-pool-u, 1));
+  }
+  .g-pool .arcade-btn,
+  .g-pool .arcade-seg > button {
+    min-height: calc(40px * var(--g-pool-u, 1));
+  }
+  .g-pool .g-pool-spin {
+    scale: var(--g-pool-u, 1);
+  }
+  .g-pool .g-pool-name {
+    font-size: calc(13px * var(--g-pool-u, 1));
+  }
+  .g-pool .g-pool-name em,
+  .g-pool .g-pool-spin span {
+    font-size: calc(11px * var(--g-pool-u, 1));
+  }
+  .g-pool .g-pool-group {
+    font-size: calc(11.5px * var(--g-pool-u, 1));
+  }
+  .g-pool .g-pool-state {
+    font-size: calc(12px * var(--g-pool-u, 1));
+  }
+  .g-pool .g-pool-wait,
+  .g-pool .g-pool-toast {
+    font-size: calc(14px * var(--g-pool-u, 1));
+  }
+}
