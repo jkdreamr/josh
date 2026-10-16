@@ -9,7 +9,7 @@ import {
   PACKET_LIMIT, endPacket, helloPacket, initPacket, movePacket, operationPackets, packetBytes, parsePacket,
   snapshotPackets, statePacket, type NetOp, type Packet, type RosterEntry, type SnakeState,
 } from './net.ts';
-import { renderWorld, type Camera, type Particle } from './render.ts';
+import { overlayLayout, renderWorld, type Camera, type Particle } from './render.ts';
 import {
   TICK, SKINS, addSnake, angleDiff, bodyGridFor, createSoloWorld, createWorld, maxTurnRate, spawnSnake, step,
   type Input, type Level, type World,
@@ -633,10 +633,13 @@ function Play() {
       const currentSnake = world.snakes.find((snake) => snake.id === currentId.current);
       const order = world.snakes.filter((snake) => snake.alive).sort((a, b) => b.mass - a.mass || b.kills - a.kills || a.id - b.id);
       const rank = Math.max(1, order.findIndex((snake) => snake.id === currentId.current) + 1);
-      const rows = order.slice(0, size.h >= 400 ? 10 : 5).map((snake, i) => ({
+      const layout = overlayLayout(size);
+      const topCount = size.h >= 400 ? 10 : Math.min(5, layout.maxBoardRows);
+      const rows = order.slice(0, topCount).map((snake, i) => ({
         id: snake.id, name: snake.name, length: snake.mass, skin: snake.skin, rank: i + 1,
       }));
-      if (size.h < 400 && currentSnake?.alive && rank > 5) {
+      if (size.h < 400 && currentSnake?.alive && rank > topCount) {
+        if (rows.length >= layout.maxBoardRows) rows.pop();
         rows.push({ id: currentSnake.id, name: currentSnake.name, length: currentSnake.mass, skin: currentSnake.skin, rank });
       }
       const timeLeft = room ? Math.max(0, durationRef.current - world.clock) : world.clock;
@@ -672,7 +675,7 @@ function Play() {
     return { x: dx * scale, y: dy * scale };
   })() : null;
   return (
-    <div className="g-slither-stage">
+    <div className={`g-slither-stage${size.h <= 190 ? ' is-compact' : ''}`}>
       <canvas
         ref={ref}
         className="g-slither-canvas"

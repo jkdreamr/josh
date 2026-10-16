@@ -13,6 +13,18 @@ const colorAlpha = (hex: string, alpha: number) => {
   return `rgba(${r},${g},${b},${alpha})`;
 };
 
+export function overlayLayout(size: { w: number; h: number }) {
+  const miniDiameter = clamp(Math.min(size.w, size.h) * 0.34, 58, 88);
+  const miniPad = size.h < 200 ? 4 : 12;
+  const miniTop = size.h - miniDiameter - miniPad;
+  const compact = size.h <= 190;
+  const boardTop = 50;
+  const boardChrome = compact ? 6 : 28;
+  const boardRowHeight = compact ? 11 : 13;
+  const maxBoardRows = Math.max(1, Math.floor((miniTop - boardTop - boardChrome) / boardRowHeight));
+  return { miniDiameter, miniPad, miniTop, boardTop, boardChrome, boardRowHeight, maxBoardRows };
+}
+
 function drawSnake(ctx: CanvasRenderingContext2D, snake: Snake, world: World, me: number) {
   if (!snake.alive || snake.body.length < 2) return;
   const radius = radiusOf(snake.mass);
@@ -78,10 +90,8 @@ function drawPellet(ctx: CanvasRenderingContext2D, pellet: World['pellets'][numb
 }
 
 function drawMiniMap(ctx: CanvasRenderingContext2D, world: World, size: { w: number; h: number }, me: number) {
-  const diameter = clamp(Math.min(size.w, size.h) * 0.34, 58, 88);
-  const pad = size.h < 200 ? 4 : 12;
+  const { miniDiameter: diameter, miniPad: pad, miniTop: y } = overlayLayout(size);
   const x = size.w - diameter - pad;
-  const y = size.h - diameter - pad;
   const r = diameter / 2;
   ctx.save();
   ctx.beginPath();

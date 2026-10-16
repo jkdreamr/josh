@@ -96,6 +96,10 @@ export const radiusOf = (mass: number) => Math.max(6, Math.min(26, 6 + Math.sqrt
 export const bodyCount = (mass: number) => Math.max(12, Math.min(1800, Math.floor(8 + Math.pow(mass, 0.62) * 1.3)));
 export const maxTurnRate = (snake: Snake) => 4.2 * Math.pow(9 / radiusOf(snake.mass), 0.28);
 export const angleDiff = (a: number, b: number) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+export const wrapAngle = (angle: number) => {
+  const wrapped = Math.atan2(Math.sin(angle), Math.cos(angle));
+  return wrapped <= -Math.PI ? Math.PI : wrapped;
+};
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 const cellKey = (x: number, y: number) => `${Math.floor(x / GRID_SIZE)},${Math.floor(y / GRID_SIZE)}`;
 
@@ -162,7 +166,7 @@ export function spawnSnake(world: World, snake: Snake): WorldEvent {
   }
   snake.x = snake.px = x;
   snake.y = snake.py = y;
-  snake.angle = snake.prevAngle = Math.atan2(-y, -x) + (world.random() - 0.5) * 0.5;
+  snake.angle = snake.prevAngle = wrapAngle(Math.atan2(-y, -x) + (world.random() - 0.5) * 0.5);
   snake.vx = snake.vy = 0;
   snake.mass = 10;
   snake.peak = Math.max(snake.peak, 10);
@@ -302,10 +306,10 @@ export function step(
     const input = getInput(snake.id);
     const target = input?.target ?? snake.angle;
     const turn = clamp(angleDiff(target, snake.angle), -maxTurnRate(snake) * TICK, maxTurnRate(snake) * TICK);
-    snake.prevAngle = snake.angle;
+    snake.prevAngle = wrapAngle(snake.angle);
     snake.px = snake.x;
     snake.py = snake.y;
-    snake.angle += turn;
+    snake.angle = wrapAngle(snake.angle + turn);
     snake.boosting = !!input?.boost && snake.mass > BOOST_MIN;
     const oldX = snake.x;
     const oldY = snake.y;

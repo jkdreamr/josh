@@ -63,28 +63,31 @@
 .g-slither-board {
   position: absolute;
   z-index: 2;
-  top: 9px;
+  top: 50px;
   right: 10px;
   width: min(136px, 33%);
-  padding: 6px 8px;
+  padding: 5px 8px;
   border: 1px solid rgba(190, 241, 220, 0.14);
   border-radius: 9px;
   background: rgba(6, 18, 22, 0.7);
   pointer-events: none;
 }
 .g-slither-board-title {
+  height: 13px;
   margin-bottom: 3px;
   color: rgba(238, 255, 248, 0.68);
   font-size: 11px;
   font-weight: 600;
+  line-height: 13px;
 }
 .g-slither-board-row {
   display: flex;
   align-items: center;
   gap: 5px;
-  height: 15px;
+  height: 13px;
   color: rgba(247, 255, 251, 0.84);
   font-size: 11px;
+  line-height: 13px;
 }
 .g-slither-board-row.is-me {
   color: #d4ffe9;
@@ -198,26 +201,23 @@
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.75);
 }
+.g-slither-stage.is-compact .g-slither-board {
+  right: 6px;
+  padding: 2px 6px;
+}
+.g-slither-stage.is-compact .g-slither-board-title {
+  display: none;
+}
+.g-slither-stage.is-compact .g-slither-board-row {
+  height: 11px;
+  font-size: 11px;
+  line-height: 11px;
+}
 @media (max-height: 190px) {
   .g-slither-hud {
     top: 5px;
     left: 6px;
     gap: 4px;
-  }
-  .g-slither-board {
-    top: 5px;
-    right: 6px;
-    padding: 4px 6px;
-  }
-  .g-slither-board-title {
-    display: none;
-  }
-  .g-slither-board-row {
-    height: 13px;
-    font-size: 11px;
-  }
-  .g-slither-board-row:nth-child(n + 8) {
-    display: none;
   }
   .g-slither-score {
     min-height: 25px;

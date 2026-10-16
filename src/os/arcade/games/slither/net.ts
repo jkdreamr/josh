@@ -1,4 +1,4 @@
-import type { Pellet, World } from './world.ts';
+import { wrapAngle, type Pellet, type World } from './world.ts';
 
 export const PACKET_LIMIT = 6000;
 export type RosterEntry = { id: number; seat: number; name: string; color: number; skin: number; bot: boolean; eligible: boolean };
@@ -89,10 +89,10 @@ export function parsePacket(input: unknown): Packet | null {
 export const initPacket = (r: number, seed: number, radius: number, duration: number, level: 'easy' | 'normal' | 'hard', seq: number, roster: RosterEntry[]) =>
   packet(r, 'I', { seed, radius, duration, level, seq, roster }) as Packet;
 export function statePacket(r: number, world: World): Packet {
-  const snakes = world.snakes.map((s) => [s.id, s.x, s.y, s.angle, s.mass, s.alive, s.kills, s.boosting, s.vx, s.vy, s.peak] as SnakeState);
+  const snakes = world.snakes.map((s) => [s.id, s.x, s.y, wrapAngle(s.angle), s.mass, s.alive, s.kills, s.boosting, s.vx, s.vy, s.peak] as SnakeState);
   return packet(r, 'S', { tick: world.tick, clock: world.clock, snakes }) as Packet;
 }
-export const movePacket = (r: number, seq: number, target: number, boost: boolean): Packet => packet(r, 'M', { seq, target, boost }) as Packet;
+export const movePacket = (r: number, seq: number, target: number, boost: boolean): Packet => packet(r, 'M', { seq, target: wrapAngle(target), boost }) as Packet;
 export const helloPacket = (r: number): Packet => packet(r, 'H') as Packet;
 export const resyncPacket = (r: number): Packet => packet(r, 'Q') as Packet;
 export const pausePacket = (r: number, away: boolean): Packet => packet(r, 'P', { away }) as Packet;
@@ -103,7 +103,8 @@ export function operationPackets(r: number, firstSeq: number, ops: NetOp[]): Pac
   const result: Packet[] = [];
   let batch: NetOp[] = [];
   let seq = firstSeq;
-  for (const op of ops) {
+  for (const value of ops) {
+    const op: NetOp = value.k === 'spawn' ? { ...value, angle: wrapAngle(value.angle) } : value;
     const trial = packet(r, 'O', { seq, ops: [...batch, op] });
     if (byteLength(trial) > PACKET_LIMIT && batch.length) {
       result.push(packet(r, 'O', { seq, ops: batch }) as Packet);
@@ -119,7 +120,7 @@ export function snapshotPackets(world: World, r: number, snap: number): Packet[]
   const entries: unknown[][] = [];
   for (const snake of world.snakes) {
     entries.push(['s', snake.id, snake.seat, snake.name, snake.color, snake.skin, snake.bot, snake.eligible, snake.alive,
-      snake.x, snake.y, snake.angle, snake.mass, snake.peak, snake.kills, snake.boosting, snake.vx, snake.vy, snake.respawnAt]);
+      snake.x, snake.y, wrapAngle(snake.angle), snake.mass, snake.peak, snake.kills, snake.boosting, snake.vx, snake.vy, snake.respawnAt]);
     for (let start = 0; start < snake.body.length; start += 60) {
       const values: number[] = [];
       for (const p of snake.body.slice(start, start + 60)) values.push(Math.round(p.x * 10), Math.round(p.y * 10));

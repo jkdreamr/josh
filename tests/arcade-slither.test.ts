@@ -7,11 +7,12 @@ import {
 } from '../src/os/arcade/games/slither/net.ts';
 import {
   addPellet, addSnake, bodyCount, bodyGridFor, createSoloWorld, createWorld, maxTurnRate, radiusOf, setPellet, step, TICK,
-  type World,
+  wrapAngle, type World,
 } from '../src/os/arcade/games/slither/world.ts';
 import {
   applyHeadState, applyOps, loadSnapshot, makeRoster, resultRows, standings, syncRoster, takeOverSeats, winnerSeat,
 } from '../src/os/arcade/games/slither/session.ts';
+import { overlayLayout } from '../src/os/arcade/games/slither/render.ts';
 
 function clearWorld(seed = 7, radius = 500) {
   return createWorld({ seed, radius, fillPellets: false });
@@ -40,6 +41,16 @@ test('seeded solo starts are repeatable, safely spaced and naturally stocked', (
   assert.deepEqual(a.snakes.map(({ x, y, angle }) => [x, y, angle]), b.snakes.map(({ x, y, angle }) => [x, y, angle]));
   assert.deepEqual(a.pellets.map(({ x, y, value }) => [x, y, value]), b.pellets.map(({ x, y, value }) => [x, y, value]));
   for (const snake of a.snakes) assert.ok(Math.hypot(snake.x, snake.y) < a.radius * 0.8);
+});
+
+test('short-stage leaderboard rows fit between shell controls and minimap', () => {
+  const phone = overlayLayout({ w: 464, h: 157 });
+  assert.equal(phone.maxBoardRows, 3);
+  assert.ok(phone.boardTop + phone.boardChrome + phone.boardRowHeight * phone.maxBoardRows <= phone.miniTop);
+
+  const laptop = overlayLayout({ w: 600, h: 262 });
+  assert.equal(laptop.maxBoardRows, 6);
+  assert.ok(laptop.boardTop + laptop.boardChrome + laptop.boardRowHeight * laptop.maxBoardRows <= laptop.miniTop);
 });
 
 test('pellets feed mass, steering respects the turn limit, and boost trades mass for speed', () => {
@@ -76,6 +87,58 @@ test('pellets feed mass, steering respects the turn limit, and boost trades mass
   assert.equal(snake.mass, smallMass, 'boost stops below its minimum mass');
   assert.ok(Math.abs(snake.x - smallX) < 6);
   assert.ok(radiusOf(snake.mass) >= 6);
+});
+
+test('a snake can turn indefinitely while state angles stay within packet bounds', () => {
+  const world = clearWorld(91, 5000);
+  world.pelletTarget = 0;
+  const snake = placeSnake(world, 0, 0, 0, 0);
+  for (let i = 0; i < 600; i++) {
+    step(world, { 0: { target: snake.angle + Math.PI / 2, boost: false } });
+    assert.ok(Math.abs(snake.angle) <= Math.PI);
+    assert.ok(Math.abs(snake.prevAngle) <= Math.PI);
+  }
+  const parsed = parsePacket(JSON.parse(JSON.stringify(statePacket(7, world))));
+  assert.ok(parsed?.k === 'S');
+});
+
+test('long bot rounds keep state and snapshot packets valid', () => {
+  const world = createWorld({ seed: 73, radius: 5000, fillPellets: false });
+  for (let i = 0; i < 8; i++) addSnake(world, { id: i, bot: true, respawnDelay: 2.4 });
+  for (let tick = 0; tick < 900; tick++) {
+    const grid = bodyGridFor(world);
+    const inputs = new Map<number, { target: number; boost: boolean }>();
+    for (const snake of world.snakes) {
+      if (snake.alive) inputs.set(snake.id, think(world, snake, 'hard', grid, world.random));
+    }
+    step(world, inputs, grid);
+  }
+  const state = parsePacket(JSON.parse(JSON.stringify(statePacket(8, world))));
+  assert.ok(state?.k === 'S');
+  const snapshots = snapshotPackets(world, 8, world.tick);
+  assert.ok(snapshots.length > 0);
+  for (const snapshot of snapshots) {
+    const parsed = parsePacket(JSON.parse(JSON.stringify(snapshot)));
+    assert.ok(parsed?.k === 'Z');
+  }
+});
+
+test('angle-bearing packet builders wrap their values defensively', () => {
+  const world = clearWorld(19);
+  const snake = placeSnake(world, 0, 0, 0, 0);
+  const angle = 9 * Math.PI + 0.4;
+  assert.equal(wrapAngle(-Math.PI), Math.PI);
+  snake.angle = angle;
+  const state = parsePacket(statePacket(4, world));
+  assert.ok(state?.k === 'S');
+  if (state?.k === 'S') assert.ok(Math.abs(state.snakes[0][3]) <= Math.PI);
+
+  const move = parsePacket(movePacket(4, 1, angle, false));
+  assert.ok(move?.k === 'M' && Math.abs(move.target) <= Math.PI);
+  const spawn = operationPackets(4, 1, [{ k: 'spawn', id: 0, x: 0, y: 0, angle }]);
+  assert.ok(spawn.length === 1 && parsePacket(spawn[0])?.k === 'O');
+  const snapshots = snapshotPackets(world, 4, 1);
+  assert.ok(snapshots.every((part) => parsePacket(part)?.k === 'Z'));
 });
 
 test('expired pellets emit remove operations for non-stepping guests', () => {

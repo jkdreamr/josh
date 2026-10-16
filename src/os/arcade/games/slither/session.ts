@@ -1,5 +1,5 @@
 import type { World, Pellet } from './world.ts';
-import { addSnake, bodyCount, setPellet } from './world.ts';
+import { addSnake, bodyCount, setPellet, wrapAngle } from './world.ts';
 import type { NetOp, RosterEntry, SnakeState } from './net.ts';
 
 export type RoomSeat = { seat: number; name: string; bot?: boolean; color?: number; skin?: number };
@@ -104,14 +104,15 @@ export function applyOps(world: World, ops: readonly NetOp[]) {
     } else if (op.k === 'spawn') {
       const snake = world.snakes.find((s) => s.id === op.id);
       if (snake) {
+        const angle = wrapAngle(op.angle);
         snake.x = snake.px = op.x;
         snake.y = snake.py = op.y;
-        snake.angle = snake.prevAngle = op.angle;
+        snake.angle = snake.prevAngle = angle;
         snake.alive = true;
         snake.mass = 10;
         snake.body = Array.from({ length: 13 }, (_, i) => ({
-          x: op.x - Math.cos(op.angle) * i * 7,
-          y: op.y - Math.sin(op.angle) * i * 7,
+          x: op.x - Math.cos(angle) * i * 7,
+          y: op.y - Math.sin(angle) * i * 7,
         }));
         snake.respawnAt = null;
       }
@@ -148,7 +149,8 @@ export function applyHeadState(world: World, state: readonly SnakeState[]) {
     snake.py = snake.y;
     snake.x = x;
     snake.y = y;
-    snake.angle = angle;
+    snake.prevAngle = wrapAngle(snake.angle);
+    snake.angle = wrapAngle(angle);
     snake.mass = mass;
     if (snake.alive) {
       snake.body.length = Math.min(snake.body.length, bodyCount(mass) + 2);
@@ -178,7 +180,7 @@ export function loadSnapshot(world: World, data: readonly unknown[][]) {
       snake.alive = row[8] as boolean;
       snake.x = snake.px = row[9] as number;
       snake.y = snake.py = row[10] as number;
-      snake.angle = snake.prevAngle = row[11] as number;
+      snake.angle = snake.prevAngle = wrapAngle(row[11] as number);
       snake.mass = row[12] as number;
       snake.peak = row[13] as number;
       snake.kills = row[14] as number;
