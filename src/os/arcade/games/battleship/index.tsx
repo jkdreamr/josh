@@ -51,6 +51,7 @@ type GameState = {
   incoming: [Uint8Array, Uint8Array];
   placementSeat: number;
   viewer: number;
+  touchAim: boolean;
   turn: number;
   shotsBySeat: [number, number];
   hitBySeat: [number, number];
@@ -104,6 +105,7 @@ function createGameState(mode: GameMode, localSeat: number): GameState {
     incoming: makeTuple(() => new Uint8Array(SIZE * SIZE)),
     placementSeat: online ? localSeat : 0,
     viewer: online ? localSeat : 0,
+    touchAim: false,
     turn: 0,
     shotsBySeat: [0, 0],
     hitBySeat: [0, 0],
@@ -640,6 +642,7 @@ function Battleship() {
         if (event.pointerType !== 'touch') {
           s.aimed = cell;
           s.cursor = cell;
+          s.touchAim = false;
         }
         refresh();
       }
@@ -671,6 +674,7 @@ function Battleship() {
           else {
             s.aimed = cell;
             s.cursor = cell;
+            s.touchAim = true;
             refresh();
           }
         } else fire(cell);
@@ -911,7 +915,7 @@ function Battleship() {
   const placementShip = drag?.candidate;
   const showCover = state.phase === 'cover' && (shell.status === 'playing' || shell.status === 'paused');
   const targetInteractive = state.phase === 'battle' && isHumanTurn(state);
-  const showFire = targetInteractive && state.aimed !== null;
+  const showFire = targetInteractive && state.aimed !== null && (geometry.portrait || state.touchAim);
   const stageClass = `g-battleship-stage${size.h < 220 ? ' compact-height' : ''}${size.h < 300 ? ' short-window' : ''}${geometry.portrait ? ' portrait' : ''}${statusLayout.below ? ' status-below' : ''}`;
   const targetBoardStyle = boardStyle(geometry.targetCell, geometry.targetX, geometry.targetY);
   const ownBoardStyle = boardStyle(geometry.ownCell, geometry.ownX, geometry.ownY);
@@ -1210,11 +1214,14 @@ function getGeometry(w: number, h: number, phase: Phase, top: number) {
     const gap = Math.max(12, cell * 0.55);
     const x = Math.max(6, (w - targetSide - ownSide - gap) / 2);
     const y = top + (available - targetSide) / 2;
+    const ownX = x + targetSide + gap;
+    const ownY = y + (targetSide - ownSide) / 2;
     return {
-      portrait: false, targetCell: cell, targetX: x, targetY: y, ownCell, ownX: x + targetSide + gap,
-      ownY: y + (targetSide - ownSide) / 2,
+      portrait: false, targetCell: cell, targetX: x, targetY: y, ownCell, ownX, ownY,
       placeCell: cell, placeX: 0, placeY: 0,
-      toolsX: 0, toolsY: 0, fireX: 0, fireY: 0,
+      toolsX: 0, toolsY: 0,
+      fireX: Math.min(w - 128, Math.max(8, ownX + (ownSide - 120) / 2)),
+      fireY: Math.min(ownY + ownSide + 10, h - bottom - 50),
     };
   }
   const cell = Math.floor(Math.max(18, Math.min((w - 24) / 10, (available - 86) / 15.8)));
