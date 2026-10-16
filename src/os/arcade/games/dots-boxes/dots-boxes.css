@@ -26,7 +26,8 @@
   white-space: nowrap;
 }
 .g-dots-boxes .g-dots-boxes-status.is-side {
-  max-width: 168px;
+  max-width: 156px;
+  font-size: 12px;
 }
 .g-dots-boxes .g-dots-boxes-status-text {
   min-width: 0;
