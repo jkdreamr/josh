@@ -137,6 +137,11 @@
   pointer-events: none;
 }
 
+.g-sumo-tag.is-compact {
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
 .g-sumo-toast {
   position: absolute;
   z-index: 3;

@@ -23,6 +23,7 @@ const CHARGE_STEPS = 24;
 const DROP_COUNT = 72;
 const RING_COUNT = 12;
 const pitch = (55 * Math.PI) / 180;
+const compactPitch = (70 * Math.PI) / 180;
 const toColor = (THREE: Three, value: string) => new THREE.Color(value);
 
 function setInstance(mesh: T.InstancedMesh, index: number, dummy: T.Object3D, pos: [number, number, number], rot: [number, number, number], scale: [number, number, number]) {
@@ -201,6 +202,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   let width = 1;
   let height = 1;
   let cameraDistance = 30;
+  let cameraPitch = pitch;
   let fitRadius = 0;
   let fitDirty = true;
   let previousRadius = 0;
@@ -234,15 +236,16 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       const pillarZ = Math.sin(angle) * 0.72;
       points.push(new THREE.Vector3(pillarX, -2.4, pillarZ), new THREE.Vector3(pillarX, -0.2, pillarZ));
     }
-    const topInset = height <= 280 ? 42 : Math.min(44, Math.max(34, height * 0.07));
+    const topInset = height < 260 ? Math.min(30, height * 0.12) : Math.min(44, Math.max(34, height * 0.07));
     const bottomInset = height <= 280 ? 8 : 12;
-    const leftBound = -1 + (24 / width);
-    const rightBound = 1 - (24 / width);
+    const sideInset = touch && width < 500 ? 12 : 24;
+    const leftBound = -1 + (2 * sideInset / width);
+    const rightBound = 1 - (2 * sideInset / width);
     const bottomBound = -1 + (2 * bottomInset / height);
     const topBound = 1 - (2 * topInset / height);
     const projected = new THREE.Vector3();
     const fits = (distance: number) => {
-      camera.position.set(0, distance * Math.sin(pitch), distance * Math.cos(pitch));
+      camera.position.set(0, distance * Math.sin(cameraPitch), distance * Math.cos(cameraPitch));
       camera.lookAt(0, 0, 0);
       camera.updateMatrixWorld(true);
       for (const point of points) {
@@ -273,13 +276,14 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       shake = Math.max(0, shake - dt * 1.8);
       const startRadius = world.startRadius || world.radius || 10;
       if (fitDirty || fitRadius !== startRadius) {
+        cameraPitch = height < 260 ? compactPitch : pitch;
         cameraDistance = distanceFor(startRadius);
         fitRadius = startRadius;
         fitDirty = false;
       }
       const jitterX = shake > 0 ? Math.sin(clock * 48) * shake * 0.18 : 0;
       const jitterZ = shake > 0 ? Math.cos(clock * 41) * shake * 0.18 : 0;
-      camera.position.set(jitterX, cameraDistance * Math.sin(pitch), cameraDistance * Math.cos(pitch) + jitterZ);
+      camera.position.set(jitterX, cameraDistance * Math.sin(cameraPitch), cameraDistance * Math.cos(cameraPitch) + jitterZ);
       camera.lookAt(0, 0, 0);
 
       const radius = world.radius || world.startRadius || 10;

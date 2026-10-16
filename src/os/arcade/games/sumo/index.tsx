@@ -536,6 +536,7 @@ function Play({ mode }: { mode: StageMode }) {
   const watched = mode === 'online' && !synced.current;
   const yourCar = current.cars[mine()];
   const hostRect = ref.current?.getBoundingClientRect();
+  const compactTags = (hostRect?.height ?? 0) < 220;
   const centerText = hud.phase === 'count'
     ? `${Math.max(1, Math.ceil(hud.timer))}`
     : hud.phase === 'over'
@@ -568,11 +569,12 @@ function Play({ mode }: { mode: StageMode }) {
       </div>
 
       {current.cars.map((car) => {
+        if (compactTags && car.ai !== null) return null;
         const position = view.current?.project(car);
         if (!position?.visible) return null;
         return (
           <div
-            className="g-sumo-tag"
+            className={`g-sumo-tag${compactTags ? ' is-compact' : ''}`}
             key={car.id}
             style={{ left: position.x, top: position.y, '--tag-color': CAR_COLORS[car.color] } as CSSProperties}
           >
