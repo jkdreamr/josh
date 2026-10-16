@@ -121,7 +121,7 @@ export function applyOps(world: World, ops: readonly NetOp[]) {
       if (snake) {
         snake.alive = false;
         snake.mass = op.mass;
-        snake.respawnAt = null;
+        snake.respawnAt = snake.respawnDelay > 0 ? world.clock + snake.respawnDelay : null;
       }
     }
   }

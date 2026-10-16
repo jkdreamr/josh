@@ -316,6 +316,11 @@ test('room roster seats, late join takeover, ordered state and winner attributio
   assert.deepEqual(standings(world)[0], 0);
   assert.equal(winnerSeat(world, 0), 0);
   assert.deepEqual(resultRows(world)[0], [0, 0, 25, 3]);
+  const guest = world.snakes[0];
+  guest.respawnDelay = 3;
+  world.clock = 12;
+  applyOps(world, [{ k: 'death', id: guest.id, killer: null, mass: guest.mass, x: guest.x, y: guest.y }]);
+  assert.equal(guest.respawnAt, world.clock + guest.respawnDelay);
 });
 
 test('24 snakes at grown mass stay within the fixed-step budget', () => {
