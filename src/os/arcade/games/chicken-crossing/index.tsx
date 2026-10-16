@@ -61,6 +61,17 @@ function Play() {
     s.world.queued = null;
     s.world.repeat = 0;
   }, [shell.status, s]);
+  // The hawk would take an unattended chicken, so leaving the window for another app pauses the round.
+  useEffect(() => {
+    const win = shell.root.current?.closest('.win');
+    if (!win || shell.status !== 'playing') return;
+    const check = () => {
+      if (win.classList.contains('is-inactive')) shell.pause();
+    };
+    const watch = new MutationObserver(check);
+    watch.observe(win, { attributes: true, attributeFilter: ['class'] });
+    return () => watch.disconnect();
+  }, [shell.root, shell.status, shell.pause]);
   useEffect(() => {
     if (!toast) return;
     const id = window.setTimeout(() => setToast(null), 2200);

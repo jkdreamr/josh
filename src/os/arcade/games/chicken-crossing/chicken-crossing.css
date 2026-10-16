@@ -106,3 +106,9 @@
     animation: none;
   }
 }
+@media (pointer: coarse) {
+  .g-chicken-crossing.arcade-shell .arcade-seg > button,
+  .g-chicken-crossing.arcade-shell .arcade-btn {
+    min-height: 40px;
+  }
+}
