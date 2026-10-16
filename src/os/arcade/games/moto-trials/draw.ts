@@ -65,7 +65,8 @@ export function render(
   const shx = shake * 0.35 * Math.sin(run.t * 47);
   const shy = shake * 0.35 * Math.cos(run.t * 39);
 
-  const anchorX = w * (fit.portrait ? 0.36 : 0.33);
+  // anchorX pins cam.x, which already leads the bike by lookX, so add it back
+  const anchorX = w * (fit.portrait ? 0.3 : 0.33) + lookX * scale;
   const anchorY = h * (fit.portrait ? (touch ? 0.58 : 0.56) : touch ? 0.56 : 0.6);
   const sx = (wx: number) => (wx - cam.x) * scale + anchorX + shx * scale * 0.1;
   const sy = (wy: number) => anchorY - (wy - cam.y) * scale + shy * scale * 0.1;
@@ -927,11 +928,12 @@ const fmt = (ms: number) => {
 
 /** Where the shell's own pills sit, measured in canvas px, so the HUD dodges them. */
 function chromeRects(c: CanvasRenderingContext2D, w: number) {
-  const stage = c.canvas.parentElement;
+  // the score pill and control row are siblings of .arcade-stage inside .arcade-shell
+  const root = c.canvas.closest('.arcade-shell') ?? c.canvas.ownerDocument;
   const cr = c.canvas.getBoundingClientRect();
   const k = w / (cr.width || w || 1);
   const box = (sel: string) => {
-    const el = stage?.querySelector(sel);
+    const el = root.querySelector(sel);
     if (!el) return null;
     const r = el.getBoundingClientRect();
     if (!r.width) return null;
@@ -946,16 +948,17 @@ function hud(c: CanvasRenderingContext2D, w: number, h: number, run: Run, ghosts
   const pillR = chrome.pill?.r ?? 0;
   const ctrlL = chrome.ctrl?.l ?? w;
   const rowB = Math.max(chrome.ctrl?.b ?? 0, chrome.pill?.b ?? 0);
-  const freeW = ctrlL - pillR - 24;
+  const freeW = ctrlL - pillR;
   const bw = Math.min(w * 0.42, 340);
   let bx: number;
   let by: number;
-  if (freeW >= 120) {
-    bx = clamp(w / 2 - bw / 2, pillR + 12, ctrlL - 12 - bw);
-    by = Math.max(12, (chrome.pill?.t ?? 12));
+  if (freeW - bw >= 120) {
+    // enough room to live on the same line as the pills, clear of both
+    bx = clamp(w / 2 - bw / 2, pillR + 16, ctrlL - 16 - bw);
+    by = Math.max(12, chrome.pill?.t ?? 12);
   } else {
     bx = w / 2 - bw / 2;
-    by = rowB + 10;
+    by = rowB + 8;
   }
 
   const prog = clamp((run.bike.p.x - level.start.x) / (level.finishX - level.start.x), 0, 1);
