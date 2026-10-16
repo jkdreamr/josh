@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { createWorld, fitBoard, mulberry32, noInput, spawnRound, stickInput, step, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
+import { createWorld, fitBoard, mulberry32, noInput, spawnRound, stickInput, step, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, statePacket, type NetEvent, type RoundPacket } from './net.ts';
 import { meta } from './meta';
@@ -148,29 +148,7 @@ function TankMaze() {
   };
 
   /** Maze/board layout: the board rect plus the touch zone each human gets. */
-  const layout = (w: number, h: number) => {
-    const hud = h < 200 ? 26 : 34;
-    const humans = online ? 1 : effMode === '3p' ? 3 : effMode === '2p' ? 2 : 1;
-    const touchN = touch ? Math.min(humans, 2) : 0;
-    const portrait = h > w;
-    let board = { x: 0, y: hud, w, h: h - hud };
-    const zones: { x: number; y: number; w: number; h: number; flip: boolean }[] = [];
-    if (touchN === 1) {
-      const band = Math.min(h * 0.3, 190);
-      board = { x: 0, y: hud, w, h: h - hud - band };
-      zones.push({ x: 0, y: h - band, w: w * 0.62, h: band, flip: false });
-    } else if (touchN === 2 && portrait) {
-      const band = Math.min(h * 0.24, 170);
-      board = { x: 0, y: hud + band, w, h: h - hud - band * 2 };
-      zones.push({ x: 0, y: h - band, w, h: band, flip: false });
-      zones.push({ x: 0, y: hud, w, h: band, flip: true });
-    } else if (touchN === 2) {
-      board = { x: 0, y: hud, w, h: h - hud };
-      zones.push({ x: 0, y: hud, w: w / 2, h: h - hud, flip: false });
-      zones.push({ x: w / 2, y: hud, w: w / 2, h: h - hud, flip: false });
-    }
-    return { hud, board, zones, portrait };
-  };
+  const layout = (w: number, h: number) => touchLayout(w, h, online ? 1 : effMode === '3p' ? 3 : effMode === '2p' ? 2 : 1, touch);
 
   const mazeSize = (board: { w: number; h: number }) => {
     if (board.w >= board.h) {
@@ -384,7 +362,12 @@ function TankMaze() {
     const player = humanIds(m.current!)[zi];
     if (player === undefined) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    sticks.current.set(e.pointerId, { id: e.pointerId, ox: x, oy: y, x, y, player });
+    // the drawn ring (r=44) must never reach over the maze: keep the origin inside the zone
+    const z = layout(sizeRef.current.w, sizeRef.current.h).zones[zi];
+    const lo = z.x + Math.min(44, z.w / 2);
+    const hi = z.x + Math.max(z.w - 44, z.w / 2);
+    const ox = Math.min(Math.max(x, lo), hi);
+    sticks.current.set(e.pointerId, { id: e.pointerId, ox, oy: y, x, y, player });
   };
   const onPointerMove = (e: RPointerEvent<HTMLCanvasElement>) => {
     const s = sticks.current.get(e.pointerId);
@@ -1150,12 +1133,15 @@ function TankMaze() {
         const z = lay.zones[i];
         if (!z) return null;
         // fire button at the far corner of each zone; P2's portrait zone is flipped, so its corner reads top-left on screen
+        const landscape2 = lay.zones.length === 2 && !lay.portrait;
         const style: React.CSSProperties =
           lay.zones.length === 1
             ? { right: 14, bottom: 14 }
             : z.flip
               ? { left: z.x + 14, top: z.y + 14 }
-              : { left: z.x + z.w - 70, top: z.y + z.h - 70 };
+              : landscape2 && i === 0
+                ? { left: z.x + 14, top: z.y + z.h - 70 }
+                : { left: z.x + z.w - 70, top: z.y + z.h - 70 };
         return (
           <button
             key={pid}
@@ -1176,7 +1162,6 @@ function TankMaze() {
           </button>
         );
       })}
-      {touch && !online && effMode === '2p' && lay && lay.zones.length === 2 && !lay.portrait && <div className="g-tank-maze-split" style={{ top: lay.hud }} aria-hidden="true" />}
       {banner && (
         <div className="g-tank-maze-banner" key={banner.text} aria-live="polite">
           <strong>{banner.text}</strong>

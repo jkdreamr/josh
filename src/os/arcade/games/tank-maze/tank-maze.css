@@ -10,14 +10,6 @@
   height: 100%;
   touch-action: none;
 }
-.g-tank-maze .g-tank-maze-split {
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  width: 0;
-  border-left: 1.5px dashed rgba(60, 56, 48, 0.2);
-  pointer-events: none;
-}
 .g-tank-maze .g-tank-maze-fire {
   position: absolute;
   width: 58px;

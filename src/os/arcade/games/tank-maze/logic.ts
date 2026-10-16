@@ -825,6 +825,43 @@ export function fitBoard(
   return narrow.cell >= low.cell ? narrow : low;
 }
 
+export type TouchZone = { x: number; y: number; w: number; h: number; flip: boolean };
+
+/**
+ * Stage layout in canvas CSS px: the HUD band, the board the maze letterboxes into, and one
+ * touch zone per human (max 2). Zones always sit beside or above/below the board, never over it:
+ * 1P gets a bottom band, portrait 2P splits top/bottom (the top player's zone renders flipped),
+ * and landscape 2P gets slim side columns flanking the board.
+ */
+export function touchLayout(
+  w: number,
+  h: number,
+  humans: number,
+  touch: boolean,
+): { hud: number; board: { x: number; y: number; w: number; h: number }; zones: TouchZone[]; portrait: boolean } {
+  const hud = h < 200 ? 26 : 34;
+  const touchN = touch ? Math.min(humans, 2) : 0;
+  const portrait = h > w;
+  let board = { x: 0, y: hud, w, h: h - hud };
+  const zones: TouchZone[] = [];
+  if (touchN === 1) {
+    const band = Math.min(h * 0.3, 190);
+    board = { x: 0, y: hud, w, h: h - hud - band };
+    zones.push({ x: 0, y: h - band, w: w * 0.62, h: band, flip: false });
+  } else if (touchN === 2 && portrait) {
+    const band = Math.min(h * 0.24, 170);
+    board = { x: 0, y: hud + band, w, h: h - hud - band * 2 };
+    zones.push({ x: 0, y: h - band, w, h: band, flip: false });
+    zones.push({ x: 0, y: hud, w, h: band, flip: true });
+  } else if (touchN === 2) {
+    const side = Math.round(Math.min(w * 0.24, 210));
+    board = { x: side, y: hud, w: w - 2 * side, h: h - hud };
+    zones.push({ x: 0, y: hud, w: side, h: h - hud, flip: false });
+    zones.push({ x: w - side, y: hud, w: side, h: h - hud, flip: false });
+  }
+  return { hud, board, zones, portrait };
+}
+
 /**
  * Touch stick -> TankInput. The stick is a desired heading plus magnitude (0..1): the tank turns
  * toward it and drives when roughly aligned; a stick pointed almost behind reverses instead of U-turning.

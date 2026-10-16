@@ -19,6 +19,7 @@ import {
   spawnRound,
   step,
   stickInput,
+  touchLayout,
   traceShot,
   type Maze,
 } from '../src/os/arcade/games/tank-maze/logic.ts';
@@ -597,4 +598,30 @@ test('fitBoard stays inside the board and clear of the control pill', () => {
     const overlap = f.ox + bw > r.x && f.ox < r.x + r.w && f.oy + bh > r.y && f.oy < r.y + r.h;
     assert.ok(!overlap, `${w}x${h}: maze under the control pill`);
   }
+});
+
+test('touchLayout keeps touch zones off the board', () => {
+  const overlap = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) =>
+    a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  // phone landscape 2P: side columns flank the board, never covering it
+  const land = touchLayout(844, 390, 2, true);
+  assert.equal(land.zones.length, 2);
+  for (const z of land.zones) assert.ok(!overlap(z, land.board), `landscape zone over board: ${JSON.stringify(z)}`);
+  assert.ok(land.zones[0].x + land.zones[0].w <= land.board.x, 'P1 column left of the board');
+  assert.ok(land.zones[1].x >= land.board.x + land.board.w, 'P2 column right of the board');
+  // phone portrait 2P: the board sits between the two bands
+  const port = touchLayout(390, 844, 2, true);
+  assert.equal(port.zones.length, 2);
+  const p2 = port.zones.find((z) => z.flip)!;
+  const p1 = port.zones.find((z) => !z.flip)!;
+  assert.ok(port.board.y >= p2.y + p2.h, 'board below the flipped P2 band');
+  assert.ok(port.board.y + port.board.h <= p1.y, 'board above the P1 band');
+  // 1P touch: single band at the bottom
+  const solo = touchLayout(390, 844, 1, true);
+  assert.equal(solo.zones.length, 1);
+  assert.ok(solo.board.y + solo.board.h <= solo.zones[0].y);
+  // no touch: the board owns everything below the HUD
+  const desk = touchLayout(1440, 900, 3, false);
+  assert.equal(desk.zones.length, 0);
+  assert.ok(desk.board.h === 900 - desk.hud);
 });
