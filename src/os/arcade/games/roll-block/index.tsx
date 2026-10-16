@@ -24,11 +24,12 @@ const FALL_MS = 700;
 const WIN_MS = 500;
 const INTRO_MS = 700;
 const FLIP_MS = 250;
+const SPAWN_MS = 350;
 const ACCENT = 0x14857a;
 
 type Assets = {
   tileGeo: T.BufferGeometry;
-  fragGeo: T.BufferGeometry;
+  fragHalfGeo: T.BufferGeometry;
   switchGeo: T.BufferGeometry;
   barGeo: T.BufferGeometry;
   frameGeo: T.BufferGeometry;
@@ -36,7 +37,7 @@ type Assets = {
   blockGeo: T.BufferGeometry;
   floorA: T.Material;
   floorB: T.Material;
-  frag: T.Material;
+  fragHalf: T.Material;
   bridge: T.Material;
   hole: T.Material;
   frame: T.Material;
@@ -57,6 +58,7 @@ type Anim =
   | { kind: 'intro'; t: number }
   | { kind: 'roll'; t: number; dir: Dir; next: State; win: boolean }
   | { kind: 'fall'; t: number; dir: Dir; fragileCell: [number, number] | null }
+  | { kind: 'spawn'; t: number }
   | { kind: 'sink'; t: number };
 
 type World = {
@@ -72,7 +74,7 @@ type World = {
   bridgeCells: Map<string, TileRec[]>;
   switchCells: Map<number, TileRec>;
   bounds: { cx: number; cz: number; w: number; h: number };
-  fit: (w: number, h: number) => void;
+  fit: (w: number, h: number, margins?: { top?: number; bottom?: number }) => void;
   dispose: () => void;
 };
 
@@ -99,24 +101,25 @@ function rollPivot(b: Block, d: Dir) {
 function makeAssets(THREE: Three): Assets {
   const std = (color: number, roughness = 0.7) => new THREE.MeshStandardMaterial({ color, roughness });
   const side = std(ACCENT, 0.55);
-  const top = std(0x2bb8a8, 0.5);
+  const top = std(0x4fd8c4, 0.45);
   const bottom = std(0x0b3f3a, 0.8);
   return {
     tileGeo: new THREE.BoxGeometry(0.94, 0.22, 0.94),
-    fragGeo: new THREE.BoxGeometry(0.9, 0.12, 0.9),
+
     switchGeo: new THREE.CylinderGeometry(0.32, 0.36, 0.07, 24),
     barGeo: new THREE.BoxGeometry(0.5, 0.07, 0.12),
     frameGeo: new THREE.BoxGeometry(1.0, 0.06, 0.08),
     holeGeo: new THREE.BoxGeometry(0.86, 0.2, 0.86),
     blockGeo: new THREE.BoxGeometry(0.94, 2, 0.94),
-    floorA: std(0x39435c),
-    floorB: std(0x2e3850),
-    frag: std(0xd9822b, 0.85),
-    bridge: std(0x4f6d99, 0.7),
+    floorA: std(0xd7dbe2, 0.85),
+    floorB: std(0xc8ced8, 0.85),
+    fragHalf: std(0xd97c22, 0.8),
+    fragHalfGeo: new THREE.BoxGeometry(0.42, 0.12, 0.9),
+    bridge: std(0x5a7aa8, 0.6),
     hole: std(0x06080f, 1),
-    frame: std(0x1d2333, 0.8),
-    swSoft: std(0x7fd4c9, 0.4),
-    swHard: std(0xe0b13e, 0.5),
+    frame: std(0x2a3550, 0.7),
+    swSoft: std(0x0d7d72, 0.4),
+    swHard: std(0xc2410c, 0.5),
     blockMats: [side, side, top, bottom, side, side],
   };
 }
@@ -129,11 +132,13 @@ function build(THREE: Three, host: HTMLElement): World | null {
   scene.fog = new THREE.Fog(0x0b0e18, 18, 42);
   const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 80);
 
-  scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x1a2030, 0.95));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+  scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x2a3140, 0.7));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.9);
   sun.position.set(5, 10, 7);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.02;
   scene.add(sun);
   const fill = new THREE.DirectionalLight(0x88a4ff, 0.35);
   fill.position.set(-6, 4, -5);
@@ -161,25 +166,36 @@ function build(THREE: Three, host: HTMLElement): World | null {
     bridgeCells: new Map(),
     switchCells: new Map(),
     bounds: { cx: 0, cz: 0, w: 0, h: 0 },
-    fit(w, h) {
+    fit(w, h, margins) {
       if (w <= 0 || h <= 0) return;
+      const topPx = margins?.top ?? 46;
+      const bottomPx = margins?.bottom ?? 12;
       gl.renderer.setSize(w, h, false);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       const { cx, cz } = world.bounds;
-      // south of the board, elevated ~55deg, slight yaw for depth; look point pushed a bit
-      // toward the camera so the board sits low and clears the top bar
+      // south of the board, elevated ~55deg, slight yaw for depth
       const yaw = 0.22;
       const el = (55 * Math.PI) / 180;
       const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(el), Math.sin(el), Math.cos(yaw) * Math.cos(el));
       const look = new THREE.Vector3(cx, -0.4, cz + 0.4);
+      const bw = world.bounds.w;
+      const bh = world.bounds.h;
       const corners = [
         new THREE.Vector3(-0.6, 0, -0.6),
-        new THREE.Vector3(world.bounds.w - 0.4, 0, -0.6),
-        new THREE.Vector3(-0.6, 0, world.bounds.h - 0.4),
-        new THREE.Vector3(world.bounds.w - 0.4, 0, world.bounds.h - 0.4),
-        new THREE.Vector3(cx, 1.6, cz),
+        new THREE.Vector3(bw - 0.4, 0, -0.6),
+        new THREE.Vector3(-0.6, 0, bh - 0.4),
+        new THREE.Vector3(bw - 0.4, 0, bh - 0.4),
+        // standing block tops above the board corners
+        new THREE.Vector3(-0.6, 2.1, -0.6),
+        new THREE.Vector3(bw - 0.4, 2.1, -0.6),
+        new THREE.Vector3(-0.6, 2.1, bh - 0.4),
+        new THREE.Vector3(bw - 0.4, 2.1, bh - 0.4),
       ];
+      // pixel margins -> NDC bounds (ndc y is up, screen top is +1)
+      const nx = 1 - 16 / w;
+      const nyt = 1 - (2 * topPx) / h;
+      const nyb = -1 + (2 * bottomPx) / h;
       let lo = 2;
       let hi = 60;
       for (let i = 0; i < 24; i++) {
@@ -190,13 +206,24 @@ function build(THREE: Three, host: HTMLElement): World | null {
         let ok = true;
         for (const c of corners) {
           const p = c.clone().project(camera);
-          if (Math.abs(p.x) > 0.95 || p.y > 0.82 || p.y < -0.92) ok = false;
+          if (Math.abs(p.x) > nx || p.y > nyt || p.y < nyb) ok = false;
         }
         if (ok) hi = d;
         else lo = d;
       }
       camera.position.copy(look).addScaledVector(dir, hi);
       camera.lookAt(look);
+      camera.updateMatrixWorld();
+      // shift the look point along camera-up so the board centers in the free area
+      const targetY = (nyt + nyb) / 2;
+      const p0 = new THREE.Vector3(cx, 0.9, cz).project(camera);
+      const off = p0.y - targetY;
+      if (Math.abs(off) > 0.002) {
+        const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+        look.addScaledVector(camUp, off * hi * Math.tan(((camera.fov / 2) * Math.PI) / 180));
+        camera.position.copy(look).addScaledVector(dir, hi);
+        camera.lookAt(look);
+      }
       const r = Math.max(world.bounds.w, world.bounds.h) * 0.8 + 2;
       sun.position.set(cx + 5, 10, cz + 7);
       sun.target.position.set(cx, 0, cz);
@@ -290,12 +317,22 @@ function buildLevel(THREE: Three, world: World, level: Level) {
             world.extras.push({ i, mesh: bar, delay: delay + 60 });
           }
         }
+      } else if (t === 'fragile') {
+        // two sunken half slabs with a crack down the middle
+        const grp = new THREE.Group();
+        grp.position.set(x, -0.1, z);
+        for (const ox of [-0.24, 0.24]) {
+          const half = new THREE.Mesh(world.assets.fragHalfGeo, world.assets.fragHalf);
+          half.position.x = ox;
+          half.receiveShadow = true;
+          grp.add(half);
+        }
+        g.add(grp);
+        rec.mesh = grp as unknown as T.Mesh;
       } else {
         const checker = (x + z) % 2 === 0;
-        const geo = t === 'fragile' ? world.assets.fragGeo : world.assets.tileGeo;
-        const mat = t === 'fragile' ? world.assets.frag : checker ? world.assets.floorA : world.assets.floorB;
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.position.set(x, t === 'fragile' ? -0.06 : -0.11, z);
+        const mesh = new THREE.Mesh(world.assets.tileGeo, checker ? world.assets.floorA : world.assets.floorB);
+        mesh.position.set(x, -0.11, z);
         mesh.receiveShadow = true;
         g.add(mesh);
         rec.mesh = mesh;
@@ -359,6 +396,17 @@ function Play() {
     w.blockPivot.userData.ang = p.ang;
   }
 
+  // pixel margins for the camera fit: top clears the bar, bottom clears the dpad on portrait phones
+  const fitMargins = () => {
+    const host = ref.current;
+    const bar = shell.root.current?.querySelector('.g-roll-block-bar');
+    let top = size.w < 640 ? 86 : 46;
+    if (host && bar) top = bar.getBoundingClientRect().bottom - host.getBoundingClientRect().top + 8;
+    let bottom = 12;
+    if (shell.touch && size.h > size.w) bottom = Math.min(190, size.h * 0.34);
+    return { top, bottom };
+  };
+
   const loadLevel = (idx: number) => {
     const l = parseLevel(LEVELS[idx]);
     st.current = initialState(l);
@@ -375,7 +423,7 @@ function Play() {
       setBlockPose(w.blockMesh, l.start, 2.2);
       w.blockPivot.rotation.set(0, 0, 0);
       syncBridges(w, l, l.initialMask, true);
-      w.fit(size.w, size.h);
+      w.fit(size.w, size.h, fitMargins());
     }
     bump((v) => v + 1);
   };
@@ -429,9 +477,10 @@ function Play() {
     setMoves(0);
     const w = world.current;
     if (w) {
-      setBlockPose(w.blockMesh, st.current.block);
+      setBlockPose(w.blockMesh, st.current.block, 2.2);
       syncBridges(w, level, st.current.mask, true);
     }
+    anim.current = { kind: 'spawn', t: 0 };
     sfx.play('select', 0.7);
   };
 
@@ -482,7 +531,7 @@ function Play() {
     buildLevel(THREE, w, level);
     syncBridges(w, level, level.initialMask, true);
     setBlockPose(w.blockMesh, level.start, 2.2);
-    w.fit(size.w, size.h);
+    w.fit(size.w, size.h, fitMargins());
     shell.invalidate();
     return () => {
       w.dispose();
@@ -493,7 +542,8 @@ function Play() {
   }, [THREE]);
 
   useEffect(() => {
-    world.current?.fit(size.w, size.h);
+    world.current?.fit(size.w, size.h, fitMargins());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.w, size.h, THREE]);
 
   useEffect(() => {
@@ -538,7 +588,6 @@ function Play() {
             const e = ease(tt);
             const m = rec.mesh;
             m.visible = tt > 0;
-            m.position.y += 0; // keep base; apply offset on top
             const base = rec.pivot ? -0.11 : m.userData.baseY ?? (m.userData.baseY = m.position.y);
             m.position.y = base - (1 - e) * 0.6;
           }
@@ -594,14 +643,23 @@ function Play() {
             setToast({ id: Date.now(), text: 'fell off' });
             st.current = initialState(level);
             setMoves(0);
-            setBlockPose(w.blockMesh, st.current.block, 1.2);
+            setBlockPose(w.blockMesh, st.current.block, 2.2);
             syncBridges(w, level, st.current.mask, true);
             if (a.fragileCell) {
               const rec = w.tiles.get(a.fragileCell[1] * level.w + a.fragileCell[0]);
-              if (rec) rec.mesh.position.y = -0.06;
+              if (rec) rec.mesh.position.y = -0.1;
             }
-            anim.current = null;
+            anim.current = { kind: 'spawn', t: 0 };
           }
+        }
+        return;
+      }
+      if (a.kind === 'spawn') {
+        a.t = Math.min(1, a.t + (dt * 1000) / SPAWN_MS);
+        setBlockPose(w.blockMesh, st.current.block, 2.2 * (1 - ease(a.t)));
+        if (a.t >= 1) {
+          setBlockPose(w.blockMesh, st.current.block);
+          anim.current = null;
         }
         return;
       }
@@ -669,7 +727,7 @@ function Play() {
 
   const def = level.def;
   const playing = shell.status === 'playing';
-  const showHint = playing && levelIdx === 0 && moves === 0 && !cleared;
+  const showHint = playing && levelIdx === 0 && moves === 0 && !cleared && size.h >= 200;
   return (
     <>
       <div ref={ref} className="g-roll-block-host" onPointerDown={swipeStart} onPointerUp={swipeEnd} onPointerCancel={() => (drag.current = null)} />
@@ -708,10 +766,10 @@ function Play() {
       {panelOpen && (
         <div className="g-roll-block-panel" role="dialog" aria-label="Levels">
           <div className="g-roll-block-panel-head">
-            <span>levels</span>
             <button type="button" className="arcade-btn" onClick={() => press(() => setPanelOpen(false))}>
               Done
             </button>
+            <span>levels</span>
           </div>
           <div className="g-roll-block-grid">
             {LEVELS.map((d, i) => {

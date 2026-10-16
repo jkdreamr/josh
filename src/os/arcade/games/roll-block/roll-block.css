@@ -1,7 +1,7 @@
 .g-roll-block .g-roll-block-host {
   position: absolute;
   inset: 0;
-  background: radial-gradient(120% 100% at 50% 20%, #1b2438 0%, #10141f 55%, #0a0c12 100%);
+  background: linear-gradient(165deg, #1d2b47 0%, #25354f 55%, #141c2c 100%);
   touch-action: none;
 }
 .g-roll-block .g-roll-block-bar {
@@ -38,10 +38,10 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 14px;
+  top: 46px;
   text-align: center;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.6);
   pointer-events: none;
 }
 .g-roll-block .g-roll-block-toast {
@@ -112,10 +112,13 @@
 }
 .g-roll-block .g-roll-block-panel {
   position: absolute;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: 46px;
+  bottom: 0;
   display: flex;
   flex-direction: column;
-  padding: 12px;
+  padding: 0 12px 12px;
   background: rgba(10, 12, 18, 0.92);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -123,7 +126,7 @@
 .g-roll-block .g-roll-block-panel-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
   font-size: 14px;
   font-weight: 650;
@@ -181,6 +184,12 @@
 @media (max-width: 640px) {
   .g-roll-block .g-roll-block-bar {
     top: 48px;
+  }
+  .g-roll-block .g-roll-block-hint {
+    top: 86px;
+  }
+  .g-roll-block .g-roll-block-panel {
+    top: 86px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

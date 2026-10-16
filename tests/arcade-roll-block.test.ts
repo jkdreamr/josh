@@ -263,3 +263,131 @@ test('levels: optimal solution triggers every kind of switch present', () => {
     }
   }
 });
+
+// ---------- level design quality ----------
+
+const walkSet = (def: LevelDef) => {
+  const l = lvl(def);
+  const s = new Set<string>();
+  for (let z = 0; z < l.h; z++)
+    for (let x = 0; x < l.w; x++) if (l.tiles[z * l.w + x] !== 'void') s.add(`${x},${z}`);
+  return s;
+};
+
+// Non-fall, non-win states reachable from the start (BFS over block positions only).
+const reachableStates = (def: LevelDef) => {
+  const l = lvl(def);
+  const start = initialState(l);
+  const key = (b: Block, m: number) => `${b.x},${b.z},${b.o},${m}`;
+  const seen = new Set([key(start.block, start.mask)]);
+  const queue = [start];
+  while (queue.length) {
+    const s = queue.shift()!;
+    for (const d of DIRS) {
+      const r = step(l, s, d);
+      if (r.outcome.kind !== 'ok') continue;
+      const k = key(r.state.block, r.state.mask);
+      if (!seen.has(k)) {
+        seen.add(k);
+        queue.push(r.state);
+      }
+    }
+  }
+  return seen.size;
+};
+
+// Longest straight run of walkable cells along one row/column with void on BOTH perpendicular sides.
+const longestCorridor = (def: LevelDef) => {
+  const l = lvl(def);
+  const walk = (x: number, z: number) => x >= 0 && z >= 0 && x < l.w && z < l.h && l.tiles[z * l.w + x] !== 'void';
+  const corridor = (x: number, z: number, dx: number, dz: number) =>
+    walk(x, z) && !walk(x + dz, z + dx) && !walk(x - dz, z - dx);
+  let best = 0;
+  for (let z = 0; z < l.h; z++)
+    for (let x = 0; x < l.w; x++) {
+      for (const [dx, dz] of [[1, 0], [0, 1]] as const) {
+        let run = 0;
+        let cx = x;
+        let cz = z;
+        while (corridor(cx, cz, dx, dz)) {
+          run++;
+          cx += dx;
+          cz += dz;
+        }
+        best = Math.max(best, run);
+      }
+    }
+  return best;
+};
+
+// How many times each switch cell is triggered when replaying the optimal solution.
+const optimalPressCounts = (def: LevelDef) => {
+  const l = lvl(def);
+  const counts = new Map<string, number>();
+  let s = initialState(l);
+  for (const d of solve(l)!) {
+    const r = step(l, s, d);
+    s = r.state;
+    for (const [x, z] of r.pressed) {
+      const k = `${x},${z}`;
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+  }
+  return counts;
+};
+
+test('levels: depth and open rows (no one-row mazes)', () => {
+  for (const def of LEVELS) {
+    if (def.id === 'l01' || def.id === 'l02') continue;
+    const l = lvl(def);
+    assert.ok(l.h >= 4, `${def.id}: only ${l.h} rows deep`);
+    const openRows = def.rows.filter((r) => (r.match(/[^.]/g) ?? []).length >= 3).length;
+    assert.ok(openRows >= 3, `${def.id}: only ${openRows} rows with >= 3 walkable tiles`);
+    const corr = longestCorridor(def);
+    assert.ok(corr <= 5, `${def.id}: one-tile corridor of ${corr} tiles`);
+  }
+});
+
+test('levels: shapes are pairwise distinct (jaccard < 0.6)', () => {
+  const sets = LEVELS.map(walkSet);
+  for (let i = 0; i < sets.length; i++) {
+    for (let j = i + 1; j < sets.length; j++) {
+      let inter = 0;
+      for (const c of sets[i]) if (sets[j].has(c)) inter++;
+      const union = sets[i].size + sets[j].size - inter;
+      const jac = inter / union;
+      assert.ok(jac < 0.6, `${LEVELS[i].id} ~ ${LEVELS[j].id}: jaccard ${jac.toFixed(2)}`);
+    }
+  }
+});
+
+test('levels: par curve', () => {
+  const pars = LEVELS.map((d) => d.par);
+  assert.ok(pars[0] >= 6 && pars[0] <= 12, `level 1 par ${pars[0]}`);
+  LEVELS.forEach((d, i) => {
+    if (i >= 6) assert.ok(d.par >= 10, `${d.id}: par ${d.par} < 10`);
+  });
+  assert.ok(pars.filter((p) => p >= 30).length >= 3, 'need >= 3 levels with par >= 30');
+  const last5 = pars.slice(-5);
+  const avg = last5.reduce((a, b) => a + b, 0) / last5.length;
+  assert.ok(avg >= 24, `average par of last 5 is ${avg}`);
+});
+
+test('levels: reachable non-fall state count >= 30 from l04 on', () => {
+  for (const def of LEVELS) {
+    const idx = LEVELS.indexOf(def);
+    if (idx < 3) continue;
+    const r = reachableStates(def);
+    assert.ok(r >= 30, `${def.id}: only ${r} reachable states`);
+  }
+});
+
+test('levels: some optimal solution presses the same switch twice, some level uses off', () => {
+  const revisit = LEVELS.some((def) => {
+    const counts = optimalPressCounts(def);
+    return [...counts.values()].some((n) => n >= 2);
+  });
+  assert.ok(revisit, 'no level presses the same switch cell twice in its optimal path');
+  const hasOff = LEVELS.some((def) => Object.values(def.switches ?? {}).some((s) => s.act === 'off'));
+  assert.ok(hasOff, "no level uses act 'off'");
+});
