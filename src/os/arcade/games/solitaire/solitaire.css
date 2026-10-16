@@ -25,7 +25,7 @@
   position: absolute;
   top: 10px;
   left: 50%;
-  z-index: 4;
+  z-index: 2400;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -39,7 +39,9 @@
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  background: rgba(10, 30, 20, 0.5);
+  background: rgba(10, 30, 20, 0.78);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
 }
 .g-solitaire .g-solitaire-mode {
@@ -70,17 +72,34 @@
   opacity: 0.4;
   cursor: default;
 }
+.g-solitaire .g-solitaire-hud .g-solitaire-btn {
+  background: rgba(36, 76, 56, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.g-solitaire .g-solitaire-hud .g-solitaire-btn:hover:not(:disabled) {
+  background: rgba(50, 96, 72, 0.94);
+}
+.g-solitaire .g-solitaire-hud .g-solitaire-btn:active:not(:disabled) {
+  background: rgba(26, 58, 42, 0.94);
+}
+.g-solitaire .g-solitaire-hud .g-solitaire-btn:disabled {
+  opacity: 1;
+  color: rgba(255, 255, 255, 0.42);
+}
 .g-solitaire .g-solitaire-btn.is-primary {
   color: #08301e;
   background: #f4f1e8;
 }
+/* 50px so the button stays over 40px on screen when the iPad frame scales the page to about 0.82. */
 .g-solitaire .is-touch .g-solitaire-btn {
-  min-height: 40px;
-  min-width: 64px;
+  min-height: 50px;
+  min-width: 76px;
+  border-radius: 12px;
   font-size: 15px;
 }
 .g-solitaire .is-touch .g-solitaire-hud {
-  top: 8px;
+  top: 6px;
 }
 .g-solitaire .is-low .g-solitaire-hud {
   top: auto;
@@ -88,6 +107,12 @@
 }
 .g-solitaire .is-low .g-solitaire-toast {
   bottom: 62px;
+}
+.g-solitaire .is-touch.is-low .g-solitaire-hud {
+  bottom: 6px;
+}
+.g-solitaire .is-touch.is-low .g-solitaire-toast {
+  bottom: 68px;
 }
 .g-solitaire .is-touch .g-solitaire-time,
 .g-solitaire .is-touch .g-solitaire-mode {

@@ -87,6 +87,12 @@ function withHistory(s: State): Snapshot[] {
   return [...s.history, snapshotOf(s)].slice(-500);
 }
 
+/** The same shuffle dealt for a new draw setting, while the deal is still untouched; null when nothing should change. */
+export function redealFor(s: State, draw: Draw): State | null {
+  if (s.draw === draw || s.history.length) return null;
+  return deal(s.seed, draw);
+}
+
 export function deal(seed: number, draw: Draw): State {
   const deck = shuffled(seed);
   const tab = Array.from({ length: 7 }, () => [] as Card[]);
