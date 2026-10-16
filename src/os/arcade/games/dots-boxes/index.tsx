@@ -32,7 +32,13 @@ const COLORS = ['#0a84ff', '#ff453a', '#30d158', '#ff9f0a'];
 const LOCAL_NAMES = ['Blue', 'Red', 'Green', 'Orange'];
 const CPU_NAMES = ['Pip', 'Moss', 'Juno'];
 const GAME = 'dots-boxes';
-const sideLayout = (w: number, h: number) => w >= 560 && w > h * 1.35;
+const SIDE = { top: 12, bottom: 12, left: 172, right: 16 };
+const STACK = { top: 50, bottom: 62, left: 22, right: 22 };
+const fit = (m: typeof SIDE, w: number, h: number, rows: number, cols: number) =>
+  Math.min(120, (w - m.left - m.right) / cols, (h - m.top - m.bottom) / rows);
+// short wide windows put the scoreboard in a left column when that gives a clearly bigger board
+const sideLayout = (w: number, h: number, rows: number, cols: number, seats: number) =>
+  w >= 400 && h >= 36 + seats * 28 && fit(SIDE, w, h, rows, cols) > fit(STACK, w, h, rows, cols) * 1.1;
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
@@ -292,13 +298,9 @@ function DotsBoxes() {
     const s = m.current;
     const rows = s?.game.rows ?? Number(grid);
     const cols = s?.game.cols ?? Number(grid);
-    // wide windows put the scoreboard in a left column so the board can use the full height
-    const side = sideLayout(w, h);
-    const top = side ? 16 : 50;
-    const bottom = side ? 16 : 62;
-    const left = side ? 176 : 22;
-    const right = side ? 72 : 22;
-    const cell = Math.max(10, Math.min(120, (w - left - right) / cols, (h - top - bottom) / rows));
+    const m2 = sideLayout(w, h, rows, cols, s?.seats.length ?? 2) ? SIDE : STACK;
+    const { top, bottom, left, right } = m2;
+    const cell = Math.max(10, fit(m2, w, h, rows, cols));
     const bw = cell * cols;
     const bh = cell * rows;
     const x0 = left + (w - left - right - bw) / 2;
@@ -702,7 +704,7 @@ function DotsBoxes() {
     else status = again ? `${seat?.name} scores, go again` : `${seat?.name}'s turn`;
   }
   const tight = (s?.seats.length ?? 0) > 2 && size.w < 520;
-  const side = sideLayout(size.w, size.h);
+  const side = !!s && sideLayout(size.w, size.h, s.game.rows, s.game.cols, s.seats.length);
 
   return (
     <div className="g-dots-boxes-stage">

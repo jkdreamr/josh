@@ -101,7 +101,7 @@
   max-width: 64px;
 }
 .g-dots-boxes .g-dots-boxes-hud.is-side {
-  top: 46px;
+  top: 40px;
   right: auto;
   bottom: auto;
   width: 150px;
@@ -109,13 +109,21 @@
   flex-wrap: nowrap;
   align-items: flex-start;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 4px;
 }
 .g-dots-boxes .g-dots-boxes-hud.is-side .g-dots-boxes-pill {
   max-width: 150px;
+  height: 24px;
+  gap: 6px;
+  padding: 0 10px 0 9px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+.g-dots-boxes .g-dots-boxes-hud.is-side .g-dots-boxes-score {
+  font-size: 13px;
 }
 .g-dots-boxes .g-dots-boxes-hud.is-side .g-dots-boxes-name {
-  max-width: 76px;
+  max-width: 84px;
 }
 @keyframes g-dots-boxes-pulse {
   0%,
