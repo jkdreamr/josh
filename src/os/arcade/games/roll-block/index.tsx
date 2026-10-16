@@ -129,7 +129,8 @@ function build(THREE: Three, host: HTMLElement): World | null {
   if (!gl) return null;
   gl.renderer.shadowMap.enabled = true;
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0x0b0e18, 18, 42);
+  const fog = new THREE.Fog(0x0b0e18, 18, 42);
+  scene.fog = fog;
   const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 80);
 
   scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x2a3140, 0.7));
@@ -196,6 +197,10 @@ function build(THREE: Three, host: HTMLElement): World | null {
       const nx = 1 - 16 / w;
       const nyt = 1 - (2 * topPx) / h;
       const nyb = -1 + (2 * bottomPx) / h;
+      // the projected bbox must fit the free-area span; we recenter afterwards,
+      // so the search only checks its size, not its (uncentered) position
+      const spanX = 2 * nx;
+      const spanY = nyt - nyb;
       let lo = 2;
       let hi = 60;
       for (let i = 0; i < 24; i++) {
@@ -203,18 +208,25 @@ function build(THREE: Three, host: HTMLElement): World | null {
         camera.position.copy(look).addScaledVector(dir, d);
         camera.lookAt(look);
         camera.updateMatrixWorld();
-        let ok = true;
+        let minX = Infinity,
+          maxX = -Infinity,
+          minY = Infinity,
+          maxY = -Infinity;
         for (const c of corners) {
           const p = c.clone().project(camera);
-          if (Math.abs(p.x) > nx || p.y > nyt || p.y < nyb) ok = false;
+          minX = Math.min(minX, p.x);
+          maxX = Math.max(maxX, p.x);
+          minY = Math.min(minY, p.y);
+          maxY = Math.max(maxY, p.y);
         }
+        const ok = maxX - minX <= spanX * 0.95 && maxY - minY <= spanY * 0.95;
         if (ok) hi = d;
         else lo = d;
       }
       camera.position.copy(look).addScaledVector(dir, hi);
       camera.lookAt(look);
       camera.updateMatrixWorld();
-      // shift the look point along camera-up so the board centers in the free area
+      // shift the look point so the board centers in the free area
       const targetY = (nyt + nyb) / 2;
       const p0 = new THREE.Vector3(cx, 0.9, cz).project(camera);
       const off = p0.y - targetY;
@@ -224,6 +236,9 @@ function build(THREE: Three, host: HTMLElement): World | null {
         camera.position.copy(look).addScaledVector(dir, hi);
         camera.lookAt(look);
       }
+      // fog scales with camera distance so big boards never sink into it
+      fog.near = hi + 14;
+      fog.far = hi + 70;
       const r = Math.max(world.bounds.w, world.bounds.h) * 0.8 + 2;
       sun.position.set(cx + 5, 10, cz + 7);
       sun.target.position.set(cx, 0, cz);
@@ -363,6 +378,10 @@ function Play() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const [undoCount, setUndoCount] = useState(0);
+  const barRef = useRef<HTMLDivElement>(null);
+  // low = bar dropped to a second row because it would hit the shell control row;
+  // uiTop = px offset below the host top where hint/panel may start
+  const [barLayout, setBarLayout] = useState<{ low: boolean; uiTop: number }>({ low: false, uiTop: 50 });
   const [, bump] = useState(0);
   const drag = useRef<{ id: number; x: number; y: number } | null>(null);
 
@@ -399,7 +418,7 @@ function Play() {
   // pixel margins for the camera fit: top clears the bar, bottom clears the dpad on portrait phones
   const fitMargins = () => {
     const host = ref.current;
-    const bar = shell.root.current?.querySelector('.g-roll-block-bar');
+    const bar = barRef.current;
     let top = size.w < 640 ? 86 : 46;
     if (host && bar) top = bar.getBoundingClientRect().bottom - host.getBoundingClientRect().top + 8;
     let bottom = 12;
@@ -541,10 +560,23 @@ function Play() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [THREE]);
 
+  // measure the bar vs the shell control row; drop the bar a row if they collide
   useEffect(() => {
+    const host = ref.current;
+    const bar = barRef.current;
+    if (host && bar) {
+      const hostR = host.getBoundingClientRect();
+      const ctrlR = shell.root.current?.querySelector('.arcade-ctrl')?.getBoundingClientRect();
+      const ctrlL = ctrlR ? ctrlR.left : hostR.right - 170;
+      const r = bar.getBoundingClientRect();
+      const low = r.right > ctrlL - 8;
+      const barTop = low ? 48 : 10;
+      const uiTop = Math.max(barTop + r.height + 4, (ctrlR ? ctrlR.bottom - hostR.top : 44) + 4);
+      if (low !== barLayout.low || uiTop !== barLayout.uiTop) setBarLayout({ low, uiTop });
+    }
     world.current?.fit(size.w, size.h, fitMargins());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.w, size.h, THREE]);
+  }, [size.w, size.h, THREE, barLayout, levelIdx, undoCount]);
 
   useEffect(() => {
     shell.setScore(moves || null);
@@ -731,7 +763,7 @@ function Play() {
   return (
     <>
       <div ref={ref} className="g-roll-block-host" onPointerDown={swipeStart} onPointerUp={swipeEnd} onPointerCancel={() => (drag.current = null)} />
-      <div className="g-roll-block-bar">
+      <div ref={barRef} className={`g-roll-block-bar${barLayout.low ? ' is-low' : ''}`}>
         <div className="g-roll-block-pill">
           <strong>level {levelIdx + 1}</strong>
           <span>par {def.par}</span>
@@ -743,7 +775,7 @@ function Play() {
           Levels
         </button>
       </div>
-      {showHint && <div className="g-roll-block-hint">{shell.touch ? 'swipe to roll the block. stand it up in the hole' : 'arrow keys roll the block. stand it up in the hole'}</div>}
+      {showHint && <div className="g-roll-block-hint" style={{ top: barLayout.uiTop }}>{shell.touch ? 'swipe to roll the block. stand it up in the hole' : 'arrow keys roll the block. stand it up in the hole'}</div>}
       {toast && (
         <div key={toast.id} className="g-roll-block-toast" onAnimationEnd={() => setToast(null)}>
           {toast.text}
@@ -764,7 +796,7 @@ function Play() {
         </div>
       )}
       {panelOpen && (
-        <div className="g-roll-block-panel" role="dialog" aria-label="Levels">
+        <div className="g-roll-block-panel" role="dialog" aria-label="Levels" style={{ top: barLayout.uiTop }}>
           <div className="g-roll-block-panel-head">
             <button type="button" className="arcade-btn" onClick={() => press(() => setPanelOpen(false))}>
               Done
