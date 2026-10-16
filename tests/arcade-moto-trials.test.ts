@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { LEVELS, LEVEL_IDS, getLevel, worldOf } from '../src/os/arcade/games/moto-trials/levels.ts';
 import { autoInput, currentMs, newRun, startRun, stepRun } from '../src/os/arcade/games/moto-trials/logic.ts';
 import { buildWorld, newBike, segActive, step, type Seg } from '../src/os/arcade/games/moto-trials/physics.ts';
+import { parseProgress, tourLeft, tourTotal, unlocked } from '../src/os/arcade/games/moto-trials/progress.ts';
+import { meta } from '../src/os/arcade/games/moto-trials/meta.ts';
 
 const DT = 1 / 60;
 const flat: Seg[] = [{ ax: -50, ay: 0, bx: 200, by: 0, nx: 0, ny: 1, len: 250 }];
@@ -224,4 +226,46 @@ test('gate filtering hides the far half of a loop', () => {
   assert.ok(segActive(w, inSeg) && segActive(w, outSeg));
   w.loops[0].phase = 'leaving';
   assert.ok(!segActive(w, inSeg) && segActive(w, outSeg));
+});
+
+test('progress parses safely and unlocks in order', () => {
+  assert.deepEqual(parseProgress(null), { best: {}, stars: {} });
+  assert.deepEqual(parseProgress('not json{'), { best: {}, stars: {} });
+  assert.deepEqual(parseProgress('42'), { best: {}, stars: {} });
+  // junk values and unknown ids are dropped
+  const p = parseProgress(
+    JSON.stringify({
+      best: { 'level-1': 21000, 'level-9': 'fast', nope: 1, 'level-2': NaN, 'level-3': -4 },
+      stars: { 'level-1': 2.7, 'level-2': 9 },
+    }),
+  );
+  assert.equal(p.best['level-1'], 21000);
+  assert.ok(!('level-2' in p.best) && !('level-3' in p.best) && !('nope' in p.best));
+  assert.equal(p.stars['level-1'], 2);
+  assert.ok(!('level-2' in p.stars));
+
+  // unlock chain: level-1 open, level-N needs a best on N-1
+  const none = parseProgress(null);
+  assert.ok(unlocked(none, 'level-1'));
+  assert.ok(!unlocked(none, 'level-2'));
+  assert.ok(!unlocked(none, 'level-10'));
+  const one = parseProgress(JSON.stringify({ best: { 'level-1': 25000 }, stars: {} }));
+  assert.ok(unlocked(one, 'level-2'));
+  assert.ok(!unlocked(one, 'level-3'));
+
+  // tour total needs every level
+  assert.equal(tourTotal(one), null);
+  assert.equal(tourLeft(one), 9);
+  const full = parseProgress(JSON.stringify({ best: Object.fromEntries(LEVEL_IDS.map((id) => [id, 20000])), stars: {} }));
+  assert.equal(tourTotal(full), 200000);
+  assert.equal(tourLeft(full), 0);
+  assert.ok(unlocked(full, 'level-10'));
+});
+
+test('the tour leaderboard floor is unreachable by a single race', () => {
+  const goldSum = LEVELS.reduce((a, l) => a + l.stars[0], 0);
+  const maxBronze = Math.max(...LEVELS.map((l) => l.stars[2]));
+  const min = meta.leaderboard!.min;
+  assert.ok(min < goldSum * 0.85, `min ${min} vs 0.85x gold sum ${goldSum * 0.85}`);
+  assert.ok(min > maxBronze * 2, `min ${min} not above 2x max bronze ${maxBronze * 2}`);
 });

@@ -5,6 +5,7 @@ import { meta } from './meta';
 import { LEVELS, LEVEL_IDS, getLevel } from './levels.ts';
 import { currentMs, newRun, starsFor, startRun, stepRun, type Run } from './logic.ts';
 import { newCam, render, type Cam, type Ghost } from './draw.ts';
+import { loadProgress, saveProgress, tourLeft, tourTotal, unlocked } from './progress.ts';
 import './moto-trials.css';
 
 const LEVEL = defineSetting('moto-trials:level', LEVEL_IDS, 'level-1');
@@ -15,34 +16,6 @@ const fmtMs = (ms: number) => {
   const m = Math.floor(s / 60);
   const ss = (s % 60).toFixed(2).padStart(5, '0');
   return m ? `${m}:${ss}` : `0:${ss}`;
-};
-
-// Progress: best times and stars per level, unlocked sequentially in solo play.
-type Progress = { best: Record<string, number>; stars: Record<string, number> };
-const PROG_KEY = 'arcade:moto-trials:progress';
-function loadProgress(): Progress {
-  try {
-    const raw = window.localStorage.getItem(PROG_KEY);
-    if (!raw) return { best: {}, stars: {} };
-    const p = JSON.parse(raw) as Progress;
-    const clean = (m: Record<string, unknown> | undefined) =>
-      Object.fromEntries(Object.entries(m ?? {}).filter(([k, v]) => LEVEL_IDS.includes(k) && typeof v === 'number' && Number.isFinite(v)));
-    return { best: clean(p.best) as Record<string, number>, stars: clean(p.stars) as Record<string, number> };
-  } catch {
-    return { best: {}, stars: {} };
-  }
-}
-function saveProgress(p: Progress) {
-  try {
-    window.localStorage.setItem(PROG_KEY, JSON.stringify(p));
-  } catch {
-    /* private mode */
-  }
-}
-/** Level i+1 unlocks once level i is cleared. Online rooms open everything. */
-const unlocked = (prog: Progress, id: string) => {
-  const i = LEVEL_IDS.indexOf(id);
-  return i === 0 || (prog.best[LEVEL_IDS[i - 1]] ?? null) !== undefined;
 };
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
@@ -70,24 +43,31 @@ function Lock() {
   );
 }
 
-/** The level grid: number, name and earned stars; locked levels show a lock. */
+/** The level strip: one row of square number buttons, then a line about the pick. */
 function LevelPicker({ value, onChange, all }: { value: string; onChange?: (id: string) => void; all?: boolean }) {
   const prog = loadProgress();
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    rowRef.current?.querySelector('.is-on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, []);
+  const picked = getLevel(value);
+  const stars = prog.stars[value] ?? 0;
+  const best = prog.best[value];
   return (
     <div className="arcade-field">
-      <span>Level{onChange ? '' : ' · picked by the host'}</span>
-      <div className="g-moto-trials-levels" role="group" aria-label="Level">
+      <span>{onChange ? 'Level' : 'Level, picked by the host'}</span>
+      <div className="g-moto-trials-strip" role="group" aria-label="Level" ref={rowRef}>
         {LEVELS.map((l, i) => {
           const locked = !all && !unlocked(prog, l.id);
-          const stars = prog.stars[l.id] ?? 0;
+          const n = prog.stars[l.id] ?? 0;
           return (
             <button
               key={l.id}
               type="button"
-              className={`g-moto-trials-level${l.id === value ? ' is-on' : ''}`}
+              className={`g-moto-trials-pick${l.id === value ? ' is-on' : ''}`}
               aria-pressed={l.id === value}
               disabled={!onChange || locked}
-              title={`Level ${i + 1} ${l.name}`}
+              title={`Level ${i + 1}, ${l.name}`}
               onClick={() => {
                 if (!onChange || l.id === value) return;
                 sfx.play('select');
@@ -95,29 +75,23 @@ function LevelPicker({ value, onChange, all }: { value: string; onChange?: (id: 
               }}
             >
               <b>{i + 1}</b>
-              <span>{l.name}</span>
-              <em>{locked ? <Lock /> : [0, 1, 2].map((s) => <Star key={s} on={s < stars} />)}</em>
+              {locked ? <Lock /> : n > 0 && <em>{'\u2022'.repeat(n)}</em>}
             </button>
           );
         })}
       </div>
+      <small className="g-moto-trials-info">
+        {picked.name}
+        <em className="g-moto-trials-dots">{[0, 1, 2].map((i) => <Star key={i} on={i < stars} />)}</em>
+        {best !== undefined && <span>best {fmtMs(best)}</span>}
+      </small>
     </div>
   );
 }
 
 function Setup() {
   const [level, setLevel] = useSetting(LEVEL);
-  const best = loadProgress().best[level];
-  return (
-    <>
-      <LevelPicker value={level} onChange={setLevel} />
-      {best !== undefined && (
-        <small className="g-moto-trials-best">
-          best on {getLevel(level).name}: {fmtMs(best)}
-        </small>
-      )}
-    </>
-  );
+  return <LevelPicker value={level} onChange={setLevel} />;
 }
 
 /** Online: the host picks the level for everyone and announces it; guests just see it. */
@@ -144,7 +118,6 @@ function OnlineSetup() {
   return (
     <>
       <LevelPicker value={host ? level : (hostLevel ?? level)} onChange={host ? setLevel : undefined} all />
-      {host && <small className="g-moto-trials-best">you pick the level for everyone</small>}
     </>
   );
 }
@@ -194,11 +167,13 @@ function Play({ online }: { online: OnlineApi | null }) {
       const p = d as { game?: string; k?: string; level?: string };
       if (p.game !== 'moto-trials' || p.k !== 'start' || !LEVEL_IDS.includes(p.level ?? '')) return;
       const r = run.current!;
+      // only guests still holding for the host adopt a start packet
+      if (r.phase !== 'wait') return;
       if (p.level !== r.level.id) {
-        run.current = newRun(getLevel(p.level!), false);
+        run.current = newRun(getLevel(p.level!), true);
         cam.current = newCam();
       }
-      startRun(r);
+      startRun(run.current!);
     });
   }, [online]);
 
@@ -241,10 +216,24 @@ function Play({ online }: { online: OnlineApi | null }) {
     const flipText = r.flips ? `, ${r.flips} flip${r.flips === 1 ? '' : 's'}` : '';
     const starText = stars === 3 ? '3 stars' : stars === 2 ? '2 stars' : stars === 1 ? '1 star' : 'no stars';
     const next = stars < 3 ? ` next star at ${fmtMs(r.level.stars[stars])}.` : '';
+    let detail = `${fmtMs(ms)}${flipText}. ${starText}.${next}`;
+    let rank: number | undefined;
+    if (live) {
+      rank = ms; // race standings compare this run's time, not the tour board
+    } else {
+      const total = tourTotal(p);
+      if (total !== null) {
+        rank = total;
+        detail += ` full tour: ${fmtMs(total)}.`;
+      } else {
+        const left = tourLeft(p);
+        detail += ` clear ${left} more level${left === 1 ? '' : 's'} to post a tour time.`;
+      }
+    }
     shellRef.current.gameOver(undefined, {
       title: isBest ? 'New Best' : `${r.level.name} Cleared`,
-      detail: `${fmtMs(ms)}${flipText}. ${starText}.${next}`,
-      rank: ms,
+      detail,
+      rank,
     });
   };
 
@@ -252,10 +241,12 @@ function Play({ online }: { online: OnlineApi | null }) {
     (dt) => {
       dtRef.current = dt;
       const r = run.current!;
-      // the host keeps naming the level until everyone is counting down
-      if (live && isHost && (r.phase === 'count' || r.phase === 'wait')) {
+      // the host keeps naming the level: fast during the countdown, slower mid-run,
+      // so guests that mount late still get adopted while they wait
+      if (live && isHost && r.phase !== 'done') {
         net.current.startT += dt;
-        if (net.current.startT > 0.5) {
+        const every = r.phase === 'run' || r.phase === 'crash' ? 1 : 0.5;
+        if (net.current.startT > every) {
           net.current.startT = 0;
           online!.send({ game: 'moto-trials', k: 'start', level: r.level.id });
         }

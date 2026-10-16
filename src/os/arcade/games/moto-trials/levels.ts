@@ -16,6 +16,14 @@ export type Theme = {
   dust: string;
   wood: string;
   saw: string;
+  /** Soil band under the surface and speckles in the dirt body. */
+  soil: string;
+  speckle: string;
+  /** Sun or moon disc + cloud tint. */
+  sun: string;
+  cloud: string;
+  /** Foreground props scattered on flat ground. */
+  prop: 'bush' | 'cactus' | 'pine' | 'rock' | 'cone';
   /** Decorative skyline: 'hills' | 'trees' | 'city' | 'rocks' | 'snow' */
   scenery: 'hills' | 'trees' | 'city' | 'rocks' | 'snow';
   /** Dimmer world for night themes. */
@@ -175,16 +183,16 @@ function track() {
 }
 
 const THEMES: Record<string, Theme> = {
-  dawn: { skyTop: '#ffb36b', skyBot: '#ff7e5f', far: '#c96a4e', mid: '#a34e3e', near: '#7d3a30', ground: '#5a3226', edge: '#ffb36b', dust: '#d9a077', wood: '#8a5a34', saw: '#d8d8e0', scenery: 'hills' },
-  desert: { skyTop: '#7ec8e3', skyBot: '#ffe1a8', far: '#e8b36a', mid: '#c98d4e', near: '#9c6537', ground: '#6d4526', edge: '#ffd98e', dust: '#e0b37c', wood: '#8a5a34', saw: '#d8d8e0', scenery: 'hills' },
-  lagoon: { skyTop: '#7fd4c9', skyBot: '#d9f4e3', far: '#58a99a', mid: '#3d8577', near: '#2b6157', ground: '#4c3f33', edge: '#a8e6c9', dust: '#8fc9b0', wood: '#7a5a38', saw: '#d8d8e0', scenery: 'hills' },
-  quarry: { skyTop: '#8fa3b8', skyBot: '#d9c8a8', far: '#77879c', mid: '#5d6b7f', near: '#454f61', ground: '#4a4038', edge: '#cfc0a5', dust: '#a89880', wood: '#7d5c36', saw: '#e0e0e8', scenery: 'rocks' },
-  forest: { skyTop: '#9fd18b', skyBot: '#e8f2c8', far: '#5c8f52', mid: '#41713f', near: '#2c5230', ground: '#3f3325', edge: '#a8d97f', dust: '#8ba86b', wood: '#6e4f2e', saw: '#d8d8e0', scenery: 'trees' },
-  autumn: { skyTop: '#e8a15c', skyBot: '#f5d9a8', far: '#b06a3e', mid: '#8a4f32', near: '#613a28', ground: '#4a3428', edge: '#f0be7a', dust: '#c99a68', wood: '#6e4a28', saw: '#d8dce4', scenery: 'trees' },
-  neon: { skyTop: '#1b2140', skyBot: '#4a2a6e', far: '#352a55', mid: '#2a2144', near: '#1e1834', ground: '#241f33', edge: '#8f7ae0', dust: '#6a5a9e', wood: '#4a3a66', saw: '#c8c8f0', scenery: 'city', night: true },
-  frost: { skyTop: '#b8cfe8', skyBot: '#eef4fb', far: '#9db6d4', mid: '#7d9cc0', near: '#5d7da0', ground: '#e8eef6', edge: '#ffffff', dust: '#dceaf8', wood: '#7a6248', saw: '#b8c8d8', scenery: 'snow' },
-  canyon: { skyTop: '#e8633f', skyBot: '#ffc98a', far: '#b04a38', mid: '#8a3a30', near: '#5f2b24', ground: '#54281e', edge: '#ffab6e', dust: '#c97a50', wood: '#7a4a2e', saw: '#d8d8e0', scenery: 'rocks' },
-  storm: { skyTop: '#2e3444', skyBot: '#6a5a70', far: '#3c3a50', mid: '#302e42', near: '#242234', ground: '#2c2434', edge: '#9a8ab0', dust: '#6a5a80', wood: '#4a3a52', saw: '#d0d0e8', scenery: 'city', night: true },
+  dawn: { skyTop: '#ffb36b', skyBot: '#ff7e5f', far: '#c96a4e', mid: '#a34e3e', near: '#7d3a30', ground: '#5a3226', edge: '#ffb36b', dust: '#d9a077', wood: '#8a5a34', saw: '#d8d8e0', soil: '#7a4630', speckle: 'rgba(0,0,0,0.18)', sun: '#fff0d8', cloud: 'rgba(255,236,220,0.55)', prop: 'bush', scenery: 'hills' },
+  desert: { skyTop: '#7ec8e3', skyBot: '#ffe1a8', far: '#e8b36a', mid: '#c98d4e', near: '#9c6537', ground: '#6d4526', edge: '#ffd98e', dust: '#e0b37c', wood: '#8a5a34', saw: '#d8d8e0', soil: '#8a5a32', speckle: 'rgba(0,0,0,0.16)', sun: '#fff6d8', cloud: 'rgba(255,255,255,0.65)', prop: 'cactus', scenery: 'hills' },
+  lagoon: { skyTop: '#7fd4c9', skyBot: '#d9f4e3', far: '#58a99a', mid: '#3d8577', near: '#2b6157', ground: '#4c3f33', edge: '#a8e6c9', dust: '#8fc9b0', wood: '#7a5a38', saw: '#d8d8e0', soil: '#63513a', speckle: 'rgba(0,0,0,0.16)', sun: '#fffbe8', cloud: 'rgba(255,255,255,0.7)', prop: 'bush', scenery: 'hills' },
+  quarry: { skyTop: '#8fa3b8', skyBot: '#d9c8a8', far: '#77879c', mid: '#5d6b7f', near: '#454f61', ground: '#4a4038', edge: '#cfc0a5', dust: '#a89880', wood: '#7d5c36', saw: '#e0e0e8', soil: '#5d5045', speckle: 'rgba(0,0,0,0.22)', sun: '#f2ecdc', cloud: 'rgba(255,255,255,0.5)', prop: 'rock', scenery: 'rocks' },
+  forest: { skyTop: '#9fd18b', skyBot: '#e8f2c8', far: '#5c8f52', mid: '#41713f', near: '#2c5230', ground: '#3f3325', edge: '#a8d97f', dust: '#8ba86b', wood: '#6e4f2e', saw: '#d8d8e0', soil: '#54452f', speckle: 'rgba(0,0,0,0.18)', sun: '#fffbe0', cloud: 'rgba(255,255,255,0.7)', prop: 'pine', scenery: 'trees' },
+  autumn: { skyTop: '#e8a15c', skyBot: '#f5d9a8', far: '#b06a3e', mid: '#8a4f32', near: '#613a28', ground: '#4a3428', edge: '#f0be7a', dust: '#c99a68', wood: '#6e4a28', saw: '#d8dce4', soil: '#5d4030', speckle: 'rgba(0,0,0,0.18)', sun: '#ffe8c8', cloud: 'rgba(255,244,224,0.6)', prop: 'pine', scenery: 'trees' },
+  neon: { skyTop: '#1b2140', skyBot: '#4a2a6e', far: '#352a55', mid: '#2a2144', near: '#1e1834', ground: '#241f33', edge: '#8f7ae0', dust: '#6a5a9e', wood: '#4a3a66', saw: '#c8c8f0', soil: '#332a4a', speckle: 'rgba(0,0,0,0.3)', sun: '#e8e2ff', cloud: 'rgba(60,50,100,0.5)', prop: 'cone', scenery: 'city', night: true },
+  frost: { skyTop: '#b8cfe8', skyBot: '#eef4fb', far: '#9db6d4', mid: '#7d9cc0', near: '#5d7da0', ground: '#e8eef6', edge: '#ffffff', dust: '#dceaf8', wood: '#7a6248', saw: '#b8c8d8', soil: '#c2d2e4', speckle: 'rgba(90,110,140,0.18)', sun: '#ffffff', cloud: 'rgba(255,255,255,0.75)', prop: 'pine', scenery: 'snow' },
+  canyon: { skyTop: '#e8633f', skyBot: '#ffc98a', far: '#b04a38', mid: '#8a3a30', near: '#5f2b24', ground: '#54281e', edge: '#ffab6e', dust: '#c97a50', wood: '#7a4a2e', saw: '#d8d8e0', soil: '#6d3624', speckle: 'rgba(0,0,0,0.2)', sun: '#ffe4c0', cloud: 'rgba(255,224,190,0.5)', prop: 'cactus', scenery: 'rocks' },
+  storm: { skyTop: '#2e3444', skyBot: '#6a5a70', far: '#3c3a50', mid: '#302e42', near: '#242234', ground: '#2c2434', edge: '#9a8ab0', dust: '#6a5a80', wood: '#4a3a52', saw: '#d0d0e8', soil: '#3a3348', speckle: 'rgba(0,0,0,0.3)', sun: '#d8d4e8', cloud: 'rgba(70,64,92,0.5)', prop: 'cone', scenery: 'city', night: true },
 };
 
 function lvl(id: string, name: string, theme: Theme, stars: [number, number, number], built: Built): Level {

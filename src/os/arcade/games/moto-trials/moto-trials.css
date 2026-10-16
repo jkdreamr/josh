@@ -6,70 +6,86 @@
   display: block;
 }
 
-/* level picker on the setup cards: a compact grid, five across where there is room */
-.g-moto-trials .g-moto-trials-levels {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 6px;
-  width: 100%;
-  max-height: min(300px, 58cqh);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-}
-@container arcade-ov (max-width: 430px) {
-  .g-moto-trials .g-moto-trials-levels {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-.g-moto-trials .g-moto-trials-level {
+/* level picker: one scrollable row of square buttons, no visible scrollbar */
+.g-moto-trials .g-moto-trials-strip {
   display: flex;
+  gap: 5px;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding: 1px;
+}
+.g-moto-trials .g-moto-trials-strip::-webkit-scrollbar {
+  display: none;
+}
+.g-moto-trials .g-moto-trials-pick {
+  position: relative;
+  display: flex;
+  flex: none;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 0;
-  min-height: 40px;
-  padding: 6px 7px;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
   border: 0;
   border-radius: 9px;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
-  line-height: 1.15;
-  text-align: left;
-  color: inherit;
-  background: rgba(0, 0, 0, 0.28);
+  color: #f5f5f7;
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
   cursor: pointer;
 }
-.g-moto-trials .g-moto-trials-level:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+.g-moto-trials .g-moto-trials-pick:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
 }
-.g-moto-trials .g-moto-trials-level.is-on {
-  background: rgba(255, 255, 255, 0.16);
-  box-shadow: inset 0 0 0 2px var(--accent);
+.g-moto-trials .g-moto-trials-pick.is-on {
+  color: #fff;
+  background: var(--accent);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.3),
+    0 1px 3px rgba(0, 0, 0, 0.3);
 }
-.g-moto-trials .g-moto-trials-level:disabled {
-  opacity: 0.45;
+.g-moto-trials .g-moto-trials-pick:disabled {
+  opacity: 0.4;
   cursor: default;
 }
-.g-moto-trials .g-moto-trials-level:disabled.is-on {
+.g-moto-trials .g-moto-trials-pick:disabled.is-on {
   opacity: 1;
 }
-.g-moto-trials .g-moto-trials-level b {
-  font-size: 13px;
-}
-.g-moto-trials .g-moto-trials-level span {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.g-moto-trials .g-moto-trials-level em {
-  display: flex;
-  gap: 1px;
+.g-moto-trials .g-moto-trials-pick em {
   font-style: normal;
-  min-height: 11px;
+  font-size: 8px;
+  line-height: 1;
+  letter-spacing: 1px;
+  color: #ffd23f;
+}
+.g-moto-trials .g-moto-trials-lock {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+
+/* the line under the strip: name, earned stars, best time */
+.g-moto-trials .g-moto-trials-info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 14px;
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.8);
+}
+.g-moto-trials .g-moto-trials-dots {
+  display: inline-flex;
+  gap: 2px;
+  font-style: normal;
 }
 .g-moto-trials .g-moto-trials-star {
   fill: rgba(255, 255, 255, 0.22);
@@ -77,11 +93,11 @@
 .g-moto-trials .g-moto-trials-star.is-on {
   fill: #ffd23f;
 }
-.g-moto-trials .g-moto-trials-lock {
-  color: rgba(255, 255, 255, 0.55);
-}
-.g-moto-trials .g-moto-trials-best {
-  display: block;
-  font-size: 12px;
-  opacity: 0.85;
+
+/* short cards: drop the extras so Play stays in view */
+@container arcade-ov (max-height: 340px) {
+  .g-moto-trials .g-moto-trials-info,
+  .g-moto-trials .arcade-field:has(.g-moto-trials-strip) > span {
+    display: none;
+  }
 }

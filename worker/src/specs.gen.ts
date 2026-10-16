@@ -44,7 +44,7 @@ export const LEADERBOARD_SPECS: Record<string, LeaderboardSpec> = {
   "minesweeper-beginner": {"order":"asc","min":300,"max":3600000,"format":"time","measure":"Fastest Clear"},
   "minesweeper-expert": {"order":"asc","min":300,"max":3600000,"format":"time","measure":"Fastest Clear"},
   "minesweeper-intermediate": {"order":"asc","min":300,"max":3600000,"format":"time","measure":"Fastest Clear"},
-  "moto-trials": {"order":"asc","min":5000,"max":1800000,"format":"time","measure":"Fastest Run"},
+  "moto-trials": {"order":"asc","min":150000,"max":3600000,"format":"time","measure":"Full Tour, Sum of Best Times"},
   "omok-easy": {"order":"asc","min":5,"max":113,"unit":"moves","measure":"Fewest Moves to Beat the Computer"},
   "omok-normal": {"order":"asc","min":5,"max":113,"unit":"moves","measure":"Fewest Moves to Beat the Computer"},
   "palmdrive-barn-100cc": {"order":"asc","min":80000,"max":1800000,"format":"time","measure":"Fastest Race"},

@@ -105,7 +105,7 @@ const C_SUS = 560;
 const K_LAT = 26000;
 const C_LAT = 400;
 
-const TOP_SPEED = 14.5;
+export const TOP_SPEED = 14.5;
 const MOTOR_ACC = 340;
 const BRAKE_DAMP = 14;
 const ROLL_DAMP = 0.35;
