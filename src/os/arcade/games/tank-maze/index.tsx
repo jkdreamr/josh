@@ -515,8 +515,10 @@ function TankMaze() {
           match.reported = true;
           match.ended = true;
           online.reportResult(online.round, pkt.winner);
-          const winnerSeat = pkt.winner;
-          const title = winnerSeat === null ? 'Draw' : winnerSeat === online.seat ? 'You Win' : `${pkt.winner !== null ? seatName(match, winnerSeat) : ''} Wins`;
+          // champ is the seat whose tank actually won the match (bots and departed seats count);
+          // winner stays null for them because nobody scores the room win.
+          const champ = pkt.champ;
+          const title = champ === null ? 'Draw' : champ === online.seat ? 'You Win' : `${seatName(match, champ)} Wins`;
           shell.gameOver(undefined, { title, detail: `${pkt.scores.join(' to ')} in ${pkt.rounds} rounds.` });
         }
       }),
@@ -569,7 +571,7 @@ function TankMaze() {
       if (!match.reported) {
         match.reported = true;
         online.reportResult(online.round, winnerSeat);
-        online.send(endPacket({ k: 'end', roomRound: online.round, winner: winnerSeat, scores: w.scores, rounds: w.round }));
+        online.send(endPacket({ k: 'end', roomRound: online.round, winner: winnerSeat, champ: winner >= 0 ? (match.seats[winner] ?? null) : null, scores: w.scores, rounds: w.round }));
       }
       title = winnerSeat === null ? (winner >= 0 ? `${nameOf(match, winner)} Wins` : 'Draw') : winnerSeat === online.seat ? 'You Win' : `${seatName(match, winnerSeat)} Wins`;
       if (winner >= 0 && winnerSeat === null) title = `${nameOf(match, winner)} Wins`;
@@ -1050,48 +1052,62 @@ function TankMaze() {
     const compactHud = hudH < 30;
     const scores = isGuest ? match.guestScores : world.scores;
     const chips = viewTanks.map((_, i) => i);
-    // chips live in [12, w-176] so they never sit under the shell's top-right controls
+    // chips live in [12, w-176] so they never sit under the shell's top-right controls;
+    // online they split into two groups around the centered transport badge (~112px at w/2)
     const chipLeft = 12;
-    const chipAvail = Math.max(0, w - 176 - chipLeft);
-    let chipFont = Math.max(11, Math.min(13, hudH * 0.4));
-    let gap = compactHud ? 8 : 14;
-    const measure = () => {
-      c.font = `600 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-      const ws = chips.map((i) => {
+    const chipRight = w - 176;
+    const leftW = w / 2 - 56 - chipLeft;
+    const rightW = chipRight - (w / 2 + 56);
+    const groups: { idxs: number[]; x0: number; x1: number }[] =
+      online && leftW >= 80 && rightW >= 80
+        ? [
+            { idxs: chips.slice(0, Math.ceil(chips.length / 2)), x0: chipLeft, x1: w / 2 - 56 },
+            { idxs: chips.slice(Math.ceil(chips.length / 2)), x0: w / 2 + 56, x1: chipRight },
+          ]
+        : [{ idxs: chips, x0: chipLeft, x1: chipRight }];
+    for (const g of groups) {
+      const avail = Math.max(0, g.x1 - g.x0);
+      let chipFont = Math.max(11, Math.min(13, hudH * 0.4));
+      let gap = compactHud ? 8 : 14;
+      const measure = () => {
+        c.font = `600 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+        const ws = g.idxs.map((i) => {
+          const name = nameOf(match, i);
+          return 10 + c.measureText(name).width + 8 + c.measureText(`${scores[i] ?? 0}`).width + 6;
+        });
+        return { ws, total: ws.reduce((a, b) => a + b, 0) + gap * Math.max(0, g.idxs.length - 1) };
+      };
+      let { ws: widths, total } = measure();
+      if (total > avail && gap > 4) {
+        gap = 4;
+        ({ ws: widths, total } = measure());
+      }
+      while (total > avail && chipFont > 11) {
+        chipFont--;
+        ({ ws: widths, total } = measure());
+      }
+      let cx = g.x0 + Math.max(0, (avail - total) / 2);
+      for (let ci = 0; ci < g.idxs.length; ci++) {
+        const i = g.idxs[ci];
+        const cw = widths[ci];
+        c.fillStyle = 'rgba(255,255,255,0.65)';
+        c.beginPath();
+        c.roundRect(cx, hudH / 2 - hudH * 0.32, cw, hudH * 0.64, hudH * 0.32);
+        c.fill();
+        c.fillStyle = COLORS[i % COLORS.length];
+        c.beginPath();
+        c.arc(cx + 9, hudH / 2, 4, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = '#2e2d2a';
         const name = nameOf(match, i);
-        return 10 + c.measureText(name).width + 8 + c.measureText(`${scores[i] ?? 0}`).width + 6;
-      });
-      return { ws, total: ws.reduce((a, b) => a + b, 0) + gap * Math.max(0, chips.length - 1) };
-    };
-    let { ws: widths, total } = measure();
-    if (total > chipAvail && gap > 4) {
-      gap = 4;
-      ({ ws: widths, total } = measure());
-    }
-    while (total > chipAvail && chipFont > 11) {
-      chipFont--;
-      ({ ws: widths, total } = measure());
-    }
-    let cx = chipLeft + Math.max(0, (chipAvail - total) / 2);
-    for (const i of chips) {
-      const cw = widths[i];
-      c.fillStyle = 'rgba(255,255,255,0.65)';
-      c.beginPath();
-      c.roundRect(cx, hudH / 2 - hudH * 0.32, cw, hudH * 0.64, hudH * 0.32);
-      c.fill();
-      c.fillStyle = COLORS[i % COLORS.length];
-      c.beginPath();
-      c.arc(cx + 9, hudH / 2, 4, 0, Math.PI * 2);
-      c.fill();
-      c.fillStyle = '#2e2d2a';
-      const name = nameOf(match, i);
-      c.fillText(name, cx + 17, hudH / 2 + chipFont * 0.36);
-      const nw = c.measureText(name).width;
-      c.font = `700 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-      c.fillStyle = '#1d1c19';
-      c.fillText(`${scores[i] ?? 0}`, cx + 17 + nw + 8, hudH / 2 + chipFont * 0.36);
-      c.font = `600 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-      cx += cw + gap;
+        c.fillText(name, cx + 17, hudH / 2 + chipFont * 0.36);
+        const nw = c.measureText(name).width;
+        c.font = `700 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+        c.fillStyle = '#1d1c19';
+        c.fillText(`${scores[i] ?? 0}`, cx + 17 + nw + 8, hudH / 2 + chipFont * 0.36);
+        c.font = `600 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+        cx += cw + gap;
+      }
     }
 
     // touch sticks

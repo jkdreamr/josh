@@ -3,7 +3,7 @@
 // Rooms are a star around the host (seat 0). The host simulates everything and guests send inputs:
 //   round  host -> all,   reliable   a new round: seed, size, seats, bots, scores, spawns, target
 //   s      host -> all,   fast       snapshot ~25 Hz: tanks, shells, pickups, mines, beams, scores, events
-//   end    host -> all,   reliable   the match is over: winner seat (or null), scores, rounds
+//   end    host -> all,   reliable   the match is over: winner seat (or null), champ seat (null only on a draw), scores, rounds
 //   in     guest -> host, fast       this guest's input, with a monotonic fireCount so dropped packets
 //                                    don't drop shots (the host fires once per increment)
 import type { Special } from './logic.ts';
@@ -50,7 +50,7 @@ export type StatePacket = {
   events: NetEvent[];
 };
 
-export type EndPacket = { k: 'end'; roomRound: number; winner: number | null; scores: number[]; rounds: number };
+export type EndPacket = { k: 'end'; roomRound: number; winner: number | null; champ: number | null; scores: number[]; rounds: number };
 export type InputPacket = { k: 'in'; roomRound: number; turn: -1 | 0 | 1; move: -1 | 0 | 1; fireCount: number };
 
 export type Packet = RoundPacket | StatePacket | EndPacket | InputPacket;
@@ -92,7 +92,7 @@ export const statePacket = (p: Omit<StatePacket, 'k'>) => ({
   ev: p.events.map((e) => (e.pts ? [e.id, e.k, e.a, e.b, q(e.x), q(e.y), e.pts.map(q)] : [e.id, e.k, e.a, e.b, q(e.x), q(e.y)])),
 });
 
-export const endPacket = (p: EndPacket) => ({ game: 'tank-maze', type: 'end', room: p.roomRound, winner: p.winner, scores: p.scores, rounds: p.rounds });
+export const endPacket = (p: EndPacket) => ({ game: 'tank-maze', type: 'end', room: p.roomRound, winner: p.winner, champ: p.champ, scores: p.scores, rounds: p.rounds });
 export const inputPacket = (p: InputPacket) => ({ game: 'tank-maze', type: 'in', room: p.roomRound, turn: p.turn, move: p.move, fc: p.fireCount });
 
 // -----------------------------------------------------------------------------------------------------------------
@@ -193,7 +193,9 @@ export function parsePacket(value: unknown): Packet | null {
     case 'end': {
       if (!(p.winner === null || seatOk(p.winner)) || !Array.isArray(p.scores) || !int(p.rounds)) return null;
       if (!(p.scores as unknown[]).every((s) => int(s) && s >= 0 && s < 100)) return null;
-      return { k: 'end', roomRound, winner: p.winner as number | null, scores: (p.scores as number[]).slice(0, 4), rounds: p.rounds as number };
+      if (p.champ !== undefined && !(p.champ === null || seatOk(p.champ))) return null;
+      const champ = (p.champ ?? null) as number | null;
+      return { k: 'end', roomRound, winner: p.winner as number | null, champ, scores: (p.scores as number[]).slice(0, 4), rounds: p.rounds as number };
     }
     case 'in': {
       if (!int(p.turn) || !int(p.move) || !int(p.fc)) return null;

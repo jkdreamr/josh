@@ -500,8 +500,23 @@ test('state and input packets round trip', () => {
   const i = inputPacket({ k: 'in', roomRound: 1, turn: -1, move: 1, fireCount: 3 });
   const pi = parsePacket(i);
   assert.ok(pi && pi.k === 'in' && pi.fireCount === 3);
-  const e = parsePacket(endPacket({ k: 'end', roomRound: 1, winner: 2, scores: [5, 3], rounds: 9 }));
+  const e = parsePacket(endPacket({ k: 'end', roomRound: 1, winner: 2, champ: 2, scores: [5, 3], rounds: 9 }));
   assert.ok(e && e.k === 'end' && e.winner === 2);
+});
+
+test('end packet champ rides along while winner stays null', () => {
+  // a bot tank won the match: nobody gets the room win (winner null) but guests
+  // still need the champ seat to title the Game Over card correctly
+  const e = parsePacket(endPacket({ k: 'end', roomRound: 3, winner: null, champ: 2, scores: [0, 0, 5], rounds: 7 }));
+  assert.ok(e && e.k === 'end');
+  assert.equal(e.winner, null);
+  assert.equal(e.champ, 2);
+  // older hosts without a champ field still parse, as a draw
+  const old = parsePacket({ game: 'tank-maze', type: 'end', room: 3, winner: null, scores: [1, 1], rounds: 4 });
+  assert.ok(old && old.k === 'end');
+  assert.equal(old.champ, null);
+  // malformed champ is rejected
+  assert.equal(parsePacket({ game: 'tank-maze', type: 'end', room: 1, winner: null, champ: 9, scores: [0], rounds: 1 }), null);
 });
 
 test('malformed packets are rejected', () => {
