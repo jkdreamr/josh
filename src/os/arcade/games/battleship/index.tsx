@@ -637,7 +637,10 @@ function Battleship() {
     if (target) {
       if (isHumanTurn(s) && validCell(cell) && cell !== s.hover) {
         s.hover = cell;
-        if (event.pointerType !== 'touch') s.aimed = cell;
+        if (event.pointerType !== 'touch') {
+          s.aimed = cell;
+          s.cursor = cell;
+        }
         refresh();
       }
       return;
@@ -667,6 +670,7 @@ function Battleship() {
           if (wasAimed) fire(cell);
           else {
             s.aimed = cell;
+            s.cursor = cell;
             refresh();
           }
         } else fire(cell);
@@ -1218,14 +1222,14 @@ function getGeometry(w: number, h: number, phase: Phase, top: number) {
   const targetSide = cell * 10 + 9;
   const ownSide = ownCell * 10 + 9;
   const gap = 10;
-  const fireHeight = 48;
+  const fireHeight = 50;
   const total = targetSide + gap + fireHeight + gap + ownSide;
   const y = top + Math.max(0, (available - total) / 2);
   return {
     portrait: true, targetCell: cell, targetX: (w - targetSide) / 2, targetY: y,
     ownCell, ownX: (w - ownSide) / 2, ownY: y + targetSide + gap + fireHeight + gap,
     placeCell: cell, placeX: 0, placeY: 0,
-    toolsX: 0, toolsY: 0, fireX: (w - 104) / 2, fireY: y + targetSide + gap,
+    toolsX: 0, toolsY: 0, fireX: (w - 120) / 2, fireY: y + targetSide + gap,
   };
 }
 
