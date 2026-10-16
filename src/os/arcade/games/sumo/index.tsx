@@ -254,13 +254,13 @@ function Play({ mode }: { mode: StageMode }) {
       endPacket.current = endOf(o.round, winnerSeat, [...current.wins]);
       if (sendEnd) endSends.current = 0;
       const title = winnerSeat === o.seat ? 'You Win' : `${winner.name} Wins`;
-      shellRef.current.gameOver(undefined, { title, detail: `${current.wins.join(' to ')} in ${current.round} rounds` });
+      shellRef.current.gameOver(undefined, { title, detail: `${current.wins.join(' To ')} In ${current.round} Rounds` });
       return;
     }
     reported.current = true;
     const twoPlayer = mode === 'solo' && playMode === '2p';
     const title = twoPlayer ? `P${winnerId + 1} Wins` : winnerId === 0 ? 'You Win' : 'Splashed Out';
-    shellRef.current.gameOver(undefined, { title, detail: `${current.wins.join(' to ')} in ${current.round} rounds` });
+    shellRef.current.gameOver(undefined, { title, detail: `${current.wins.join(' To ')} In ${current.round} Rounds` });
   };
 
   const eventsFrom = (events: ReturnType<typeof step>) => {
@@ -276,6 +276,8 @@ function Play({ mode }: { mode: StageMode }) {
         sfx.noise(0.3, 0.18);
       } else if (event.type === 'bump') {
         sfx.play('tick');
+        setToast('Bump!');
+        toastTimer.current = 1;
       } else if (event.type === 'round') {
         if (event.winner === mine()) sfx.play('coin');
         else sfx.play(event.winner === null ? 'select' : 'lose');
@@ -291,7 +293,7 @@ function Play({ mode }: { mode: StageMode }) {
       const departed = takeoverDeparted(current, o.players.map((player) => player.seat), level);
       if (departed.length) {
         const name = current.cars.find((car) => car.seat === departed[0])?.name ?? 'Player';
-        setToast(`${name} left, a bot took over`);
+        setToast(`${name} Left, a Bot Took Over`);
         toastTimer.current = 3;
       }
     }
@@ -540,8 +542,11 @@ function Play({ mode }: { mode: StageMode }) {
   const centerText = hud.phase === 'count'
     ? `${Math.max(1, Math.ceil(hud.timer))}`
     : hud.phase === 'over'
-      ? current.roundWinner === null ? 'draw' : `${carName(current.roundWinner)} takes the round`
-      : yourCar?.falling || yourCar?.out ? "you're in the water, watch them finish" : watched ? 'watching this round' : '';
+      ? current.roundWinner === null ? 'Draw, Go Again' : `${carName(current.roundWinner)} Takes the Round`
+      : '';
+  const statusText = yourCar?.falling || yourCar?.out
+    ? "You're in the Water"
+    : watched ? 'Watching This Round' : '';
 
   return (
     <div
@@ -558,14 +563,16 @@ function Play({ mode }: { mode: StageMode }) {
       <div className="g-sumo-hud" aria-live="polite">
         <div className="g-sumo-scores">
           {hud.wins.map((wins, i) => (
-            <div className={`g-sumo-score${i === mine() ? ' is-you' : ''}`} key={i} aria-label={`${carName(i)} ${wins} wins`}>
+            <div className={`g-sumo-score${i === mine() ? ' is-you' : ''}`} key={i} aria-label={`${carName(i)} ${wins} Wins`}>
               <i style={{ backgroundColor: CAR_COLORS[current.cars[i]?.color ?? i] }} />
               <span>{[0, 1, 2].map((pip) => <b key={pip} className={pip < wins ? 'is-won' : ''} />)}</span>
             </div>
           ))}
         </div>
-        {hud.radius < hud.startRadius - 0.02 && <div className="g-sumo-warning">the float is shrinking</div>}
+        <div className="g-sumo-round">Round {hud.round}</div>
+        {hud.radius < hud.startRadius - 0.02 && <div className="g-sumo-warning">The Float Is Shrinking</div>}
         {centerText && <div className="g-sumo-banner">{centerText}</div>}
+        {statusText && <div className="g-sumo-status">{statusText}</div>}
       </div>
 
       {current.cars.map((car) => {

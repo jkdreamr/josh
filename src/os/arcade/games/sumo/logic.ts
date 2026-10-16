@@ -327,6 +327,7 @@ function simulate(world: World, inputs: Input[], events: Event[], authoritative:
       car.z += car.vz * STEP;
       if (car.y < -2.5) {
         car.out = true;
+        car.falling = false;
         events.push({ type: 'splash', car: car.id, x: car.x, z: car.z });
       }
       continue;

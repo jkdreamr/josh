@@ -78,6 +78,10 @@ test('dash charges, launches on release, then observes its cooldown', () => {
 test('the float shrinks, stops at sudden death, and falling cars splash out', () => {
   const world = createWorld(entries(2), 4);
   go(world);
+  world.cars[0].x = -1.4;
+  world.cars[0].z = 0;
+  world.cars[1].x = 1.4;
+  world.cars[1].z = 0;
   const start = world.radius;
   step(world, idle(world), 8);
   assert.ok(world.radius < start);
@@ -91,9 +95,38 @@ test('the float shrinks, stops at sudden death, and falling cars splash out', ()
   car.x = fallWorld.radius + 0.3;
   car.z = 0;
   const splashes = step(fallWorld, idle(fallWorld), 0.5);
-  assert.equal(car.falling, true);
+  assert.equal(car.falling, false);
   assert.equal(car.out, true);
   assert.ok(splashes.some((event) => event.type === 'splash' && event.car === car.id));
+});
+
+test('a real splash ends the round and awards the survivor promptly', () => {
+  const world = createWorld(entries(2), 44);
+  go(world);
+  const eliminated = world.cars[0];
+  const survivor = world.cars[1];
+  eliminated.x = world.radius + 0.3;
+  eliminated.z = 0;
+  eliminated.vx = 0;
+  eliminated.vz = 0;
+  survivor.x = 0;
+  survivor.z = 0;
+  survivor.vx = 0;
+  survivor.vz = 0;
+  let elapsed = 0;
+  let splashed = false;
+  while (world.phase === 'fight' && elapsed < 3) {
+    const events = step(world, idle(world), STEP);
+    splashed ||= events.some((event) => event.type === 'splash' && event.car === eliminated.id);
+    elapsed += STEP;
+  }
+  assert.ok(splashed);
+  assert.equal(eliminated.out, true);
+  assert.equal(eliminated.falling, false);
+  assert.equal(world.phase, 'over');
+  assert.equal(world.roundWinner, survivor.id);
+  assert.equal(world.wins[survivor.id], 1);
+  assert.ok(elapsed < 3);
 });
 
 test('physics-only stepping moves cars without changing host-owned outcomes', () => {
@@ -176,6 +209,40 @@ test('seeded bots stay on the float alone and the normal bot match finishes clea
   assert.ok(matchWinner(world) !== null, `bot match did not finish within ${maxTime}s`);
 });
 
+test('an eight-bot full match resolves real falls well before the round cap', () => {
+  const world = createWorld(entries(8, 1), 201);
+  const random = rng(301);
+  const roundDurations: number[] = [];
+  let arrangedRound = 0;
+  const maxTime = 30;
+  for (let t = 0; t < maxTime * 60 && matchWinner(world) === null; t++) {
+    if (world.phase === 'fight' && world.round !== arrangedRound) {
+      arrangedRound = world.round;
+      const survivor = world.cars[0];
+      survivor.x = 0;
+      survivor.z = 0;
+      survivor.vx = 0;
+      survivor.vz = 0;
+      for (const car of world.cars.slice(1)) {
+        car.x = world.radius + 0.3;
+        car.z = 0;
+        car.vx = 0;
+        car.vz = 0;
+      }
+    }
+    const events = step(world, world.cars.map((car) => think(world, car.id, 1, random)), STEP);
+    for (const event of events) {
+      if (event.type === 'splash') assert.equal(world.cars[event.car].falling, false);
+      if (event.type === 'round') roundDurations.push(world.fightTime);
+    }
+  }
+  assert.ok(matchWinner(world) !== null, `eight-bot match did not finish within ${maxTime}s`);
+  assert.ok(roundDurations.length >= 3);
+  const cappedRounds = roundDurations.filter((duration) => duration >= 100).length;
+  assert.ok(cappedRounds < roundDurations.length / 2, `too many rounds reached the cap: ${roundDurations.join(', ')}`);
+  assert.ok(roundDurations.reduce((sum, duration) => sum + duration, 0) / roundDurations.length < 50);
+});
+
 test('bot inputs stay inside the unit disc and dash is boolean', () => {
   const world = createWorld(entries(8, 2), 9);
   for (const car of world.cars) {
@@ -192,7 +259,12 @@ test('sumo packets round-trip and reject malformed numbers, types, seats, and ov
     { x: 1, z: 2, y: 0, vx: 3, vz: 4, yaw: 0.4, charge: 0.5, flags: 1 },
     { x: -1, z: 0, y: 0, vx: 0, vz: 1, yaw: -0.5, charge: 0, flags: 4 },
   ]);
-  assert.equal(parsePacket(state)?.k, 'S');
+  const parsedState = parsePacket(state);
+  assert.equal(parsedState?.k, 'S');
+  if (parsedState?.k === 'S') {
+    assert.equal(Boolean(parsedState.cars[1].flags & 4), true);
+    assert.equal(Boolean(parsedState.cars[1].flags & 2), false);
+  }
   assert.deepEqual(parsePacket(endOf(2, 3, [1, 2]))?.k, 'end');
   assert.deepEqual(parsePacket(configOf(2, 2)), { k: 'cfg', r: 2, lv: 2 });
   assert.equal(parsePacket({ t: 'sumo', r: 1, k: 'i', x: NaN, y: 0, d: false }), null);

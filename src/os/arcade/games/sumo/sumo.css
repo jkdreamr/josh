@@ -44,6 +44,21 @@
   backdrop-filter: blur(8px);
 }
 
+.g-sumo-round {
+  position: absolute;
+  top: 13px;
+  left: 12px;
+  padding: 5px 9px;
+  border: 1px solid rgba(41, 72, 77, 0.15);
+  border-radius: 18px;
+  background: rgba(255, 249, 232, 0.82);
+  box-shadow: 0 3px 11px rgba(43, 80, 79, 0.12);
+  color: #243943;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
 .g-sumo-score {
   display: flex;
   min-width: 28px;
@@ -117,6 +132,24 @@
   line-height: 1.2;
   text-align: center;
   animation: g-sumo-pop 180ms ease-out both;
+}
+
+.g-sumo-status {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  max-width: calc(100% - 24px);
+  padding: 2px 9px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  background: rgba(33, 98, 103, 0.9);
+  color: #fff9e9;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .g-sumo-tag {
