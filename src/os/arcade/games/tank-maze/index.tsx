@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { createWorld, mulberry32, noInput, stickInput, step, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
+import { createWorld, fitBoard, mulberry32, noInput, spawnRound, stickInput, step, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, statePacket, type NetEvent, type RoundPacket } from './net.ts';
 import { meta } from './meta';
@@ -104,6 +104,8 @@ type Match = {
   lastEvSeen: number;
   prevPhase: string;
   lastNetAt: number;
+  /** Local match built before the canvas had a real size; rebuild round 1 once it does. */
+  fixDims: boolean;
 };
 
 const STEP = 1 / 60;
@@ -248,6 +250,7 @@ function TankMaze() {
       lastEvSeen: 0,
       prevPhase: 'ready',
       lastNetAt: 0,
+      fixDims: false,
     };
     return match;
   };
@@ -304,6 +307,8 @@ function TankMaze() {
       const count = cfg.current.mode === '3p' ? 3 : cfg.current.mode === '2p' ? 2 : 1 + cfg.current.rivals;
       match = newMatch(g.cols, g.rows, count, (Math.random() * 2 ** 31) >>> 0, cfg.current.target);
       for (let i = 0; i < count; i++) match.minds[i] = i < humanIds(match).length ? null : makeMemory();
+      // The canvas wasn't sized yet: these dims are from a fallback board. Respawn once it is.
+      match.fixDims = !w || !h;
     }
     m.current = match;
     match.world.round = 1;
@@ -581,6 +586,15 @@ function TankMaze() {
   const update = (dt: number) => {
     const match = m.current;
     if (!match) return;
+    // Round 1 built on fallback dims: respawn it as soon as the real size shows up.
+    if (match.fixDims) {
+      const { w: sw, h: sh } = sizeRef.current;
+      if (sw && sh && match.world.round === 1 && match.world.phase === 'ready') {
+        match.fixDims = false;
+        const g = mazeSize(layout(sw, sh).board);
+        spawnRound(match.world, match.world.seed, g);
+      } else if (sw && sh) match.fixDims = false;
+    }
     // decay visuals
     match.flash = Math.max(0, match.flash - dt * 2.5);
     match.shake = Math.max(0, match.shake - dt * 2.2);
@@ -687,6 +701,11 @@ function TankMaze() {
       match.prevPhase = w.phase;
       if (w.round !== sentRound) {
         sentRound = w.round;
+        // Local rounds use the maze dims that fit the stage as it is right now.
+        if (!online) {
+          const { w: sw, h: sh } = sizeRef.current;
+          if (sw && sh) spawnRound(w, w.seed, mazeSize(layout(sw, sh).board));
+        }
         hostSendRound(match);
         startBanner(match);
       }
@@ -734,13 +753,14 @@ function TankMaze() {
     if (!match) return;
     const world = match.world;
     const lay = layout(w, h);
-    const cell = Math.min(lay.board.w / world.maze.cols, lay.board.h / world.maze.rows);
+    const fit = fitBoard(lay.board, world.maze.cols, world.maze.rows, w);
+    const cell = fit.cell;
     const bw = cell * world.maze.cols;
     const bh = cell * world.maze.rows;
     const shx = match.shake ? (Math.random() - 0.5) * match.shake * 9 : 0;
     const shy = match.shake ? (Math.random() - 0.5) * match.shake * 9 : 0;
-    const ox = lay.board.x + (lay.board.w - bw) / 2 + shx;
-    const oy = lay.board.y + (lay.board.h - bh) / 2 + shy;
+    const ox = fit.ox + shx;
+    const oy = fit.oy + shy;
     const X = (x: number) => ox + x * cell;
     const Y = (y: number) => oy + y * cell;
 
@@ -1030,15 +1050,29 @@ function TankMaze() {
     const compactHud = hudH < 30;
     const scores = isGuest ? match.guestScores : world.scores;
     const chips = viewTanks.map((_, i) => i);
-    const chipFont = Math.max(10, Math.min(13, hudH * 0.4));
-    c.font = `600 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-    const gap = compactHud ? 8 : 14;
-    const widths = chips.map((i) => {
-      const name = nameOf(match, i);
-      return 10 + c.measureText(name).width + 8 + c.measureText(`${scores[i] ?? 0}`).width + 6;
-    });
-    const total = widths.reduce((a, b) => a + b, 0) + gap * (chips.length - 1);
-    let cx = Math.max(8, (w - Math.min(total, w - 176)) / 2);
+    // chips live in [12, w-176] so they never sit under the shell's top-right controls
+    const chipLeft = 12;
+    const chipAvail = Math.max(0, w - 176 - chipLeft);
+    let chipFont = Math.max(11, Math.min(13, hudH * 0.4));
+    let gap = compactHud ? 8 : 14;
+    const measure = () => {
+      c.font = `600 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+      const ws = chips.map((i) => {
+        const name = nameOf(match, i);
+        return 10 + c.measureText(name).width + 8 + c.measureText(`${scores[i] ?? 0}`).width + 6;
+      });
+      return { ws, total: ws.reduce((a, b) => a + b, 0) + gap * Math.max(0, chips.length - 1) };
+    };
+    let { ws: widths, total } = measure();
+    if (total > chipAvail && gap > 4) {
+      gap = 4;
+      ({ ws: widths, total } = measure());
+    }
+    while (total > chipAvail && chipFont > 11) {
+      chipFont--;
+      ({ ws: widths, total } = measure());
+    }
+    let cx = chipLeft + Math.max(0, (chipAvail - total) / 2);
     for (const i of chips) {
       const cw = widths[i];
       c.fillStyle = 'rgba(255,255,255,0.65)';

@@ -12,6 +12,7 @@ import {
   circleFree,
   createMaze,
   createWorld,
+  fitBoard,
   mulberry32,
   noInput,
   pickSpawns,
@@ -534,4 +535,51 @@ test('fireCount increments map to shots with cooldown', () => {
   for (let i = 0; i < Math.ceil(FIRE_CD * 60) + 2; i++) step(w, [idle, idle]);
   apply(3);
   assert.ok(w.shells.filter((s) => s.owner === 0).length >= 2, 'later increment fires after cooldown');
+});
+
+test('spawnRound with dims rebuilds the maze at those dims', () => {
+  const w = createWorld({ cols: 8, rows: 6, seed: 11, count: 3, target: 5 });
+  w.scores[0] = 2;
+  spawnRound(w, 77, { cols: 10, rows: 5 });
+  assert.equal(w.maze.cols, 10);
+  assert.equal(w.maze.rows, 5);
+  assert.equal(w.seed, 77);
+  // scores survive a respawn
+  assert.equal(w.scores[0], 2);
+  const dist = bfs(w.maze, [0]);
+  for (let c = 0; c < 10 * 5; c++) assert.ok(dist[c] >= 0, `cell ${c} unreachable`);
+  for (let y = 0; y < 5; y++) {
+    assert.ok(w.maze.v[y * 11]);
+    assert.ok(w.maze.v[y * 11 + 10]);
+  }
+  for (let x = 0; x < 10; x++) {
+    assert.ok(w.maze.h[x]);
+    assert.ok(w.maze.h[5 * 10 + x]);
+  }
+  for (const t of w.tanks) {
+    assert.ok(t.x >= 0 && t.x < 10 && t.y >= 0 && t.y < 5, 'tank inside maze');
+    assert.ok(circleFree(w.maze, t.x, t.y, 0.26), `tank ${t.id} not in a free cell`);
+  }
+});
+
+test('fitBoard stays inside the board and clear of the control pill', () => {
+  const R = (w: number) => ({ x: w - 176, y: 0, w: 176, h: 50 });
+  for (const [w, h, cols, rows] of [
+    [464, 157, 8, 6],
+    [601, 260, 12, 6],
+    [1280, 680, 12, 6],
+    [390, 600, 6, 10],
+    [320, 400, 6, 7],
+  ] as const) {
+    const board = { x: 0, y: 34, w, h: h - 34 };
+    const f = fitBoard(board, cols, rows, w);
+    const bw = f.cell * cols;
+    const bh = f.cell * rows;
+    assert.ok(f.cell > 0, `${w}x${h}: positive cell`);
+    assert.ok(f.ox >= board.x + 8 - 1e-9 && f.ox + bw <= board.x + board.w - 8 + 1e-9, `${w}x${h}: horizontal bounds`);
+    assert.ok(f.oy >= board.y + 8 - 1e-9 && f.oy + bh <= board.y + board.h - 8 + 1e-9, `${w}x${h}: vertical bounds`);
+    const r = R(w);
+    const overlap = f.ox + bw > r.x && f.ox < r.x + r.w && f.oy + bh > r.y && f.oy < r.y + r.h;
+    assert.ok(!overlap, `${w}x${h}: maze under the control pill`);
+  }
 });

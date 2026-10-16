@@ -313,9 +313,9 @@ export function pickSpawns(m: Maze, count: number, rng: Rng): { cx: number; cy: 
 }
 
 /** Start a round on a fresh (or given) maze: place tanks, clear projectiles. */
-export function spawnRound(w: World, seed: number) {
+export function spawnRound(w: World, seed: number, dims?: { cols: number; rows: number }) {
   w.seed = seed;
-  w.maze = createMaze(w.maze.cols, w.maze.rows, seed);
+  w.maze = createMaze(dims?.cols ?? w.maze.cols, dims?.rows ?? w.maze.rows, seed);
   w.rng = mulberry32(seed ^ 0xa53a9d01);
   const spots = pickSpawns(w.maze, w.tanks.length, w.rng);
   for (const t of w.tanks) {
@@ -791,6 +791,38 @@ export function predictShell(w: World, s: Shell, secs: number): { x: number; y: 
     pts.push({ x: g.x, y: g.y });
   }
   return pts;
+}
+
+/** Region the shell's control pill occupies at the top right of the stage (canvas CSS px). */
+const TOOLBAR = { w: 176, h: 50 };
+
+/**
+ * Fit the maze inside a board rect (canvas CSS px): pads the board 8px on every side, then
+ * letterboxes the maze inside. When the fitted maze would slide under the top-right control pill,
+ * it refits either against a narrower region (right edge kept clear of the pill) or a lower one
+ * (below the pill), whichever leaves the bigger cells. w is the full canvas width.
+ */
+export function fitBoard(
+  board: { x: number; y: number; w: number; h: number },
+  cols: number,
+  rows: number,
+  w: number,
+): { cell: number; ox: number; oy: number } {
+  const pad = 8;
+  const b = { x: board.x + pad, y: board.y + pad, w: Math.max(0, board.w - pad * 2), h: Math.max(0, board.h - pad * 2) };
+  const rx = w - TOOLBAR.w;
+  const fit = (x: number, y: number, bw: number, bh: number) => {
+    const cell = Math.min(bw / cols, bh / rows);
+    return { cell, ox: x + (bw - cell * cols) / 2, oy: y + (bh - cell * rows) / 2 };
+  };
+  const overlaps = (f: { cell: number; ox: number; oy: number }) =>
+    f.ox + f.cell * cols > rx && f.ox < w && f.oy + f.cell * rows > 0 && f.oy < TOOLBAR.h;
+  const base = fit(b.x, b.y, b.w, b.h);
+  if (!overlaps(base) || base.cell <= 0) return base;
+  // (a) keep the maze left of the pill; (b) drop it below the pill.
+  const narrow = fit(b.x, b.y, Math.max(0, rx - pad - b.x), b.h);
+  const low = fit(b.x, TOOLBAR.h, b.w, Math.max(0, b.y + b.h - TOOLBAR.h));
+  return narrow.cell >= low.cell ? narrow : low;
 }
 
 /**
