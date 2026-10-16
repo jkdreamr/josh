@@ -14,20 +14,20 @@ export type View = { rot: boolean; s: number; ox: number; oy: number; side: bool
 export function layout(w: number, h: number): View {
   const rot = h > w * 1.12;
   if (rot) {
-    const s = Math.max(10, Math.min((w - 20) / OUT_H, (h - 52 - 74) / OUT_W));
+    const s = Math.max(10, Math.min((w - 20) / OUT_H, (h - 52 - 104) / OUT_W));
     const tw = OUT_H * s;
     const th = OUT_W * s;
-    const top = 52 + Math.max(0, (h - 52 - 74 - th) / 2);
+    const top = 52 + Math.max(0, (h - 52 - 104 - th) / 2);
     return { rot, s, ox: (w - tw) / 2 + RAIL * s, oy: top + RAIL * s, side: false, panelW: 0, w, h };
   }
   const panelW = Math.round(Math.max(96, Math.min(150, w * 0.17)));
   const sSide = Math.min((w - panelW * 2 - 28) / OUT_W, (h - 14) / OUT_H);
-  const sBottom = Math.min((w - 20) / OUT_W, (h - 48 - 66) / OUT_H);
+  const sBottom = Math.min((w - 20) / OUT_W, (h - 48 - 96) / OUT_H);
   const side = sSide >= sBottom * 0.9;
   const s = Math.max(10, side ? sSide : sBottom);
   const tw = OUT_W * s;
   const th = OUT_H * s;
-  const top = side ? (h - th) / 2 : 46 + Math.max(0, (h - 46 - 66 - th) / 2);
+  const top = side ? (h - th) / 2 : 46 + Math.max(0, (h - 46 - 96 - th) / 2);
   return { rot, s, ox: (w - tw) / 2 + RAIL * s, oy: top + RAIL * s, side, panelW, w, h };
 }
 

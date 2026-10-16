@@ -10,7 +10,7 @@ import './pool.css';
 
 const MODE = defineSetting('pool:mode', PLAY_MODES, 'cpu');
 const LEVEL = defineSetting('pool:level', LEVEL_NAMES, 'normal');
-const MIN_THINK = 0.55;
+const MIN_THINK = 0.3;
 const SPINS = [0, 0.7, -0.7] as const;
 const SPIN_NAMES = ['Center', 'Follow', 'Draw'] as const;
 
@@ -233,7 +233,7 @@ function Pool() {
       const title = online ? (win === online.seat ? 'You Win' : `${name(win)} Wins`) : isCpu() ? (win === 0 ? 'You Win' : 'Computer Wins') : `${name(win)} Wins`;
       const detail = cleared ? `${name(win)} sank the 8 to clear the table.` : `${name(loser)} ${g.reason}.`;
       if (online) online.reportResult(online.round, win);
-      shell.gameOver(undefined, { title, detail: isCpu() ? `${detail} ${levelLabel(LEVEL_NAMES[cfg.current.level])} computer.` : detail });
+      shell.gameOver(undefined, { title: shell.compact ? `${title} · ${detail.slice(0, -1)}` : title, detail: isCpu() ? `${detail} ${levelLabel(LEVEL_NAMES[cfg.current.level])} computer.` : detail });
     }, 1.1);
   };
 
@@ -323,12 +323,12 @@ function Pool() {
       let da = target - anim.a0;
       while (da > Math.PI) da -= Math.PI * 2;
       while (da < -Math.PI) da += Math.PI * 2;
-      const k = Math.min(1, anim.t / 0.5);
+      const k = Math.min(1, anim.t / 0.32);
       const e = 1 - (1 - k) ** 3;
       aim.current.a = anim.a0 + da * e;
       if (sh.place) place.current = { x: anim.from.x + (sh.place.x - anim.from.x) * e, y: anim.from.y + (sh.place.y - anim.from.y) * e };
-      aim.current.power = anim.t < 0.6 ? 0 : anim.t < 1 ? sh.power * Math.min(1, (anim.t - 0.6) / 0.35) : sh.power * Math.max(0, 1 - (anim.t - 1) / 0.08);
-      if (anim.t >= 1.08) {
+      aim.current.power = anim.t < 0.36 ? 0 : anim.t < 0.64 ? sh.power * Math.min(1, (anim.t - 0.36) / 0.24) : sh.power * Math.max(0, 1 - (anim.t - 0.64) / 0.06);
+      if (anim.t >= 0.7) {
         aiAnim.current = null;
         if (sh.place) place.current = { ...sh.place };
         begin(sh);

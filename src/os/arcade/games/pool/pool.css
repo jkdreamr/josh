@@ -47,9 +47,8 @@
   font-weight: 600;
 }
 .g-pool .g-pool-name span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .g-pool .g-pool-name em {
   font-style: normal;
