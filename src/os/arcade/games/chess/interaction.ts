@@ -40,13 +40,13 @@ export function pieceTransform(sq: number, flipped: boolean, boardPx: number, dr
   if (drag?.from === sq) return `translate(${drag.point.x * boardPx - boardPx / 16}px, ${drag.point.y * boardPx - boardPx / 16}px) scale(1.12)`;
   return `translate(${columnOf(sq, flipped) * 100}%, ${rowOf(sq, flipped) * 100}%)`;
 }
-type Drag = { pid: number; from: number; start: Point; moved: boolean };
+type Drag = { pid: number; from: number; start: Point; moved: boolean; reselect: boolean };
 export class PieceDrag {
   current: Drag | null = null;
 
-  begin(pid: number, from: number, start: Point) {
+  begin(pid: number, from: number, start: Point, reselect = false) {
     if (this.current) return false;
-    this.current = { pid, from, start, moved: false };
+    this.current = { pid, from, start, moved: false, reselect };
     return true;
   }
 
@@ -68,6 +68,8 @@ export class PieceDrag {
     return d;
   }
 }
+
+export const toggleSelection = (sel: number | null, sq: number) => (sq === sel ? null : sq);
 
 export const initialIds = (pos: Position) => new Map(pieces(pos).map(([sq], i) => [sq, i + 1]));
 export function nextIds(ids: Map<number, number>, pos: Position, m: number) {

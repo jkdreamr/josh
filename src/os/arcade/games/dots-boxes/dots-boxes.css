@@ -1,0 +1,158 @@
+.g-dots-boxes .g-dots-boxes-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #0b0c12;
+}
+.g-dots-boxes .g-dots-boxes-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: pointer;
+}
+.g-dots-boxes .g-dots-boxes-status {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.78);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.g-dots-boxes .g-dots-boxes-status.is-side {
+  max-width: 156px;
+  font-size: 12px;
+}
+.g-dots-boxes .g-dots-boxes-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.g-dots-boxes .g-dots-boxes-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c);
+}
+.g-dots-boxes .g-dots-boxes-status-dot.is-thinking {
+  animation: g-dots-boxes-pulse 1s ease-in-out infinite;
+}
+.g-dots-boxes .g-dots-boxes-hud {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 12px;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  pointer-events: none;
+}
+.g-dots-boxes .g-dots-boxes-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  min-width: 0;
+  padding: 0 14px 0 12px;
+  border-radius: 17px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color: rgba(245, 245, 247, 0.72);
+  font-size: 13px;
+  font-weight: 500;
+  transition:
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    color 0.2s ease;
+}
+.g-dots-boxes .g-dots-boxes-pill.is-turn {
+  background: color-mix(in srgb, var(--c) 20%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--c);
+  color: #f5f5f7;
+}
+.g-dots-boxes .g-dots-boxes-pill.is-left {
+  opacity: 0.6;
+}
+.g-dots-boxes .g-dots-boxes-swatch {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 3px;
+  background: var(--c);
+}
+.g-dots-boxes .g-dots-boxes-name {
+  overflow: hidden;
+  max-width: 120px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-dots-boxes .g-dots-boxes-score {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #f5f5f7;
+}
+.g-dots-boxes .g-dots-boxes-score.is-up {
+  animation: g-dots-boxes-pop 0.35s ease-out;
+}
+.g-dots-boxes .g-dots-boxes-hud.is-tight .g-dots-boxes-pill {
+  gap: 6px;
+  padding: 0 10px 0 9px;
+}
+.g-dots-boxes .g-dots-boxes-hud.is-tight .g-dots-boxes-name {
+  max-width: 64px;
+}
+.g-dots-boxes .g-dots-boxes-hud.is-side {
+  top: 40px;
+  right: auto;
+  bottom: auto;
+  width: 150px;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 4px;
+}
+.g-dots-boxes .g-dots-boxes-hud.is-side .g-dots-boxes-pill {
+  max-width: 150px;
+  height: 24px;
+  gap: 6px;
+  padding: 0 10px 0 9px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+.g-dots-boxes .g-dots-boxes-hud.is-side .g-dots-boxes-score {
+  font-size: 13px;
+}
+.g-dots-boxes .g-dots-boxes-hud.is-side .g-dots-boxes-name {
+  max-width: 84px;
+}
+@keyframes g-dots-boxes-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+@keyframes g-dots-boxes-pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.35);
+  }
+  100% {
+    transform: scale(1);
+  }
+}

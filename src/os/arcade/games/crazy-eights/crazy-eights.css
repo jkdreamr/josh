@@ -1,0 +1,1036 @@
+.g-crazy-eights {
+  background: #0f3d2e;
+}
+
+.g-crazy-eights .g-crazy-eights-table {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  color: #f4f7f5;
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 46%, #1f7a55 0%, #155c41 55%, #0d3d2c 100%);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  --cw: 64px;
+  --ch: 90px;
+}
+
+.g-crazy-eights .g-crazy-eights-table::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 3px);
+}
+
+.g-crazy-eights .g-crazy-eights-table.is-paused *,
+.g-crazy-eights .g-crazy-eights-table.is-paused::before {
+  animation-play-state: paused !important;
+}
+
+.g-crazy-eights .g-crazy-eights-wait {
+  grid-row: 1 / -1;
+  place-self: center;
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Rivals */
+.g-crazy-eights .g-crazy-eights-seat {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.g-crazy-eights .g-crazy-eights-seat.pos-top {
+  top: 10px;
+  left: 50%;
+  translate: -50% 0;
+}
+
+.g-crazy-eights .g-crazy-eights-seat.pos-left,
+.g-crazy-eights .g-crazy-eights-seat.pos-right {
+  top: 34%;
+  translate: 0 -50%;
+}
+
+.g-crazy-eights .n-3 .g-crazy-eights-seat.pos-left,
+.g-crazy-eights .n-3 .g-crazy-eights-seat.pos-right {
+  top: 22%;
+}
+
+.g-crazy-eights .g-crazy-eights-seat.pos-left {
+  left: 12px;
+}
+
+.g-crazy-eights .g-crazy-eights-seat.pos-right {
+  right: 12px;
+}
+
+.g-crazy-eights .g-crazy-eights-backs {
+  position: relative;
+  width: calc(var(--cw) * 1.5);
+  height: calc(var(--ch) * 0.56);
+}
+
+.g-crazy-eights .g-crazy-eights-mini {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: calc(var(--cw) * 0.4);
+  height: calc(var(--ch) * 0.4);
+  margin-left: calc(var(--cw) * -0.2);
+  transform-origin: 50% 120%;
+}
+
+.g-crazy-eights .g-crazy-eights-mini,
+.g-crazy-eights .g-crazy-eights-back {
+  border-radius: 5px;
+  border: 2px solid #fff;
+  background-color: #c4363a;
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.22) 0 18%, transparent 19%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.16) 0 2px, transparent 2px 7px),
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.16) 0 2px, transparent 2px 7px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.g-crazy-eights .g-crazy-eights-name {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 11px 5px;
+  border-radius: 11px;
+  background: rgba(0, 0, 0, 0.26);
+  font-size: 13px;
+  line-height: 1.25;
+  transition: background 0.2s, color 0.2s;
+}
+
+.g-crazy-eights .g-crazy-eights-name b,
+.g-crazy-eights .g-crazy-eights-me b {
+  font-weight: 600;
+}
+
+.g-crazy-eights .g-crazy-eights-name span,
+.g-crazy-eights .g-crazy-eights-me span {
+  font-size: 12px;
+  opacity: 0.78;
+  font-variant-numeric: tabular-nums;
+}
+
+.g-crazy-eights .g-crazy-eights-name em {
+  font-style: normal;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.g-crazy-eights .is-turn > .g-crazy-eights-name,
+.g-crazy-eights .g-crazy-eights-me.is-turn {
+  background: #f5f5f7;
+  color: #1d1d1f;
+}
+
+/* The middle: draw pile, discards, and the direction of play */
+.g-crazy-eights .g-crazy-eights-middle {
+  grid-row: 2;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--cw) * 0.45);
+  padding-top: calc(var(--ch) * 0.62);
+}
+
+.g-crazy-eights .n-3 .g-crazy-eights-middle {
+  padding-top: calc(var(--ch) * 0.3);
+}
+
+.g-crazy-eights .g-crazy-eights-ring {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + var(--ch) * 0.31);
+  width: calc(var(--cw) * 3.6);
+  height: calc(var(--cw) * 3.6);
+  margin: calc(var(--cw) * -1.8) 0 0 calc(var(--cw) * -1.8);
+  border-radius: 50%;
+  border: 2px dashed rgba(255, 255, 255, 0.13);
+  animation: g-crazy-eights-spin 18s linear infinite;
+  pointer-events: none;
+}
+
+.g-crazy-eights .n-3 .g-crazy-eights-ring {
+  top: calc(50% + var(--ch) * 0.15);
+}
+
+.g-crazy-eights .g-crazy-eights-ring.dir-ccw {
+  animation-direction: reverse;
+}
+
+.g-crazy-eights .g-crazy-eights-deck {
+  position: relative;
+  width: var(--cw);
+  height: var(--ch);
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.18);
+  cursor: default;
+  font: inherit;
+  color: inherit;
+}
+
+.g-crazy-eights .g-crazy-eights-deck.can-draw {
+  cursor: pointer;
+}
+
+.g-crazy-eights .g-crazy-eights-back.is-deck {
+  position: absolute;
+  inset: 0;
+  border-radius: 7px;
+  box-shadow:
+    2px 2px 0 -1px #fff,
+    2px 2px 0 0 rgba(0, 0, 0, 0.25),
+    4px 4px 0 -1px #fff,
+    4px 4px 0 0 rgba(0, 0, 0, 0.25),
+    0 6px 14px rgba(0, 0, 0, 0.35);
+  transition: transform 0.18s;
+}
+
+.g-crazy-eights .g-crazy-eights-deck.can-draw .g-crazy-eights-back.is-deck {
+  animation: g-crazy-eights-nudge 1.6s ease-in-out infinite;
+}
+
+.g-crazy-eights .g-crazy-eights-deck.can-draw:hover .g-crazy-eights-back.is-deck {
+  transform: translateY(-4px);
+}
+
+.g-crazy-eights .g-crazy-eights-count {
+  position: absolute;
+  left: 50%;
+  bottom: -22px;
+  translate: -50% 0;
+  font-size: 12px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.g-crazy-eights .g-crazy-eights-pending {
+  position: absolute;
+  right: -10px;
+  top: -10px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  background: #ff453a;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  animation: g-crazy-eights-pop 0.32s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+
+.g-crazy-eights .g-crazy-eights-pile {
+  position: relative;
+  width: var(--cw);
+  height: var(--ch);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.g-crazy-eights .g-crazy-eights-pilecard {
+  position: absolute;
+  inset: 0;
+}
+
+.g-crazy-eights .g-crazy-eights-pilecard .g-crazy-eights-face {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.g-crazy-eights .g-crazy-eights-called {
+  position: absolute;
+  left: 50%;
+  bottom: -30px;
+  translate: -50% 0;
+  white-space: nowrap;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d1d1f;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  animation: g-crazy-eights-pop 0.32s cubic-bezier(0.3, 1.6, 0.5, 1);
+  z-index: 3;
+}
+
+.g-crazy-eights .g-crazy-eights-called.suit-1,
+.g-crazy-eights .g-crazy-eights-called.suit-2 {
+  color: #d70015;
+}
+
+.g-crazy-eights .g-crazy-eights-toast {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 6;
+  padding: 6px 16px;
+  border-radius: 16px;
+  background: rgba(20, 20, 22, 0.82);
+  font-size: 17px;
+  font-weight: 650;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: g-crazy-eights-toast 1.15s ease-out both;
+}
+
+.g-crazy-eights .g-crazy-eights-toast.tone-two {
+  background: #ff453a;
+  font-size: 22px;
+}
+
+.g-crazy-eights .g-crazy-eights-toast.tone-suit {
+  background: #fff;
+  color: #1d1d1f;
+}
+
+/* Your row */
+.g-crazy-eights .g-crazy-eights-bar {
+  grid-row: 3;
+  position: relative;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 12px;
+}
+
+.g-crazy-eights .g-crazy-eights-me {
+  justify-self: start;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 4px 11px;
+  border-radius: 11px;
+  background: rgba(0, 0, 0, 0.26);
+  font-size: 13px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.g-crazy-eights .g-crazy-eights-status {
+  font-size: 15px;
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.g-crazy-eights .g-crazy-eights-status span {
+  display: inline-block;
+  animation: g-crazy-eights-rise 0.25s ease-out;
+}
+
+.g-crazy-eights .g-crazy-eights-status .is-hint {
+  color: #ffd60a;
+  animation: g-crazy-eights-hint 2.4s ease both;
+}
+
+.g-crazy-eights .g-crazy-eights-actions {
+  justify-self: end;
+  display: flex;
+  gap: 8px;
+}
+
+.g-crazy-eights .g-crazy-eights-actions .arcade-btn {
+  min-height: 40px;
+  min-width: 72px;
+}
+
+/* The hand */
+.g-crazy-eights .g-crazy-eights-hand {
+  grid-row: 4;
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.g-crazy-eights .g-crazy-eights-slot {
+  position: absolute;
+  left: 0;
+  top: 14px;
+  width: var(--cw);
+  height: var(--ch);
+  transform-origin: 50% 100%;
+  transition: transform 0.32s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+
+.g-crazy-eights .g-crazy-eights-card {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 7px;
+  cursor: pointer;
+  touch-action: none;
+  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.25, 1), filter 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.g-crazy-eights .g-crazy-eights-card:focus-visible {
+  outline: 3px solid #0a84ff;
+  outline-offset: 2px;
+}
+
+.g-crazy-eights .g-crazy-eights-card.is-live {
+  transform: translateY(-10px);
+}
+
+.g-crazy-eights .g-crazy-eights-card.is-live:hover,
+.g-crazy-eights .g-crazy-eights-card.is-selected {
+  transform: translateY(-20px);
+}
+
+.g-crazy-eights .g-crazy-eights-card.is-dim {
+  filter: brightness(0.72) saturate(0.8);
+}
+
+.g-crazy-eights .g-crazy-eights-card.is-drawn .g-crazy-eights-face {
+  box-shadow: 0 0 0 3px #ffd60a, 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+
+.g-crazy-eights .g-crazy-eights-card.is-dragging {
+  transition: none;
+  z-index: 50;
+  position: relative;
+  cursor: grabbing;
+}
+
+.g-crazy-eights .g-crazy-eights-card.is-dragging .g-crazy-eights-face {
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.45);
+}
+
+.g-crazy-eights .g-crazy-eights-card.is-shake {
+  animation: g-crazy-eights-shake 0.36s ease;
+}
+
+/* Card faces */
+.g-crazy-eights .g-crazy-eights-face {
+  position: relative;
+  display: block;
+  width: var(--cw);
+  height: var(--ch);
+  border-radius: 7px;
+  background: linear-gradient(160deg, #ffffff 0%, #f6f4ee 100%);
+  color: #1d1d1f;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06), 0 3px 8px rgba(0, 0, 0, 0.28);
+  font-family: 'New York', 'Iowan Old Style', Georgia, serif;
+  overflow: hidden;
+}
+
+.g-crazy-eights .g-crazy-eights-face.suit-1,
+.g-crazy-eights .g-crazy-eights-face.suit-2 {
+  color: #d70015;
+}
+
+.g-crazy-eights .g-crazy-eights-corner {
+  position: absolute;
+  left: 4px;
+  top: 3px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 0.95;
+  width: max(14px, calc(var(--cw) * 0.24));
+}
+
+.g-crazy-eights .g-crazy-eights-corner b {
+  font-size: max(13px, calc(var(--cw) * 0.25));
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+.g-crazy-eights .g-crazy-eights-corner i {
+  font-style: normal;
+  font-size: max(11px, calc(var(--cw) * 0.2));
+}
+
+.g-crazy-eights .g-crazy-eights-corner.is-flip {
+  left: auto;
+  top: auto;
+  right: 4px;
+  bottom: 3px;
+  rotate: 180deg;
+}
+
+.g-crazy-eights .g-crazy-eights-pip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--cw) * 0.52);
+  line-height: 1;
+}
+
+.g-crazy-eights .is-court .g-crazy-eights-pip,
+.g-crazy-eights .is-eight .g-crazy-eights-pip {
+  inset: 18% 20%;
+  border-radius: 5px;
+  border: 1.5px solid currentColor;
+  font-size: calc(var(--cw) * 0.36);
+}
+
+.g-crazy-eights .g-crazy-eights-pip b {
+  font-weight: 700;
+}
+
+.g-crazy-eights .g-crazy-eights-pip i {
+  font-style: normal;
+  font-size: 0.7em;
+}
+
+.g-crazy-eights .is-eight .g-crazy-eights-pip {
+  border: 0;
+  inset: 16% 16%;
+  background: conic-gradient(from 45deg, #1d1d1f 0 25%, #d70015 0 50%, #1d1d1f 0 75%, #d70015 0);
+  color: #fff;
+}
+
+.g-crazy-eights .is-eight .g-crazy-eights-pip b {
+  display: grid;
+  place-items: center;
+  width: 70%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #fff;
+  color: #1d1d1f;
+  font-size: 1.35em;
+}
+
+.g-crazy-eights .is-eight.suit-1 .g-crazy-eights-pip b,
+.g-crazy-eights .is-eight.suit-2 .g-crazy-eights-pip b {
+  color: #d70015;
+}
+
+.g-crazy-eights .is-eight .g-crazy-eights-pip i {
+  display: none;
+}
+
+/* Sheets: suit picker and hand summary */
+.g-crazy-eights .g-crazy-eights-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.32);
+  animation: g-crazy-eights-fade 0.2s ease-out;
+}
+
+.g-crazy-eights .g-crazy-eights-picker,
+.g-crazy-eights .g-crazy-eights-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(360px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 18px;
+  border-radius: 16px;
+  background: rgba(246, 246, 248, 0.97);
+  color: #1d1d1f;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+  animation: g-crazy-eights-sheet 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+.g-crazy-eights .g-crazy-eights-picker p {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.g-crazy-eights .g-crazy-eights-suits {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.g-crazy-eights .g-crazy-eights-suit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 56px;
+  border: 0;
+  border-radius: 11px;
+  background: #fff;
+  color: #1d1d1f;
+  font: 600 15px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.14), 0 1px 2px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  transition: transform 0.12s, background 0.12s;
+}
+
+.g-crazy-eights .g-crazy-eights-suit:hover {
+  background: #f0f0f3;
+}
+
+.g-crazy-eights .g-crazy-eights-suit:active {
+  transform: scale(0.97);
+}
+
+.g-crazy-eights .g-crazy-eights-suit i {
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.g-crazy-eights .g-crazy-eights-suit.suit-1 i,
+.g-crazy-eights .g-crazy-eights-suit.suit-2 i {
+  color: #d70015;
+}
+
+.g-crazy-eights .g-crazy-eights-summary h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  text-align: center;
+}
+
+.g-crazy-eights .g-crazy-eights-gain {
+  margin: -6px 0 0;
+  font-size: 30px;
+  font-weight: 750;
+  color: #248a3d;
+  font-variant-numeric: tabular-nums;
+  animation: g-crazy-eights-pop 0.4s 0.15s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+}
+
+.g-crazy-eights .g-crazy-eights-summary ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.g-crazy-eights .g-crazy-eights-summary li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: 'who score' 'left score' 'meter meter';
+  column-gap: 10px;
+  row-gap: 2px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.g-crazy-eights .g-crazy-eights-summary li.is-winner {
+  box-shadow: inset 0 0 0 2px #34c759;
+}
+
+.g-crazy-eights .g-crazy-eights-who {
+  grid-area: who;
+  font-weight: 600;
+}
+
+.g-crazy-eights .g-crazy-eights-left {
+  grid-area: left;
+  color: #6e6e73;
+  font-size: 12px;
+}
+
+.g-crazy-eights .g-crazy-eights-summary li b {
+  grid-area: score;
+  align-self: center;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.g-crazy-eights .g-crazy-eights-meter {
+  grid-area: meter;
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: #e5e5ea;
+  overflow: hidden;
+}
+
+.g-crazy-eights .g-crazy-eights-meter i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: #34c759;
+  transition: width 0.6s ease-out;
+}
+
+.g-crazy-eights .g-crazy-eights-note {
+  margin: 0;
+  font-size: 13px;
+  color: #6e6e73;
+}
+
+
+@media (max-height: 420px) {
+  .g-crazy-eights .g-crazy-eights-seat.pos-top {
+    top: 4px;
+  }
+
+  .g-crazy-eights .g-crazy-eights-bar {
+    min-height: 40px;
+  }
+}
+
+@keyframes g-crazy-eights-fly {
+  from {
+    translate: var(--fx, 0) var(--fy, 0);
+    scale: var(--fs, 1);
+    opacity: 0.4;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+
+@keyframes g-crazy-eights-flip {
+  from {
+    translate: var(--fx, 0) var(--fy, 0);
+    scale: var(--fs, 1);
+    rotate: y 180deg;
+    filter: brightness(0.6);
+  }
+  45% {
+    filter: brightness(0.6);
+  }
+  55% {
+    filter: none;
+  }
+}
+
+@keyframes g-crazy-eights-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@keyframes g-crazy-eights-nudge {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -3px;
+  }
+}
+
+@keyframes g-crazy-eights-pop {
+  from {
+    scale: 0.4;
+    opacity: 0;
+  }
+}
+
+@keyframes g-crazy-eights-toast {
+  0% {
+    translate: -50% -50%;
+    scale: 0.5;
+    opacity: 0;
+  }
+  18% {
+    translate: -50% -50%;
+    scale: 1.08;
+    opacity: 1;
+  }
+  28% {
+    scale: 1;
+  }
+  75% {
+    translate: -50% -50%;
+    opacity: 1;
+  }
+  100% {
+    translate: -50% -90%;
+    opacity: 0;
+  }
+}
+
+@keyframes g-crazy-eights-rise {
+  from {
+    translate: 0 5px;
+    opacity: 0;
+  }
+}
+
+@keyframes g-crazy-eights-hint {
+  0% {
+    opacity: 0;
+    translate: 0 5px;
+  }
+  10%,
+  85% {
+    opacity: 1;
+    translate: 0 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes g-crazy-eights-shake {
+  20% {
+    translate: -6px 0;
+  }
+  45% {
+    translate: 5px 0;
+  }
+  70% {
+    translate: -3px 0;
+  }
+  90% {
+    translate: 1px 0;
+  }
+}
+
+@keyframes g-crazy-eights-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes g-crazy-eights-sheet {
+  from {
+    scale: 0.92;
+    opacity: 0;
+  }
+}
+
+.g-crazy-eights .g-crazy-eights-rivals {
+  display: contents;
+}
+
+/* Short laptop windows: pile on the left, rivals in a row, your hand below them */
+.g-crazy-eights .g-crazy-eights-table.is-short {
+  grid-template-columns: calc(var(--cw) * 2.45 + 28px) 1fr;
+  grid-template-rows: auto auto 1fr;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-rivals {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px 0;
+  min-width: 0;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-seat {
+  position: static;
+  translate: none;
+  min-width: 0;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-backs {
+  display: none;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-name {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-name em {
+  display: none;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-middle {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  padding: 0 0 14px 12px;
+  gap: calc(var(--cw) * 0.3);
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-ring {
+  display: none;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-count {
+  bottom: -18px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-called {
+  bottom: -26px;
+  font-size: 12px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-bar {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 36px;
+  padding: 0 8px;
+  gap: 6px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-me {
+  padding: 3px 9px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-status {
+  font-size: 13px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-actions .arcade-btn {
+  min-width: 60px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-hand {
+  grid-column: 2;
+  grid-row: 3;
+  align-self: end;
+  margin-bottom: 2px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-slot {
+  top: 12px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-sheet {
+  padding: 8px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-picker,
+.g-crazy-eights .is-short .g-crazy-eights-summary {
+  width: min(560px, 100%);
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-suits {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-suit {
+  min-height: 44px;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-summary ul {
+  flex-direction: row;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-summary li {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-gain {
+  margin: -4px 0 0;
+  font-size: 22px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-rivals {
+  justify-content: flex-start;
+  padding-right: 150px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-bar {
+  grid-template-columns: 1fr auto;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-status {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.g-crazy-eights .g-crazy-eights-me[hidden] {
+  display: none;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-rivals {
+  grid-column: 1 / -1;
+  min-height: 46px;
+  align-items: flex-start;
+  padding: 10px 140px 0 64px;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-seat {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-seat .g-crazy-eights-name {
+  gap: 4px;
+  padding: 3px 7px;
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-seat .g-crazy-eights-name b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-seat .g-crazy-eights-name span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Online, the room badge sits top center, so the rivals drop below it */
+.g-crazy-eights .is-short.is-online .g-crazy-eights-rivals {
+  min-height: 60px;
+  padding-top: 36px;
+}
+
+.g-crazy-eights .g-crazy-eights-table {
+  overflow: clip;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-bar {
+  min-height: 40px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-middle {
+  padding-top: 44px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-hand .g-crazy-eights-slot {
+  top: 6px;
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-hand {
+  margin-bottom: 0;
+}

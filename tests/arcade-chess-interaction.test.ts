@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { bestMove } from '../src/os/arcade/games/chess/ai.ts';
 import { BLACK, WHITE, QUEEN, findMove, moveCaptured, moveFrom, moveTo, newGame, parseSquare, pieces, play, toFen, type Game } from '../src/os/arcade/games/chess/engine.ts';
-import { PieceDrag, boardPoint, columnOf, initialIds, nextIds, pieceTransform, rowOf, squareAtPoint, type BoardQuad, type Point } from '../src/os/arcade/games/chess/interaction.ts';
+import { PieceDrag, boardPoint, columnOf, initialIds, nextIds, pieceTransform, rowOf, squareAtPoint, toggleSelection, type BoardQuad, type Point } from '../src/os/arcade/games/chess/interaction.ts';
 
 const sq = parseSquare;
 const near = (actual: Point | null, expected: Point) => {
@@ -50,6 +50,25 @@ test('click/hover/release retains every home transform, including a1 and h8', ()
     assert.equal(drag.end(1)?.moved, false);
     assert.equal(pieceTransform(square, false, 320, null), home);
   }
+});
+
+test('selected-square presses toggle selection without changing a selected-piece drag', () => {
+  assert.equal(toggleSelection(null, 12), 12);
+  assert.equal(toggleSelection(12, 12), null);
+  assert.equal(toggleSelection(12, 20), 20);
+
+  const click = new PieceDrag();
+  click.begin(1, sq('e2'), { x: 10, y: 10 }, true);
+  assert.deepEqual(click.end(1), { pid: 1, from: sq('e2'), start: { x: 10, y: 10 }, moved: false, reselect: true });
+
+  const move = new PieceDrag();
+  move.begin(2, sq('e2'), { x: 10, y: 10 }, true);
+  assert.ok(move.move(2, { x: 15, y: 10 }, { x: 0.6, y: 0.8 }));
+  assert.equal(move.end(2)?.moved, true);
+
+  const defaultSelection = new PieceDrag();
+  defaultSelection.begin(3, sq('e2'), { x: 10, y: 10 });
+  assert.equal(defaultSelection.end(3)?.reselect, false);
 });
 
 test('drag threshold uses actual pointer-down in client pixels, not local square center', () => {
