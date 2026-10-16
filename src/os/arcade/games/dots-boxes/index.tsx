@@ -32,6 +32,7 @@ const COLORS = ['#0a84ff', '#ff453a', '#30d158', '#ff9f0a'];
 const LOCAL_NAMES = ['Blue', 'Red', 'Green', 'Orange'];
 const CPU_NAMES = ['Pip', 'Moss', 'Juno'];
 const GAME = 'dots-boxes';
+const sideLayout = (w: number, h: number) => w >= 560 && w > h * 1.35;
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
@@ -74,7 +75,8 @@ function OnlineSetup() {
 
 type Seat = { name: string; color: string; cpu: boolean; seat: number; left: boolean };
 type Spark = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string };
-type Think = { id: number; moves: number; wait: number; line: number | null };
+/** `at` is a performance.now() deadline, so slow frames (the loop caps dt) never stretch a bot's turn. */
+type Think = { id: number; moves: number; at: number; line: number | null };
 type Match = {
   game: Game;
   seats: Seat[];
@@ -290,13 +292,16 @@ function DotsBoxes() {
     const s = m.current;
     const rows = s?.game.rows ?? Number(grid);
     const cols = s?.game.cols ?? Number(grid);
-    const top = 50;
-    const bottom = 62;
-    const pad = 22;
-    const cell = Math.max(10, Math.min(120, (w - pad * 2) / cols, (h - top - bottom) / rows));
+    // wide windows put the scoreboard in a left column so the board can use the full height
+    const side = sideLayout(w, h);
+    const top = side ? 16 : 50;
+    const bottom = side ? 16 : 62;
+    const left = side ? 176 : 22;
+    const right = side ? 72 : 22;
+    const cell = Math.max(10, Math.min(120, (w - left - right) / cols, (h - top - bottom) / rows));
     const bw = cell * cols;
     const bh = cell * rows;
-    const x0 = (w - bw) / 2;
+    const x0 = left + (w - left - right - bw) / 2;
     const y0 = top + (h - top - bottom - bh) / 2;
     return { cell, x0, y0, bw, bh };
   };
@@ -511,12 +516,11 @@ function DotsBoxes() {
     if (drivesTurn(s)) {
       if (!s.think || s.think.moves !== s.game.moves) {
         const quick = s.streak > 0;
-        s.think = { id: ++reqId.current, moves: s.game.moves, wait: quick ? 0.2 + Math.random() * 0.1 : 0.35 + Math.random() * 0.25, line: null };
+        s.think = { id: ++reqId.current, moves: s.game.moves, at: performance.now() + (quick ? 200 + Math.random() * 100 : 350 + Math.random() * 250), line: null };
         askAi();
         redraw();
       } else {
-        s.think.wait -= dt;
-        if (s.think.wait <= 0 && s.think.line !== null) {
+        if (performance.now() >= s.think.at && s.think.line !== null) {
           const l = s.think.line;
           if (!commit(l)) {
             const fallback = chooseMove(s.game, 0);
@@ -698,6 +702,7 @@ function DotsBoxes() {
     else status = again ? `${seat?.name} scores, go again` : `${seat?.name}'s turn`;
   }
   const tight = (s?.seats.length ?? 0) > 2 && size.w < 520;
+  const side = sideLayout(size.w, size.h);
 
   return (
     <div className="g-dots-boxes-stage">
@@ -716,7 +721,7 @@ function DotsBoxes() {
         </div>
       )}
       {s && (
-        <div className={`g-dots-boxes-hud${tight ? ' is-tight' : ''}`}>
+        <div className={`g-dots-boxes-hud${tight ? ' is-tight' : ''}${side ? ' is-side' : ''}`}>
           {s.seats.map((seat, i) => (
             <div
               key={i}

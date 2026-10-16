@@ -100,6 +100,23 @@
 .g-dots-boxes .g-dots-boxes-hud.is-tight .g-dots-boxes-name {
   max-width: 64px;
 }
+.g-dots-boxes .g-dots-boxes-hud.is-side {
+  top: 46px;
+  right: auto;
+  bottom: auto;
+  width: 150px;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 6px;
+}
+.g-dots-boxes .g-dots-boxes-hud.is-side .g-dots-boxes-pill {
+  max-width: 150px;
+}
+.g-dots-boxes .g-dots-boxes-hud.is-side .g-dots-boxes-name {
+  max-width: 76px;
+}
 @keyframes g-dots-boxes-pulse {
   0%,
   100% {
