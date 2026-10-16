@@ -31,7 +31,7 @@
 .g-sumo-scores {
   position: absolute;
   top: 13px;
-  left: 50%;
+  left: var(--score-left, 50%);
   display: flex;
   gap: 6px;
   align-items: center;
@@ -42,6 +42,53 @@
   background: rgba(255, 249, 232, 0.82);
   box-shadow: 0 3px 11px rgba(43, 80, 79, 0.12);
   backdrop-filter: blur(8px);
+}
+
+.g-sumo-scores-probe {
+  top: -10000px;
+  left: -10000px;
+  width: max-content;
+  max-width: none;
+  transform: none;
+  flex-wrap: nowrap;
+  visibility: hidden;
+}
+
+.g-sumo-scores.is-bottom {
+  top: auto;
+  bottom: 8px;
+  left: var(--score-left, 8px);
+  width: var(--score-width, calc(100% - 16px));
+  max-width: var(--score-width, calc(100% - 16px));
+  box-sizing: border-box;
+  transform: none;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 2px;
+  padding: 2px 3px;
+  border-radius: 10px;
+}
+
+.g-sumo-scores.is-bottom .g-sumo-score {
+  width: 20px;
+  min-width: 20px;
+  gap: 1px;
+  padding: 1px 0;
+  box-sizing: border-box;
+}
+
+.g-sumo-scores.is-bottom .g-sumo-score > i {
+  width: 4px;
+  height: 4px;
+}
+
+.g-sumo-scores.is-bottom .g-sumo-score > span {
+  gap: 1px;
+}
+
+.g-sumo-scores.is-bottom .g-sumo-score b {
+  width: 3px;
+  height: 3px;
 }
 
 .g-sumo-round {
@@ -102,17 +149,9 @@
 }
 
 .g-sumo-warning {
-  position: absolute;
-  top: 52px;
-  left: 50%;
-  padding: 5px 11px;
-  transform: translateX(-50%);
   border: 1px solid rgba(255, 255, 255, 0.55);
-  border-radius: 14px;
   background: rgba(33, 98, 103, 0.78);
   color: #fff9e9;
-  font-size: 12px;
-  font-weight: 650;
 }
 
 .g-sumo-banner {
@@ -135,21 +174,42 @@
 }
 
 .g-sumo-status {
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  max-width: calc(100% - 24px);
-  padding: 2px 9px;
-  transform: translateX(-50%);
   border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 999px;
   background: rgba(33, 98, 103, 0.9);
   color: #fff9e9;
+}
+
+.g-sumo-status-stack {
+  position: absolute;
+  z-index: 3;
+  bottom: 8px;
+  left: 50%;
+  display: flex;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.g-sumo-warning,
+.g-sumo-status,
+.g-sumo-toast {
+  position: static;
+  top: auto;
+  left: auto;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 999px;
   font-size: 11px;
   font-weight: 650;
-  line-height: 1.2;
+  line-height: 1.15;
   text-align: center;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .g-sumo-tag {
@@ -167,6 +227,7 @@
   font-weight: 700;
   line-height: 1.2;
   white-space: nowrap;
+  visibility: hidden;
   pointer-events: none;
 }
 
@@ -176,20 +237,8 @@
 }
 
 .g-sumo-toast {
-  position: absolute;
-  z-index: 3;
-  top: 53px;
-  left: 50%;
-  max-width: calc(100% - 24px);
-  padding: 7px 12px;
-  transform: translateX(-50%);
-  border-radius: 14px;
   background: rgba(36, 57, 67, 0.86);
   color: white;
-  font-size: 12px;
-  font-weight: 600;
-  text-align: center;
-  pointer-events: none;
 }
 
 .g-sumo-stick {

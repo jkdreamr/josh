@@ -5,7 +5,7 @@ import { createGL, disposeTree, type GL } from './gl';
 type Three = typeof import('three');
 type Drop = { x: number; z: number; y: number; vx: number; vz: number; vy: number; life: number };
 type SplashRing = { x: number; z: number; life: number };
-type Position = { x: number; y: number; visible: boolean };
+type Position = { x: number; y: number; depth: number; visible: boolean };
 export type View = {
   gl: GL;
   resize: (w: number, h: number) => void;
@@ -366,6 +366,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       return {
         x: (point.x * 0.5 + 0.5) * width,
         y: (-point.y * 0.5 + 0.5) * height,
+        depth: point.z,
         visible: !car.out && point.z > -1 && point.z < 1,
       };
     },

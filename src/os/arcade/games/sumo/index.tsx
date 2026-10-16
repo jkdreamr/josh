@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { think } from './ai';
@@ -13,6 +13,7 @@ type Mode = 'cpu' | '2p';
 type StageMode = 'idle' | 'solo' | 'online';
 type Stick = { pointer: number; player: number; ox: number; oy: number; x: number; y: number };
 type Hud = { phase: string; timer: number; round: number; radius: number; startRadius: number; wins: number[]; positions: { x: number; z: number; y: number; out: boolean }[] };
+type ScoreLayout = { bottom: boolean; left: number; width: number };
 
 const MODE = defineSetting('sumo:mode', PLAY_MODES, 'cpu');
 const RIVALS = defineSetting('sumo:rivals', ['1', '3', '5', '7'] as const, '3');
@@ -167,6 +168,14 @@ function Play({ mode }: { mode: StageMode }) {
   const dashPointers = useRef(new Map<number, number>());
   const [touchCharge, setTouchCharge] = useState([0, 0]);
   const touchTimer = useRef(0);
+  const scoresRef = useRef<HTMLDivElement | null>(null);
+  const scoreProbeRef = useRef<HTMLDivElement | null>(null);
+  const roundRef = useRef<HTMLDivElement | null>(null);
+  const statusStackRef = useRef<HTMLDivElement | null>(null);
+  const [scoreLayout, setScoreLayout] = useState<ScoreLayout | null>(null);
+  const tagNodes = useRef(new Map<number, HTMLDivElement>());
+  const tagSizes = useRef(new Map<number, { width: number; height: number }>());
+  const tagRefCallbacks = useRef(new Map<number, (node: HTMLDivElement | null) => void>());
 
   const isOnline = mode === 'online' && !!online;
   const mine = () => (isOnline ? world.current?.cars.find((car) => car.seat === onlineRef.current?.seat)?.id ?? -1 : 0);
@@ -177,6 +186,46 @@ function Play({ mode }: { mode: StageMode }) {
     if (mode === 'online') return onlineRef.current?.seat === car.seat ? 'You' : car.name;
     return carId === 0 ? 'You' : car.name;
   };
+
+  useLayoutEffect(() => {
+    const stage = ref.current;
+    const scores = scoresRef.current;
+    const probe = scoreProbeRef.current;
+    const round = roundRef.current;
+    const statusStack = statusStackRef.current;
+    const controls = stage?.closest('.arcade-shell')?.querySelector<HTMLElement>('.arcade-ctrl') ?? null;
+    if (!stage || !scores || !probe || !round || !statusStack) return;
+
+    const update = () => {
+      const stageRect = stage.getBoundingClientRect();
+      const roundRect = round.getBoundingClientRect();
+      const controlRect = controls?.getBoundingClientRect();
+      const scoreWidth = probe.getBoundingClientRect().width;
+      const leftEdge = roundRect.right - stageRect.left + 8;
+      const rightEdge = controlRect ? controlRect.left - stageRect.left - 8 : stageRect.width - 8;
+      const available = Math.max(0, rightEdge - leftEdge);
+      const bottom = scoreWidth > available;
+      const statusWidth = statusStack.getBoundingClientRect().width;
+      const width = bottom
+        ? Math.max(0, Math.min(stageRect.width - 16, statusWidth > 0 ? (stageRect.width - statusWidth - 32) / 2 : stageRect.width - 16))
+        : scoreWidth;
+      const left = bottom ? 8 : leftEdge + available / 2;
+      const next = { bottom, left: Math.round(left), width: Math.round(width) };
+      setScoreLayout((previous) => previous
+        && previous.bottom === next.bottom
+        && previous.left === next.left
+        && previous.width === next.width
+        ? previous
+        : next);
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    for (const element of [stage, scores, probe, round, statusStack, controls]) {
+      if (element) observer.observe(element);
+    }
+    return () => observer.disconnect();
+  }, [mode]);
 
   useEffect(() => {
     shell.setScore(null);
@@ -229,6 +278,21 @@ function Play({ mode }: { mode: StageMode }) {
     const dashPlayer = twoPlayer ? player === 0 ? keys.down('Space') : keys.down('Enter') : keys.down('Space', 'Enter');
     const touchDash = [...dashPointers.current.values()].includes(player);
     return { x, y, dash: touchDash || dashPlayer };
+  };
+
+  const tagRefFor = (id: number) => {
+    let callback = tagRefCallbacks.current.get(id);
+    if (!callback) {
+      callback = (node) => {
+        if (node) tagNodes.current.set(id, node);
+        else {
+          tagNodes.current.delete(id);
+          tagSizes.current.delete(id);
+        }
+      };
+      tagRefCallbacks.current.set(id, callback);
+    }
+    return callback;
   };
 
   const inputsForFrame = (): Input[] => {
@@ -335,7 +399,75 @@ function Play({ mode }: { mode: StageMode }) {
     lastSimWall.current = performance.now() / 1000;
   };
 
-  const render = () => view.current?.render();
+  const updateTags = () => {
+    const currentWorld = world.current;
+    const currentView = view.current;
+    const stage = ref.current;
+    if (!currentWorld || !currentView || !stage) return;
+    const compact = stage.clientHeight < 220;
+
+    const candidates: {
+      node: HTMLDivElement;
+      id: number;
+      x: number;
+      y: number;
+      depth: number;
+      width: number;
+      height: number;
+      priority: boolean;
+    }[] = [];
+
+    for (const car of currentWorld.cars) {
+      const node = tagNodes.current.get(car.id);
+      if (!node) continue;
+      if (car.out || (compact && car.ai !== null)) {
+        node.style.visibility = 'hidden';
+        continue;
+      }
+      const size = tagSizes.current.get(car.id);
+      const position = currentView.project(car);
+      if (!size || !position.visible
+        || position.x + size.width / 2 < 0
+        || position.x - size.width / 2 > stage.clientWidth
+        || position.y < 0
+        || position.y - size.height > stage.clientHeight) {
+        node.style.visibility = 'hidden';
+        continue;
+      }
+      const name = carName(car.id);
+      candidates.push({
+        node,
+        id: car.id,
+        x: position.x,
+        y: position.y,
+        depth: position.depth,
+        width: size.width,
+        height: size.height,
+        priority: name === 'You' || name === 'P1' || name === 'P2',
+      });
+    }
+
+    candidates.sort((a, b) => Number(b.priority) - Number(a.priority) || a.depth - b.depth || a.id - b.id);
+    const placed: { left: number; right: number; top: number; bottom: number }[] = [];
+    for (const candidate of candidates) {
+      const rect = {
+        left: candidate.x - candidate.width / 2 - 2,
+        right: candidate.x + candidate.width / 2 + 2,
+        top: candidate.y - candidate.height - 2,
+        bottom: candidate.y + 2,
+      };
+      const overlaps = placed.some((other) => rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top);
+      candidate.node.style.left = `${candidate.x}px`;
+      candidate.node.style.top = `${candidate.y}px`;
+      candidate.node.style.visibility = overlaps ? 'hidden' : 'visible';
+      if (!overlaps) placed.push(rect);
+    }
+  };
+
+  const render = () => {
+    updateTags();
+    view.current?.render();
+  };
   useGameLoop(updateWorld, render);
 
   useEffect(() => {
@@ -547,6 +679,29 @@ function Play({ mode }: { mode: StageMode }) {
   const statusText = yourCar?.falling || yourCar?.out
     ? "You're in the Water"
     : watched ? 'Watching This Round' : '';
+  const tagKey = `${compactTags ? 'compact' : 'full'}|${current.cars
+    .filter((car) => !car.out && (!compactTags || car.ai === null))
+    .map((car) => `${car.id}:${carName(car.id)}`)
+    .join('|')}`;
+
+  useLayoutEffect(() => {
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const id = Number((entry.target as HTMLElement).dataset.sumoCarId);
+        if (!Number.isInteger(id)) continue;
+        const borderBox = entry.borderBoxSize?.[0];
+        const style = getComputedStyle(entry.target);
+        const px = (value: string) => Number.parseFloat(value) || 0;
+        const width = borderBox?.inlineSize
+          ?? entry.contentRect.width + px(style.paddingLeft) + px(style.paddingRight) + px(style.borderLeftWidth) + px(style.borderRightWidth);
+        const height = borderBox?.blockSize
+          ?? entry.contentRect.height + px(style.paddingTop) + px(style.paddingBottom) + px(style.borderTopWidth) + px(style.borderBottomWidth);
+        if (width > 0 && height > 0) tagSizes.current.set(id, { width, height });
+      }
+    });
+    for (const node of tagNodes.current.values()) observer.observe(node);
+    return () => observer.disconnect();
+  }, [tagKey]);
 
   return (
     <div
@@ -561,7 +716,14 @@ function Play({ mode }: { mode: StageMode }) {
       onLostPointerCapture={endPointer}
     >
       <div className="g-sumo-hud" aria-live="polite">
-        <div className="g-sumo-scores">
+        <div
+          className={`g-sumo-scores${scoreLayout?.bottom ? ' is-bottom' : ''}`}
+          ref={scoresRef}
+          style={scoreLayout ? ({
+            '--score-left': `${scoreLayout.left}px`,
+            '--score-width': `${scoreLayout.width}px`,
+          } as CSSProperties) : undefined}
+        >
           {hud.wins.map((wins, i) => (
             <div className={`g-sumo-score${i === mine() ? ' is-you' : ''}`} key={i} aria-label={`${carName(i)} ${wins} Wins`}>
               <i style={{ backgroundColor: CAR_COLORS[current.cars[i]?.color ?? i] }} />
@@ -569,28 +731,38 @@ function Play({ mode }: { mode: StageMode }) {
             </div>
           ))}
         </div>
-        <div className="g-sumo-round">Round {hud.round}</div>
-        {hud.radius < hud.startRadius - 0.02 && <div className="g-sumo-warning">The Float Is Shrinking</div>}
+        <div className="g-sumo-scores g-sumo-scores-probe" ref={scoreProbeRef} aria-hidden="true">
+          {hud.wins.map((wins, i) => (
+            <div className={`g-sumo-score${i === mine() ? ' is-you' : ''}`} key={i}>
+              <i style={{ backgroundColor: CAR_COLORS[current.cars[i]?.color ?? i] }} />
+              <span>{[0, 1, 2].map((pip) => <b key={pip} className={pip < wins ? 'is-won' : ''} />)}</span>
+            </div>
+          ))}
+        </div>
+        <div className="g-sumo-round" ref={roundRef}>Round {hud.round}</div>
         {centerText && <div className="g-sumo-banner">{centerText}</div>}
-        {statusText && <div className="g-sumo-status">{statusText}</div>}
+        <div className="g-sumo-status-stack" ref={statusStackRef}>
+          {hud.radius < hud.startRadius - 0.02 && <div className="g-sumo-warning">The Float Is Shrinking</div>}
+          {statusText && <div className="g-sumo-status">{statusText}</div>}
+          {toast && <div className="g-sumo-toast">{toast}</div>}
+        </div>
       </div>
 
       {current.cars.map((car) => {
-        if (compactTags && car.ai !== null) return null;
-        const position = view.current?.project(car);
-        if (!position?.visible) return null;
+        if (car.out || (compactTags && car.ai !== null)) return null;
         return (
           <div
             className={`g-sumo-tag${compactTags ? ' is-compact' : ''}`}
             key={car.id}
-            style={{ left: position.x, top: position.y, '--tag-color': CAR_COLORS[car.color] } as CSSProperties}
+            ref={tagRefFor(car.id)}
+            data-sumo-car-id={car.id}
+            style={{ '--tag-color': CAR_COLORS[car.color] } as CSSProperties}
           >
             {carName(car.id)}
           </div>
         );
       })}
 
-      {toast && <div className="g-sumo-toast">{toast}</div>}
       {shell.touch && shell.status === 'playing' && (
         <>
           {sticks.map((stick) => (
