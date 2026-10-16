@@ -66,12 +66,13 @@ export function build(THREE: Three, host: HTMLElement): World | null {
   const aimMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false });
   const shaft = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), aimMat);
   shaft.rotation.x = -Math.PI / 2;
-  const headShape = new THREE.Shape();
-  headShape.moveTo(0, 0.17);
-  headShape.lineTo(0.26, 0);
-  headShape.lineTo(0, -0.17);
-  headShape.lineTo(0, 0.17);
-  const head = new THREE.Mesh(new THREE.ShapeGeometry(headShape), aimMat);
+  const tri = (pts: number[]) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute([pts[0], pts[1], 0, pts[2], pts[3], 0, pts[4], pts[5], 0], 3));
+    g.computeVertexNormals();
+    return g;
+  };
+  const head = new THREE.Mesh(tri([0, 0.17, 0, -0.17, 0.26, 0]), aimMat);
   head.rotation.x = -Math.PI / 2;
   aimGroup.add(shaft, head);
   aimGroup.visible = false;
@@ -93,7 +94,7 @@ export function build(THREE: Three, host: HTMLElement): World | null {
     const g = new THREE.Group();
     g.position.set(d.x, BASE, d.z);
     g.rotation.y = d.a ?? 0;
-    g.scale.setScalar(d.s ?? 1);
+    g.scale.setScalar((d.s ?? 1) * (d.k === 'palm' ? 0.62 : 1));
     root.add(g);
     switch (d.k) {
       case 'palm': {
@@ -287,11 +288,7 @@ export function build(THREE: Three, host: HTMLElement): World | null {
     f.position.set(h.cup.x + CUP_R * 0.55, cy, h.cup.z);
     root.add(f);
     cyl(0.016, 0.016, 1.15, '#f4f1ea', 0, 0.57, 0, f, 6);
-    const fs = new THREE.Shape();
-    fs.moveTo(0, 0);
-    fs.lineTo(0.42, -0.13);
-    fs.lineTo(0, -0.27);
-    const cloth = mesh(new THREE.ShapeGeometry(fs), new THREE.MeshLambertMaterial({ color: '#8c1515', side: THREE.DoubleSide }), 0, 1.13, 0, f);
+    const cloth = mesh(tri([0, 0, 0, -0.27, 0.42, -0.13]), new THREE.MeshLambertMaterial({ color: '#8c1515', side: THREE.DoubleSide }), 0, 1.13, 0, f);
     flag = cloth;
     for (const p of h.posts) {
       const y = height(h, p.x, p.z);
@@ -354,13 +351,8 @@ export function build(THREE: Three, host: HTMLElement): World | null {
       const dx = Math.cos(L.a);
       const dz = Math.sin(L.a);
       for (const side of [-1, 1]) {
-        const pts: T.Vector3[] = [];
-        for (let i = 0; i <= 48; i++) {
-          const th = (i / 48) * Math.PI * 2;
-          const s = (i / 48 - 0.5) * 0.36 + side * (R + 0.03);
-          pts.push(new THREE.Vector3(L.x + dx * Math.sin(th) * L.r - dz * s, L.r * (1 - Math.cos(th)), L.z + dz * Math.sin(th) * L.r + dx * s));
-        }
-        mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 96, 0.03, 6, false), lam('#e9e7e0'));
+        const rail = mesh(new THREE.TorusGeometry(L.r, 0.03, 6, 48), lam('#e9e7e0'), L.x - dz * side * (R + 0.03), L.r, L.z + dx * side * (R + 0.03));
+        rail.rotation.y = -L.a;
       }
       for (const side of [-1, 1]) {
         const leg = box(0.06, L.r, 0.06, '#9da1a6', L.x, L.r / 2, L.z + side * 0.42);
@@ -385,17 +377,18 @@ export function build(THREE: Three, host: HTMLElement): World | null {
   function fit(fly: boolean) {
     if (!hole) return;
     const pts = bounds();
-    const box3 = new THREE.Box3().setFromPoints(pts);
-    const c = box3.getCenter(new THREE.Vector3());
+    const lo3 = pts.reduce((a, p) => a.min(p), pts[0].clone());
+    const hi3 = pts.reduce((a, p) => a.max(p), pts[0].clone());
+    const c = lo3.add(hi3).multiplyScalar(0.5);
     c.y = 0;
     const portrait = aspect < 0.95;
-    const pitch = portrait ? 1.0 : 0.95;
+    const pitch = portrait ? 1.18 : 1.1;
     const dir = portrait ? new THREE.Vector3(-Math.cos(pitch), Math.sin(pitch), 0) : new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch));
     camera.fov = portrait ? 46 : 36;
     camera.aspect = aspect;
     camera.updateProjectionMatrix();
     const topPad = Math.min(0.5, 70 / vh);
-    const botPad = Math.min(0.5, 64 / vh);
+    const botPad = Math.min(0.5, 104 / vh);
     const sidePad = Math.min(0.3, 18 / vw);
     const ok = (d: number) => {
       camera.position.copy(c).addScaledVector(dir, d);

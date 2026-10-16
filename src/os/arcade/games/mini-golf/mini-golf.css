@@ -14,8 +14,10 @@
 .g-mini-golf .g-mini-golf-top {
   position: absolute;
   top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 10px;
+  max-width: calc(100% - 200px);
+  overflow: hidden;
+  text-overflow: ellipsis;
   display: flex;
   gap: 10px;
   align-items: center;

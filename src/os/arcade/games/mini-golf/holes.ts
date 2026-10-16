@@ -53,7 +53,7 @@ export const HOLES: Hole[] = [
     ground: [{ k: 'tilt', gx: 0, gz: 0.025 }],
     ponds: [],
     movers: [],
-    decor: [...row('palm', 0, 12, 2.2, -2.1), ...row('palm', 1.1, 12, 2.2, 2.1), { k: 'palm', x: 6.2, z: 0, s: 0.8 }],
+    decor: [...row('palm', 0, 12, 2.2, -2.3), ...row('palm', 1.1, 12, 2.2, 2.3), { k: 'palm', x: 6.2, z: 0, s: 0.8 }],
     theme: DAY,
   },
   {

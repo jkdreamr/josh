@@ -398,8 +398,7 @@ export function ballPos(h: Hole, b: Ball) {
     const dx = Math.cos(L.a);
     const dz = Math.sin(L.a);
     const u = Math.sin(th) * (L.r - R);
-    const side = (b.loop.s / (Math.PI * 2 * L.r) - 0.5) * 0.36;
-    return { x: b.x + dx * u - dz * side, y: (L.r - R) * (1 - Math.cos(th)) + R, z: b.z + dz * u + dx * side };
+    return { x: b.x + dx * u, y: (L.r - R) * (1 - Math.cos(th)) + R, z: b.z + dz * u };
   }
   const y = b.state === 'holed' ? -0.12 : b.state === 'water' ? height(h, b.x, b.z) - 0.1 : height(h, b.x, b.z) + R;
   return { x: b.x, y, z: b.z };
