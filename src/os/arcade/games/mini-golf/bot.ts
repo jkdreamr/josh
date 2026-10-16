@@ -100,9 +100,9 @@ export function rng(seed: number) {
 }
 
 const NOISE: Record<Level, { a: number; p: number; pick: number }> = {
-  easy: { a: 0.13, p: 0.22, pick: 4 },
-  normal: { a: 0.085, p: 0.15, pick: 2 },
-  hard: { a: 0.05, p: 0.09, pick: 1 },
+  easy: { a: 0.17, p: 0.28, pick: 4 },
+  normal: { a: 0.11, p: 0.19, pick: 3 },
+  hard: { a: 0.07, p: 0.12, pick: 2 },
 };
 
 function score(h: Hole, from: Ball, end: Ball) {
