@@ -185,3 +185,17 @@
     opacity: 1;
   }
 }
+.g-pool .is-tight .g-pool-player {
+  gap: 2px;
+  padding: 6px 8px;
+}
+.g-pool .is-tight .g-pool-racks {
+  flex-wrap: nowrap;
+  gap: 2px;
+  min-height: 9px;
+}
+.g-pool .is-tight .g-pool-mini {
+  flex: none;
+  width: 9px;
+  height: 9px;
+}

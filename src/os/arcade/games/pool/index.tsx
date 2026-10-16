@@ -571,7 +571,7 @@ function Pool() {
       : { left: box.x - v.panelW / 2 - 34, top: Math.max(2, cardTop - 48) } : { left: box.x + box.w / 2 - 22, top: box.y + box.h + 12 };
 
   return (
-    <div className={`g-pool-stage ${v.side ? 'is-side' : 'is-row'}`}>
+    <div className={`g-pool-stage ${v.side ? 'is-side' : 'is-row'} ${size.h < 220 ? 'is-tight' : ''}`}>
       <canvas
         ref={ref}
         className={`g-pool-canvas ${mine ? 'is-live' : ''}`}
