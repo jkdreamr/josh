@@ -282,7 +282,22 @@ function finishRound(world: World, winner: number | null, events: Event[]) {
   events.push({ type: 'round', winner });
 }
 
-function simulate(world: World, inputs: Input[], events: Event[]) {
+function simulate(world: World, inputs: Input[], events: Event[], authoritative: boolean) {
+  if (!authoritative) {
+    if (world.phase !== 'fight') return;
+    for (const car of world.cars) {
+      if (!car.out && !car.falling) moveCar(car, boundedInput(inputs[car.id]), STEP, events);
+    }
+    for (let i = 0; i < world.cars.length; i++) {
+      const a = world.cars[i];
+      if (a.out || a.falling) continue;
+      for (let j = i + 1; j < world.cars.length; j++) {
+        const b = world.cars[j];
+        if (!b.out && !b.falling) collide(a, b, events);
+      }
+    }
+    return;
+  }
   if (world.phase === 'count') {
     world.timer -= STEP;
     if (world.timer <= 0) {
@@ -342,13 +357,13 @@ function simulate(world: World, inputs: Input[], events: Event[]) {
   }
 }
 
-export function step(world: World, inputs: Input[], dt: number): Event[] {
+export function step(world: World, inputs: Input[], dt: number, options: { authoritative?: boolean } = {}): Event[] {
   if (!Number.isFinite(dt) || dt <= 0 || world.phase === 'done') return [];
   world.acc += dt;
   const events: Event[] = [];
   while (world.acc + 1e-9 >= STEP && (world.phase as Phase) !== 'done') {
     world.acc -= STEP;
-    simulate(world, inputs, events);
+    simulate(world, inputs, events, options.authoritative !== false);
   }
   return events;
 }

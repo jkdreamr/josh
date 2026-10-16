@@ -1,6 +1,6 @@
 import type * as T from 'three';
 import type { Car, World } from './logic.ts';
-import { createGL, damp, disposeTree, type GL } from './gl';
+import { createGL, disposeTree, type GL } from './gl';
 
 type Three = typeof import('three');
 type Drop = { x: number; z: number; y: number; vx: number; vz: number; vy: number; life: number };
@@ -44,9 +44,30 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   sun.position.set(-12, 22, 9);
   scene.add(sun);
 
+  const waterGeometry = new THREE.PlaneGeometry(320, 320, 64, 64);
+  const waterPositions = waterGeometry.attributes.position;
+  const waterColors = new Float32Array(waterPositions.count * 3);
+  const deepWater = new THREE.Color(0x174c61);
+  const quietWater = new THREE.Color(0x397f86);
+  const lagoonBand = new THREE.Color(0x66c5ad);
+  const waterColor = new THREE.Color();
+  const smoothstep = (from: number, to: number, value: number) => {
+    const t = Math.max(0, Math.min(1, (value - from) / (to - from)));
+    return t * t * (3 - 2 * t);
+  };
+  for (let i = 0; i < waterPositions.count; i++) {
+    const distance = Math.hypot(waterPositions.getX(i), waterPositions.getY(i));
+    const band = smoothstep(10.5, 12.5, distance) * (1 - smoothstep(20, 29, distance));
+    const horizon = smoothstep(23, 76, distance);
+    waterColor.copy(quietWater).lerp(lagoonBand, band).lerp(deepWater, horizon);
+    waterColors[i * 3] = waterColor.r;
+    waterColors[i * 3 + 1] = waterColor.g;
+    waterColors[i * 3 + 2] = waterColor.b;
+  }
+  waterGeometry.setAttribute('color', new THREE.Float32BufferAttribute(waterColors, 3));
   const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(160, 160),
-    new THREE.MeshLambertMaterial({ color: 0x3d9e9e, flatShading: true }),
+    waterGeometry,
+    new THREE.MeshLambertMaterial({ vertexColors: true }),
   );
   water.rotation.x = -Math.PI / 2;
   water.position.y = -1.25;
@@ -180,6 +201,8 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   let width = 1;
   let height = 1;
   let cameraDistance = 30;
+  let fitRadius = 0;
+  let fitDirty = true;
   let previousRadius = 0;
   let flash = 0;
   let shake = 0;
@@ -191,12 +214,54 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     gl.renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    fitDirty = true;
   };
   const distanceFor = (radius: number) => {
-    const vertical = (camera.fov * Math.PI) / 360;
-    const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
-    const extent = radius + 2;
-    return Math.max(extent / Math.tan(horizontal), (extent * Math.sin(pitch)) / Math.tan(vertical)) * 1.08;
+    const points: T.Vector3[] = [];
+    const edgeRadius = radius * 1.11 + 0.12;
+    const edgeBottom = 0.08 - radius * 0.11;
+    const edgeTop = 0.08 + radius * 0.11;
+    for (let i = 0; i < 16; i++) {
+      const angle = (i / 16) * Math.PI * 2;
+      const x = Math.cos(angle) * edgeRadius;
+      const z = Math.sin(angle) * edgeRadius;
+      points.push(
+        new THREE.Vector3(x, edgeBottom, z),
+        new THREE.Vector3(x, edgeTop, z),
+        new THREE.Vector3(x, 1.85, z),
+      );
+      const pillarX = Math.cos(angle) * 0.72;
+      const pillarZ = Math.sin(angle) * 0.72;
+      points.push(new THREE.Vector3(pillarX, -2.4, pillarZ), new THREE.Vector3(pillarX, -0.2, pillarZ));
+    }
+    const topInset = height <= 280 ? 42 : Math.min(44, Math.max(34, height * 0.07));
+    const bottomInset = height <= 280 ? 8 : 12;
+    const leftBound = -1 + (24 / width);
+    const rightBound = 1 - (24 / width);
+    const bottomBound = -1 + (2 * bottomInset / height);
+    const topBound = 1 - (2 * topInset / height);
+    const projected = new THREE.Vector3();
+    const fits = (distance: number) => {
+      camera.position.set(0, distance * Math.sin(pitch), distance * Math.cos(pitch));
+      camera.lookAt(0, 0, 0);
+      camera.updateMatrixWorld(true);
+      for (const point of points) {
+        projected.copy(point).project(camera);
+        if (projected.z < -1 || projected.z > 1
+          || projected.x < leftBound || projected.x > rightBound
+          || projected.y < bottomBound || projected.y > topBound) return false;
+      }
+      return true;
+    };
+    let low = 1;
+    let high = 10;
+    while (high < 220 && !fits(high)) high *= 1.5;
+    for (let i = 0; i < 26; i++) {
+      const middle = (low + high) / 2;
+      if (fits(middle)) high = middle;
+      else low = middle;
+    }
+    return high * 1.025;
   };
 
   const view: View = {
@@ -206,7 +271,12 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       clock += dt;
       flash = Math.max(0, flash - dt * 2.4);
       shake = Math.max(0, shake - dt * 1.8);
-      cameraDistance = damp(cameraDistance, distanceFor(world.radius || world.startRadius || 10), 2, dt);
+      const startRadius = world.startRadius || world.radius || 10;
+      if (fitDirty || fitRadius !== startRadius) {
+        cameraDistance = distanceFor(startRadius);
+        fitRadius = startRadius;
+        fitDirty = false;
+      }
       const jitterX = shake > 0 ? Math.sin(clock * 48) * shake * 0.18 : 0;
       const jitterZ = shake > 0 ? Math.cos(clock * 41) * shake * 0.18 : 0;
       camera.position.set(jitterX, cameraDistance * Math.sin(pitch), cameraDistance * Math.cos(pitch) + jitterZ);

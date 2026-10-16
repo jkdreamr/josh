@@ -96,6 +96,21 @@ test('the float shrinks, stops at sudden death, and falling cars splash out', ()
   assert.ok(splashes.some((event) => event.type === 'splash' && event.car === car.id));
 });
 
+test('physics-only stepping moves cars without changing host-owned outcomes', () => {
+  const world = createWorld(entries(2), 43);
+  go(world);
+  const car = world.cars[0];
+  car.x = world.radius + 4;
+  const radius = world.radius;
+  const wins = [...world.wins];
+  step(world, idle(world), STEP, { authoritative: false });
+  assert.equal(world.phase, 'fight');
+  assert.equal(world.radius, radius);
+  assert.deepEqual(world.wins, wins);
+  assert.equal(car.out, false);
+  assert.equal(car.falling, false);
+});
+
 test('rounds award the last car, draws award nobody, and the cap and match target resolve', () => {
   const world = createWorld(entries(2), 5);
   go(world);

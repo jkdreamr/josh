@@ -4,7 +4,7 @@ import type { GameProps } from '../../types';
 import { think } from './ai';
 import { CAR_COLORS, createScene, type View } from './scene';
 import { configOf, endOf, hostState, inputOf, parsePacket, type PackedCar } from './net';
-import { TARGET, createWorld, matchWinner, step, takeoverDeparted, type CarConfig, type Input, type Level, type World } from './logic';
+import { createWorld, matchWinner, step, takeoverDeparted, type CarConfig, type Input, type Level, type World } from './logic';
 import { meta } from './meta';
 import './sumo.css';
 
@@ -227,7 +227,8 @@ function Play({ mode }: { mode: StageMode }) {
       y = (keys.down('KeyS', 'ArrowDown') ? 1 : 0) - (keys.down('KeyW', 'ArrowUp') ? 1 : 0);
     }
     const dashPlayer = twoPlayer ? player === 0 ? keys.down('Space') : keys.down('Enter') : keys.down('Space', 'Enter');
-    return { x, y, dash: dashPointers.current.has(player) || dashPlayer };
+    const touchDash = [...dashPointers.current.values()].includes(player);
+    return { x, y, dash: touchDash || dashPlayer };
   };
 
   const inputsForFrame = (): Input[] => {
@@ -294,7 +295,8 @@ function Play({ mode }: { mode: StageMode }) {
         toastTimer.current = 3;
       }
     }
-    const events = step(current, inputsForFrame(), dt);
+    const authoritative = mode !== 'online' || o?.isHost === true;
+    const events = step(current, inputsForFrame(), dt, { authoritative });
     eventsFrom(events);
     if (toastTimer.current > 0) {
       toastTimer.current -= dt;
@@ -312,7 +314,7 @@ function Play({ mode }: { mode: StageMode }) {
       if (chargeStep > previousChargeStep.current) sfx.tone({ freq: 330 + myCar.charge * 300, to: 500 + myCar.charge * 200, dur: 0.045, type: 'sine', vol: 0.07 });
       previousChargeStep.current = chargeStep;
     } else previousChargeStep.current = 0;
-    if (current.phase === 'done') {
+    if (current.phase === 'done' && (mode !== 'online' || o?.isHost)) {
       const winnerId = matchWinner(current);
       if (winnerId !== null) finishGame(winnerId, true);
     }
@@ -355,13 +357,20 @@ function Play({ mode }: { mode: StageMode }) {
             const bot = o.bots.find((candidate) => candidate.seat === seat);
             return { seat, color: index, ai: bot ? packet.lv : null, name: player?.name ?? bot?.name ?? `Player ${seat + 1}` };
           }).map((entry, id) => ({ ...createWorld([entry]).cars[0], id }));
-          current.wins = [...packet.wins];
           synced.current = true;
         }
+        const previousPhase = current.phase;
+        const previousWins = current.wins;
         current.round = packet.rn;
         current.wins = [...packet.wins];
         current.phase = packet.ph;
         current.radius = packet.rad;
+        if (packet.ph === 'over' && previousPhase !== 'over') {
+          const winner = packet.wins.findIndex((wins, index) => wins > (previousWins[index] ?? 0));
+          current.roundWinner = winner < 0 ? null : winner;
+        } else if (packet.ph === 'count') {
+          current.roundWinner = null;
+        }
         if (packet.ph === 'count' || packet.ph === 'over') current.timer = packet.tm;
         else current.fightTime = packet.tm;
         for (let i = 0; i < packet.cars.length; i++) {
@@ -392,7 +401,9 @@ function Play({ mode }: { mode: StageMode }) {
           car.yaw = packed.yaw;
           car.charge = packed.charge;
           car.falling = !!(packed.flags & 2);
+          const wasOut = car.out;
           car.out = !!(packed.flags & 4);
+          if (!wasOut && car.out) view.current?.splash(packed.x, packed.z);
           car.dashT = packed.flags & 8 ? 0.2 : 0;
           if (packed.flags & 16) car.ai = packet.lv;
         }
@@ -400,7 +411,8 @@ function Play({ mode }: { mode: StageMode }) {
       }
       if (packet.k === 'end' && !o.isHost && from === 0 && !reported.current) {
         current.wins = [...packet.wins];
-        const winnerId = current.wins.findIndex((wins) => wins >= TARGET);
+        if (packet.w === null) return;
+        const winnerId = current.cars.findIndex((car) => car.seat === packet.w);
         if (winnerId < 0) return;
         finishGame(winnerId, false);
       }
@@ -411,15 +423,17 @@ function Play({ mode }: { mode: StageMode }) {
       const current = world.current;
       if (!o || !current) return;
       if (shellRef.current.status === 'playing') {
-        const now = performance.now() / 1000;
-        let catchup = now - lastSimWall.current;
-        if (catchup > 0.08) {
-          while (catchup > 0.001) {
-            const part = Math.min(0.25, catchup);
-            updateWorld(part);
-            catchup -= part;
+        if (o.isHost) {
+          const now = performance.now() / 1000;
+          let catchup = now - lastSimWall.current;
+          if (catchup > 0.08) {
+            while (catchup > 0.001) {
+              const part = Math.min(0.25, catchup);
+              updateWorld(part);
+              catchup -= part;
+            }
+            lastSimWall.current = now;
           }
-          lastSimWall.current = now;
         }
         tickCount.current++;
         if (!o.isHost) {
@@ -585,7 +599,12 @@ function Play({ mode }: { mode: StageMode }) {
               key={player}
               type="button"
               aria-label="Dash"
-              style={{ '--charge': `${Math.round(chargeFor(player) * 100)}%` } as CSSProperties}
+              style={{
+                '--charge': `${Math.round(chargeFor(player) * 100)}%`,
+                backgroundColor: 'rgba(255, 255, 255, 0.88)',
+                backgroundImage: 'radial-gradient(circle at center, rgba(255, 255, 255, 0.9) 0 28px, transparent 29px), conic-gradient(#ffbd4b var(--charge), rgba(255, 255, 255, 0.88) 0%)',
+                fontSize: '14px',
+              } as CSSProperties}
               onPointerDown={(e) => setDash(e, true, player)}
               onPointerUp={(e) => setDash(e, false, player)}
               onPointerCancel={(e) => setDash(e, false, player)}
