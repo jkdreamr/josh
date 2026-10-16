@@ -3,7 +3,7 @@ import { GameShell, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, u
 import type { GameProps } from '../../types';
 import { meta } from './meta';
 import { LEVELS, LEVEL_IDS, getLevel } from './levels.ts';
-import { currentMs, newRun, starsFor, startRun, stepRun, type Run } from './logic.ts';
+import { currentMs, newRun, nextStarMs, starsFor, startRun, stepRun, type Run } from './logic.ts';
 import { newCam, render, type Cam, type Ghost } from './draw.ts';
 import { loadProgress, saveProgress, tourLeft, tourTotal, unlocked } from './progress.ts';
 import './moto-trials.css';
@@ -215,7 +215,8 @@ function Play({ online }: { online: OnlineApi | null }) {
     if (!live && !hadBest && idx + 1 < LEVEL_IDS.length && levelSetting === r.level.id) setLevelSetting(LEVEL_IDS[idx + 1]);
     const flipText = r.flips ? `, ${r.flips} flip${r.flips === 1 ? '' : 's'}` : '';
     const starText = stars === 3 ? '3 stars' : stars === 2 ? '2 stars' : stars === 1 ? '1 star' : 'no stars';
-    const next = stars < 3 ? ` next star at ${fmtMs(r.level.stars[stars])}.` : '';
+    const nsm = nextStarMs(r.level, stars);
+    const next = nsm !== null ? ` next star at ${fmtMs(nsm)}.` : '';
     let detail = `${fmtMs(ms)}${flipText}. ${starText}.${next}`;
     let rank: number | undefined;
     if (live) {

@@ -58,7 +58,8 @@ export function render(
   // camera: lookahead down the track, soft vertical follow, bike sits left of center
   const lookX = clamp(bike.v.x * 0.4, 0, 5.5) + 1.4;
   const tx = bike.p.x + lookX;
-  const ty = bike.p.y + 1.5;
+  // on descents the camera lags above the dive line, so lead downward a little
+  const ty = bike.p.y + 1.5 + clamp(-bike.v.y * 0.22, 0, 2.4);
   cam.x = cam.x ? lerp(cam.x, tx, Math.min(1, dt * 5)) : tx;
   cam.y = cam.y ? lerp(cam.y, ty, Math.min(1, dt * 2.5)) : ty;
   const shake = run.shake;
@@ -68,6 +69,9 @@ export function render(
   // anchorX pins cam.x, which already leads the bike by lookX, so add it back
   const anchorX = w * (fit.portrait ? 0.3 : 0.33) + lookX * scale;
   const anchorY = h * (fit.portrait ? (touch ? 0.58 : 0.56) : touch ? 0.56 : 0.6);
+  // hard keep the wheels inside ~12-85% of the canvas height on dives
+  cam.y = Math.min(cam.y, bike.p.y - 0.9 - (anchorY - 0.85 * h) / scale);
+  cam.y = Math.max(cam.y, bike.p.y + 0.9 - (anchorY - 0.12 * h) / scale);
   const sx = (wx: number) => (wx - cam.x) * scale + anchorX + shx * scale * 0.1;
   const sy = (wy: number) => anchorY - (wy - cam.y) * scale + shy * scale * 0.1;
 
@@ -947,12 +951,12 @@ function hud(c: CanvasRenderingContext2D, w: number, h: number, run: Run, ghosts
   const chrome = chromeRects(c, w);
   const pillR = chrome.pill?.r ?? 0;
   const ctrlL = chrome.ctrl?.l ?? w;
-  const rowB = Math.max(chrome.ctrl?.b ?? 0, chrome.pill?.b ?? 0);
+  const rowB = Math.max(chrome.ctrl?.b ?? 0, chrome.pill?.b ?? 0, chrome.status?.b ?? 0);
   const freeW = ctrlL - pillR;
   const bw = Math.min(w * 0.42, 340);
   let bx: number;
   let by: number;
-  if (freeW - bw >= 120) {
+  if (freeW - bw >= 120 && !chrome.status) {
     // enough room to live on the same line as the pills, clear of both
     bx = clamp(w / 2 - bw / 2, pillR + 16, ctrlL - 16 - bw);
     by = Math.max(12, chrome.pill?.t ?? 12);

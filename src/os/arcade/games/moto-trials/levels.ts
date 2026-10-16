@@ -634,7 +634,7 @@ const META_ROWS: [string, string, Theme, [number, number, number]][] = [
   ['level-4', 'Quarry Run', THEMES.quarry, [18_000, 25_500, 37_500]],
   ['level-5', 'Pine Ridge', THEMES.forest, [21_500, 30_500, 45_000]],
   ['level-6', 'Sawmill Sprint', THEMES.autumn, [17_500, 24_500, 36_000]],
-  ['level-7', 'Neon Drop', THEMES.neon, [24_000, 33_500, 49_500]],
+  ['level-7', 'Neon Drop', THEMES.neon, [18_000, 25_500, 37_500]],
   ['level-8', 'Frostbite', THEMES.frost, [21_000, 29_500, 43_500]],
   ['level-9', 'Canyon Cross', THEMES.canyon, [22_500, 31_500, 46_500]],
   ['level-10', 'Last Lap', THEMES.storm, [28_500, 39_500, 58_500]],

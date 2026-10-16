@@ -10,7 +10,9 @@
 .g-moto-trials .g-moto-trials-strip {
   display: flex;
   gap: 5px;
-  width: 100%;
+  /* zero intrinsic width so the 10 buttons can't widen the card */
+  width: 0;
+  min-width: 100%;
   max-width: 100%;
   overflow-x: auto;
   overscroll-behavior-x: contain;
@@ -61,7 +63,7 @@
 }
 .g-moto-trials .g-moto-trials-pick em {
   font-style: normal;
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1;
   letter-spacing: 1px;
   color: #ffd23f;
@@ -70,6 +72,11 @@
   color: rgba(255, 255, 255, 0.7);
 }
 
+
+/* the strip's field wrapper must not claim the buttons' intrinsic width either */
+.g-moto-trials .arcade-field:has(.g-moto-trials-strip) {
+  min-width: 0;
+}
 
 /* the line under the strip: name, earned stars, best time */
 .g-moto-trials .g-moto-trials-info {

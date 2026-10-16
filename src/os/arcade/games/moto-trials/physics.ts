@@ -114,9 +114,9 @@ const MU = 1.05;
 
 /** Lean torque (N*m), stronger and freer in the air so a flip takes about a second of held lean. */
 const T_LEAN_GROUND = 95;
-const T_LEAN_AIR = 80;
+const T_LEAN_AIR = 180;
 const DAMP_W_GROUND = 4.5;
-const DAMP_W_AIR = 1.5;
+const DAMP_W_AIR = 1.0;
 
 export function buildWorld(segs: Seg[], saws: Saw[], loops: LoopGate[], killY: number): PhysWorld {
   const grid = new Map<number, number[]>();
@@ -291,6 +291,8 @@ function substep(bike: Bike, world: PhysWorld, input: Input, h: number) {
   const tq = -input.lean * (air ? T_LEAN_AIR : T_LEAN_GROUND);
   bike.w += (tq / INERTIA) * h;
   bike.w -= bike.w * (air ? DAMP_W_AIR : DAMP_W_GROUND) * h;
+  // leaning against the spin bleeds it off fast: this is how riders level out
+  if (air && input.lean * bike.w > 0) bike.w -= bike.w * 4.5 * h;
 
   // drive and brakes on wheel spin
   for (const [wh, rear] of [
@@ -362,6 +364,9 @@ export function step(bike: Bike, world: PhysWorld, input: Input, dt: number): St
     const dx = hx - (sg.ax + ux * t);
     const dy = hy - (sg.ay + uy * t);
     if (dx * dx + dy * dy < HEAD_R * HEAD_R) {
+      // a wheels-down landing within ~40 deg of the surface is a save, not a head bonk
+      const segA = Math.atan2(sg.by - sg.ay, sg.bx - sg.ax);
+      if ((bike.fw.on || bike.rw.on) && Math.abs(wrapAngle(bike.a - segA)) < 0.7) continue;
       hits.head = true;
       break;
     }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LEVELS, LEVEL_IDS, getLevel, worldOf } from '../src/os/arcade/games/moto-trials/levels.ts';
-import { autoInput, currentMs, newRun, startRun, stepRun } from '../src/os/arcade/games/moto-trials/logic.ts';
+import { autoInput, currentMs, newRun, nextStarMs, startRun, stepRun } from '../src/os/arcade/games/moto-trials/logic.ts';
 import { buildWorld, newBike, segActive, step, type Seg } from '../src/os/arcade/games/moto-trials/physics.ts';
 import { parseProgress, tourLeft, tourTotal, unlocked } from '../src/os/arcade/games/moto-trials/progress.ts';
 import { meta } from '../src/os/arcade/games/moto-trials/meta.ts';
@@ -156,6 +156,24 @@ test('a landed backflip earns a 1000 ms bonus', () => {
   assert.ok(run.phase !== 'crash', 'crashed instead of landing');
 });
 
+test('a timed lean-back on the big level-2 jump lands a flip', () => {
+  // a human play pattern: autopilot to the long jump, then hold lean back
+  // from takeoff until the rotation is nearly done, release, and ride on
+  const run = newRun(getLevel('level-2'));
+  while (run.phase === 'count') stepRun(run, { gas: 0, brake: 0, lean: 0 }, DT);
+  for (let i = 0; i < 60 * 90 && run.phase === 'run' && run.flips === 0; i++) {
+    const b = run.bike;
+    const air = !b.fw.on && !b.rw.on;
+    let input = autoInput(run);
+    // only commit to a flip on the big jump; small hops stay autopiloted
+    if (air && b.p.x > 145 && Math.abs(run.air.accum) < (330 * Math.PI) / 180) input = { gas: 1, brake: 0, lean: -1 };
+    stepRun(run, input, DT);
+  }
+  assert.ok(run.flips >= 1, `never landed a flip (crashes ${run.crashes})`);
+  assert.equal(run.crashes, 0, 'crashed on the way to the flip');
+  assert.ok(run.bonusMs >= 1000);
+});
+
 test('checkpoints save progress and crashes respawn there', () => {
   const lv = getLevel('level-1');
   const run = newRun(lv);
@@ -260,6 +278,14 @@ test('progress parses safely and unlocks in order', () => {
   assert.equal(tourTotal(full), 200000);
   assert.equal(tourLeft(full), 0);
   assert.ok(unlocked(full, 'level-10'));
+});
+
+test('nextStarMs chases silver then gold then nothing', () => {
+  const lv = getLevel('level-1');
+  assert.equal(nextStarMs(lv, 0), lv.stars[2], 'no stars -> chase bronze');
+  assert.equal(nextStarMs(lv, 1), lv.stars[1], '1 star -> chase silver');
+  assert.equal(nextStarMs(lv, 2), lv.stars[0], '2 stars -> chase gold');
+  assert.equal(nextStarMs(lv, 3), null);
 });
 
 test('the tour leaderboard floor is unreachable by a single race', () => {

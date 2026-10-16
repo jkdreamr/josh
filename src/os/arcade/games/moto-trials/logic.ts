@@ -253,6 +253,12 @@ export function starsFor(level: Level, ms: number): number {
   return 0;
 }
 
+/** The time to beat for the next star up, or null when all three are earned.
+ *  stars[] is [gold, silver, bronze] so earning `stars` stars chases stars[2 - stars]. */
+export function nextStarMs(level: Level, stars: number): number | null {
+  return stars >= 3 ? null : level.stars[2 - stars];
+}
+
 // ------------------------------------------------------------------------------------------------------------------
 // Autopilot: a deterministic rider used by the tests and by nothing in the game itself.
 
