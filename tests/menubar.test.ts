@@ -1,6 +1,47 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { batteryView, hourLabel, monthGrid, parseWeather } from '../src/os/hooks.ts';
+import { onEscapeCapture } from '../src/os/escape.ts';
+
+test('onEscapeCapture handles Escape in capture phase and removes its listener', () => {
+  let added: { type: string; listener: EventListenerOrEventListenerObject; options?: boolean | AddEventListenerOptions } | undefined;
+  let removed: typeof added;
+  const target = {
+    addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) {
+      added = { type, listener, options };
+    },
+    removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions) {
+      removed = { type, listener, options };
+    },
+  } as Parameters<typeof onEscapeCapture>[0];
+  let handled = 0;
+  let prevented = 0;
+  let stopped = 0;
+  const cleanup = onEscapeCapture(target, () => { handled += 1; });
+  assert.equal(added?.type, 'keydown');
+  assert.equal(added?.options, true);
+
+  const invoke = (event: KeyboardEvent) => {
+    if (typeof added?.listener === 'function') added.listener(event);
+  };
+  invoke({
+    key: 'Escape',
+    preventDefault: () => { prevented += 1; },
+    stopImmediatePropagation: () => { stopped += 1; },
+  } as KeyboardEvent);
+  assert.deepEqual([handled, prevented, stopped], [1, 1, 1]);
+  invoke({
+    key: 'a',
+    preventDefault: () => { prevented += 1; },
+    stopImmediatePropagation: () => { stopped += 1; },
+  } as KeyboardEvent);
+  assert.deepEqual([handled, prevented, stopped], [1, 1, 1]);
+
+  cleanup();
+  assert.equal(removed?.type, 'keydown');
+  assert.equal(removed?.listener, added?.listener);
+  assert.equal(removed?.options, true);
+});
 
 test('hourLabel formats hours in 12-hour time', () => {
   assert.equal(hourLabel(0), '12 AM');
