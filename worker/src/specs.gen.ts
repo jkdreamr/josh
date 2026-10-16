@@ -127,4 +127,5 @@ export const ONLINE_SPECS: Record<string, OnlineSpec> = {
   "snake": {"seats":4},
   "solitaire": {"seats":4},
   "stack": {"seats":4},
+  "tank-maze": {"seats":4,"lateJoin":true,"bots":true},
 };
