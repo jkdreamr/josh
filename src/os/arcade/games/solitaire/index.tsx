@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
-import { defineSetting, GameShell, getSetting, Segmented, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
+import { defineSetting, GameShell, Segmented, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import {
   autoStep,
@@ -20,6 +20,7 @@ import {
   parseDeal,
   pileCards,
   randomSeed,
+  redealFor,
   score,
   TABLEAU,
   TIME_LIMIT,
@@ -89,10 +90,10 @@ type Layout = {
 };
 
 function layout(w: number, h: number, s: State, touch: boolean): Layout {
-  const top = touch ? 58 : 48;
+  const top = touch ? 62 : 48;
   const pad = 8;
   const low = w < 560;
-  const foot = low ? (touch ? 58 : 46) : 0;
+  const foot = low ? (touch ? 62 : 46) : 0;
   const H = Math.max(60, h - top - pad - foot);
   const gap = (cw: number) => Math.max(4, Math.min(14, Math.round(cw * 0.12)));
   const topRow = () => {
@@ -220,7 +221,8 @@ function Play() {
   const { ref, size } = useCanvas<HTMLDivElement>();
   const fx = useCanvas();
   const corners = useRef<(HTMLDivElement | null)[]>([]);
-  const localDraw: Draw = getSetting(DRAW) === '3' ? 3 : 1;
+  const [drawSetting] = useSetting(DRAW);
+  const localDraw: Draw = drawSetting === '3' ? 3 : 1;
   const [s, setS] = useState<State | null>(() => (online && !online.isHost ? null : deal(randomSeed(), localDraw)));
   const st = useRef<State | null>(s);
   st.current = s;
@@ -292,6 +294,18 @@ function Play() {
       window.clearInterval(ask);
     };
   }, [isOnline, isHost]);
+
+  // Play mounts behind the Start card, so a draw picked there redeals the untouched shuffle before the first move.
+  useEffect(() => {
+    const cur = st.current;
+    const room = onlineRef.current;
+    if (shell.status !== 'ready' || !cur || (room && !room.isHost)) return;
+    const next = redealFor(cur, localDraw);
+    if (!next) return;
+    st.current = next;
+    setS(next);
+    room?.send({ t: 'deal', seed: next.seed, draw: next.draw });
+  }, [shell.status, localDraw, s]);
 
   const L = s ? layout(size.w, size.h, s, shell.touch) : null;
   const playing = shell.status === 'playing';
