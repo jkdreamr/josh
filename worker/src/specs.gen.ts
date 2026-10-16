@@ -125,4 +125,5 @@ export const ONLINE_SPECS: Record<string, OnlineSpec> = {
   "scramble": {"seats":8,"lateJoin":true,"bots":true},
   "snake": {"seats":4},
   "stack": {"seats":4},
+  "sumo": {"seats":8,"lateJoin":true,"bots":true},
 };
