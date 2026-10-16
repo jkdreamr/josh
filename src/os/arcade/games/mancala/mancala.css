@@ -1,0 +1,304 @@
+.g-mancala .g-mancala-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  isolation: isolate;
+  overflow: hidden;
+  background: radial-gradient(120% 90% at 50% 40%, #241a14, #120d0b 70%);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.g-mancala .g-mancala-status {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 55%;
+  height: 22px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.78);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.g-mancala .g-mancala-dots {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: g-mancala-pulse 1s ease-in-out infinite;
+}
+@keyframes g-mancala-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+.g-mancala .g-mancala-board {
+  position: absolute;
+  box-sizing: border-box;
+  background:
+    repeating-linear-gradient(97deg, rgba(255, 255, 255, 0.025) 0 3px, rgba(0, 0, 0, 0.03) 3px 7px, transparent 7px 13px),
+    linear-gradient(180deg, #9a6a43, #7b4f2f 55%, #683f24);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 235, 210, 0.28),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+    0 1px 0 rgba(0, 0, 0, 0.4),
+    0 22px 50px rgba(0, 0, 0, 0.55);
+}
+.g-mancala .g-mancala-board.tall {
+  background:
+    repeating-linear-gradient(7deg, rgba(255, 255, 255, 0.025) 0 3px, rgba(0, 0, 0, 0.03) 3px 7px, transparent 7px 13px),
+    linear-gradient(90deg, #9a6a43, #7b4f2f 55%, #683f24);
+}
+.g-mancala .g-mancala-pit,
+.g-mancala .g-mancala-store {
+  position: absolute;
+  box-sizing: border-box;
+  touch-action: manipulation;
+}
+.g-mancala .g-mancala-pit::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--pit);
+  height: var(--pit);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle at 50% 38%, #3b2415, #4b2e1b 62%, #5d3920);
+  box-shadow:
+    inset 0 4px 8px rgba(0, 0, 0, 0.55),
+    inset 0 -1px 0 rgba(255, 225, 190, 0.18),
+    0 1px 0 rgba(255, 230, 200, 0.16);
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+.g-mancala .g-mancala-store {
+  background: radial-gradient(ellipse at 50% 40%, #3b2415, #4b2e1b 65%, #5d3920);
+  box-shadow:
+    inset 0 5px 10px rgba(0, 0, 0, 0.55),
+    inset 0 -1px 0 rgba(255, 225, 190, 0.18),
+    0 1px 0 rgba(255, 230, 200, 0.16);
+  transition: box-shadow 0.25s ease;
+}
+.g-mancala .g-mancala-store.on {
+  box-shadow:
+    inset 0 5px 10px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 2px rgba(255, 159, 10, 0.55),
+    0 1px 0 rgba(255, 230, 200, 0.16);
+}
+.g-mancala .g-mancala-pit.live {
+  cursor: pointer;
+}
+.g-mancala .g-mancala-pit.live::before {
+  box-shadow:
+    inset 0 4px 8px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 1.5px rgba(255, 214, 150, 0.35),
+    0 1px 0 rgba(255, 230, 200, 0.16);
+}
+@media (hover: hover) {
+  .g-mancala .g-mancala-pit.live:hover::before {
+    transform: translate(-50%, -50%) scale(1.04);
+    box-shadow:
+      inset 0 4px 8px rgba(0, 0, 0, 0.5),
+      inset 0 0 0 2px rgba(255, 214, 150, 0.75),
+      0 1px 0 rgba(255, 230, 200, 0.16);
+  }
+}
+.g-mancala .g-mancala-pit.live:active::before,
+.g-mancala .g-mancala-pit.pending::before {
+  transform: translate(-50%, -50%) scale(0.96);
+}
+.g-mancala .g-mancala-pit.cursor::before {
+  box-shadow:
+    inset 0 4px 8px rgba(0, 0, 0, 0.5),
+    0 0 0 2.5px #fff;
+}
+.g-mancala .g-mancala-pit.land::after,
+.g-mancala .g-mancala-landring {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  border: 2px dashed rgba(255, 214, 150, 0.7);
+  box-sizing: border-box;
+}
+.g-mancala .g-mancala-pit.land::after {
+  left: 50%;
+  top: 50%;
+  width: calc(var(--pit) + 6px);
+  height: calc(var(--pit) + 6px);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+.g-mancala .g-mancala-landring {
+  z-index: 1;
+}
+.g-mancala .g-mancala-pit.source::before {
+  box-shadow:
+    inset 0 4px 8px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 2px rgba(255, 159, 10, 0.8);
+}
+.g-mancala .g-mancala-pit.flash::before {
+  animation: g-mancala-flash 0.3s ease;
+  box-shadow:
+    inset 0 4px 8px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 3px #ff9f0a;
+}
+@keyframes g-mancala-flash {
+  50% {
+    transform: translate(-50%, -50%) scale(1.1);
+  }
+}
+.g-mancala .g-mancala-count {
+  position: absolute;
+  z-index: 50;
+  min-width: 1.5em;
+  padding: 0 0.35em;
+  box-sizing: border-box;
+  transform: translate(-50%, -50%);
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 240, 222, 0.82);
+  pointer-events: none;
+}
+.g-mancala .g-mancala-count.land {
+  color: #ffd596;
+}
+.g-mancala .g-mancala-count.store {
+  left: 50%;
+  top: 50%;
+  border-radius: 999px;
+  background: rgba(30, 18, 10, 0.62);
+  color: #fff;
+  transition: transform 0.2s ease;
+}
+.g-mancala .g-mancala-seeds {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.g-mancala .g-mancala-seed {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.85) 0 12%, rgba(255, 255, 255, 0) 30%),
+    radial-gradient(circle at 60% 70%, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0) 60%),
+    var(--seed);
+  box-shadow:
+    inset 0 -1px 2px rgba(0, 0, 0, 0.35),
+    0 1px 1.5px rgba(0, 0, 0, 0.45);
+  transition: transform 0.24s cubic-bezier(0.25, 0.9, 0.3, 1.15);
+  will-change: transform;
+}
+.g-mancala .g-mancala-seed.held {
+  box-shadow:
+    inset 0 -1px 2px rgba(0, 0, 0, 0.35),
+    0 5px 7px rgba(0, 0, 0, 0.5);
+}
+.g-mancala .g-mancala-hand {
+  position: absolute;
+  z-index: 70;
+  transform: translate(-50%, -50%);
+  padding: 0 0.5em;
+  border-radius: 999px;
+  background: #ff9f0a;
+  color: #2a1600;
+  font-weight: 700;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.g-mancala .g-mancala-toast {
+  position: absolute;
+  z-index: 80;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(24, 15, 9, 0.88);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 8px 24px rgba(0, 0, 0, 0.4);
+  color: #ffd596;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  animation: g-mancala-toast 1.1s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+@keyframes g-mancala-toast {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -30%) scale(0.85);
+  }
+  15%,
+  75% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -70%) scale(0.98);
+  }
+}
+.g-mancala .g-mancala-foot {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 28px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.6);
+}
+.g-mancala .g-mancala-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: color 0.2s ease;
+}
+.g-mancala .g-mancala-side.on {
+  color: #fff;
+}
+.g-mancala .g-mancala-side b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.g-mancala .g-mancala-mode {
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.4);
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-mancala .g-mancala-seed,
+  .g-mancala .g-mancala-pit::before,
+  .g-mancala .g-mancala-store {
+    transition: none;
+  }
+  .g-mancala .g-mancala-toast,
+  .g-mancala .g-mancala-pit.flash::before,
+  .g-mancala .g-mancala-dots {
+    animation: none;
+  }
+}
