@@ -905,7 +905,7 @@ function Battleship() {
   const ownIntel = state.ownIntel[ownSeat];
   const ownBoardLabel = state.mode === '2p' ? `player ${ownSeat + 1}` : 'your fleet';
   const placementShip = drag?.candidate;
-  const showCover = state.phase === 'cover';
+  const showCover = state.phase === 'cover' && (shell.status === 'playing' || shell.status === 'paused');
   const targetInteractive = state.phase === 'battle' && isHumanTurn(state);
   const showFire = targetInteractive && state.aimed !== null;
   const stageClass = `g-battleship-stage${size.h < 220 ? ' compact-height' : ''}${size.h < 300 ? ' short-window' : ''}${geometry.portrait ? ' portrait' : ''}${statusLayout.below ? ' status-below' : ''}`;
