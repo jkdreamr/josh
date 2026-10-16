@@ -878,7 +878,14 @@ function Battleship() {
 
   useGameLoop((dt) => {
     const timer = timerRef.current;
-    if (!timer) return;
+    if (!timer) {
+      const s = stateRef.current;
+      if (s?.phase === 'cover' && !s.coverArmed) setTimer(0.6, () => {
+        s.coverArmed = true;
+        refresh();
+      });
+      return;
+    }
     timer.remaining -= dt;
     if (timer.remaining <= 0 && timerRef.current === timer) {
       timerRef.current = null;
