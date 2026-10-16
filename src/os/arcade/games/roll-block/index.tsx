@@ -578,10 +578,7 @@ function Play() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.w, size.h, THREE, barLayout, levelIdx, undoCount]);
 
-  useEffect(() => {
-    shell.setScore(moves || null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moves]);
+
 
   useGameLoop(
     (dt) => {
@@ -767,6 +764,7 @@ function Play() {
         <div className="g-roll-block-pill">
           <strong>level {levelIdx + 1}</strong>
           <span>par {def.par}</span>
+          {moves > 0 && <span>{moves === 1 ? '1 move' : `${moves} moves`}</span>}
         </div>
         <button type="button" className="arcade-btn" onClick={() => press(doUndo)} disabled={!playing || !undoCount || !!cleared} aria-label="Undo">
           Undo
