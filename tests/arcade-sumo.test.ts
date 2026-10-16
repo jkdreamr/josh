@@ -19,6 +19,40 @@ const rng = (seed: number) => {
   };
 };
 const onPlatform = (car: Car, world: World) => !car.out && !car.falling && Math.hypot(car.x, car.z) <= world.radius + 0.15;
+const simulateEightBotMatch = (level: Level, seed: number) => {
+  const world = createWorld(entries(8, level), seed);
+  const random = rng(seed + 100);
+  const roundDurations: number[] = [];
+  const lastNear = world.cars.map(() => -Infinity);
+  const maxSteps = 600 * 60;
+  for (let t = 0; t < maxSteps && matchWinner(world) === null; t++) {
+    const updateNearby = (time: number) => {
+      for (let i = 0; i < world.cars.length; i++) {
+        const a = world.cars[i];
+        if (a.out) continue;
+        for (let j = i + 1; j < world.cars.length; j++) {
+          const b = world.cars[j];
+          if (!b.out && Math.hypot(a.x - b.x, a.z - b.z) <= 3) {
+            lastNear[i] = time;
+            lastNear[j] = time;
+          }
+        }
+      }
+    };
+    const wasFalling = world.cars.map((car) => car.falling);
+    updateNearby(t * STEP);
+    const events = step(world, world.cars.map((car) => think(world, car.id, level, random)), STEP);
+    const elapsed = (t + 1) * STEP;
+    updateNearby(elapsed);
+    for (const car of world.cars) {
+      if (!wasFalling[car.id] && car.falling) {
+        assert.ok(elapsed - lastNear[car.id] <= 1, `level ${level}, seed ${seed}, car ${car.id} fell without a nearby car in the previous second`);
+      }
+    }
+    for (const event of events) if (event.type === 'round') roundDurations.push(world.fightTime);
+  }
+  return { world, roundDurations };
+};
 
 test('cars spawn inside and apart, face the centre, and stay still during the countdown', () => {
   const world = createWorld(entries(8), 8);
@@ -83,10 +117,14 @@ test('the float shrinks, stops at sudden death, and falling cars splash out', ()
   world.cars[1].x = 1.4;
   world.cars[1].z = 0;
   const start = world.radius;
-  step(world, idle(world), 8);
-  assert.ok(world.radius < start);
-  step(world, idle(world), 90);
-  assert.equal(world.radius, 2.6);
+  step(world, idle(world), 3.99);
+  assert.equal(world.radius, start);
+  step(world, idle(world), 30.02);
+  assert.ok(Math.abs(world.radius - 4.5) < 0.01);
+  step(world, idle(world), 5);
+  assert.equal(world.radius, 4.5);
+  step(world, idle(world), 9.3);
+  assert.equal(world.radius, 2.2);
   const fallWorld = createWorld(entries(2), 44);
   go(fallWorld);
   fallWorld.fightTime = 80;
@@ -187,6 +225,7 @@ test('seeded bots stay on the float alone and the normal bot match finishes clea
         lone.phase = 'fight';
       }
       assert.ok(onPlatform(lone.cars[0], lone), `level ${level}, seed ${seed} fell alone`);
+      assert.equal(lone.radius, 2.2, `level ${level}, seed ${seed} did not reach the floor`);
     }
   }
 
@@ -209,38 +248,44 @@ test('seeded bots stay on the float alone and the normal bot match finishes clea
   assert.ok(matchWinner(world) !== null, `bot match did not finish within ${maxTime}s`);
 });
 
-test('an eight-bot full match resolves real falls well before the round cap', () => {
-  const world = createWorld(entries(8, 1), 201);
-  const random = rng(301);
-  const roundDurations: number[] = [];
-  let arrangedRound = 0;
-  const maxTime = 30;
-  for (let t = 0; t < maxTime * 60 && matchWinner(world) === null; t++) {
-    if (world.phase === 'fight' && world.round !== arrangedRound) {
-      arrangedRound = world.round;
-      const survivor = world.cars[0];
-      survivor.x = 0;
-      survivor.z = 0;
-      survivor.vx = 0;
-      survivor.vz = 0;
-      for (const car of world.cars.slice(1)) {
-        car.x = world.radius + 0.3;
-        car.z = 0;
-        car.vx = 0;
-        car.vz = 0;
-      }
+test('natural eight-bot matches finish quickly across levels and seeds', () => {
+  for (let level: Level = 0; level <= 2; level = (level + 1) as Level) {
+    const durations: number[] = [];
+    for (const seed of [201, 202, 203]) {
+      const { world, roundDurations } = simulateEightBotMatch(level, seed);
+      assert.ok(matchWinner(world) !== null, `level ${level}, seed ${seed} did not finish`);
+      assert.ok(roundDurations.length >= 3, `level ${level}, seed ${seed} resolved fewer than three rounds`);
+      durations.push(...roundDurations);
     }
-    const events = step(world, world.cars.map((car) => think(world, car.id, 1, random)), STEP);
-    for (const event of events) {
-      if (event.type === 'splash') assert.equal(world.cars[event.car].falling, false);
-      if (event.type === 'round') roundDurations.push(world.fightTime);
-    }
+    const capped = durations.filter((duration) => duration >= 100).length;
+    const mean = durations.reduce((sum, duration) => sum + duration, 0) / durations.length;
+    assert.ok(mean < 45, `level ${level} mean round length was ${mean.toFixed(1)}s`);
+    assert.ok(capped / durations.length < 0.1, `level ${level} cap rate was ${capped}/${durations.length}`);
   }
-  assert.ok(matchWinner(world) !== null, `eight-bot match did not finish within ${maxTime}s`);
-  assert.ok(roundDurations.length >= 3);
-  const cappedRounds = roundDurations.filter((duration) => duration >= 100).length;
-  assert.ok(cappedRounds < roundDurations.length / 2, `too many rounds reached the cap: ${roundDurations.join(', ')}`);
-  assert.ok(roundDurations.reduce((sum, duration) => sum + duration, 0) / roundDurations.length < 50);
+});
+
+test('each bot level pushes a naturally spawned idle human off on time', () => {
+  for (let level: Level = 0; level <= 2; level = (level + 1) as Level) {
+    const seed = 701 + level;
+    const world = createWorld([
+      { seat: 0, color: 0, ai: null, name: 'Human' },
+      { seat: 1, color: 1, ai: level, name: 'Bot' },
+    ], seed);
+    const random = rng(seed + 100);
+    go(world);
+    const deadline = level === 0 ? 60 : 30;
+    let elapsed = 0;
+    let humanSplashed = false;
+    while (elapsed < deadline && !world.cars[0].out && world.phase === 'fight') {
+      const inputs = idle(world);
+      inputs[1] = think(world, 1, level, random);
+      const events = step(world, inputs, STEP);
+      humanSplashed ||= events.some((event) => event.type === 'splash' && event.car === 0);
+      elapsed += STEP;
+    }
+    assert.ok(humanSplashed, `level ${level} bot did not splash the idle human within ${deadline}s`);
+    assert.ok(elapsed <= deadline, `level ${level} bot took ${elapsed.toFixed(1)}s`);
+  }
 });
 
 test('bot inputs stay inside the unit disc and dash is boolean', () => {

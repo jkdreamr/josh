@@ -24,12 +24,27 @@ function aimAt(world: World, car: Car, level: Level, rng: () => number) {
   car.aiTarget = target.id;
   const dx = target.x - car.x;
   const dz = target.z - car.z;
+  const edge = Math.hypot(target.x, target.z);
+  const outwardX = edge > 0.1 ? target.x / edge : 0;
+  const outwardZ = edge > 0.1 ? target.z / edge : 0;
+  const smallFloat = world.radius <= 6.5;
+  if (smallFloat && edge > 0.1) {
+    const distance = Math.hypot(dx, dz);
+    if (distance <= 3.5) {
+      car.aiAimX = car.x + outwardX * 5;
+      car.aiAimZ = car.z + outwardZ * 5;
+    } else {
+      const staging = level === 0 ? 0.8 : 1.4;
+      car.aiAimX = target.x - outwardX * staging;
+      car.aiAimZ = target.z - outwardZ * staging;
+    }
+    return;
+  }
   let angle = Math.atan2(dx, dz);
   if (level === 2) {
-    const edge = Math.hypot(target.x, target.z) || 1;
-    angle = Math.atan2(target.x / edge, target.z / edge);
-    car.aiAimX = target.x + (target.x / edge) * 0.6;
-    car.aiAimZ = target.z + (target.z / edge) * 0.6;
+    angle = Math.atan2(outwardX, outwardZ);
+    car.aiAimX = target.x + outwardX * 0.6;
+    car.aiAimZ = target.z + outwardZ * 0.6;
   } else {
     angle += (rng() * 2 - 1) * noises[level];
     const distance = Math.hypot(dx, dz);
@@ -42,6 +57,10 @@ function toward(car: Car, x: number, z: number) {
   return unit(x - car.x, z - car.z);
 }
 
+function safetyMargin(world: World, level: Level) {
+  return Math.min(margins[level], world.radius * 0.3);
+}
+
 function shouldCharge(world: World, car: Car, target: Car | undefined, level: Level, dir: Input, rng: () => number) {
   if (!target || car.cool > 0 || car.charge > 0 || car.dashT > 0) return false;
   const dx = target.x - car.x;
@@ -51,13 +70,15 @@ function shouldCharge(world: World, car: Car, target: Car | undefined, level: Le
   const forwardZ = Math.cos(car.yaw);
   const dot = distance ? (dx * forwardX + dz * forwardZ) / distance : 1;
   const maxDistance = level === 0 ? 5 : level === 1 ? 7 : 9;
-  if (distance > maxDistance || dot <= 0.85 || Math.hypot(dir.x, dir.y) < 0.4) return false;
+  if (distance > maxDistance || dot <= (level === 0 ? 0.2 : 0.45) || Math.hypot(dir.x, dir.y) < 0.4) return false;
   const aimLength = Math.hypot(dir.x, dir.y) || 1;
   const dashX = dir.x / aimLength;
   const dashZ = dir.y / aimLength;
-  const projected = Math.hypot(car.x + (car.vx + dashX * 9) * 0.45, car.z + (car.vz + dashZ * 9) * 0.45);
-  if (projected > world.radius - margins[level]) return false;
-  return level === 0 ? rng() < 0.025 : true;
+  const charge = level === 0 ? 0.28 : level === 1 ? 0.5 : 1;
+  const speed = 9 + 11 * charge;
+  const projected = Math.hypot(car.x + (car.vx + dashX * speed) * 0.45, car.z + (car.vz + dashZ * speed) * 0.45);
+  if (projected > world.radius - safetyMargin(world, level)) return false;
+  return level === 0 ? rng() < 0.18 : true;
 }
 
 export function think(world: World, id: number, level: Level, rng: () => number = world.random): Input {
@@ -72,8 +93,9 @@ export function think(world: World, id: number, level: Level, rng: () => number 
   }
   const foe = world.cars[car.aiTarget];
   let dir = toward(car, car.aiAimX, car.aiAimZ);
+  const targetRadius = world.radius - safetyMargin(world, level);
 
-  if (level === 2 && Math.hypot(car.x, car.z) > world.radius - 2.2) {
+  if (level === 2 && Math.hypot(car.x, car.z) > targetRadius) {
     const incoming = world.cars.find((other) => other.id !== car.id && !other.out && !other.falling && other.dashT > 0 && Math.hypot(other.x - car.x, other.z - car.z) < 4);
     if (incoming) {
       const awayX = car.x - incoming.x;
@@ -85,19 +107,19 @@ export function think(world: World, id: number, level: Level, rng: () => number 
 
   const predictedX = car.x + car.vx * 0.45;
   const predictedZ = car.z + car.vz * 0.45;
-  const targetRadius = world.radius - margins[level];
-  const futureDash = car.aiDashReady ? 9 * 0.35 : 0;
+  const futureDash = car.aiDashReady ? (9 + 11 * car.charge) * 0.35 : 0;
   const predictedDistance = Math.hypot(predictedX + Math.sin(car.yaw) * futureDash, predictedZ + Math.cos(car.yaw) * futureDash);
   const edgeRisk = predictedDistance > targetRadius;
   if (edgeRisk) {
-    dir = toward(car, 0, 0);
+    const engaged = foe && !foe.out && !foe.falling && Math.hypot(foe.x - car.x, foe.z - car.z) <= 3.5;
+    if (!engaged) dir = toward(car, 0, 0);
     car.aiDashReady = false;
     car.aiDashHold = 0;
   }
 
   if (car.aiDashHold > 0) {
     car.aiDashHold -= 1 / 60;
-    if (car.charge >= (level === 2 ? 0.98 : level === 1 ? 0.43 : 0.35) || edgeRisk || car.cool > 0) {
+    if (car.charge >= (level === 2 ? 0.98 : level === 1 ? 0.48 : 0.27) || edgeRisk || car.cool > 0) {
       car.aiDashHold = 0;
       car.aiDashReady = false;
       return { ...dir, dash: false };
@@ -106,7 +128,7 @@ export function think(world: World, id: number, level: Level, rng: () => number 
   }
 
   if (!edgeRisk && shouldCharge(world, car, foe, level, dir, rng)) {
-    car.aiDashHold = level === 2 ? 0.72 : level === 1 ? 0.3 : 0.22;
+    car.aiDashHold = level === 2 ? 0.7 : level === 1 ? 0.35 : 0.2;
     car.aiDashReady = true;
     return { ...dir, dash: true };
   }

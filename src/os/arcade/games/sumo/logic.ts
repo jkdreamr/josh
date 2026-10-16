@@ -170,12 +170,12 @@ export function takeoverDeparted(world: World, present: readonly number[], level
 }
 
 function radiusAt(world: World) {
-  const elapsed = world.fightTime - 6;
+  const elapsed = world.fightTime - 4;
   if (elapsed <= 0) return world.startRadius;
-  const slowDuration = (world.startRadius - 4.5) / 0.18;
-  if (elapsed <= slowDuration) return Math.max(4.5, world.startRadius - elapsed * 0.18);
-  const sudden = elapsed - slowDuration - 15;
-  return Math.max(2.6, 4.5 - Math.max(0, sudden) * 0.45);
+  const slowRate = (world.startRadius - 4.5) / 30;
+  if (elapsed <= 30) return Math.max(4.5, world.startRadius - elapsed * slowRate);
+  const sudden = elapsed - 35;
+  return Math.max(2.2, 4.5 - Math.max(0, sudden) * 0.25);
 }
 
 function boundedInput(input: Input | undefined): Input {
