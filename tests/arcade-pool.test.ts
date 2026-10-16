@@ -26,6 +26,7 @@ import {
 } from '../src/os/arcade/games/pool/logic.ts';
 import { chooseShot } from '../src/os/arcade/games/pool/ai.ts';
 import { answer } from '../src/os/arcade/games/pool/worker.ts';
+import { guestSync, shootPressed } from '../src/os/arcade/games/pool/sync.ts';
 
 // --- helpers ---------------------------------------------------------------
 
@@ -605,4 +606,59 @@ test('worker answer echoes the id and a shot', () => {
   assert.equal(rep.id, 9);
   assert.ok(Math.abs(Math.hypot(rep.shot.dx, rep.shot.dy) - 1) < 1e-6);
   assert.ok(rep.shot.power > 0 && rep.shot.power <= 1);
+});
+
+// --- online sync and shoot key ----------------------------------------------
+
+test('guest adopts the host table it has not synced yet, whatever its own rack was', () => {
+  const host = newGame(1330695937, 0);
+  const guest = newGame(253426796, 0);
+  assert.notEqual(host.seed, guest.seed);
+  assert.equal(guestSync(guest, host, false, false), 'adopt');
+});
+
+test('a synced guest replaces a fresh deal with the same shot count', () => {
+  const mine = newGame(182278432, 0);
+  const deal = newGame(1419131124, 1);
+  assert.equal(guestSync(mine, deal, true, false), 'adopt');
+  assert.equal(guestSync(mine, cloneGame(mine), true, false), 'ignore');
+});
+
+test('a synced guest only moves forward and queues while rolling', () => {
+  const g = newGame(5, 0);
+  const next = play(g, { dx: 1, dy: 0, power: 0.9, place: { x: HEAD_X * 0.6, y: W / 2 } });
+  assert.equal(guestSync(g, next, true, false), 'apply');
+  assert.equal(guestSync(g, next, true, true), 'queue');
+  assert.equal(guestSync(next, g, true, false), 'ignore');
+  assert.equal(guestSync(g, cloneGame(g), true, true), 'ignore');
+});
+
+/** The kit's key buffer (keys.ts pulls in React, so it's mirrored here): one saved hit per key until pressed() reads it. */
+class Keys {
+  private held = new Set<string>();
+  private hits = new Set<string>();
+  press(c: string) {
+    if (!this.held.has(c)) this.hits.add(c);
+    this.held.add(c);
+  }
+  release(c: string) {
+    this.held.delete(c);
+  }
+  pressed(...names: string[]) {
+    let hit = false;
+    for (const n of names) for (const c of n === 'action' ? ['Space', 'Enter'] : [n]) if (this.hits.delete(c)) hit = true;
+    return hit;
+  }
+}
+
+test('shoot presses while a shot is rolling are used up, not saved for the next turn', () => {
+  const keys = new Keys();
+  for (let i = 0; i < 6; i++) {
+    keys.press('Space');
+    keys.release('Space');
+  }
+  assert.equal(shootPressed(keys, false), false);
+  assert.equal(shootPressed(keys, true), false, 'the next player still has to press Space');
+  keys.press('Space');
+  assert.equal(shootPressed(keys, true), true);
 });
