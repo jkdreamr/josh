@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   GameShell, LEVEL_NAMES, Segmented, defineSetting, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell,
 } from '../../kit';
@@ -15,7 +15,7 @@ import {
   type Input, type Level, type World,
 } from './world.ts';
 import {
-  applyHeadState, applyOps, loadSnapshot, makeRoster, resultRows, startsSoloRound, syncRoster, winnerOf, winnerSeat,
+  applyHeadState, applyOps, loadSnapshot, makeRoster, resultRows, startsSoloRound, syncRoster, touchTarget, winnerOf, winnerSeat,
 } from './session.ts';
 import './slither.css';
 
@@ -50,11 +50,22 @@ export default function Game({ compact, onExit, roomCode }: GameProps) {
   );
 }
 
+function useTargetSize() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState(44);
+  useLayoutEffect(() => {
+    const field = ref.current?.querySelector<HTMLElement>('.arcade-seg');
+    if (field) setSize(touchTarget(field.getBoundingClientRect().width, field.offsetWidth));
+  }, []);
+  return { ref, style: { '--g-slither-target': `${size}px` } as CSSProperties };
+}
+
 function Setup() {
   const [level, setLevel] = useSetting(LEVEL);
   const [skin, setSkin] = useSetting(SKIN);
+  const target = useTargetSize();
   return (
-    <div className="g-slither-setup">
+    <div className="g-slither-setup" ref={target.ref} style={target.style}>
       <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} className="g-slither-seg" />
       <div className="g-slither-setup-skins">
         <span>Skin</span>
@@ -80,9 +91,10 @@ function OnlineSetup() {
   const online = useOnline();
   const [level, setLevel] = useSetting(LEVEL);
   const [duration, setDuration] = useSetting(DURATION);
+  const target = useTargetSize();
   if (!online?.isHost) return null;
   return (
-    <div className="g-slither-setup">
+    <div className="g-slither-setup" ref={target.ref} style={target.style}>
       <Segmented label="Bot Level" value={level} options={levelOptions} onChange={setLevel} className="g-slither-seg" />
       <Segmented label="Round" value={duration} options={durationOptions} onChange={setDuration} className="g-slither-seg" />
     </div>

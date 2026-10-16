@@ -218,14 +218,14 @@
     gap: 6px;
   }
   .g-slither-setup-skins > .g-slither-swatch {
-    width: 44px;
-    height: 44px;
+    width: var(--g-slither-target, 44px);
+    height: var(--g-slither-target, 44px);
   }
   .g-slither-setup-skins > .g-slither-swatch:hover {
     transform: none;
   }
   .g-slither-setup .arcade-seg.g-slither-seg > button {
-    height: 44px;
+    height: var(--g-slither-target, 44px);
   }
 }
 .g-slither-stage.is-compact .g-slither-board {

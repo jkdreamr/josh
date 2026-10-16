@@ -229,3 +229,9 @@ type ShellStatus = 'ready' | 'playing' | 'paused' | 'over';
 export function startsSoloRound(previous: ShellStatus | null, status: ShellStatus, hasWorld: boolean): boolean {
   return status === 'playing' && (!hasWorld || previous !== 'paused');
 }
+
+/** CSS size that still renders at least `min` px when a framed device scales the whole screen down. */
+export function touchTarget(renderedWidth: number, layoutWidth: number, min = 44): number {
+  const scale = layoutWidth > 0 && renderedWidth > 0 ? renderedWidth / layoutWidth : 1;
+  return Math.ceil(min / Math.min(1, scale));
+}
