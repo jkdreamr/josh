@@ -1171,7 +1171,7 @@ function getGeometry(w: number, h: number, phase: Phase, top: number) {
   const available = Math.max(1, h - top - bottom);
   if (phase === 'place') {
     if (wide) {
-      const cell = Math.floor(Math.max(11, Math.min((available - 9) / 10, (w - 187) / 10)));
+      const cell = Math.floor(Math.max(7, Math.min((available - 9) / 10, (w - 187) / 10)));
       const side = cell * 10 + 9;
       const x = Math.max(8, (w - side - 162) / 2);
       return {
@@ -1192,7 +1192,7 @@ function getGeometry(w: number, h: number, phase: Phase, top: number) {
     };
   }
   if (wide) {
-    const cell = Math.floor(Math.max(11, Math.min((available - 9) / 10, (w - 42) / 16.2)));
+    const cell = Math.floor(Math.max(7, Math.min((available - 9) / 10, (w - 42) / 16.2)));
     const ownCell = Math.max(7, Math.floor(cell * 0.62));
     const targetSide = cell * 10 + 9;
     const ownSide = ownCell * 10 + 9;
