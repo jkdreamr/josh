@@ -178,7 +178,7 @@ function Mancala() {
   const reqId = useRef(0);
   const ended = useRef(false);
 
-  const view: Side = online ? (online.seat === 1 ? 1 : 0) : 0;
+  const view: Side = online && online.seat !== 0 ? 1 : 0;
   const geo = useMemo(() => layout(size.w || 600, size.h || 300, view), [size.w, size.h, view]);
 
   // The Start card's settings apply to the round about to begin.
@@ -329,7 +329,7 @@ function Mancala() {
         if (from === 0) return;
         if (p.t === 'hello') o.send({ t: 'sync', state: g }, { to: from });
         else if (p.t === 'pick') {
-          if (from === 1 && !g.over && g.turn === 1 && p.seq === g.seq && playPit(p.pit)) o.send({ t: 'move', seq: g.seq, pit: p.pit, state: gameRef.current });
+          if (from === seatOf(o, 1) && !g.over && g.turn === 1 && p.seq === g.seq && playPit(p.pit)) o.send({ t: 'move', seq: g.seq, pit: p.pit, state: gameRef.current });
           else o.send({ t: 'sync', state: g }, { to: from });
         }
         return;
@@ -351,6 +351,19 @@ function Mancala() {
     if (online.isHost) online.send({ t: 'sync', state: gameRef.current });
     return off;
   }, [online?.onMessage, online?.isHost, playPit, snap]);
+
+  // A player who joins from the Start card keeps this board into their first round, so a new round always starts clean.
+  const roundRef = useRef(online?.round);
+  useEffect(() => {
+    const o = onlineRef.current;
+    if (!o || roundRef.current === o.round) return;
+    roundRef.current = o.round;
+    ended.current = false;
+    setPickPending(null);
+    snap({ ...newState(), turn: (o.round % 2) as Side });
+    setSynced(o.isHost);
+    if (o.isHost) o.send({ t: 'sync', state: gameRef.current });
+  }, [online?.round, snap]);
 
   // Guests keep asking until the host answers (it may still be loading the round).
   useEffect(() => {
@@ -466,7 +479,7 @@ function Mancala() {
       const tally = `${a} to ${b}`;
       const mine = view === 0 ? `${a} to ${b}` : `${b} to ${a}`;
       if (mode === 'online' && o) {
-        o.reportResult(o.round, win);
+        o.reportResult(o.round, win === null ? null : seatOf(o, win));
         sfx.play(win === null ? 'select' : win === view ? 'win' : 'lose');
         shell.gameOver(undefined, { title: win === null ? 'Tie Game' : win === view ? 'You Win' : `${names[win]} Wins`, detail: `${mine}. ${win === null ? 'Even split.' : `${names[win]} took ${Math.max(a, b)} of 48 seeds.`}` });
       } else if (mode === 'cpu') {
@@ -546,10 +559,12 @@ function Mancala() {
   const pitIndices = [...pitsOf(0), ...pitsOf(1)];
   return (
     <div ref={stageRef} className="g-mancala-stage">
-      <div className={`g-mancala-status ${thinking || busy ? 'busy' : ''}`} aria-live="polite">
-        {(thinking || (mode === 'online' && !synced)) && <span className="g-mancala-dots" aria-hidden="true" />}
-        {status}
-      </div>
+      {shell.status !== 'ready' && (
+        <div className={`g-mancala-status ${thinking || busy ? 'busy' : ''}`} aria-live="polite">
+          {(thinking || (mode === 'online' && !synced)) && <span className="g-mancala-dots" aria-hidden="true" />}
+          {status}
+        </div>
+      )}
       <div
         className={`g-mancala-board ${geo.vertical ? 'tall' : ''}`}
         style={{ left: geo.bx, top: geo.by, width: geo.bw, height: geo.bh, borderRadius: 0.5 * u }}
@@ -643,13 +658,18 @@ function LandRing({ c, u, vertical }: { c: Point; u: number; vertical: boolean }
   return <span className="g-mancala-landring" style={{ left: c.x - w / 2, top: c.y - h / 2, width: w, height: h, borderRadius: 0.41 * u }} aria-hidden="true" />;
 }
 
+/** The host plays the first side; whoever else holds a seat plays the second (seat numbers can grow as people rejoin). */
+function seatOf(online: NonNullable<ReturnType<typeof useOnline>>, side: Side): number {
+  if (side === 0) return 0;
+  return online.players.find((p) => p.seat !== 0)?.seat ?? (online.seat !== 0 ? online.seat : 1);
+}
+
 function sideNames(mode: 'cpu' | '2p' | 'online', online: ReturnType<typeof useOnline>, view: Side): Record<Side, string> {
   if (mode === 'cpu') return { 0: 'You', 1: 'Computer' };
   if (mode === 'online' && online) {
-    const name = (seat: number) => online.players.find((p) => p.seat === seat)?.name ?? (seat === online.seat ? 'You' : 'Opponent');
-    const me = view;
     const them = (1 - view) as Side;
-    return { [me]: 'You', [them]: name(them) } as Record<Side, string>;
+    const name = online.players.find((p) => p.seat === seatOf(online, them))?.name ?? 'Opponent';
+    return { [view]: 'You', [them]: name } as Record<Side, string>;
   }
   return { 0: 'Player 1', 1: 'Player 2' };
 }

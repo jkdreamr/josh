@@ -1,6 +1,8 @@
 .g-mancala .g-mancala-stage {
   position: absolute;
   inset: 0;
+  z-index: 0;
+  isolation: isolate;
   overflow: hidden;
   background: radial-gradient(120% 90% at 50% 40%, #241a14, #120d0b 70%);
   user-select: none;
