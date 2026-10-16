@@ -50,6 +50,7 @@ type GameState = {
   ownIntel: [Intel, Intel];
   incoming: [Uint8Array, Uint8Array];
   placementSeat: number;
+  viewer: number;
   turn: number;
   shotsBySeat: [number, number];
   hitBySeat: [number, number];
@@ -102,6 +103,7 @@ function createGameState(mode: GameMode, localSeat: number): GameState {
     ownIntel: makeTuple(newIntel),
     incoming: makeTuple(() => new Uint8Array(SIZE * SIZE)),
     placementSeat: online ? localSeat : 0,
+    viewer: online ? localSeat : 0,
     turn: 0,
     shotsBySeat: [0, 0],
     hitBySeat: [0, 0],
@@ -463,6 +465,7 @@ function Battleship() {
       s.status = 'place your fleet';
     } else {
       s.phase = 'battle';
+      s.viewer = s.turn;
       s.status = s.mode === 'online'
         ? s.turn === localSeat ? 'your turn' : `${playerName(s.turn)} is firing`
         : s.mode === '2p' ? `player ${s.turn + 1}, your turn` : 'your turn';
@@ -886,12 +889,12 @@ function Battleship() {
   const geometry = getGeometry(size.w, size.h, state.phase, statusLayout.boardTop);
   const localFleet = state.fleets[state.placementSeat];
   const drag = state.drag;
-  const targetSeat = state.mode === 'online' ? localSeat : state.turn;
+  const targetSeat = state.mode === 'online' ? localSeat : state.viewer;
   const renderTargetShips = state.endRevealFleet ?? state.targets[targetSeat].sunkShips;
-  const boardTargetLabel = state.endRevealFleet ? 'enemy fleet revealed' : state.mode === '2p' ? `player ${opposite(state.turn) + 1}` : state.mode === 'online' ? playerName(opposite(localSeat)) : 'enemy waters';
+  const boardTargetLabel = state.endRevealFleet ? 'enemy fleet revealed' : state.mode === '2p' ? `player ${opposite(state.viewer) + 1}` : state.mode === 'online' ? playerName(opposite(localSeat)) : 'enemy waters';
   const targetIntel = state.targets[targetSeat];
   const targetLast = state.lastTarget[targetSeat];
-  const ownSeat = state.mode === 'online' ? localSeat : state.turn;
+  const ownSeat = targetSeat;
   const ownIntel = state.ownIntel[ownSeat];
   const ownBoardLabel = state.mode === '2p' ? `player ${ownSeat + 1}` : 'your fleet';
   const placementShip = drag?.candidate;
