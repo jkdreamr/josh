@@ -12,6 +12,7 @@ import {
   W,
   canPlace,
   clampPlace,
+  cloneGame,
   legalTargets,
   newGame,
   play,
@@ -494,6 +495,53 @@ test('chooseShot returns a legal input at every level within budget', () => {
   for (const level of [0, 1, 2]) {
     const t = times[level].slice().sort((a, b) => a - b);
     console.log(`level ${level} chooseShot median ${t[Math.floor(t.length / 2)]?.toFixed(1)}ms max ${t[t.length - 1]?.toFixed(1)}ms`);
+  }
+});
+
+test('the computer never hits the wrong ball first or misses everything', () => {
+  const rand = rng(4321);
+  const budgets = { 0: 15, 1: 60, 2: 100 };
+  const positions: Game[] = [];
+  for (let i = 0; i < 30 && positions.length < 30; i++) {
+    let g = newGame(800 + i);
+    g = play(g, { dx: 1, dy: (rand() - 0.5) * 0.1, power: 0.9, place: { x: HEAD_X * 0.6, y: W / 2 } });
+    for (let k = 0; k < 1 + (i % 4) && g.phase !== 'over'; k++) {
+      g = play(g, {
+        dx: rand() * 2 - 1,
+        dy: rand() * 2 - 1,
+        power: 0.3 + rand() * 0.4,
+        place: g.ballInHand ? (clampPlace(g, L / 2, W / 2) ?? undefined) : undefined,
+      });
+    }
+    if (g.phase !== 'over') positions.push(g);
+  }
+  // a hand-made wrong-ball trap: only an opponent ball is directly hittable
+  const trap = bare([3, 10], { x: 0.5, y: 0.5 });
+  trap.groups = ['solids', 'stripes'];
+  trap.balls[10].x = 0.8;
+  trap.balls[10].y = 0.5; // stripe sits dead ahead
+  trap.balls[3].x = 1.2;
+  trap.balls[3].y = 0.2; // the shooter's solid needs a kick or a bank
+  positions.push(trap, cloneGame(trap));
+  const times: number[][] = [[], [], []];
+  let checked = 0;
+  for (const g of positions) {
+    for (const level of [0, 1, 2] as const) {
+      const t0 = performance.now();
+      const shot = chooseShot(g, level, { budgetMs: budgets[level], seed: 61000 + checked });
+      times[level].push(performance.now() - t0);
+      const sim = runSim(startShot(g, shot));
+      const targets = legalTargets(g);
+      assert.ok(
+        sim.first !== null && targets.includes(sim.first),
+        `level ${level}: illegal first contact ${sim.first} (targets ${targets})`,
+      );
+      checked++;
+    }
+  }
+  for (const level of [0, 1, 2]) {
+    const t = times[level].slice().sort((a, b) => a - b);
+    console.log(`level ${level} legal-guard median ${t[Math.floor(t.length / 2)]?.toFixed(1)}ms max ${t[t.length - 1]?.toFixed(1)}ms`);
   }
 });
 

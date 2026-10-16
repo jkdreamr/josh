@@ -238,6 +238,62 @@ function fallbackShot(game: Game, seat: Seat, rand: () => number, power = 0.6): 
 
 const BUDGET: Record<Level, number> = { 0: 40, 1: 250, 2: 750 };
 
+// would this shot's first contact be legal (something hit, and a legal target)?
+function firstLegal(game: Game, shot: Shot): boolean {
+  const sim = runSim(startShot(cloneGame(game), shot));
+  return sim.first !== null && legalTargets(game, game.turn).includes(sim.first);
+}
+
+// final guard on every non-break return: the computer never misses everything
+// and never hits an illegal ball first (scratches / no-rail can still happen).
+function legalize(
+  game: Game,
+  shot: Shot,
+  rand: () => number,
+  deadline: number,
+  redraw?: { dx: number; dy: number; sigmaDeg: number },
+): Shot {
+  const me = game.turn;
+  if (firstLegal(game, shot)) return shot;
+  const probe = (s: Shot): 'bad' | 'lose' | 'ok' => {
+    const sim = runSim(startShot(cloneGame(game), s));
+    if (sim.first === null || !legalTargets(game, me).includes(sim.first)) return 'bad';
+    const g2 = resolve(cloneGame(game), s, sim);
+    return g2.winner !== null && g2.winner !== me ? 'lose' : 'ok';
+  };
+  // (a) easy: re-draw the aim noise a few times around the same clean aim
+  if (redraw) {
+    for (let i = 0; i < 6 && performance.now() < deadline; i++) {
+      const d = rot(redraw.dx, redraw.dy, (gauss(rand) * redraw.sigmaDeg * Math.PI) / 180);
+      const s = ensurePlace(game, { ...shot, dx: d.x, dy: d.y });
+      if (firstLegal(game, s)) return s;
+    }
+    // (b) the clean noiseless aim
+    const s = ensurePlace(game, { ...shot, dx: redraw.dx, dy: redraw.dy });
+    if (firstLegal(game, s)) return s;
+  }
+  // (c) first candidate by geometric ease whose clean aim passes
+  const cands = candidates(game, me).sort(
+    (a, b) => Math.cos(b.cut) / (0.3 + b.dist) - Math.cos(a.cut) / (0.3 + a.dist),
+  );
+  for (const c of cands) {
+    if (performance.now() > deadline) break;
+    const s: Shot = { dx: c.aim.x, dy: c.aim.y, power: 0.55 };
+    if (c.place) s.place = c.place;
+    if (c.ball === 8) s.call = c.pocket;
+    const placed = ensurePlace(game, s);
+    if (firstLegal(game, placed)) return placed;
+  }
+  // (d) sweep 72 directions at power 0.5 for a legal, non-losing contact
+  for (let i = 0; i < 72 && performance.now() < deadline; i++) {
+    const ang = (i / 72) * Math.PI * 2;
+    const s = ensurePlace(game, { dx: Math.cos(ang), dy: Math.sin(ang), power: 0.5 });
+    if (probe(s) === 'ok') return s;
+  }
+  // (e) give up and return what we were given
+  return shot;
+}
+
 export function chooseShot(game: Game, level: Level, opts?: { budgetMs?: number; seed?: number }): Shot {
   const t0 = performance.now();
   const budget = opts?.budgetMs ?? BUDGET[level];
@@ -262,10 +318,11 @@ export function chooseShot(game: Game, level: Level, opts?: { budgetMs?: number;
 
   const on8 = game.groups[me] !== null && remaining(game, game.groups[me] as Group).length === 0;
   const cands = candidates(game, me);
+  const deadline = t0 + budget + 150; // legalize may over-run the budget a little
 
   if (level === 0) {
     // geometric pick, no simulation
-    let shot: Shot;
+    let clean: Shot;
     if (cands.length) {
       let best = cands[0];
       let bestS = -Infinity;
@@ -276,25 +333,22 @@ export function chooseShot(game: Game, level: Level, opts?: { budgetMs?: number;
           best = c;
         }
       }
-      const dir = rot(best.aim.x, best.aim.y, (gauss(rand) * 1.8 * Math.PI) / 180);
-      shot = { dx: dir.x, dy: dir.y, power: 0.35 + rand() * 0.45 };
-      shot = ensurePlace(game, shot);
-      if (best.place) shot.place = best.place;
+      clean = { dx: best.aim.x, dy: best.aim.y, power: 0.35 + rand() * 0.45 };
+      if (best.place) clean.place = best.place;
       if (best.ball === 8) {
         const call = pocketFor(game, 8, unit(best.ghost.x - game.balls[8].x, best.ghost.y - game.balls[8].y));
-        shot.call = call ?? best.pocket;
+        clean.call = call ?? best.pocket;
       }
     } else {
-      shot = fallbackShot(game, me, rand, 0.5);
-      if (game.ballInHand && !shot.place) {
+      clean = fallbackShot(game, me, rand, 0.5);
+      if (game.ballInHand && !clean.place) {
         const spot = clampPlace(game, W / 2, W / 2) ?? clampPlace(game, L / 2, W / 2);
-        if (spot) shot.place = spot;
+        if (spot) clean.place = spot;
       }
-      const dir = rot(shot.dx, shot.dy, (gauss(rand) * 1.8 * Math.PI) / 180);
-      shot.dx = dir.x;
-      shot.dy = dir.y;
     }
-    return shot;
+    const dir = rot(clean.dx, clean.dy, (gauss(rand) * 1.8 * Math.PI) / 180);
+    const shot = ensurePlace(game, { ...clean, dx: dir.x, dy: dir.y });
+    return legalize(game, shot, rand, deadline, { dx: clean.dx, dy: clean.dy, sigmaDeg: 1.8 });
   }
 
   // normal + hard: simulate candidates
@@ -327,17 +381,22 @@ export function chooseShot(game: Game, level: Level, opts?: { budgetMs?: number;
 
   if (level === 1) {
     const noise = (gauss(rand) * 0.5 * Math.PI) / 180;
-    if (scored.length && scored[0].score > -350) {
-      const s = scored[0].shot;
+    // prefer the best scored shot that doesn't itself resolve to a foul or a loss
+    const pick =
+      scored.find((s) => !s.after.foul && !(s.after.winner !== null && s.after.winner !== me)) ?? scored[0];
+    if (pick && pick.score > -350) {
+      const s = pick.shot;
       const dir = rot(s.dx, s.dy, noise);
       const noisy = ensurePlace(game, { ...s, dx: dir.x, dy: dir.y });
       // the noise can turn a winning line into a foul or a lost 8; check it
       const chk = evalShot(game, me, noisy);
-      if (chk.game.winner !== null && chk.game.winner !== me) return ensurePlace(game, s);
-      if (chk.game.foul) return ensurePlace(game, s);
-      return noisy;
+      const chosen =
+        chk.game.foul || (chk.game.winner !== null && chk.game.winner !== me)
+          ? ensurePlace(game, s)
+          : noisy;
+      return legalize(game, chosen, rand, deadline);
     }
-    return fallbackShot(game, me, rand, 0.55);
+    return legalize(game, fallbackShot(game, me, rand, 0.55), rand, deadline);
   }
 
   // hard: robustness re-check of the top candidates under +-0.25deg aim error
@@ -392,7 +451,7 @@ export function chooseShot(game: Game, level: Level, opts?: { budgetMs?: number;
     if (safe) bestShot = safe;
   }
 
-  if (bestShot === null) return fallbackShot(game, me, rand, 0.55);
+  if (bestShot === null) return legalize(game, fallbackShot(game, me, rand, 0.55), rand, deadline);
   bestShot = ensurePlace(game, bestShot);
   if (on8 && bestShot.call === undefined) {
     const call = pocketFor(game, 8, { x: bestShot.dx, y: bestShot.dy });
@@ -400,10 +459,11 @@ export function chooseShot(game: Game, level: Level, opts?: { budgetMs?: number;
   }
   const dir = rot(bestShot.dx, bestShot.dy, noiseH);
   const noisy = { ...bestShot, dx: dir.x, dy: dir.y };
+  let chosen = noisy;
   if (!over()) {
     // verify the noisy aim still does what the clean one was picked for
     const chk = evalShot(game, me, noisy);
-    if (chk.game.foul || (chk.game.winner !== null && chk.game.winner !== me)) return bestShot;
+    if (chk.game.foul || (chk.game.winner !== null && chk.game.winner !== me)) chosen = bestShot;
   }
-  return noisy;
+  return legalize(game, chosen, rand, deadline);
 }

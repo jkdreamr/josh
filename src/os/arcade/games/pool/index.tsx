@@ -10,7 +10,7 @@ import './pool.css';
 
 const MODE = defineSetting('pool:mode', PLAY_MODES, 'cpu');
 const LEVEL = defineSetting('pool:level', LEVEL_NAMES, 'normal');
-const MIN_THINK = 0.3;
+const MIN_THINK = 0.15;
 const SPINS = [0, 0.7, -0.7] as const;
 const SPIN_NAMES = ['Center', 'Follow', 'Draw'] as const;
 
@@ -93,6 +93,8 @@ function Pool() {
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null);
   const [, bump] = useState(0);
   const refresh = useCallback(() => bump((n) => n + 1), []);
+  const sizeRef = useRef(0);
+  sizeRef.current = size.h;
   const statusRef = useRef(shell.status);
   statusRef.current = shell.status;
 
@@ -233,7 +235,7 @@ function Pool() {
       const title = online ? (win === online.seat ? 'You Win' : `${name(win)} Wins`) : isCpu() ? (win === 0 ? 'You Win' : 'Computer Wins') : `${name(win)} Wins`;
       const detail = cleared ? `${name(win)} sank the 8 to clear the table.` : `${name(loser)} ${g.reason}.`;
       if (online) online.reportResult(online.round, win);
-      shell.gameOver(undefined, { title: shell.compact ? `${title} · ${detail.slice(0, -1)}` : title, detail: isCpu() ? `${detail} ${levelLabel(LEVEL_NAMES[cfg.current.level])} computer.` : detail });
+      shell.gameOver(undefined, { title: shell.compact || sizeRef.current < 240 ? `${title} · ${detail.slice(0, -1)}` : title, detail: isCpu() ? `${detail} ${levelLabel(LEVEL_NAMES[cfg.current.level])} computer.` : detail });
     }, 1.1);
   };
 
@@ -323,12 +325,12 @@ function Pool() {
       let da = target - anim.a0;
       while (da > Math.PI) da -= Math.PI * 2;
       while (da < -Math.PI) da += Math.PI * 2;
-      const k = Math.min(1, anim.t / 0.32);
+      const k = Math.min(1, anim.t / 0.24);
       const e = 1 - (1 - k) ** 3;
       aim.current.a = anim.a0 + da * e;
       if (sh.place) place.current = { x: anim.from.x + (sh.place.x - anim.from.x) * e, y: anim.from.y + (sh.place.y - anim.from.y) * e };
-      aim.current.power = anim.t < 0.36 ? 0 : anim.t < 0.64 ? sh.power * Math.min(1, (anim.t - 0.36) / 0.24) : sh.power * Math.max(0, 1 - (anim.t - 0.64) / 0.06);
-      if (anim.t >= 0.7) {
+      aim.current.power = anim.t < 0.26 ? 0 : anim.t < 0.46 ? sh.power * Math.min(1, (anim.t - 0.26) / 0.18) : sh.power * Math.max(0, 1 - (anim.t - 0.46) / 0.05);
+      if (anim.t >= 0.51) {
         aiAnim.current = null;
         if (sh.place) place.current = { ...sh.place };
         begin(sh);
@@ -559,10 +561,14 @@ function Pool() {
     );
   };
 
+  const cardTop = Math.max(48, box.y + 8);
   const hud = v.side
-    ? { left: { left: box.x - v.panelW - 12, top: Math.max(48, box.y + 8), width: v.panelW }, right: { left: box.x + box.w + 12, top: Math.max(48, box.y + 8), width: v.panelW } }
+    ? { left: { left: box.x - v.panelW - 12, top: cardTop, width: v.panelW }, right: { left: box.x + box.w + 12, top: cardTop, width: v.panelW } }
     : { left: { left: Math.max(10, box.x), top: box.y + box.h + 8, width: Math.min(box.w / 2 - 30, 220) }, right: { left: Math.min(size.w - 10, box.x + box.w) - Math.min(box.w / 2 - 30, 220), top: box.y + box.h + 8, width: Math.min(box.w / 2 - 30, 220) } };
-  const spinAt = v.side ? { left: box.x + box.w + 12 + v.panelW / 2 - 22, top: Math.min(size.h - 56, box.y + box.h - 52) } : { left: box.x + box.w / 2 - 22, top: box.y + box.h + 12 };
+  const spinAt = v.side
+    ? cardTop + 140 <= size.h
+      ? { left: box.x + box.w + 12 + v.panelW / 2 - 22, top: Math.min(size.h - 56, box.y + box.h - 52) }
+      : { left: box.x - v.panelW / 2 - 34, top: Math.max(2, cardTop - 48) } : { left: box.x + box.w / 2 - 22, top: box.y + box.h + 12 };
 
   return (
     <div className={`g-pool-stage ${v.side ? 'is-side' : 'is-row'}`}>
