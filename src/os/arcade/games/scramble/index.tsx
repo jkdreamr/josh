@@ -32,7 +32,7 @@ import {
 import { configOf, parsePacket, type Bots } from './net';
 import { END_PAUSE, FLUSH, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
 import { MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
-import { HALF, SUPPLY_FALL } from './map';
+import { HALF, SUPPLY_FALL, placeAt } from './map';
 import { AmmoIcon, EggIcon, HowToPlay, IslandArt, PackIcon, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon } from './hud';
 import { meta } from './meta';
 import './scramble.css';
@@ -210,6 +210,8 @@ type Hud = {
   shrinking: boolean;
   outside: boolean;
   low: boolean;
+  /** Warming up at a campfire. */
+  warm: boolean;
   banner: string | null;
   prompt: string | null;
   jump: boolean;
@@ -219,7 +221,7 @@ type Hud = {
 };
 const deep = new Set<keyof Hud>(['slots', 'toss', 'items']);
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, wood: 0, items: null, scope: 0, pack: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, wood: 0, items: null, scope: 0, pack: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
@@ -279,6 +281,8 @@ function Play({ mode }: { mode: Mode }) {
   const [feed, setFeed] = useState<Feed[]>([]);
   const [bigMap, setBigMap] = useState(false);
   const bannerRef = useRef({ text: '', until: -1 });
+  /** The named place our egg was last in, for the banner on walking (or landing) into one. */
+  const placeRef = useRef(-1);
   const spectate = useRef(-1);
   const soloEnd = useRef(-1);
 
@@ -593,6 +597,12 @@ function Play({ mode }: { mode: Mode }) {
         v?.react(e, m, focus);
         if (live && o) share(n, e, o.seat);
       }
+      // a banner on walking or landing into a named place
+      const here = me && me.phase === 'ground' ? placeAt(m.map, me.x, me.z) : -1;
+      if (here !== placeRef.current) {
+        placeRef.current = here;
+        if (here >= 0 && !n.over) say(`entering ${m.map.places[here].name}`, 2.6);
+      }
       if (live && o) for (const packet of flush(n, o.round, dt)) o.send(packet);
 
       if (v) {
@@ -768,6 +778,14 @@ function Play({ mode }: { mode: Mode }) {
       case 'jump':
         if (mine) sfx.play('jump');
         break;
+      case 'bounce':
+        if (f && (mine || near(f.x, f.z) > 0.2)) {
+          const k = mine ? 1 : near(f.x, f.z);
+          sfx.tone({ freq: 240, to: 720, dur: 0.28, type: 'triangle', vol: 0.12 * k });
+          sfx.tone({ freq: 480, to: 1100, dur: 0.2, type: 'sine', vol: 0.06 * k, delay: 0.08 });
+          if (mine) buzz(30);
+        }
+        break;
       case 'land':
         if (mine) sfx.noise(0.12, 0.12);
         break;
@@ -853,7 +871,9 @@ function Play({ mode }: { mode: Mode }) {
         if (e.f === m.me) {
           const c = m.map.containers[e.c];
           if (c?.kind === 'chest' || c?.kind === 'supply') sfx.play('coin', c.kind === 'supply' || c.gold ? 0.8 : 1);
-          else if (c?.kind === 'crate') sfx.noise(0.15, 0.15);
+          else if (c?.kind === 'fridge') sfx.play('coin', 1.2);
+          else if (c?.kind === 'toilet') sfx.tone({ freq: 900, to: 300, dur: 0.12, type: 'square', vol: 0.07 });
+          else if (c?.kind === 'crate' || c?.kind === 'hay') sfx.noise(0.15, 0.15);
         }
         break;
       case 'wall':
@@ -978,7 +998,7 @@ function Play({ mode }: { mode: Mode }) {
       const p = prompt(m, me);
       if (p && 'chest' in p) {
         const c = m.map.containers[p.chest];
-        promptText = c.kind === 'supply' ? 'open supply drop' : c.gold ? 'open the golden chest' : 'open chest';
+        promptText = c.kind === 'supply' ? 'open supply drop' : c.kind === 'fridge' ? 'open the fridge' : c.gold ? 'open the golden chest' : 'open chest';
       } else if (p) promptText = `${p.swap ? `swap ${p.item.def.kind === 'melee' ? MELEE[me.melee].name : 'gun'} for` : 'pick up'} ${lootName(p.item.def)}`;
     }
     const out = me && me.phase === 'out' ? (me.by >= 0 && me.by !== me.id && m.fighters[me.by] ? `cracked by ${m.fighters[me.by].name}` : me.outCause === 'storm' ? 'lost to the storm' : 'out') + ` · ${ordinal(me.place)} of ${m.fighters.length}` : null;
@@ -1008,6 +1028,7 @@ function Play({ mode }: { mode: Mode }) {
       shrinking: s.shrinking,
       outside,
       low: own && focus.hp <= 30 && focus.phase === 'ground',
+      warm: focus.warm && focus.phase === 'ground',
       banner,
       prompt: promptText,
       jump: !!me && me === focus && me.phase === 'bus' && m.time >= m.map.bus.on,
@@ -1239,6 +1260,14 @@ function Play({ mode }: { mode: Mode }) {
               <span className="g-scramble-pill is-gear" aria-label={`level ${hud.pack} backpack`}>
                 <PackIcon size={15} lv={hud.pack} />
                 <b>{hud.pack}</b>
+              </span>
+            )}
+            {hud.warm && (
+              <span className="g-scramble-pill is-warm" role="status">
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                  <path d="M12 3c1 3 4 4.5 4 9a4 4 0 0 1-8 0c0-2 1-3 1.5-4 .5 1.5 1.5 2 2.5 2 0-3-1-4 0-7z" fill="currentColor" />
+                </svg>
+                warming up
               </span>
             )}
           </div>

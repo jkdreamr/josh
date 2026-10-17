@@ -240,8 +240,11 @@ export type LootDef =
   | { kind: 'pack'; lv: number }
   | { kind: 'wood'; n: number };
 
-/** Where loot is found: on the floor, in a crate, a chest, the Golden Coop's chest, or a supply drop. */
-export type LootTier = 'floor' | 'crate' | 'chest' | 'gold' | 'supply';
+/**
+ * Where loot is found: on the floor, in a crate, a chest, the Golden Coop's chest, a supply drop, a fridge (healing
+ * and food) or a hay bale (often nothing).
+ */
+export type LootTier = 'floor' | 'crate' | 'chest' | 'gold' | 'supply' | 'fridge' | 'hay';
 
 const RARITY_ODDS: Record<LootTier, number[]> = {
   floor: [46, 30, 16, 6, 2],
@@ -249,7 +252,11 @@ const RARITY_ODDS: Record<LootTier, number[]> = {
   chest: [0, 28, 40, 22, 10],
   supply: [0, 0, 25, 45, 30],
   gold: [0, 0, 0, 45, 55],
+  fridge: [46, 30, 16, 6, 2],
+  hay: [46, 30, 16, 6, 2],
 };
+/** What a fridge holds: mostly things to eat and patch up with. */
+const FRIDGE_ODDS: Record<UseId, number> = { bandage: 30, medkit: 14, mini: 22, shield: 12, coffee: 22 };
 const GUN_ODDS: Record<WeaponId, number> = { pistol: 14, revolver: 7, smg: 13, micro: 8, rifle: 14, burst: 9, scout: 6, lmg: 5, shotgun: 12, auto: 6, double: 7, sniper: 5, crossbow: 4, launcher: 4 };
 const MELEE_ODDS: Partial<Record<MeleeId, number>> = { whisk: 22, knife: 20, cleaver: 18, pan: 22, pin: 18 };
 const THROW_ODDS: Record<ThrowId, number> = { grenade: 45, flour: 25, sauce: 30 };
@@ -306,6 +313,13 @@ export function rollLoot(rng: Rng, tier: LootTier): LootDef[] {
     out.push(levelDrop(rng, rng() < 0.5 ? 'scope' : 'pack', true));
     return out;
   }
+  if (tier === 'fridge') {
+    // two things from the shelves, the second one different from the first
+    const a = weighted(rng, FRIDGE_ODDS);
+    const b = weighted(rng, { ...FRIDGE_ODDS, [a]: 0 });
+    return [a, b].map((w): LootDef => ({ kind: 'use', w, n: w === 'bandage' ? 3 : w === 'mini' ? 2 : 1 }));
+  }
+  if (tier === 'hay') return rng() < 0.45 ? [] : rollLoot(rng, 'floor');
   if (tier === 'chest') {
     const out = gunDrop(rng, 'chest');
     const extra = rng();

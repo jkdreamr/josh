@@ -2,7 +2,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AMMO_BOX, BOOST, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, type Ammo, type GunClass, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
-import { HALF, type Building, type Door, type GameMap } from './map';
+import { CAMP, HALF, PAD, ROAD_HALF, type Building, type Door, type GameMap } from './map';
 import type { Held } from './logic';
 
 const Svg = ({ children, size = 28, label }: { children: ReactNode; size?: number; label?: string }) => (
@@ -327,7 +327,10 @@ function DoorMark({ b, d }: { b: Building; d: Door }) {
   return <rect x={x - hw} y={z - hd} width={hw * 2} height={hd * 2} fill={open ? '#1d2025' : b.kind === 'ruin' ? '#e4dccb' : '#fff6d6'} />;
 }
 
-/** The island drawn in map coordinates (x right, north up), for the minimap and the big map. */
+/**
+ * The island drawn in map coordinates (x right, north up), for the minimap and the big map: roads, farm fences, cars,
+ * campfires and bounce pads too, and the name of every town and site (sized by the map's own styles).
+ */
 export function IslandArt({ map }: { map: GameMap }) {
   const coop = map.buildings[map.coop];
   return (
@@ -338,8 +341,14 @@ export function IslandArt({ map }: { map: GameMap }) {
       {map.ponds.map((p, i) => (
         <circle key={`p${i}`} cx={p.x} cy={p.z} r={p.r} fill="#4cb3dc" stroke="#d8c690" strokeWidth="1.5" />
       ))}
+      {map.roads.map((r, i) => (
+        <line key={`rd${i}`} x1={r.x0} y1={r.z0} x2={r.x1} y2={r.z1} stroke="#cdb07a" strokeWidth={ROAD_HALF * 2} strokeLinecap="round" />
+      ))}
       {map.fields.map((f, i) => (
         <rect key={`f${i}`} x={f.x - f.hw} y={f.z - f.hd} width={f.hw * 2} height={f.hd * 2} fill="#b8a640" />
+      ))}
+      {map.yards.map((y, i) => (
+        <rect key={`y${i}`} x={y.x - y.hw} y={y.z - y.hd} width={y.hw * 2} height={y.hd * 2} fill="none" stroke="#c49a5c" strokeWidth="1.2" strokeDasharray="5 3" />
       ))}
       {map.trees.map((t, i) => (
         <circle key={`t${i}`} cx={t.x} cy={t.z} r="2" fill="#3f8f3a" />
@@ -351,7 +360,24 @@ export function IslandArt({ map }: { map: GameMap }) {
         <rect key={`b${i}`} x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={MAP_ROOF[b.kind]} stroke={b.kind === 'ruin' ? 'none' : '#f1e6d2'} strokeWidth="1" />
       ))}
       {map.buildings.map((b, i) => b.doors.map((d, k) => <DoorMark key={`d${i}-${k}`} b={b} d={d} />))}
+      {map.cars.map((c, i) => (
+        <rect key={`c${i}`} x={c.x - c.hw} y={c.z - c.hd} width={c.hw * 2} height={c.hd * 2} rx="0.6" fill={c.truck ? '#4a4e55' : '#e4e7ec'} stroke="#2b2d33" strokeWidth="0.5" />
+      ))}
+      {map.fires.map((f, i) => (
+        <circle key={`fi${i}`} cx={f.x} cy={f.z} r={CAMP.r * 0.7} fill="#ff8a2a" stroke="#ffd36a" strokeWidth="1" />
+      ))}
+      {map.pads.map((p, i) => (
+        <g key={`pd${i}`}>
+          <circle cx={p.x} cy={p.z} r={PAD.r + 1} fill="#2ee6a6" stroke="#0c6b4a" strokeWidth="0.8" />
+          <line x1={p.x} y1={p.z} x2={p.x + p.dx * 6} y2={p.z + p.dz * 6} stroke="#0c6b4a" strokeWidth="1.4" strokeLinecap="round" />
+        </g>
+      ))}
       {coop && <path d={star(coop.x, coop.z, 9)} fill="#ffd23d" stroke="#7a4a00" strokeWidth="1.4" strokeLinejoin="round" />}
+      {map.places.map((p, i) => (
+        <text key={`n${i}`} className="g-scramble-place" x={p.x} y={p.z - p.r * 0.55} textAnchor="middle">
+          {p.name}
+        </text>
+      ))}
     </>
   );
 }
@@ -521,7 +547,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>The bus.</b> It flies across the island. Jump any time while it's over land, then glide down and steer to where you want to land.
           </li>
           <li>
-            <b>Loot.</b> Guns, ammo, healing and more lie in buildings and around the island. Smash crates and open the golden chests for better ones. Walking over ammo, healing and throwables picks them up.
+            <b>Loot.</b> Guns, ammo, healing and more lie in buildings and around the island. Smash crates, toilets and hay bales, raid the fridges and open the golden chests for better ones. Walking over ammo, healing and throwables picks them up.
           </li>
           <li>
             <b>Health and shield.</b> You have 100 health and up to 100 shield, which takes hits first.
@@ -541,7 +567,25 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         <h3>Around the island</h3>
         <ul>
           <li>
+            <b>Towns and sites.</b> Every town, farm, camp and yard has a name: it's on the map, and a banner tells you when you walk in. Dirt roads link the places near each other, and you walk a little quicker on them.
+          </li>
+          <li>
             <b>Houses, farmhouses and sheds.</b> Loot inside, often a chest. The roof lifts off while you're in, and nobody outside can see you.
+          </li>
+          <li>
+            <b>Kitchens.</b> Houses and farmhouses have a fridge, which opens like a chest and holds things to eat and patch up with, and a toilet, which breaks like a crate and might hold anything.
+          </li>
+          <li>
+            <b>Campfires.</b> By some houses and out at the camps. Stand within a few steps of one and it heals you {CAMP.hps} health a second, all the way to full, as long as nobody chases you off.
+          </li>
+          <li>
+            <b>Bounce pads.</b> The glowing green discs with an arrow. Step on one and up you go, gliding off the way the arrow points: steer as you did from the bus and land somewhere new. You can't be hit while you're up there, but you can't shoot either.
+          </li>
+          <li>
+            <b>Farms.</b> A wooden fence rings the farmhouse and its field, with a gate in the middle of every side. Fences stop you walking, not bullets. The hay bales are cover that breaks when shot or smacked, and sometimes something falls out.
+          </li>
+          <li>
+            <b>Cars and trucks.</b> Parked in driveways, by the warehouses and the container yards. Solid cover: nothing gets through one.
           </li>
           <li>
             <b>Doors.</b> Every way in has a bright frame, a lamp, a porch and an awning sticking out from the roof, and shows as a light tab on the map. Walk up to a door, or line up with one, and the roof thins so you can peek in.
@@ -566,6 +610,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>Ruins.</b> Broken walls and no roof: cover, but nowhere to hide.
+          </li>
+          <li>
+            <b>Odds and ends.</b> Lamp posts along the roads, mailboxes by the doors and picnic tables in the yards. Posts stop bullets; a table only stops your feet.
           </li>
         </ul>
       </section>

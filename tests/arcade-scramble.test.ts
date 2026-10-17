@@ -6,21 +6,28 @@ import { AMMO_BOX, AMMO_TYPES, BOOST, HP_MAX, MAX_PACK, MAX_RARITY, MELEE, MELEE
 import {
   BEACH,
   BUS_Y,
+  CAMP,
   DOOR,
   DROP_BASE,
   EDGE,
+  GATE,
   HALF,
+  PAD,
   PEEK,
   POND_SLOW,
+  ROAD_SPEED,
   STORM_PHASES,
   STORM_R0,
   SUPPLY_FALL,
+  TOILET_R,
   WALL_T,
   buildingAt,
   busAt,
   coverAt,
   generateMap,
+  low,
   peekAt,
+  placeAt,
   pushBox,
   pushCircle,
   pushObb,
@@ -28,10 +35,13 @@ import {
   rayCircle,
   rayObb,
   raySolid,
+  reindex,
+  roadAt,
   solidsNear,
   stormAt,
   stormEnd,
   walkCells,
+  yardAt,
   type Building,
   type Door,
   type GameMap,
@@ -49,11 +59,13 @@ import {
   LEVELS,
   LEVEL_SPECS,
   MAX_FIGHTERS,
+  PAD_FLY,
   PICK_R,
   SLOT_MELEE,
   SLOT_THROW,
   SPEED,
   STORM_TICK,
+  TOILET_HP,
   WALL_HP,
   aliveCount,
   applyState,
@@ -185,6 +197,71 @@ test('every island has all its buildings, each with the doorways it should have,
     assert.equal(kinds('chest').filter((c) => c.gold).length, 1, 'one golden chest, in the Golden Coop');
     assert.ok(kinds('barrel').length >= 16, 'barrels about');
     assert.equal(kinds('supply').length, 3);
+    // the kitchens, the farmyards, the camps and everything round the houses
+    assert.equal(kinds('fridge').length, 11, 'a fridge in every house and farmhouse');
+    assert.equal(kinds('toilet').length, 11, 'and a toilet');
+    assert.equal(kinds('hay').length, 10, 'five hay bales a farm');
+    assert.equal(m.yards.length, 2, 'a fence round each farm');
+    for (const y of m.yards) {
+      assert.equal(y.gates.length, 4, 'a gate in every side');
+      for (const g of y.gates) assert.ok(Math.abs(g.w - GATE) < 0.01);
+      const farm = m.buildings.find((b) => b.kind === 'farm' && Math.abs(b.x - y.x) < y.hw && Math.abs(b.z - y.z) < y.hd)!;
+      assert.ok(farm && m.fields.some((f) => Math.abs(f.x - y.x) < y.hw && Math.abs(f.z - y.z) < y.hd), 'the farmhouse and its field inside it');
+      for (const c of kinds('hay')) if (Math.abs(c.x - y.x) < y.hw && Math.abs(c.z - y.z) < y.hd) assert.ok(Math.abs(c.x - farm.x) > farm.w / 2 + 1 || Math.abs(c.z - farm.z) > farm.d / 2 + 1, 'hay outdoors');
+    }
+    assert.ok(m.fires.length >= 3 && m.fires.length <= 12, `seed ${seed}: three camps and a few house fires (${m.fires.length})`);
+    assert.equal(m.pads.length, 5, 'five bounce pads');
+    for (const p of m.pads) assert.ok(Math.abs(Math.hypot(p.dx, p.dz) - 1) < 0.01 && p.x * p.dx + p.z * p.dz < 0, 'each pointing in toward the island');
+    assert.ok(m.cars.length >= 4 && m.lamps.length >= 20 && m.mailboxes.length >= 12 && m.tables.length >= 3 && m.roads.length >= 15, `seed ${seed}: props and roads`);
+    assert.ok(m.places.length >= 5, `seed ${seed}: named places`);
+    assert.equal(new Set(m.places.map((p) => p.name)).size, m.places.length, 'no two places share a name');
+    for (const b of m.buildings) if (b.kind === 'farm' || b.kind === 'warehouse' || b.kind === 'coop') assert.ok(placeAt(m, b.x, b.z) >= 0, `seed ${seed}: a ${b.kind} is somewhere with a name`);
+    for (const f of m.fires) assert.ok(placeAt(m, f.x, f.z) >= 0 || m.buildings.some((b) => Math.hypot(b.x - f.x, b.z - f.z) < 20), 'a fire is at a camp or by a house');
+  }
+});
+
+test('roads run edge to edge between places, never through a building, a pond or a fence; lamp posts stand beside them', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const m = generateMap(seed);
+    for (const r of m.roads) {
+      const len = Math.hypot(r.x1 - r.x0, r.z1 - r.z0);
+      const ux = (r.x1 - r.x0) / len;
+      const uz = (r.z1 - r.z0) / len;
+      assert.ok(len >= 6, 'long enough to be a road');
+      for (const b of m.buildings) assert.equal(rayBox(r.x0, r.z0, ux, uz, len, b.x, b.z, b.w / 2, b.d / 2), Infinity, `seed ${seed}: a road through a ${b.kind}`);
+      for (const p of m.ponds) assert.equal(rayCircle(r.x0, r.z0, ux, uz, len, p.x, p.z, p.r), Infinity, 'a road through a pond');
+      for (const y of m.yards) for (const f of y.fences) assert.equal(rayBox(r.x0, r.z0, ux, uz, len, f.x, f.z, f.hw, f.hd), Infinity, 'a road through a fence (the gate is the way in)');
+      assert.ok(roadAt(m, (r.x0 + r.x1) / 2, (r.z0 + r.z1) / 2), 'you can stand on it');
+      assert.ok(Math.abs(r.x0) < EDGE && Math.abs(r.z0) < EDGE && Math.abs(r.x1) < EDGE && Math.abs(r.z1) < EDGE);
+    }
+    for (const l of m.lamps) {
+      assert.ok(!roadAt(m, l.x, l.z), 'a lamp post stands beside the road, not on it');
+      assert.ok(m.roads.some((r) => Math.hypot(l.x - (r.x0 + r.x1) / 2, l.z - (r.z0 + r.z1) / 2) < Math.hypot(r.x1 - r.x0, r.z1 - r.z0) / 2 + 4), 'near one');
+    }
+    for (const t of m.trees) assert.ok(!roadAt(m, t.x, t.z), 'no tree grows in the road');
+  }
+});
+
+test('campfires, bounce pads, cars and tables stand in the open where an egg can walk up to them, and never indoors', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const m = generateMap(seed);
+    const indoors = (x: number, z: number) => m.buildings.some((b) => Math.abs(x - b.x) < b.w / 2 + 0.5 && Math.abs(z - b.z) < b.d / 2 + 0.5);
+    const wet = (x: number, z: number) => m.ponds.some((p) => Math.hypot(x - p.x, z - p.z) < p.r + 1);
+    const check = (x: number, z: number, reach: number, what: string) => {
+      assert.ok(!indoors(x, z) && !wet(x, z), `seed ${seed}: a ${what} indoors or in a pond`);
+      const walk = walkable(m, x - 9, z - 9, x + 9, z + 9);
+      assert.ok(walk(x, z, reach), `seed ${seed}: no way up to the ${what} at ${x},${z}`);
+    };
+    for (const f of m.fires) check(f.x, f.z, CAMP.r - 0.3, 'campfire');
+    for (const p of m.pads) check(p.x, p.z, PAD.r - 0.2, 'bounce pad');
+    for (const c of m.cars) check(c.x, c.z, Math.max(c.hw, c.hd) + 1.4, 'car');
+    for (const t of m.tables) check(t.x, t.z, 2.6, 'picnic table');
+    for (const l of [...m.lamps, ...m.mailboxes]) check(l.x, l.z, 1.4, 'post');
+    for (const p of m.pads) {
+      assert.ok(yardAt(m, p.x, p.z) < 0, 'no pad inside a farmyard');
+      // and nowhere near a door, so nobody gets thrown about leaving a house
+      for (const b of m.buildings) for (const d of b.doors) assert.ok(Math.hypot(p.x - d.x, p.z - d.z) > 5, `seed ${seed}: a pad by a doorway`);
+    }
   }
 });
 
@@ -202,9 +279,13 @@ test('standing at a doorway, or lined up with one a few steps out, peeks into th
         for (const [k, side] of [[0, 0], [1.2, 0], [1.5, d.w / 2 + 0.8], [4, d.w / 2 + 1.5]]) {
           const p = out(d, k, side);
           const at = peekAt(m, p.x, p.z);
-          // in a yard of containers, the next one's open end can be nearer
+          // in a yard of containers, the next one's open end can be nearer; so can a shed's door facing this one
           if (b.kind === 'container') assert.ok(at >= 0 && m.buildings[at].kind === 'container', `seed ${seed}: peeking into a container`);
-          else assert.equal(at, i, `seed ${seed}: ${k} m out from a ${b.kind}'s door`);
+          else if (at !== i) {
+            const other = m.buildings[at];
+            const nearer = other?.doors.some((o) => (p.x - o.x) * o.ox + (p.z - o.z) * o.oz < k - 0.5);
+            assert.ok(nearer, `seed ${seed}: ${k} m out from a ${b.kind}'s door`);
+          }
         }
         const far = out(d, 6);
         assert.ok(peekAt(m, far.x, far.z) >= 0, `seed ${seed}: lined up with a door from six meters`);
@@ -278,19 +359,23 @@ function walkable(m: GameMap, x0: number, z0: number, x1: number, z1: number) {
   };
 }
 
-test('every building can be walked into, and everything in it reached', () => {
+test('every building and farmyard can be walked into, and everything in it reached', () => {
   for (let seed = 1; seed <= 30; seed++) {
     const m = generateMap(seed);
-    for (const b of m.buildings) {
-      const reach = walkable(m, b.x - b.w / 2 - 4, b.z - b.d / 2 - 4, b.x + b.w / 2 + 4, b.z + b.d / 2 + 4);
-      const inBuilding = (x: number, z: number) => Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2;
-      for (const l of m.floor) if (inBuilding(l.x, l.z)) assert.ok(reach(l.x, l.z, PICK_R - 0.1), `seed ${seed}: loot at ${l.x},${l.z} in a ${b.kind}`);
+    // a farm's lot is its whole fenced yard: the way in is through a gate
+    const lots = [...m.buildings.map((b) => ({ kind: b.kind, x: b.x, z: b.z, hw: b.w / 2, hd: b.d / 2 })), ...m.yards.map((y) => ({ kind: 'yard', x: y.x, z: y.z, hw: y.hw, hd: y.hd }))];
+    for (const b of lots) {
+      const reach = walkable(m, b.x - b.hw - 4, b.z - b.hd - 4, b.x + b.hw + 4, b.z + b.hd + 4);
+      const inLot = (x: number, z: number) => Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd;
+      for (const l of m.floor) if (inLot(l.x, l.z)) assert.ok(reach(l.x, l.z, PICK_R - 0.1), `seed ${seed}: loot at ${l.x},${l.z} in a ${b.kind}`);
       for (const c of m.containers) {
-        if (!inBuilding(c.x, c.z)) continue;
-        if (c.kind === 'chest') assert.ok(reach(c.x, c.z, CHEST_R - 0.1), `seed ${seed}: the chest in a ${b.kind}`);
-        // a crate is broken from wherever a gun can see it; its loot spills where it stood
-        if (c.kind === 'crate') assert.ok(reach(c.x, c.z, PICK_R + 0.7), `seed ${seed}: the crate in a ${b.kind}`);
+        if (!inLot(c.x, c.z)) continue;
+        if (c.kind === 'chest' || c.kind === 'fridge') assert.ok(reach(c.x, c.z, CHEST_R - 0.1), `seed ${seed}: the ${c.kind} in a ${b.kind}`);
+        // a crate, toilet or hay bale is broken from wherever a gun can see it; its loot spills where it stood
+        if (c.kind === 'crate' || c.kind === 'toilet') assert.ok(reach(c.x, c.z, PICK_R + 0.7), `seed ${seed}: the ${c.kind} in a ${b.kind}`);
+        if (c.kind === 'hay') assert.ok(reach(c.x, c.z, PICK_R + 1), `seed ${seed}: the hay in a ${b.kind}`);
       }
+      if (b.kind === 'yard') for (const g of m.yards.find((y) => y.x === b.x && y.z === b.z)!.gates) assert.ok(reach(g.x, g.z, 0.5), `seed ${seed}: a gate is open`);
     }
   }
 });
@@ -394,10 +479,15 @@ test('the grid finds everything a ray could hit, the same as checking every soli
     const len = 1 + rng() * 60;
     const dx = Math.sin(a);
     const dz = Math.cos(a);
-    const grid = castRay(m, x, z, dx, dz, len, -1, false);
+    const grid = castRay(m, x, z, dx, dz, len, -1, false, true);
     let brute = Infinity;
     for (const s of m.map.solids) if (standing(m, s)) brute = Math.min(brute, raySolid(s, x, z, dx, dz, len));
     assert.equal(grid?.t ?? Infinity, brute, `ray ${i}`);
+    // bullets and eyes go over fences, tables and fire pits
+    const high = castRay(m, x, z, dx, dz, len, -1, false);
+    let tall = Infinity;
+    for (const s of m.map.solids) if (standing(m, s) && !low(s)) tall = Math.min(tall, raySolid(s, x, z, dx, dz, len));
+    assert.equal(high?.t ?? Infinity, tall, `high ray ${i}`);
   }
   // cells along a diagonal come in order, each next to the last
   const cells: number[] = [];

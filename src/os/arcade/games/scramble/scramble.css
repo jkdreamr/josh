@@ -142,6 +142,25 @@
 .g-scramble .g-scramble-pill.is-gear b {
   font-size: 13px;
 }
+.g-scramble .g-scramble-pill.is-warm {
+  gap: 5px;
+  color: #ffb45e;
+  animation: g-scramble-throb 1.2s ease-in-out infinite;
+}
+/* the names of towns and sites: big enough to read on the little map, smaller on the big one */
+.g-scramble .g-scramble-place {
+  font: 700 15px/1 system-ui, sans-serif;
+  fill: #fff;
+  paint-order: stroke;
+  stroke: rgba(20, 24, 30, 0.75);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.g-scramble .g-scramble-bigmap .g-scramble-place {
+  font-size: 9px;
+  stroke-width: 2px;
+}
 .g-scramble .g-scramble-storm {
   position: absolute;
   top: 12px;
