@@ -24,6 +24,7 @@ import {
   WEAPON_IDS,
   WOOD_MAX,
   ammoCap,
+  armorMult,
   damageOf,
   isWeapon,
   reloadOf,
@@ -214,6 +215,9 @@ export type Fighter = {
   scope: number;
   /** Backpack level 0..3. */
   pack: number;
+  /** Helmet and vest levels 0..3: each takes a cut of bullets, swings and blasts. */
+  helmet: number;
+  vest: number;
   wood: number;
   fireT: number;
   /** Shots left in the burst being fired, and the wait before the next. */
@@ -250,6 +254,8 @@ export type Fighter = {
   show: { w: Held | null; r: number; flags: number };
   /** Loot ids asked of the host, and when. */
   pending: Map<number, number>;
+  /** The loot id last asked for with the key: only that puts on a worse helmet or vest. */
+  keyAsk: number;
   wallSeq: number;
   dropSeq: number;
   /** Remote eggs whose owner says they are out, though the news of how hasn't arrived yet. */
@@ -278,7 +284,7 @@ export type Ev = (
   | { t: 'swing'; f: number }
   | { t: 'throw'; f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; ft: number }
   | { t: 'zone'; k: Zone['k']; x: number; z: number }
-  | { t: 'hit'; f: number; to: number; d: number; w: Cause; x: number; z: number; shield: boolean; local: boolean }
+  | { t: 'hit'; f: number; to: number; d: number; took: number; w: Cause; x: number; z: number; shield: boolean; local: boolean }
   | { t: 'hurt'; f: number; d: number; by: number; storm: boolean; shield: boolean }
   | { t: 'thud'; x: number; z: number; what: Thud }
   | { t: 'smash'; f: number; kind: 'wall' | 'crate'; id: number; d: number; x: number; z: number }
@@ -450,6 +456,8 @@ function newFighter(id: number, e: Entrant, x: number, z: number): Fighter {
     boost: 0,
     scope: 0,
     pack: 0,
+    helmet: 0,
+    vest: 0,
     wood: 30,
     fireT: 0,
     burst: 0,
@@ -479,6 +487,7 @@ function newFighter(id: number, e: Entrant, x: number, z: number): Fighter {
     snaps: [],
     show: { w: null, r: 0, flags: 0 },
     pending: new Map(),
+    keyAsk: -1,
     wallSeq: 0,
     dropSeq: 0,
     outSeen: -1,
@@ -1084,18 +1093,28 @@ function swing(m: Match, f: Fighter) {
   else emit(m, { t: 'thud', x, z, what: hit.what });
 }
 
-/** A hit on an egg from something this client fired: applied here if we own the egg, else sent to its owner. */
+/**
+ * A hit on an egg from something this client fired: applied here if we own the egg, else sent to its owner. `d` is
+ * the hit as fired, `took` what's left of it after the egg's armor (as its last report has it, for someone else's).
+ */
 function strike(m: Match, from: Fighter, o: Fighter, dmg: number, w: Cause, x: number, z: number) {
   const d = Math.max(1, Math.round(dmg));
+  const took = armored(d, w, false, o);
   const shield = o.kind === 'remote' ? (o.show.flags & F_SHIELDED) !== 0 : o.shield > 0;
   if (o.kind === 'remote') {
-    from.dealt += d;
-    emit(m, { t: 'hit', f: from.id, to: o.id, d, w, x: r2(x), z: r2(z), shield, local: false });
+    from.dealt += took;
+    emit(m, { t: 'hit', f: from.id, to: o.id, d, took, w, x: r2(x), z: r2(z), shield, local: false });
     return;
   }
-  const took = hurt(m, o, d, from.id, w, false);
-  if (took > 0) from.dealt += took;
-  emit(m, { t: 'hit', f: from.id, to: o.id, d, w, x: r2(x), z: r2(z), shield, local: true });
+  const landed = hurt(m, o, d, from.id, w, false);
+  if (landed > 0) from.dealt += landed;
+  emit(m, { t: 'hit', f: from.id, to: o.id, d, took, w, x: r2(x), z: r2(z), shield, local: true });
+}
+
+/** What's left of a hit after the armor an egg wears: bullets, swings and blasts are cut, the storm and hot sauce aren't. */
+export function armored(d: number, w: Cause, storm: boolean, f: Fighter) {
+  if (storm || w === 'sauce' || (f.helmet <= 0 && f.vest <= 0)) return d;
+  return r1(d * armorMult(f.helmet, f.vest));
 }
 
 /**
@@ -1112,12 +1131,12 @@ export function panBlocks(f: Fighter, dx: number, dz: number) {
 }
 
 /**
- * Damage to an egg this client owns. Shields soak it first, except the storm's. Returns how much landed. Only eggs on
- * the ground can be hurt, and nobody once the match is over.
+ * Damage to an egg this client owns. Armor takes its cut first, then shields soak it, except the storm's. Returns how
+ * much landed. Only eggs on the ground can be hurt, and nobody once the match is over.
  */
 export function hurt(m: Match, f: Fighter, d: number, by: number, w: Cause, storm: boolean) {
   if (m.ended || !owned(f) || f.phase !== 'ground' || !(d > 0)) return 0;
-  let left = d;
+  let left = armored(d, w, storm, f);
   const fromShield = storm ? 0 : Math.min(f.shield, left);
   f.shield -= fromShield;
   left -= fromShield;
@@ -1157,6 +1176,8 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   for (const k of THROW_IDS) if (f.throws[k] > 0) spill.push({ kind: 'throw', w: k, n: f.throws[k] });
   if (f.scope > 0) spill.push({ kind: 'scope', lv: f.scope });
   if (f.pack > 0) spill.push({ kind: 'pack', lv: f.pack });
+  if (f.helmet > 0) spill.push({ kind: 'helmet', lv: f.helmet });
+  if (f.vest > 0) spill.push({ kind: 'vest', lv: f.vest });
   if (f.wood >= 10) spill.push({ kind: 'wood', n: Math.floor(f.wood / 2) });
   f.guns = [null, null];
   f.melee = 'spatula';
@@ -1165,6 +1186,8 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   f.throws = none(THROW_IDS);
   f.scope = 0;
   f.pack = 0;
+  f.helmet = 0;
+  f.vest = 0;
   f.wood = 0;
   const rad = spill.length > 1 ? 1 + spill.length * 0.07 : 0;
   spill.forEach((def, i) => {
@@ -1508,7 +1531,8 @@ export function addWall(m: Match, wall: Wall) {
 
 /**
  * Would an egg take this? Guns need an empty slot, and a melee weapon in place of anything but the spatula, unless
- * it's a swap the player asked for. A scope or backpack only if it's better than the one we have.
+ * it's a swap the player asked for. A scope or backpack only if it's better than the one we have; a helmet or vest
+ * too, unless the player asks for a worse one.
  */
 export function wants(f: Fighter, def: LootDef, manual: boolean) {
   switch (def.kind) {
@@ -1516,6 +1540,10 @@ export function wants(f: Fighter, def: LootDef, manual: boolean) {
       return manual || f.guns[0] === null || f.guns[1] === null;
     case 'melee':
       return def.w !== f.melee && (manual || f.melee === 'spatula');
+    case 'helmet':
+      return def.lv > f.helmet || (manual && def.lv !== f.helmet);
+    case 'vest':
+      return def.lv > f.vest || (manual && def.lv !== f.vest);
     case 'throw':
       return f.throws[def.w] < throwCap(def.w, f.pack);
     case 'ammo':
@@ -1574,7 +1602,7 @@ export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootIt
   }
   if (!item) return null;
   const def = item.def;
-  return { item, swap: (def.kind === 'gun' && f.guns[0] !== null && f.guns[1] !== null) || (def.kind === 'melee' && f.melee !== 'spatula') };
+  return { item, swap: (def.kind === 'gun' && f.guns[0] !== null && f.guns[1] !== null) || (def.kind === 'melee' && f.melee !== 'spatula') || (def.kind === 'helmet' && f.helmet > 0) || (def.kind === 'vest' && f.vest > 0) };
 }
 
 /** True while a pickup request is waiting for the host's answer (it gives up after a second). */
@@ -1587,22 +1615,23 @@ function interact(m: Match, f: Fighter) {
   const p = prompt(m, f);
   if (!p) return;
   if ('chest' in p) requestOpen(m, f, p.chest);
-  else requestTake(m, f, p.item);
+  else requestTake(m, f, p.item, true);
 }
 
 function autoPickup(m: Match, f: Fighter) {
   for (const l of m.loot.values()) {
     if (Math.abs(l.x - f.x) > AUTO_R || Math.abs(l.z - f.z) > AUTO_R) continue;
     if ((l.x - f.x) * (l.x - f.x) + (l.z - f.z) * (l.z - f.z) > AUTO_R * AUTO_R) continue;
-    // never straight back up what we just put down
-    if (l.by === f.id && m.time - l.at < 3) continue;
+    // never straight back up what we just put down (armor we took off stays off until we ask for it)
+    if (l.by === f.id && (m.time - l.at < 3 || l.def.kind === 'helmet' || l.def.kind === 'vest')) continue;
     if (wants(f, l.def, false)) requestTake(m, f, l);
   }
 }
 
-function requestTake(m: Match, f: Fighter, l: LootItem) {
+function requestTake(m: Match, f: Fighter, l: LootItem, key = false) {
   const asked = f.pending.get(l.id);
   if (asked !== undefined && m.clock - asked < 1) return;
+  if (key) f.keyAsk = l.id;
   if (m.world) grantTake(m, f.id, l.id, true);
   else {
     f.pending.set(l.id, m.clock);
@@ -1627,7 +1656,7 @@ export function grantTake(m: Match, fid: number, id: number, announce: boolean) 
   if (!l || !f || f.phase !== 'ground') return false;
   m.loot.delete(id);
   m.gone.add(id);
-  if (owned(f)) give(m, f, l.def);
+  if (owned(f)) give(m, f, l.def, f.keyAsk === id);
   emit(m, announce ? { t: 'took', f: fid, id, def: l.def } : { t: 'took', f: fid, id, def: l.def, net: true });
   return true;
 }
@@ -1640,7 +1669,7 @@ export function applyTook(m: Match, fid: number, id: number, def: LootDef) {
   if (!f) return;
   f.pending.delete(id);
   if (owned(f)) {
-    if (f.phase === 'ground') give(m, f, def);
+    if (f.phase === 'ground') give(m, f, def, f.keyAsk === id);
     // cracked while the host was saying yes: it goes back down where we fell, for anyone to pick up
     else dropItem(m, f, def, f.x, f.z);
   }
@@ -1648,7 +1677,7 @@ export function applyTook(m: Match, fid: number, id: number, def: LootDef) {
 }
 
 /** Puts a pickup in an egg's pockets. Whatever doesn't fit goes back on the ground at its feet. */
-function give(m: Match, f: Fighter, def: LootDef) {
+function give(m: Match, f: Fighter, def: LootDef, key: boolean) {
   const fill = (have: number, cap: number, n: number, rest: (left: number) => LootDef) => {
     const take = Math.max(0, Math.min(n, cap - have));
     if (n - take > 0) dropItem(m, f, rest(n - take), f.x, f.z);
@@ -1700,6 +1729,17 @@ function give(m: Match, f: Fighter, def: LootDef) {
         f.pack = def.lv;
       } else dropItem(m, f, def, f.x, f.z);
       break;
+    case 'helmet':
+    case 'vest': {
+      // a better level goes on, a worse one only when asked for with the key, and the old one comes off
+      const old = f[def.kind];
+      if (def.lv === old || (def.lv < old && !key)) dropItem(m, f, def, f.x, f.z);
+      else {
+        f[def.kind] = def.lv;
+        if (old > 0) dropItem(m, f, { kind: def.kind, lv: old }, f.x, f.z);
+      }
+      break;
+    }
     case 'wood':
       f.wood = fill(f.wood, WOOD_MAX, def.n, (n) => ({ kind: 'wood', n }));
       break;
@@ -1739,7 +1779,7 @@ export function flagsOf(f: Fighter) {
 }
 
 /** A position report for an egg another client owns. */
-export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number }) {
+export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number }) {
   if (f.kind !== 'remote') return;
   if (f.phase === 'out') return;
   if (s.phase === 'out') {
@@ -1754,6 +1794,8 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
   f.phase = s.phase;
   f.hp = s.hp;
   f.shield = s.shield;
+  f.helmet = s.helmet;
+  f.vest = s.vest;
   f.show = { w: s.w, r: s.r, flags: s.flags };
   f.hitT = s.flags & F_HIT ? 0.2 : 0;
   snaps.push({ at: m.clock, x: s.x, z: s.z, y: s.y, aim: s.aim, vx: s.vx, vz: s.vz });
@@ -2155,6 +2197,8 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
         break;
       case 'scope':
       case 'pack':
+      case 'helmet':
+      case 'vest':
         useful = wants(f, def, false);
         break;
       default:

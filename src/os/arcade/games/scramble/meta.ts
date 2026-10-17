@@ -3,7 +3,7 @@ import type { GameMeta } from '../../types';
 export const meta: GameMeta = {
   id: 'scramble',
   title: 'Scramble',
-  blurb: 'An egg battle royale for twenty eggs, up to eight of them friends. Jump from the bus, raid the kitchen drawer for guns, throwables and frying pans, build walls and be the last egg standing as the storm closes in.',
+  blurb: 'An egg battle royale for twenty eggs, up to eight of them friends. Jump from the bus, raid the kitchen drawer for guns, throwables, frying pans and pots and aprons to wear, build walls and be the last egg standing as the storm closes in.',
   category: '3d',
   players: '1-8P',
   controls: 'WASD walks, the mouse aims, click shoots or throws. Space jumps from the bus and builds walls, E or F picks up, R reloads, 1 to 4 switch weapons, 5 to 9 use items, H heals, G shields, C drinks coffee, M shows the map.',

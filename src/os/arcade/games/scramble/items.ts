@@ -228,6 +228,24 @@ export const throwCap = (w: ThrowId, pack: number) => capOf(THROWS[w].carry, pac
 export const AMMO_BOX: Record<Ammo, number> = { light: 30, heavy: 20, shells: 10, rockets: 3 };
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Armor: a helmet and a vest from the kitchen, three levels each.
+
+export const ARMOR_KINDS = ['helmet', 'vest'] as const;
+export type ArmorKind = (typeof ARMOR_KINDS)[number];
+export const isArmor = (v: unknown): v is ArmorKind => ARMOR_KINDS.includes(v as ArmorKind);
+export const MAX_ARMOR = 3;
+/** What each level is called, by kind, level 0 being none. */
+export const ARMOR_NAMES: Record<ArmorKind, readonly string[]> = {
+  helmet: ['', 'colander', 'saucepan', 'stockpot'],
+  vest: ['', 'apron', 'quilted apron', 'steel apron'],
+};
+/** The share of a hit each level stops. The two multiply, so the best of both stops about 45%. */
+export const ARMOR_CUT: Record<ArmorKind, readonly number[]> = { helmet: [0, 0.08, 0.12, 0.16], vest: [0, 0.15, 0.25, 0.35] };
+export const clampArmor = (lv: number) => clampInt(lv, 0, MAX_ARMOR);
+/** What's left of a bullet, swing or blast after the armor an egg wears. The storm and hot sauce go straight through. */
+export const armorMult = (helmet: number, vest: number) => (1 - ARMOR_CUT.helmet[clampArmor(helmet)]) * (1 - ARMOR_CUT.vest[clampArmor(vest)]);
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Loot.
 
 export type LootDef =
@@ -238,6 +256,8 @@ export type LootDef =
   | { kind: 'use'; w: UseId; n: number }
   | { kind: 'scope'; lv: number }
   | { kind: 'pack'; lv: number }
+  | { kind: 'helmet'; lv: number }
+  | { kind: 'vest'; lv: number }
   | { kind: 'wood'; n: number };
 
 /** Where loot is found: on the floor, in a crate, a chest, the Golden Coop's chest, or a supply drop. */
@@ -296,24 +316,50 @@ const levelDrop = (rng: Rng, kind: 'scope' | 'pack', better: boolean): LootDef =
   return { kind, lv };
 };
 
-/** What a loot spot, crate or chest holds. Deterministic for a given generator state. At most five things. */
+/** Odds of each armor level by where it's found: the floor mostly level 1, the golden chest only level 3. */
+const ARMOR_ODDS: Record<LootTier, number[]> = {
+  floor: [0, 62, 32, 6],
+  crate: [0, 45, 42, 13],
+  chest: [0, 12, 56, 32],
+  supply: [0, 0, 30, 70],
+  gold: [0, 0, 0, 100],
+};
+
+/** A helmet or a vest, as good as the place it's found. */
+const armorDrop = (rng: Rng, tier: LootTier): LootDef => {
+  const kind = rng() < 0.5 ? 'helmet' : 'vest';
+  const odds = ARMOR_ODDS[tier];
+  let roll = rng() * odds.reduce((a, b) => a + b, 0);
+  let lv = 1;
+  for (let i = 1; i < odds.length; i++) {
+    roll -= odds[i];
+    if (roll < 0) {
+      lv = i;
+      break;
+    }
+  }
+  return { kind, lv };
+};
+
+/** What a loot spot, crate or chest holds. Deterministic for a given generator state. At most six things. */
 export function rollLoot(rng: Rng, tier: LootTier): LootDef[] {
   if (tier === 'gold' || tier === 'supply') {
-    // a top gun with plenty of ammo, the good potions, something to throw and a scope or backpack
+    // a top gun with plenty of ammo, the good potions, something to throw, a scope or backpack, and a piece of armor
     const out = gunDrop(rng, tier);
     out.push(rng() < 0.55 ? { kind: 'use', w: 'shield', n: 2 } : { kind: 'use', w: 'medkit', n: 2 });
     out.push({ kind: 'throw', w: rng() < 0.6 ? 'grenade' : 'sauce', n: 2 });
     out.push(levelDrop(rng, rng() < 0.5 ? 'scope' : 'pack', true));
+    out.push(armorDrop(rng, tier));
     return out;
   }
   if (tier === 'chest') {
     const out = gunDrop(rng, 'chest');
     const extra = rng();
-    out.push(extra < 0.55 ? useDrop(rng) : extra < 0.8 ? throwDrop(rng) : levelDrop(rng, rng() < 0.5 ? 'scope' : 'pack', false));
+    out.push(extra < 0.4 ? useDrop(rng) : extra < 0.6 ? throwDrop(rng) : extra < 0.85 ? armorDrop(rng, 'chest') : levelDrop(rng, rng() < 0.5 ? 'scope' : 'pack', false));
     out.push({ kind: 'wood', n: 30 });
     return out;
   }
-  const pick = weighted(rng, tier === 'crate' ? { gun: 40, ammo: 12, use: 20, throw: 10, melee: 5, scope: 5, pack: 4, wood: 4 } : { gun: 46, ammo: 13, use: 18, throw: 8, melee: 5, scope: 3, pack: 3, wood: 4 });
+  const pick = weighted(rng, tier === 'crate' ? { gun: 37, ammo: 12, use: 19, throw: 9, melee: 5, scope: 4, pack: 4, armor: 9, wood: 4 } : { gun: 43, ammo: 13, use: 17, throw: 8, melee: 5, scope: 3, pack: 3, armor: 8, wood: 4 });
   switch (pick) {
     case 'gun':
       return gunDrop(rng, tier);
@@ -330,6 +376,8 @@ export function rollLoot(rng: Rng, tier: LootTier): LootDef[] {
     case 'scope':
     case 'pack':
       return [levelDrop(rng, pick, false)];
+    case 'armor':
+      return [armorDrop(rng, tier)];
     default:
       return [{ kind: 'wood', n: 20 }];
   }
@@ -354,6 +402,9 @@ export function lootName(def: LootDef) {
       return `${SCOPES[clampInt(def.lv, 0, MAX_SCOPE)]} scope`;
     case 'pack':
       return `level ${clampInt(def.lv, 1, MAX_PACK)} backpack`;
+    case 'helmet':
+    case 'vest':
+      return `${ARMOR_NAMES[def.kind][clampInt(def.lv, 1, MAX_ARMOR)]} (level ${clampInt(def.lv, 1, MAX_ARMOR)} ${def.kind})`;
     case 'wood':
       return `${def.n} wood`;
   }
@@ -391,6 +442,11 @@ export function parseLoot(v: unknown): LootDef | null {
     case 'scope':
     case 'pack': {
       const lv = n(d.lv, d.kind === 'scope' ? MAX_SCOPE : MAX_PACK);
+      return lv === null ? null : { kind: d.kind, lv };
+    }
+    case 'helmet':
+    case 'vest': {
+      const lv = n(d.lv, MAX_ARMOR);
       return lv === null ? null : { kind: d.kind, lv };
     }
     case 'wood': {
