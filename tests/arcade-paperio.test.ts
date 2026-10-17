@@ -34,6 +34,7 @@ import { meta } from '../src/os/arcade/games/paperio/meta.ts';
 import { boardFor, plausible } from '../src/os/arcade/kit/leaderboard-core.ts';
 import { readFileSync } from 'node:fs';
 import { SKINS, earned, freshLocker, parseLocker, record } from '../src/os/arcade/games/paperio/skins.ts';
+import { GLOW, MAX_DELAY, PASS, SETTLE, SHOW, age, janitorRows, restamp, settle as settleTexel, shown as shownAt, stampFor } from '../src/os/arcade/games/paperio/reveal.ts';
 
 /** A small arena with players already placed. */
 function world(radius = 120) {
@@ -1107,4 +1108,94 @@ test('a head left facing straight into the wall slides off along it instead of p
     drive(w, a, a.x, a.y);
   }
   assert.ok(Math.hypot(a.x - x0, a.y - y0) > 40, `it moves on along the wall (${Math.hypot(a.x - x0, a.y - y0).toFixed(1)} cells in 2 s)`);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The board's reveal clock (reveal.ts mirrors the shader): captured land glows once, then never again
+
+/** Plays one texel through a capture and `seconds` of frames, the way scene.ts does (sync, then render). */
+function playTexel(opts: { fps: number; n?: number; row?: number; delay?: number; from?: number; to?: number; seconds?: number }) {
+  const n = opts.n ?? 728;
+  const row = opts.row ?? 500;
+  const du = 60 / opts.fps;
+  const data = new Uint8Array(4);
+  data[0] = data[1] = opts.from ?? 0;
+  let units = 1000.4; // any phase of the clock
+  let janitorRow = 0;
+  let janitorAt = units;
+  const glows: number[] = [];
+  const owners: number[] = [];
+  const frames = Math.round((opts.seconds ?? 20) * opts.fps);
+  for (let f = 0; f < frames; f++) {
+    const now = Math.floor(units) & 255;
+    if (f === 10) restamp(data, 0, opts.to ?? 3, now, opts.delay ?? 0);
+    const rows = janitorRows(n, units - janitorAt);
+    janitorAt = units;
+    for (let r = 0; r < rows; r++) {
+      if (janitorRow === row) settleTexel(data, 0, now);
+      janitorRow = (janitorRow + 1) % n;
+    }
+    units += du;
+    const s = shownAt(data[0], data[1], data[2], units % 256);
+    glows.push(s.glow);
+    owners.push(s.owner);
+  }
+  return { glows, owners, data, du };
+}
+
+test('captured land glows once when it appears and never again, at any frame rate', () => {
+  for (const fps of [60, 30, 20, 144]) {
+    for (const row of [0, 200, 500, 727]) {
+      for (const delay of [0, 12, 56]) {
+        const { glows, owners, data, du } = playTexel({ fps, row, delay });
+        const lit = glows.map((g, f) => (g > 0 ? f : -1)).filter((f) => f >= 0);
+        const label = `${fps} fps, row ${row}, delay ${delay}`;
+        assert.ok(lit.length > 0, `${label}: it glows when it appears`);
+        // one short run of glowing frames, right after the change appears
+        assert.ok((lit[lit.length - 1] - lit[0] + 1) * du <= GLOW + du, `${label}: glows for at most ${GLOW} units (${lit.map((f) => f).join(',')})`);
+        const appear = owners.indexOf(3);
+        assert.ok(appear >= 10 && appear <= 10 + Math.ceil((delay + 1) / du), `${label}: it appears after its delay (frame ${appear})`);
+        assert.equal(lit[0], appear, `${label}: the glow starts when the land appears`);
+        // before it appears: the old owner; after: the new one, for good
+        assert.ok(owners.slice(appear).every((o) => o === 3), `${label}: once shown, the new owner stays`);
+        assert.ok(owners.slice(0, appear).every((o) => o === 0), `${label}: the old owner until then`);
+        assert.equal(data[1], data[0], `${label}: the change is settled`);
+      }
+    }
+  }
+});
+
+test('the janitor keeps pace with the clock: every row is visited within one pass, however slow the frames', () => {
+  const n = 728;
+  for (const du of [0.5, 1, 2, 3, 4.5]) {
+    const rows = janitorRows(n, du);
+    const framesPerPass = Math.ceil(n / rows);
+    assert.ok(framesPerPass * du <= PASS + du, `du ${du}: a pass takes ${framesPerPass * du} units`);
+    // settling can only happen while a change is between SETTLE and SHOW units old: two visits fit in that window
+    assert.ok(framesPerPass * du * 2 <= SHOW - SETTLE, `du ${du}: room for two visits`);
+  }
+  assert.equal(janitorRows(n, 0), 24, 'a minimum while the clock stands still');
+  assert.equal(janitorRows(n, 1e6), n, 'never more than the whole grid');
+});
+
+test('a change still waiting to appear keeps showing the old owner when it changes again', () => {
+  const data = new Uint8Array(4);
+  data[0] = data[1] = 2;
+  restamp(data, 0, 5, 100, 40); // owner 2 -> 5, appears at 141
+  assert.deepEqual(shownAt(data[0], data[1], data[2], 120), { owner: 2, glow: 0 });
+  restamp(data, 0, 2, 120, 0); // taken back before it appeared: nothing visible changes and nothing glows
+  for (let u = 120; u < 600; u++) {
+    const s = shownAt(data[0], data[1], data[2], u % 256);
+    assert.equal(s.owner, 2);
+    assert.equal(s.glow, 0);
+  }
+  assert.equal(age(10, 250), 16);
+  assert.equal(stampFor(255.7, 0), 0, 'the stamp wraps with the clock');
+  assert.equal(stampFor(10, 500), 10 + 1 + MAX_DELAY, 'delays are capped');
+});
+
+test('the board shader only lets unsettled texels glow, and glows in the land color rather than white', () => {
+  const src = readFileSync(new URL('../src/os/arcade/games/paperio/scene.ts', import.meta.url), 'utf8');
+  assert.match(src, /pop = t\.r > 0\.5 && t\.g != t\.r \?/, 'shown() gates the glow on an unsettled change');
+  assert.doesNotMatch(src, /mix\(top, vec3\(1\.0\)/, 'no mix toward white on the land top');
 });
