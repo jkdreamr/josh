@@ -83,7 +83,7 @@ export const ZONES: Zone[] = [
     line: 'where the fire never sleeps',
     from: 0,
     to: 20,
-    palette: { sky: ['#1b0806', '#4a140c', '#8a2a10'], fog: '#3a100b', fogNear: 16, fogFar: 46, hemi: ['#ff9a6a', '#2a0804'], sun: '#ffb080', stone: ['#6a4038', '#3c2521'], core: '#301c18', glow: '#ff7a2a', ink: '#ff9e6e' },
+    palette: { sky: ['#1b0806', '#4a140c', '#8a2a10'], fog: '#45140b', fogNear: 14, fogFar: 40, hemi: ['#ff8a5a', '#4a1208'], sun: '#ffb080', stone: ['#705750', '#3a2a26'], core: '#221412', glow: '#ff7a2a', ink: '#ff9e6e' },
   },
   {
     id: 'catacombs',
@@ -92,7 +92,7 @@ export const ZONES: Zone[] = [
     line: 'the stones remember every fall',
     from: 20,
     to: 40,
-    palette: { sky: ['#101116', '#1e2027', '#2d3038'], fog: '#1a1c23', fogNear: 14, fogFar: 44, hemi: ['#aab3c8', '#15171c'], sun: '#cfd7e6', stone: ['#73757b', '#45474d'], core: '#3a3b40', glow: '#8fe3a0', ink: '#b9e8c4' },
+    palette: { sky: ['#101116', '#1e2027', '#2d3038'], fog: '#14161c', fogNear: 9, fogFar: 34, hemi: ['#8d99ae', '#1c1b19'], sun: '#cfd7e6', stone: ['#7a7873', '#3e3c3b'], core: '#34322f', glow: '#8fe3a0', ink: '#b9e8c4' },
   },
   {
     id: 'forge',
@@ -101,7 +101,7 @@ export const ZONES: Zone[] = [
     line: 'iron, steam and a thousand sparks',
     from: 40,
     to: 60,
-    palette: { sky: ['#160f0a', '#3a2010', '#6a3a12'], fog: '#2a1a10', fogNear: 15, fogFar: 46, hemi: ['#ffc27d', '#2a1408'], sun: '#ffd9a0', stone: ['#5b5048', '#33302e'], core: '#262a30', glow: '#ffa63a', ink: '#ffc98a' },
+    palette: { sky: ['#120b07', '#3a1d0e', '#7a3f12'], fog: '#2c1a0f', fogNear: 18, fogFar: 58, hemi: ['#ffb878', '#4a1c0a'], sun: '#ffd9a0', stone: ['#5e544d', '#26221f'], core: '#1c1f24', glow: '#ffa63a', ink: '#ffc98a' },
   },
   {
     id: 'frost',
@@ -110,7 +110,7 @@ export const ZONES: Zone[] = [
     line: 'the cold at the bottom of everything, turned upside down',
     from: 60,
     to: 80,
-    palette: { sky: ['#08131f', '#1a3650', '#3b6a8c'], fog: '#1e3a52', fogNear: 18, fogFar: 54, hemi: ['#d6ecff', '#1a2e44'], sun: '#eef8ff', stone: ['#c6e6f6', '#86b9d4'], core: '#355772', glow: '#9fe0ff', ink: '#cfeeff' },
+    palette: { sky: ['#08131f', '#1f3f5d', '#3b6a8c'], fog: '#27475f', fogNear: 14, fogFar: 46, hemi: ['#cde4ff', '#27465f'], sun: '#eef8ff', stone: ['#dff3ff', '#6f9fbb'], core: '#2a4a68', glow: '#7fd4ff', ink: '#cfeeff' },
   },
   {
     id: 'cathedral',
@@ -119,7 +119,7 @@ export const ZONES: Zone[] = [
     line: 'light through broken glass',
     from: 80,
     to: 100,
-    palette: { sky: ['#150e28', '#2d1f4e', '#4a2f6a'], fog: '#2a1e44', fogNear: 16, fogFar: 50, hemi: ['#e8ccff', '#1c1230'], sun: '#ffe9c8', stone: ['#8f8299', '#5a4f66'], core: '#484056', glow: '#ffd27a', ink: '#e9d2ff' },
+    palette: { sky: ['#150e28', '#2d1f4e', '#4a2f6a'], fog: '#241a3c', fogNear: 18, fogFar: 82, hemi: ['#d9c3ff', '#241a44'], sun: '#ffe3b0', stone: ['#b6a89b', '#6a5c66'], core: '#3b3349', glow: '#ffd27a', ink: '#e9d2ff' },
   },
   {
     id: 'stars',
@@ -128,7 +128,7 @@ export const ZONES: Zone[] = [
     line: 'and thence we came forth to see again the stars',
     from: 100,
     to: TOP,
-    palette: { sky: ['#02030a', '#0b1030', '#1c2a5a'], fog: '#0c1230', fogNear: 20, fogFar: 70, hemi: ['#c2ceff', '#0a0d24'], sun: '#ffffff', stone: ['#8891b4', '#5a6184'], core: '#3b4160', glow: '#ffffff', ink: '#dfe6ff' },
+    palette: { sky: ['#02030a', '#0b1030', '#1c2a5a'], fog: '#0c1230', fogNear: 20, fogFar: 70, hemi: ['#c2ceff', '#2a3464'], sun: '#ffffff', stone: ['#7f8ab2', '#454c70'], core: '#3b4160', glow: '#ffffff', ink: '#dfe6ff' },
   },
 ];
 
