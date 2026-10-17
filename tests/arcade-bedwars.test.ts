@@ -8,6 +8,7 @@ import { applyKnock, armorPoints, fallDamage, hurtFilter, meleeKnock, protection
 import { GEN_INTERVAL, HOTBAR, SLOTS, addItem, buy, forgeInterval, freshInventory, inventoryAfterDeath, moveSlot, priceOf, offerById, quickMoveTarget, trapCost, upgradeCost, freshUpgrades } from '../src/os/arcade/games/bedwars/items.ts';
 import {
   RESPAWN_TICKS,
+  SPLIT_RANGE,
   TPS,
   applyAction,
   attack,
@@ -15,13 +16,16 @@ import {
   createGame,
   damage,
   destroyBed,
+  forgeTeam,
   placeAllowed,
   placeBlock,
   spawnDrop,
   tickGame,
   timeline,
   type Entrant,
+  type Ev,
   type Game,
+  type Player,
 } from '../src/os/arcade/games/bedwars/game.ts';
 import { meshChunk } from '../src/os/arcade/games/bedwars/mesher.ts';
 import { SKILLS, botDigTicks, defenseCells, findPath, nextPurchase, thinkBots } from '../src/os/arcade/games/bedwars/bots.ts';
@@ -392,6 +396,232 @@ test('forges and generators: timing, tiers, caps and pickups', () => {
   assert.equal(t[0].at, 2 * 60 * TPS);
   assert.equal(GEN_INTERVAL.diamond[0], 30 * TPS);
   assert.equal(timeline('classic')[4].at, 30 * 60 * TPS, 'beds go at 30 minutes on classic');
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// the forge split: teammates standing at their own forge all get what one of them picks up
+
+/** Doubles with these entrants first (on the teams they ask for), bots on the rest. */
+const doubles = (entrants: Entrant[]): Game => createGame({ mode: 'doubles', pace: 'quick', level: 'normal', entrants: [...entrants, ...bots(8 - entrants.length)], seed: 11 });
+const human = (name: string, seat: number, team: number, ctrl: 'local' | 'remote' = 'remote'): Entrant => ({ name, seat, ctrl, skin: 0, team });
+const standAt = (p: Player, x: number, y: number, z: number) => {
+  p.body.x = x;
+  p.body.y = y;
+  p.body.z = z;
+  p.body.vx = p.body.vy = p.body.vz = 0;
+};
+/** A pile on a team's forge, as the forge makes them. */
+const forgePile = (g: Game, team: number, item: 'iron' | 'gold' | 'emerald', n: number) => {
+  const f = g.info.teams[team].forge;
+  const d = spawnDrop(g, item, n, f[0], f[1], f[2], 0, 0, 0, -10 - team);
+  d.rest = true;
+  return d;
+};
+/** Who got a drop, in the order the pick events say. */
+const picks = (g: Game, id: number) => g.events.flatMap((e) => (e.t === 'pick' && e.id === id ? [e.p] : []));
+
+test('the forge split: two teammates at their forge both get what one picks up', () => {
+  const g = doubles([human('me', 0, 0, 'local'), human('mate', 1, 0)]);
+  const [me, mate] = g.players;
+  assert.equal(mate.team, me.team);
+  const f = g.info.teams[0].forge;
+  // the forge piles up while we are at spawn
+  for (let i = 0; i < TPS * 5; i++) tickGame(g);
+  const iron = g.drops.find((d) => d.item === 'iron' && forgeTeam(d) === 0);
+  assert.ok(iron && iron.n >= 3, `iron at the forge: ${iron?.n}`);
+  assert.equal(me.inv.wallet.iron + mate.inv.wallet.iron, 0, 'nobody picked anything up from spawn');
+  // I walk onto it; my teammate waits two blocks over, outside the pickup box
+  standAt(me, f[0], f[1], f[2]);
+  standAt(mate, f[0] + 2, f[1], f[2] - 0.5);
+  g.events.length = 0;
+  tickGame(g);
+  assert.ok(!g.drops.includes(iron), 'the pile is gone');
+  assert.ok(me.inv.wallet.iron >= 3);
+  assert.equal(mate.inv.wallet.iron, me.inv.wallet.iron, 'the teammate gets the same iron');
+  assert.ok(me.inv.wallet.gold > 0);
+  assert.equal(mate.inv.wallet.gold, me.inv.wallet.gold, 'and the same gold');
+  // both hear the pickup, and both inventories go out to their owners online
+  assert.deepEqual(picks(g, iron.id), [me.id, mate.id]);
+  for (const p of [me, mate]) assert.ok(g.events.some((e) => e.t === 'inv' && e.p === p.id));
+  // the emeralds a forge upgrade adds split too, whoever picks them up
+  const em = forgePile(g, 0, 'emerald', 2);
+  standAt(me, f[0] - 2, f[1], f[2]);
+  standAt(mate, f[0], f[1], f[2]);
+  tickGame(g);
+  assert.ok(!g.drops.includes(em));
+  assert.equal(me.inv.wallet.emerald, 2);
+  assert.equal(mate.inv.wallet.emerald, 2);
+});
+
+test('the forge split: a teammate away from the forge, or dead on it, gets nothing', () => {
+  const g = doubles([human('me', 0, 0, 'local'), human('mate', 1, 0)]);
+  const [me, mate] = g.players;
+  const f = g.info.teams[0].forge;
+  const pile = forgePile(g, 0, 'iron', 5);
+  standAt(me, f[0], f[1], f[2]);
+  // at spawn, a few blocks down the path
+  assert.ok(Math.hypot(mate.body.x - f[0], mate.body.z - f[2]) > SPLIT_RANGE + 1);
+  tickGame(g);
+  assert.ok(!g.drops.includes(pile));
+  assert.equal(me.inv.wallet.iron, 5);
+  assert.equal(mate.inv.wallet.iron, 0, 'at spawn');
+  // just past the edge of the forge
+  const next = forgePile(g, 0, 'iron', 4);
+  standAt(mate, f[0] + SPLIT_RANGE + 0.3, f[1], f[2]);
+  tickGame(g);
+  assert.ok(!g.drops.includes(next));
+  assert.equal(mate.inv.wallet.iron, 0, 'a step too far');
+  // right above it, on the pavilion roof
+  const roof = forgePile(g, 0, 'iron', 4);
+  standAt(mate, f[0] + 1.6, f[1] + 5, f[2]);
+  tickGame(g);
+  assert.ok(!g.drops.includes(roof));
+  assert.equal(mate.inv.wallet.iron, 0, 'on the roof');
+  // waiting to respawn on the forge
+  const last = forgePile(g, 0, 'iron', 4);
+  standAt(mate, f[0] + 2, f[1], f[2]);
+  mate.alive = false;
+  mate.respawn = RESPAWN_TICKS;
+  tickGame(g);
+  assert.ok(!g.drops.includes(last));
+  assert.equal(mate.inv.wallet.iron, 0, 'dead');
+  assert.equal(me.inv.wallet.iron, 17, 'the picker got every pile');
+});
+
+test('the forge split: an enemy raiding your forge shares it with nobody', () => {
+  const g = doubles([human('a', 0, 0, 'local'), human('b', 1, 0), human('c', 2, 1), human('d', 3, 1)]);
+  const [a, b, c, d] = g.players;
+  assert.deepEqual([a, b, c, d].map((p) => p.team), [0, 0, 1, 1]);
+  const f = g.info.teams[0].forge;
+  const pile = forgePile(g, 0, 'gold', 6);
+  // the raider stands on it; everyone else waits around it, outside the pickup box
+  standAt(c, f[0], f[1], f[2]);
+  standAt(a, f[0] + 2, f[1], f[2]);
+  standAt(b, f[0] - 2, f[1], f[2]);
+  standAt(d, f[0], f[1], f[2] + 2);
+  g.events.length = 0;
+  tickGame(g);
+  assert.ok(!g.drops.includes(pile));
+  assert.equal(c.inv.wallet.gold, 6, 'the raider takes it');
+  assert.deepEqual([a, b, d].map((p) => p.inv.wallet.gold), [0, 0, 0], 'not split to either team');
+  assert.deepEqual(picks(g, pile.id), [c.id]);
+  // their own forge splits for them, though
+  const f1 = g.info.teams[1].forge;
+  const theirs = forgePile(g, 1, 'iron', 3);
+  standAt(c, f1[0], f1[1], f1[2]);
+  standAt(d, f1[0] + 2, f1[1], f1[2]);
+  tickGame(g);
+  assert.ok(!g.drops.includes(theirs));
+  assert.deepEqual([c.inv.wallet.iron, d.inv.wallet.iron], [3, 3]);
+});
+
+test('the forge split: diamond generators and dropped items are not split', () => {
+  const g = doubles([human('me', 0, 0, 'local'), human('mate', 1, 0)]);
+  const [me, mate] = g.players;
+  const i = g.gens.findIndex((x) => x.kind === 'diamond');
+  const gen = g.gens[i];
+  const dia = spawnDrop(g, 'diamond', 3, gen.x, gen.y + 0.2, gen.z, 0, 0, 0, i);
+  assert.equal(forgeTeam(dia), -1);
+  standAt(me, gen.x, gen.y, gen.z);
+  standAt(mate, gen.x + 2, gen.y, gen.z);
+  tickGame(g);
+  assert.ok(!g.drops.includes(dia));
+  assert.equal(me.inv.wallet.diamond, 3);
+  assert.equal(mate.inv.wallet.diamond, 0, 'a diamond generator is first come, first served');
+  // iron someone threw down on the forge is just a drop
+  const f = g.info.teams[0].forge;
+  const thrown = spawnDrop(g, 'iron', 8, f[0], f[1], f[2], 0, 0, 0, -1);
+  thrown.rest = true;
+  standAt(me, f[0], f[1], f[2]);
+  standAt(mate, f[0] + 2, f[1], f[2]);
+  tickGame(g);
+  assert.ok(!g.drops.includes(thrown));
+  assert.equal(me.inv.wallet.iron + mate.inv.wallet.iron, 8, 'nobody gets a copy');
+});
+
+test('the forge split: a bot teammate shares with you and you with it, and bots at the forge both earn', () => {
+  const g = doubles([human('me', 0, 0, 'local'), { name: 'bot', seat: -1, ctrl: 'bot', skin: 0, team: 0 }]);
+  const [me, bot] = g.players;
+  assert.equal(bot.team, 0);
+  const f = g.info.teams[0].forge;
+  // the bot picks it up
+  const one = forgePile(g, 0, 'iron', 7);
+  standAt(bot, f[0], f[1], f[2]);
+  standAt(me, f[0] + 0.5, f[1], f[2] + 2);
+  g.events.length = 0;
+  tickGame(g);
+  assert.ok(!g.drops.includes(one));
+  assert.deepEqual([bot.inv.wallet.iron, me.inv.wallet.iron], [7, 7]);
+  assert.deepEqual(picks(g, one.id), [bot.id, me.id], 'I hear it too');
+  // I pick it up
+  const two = forgePile(g, 0, 'gold', 2);
+  standAt(me, f[0], f[1], f[2]);
+  standAt(bot, f[0] - 2, f[1], f[2]);
+  tickGame(g);
+  assert.ok(!g.drops.includes(two));
+  assert.deepEqual([me.inv.wallet.gold, bot.inv.wallet.gold], [2, 2]);
+  // bots left to themselves: both bots of a team collect at their forge, earn, and go shopping
+  const b = createGame({ mode: 'doubles', pace: 'quick', level: 'normal', entrants: bots(8), seed: 5 });
+  const earned = new Map<number, number>();
+  let bought = 0;
+  for (let t = 0; t < TPS * 30; t++) {
+    thinkBots(b);
+    tickGame(b);
+    for (const e of b.events.splice(0)) {
+      if (e.t === 'pick' && e.p >= 0 && e.item === 'iron') earned.set(e.p, (earned.get(e.p) ?? 0) + e.n);
+      if (e.t === 'msg' && e.k === 'buy' && e.to !== undefined) bought++;
+    }
+  }
+  for (const p of b.players) assert.ok((earned.get(p.id) ?? 0) > 0, `${p.name} on team ${p.team} earned iron at the forge`);
+  assert.ok(bought >= 8, `bots went shopping (${bought} buys)`);
+});
+
+test('the forge split online: a guest standing at the forge gets the host\'s pickup, with the sound', () => {
+  const room = fakeRoom([0, 1], false);
+  const ready = new Map<number, { game: Game; me: number }>();
+  const heard: Ev[] = [];
+  let pinged = 0;
+  const sessions = [0, 1].map((seat) => {
+    const s = new Session(room.api(seat), { mode: 'doubles', level: 'normal', pace: 'quick', bots: true, skin: 0, botNames: ['a'], onReady: (game, me) => ready.set(seat, { game, me }) });
+    s.client = { time: 0, onEvent: (e: Ev) => void (seat === 1 && heard.push(e)), pushRemote() {}, hooks: { ping: () => void (seat === 1 && pinged++) } } as never;
+    return s;
+  });
+  for (let i = 0; i < 4; i++) room.deliver();
+  const host = ready.get(0);
+  const guest = ready.get(1);
+  assert.ok(host && guest, 'both have a game');
+  const hostMe = host.game.players[host.me];
+  const guestMe = guest.game.players[guest.me];
+  const guestOnHost = host.game.players[guest.me];
+  assert.equal(guestOnHost.team, hostMe.team, 'paired on one island');
+  const f = host.game.info.teams[hostMe.team].forge;
+  const pile = forgePile(host.game, hostMe.team, 'iron', 9);
+  // the pile reaches the guest, and the guest walks up to the forge (its own report moves it on the host)
+  sessions[0].broadcast(host.game.events.splice(0));
+  standAt(guestMe, f[0] + 2, f[1], f[2]);
+  for (const s of sessions) s.tick();
+  room.deliver();
+  assert.ok(guest.game.drops.some((d) => d.id === pile.id), 'the guest sees the pile');
+  assert.ok(Math.hypot(guestOnHost.body.x - f[0] - 2, guestOnHost.body.z - f[2]) < 0.01, 'the host has the guest at the forge');
+  // the host steps onto it
+  standAt(hostMe, f[0], f[1], f[2]);
+  tickGame(host.game);
+  sessions[0].broadcast(host.game.events.splice(0));
+  heard.length = 0;
+  pinged = 0;
+  for (const s of sessions) s.tick();
+  room.deliver();
+  assert.equal(hostMe.inv.wallet.iron, 9);
+  assert.equal(guestOnHost.inv.wallet.iron, 9, 'the host gave the guest the same');
+  assert.equal(guestMe.inv.wallet.iron, 9, "and the guest's wallet shows it");
+  assert.ok(pinged > 0, "the guest's hud refreshes");
+  assert.ok(heard.some((e) => e.t === 'pick' && e.id === pile.id && e.p === guest.me && e.n === 9), 'the guest hears its own pickup');
+  assert.ok(!guest.game.drops.some((d) => d.id === pile.id), 'the pile is gone on the guest too');
+  // the host's pick and the guest's share both name the pile: the second is harmless on a replica
+  assert.ok(heard.some((e) => e.t === 'pick' && e.id === pile.id && e.p === host.me));
+  applyEvent(guest.game, { t: 'pick', id: pile.id, p: guest.me, item: 'iron', n: 9 }, guest.me);
+  assert.ok(!guest.game.drops.some((d) => d.id === pile.id));
+  for (const s of sessions) s.dispose();
 });
 
 // ---------------------------------------------------------------------------------------------------------------
