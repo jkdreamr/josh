@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { TOP, ZONES, buildLevel, zoneIndex } from './level';
@@ -46,6 +46,28 @@ const HINT_CLIMBS = 3;
 const CLIMBS_KEY = 'arcade:chained-climbs';
 const LEVEL = buildLevel();
 const fmtMs = (ms: number) => fmtTime(ms / 1000);
+
+/**
+ * How the last round ended, for the result card. The shell's own score slot would record every round as a best under
+ * the game id, so the cards draw the number themselves.
+ */
+const lastOver = { big: '', sub: '' };
+
+/** The result card: the big number, then the setup rows folded away behind one line. */
+function Result({ rows }: { rows: ReactNode }) {
+  return (
+    <>
+      <div className="g-chained-result">
+        <b>{lastOver.big}</b>
+        {lastOver.sub && <span>{lastOver.sub}</span>}
+      </div>
+      <details className="g-chained-tweak">
+        <summary>Change setup</summary>
+        <div className="g-chained-tweak-body">{rows}</div>
+      </details>
+    </>
+  );
+}
 
 function climbsRun() {
   try {
@@ -105,7 +127,7 @@ function Setup() {
   const bests = useBests();
   const team = party === 'local' && !shell.touch;
   const best = isRanked(mode) ? bests[boardOf(team, mode)].best : null;
-  return (
+  const rows = (
     <>
       <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
       {mode !== 'race' && <small className="g-chained-note">{MODE_INFO[mode].blurb}</small>}
@@ -128,10 +150,12 @@ function Setup() {
       )}
     </>
   );
+  return shell.status === 'over' ? <Result rows={rows} /> : rows;
 }
 
 /** Settings for online climbs: the host picks the mode for everyone and tells the room as it changes. */
 function OnlineSetup() {
+  const shell = useShell();
   const online = useOnline();
   const [mode, setMode] = useSetting(MODE);
   const [music, setMusic] = useSetting(MUSIC);
@@ -165,7 +189,7 @@ function OnlineSetup() {
           : seats === 2
             ? 'The two of you climb one chain against the shades.'
             : 'On your own you climb both souls of your chain against the shades. More players join as seats fill.';
-  return (
+  const rows = (
     <>
       {host ? (
         <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
@@ -199,6 +223,7 @@ function OnlineSetup() {
       <Extras />
     </>
   );
+  return shell.status === 'over' ? <Result rows={rows} /> : rows;
 }
 
 type Kind = 'idle' | 'local' | 'online';
@@ -520,13 +545,16 @@ function Play({ kind }: { kind: Kind }) {
       const mine = myTeam(g);
       const rival = rivalName(g);
       const gap = Math.max(0, Math.round(Math.abs(teamHeight(g, mine) - teamHeight(g, 1 - mine))));
+      lastOver.big = fmtTime(time);
       if (winner === mine) {
         playJingle(JINGLE_OUT);
-        shellRef.current.gameOver(undefined, { title: 'You Won the Race', detail: `Out in ${fmtTime(time)}, with ${rival === 'The shades' ? 'the shades' : rival} ${gap < 2 ? 'right behind you' : `${gap} m below you`}.` });
+        lastOver.sub = `${rival === 'The shades' ? 'the shades' : rival} ${gap < 2 ? 'right behind you' : `${gap} m below you`}`;
+        shellRef.current.gameOver(undefined, { title: 'You Won the Race', detail: 'Out of the tower first.' });
       } else {
         sfx.play('lose');
         const z = ZONES[zoneIndex(teamHeight(g, mine))];
-        shellRef.current.gameOver(undefined, { title: `${rival === 'The shades' ? 'The Shades' : rival} Won the Race`, detail: `They stood on the way out at ${fmtTime(time)}. You were ${gap} m below, in ${z.name}.` });
+        lastOver.sub = `you were ${gap} m below, in ${z.name}`;
+        shellRef.current.gameOver(undefined, { title: `${rival === 'The shades' ? 'The Shades' : rival} Won the Race`, detail: 'They stood on the way out first.' });
       }
       if (live && onlineRef.current) onlineRef.current.reportResult(onlineRef.current.round, winner >= 0 ? winnerSeat(g, winner) : null);
       return;
@@ -534,16 +562,20 @@ function Play({ kind }: { kind: Kind }) {
     if (won && isRanked(g.mode)) {
       const newBest = bests[boardOf(team, g.mode)].submit(ms);
       playJingle(JINGLE_OUT);
+      lastOver.big = fmtTime(time);
+      lastOver.sub = newBest ? 'a new best' : 'from the pit to the stars';
       shellRef.current.gameOver(undefined, {
         title: 'You Climbed Out',
-        detail: `${fmtTime(time)} from the pit to the stars${newBest ? ', a new best' : ''}. ${team ? 'Nobody let go.' : 'Both souls made it.'}`,
+        detail: team ? 'Nobody let go.' : 'Both souls made it.',
         board: boardOf(team, g.mode),
         rank: ms,
       });
     } else {
       const z = ZONES[zoneIndex(height)];
       sfx.play('lose');
-      shellRef.current.gameOver(undefined, { title: 'Burned', detail: `The lava caught the team ${Math.floor(height)} m up, in ${z.name}.` });
+      lastOver.big = `${Math.floor(height)} m`;
+      lastOver.sub = `up the tower, in ${z.name}`;
+      shellRef.current.gameOver(undefined, { title: 'Burned', detail: 'The lava caught the team.' });
     }
     if (live && onlineRef.current) onlineRef.current.reportResult(onlineRef.current.round, null);
   };

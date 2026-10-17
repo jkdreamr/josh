@@ -830,3 +830,60 @@
     animation: none;
   }
 }
+
+/* the result card: the number first, the setup rows folded away */
+.g-chained .g-chained-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  margin: 0 0 4px;
+  padding-top: 10px;
+  border-top: 2px solid color-mix(in srgb, var(--ink) 70%, transparent);
+}
+.g-chained .g-chained-result b {
+  font-family: var(--display);
+  font-size: 44px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: lining-nums tabular-nums;
+  font-variation-settings: 'opsz' 144;
+}
+.g-chained .g-chained-result span {
+  font-family: var(--voice);
+  font-size: 17px;
+  line-height: 1.2;
+  color: rgba(245, 245, 247, 0.78);
+  text-align: center;
+  text-wrap: balance;
+}
+.g-chained .g-chained-tweak {
+  width: 100%;
+}
+.g-chained .g-chained-tweak summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 6px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(245, 245, 247, 0.6);
+  text-align: center;
+}
+.g-chained .g-chained-tweak summary::-webkit-details-marker {
+  display: none;
+}
+.g-chained .g-chained-tweak summary:hover,
+.g-chained .g-chained-tweak[open] summary {
+  color: rgba(245, 245, 247, 0.9);
+}
+.g-chained .g-chained-tweak-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding-top: 8px;
+}
