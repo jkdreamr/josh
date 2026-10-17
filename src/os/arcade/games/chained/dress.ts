@@ -155,7 +155,8 @@ export function sector(out: Tri, a0: number, a1: number, r0: number, r1: number,
       yO.push(yO[0]);
       continue;
     }
-    const ro = rough ? r1 + (rough() - 0.5) * 0.28 : r1;
+    // the rim never crosses the inner radius, so a rough band thinner than the jitter stays a band
+    const ro = rough ? Math.max(r0 + 0.02, r1 + (rough() - 0.5) * 0.28) : r1;
     rO.push(ro);
     let yi = y1;
     let yo = y1;
