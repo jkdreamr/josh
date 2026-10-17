@@ -4,29 +4,38 @@ import { createPortal } from 'react-dom';
 import { CHAIN_L, TOP, ZONES, type Platform } from './level';
 import { MODE_INFO, type Mode } from './logic';
 
-export type SoulChip = { idx: number; name: string; color: string; y: number; state: 'climbing' | 'air' | 'hanging' | 'burned' | 'out'; me: boolean };
+export type SoulChip = { idx: number; name: string; color: string; y: number; state: 'climbing' | 'air' | 'hanging' | 'burned' | 'out'; me: boolean; rival?: boolean };
 
 /**
- * A tall strip on the right: the six circles as bands, a tick for every beacon, a dot for every soul, the lava
- * creeping up from the bottom in Lava mode and the way out at the very top.
+ * A tall rail on the right: the six circles as bands with their numerals beside them, a tick for every beacon, a dot
+ * for every soul (your chain in one lane and the rival chain in the other during a race), the lava creeping up from
+ * the bottom in Lava mode and the way out at the very top.
  */
 export function Altimeter({ souls, lava, lit, checkpoints, mode, zone }: { souls: SoulChip[]; lava: number; lit: boolean[]; checkpoints: Platform[]; mode: Mode; zone: number }) {
   const pct = (y: number) => `${(1 - Math.max(0, Math.min(1, y / TOP))) * 100}%`;
   const hpct = (y: number) => `${Math.max(0, Math.min(1, y / TOP)) * 100}%`;
+  const lanes = souls.some((s) => s.rival);
   return (
     <div className="g-chained-alti" aria-hidden="true">
+      {ZONES.map((z, i) => (
+        <span key={z.id} className={`g-chained-alti-numeral${i === zone ? ' is-here' : ''}`} style={{ top: pct((z.from + z.to) / 2), ['--band' as string]: z.palette.ink }}>
+          {z.numeral}
+        </span>
+      ))}
       <div className="g-chained-alti-track">
         {ZONES.map((z, i) => (
-          <div key={z.id} className={`g-chained-alti-band${i === zone ? ' is-here' : ''}`} style={{ top: pct(z.to), height: `${((z.to - z.from) / TOP) * 100}%`, ['--band' as string]: z.palette.ink }}>
-            <span>{z.numeral}</span>
-          </div>
+          <div key={z.id} className={`g-chained-alti-band${i === zone ? ' is-here' : ''}`} style={{ top: pct(z.to), height: `${((z.to - z.from) / TOP) * 100}%`, ['--band' as string]: z.palette.ink }} />
         ))}
         {mode === 'lava' && <div className="g-chained-alti-lava" style={{ height: hpct(lava) }} />}
         {checkpoints.map((p) => (
           <i key={p.id} className={`g-chained-alti-tick${lit[p.cp] ? ' is-lit' : ''}${p.kind === 'goal' ? ' is-goal' : ''}`} style={{ top: pct(p.y) }} />
         ))}
         {souls.map((s) => (
-          <b key={s.idx} className={`g-chained-alti-soul${s.me ? ' is-me' : ''}${s.state === 'burned' ? ' is-burned' : ''}`} style={{ top: pct(s.y), background: s.color }} />
+          <b
+            key={s.idx}
+            className={`g-chained-alti-soul${s.me ? ' is-me' : ''}${s.rival ? ' is-rival' : ''}${s.state === 'burned' ? ' is-burned' : ''}`}
+            style={{ top: pct(s.y), left: lanes ? (s.rival ? '32%' : '68%') : '50%', ...(s.rival ? { ['--soul' as string]: s.color } : { background: s.color }) }}
+          />
         ))}
       </div>
     </div>
@@ -39,27 +48,36 @@ export function ZoneCard({ zone }: { zone: number }) {
   if (!z) return null;
   return (
     <div className="g-chained-zonecard" style={{ ['--ink' as string]: z.palette.ink }}>
-      <span className="g-chained-zonecard-numeral">{z.numeral}</span>
+      <span className="g-chained-zonecard-numeral">
+        <i />
+        {z.numeral}
+        <i />
+      </span>
       <h3>{z.name}</h3>
       <p>{z.line}</p>
     </div>
   );
 }
 
-/** Who is on the chain, in chain order, and what each soul is up to. */
-export function TeamStrip({ souls, active, solo, touch }: { souls: SoulChip[]; active: number; solo: boolean; touch: boolean }) {
-  const word = (s: SoulChip) => (s.state === 'burned' ? 'burned' : s.state === 'hanging' ? 'hanging' : s.state === 'out' ? 'out' : s.state === 'air' ? 'in the air' : 'climbing');
+/** Who is on each chain, in chain order, with a link drawn between souls that share one, and what each soul is up to. In a race, the rival chain follows after a "vs". */
+export function TeamStrip({ souls, rivals = [], active, solo, touch }: { souls: SoulChip[]; rivals?: SoulChip[]; active: number; solo: boolean; touch: boolean }) {
+  // every word fits the same slot, so the chips never change width as souls jump and land
+  const word = (s: SoulChip) => (s.state === 'burned' ? 'burned' : s.state === 'hanging' ? 'hanging' : s.state === 'out' ? 'out' : s.state === 'air' ? 'jumping' : 'climbing');
+  const chain = (list: SoulChip[]) =>
+    list.flatMap((s, i) => [
+      i > 0 ? <em key={`link-${s.idx}`} className="g-chained-chip-link" style={{ ['--soul' as string]: s.color }} /> : null,
+      <span key={s.idx} className={`g-chained-chip${solo && s.idx === active ? ' is-active' : ''}${s.rival ? ' is-rival' : ''}${s.state === 'burned' ? ' is-burned' : ''}`} style={{ ['--soul' as string]: s.color }}>
+        <i />
+        <b>{s.name}</b>
+        <small>{solo && s.idx === active ? 'steering' : word(s)}</small>
+      </span>,
+    ]);
   return (
-    <div className="g-chained-team" aria-label="The chain">
-      {souls.map((s, i) => (
-        <span key={s.idx} className={`g-chained-chip${solo && s.idx === active ? ' is-active' : ''}${s.state === 'burned' ? ' is-burned' : ''}`} style={{ ['--soul' as string]: s.color }}>
-          {i > 0 && <em className="g-chained-chip-link" />}
-          <i />
-          <b>{s.name}</b>
-          <small>{solo && s.idx === active ? 'steering' : word(s)}</small>
-        </span>
-      ))}
-      {solo && <span className="g-chained-team-hint">{touch ? 'swap to steer the other soul' : 'Shift swaps souls'}</span>}
+    <div className="g-chained-team" aria-label="The chains">
+      {chain(souls)}
+      {rivals.length > 0 && <span className="g-chained-vs">vs</span>}
+      {chain(rivals)}
+      {solo && <span className="g-chained-team-hint">{touch ? 'swap steers the other soul' : 'Shift swaps souls'}</span>}
     </div>
   );
 }
@@ -179,6 +197,11 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         </p>
       </section>
       <section>
+        <h3>Racing</h3>
+        <p>In a race two chains climb the same tower and the first team with both souls on the way out wins. On your own, or two on one keyboard, you race the shades: a pair of souls the game climbs for itself. The Start card sets how quick they are.</p>
+        <p>Online, seats 1 and 2 are one team and seats 3 and 4 the other. A seat alone on its team climbs both of its souls, swapping like a solo climber, and a team with nobody on it is the shades. Crumbling ledges are shared, so a stepping stone one team breaks is gone for the other until it grows back.</p>
+      </section>
+      <section>
         <h3>On your own</h3>
         <p>You climb two souls, one at a time. Take one up a ledge or two, swap, and bring the other along. Or walk on and let the chain haul the second one up behind you. A soul you leave standing stays put, unless something pulls it.</p>
       </section>
@@ -208,7 +231,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
       </section>
       <section>
         <h3>Times</h3>
-        <p>The clock runs from the start to the moment every soul stands on the top ledge. There is a board for each mode, for solo climbs and for teams.</p>
+        <p>The clock runs from the start to the moment every soul stands on the top ledge. There is a board for each mode, for solo climbs and for teams. Races keep no board: a race is only ever against who you raced.</p>
       </section>
     </Sheet>
   );

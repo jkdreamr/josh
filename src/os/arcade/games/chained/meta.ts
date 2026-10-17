@@ -6,7 +6,7 @@ export const meta: GameMeta = {
   blurb: 'Climb out of the inferno chained to your friends. Six circles, one chain, and a single slip drags everyone down.',
   category: '3d',
   players: '1-4P',
-  controls: 'Arrows or WASD move, Space jumps, Shift swaps souls. On a shared keyboard WASD and Space climb one soul, arrows and Enter the other.',
+  controls: 'Arrows or WASD move, Space jumps, Shift swaps souls. Two players share the keyboard: WASD and Space, arrows and Enter.',
   accent: '#e8532a',
   glyph: 'M9.5 8.5a3 3 0 0 1 0-4.2l1.3-1.3a3 3 0 0 1 4.2 4.2l-1.3 1.3M14.5 15.5a3 3 0 0 1 0 4.2l-1.3 1.3a3 3 0 0 1-4.2-4.2l1.3-1.3M10 10l-2.2 2.2a3 3 0 0 0 4.2 4.2L14 14M14 14l2.2-2.2a3 3 0 0 0-4.2-4.2L10 10',
   order: 3,

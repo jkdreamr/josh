@@ -31,24 +31,33 @@ import {
   type Pose,
 } from './level.ts';
 
-export type Mode = 'normal' | 'beginner' | 'lava';
-export const MODES = ['normal', 'beginner', 'lava'] as const;
+export type Mode = 'normal' | 'beginner' | 'lava' | 'race';
+export const MODES = ['normal', 'beginner', 'lava', 'race'] as const;
 export const isMode = (v: unknown): v is Mode => (MODES as readonly string[]).includes(v as string);
 export const MODE_INFO: Record<Mode, { label: string; blurb: string }> = {
   normal: { label: 'Normal', blurb: 'No checkpoints. A fall only costs you height. Lava is just scenery.' },
   beginner: { label: 'Beginner', blurb: 'A beacon at every circle. Fall too far and the team starts again from the last one.' },
   lava: { label: 'Lava', blurb: 'The lava rises from the start. Touch it and the whole team is done.' },
+  race: { label: 'Race', blurb: 'Two chains on one tower. The first team to stand on the way out wins. A fall only costs height.' },
 };
+/** The modes with a leaderboard: a race depends on who you race. */
+export const RANKED_MODES = ['normal', 'beginner', 'lava'] as const;
 
 export const SUB = 1 / 120;
 export const COYOTE = 0.1;
 export const JUMP_BUFFER = 0.12;
 export const JUMP_CUT = 4;
+/** A jump keeps full thrust this long after it fires: a held press briefly, a press that was already let go (buffered) long enough to still rise. */
+export const JUMP_MIN = 0.04;
+export const JUMP_BUFFER_HOLD = 0.12;
 export const ACCEL = 42;
 export const AIR_ACCEL = 18;
 export const FRICTION = 34;
-export const ICE_ACCEL = 12;
-export const ICE_FRICTION = 4;
+export const ICE_ACCEL = 16;
+export const ICE_FRICTION = 6;
+/** Ice: a landing keeps this share of its speed, and a slide tails off at this rate on top of the friction. */
+export const ICE_LANDING = 0.6;
+export const ICE_TAIL = 1.2;
 export const AIR_FRICTION = 0.5;
 export const MAX_FALL = 28;
 export const MAX_H = 14;
@@ -66,14 +75,16 @@ export const CRUMBLE_FALL = 1.6;
 export const CRUMBLE_BACK = 5;
 export const CRUMBLE_G = 12;
 /** A standing soul holds against the chain pulling slower than this; a faster pull drags it. */
-export const GRIP_V = 1.2;
+export const GRIP_V = 2.5;
 /** How much of a yank a standing soul takes against a soul in the air (1), in position and in speed. */
-export const YANK_W = 0.5;
+export const YANK_W = 0.4;
 export const YANK_K = 0.8;
 /** The chain never kicks a soul faster than this in one substep (a teleport or a late packet is not a yank). */
 export const CHAIN_KICK = 12;
 /** Nor move one further than this in one substep: a big stretch is taken up over a few. */
 export const CHAIN_STEP = 0.2;
+/** A jump that tops out this far inside a slab still lands on it. */
+export const LEDGE_GRAB = 0.6;
 /** A soul in the air this far below a rim, and this close to it, pulls itself up onto the ledge. */
 export const MANTLE_H = 1.15;
 export const MANTLE_REACH = 0.6;
@@ -81,28 +92,42 @@ export const MANTLE_REACH = 0.6;
 export const SOUL_H = 0.9;
 /** Two or more souls hanging off a standing one slide it toward the edge this fast (m/s). */
 export const OVERLOAD = 1.6;
+/** A soul swinging on the chain settles at this rate (per second) and never swings sideways faster than this (m/s). */
+export const SWING_DAMP = 3.5;
+export const SWING_MAX = 7;
+/** Souls standing on one ledge keep this much room between them. */
+export const SOUL_SEP = 0.6;
 export const WIND_FROM = 98;
 export const WIND_CYCLE = 9;
 export const WIND_BUILD = 5.5;
 export const WIND_GUST = 6.5;
 export const WIND_END = 8;
-export const WIND_AIR = 13;
+export const WIND_AIR = 11;
 export const WIND_GROUND = 5;
 /** Time before the souls can move. */
 export const COUNTDOWN = 1.2;
 export const MAX_SOULS = 4;
+/** A race is two teams; a climb is one. */
+export const MAX_TEAMS = 2;
 
 export type Surface = 'stone' | 'ice' | 'metal' | 'none';
 export type Input = { side: -1 | 0 | 1; fwd: -1 | 0 | 1; jump: boolean; hold: boolean };
 export const idle = (): Input => ({ side: 0, fwd: 0, jump: false, hold: false });
 
 export type SoulKind = 'local' | 'remote';
+/** Who moves a soul: a person at a keyboard, or the shades (the game's own climbers in a race). */
+export type Driver = 'human' | 'shade';
 export type Soul = {
   idx: number;
+  /** The seat of whoever owns this soul online, -1 for a shade. */
   seat: number;
   name: string;
   color: string;
   kind: SoulKind;
+  team: number;
+  driver: Driver;
+  /** Run speed as a share of a full run (the shades climb slower on the easier settings). */
+  pace: number;
   x: number;
   y: number;
   z: number;
@@ -149,6 +174,18 @@ export type Soul = {
   /** Where the substep started, for keeping out of the sides of ledges. */
   px: number;
   pz: number;
+  /** Where the last substep left the soul, so the view can draw between substeps. */
+  rx: number;
+  ry: number;
+  rz: number;
+  /** A jump keeps full thrust until this time even if the key is up. */
+  heldUntil: number;
+  /** What the lift or swing underfoot is doing, carried into a jump or a step off. */
+  rideVx: number;
+  rideVy: number;
+  rideVz: number;
+  /** Standing on a spring pad already (it fires on arrival, not every substep). */
+  onPad: boolean;
   /** Remote souls: the last report and when it arrived. */
   net: { x: number; y: number; z: number; vx: number; vy: number; vz: number; at: number; flags: number } | null;
 };
@@ -157,7 +194,7 @@ export type Ev =
   | { t: 'go' }
   | { t: 'jump'; i: number }
   | { t: 'land'; i: number; hard: boolean; surface: Surface }
-  | { t: 'mantle'; i: number }
+  | { t: 'mantle'; i: number; grab?: boolean }
   | { t: 'step'; i: number; surface: Surface }
   | { t: 'taut'; i: number; j: number; speed: number }
   | { t: 'yank'; i: number; speed: number }
@@ -165,10 +202,10 @@ export type Ev =
   | { t: 'crumble'; id: number; phase: 'warn' | 'fall' }
   | { t: 'spring'; i: number }
   | { t: 'checkpoint'; cp: number; i: number }
-  | { t: 'zone'; zone: number }
+  | { t: 'zone'; zone: number; team: number }
   | { t: 'burn'; i: number }
-  | { t: 'respawn'; cp: number }
-  | { t: 'win'; time: number }
+  | { t: 'respawn'; cp: number; team: number }
+  | { t: 'win'; time: number; team: number }
   | { t: 'lose'; height: number }
   | { t: 'gust'; dir: number; phase: 'build' | 'gust' };
 
@@ -176,8 +213,11 @@ export type Game = {
   mode: Mode;
   level: Level;
   souls: Soul[];
-  /** Soul indexes in chain order. */
+  /** Every soul in chain order, team by team. */
   chain: number[];
+  /** Each team's souls in chain order. A climb has one team; a race has two. */
+  chains: number[][];
+  teams: number;
   /** Decides respawns and the result (solo, shared keyboard, or the host online). */
   authority: boolean;
   /** One player climbing both souls: the lava gives them more time. */
@@ -187,18 +227,24 @@ export type Game = {
   /** The team's checkpoint and which beacons have been lit. */
   cp: number;
   lit: boolean[];
-  zone: number;
+  /** The circle each team has reached. */
+  zones: number[];
   crumbles: Map<number, number>;
-  respawn: { cp: number; at: number } | null;
+  /** A pending respawn per team. */
+  respawn: ({ cp: number; at: number } | null)[];
   won: number | null;
+  /** The team that climbed out first. */
+  winner: number | null;
   lost: { height: number } | null;
   gustPhase: 'calm' | 'build' | 'gust';
   events: Ev[];
   acc: number;
   started: boolean;
+  /** Called once per frame before the substeps: the shades decide their inputs here. */
+  drivers: ((g: Game, dt: number) => void)[];
 };
 
-export type SoulSpec = { seat: number; name: string; color: string; kind: SoulKind };
+export type SoulSpec = { seat: number; name: string; color: string; kind: SoulKind; team?: number; driver?: Driver; pace?: number };
 
 export function createGame(opts: { mode: Mode; souls: SoulSpec[]; authority?: boolean; countdown?: number; level?: Level; solo?: boolean }): Game {
   const level = opts.level ?? buildLevel();
@@ -211,6 +257,9 @@ export function createGame(opts: { mode: Mode; souls: SoulSpec[]; authority?: bo
       name: spec.name,
       color: spec.color,
       kind: spec.kind,
+      team: Math.max(0, Math.min(MAX_TEAMS - 1, spec.team ?? 0)),
+      driver: spec.driver ?? 'human',
+      pace: Math.max(0.5, Math.min(1, spec.pace ?? 1)),
       x: at.x,
       y: at.y,
       z: at.z,
@@ -245,32 +294,50 @@ export function createGame(opts: { mode: Mode; souls: SoulSpec[]; authority?: bo
       mantled: -9,
       px: at.x,
       pz: at.z,
+      rx: at.x,
+      ry: at.y,
+      rz: at.z,
+      heldUntil: -9,
+      rideVx: 0,
+      rideVy: 0,
+      rideVz: 0,
+      onPad: false,
       net: null,
     };
   });
+  const teams = Math.max(1, ...souls.map((s) => s.team + 1));
+  const chains = Array.from({ length: teams }, (_, t) => souls.filter((s) => s.team === t).map((s) => s.idx));
   return {
     mode: opts.mode,
     level,
     souls,
-    chain: souls.map((s) => s.idx),
+    chain: chains.flat(),
+    chains,
+    teams,
     authority: opts.authority ?? true,
     solo: !!opts.solo,
     time: -(opts.countdown ?? COUNTDOWN),
     lava: LAVA_Y,
     cp: 0,
     lit: level.checkpoints.map((_, i) => i === 0),
-    zone: 0,
+    zones: chains.map(() => 0),
     crumbles: new Map(),
-    respawn: null,
+    respawn: chains.map(() => null),
     won: null,
+    winner: null,
     lost: null,
     gustPhase: 'calm',
     events: [],
     acc: 0,
     started: false,
+    drivers: [],
   };
 }
 
+/** How far between the last two substeps a frame falls (0 to 1), for drawing souls between them. */
+export const renderAlpha = (g: Game) => Math.max(0, Math.min(1, g.acc / SUB));
+/** The sim time a frame should draw moving ledges at, matching renderAlpha. */
+export const renderTime = (g: Game) => g.time - (SUB - Math.max(0, Math.min(SUB, g.acc)));
 export const lavaAt = (mode: Mode, t: number, solo = false) => (mode === 'lava' ? LAVA_Y + Math.max(0, t - LAVA_DELAY) * (solo ? LAVA_RISE_SOLO : LAVA_RISE) : LAVA_Y);
 
 /** The wind above the cathedral: which way it blows and how hard, by time. */
@@ -280,8 +347,12 @@ export function windAt(t: number): { phase: 'calm' | 'build' | 'gust'; dir: numb
   const u = t - cycle * WIND_CYCLE;
   const dir = cycle % 2 === 0 ? 1 : -1;
   if (u < WIND_BUILD) return { phase: 'calm', dir, strength: 0 };
-  if (u < WIND_GUST) return { phase: 'build', dir, strength: (u - WIND_BUILD) / (WIND_GUST - WIND_BUILD) };
-  if (u < WIND_END) return { phase: 'gust', dir, strength: 1 };
+  if (u < WIND_GUST) {
+    const k = (u - WIND_BUILD) / (WIND_GUST - WIND_BUILD);
+    return { phase: 'build', dir, strength: k * k };
+  }
+  // the gust holds, then dies over its last half second rather than switching off
+  if (u < WIND_END) return { phase: 'gust', dir, strength: Math.min(1, (WIND_END - u) / 0.5) };
   return { phase: 'calm', dir, strength: 0 };
 }
 
@@ -289,6 +360,12 @@ export const radiusOf = (s: { x: number; z: number }) => Math.hypot(s.x, s.z);
 export const angleOf = (s: { x: number; z: number }) => Math.atan2(s.z, s.x);
 export const heightOf = (g: Game) => Math.max(...g.souls.map((s) => s.y));
 export const teamBest = (g: Game) => Math.max(...g.souls.map((s) => s.best));
+/** How high a team's highest soul is right now. */
+export const teamHeight = (g: Game, team: number) => Math.max(...g.chains[team].map((i) => g.souls[i].y));
+/** The chain a soul is on. */
+export const chainOf = (g: Game, idx: number) => g.chains[g.souls[idx].team];
+/** A team's souls that are still climbing (not burned), in chain order. */
+export const liveOf = (g: Game, team: number) => g.chains[team].filter((i) => g.souls[i].burned < 0);
 
 export function fmtTime(seconds: number) {
   const ms = Math.max(0, Math.round(seconds * 1000));
@@ -355,20 +432,21 @@ function landing(g: Game, s: Soul, yPrev: number, t0: number, t1: number): Platf
   return best;
 }
 
-export function scheduleRespawn(g: Game, cp: number, at = g.time + RESPAWN_T) {
-  if (g.respawn && g.respawn.at <= at) return;
-  g.respawn = { cp, at };
+export function scheduleRespawn(g: Game, cp: number, at = g.time + RESPAWN_T, team = 0) {
+  const pending = g.respawn[team];
+  if (pending && pending.at <= at) return;
+  g.respawn[team] = { cp, at };
 }
 
-/** Puts the team on a beacon, standing still. */
-export function doRespawn(g: Game, cp: number) {
-  g.respawn = null;
+/** Puts a team on a beacon, standing still. In a climb the crumbled ledges come back too; in a race they are shared. */
+export function doRespawn(g: Game, cp: number, team = 0) {
+  g.respawn[team] = null;
   g.cp = Math.max(g.cp, cp);
-  g.crumbles.clear();
-  const live = g.chain;
-  live.forEach((idx, slot) => {
+  if (g.teams === 1) g.crumbles.clear();
+  const slots = g.chain.length;
+  (g.chains[team] ?? []).forEach((idx) => {
     const s = g.souls[idx];
-    const at = spawnAt(g.level, cp, slot, live.length);
+    const at = spawnAt(g.level, cp, g.chain.indexOf(idx), slots);
     s.x = at.x;
     s.y = at.y;
     s.z = at.z;
@@ -383,8 +461,16 @@ export function doRespawn(g: Game, cp: number) {
     s.taut = s.hanging = false;
     s.finished = false;
     s.face = at.a + (DIR < 0 ? Math.PI / 2 : -Math.PI / 2);
+    s.rx = s.x;
+    s.ry = s.y;
+    s.rz = s.z;
+    s.heldUntil = -9;
+    s.rideVx = s.rideVy = s.rideVz = 0;
+    s.onPad = false;
+    s.squash = 0;
+    s.sprung = -9;
   });
-  g.events.push({ t: 'respawn', cp });
+  g.events.push({ t: 'respawn', cp, team });
 }
 
 /** Marks a soul burned: it stops where it is until the team respawns (or the climb is lost). */
@@ -396,7 +482,7 @@ export function burn(g: Game, s: Soul) {
   s.ground = -1;
   g.events.push({ t: 'burn', i: s.idx });
   if (g.mode === 'lava') lose(g);
-  else if (g.authority) scheduleRespawn(g, g.mode === 'beginner' ? g.cp : 0);
+  else if (g.authority) scheduleRespawn(g, g.mode === 'beginner' ? g.cp : 0, g.time + RESPAWN_T, s.team);
 }
 
 export function lose(g: Game) {
@@ -405,10 +491,11 @@ export function lose(g: Game) {
   g.events.push({ t: 'lose', height: g.lost.height });
 }
 
-export function win(g: Game, time = g.time) {
+export function win(g: Game, time = g.time, team = 0) {
   if (g.won !== null || g.lost) return;
   g.won = time;
-  g.events.push({ t: 'win', time });
+  g.winner = team;
+  g.events.push({ t: 'win', time, team });
 }
 
 /** A remote soul's report. flags: 1 grounded, 2 finished, 4 burned, 8 hanging. */
@@ -434,7 +521,7 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
   const standing = s.grounded ? level.platforms[s.ground] : undefined;
   s.surface = surfaceOf(standing);
 
-  // ride a lift or a swing
+  // ride a lift or a swing, and remember what it is doing so a jump or a step off keeps the carry
   if (standing && (standing.kind === 'lift' || standing.kind === 'swing')) {
     const q0 = pose(standing, t0, scratch0);
     const q1 = pose(standing, t1, scratch);
@@ -448,7 +535,17 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
       s.x = x;
       s.z = z;
     }
-  }
+    if (standing.kind === 'lift') {
+      s.rideVy = q1.vy;
+      s.rideVx = s.rideVz = 0;
+    } else {
+      const rr = Math.max(0.001, Math.hypot(s.x, s.z));
+      const va = q1.va * rr;
+      s.rideVx = -(s.z / rr) * va;
+      s.rideVz = (s.x / rr) * va;
+      s.rideVy = 0;
+    }
+  } else if (standing) s.rideVx = s.rideVy = s.rideVz = 0;
 
   const moving = g.time >= 0 && g.won === null && s.burned < 0;
   const inp = moving ? s.input : idle();
@@ -467,8 +564,8 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
   const accel = !s.grounded ? AIR_ACCEL : ice ? ICE_ACCEL : ACCEL;
   const friction = !s.grounded ? AIR_FRICTION : ice ? ICE_FRICTION : FRICTION;
   if (dl > 0.01) {
-    const tx = dx * RUN;
-    const tz = dz * RUN;
+    const tx = dx * RUN * s.pace;
+    const tz = dz * RUN * s.pace;
     const ex = tx - s.vx;
     const ez = tz - s.vz;
     const el = Math.hypot(ex, ez);
@@ -482,13 +579,19 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
       s.vx *= k;
       s.vz *= k;
     }
+    if (ice && s.grounded) {
+      // a slide on ice tails off instead of stopping dead
+      const tail = Math.exp(-ICE_TAIL * dt);
+      s.vx *= tail;
+      s.vz *= tail;
+    }
   }
 
-  // the wind above the cathedral
+  // the wind above the cathedral: it leans on you as it builds, blows through the gust and dies away
   if (s.y > WIND_FROM) {
     const w = windAt(g.time);
-    if (w.phase === 'gust') {
-      const push = (s.grounded ? (ice ? WIND_AIR : WIND_GROUND) : WIND_AIR) * w.dir * DIR;
+    if (w.strength > 0) {
+      const push = (s.grounded ? (ice ? WIND_AIR : WIND_GROUND) : WIND_AIR) * w.dir * DIR * w.strength;
       s.vx += -sa * push * dt;
       s.vz += ca * push * dt;
     }
@@ -498,13 +601,12 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
   if (inp.jump) s.buffer = JUMP_BUFFER;
   else s.buffer = Math.max(0, s.buffer - dt);
   if (moving && s.buffer > 0 && (s.grounded || s.coyote > 0)) {
-    s.vy = JUMP_V;
-    if (standing && standing.kind === 'lift') s.vy += Math.max(0, pose(standing, t1, scratch).vy);
-    if (standing && standing.kind === 'swing') {
-      const va = pose(standing, t1, scratch).va * r;
-      s.vx += -sa * va;
-      s.vz += ca * va;
-    }
+    // a lift's rise and a swing's sweep go into the jump, from the ledge or from the coyote moment after it
+    s.vy = JUMP_V + Math.max(0, s.rideVy);
+    s.vx += s.rideVx;
+    s.vz += s.rideVz;
+    s.rideVx = s.rideVy = s.rideVz = 0;
+    s.heldUntil = g.time + (inp.hold ? JUMP_MIN : JUMP_BUFFER_HOLD);
     s.grounded = false;
     s.ground = -1;
     s.coyote = 0;
@@ -514,7 +616,7 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
     s.fallFrom = s.y;
     ev.push({ t: 'jump', i: s.idx });
   }
-  if (!s.grounded && !inp.hold && !s.cut && s.vy > JUMP_CUT) {
+  if (!s.grounded && !inp.hold && !s.cut && s.vy > JUMP_CUT && g.time >= s.heldUntil) {
     s.vy = JUMP_CUT;
     s.cut = true;
   }
@@ -549,6 +651,10 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
       s.air = 0;
       s.fallFrom = s.y;
       s.vy = standing.kind === 'lift' ? q1.vy : 0;
+      // a swing's sweep stays with you off the end of it (the lift's rise is kept for a coyote jump)
+      s.vx += s.rideVx;
+      s.vz += s.rideVz;
+      s.rideVx = s.rideVz = 0;
     } else {
       s.y = q1.y;
       s.vy = standing.kind === 'lift' ? q1.vy : 0;
@@ -561,11 +667,26 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
     if (p) landOn(g, s, p, t1, moving, wasGrounded);
     else if (moving) mantle(g, s, dx, dz);
   }
+  // a jump that tops out just inside a slab lands on it rather than falling back through: a generous ledge
+  if (!s.grounded && s.vy <= 0 && s.vy > -4 && s.burned < 0) {
+    for (const p of level.platforms) {
+      if (p.kind === 'floor' || p.y + p.amp < s.y || p.y - p.amp - LEDGE_GRAB > s.y || !landable(g, p)) continue;
+      const q = pose(p, t1, scratch);
+      if (s.y >= q.y || s.y < q.y - LEDGE_GRAB || !over(p, q.a, s.x, s.z)) continue;
+      s.y = q.y;
+      s.mantled = g.time;
+      landOn(g, s, p, t1, moving, true);
+      ev.push({ t: 'mantle', i: s.idx, grab: true });
+      break;
+    }
+  }
   // the pad in the middle of a spring ledge
   if (s.grounded && moving && level.platforms[s.ground].kind === 'spring') {
     const p = level.platforms[s.ground];
     const mid = (p.r0 + p.r1) / 2;
-    if (Math.hypot(Math.cos(p.a) * mid - s.x, Math.sin(p.a) * mid - s.z) <= PAD_R) {
+    const inPad = Math.hypot(Math.cos(p.a) * mid - s.x, Math.sin(p.a) * mid - s.z) <= PAD_R;
+    // walking or being hauled onto the pad fires it; coming straight back down from its own throw does not
+    if (inPad && (wasGrounded ? !s.onPad : g.time - s.sprung > 1.8)) {
       s.vy = SPRING_V;
       s.grounded = false;
       s.ground = -1;
@@ -573,9 +694,10 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
       s.sprung = g.time;
       s.fallFrom = s.y;
       s.air = 0;
+      s.onPad = false;
       ev.push({ t: 'spring', i: s.idx });
-    }
-  }
+    } else s.onPad = inPad;
+  } else if (!s.grounded) s.onPad = false;
   s.finished = s.grounded && s.ground === level.goal.id;
 
   // facing and footsteps
@@ -592,16 +714,16 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
   s.squash = Math.max(0, s.squash - dt * 4);
   s.best = Math.max(s.best, s.y);
 
-  // the zone the team has reached
+  // the circle the team has reached
   const zone = zoneIndex(s.y);
-  if (s.grounded && zone > g.zone) {
-    g.zone = zone;
-    ev.push({ t: 'zone', zone });
+  if (s.grounded && zone > g.zones[s.team]) {
+    g.zones[s.team] = zone;
+    ev.push({ t: 'zone', zone, team: s.team });
   }
 
   // lava
   if (s.y < g.lava + 0.08 && moving) burn(g, s);
-  else if (g.authority && g.mode === 'beginner' && moving && s.y < g.level.checkpoints[g.cp].y - FALL_TOO_FAR) scheduleRespawn(g, g.cp, g.time + 0.5);
+  else if (g.authority && g.mode === 'beginner' && moving && s.y < g.level.checkpoints[g.cp].y - FALL_TOO_FAR) scheduleRespawn(g, g.cp, g.time + RESPAWN_T * 0.6, s.team);
 }
 
 /** Puts a soul down on a ledge and does what the ledge does: springs launch, crumbles start, beacons light. */
@@ -618,9 +740,15 @@ function landOn(g: Game, s: Soul, p: Platform, t1: number, _moving: boolean, was
   s.squash = Math.min(1, 0.35 + fell / 8);
   s.surface = surfaceOf(p);
   if (!wasGrounded) ev.push({ t: 'land', i: s.idx, hard: fell > HARD_FALL, surface: s.surface });
+  if (!wasGrounded && p.kind === 'ice') {
+    // the landing takes some of the speed, so ice is slippery rather than a slide off the far end
+    s.vx *= ICE_LANDING;
+    s.vz *= ICE_LANDING;
+  }
   s.air = 0;
   s.fallFrom = s.y;
   s.vy = p.kind === 'lift' ? q1.vy : 0;
+  if (p.kind !== 'lift' && p.kind !== 'swing') s.rideVx = s.rideVy = s.rideVz = 0;
   if (p.kind === 'crumble' && !g.crumbles.has(p.id)) {
     g.crumbles.set(p.id, g.time);
     ev.push({ t: 'crumble', id: p.id, phase: 'warn' });
@@ -637,7 +765,8 @@ function landOn(g: Game, s: Soul, p: Platform, t1: number, _moving: boolean, was
  * pushing toward the rim (dx, dz is its input direction). Falling fast, it just falls.
  */
 function mantle(g: Game, s: Soul, dx: number, dz: number): boolean {
-  if (s.vy > 1.5 || s.vy < -9) return false;
+  // a free jumper only mantles near the top of its arc; a soul on the chain mantles however fast it is being hauled
+  if ((s.vy > 1.5 && !s.hanging && !s.taut) || s.vy < -9) return false;
   const pushing = Math.hypot(dx, dz) > 0.3;
   if (!s.hanging && !s.taut && !pushing) return false;
   const r = Math.hypot(s.x, s.z);
@@ -647,13 +776,24 @@ function mantle(g: Game, s: Soul, dx: number, dz: number): boolean {
     if (p.y + p.amp < s.y || p.y - p.amp - MANTLE_H - 0.5 > s.y) continue;
     const q = pose(p, g.time, scratch);
     if (s.y > q.y - 0.05 || s.y < q.y - MANTLE_H) continue;
-    const rr = Math.min(p.r1, Math.max(p.r0, r));
-    const da = Math.min(p.span, Math.max(-p.span, angDiff(ang, q.a)));
+    let rr = Math.min(p.r1, Math.max(p.r0, r));
+    let da = Math.min(p.span, Math.max(-p.span, angDiff(ang, q.a)));
+    const inside = r >= p.r0 && r <= p.r1 && Math.abs(angDiff(ang, q.a)) <= p.span;
+    if (inside) {
+      // under the slab (swung in on the chain): the way up is over the nearest rim
+      if (!s.hanging && !s.taut) continue;
+      const dOut = p.r1 - r;
+      const dIn = p.r0 > R_CORE + 0.5 ? r - p.r0 : Infinity;
+      const dSide = (p.span - Math.abs(da)) * r;
+      if (dOut <= dIn && dOut <= dSide) rr = p.r1;
+      else if (dIn <= dSide) rr = p.r0;
+      else da = da >= 0 ? p.span : -p.span;
+    }
     const ex = Math.cos(q.a + da) * rr;
     const ez = Math.sin(q.a + da) * rr;
     const dist = Math.hypot(ex - s.x, ez - s.z);
-    if (dist > MANTLE_REACH || dist < 0.02) continue;
-    if (!s.hanging && !s.taut && (dx * (ex - s.x) + dz * (ez - s.z)) / dist < 0.4) continue;
+    if (dist > (inside ? MANTLE_REACH + 0.6 : MANTLE_REACH) || (!inside && dist < 0.02)) continue;
+    if (!s.hanging && !s.taut && (dx * (ex - s.x) + dz * (ez - s.z)) / Math.max(dist, 1e-3) < 0.4) continue;
     // up and a step in from the rim
     const mid = (p.r0 + p.r1) / 2;
     const ix = Math.cos(q.a) * mid - ex;
@@ -667,6 +807,9 @@ function mantle(g: Game, s: Soul, dx: number, dz: number): boolean {
     s.mantled = g.time;
     s.fallFrom = s.y;
     landOn(g, s, p, g.time, true, true);
+    s.rx = s.x;
+    s.ry = s.y;
+    s.rz = s.z;
     g.events.push({ t: 'mantle', i: s.idx });
     return true;
   }
@@ -791,10 +934,12 @@ function moveRemote(g: Game, s: Soul, dt: number) {
 }
 
 /** Souls in the chain, in order, skipping anyone who burned. */
-const links = (g: Game) => g.chain.filter((i) => g.souls[i].burned < 0);
-
+/** Every chain in turn: the chains of a race never touch. */
 function solveChain(g: Game, dt: number) {
-  const live = links(g);
+  for (let team = 0; team < g.teams; team++) solveLinks(g, liveOf(g, team), dt);
+}
+
+function solveLinks(g: Game, live: number[], dt: number) {
   for (const i of live) {
     const s = g.souls[i];
     s.cx = s.cy = s.cz = 0;
@@ -942,18 +1087,31 @@ function solveChain(g: Game, dt: number) {
     if (!s.grounded) {
       s.vx *= 0.995;
       s.vz *= 0.995;
+      // a soul swinging on a taut chain loses its sideways swing quickly and never whips round faster than it runs
+      // and a half (the jump itself, up and down, is left alone)
+      if (s.taut || c > 0) {
+        const settle = Math.exp(-SWING_DAMP * dt);
+        s.vx *= settle;
+        s.vz *= settle;
+        const sw = Math.hypot(s.vx, s.vz);
+        if (sw > SWING_MAX) {
+          s.vx *= SWING_MAX / sw;
+          s.vz *= SWING_MAX / sw;
+        }
+      }
     }
     clampRadius(s);
     slabSides(g, s);
   }
 
-  // hanging: in the air on a taut chain with a neighbour well above
+  // hanging: in the air on a taut chain with a neighbour well above. It takes a clear drop to start hanging and a
+  // clear rise (or a slack second) to stop, so a soul being hauled past the threshold does not flicker.
   for (let k = 0; k < live.length; k++) {
     const s = g.souls[live[k]];
     if (s.kind !== 'local') continue;
-    const up = (live[k - 1] !== undefined && g.souls[live[k - 1]].y - s.y > 1) || (live[k + 1] !== undefined && g.souls[live[k + 1]].y - s.y > 1);
+    const above = (by: number) => (live[k - 1] !== undefined && g.souls[live[k - 1]].y - s.y > by) || (live[k + 1] !== undefined && g.souls[live[k + 1]].y - s.y > by);
     // a swing on the chain goes slack for a moment at the top: still hanging
-    const hanging = !s.grounded && up && g.time - s.tautAt < 0.5 && s.vy < 6;
+    const hanging = !s.grounded && (s.hanging ? s.vy < 9 && above(0.35) && g.time - s.tautAt < 0.9 : s.vy < 6 && above(1) && g.time - s.tautAt < 0.5);
     if (hanging && !s.hanging) g.events.push({ t: 'hang', i: s.idx });
     s.hanging = hanging;
   }
@@ -982,6 +1140,35 @@ function solveChain(g: Game, dt: number) {
     s.x += (dx / dl) * slide;
     s.z += (dz / dl) * slide;
     s.pulled = true;
+  }
+
+  // souls standing on one ledge keep a little room between them, never at the cost of stepping off it
+  for (let it = 0; it < 2; it++) {
+    for (let i = 0; i < live.length; i++) {
+      for (let j = i + 1; j < live.length; j++) {
+        const a = g.souls[live[i]];
+        const b = g.souls[live[j]];
+        if (!a.grounded || !b.grounded || a.ground < 0 || a.ground !== b.ground) continue;
+        if (g.time - a.mantled < 0.15 || g.time - b.mantled < 0.15 || g.time - a.landed < 0.15 || g.time - b.landed < 0.15) continue;
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const d = Math.hypot(dx, dz);
+        if (d >= SOUL_SEP || d < 1e-3) continue;
+        const push = (SOUL_SEP - d) / 2;
+        const nx = dx / d;
+        const nz = dz / d;
+        const p = g.level.platforms[a.ground];
+        const q = pose(p, g.time, scratch);
+        if (a.kind === 'local' && over(p, q.a, a.x - nx * push, a.z - nz * push)) {
+          a.x -= nx * push;
+          a.z -= nz * push;
+        }
+        if (b.kind === 'local' && over(p, q.a, b.x + nx * push, b.z + nz * push)) {
+          b.x += nx * push;
+          b.z += nz * push;
+        }
+      }
+    }
   }
 
   // a standing soul moved by the chain stays on its ledge or is pulled off it
@@ -1053,7 +1240,9 @@ function substep(g: Game, dt: number) {
   g.lava = lavaAt(g.mode, g.time, g.solo);
   if (g.lost) return;
 
-  if (g.respawn && g.time >= g.respawn.at) doRespawn(g, g.respawn.cp);
+  g.respawn.forEach((r, team) => {
+    if (r && g.time >= r.at) doRespawn(g, r.cp, team);
+  });
 
   for (const [id, at] of g.crumbles) {
     const t = g.time - at;
@@ -1061,6 +1250,11 @@ function substep(g: Game, dt: number) {
     if (t > CRUMBLE_BACK) g.crumbles.delete(id);
   }
 
+  for (const s of g.souls) {
+    s.rx = s.x;
+    s.ry = s.y;
+    s.rz = s.z;
+  }
   for (const s of g.souls) {
     if (s.burned >= 0) continue;
     if (s.kind === 'local') moveSoul(g, s, dt, t0, t1);
@@ -1075,15 +1269,18 @@ function substep(g: Game, dt: number) {
     if (w.phase !== 'calm' && heightOf(g) > WIND_FROM - 6) g.events.push({ t: 'gust', dir: w.dir, phase: w.phase });
   }
 
-  // the way out: everyone standing on the top ledge
+  // the way out: a whole team standing on the top ledge (in a race, the first one)
   if (g.authority && g.won === null && g.time > 0) {
-    const live = links(g);
-    if (live.length === g.chain.length && live.every((i) => g.souls[i].finished)) win(g);
+    for (let team = 0; team < g.teams && g.won === null; team++) {
+      const live = liveOf(g, team);
+      if (live.length === g.chains[team].length && live.every((i) => g.souls[i].finished)) win(g, g.time, team);
+    }
   }
 }
 
 /** Advances the game by dt seconds in fixed substeps. Events pile up in g.events for the caller to drain. */
 export function step(g: Game, dt: number) {
+  for (const drive of g.drivers) drive(g, dt);
   g.acc += Math.min(dt, 0.25);
   let n = 0;
   while (g.acc >= SUB && n++ < 40) {
@@ -1098,12 +1295,36 @@ export const standingOn = (g: Game, s: Soul) => (s.grounded && s.ground >= 0 ? g
 /** A soul's angle and radius, for the camera and the HUD. */
 export const cylOf = (s: { x: number; z: number }) => ({ a: Math.atan2(s.z, s.x), r: Math.hypot(s.x, s.z) });
 
+/** A soul to seat: whose it is (its owner's seat, -1 for a shade), its team and place on the chain, and whether it is a player's second soul. */
+export type Seating = { seat: number; team: number; slot: number; shade: boolean; second: boolean };
+
+/**
+ * Who climbs what, from the seats in a room. A climb puts one soul per seat on one chain, in seat order. A race fills
+ * team A with the first two seats and team B with the next two: a seat alone on its team climbs both of its souls,
+ * and a team with nobody on it is the shades. Every client builds the same list, so souls can travel by index.
+ */
+export function seatSouls(roster: number[], mode: Mode): Seating[] {
+  const seats = [...new Set(roster)].sort((a, b) => a - b).slice(0, MAX_SOULS);
+  if (mode !== 'race') return seats.map((seat, slot) => ({ seat, team: 0, slot, shade: false, second: false }));
+  const out: Seating[] = [];
+  for (let team = 0; team < MAX_TEAMS; team++) {
+    const own = seats.slice(team * 2, team * 2 + 2);
+    for (let slot = 0; slot < 2; slot++) {
+      if (own.length === 0) out.push({ seat: -1, team, slot, shade: true, second: false });
+      else if (own.length === 1) out.push({ seat: own[0], team, slot, shade: false, second: slot === 1 });
+      else out.push({ seat: own[slot], team, slot, shade: false, second: false });
+    }
+  }
+  return out;
+}
+
 /** Souls this one is chained to. */
 export function neighbours(g: Game, idx: number): Soul[] {
-  const k = g.chain.indexOf(idx);
+  const chain = chainOf(g, idx);
+  const k = chain.indexOf(idx);
   const out: Soul[] = [];
-  if (k > 0) out.push(g.souls[g.chain[k - 1]]);
-  if (k >= 0 && k + 1 < g.chain.length) out.push(g.souls[g.chain[k + 1]]);
+  if (k > 0) out.push(g.souls[chain[k - 1]]);
+  if (k >= 0 && k + 1 < chain.length) out.push(g.souls[chain[k + 1]]);
   return out;
 }
 

@@ -14,10 +14,20 @@
   src: url('/fonts/instrument-serif-italic.woff2') format('woff2');
 }
 
+/* one glass, one hairline and two faces for every overlay */
 .g-chained {
   --ink: #ff9e6e;
   --display: 'Fraunces', Georgia, serif;
   --voice: 'Instrument Serif', Georgia, serif;
+  --glass: rgba(14, 10, 18, 0.56);
+  --glass-blur: 12px;
+  --hairline: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  --label: 600 11px/1 system-ui, -apple-system, 'Inter', sans-serif;
+}
+/* the stage is the box the phone layout measures */
+.g-chained .arcade-stage {
+  container-type: inline-size;
 }
 .g-chained .g-chained-skies {
   position: absolute;
@@ -53,12 +63,14 @@
 /* the Start card */
 .g-chained .g-chained-note {
   display: block;
-  max-width: 34ch;
+  max-width: 32ch;
   margin: -2px auto 0;
-  font-size: 12px;
-  line-height: 1.35;
-  color: rgba(245, 245, 247, 0.7);
+  font-family: var(--voice);
+  font-size: 14px;
+  line-height: 1.3;
+  color: rgba(245, 245, 247, 0.72);
   text-align: center;
+  text-wrap: balance;
 }
 .g-chained .g-chained-best {
   display: block;
@@ -86,7 +98,7 @@
   color: rgba(245, 245, 247, 0.6);
 }
 
-/* the top line: the clock and the mode */
+/* the top line: the clock as the hero, the mode after a hairline, the lead as a dot */
 .g-chained .g-chained-top {
   position: absolute;
   top: 12px;
@@ -95,28 +107,63 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 5px 12px;
+  height: 32px;
+  padding: 0 14px 0 13px;
   border-radius: 999px;
-  background: rgba(10, 8, 14, 0.42);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  background: var(--glass);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--hairline), var(--shadow);
   pointer-events: none;
 }
 .g-chained .g-chained-time {
   font-family: var(--display);
-  font-variant-numeric: tabular-nums;
-  font-size: 16px;
+  font-feature-settings: 'lnum' 1, 'tnum' 1;
+  font-variation-settings: 'opsz' 48;
+  font-size: 18px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   color: #fff;
 }
 .g-chained .g-chained-modetag {
-  font-size: 11px;
-  font-weight: 600;
+  font: var(--label);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ink);
+  padding-left: 10px;
+  border-left: 0.5px solid rgba(255, 255, 255, 0.22);
+}
+.g-chained .g-chained-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: var(--label);
+  font-feature-settings: 'tnum' 1;
+  letter-spacing: 0.03em;
+  color: rgba(255, 255, 255, 0.92);
+  padding-left: 10px;
+  border-left: 0.5px solid rgba(255, 255, 255, 0.22);
+}
+.g-chained .g-chained-lead::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  transition: background 0.4s ease, box-shadow 0.4s ease;
+}
+.g-chained .g-chained-lead.is-ahead::before {
+  background: #5fd27a;
+  box-shadow: 0 0 8px #5fd27a;
+}
+.g-chained .g-chained-lead.is-behind::before {
+  background: #ff6a5c;
+  box-shadow: 0 0 8px #ff6a5c;
+}
+.g-chained .g-chained-lead,
+.g-chained .g-chained-modetag,
+.g-chained .g-chained-time {
+  white-space: nowrap;
 }
 .g-chained .g-chained-ready {
   position: absolute;
@@ -124,11 +171,37 @@
   left: 50%;
   transform: translate(-50%, -50%);
   font-family: var(--voice);
-  font-size: 28px;
-  color: rgba(255, 255, 255, 0.85);
+  font-size: 30px;
+  color: rgba(255, 255, 255, 0.88);
   text-shadow: 0 2px 18px rgba(0, 0, 0, 0.6);
   pointer-events: none;
   animation: g-chained-breathe 1.2s ease-in-out infinite;
+}
+/* the race's count: a numeral that lands and fades each second */
+.g-chained .g-chained-ready.is-count {
+  font-family: var(--display);
+  font-variation-settings: 'opsz' 144;
+  font-size: 92px;
+  font-weight: 600;
+  color: #fff;
+  animation: g-chained-count 1s ease-out both;
+}
+@keyframes g-chained-count {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.6);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.94);
+  }
 }
 @keyframes g-chained-breathe {
   0%,
@@ -140,14 +213,15 @@
   }
 }
 
-/* the circle cards */
+/* the circle cards: a chapter heading with the numeral between hairlines */
 .g-chained .g-chained-cardwrap {
   position: absolute;
-  top: 18%;
+  top: 17%;
   left: 50%;
+  width: min(88%, 560px);
   transform: translateX(-50%);
   pointer-events: none;
-  animation: g-chained-card 3.6s ease forwards;
+  animation: g-chained-card 3.8s ease forwards;
 }
 @keyframes g-chained-card {
   0% {
@@ -172,69 +246,100 @@
   text-shadow: 0 2px 20px rgba(0, 0, 0, 0.7);
 }
 .g-chained .g-chained-zonecard-numeral {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   font-family: var(--display);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 500;
-  letter-spacing: 0.4em;
-  margin-left: 0.4em;
+  letter-spacing: 0.35em;
+  padding-left: 0.35em;
   color: var(--ink);
 }
+.g-chained .g-chained-zonecard-numeral i {
+  width: 24px;
+  height: 1px;
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
+}
 .g-chained .g-chained-zonecard h3 {
-  margin: 2px 0 0;
+  margin: 4px 0 0;
+  max-width: 14ch;
   font-family: var(--display);
-  font-size: clamp(26px, 6vmin, 40px);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.05;
+  font-variation-settings: 'opsz' 144;
+  font-size: clamp(28px, 7vmin, 44px);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.02;
+  text-wrap: balance;
 }
 .g-chained .g-chained-zonecard p {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
+  max-width: 28ch;
   font-family: var(--voice);
-  font-size: clamp(15px, 3.2vmin, 20px);
-  color: rgba(255, 255, 255, 0.82);
+  font-size: clamp(15px, 3vmin, 19px);
+  line-height: 1.25;
+  color: rgba(255, 255, 255, 0.84);
+  text-wrap: balance;
 }
 
-/* the altimeter */
+/* the altimeter: numerals in a column beside one dark rail, a lane for each team */
 .g-chained .g-chained-alti {
   position: absolute;
   top: 56px;
   right: 14px;
   bottom: 24px;
-  width: 22px;
+  width: 26px;
   pointer-events: none;
 }
 .g-chained .g-chained-alti-track {
   position: absolute;
   inset: 0;
-  border-radius: 11px;
-  background: rgba(8, 6, 12, 0.45);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  border-radius: 13px;
+  background: var(--glass);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--hairline), var(--shadow);
   overflow: hidden;
 }
 .g-chained .g-chained-alti-band {
   position: absolute;
   left: 0;
   right: 0;
-  background: color-mix(in srgb, var(--band) 18%, transparent);
+  background: color-mix(in srgb, var(--band) 10%, transparent);
   border-top: 0.5px solid rgba(255, 255, 255, 0.1);
 }
-.g-chained .g-chained-alti-band.is-here {
-  background: color-mix(in srgb, var(--band) 36%, transparent);
-}
-.g-chained .g-chained-alti-band span {
+.g-chained .g-chained-alti-band::before {
+  content: '';
   position: absolute;
   left: 0;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  text-align: center;
-  font-family: var(--display);
-  font-size: 9px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.55);
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: color-mix(in srgb, var(--band) 55%, transparent);
 }
-.g-chained .g-chained-alti-band.is-here span {
-  color: #fff;
+.g-chained .g-chained-alti-band.is-here {
+  background: color-mix(in srgb, var(--band) 26%, transparent);
+}
+.g-chained .g-chained-alti-band.is-here::before {
+  background: var(--band);
+  box-shadow: 0 0 8px var(--band);
+}
+.g-chained .g-chained-alti-numeral {
+  position: absolute;
+  right: 100%;
+  margin-right: 7px;
+  transform: translateY(-50%);
+  font-family: var(--display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.5);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  transition: color 0.4s ease;
+}
+.g-chained .g-chained-alti-numeral.is-here {
+  font-size: 11px;
+  color: var(--band);
 }
 .g-chained .g-chained-alti-lava {
   position: absolute;
@@ -246,11 +351,11 @@
 }
 .g-chained .g-chained-alti-tick {
   position: absolute;
-  left: 4px;
-  right: 4px;
+  left: 5px;
+  right: 5px;
   height: 2px;
   margin-top: -1px;
-  background: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.3);
 }
 .g-chained .g-chained-alti-tick.is-lit {
   background: #fff;
@@ -279,8 +384,12 @@
 .g-chained .g-chained-alti-soul.is-burned {
   opacity: 0.3;
 }
+.g-chained .g-chained-alti-soul.is-rival {
+  background: rgba(10, 8, 14, 0.55);
+  box-shadow: inset 0 0 0 2.5px var(--soul), 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
 
-/* the chain, bottom left */
+/* the chains, bottom left: a chip per soul, a link between souls on one chain, "vs" between chains */
 .g-chained .g-chained-team {
   position: absolute;
   left: 14px;
@@ -288,7 +397,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 0 2px;
+  row-gap: 6px;
   max-width: calc(100% - 60px);
   pointer-events: none;
 }
@@ -296,26 +406,32 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 9px 4px 6px;
+  height: 26px;
+  padding: 0 9px 0 7px;
   border-radius: 999px;
-  background: rgba(10, 8, 14, 0.46);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+  background: var(--glass);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--hairline), var(--shadow);
   color: #fff;
   font-size: 12px;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: box-shadow 0.2s ease;
 }
 .g-chained .g-chained-chip.is-active {
-  box-shadow: inset 0 0 0 1.5px var(--soul);
-  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1.5px var(--soul), var(--shadow);
+}
+.g-chained .g-chained-chip.is-active b {
+  color: var(--soul);
+}
+.g-chained .g-chained-chip.is-active i {
+  box-shadow: 0 0 0 1.5px #fff, 0 0 8px var(--soul);
 }
 .g-chained .g-chained-chip.is-burned {
   opacity: 0.5;
 }
 .g-chained .g-chained-chip i {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--soul);
   box-shadow: 0 0 8px var(--soul);
@@ -324,57 +440,99 @@
   font-weight: 600;
 }
 .g-chained .g-chained-chip small {
+  display: inline-block;
+  min-width: 8ch;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.6);
 }
 .g-chained .g-chained-chip-link {
-  display: none;
+  display: block;
+  width: 12px;
+  height: 0;
+  border-top: 2px dotted color-mix(in srgb, var(--soul) 70%, #fff);
+  opacity: 0.9;
 }
 .g-chained .g-chained-team-hint {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.55);
-  padding-left: 2px;
+  font-family: var(--voice);
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+  padding-left: 8px;
 }
-@media (max-width: 560px) {
-  .g-chained .g-chained-chip small {
-    display: none;
-  }
-  .g-chained .g-chained-team-hint {
-    display: none;
-  }
+/* the rival chain in a race: hollow dots, a quieter chip */
+.g-chained .g-chained-chip.is-rival {
+  background: rgba(14, 10, 18, 0.34);
+  color: rgba(255, 255, 255, 0.82);
+}
+.g-chained .g-chained-chip.is-rival i {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--soul);
+}
+.g-chained .g-chained-vs {
+  font-family: var(--voice);
+  font-size: 15px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.62);
+  padding: 0 7px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
 }
 
-/* toasts and tags */
+/* toasts up top where nothing stands, in two voices: a slim note, a serif tip */
 .g-chained .g-chained-toast {
   position: absolute;
   left: 50%;
-  bottom: 22%;
+  top: 58px;
   transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   max-width: min(78%, 420px);
-  padding: 8px 14px;
-  border-radius: 12px;
-  background: rgba(10, 8, 14, 0.55);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  padding: 6px 13px;
+  border-radius: 999px;
+  background: var(--glass);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--hairline), var(--shadow);
   color: #fff;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 500;
   line-height: 1.35;
   text-align: center;
   pointer-events: none;
   animation: g-chained-toast 3.2s ease forwards;
 }
+.g-chained .g-chained-toast::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink);
+}
 .g-chained .g-chained-toast.is-tip {
+  display: block;
+  max-width: min(84%, 34ch);
+  padding: 10px 18px 11px;
+  border-radius: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--ink) 60%, transparent);
   font-family: var(--voice);
-  font-size: 16px;
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+.g-chained .g-chained-toast.is-tip::before {
+  display: none;
 }
 .g-chained .g-chained-toast.is-warn {
   color: #ffd9b0;
 }
+.g-chained .g-chained-toast.is-warn::before {
+  background: #ff8a66;
+}
 @keyframes g-chained-toast {
   0% {
     opacity: 0;
-    transform: translate(-50%, 8px);
+    transform: translate(-50%, -6px);
   }
   10%,
   80% {
@@ -388,7 +546,7 @@
 }
 .g-chained .g-chained-windtag {
   position: absolute;
-  top: 52px;
+  top: 100px;
   left: 50%;
   transform: translateX(-50%);
   font-family: var(--voice);
@@ -400,20 +558,43 @@
   color: #fff;
   animation: g-chained-breathe 0.5s ease-in-out infinite;
 }
+/* name tags over the souls you do not steer: a dot, the name, a pointer */
 .g-chained .g-chained-tag {
   position: absolute;
   top: 0;
   left: 0;
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 6px;
   border-radius: 999px;
-  background: rgba(10, 8, 14, 0.5);
-  box-shadow: inset 0 0 0 1px var(--soul);
+  background: var(--glass);
+  box-shadow: var(--hairline), var(--shadow);
   color: #fff;
-  font-size: 11px;
-  font-weight: 600;
+  font: var(--label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   white-space: nowrap;
   pointer-events: none;
   will-change: transform;
+}
+.g-chained .g-chained-tag::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--soul);
+  box-shadow: 0 0 6px var(--soul);
+}
+.g-chained .g-chained-tag::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 6px;
+  height: 6px;
+  background: var(--glass);
+  transform: translateX(-50%) rotate(45deg);
 }
 
 /* vignettes */
@@ -466,9 +647,9 @@
   place-items: center;
   padding: 16px;
   text-align: left;
-  background: rgba(8, 6, 10, 0.62);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(8, 6, 10, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 .g-chained .g-chained-sheet-card {
   width: min(560px, 100%);
@@ -491,24 +672,25 @@
 .g-chained .g-chained-sheet-card h2 {
   margin: 0;
   font-family: var(--display);
-  font-size: 20px;
+  font-variation-settings: 'opsz' 48;
+  font-size: 22px;
   font-weight: 600;
 }
 .g-chained .g-chained-sheet-body {
   overflow: auto;
-  padding: 4px 16px 18px;
-  font-size: 13px;
-  line-height: 1.45;
+  padding: 4px 18px 20px;
+  font-size: 14px;
+  line-height: 1.5;
   overscroll-behavior: contain;
 }
 .g-chained .g-chained-sheet-body section {
-  margin-top: 14px;
+  margin-top: 18px;
 }
 .g-chained .g-chained-sheet-body h3 {
   margin: 0 0 6px;
-  font-family: var(--display);
-  font-size: 15px;
-  font-weight: 600;
+  font: var(--label);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: #ffb98a;
 }
 .g-chained .g-chained-sheet-body p {
@@ -519,21 +701,21 @@
   padding-left: 18px;
 }
 .g-chained .g-chained-sheet-body li {
-  margin: 4px 0;
+  margin: 5px 0;
 }
 .g-chained .g-chained-sheet-body b {
   color: #fff;
 }
 .g-chained .g-chained-lede {
   font-family: var(--voice);
-  font-size: 17px;
+  font-size: 18px;
   line-height: 1.35;
   color: rgba(255, 255, 255, 0.9);
 }
 .g-chained .g-chained-keys {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 4px 12px;
+  gap: 5px 12px;
   margin: 0;
 }
 .g-chained .g-chained-keys dt {
@@ -578,6 +760,64 @@
   color: rgba(245, 245, 247, 0.75);
 }
 
+/* phones: the bar sits top left clear of the shell's buttons, the chains under it clear of the touch controls, toasts below those */
+@container (max-width: 560px) {
+  .g-chained .g-chained-top {
+    left: 10px;
+    right: 138px;
+    transform: none;
+    justify-content: flex-start;
+    height: 30px;
+    gap: 8px;
+    padding: 0 11px 0 10px;
+  }
+  .g-chained .g-chained-time {
+    font-size: 15px;
+  }
+  .g-chained .g-chained-team {
+    left: 10px;
+    right: 48px;
+    bottom: auto;
+    top: 50px;
+    max-width: none;
+    row-gap: 4px;
+  }
+  .g-chained .g-chained-chip {
+    height: 24px;
+    padding: 0 8px 0 6px;
+    font-size: 11px;
+  }
+  .g-chained .g-chained-chip small {
+    display: none;
+  }
+  .g-chained .g-chained-vs {
+    font-size: 13px;
+    padding: 0 5px;
+  }
+  .g-chained .g-chained-team-hint {
+    display: none;
+  }
+  .g-chained .g-chained-toast {
+    top: 88px;
+    max-width: 86%;
+  }
+  .g-chained .g-chained-alti {
+    top: 84px;
+    bottom: 150px;
+    width: 18px;
+  }
+  .g-chained .g-chained-alti-numeral {
+    font-size: 9px;
+    margin-right: 5px;
+  }
+  .g-chained .g-chained-cardwrap {
+    top: 24%;
+  }
+  .g-chained .g-chained-windtag {
+    top: 128px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .g-chained .g-chained-cardwrap,
   .g-chained .g-chained-toast,
@@ -589,4 +829,61 @@
   .g-chained .g-chained-windtag.is-gust {
     animation: none;
   }
+}
+
+/* the result card: the number first, the setup rows folded away */
+.g-chained .g-chained-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  margin: 0 0 4px;
+  padding-top: 10px;
+  border-top: 2px solid color-mix(in srgb, var(--ink) 70%, transparent);
+}
+.g-chained .g-chained-result b {
+  font-family: var(--display);
+  font-size: 44px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: lining-nums tabular-nums;
+  font-variation-settings: 'opsz' 144;
+}
+.g-chained .g-chained-result span {
+  font-family: var(--voice);
+  font-size: 17px;
+  line-height: 1.2;
+  color: rgba(245, 245, 247, 0.78);
+  text-align: center;
+  text-wrap: balance;
+}
+.g-chained .g-chained-tweak {
+  width: 100%;
+}
+.g-chained .g-chained-tweak summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 6px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(245, 245, 247, 0.6);
+  text-align: center;
+}
+.g-chained .g-chained-tweak summary::-webkit-details-marker {
+  display: none;
+}
+.g-chained .g-chained-tweak summary:hover,
+.g-chained .g-chained-tweak[open] summary {
+  color: rgba(245, 245, 247, 0.9);
+}
+.g-chained .g-chained-tweak-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding-top: 8px;
 }
