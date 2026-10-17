@@ -1098,3 +1098,186 @@ test('the sequencer schedules ahead, swaps pieces on the bar, and adds a heartbe
   for (let t = 16; t < 20; t += 0.1) seq.tick(t, 5, 1);
   assert.ok(played.some((p) => p.voice === 'heart'));
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// the dressing helpers
+
+import { arch, box, hash, onLedge, prism, ringBand, scatter, sector, tangentFrame, tri, wedge, type RGB, type Tri } from '../src/os/arcade/games/chained/dress.ts';
+
+const GREY: RGB = [0.5, 0.5, 0.5];
+/** each triangle of a Tri: its stored normal, the normal its winding implies and its centroid */
+const facesOf = (t: Tri) => {
+  const faces: { nor: number[]; wind: number[]; mid: number[] }[] = [];
+  for (let i = 0; i < t.pos.length; i += 9) {
+    const a = t.pos.slice(i, i + 3);
+    const b = t.pos.slice(i + 3, i + 6);
+    const c = t.pos.slice(i + 6, i + 9);
+    const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const w = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    const l = Math.hypot(w[0], w[1], w[2]);
+    if (l < 1e-9) continue;
+    faces.push({ nor: t.nor.slice(i, i + 3), wind: w.map((x) => x / l), mid: [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (a[2] + b[2] + c[2]) / 3] });
+  }
+  return faces;
+};
+const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+/** every face winds the way its normal says and looks away from the centre */
+const assertOutward = (t: Tri, centre: number[], what: string, skip: (f: { nor: number[]; mid: number[] }) => boolean = () => false) => {
+  const faces = facesOf(t);
+  assert.ok(faces.length > 0, `${what} has faces`);
+  for (const f of faces) {
+    assert.ok(Math.abs(Math.hypot(...f.nor) - 1) < 1e-6, `${what} unit normal`);
+    assert.ok(dot(f.nor, f.wind) > 0.999, `${what} winding agrees with its normal`);
+    if (skip(f)) continue;
+    const away = [f.mid[0] - centre[0], f.mid[1] - centre[1], f.mid[2] - centre[2]];
+    assert.ok(dot(f.nor, away) > 1e-6, `${what} face at ${f.mid.map((v) => v.toFixed(2))} normal ${f.nor.map((v) => v.toFixed(2))} points away from the centre`);
+  }
+};
+
+test('sector, box, wedge, prism and arch wind outward', () => {
+  const s = tri();
+  sector(s, 0.2, 1.1, 4, 6, 1, 1.6, GREY, GREY, { segs: 4 });
+  // the sector's centre is a point in the middle of its arc
+  const am = 0.65;
+  assertOutward(s, [Math.cos(am) * 5, 1.3, Math.sin(am) * 5], 'sector');
+  const dressed = tri();
+  const rng = scatter(7);
+  sector(dressed, 0.2, 1.1, 4, 6, 1, 1.6, GREY, GREY, { segs: 5, rough: rng, undercut: 0.12, skew: [0.02, 0.01], lip: { w: 0.2, h: 0.08, k: 1.1 }, cornerShade: 0.7, bottomBand: [0.1, 0.1, 0.1], topOf: (i) => (i % 2 ? GREY : [0.6, 0.6, 0.6]) });
+  // the lip's inner face looks back across the ledge, every other face looks away from the middle
+  assertOutward(dressed, [Math.cos(am) * 5, 1.3, Math.sin(am) * 5], 'dressed sector', (f) => f.mid[1] > 1.6 && Math.hypot(f.mid[0], f.mid[2]) < 5.9 && Math.abs(f.nor[1]) < 0.5);
+  const b = tri();
+  box(b, 1, 2, 3, 0.5, 0.3, 0.2, 0.7, GREY, GREY);
+  assertOutward(b, [1, 2, 3], 'box');
+  const w = tri();
+  wedge(w, 0.4, 4, 4.6, 2, 0.5, 0.4, GREY);
+  assertOutward(w, [Math.cos(0.4) * 4.3, 1.9, Math.sin(0.4) * 4.3], 'wedge');
+  const p = tri();
+  prism(p, [[-1, -1], [-1, 1], [1, 1], [1, -1]], 0, 2, GREY, GREY);
+  assertOutward(p, [0, 1, 0], 'prism');
+  const pt = tri();
+  prism(pt, [[0, -1], [-1, 1], [1, 1]], 0, 1, GREY, GREY);
+  assertOutward(pt, [0, 0.5, 0.3], 'triangular prism');
+  const a = tri();
+  arch(a, 2, 1, -3, 0.9, 1.2, 1.5, 0.12, 6, GREY);
+  const faces = facesOf(a);
+  assert.ok(faces.length >= 2 * 6 * 4 * 2, 'four faces per arc step');
+  for (const f of faces) assert.ok(dot(f.nor, f.wind) > 0.999, 'arch winding agrees with its normal');
+  // every face looks the way its class says: the extrados away from its arc centre, the intrados toward it, the
+  // front and back out of the plane on their own side
+  const yaw = 0.9;
+  const U = [Math.cos(yaw), 0, -Math.sin(yaw)];
+  const N = [Math.sin(yaw), 0, Math.cos(yaw)];
+  const aw = 1.2;
+  const ah = 1.5;
+  const R = (aw * aw * 0.25 + ah * ah) / aw;
+  const d = R - aw / 2;
+  const checked = { ext: 0, int: 0, side: 0 };
+  for (const f of faces) {
+    const rel = [f.mid[0] - 2, f.mid[1] - 1, f.mid[2] + 3];
+    const u = dot(rel, U);
+    const n = dot(rel, N);
+    if (Math.abs(f.nor[1]) > 0.99) continue;
+    if (Math.abs(dot(f.nor, N)) > 0.99) {
+      assert.ok(dot(f.nor, N) * n > 0, `arch side face at ${f.mid.map((v) => v.toFixed(2))} looks out of the plane`);
+      checked.side++;
+      continue;
+    }
+    const cu = u < 0 ? d : -d;
+    const du = u - cu;
+    const rho = Math.hypot(du, rel[1]);
+    const e = [(U[0] * du) / rho, rel[1] / rho, (U[2] * du) / rho];
+    const along = dot(f.nor, e);
+    if (rho > R + 0.03) {
+      assert.ok(along > 0.9, `arch extrados at ${f.mid.map((v) => v.toFixed(2))} normal ${f.nor.map((v) => v.toFixed(2))}`);
+      checked.ext++;
+    } else if (rho < R - 0.03) {
+      assert.ok(along < -0.9, `arch intrados at ${f.mid.map((v) => v.toFixed(2))} normal ${f.nor.map((v) => v.toFixed(2))}`);
+      checked.int++;
+    }
+  }
+  assert.ok(checked.ext >= 12 && checked.int >= 12 && checked.side >= 24, `arch faces checked ${JSON.stringify(checked)}`);
+  // the feet stand on the line through the centre and the apex is h above it
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 1; i < a.pos.length; i += 3) {
+    lo = Math.min(lo, a.pos[i]);
+    hi = Math.max(hi, a.pos[i]);
+  }
+  assert.ok(Math.abs(lo - 1) < 1e-9 && hi > 2.4 && hi < 2.7, `arch spans ${lo}..${hi}`);
+});
+
+test('a rough lipped sector keeps its inner radius exact and the walkable top level enough', () => {
+  const t = tri();
+  const rng = scatter(3);
+  sector(t, -0.5, 0.5, 4, 6, 1, 1.6, GREY, GREY, { segs: 6, rough: rng, lip: { w: 0.25, h: 0.1, k: 1.1 }, undercut: 0.1 });
+  let inner = 0;
+  let maxTop = -Infinity;
+  for (let i = 0; i < t.pos.length; i += 3) {
+    const r = Math.hypot(t.pos[i], t.pos[i + 2]);
+    assert.ok(r > 4 - 1e-9, 'nothing inside the inner radius');
+    if (Math.abs(r - 4) < 1e-9) inner++;
+    if (r < 5.6) maxTop = Math.max(maxTop, t.pos[i + 1]);
+    assert.ok(r < 6.15, 'the rim jitters at most 0.14 m out');
+  }
+  assert.ok(inner >= 6 * 4, 'the inner edge sits exactly on r0');
+  assert.ok(maxTop <= 1.6 + 0.03 + 1e-9, 'the walkable top jitters at most 0.03 m');
+});
+
+test('ringBand covers the whole ring without end caps', () => {
+  const t = tri();
+  ringBand(t, 3, 4, 0, 0.5, GREY, GREY, 24);
+  const half = tri();
+  sector(half, 0, Math.PI, 3, 4, 0, 0.5, GREY, GREY, { segs: 12 });
+  // a full ring is two halves minus the four end faces (each two triangles of three vertices)
+  assert.equal(t.pos.length, half.pos.length * 2 - 4 * 2 * 3 * 3);
+  let seen = 0;
+  for (let k = 0; k < 24; k++) {
+    const a = ((k + 0.5) / 24) * Math.PI * 2;
+    const x = Math.cos(a) * 3.5;
+    const z = Math.sin(a) * 3.5;
+    let near = false;
+    for (let i = 0; i < t.pos.length && !near; i += 3) near = Math.hypot(t.pos[i] - x, t.pos[i + 2] - z) < 0.8;
+    if (near) seen++;
+  }
+  assert.equal(seen, 24, 'stone all the way round');
+  assertOutward(t, [0, 0.25, 0], 'ring band', (f) => Math.abs(f.nor[1]) < 0.5 && Math.hypot(f.mid[0], f.mid[2]) < 3.5);
+});
+
+test('hash is deterministic and in 0..1', () => {
+  const seen = new Set<number>();
+  for (let i = -5; i < 40; i++)
+    for (let j = -5; j < 40; j++) {
+      const h = hash(i, j);
+      assert.equal(h, hash(i, j));
+      assert.ok(h >= 0 && h < 1);
+      seen.add(h);
+    }
+  assert.ok(seen.size > 1900, 'spread out');
+  assert.notEqual(hash(1, 2), hash(2, 1));
+});
+
+test('onLedge stays inside the ledge and tangentFrame is an orthonormal frame', () => {
+  const level = buildLevel(11);
+  const rng = scatter(5);
+  for (const p of level.platforms) {
+    for (let k = 0; k < 8; k++) {
+      const s = onLedge(p, rng);
+      assert.equal(s.y, p.y);
+      assert.ok(s.r >= p.r0 && s.r <= p.r1, `r ${s.r} within ${p.r0}..${p.r1}`);
+      assert.ok(Math.abs(s.a - p.a) <= p.span * 0.8 + 1e-9);
+      assert.ok(Math.abs(Math.hypot(s.x, s.z) - s.r) < 1e-9);
+      const tight = onLedge(p, rng, { rIn: 0.1, rOut: 0.1, spanK: 0.5 });
+      assert.ok(tight.r >= p.r0 + 0.1 - 1e-9 && tight.r <= p.r1 - 0.1 + 1e-9);
+      assert.ok(Math.abs(tight.a - p.a) <= p.span * 0.5 + 1e-9);
+    }
+  }
+  for (const a of [0, 0.7, 2.5, -1.3, 7]) {
+    const f = tangentFrame(a);
+    for (const v of [f.out, f.tan, f.up]) assert.ok(Math.abs(Math.hypot(...v) - 1) < 1e-9);
+    assert.ok(Math.abs(dot(f.out, f.tan)) < 1e-9 && Math.abs(dot(f.out, f.up)) < 1e-9 && Math.abs(dot(f.tan, f.up)) < 1e-9);
+    // tan points along the growing angle
+    const ahead = [Math.cos(a + 0.01), 0, Math.sin(a + 0.01)];
+    assert.ok(dot(ahead, f.tan) > 0);
+  }
+});
