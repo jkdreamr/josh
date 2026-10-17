@@ -315,10 +315,12 @@ test('a CPU with a clean line past something keeps its foot down; it brakes only
   assert.equal(brakes(1), false, 'nor on a boost');
   assert.equal(brakes(1, 0.45), true, 'but angled across the road at a boost\'s speed it cannot straighten up in time');
   assert.equal(brakes(0, 0, true), true, 'and with no way past at all it slows and waits for one');
-  // oil on the apex of a bend at Hoover Nights, with a clean line round it: it keeps its foot down
+  // oil on the apex of a bend at Hoover Nights, with a clean line round it (and nothing else about): it keeps its
+  // foot down
   const r = createRace({ cc: '200cc', course: 'hoover', seed: 5, countdown: 0, racers: [RIVALS[0]] });
   const [k] = r.karts;
-  const oil = find(r, 'oil', (h) => Math.abs(h.s - 664) < 1);
+  const oil = find(r, 'oil', (h) => Math.abs(h.s - 680) < 1);
+  r.hazards = [oil];
   place(r, k, oil.s - 24, oil.d, 38);
   k.boost = 1;
   step(r, DT);

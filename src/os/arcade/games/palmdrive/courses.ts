@@ -1,6 +1,6 @@
 // The courses you can race: each is a loop of control points, where its pickups sit and how its sky looks. Pure, no
 // three.js; the scene builds each course's scenery (scene.ts) and the logic races on its track (logic.ts).
-import { EDGE, HAZARD_R, ROAD_HALF, ROUTE, START, buildTrack, layout as palmLayout, wrapS, type HazardKind, type Layout, type Track } from './track.ts';
+import { EDGE, HAZARD_R, KART_R, PASTS, ROAD_HALF, ROUTE, START, WET, buildTrack, deltaS, layout as palmLayout, shoreOf, wrapS, type EdgeSpan, type HazardKind, type Layout, type Track } from './track.ts';
 
 export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium' | 'quad' | 'hoover' | 'golf';
 export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium', 'quad', 'hoover', 'golf'];
@@ -15,14 +15,17 @@ export type Difficulty = 1 | 2 | 3 | 4;
  * their own and the class's. band: how far the CPUs ease off when well ahead of you and push when well behind
  * ([slowest, fastest, over how many meters]); on the harder courses they hardly ease off at all. harsh: how much longer
  * a spin, a squash or a tumble lasts, whatever the cause. rocket: how often the CPUs nail a rocket start (times their
- * skill). fallT and fallCoins: what going into the water costs (seconds before you are back on the road, and coins).
+ * skill). fallT and fallCoins: what falling off the road costs, into water or a pit (seconds before you are back on
+ * it, and coins). brink: where the road drops away with no wall, how far past the edge of the road the kart's middle can
+ * go before it falls (on Expert about half the kart is over the drop by then).
  */
-export type Tier = { pace: number; band: [number, number, number]; harsh: number; rocket: number; fallT: number; fallCoins: number };
+export type Tier = { pace: number; paceCc?: Partial<Record<'50cc' | '100cc' | '150cc' | '200cc', number>>; band: [number, number, number]; harsh: number; rocket: number; fallT: number; fallCoins: number; brink: number };
 export const TIER: Record<Difficulty, Tier> = {
-  1: { pace: 0.97, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1 },
-  2: { pace: 0.98, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1 },
-  3: { pace: 0.985, band: [0.93, 1.09, 500], harsh: 1.15, rocket: 0.75, fallT: 1.5, fallCoins: 2 },
-  4: { pace: 1.03, band: [0.97, 1.1, 450], harsh: 1.3, rocket: 0.9, fallT: 1.7, fallCoins: 3 },
+  1: { pace: 0.97, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1, brink: 1 },
+  2: { pace: 0.98, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1, brink: 1 },
+  3: { pace: 0.985, band: [0.93, 1.09, 500], harsh: 1.15, rocket: 0.75, fallT: 1.5, fallCoins: 2, brink: 1 },
+  // (at 200cc the CPUs' usual 3% off the class pace is waived too: a good driver was still winning a quarter of races)
+  4: { pace: 1.03, paceCc: { '200cc': 1 / 0.97 }, band: [0.97, 1.1, 450], harsh: 1.3, rocket: 0.9, fallT: 1.7, fallCoins: 3, brink: 0.6 },
 };
 
 export type Course = {
@@ -44,6 +47,10 @@ export type Course = {
   tier?: Partial<Tier>;
   /** A line for the lap banner on the laps where something joins in (see Hazard.lap). */
   laps?: Record<number, string>;
+  /** Where the walls give way to a drop (or stand somewhere else): everywhere else the walls stand at `edge`. */
+  edges?: EdgeSpan[];
+  /** The leaderboard the course's times go on, if not its id (a course rebuilt so its old times no longer compare). */
+  board?: string;
 };
 
 /**
@@ -70,6 +77,8 @@ function placed(
     balls?: [number, number, number, number, number, number, number?][];
     /** Ponds beside the road: [s, d of the middle, radius]. */
     ponds?: [number, number, number][];
+    /** Trenches right across the road: [s, meters long, d of the middle, meters either side of it, put back at s]. */
+    holes?: [number, number, number, number, number][];
   },
 ): Layout {
   // a narrow road packs its row of boxes a little closer together
@@ -85,6 +94,7 @@ function placed(
       ...(spec.carts ?? []).map(([s, d, drive]) => ({ kind: 'cart' as const, s: wrapS(t, s), d, r: HAZARD_R.cart, drive })),
       ...(spec.balls ?? []).map(([s, d, every, phase, along, across, lap]) => ({ kind: 'ball' as const, s: wrapS(t, s), d, r: HAZARD_R.ball, every, phase, tee: [along, across] as [number, number], ...(lap ? { lap } : {}) })),
       ...(spec.ponds ?? []).map(([s, d, r]) => ({ kind: 'water' as const, s: wrapS(t, s), d, r })),
+      ...(spec.holes ?? []).map(([s, len, d, w, back]) => ({ kind: 'trench' as const, s: wrapS(t, s), d, r: w, len, w, back: wrapS(t, back) })),
     ],
   };
 }
@@ -147,14 +157,14 @@ const STADIUM: [number, number][] = [
 ];
 
 /**
- * Straight legs joined by round corners: each corner [east, north] becomes an arc of radius r tangent to both legs,
- * so a course can turn square corners that still drive smoothly.
+ * Straight legs joined by round corners: each corner [east, north, r] becomes an arc of radius r tangent to both legs,
+ * so a course can turn square corners that still drive smoothly (and a hairpin can be tight where a sweeper is wide).
  */
-function squared(corners: [number, number][], r: number): [number, number][] {
+function rounded(corners: [number, number, number][]): [number, number][] {
   const out: [number, number][] = [];
   const n = corners.length;
   for (let i = 0; i < n; i++) {
-    const [x, y] = corners[i];
+    const [x, y, r] = corners[i];
     const [px, py] = corners[(i - 1 + n) % n];
     const [qx, qy] = corners[(i + 1) % n];
     const la = Math.hypot(x - px, y - py);
@@ -173,6 +183,8 @@ function squared(corners: [number, number][], r: number): [number, number][] {
   }
   return out;
 }
+/** The same with one radius for every corner. */
+const squared = (corners: [number, number][], r: number) => rounded(corners.map(([x, y]): [number, number, number] => [x, y, r]));
 
 /**
  * The Main Quad: paths round the outside of the quad and in through the arcades, all square corners and short
@@ -190,26 +202,14 @@ const QUAD: [number, number][] = [
 ];
 
 /**
- * Hoover Nights: campus after dark. A fast run east toward Hoover Tower into a pair of hairpins, a sweeper north, a
- * hairpin round the fountain, esses across the quad and a quick run home down the west side. The points are close
- * together so the hairpins keep an even radius.
+ * Hoover Nights: campus after dark, rebuilt round three real hairpins. Corners [east, north, radius] in world meters: the
+ * start straight down Serra Mall, the Tanner Fountain hairpin, back west to the Dig hairpin, the causeway over the Dig and
+ * the Lasuen sweeper, up to the Claw hairpin, the esses and Memorial Church, and home down the west side.
  */
-const HOOVER: [number, number][] = [
-  // the start straight, and the first hairpin round the east end
-  [-120, -150], [-101, -150], [-81, -150], [72, -150], [92, -150], [112, -150], [129, -151],
-  [149, -144], [162, -126], [162, -105], [150, -89], [130, -82], [110, -82],
-  // back west and round the second hairpin
-  [70, -82], [51, -82], [30, -74], [19, -59], [19, -36], [29, -21], [49, -13], [70, -14],
-  // the sweeper north to the tower
-  [110, -14], [129, -11], [145, -2], [159, 11], [167, 28], [170, 46], [170, 66],
-  // the hairpin round the fountain, and out to the west
-  [169, 85], [162, 106], [147, 117], [125, 117], [110, 106], [103, 86], [103, 71],
-  [101, 56], [97, 40], [86, 28], [68, 22], [48, 22], [28, 22],
-  // esses across the quad and along the north side
-  [10, 27], [-3, 40], [-15, 61], [-28, 74], [-46, 79], [-89, 78], [-111, 79],
-  // down the west side through the kink, and round onto the straight
-  [-128, 75], [-140, 63], [-144, 47], [-144, 29], [-144, -8], [-144, -26], [-153, -48], [-160, -70],
-  [-160, -90], [-160, -110], [-155, -130], [-140, -145],
+const HOOVER_K = 1.25;
+const HOOVER: [number, number, number][] = [
+  [-130, -120, 20], [84, -120, 14], [84, -92, 14], [-35, -92, 15], [-35, -62, 15], [130, -62, 40],
+  [130, 91, 13], [104, 91, 13], [104, 22, 16], [50, 22, 22], [37.3, 44, 22], [-130, 44, 18],
 ];
 
 /**
@@ -475,56 +475,94 @@ export const COURSES: Record<CourseId, Course> = {
   hoover: {
     id: 'hoover',
     name: 'Hoover Nights',
-    blurb: 'Campus after dark round Hoover Tower: the narrowest road, three hairpins, oil on the apexes and the Marguerite out on its rounds.',
+    blurb: 'Campus after dark: hairpins round the fountains, a plank road over the Dig, and no wall where you need one.',
     difficulty: 4,
-    route: HOOVER,
-    start: [-60, -150],
+    route: rounded(HOOVER).map(([e, n]) => [e * HOOVER_K, n * HOOVER_K]),
+    start: [-60 * HOOVER_K, -120 * HOOVER_K],
     half: 6,
-    edge: 9.5,
-    layout: (t) =>
-      placed(t, {
-        boxes: [60, 262, 410, 815],
+    edge: 8.5,
+    // rebuilt round real hairpins and open edges in 2026: the old route's times are on the old boards
+    board: 'hoover2',
+    edges: [
+      // Tanner Fountain, inside the first hairpin: cut the apex and you go fountain hopping
+      [126, 180, -1, 'water'],
+      // the Dig, round the inside of the second hairpin and along the causeway
+      // (on to where the reflecting pool begins: no stub of wall between the two)
+      [200, 431, 1, 'pit'],
+      // the utility trench along the other side of the causeway: open on both sides here
+      [330, 404, -1, 'pit'],
+      // the reflecting pool, outside the sweeper
+      [430, 488, 1, 'water'],
+      // the Claw, inside the third hairpin
+      [580, 632, -1, 'water'],
+      // the Arboretum ditch, outside the left-hander and down the west side
+      // (a little further out through the bend itself, so a late brake into L is not a fall)
+      [894, 930, 1, 'pit', 7.2],
+      [930, 972, 1, 'pit'],
+    ],
+    layout: (t) => {
+      // cyclists cross the road while both Marguerites keep to the right-hand lane: each crosses a whole number of times
+      // per bus lap, timed to be over on the far side as either bus comes by (an even number, as the buses are about
+      // half a lap apart)
+      const BUS_V = 11;
+      const buses: [number, number, number][] = [
+        [200, 3.6, BUS_V],
+        [760, 3.6, BUS_V],
+      ];
+      const lap = t.length / BUS_V;
+      const bike = (s: number, n: number): [HazardKind, number, number, number?, number?, number?, number?] => {
+        const speed = (2 * Math.PI * n) / lap;
+        const [a, b] = buses.map(([from]) => ((((s - from) % t.length) + t.length) % t.length) / BUS_V);
+        // halfway between the two buses' turns (in the angle of the swing), at the far left of the swing
+        const gap = ((((speed * (b - a)) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+        return ['bike', s, 0, undefined, 5, speed, 1.5 * Math.PI - speed * a - gap / 2];
+      };
+      return placed(t, {
+        boxes: [20, 196, 520, 790],
         coins: [
-          [20, -3, 5],
-          [120, 3, 5],
-          [240, 0, 5],
-          [440, -2.5, 5],
-          [636, 0, 4],
-          [690, 3, 5],
-          [755, -2, 4],
-          [866, 2.5, 4],
-          [960, 0, 5],
-          [1005, 2.5, 5],
-          [1075, -3, 5],
+          [70, 3, 3],
+          // bait on the fountain's lip, on the inside line by the water
+          [136, -5.2, 4],
+          // onto the right-hand plate over the trench
+          [336, 3.4, 4],
+          [450, -4, 3],
+          [500, -3, 5],
+          // bait on the Claw's lip
+          [598, -4.4, 3],
+          [700, 0, 4],
+          [820, 3, 5],
+          [880, -3, 4],
+          [938, 3.5, 4],
+          [1030, 0, 5],
+          [1100, -3, 5],
         ],
-        // boosts and jumps keep to the middle of the road, out of the buses' lanes
+        // a boost onto the causeway, open on both sides, and two down the long straights
         dashes: [
-          [30, 0],
-          [505, 0],
-          [705, 0],
-          [900, 0],
+          [324, 0],
+          [840, 0],
+          [1000, 0],
         ],
+        // the jump over the trench, and a kicker on the west straight
         ramps: [
-          [528, 0, 4],
-          [922, 0, 4],
+          [394.5, 0, 4.4],
+          [1011, 0, 5],
         ],
+        holes: [[395, 6, 0, 2, 380]],
         hazards: [
-          // oil on the apex of every hairpin and corner, and on the line through the sweeper and the esses
-          ['oil', 188, -3.5],
-          ['oil', 342, 3.5],
-          ['oil', 466, -3.5],
-          ['oil', 585, -3.5],
-          ['oil', 664, 3.4],
-          ['oil', 788, -3.7, 2.1],
-          ['oil', 873, -3.5],
-          ['oil', 1045, -3.5],
+          // the Thinker, dead in the middle of the Claw hairpin's apex: an inside line by the water or the outside one
+          ['statue', 606, -0.2, 1.4],
+          // oil on the inside of the turn after the Claw, and on the outside of the second bend of the esses
+          ['oil', 680, 3],
+          ['oil', 750, 3],
+          // cyclists on their way across the quad
+          bike(704, 18),
+          bike(738, 20),
+          bike(770, 16),
         ],
-        // two Marguerite shuttles half a lap apart, one in each outside lane, so one side is always clear
-        buses: [
-          [430, 3.4, 11],
-          [990, -3.4, 11],
-        ],
-      }),
+        // two Marguerites on their rounds, both in the right-hand lane
+        buses,
+      });
+    },
     sky: 'linear-gradient(180deg, #03061a 0%, #0a1434 22%, #16264e 36%, #2a3a68 43%, #22325e 46%, #121a2a 47%)',
   },
   golf: {
@@ -652,13 +690,51 @@ export const COURSES: Record<CourseId, Course> = {
 export const tierOf = (id: CourseId): Tier => ({ ...TIER[COURSES[id].difficulty], ...COURSES[id].tier });
 
 const tracks = new Map<CourseId, Track>();
-/** Each course's circuit, built once. */
+/** Each course's circuit, built once, with its edges: where the road drops away and what into. */
 export function trackOf(id: CourseId): Track {
   let t = tracks.get(id);
   if (!t) {
     const c = COURSES[id];
     t = buildTrack(c.route, c.start, c.half ?? ROAD_HALF, c.edge ?? EDGE);
+    edgesOf(t, c);
     tracks.set(id, t);
   }
   return t;
+}
+
+/** Fills in a track's edges: the course's own spans, then its ponds and the steel plates over any trench. */
+function edgesOf(t: Track, c: Course) {
+  const set = (i: number, side: number, lim: number, code: number) => {
+    if (side <= 0) {
+      t.lo[i] = -lim;
+      t.pastLo[i] = code;
+    }
+    if (side >= 0) {
+      t.hi[i] = lim;
+      t.pastHi[i] = code;
+    }
+  };
+  const brink = t.half + tierOf(c.id).brink;
+  for (const [s0, s1, side, past, at] of c.edges ?? []) {
+    for (let i = 0; i < t.n; i++) if (i * t.step >= s0 && i * t.step <= s1) set(i, side, at ?? (past === 'wall' ? t.edge : brink), PASTS.indexOf(past));
+  }
+  // where a pond comes inside the wall line there is no wall: the kart is in once its middle is within WET of the water
+  const lay = c.layout(t);
+  const shore = shoreOf(t, lay.hazards);
+  if (shore) {
+    for (let i = 0; i < t.n; i++) {
+      // (only where the water lies inside where a wall would hold the kart anyway: elsewhere the wall stands as before)
+      if (shore.left[i] - WET < t.edge - KART_R) set(i, -1, shore.left[i] - WET, PASTS.indexOf('water'));
+      if (shore.right[i] - WET < t.edge - KART_R) set(i, 1, shore.right[i] - WET, PASTS.indexOf('water'));
+    }
+  }
+  // over a trench, steel plates take the road on either side of the hole, and past them it drops away (from the sample
+  // before it to the one after, so the edge is the plates' all the way along it)
+  for (const h of lay.hazards) {
+    if (h.kind !== 'trench') continue;
+    for (let i = 0; i < t.n; i++) {
+      const ds = deltaS(t, h.s, i * t.step);
+      if (ds > -t.step && ds < (h.len ?? 0) + t.step) set(i, 0, t.half - 0.4, PASTS.indexOf('pit'));
+    }
+  }
 }

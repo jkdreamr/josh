@@ -148,6 +148,23 @@
   stroke: #fff;
   stroke-width: 4;
 }
+/* where the road drops away: water, a pit, out of bounds */
+.g-palmdrive .g-palmdrive-map-edge {
+  fill: none;
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.g-palmdrive .g-palmdrive-map-edge.is-water {
+  stroke: #45c4ff;
+}
+.g-palmdrive .g-palmdrive-map-edge.is-pit {
+  stroke: #ff8a1f;
+}
+.g-palmdrive .g-palmdrive-map-edge.is-ob {
+  stroke: #fff;
+  stroke-dasharray: 10 8;
+}
 /* a Marguerite bus: white with a cardinal edge */
 .g-palmdrive .g-palmdrive-map-bus {
   fill: #f2f2ee;

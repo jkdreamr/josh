@@ -2,9 +2,9 @@
 // scenery is in scenery.ts). It reads a Race every frame and never changes it.
 import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
-import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, deltaS, gridSpot, headingOf, locate, pointAt, wallGaps, wrapAngle, type Track } from './track';
-import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, noise, scatter, swingAt, texture, waterTexture } from './scenery';
-import { COUNTDOWN, RAMP_H, RAMP_LEN, TURBO_AT, hazardV, hurt, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
+import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, deltaS, dropAt, edgeAt, edgeRuns, gridSpot, headingOf, inTrench, locate, pointAt, wrapAngle, wrapS, type Past, type Track } from './track';
+import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, makeStatue, noise, scatter, swingAt, texture, waterTexture } from './scenery';
+import { COUNTDOWN, FALL_CARRY, FALL_SINK, RAMP_H, RAMP_LEN, TURBO_AT, hazardV, hurt, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
 
 type Three = typeof import('three');
 
@@ -39,8 +39,6 @@ type KartView = {
   wind: T.Group;
   /** The bullet the kart rides inside while a Bullet item flies it. */
   bullet: T.Group;
-  /** The line it is fished out of a pond on. */
-  line: T.Mesh;
   hat: T.Group;
   hatName: Hat;
   /** Swaps the hat when a kart's look changes (an online racer's garage arrives after the race is built). */
@@ -124,6 +122,71 @@ function ribbon(THREE: Three, t: Track, a: number, b: number, y: number, vLen: n
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
+}
+
+/**
+ * A strip along the track from s0 to s1 between lateral offsets a(s) and b(s), at height y. Its texture runs one unit
+ * every vLen meters along it and once across it, or (world) is laid in world space every vLen meters so neighbouring
+ * strips join up.
+ */
+function strip(THREE: Three, t: Track, s0: number, s1: number, a: (s: number) => number, b: (s: number) => number, y: number, vLen: number, world = false) {
+  const count = Math.max(1, Math.round((s1 - s0) / (t.step / 2)));
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  for (let k = 0; k <= count; k++) {
+    const s = s0 + ((s1 - s0) * k) / count;
+    const p = pointAt(t, s);
+    const nx = -p.tz;
+    const nz = p.tx;
+    // (left to right, so it faces up whichever side of the road it is on)
+    const [da, db] = [Math.min(a(s), b(s)), Math.max(a(s), b(s))];
+    const [ax, az, bx, bz] = [p.x + nx * da, p.z + nz * da, p.x + nx * db, p.z + nz * db];
+    pos.push(ax, y, az, bx, y, bz);
+    if (world) uv.push(ax / vLen, az / vLen, bx / vLen, bz / vLen);
+    else uv.push(0, (s - s0) / vLen, 1, (s - s0) / vLen);
+    if (k < count) idx.push(2 * k, 2 * k + 1, 2 * k + 2, 2 * k + 1, 2 * k + 3, 2 * k + 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** How far out (past the brink) water or a pit shows at each sample on each side: up to BEYOND, short of other road. */
+const BEYOND = 9;
+function beyondOf(t: Track) {
+  const reach = (side: number) => {
+    const out = new Float32Array(t.n);
+    for (let i = 0; i < t.n; i++) {
+      if (!dropAt(t, i, side)) continue;
+      const lim = side > 0 ? t.hi[i] : -t.lo[i];
+      // on the inside of a bend, short of where the strips would fold over each other
+      const c = t.curv[i] * side;
+      let far = lim + BEYOND;
+      if (c > 0.005) far = Math.min(far, 0.92 / c);
+      // and never closer to another stretch of road than to this one
+      const nx = -t.tz[i] * side;
+      const nz = t.tx[i] * side;
+      let d = lim + 0.5;
+      for (; d < far; d += 0.5) {
+        const x = t.x[i] + nx * d;
+        const z = t.z[i] + nz * d;
+        let near = Infinity;
+        for (let j = 0; j < t.n; j++) {
+          const gap = Math.abs(i - j);
+          if (Math.min(gap, t.n - gap) * t.step < 25) continue;
+          near = Math.min(near, (t.x[j] - x) ** 2 + (t.z[j] - z) ** 2);
+        }
+        if (Math.sqrt(near) < d + 0.3) break;
+      }
+      out[i] = Math.max(lim + 0.5, Math.min(far, d));
+    }
+    return out;
+  };
+  return { lo: reach(-1), hi: reach(1) };
 }
 
 /** A vertical strip at lateral offset d, from the ground to height h, from s0 to s1 (all the way round by default). */
@@ -238,9 +301,6 @@ function makeKart(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: K
   }
   bullet.visible = false;
   root.add(bullet);
-  const line = new THREE.Mesh(geo.box, shared.dark);
-  line.visible = false;
-  root.add(line);
   body.scale.setScalar(0.85);
   const shadow = new THREE.Mesh(geo.plane, shared.shadow);
   shadow.rotation.x = -Math.PI / 2;
@@ -248,7 +308,7 @@ function makeKart(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: K
   shadow.position.y = 0.11;
   root.add(shadow);
   const view: KartView = {
-    root, body, paint, color: new THREE.Color(color).getHex(), steer, spinners, flames, sparks, sparkMat, shadow, trail, stars, wind, bullet, line,
+    root, body, paint, color: new THREE.Color(color).getHex(), steer, spinners, flames, sparks, sparkMat, shadow, trail, stars, wind, bullet,
     hat: hatGroup,
     hatName: hat,
     wear(next) {
@@ -283,6 +343,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   sun.position.set(160, 260, -220);
   scene.add(sun);
 
+  const dummy = new THREE.Object3D();
   const geo = {
     box: new THREE.BoxGeometry(1, 1, 1),
     wheel: new THREE.CylinderGeometry(1, 1, 1, 14),
@@ -419,27 +480,196 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   wallTex.wrapS = THREE.RepeatWrapping;
   const wallMat = new THREE.MeshLambertMaterial({ map: wallTex, side: THREE.DoubleSide });
   const capMat = look.night ? new THREE.MeshBasicMaterial({ color: look.band }) : new THREE.MeshLambertMaterial({ color: look.band });
-  // no wall where a pond comes up to the road: the wall stops at a stone pillar either side and the water's edge has
-  // its own low stone lip (below)
-  const gaps = wallGaps(t, r.shore);
-  const inGap = (side: number, s: number) => gaps.some(([sd, from, to]) => sd === side && deltaS(t, from, s) >= 0 && deltaS(t, s, to) >= 0);
-  for (const side of [-1, 1]) {
-    const mine = gaps.filter(([sd]) => sd === side).sort((a, b) => a[1] - b[1]);
-    const runs: [number, number][] = mine.length ? mine.map(([, , to], k): [number, number] => [to, k + 1 < mine.length ? mine[k + 1][1] : mine[0][1] + t.length]) : [[0, t.length]];
-    for (const [s0, s1] of runs) {
-      scene.add(new THREE.Mesh(fence(THREE, t, side * t.edge, 1.25, 3, s0, s1), wallMat));
-      scene.add(new THREE.Mesh(ribbon(THREE, t, side * t.edge - 0.3, side * t.edge + 0.3, 1.25, 4, s0, s1), capMat));
-      if (!mine.length) continue;
-      for (const s of [s0, s1]) {
-        const p = pointAt(t, s, side * t.edge);
-        const pillar = new THREE.Mesh(geo.box, capMat);
-        pillar.scale.set(0.8, 1.6, 0.8);
-        pillar.position.set(p.x, 0.8, p.z);
-        pillar.rotation.y = headingOf(p.tx, p.tz);
-        scene.add(pillar);
+  // walls only where the road has them, each run ending in a striped post with a reflector where the road drops away;
+  // there the edge has a striped lip with amber studs blinking along it, and past it water or a pit (see below)
+  const runs = edgeRuns(t);
+  const beyond = beyondOf(t);
+  const limit = (side: number) => (s: number) => side * edgeAt(t, s, side).lim;
+  const reachAt = (side: number) => (s: number) => {
+    const w = wrapS(t, s) / t.step;
+    const i = Math.floor(w) % t.n;
+    const arr = side > 0 ? beyond.hi : beyond.lo;
+    return side * Math.max(arr[i], arr[(i + 1) % t.n] || arr[i]);
+  };
+  const stripe = (a: string, b: string, n: number) =>
+    texture(
+      THREE,
+      canvas(64, 64, (g) => {
+        g.fillStyle = a;
+        g.fillRect(0, 0, 64, 64);
+        g.fillStyle = b;
+        for (let k = -n; k < n * 2; k++) {
+          g.beginPath();
+          g.moveTo((k * 64) / n, 0);
+          g.lineTo((k * 64) / n + 32 / n, 0);
+          g.lineTo((k * 64) / n + 32 / n + 64, 64);
+          g.lineTo((k * 64) / n + 64, 64);
+          g.closePath();
+          g.fill();
+        }
+      }),
+    );
+  const postTex = texture(
+    THREE,
+    canvas(16, 64, (g) => {
+      for (let k = 0; k < 8; k++) {
+        g.fillStyle = k % 2 ? '#f4f4f4' : '#d2261e';
+        g.fillRect(0, k * 8, 16, 8);
+      }
+    }),
+  );
+  const postMat = look.night ? new THREE.MeshBasicMaterial({ map: postTex }) : new THREE.MeshLambertMaterial({ map: postTex });
+  const reflectorMat = new THREE.MeshBasicMaterial({ color: 0xffb300 });
+  const posts: { x: number; z: number; ry: number }[] = [];
+  const open = runs.filter((run) => run[3] !== 'wall');
+  for (const [side, s0, s1, past] of runs) {
+    if (past !== 'wall') continue;
+    scene.add(new THREE.Mesh(fence(THREE, t, side * t.edge, 1.25, 3, s0, s1), wallMat));
+    scene.add(new THREE.Mesh(ribbon(THREE, t, side * t.edge - 0.3, side * t.edge + 0.3, 1.25, 4, s0, s1), capMat));
+    if (s1 - s0 >= t.length - 0.01) continue;
+    for (const s of [s0, s1]) {
+      const p = pointAt(t, s, side * t.edge);
+      posts.push({ x: p.x, z: p.z, ry: headingOf(p.tx, p.tz) });
+    }
+  }
+  if (posts.length) {
+    const post = new THREE.InstancedMesh(geo.box, postMat, posts.length);
+    const cap = new THREE.InstancedMesh(geo.box, reflectorMat, posts.length);
+    posts.forEach((p, k) => {
+      dummy.position.set(p.x, 0.95, p.z);
+      dummy.rotation.set(0, p.ry, 0);
+      dummy.scale.set(0.55, 1.9, 0.55);
+      dummy.updateMatrix();
+      post.setMatrixAt(k, dummy.matrix);
+      dummy.position.y = 2.0;
+      dummy.scale.set(0.42, 0.22, 0.42);
+      dummy.updateMatrix();
+      cap.setMatrixAt(k, dummy.matrix);
+    });
+    dummy.rotation.set(0, 0, 0);
+    scene.add(post, cap);
+  }
+  // the lip: yellow and black, lit, from just inside the brink to just past it; on the golf course red stakes instead
+  // (a lateral water hazard), and the pond itself shows the water
+  const lipMat = new THREE.MeshBasicMaterial({ map: stripe('#ffcf1f', '#141414', 2) });
+  (lipMat.map as T.Texture).wrapT = THREE.RepeatWrapping;
+  const studs: { x: number; z: number }[] = [];
+  const stakes: { x: number; z: number }[] = [];
+  const pitTex = texture(
+    THREE,
+    canvas(64, 8, (g) => {
+      const grad = g.createLinearGradient(0, 0, 64, 0);
+      grad.addColorStop(0, '#6a4426');
+      grad.addColorStop(0.12, '#3a2414');
+      grad.addColorStop(0.4, '#0d0806');
+      grad.addColorStop(1, '#030202');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 8);
+    }),
+  );
+  const pitMat = new THREE.MeshBasicMaterial({ map: pitTex });
+  const pondTex = look.edge === 'stakes' ? null : waterTexture(THREE, true);
+  const pondMat = pondTex ? new THREE.MeshBasicMaterial({ map: pondTex, color: 0x9fe6f0 }) : null;
+  const copingMat = new THREE.MeshLambertMaterial({ color: 0xcdb48a, ...(look.night ? { emissive: 0x2a2214 } : {}) });
+  const netting: { x: number; z: number; ry: number; len: number }[] = [];
+  for (const [side, s0, s1, past] of open) {
+    const lim = limit(side);
+    const far = reachAt(side);
+    if (look.edge === 'stakes') {
+      for (let s = s0 + 2; s < s1; s += 6) {
+        const p = pointAt(t, s, side * (edgeAt(t, s, side).lim + 0.35));
+        stakes.push({ x: p.x, z: p.z });
+      }
+      continue;
+    }
+    scene.add(new THREE.Mesh(strip(THREE, t, s0, s1, (s) => lim(s) - side * 0.6, (s) => lim(s) + side * 0.4, 0.075, 2), lipMat));
+    for (let s = s0 + 2.5; s < s1; s += 5) {
+      const p = pointAt(t, s, side * (edgeAt(t, s, side).lim + 0.15));
+      studs.push({ x: p.x, z: p.z });
+    }
+    // past the lip: lit water (its ripples laid in world space, so a fountain basin in it joins up), or a dark pit
+    // lit near the lip, with orange netting on its far side
+    if (past === 'water' && pondMat) {
+      scene.add(new THREE.Mesh(strip(THREE, t, s0, s1, (s) => lim(s) + side * 0.4, far, 0.03, 12, true), pondMat));
+      // a pool out in the open (not a basin tucked inside a hairpin) has a stone coping along its far bank
+      let open = true;
+      for (let s = s0; s <= s1 && open; s += t.step) open = Math.abs(far(s) - lim(s)) > BEYOND - 0.5;
+      if (open) scene.add(new THREE.Mesh(strip(THREE, t, s0, s1, far, (s) => far(s) + side * 0.7, 0.14, 4), copingMat));
+    } else if (past !== 'water') {
+      const g = strip(THREE, t, s0, s1, (s) => lim(s) + side * 0.4, far, 0.031, 4);
+      scene.add(new THREE.Mesh(g, pitMat));
+      for (let s = s0 + 2; s < s1 - 2; s += 4) {
+        const a = pointAt(t, s, far(s) - side * 0.3);
+        const b = pointAt(t, s + 4, far(s + 4) - side * 0.3);
+        netting.push({ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, ry: Math.atan2(b.x - a.x, b.z - a.z), len: Math.hypot(b.x - a.x, b.z - a.z) });
       }
     }
   }
+  const studMat = new THREE.MeshBasicMaterial({ color: 0xffa000 });
+  if (studs.length) {
+    const m = new THREE.InstancedMesh(geo.box, studMat, studs.length);
+    studs.forEach((p, k) => {
+      dummy.position.set(p.x, 0.12, p.z);
+      dummy.scale.set(0.3, 0.12, 0.3);
+      dummy.updateMatrix();
+      m.setMatrixAt(k, dummy.matrix);
+    });
+    scene.add(m);
+  }
+  if (stakes.length) {
+    const m = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xd8312a }), stakes.length);
+    stakes.forEach((p, k) => {
+      dummy.position.set(p.x, 0.45, p.z);
+      dummy.scale.set(0.12, 0.9, 0.12);
+      dummy.updateMatrix();
+      m.setMatrixAt(k, dummy.matrix);
+    });
+    scene.add(m);
+  }
+  if (netting.length) {
+    // orange posts and netting along the far side of a pit, with a red lamp on every other post
+    const netTex = texture(
+      THREE,
+      canvas(32, 32, (g) => {
+        g.strokeStyle = 'rgba(255,120,20,0.9)';
+        g.lineWidth = 2;
+        for (let k = -32; k < 64; k += 8) {
+          g.beginPath();
+          g.moveTo(k, 0);
+          g.lineTo(k + 32, 32);
+          g.moveTo(k + 32, 0);
+          g.lineTo(k, 32);
+          g.stroke();
+        }
+      }),
+    );
+    const net = new THREE.InstancedMesh(geo.plane, new THREE.MeshBasicMaterial({ map: netTex, transparent: true, side: THREE.DoubleSide, depthWrite: false }), netting.length);
+    const pole = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xff7a1a, emissive: 0x3a1600 }), netting.length);
+    const lamps = netting.filter((_, k) => k % 2 === 0);
+    const lamp = new THREE.InstancedMesh(geo.ball, new THREE.MeshBasicMaterial({ color: 0xff2a1a }), Math.max(1, lamps.length));
+    netting.forEach((n, k) => {
+      dummy.position.set(n.x, 0.6, n.z);
+      dummy.rotation.set(0, n.ry + Math.PI / 2, 0);
+      dummy.scale.set(n.len, 1.1, 1);
+      dummy.updateMatrix();
+      net.setMatrixAt(k, dummy.matrix);
+      dummy.rotation.set(0, 0, 0);
+      dummy.position.set(n.x + Math.sin(n.ry) * n.len * 0.5, 0.65, n.z + Math.cos(n.ry) * n.len * 0.5);
+      dummy.scale.set(0.1, 1.3, 0.1);
+      dummy.updateMatrix();
+      pole.setMatrixAt(k, dummy.matrix);
+    });
+    lamps.forEach((n, k) => {
+      dummy.position.set(n.x + Math.sin(n.ry) * n.len * 0.5, 1.4, n.z + Math.cos(n.ry) * n.len * 0.5);
+      dummy.scale.setScalar(0.13);
+      dummy.updateMatrix();
+      lamp.setMatrixAt(k, dummy.matrix);
+    });
+    dummy.rotation.set(0, 0, 0);
+    scene.add(net, pole, lamp);
+  }
+  // a chevron board on the post where each open run starts, pointing back in toward the road
+  const startBoards: { s: number; side: number }[] = look.edge === 'stakes' ? [] : open.map(([side, s0]) => ({ s: s0, side }));
   const checker = texture(
     THREE,
     canvas(128, 32, (g) => {
@@ -589,9 +819,14 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   // reflective, so they still show up at night
   const chevronMat = look.night ? new THREE.MeshBasicMaterial({ map: chevron, side: THREE.DoubleSide }) : new THREE.MeshLambertMaterial({ map: chevron, side: THREE.DoubleSide });
   for (let s = 0; s < t.length; s += 9) {
-    const c = t.curv[Math.floor(s / t.step) % t.n];
-    if (Math.abs(c) < 0.03 || inGap(-Math.sign(c), s)) continue;
-    const p = pointAt(t, s, -Math.sign(c) * (t.edge - 0.4));
+    const i = Math.floor(s / t.step) % t.n;
+    const c = t.curv[i];
+    if (Math.abs(c) < 0.03) continue;
+    // (where the outside of the bend drops away, across the water or the pit on its far bank)
+    const out = -Math.sign(c);
+    const open = dropAt(t, i, out);
+    if (open && look.edge === 'stakes') continue;
+    const p = pointAt(t, s, open ? out * ((out > 0 ? beyond.hi : beyond.lo)[i] + 0.6) : out * (t.edge - 0.4));
     const sign = new THREE.Mesh(geo.plane, chevronMat);
     sign.scale.set(1.6, 1.6, 1);
     sign.position.set(p.x, 1.9, p.z);
@@ -600,11 +835,26 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     if (c < 0) sign.scale.x = -1.6;
     scene.add(sign);
   }
+  for (const { s, side } of startBoards) {
+    const p = pointAt(t, s, side * t.edge);
+    const sign = new THREE.Mesh(geo.plane, chevronMat);
+    sign.scale.set(1.5, 1.5, 1);
+    sign.position.set(p.x, 2.7, p.z);
+    sign.rotation.y = headingOf(p.tx, p.tz) + Math.PI;
+    // the arrow points back in, away from the drop
+    if (side > 0) sign.scale.x = -1.5;
+    scene.add(sign);
+  }
 
   // the course's own scenery
   const rand = scatter(7);
-  const clear = (x: number, z: number, margin: number) => Math.abs(locate(t, x, z).d) > t.edge + margin;
-  const dummy = new THREE.Object3D();
+  const clear = (x: number, z: number, margin: number) => {
+    const at = locate(t, x, z);
+    const side = at.d >= 0 ? 1 : -1;
+    const i = Math.round(at.s / t.step) % t.n;
+    const out = dropAt(t, i, side) ? Math.max(t.edge, (side > 0 ? beyond.hi : beyond.lo)[i]) : t.edge;
+    return Math.abs(at.d) > out + margin;
+  };
   const sceneryTick = SCENERY[r.course]({ THREE, scene, t, r, geo, mats, rand, clear, dummy }) || null;
 
   // what the course leaves on the road: mud and oil lie flat, bales, boulders and planters stand in the way, cows
@@ -727,6 +977,46 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   });
   const ballMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
   const streakMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, depthWrite: false });
+  /**
+   * A trench right across the road: the hole black and deep, striped along its edges, and steel plates over the rest of
+   * the road either side of it.
+   */
+  const trench = (h: (typeof r.hazards)[number]) => {
+    const len = h.len ?? 0;
+    const w = h.w ?? h.r;
+    const s0 = h.s;
+    const s1 = h.s + len;
+    const plate = edgeAt(t, s0 + len / 2, 1).lim;
+    const hole = texture(
+      THREE,
+      canvas(8, 64, (g) => {
+        const grad = g.createLinearGradient(0, 0, 0, 64);
+        grad.addColorStop(0, '#3a2a1c');
+        grad.addColorStop(0.15, '#0b0806');
+        grad.addColorStop(0.85, '#0b0806');
+        grad.addColorStop(1, '#3a2a1c');
+        g.fillStyle = grad;
+        g.fillRect(0, 0, 8, 64);
+      }),
+    );
+    scene.add(new THREE.Mesh(strip(THREE, t, s0, s1, () => h.d - w, () => h.d + w, 0.072, len), new THREE.MeshBasicMaterial({ map: hole })));
+    const steel = texture(
+      THREE,
+      canvas(32, 32, (g) => {
+        g.fillStyle = '#7d8189';
+        g.fillRect(0, 0, 32, 32);
+        g.fillStyle = 'rgba(255,255,255,0.35)';
+        for (let y = 0; y < 32; y += 8) for (let x = (y / 8) % 2 ? 4 : 0; x < 32; x += 8) g.fillRect(x, y, 4, 1.5);
+        noise(g, 32, 32, 60, 0.08);
+      }),
+      [4, 3],
+    );
+    const plateMat = new THREE.MeshLambertMaterial({ map: steel, ...(look.night ? { emissive: 0x23252a } : {}) });
+    for (const side of [-1, 1]) scene.add(new THREE.Mesh(strip(THREE, t, s0 - 0.6, s1 + 0.6, () => h.d + side * w, () => side * plate, 0.074, 4), plateMat));
+    // hazard stripes along the near and far edges of the hole
+    const edges = new THREE.MeshBasicMaterial({ map: stripe('#ffcf1f', '#141414', 4) });
+    for (const at of [s0 - 0.4, s1]) scene.add(new THREE.Mesh(strip(THREE, t, at, at + 0.4, () => h.d - w, () => h.d + w, 0.076, 0.4), edges));
+  };
   r.hazards.forEach((h, i) => {
     if (h.kind === 'sand') {
       // a bunker: raked sand with a soft edge
@@ -740,6 +1030,18 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       return;
     }
     if (h.kind === 'water') return;
+    if (h.kind === 'statue') {
+      // a bronze on its plinth, spotlit from above
+      const g = makeStatue(THREE, geo, h.r);
+      g.position.set(h.x, 0, h.z);
+      g.rotation.y = headingOf(h.tx, h.tz) + Math.PI;
+      scene.add(g);
+      return;
+    }
+    if (h.kind === 'trench') {
+      trench(h);
+      return;
+    }
     if (h.kind === 'pin') {
       // the road runs across a green here: the green itself, the cup and the flagstick in it
       greenMat ??= new THREE.MeshLambertMaterial({ map: greenTexture(THREE), transparent: true, depthWrite: false });
@@ -964,6 +1266,42 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     scene.add(v.root);
     return v;
   });
+  // the night crew's crane hooks that fish karts out (on the golf course, a giant ball retriever), three of them
+  const rigs = Array.from({ length: 3 }, () => {
+    const g = new THREE.Group();
+    const yellow = new THREE.MeshLambertMaterial({ color: 0xffc21a, emissive: 0x4a3200 });
+    const cable = new THREE.Mesh(geo.box, kartShared.dark);
+    const parts: T.Mesh[] = [];
+    if (look.rescue === 'retriever') {
+      // a long telescoping pole with a cup on the end
+      const cup = new THREE.Mesh(geo.ring, new THREE.MeshLambertMaterial({ color: 0xd8d8de }));
+      cup.rotation.x = Math.PI / 2;
+      cup.scale.setScalar(0.9);
+      parts.push(cup);
+      cable.material = new THREE.MeshLambertMaterial({ color: 0xc9ccd4 });
+    } else {
+      // a yellow hook block and its hook
+      const block = new THREE.Mesh(geo.box, yellow);
+      block.scale.set(0.7, 0.9, 0.5);
+      block.position.y = 0.9;
+      const hook = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.09, 6, 12, Math.PI * 1.4), yellow);
+      hook.rotation.z = Math.PI * 0.8;
+      hook.position.y = 0.2;
+      const tip = new THREE.Mesh(geo.box, kartShared.dark);
+      tip.scale.set(0.12, 0.3, 0.12);
+      tip.position.y = 0.55;
+      parts.push(block, hook, tip);
+    }
+    g.add(...parts);
+    g.visible = false;
+    cable.visible = false;
+    scene.add(g, cable);
+    return { g, cable };
+  });
+  /** Where each kart is drawn this frame if it has fallen off the road (null: on the road). */
+  const poses: (Pose | null)[] = r.karts.map(() => null);
+  /** Where the camera stopped as your kart went over the edge. */
+  let frozen: { x: number; y: number; z: number } | null = null;
 
   // items on the road, pooled by kind
   const thingMats = {
@@ -1379,13 +1717,41 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       }
 
       // karts, with drift smoke and dust kicked up off the grass
+      let rig = 0;
       race.karts.forEach((k, i) => {
         const v = karts[i];
-        syncKart(v, k, dt, clock, race.tier.fallT);
+        const pose = k.sunk > 0 ? fallPose(race, k, clock) : null;
+        poses[i] = pose;
+        syncKart(v, k, dt, clock, pose);
         v.smoke -= dt;
-        if (k.sunk > 0) {
-          // bubbles while it is under
-          if (Math.random() < dt * 14) emit(geo.ball, partMat.white, k.x + (Math.random() - 0.5) * 1.6, 0.08, k.z + (Math.random() - 0.5) * 1.6, 0, 0.6, 0, 0.5, 0.14, -3);
+        if (pose) {
+          // the hook (or the retriever) on its way down for it, carrying it back and letting go
+          const set = rigs[rig];
+          if (set && pose.hook !== null) {
+            rig++;
+            set.g.visible = set.cable.visible = true;
+            set.g.position.set(pose.x, pose.hook, pose.z);
+            set.g.rotation.y = pose.h;
+            if (look.rescue === 'retriever') {
+              // reaching in from the bank, from off the side of the road
+              const sd = k.d >= 0 ? 1 : -1;
+              const bank = pointAt(race.track, k.s, sd * (race.track.edge + 7));
+              const dx = pose.x - bank.x;
+              const dz = pose.z - bank.z;
+              const dy = pose.hook - 0.8;
+              const len = Math.hypot(dx, dy, dz);
+              set.cable.scale.set(0.12, len, 0.12);
+              set.cable.position.set((pose.x + bank.x) / 2, (pose.hook + 0.8) / 2, (pose.z + bank.z) / 2);
+              set.cable.quaternion.setFromUnitVectors(UP, scratchV.set(dx / len, dy / len, dz / len));
+            } else {
+              const top = 42;
+              set.cable.quaternion.identity();
+              set.cable.scale.set(0.06, top - pose.hook, 0.06);
+              set.cable.position.set(pose.x, (top + pose.hook) / 2 + 1, pose.z);
+            }
+          }
+          // bubbles while it is under the water, dust coming up out of a pit
+          if (pose.y < -0.5 && Math.random() < dt * 14) emit(geo.ball, k.fell?.past === 'water' || !k.fell ? partMat.white : partMat.dust, pose.x + (Math.random() - 0.5) * 1.6, 0.08, pose.z + (Math.random() - 0.5) * 1.6, 0, 0.6, 0, 0.5, 0.14, -3);
           return;
         }
         if (v.smoke > 0 || k.y > 0.2 || Math.abs(k.v) < 6) return;
@@ -1406,6 +1772,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
           emit(geo.ball, dusty ? partMat.dust : partMat.smoke, bx + rx * side * 0.75, 0.25, bz + rz * side * 0.75, (Math.random() - 0.5) * 1.5, 1 + Math.random(), (Math.random() - 0.5) * 1.5, 0.5, dusty ? 0.45 : 0.35, 0, true);
         }
       });
+      for (let n = rig; n < rigs.length; n++) rigs[n].g.visible = rigs[n].cable.visible = false;
+      // the studs along the lip blink, and the water moves
+      studMat.color.setHex(Math.floor(clock * 2) % 2 ? 0x5a3200 : 0xffa000);
+      if (pondTex) pondTex.offset.set((clock * 0.02) % 1, (clock * 0.013) % 1);
       for (let i = parts.length - 1; i >= 0; i--) {
         const p = parts[i];
         p.life -= dt;
@@ -1441,7 +1811,13 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       // chase camera: behind the direction of travel, swinging round from the front during the countdown
       const k = race.karts[me];
       if (!k) return;
-      camYaw = camYaw === null ? k.h : dampAngle(camYaw, k.h, k.spin > 0 || k.tumble > 0 ? 2 : 6, dt);
+      // (off the road, the camera follows the kart as the crane carries it; it stops where it is as the kart goes over)
+      const pose = poses[me] ?? null;
+      const focusX = pose ? pose.x : k.x;
+      const focusZ = pose ? pose.z : k.z;
+      const focusY = pose ? Math.max(0, pose.y) : k.y;
+      const sinking = pose !== null && k.sunk > 0 && 1 - k.sunk / race.tier.fallT < FALL_SINK;
+      camYaw = camYaw === null ? k.h : dampAngle(camYaw, pose ? pose.h : k.h, k.spin > 0 || k.tumble > 0 || pose ? 2 : 6, dt);
       let swing = 0;
       if (race.time < -0.8) {
         const u = Math.min(1, Math.max(0, (race.time + COUNTDOWN + 0.4) / (COUNTDOWN - 0.4)));
@@ -1454,24 +1830,33 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const dist = back + swing * 2.2 + pull * 2.5;
       const jx = (Math.random() - 0.5) * shake;
       const jy = (Math.random() - 0.5) * shake;
-      let cx = k.x - Math.sin(yaw) * dist;
-      let cz = k.z - Math.cos(yaw) * dist;
-      // never out past the wall: up against it facing across the road (after a spin, say) the camera would be out
-      // among the scenery behind it, so it comes in toward the kart until it is over the wall, and up a little to
-      // look down over the kart rather than into the back of it
+      let cx = focusX - Math.sin(yaw) * dist;
+      let cz = focusZ - Math.cos(yaw) * dist;
+      // never out past a wall: up against one facing across the road (after a spin, say) the camera would be out among
+      // the scenery behind it, so it comes in toward the kart until it is over the wall, and up a little to look down
+      // over the kart rather than into the back of it. Where the road drops away there is nothing to hide behind.
       let lift = 0;
-      if (swing === 0) {
+      if (swing === 0 && !pose) {
         const road = race.track;
         const at = locate(road, cx, cz, k.i);
-        if (Math.abs(at.d) > road.edge && Math.abs(at.d - k.d) > 0.01 && Math.abs(deltaS(road, k.s, at.s)) < 15) {
-          const f = Math.min(1, Math.max(0, (Math.sign(at.d) * road.edge - k.d) / (at.d - k.d)));
+        const side = at.d >= 0 ? 1 : -1;
+        if (Math.abs(at.d) > road.edge && edgeAt(road, at.s, side).past === 'wall' && Math.abs(at.d - k.d) > 0.01 && Math.abs(deltaS(road, k.s, at.s)) < 15) {
+          const f = Math.min(1, Math.max(0, (side * road.edge - k.d) / (at.d - k.d)));
           cx = k.x + (cx - k.x) * f;
           cz = k.z + (cz - k.z) * f;
           lift = (1 - f) * 1.6;
         }
       }
-      camera.position.set(cx + jx, 2.75 + swing * 0.8 + pull * 1.6 + lift + k.y * 0.25 + jy, cz);
-      camera.lookAt(k.x + Math.sin(camYaw + flip) * 4, 1.15 + k.y * 0.3, k.z + Math.cos(camYaw + flip) * 4);
+      let cy = 2.75 + swing * 0.8 + pull * 1.6 + lift + focusY * 0.25;
+      if (pose) cy = Math.max(1.5, cy + (pose.y > 0 ? pose.y * 0.6 : 0));
+      if (sinking) {
+        frozen ??= { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+        camera.position.set(frozen.x + jx, frozen.y + jy, frozen.z);
+      } else {
+        frozen = null;
+        camera.position.set(cx + jx, cy + jy, cz);
+      }
+      camera.lookAt(focusX + Math.sin(camYaw + flip) * 4, 1.15 + (pose ? Math.max(-0.5, pose.y) * 0.6 : k.y * 0.3), focusZ + Math.cos(camYaw + flip) * 4);
       const fov = fovBase + (k.boost > 0 ? 9 : 0) + Math.min(5, Math.max(0, k.v - 15) * 0.3);
       if (Math.abs(camera.fov - fov) > 0.05) {
         camera.fov = damp(camera.fov, fov, 4, dt);
@@ -1537,6 +1922,17 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         burst(geo.ball, [partMat.spray, partMat.white], k.x, 0.3, k.z, 28, 8, 0.32, 0.9, 16);
         effect(k.x, 0.4, k.z, 2.6, false);
         if (e.k === me) shake = Math.max(shake, 0.5);
+      } else if (e.t === 'fall') {
+        // down into the pit: a cloud of dust, and a jolt
+        const k = race.karts[e.k];
+        if (!k) return;
+        burst(geo.ball, [partMat.dust], k.x, 0.3, k.z, 22, 6, 0.4, 0.9, 10);
+        if (e.k === me) shake = Math.max(shake, 0.7);
+      } else if (e.t === 'sank') {
+        burst(geo.ball, [e.kind === 'water' ? partMat.spray : partMat.dust], e.x, 0.2, e.z, 8, 4, 0.2, 0.5, 14);
+      } else if (e.t === 'set') {
+        const k = race.karts[e.k];
+        if (k) effect(k.x, 0.5, k.z, 1.4, false);
       } else if (e.t === 'sand') {
         const k = race.karts[e.k];
         if (k) burst(geo.ball, [partMat.sand], k.x, 0.3, k.z, 12, 4.5, 0.32, 0.6, 10);
@@ -1577,15 +1973,57 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   return view;
 }
 
+/**
+ * Where a kart that has fallen off the road is drawn while the crane fishes it out (see FALL_SINK and FALL_CARRY): it
+ * slides on over the edge and sinks out of sight (into the water, or down the pit), the hook comes down for it, carries
+ * it back over the road swinging and sets it down facing the right way. hook: how high the hook is (null: not out).
+ * Someone else's kart online is just under, with the hook over it.
+ */
+type Pose = { x: number; z: number; y: number; h: number; hook: number | null };
+function fallPose(r: Race, k: Kart, clock: number): Pose {
+  const t = r.track;
+  const T = r.tier.fallT;
+  const u = 1 - Math.min(1, k.sunk / T);
+  const fell = k.fell;
+  const at = locate(t, k.x, k.z, k.i);
+  const past: Past = fell?.past ?? (r.holes.some((h) => inTrench(t, h, at.s, at.d)) ? 'pit' : edgeAt(t, at.s, at.d >= 0 ? 1 : -1).past);
+  const depth = past === 'water' ? 1.4 : 3;
+  if (!fell) return { x: k.x, z: k.z, y: -depth, h: k.h, hook: 1 + Math.sin(clock * 2) * 0.5 };
+  const ease = (q: number) => q * q * (3 - 2 * q);
+  // sliding on over the edge as it drops, slowing to a stop (not far, down a trench)
+  const slide = (q: number) => Math.min(fell.hole ? 1.2 : 6, fell.v * FALL_SINK * T * (q - (q * q) / 2));
+  const s1 = slide(1);
+  const sx = k.x + Math.sin(k.h) * s1;
+  const sz = k.z + Math.cos(k.h) * s1;
+  const to = pointAt(t, fell.to[0], fell.to[1]);
+  const th = headingOf(to.tx, to.tz);
+  if (u < FALL_SINK) {
+    const q = u / FALL_SINK;
+    const d = slide(q);
+    // the hook comes down for it as it goes under
+    const hook = q > 0.4 ? -depth + 1.9 + 14 * (1 - ease((q - 0.4) / 0.6)) : null;
+    return { x: k.x + Math.sin(k.h) * d, z: k.z + Math.cos(k.h) * d, y: -depth * q * q, h: k.h, hook };
+  }
+  if (u < FALL_SINK + FALL_CARRY) {
+    const e = ease((u - FALL_SINK) / FALL_CARRY);
+    const y = -depth + (depth + 1.2) * e + 2.4 * Math.sin(Math.PI * e);
+    return { x: sx + (to.x - sx) * e, z: sz + (to.z - sz) * e, y, h: k.h + wrapAngle(th - k.h) * e, hook: y + 1.9 };
+  }
+  // set down, and the hook lets go and goes back up
+  const q = (u - FALL_SINK - FALL_CARRY) / (1 - FALL_SINK - FALL_CARRY);
+  const y = 1.2 * (1 - q) * (1 - q);
+  return { x: to.x, z: to.z, y, h: th, hook: y + 1.9 + Math.max(0, q - 0.4) * 22 };
+}
+
 const scratch = { color: 0 };
-function syncKart(v: KartView, k: Kart, dt: number, clock: number, fallT: number) {
+function syncKart(v: KartView, k: Kart, dt: number, clock: number, pose: Pose | null) {
   if (k.hat !== v.hatName) v.wear(k.hat);
   // a moment's grace after a hit or being set back on the road: the kart blinks
   v.root.visible = !(k.safe > 0 && !hurt(k) && Math.floor(clock * 15) % 2 === 1);
   scratch.color = parseInt(k.color.slice(1), 16);
   if (scratch.color !== v.color) v.color = scratch.color;
-  v.root.position.set(k.x, 0, k.z);
-  v.root.rotation.y = k.h;
+  v.root.position.set(pose ? pose.x : k.x, 0, pose ? pose.z : k.z);
+  v.root.rotation.y = pose ? pose.h : k.h;
   v.driftYaw = damp(v.driftYaw, k.drift * 0.38, 10, dt);
   if (k.spin > 0) v.spinA += dt * 15;
   else v.spinA = v.spinA % (Math.PI * 2) > 0.2 ? v.spinA + dt * 15 : 0;
@@ -1596,21 +2034,11 @@ function syncKart(v: KartView, k: Kart, dt: number, clock: number, fallT: number
   else if (k.y <= 0.05) v.trickA = 0;
   v.roll = damp(v.roll, -k.steer * 0.07 - k.drift * 0.06, 8, dt);
   const wobble = k.wobble > 0 ? Math.sin(clock * 34) * 0.18 : 0;
-  // in a pond: down under the water, then hauled up out of it on a line and set back on the road
-  let sink = 0;
-  if (k.sunk > 0) {
-    const u = 1 - Math.min(1, k.sunk / fallT);
-    sink = u < 0.25 ? -1.3 * (u / 0.25) : u < 0.7 ? -1.3 + Math.sin(clock * 9) * 0.05 : -1.3 + 3.8 * ((u - 0.7) / 0.3);
-    v.line.visible = u > 0.55;
-    if (v.line.visible) {
-      const from = sink + 1.6;
-      v.line.scale.set(0.04, 18 - from, 0.04);
-      v.line.position.set(0, (18 + from) / 2, -0.2);
-    }
-  } else v.line.visible = false;
-  v.shadow.visible = k.sunk <= 0;
-  v.body.position.y = k.y + sink;
-  v.body.rotation.set(-v.flipA, v.driftYaw + v.spinA + v.trickA, v.roll + wobble);
+  // off the road: sinking out of sight, then swinging a little on the crane's hook as it is carried back
+  v.shadow.visible = !pose;
+  v.body.position.y = pose ? pose.y : k.y;
+  const sway = pose && pose.hook !== null ? Math.sin(clock * 5) * 0.12 : 0;
+  v.body.rotation.set(-v.flipA + sway, v.driftYaw + v.spinA + v.trickA, v.roll + wobble + sway * 0.6);
   const size = k.shrink > 0 ? 0.62 : k.mega > 0 ? 1.5 : 1;
   const flat = k.squash > 0 ? 0.35 : 1;
   v.body.scale.set(0.85 * size * (flat < 1 ? 1.25 : 1), 0.85 * size * flat, 0.85 * size * (flat < 1 ? 1.25 : 1));

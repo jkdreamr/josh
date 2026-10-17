@@ -218,6 +218,48 @@ export function makeCow(THREE: Three, geo: { box: T.BoxGeometry; ball: T.SphereG
   return { g, legs, head };
 }
 
+/**
+ * A bronze of Rodin's Thinker on a sandstone plinth `r` meters out from the middle, about 4 m tall all told, spotlit from
+ * above: a cone of light and a pool of it round the plinth.
+ */
+export function makeStatue(THREE: Three, geo: { box: T.BoxGeometry; ball: T.SphereGeometry; cone: T.ConeGeometry; plane: T.PlaneGeometry }, r: number) {
+  const g = new THREE.Group();
+  const stone = new THREE.MeshLambertMaterial({ color: 0xcdb48a, emissive: 0x2a2010 });
+  const bronze = new THREE.MeshLambertMaterial({ color: 0x8f5e2c, emissive: 0x2e1806 });
+  const add = (geom: T.BufferGeometry, mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number, rx = 0, rz = 0) => {
+    const m = new THREE.Mesh(geom, mat);
+    m.position.set(x, y, z);
+    m.scale.set(sx, sy, sz);
+    m.rotation.set(rx, 0, rz);
+    g.add(m);
+    return m;
+  };
+  const w = r * 1.45;
+  add(geo.box, stone, 0, 0.7, 0, w, 1.4, w);
+  add(geo.box, stone, 0, 1.45, 0, w + 0.2, 0.12, w + 0.2);
+  // seated on a rock, leaning forward with his chin on his right hand and his left forearm across his knee
+  add(geo.box, bronze, 0, 1.8, -0.15, 0.9, 0.6, 0.8);
+  for (const sx of [-1, 1]) {
+    add(geo.box, bronze, sx * 0.2, 2.1, 0.25, 0.3, 0.26, 0.85);
+    add(geo.box, bronze, sx * 0.2, 1.78, 0.62, 0.24, 0.66, 0.26);
+  }
+  add(geo.box, bronze, 0, 2.75, 0.05, 0.62, 1.05, 0.42, 0.45);
+  add(geo.ball, bronze, 0.02, 3.28, 0.42, 0.22, 0.25, 0.22);
+  add(geo.box, bronze, 0.2, 2.75, 0.38, 0.14, 0.62, 0.14, -0.2);
+  add(geo.box, bronze, -0.25, 2.42, 0.45, 0.14, 0.14, 0.62, 0.1);
+  // the spotlight: a soft cone down onto him, and the pool it throws round the plinth
+  const beam = new THREE.Mesh(geo.cone, new THREE.MeshBasicMaterial({ color: 0xfff1c4, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+  beam.scale.set(2.6, 8, 2.6);
+  beam.position.y = 5;
+  g.add(beam);
+  const pool = new THREE.Mesh(geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,236,180', 0.55), transparent: true, depthWrite: false }));
+  pool.rotation.x = -Math.PI / 2;
+  pool.scale.set(7, 7, 1);
+  pool.position.y = 0.08;
+  g.add(pool);
+  return g;
+}
+
 /** A round sandstone planter `r` meters across the middle, with a little tree and some flowers in it. */
 export function makePlanter(THREE: Three, geo: { ball: T.SphereGeometry; wheel: T.CylinderGeometry }, r: number, rand: () => number) {
   const g = new THREE.Group();
@@ -743,16 +785,19 @@ export function bunkerTexture(THREE: Three, seed = 3) {
   );
 }
 
-/** Pond water: blue with soft ripples, to be tiled in world space so overlapping ponds join up seamlessly. */
-export function waterTexture(THREE: Three) {
+/**
+ * Pond water: blue with soft ripples, to be tiled in world space so overlapping ponds join up seamlessly; lit, a deep
+ * teal glowing from below (fountains and pools after dark).
+ */
+export function waterTexture(THREE: Three, lit = false) {
   const tex = texture(
     THREE,
     canvas(128, 128, (g) => {
-      g.fillStyle = '#3f8cc4';
+      g.fillStyle = lit ? '#0d5d6c' : '#3f8cc4';
       g.fillRect(0, 0, 128, 128);
       const r = scatter(17);
       for (let i = 0; i < 34; i++) {
-        g.strokeStyle = `rgba(255,255,255,${0.1 + r() * 0.18})`;
+        g.strokeStyle = lit ? `rgba(150,255,240,${0.12 + r() * 0.3})` : `rgba(255,255,255,${0.1 + r() * 0.18})`;
         g.lineWidth = 1 + r() * 1.5;
         const x = r() * 128;
         const y = r() * 128;
@@ -786,6 +831,13 @@ export type Look = {
   joints?: string;
   /** After dark: the curbs, wall tops, signs and oil slicks glow a little so the edges and hazards always read. */
   night?: boolean;
+  /**
+   * Where the road drops away: a striped lip with blinking studs and lit water or a dark pit past it (the default), or
+   * on the golf course just red stakes along the water's edge (the ponds show themselves).
+   */
+  edge?: 'lip' | 'stakes';
+  /** What fishes a kart out after a fall: the night crew's crane hook (the default), or a giant golf ball retriever. */
+  rescue?: 'hook' | 'retriever';
 };
 export const LOOKS: Record<CourseId, Look> = {
   palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE', road: '#4a4a52' },
@@ -797,7 +849,7 @@ export const LOOKS: Record<CourseId, Look> = {
   // cool moonlight, low enough to read as night with the road and karts still clear
   hoover: { fog: [0x22325e, 80, 470], sky: 0x8d9fdc, ground: 0x2a3150, sun: [0xb4c8ff, 0.8], field: '#33402c', lawn: '#3b5734', curb: ['#f4f1ea', '#d9a52e'], wall: '#c9c0b0', band: '#ffc53d', banner: 'HOOVER NIGHTS', road: '#4e4e58', night: true },
   // a bright late afternoon: deep green rough all round, the fairway mown in stripes beside the road
-  golf: { fog: [0xf1e2bf, 150, 720], sky: 0xfff2d6, ground: 0x4f7a34, sun: [0xffe0a8, 1.6], field: '#4c8a32', lawn: '#6fb34a', curb: ['#f4f1ea', '#2f7a3a'], wall: '#efe9da', band: '#2f6b3a', banner: 'STANFORD GOLF', road: '#57575f' },
+  golf: { fog: [0xf1e2bf, 150, 720], sky: 0xfff2d6, ground: 0x4f7a34, sun: [0xffe0a8, 1.6], field: '#4c8a32', lawn: '#6fb34a', curb: ['#f4f1ea', '#2f7a3a'], wall: '#efe9da', band: '#2f6b3a', banner: 'STANFORD GOLF', road: '#57575f', edge: 'stakes', rescue: 'retriever' },
 };
 
 /** What a course's scenery builder gets: the scene, the track and shared helpers. */
@@ -2308,19 +2360,24 @@ function glowTexture(THREE: Three, rgb: string, alpha: number) {
 }
 
 /**
- * Hoover Nights: campus after dark. Hoover Tower floodlit with its belfry aglow, straight ahead down the start, a lit
- * fountain inside the hairpin north of it, sandstone halls with their windows lit, lamp posts all along the road
- * throwing pools of light across it, uplit palms down the start straight and oaks in silhouette, a Marguerite stop
- * where each bus waits for the start, Memorial Church off across campus, and the moon and the stars.
+ * Hoover Nights: campus after dark, under construction. Hoover Tower floodlit with its belfry aglow, straight ahead down
+ * the start; Tanner Fountain lit up inside the first hairpin, and the Claw's basin inside the third; the Dig between the
+ * second hairpin's legs, with its rebar, work lights and the tower crane whose hook fishes karts out; the reflecting pool
+ * outside the sweeper and the Arboretum's ditch down the west side; sandstone halls with their windows lit, lamp posts
+ * along the walled stretches throwing pools of light across the road, uplit palms down the start straight and oaks in
+ * silhouette, a Marguerite stop where each bus waits for the start, Memorial Church lit up beyond the north straight, and
+ * the moon and the stars. (Map points are world meters times 1.25, like the route.)
  */
-function hoover(c: Scenery) {
+function hoover(c: Scenery): SceneryTick {
   const { THREE, scene, t, r, geo, mats, rand, clear, dummy } = c;
   const { cx, cz, rx, rz } = bounds(t);
   type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number; rx?: number };
   const flat = -Math.PI / 2;
+  const K = 1.25;
+  const at = (east: number, north: number) => fromMap(east * K, north * K);
 
-  // Hoover Tower beyond the hairpins at the end of the start straight, floodlit from its base
-  const foot = roomiest(t, fromMap(245, -115), 20);
+  // Hoover Tower beyond the first hairpin, straight down the start straight, floodlit from its base
+  const foot = roomiest(t, fromMap(156, -132), 20);
   const tower = makeHoover(THREE, geo.box, true);
   tower.position.set(foot.x, 0, foot.z);
   tower.scale.setScalar(Math.min(1.3, (foot.room - t.edge - 2) / 11.3));
@@ -2332,20 +2389,133 @@ function hoover(c: Scenery) {
   flood.position.set(foot.x, 0.03, foot.z);
   scene.add(flood);
 
-  // a fountain lit up in the plaza inside the hairpin north of the tower
-  const plaza = roomiest(t, fromMap(136, 86), 14);
-  const basin = new THREE.Mesh(new THREE.CylinderGeometry(5.5, 6, 0.8, 28), new THREE.MeshLambertMaterial({ color: 0xd9c4a0, emissive: 0x2a2014 }));
-  basin.position.set(plaza.x, 0.4, plaza.z);
-  const water = new THREE.Mesh(new THREE.CircleGeometry(5, 28), new THREE.MeshBasicMaterial({ color: 0x6fb4ff }));
-  water.rotation.x = flat;
-  water.position.set(plaza.x, 0.82, plaza.z);
-  const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.7, 4, 10), new THREE.MeshBasicMaterial({ color: 0xd8ecff, transparent: true, opacity: 0.75 }));
-  jet.position.set(plaza.x, 2.8, plaza.z);
-  const pool = new THREE.Mesh(geo.plane, glow);
-  pool.rotation.x = flat;
-  pool.scale.set(26, 26, 1);
-  pool.position.set(plaza.x, 0.03, plaza.z);
-  scene.add(basin, water, jet, pool);
+  // the water inside the hairpins: Tanner Fountain inside the first, its lit jets and mist, and the Claw's basin inside
+  // the third with the bronze claw rising out of it; laid in world space like the water along the road's edge, so the
+  // two join up
+  const ripples = waterTexture(THREE, true);
+  const pondMat = new THREE.MeshBasicMaterial({ map: ripples, color: 0x9fe6f0 });
+  const basinOf = (p: { x: number; z: number }, radius: number) => {
+    const disc = new THREE.CircleGeometry(radius, 40);
+    disc.rotateX(flat);
+    const pos = disc.getAttribute('position');
+    const uv = disc.getAttribute('uv');
+    for (let j = 0; j < pos.count; j++) uv.setXY(j, (pos.getX(j) + p.x) / 12, (pos.getZ(j) + p.z) / 12);
+    const m = new THREE.Mesh(disc, pondMat);
+    m.position.set(p.x, 0.029, p.z);
+    scene.add(m);
+  };
+  const tanner = at(70, -106);
+  basinOf(tanner, 7);
+  const spray = new THREE.MeshBasicMaterial({ color: 0xd8f4ff, transparent: true, opacity: 0.7, depthWrite: false });
+  const jets: T.Mesh[] = [];
+  const jetGeo = new THREE.CylinderGeometry(0.12, 0.45, 1, 8, 1, true);
+  for (let k = 0; k < 7; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    const j = new THREE.Mesh(jetGeo, spray);
+    const rr = k === 6 ? 0 : 3;
+    j.position.set(tanner.x + Math.cos(a) * rr, 0, tanner.z + Math.sin(a) * rr);
+    jets.push(j);
+    scene.add(j);
+  }
+  const mist = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(THREE, '200,240,255', 0.45), transparent: true, depthWrite: false }));
+  mist.position.set(tanner.x, 3, tanner.z);
+  mist.scale.set(12, 9, 1);
+  scene.add(mist);
+  const claw = at(117, 78);
+  basinOf(claw, 6.2);
+  const bronze = new THREE.MeshLambertMaterial({ color: 0x8f5e2c, emissive: 0x3a1e08 });
+  for (let k = 0; k < 5; k++) {
+    // five curled bronze fingers rising out of the water
+    const a = (k / 5) * Math.PI * 2;
+    const finger = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.22, 6, 12, Math.PI * 0.9), bronze);
+    finger.position.set(claw.x + Math.cos(a) * 1.1, 0.2, claw.z + Math.sin(a) * 1.1);
+    finger.rotation.set(0, -a + Math.PI / 2, Math.PI / 2);
+    scene.add(finger);
+  }
+  for (const p of [tanner, claw]) {
+    const pool = new THREE.Mesh(geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '120,230,255', 0.35), transparent: true, depthWrite: false }));
+    pool.rotation.x = flat;
+    pool.scale.set(18, 18, 1);
+    pool.position.set(p.x, 0.04, p.z);
+    scene.add(pool);
+  }
+
+  // the Dig between the legs of the second hairpin: rebar sticking up out of the dark, work lights on tall posts and a
+  // hoarding with the banner; and the tower crane beside it, its jib slowly swinging and its beacon blinking
+  const rebar: Item[] = [];
+  const lights: Item[] = [];
+  for (let n = 0; rebar.length < 70 && n < 900; n++) {
+    const p = at(-30 + rand() * 110, -85 + rand() * 16);
+    const a2 = locate(t, p.x, p.z);
+    if (Math.abs(a2.d) < t.half + 3) continue;
+    rebar.push({ x: p.x, y: -0.2, z: p.z, sx: 0.08, sy: 1.5 + rand() * 2.5, sz: 0.08, rx: (rand() - 0.5) * 0.3 });
+  }
+  instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color: 0x8a4a2a, emissive: 0x2a1006 }), rebar);
+  for (const [e, n] of [[-20, -77], [25, -77], [70, -77], [-35, -48], [60, -48], [120, -48]] as const) {
+    const p = at(e, n);
+    if (Math.abs(locate(t, p.x, p.z).d) < t.half + 1.5) continue;
+    lights.push({ x: p.x, y: 4, z: p.z, sx: 0.25, sy: 8, sz: 0.25 });
+  }
+  instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color: 0xffb300, emissive: 0x3a2a00 }), lights);
+  instances(THREE, scene, dummy, geo.box, new THREE.MeshBasicMaterial({ color: 0xfff6dc }), lights.map((l) => ({ ...l, y: 8.2, sx: 1.4, sy: 0.6, sz: 0.5 })));
+  instances(THREE, scene, dummy, geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,240,200', 0.4), transparent: true, depthWrite: false }), lights.map((l) => ({ ...l, y: 0.06, sx: 16, sy: 16, sz: 1, rx: flat })));
+  {
+    const banner = texture(
+      THREE,
+      canvas(256, 48, (g2) => {
+        g2.fillStyle = '#8c1515';
+        g2.fillRect(0, 0, 256, 48);
+        g2.fillStyle = '#fff';
+        g2.font = 'bold 24px Inter, Arial, sans-serif';
+        g2.textAlign = 'center';
+        g2.textBaseline = 'middle';
+        g2.fillText('BUILDING THE FUTURE', 128, 26);
+      }),
+    );
+    // on the hoarding down the middle of the Dig, read from both legs of the hairpin
+    const p = at(25, -77);
+    const board = new THREE.Mesh(geo.plane, new THREE.MeshBasicMaterial({ map: banner, side: THREE.DoubleSide }));
+    board.position.set(p.x, 3.6, p.z);
+    board.scale.set(16, 3, 1);
+    scene.add(board);
+  }
+  const craneAt = at(20, -20);
+  const crane = new THREE.Group();
+  crane.position.set(craneAt.x, 0, craneAt.z);
+  const craneMat = new THREE.MeshLambertMaterial({ color: 0xf2b705, emissive: 0x3a2a00 });
+  const part = (parent: T.Object3D, x: number, y: number, z: number, sx: number, sy: number, sz: number, mat: T.Material = craneMat) => {
+    const m = new THREE.Mesh(geo.box, mat);
+    m.position.set(x, y, z);
+    m.scale.set(sx, sy, sz);
+    parent.add(m);
+    return m;
+  };
+  part(crane, 0, 20, 0, 1.6, 40, 1.6);
+  const jib = new THREE.Group();
+  jib.position.y = 40.5;
+  crane.add(jib);
+  part(jib, 0, 0, 16, 1.2, 1.2, 38);
+  part(jib, 0, 0, -9, 1.2, 1.2, 14);
+  part(jib, 0, -0.6, -14, 3, 2.4, 3, new THREE.MeshLambertMaterial({ color: 0x55585e }));
+  part(jib, 0, 1.6, 0, 2, 2, 2.4);
+  const beacon = part(jib, 0, 3, 0, 0.6, 0.6, 0.6, new THREE.MeshBasicMaterial({ color: 0xff2a1a }));
+  scene.add(crane);
+
+  // the reflecting pool's lamp reflections, quivering on the water outside the sweeper
+  const glints: Item[] = [];
+  for (let s = 436; s < 486; s += 7) {
+    const p = pointAt(t, s, t.edge + 4 + rand() * 3);
+    glints.push({ x: p.x, y: 0.05, z: p.z, sx: 1.2, sy: 4 + rand() * 2, sz: 1, rx: flat, ry: rand() * 0.4 });
+  }
+  instances(THREE, scene, dummy, geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,230,170', 0.5), transparent: true, depthWrite: false }), glints);
+
+  // ferns along the far side of the Arboretum's ditch
+  const ferns: Item[] = [];
+  for (let s = 896; s < 972; s += 2.5) {
+    const p = pointAt(t, s, t.half + 0.6 + 8 + rand() * 2);
+    if (clear(p.x, p.z, -1)) ferns.push({ x: p.x, y: 0.4, z: p.z, sx: 0.9 + rand() * 0.6, sy: 0.7 + rand() * 0.4, sz: 0.9 + rand() * 0.6, ry: rand() * 6 });
+  }
+  instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x2f6a3a, emissive: 0x0a2010, side: THREE.DoubleSide }), ferns);
 
   // lamp posts down alternate sides of the road, each with a glowing head and a pool of light across the road
   const posts: Item[] = [];
@@ -2377,7 +2547,7 @@ function hoover(c: Scenery) {
   const unlit = new THREE.MeshLambertMaterial({ color: 0x23262e });
   const hallMats = { stone: new THREE.MeshLambertMaterial({ color: 0xd9b98a, emissive: 0x1e160c }), tile: mats.tile, dark: lit };
   const fits = (x: number, z: number, ax: number, az: number, w: number, d: number) =>
-    [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]].every(([a, b]) => clear(x + (ax * a * w) / 2 - (az * b * d) / 2, z + (az * a * w) / 2 + (ax * b * d) / 2, 2.5)) && Math.hypot(x - foot.x, z - foot.z) > 30 && Math.hypot(x - plaza.x, z - plaza.z) > 20;
+    [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]].every(([a, b]) => clear(x + (ax * a * w) / 2 - (az * b * d) / 2, z + (az * a * w) / 2 + (ax * b * d) / 2, 2.5)) && Math.hypot(x - foot.x, z - foot.z) > 30 && Math.hypot(x - craneAt.x, z - craneAt.z) > 14;
   const hall = (x: number, z: number, ry: number, w: number, d: number, h: number) => {
     const g = makeHall(THREE, geo.box, geo.roof, hallMats, w, d, h);
     g.children.forEach((o) => {
@@ -2464,11 +2634,21 @@ function hoover(c: Scenery) {
     scene.add(stop);
   }
 
-  // Memorial Church off across campus, the foothills beyond, and the moon and the stars
+  // Memorial Church lit up beyond the north straight, the foothills beyond, and the moon and the stars
   const church = makeChurch(THREE, geo.box);
-  church.position.set(cx - 60, 0, cz + rz + 180);
-  church.scale.setScalar(1.25);
+  const mem = at(-40, 140);
+  church.position.set(mem.x, 0, mem.z);
+  church.scale.setScalar(1.1);
+  church.traverse((o) => {
+    const m = o as T.Mesh;
+    if (m.isMesh && (m.material as T.MeshLambertMaterial).emissive) (m.material as T.MeshLambertMaterial).emissive.setHex(0x3a2a14);
+  });
   scene.add(church);
+  const front = new THREE.Mesh(geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,214,150', 0.45), transparent: true, depthWrite: false }));
+  front.rotation.x = flat;
+  front.scale.set(50, 50, 1);
+  front.position.set(mem.x, 0.04, mem.z - 8);
+  scene.add(front);
   foothills(c, cx, cz, null);
   const moon = new THREE.Mesh(new THREE.CircleGeometry(24, 32), new THREE.MeshBasicMaterial({ color: 0xf6f2dc, fog: false }));
   moon.position.set(cx - 520, 320, cz + 640);
@@ -2487,6 +2667,19 @@ function hoover(c: Scenery) {
     stars.push({ x: cx + Math.cos(a) * Math.cos(up) * 1100, y: Math.sin(up) * 1100, z: cz + Math.sin(a) * Math.cos(up) * 1100, sx: size, sy: size, sz: size });
   }
   instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 6, 4), new THREE.MeshBasicMaterial({ color: 0xeef2ff, fog: false }), stars);
+
+  return (_race, clock) => {
+    // the fountain's jets dance, the crane's jib swings slowly to and fro and its beacon blinks
+    jets.forEach((j, k) => {
+      const h = k === 6 ? 5 + Math.sin(clock * 1.7) * 1.2 : 2 + Math.sin(clock * 2.3 + k) * 0.6;
+      j.scale.set(1, h, 1);
+      j.position.y = h / 2;
+    });
+    // (moving with the water along the road's edge, see the scene)
+    ripples.offset.set((clock * 0.02) % 1, (clock * 0.013) % 1);
+    jib.rotation.y = 0.6 + Math.sin(clock * 0.07) * 0.8;
+    beacon.visible = Math.floor(clock * 1.5) % 2 === 0;
+  };
 }
 
 /**
