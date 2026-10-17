@@ -341,6 +341,16 @@ function Play({ kind }: { kind: Kind }) {
     setToast({ id: ++nextId.current, text, kind });
   };
 
+  // Someone who leaves mid-climb drops out of the chain on every screen: a soul nobody steers would hold the team in
+  // place, never reach the top, and the climb could never be won.
+  useEffect(() => {
+    const g = game.current;
+    if (!live || !g || !online) return;
+    const here = new Set(online.players.map((p) => p.seat));
+    for (const soul of g.souls) if (soul.kind === 'remote' && !here.has(soul.seat) && soul.burned < 0) soul.burned = g.time;
+    g.chain = g.chain.filter((i) => g.souls[i].kind === 'local' || here.has(g.souls[i].seat));
+  }, [live, online?.players]);
+
   useEffect(() => {
     const host = ref.current;
     if (!THREE || !host) return;

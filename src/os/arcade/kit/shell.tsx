@@ -327,6 +327,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setRoundBots(bots);
       roundSeatsRef.current = players.map((player) => player.seat);
       setRoundSeats(roundSeatsRef.current);
+      // The round's lineup, so a game set up from online.players includes someone who joined as the host pressed start.
+      setOnlinePlayers(players);
       raceRef.current.round = nextOnlineRound(raceRef.current.round, serverRound);
       router.begin(raceRef.current.round);
       raceRef.current.scores = {};

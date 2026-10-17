@@ -150,18 +150,32 @@ function Checkers() {
     setGone([]);
   }, [mode, levelName, shell.status, online?.seat]);
 
+  // The opponent's move. One that arrives while our own move is still animating (the turn hasn't passed yet here,
+  // e.g. in a tab that was hidden) waits for it instead of being lost, which would leave both sides waiting.
+  const pendingRemote = useRef<{ from: number; move: Move } | null>(null);
+  const takeRemote = (from: number, move: Move) => {
+    const expected = gameRef.current.turn === RED ? 0 : 1;
+    if (from !== expected || anim) return false;
+    const legal = gameRef.current.legal.find((candidate) =>
+      candidate.from === move.from && candidate.to === move.to && candidate.path.join() === move.path.join() && candidate.captured.join() === move.captured.join(),
+    );
+    if (legal) commitRef.current(legal);
+    return true;
+  };
+  const takeRemoteRef = useRef(takeRemote);
+  takeRemoteRef.current = takeRemote;
   useEffect(() => online?.onMessage((from, data) => {
     if (!online || from === online.seat || !data || typeof data !== 'object') return;
     const message = data as { game?: unknown; move?: unknown };
     if (message.game !== 'checkers' || !message.move || typeof message.move !== 'object') return;
     const move = message.move as Move;
-    const expected = gameRef.current.turn === RED ? 0 : 1;
-    if (from !== expected || !Array.isArray(move.path) || !Array.isArray(move.captured)) return;
-    const legal = gameRef.current.legal.find((candidate) =>
-      candidate.from === move.from && candidate.to === move.to && candidate.path.join() === move.path.join() && candidate.captured.join() === move.captured.join(),
-    );
-    if (legal) commitRef.current(legal);
+    if (!Array.isArray(move.path) || !Array.isArray(move.captured)) return;
+    if (!takeRemoteRef.current(from, move)) pendingRemote.current = { from, move };
   }), [online?.onMessage, online?.seat]);
+  useEffect(() => {
+    const pending = pendingRemote.current;
+    if (pending && takeRemoteRef.current(pending.from, pending.move)) pendingRemote.current = null;
+  }, [game, anim]);
 
   useEffect(() => {
     let w: Worker | null = null;
