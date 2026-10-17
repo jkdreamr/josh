@@ -64,7 +64,8 @@ type ShellApi = {
   meta: GameMeta; status: GameStatus; round: number; active: boolean; compact: boolean; touch: boolean;
   keys: KeyState; root: RefObject<HTMLDivElement | null>;
   start(): void; pause(): void; resume(): void; restart(): void;
-  gameOver(score?: number, info?: { title?: string; detail?: string; board?: string; rank?: number }): void;
+  gameOver(score?: number, info?: { title?: string; detail?: string; board?: string; rank?: number; wait?: string }): void;
+  updateOver(info: { title?: string; detail?: string; wait?: string }): void; // change the card that is up
   setScore(score: number | null): void;     // live score pill, null hides it
   invalidate(): void;                       // request one redraw while idle
   onInvalidate(fn: () => void): () => void;
@@ -177,6 +178,8 @@ Baduk (Go and Omok) and Badminton are desktop apps, not arcade games, but they s
 
 - **Match** (`online: { seats: 2 }`): players play each other. The game reads `useOnline()` for its seat, sends moves with `send()`, listens with `onMessage()` and calls `reportResult(round, winnerSeat)` when a round ends. Chess, Connect Four, Checkers, Pong, Air Hockey, Light Cycles and Cox Box work this way.
 - **Race** (`online: { seats: 4, race: true }`): every player runs their own round at the same time and the best score wins. No game code is needed: the shell collects each player's `gameOver` score, shows the standings on the Game Over card and reports the winner. Use it for games with one comparable score (a `leaderboard` without `variants`).
+
+A match game whose round goes on after a player is out (Scramble's done watching) can show that player's card early with `gameOver(undefined, { title, detail, wait })` and keep the round running from a timer, since the frame loop stops with the card. While `wait` is set the host's Play Again is held, with `wait` as the note under it, and the room is not told the round is over; the game calls `updateOver({ title, detail })` without `wait` once the round ends for everyone. A new host clears it, since the old host's game ran the round; `useOnline().handoffs` bumps then too, so a game whose card went up early can say the round is over.
 
 Rooms lock once the host starts. Add `lateJoin: true` to let people join between rounds instead: a latecomer waits in the lobby and plays the next round, and wins only count the players who started that round. Cox Box uses this for eight-crew typing races.
 
