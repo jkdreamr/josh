@@ -4,7 +4,7 @@ import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
 import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, deltaS, dropAt, edgeAt, edgeRuns, gridSpot, headingOf, inTrench, locate, pointAt, wrapAngle, wrapS, type Past, type Track } from './track';
 import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, makeStatue, noise, scatter, swingAt, texture, waterTexture } from './scenery';
-import { COUNTDOWN, FALL_CARRY, FALL_SINK, RAMP_H, RAMP_LEN, TURBO_AT, hazardV, hurt, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
+import { COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, RAMP_H, RAMP_LEN, TURBO_AT, hazState, hazardV, hurt, turboLevel, type Ev, type Hat, type HazPhase, type Kart, type LiveHazard, type Race, type ThingKind } from './logic';
 
 type Three = typeof import('three');
 
@@ -1017,7 +1017,214 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     const edges = new THREE.MeshBasicMaterial({ map: stripe('#ffcf1f', '#141414', 4) });
     for (const at of [s0 - 0.4, s1]) scene.add(new THREE.Mesh(strip(THREE, t, at, at + 0.4, () => h.d - w, () => h.d + w, 0.076, 0.4), edges));
   };
+  // the set pieces (see HazardKind and hazState in logic.ts): pile-driver rigs straddling the road, bollard banks under
+  // a signal gantry, wrecking balls on tower cranes, sprinklers on their planters and the wet road. They are drawn from
+  // hazState for the lap this screen's kart is on, the state it collides with; before their lap they stand by asleep
+  // (the hammer parked high and dark, the bollards flush with green lamps, the sprinkler capped), so the first lap
+  // shows where they are.
+  const rigMat = new THREE.MeshLambertMaterial({ color: 0xf2b705, emissive: 0x3a2a00 });
+  const steelMat = new THREE.MeshLambertMaterial({ color: 0x3a3d46, emissive: 0x0b0c10 });
+  const ironMat = new THREE.MeshLambertMaterial({ color: 0x2a2c31, emissive: 0x08090c });
+  const chevronTex = stripe('#ffcf1f', '#141414', 3);
+  const headMat = new THREE.MeshLambertMaterial({ map: chevronTex, ...(look.night ? { emissive: 0xffffff, emissiveMap: chevronTex, emissiveIntensity: 0.3 } : {}) });
+  const lampRed = new THREE.MeshBasicMaterial({ color: 0xff2a1a });
+  const footMat = new THREE.MeshBasicMaterial({ color: 0xd8312a, transparent: true, opacity: 0.8, depthWrite: false });
+  const shadowTex = (kartShared.shadow as T.MeshBasicMaterial).map!;
+  const signOf = (text: string, bg: string, fg: string) =>
+    new THREE.MeshBasicMaterial({
+      map: texture(
+        THREE,
+        canvas(256, 64, (g) => {
+          g.fillStyle = bg;
+          g.fillRect(0, 0, 256, 64);
+          g.fillStyle = fg;
+          g.font = 'bold 30px Inter, Arial, sans-serif';
+          g.textAlign = 'center';
+          g.textBaseline = 'middle';
+          g.fillText(text, 128, 34);
+        }),
+      ),
+      side: THREE.DoubleSide,
+    });
+  const rigSign = signOf('PILE DRIVER', '#f2b705', '#141414');
+  const lockSign = signOf('LOCKDOWN', '#8c1515', '#ffffff');
+  const part = (parent: T.Object3D, mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number, geom: T.BufferGeometry = geo.box) => {
+    const m = new THREE.Mesh(geom, mat);
+    m.position.set(x, y, z);
+    m.scale.set(sx, sy, sz);
+    parent.add(m);
+    return m;
+  };
+  // (a group at a point of the road, turned to face along it: local z runs along the road and local -x is to the right,
+  // so something d to the right sits at local x = -d)
+  const groupAt = (s: number, d = 0) => {
+    const c = pointAt(t, s, d);
+    const g = new THREE.Group();
+    g.position.set(c.x, 0, c.z);
+    g.rotation.y = headingOf(c.tx, c.tz);
+    scene.add(g);
+    return g;
+  };
+  type HammerView = { i: number; head: T.Mesh; ram: T.Mesh; shade: T.Mesh; shadeMat: T.MeshBasicMaterial; beacon: T.Mesh; lift: number; phase: HazPhase };
+  const hammers: HammerView[] = [];
+  const buildHammer = (h: LiveHazard, i: number) => {
+    const g = groupAt(h.s);
+    // the A-frame: legs just outside the wall (or just past the lip where the road drops away), a beam across the top
+    const legs = [-1, 1].map((side) => side * (edgeAt(t, h.s, side).lim + 0.6));
+    for (const d of legs) {
+      part(g, rigMat, -d, 4.2, 0, 0.55, 8.4, 0.55);
+      part(g, rigMat, -d, 0.15, 0, 1.4, 0.3, 1.4);
+    }
+    part(g, rigMat, -(legs[0] + legs[1]) / 2, 8.4, 0, legs[1] - legs[0] + 0.6, 0.6, 0.6);
+    const sign = part(g, rigSign, -(legs[0] + legs[1]) / 2, 9.2, 0, 4.2, 1.05, 1, geo.plane);
+    sign.rotation.y = Math.PI;
+    const ram = part(g, steelMat, -h.d, 5, 0, 0.6, 1, 0.6);
+    const head = new THREE.Mesh(geo.box, [headMat, headMat, rigMat, ironMat, headMat, headMat]);
+    head.scale.set(h.r * 1.9, 1.4, h.r * 1.9);
+    head.position.set(-h.d, 0.7, 0);
+    g.add(head);
+    const shadeMat = new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.4 });
+    const shade = part(g, shadeMat, -h.d, 0.085, 0, h.r * 2.6, h.r * 2.6, 1, geo.plane);
+    shade.rotation.x = -Math.PI / 2;
+    shade.renderOrder = 2;
+    // the footprint painted on the road, always: exactly what the head covers
+    const foot = new THREE.Mesh(new THREE.RingGeometry(h.r - 0.28, h.r, 28), footMat);
+    foot.rotation.x = -Math.PI / 2;
+    foot.position.set(-h.d, 0.082, 0);
+    foot.renderOrder = 2;
+    g.add(foot);
+    const beacon = part(g, lampRed, -h.d, 8.95, 0, 0.5, 0.5, 0.5);
+    hammers.push({ i, head, ram, shade, shadeMat, beacon, lift: 1, phase: 'off' });
+  };
+  // bollard banks: three posts each, instanced, under a gantry with a lamp per bank; one gantry and one stripe per row
+  const bankPosts: { x: number; z: number; ry: number }[] = [];
+  const lamps: { x: number; z: number; ry: number }[] = [];
+  const banks: { i: number; post: number; lamp: number }[] = [];
+  const rowsBuilt = new Set<number>();
+  const buildBank = (h: LiveHazard, i: number) => {
+    const w = h.w ?? 0;
+    const post = bankPosts.length;
+    for (const k of [-1, 0, 1]) {
+      const p = pointAt(t, h.s, h.d + (k * w) / 3);
+      bankPosts.push({ x: p.x, z: p.z, ry: headingOf(p.tx, p.tz) });
+    }
+    const lp = pointAt(t, h.s, h.d);
+    lamps.push({ x: lp.x, z: lp.z, ry: headingOf(lp.tx, lp.tz) });
+    banks.push({ i, post, lamp: lamps.length - 1 });
+    const row = Math.round(h.s);
+    if (rowsBuilt.has(row)) return;
+    rowsBuilt.add(row);
+    const g = groupAt(h.s);
+    for (const side of [-1, 1]) part(g, rigMat, -side * (t.edge + 0.6), 2.6, 0, 0.45, 5.2, 0.45);
+    part(g, rigMat, 0, 5.2, 0, t.edge * 2 + 1.8, 0.5, 0.5);
+    const sign = part(g, lockSign, 0, 6.05, 0, 4.4, 1.1, 1, geo.plane);
+    sign.rotation.y = Math.PI;
+    // the line across the road where they come up
+    scene.add(new THREE.Mesh(strip(THREE, t, h.s - 0.55, h.s + 0.55, () => -t.edge, () => t.edge, 0.078, 1.1), new THREE.MeshBasicMaterial({ map: stripe('#ffcf1f', '#141414', 6) })));
+  };
+  type WreckerView = { i: number; g: T.Group; cable: T.Mesh; ball: T.Group; light: T.Mesh; lift: number };
+  const wreckers: WreckerView[] = [];
+  const buildWrecker = (h: LiveHazard, i: number) => {
+    const g = groupAt(h.s);
+    // a tower crane on the left verge, its jib out over the road past the pivot the ball hangs from
+    const mastD = -(t.edge + 2.6);
+    const tip = h.d + 4.5;
+    part(g, rigMat, -mastD, 6.5, 0, 1.2, 13, 1.2);
+    part(g, rigMat, -(mastD + tip) / 2, 10.5, 0, tip - mastD + 0.6, 0.7, 0.7);
+    part(g, rigMat, -(mastD - 2.4), 10.5, 0, 3.6, 0.7, 0.7);
+    part(g, steelMat, -(mastD - 3.4), 9.7, 0, 1.6, 1.3, 1.6);
+    part(g, rigMat, -mastD, 11.6, 0, 1.6, 1.6, 1.6);
+    part(g, steelMat, -h.d, 9.9, 0, 0.9, 0.6, 0.9);
+    const cable = part(g, kartShared.dark, -h.d, 5, 0, 0.09, 1, 0.09);
+    const ball = new THREE.Group();
+    const iron = new THREE.Mesh(geo.ball, ironMat);
+    iron.scale.setScalar(h.r);
+    const band = new THREE.Mesh(new THREE.TorusGeometry(h.r * 0.99, 0.08, 6, 28), new THREE.MeshBasicMaterial({ color: 0xfff3c8 }));
+    band.rotation.x = Math.PI / 2;
+    ball.add(iron, band);
+    g.add(ball);
+    const light = part(g, lampRed, -tip, 11.1, 0, 0.4, 0.4, 0.4, geo.ball);
+    wreckers.push({ i, g, cable, ball, light, lift: 0 });
+  };
+  const jetMat = new THREE.MeshBasicMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const jetGeo = new THREE.CylinderGeometry(0.5, 0.1, 1, 8, 1, true);
+  jetGeo.rotateX(Math.PI / 2);
+  jetGeo.translate(0, 0, 0.5);
+  const sprayMat = new THREE.SpriteMaterial({ map: texture(THREE, canvas(64, 64, (g) => { const grad = g.createRadialGradient(32, 32, 2, 32, 32, 31); grad.addColorStop(0, 'rgba(220,245,255,0.7)'); grad.addColorStop(1, 'rgba(200,240,255,0)'); g.fillStyle = grad; g.fillRect(0, 0, 64, 64); })), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const sheenMat = new THREE.MeshBasicMaterial({ color: 0x9fd8ff, transparent: true, opacity: 0.1, depthWrite: false });
+  type RotorView = { i: number; arm: T.Group; jet: T.Mesh; spray: T.Sprite; sheen: T.Mesh; cap: T.Mesh; on: number };
+  const rotors: RotorView[] = [];
+  const buildRotor = (h: LiveHazard, i: number) => {
+    const g = groupAt(h.s, h.d);
+    const arm = h.arm ?? 5;
+    part(g, mats.stone, 0, 0.17, 0, h.r * 1.9, 0.34, h.r * 1.9, geo.wheel);
+    part(g, steelMat, 0, 0.7, 0, h.r, 0.75, h.r, geo.wheel);
+    const cap = part(g, ironMat, 0, 1.12, 0, h.r * 0.7, 0.14, h.r * 0.7, geo.wheel);
+    const armG = new THREE.Group();
+    armG.position.y = 1.02;
+    const jet = new THREE.Mesh(jetGeo, jetMat);
+    jet.scale.set(1, 1, arm);
+    const spray = new THREE.Sprite(sprayMat);
+    spray.scale.set(3, 2.2, 1);
+    spray.position.set(0, 0.2, arm);
+    armG.add(jet, spray);
+    g.add(armG);
+    const sheen = new THREE.Mesh(new THREE.RingGeometry(h.r + 0.6, arm + 0.7, 36), sheenMat);
+    sheen.rotation.x = -Math.PI / 2;
+    sheen.position.y = 0.06;
+    sheen.renderOrder = 1;
+    g.add(sheen);
+    rotors.push({ i, arm: armG, jet, spray, sheen, cap, on: 0 });
+  };
+  const wetTex = texture(
+    THREE,
+    canvas(128, 128, (g) => {
+      // a glossy dark sheet with the lamps streaked across it
+      const blobs = scatter(41);
+      for (let n = 0; n < 7; n++) {
+        const a = (n / 7) * Math.PI * 2;
+        const x = 64 + Math.cos(a) * 24 * blobs();
+        const y = 64 + Math.sin(a) * 24 * blobs();
+        const rad = 34 + blobs() * 14;
+        const grad = g.createRadialGradient(x, y, rad * 0.2, x, y, rad);
+        grad.addColorStop(0, 'rgba(14,18,30,0.75)');
+        grad.addColorStop(0.8, 'rgba(20,24,38,0.55)');
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = grad;
+        g.beginPath();
+        g.arc(x, y, rad, 0, Math.PI * 2);
+        g.fill();
+      }
+      for (let n = 0; n < 9; n++) {
+        g.fillStyle = `rgba(255,232,180,${0.12 + blobs() * 0.16})`;
+        g.beginPath();
+        g.ellipse(30 + blobs() * 68, 30 + blobs() * 68, 2 + blobs() * 3, 9 + blobs() * 14, 0.1, 0, Math.PI * 2);
+        g.fill();
+      }
+    }),
+  );
+  const wetMat = new THREE.MeshBasicMaterial({ map: wetTex, transparent: true, depthWrite: false });
+  const mistMat = new THREE.SpriteMaterial({ map: sprayMat.map, transparent: true, opacity: 0.28, depthWrite: false });
+  type WetView = { i: number; decal: T.Mesh; mist: T.Sprite };
+  const wets: WetView[] = [];
+  const buildWet = (h: LiveHazard, i: number) => {
+    const decal = new THREE.Mesh(geo.plane, wetMat);
+    decal.rotation.set(-Math.PI / 2, 0, rand() * Math.PI * 2);
+    decal.scale.set(h.r * 2.2, h.r * 2.2, 1);
+    decal.position.set(h.x, 0.058 + i * 0.0004, h.z);
+    decal.renderOrder = 1;
+    const mist = new THREE.Sprite(mistMat);
+    mist.scale.set(h.r * 2.2, 2.6, 1);
+    mist.position.set(h.x, 0.9, h.z);
+    scene.add(decal, mist);
+    wets.push({ i, decal, mist });
+  };
   r.hazards.forEach((h, i) => {
+    if (h.kind === 'hammer') return buildHammer(h, i);
+    if (h.kind === 'bollard') return buildBank(h, i);
+    if (h.kind === 'wrecker') return buildWrecker(h, i);
+    if (h.kind === 'rotor') return buildRotor(h, i);
+    if (h.kind === 'wet') return buildWet(h, i);
     if (h.kind === 'sand') {
       // a bunker: raked sand with a soft edge
       sandMat ??= new THREE.MeshLambertMaterial({ map: bunkerTexture(THREE, 9), transparent: true, depthWrite: false });
@@ -1188,6 +1395,23 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     }
   });
 
+  // the bollards' posts, their lit caps and the gantry lamps, one instanced mesh each, coloured per bank
+  const whiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const postMesh = bankPosts.length ? new THREE.InstancedMesh(geo.wheel, steelMat, bankPosts.length) : null;
+  const capMesh = bankPosts.length ? new THREE.InstancedMesh(geo.wheel, whiteMat, bankPosts.length) : null;
+  const lampMesh = lamps.length ? new THREE.InstancedMesh(geo.box, whiteMat, lamps.length) : null;
+  if (postMesh && capMesh && lampMesh) {
+    scene.add(postMesh, capMesh, lampMesh);
+    lamps.forEach((l, k) => {
+      dummy.position.set(l.x, 4.65, l.z);
+      dummy.rotation.set(0, l.ry, 0);
+      dummy.scale.set(0.8, 0.6, 0.4);
+      dummy.updateMatrix();
+      lampMesh.setMatrixAt(k, dummy.matrix);
+    });
+    dummy.rotation.set(0, 0, 0);
+  }
+  const lampColor = { off: new THREE.Color(0x27e36a), warn: new THREE.Color(0xffb300), on: new THREE.Color(0xff2a1a), dim: new THREE.Color(0x163a22) };
   // ponds: still blue water up against the shoulder (tiled in world space, so ponds that overlap join up), a low
   // stone lip all round the edge, and the water gently moving
   const ponds = r.hazards.filter((h) => h.kind === 'water');
@@ -1648,6 +1872,91 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
           b.mark.position.y = 3.4 + Math.sin(clock * 5) * 0.15;
         }
       }
+      // the set pieces, as hazState has them for this screen's lap
+      const meK = race.karts[me];
+      for (const hv of hammers) {
+        const h = race.hazards[hv.i];
+        const st = hazState(race, h, race.time, lapNow);
+        // (the head falls and sits as the state says; hauled up for a bus, or parked asleep, it eases)
+        hv.lift = st.phase === 'idle' || st.phase === 'off' ? damp(hv.lift, 1, 6, dt) : st.lift;
+        if (hv.phase === 'slam' && st.phase === 'down') {
+          // the blow: dust round the foot of the head, and the ground shakes nearby
+          burst(geo.ball, [partMat.dust], h.x, 0.3, h.z, 14, 6, 0.4, 0.7, 12);
+          if (meK && Math.hypot(meK.x - h.x, meK.z - h.z) < 25) shake = Math.max(shake, 0.3);
+        }
+        hv.phase = st.phase;
+        const y = 0.7 + hv.lift * HAMMER.drop + (st.warn > 0 ? Math.sin(clock * 40) * 0.05 * st.warn : 0);
+        hv.head.position.y = y;
+        hv.ram.scale.y = Math.max(0.1, 8.1 - (y + 0.7));
+        hv.ram.position.y = (8.1 + y + 0.7) / 2;
+        const sz = h.r * (1.4 + 1.2 * (1 - hv.lift));
+        hv.shade.scale.set(sz, sz, 1);
+        hv.shadeMat.opacity = st.phase === 'off' ? 0.15 : 0.25 + 0.5 * (1 - hv.lift) + 0.25 * st.warn;
+        hv.beacon.visible = st.warn > 0 && Math.floor(clock * 8) % 2 === 0;
+      }
+      if (postMesh && capMesh && lampMesh) {
+        for (const b of banks) {
+          const h = race.hazards[b.i];
+          const st = hazState(race, h, race.time, lapNow);
+          const lift = st.lift;
+          for (let k = 0; k < 3; k++) {
+            const p = bankPosts[b.post + k];
+            dummy.position.set(p.x, -0.52 + lift * 1.04, p.z);
+            dummy.rotation.set(0, p.ry, 0);
+            dummy.scale.set(0.22, 1.04, 0.22);
+            dummy.updateMatrix();
+            postMesh.setMatrixAt(b.post + k, dummy.matrix);
+            dummy.position.y = lift * 1.04 + 0.03;
+            dummy.scale.set(0.28, 0.1, 0.28);
+            dummy.updateMatrix();
+            capMesh.setMatrixAt(b.post + k, dummy.matrix);
+          }
+          // green down, amber flashing before it rises, red up; dark before its lap
+          const c = st.phase === 'off' ? lampColor.dim : st.solid ? lampColor.on : st.warn > 0 && Math.floor(clock * 8) % 2 === 0 ? lampColor.warn : st.warn > 0 ? lampColor.dim : lampColor.off;
+          lampMesh.setColorAt(b.lamp, c);
+          for (let k = 0; k < 3; k++) capMesh.setColorAt(b.post + k, c);
+        }
+        dummy.rotation.set(0, 0, 0);
+        postMesh.instanceMatrix.needsUpdate = true;
+        capMesh.instanceMatrix.needsUpdate = true;
+        if (lampMesh.instanceColor) lampMesh.instanceColor.needsUpdate = true;
+        if (capMesh.instanceColor) capMesh.instanceColor.needsUpdate = true;
+      }
+      for (const wv of wreckers) {
+        const h = race.hazards[wv.i];
+        const st = hazState(race, h, race.time, lapNow);
+        wv.lift = damp(wv.lift, st.lift, 4, dt);
+        const swing = st.d - h.d;
+        const y = 9.5 - Math.sqrt(Math.max(0, 8.2 * 8.2 - swing * swing)) + wv.lift * 4;
+        wv.ball.position.set(-st.d, y, 0);
+        const dx = -(st.d - h.d);
+        const dy = y - 9.5;
+        const len = Math.hypot(dx, dy) || 0.01;
+        wv.cable.scale.set(0.09, len, 0.09);
+        wv.cable.position.set(-(st.d + h.d) / 2, (y + 9.5) / 2, 0);
+        wv.cable.quaternion.setFromUnitVectors(UP, scratchV.set(dx / len, dy / len, 0));
+        wv.ball.rotation.z = Math.atan2(dx, -dy) * 0.3;
+        wv.light.visible = Math.floor(clock * 1.5) % 2 === 0;
+      }
+      for (const rv of rotors) {
+        const h = race.hazards[rv.i];
+        const st = hazState(race, h, race.time, lapNow);
+        rv.arm.rotation.y = -st.ang;
+        rv.on = damp(rv.on, st.live ? 1 : 0, 5, dt);
+        rv.arm.visible = rv.on > 0.03;
+        rv.jet.scale.set(0.5 + 0.5 * rv.on, 0.5 + 0.5 * rv.on, (h.arm ?? 5) * rv.on);
+        rv.spray.position.z = (h.arm ?? 5) * rv.on;
+        rv.spray.scale.set(3 * rv.on, 2.2 * rv.on, 1);
+        rv.sheen.visible = rv.on > 0.03;
+        rv.cap.visible = st.phase === 'off';
+      }
+      for (const w of wets) {
+        const h = race.hazards[w.i];
+        const on = hazState(race, h, race.time, lapNow).live;
+        w.decal.visible = on;
+        w.mist.visible = on;
+        if (on) (w.mist.material as T.SpriteMaterial).opacity = 0.2 + Math.sin(clock * 1.3 + w.i) * 0.06;
+      }
       pins.forEach((f, n) => {
         f.rotation.y = Math.sin(clock * 2.3 + n * 2) * 0.4;
         f.scale.x = 0.9 + Math.sin(clock * 6 + n) * 0.1;
@@ -1941,6 +2250,13 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         if (!k) return;
         burst(geo.box, [partMat.white, partMat.star], k.x, 1.8, k.z, 10, 4, 0.16, 0.5, 6);
         say('PLINK!', k.x, 3.2, k.z, '#ffe14d');
+      } else if (e.t === 'haz') {
+        // caught by a set piece: sparks off the steel (spray off the jet), and a jolt if it was you
+        const k = race.karts[e.k];
+        if (!k) return;
+        if (e.kind === 'rotor') burst(geo.ball, [partMat.spray, partMat.white], k.x, 0.8, k.z, 14, 5, 0.25, 0.6, 10);
+        else burst(geo.box, [partMat.white, partMat.star], k.x, 0.9, k.z, 12, 6, 0.16, 0.5);
+        if (e.k === me) shake = Math.max(shake, e.kind === 'rotor' ? 0.35 : 0.7);
       } else if (e.t === 'toot' || e.t === 'fore') {
         const k = race.karts[e.k];
         if (k) say(e.t === 'toot' ? 'BEEP BEEP!' : 'FORE!', k.x, 3.4, k.z, e.t === 'fore' ? '#ff8a3d' : '#ffffff');

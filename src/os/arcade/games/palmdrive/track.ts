@@ -325,8 +325,17 @@ export const sOf = (t: Track, e: number, n: number) => {
  *
  * Some only join in later in the race: a hazard with a `lap` is there for a kart from that lap of its own on (each
  * kart's own lap, so every screen agrees about every kart); until then it is drawn standing by, out of the way.
+ *
+ * The set pieces run on the race clock too (see hazState in logic.ts), so every screen agrees about them without a
+ * word going over the network. A hammer is a pile driver that slams down on the spot every `every` seconds (first at
+ * race time `phase`) and sits on the ground `on` seconds: solid while it is down, flattening whoever is under it as it
+ * comes down. A bollard is a bank of security bollards `w` wide across the road at d that rises every `every` seconds
+ * for `on` seconds, with an amber warning `warn` seconds before: solid while up. A rotor is a lawn sprinkler, a solid
+ * hub of radius r with a jet `arm` meters long turning at `spin` radians a second from angle `a0` (0 along the road,
+ * +pi/2 to the right): the jet spins you. A wrecker is a wrecking ball swinging across the road like a cow walks
+ * (swing, speed, phase): it tumbles you and throws you aside. Wet is a patch of wet road: no grip.
  */
-export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus' | 'cart' | 'golfer' | 'ball' | 'sand' | 'water' | 'pin' | 'statue' | 'trench';
+export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus' | 'cart' | 'golfer' | 'ball' | 'sand' | 'water' | 'pin' | 'statue' | 'trench' | 'hammer' | 'bollard' | 'wrecker' | 'rotor' | 'wet';
 export type Hazard = {
   kind: HazardKind;
   s: number;
@@ -341,11 +350,19 @@ export type Hazard = {
   lap?: number;
   /** A trench across the road: `len` meters long from s, `w` either side of d, and the s you are put back at (`back`). */
   len?: number;
+  /** A trench: meters either side of d. A bollard bank: how wide it is across the road. */
   w?: number;
   back?: number;
+  /** A set piece's timing: seconds live each cycle, and the warning before it (see HazardKind). */
+  on?: number;
+  warn?: number;
+  /** A rotor's jet: its length, how fast it turns (radians a second, negative the other way) and where it points at t=0. */
+  arm?: number;
+  spin?: number;
+  a0?: number;
 };
-/** How big each kind is unless a course says otherwise. */
-export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1, bus: 1.3, cart: 0.8, golfer: 0.8, ball: 0.55, sand: 2.8, water: 20, pin: 0.5, statue: 1.4, trench: 2 };
+/** How big each kind is unless a course says otherwise (a bollard's r is the bank's thickness along the road). */
+export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1, bus: 1.3, cart: 0.8, golfer: 0.8, ball: 0.55, sand: 2.8, water: 20, pin: 0.5, statue: 1.4, trench: 2, hammer: 1.7, bollard: 0.35, wrecker: 1.3, rotor: 0.6, wet: 5 };
 /** A bus is this long, nose to tail, and so is a golf cart. */
 export const BUS_LEN = 9.6;
 export const CART_LEN = 3.1;
@@ -356,7 +373,14 @@ export const lengthOf = (h: Hazard) => (h.kind === 'bus' ? BUS_LEN : CART_LEN);
 /** Whether a hazard is there yet for a kart on lap `lap` (see `lap` above). */
 export const awake = (h: Hazard, lap: number) => !h.lap || lap >= h.lap;
 /** Things you bounce off (or that spin you out when you run into them); the rest you drive through or over. */
-export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil' && kind !== 'sand' && kind !== 'water' && kind !== 'ball' && kind !== 'trench';
+export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil' && kind !== 'sand' && kind !== 'water' && kind !== 'ball' && kind !== 'trench' && kind !== 'wet';
+/** The set pieces that come and go on the race clock: solid or in the way only some of the time (see hazState). */
+export const timed = (kind: HazardKind) => kind === 'hammer' || kind === 'bollard' || kind === 'wrecker' || kind === 'rotor';
+/**
+ * How far into its cycle (0 up to `every`) a timed hazard is at race time `time`: the cycle is `every` seconds long
+ * and the first starts at `phase` (golf balls land on that beat, a hammer slams on it, a bank rises on it).
+ */
+export const cycleAt = (h: Hazard, time: number, every = h.every ?? 1) => (((time - (h.phase ?? 0)) % every) + every) % every;
 /** Whether a kart's middle at (s, d) is over a trench (a hole across the road). */
 export const inTrench = (t: Track, h: Hazard, s: number, d: number) => {
   const ds = deltaS(t, h.s, s);

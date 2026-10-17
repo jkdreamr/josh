@@ -1,6 +1,6 @@
 // The courses you can race: each is a loop of control points, where its pickups sit and how its sky looks. Pure, no
 // three.js; the scene builds each course's scenery (scene.ts) and the logic races on its track (logic.ts).
-import { EDGE, HAZARD_R, KART_R, PASTS, ROAD_HALF, ROUTE, START, WET, buildTrack, deltaS, layout as palmLayout, shoreOf, wrapS, type EdgeSpan, type HazardKind, type Layout, type Track } from './track.ts';
+import { EDGE, HAZARD_R, KART_R, PASTS, ROAD_HALF, ROUTE, START, WET, buildTrack, deltaS, layout as palmLayout, shoreOf, wrapS, type EdgeSpan, type Hazard, type HazardKind, type Layout, type Track } from './track.ts';
 
 export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium' | 'quad' | 'hoover' | 'golf';
 export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium', 'quad', 'hoover', 'golf'];
@@ -79,6 +79,8 @@ function placed(
     ponds?: [number, number, number][];
     /** Trenches right across the road: [s, meters long, d of the middle, meters either side of it, put back at s]. */
     holes?: [number, number, number, number, number][];
+    /** The set pieces (hammers, bollard banks, wreckers, rotors, wet road), spelled out in full (see HazardKind). */
+    pieces?: (Partial<Hazard> & { kind: HazardKind; s: number; d: number })[];
   },
 ): Layout {
   // a narrow road packs its row of boxes a little closer together
@@ -95,8 +97,18 @@ function placed(
       ...(spec.balls ?? []).map(([s, d, every, phase, along, across, lap]) => ({ kind: 'ball' as const, s: wrapS(t, s), d, r: HAZARD_R.ball, every, phase, tee: [along, across] as [number, number], ...(lap ? { lap } : {}) })),
       ...(spec.ponds ?? []).map(([s, d, r]) => ({ kind: 'water' as const, s: wrapS(t, s), d, r })),
       ...(spec.holes ?? []).map(([s, len, d, w, back]) => ({ kind: 'trench' as const, s: wrapS(t, s), d, r: w, len, w, back: wrapS(t, back) })),
+      ...(spec.pieces ?? []).map((p) => ({ r: HAZARD_R[p.kind], ...p, s: wrapS(t, p.s) })),
     ],
   };
+}
+
+/**
+ * A row of four bollard banks right across the road, wall to wall, at s from lap `lap`: each rises in turn (`phases`
+ * seconds into the cycle, left to right), so the gap ripples across the road.
+ */
+function bollards(t: Track, s: number, lap: number, phases: [number, number, number, number]): NonNullable<Parameters<typeof placed>[1]['pieces']> {
+  const w = (2 * t.edge) / 4;
+  return phases.map((phase, i) => ({ kind: 'bollard' as const, s, d: (i - 1.5) * w, w, every: 3.2, on: 1.6, warn: 0.9, phase, lap }));
 }
 
 /** Lake Lagunita, scaled from map meters like Palm Drive's route. */
@@ -475,7 +487,7 @@ export const COURSES: Record<CourseId, Course> = {
   hoover: {
     id: 'hoover',
     name: 'Hoover Nights',
-    blurb: 'Campus after dark: hairpins round the fountains, a plank road over the Dig, and no wall where you need one.',
+    blurb: 'Campus after dark: hairpins round the fountains, a plank road over the Dig, pile drivers, a wrecking ball, and no wall where you need one.',
     difficulty: 4,
     route: rounded(HOOVER).map(([e, n]) => [e * HOOVER_K, n * HOOVER_K]),
     start: [-60 * HOOVER_K, -120 * HOOVER_K],
@@ -561,9 +573,38 @@ export const COURSES: Record<CourseId, Course> = {
         ],
         // two Marguerites on their rounds, both in the right-hand lane
         buses,
+        // the night crew's set pieces, more of them each lap (see HazardKind and hazState): the Marguerites have
+        // right of way through all of them
+        pieces: [
+          // lockdown: bollards right across the start straight and the north straight from lap 2, rippling opposite
+          // ways
+          ...bollards(t, 100, 2, [0, 0.8, 1.6, 2.4]),
+          ...bollards(t, 548, 2, [2.4, 1.6, 0.8, 0]),
+          // a pile driver on the inside of the fountain hairpin: the bait line by the water squeezes past it
+          { kind: 'hammer', s: 153, d: -1.7, r: 1.7, every: 3.6, on: 0.7, phase: 0 },
+          // a wrecking ball swinging across beside the Dig, on the straight (clear of where a kart brakes for the hairpin:
+          // a slow kart in its path is a hit)
+          { kind: 'wrecker', s: 214, d: 0.6, r: 1.3, swing: 3.3, speed: 1.65, phase: 0 },
+          // one down the middle of the causeway, with the plates' lanes either side; a second on the last lap, on the
+          // opposite beat, so the middle is never clear
+          { kind: 'hammer', s: 360, d: 0, r: 1.5, every: 3.6, on: 0.7, phase: 1.8 },
+          { kind: 'hammer', s: 372, d: 0, r: 1.5, every: 3.6, on: 0.7, phase: 0, lap: 5 },
+          // the sprinklers come on round the sweeper from lap 2, turning opposite ways, and from lap 3 the road through
+          // it is wet
+          { kind: 'rotor', s: 440, d: 0, r: 0.6, arm: 5, spin: 2.2, a0: 0, lap: 2 },
+          { kind: 'wet', s: 445, d: 0.5, r: 5, lap: 3 },
+          { kind: 'wet', s: 459, d: 0.5, r: 5, lap: 3 },
+          { kind: 'wet', s: 474, d: 0.5, r: 5, lap: 3 },
+          { kind: 'rotor', s: 468, d: 0, r: 0.6, arm: 5, spin: -2.2, a0: 1.6, lap: 2 },
+          // a second ball on the straight after the Claw, walled both sides (again before the braking for the turn after)
+          { kind: 'wrecker', s: 642, d: 0.8, r: 1.3, swing: 3.1, speed: 1.9, phase: 1.5 },
+          // a third pile driver on the inside of the last bend from lap 3
+          { kind: 'hammer', s: 1068, d: -1.6, r: 1.7, every: 3.6, on: 0.7, phase: 2.4, lap: 3 },
+        ],
       });
     },
     sky: 'linear-gradient(180deg, #03061a 0%, #0a1434 22%, #16264e 36%, #2a3a68 43%, #22325e 46%, #121a2a 47%)',
+    laps: { 2: 'Bollards and sprinklers on', 3: 'Wet road and a third hammer', 5: 'Last lap: double pile driver' },
   },
   golf: {
     id: 'golf',

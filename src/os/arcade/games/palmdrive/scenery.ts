@@ -2509,6 +2509,22 @@ function hoover(c: Scenery): SceneryTick {
   }
   instances(THREE, scene, dummy, geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,230,170', 0.5), transparent: true, depthWrite: false }), glints);
 
+  // the sprinkler planters along the inside verge of the sweeper, one per wet patch, with a pop-up head each (the
+  // sprinklers that turn across the road are the set pieces themselves: see the scene)
+  const planters: Item[] = [];
+  const nozzles: Item[] = [];
+  for (const h of r.hazards) {
+    if (h.kind !== 'wet') continue;
+    const p = pointAt(t, h.s, -(t.half + 1.9));
+    planters.push({ x: p.x, y: 0.3, z: p.z, sx: 2.2, sy: 0.6, sz: 1.2, ry: headingOf(p.tx, p.tz) });
+    nozzles.push({ x: p.x, y: 0.75, z: p.z, sx: 0.16, sy: 0.3, sz: 0.16 });
+  }
+  if (planters.length) {
+    instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color: 0xcdb48a, emissive: 0x2a2214 }), planters);
+    instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color: 0x2f6a3a, emissive: 0x0a2010 }), planters.map((p) => ({ ...p, y: 0.62, sx: 2.0, sy: 0.08, sz: 1.0 })));
+    instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color: 0x3a3d46 }), nozzles);
+  }
+
   // ferns along the far side of the Arboretum's ditch
   const ferns: Item[] = [];
   for (let s = 896; s < 972; s += 2.5) {
