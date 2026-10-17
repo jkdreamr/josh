@@ -443,7 +443,10 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
       </section>
       <section>
         <h3>Courses</h3>
-        <p>Each course has its own difficulty: the harder ones are narrower, twistier and have more in the way.</p>
+        <p>
+          Each course has its own difficulty: the harder ones are narrower, twistier and have more in the way, and the CPUs drive harder too. On Expert they hardly ever ease off, and a spin or a tumble keeps you down for longer.
+          Some courses get busier as the race goes on: the lap banner says what has joined in.
+        </p>
         <ul>
           <li>
             <b>Mud</b> slows you down like the grass. A boost or a jump gets you through.
@@ -459,6 +462,21 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>The Marguerite buses</b> drive their rounds slower than you, each in its own lane. Pass on the free side: run into one and you spin out. Shells break on them too.
+          </li>
+          <li>
+            <b>Golf carts</b> drive their rounds like the buses, and more cross the road on the cart paths. Run into one and you spin out.
+          </li>
+          <li>
+            <b>Golfers</b> walk across the road with their bags, sometimes four at a time. Hit one and you spin out.
+          </li>
+          <li>
+            <b>Golf balls</b> come down on the road. Watch for a shadow growing under a <b>!</b> and steer clear: one on your head spins you out.
+          </li>
+          <li>
+            <b>Bunkers</b> slow you down like mud. A jump carries you over the one on the 18th.
+          </li>
+          <li>
+            <b>Water.</b> Run wide into a pond and you splash in: you lose three coins and about three seconds being fished out, though you keep your item. Tap drift just as you are set back down for a boost.
           </li>
           <li>A star, a Mega Mushroom or a Bullet ploughs straight through all of it.</li>
         </ul>

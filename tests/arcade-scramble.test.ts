@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { AMMO_BOX, AMMO_TYPES, BOOST, MAX_PACK, MELEE, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, WOOD_MAX, ammoCap, damageOf, parseLoot, rng32, rollLoot, throwCap, useCap, type LootDef } from '../src/os/arcade/games/scramble/items.ts';
+import { AMMO_BOX, AMMO_TYPES, BOOST, HP_MAX, MAX_PACK, MAX_RARITY, MELEE, MELEE_IDS, SHIELD_MAX, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, WOOD_MAX, ammoCap, damageOf, parseLoot, rng32, rollLoot, throwCap, useCap, type LootDef, type WeaponId } from '../src/os/arcade/games/scramble/items.ts';
 import {
   BEACH,
   BUS_Y,
@@ -10,6 +10,7 @@ import {
   DROP_BASE,
   EDGE,
   HALF,
+  PEEK,
   POND_SLOW,
   STORM_PHASES,
   STORM_R0,
@@ -19,6 +20,7 @@ import {
   busAt,
   coverAt,
   generateMap,
+  peekAt,
   pushBox,
   pushCircle,
   pushObb,
@@ -45,6 +47,7 @@ import {
   F_PAN,
   INTERP,
   LEVELS,
+  LEVEL_SPECS,
   MAX_FIGHTERS,
   PICK_R,
   SLOT_MELEE,
@@ -81,7 +84,7 @@ import {
   type Level,
   type Match,
 } from '../src/os/arcade/games/scramble/logic.ts';
-import { applyNet, configOf, endOf, guestState, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
+import { applyNet, configOf, endOf, guestState, hitCap, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
 import { END_PAUSE, FIRST_GRACE, FLUSH, STALE, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
 
@@ -182,6 +185,41 @@ test('every island has all its buildings, each with the doorways it should have,
     assert.equal(kinds('chest').filter((c) => c.gold).length, 1, 'one golden chest, in the Golden Coop');
     assert.ok(kinds('barrel').length >= 16, 'barrels about');
     assert.equal(kinds('supply').length, 3);
+  }
+});
+
+test('standing at a doorway, or lined up with one a few steps out, peeks into that building, and nowhere else does', () => {
+  const out = (d: Door, k: number, side = 0) => ({ x: d.x + d.ox * k + Math.abs(d.oz) * side, z: d.z + d.oz * k + Math.abs(d.ox) * side });
+  for (let seed = 1; seed <= 25; seed++) {
+    const m = generateMap(seed);
+    m.buildings.forEach((b, i) => {
+      for (const d of b.doors) {
+        if (!b.roof) {
+          const p = out(d, 1);
+          assert.notEqual(peekAt(m, p.x, p.z), i, 'a ruin has no roof to peek under');
+          continue;
+        }
+        for (const [k, side] of [[0, 0], [1.2, 0], [1.5, d.w / 2 + 0.8], [4, d.w / 2 + 1.5]]) {
+          const p = out(d, k, side);
+          const at = peekAt(m, p.x, p.z);
+          // in a yard of containers, the next one's open end can be nearer
+          if (b.kind === 'container') assert.ok(at >= 0 && m.buildings[at].kind === 'container', `seed ${seed}: peeking into a container`);
+          else assert.equal(at, i, `seed ${seed}: ${k} m out from a ${b.kind}'s door`);
+        }
+        const far = out(d, 6);
+        assert.ok(peekAt(m, far.x, far.z) >= 0, `seed ${seed}: lined up with a door from six meters`);
+        const beyond = out(d, PEEK + 1);
+        assert.notEqual(peekAt(m, beyond.x, beyond.z), i, 'too far to peek in');
+      }
+      // three meters out from the middle of a wall with no door in it, you can't see in
+      if (!b.roof || b.kind === 'container') return;
+      for (const [ox, oz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        if (b.doors.some((d) => d.ox === ox && d.oz === oz)) continue;
+        const x = b.x + ox * (b.w / 2 + 3);
+        const z = b.z + oz * (b.d / 2 + 3);
+        assert.notEqual(peekAt(m, x, z), i, `seed ${seed}: no peeking into a ${b.kind} through a blank wall`);
+      }
+    });
   }
 });
 
@@ -434,6 +472,48 @@ test('rarer guns hit harder and reload faster', () => {
   for (const w of Object.keys(WEAPONS) as (keyof typeof WEAPONS)[]) {
     for (let r = 1; r <= 4; r++) assert.ok(damageOf(w, r) > damageOf(w, r - 1));
   }
+});
+
+/** What one bullet or pellet does to an egg, rounded the way a hit is. */
+const perHit = (w: WeaponId, r: number) => Math.max(1, Math.round(damageOf(w, r)));
+
+test('no gun cracks a full-health egg with one pull of the trigger at any rarity, and no swing does either', () => {
+  for (const w of WEAPON_IDS) {
+    const spec = WEAPONS[w];
+    for (let r = 0; r <= MAX_RARITY; r++) {
+      // every pellet at point blank, every shot of a burst, a launcher egg right on target
+      const pull = perHit(w, r) * spec.pellets * (spec.burst?.n ?? 1);
+      assert.ok(pull < HP_MAX, `${w} r${r}: ${pull}`);
+    }
+  }
+  for (const w of MELEE_IDS) assert.ok(MELEE[w].dmg < HP_MAX, w);
+
+  // and for real, a legendary of each fired once from two steps away
+  for (const w of WEAPON_IDS) {
+    const m = quiet();
+    const [a, b] = m.fighters;
+    openSpot(m);
+    land(a, 0, 0);
+    land(b, 0, 2);
+    a.guns[0] = { w, r: MAX_RARITY, mag: WEAPONS[w].mag };
+    a.slot = 0;
+    a.input.aim = 0;
+    a.input.fire = true;
+    run(m, DT);
+    a.input.fire = false;
+    run(m, 1);
+    assert.ok(b.hp > 0 && b.hp < HP_MAX, `${w} left ${b.hp}`);
+  }
+});
+
+test('a sniper takes two hits to crack a bare egg even at legendary, and three through a shield at common', () => {
+  const hits = (w: WeaponId, r: number, total: number) => Math.ceil(total / perHit(w, r));
+  assert.equal(hits('sniper', MAX_RARITY, HP_MAX), 2);
+  assert.equal(hits('sniper', 0, HP_MAX), 2);
+  assert.equal(hits('sniper', 0, HP_MAX + 50), 3);
+  assert.equal(hits('sniper', 0, HP_MAX + SHIELD_MAX), 3);
+  // the other long guns never take fewer
+  for (const w of ['scout', 'crossbow'] as const) for (let r = 0; r <= MAX_RARITY; r++) assert.ok(hits(w, r, HP_MAX) >= 2, w);
 });
 
 test('the same shot gives the same pellets on every client, and shotgun pellets lose bite with distance', () => {
@@ -783,9 +863,27 @@ test('packets survive the trip and anything malformed is turned away', () => {
   const wild = guestState(1, { ...s, hp: 500 });
   assert.equal(parsePacket(wild), null);
   // bad events drop out one by one, good ones stay
-  const e = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, [{ y: 'd', f: 1, to: 0, d: 20, w: 'smg', x: 0, z: 0 }, { y: 'd', f: 1, to: 0, d: 9999, w: 'smg', x: 0, z: 0 }, { y: 'dr', id: 5, x: 0, z: 0, by: 1, it: { kind: 'gun', w: 'bazooka', r: 1 } }, { y: 'zz' }]]] });
+  const e = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, [{ y: 'd', f: 1, to: 0, d: 12, w: 'smg', x: 0, z: 0 }, { y: 'd', f: 1, to: 0, d: 9999, w: 'smg', x: 0, z: 0 }, { y: 'dr', id: 5, x: 0, z: 0, by: 1, it: { kind: 'gun', w: 'bazooka', r: 1 } }, { y: 'zz' }]]] });
   assert.ok(e && e.k === 'e');
   assert.equal(e.groups[0][1].length, 1);
+});
+
+test('a hit from another client can do no more than that weapon ever could', () => {
+  const hit = (d: number, w: string) => {
+    const p = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, [{ y: 'd', f: 1, to: 0, d, w, x: 0, z: 0 }]]] });
+    return !!p && p.k === 'e' && p.groups[0]?.[1].length === 1;
+  };
+  for (const w of WEAPON_IDS) {
+    const most = perHit(w, MAX_RARITY);
+    assert.equal(hitCap(w), most);
+    assert.ok(hit(most, w), w);
+    assert.ok(!hit(most + 1, w), w);
+    assert.ok(most < HP_MAX, `${w}: no single hit cracks a full egg`);
+  }
+  assert.ok(hit(MELEE.cleaver.dmg, 'cleaver') && !hit(MELEE.cleaver.dmg + 1, 'cleaver'));
+  assert.ok(hit(THROWS.grenade.dmg!, 'grenade') && !hit(THROWS.grenade.dmg! + 1, 'grenade'));
+  // each client works these out for its own egg, so they never come as hits
+  for (const w of ['storm', 'sauce', 'barrel', 'left']) assert.ok(!hit(1, w), w);
 });
 
 test('what happens here becomes network news only when someone else needs it', () => {
@@ -990,6 +1088,18 @@ test('the host\'s result is final: an elimination that arrives after it changes 
   applyNet(g, { y: 'o', f: 0, by: 1, w: 'smg' });
   assert.equal(g.fighters[1].kills, 2, 'not counted twice');
   assert.equal(g.fighters[0].place, 2);
+
+  // a trade at the end: a last hit cracks our egg here, but the host had already called it for us
+  const t = createMatch({ seed: 2, role: 'guest', level: 'normal', entrants: [{ name: 'a', color: '#fff', kind: 'remote', seat: 0 }, { name: 'b', color: '#fff', kind: 'player', seat: 1 }], me: 1, countdown: 0 });
+  for (const f of t.fighters) f.phase = 'ground';
+  applyNet(t, { y: 'o', f: 0, by: 1, w: 'smg' });
+  applyNet(t, { y: 'd', f: 0, to: 1, d: 300, w: 'grenade', x: 0, z: 0 });
+  assert.equal(t.fighters[1].phase, 'out');
+  receive(newSession(true), t, { seat: 1, isHost: false, round: 1 }, 0, endOf(1, 1, [[1, 1, 1], [0, 2, 0]]), () => t, 0);
+  assert.notEqual(t.fighters[1].phase, 'out', 'the host says we won, so we stand');
+  assert.equal(t.fighters[1].place, 1);
+  hurt(t, t.fighters[1], 50, -1, 'storm', true);
+  assert.notEqual(t.fighters[1].phase, 'out', 'and nothing hurts once it is over');
 });
 
 test('the host adds as many computer eggs as it asks for, twenty eggs at most', () => {
@@ -1216,6 +1326,91 @@ test('a computer egg sent for a gun takes that gun, not whatever lies nearer', (
   run(m, 5);
   assert.equal(a.melee, 'pan');
   assert.deepEqual(a.guns.map((g) => g?.w), ['sniper', 'rifle'], 'the sniper in place of the weaker SMG');
+});
+
+/**
+ * A computer egg at the middle of bare grass holding `guns`, and a still egg `dist` meters north that never cracks.
+ * `go(seconds, true)` keeps the computer egg where it is too.
+ */
+function range(level: Level, dist: number, guns: Fighter['guns']) {
+  const m = quiet();
+  m.level = level;
+  const [a, b] = m.fighters;
+  openSpot(m);
+  land(a, 0, 0);
+  land(b, 0, dist);
+  autopilot(m, a);
+  a.guns = guns;
+  a.slot = 0;
+  a.ammo.heavy = 400;
+  a.ammo.light = 400;
+  const shots: number[] = [];
+  let hits = 0;
+  const go = (seconds: number, pin = false) =>
+    run(m, seconds, (evs) => {
+      b.hp = 100;
+      b.x = 0;
+      b.z = dist;
+      if (pin) land(a, 0, 0);
+      for (const e of evs) {
+        if (e.t === 'shot' && e.f === a.id) shots.push(m.time);
+        if (e.t === 'hit' && e.f === a.id) hits++;
+      }
+    });
+  return { m, a, b, shots, go, hits: () => hits };
+}
+
+test('a computer egg steadies its aim before a scoped shot, and again before the next', () => {
+  for (const level of LEVELS) {
+    const { shots, go } = range(level, 30, [{ w: 'sniper', r: 0, mag: 4 }, null]);
+    go(8);
+    assert.ok(shots.length >= 2, `${level}: it fired (${shots.length})`);
+    const settle = LEVEL_SPECS[level].settle;
+    for (let i = 1; i < shots.length; i++) assert.ok(shots[i] - shots[i - 1] >= 1 / WEAPONS.sniper.rate + settle - 0.02, `${level}: ${shots[i] - shots[i - 1]}`);
+  }
+});
+
+test('computer eggs miss more the farther off the target is, the easy ones far more than the hard ones', () => {
+  const rate = (level: Level, dist: number) => {
+    const t = range(level, dist, [{ w: 'scout', r: 0, mag: 10 }, null]);
+    t.go(30, true);
+    assert.ok(t.shots.length > 10, `${level} at ${dist}: ${t.shots.length} shots`);
+    return t.hits() / t.shots.length;
+  };
+  const hardNear = rate('hard', 12);
+  const hardFar = rate('hard', 45);
+  const easyFar = rate('easy', 45);
+  assert.ok(hardNear > 0.8, `hard up close ${hardNear}`);
+  assert.ok(hardFar < hardNear * 0.7, `hard far ${hardFar}`);
+  assert.ok(hardFar > 0.15, `hard is still sharp ${hardFar}`);
+  assert.ok(easyFar < hardFar * 0.6, `easy far ${easyFar}`);
+});
+
+test('a computer egg with a scope and a rifle closes in and fights with the rifle, keeping the scope for far off', () => {
+  const guns = (): Fighter['guns'] => [{ w: 'sniper', r: 0, mag: 4 }, { w: 'rifle', r: 0, mag: 30 }];
+  const near = range('hard', 25, guns());
+  near.go(2);
+  assert.equal(near.a.slot, 1, 'the rifle at 25 meters');
+  const far = range('hard', 55, guns());
+  far.go(1.2);
+  assert.equal(far.a.slot, 0, 'the sniper at 55 meters');
+  far.go(3);
+  assert.ok(Math.hypot(far.a.x, far.a.z - 55) < 50, `it walked in (${Math.hypot(far.a.x, far.a.z - 55)})`);
+
+  // and it won't trade that rifle for a second scope, though it would trade the scope for a better one
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  land(a, 0, 0);
+  land(b, 100, 100);
+  autopilot(m, a);
+  a.guns = [{ w: 'scout', r: 2, mag: 10 }, { w: 'rifle', r: 0, mag: 30 }];
+  m.loot.set(1, { id: 1, def: { kind: 'gun', w: 'sniper', r: 4 }, x: 0, z: 5, by: -1, at: 0 });
+  run(m, 4);
+  assert.deepEqual(a.guns.map((g) => g?.w), ['scout', 'rifle']);
+  a.guns = [{ w: 'scout', r: 0, mag: 10 }, { w: 'rifle', r: 3, mag: 30 }];
+  run(m, 4);
+  assert.deepEqual(a.guns.map((g) => g?.w), ['sniper', 'rifle']);
 });
 
 /** The first building of a kind (whose doorway passes `ok`), and that doorway. */

@@ -361,6 +361,8 @@ type Hud = {
   time: string;
   lights: number;
   banner: string | null;
+  /** A line under the lap banner when something joins in on that lap. */
+  note: string | null;
   wrong: boolean;
   results: boolean;
 };
@@ -420,14 +422,14 @@ function Play({ mode }: { mode: Mode }) {
   const tap = useRef({ back: false, gas: false, cash: false, slam: false });
   /** The item button was holding a banana or shell out behind last frame. */
   const holding = useRef(false);
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, wrong: false, results: false });
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, note: null, wrong: false, results: false });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
   const clock = useRef(0);
   const rollTick = useRef(0);
-  /** The lap banner ('lap 2/5', 'final lap!') and when it went up. */
-  const lapBanner = useRef({ text: '', at: -99 });
+  /** The lap banner ('lap 2/5', 'final lap!'), the course's line about what is new that lap, and when it went up. */
+  const lapBanner = useRef<{ text: string; note: string | null; at: number }>({ text: '', note: null, at: -99 });
   const [coinPop, setCoinPop] = useState<{ id: number; text: string; loss: boolean } | null>(null);
   const lastCoins = useRef(0);
   const [hint, setHint] = useState<{ id: number; text: string } | null>(null);
@@ -443,7 +445,7 @@ function Play({ mode }: { mode: Mode }) {
   };
   const doneAt = useRef<number | null>(null);
   const dots = useRef(new Map<number, SVGCircleElement>());
-  /** Minimap markers for the buses, by hazard index. */
+  /** Minimap markers for the buses and golf carts, by hazard index. */
   const busDots = useRef(new Map<number, SVGRectElement>());
   const tags = useRef(new Map<number, HTMLDivElement>());
   const lastLevel = useRef(0);
@@ -845,6 +847,38 @@ function Play({ mode }: { mode: Mode }) {
           sfx.tone({ freq: 330, dur: 0.42, type: 'sawtooth', vol: 0.09, delay: 0.22 });
         }
         break;
+      case 'toot':
+        // a golf cart's little horn: beep-beep
+        if (mine) {
+          sfx.tone({ freq: 988, dur: 0.1, type: 'square', vol: 0.07 });
+          sfx.tone({ freq: 988, dur: 0.14, type: 'square', vol: 0.07, delay: 0.15 });
+        }
+        break;
+      case 'fore':
+        // a golfer's shout, up and down
+        if (mine) {
+          sfx.tone({ freq: 420, to: 760, dur: 0.16, type: 'sawtooth', vol: 0.09 });
+          sfx.tone({ freq: 760, to: 520, dur: 0.38, type: 'sawtooth', vol: 0.09, delay: 0.15 });
+        }
+        break;
+      case 'plink':
+        // a golf ball off your helmet
+        if (mine) {
+          sfx.tone({ freq: 2600, to: 1700, dur: 0.12, type: 'sine', vol: 0.16 });
+          sfx.tone({ freq: 3400, dur: 0.08, type: 'triangle', vol: 0.07, delay: 0.03 });
+        }
+        break;
+      case 'splash':
+        // into the pond
+        if (mine) {
+          sfx.noise(0.5, 0.22);
+          sfx.tone({ freq: 300, to: 80, dur: 0.45, type: 'sine', vol: 0.16 });
+          buzz(80);
+        }
+        break;
+      case 'sand':
+        if (mine) sfx.noise(0.14, 0.09);
+        break;
       case 'slam':
         if (mine) sfx.tone({ freq: 240, to: 120, dur: 0.14, type: 'sawtooth', vol: 0.12 });
         break;
@@ -907,7 +941,7 @@ function Play({ mode }: { mode: Mode }) {
       case 'lap':
         if (!mine) break;
         setLapNote({ id: Date.now(), text: fmtTime(r.karts[r.me].laps[r.karts[r.me].laps.length - 1] ?? 0) });
-        lapBanner.current = { text: e.lap === r.laps ? 'final lap!' : `lap ${e.lap}/${r.laps}`, at: clock.current };
+        lapBanner.current = { text: e.lap === r.laps ? 'final lap!' : `lap ${e.lap}/${r.laps}`, note: COURSES[r.course].laps?.[e.lap] ?? null, at: clock.current };
         if (e.lap === r.laps) {
           sfx.tone({ freq: 660, dur: 0.12, type: 'square', vol: 0.14 });
           sfx.tone({ freq: 880, dur: 0.12, type: 'square', vol: 0.14, delay: 0.14 });
@@ -955,6 +989,7 @@ function Play({ mode }: { mode: Mode }) {
     const me = r.karts[r.me];
     if (!me) return;
     let banner: string | null = null;
+    let note: string | null = null;
     let lights = 0;
     if (!n.synced) banner = 'waiting for the host';
     else if (r.time < -COUNTDOWN) banner = COURSES[r.course].name;
@@ -965,7 +1000,10 @@ function Play({ mode }: { mode: Mode }) {
       banner = 'go!';
       lights = 4;
     } else if (me.done !== null) banner = clock.current - (doneAt.current ?? 0) < 3 ? 'finish!' : null;
-    else if (clock.current - lapBanner.current.at < 1.8) banner = lapBanner.current.text;
+    else if (clock.current - lapBanner.current.at < (lapBanner.current.note ? 3 : 1.8)) {
+      banner = lapBanner.current.text;
+      note = lapBanner.current.note;
+    }
     const next: Hud = {
       place: me.place,
       field: r.karts.length,
@@ -985,6 +1023,7 @@ function Play({ mode }: { mode: Mode }) {
       time: fmtTime(Math.max(0, me.done ?? r.time)),
       lights,
       banner,
+      note,
       wrong: me.wrong > 1.2 && me.done === null,
       results: me.done !== null && clock.current - (doneAt.current ?? 0) >= 3,
     };
@@ -1061,20 +1100,20 @@ function Play({ mode }: { mode: Mode }) {
             <path d={minimap.d} className="g-palmdrive-map-line" />
             {r.hazards.map(
               (h, i) =>
-                h.kind === 'bus' && (
+                (h.kind === 'bus' || h.kind === 'cart') && (
                   <rect
                     key={`bus${i}`}
                     ref={(el) => {
                       if (el) busDots.current.set(i, el);
                       else busDots.current.delete(i);
                     }}
-                    x={-8}
-                    y={-8}
-                    width={16}
-                    height={16}
+                    x={h.kind === 'bus' ? -8 : -6}
+                    y={h.kind === 'bus' ? -8 : -6}
+                    width={h.kind === 'bus' ? 16 : 12}
+                    height={h.kind === 'bus' ? 16 : 12}
                     rx={3}
                     transform={`translate(${-h.x} ${-h.z})`}
-                    className="g-palmdrive-map-bus"
+                    className={h.kind === 'bus' ? 'g-palmdrive-map-bus' : 'g-palmdrive-map-cart'}
                   />
                 ),
             )}
@@ -1146,6 +1185,11 @@ function Play({ mode }: { mode: Mode }) {
           {hud.banner && (
             <div key={`banner-${hud.banner}`} className={`g-palmdrive-banner${/^\d$/.test(hud.banner) ? ' is-count' : ''}${hud.banner.length > 12 ? ' is-note' : ''}`}>
               {hud.banner}
+            </div>
+          )}
+          {hud.banner && hud.note && (
+            <div key={`note-${hud.note}`} className="g-palmdrive-lapnote">
+              {hud.note}
             </div>
           )}
           {hud.wrong && <div className="g-palmdrive-wrong">wrong way</div>}

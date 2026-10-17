@@ -763,6 +763,18 @@
   letter-spacing: 0.12em;
   text-align: center;
 }
+.arcade-room {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: inherit;
+  width: 100%;
+}
+/* On the Game Over card the room sits under the results, smaller than in its lobby. */
+.arcade-card:not(.arcade-online-card) .arcade-room-code {
+  padding: 2px 0 0;
+  font-size: 26px;
+}
 .arcade-room-code {
   padding: 4px 0 2px;
   font-size: clamp(34px, 10vw, 52px);

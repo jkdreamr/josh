@@ -170,6 +170,8 @@ export type Ai = {
   exit: Door | null;
   err: number;
   errT: number;
+  /** Seconds the aim has held steady on the target, for a scoped shot. */
+  steady: number;
   burst: number;
   rest: number;
   buildCool: number;
@@ -394,12 +396,15 @@ export function botNames(seed: number): string[] {
   return names;
 }
 
-/** How sharp the computer players are. `toss` is the seconds between throws (0: never); `build` between walls. */
-type LevelSpec = { err: number; react: number; turn: number; sight: number; lead: number; burst: number; rest: number; build: number; heal: number; toss: number };
+/**
+ * How sharp the computer players are. `toss` is the seconds between throws (0: never); `build` between walls. `far` is
+ * how much wider the aim gets for every 10 meters past 20, and `settle` the seconds a scoped shot waits for a steady aim.
+ */
+type LevelSpec = { err: number; react: number; turn: number; sight: number; lead: number; burst: number; rest: number; build: number; heal: number; toss: number; far: number; settle: number };
 export const LEVEL_SPECS: Record<Level, LevelSpec> = {
-  easy: { err: 0.2, react: 0.85, turn: 3.2, sight: 32, lead: 0, burst: 0.45, rest: 0.6, build: 0, heal: 45, toss: 22 },
-  normal: { err: 0.11, react: 0.5, turn: 6, sight: 42, lead: 0.5, burst: 0.8, rest: 0.35, build: 12, heal: 60, toss: 11 },
-  hard: { err: 0.055, react: 0.28, turn: 9, sight: 52, lead: 1, burst: 1.4, rest: 0.2, build: 5, heal: 70, toss: 6 },
+  easy: { err: 0.2, react: 0.85, turn: 3.2, sight: 32, lead: 0, burst: 0.45, rest: 0.6, build: 0, heal: 45, toss: 22, far: 0.5, settle: 1.1 },
+  normal: { err: 0.11, react: 0.5, turn: 6, sight: 42, lead: 0.5, burst: 0.8, rest: 0.35, build: 12, heal: 60, toss: 11, far: 0.35, settle: 0.7 },
+  hard: { err: 0.055, react: 0.28, turn: 9, sight: 52, lead: 1, burst: 1.4, rest: 0.2, build: 5, heal: 70, toss: 6, far: 0.15, settle: 0.4 },
 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -517,6 +522,7 @@ function newAi(m: Match, f: Fighter): Ai {
     exit: null,
     err: 0,
     errT: 0,
+    steady: 0,
     burst: 0,
     rest: 0,
     buildCool: 0,
@@ -693,6 +699,15 @@ export function endMatch(m: Match, winner: number, places: [number, number, numb
       f.phase = 'out';
       f.outAt = m.time;
     }
+  }
+  // and the winner stands, even if a last hit that came too late for the host cracked it here (a trade at the end)
+  const w = m.fighters[winner];
+  if (w && w.phase === 'out') {
+    w.phase = 'ground';
+    w.hp = Math.max(1, w.hp);
+    w.place = 1;
+    w.by = -1;
+    w.outCause = null;
   }
   m.ended = true;
   m.winner = winner;
@@ -1098,10 +1113,10 @@ export function panBlocks(f: Fighter, dx: number, dz: number) {
 
 /**
  * Damage to an egg this client owns. Shields soak it first, except the storm's. Returns how much landed. Only eggs on
- * the ground can be hurt.
+ * the ground can be hurt, and nobody once the match is over.
  */
 export function hurt(m: Match, f: Fighter, d: number, by: number, w: Cause, storm: boolean) {
-  if (!owned(f) || f.phase !== 'ground' || !(d > 0)) return 0;
+  if (m.ended || !owned(f) || f.phase !== 'ground' || !(d > 0)) return 0;
   let left = d;
   const fromShield = storm ? 0 : Math.min(f.shield, left);
   f.shield -= fromShield;
@@ -1831,6 +1846,11 @@ function hasAmmo(f: Fighter, g: Gun | null) {
   return !!g && (g.mag > 0 || f.ammo[WEAPONS[g.w].ammo] > 0);
 }
 
+const scopedGun = (g: Gun | null) => !!g && WEAPONS[g.w].cls === 'sniper';
+
+/** A loaded gun other than `g` for closer in than a scope, or null. */
+const closerGun = (f: Fighter, g: Gun | null) => f.guns.find((x) => x && x !== g && !scopedGun(x) && hasAmmo(f, x)) ?? null;
+
 /** The slot to fight with at a distance: the gun that likes it best, or the melee weapon. */
 function bestSlot(f: Fighter, d: number) {
   let best = SLOT_MELEE;
@@ -1839,12 +1859,22 @@ function bestSlot(f: Fighter, d: number) {
   f.guns.forEach((g, i) => {
     if (!hasAmmo(f, g)) return;
     const s = -Math.abs(PREFER[g!.w] - d) / Math.max(4, PREFER[g!.w]) + g!.r * 0.05 + (WEAPONS[g!.w].range < d ? -2 : 0);
-    if (s > score) {
-      score = s;
+    // a scope only when the other gun can't reach
+    const other = scopedGun(g) ? closerGun(f, g) : null;
+    const t = s - (other && WEAPONS[other.w].range * 0.8 >= d ? 0.35 : 0);
+    if (t > score) {
+      score = t;
       best = i;
     }
   });
   return best;
+}
+
+/** How far off to fight: what the gun in hand likes, or closer when we carry a gun for that next to a scoped one. */
+function fightRange(f: Fighter, g: Gun | null) {
+  if (!g) return MELEE_PREFER;
+  const other = scopedGun(g) ? closerGun(f, g) : null;
+  return other ? PREFER[other.w] + 4 : PREFER[g.w];
 }
 
 function think(m: Match, f: Fighter, dt: number) {
@@ -1901,17 +1931,21 @@ function think(m: Match, f: Fighter, dt: number) {
     const speed = g ? WEAPONS[g.w].speed : 1e9;
     const lead = (d / speed) * L.lead;
     const ideal = Math.atan2(dx + tgt.vx * lead, dz + tgt.vz * lead);
+    // a scoped shot waits until the gun is ready and the aim has held still a moment (getting hit spoils it)
+    const scoped = scopedGun(g);
     ai.errT -= dt;
-    if (ai.errT <= 0) {
+    if (ai.errT <= 0 && !(scoped && ai.steady > 0 && ai.steady < L.settle)) {
       ai.errT = 0.3 + m.rng() * 0.4;
+      // the farther off and the quicker it moves, the wider the miss
       const moving = Math.min(1, Math.hypot(tgt.vx, tgt.vz) / SPEED);
-      ai.err = (m.rng() * 2 - 1) * L.err * (0.6 + moving * 0.8) * (d > 25 ? 0.7 : 1);
+      ai.err = (m.rng() * 2 - 1) * L.err * (0.6 + moving * 0.8) * (1 + (Math.max(0, d - 20) / 10) * L.far);
     }
     const turn = angleDiff(ideal + ai.err, f.aim);
     const maxTurn = L.turn * dt;
     inp.aim = f.aim + clamp(turn, -maxTurn, maxTurn);
-    const aligned = Math.abs(angleDiff(inp.aim, ideal)) < 0.22 + (g ? WEAPONS[g.w].spread : 0.4);
-    // bursts: shoot a while, rest a beat
+    ai.steady = scoped && f.fireT <= 0 && f.hitT <= 0 && Math.abs(angleDiff(inp.aim, ideal + ai.err)) < 0.03 ? ai.steady + dt : 0;
+    const aligned = Math.abs(angleDiff(inp.aim, ideal)) < 0.22 + (g ? WEAPONS[g.w].spread : 0.4) && (!scoped || ai.steady >= L.settle);
+    // bursts: shoot a while, rest a beat (a scoped gun keeps its own beat, the settle)
     if (ai.burst > 0) ai.burst -= dt;
     else if (ai.rest > 0) ai.rest -= dt;
     else {
@@ -1944,7 +1978,14 @@ function think(m: Match, f: Fighter, dt: number) {
         ai.swapCool = 0.8;
       }
       const reach = g ? WEAPONS[g.w].range * 0.95 : MELEE[f.melee].range + 0.4;
-      if (f.slot !== SLOT_THROW && ai.react <= 0 && aligned && d < reach && ai.burst > 0 && clearLine(m, f.x, f.z, tgt.x, tgt.z)) inp.fire = true;
+      if (f.slot !== SLOT_THROW && ai.react <= 0 && aligned && d < reach && (ai.burst > 0 || scoped) && clearLine(m, f.x, f.z, tgt.x, tgt.z)) {
+        inp.fire = true;
+        // after a scoped shot, aim afresh and settle again
+        if (scoped && f.fireT <= 0) {
+          ai.steady = 0;
+          ai.errT = 0;
+        }
+      }
     }
     // a wall between us when it gets hot
     if (L.build && !ai.toss && ai.buildCool <= 0 && f.wood >= WALL_COST && f.hitT > 0 && f.hp + f.shield < 130 && d > 7 && !shutsIn(m, f, ideal)) {
@@ -1957,7 +1998,7 @@ function think(m: Match, f: Fighter, dt: number) {
     } else if (burn) {
       away(burn);
     } else {
-      const pref = g ? PREFER[g.w] : MELEE_PREFER;
+      const pref = fightRange(f, g);
       let mx = 0;
       let mz = 0;
       if (d > pref + 4 || !clearLine(m, f.x, f.z, tgt.x, tgt.z)) {
@@ -1971,8 +2012,11 @@ function think(m: Match, f: Fighter, dt: number) {
         ai.strafeT = 0.5 + m.rng() * 1.1;
         ai.strafe = m.rng() < 0.5 ? -1 : 1;
       }
-      mx += (dz / d) * ai.strafe * 0.8;
-      mz += (-dx / d) * ai.strafe * 0.8;
+      // a sniper settling its aim stops dodging about
+      if (!(scoped && ai.steady > 0)) {
+        mx += (dz / d) * ai.strafe * 0.8;
+        mz += (-dx / d) * ai.strafe * 0.8;
+      }
       const len = Math.hypot(mx, mz);
       if (len > 0.01) steer(m, f, ai, f.x + (mx / len) * 4, f.z + (mz / len) * 4, dt, 0);
     }
@@ -2083,6 +2127,8 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
 
   const inSafe = (x: number, z: number) => Math.hypot(x - safe.x, z - safe.z) < safe.r - 2;
   const worst = Math.min(gunValue(f.guns[0]), gunValue(f.guns[1]));
+  // the gun a find would take the place of, when both hands are full
+  const weakest = f.guns[0] && f.guns[1] ? f.guns[gunValue(f.guns[0]) <= gunValue(f.guns[1]) ? 0 : 1] : null;
   let item: LootItem | null = null;
   let itemD = 70;
   for (const l of m.loot.values()) {
@@ -2092,7 +2138,8 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     let useful: boolean;
     switch (def.kind) {
       case 'gun':
-        useful = gunValue({ w: def.w, r: def.r, mag: 0 }) > worst + 3;
+        // never a second scope in place of the gun for closer in
+        useful = gunValue({ w: def.w, r: def.r, mag: 0 }) > worst + 3 && !(WEAPONS[def.w].cls === 'sniper' && weakest && !scopedGun(weakest) && f.guns.some(scopedGun));
         break;
       case 'ammo':
         useful = f.guns.some((x) => x && WEAPONS[x.w].ammo === def.a) && f.ammo[def.a] < ammoCap(def.a, f.pack) * 0.5;

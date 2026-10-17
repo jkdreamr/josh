@@ -2,8 +2,8 @@
 // effects. It reads a Match every frame and never changes it. Only classes kit/three-lib.ts exports are used.
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
-import { BARREL_R, BEACH, BUSH_R, BUS_Y, CHEST_HD, CHEST_HW, CRATE_HALF, HALF, SUPPLY_FALL, SUPPLY_HALF, busAt, type Building } from './map';
-import { BARREL, CRATE_HP, F_DRINKING, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, WALL_HALF, WALL_HP, WALL_THICK, concealed, held, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Toss, type Zone } from './logic';
+import { BARREL_R, BEACH, BUSH_R, BUS_Y, CHEST_HD, CHEST_HW, CRATE_HALF, HALF, SUPPLY_FALL, SUPPLY_HALF, WALL_T, busAt, peekAt, type Building, type BuildingKind } from './map';
+import { BARREL, CRATE_HP, F_DRINKING, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, WALL_HALF, WALL_HP, WALL_THICK, clearLine, concealed, held, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Toss, type Zone } from './logic';
 import { MELEE, RARITY_COLORS, WEAPONS, isMelee, isThrow, isWeapon, type LootDef, type UseId } from './items';
 
 type Three = typeof import('three');
@@ -53,10 +53,25 @@ const FRAME_W = (Math.sin(TILT) * Math.tan(HALF_FOV)) / (Math.sin(TILT) - Math.t
 const GREATER_DEPTH = 6 as T.DepthModes;
 
 const AMMO_COLORS = { light: 0xf2c94c, heavy: 0x6fcf97, shells: 0xeb5757, rockets: 0xbb6bd9 } as const;
-const ROOF_COLORS = [0xb5523b, 0x4f6d8f, 0x6f8b4e, 0x8b5e83];
+const ROOF_COLORS = [0xd0623f, 0x5b84b0, 0x7ea55a, 0xa06b98];
+const SHED_ROOFS = [0x6aa69a, 0xa3adb5, 0xc06a40, 0x86a85c];
 const WALL_COLORS = [0xf1e6d2, 0xd9c7a8, 0xe8dccb, 0xcfd6dc];
 const CONTAINER_COLORS = [0xc0392b, 0x2e86de, 0x27ae60, 0xe67e22, 0x8e44ad];
 const WAREHOUSE_COLORS = [0x9aa5b1, 0x8d9aa6, 0xa7b0b8, 0x7f8c97];
+/**
+ * How each kind dresses its doorways, in colors that stand out from its walls and roof: the door frame, the porch (a
+ * loading apron at a warehouse, a stone path through a ruin), the doormat (a warehouse's apron lines), the awning
+ * over the door and the board along its front, and the eaves.
+ */
+const DRESS: Record<BuildingKind, { frame: number; porch: number; mat: number; awning: number; edge: number; trim: number }> = {
+  house: { frame: 0x6b4426, porch: 0xb98250, mat: 0xb33c2e, awning: 0xf6eedb, edge: 0xffcf4a, trim: 0xf6eedb },
+  farm: { frame: 0xf6f1e4, porch: 0xa8763f, mat: 0x3f6b3a, awning: 0xf6f1e4, edge: 0xffcf4a, trim: 0xf6f1e4 },
+  shed: { frame: 0xeadbb5, porch: 0x9a7046, mat: 0x4f7a3a, awning: 0xeadbb5, edge: 0xffcf4a, trim: 0x5a3e24 },
+  warehouse: { frame: 0xf2c230, porch: 0xc3c8cc, mat: 0xf2c230, awning: 0xf2b632, edge: 0x2b2d33, trim: 0x59636d },
+  container: { frame: 0, porch: 0, mat: 0, awning: 0, edge: 0, trim: 0 },
+  ruin: { frame: 0, porch: 0xcfc6b2, mat: 0, awning: 0, edge: 0, trim: 0 },
+  coop: { frame: 0xc0392b, porch: 0xd9a441, mat: 0xc0392b, awning: 0xc0392b, edge: 0xffffff, trim: 0xfff1c9 },
+};
 /** Glow under a pickup, by how good it is (the rarity colors). */
 const USE_GLOW: Record<UseId, number> = { bandage: 1, medkit: 2, mini: 2, shield: 3, coffee: 4 };
 
@@ -151,6 +166,47 @@ function planksTexture(THREE: Three, base: string, line: string, repeat: [number
   );
 }
 
+/** Rows of shingles in greys, tinted by the roof's colors; the rows run along u. */
+function shingleTexture(THREE: Three) {
+  const rnd = scatter(29);
+  return texture(
+    THREE,
+    canvas(128, 128, (g) => {
+      g.fillStyle = '#7d7d7d';
+      g.fillRect(0, 0, 128, 128);
+      for (let y = 0; y < 128; y += 16) {
+        for (let x = (y / 16) % 2 ? -8 : 0; x < 128; x += 16) {
+          const v = 205 + Math.floor(rnd() * 50);
+          g.fillStyle = `rgb(${v},${v},${v})`;
+          g.fillRect(x + 1, y + 1, 14, 12);
+        }
+        // the shadow each row casts on the one below
+        g.fillStyle = 'rgba(0,0,0,0.22)';
+        g.fillRect(0, y + 13, 128, 3);
+      }
+    }),
+    [1, 1],
+  );
+}
+
+/** Corrugated metal: ribs across u. */
+function ribTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(64, 16, (g) => {
+      g.fillStyle = '#f2f2f2';
+      g.fillRect(0, 0, 64, 16);
+      for (let x = 0; x < 64; x += 8) {
+        g.fillStyle = '#b4b4b4';
+        g.fillRect(x + 5, 0, 2, 16);
+        g.fillStyle = '#ffffff';
+        g.fillRect(x + 1, 0, 2, 16);
+      }
+    }),
+    [1, 1],
+  );
+}
+
 function crateTexture(THREE: Three) {
   return texture(
     THREE,
@@ -222,6 +278,66 @@ function eggGeometry(THREE: Three) {
     pos.setXYZ(i, x * k, (y + 1) * 0.8, z * k);
   }
   g.computeVertexNormals();
+  return g;
+}
+
+/** A gable roof `len` long (its ridge along x) and `wide` across, standing on y = 0 and `rise` tall. Flat shaded. */
+function gableGeometry(THREE: Three, len: number, wide: number, rise: number) {
+  const a = len / 2;
+  const b = wide / 2;
+  // two slopes and two gable ends, each wound to face out
+  const faces = [
+    [-a, 0, b, a, 0, b, a, rise, 0],
+    [-a, 0, b, a, rise, 0, -a, rise, 0],
+    [a, 0, -b, -a, 0, -b, -a, rise, 0],
+    [a, 0, -b, -a, rise, 0, a, rise, 0],
+    [a, 0, b, a, 0, -b, a, rise, 0],
+    [-a, 0, -b, -a, 0, b, -a, rise, 0],
+  ];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(faces.flat(), 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+type RoofPart = { g: T.BufferGeometry; c: number };
+
+/**
+ * A roof's pieces merged into one geometry with a color per piece, so a whole roof is one draw call and fades as one.
+ * Texture coordinates come from where each point sits seen from above, `tile` meters a repeat, u along the ridge.
+ */
+function mergeRoof(THREE: Three, parts: RoofPart[], tile: number, alongX: boolean) {
+  let count = 0;
+  for (const p of parts) count += p.g.index ? p.g.index.count : (p.g.attributes.position as T.BufferAttribute).count;
+  const pos = new Float32Array(count * 3);
+  const nor = new Float32Array(count * 3);
+  const col = new Float32Array(count * 3);
+  const uv = new Float32Array(count * 2);
+  const c = new THREE.Color();
+  let at = 0;
+  for (const p of parts) {
+    const P = p.g.attributes.position as T.BufferAttribute;
+    const N = p.g.attributes.normal as T.BufferAttribute;
+    const n = p.g.index ? p.g.index.count : P.count;
+    c.setHex(p.c);
+    for (let k = 0; k < n; k++) {
+      const i = p.g.index ? p.g.index.getX(k) : k;
+      const x = P.getX(i);
+      const z = P.getZ(i);
+      pos.set([x, P.getY(i), z], at * 3);
+      nor.set([N.getX(i), N.getY(i), N.getZ(i)], at * 3);
+      col.set([c.r, c.g, c.b], at * 3);
+      uv[at * 2] = (alongX ? x : z) / tile;
+      uv[at * 2 + 1] = (alongX ? z : x) / tile;
+      at++;
+    }
+    p.g.dispose();
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   return g;
 }
 
@@ -461,10 +577,16 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   });
   scene.add(stalks);
 
-  // buildings: a floor, walls with doorways, and (all but the ruins) a roof that lifts away while you're inside
+  // buildings: a floor, walls, and at every doorway a frame, a porch with a lamp and an awning, so the ways in read
+  // from the ground and from the sky. All but the ruins have a roof that lifts away while you're inside and thins
+  // while you stand at a door or line up with one, so you can peek in.
   const floorTex = keep(planksTexture(THREE, '#c9935a', '#9c6b3a', [1, 1]));
+  const shingles = keep(shingleTexture(THREE));
+  const ribs = keep(ribTexture(THREE));
   const concrete = lambert(0x9aa1a6);
   const dirt = lambert(0xb9ad93);
+  // a shipping container is dark inside, so its open end shows from afar
+  const hold = lambert(0x3a3e44);
   const wallColor = (b: Building, rnd: () => number) => {
     switch (b.kind) {
       case 'house':
@@ -486,38 +608,45 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const roofColor = (b: Building) => {
     switch (b.kind) {
       case 'farm':
-        return 0x7a2a1f;
+        return 0x5d7766;
       case 'shed':
-        return 0x6b4a2a;
+        return SHED_ROOFS[b.look % SHED_ROOFS.length];
       case 'warehouse':
-        return 0x6f7c88;
+        return 0x8a98a5;
       case 'container':
         return CONTAINER_COLORS[b.look % CONTAINER_COLORS.length];
       case 'coop':
-        return 0xf5b301;
+        return 0xffc21a;
       default:
         return ROOF_COLORS[b.look % ROOF_COLORS.length];
     }
   };
+  const darker = (hex: number, k: number) => color.setHex(hex).multiplyScalar(k).getHex();
   const wallCount = map.buildings.reduce((n, b) => n + b.walls.length, 0);
   const buildingWalls = many(G.box, lambert(0xffffff), wallCount);
   const wallRnd = scatter(17);
+  const doorRnd = scatter(31);
   let wi = 0;
   const roofs: { mesh: T.Mesh; mats: T.MeshLambertMaterial[]; fade: number; at: number }[] = [];
+  // door frames, porches, mats, paving and container doors, all one instanced mesh; lamps another
+  const bits: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number; c: number }[] = [];
+  const lamps: { x: number; y: number; z: number; sx: number; sz: number }[] = [];
   map.buildings.forEach((b, bi) => {
     const floorMat =
-      b.kind === 'warehouse' || b.kind === 'container'
-        ? concrete
-        : b.kind === 'ruin'
-          ? dirt
-          : (() => {
-              const tex = keep(floorTex.clone());
-              tex.repeat.set(b.w / 4, b.d / 4);
-              tex.wrapS = THREE.RepeatWrapping;
-              tex.wrapT = THREE.RepeatWrapping;
-              tex.needsUpdate = true;
-              return lambert(0xffffff, { map: tex });
-            })();
+      b.kind === 'container'
+        ? hold
+        : b.kind === 'warehouse'
+          ? concrete
+          : b.kind === 'ruin'
+            ? dirt
+            : (() => {
+                const tex = keep(floorTex.clone());
+                tex.repeat.set(b.w / 4, b.d / 4);
+                tex.wrapS = THREE.RepeatWrapping;
+                tex.wrapT = THREE.RepeatWrapping;
+                tex.needsUpdate = true;
+                return lambert(0xffffff, { map: tex });
+              })();
     const floor = new THREE.Mesh(G.plane, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(b.x, 0.02, b.z);
@@ -532,33 +661,140 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       buildingWalls.setColorAt(wi, wallColor(b, wallRnd));
       wi++;
     }
-    if (!b.roof) return;
-    const special = b.kind === 'coop';
-    const roofMat = lambert(roofColor(b), special ? { transparent: true, opacity: 1, emissive: 0x5a3c00 } : { transparent: true, opacity: 1 });
-    const roof = new THREE.Mesh(G.box, roofMat);
-    const flat = b.kind === 'warehouse' || b.kind === 'container';
-    roof.position.set(b.x, b.h + (flat ? 0.12 : 0.25), b.z);
-    roof.scale.set(b.w + (flat ? 0.3 : 0.9), flat ? 0.24 : 0.5, b.d + (flat ? 0.3 : 0.9));
-    scene.add(roof);
-    if (!flat) {
-      const ridge = new THREE.Mesh(G.box, roofMat);
-      ridge.position.set(0, 0.9, 0);
-      ridge.scale.set((1 / (b.w + 0.9)) * (b.w * 0.7), 1, (1 / (b.d + 0.9)) * (b.d * 0.5));
-      roof.add(ridge);
+
+    const s = DRESS[b.kind];
+    const paint = b.kind === 'container' ? CONTAINER_COLORS[b.look % CONTAINER_COLORS.length] : 0;
+    for (const d of b.doors) {
+      // a door's own axes: `o` out through it, `l` along the wall
+      const ax = Math.abs(d.oz);
+      const az = Math.abs(d.ox);
+      const put = (o: number, l: number, y: number, so: number, sl: number, sy: number, c: number) =>
+        bits.push({ x: d.x + d.ox * o + ax * l, y, z: d.z + d.oz * o + az * l, sx: d.ox ? so : sl, sy, sz: d.ox ? sl : so, ry: 0, c });
+      const half = d.w / 2;
+      if (b.kind === 'ruin') {
+        // broken walls: a worn stone path through the gap
+        put(0, 0, 0.03, WALL_T + 1.4, d.w + 0.2, 0.06, shade(doorRnd, s.porch, 0.5).getHex());
+        continue;
+      }
+      if (b.kind === 'container') {
+        // a dark frame round the open end, both doors swung wide, and a dark lining inside
+        const frame = darker(paint, 0.45);
+        for (const k of [-1, 1]) put(0.1, k * (half + 0.14), b.h / 2, 0.32, 0.32, b.h, frame);
+        put(0.1, 0, b.h - 0.18, 0.32, d.w + 0.6, 0.36, frame);
+        const long = d.ox ? b.w : b.d;
+        const short = d.ox ? b.d : b.w;
+        put(-long + WALL_T / 2 + 0.03, 0, b.h / 2, 0.04, short - WALL_T, b.h - 0.06, 0x1d2025);
+        for (const k of [-1, 1]) put(-long / 2 + WALL_T / 4, k * (short / 2 - WALL_T / 2 - 0.03), b.h / 2, long - WALL_T / 2, 0.04, b.h - 0.06, 0x1d2025);
+        // each door hinged at its corner and swung out past square
+        const leaf = half + 0.25;
+        for (const k of [-1, 1]) {
+          const wx = d.ox * Math.sin(2.3) - ax * k * Math.cos(2.3);
+          const wz = d.oz * Math.sin(2.3) - az * k * Math.cos(2.3);
+          const hx = d.x + d.ox * (WALL_T / 2) + ax * k * leaf;
+          const hz = d.z + d.oz * (WALL_T / 2) + az * k * leaf;
+          bits.push({ x: hx + (wx * leaf) / 2, y: b.h / 2, z: hz + (wz * leaf) / 2, sx: leaf - 0.04, sy: b.h - 0.12, sz: 0.07, ry: Math.atan2(-wz, wx), c: darker(paint, 0.8) });
+        }
+        continue;
+      }
+      // posts and a lintel in a color that stands out from the walls, a lamp beside the door (on the side toward the
+      // middle of the wall), and a step out onto a porch with a mat (a loading apron at a warehouse)
+      const t = WALL_T + 0.14;
+      for (const k of [-1, 1]) put(0, k * (half + 0.15), b.h / 2, t, 0.3, b.h, s.frame);
+      put(0, 0, b.h - 0.25, t, d.w + 0.6, 0.5, s.frame);
+      put(0, 0, 0.035, WALL_T + 0.02, d.w, 0.07, s.porch);
+      const toward = (b.x - d.x) * ax + (b.z - d.z) * az >= 0 ? 1 : -1;
+      const lamp = { o: WALL_T / 2 + 0.08, l: toward * (half + 0.6) };
+      lamps.push({ x: d.x + d.ox * lamp.o + ax * lamp.l, y: Math.min(b.h - 0.8, 2.4), z: d.z + d.oz * lamp.o + az * lamp.l, sx: d.ox ? 0.14 : 0.24, sz: d.ox ? 0.24 : 0.14 });
+      if (b.kind === 'warehouse') {
+        put(WALL_T / 2 + 1.3, 0, 0.04, 2.6, d.w + 1.6, 0.08, s.porch);
+        for (const k of [-1, 1]) put(WALL_T / 2 + 1.3, k * (half + 0.5), 0.085, 2.6, 0.2, 0.02, s.mat);
+        continue;
+      }
+      put(WALL_T / 2 + 0.75, 0, 0.06, 1.5, d.w + 1.2, 0.12, s.porch);
+      put(WALL_T / 2 + 0.6, 0, 0.13, 0.75, Math.min(d.w * 0.62, 1.9), 0.03, s.mat);
+      // a couple of stepping stones lead off the porch
+      for (const o of [2.2, 3.05]) put(WALL_T / 2 + o, (doorRnd() - 0.5) * 0.5, 0.03, 0.6, 0.85, 0.06, shade(doorRnd, 0xcbc3ae, 0.5).getHex());
     }
+
+    if (!b.roof) return;
+    // the roof: one merged mesh of eaves, a gable (flat on a container), a ridge cap and something over each door
+    const parts: RoofPart[] = [];
+    const piece = (g: T.BufferGeometry, x: number, y: number, z: number, c: number, turn = 0) => {
+      if (turn) g.rotateY(turn);
+      g.translate(x, y, z);
+      parts.push({ g, c });
+    };
+    const rc = roofColor(b);
+    const alongX = b.w >= b.d;
+    const over = b.kind === 'container' ? 0.06 : b.kind === 'warehouse' ? 0.2 : 0.45;
+    const W = b.w + 2 * over;
+    const D = b.d + 2 * over;
+    let top = 0.2;
+    if (b.kind === 'container') piece(new THREE.BoxGeometry(W, 0.2, D), 0, 0.1, 0, rc);
+    else {
+      piece(new THREE.BoxGeometry(W, 0.2, D), 0, 0.1, 0, s.trim);
+      const rise = b.kind === 'warehouse' ? 0.9 : Math.min(1.6, (alongX ? D : W) * 0.16);
+      piece(gableGeometry(THREE, alongX ? W : D, alongX ? D : W, rise), 0, 0.2, 0, rc, alongX ? 0 : Math.PI / 2);
+      piece(new THREE.BoxGeometry(alongX ? W + 0.06 : 0.36, 0.16, alongX ? 0.36 : D + 0.06), 0, 0.2 + rise, 0, darker(rc, 0.62));
+      // a long vent along a warehouse's ridge
+      if (b.kind === 'warehouse') piece(new THREE.BoxGeometry(alongX ? W * 0.7 : 1.3, 0.36, alongX ? 1.3 : D * 0.7), 0, 0.3 + rise, 0, 0xd5dbe0);
+      top = 0.2 + rise;
+    }
+    for (const d of b.doors) {
+      const rx = d.x - b.x;
+      const rz = d.z - b.z;
+      // turns +x to point out through the door
+      const turn = Math.atan2(-d.oz, d.ox);
+      if (b.kind === 'container') {
+        // a yellow band across the roof at the open end
+        piece(new THREE.BoxGeometry(0.55, 0.06, d.w + 0.6), rx - d.ox * 0.3, 0.23, rz - d.oz * 0.3, 0xf2c94c, turn);
+      } else if (b.kind === 'warehouse') {
+        // a flat canopy, yellow with a dark edge
+        piece(new THREE.BoxGeometry(2.6, 0.16, d.w + 1), rx + d.ox * 1.3, -0.4, rz + d.oz * 1.3, s.awning, turn);
+        piece(new THREE.BoxGeometry(0.12, 0.26, d.w + 1.04), rx + d.ox * 2.6, -0.4, rz + d.oz * 2.6, s.edge, turn);
+      } else {
+        // a little gable poking out past the eaves, with a bright board along its front
+        piece(gableGeometry(THREE, 2.4, d.w + 1, 0.75), rx + d.ox * 0.9, -0.35, rz + d.oz * 0.9, s.awning, turn);
+        piece(new THREE.BoxGeometry(0.1, 0.18, d.w + 1.06), rx + d.ox * 2.1, -0.28, rz + d.oz * 2.1, s.edge, turn);
+      }
+    }
+    const special = b.kind === 'coop';
+    const ribbed = b.kind === 'container' || b.kind === 'warehouse' || b.kind === 'shed';
+    const roofMat = lambert(0xffffff, { vertexColors: true, map: ribbed ? ribs : shingles, transparent: true, opacity: 1, ...(special ? { emissive: 0x3a2800 } : {}) });
+    const roof = new THREE.Mesh(geo(mergeRoof(THREE, parts, 2.4, alongX)), roofMat);
+    roof.position.set(b.x, b.h, b.z);
+    scene.add(roof);
     const mats = [roofMat];
     if (special) {
       // a golden egg on top, so the Golden Coop stands out from anywhere (it lifts away with the roof)
       const eggMat = lambert(0xffc83d, { emissive: 0x6a4a00, transparent: true, opacity: 1 });
-      const top = new THREE.Mesh(G.egg, eggMat);
-      top.position.set(0, 1.4, 0);
-      top.scale.set(1.6 / (b.w + 0.9), 3, 1.6 / (b.d + 0.9));
-      roof.add(top);
+      const egg = new THREE.Mesh(G.egg, eggMat);
+      egg.position.set(0, top - 0.3, 0);
+      egg.scale.set(1.6, 1.5, 1.6);
+      roof.add(egg);
       mats.push(eggMat);
     }
     roofs.push({ mesh: roof, mats, fade: 1, at: bi });
   });
   scene.add(buildingWalls);
+  const doorBits = many(G.box, lambert(0xffffff), bits.length);
+  bits.forEach((p, i) => {
+    dummy.position.set(p.x, p.y, p.z);
+    dummy.rotation.set(0, p.ry, 0);
+    dummy.scale.set(p.sx, p.sy, p.sz);
+    dummy.updateMatrix();
+    doorBits.setMatrixAt(i, dummy.matrix);
+    doorBits.setColorAt(i, color.setHex(p.c));
+  });
+  const doorLamps = many(G.box, basic(0xffe9a3), lamps.length);
+  lamps.forEach((p, i) => {
+    dummy.position.set(p.x, p.y, p.z);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(p.sx, 0.32, p.sz);
+    dummy.updateMatrix();
+    doorLamps.setMatrixAt(i, dummy.matrix);
+  });
+  scene.add(doorBits, doorLamps);
 
   // trees: round ones (a trunk and two crowns) and pines (a trunk and two cones)
   const treeRnd = scatter(3);
@@ -1425,10 +1661,12 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         bus.rotation.y = Math.atan2(dx, dz);
       }
 
-      // roofs lift off the building you're in
-      const inside = focus && focus.phase === 'ground' ? focus.inside : -1;
+      // roofs lift off the building you're in, and thin while you stand at one of its doors or line up with one
+      const afoot = !!focus && focus.phase === 'ground';
+      const inside = afoot ? focus.inside : -1;
+      const peek = afoot && inside < 0 ? peekAt(map, focus.x, focus.z) : -1;
       for (const r of roofs) {
-        r.fade = damp(r.fade, r.at === inside ? 0.08 : 1, 10, dt);
+        r.fade = damp(r.fade, r.at === inside ? 0.08 : r.at === peek ? 0.25 : 1, 10, dt);
         for (const x of r.mats) {
           x.opacity = r.fade;
           x.depthWrite = r.fade > 0.98;
@@ -1480,12 +1718,13 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         beamMat.opacity = 0.16 + Math.sin(clock * 3) * 0.06;
       }
 
-      // eggs
+      // eggs (peeking in through a door shows only who the doorway lets you see)
       m.fighters.forEach((f, i) => {
         const v = eggs[i];
         if (!v) return;
         const isFocus = i === focusId;
-        syncEgg(v, f, dt, clock, isFocus, !isFocus && concealed(m, f, focus));
+        const walled = peek >= 0 && !!focus && f.inside === peek && !clearLine(m, focus.x, focus.z, f.x, f.z);
+        syncEgg(v, f, dt, clock, isFocus, !isFocus && (concealed(m, f, focus) || walled));
       });
       syncTosses(m, clock);
       syncZones(m, clock, focus);

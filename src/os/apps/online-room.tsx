@@ -20,7 +20,10 @@ export type AppRoom = ReturnType<typeof useAppRoom>;
 type Handlers = {
   /** A round began (first start or a rematch). Seat 0 is the host. */
   onStart?: (round: number, seat: number, players: RoomPlayer[]) => void;
-  /** The room ended: the host or the opponent left, or the connection dropped. */
+  /**
+   * The game stopped: 'opponent-left' or 'host-left' (someone else hosts now) while you stay in the room, back in its
+   * lobby; 'connection-lost' when the room is gone for you.
+   */
   onEnd?: (reason: string) => void;
 };
 
@@ -83,18 +86,29 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
       setCode(message.code);
       setPlayers(message.players);
     });
+    // Whoever stays keeps the room: back in its lobby, where someone else can join and the host can start again.
+    const toLobby = (message: string, reason: string) => {
+      statusRef.current = 'lobby';
+      setStatus('lobby');
+      setError(message);
+      handlersRef.current.onEnd?.(reason);
+    };
     link.on('players', (list) => {
       if (linkRef.current !== link) return;
       setPlayers(list);
-      if (statusRef.current === 'playing' && list.length < 2) {
-        reset('Your opponent left the room.');
-        handlersRef.current.onEnd?.('opponent-left');
-      }
+      if (statusRef.current === 'playing' && list.length < 2) toLobby('Your opponent left the room.', 'opponent-left');
+    });
+    link.on('host', ({ seat: next }) => {
+      if (linkRef.current !== link) return;
+      setSeat(next);
+      if (statusRef.current === 'playing') toLobby(next === 0 ? 'The host left. You host the room now.' : 'The host left.', 'host-left');
+      else if (next === 0) setError('The host left. You host the room now.');
     });
     link.on('transport', setTransport);
     link.on('listed', (on) => linkRef.current === link && setListedState(on));
     link.on('start', ({ players: list, round: serverRound }) => {
       if (linkRef.current !== link || link.seat === null) return;
+      setError('');
       roundRef.current = nextOnlineRound(roundRef.current, serverRound);
       statusRef.current = 'playing';
       setStatus('playing');
@@ -138,7 +152,12 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
     if (!link) return () => {};
     return link.on('msg', ({ from, d }) => listener(from, d));
   }, []);
-  const reportResult = useCallback((winner: number | null) => linkRef.current?.reportResult(roundRef.current, winner), []);
+  // The result ends the game: the host also tells the room, so someone new can join before the next one.
+  const reportResult = useCallback((winner: number | null) => {
+    const link = linkRef.current;
+    link?.reportResult(roundRef.current, winner);
+    if (link?.seat === 0) link.endRound(roundRef.current);
+  }, []);
 
   useEffect(() => () => linkRef.current?.close(), []);
 
