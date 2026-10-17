@@ -4,9 +4,11 @@
 // computer players and sends everyone the whole match. Things that happen (shots, hits, drops, walls, pickups) travel
 // as events: a guest sends its own to the host, and the host applies them and passes them on to everyone else, in the
 // order it applied them, together with its own. Guests ask the host for pickups and chests and hear back who got them.
-import { isWeapon, parseLoot, type LootDef, type WeaponId } from './items.ts';
+import { MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import {
   CAUSES,
+  HELD,
+  MAX_FIGHTERS,
   PHASES,
   addLoot,
   addWall,
@@ -20,6 +22,7 @@ import {
   held,
   hurt,
   isLevel,
+  launch,
   makeWall,
   openContainer,
   owned,
@@ -27,6 +30,7 @@ import {
   type Cause,
   type Ev,
   type Fighter,
+  type Held,
   type Level,
   type Match,
   type Phase,
@@ -37,11 +41,12 @@ export type Bots = 'fill' | 'none';
 export const isBots = (v: unknown): v is Bots => v === 'fill' || v === 'none';
 
 /** An egg as its owner reports it. */
-export type State = { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: WeaponId | null; r: number; flags: number };
+export type State = { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number };
 
 export type NetEv =
   | { y: 's'; f: number; w: WeaponId; r: number; x: number; z: number; a: number; s: number; k: number }
   | { y: 'sw'; f: number }
+  | { y: 'th'; f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; ft: number }
   | { y: 'd'; f: number; to: number; d: number; w: Cause; x: number; z: number }
   | { y: 'm'; f: number; k: 'wall' | 'crate'; id: number; d: number }
   | { y: 'b'; f: number; x: number; z: number }
@@ -64,7 +69,6 @@ export type Packet =
   | { k: 'end'; round: number; winner: number; places: [number, number, number][] }
   | { k: 'cfg'; round: number; bots: Bots; level: Level };
 
-const MAX_FIGHTERS = 8;
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -72,6 +76,15 @@ const int = (v: unknown): v is number => Number.isInteger(v);
 const fid = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) < MAX_FIGHTERS;
 const seat = (v: unknown): v is number => int(v) && (v as number) >= -1 && (v as number) < 16;
 const isCause = (v: unknown): v is Cause => CAUSES.includes(v as Cause);
+/**
+ * The most one hit from another client can do: a legendary bullet or pellet, a swing, or a grenade right on top. The
+ * rest (the storm, hot sauce, barrels) each client works out for its own egg, so never arrives as a hit.
+ */
+export function hitCap(w: Cause) {
+  if (isWeapon(w)) return Math.round(damageOf(w, MAX_RARITY));
+  if (isMelee(w)) return MELEE[w].dmg;
+  return w === 'grenade' ? (THROWS.grenade.dmg ?? 0) : 0;
+}
 /** Loot and wall ids: whole numbers well inside what JSON carries exactly. */
 const id = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) < 1e9;
 
@@ -83,16 +96,17 @@ export function stateOf(f: Fighter): State {
   return { x: r2(f.x), z: r2(f.z), y: r1(f.y), aim: r2(f.aim), vx: r1(f.vx), vz: r1(f.vz), phase: f.phase, hp: r1(f.hp), shield: r1(f.shield), w: h.w, r: h.r, flags: flagsOf(f) };
 }
 
-const WEAPON_CODES: (WeaponId | null)[] = [null, 'pistol', 'smg', 'rifle', 'shotgun', 'sniper', 'launcher'];
-const packState = (s: State) => [s.x, s.z, s.y, s.aim, s.vx, s.vz, PHASES.indexOf(s.phase), s.hp, s.shield, WEAPON_CODES.indexOf(s.w), s.r, s.flags];
+/** What an egg holds, as a number: 0 for nothing reported yet, then guns, melee weapons and throwables. */
+const HELD_CODES: (Held | null)[] = [null, ...HELD];
+const packState = (s: State) => [s.x, s.z, s.y, s.aim, s.vx, s.vz, PHASES.indexOf(s.phase), s.hp, s.shield, HELD_CODES.indexOf(s.w), s.r, s.flags];
 
 function unpackState(a: unknown): State | null {
   if (!Array.isArray(a) || a.length < 12 || !a.slice(0, 12).every(num)) return null;
   const [x, z, y, aim, vx, vz, ph, hp, shield, w, r, flags] = a as number[];
   const phase = PHASES[ph];
-  if (!phase || !int(w) || w < 0 || w >= WEAPON_CODES.length || !int(r) || r < 0 || r > 4 || !int(flags)) return null;
+  if (!phase || !int(w) || w < 0 || w >= HELD_CODES.length || !int(r) || r < 0 || r > 4 || !int(flags) || flags < 0 || flags > 255) return null;
   if (Math.abs(x) > 400 || Math.abs(z) > 400 || y < -1 || y > 100 || hp < 0 || hp > 100 || shield < 0 || shield > 100) return null;
-  return { x, z, y, aim, vx: Math.max(-40, Math.min(40, vx)), vz: Math.max(-40, Math.min(40, vz)), phase, hp, shield, w: WEAPON_CODES[w], r, flags };
+  return { x, z, y, aim, vx: Math.max(-40, Math.min(40, vx)), vz: Math.max(-40, Math.min(40, vz)), phase, hp, shield, w: HELD_CODES[w], r, flags };
 }
 
 export const guestState = (round: number, s: State) => ({ t: 'pk', r: round, k: 's', c: packState(s) });
@@ -124,6 +138,8 @@ export function toNet(e: Ev): NetEv | null {
       return { y: 's', f: e.f, w: e.w, r: e.r, x: e.x, z: e.z, a: e.a, s: e.s, k: e.k };
     case 'swing':
       return { y: 'sw', f: e.f };
+    case 'throw':
+      return { y: 'th', f: e.f, k: e.k, x: e.x, z: e.z, lx: e.lx, lz: e.lz, ft: e.ft };
     case 'hit':
       return e.local ? null : { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z };
     case 'smash':
@@ -174,8 +190,12 @@ function parseEv(v: unknown): NetEv | null {
         : null;
     case 'sw':
       return fid(e.f) ? { y: 'sw', f: e.f } : null;
+    case 'th':
+      return fid(e.f) && isThrow(e.k) && num(e.x) && num(e.z) && num(e.lx) && num(e.lz) && num(e.ft) && e.ft > 0 && e.ft <= 3 && Math.hypot(e.lx - e.x, e.lz - e.z) <= 25
+        ? { y: 'th', f: e.f, k: e.k, x: e.x, z: e.z, lx: e.lx, lz: e.lz, ft: e.ft }
+        : null;
     case 'd':
-      return fid(e.f) && fid(e.to) && num(e.d) && e.d > 0 && e.d <= 400 && isCause(e.w) && num(e.x) && num(e.z) ? { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z } : null;
+      return fid(e.f) && fid(e.to) && num(e.d) && isCause(e.w) && e.d > 0 && e.d <= hitCap(e.w) && num(e.x) && num(e.z) ? { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z } : null;
     case 'm':
       return fid(e.f) && (e.k === 'wall' || e.k === 'crate') && id(e.id) && num(e.d) && e.d > 0 && e.d <= 1000 ? { y: 'm', f: e.f, k: e.k, id: e.id, d: e.d } : null;
     case 'b':
@@ -214,7 +234,8 @@ export function applyNet(m: Match, e: NetEv): boolean {
   switch (e.y) {
     case 's':
       if (!f || owned(f)) return false;
-      f.firedAt = m.clock;
+      // a silent shot keeps the shooter hidden here too, as it does on the shooter's own screen
+      if (!WEAPONS[e.w].silent) f.firedAt = m.clock;
       fire(m, e.f, e.w, e.r, e.x, e.z, e.a, e.s, e.k, false);
       m.events.push({ t: 'shot', f: e.f, w: e.w, r: e.r, x: e.x, z: e.z, a: e.a, s: e.s, k: e.k, net: true });
       return true;
@@ -222,6 +243,12 @@ export function applyNet(m: Match, e: NetEv): boolean {
       if (!f || owned(f)) return false;
       f.firedAt = m.clock;
       m.events.push({ t: 'swing', f: e.f, net: true });
+      return true;
+    case 'th':
+      if (!f || owned(f)) return false;
+      f.firedAt = m.clock;
+      launch(m, e.f, e.k, e.x, e.z, e.lx, e.lz, e.ft, false);
+      m.events.push({ t: 'throw', f: e.f, k: e.k, x: e.x, z: e.z, lx: e.lx, lz: e.lz, ft: e.ft, net: true });
       return true;
     case 'd': {
       const to = m.fighters[e.to];
@@ -250,8 +277,9 @@ export function applyNet(m: Match, e: NetEv): boolean {
       if (!m.world) applyTook(m, e.f, e.id, e.it);
       return true;
     case 'op': {
+      // a chest, or a supply drop that has landed (give or take the second a guest's clock may be ahead)
       const c = m.map.containers[e.c];
-      if (m.world && c?.kind === 'chest') openContainer(m, e.c, e.f, true);
+      if (m.world && c && (c.kind === 'chest' || (c.kind === 'supply' && m.time >= c.at - 1))) openContainer(m, e.c, e.f, true);
       return false;
     }
     case 'opd':

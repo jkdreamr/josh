@@ -6,51 +6,63 @@ import {
   COUNTDOWN,
   FIGHTER_COLORS,
   LEVELS,
+  MAX_FIGHTERS,
+  SLOT_MELEE,
+  SLOT_THROW,
   aliveCount,
   angleDiff,
-  canSee,
   concealed,
   createMatch,
   fmtClock,
   held,
+  heldGun,
   ordinal,
   owned,
   prompt,
   scoreOf,
   soloMatch,
   step,
+  type Cause,
   type Ev,
   type Fighter,
+  type Input,
   type Level,
   type Match,
 } from './logic';
 import { configOf, parsePacket, type Bots } from './net';
-import { FLUSH, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
-import { AMMO_MAX, RARITY_COLORS, WEAPONS, WOOD_MAX, lootName, reloadOf, type WeaponId } from './items';
-import { HALF } from './map';
-import { AmmoIcon, BandageIcon, EggIcon, HowToPlay, IslandArt, ShieldIcon, WeaponIcon, WoodIcon } from './hud';
+import { END_PAUSE, FLUSH, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
+import { MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
+import { HALF, SUPPLY_FALL } from './map';
+import { AmmoIcon, EggIcon, HowToPlay, IslandArt, PackIcon, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon } from './hud';
 import { meta } from './meta';
 import './scramble.css';
 
 const LEVEL = defineSetting('scramble:level', LEVELS, 'normal');
-const BOTS = defineSetting('scramble:bots', ['fill', 'none'] as const, 'fill');
 const levelOptions = [
   ['easy', 'Easy'],
   ['normal', 'Normal'],
   ['hard', 'Hard'],
 ] as const;
-const botOptions = [
-  ['fill', 'Fill to 8'],
-  ['none', 'None'],
+/** With computer eggs in the room, whether more of them fill the island up to twenty. */
+const FILL = defineSetting('scramble:fill', ['fill', 'none'] as const, 'fill');
+/** A Scramble room starts full: seven bots with the host, and Fill to 20 adds the rest. */
+const ROOM_BOTS = (meta.online?.seats ?? 8) - 1;
+const fillOptions = [
+  ['fill', 'Fill to 20'],
+  ['none', 'Room Bots Only'],
 ] as const;
 /** The host gives everyone a moment to get its first packet before the countdown. */
 const HOST_LEAD = 1.2;
 const STICK_R = 52;
 const randomSeed = () => Math.floor(Math.random() * 0x7fffffff);
+/** How far a touch throw goes for how far the right thumb is pushed (pixels from where it came down). */
+const tossReach = (len: number) => THROW.min + Math.max(0, Math.min(1, (len - 12) / (STICK_R - 12))) * (THROW.max - THROW.min);
+/** Seconds a touch throw let go of too soon after the last one waits to go. */
+const TOSS_WAIT = 0.8;
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} defaultBots={ROOM_BOTS}>
       <Stage />
     </GameShell>
   );
@@ -97,49 +109,55 @@ function Extras() {
   );
 }
 
-/** Settings for online matches: the host picks for everyone and tells the room as they change; guests see the picks. */
+/**
+ * Settings for online matches. The room's bots are its computer eggs (the host adds them in the room, and they fill
+ * every empty seat unless the host takes some away). With any in the room, the host picks whether more fill the island
+ * to twenty, and how sharp they all are, and tells the room.
+ */
 function OnlineSetup() {
   const online = useOnline();
   const [level, setLevel] = useSetting(LEVEL);
-  const [bots, setBots] = useSetting(BOTS);
+  const [fill, setFill] = useSetting(FILL);
   const [picked, setPicked] = useState<{ bots: Bots; level: Level } | null>(null);
   const host = online?.isHost ?? true;
+  const bots = online?.bots.length ?? 0;
   useEffect(() => {
     if (!online?.isHost) return;
-    const say = () => online.send(configOf(online.round, bots, level));
+    const say = () => online.send(configOf(online.round, fill, level));
     say();
     const timer = window.setInterval(say, 2000);
     return () => window.clearInterval(timer);
-  }, [online, bots, level]);
+  }, [online, fill, level]);
   useEffect(() => {
     if (!online || online.isHost) return;
     return online.onMessage((from, d) => {
       const p = parsePacket(d);
       if (from !== 0 || !p) return;
       if (p.k === 'cfg') setPicked({ bots: p.bots, level: p.level });
-      // joining while a match is on: the host's state says how it was set up
+      // joining while a match is on, the host's state says how it was set up
       else if (p.k === 'S') {
-        const bots: Bots = p.roster.includes(-1) ? 'fill' : 'none';
+        const bots: Bots = p.roster.length >= MAX_FIGHTERS ? 'fill' : 'none';
         setPicked((x) => (x && x.bots === bots && x.level === p.level ? x : { bots, level: p.level }));
       }
     });
   }, [online]);
   return (
     <>
-      {host ? (
-        <>
-          <Segmented label="Computer Eggs" value={bots} options={botOptions} onChange={setBots} />
-          {bots === 'fill' && <Segmented label="How Sharp" value={level} options={levelOptions} onChange={setLevel} />}
-        </>
-      ) : (
-        <div className="arcade-field">
-          <span>Computer Eggs</span>
-          <div className="g-scramble-hostpick">
-            <b>{picked ? (picked.bots === 'fill' ? `fill to 8, ${picked.level}` : 'none') : '…'}</b>
-            <small>picked by the host</small>
+      {bots > 0 &&
+        (host ? (
+          <>
+            <Segmented label="Computer Eggs" value={fill} options={fillOptions} onChange={setFill} />
+            <Segmented label="How Sharp" value={level} options={levelOptions} onChange={setLevel} />
+          </>
+        ) : (
+          <div className="arcade-field">
+            <span>Computer Eggs</span>
+            <div className="g-scramble-hostpick">
+              <b>{picked ? `${picked.bots === 'fill' ? 'fill to 20' : 'room bots only'}, ${picked.level}` : '…'}</b>
+              <small>picked by the host</small>
+            </div>
           </div>
-        </div>
-      )}
+        ))}
       <Extras />
     </>
   );
@@ -163,7 +181,7 @@ function Stage() {
 /** A stand-in while a guest waits for the host: the island with nobody on it. */
 const waitingMatch = (level: Level) => createMatch({ seed: 1, role: 'guest', level, entrants: [], me: -1 });
 
-type Slot = { w: WeaponId | null; r: number; mag: number } | null;
+type Slot = { w: WeaponId; r: number; mag: number } | null;
 type Hud = {
   phase: Fighter['phase'] | 'none';
   alive: number;
@@ -171,13 +189,20 @@ type Hud = {
   kills: number;
   hp: number;
   shield: number;
+  boost: number;
   slot: number;
   slots: [Slot, Slot];
+  melee: MeleeId;
+  /** The throwable in the throw slot, how many (-1 when it's someone else's egg), and how many kinds we carry. */
+  toss: { w: ThrowId; n: number; kinds: number } | null;
   mag: number;
   reserve: number;
+  ammo: Ammo | null;
   wood: number;
-  bandages: number;
-  shields: number;
+  /** Consumables by kind, or null when it's someone else's egg. */
+  items: Record<UseId, number> | null;
+  scope: number;
+  pack: number;
   /** 0..1 while reloading or using something, else -1. */
   busy: number;
   busyText: string;
@@ -192,15 +217,29 @@ type Hud = {
   out: string | null;
   mine: boolean;
 };
-const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (k === 'slots' ? JSON.stringify(a.slots) === JSON.stringify(b.slots) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, slot: 2, slots: [null, null], mag: 0, reserve: 0, wood: 0, bandages: 0, shields: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
+const deep = new Set<keyof Hud>(['slots', 'toss', 'items']);
+const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, wood: 0, items: null, scope: 0, pack: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
 type Feed = { id: number; text: string; mine: boolean; until: number };
 type Pop = { el: HTMLDivElement | null; x: number; y: number; z: number; age: number; live: boolean };
+/** `toss` is how far a touch throw goes, `tossAim` which way, and `tossBy` the match clock it gives up at if it can't go yet. */
+type Taps = { build: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number };
+const noTaps = (): Taps => ({ build: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0 });
 
-const causeName = (w: string) => (w === 'storm' ? 'the storm' : w === 'left' ? '' : w === 'spatula' ? 'a spatula' : WEAPONS[w as WeaponId]?.name ?? w);
+const BUSY_TEXT: Record<UseId, string> = { bandage: 'bandaging', medkit: 'using a medkit', mini: 'drinking a mini shield', shield: 'drinking a shield potion', coffee: 'drinking coffee' };
+/** A name with its article, for the kill feed: "with a pistol", "with an smg", "with hot sauce". */
+const withA = (name: string) => `${/^[aeiou]|^SMG/.test(name) ? 'an' : 'a'} ${name}`;
+function causeName(w: Cause) {
+  if (w === 'storm') return 'the storm';
+  if (w === 'left') return '';
+  if (w === 'sauce') return 'hot sauce';
+  if (w === 'grenade' || w === 'barrel') return withA(w);
+  if (isMelee(w)) return withA(MELEE[w].name);
+  return withA(WEAPONS[w].name);
+}
 
 function Play({ mode }: { mode: Mode }) {
   const shell = useShell();
@@ -213,7 +252,7 @@ function Play({ mode }: { mode: Mode }) {
   onlineRef.current = online;
   const live = mode === 'online' && !!online;
   const [level] = useSetting(LEVEL);
-  const [bots] = useSetting(BOTS);
+  const [fill] = useSetting(FILL);
   const bests = useBests();
   const { ref, size } = useCanvas<HTMLDivElement>();
   const sizeRef = useRef(size);
@@ -226,7 +265,9 @@ function Play({ mode }: { mode: Mode }) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
     else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0]);
     else if (online!.isHost) {
-      const h = hostMatch(online!.players, online!.seat, randomSeed(), level, bots, COUNTDOWN + HOST_LEAD);
+      // the room's bots, and with any of them, more to fill the island when the host wants it
+      const bots = online!.bots.length;
+      const h = hostMatch(online!.players, online!.seat, randomSeed(), level, bots > 0 && fill === 'fill' ? MAX_FIGHTERS : bots, COUNTDOWN + HOST_LEAD);
       match.current = h.match;
       net.current.roster = h.roster;
     } else match.current = waitingMatch(level);
@@ -243,7 +284,7 @@ function Play({ mode }: { mode: Mode }) {
 
   // input that arrives between frames
   const mouse = useRef({ x: 0, y: 0, inside: false, down: false, clicked: false });
-  const taps = useRef({ build: false, reload: false, heal: false, shield: false, interact: false, jump: false, cycle: 0, slot: -1, watch: 0 });
+  const taps = useRef<Taps>(noTaps());
   const moveStick = useRef<Stick | null>(null);
   const aimStick = useRef<Stick | null>(null);
   /** Which thumbsticks are down; their knobs move on the DOM as the thumb does. */
@@ -263,7 +304,7 @@ function Play({ mode }: { mode: Mode }) {
   const soundGap = useRef(0);
 
   // floating damage numbers and name tags, moved on the DOM every frame
-  const pops = useRef<Pop[]>(Array.from({ length: 18 }, () => ({ el: null, x: 0, y: 0, z: 0, age: 9, live: false })));
+  const pops = useRef<Pop[]>(Array.from({ length: 24 }, () => ({ el: null, x: 0, y: 0, z: 0, age: 9, live: false })));
   const popAt = useRef(0);
   const tags = useRef(new Map<number, HTMLDivElement>());
 
@@ -339,7 +380,11 @@ function Play({ mode }: { mode: Mode }) {
   // -------------------------------------------------------------------------------------------------------------
   // Online: state about 15 times a second, events as they happen, the result from the host.
 
-  const finishOnline = (report: boolean) => {
+  /**
+   * The result card for an online match. `report` once the host has called it; `early` when a guest who is out has
+   * seen enough before the end (the match goes on for everyone else, and the result is still reported when it comes).
+   */
+  const finishOnline = (report: boolean, early = false) => {
     const n = net.current;
     const o = onlineRef.current;
     const m = match.current!;
@@ -354,7 +399,7 @@ function Play({ mode }: { mode: Mode }) {
     const won = !!me && m.winner === me.id;
     const title = won ? 'Last Egg Standing' : me ? `${ordinal(me.place || m.fighters.length)} of ${m.fighters.length}` : 'Match Over';
     const stats = me ? `${me.kills} ${me.kills === 1 ? 'elimination' : 'eliminations'}, ${Math.round(me.dealt)} damage.` : '';
-    const who = winner && !won ? ` ${winner.name} won.` : !winner ? ' Nobody survived the storm.' : '';
+    const who = early ? ` ${aliveCount(m)} eggs still going.` : winner && !won ? ` ${winner.name} won.` : !winner ? ' Nobody survived the storm.' : '';
     sfx.play(won ? 'win' : 'lose');
     shellRef.current.gameOver(undefined, { title, detail: `${stats}${who}`.trim() });
   };
@@ -402,6 +447,11 @@ function Play({ mode }: { mode: Mode }) {
         const call = ending(n, m, me, now);
         if (call) finishRef.current(call === 'report');
       }
+      if (n.over) {
+        // done watching before the end: nothing draws the match any more, but the room still hears who won from us
+        m.events.length = 0;
+        if (!n.reported && n.end && now - n.endAt > END_PAUSE) finishRef.current(true);
+      }
       for (const out of tick(n, m, me, o.players.map((p) => p.seat), now)) o.send(out.d, { fast: out.fast });
     }, TICK_MS);
     return () => {
@@ -413,9 +463,13 @@ function Play({ mode }: { mode: Mode }) {
   // -------------------------------------------------------------------------------------------------------------
   // Input.
 
-  function readInput(m: Match, me: Fighter, v: View | null) {
+  const throwing = (f: Fighter | undefined) => !!f && owned(f) && f.phase === 'ground' && f.slot === SLOT_THROW && THROW_IDS.some((k) => f.throws[k] > 0);
+
+  function readInput(m: Match, me: Fighter, v: View | null, dt: number) {
     const inp = me.input;
     const t = taps.current;
+    // Enter and left/right taps only count once you're out (leave, watch another egg): drop any made before then
+    keys.pressed('Enter', 'left', 'right');
     // walking: keys, or the left thumb
     let mx = keys.axis('left', 'right');
     let mz = keys.axis('up', 'down');
@@ -430,49 +484,72 @@ function Play({ mode }: { mode: Mode }) {
     }
     inp.mx = mx;
     inp.mz = mz;
-    // aiming: the right thumb, the mouse, or the way you walk
+    // aiming: the right thumb, the mouse, or the way you walk. With a throwable out, the right thumb sets how far
+    // it goes and letting go throws it; the mouse throws to wherever it points.
+    const tossing = throwing(me);
     let fire = false;
     const as = aimStick.current;
-    if (as && Math.hypot(as.x - as.ox, as.y - as.oy) > 10) {
+    const drag = !!as && Math.hypot(as.x - as.ox, as.y - as.oy) > 10;
+    if (drag) {
       const dx = as.x - as.ox;
       const dy = as.y - as.oy;
+      const len = Math.hypot(dx, dy);
       lastAim.current = assist(m, me, Math.atan2(dx, dy));
-      fire = Math.hypot(dx, dy) > STICK_R * 0.5;
+      if (tossing) inp.reach = tossReach(len);
+      else fire = len > STICK_R * 0.5;
     } else if (mouse.current.inside && v && !touchRef.current) {
       const g = v.ground(mouse.current.x, mouse.current.y, 1);
       if (g && Math.hypot(g.x - me.x, g.z - me.z) > 0.3) lastAim.current = Math.atan2(g.x - me.x, g.z - me.z);
-    } else if (mx || mz) lastAim.current = Math.atan2(mx, mz);
-    if (mouse.current.down && !touchRef.current) fire = true;
-    if (keys.down('KeyF')) {
-      // F: shoot at the nearest egg in sight
-      const target = nearestFoe(m, me);
-      if (target) lastAim.current = Math.atan2(target.x - me.x, target.z - me.z);
-      fire = true;
+      inp.reach = g ? Math.hypot(g.x - me.x, g.z - me.z) : 0;
+    } else {
+      if (mx || mz) lastAim.current = Math.atan2(mx, mz);
+      if (!as) inp.reach = 0;
     }
-    inp.aim = lastAim.current;
+    // a click too quick for a frame still fires (or throws) once
+    if ((mouse.current.down || mouse.current.clicked) && !touchRef.current) fire = true;
+    // a touch throw goes where the right thumb aimed it. One let go of during the throw cooldown waits it out (for a
+    // moment), and a new drag of the right thumb keeps the aim line until it goes.
+    const toss = tossing && t.toss > 0 && m.clock < t.tossBy ? t.toss : 0;
+    const go = toss > 0 && (!drag || me.fireT <= dt);
+    if (go) {
+      fire = true;
+      inp.reach = toss;
+    }
+    inp.aim = go ? t.tossAim : lastAim.current;
     inp.fire = fire && me.phase === 'ground';
     if (keys.pressed('Digit1')) inp.slot = 0;
     if (keys.pressed('Digit2')) inp.slot = 1;
-    if (keys.pressed('Digit3')) inp.slot = 2;
+    if (keys.pressed('Digit3')) inp.slot = SLOT_MELEE;
+    if (keys.pressed('Digit4')) inp.slot = SLOT_THROW;
     if (t.slot >= 0) inp.slot = t.slot;
     if (keys.pressed('KeyQ')) inp.cycle = 1;
     if (t.cycle) inp.cycle = t.cycle;
     if (keys.pressed('KeyR') || t.reload) inp.reload = true;
-    if (keys.pressed('KeyE') || t.interact) inp.interact = true;
-    if (keys.pressed('KeyH', 'Digit4') || t.heal) inp.heal = true;
-    if (keys.pressed('KeyG', 'Digit5') || t.shield) inp.shield = true;
+    if (keys.pressed('KeyE', 'KeyF') || t.interact) inp.interact = true;
+    USE_IDS.forEach((w) => {
+      if (keys.pressed(`Digit${USE_KEYS[w]}`)) inp.use = w;
+    });
+    if (keys.pressed('KeyH')) inp.use = 'bestHeal';
+    if (keys.pressed('KeyG')) inp.use = 'bestShield';
+    if (keys.pressed('KeyC')) inp.use = 'coffee';
+    if (t.use) inp.use = t.use;
     const space = keys.pressed('Space');
     if (me.phase === 'bus') {
       if (space || t.jump || mouse.current.clicked || inp.interact || t.build) inp.jump = true;
     } else if (space || t.build) inp.build = true;
     mouse.current.clicked = false;
-    taps.current = { build: false, reload: false, heal: false, shield: false, interact: false, jump: false, cycle: 0, slot: -1, watch: 0 };
+    taps.current = noTaps();
+    if (toss && me.fireT > dt) {
+      taps.current.toss = toss;
+      taps.current.tossAim = t.tossAim;
+      taps.current.tossBy = t.tossBy;
+    }
   }
 
   /** On a touchscreen, a near miss with the right thumb snaps onto the egg it was meant for. */
   function assist(m: Match, me: Fighter, a: number) {
-    const h = held(me);
-    const range = h.w ? WEAPONS[h.w].range : 3;
+    const g = heldGun(me);
+    const range = g ? WEAPONS[g].range : throwing(me) ? THROW.max : 3;
     let best = a;
     let bestD = 0.2;
     for (const o of m.fighters) {
@@ -483,20 +560,6 @@ function Play({ mode }: { mode: Mode }) {
       if (off < bestD) {
         bestD = off;
         best = Math.atan2(o.x - me.x, o.z - me.z);
-      }
-    }
-    return best;
-  }
-
-  function nearestFoe(m: Match, me: Fighter) {
-    let best: Fighter | null = null;
-    let bestD = Infinity;
-    for (const o of m.fighters) {
-      if (o === me || !canSee(m, me, o, 70)) continue;
-      const d = Math.hypot(o.x - me.x, o.z - me.z);
-      if (d < bestD) {
-        best = o;
-        bestD = d;
       }
     }
     return best;
@@ -519,7 +582,7 @@ function Play({ mode }: { mode: Mode }) {
         return;
       }
       const me = m.fighters[m.me];
-      if (me && me.phase !== 'out' && !n.over) readInput(m, me, v);
+      if (me && me.phase !== 'out' && !n.over) readInput(m, me, v, dt);
       else watchInput(m);
       if (keys.pressed('KeyM')) setBigMap((b) => !b);
 
@@ -537,13 +600,11 @@ function Play({ mode }: { mode: Mode }) {
         placeOverlays(m, v, dt, focus);
       }
 
-      // the end
+      // the end: once one egg is left (out or not, you watch the rest until then, or leave when you like)
       if (!live) {
-        if (me && !n.over) {
-          if (me.phase === 'out' || m.ended) {
-            if (soloEnd.current < 0) soloEnd.current = clock.current;
-            if (clock.current - soloEnd.current > (me.phase === 'out' ? 2.6 : 2.2)) finishSolo(m, me);
-          }
+        if (me && !n.over && m.ended) {
+          if (soloEnd.current < 0) soloEnd.current = clock.current;
+          if (clock.current - soloEnd.current > 2.2) finishSolo(m, me);
         }
       } else if (o) {
         // the host calls it; if it never does, show what we know without reporting a winner
@@ -555,8 +616,9 @@ function Play({ mode }: { mode: Mode }) {
     () => view.current?.render(),
   );
 
-  /** Out of the match: arrows (or the on-screen buttons) switch whose view you watch. */
+  /** Out of the match: arrows (or the on-screen buttons) switch whose view you watch, and Enter leaves. */
   function watchInput(m: Match) {
+    if (keys.pressed('Enter') && canLeave()) leave();
     const step = (keys.pressed('right', 'KeyE') ? 1 : 0) - (keys.pressed('left') ? 1 : 0) + taps.current.watch;
     taps.current.watch = 0;
     if (!step) return;
@@ -564,6 +626,23 @@ function Play({ mode }: { mode: Mode }) {
     if (!alive.length) return;
     const at = alive.findIndex((f) => f.id === spectate.current);
     spectate.current = alive[(at + step + alive.length) % alive.length].id;
+  }
+
+  /**
+   * Out, and seen enough: on to the results. Online that's only for guests; the host's game runs the match for
+   * everyone, so the host watches it to the end.
+   */
+  const canLeave = () => {
+    const m = match.current;
+    const me = m?.fighters[m.me];
+    return !!me && me.phase === 'out' && !net.current.over && (!live || !onlineRef.current?.isHost);
+  };
+  function leave() {
+    const m = match.current!;
+    const me = m.fighters[m.me];
+    if (!canLeave() || !me) return;
+    if (!live) finishSolo(m, me);
+    else finishRef.current(false, !m.ended);
   }
 
   function finishSolo(m: Match, me: Fighter) {
@@ -576,7 +655,7 @@ function Play({ mode }: { mode: Mode }) {
     const newBest = score > 0 && best.submit(score);
     const winner = m.fighters[m.winner];
     const title = won ? 'Last Egg Standing' : `${ordinal(me.place)} of ${m.fighters.length}`;
-    const how = won ? '' : me.by >= 0 ? ` Cracked by ${m.fighters[me.by]?.name ?? 'someone'}.` : me.outCause === 'storm' ? ' The storm got you.' : '';
+    const how = won ? '' : me.by >= 0 && me.by !== me.id ? ` Cracked by ${m.fighters[me.by]?.name ?? 'someone'}.` : me.outCause === 'storm' ? ' The storm got you.' : '';
     const detail = `${score.toLocaleString('en-US')} pts${newBest ? ', a new best' : ''}: ${me.kills} ${me.kills === 1 ? 'elimination' : 'eliminations'}, ${Math.round(me.dealt)} damage${won ? ' and the win' : ''}.${how}${!won && winner && m.ended ? ` ${winner.name} won.` : ''}`;
     shellRef.current.gameOver(undefined, score > 0 ? { title, detail, board: m.level, rank: score } : { title, detail });
   }
@@ -612,21 +691,46 @@ function Play({ mode }: { mode: Mode }) {
         sfx.noise(0.06, 0.14 * k);
         sfx.tone({ freq: 720, to: 180, dur: 0.06, type: 'square', vol: 0.05 * k });
         break;
+      case 'revolver':
+        sfx.noise(0.2, 0.26 * k);
+        sfx.tone({ freq: 420, to: 70, dur: 0.22, type: 'sawtooth', vol: 0.09 * k });
+        break;
       case 'smg':
         sfx.noise(0.04, 0.1 * k);
         sfx.tone({ freq: 900, to: 300, dur: 0.04, type: 'square', vol: 0.04 * k });
         break;
+      case 'micro':
+        sfx.noise(0.03, 0.08 * k);
+        sfx.tone({ freq: 1100, to: 420, dur: 0.03, type: 'square', vol: 0.035 * k });
+        break;
       case 'rifle':
+      case 'burst':
         sfx.noise(0.07, 0.15 * k);
         sfx.tone({ freq: 520, to: 120, dur: 0.08, type: 'sawtooth', vol: 0.06 * k });
         break;
+      case 'lmg':
+        sfx.noise(0.08, 0.17 * k);
+        sfx.tone({ freq: 380, to: 90, dur: 0.08, type: 'sawtooth', vol: 0.06 * k });
+        break;
+      case 'scout':
+        sfx.noise(0.16, 0.22 * k);
+        sfx.tone({ freq: 1100, to: 140, dur: 0.2, type: 'sawtooth', vol: 0.07 * k });
+        break;
       case 'shotgun':
+      case 'double':
         sfx.noise(0.22, 0.3 * k);
         sfx.tone({ freq: 190, to: 50, dur: 0.18, type: 'sawtooth', vol: 0.1 * k });
+        break;
+      case 'auto':
+        sfx.noise(0.15, 0.24 * k);
+        sfx.tone({ freq: 230, to: 70, dur: 0.12, type: 'sawtooth', vol: 0.08 * k });
         break;
       case 'sniper':
         sfx.noise(0.3, 0.28 * k);
         sfx.tone({ freq: 1400, to: 90, dur: 0.35, type: 'sawtooth', vol: 0.08 * k });
+        break;
+      case 'crossbow':
+        sfx.tone({ freq: 260, to: 120, dur: 0.12, type: 'triangle', vol: 0.09 * k });
         break;
       case 'launcher':
         sfx.tone({ freq: 220, to: 560, dur: 0.25, type: 'sawtooth', vol: 0.07 * k });
@@ -655,6 +759,12 @@ function Play({ mode }: { mode: Mode }) {
           sfx.tone({ freq: 300, to: 200, dur: 0.6, type: 'sawtooth', vol: 0.08, delay: 0.7 });
         }
         break;
+      case 'supply':
+        if (m.fighters[m.me]?.phase === 'out') break;
+        say('a supply drop is coming down', 3);
+        sfx.tone({ freq: 660, to: 990, dur: 0.25, type: 'triangle', vol: 0.12 });
+        sfx.tone({ freq: 990, to: 1320, dur: 0.25, type: 'triangle', vol: 0.12, delay: 0.25 });
+        break;
       case 'jump':
         if (mine) sfx.play('jump');
         break;
@@ -673,7 +783,27 @@ function Play({ mode }: { mode: Mode }) {
         break;
       }
       case 'swing':
-        if (f && (mine || near(f.x, f.z) > 0.6)) sfx.tone({ freq: 340, to: 140, dur: 0.1, type: 'triangle', vol: 0.08 });
+        if (f && (mine || near(f.x, f.z) > 0.6)) {
+          if (held(f).w === 'pan') sfx.tone({ freq: 520, to: 260, dur: 0.12, type: 'square', vol: 0.06 });
+          else sfx.tone({ freq: 340, to: 140, dur: 0.1, type: 'triangle', vol: 0.08 });
+        }
+        break;
+      case 'throw':
+        if (f && (mine || near(f.x, f.z) > 0.3)) sfx.tone({ freq: 500, to: 900, dur: 0.15, type: 'triangle', vol: 0.06 * (mine ? 1 : near(f.x, f.z)) });
+        break;
+      case 'zone': {
+        const k = near(e.x, e.z);
+        if (k <= 0) break;
+        if (e.k === 'flour') sfx.noise(0.35, 0.2 * k);
+        else {
+          sfx.noise(0.5, 0.12 * k);
+          sfx.tone({ freq: 160, to: 90, dur: 0.4, type: 'sawtooth', vol: 0.05 * k });
+        }
+        break;
+      }
+      case 'thud':
+        // a frying pan turning a bullet away, near us
+        if (e.what === 'pan' && near(e.x, e.z) > 0.5) sfx.tone({ freq: 1500, to: 900, dur: 0.12, type: 'square', vol: 0.06 });
         break;
       case 'hit':
         if (e.f === m.me) {
@@ -714,16 +844,16 @@ function Play({ mode }: { mode: Mode }) {
         if (mine) sfx.play('select', 0.8);
         break;
       case 'used':
-        if (mine) sfx.play('coin', e.what === 'shield' ? 0.9 : 1.2);
+        if (mine) sfx.play('coin', e.what === 'shield' || e.what === 'mini' ? 0.9 : e.what === 'coffee' ? 1.5 : 1.2);
         break;
       case 'took':
-        if (e.f === m.me) sfx.play(e.def.kind === 'gun' ? 'select' : 'blip', 1.3);
+        if (e.f === m.me) sfx.play(e.def.kind === 'gun' || e.def.kind === 'melee' ? 'select' : 'blip', 1.3);
         break;
       case 'opened':
         if (e.f === m.me) {
           const c = m.map.containers[e.c];
-          if (c?.kind === 'chest') sfx.play('coin', 1);
-          else sfx.noise(0.15, 0.15);
+          if (c?.kind === 'chest' || c?.kind === 'supply') sfx.play('coin', c.kind === 'supply' || c.gold ? 0.8 : 1);
+          else if (c?.kind === 'crate') sfx.noise(0.15, 0.15);
         }
         break;
       case 'wall':
@@ -772,7 +902,7 @@ function Play({ mode }: { mode: Mode }) {
     for (const f of m.fighters) {
       const tag = tags.current.get(f.id);
       if (!tag) continue;
-      const show = f.id !== focus && (f.phase === 'ground' || f.phase === 'drop') && !concealed(m, f, eye) && !!eye && Math.hypot(f.x - eye.x, f.z - eye.z) < 34 && (f.inside < 0 || f.inside === eye.inside);
+      const show = f.id !== focus && (f.phase === 'ground' || f.phase === 'drop') && !concealed(m, f, eye) && !!eye && Math.hypot(f.x - eye.x, f.z - eye.z) < 40 && (f.inside < 0 || f.inside === eye.inside);
       const at = show ? v.project(f.x, f.y + 2.3, f.z) : null;
       if (!at) tag.style.opacity = '0';
       else {
@@ -815,7 +945,11 @@ function Play({ mode }: { mode: Mode }) {
     const own = owned(focus);
     const h = held(focus);
     const g = own && focus.slot < 2 ? focus.guns[focus.slot] : null;
-    const slots: [Slot, Slot] = own ? [focus.guns[0] ? { ...focus.guns[0] } : null, focus.guns[1] ? { ...focus.guns[1] } : null] : [h.w ? { w: h.w, r: h.r, mag: -1 } : null, null];
+    const slots: [Slot, Slot] = own ? [focus.guns[0] ? { ...focus.guns[0] } : null, focus.guns[1] ? { ...focus.guns[1] } : null] : [isWeapon(h.w) ? { w: h.w, r: h.r, mag: -1 } : null, null];
+    const kinds = THROW_IDS.filter((k) => focus.throws[k] > 0).length;
+    // someone else's egg: only what's in hand shows, not how many
+    const toss = own && kinds > 0 ? { w: focus.throws[focus.pick] > 0 ? focus.pick : THROW_IDS.find((k) => focus.throws[k] > 0)!, n: 0, kinds } : !own && isThrow(h.w) ? { w: h.w, n: -1, kinds: 1 } : null;
+    if (toss && own) toss.n = focus.throws[toss.w];
     const s = m.storm;
     const outside = Math.hypot(focus.x - s.x, focus.z - s.z) > s.r && focus.phase === 'ground';
     let storm = '';
@@ -836,15 +970,19 @@ function Play({ mode }: { mode: Mode }) {
       busy = 1 - focus.reloadT / reloadOf(g.w, g.r);
       busyText = 'reloading';
     } else if (own && focus.using) {
-      busy = 1 - focus.useT / (focus.using === 'bandage' ? 2.2 : 3);
-      busyText = focus.using === 'bandage' ? 'bandaging' : 'drinking shield';
+      busy = 1 - focus.useT / USES[focus.using].time;
+      busyText = BUSY_TEXT[focus.using];
     }
     let promptText: string | null = null;
     if (me && me === focus && me.phase === 'ground') {
       const p = prompt(m, me);
-      if (p) promptText = 'chest' in p ? 'open chest' : `${p.swap ? 'swap for' : 'pick up'} ${lootName(p.item.def)}`;
+      if (p && 'chest' in p) {
+        const c = m.map.containers[p.chest];
+        promptText = c.kind === 'supply' ? 'open supply drop' : c.gold ? 'open the golden chest' : 'open chest';
+      } else if (p) promptText = `${p.swap ? `swap ${p.item.def.kind === 'melee' ? MELEE[me.melee].name : 'gun'} for` : 'pick up'} ${lootName(p.item.def)}`;
     }
-    const out = me && me.phase === 'out' ? (me.by >= 0 && m.fighters[me.by] ? `cracked by ${m.fighters[me.by].name}` : me.outCause === 'storm' ? 'lost to the storm' : 'out') + ` · ${ordinal(me.place)} of ${m.fighters.length}` : null;
+    const out = me && me.phase === 'out' ? (me.by >= 0 && me.by !== me.id && m.fighters[me.by] ? `cracked by ${m.fighters[me.by].name}` : me.outCause === 'storm' ? 'lost to the storm' : 'out') + ` · ${ordinal(me.place)} of ${m.fighters.length}` : null;
+    const gw = g ? WEAPONS[g.w] : null;
     const next: Hud = {
       phase: focus.phase,
       alive: aliveCount(m),
@@ -852,13 +990,18 @@ function Play({ mode }: { mode: Mode }) {
       kills: focus.kills,
       hp: Math.ceil(focus.hp),
       shield: Math.ceil(focus.shield),
-      slot: own ? focus.slot : h.w ? 0 : 2,
+      boost: own ? Math.ceil(focus.boost) : 0,
+      slot: own ? focus.slot : isWeapon(h.w) ? 0 : isThrow(h.w) ? SLOT_THROW : SLOT_MELEE,
       slots,
+      melee: own ? focus.melee : isMelee(h.w) ? h.w : 'spatula',
+      toss,
       mag: g ? g.mag : -1,
-      reserve: g ? focus.ammo[WEAPONS[g.w].ammo] : 0,
+      reserve: g && gw ? focus.ammo[gw.ammo] : 0,
+      ammo: gw ? gw.ammo : null,
       wood: own ? focus.wood : -1,
-      bandages: own ? focus.bandages : -1,
-      shields: own ? focus.shields : -1,
+      items: own ? { ...focus.items } : null,
+      scope: own ? focus.scope : 0,
+      pack: own ? focus.pack : 0,
       busy: Math.round(busy * 30) / 30,
       busyText,
       storm,
@@ -878,6 +1021,14 @@ function Play({ mode }: { mode: Mode }) {
   // -------------------------------------------------------------------------------------------------------------
   // Pointer input.
 
+  /** Keeps a pointer's moves coming here even off the element (a pointer that is already gone can't be kept). */
+  const capture = (e: RPointerEvent<HTMLElement>) => {
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {
+      /* no such pointer any more */
+    }
+  };
   /** Whichever kind of pointer was just used becomes the way to play. */
   const usePointer = (e: RPointerEvent<HTMLElement>) => {
     const mouseNow = e.pointerType === 'mouse';
@@ -902,7 +1053,7 @@ function Play({ mode }: { mode: Mode }) {
     if (e.button === 0) {
       mouse.current.down = true;
       mouse.current.clicked = true;
-      e.currentTarget.setPointerCapture?.(e.pointerId);
+      capture(e);
     } else if (e.button === 2) taps.current.build = true;
   };
   const onMouseUp = (e: RPointerEvent<HTMLDivElement>) => {
@@ -912,13 +1063,28 @@ function Play({ mode }: { mode: Mode }) {
 
   const stick = (which: 'move' | 'aim') => {
     const r = which === 'move' ? moveStick : aimStick;
+    const release = (throwNow: boolean) => {
+      const s = r.current;
+      // with a throwable out, letting go of the right thumb throws it, as far as the thumb was pushed
+      if (throwNow && which === 'aim' && s) {
+        const len = Math.hypot(s.x - s.ox, s.y - s.oy);
+        const m = match.current;
+        if (len > 14 && m && throwing(m.fighters[m.me])) {
+          taps.current.toss = tossReach(len);
+          taps.current.tossAim = lastAim.current;
+          taps.current.tossBy = m.clock + TOSS_WAIT;
+        }
+      }
+      r.current = null;
+      setSticks((v) => ({ ...v, [which]: false }));
+    };
     return {
       onPointerDown: (e: RPointerEvent<HTMLDivElement>) => {
         // a mouse over the thumbstick areas means someone is playing with a mouse after all
         if (usePointer(e)) return;
         e.preventDefault();
         if (r.current) return;
-        e.currentTarget.setPointerCapture?.(e.pointerId);
+        capture(e);
         const x = e.nativeEvent.offsetX;
         const y = e.nativeEvent.offsetY;
         r.current = { id: e.pointerId, ox: x, oy: y, x, y };
@@ -945,16 +1111,11 @@ function Play({ mode }: { mode: Mode }) {
       },
       onPointerUp: (e: RPointerEvent<HTMLDivElement>) => {
         if (r.current?.id !== e.pointerId) return;
-        r.current = null;
-        setSticks((v) => ({ ...v, [which]: false }));
+        release(true);
       },
-      onPointerCancel: () => {
-        r.current = null;
-        setSticks((v) => ({ ...v, [which]: false }));
-      },
+      onPointerCancel: () => release(false),
       onLostPointerCapture: () => {
-        r.current = null;
-        setSticks((v) => ({ ...v, [which]: false }));
+        if (r.current) release(false);
       },
       onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault(),
     };
@@ -970,16 +1131,18 @@ function Play({ mode }: { mode: Mode }) {
     const k = len > STICK_R ? STICK_R / len : 1;
     el.style.left = `${s.ox}px`;
     el.style.top = `${s.oy}px`;
-    el.classList.toggle('is-firing', which === 'aim' && len > STICK_R * 0.5);
+    const tossing = which === 'aim' && throwing(match.current?.fighters[match.current.me]);
+    el.classList.toggle('is-firing', which === 'aim' && !tossing && len > STICK_R * 0.5);
+    el.classList.toggle('is-tossing', tossing && len > 14);
     const knob = el.firstElementChild as HTMLElement | null;
     if (knob) knob.style.transform = `translate(${(dx * k).toFixed(1)}px, ${(dy * k).toFixed(1)}px)`;
   }
 
-  const tap = (key: 'build' | 'reload' | 'heal' | 'shield' | 'interact' | 'jump') => ({
+  const tap = (set: (t: Taps) => void) => ({
     onPointerDown: (e: RPointerEvent<HTMLButtonElement>) => {
       e.preventDefault();
       e.stopPropagation();
-      taps.current[key] = true;
+      set(taps.current);
     },
     onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault(),
   });
@@ -991,20 +1154,27 @@ function Play({ mode }: { mode: Mode }) {
   const focusFighter = m.fighters[focusOf(m)];
   const s = m.storm;
   const stormPath = `M${-HALF - 40} ${-HALF - 40}H${HALF + 40}V${HALF + 40}H${-HALF - 40}Z M${(s.x - s.r).toFixed(1)} ${s.z.toFixed(1)}a${s.r.toFixed(1)} ${s.r.toFixed(1)} 0 1 0 ${(2 * s.r).toFixed(1)} 0a${s.r.toFixed(1)} ${s.r.toFixed(1)} 0 1 0 ${(-2 * s.r).toFixed(1)} 0Z`;
+  // supply drops show on the map from the moment they're on their way until someone opens them
+  const drops = map.drops.map((id) => map.containers[id]).filter((c) => m.time >= c.at - SUPPLY_FALL && !m.opened[c.id]);
   const mapMarks = (big: boolean) => (
     <>
       <path d={stormPath} fill="rgba(122, 60, 240, 0.45)" fillRule="evenodd" />
-      {(s.shrinking || s.next.r < s.r - 0.5) && s.next.r > 0.3 && <circle cx={s.next.x} cy={s.next.z} r={s.next.r} fill="none" stroke="#fff" strokeWidth={big ? 1.2 : 2.2} />}
-      {big && focusFighter?.phase === 'bus' && <line x1={map.bus.x0} y1={map.bus.z0} x2={map.bus.x1} y2={map.bus.z1} stroke="#fff" strokeWidth="1.5" strokeDasharray="4 3" />}
+      {(s.shrinking || s.next.r < s.r - 0.5) && s.next.r > 0.3 && <circle cx={s.next.x} cy={s.next.z} r={s.next.r} fill="none" stroke="#fff" strokeWidth={big ? 1.6 : 3} />}
+      {big && focusFighter?.phase === 'bus' && <line x1={map.bus.x0} y1={map.bus.z0} x2={map.bus.x1} y2={map.bus.z1} stroke="#fff" strokeWidth="2" strokeDasharray="5 4" />}
+      {drops.map((c) => (
+        <rect key={c.id} x={c.x - (big ? 5 : 8)} y={c.z - (big ? 5 : 8)} width={big ? 10 : 16} height={big ? 10 : 16} rx="2" fill="#2f7de1" stroke="#fff" strokeWidth={big ? 1.6 : 2.6} />
+      ))}
       {focusFighter && focusFighter.phase !== 'out' && (
         <g transform={`translate(${focusFighter.x.toFixed(1)} ${focusFighter.z.toFixed(1)}) rotate(${((-focusFighter.aim * 180) / Math.PI + 180).toFixed(0)})`}>
-          <path d={big ? 'M0 -5L3.6 3.6L0 1.8L-3.6 3.6Z' : 'M0 -9L6.5 6.5L0 3.2L-6.5 6.5Z'} fill={focusFighter.color} stroke="#fff" strokeWidth={big ? 0.9 : 1.6} strokeLinejoin="round" />
+          <path d={big ? 'M0 -7L5 5L0 2.5L-5 5Z' : 'M0 -13L9.5 9.5L0 4.6L-9.5 9.5Z'} fill={focusFighter.color} stroke="#fff" strokeWidth={big ? 1.2 : 2.2} strokeLinejoin="round" />
         </g>
       )}
     </>
   );
-  const box = `${-HALF - 6} ${-HALF - 6} ${2 * HALF + 12} ${2 * HALF + 12}`;
+  const box = `${-HALF - 8} ${-HALF - 8} ${2 * HALF + 16} ${2 * HALF + 16}`;
   const slotLabel = (i: number) => (touchMode ? '' : String(i + 1));
+  const heals = hud.items ? hud.items.bandage + hud.items.medkit : 0;
+  const shields = hud.items ? hud.items.mini + hud.items.shield : 0;
 
   return (
     <>
@@ -1059,6 +1229,18 @@ function Play({ mode }: { mode: Mode }) {
               </svg>
               <b>{hud.kills}</b>
             </span>
+            {hud.scope > 0 && (
+              <span className="g-scramble-pill is-gear" aria-label={`${SCOPES[hud.scope]} scope`}>
+                <ScopeIcon size={15} />
+                <b>{SCOPES[hud.scope]}</b>
+              </span>
+            )}
+            {hud.pack > 0 && (
+              <span className="g-scramble-pill is-gear" aria-label={`level ${hud.pack} backpack`}>
+                <PackIcon size={15} lv={hud.pack} />
+                <b>{hud.pack}</b>
+              </span>
+            )}
           </div>
           {hud.storm && <div className={`g-scramble-storm${hud.shrinking ? ' is-moving' : ''}`}>{hud.storm}</div>}
           <svg
@@ -1109,10 +1291,23 @@ function Play({ mode }: { mode: Mode }) {
                   )}
                 </span>
               )}
+              {canLeave() && (
+                <button
+                  type="button"
+                  className="g-scramble-leave"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    leave();
+                  }}
+                >
+                  done watching{!touchMode && <kbd>Enter</kbd>}
+                </button>
+              )}
             </div>
           )}
           {hud.jump && (
-            <button type="button" className="g-scramble-jump" {...tap('jump')}>
+            <button type="button" className="g-scramble-jump" {...tap((t) => (t.jump = true))}>
               jump{!touchMode && <kbd>Space</kbd>}
             </button>
           )}
@@ -1123,14 +1318,19 @@ function Play({ mode }: { mode: Mode }) {
             </div>
           )}
           {hud.prompt && hud.phase === 'ground' && (
-            <button type="button" className="g-scramble-prompt" {...tap('interact')}>
+            <button type="button" className="g-scramble-prompt" {...tap((t) => (t.interact = true))}>
               {!touchMode && <kbd>E</kbd>}
               {hud.prompt}
             </button>
           )}
           {hud.phase !== 'none' && hud.phase !== 'bus' && (
             <div className="g-scramble-bottom">
-              <div className="g-scramble-bars" aria-label={`${hud.hp} health, ${hud.shield} shield`}>
+              <div className="g-scramble-bars" aria-label={`${hud.hp} health, ${hud.shield} shield${hud.boost ? `, ${hud.boost} boost` : ''}`}>
+                {hud.boost > 0 && (
+                  <div className="g-scramble-bar is-boost">
+                    <i style={{ width: `${hud.boost}%` }} />
+                  </div>
+                )}
                 <div className="g-scramble-bar is-shield">
                   <i style={{ width: `${hud.shield}%` }} />
                   <span>{hud.shield}</span>
@@ -1141,17 +1341,19 @@ function Play({ mode }: { mode: Mode }) {
                 </div>
               </div>
               <div className="g-scramble-slots" role="group" aria-label="Weapons">
-                {[0, 1, 2].map((i) => {
-                  const g = i < 2 ? hud.slots[i] : null;
+                {[0, 1, SLOT_MELEE, SLOT_THROW].map((i) => {
+                  const g = i < 2 ? hud.slots[i as 0 | 1] : null;
                   const on = hud.slot === i;
+                  const empty = (i < 2 && !g) || (i === SLOT_THROW && !hud.toss);
+                  const label = i < 2 ? (g ? WEAPONS[g.w].name : 'Empty slot') : i === SLOT_MELEE ? MELEE[hud.melee].name : hud.toss ? (hud.toss.n < 0 ? THROWS[hud.toss.w].name : `${hud.toss.n} ${hud.toss.n === 1 ? THROWS[hud.toss.w].name : THROWS[hud.toss.w].plural}`) : 'Nothing to throw';
                   return (
                     <button
                       key={i}
                       type="button"
                       tabIndex={-1}
-                      className={`g-scramble-slot${on ? ' is-on' : ''}${i < 2 && !g ? ' is-empty' : ''}`}
+                      className={`g-scramble-slot${on ? ' is-on' : ''}${empty ? ' is-empty' : ''}`}
                       style={g ? { ['--rarity' as string]: RARITY_COLORS[g.r] } : undefined}
-                      aria-label={i === 2 ? 'Spatula' : g && g.w ? `${WEAPONS[g.w].name}` : 'Empty slot'}
+                      aria-label={label}
                       aria-pressed={on}
                       onPointerDown={(e) => {
                         e.preventDefault();
@@ -1160,7 +1362,15 @@ function Play({ mode }: { mode: Mode }) {
                       }}
                     >
                       {slotLabel(i) && <small>{slotLabel(i)}</small>}
-                      {i === 2 ? <WeaponIcon w={null} size={30} /> : g ? <WeaponIcon w={g.w} size={34} /> : null}
+                      {i < 2 && g && <WeaponIcon w={g.w} size={34} />}
+                      {i === SLOT_MELEE && <WeaponIcon w={hud.melee} size={30} />}
+                      {i === SLOT_THROW && hud.toss && (
+                        <>
+                          <WeaponIcon w={hud.toss.w} size={28} />
+                          {hud.toss.n >= 0 && <b className="g-scramble-count">{hud.toss.n}</b>}
+                          {hud.toss.kinds > 1 && <i className="g-scramble-more" aria-hidden="true" />}
+                        </>
+                      )}
                       {on && i < 2 && g && hud.mag >= 0 && (
                         <em>
                           {hud.mag}
@@ -1171,28 +1381,33 @@ function Play({ mode }: { mode: Mode }) {
                   );
                 })}
               </div>
-              {hud.wood >= 0 && (
+              {hud.items && (
                 <div className="g-scramble-mats">
+                  {USE_IDS.map((w) => (
+                    <button
+                      key={w}
+                      type="button"
+                      tabIndex={-1}
+                      className={hud.items![w] ? undefined : 'is-none'}
+                      title={USES[w].name}
+                      aria-label={`${hud.items![w]} ${hud.items![w] === 1 ? USES[w].name : USES[w].plural}`}
+                      {...tap((t) => (t.use = w))}
+                    >
+                      <UseIcon w={w} size={20} />
+                      {hud.items![w]}
+                      {!touchMode && <kbd>{USE_KEYS[w]}</kbd>}
+                    </button>
+                  ))}
                   <span className={hud.wood >= WOOD_MAX ? 'is-full' : undefined} title="Wood">
                     <WoodIcon size={20} />
                     {hud.wood}
                     {!touchMode && <kbd>Space</kbd>}
                   </span>
-                  <span className={hud.bandages ? undefined : 'is-none'} title="Bandages">
-                    <BandageIcon size={20} />
-                    {hud.bandages}
-                    {!touchMode && <kbd>H</kbd>}
-                  </span>
-                  <span className={hud.shields ? undefined : 'is-none'} title="Shield potions">
-                    <ShieldIcon size={20} />
-                    {hud.shields}
-                    {!touchMode && <kbd>G</kbd>}
-                  </span>
-                  {hud.mag >= 0 && hud.slots[hud.slot as 0 | 1]?.w && (
+                  {hud.ammo && (
                     <span className="g-scramble-ammo" title="Ammo">
-                      <AmmoIcon a={WEAPONS[hud.slots[hud.slot as 0 | 1]!.w!].ammo} size={20} />
+                      <AmmoIcon a={hud.ammo} size={20} />
                       {hud.reserve}
-                      <small>/{AMMO_MAX[WEAPONS[hud.slots[hud.slot as 0 | 1]!.w!].ammo]}</small>
+                      <small>/{ammoCap(hud.ammo, hud.pack)}</small>
                     </span>
                   )}
                 </div>
@@ -1220,34 +1435,48 @@ function Play({ mode }: { mode: Mode }) {
       {touchMode && playing && !net.current.over && (
         <div className="g-scramble-touch">
           <div className="g-scramble-zone is-move" {...stick('move')}>
-            {sticks.move && moveStick.current && <StickArt s={moveStick.current} at={(el) => {
+            {sticks.move && moveStick.current && (
+              <StickArt
+                s={moveStick.current}
+                at={(el) => {
                   stickEls.current.move = el;
-                }} />}
+                }}
+              />
+            )}
           </div>
           <div className="g-scramble-zone is-aim" {...stick('aim')}>
-            {sticks.aim && aimStick.current && <StickArt s={aimStick.current} at={(el) => {
+            {sticks.aim && aimStick.current && (
+              <StickArt
+                s={aimStick.current}
+                at={(el) => {
                   stickEls.current.aim = el;
-                }} />}
+                }}
+              />
+            )}
           </div>
-          {hud.phase === 'ground' && (
+          {hud.phase === 'ground' && hud.mine && (
             <div className="g-scramble-buttons">
-              <button type="button" tabIndex={-1} aria-label="Build a wall" {...tap('build')}>
+              <button type="button" tabIndex={-1} aria-label="Build a wall" {...tap((t) => (t.build = true))}>
                 <WoodIcon size={22} />
                 <span>wall</span>
               </button>
-              <button type="button" tabIndex={-1} aria-label="Reload" {...tap('reload')}>
+              <button type="button" tabIndex={-1} aria-label="Reload" {...tap((t) => (t.reload = true))}>
                 <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
                   <path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
                 <span>reload</span>
               </button>
-              <button type="button" tabIndex={-1} aria-label="Use a bandage" className={hud.bandages ? undefined : 'is-none'} {...tap('heal')}>
-                <BandageIcon size={22} />
-                <span>{hud.bandages}</span>
+              <button type="button" tabIndex={-1} aria-label="Heal" className={heals ? undefined : 'is-none'} {...tap((t) => (t.use = 'bestHeal'))}>
+                <UseIcon w={hud.items && !hud.items.bandage && hud.items.medkit ? 'medkit' : 'bandage'} size={22} />
+                <span>{heals}</span>
               </button>
-              <button type="button" tabIndex={-1} aria-label="Drink a shield potion" className={hud.shields ? undefined : 'is-none'} {...tap('shield')}>
-                <ShieldIcon size={22} />
-                <span>{hud.shields}</span>
+              <button type="button" tabIndex={-1} aria-label="Top up shield" className={shields ? undefined : 'is-none'} {...tap((t) => (t.use = 'bestShield'))}>
+                <UseIcon w={hud.items && !hud.items.mini && hud.items.shield ? 'shield' : 'mini'} size={22} />
+                <span>{shields}</span>
+              </button>
+              <button type="button" tabIndex={-1} aria-label="Drink a coffee" className={hud.items?.coffee ? undefined : 'is-none'} {...tap((t) => (t.use = 'coffee'))}>
+                <UseIcon w="coffee" size={22} />
+                <span>{hud.items?.coffee ?? 0}</span>
               </button>
             </div>
           )}

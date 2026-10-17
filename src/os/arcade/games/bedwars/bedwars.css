@@ -1,0 +1,1165 @@
+/* Bed Wars: Minecraft's HUD with a Stanford accent. The sidebar scoreboard wears a cardinal header, titles are set in
+   Big Shoulders Display (a collegiate face), and everything else keeps Minecraft's hard drop shadows. */
+@font-face {
+  font-family: 'Big Shoulders Display';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/big-shoulders-display.woff2') format('woff2');
+}
+
+.g-bedwars {
+  --g-bedwars-cardinal: #8c1515;
+  --g-bedwars-cardinal-hi: #b1040e;
+  --g-bedwars-gold: #ffd23f;
+  --g-bedwars-display: 'Big Shoulders Display', 'Bricolage Grotesque', Inter, system-ui, sans-serif;
+  --g-bedwars-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6);
+}
+.g-bedwars .g-bedwars-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* the HUD sizes itself to the game, not the window (the arcade window on a laptop is small in a wide page) */
+  container: g-bedwars-stage / size;
+}
+.g-bedwars .g-bedwars-host {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #4f86d4 0%, #9cc2ec 40%, #f3d7b5 55%, #7b8fb4 70%, #141a2e 100%);
+  touch-action: none;
+  cursor: crosshair;
+}
+.g-bedwars .g-bedwars-canvas {
+  image-rendering: pixelated;
+}
+.g-bedwars .g-bedwars-setup {
+  display: grid;
+  gap: 8px;
+}
+.g-bedwars .g-bedwars-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  text-shadow: var(--g-bedwars-shadow);
+}
+.g-bedwars .g-bedwars-icon {
+  image-rendering: pixelated;
+  display: block;
+  pointer-events: none;
+}
+
+/* crosshair: two thin bars, inverted against the sky like Minecraft */
+.g-bedwars .g-bedwars-cross {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  mix-blend-mode: difference;
+}
+.g-bedwars .g-bedwars-cross i {
+  position: absolute;
+  background: #fff;
+}
+.g-bedwars .g-bedwars-cross i:first-child {
+  left: 8px;
+  top: 0;
+  width: 2px;
+  height: 18px;
+}
+.g-bedwars .g-bedwars-cross i:last-child {
+  top: 8px;
+  left: 0;
+  width: 18px;
+  height: 2px;
+}
+
+/* the sidebar scoreboard */
+.g-bedwars .g-bedwars-board {
+  position: absolute;
+  right: 10px;
+  top: 52px;
+  min-width: 178px;
+  padding: 0 0 6px;
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.45;
+  background: rgba(10, 10, 14, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.g-bedwars .g-bedwars-board header {
+  padding: 4px 10px 3px;
+  font-family: var(--g-bedwars-display);
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-align: center;
+  color: var(--g-bedwars-gold);
+  background: linear-gradient(180deg, var(--g-bedwars-cardinal-hi), var(--g-bedwars-cardinal));
+  text-shadow: 1px 2px 0 rgba(0, 0, 0, 0.45);
+}
+.g-bedwars .g-bedwars-board p,
+.g-bedwars .g-bedwars-board li {
+  margin: 0;
+  padding: 0 10px;
+}
+.g-bedwars .g-bedwars-board .g-bedwars-board-sub {
+  color: #9a9aa0;
+  font-size: 11px;
+  margin: 2px 0 4px;
+  text-align: center;
+}
+.g-bedwars .g-bedwars-board ul {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+.g-bedwars .g-bedwars-board li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.g-bedwars .g-bedwars-board li.is-out span {
+  color: #8a8a90;
+}
+.g-bedwars .g-bedwars-board li b {
+  width: 12px;
+  font-weight: 800;
+}
+.g-bedwars .g-bedwars-board li i {
+  font-style: normal;
+  font-weight: 800;
+}
+.g-bedwars .g-bedwars-board li small {
+  margin-left: auto;
+  color: #9a9aa0;
+  font-size: 11px;
+}
+.g-bedwars .g-bedwars-board .is-ok,
+.g-bedwars .g-bedwars-board .is-green,
+.g-bedwars .g-bedwars-board .is-n {
+  color: #55ff55;
+}
+.g-bedwars .g-bedwars-board .is-x {
+  color: #ff5555;
+}
+.g-bedwars .g-bedwars-board footer {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--g-bedwars-gold);
+}
+
+/* hotbar, hearts and resources */
+.g-bedwars .g-bedwars-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 4px;
+  pointer-events: none;
+}
+.g-bedwars .g-bedwars-barTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+}
+.g-bedwars .g-bedwars-hearts {
+  display: flex;
+  flex-wrap: wrap;
+  max-width: 190px;
+  gap: 1px;
+}
+.g-bedwars .g-bedwars-hearts .is-low {
+  animation: g-bedwars-throb 0.5s steps(2) infinite;
+}
+.g-bedwars .g-bedwars-hearts.is-hurt img {
+  filter: brightness(1.8);
+}
+@keyframes g-bedwars-throb {
+  50% {
+    transform: translateY(-2px);
+  }
+}
+.g-bedwars .g-bedwars-wallet {
+  display: flex;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 800;
+}
+.g-bedwars .g-bedwars-wallet span {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.g-bedwars .g-bedwars-wallet .is-zero {
+  opacity: 0.45;
+}
+.g-bedwars .g-bedwars-slots {
+  display: flex;
+  padding: 3px;
+  gap: 3px;
+  border-radius: 6px;
+  background: rgba(10, 10, 14, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  pointer-events: auto;
+}
+.g-bedwars .g-bedwars-slot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+.g-bedwars .g-bedwars-slot.is-sel {
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 3px #fff, 0 0 0 2px var(--g-bedwars-cardinal);
+}
+.g-bedwars .g-bedwars-slot b {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.g-bedwars .g-bedwars-slot kbd {
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  font: 600 9px Inter, system-ui, sans-serif;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* chat and kill feed */
+.g-bedwars .g-bedwars-feed {
+  position: absolute;
+  left: 10px;
+  bottom: 118px;
+  max-width: min(460px, 60%);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 1px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.g-bedwars .g-bedwars-feed li {
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.32);
+  transition: opacity 0.4s;
+}
+.g-bedwars .g-bedwars-feed .is-bed b,
+.g-bedwars .g-bedwars-feed .is-elim b {
+  font-weight: 800;
+}
+.g-bedwars .g-bedwars-feed .is-final {
+  color: #55ffff;
+  font-weight: 700;
+}
+.g-bedwars .g-bedwars-feed .is-tier,
+.g-bedwars .g-bedwars-feed .is-phase {
+  color: var(--g-bedwars-gold);
+}
+.g-bedwars .g-bedwars-feed .is-deny {
+  color: #ff5555;
+}
+.g-bedwars .g-bedwars-feed .is-buy,
+.g-bedwars .g-bedwars-feed .is-res {
+  color: #55ff55;
+}
+.g-bedwars .g-bedwars-feed .is-trap {
+  color: #ff7a7a;
+  font-weight: 700;
+}
+
+/* big centered titles */
+.g-bedwars .g-bedwars-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 28%;
+  text-align: center;
+  animation: g-bedwars-title 0.35s ease-out;
+}
+.g-bedwars .g-bedwars-title h2 {
+  margin: 0;
+  font-family: var(--g-bedwars-display);
+  font-size: clamp(40px, 9vw, 84px);
+  font-size: clamp(30px, 9cqw, 84px);
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-shadow: 4px 4px 0 rgba(0, 0, 0, 0.55);
+}
+.g-bedwars .g-bedwars-title p {
+  margin: 8px 0 0;
+  font-size: clamp(14px, 2.6vw, 20px);
+  font-size: clamp(13px, 2.6cqw, 20px);
+  font-weight: 600;
+}
+@keyframes g-bedwars-title {
+  from {
+    opacity: 0;
+    transform: scale(1.15);
+  }
+}
+
+.g-bedwars .g-bedwars-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 140px;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+}
+.g-bedwars .g-bedwars-hurt {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(200, 0, 0, 0.9) 100%);
+}
+.g-bedwars .g-bedwars-blind {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0.97) 38%);
+}
+.g-bedwars .g-bedwars-clickToPlay {
+  position: absolute;
+  left: 50%;
+  top: 58%;
+  transform: translateX(-50%);
+  padding: 10px 22px;
+  border-radius: 999px;
+  font-family: var(--g-bedwars-display);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: var(--g-bedwars-cardinal);
+  box-shadow: 0 3px 0 #5a0d0d, 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  animation: g-bedwars-pulse 1.6s ease-in-out infinite;
+}
+@keyframes g-bedwars-pulse {
+  50% {
+    transform: translateX(-50%) scale(1.05);
+  }
+}
+
+/* shop and upgrades (clear of the shell's control row at the top right, so a close never lands on Arcade) */
+.g-bedwars .g-bedwars-panelWrap {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 52px 12px 12px;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  text-shadow: none;
+}
+.g-bedwars .g-bedwars-panel {
+  width: min(640px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  border-radius: 12px;
+  background: #1c1c22;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+.g-bedwars .g-bedwars-panel header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.g-bedwars .g-bedwars-panel h2 {
+  margin: 0;
+  font-family: var(--g-bedwars-display);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: #fff;
+}
+.g-bedwars .g-bedwars-panel .g-bedwars-wallet {
+  margin-left: auto;
+}
+.g-bedwars .g-bedwars-close {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+.g-bedwars .g-bedwars-close:hover {
+  background: var(--g-bedwars-cardinal);
+}
+.g-bedwars .g-bedwars-panel.is-touch .g-bedwars-close {
+  width: 48px;
+  height: 48px;
+}
+.g-bedwars .g-bedwars-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  margin-bottom: 10px;
+  padding-bottom: 2px;
+}
+.g-bedwars .g-bedwars-tabs button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1 0 64px;
+  min-height: 52px;
+  padding: 6px 4px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #c9c9cf;
+  background: rgba(255, 255, 255, 0.05);
+}
+.g-bedwars .g-bedwars-tabs button.is-on {
+  color: #fff;
+  background: var(--g-bedwars-cardinal);
+}
+.g-bedwars .g-bedwars-offers {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 6px;
+}
+.g-bedwars .g-bedwars-offer {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 6px;
+  min-height: 58px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  text-align: left;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  transition: background 0.12s, transform 0.08s;
+}
+.g-bedwars .g-bedwars-offer:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.g-bedwars .g-bedwars-offer:active {
+  transform: scale(0.97);
+}
+.g-bedwars .g-bedwars-offer.is-can {
+  box-shadow: inset 0 0 0 1px rgba(85, 255, 85, 0.35);
+}
+.g-bedwars .g-bedwars-offer.is-cant .g-bedwars-offer-name {
+  color: #ff8a8a;
+}
+.g-bedwars .g-bedwars-offer.is-owned {
+  opacity: 0.45;
+}
+.g-bedwars .g-bedwars-offer-icon {
+  position: relative;
+  grid-row: span 2;
+}
+.g-bedwars .g-bedwars-offer-icon b {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  font-size: 12px;
+  text-shadow: var(--g-bedwars-shadow);
+}
+.g-bedwars .g-bedwars-offer-name {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.g-bedwars .g-bedwars-offer-cost {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.g-bedwars .g-bedwars-ups,
+.g-bedwars .g-bedwars-traps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 6px;
+}
+.g-bedwars .g-bedwars-up {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 58px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  text-align: left;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+.g-bedwars .g-bedwars-up:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.g-bedwars .g-bedwars-up.is-can {
+  box-shadow: inset 0 0 0 1px rgba(85, 255, 255, 0.35);
+}
+.g-bedwars .g-bedwars-up.is-owned {
+  opacity: 0.55;
+}
+.g-bedwars .g-bedwars-up-text {
+  display: grid;
+  gap: 1px;
+  flex: 1;
+}
+.g-bedwars .g-bedwars-up-text b {
+  font-size: 13px;
+}
+.g-bedwars .g-bedwars-up-text small {
+  font-size: 11px;
+  color: #b9b9c0;
+  line-height: 1.25;
+}
+.g-bedwars .g-bedwars-pips {
+  display: flex;
+  gap: 3px;
+  margin-top: 2px;
+}
+.g-bedwars .g-bedwars-pips em {
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.15);
+}
+.g-bedwars .g-bedwars-pips em.is-on {
+  background: #55ffff;
+}
+.g-bedwars .g-bedwars-trap-head {
+  margin: 14px 0 6px;
+  font-size: 14px;
+  color: #fff;
+}
+.g-bedwars .g-bedwars-trap-head small {
+  font-weight: 500;
+  color: #9a9aa0;
+}
+.g-bedwars .g-bedwars-queue {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #b9b9c0;
+}
+.g-bedwars .g-bedwars-queue span {
+  margin-right: 8px;
+  color: #ff9a9a;
+}
+/* the inventory screen: the back nine over the hotbar */
+.g-bedwars .g-bedwars-panel.is-inv {
+  width: min(500px, 100%);
+}
+.g-bedwars .g-bedwars-gear {
+  margin: -4px 0 8px;
+  font-size: 12px;
+  color: #b9b9c0;
+}
+.g-bedwars .g-bedwars-invGrid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 50px));
+  justify-content: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.g-bedwars .g-bedwars-invGrid.is-hotbar {
+  margin-top: 10px;
+  background: rgba(140, 21, 21, 0.22);
+}
+.g-bedwars .g-bedwars-cell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 4px;
+  color: #fff;
+  text-shadow: var(--g-bedwars-shadow);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.07);
+  touch-action: manipulation;
+}
+.g-bedwars .g-bedwars-cell:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.g-bedwars .g-bedwars-cell.is-sel {
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.6);
+}
+.g-bedwars .g-bedwars-cell.is-picked {
+  background: rgba(255, 210, 63, 0.35);
+  box-shadow: inset 0 0 0 3px var(--g-bedwars-gold);
+}
+.g-bedwars .g-bedwars-cell b {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.g-bedwars .g-bedwars-cell kbd {
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  font: 600 9px Inter, system-ui, sans-serif;
+  color: rgba(255, 255, 255, 0.45);
+}
+.g-bedwars .g-bedwars-cell .g-bedwars-icon {
+  width: 70%;
+  height: auto;
+}
+@container g-bedwars-stage (max-width: 460px) {
+  /* nine 40px slots across a phone */
+  .g-bedwars .g-bedwars-panelWrap.is-inv {
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+  .g-bedwars .g-bedwars-panel.is-inv {
+    padding: 10px 4px;
+  }
+  .g-bedwars .g-bedwars-panel.is-inv header {
+    padding: 0 6px;
+  }
+  .g-bedwars .g-bedwars-invGrid {
+    gap: 1px;
+    padding: 2px;
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+  }
+}
+.g-bedwars .g-bedwars-invHint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  text-align: center;
+  color: #c9c9cf;
+}
+.g-bedwars .g-bedwars-panel-hint {
+  margin: 10px 0 0;
+  font-size: 11px;
+  text-align: center;
+  color: #7a7a82;
+}
+
+/* player list (Tab) */
+.g-bedwars .g-bedwars-tab {
+  position: absolute;
+  left: 50%;
+  top: 56px;
+  transform: translateX(-50%);
+  min-width: 300px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 13px;
+}
+.g-bedwars .g-bedwars-tab table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.g-bedwars .g-bedwars-tab th {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9a9aa0;
+  text-align: right;
+}
+.g-bedwars .g-bedwars-tab th:first-child,
+.g-bedwars .g-bedwars-tab td:first-child {
+  text-align: left;
+}
+.g-bedwars .g-bedwars-tab td {
+  padding: 2px 6px;
+  text-align: right;
+}
+.g-bedwars .g-bedwars-tab tr.is-dead td {
+  opacity: 0.6;
+}
+.g-bedwars .g-bedwars-tab tr.is-out td {
+  opacity: 0.35;
+  text-decoration: line-through;
+}
+.g-bedwars .g-bedwars-tab small {
+  color: #9a9aa0;
+}
+
+/* the held item's name, shown for a moment on switch */
+.g-bedwars .g-bedwars-itemName {
+  position: absolute;
+  left: 50%;
+  bottom: 104px;
+  transform: translateX(-50%);
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  animation: g-bedwars-fade 2s ease-in forwards;
+}
+@keyframes g-bedwars-fade {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.g-bedwars .g-bedwars-outCard {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(10, 10, 14, 0.6);
+  pointer-events: auto;
+  text-shadow: none;
+}
+.g-bedwars .g-bedwars-outCard p {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* touch */
+.g-bedwars .g-bedwars-touch {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.g-bedwars .g-bedwars-stickZone {
+  position: absolute;
+  left: 28px;
+  bottom: 120px;
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.18);
+}
+.g-bedwars .g-bedwars-stickZone i {
+  position: absolute;
+  left: 30px;
+  top: 30px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+}
+.g-bedwars .g-bedwars-tbtns {
+  position: absolute;
+  right: 14px;
+  bottom: 112px;
+  display: grid;
+  grid-template-columns: 64px 64px;
+  gap: 10px;
+  pointer-events: auto;
+}
+.g-bedwars .g-bedwars-tb {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.5);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.25);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.g-bedwars .g-bedwars-tb.is-attack {
+  background: rgba(140, 21, 21, 0.75);
+}
+.g-bedwars .g-bedwars-tb.is-on {
+  background: rgba(255, 255, 255, 0.35);
+}
+/* bag and shop: above the stick, away from the action buttons */
+.g-bedwars .g-bedwars-tmenu {
+  position: absolute;
+  left: 14px;
+  bottom: 236px;
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.g-bedwars .g-bedwars-tm {
+  min-width: 56px;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(20, 20, 26, 0.55);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.25);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.g-bedwars .g-bedwars-tm.is-shop {
+  min-width: 72px;
+  background: rgba(255, 210, 63, 0.85);
+  color: #222;
+}
+.g-bedwars .is-touch .g-bedwars-itemName {
+  bottom: 88px;
+}
+.g-bedwars .is-touch .g-bedwars-feed {
+  bottom: auto;
+  top: 48px;
+  left: 8px;
+  max-width: 52%;
+  font-size: 11px;
+}
+/* touch slots stay at least 40px (nine of them and their gaps fit across a 390px phone) */
+.g-bedwars .is-touch .g-bedwars-slots {
+  gap: 2px;
+  padding: 2px;
+}
+.g-bedwars .is-touch .g-bedwars-slot {
+  width: 40px;
+  height: 40px;
+}
+
+/* A small game (the arcade window on a laptop, a phone) gets the compact HUD: sized to the game, not the window */
+@container g-bedwars-stage (max-width: 760px) or (max-height: 460px) {
+  .g-bedwars .g-bedwars-board {
+    top: 48px;
+    min-width: 0;
+    width: 128px;
+    font-size: 11px;
+    line-height: 1.3;
+  }
+  .g-bedwars .g-bedwars-board header {
+    font-size: 15px;
+  }
+  .g-bedwars .g-bedwars-board ul {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 2px;
+    margin: 4px 0;
+  }
+  .g-bedwars .g-bedwars-board li {
+    padding: 0 6px;
+    gap: 3px;
+  }
+  .g-bedwars .g-bedwars-board li span,
+  .g-bedwars .g-bedwars-board li small,
+  .g-bedwars .g-bedwars-board footer,
+  .g-bedwars .g-bedwars-board .g-bedwars-board-sub {
+    display: none;
+  }
+  .g-bedwars .g-bedwars-board p {
+    padding: 0 8px;
+  }
+  .g-bedwars .g-bedwars-slot {
+    width: 36px;
+    height: 36px;
+  }
+  .g-bedwars .g-bedwars-slot .g-bedwars-icon {
+    width: 26px;
+    height: 26px;
+  }
+  .g-bedwars .g-bedwars-hearts {
+    max-width: 150px;
+  }
+  .g-bedwars .g-bedwars-hearts .g-bedwars-icon {
+    width: 14px;
+    height: 14px;
+  }
+  .g-bedwars .g-bedwars-wallet {
+    gap: 4px;
+    font-size: 12px;
+  }
+  .g-bedwars .g-bedwars-wallet .g-bedwars-icon {
+    width: 16px;
+    height: 16px;
+  }
+  .g-bedwars .g-bedwars-feed {
+    bottom: 92px;
+    font-size: 11px;
+  }
+  .g-bedwars .g-bedwars-prompt {
+    bottom: 92px;
+    font-size: 12px;
+  }
+  .g-bedwars .g-bedwars-itemName {
+    bottom: 80px;
+  }
+  .g-bedwars .g-bedwars-clickToPlay {
+    font-size: 18px;
+  }
+}
+/* short: the score rows wait in the Tab list, and the pill sits above the hotbar */
+@container g-bedwars-stage (max-height: 340px) {
+  .g-bedwars .g-bedwars-board {
+    line-height: 1.2;
+  }
+  .g-bedwars .g-bedwars-board header {
+    padding: 2px 8px;
+    font-size: 13px;
+  }
+  .g-bedwars .g-bedwars-board .g-bedwars-stat {
+    display: none;
+  }
+  .g-bedwars .g-bedwars-clickToPlay {
+    top: 30%;
+  }
+  .g-bedwars .g-bedwars-panelWrap {
+    padding-bottom: 6px;
+  }
+  .g-bedwars .g-bedwars-invGrid {
+    grid-template-columns: repeat(9, minmax(0, 42px));
+  }
+  .g-bedwars .g-bedwars-invGrid.is-hotbar {
+    margin-top: 6px;
+  }
+  .g-bedwars .g-bedwars-panel {
+    padding: 8px 10px;
+  }
+  .g-bedwars .g-bedwars-panel header {
+    margin-bottom: 4px;
+  }
+  .g-bedwars .g-bedwars-panel h2 {
+    font-size: 20px;
+  }
+  .g-bedwars .g-bedwars-gear {
+    margin: 0 0 4px;
+  }
+  .g-bedwars .g-bedwars-invHint,
+  .g-bedwars .g-bedwars-panel-hint {
+    display: none;
+  }
+}
+/* a tablet: bigger slots, so they stay big inside the scaled iPad frame */
+@container g-bedwars-stage (min-width: 600px) and (min-height: 600px) {
+  .g-bedwars .is-touch .g-bedwars-slot {
+    width: 50px;
+    height: 50px;
+  }
+}
+/* a phone held sideways: everything in reach of a thumb, nothing above the top bar */
+@container g-bedwars-stage (max-height: 460px) {
+  .g-bedwars .is-touch .g-bedwars-tbtns {
+    right: 10px;
+    bottom: 12px;
+    grid-template-columns: 50px 50px;
+    gap: 8px;
+  }
+  .g-bedwars .is-touch .g-bedwars-tb {
+    width: 50px;
+    height: 50px;
+    font-size: 12px;
+  }
+  .g-bedwars .is-touch .g-bedwars-stickZone {
+    bottom: 16px;
+  }
+  .g-bedwars .is-touch .g-bedwars-tmenu {
+    bottom: 132px;
+  }
+  .g-bedwars .is-touch .g-bedwars-itemName {
+    bottom: 80px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-bedwars .g-bedwars-title,
+  .g-bedwars .g-bedwars-clickToPlay,
+  .g-bedwars .g-bedwars-hearts .is-low {
+    animation: none;
+  }
+}
+
+.g-bedwars .g-bedwars-joining {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--g-bedwars-display);
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fff;
+  text-shadow: var(--g-bedwars-shadow);
+  background: rgba(10, 10, 14, 0.4);
+}
+.g-bedwars .g-bedwars-hostnote {
+  display: block;
+  opacity: 0.75;
+}
+.g-bedwars .g-bedwars-touchNote {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.8;
+}
+.g-bedwars .g-bedwars-done {
+  min-width: 72px;
+  min-height: 40px;
+}
+@media (pointer: coarse) {
+  .g-bedwars .g-bedwars-done {
+    min-height: 48px;
+  }
+}
+
+/* start card extras: record, how to play, locker */
+.g-bedwars .g-bedwars-extras {
+  display: grid;
+  gap: 8px;
+}
+.g-bedwars .g-bedwars-extraBtns {
+  display: flex;
+  gap: 6px;
+}
+.g-bedwars .g-bedwars-extraBtns .arcade-btn {
+  flex: 1;
+}
+.g-bedwars .g-bedwars-record {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 12px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: #c9c9cf;
+  background: rgba(140, 21, 21, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(140, 21, 21, 0.5);
+}
+.g-bedwars .g-bedwars-record b {
+  color: #fff;
+  margin-right: 2px;
+}
+.g-bedwars .g-bedwars-star {
+  color: var(--g-bedwars-gold);
+  font-weight: 800;
+}
+.g-bedwars .g-bedwars-star b {
+  color: var(--g-bedwars-gold);
+}
+.g-bedwars .g-bedwars-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgba(8, 8, 12, 0.6);
+}
+.g-bedwars .g-bedwars-sheet-card {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: 100%;
+  border-radius: 14px;
+  background: #1c1c22;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 20px 50px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.g-bedwars .g-bedwars-sheet-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, #b1040e, #8c1515);
+}
+.g-bedwars .g-bedwars-sheet-card h2 {
+  margin: 0;
+  font-family: var(--g-bedwars-display);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: #fff;
+}
+.g-bedwars .g-bedwars-sheet-body {
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 12px 16px 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #e4e4ea;
+}
+.g-bedwars .g-bedwars-sheet-body section {
+  margin-top: 12px;
+}
+.g-bedwars .g-bedwars-sheet-body h3 {
+  margin: 0 0 6px;
+  font-family: var(--g-bedwars-display);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: var(--g-bedwars-gold);
+}
+.g-bedwars .g-bedwars-sheet-body ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.g-bedwars .g-bedwars-lede {
+  margin: 0;
+  color: #fff;
+}
+.g-bedwars .g-bedwars-keys {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.g-bedwars .g-bedwars-keys dt {
+  font-weight: 700;
+  color: #fff;
+}
+.g-bedwars .g-bedwars-keys dd {
+  margin: 0;
+  color: #c9c9cf;
+}
+.g-bedwars .g-bedwars-locker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+}
+.g-bedwars .g-bedwars-cosmetic {
+  display: grid;
+  gap: 2px;
+  min-height: 52px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  text-align: left;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+.g-bedwars .g-bedwars-cosmetic small {
+  font-size: 11px;
+  color: #a9a9b0;
+}
+.g-bedwars .g-bedwars-cosmetic.is-on {
+  background: #8c1515;
+  box-shadow: inset 0 0 0 2px #ffd23f;
+}
+.g-bedwars .g-bedwars-cosmetic.is-locked {
+  opacity: 0.45;
+}

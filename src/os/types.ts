@@ -5,6 +5,7 @@ export type AppId =
   | 'finder'
   | 'chrome'
   | 'messages'
+  | 'lounge'
   | 'notes'
   | 'soundcloud'
   | 'spotify'
@@ -33,8 +34,10 @@ export type OpenArgs = {
   game?: 'go' | 'omok';
   /** arcade game id the Arcade app opens straight into */
   play?: string;
-  /** online room code from an invite link (Baduk, Badminton and Cox Box) */
+  /** online room code from an invite link (Baduk, Badminton and Cox Box), or one to join in the Arcade with `play` */
   room?: string;
+  /** a room to share in the Lounge, which opens on #find-a-game with it attached */
+  invite?: { game: string; code: string };
   /** bumps on every open() call so an already-open app can react to new args */
   nonce?: number;
 };
@@ -69,3 +72,11 @@ export function useOS(): OSApi {
 }
 
 export type AppProps = { args: OpenArgs };
+
+/** The window an app is drawn in: whether it's the front window, and whether it's minimized. */
+export type WinState = { active: boolean; min: boolean };
+export const WinContext = createContext<WinState>({ active: true, min: false });
+
+export function useWin(): WinState {
+  return useContext(WinContext);
+}

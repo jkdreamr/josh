@@ -2,13 +2,28 @@
 // three.js; the scene builds each course's scenery (scene.ts) and the logic races on its track (logic.ts).
 import { EDGE, HAZARD_R, ROAD_HALF, ROUTE, START, buildTrack, layout as palmLayout, wrapS, type HazardKind, type Layout, type Track } from './track.ts';
 
-export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium';
-export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium'];
+export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium' | 'quad' | 'hoover' | 'golf';
+export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium', 'quad', 'hoover', 'golf'];
 export const isCourse = (v: unknown): v is CourseId => COURSE_IDS.includes(v as CourseId);
 
 /** How hard a course is, for the picker: narrower roads, tighter bends and more in the way as it goes up. */
 export const DIFFICULTY = ['Easy', 'Medium', 'Hard', 'Expert'] as const;
 export type Difficulty = 1 | 2 | 3 | 4;
+
+/**
+ * How the race itself gets harder with the course, past what is on the road. pace: the CPUs' top speed, on top of
+ * their own and the class's. band: how far the CPUs ease off when well ahead of you and push when well behind
+ * ([slowest, fastest, over how many meters]); on the harder courses they hardly ease off at all. harsh: how much longer
+ * a spin, a squash or a tumble lasts, whatever the cause. rocket: how often the CPUs nail a rocket start (times their
+ * skill). fallT and fallCoins: what going into the water costs (seconds before you are back on the road, and coins).
+ */
+export type Tier = { pace: number; band: [number, number, number]; harsh: number; rocket: number; fallT: number; fallCoins: number };
+export const TIER: Record<Difficulty, Tier> = {
+  1: { pace: 0.97, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1 },
+  2: { pace: 0.98, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1 },
+  3: { pace: 0.985, band: [0.93, 1.09, 500], harsh: 1.15, rocket: 0.75, fallT: 1.5, fallCoins: 2 },
+  4: { pace: 1.03, band: [0.97, 1.1, 450], harsh: 1.3, rocket: 0.9, fallT: 1.7, fallCoins: 3 },
+};
 
 export type Course = {
   id: CourseId;
@@ -25,6 +40,10 @@ export type Course = {
   layout: (t: Track) => Layout;
   /** The sky behind the 3D view (the canvas is transparent). */
   sky: string;
+  /** Anything about the course's tier (see TIER) that differs from its difficulty's. */
+  tier?: Partial<Tier>;
+  /** A line for the lap banner on the laps where something joins in (see Hazard.lap). */
+  laps?: Record<number, string>;
 };
 
 /**
@@ -38,8 +57,19 @@ function placed(
     coins: [number, number, number][];
     dashes: [number, number][];
     ramps: [number, number, number][];
-    /** [kind, s, d, size], and for cows how far they wander, how fast and when they set off. */
-    hazards?: [HazardKind, number, number, number?, number?, number?, number?][];
+    /** [kind, s, d, size], and for cows how far they wander, how fast and when they set off; then the lap it joins in. */
+    hazards?: [HazardKind, number, number, number?, number?, number?, number?, number?][];
+    /** Buses: [where it waits for the green light, its lane d, meters a second]. */
+    buses?: [number, number, number][];
+    /** Golf carts driving laps, the same way. */
+    carts?: [number, number, number][];
+    /**
+     * Golf balls: [s, d where they land, every so many seconds, the first at, the tee: [along, across] from there],
+     * and the lap they start on if not the first.
+     */
+    balls?: [number, number, number, number, number, number, number?][];
+    /** Ponds beside the road: [s, d of the middle, radius]. */
+    ponds?: [number, number, number][];
   },
 ): Layout {
   // a narrow road packs its row of boxes a little closer together
@@ -49,7 +79,13 @@ function placed(
     coins: spec.coins.flatMap(([s, d, count]) => Array.from({ length: count }, (_, k) => ({ s: wrapS(t, s + k * 3.2), d }))),
     dashes: spec.dashes.map(([s, d]) => ({ s: wrapS(t, s), d })),
     ramps: spec.ramps.map(([s, d, w]) => ({ s: wrapS(t, s), d, w })),
-    hazards: (spec.hazards ?? []).map(([kind, s, d, r, swing, speed, phase]) => ({ kind, s: wrapS(t, s), d, r: r ?? HAZARD_R[kind], swing, speed, phase })),
+    hazards: [
+      ...(spec.hazards ?? []).map(([kind, s, d, r, swing, speed, phase, lap]) => ({ kind, s: wrapS(t, s), d, r: r ?? HAZARD_R[kind], swing, speed, phase, ...(lap ? { lap } : {}) })),
+      ...(spec.buses ?? []).map(([s, d, drive]) => ({ kind: 'bus' as const, s: wrapS(t, s), d, r: HAZARD_R.bus, drive })),
+      ...(spec.carts ?? []).map(([s, d, drive]) => ({ kind: 'cart' as const, s: wrapS(t, s), d, r: HAZARD_R.cart, drive })),
+      ...(spec.balls ?? []).map(([s, d, every, phase, along, across, lap]) => ({ kind: 'ball' as const, s: wrapS(t, s), d, r: HAZARD_R.ball, every, phase, tee: [along, across] as [number, number], ...(lap ? { lap } : {}) })),
+      ...(spec.ponds ?? []).map(([s, d, r]) => ({ kind: 'water' as const, s: wrapS(t, s), d, r })),
+    ],
   };
 }
 
@@ -110,6 +146,91 @@ const STADIUM: [number, number][] = [
   [-119, 186], [-145, 201], [-175, 198], [-199, 179], [-208, 150], [-208, 90], [-204, 10], [-176, -46],
 ];
 
+/**
+ * Straight legs joined by round corners: each corner [east, north] becomes an arc of radius r tangent to both legs,
+ * so a course can turn square corners that still drive smoothly.
+ */
+function squared(corners: [number, number][], r: number): [number, number][] {
+  const out: [number, number][] = [];
+  const n = corners.length;
+  for (let i = 0; i < n; i++) {
+    const [x, y] = corners[i];
+    const [px, py] = corners[(i - 1 + n) % n];
+    const [qx, qy] = corners[(i + 1) % n];
+    const la = Math.hypot(x - px, y - py);
+    const lb = Math.hypot(qx - x, qy - y);
+    const [ax, ay, bx, by] = [(x - px) / la, (y - py) / la, (qx - x) / lb, (qy - y) / lb];
+    // how far it turns (positive to the left), how far back from the corner the arc meets the leg in, and its middle
+    const turn = Math.atan2(ax * by - ay * bx, ax * bx + ay * by);
+    const back = r * Math.tan(Math.abs(turn) / 2);
+    const side = Math.sign(turn);
+    const cx = x - ax * back - ay * r * side;
+    const cy = y - ay * back + ax * r * side;
+    const from = Math.atan2(y - ay * back - cy, x - ax * back - cx);
+    // a point every 15 degrees keeps the spline on the arc
+    const steps = Math.max(1, Math.round(Math.abs(turn) / (Math.PI / 12)));
+    for (let k = 0; k <= steps; k++) out.push([cx + Math.cos(from + (turn * k) / steps) * r, cy + Math.sin(from + (turn * k) / steps) * r]);
+  }
+  return out;
+}
+
+/**
+ * The Main Quad: paths round the outside of the quad and in through the arcades, all square corners and short
+ * straights. Along the front of Memorial Court, up the east side and in round the inner quad, out again and up to
+ * the church, a chicane in front of its mosaic, then down the west side with another dog-leg through the arcades.
+ */
+const QUAD_K = 1.25;
+const QUAD: [number, number][] = [
+  // Memorial Court, and the dog-leg in round the east side of the inner quad
+  [-95, -100], [60, -100], [60, -40], [0, -40], [0, 20], [80, 20],
+  // up the east side to the head of the quad, and the chicane in front of the church
+  [80, 100], [44, 100], [26, 85], [-4, 85], [-22, 100],
+  // down the west side, with a dog-leg in through the arcades
+  [-95, 100], [-95, 40], [-40, 40], [-40, -20], [-95, -20],
+];
+
+/**
+ * Hoover Nights: campus after dark. A fast run east toward Hoover Tower into a pair of hairpins, a sweeper north, a
+ * hairpin round the fountain, esses across the quad and a quick run home down the west side. The points are close
+ * together so the hairpins keep an even radius.
+ */
+const HOOVER: [number, number][] = [
+  // the start straight, and the first hairpin round the east end
+  [-120, -150], [-101, -150], [-81, -150], [72, -150], [92, -150], [112, -150], [129, -151],
+  [149, -144], [162, -126], [162, -105], [150, -89], [130, -82], [110, -82],
+  // back west and round the second hairpin
+  [70, -82], [51, -82], [30, -74], [19, -59], [19, -36], [29, -21], [49, -13], [70, -14],
+  // the sweeper north to the tower
+  [110, -14], [129, -11], [145, -2], [159, 11], [167, 28], [170, 46], [170, 66],
+  // the hairpin round the fountain, and out to the west
+  [169, 85], [162, 106], [147, 117], [125, 117], [110, 106], [103, 86], [103, 71],
+  [101, 56], [97, 40], [86, 28], [68, 22], [48, 22], [28, 22],
+  // esses across the quad and along the north side
+  [10, 27], [-3, 40], [-15, 61], [-28, 74], [-46, 79], [-89, 78], [-111, 79],
+  // down the west side through the kink, and round onto the straight
+  [-128, 75], [-140, 63], [-144, 47], [-144, 29], [-144, -8], [-144, -26], [-153, -48], [-160, -70],
+  [-160, -90], [-160, -110], [-155, -130], [-140, -145],
+];
+
+/**
+ * The Stanford Golf Course: off the first tee past the clubhouse with the driving range alongside, through the bunkers,
+ * round the island green's pond, the dog-leg esses on the back nine and down the 18th fairway home. The loop round the
+ * pond is points on a circle, so the water keeps an even distance from the road.
+ */
+const GOLF_K = 0.9;
+const GOLF: [number, number][] = [
+  // the first tee, past the clubhouse and the driving range, and the long sweeper north
+  [-200, -160], [-60, -165], [80, -160], [160, -132], [200, -75],
+  // the bunker esses
+  [205, -10], [180, 45],
+  // round the island green's pond
+  [192, 102], [192, 148], [169, 187], [130, 210], [84, 210], [45, 187], [22, 148],
+  // the dog-leg esses on the back nine
+  [14, 100], [-24, 66], [-76, 84], [-120, 140],
+  // and down the 18th fairway home
+  [-180, 140], [-215, 90], [-232, 10], [-238, -70], [-224, -132],
+];
+
 export const COURSES: Record<CourseId, Course> = {
   palm: {
     id: 'palm',
@@ -163,6 +284,9 @@ export const COURSES: Record<CourseId, Course> = {
     start: [-150 * BARN_K, -160.5 * BARN_K],
     half: 7,
     edge: 11.5,
+    // the CPUs know their way round the bales and the bog, which makes the barn the harder of the two Medium courses
+    // at the Medium pace: a touch slower keeps it Medium
+    tier: { pace: 0.965 },
     layout: (t) =>
       placed(t, {
         boxes: [60, 560, 795],
@@ -266,6 +390,8 @@ export const COURSES: Record<CourseId, Course> = {
     start: [-40 * STADIUM_K, -63 * STADIUM_K],
     half: 10,
     edge: 15,
+    // a short sprint on a wide road keeps the field bunched up, so the CPUs go a touch easier to leave it Easy
+    tier: { pace: 0.955 },
     layout: (t) =>
       placed(t, {
         boxes: [70, 300, 590],
@@ -295,7 +421,235 @@ export const COURSES: Record<CourseId, Course> = {
       }),
     sky: 'linear-gradient(180deg, #1f5fbf 0%, #5d9be0 25%, #b5d3f0 38%, #e6e2d4 44%, #c9bd8a 46%, #6f9a52 47%)',
   },
+  quad: {
+    id: 'quad',
+    name: 'Main Quad',
+    blurb: 'Square corners round the sandstone arcades, a chicane at the church, and bikes everywhere. Tight and twisty.',
+    difficulty: 3,
+    route: squared(QUAD, 22).map(([e, n]) => [e * QUAD_K, n * QUAD_K]),
+    start: [-40 * QUAD_K, -100.6 * QUAD_K],
+    half: 6.5,
+    edge: 10,
+    layout: (t) =>
+      placed(t, {
+        boxes: [48, 350, 636],
+        coins: [
+          [14, 3, 5],
+          [107, 2.5, 4],
+          [168, 0, 4],
+          [207, -2.5, 4],
+          [276, -3, 5],
+          [382, 2, 4],
+          [430, -2, 5],
+          [552, 3, 4],
+          [612, -2, 4],
+          [700, 3, 4],
+          [808, -3, 4],
+        ],
+        dashes: [
+          [522, 0],
+          [852, -2],
+        ],
+        // a dash panel straight into a jump after the chicane, and a kicker down the west side
+        ramps: [
+          [540, 0, 8],
+          [803, 3.5, 5],
+        ],
+        hazards: [
+          // round planters with a tree in each, on the inside of the corners
+          ['planter', 118, -3],
+          ['planter', 224, 2.6],
+          ['planter', 457, 2.4],
+          ['planter', 588, -2.6],
+          ['planter', 684, 2.6],
+          // and cyclists riding across, back and forth between classes
+          ['bike', 66, 0, undefined, 5, 1.1, 0],
+          ['bike', 288, 0, undefined, 5, 1.2, 2],
+          ['bike', 366, 0, undefined, 5, 1.1, 4],
+          ['bike', 512, 0, undefined, 5, 1.25, 1],
+          ['bike', 798, 0, undefined, 5, 0.8, 3],
+        ],
+      }),
+    sky: 'linear-gradient(180deg, #2a68c4 0%, #6aa3e3 24%, #bcd6ee 36%, #f1dfbf 42%, #dcc596 46%, #c9b07e 47%)',
+  },
+  hoover: {
+    id: 'hoover',
+    name: 'Hoover Nights',
+    blurb: 'Campus after dark round Hoover Tower: the narrowest road, three hairpins, oil on the apexes and the Marguerite out on its rounds.',
+    difficulty: 4,
+    route: HOOVER,
+    start: [-60, -150],
+    half: 6,
+    edge: 9.5,
+    layout: (t) =>
+      placed(t, {
+        boxes: [60, 262, 410, 815],
+        coins: [
+          [20, -3, 5],
+          [120, 3, 5],
+          [240, 0, 5],
+          [440, -2.5, 5],
+          [636, 0, 4],
+          [690, 3, 5],
+          [755, -2, 4],
+          [866, 2.5, 4],
+          [960, 0, 5],
+          [1005, 2.5, 5],
+          [1075, -3, 5],
+        ],
+        // boosts and jumps keep to the middle of the road, out of the buses' lanes
+        dashes: [
+          [30, 0],
+          [505, 0],
+          [705, 0],
+          [900, 0],
+        ],
+        ramps: [
+          [528, 0, 4],
+          [922, 0, 4],
+        ],
+        hazards: [
+          // oil on the apex of every hairpin and corner, and on the line through the sweeper and the esses
+          ['oil', 188, -3.5],
+          ['oil', 342, 3.5],
+          ['oil', 466, -3.5],
+          ['oil', 585, -3.5],
+          ['oil', 664, 3.4],
+          ['oil', 788, -3.7, 2.1],
+          ['oil', 873, -3.5],
+          ['oil', 1045, -3.5],
+        ],
+        // two Marguerite shuttles half a lap apart, one in each outside lane, so one side is always clear
+        buses: [
+          [430, 3.4, 11],
+          [990, -3.4, 11],
+        ],
+      }),
+    sky: 'linear-gradient(180deg, #03061a 0%, #0a1434 22%, #16264e 36%, #2a3a68 43%, #22325e 46%, #121a2a 47%)',
+  },
+  golf: {
+    id: 'golf',
+    name: 'Stanford Golf Course',
+    blurb: 'Golf carts and golfers crossing, balls raining down off the tees, bunkers, water and an island green. The wildest yet.',
+    difficulty: 4,
+    route: GOLF.map(([e, n]) => [e * GOLF_K, n * GOLF_K]),
+    start: [-120 * GOLF_K, -163 * GOLF_K],
+    half: 6.5,
+    edge: 10,
+    layout: (t) => {
+      // Three carts drive their rounds in the right-hand lane a third of a lap apart, so the left is always clear.
+      // Everything that crosses the road keeps time with them: a whole number of crossings between one cart and the
+      // next, timed to be over on the far side whenever one comes by.
+      const cartV = 9;
+      const third = t.length / 3;
+      const every = third / cartV;
+      // (a group walking together keeps time with the one at the front, at s0)
+      const across = (kind: 'golfer' | 'cart', s: number, n: number, swing: number, size?: number, s0 = s, lap?: number): [HazardKind, number, number, number?, number?, number?, number?, number?] => {
+        const speed = (2 * Math.PI * n) / every;
+        const pass = ((((s0 - 180) % third) + third) % third) / cartV;
+        return [kind, s, 0, size, swing, speed, -Math.PI / 2 - speed * pass, lap];
+      };
+      return placed(t, {
+        boxes: [22, 285, 600, 812],
+        coins: [
+          [52, 3, 4],
+          [175, -3, 5],
+          [262, -2.5, 4],
+          [320, 0, 4],
+          [425, 3, 5],
+          [515, 0, 3],
+          [624, 2.5, 4],
+          [700, -2.5, 4],
+          [785, 0, 4],
+          [862, -3, 4],
+          [958, 3, 4],
+          [1040, -3, 5],
+          [1075, 3, 4],
+        ],
+        // boosts and jumps keep to the middle of the road, out of the carts' lanes; the jump down the 18th clears the
+        // fairway bunker
+        dashes: [
+          [160, 0],
+          [828, 0],
+          [1065, 0],
+        ],
+        ramps: [
+          [535, 0, 4.5],
+          [846, 0, 5.5],
+        ],
+        hazards: [
+          // the bunker esses, a bunker on each apex so the line slaloms, more on the apexes of the back nine, and one in
+          // the middle of the 18th fairway that the jump clears
+          ['sand', 310, -3.6],
+          ['sand', 348, 3.6],
+          ['sand', 388, -3.6],
+          ['sand', 662, 3.6],
+          ['sand', 752, -3.6],
+          ['sand', 858, 0, 3],
+          ['sand', 1028, -3.6],
+          // carts crossing the road on the cart paths, and back
+          across('cart', 205, 6, 4.8, 1.2),
+          across('cart', 775, 6, 4.8, 1.2),
+          // golfers walking across with their bags: a pair to the second tee, a foursome on the way to the island green
+          // (one behind the other, in step), and a couple more on the back nine
+          across('golfer', 255, 3, 4.6),
+          across('golfer', 256.6, 3, 4.6, undefined, 255),
+          ...[498, 499.6, 501.2, 502.8].map((at) => across('golfer', at, 3, 4.6, undefined, 498)),
+          across('golfer', 690, 4, 4.6),
+          across('golfer', 972, 3, 4.6),
+          // and from the last lap the gallery that has been watching by the 18th green walks across it, all four
+          ...[1016, 1017.6, 1019.2, 1020.8].map((at) => across('golfer', at, 3, 4.6, undefined, 1016, 5)),
+          // the flagsticks where the road crosses two greens
+          ['pin', 725, -2.6],
+          ['pin', 1006, -2.4],
+        ],
+        carts: [
+          [180, 3.8, cartV],
+          [180 + third, 3.8, cartV],
+          [180 + 2 * third, 3.8, cartV],
+        ],
+        // balls driven onto the road: four from the driving range across the first straight, more down the 18th,
+        // and one off each of the tees in between. From the third lap the whole range is hitting (four more across the
+        // rest of the straight), and on the last lap two more come down on the approach to the 18th green
+        balls: [
+          [45, 1.8, 4, 0.4, -6, 26],
+          [75, -2.4, 4, 1.4, -6, 26],
+          [105, 0.6, 4, 2.4, -6, 26],
+          [135, -1.8, 4, 3.4, -6, 26],
+          [230, 2, 5, 1.5, 20, 32],
+          [455, 1.8, 5.5, 0.8, -15, 30],
+          [580, -1.5, 5, 3.3, -10, 30],
+          [640, -1, 4.5, 2.2, 10, -30],
+          [880, 1.6, 4.5, 0.2, -12, 30],
+          [905, -2, 5, 2.6, -12, 30],
+          [935, 1, 4.5, 1.1, -12, 30],
+          [965, -1.5, 5, 3.9, -12, 30],
+          [178, 0, 4, 0.9, -6, 26, 3],
+          [200, 2.2, 4, 2.9, -6, 26, 3],
+          [215, -2.6, 4.5, 1.7, -6, 26, 3],
+          [245, 1, 4, 3.7, -6, 26, 3],
+          [985, 1.6, 4, 0.7, -12, 30, 5],
+          [995, -1, 4.5, 2.2, -12, 30, 5],
+        ],
+        // the island green's pond on the inside of the loop, and the water down the left of the 18th: right up to the
+        // curb, so one wheel over and you are in
+        ponds: [
+          [402.57, -62.54, 54.9],
+          [915, -37.7, 30],
+          [929, -37.7, 30],
+          [943, -37.7, 30],
+        ],
+      });
+    },
+    sky: 'linear-gradient(180deg, #3a7fd0 0%, #85b8ea 24%, #d3e5f1 36%, #f6e3b6 42%, #e9cf96 46%, #5d9a3c 47%)',
+    // a good line misses most of what is on the road here, so the CPUs need a touch more pace to keep up with one
+    tier: { pace: 1.04 },
+    laps: { 3: 'The range opens up', 5: 'The gallery at the 18th' },
+  },
 };
+
+/** A course's tier: its difficulty's, with anything the course sets itself. */
+export const tierOf = (id: CourseId): Tier => ({ ...TIER[COURSES[id].difficulty], ...COURSES[id].tier });
 
 const tracks = new Map<CourseId, Track>();
 /** Each course's circuit, built once. */

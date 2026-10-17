@@ -1,0 +1,929 @@
+/* The Lounge (Lounge.tsx): the arcade chat as an app. Channels on the left (tabs when narrow), messages, and who's here
+   on the right (behind a button when narrow). The layout follows the window's width, set from JS as is-wide / is-roomy. */
+.lounge {
+  --lg-bg: #1d1e22;
+  --lg-side: #16171a;
+  --lg-panel: #19191d;
+  --lg-raise: #27282e;
+  --lg-hover: rgba(255, 255, 255, 0.05);
+  --lg-on: rgba(255, 255, 255, 0.1);
+  --lg-line: rgba(255, 255, 255, 0.07);
+  --lg-text: #e8e9ec;
+  --lg-body: #d6d7db;
+  --lg-dim: #a3a6ae;
+  --lg-faint: #73767e;
+  --lg-accent: #b39dff;
+  --lg-strong: #7c5cf0;
+  --lg-red: #f0505a;
+  --lg-green: #2e9e5f;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  /* Room for a phone keyboard while typing (see useKeyboardLift). */
+  padding-bottom: var(--lounge-keyboard, 0px);
+  overflow: hidden;
+  background: var(--lg-bg);
+  color: var(--lg-text);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.lounge.is-wide {
+  grid-template-columns: 212px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.lounge.is-roomy {
+  grid-template-columns: 212px minmax(0, 1fr) 236px;
+}
+:where(.lounge) button {
+  font: inherit;
+  color: inherit;
+}
+.lounge button:focus-visible,
+.lounge input:focus-visible {
+  outline: 2px solid var(--lg-accent);
+  outline-offset: 1px;
+}
+.lounge-list,
+.lounge-members,
+.lounge-side .lounge-channels {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+/* ---- channels: a sidebar when wide, a row of tabs when narrow ---- */
+.lounge-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--lg-side);
+  border-right: 1px solid var(--lg-line);
+}
+.lounge-brand {
+  margin: 0;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--lg-line);
+  font-size: 15px;
+  font-weight: 700;
+}
+.lounge-channels {
+  display: flex;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lounge-side .lounge-channels {
+  flex: 1;
+  flex-direction: column;
+  padding: 10px 8px;
+  overflow-y: auto;
+}
+.lounge-channels button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--lg-faint);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.lounge-channels i {
+  width: 14px;
+  font-size: 18px;
+  font-style: normal;
+  line-height: 1;
+  text-align: center;
+  opacity: 0.85;
+}
+.lounge-channels span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lounge-channels button:hover {
+  background: var(--lg-hover);
+  color: var(--lg-dim);
+}
+.lounge-channels button.is-unread {
+  color: var(--lg-text);
+  font-weight: 650;
+}
+.lounge-channels button.is-on {
+  background: var(--lg-on);
+  color: #fff;
+}
+.lounge-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--lg-red);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.lounge-tabs {
+  overflow-x: auto;
+  background: var(--lg-side);
+  border-bottom: 1px solid var(--lg-line);
+  scrollbar-width: none;
+}
+.lounge-tabs::-webkit-scrollbar {
+  display: none;
+}
+.lounge-tabs .lounge-channels {
+  gap: 4px;
+  width: max-content;
+  padding: 8px 10px;
+}
+.lounge-tabs .lounge-channels button {
+  width: auto;
+  padding: 5px 11px 5px 9px;
+  border-radius: 999px;
+}
+
+/* ---- the channel ---- */
+.lounge-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.lounge-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 6px 10px 6px 16px;
+  border-bottom: 1px solid var(--lg-line);
+}
+.lounge-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.lounge-head h2 i {
+  color: var(--lg-faint);
+  font-size: 19px;
+  font-style: normal;
+  font-weight: 500;
+}
+.lounge-head p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--lg-line);
+  overflow: hidden;
+  color: var(--lg-faint);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The tabs already say which channel this is. */
+.lounge:not(.is-wide) .lounge-head h2 {
+  display: none;
+}
+.lounge:not(.is-wide) .lounge-head {
+  min-height: 40px;
+  padding-left: 14px;
+}
+.lounge:not(.is-wide) .lounge-head p {
+  padding-left: 0;
+  border-left: 0;
+}
+.lounge-members-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--lg-hover);
+  color: var(--lg-dim);
+  font-weight: 600;
+  cursor: pointer;
+}
+.lounge-members-btn:hover,
+.lounge-members-btn[aria-expanded='true'] {
+  background: var(--lg-on);
+  color: var(--lg-text);
+}
+.lounge-body {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.lounge-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 10px 0 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.lounge-day,
+.lounge-new {
+  display: flex;
+  align-items: center;
+  margin: 16px 16px 4px;
+  color: var(--lg-faint);
+  font-size: 12px;
+  font-weight: 600;
+}
+.lounge-day::before,
+.lounge-day::after,
+.lounge-new::before {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--lg-line);
+}
+.lounge-day span {
+  padding: 0 10px;
+}
+.lounge-new {
+  margin-top: 10px;
+  color: var(--lg-red);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.lounge-new::before {
+  background: var(--lg-red);
+  opacity: 0.7;
+}
+.lounge-new span {
+  padding-left: 8px;
+}
+.lounge-msg {
+  position: relative;
+  padding: 1px 16px 1px 68px;
+}
+.lounge-msg.is-first {
+  margin-top: 12px;
+  padding-top: 2px;
+}
+.lounge-msg:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+.lounge-msg.is-mention {
+  background: rgba(240, 178, 50, 0.09);
+  box-shadow: inset 2px 0 0 #f0b232;
+}
+.lounge-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #4a4c53;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.lounge-msg .lounge-avatar {
+  position: absolute;
+  top: 4px;
+  left: 16px;
+}
+.lounge-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.lounge-meta b {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--name, #fff) 40%, #fff);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lounge-meta time {
+  flex: none;
+  color: var(--lg-faint);
+  font-size: 11.5px;
+}
+.lounge-gutter {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  width: 56px;
+  color: var(--lg-faint);
+  font-size: 10.5px;
+  text-align: right;
+  opacity: 0;
+}
+.lounge-msg:hover .lounge-gutter {
+  opacity: 1;
+}
+.lounge-text {
+  margin: 0;
+  color: var(--lg-body);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.lounge-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.lounge:not(.is-wide) .lounge-msg {
+  padding-right: 12px;
+  padding-left: 56px;
+}
+.lounge:not(.is-wide) .lounge-msg .lounge-avatar {
+  left: 12px;
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+}
+.lounge:not(.is-wide) .lounge-gutter {
+  width: 46px;
+}
+.lounge:not(.is-wide) .lounge-day,
+.lounge:not(.is-wide) .lounge-new {
+  margin-right: 12px;
+  margin-left: 12px;
+}
+
+/* A shared room. */
+.lounge-invite {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 380px;
+  margin: 6px 0 4px;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid var(--lg-line);
+  border-radius: 10px;
+  background: var(--lg-raise);
+}
+.lounge-invite.is-stale {
+  opacity: 0.6;
+}
+.lounge-invite-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+}
+.lounge-invite-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.lounge-invite-text b {
+  font-weight: 650;
+}
+.lounge-invite-text em {
+  overflow: hidden;
+  color: var(--lg-dim);
+  font-size: 12.5px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lounge-join {
+  flex: none;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--lg-green);
+  color: #fff;
+  font-weight: 650;
+  cursor: pointer;
+}
+.lounge-join:hover {
+  filter: brightness(1.12);
+}
+.lounge-join.is-small {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.lounge-status {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  left: 50%;
+  margin: 0;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--lg-dim);
+  font-size: 12px;
+  transform: translateX(-50%);
+}
+.lounge-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--lg-dim);
+  text-align: center;
+}
+.lounge-empty p {
+  margin: 0;
+}
+.lounge-empty-hash {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--lg-raise);
+  color: var(--lg-text);
+  font-size: 30px;
+}
+.lounge-jump {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--lg-strong);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transform: translateX(-50%);
+}
+
+/* #find-a-game's open rooms, above the chat. */
+.lounge-rooms {
+  flex: none;
+  margin: 10px 16px 0;
+  overflow: hidden;
+  border: 1px solid var(--lg-line);
+  border-radius: 10px;
+  background: var(--lg-panel);
+}
+.lounge:not(.is-wide) .lounge-rooms {
+  margin: 8px 10px 0;
+}
+.lounge-rooms-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px 9px 12px;
+  border: 0;
+  background: none;
+  color: var(--lg-dim);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.lounge-rooms-head:hover {
+  color: var(--lg-text);
+}
+.lounge-rooms-head i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lg-faint);
+}
+.lounge-rooms-head i.is-live {
+  background: var(--lg-green);
+  box-shadow: 0 0 0 3px rgba(46, 158, 95, 0.22);
+}
+.lounge-rooms-head b {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--lg-on);
+  color: var(--lg-text);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.lounge-rooms-head svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  transition: transform 0.15s;
+}
+.lounge-rooms:not(.is-open) .lounge-rooms-head svg {
+  transform: rotate(-90deg);
+}
+.lounge-rooms-note {
+  margin: 0;
+  padding: 0 12px 12px;
+  color: var(--lg-faint);
+  font-size: 12.5px;
+}
+.lounge-room-list {
+  max-height: 214px;
+  margin: 0;
+  padding: 0 6px 6px;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  scrollbar-width: thin;
+}
+.lounge-room {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 8px;
+}
+.lounge-room:hover {
+  background: var(--lg-hover);
+}
+.lounge-room .lounge-invite-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+.lounge-room-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.lounge-room-text b,
+.lounge-room-text em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lounge-room-text b {
+  font-weight: 650;
+}
+.lounge-room-text small {
+  color: var(--lg-dim);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.lounge-room-text em {
+  color: var(--lg-dim);
+  font-size: 12px;
+  font-style: normal;
+}
+.lounge-room-yours {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 7px;
+  background: var(--lg-on);
+  color: var(--lg-dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---- writing ---- */
+.lounge-compose {
+  flex: none;
+  padding: 0 16px 14px;
+}
+.lounge:not(.is-wide) .lounge-compose {
+  padding: 0 10px 10px;
+}
+.lounge-typing {
+  height: 20px;
+  margin: 0;
+  padding: 2px 2px 0;
+  overflow: hidden;
+  color: var(--lg-dim);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lounge-notice {
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(240, 80, 90, 0.13);
+  color: #ffa3a8;
+  font-size: 12.5px;
+}
+.lounge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 0 0 6px;
+  padding: 5px 5px 5px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 24%, var(--lg-raise));
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.lounge-chip > svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+}
+.lounge-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lounge-chip button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--lg-dim);
+  cursor: pointer;
+}
+.lounge-chip button:hover {
+  background: var(--lg-on);
+  color: #fff;
+}
+.lounge-chip button svg {
+  width: 14px;
+  height: 14px;
+}
+.lounge-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 14px;
+  border-radius: 10px;
+  background: var(--lg-raise);
+}
+.lounge-row:focus-within {
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--lg-accent) 55%, transparent);
+}
+.lounge-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--lg-text);
+  font: inherit;
+  font-size: 14.5px;
+}
+.lounge-row input:focus-visible {
+  outline: none;
+}
+.lounge-row input::placeholder,
+.lounge-user-edit input::placeholder {
+  color: var(--lg-faint);
+}
+.lounge-left {
+  color: var(--lg-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.lounge-send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: var(--lg-strong);
+  color: #fff;
+  cursor: pointer;
+}
+.lounge-send:disabled {
+  background: transparent;
+  color: var(--lg-faint);
+  cursor: default;
+}
+.lounge-btn {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--lg-on);
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lounge-btn.is-primary {
+  background: var(--lg-strong);
+  color: #fff;
+}
+.lounge-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* ---- you ---- */
+.lounge-user {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 10px 8px 10px 12px;
+  border-top: 1px solid var(--lg-line);
+  background: rgba(0, 0, 0, 0.2);
+}
+.lounge-user .lounge-avatar,
+.lounge-member .lounge-avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 14px;
+}
+.lounge-user-text,
+.lounge-member-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.lounge-user-text b,
+.lounge-user-text em,
+.lounge-member-text b,
+.lounge-member-text em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lounge-user-text b,
+.lounge-member-text b {
+  font-weight: 600;
+}
+.lounge-user-text em,
+.lounge-member-text em {
+  color: var(--lg-dim);
+  font-size: 12px;
+  font-style: normal;
+}
+.lounge-member-text small {
+  color: var(--lg-faint);
+  font-weight: 500;
+}
+.lounge-icon-btn {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--lg-dim);
+  cursor: pointer;
+}
+.lounge-icon-btn:hover {
+  background: var(--lg-on);
+  color: #fff;
+}
+.lounge-user-edit {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+}
+.lounge-user-edit input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  outline: none;
+  background: var(--lg-raise);
+  color: var(--lg-text);
+  font: inherit;
+}
+.lounge-user-edit button {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--lg-strong);
+  color: #fff;
+  font-weight: 650;
+  cursor: pointer;
+}
+.lounge-user-edit button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* ---- who's here: a column when roomy, a panel over the chat otherwise ---- */
+.lounge-members {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding-bottom: 12px;
+  overflow-y: auto;
+  border-left: 1px solid var(--lg-line);
+  background: var(--lg-panel);
+}
+.lounge-members.is-overlay {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(292px, 86%);
+  box-shadow: -12px 0 30px rgba(0, 0, 0, 0.35);
+  animation: loungeIn 0.18s ease-out;
+}
+.lounge-members.is-overlay .lounge-user {
+  border-top: 0;
+  border-bottom: 1px solid var(--lg-line);
+}
+.lounge-scrim {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.35);
+  cursor: default;
+}
+.lounge-members-head {
+  margin: 16px 16px 6px;
+  color: var(--lg-faint);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.lounge-member-list {
+  margin: 0;
+  padding: 0 8px;
+  list-style: none;
+}
+.lounge-member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.lounge-member:hover {
+  background: var(--lg-hover);
+}
+.lounge-guests {
+  margin: 10px 16px 0;
+  color: var(--lg-faint);
+  font-size: 12.5px;
+}
+@keyframes loungeIn {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lounge-members.is-overlay {
+    animation: none;
+  }
+}
+/* Phones zoom into any box with text under 16px; keep them still. */
+@media (pointer: coarse) {
+  .lounge input {
+    font-size: 16px;
+  }
+}

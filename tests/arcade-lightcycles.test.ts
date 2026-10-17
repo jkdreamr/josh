@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alive, createArena, lookahead, reachable, roundOver, steer, step, swipeDir, think, type Dir } from '../src/os/arcade/games/lightcycles/cycles.ts';
+import { alive, createArena, lookahead, reachable, riderSeats, roundOver, steer, step, swipeDir, think, type Dir } from '../src/os/arcade/games/lightcycles/cycles.ts';
 
 test('riders start apart, facing the centre, with their start cells claimed', () => {
   const a = createArena(40, 30, 2, 1);
@@ -110,4 +110,11 @@ test('swipe direction needs a minimum length and follows the dominant axis', () 
   assert.equal(swipeDir(-40, 5), 3);
   assert.equal(swipeDir(4, 30), 2);
   assert.equal(swipeDir(4, -30), 0);
+});
+
+test('online riders follow the seats in the room, people and bots alike', () => {
+  assert.deepEqual(riderSeats([0, 2], [1, 3]), [0, 1, 2, 3]);
+  assert.deepEqual(riderSeats([0, 3], [1]), [0, 1, 3], 'a seat someone left stays empty');
+  assert.deepEqual(riderSeats([0, 1], [1, 2]), [0, 1, 2], 'each seat rides once');
+  assert.deepEqual(riderSeats([0, 1, 2, 3, 4], []), [0, 1, 2, 3], 'four riders at most');
 });

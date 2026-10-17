@@ -1,7 +1,7 @@
 // Pure race rules for Palm Drive: kart physics, drifting and mini-turbos, items, CPU drivers, laps and places.
 // No DOM, no three.js. Distances are meters, times seconds; see track.ts for the axes and heading convention.
-import { COURSES, trackOf, type CourseId } from './courses.ts';
-import { CURB, deltaS, solid, gridSpot, headingOf, locate, pointAt, wrapAngle, type Hazard, type Layout, type Track } from './track.ts';
+import { COURSES, tierOf, trackOf, type CourseId, type Tier } from './courses.ts';
+import { BALL_WINDOW, CURB, awake, ballDue, ballNear, deltaS, drives, gridSpot, headingOf, lengthOf, locate, pointAt, shoreOf, solid, wrapAngle, wrapS, type Hazard, type Layout, type Shore, type Track } from './track.ts';
 
 export const LAPS = 5;
 export const COUNTDOWN = 3;
@@ -69,6 +69,13 @@ export const GREEN_V = 42;
 export const RED_V = 40;
 export const BLUE_V = 60;
 export const BOOM_R = 7;
+/**
+ * In the water: how close to a pond's edge the kart's middle can come before it goes in (how long until you are fished out, and
+ * what it costs, go with the course: see Tier). Press drift this close either side of being set back down on the road
+ * for a drop start, a boost as long as a dash panel's.
+ */
+export const WET = 0.6;
+export const DROP_WINDOW = 0.25;
 
 export type Cc = '50cc' | '100cc' | '150cc' | '200cc';
 export const CCS: Cc[] = ['50cc', '100cc', '150cc', '200cc'];
@@ -93,7 +100,8 @@ export type HitHow = 'spin' | 'tumble' | 'squash' | 'boom';
 export type Input = { steer: number; brake: boolean; drift: boolean; hop: boolean; use: boolean; back: boolean; fwd: boolean; hold: boolean; slam: boolean; cash: boolean };
 export type Hat = 'cap' | 'tree' | 'top' | 'bow' | 'tower' | 'axe' | 'dish' | 'claw';
 export const HATS: Hat[] = ['cap', 'tree', 'top', 'bow', 'tower', 'axe', 'dish', 'claw'];
-export type Ai = { pace: number; skill: number; band: number; lane: number; laneTo: number; laneT: number; itemT: number; held: number; driftT: number };
+/** care: seconds left keeping well away from the water after a splash; dropGo: this time it times the drop start. */
+export type Ai = { pace: number; skill: number; band: number; lane: number; laneTo: number; laneT: number; itemT: number; held: number; driftT: number; care: number; dropGo: boolean };
 /** What the network last said about a remote kart. */
 export type NetState = { x: number; z: number; h: number; v: number; prog: number; done: number | null; flags: number; at: number };
 
@@ -162,8 +170,14 @@ export type Kart = {
   uses: number;
   roll: number;
   offroad: boolean;
-  /** In a mud puddle: as slow as the grass. */
+  /** In a mud puddle or a bunker: as slow as the grass (sand: it is a bunker). */
   mud: boolean;
+  sand: boolean;
+  /** In a pond, waiting to be fished out; then how long is left to press for a drop start, and whether it was pressed. */
+  sunk: number;
+  drop: number;
+  dropHit: boolean;
+  dropMiss: boolean;
   wrong: number;
   stuck: number;
   gas: number | null;
@@ -231,9 +245,17 @@ export type Ev =
   | { t: 'inked'; k: number }
   | { t: 'horn'; k: number; x: number; z: number }
   | { t: 'blast'; x: number; z: number }
-  /** Splashing into mud, and running into a cow. */
+  /** Splashing into mud, running into a cow or a cyclist, and the horn of the bus you ran into. */
   | { t: 'mud'; k: number }
-  | { t: 'moo'; k: number };
+  | { t: 'moo'; k: number }
+  | { t: 'ding'; k: number }
+  | { t: 'honk'; k: number }
+  /** Out on the golf course: into a bunker, into a pond, a golf cart's horn, a golfer's shout and a ball off your helmet. */
+  | { t: 'sand'; k: number }
+  | { t: 'splash'; k: number }
+  | { t: 'toot'; k: number }
+  | { t: 'fore'; k: number }
+  | { t: 'plink'; k: number };
 
 export type Rng = () => number;
 
@@ -250,8 +272,12 @@ export type Race = {
   coins: Coin[];
   dashes: Dash[];
   ramps: Ramp[];
-  /** The course's mud, oil, hay bales, boulders and cows, with where each is right now. */
+  /** The course's mud, oil, hay bales, boulders, cows, buses and so on, with where each is right now. */
   hazards: LiveHazard[];
+  /** How far it is to the water either side of the road, on a course with ponds. */
+  shore: Shore | null;
+  /** How hard the CPUs push and what mistakes cost on this course (from its difficulty). */
+  tier: Tier;
   rand: Rng;
   nextId: number;
   events: Ev[];
@@ -263,8 +289,11 @@ export type Race = {
   boltAt: number;
 };
 
-/** A hazard on the road, where it is now, and which way a cow is walking (+1 to the right of the road). */
-export type LiveHazard = Hazard & { x: number; z: number; at: number; walk: number };
+/**
+ * A hazard on the road and where it is now: how far along the lap and across the road, which way the road runs
+ * there (a bus faces that way), and which way a cow or a bike is heading (+1 to the right of the road).
+ */
+export type LiveHazard = Hazard & { x: number; z: number; along: number; at: number; tx: number; tz: number; walk: number };
 
 export type Racer = { name: string; color: string; kind: Kart['kind']; seat?: number; pace?: number; skill?: number; hat?: Hat };
 
@@ -364,6 +393,11 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
       roll: 0,
       offroad: false,
       mud: false,
+      sand: false,
+      sunk: 0,
+      drop: 0,
+      dropHit: false,
+      dropMiss: false,
       wrong: 0,
       stuck: 0,
       gas: null,
@@ -391,7 +425,7 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
   });
   const hazards = lay.hazards.map((h): LiveHazard => {
     const p = pointAt(track, h.s, h.d);
-    return { ...h, x: p.x, z: p.z, at: h.d, walk: 0 };
+    return { ...h, x: p.x, z: p.z, along: h.s, at: h.d, tx: p.tx, tz: p.tz, walk: 0 };
   });
   const race: Race = {
     course,
@@ -407,6 +441,8 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
     dashes,
     ramps,
     hazards,
+    shore: shoreOf(track, lay.hazards),
+    tier: tierOf(course),
     rand,
     nextId: opts.idBase ?? 1,
     events: [],
@@ -419,23 +455,54 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
   return race;
 }
 
-/** Where across the road a hazard is at race time `time`: cows amble from side to side, the rest stay put. */
+/** Where across the road a hazard is at race time `time`: cows and bikes cross from side to side, the rest stay put. */
 export const hazardD = (h: Hazard, time: number) => (h.swing ? h.d + h.swing * Math.sin(time * (h.speed ?? 0.5) + (h.phase ?? 0)) : h.d);
+/** How fast a hazard is crossing the road at race time `time`, in meters a second to the right. */
+export const hazardV = (h: Hazard, time: number) => (h.swing ? h.swing * (h.speed ?? 0.5) * Math.cos(time * (h.speed ?? 0.5) + (h.phase ?? 0)) : 0);
 
-/** Cows amble across the road and back on the race clock, so every screen has them in the same place. */
+/** How far along the lap a hazard is at race time `time`: a bus waits at its stop for the green light, then drives on. */
+export const hazardS = (t: Track, h: Hazard, time: number) => (h.drive ? wrapS(t, h.s + h.drive * Math.max(0, time)) : h.s);
+
+/**
+ * Cows and cyclists cross the road and back, and buses drive their laps, on the race clock, so every screen has them
+ * in the same place.
+ */
 export function moveHazards(r: Race) {
   for (const h of r.hazards) {
-    if (!h.swing) continue;
+    if (!h.swing && !h.drive) continue;
     h.at = hazardD(h, r.time);
-    h.walk = Math.cos(r.time * (h.speed ?? 0.5) + (h.phase ?? 0)) >= 0 ? 1 : -1;
-    const p = pointAt(r.track, h.s, h.at);
+    h.along = hazardS(r.track, h, r.time);
+    if (h.swing) h.walk = Math.cos(r.time * (h.speed ?? 0.5) + (h.phase ?? 0)) >= 0 ? 1 : -1;
+    const p = pointAt(r.track, h.along, h.at);
     h.x = p.x;
     h.z = p.z;
+    h.tx = p.tx;
+    h.tz = p.tz;
   }
 }
 
+/**
+ * How far (x, z) is inside a bus (or a golf cart driving its laps) grown by `pad` all round, along its length and
+ * across it, in its own frame (it faces the way the road runs where it is); null when clear of it.
+ */
+export function inBus(h: LiveHazard, x: number, z: number, pad: number) {
+  const dx = x - h.x;
+  const dz = z - h.z;
+  const along = dx * h.tx + dz * h.tz;
+  const across = -dx * h.tz + dz * h.tx;
+  const inL = lengthOf(h) / 2 + pad - Math.abs(along);
+  const inW = h.r + pad - Math.abs(across);
+  return inL > 0 && inW > 0 ? { along, across, inL, inW } : null;
+}
+
+/**
+ * Whether something solid stands at (x, z), give or take `pad`: a bus or a cart over its whole length, the rest round
+ * about. Only what is out yet on lap `lap` (a shell goes by its thrower's lap).
+ */
+const blocks = (h: LiveHazard, x: number, z: number, pad: number, lap: number) => solid(h.kind) && awake(h, lap) && (drives(h) ? inBus(h, x, z, pad) !== null : Math.hypot(h.x - x, h.z - z) < h.r + pad);
+
 function newAi(pace: number, skill: number, rand: Rng): Ai {
-  return { pace, skill, band: 1, lane: (rand() - 0.5) * 0.8, laneTo: 0, laneT: rand() * 2, itemT: 1 + rand() * 2, held: 0, driftT: 0 };
+  return { pace, skill, band: 1, lane: (rand() - 0.5) * 0.8, laneTo: 0, laneT: rand() * 2, itemT: 1 + rand() * 2, held: 0, driftT: 0, care: 0, dropGo: false };
 }
 
 /** A solo Grand Prix: seven CPU rivals ahead of you on the grid, like the first race of a cup. */
@@ -445,7 +512,7 @@ export function soloRace(cc: Cc, seed?: number, look: { color: string; hat: Hat 
 
 export const racing = (r: Race) => r.time >= 0;
 const scaleOf = (k: Kart) => (k.shrink > 0 ? 0.62 : k.mega > 0 ? 1.5 : 1);
-export const hurt = (k: Kart) => k.spin > 0 || k.tumble > 0;
+export const hurt = (k: Kart) => k.spin > 0 || k.tumble > 0 || k.sunk > 0;
 const local = (k: Kart) => k.kind !== 'remote';
 
 export function step(r: Race, dt: number) {
@@ -469,7 +536,7 @@ export function step(r: Race, dt: number) {
     r.events.push({ t: 'go' });
     for (const k of r.karts) {
       if (!local(k)) continue;
-      const early = k.ai ? (r.rand() < k.ai.skill * 0.6 ? -0.4 : null) : k.gas;
+      const early = k.ai ? (r.rand() < k.ai.skill * r.tier.rocket ? -0.4 : null) : k.gas;
       if (early !== null && early >= -0.8 && early <= -0.15) {
         k.boost = ROCKET_T;
         k.v = 9;
@@ -526,6 +593,10 @@ function glide(r: Race, k: Kart, dt: number) {
   k.s = at.s;
   k.d = at.d;
   k.lap = clamp(Math.floor(k.prog / r.track.length) + 1, 1, r.laps);
+  // just gone in the water (applyFlags marks it): sink, haul out and set down on our clock, held at the last moment
+  // until its owner says it is out
+  if (k.sunk === Infinity) k.sunk = r.tier.fallT;
+  else if (k.sunk > 0) k.sunk = Math.max(0.01, k.sunk - dt);
 }
 
 function drive(r: Race, k: Kart, dt: number) {
@@ -546,6 +617,34 @@ function drive(r: Race, k: Kart, dt: number) {
     k.roll = Math.max(0, k.roll - dt);
     if (k.roll === 0 && k.item) r.events.push({ t: 'got', k: k.idx, item: k.item });
   }
+  if (k.sunk > 0) {
+    // in the pond, going nowhere until you are fished out and set back on the road; press drift just as you touch
+    // down (just before or just after) for a drop start
+    k.sunk = Math.max(0, k.sunk - dt);
+    k.v = 0;
+    k.steer = 0;
+    k.trail = false;
+    if (inp.hop && k.sunk <= DROP_WINDOW && !k.dropMiss) k.dropHit = true;
+    else if (inp.hop && k.sunk <= DROP_WINDOW + 0.6) k.dropMiss = true;
+    if (k.sunk === 0) {
+      rescue(r, k);
+      k.drop = DROP_WINDOW;
+    }
+    return;
+  }
+  if (k.drop > 0) {
+    k.drop = Math.max(0, k.drop - dt);
+    if (inp.hop && !k.dropMiss) k.dropHit = true;
+    if (k.dropHit) {
+      k.drop = 0;
+      k.boost = Math.max(k.boost, DASH_T);
+      r.events.push({ t: 'turbo', k: k.idx, level: 2 });
+    }
+    if (k.drop === 0) {
+      k.dropHit = false;
+      k.dropMiss = false;
+    }
+  }
   const control = !hurt(k);
   if (!control) {
     k.drift = 0;
@@ -559,7 +658,8 @@ function drive(r: Race, k: Kart, dt: number) {
     k.charge = 0;
   }
 
-  let top = C.top * (k.ai ? k.ai.pace * k.ai.band * C.cpu : 1) + coinTop(k.coins);
+  // (the course's tier pace is for the CPUs, not for your kart bringing itself home after the flag)
+  let top = C.top * (k.ai ? k.ai.pace * k.ai.band * C.cpu * (k.kind === 'cpu' ? r.tier.pace : 1) : 1) + coinTop(k.coins);
   if (k.shrink > 0) top *= 0.72;
   if (k.star > 0) top += STAR_DV;
   if (k.mega > 0) top += MEGA_DV;
@@ -812,20 +912,43 @@ function wall(r: Race, k: Kart) {
   k.offroad = Math.abs(now.d) > r.track.half + CURB * 0.6;
 }
 
-/** Mud, oil and the hay bales, boulders and cows in the way, for a kart this client drives. */
+/**
+ * Mud, sand, oil, ponds, golf balls and the bales, boulders, planters, cows, bikes, buses, carts, golfers and flagsticks
+ * in the way, for a kart this client drives.
+ */
 function hazards(r: Race, k: Kart) {
   const was = k.mud;
   k.mud = false;
-  // in the air you sail over all of it, and stars, megas and bullets plough straight through
-  if (k.y > 0.3) return;
+  k.sand = false;
+  // in the air you sail over all of it but a bus or a cart, and stars, megas and bullets plough straight through
+  const flying = k.y > 0.3;
   const tough = k.star > 0 || k.mega > 0 || k.bullet > 0;
   for (const h of r.hazards) {
     const dx = k.x - h.x;
     const dz = k.z - h.z;
-    if (Math.abs(dx) > 9 || Math.abs(dz) > 9) continue;
+    if (h.kind === 'water') {
+      // run wide into a pond (a bullet keeps to the middle of the road, and you can jump the edge)
+      if (!flying && k.bullet <= 0 && dx * dx + dz * dz < (h.r + WET) ** 2) splash(r, k);
+      if (k.sunk > 0) return;
+      continue;
+    }
+    if (Math.abs(dx) > 9 || Math.abs(dz) > 9 || !awake(h, k.lap)) continue;
+    if (drives(h)) {
+      if (!tough) busHit(r, k, h);
+      continue;
+    }
     const dist = Math.hypot(dx, dz);
-    if (h.kind === 'mud') {
-      if (dist < h.r && !tough) k.mud = true;
+    if (h.kind === 'ball') {
+      // a ball coming down on your head as it lands; high enough in the air and it lands underneath you
+      if (!tough && k.y < 1 && dist < h.r + KART_R * scaleOf(k) && Math.abs(ballNear(h, r.time)) < BALL_WINDOW && hitKart(r, k, 'spin', -1)) r.events.push({ t: 'plink', k: k.idx });
+      continue;
+    }
+    if (flying) continue;
+    if (h.kind === 'mud' || h.kind === 'sand') {
+      if (dist < h.r && !tough) {
+        k.mud = true;
+        k.sand = h.kind === 'sand';
+      }
       continue;
     }
     if (h.kind === 'oil') {
@@ -841,24 +964,165 @@ function hazards(r: Race, k: Kart) {
     k.z = h.z + nz * reach;
     const vx = Math.sin(k.h) * k.v + k.kx;
     const vz = Math.cos(k.h) * k.v + k.kz;
-    const into = -(vx * nx + vz * nz);
+    // how hard they meet: a bike riding into the side of you counts as much as you driving into it
+    let into = -(vx * nx + vz * nz);
+    if (h.swing) {
+      const p = pointAt(r.track, h.s);
+      const across = hazardV(h, r.time);
+      into += -p.tz * across * nx + p.tx * across * nz;
+    }
     if (into <= 0) continue;
     k.kx += nx * into * 1.3;
     k.kz += nz * into * 1.3;
-    k.v *= 1 - (0.6 * into) / (Math.hypot(vx, vz) || 1);
-    // a cow does not take kindly to it
-    if (h.kind === 'cow' && into > 3) {
-      if (hitKart(r, k, 'spin', -1)) r.events.push({ t: 'moo', k: k.idx });
+    k.v *= 1 - Math.min(0.9, (0.6 * into) / (Math.hypot(vx, vz) || 1));
+    // a cow does not take kindly to it, nor does a cyclist, a golfer or a golf cart crossing on its path
+    if ((h.kind === 'cow' || h.kind === 'bike' || h.kind === 'golfer' || h.kind === 'cart') && into > 3) {
+      if (hitKart(r, k, 'spin', -1)) r.events.push({ t: h.kind === 'cow' ? 'moo' : h.kind === 'bike' ? 'ding' : h.kind === 'golfer' ? 'fore' : 'toot', k: k.idx });
     } else if (into > 5) r.events.push({ t: 'wall', k: k.idx, power: into });
   }
-  if (k.mud && !was) r.events.push({ t: 'mud', k: k.idx });
+  if (k.mud && !was) r.events.push({ t: k.sand ? 'sand' : 'mud', k: k.idx });
 }
 
-/** Puts a kart that is stuck (or lost) back on the road, facing the right way. */
+/**
+ * Into the pond: a splash, and you sit there until you are fished out and set back on the road (rescue). It costs
+ * coins, and a banana or shell held out behind goes in the water, but the item in your hand stays dry. A CPU keeps well
+ * clear of the water for a while after (and the better ones time a drop start).
+ */
+function splash(r: Race, k: Kart) {
+  if (k.sunk > 0) return;
+  k.sunk = r.tier.fallT;
+  // a kart on its lap of honour after the flag gets fished out all the same, but keeps its coins
+  if (k.done === null) k.coins = Math.max(0, k.coins - r.tier.fallCoins);
+  if (k.trail) {
+    k.trail = false;
+    k.item = null;
+    k.uses = 0;
+  }
+  k.drop = 0;
+  k.dropHit = false;
+  k.dropMiss = false;
+  if (k.ai && k.kind === 'cpu') {
+    k.ai.care = 12;
+    k.ai.dropGo = r.rand() < k.ai.skill;
+  }
+  k.v = 0;
+  k.kx = 0;
+  k.kz = 0;
+  k.vy = 0;
+  k.y = 0;
+  k.drift = 0;
+  k.charge = 0;
+  k.boost = 0;
+  k.mud = false;
+  k.sand = false;
+  k.stuck = 0;
+  r.events.push({ t: 'splash', k: k.idx });
+}
+
+/**
+ * A kart touching a bus (or a golf cart driving its laps) is pushed back out the nearer way (off its nose or tail, or
+ * out of its side) and knocked away as hard as the two closed on each other: a bus coming up behind shoves you along.
+ * Run into one (or get run down) and you spin out to the sound of its horn.
+ */
+function busHit(r: Race, k: Kart, h: LiveHazard) {
+  const at = inBus(h, k.x, k.z, KART_R * scaleOf(k));
+  if (!at) return;
+  let nx: number;
+  let nz: number;
+  if (at.inL < at.inW) {
+    const sg = Math.sign(at.along) || -1;
+    nx = h.tx * sg;
+    nz = h.tz * sg;
+  } else {
+    const sg = Math.sign(at.across) || 1;
+    nx = -h.tz * sg;
+    nz = h.tx * sg;
+  }
+  const over = Math.min(at.inL, at.inW);
+  k.x += nx * over;
+  k.z += nz * over;
+  const vx = Math.sin(k.h) * k.v + k.kx;
+  const vz = Math.cos(k.h) * k.v + k.kz;
+  // the kart's own speed into the bus, and how fast the two close once the bus's own speed is counted
+  const own = -(vx * nx + vz * nz);
+  const into = own + (h.drive ?? 0) * (h.tx * nx + h.tz * nz);
+  if (into <= 0) return;
+  k.kx += nx * into * 1.3;
+  k.kz += nz * into * 1.3;
+  if (own > 0) k.v *= 1 - (0.6 * own) / (Math.hypot(vx, vz) || 1);
+  // the bus's two-tone horn, or a golf cart's beep-beep
+  if (into > 3 && hitKart(r, k, 'spin', -1)) r.events.push({ t: h.kind === 'bus' ? 'honk' : 'toot', k: k.idx });
+  else if (into > 5) r.events.push({ t: 'wall', k: k.idx, power: into });
+}
+
+/** Seconds a kart set back on the road takes to get going: nothing should come through its spot before then. */
+const SET_T = 1.5;
+
+/** How far across the road (left, right) a kart can be set down at s: well inside the road, and well clear of water. */
+function setDown(r: Race, s: number): [number, number] {
+  const t = r.track;
+  const i = Math.floor(wrapS(t, s) / t.step) % t.n;
+  let lo = -(t.half - 1.5);
+  let hi = t.half - 1.5;
+  if (r.shore) {
+    lo = Math.max(lo, -(r.shore.left[i] - WET - 3));
+    hi = Math.min(hi, r.shore.right[i] - WET - 3);
+  }
+  return [lo, hi];
+}
+
+/**
+ * Whether (s, d) is a safe spot to set kart k down: no bus or cart driving its rounds alongside or just behind in that
+ * lane, nothing solid or slippery just ahead, nobody crossing there and no ball coming down there while it gets going.
+ */
+function clearFor(r: Race, k: Kart, s: number, d: number) {
+  const t = r.track;
+  for (const h of r.hazards) {
+    if (!awake(h, k.lap) || h.kind === 'water' || h.kind === 'mud' || h.kind === 'sand') continue;
+    const room = h.r + KART_R + 1;
+    if (drives(h)) {
+      const ds = deltaS(t, h.along, s);
+      if (ds > -(lengthOf(h) / 2 + 6) && ds < lengthOf(h) / 2 + 12 && Math.abs(h.d - d) < room + 0.5) return false;
+      continue;
+    }
+    const ds = deltaS(t, s, h.along);
+    if (ds < -2 || ds > 12) continue;
+    if (h.kind === 'ball') {
+      if (Math.abs(h.d - d) < room && ballDue(h, r.time, r.time + SET_T)) return false;
+      continue;
+    }
+    for (let u = 0; u <= SET_T; u += 0.25) if (Math.abs(hazardD(h, r.time + u) - d) < room) return false;
+  }
+  return true;
+}
+
+/**
+ * Puts a kart that is stuck, lost or fished out of the water back on the road, facing the right way, with a moment's
+ * grace. It goes down where it went off, or as near as is safe: in its own lane, the middle or the other side, and if
+ * none of those is clear (a cart coming, golfers crossing, a ball about to land) a few meters further back.
+ */
 export function rescue(r: Race, k: Kart) {
-  const p = pointAt(r.track, k.s, clamp(k.d, -4, 4));
+  const t = r.track;
+  let spot: [number, number] | null = null;
+  for (let back = 0; back <= 40 && !spot; back += 4) {
+    const s = wrapS(t, k.s - back);
+    const [lo, hi] = setDown(r, s);
+    const d = clamp(k.d, lo, hi);
+    for (const lane of [d, 0, clamp(-d, lo, hi)]) {
+      if (clearFor(r, k, s, lane)) {
+        spot = [s, lane];
+        break;
+      }
+    }
+  }
+  if (!spot) {
+    const [lo, hi] = setDown(r, k.s);
+    spot = [k.s, clamp(k.d, lo, hi)];
+  }
+  const p = pointAt(t, spot[0], spot[1]);
   k.x = p.x;
   k.z = p.z;
+  k.i = p.i;
   k.h = headingOf(p.tx, p.tz);
   k.v = 0;
   k.kx = 0;
@@ -866,7 +1130,11 @@ export function rescue(r: Race, k: Kart) {
   k.drift = 0;
   k.charge = 0;
   k.stuck = 0;
-  k.safe = Math.max(k.safe, 1.5);
+  // back on the ground and the right way up, whatever happened on the way in
+  k.y = 0;
+  k.vy = 0;
+  k.tumble = 0;
+  k.safe = Math.max(k.safe, 1.2);
 }
 
 function progress(r: Race, k: Kart, dt: number) {
@@ -938,6 +1206,8 @@ function bumpKarts(r: Race) {
       const B = ks[b];
       if (!local(A) && !local(B)) continue;
       if (A.done !== null && B.done !== null) continue;
+      // a kart in the water is out of everyone's way until it is fished out
+      if (A.sunk > 0 || B.sunk > 0) continue;
       const dx = B.x - A.x;
       const dz = B.z - A.z;
       const reach = KART_R * (scaleOf(A) + scaleOf(B));
@@ -984,7 +1254,7 @@ function bumpKarts(r: Race) {
 
 /** Hits a kart this client simulates. Stars shrug everything off; a kart already reeling is not hit twice. */
 export function hitKart(r: Race, k: Kart, how: HitHow, by: number) {
-  if (!local(k) || k.star > 0 || k.bullet > 0 || k.done !== null) return false;
+  if (!local(k) || k.sunk > 0 || k.star > 0 || k.bullet > 0 || k.done !== null) return false;
   // a mega kart only notices explosions, and they shrink it back down
   if (k.mega > 0 && how !== 'boom') return false;
   if (how !== 'boom' && (hurt(k) || k.safe > 0)) return false;
@@ -999,19 +1269,22 @@ export function hitKart(r: Race, k: Kart, how: HitHow, by: number) {
     k.item = null;
     k.uses = 0;
   }
+  // on the harder courses a hit keeps you down for longer
+  const harsh = r.tier.harsh;
+  const down = (how === 'spin' ? 1.05 : how === 'squash' ? 0.8 : how === 'boom' ? 1.8 : 1.3) * harsh;
   if (how === 'spin' || how === 'squash') {
-    k.spin = how === 'squash' ? 0.8 : 1.05;
+    k.spin = down;
     k.v *= how === 'squash' ? 0.5 : 0.4;
     k.coins = Math.max(0, k.coins - 1);
-    if (how === 'squash') k.squash = 1.6;
+    if (how === 'squash') k.squash = 1.6 * harsh;
   } else {
-    k.tumble = how === 'boom' ? 1.8 : 1.3;
+    k.tumble = down;
     k.vy = how === 'boom' ? 9 : 6.5;
     k.y = Math.max(k.y, 0.01);
     k.v *= 0.15;
     k.coins = Math.max(0, k.coins - 3);
   }
-  k.safe = (how === 'spin' ? 1.05 : how === 'squash' ? 0.8 : how === 'boom' ? 1.8 : 1.3) + 0.7;
+  k.safe = down + 0.7;
   r.events.push({ t: 'hit', k: k.idx, how, by });
   return true;
 }
@@ -1155,11 +1428,11 @@ export function hornAt(r: Race, from: number, x: number, z: number) {
 /** Lightning: everyone but the user (and anyone under a star) spins, shrinks and drops their item. */
 export function strike(r: Race, from: number) {
   for (const o of r.karts) {
-    if (o.idx === from || !local(o) || o.star > 0 || o.bullet > 0 || o.done !== null) continue;
+    if (o.idx === from || !local(o) || o.sunk > 0 || o.star > 0 || o.bullet > 0 || o.done !== null) continue;
     o.mega = 0;
     o.goldT = 0;
     o.shrink = SHRINK_T * (o.place <= 3 ? 1.2 : 0.8);
-    o.spin = Math.max(o.spin, 0.6);
+    o.spin = Math.max(o.spin, 0.6 * r.tier.harsh);
     o.v *= 0.5;
     o.drift = 0;
     o.charge = 0;
@@ -1282,8 +1555,9 @@ function moveThings(r: Race, dt: number) {
     }
     th.x += th.vx * dt;
     th.z += th.vz * dt;
-    // shells break on hay bales, boulders and cows
-    if (r.hazards.some((h) => solid(h.kind) && Math.hypot(h.x - th.x, h.z - th.z) < h.r + 0.45)) {
+    // shells break on anything solid: bales, boulders, planters, cows, bikes and buses
+    const lap = r.karts[th.owner]?.lap ?? 1;
+    if (r.hazards.some((h) => blocks(h, th.x, th.z, 0.45, lap))) {
       removeThing(r, th.id, th.local);
       continue;
     }
@@ -1326,7 +1600,7 @@ function hitThings(r: Race) {
     }
   }
   for (const k of r.karts) {
-    if (!local(k) || k.done !== null) continue;
+    if (!local(k) || k.done !== null || k.sunk > 0) continue;
     const reach = KART_R * scaleOf(k) + 0.6;
     for (const th of [...r.things]) {
       if (th.kind === 'blue' || th.kind === 'bomb' || th.y > 1.2 + k.y) continue;
@@ -1356,7 +1630,7 @@ function pickups(r: Race, dt: number) {
       continue;
     }
     for (const k of r.karts) {
-      if (!local(k) || (k.x - b.x) ** 2 + (k.z - b.z) ** 2 > (1.7 + KART_R) ** 2) continue;
+      if (!local(k) || k.sunk > 0 || (k.x - b.x) ** 2 + (k.z - b.z) ** 2 > (1.7 + KART_R) ** 2) continue;
       b.t = BOX_RESPAWN;
       r.events.push({ t: 'box', k: k.idx });
       if (!k.item && k.roll === 0 && k.done === null) giveItem(r, k, rollItem(r, k));
@@ -1369,7 +1643,7 @@ function pickups(r: Race, dt: number) {
       continue;
     }
     for (const k of r.karts) {
-      if (!local(k) || (k.x - c.x) ** 2 + (k.z - c.z) ** 2 > (0.7 + KART_R) ** 2) continue;
+      if (!local(k) || k.sunk > 0 || (k.x - c.x) ** 2 + (k.z - c.z) ** 2 > (0.7 + KART_R) ** 2) continue;
       c.t = COIN_RESPAWN;
       k.coins = Math.min(MAX_COINS, k.coins + 1);
       k.earned++;
@@ -1393,7 +1667,7 @@ function pickups(r: Race, dt: number) {
 // ---------------------------------------------------------------------------------------------------------------
 // CPU drivers (and the autopilot that brings you home after the flag)
 
-const AUTO: Ai = { pace: 1, skill: 0.6, band: 1, lane: 0, laneTo: 0, laneT: 0, itemT: 1, held: 0, driftT: 0 };
+const AUTO: Ai = { pace: 1, skill: 0.6, band: 1, lane: 0, laneTo: 0, laneT: 0, itemT: 1, held: 0, driftT: 0, care: 0, dropGo: false };
 
 function curveAhead(t: Track, s: number, from: number, to: number) {
   let sum = 0;
@@ -1408,41 +1682,122 @@ function curveAhead(t: Track, s: number, from: number, to: number) {
   return { mean: sum / Math.max(1, n), peak };
 }
 
+/** How far across the road (to its right) a kart heads for every meter it goes along it. */
+function acrossRoad(t: Track, k: Kart) {
+  const tx = t.tx[k.i];
+  const tz = t.tz[k.i];
+  const along = Math.sin(k.h) * tx + Math.cos(k.h) * tz;
+  return (Math.cos(k.h) * tx - Math.sin(k.h) * tz) / Math.max(0.3, along);
+}
+
 /**
- * A lane (as a fraction of the road's half width) clear of the hay bales, boulders, cows and oil slicks coming up, and of the
- * puddles too when there is room, as close as it can be to the lane the kart wanted; null when nothing is in the way.
- * Cows are dodged where they will be by the time the kart gets there.
+ * A lane (as a fraction of the road's half width) clear of the bales, boulders, planters, cows, bikes, buses, carts,
+ * golfers, flagsticks and oil slicks coming up, and of the puddles and bunkers too when there is room, as close as it
+ * can be to the lane the kart wanted; null when nothing is in the way. Anything on the move is dodged where it will be
+ * by the time the kart gets there, with a little to spare for getting the timing wrong, and close up the kart keeps to
+ * its side of things rather than cut across in front of them. A bus or a cart drives on down the road, so the kart
+ * closes on it only as fast as it outruns it, and it stays in the way from its tail to its nose: the kart pulls out
+ * and passes on the free side. A golf ball's landing spot is in the way only if a ball comes down on it about when the
+ * kart gets there, and a pond beside the road keeps the kart over toward the other side. Also says how far the kart
+ * goes before it reaches the nearest thing in the way, and whether the lane misses everything solid.
  */
-function dodgeHazard(r: Race, k: Kart, lane: number): number | null {
+function dodgeHazard(r: Race, k: Kart, lane: number): { lane: number; ds: number; clear: boolean; wet?: boolean } | null {
   const t = r.track;
   const v = Math.max(8, Math.abs(k.v));
   const reach = 3 + v * 1.2;
-  const ahead: { d: number; room: number }[] = [];
-  let blocked = false;
+  // what is coming up, as the stretch across the road it covers while the kart goes by
+  const ahead: { lo: number; hi: number; room: number; solid: boolean; close?: boolean; soft?: boolean; wet?: boolean }[] = [];
+  const gap = (at: number, a: { lo: number; hi: number }) => Math.max(0, a.lo - at, at - a.hi);
+  let near = Infinity;
   for (const h of r.hazards) {
-    const ds = deltaS(t, k.s, h.s);
-    if (ds < -1 || ds > reach) continue;
-    if (h.kind === 'mud' && k.ai!.skill < 0.4) continue;
-    const d = hazardD(h, r.time + Math.max(0, ds) / v);
-    const room = h.r + KART_R + 1;
+    if (h.kind === 'water' || !awake(h, k.lap)) continue;
+    // a bus or a cart is in the way from its tail to its nose, so still while the kart is alongside it
+    const long = drives(h) ? lengthOf(h) / 2 + KART_R : 0;
+    const ds = deltaS(t, k.s, h.along);
+    if (ds + long < -1) continue;
+    const until = Math.max(0, ds - long);
+    // how long the kart takes to get there at a speed: a bus drives on ahead, so the kart only closes on it as fast as
+    // it outruns it
+    const when = (speed: number) => until / Math.max(2, speed - (h.drive ?? 0));
+    // and so how far the kart goes before it gets there (for anything standing still, just how far ahead it is)
+    const far = until * (v / Math.max(2, v - (h.drive ?? 0)));
+    if (far > reach) continue;
+    if ((h.kind === 'mud' || h.kind === 'sand') && k.ai!.skill < 0.4) continue;
+    // a ball's landing spot only matters if one lands about when the kart gets there
+    if (h.kind === 'ball' && !ballDue(h, r.time + when(v + 8) - 0.35, r.time + when(Math.max(6, v - 6)) + 0.3)) continue;
+    // how far to keep from it: a bus or a cart is passed with a wider berth, as it is long and its corners stick out
+    // on a bend. Something solid standing still just ahead is not to be cut across in front of, whatever is further
+    // on, so long as there is room to get by it on this side; and a puddle or a bunker only slows you, so better to
+    // clip one than to hit something
+    const room = h.r + KART_R + (h.kind === 'bus' ? 2 : drives(h) ? 1.5 : 1);
+    const side = k.d > h.d ? 0.85 * t.half - h.d : h.d + 0.85 * t.half;
+    const close = solid(h.kind) && !h.swing && !h.drive && far < 6 + v * 0.5 && side >= room;
+    const soft = h.kind === 'mud' || h.kind === 'sand';
+    // from the soonest the kart could get there (a boost) to the latest (braking)
+    const a = { lo: Infinity, hi: -Infinity, room, solid: solid(h.kind) || h.kind === 'ball', close, soft };
+    for (const time of [when(v + 8) - 0.1, when(v), when(Math.max(6, v - 6)) + 0.1]) {
+      const d = hazardD(h, r.time + time);
+      a.lo = Math.min(a.lo, d);
+      a.hi = Math.max(a.hi, d);
+    }
     // a puddle with no way round it is driven through
-    if (h.kind === 'mud' && Math.max(t.half - (d + h.r), d - h.r + t.half) < 2 * KART_R + 1) continue;
-    ahead.push({ d, room });
-    if (Math.abs(d - lane * t.half) < room || (ds < reach * 0.6 && Math.abs(d - k.d) < room)) blocked = true;
+    if ((h.kind === 'mud' || h.kind === 'sand') && Math.max(t.half - (a.hi + h.r), a.lo - h.r + t.half) < 2 * KART_R + 1) continue;
+    ahead.push(a);
+    if (gap(lane * t.half, a) < a.room || (far < reach * 0.6 && gap(k.d, a) < a.room)) near = Math.min(near, far);
   }
-  if (!blocked) return null;
-  let best = lane;
+  // a pond up against the road: keep well over from that side all the way past it, and further still for a while
+  // after going in
+  if (r.shore) {
+    const keep = 3.2 + (k.ai!.care > 0 ? 1.2 : 0);
+    const i0 = Math.floor(k.s / t.step);
+    const n = Math.ceil(reach / t.step);
+    for (const side of [-1, 1]) {
+      const shore = side < 0 ? r.shore.left : r.shore.right;
+      let first = -1;
+      let edge = Infinity;
+      for (let j = 0; j <= n; j++) {
+        const w = shore[(i0 + j) % t.n];
+        if (w < t.edge + 1 && first < 0) first = j;
+        edge = Math.min(edge, w);
+      }
+      if (first < 0) continue;
+      const a = side < 0 ? { lo: -99, hi: -edge, room: keep, solid: false, wet: true } : { lo: edge, hi: 99, room: keep, solid: false, wet: true };
+      ahead.push(a);
+      if (gap(lane * t.half, a) < a.room) near = Math.min(near, Math.max(1, first * t.step));
+    }
+  }
+  if (near === Infinity) return null;
+  // the closer it is, the dearer a lane on the far side of it
+  const stay = 0.05 + 1.5 / Math.max(4, near);
+  let best: { lane: number; ds: number; clear: boolean; wet?: boolean } = { lane, ds: near, clear: false };
   let bestCost = Infinity;
   for (let c = -0.85; c <= 0.851; c += 0.05) {
     const at = c * t.half;
     // how far inside anything's clearance this lane goes, then how far it strays from the lane wanted
-    const into = ahead.reduce((sum, a) => sum + Math.max(0, a.room - Math.abs(at - a.d)), 0);
-    const cost = into * 10 + Math.abs(c - lane) + Math.abs(at - k.d) * 0.05;
+    const into = ahead.reduce((sum, a) => sum + Math.max(0, a.room - gap(at, a)) * (a.soft ? 0.3 : 1) + (a.close && (at - a.lo) * (k.d - a.lo) < 0 ? a.room : 0), 0);
+    const cost = into * 10 + Math.abs(c - lane) + Math.abs(at - k.d) * stay;
     if (cost < bestCost) {
       bestCost = cost;
-      best = c;
+      best = { lane: c, ds: near, clear: ahead.every((a) => !a.solid || gap(at, a) >= a.room - 1), wet: ahead.some((a) => a.wet && gap(k.d, a) < a.room) };
     }
   }
+  return best;
+}
+
+/** Whether there is water inside the wall line on the outside of a bend (turning `turn`: 1 right) within `ahead` m. */
+function wetOutside(r: Race, s: number, ahead: number, turn: number) {
+  if (!r.shore) return false;
+  const t = r.track;
+  const shore = turn > 0 ? r.shore.left : r.shore.right;
+  const i0 = Math.floor(wrapS(t, s) / t.step);
+  for (let j = 0; j * t.step <= ahead; j++) if (shore[(i0 + j) % t.n] < t.edge) return true;
+  return false;
+}
+
+/** Who the CPUs keep pace with: the furthest kart a person drives (you, solo; whoever leads them online). */
+export function pacer(r: Race): Kart | null {
+  let best: Kart | null = null;
+  for (const k of r.karts) if (k.kind !== 'cpu' && (!best || k.prog > best.prog)) best = k;
   return best;
 }
 
@@ -1450,6 +1805,16 @@ function think(r: Race, k: Kart, dt: number) {
   const t = r.track;
   const ai = (k.ai ??= { ...AUTO });
   const inp = k.input;
+  ai.care = Math.max(0, ai.care - dt);
+  if (k.sunk > 0) {
+    // in the water: nothing to do but be ready to time a drop start for the moment it is set back down
+    inp.steer = 0;
+    inp.brake = false;
+    inp.drift = false;
+    inp.use = false;
+    inp.hop = ai.dropGo && k.sunk <= DROP_WINDOW * 0.6;
+    return;
+  }
   ai.laneT -= dt;
   if (ai.laneT <= 0) {
     ai.laneTo = (r.rand() - 0.5) * 0.9;
@@ -1468,9 +1833,9 @@ function think(r: Race, k: Kart, dt: number) {
   const curve = curveAhead(t, k.s, 8, 40);
   let lane = clamp(ai.lane + clamp(curve.mean * 40, -0.55, 0.55) * ai.skill, -0.82, 0.82);
   const dodge = dodgeHazard(r, k, lane);
-  if (dodge !== null) lane = dodge;
-  // aim closer in while dodging, to get across in time
-  const look = dodge === null ? 7 + Math.abs(k.v) * 0.5 : 5 + Math.abs(k.v) * 0.25;
+  if (dodge !== null) lane = dodge.lane;
+  // aim closer in while dodging, beside whatever is in the way, to get across in time
+  const look = dodge === null ? 7 + Math.abs(k.v) * 0.5 : clamp(dodge.ds, 4, 5 + Math.abs(k.v) * 0.25);
   const p = pointAt(t, k.s + look, lane * t.half);
   const diff = wrapAngle(headingOf(p.x - k.x, p.z - k.z) - k.h);
   const need = -diff * 2.6;
@@ -1480,23 +1845,51 @@ function think(r: Race, k: Kart, dt: number) {
     ai.driftT += dt;
     const goal = ai.skill > 0.7 ? 2 : 1;
     const ending = Math.abs(curve.mean) < 0.01 || Math.sign(curve.mean) !== k.drift;
-    if ((turboLevel(k.charge) >= goal && ending) || k.drift * need < -0.35 || ai.driftT > 3) inp.drift = false;
+    // and a drift can't swerve, so it lets go of one to get across to its line round something in the way
+    const swerve = dodge !== null && (!dodge.clear || !!dodge.wet) && dodge.ds < 8 + 0.9 * k.v && Math.abs(dodge.lane * t.half - k.d) > 1;
+    if ((turboLevel(k.charge) >= goal && ending) || k.drift * need < -0.35 || ai.driftT > 3 || swerve) inp.drift = false;
   } else if (k.y === 0) {
     inp.steer = clamp(need, -1, 1);
     const bend = curveAhead(t, k.s, 4, 30).mean;
-    inp.drift = Math.abs(bend) > 0.02 && k.v > 14 && Math.sign(bend) === Math.sign(need) && r.rand() < ai.skill;
+    // no drifting into a corner with something in the way just ahead (a drift can't swerve), unless the kart is already
+    // on a clean line past it
+    const open = dodge === null || (dodge.clear && Math.abs(dodge.lane * t.half - k.d) < 1) || dodge.ds > 6 + k.v * 0.6;
+    inp.drift = Math.abs(bend) > 0.02 && k.v > 14 && Math.sign(bend) === Math.sign(need) && r.rand() < ai.skill && open;
     inp.hop = inp.drift;
     ai.driftT = 0;
     if (inp.hop) inp.steer = Math.sign(bend);
   } else {
     inp.steer = clamp(need, -1, 1);
   }
-  const peak = Math.abs(curveAhead(t, k.s, 0, 20 + k.v * 0.8).peak);
-  inp.brake = peak > 0 && k.v > 1.55 / peak && k.boost <= 0;
+  // slow for a bend too tight to take flat out: a kart turns about 1.55 rad/s at speed, and up to 1.85 in a drift; with
+  // water on the outside of it, a little slower still, and then even on a boost
+  const bendAhead = curveAhead(t, k.s, 0, 20 + k.v * 0.8).peak;
+  const peak = Math.abs(bendAhead);
+  const wet = peak > 0.02 && wetOutside(r, k.s, 20 + k.v * 0.8, Math.sign(bendAhead));
+  const cap = (k.drift !== 0 || inp.drift ? 1.85 : 1.55) * (wet ? 0.92 : 1);
+  inp.brake = peak > 0 && k.v > cap / peak && (k.boost <= 0 || wet);
+  if (dodge) {
+    // a swerve round something in the way turns the kart as much as a bend does. With a clean line past it the kart
+    // keeps its foot down (it brakes for neither the hazard nor the bend it is on), unless the swerve itself is too
+    // sharp to make at its speed; with no clean way past yet it eases off for the two together, and waits for one. On
+    // a boost it doesn't brake for bends, any more than it does anywhere else, unless the thing in the way sits on one
+    // and it has to make the bend on its line round it. And on a boost it judges the swerve by the way it is heading:
+    // out of a drift it is still angled across the road, and at a boost's speed that carries it a long way on toward
+    // whatever it is getting round
+    const ds = Math.max(4, dodge.ds);
+    let bend = dodge.clear ? 0 : peak;
+    let slope = 0;
+    if (k.boost > 0) {
+      if (!dodge.clear) bend = Math.abs(curveAhead(t, k.s, dodge.ds - 4, dodge.ds + 4).peak) > 0.02 ? Math.abs(curveAhead(t, k.s, 0, dodge.ds + 4).peak) : 0;
+      slope = acrossRoad(t, k);
+    }
+    const swerve = (2 * Math.abs(lane * t.half - k.d - slope * ds)) / ds ** 2;
+    if ((bend + swerve > 0 && k.v > 1.55 / (bend + swerve)) || (!dodge.clear && dodge.ds < 4 + k.v * 0.5 && k.v > 9)) inp.brake = true;
+  }
   if (Math.abs(diff) > 2.2 && k.v < 4) inp.brake = false;
 
-  // cash in a full purse for a boost on a straight
-  if (k.coins >= MAX_COINS && k.boost <= 0 && Math.abs(curveAhead(t, k.s, 0, 30).peak) < 0.012 && r.rand() < dt * 0.3) inp.cash = true;
+  // cash in a full purse for a boost on a straight with nothing in the way
+  if (k.coins >= MAX_COINS && k.boost <= 0 && !dodge && Math.abs(curveAhead(t, k.s, 0, 30).peak) < 0.012 && r.rand() < dt * 0.3) inp.cash = true;
 
   // tricks off ramps, and a shove for anyone driving alongside
   if (k.air && k.trickT > 0 && !k.trick && r.rand() < ai.skill * 0.25) inp.hop = true;
@@ -1512,9 +1905,11 @@ function think(r: Race, k: Kart, dt: number) {
     if (beside) inp.slam = true;
   }
 
-  // keep the pack close: CPUs ease off well ahead of you and push when far behind
-  const me = r.karts[r.me];
-  if (k.ai && me && me !== k) ai.band = clamp(1 + (me.prog - k.prog) / 600, 0.9, 1.08);
+  // keep the pack close: CPUs ease off well ahead of the leading driver who isn't one (you, solo) and push when far behind
+  const lead = pacer(r);
+  // (on the harder courses they ease off less, and push harder from further back)
+  const [slow, fast, span] = r.tier.band;
+  if (k.ai && lead && lead !== k) ai.band = clamp(1 + (lead.prog - k.prog) / span, slow, fast);
 
   // items
   ai.itemT -= dt;
@@ -1554,9 +1949,14 @@ function think(r: Race, k: Kart, dt: number) {
       break;
     case 'mushroom':
     case 'triple':
-    case 'golden':
-      go = straight || k.offroad || k.mud;
+    case 'golden': {
+      // on a straight with nothing in the way; but an item in hand means no new one from the boxes, so after a few
+      // seconds' wait a shorter straight will do (some courses are all short straights), and something up the road
+      // with a clean way past it, or a way off yet, is no reason to wait
+      const soon = ai.held > 3 && (straight || Math.abs(curveAhead(t, k.s, 0, 15).peak) < 0.012) && (!dodge || dodge.clear || dodge.ds > 30);
+      go = (straight && !dodge) || soon || k.offroad || k.mud;
       break;
+    }
     case 'coin':
       go = k.coins < MAX_COINS;
       break;

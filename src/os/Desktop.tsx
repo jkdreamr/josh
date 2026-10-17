@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react';
 import { apps, dockOrder, games, mobileDock, tabletDock } from './registry';
 import { AppIcon, type IconKind } from './icons';
-import { OSContext, useOS as useOSLocal, type AppId, type OpenArgs, type Origin, type OSApi } from './types';
+import { OSContext, useOS as useOSLocal, WinContext, type AppId, type OpenArgs, type Origin, type OSApi } from './types';
+import { badgeLabel, useBadge } from './badges';
+import { sidePanel } from './placement';
 import { folders, links, profile } from './data';
 import Wallpaper from './Wallpaper';
 import Banner from './Banner';
@@ -9,6 +11,7 @@ import HomeScreen, { originOf } from './HomeScreen';
 import { clamp, monthGrid, useBattery, useNow, useWeatherReport, type BatteryView, type Weather } from './hooks';
 import { getMeta } from './arcade/manifest';
 import { formatCount, useStats, type StatsPeriod } from './stats';
+import { onEscapeCapture } from './escape';
 
 const MENU_H = 26;
 const DOCK_SPACE = 78;
@@ -51,6 +54,8 @@ type Win = {
   args: OpenArgs;
   state: 'opening' | 'open' | 'closing';
   origin?: Origin;
+  /** Sliding aside for a panel that just docked next to it. */
+  glide?: boolean;
 };
 
 type Props = {
@@ -177,9 +182,20 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
         return ws.map((w) =>
           w.id === id ? { ...w, z, min: false, state: w.state === 'closing' ? 'open' : w.state, args: { ...args, nonce: Date.now() }, origin: from ?? w.origin } : w,
         );
+      // Opened next to a game (the Lounge while you play), dock down the right edge and slide what's there out of the way.
+      const shown = ws.filter((win) => !win.min && win.state !== 'closing');
+      const front = shown.reduce<Win | null>((a, b) => (!a || b.z > a.z ? b : a), null);
+      if (def.side && !mobile && !tablet && front && (games.includes(front.id) || front.id === 'chrome')) {
+        const { panel, moves } = sidePanel({ w: W, top: MENU_H + 6, bottom: H - DOCK_SPACE - 4 }, def.side, shown.filter((win) => !win.max));
+        return [
+          ...ws.map((win) => (moves.has(win.id) ? { ...win, x: moves.get(win.id)!, glide: true } : win)),
+          { id, ...panel, z, min: false, max: false, args: { ...args, nonce: Date.now() }, state: 'opening' as const, origin: from },
+        ];
+      }
       const { x, y, w, h } = getPlacement(ws.filter((win) => !win.min).length % 6);
       return [...ws, { id, x, y, w, h, z, min: false, max: false, args: { ...args, nonce: Date.now() }, state: 'opening', origin: from }];
     });
+    if (def.side) window.setTimeout(() => setWins((ws) => (ws.some((w) => w.glide) ? ws.map((w) => (w.glide ? { ...w, glide: false } : w)) : ws)), 450);
   }, [mobile, tablet]);
 
   const revealHeldBanner = useCallback(() => {
@@ -472,6 +488,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
           const def = apps[w.id];
           const C = def.Component;
           const isActive = active?.id === w.id;
+          const below = mobile ? visible.filter((o) => o.id !== w.id && o.z < w.z).reduce<Win | null>((a, b) => (!a || b.z > a.z ? b : a), null) : null;
           const o = w.origin;
           const style = mobile
             ? ({
@@ -499,6 +516,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
                 isActive ? 'is-active' : 'is-inactive',
                 w.min ? 'is-min' : '',
                 w.max ? 'is-max' : '',
+                w.glide ? 'is-gliding' : '',
                 `st-${w.state}`,
               ].join(' ')}
               style={style}
@@ -520,7 +538,8 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
                 <header className="mbar">
                   <button onClick={() => close(w.id)} aria-label={`Close ${def.title}`}>
                     <svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2L2 8l6 6" /></svg>
-                    Home
+                    {/* Back to the app this one was opened over (the Lounge over a game), or home. */}
+                    {below ? apps[below.id].title : 'Home'}
                   </button>
                   <b>{def.title}</b>
                 </header>
@@ -545,7 +564,9 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
                 </>
               )}
               <div className="win-body">
-                <C args={w.args} />
+                <WinContext.Provider value={{ active: isActive, min: w.min }}>
+                  <C args={w.args} />
+                </WinContext.Provider>
               </div>
               {!mobile && !w.max && (
                 <>
@@ -868,16 +889,15 @@ function MenuBar({
       const t = e.target as HTMLElement;
       if (!barRef.current?.contains(t) || !t.closest('.menu')) setOpenId(null);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpenId(null);
-    };
+    const offEscape = onEscapeCapture(window, () => {
+      const bar = barRef.current;
+      if (bar?.contains(document.activeElement)) bar.querySelector<HTMLButtonElement>(`.menu[data-menu="${openId}"] .menu-btn`)?.focus({ preventScroll: true });
+      setOpenId(null);
+    });
     window.addEventListener('pointerdown', onDown, true);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('blur', onKey as unknown as () => void);
     return () => {
       window.removeEventListener('pointerdown', onDown, true);
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('blur', onKey as unknown as () => void);
+      offEscape();
     };
   }, [openId]);
   const shared = { openId, setOpenId, focusOnOpen };
@@ -1883,6 +1903,7 @@ function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: A
               aria-label={apps[id].title}
             >
               <AppIcon kind={apps[id].icon} size={base} />
+              <DockBadge app={id} />
             </button>
           );
         })}
@@ -1912,6 +1933,16 @@ function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: A
       </div>
     </nav>
   );
+}
+
+/** An app's unread count on its Dock icon. Not part of the button's name: screen readers get it from the app. */
+function DockBadge({ app }: { app: AppId }) {
+  const n = useBadge(app);
+  return n ? (
+    <span className="dock-badge" aria-hidden="true">
+      {badgeLabel(n)}
+    </span>
+  ) : null;
 }
 
 /* ---------------------------------- launcher ---------------------------------- */

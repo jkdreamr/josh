@@ -1,20 +1,26 @@
 import { DurableObject } from 'cloudflare:workers';
-import { validateSubmission, TOP, type BoardEntry } from '../../src/os/arcade/kit/leaderboard-core.ts';
+import { previewSize, validateSubmission, TOP, type BoardEntry, type BoardTops } from '../../src/os/arcade/kit/leaderboard-core.ts';
 import type { LeaderboardSpec } from '../../src/os/arcade/types.ts';
 import { cleanName, nameLength } from '../../src/os/arcade/kit/leaderboard-core.ts';
 import { dayKey, isVisitorId, KEEP_DAYS, MAX_GAMES, parseHit, periodStarts, shiftDay, TOP_GAMES, type StatsHit, type StatsSummary, type TopGame } from '../../src/os/stats-core.ts';
 import { cleanText, isSession, readIndex, webhookSecret, type TgUpdate } from '../../src/os/chat-core.ts';
+import type { OnlineSpec } from '../../src/os/arcade/types.ts';
+import { isChannel, sameSecret } from '../../src/os/arcade/lounge-core.ts';
 import { Chat, type ChatEnv } from './chat';
+import { Lobby } from './lobby';
+import { Lounge, type LoungeEnv } from './lounge';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
-import { agreedWinner, beginRound, benchSeat, canJoinRoom, canStartRoom, lowestFreeSeat, makeRoomCode, markRoundRecorded, parseRoomMessage, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
+import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, LISTING_REFRESH_MS, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
-export { Chat };
+export { Chat, Lobby, Lounge };
 
-interface Env extends ChatEnv {
+interface Env extends ChatEnv, LoungeEnv {
   BOARDS: DurableObjectNamespace<Boards>;
   ROOMS: DurableObjectNamespace<Room>;
   STATS: DurableObjectNamespace<Stats>;
   CHAT: DurableObjectNamespace<Chat>;
+  LOUNGE: DurableObjectNamespace<Lounge>;
+  LOBBY: DurableObjectNamespace<Lobby>;
 }
 
 const RATE_LIMIT = 6;
@@ -31,12 +37,17 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers },
   });
 
-function boardEntries(sql: SqlStorage, game: string, spec: LeaderboardSpec): BoardEntry[] {
+function boardEntries(sql: SqlStorage, game: string, spec: LeaderboardSpec, limit = TOP): BoardEntry[] {
   const direction = spec.order === 'desc' ? 'DESC' : 'ASC';
   return sql.exec<BoardEntry>(
-    `SELECT name, score, date FROM scores WHERE game = ? ORDER BY score ${direction}, date ASC LIMIT ${TOP}`,
+    `SELECT name, score, date FROM scores WHERE game = ? ORDER BY score ${direction}, date ASC LIMIT ?`,
     game,
+    limit,
   ).toArray();
+}
+
+function winEntries(sql: SqlStorage, game: string, limit = TOP): BoardEntry[] {
+  return sql.exec<BoardEntry>('SELECT name, wins AS score, date FROM wins WHERE game = ? ORDER BY wins DESC, date ASC LIMIT ?', game, limit).toArray();
 }
 
 export class Boards extends DurableObject<Env> {
@@ -55,12 +66,22 @@ export class Boards extends DurableObject<Env> {
       const game = url.searchParams.get('game') ?? '';
       if (!Object.hasOwn(ONLINE_SPECS, game)) return json({ error: 'unknown game' }, 404);
       try {
-        const entries = this.ctx.storage.sql.exec<{ name: string; score: number; date: string }>(
-          'SELECT name, wins AS score, date FROM wins WHERE game = ? ORDER BY wins DESC, date ASC LIMIT ?',
-          game,
-          TOP,
-        ).toArray();
-        return json({ entries });
+        return json({ entries: winEntries(this.ctx.storage.sql, game) });
+      } catch {
+        return json({ error: 'unavailable' }, 503);
+      }
+    }
+
+    // The arcade's Leaderboards cards: the best few of every board in one request (`?n=`, 3 by default, at most 10).
+    if (url.pathname === '/leaderboard/top' && request.method === 'GET') {
+      const n = previewSize(url.searchParams.get('n'));
+      const sql = this.ctx.storage.sql;
+      try {
+        const tops: BoardTops = {
+          boards: Object.fromEntries(Object.entries(LEADERBOARD_SPECS).map(([game, spec]) => [game, boardEntries(sql, game, spec, n)])),
+          wins: Object.fromEntries(Object.keys(ONLINE_SPECS).map((game) => [game, winEntries(sql, game, n)])),
+        };
+        return json(tops);
       } catch {
         return json({ error: 'unavailable' }, 503);
       }
@@ -131,7 +152,10 @@ export class Boards extends DurableObject<Env> {
   }
 }
 
-type Attachment = { seat: number; name: string };
+/** v: the room protocol the client speaks; 2 and up follow a host hand-off (older clients only know the room closing). */
+type Attachment = { seat: number; name: string; v?: number };
+/** Clients that follow a host hand-off: when one of these is left without a host, the next one takes over. */
+const HANDOFF_VERSION = 2;
 type RoomResults = { reports: RoundReports; recorded: RecordedRounds };
 
 export class Room extends DurableObject<Env> {
@@ -142,10 +166,11 @@ export class Room extends DurableObject<Env> {
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
-  open(game: string, seats: number, lateJoin = false): Promise<boolean> {
+  /** listed: a public room, shown in the arcade's Open Rooms once its host is in. */
+  open(code: string, game: string, spec: OnlineSpec, listed = false): Promise<boolean> {
     return this.exclusive(async () => {
       if (await this.ctx.storage.get<RoomState>('room')) return false;
-      await this.ctx.storage.put<RoomState>('room', { game, seats, started: false, lateJoin });
+      await this.ctx.storage.put<RoomState>('room', { code, game, seats: spec.seats, started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: 0 } : {}), ...(listed ? { listed: true } : {}) });
       await this.ctx.storage.put<RoomResults>('results', { reports: {}, recorded: [] });
       return true;
     });
@@ -159,6 +184,14 @@ export class Room extends DurableObject<Env> {
     return this.exclusive(() => this.handleMessage(ws, message));
   }
 
+  /** While the room is listed, its line in Open Rooms is refreshed every minute, so it never goes stale. */
+  async alarm() {
+    await this.exclusive(async () => {
+      const room = await this.ctx.storage.get<RoomState>('room');
+      if (room) await this.publish(room, this.players());
+    });
+  }
+
   private async handleMessage(ws: WebSocket, message: string | ArrayBuffer) {
     const attachment = ws.deserializeAttachment() as Attachment | null;
     if (!attachment) return;
@@ -168,11 +201,35 @@ export class Room extends DurableObject<Env> {
     if (!parsed) return;
 
     if (parsed.t === 'start') {
-      const players = this.players();
-      if (!canStartRoom(attachment.seat, players.length)) return;
-      const round = beginRound(room, players.map(({ seat }) => seat));
+      const lineup = this.lineup(room, this.players());
+      if (!canStartRoom(attachment.seat, lineup.players.length, lineup.bots?.length)) return;
+      const round = beginRound(room, lineup.players.map(({ seat }) => seat), lineup.bots?.length ?? 0);
       await this.ctx.storage.put('room', room);
-      this.broadcast({ t: 'start', players, round });
+      this.broadcast({ t: 'start', ...lineup, round });
+      await this.publish(room, lineup.players);
+      return;
+    }
+
+    // The host's game says the round is over: the room takes people again (and goes back on Open Rooms) until the next.
+    if (parsed.t === 'over') {
+      if (attachment.seat !== 0 || !endRound(room, parsed.round)) return;
+      await this.ctx.storage.put('room', room);
+      const players = this.players();
+      this.broadcast({ t: 'players', ...this.lineup(room, players), started: false });
+      await this.publish(room, players);
+      return;
+    }
+
+    if (parsed.t === 'bots' || parsed.t === 'listed') {
+      if (attachment.seat !== 0) return;
+      if (parsed.t === 'bots') {
+        if (!room.allowBots) return;
+        room.bots = parsed.n;
+      } else room.listed = parsed.on;
+      await this.ctx.storage.put('room', room);
+      const lineup = this.lineup(room, this.players());
+      this.broadcast({ t: 'players', ...lineup });
+      await this.publish(room, lineup.players);
       return;
     }
 
@@ -228,35 +285,70 @@ export class Room extends DurableObject<Env> {
     const room = await this.ctx.storage.get<RoomState>('room');
     if (!room) return json({ error: 'room not found' }, 404);
     if (!canJoinRoom(room)) return json({ error: 'room already started' }, 409);
+    // A socket on its way out keeps its seat until it has gone, so nobody is ever given a seat someone still holds.
     const sockets = this.ctx.getWebSockets();
     const seat = lowestFreeSeat(room.seats, sockets.map((socket) => (socket.deserializeAttachment() as Attachment | null)?.seat).filter((value): value is number => value !== undefined));
     if (seat === null) return json({ error: 'room is full' }, 409);
-    const existingPlayers = sockets
-      .map((socket) => socket.deserializeAttachment() as Attachment | null)
-      .filter((value): value is Attachment => !!value)
-      .map(({ seat: playerSeat, name: playerName }) => ({ seat: playerSeat, name: playerName }));
+    const existingPlayers = this.players();
 
     const url = new URL(request.url);
     const cleaned = cleanName(url.searchParams.get('name') ?? '');
     const name = nameLength(cleaned) >= 1 && nameLength(cleaned) <= 16 ? cleaned : `Player ${seat + 1}`;
+    const version = Number(url.searchParams.get('v'));
     const code = /\/rooms\/([ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4})\/ws$/.exec(url.pathname)?.[1] ?? '';
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    server.serializeAttachment({ seat, name } satisfies Attachment);
+    server.serializeAttachment({ seat, name, ...(Number.isSafeInteger(version) && version > 1 ? { v: version } : {}) } satisfies Attachment);
     this.ctx.acceptWebSocket(server);
     if (room.started) {
       benchSeat(room, seat);
       await this.ctx.storage.put('room', room);
     }
-    const players = [...existingPlayers, { seat, name }].sort((a, b) => a.seat - b.seat);
-    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, players, started: room.started }));
-    this.broadcast({ t: 'players', players });
+    const lineup = this.lineup(room, [...existingPlayers, { seat, name }].sort((a, b) => a.seat - b.seat));
+    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, ...lineup, started: room.started, round: room.round ?? 0 }));
+    this.broadcast({ t: 'players', ...lineup, started: room.started });
+    await this.publish(room, lineup.players);
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  /**
+   * Who is in the room, the seats bots would take if the host started now (rooms that allow bots), and whether the
+   * room is public.
+   */
+  private lineup(room: RoomState, players: RoomPlayer[]): { players: RoomPlayer[]; bots?: number[]; listed: boolean } {
+    const listed = !!room.listed;
+    return room.allowBots ? { players, bots: botSeats(room.seats, players.map(({ seat }) => seat), room.bots ?? 0), listed } : { players, listed };
+  }
+
+  /**
+   * Keeps the room's line in the arcade's Open Rooms right: there, with an alarm to refresh it, while the room is
+   * public and someone can join; gone otherwise. Rooms that aren't listed never call Open Rooms, so the one Lobby only
+   * hears from public rooms. Open Rooms is a convenience, so a room carries on if it fails.
+   */
+  private async publish(room: RoomState, players: RoomPlayer[]) {
+    if (!room.code) return;
+    const listing = roomListing(room, players, this.lineup(room, players).bots?.length ?? 0);
+    if (!listing && !room.inLobby) return;
+    try {
+      const lobby = this.env.LOBBY.get(this.env.LOBBY.idFromName('global'));
+      if (listing) await lobby.put(listing);
+      else await lobby.drop(room.code);
+    } catch {
+      /* listed again on the next change or refresh, or dropped once nobody refreshes it */
+    }
+    if (!!listing !== !!room.inLobby) {
+      room.inLobby = !!listing;
+      await this.ctx.storage.put('room', room);
+    }
+    if (listing && (await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + LISTING_REFRESH_MS);
+    else if (!listing) await this.ctx.storage.deleteAlarm();
+  }
+
+  /** People in the room: open sockets, in seat order. */
   private players(): RoomPlayer[] {
     return this.ctx.getWebSockets()
+      .filter((socket) => socket.readyState === WebSocket.OPEN)
       .map((socket) => socket.deserializeAttachment() as Attachment | null)
       .filter((value): value is Attachment => !!value)
       .map(({ seat, name }) => ({ seat, name }))
@@ -285,23 +377,59 @@ export class Room extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Someone left. The room carries on while anyone is in it: when the host goes, the person in the lowest seat takes
+   * over as host (seat 0) and any round under way ends, since the host's game ran it; when a guest goes, the round
+   * ends only if nobody is left to play against. Clients from before hand-offs can't follow one, so a room with any of
+   * them still closes when its host leaves.
+   */
   private async onSocketClose(ws: WebSocket, attachment: Attachment | null) {
-    if (attachment?.seat === 0) {
+    const remaining = this.ctx.getWebSockets().filter((socket) => socket !== ws && socket.readyState === WebSocket.OPEN);
+    const seated = remaining
+      .map((socket) => ({ socket, seat: socket.deserializeAttachment() as Attachment | null }))
+      .filter((entry): entry is { socket: WebSocket; seat: Attachment } => !!entry.seat);
+    const room = await this.ctx.storage.get<RoomState>('room');
+    if (!seated.length || !room) {
+      await this.close();
+      return;
+    }
+    if (attachment?.seat === 0 && seated.some(({ seat }) => (seat.v ?? 1) < HANDOFF_VERSION)) {
       this.broadcast({ t: 'closed', reason: 'host-left' }, ws);
       for (const socket of this.ctx.getWebSockets()) socket.close(1000, 'host-left');
-      await this.ctx.storage.deleteAll();
+      await this.close();
       return;
     }
-    const remaining = this.ctx.getWebSockets().filter((socket) => socket !== ws && socket.readyState === WebSocket.OPEN);
-    if (!remaining.length) {
-      await this.ctx.storage.deleteAll();
-      return;
+    let from: number | null = null;
+    if (attachment?.seat === 0) {
+      const next = nextHost(seated.map(({ seat }) => seat))!;
+      const entry = seated.find(({ seat }) => seat.seat === next.seat)!;
+      from = next.seat;
+      entry.seat = { ...entry.seat, seat: 0 };
+      entry.socket.serializeAttachment(entry.seat);
+      endRound(room);
     }
-    const players = remaining
-      .map((socket) => socket.deserializeAttachment() as Attachment | null)
-      .filter((value): value is Attachment => !!value)
-      .map(({ seat, name }) => ({ seat, name }));
-    this.broadcast({ t: 'players', players });
+    const players = seated.map(({ seat: { seat, name } }) => ({ seat, name })).sort((a, b) => a.seat - b.seat);
+    // Benched latecomers aren't in the round, so they don't keep it going.
+    const inRound = room.roster ? players.filter(({ seat }) => room.roster!.includes(seat)).length : players.length;
+    if (from === null && room.started && !roundPlayable(room, inRound)) endRound(room);
+    await this.ctx.storage.put('room', room);
+    const lineup = { ...this.lineup(room, players), started: room.started };
+    this.broadcast(from === null ? { t: 'players', ...lineup } : { t: 'host', from, ...lineup }, ws);
+    await this.publish(room, players);
+  }
+
+  /** The room is over: off Open Rooms, and everything it kept is gone. */
+  private async close() {
+    const room = await this.ctx.storage.get<RoomState>('room');
+    if (room?.code && room.inLobby) {
+      try {
+        await this.env.LOBBY.get(this.env.LOBBY.idFromName('global')).drop(room.code);
+      } catch {
+        /* the line expires on its own */
+      }
+    }
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
   }
 }
 
@@ -450,6 +578,10 @@ export default {
       const id = env.BOARDS.idFromName('global');
       return withCors(await env.BOARDS.get(id).fetch(request));
     }
+    if (url.pathname === '/leaderboard/top' && request.method === 'GET') {
+      const id = env.BOARDS.idFromName('global');
+      return withCors(await env.BOARDS.get(id).fetch(request));
+    }
     if (url.pathname === '/stats' && request.method === 'GET') {
       try {
         return withCors(json(await env.STATS.get(env.STATS.idFromName('global')).summary()));
@@ -511,14 +643,41 @@ export default {
         return new Response('ok');
       }
     }
+    if (url.pathname === '/lounge' && request.method === 'GET') {
+      return withCors(await env.LOUNGE.get(env.LOUNGE.idFromName('global')).fetch(request));
+    }
+    // For Josh: wipes the arcade chat, or one channel of it (?ch=). Off unless the LOUNGE_ADMIN_TOKEN secret is set.
+    if (url.pathname === '/lounge/clear' && request.method === 'POST') {
+      if (!env.LOUNGE_ADMIN_TOKEN) return json({ error: 'disabled' }, 403);
+      const given = /^Bearer\s+(\S+)$/i.exec(request.headers.get('Authorization') ?? '')?.[1] ?? '';
+      if (!(await sameSecret(given, env.LOUNGE_ADMIN_TOKEN))) return json({ error: 'forbidden' }, 401);
+      const ch = url.searchParams.get('ch');
+      if (ch !== null && !isChannel(ch)) return json({ error: 'unknown channel' }, 404);
+      try {
+        return json({ ok: true, removed: await env.LOUNGE.get(env.LOUNGE.idFromName('global')).clear(ch ?? undefined) });
+      } catch {
+        return json({ error: 'unavailable' }, 503);
+      }
+    }
+    // Open Rooms: public rooms someone can join now, for one game (?game=) or all of them.
+    if (url.pathname === '/rooms' && request.method === 'GET') {
+      const game = url.searchParams.get('game');
+      if (game !== null && !Object.hasOwn(ONLINE_SPECS, game)) return withCors(json({ error: 'unknown game' }, 404));
+      try {
+        return withCors(json({ rooms: await env.LOBBY.get(env.LOBBY.idFromName('global')).list(game) }));
+      } catch {
+        return withCors(json({ error: 'unavailable' }, 503));
+      }
+    }
     if (url.pathname === '/rooms' && request.method === 'POST') {
       const game = url.searchParams.get('game') ?? '';
       const spec = Object.hasOwn(ONLINE_SPECS, game) ? ONLINE_SPECS[game] : undefined;
       if (!spec) return withCors(json({ error: 'unknown game' }, 404));
+      const listed = url.searchParams.get('public') === '1';
       for (let attempt = 0; attempt < 5; attempt++) {
         const code = makeRoomCode(crypto.getRandomValues(new Uint8Array(4)));
         const room = env.ROOMS.get(env.ROOMS.idFromName(code));
-        if (await room.open(game, spec.seats, !!spec.lateJoin)) return withCors(json({ code }));
+        if (await room.open(code, game, spec, listed)) return withCors(json({ code }));
       }
       return withCors(json({ error: 'could not create room' }, 503));
     }

@@ -1,0 +1,196 @@
+.g-roll-block .g-roll-block-host {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(165deg, #1d2b47 0%, #25354f 55%, #141c2c 100%);
+  touch-action: none;
+}
+.g-roll-block .g-roll-block-bar {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.g-roll-block .g-roll-block-bar.is-low {
+  top: 48px;
+}
+.g-roll-block .g-roll-block-pill {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 12px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(16, 20, 30, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.g-roll-block .g-roll-block-pill strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+.g-roll-block .g-roll-block-pill span {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+}
+.g-roll-block .g-roll-block-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+}
+.g-roll-block .g-roll-block-toast {
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  transform: translateX(-50%);
+  font-size: 18px;
+  font-weight: 650;
+  color: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+  animation: g-roll-block-fade 0.9s ease-out forwards;
+}
+@keyframes g-roll-block-fade {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.9);
+  }
+  15% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+}
+.g-roll-block .g-roll-block-card {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(16, 20, 30, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  animation: g-roll-block-pop 0.25s ease-out;
+}
+@keyframes g-roll-block-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+.g-roll-block .g-roll-block-card-title {
+  font-size: 14px;
+  font-weight: 650;
+}
+.g-roll-block .g-roll-block-card-sub {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+}
+.g-roll-block .g-roll-block-card-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.g-roll-block .g-roll-block-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 46px;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 12px 12px;
+  background: rgba(10, 12, 18, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.g-roll-block .g-roll-block-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 650;
+  color: rgba(255, 255, 255, 0.9);
+}
+.g-roll-block .g-roll-block-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: 8px;
+  overflow-y: auto;
+  flex: 1;
+  align-content: start;
+}
+.g-roll-block .g-roll-block-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.85);
+  font: inherit;
+  cursor: pointer;
+}
+.g-roll-block .g-roll-block-cell span {
+  font-size: 14px;
+  font-weight: 650;
+}
+.g-roll-block .g-roll-block-cell em {
+  font-size: 11px;
+  font-style: normal;
+  color: rgba(255, 255, 255, 0.5);
+}
+.g-roll-block .g-roll-block-cell.is-clear {
+  background: var(--accent, #14857a);
+  border-color: transparent;
+  color: #fff;
+}
+.g-roll-block .g-roll-block-cell.is-clear em {
+  color: rgba(255, 255, 255, 0.75);
+}
+.g-roll-block .g-roll-block-cell.is-par {
+  box-shadow: inset 0 -2px 0 rgba(255, 255, 255, 0.35);
+}
+.g-roll-block .g-roll-block-cell.is-current {
+  outline: 2px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 1px;
+}
+.g-roll-block .g-roll-block-cell:active {
+  transform: translateY(1px);
+}
+@media (max-width: 640px) {
+  .g-roll-block .g-roll-block-bar {
+    top: 48px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-roll-block .g-roll-block-toast,
+  .g-roll-block .g-roll-block-card {
+    animation: none;
+  }
+}

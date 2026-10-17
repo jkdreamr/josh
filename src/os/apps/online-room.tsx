@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from '../arcade/kit/board';
 import { ARCADE_API, NAME_MAX, formatBoardScore, savedName, saveName, type BoardInfo } from '../arcade/kit/leaderboard';
-import { nextOnlineRound } from '../arcade/kit/online-core';
+import { ROOM_VISIBILITY, useOpenRooms, type RoomVisibility } from '../arcade/kit/online';
+import { nextOnlineRound, openRoomLine } from '../arcade/kit/online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from '../arcade/kit/room';
+import { useSetting } from '../arcade/kit/settings';
+import { usePlayingReport } from '../arcade/playing';
+import { OSContext } from '../types';
 import './online-room.css';
 
 /**
@@ -16,7 +20,10 @@ export type AppRoom = ReturnType<typeof useAppRoom>;
 type Handlers = {
   /** A round began (first start or a rematch). Seat 0 is the host. */
   onStart?: (round: number, seat: number, players: RoomPlayer[]) => void;
-  /** The room ended: the host or the opponent left, or the connection dropped. */
+  /**
+   * The game stopped: 'opponent-left' or 'host-left' (someone else hosts now) while you stay in the room, back in its
+   * lobby; 'connection-lost' when the room is gone for you.
+   */
   onEnd?: (reason: string) => void;
 };
 
@@ -34,6 +41,9 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [name, setName] = useState(() => savedName());
+  /** Whether the room is public (null: the server doesn't say), and the kind of room Create Room makes. */
+  const [listed, setListedState] = useState<boolean | null>(null);
+  const [visibility, setVisibility] = useSetting(ROOM_VISIBILITY);
   const linkRef = useRef<RoomLink | null>(null);
   const roundRef = useRef(0);
   const statusRef = useRef<AppRoomStatus>('idle');
@@ -52,6 +62,7 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
     setRound(0);
     setRoomGame('');
     setTransport('relay');
+    setListedState(null);
     setError(message);
   }, []);
 
@@ -75,17 +86,29 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
       setCode(message.code);
       setPlayers(message.players);
     });
+    // Whoever stays keeps the room: back in its lobby, where someone else can join and the host can start again.
+    const toLobby = (message: string, reason: string) => {
+      statusRef.current = 'lobby';
+      setStatus('lobby');
+      setError(message);
+      handlersRef.current.onEnd?.(reason);
+    };
     link.on('players', (list) => {
       if (linkRef.current !== link) return;
       setPlayers(list);
-      if (statusRef.current === 'playing' && list.length < 2) {
-        reset('Your opponent left the room.');
-        handlersRef.current.onEnd?.('opponent-left');
-      }
+      if (statusRef.current === 'playing' && list.length < 2) toLobby('Your opponent left the room.', 'opponent-left');
+    });
+    link.on('host', ({ seat: next }) => {
+      if (linkRef.current !== link) return;
+      setSeat(next);
+      if (statusRef.current === 'playing') toLobby(next === 0 ? 'The host left. You host the room now.' : 'The host left.', 'host-left');
+      else if (next === 0) setError('The host left. You host the room now.');
     });
     link.on('transport', setTransport);
+    link.on('listed', (on) => linkRef.current === link && setListedState(on));
     link.on('start', ({ players: list, round: serverRound }) => {
       if (linkRef.current !== link || link.seat === null) return;
+      setError('');
       roundRef.current = nextOnlineRound(roundRef.current, serverRound);
       statusRef.current = 'playing';
       setStatus('playing');
@@ -104,13 +127,13 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
     setBusy(true);
     setError('');
     try {
-      connect(await createRoom(game));
+      connect(await createRoom(game, { listed: visibility === 'public' }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could Not Create A Room');
     } finally {
       setBusy(false);
     }
-  }, [connect, game]);
+  }, [connect, game, visibility]);
 
   const join = useCallback((roomCode: string) => {
     try {
@@ -122,18 +145,24 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
 
   const leave = useCallback(() => reset(''), [reset]);
   const start = useCallback(() => linkRef.current?.start(), []);
+  const setListed = useCallback((on: boolean) => linkRef.current?.setListed(on), []);
   const send = useCallback((d: unknown, options?: { fast?: boolean }) => linkRef.current?.send(d, options), []);
   const onMessage = useCallback((listener: (from: number, d: unknown) => void) => {
     const link = linkRef.current;
     if (!link) return () => {};
     return link.on('msg', ({ from, d }) => listener(from, d));
   }, []);
-  const reportResult = useCallback((winner: number | null) => linkRef.current?.reportResult(roundRef.current, winner), []);
+  // The result ends the game: the host also tells the room, so someone new can join before the next one.
+  const reportResult = useCallback((winner: number | null) => {
+    const link = linkRef.current;
+    link?.reportResult(roundRef.current, winner);
+    if (link?.seat === 0) link.endRound(roundRef.current);
+  }, []);
 
   useEffect(() => () => linkRef.current?.close(), []);
 
   const opponent = players.find((player) => player.seat !== seat);
-  return { game, roomGame, status, code, seat, players, opponent, round, transport, busy, error, name, setName, create, join, leave, start, send, onMessage, reportResult, isHost: seat === 0, linked: !!code };
+  return { game, roomGame, status, code, seat, players, opponent, round, transport, busy, error, name, setName, visibility, setVisibility, listed, setListed, create, join, leave, start, send, onMessage, reportResult, isHost: seat === 0, linked: !!code };
 }
 
 /** Joins a room once, from an invite link the OS passed in as app args. */
@@ -150,8 +179,59 @@ export function useInvite(room: AppRoom, inviteCode: string | undefined, nonce: 
   }, [inviteCode, nonce]);
 }
 
+const visibilityNotes: Record<RoomVisibility, string> = {
+  private: 'Only people with the code or link can join.',
+  public: 'Anyone can find it in Open Rooms and join.',
+};
+
+/** Private or public, in the apps' own controls: a public room is listed in the arcade's Open Rooms. */
+function VisibilitySeg({ value, onChange }: { value: RoomVisibility; onChange: (v: RoomVisibility) => void }) {
+  return (
+    <div className="oroom-field">
+      <span className="glabel">Room</span>
+      <div className="gseg" role="group" aria-label="Room">
+        <button type="button" aria-pressed={value === 'private'} onClick={() => onChange('private')}>Private</button>
+        <button type="button" aria-pressed={value === 'public'} onClick={() => onChange('public')}>Public</button>
+      </div>
+      <span className="ghelp">{visibilityNotes[value]}</span>
+    </div>
+  );
+}
+
+/** Open rooms for this app's game, each with a Join button. Hidden until Open Rooms answers. */
+function OpenRoomRows({ room }: { room: AppRoom }) {
+  const rooms = useOpenRooms(room.game);
+  if (!rooms) return null;
+  return (
+    <section className="oroom-open" aria-label="Open Rooms">
+      <span className="glabel">Open Rooms</span>
+      {rooms.length ? (
+        <ul className="oroom-players">
+          {rooms.map((open) => (
+            <li key={open.code}>
+              <span>{open.host}</span>
+              <small>{openRoomLine(open)}</small>
+              <button type="button" className="gbtn gbtn-sm" disabled={!validName(room.name)} aria-label={`Join ${open.host}'s Room`} onClick={() => room.join(open.code)}>
+                Join
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="oroom-note">None right now. Make yours public and others can find it.</p>
+      )}
+    </section>
+  );
+}
+
+/** Tells the Lounge this app's game is open, with the room while it's public so people there can join. */
+export function usePlayingRoom(game: string, room: AppRoom) {
+  usePlayingReport(game, room.linked && room.listed && room.code ? room.code : null);
+}
+
 /** Lobby for an app room: name, create or join with a code, then the code, players and Start. */
 export function RoomPanel({ room, title, note, startLabel = 'Start Game' }: { room: AppRoom; title: string; note?: string; startLabel?: string }) {
+  const os = useContext(OSContext);
   const [joinCode, setJoinCode] = useState('');
   const [copied, setCopied] = useState(false);
   const link = room.code ? `${location.origin}/?game=${encodeURIComponent(room.game)}&room=${encodeURIComponent(room.code)}` : '';
@@ -176,8 +256,9 @@ export function RoomPanel({ room, title, note, startLabel = 'Start Game' }: { ro
             <span className="glabel">Your Name</span>
             <input className="ginput" value={room.name} maxLength={NAME_MAX} autoComplete="nickname" spellCheck={false} onChange={(e) => room.setName(e.target.value)} />
           </label>
+          <VisibilitySeg value={room.visibility} onChange={room.setVisibility} />
           <button type="button" className="gbtn gbtn-primary" disabled={room.busy || !validName(room.name)} onClick={room.create}>
-            {room.busy ? 'Creating Room…' : 'Create Room'}
+            {room.busy ? 'Creating Room…' : room.visibility === 'public' ? 'Create Public Room' : 'Create Room'}
           </button>
           <form
             className="oroom-join"
@@ -201,12 +282,18 @@ export function RoomPanel({ room, title, note, startLabel = 'Start Game' }: { ro
               Join
             </button>
           </form>
+          <OpenRoomRows room={room} />
         </>
       ) : (
         <>
           <div className="oroom-code" aria-label={`Room Code ${room.code}`}>{room.code}</div>
           <div className="oroom-row">
             <button type="button" className="gbtn" onClick={copyLink}>{copied ? 'Copied' : 'Copy Link'}</button>
+            {os && (
+              <button type="button" className="gbtn" onClick={() => os.open('lounge', { invite: { game: room.game, code: room.code } })}>
+                Share in Lounge
+              </button>
+            )}
             <button type="button" className="gbtn" onClick={room.leave}>Leave</button>
           </div>
           <ul className="oroom-players" aria-label="Players">
@@ -218,8 +305,10 @@ export function RoomPanel({ room, title, note, startLabel = 'Start Game' }: { ro
               </li>
             ))}
           </ul>
+          {room.isHost && room.listed !== null && room.status !== 'playing' && <VisibilitySeg value={room.listed ? 'public' : 'private'} onChange={(v) => room.setListed(v === 'public')} />}
+          {!room.isHost && room.listed && <p className="oroom-note">A public room: anyone can join from Open Rooms.</p>}
           {room.players.length < 2 ? (
-            <p className="oroom-note">Waiting for another player. Share the code or the link.</p>
+            <p className="oroom-note">{room.listed ? 'Waiting for another player. Anyone can find this room in Open Rooms.' : 'Waiting for another player. Share the code or the link.'}</p>
           ) : room.isHost ? (
             room.status !== 'playing' && (
               <button type="button" className="gbtn gbtn-primary" onClick={room.start}>
