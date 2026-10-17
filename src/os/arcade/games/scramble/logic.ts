@@ -2449,14 +2449,11 @@ function around(m: Match, x: number, z: number, px: number, pz: number, yard: nu
   if (len < 1) return null;
   const dx = (px - x) / len;
   const dz = (pz - z) / len;
-  const boxes: Box[] = [];
-  for (const b of m.map.buildings) if (b.roof) boxes.push({ x: b.x, z: b.z, hw: (b.w + WALL_T) / 2, hd: (b.d + WALL_T) / 2 });
-  m.map.yards.forEach((y, i) => i !== yard && boxes.push(y));
   let near = Infinity;
   let o: Box | null = null;
-  for (const b of boxes) {
+  for (const b of blockersOf(m.map)) {
     // never one we're standing in (a doorway) or one the point is in
-    if ((Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd) || (Math.abs(px - b.x) < b.hw && Math.abs(pz - b.z) < b.hd)) continue;
+    if (b.yard === yard || (Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd) || (Math.abs(px - b.x) < b.hw && Math.abs(pz - b.z) < b.hd)) continue;
     const t = rayBox(x, z, dx, dz, len, b.x, b.z, b.hw, b.hd);
     if (t < near) {
       near = t;
@@ -2489,6 +2486,20 @@ function around(m: Match, x: number, z: number, px: number, pz: number, yard: nu
     }
   }
   return best;
+}
+/**
+ * The roofed buildings and fenced yards of an island (`yard` is the yard's index, or -2 for a building), worked out
+ * once (and again should the lists be swapped for others, as tests do).
+ */
+const blockers = new WeakMap<GameMap, { of: [unknown, unknown]; list: (Box & { yard: number })[] }>();
+function blockersOf(map: GameMap) {
+  let got = blockers.get(map);
+  if (!got || got.of[0] !== map.buildings || got.of[1] !== map.yards) {
+    const list = [...map.buildings.filter((b) => b.roof).map((b) => ({ x: b.x, z: b.z, hw: (b.w + WALL_T) / 2, hd: (b.d + WALL_T) / 2, yard: -2 })), ...map.yards.map((y, i) => ({ x: y.x, z: y.z, hw: y.hw, hd: y.hd, yard: i }))];
+    got = { of: [map.buildings, map.yards], list };
+    blockers.set(map, got);
+  }
+  return got.list;
 }
 const CORNERS = [
   [-1, -1],
