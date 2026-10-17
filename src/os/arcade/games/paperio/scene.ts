@@ -4,6 +4,7 @@
 // skin. The texture is only re-uploaded where the grid changed (dirty rows).
 import type * as T from 'three';
 import { drawSkin } from './art.ts';
+import { GLOW, SHOW, age, janitorRows, restamp, settle } from './reveal.ts';
 import { PALETTE, colorOf, shade, sideOf, skinOf, trailOf } from './skins.ts';
 import { HEAD, MAX_PLAYERS, eachDirtyRow, type Ev, type Player, type World } from './world.ts';
 
@@ -80,11 +81,13 @@ vec4 texel(ivec2 c) {
   return floor(texelFetch(uGrid, c, 0) * 255.0 + 0.5);
 }
 
-// The owner a texel shows right now: the new one once its reveal time has passed, else the old one.
+// The owner a texel shows right now: the new one once its reveal time has passed, else the old one (see reveal.ts).
+// The glow only plays while the change is unsettled (g != r): the clock wraps every 256 units, and a settled texel
+// must not glow again each time its age comes round.
 float shown(vec4 t, out float pop) {
   float dt = mod(uNow - t.b + 256.0, 256.0);
-  if (dt < 192.0) {
-    pop = t.r > 0.5 ? max(0.0, 1.0 - dt / 20.0) : 0.0;
+  if (dt < ${SHOW}.0) {
+    pop = t.r > 0.5 && t.g != t.r ? max(0.0, 1.0 - dt / ${GLOW}.0) : 0.0;
     return t.r;
   }
   pop = 0.0;
@@ -218,7 +221,8 @@ void main() {
   top *= 0.978 + 0.03 * hash(floor(q * 2.0) + 7.0);
   // light catches the northern lip of the paper
   top = mix(top, min(top * 1.12 + 0.03, vec3(1.0)), (1.0 - smoothstep(0.35, 0.65, scov)) * 0.7);
-  top = mix(top, vec3(1.0), min(1.0, pop) * 0.45);
+  // fresh land glows a little brighter in its own color for a moment (never toward white)
+  top = mix(top, min(top * 1.18 + 0.02, vec3(1.0)), min(1.0, pop));
   col = mix(col, top, topA);
   // trails
   float trA = smoothstep(0.5 - e, 0.5 + e, tcov * 1.15);
@@ -532,6 +536,7 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
   const deaths: { id: number; x: number; y: number }[] = [];
   const spawns: { id: number; x: number; y: number }[] = [];
   let janitorRow = 0;
+  let janitorAt = 0;
 
   /** Breadth-first distance from the closed trail through the freshly claimed cells: the fill sweeps outward. */
   function sweep(world: World, id: number, seeds: Int32Array) {
@@ -617,15 +622,13 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
       const t = trail[k];
       let changed = false;
       if (data[i] !== o) {
-        const dt = (now - data[i + 2] + 256) & 255;
-        data[i + 1] = dt < 192 ? data[i] : data[i + 1];
-        data[i] = o;
+        const was = age(now, data[i + 2]) < SHOW ? data[i] : data[i + 1];
         let d = 0;
         if (syncSwept && stampOf[k] >= syncFrom && stampOf[k] <= syncTo) d = delay[k];
         else if (o === 0 && deaths.length) {
           for (let j = 0; j < deaths.length; j++) {
             const dd = deaths[j];
-            if (dd.id + 1 !== data[i + 1]) continue;
+            if (dd.id + 1 !== was) continue;
             const ex = x - dd.x;
             const ey = y - dd.y;
             d = Math.min(60, (Math.sqrt(ex * ex + ey * ey) / 4.4) | 0);
@@ -641,7 +644,7 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
             break;
           }
         }
-        data[i + 2] = (now + 1 + d) & 255;
+        restamp(data, i, o, now, d);
         changed = true;
       }
       if (data[i + 3] !== t) {
@@ -682,18 +685,19 @@ export function buildView(THREE: Three, host: HTMLElement, w: World): View | nul
     eachDirtyRow(world, syncRow);
     flushBlocks();
     // janitor: once an animation is long done, the old owner channel catches up so the reveal clock can wrap safely
-    const rows = 24;
+    // (an unsettled texel would glow again, or show its old owner, when its age comes round). It keeps pace with the
+    // clock, not the frame rate, so slow frames never let a change slip past unsettled.
+    let du = units - janitorAt;
+    if (du < 0) du += 65536;
+    janitorAt = units;
+    const rows = janitorRows(n, du);
     for (let r = 0; r < rows; r++) {
       const y = janitorRow;
       janitorRow = (janitorRow + 1) % n;
       let first = -1;
       let last = -1;
       for (let x = 0; x < n; x++) {
-        const i = (y * n + x) * 4;
-        if (data[i + 1] === data[i]) continue;
-        const dt = (now - data[i + 2] + 256) & 255;
-        if (dt >= 90 && dt < 192) {
-          data[i + 1] = data[i];
+        if (settle(data, (y * n + x) * 4, now)) {
           if (first < 0) first = x;
           last = x;
         }
