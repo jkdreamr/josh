@@ -385,6 +385,13 @@ type EggView = {
   ring: T.Mesh;
   ghost: T.Mesh;
   backPan: T.Group;
+  /** The party hat, hidden under a helmet. */
+  hat: T.Mesh[];
+  /** The helmet and vest it wears, rebuilt when the level changes. */
+  helmet: T.Group | null;
+  helmetLv: number;
+  vest: T.Group | null;
+  vestLv: number;
   walk: number;
   swing: number;
   recoil: number;
@@ -452,6 +459,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     bigDisc: geo(new THREE.CircleGeometry(1, 48)),
     plane: geo(new THREE.PlaneGeometry(1, 1)),
     ring: geo(new THREE.RingGeometry(0.72, 1, 28)),
+    // the curved front of an apron: a strip of a cylinder, open top and bottom, facing +z
+    apron: geo(new THREE.CylinderGeometry(1, 1, 1, 10, 1, true, -0.95, 1.9)),
   };
   const blob = keep(blobTexture(THREE));
   const M = {
@@ -492,6 +501,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     leaf: lambert(0x3f9a4a),
   };
   const rarity = RARITY_COLORS.map((c) => lambert(parseInt(c.slice(1), 16), { emissive: parseInt(c.slice(1), 16), emissiveIntensity: 0.25 }));
+  // armor in its level's color (uncommon, rare, epic), two-sided for the open curve of an apron
+  const armorMat = [0, 1, 2, 3].map((lv) => lambert(parseInt(RARITY_COLORS[Math.min(4, lv + 1)].slice(1), 16), { emissive: parseInt(RARITY_COLORS[Math.min(4, lv + 1)].slice(1), 16), emissiveIntensity: 0.2, side: THREE.DoubleSide }));
   const rarityGlow = RARITY_COLORS.map((c) => basic(parseInt(c.slice(1), 16), { transparent: true, opacity: 0.75, depthWrite: false, side: THREE.DoubleSide }));
   const ammoMat = Object.fromEntries(Object.entries(AMMO_COLORS).map(([k, c]) => [k, lambert(c)])) as Record<keyof typeof AMMO_COLORS, T.MeshLambertMaterial>;
   const ammoGlow = Object.fromEntries(Object.entries(AMMO_COLORS).map(([k, c]) => [k, basic(c, { transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide })])) as Record<keyof typeof AMMO_COLORS, T.MeshBasicMaterial>;
@@ -1052,6 +1063,55 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     o.rotation.x = Math.PI / 2;
     return o;
   };
+  /** A helmet from the kitchen, upside down, its brim on y = 0: a colander, a saucepan or a stockpot by level. */
+  function helmetModel(lv: number): T.Group {
+    const g = new THREE.Group();
+    const c = armorMat[Math.min(3, Math.max(1, lv))];
+    if (lv <= 1) {
+      // a colander: a bowl with a rim and two little handles, and a ring of holes round it
+      add(g, G.cap, c, 0, 0, 0, 0.6, 0.5, 0.6);
+      add(g, G.band, M.steel, 0, 0.02, 0, 0.6, 0.6, 0.6).rotation.x = Math.PI / 2;
+      for (const side of [-1, 1]) add(g, G.box, M.steel, side * 0.66, 0.04, 0, 0.16, 0.05, 0.22);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        add(g, G.ball, M.dark, Math.sin(a) * 0.48, 0.24, Math.cos(a) * 0.48, 0.05, 0.05, 0.05);
+      }
+    } else if (lv === 2) {
+      // a saucepan: a short pot with a long handle out the back
+      add(g, G.cyl, c, 0, 0.24, 0, 0.52, 0.48, 0.52);
+      add(g, G.cyl, M.dark, 0, 0.5, 0, 0.5, 0.04, 0.5);
+      add(g, G.band, M.steel, 0, 0.04, 0, 0.52, 0.52, 0.52).rotation.x = Math.PI / 2;
+      add(g, G.box, M.dark, 0, 0.12, -0.78, 0.12, 0.08, 0.56);
+    } else {
+      // a stockpot: tall, two side handles, a lid with a knob
+      add(g, G.cyl, c, 0, 0.36, 0, 0.54, 0.72, 0.54);
+      add(g, G.band, M.steel, 0, 0.04, 0, 0.54, 0.54, 0.54).rotation.x = Math.PI / 2;
+      add(g, G.cyl, M.steel, 0, 0.74, 0, 0.58, 0.06, 0.58);
+      add(g, G.ball, M.dark, 0, 0.82, 0, 0.09, 0.07, 0.09);
+      for (const side of [-1, 1]) add(g, G.box, M.dark, side * 0.6, 0.42, 0, 0.14, 0.08, 0.3);
+    }
+    return g;
+  }
+
+  /** A vest: an apron hung from a strap, its bib centered on y = 0 and facing +z. Quilted at level 2, steel plated at 3. */
+  function vestModel(lv: number): T.Group {
+    const g = new THREE.Group();
+    const c = armorMat[Math.min(3, Math.max(1, lv))];
+    add(g, G.apron, c, 0, 0, 0, 0.66, 0.64, 0.66);
+    add(g, G.band, M.dark, 0, 0.4, 0, 0.6, 0.6, 0.6).rotation.x = Math.PI / 2;
+    if (lv <= 1) add(g, G.box, M.dark, 0, -0.14, 0.655, 0.3, 0.16, 0.03);
+    else if (lv === 2) {
+      // stitched squares
+      for (const y of [-0.2, 0, 0.2]) add(g, G.box, M.dark, 0, y, 0.66, 0.5, 0.02, 0.02);
+      for (const x of [-0.17, 0.17]) add(g, G.box, M.dark, x, 0, 0.655, 0.02, 0.56, 0.02);
+    } else {
+      // steel plates with rivets
+      for (const y of [-0.2, 0.02, 0.24]) add(g, G.box, M.steel, 0, y, 0.67, 0.52, 0.17, 0.03);
+      for (const y of [-0.2, 0.02, 0.24]) for (const x of [-0.2, 0.2]) add(g, G.ball, M.dark, x, y, 0.69, 0.035, 0.035, 0.035);
+    }
+    return g;
+  }
+
   function gunModel(w: Held): { group: T.Group; stripe: T.Mesh | null } {
     const g = new THREE.Group();
     let stripe: T.Mesh | null = null;
@@ -1192,10 +1252,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     root.add(body);
     const skin = lambert(0xfff3df, { emissive: 0x000000 });
     add(body, G.egg, skin, 0, 0, 0, 1, 1, 1);
-    const hat = lambert(parseInt(f.color.slice(1), 16));
-    add(body, G.cap, hat, 0, 1.08, 0, 0.5, 0.52, 0.5);
-    add(body, G.band, hat, 0, 1.1, 0, 0.47, 0.47, 0.47).rotation.x = Math.PI / 2;
-    add(body, G.ball, hat, 0, 1.64, 0, 0.11, 0.11, 0.11);
+    const hatMat = lambert(parseInt(f.color.slice(1), 16));
+    const hat = [add(body, G.cap, hatMat, 0, 1.08, 0, 0.5, 0.52, 0.5), add(body, G.band, hatMat, 0, 1.1, 0, 0.47, 0.47, 0.47), add(body, G.ball, hatMat, 0, 1.64, 0, 0.11, 0.11, 0.11)];
+    hat[1].rotation.x = Math.PI / 2;
     for (const side of [-1, 1]) add(body, G.ball, M.black, side * 0.17, 1.0, 0.53, 0.065, 0.085, 0.05);
     for (const side of [-1, 1]) add(body, G.ball, M.cream, side * 0.4, 0.72, 0.42, 0.11, 0.11, 0.11);
     const hand = new THREE.Group();
@@ -1242,7 +1301,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     ghost.renderOrder = 20;
     body.add(ghost);
     scene.add(root);
-    return { root, body, skin, hand, guns: new Map(), shadow, glider, heal, ring, ghost, backPan, walk: 0, swing: 0, recoil: 0, lean: 0 };
+    return { root, body, skin, hand, guns: new Map(), shadow, glider, heal, ring, ghost, backPan, hat, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, swing: 0, recoil: 0, lean: 0 };
   });
 
   // the aim line from your gun, and where you'll land while gliding
@@ -1313,6 +1372,18 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         add(g, G.cap, rarity[Math.min(4, def.lv + 1)], 0, 0.25, 0, 0.25, 0.14, 0.15);
         add(g, G.box, M.dark, 0, -0.05, 0.16, 0.36, 0.2, 0.04);
         break;
+      case 'helmet': {
+        const h = helmetModel(def.lv);
+        h.position.y = -0.2;
+        g.add(h);
+        break;
+      }
+      case 'vest': {
+        const v = vestModel(def.lv);
+        v.scale.setScalar(0.85);
+        g.add(v);
+        break;
+      }
       case 'wood':
         for (let i = 0; i < 3; i++) add(g, G.box, M.wood, 0, i * 0.13 - 0.1, (i - 1) * 0.06, 0.7, 0.11, 0.2).rotation.y = i * 0.4;
         break;
@@ -1329,6 +1400,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         return rarityGlow[USE_GLOW[def.w]];
       case 'scope':
       case 'pack':
+      case 'helmet':
+      case 'vest':
         return rarityGlow[Math.min(4, def.lv + 1)];
       case 'melee':
         return rarityGlow[2];
@@ -1490,6 +1563,26 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     v.hand.rotation.x = melee ? -0.4 : isThrow(key) ? -0.9 + v.swing * 1.4 : (f.kind === 'remote' ? f.show.flags & F_RELOAD : f.reloadT > 0) ? 0.7 : 0;
     const pan = f.kind === 'remote' ? (f.show.flags & F_PAN) !== 0 : MELEE[f.melee].blocks === true;
     v.backPan.visible = pan && key !== 'pan' && f.phase === 'ground';
+    // the armor it wears
+    if (v.helmetLv !== f.helmet) {
+      if (v.helmet) v.body.remove(v.helmet);
+      v.helmet = f.helmet > 0 ? helmetModel(f.helmet) : null;
+      if (v.helmet) {
+        v.helmet.position.y = 1.1;
+        v.body.add(v.helmet);
+      }
+      v.helmetLv = f.helmet;
+      for (const o of v.hat) o.visible = f.helmet <= 0;
+    }
+    if (v.vestLv !== f.vest) {
+      if (v.vest) v.body.remove(v.vest);
+      v.vest = f.vest > 0 ? vestModel(f.vest) : null;
+      if (v.vest) {
+        v.vest.position.y = 0.52;
+        v.body.add(v.vest);
+      }
+      v.vestLv = f.vest;
+    }
     // flash red when hit; healing, shield and coffee show while in use
     const hit = f.hitT > 0;
     v.skin.emissive.setHex(hit ? 0xff3b30 : 0x000000);

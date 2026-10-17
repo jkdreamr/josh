@@ -31,9 +31,9 @@ import {
 } from './logic';
 import { configOf, parsePacket, type Bots } from './net';
 import { END_PAUSE, FLUSH, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
-import { MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
+import { ARMOR_NAMES, MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { HALF, SUPPLY_FALL } from './map';
-import { AmmoIcon, EggIcon, HowToPlay, IslandArt, PackIcon, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon } from './hud';
+import { AmmoIcon, ArmorIcon, EggIcon, HowToPlay, IslandArt, PackIcon, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon } from './hud';
 import { meta } from './meta';
 import './scramble.css';
 
@@ -203,6 +203,9 @@ type Hud = {
   items: Record<UseId, number> | null;
   scope: number;
   pack: number;
+  /** Helmet and vest levels (shown for someone else's egg too, as its owner reports them). */
+  helmet: number;
+  vest: number;
   /** 0..1 while reloading or using something, else -1. */
   busy: number;
   busyText: string;
@@ -219,7 +222,7 @@ type Hud = {
 };
 const deep = new Set<keyof Hud>(['slots', 'toss', 'items']);
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, wood: 0, items: null, scope: 0, pack: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, wood: 0, items: null, scope: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
@@ -260,6 +263,7 @@ function Play({ mode }: { mode: Mode }) {
   const view = useRef<View | null>(null);
   const match = useRef<Match | null>(null);
   const net = useRef<Session>(null as unknown as Session);
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__scramble = { match: () => match.current, view: () => view.current, net: () => net.current };
   net.current ??= newSession(!live || online!.isHost);
   if (!match.current) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
@@ -807,7 +811,7 @@ function Play({ mode }: { mode: Mode }) {
         break;
       case 'hit':
         if (e.f === m.me) {
-          popNumber(e.x, e.z, String(e.d), e.shield);
+          popNumber(e.x, e.z, String(Math.round(e.took)), e.shield);
           sfx.tone({ freq: e.shield ? 1500 : 1100, dur: 0.035, type: 'triangle', vol: 0.1 });
         }
         break;
@@ -979,7 +983,11 @@ function Play({ mode }: { mode: Mode }) {
       if (p && 'chest' in p) {
         const c = m.map.containers[p.chest];
         promptText = c.kind === 'supply' ? 'open supply drop' : c.gold ? 'open the golden chest' : 'open chest';
-      } else if (p) promptText = `${p.swap ? `swap ${p.item.def.kind === 'melee' ? MELEE[me.melee].name : 'gun'} for` : 'pick up'} ${lootName(p.item.def)}`;
+      } else if (p) {
+        const k = p.item.def.kind;
+        const have = k === 'melee' ? MELEE[me.melee].name : k === 'helmet' || k === 'vest' ? ARMOR_NAMES[k][me[k]] : 'gun';
+        promptText = `${p.swap ? `swap ${have} for` : 'pick up'} ${lootName(p.item.def)}`;
+      }
     }
     const out = me && me.phase === 'out' ? (me.by >= 0 && me.by !== me.id && m.fighters[me.by] ? `cracked by ${m.fighters[me.by].name}` : me.outCause === 'storm' ? 'lost to the storm' : 'out') + ` · ${ordinal(me.place)} of ${m.fighters.length}` : null;
     const gw = g ? WEAPONS[g.w] : null;
@@ -1002,6 +1010,8 @@ function Play({ mode }: { mode: Mode }) {
       items: own ? { ...focus.items } : null,
       scope: own ? focus.scope : 0,
       pack: own ? focus.pack : 0,
+      helmet: focus.helmet,
+      vest: focus.vest,
       busy: Math.round(busy * 30) / 30,
       busyText,
       storm,
@@ -1239,6 +1249,18 @@ function Play({ mode }: { mode: Mode }) {
               <span className="g-scramble-pill is-gear" aria-label={`level ${hud.pack} backpack`}>
                 <PackIcon size={15} lv={hud.pack} />
                 <b>{hud.pack}</b>
+              </span>
+            )}
+            {hud.helmet > 0 && (
+              <span className="g-scramble-pill is-gear" aria-label={`${ARMOR_NAMES.helmet[hud.helmet]}, a level ${hud.helmet} helmet`}>
+                <ArmorIcon kind="helmet" size={15} lv={hud.helmet} />
+                <b>{hud.helmet}</b>
+              </span>
+            )}
+            {hud.vest > 0 && (
+              <span className="g-scramble-pill is-gear" aria-label={`${ARMOR_NAMES.vest[hud.vest]}, a level ${hud.vest} vest`}>
+                <ArmorIcon kind="vest" size={15} lv={hud.vest} />
+                <b>{hud.vest}</b>
               </span>
             )}
           </div>

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { AMMO_BOX, AMMO_TYPES, BOOST, HP_MAX, MAX_PACK, MAX_RARITY, MELEE, MELEE_IDS, SHIELD_MAX, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, WOOD_MAX, ammoCap, damageOf, parseLoot, rng32, rollLoot, throwCap, useCap, type LootDef, type WeaponId } from '../src/os/arcade/games/scramble/items.ts';
+import { AMMO_BOX, AMMO_TYPES, ARMOR_CUT, ARMOR_KINDS, BOOST, HP_MAX, MAX_ARMOR, MAX_PACK, MAX_RARITY, MELEE, MELEE_IDS, SHIELD_MAX, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, WOOD_MAX, ammoCap, armorMult, damageOf, lootName, parseLoot, rng32, rollLoot, throwCap, useCap, type LootDef, type WeaponId } from '../src/os/arcade/games/scramble/items.ts';
 import {
   BEACH,
   BUS_Y,
@@ -57,6 +57,7 @@ import {
   WALL_HP,
   aliveCount,
   applyState,
+  armored,
   autopilot,
   bestUse,
   botNames,
@@ -78,6 +79,7 @@ import {
   standing,
   step,
   viewOf,
+  wants,
   type Entrant,
   type Ev,
   type Fighter,
@@ -759,6 +761,8 @@ test('a cracked egg spills what it carried, its killer is credited, and the last
   b.melee = 'cleaver';
   b.throws.grenade = 2;
   b.scope = 2;
+  b.helmet = 2;
+  b.vest = 1;
   b.wood = 40;
   b.hp = 10;
   a.guns[0] = { w: 'pistol', r: 0, mag: 14 };
@@ -772,8 +776,9 @@ test('a cracked egg spills what it carried, its killer is credited, and the last
   assert.equal(out.place, 3);
   assert.equal(a.kills, 1);
   const spilled = evs.filter((e) => e.t === 'drop').map((e) => (e.t === 'drop' ? e.item.def.kind : ''));
-  assert.deepEqual(spilled.sort(), ['ammo', 'gun', 'melee', 'scope', 'throw', 'use', 'wood']);
+  assert.deepEqual(spilled.sort(), ['ammo', 'gun', 'helmet', 'melee', 'scope', 'throw', 'use', 'vest', 'wood']);
   assert.equal(b.melee, 'spatula');
+  assert.equal(b.helmet + b.vest, 0);
   assert.equal(aliveCount(m), 2);
   hurt(m, c, 500, a.id, 'pistol', false);
   const end = run(m, 0.05).find((e) => e.t === 'end');
@@ -887,8 +892,8 @@ test('a hit from another client can do no more than that weapon ever could', () 
 });
 
 test('what happens here becomes network news only when someone else needs it', () => {
-  assert.equal(toNet({ t: 'hit', f: 0, to: 1, d: 5, w: 'smg', x: 0, z: 0, shield: false, local: true }), null, 'a hit on an egg we own is already applied');
-  assert.deepEqual(toNet({ t: 'hit', f: 0, to: 1, d: 5, w: 'smg', x: 1, z: 2, shield: false, local: false }), { y: 'd', f: 0, to: 1, d: 5, w: 'smg', x: 1, z: 2 });
+  assert.equal(toNet({ t: 'hit', f: 0, to: 1, d: 5, took: 5, w: 'smg', x: 0, z: 0, shield: false, local: true }), null, 'a hit on an egg we own is already applied');
+  assert.deepEqual(toNet({ t: 'hit', f: 0, to: 1, d: 5, took: 4, w: 'smg', x: 1, z: 2, shield: false, local: false }), { y: 'd', f: 0, to: 1, d: 5, w: 'smg', x: 1, z: 2 }, 'the hit as fired: the owner takes the armor off it');
   assert.equal(toNet({ t: 'out', f: 1, by: 0, w: 'smg', place: 3, net: true }), null, 'news from the network is not sent back');
   assert.equal(toNet({ t: 'beep' }), null);
   assert.equal(toNet({ t: 'thud', x: 0, z: 0, what: 'tree' }), null);
@@ -1016,7 +1021,7 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
 }
 
 for (const [label, opts] of [
-  ['a host, three guests and four computer eggs, with lag and lost packets', { humans: 4, bots: true, seed: 21, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
+  ['a host, three guests and four computer eggs, with lag and lost packets', { humans: 4, bots: true, seed: 30, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
   ['eight people and no computer eggs, one of whom leaves halfway', { humans: 8, bots: false, seed: 34, level: 'normal' as Level, delay: 0.05, loss: 0.05, leave: { seat: 5, at: 40 } }],
   ['a guest whose tab freezes on the bus (still in the room, still reporting)', { humans: 3, bots: true, seed: 8, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 2, at: 2, silent: false } }],
   ['a guest who goes silent mid-match', { humans: 3, bots: true, seed: 13, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 1, at: 30, silent: true } }],
@@ -1784,6 +1789,166 @@ test('every backpack level carries more of everything than the one below it', ()
   assert.deepEqual([0, 1, 2, 3].map((p) => useCap('medkit', p)), [2, 3, 4, 5]);
 });
 
+test('a helmet and a vest take their cut of bullets, swings and blasts, but not of the storm or hot sauce', () => {
+  assert.equal(armorMult(0, 0), 1);
+  for (const k of ARMOR_KINDS) for (let lv = 1; lv <= MAX_ARMOR; lv++) assert.ok(ARMOR_CUT[k][lv] > ARMOR_CUT[k][lv - 1] && ARMOR_CUT[k][lv] < 0.5, `${k} ${lv}`);
+  assert.ok(Math.abs(armorMult(3, 3) - (1 - ARMOR_CUT.helmet[3]) * (1 - ARMOR_CUT.vest[3])) < 1e-9, 'the two multiply');
+  assert.ok(armorMult(3, 3) > 0.5, 'the best of both still lets more than half through');
+  assert.equal(armorMult(9, -1), armorMult(3, 0), 'levels are clamped');
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  land(a, 0, 0);
+  land(b, 0, 6);
+  b.helmet = 2;
+  b.vest = 3;
+  const cut = (d: number) => Math.round(d * armorMult(2, 3) * 10) / 10;
+  for (const [d, w] of [[40, 'rifle'], [50, 'cleaver'], [80, 'grenade'], [60, 'barrel'], [52, 'launcher']] as const) {
+    b.hp = 100;
+    assert.equal(hurt(m, b, d, a.id, w, false), cut(d), w);
+    assert.ok(Math.abs(b.hp - (100 - cut(d))) < 1e-9);
+  }
+  b.hp = 100;
+  assert.equal(hurt(m, b, 7, -1, 'storm', true), 7, 'the storm goes straight through');
+  assert.equal(hurt(m, b, 6, a.id, 'sauce', false), 6, 'so does hot sauce');
+  // the shield soaks what the armor lets through
+  b.hp = 100;
+  b.shield = 10;
+  hurt(m, b, 40, a.id, 'rifle', false);
+  assert.equal(b.shield, 0);
+  assert.ok(Math.abs(b.hp - (100 - (cut(40) - 10))) < 1e-9);
+  // a real shot reports what was fired and what landed
+  b.hp = 100;
+  b.shield = 0;
+  a.guns[0] = { w: 'pistol', r: 0, mag: 14 };
+  a.slot = 0;
+  a.input.aim = 0;
+  a.input.fire = true;
+  const hit = run(m, 0.15).find((e) => e.t === 'hit');
+  a.input.fire = false;
+  assert.ok(hit && hit.t === 'hit' && hit.to === b.id);
+  assert.equal(hit.d, Math.round(damageOf('pistol', 0)));
+  assert.equal(hit.took, armored(hit.d, 'pistol', false, b));
+  assert.ok(hit.took < hit.d);
+  assert.equal(a.dealt, hit.took, 'credit for what landed');
+  assert.ok(Math.abs(b.hp - (100 - hit.took)) < 1e-9);
+});
+
+test('a better helmet or vest goes on as you walk over it and the old one drops; a worse one waits for the key', () => {
+  const m = quiet();
+  const me = m.fighters[0];
+  openSpot(m);
+  land(me, 0, 0);
+  const put = (id: number, def: LootDef) => m.loot.set(id, { id, def, x: me.x, z: me.z, by: -1, at: 0 });
+  put(1, { kind: 'helmet', lv: 1 });
+  put(2, { kind: 'vest', lv: 2 });
+  run(m, 0.05);
+  assert.equal(me.helmet, 1);
+  assert.equal(me.vest, 2);
+  assert.equal(m.loot.size, 0);
+  put(3, { kind: 'helmet', lv: 3 });
+  const evs = run(m, 0.05);
+  assert.equal(me.helmet, 3);
+  const old = evs.find((e) => e.t === 'drop');
+  assert.ok(old && old.t === 'drop' && old.item.def.kind === 'helmet' && old.item.def.lv === 1 && old.item.by === me.id, 'the colander comes off');
+  run(m, 3.5);
+  assert.equal(me.helmet, 3, 'and stays off');
+  m.loot.clear();
+  put(4, { kind: 'vest', lv: 1 });
+  run(m, 0.2);
+  assert.equal(me.vest, 2, 'a worse apron stays where it is');
+  assert.ok(m.loot.has(4));
+  assert.ok(!wants(me, { kind: 'vest', lv: 1 }, false) && wants(me, { kind: 'vest', lv: 1 }, true) && !wants(me, { kind: 'vest', lv: 2 }, true) && wants(me, { kind: 'vest', lv: 3 }, false));
+  const p = prompt(m, me);
+  assert.ok(p && 'item' in p && p.item.id === 4 && p.swap, 'the key offers a swap');
+  assert.equal(lootName(p.item.def), 'apron (level 1 vest)');
+  me.input.interact = true;
+  const swapped = run(m, DT);
+  assert.equal(me.vest, 1);
+  assert.ok(swapped.some((e) => e.t === 'drop' && e.item.def.kind === 'vest' && e.item.def.lv === 2 && e.item.by === me.id), 'the quilted apron goes down');
+  assert.ok(!m.loot.has(4));
+  run(m, 3.5);
+  assert.equal(me.vest, 1, 'what we took off is not put straight back on');
+  const back = prompt(m, me);
+  assert.ok(back && 'item' in back && back.item.def.kind === 'vest' && back.swap, 'but the key will');
+});
+
+test('a computer egg goes for better armor and puts it on, and leaves what is no better than its own', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  land(a, 0, 0);
+  land(b, 100, 100);
+  autopilot(m, a);
+  a.guns = [{ w: 'rifle', r: 1, mag: 30 }, null];
+  a.slot = 0;
+  a.helmet = 1;
+  m.loot.set(1, { id: 1, def: { kind: 'helmet', lv: 1 }, x: 0, z: 5, by: -1, at: 0 });
+  m.loot.set(2, { id: 2, def: { kind: 'vest', lv: 2 }, x: 0, z: 11, by: -1, at: 0 });
+  m.loot.set(3, { id: 3, def: { kind: 'helmet', lv: 3 }, x: 6, z: 11, by: -1, at: 0 });
+  run(m, 12);
+  assert.equal(a.vest, 2);
+  assert.equal(a.helmet, 3);
+  assert.ok(m.loot.has(1), 'the spare colander is left where it lies');
+  assert.ok(!m.loot.has(2) && !m.loot.has(3));
+});
+
+test('an egg’s helmet and vest travel with its state, within bounds, and show on everyone else’s screen', () => {
+  const m = quiet();
+  const f = m.fighters[0];
+  land(f, 1, 2);
+  f.helmet = 2;
+  f.vest = 3;
+  const s = stateOf(f);
+  assert.equal(s.helmet, 2);
+  assert.equal(s.vest, 3);
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(1, s)))), { k: 's', round: 1, state: s });
+  for (const bad of [{ ...s, helmet: MAX_ARMOR + 1 }, { ...s, vest: -1 }, { ...s, helmet: 1.5 }]) assert.equal(parsePacket(guestState(1, bad)), null, JSON.stringify(bad));
+  const packed = guestState(1, s);
+  assert.equal(parsePacket({ ...packed, c: packed.c.slice(0, 12) }), null, 'a report without the armor is no report');
+  const g = createMatch({ seed: 2, role: 'guest', level: 'normal', entrants: [{ name: 'h', color: '#fff', kind: 'remote', seat: 0 }, { name: 'a', color: '#fff', kind: 'player', seat: 1 }], me: 1, countdown: 0 });
+  applyState(g, g.fighters[0], s);
+  assert.equal(g.fighters[0].helmet, 2);
+  assert.equal(g.fighters[0].vest, 3);
+  for (const bad of [{ kind: 'helmet', lv: 4 }, { kind: 'vest', lv: 0 }, { kind: 'helmet' }]) assert.equal(parseLoot(bad), null, JSON.stringify(bad));
+  assert.deepEqual(parseLoot({ kind: 'vest', lv: 3 }), { kind: 'vest', lv: 3 });
+});
+
+test('online, a guest’s armor takes its cut of the host’s shots on the guest’s own screen, and the host’s numbers allow for it', () => {
+  const { h, g, hs, hMe, toGuest } = pair();
+  const mine = g.fighters[1];
+  mine.helmet = 3;
+  mine.vest = 3;
+  // the host hears what the guest wears
+  receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(mine)))), () => h, 0.1);
+  assert.equal(h.fighters[1].helmet, 3);
+  assert.equal(h.fighters[1].vest, 3);
+  // and shoots west at it
+  const host = h.fighters[0];
+  host.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  host.slot = 0;
+  host.input.aim = -Math.PI / 2;
+  host.input.fire = true;
+  let hit: Ev | undefined;
+  for (let i = 0; i < 30 && !hit; i++) {
+    step(h, DT);
+    hit = h.events.find((e) => e.t === 'hit');
+  }
+  host.input.fire = false;
+  assert.ok(hit && hit.t === 'hit' && !hit.local && hit.to === 1);
+  assert.equal(hit.d, Math.round(damageOf('rifle', 0)), 'sent as fired');
+  assert.equal(hit.took, armored(hit.d, 'rifle', false, h.fighters[1]));
+  assert.ok(hit.took < hit.d);
+  assert.equal(host.dealt, hit.took);
+  toGuest();
+  assert.ok(Math.abs(mine.hp - (100 - hit.took)) < 1e-9, `the guest took the cut hit (${mine.hp})`);
+  // the same hit on a bare egg lands in full
+  const bare = pair();
+  bare.h.events.length = 0;
+  applyNet(bare.g, { y: 'd', f: 0, to: 1, d: hit.d, w: 'rifle', x: 0, z: 0 });
+  assert.equal(bare.g.fighters[1].hp, 100 - hit.d);
+});
+
 test('ponds slow you down and cornfields hide you', () => {
   const m = quiet();
   const [a, b] = m.fighters;
@@ -1809,12 +1974,12 @@ test('a host’s report of twenty eggs fits well inside one room message, and ne
   const h = hostMatch(players, 0, 3, 'normal', MAX_FIGHTERS, 3);
   assert.equal(h.roster.length, 20);
   assert.equal(h.roster.filter((s) => s < 0).length, 12);
-  const big = { x: -158.88, z: 157.77, y: 54.9, aim: -3.14, vx: -12.5, vz: 12.5, phase: 'ground' as const, hp: 99.9, shield: 99.9, w: 'pan' as const, r: 4, flags: 255 };
+  const big = { x: -158.88, z: 157.77, y: 54.9, aim: -3.14, vx: -12.5, vz: 12.5, phase: 'ground' as const, hp: 99.9, shield: 99.9, w: 'pan' as const, r: 4, flags: 255, helmet: 3, vest: 3 };
   const packet = hostState(9, 123456789, 345.67, 'hard', h.roster, h.roster.map((_, i): [number, typeof big] => [i, big]));
   const text = JSON.stringify({ t: 'msg', to: 1, d: packet });
   assert.ok(text.length < 4000, `${text.length} bytes`);
   const back = parsePacket(JSON.parse(text).d);
-  assert.ok(back && back.k === 'S' && back.states.length === 20 && back.states[19][1].w === 'pan' && back.states[0][1].flags === 255);
+  assert.ok(back && back.k === 'S' && back.states.length === 20 && back.states[19][1].w === 'pan' && back.states[0][1].flags === 255 && back.states[7][1].vest === 3);
   for (const w of ['grenade', 'cleaver', 'lmg'] as const) {
     const s = { ...big, w };
     assert.deepEqual(parsePacket(guestState(1, s)), { k: 's', round: 1, state: s });
@@ -1832,23 +1997,34 @@ test('a host’s report of twenty eggs fits well inside one room message, and ne
 test('loot tables only roll real things, launchers are never common, and the best places hold the best guns', () => {
   const rng = rng32(1);
   const kinds = new Set<string>();
+  const armor = Object.fromEntries(['floor', 'crate', 'chest', 'gold', 'supply'].map((t) => [t, [0, 0, 0, 0]]));
   for (let i = 0; i < 3000; i++) {
     for (const tier of ['floor', 'crate', 'chest', 'gold', 'supply'] as const) {
       const defs = rollLoot(rng, tier);
-      assert.ok(defs.length >= 1 && defs.length <= 5);
+      assert.ok(defs.length >= 1 && defs.length <= 6);
       for (const def of defs) {
         kinds.add(def.kind);
         assert.ok(parseLoot(def), JSON.stringify(def));
+        if (def.kind === 'helmet' || def.kind === 'vest') {
+          armor[tier][def.lv]++;
+          if (tier === 'gold') assert.equal(def.lv, 3, 'the golden chest holds the best armor');
+          if (tier === 'supply') assert.ok(def.lv >= 2, 'supply drops hold good armor');
+        }
         if (def.kind === 'gun' && def.w === 'launcher') assert.ok(def.r >= 2);
         if (def.kind === 'gun' && tier === 'chest') assert.ok(def.r >= 1, 'chest guns are better than common');
         if (def.kind === 'gun' && tier === 'supply') assert.ok(def.r >= 2, 'supply drops hold rare or better');
         if (def.kind === 'gun' && tier === 'gold') assert.ok(def.r >= 3, 'the golden chest holds epic or legendary');
         if (def.kind === 'wood') assert.ok(def.n <= WOOD_MAX);
       }
-      if (tier === 'gold' || tier === 'supply') assert.ok(defs.some((d) => d.kind === 'gun') && defs.some((d) => d.kind === 'throw'));
+      if (tier === 'gold' || tier === 'supply') assert.ok(defs.some((d) => d.kind === 'gun') && defs.some((d) => d.kind === 'throw') && defs.some((d) => d.kind === 'helmet' || d.kind === 'vest'));
     }
   }
-  assert.deepEqual([...kinds].sort(), ['ammo', 'gun', 'melee', 'pack', 'scope', 'throw', 'use', 'wood'], 'every kind of loot turns up');
+  assert.deepEqual([...kinds].sort(), ['ammo', 'gun', 'helmet', 'melee', 'pack', 'scope', 'throw', 'use', 'vest', 'wood'], 'every kind of loot turns up');
+  // the better the place, the better the armor: level 3 is rare on the floor and the usual thing in a supply drop
+  assert.ok(armor.floor[1] > armor.floor[2] && armor.floor[2] > armor.floor[3] && armor.floor[3] > 0, JSON.stringify(armor.floor));
+  assert.ok(armor.chest[2] > armor.chest[1] && armor.chest[3] > armor.chest[1], JSON.stringify(armor.chest));
+  assert.ok(armor.supply[3] > armor.supply[2], JSON.stringify(armor.supply));
+  assert.ok(armor.floor[1] + armor.floor[2] + armor.floor[3] > 200, 'armor turns up on the floor often enough');
   const guns = new Set<string>();
   for (let i = 0; i < 4000; i++) for (const def of rollLoot(rng, 'floor')) if (def.kind === 'gun') guns.add(def.w);
   assert.deepEqual([...guns].sort(), [...WEAPON_IDS].sort(), 'every gun turns up on the floor');

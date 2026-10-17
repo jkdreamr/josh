@@ -1,7 +1,7 @@
 // Pictures and sheets for Scramble's interface: weapon and item icons, the island map, and How to Play.
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { AMMO_BOX, BOOST, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, type Ammo, type GunClass, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
+import { AMMO_BOX, ARMOR_CUT, ARMOR_NAMES, BOOST, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, type Ammo, type ArmorKind, type GunClass, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { HALF, type Building, type Door, type GameMap } from './map';
 import type { Held } from './logic';
 
@@ -290,6 +290,48 @@ export function PackIcon({ size, lv = 1 }: { size?: number; lv?: number }) {
   );
 }
 
+/** A helmet (a colander, saucepan or stockpot upside down) or a vest (an apron), in its level's color. */
+export function ArmorIcon({ kind, size, lv = 1 }: { kind: ArmorKind; size?: number; lv?: number }) {
+  const fill = RARITY_COLORS[Math.min(4, lv + 1)];
+  const edge = 'rgba(0,0,0,0.3)';
+  if (kind === 'vest')
+    return (
+      <Svg size={size}>
+        <path d="M11 4h10v6l5 3v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V13l5-3z" fill={fill} stroke={edge} strokeWidth="1.2" strokeLinejoin="round" />
+        <path d="M11 4c0 3.5 10 3.5 10 0" fill="none" stroke={edge} strokeWidth="1.4" />
+        <rect x="11" y="17" width="10" height="6" rx="1.2" fill={edge} />
+        {lv >= 2 && <path d="M8 13l16 10M24 13L8 23" stroke={edge} strokeWidth="1" />}
+      </Svg>
+    );
+  // level 1 a colander on its bowl, 2 a saucepan with its handle out, 3 a tall stockpot with two handles
+  if (lv <= 1)
+    return (
+      <Svg size={size}>
+        <path d="M4 14a12 10 0 0 1 24 0v3H4z" fill={fill} stroke={edge} strokeWidth="1.2" />
+        <rect x="2" y="16" width="28" height="3" rx="1.5" fill={fill} stroke={edge} strokeWidth="1.2" />
+        <path d="M10 10.5h.1M16 8h.1M22 10.5h.1M13 13h.1M19 13h.1" stroke={edge} strokeWidth="2.2" strokeLinecap="round" />
+        <path d="M11 20c1 5 9 5 10 0" fill="none" stroke={edge} strokeWidth="2" />
+      </Svg>
+    );
+  if (lv === 2)
+    return (
+      <Svg size={size}>
+        <rect x="5" y="12" width="18" height="11" rx="2" fill={fill} stroke={edge} strokeWidth="1.2" />
+        <rect x="4" y="10" width="20" height="3" rx="1.5" fill={fill} stroke={edge} strokeWidth="1.2" />
+        <path d="M23 15h7" stroke={fill} strokeWidth="3.4" strokeLinecap="round" />
+        <path d="M23 15h7" stroke={edge} strokeWidth="1" />
+      </Svg>
+    );
+  return (
+    <Svg size={size}>
+      <rect x="7" y="8" width="18" height="18" rx="2" fill={fill} stroke={edge} strokeWidth="1.2" />
+      <rect x="6" y="6" width="20" height="3" rx="1.5" fill={fill} stroke={edge} strokeWidth="1.2" />
+      <path d="M3 13h4M25 13h4" stroke={edge} strokeWidth="2.6" strokeLinecap="round" />
+      <path d="M11 17h10M11 21h10" stroke={edge} strokeWidth="1" />
+    </Svg>
+  );
+}
+
 export function WoodIcon({ size }: { size?: number }) {
   return (
     <Svg size={size}>
@@ -461,6 +503,8 @@ const USE_HELP: Record<UseId, string> = {
   shield: `+${USES.shield.shield} shield, all the way to 100.`,
   coffee: `Boost: heals a little at a time and puts a spring in your step for ${Math.round((USES.coffee.boost ?? 0) / BOOST.drain)} seconds.`,
 };
+/** "Colander, saucepan, stockpot: 8%, 12% and 16% off every hit." */
+const armorLine = (kind: ArmorKind) => `${cap(ARMOR_NAMES[kind].slice(1).join(', '))}: ${ARMOR_CUT[kind].slice(1).map((c, i, a) => `${Math.round(c * 100)}%${i === a.length - 2 ? ' and' : i < a.length - 1 ? ',' : ''}`).join(' ')} off every hit.`;
 /** The number keys that use each consumable. */
 export const USE_KEYS: Record<UseId, string> = { bandage: '5', medkit: '6', mini: '7', shield: '8', coffee: '9' };
 
@@ -525,6 +569,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>Health and shield.</b> You have 100 health and up to 100 shield, which takes hits first.
+          </li>
+          <li>
+            <b>Armor.</b> A helmet and a vest from the kitchen, three levels each, take a cut of every bullet, swing and blast (not the storm, not hot sauce). Walk over a better one to put it on; your old one drops. {touch ? 'Tap pick up' : 'Press E'} to swap for a worse one if you really want it.
           </li>
           <li>
             <b>The storm.</b> The white ring shows where the safe circle is heading. Outside the circle the storm eats your health (shields don't help), and it bites harder each time it closes.
@@ -652,6 +699,18 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <PackIcon size={30} lv={2} />
             <span>
               <b>Backpacks.</b> Three levels, each carrying more ammo, healing and throwables.
+            </span>
+          </li>
+          <li>
+            <ArmorIcon kind="helmet" size={30} lv={2} />
+            <span>
+              <b>Helmets.</b> {armorLine('helmet')}
+            </span>
+          </li>
+          <li>
+            <ArmorIcon kind="vest" size={30} lv={2} />
+            <span>
+              <b>Vests.</b> {armorLine('vest')} The two cuts multiply.
             </span>
           </li>
         </ul>

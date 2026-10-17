@@ -4,7 +4,7 @@
 // computer players and sends everyone the whole match. Things that happen (shots, hits, drops, walls, pickups) travel
 // as events: a guest sends its own to the host, and the host applies them and passes them on to everyone else, in the
 // order it applied them, together with its own. Guests ask the host for pickups and chests and hear back who got them.
-import { MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
+import { MAX_ARMOR, MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import {
   CAUSES,
   HELD,
@@ -40,8 +40,8 @@ import {
 export type Bots = 'fill' | 'none';
 export const isBots = (v: unknown): v is Bots => v === 'fill' || v === 'none';
 
-/** An egg as its owner reports it. */
-export type State = { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number };
+/** An egg as its owner reports it, down to the helmet and vest it wears. */
+export type State = { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number };
 
 export type NetEv =
   | { y: 's'; f: number; w: WeaponId; r: number; x: number; z: number; a: number; s: number; k: number }
@@ -93,20 +93,22 @@ const id = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as nu
 
 export function stateOf(f: Fighter): State {
   const h = held(f);
-  return { x: r2(f.x), z: r2(f.z), y: r1(f.y), aim: r2(f.aim), vx: r1(f.vx), vz: r1(f.vz), phase: f.phase, hp: r1(f.hp), shield: r1(f.shield), w: h.w, r: h.r, flags: flagsOf(f) };
+  return { x: r2(f.x), z: r2(f.z), y: r1(f.y), aim: r2(f.aim), vx: r1(f.vx), vz: r1(f.vz), phase: f.phase, hp: r1(f.hp), shield: r1(f.shield), w: h.w, r: h.r, flags: flagsOf(f), helmet: f.helmet, vest: f.vest };
 }
 
 /** What an egg holds, as a number: 0 for nothing reported yet, then guns, melee weapons and throwables. */
 const HELD_CODES: (Held | null)[] = [null, ...HELD];
-const packState = (s: State) => [s.x, s.z, s.y, s.aim, s.vx, s.vz, PHASES.indexOf(s.phase), s.hp, s.shield, HELD_CODES.indexOf(s.w), s.r, s.flags];
+const packState = (s: State) => [s.x, s.z, s.y, s.aim, s.vx, s.vz, PHASES.indexOf(s.phase), s.hp, s.shield, HELD_CODES.indexOf(s.w), s.r, s.flags, s.helmet, s.vest];
+
+const armorLv = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) <= MAX_ARMOR;
 
 function unpackState(a: unknown): State | null {
-  if (!Array.isArray(a) || a.length < 12 || !a.slice(0, 12).every(num)) return null;
-  const [x, z, y, aim, vx, vz, ph, hp, shield, w, r, flags] = a as number[];
+  if (!Array.isArray(a) || a.length < 14 || !a.slice(0, 14).every(num)) return null;
+  const [x, z, y, aim, vx, vz, ph, hp, shield, w, r, flags, helmet, vest] = a as number[];
   const phase = PHASES[ph];
   if (!phase || !int(w) || w < 0 || w >= HELD_CODES.length || !int(r) || r < 0 || r > 4 || !int(flags) || flags < 0 || flags > 255) return null;
-  if (Math.abs(x) > 400 || Math.abs(z) > 400 || y < -1 || y > 100 || hp < 0 || hp > 100 || shield < 0 || shield > 100) return null;
-  return { x, z, y, aim, vx: Math.max(-40, Math.min(40, vx)), vz: Math.max(-40, Math.min(40, vz)), phase, hp, shield, w: HELD_CODES[w], r, flags };
+  if (Math.abs(x) > 400 || Math.abs(z) > 400 || y < -1 || y > 100 || hp < 0 || hp > 100 || shield < 0 || shield > 100 || !armorLv(helmet) || !armorLv(vest)) return null;
+  return { x, z, y, aim, vx: Math.max(-40, Math.min(40, vx)), vz: Math.max(-40, Math.min(40, vz)), phase, hp, shield, w: HELD_CODES[w], r, flags, helmet, vest };
 }
 
 export const guestState = (round: number, s: State) => ({ t: 'pk', r: round, k: 's', c: packState(s) });
