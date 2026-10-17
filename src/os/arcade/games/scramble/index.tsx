@@ -413,6 +413,12 @@ function Play({ mode }: { mode: Mode }) {
       const o = onlineRef.current;
       const m = match.current;
       if (!o || !m) return;
+      // Left out of the host's match (joined just as it was set up): sit it out rather than wait for good.
+      const packet = d as { k?: unknown; round?: unknown; roster?: unknown } | null;
+      if (!n.synced && from === 0 && packet?.k === 'S' && packet.round === o.round && Array.isArray(packet.roster) && !packet.roster.includes(o.seat)) {
+        if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, { title: 'Sitting This One Out', detail: 'You Will Be in the Next Round.' });
+        return;
+      }
       const next = receive(n, m, { seat: o.seat, isHost: o.isHost, round: o.round }, from, d, (seed, lvl, time, roster) => guestMatch(o.players, o.seat, seed, lvl, time, roster), performance.now() / 1000);
       if (next !== m) {
         match.current = next;

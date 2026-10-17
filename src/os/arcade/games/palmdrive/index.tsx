@@ -408,6 +408,8 @@ function Play({ mode }: { mode: Mode }) {
     /** On the host: the bots it drives this race, and those still out on the course when time ran out. */
     bots: new Set(live && online!.isHost ? online!.bots.map((b) => b.seat) : []),
     botsOut: new Set<number>(),
+    /** Racers who left this race: out for good, even if a newcomer takes their seat number. */
+    gone: new Set<number>(),
     cars: new Map<number, Car>(),
     /**
      * Item events to send, in the order they happened, in runs by the seat of the kart that made them (this player's,
@@ -566,7 +568,11 @@ function Play({ mode }: { mode: Mode }) {
       } else if (p.k === 'S') {
         if (o.isHost || from !== 0) return;
         if (!n.synced) {
-          if (!p.roster.includes(o.seat)) return;
+          // Left out of the host's race (joined just as it was set): sit it out rather than wait for good.
+          if (!p.roster.includes(o.seat)) {
+            if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, { title: 'Sitting This One Out', detail: 'You Will Race the Next One.' });
+            return;
+          }
           r = race.current = onlineRace(o, isCc(p.cc) ? p.cc : r.cc, isCourse(p.course) ? p.course : r.course, p.roster, p.go, lookFor(loadGarage()));
           n.roster = p.roster;
           n.synced = true;
@@ -595,7 +601,8 @@ function Play({ mode }: { mode: Mode }) {
         o.send(guestState(o.round, mine), { fast: n.ticks % 5 !== 0 && mine.fin === -1 });
         return;
       }
-      const present = n.roster.filter((seat) => !n.bots.has(seat) && o.players.some((p) => p.seat === seat));
+      for (const seat of n.roster) if (!n.bots.has(seat) && !o.players.some((p) => p.seat === seat)) n.gone.add(seat);
+      const present = n.roster.filter((seat) => !n.bots.has(seat) && !n.gone.has(seat));
       // bots run out of time like everyone else, 30 seconds after the first kart home
       const bots = r.karts.filter((k) => k.kind === 'cpu' && n.bots.has(k.seat));
       if (r.first !== null && r.time - r.first > TIME_LIMIT) for (const k of bots) if (k.done === null) n.botsOut.add(k.seat);

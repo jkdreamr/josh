@@ -116,12 +116,20 @@ function ConnectFour() {
   };
   placeRef.current = place;
 
+  // The opponent's move. One that arrives while our own disc is still falling (the turn hasn't passed yet here, e.g.
+  // in a tab that was hidden) waits for it to land instead of being lost, which would leave both sides waiting.
+  const pendingCol = useRef<{ from: number; col: number } | null>(null);
+  const takeRemote = (from: number, col: number) => {
+    const s = st.current;
+    if (!s || s.falling || from !== (s.turn === 1 ? 0 : 1)) return false;
+    placeRef.current(col, true);
+    return true;
+  };
   useEffect(() => online?.onMessage((from, data) => {
     if (!online || from === online.seat || !data || typeof data !== 'object') return;
     const message = data as { game?: unknown; col?: unknown };
-    const s = st.current;
-    const expectedSeat = s?.turn === 1 ? 0 : 1;
-    if (message.game === 'connect4' && Number.isInteger(message.col) && from === expectedSeat) placeRef.current(message.col as number, true);
+    if (message.game !== 'connect4' || !Number.isInteger(message.col)) return;
+    if (!takeRemote(from, message.col as number)) pendingCol.current = { from, col: message.col as number };
   }), [online?.onMessage, online?.seat]);
 
   const land = (s: State, f: Falling) => {
@@ -178,6 +186,11 @@ function ConnectFour() {
     }
     s.turn = s.turn === 1 ? 2 : 1;
     s.cursor = f.col;
+    const pending = pendingCol.current;
+    if (pending && takeRemote(pending.from, pending.col)) {
+      pendingCol.current = null;
+      return;
+    }
     if (isCpu(s.turn)) {
       s.thinking = true;
       s.thinkRemaining = 0.38 + Math.random() * 0.3;
