@@ -2,14 +2,18 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type Pointe
 import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
-import { openRuns, pointAt, type Past, type Track } from './track';
+import { cycleAt, openRuns, pointAt, timed, type Past, type Track } from './track';
 import {
+  BANK,
   CASH_COST,
   CCS,
   COUNTDOWN,
   FALL_CARRY,
   FALL_SINK,
+  HAMMER,
   ITEMS,
+  hazState,
+  hazardV,
   boom,
   createRace,
   fmtTime,
@@ -455,6 +459,10 @@ function Play({ mode }: { mode: Mode }) {
   const lastLevel = useRef(0);
   /** The crane is hauling your kart back (for the winch's whirr). */
   const winching = useRef(false);
+  /** The set pieces' clocks last frame (by hazard index), for the sounds they make as they go off; and the tyres' hiss. */
+  const pieceCyc = useRef(new Map<number, number>());
+  const pieceTick = useRef(0);
+  const hissT = useRef(0);
   /** A short buzz on phones that can. */
   const buzz = (ms: number) => {
     if (!shellRef.current.touch) return;
@@ -698,6 +706,7 @@ function Play({ mode }: { mode: Mode }) {
       const carrying = !!me && me.sunk > 0 && 1 - me.sunk / r.tier.fallT >= FALL_SINK;
       if (carrying && !winching.current) sfx.tone({ freq: 180, to: 460, dur: FALL_CARRY * r.tier.fallT, type: 'sawtooth', vol: 0.045 });
       winching.current = carrying;
+      if (me) pieceSounds(r, me, dt);
       const level = me && me.drift ? turboLevel(me.charge) : 0;
       if (level > lastLevel.current) sfx.tone({ freq: 500 + level * 180, dur: 0.06, type: 'square', vol: 0.08 });
       lastLevel.current = level;
@@ -763,6 +772,70 @@ function Play({ mode }: { mode: Mode }) {
       detail: `${fmtTime(ms / 1000)} on ${COURSES[r.course].name} at ${r.cc}${newBest ? ', a new best' : ''}. ${lead}`.trim() + bankCoins(place),
       board: boardOf(r.course, r.cc),
       rank: ms,
+    });
+  }
+
+  /**
+   * What the set pieces sound like as they go off near you, worked out here from their state on the clock (so nothing
+   * about them goes over the network): the hiss and thoom of a pile driver, a bollard bank's warning beep and clank,
+   * the ratchet of a sprinkler and its hiss as it comes on, the whoosh of the ball swinging by, and your own tyres on
+   * the wet road. Quieter the further off they are, and silent beyond 70 m.
+   */
+  function pieceSounds(r: Race, me: Kart, dt: number) {
+    pieceTick.current -= dt;
+    const tick = pieceTick.current <= 0;
+    if (tick) pieceTick.current = 0.17;
+    hissT.current -= dt;
+    if (me.wet && me.v > 6 && hissT.current <= 0) {
+      hissT.current = 0.1;
+      sfx.noise(0.12, 0.025);
+    }
+    r.hazards.forEach((h, i) => {
+      if (!timed(h.kind)) return;
+      const dist = Math.hypot(h.x - me.x, h.z - me.z);
+      if (dist > 70) return;
+      const vol = 1 - dist / 70;
+      const st = hazState(r, h, r.time, me.lap);
+      if (h.kind === 'wrecker') {
+        // the ball passing through the middle of its swing, close by
+        const v = hazardV(h, r.time);
+        const was = pieceCyc.current.get(i) ?? v;
+        pieceCyc.current.set(i, v);
+        if (st.live && dist < 20 && Math.sign(v) !== Math.sign(was)) sfx.noise(0.3, 0.09 * (1 - dist / 20) + 0.02);
+        return;
+      }
+      if (h.kind === 'rotor') {
+        const was = pieceCyc.current.get(i) ?? 0;
+        pieceCyc.current.set(i, st.live ? 1 : 0);
+        if (st.live && !was && dist < 70) sfx.noise(0.5, 0.08 * vol);
+        if (st.live && tick && dist < 40) sfx.tone({ freq: 2400, dur: 0.012, type: 'square', vol: 0.03 * (1 - dist / 40) });
+        return;
+      }
+      if (st.phase === 'off') return;
+      const every = h.every ?? (h.kind === 'hammer' ? HAMMER.every : BANK.every);
+      const c = cycleAt(h, r.time, every);
+      const was = pieceCyc.current.get(i);
+      pieceCyc.current.set(i, c);
+      if (was === undefined) return;
+      // the beat, and the warning before it: crossed this frame?
+      const crossed = (at: number) => (was < at && c >= at) || (was > c && (c >= at || was < at));
+      const warn = every - (h.warn ?? (h.kind === 'hammer' ? HAMMER.warn : BANK.warn));
+      if (h.kind === 'hammer') {
+        if (crossed(warn) && st.phase === 'idle' && st.warn > 0) sfx.noise(0.5, 0.05 * vol);
+        if (crossed(HAMMER.slam) && (st.phase === 'down' || st.phase === 'slam')) {
+          // thoom
+          sfx.noise(0.22, 0.2 * vol);
+          sfx.tone({ freq: 45, to: 32, dur: 0.4, type: 'sine', vol: 0.22 * vol });
+          if (dist < 25) buzz(30);
+        }
+      } else {
+        if (crossed(warn) && st.phase === 'idle' && st.warn > 0) sfx.tone({ freq: 620, to: 980, dur: 0.5, type: 'square', vol: 0.035 * vol });
+        if (crossed(0) && st.solid) {
+          // a hydraulic clank
+          sfx.noise(0.06, 0.07 * vol);
+          sfx.tone({ freq: 190, to: 95, dur: 0.14, type: 'sawtooth', vol: 0.08 * vol });
+        }
+      }
     });
   }
 
@@ -874,6 +947,22 @@ function Play({ mode }: { mode: Mode }) {
         if (mine) {
           sfx.tone({ freq: 420, to: 760, dur: 0.16, type: 'sawtooth', vol: 0.09 });
           sfx.tone({ freq: 760, to: 520, dur: 0.38, type: 'sawtooth', vol: 0.09, delay: 0.15 });
+        }
+        break;
+      case 'haz':
+        // caught by a set piece: flattened with a thud, clanged off a bollard, sprayed, or rung by the ball
+        if (!mine) break;
+        buzz(e.kind === 'rotor' ? 50 : 110);
+        if (e.kind === 'hammer') {
+          sfx.tone({ freq: 90, to: 36, dur: 0.35, type: 'sine', vol: 0.24 });
+          sfx.noise(0.25, 0.16);
+        } else if (e.kind === 'bollard') {
+          sfx.noise(0.08, 0.12);
+          sfx.tone({ freq: 240, to: 110, dur: 0.2, type: 'sawtooth', vol: 0.14 });
+        } else if (e.kind === 'rotor') sfx.noise(0.35, 0.14);
+        else {
+          sfx.tone({ freq: 520, to: 180, dur: 0.3, type: 'sawtooth', vol: 0.14 });
+          sfx.noise(0.2, 0.1);
         }
         break;
       case 'plink':

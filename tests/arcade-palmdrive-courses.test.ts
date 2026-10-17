@@ -4,7 +4,7 @@ import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf } from '../src/os/ar
 import { CCS, CLASSES, KART_R, RIVALS, WET, createRace, hazardD, soloRace, step } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { meta } from '../src/os/arcade/games/palmdrive/meta.ts';
 import { configOf, hostState, parsePacket } from '../src/os/arcade/games/palmdrive/net.ts';
-import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, dropAt, gridSpot, lengthOf, locate, openRuns, pointAt, shoreOf, solid, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
+import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, dropAt, gridSpot, lengthOf, locate, openRuns, pointAt, shoreOf, solid, timed, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
 
 /** The widest stretch of road left clear between things standing across it, given as [from, to] lateral spans. */
 function widest(t: Track, spans: [number, number][]) {
@@ -97,26 +97,29 @@ for (const id of COURSE_IDS) {
       assert.ok(h.r > 0, where);
       // (a bus or a cart waits here for the green light)
       assert.ok(h.s > 40 && h.s < t.length - 30, `${where} is clear of the start`);
-      // (a pond lies off beside the road: see below)
-      if (h.kind !== 'water') assert.ok(Math.abs(h.d) + (h.swing ?? 0) <= t.half, `${where} stays on the road`);
+      // (a pond lies off beside the road: see below; a bank of bollards runs wall to wall by design, and the set pieces
+      // leave a way through by the clock: see the timed tests)
+      if (h.kind !== 'water' && h.kind !== 'bollard') assert.ok(Math.abs(h.d) + (h.swing ?? 0) <= t.half, `${where} stays on the road`);
       // buses drive the whole lap, so where they start says nothing about the boxes and boosts (see below)
       if (!solid(h.kind) || h.drive) continue;
       // a gap at least two karts wide beside anything solid, and none of them in front of an item box row
       const room = Math.max(t.half - (h.d + h.r), h.d - h.r + t.half);
-      if (!h.swing) assert.ok(room >= 4.5, `${where} leaves ${room} m`);
+      if (!h.swing && h.kind !== 'bollard') assert.ok(room >= 4.5, `${where} leaves ${room} m`);
       for (const b of lay.boxes) assert.ok(Math.abs(deltaS(t, h.s, b.s)) > 10, `${where} is in front of the boxes at s=${b.s}`);
-      for (const o of lay.hazards) if (o !== h && solid(o.kind) && !h.swing && !o.swing && !o.drive) assert.ok(Math.abs(deltaS(t, h.s, o.s)) > 8 || Math.abs(h.d - o.d) > 2 * h.r + 5, `${where} crowds another`);
+      for (const o of lay.hazards) if (o !== h && solid(o.kind) && !h.swing && !o.swing && !o.drive && h.kind !== 'bollard' && o.kind !== 'bollard') assert.ok(Math.abs(deltaS(t, h.s, o.s)) > 8 || Math.abs(h.d - o.d) > 2 * h.r + 5, `${where} crowds another`);
     }
     // nothing solid right where a dash panel or a ramp sends you
     for (const p of [...lay.dashes, ...lay.ramps]) {
       for (const h of lay.hazards) if (solid(h.kind) && !h.drive) assert.ok(deltaS(t, p.s, h.s) < 0 || deltaS(t, p.s, h.s) > 30, `${id} ${h.kind} at s=${h.s} right after a boost at s=${p.s}`);
     }
-    // and no coins, boxes or dash panels leading you into something solid in the same lane
+    // and no coins, boxes or dash panels leading you into something solid in the same lane (the set pieces included:
+    // a bank is as wide as it is)
     for (const p of [...lay.coins, ...lay.boxes, ...lay.dashes]) {
       for (const h of lay.hazards) {
         if (!solid(h.kind) || h.swing || h.drive) continue;
         const ahead = deltaS(t, p.s, h.s);
-        assert.ok(ahead <= 0 || ahead > 15 || Math.abs(p.d - h.d) > h.r + 1.6, `${id} pickup at s=${p.s} d=${p.d} leads into the ${h.kind} at s=${h.s}`);
+        const wide = h.kind === 'bollard' ? (h.w ?? 0) / 2 : h.r;
+        assert.ok(ahead <= 0 || ahead > 15 || Math.abs(p.d - h.d) > wide + 1.6, `${id} pickup at s=${p.s} d=${p.d} leads into the ${h.kind} at s=${h.s}`);
       }
     }
     // anything crossing the road never shuts the way past, wherever it has got to, and never runs into anything else
@@ -156,9 +159,10 @@ for (const id of COURSE_IDS) {
       const bus: [number, number] = [b.d - b.r, b.d + b.r];
       assert.ok(widest(t, [bus]) >= 4.5, `${where} leaves room to pass`);
       for (const o of lay.hazards) {
-        // a bus or a cart drives through puddles and bunkers, cows, cyclists and golfers get out of its way, and golf
-        // balls come and go (the CPU drivers and the ball tests see to those)
-        if (o === b || o.kind === 'mud' || o.kind === 'sand' || o.kind === 'water' || o.kind === 'ball' || o.swing) continue;
+        // a bus or a cart drives through puddles and bunkers, cows, cyclists and golfers get out of its way, golf
+        // balls come and go (the CPU drivers and the ball tests see to those), and the set pieces stand aside for it
+        // (right of way: see the timed tests)
+        if (o === b || o.kind === 'mud' || o.kind === 'sand' || o.kind === 'water' || o.kind === 'ball' || o.kind === 'wet' || o.swing || timed(o.kind)) continue;
         if (o.drive) {
           // two on the same timetable never meet; any others have room to pass between them
           if (o.drive === b.drive) assert.ok(Math.abs(deltaS(t, b.s, o.s)) > Math.max(lengthOf(b), lengthOf(o)) + 20, `${where} sits on the ${o.kind} from s=${o.s}`);
@@ -169,9 +173,10 @@ for (const id of COURSE_IDS) {
         const gap = widest(t, [bus, [o.d - o.r, o.d + o.r]]);
         assert.ok(gap >= 2 * KART_R + 1, `${where} passing the ${o.kind} at s=${o.s} leaves ${gap.toFixed(1)} m`);
       }
-      // anyone or anything crossing the road is over on the far side whenever it comes by (never driven through)
+      // anyone or anything crossing the road is over on the far side whenever it comes by (never driven through); the
+      // wrecking ball is hauled up for it instead
       for (const o of lay.hazards) {
-        if (!o.swing || !solid(o.kind)) continue;
+        if (!o.swing || !solid(o.kind) || timed(o.kind)) continue;
         for (let lap = 0; lap < 6; lap++) {
           const when = (((o.s - b.s + t.length) % t.length) + lap * t.length) / b.drive!;
           for (const dt of [-0.6, 0, 0.6]) {

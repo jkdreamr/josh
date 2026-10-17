@@ -4,7 +4,7 @@ import { COURSES, COURSE_IDS, TIER, tierOf, trackOf } from '../src/os/arcade/gam
 import { DROP_WINDOW, FALL_CARRY, FALL_SINK, KART_R, RIVALS, createRace, rescue, spawn, step, type Ev, type Kart, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { meta } from '../src/os/arcade/games/palmdrive/meta.ts';
 import { F_SUNK, applyFlags, flagsOf } from '../src/os/arcade/games/palmdrive/net.ts';
-import { deltaS, dropAt, edgeAt, edgeRuns, headingOf, inTrench, locate, openRuns, pointAt, solid, wallRuns, wrapAngle, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
+import { deltaS, dropAt, edgeAt, edgeRuns, headingOf, inTrench, locate, openRuns, pointAt, solid, timed, wallRuns, wrapAngle, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
 
 const DT = 1 / 60;
 
@@ -371,6 +371,7 @@ test('rescue() on its own still puts a stuck kart back where it is', () => {
 
 test('CPU-only races at Hoover Nights at every class: everyone finishes, nobody gets stuck, and the CPUs mostly stay on the road', () => {
   let falls = 0;
+  let caught = 0;
   let races = 0;
   for (const cc of ['50cc', '100cc', '150cc', '200cc'] as const) {
     for (const seed of [3, 4, 5]) {
@@ -383,9 +384,11 @@ test('CPU-only races at Hoover Nights at every class: everyone finishes, nobody 
         for (const k of r.karts) if (k.stuck > 2) stuck++;
         for (const e of r.events.splice(0)) {
           if (e.t === 'fall' || e.t === 'splash') at[e.k].push(r.time);
+          // (the set pieces catch them now and then by design: those are counted apart, below)
+          if (e.t === 'haz') caught++;
           if (e.t === 'hit' && e.by === -1) {
             const k = r.karts[e.k];
-            const h = r.hazards.find((o) => !o.swing && !o.drive && Math.hypot(o.x - k.x, o.z - k.z) < o.r + 3);
+            const h = r.hazards.find((o) => !o.swing && !o.drive && !timed(o.kind) && o.kind !== 'wet' && Math.hypot(o.x - k.x, o.z - k.z) < o.r + 3);
             if (h) hits[`${h.kind}@${h.s}`] = (hits[`${h.kind}@${h.s}`] ?? 0) + 1;
           }
         }
@@ -407,4 +410,6 @@ test('CPU-only races at Hoover Nights at every class: everyone finishes, nobody 
     }
   }
   assert.ok(falls / races / 8 <= 0.5, `${(falls / races / 8).toFixed(2)} falls per CPU per race`);
+  // the set pieces catch each of them a time or two a race: they look human, and they still get round
+  assert.ok(caught / races / 8 >= 0.5 && caught / races / 8 <= 2.5, `${(caught / races / 8).toFixed(2)} set-piece hits per CPU per race`);
 });
