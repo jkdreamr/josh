@@ -1,5 +1,5 @@
 // Pictures and sheets for Scramble's interface: weapon and item icons, the island map, and How to Play.
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AMMO_BOX, BOOST, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, type Ammo, type GunClass, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { CAMP, HALF, PAD, ROAD_HALF, type Building, type Door, type GameMap } from './map';
@@ -329,7 +329,7 @@ function DoorMark({ b, d }: { b: Building; d: Door }) {
 
 /**
  * The island drawn in map coordinates (x right, north up), for the minimap and the big map: roads, farm fences, cars,
- * campfires and bounce pads too, and the name of every town and site (sized by the map's own styles).
+ * campfires and bounce pads too.
  */
 export function IslandArt({ map }: { map: GameMap }) {
   const coop = map.buildings[map.coop];
@@ -373,8 +373,34 @@ export function IslandArt({ map }: { map: GameMap }) {
         </g>
       ))}
       {coop && <path d={star(coop.x, coop.z, 9)} fill="#ffd23d" stroke="#7a4a00" strokeWidth="1.4" strokeLinejoin="round" />}
+    </>
+  );
+}
+
+/**
+ * Where each place's name goes on the big map: above its middle, or below it, or on it, whichever first clears the
+ * names already placed (sizes in island meters, for the map's 9 m type).
+ */
+function labelSpots(map: GameMap) {
+  const placed: { x: number; y: number; hw: number }[] = [];
+  return map.places.map((p) => {
+    const hw = p.name.length * 2.7 + 2;
+    const x = Math.max(-HALF + hw, Math.min(HALF - hw, p.x));
+    const up = Math.min(p.r * 0.5, 16);
+    const tries = [p.z - up, p.z + up + 8, p.z + 3, p.z - up - 11, p.z + up + 19].map((y) => Math.max(-HALF + 12, Math.min(HALF - 4, y)));
+    const y = tries.find((t) => placed.every((o) => Math.abs(o.x - x) > o.hw + hw || Math.abs(o.y - t) > 10)) ?? tries[0];
+    placed.push({ x, y, hw });
+    return { x, y };
+  });
+}
+
+/** The name of every town and site, for the big map (the minimap names only the place you're in, under it). */
+export function PlaceNames({ map }: { map: GameMap }) {
+  const spots = useMemo(() => labelSpots(map), [map]);
+  return (
+    <>
       {map.places.map((p, i) => (
-        <text key={`n${i}`} className="g-scramble-place" x={p.x} y={p.z - p.r * 0.55} textAnchor="middle">
+        <text key={i} className="g-scramble-place" x={spots[i].x} y={spots[i].y} textAnchor="middle">
           {p.name}
         </text>
       ))}
@@ -514,7 +540,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>+, shield, coffee</dt>
               <dd>Heal, top up your shield, or drink a coffee. The right item is picked for you</dd>
               <dt>pick up</dt>
-              <dd>Shows up when you stand on something or next to a chest</dd>
+              <dd>Shows up when you stand on something or next to a chest or a fridge</dd>
             </>
           ) : (
             <>
@@ -525,7 +551,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>Space</dt>
               <dd>Jump from the bus, then build a wall where you aim ({WALL_COST} wood). Right click builds too</dd>
               <dt>E or F</dt>
-              <dd>Pick up, swap, open chests and supply drops</dd>
+              <dd>Pick up, swap, open chests, fridges and supply drops</dd>
               <dt>R</dt>
               <dd>Reload</dd>
               <dt>1 2 3 4</dt>
@@ -567,7 +593,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         <h3>Around the island</h3>
         <ul>
           <li>
-            <b>Towns and sites.</b> Every town, farm, camp and yard has a name: it's on the map, and a banner tells you when you walk in. Dirt roads link the places near each other, and you walk a little quicker on them.
+            <b>Towns and sites.</b> Every town, farm, camp and yard has a name. They're all on the big map, the little map shows the one you're in, and the name comes up when you walk or land in. Dirt roads link the places near each other, and you walk a little quicker on them.
           </li>
           <li>
             <b>Houses, farmhouses and sheds.</b> Loot inside, often a chest. The roof lifts off while you're in, and nobody outside can see you.
@@ -576,10 +602,10 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Kitchens.</b> Houses and farmhouses have a fridge, which opens like a chest and holds things to eat and patch up with, and a toilet, which breaks like a crate and might hold anything.
           </li>
           <li>
-            <b>Campfires.</b> By some houses and out at the camps. Stand within a few steps of one and it heals you {CAMP.hps} health a second, all the way to full, as long as nobody chases you off.
+            <b>Campfires.</b> By some houses and out at the camps (orange dots on the map). Stand within a few steps of one and it heals you {CAMP.hps} health a second, all the way to full, as long as nobody chases you off.
           </li>
           <li>
-            <b>Bounce pads.</b> The glowing green discs with an arrow. Step on one and up you go, gliding off the way the arrow points: steer as you did from the bus and land somewhere new. You can't be hit while you're up there, but you can't shoot either.
+            <b>Bounce pads.</b> The glowing green discs with arrows on (green dots on the map). Step on one and up you go, gliding off the way the arrows point: steer as you did from the bus, or let go and it carries you on, and land somewhere new. Nothing can hit you up there, but you can't shoot or heal either.
           </li>
           <li>
             <b>Farms.</b> A wooden fence rings the farmhouse and its field, with a gate in the middle of every side. Fences stop you walking, not bullets. The hay bales are cover that breaks when shot or smacked, and sometimes something falls out.

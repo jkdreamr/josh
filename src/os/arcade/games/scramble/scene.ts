@@ -271,6 +271,24 @@ function hayTexture(THREE: Three) {
         g.lineTo(x + (rnd() - 0.5) * 14, y + (rnd() - 0.5) * 6);
         g.stroke();
       }
+      // two bands of twine round the bale
+      g.fillStyle = 'rgba(110,70,25,0.75)';
+      for (const y of [18, 44]) g.fillRect(0, y, 64, 3);
+    }),
+  );
+}
+
+/** A soft round glow, white in the middle and fading out (tinted by the material). */
+function glowTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      const grad = g.createRadialGradient(32, 32, 1, 32, 32, 31);
+      grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+      grad.addColorStop(0.45, 'rgba(255,255,255,0.45)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
     }),
   );
 }
@@ -1033,13 +1051,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const len = Math.hypot(r.x1 - r.x0, r.z1 - r.z0);
     put(roads, i, (r.x0 + r.x1) / 2, 0.012, (r.z0 + r.z1) / 2, ROAD_HALF * 2, 0.012, len + ROAD_HALF, Math.atan2(r.x1 - r.x0, r.z1 - r.z0));
   });
-  const poles = many(G.cyl, lambert(0x3b3f47), map.lamps.length);
-  const lampHeads = many(G.box, basic(0xffe9a3), map.lamps.length);
-  const lampCaps = many(G.box, lambert(0x2b2d33), map.lamps.length);
+  // lamp posts: a slim pole, a collar and a glowing bulb on top
+  const poles = many(G.cyl, lambert(0x5d6670), map.lamps.length);
+  const lampCaps = many(G.cyl, lambert(0x2b2d33), map.lamps.length);
+  const lampHeads = many(G.ball, basic(0xfff0b0), map.lamps.length);
   map.lamps.forEach((p, i) => {
-    put(poles, i, p.x, 1.8, p.z, LAMP_R, 3.6, LAMP_R);
-    put(lampHeads, i, p.x, 3.75, p.z, 0.5, 0.36, 0.5);
-    put(lampCaps, i, p.x, 4, p.z, 0.66, 0.12, 0.66);
+    put(poles, i, p.x, 1.5, p.z, LAMP_R * 0.8, 3, LAMP_R * 0.8);
+    put(lampCaps, i, p.x, 3.05, p.z, 0.17, 0.16, 0.17);
+    put(lampHeads, i, p.x, 3.32, p.z, 0.3, 0.3, 0.3);
   });
   const MAIL_COLORS = [0x2f7de1, 0xe53935, 0x3fae4a, 0xfdd835];
   const mailPosts = many(G.box, M.wood, map.mailboxes.length);
@@ -1080,27 +1099,30 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     for (const [k, y] of [0.5, 0.95].entries()) put(fenceRails, i * 2 + k, r.x, y, r.z, r.hw * 2, 0.1, r.hd * 2);
   });
   postSpots.forEach((p, i) => put(fencePosts, i, p.x, 0.6, p.z, FENCE_T + 0.1, 1.2, FENCE_T + 0.1));
-  // cars: a body, a cabin (a cab and a bed on a truck) and four wheels
+  // cars: a body, glass with a roof on it (a cab and a bed on a truck) and four wheels
   const CAR_COLORS = [0xe53935, 0x1e88e5, 0xf5f7fa, 0x43a047, 0xfdd835, 0x5e35b1];
   const carBodies = many(G.box, lambert(0xffffff), map.cars.length);
   const carCabins = many(G.box, lambert(0xffffff), map.cars.length);
-  const carBeds = many(G.box, lambert(0x4a4e55), map.cars.length);
+  const carTops = many(G.box, lambert(0xffffff), map.cars.length);
   const wheels = many(G.cyl, M.dark, map.cars.length * 4);
   map.cars.forEach((c, i) => {
     const ry = c.alongX ? Math.PI / 2 : 0;
     const len = c.alongX ? c.hw * 2 : c.hd * 2;
     const wide = c.alongX ? c.hd * 2 : c.hw * 2;
-    const paint = color.setHex(CAR_COLORS[c.look % CAR_COLORS.length]);
+    const paint = CAR_COLORS[c.look % CAR_COLORS.length];
+    // a point `u` meters along the car from its middle (toward the nose)
+    const at = (u: number) => [c.x + (c.alongX ? u : 0), c.z + (c.alongX ? 0 : u)] as const;
     if (c.truck) {
-      put(carBodies, i, c.x, 0.55, c.z, wide, 0.5, len, ry, paint);
-      // the cab at the nose, the bed behind it with low sides
-      const nose = len / 2 - 0.75;
-      put(carCabins, i, c.x + (c.alongX ? nose : 0), 1.25, c.z + (c.alongX ? 0 : nose), wide - 0.1, 1.1, 1.4, ry, paint);
-      put(carBeds, i, c.x - (c.alongX ? 0.8 : 0), 0.95, c.z - (c.alongX ? 0 : 0.8), wide - 0.06, 0.4, len - 1.7, ry);
+      put(carBodies, i, c.x, 0.62, c.z, wide, 0.6, len, ry, color.setHex(paint));
+      // the cab at the nose, the bed behind it
+      const [nx, nz] = at(len / 2 - 0.85);
+      put(carCabins, i, nx, 1.45, nz, wide - 0.1, 1.05, 1.6, ry, color.setHex(paint));
+      const [bx, bz] = at(-0.85);
+      put(carTops, i, bx, 1.02, bz, wide - 0.08, 0.22, len - 1.9, ry, color.setHex(0x4a4e55));
     } else {
-      put(carBodies, i, c.x, 0.5, c.z, wide, 0.5, len, ry, paint);
-      put(carCabins, i, c.x, 1.0, c.z, wide - 0.24, 0.55, len * 0.5, ry, color.setHex(0x9ecbe8));
-      put(carBeds, i, c.x, 0, c.z, 0, 0, 0, ry);
+      put(carBodies, i, c.x, 0.55, c.z, wide, 0.6, len, ry, color.setHex(paint));
+      put(carCabins, i, c.x, 1.08, c.z, wide - 0.2, 0.5, len * 0.55, ry, color.setHex(0x9ecbe8));
+      put(carTops, i, c.x, 1.36, c.z, wide - 0.36, 0.07, len * 0.42, ry, color.setHex(paint));
     }
     for (const [k, [a, b]] of [
       [-1, -1],
@@ -1108,49 +1130,76 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       [-1, 1],
       [1, 1],
     ].entries()) {
-      const ax = a * (len / 2 - 0.5);
-      const bz = b * (wide / 2 - 0.05);
-      dummy.position.set(c.x + (c.alongX ? ax : bz), 0.32, c.z + (c.alongX ? bz : ax));
+      const ax = a * (len / 2 - 0.7);
+      const bz = b * (wide / 2 - 0.08);
+      dummy.position.set(c.x + (c.alongX ? ax : bz), 0.38, c.z + (c.alongX ? bz : ax));
       // axles run across the car
       dummy.rotation.set(c.alongX ? Math.PI / 2 : 0, 0, c.alongX ? 0 : Math.PI / 2);
-      dummy.scale.set(0.32, 0.22, 0.32);
+      dummy.scale.set(0.38, 0.26, 0.38);
       dummy.updateMatrix();
       wheels.setMatrixAt(i * 4 + k, dummy.matrix);
     }
   });
-  scene.add(roads, poles, lampHeads, lampCaps, mailPosts, mailBoxes, tableTops, benches, tableLegs, fenceRails, fencePosts, carBodies, carCabins, carBeds, wheels);
+  scene.add(roads, poles, lampHeads, lampCaps, mailPosts, mailBoxes, tableTops, benches, tableLegs, fenceRails, fencePosts, carBodies, carCabins, carTops, wheels);
 
-  // campfires: a ring of stones round crossed logs, flames that flicker, and a warm glow on the ground
-  const fireGlowMat = basic(0xff9a3a, { transparent: true, opacity: 0.35, depthWrite: false });
-  const campFlame = basic(0xff8a2a, { transparent: true, opacity: 0.9, depthWrite: false });
-  const emberMat = basic(0xffd36a, { transparent: true, opacity: 0.95, depthWrite: false });
-  const stoneMat = lambert(0x8d9298, { flatShading: true });
-  const fires = map.fires.map((c) => {
-    const group = new THREE.Group();
-    group.position.set(c.x, 0, c.z);
-    const stones = add(group, G.band, stoneMat, 0, 0.12, 0, CAMP.pit + 0.15, CAMP.pit + 0.15, 1);
-    stones.rotation.x = Math.PI / 2;
-    for (const k of [0, 1]) add(group, G.box, M.wood, 0, 0.18, 0, 0.9, 0.2, 0.22).rotation.y = k ? 0.8 : -0.8;
-    const flames = [0, 1, 2].map((k) => add(group, G.pine, k === 1 ? emberMat : campFlame, Math.cos(k * 2.1) * 0.18, 0.5, Math.sin(k * 2.1) * 0.18, k === 1 ? 0.22 : 0.3, k === 1 ? 1.1 : 0.9, k === 1 ? 0.22 : 0.3));
-    const glow = add(group, G.bigDisc, fireGlowMat, 0, 0.03, 0, CAMP.r, CAMP.r, 1);
-    glow.rotation.x = -Math.PI / 2;
-    scene.add(group);
-    return { c, group, flames, glow };
+  // campfires: a ring of stones round crossed logs, flames that flicker, and a warm glow on the ground. All instanced.
+  const STONES = 8;
+  const fireStones = many(G.rock, lambert(0x8d9298, { flatShading: true }), map.fires.length * STONES);
+  const fireLogs = many(G.box, M.wood, map.fires.length * 3);
+  const flames = many(G.pine, basic(0xffffff), map.fires.length * 3);
+  const fireGlowMat = basic(0xff8a2a, { map: keep(glowTexture(THREE)), transparent: true, opacity: 0.55, depthWrite: false });
+  const fireGlow = many(G.disc, fireGlowMat, map.fires.length);
+  const FLAME_COLORS = [0xff6a1a, 0xffd34a, 0xff9a2a];
+  map.fires.forEach((c, i) => {
+    for (let k = 0; k < STONES; k++) {
+      const a = (k / STONES) * Math.PI * 2 + i;
+      const r = CAMP.pit + 0.05;
+      dummy.position.set(c.x + Math.sin(a) * r, 0.1, c.z + Math.cos(a) * r);
+      dummy.rotation.set(0, a * 3, 0);
+      dummy.scale.set(0.2, 0.15, 0.17);
+      dummy.updateMatrix();
+      fireStones.setMatrixAt(i * STONES + k, dummy.matrix);
+    }
+    for (let k = 0; k < 3; k++) put(fireLogs, i * 3 + k, c.x, 0.14, c.z, 0.16, 0.16, 1.1, (k * Math.PI) / 3 + i);
+    FLAME_COLORS.forEach((f, k) => flames.setColorAt(i * 3 + k, color.setHex(f)));
   });
+  const placeFires = (clock: number) => {
+    map.fires.forEach((c, i) => {
+      for (let k = 0; k < 3; k++) {
+        // a tall middle tongue and two lower ones either side, each flickering on its own beat
+        const s = 0.75 + Math.abs(Math.sin(clock * (7 + k * 1.7) + i * 1.3 + k)) * 0.5;
+        const h = (k === 1 ? 0.75 : 1.15) * s;
+        const ox = k === 2 ? 0.14 : k === 0 ? -0.12 : 0;
+        put(flames, i * 3 + k, c.x + ox, 0.2 + h / 2, c.z + (k === 0 ? 0.08 : -0.05), k === 1 ? 0.24 : 0.34, h, k === 1 ? 0.24 : 0.34, clock * (1.5 + k));
+      }
+      dummy.position.set(c.x, 0.04, c.z);
+      dummy.rotation.set(-Math.PI / 2, 0, 0);
+      dummy.scale.setScalar((CAMP.r + 0.4) * (0.94 + Math.sin(clock * 9 + i) * 0.04));
+      dummy.updateMatrix();
+      fireGlow.setMatrixAt(i, dummy.matrix);
+    });
+    flames.instanceMatrix.needsUpdate = true;
+    fireGlow.instanceMatrix.needsUpdate = true;
+  };
+  placeFires(0);
+  scene.add(fireStones, fireLogs, flames, fireGlow);
 
-  // bounce pads: a bright disc with a dark rim, an arrow for the way it throws you, and a ring that pulses round it
-  const bounceMat = lambert(0x2ee6a6, { emissive: 0x0c6b4a });
-  const padRingMat = basic(0x7dffd2, { transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide });
+  // bounce pads: a bright disc in a dark rim, chevrons for the way it throws you, and a ring that pulses out from it
+  const bounceMat = lambert(0x2ee6a6, { emissive: 0x168f62 });
+  const padRingMat = basic(0x8dffdc, { transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide });
   const pads = map.pads.map((p) => {
     const group = new THREE.Group();
     group.position.set(p.x, 0, p.z);
     group.rotation.y = Math.atan2(p.dx, p.dz);
-    add(group, G.cyl, M.dark, 0, 0.08, 0, PAD.r + 0.25, 0.16, PAD.r + 0.25);
-    const top = add(group, G.cyl, bounceMat, 0, 0.17, 0, PAD.r + 0.05, 0.1, PAD.r + 0.05);
-    // the arrow lies flat, pointing +z (the way out)
-    add(group, G.box, M.white, 0, 0.24, -0.15, 0.22, 0.04, 0.8);
-    add(group, G.pine, M.white, 0, 0.24, 0.55, 0.42, 0.6, 0.06).rotation.x = Math.PI / 2;
-    const ring = add(group, G.ring, padRingMat, 0, 0.05, 0, 2, 2, 1);
+    add(group, G.cyl, M.dark, 0, 0.1, 0, PAD.r + 0.3, 0.2, PAD.r + 0.3);
+    const top = add(group, G.cyl, bounceMat, 0, 0.2, 0, PAD.r + 0.05, 0.1, PAD.r + 0.05);
+    // two chevrons, flat on the top, pointing +z (the way out)
+    for (const at of [-0.35, 0.25])
+      for (const side of [-1, 1]) {
+        const bar = add(group, G.box, M.white, side * 0.22, 0.27, at, 0.14, 0.04, 0.62);
+        bar.rotation.y = -side * 0.8;
+      }
+    const ring = add(group, G.ring, padRingMat, 0, 0.06, 0, 2, 2, 1);
     ring.rotation.x = -Math.PI / 2;
     scene.add(group);
     return { p, group, top, ring };
@@ -1935,17 +1984,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       chestGlowMat.opacity = 0.35 + Math.sin(clock * 4) * 0.2;
 
       // campfires flicker (and throw the odd spark when you're close), pads pulse
-      for (const [i, fr] of fires.entries()) {
-        fr.flames.forEach((fl, k) => {
-          const s = 0.75 + Math.abs(Math.sin(clock * (6 + k * 1.3) + i * 1.7 + k)) * 0.5;
-          fl.scale.y = (k === 1 ? 1.1 : 0.9) * s;
-          fl.position.y = 0.2 + fl.scale.y / 2;
-          fl.rotation.y = clock * (2 + k);
-        });
-        fr.glow.scale.setScalar(CAMP.r * (0.92 + Math.sin(clock * 9 + i) * 0.05));
-        if (Math.random() < 0.08 && Math.abs(fr.c.x - cam.x) < cam.view * 2 && Math.abs(fr.c.z - cam.z) < cam.view * 2) burst(fr.c.x, 0.9, fr.c.z, 1, 1.2, 0.08, 0.7, [partMat.spark], -2);
-      }
-      fireGlowMat.opacity = 0.3 + Math.sin(clock * 11) * 0.06 + Math.sin(clock * 23) * 0.03;
+      placeFires(clock);
+      for (const c of map.fires) if (Math.random() < 0.08 && Math.abs(c.x - cam.x) < cam.view * 2 && Math.abs(c.z - cam.z) < cam.view * 2) burst(c.x, 1, c.z, 1, 1.2, 0.08, 0.7, [partMat.spark], -2);
+      fireGlowMat.opacity = 0.5 + Math.sin(clock * 11) * 0.07 + Math.sin(clock * 23) * 0.04;
       for (const [i, pd] of pads.entries()) {
         const k = (clock * 0.8 + i * 0.3) % 1;
         pd.ring.scale.setScalar(PAD.r + 0.3 + k * 1.2);

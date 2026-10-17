@@ -30,7 +30,7 @@ export const ROAD_HALF = 1.8;
 export const ROAD_SPEED = 1.08;
 /** A campfire heals anyone within `r` meters this much a second; `pit` is the fire itself, which nobody stands in. */
 export const CAMP = { r: 3.2, hps: 2, pit: 0.6 };
-/** A bounce pad: step within `r` of its middle and up you go, to `y` meters, gliding off the way its arrow points. */
+/** A bounce pad: step within `r` of its middle and up you go, to `y` meters, gliding off the way its arrows point. */
 export const PAD = { r: 1.2, y: 26 };
 export const HAY_HW = 0.9;
 export const HAY_HD = 0.6;
@@ -47,8 +47,8 @@ export const GATE = 4;
 /** How far a farm's fence stands out from the farmhouse and its field. */
 export const YARD = 4;
 /** Cars park nose-on, trucks too (sizes along and across). */
-export const CAR = { along: 2.2, across: 1.1 };
-export const TRUCK = { along: 3.4, across: 1.3 };
+export const CAR = { along: 3.8, across: 1.8 };
+export const TRUCK = { along: 5.4, across: 2.2 };
 /** The eight ways a bounce pad can point (no trig in here: the diagonals are written out). */
 export const DIRS: readonly (readonly [number, number])[] = [
   [0, 1],
@@ -91,6 +91,8 @@ export const PLACE_NAMES = [
   'Carton Crossing',
   'Dozen Docks',
 ];
+/** How far from its first site a town reaches for the rest. */
+const TOWN = 36;
 const CELL = 8;
 const COLS = Math.ceil((2 * HALF) / CELL);
 
@@ -102,8 +104,11 @@ export type Rock = Circle & { look: number };
  * a roof hides what's inside from anyone outside (ruins have none). `h` is how tall the walls are drawn.
  */
 export type BuildingKind = 'house' | 'farm' | 'shed' | 'warehouse' | 'container' | 'ruin' | 'coop';
-export type Building = { kind: BuildingKind; x: number; z: number; w: number; d: number; walls: Box[]; doors: Door[]; look: number; roof: boolean; h: number };
-/** A way in through the outer walls: the middle of the opening, the way out (one step along x or z), and how wide it is. */
+export type Building = { kind: BuildingKind; x: number; z: number; w: number; d: number; walls: Box[]; doors: Door[]; inner: Door[]; look: number; roof: boolean; h: number };
+/**
+ * A way in through the outer walls: the middle of the opening, the way out (one step along x or z), and how wide it
+ * is. A doorway between two rooms (`inner`) points across the wall it is in.
+ */
 export type Door = { x: number; z: number; ox: number; oz: number; w: number };
 export type LootSpawn = { id: number; def: LootDef; x: number; z: number };
 /**
@@ -600,7 +605,7 @@ export function generateMap(seed: number): GameMap {
   const offDoors = (x: number, z: number, r: number) => [...map.buildings.flatMap((b) => b.doors), ...map.yards.flatMap((y) => y.gates)].every((d) => Math.abs(d.x - x) >= d.w / 2 + r || Math.abs(d.z - z) >= d.w / 2 + r);
 
   const build = (kind: BuildingKind, x: number, z: number, w: number, d: number, walls: Box[], doors: Door[], look: number, h: number) => {
-    map.buildings.push({ kind, x, z, w, d, walls, doors, look, roof: kind !== 'ruin', h });
+    map.buildings.push({ kind, x, z, w, d, walls, doors, inner: [], look, roof: kind !== 'ruin', h });
     return map.buildings[map.buildings.length - 1];
   };
 
@@ -723,7 +728,7 @@ export function generateMap(seed: number): GameMap {
         const fences: Box[] = [];
         const gates = shell(fences, yx, z, yhw * 2, yhd * 2, [[[0, GATE]], [[0, GATE]], [[0, GATE]], [[0, GATE]]], FENCE_T);
         map.yards.push({ x: yx, z, hw: yhw, hd: yhd, fences, gates });
-        // hay bales along the far side of the field, and one either side of the kitchen end of the house
+        // hay bales along the far side of the field
         for (const hz of [-d / 2 + 1.5, 0, d / 2 - 1.5]) addContainer('hay', fx + fs * 5.4, z + hz, 1, 'hay');
         const flip = rng() < 0.5 ? 1 : -1;
         const px = x + flip * (-w / 2 + 9);
@@ -738,13 +743,15 @@ export function generateMap(seed: number): GameMap {
         const hi = bigC - x + bigW / 2 - DOOR / 2 - 1;
         gaps[rng() < 0.5 ? 0 : 1].push([Math.round((lo + rng() * (hi - lo)) * 2) / 2, DOOR]);
         const doors = shell(walls, x, z, w, d, gaps);
-        wallLine(walls, false, px, z, d - WALL_T, [[doorAt(rng, d, DOOR), DOOR]]);
-        build('farm', x, z, w, d, walls, doors, Math.floor(rng() * 4), 3.4);
+        const iu = doorAt(rng, d, DOOR);
+        wallLine(walls, false, px, z, d - WALL_T, [[iu, DOOR]]);
+        build('farm', x, z, w, d, walls, doors, Math.floor(rng() * 4), 3.4).inner.push({ x: px, z: z + iu, ox: 1, oz: 0, w: DOOR });
         // the small room is the kitchen: a fridge at one end and a toilet at the other
         const kz = rng() < 0.5 ? -1 : 1;
         addContainer('fridge', smallC, z + (kz * d) / 4, kz > 0 ? -1 : 1, 'fridge');
         addContainer('toilet', smallC, z - (kz * d) / 4, 1, 'crate');
-        for (const side of [-1, 1]) addContainer('hay', smallC, z + side * (d / 2 + 2), 1, 'hay');
+        // and a bale out either side of the kitchen, unless it would stand in the way in through a gate or a door
+        for (const side of [-1, 1]) if (offDoors(smallC, z + side * (d / 2 + 2), HAY_HW + 0.8)) addContainer('hay', smallC, z + side * (d / 2 + 2), 1, 'hay');
         furnish({ x: bigC, z, w: bigW, d }, true);
         addSpot(r1(fx + (rng() * 2 - 1) * 4), r1(z + (rng() * 2 - 1) * 5));
         break;
@@ -869,7 +876,9 @@ export function generateMap(seed: number): GameMap {
       const l = Math.sqrt(dx * dx + dz * dz);
       if (l < 6 || (p0.x - a.x) * ux + (p0.z - a.z) * uz > (p1.x - a.x) * ux + (p1.z - a.z) * uz) continue;
       const blocked = lots.some((lot) => !own(a, lot) && !own(b, lot) && rayBox(p0.x, p0.z, dx / l, dz / l, l, lot.x, lot.z, lot.hw + 1.5, lot.hd + 1.5) < Infinity);
-      if (blocked || map.ponds.some((p) => rayCircle(p0.x, p0.z, dx / l, dz / l, l, p.x, p.z, p.r + 1) < Infinity)) continue;
+      // and never along or through a fence, a farm's own included
+      const fenced = map.yards.some((y) => y.fences.some((fc) => rayBox(p0.x, p0.z, dx / l, dz / l, l, fc.x, fc.z, fc.hw + 0.4, fc.hd + 0.4) < Infinity));
+      if (blocked || fenced || map.ponds.some((p) => rayCircle(p0.x, p0.z, dx / l, dz / l, l, p.x, p.z, p.r + 1) < Infinity)) continue;
       edges.push([i, j]);
       map.roads.push({ x0: r1(p0.x), z0: r1(p0.z), x1: r1(p1.x), z1: r1(p1.z) });
     }
@@ -885,7 +894,7 @@ export function generateMap(seed: number): GameMap {
       const side = k % 2 ? 1 : -1;
       const x = r1(r.x0 + ux * s - uz * side * (ROAD_HALF + 1));
       const z = r1(r.z0 + uz * s + ux * side * (ROAD_HALF + 1));
-      if (!onLand(x, z, 2) || nearLot(x, z, 0.8) || !free(x, z, 0.8) || !offDoors(x, z, 1.5)) continue;
+      if (!onLand(x, z, 2) || nearLot(x, z, 0.8) || nearRoad(x, z, 0.5) || !free(x, z, 0.8) || !offDoors(x, z, 1.5)) continue;
       taken.push({ x, z, r: 0.8 });
       map.lamps.push({ x, z, look: i });
     }
@@ -898,7 +907,7 @@ export function generateMap(seed: number): GameMap {
     const hw = alongX ? size.along / 2 : size.across / 2;
     const hd = alongX ? size.across / 2 : size.along / 2;
     const r = Math.max(hw, hd);
-    if (!onLand(x, z, 3) || !clear(x, z, hw, hd, 1.3) || !free(x, z, r + 1.2) || !offDoors(x, z, r + 1.4)) return false;
+    if (!onLand(x, z, 3) || !clear(x, z, hw, hd, 1.3) || !free(x, z, r + 1.2) || !offDoors(x, z, r + 1.4) || nearRoad(x, z, r)) return false;
     taken.push({ x, z, r: r + 0.8 });
     map.cars.push({ x: r1(x), z: r1(z), hw, hd, look: Math.floor(rng() * 6), truck, alongX });
     return true;
@@ -918,7 +927,7 @@ export function generateMap(seed: number): GameMap {
         }
         if (wantTable && !map.tables.some((t) => dist(t.x, t.z, b.x, b.z) < 14)) {
           const p = beside(b, side, 4.5, Math.round((rng() * 2 - 1) * span(side)));
-          if (clear(p.x, p.z, TABLE_HW, TABLE_HD, 1.3) && free(p.x, p.z, 1.9) && offDoors(p.x, p.z, 2.2)) {
+          if (clear(p.x, p.z, TABLE_HW, TABLE_HD, 1.3) && free(p.x, p.z, 1.9) && offDoors(p.x, p.z, 2.2) && !nearRoad(p.x, p.z, 1.2)) {
             taken.push({ x: p.x, z: p.z, r: 1.9 });
             map.tables.push({ x: p.x, z: p.z, alongX: side < 2 });
             continue;
@@ -926,7 +935,7 @@ export function generateMap(seed: number): GameMap {
         }
         if (wantFire && !map.fires.some((f) => dist(f.x, f.z, b.x, b.z) < 16)) {
           const p = beside(b, side, 5, Math.round((rng() * 2 - 1) * span(side)));
-          if (clear(p.x, p.z, CAMP.pit, CAMP.pit, 1.3) && free(p.x, p.z, 2.6) && offDoors(p.x, p.z, 2.5)) {
+          if (clear(p.x, p.z, CAMP.pit, CAMP.pit, 1.3) && free(p.x, p.z, 2.6) && offDoors(p.x, p.z, 2.5) && !nearRoad(p.x, p.z, 1.5)) {
             taken.push({ x: p.x, z: p.z, r: 2.6 });
             map.fires.push({ x: p.x, z: p.z, r: CAMP.pit });
           }
@@ -936,11 +945,15 @@ export function generateMap(seed: number): GameMap {
         const ax = Math.abs(d.oz);
         const az = Math.abs(d.ox);
         const toward = (b.x - d.x) * ax + (b.z - d.z) * az >= 0 ? 1 : -1;
-        const x = r1(d.x + d.ox * 3.4 - ax * toward * (d.w / 2 + 1.4));
-        const z = r1(d.z + d.oz * 3.4 - az * toward * (d.w / 2 + 1.4));
-        if (!onLand(x, z, 2) || !free(x, z, 0.5) || !offDoors(x, z, 1)) continue;
-        taken.push({ x, z, r: 0.5 });
-        map.mailboxes.push({ x, z, look: b.look });
+        // to the corner side of the path, or the other side when a road or something else is there
+        for (const s of [toward, -toward]) {
+          const x = r1(d.x + d.ox * 3.4 - ax * s * (d.w / 2 + 1.4));
+          const z = r1(d.z + d.oz * 3.4 - az * s * (d.w / 2 + 1.4));
+          if (!onLand(x, z, 2) || !free(x, z, 0.5) || !offDoors(x, z, 1) || nearRoad(x, z, 0.3)) continue;
+          taken.push({ x, z, r: 0.5 });
+          map.mailboxes.push({ x, z, look: b.look });
+          break;
+        }
       }
     } else if (b.kind === 'warehouse') {
       // a truck beside one loading door, backed up toward it
@@ -1029,23 +1042,19 @@ export function generateMap(seed: number): GameMap {
     map.drops.push(addContainer('supply', x, z, 1, 'supply', at));
   }
 
-  // named places: sites within forty meters of each other make a town; a farm, a warehouse, a container yard, a camp
-  // or the Golden Coop on its own gets a name too, a lone house or shed doesn't
-  const parent = sites.map((_, i) => i);
-  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-  sites.forEach((a, i) => sites.forEach((b, j) => {
-    if (j > i && dist(a.x, a.z, b.x, b.z) < 40) parent[find(i)] = find(j);
-  }));
-  const groups = new Map<number, number[]>();
-  sites.forEach((_, i) => {
-    const root = find(i);
-    const g = groups.get(root);
-    if (g) g.push(i);
-    else groups.set(root, [i]);
-  });
-  const named = (s: (typeof sites)[number]) => s.kind !== 'building' || s.b === map.coop || ['warehouse', 'farm'].includes(map.buildings[s.b!].kind);
-  const towns = [...groups.values()].filter((g) => g.length >= 2 || named(sites[g[0]]));
-  towns.sort((a, b) => b.length - a.length || sites[a[0]].x - sites[b[0]].x || sites[a[0]].z - sites[b[0]].z);
+  // named places: each special site (the Golden Coop, a farm, a warehouse, a container yard, a camp), then each house
+  // or shed, gathers the sites not yet in a place within TOWN meters of it; a lone house or shed gets no name
+  const plain = (s: (typeof sites)[number]) => s.kind === 'building' && s.b !== map.coop && !['warehouse', 'farm'].includes(map.buildings[s.b!].kind);
+  const order = sites.map((_, i) => i).sort((a, b) => Number(plain(sites[a])) - Number(plain(sites[b])) || a - b);
+  const claimed = sites.map(() => false);
+  const towns: number[][] = [];
+  for (const i of order) {
+    if (claimed[i]) continue;
+    const g = order.filter((j) => !claimed[j] && dist(sites[i].x, sites[i].z, sites[j].x, sites[j].z) < TOWN);
+    if (g.length < 2 && plain(sites[i])) continue;
+    for (const j of g) claimed[j] = true;
+    towns.push(g);
+  }
   const names = [...PLACE_NAMES];
   for (let i = names.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
@@ -1054,8 +1063,8 @@ export function generateMap(seed: number): GameMap {
   towns.forEach((g, k) => {
     const cx = r1(g.reduce((s, i) => s + sites[i].x, 0) / g.length);
     const cz = r1(g.reduce((s, i) => s + sites[i].z, 0) / g.length);
-    const r = g.reduce((s, i) => Math.max(s, dist(sites[i].x, sites[i].z, cx, cz) + Math.max(sites[i].hw, sites[i].hd)), 0) + 8;
-    map.places.push({ name: names[k % names.length], x: cx, z: cz, r: r1(Math.max(20, r)) });
+    const r = g.reduce((s, i) => Math.max(s, dist(sites[i].x, sites[i].z, cx, cz) + Math.max(sites[i].hw, sites[i].hd)), 0) + 6;
+    map.places.push({ name: names[k % names.length], x: cx, z: cz, r: r1(Math.max(18, r)) });
   });
 
   map.buildings.forEach((b, i) => {

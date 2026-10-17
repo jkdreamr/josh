@@ -145,21 +145,70 @@
 .g-scramble .g-scramble-pill.is-warm {
   gap: 5px;
   color: #ffb45e;
-  animation: g-scramble-throb 1.2s ease-in-out infinite;
+  animation: g-scramble-warm 1.2s ease-in-out infinite;
 }
-/* the names of towns and sites: big enough to read on the little map, smaller on the big one */
+@keyframes g-scramble-warm {
+  50% {
+    box-shadow: 0 0 0 4px rgba(255, 150, 60, 0.3);
+  }
+}
+/* the names of towns and sites on the big map, in island meters (about 15px across a 560px map) */
 .g-scramble .g-scramble-place {
-  font: 700 15px/1 system-ui, sans-serif;
+  font: 700 9px/1 system-ui, sans-serif;
   fill: #fff;
   paint-order: stroke;
   stroke: rgba(20, 24, 30, 0.75);
-  stroke-width: 3px;
+  stroke-width: 2px;
   stroke-linejoin: round;
   pointer-events: none;
 }
-.g-scramble .g-scramble-bigmap .g-scramble-place {
-  font-size: 9px;
-  stroke-width: 2px;
+/* the name of the place you walk or land into, under the storm timer */
+.g-scramble .g-scramble-arrive {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  max-width: 70%;
+  color: #fff;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: g-scramble-arrive 3s ease-out forwards;
+}
+.g-scramble .g-scramble-arrive small {
+  font: 800 11px/1 system-ui, sans-serif;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.g-scramble .g-scramble-arrive b {
+  font: 400 26px/1.1 'Bungee', system-ui, sans-serif;
+  -webkit-text-stroke: 1.5px rgba(40, 10, 80, 0.8);
+  paint-order: stroke fill;
+  text-shadow: 0 3px 0 rgba(40, 10, 80, 0.45);
+}
+.g-scramble .g-scramble-hud.is-online .g-scramble-arrive {
+  top: 76px;
+}
+@keyframes g-scramble-arrive {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  12% {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+  80% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-50%);
+  }
 }
 .g-scramble .g-scramble-storm {
   position: absolute;
@@ -193,12 +242,33 @@
   right: 10px;
   width: 124px;
   height: 124px;
+  overflow: hidden;
   border-radius: 12px;
   box-shadow:
     0 0 0 2px rgba(255, 255, 255, 0.8),
     0 3px 10px rgba(0, 0, 0, 0.3);
   cursor: pointer;
   pointer-events: auto;
+}
+.g-scramble .g-scramble-map svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* the place you're in, along the bottom of the little map */
+.g-scramble .g-scramble-map span {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  padding: 2px 4px 3px;
+  font: 700 10px/1.1 system-ui, sans-serif;
+  color: #fff;
+  text-align: center;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: rgba(20, 20, 26, 0.6);
 }
 .g-scramble .g-scramble-feed {
   position: absolute;
@@ -721,6 +791,12 @@
 .g-scramble .g-scramble-hud.is-online.is-touch .g-scramble-top {
   top: 78px;
 }
+.g-scramble .g-scramble-hud.is-touch .g-scramble-arrive {
+  top: 18%;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-arrive b {
+  font-size: 20px;
+}
 .g-scramble .g-scramble-hud.is-touch .g-scramble-bottom {
   z-index: 4;
   flex-direction: column;
@@ -1010,7 +1086,9 @@
   .g-scramble .g-scramble-storm.is-moving,
   .g-scramble .g-scramble-stormfx,
   .g-scramble .g-scramble-lowfx,
-  .g-scramble .g-scramble-jump {
+  .g-scramble .g-scramble-jump,
+  .g-scramble .g-scramble-pill.is-warm,
+  .g-scramble .g-scramble-arrive {
     animation: none;
   }
   .g-scramble .g-scramble-banner,

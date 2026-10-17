@@ -10,8 +10,10 @@ import {
   DOOR,
   DROP_BASE,
   EDGE,
+  FENCE_T,
   GATE,
   HALF,
+  HAY_HW,
   PAD,
   PEEK,
   POND_SLOW,
@@ -113,12 +115,20 @@ function run(m: Match, seconds: number, each?: (evs: Ev[]) => void) {
   return all;
 }
 
-/** Clears the island down to bare grass (no trees, rocks, buildings, bushes, crates, barrels or loot) and returns its middle. */
+/**
+ * Clears the island down to bare grass (no trees, rocks, buildings, bushes, crates, barrels, loot, fences, cars,
+ * roads, campfires or bounce pads) and returns its middle.
+ */
 function openSpot(m: Match) {
   m.map.solids = [];
   m.map.grid = m.map.grid.map(() => []);
   m.map.bushes = [];
   m.map.buildings = [];
+  m.map.yards = [];
+  m.map.cars = [];
+  m.map.roads = [];
+  m.map.fires = [];
+  m.map.pads = [];
   m.map.containers = [];
   m.map.drops = [];
   m.opened = [];
@@ -200,7 +210,7 @@ test('every island has all its buildings, each with the doorways it should have,
     // the kitchens, the farmyards, the camps and everything round the houses
     assert.equal(kinds('fridge').length, 11, 'a fridge in every house and farmhouse');
     assert.equal(kinds('toilet').length, 11, 'and a toilet');
-    assert.equal(kinds('hay').length, 10, 'five hay bales a farm');
+    assert.ok(kinds('hay').length >= 6 && kinds('hay').length <= 10, 'three to five hay bales a farm');
     assert.equal(m.yards.length, 2, 'a fence round each farm');
     for (const y of m.yards) {
       assert.equal(y.gates.length, 4, 'a gate in every side');
@@ -212,7 +222,7 @@ test('every island has all its buildings, each with the doorways it should have,
     assert.ok(m.fires.length >= 3 && m.fires.length <= 12, `seed ${seed}: three camps and a few house fires (${m.fires.length})`);
     assert.equal(m.pads.length, 5, 'five bounce pads');
     for (const p of m.pads) assert.ok(Math.abs(Math.hypot(p.dx, p.dz) - 1) < 0.01 && p.x * p.dx + p.z * p.dz < 0, 'each pointing in toward the island');
-    assert.ok(m.cars.length >= 4 && m.lamps.length >= 20 && m.mailboxes.length >= 12 && m.tables.length >= 3 && m.roads.length >= 15, `seed ${seed}: props and roads`);
+    assert.ok(m.cars.length >= 3 && m.lamps.length >= 20 && m.mailboxes.length >= 12 && m.tables.length >= 3 && m.roads.length >= 15, `seed ${seed}: props and roads`);
     assert.ok(m.places.length >= 5, `seed ${seed}: named places`);
     assert.equal(new Set(m.places.map((p) => p.name)).size, m.places.length, 'no two places share a name');
     for (const b of m.buildings) if (b.kind === 'farm' || b.kind === 'warehouse' || b.kind === 'coop') assert.ok(placeAt(m, b.x, b.z) >= 0, `seed ${seed}: a ${b.kind} is somewhere with a name`);
@@ -1107,7 +1117,7 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
 
 for (const [label, opts] of [
   ['a host, three guests and four computer eggs, with lag and lost packets', { humans: 4, bots: true, seed: 21, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
-  ['eight people and no computer eggs, one of whom leaves halfway', { humans: 8, bots: false, seed: 34, level: 'normal' as Level, delay: 0.05, loss: 0.05, leave: { seat: 5, at: 40 } }],
+  ['eight people and no computer eggs, one of whom leaves halfway', { humans: 8, bots: false, seed: 34, level: 'normal' as Level, delay: 0.05, loss: 0.05, leave: { seat: 5, at: 30 } }],
   ['a guest whose tab freezes on the bus (still in the room, still reporting)', { humans: 3, bots: true, seed: 8, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 2, at: 2, silent: false } }],
   ['a guest who goes silent mid-match', { humans: 3, bots: true, seed: 13, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 1, at: 30, silent: true } }],
 ] as const) {
@@ -1518,22 +1528,26 @@ test('a computer egg under fire builds a wall in the open, but never indoors', (
   autopilot(m, a);
   a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
   a.ammo.heavy = 90;
-  // inside a shipping container, with someone shooting in through its open end
+  // cornered inside a shipping container, with someone shooting in through its open end
   const c = doorOf(m, 'container', (d) => {
     const [p, q] = [through(d, -2), through(d, 10)];
     return clearLine(m, p.x, p.z, q.x, q.z) && coverAt(m.map, q.x, q.z) < 0;
   });
-  land(a, through(c.door, -2).x, through(c.door, -2).z);
+  const corner = through(c.door, -2);
+  land(a, corner.x, corner.z);
   land(b, through(c.door, 10).x, through(c.door, 10).z);
+  let pinned = true;
   const hot = (seconds: number) =>
     run(m, seconds, () => {
       a.hitT = 0.25;
       a.hp = 60;
       b.hp = 100;
+      if (pinned) land(a, corner.x, corner.z);
     });
   assert.ok(!hot(2).some((e) => e.t === 'wall'), 'no wall shuts it in');
   assert.equal(a.ai!.target, b.id, 'it was fighting');
   assert.equal(buildingAt(m.map, a.x, a.z), c.i, 'still inside');
+  pinned = false;
   openSpot(m);
   land(a, 0, 0);
   land(b, 0, 12);
@@ -1892,6 +1906,300 @@ test('ponds slow you down and cornfields hide you', () => {
   assert.ok(b.bush >= 0 && coverAt(m.map, b.x, b.z) >= 0);
   assert.ok(concealed(m, b, a), 'hidden in the corn');
   assert.ok(!concealed(m, a, b));
+});
+
+test('dirt roads put a spring in your step', () => {
+  const m = quiet();
+  const a = m.fighters[0];
+  openSpot(m);
+  m.map.roads = [{ x0: -30, z0: 0, x1: 30, z1: 0 }];
+  land(a, -20, 0);
+  a.input.mx = 1;
+  run(m, 0.5);
+  assert.ok(roadAt(m.map, a.x, a.z));
+  assert.ok(Math.abs(Math.hypot(a.vx, a.vz) - SPEED * MELEE.spatula.move * ROAD_SPEED) < 0.05, 'on the road');
+  land(a, -20, 6);
+  run(m, 0.5);
+  assert.ok(Math.abs(Math.hypot(a.vx, a.vz) - SPEED * MELEE.spatula.move) < 0.05, 'beside it');
+});
+
+test('a campfire heals whoever stands by it a little at a time, up to full, on its owner’s client', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  m.map.fires = [{ x: 0, z: 0, r: CAMP.pit }];
+  land(a, 1.8, 0);
+  land(b, CAMP.r + 1, 0);
+  a.hp = 50;
+  b.hp = 50;
+  run(m, 2);
+  assert.ok(a.warm && !b.warm);
+  assert.ok(Math.abs(a.hp - (50 + CAMP.hps * 2)) < 0.2, `${a.hp}`);
+  assert.equal(b.hp, 50, 'a step too far');
+  run(m, 30);
+  assert.equal(a.hp, HP_MAX, 'all the way to full');
+  // nobody walks into the fire itself
+  a.input.mx = -1;
+  run(m, 1);
+  assert.ok(Math.hypot(a.x, a.z) >= CAMP.pit + FIGHTER_R - 0.01, 'stopped at the fire pit');
+
+  // someone else's egg is healed by its owner, and only shows as warming up here
+  const g = createMatch({ seed: 7, role: 'guest', level: 'normal', entrants: [{ name: 'g', color: '#fff', kind: 'player', seat: 1 }, { name: 'h', color: '#fff', kind: 'remote', seat: 0 }], me: 0, countdown: 0 });
+  g.time = 5;
+  openSpot(g);
+  g.map.fires = [{ x: 0, z: 0, r: CAMP.pit }];
+  const r = g.fighters[1];
+  applyState(g, r, { x: 1.8, z: 0, y: 0, aim: 0, vx: 0, vz: 0, phase: 'ground', hp: 40, shield: 0, w: null, r: 0, flags: 0 });
+  run(g, 2);
+  assert.ok(r.warm);
+  assert.equal(r.hp, 40, 'until its owner says otherwise');
+});
+
+test('a bounce pad throws an egg up for a glide the way its arrow points, out of reach of everything until it lands', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  m.map.pads = [{ x: 0, z: 0, dx: 1, dz: 0 }];
+  land(a, -3, 0);
+  land(b, -3, 6);
+  a.hp = 60;
+  a.items.bandage = 3;
+  a.input.mx = 1;
+  let evs = run(m, 0.6);
+  assert.ok(evs.some((e) => e.t === 'bounce' && e.f === a.id));
+  assert.equal(a.phase, 'drop');
+  assert.ok(a.y > PAD.y - FALL * 0.6 - 0.5, `up high: ${a.y}`);
+  assert.equal(hurt(m, a, 50, b.id, 'smg', false), 0, 'nothing hits an egg in the air');
+  a.input.use = 'bandage';
+  run(m, 0.1);
+  assert.equal(a.using, null, 'nor does it patch up up there');
+  // let go of the stick: the glide carries on along the arrow
+  a.input.mx = 0;
+  evs = [];
+  for (let t = 0; t < 6 && a.phase !== 'ground'; t += DT) evs.push(...run(m, DT));
+  assert.equal(a.phase, 'ground');
+  assert.ok(evs.some((e) => e.t === 'land' && e.f === a.id));
+  assert.ok(Math.abs(a.x - PAD_FLY) < PAD_FLY * 0.2 && Math.abs(a.z) < 0.5, `landed ${a.x.toFixed(1)}, ${a.z.toFixed(1)} (about ${PAD_FLY} m on)`);
+  // steering takes it wherever you like, as off the bus
+  land(a, -3, 0);
+  a.input.mx = 1;
+  for (let t = 0; t < 2 && a.phase === 'ground'; t += DT) run(m, DT);
+  a.input.mx = 0;
+  a.input.mz = 1;
+  for (let t = 0; t < 6 && a.phase !== 'ground'; t += DT) run(m, DT);
+  assert.ok(a.z > 25 && a.x < 15, `steered off to ${a.x.toFixed(1)}, ${a.z.toFixed(1)}`);
+});
+
+test('a guest gliding off a bounce pad long after the bus is not taken for one that stopped playing', () => {
+  const { h, g, hs, hMe } = pair();
+  for (const m of [h, g]) {
+    m.time = m.map.bus.off + 60;
+    m.map.pads = [{ x: 0, z: 0, dx: 0, dz: 1 }];
+  }
+  const mine = g.fighters[1];
+  land(mine, 0, -3);
+  mine.input.mz = 1;
+  const evs = run(g, 0.6);
+  assert.ok(evs.some((e) => e.t === 'bounce' && e.f === 1) && mine.phase === 'drop');
+  receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(mine)))), () => h, 0.1);
+  const r = h.fighters[1];
+  assert.equal(r.phase, 'drop');
+  assert.ok(h.events.some((e) => e.t === 'bounce' && e.f === 1 && e.net), 'the host sees it go up');
+  tick(hs, h, hMe, [0, 1], 0.2);
+  assert.notEqual(r.phase, 'out');
+  // one that hangs up there far longer than a glide takes has stopped playing
+  h.time += BUS_Y / FALL + 9;
+  receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(mine)))), () => h, 0.3);
+  tick(hs, h, hMe, [0, 1], 0.4);
+  assert.equal(r.phase, 'out');
+});
+
+test('fridges open like chests and hold food and healing; toilets and hay bales break like crates', () => {
+  const m = quiet(9);
+  const me = m.fighters[0];
+  for (const seed of [1, 2, 3]) {
+    for (const c of generateMap(seed).containers) {
+      if (c.kind !== 'fridge') continue;
+      assert.equal(c.loot.length, 2);
+      assert.ok(c.loot.every((l) => l.def.kind === 'use') && c.loot[0].def.kind === 'use' && c.loot[1].def.kind === 'use' && c.loot[0].def.w !== c.loot[1].def.w, 'two different things to eat or patch up with');
+    }
+  }
+  const fridge = m.map.containers.find((c) => c.kind === 'fridge')!;
+  land(me, fridge.x, fridge.z + fridge.face * 1.4);
+  m.loot.clear();
+  const p = prompt(m, me);
+  assert.ok(p && 'chest' in p && p.chest === fridge.id);
+  me.input.aim = fridge.face > 0 ? Math.PI : 0;
+  me.input.fire = true;
+  run(m, 1);
+  assert.ok(!m.opened[fridge.id], 'it opens, it does not break');
+  me.input.fire = false;
+  me.input.interact = true;
+  run(m, 0.05);
+  assert.ok(m.opened[fridge.id]);
+  assert.ok(fridge.loot.every((l) => m.loot.has(l.id) || m.gone.has(l.id)), 'out it comes');
+
+  // a guest asks the host to open one, as with a chest
+  const h = quiet(9);
+  assert.equal(applyNet(h, { y: 'op', f: 1, c: fridge.id }), false);
+  assert.ok(h.opened[fridge.id]);
+  assert.ok(h.events.some((e) => e.t === 'opened' && e.c === fridge.id && !e.net));
+  // but a toilet or a hay bale only breaks
+  const toilet = h.map.containers.find((c) => c.kind === 'toilet')!;
+  const hay = h.map.containers.find((c) => c.kind === 'hay')!;
+  applyNet(h, { y: 'op', f: 1, c: toilet.id });
+  applyNet(h, { y: 'op', f: 1, c: hay.id });
+  assert.ok(!h.opened[toilet.id] && !h.opened[hay.id]);
+  applyNet(h, { y: 'm', f: 1, k: 'crate', id: toilet.id, d: TOILET_HP - 1 });
+  assert.ok(!h.opened[toilet.id]);
+  applyNet(h, { y: 'm', f: 1, k: 'crate', id: toilet.id, d: 1 });
+  assert.ok(h.opened[toilet.id], 'flushed');
+  assert.ok(toilet.loot.length >= 1 && toilet.loot.every((l) => h.loot.has(l.id)), 'and whatever was in it spills out');
+
+  // two smacks of the spatula break a hay bale
+  const a = m.fighters[0];
+  land(a, hay.x - (HAY_HW + 1.2), hay.z);
+  a.slot = SLOT_MELEE;
+  a.fireT = 0;
+  a.input.aim = Math.PI / 2;
+  a.input.fire = true;
+  run(m, 0.1);
+  assert.ok(!m.opened[hay.id]);
+  run(m, 0.6);
+  assert.ok(m.opened[hay.id], 'the bale comes apart');
+});
+
+test('cars and lamp posts stop bullets; fences, picnic tables and fire pits only stop your feet', () => {
+  const m = quiet();
+  const [a] = m.fighters;
+  openSpot(m);
+  m.map.solids = [
+    { shape: 'box', x: 6, z: 0, hw: 0.55, hd: 1.1, what: 'car', ref: 0 },
+    { shape: 'circle', x: -6, z: 0, r: 0.18, what: 'post', ref: 0 },
+    { shape: 'box', x: 0, z: 6, hw: 3, hd: FENCE_T / 2, what: 'fence', ref: 0 },
+    { shape: 'box', x: 0, z: -6, hw: 1.1, hd: 0.8, what: 'table', ref: 0 },
+    { shape: 'circle', x: 6, z: 6, r: CAMP.pit, what: 'fire', ref: 0 },
+  ];
+  reindex(m.map);
+  assert.equal(castRay(m, 0, 0, 1, 0, 20, -1, true)?.what, 'car');
+  assert.equal(castRay(m, 0, 0, -1, 0, 20, -1, true)?.what, 'post');
+  for (const [dx, dz] of [[0, 1], [0, -1], [Math.SQRT1_2, Math.SQRT1_2]]) {
+    assert.equal(castRay(m, 0, 0, dx, dz, 20, -1, true), null, 'bullets fly over');
+    assert.ok(castRay(m, 0, 0, dx, dz, 20, -1, true, true), 'feet and swings do not');
+  }
+  assert.ok(clearLine(m, 0, 0, 0, 12) && !clearLine(m, 0, 0, 12, 0), 'you can see over a fence, not through a car');
+  // walking into each stops you at it
+  for (const [x, z, mx, mz] of [[0, 3, 0, 1], [0, -3, 0, -1], [3, 0, 1, 0], [3.5, 3.5, 1, 1]]) {
+    land(a, x, z);
+    a.input.mx = mx;
+    a.input.mz = mz;
+    run(m, 1.2);
+    let inside = false;
+    for (const s of m.map.solids) if (s.shape === 'circle' ? pushCircle(a.x, a.z, FIGHTER_R - 0.02, s.x, s.z, s.r) : pushBox(a.x, a.z, FIGHTER_R - 0.02, s.x, s.z, s.hw, s.hd)) inside = true;
+    assert.ok(!inside && Math.hypot(a.x - x, a.z - z) < 5, `stopped walking from ${x},${z}: at ${a.x.toFixed(2)},${a.z.toFixed(2)}`);
+  }
+  a.input.mx = 0;
+  a.input.mz = 0;
+  // and a bullet from one side of a fence finds an egg on the other
+  const b = m.fighters[1];
+  land(a, 0, 3);
+  land(b, 0, 10);
+  a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  a.slot = 0;
+  a.input.aim = 0;
+  a.input.fire = true;
+  run(m, 0.3);
+  assert.ok(b.hp < HP_MAX, 'shot over the fence');
+});
+
+/** A computer egg alone on the island with everything else put out of the way: the other egg hangs in the sky. */
+function alone(m: Match) {
+  const [a, b] = m.fighters;
+  b.phase = 'drop';
+  b.y = 1e9;
+  autopilot(m, a);
+  a.ai!.goal = 'roam';
+  return a;
+}
+
+/** A spot `d` meters from (x, z) on open ground, outside every building and farmyard, or null. */
+function startNear(m: Match, x: number, z: number, d: number) {
+  for (let k = 0; k < 16; k++) {
+    const a = (k * Math.PI) / 8;
+    const sx = x + Math.sin(a) * d;
+    const sz = z + Math.cos(a) * d;
+    if (Math.abs(sx) > EDGE - 3 || Math.abs(sz) > EDGE - 3) continue;
+    if (m.map.buildings.some((b) => Math.abs(sx - b.x) < b.w / 2 + 2 && Math.abs(sz - b.z) < b.d / 2 + 2)) continue;
+    if (m.map.yards.some((y) => Math.abs(sx - y.x) < y.hw + 1.5 && Math.abs(sz - y.z) < y.hd + 1.5)) continue;
+    if (m.map.ponds.some((p) => Math.hypot(sx - p.x, sz - p.z) < p.r + 1)) continue;
+    let hit = false;
+    solidsNear(m.map, sx, sz, 3, (_i, s) => {
+      if (s.shape === 'circle' ? pushCircle(sx, sz, FIGHTER_R + 0.5, s.x, s.z, s.r) : pushBox(sx, sz, FIGHTER_R + 0.5, s.x, s.z, s.hw, s.hd)) hit = true;
+    });
+    if (!hit) return { x: sx, z: sz };
+  }
+  return null;
+}
+
+test('computer eggs raid the fridges, break the toilets and hay bales, and warm up at campfires when hurt, never stuck on a fence or a car', () => {
+  let tried = 0;
+  for (const seed of [1, 2, 3, 4]) {
+    const base = generateMap(seed);
+    const jobs = [...base.containers.filter((c) => c.kind === 'fridge' || c.kind === 'toilet' || c.kind === 'hay').map((c) => ({ kind: c.kind, x: c.x, z: c.z, c: c.id })), ...base.fires.map((f) => ({ kind: 'fire', x: f.x, z: f.z, c: -1 }))];
+    for (const job of jobs) {
+      const m = quiet(seed);
+      const a = alone(m);
+      m.loot.clear();
+      // everything else already opened, so this is the one worth going to
+      m.opened = m.opened.map((_, i) => i !== job.c);
+      const at = startNear(m, job.x, job.z, 14) ?? startNear(m, job.x, job.z, 20);
+      assert.ok(at, `seed ${seed}: somewhere to start from near the ${job.kind}`);
+      land(a, at.x, at.z);
+      if (job.kind === 'fire') a.hp = 30;
+      let done = false;
+      for (let t = 0; t < 30 && !done; t += 1 / 30) {
+        step(m, 1 / 30);
+        m.events.length = 0;
+        done = job.kind === 'fire' ? a.warm : m.opened[job.c];
+      }
+      assert.ok(done, `seed ${seed}: a computer egg from ${at.x.toFixed(1)},${at.z.toFixed(1)} got to the ${job.kind} at ${job.x},${job.z} (stuck at ${a.x.toFixed(1)},${a.z.toFixed(1)})`);
+      if (job.kind === 'fire') {
+        const hp = a.hp;
+        run(m, 8);
+        assert.ok(a.hp > hp + 10, `seed ${seed}: and stayed by the fire to heal (${hp.toFixed(0)} to ${a.hp.toFixed(0)})`);
+      }
+      tried++;
+    }
+  }
+  assert.ok(tried > 100);
+});
+
+test('a computer egg off somewhere far takes a bounce pad that points the right way', () => {
+  const m = quiet(3);
+  const a = alone(m);
+  openSpot(m);
+  m.map.pads = [{ x: 0, z: 0, dx: 1, dz: 0 }];
+  land(a, -8, 2);
+  // somewhere far east, inside the circle
+  a.ai!.goal = 'roam';
+  a.ai!.gx = 90;
+  a.ai!.gz = 0;
+  const evs: Ev[] = [];
+  for (let t = 0; t < 4 && a.phase === 'ground'; t += DT) evs.push(...run(m, DT));
+  assert.ok(evs.some((e) => e.t === 'bounce' && e.f === a.id), 'up it goes');
+  for (let t = 0; t < 6 && a.phase !== 'ground'; t += DT) run(m, DT);
+  assert.ok(a.phase === 'ground' && a.x > 35, `and down far along the way (${a.x.toFixed(1)})`);
+  // one pointing the wrong way is walked past
+  const w = quiet(3);
+  const b = alone(w);
+  openSpot(w);
+  w.map.pads = [{ x: 0, z: 0, dx: -1, dz: 0 }];
+  land(b, -8, 0.4);
+  b.ai!.gx = 90;
+  b.ai!.gz = 0;
+  const more = run(w, 4);
+  assert.ok(!more.some((e) => e.t === 'bounce'), 'round it, not over it');
+  assert.ok(b.x > 10, 'and on its way on foot');
 });
 
 test('a host’s report of twenty eggs fits well inside one room message, and new holdings travel', () => {

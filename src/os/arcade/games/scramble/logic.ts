@@ -62,6 +62,7 @@ import {
   pushBox,
   pushCircle,
   pushObb,
+  rayBox,
   rayCircle,
   rayObb,
   raySolid,
@@ -70,6 +71,7 @@ import {
   solidsNear,
   stormAt,
   yardAt,
+  type Box,
   type Container,
   type Door,
   type GameMap,
@@ -189,8 +191,9 @@ export type Ai = {
   /** Knocking down the wall or crate in our way, for this long, swinging this way. */
   smashT: number;
   smashA: number;
-  /** The doorway we're on our way out through. */
+  /** The doorway we're on our way out through (or the gate we're on our way in through, when `inward`). */
   exit: Door | null;
+  inward: boolean;
   err: number;
   errT: number;
   /** Seconds the aim has held steady on the target, for a scoped shot. */
@@ -270,6 +273,9 @@ export type Fighter = {
   warm: boolean;
   /** Match time the current glide began (from the bus or a bounce pad). */
   dropAt: number;
+  /** The way a bounce pad threw us: unsteered, the glide carries on that way (still, off the bus). */
+  flingX: number;
+  flingZ: number;
   input: Input;
   ai: Ai | null;
   /** Remote eggs: recent reports, newest last, and what they hold. */
@@ -504,6 +510,8 @@ function newFighter(id: number, e: Entrant, x: number, z: number): Fighter {
     wet: false,
     warm: false,
     dropAt: 0,
+    flingX: 0,
+    flingZ: 0,
     input: noInput(),
     ai: null,
     snaps: [],
@@ -553,6 +561,7 @@ function newAi(m: Match, f: Fighter): Ai {
     smashT: 0,
     smashA: 0,
     exit: null,
+    inward: false,
     err: 0,
     errT: 0,
     steady: 0,
@@ -763,6 +772,8 @@ function act(m: Match, f: Fighter, dt: number) {
       f.y = BUS_Y - 1.5;
       f.vx = 0;
       f.vz = 0;
+      f.flingX = 0;
+      f.flingZ = 0;
       f.dropAt = m.time;
       emit(m, { t: 'jump', f: f.id });
     }
@@ -772,8 +783,8 @@ function act(m: Match, f: Fighter, dt: number) {
   if (f.phase === 'drop') {
     const len = Math.hypot(inp.mx, inp.mz);
     const k = 1 - Math.exp(-5 * dt);
-    f.vx += ((len > 0 ? (inp.mx / Math.max(1, len)) * GLIDE : 0) - f.vx) * k;
-    f.vz += ((len > 0 ? (inp.mz / Math.max(1, len)) * GLIDE : 0) - f.vz) * k;
+    f.vx += ((len > 0 ? (inp.mx / Math.max(1, len)) * GLIDE : f.flingX * GLIDE) - f.vx) * k;
+    f.vz += ((len > 0 ? (inp.mz / Math.max(1, len)) * GLIDE : f.flingZ * GLIDE) - f.vz) * k;
     f.x = clamp(f.x + f.vx * dt, -EDGE, EDGE);
     f.z = clamp(f.z + f.vz * dt, -EDGE, EDGE);
     f.y -= FALL * dt;
@@ -862,13 +873,15 @@ function act(m: Match, f: Fighter, dt: number) {
 
   autoPickup(m, f);
 
-  // a bounce pad throws us up for a glide, off the way its arrow points
+  // a bounce pad throws us up for a glide, off the way its arrows point
   const pad = padAt(m.map, f.x, f.z);
   if (pad >= 0) {
     const p = m.map.pads[pad];
     f.phase = 'drop';
     f.y = PAD.y;
     f.dropAt = m.time;
+    f.flingX = p.dx;
+    f.flingZ = p.dz;
     f.vx = p.dx * GLIDE;
     f.vz = p.dz * GLIDE;
     f.using = null;
@@ -2177,19 +2190,20 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   ai.pad = -1;
   if (ai.target >= 0 || ai.goal === 'fire' || ai.goal === 'smash' || ai.goal === 'chase') return;
   const far = Math.hypot(ai.gx - f.x, ai.gz - f.z);
-  if (far < 45) return;
+  if (far < 35) return;
   const s = m.storm;
   const safe = s.shrinking || s.timer < 20 ? s.next : { x: s.x, z: s.z, r: s.r };
-  let bestD = 14;
+  let best = far - 8;
   m.map.pads.forEach((p, i) => {
     const d = Math.hypot(p.x - f.x, p.z - f.z);
-    if (d >= bestD) return;
-    // a pad pointing our way, that lands us inside the circle
+    if (d > 26) return;
+    // a pad pointing our way, that lands us inside the circle and leaves less of the way to walk
     const lx = p.x + p.dx * PAD_FLY;
     const lz = p.z + p.dz * PAD_FLY;
-    if ((ai.gx - f.x) * p.dx + (ai.gz - f.z) * p.dz < far * 0.6 || Math.hypot(lx - safe.x, lz - safe.z) > safe.r - 2) return;
+    const walk = d + Math.hypot(ai.gx - lx, ai.gz - lz);
+    if ((ai.gx - f.x) * p.dx + (ai.gz - f.z) * p.dz < far * 0.6 || Math.hypot(lx - safe.x, lz - safe.z) > safe.r - 2 || walk >= best) return;
     ai.pad = i;
-    bestD = d;
+    best = walk;
   });
 }
 
@@ -2341,7 +2355,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   }
   if (smash >= 0) {
     const c = m.map.containers[smash];
-    if (ai.goal !== 'smash' || ai.chest !== smash) ai.until = m.time + 9;
+    if (ai.goal !== 'smash' || ai.chest !== smash) ai.until = m.time + 15;
     ai.goal = 'smash';
     ai.chest = smash;
     ai.gx = c.x;
@@ -2375,31 +2389,113 @@ function shutsIn(m: Match, f: Fighter, aim: number) {
 
 /**
  * Steers toward a goal. From inside a building the goal isn't in, that's out through a doorway first; from inside a
- * fenced yard it isn't in, out through a gate.
+ * fenced yard it isn't in, out through a gate. Going the other way, it's in through a gate, then a doorway.
  */
 function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, stop: number) {
   const b = f.inside >= 0 ? m.map.buildings[f.inside] : undefined;
   const yard = b ? -1 : yardAt(m.map, f.x, f.z);
   const ways = b ? b.doors : yard >= 0 ? m.map.yards[yard].gates : null;
-  const same = b ? buildingAt(m.map, tx, tz) === f.inside : yard >= 0 ? yardAt(m.map, tx, tz) === yard : true;
-  if (ways && !same) {
-    // the way out that makes the shortest way there, one in sight if there is one
+  // the way through that makes the shortest way there, one in sight if there is one
+  const pick = (list: Door[], inward: boolean) => {
     let best = Infinity;
-    for (const dr of ways) {
-      const d = Math.hypot(dr.x - f.x, dr.z - f.z) + Math.hypot(tx - dr.x, tz - dr.z) + (clearLine(m, f.x, f.z, dr.x - dr.ox, dr.z - dr.oz) ? 0 : 20);
+    for (const dr of list) {
+      const d = Math.hypot(dr.x - f.x, dr.z - f.z) + Math.hypot(tx - dr.x, tz - dr.z) + (clearLine(m, f.x, f.z, dr.x + dr.ox * (inward ? 1 : -1), dr.z + dr.oz * (inward ? 1 : -1)) ? 0 : 20);
       if (d < best) {
         ai.exit = dr;
         best = d;
       }
     }
-  } else if (ways || (ai.exit && Math.hypot(f.x - ai.exit.x, f.z - ai.exit.z) >= 1.5)) ai.exit = null;
+    ai.inward = inward;
+  };
+  const yardIn = !b && yard < 0 ? yardAt(m.map, tx, tz) : -1;
+  const roomIn = !b && yardIn < 0 ? buildingAt(m.map, tx, tz) : -1;
+  if (b && buildingAt(m.map, tx, tz) !== f.inside) pick(b.doors, false);
+  else if (yard >= 0 && yardAt(m.map, tx, tz) !== yard) pick(m.map.yards[yard].gates, false);
+  else if (yardIn >= 0) pick(m.map.yards[yardIn].gates, true);
+  else if (roomIn >= 0) pick(m.map.buildings[roomIn].doors, true);
+  else if (ways || (ai.exit && (ai.inward || Math.hypot(f.x - ai.exit.x, f.z - ai.exit.z) >= 1.5))) ai.exit = null;
   const door = ai.exit;
-  if (!door) return steer(m, f, ai, tx, tz, dt, stop);
-  // square in front of it (or through it), straight out; off to one side, line up in front of it first
-  const across = (f.x - door.x) * door.oz - (f.z - door.z) * door.ox;
-  const k = !ways || Math.abs(across) < Math.max(0.3, door.w / 2 - FIGHTER_R - 0.1) ? 1.5 : -1.2;
-  steer(m, f, ai, door.x + door.ox * k, door.z + door.oz * k, dt, 0);
+  let px = tx;
+  let pz = tz;
+  if (door) {
+    // square in front of it (or in it), straight on through; off to one side or behind, line up in front of it first
+    const lined = Math.abs((f.x - door.x) * door.oz - (f.z - door.z) * door.ox) < Math.max(0.3, door.w / 2 - FIGHTER_R - 0.1);
+    const k = ai.inward ? (lined && (f.x - door.x) * door.ox + (f.z - door.z) * door.oz > -0.3 ? -1.5 : 1.6) : !ways || lined ? 1.5 : -1.2;
+    px = door.x + door.ox * k;
+    pz = door.z + door.oz * k;
+  }
+  // outdoors, with a building or a fenced yard across the way: round it by a corner
+  const c = b ? null : around(m, f.x, f.z, px, pz, yard);
+  if (c) return steer(m, f, ai, c.x, c.z, dt, 0);
+  // inside, with where we're going on the far side of the wall between two rooms: through the doorway in it first
+  if (b)
+    for (const dr of b.inner) {
+      const there = (px - dr.x) * dr.ox + (pz - dr.z) * dr.oz;
+      const here = (f.x - dr.x) * dr.ox + (f.z - dr.z) * dr.oz;
+      if (there * here >= 0) continue;
+      const s = there > 0 ? 1 : -1;
+      const k = Math.abs((f.x - dr.x) * dr.oz - (f.z - dr.z) * dr.ox) < Math.max(0.3, dr.w / 2 - FIGHTER_R - 0.1) ? 1.5 : -1.2;
+      return steer(m, f, ai, dr.x + dr.ox * s * k, dr.z + dr.oz * s * k, dt, 0);
+    }
+  steer(m, f, ai, px, pz, dt, door ? 0 : stop);
 }
+
+/**
+ * When the way from (x, z) to (px, pz) cuts across a roofed building or a fenced yard (but the one we're in), the
+ * corner to walk round the nearest one by: the one in sight that makes the shortest way, and not the one we're at.
+ */
+function around(m: Match, x: number, z: number, px: number, pz: number, yard: number) {
+  const len = Math.hypot(px - x, pz - z);
+  if (len < 1) return null;
+  const dx = (px - x) / len;
+  const dz = (pz - z) / len;
+  const boxes: Box[] = [];
+  for (const b of m.map.buildings) if (b.roof) boxes.push({ x: b.x, z: b.z, hw: (b.w + WALL_T) / 2, hd: (b.d + WALL_T) / 2 });
+  m.map.yards.forEach((y, i) => i !== yard && boxes.push(y));
+  let near = Infinity;
+  let o: Box | null = null;
+  for (const b of boxes) {
+    // never one we're standing in (a doorway) or one the point is in
+    if ((Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd) || (Math.abs(px - b.x) < b.hw && Math.abs(pz - b.z) < b.hd)) continue;
+    const t = rayBox(x, z, dx, dz, len, b.x, b.z, b.hw, b.hd);
+    if (t < near) {
+      near = t;
+      o = b;
+    }
+  }
+  if (!o) return null;
+  const box = o;
+  const corners = CORNERS.map(([sx, sz]) => ({ x: box.x + sx * (box.hw + 1.4), z: box.z + sz * (box.hd + 1.4) }));
+  const sees = (ax: number, az: number, bx: number, bz: number) => {
+    const l = Math.hypot(bx - ax, bz - az);
+    return l < 1e-6 || rayBox(ax, az, (bx - ax) / l, (bz - az) / l, l, box.x, box.z, box.hw, box.hd) === Infinity;
+  };
+  // the rest of the way from a corner: straight on when the point is in sight, else by the next corner round
+  const rest = (i: number) => {
+    const c = corners[i];
+    if (sees(c.x, c.z, px, pz)) return Math.hypot(px - c.x, pz - c.z);
+    return Math.min(...[corners[(i + 1) % 4], corners[(i + 3) % 4]].map((n) => Math.hypot(n.x - c.x, n.z - c.z) + Math.hypot(px - n.x, pz - n.z)));
+  };
+  let best: { x: number; z: number } | null = null;
+  let bestD = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const c = corners[i];
+    const l = Math.hypot(c.x - x, c.z - z);
+    if (l < 1 || !sees(x, z, c.x, c.z)) continue;
+    const d = l + rest(i);
+    if (d < bestD) {
+      best = c;
+      bestD = d;
+    }
+  }
+  return best;
+}
+const CORNERS = [
+  [-1, -1],
+  [1, -1],
+  [1, 1],
+  [-1, 1],
+] as const;
 
 /** The roofed building whose outer walls stand round a point, or -1. */
 const roomAt = (m: Match, x: number, z: number) => m.map.buildings.findIndex((b) => b.roof && Math.abs(x - b.x) < (b.w + WALL_T) / 2 && Math.abs(z - b.z) < (b.d + WALL_T) / 2);
@@ -2420,11 +2516,12 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
     a = ai.detourA;
   } else {
     // try straight on, then ever wider either side, and never into a building (doorways too) or a fenced yard the
-    // point isn't in
+    // point isn't in, nor over a bounce pad we aren't making for
     const look = Math.min(2.4, d);
     const into = roomAt(m, tx, tz);
     const intoYard = yardAt(m.map, tx, tz);
     const fromYard = yardAt(m.map, f.x, f.z);
+    const onPad = padAt(m.map, tx, tz);
     for (const turn of [0, 0.5, -0.5, 1, -1, 1.5, -1.5, 2.2, -2.2]) {
       const b = a + turn;
       const ex = Math.sin(b);
@@ -2435,6 +2532,7 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       const blocked =
         (room >= 0 && room !== f.inside && room !== into) ||
         (yard >= 0 && yard !== fromYard && yard !== intoYard) ||
+        m.map.pads.some((p, i) => i !== onPad && rayCircle(f.x, f.z, ex, ez, look, p.x, p.z, PAD.r + FIGHTER_R * 0.5) < Infinity) ||
         [-side, 0, side].some((o) => castRay(m, f.x + ez * o, f.z - ex * o, ex, ez, look, f.id, false, true) !== null);
       if (!blocked) {
         a = b;
