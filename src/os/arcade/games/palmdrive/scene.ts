@@ -3342,7 +3342,7 @@ const scratch = { color: 0 };
 function syncKart(v: KartView, k: Kart, dt: number, clock: number, pose: Pose | null) {
   if (k.hat !== v.hatName) v.wear(k.hat);
   // a moment's grace after a hit or being set back on the road: the kart blinks
-  v.root.visible = !(k.safe > 0 && !hurt(k) && Math.floor(clock * 15) % 2 === 1);
+  v.root.visible = !k.left && !(k.safe > 0 && !hurt(k) && Math.floor(clock * 15) % 2 === 1);
   scratch.color = parseInt(k.color.slice(1), 16);
   if (scratch.color !== v.color) v.color = scratch.color;
   v.root.position.set(pose ? pose.x : k.x, 0, pose ? pose.z : k.z);

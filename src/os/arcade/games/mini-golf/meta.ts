@@ -11,5 +11,5 @@ export const meta: GameMeta = {
   glyph: 'M12 3v12M12 3l6 2.5-6 2.5M7.5 17.5c0 1.7 2 3 4.5 3s4.5-1.3 4.5-3-2-3-4.5-3-4.5 1.3-4.5 3z',
   order: 13,
   leaderboard: { order: 'asc', min: 9, max: 63, unit: 'strokes', measure: 'Strokes for 9 Holes' },
-  online: { seats: 4, bots: true },
+  online: { seats: 4, bots: true, quick: true },
 };

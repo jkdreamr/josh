@@ -248,6 +248,8 @@ export type Kart = {
   /** The finished player hands the wheel to the CPU driver. */
   auto: boolean;
   net: NetState | null;
+  /** Online: whoever drove it left the room, so it is parked out of sight and out of everyone's way. */
+  left?: boolean;
 };
 
 export type Thing = {

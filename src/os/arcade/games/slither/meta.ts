@@ -11,5 +11,5 @@ export const meta: GameMeta = {
   glyph: 'M4 15c2.5-7 5-7 7 0s4.5 7 8 0M5 8h.01M19 8h.01',
   order: 0.7,
   leaderboard: { order: 'desc', min: 0, max: 100000, measure: 'Best Length vs Computer', variants: { easy: 'Easy', normal: 'Normal', hard: 'Hard' } },
-  online: { seats: 8, lateJoin: true, bots: true },
+  online: { seats: 8, lateJoin: true, bots: true, quick: true },
 };

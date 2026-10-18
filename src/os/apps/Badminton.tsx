@@ -177,6 +177,8 @@ export default function Badminton({ args }: AppProps) {
   const [settings, setSettings] = useState<Settings>(() => (args.room ? { ...loadSettings(), mode: 'online' } : loadSettings()));
   const [matchNo, setMatchNo] = useState(0);
   const roleRef = useRef<Role>(null);
+  /** Online, watching someone else's match: drawn like the guest's screen, with nobody on court called You. */
+  const watchingRef = useRef(false);
   const [role, setRole] = useState<Role>(null);
   const [screen, setScreen] = useState<Screen>('menu');
   const [match, setMatch] = useState<MatchState>(() => newMatch('game'));
@@ -231,7 +233,7 @@ export default function Badminton({ args }: AppProps) {
   const nameOf = useCallback((side: Side, long = true) => {
     if (settingsRef.current.mode === 'cpu') return side === 'a' ? 'You' : long ? 'Computer' : 'CPU';
     if (settingsRef.current.mode === 'online' && roleRef.current) {
-      if (side === (roleRef.current === 'guest' ? 'b' : 'a')) return 'You';
+      if (!watchingRef.current && side === (roleRef.current === 'guest' ? 'b' : 'a')) return 'You';
       const name = netNames.current[side];
       return long || name.length <= 8 ? name : `${name.slice(0, 7)}…`;
     }
@@ -449,6 +451,8 @@ export default function Badminton({ args }: AppProps) {
 
   const room = useAppRoom('badminton', {
     onStart: (_round, seat, players) => {
+      // a spectator (seat -1) draws the host's court as the guest does, and sends nothing
+      watchingRef.current = seat < 0;
       const next: Role = seat === 0 ? 'host' : 'guest';
       roleRef.current = next;
       setRole(next);
@@ -461,6 +465,7 @@ export default function Badminton({ args }: AppProps) {
     },
     onEnd: () => {
       roleRef.current = null;
+      watchingRef.current = false;
       setRole(null);
       quitToMenu();
     },
@@ -475,6 +480,7 @@ export default function Badminton({ args }: AppProps) {
   const leaveOnline = () => {
     room.leave();
     roleRef.current = null;
+    watchingRef.current = false;
     setRole(null);
     quitToMenu();
   };
@@ -1273,7 +1279,8 @@ export default function Badminton({ args }: AppProps) {
             )}
           </div>
 
-          {touch && settings.mode !== 'two' ? (
+          {/* a spectator has nothing to steer, so no pads */}
+          {touch && settings.mode !== 'two' && !(online && room.watching) ? (
             <div className="bd-pads">
               <div className="bd-pad-group">
                 <button type="button" className="gpad bd-pad" {...padProps('left')}>
@@ -1303,7 +1310,7 @@ export default function Badminton({ args }: AppProps) {
             </div>
           ) : (
             <footer className="bd-bar">
-              <p className="bd-help">{helpLine}</p>
+              <p className="bd-help">{online && room.watching ? `Watching${room.watchers.length > 1 ? ` with ${room.watchers.length - 1} more` : ''}. You can play once a seat is free between matches.` : helpLine}</p>
               {online ? (
                 <button type="button" className="gbtn gbtn-sm" onClick={leaveOnline}>
                   Leave

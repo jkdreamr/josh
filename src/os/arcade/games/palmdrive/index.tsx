@@ -552,12 +552,18 @@ function Play({ mode }: { mode: Mode }) {
     if (me.done !== null) bests[r.course][r.cc].submit(Math.round(me.done * 1000));
     shellRef.current.gameOver(undefined, me.done === null ? { title, detail: head + tail } : { title, detail: head + tail, board: boardOf(r.course, r.cc), rank: Math.round(me.done * 1000) });
   };
+  const leave = (k: Kart) => {
+    k.left = true;
+    k.net = null;
+    k.x = k.z = 1e5;
+    k.v = 0;
+  };
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
 
   const applyCar = (r: Race, seat: number, car: Omit<Car, 'seat'>) => {
     const k = r.karts.find((x) => x.seat === seat && x.kind === 'remote');
-    if (!k) return;
+    if (!k || k.left) return;
     k.net = { x: car.x, z: car.z, h: car.h, v: car.v, prog: car.p, done: car.fin >= 0 ? car.fin : null, flags: car.f, at: r.time };
     k.y = car.y;
     applyFlags(k, car.f);
@@ -628,6 +634,8 @@ function Play({ mode }: { mode: Mode }) {
       const me = r.karts[r.me];
       const car = carOf(me, lookRef.current);
       const mine = { ...car, fin: n.dnf ? -2 : car.fin };
+      // a kart whose driver left the room is parked out of sight, rather than frozen on the track
+      for (const k of r.karts) if (k.kind === 'remote' && !k.left && !o.players.some((p) => p.seat === k.seat) && !o.bots.some((b) => b.seat === k.seat)) leave(k);
       if (!o.isHost) {
         o.send(guestState(o.round, mine), { fast: n.ticks % 5 !== 0 && mine.fin === -1 });
         return;

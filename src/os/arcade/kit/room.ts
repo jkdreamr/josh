@@ -2,8 +2,13 @@ import { ARCADE_API } from './leaderboard.ts';
 import { parseOpenRooms, type OpenRoom } from './online-core.ts';
 
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-/** The room protocol this client speaks: 2 follows a host hand-off when the host leaves (see the 'host' event). */
-export const ROOM_PROTOCOL = 2;
+/**
+ * The room protocol this client speaks: 2 follows a host hand-off when the host leaves (see the 'host' event), 3 knows
+ * spectators and is told on the socket why a room turned it away (see the 'closed' event).
+ */
+export const ROOM_PROTOCOL = 3;
+/** A spectator gets the host's fast messages (snapshots that the next one replaces) at most this often, each kind. */
+const WATCH_FAST_MS = 66;
 const ICE_SERVERS = [{ urls: 'stun:stun.cloudflare.com:3478' }, { urls: 'stun:stun.l.google.com:19302' }];
 
 export type RoomPlayer = { seat: number; name: string };
@@ -15,13 +20,18 @@ type RoomEvents = {
    * started: a round is already under way (rooms that allow joining between rounds). round: the room's latest round.
    * bots: seats bots would take if the host started now, or null when the room has no bots (see the bots event).
    * quick: a quick-play room; startIn: while it gathers people, milliseconds until it starts on its own, else null.
+   * watching: in as a spectator (seat -1), and roundBots then the seats bots play the round under way. watchable:
+   * people can watch the room.
    */
-  welcome: { seat: number; code: string; game: string; seats: number; players: RoomPlayer[]; started: boolean; round: number; bots: number[] | null; quick: boolean; startIn: number | null };
+  welcome: { seat: number; code: string; game: string; seats: number; players: RoomPlayer[]; started: boolean; round: number; bots: number[] | null; quick: boolean; startIn: number | null; watching: boolean; roundBots: number[]; watchable: boolean };
   players: RoomPlayer[];
   /** Whether a round is under way, when the room says it changed: a round ends, or one stops for want of players. */
   started: boolean;
+  /** Who is watching (by name), and whether the host lets people watch; only rooms for games people can watch send them. */
+  watchers: { names: string[]; on: boolean };
   /**
-   * The host left and the person in seat `from` took over as host (seat 0; `seat` is this player's own seat now).
+   * The host left and the person in seat `from` took over as host (seat 0; `seat` is this player's own seat now, -1
+   * for a spectator).
    * Any round under way is over, since the host's game was running it.
    */
   host: { from: number; seat: number; players: RoomPlayer[] };
@@ -34,7 +44,11 @@ type RoomEvents = {
   /** round: the room's shared round number, or null from a server that does not send one. bots: the seats bots play this round. */
   start: { players: RoomPlayer[]; round: number | null; bots: number[] };
   msg: { from: number; d: unknown };
-  closed: { reason: string };
+  /**
+   * The room is gone for this player, or turned them away: reason says why (host-left, connection-lost, room-closed,
+   * not-found, started, full, no-watching), and watch whether they could watch it instead.
+   */
+  closed: { reason: string; watch: boolean };
   transport: RoomTransport;
 };
 
@@ -89,6 +103,12 @@ export class RoomLink {
   listed: boolean | null = null;
   /** A quick-play room, which starts on its own. */
   quick = false;
+  /** In as a spectator: no seat, and nothing is sent. */
+  readonly watching: boolean;
+  /** Spectators by name, and whether the host lets people watch (null: a game nobody can watch, or an older server). */
+  watchers: string[] = [];
+  watchable: boolean | null = null;
+  private readonly watchSent = new Map<string, number>();
   private readonly socket: WebSocket;
   private readonly listeners = new Map<keyof RoomEvents, Set<Listener<never>>>();
   private readonly peers = new Map<number, Peer>();
@@ -96,14 +116,15 @@ export class RoomLink {
   private transportValue: RoomTransport = 'relay';
   private closed = false;
 
-  constructor(code: string, name: string, api = ARCADE_API) {
+  constructor(code: string, name: string, api = ARCADE_API, { watch = false }: { watch?: boolean } = {}) {
     if (!api) throw new Error('Online Play Is Unavailable');
     this.code = code.toUpperCase();
     this.name = name;
+    this.watching = watch;
     const base = new URL(api);
     base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
     base.pathname = `${base.pathname.replace(/\/+$/, '')}/rooms/${encodeURIComponent(this.code)}/ws`;
-    base.search = new URLSearchParams({ name, v: String(ROOM_PROTOCOL) }).toString();
+    base.search = new URLSearchParams({ name, v: String(ROOM_PROTOCOL), ...(watch ? { watch: '1' } : {}) }).toString();
     this.socket = new WebSocket(base);
     this.socket.addEventListener('open', this.onOpen);
     this.socket.addEventListener('message', this.onSocketMessage);
@@ -139,6 +160,11 @@ export class RoomLink {
     this.sendSocket({ t: 'listed', on });
   }
 
+  /** Host only: let people watch the room's rounds, or send everyone watching away. */
+  setWatchable(on: boolean) {
+    this.sendSocket({ t: 'watchable', on });
+  }
+
   reportResult(round: number, winner: number | null) {
     this.sendSocket({ t: 'result', round, winner });
   }
@@ -171,6 +197,15 @@ export class RoomLink {
       relayed = true;
     }
     if (relayed) this.setTransport('relay');
+    // What the host's game says to everyone, spectators see too, through the room (fast snapshots a few times a second).
+    if (this.seat === 0 && options.to === undefined && this.watchers.length) {
+      const inner = d && typeof d === 'object' ? ((d as { d?: unknown }).d ?? d) : d;
+      const kind = inner && typeof inner === 'object' ? String((inner as { t?: unknown; k?: unknown; type?: unknown }).t ?? (inner as { k?: unknown }).k ?? (inner as { type?: unknown }).type ?? '') : '';
+      const now = globalThis.performance?.now() ?? Date.now();
+      if (options.fast && now - (this.watchSent.get(kind) ?? -Infinity) < WATCH_FAST_MS) return;
+      if (options.fast) this.watchSent.set(kind, now);
+      this.sendSocket({ t: 'watch', d });
+    }
   }
 
   close() {
@@ -201,7 +236,9 @@ export class RoomLink {
       return;
     }
     if (message.t === 'welcome' && Number.isInteger(message.seat) && typeof message.game === 'string' && Number.isInteger(message.seats)) {
-      this.seat = message.seat as number;
+      // a spectator has no seat: it sends nothing, and the host never links to it
+      const watching = this.watching && message.watch === true;
+      this.seat = watching ? null : message.seat as number;
       this.game = message.game;
       this.seats = message.seats as number;
       this.players = this.asPlayers(message.players);
@@ -209,10 +246,12 @@ export class RoomLink {
       const round = Number.isSafeInteger(message.round) && (message.round as number) > 0 ? message.round as number : 0;
       this.quick = message.quick === true;
       const startIn = this.startIn(message);
-      this.emit('welcome', { seat: this.seat, code: this.code, game: this.game, seats: this.seats, players: this.players, started: message.started === true, round, bots: this.bots, quick: this.quick, startIn });
+      const roundBots = watching && Array.isArray(message.roundBots) ? this.asSeats(message.roundBots) : [];
+      this.emit('welcome', { seat: watching ? -1 : this.seat!, code: this.code, game: this.game, seats: this.seats, players: this.players, started: message.started === true, round, bots: this.bots, quick: this.quick, startIn, watching, roundBots, watchable: message.watchable === true });
       this.emit('players', this.players);
       if (this.bots) this.emit('bots', this.bots);
       this.takeListed(message.listed);
+      this.takeWatchers(message);
       if (this.quick) this.emit('gather', startIn);
     } else if (message.t === 'players' || (message.t === 'host' && Number.isInteger(message.from))) {
       this.players = this.asPlayers(message.players);
@@ -221,7 +260,7 @@ export class RoomLink {
         if (this.seat === from) this.seat = 0;
         // Every direct link ran through the old host; the next round connects everyone to the new one.
         this.dropPeers();
-        if (this.seat !== null) this.emit('host', { from, seat: this.seat, players: this.players });
+        if (this.seat !== null || this.watching) this.emit('host', { from, seat: this.seat ?? -1, players: this.players });
       } else this.dropPeers(this.players);
       this.emit('players', this.players);
       if (Array.isArray(message.bots)) {
@@ -229,6 +268,7 @@ export class RoomLink {
         this.emit('bots', this.bots);
       }
       this.takeListed(message.listed);
+      this.takeWatchers(message);
       if (this.quick) this.emit('gather', this.startIn(message));
       if (typeof message.started === 'boolean') this.emit('started', message.started);
       this.updateTransport();
@@ -242,12 +282,14 @@ export class RoomLink {
     } else if (message.t === 'signal' && Number.isInteger(message.from)) {
       void this.receiveSignal(message.from as number, message.d);
     } else if (message.t === 'closed' && typeof message.reason === 'string') {
-      this.emit('closed', { reason: message.reason });
+      this.emit('closed', { reason: message.reason, watch: message.watch === true });
+      // said once: the socket closing after it is the same news
+      this.close();
     }
   };
 
   private readonly onSocketClose = () => {
-    if (!this.closed) this.emit('closed', { reason: 'connection-lost' });
+    if (!this.closed) this.emit('closed', { reason: 'connection-lost', watch: false });
   };
 
   private readonly onSocketError = () => {
@@ -370,6 +412,7 @@ export class RoomLink {
   }
 
   private sendSocket(message: unknown) {
+    if (this.watching) return;
     if (this.socket.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message));
   }
 
@@ -400,6 +443,15 @@ export class RoomLink {
   private startIn(message: Record<string, unknown>): number | null {
     const ms = message.startIn;
     return this.quick && typeof ms === 'number' && Number.isFinite(ms) ? Math.max(0, Math.min(60_000, ms)) : null;
+  }
+
+  private takeWatchers(message: Record<string, unknown>) {
+    if (!Array.isArray(message.watchers) || typeof message.watchable !== 'boolean') return;
+    const names = message.watchers.filter((name): name is string => typeof name === 'string').slice(0, 32).map((name) => name.slice(0, 32));
+    if (names.join('\n') === this.watchers.join('\n') && message.watchable === this.watchable) return;
+    this.watchers = names;
+    this.watchable = message.watchable;
+    this.emit('watchers', { names, on: message.watchable });
   }
 
   private takeListed(value: unknown) {

@@ -503,7 +503,8 @@ function Play({ mode }: { mode: StageMode }) {
       }
       if (packet.k === 'S' && !o.isHost && from === 0) {
         if (!synced.current) {
-          if (!packet.roster.includes(o.seat)) return;
+          // left out of the host's round (in just as it began) waits for the next; a spectator watches every car
+          if (!packet.roster.includes(o.seat) && !o.watching) return;
           current.cars = packet.roster.map((seat, index) => {
             const player = o.players.find((candidate) => candidate.seat === seat);
             const bot = o.bots.find((candidate) => candidate.seat === seat);
@@ -781,7 +782,7 @@ function Play({ mode }: { mode: StageMode }) {
         );
       })}
 
-      {shell.touch && shell.status === 'playing' && (
+      {shell.touch && shell.status === 'playing' && !online?.watching && (
         <>
           {sticks.map((stick) => (
             <div
