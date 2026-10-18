@@ -58,6 +58,10 @@ type Think = { id: number; turn: string; at: number; move: Move | null };
 
 const seatInfo = (seats: Seat[]): SeatInfo[] => seats.map(({ name, cpu, left }) => ({ name, cpu, left }));
 const sortKey = (c: Card) => (rankOf(c) === 8 ? 100 + SUIT_ORDER.indexOf(suitOf(c)) : SUIT_ORDER.indexOf(suitOf(c)) * 20 + (rankOf(c) === 1 ? 14 : rankOf(c)));
+const frameU = (el: HTMLElement, touch: boolean) => {
+  const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+  return touch && k > 0.2 && k < 0.99 ? Math.round(Math.min(2, 1 / k) * 1000) / 1000 : 1;
+};
 const sortHand = (hand: readonly Card[]) => hand.slice().sort((a, b) => sortKey(a) - sortKey(b));
 const tilt = (c: Card) => ((c * 37) % 11) - 5;
 const fmtSuit = (s: number) => `${SYMBOLS[s]} ${suitLabel(s)}`;
@@ -129,8 +133,7 @@ function Table() {
     if (!el) return;
     const measure = () => {
       setSize({ w: el.clientWidth, h: el.clientHeight });
-      const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
-      setU(shell.touch && k > 0.2 && k < 0.99 ? Math.round(Math.min(2, 1 / k) * 1000) / 1000 : 1);
+      setU(frameU(el, shell.touch));
     };
     const ro = new ResizeObserver(measure);
     ro.observe(el);
@@ -151,6 +154,9 @@ function Table() {
     const nameH = name ? name.offsetHeight : chrome.nameH;
     const barH = bar ? bar.offsetHeight : chrome.barH;
     if (Math.abs(nameH - chrome.nameH) > 0.5 || Math.abs(barH - chrome.barH) > 0.5) setChrome({ nameH, barH });
+    // The frame can still be animating in when the table first measures, and that never resizes the table, so check again on every render.
+    const next = frameU(el, shell.touch);
+    if (Math.abs(next - u) > 0.01) setU(next);
   });
 
   function nameFor(seat: number) {
