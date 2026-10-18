@@ -268,8 +268,15 @@ function Play() {
         round.pointer = null;
         const state = round.state;
         const board = round.board;
-        if (!start || start.swiped || !state || !board || performance.now() - start.at > 450) return;
+        if (!start || start.swiped || !state || !board) return;
         const p = local(event);
+        const sx = p.x - start.x;
+        const sy = p.y - start.y;
+        if (Math.max(Math.abs(sx), Math.abs(sy)) >= 18) {
+          steer(Math.abs(sx) > Math.abs(sy) ? (sx > 0 ? 'right' : 'left') : sy > 0 ? 'down' : 'up');
+          return;
+        }
+        if (performance.now() - start.at > 450) return;
         const dx = p.x - round.head.x;
         const dy = p.y - round.head.y;
         const dead = board.cell * 0.35;
