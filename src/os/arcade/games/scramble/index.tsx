@@ -750,12 +750,13 @@ function Play({ mode }: { mode: Mode }) {
     setFeed((f) => [...f.slice(-4), { id, text, mine, until: clock.current + 6 }]);
   }
 
-  function popNumber(x: number, z: number, text: string, shield: boolean, big: boolean) {
+  /** A damage number popping up over a hit, `y` up from the ground (the egg's height up on something built). */
+  function popNumber(x: number, z: number, text: string, shield: boolean, big: boolean, y = 0) {
     const p = pops.current[popAt.current];
     popAt.current = (popAt.current + 1) % pops.current.length;
     if (!p.el) return;
     p.x = x + (Math.random() - 0.5) * 0.6;
-    p.y = 1.8;
+    p.y = 1.8 + y;
     p.z = z;
     p.age = 0;
     p.live = true;
@@ -917,7 +918,7 @@ function Play({ mode }: { mode: Mode }) {
         break;
       case 'hit':
         if (e.f === m.me) {
-          popNumber(e.x, e.z, String(Math.round(e.took)), e.shield, e.took >= 40);
+          popNumber(e.x, e.z, String(Math.round(e.took)), e.shield, e.took >= 40, m.fighters[e.to]?.y ?? 0);
           sfx.tone({ freq: e.shield ? 1500 : 1100, dur: 0.035, type: 'triangle', vol: 0.1 });
         }
         break;
