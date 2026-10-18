@@ -4,7 +4,7 @@ import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
 import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, deltaS, dropAt, edgeAt, edgeRuns, gridSpot, headingOf, inTrench, locate, pointAt, wrapAngle, wrapS, type Past, type Track } from './track';
 import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, makeStatue, noise, scatter, swingAt, texture, waterTexture } from './scenery';
-import { COUNTDOWN, FALL_CARRY, FALL_SINK, RAMP_H, RAMP_LEN, TURBO_AT, hazardV, hurt, turboLevel, type Ev, type Hat, type Kart, type Race, type ThingKind } from './logic';
+import { COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, RAMP_H, RAMP_LEN, TURBO_AT, hazState, hazardV, hurt, turboLevel, type Ev, type Hat, type HazPhase, type Kart, type LiveHazard, type Race, type ThingKind } from './logic';
 
 type Three = typeof import('three');
 
@@ -1017,7 +1017,216 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     const edges = new THREE.MeshBasicMaterial({ map: stripe('#ffcf1f', '#141414', 4) });
     for (const at of [s0 - 0.4, s1]) scene.add(new THREE.Mesh(strip(THREE, t, at, at + 0.4, () => h.d - w, () => h.d + w, 0.076, 0.4), edges));
   };
+  // the set pieces (see HazardKind and hazState in logic.ts): pile-driver rigs straddling the road, bollard banks under
+  // a signal gantry, wrecking balls on tower cranes, sprinklers on their planters and the wet road. They are drawn from
+  // hazState for the lap this screen's kart is on, the state it collides with; before their lap they stand by asleep
+  // (the hammer parked high and dark, the bollards flush with green lamps, the sprinkler capped), so the first lap
+  // shows where they are.
+  const rigMat = new THREE.MeshLambertMaterial({ color: 0xf2b705, emissive: 0x3a2a00 });
+  const steelMat = new THREE.MeshLambertMaterial({ color: 0x3a3d46, emissive: 0x0b0c10 });
+  const ironMat = new THREE.MeshLambertMaterial({ color: 0x2a2c31, emissive: 0x08090c });
+  const chevronTex = stripe('#ffcf1f', '#141414', 3);
+  // (a hammer's head is one box in one material, its own, so it can glow as it wakes and as it is about to drop; asleep
+  // it is a dark lump with no light of its own)
+  const headLit = () => new THREE.MeshLambertMaterial({ map: chevronTex, ...(look.night ? { emissive: 0xffffff, emissiveMap: chevronTex, emissiveIntensity: 0.3 } : {}) });
+  const headAsleep = new THREE.MeshBasicMaterial({ color: 0x23252b });
+  const glowTex = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      const grad = g.createRadialGradient(32, 32, 2, 32, 32, 31);
+      grad.addColorStop(0, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
+    }),
+  );
+  const shadowTex = (kartShared.shadow as T.MeshBasicMaterial).map!;
+  const signOf = (text: string, bg: string, fg: string) =>
+    new THREE.MeshBasicMaterial({
+      map: texture(
+        THREE,
+        canvas(256, 64, (g) => {
+          g.fillStyle = bg;
+          g.fillRect(0, 0, 256, 64);
+          g.fillStyle = fg;
+          g.font = 'bold 30px Inter, Arial, sans-serif';
+          g.textAlign = 'center';
+          g.textBaseline = 'middle';
+          g.fillText(text, 128, 34);
+        }),
+      ),
+      side: THREE.DoubleSide,
+    });
+  // Everything about the rigs that stands still is instanced, a draw for each material: the yellow steelwork (A-frames,
+  // gantries, cranes), the grey steel, the two signs, the planters and hubs. Each piece is placed in its own frame at a
+  // point of the road, turned to face along it: local z runs along the road and local -x is to the right, so something
+  // d to the right sits at local x = -d.
+  const frame = (s: number, d = 0) => {
+    const c = pointAt(t, s, d);
+    return { x: c.x, z: c.z, h: headingOf(c.tx, c.tz) };
+  };
+  type Frame = ReturnType<typeof frame>;
+  const pose = (f: Frame, x: number, y: number, z: number, sx: number, sy: number, sz: number, ry = 0) => {
+    const c = Math.cos(f.h);
+    const n = Math.sin(f.h);
+    dummy.position.set(f.x + x * c + z * n, y, f.z - x * n + z * c);
+    dummy.rotation.set(0, f.h + ry, 0);
+    dummy.scale.set(sx, sy, sz);
+    dummy.updateMatrix();
+    return dummy.matrix;
+  };
+  const placed = (f: Frame, x: number, y: number, z: number, sx: number, sy: number, sz: number, ry = 0) => pose(f, x, y, z, sx, sy, sz, ry).clone();
+  const still = { rig: [] as T.Matrix4[], steel: [] as T.Matrix4[], pile: [] as T.Matrix4[], lock: [] as T.Matrix4[], stone: [] as T.Matrix4[], hub: [] as T.Matrix4[] };
+  // the uprights the chase camera can come round (a hammer's legs on the inside of a hairpin): faded as it passes them
+  const uprights: { k: number; x: number; z: number; half: number; m: T.Matrix4 }[] = [];
+  const upright = (f: Frame, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+    const m = placed(f, x, y, z, sx, sy, sz);
+    uprights.push({ k: still.rig.length, x: m.elements[12], z: m.elements[14], half: Math.max(sx, sz) / 2, m });
+    still.rig.push(m);
+  };
+  type HammerView = { i: number; head: T.Mesh; lit: T.MeshLambertMaterial; shade: T.Mesh; shadeMat: T.MeshBasicMaterial; glow: T.Sprite; f: Frame; beaconY: number; lift: number; phase: HazPhase; flash: number };
+  const hammers: HammerView[] = [];
+  const buildHammer = (h: LiveHazard, i: number) => {
+    const f = frame(h.s);
+    // the A-frame: legs just outside the wall (or just past the lip where the road drops away), a beam across the top
+    const legs = [-1, 1].map((side) => side * (edgeAt(t, h.s, side).lim + 0.6));
+    for (const d of legs) {
+      upright(f, -d, 4.2, 0, 0.55, 8.4, 0.55);
+      still.rig.push(placed(f, -d, 0.15, 0, 1.4, 0.3, 1.4));
+    }
+    still.rig.push(placed(f, -(legs[0] + legs[1]) / 2, 8.4, 0, legs[1] - legs[0] + 0.6, 0.6, 0.6));
+    still.pile.push(placed(f, -(legs[0] + legs[1]) / 2, 9.2, 0, 4.2, 1.05, 1, Math.PI));
+    // (and a mast up from the beam over the head for its beacon, clear above the sign)
+    still.rig.push(placed(f, -h.d, 9.65, 0.45, 0.18, 2.1, 0.18));
+    const lit = headLit();
+    const head = new THREE.Mesh(geo.box, lit);
+    head.scale.set(h.r * 1.9, 1.4, h.r * 1.9);
+    const c = pointAt(t, h.s, h.d);
+    head.position.set(c.x, 0.7, c.z);
+    head.rotation.y = f.h;
+    scene.add(head);
+    const shadeMat = new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.4 });
+    const shade = new THREE.Mesh(geo.plane, shadeMat);
+    shade.rotation.x = -Math.PI / 2;
+    shade.position.set(c.x, 0.085, c.z);
+    shade.renderOrder = 2;
+    scene.add(shade);
+    // a red glow round the beacon while it strobes, seen from well down the road (no fog on it)
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xff3a1a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+    glow.position.set(c.x + Math.sin(f.h) * 0.45, 10.9, c.z + Math.cos(f.h) * 0.45);
+    glow.visible = false;
+    scene.add(glow);
+    hammers.push({ i, head, lit, shade, shadeMat, glow, f, beaconY: 10.9, lift: 1, phase: 'off', flash: 0 });
+  };
+  // bollard banks: three posts each, instanced, under a gantry with a lamp per bank; one gantry and one stripe per row
+  const bankPosts: { x: number; z: number; ry: number }[] = [];
+  const lamps: { x: number; z: number; ry: number }[] = [];
+  const banks: { i: number; post: number; lamp: number }[] = [];
+  const rowsBuilt = new Set<number>();
+  const buildBank = (h: LiveHazard, i: number) => {
+    const w = h.w ?? 0;
+    const post = bankPosts.length;
+    for (const k of [-1, 0, 1]) {
+      const p = pointAt(t, h.s, h.d + (k * w) / 3);
+      bankPosts.push({ x: p.x, z: p.z, ry: headingOf(p.tx, p.tz) });
+    }
+    const lp = pointAt(t, h.s, h.d);
+    lamps.push({ x: lp.x, z: lp.z, ry: headingOf(lp.tx, lp.tz) });
+    banks.push({ i, post, lamp: lamps.length - 1 });
+    const row = Math.round(h.s);
+    if (rowsBuilt.has(row)) return;
+    rowsBuilt.add(row);
+    const f = frame(h.s);
+    for (const side of [-1, 1]) upright(f, -side * (t.edge + 0.6), 2.6, 0, 0.45, 5.2, 0.45);
+    still.rig.push(placed(f, 0, 5.2, 0, t.edge * 2 + 1.8, 0.5, 0.5));
+    still.lock.push(placed(f, 0, 6.05, 0, 4.4, 1.1, 1, Math.PI));
+    // the line across the road where they come up
+    scene.add(new THREE.Mesh(strip(THREE, t, h.s - 0.55, h.s + 0.55, () => -t.edge, () => t.edge, 0.078, 1.1), new THREE.MeshBasicMaterial({ map: stripe('#ffcf1f', '#141414', 6) })));
+  };
+  type WreckerView = { i: number; f: Frame; tip: number; lift: number };
+  const wreckers: WreckerView[] = [];
+  const buildWrecker = (h: LiveHazard, i: number) => {
+    const f = frame(h.s);
+    // a tower crane on the left verge, its jib out over the road past the pivot the ball hangs from
+    const mastD = -(t.edge + 2.6);
+    const tip = h.d + 4.5;
+    upright(f, -mastD, 6.5, 0, 1.2, 13, 1.2);
+    still.rig.push(placed(f, -(mastD + tip) / 2, 10.5, 0, tip - mastD + 0.6, 0.7, 0.7));
+    still.rig.push(placed(f, -(mastD - 2.4), 10.5, 0, 3.6, 0.7, 0.7));
+    still.steel.push(placed(f, -(mastD - 3.4), 9.7, 0, 1.6, 1.3, 1.6));
+    still.rig.push(placed(f, -mastD, 11.6, 0, 1.6, 1.6, 1.6));
+    still.steel.push(placed(f, -h.d, 9.9, 0, 0.9, 0.6, 0.9));
+    wreckers.push({ i, f, tip, lift: 0 });
+  };
+  const jetMat = new THREE.MeshBasicMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const jetGeo = new THREE.CylinderGeometry(0.5, 0.1, 1, 8, 1, true);
+  jetGeo.rotateX(Math.PI / 2);
+  jetGeo.translate(0, 0, 0.5);
+  const sprayMat = new THREE.SpriteMaterial({ map: texture(THREE, canvas(64, 64, (g) => { const grad = g.createRadialGradient(32, 32, 2, 32, 32, 31); grad.addColorStop(0, 'rgba(220,245,255,0.7)'); grad.addColorStop(1, 'rgba(200,240,255,0)'); g.fillStyle = grad; g.fillRect(0, 0, 64, 64); })), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  type RotorView = { i: number; f: Frame; spray: T.Sprite; on: number };
+  const rotors: RotorView[] = [];
+  const buildRotor = (h: LiveHazard, i: number) => {
+    const f = frame(h.s, h.d);
+    still.stone.push(placed(f, 0, 0.17, 0, h.r * 1.9, 0.34, h.r * 1.9));
+    still.hub.push(placed(f, 0, 0.7, 0, h.r, 0.75, h.r));
+    const spray = new THREE.Sprite(sprayMat);
+    spray.visible = false;
+    scene.add(spray);
+    rotors.push({ i, f, spray, on: 0 });
+  };
+  const wetTex = texture(
+    THREE,
+    canvas(128, 128, (g) => {
+      // a glossy dark sheet with the lamps streaked across it
+      const blobs = scatter(41);
+      for (let n = 0; n < 7; n++) {
+        const a = (n / 7) * Math.PI * 2;
+        const x = 64 + Math.cos(a) * 24 * blobs();
+        const y = 64 + Math.sin(a) * 24 * blobs();
+        const rad = 34 + blobs() * 14;
+        const grad = g.createRadialGradient(x, y, rad * 0.2, x, y, rad);
+        grad.addColorStop(0, 'rgba(8,10,18,0.85)');
+        grad.addColorStop(0.8, 'rgba(14,18,30,0.6)');
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = grad;
+        g.beginPath();
+        g.arc(x, y, rad, 0, Math.PI * 2);
+        g.fill();
+      }
+      for (let n = 0; n < 11; n++) {
+        g.fillStyle = `rgba(255,232,180,${0.28 + blobs() * 0.3})`;
+        g.beginPath();
+        g.ellipse(30 + blobs() * 68, 30 + blobs() * 68, 1.5 + blobs() * 2.5, 9 + blobs() * 14, 0.1, 0, Math.PI * 2);
+        g.fill();
+      }
+    }),
+  );
+  // (like the oil, after dark its own light keeps it reading as a wet sheet rather than a grey smear: dark, with the
+  // lamps' streaks shining in it)
+  const wetMat = new THREE.MeshLambertMaterial({ map: wetTex, transparent: true, depthWrite: false, ...(look.night ? { emissive: 0xffffff, emissiveMap: wetTex, emissiveIntensity: 0.9 } : {}) });
+  type WetView = { i: number; decal: T.Mesh; mist: T.Sprite; mistMat: T.SpriteMaterial };
+  const wets: WetView[] = [];
+  const buildWet = (h: LiveHazard, i: number) => {
+    const decal = new THREE.Mesh(geo.plane, wetMat);
+    decal.rotation.set(-Math.PI / 2, 0, rand() * Math.PI * 2);
+    decal.scale.set(h.r * 2.2, h.r * 2.2, 1);
+    decal.position.set(h.x, 0.058 + i * 0.0004, h.z);
+    decal.renderOrder = 1;
+    // a thin low mist off it, additive and faint, gone as the camera comes into it
+    const mistMat = new THREE.SpriteMaterial({ map: sprayMat.map, color: 0x9fb8d8, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+    const mist = new THREE.Sprite(mistMat);
+    mist.scale.set(h.r * 1.5, 1.2, 1);
+    mist.position.set(h.x, 0.6, h.z);
+    scene.add(decal, mist);
+    wets.push({ i, decal, mist, mistMat });
+  };
   r.hazards.forEach((h, i) => {
+    if (h.kind === 'hammer') return buildHammer(h, i);
+    if (h.kind === 'bollard') return buildBank(h, i);
+    if (h.kind === 'wrecker') return buildWrecker(h, i);
+    if (h.kind === 'rotor') return buildRotor(h, i);
+    if (h.kind === 'wet') return buildWet(h, i);
     if (h.kind === 'sand') {
       // a bunker: raked sand with a soft edge
       sandMat ??= new THREE.MeshLambertMaterial({ map: bunkerTexture(THREE, 9), transparent: true, depthWrite: false });
@@ -1188,6 +1397,92 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     }
   });
 
+  // the bollards' posts, their lit caps and the gantry lamps, one instanced mesh each, coloured per bank
+  const whiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const postMesh = bankPosts.length ? new THREE.InstancedMesh(geo.wheel, steelMat, bankPosts.length) : null;
+  const capMesh = bankPosts.length ? new THREE.InstancedMesh(geo.wheel, whiteMat, bankPosts.length) : null;
+  const lampMesh = lamps.length ? new THREE.InstancedMesh(geo.box, whiteMat, lamps.length) : null;
+  if (postMesh && capMesh && lampMesh) {
+    scene.add(postMesh, capMesh, lampMesh);
+    lamps.forEach((l, k) => {
+      dummy.position.set(l.x, 4.65, l.z);
+      dummy.rotation.set(0, l.ry, 0);
+      dummy.scale.set(0.8, 0.6, 0.4);
+      dummy.updateMatrix();
+      lampMesh.setMatrixAt(k, dummy.matrix);
+    });
+    dummy.rotation.set(0, 0, 0);
+  }
+  // the rigs' still parts, a draw a material (see `still`)
+  const instanced = (geom: T.BufferGeometry, mat: T.Material, ms: T.Matrix4[]) => {
+    if (!ms.length) return null;
+    const m = new THREE.InstancedMesh(geom, mat, ms.length);
+    ms.forEach((x, k) => m.setMatrixAt(k, x));
+    m.computeBoundingSphere();
+    scene.add(m);
+    return m;
+  };
+  const rigMesh = instanced(geo.box, rigMat, still.rig);
+  instanced(geo.box, steelMat, still.steel);
+  instanced(geo.plane, signOf('PILE DRIVER', '#f2b705', '#141414'), still.pile);
+  instanced(geo.plane, signOf('LOCKDOWN', '#8c1515', '#ffffff'), still.lock);
+  instanced(geo.wheel, mats.stone, still.stone);
+  instanced(geo.wheel, steelMat, still.hub);
+  // (an upright the camera is coming round is drawn faded instead: a ghost in its place, the solid one shrunk away)
+  const ghostMat = new THREE.MeshLambertMaterial({ color: 0xf2b705, emissive: 0x3a2a00, transparent: true, opacity: 0.22, depthWrite: false });
+  const ghosts = [0, 1].map(() => {
+    const m = new THREE.Mesh(geo.box, ghostMat);
+    m.matrixAutoUpdate = false;
+    m.visible = false;
+    scene.add(m);
+    return m;
+  });
+  const faded = new Set<number>();
+  const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+  // (and a hammer's head and ram, when the camera trails through them on the inside of the hairpin)
+  const headGhost = new THREE.MeshBasicMaterial({ map: chevronTex, transparent: true, opacity: 0.25, depthWrite: false });
+  const ramGhost = new THREE.Mesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x3a3d46, transparent: true, opacity: 0.22, depthWrite: false }));
+  ramGhost.visible = false;
+  scene.add(ramGhost);
+  // the moving parts, instanced too: rams, footprint rings and beacons for the hammers; cables, balls, their bands and the
+  // jib lights for the cranes; jets, the asleep caps and their standby lamps for the sprinklers. All are drawn whatever
+  // the camera sees (their instances move), a draw apiece
+  const moving = (geom: T.BufferGeometry, mat: T.Material, n: number) => {
+    if (!n) return null;
+    const m = new THREE.InstancedMesh(geom, mat, n);
+    m.frustumCulled = false;
+    for (let k = 0; k < n; k++) m.setMatrixAt(k, ZERO);
+    scene.add(m);
+    return m;
+  };
+  const tinted = (color: number, extra: T.MeshBasicMaterialParameters = {}) => new THREE.MeshBasicMaterial({ color, ...extra });
+  const ramMesh = moving(geo.box, steelMat, hammers.length);
+  // (the footprint painted on the road, always: exactly what the head covers; grey while the hammer sleeps)
+  const ringGeo = new THREE.RingGeometry(0.84, 1, 28);
+  ringGeo.rotateX(-Math.PI / 2);
+  const footMesh = moving(ringGeo, tinted(0xffffff, { transparent: true, opacity: 0.85, depthWrite: false }), hammers.length);
+  if (footMesh) footMesh.renderOrder = 2;
+  const beaconMesh = moving(geo.ball, tinted(0xffffff), hammers.length);
+  const cableMesh = moving(geo.box, kartShared.dark, wreckers.length);
+  const ballMesh = moving(geo.ball, ironMat, wreckers.length);
+  const bandGeo = new THREE.TorusGeometry(0.99, 0.06, 6, 28);
+  bandGeo.rotateX(Math.PI / 2);
+  const bandMesh = moving(bandGeo, tinted(0xfff3c8), wreckers.length);
+  const jibMesh = moving(geo.ball, tinted(0xff2a1a), wreckers.length);
+  const jetMesh = moving(jetGeo, jetMat, rotors.length);
+  // (asleep, a sprinkler shows its cap and the nozzle arm folded down along it, and a dim blue standby lamp)
+  const capMesh2 = moving(geo.box, new THREE.MeshLambertMaterial({ color: 0x8a92a2, emissive: 0x1c1f26 }), rotors.length * 2);
+  const standbyMesh = moving(geo.ball, tinted(0x2f6dff), rotors.length);
+  // (the lawn-wet shimmer round a sprinkler that has come on: faint and additive, so the road under it stays road)
+  const sheenGeo = new THREE.RingGeometry(1.2, 5.7, 36);
+  sheenGeo.rotateX(-Math.PI / 2);
+  const sheenMesh = moving(sheenGeo, tinted(0x9fd8ff, { transparent: true, opacity: 0.05, depthWrite: false, blending: THREE.AdditiveBlending }), rotors.length);
+  if (sheenMesh) sheenMesh.renderOrder = 1;
+  const colorOf = { asleep: new THREE.Color(0x3c3f47), foot: new THREE.Color(0xd8312a), footHot: new THREE.Color(0xff5a3c), standby: new THREE.Color(0x1f9a45), beaconIdle: new THREE.Color(0x4a0d08), beaconOn: new THREE.Color(0xff2a1a), flash: new THREE.Color(0xfff2c0) };
+  const setAt = (m: T.InstancedMesh | null, k: number, f: Frame, x: number, y: number, z: number, sx: number, sy: number, sz: number, ry = 0) => {
+    if (m) m.setMatrixAt(k, pose(f, x, y, z, sx, sy, sz, ry));
+  };
+  const lampColor = { off: new THREE.Color(0x27e36a), warn: new THREE.Color(0xffb300), on: new THREE.Color(0xff2a1a), dim: new THREE.Color(0x163a22) };
   // ponds: still blue water up against the shoulder (tiled in world space, so ponds that overlap join up), a low
   // stone lip all round the edge, and the water gently moving
   const ponds = r.hazards.filter((h) => h.kind === 'water');
@@ -1411,6 +1706,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const pops: { s: T.Sprite; age: number }[] = [];
   const UP = new THREE.Vector3(0, 1, 0);
   const scratchV = new THREE.Vector3();
+  const scratchQ = new THREE.Quaternion();
   const say = (text: string, x: number, y: number, z: number, color = '#ffffff') => {
     let tex = words.get(text);
     if (!tex) {
@@ -1647,6 +1943,173 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
           b.mark.scale.set(pulse, pulse, 1);
           b.mark.position.y = 3.4 + Math.sin(clock * 5) * 0.15;
         }
+      }
+      // the set pieces, as hazState has them for this screen's lap
+      const meK = race.karts[me];
+      // (the uprights the camera is right up against are drawn faded)
+      if (rigMesh) {
+        let g = 0;
+        const near = new Set<number>();
+        for (const u of uprights) if (g < ghosts.length && camera.position.y < 13 && Math.hypot(camera.position.x - u.x, camera.position.z - u.z) < u.half + 1.3) {
+          near.add(u.k);
+          ghosts[g].matrix.copy(u.m);
+          ghosts[g].visible = true;
+          g++;
+        }
+        for (; g < ghosts.length; g++) ghosts[g].visible = false;
+        let changed = false;
+        for (const u of uprights) {
+          const was = faded.has(u.k);
+          if (near.has(u.k) === was) continue;
+          rigMesh.setMatrixAt(u.k, was ? u.m : ZERO);
+          if (was) faded.delete(u.k);
+          else faded.add(u.k);
+          changed = true;
+        }
+        if (changed) rigMesh.instanceMatrix.needsUpdate = true;
+      }
+      let ghostRam = false;
+      hammers.forEach((hv, n) => {
+        const h = race.hazards[hv.i];
+        const st = hazState(race, h, race.time, lapNow);
+        // (the head falls and sits as the state says; hauled up for a bus, or parked asleep, it eases)
+        hv.lift = st.phase === 'idle' || st.phase === 'off' ? damp(hv.lift, 1, 6, dt) : st.lift;
+        if (hv.phase === 'slam' && st.phase === 'down') {
+          // the blow: dust round the foot of the head, and the ground shakes nearby
+          burst(geo.ball, [partMat.dust], h.x, 0.3, h.z, 14, 6, 0.4, 0.7, 12);
+          if (meK && Math.hypot(meK.x - h.x, meK.z - h.z) < 25) shake = Math.max(shake, 0.3);
+        }
+        // waking on its lap: a flash of the head and the beacon, so the new one on the road is seen
+        if (hv.phase === 'off' && st.phase !== 'off') hv.flash = 0.9;
+        hv.flash = Math.max(0, hv.flash - dt);
+        hv.phase = st.phase;
+        const asleep = st.phase === 'off';
+        // (shaking hard in the last moments before it drops)
+        const jolt = st.warn > 0 ? 0.13 * st.warn : 0;
+        const y = 0.7 + hv.lift * HAMMER.drop + (jolt ? Math.sin(clock * 40) * jolt : 0);
+        const c = pointAt(race.track, h.s, h.d);
+        hv.head.position.set(c.x + (jolt ? Math.cos(clock * 33) * jolt * 0.5 : 0), y, c.z);
+        // (the camera within a meter and a half of the head's box, along the road or across it)
+        const cdx = camera.position.x - c.x;
+        const cdz = camera.position.z - c.z;
+        const box = h.r * 0.95 + 1.5;
+        const inside = camera.position.y < 9 && Math.abs(cdx * Math.sin(hv.f.h) + cdz * Math.cos(hv.f.h)) < box && Math.abs(cdx * Math.cos(hv.f.h) - cdz * Math.sin(hv.f.h)) < box;
+        hv.head.material = inside ? headGhost : asleep ? headAsleep : hv.lit;
+        const strobe = st.warn > 0 && Math.floor(clock * 8) % 2 === 0;
+        if (look.night) hv.lit.emissiveIntensity = 0.3 + (hv.flash > 0 ? 1.6 * (hv.flash / 0.9) : 0) + (st.warn > 0 ? (strobe ? 0.9 : 0.4) * st.warn : 0);
+        setAt(ramMesh, n, hv.f, -h.d, (8.1 + y + 0.7) / 2, 0, inside ? 0 : 0.6, Math.max(0.1, 8.1 - (y + 0.7)), inside ? 0 : 0.6);
+        if (inside) {
+          ramGhost.position.set(c.x, (8.1 + y + 0.7) / 2, c.z);
+          ramGhost.rotation.y = hv.f.h;
+          ramGhost.scale.set(0.6, Math.max(0.1, 8.1 - (y + 0.7)), 0.6);
+          ghostRam = true;
+        }
+        const sz = h.r * (1.4 + 1.2 * (1 - hv.lift));
+        hv.shade.scale.set(sz, sz, 1);
+        hv.shadeMat.opacity = asleep ? 0.12 : 0.25 + 0.5 * (1 - hv.lift) + 0.25 * st.warn;
+        setAt(footMesh, n, hv.f, -h.d, 0.082, 0, h.r, 1, h.r);
+        footMesh?.setColorAt(n, asleep ? colorOf.asleep : st.warn > 0 ? (strobe ? colorOf.footHot : colorOf.foot) : colorOf.foot);
+        // the beacon on its mast: a small green standby lamp asleep, dark red awake, and a big strobing red one with a
+        // glow round it in the warning
+        const big = asleep ? 0.32 : st.warn > 0 || hv.flash > 0 ? 0.6 : 0.42;
+        setAt(beaconMesh, n, hv.f, -h.d, hv.beaconY, 0.45, big, big, big);
+        beaconMesh?.setColorAt(n, hv.flash > 0 && Math.floor(clock * 10) % 2 === 0 ? colorOf.flash : asleep ? colorOf.standby : strobe ? colorOf.beaconOn : colorOf.beaconIdle);
+        hv.glow.visible = strobe || hv.flash > 0;
+        if (hv.glow.visible) {
+          const g = 4.5 + (hv.flash > 0 ? 2 : 1.5 * st.warn);
+          hv.glow.scale.set(g, g, 1);
+        }
+      });
+      ramGhost.visible = ghostRam;
+      for (const m of [ramMesh, footMesh, beaconMesh]) if (m) m.instanceMatrix.needsUpdate = true;
+      if (footMesh?.instanceColor) footMesh.instanceColor.needsUpdate = true;
+      if (beaconMesh?.instanceColor) beaconMesh.instanceColor.needsUpdate = true;
+      if (postMesh && capMesh && lampMesh) {
+        for (const b of banks) {
+          const h = race.hazards[b.i];
+          const st = hazState(race, h, race.time, lapNow);
+          const lift = st.lift;
+          for (let k = 0; k < 3; k++) {
+            const p = bankPosts[b.post + k];
+            dummy.position.set(p.x, -0.52 + lift * 1.04, p.z);
+            dummy.rotation.set(0, p.ry, 0);
+            dummy.scale.set(0.22, 1.04, 0.22);
+            dummy.updateMatrix();
+            postMesh.setMatrixAt(b.post + k, dummy.matrix);
+            dummy.position.y = lift * 1.04 + 0.03;
+            dummy.scale.set(0.28, 0.1, 0.28);
+            dummy.updateMatrix();
+            capMesh.setMatrixAt(b.post + k, dummy.matrix);
+          }
+          // green down, amber flashing before it rises, red up; dark before its lap
+          const c = st.phase === 'off' ? lampColor.dim : st.solid ? lampColor.on : st.warn > 0 && Math.floor(clock * 8) % 2 === 0 ? lampColor.warn : st.warn > 0 ? lampColor.dim : lampColor.off;
+          lampMesh.setColorAt(b.lamp, c);
+          for (let k = 0; k < 3; k++) capMesh.setColorAt(b.post + k, c);
+        }
+        dummy.rotation.set(0, 0, 0);
+        postMesh.instanceMatrix.needsUpdate = true;
+        capMesh.instanceMatrix.needsUpdate = true;
+        if (lampMesh.instanceColor) lampMesh.instanceColor.needsUpdate = true;
+        if (capMesh.instanceColor) capMesh.instanceColor.needsUpdate = true;
+      }
+      wreckers.forEach((wv, n) => {
+        const h = race.hazards[wv.i];
+        const st = hazState(race, h, race.time, lapNow);
+        wv.lift = damp(wv.lift, st.lift, 4, dt);
+        const swing = st.d - h.d;
+        const y = 9.5 - Math.sqrt(Math.max(0, 8.2 * 8.2 - swing * swing)) + wv.lift * 4;
+        const dx = -(st.d - h.d);
+        const dy = y - 9.5;
+        const len = Math.hypot(dx, dy) || 0.01;
+        // (the cable from the pivot to the ball, tilted in the frame's x-y plane)
+        const c = Math.cos(wv.f.h);
+        const sn = Math.sin(wv.f.h);
+        const lx = -(st.d + h.d) / 2;
+        dummy.position.set(wv.f.x + lx * c, (y + 9.5) / 2, wv.f.z - lx * sn);
+        dummy.quaternion.setFromUnitVectors(UP, scratchV.set(dx / len, dy / len, 0));
+        dummy.quaternion.premultiply(scratchQ.setFromAxisAngle(UP, wv.f.h));
+        dummy.scale.set(0.09, len, 0.09);
+        dummy.updateMatrix();
+        cableMesh?.setMatrixAt(n, dummy.matrix);
+        dummy.rotation.set(0, 0, 0);
+        setAt(ballMesh, n, wv.f, -st.d, y, 0, h.r, h.r, h.r);
+        setAt(bandMesh, n, wv.f, -st.d, y, 0, h.r, h.r, h.r);
+        const blink = Math.floor(clock * 1.5) % 2 === 0;
+        setAt(jibMesh, n, wv.f, -wv.tip, 11.1, 0, blink ? 0.4 : 0, blink ? 0.4 : 0, blink ? 0.4 : 0);
+      });
+      for (const m of [cableMesh, ballMesh, bandMesh, jibMesh]) if (m) m.instanceMatrix.needsUpdate = true;
+      rotors.forEach((rv, n) => {
+        const h = race.hazards[rv.i];
+        const st = hazState(race, h, race.time, lapNow);
+        rv.on = damp(rv.on, st.live ? 1 : 0, 5, dt);
+        const arm = h.arm ?? 5;
+        const on = rv.on > 0.03;
+        // (the arm turns with the state's angle: 0 along the road, +pi/2 to the right)
+        setAt(jetMesh, n, rv.f, 0, 1.02, 0, on ? 0.5 + 0.5 * rv.on : 0, on ? 0.5 + 0.5 * rv.on : 0, on ? arm * rv.on : 0, -st.ang);
+        rv.spray.visible = on;
+        if (on) {
+          const a = rv.f.h - st.ang;
+          rv.spray.position.set(rv.f.x + Math.sin(a) * arm * rv.on, 1.22, rv.f.z + Math.cos(a) * arm * rv.on);
+          rv.spray.scale.set(3 * rv.on, 2.2 * rv.on, 1);
+        }
+        setAt(sheenMesh, n, rv.f, 0, 0.06, 0, on ? 1 : 0, 1, on ? 1 : 0);
+        const asleep = st.phase === 'off';
+        const z = asleep ? 1 : 0;
+        // asleep: the cap, the nozzle arm folded down along it, a dim blue lamp on top
+        setAt(capMesh2, 2 * n, rv.f, 0, 1.12, 0, h.r * 1.3 * z, 0.14 * z, h.r * 1.3 * z);
+        setAt(capMesh2, 2 * n + 1, rv.f, 0, 1.26, 0.45, 0.22 * z, 0.18 * z, 1.7 * z, 0.6);
+        setAt(standbyMesh, n, rv.f, 0, 1.36, 0, 0.16 * z, 0.16 * z, 0.16 * z);
+      });
+      for (const m of [jetMesh, sheenMesh, capMesh2, standbyMesh]) if (m) m.instanceMatrix.needsUpdate = true;
+      for (const w of wets) {
+        const h = race.hazards[w.i];
+        const on = hazState(race, h, race.time, lapNow).live;
+        w.decal.visible = on;
+        // (the mist fades away as the camera comes into it, so it never fogs the view)
+        const near = Math.hypot(camera.position.x - h.x, camera.position.z - h.z);
+        const fade = Math.min(1, Math.max(0, (near - 6) / 8));
+        w.mist.visible = on && fade > 0;
+        if (w.mist.visible) w.mistMat.opacity = (0.16 + Math.sin(clock * 1.3 + w.i) * 0.05) * fade;
       }
       pins.forEach((f, n) => {
         f.rotation.y = Math.sin(clock * 2.3 + n * 2) * 0.4;
@@ -1941,6 +2404,13 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         if (!k) return;
         burst(geo.box, [partMat.white, partMat.star], k.x, 1.8, k.z, 10, 4, 0.16, 0.5, 6);
         say('PLINK!', k.x, 3.2, k.z, '#ffe14d');
+      } else if (e.t === 'haz') {
+        // caught by a set piece: sparks off the steel (spray off the jet), and a jolt if it was you
+        const k = race.karts[e.k];
+        if (!k) return;
+        if (e.kind === 'rotor') burst(geo.ball, [partMat.spray, partMat.white], k.x, 0.8, k.z, 14, 5, 0.25, 0.6, 10);
+        else burst(geo.box, [partMat.white, partMat.star], k.x, 0.9, k.z, 12, 6, 0.16, 0.5);
+        if (e.k === me) shake = Math.max(shake, e.kind === 'rotor' ? 0.35 : 0.7);
       } else if (e.t === 'toot' || e.t === 'fore') {
         const k = race.karts[e.k];
         if (k) say(e.t === 'toot' ? 'BEEP BEEP!' : 'FORE!', k.x, 3.4, k.z, e.t === 'fore' ? '#ff8a3d' : '#ffffff');
