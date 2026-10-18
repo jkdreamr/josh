@@ -247,7 +247,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   );
   /** Changes the card that is up, for a round that goes on after this player is out. */
   const updateOver = useCallback((info: GameOverInfo) => {
-    setResult((r) => (!r || (r.title === info.title && r.detail === info.detail && r.wait === info.wait) ? r : { ...r, title: info.title, detail: info.detail, wait: info.wait }));
+    setResult((r) =>
+      !r || (r.title === info.title && r.detail === info.detail && r.wait === info.wait && r.keepDetail === info.keepDetail)
+        ? r
+        : { ...r, title: info.title, detail: info.detail, wait: info.wait, keepDetail: info.keepDetail },
+    );
   }, []);
   /** What the host's Play Again waits on (see canStartNext). */
   const nextRound = useRef({ ready: true, waiting: false, racing: false });
@@ -1019,7 +1023,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     {result.isBest ? <span className="arcade-new">New Best</span> : bestNow != null && <span>Best {fmt(bestNow)}</span>}
                   </div>
                 )}
-                {result?.detail && <p>{result.detail}</p>}
+                {result?.detail && <p className={result.keepDetail ? 'arcade-keep' : undefined}>{result.detail}</p>}
                 {raceNow && (
                   <ol className="arcade-race" aria-label="Race Standings">
                     {raceNow.standings.map((entry) => (

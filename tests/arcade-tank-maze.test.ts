@@ -29,6 +29,7 @@ import {
 } from '../src/os/arcade/games/tank-maze/logic.ts';
 import { makeMemory, STANDOFF, think } from '../src/os/arcade/games/tank-maze/bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket } from '../src/os/arcade/games/tank-maze/net.ts';
+import { finalLine, freeSpans, listNames, packChips, rosterLine } from '../src/os/arcade/games/tank-maze/hud.ts';
 
 const fire: TankInput = { turn: 0, move: 0, fire: true };
 const idle: TankInput = { turn: 0, move: 0, fire: false };
@@ -769,4 +770,25 @@ test('touchLayout keeps touch zones off the board', () => {
   const desk = touchLayout(1440, 900, 3, false);
   assert.equal(desk.zones.length, 0);
   assert.ok(desk.board.h === 900 - desk.hud);
+});
+
+test('hud chips skip the online badge and the shell controls', () => {
+  const spans = freeSpans(12, 417, [{ x0: 273, x1: 328 }]);
+  assert.deepEqual(spans, [{ x0: 12, x1: 265 }, { x0: 336, x1: 417 }]);
+  const xs = packChips([100, 100, 40, 30], spans, 8);
+  assert.ok(xs);
+  const ws = [100, 100, 40, 30];
+  for (let i = 0; i < 4; i++) {
+    const inside = spans.some((s) => xs[i] >= s.x0 - 1e-9 && xs[i] + ws[i] <= s.x1 + 1e-9);
+    assert.ok(inside, `chip ${i} at ${xs[i]} overlaps a blocked span`);
+  }
+  assert.equal(packChips([200, 200, 200], spans, 8), null);
+});
+
+test('game over copy labels every score and lists the people in the room', () => {
+  assert.equal(finalLine(['You', 'Green Tester', 'Bot 1', 'Bot 2'], [0, 0, 2, 3], 6), 'Bot 2 3, Bot 1 2, You 0 and Green Tester 0 after 6 rounds.');
+  assert.equal(finalLine(['Red', 'Green', 'Blue'], [3, 1, 0], 1), 'Red 3, Green 1 and Blue 0 after 1 round.');
+  assert.equal(rosterLine(['You', 'Green Tester']), '2 people here: You and Green Tester.');
+  assert.equal(rosterLine(['You']), 'Just you here.');
+  assert.equal(listNames(['A', 'B', 'C']), 'A, B and C');
 });
