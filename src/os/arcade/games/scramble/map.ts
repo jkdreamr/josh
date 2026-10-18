@@ -23,8 +23,14 @@ export const BARREL_R = 0.55;
 export const SUPPLY_HALF = 0.85;
 /** Seconds a supply drop takes to float down before it lands. */
 export const SUPPLY_FALL = 12;
-/** Wading through a pond slows an egg to this share of its pace. */
+/** Wading through a pond or the river slows an egg to this share of its pace. */
 export const POND_SLOW = 0.62;
+/** Half the river's width, and half a bridge's (rail to rail). */
+export const RIVER_HALF = 3.5;
+export const BRIDGE_HALF = 2;
+/** A fallen log's half thickness, and a stump's. */
+export const LOG_R = 0.35;
+export const STUMP_R = 0.45;
 /** A dirt road: half its width, and the spring it puts in your step. */
 export const ROAD_HALF = 1.8;
 export const ROAD_SPEED = 1.08;
@@ -91,19 +97,26 @@ export const PLACE_NAMES = [
   'Carton Crossing',
   'Dozen Docks',
 ];
+/** The diner and the windmill go by their own names. */
+export const DINER_NAMES = ['Greasy Spoon', 'Hash House', 'Sunny Side Diner', 'Waffle Stop', 'Short Stack Diner'];
+export const MILL_NAMES = ['Old Mill', 'Windy Mill', 'Millstone Hill', 'Flour Power', 'Grindstone Mill'];
 /** How far from its first site a town reaches for the rest. */
 const TOWN = 36;
 const CELL = 8;
 const COLS = Math.ceil((2 * HALF) / CELL);
 
 export type Circle = { x: number; z: number; r: number };
+/** Trees come in four looks; only how they're drawn differs. */
+export type TreeKind = 'oak' | 'pine' | 'birch' | 'fruit';
+export type Tree = Circle & { kind: TreeKind };
 export type Box = { x: number; z: number; hw: number; hd: number };
 export type Rock = Circle & { look: number };
 /**
- * Houses, farmhouses, sheds, warehouses, shipping containers, ruins and the Golden Coop. Walls stop eggs and bullets;
- * a roof hides what's inside from anyone outside (ruins have none). `h` is how tall the walls are drawn.
+ * Houses, farmhouses, sheds, warehouses, shipping containers, ruins, the Golden Coop, and now and then a diner or a
+ * windmill. Walls stop eggs and bullets; a roof hides what's inside from anyone outside (ruins have none). `h` is
+ * how tall the walls are drawn.
  */
-export type BuildingKind = 'house' | 'farm' | 'shed' | 'warehouse' | 'container' | 'ruin' | 'coop';
+export type BuildingKind = 'house' | 'farm' | 'shed' | 'warehouse' | 'container' | 'ruin' | 'coop' | 'diner' | 'mill';
 export type Building = { kind: BuildingKind; x: number; z: number; w: number; d: number; walls: Box[]; doors: Door[]; inner: Door[]; look: number; roof: boolean; h: number };
 /**
  * A way in through the outer walls: the middle of the opening, the way out (one step along x or z), and how wide it
@@ -123,10 +136,13 @@ export type Container = { id: number; kind: ContainerKind; x: number; z: number;
  * and hay bales are `crate` solids and fridges `chest` ones, since they break and open the same way.
  */
 export type Solid =
-  | { shape: 'circle'; x: number; z: number; r: number; what: 'tree' | 'rock' | 'barrel' | 'post' | 'fire'; ref: number }
-  | { shape: 'box'; x: number; z: number; hw: number; hd: number; what: 'wall' | 'crate' | 'chest' | 'car' | 'fence' | 'table'; ref: number };
-/** Low things (fences, picnic tables, fire pits) stop eggs walking but not bullets, throws or the view. */
-export const low = (s: Solid) => s.what === 'fence' || s.what === 'table' || s.what === 'fire';
+  | { shape: 'circle'; x: number; z: number; r: number; what: 'tree' | 'rock' | 'barrel' | 'post' | 'fire' | 'log'; ref: number }
+  | { shape: 'box'; x: number; z: number; hw: number; hd: number; what: 'wall' | 'crate' | 'chest' | 'car' | 'fence' | 'table' | 'log' | 'shelf' | 'seat'; ref: number };
+/**
+ * Low things (fences and bridge rails, picnic tables, fire pits, fallen logs and stumps, and beds, tables and booths
+ * indoors) stop eggs walking but not bullets, throws or the view.
+ */
+export const low = (s: Solid) => s.what === 'fence' || s.what === 'table' || s.what === 'fire' || s.what === 'log' || s.what === 'seat';
 /** A parked car or truck: solid cover that stops bullets. Axis aligned, nose along x when `alongX`. */
 export type Car = { x: number; z: number; hw: number; hd: number; look: number; truck: boolean; alongX: boolean };
 /** A farm's fenced yard, with a gate in the middle of each side (gates are doors: the way out is `ox`, `oz`). */
@@ -140,6 +156,22 @@ export type Place = { name: string; x: number; z: number; r: number };
 /** Lamp posts and mailboxes. */
 export type Prop = { x: number; z: number; look: number };
 export type Table = { x: number; z: number; alongX: boolean };
+/** The river's middle line, from the shore on one side of the island to the shore across. */
+export type River = { x: number; z: number }[];
+/** A wooden bridge: a deck from bank to bank, along x (or z), with a rail down each side. */
+export type Bridge = Box & { alongX: boolean };
+/** A fallen log, lying along x (or z). */
+export type Log = Box & { alongX: boolean };
+/**
+ * Things indoors. Counters, shelves, sacks and millstones stop eggs and bullets (`shelf` solids); beds, tables,
+ * booths and benches only stop feet (`seat` solids); rugs, chairs and stools are just there to look at. `face` is the
+ * side a bed's head or a seat's back is against (sides as in shell()); `b` the building.
+ */
+export type FurnitureKind = 'rug' | 'chair' | 'stool' | 'table' | 'bed' | 'booth' | 'counter' | 'shelf' | 'sacks' | 'millstone';
+export type Furniture = Box & { kind: FurnitureKind; face: number; b: number; look: number };
+/** What furniture stops: everything, only feet, or nothing. */
+export const furnitureSolid = (k: FurnitureKind): 'shelf' | 'seat' | null =>
+  k === 'counter' || k === 'shelf' || k === 'sacks' || k === 'millstone' ? 'shelf' : k === 'table' || k === 'bed' || k === 'booth' ? 'seat' : null;
 
 /** The bus's route; `on` and `off` are when it is over land, the only time anyone can jump. */
 export type Bus = { x0: number; z0: number; x1: number; z1: number; len: number; dur: number; on: number; off: number };
@@ -148,13 +180,19 @@ export type Storm = { circles: StormCircle[]; starts: number[]; ends: number[] }
 
 export type GameMap = {
   seed: number;
-  trees: Circle[];
+  trees: Tree[];
   rocks: Rock[];
   bushes: Circle[];
   /** Cornfields: walk in and nobody sees you from a distance, like a bush. */
   fields: Box[];
   /** Ponds slow anyone wading through. */
   ponds: Circle[];
+  /** So does the river, but for its bridges. */
+  river: River;
+  bridges: Bridge[];
+  logs: Log[];
+  stumps: Circle[];
+  furniture: Furniture[];
   buildings: Building[];
   /** The Golden Coop's building index. */
   coop: number;
@@ -197,9 +235,12 @@ export const STORM_PHASES = [
 /** Seconds before the first three storm phases begin to move that a supply drop lands inside the circle it closes to. */
 const DROP_LEAD = [10, 8, 6];
 
-/** The buildings an island has, placed in this order (the biggest first, so they always fit). */
-const PLAN: BuildingKind[] = ['coop', 'warehouse', 'warehouse', 'farm', 'farm', 'container', 'container', ...Array<BuildingKind>(9).fill('house'), ...Array<BuildingKind>(7).fill('shed'), ...Array<BuildingKind>(4).fill('ruin')];
-const COUNTS = { forests: 6, forestTrees: 16, trees: 150, rocks: 70, bushes: 110, crates: 50, chests: 8, spots: 70, barrels: 14, ponds: 3, camps: 3, pads: 5 };
+/** The buildings an island has, placed in this order (the biggest first, so they always fit); `special` is a diner, a windmill or both. */
+const plan = (special: BuildingKind[]): BuildingKind[] => ['coop', 'warehouse', 'warehouse', 'farm', 'farm', ...special, 'container', 'container', ...Array<BuildingKind>(9).fill('house'), ...Array<BuildingKind>(7).fill('shed'), ...Array<BuildingKind>(4).fill('ruin')];
+const COUNTS = { forests: 6, forestTrees: 16, trees: 150, rocks: 70, bushes: 110, crates: 50, chests: 8, spots: 70, barrels: 14, ponds: 3, camps: 3, pads: 5, logs: 12, stumps: 16 };
+/** A bridge's deck runs this far onto each bank, and nothing else is built within `clear` of either end. */
+const BRIDGE_STEP = 1.5;
+const BRIDGE_CLEAR = 6;
 const FLOOR_BASE = 10_000;
 const CONTAINER_BASE = 100_000;
 /** Loot ids for spawns and containers stay below this; fighters number their own drops above it. */
@@ -214,6 +255,12 @@ const SPREAD = [
 ] as const;
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
+const CORNERS = [
+  [-1, -1],
+  [1, -1],
+  [1, 1],
+  [-1, 1],
+] as const;
 
 // -------------------------------------------------------------------------------------------------------------------
 // Buildings.
@@ -360,6 +407,64 @@ export function roadAt(map: GameMap, x: number, z: number) {
   return false;
 }
 
+/** How far a point is from the river's middle line, squared (Infinity on an island with no river). */
+export function riverDist2(map: GameMap, x: number, z: number) {
+  let best = Infinity;
+  const r = map.river;
+  for (let i = 1; i < r.length; i++) {
+    const a = r[i - 1];
+    const b = r[i];
+    // a cheap miss first: both ends far off on the same side
+    if ((a.x - x > 40 && b.x - x > 40) || (x - a.x > 40 && x - b.x > 40) || (a.z - z > 40 && b.z - z > 40) || (z - a.z > 40 && z - b.z > 40)) continue;
+    const d = segDist2(x, z, a.x, a.z, b.x, b.z);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/** The bridge whose deck a point is on, or -1. */
+export function bridgeAt(map: GameMap, x: number, z: number) {
+  for (let i = 0; i < map.bridges.length; i++) {
+    const b = map.bridges[i];
+    if (Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd) return i;
+  }
+  return -1;
+}
+
+/** In the river (and not up on a bridge over it). */
+export function riverAt(map: GameMap, x: number, z: number) {
+  return riverDist2(map, x, z) < RIVER_HALF * RIVER_HALF && bridgeAt(map, x, z) < 0;
+}
+
+/** Wading: in a pond or the river. */
+export const waterAt = (map: GameMap, x: number, z: number) => pondAt(map, x, z) >= 0 || riverAt(map, x, z);
+
+/** True when two segments cross. */
+function crosses(ax: number, az: number, bx: number, bz: number, cx: number, cz: number, dx: number, dz: number) {
+  const side = (px: number, pz: number, qx: number, qz: number, rx: number, rz: number) => (qx - px) * (rz - pz) - (qz - pz) * (rx - px);
+  const d1 = side(cx, cz, dx, dz, ax, az);
+  const d2 = side(cx, cz, dx, dz, bx, bz);
+  const d3 = side(ax, az, bx, bz, cx, cz);
+  const d4 = side(ax, az, bx, bz, dx, dz);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** How many times the way from one point to another crosses the river's middle line (odd: they're on opposite banks). */
+export function riverCrossings(map: GameMap, x0: number, z0: number, x1: number, z1: number) {
+  let n = 0;
+  const r = map.river;
+  for (let i = 1; i < r.length; i++) if (crosses(x0, z0, x1, z1, r[i - 1].x, r[i - 1].z, r[i].x, r[i].z)) n++;
+  return n;
+}
+
+/** How near a segment comes to the river's middle line, squared. */
+export function riverSegDist2(map: GameMap, x0: number, z0: number, x1: number, z1: number) {
+  if (riverCrossings(map, x0, z0, x1, z1) > 0) return 0;
+  let best = Math.min(riverDist2(map, x0, z0), riverDist2(map, x1, z1));
+  for (const p of map.river) best = Math.min(best, segDist2(p.x, p.z, x0, z0, x1, z1));
+  return best;
+}
+
 /** The campfire warming a point, or -1. */
 export function fireAt(map: GameMap, x: number, z: number) {
   for (let i = 0; i < map.fires.length; i++) {
@@ -427,6 +532,63 @@ function planBus(rng: Rng): Bus {
   const enter = rayBox(x0, z0, dx, dz, len, 0, 0, land, land);
   const leave = rayBox(x1, z1, -dx, -dz, len, 0, 0, land, land);
   return { x0, z0, x1, z1, len, dur: len / BUS_SPEED, on: enter / BUS_SPEED, off: (len - leave) / BUS_SPEED };
+}
+
+/**
+ * A river from the shore on one side of the island to the shore across, wandering as it goes. The heading turns a
+ * little each step (no trig: the turn is added side on, then the heading is scaled back to length one), is pulled
+ * back when the river strays far from the middle, and never doubles back; then the corners are cut (twice when there
+ * are few) so it bends smoothly.
+ */
+function planRiver(rng: Rng): River {
+  const alongX = rng() < 0.5;
+  const flip = rng() < 0.5 ? 1 : -1;
+  let u = -HALF;
+  let v = Math.round((rng() * 2 - 1) * 60);
+  let hu = 1;
+  let hv = (rng() * 2 - 1) * 0.4;
+  let turn = 0;
+  const far = HALF - 40;
+  let pts: [number, number][] = [[u, v]];
+  while (u < HALF) {
+    turn = turn * 0.75 + (rng() * 2 - 1) * 0.3 - v / 900;
+    const nu = Math.max(0.5, hu - hv * turn);
+    const nv = hv + hu * turn;
+    const l = Math.sqrt(nu * nu + nv * nv);
+    hu = nu / l;
+    hv = nv / l;
+    const pu = u;
+    const pv = v;
+    u += hu * 13;
+    v = Math.max(-far, Math.min(far, v + hv * 13));
+    // the last point on the shore line itself
+    if (u >= HALF) {
+      v = pv + ((v - pv) * (HALF - pu)) / (u - pu);
+      u = HALF;
+    }
+    pts.push([u, v]);
+  }
+  for (let pass = 0; pass < 2; pass++) {
+    if (pass && pts.length > 40) break;
+    const out: [number, number][] = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+      const [au, av] = pts[i - 1];
+      const [bu, bv] = pts[i];
+      out.push([au * 0.75 + bu * 0.25, av * 0.75 + bv * 0.25], [au * 0.25 + bu * 0.75, av * 0.25 + bv * 0.75]);
+    }
+    out.push(pts[pts.length - 1]);
+    pts = out;
+  }
+  const river: River = [];
+  pts.forEach(([a, b], i) => {
+    const p = alongX ? { x: r1(a * flip), z: r1(b) } : { x: r1(b), z: r1(a * flip) };
+    const last = river[river.length - 1];
+    // no two points on top of each other, and the one on the far shore always kept
+    if (last && Math.abs(last.x - p.x) + Math.abs(last.z - p.z) <= 0.5) {
+      if (i === pts.length - 1) river[river.length - 1] = p;
+    } else river.push(p);
+  });
+  return river;
 }
 
 function planStorm(rng: Rng): Storm {
@@ -521,6 +683,11 @@ export function generateMap(seed: number): GameMap {
     bushes: [],
     fields: [],
     ponds: [],
+    river: [],
+    bridges: [],
+    logs: [],
+    stumps: [],
+    furniture: [],
     buildings: [],
     coop: -1,
     containers: [],
@@ -543,9 +710,66 @@ export function generateMap(seed: number): GameMap {
     mark: 0,
   };
 
-  // Footprints already taken by buildings, yards and fields; everything keeps its distance from them.
+  const dist = (ax: number, az: number, bx: number, bz: number) => Math.sqrt((ax - bx) * (ax - bx) + (az - bz) * (az - bz));
+  const onLand = (x: number, z: number, margin: number) => Math.abs(x) <= HALF - BEACH - margin && Math.abs(z) <= HALF - BEACH - margin;
+
+  // Footprints already taken by bridges, buildings, yards and fields; everything keeps its distance from them.
   const lots: Box[] = [];
-  const clear = (x: number, z: number, hw: number, hd: number, margin: number) => lots.every((l) => Math.abs(l.x - x) >= l.hw + hw + margin || Math.abs(l.z - z) >= l.hd + hd + margin);
+
+  // the river, and two to four bridges spread along it, each square across it along x or z from dry bank to dry bank
+  map.river = planRiver(rng);
+  const reach = map.river.slice(1).map((b, i) => {
+    const a = map.river[i];
+    const len = dist(a.x, a.z, b.x, b.z);
+    return { x: a.x, z: a.z, ux: (b.x - a.x) / len, uz: (b.z - a.z) / len, len };
+  });
+  const total = reach.reduce((n, r) => n + r.len, 0);
+  const wet = (x: number, z: number) => riverDist2(map, x, z) < RIVER_HALF * RIVER_HALF;
+  const bridgeLots: Box[] = [];
+  const bridges = 2 + Math.floor(rng() * 3);
+  for (let k = 0; k < bridges; k++) {
+    for (let tries = 0; tries < 12; tries++) {
+      let s = total * ((k + 0.5) / bridges + (rng() * 2 - 1) * 0.12);
+      const r = reach.find((q) => (s -= q.len) < 0) ?? reach[reach.length - 1];
+      const px = r.x + r.ux * (r.len + s);
+      const pz = r.z + r.uz * (r.len + s);
+      if (!onLand(px, pz, 16)) continue;
+      // across a river that runs more along z, the deck runs along x
+      const alongX = Math.abs(r.uz) >= Math.abs(r.ux);
+      const ax = alongX ? 1 : 0;
+      const az = alongX ? 0 : 1;
+      // how far the water reaches either way, along the deck's middle and both its edges
+      let lo = 0;
+      let hi = 0;
+      for (const side of [-BRIDGE_HALF, 0, BRIDGE_HALF])
+        for (const dir of [-1, 1])
+          for (let o = 0.5; o < 24 && wet(px + ax * o * dir + az * side, pz + az * o * dir + ax * side); o += 0.5) {
+            if (dir > 0) hi = Math.max(hi, o);
+            else lo = Math.max(lo, o);
+          }
+      if (lo + hi > 18) continue;
+      const half = r1((lo + hi) / 2 + 0.5 + BRIDGE_STEP);
+      const x = r1(px + (ax * (hi - lo)) / 2);
+      const z = r1(pz + (az * (hi - lo)) / 2);
+      // dry at both ends, and well along the river from the last
+      if ([-1, 1].some((e) => [-BRIDGE_HALF, 0, BRIDGE_HALF].some((side) => wet(x + ax * e * (half - 0.4) + az * side, z + az * e * (half - 0.4) + ax * side)))) continue;
+      if (map.bridges.some((b) => dist(b.x, b.z, x, z) < 45)) continue;
+      // and over the river just the once, not across a bend twice
+      const e = [-1, 1].map((k) => ({ x: x + ax * k * half, z: z + az * k * half }));
+      if (riverCrossings(map, e[0].x, e[0].z, e[1].x, e[1].z) !== 1) continue;
+      map.bridges.push({ x, z, hw: alongX ? half : BRIDGE_HALF, hd: alongX ? BRIDGE_HALF : half, alongX });
+      const lot = { x, z, hw: alongX ? half + BRIDGE_CLEAR : BRIDGE_HALF + 1.5, hd: alongX ? BRIDGE_HALF + 1.5 : half + BRIDGE_CLEAR };
+      lots.push(lot);
+      bridgeLots.push(lot);
+      break;
+    }
+  }
+  /** Clear of the river by `margin` past the water's edge, for a box (its corners squared off, so a little more). */
+  const dryBox = (x: number, z: number, hw: number, hd: number, margin: number) =>
+    reach.every((r) => rayBox(r.x, r.z, r.ux, r.uz, r.len, x, z, hw + RIVER_HALF + margin, hd + RIVER_HALF + margin) === Infinity);
+  // buildings keep five meters from the water at most, so they still fit
+  const clear = (x: number, z: number, hw: number, hd: number, margin: number) =>
+    lots.every((l) => Math.abs(l.x - x) >= l.hw + hw + margin || Math.abs(l.z - z) >= l.hd + hd + margin) && dryBox(x, z, hw, hd, Math.min(margin, 5));
   const nearLot = (x: number, z: number, margin: number) => lots.some((l) => Math.abs(x - l.x) < l.hw + margin && Math.abs(z - l.z) < l.hd + margin);
   const roomFor = (hw: number, hd: number) => {
     const x = Math.round((rng() * 2 - 1) * (HALF - BEACH - hw - 5));
@@ -609,9 +833,104 @@ export function generateMap(seed: number): GameMap {
     return map.buildings[map.buildings.length - 1];
   };
 
+  // Furniture. Anything that stops feet stands flush against a wall or something else, or leaves a way past it at
+  // least 1.3 m wide, never in the way in through a doorway, and well clear of what's there to loot.
+  const half = (c: Container) =>
+    c.kind === 'chest' ? [CHEST_HW, CHEST_HD] : c.kind === 'fridge' ? [FRIDGE_HW, FRIDGE_HD] : c.kind === 'toilet' ? [TOILET_R, TOILET_R] : c.kind === 'hay' ? [HAY_HW, HAY_HD] : c.kind === 'supply' ? [SUPPLY_HALF, SUPPLY_HALF] : [CRATE_HALF, CRATE_HALF];
+  /** The gap between two boxes along whichever axis they are farthest apart (below zero when they overlap). */
+  const gap = (a: Box, b: Box) => Math.max(Math.abs(a.x - b.x) - a.hw - b.hw, Math.abs(a.z - b.z) - a.hd - b.hd);
+  const roomy = (g: number) => g <= 0.05 || g >= 1.3;
+  const fit = (bi: number, kind: FurnitureKind, x: number, z: number, hw: number, hd: number, face = 0, look = 0) => {
+    const b = map.buildings[bi];
+    const box = { x, z, hw, hd };
+    if (Math.abs(box.x - b.x) + hw > b.w / 2 - WALL_T / 2 + 0.01 || Math.abs(box.z - b.z) + hd > b.d / 2 - WALL_T / 2 + 0.01) return false;
+    const stops = furnitureSolid(kind) !== null;
+    // the way in through every doorway, from either side of a doorway between rooms
+    const ways = [...b.doors.map((d) => ({ d, k: 1 })), ...b.inner.flatMap((d) => [{ d, k: 1 }, { d, k: -1 }])];
+    for (const { d, k } of ways) {
+      const ax = Math.abs(d.oz);
+      const az = Math.abs(d.ox);
+      const zone = { x: d.x - d.ox * k * 1.3, z: d.z - d.oz * k * 1.3, hw: ax * (d.w / 2 + 0.5) + az * 1.3, hd: az * (d.w / 2 + 0.5) + ax * 1.3 };
+      if (gap(box, zone) < 0) return false;
+    }
+    for (const w of b.walls) if (gap(box, w) < -0.01 || (stops && !roomy(gap(box, w)))) return false;
+    for (const c of map.containers) {
+      if (Math.abs(c.x - b.x) > b.w / 2 || Math.abs(c.z - b.z) > b.d / 2) continue;
+      const [chw, chd] = half(c);
+      const g = gap(box, { x: c.x, z: c.z, hw: chw, hd: chd });
+      if (g < (stops ? 1.3 : 0.15)) return false;
+    }
+    if (stops) {
+      for (const l of map.floor) if (Math.abs(l.x - box.x) < hw + 0.6 && Math.abs(l.z - box.z) < hd + 0.6) return false;
+      for (const f of map.furniture) if (f.b === bi && furnitureSolid(f.kind) && !roomy(gap(box, f))) return false;
+    }
+    map.furniture.push({ ...box, kind, face, b: bi, look });
+    return true;
+  };
+  /** Up against the inside of wall `side` (sides as in shell()), `l` along it, `deep` out from it and `long` along it. */
+  const against = (bi: number, kind: FurnitureKind, side: number, l: number, deep: number, long: number, look = 0) => {
+    const b = map.buildings[bi];
+    const o = (side < 2 ? b.d : b.w) / 2 - WALL_T / 2 - deep / 2;
+    const x = side < 2 ? b.x + l : b.x + (side === 2 ? -o : o);
+    const z = side < 2 ? b.z + (side === 0 ? -o : o) : b.z + l;
+    return fit(bi, kind, x, z, side < 2 ? long / 2 : deep / 2, side < 2 ? deep / 2 : long / 2, side, look);
+  };
+  /** The first of a few spots along a wall that fits. */
+  const along = (bi: number, kind: FurnitureKind, side: number, spots: number[], deep: number, long: number, look = 0) => spots.some((l) => against(bi, kind, side, l, deep, long, look));
+  /** The longest of a few lengths that fits somewhere along a wall: in the middle, a little off it, or in a corner. */
+  const alongAny = (bi: number, kind: FurnitureKind, side: number, deep: number, lengths: number[], look = 0) => {
+    const b = map.buildings[bi];
+    const span = (side < 2 ? b.w : b.d) / 2 - WALL_T / 2;
+    return lengths.some((long) => along(bi, kind, side, [0, -1.5, 1.5, -(span - long / 2), span - long / 2], deep, long, look));
+  };
+  /** A table with a chair at each side of it, on a rug. */
+  const dining = (bi: number, x: number, z: number, alongX: boolean, look: number) => {
+    const [hw, hd] = alongX ? [0.85, 0.5] : [0.5, 0.85];
+    if (!fit(bi, 'table', x, z, hw, hd, 0, look)) return;
+    fit(bi, 'rug', x, z, hw + 1.1, hd + 1.1, 0, look);
+    for (const s of [-1, 1])
+      for (const t of [-0.45, 0.45]) {
+        if (alongX) fit(bi, 'chair', x + t, z + s * 0.85, 0.22, 0.22, s < 0 ? 0 : 1, look);
+        else fit(bi, 'chair', x + s * 0.85, z + t, 0.22, 0.22, s < 0 ? 2 : 3, look);
+      }
+  };
+  /**
+   * Furnishes a house, farmhouse, shed or warehouse once its loot is in: a table and chairs on a rug, a bed against the
+   * middle of a long wall, a kitchen counter by the fridge, shelves; racks down a warehouse's long walls; a workbench in
+   * a shed.
+   */
+  const decorate = (bi: number, room?: { x: number; w: number }) => {
+    const b = map.buildings[bi];
+    const look = Math.floor(rng() * 4);
+    const order = (a: number, c: number) => (rng() < 0.5 ? [a, c] : [c, a]);
+    if (b.kind === 'shed') {
+      for (const side of order(0, 1).concat(order(2, 3))) if (against(bi, 'counter', side, 0, 0.6, 2, look)) break;
+      return;
+    }
+    if (b.kind === 'warehouse') {
+      const long = b.w > b.d ? [0, 1] : [2, 3];
+      const span = (b.w > b.d ? b.w : b.d) / 2;
+      for (const side of long) for (const l of [-span + 4, -span + 9.5, span - 9.5, span - 4]) against(bi, 'shelf', side, l, 1, 4.6, look);
+      return;
+    }
+    // a house is one room; a farmhouse has a big room and a kitchen beside it
+    const rx = room?.x ?? b.x;
+    const rw = room?.w ?? b.w;
+    dining(bi, rx, b.z, true, look);
+    for (const side of order(0, 1)) if (along(bi, 'bed', side, [rx - b.x, rx - b.x - 1, rx - b.x + 1], 2.1, 1.5, look)) break;
+    // a kitchen counter along the end wall by the fridge (in a house, the other end will do when a door's in the way)
+    const fridge = map.containers.find((c) => c.kind === 'fridge' && Math.abs(c.x - b.x) < b.w / 2 && Math.abs(c.z - b.z) < b.d / 2);
+    const by = fridge ? (fridge.x < b.x ? 2 : 3) : rng() < 0.5 ? 2 : 3;
+    const kitchen = [by, ...(room ? [] : [5 - by])].find((side) => alongAny(bi, 'counter', side, 0.6, [4, 2.6, 1.8], look)) ?? by;
+    // shelves at the other end of the big room
+    const end = room ? (rx > b.x ? 3 : 2) : 5 - kitchen;
+    along(bi, 'shelf', end, [0, -2, 2, -3, 3], 0.45, 1.8, look);
+    if (rw >= 14) along(bi, 'shelf', end, [-3.5, 3.5], 0.45, 1.4, look);
+  };
+
   // everything outdoors keeps its distance from buildings and from each other
   const taken: Circle[] = [];
-  const free = (x: number, z: number, r: number) => taken.every((c) => (c.x - x) * (c.x - x) + (c.z - z) * (c.z - z) >= (c.r + r) * (c.r + r));
+  const free = (x: number, z: number, r: number) => taken.every((c) => (c.x - x) * (c.x - x) + (c.z - z) * (c.z - z) >= (c.r + r) * (c.r + r)) && riverDist2(map, x, z) >= (RIVER_HALF + r) * (RIVER_HALF + r);
 
   /** The places roads link and names go to: every building but the shipping containers (their yard counts once), and camps. */
   const sites: { x: number; z: number; hw: number; hd: number; kind: 'building' | 'yard' | 'camp'; b?: number }[] = [];
@@ -629,8 +948,67 @@ export function generateMap(seed: number): GameMap {
     }
   };
 
-  for (const kind of PLAN) {
+  // a diner, a windmill, or now and then both, each going by its own name
+  const special: BuildingKind[] = rng() < 0.5 ? ['diner', 'mill'] : ['mill', 'diner'];
+  const ownName = new Map<number, string>();
+  // far enough apart that each makes a place of its own
+  const apart = (x: number, z: number) => map.buildings.every((o) => (o.kind !== 'diner' && o.kind !== 'mill') || dist(o.x, o.z, x, z) >= 90);
+  for (const kind of plan(rng() < 0.4 ? special : special.slice(0, 1))) {
     for (let tries = 0; tries < 150; tries++) {
+      if (kind === 'diner') {
+        // a long dining room: booths along the front, a counter with stools across the middle, and behind it the
+        // kitchen with two fridges, a chest and a back door. `fz` points out the front.
+        const w = 20;
+        const d = 12;
+        const { x, z } = roomFor(w / 2, d / 2);
+        if (!clear(x, z, w / 2, d / 2, 10) || !apart(x, z)) continue;
+        lots.push({ x, z, hw: w / 2, hd: d / 2 });
+        const fz = rng() < 0.5 ? 1 : -1;
+        const walls: Box[] = [];
+        const gaps = sides();
+        const front = fz > 0 ? 1 : 0;
+        gaps[front].push([Math.round((rng() * 2 - 1) * 3) / 2, DOOR]);
+        const back = (rng() < 0.5 ? -1 : 1) * (w / 2 - 3);
+        gaps[1 - front].push([back, DOOR]);
+        const b = build('diner', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), 3.6);
+        const bi = map.buildings.length - 1;
+        ownName.set(bi, DINER_NAMES[Math.floor(rng() * DINER_NAMES.length)]);
+        // the kitchen's stash
+        const s = back > 0 ? -1 : 1;
+        for (const u of [3, 1.6]) addContainer('fridge', x + u * s, z - fz * (d / 2 - WALL_T / 2 - FRIDGE_HD - 0.05), fz as 1 | -1, 'fridge');
+        addContainer('chest', x - 2.2 * s, z - fz * (d / 2 - 1.2), fz as 1 | -1, 'chest');
+        addSpot(x + 8 * s, z - fz * 2.6, 'crate');
+        addSpot(x - 5, z + fz * 1.2);
+        addSpot(x + 5, z + fz * 1.2);
+        // booths against the front wall, either side of the door; the counter and its stools
+        for (const u of [-7.5, -4.5, 4.5, 7.5]) against(bi, 'booth', front, u, 2, 1.6, b.look);
+        fit(bi, 'counter', x - 0.5, z - fz * 1.3, 5.5, 0.3, front, b.look);
+        for (let u = -5; u <= 4; u += 1.5) fit(bi, 'stool', x + u, z - fz * 0.5, 0.22, 0.22, front, b.look);
+        break;
+      }
+      if (kind === 'mill') {
+        // a windmill: a tall square tower with one way in, sacks of flour in the corners, the millstone in the
+        // middle and a chest of the good stuff against the wall across from the door
+        const w = 9;
+        const { x, z } = roomFor(w / 2, w / 2);
+        if (!clear(x, z, w / 2, w / 2, 10) || !apart(x, z)) continue;
+        lots.push({ x, z, hw: w / 2, hd: w / 2 });
+        const walls: Box[] = [];
+        const gaps = sides();
+        const door = Math.floor(rng() * 4);
+        gaps[door].push([0, DOOR]);
+        const b = build('mill', x, z, w, w, walls, shell(walls, x, z, w, w, gaps), Math.floor(rng() * 4), 6);
+        const bi = map.buildings.length - 1;
+        ownName.set(bi, MILL_NAMES[Math.floor(rng() * MILL_NAMES.length)]);
+        // the chest faces along z, so it goes against the north or south wall, whichever has no door
+        const cz = door === 0 ? 1 : -1;
+        addContainer('chest', x, z + cz * (w / 2 - 1.1), (-cz) as 1 | -1, 'supply');
+        addSpot(x - cz * 2.6, z - cz * 1.2, 'crate');
+        addSpot(x + cz * 2.6, z - cz * 1.2, 'crate');
+        fit(bi, 'millstone', x, z, 0.8, 0.8, 0, b.look);
+        for (const [sx, sz] of CORNERS) fit(bi, 'sacks', x + sx * (w / 2 - WALL_T / 2 - 0.5), z + sz * (w / 2 - WALL_T / 2 - 0.5), 0.5, 0.5, 0, b.look);
+        break;
+      }
       if (kind === 'house' || kind === 'shed' || kind === 'ruin' || kind === 'coop') {
         const w = kind === 'house' ? 12 + 2 * Math.floor(rng() * 3) : kind === 'shed' ? 6 + Math.floor(rng() * 2) : kind === 'ruin' ? 10 + 2 * Math.floor(rng() * 3) : 16;
         const d = kind === 'house' ? 10 + 2 * Math.floor(rng() * 2) : kind === 'shed' ? 6 : kind === 'ruin' ? 8 + 2 * Math.floor(rng() * 2) : 12;
@@ -646,12 +1024,14 @@ export function generateMap(seed: number): GameMap {
           for (const s of [first, second]) gaps[s].push([doorAt(rng, s < 2 ? w : d, DOOR), DOOR]);
           build('house', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), WALL_H);
           furnish({ x, z, w, d }, true, true);
+          decorate(map.buildings.length - 1);
         } else if (kind === 'shed') {
           const s = Math.floor(rng() * 4);
           gaps[s].push([Math.round((rng() * 2 - 1) * 2) / 2, DOOR]);
           build('shed', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), 2.8);
           if (rng() < 0.5) addContainer('crate', x, z, 1, 'crate');
           else addSpot(x, z);
+          decorate(map.buildings.length - 1);
         } else if (kind === 'ruin') {
           // broken walls: a gap or two in every side, and no roof
           for (let s = 0; s < 4; s++) {
@@ -709,6 +1089,7 @@ export function generateMap(seed: number): GameMap {
         // the chest in a north corner, where the tall south wall can't hide it
         const qx = rng() < 0.5 ? -1 : 1;
         addContainer('chest', x + qx * (w / 2 - 2.2), z - (d / 2 - 1.8), 1, 'chest');
+        decorate(map.buildings.length - 1);
         barrelsAround(x, z, w / 2, d / 2, 2 + Math.floor(rng() * 2));
         break;
       }
@@ -753,6 +1134,7 @@ export function generateMap(seed: number): GameMap {
         // and a bale out either side of the kitchen, unless it would stand in the way in through a gate or a door
         for (const side of [-1, 1]) if (offDoors(smallC, z + side * (d / 2 + 2), HAY_HW + 0.8)) addContainer('hay', smallC, z + side * (d / 2 + 2), 1, 'hay');
         furnish({ x: bigC, z, w: bigW, d }, true);
+        decorate(map.buildings.length - 1, { x: bigC, w: bigW });
         addSpot(r1(fx + (rng() * 2 - 1) * 4), r1(z + (rng() * 2 - 1) * 5));
         break;
       }
@@ -790,16 +1172,7 @@ export function generateMap(seed: number): GameMap {
     const yard = map.yards.find((y) => Math.abs(b.x - y.x) < y.hw && Math.abs(b.z - y.z) < y.hd);
     sites.push(yard ? { x: yard.x, z: yard.z, hw: yard.hw, hd: yard.hd, kind: 'building', b: i } : { x: b.x, z: b.z, hw: b.w / 2, hd: b.d / 2, kind: 'building', b: i });
   });
-  const dist = (ax: number, az: number, bx: number, bz: number) => Math.sqrt((ax - bx) * (ax - bx) + (az - bz) * (az - bz));
-  const onLand = (x: number, z: number, margin: number) => Math.abs(x) <= HALF - BEACH - margin && Math.abs(z) <= HALF - BEACH - margin;
-
   // camps: a fire out in the open with a picnic table, a crate and something on the ground round it
-  const CORNERS = [
-    [-1, -1],
-    [1, -1],
-    [1, 1],
-    [-1, 1],
-  ] as const;
   for (let k = 0, tries = 0; k < COUNTS.camps && tries < 200; tries++) {
     const x = Math.round((rng() * 2 - 1) * (HALF - BEACH - 12));
     const z = Math.round((rng() * 2 - 1) * (HALF - BEACH - 12));
@@ -879,8 +1252,38 @@ export function generateMap(seed: number): GameMap {
       // and never along or through a fence, a farm's own included
       const fenced = map.yards.some((y) => y.fences.some((fc) => rayBox(p0.x, p0.z, dx / l, dz / l, l, fc.x, fc.z, fc.hw + 0.4, fc.hd + 0.4) < Infinity));
       if (blocked || fenced || map.ponds.some((p) => rayCircle(p0.x, p0.z, dx / l, dz / l, l, p.x, p.z, p.r + 1) < Infinity)) continue;
+      // nor across the river: that's what the bridges are for
+      if (riverSegDist2(map, p0.x, p0.z, p1.x, p1.z) < (RIVER_HALF + ROAD_HALF + 0.5) * (RIVER_HALF + ROAD_HALF + 0.5)) continue;
       edges.push([i, j]);
       map.roads.push({ x0: r1(p0.x), z0: r1(p0.z), x1: r1(p1.x), z1: r1(p1.z) });
+    }
+  });
+  // a road off each end of a bridge to the nearest place it can reach without crossing anything
+  map.bridges.forEach((br, bi) => {
+    for (const e of [-1, 1]) {
+      const ax = br.alongX ? e : 0;
+      const az = br.alongX ? 0 : e;
+      const ex = br.x + ax * (br.alongX ? br.hw : br.hd);
+      const ez = br.z + az * (br.alongX ? br.hw : br.hd);
+      const near = sites.map((s, j) => ({ j, d: dist(ex, ez, s.x, s.z) })).filter(({ j, d }) => d < 75 && (sites[j].x - ex) * ax + (sites[j].z - ez) * az > 0).sort((p, q) => p.d - q.d);
+      for (const { j, d } of near) {
+        const s = sites[j];
+        const p1 = roadEnd(s, ex, ez, (ex - s.x) / d, (ez - s.z) / d, d, { x: ex, z: ez });
+        if (!p1) continue;
+        const dx = p1.x - ex;
+        const dz = p1.z - ez;
+        const l = Math.sqrt(dx * dx + dz * dz);
+        if (l < 6) continue;
+        // from a few steps off the deck on, the road keeps clear of the water
+        const sx = ex + (dx / l) * 4;
+        const sz = ez + (dz / l) * 4;
+        if (riverSegDist2(map, sx, sz, p1.x, p1.z) < (RIVER_HALF + ROAD_HALF + 0.3) * (RIVER_HALF + ROAD_HALF + 0.3)) continue;
+        if (lots.some((lot) => lot !== bridgeLots[bi] && !own(s, lot) && rayBox(ex, ez, dx / l, dz / l, l, lot.x, lot.z, lot.hw + 1.5, lot.hd + 1.5) < Infinity)) continue;
+        if (map.yards.some((y) => y.fences.some((fc) => rayBox(ex, ez, dx / l, dz / l, l, fc.x, fc.z, fc.hw + 0.4, fc.hd + 0.4) < Infinity))) continue;
+        if (map.ponds.some((p) => rayCircle(ex, ez, dx / l, dz / l, l, p.x, p.z, p.r + 1) < Infinity)) continue;
+        map.roads.push({ x0: r1(ex), z0: r1(ez), x1: r1(p1.x), z1: r1(p1.z) });
+        break;
+      }
     }
   });
   const nearRoad = (x: number, z: number, margin: number) => map.roads.some((r) => segDist2(x, z, r.x0, r.z0, r.x1, r.z1) < (ROAD_HALF + margin) * (ROAD_HALF + margin));
@@ -994,26 +1397,58 @@ export function generateMap(seed: number): GameMap {
     k++;
   }
 
-  const scatter = (count: number, r: number, margin: number, put: (x: number, z: number) => void, around?: { x: number; z: number; spread: number }) => {
+  const scatter = (count: number, r: number, margin: number, put: (x: number, z: number) => void, around?: { x: number; z: number; spread: number }, roadGap = 0.3) => {
     let placed = 0;
     for (let tries = 0; placed < count && tries < count * 40; tries++) {
       const x = r1(around ? around.x + (rng() + rng() - 1) * around.spread : (rng() * 2 - 1) * (HALF - BEACH - 2));
       const z = r1(around ? around.z + (rng() + rng() - 1) * around.spread : (rng() * 2 - 1) * (HALF - BEACH - 2));
       if (Math.abs(x) > HALF - BEACH - 2 || Math.abs(z) > HALF - BEACH - 2) continue;
-      if (nearLot(x, z, margin) || !free(x, z, r) || nearRoad(x, z, 0.3)) continue;
+      if (nearLot(x, z, margin) || !free(x, z, r) || nearRoad(x, z, roadGap)) continue;
       taken.push({ x, z, r });
       put(x, z);
       placed++;
     }
   };
 
-  const tree = (x: number, z: number) => map.trees.push({ x, z, r: TREE_R });
+  const tree = (kind: TreeKind) => (x: number, z: number) => map.trees.push({ x, z, r: TREE_R, kind });
+  // fallen logs lie along x or z, and keep their whole length off the roads and away from doorways
+  const log = (x: number, z: number) => {
+    const alongX = rng() < 0.5;
+    const len = r1(1.4 + rng() * 0.8);
+    map.logs.push({ x, z, hw: alongX ? len : LOG_R, hd: alongX ? LOG_R : len, alongX });
+  };
+  const stump = (x: number, z: number) => map.stumps.push({ x, z, r: STUMP_R });
+  // woods of mostly one kind of tree, with a stump or two and a fallen log
+  const KINDS: TreeKind[] = ['oak', 'pine', 'birch'];
   for (let k = 0; k < COUNTS.forests; k++) {
     const cx = r1((rng() * 2 - 1) * (HALF - BEACH - 20));
     const cz = r1((rng() * 2 - 1) * (HALF - BEACH - 20));
-    scatter(COUNTS.forestTrees, 2.3, 3, tree, { x: cx, z: cz, spread: 16 });
+    const kind = KINDS[Math.floor(rng() * KINDS.length)];
+    const wood = { x: cx, z: cz, spread: 16 };
+    scatter(COUNTS.forestTrees, 2.3, 3, (x, z) => tree(rng() < 0.8 ? kind : 'oak')(x, z), wood);
+    scatter(2, 1.2, 3, stump, wood);
+    scatter(1, 2.6, 5, log, wood, 2.4);
   }
-  scatter(COUNTS.trees, 2.6, 3, tree);
+  // an orchard of fruit trees in two rows beside each farm, on the first side with room for most of them
+  for (const y of map.yards) {
+    for (const side of sidesFrom(Math.floor(rng() * 4))) {
+      const l = (rng() < 0.5 ? -1 : 1) * ((side < 2 ? y.hw : y.hd) - 7);
+      const spots = [5, 10].flatMap((o) => [-5, 0, 5].map((a) => beside({ x: y.x, z: y.z, w: y.hw * 2, d: y.hd * 2 }, side, o, l + a)));
+      const ok = spots.filter((p) => onLand(p.x, p.z, 3) && !nearLot(p.x, p.z, 3) && free(p.x, p.z, 2.3) && !nearRoad(p.x, p.z, 0.3));
+      if (ok.length < 4) continue;
+      for (const p of ok) {
+        taken.push({ x: p.x, z: p.z, r: 2.3 });
+        tree('fruit')(p.x, p.z);
+      }
+      break;
+    }
+  }
+  scatter(COUNTS.trees, 2.6, 3, (x, z) => {
+    const k = rng();
+    tree(k < 0.55 ? 'oak' : k < 0.85 ? 'pine' : 'birch')(x, z);
+  });
+  scatter(COUNTS.logs, 2.6, 5, log, undefined, 2.4);
+  scatter(COUNTS.stumps, 1.2, 3, stump);
   // a boulder keeps its whole width (up to 2.2 m) clear of every doorway, not just its middle
   scatter(COUNTS.rocks, 2.6, 5.5, (x, z) => map.rocks.push({ x, z, r: r1(1 + rng() * 1.2), look: Math.floor(rng() * 1000) }));
   scatter(COUNTS.bushes, 2, 2, (x, z) => map.bushes.push({ x, z, r: BUSH_R }));
@@ -1042,9 +1477,10 @@ export function generateMap(seed: number): GameMap {
     map.drops.push(addContainer('supply', x, z, 1, 'supply', at));
   }
 
-  // named places: each special site (the Golden Coop, a farm, a warehouse, a container yard, a camp), then each house
-  // or shed, gathers the sites not yet in a place within TOWN meters of it; a lone house or shed gets no name
-  const plain = (s: (typeof sites)[number]) => s.kind === 'building' && s.b !== map.coop && !['warehouse', 'farm'].includes(map.buildings[s.b!].kind);
+  // named places: each special site (the Golden Coop, a diner, a windmill, a farm, a warehouse, a container yard, a
+  // camp), then each house or shed, gathers the sites not yet in a place within TOWN meters of it; a lone house or
+  // shed gets no name. A place with a diner or a windmill in it goes by that one's name.
+  const plain = (s: (typeof sites)[number]) => s.kind === 'building' && s.b !== map.coop && !['warehouse', 'farm', 'diner', 'mill'].includes(map.buildings[s.b!].kind);
   const order = sites.map((_, i) => i).sort((a, b) => Number(plain(sites[a])) - Number(plain(sites[b])) || a - b);
   const claimed = sites.map(() => false);
   const towns: number[][] = [];
@@ -1060,12 +1496,14 @@ export function generateMap(seed: number): GameMap {
     const j = Math.floor(rng() * (i + 1));
     [names[i], names[j]] = [names[j], names[i]];
   }
-  towns.forEach((g, k) => {
+  let named = 0;
+  for (const g of towns) {
     const cx = r1(g.reduce((s, i) => s + sites[i].x, 0) / g.length);
     const cz = r1(g.reduce((s, i) => s + sites[i].z, 0) / g.length);
     const r = g.reduce((s, i) => Math.max(s, dist(sites[i].x, sites[i].z, cx, cz) + Math.max(sites[i].hw, sites[i].hd)), 0) + 6;
-    map.places.push({ name: names[k % names.length], x: cx, z: cz, r: r1(Math.max(18, r)) });
-  });
+    const site = g.find((i) => ownName.has(sites[i].b ?? -1));
+    map.places.push({ name: site !== undefined ? ownName.get(sites[site].b!)! : names[named++ % names.length], x: cx, z: cz, r: r1(Math.max(18, r)) });
+  }
 
   map.buildings.forEach((b, i) => {
     for (const w of b.walls) map.solids.push({ shape: 'box', ...w, what: 'wall', ref: i });
@@ -1086,6 +1524,19 @@ export function generateMap(seed: number): GameMap {
     for (const f of y.fences) map.solids.push({ shape: 'box', ...f, what: 'fence', ref: i });
   });
   map.cars.forEach((c, i) => map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: c.hw, hd: c.hd, what: 'car', ref: i }));
+  // a bridge's rails, down both sides of the deck
+  map.bridges.forEach((b, i) => {
+    for (const s of [-1, 1]) {
+      if (b.alongX) map.solids.push({ shape: 'box', x: b.x, z: b.z + s * (b.hd - FENCE_T / 2), hw: b.hw, hd: FENCE_T / 2, what: 'fence', ref: i });
+      else map.solids.push({ shape: 'box', x: b.x + s * (b.hw - FENCE_T / 2), z: b.z, hw: FENCE_T / 2, hd: b.hd, what: 'fence', ref: i });
+    }
+  });
+  map.logs.forEach((l, i) => map.solids.push({ shape: 'box', x: l.x, z: l.z, hw: l.hw, hd: l.hd, what: 'log', ref: i }));
+  map.stumps.forEach((t, i) => map.solids.push({ shape: 'circle', x: t.x, z: t.z, r: t.r, what: 'log', ref: i }));
+  map.furniture.forEach((f, i) => {
+    const what = furnitureSolid(f.kind);
+    if (what) map.solids.push({ shape: 'box', x: f.x, z: f.z, hw: f.hw, hd: f.hd, what, ref: i });
+  });
   map.lamps.forEach((p, i) => map.solids.push({ shape: 'circle', x: p.x, z: p.z, r: LAMP_R, what: 'post', ref: i }));
   map.mailboxes.forEach((p, i) => map.solids.push({ shape: 'circle', x: p.x, z: p.z, r: MAILBOX_R, what: 'post', ref: i }));
   map.tables.forEach((t, i) => map.solids.push({ shape: 'box', x: t.x, z: t.z, hw: t.alongX ? TABLE_HW : TABLE_HD, hd: t.alongX ? TABLE_HD : TABLE_HW, what: 'table', ref: i }));

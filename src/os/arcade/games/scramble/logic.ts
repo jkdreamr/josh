@@ -47,10 +47,12 @@ import {
   HAY_HW,
   PAD,
   POND_SLOW,
+  RIVER_HALF,
   ROAD_SPEED,
   SUPPLY_FALL,
   TOILET_R,
   WALL_T,
+  bridgeAt,
   buildingAt,
   busAt,
   coverAt,
@@ -58,7 +60,6 @@ import {
   generateMap,
   low,
   padAt,
-  pondAt,
   pushBox,
   pushCircle,
   pushObb,
@@ -66,12 +67,15 @@ import {
   rayCircle,
   rayObb,
   raySolid,
+  riverCrossings,
   roadAt,
   solidsAlong,
   solidsNear,
   stormAt,
+  waterAt,
   yardAt,
   type Box,
+  type Bridge,
   type Container,
   type Door,
   type GameMap,
@@ -173,6 +177,8 @@ export type Ai = {
   chest: number;
   /** A bounce pad on the way to somewhere far, or -1. */
   pad: number;
+  /** The bridge we're crossing the river by, or -1. */
+  bridge: number;
   /** When to give up on a crate or a campfire. */
   until: number;
   /** The last container we gave up smashing. */
@@ -297,7 +303,7 @@ export type Toss = { f: number; k: ThrowId; x: number; z: number; lx: number; lz
 /** A flour cloud (hides whoever is in it) or a puddle of hot sauce (burns whoever stands in it), until `until`. */
 export type Zone = { k: 'flour' | 'sauce'; x: number; z: number; r: number; from: number; until: number; by: number };
 
-export type Thud = 'tree' | 'rock' | 'wall' | 'crate' | 'chest' | 'barrel' | 'car' | 'fence' | 'table' | 'post' | 'fire' | 'built' | 'egg' | 'pan' | 'ground';
+export type Thud = 'tree' | 'rock' | 'wall' | 'crate' | 'chest' | 'barrel' | 'car' | 'fence' | 'table' | 'post' | 'fire' | 'log' | 'shelf' | 'seat' | 'built' | 'egg' | 'pan' | 'ground';
 
 /** Things that happened this frame, for sounds, effects and the network. `net` marks news that came from it. */
 export type Ev = (
@@ -545,6 +551,7 @@ function newAi(m: Match, f: Fighter): Ai {
     item: -1,
     chest: -1,
     pad: -1,
+    bridge: -1,
     until: 0,
     tried: -1,
     target: -1,
@@ -851,8 +858,8 @@ function act(m: Match, f: Fighter, dt: number) {
   if (inp.interact) interact(m, f);
   if (inp.fire && f.fireT <= 0 && f.burst <= 0) trigger(m, f);
 
-  // walking: slow through a pond, a little quicker on a road
-  f.wet = pondAt(m.map, f.x, f.z) >= 0;
+  // walking: slow through a pond or the river, a little quicker on a road
+  f.wet = waterAt(m.map, f.x, f.z);
   const speed = SPEED * paceOf(f) * (f.using ? 0.5 : 1) * (f.boost > 0 ? BOOST.speed : 1) * (f.wet ? POND_SLOW : roadAt(m.map, f.x, f.z) ? ROAD_SPEED : 1);
   const len = Math.hypot(inp.mx, inp.mz);
   const tx = len > 0 ? (inp.mx / Math.max(1, len)) * speed : 0;
@@ -1142,14 +1149,14 @@ function swing(m: Match, f: Fighter) {
     bestD = d;
   }
   if (best) return strike(m, f, best, spec.dmg, f.melee, best.x, best.z);
-  // then a wall, crate, barrel or tree just ahead (a fence or a table too, for the bonk)
+  // then a wall, crate, barrel, tree or fallen log just ahead (a fence or a table too, for the bonk)
   const fx = Math.sin(f.aim);
   const fz = Math.cos(f.aim);
   const hit = castRay(m, f.x, f.z, fx, fz, spec.range, -1, false, true);
   if (!hit) return;
   const x = f.x + fx * hit.t;
   const z = f.z + fz * hit.t;
-  if (hit.what === 'tree') {
+  if (hit.what === 'tree' || hit.what === 'log') {
     const n = Math.min(spec.wood, WOOD_MAX - f.wood);
     f.wood += n;
     emit(m, { t: 'harvest', f: f.id, x, z, n });
@@ -1871,7 +1878,7 @@ function follow(m: Match, f: Fighter) {
   if (f.phase === 'ground') {
     f.bush = coverAt(m.map, f.x, f.z);
     f.inside = buildingAt(m.map, f.x, f.z);
-    f.wet = pondAt(m.map, f.x, f.z) >= 0;
+    f.wet = waterAt(m.map, f.x, f.z);
     f.warm = fireAt(m.map, f.x, f.z) >= 0;
   } else {
     f.bush = -1;
@@ -2368,7 +2375,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     for (let i = 0; i < 8; i++) {
       const x = safe.x + (m.rng() * 2 - 1) * r;
       const z = safe.z + (m.rng() * 2 - 1) * r;
-      if (Math.abs(x) > EDGE - 4 || Math.abs(z) > EDGE - 4 || !inSafe(x, z)) continue;
+      if (Math.abs(x) > EDGE - 4 || Math.abs(z) > EDGE - 4 || !inSafe(x, z) || waterAt(m.map, x, z)) continue;
       ai.gx = x;
       ai.gz = z;
       break;
@@ -2389,7 +2396,8 @@ function shutsIn(m: Match, f: Fighter, aim: number) {
 
 /**
  * Steers toward a goal. From inside a building the goal isn't in, that's out through a doorway first; from inside a
- * fenced yard it isn't in, out through a gate. Going the other way, it's in through a gate, then a doorway.
+ * fenced yard it isn't in, out through a gate. Going the other way, it's in through a gate, then a doorway. With the
+ * river in the way, it's over a bridge first, unless wading across is quicker.
  */
 function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, stop: number) {
   const b = f.inside >= 0 ? m.map.buildings[f.inside] : undefined;
@@ -2424,6 +2432,11 @@ function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, 
     px = door.x + door.ox * k;
     pz = door.z + door.oz * k;
   }
+  const over = b ? null : bridgeWay(m, f, ai, px, pz);
+  if (over) {
+    px = over.x;
+    pz = over.z;
+  }
   // outdoors, with a building or a fenced yard across the way: round it by a corner
   const c = b ? null : around(m, f.x, f.z, px, pz, yard);
   if (c) return steer(m, f, ai, c.x, c.z, dt, 0);
@@ -2437,7 +2450,67 @@ function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, 
       const k = Math.abs((f.x - dr.x) * dr.oz - (f.z - dr.z) * dr.ox) < Math.max(0.3, dr.w / 2 - FIGHTER_R - 0.1) ? 1.5 : -1.2;
       return steer(m, f, ai, dr.x + dr.ox * s * k, dr.z + dr.oz * s * k, dt, 0);
     }
-  steer(m, f, ai, px, pz, dt, door ? 0 : stop);
+  steer(m, f, ai, px, pz, dt, door || over ? 0 : stop);
+}
+
+/** A meter waded counts as this many walked: it's slow, and out in the open. */
+const WADE = 2.4;
+
+/** Where to step on and off a bridge: just past each end of its deck. */
+function bridgeEnds(b: Bridge) {
+  const ax = b.alongX ? 1 : 0;
+  const az = 1 - ax;
+  const h = (b.alongX ? b.hw : b.hd) + 1.2;
+  return [
+    { x: b.x - ax * h, z: b.z - az * h },
+    { x: b.x + ax * h, z: b.z + az * h },
+  ];
+}
+
+/**
+ * With the river between us and (tx, tz), the point to make for on the way over the bridge that makes the quickest
+ * way there: its near end, then (lined up there, or once on the deck) its far end. Null to go straight on: no river in
+ * the way, wading is quicker, or we're already in the water.
+ */
+function bridgeWay(m: Match, f: Fighter, ai: Ai, tx: number, tz: number) {
+  const map = m.map;
+  const on = bridgeAt(map, f.x, f.z);
+  if (on >= 0) {
+    ai.bridge = on;
+    if (bridgeAt(map, tx, tz) === on) return null;
+    const [a, c] = bridgeEnds(map.bridges[on]);
+    // off the end on the same bank as where we're going
+    return riverCrossings(map, a.x, a.z, tx, tz) % 2 === 0 ? a : c;
+  }
+  const n = map.bridges.length && !f.wet ? riverCrossings(map, f.x, f.z, tx, tz) : 0;
+  if (n % 2 === 0) {
+    ai.bridge = -1;
+    return null;
+  }
+  // which end is which from here, for each bridge, and the way round by it (the one we chose counts a little shorter)
+  let best = -1;
+  let bestD = Math.hypot(tx - f.x, tz - f.z) + n * RIVER_HALF * 2 * (WADE - 1);
+  let near = { x: 0, z: 0 };
+  let far = near;
+  map.bridges.forEach((br, i) => {
+    const [a, c] = bridgeEnds(br);
+    const [p, q] = riverCrossings(map, f.x, f.z, a.x, a.z) % 2 === 0 ? [a, c] : [c, a];
+    const d = Math.hypot(p.x - f.x, p.z - f.z) + Math.hypot(q.x - p.x, q.z - p.z) + Math.hypot(tx - q.x, tz - q.z) - (i === ai.bridge ? 4 : 0);
+    if (d < bestD) {
+      best = i;
+      bestD = d;
+      near = p;
+      far = q;
+    }
+  });
+  ai.bridge = best;
+  if (best < 0) return null;
+  // lined up with the deck at its near end, or past that already: on over it
+  const len = Math.hypot(far.x - near.x, far.z - near.z);
+  const ux = (far.x - near.x) / len;
+  const uz = (far.z - near.z) / len;
+  const t = (f.x - near.x) * ux + (f.z - near.z) * uz;
+  return t > -1.2 && Math.abs((f.x - near.x) * uz - (f.z - near.z) * ux) < 1.2 ? far : near;
 }
 
 /**

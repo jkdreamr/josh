@@ -307,7 +307,7 @@ export function EggIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-const MAP_ROOF: Record<Building['kind'], string> = { house: '#b5523b', farm: '#8b2f23', shed: '#7a5534', warehouse: '#6f7c88', container: '#4f6d8f', ruin: '#a39e93', coop: '#f5b301' };
+const MAP_ROOF: Record<Building['kind'], string> = { house: '#b5523b', farm: '#8b2f23', shed: '#7a5534', warehouse: '#6f7c88', container: '#4f6d8f', ruin: '#a39e93', coop: '#f5b301', diner: '#d64545', mill: '#7a4a2a' };
 
 /**
  * A doorway on the map: a light tab through the wall that pokes out the way in, or a dark band across a shipping
