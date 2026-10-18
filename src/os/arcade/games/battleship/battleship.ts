@@ -327,3 +327,71 @@ export function parseMsg(value: unknown): Msg | null {
       return null;
   }
 }
+
+/** Layout units per CSS px: 1/scale when a device frame shrinks the game (iPad), else 1. */
+export function frameUnit(screenWidth: number, layoutWidth: number): number {
+  if (!(screenWidth > 0) || !(layoutWidth > 0)) return 1;
+  const scale = screenWidth / layoutWidth;
+  return scale > 0.2 && scale < 0.99 ? Math.min(2, 1 / scale) : 1;
+}
+
+/** Board placement inside the stage; fixed-size chrome (buttons, labels, gaps) grows with u. */
+export function boardGeometry(w: number, h: number, placing: boolean, top: number, u = 1) {
+  const wide = w / Math.max(1, h) >= 1.25 || h < 220;
+  const bottom = h < 220 ? 4 : 8;
+  const available = Math.max(1, h - top - bottom);
+  if (placing) {
+    if (wide) {
+      const cell = Math.floor(Math.max(7, Math.min((available - 9) / 10, (w - 187 * u) / 10)));
+      const side = cell * 10 + 9;
+      const x = Math.max(8, (w - side - 162 * u) / 2);
+      return {
+        portrait: false, targetCell: cell, targetX: 0, targetY: 0, ownCell: cell, ownX: 0, ownY: 0,
+        placeCell: cell, placeX: x, placeY: top + (available - side) / 2,
+        toolsX: x + side + 20 * u, toolsY: top + (available - 108 * u) / 2,
+        fireX: 0, fireY: 0,
+      };
+    }
+    const cell = Math.floor(Math.max(18, Math.min((w - 24 * u) / 10, (available - 65 * u) / 10)));
+    const side = cell * 10 + 9;
+    const placeY = top + Math.max(4, (available - side - 62 * u) / 2);
+    return {
+      portrait: true, targetCell: cell, targetX: 0, targetY: 0, ownCell: cell, ownX: 0, ownY: 0,
+      placeCell: cell, placeX: Math.max(16 * u, (w - side) / 2), placeY,
+      toolsX: Math.max(10 * u, (w - 330 * u) / 2), toolsY: Math.min(placeY + side + 12 * u, top + available - 52 * u),
+      fireX: 0, fireY: 0,
+    };
+  }
+  if (wide) {
+    const cell = Math.floor(Math.max(7, Math.min((available - 9) / 10, (w - 42 * u) / 16.2)));
+    const ownCell = Math.max(7, Math.floor(cell * 0.62));
+    const targetSide = cell * 10 + 9;
+    const ownSide = ownCell * 10 + 9;
+    const gap = Math.max(12 * u, cell * 0.55);
+    const x = Math.max(6 * u, (w - targetSide - ownSide - gap) / 2);
+    const y = top + (available - targetSide) / 2;
+    const ownX = x + targetSide + gap;
+    const ownY = y + (targetSide - ownSide) / 2;
+    return {
+      portrait: false, targetCell: cell, targetX: x, targetY: y, ownCell, ownX, ownY,
+      placeCell: cell, placeX: 0, placeY: 0,
+      toolsX: 0, toolsY: 0,
+      fireX: Math.min(w - 128 * u, Math.max(8 * u, ownX + (ownSide - 120 * u) / 2)),
+      fireY: Math.min(ownY + ownSide + 10 * u, h - bottom - 50 * u),
+    };
+  }
+  const cell = Math.floor(Math.max(18, Math.min((w - 24 * u) / 10, (available - 86 * u) / 15.8)));
+  const ownCell = Math.max(12, Math.floor(cell * 0.58));
+  const targetSide = cell * 10 + 9;
+  const ownSide = ownCell * 10 + 9;
+  const gap = 10 * u;
+  const fireHeight = 50 * u;
+  const total = targetSide + gap + fireHeight + gap + ownSide;
+  const y = top + Math.max(0, (available - total) / 2);
+  return {
+    portrait: true, targetCell: cell, targetX: (w - targetSide) / 2, targetY: y,
+    ownCell, ownX: (w - ownSide) / 2, ownY: y + targetSide + gap + fireHeight + gap,
+    placeCell: cell, placeX: 0, placeY: 0,
+    toolsX: 0, toolsY: 0, fireX: (w - 120 * u) / 2, fireY: y + targetSide + gap,
+  };
+}

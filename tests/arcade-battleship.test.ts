@@ -8,11 +8,13 @@ import {
   SUNK,
   UNKNOWN,
   applyResult,
+  boardGeometry,
   canPlace,
   chooseShot,
   consistent,
   densityMap,
   fleetCode,
+  frameUnit,
   isCompleteFleet,
   newIntel,
   parseFleet,
@@ -206,4 +208,57 @@ test('parseMsg accepts valid packets and rejects invalid tags and fields', () =>
     { game: 'battleship', t: 'answer', n: 1, res: { ...sunk, sunk: 'unknown' } },
     { game: 'battleship', t: 'ready', commit: 'not-a-hash' },
   ]) assert.equal(parseMsg(packet), null, JSON.stringify(packet));
+});
+
+test('frame unit undoes a shrinking device frame and ignores unscaled or projected layouts', () => {
+  assert.equal(frameUnit(820, 820), 1);
+  assert.equal(frameUnit(0, 820), 1);
+  assert.equal(frameUnit(670, 0), 1);
+  assert.equal(frameUnit(900, 820), 1);
+  assert.equal(frameUnit(50, 820), 1);
+  const u = frameUnit(820 * 0.8175, 820);
+  assert.ok(Math.abs(u - 1 / 0.8175) < 1e-9);
+  // 14px game text then renders at 14px on screen in the framed iPad, not ~11px.
+  assert.ok(14 * u * 0.8175 >= 13.99);
+});
+
+test('board geometry is unchanged at unit scale', () => {
+  assert.deepEqual(boardGeometry(820, 997, true, 64), {
+    portrait: true, targetCell: 79, targetX: 0, targetY: 0, ownCell: 79, ownX: 0, ownY: 0,
+    placeCell: 79, placeX: 16, placeY: 96, toolsX: 245, toolsY: 907, fireX: 0, fireY: 0,
+  });
+  assert.deepEqual(boardGeometry(820, 997, false, 64), {
+    portrait: true, targetCell: 53, targetX: 140.5, targetY: 67.5, ownCell: 30, ownX: 255.5, ownY: 676.5,
+    placeCell: 53, placeX: 0, placeY: 0, toolsX: 0, toolsY: 0, fireX: 350, fireY: 616.5,
+  });
+  assert.deepEqual(boardGeometry(464, 157, false, 40), {
+    portrait: false, targetCell: 10, targetX: 132, targetY: 42, ownCell: 7, ownX: 253, ownY: 57,
+    placeCell: 10, placeX: 0, placeY: 0, toolsX: 0, toolsY: 0, fireX: 232.5, fireY: 103,
+  });
+  assert.deepEqual(boardGeometry(390, 700, true, 88), {
+    portrait: true, targetCell: 36, targetX: 0, targetY: 0, ownCell: 36, ownX: 0, ownY: 0,
+    placeCell: 36, placeX: 16, placeY: 174.5, toolsX: 30, toolsY: 555.5, fireX: 0, fireY: 0,
+  });
+});
+
+test('scaled board geometry leaves room for the scaled labels, fire button and tools', () => {
+  const u = 1 / 0.8175;
+  const w = 820;
+  const h = 997;
+  const top = Math.round(64 * u);
+  const place = boardGeometry(w, h, true, top, u);
+  const placeSide = place.placeCell * 10 + 9;
+  assert.ok(place.placeX >= 15 * u, 'row labels stay on the stage');
+  assert.ok(place.placeX + placeSide <= w, 'board stays on the stage');
+  assert.ok(place.toolsY >= place.placeY + placeSide + 12 * u - 1e-9 || place.toolsY === top + (h - top - 8) - 52 * u);
+  assert.ok(place.toolsY + 50 * u <= h, 'tools stay on the stage');
+
+  const battle = boardGeometry(w, h, false, top, u);
+  const targetSide = battle.targetCell * 10 + 9;
+  const ownSide = battle.ownCell * 10 + 9;
+  assert.ok(battle.targetX >= 15 * u);
+  assert.equal(battle.fireY, battle.targetY + targetSide + 10 * u);
+  assert.equal(battle.ownY, battle.fireY + 50 * u + 10 * u);
+  assert.ok(battle.ownY + ownSide <= h);
+  assert.ok(Math.abs(battle.fireX + 60 * u - w / 2) < 1e-9, 'fire is centered');
 });

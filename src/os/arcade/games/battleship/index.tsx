@@ -9,10 +9,12 @@ import {
   SUNK,
   UNKNOWN,
   applyResult,
+  boardGeometry,
   canPlace,
   chooseShot,
   consistent,
   fleetCode,
+  frameUnit,
   isCompleteFleet,
   newIntel,
   parseFleet,
@@ -177,6 +179,34 @@ function Battleship() {
   const keys = useKeys((code) => actionsRef.current.key(code));
   const onlineRef = useRef(online);
   onlineRef.current = online;
+  // The iPad frame scales the whole screen down; grow text and touch targets by the same factor so they read the same on screen.
+  const [unit, setUnit] = useState(1);
+  useEffect(() => {
+    const root = shell.root.current;
+    if (!root || !shell.touch) {
+      setUnit(1);
+      return;
+    }
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const next = frameUnit(root.getBoundingClientRect().width, root.offsetWidth);
+        root.style.setProperty('--g-battleship-u', next.toFixed(3));
+        setUnit((current) => Math.abs(current - next) < 0.001 ? current : next);
+      });
+    };
+    measure();
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(root);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', measure);
+      root.style.removeProperty('--g-battleship-u');
+    };
+  }, [shell.touch]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -206,7 +236,7 @@ function Battleship() {
       const rightEdge = controlRect ? controlLeft - 8 : width - 8;
       const statusWidth = status.getBoundingClientRect().width / scaleX;
       const compact = height < 300;
-      const regularBoardTop = compact ? 40 : 64;
+      const regularBoardTop = Math.round((compact ? 40 : 64) * unit);
 
       if (rightEdge - leftEdge >= statusWidth) {
         const left = Math.round((leftEdge + (rightEdge - leftEdge - statusWidth) / 2) * 2) / 2;
@@ -243,7 +273,7 @@ function Battleship() {
       mutationObserver.disconnect();
       window.removeEventListener('resize', update);
     };
-  }, [size.w, size.h, state.status]);
+  }, [size.w, size.h, state.status, unit]);
 
   const setTimer = (seconds: number, callback: () => void) => {
     timerRef.current = { remaining: seconds, callback };
@@ -901,7 +931,7 @@ function Battleship() {
     }
   });
 
-  const geometry = getGeometry(size.w, size.h, state.phase, statusLayout.boardTop);
+  const geometry = boardGeometry(size.w, size.h, state.phase === 'place', statusLayout.boardTop, unit);
   const localFleet = state.fleets[state.placementSeat];
   const drag = state.drag;
   const targetSeat = state.mode === 'online' ? localSeat : state.viewer;
@@ -1178,66 +1208,6 @@ function boardStyle(cell: number, x: number, y: number): CSSProperties {
     height: side,
     '--cell': `${cell}px`,
   } as CSSProperties;
-}
-
-function getGeometry(w: number, h: number, phase: Phase, top: number) {
-  const wide = w / Math.max(1, h) >= 1.25 || h < 220;
-  const bottom = h < 220 ? 4 : 8;
-  const available = Math.max(1, h - top - bottom);
-  if (phase === 'place') {
-    if (wide) {
-      const cell = Math.floor(Math.max(7, Math.min((available - 9) / 10, (w - 187) / 10)));
-      const side = cell * 10 + 9;
-      const x = Math.max(8, (w - side - 162) / 2);
-      return {
-        portrait: false, targetCell: cell, targetX: 0, targetY: 0, ownCell: cell, ownX: 0, ownY: 0,
-        placeCell: cell, placeX: x, placeY: top + (available - side) / 2,
-        toolsX: x + side + 20, toolsY: top + (available - 108) / 2,
-        fireX: 0, fireY: 0,
-      };
-    }
-    const cell = Math.floor(Math.max(18, Math.min((w - 24) / 10, (available - 65) / 10)));
-    const side = cell * 10 + 9;
-    const placeY = top + Math.max(4, (available - side - 62) / 2);
-    return {
-      portrait: true, targetCell: cell, targetX: 0, targetY: 0, ownCell: cell, ownX: 0, ownY: 0,
-      placeCell: cell, placeX: Math.max(16, (w - side) / 2), placeY,
-      toolsX: Math.max(10, (w - 330) / 2), toolsY: Math.min(placeY + side + 12, top + available - 52),
-      fireX: 0, fireY: 0,
-    };
-  }
-  if (wide) {
-    const cell = Math.floor(Math.max(7, Math.min((available - 9) / 10, (w - 42) / 16.2)));
-    const ownCell = Math.max(7, Math.floor(cell * 0.62));
-    const targetSide = cell * 10 + 9;
-    const ownSide = ownCell * 10 + 9;
-    const gap = Math.max(12, cell * 0.55);
-    const x = Math.max(6, (w - targetSide - ownSide - gap) / 2);
-    const y = top + (available - targetSide) / 2;
-    const ownX = x + targetSide + gap;
-    const ownY = y + (targetSide - ownSide) / 2;
-    return {
-      portrait: false, targetCell: cell, targetX: x, targetY: y, ownCell, ownX, ownY,
-      placeCell: cell, placeX: 0, placeY: 0,
-      toolsX: 0, toolsY: 0,
-      fireX: Math.min(w - 128, Math.max(8, ownX + (ownSide - 120) / 2)),
-      fireY: Math.min(ownY + ownSide + 10, h - bottom - 50),
-    };
-  }
-  const cell = Math.floor(Math.max(18, Math.min((w - 24) / 10, (available - 86) / 15.8)));
-  const ownCell = Math.max(12, Math.floor(cell * 0.58));
-  const targetSide = cell * 10 + 9;
-  const ownSide = ownCell * 10 + 9;
-  const gap = 10;
-  const fireHeight = 50;
-  const total = targetSide + gap + fireHeight + gap + ownSide;
-  const y = top + Math.max(0, (available - total) / 2);
-  return {
-    portrait: true, targetCell: cell, targetX: (w - targetSide) / 2, targetY: y,
-    ownCell, ownX: (w - ownSide) / 2, ownY: y + targetSide + gap + fireHeight + gap,
-    placeCell: cell, placeX: 0, placeY: 0,
-    toolsX: 0, toolsY: 0, fireX: (w - 120) / 2, fireY: y + targetSide + gap,
-  };
 }
 
 function sameShotResult(a: ShotResult, b: ShotResult): boolean {
