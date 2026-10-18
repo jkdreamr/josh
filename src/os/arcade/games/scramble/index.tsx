@@ -1416,6 +1416,11 @@ function Play({ mode }: { mode: Mode }) {
                   onPointerDown={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
+                  }}
+                  // on the click, not the press: the result card comes up where the finger is, and the click a lifted
+                  // finger makes would land on its Play Again
+                  onClick={(e) => {
+                    e.stopPropagation();
                     leave();
                   }}
                 >
