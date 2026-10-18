@@ -136,10 +136,12 @@ export const HATS: Hat[] = ['cap', 'tree', 'top', 'bow', 'tower', 'axe', 'dish',
  */
 /**
  * shaken: seconds left driving very carefully after falling twice in quick succession (fellAt: when it last fell), on
- * the courses where the road itself is the danger (see Race.slick).
+ * the courses where the road itself is the danger (see Race.slick). blink: through the Blink, the side of its rows of
+ * panes it has picked and keeps to (-1 left, 1 right; -2 or 2 holding short of them on that side, 0 not there: see
+ * blinkPlan), and blinkT how long it has held there.
  */
 /** On the water: catchBeat and catchAt, the next beat it means to catch and when it presses for it (NaN: it lets it go); hopKey and hopGo: the last crest of swell it decided about, and whether it hops it. */
-export type Ai = { pace: number; skill: number; band: number; lane: number; laneTo: number; laneT: number; itemT: number; held: number; driftT: number; care: number; dropGo: boolean; reactS: number; react: boolean; err: number; errLap: number; blunders: Record<string, boolean>; waitT: number; backT: number; backs: number; backAt: number; heldT: number; goT: number; goD: number; shaken: number; fellAt: number; catchBeat: number; catchAt: number; hopKey: string; hopGo: boolean };
+export type Ai = { pace: number; skill: number; band: number; lane: number; laneTo: number; laneT: number; itemT: number; held: number; driftT: number; care: number; dropGo: boolean; reactS: number; react: boolean; err: number; errLap: number; blunders: Record<string, boolean>; waitT: number; backT: number; backs: number; backAt: number; heldT: number; goT: number; goD: number; shaken: number; fellAt: number; catchBeat: number; catchAt: number; hopKey: string; hopGo: boolean; blink: number; blinkT: number };
 /** A fall off the road: into what (and whether down a trench), how fast the kart was going, and where it is put back [s, d]. */
 export type Fell = { past: Past; hole: boolean; v: number; to: [number, number] };
 /** What the network last said about a remote kart. */
@@ -660,7 +662,7 @@ const blocks = (r: Race, h: LiveHazard, x: number, z: number, pad: number, lap: 
 };
 
 function newAi(pace: number, skill: number, rand: Rng): Ai {
-  return { pace, skill, band: 1, lane: (rand() - 0.5) * 0.8, laneTo: 0, laneT: rand() * 2, itemT: 1 + rand() * 2, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0, shaken: 0, fellAt: -99, catchBeat: -1e9, catchAt: NaN, hopKey: '', hopGo: false };
+  return { pace, skill, band: 1, lane: (rand() - 0.5) * 0.8, laneTo: 0, laneT: rand() * 2, itemT: 1 + rand() * 2, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0, shaken: 0, fellAt: -99, catchBeat: -1e9, catchAt: NaN, hopKey: '', hopGo: false, blink: 0, blinkT: 0 };
 }
 
 /** A solo Grand Prix: seven CPU rivals ahead of you on the grid, like the first race of a cup. */
@@ -783,6 +785,9 @@ function drive(r: Race, k: Kart, dt: number) {
   const inp = k.input;
   const flying = k.bullet > 0;
   for (const key of ['boost', 'star', 'shrink', 'spin', 'tumble', 'squash', 'safe', 'dashCool', 'slamCool', 'slamT', 'wobble', 'rampCool', 'trickT', 'mega', 'bullet', 'ink', 'calm'] as const) k[key] = Math.max(0, k[key] - dt);
+  // (on the glass a bullet never hands the kart back in a bend over the sky, far too fast to make it, nor on the
+  // run-up to the Blink: it carries it on to where the road straightens, or past the panes)
+  if (flying && k.bullet === 0 && glass(r) && bulletBend(r, k)) k.bullet = dt;
   // a bullet hands the kart back with a little boost
   if (flying && k.bullet === 0) k.boost = Math.max(k.boost, 0.6);
   if (k.goldT > 0) {
@@ -970,6 +975,20 @@ function drive(r: Race, k: Kart, dt: number) {
   slipstream(r, k, dt, control);
   k.stuck = control && r.time > 1 && Math.abs(k.v) < 1.5 && !inp.brake && k.done === null ? k.stuck + dt : 0;
   if (k.stuck > 2.5) rescue(r, k);
+}
+
+/**
+ * Whether a bend with the sky beside it comes up too soon for a kart going at k.v to slow for, or the Blink (see
+ * drive()).
+ */
+function bulletBend(r: Race, k: Kart) {
+  const t = r.track;
+  const ahead = 20 + 0.8 * k.v;
+  if (r.panels.some((h) => awake(h, k.lap) && deltaS(t, k.s, h.s) > -(h.len ?? 0) && deltaS(t, k.s, h.s) < ahead)) return true;
+  if (Math.abs(curveAhead(t, k.s, 0, ahead).peak) <= 0.02) return false;
+  const i0 = Math.floor(wrapS(t, k.s) / t.step);
+  for (let j = 0; j * t.step <= ahead; j++) if (dropAt(t, i0 + j, -1) || dropAt(t, i0 + j, 1)) return true;
+  return false;
 }
 
 export const turboLevel = (charge: number) => (charge >= TURBO_AT[3] ? 3 : charge >= TURBO_AT[2] ? 2 : charge >= TURBO_AT[1] ? 1 : 0);
@@ -1381,9 +1400,8 @@ function rideRamps(r: Race, k: Kart) {
 /**
  * Keeps a kart on the road: it slides along a wall, losing speed for a head-on hit. Where the road drops away instead
  * nothing holds it, and once its middle is over the brink with its wheels on the ground it falls in (in the air it sails
- * on, and falls where it lands; a bullet rides its rails over anything). A trench across the road is the same. A CPU
- * fished out a moment ago is the exception: the lip holds it like a wall, its wheels on the brink, for a while, so it
- * never falls twice running.
+ * on, and falls where it lands; a bullet rides its rails over anything). A trench across the road is the same. On the
+ * Skyway's glass a CPU the drone set down a moment ago is the exception (see lipHolds).
  */
 function wall(r: Race, k: Kart) {
   const t = r.track;
@@ -1403,11 +1421,13 @@ function wall(r: Race, k: Kart) {
     }
   }
   const edge = edgeAt(t, at.s, at.d >= 0 ? 1 : -1);
-  // (the same for everyone: a CPU that fell a moment ago keeps clear of the edge in its planning, nothing holds it on)
-  if (edge.past !== 'wall') {
+  // (the same for everyone: a CPU that fell a moment ago keeps clear of the edge in its planning, nothing holds it on;
+  // but on the glass see lipHolds)
+  const held = edge.past === 'void' && lipHolds(r, k);
+  if (edge.past !== 'wall' && !held) {
     if ((edge.past === 'water' ? low : grounded) && Math.abs(at.d) > edge.lim) return fallIn(r, k, edge.past, at);
   } else {
-    const lim = edge.lim - KART_R * scaleOf(k);
+    const lim = held ? edge.lim - LIP_HOLD : edge.lim - KART_R * scaleOf(k);
     if (Math.abs(at.d) > lim) {
       const sg = Math.sign(at.d);
       const nx = -at.tz * sg;
@@ -1435,6 +1455,16 @@ function wall(r: Race, k: Kart) {
   // (on the water there is no grass: the channel runs right out to the wall's foot)
   k.offroad = !r.boat && Math.abs(now.d) > t.half + CURB * 0.6;
 }
+
+/**
+ * On the Skyway's glass, where a shove or a slide carries a long way and the drone has only just set it down, a CPU still
+ * finding its feet after a fall (see Ai.care) is held by the lip like a rail, its wheels on the brink: a fallback for
+ * whatever its planning did not see coming (it keeps well clear of the brink then anyway), so it never goes straight
+ * back over. Only the lip: a pane or the Gap drops it like anyone. You get no such help.
+ */
+const lipHolds = (r: Race, k: Kart) => glass(r) && k.kind === 'cpu' && k.ai !== null && k.ai.care > 0 && k.sunk === 0;
+/** How far short of the lip itself (its middle over the brink) it holds a kart (see lipHolds). */
+const LIP_HOLD = 0.1;
 
 /**
  * Mud, sand, oil, golf balls and the bales, boulders, planters, statues, cows, bikes, buses, carts, golfers and
@@ -1990,6 +2020,10 @@ function fallIn(r: Race, k: Kart, past: Past, at: Spot, hole: Hazard | null = nu
     if (r.slick) {
       if (r.time - k.ai.fellAt < SHAKEN_WITHIN) k.ai.shaken = SHAKEN_T;
       k.ai.fellAt = r.time;
+      // (and whatever it failed to see coming this lap it sees now: a pane it never saw blink would otherwise drop it
+      // again every time the drone puts it back in front of it)
+      for (const key in k.ai.blunders) k.ai.blunders[key] = false;
+      k.ai.blink = k.ai.blinkT = 0;
     }
   }
   k.v = 0;
@@ -2178,10 +2212,15 @@ export function rescue(r: Race, k: Kart, spot = spotFor(r, k, k.s, k.d)) {
   k.y = 0;
   k.vy = 0;
   k.tumble = 0;
-  k.safe = Math.max(k.safe, 1.2);
+  // (on the Skyway's glass the drone stays with a CPU a while longer, until it is under way: a CPU set down at a standstill
+  // in front of the Blink or on the Wire is a sitting duck for the pack coming through, and a hit there is as good as
+  // another fall; you get the usual moment, as you can see it coming)
+  k.safe = Math.max(k.safe, glass(r) && k.kind === 'cpu' ? DRONE_GRACE : 1.2);
   // (on the water the launch holds the shell a little longer, until it is under way)
   k.calm = r.boat ? CALM_T + 1 : CALM_T;
 }
+/** How long a CPU the drone has just set down on the glass is safe from a hit (see rescue). */
+const DRONE_GRACE = 3.5;
 /** How long the drone holds a kart it has just set down steady against the wind (see Kart.calm). */
 export const CALM_T = 1.5;
 
@@ -2287,10 +2326,14 @@ function bumpKarts(r: Race) {
       const rel = (Math.sin(A.h) * A.v + A.kx - Math.sin(B.h) * B.v - B.kx) * nx + (Math.cos(A.h) * A.v + A.kz - Math.cos(B.h) * B.v - B.kz) * nz;
       if (rel > 0) {
         const j = rel * 0.9 + 2;
-        A.kx -= nx * j * shareA * 1.6;
-        A.kz -= nz * j * shareA * 1.6;
-        B.kx += nx * j * shareB * 1.6;
-        B.kz += nz * j * shareB * 1.6;
+        // (on glass a shove carries a long way, so a kart reeling from a hit, which can do nothing about it, is only
+        // nudged out of the way, not knocked over the brink)
+        const ja = glass(r) && hurt(A) ? REELING : 1;
+        const jb = glass(r) && hurt(B) ? REELING : 1;
+        A.kx -= nx * j * shareA * 1.6 * ja;
+        A.kz -= nz * j * shareA * 1.6 * ja;
+        B.kx += nx * j * shareB * 1.6 * jb;
+        B.kz += nz * j * shareB * 1.6 * jb;
         if (rel > 3) {
           if (local(A)) r.events.push({ t: 'bump', k: A.idx, power: rel });
           if (local(B)) r.events.push({ t: 'bump', k: B.idx, power: rel });
@@ -2299,6 +2342,9 @@ function bumpKarts(r: Race) {
     }
   }
 }
+
+/** How much of a shove a kart reeling from a hit takes on the glass (see bumpKarts). */
+const REELING = 0.25;
 
 /**
  * Hits a kart this client simulates. Stars shrug everything off; a kart already reeling is not hit twice, and one that
@@ -2758,7 +2804,7 @@ function pickups(r: Race, dt: number) {
 // ---------------------------------------------------------------------------------------------------------------
 // CPU drivers (and the autopilot that brings you home after the flag)
 
-const AUTO: Ai = { pace: 1, skill: 0.6, band: 1, lane: 0, laneTo: 0, laneT: 0, itemT: 1, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0, shaken: 0, fellAt: -99, catchBeat: -1e9, catchAt: NaN, hopKey: '', hopGo: false };
+const AUTO: Ai = { pace: 1, skill: 0.6, band: 1, lane: 0, laneTo: 0, laneT: 0, itemT: 1, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0, shaken: 0, fellAt: -99, catchBeat: -1e9, catchAt: NaN, hopKey: '', hopGo: false, blink: 0, blinkT: 0 };
 
 function curveAhead(t: Track, s: number, from: number, to: number) {
   let sum = 0;
@@ -2818,6 +2864,8 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
     if (h.gone) continue;
     // (a sprinkler's hub stands there before its jet comes on)
     if (!awake(h, k.lap) && h.kind !== 'rotor') continue;
+    // (through the Blink the panes are blinkPlan's: see think)
+    if (h.kind === 'panel' && ai.blink !== 0) continue;
     // a bus or a cart is in the way from its tail to its nose, so still while the kart is alongside it
     const long = drives(h) ? lengthOf(h) / 2 + KART_R : 0;
     const ds = deltaS(t, k.s, h.along);
@@ -2966,7 +3014,7 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
       const far = deltaS(t, k.s, p.s);
       if (far < -2 || far > reach) continue;
       const sg = Math.sign(p.kick);
-      const whole = ai.skill < 0.8 || ai.shaken > 0;
+      const whole = ai.skill < 0.8 || wary(r, ai);
       const a = whole ? { lo: p.d - 1.6, hi: p.d + 1.6 } : { lo: Math.min(p.d - sg * 0.55, p.d + sg * 1.6), hi: Math.max(p.d - sg * 0.55, p.d + sg * 1.6) };
       const pad = { ...a, room: 0.6, solid: false, soft: true };
       ahead.push(pad);
@@ -3059,7 +3107,11 @@ function dropOutside(r: Race, s: number, ahead: number, turn: number) {
 const EDGE_KEEP = 2.6;
 type Band = { lo: number; hi: number; open: boolean; hole: boolean; wide?: boolean };
 const FREE: Band = { lo: -Infinity, hi: Infinity, open: false, hole: false };
-const edgeRoom = (r: Race, k: Kart, ai: Ai) => KART_R + 0.9 + 0.025 * Math.abs(k.v) + 0.8 * (1 - ai.skill) + (ai.care > 0 ? 1.2 : 0) + (r.slick ? 0.25 * Math.hypot(k.kx, k.kz) + (ai.shaken > 0 ? 2 : 0) : 0);
+/** The Skyway's glass: a slick course on land (the water is slick too, but a shell is another matter). */
+const glass = (r: Race) => r.slick && !r.boat;
+/** A CPU driving very carefully: shaken by two falls in quick succession, or on the glass just back from one. */
+const wary = (r: Race, ai: Ai) => ai.shaken > 0 || (glass(r) && ai.care > 0);
+const edgeRoom = (r: Race, k: Kart, ai: Ai) => KART_R + 0.9 + 0.025 * Math.abs(k.v) + 0.8 * (1 - ai.skill) + (ai.care > 0 ? 1.2 : 0) + (r.slick ? 0.25 * Math.hypot(k.kx, k.kz) + (wary(r, ai) ? 2 : 0) : 0);
 
 /**
  * The stretch across the road (lateral offsets lo to hi) a CPU keeps to over the road ahead: clear of the brink wherever
@@ -3207,10 +3259,20 @@ function think(r: Race, k: Kart, dt: number) {
   const room = edgeRoom(r, k, ai);
   // (on the water likewise against the current setting across the channel and the swell about to roll in: see waterAhead)
   const water = r.boat ? waterAhead(r, k) : null;
-  const band = water ? edgeBand(r, k, room, room + (wind < 0 ? 0.1 * -wind : 0) + water.lo, room + (wind > 0 ? 0.1 * wind : 0) + water.hi) : wind ? edgeBand(r, k, room, room + (wind < 0 ? 0.1 * -wind : 0), room + (wind > 0 ? 0.1 * wind : 0)) : edgeBand(r, k, room);
+  let band = water ? edgeBand(r, k, room, room + (wind < 0 ? 0.1 * -wind : 0) + water.lo, room + (wind > 0 ? 0.1 * wind : 0) + water.hi) : wind ? edgeBand(r, k, room, room + (wind < 0 ? 0.1 * -wind : 0), room + (wind > 0 ? 0.1 * wind : 0)) : edgeBand(r, k, room);
   let want = ai.lane + clamp(curve.mean * 40, -0.55, 0.55) * ai.skill;
   if (wind) want -= (Math.sign(wind) * Math.min(1.2, 0.12 * Math.abs(wind))) / t.half;
   if (water) want = (want * t.half - water.lean) / t.half + water.lane(want);
+  // through the Blink, square in the middle of the half of the rows it has picked (or holds short of them on), all the
+  // way (see blinkPlan)
+  const blinkGo = r.panels.length ? blinkPlan(r, k, ai, dt) : null;
+  if (ai.blink !== 0 && blinkGo?.across) {
+    // (inside the edges' own band, coming round Tower Turn as it may still be)
+    const side = Math.sign(ai.blink);
+    const [lo, hi] = [Math.max(band.lo, side > 0 ? BLINK_IN : -BLINK_OUT), Math.min(band.hi, side > 0 ? BLINK_OUT : -BLINK_IN)];
+    band = lo <= hi ? { ...band, lo, hi } : { ...band, lo: side > 0 ? band.hi : band.lo, hi: side > 0 ? band.hi : band.lo };
+    want = (side * BLINK_MID) / t.half;
+  }
   let lane = clamp(clamp(want, -0.82, 0.82), band.lo / t.half, band.hi / t.half);
   let dodge = dodgeHazard(r, k, lane, band);
   if (dodge !== null) lane = dodge.lane;
@@ -3221,6 +3283,8 @@ function think(r: Race, k: Kart, dt: number) {
   // (but a ferry crossing is met on a short look, as anything that moves across)
   const ferry = r.boat && ferryAhead(r, k);
   if (r.boat && dodge?.clear && !ferry) look = Math.max(look, Math.min(7 + Math.abs(k.v) * 0.5, BOAT_LOOK * Math.abs(k.v)));
+  // (and through the Blink, on its half by the first row it comes to)
+  if (blinkGo?.across && ai.blink !== 0) look = Math.min(look, Math.max(6, blinkGo.ahead));
   let aim = lane * t.half;
   if (band.open) {
     // aiming at a point that far ahead cuts the inside of a tight bend by look^2/8R: with a drop beside it, look less far
@@ -3258,7 +3322,7 @@ function think(r: Race, k: Kart, dt: number) {
     const room = out.past === 'wall' ? Infinity : out.lim + k.d * k.drift;
     if (room < 2.4) inp.steer = k.drift;
     // (and on the water it lets go well before a ferry crossing: the shell slides on a long way out of a carve)
-    if ((turboLevel(k.charge) >= goal && ending && aligned) || k.drift * rate < -0.35 || ai.driftT > 3 || swerve || room < 1.1 || ai.shaken > 0 || ferry) inp.drift = false;
+    if ((turboLevel(k.charge) >= goal && ending && aligned) || k.drift * rate < -0.35 || ai.driftT > 3 || swerve || room < 1.1 || wary(r, ai) || ferry) inp.drift = false;
   } else if (k.y === 0) {
     inp.steer = clamp(need, -1, 1);
     const bend = curveAhead(t, k.s, 4, 30).mean;
@@ -3266,7 +3330,7 @@ function think(r: Race, k: Kart, dt: number) {
     // on a clean line past it
     // (and the less able don't drift at all where the road drops away)
     // (nor in the wind unless it is very good, as a drift cannot correct for it; nor at all shaken by a fall)
-    const open = (dodge === null || (dodge.clear && Math.abs(dodge.lane * t.half - k.d) < 1) || dodge.ds > 6 + k.v * 0.6) && !(band.open && ai.skill < 0.6) && !(wind !== 0 && ai.skill < 0.8) && !(ai.shaken > 0) && !(r.panels.length > 0 && r.panels.some((h) => deltaS(t, k.s, h.s) > 0 && deltaS(t, k.s, h.s) < 45 && awake(h, k.lap))) && !(r.whirls.length > 0 && ai.skill < 0.9 && whirlAhead(r, k)) && !ferry;
+    const open = (dodge === null || (dodge.clear && Math.abs(dodge.lane * t.half - k.d) < 1) || dodge.ds > 6 + k.v * 0.6) && !(band.open && ai.skill < 0.6) && !(wind !== 0 && ai.skill < 0.8) && !wary(r, ai) && !(r.panels.length > 0 && r.panels.some((h) => deltaS(t, k.s, h.s) > 0 && deltaS(t, k.s, h.s) < 60 && awake(h, k.lap))) && !(r.whirls.length > 0 && ai.skill < 0.9 && whirlAhead(r, k)) && !ferry;
     inp.drift = Math.abs(bend) > 0.02 && k.v > 14 && Math.sign(bend) === Math.sign(need) && r.rand() < ai.skill && open;
     inp.hop = inp.drift;
     ai.driftT = 0;
@@ -3299,6 +3363,7 @@ function think(r: Race, k: Kart, dt: number) {
     }
   }
   inp.brake = tooFast && (k.boost <= 0 || wet);
+  const bendBrake = inp.brake;
   // (waiting for a set piece to get out of the way, but never for long: the road is clear again by then)
   ai.waitT = dodge?.wait ? ai.waitT + dt : 0;
   if (dodge?.wait && ai.waitT > 3) dodge = { ...dodge, wait: false, clear: true };
@@ -3485,6 +3550,10 @@ function think(r: Race, k: Kart, dt: number) {
     const [slow, within] = band.wide ? [20, 40] : [15, 30];
     if (k.v < slow && k.roll === 0 && (k.item === 'mushroom' || k.item === 'triple' || k.item === 'golden') && r.holes.some((h) => deltaS(t, k.s, h.s) > 0 && deltaS(t, k.s, h.s) < within)) inp.use = true;
   }
+  // (through the Blink it goes for it on the side it has picked, or holds short of the first row until one will hold)
+  // (and on its way it lifts for nothing but a bend, as arriving later than it planned is how a pane goes under it)
+  if (blinkGo !== null && Math.abs(ai.blink) === 2 && k.v > Math.max(Math.sqrt(2 * 14 * Math.max(0, blinkGo.stop)), blinkGo.creep ? 3 : 0)) inp.brake = true;
+  else if (blinkGo !== null && Math.abs(ai.blink) === 1) inp.brake = bendBrake;
   // (committed to a run across a bank, it does not lift halfway over)
   if (ai.goT > 0 && !hurt(k)) inp.brake = false;
   if (held && ai.backT === 0) inp.brake = k.v > (creep ? 2.5 : 0.3);
@@ -3512,7 +3581,7 @@ function think(r: Race, k: Kart, dt: number) {
       if (Math.abs(deltaS(t, ai.reactS, k.s)) > 30) {
         ai.reactS = k.s;
         // (shaken by a fall, it always does)
-        ai.react = ai.shaken > 0 || r.rand() < 0.55 + 0.45 * ai.skill;
+        ai.react = wary(r, ai) || r.rand() < 0.55 + 0.45 * ai.skill;
       }
       if (ai.react) {
         inp.steer = -side;
@@ -3524,20 +3593,20 @@ function think(r: Race, k: Kart, dt: number) {
   }
   // on the water: never sitting on the brakes beside a whirlpool that spins (or is about to), as a slow shell is the one
   // it draws in; and stopped short of the weir, too slow to clear the stopper from there, back off for a run at it
-  if (r.boat) {
-    if (inp.brake && ai.backT === 0 && !held && !backOut && k.v < 15 && whirlNear(r, k, 2)) inp.brake = false;
-    if (band.wide && k.y === 0 && !hurt(k)) {
-      for (const h of r.holes) {
-        const ds = deltaS(t, k.s, h.s);
-        if (ds < 0 || ds > 16) continue;
-        // (straight back, square to the weir, not swinging off toward the marsh)
-        if (ai.backT > 0) {
-          inp.steer = clamp(wrapAngle(headingOf(t.tx[k.i], t.tz[k.i]) - k.h) * 2, -1, 1);
-          continue;
-        }
-        const lip = Math.sqrt(Math.max(0, k.v * Math.abs(k.v) + 2 * 0.85 * CLASSES[r.cc].accel * Math.max(0, ds - 1)));
-        if (facing && ds < 14 && lip < 14.5 && k.boost <= 0) ai.backT = 2;
+  // (and on the Skyway the same short of the Gap, knocked about on the run-up, say, with no mushroom to clear it on)
+  if (r.boat && inp.brake && ai.backT === 0 && !held && !backOut && k.v < 15 && whirlNear(r, k, 2)) inp.brake = false;
+  const shroom = k.item === 'mushroom' || k.item === 'triple' || k.item === 'golden';
+  if ((r.boat || (glass(r) && !shroom)) && band.wide && k.y === 0 && !hurt(k)) {
+    for (const h of r.holes) {
+      const ds = deltaS(t, k.s, h.s);
+      if (ds < 0 || ds > 16) continue;
+      // (straight back, square to the weir, not swinging off toward the marsh)
+      if (ai.backT > 0) {
+        inp.steer = clamp(wrapAngle(headingOf(t.tx[k.i], t.tz[k.i]) - k.h) * 2, -1, 1);
+        continue;
       }
+      const lip = Math.sqrt(Math.max(0, k.v * Math.abs(k.v) + 2 * 0.85 * CLASSES[r.cc].accel * Math.max(0, ds - 1)));
+      if (facing && ds < 14 && lip < 14.5 && k.boost <= 0) ai.backT = 2;
     }
   }
   // on the water: catches on the beat, hopping the swell and (the best of them) a log in the way
@@ -3559,9 +3628,10 @@ function think(r: Race, k: Kart, dt: number) {
       const across = Math.abs(dx * rx + dz * rz);
       return Math.abs(dx * Math.sin(k.h) + dz * Math.cos(k.h)) < 2.4 && across > 1 && across < 3.4;
     });
-    // (on the Skyway it never shoves another CPU over the brink: its tricks there are for the people it races)
-    // (on the water, where a shove carries a long way, nowhere near it)
-    if (beside && !(r.slick && beside.kind === 'cpu' && fromBrink(r, beside) < (r.boat ? 5.5 : 3)) && (!hunt || fromBrink(r, beside) < 3 || r.rand() < 0.5)) inp.slam = true;
+    // (on the Skyway it never shoves another CPU anywhere near the brink, as a shove carries a long way on glass, nor
+    // through the Blink, where the panes are the drop: its tricks there are for the people it races)
+    // (on the water, where a shove carries a long way too, nowhere near it either)
+    if (beside && !(r.slick && beside.kind === 'cpu' && (fromBrink(r, beside) < (r.boat ? 5.5 : 6.5) || ai.blink !== 0)) && (!hunt || fromBrink(r, beside) < 3 || r.rand() < 0.5)) inp.slam = true;
   }
 
   // keep the pack close: CPUs ease off well ahead of the leading driver who isn't one (you, solo) and push when far behind
@@ -3615,8 +3685,9 @@ function think(r: Race, k: Kart, dt: number) {
       // with a clean way past it, or a way off yet, is no reason to wait
       const soon = ai.held > 3 && (straight || Math.abs(curveAhead(t, k.s, 0, 15).peak) < 0.012) && (!dodge || dodge.clear || dodge.ds > 30);
       go = (straight && !dodge) || soon || k.offroad || k.mud;
-      // (never while waiting its moment at a set piece, nor on its timed run past one: a boost throws the timing out)
-      if (held || backOut || ai.goT > 0) go = false;
+      // (never while waiting its moment at a set piece, nor on its timed run past one, nor through the Blink: a boost
+      // throws the timing out)
+      if (held || backOut || ai.goT > 0 || ai.blink !== 0) go = false;
       break;
     }
     case 'coin':
@@ -3796,6 +3867,115 @@ function waterHop(r: Race, k: Kart, ai: Ai, dodge: Dodge | null) {
 export function cpuLane(r: Race, k: Kart) {
   const ai = (k.ai ??= { ...AUTO, blunders: {} });
   return dodgeHazard(r, k, clamp(ai.lane, -0.82, 0.82), edgeBand(r, k, edgeRoom(r, k, ai)));
+}
+
+/** How far before the Blink's first row a CPU starts planning its way through, and where it keeps to across a half of it. */
+const BLINK_AHEAD = 40;
+const BLINK_MID = 2.75;
+const BLINK_IN = 1.4;
+const BLINK_OUT = 4.1;
+/** The longest it holds short of a row (two of a pane's cycles, near enough) before it goes for it whatever. */
+const BLINK_WAIT = 6;
+/**
+ * Through the Blink, the rows of panes that blink out on the clock: a CPU picks the side of the road whose panes coming
+ * up hold the whole time it is going over each, foot down from here (as far as a gap between rows it could stop in
+ * again, and on a side it can get across to in time), and keeps to it, as swapping halves between rows is how a kart
+ * ends up on the seam over the one that has gone. If neither side will hold it holds short of the next row until one
+ * will: the Blink has rails, and the panes run on the clock, so that is never long. Sets ai.blink (the side, -1 or 1;
+ * twice that holding; 0 away from the Blink) and returns how far the kart may still go before it has to stop (Infinity
+ * once it goes), whether it may move across to its half yet, and how far the next row is; null away from the Blink.
+ */
+function blinkPlan(r: Race, k: Kart, ai: Ai, dt: number): { stop: number; across: boolean; ahead: number; creep?: boolean } | null {
+  const t = r.track;
+  const ds = (h: Hazard) => deltaS(t, k.s, h.s);
+  // (the panes out on its lap still ahead of the kart's middle, or under it)
+  const rows = r.panels.filter((h) => awake(h, k.lap) && ds(h) > -(h.len ?? 0) && ds(h) < BLINK_AHEAD);
+  if (!rows.length || hurt(k)) {
+    if (!rows.length) ai.blink = ai.blinkT = 0;
+    return null;
+  }
+  const first = Math.min(...rows.map(ds));
+  // where it would stop to hold, and whether it still can before its middle is over the next pane (braking a little
+  // less hard than glass allows)
+  const stop = first - KART_R - 4;
+  const canStop = k.v <= 0.5 || (k.v * k.v) / 40 <= first - 0.3;
+  // where it gets to, and how fast it is going, foot down from here, every 0.05 s for 4 s (on a boost, then off it), but
+  // no faster than it takes the bend it is coming out of (see think)
+  const C = CLASSES[r.cc];
+  const grip = 0.6 + 0.4 * gripAt(t, k.s, k.lap);
+  const top = topOf(r, k) - (k.boost > 0 ? BOOST_DV : 0);
+  const bendCap = 1.55 * (0.55 + 0.45 * gripAt(t, k.s, k.lap));
+  const path = [0];
+  const speed = [Math.max(0, k.v)];
+  for (let u = 0, v = Math.max(0, k.v), x = 0, boost = k.boost; u < 4; u += 0.05) {
+    const c = Math.abs(t.curv[Math.floor(wrapS(t, k.s + x) / t.step) % t.n]);
+    const cap = Math.min(top + (boost > 0 ? BOOST_DV : 0), c > 0.02 ? bendCap / c : Infinity);
+    v = v < cap ? Math.min(cap, v + (boost > 0 ? 34 : C.accel) * grip * 0.05) : Math.max(cap, v - 20 * 0.05);
+    x += v * 0.05;
+    boost -= 0.05;
+    path.push(x);
+    speed.push(v);
+  }
+  const at = (dist: number) => {
+    const i = path.findIndex((x) => x >= dist);
+    return i < 0 ? -1 : i;
+  };
+  // (it moves across to its half on the way round Tower Turn, or once out of it, but not on the straight before it, where
+  // swinging out to the right is how it runs wide off the turn: see think)
+  let bend = 0;
+  for (let a = 0; a < first; a += t.step) if (Math.abs(t.curv[Math.floor(wrapS(t, k.s + a) / t.step) % t.n]) >= 0.03) bend = a + t.step;
+  /**
+   * Whether the panes on that side hold while the kart goes over each (with `spare` seconds either side), as far as the
+   * first gap between rows it could stop in again and think again; and whether it can get across to that side.
+   */
+  const holds = (side: number, spare: number) => {
+    const mine = rows.filter((h) => Math.sign(h.d) === side).sort((a, b) => ds(a) - ds(b));
+    if (!mine.length) return true;
+    // (a kart already well over that half need not move across; one that has to cross the seam needs room to)
+    if (side * k.d < 0.3 && Math.abs(side * BLINK_MID - k.d) > 0.4 + 0.25 * Math.max(0, ds(mine[0]) - KART_R)) return false;
+    for (let j = 0; j < mine.length; j++) {
+      const h = mine[j];
+      const len = h.len ?? 0;
+      const i0 = at(ds(h) - KART_R - 0.3);
+      const i1 = at(ds(h) + len + KART_R + 0.3);
+      if (i0 < 0 || i1 < 0) return false;
+      for (let u = Math.max(0, i0 * 0.05 - spare); u <= i1 * 0.05 + spare; u += 0.05) if (hazState(r, h, r.time + u, k.lap).live) return false;
+      const next = mine[j + 1];
+      const out = at(ds(h) + len + 0.3);
+      if (next && out >= 0 && (speed[out] * speed[out]) / 40 <= ds(next) - ds(h) - len - 0.6) break;
+    }
+    return true;
+  };
+  const go = { stop: Infinity, across: bend === 0 || Math.abs(t.curv[k.i]) >= 0.03, ahead: first };
+  const side = k.d >= 0 ? 1 : -1;
+  // (already on a pane, knocked onto it, say: it never sits there, but gets off it)
+  if (rows.some((h) => Math.sign(h.d) === side && ds(h) <= 0.3)) {
+    ai.blink = side;
+    ai.blinkT = 0;
+    return go;
+  }
+  // (nor does it wait on for ever: then it goes, and keeps going, blinkT -1)
+  if (ai.blinkT >= 0) ai.blinkT = Math.abs(ai.blink) === 2 ? ai.blinkT + dt : 0;
+  if (ai.blinkT > BLINK_WAIT) {
+    ai.blink = side;
+    ai.blinkT = -1;
+  }
+  // (once it has picked a side it keeps to it, unless that side will not hold after all and it can still stop short)
+  if ((ai.blink === 1 || ai.blink === -1) && (ai.blinkT < 0 || !canStop || holds(ai.blink, 0))) return go;
+  const sides = [-1, 1].filter((sg) => holds(sg, 0.15));
+  if (sides.length) {
+    ai.blink = sides.length > 1 ? (Math.abs(ai.blink) === 2 ? Math.sign(ai.blink) : side) : sides[0];
+    return go;
+  }
+  // (too late to stop short of it: the side it is on)
+  if (!canStop) {
+    ai.blink = side;
+    return go;
+  }
+  // (holding on the half it is on, or on the seam the one it meant to take, and staying on it rather than drifting back
+  // onto the seam as it slows; and until it is over it, creeping on, as a kart at a standstill cannot steer across)
+  if (Math.abs(ai.blink) !== 2) ai.blink = 2 * (Math.abs(k.d) > 0.5 ? side : Math.sign(ai.blink) || side);
+  return { ...go, stop, creep: Math.sign(ai.blink) * k.d < 0.3 && first > KART_R + 1.5 };
 }
 
 /**
