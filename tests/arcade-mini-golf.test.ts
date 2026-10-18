@@ -4,7 +4,8 @@ import { distTo, planNow } from '../src/os/arcade/games/mini-golf/bot.ts';
 import { HOLES, TOTAL_PAR } from '../src/os/arcade/games/mini-golf/holes.ts';
 import { MAX_STROKES, applyPutt, forfeitHole, holeDone, label, newMatch, nextUp, overDetail, startHole, total, winner, type Golfer } from '../src/os/arcade/games/mini-golf/match.ts';
 import { parse } from '../src/os/arcade/games/mini-golf/net.ts';
-import { CUP_R, MIN_ROLL, R, inside, restBall, shotDistance, simulate, strike, type Ball } from '../src/os/arcade/games/mini-golf/physics.ts';
+import { CUP_R, CUP_V, DMAX, MIN_ROLL, R, WALL_R, captureSpeed, closestOnSeg, inside, pondK, restBall, segments, shotDistance, simulate, step, strike, type Ball } from '../src/os/arcade/games/mini-golf/physics.ts';
+import type { Hole } from '../src/os/arcade/games/mini-golf/holes.ts';
 
 const golfers = (n: number): Golfer[] => Array.from({ length: n }, (_, i) => ({ name: `G${i}`, color: '#fff', kind: 'human', level: 'normal', left: false }));
 
@@ -63,7 +64,106 @@ test('the cup is sized like a real one and takes firm putts through the middle',
   assert.equal(simulate(h, roll(edge, 0.8 * CUP_R, 3.3)).state, 'holed', 'slow ball dropping on the edge');
   assert.notEqual(simulate(h, roll(edge, 0.8 * CUP_R, 4.2)).state, 'holed', 'quick ball on the edge lips out');
   assert.equal(simulate(h, roll(edge, 0, 4.8)).state, 'holed', 'firm ball through the middle');
-  assert.notEqual(simulate(h, roll(edge, 0, 6)).state, 'holed', 'a blast rides over');
+  assert.equal(simulate(h, roll(edge, 0, 5.6)).state, 'holed', 'a firm putt dead center drops');
+  assert.notEqual(simulate(h, roll(edge, 0, 7.5)).state, 'holed', 'a blast hops over');
+});
+
+test('capture speed falls off from the middle of the cup to the rim', () => {
+  assert.equal(captureSpeed(0), CUP_V);
+  assert.ok(captureSpeed(0.5 * CUP_R) > 0.85 * CUP_V);
+  assert.ok(captureSpeed(0.9 * CUP_R) < 0.5 * CUP_V);
+  assert.equal(captureSpeed(CUP_R), 0);
+});
+
+test('a ball too quick for the cup lips out: it slows and turns toward the side the cup was on', () => {
+  const h = flat(5);
+  for (const side of [1, -1]) {
+    const b = roll(5 - CUP_R - 0.05, side * 0.6 * CUP_R, 5.5);
+    let lipped = false;
+    for (let i = 0; i < 400 && b.state === 'roll' && !lipped; i++) lipped = step(h, b).lip;
+    assert.ok(lipped, 'lips out');
+    assert.notEqual(b.state, 'holed');
+    assert.ok(Math.hypot(b.vx, b.vz) < 5.5 * 0.85, 'loses pace on the rim');
+    assert.ok(Math.sign(b.vz) === -side, 'turned toward the cup side');
+  }
+  const hop = roll(5 - CUP_R - 0.05, 0, 7.5);
+  while (hop.state === 'roll' && hop.x < 5 + CUP_R + 0.1) step(h, hop);
+  assert.ok(Math.abs(hop.vz) < 1e-9, 'dead center it hops straight on');
+});
+
+test('the cup is swept, so a ball that clears it in one step still meets the rim', () => {
+  const h = flat(5);
+  const b = roll(5 - 0.07, 0.335, 18);
+  assert.ok(Math.hypot(b.x - 5, b.z) > CUP_R, 'starts off the cup');
+  const ev = step(h, b);
+  assert.ok(b.x > 5 && Math.hypot(b.x - 5, b.z) > CUP_R, 'stepped clean over the cup');
+  assert.ok(ev.lip, 'met the rim on the way');
+  const slow = roll(5 - CUP_R - 0.04, 0.2, 0.9);
+  assert.equal(simulate(h, slow).state, 'holed');
+});
+
+test('a ball that dies hanging on the lip tips in', () => {
+  const h = flat(5);
+  assert.equal(simulate(h, roll(4.65, CUP_R + 0.02, 0.9)).state, 'holed');
+});
+
+// Putts aimed at the cup from every clear lie around it on every hole, over a range of pace and aim errors.
+const clearLine = (h: Hole, x: number, z: number) => {
+  if (!inside(h.outline, x, z) || (h.ponds.length && pondK(h, x, z) < 1.3)) return false;
+  for (let k = 0; k <= 40; k++) {
+    const px = x + ((h.cup.x - x) * k) / 40;
+    const pz = z + ((h.cup.z - z) * k) / 40;
+    for (const s of segments(h)) {
+      const c = closestOnSeg(s, px, pz);
+      if (Math.hypot(px - c.x, pz - c.z) < WALL_R + 0.12) return false;
+    }
+    if (h.posts.some((p) => Math.hypot(px - p.x, pz - p.z) < p.r + R + 0.12)) return false;
+    for (const m of h.movers) {
+      const mx = m.k === 'sweep' ? m.x : (m.ax + m.bx) / 2;
+      const mz = m.k === 'sweep' ? m.z : (m.az + m.bz) / 2;
+      const rr = m.k === 'sweep' ? m.len + 0.4 : Math.hypot(m.bx - m.ax, m.bz - m.az) / 2 + 0.8;
+      if (Math.hypot(px - mx, pz - mz) < rr) return false;
+    }
+    if (h.loop && Math.hypot(px - h.loop.x, pz - h.loop.z) < 1.2) return false;
+  }
+  return true;
+};
+
+test('putts aimed at the cup drop on every hole unless they are hit far too hard', () => {
+  for (const h of HOLES) {
+    const rate: Record<string, [number, number]> = {};
+    let lies = 0;
+    for (const d of [1, 2.5, 4]) {
+      for (let a = 0; a < 24; a++) {
+        const ang = (a / 24) * Math.PI * 2;
+        const x = h.cup.x + Math.cos(ang) * d;
+        const z = h.cup.z + Math.sin(ang) * d;
+        if (!clearLine(h, x, z)) continue;
+        lies++;
+        const base = Math.atan2(h.cup.z - z, h.cup.x - x);
+        // Pace is how far past the cup it would roll on a flat green; aim is how far off center it is.
+        for (const past of [1, 2, 4, 6, 14]) {
+          for (const aim of [0, 0.25, 0.5, 0.75]) {
+            for (const side of [1, -1]) {
+              const end = simulate(h, strike(restBall(x, z), base + side * Math.asin((aim * CUP_R) / d), Math.min(1, (d + past) / DMAX), 0));
+              const key = `${past} ${aim}`;
+              rate[key] ??= [0, 0];
+              rate[key][1]++;
+              if (end.state === 'holed') rate[key][0]++;
+            }
+          }
+        }
+      }
+    }
+    assert.ok(lies >= 4, `${h.name} has clear lies near the cup`);
+    const pct = (k: string) => rate[k][0] / rate[k][1];
+    for (const past of [1, 2, 4]) for (const aim of [0, 0.25, 0.5]) assert.equal(pct(`${past} ${aim}`), 1, `${h.name}: ${past} ft past, ${aim} of the cup off center`);
+    // Firm putts on the sloped greens can break a little before they reach the cup.
+    for (const aim of [0, 0.25, 0.5]) assert.ok(pct(`6 ${aim}`) >= 0.95, `${h.name}: 6 ft past, ${aim} off center dropped ${pct(`6 ${aim}`)}`);
+    for (const past of [1, 2, 4]) assert.ok(pct(`${past} 0.75`) >= 0.9, `${h.name}: near the edge at ${past} ft past dropped ${pct(`${past} 0.75`)}`);
+    assert.ok(pct('6 0.75') < 0.7, `${h.name}: a firm putt that only clips the edge can lip out`);
+    assert.ok(pct('14 0') < 0.8, `${h.name}: a blast from close can hop the cup`);
+  }
 });
 
 test('Palm Drive can be aced and the Dish loop can be cleared', () => {

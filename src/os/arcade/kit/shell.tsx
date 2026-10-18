@@ -1019,7 +1019,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     {result.isBest ? <span className="arcade-new">New Best</span> : bestNow != null && <span>Best {fmt(bestNow)}</span>}
                   </div>
                 )}
-                {result?.detail && <p>{result.detail}</p>}
+                {result?.detail && <p className="arcade-detail">{result.detail}</p>}
                 {raceNow && (
                   <ol className="arcade-race" aria-label="Race Standings">
                     {raceNow.standings.map((entry) => (
