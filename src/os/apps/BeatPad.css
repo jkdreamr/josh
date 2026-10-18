@@ -545,19 +545,12 @@
   background: #758baa;
 }
 
-.beatpad-pads-foot {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 10px;
-}
-
-.beatpad-pads-foot .gbtn {
+.beatpad-perform-side > .gbtn {
   min-width: 102px;
-  min-height: 38px;
+  min-height: 34px;
 }
 
-.beatpad-pads-foot .gbtn.is-recording {
+.beatpad-perform-side > .gbtn.is-recording {
   border-color: #d78275;
   background: #a8443a;
   color: #fff;
@@ -1458,4 +1451,129 @@
   .beatpad-grid-layout.is-wide > .beatpad-grid {
     grid-template-rows: 20px repeat(var(--tracks), minmax(32px, 56px));
   }
+}
+
+/* Groove picker, performance pad and repeat */
+
+.beatpad-groove-field {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.beatpad-groove-select {
+  min-width: 132px;
+  min-height: 30px;
+}
+
+.beatpad-groove-row .beatpad-groove-actions {
+  margin-left: auto;
+}
+
+.beatpad-new-melody {
+  min-height: 28px;
+}
+
+.beatpad-perform {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 10px;
+}
+
+.beatpad-xy {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 72px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background:
+    linear-gradient(to top, rgba(18, 23, 25, 0.0), rgba(196, 156, 101, 0.16)),
+    linear-gradient(to right, #1d2a2c, #2a3133 50%, #2f2b26);
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.beatpad-xy.is-live {
+  border-color: rgba(221, 191, 146, 0.6);
+}
+
+.beatpad-xy-label {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  color: #ebece3;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.beatpad-xy-help {
+  position: absolute;
+  bottom: 8px;
+  left: 10px;
+  color: #9da79f;
+  font-size: 12px;
+}
+
+.beatpad-xy-dot {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border: 2px solid #f2dcb6;
+  border-radius: 50%;
+  background: rgba(196, 156, 101, 0.4);
+  box-shadow: 0 0 18px rgba(221, 191, 146, 0.5);
+  pointer-events: none;
+}
+
+.beatpad-perform-side {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.beatpad-repeat > button {
+  min-height: 34px;
+  padding: 0 12px;
+  touch-action: none;
+}
+
+@container (max-width: 500px) {
+  .beatpad-groove-select {
+    min-width: 0;
+  }
+
+  .beatpad-groove-field > .beatpad-section-label {
+    display: none;
+  }
+}
+
+@container (max-width: 560px) {
+  .beatpad-perform {
+    flex-direction: column;
+  }
+
+  .beatpad-perform-side {
+    flex-direction: row;
+    align-items: flex-end;
+  }
+}
+
+@container (max-height: 360px) {
+  .beatpad-xy-help {
+    display: none;
+  }
+}
+
+.is-coarse .beatpad-repeat > button,
+.is-coarse .beatpad-perform-side > .gbtn {
+  min-height: 44px;
 }
