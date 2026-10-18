@@ -2,7 +2,7 @@
 // scenery is in scenery.ts). It reads a Race every frame and never changes it.
 import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
-import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, deltaS, dropAt, edgeAt, edgeRuns, gridSpot, headingOf, inTrench, locate, pointAt, roadEdge, wrapAngle, wrapS, type Past, type Track } from './track';
+import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, deltaS, dropAt, edgeAt, edgeRuns, gridSpot, headingOf, inTrench, lengthOf, locate, pointAt, roadEdge, wrapAngle, wrapS, type Past, type Track } from './track';
 import { COURSES } from './courses';
 import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, makeStatue, noise, scatter, swingAt, texture, waterTexture } from './scenery';
 import { COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, RAMP_H, RAMP_LEN, TURBO_AT, gustWarn, hazState, hazardV, hurt, strokeAt, turboLevel, windAt, type Ev, type Hat, type HazPhase, type Kart, type LiveHazard, type Race, type ThingKind } from './logic';
@@ -53,7 +53,7 @@ type KartView = {
   wheelA: number;
   smoke: number;
   /** A racing shell's oars (each turning on its rigger pin, its blade at the end) and the rower's body, on the water. */
-  oars?: { pins: T.Group[]; blades: T.Mesh[]; rower: T.Group; off: number };
+  oars?: { pins: T.Group[]; blades: T.Mesh[]; rower: T.Group; off: number; tuck: number; crab: number; carve: number; side: 1 | -1; puddle: number; eight: T.Group; crew: { pin: T.Group; side: number; body: T.Mesh }[] };
 };
 
 type KartGeo = { box: T.BoxGeometry; wheel: T.CylinderGeometry; ball: T.SphereGeometry; ring: T.TorusGeometry; cone: T.ConeGeometry; plane: T.PlaneGeometry };
@@ -392,32 +392,155 @@ function makeShell(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: 
   view.trail.position.set(0, 0.2, -3.2);
   view.stars.position.set(0, 1.5, -0.35);
   view.shadow.scale.set(1.4, 6, 1);
-  view.oars = { pins, blades, rower, off: idx * 0.04 };
+  // a Bullet on the water is the coach's launch at full throttle, the coach at the wheel with the megaphone
+  for (const child of [...view.bullet.children]) view.bullet.remove(child);
+  const alu = new THREE.MeshLambertMaterial({ color: 0xc4cad2 });
+  add(view.bullet, geo.box, alu, 0, 0.4, 0, 2, 0.8, 5.4);
+  add(view.bullet, geo.box, shared.red, 0, 0.82, 0.3, 2.04, 0.14, 3.6);
+  add(view.bullet, geo.cone, alu, 0, 0.4, 3.05, 1, 1.3, 0.8).rotation.x = Math.PI / 2;
+  add(view.bullet, geo.box, dark, 0, 1.05, 0.9, 0.9, 0.5, 0.7);
+  add(view.bullet, geo.box, shared.dark, 0, 0.75, -2.75, 0.42, 0.75, 0.5);
+  add(view.bullet, geo.box, shared.red, 0.35, 1.45, -0.3, 0.55, 0.8, 0.4);
+  add(view.bullet, geo.ball, skin, 0.35, 2.02, -0.3, 0.19, 0.21, 0.19);
+  add(view.bullet, geo.cone, white, 0.72, 1.75, 0.05, 0.13, 0.42, 0.13).rotation.x = Math.PI / 2;
+  // (a bow wave either side of it)
+  for (const sx of [-1, 1]) add(view.bullet, geo.box, white, sx * 1.25, 0.12, 1.6, 0.25, 0.08, 3.2).rotation.y = sx * 0.35;
+  // a Mega on the water makes it an eight: a longer hull, more of the crew (each with one sweep oar, sides alternating)
+  // and a cox in the stern
+  const eight = new THREE.Group();
+  // (most of the extra length out ahead of you, so the chase camera is not sat in the cox's lap)
+  add(eight, geo.ball, paint, 0, 0.19, 1.3, 0.47, 0.21, 4.9);
+  add(eight, geo.box, white, 0, 0.37, 1.5, 0.08, 0.04, 8.6);
+  const crew: { pin: T.Group; side: number; body: T.Mesh }[] = [];
+  [4.35, 3.3, 2.25, 1.2, -1.4].forEach((z, n) => {
+    const side = n % 2 ? 1 : -1;
+    const body = add(eight, geo.box, paint, 0, 0.75, z, 0.4, 0.52, 0.25);
+    add(body, geo.ball, skin, 0, 0.8, 0, 0.36, 0.33, 0.6);
+    const pin = new THREE.Group();
+    pin.position.set(side * 0.62, 0.52, z + 0.35);
+    add(pin, geo.box, white, side * 1.6, 0, 0, 3.4, 0.05, 0.05);
+    add(pin, geo.box, bladeMat, side * 3.25, 0, 0, 0.5, 0.03, 0.16);
+    eight.add(pin);
+    crew.push({ pin, side, body });
+  });
+  // (the cox, low in the stern, facing the bow, with the megaphone)
+  add(eight, geo.box, shared.red, 0, 0.5, -2.65, 0.36, 0.34, 0.28);
+  add(eight, geo.ball, skin, 0, 0.8, -2.65, 0.14, 0.16, 0.14);
+  add(eight, geo.cone, white, 0, 0.75, -2.42, 0.07, 0.22, 0.07).rotation.x = Math.PI / 2;
+  eight.visible = false;
+  body.add(eight);
+  view.oars = { pins, blades, rower, off: idx * 0.04, tuck: 0, crab: 0, carve: 0, side: idx % 2 ? 1 : -1, puddle: -1, eight, crew };
   return view;
 }
 
-/** The oars on the beat (see STROKE_T): through the water from the catch to the finish, then feathered back over it. */
-function syncOars(v: KartView, k: Kart, time: number, me: boolean) {
+/**
+ * The oars on the beat (see STROKE_T): through the water from the catch to the finish, then feathered back over it. In
+ * the air (a hop, the weir, a wake) or with anything close alongside, both come in along the hull ("let it run"); in a
+ * carve the inside blade drags in the water and the shell heels into the turn; a crab jams one oar deep and slews the
+ * shell round it. And the shell's own look on the water: it bobs, a capsize rolls it over sideways rather than end over
+ * end, swamped it sits low rather than squashed flat, and its shadow is long and narrow. crowd: something within an oar's
+ * length to the side.
+ */
+function syncOars(v: KartView, k: Kart, time: number, me: boolean, dt: number, clock: number, crowd: boolean, posed: boolean) {
   const o = v.oars;
   if (!o) return;
   // (everyone rows to the race's beat; the field a little off it from one boat to the next, yours right on it)
   const phase = strokeAt(time - (me ? 0 : o.off));
   const drive = 0.38;
   const rowing = k.v > 3 && k.sunk === 0 && !hurt(k);
+  // (and while the launch has it in tow)
+  o.tuck = damp(o.tuck, posed || k.y > 0.05 || crowd || k.bullet > 0 ? 1 : 0, 14, dt);
+  o.crab = damp(o.crab, k.spin > 0 && !posed ? 1 : 0, 9, dt);
+  o.carve = damp(o.carve, k.drift !== 0 && !posed ? 1 : 0, 8, dt);
+  if (k.spin <= 0) o.side = k.steer > 0.1 ? -1 : k.steer < -0.1 ? 1 : o.side;
   const u = phase < drive ? phase / drive : (phase - drive) / (1 - drive);
   const sweep = rowing ? (phase < drive ? 0.87 - 1.48 * u : -0.61 + 1.48 * u) : k.sunk > 0 ? 0 : -0.15;
   const dip = rowing ? (phase < drive ? -0.18 : 0.12 + 0.05 * Math.sin(u * Math.PI)) : 0.05;
+  // (the inside of a carve: the right-hand oar, pins[0], is on the -x side)
+  const inside = k.drift > 0 ? 0 : k.drift < 0 ? 1 : -1;
   o.pins.forEach((pin, n) => {
     const side = n ? 1 : -1;
+    let sw = sweep;
+    let dp = dip;
+    let square = phase < drive && rowing;
+    // (the inside blade laid back and dragged through the water in a carve)
+    if (n === inside) {
+      sw += (-0.35 - sw) * o.carve;
+      dp += (-0.22 - dp) * o.carve;
+      if (o.carve > 0.5) square = false;
+    }
+    // (a crab: one oar jammed deep and dragged back, the other let go)
+    if (o.crab > 0.01) {
+      const jam = side === o.side;
+      sw += ((jam ? -0.95 : 0.4) - sw) * o.crab;
+      dp += ((jam ? -0.5 : 0.25) - dp) * o.crab;
+      square = jam;
+    }
+    // (in along the hull, the blades trailing just clear of the water)
+    sw += (-1.42 - sw) * o.tuck;
+    dp += (0.07 - dp) * o.tuck;
     // (sweep: toward the bow at the catch; dip: the blade's end down into the water)
-    pin.rotation.set(0, -side * sweep, side * dip);
+    pin.rotation.set(0, -side * sw, side * dp);
     // (squared through the water, feathered flat over it)
-    o.blades[n].rotation.x = phase < drive && rowing ? Math.PI / 2 : 0;
+    o.blades[n].rotation.x = square && o.tuck < 0.5 ? Math.PI / 2 : 0;
   });
+  // (an eight: the rest of the crew rowing with you)
+  o.eight.visible = k.mega > 0;
+  if (o.eight.visible) {
+    for (const c of o.crew) {
+      c.pin.rotation.set(0, -c.side * (sweep + (-1.42 - sweep) * o.tuck), c.side * (dip + (0.07 - dip) * o.tuck));
+      c.body.rotation.x = rowing ? (phase < drive ? -0.35 + 0.6 * u : 0.25 - 0.6 * u) * (1 - o.tuck) : 0;
+    }
+  }
   // the seat slides toward the bow through the drive and back toward the stern on the recovery (the rower faces the
-  // stern), and the body swings with it
-  o.rower.position.z = -0.35 + (rowing ? (phase < drive ? -0.15 + 0.3 * u : 0.15 - 0.3 * u) : 0);
-  o.rower.rotation.x = rowing ? (phase < drive ? -0.35 + 0.6 * u : 0.25 - 0.6 * u) : 0;
+  // stern), and the body swings with it (thrown back by a crab)
+  const still = Math.max(o.tuck, o.crab);
+  o.rower.position.z = -0.35 + (rowing ? (phase < drive ? -0.15 + 0.3 * u : 0.15 - 0.3 * u) : 0) * (1 - still);
+  o.rower.rotation.x = (rowing ? (phase < drive ? -0.35 + 0.6 * u : 0.25 - 0.6 * u) : 0) * (1 - still) - 0.5 * o.crab;
+  // the hull: heeled into a carve, slewed round a crab (not spun like a kart), rolled over sideways in a capsize, low in
+  // the water swamped, and bobbing on the water the rest of the time
+  const size = k.shrink > 0 ? 0.62 : k.mega > 0 ? 1.5 : 1;
+  v.body.rotation.x += v.flipA;
+  v.body.rotation.z += v.flipA + k.drift * 0.2 * o.carve;
+  v.body.rotation.y += -v.spinA + o.side * 0.75 * o.crab + Math.sin(clock * 9) * 0.06 * o.crab;
+  if (k.squash > 0) {
+    v.body.scale.setScalar(0.85 * size);
+    v.body.position.y -= 0.22;
+  }
+  if (!posed && k.y <= 0.05) v.body.position.y += 0.035 * Math.sin(clock * 2.1 + o.off * 40);
+  v.shadow.scale.set(1.15 * size, 5.2 * size, 1);
+  v.shadow.rotation.z = v.driftYaw + o.side * 0.75 * o.crab;
+  // (no sparks off a shell: the carve throws spray instead, see the particles)
+  for (const sp of v.sparks) sp.visible = false;
+}
+
+/**
+ * Whether anything is within an oar's length of shell k's side: another boat (and its oars), a wall, a vessel, the
+ * ferry, a buoy or a pier. Its oars come in for it.
+ */
+function crowded(r: Race, k: Kart) {
+  const t = r.track;
+  for (const side of [-1, 1]) {
+    const e = edgeAt(t, k.s, side);
+    if (e.past === 'wall' && e.lim - side * k.d < 3.6) return true;
+  }
+  const fx = Math.sin(k.h);
+  const fz = Math.cos(k.h);
+  for (const o of r.karts) {
+    if (o === k || o.sunk > 0) continue;
+    const dx = o.x - k.x;
+    const dz = o.z - k.z;
+    if (Math.abs(dx) > 7 || Math.abs(dz) > 7) continue;
+    if (Math.abs(dx * fx + dz * fz) < 3 && Math.abs(dx * fz - dz * fx) < 5) return true;
+  }
+  for (const h of r.hazards) {
+    if (h.gone || !(h.kind === 'buoy' || h.kind === 'ferry' || h.kind === 'statue' || h.kind === 'rotor' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'log')) continue;
+    const dx = h.x - k.x;
+    const dz = h.z - k.z;
+    const reach = (h.drive ? lengthOf(h) / 2 : 0) + h.r + 3.4;
+    if (dx * dx + dz * dz < reach * reach) return true;
+  }
+  return false;
 }
 
 const SPARK = [0, 0x4fc3ff, 0xff9d2e, 0xd36bff];
@@ -746,7 +869,15 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const skirtMat = look.glass ? new THREE.MeshBasicMaterial({ color: 0x1a0610, side: THREE.DoubleSide }) : null;
   const lipPosts: { x: number; z: number; s: number; nx: number; nz: number; tx: number; tz: number }[] = [];
   for (const [side, s0, s1, past] of open) {
-    if (boat) continue;
+    if (boat) {
+      // (on the water the wind's streamers fly from the marker posts along the marsh, where it blows: see water.ts)
+      for (let s = s0 + 4; s < s1 - 2; s += 10) {
+        if (!r.gusts.some((g) => deltaS(t, g.s0, s) >= 0 && deltaS(t, s, g.s1) >= 0)) continue;
+        const p = pointAt(t, s, side * (edgeAt(t, s, side).lim + 1.1));
+        lipPosts.push({ x: p.x, z: p.z, s, nx: -p.tz, nz: p.tx, tx: p.tx, tz: p.tz });
+      }
+      continue;
+    }
     const lim = limit(side);
     const far = reachAt(side);
     if (past === 'void' && neonMat && skirtMat) {
@@ -811,7 +942,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     streamers.frustumCulled = false;
     scene.add(streamers);
   }
-  if (lipPosts.length) {
+  if (lipPosts.length && !boat) {
     const m = new THREE.InstancedMesh(geo.box, new THREE.MeshBasicMaterial({ color: 0xffd6e4 }), lipPosts.length);
     lipPosts.forEach((p, k) => {
       dummy.position.set(p.x, 0.45, p.z);
@@ -1977,7 +2108,32 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   });
   /** Seconds each box has been back, so it pops in instead of appearing. */
   const boxAge = r.boxes.map(() => 1);
-  const coins = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.5, 0.5, 0.12, 18), new THREE.MeshLambertMaterial({ color: 0xf7c948, emissive: 0x5a3c00 }), Math.max(1, r.coins.length));
+  // (on the water, in the low dawn light, they shine a little brighter, with a rim and a stamped face, or they read as
+  // dull brown discs)
+  const coinFace = boat
+    ? new THREE.MeshLambertMaterial({
+        emissive: 0x7a4c00,
+        map: texture(
+          THREE,
+          canvas(64, 64, (g) => {
+            g.fillStyle = '#f7c948';
+            g.fillRect(0, 0, 64, 64);
+            g.strokeStyle = '#fff1b0';
+            g.lineWidth = 5;
+            g.beginPath();
+            g.arc(32, 32, 24, 0, Math.PI * 2);
+            g.stroke();
+            g.fillStyle = '#c98a10';
+            g.font = 'bold 30px Georgia, serif';
+            g.textAlign = 'center';
+            g.textBaseline = 'middle';
+            g.fillText('S', 32, 34);
+          }),
+        ),
+      })
+    : null;
+  const coinMat = new THREE.MeshLambertMaterial({ color: boat ? 0xb8860b : 0xf7c948, emissive: boat ? 0x4a2c00 : 0x5a3c00 });
+  const coins = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.5, 0.5, 0.12, 18), coinFace ? [coinMat, coinFace, coinFace] : coinMat, Math.max(1, r.coins.length));
   scene.add(coins);
 
   // karts
@@ -2214,6 +2370,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     gold: kartShared.gold,
     spark: SPARK.slice(1).map((c) => new THREE.MeshBasicMaterial({ color: c })),
     rainbow: [0xff5a5a, 0xffb347, 0xffe14d, 0x5ad86f, 0x4fb3ff, 0xb57bff].map((c) => new THREE.MeshBasicMaterial({ color: c })),
+    // (on the water a carve throws spray, white at first and then in the turbo's color as it charges)
+    carve: [0xeaf6ff, ...SPARK.slice(1)].map((c, n) => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: n ? 0.85 : 0.6, depthWrite: false })),
   };
   const parts: Particle[] = [];
   const spare: T.Mesh[] = [];
@@ -2654,7 +2812,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
           const sway = Math.sin(clock * 11 + n * 1.7) * flutter;
           const sg = Math.sign(wa) || 1;
           scratchV.set(p.nx * sg * k + p.tx * sway, -(1 - k) * 0.95 + 0.05, p.nz * sg * k + p.tz * sway).normalize();
-          dummy.position.set(p.x, 0.9, p.z);
+          dummy.position.set(p.x, boat ? 1.12 : 0.9, p.z);
           dummy.quaternion.setFromUnitVectors(UP, scratchV);
           dummy.scale.set(1, 1.1, 1);
           dummy.updateMatrix();
@@ -2791,7 +2949,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         const pose = k.sunk > 0 ? fallPose(race, k, clock) : null;
         poses[i] = pose;
         syncKart(v, k, dt, clock, pose);
-        if (v.oars) syncOars(v, k, race.time, i === me);
+        if (v.oars) syncOars(v, k, race.time, i === me, dt, clock, crowded(race, k), !!pose);
         v.smoke -= dt;
         if (pose) {
           // the hook (or the retriever) on its way down for it, carrying it back and letting go
@@ -2854,6 +3012,17 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
           // mud (or sand, out of a bunker) flies up off the back wheels
           v.smoke = 0.04;
           for (const side of [-1, 1]) emit(geo.ball, k.sand ? partMat.sand : partMat.mud, k.x - Math.sin(k.h) * 1.2 - Math.cos(k.h) * side * 0.75, 0.3, k.z - Math.cos(k.h) * 1.2 + Math.sin(k.h) * side * 0.75, (Math.random() - 0.5) * 3 - Math.sin(k.h) * 3, 3 + Math.random() * 3, (Math.random() - 0.5) * 3 - Math.cos(k.h) * 3, 0.5, 0.16, 14);
+          return;
+        }
+        if (v.oars) {
+          // on the water: spray thrown up off the inside blade as it drags through a carve
+          if (k.drift === 0) return;
+          v.smoke = 0.03;
+          const lx = -k.drift * (2.6 + Math.random() * 0.8);
+          const ox = Math.cos(k.h) * lx - Math.sin(k.h) * 0.6;
+          const oz = -Math.sin(k.h) * lx - Math.cos(k.h) * 0.6;
+          const lv = turboLevel(k.charge);
+          emit(geo.ball, partMat.carve[lv], k.x + ox, 0.15, k.z + oz, ox * 0.6 - Math.sin(k.h) * 3 + (Math.random() - 0.5) * 2, 1.8 + Math.random() * 2.2, oz * 0.6 - Math.cos(k.h) * 3 + (Math.random() - 0.5) * 2, 0.4, 0.09 + lv * 0.03, 10);
           return;
         }
         if (k.drift === 0 && !dusty) return;
@@ -3056,7 +3225,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       } else if (e.t === 'wake' || e.t === 'swell') {
         // spray off the bow as a wake or a crest throws you
         const k = race.karts[e.k];
-        if (k) burst(geo.ball, [partMat.spray, partMat.white], k.x + Math.sin(k.h) * 2, 0.3, k.z + Math.cos(k.h) * 2, 8, 3.5, 0.2, 0.5, 12);
+        if (k) burst(geo.ball, [partMat.spray, partMat.carve[0]], k.x + Math.sin(k.h) * 2, 0.3, k.z + Math.cos(k.h) * 2, 8, 3.5, 0.12, 0.45, 12);
       } else if (e.t === 'toot' || e.t === 'fore') {
         const k = race.karts[e.k];
         if (k) say(e.t === 'toot' ? 'BEEP BEEP!' : 'FORE!', k.x, 3.4, k.z, e.t === 'fore' ? '#ff8a3d' : '#ffffff');

@@ -19,6 +19,7 @@ import {
   swellWarn,
   CATCH_WIN,
   STROKE_T,
+  TIDE_LAP,
   hazardV,
   boom,
   createRace,
@@ -481,6 +482,10 @@ function Play({ mode }: { mode: Mode }) {
   const strokeTarget = useRef<SVGCircleElement | null>(null);
   const strokeTicks = useRef<(SVGRectElement | null)[]>([]);
   const lastBeat = useRef(0);
+  /** On the water: when the weir last roared and which eight seconds the foghorn last sounded in. */
+  const roarT = useRef(0);
+  const fogHorn = useRef(-1);
+  const tugAt = useRef(-1);
   /** A short buzz on phones that can. */
   const buzz = (ms: number) => {
     if (!shellRef.current.touch) return;
@@ -731,6 +736,8 @@ function Play({ mode }: { mode: Mode }) {
       }
       winching.current = carrying;
       if (me) pieceSounds(r, me, dt);
+      // on the water: the weir roaring as you come down to it, gulls over the Port, and on the last lap the foghorn
+      if (me && r.boat && r.time > 0) boatSounds(r, me, dt);
       // on the water, the cox-box clicking the beat
       if (me && r.boat && r.time > 0 && me.done === null && me.sunk === 0) {
         const beat = beatAt(r.time).beat;
@@ -813,6 +820,44 @@ function Play({ mode }: { mode: Mode }) {
    * the ratchet of a sprinkler and its hiss as it comes on, the whoosh of the ball swinging by, and your own tyres on
    * the wet road. Quieter the further off they are, and silent beyond 70 m.
    */
+  /** The slough's own sounds, round your shell: the weir's roar, gulls over the Port and the foghorn in the fog. */
+  function boatSounds(r: Race, me: Kart, dt: number) {
+    roarT.current -= dt;
+    if (roarT.current <= 0) {
+      roarT.current = 0.28;
+      for (const h of r.holes) {
+        const dist = Math.hypot(h.x - me.x, h.z - me.z);
+        if (dist < 80) sfx.noise(0.34, 0.05 * (1 - dist / 80) ** 1.5);
+      }
+    }
+    // (the tug's horn as it comes up Westpoint Slough, once a transit, near enough to hear)
+    for (const v of r.vessels) {
+      if (v.kind !== 'barge' || v.gone) continue;
+      const dist = Math.hypot(v.x - me.x, v.z - me.z);
+      const transit = Math.floor((r.time - (v.phase ?? 0)) / (v.every ?? 60));
+      if (dist < 90 && tugAt.current !== transit) {
+        tugAt.current = transit;
+        const vol = 1 - dist / 90;
+        sfx.tone({ freq: 82, dur: 1.2, type: 'sawtooth', vol: 0.09 * vol });
+        sfx.tone({ freq: 123, dur: 1.2, type: 'triangle', vol: 0.05 * vol });
+      }
+    }
+    // (gulls wheeling over the Port's wharves, now and then)
+    if (me.s > 370 && me.s < 450 && Math.random() < dt * 0.5) {
+      const f = 1500 + Math.random() * 400;
+      sfx.tone({ freq: f, to: f * 0.62, dur: 0.16, type: 'triangle', vol: 0.025 });
+      sfx.tone({ freq: f * 1.05, to: f * 0.6, dur: 0.2, type: 'triangle', vol: 0.02, delay: 0.2 });
+    }
+    // (the foghorn out on the Bay, every 8 s, once the fog is in)
+    // (the fog comes in with the tide's turn: see Look.fogLap)
+    const horn = Math.floor(r.time / 8);
+    if (me.lap >= TIDE_LAP && me.done === null && horn !== fogHorn.current) {
+      fogHorn.current = horn;
+      sfx.tone({ freq: 110, dur: 1.5, type: 'sawtooth', vol: 0.045 });
+      sfx.tone({ freq: 111.5, dur: 1.5, type: 'triangle', vol: 0.06 });
+    }
+  }
+
   function pieceSounds(r: Race, me: Kart, dt: number) {
     pieceTick.current -= dt;
     const tick = pieceTick.current <= 0;
@@ -920,6 +965,17 @@ function Play({ mode }: { mode: Mode }) {
             sfx.tone({ freq: 45, to: 32, dur: 0.4, type: 'sine', vol: 0.22 * vol });
           }
           if (dist < 25) buzz(30);
+        }
+      } else if (h.look === 'gate') {
+        // the Tide Gates: the lock's klaxon as a leaf is about to swing, and the steel clang as it shuts
+        if (crossed(warn) && st.phase === 'idle' && st.warn > 0) {
+          sfx.tone({ freq: 440, to: 330, dur: 0.28, type: 'square', vol: 0.035 * vol });
+          sfx.tone({ freq: 440, to: 330, dur: 0.28, type: 'square', vol: 0.035 * vol, delay: 0.34 });
+        }
+        if (crossed(0) && st.solid) {
+          sfx.tone({ freq: 150, dur: 0.5, type: 'triangle', vol: 0.09 * vol });
+          sfx.tone({ freq: 415, dur: 0.3, type: 'sine', vol: 0.04 * vol });
+          sfx.noise(0.08, 0.06 * vol);
         }
       } else {
         if (crossed(warn) && st.phase === 'idle' && st.warn > 0) sfx.tone({ freq: 620, to: 980, dur: 0.5, type: 'square', vol: 0.035 * vol });
@@ -1177,6 +1233,11 @@ function Play({ mode }: { mode: Mode }) {
         if (mine) {
           buzz(e.how === 'spin' || e.how === 'squash' ? 60 : 120);
           sfx.play(e.how === 'spin' || e.how === 'squash' ? 'hit' : 'boom');
+          // (on the water a spin is a crab: the oar's clack in its gate and a splash)
+          if (r.boat && e.how === 'spin') {
+            sfx.tone({ freq: 1100, to: 700, dur: 0.05, type: 'square', vol: 0.08 });
+            sfx.noise(0.3, 0.09, 0.05);
+          }
           setFlash({ id: Date.now(), kind: 'hit' });
         }
         break;
