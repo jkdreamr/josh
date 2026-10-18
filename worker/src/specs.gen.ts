@@ -145,7 +145,7 @@ export const ONLINE_SPECS: Record<string, OnlineSpec> = {
   "paperio": {"seats":8,"lateJoin":true},
   "pong": {"seats":2},
   "pool": {"seats":2},
-  "run-3d": {"seats":4,"bots":true,"quick":true},
+  "run-3d": {"seats":4,"bots":true},
   "scramble": {"seats":20,"lateJoin":true,"bots":true,"quick":true},
   "slither": {"seats":8,"lateJoin":true,"bots":true},
   "snake": {"seats":4},

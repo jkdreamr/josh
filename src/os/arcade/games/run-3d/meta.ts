@@ -20,5 +20,5 @@ export const meta: GameMeta = {
   order: 6,
   music: 'synth',
   leaderboard: { order: 'desc', max: 1_000_000, unit: 'm' },
-  online: { seats: 4, bots: true, quick: true },
+  online: { seats: 4, bots: true },
 };

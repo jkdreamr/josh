@@ -27,6 +27,24 @@ import {
 
 type Three = typeof import('three');
 
+const ADD = 2 as T.Blending;
+const STAR_VERT = `
+attribute vec3 tint;
+uniform float size;
+varying vec3 vTint;
+void main() {
+  vTint = tint;
+  gl_PointSize = size;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+const STAR_FRAG = `
+varying vec3 vTint;
+void main() {
+  vec2 d = gl_PointCoord - 0.5;
+  float a = smoothstep(0.5, 0.15, length(d));
+  gl_FragColor = vec4(vTint, a);
+}`;
+
 export type Theme = { tile: number; edge: number; crumb: number; fog: number; sky: number; light: number; planet: number };
 export const THEMES: readonly Theme[] = [
   { tile: 0x7d86ff, edge: 0x9fa6ff, crumb: 0x6b4fa0, fog: 0x0a0b26, sky: 0x5a4cff, light: 0xb7b4ff, planet: 0xff9a6a },
@@ -93,7 +111,7 @@ export type World = {
   cells: T.Group[];
   hemi: T.HemisphereLight;
   key: T.DirectionalLight;
-  glow: T.PointLight;
+  glow: T.DirectionalLight;
   you: Runner;
   ghosts: Map<number, Ghost>;
   labels: Map<number, { x: number; y: number; on: boolean }>;
@@ -256,7 +274,16 @@ export function makeRunner(THREE: Three, accent: number, suit = 0xf2f3fa): Runne
   const trimMat = new THREE.MeshStandardMaterial({ color: accent, roughness: 0.5, emissive: accent, emissiveIntensity: 0.25 });
   const glowMat = new THREE.MeshBasicMaterial({ color: accent, toneMapped: false });
   const visorMat = new THREE.MeshStandardMaterial({ color: 0x141826, roughness: 0.12, metalness: 0.7 });
-  const capsule = (r: number, l: number, m: T.Material) => new THREE.Mesh(new THREE.CapsuleGeometry(r, l, 4, 10), m);
+  // a capsule from a tube and two caps (the shared three.js chunk has no CapsuleGeometry)
+  const capsule = (r: number, l: number, m: T.Material) => {
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r, l, 10, 1, true), m);
+    for (const y of [l / 2, -l / 2]) {
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 6), m);
+      cap.position.y = y;
+      body.add(cap);
+    }
+    return body;
+  };
 
   const torso = capsule(0.16, 0.2, suitMat);
   torso.position.y = 0.66;
@@ -270,7 +297,7 @@ export function makeRunner(THREE: Three, accent: number, suit = 0xf2f3fa): Runne
   const pack = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.26, 0.12), trimMat);
   pack.position.set(0, 0.7, 0.17);
   body.add(pack);
-  const jet = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.24, 10, 1, true), new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+  const jet = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.24, 10, 1, true), new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.85, blending: ADD, depthWrite: false, toneMapped: false }));
   jet.rotation.x = Math.PI;
   jet.position.set(0, 0.48, 0.2);
   body.add(jet);
@@ -374,8 +401,8 @@ export function buildWorld(THREE: Three, host: HTMLElement, accent = 0xff8a3d): 
   scene.add(hemi);
   const key = new THREE.DirectionalLight(0xffffff, 1.6);
   scene.add(key, key.target);
-  const glow = new THREE.PointLight(0xb7b4ff, 9, 11, 1.4);
-  scene.add(glow);
+  const glow = new THREE.DirectionalLight(0xb7b4ff, 1.2);
+  scene.add(glow, glow.target);
 
   const { map, glow: glowMap } = tileTextures(THREE);
   const tileMat = new THREE.MeshStandardMaterial({ map, emissiveMap: glowMap, emissive: 0xffffff, emissiveIntensity: 1.1, roughness: 0.38, metalness: 0.25 });
@@ -387,7 +414,7 @@ export function buildWorld(THREE: Three, host: HTMLElement, accent = 0xff8a3d): 
   const decalTex = chevronTexture(THREE);
   const decals = new THREE.InstancedMesh(
     new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ map: decalTex, color: 0x9ffcff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+    new THREE.MeshBasicMaterial({ map: decalTex, color: 0x9ffcff, transparent: true, blending: ADD, depthWrite: false, toneMapped: false }),
     ROWS_VIS * 3,
   );
   decals.frustumCulled = false;
@@ -400,7 +427,7 @@ export function buildWorld(THREE: Three, host: HTMLElement, accent = 0xff8a3d): 
   const glowTex = glowTexture(THREE);
   const sparks = new THREE.InstancedMesh(
     new THREE.PlaneGeometry(1, 1),
-    new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+    new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, blending: ADD, depthWrite: false, toneMapped: false }),
     SPARKS,
   );
   sparks.frustumCulled = false;
@@ -408,7 +435,7 @@ export function buildWorld(THREE: Three, host: HTMLElement, accent = 0xff8a3d): 
 
   const streaks = new THREE.InstancedMesh(
     new THREE.BoxGeometry(0.03, 0.03, 1),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, blending: ADD, depthWrite: false, fog: false }),
     STREAKS,
   );
   streaks.frustumCulled = false;
@@ -434,8 +461,8 @@ export function buildWorld(THREE: Three, host: HTMLElement, accent = 0xff8a3d): 
     col.set([tint, tint * (0.85 + 0.15 * warm), tint * (0.75 + 0.25 * (1 - warm))], i * 3);
   }
   starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  starGeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 1.7, sizeAttenuation: false, vertexColors: true, fog: false, transparent: true, depthWrite: false }));
+  starGeo.setAttribute('tint', new THREE.BufferAttribute(col, 3));
+  const stars = new THREE.Points(starGeo, new THREE.ShaderMaterial({ vertexShader: STAR_VERT, fragmentShader: STAR_FRAG, uniforms: { size: { value: 1.7 * Math.min(2, window.devicePixelRatio || 1) } }, transparent: true, depthWrite: false }));
   stars.renderOrder = -1;
   scene.add(stars);
 
@@ -458,14 +485,14 @@ export function buildWorld(THREE: Three, host: HTMLElement, accent = 0xff8a3d): 
   const moon = new THREE.Mesh(new THREE.SphereGeometry(9, 24, 16), new THREE.MeshStandardMaterial({ color: 0xb9bccc, roughness: 1, fog: false }));
   moon.position.set(120, 40, -60);
   planet.add(moon);
-  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffffff, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffffff, transparent: true, opacity: 0.28, blending: ADD, depthWrite: false, fog: false }));
   halo.scale.set(150, 150, 1);
   planet.add(halo);
   scene.add(planet);
 
   const rings: T.Mesh[] = [];
   for (let i = 0; i < 3; i++) {
-    const m = new THREE.Mesh(undefined, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    const m = new THREE.Mesh(undefined, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, blending: ADD, depthWrite: false, toneMapped: false }));
     m.visible = false;
     scene.add(m);
     rings.push(m);
@@ -474,9 +501,9 @@ export function buildWorld(THREE: Three, host: HTMLElement, accent = 0xff8a3d): 
   const cells: T.Group[] = [];
   for (let i = 0; i < 3; i++) {
     const g = new THREE.Group();
-    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.2), new THREE.MeshStandardMaterial({ color: 0xfff1a8, emissive: 0xffc93a, emissiveIntensity: 1.6, roughness: 0.2, metalness: 0.3 }));
+    const gem = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2, 0), new THREE.MeshStandardMaterial({ color: 0xfff1a8, emissive: 0xffc93a, emissiveIntensity: 1.6, roughness: 0.2, metalness: 0.3 }));
     g.add(gem);
-    const h = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffd166, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const h = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffd166, transparent: true, blending: ADD, depthWrite: false }));
     h.scale.set(1.1, 1.1, 1);
     g.add(h);
     g.visible = false;
@@ -638,7 +665,7 @@ export function syncWorld(w: World, s: State, dt: number, ev: Events, ghosts: re
   w.hemi.color.copy(w.col.light);
   w.hemi.intensity = 1.1 - 0.75 * w.dark;
   w.glow.color.copy(w.col.light);
-  w.glow.intensity = 9 + 10 * w.dark;
+  w.glow.intensity = 0.9 + 1.4 * w.dark;
   w.key.intensity = 1.6 - 1.1 * w.dark;
 
   // you
@@ -651,6 +678,7 @@ export function syncWorld(w: World, s: State, dt: number, ev: Events, ghosts: re
   animateRunner(w.you, s.hold > 0 ? 0 : dt, { speed: s.hold > 0 ? 0 : s.speed, grounded: s.grounded, vy: s.vy, falling: s.falling, vx: s.vx, landed: ev.landed });
   place(w.v2, z, s.side, s.x, s.h + 1.1, s.dist - 0.4);
   w.glow.position.copy(w.v2);
+  w.glow.target.position.copy(w.you.root.position);
 
   if (ev.jumped) burst(w, z, s.side, s.x, 0.05, s.dist, 8, w.col.edge, 2.2, 0.8);
   if (ev.landed) {
