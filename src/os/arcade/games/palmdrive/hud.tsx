@@ -469,6 +469,22 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>The Marguerite buses</b> drive their rounds slower than you, both in the right-hand lane. Pass on the left: run into one and you spin out. Shells break on them too.
+            And they have right of way: the pile drivers, bollards, sprinklers and wrecking balls stand aside as a bus comes through.
+          </li>
+          <li>
+            <b>Pile drivers</b> slam down on the corners every few seconds and sit a moment: the beacon strobes and the head shakes just before it drops. Go under it while it is up, or take the long way round. It flattens you on the way down, it is solid on the ground, and shells break on it there.
+          </li>
+          <li>
+            <b>Bollards</b> rise across the road in four banks from lap 2, one gap rippling across: green lamps down, amber about to rise, red up. Hit a raised bank and you are squashed and stopped behind it. Shells break on a raised bank.
+          </li>
+          <li>
+            <b>Sprinklers</b> on the sweeper spin a jet round from lap 2: the spray spins you (a hop does not clear it), the hub is solid. Pass on the side the arm has just left.
+          </li>
+          <li>
+            <b>Wet road</b> from lap 3: there is no grip through the sweeper, so you turn less. Drift through it, or ease off.
+          </li>
+          <li>
+            <b>Wrecking balls</b> swing across the road on the clock. A hit tumbles you and throws you aside, and beside the Dig that means the drop. Go through fast on the side the ball is leaving.
           </li>
           <li>
             <b>Golf carts</b> drive their rounds like the buses, and more cross the road on the cart paths. Run into one and you spin out.
