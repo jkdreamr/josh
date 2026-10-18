@@ -1,7 +1,7 @@
 // Pictures and sheets for Scramble's interface: weapon and item icons, the island map, and How to Play.
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { AMMO_BOX, BOOST, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, type Ammo, type GunClass, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
+import { AMMO_BOX, ARMOR_CUT, ARMOR_NAMES, BOOST, FLARE_WAIT, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, SIP, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, type Ammo, type ArmorKind, type GunClass, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { HALF, type Building, type Door, type GameMap } from './map';
 import type { Held } from './logic';
 
@@ -91,10 +91,50 @@ export function WeaponIcon({ w, size }: { w: Held | null; size?: number }) {
           <path d="M13.5 19.5c1-2.6 4-2.6 5 0-.6 2.4-4.4 2.4-5 0z" fill="#ffd23d" />
         </Svg>
       );
+    case 'impulse':
+      // an egg with a bolt on it, and the shove rippling out either side
+      return (
+        <Svg size={size}>
+          <path d="M5.5 11.5a11 11 0 0 0 0 10M26.5 11.5a11 11 0 0 1 0 10M2.2 9a15 15 0 0 0 0 15M29.8 9a15 15 0 0 1 0 15" fill="none" stroke="#bcd7ff" strokeWidth="1.4" strokeLinecap="round" />
+          <path d="M16 6.5c-4 0-6.6 5.4-6.6 9.6a6.6 6.6 0 0 0 13.2 0C22.6 11.9 20 6.5 16 6.5z" fill="#4aa8ff" />
+          <path d="M17.2 9.5l-4.2 7h3.2l-1.4 6 4.6-7.6h-3.2z" fill="#fff" />
+        </Svg>
+      );
+    case 'jam':
+      // a jar of jam with a checked lid and a label
+      return (
+        <Svg size={size}>
+          <rect x="8" y="10" width="16" height="18" rx="3.5" fill="#a3214a" />
+          <rect x="7" y="5.5" width="18" height="5" rx="1.3" fill="#fff3df" stroke="#c9a85a" strokeWidth="1" />
+          <path d="M10 5.5v5M14 5.5v5M18 5.5v5M22 5.5v5" stroke="#e53935" strokeWidth="1.2" />
+          <rect x="11" y="15" width="10" height="7.5" rx="1.5" fill="#fff3df" />
+          <circle cx="16" cy="18.7" r="2" fill="#a3214a" />
+        </Svg>
+      );
+    case 'bush':
+      // a tin can with a bush bursting out of the top
+      return (
+        <Svg size={size}>
+          <rect x="10" y="16" width="12" height="12" rx="1.5" fill="#c9d0d8" stroke="#8e98a6" strokeWidth="1" />
+          <rect x="10" y="19.5" width="12" height="5" fill="#3f9a4a" />
+          <circle cx="11.5" cy="12" r="4.5" fill="#3f8f3a" />
+          <circle cx="20.5" cy="12" r="4.5" fill="#3f8f3a" />
+          <circle cx="16" cy="8.5" r="5" fill="#56a648" />
+        </Svg>
+      );
     case 'pistol':
       return (
         <Svg size={size}>
           <path d="M6 11h19v4.5H14l-1.4 7.5H8.2l1.5-7.5H6z" fill={INK} />
+        </Svg>
+      );
+    case 'flare':
+      // a stubby orange pistol with a wide mouth and the flare glowing in it
+      return (
+        <Svg size={size}>
+          <path d="M4.5 11h17.5a2.5 2.5 0 0 1 2.5 2.5v2.5H14.5l-1.5 7.5H8.4l1.5-7.5H4.5z" fill="#ff7a2f" />
+          <circle cx="26" cy="13.5" r="3.6" fill="#ffd23d" stroke="#e5531f" strokeWidth="1.3" />
+          <path d="M27.5 7l1.4-3M30 9.5l1.6-1.4" stroke="#ffd23d" strokeWidth="1.4" strokeLinecap="round" />
         </Svg>
       );
     case 'revolver':
@@ -119,6 +159,15 @@ export function WeaponIcon({ w, size }: { w: Held | null; size?: number }) {
           <path d="M16.6 18h2.8v8.5h-2.8z" fill="#9aa3ad" />
         </Svg>
       );
+    case 'hsmg':
+      // a chunky SMG with a fat box of heavy rounds and a front grip
+      return (
+        <Svg size={size}>
+          <path d="M2 11h21v2.5h5v3h-5V18H15.5l-1.2 6h-4.2l1-6H8l-1.5 3.2H2z" fill={INK} />
+          <rect x="15.5" y="17.5" width="4.4" height="9" rx="1" fill="#6fcf97" />
+          <path d="M22 18.5l-1.2 4.5" stroke={INK} strokeWidth="2.6" strokeLinecap="round" />
+        </Svg>
+      );
     case 'rifle':
       return (
         <Svg size={size}>
@@ -134,6 +183,16 @@ export function WeaponIcon({ w, size }: { w: Held | null; size?: number }) {
           <path d="M5 18h4l-1 4.5H4.6z" fill="#d9c49a" />
         </Svg>
       );
+    case 'marksman':
+      // a long tan rifle with a scope and a short magazine
+      return (
+        <Svg size={size}>
+          <path d="M1.5 14.2l4.5-1.4h11v-1H31v2.3H19.5v2.4h-5.2l-1.2 4.6H9.7l.9-4.6H6.5l-3 2.2h-2z" fill="#d9c49a" />
+          <rect x="8.5" y="8.4" width="8.5" height="2.8" rx="1.4" fill={INK} />
+          <path d="M10.5 11.2v1.6M15 11.2v1.6" stroke={INK} strokeWidth="1.2" />
+          <rect x="15" y="16.5" width="3.2" height="5.5" rx="0.8" fill={INK} />
+        </Svg>
+      );
     case 'scout':
       return (
         <Svg size={size}>
@@ -147,6 +206,17 @@ export function WeaponIcon({ w, size }: { w: Held | null; size?: number }) {
           <path d="M1 12.5h23v1.5h7v2.6h-7V18H13v4.5H8.5V18H1z" fill={INK} />
           <rect x="13.5" y="18.5" width="6" height="5" rx="1" fill="#c7d39a" />
           <path d="M26 17l-2 7M26 17l2.5 7" stroke={INK} strokeWidth="1.3" strokeLinecap="round" />
+        </Svg>
+      );
+    case 'minigun':
+      // a drum of a body, a bundle of barrels, and a belt of light rounds over the top
+      return (
+        <Svg size={size}>
+          <path d="M5 7.5c3-2 7-2 9.5 0" fill="none" stroke="#f2c94c" strokeWidth="2.4" strokeLinecap="round" />
+          <rect x="2.5" y="9.5" width="12" height="12" rx="3" fill={INK} />
+          <path d="M14.5 12h15M14.5 15.5h15M14.5 19h15" stroke="#9aa3ad" strokeWidth="2.3" strokeLinecap="round" />
+          <rect x="25.5" y="10" width="2.4" height="11" rx="1" fill={INK} />
+          <path d="M6.5 21.5l-1.5 5h4.2l1-5z" fill={INK} />
         </Svg>
       );
     case 'shotgun':
@@ -266,6 +336,29 @@ export function UseIcon({ w, size }: { w: UseId; size?: number }) {
           <path d="M13 6c-1-1.5 1-2.2 0-3.7M17.5 6c-1-1.5 1-2.2 0-3.7" stroke="#fff" strokeWidth="1.3" strokeLinecap="round" fill="none" opacity="0.8" />
         </Svg>
       );
+    case 'smoothie':
+      // a pink smoothie with berries in it, a lid and a straw
+      return (
+        <Svg size={size}>
+          <path d="M9 11h14l-1.9 15.4a2 2 0 0 1-2 1.8h-6.2a2 2 0 0 1-2-1.8z" fill="#ff6fa8" />
+          <path d="M9.6 16h12.8" stroke="#bcd7ff" strokeWidth="1.6" />
+          <circle cx="13.5" cy="20" r="1.7" fill="#a3214a" />
+          <circle cx="18.2" cy="23" r="1.5" fill="#a3214a" />
+          <rect x="8" y="8.5" width="16" height="3" rx="1.2" fill="#fff3df" />
+          <path d="M17.5 8.5l2.6-6.5h3.4" fill="none" stroke="#4aa8ff" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+        </Svg>
+      );
+    case 'tart':
+      // a golden egg tart, crimped round the edge, with a sparkle
+      return (
+        <Svg size={size}>
+          <path d="M3.5 17.5h25l-2.6 7.4a2 2 0 0 1-1.9 1.3H8a2 2 0 0 1-1.9-1.3z" fill="#d9952b" />
+          <path d="M8.5 21.5v3M12.5 21.5v3.5M16 21.5v3.5M19.5 21.5v3.5M23.5 21.5v3" stroke="#a8691c" strokeWidth="1.2" />
+          <ellipse cx="16" cy="17.5" rx="12.5" ry="4.2" fill="#ffd23d" stroke="#d9952b" strokeWidth="1.8" />
+          <ellipse cx="13" cy="16.6" rx="4" ry="1.2" fill="#fff3a8" />
+          <path d="M24 4l1.1 2.6 2.7.3-2 1.8.6 2.7-2.4-1.4-2.4 1.4.6-2.7-2-1.8 2.7-.3z" fill="#fff6c9" />
+        </Svg>
+      );
   }
 }
 
@@ -286,6 +379,55 @@ export function PackIcon({ size, lv = 1 }: { size?: number; lv?: number }) {
       <path d="M8 13a8 8 0 0 1 16 0v13a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2z" fill={fill} />
       <path d="M12 8.5V6a4 4 0 0 1 8 0v2.5" fill="none" stroke={fill} strokeWidth="2" />
       <rect x="11" y="18" width="10" height="6" rx="1.5" fill="rgba(0,0,0,0.25)" />
+    </Svg>
+  );
+}
+
+/** A helmet (a colander, saucepan or stockpot upside down) or a vest (an apron), in its level's color. */
+export function ArmorIcon({ kind, size, lv = 1 }: { kind: ArmorKind; size?: number; lv?: number }) {
+  const fill = RARITY_COLORS[Math.min(4, lv + 1)];
+  const edge = 'rgba(0,0,0,0.35)';
+  if (kind === 'vest')
+    // an apron on its neck loop: a pocket at level 1, quilted at 2, steel plates at 3
+    return (
+      <Svg size={size}>
+        <path d="M12 6.5c0-4.5 8-4.5 8 0M6.5 15.5l-3.5 2M25.5 15.5l3.5 2" fill="none" stroke={INK} strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M11 6h10v6l5 2.5V26a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V14.5l5-2.5z" fill={fill} stroke={edge} strokeWidth="1.2" strokeLinejoin="round" />
+        {lv <= 1 && <rect x="11" y="18" width="10" height="6" rx="1.2" fill={edge} />}
+        {lv === 2 && <path d="M7 18.5h18M7 23.5h18M13.5 7v20.5M18.5 7v20.5" stroke={edge} strokeWidth="1.1" />}
+        {lv >= 3 && (
+          <g fill={STEEL} stroke={edge} strokeWidth="0.8">
+            <rect x="12.5" y="8" width="7" height="4" rx="0.8" />
+            <rect x="8.5" y="15" width="15" height="5" rx="0.8" />
+            <rect x="8.5" y="21.5" width="15" height="5" rx="0.8" />
+          </g>
+        )}
+      </Svg>
+    );
+  // level 1 a colander dotted with holes, 2 a saucepan with its long handle, 3 a tall stockpot with a lid
+  if (lv <= 1)
+    return (
+      <Svg size={size}>
+        <path d="M5 20a11 11 0 0 1 22 0z" fill={fill} stroke={edge} strokeWidth="1.2" />
+        <rect x="2.5" y="19.5" width="27" height="3.5" rx="1.75" fill={STEEL} stroke={edge} strokeWidth="1" />
+        <path d="M11 13.5h.1M16 11.5h.1M21 13.5h.1M8.5 17.5h.1M13.5 16.5h.1M18.5 16.5h.1M23.5 17.5h.1" stroke={edge} strokeWidth="2.2" strokeLinecap="round" />
+      </Svg>
+    );
+  if (lv === 2)
+    return (
+      <Svg size={size}>
+        <path d="M21 16h8.5" stroke={INK} strokeWidth="3.4" strokeLinecap="round" />
+        <rect x="4" y="12" width="18" height="12" rx="2.5" fill={fill} stroke={edge} strokeWidth="1.2" />
+        <rect x="3" y="10" width="20" height="3.5" rx="1.75" fill={STEEL} stroke={edge} strokeWidth="1" />
+      </Svg>
+    );
+  return (
+    <Svg size={size}>
+      <path d="M3.5 15h4M24.5 15h4" stroke={INK} strokeWidth="3" strokeLinecap="round" />
+      <rect x="7" y="9" width="18" height="19" rx="2.5" fill={fill} stroke={edge} strokeWidth="1.2" />
+      <path d="M6 9a10 3 0 0 1 20 0z" fill={STEEL} stroke={edge} strokeWidth="1" />
+      <circle cx="16" cy="5" r="1.8" fill={STEEL} stroke={edge} strokeWidth="1" />
+      <path d="M10 19h12" stroke={edge} strokeWidth="1.2" />
     </Svg>
   );
 }
@@ -420,12 +562,16 @@ const AMMO_NAME: Record<Ammo, string> = { light: 'Light ammo', heavy: 'Heavy amm
 const GUN_HELP: Record<WeaponId, string> = {
   pistol: 'Steady and accurate.',
   revolver: 'Slow, but each shot hits like a truck.',
+  flare: `Rare, always legendary. One flare straight up, and a supply drop floats down near you about ${FLARE_WAIT} seconds later. Everyone sees it coming.`,
   smg: 'Sprays fast up close.',
   micro: 'The quickest trigger on the island. Shreds at short range.',
+  hsmg: 'Hits harder than an SMG, but climbs: every shot goes wider until you let off the trigger.',
   rifle: 'The all-rounder: quick, accurate, long reach.',
   burst: 'Three rounds a pull, dead on target.',
-  scout: 'A marksman rifle with a scope built in.',
+  marksman: 'One careful shot at a time, between a rifle and a scout. Sees a little farther.',
+  scout: 'A long rifle with a scope built in.',
   lmg: 'An 80-round belt. You walk slower carrying it.',
+  minigun: `Hold the trigger: it spins up for ${WEAPONS.minigun.spin?.up} seconds, then pours out ${WEAPONS.minigun.mag} rounds. You walk slowly with it, and slower still while it spins.`,
   shotgun: 'Nine pellets. Huge up close, weak far off.',
   auto: 'Fires as fast as you pull, a little weaker a shot.',
   double: 'Two barrels, then a reload. Brutal at arm’s length.',
@@ -451,8 +597,11 @@ const MELEE_HELP: Record<MeleeId, string> = {
 };
 const THROW_HELP: Record<ThrowId, string> = {
   grenade: `Goes off ${THROWS.grenade.fuse} seconds after you throw it.`,
+  impulse: 'Goes off a moment after it lands and shoves every egg and everything on the ground away from it (not you). Barely scratches.',
   flour: 'Bursts into a cloud. Nobody outside it can see in, or through it.',
   sauce: 'Splashes a burning puddle that hurts anyone standing in it, you too.',
+  jam: `A sticky puddle that lasts ${THROWS.jam.time} seconds: anyone wading through it slows to a crawl.`,
+  bush: `Grows a bush where it lands for ${THROWS.bush.time} seconds. Stand in it and nobody sees you from a distance until you fire.`,
 };
 const USE_HELP: Record<UseId, string> = {
   bandage: `+${USES.bandage.hp} health, up to ${USES.bandage.hpCap}.`,
@@ -460,9 +609,15 @@ const USE_HELP: Record<UseId, string> = {
   mini: `+${USES.mini.shield} shield, up to ${USES.mini.shieldCap}.`,
   shield: `+${USES.shield.shield} shield, all the way to 100.`,
   coffee: `Boost: heals a little at a time and puts a spring in your step for ${Math.round((USES.coffee.boost ?? 0) / BOOST.drain)} seconds.`,
+  smoothie: `+${USES.smoothie.sip} shield, a little at a time over ${Math.round((USES.smoothie.sip ?? 0) / SIP)} seconds, all the way to 100.`,
+  tart: 'Legendary. Full health and a full boost on top.',
 };
+/** "Colander, saucepan, stockpot: 8%, 12% and 16% off every hit." */
+const armorLine = (kind: ArmorKind) => `${cap(ARMOR_NAMES[kind].slice(1).join(', '))}: ${ARMOR_CUT[kind].slice(1).map((c, i, a) => `${Math.round(c * 100)}%${i === a.length - 2 ? ' and' : i < a.length - 1 ? ',' : ''}`).join(' ')} off every hit.`;
 /** The number keys that use each consumable. */
-export const USE_KEYS: Record<UseId, string> = { bandage: '5', medkit: '6', mini: '7', shield: '8', coffee: '9' };
+export const USE_KEYS: Record<UseId, string> = { bandage: '5', medkit: '6', mini: '7', shield: '8', coffee: '9', smoothie: '0', tart: 'T' };
+/** The keyboard code for a key above. */
+export const keyCode = (k: string) => (/^\d$/.test(k) ? `Digit${k}` : `Key${k}`);
 
 export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; touch: boolean; onClose: () => void }) {
   return (
@@ -486,7 +641,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>reload</dt>
               <dd>Reload (it also happens on its own when you run dry)</dd>
               <dt>+, shield, coffee</dt>
-              <dd>Heal, top up your shield, or drink a coffee. The right item is picked for you</dd>
+              <dd>Heal, top up your shield, or drink a coffee. The right item is picked for you (a golden egg tart when you're nearly cracked, a smoothie after the minis)</dd>
               <dt>pick up</dt>
               <dd>Shows up when you stand on something or next to a chest</dd>
             </>
@@ -504,8 +659,8 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dd>Reload</dd>
               <dt>1 2 3 4</dt>
               <dd>Your two guns, your melee weapon and your throwables (4 again switches kinds). Q or the wheel cycles</dd>
-              <dt>5 to 9</dt>
-              <dd>Bandage, medkit, mini shield, shield potion, coffee</dd>
+              <dt>5 to 0, T</dt>
+              <dd>Bandage, medkit, mini shield, shield potion, coffee, smoothie, and T for a golden egg tart</dd>
               <dt>H, G, C</dt>
               <dd>Heal, top up your shield, or drink a coffee, picking the right item for you</dd>
               <dt>M</dt>
@@ -521,16 +676,22 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>The bus.</b> It flies across the island. Jump any time while it's over land, then glide down and steer to where you want to land.
           </li>
           <li>
-            <b>Loot.</b> Guns, ammo, healing and more lie in buildings and around the island. Smash crates and open the golden chests for better ones. Walking over ammo, healing and throwables picks them up.
+            <b>Loot.</b> Guns, ammo, healing and more lie in buildings and around the island. Smash crates (most hold a box of ammo too) and open the golden chests for better ones. Walking over ammo, healing and throwables picks them up.
+          </li>
+          <li>
+            <b>Legendary loot.</b> Legendary guns, flare guns and golden egg tarts glow gold on the ground, with a beam of light you can spot from far off.
           </li>
           <li>
             <b>Health and shield.</b> You have 100 health and up to 100 shield, which takes hits first.
           </li>
           <li>
+            <b>Armor.</b> A helmet and a vest from the kitchen, three levels each, take a cut of every bullet, swing and blast (not the storm, not hot sauce). Walk over a better one to put it on; your old one drops. {touch ? 'Tap pick up' : 'Press E'} to swap for a worse one if you really want it.
+          </li>
+          <li>
             <b>The storm.</b> The white ring shows where the safe circle is heading. Outside the circle the storm eats your health (shields don't help), and it bites harder each time it closes.
           </li>
           <li>
-            <b>Supply drops.</b> Three times a match a crate floats down under a balloon inside the next circle, with a beam of light over it. They're full of epic and legendary gear.
+            <b>Supply drops.</b> Three times a match a crate floats down under a balloon inside the next circle, with a beam of light over it. They're full of epic and legendary gear. Fire a flare gun to call one more down near you.
           </li>
           <li>
             <b>Walls.</b> Swing at trees for wood, then throw up walls for cover. They take a beating before they break.
@@ -589,7 +750,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
                 <li key={w}>
                   <WeaponIcon w={w} size={34} />
                   <span>
-                    <b>{cap(WEAPONS[w].name)}.</b> {GUN_HELP[w]} <small>{AMMO_NAME[WEAPONS[w].ammo]}.</small>
+                    <b>{cap(WEAPONS[w].name)}.</b> {GUN_HELP[w]} <small>{WEAPONS[w].call ? 'No ammo needed' : AMMO_NAME[WEAPONS[w].ammo]}.</small>
                   </span>
                 </li>
               ))}
@@ -652,6 +813,18 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <PackIcon size={30} lv={2} />
             <span>
               <b>Backpacks.</b> Three levels, each carrying more ammo, healing and throwables.
+            </span>
+          </li>
+          <li>
+            <ArmorIcon kind="helmet" size={30} lv={2} />
+            <span>
+              <b>Helmets.</b> {armorLine('helmet')}
+            </span>
+          </li>
+          <li>
+            <ArmorIcon kind="vest" size={30} lv={2} />
+            <span>
+              <b>Vests.</b> {armorLine('vest')} The two cuts multiply.
             </span>
           </li>
         </ul>

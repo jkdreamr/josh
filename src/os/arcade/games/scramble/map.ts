@@ -43,8 +43,9 @@ export type LootSpawn = { id: number; def: LootDef; x: number; z: number };
 /**
  * Crates and barrels break when shot or smacked (a barrel blows up); chests and supply drops open with the interact
  * key. A supply drop floats down from the sky and lands at match time `at`. `gold` marks the Golden Coop's chest.
+ * `flare` marks a supply drop kept back for a flare gun to call: it lands nowhere (`at` is Infinity) until one does.
  */
-export type Container = { id: number; kind: 'crate' | 'chest' | 'barrel' | 'supply'; x: number; z: number; face: 1 | -1; loot: LootSpawn[]; solid: number; gold: boolean; at: number };
+export type Container = { id: number; kind: 'crate' | 'chest' | 'barrel' | 'supply'; x: number; z: number; face: 1 | -1; loot: LootSpawn[]; solid: number; gold: boolean; at: number; flare: boolean };
 /** Something that stops eggs and bullets. `ref` is the tree, rock, building or container it belongs to. */
 export type Solid = { shape: 'circle'; x: number; z: number; r: number; what: 'tree' | 'rock' | 'barrel'; ref: number } | { shape: 'box'; x: number; z: number; hw: number; hd: number; what: 'wall' | 'crate' | 'chest'; ref: number };
 
@@ -68,6 +69,8 @@ export type GameMap = {
   containers: Container[];
   /** Supply drop container ids, in the order they land. */
   drops: number[];
+  /** The supply drops flare guns can call, in the order they are called. */
+  flares: number[];
   floor: LootSpawn[];
   solids: Solid[];
   /** Solid indices per grid cell. */
@@ -93,6 +96,8 @@ export const STORM_PHASES = [
 ] as const;
 /** Seconds before the first three storm phases begin to move that a supply drop lands inside the circle it closes to. */
 const DROP_LEAD = [10, 8, 6];
+/** How many supply drops flare guns can call in a match. */
+export const FLARE_DROPS = 3;
 
 /** The buildings an island has, placed in this order (the biggest first, so they always fit). */
 const PLAN: BuildingKind[] = ['coop', 'warehouse', 'warehouse', 'farm', 'farm', 'container', 'container', ...Array<BuildingKind>(9).fill('house'), ...Array<BuildingKind>(7).fill('shed'), ...Array<BuildingKind>(4).fill('ruin')];
@@ -353,6 +358,7 @@ export function generateMap(seed: number): GameMap {
     coop: -1,
     containers: [],
     drops: [],
+    flares: [],
     floor: [],
     solids: [],
     grid: [],
@@ -387,7 +393,7 @@ export function generateMap(seed: number): GameMap {
         ? { id: CONTAINER_BASE + id * 8 + j, def, x: r1(x + SPREAD[j][0]), z: r1(z + SPREAD[j][1]) }
         : { id: CONTAINER_BASE + id * 8 + j, def, x: r1(x + (j - (defs.length - 1) / 2) * 0.9), z: r1(z + face * ahead) },
     );
-    map.containers.push({ id, kind, x: r1(x), z: r1(z), face, loot, solid: -1, gold: tier === 'gold', at });
+    map.containers.push({ id, kind, x: r1(x), z: r1(z), face, loot, solid: -1, gold: tier === 'gold', at, flare: at === Infinity });
     return id;
   };
   const quads = (b: { x: number; z: number; w: number; d: number }) =>
@@ -406,6 +412,23 @@ export function generateMap(seed: number): GameMap {
     });
   };
 
+  /**
+   * Would a new doorway face another building's across so small a gap that, standing out in front of one, you'd be
+   * peeking into the other? Those places are tried again.
+   */
+  const facing = (doors: Door[]) =>
+    doors.some((a) =>
+      map.buildings.some(
+        (b) =>
+          b.roof &&
+          b.doors.some((c) => {
+            if (a.ox !== -c.ox || a.oz !== -c.oz) return false;
+            const out = (c.x - a.x) * a.ox + (c.z - a.z) * a.oz;
+            const side = Math.abs((c.x - a.x) * a.oz - (c.z - a.z) * a.ox);
+            return out > 0 && out < 2 * PEEK + 2 && side < (a.w + c.w) / 2 + 6;
+          }),
+      ),
+    );
   const build = (kind: BuildingKind, x: number, z: number, w: number, d: number, walls: Box[], doors: Door[], look: number, h: number) => {
     map.buildings.push({ kind, x, z, w, d, walls, doors, look, roof: kind !== 'ruin', h });
     return map.buildings[map.buildings.length - 1];
@@ -443,12 +466,22 @@ export function generateMap(seed: number): GameMap {
           const first = Math.floor(rng() * 4);
           const second = (first + 1 + Math.floor(rng() * 3)) % 4;
           for (const s of [first, second]) gaps[s].push([doorAt(rng, s < 2 ? w : d, DOOR), DOOR]);
-          build('house', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), WALL_H);
+          const doors = shell(walls, x, z, w, d, gaps);
+          if (facing(doors)) {
+            lots.pop();
+            continue;
+          }
+          build('house', x, z, w, d, walls, doors, Math.floor(rng() * 4), WALL_H);
           furnish({ x, z, w, d }, true);
         } else if (kind === 'shed') {
           const s = Math.floor(rng() * 4);
           gaps[s].push([Math.round((rng() * 2 - 1) * 2) / 2, DOOR]);
-          build('shed', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), 2.8);
+          const doors = shell(walls, x, z, w, d, gaps);
+          if (facing(doors)) {
+            lots.pop();
+            continue;
+          }
+          build('shed', x, z, w, d, walls, doors, Math.floor(rng() * 4), 2.8);
           if (rng() < 0.5) addContainer('crate', x, z, 1, 'crate');
           else addSpot(x, z);
         } else if (kind === 'ruin') {
@@ -495,7 +528,12 @@ export function generateMap(seed: number): GameMap {
         for (const s of [e0, e1]) gaps[s].push([Math.round((rng() * 2 - 1) * (endSpan / 2 - wide / 2 - 1.5) * 2) / 2, wide]);
         const long = rot ? (rng() < 0.5 ? 2 : 3) : rng() < 0.5 ? 0 : 1;
         gaps[long].push([doorAt(rng, rot ? d : w, DOOR), DOOR]);
-        build('warehouse', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), 4.4);
+        const doors = shell(walls, x, z, w, d, gaps);
+        if (facing(doors)) {
+          lots.pop();
+          continue;
+        }
+        build('warehouse', x, z, w, d, walls, doors, Math.floor(rng() * 4), 4.4);
         // rows of crates with a lane down the middle, loot between, and a chest in one corner
         for (const a of [-7.5, 0, 7.5])
           for (const b of [-4.6, 4.6]) {
@@ -534,6 +572,11 @@ export function generateMap(seed: number): GameMap {
         const hi = bigC - x + bigW / 2 - DOOR / 2 - 1;
         gaps[rng() < 0.5 ? 0 : 1].push([Math.round((lo + rng() * (hi - lo)) * 2) / 2, DOOR]);
         const doors = shell(walls, x, z, w, d, gaps);
+        if (facing(doors)) {
+          lots.length -= 2;
+          map.fields.pop();
+          continue;
+        }
         wallLine(walls, false, px, z, d - WALL_T, [[doorAt(rng, d, DOOR), DOOR]]);
         build('farm', x, z, w, d, walls, doors, Math.floor(rng() * 4), 3.4);
         addSpot(smallC, z - d / 4);
@@ -627,6 +670,8 @@ export function generateMap(seed: number): GameMap {
     taken.push({ x, z, r: 2.4 });
     map.drops.push(addContainer('supply', x, z, 1, 'supply', at));
   }
+  // and the ones a flare gun calls, packed and waiting: they get a place and a time when one is fired
+  for (let k = 0; k < FLARE_DROPS; k++) map.flares.push(addContainer('supply', 0, 0, 1, 'supply', Infinity));
 
   map.buildings.forEach((b, i) => {
     for (const w of b.walls) map.solids.push({ shape: 'box', ...w, what: 'wall', ref: i });
@@ -634,6 +679,7 @@ export function generateMap(seed: number): GameMap {
   map.trees.forEach((t, i) => map.solids.push({ shape: 'circle', x: t.x, z: t.z, r: t.r, what: 'tree', ref: i }));
   map.rocks.forEach((r, i) => map.solids.push({ shape: 'circle', x: r.x, z: r.z, r: r.r, what: 'rock', ref: i }));
   for (const c of map.containers) {
+    if (c.flare) continue;
     c.solid = map.solids.length;
     if (c.kind === 'crate') map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: CRATE_HALF, hd: CRATE_HALF, what: 'crate', ref: c.id });
     else if (c.kind === 'barrel') map.solids.push({ shape: 'circle', x: c.x, z: c.z, r: BARREL_R, what: 'barrel', ref: c.id });
@@ -641,7 +687,53 @@ export function generateMap(seed: number): GameMap {
     else map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: CHEST_HW, hd: CHEST_HD, what: 'chest', ref: c.id });
   }
   index(map);
+  // a called drop's box stops eggs and bullets once it is placed (see placeDrop); until then it is in no grid cell
+  for (const id of map.flares) {
+    const c = map.containers[id];
+    c.solid = map.solids.length;
+    map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: SUPPLY_HALF, hd: SUPPLY_HALF, what: 'chest', ref: c.id });
+  }
+  map.stamp = new Uint32Array(map.solids.length);
   return map;
+}
+
+/** Sends a called supply drop to land at (x, z) at match time `at`: its box, its loot and its place in the grid. */
+export function placeDrop(map: GameMap, c: Container, x: number, z: number, at: number) {
+  if (!c.flare || c.at !== Infinity) return;
+  const dx = r1(x) - c.x;
+  const dz = r1(z) - c.z;
+  c.x = r1(x);
+  c.z = r1(z);
+  c.at = at;
+  for (const l of c.loot) {
+    l.x = r1(l.x + dx);
+    l.z = r1(l.z + dz);
+  }
+  const s = map.solids[c.solid];
+  if (!s) return;
+  s.x = c.x;
+  s.z = c.z;
+  const r = SUPPLY_HALF + 0.5;
+  for (let cz = cellOf(c.z - r); cz <= cellOf(c.z + r); cz++) for (let cx = cellOf(c.x - r); cx <= cellOf(c.x + r); cx++) map.grid[cx + cz * COLS].push(c.solid);
+}
+
+/**
+ * Is (x, z) a fair place for a supply drop to come down: on the grass, out of the ponds, the bushes and the cornfields,
+ * clear of every building (with room to walk round it) and of anything solid?
+ */
+export function dropFits(map: GameMap, x: number, z: number) {
+  if (Math.abs(x) > HALF - BEACH - 4 || Math.abs(z) > HALF - BEACH - 4) return false;
+  if (map.buildings.some((b) => Math.abs(x - b.x) < b.w / 2 + 3 && Math.abs(z - b.z) < b.d / 2 + 3)) return false;
+  if (map.fields.some((f) => Math.abs(x - f.x) < f.hw + 1 && Math.abs(z - f.z) < f.hd + 1)) return false;
+  if (map.ponds.some((p) => (x - p.x) * (x - p.x) + (z - p.z) * (z - p.z) < (p.r + 2.5) * (p.r + 2.5))) return false;
+  if (map.bushes.some((b) => (x - b.x) * (x - b.x) + (z - b.z) * (z - b.z) < (b.r + 1.5) * (b.r + 1.5))) return false;
+  let hit = false;
+  solidsNear(map, x, z, 3, (_i, s) => {
+    if (hit) return;
+    const near = s.shape === 'circle' ? pushCircle(x, z, SUPPLY_HALF + 1.4, s.x, s.z, s.r) : pushBox(x, z, SUPPLY_HALF + 1.4, s.x, s.z, s.hw, s.hd);
+    if (near) hit = true;
+  });
+  return !hit;
 }
 
 // -------------------------------------------------------------------------------------------------------------------

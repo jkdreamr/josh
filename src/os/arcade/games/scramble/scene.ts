@@ -3,8 +3,8 @@
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
 import { BARREL_R, BEACH, BUSH_R, BUS_Y, CHEST_HD, CHEST_HW, CRATE_HALF, HALF, SUPPLY_FALL, SUPPLY_HALF, WALL_T, busAt, peekAt, type Building, type BuildingKind } from './map';
-import { BARREL, CRATE_HP, F_DRINKING, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, WALL_HALF, WALL_HP, WALL_THICK, clearLine, concealed, held, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Toss, type Zone } from './logic';
-import { MELEE, RARITY_COLORS, WEAPONS, isMelee, isThrow, isWeapon, type LootDef, type UseId } from './items';
+import { BARREL, CRATE_HP, F_DRINKING, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_TART, WALL_HALF, WALL_HP, WALL_THICK, clearLine, concealed, held, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Toss, type Zone } from './logic';
+import { MELEE, RARITY_COLORS, THROWS, WEAPONS, isMelee, isThrow, isWeapon, legendary, type LootDef, type UseId } from './items';
 
 type Three = typeof import('three');
 
@@ -73,7 +73,11 @@ const DRESS: Record<BuildingKind, { frame: number; porch: number; mat: number; a
   coop: { frame: 0xc0392b, porch: 0xd9a441, mat: 0xc0392b, awning: 0xc0392b, edge: 0xffffff, trim: 0xfff1c9 },
 };
 /** Glow under a pickup, by how good it is (the rarity colors). */
-const USE_GLOW: Record<UseId, number> = { bandage: 1, medkit: 2, mini: 2, shield: 3, coffee: 4 };
+const USE_GLOW: Record<UseId, number> = { bandage: 1, medkit: 2, mini: 2, shield: 3, coffee: 4, smoothie: 3, tart: 4 };
+/** How many legendary things on the ground get a gold beam at once (there are rarely more than a handful). */
+const BEAMS = 40;
+/** A flare climbs this high over this many seconds, then hangs there burning for a few more. */
+const FLARE_UP = { y: 15, rise: 2.4, burn: 4 };
 
 function canvas(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void) {
   const c = document.createElement('canvas');
@@ -373,18 +377,30 @@ function freeRing(THREE: Three, segments: number) {
 
 type Particle = { mesh: T.Mesh; vx: number; vy: number; vz: number; life: number; max: number; spin: number; grav: number; size: number };
 
+/** A model for something in hand: the group, the stripe in its rarity's color, and a minigun's barrels that spin. */
+type HeldModel = { group: T.Group; stripe: T.Mesh | null; spin: T.Object3D | null };
+
 type EggView = {
   root: T.Group;
   body: T.Group;
   skin: T.MeshLambertMaterial;
   hand: T.Group;
-  guns: Map<Held, { group: T.Group; stripe: T.Mesh | null }>;
+  guns: Map<Held, HeldModel>;
   shadow: T.Mesh;
   glider: T.Group;
   heal: T.Group;
+  /** The two bars of the cross over the head while healing (gold for a golden egg tart). */
+  cross: T.Mesh[];
   ring: T.Mesh;
   ghost: T.Mesh;
   backPan: T.Group;
+  /** The party hat, hidden under a helmet. */
+  hat: T.Mesh[];
+  /** The helmet and vest it wears, rebuilt when the level changes. */
+  helmet: T.Group | null;
+  helmetLv: number;
+  vest: T.Group | null;
+  vestLv: number;
   walk: number;
   swing: number;
   recoil: number;
@@ -452,6 +468,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     bigDisc: geo(new THREE.CircleGeometry(1, 48)),
     plane: geo(new THREE.PlaneGeometry(1, 1)),
     ring: geo(new THREE.RingGeometry(0.72, 1, 28)),
+    // the curved front of an apron: a strip of a cylinder, open top and bottom, facing +z
+    apron: geo(new THREE.CylinderGeometry(1, 1, 1, 10, 1, true, -0.95, 1.9)),
   };
   const blob = keep(blobTexture(THREE));
   const M = {
@@ -490,8 +508,20 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     flour: lambert(0xf3eee2),
     sauce: lambert(0xd2321e, { emissive: 0x3a0800 }),
     leaf: lambert(0x3f9a4a),
+    flare: lambert(0xff7a2f, { emissive: 0x3a1000 }),
+    jam: lambert(0xa3214a, { emissive: 0x2a0010 }),
+    impulse: lambert(0x4aa8ff, { emissive: 0x0b2a66 }),
+    smoothie: lambert(0xff6fa8, { emissive: 0x3a0a20 }),
+    crust: lambert(0xd9952b),
+    custard: lambert(0xffd23d, { emissive: 0x5a3a00 }),
+    straw: lambert(0x4aa8ff),
+    pink: basic(0xff6fa8, { transparent: true, opacity: 0.6, depthWrite: false }),
+    glass: lambert(0xd8eef5, { transparent: true, opacity: 0.75 }),
+    goldCross: basic(0xffd23d),
   };
   const rarity = RARITY_COLORS.map((c) => lambert(parseInt(c.slice(1), 16), { emissive: parseInt(c.slice(1), 16), emissiveIntensity: 0.25 }));
+  // armor in its level's color (uncommon, rare, epic), two-sided for the open curve of an apron
+  const armorMat = [0, 1, 2, 3].map((lv) => lambert(parseInt(RARITY_COLORS[Math.min(4, lv + 1)].slice(1), 16), { emissive: parseInt(RARITY_COLORS[Math.min(4, lv + 1)].slice(1), 16), emissiveIntensity: 0.2, side: THREE.DoubleSide }));
   const rarityGlow = RARITY_COLORS.map((c) => basic(parseInt(c.slice(1), 16), { transparent: true, opacity: 0.75, depthWrite: false, side: THREE.DoubleSide }));
   const ammoMat = Object.fromEntries(Object.entries(AMMO_COLORS).map(([k, c]) => [k, lambert(c)])) as Record<keyof typeof AMMO_COLORS, T.MeshLambertMaterial>;
   const ammoGlow = Object.fromEntries(Object.entries(AMMO_COLORS).map(([k, c]) => [k, basic(c, { transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide })])) as Record<keyof typeof AMMO_COLORS, T.MeshBasicMaterial>;
@@ -960,7 +990,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const supplyMat = lambert(0xffffff, { map: keep(supplyTexture(THREE)) });
   const supplyOpen = lambert(0x50607a);
   const beamMat = basic(0x7fc4ff, { transparent: true, opacity: 0.22, depthWrite: false });
-  const supplies = map.drops.map((id) => {
+  const supplies = [...map.drops, ...map.flares].map((id) => {
     const c = map.containers[id];
     const group = new THREE.Group();
     const box = add(group, G.box, supplyMat, 0, SUPPLY_HALF, 0, SUPPLY_HALF * 2, SUPPLY_HALF * 2, SUPPLY_HALF * 2);
@@ -1052,9 +1082,79 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     o.rotation.x = Math.PI / 2;
     return o;
   };
-  function gunModel(w: Held): { group: T.Group; stripe: T.Mesh | null } {
+  /** A helmet from the kitchen, upside down, its brim on y = 0: a colander, a saucepan or a stockpot by level. */
+  function helmetModel(lv: number): T.Group {
+    const g = new THREE.Group();
+    const c = armorMat[Math.min(3, Math.max(1, lv))];
+    if (lv <= 1) {
+      // a colander: a bowl with a rim and two little handles, and a ring of holes round it
+      add(g, G.cap, c, 0, 0, 0, 0.6, 0.5, 0.6);
+      add(g, G.band, M.steel, 0, 0.02, 0, 0.6, 0.6, 0.6).rotation.x = Math.PI / 2;
+      for (const side of [-1, 1]) add(g, G.box, M.steel, side * 0.66, 0.04, 0, 0.16, 0.05, 0.22);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + 0.5;
+        add(g, G.ball, M.dark, Math.sin(a) * 0.48, 0.24, Math.cos(a) * 0.48, 0.05, 0.05, 0.05);
+      }
+    } else if (lv === 2) {
+      // a saucepan: a short pot with a long handle out the back
+      add(g, G.cyl, c, 0, 0.24, 0, 0.52, 0.48, 0.52);
+      add(g, G.cyl, M.dark, 0, 0.5, 0, 0.5, 0.04, 0.5);
+      add(g, G.band, M.steel, 0, 0.04, 0, 0.52, 0.52, 0.52).rotation.x = Math.PI / 2;
+      add(g, G.box, M.dark, 0, 0.12, -0.78, 0.12, 0.08, 0.56);
+    } else {
+      // a stockpot: tall, two side handles, a lid with a knob
+      add(g, G.cyl, c, 0, 0.36, 0, 0.54, 0.72, 0.54);
+      add(g, G.band, M.steel, 0, 0.04, 0, 0.54, 0.54, 0.54).rotation.x = Math.PI / 2;
+      add(g, G.cyl, M.steel, 0, 0.74, 0, 0.58, 0.06, 0.58);
+      add(g, G.ball, M.dark, 0, 0.82, 0, 0.09, 0.07, 0.09);
+      for (const side of [-1, 1]) add(g, G.box, M.dark, side * 0.6, 0.42, 0, 0.14, 0.08, 0.3);
+    }
+    return g;
+  }
+
+  /**
+   * A vest: an apron round the egg's front, its bib centered on y = 0 and facing +z, its strap ringing the neck in the
+   * level's color so it shows from above. Quilted at level 2, steel plated at 3.
+   */
+  function vestModel(lv: number): T.Group {
+    const g = new THREE.Group();
+    const c = armorMat[Math.min(3, Math.max(1, lv))];
+    add(g, G.apron, c, 0, 0, 0, 0.66, 0.64, 0.66);
+    add(g, G.wire, c, 0, 0.4, 0, 0.58, 0.58, 0.58).rotation.x = Math.PI / 2;
+    if (lv <= 1) add(g, G.box, M.dark, 0, -0.14, 0.655, 0.3, 0.16, 0.03);
+    else if (lv === 2) {
+      // stitched squares
+      for (const y of [-0.2, 0, 0.2]) add(g, G.box, M.dark, 0, y, 0.66, 0.5, 0.02, 0.02);
+      for (const x of [-0.17, 0.17]) add(g, G.box, M.dark, x, 0, 0.655, 0.02, 0.56, 0.02);
+    } else {
+      // steel plates
+      for (const y of [-0.2, 0.02, 0.24]) add(g, G.box, M.steel, 0, y, 0.67, 0.52, 0.17, 0.03);
+    }
+    return g;
+  }
+
+  /** A vest on the ground: an apron laid out flat, bib, skirt, neck loop and ties, with the same marks as when worn. */
+  function apronModel(lv: number): T.Group {
+    const g = new THREE.Group();
+    const c = armorMat[Math.min(3, Math.max(1, lv))];
+    add(g, G.box, c, 0, 0.3, 0, 0.42, 0.3, 0.05);
+    add(g, G.box, c, 0, -0.12, 0, 0.7, 0.56, 0.05);
+    add(g, G.wire, M.dark, 0, 0.56, 0, 0.17, 0.17, 0.17);
+    for (const side of [-1, 1]) add(g, G.box, M.dark, side * 0.46, 0.1, 0, 0.24, 0.04, 0.03).rotation.z = side * -0.4;
+    if (lv <= 1) add(g, G.box, M.dark, 0, -0.18, 0.03, 0.32, 0.18, 0.02);
+    else if (lv === 2) {
+      for (const y of [-0.28, -0.06, 0.24]) add(g, G.box, M.dark, 0, y, 0.03, y > 0 ? 0.4 : 0.68, 0.02, 0.02);
+      for (const x of [-0.17, 0.17]) add(g, G.box, M.dark, x, -0.12, 0.03, 0.02, 0.54, 0.02);
+    } else for (const y of [-0.26, -0.04, 0.26]) add(g, G.box, M.steel, 0, y, 0.035, y > 0 ? 0.36 : 0.6, 0.17, 0.03);
+    // lying back, so its front faces up at the camera
+    g.rotation.x = -1.1;
+    return g;
+  }
+
+  function gunModel(w: Held): HeldModel {
     const g = new THREE.Group();
     let stripe: T.Mesh | null = null;
+    let spin: T.Object3D | null = null;
     switch (w) {
       case 'spatula':
         add(g, G.box, M.wood, 0, 0, 0.1, 0.06, 0.06, 0.6);
@@ -1096,10 +1196,35 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         add(g, G.cyl, M.sauce, 0, 0, 0.28, 0.1, 0.34, 0.1);
         add(g, G.cyl, M.leaf, 0, 0.23, 0.28, 0.05, 0.12, 0.05);
         break;
+      case 'impulse':
+        // a blue egg with a white band round it
+        add(g, G.egg, M.impulse, 0, -0.12, 0.25, 0.2, 0.2, 0.2);
+        add(g, G.band, M.white, 0, 0.05, 0.25, 0.16, 0.16, 0.16).rotation.x = Math.PI / 2;
+        break;
+      case 'jam':
+        // a jar of jam under a checked lid
+        add(g, G.cyl, M.jam, 0, 0, 0.28, 0.14, 0.26, 0.14);
+        add(g, G.cyl, M.cream, 0, 0.17, 0.28, 0.16, 0.07, 0.16);
+        add(g, G.box, M.cream, 0, 0, 0.42, 0.14, 0.1, 0.01);
+        break;
+      case 'bush':
+        // a tin can with a bush poking out of it
+        add(g, G.cyl, M.steel, 0, -0.04, 0.28, 0.12, 0.26, 0.12);
+        add(g, G.cyl, M.leaf, 0, -0.04, 0.28, 0.125, 0.1, 0.125);
+        add(g, G.lowBall, M.leaf, 0, 0.18, 0.28, 0.17, 0.14, 0.17);
+        break;
       case 'pistol':
         add(g, G.box, M.dark, 0, 0, 0.12, 0.12, 0.14, 0.42);
         add(g, G.box, M.dark, 0, -0.14, 0, 0.1, 0.22, 0.12);
         stripe = add(g, G.box, rarity[0], 0, 0.08, 0.12, 0.13, 0.03, 0.34);
+        break;
+      case 'flare':
+        // a stubby orange pistol with a wide mouth, the flare showing in it
+        add(g, G.box, M.flare, 0, 0, 0.1, 0.13, 0.15, 0.36);
+        barrel(g, M.flare, 0, 0.01, 0.36, 0.1, 0.22);
+        barrel(g, M.custard, 0, 0.01, 0.47, 0.07, 0.02);
+        add(g, G.box, M.flare, 0, -0.15, -0.02, 0.1, 0.22, 0.12);
+        stripe = add(g, G.box, rarity[0], 0, 0.085, 0.06, 0.135, 0.03, 0.22);
         break;
       case 'revolver':
         barrel(g, M.metal, 0, 0.04, 0.36, 0.05, 0.5);
@@ -1118,6 +1243,23 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         add(g, G.box, M.metal, 0, -0.2, 0.06, 0.07, 0.3, 0.08);
         barrel(g, M.metal, 0, 0.02, 0.38, 0.035, 0.16);
         stripe = add(g, G.box, rarity[0], 0, 0.09, 0.12, 0.14, 0.03, 0.3);
+        break;
+      case 'hsmg':
+        // chunky, with a fat green box of heavy rounds and a grip out front
+        add(g, G.box, M.dark, 0, 0, 0.2, 0.17, 0.2, 0.66);
+        barrel(g, M.metal, 0, 0.03, 0.6, 0.045, 0.2);
+        add(g, G.box, ammoMat.heavy, 0, -0.21, 0.2, 0.1, 0.3, 0.14);
+        add(g, G.box, M.dark, 0, -0.14, 0.45, 0.07, 0.18, 0.07);
+        add(g, G.box, M.dark, 0, -0.12, -0.08, 0.1, 0.2, 0.1);
+        stripe = add(g, G.box, rarity[0], 0, 0.115, 0.18, 0.18, 0.03, 0.5);
+        break;
+      case 'marksman':
+        // long and tan, a scope on top and a short magazine
+        add(g, G.box, M.tan, 0, 0, 0.3, 0.12, 0.15, 1.0);
+        barrel(g, M.dark, 0, 0.02, 0.92, 0.035, 0.42);
+        barrel(g, M.dark, 0, 0.15, 0.3, 0.05, 0.34);
+        add(g, G.box, M.dark, 0, -0.15, 0.32, 0.07, 0.16, 0.12);
+        stripe = add(g, G.box, rarity[0], 0, 0.085, 0.55, 0.13, 0.03, 0.34);
         break;
       case 'rifle':
         add(g, G.box, M.dark, 0, 0, 0.3, 0.12, 0.16, 1.05);
@@ -1145,6 +1287,23 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         add(g, G.box, M.metal, 0, -0.2, 0.95, 0.03, 0.3, 0.03).rotation.x = 0.4;
         stripe = add(g, G.box, rarity[0], 0, 0.11, 0.35, 0.17, 0.03, 0.5);
         break;
+      case 'minigun': {
+        // a drum of a body, a carry handle, and six barrels that spin
+        add(g, G.box, M.dark, 0, 0, 0.12, 0.26, 0.26, 0.42);
+        add(g, G.box, M.metal, 0, 0.2, 0.12, 0.05, 0.1, 0.3);
+        add(g, G.box, ammoMat.light, 0.2, -0.04, 0.05, 0.12, 0.2, 0.26);
+        const bundle = new THREE.Group();
+        bundle.position.set(0, 0, 0.62);
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          barrel(bundle, M.metal, Math.cos(a) * 0.07, Math.sin(a) * 0.07, 0, 0.028, 0.62);
+        }
+        barrel(bundle, M.dark, 0, 0, 0.18, 0.11, 0.05);
+        g.add(bundle);
+        spin = bundle;
+        stripe = add(g, G.box, rarity[0], 0, 0.135, 0.02, 0.27, 0.03, 0.2);
+        break;
+      }
       case 'shotgun':
         add(g, G.box, M.wood, 0, -0.02, 0, 0.13, 0.16, 0.45);
         barrel(g, M.dark, 0, 0.03, 0.48, 0.07, 0.75);
@@ -1180,7 +1339,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         stripe = barrel(g, rarity[0], 0, 0.05, 0.75, 0.18, 0.12);
         break;
     }
-    return { group: g, stripe };
+    return { group: g, stripe, spin };
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -1192,10 +1351,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     root.add(body);
     const skin = lambert(0xfff3df, { emissive: 0x000000 });
     add(body, G.egg, skin, 0, 0, 0, 1, 1, 1);
-    const hat = lambert(parseInt(f.color.slice(1), 16));
-    add(body, G.cap, hat, 0, 1.08, 0, 0.5, 0.52, 0.5);
-    add(body, G.band, hat, 0, 1.1, 0, 0.47, 0.47, 0.47).rotation.x = Math.PI / 2;
-    add(body, G.ball, hat, 0, 1.64, 0, 0.11, 0.11, 0.11);
+    const hatMat = lambert(parseInt(f.color.slice(1), 16));
+    const hat = [add(body, G.cap, hatMat, 0, 1.08, 0, 0.5, 0.52, 0.5), add(body, G.band, hatMat, 0, 1.1, 0, 0.47, 0.47, 0.47), add(body, G.ball, hatMat, 0, 1.64, 0, 0.11, 0.11, 0.11)];
+    hat[1].rotation.x = Math.PI / 2;
     for (const side of [-1, 1]) add(body, G.ball, M.black, side * 0.17, 1.0, 0.53, 0.065, 0.085, 0.05);
     for (const side of [-1, 1]) add(body, G.ball, M.cream, side * 0.4, 0.72, 0.42, 0.11, 0.11, 0.11);
     const hand = new THREE.Group();
@@ -1231,8 +1389,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     // a cross over the head while healing; a ring while drinking shield (blue) or coffee (orange)
     const heal = new THREE.Group();
     heal.position.y = 2.15;
-    add(heal, G.box, M.green, 0, 0, 0, 0.42, 0.12, 0.12);
-    add(heal, G.box, M.green, 0, 0, 0, 0.12, 0.42, 0.12);
+    const cross = [add(heal, G.box, M.green, 0, 0, 0, 0.42, 0.12, 0.12), add(heal, G.box, M.green, 0, 0, 0, 0.12, 0.42, 0.12)];
     root.add(heal);
     const ring = add(root, G.band, M.blue, 0, 0.9, 0, 0.9, 0.9, 0.9);
     ring.rotation.x = Math.PI / 2;
@@ -1242,7 +1399,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     ghost.renderOrder = 20;
     body.add(ghost);
     scene.add(root);
-    return { root, body, skin, hand, guns: new Map(), shadow, glider, heal, ring, ghost, backPan, walk: 0, swing: 0, recoil: 0, lean: 0 };
+    return { root, body, skin, hand, guns: new Map(), shadow, glider, heal, cross, ring, ghost, backPan, hat, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, swing: 0, recoil: 0, lean: 0 };
   });
 
   // the aim line from your gun, and where you'll land while gliding
@@ -1301,6 +1458,20 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             add(g, G.cyl, M.coffee, 0, 0.21, 0, 0.17, 0.06, 0.17);
             add(g, G.cyl, M.coffee, 0, -0.02, 0, 0.165, 0.12, 0.165);
             break;
+          case 'smoothie': {
+            // a pink cup with a lid and a blue straw
+            add(g, G.cyl, M.smoothie, 0, 0, 0, 0.17, 0.4, 0.15);
+            add(g, G.cyl, M.cream, 0, 0.22, 0, 0.19, 0.05, 0.19);
+            const straw = add(g, G.cyl, M.straw, 0.05, 0.36, 0, 0.025, 0.3, 0.025);
+            straw.rotation.z = -0.35;
+            break;
+          }
+          case 'tart':
+            // a golden egg tart: a crimped crust round a shining custard
+            add(g, G.cyl, M.crust, 0, -0.05, 0, 0.36, 0.14, 0.36);
+            add(g, G.band, M.crust, 0, 0.03, 0, 0.34, 0.34, 0.5).rotation.x = Math.PI / 2;
+            add(g, G.cyl, M.custard, 0, 0.04, 0, 0.3, 0.04, 0.3);
+            break;
         }
         break;
       case 'scope':
@@ -1313,6 +1484,17 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         add(g, G.cap, rarity[Math.min(4, def.lv + 1)], 0, 0.25, 0, 0.25, 0.14, 0.15);
         add(g, G.box, M.dark, 0, -0.05, 0.16, 0.36, 0.2, 0.04);
         break;
+      case 'helmet': {
+        const h = helmetModel(def.lv);
+        h.position.y = -0.2;
+        h.scale.setScalar(0.8);
+        g.add(h);
+        break;
+      }
+      case 'vest': {
+        g.add(apronModel(def.lv));
+        break;
+      }
       case 'wood':
         for (let i = 0; i < 3; i++) add(g, G.box, M.wood, 0, i * 0.13 - 0.1, (i - 1) * 0.06, 0.7, 0.11, 0.2).rotation.y = i * 0.4;
         break;
@@ -1329,6 +1511,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         return rarityGlow[USE_GLOW[def.w]];
       case 'scope':
       case 'pack':
+      case 'helmet':
+      case 'vest':
         return rarityGlow[Math.min(4, def.lv + 1)];
       case 'melee':
         return rarityGlow[2];
@@ -1370,6 +1554,39 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const flourMat = (): T.MeshLambertMaterial => lambert(0xffffff, { emissive: 0x8a8578, transparent: true, opacity: 0.85, depthWrite: false });
   const sauceMat = (): T.MeshBasicMaterial => basic(0xd2321e, { transparent: true, opacity: 0.75, depthWrite: false });
   const flameMat = basic(0xffa53a, { transparent: true, opacity: 0.85, depthWrite: false });
+  const jamMat = (): T.MeshLambertMaterial => lambert(0x9e1c48, { emissive: 0x2a0010, transparent: true, opacity: 0.85, depthWrite: false });
+  const jamShine = basic(0xff8fb4, { transparent: true, opacity: 0.55, depthWrite: false });
+  const grownMat = (): T.MeshLambertMaterial => lambert(0x4c9b3c, { flatShading: true, transparent: true, opacity: 1 });
+
+  // an impulse egg's shove: a ring rushing out along the ground
+  const waves: { mesh: T.Mesh; mat: T.MeshBasicMaterial; life: number; r: number }[] = [];
+  for (let i = 0; i < 6; i++) {
+    const wm = basic(0xbcd7ff, { transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(G.ring, wm);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.visible = false;
+    scene.add(mesh);
+    waves.push({ mesh, mat: wm, life: 0, r: 1 });
+  }
+  let waveAt = 0;
+
+  // flares going up: a bright ball that climbs, hangs and burns out
+  const flareMat = basic(0xff4a2a);
+  const flareGlow = basic(0xffb07a, { transparent: true, opacity: 0.45, depthWrite: false });
+  const flares: { core: T.Mesh; glow: T.Mesh; x: number; z: number; at: number }[] = [];
+
+  // gold beams over legendary loot, seen from anywhere
+  const beamGold = basic(0xffd23d, { transparent: true, opacity: 0.3, depthWrite: false });
+  const ringGold = basic(0xffd23d, { transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide });
+  const goldBeams = many(G.cyl, beamGold, BEAMS);
+  const goldRings = many(G.ring, ringGold, BEAMS);
+  goldBeams.count = 0;
+  goldRings.count = 0;
+  goldBeams.renderOrder = 4;
+  // they move about with the loot, so they're never culled by where they first stood
+  goldBeams.frustumCulled = false;
+  goldRings.frustumCulled = false;
+  scene.add(goldBeams, goldRings);
 
   // effects: pooled bits that fly and fade, flashes, yolk puddles
   const parts: Particle[] = [];
@@ -1389,6 +1606,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     metal: lambert(0xc9d0d8),
     red: lambert(0xd8432f),
     splash: basic(0xbfe6f5, { transparent: true, opacity: 0.8, depthWrite: false }),
+    jam: basic(0xa3214a),
+    glass: basic(0xe6f2f7, { transparent: true, opacity: 0.7, depthWrite: false }),
+    shove: basic(0x8fc4ff),
   };
   for (let i = 0; i < 320; i++) {
     const mesh = new THREE.Mesh(G.box, partMat.dust);
@@ -1482,6 +1702,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       v.guns.set(key, gun);
     }
     if (gun?.stripe) gun.stripe.material = rarity[h.r] ?? rarity[0];
+    if (gun?.spin && ((f.kind === 'remote' ? f.show.flags & F_SPIN : f.spin > 0) || 0)) gun.spin.rotation.z += dt * (f.kind === 'remote' ? 30 : 6 + f.spin * 26);
     const melee = isMelee(key);
     v.recoil = Math.max(0, v.recoil - dt * 6);
     v.swing = Math.max(0, v.swing - dt * 5);
@@ -1490,17 +1711,58 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     v.hand.rotation.x = melee ? -0.4 : isThrow(key) ? -0.9 + v.swing * 1.4 : (f.kind === 'remote' ? f.show.flags & F_RELOAD : f.reloadT > 0) ? 0.7 : 0;
     const pan = f.kind === 'remote' ? (f.show.flags & F_PAN) !== 0 : MELEE[f.melee].blocks === true;
     v.backPan.visible = pan && key !== 'pan' && f.phase === 'ground';
+    // the armor it wears
+    if (v.helmetLv !== f.helmet) {
+      if (v.helmet) v.body.remove(v.helmet);
+      v.helmet = f.helmet > 0 ? helmetModel(f.helmet) : null;
+      if (v.helmet) {
+        v.helmet.position.y = 1.1;
+        v.body.add(v.helmet);
+      }
+      v.helmetLv = f.helmet;
+      for (const o of v.hat) o.visible = f.helmet <= 0;
+    }
+    if (v.vestLv !== f.vest) {
+      if (v.vest) v.body.remove(v.vest);
+      v.vest = f.vest > 0 ? vestModel(f.vest) : null;
+      if (v.vest) {
+        v.vest.position.y = 0.52;
+        v.body.add(v.vest);
+      }
+      v.vestLv = f.vest;
+    }
     // flash red when hit; healing, shield and coffee show while in use
     const hit = f.hitT > 0;
     v.skin.emissive.setHex(hit ? 0xff3b30 : 0x000000);
     v.skin.emissiveIntensity = hit ? 0.55 : 0;
     const flags = f.kind === 'remote' ? f.show.flags : 0;
-    const using = f.kind === 'remote' ? (flags & F_HEALING ? 'heal' : flags & F_SHIELDING ? 'shield' : flags & F_DRINKING ? 'coffee' : null) : f.using === 'bandage' || f.using === 'medkit' ? 'heal' : f.using === 'mini' || f.using === 'shield' ? 'shield' : f.using === 'coffee' ? 'coffee' : null;
-    v.heal.visible = using === 'heal';
-    if (v.heal.visible) v.heal.rotation.y = clock * 4;
-    v.ring.visible = using === 'shield' || using === 'coffee';
+    const using =
+      f.kind === 'remote'
+        ? flags & F_HEALING
+          ? 'heal'
+          : flags & F_SHIELDING
+            ? 'shield'
+            : flags & F_DRINKING
+              ? 'coffee'
+              : flags & F_SMOOTHIE
+                ? 'smoothie'
+                : flags & F_TART
+                  ? 'tart'
+                  : null
+        : f.using === 'bandage' || f.using === 'medkit'
+          ? 'heal'
+          : f.using === 'mini' || f.using === 'shield'
+            ? 'shield'
+            : f.using;
+    // a cross while healing (gold for a tart); a ring while drinking shield, a smoothie or coffee
+    v.heal.visible = using === 'heal' || using === 'tart';
+    if (v.heal.visible) {
+      v.heal.rotation.y = clock * 4;
+      for (const c of v.cross) c.material = using === 'tart' ? M.goldCross : M.green;
+    }
+    v.ring.visible = using === 'shield' || using === 'coffee' || using === 'smoothie';
     if (v.ring.visible) {
-      v.ring.material = using === 'coffee' ? M.orange : M.blue;
+      v.ring.material = using === 'coffee' ? M.orange : using === 'smoothie' ? M.pink : M.blue;
       v.ring.position.y = 0.4 + ((clock * 1.4) % 1) * 1.3;
       v.ring.scale.setScalar(0.85 - ((clock * 1.4) % 1) * 0.25);
     }
@@ -1568,6 +1830,34 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             const d = z.r * rnd() * 0.4;
             add(group, G.ball, material, Math.cos(a) * d, 2.8 + rnd(), Math.sin(a) * d, z.r * 0.28, z.r * 0.2, z.r * 0.28);
           }
+        } else if (z.k === 'jam') {
+          // a dark red puddle with a few blobs of fruit in it
+          material = jamMat();
+          const pool = add(group, G.disc, material, 0, 0.06, 0, z.r, z.r, z.r);
+          pool.rotation.x = -Math.PI / 2;
+          const rnd = scatter(Math.round(z.x * 11 + z.z * 5 + z.from * 100) >>> 0);
+          for (let i = 0; i < 8; i++) {
+            const a = rnd() * Math.PI * 2;
+            const d = z.r * (0.2 + rnd() * 0.7);
+            const blob = add(group, G.lowBall, material, Math.cos(a) * d, 0.08, Math.sin(a) * d, 0.25 + rnd() * 0.25, 0.12, 0.25 + rnd() * 0.25);
+            blob.rotation.y = rnd() * 6;
+            // a glint on the sticky top
+            add(group, G.disc, jamShine, Math.cos(a) * d - 0.08, 0.15, Math.sin(a) * d - 0.08, 0.09, 0.09, 0.09).rotation.x = -Math.PI / 2;
+          }
+          // and the jar it came in, tipped over in the middle
+          const jar = add(group, G.cyl, M.glass, 0.3, 0.2, -0.2, 0.2, 0.42, 0.2);
+          jar.rotation.set(Math.PI / 2, 0, 0.6);
+          add(jar, G.cyl, M.cream, 0, 0.55, 0, 1.1, 0.16, 1.1);
+        } else if (z.k === 'bush') {
+          // a bush springs up out of the can: a big round middle and a few clumps round it
+          material = grownMat();
+          add(group, G.ball, material, 0, 0.95, 0, z.r * 0.95, 1.4, z.r * 0.95);
+          const rnd = scatter(Math.round(z.x * 7 + z.z * 13 + z.from * 100) >>> 0);
+          for (let i = 0; i < 5; i++) {
+            const a = (i / 5) * Math.PI * 2 + rnd();
+            add(group, G.ball, material, Math.cos(a) * z.r * 0.55, 0.6 + rnd() * 0.5, Math.sin(a) * z.r * 0.55, z.r * 0.5, 0.75, z.r * 0.5);
+          }
+          add(group, G.cyl, M.steel, 0, 0.12, 0, 0.16, 0.24, 0.16);
         } else {
           material = sauceMat();
           const pool = add(group, G.disc, material, 0, 0.06, 0, z.r, z.r, z.r);
@@ -1582,10 +1872,18 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         v = { group, mat: material, flames };
         zoneViews.set(z, v);
       }
-      // in quickly, out slowly; a cloud you're inside thins so you can see your way
+      // in quickly, out slowly; a cloud or bush you're inside thins so you can see your way
       const life = Math.min(1, (m.time - z.from) / 0.5, (z.until - m.time) / 2);
       const inside = !!focus && Math.hypot(focus.x - z.x, focus.z - z.z) < z.r;
-      v.mat.opacity = Math.max(0, life) * (z.k === 'flour' ? (inside ? 0.45 : 0.9) : 0.75);
+      if (z.k === 'bush') {
+        // it grows in a moment, and shrinks away at the end
+        const grow = Math.min(1, (m.time - z.from) / 0.45, Math.max(0, (z.until - m.time) / 0.8));
+        v.group.scale.setScalar(0.15 + grow * 0.85);
+        v.mat.opacity = inside ? 0.55 : 1;
+        v.mat.depthWrite = !inside;
+        continue;
+      }
+      v.mat.opacity = Math.max(0, life) * (z.k === 'flour' ? (inside ? 0.45 : 0.9) : z.k === 'jam' ? 0.85 : 0.75);
       v.group.scale.setScalar(z.k === 'flour' ? 0.6 + Math.min(1, (m.time - z.from) / 0.6) * 0.4 : 1);
       if (z.k === 'flour') v.group.rotation.y = (m.time - z.from) * 0.15;
       v.flames.forEach((fl, i) => {
@@ -1706,6 +2004,12 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         sp.group.visible = coming;
         sp.beam.visible = coming && !opened;
         if (!coming) continue;
+        // one a flare called only knows where it lands once it's called
+        if (c.flare) {
+          sp.group.position.x = c.x;
+          sp.group.position.z = c.z;
+          sp.beam.position.set(c.x, 40, c.z);
+        }
         const u = Math.max(0, Math.min(1, (c.at - m.time) / SUPPLY_FALL));
         sp.group.position.y = u * 46;
         sp.group.rotation.y = u * 3;
@@ -1840,6 +2144,63 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       for (let i = ti; i < tracers.length; i++) tracers[i].visible = false;
       for (let i = ri; i < rockets.length; i++) rockets[i].visible = false;
 
+      // gold beams over legendary loot, taller the farther out the camera is
+      let gi = 0;
+      const beamH = 9 + Math.min(14, cam.view * 0.25);
+      for (const l of m.loot.values()) {
+        if (gi >= BEAMS || !legendary(l.def)) continue;
+        dummy.position.set(l.x, beamH / 2, l.z);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(0.3, beamH, 0.3);
+        dummy.updateMatrix();
+        goldBeams.setMatrixAt(gi, dummy.matrix);
+        dummy.position.set(l.x, 0.05, l.z);
+        dummy.rotation.set(-Math.PI / 2, 0, 0);
+        dummy.scale.setScalar(1.05 + Math.sin(clock * 3 + l.id) * 0.12);
+        dummy.updateMatrix();
+        goldRings.setMatrixAt(gi, dummy.matrix);
+        gi++;
+      }
+      goldBeams.count = gi;
+      goldRings.count = gi;
+      goldBeams.visible = gi > 0;
+      goldRings.visible = gi > 0;
+      if (gi) {
+        goldBeams.instanceMatrix.needsUpdate = true;
+        goldRings.instanceMatrix.needsUpdate = true;
+        beamGold.opacity = 0.22 + Math.sin(clock * 2.5) * 0.08;
+      }
+
+      // impulse rings rushing out, flares climbing and burning
+      for (const w of waves) {
+        if (!w.mesh.visible) continue;
+        w.life -= dt;
+        if (w.life <= 0) {
+          w.mesh.visible = false;
+          continue;
+        }
+        const u = 1 - w.life / 0.4;
+        w.mesh.scale.setScalar(0.6 + u * w.r);
+        w.mat.opacity = 0.85 * (1 - u);
+      }
+      for (let i = flares.length - 1; i >= 0; i--) {
+        const fl = flares[i];
+        const age = clock - fl.at;
+        if (age > FLARE_UP.rise + FLARE_UP.burn) {
+          scene.remove(fl.core, fl.glow);
+          flares.splice(i, 1);
+          continue;
+        }
+        const u = Math.min(1, age / FLARE_UP.rise);
+        const y = 1.2 + FLARE_UP.y * (1 - (1 - u) * (1 - u));
+        const fade = age > FLARE_UP.rise + FLARE_UP.burn - 1 ? FLARE_UP.rise + FLARE_UP.burn - age : 1;
+        fl.core.position.set(fl.x, y, fl.z);
+        fl.glow.position.set(fl.x, y, fl.z);
+        fl.core.scale.setScalar(0.35 * fade);
+        fl.glow.scale.setScalar((1.3 + Math.sin(clock * 30) * 0.2) * fade);
+        if (Math.random() < 0.5) burst(fl.x, y - 0.3, fl.z, 1, 0.5, 0.3, 1.2, [partMat.smoke], -0.5);
+      }
+
       // effects
       for (const p of parts) {
         if (!p.mesh.visible) continue;
@@ -1874,6 +2235,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           const f = m.fighters[e.f];
           const cls = WEAPONS[e.w].cls;
           if (v) v.recoil = 1;
+          if (e.w === 'flare' && f) {
+            // a flare goes straight up from the gun
+            const core = new THREE.Mesh(G.ball, flareMat);
+            const glow = new THREE.Mesh(G.ball, flareGlow);
+            scene.add(core, glow);
+            flares.push({ core, glow, x: e.x, z: e.z, at: now });
+            burst(e.x, 1, e.z, 8, 3, 0.18, 0.6, [partMat.spark, partMat.smoke]);
+            break;
+          }
           if (f && near(f.x, f.z) && e.w !== 'launcher' && e.w !== 'crossbow') flash(f.x + Math.sin(e.a) * 1.2, 0.95, f.z + Math.cos(e.a) * 1.2, cls === 'shotgun' ? 0.32 : e.w === 'micro' ? 0.15 : 0.2, 0.05, 0, flashMat);
           if (e.f === focus) shake = Math.max(shake, cls === 'shotgun' || cls === 'sniper' || e.w === 'launcher' || e.w === 'revolver' ? 0.35 : 0.08);
           break;
@@ -1887,6 +2257,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         case 'zone':
           if (!near(e.x, e.z)) break;
           if (e.k === 'flour') burst(e.x, 1, e.z, 24, 7, 0.4, 0.8, [partMat.flour], 3);
+          else if (e.k === 'bush') burst(e.x, 1, e.z, 16, 4, 0.2, 0.6, [partMat.leaf, partMat.dust]);
+          else if (e.k === 'jam') burst(e.x, 0.6, e.z, 16, 4, 0.16, 0.6, [partMat.jam, partMat.glass]);
           else burst(e.x, 0.6, e.z, 18, 5, 0.18, 0.6, [partMat.sauce, partMat.fire]);
           break;
         case 'thud':
@@ -1914,6 +2286,19 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         case 'harvest':
           burst(e.x, 1.4, e.z, 6, 3, 0.13, 0.45, [partMat.wood, partMat.leaf]);
           break;
+        case 'pulse': {
+          if (!near(e.x, e.z)) break;
+          const w = waves[waveAt];
+          waveAt = (waveAt + 1) % waves.length;
+          w.mesh.position.set(e.x, 0.15, e.z);
+          w.mesh.visible = true;
+          w.life = 0.4;
+          w.r = THROWS.impulse.radius;
+          burst(e.x, 0.8, e.z, 14, 8, 0.14, 0.4, [partMat.spark, partMat.shove], 4);
+          const f = m.fighters[focus];
+          if (f && Math.hypot(f.x - e.x, f.z - e.z) < 12) shake = Math.max(shake, 0.4);
+          break;
+        }
         case 'boom':
           flash(e.x, 1, e.z, 1.2, 0.35, 9, boomMat);
           burst(e.x, 1, e.z, 22, 9, 0.28, 0.9, [partMat.fire, partMat.spark, partMat.smoke]);
