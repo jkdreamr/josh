@@ -1125,7 +1125,7 @@ function TankMaze() {
     const clip = (label: string, max: number) => {
       const tag = /\s\((Left|Bot)\)$/.exec(label)?.[0] ?? '';
       const name = label.slice(0, label.length - tag.length);
-      return name.length > max ? `${name.slice(0, Math.max(1, max - 1)).trimEnd()}…${tag}` : label;
+      return name.length > Math.max(max, 5) ? `${name.slice(0, Math.max(1, max - 1)).trimEnd()}…${tag}` : label;
     };
     const maxFont = 13 * u;
     const minFont = 11.25 * u;
