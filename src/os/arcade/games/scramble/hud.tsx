@@ -686,7 +686,7 @@ export const keyCode = (k: string) => (/^\d$/.test(k) ? `Digit${k}` : `Key${k}`)
 export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; touch: boolean; onClose: () => void }) {
   return (
     <Sheet root={root} title="How to Play" onClose={onClose}>
-      <p className="g-scramble-lede">Twenty eggs drop onto the island. Grab guns, crack the others, and stay inside the circle as the storm closes in. The last egg standing wins.</p>
+      <p className="g-scramble-lede">Fifty eggs drop onto the island. Grab guns, crack the others, and stay inside the circle as the storm closes in. The last egg standing wins.</p>
       <section>
         <h3>Controls</h3>
         <dl className="g-scramble-keys">
@@ -924,7 +924,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
       </section>
       <section>
         <h3>Online</h3>
-        <p>Up to eight friends in one room. The host adds computer eggs with Bots, then picks whether more fill the island up to twenty and how sharp they are.</p>
+        <p>Up to twenty friends in one room. The host adds computer eggs with Bots, then picks whether more fill the island up to fifty and how sharp they are.</p>
         <p>Cracked? Watch the rest, or press done watching for your result while the match plays on for everyone else. The host can do the same, and starts the next match once this one is over.</p>
       </section>
     </Sheet>

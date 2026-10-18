@@ -92,7 +92,7 @@ import {
 } from './map.ts';
 
 export const COUNTDOWN = 3;
-export const MAX_FIGHTERS = 20;
+export const MAX_FIGHTERS = 50;
 export const FIGHTER_R = 0.6;
 /** Bullets hit an egg a little wider than it pushes. */
 export const HIT_R = 0.75;
@@ -438,6 +438,36 @@ export const FIGHTER_COLORS = [
   '#7cb342',
   '#37474f',
   '#ff8a65',
+  '#b71c1c',
+  '#0d47a1',
+  '#1b5e20',
+  '#4fc3f7',
+  '#81c784',
+  '#ba68c8',
+  '#ffd54f',
+  '#4db6ac',
+  '#e57373',
+  '#9575cd',
+  '#a1887f',
+  '#90a4ae',
+  '#f06292',
+  '#7986cb',
+  '#aed581',
+  '#ff7043',
+  '#26a69a',
+  '#d4e157',
+  '#880e4f',
+  '#004d40',
+  '#3e2723',
+  '#bf360c',
+  '#283593',
+  '#827717',
+  '#00695c',
+  '#6a1b9a',
+  '#ff4081',
+  '#40c4ff',
+  '#69f0ae',
+  '#ffab40',
 ];
 export const BOT_NAMES = [
   'Benedict',
@@ -466,6 +496,40 @@ export const BOT_NAMES = [
   'Crepe',
   'Hollandaise',
   'Bennie',
+  'Brioche',
+  'Waffles',
+  'Pancake',
+  'Hashbrown',
+  'Toastie',
+  'Muffin',
+  'Croissant',
+  'Biscuit',
+  'Sriracha',
+  'Paprika',
+  'Chive',
+  'Gruyere',
+  'Cheddar',
+  'Feta',
+  'Dumpling',
+  'Tortilla',
+  'Kedgeree',
+  'Carbonara',
+  'Scotch',
+  'Pickles',
+  'Clucky',
+  'Henrietta',
+  'Rooster',
+  'Nugget',
+  'Pullet',
+  'Bantam',
+  'Speckles',
+  'Tempura',
+  'Mayo',
+  'Aioli',
+  'Flan',
+  'Pavlova',
+  'Brulee',
+  'Eggroll',
 ];
 
 /** Computer player names for a match, the same on every client for a seed. */
@@ -592,7 +656,7 @@ function newAi(m: Match, f: Fighter): Ai {
     const u = along(p);
     return Math.hypot(bus.x0 + dx * u - p.x, bus.z0 + dz * u - p.z);
   };
-  const near = spots.filter((p) => off(p) < 80);
+  const near = spots.filter((p) => off(p) < 110);
   const pick = (near.length ? near : spots)[Math.floor(rng() * (near.length || spots.length))] ?? { x: 0, z: 0 };
   const jumpAt = clamp(along(pick) * bus.dur - off(pick) / GLIDE - 0.5 + rng() * 1.5, bus.on + rng() * 0.6, bus.off - 0.05);
   return {
@@ -686,7 +750,7 @@ export function autopilot(m: Match, f: Fighter) {
   f.ai = newAi(m, f);
 }
 
-/** A solo match: you and nineteen computer players. */
+/** A solo match: you and forty-nine computer players. */
 export function soloMatch(seed: number, level: Level, name = 'you', color = FIGHTER_COLORS[0]): Match {
   const bots = botNames(seed);
   const entrants: Entrant[] = [{ name, color, kind: 'player', seat: -1 }];

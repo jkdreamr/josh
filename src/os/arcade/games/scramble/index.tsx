@@ -43,12 +43,12 @@ const levelOptions = [
   ['normal', 'Normal'],
   ['hard', 'Hard'],
 ] as const;
-/** With computer eggs in the room, whether more of them fill the island up to twenty. */
+/** With computer eggs in the room, whether more of them fill the island up to fifty. */
 const FILL = defineSetting('scramble:fill', ['fill', 'none'] as const, 'fill');
-/** A Scramble room starts full: seven bots with the host, and Fill to 20 adds the rest. */
+/** A Scramble room starts full: nineteen bots with the host, and Fill to 50 adds the rest. */
 const ROOM_BOTS = (meta.online?.seats ?? 8) - 1;
 const fillOptions = [
-  ['fill', 'Fill to 20'],
+  ['fill', 'Fill to 50'],
   ['none', 'Room Bots Only'],
 ] as const;
 /** The host gives everyone a moment to get its first packet before the countdown. */
@@ -112,7 +112,7 @@ function Extras() {
 /**
  * Settings for online matches. The room's bots are its computer eggs (the host adds them in the room, and they fill
  * every empty seat unless the host takes some away). With any in the room, the host picks whether more fill the island
- * to twenty, and how sharp they all are, and tells the room.
+ * to fifty, and how sharp they all are, and tells the room.
  */
 function OnlineSetup() {
   const online = useOnline();
@@ -153,7 +153,7 @@ function OnlineSetup() {
           <div className="arcade-field">
             <span>Computer Eggs</span>
             <div className="g-scramble-hostpick">
-              <b>{picked ? `${picked.bots === 'fill' ? 'fill to 20' : 'room bots only'}, ${picked.level}` : '…'}</b>
+              <b>{picked ? `${picked.bots === 'fill' ? 'fill to 50' : 'room bots only'}, ${picked.level}` : '…'}</b>
               <small>picked by the host</small>
             </div>
           </div>

@@ -30,7 +30,7 @@ export type Player = { seat: number; name: string };
 const nameOf = (players: Player[], seat: number) => players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`;
 
 /**
- * The host's match: everyone in the room by seat, then as many computer eggs as the host asks for (twenty eggs at most).
+ * The host's match: everyone in the room by seat, then as many computer eggs as the host asks for (fifty eggs at most).
  * `roster` is each fighter's seat (-1 for a computer egg), which the host sends with every state.
  */
 export function hostMatch(players: Player[], mySeat: number, seed: number, level: Level, bots: number, countdown: number): { match: Match; roster: number[] } {

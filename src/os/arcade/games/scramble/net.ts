@@ -8,6 +8,7 @@
 // business, and show in its state.
 import { MAX_ARMOR, MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import { HALF } from './map.ts';
+import { meta } from './meta.ts';
 import {
   CAUSES,
   F_ALL,
@@ -83,7 +84,9 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const int = (v: unknown): v is number => Number.isInteger(v);
 const fid = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) < MAX_FIGHTERS;
-const seat = (v: unknown): v is number => int(v) && (v as number) >= -1 && (v as number) < 16;
+/** Room seats: -1 for a computer egg. */
+const SEATS = meta.online?.seats ?? 1;
+const seat = (v: unknown): v is number => int(v) && (v as number) >= -1 && (v as number) < SEATS;
 const isCause = (v: unknown): v is Cause => CAUSES.includes(v as Cause);
 /**
  * The most one hit from another client can do: a legendary bullet or pellet, a swing, or a grenade right on top. The
@@ -383,7 +386,7 @@ export function parsePacket(value: unknown): Packet | null {
     const groups: Group[] = [];
     let count = 0;
     for (const raw of p.g) {
-      if (!Array.isArray(raw) || !int(raw[0]) || raw[0] < 0 || raw[0] >= 16 || !Array.isArray(raw[1])) continue;
+      if (!Array.isArray(raw) || !int(raw[0]) || raw[0] < 0 || raw[0] >= SEATS || !Array.isArray(raw[1])) continue;
       const evs: NetEv[] = [];
       for (const ev of raw[1]) {
         if (++count > 400) break;
