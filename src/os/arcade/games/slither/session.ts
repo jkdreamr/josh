@@ -7,10 +7,11 @@ export type RoomSeat = { seat: number; name: string; bot?: boolean; color?: numb
 export function makeRoster(players: readonly RoomSeat[], bots: readonly RoomSeat[], fillTo = 16): RosterEntry[] {
   const roster: RosterEntry[] = [];
   const occupied = new Set<number>();
+  const people = peopleSeats(players);
   for (const player of [...players, ...bots].sort((a, b) => a.seat - b.seat)) {
     if (player.seat < 0 || player.seat > 7 || occupied.has(player.seat)) continue;
     occupied.add(player.seat);
-    const bot = !!player.bot || bots.some((b) => b.seat === player.seat);
+    const bot = !people.has(player.seat);
     roster.push({
       id: roster.length,
       seat: player.seat,
@@ -36,6 +37,8 @@ export function makeRoster(players: readonly RoomSeat[], bots: readonly RoomSeat
   return roster;
 }
 
+const peopleSeats = (players: readonly RoomSeat[]) => new Set(players.filter((p) => !p.bot && p.seat >= 0).map((p) => p.seat));
+
 /** Turn disconnected humans into host-run bots without leaving an empty seat in the round. */
 export function takeOverSeats(roster: readonly RosterEntry[], activeSeats: readonly number[]): RosterEntry[] {
   const active = new Set(activeSeats);
@@ -46,8 +49,10 @@ export function takeOverSeats(roster: readonly RosterEntry[], activeSeats: reado
 
 export function syncRoster(roster: readonly RosterEntry[], players: readonly RoomSeat[], bots: readonly RoomSeat[]): RosterEntry[] {
   const bySeat = new Map<number, RoomSeat>();
-  for (const player of players) bySeat.set(player.seat, player);
-  for (const bot of bots) bySeat.set(bot.seat, { ...bot, bot: true });
+  const people = peopleSeats(players);
+  // A person who joins mid-round takes a bot's seat; the round's bot list still names it until the next round.
+  for (const bot of bots) if (!people.has(bot.seat)) bySeat.set(bot.seat, { ...bot, bot: true });
+  for (const player of players) if (people.has(player.seat)) bySeat.set(player.seat, { ...player, bot: false });
   const result = roster.map((entry) => {
     if (entry.seat < 0) return { ...entry };
     const current = bySeat.get(entry.seat);
@@ -59,11 +64,11 @@ export function syncRoster(roster: readonly RosterEntry[], players: readonly Roo
     return { ...entry, bot: true, eligible: false };
   });
   const taken = new Set(result.filter((entry) => entry.seat >= 0).map((entry) => entry.seat));
-  const newSeats = [...players, ...bots].filter((entry) => entry.seat >= 0 && !taken.has(entry.seat));
+  const newSeats = [...bySeat.values()].filter((entry) => entry.seat >= 0 && !taken.has(entry.seat));
   for (const person of newSeats) {
     const index = result.findIndex((entry) => entry.seat < 0);
     if (index < 0) break;
-    const bot = !!person.bot || bots.some((entry) => entry.seat === person.seat);
+    const bot = !people.has(person.seat);
     result[index] = {
       ...result[index], seat: person.seat, name: person.name.slice(0, 40),
       color: person.color ?? person.seat % 8, skin: person.skin ?? person.seat % 8,
@@ -234,4 +239,52 @@ export function startsSoloRound(previous: ShellStatus | null, status: ShellStatu
 export function touchTarget(renderedWidth: number, layoutWidth: number, min = 44): number {
   const scale = layoutWidth > 0 && renderedWidth > 0 ? renderedWidth / layoutWidth : 1;
   return Math.ceil(min / Math.min(1, scale));
+}
+
+/** Who left (a person's noodle now steered by a bot) and who joined (a person now steering one) between two rosters. */
+export function rosterChanges(before: readonly RosterEntry[], after: readonly RosterEntry[], mySeat = -1): { left: string[]; joined: string[] } {
+  const left: string[] = [];
+  const joined: string[] = [];
+  const old = new Map(before.map((entry) => [entry.id, entry]));
+  const person = (entry: RosterEntry | undefined) => !!entry && entry.seat >= 0 && !entry.bot;
+  for (const entry of after) {
+    const prev = old.get(entry.id);
+    const was = person(prev);
+    const is = person(entry);
+    if (was && (!is || prev!.seat !== entry.seat)) left.push(prev!.name);
+    if (is && entry.seat !== mySeat && (!was || prev!.seat !== entry.seat)) joined.push(entry.name);
+  }
+  return { left, joined };
+}
+
+/** A short line for a roster change, or '' when nobody came or went. */
+export function rosterNotice(change: { left: string[]; joined: string[] }): string {
+  const names = (list: string[]) => list.length === 1 ? list[0] : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+  const parts: string[] = [];
+  if (change.left.length) parts.push(`${names(change.left)} left, a bot took over`);
+  if (change.joined.length) parts.push(`${names(change.joined)} joined`);
+  return parts.join('. ');
+}
+
+export type PersonResult = { seat: number; name: string; place: number; length: number; kills: number; me: boolean };
+
+/** The people still in the room at the end of a round, in finishing order, from the host's final ranking. */
+export function peopleResults(ranking: readonly [number, number, number, number][], snakes: readonly { id: number; seat: number; bot: boolean; name: string }[], mySeat: number): PersonResult[] {
+  const byId = new Map(snakes.map((snake) => [snake.id, snake]));
+  const result: PersonResult[] = [];
+  ranking.forEach(([id, seat, length, kills], i) => {
+    const snake = byId.get(id);
+    if (!snake || snake.bot || seat < 0) return;
+    result.push({ seat, name: snake.name, place: i + 1, length: Math.floor(length), kills, me: seat === mySeat });
+  });
+  return result;
+}
+
+export const ordinal = (place: number) => place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`;
+
+/** One line naming everyone in the room with their place and length, for the online Game Over card. */
+export function peopleLine(people: readonly PersonResult[]): string {
+  if (!people.length) return '';
+  const rows = people.map((p) => `${p.me ? 'you' : p.name} ${ordinal(p.place)}, length ${p.length}`);
+  return `${people.length === 1 ? '1 person' : `${people.length} people`} in the room: ${rows.join('; ')}.`;
 }
