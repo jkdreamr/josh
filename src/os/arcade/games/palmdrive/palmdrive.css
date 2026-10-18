@@ -168,6 +168,59 @@
 .g-palmdrive .g-palmdrive-map-edge.is-void {
   stroke: #ff3d7f;
 }
+.g-palmdrive .g-palmdrive-map-edge.is-marsh {
+  stroke: #9bbf5a;
+}
+/* on the water: the coach's launches and the barge */
+.g-palmdrive .g-palmdrive-map-vessel {
+  fill: #c4cad2;
+  stroke: #8c1515;
+  stroke-width: 3;
+}
+.g-palmdrive .g-palmdrive-map-vessel.is-barge {
+  fill: #2a2a30;
+  stroke: #ffc21a;
+}
+/* swell rolling in: the wind's pill in sea green */
+.g-palmdrive .g-palmdrive-gust.is-swell {
+  top: calc(12% + 38px);
+  background: #6fd3c0;
+}
+.g-palmdrive .g-palmdrive-gust.is-swell.is-on {
+  background: #e8fff9;
+}
+/* the stroke ring under your shell: the outer ring closes onto the beat, the inner one lights up in the catch window,
+   and the run of catches toward a Power Ten fills round it */
+.g-palmdrive .g-palmdrive-stroke {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  width: 92px;
+  height: 92px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  overflow: visible;
+}
+.g-palmdrive .g-palmdrive-stroke circle {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 3;
+}
+.g-palmdrive .g-palmdrive-stroke circle.is-open {
+  stroke: #ffe14d;
+  stroke-width: 5;
+  fill: rgba(255, 225, 77, 0.25);
+}
+.g-palmdrive .g-palmdrive-stroke .g-palmdrive-stroke-ring {
+  stroke: #ffffff;
+  stroke-width: 2.5;
+}
+.g-palmdrive .g-palmdrive-stroke rect {
+  fill: rgba(255, 255, 255, 0.25);
+}
+.g-palmdrive .g-palmdrive-stroke rect.is-on {
+  fill: #ff5a3c;
+}
 /* a Marguerite bus: white with a cardinal edge */
 .g-palmdrive .g-palmdrive-map-bus {
   fill: #f2f2ee;
@@ -1083,4 +1136,10 @@
 .g-palmdrive .g-palmdrive-ink i:nth-child(2n) {
   border-radius: 58% 42% 40% 60% / 45% 55% 45% 55%;
   transform: rotate(-24deg);
+}
+/* (on a touch screen, up clear of the buttons) */
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-stroke {
+  bottom: 150px;
+  width: 72px;
+  height: 72px;
 }

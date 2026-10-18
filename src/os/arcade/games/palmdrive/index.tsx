@@ -14,6 +14,11 @@ import {
   ITEMS,
   gustWarn,
   hazState,
+  beatAt,
+  strokeAt,
+  swellWarn,
+  CATCH_WIN,
+  STROKE_T,
   hazardV,
   boom,
   createRace,
@@ -374,6 +379,8 @@ type Hud = {
   results: boolean;
   /** Wind across the road just ahead: 0 still, else its way (+ to the right) times 1 about to blow, 2 blowing. */
   gust: number;
+  /** On the water, swell rolling in just ahead: the same, its way and whether it is about to (1) or rolling through (2). */
+  swell: number;
 };
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => a[k] === b[k]);
 
@@ -433,7 +440,7 @@ function Play({ mode }: { mode: Mode }) {
   const tap = useRef({ back: false, gas: false, cash: false, slam: false });
   /** The item button was holding a banana or shell out behind last frame. */
   const holding = useRef(false);
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, note: null, wrong: false, results: false, gust: 0 });
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, note: null, wrong: false, results: false, gust: 0, swell: 0 });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
@@ -466,8 +473,14 @@ function Play({ mode }: { mode: Mode }) {
   const pieceCyc = useRef(new Map<number, number>());
   const pieceTick = useRef(0);
   const hissT = useRef(0);
-  /** The wind warning last time round (for the whoosh as a gust starts to blow). */
+  /** The wind warning last time round (for the whoosh as a gust starts to blow), and the swell's. */
   const gustWas = useRef(0);
+  const swellWas = useRef(0);
+  /** On the water: the stroke ring under your shell (moved every frame), and the last beat it clicked. */
+  const strokeRing = useRef<SVGCircleElement | null>(null);
+  const strokeTarget = useRef<SVGCircleElement | null>(null);
+  const strokeTicks = useRef<(SVGRectElement | null)[]>([]);
+  const lastBeat = useRef(0);
   /** A short buzz on phones that can. */
   const buzz = (ms: number) => {
     if (!shellRef.current.touch) return;
@@ -711,11 +724,21 @@ function Play({ mode }: { mode: Mode }) {
       const carrying = !!me && me.sunk > 0 && 1 - me.sunk / r.tier.fallT >= FALL_SINK;
       // (the drone's buzz on the Skyway)
       if (carrying && !winching.current) {
-        if (r.holePast === 'void') sfx.tone({ freq: 140, to: 160, dur: FALL_CARRY * r.tier.fallT, type: 'sawtooth', vol: 0.04 });
+        // (the coach's launch's outboard, on the water)
+        if (r.boat) sfx.tone({ freq: 92, to: 110, dur: FALL_CARRY * r.tier.fallT, type: 'sawtooth', vol: 0.05 });
+        else if (r.holePast === 'void') sfx.tone({ freq: 140, to: 160, dur: FALL_CARRY * r.tier.fallT, type: 'sawtooth', vol: 0.04 });
         else sfx.tone({ freq: 180, to: 460, dur: FALL_CARRY * r.tier.fallT, type: 'sawtooth', vol: 0.045 });
       }
       winching.current = carrying;
       if (me) pieceSounds(r, me, dt);
+      // on the water, the cox-box clicking the beat
+      if (me && r.boat && r.time > 0 && me.done === null && me.sunk === 0) {
+        const beat = beatAt(r.time).beat;
+        if (beat !== lastBeat.current && Math.abs(beatAt(r.time).off) < 0.05) {
+          lastBeat.current = beat;
+          sfx.tone({ freq: 1900, dur: 0.018, type: 'square', vol: 0.02 });
+        }
+      }
       const level = me && me.drift ? turboLevel(me.charge) : 0;
       if (level > lastLevel.current) sfx.tone({ freq: 500 + level * 180, dur: 0.06, type: 'square', vol: 0.08 });
       lastLevel.current = level;
@@ -818,9 +841,32 @@ function Play({ mode }: { mode: Mode }) {
         if (st.live && dist < 20 && Math.sign(v) !== Math.sign(was)) sfx.noise(0.3, 0.09 * (1 - dist / 20) + 0.02);
         return;
       }
+      if (h.kind === 'whirl') {
+        // a whirlpool: a rising gurgle as its foam starts to turn, a roar as it spins up, churning while it spins
+        const was = pieceCyc.current.get(i) ?? 0;
+        const now = st.live ? 2 : st.warn > 0 ? 1 : 0;
+        pieceCyc.current.set(i, now);
+        if (dist > 60 || st.phase === 'off') return;
+        const near = 1 - dist / 60;
+        if (now === 1 && was === 0) sfx.tone({ freq: 120, to: 260, dur: 1.2, type: 'sine', vol: 0.05 * near });
+        if (now === 2 && was !== 2) {
+          sfx.noise(0.8, 0.07 * near);
+          sfx.tone({ freq: 180, to: 70, dur: 1, type: 'sawtooth', vol: 0.04 * near });
+        }
+        if (now === 2 && tick && Math.random() < 0.4) sfx.noise(0.25, 0.03 * near);
+        return;
+      }
       if (h.kind === 'rotor') {
         const was = pieceCyc.current.get(i) ?? 0;
         pieceCyc.current.set(i, st.live ? 1 : 0);
+        if (h.look === 'swing') {
+          // the Caltrain swing span: railway crossing bells while it sweeps, near enough to hear
+          if (st.live && tick && dist < 60) {
+            const bell = Math.floor(r.time / 0.34) % 2 ? 1250 : 1050;
+            sfx.tone({ freq: bell, dur: 0.12, type: 'triangle', vol: 0.03 * (1 - dist / 60) });
+          }
+          return;
+        }
         if (h.look === 'beam') {
           // the relay beam: a rising tone as it comes on, then a low hum as it sweeps
           if (st.live && !was) sfx.tone({ freq: 220, to: 660, dur: 0.4, type: 'sine', vol: 0.06 * vol });
@@ -1007,9 +1053,48 @@ function Play({ mode }: { mode: Mode }) {
           sfx.noise(0.08, 0.12);
           sfx.tone({ freq: 240, to: 110, dur: 0.2, type: 'sawtooth', vol: 0.14 });
         } else if (e.kind === 'rotor') sfx.noise(0.35, 0.14);
-        else {
+        else if (e.kind === 'launch') {
+          // the launch's horn
+          sfx.tone({ freq: 392, dur: 0.22, type: 'square', vol: 0.08 });
+          sfx.tone({ freq: 330, dur: 0.35, type: 'square', vol: 0.08, delay: 0.2 });
+        } else if (e.kind === 'barge') sfx.tone({ freq: 82, dur: 1.1, type: 'sawtooth', vol: 0.14 });
+        else if (e.kind === 'ferry') {
+          sfx.tone({ freq: 660, dur: 0.12, type: 'triangle', vol: 0.1 });
+          sfx.tone({ freq: 660, dur: 0.2, type: 'triangle', vol: 0.1, delay: 0.16 });
+        } else if (e.kind === 'log') {
+          sfx.tone({ freq: 130, to: 70, dur: 0.25, type: 'sine', vol: 0.2 });
+          sfx.noise(0.12, 0.1);
+        } else {
           sfx.tone({ freq: 520, to: 180, dur: 0.3, type: 'sawtooth', vol: 0.14 });
           sfx.noise(0.2, 0.1);
+        }
+        break;
+      case 'catch':
+        // a clean catch: the blade going in, thunk
+        if (mine) {
+          sfx.tone({ freq: 240, to: 130, dur: 0.12, type: 'sine', vol: 0.12 });
+          sfx.noise(0.07, 0.04);
+        }
+        break;
+      case 'power':
+        // POWER TEN: a rising triad and the cox's three beeps
+        if (mine) {
+          [523, 659, 784].forEach((f, n) => sfx.tone({ freq: f, dur: 0.16, type: 'square', vol: 0.08, delay: n * 0.09 }));
+          for (let n = 0; n < 3; n++) sfx.tone({ freq: 1320, dur: 0.06, type: 'square', vol: 0.06, delay: 0.35 + n * 0.12 });
+          lapBanner.current = { text: 'power ten!', note: null, at: clock.current };
+        }
+        break;
+      case 'bonk':
+        if (mine) sfx.tone({ freq: 330, to: 240, dur: 0.12, type: 'triangle', vol: 0.1 });
+        break;
+      case 'wake':
+        // a wake slapping the hull
+        if (mine) sfx.noise(0.14, 0.05 + 0.06 * e.amp);
+        break;
+      case 'swell':
+        if (mine) {
+          sfx.noise(0.25, 0.06);
+          sfx.tone({ freq: 90, to: 60, dur: 0.3, type: 'sine', vol: 0.1 });
         }
         break;
       case 'plink':
@@ -1020,10 +1105,10 @@ function Play({ mode }: { mode: Mode }) {
         }
         break;
       case 'splash':
-        // into the water
+        // into the water (on the slough, sucked under by a whirlpool or caught in the weir's stopper: a gurgle down)
         if (mine) {
           sfx.noise(0.5, 0.22);
-          sfx.tone({ freq: 300, to: 80, dur: 0.45, type: 'sine', vol: 0.16 });
+          sfx.tone({ freq: r.boat ? 400 : 300, to: 80, dur: r.boat ? 0.8 : 0.45, type: 'sine', vol: 0.16 });
           buzz(80);
         }
         break;
@@ -1032,6 +1117,13 @@ function Play({ mode }: { mode: Mode }) {
         if (mine && e.kind === 'void') {
           sfx.tone({ freq: 1200, to: 300, dur: 0.6, type: 'sine', vol: 0.16 });
           buzz(90);
+          break;
+        }
+        // run aground in the marsh: a squelch
+        if (mine && e.kind === 'marsh') {
+          sfx.noise(0.3, 0.12, 0.02);
+          sfx.tone({ freq: 90, to: 60, dur: 0.3, type: 'sine', vol: 0.2 });
+          buzz(70);
           break;
         }
         // down into a pit: a thud and a clatter
@@ -1137,7 +1229,22 @@ function Play({ mode }: { mode: Mode }) {
   function placeOverlays(r: Race, v: View) {
     for (const [i, el] of busDots.current) {
       const h = r.hazards[i];
-      if (h) el.setAttribute('transform', `translate(${-h.x} ${-h.z})`);
+      if (h) {
+        el.setAttribute('transform', `translate(${-h.x} ${-h.z})`);
+        el.style.display = h.gone ? 'none' : '';
+      }
+    }
+    // the stroke ring: closing onto the beat, bright through the catch window, the run of catches round it
+    const me = r.karts[r.me];
+    if (r.boat && me && strokeRing.current && strokeTarget.current) {
+      const { off } = beatAt(r.time);
+      const toBeat = off < 0 ? -off : STROKE_T - off;
+      strokeRing.current.setAttribute('r', String(20 + 26 * Math.min(1, toBeat / (STROKE_T * 0.8))));
+      strokeRing.current.style.opacity = String(toBeat < STROKE_T * 0.8 ? 1 : 0.25);
+      const open = Math.abs(off) <= CATCH_WIN;
+      strokeTarget.current.setAttribute('class', open ? 'is-open' : '');
+      strokeTicks.current.forEach((el, n) => el?.setAttribute('class', n < me.streak ? 'is-on' : ''));
+      void strokeAt;
     }
     for (const k of r.karts) {
       const dot = dots.current.get(k.idx);
@@ -1204,7 +1311,20 @@ function Play({ mode }: { mode: Mode }) {
       wrong: me.wrong > 1.2 && me.done === null,
       results: me.done !== null && clock.current - (doneAt.current ?? 0) >= 3,
       gust: 0,
+      swell: 0,
     };
+    // the swell just ahead, on the water (see swellWarn)
+    if (r.swells.length && me.done === null && me.sunk === 0) {
+      let best: ReturnType<typeof swellWarn> = null;
+      for (let a = 0; a <= 60; a += 10) {
+        const w = swellWarn(r, me.s + a, r.time, me.lap);
+        if (w && (!best || w.k > best.k)) best = w;
+      }
+      if (best) next.swell = best.dir * (best.k >= 1 ? 2 : 1);
+      // a low rumble as it starts to roll through
+      if (Math.abs(next.swell) === 2 && swellWas.current !== 2) sfx.tone({ freq: 70, to: 55, dur: 0.9, type: 'sawtooth', vol: 0.05 });
+    }
+    swellWas.current = Math.abs(next.swell);
     // the wind just ahead: the strongest gust warning or blowing within 80 m (see gustWarn)
     if (r.gusts.length && me.done === null && me.sunk === 0) {
       let best: ReturnType<typeof gustWarn> = null;
@@ -1293,20 +1413,20 @@ function Play({ mode }: { mode: Mode }) {
             <path d={minimap.d} className="g-palmdrive-map-line" />
             {r.hazards.map(
               (h, i) =>
-                (h.kind === 'bus' || h.kind === 'cart') && (
+                (h.kind === 'bus' || h.kind === 'cart' || h.kind === 'launch' || h.kind === 'barge') && (
                   <rect
                     key={`bus${i}`}
                     ref={(el) => {
                       if (el) busDots.current.set(i, el);
                       else busDots.current.delete(i);
                     }}
-                    x={h.kind === 'bus' ? -8 : -6}
-                    y={h.kind === 'bus' ? -8 : -6}
-                    width={h.kind === 'bus' ? 16 : 12}
-                    height={h.kind === 'bus' ? 16 : 12}
+                    x={h.kind === 'bus' || h.kind === 'barge' ? -8 : -6}
+                    y={h.kind === 'bus' || h.kind === 'barge' ? -8 : -6}
+                    width={h.kind === 'bus' || h.kind === 'barge' ? 16 : 12}
+                    height={h.kind === 'bus' || h.kind === 'barge' ? 16 : 12}
                     rx={3}
                     transform={`translate(${-h.x} ${-h.z})`}
-                    className={h.kind === 'bus' ? 'g-palmdrive-map-bus' : 'g-palmdrive-map-cart'}
+                    className={h.kind === 'bus' ? 'g-palmdrive-map-bus' : h.kind === 'cart' ? 'g-palmdrive-map-cart' : `g-palmdrive-map-vessel is-${h.kind}`}
                   />
                 ),
             )}
@@ -1390,6 +1510,31 @@ function Play({ mode }: { mode: Mode }) {
             <div className={`g-palmdrive-gust${Math.abs(hud.gust) === 2 ? ' is-on' : ''}`} aria-label={`Wind from the ${hud.gust > 0 ? 'left' : 'right'}`}>
               {hud.gust < 0 ? '\u2190 ' : ''}wind{hud.gust > 0 ? ' \u2192' : ''}
             </div>
+          )}
+          {hud.swell !== 0 && (
+            <div className={`g-palmdrive-gust is-swell${Math.abs(hud.swell) === 2 ? ' is-on' : ''}`} aria-label={`Swell from the ${hud.swell > 0 ? 'left' : 'right'}`}>
+              {hud.swell < 0 ? '\u2190 ' : ''}swell{hud.swell > 0 ? ' \u2192' : ''}
+            </div>
+          )}
+          {r.boat && hud.lights === 0 && !hud.results && (
+            <svg className="g-palmdrive-stroke" viewBox="-50 -50 100 100" aria-hidden="true">
+              <circle ref={strokeTarget} r="20" />
+              <circle ref={strokeRing} className="g-palmdrive-stroke-ring" r="40" />
+              {Array.from({ length: 10 }, (_, n) => (
+                <rect
+                  key={n}
+                  ref={(el) => {
+                    strokeTicks.current[n] = el;
+                  }}
+                  x="-2.5"
+                  y="-30"
+                  width="5"
+                  height="6"
+                  rx="1.5"
+                  transform={`rotate(${n * 36})`}
+                />
+              ))}
+            </svg>
           )}
           {hud.rear && <div className="g-palmdrive-rear">behind you</div>}
           {hint && (
