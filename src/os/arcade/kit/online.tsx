@@ -187,12 +187,16 @@ function useSecondsTo(at: number | null): number | null {
   return at === null ? null : Math.max(0, Math.ceil((at - now) / 1000));
 }
 
+/** Focus without scrolling (the laptop screen is projected HTML and must never scroll), once, as it appears. */
+const focusOnce = (el: HTMLInputElement | null) => el?.focus({ preventScroll: true });
+
 /**
  * Quick play's card: a name to play under (while it's still blank), then finding a match, then the people in it so far
  * and a countdown to the start, which the room makes on its own. Bots take every seat nobody holds.
  */
 export function QuickPanel({
   code,
+  linked,
   players,
   seat,
   seats,
@@ -207,6 +211,8 @@ export function QuickPanel({
   setup,
 }: {
   code: string;
+  /** On the way into a room (or in one). */
+  linked: boolean;
   players: RoomPlayer[];
   seat: number | null;
   seats: number;
@@ -225,7 +231,7 @@ export function QuickPanel({
 }) {
   const secs = useSecondsTo(code ? startAt : null);
   const inRoom = !!code && seat !== null;
-  const naming = !inRoom && !busy && (!name.trim() || !!error);
+  const naming = !inRoom && !busy && !linked;
   return (
     <div className="arcade-ov">
       <div className="arcade-card arcade-online-card arcade-quick-card">
@@ -235,6 +241,7 @@ export function QuickPanel({
             <label className="arcade-online-field">
               <span>Your Name</span>
               <input
+                ref={focusOnce}
                 className="arcade-input"
                 value={name}
                 maxLength={16}
@@ -266,8 +273,8 @@ export function QuickPanel({
                   {player.seat === seat && <small>You</small>}
                 </div>
               ))}
-              {note && <p>{note}</p>}
             </div>
+            {note && <p className="arcade-online-note">{note}</p>}
           </>
         )}
         {setup && <div className="arcade-setup">{setup}</div>}

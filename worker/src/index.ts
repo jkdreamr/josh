@@ -215,7 +215,7 @@ export class Room extends DurableObject<Env> {
     if (!canStartRoom(0, lineup.players.length, lineup.bots?.length)) return false;
     const round = beginRound(room, lineup.players.map(({ seat }) => seat), lineup.bots?.length ?? 0);
     await this.ctx.storage.put('room', room);
-    this.broadcast({ t: 'start', ...lineup, round });
+    this.broadcast({ t: 'start', ...this.lineup(room, lineup.players), round });
     await this.publish(room, lineup.players);
     return true;
   }

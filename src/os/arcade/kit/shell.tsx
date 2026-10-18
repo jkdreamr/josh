@@ -379,7 +379,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlinePlayers(players);
       // Bots keep playing a round that someone leaves; it ends only when nobody is left to play against. Everyone stays
       // in the room, so someone else can join and the host can start the next round.
-      if (!onlineModeRef.current || statusRef.current !== 'playing') return;
+      // (quick play's game fills every empty place with bots of its own)
+      if (!onlineModeRef.current || statusRef.current !== 'playing' || quickRef.current) return;
       const left = players.filter((player) => roundSeatsRef.current.includes(player.seat)).length;
       if (left + roundBotsRef.current.length >= 2) return;
       gameOver(undefined, { title: 'Opponent Left', detail: players.length > 1 ? 'Nobody Is Left in This Round.' : 'Your Opponent Left the Room.' });
@@ -806,6 +807,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
         {status === 'ready' && onlineOpen && canPlayOnline && quick && (
           <QuickPanel
             code={onlineCode}
+            linked={!!onlineLink}
             players={onlinePlayers}
             seat={onlineSeat}
             seats={onlineSeats}
@@ -865,14 +867,19 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 {glyph}
                 <h2>{meta.title}</h2>
                 <p>{meta.controls}</p>
-                {setup && <div className="arcade-setup">{setup}</div>}
+                {setup && !quickOn && <div className="arcade-setup">{setup}</div>}
                 <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={quickOn ? () => play() : start} ref={autoFocus}>
                   Play
                 </button>
+                {/* with quick play, the game's settings are for playing alone, so they go with Play with Bots */}
                 {quickOn && (
-                  <button type="button" className="arcade-btn arcade-btn-lg" onClick={start}>
-                    Play with Bots
-                  </button>
+                  <>
+                    <div className="arcade-online-divider"><span>Or Alone</span></div>
+                    {setup && <div className="arcade-setup">{setup}</div>}
+                    <button type="button" className="arcade-btn arcade-btn-lg" onClick={start}>
+                      Play with Bots
+                    </button>
+                  </>
                 )}
                 {canPlayOnline && (
                   <button type="button" className={quickOn ? 'arcade-btn' : 'arcade-btn arcade-btn-lg'} onClick={() => { setOnlineError(''); setOnlineOpen(true); }}>
