@@ -387,6 +387,14 @@ test('arena filler noodles never reuse a room bot or person name', () => {
   const full = makeRoster([{ seat: 0, name: 'Host' }], ['Orzo', 'Penne', 'Fusilli', 'Udon', 'Ramen', 'Ziti', 'Soba'].map((name, i) => ({ seat: i + 1, name, bot: true })), 16);
   assert.equal(new Set(full.map((entry) => entry.name)).size, 16);
   assert.deepEqual(fillerNames(['ziti', 'Rigatoni'], 2), ['Fusilli', 'Orzo']);
+  const clash = makeRoster([{ seat: 0, name: 'Orzo' }, { seat: 1, name: 'penne' }], ['Orzo', 'Penne', 'Fusilli'].map((name, i) => ({ seat: i + 2, name, bot: true })), 16);
+  assert.equal(clash[0].name, 'Orzo');
+  assert.equal(clash[1].name, 'penne');
+  assert.equal(new Set(clash.map((entry) => entry.name.toLowerCase())).size, 16);
+  // The host re-syncs the roster every render; the renamed bot must keep its new name.
+  const players = [{ seat: 0, name: 'Orzo' }, { seat: 1, name: 'penne' }];
+  const roomBots = ['Orzo', 'Penne', 'Fusilli'].map((name, i) => ({ seat: i + 2, name, bot: true }));
+  assert.deepEqual(syncRoster(clash, players, roomBots), clash);
   assert.equal(fillerNames([], 30).length, 30);
   assert.equal(new Set(fillerNames([], 30)).size, 30);
 });

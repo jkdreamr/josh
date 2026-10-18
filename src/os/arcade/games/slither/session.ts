@@ -35,7 +35,7 @@ export function makeRoster(players: readonly RoomSeat[], bots: readonly RoomSeat
       eligible: false,
     });
   }
-  return roster;
+  return uniqueNames(roster);
 }
 
 const EXTRA_NAMES = ['Bucatini', 'Orecchiette', 'Ravioli', 'Cavatappi', 'Lasagna', 'Vermicelli', 'Somen', 'Conchiglie', 'Tortellini'];
@@ -97,7 +97,26 @@ export function syncRoster(roster: readonly RosterEntry[], players: readonly Roo
     };
     taken.add(person.seat);
   }
-  return result;
+  return uniqueNames(result);
+}
+
+/** Renames any bot that shares a name with a person or an earlier bot, so Top 10 and the winner title name one noodle each. */
+export function uniqueNames(roster: readonly RosterEntry[]): RosterEntry[] {
+  const key = (name: string) => name.trim().toLowerCase();
+  const taken = roster.filter((entry) => !entry.bot).map((entry) => entry.name);
+  const used = new Set(taken.map(key));
+  return roster.map((entry) => {
+    if (!entry.bot) return entry;
+    if (!used.has(key(entry.name))) {
+      used.add(key(entry.name));
+      taken.push(entry.name);
+      return entry;
+    }
+    const name = fillerNames([...roster.map((other) => other.name), ...taken], 1)[0];
+    used.add(key(name));
+    taken.push(name);
+    return { ...entry, name };
+  });
 }
 
 export function worldFromRoster(seed: number, radius: number, roster: readonly RosterEntry[], create: (seed: number, radius: number) => World): World {
