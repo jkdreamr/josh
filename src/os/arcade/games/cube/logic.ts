@@ -186,6 +186,70 @@ export function inferTurn(normal: Vec, drag: Vec, cubiePos: Vec): Turn | null {
   return { axis, layer, dir: sign };
 }
 
+/** Small seeded generator (mulberry32), so every player in an online race gets the same scramble. */
+export function seeded(seed: number): Rng {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Which cube face sits where on screen: face letter to cube axis and side. */
+export type Frame = Record<Face, { axis: Axis; layer: 1 | -1 }>;
+
+/**
+ * The frame seen from a camera that has orbited the cube by `yaw` (radians about the up axis, as the rig turns it).
+ * U is always the cube's top; F is whichever side faces the viewer most, so keys follow what you see.
+ */
+export function viewFrame(yaw: number): Frame {
+  // view space x of the cube's +x and +z axes after the rig's yaw, and their z (toward the viewer)
+  const sides: { axis: Axis; layer: 1 | -1; x: number; z: number }[] = [];
+  for (const layer of [1, -1] as const) {
+    sides.push({ axis: 0, layer, x: Math.cos(yaw) * layer, z: -Math.sin(yaw) * layer });
+    sides.push({ axis: 2, layer, x: Math.sin(yaw) * layer, z: Math.cos(yaw) * layer });
+  }
+  const front = sides.reduce((a, b) => (b.z > a.z ? b : a));
+  const right = sides.filter((s) => s.axis !== front.axis).reduce((a, b) => (b.x > a.x ? b : a));
+  const flip = (f: { axis: Axis; layer: 1 | -1 }) => ({ axis: f.axis, layer: -f.layer as 1 | -1 });
+  const F = { axis: front.axis, layer: front.layer };
+  const R = { axis: right.axis, layer: right.layer };
+  const U = { axis: 1 as Axis, layer: 1 as const };
+  return { F, B: flip(F), R, L: flip(R), U, D: flip(U) };
+}
+
+/** A face turn (clockwise as seen looking at that face) in a given frame. */
+export function frameTurn(frame: Frame, face: Face, prime = false): Turn {
+  const f = frame[face];
+  return { axis: f.axis, layer: f.layer, dir: (-f.layer * (prime ? -1 : 1)) as 1 | -1 };
+}
+
+/** A middle slice turn: M turns like L, E like D and S like F. */
+export function sliceTurn(frame: Frame, slice: 'M' | 'E' | 'S', prime = false): Turn {
+  const ref = frameTurn(frame, slice === 'M' ? 'L' : slice === 'E' ? 'D' : 'F', prime);
+  return { ...ref, layer: 0 };
+}
+
+/** Notation for a turn as seen in a frame; `quarters` 2 gives a half turn like U2. */
+export function frameNotation(frame: Frame, t: Turn, quarters = 1): string {
+  let name: string;
+  let cw: boolean;
+  if (t.layer !== 0) {
+    const face = (Object.keys(frame) as Face[]).find((f) => frame[f].axis === t.axis && frame[f].layer === t.layer)!;
+    name = face;
+    cw = frameTurn(frame, face).dir === t.dir;
+  } else {
+    const slice = (['M', 'E', 'S'] as const).find((s) => frame[s === 'M' ? 'L' : s === 'E' ? 'D' : 'F'].axis === t.axis)!;
+    name = slice;
+    cw = sliceTurn(frame, slice).dir === t.dir;
+  }
+  if (quarters === 2) return `${name}2`;
+  return cw ? name : `${name}'`;
+}
+
 export const fmtTime = (ms: number) => {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60);
