@@ -3,28 +3,38 @@
 // Hwy 101's piers and deck, the Caltrain swing span, the whirlpools, the vessels and their wakes, the lane buoys, the
 // chain ferry, the swell rolling in off the Bay and the weir. It reads a Race every frame and never changes it.
 import type { T } from './gl';
-import { deltaS, edgeAt, edgeRuns, headingOf, lengthOf, pointAt, roadEdge, wrapS, type Track } from './track';
+import { deltaS, edgeAt, edgeRuns, headingOf, lengthOf, locate, pointAt, roadEdge, wrapS, type Track } from './track';
 import { DAWN, GLSL_NOISE, canvas, noise, scatter, texture, type Look } from './scenery';
+import { merge } from './shell';
 import { COURSES } from './courses';
-import { RAMP_H, TIDE_LAP, WAKE_LEN, WAKE_SPREAD, crestsAt, hazState, hazardV, strokeAt, type LiveHazard, type Race } from './logic';
+import { RAMP_H, TIDE_LAP, WAKE_LEN, WAKE_SPREAD, crestsAt, hazState, hazardV, strokeAt, windAt, type LiveHazard, type Race } from './logic';
 
 type Three = typeof import('three');
 type Geo = { box: T.BoxGeometry; wheel: T.CylinderGeometry; ball: T.SphereGeometry; plane: T.PlaneGeometry; cone: T.ConeGeometry };
 
-/** A flat strip along the track from s0 to s1 between lateral offsets a(s) and b(s), at height y (v runs vLen a unit). */
-export function band(THREE: Three, t: Track, s0: number, s1: number, a: (s: number) => number, b: (s: number) => number, y: number, vLen: number) {
+/**
+ * A strip along the track from s0 to s1 between lateral offsets a(s) and b(s), at height y (or sloping across it from
+ * y[0] at a to y[1] at b). v runs a unit every vLen meters; u runs across it, from 0 at a to 1 at b when fromA, or else
+ * left to right.
+ */
+export function band(THREE: Three, t: Track, s0: number, s1: number, a: (s: number) => number, b: (s: number) => number, y: number | [number, number], vLen: number, fromA = false) {
   const count = Math.max(1, Math.round((s1 - s0) / (t.step / 2)));
   const pos: number[] = [];
   const uv: number[] = [];
   const idx: number[] = [];
+  const [ya, yb] = typeof y === 'number' ? [y, y] : y;
   for (let k = 0; k <= count; k++) {
     const s = s0 + ((s1 - s0) * k) / count;
     const p = pointAt(t, s);
     const nx = -p.tz;
     const nz = p.tx;
-    const [da, db] = [Math.min(a(s), b(s)), Math.max(a(s), b(s))];
-    pos.push(p.x + nx * da, y, p.z + nz * da, p.x + nx * db, y, p.z + nz * db);
-    uv.push(0, (s - s0) / vLen, 1, (s - s0) / vLen);
+    // (left to right, so it faces up whichever side of the road it is on)
+    const swap = a(s) > b(s);
+    const [da, db] = swap ? [b(s), a(s)] : [a(s), b(s)];
+    const [y0, y1] = swap ? [yb, ya] : [ya, yb];
+    pos.push(p.x + nx * da, y0, p.z + nz * da, p.x + nx * db, y1, p.z + nz * db);
+    const [u0, u1] = fromA && swap ? [1, 0] : [0, 1];
+    uv.push(u0, (s - s0) / vLen, u1, (s - s0) / vLen);
     if (k < count) idx.push(2 * k, 2 * k + 1, 2 * k + 2, 2 * k + 1, 2 * k + 3, 2 * k + 2);
   }
   const g = new THREE.BufferGeometry();
@@ -138,6 +148,9 @@ function rippleNormals(THREE: Three) {
   return tex;
 }
 
+/** How many whirlpools the water shader draws. */
+const WHIRLS = 8;
+
 const WATER_VERT = /* glsl */ `
   attribute float wid;
   attribute float chop;
@@ -162,6 +175,9 @@ const WATER_FRAG = /* glsl */ `
   uniform vec3 uDeep, uShallow, uFoam, uSun, uSunCol, uSkyLow, uSkyHigh, uHorizon;
   uniform sampler2D tNormal, tRefl;
   uniform mat4 uReflM;
+  uniform vec3 uWhirlA[${WHIRLS}];
+  uniform vec3 uWhirlB[${WHIRLS}];
+  uniform vec3 uWhirlC[${WHIRLS}];
   varying vec3 vW;
   varying vec2 vUv;
   varying float vWid;
@@ -184,6 +200,37 @@ const WATER_FRAG = /* glsl */ `
            + rip(vec2(across * 0.07, along * 0.035)) * 0.45;
     n += rip(p * 0.31 + uTime * vec2(0.03, 0.021)) * (0.25 + 0.5 * rough);
     float calm = mix(1.0, 0.3, smoothstep(25.0, 220.0, dist));
+    // whirlpools: the surface tilted down toward each eye and twisted with its spin, its arms of foam, its dark middle
+    float wDark = 0.0;
+    float wFoam = 0.0;
+    float wEye = 0.0;
+    for (int i = 0; i < ${WHIRLS}; i++) {
+      vec3 A = uWhirlA[i];
+      if (A.z <= 0.0) continue;
+      vec2 d = vW.xz - A.xy;
+      float dl = length(d);
+      float r = dl / A.z;
+      if (r >= 1.0) continue;
+      vec3 B = uWhirlB[i];
+      vec3 C = uWhirlC[i];
+      float k = B.x;
+      float on = max(k, C.y * 0.8);
+      vec2 dir = d / max(dl, 1e-3);
+      vec2 tang = vec2(-dir.y, dir.x) * B.z;
+      float slope = k * 1.8 * pow(1.0 - r, 1.4) * smoothstep(0.0, 0.25, r);
+      n += (-dir + tang * 0.8) * slope / max(calm, 0.3);
+      float ph = atan(d.y, d.x) + B.y;
+      float arms = sin(4.0 * ph + B.z * 6.5 * log(max(r, 0.04)));
+      float streak = texture2D(tNormal, vec2(ph * 0.3, r * 0.8)).x;
+      float armFoam = smoothstep(0.25, 0.95, arms * (0.75 + 0.5 * streak)) * smoothstep(0.08, 0.3, r) * (1.0 - smoothstep(0.62, 1.0, r));
+      wFoam = max(wFoam, armFoam * on * (0.45 + 0.55 * k));
+      wFoam = max(wFoam, (1.0 - smoothstep(0.0, 0.07, abs(r - 0.84 + 0.04 * sin(ph * 3.0)))) * 0.45 * on);
+      wDark = max(wDark, k * (1.0 - smoothstep(0.05, 0.8, r)));
+      if (C.x > 0.0) {
+        wEye = max(wEye, 1.0 - smoothstep(C.x * 0.75, C.x * 1.1, dl));
+        wFoam = max(wFoam, (1.0 - smoothstep(0.0, 0.35, abs(dl - C.x * 1.25))) * 0.9 * k);
+      }
+    }
     float str = (0.2 + 0.18 * rough) * calm;
     vec3 N = normalize(vec3(n.x * str, 1.0, n.y * str));
     float ndv = max(dot(N, V), 0.0);
@@ -204,8 +251,8 @@ const WATER_FRAG = /* glsl */ `
     body *= 0.75 + 0.25 * smoothstep(-0.3, 0.6, N.x * uSun.x + N.z * uSun.z + 0.2);
     vec3 c = mix(body, refl * mix(vec3(1.0), uDeep * 2.2 + 0.45, 0.25), fres * 0.9);
     // the current: faint streaks of foam and slick running with it
-    float st = pdNoise(vec2(across * 1.4, along * 0.06)) * pdNoise(vec2(across * 0.6 + 3.1, along * 0.025));
-    c += vec3(0.9, 0.92, 0.95) * smoothstep(0.35, 0.7, st) * 0.09 * uStreak * calm;
+    float st = texture2D(tNormal, vec2(across * 0.05, along * 0.004)).x * texture2D(tNormal, vec2(across * 0.021 + 0.3, along * 0.0023)).y;
+    c += vec3(0.85, 0.88, 0.9) * smoothstep(0.32, 0.5, st) * 0.06 * uStreak * calm;
     // shimmer over the shallows, where the light plays on the bottom
     vec2 q = rip(p * 0.21 + uTime * vec2(0.05, 0.03)) + rip(p * 0.17 - uTime * vec2(0.04, -0.035));
     float caustic = pow(max(0.0, 1.0 - abs(q.x + q.y) * 1.6), 6.0);
@@ -221,8 +268,12 @@ const WATER_FRAG = /* glsl */ `
     float ring = (1.0 - smoothstep(0.0, 0.12, abs(edge - 0.8 - 0.3 * sin(uTime * 1.3 + along * 0.4)))) * pdNoise(vec2(along * 2.0, uTime));
     foam = max(foam, ring * 0.35);
     // and flecks of white on the chop
-    foam = max(foam, rough * smoothstep(0.55, 0.85, pdNoise(p * 1.8 + uTime * vec2(0.4, 0.1)) * (0.6 + 0.6 * n.x)) * 0.8 * calm);
+    float fleck = texture2D(tNormal, p * 0.21 + uTime * vec2(0.05, 0.02)).x * texture2D(tNormal, p * 0.33 - uTime * vec2(0.03, 0.06)).y;
+    foam = max(foam, rough * smoothstep(0.42, 0.62, fleck) * 0.75 * calm);
     c = mix(c, uFoam, clamp(foam, 0.0, 1.0) * 0.9);
+    c = mix(c, c * 0.3 + uDeep * 0.15, wDark * 0.85);
+    c = mix(c, uFoam * 0.92, clamp(wFoam, 0.0, 1.0) * 0.85);
+    c = mix(c, vec3(0.004, 0.015, 0.02), wEye);
     gl_FragColor = vec4(c, 1.0);
     if (uFogLift > 0.5) gl_FragColor = vec4(refl, 1.0);
     #include <tonemapping_fragment>
@@ -230,41 +281,491 @@ const WATER_FRAG = /* glsl */ `
     #include <fog_fragment>
   }`;
 
-/** The whirlpool's spiral: foam arms wound round a dark eye, on a transparent disc. */
-function spiralTexture(THREE: Three) {
+/** The marsh's colors at a point of the world (in meters), in linear light: GLSL for the ground and the banks. */
+const GLSL_MARSH = /* glsl */ `
+  vec3 marshAt(vec2 p) {
+    float m = pdFbm(p * 0.009);
+    float d = pdFbm(p * 0.06 + 7.0);
+    float f = pdNoise(p * 1.1) * 0.55 + pdNoise(p * 3.3) * 0.45;
+    // cordgrass, olive going gold; pickleweed, red going green; bare mudflat; and pale salt pans
+    vec3 grass = mix(vec3(0.36, 0.39, 0.17), vec3(0.6, 0.53, 0.27), smoothstep(0.3, 0.75, d));
+    vec3 pickle = mix(vec3(0.5, 0.21, 0.16), vec3(0.42, 0.44, 0.19), smoothstep(0.35, 0.7, d));
+    vec3 c = mix(grass, pickle, smoothstep(0.47, 0.58, m + (d - 0.5) * 0.2));
+    c = mix(c, vec3(0.4, 0.33, 0.25), smoothstep(0.6, 0.66, m) * 0.85);
+    c = mix(c, vec3(0.7, 0.64, 0.55), smoothstep(0.68, 0.72, m) * 0.6);
+    // tufts and shadows in it
+    c *= 0.72 + 0.5 * f;
+    // the tidal creeks winding through it, the sky in them
+    float k = abs(pdFbm(p * 0.016 + 3.0) - 0.5);
+    float creek = 1.0 - smoothstep(0.006, 0.016, k);
+    float edge = (1.0 - smoothstep(0.016, 0.026, k)) - creek;
+    c = mix(c, vec3(0.3, 0.24, 0.18), edge * 0.8);
+    c = mix(c, vec3(0.78, 0.66, 0.7), creek);
+    return pow(c, vec3(2.2));
+  }`;
+
+/**
+ * Lambert lit, its color worked out from where it is: the marsh (the ground all round), a bank (wet mud at the water's
+ * edge drying up into the marsh; u across from the water), or a quay behind a bulkhead (gravel and weeds).
+ */
+export function marshMaterial(THREE: Three, kind: 'ground' | 'bank' | 'quay') {
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vPdW;\nvarying vec2 vPdUv;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvPdW = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvPdUv = uv;');
+    const color =
+      kind === 'ground'
+        ? 'diffuseColor.rgb = marshAt(vPdW.xz);'
+        : kind === 'quay'
+          ? `float n = pdNoise(vPdW.xz * 1.7) * 0.6 + pdNoise(vPdW.xz * 6.0) * 0.4;
+             vec3 q = mix(vec3(0.52, 0.48, 0.42), vec3(0.62, 0.58, 0.5), n);
+             q = mix(q, vec3(0.38, 0.4, 0.2), smoothstep(0.62, 0.8, pdFbm(vPdW.xz * 0.25)));
+             diffuseColor.rgb = pow(q, vec3(2.2));`
+          : `float n = pdNoise(vPdW.xz * 1.3) * 0.6 + pdNoise(vPdW.xz * 5.0) * 0.4;
+             float u = vPdUv.x + (n - 0.5) * 0.25;
+             vec3 b = mix(vec3(0.2, 0.17, 0.14), vec3(0.47, 0.4, 0.31), smoothstep(0.02, 0.45, u));
+             b = mix(b, vec3(0.28, 0.23, 0.15), (1.0 - smoothstep(0.0, 0.05, abs(u - 0.42))) * 0.75);
+             b *= 0.82 + 0.34 * n;
+             diffuseColor.rgb = mix(pow(b, vec3(2.2)), marshAt(vPdW.xz), smoothstep(0.55, 0.95, u + (n - 0.5) * 0.3));
+             pdWet = 1.0 - smoothstep(0.0, 0.3, u);`;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>\nvarying vec3 vPdW;\nvarying vec2 vPdUv;\n${GLSL_NOISE}\n${GLSL_MARSH}`)
+      .replace('#include <map_fragment>', `float pdWet = 0.0;\n${color}`)
+      // (wet mud shines with the dawn)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(0.32, 0.22, 0.2) * pdWet * 0.35;');
+  };
+  mat.customProgramCacheKey = () => `pd-marsh-${kind}`;
+  return mat;
+}
+
+/** A weathered concrete bulkhead: form panels, rust weeping from the tie-rod bolts, weed and barnacles at the waterline. */
+function bulkheadTexture(THREE: Three, look: Look) {
   return texture(
     THREE,
-    canvas(256, 256, (g) => {
-      const c = 128;
-      const dark = g.createRadialGradient(c, c, 4, c, c, 128);
-      dark.addColorStop(0, 'rgba(6,20,28,0.95)');
-      dark.addColorStop(0.25, 'rgba(10,34,46,0.7)');
-      dark.addColorStop(0.7, 'rgba(14,40,52,0.25)');
-      dark.addColorStop(1, 'rgba(14,40,52,0)');
-      g.fillStyle = dark;
-      g.fillRect(0, 0, 256, 256);
-      g.lineCap = 'round';
-      for (let arm = 0; arm < 5; arm++) {
+    canvas(256, 128, (g) => {
+      g.fillStyle = '#b9b2a2';
+      g.fillRect(0, 0, 256, 128);
+      const r = scatter(77);
+      // (stained and blotched)
+      for (let i = 0; i < 90; i++) {
+        g.fillStyle = `rgba(${90 + r() * 60},${85 + r() * 50},${70 + r() * 40},${0.06 + r() * 0.1})`;
         g.beginPath();
-        for (let k = 0; k <= 60; k++) {
-          const u = k / 60;
-          const a = (arm / 5) * Math.PI * 2 + u * Math.PI * 2.4;
-          const rad = 14 + u * 108;
-          const x = c + Math.cos(a) * rad;
-          const y = c + Math.sin(a) * rad;
-          if (k) g.lineTo(x, y);
-          else g.moveTo(x, y);
-        }
-        g.strokeStyle = 'rgba(244,239,230,0.85)';
-        g.lineWidth = 5;
-        g.stroke();
+        g.ellipse(r() * 256, r() * 128, 6 + r() * 26, 4 + r() * 14, 0, 0, Math.PI * 2);
+        g.fill();
       }
-      // an outer foam ring
-      g.strokeStyle = 'rgba(244,239,230,0.7)';
-      g.lineWidth = 4;
-      g.beginPath();
-      g.arc(c, c, 118, 0, Math.PI * 2);
-      g.stroke();
+      // the form panels' joints and the bolts with rust weeping down from them
+      g.fillStyle = 'rgba(70,62,52,0.45)';
+      for (let x = 0; x < 256; x += 64) g.fillRect(x, 10, 2, 118);
+      g.fillRect(0, 62, 256, 1.5);
+      for (let x = 32; x < 256; x += 64) {
+        const grad = g.createLinearGradient(0, 40, 0, 96);
+        grad.addColorStop(0, 'rgba(140,70,30,0.55)');
+        grad.addColorStop(1, 'rgba(140,70,30,0)');
+        g.fillStyle = grad;
+        g.fillRect(x - 2, 40, 4 + r() * 3, 56);
+        g.fillStyle = '#4a3a30';
+        g.beginPath();
+        g.arc(x, 40, 3, 0, Math.PI * 2);
+        g.fill();
+      }
+      // the coping's painted lip
+      g.fillStyle = look.band;
+      g.fillRect(0, 0, 256, 7);
+      g.fillStyle = 'rgba(0,0,0,0.25)';
+      g.fillRect(0, 7, 256, 3);
+      // the tide line: dark weed below it, a crust of white barnacles along it
+      const tide = g.createLinearGradient(0, 88, 0, 128);
+      tide.addColorStop(0, 'rgba(60,70,40,0)');
+      tide.addColorStop(0.25, 'rgba(48,62,36,0.85)');
+      tide.addColorStop(1, 'rgba(24,34,26,1)');
+      g.fillStyle = tide;
+      g.fillRect(0, 88, 256, 40);
+      for (let i = 0; i < 260; i++) {
+        g.fillStyle = `rgba(236,232,220,${0.4 + r() * 0.5})`;
+        g.fillRect(r() * 256, 96 + r() * 10, 1 + r() * 2, 1 + r() * 2);
+      }
+      noise(g, 256, 128, 900, 0.08, false);
+    }),
+  );
+}
+
+/**
+ * The marsh's plants along the banks and out across it: clumps of cordgrass and reeds and tall cattails, swaying in the
+ * breeze (harder when the Bay wind gusts), in patches so each can be culled when it is off screen. Kept off the water:
+ * nothing stands within a few meters of any stretch of the channel.
+ */
+function marshPlants(THREE: Three, scene: T.Scene, t: Track, dummy: T.Object3D, lim: (side: number) => (s: number) => number) {
+  const rnd = scatter(19);
+  // a clump: blades fanning out from its foot, dark at the base and pale gold at the tips (single triangles, leaning)
+  const clump = (blades: number, hgt: number, spread: number, heads: boolean) => {
+    const pos: number[] = [];
+    const colr: number[] = [];
+    const base = [0.16, 0.2, 0.08];
+    const tip = [0.78, 0.66, 0.36];
+    for (let i = 0; i < blades; i++) {
+      const a = rnd() * Math.PI * 2;
+      const lean = 0.15 + rnd() * spread;
+      const h = hgt * (0.55 + rnd() * 0.45);
+      const w = 0.018 + rnd() * 0.02;
+      const ox = Math.cos(a) * 0.16 * rnd();
+      const oz = Math.sin(a) * 0.16 * rnd();
+      const tx = ox + Math.cos(a) * lean * h;
+      const tz = oz + Math.sin(a) * lean * h;
+      const px = -Math.sin(a) * w;
+      const pz = Math.cos(a) * w;
+      pos.push(ox - px, 0, oz - pz, ox + px, 0, oz + pz, tx, h, tz);
+      const g = 0.85 + rnd() * 0.3;
+      colr.push(...base, ...base, ...tip.map((c) => c * g));
+    }
+    if (heads) {
+      // (cattails: stiff stems with a brown head near the top)
+      for (let i = 0; i < 3; i++) {
+        const a = rnd() * Math.PI * 2;
+        const x = Math.cos(a) * 0.08;
+        const z = Math.sin(a) * 0.08;
+        const h = hgt * (1 + rnd() * 0.25);
+        const w = 0.02;
+        pos.push(x - w, 0, z, x + w, 0, z, x, h, z);
+        colr.push(...base, ...base, 0.5, 0.48, 0.25);
+        const [y0, y1, ww] = [h * 0.72, h * 0.9, 0.05];
+        for (const q of [0, Math.PI / 2]) {
+          const dx = Math.cos(q) * ww;
+          const dz = Math.sin(q) * ww;
+          pos.push(x - dx, y0, z - dz, x + dx, y0, z + dz, x + dx, y1, z + dz, x - dx, y0, z - dz, x + dx, y1, z + dz, x - dx, y1, z - dz);
+          for (let v = 0; v < 6; v++) colr.push(0.28, 0.16, 0.08);
+        }
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(colr, 3));
+    g.computeVertexNormals();
+    // (lit as if each blade faced up a little, so a clump is not black on its shady side)
+    const nrm = g.getAttribute('normal');
+    for (let k = 0; k < nrm.count; k++) {
+      const ny = Math.abs(nrm.getY(k)) + 0.8;
+      const l = Math.hypot(nrm.getX(k), ny, nrm.getZ(k));
+      nrm.setXYZ(k, nrm.getX(k) / l, ny / l, nrm.getZ(k) / l);
+    }
+    return g;
+  };
+  const kinds = [clump(20, 0.9, 0.5, false), clump(14, 1.6, 0.28, false), clump(10, 1.9, 0.18, true)];
+  const sway = { value: 0 };
+  const gust = { value: 0 };
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uSway = sway;
+    sh.uniforms.uGust = gust;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uSway;\nuniform float uGust;').replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+       vec3 ip = instanceMatrix[3].xyz;
+       float ph = ip.x * 0.21 + ip.z * 0.17;
+       float hh = position.y * position.y;
+       float wave = sin(uSway * 1.6 + ph) * 0.09 + sin(uSway * 3.1 + ph * 2.3) * 0.035;
+       transformed.x += (wave + uGust * (0.25 + 0.08 * sin(uSway * 9.0 + ph))) * hh;
+       transformed.z += cos(uSway * 1.2 + ph) * 0.05 * hh;`,
+    );
+  };
+  mat.customProgramCacheKey = () => 'pd-marsh-plants';
+  // where they grow: thick along the banks of the marsh, then scattered out across it
+  const away = (x: number, z: number, margin: number) => {
+    const at = locate(t, x, z);
+    const side = at.d >= 0 ? 1 : -1;
+    return Math.abs(at.d) > Math.abs(lim(side)(at.s)) + margin;
+  };
+  const PATCH = 160;
+  const patches = new Map<string, { k: number; x: number; z: number; s: number; ry: number }[]>();
+  // (those out in the marsh are not drawn again in the water's reflection: only the banks' are close enough to show)
+  const put = (k: number, x: number, z: number, s: number, out = false) => {
+    const key = `${Math.floor(x / PATCH)},${Math.floor(z / PATCH)},${out}`;
+    let list = patches.get(key);
+    if (!list) patches.set(key, (list = []));
+    list.push({ k, x, z, s, ry: rnd() * Math.PI * 2 });
+  };
+  for (const [side, s0, s1, past] of edgeRuns(t)) {
+    if (past !== 'marsh') continue;
+    for (let s = s0; s < s1; s += 0.7) {
+      const rows = 3 + Math.floor(rnd() * 3);
+      for (let row = 0; row < rows; row++) {
+        const out = 2.6 + row * 1.6 + rnd() * 2.4 + (row > 2 ? rnd() * 10 : 0);
+        const p = pointAt(t, s + (rnd() - 0.5) * 0.8, side * (Math.abs(edgeAt(t, s, side).lim) + out));
+        if (rnd() < 0.18 || !away(p.x, p.z, 2.4)) continue;
+        const k = rnd() < 0.55 ? 0 : rnd() < 0.7 ? 1 : 2;
+        put(k, p.x, p.z, 0.8 + rnd() * 0.6);
+      }
+    }
+  }
+  // (and out in the marsh, in drifts)
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (let i = 0; i < t.n; i++) {
+    minX = Math.min(minX, t.x[i]);
+    maxX = Math.max(maxX, t.x[i]);
+    minZ = Math.min(minZ, t.z[i]);
+    maxZ = Math.max(maxZ, t.z[i]);
+  }
+  for (let n = 0; n < 9000; n++) {
+    const x = minX - 120 + rnd() * (maxX - minX + 240);
+    const z = minZ - 120 + rnd() * (maxZ - minZ + 240);
+    // (in drifts: thick here, bare there)
+    if (Math.sin(x * 0.05 + Math.sin(z * 0.03) * 2) + Math.sin(z * 0.045 + x * 0.01) < 0.4 + rnd()) continue;
+    if (!away(x, z, 5)) continue;
+    put(rnd() < 0.7 ? 0 : 1, x, z, 0.7 + rnd() * 0.7, true);
+  }
+  const tint = new THREE.Color();
+  for (const [key, list] of patches) {
+    for (let k = 0; k < kinds.length; k++) {
+      const items = list.filter((it) => it.k === k);
+      if (!items.length) continue;
+      const m = new THREE.InstancedMesh(kinds[k], mat, items.length);
+      items.forEach((it, i) => {
+        dummy.position.set(it.x, 0.02, it.z);
+        dummy.rotation.set(0, it.ry, 0);
+        dummy.scale.set(it.s, it.s * (0.85 + rnd() * 0.3), it.s);
+        dummy.updateMatrix();
+        m.setMatrixAt(i, dummy.matrix);
+        m.setColorAt(i, tint.setRGB(0.85 + rnd() * 0.3, 0.85 + rnd() * 0.25, 0.8 + rnd() * 0.2));
+      });
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.setScalar(1);
+      m.computeBoundingSphere();
+      if (key.endsWith('true')) m.layers.set(1);
+      scene.add(m);
+    }
+  }
+  return {
+    tick(clock: number, wind: number) {
+      sway.value = clock;
+      gust.value = wind;
+    },
+  };
+}
+
+type RGB = [number, number, number];
+/**
+ * Builds a model out of boxes, cylinders, balls and cones (and any geometry), each placed in the model's own frame and
+ * colored: all of them one mesh, and its lights another.
+ */
+function modelKit(THREE: Three) {
+  const prims = { box: new THREE.BoxGeometry(1, 1, 1), cyl: new THREE.CylinderGeometry(1, 1, 1, 10), ball: new THREE.SphereGeometry(1, 10, 8), cone: new THREE.ConeGeometry(1, 1, 10) };
+  const parts: { g: T.BufferGeometry; m: T.Matrix4; color: RGB }[] = [];
+  const lights: { g: T.BufferGeometry; m: T.Matrix4; color: RGB }[] = [];
+  const rgb = (hex: number): RGB => {
+    const c = new THREE.Color(hex);
+    return [c.r, c.g, c.b];
+  };
+  const M = (x: number, y: number, z: number, sx: number, sy: number, sz: number, rx = 0, ry = 0, rz = 0) =>
+    new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
+  const put = (kind: keyof typeof prims) => (hex: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, rx = 0, ry = 0, rz = 0) => {
+    parts.push({ g: prims[kind], m: M(x, y, z, sx, sy, sz, rx, ry, rz), color: rgb(hex) });
+  };
+  return {
+    THREE,
+    box: put('box'),
+    cyl: put('cyl'),
+    ball: put('ball'),
+    cone: put('cone'),
+    geo: (g: T.BufferGeometry, hex: number, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0) => {
+      parts.push({ g, m: M(x, y, z, sx, sy, sz, rx, ry, rz), color: rgb(hex) });
+    },
+    /** A running light (or a lamp): a small bright ball. */
+    light: (hex: number, x: number, y: number, z: number, r = 0.12) => {
+      lights.push({ g: prims.ball, m: M(x, y, z, r, r, r), color: rgb(hex) });
+    },
+    build(mat: T.Material, litMat: T.Material) {
+      const g = new THREE.Group();
+      g.add(new THREE.Mesh(merge(THREE, parts), mat));
+      if (lights.length) g.add(new THREE.Mesh(merge(THREE, lights), litMat));
+      for (const p of Object.values(prims)) p.dispose();
+      return g;
+    },
+  };
+}
+type ModelKit = ReturnType<typeof modelKit>;
+
+/**
+ * A boat's hull: flat-bottomed and flared, fine at the bow (where its forefoot rises), square at the transom, from
+ * -len/2 to +len/2 along z, `beam` wide and `depth` deep; closed over the top when decked.
+ */
+function boatHull(THREE: Three, len: number, beam: number, depth: number, decked: boolean) {
+  const N = 18;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const sec = (z: number) => {
+    const u = (z + len / 2) / len;
+    const w = (beam / 2) * (u < 0.62 ? 1 - 0.08 * (1 - u / 0.62) : Math.sqrt(Math.max(0, 1 - ((u - 0.62) / 0.38) ** 2)));
+    const keel = u < 0.7 ? 0 : depth * 0.85 * ((u - 0.7) / 0.3) ** 1.6;
+    const top = depth * (1 + 0.12 * Math.max(0, u - 0.6));
+    // (gunwale, chine, bottom, keel, and back up the other side)
+    return [[-w, top], [-w * 0.96, depth * 0.3 + keel * 0.6], [-w * 0.55, keel + 0.02], [0, keel], [w * 0.55, keel + 0.02], [w * 0.96, depth * 0.3 + keel * 0.6], [w, top]];
+  };
+  const P = 7;
+  for (let i = 0; i <= N; i++) {
+    const z = -len / 2 + (len * i) / N;
+    for (const [x, y] of sec(z)) pos.push(x, y, z);
+  }
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < P - 1; j++) {
+      const a = i * P + j;
+      idx.push(a, a + P, a + 1, a + 1, a + P, a + P + 1);
+    }
+  }
+  // the transom: a fan from the middle of the stern section
+  const c0 = pos.length / 3;
+  pos.push(0, depth * 0.5, -len / 2);
+  for (let j = 0; j < P - 1; j++) idx.push(c0, j + 1, j);
+  idx.push(c0, 0, P - 1);
+  if (decked) {
+    // (a deck across the top, a little crowned)
+    const d0 = pos.length / 3;
+    for (let i = 0; i <= N; i++) {
+      const z = -len / 2 + (len * i) / N;
+      const q = sec(z);
+      pos.push(q[0][0], q[0][1], z, 0, q[0][1] + 0.06, z, q[6][0], q[6][1], z);
+    }
+    for (let i = 0; i < N; i++) {
+      const a = d0 + i * 3;
+      idx.push(a, a + 1, a + 3, a + 1, a + 4, a + 3, a + 1, a + 2, a + 4, a + 2, a + 5, a + 4);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A person standing: legs, a jacket, arms, a head and a cap; facing +z, their feet at (x, y, z). */
+function person(mk: ModelKit, x: number, y: number, z: number, coat: number, cap: number) {
+  for (const sd of [-1, 1]) mk.cyl(0x2b3340, x + sd * 0.11, y + 0.42, z, 0.08, 0.84, 0.08);
+  mk.box(coat, x, y + 1.12, z, 0.46, 0.6, 0.28);
+  for (const sd of [-1, 1]) mk.cyl(coat, x + sd * 0.29, y + 1.1, z + 0.05, 0.065, 0.55, 0.065, 0.2, 0, sd * 0.12);
+  mk.ball(0xe8bf98, x, y + 1.58, z, 0.14, 0.16, 0.14);
+  mk.ball(cap, x, y + 1.66, z, 0.15, 0.08, 0.15);
+  mk.box(cap, x, y + 1.64, z + 0.14, 0.2, 0.025, 0.14);
+}
+
+/** The coach's launch: a white aluminum hull with a cardinal band, the console and windscreen, the outboard, the coach. */
+function launchModel(mk: ModelKit, len: number, r: number) {
+  const L = len * 0.86;
+  mk.geo(boatHull(mk.THREE, L, r * 2, 0.75, false), 0xdfe3e8);
+  // (the floor inside, the gunwale's cardinal band and rubbing strake)
+  mk.box(0x8a9098, 0, 0.2, -0.2, r * 1.7, 0.04, L * 0.8);
+  for (const sd of [-1, 1]) {
+    mk.box(0x8c1515, sd * r * 0.98, 0.62, -0.3, 0.05, 0.16, L * 0.78);
+    mk.box(0x30343a, sd * r * 1.0, 0.76, -0.3, 0.07, 0.05, L * 0.8);
+  }
+  // the bow deck, the console with its windscreen and wheel
+  mk.box(0xeef0f2, 0, 0.74, L * 0.36, r * 1.4, 0.05, L * 0.26);
+  mk.box(0xd4d8de, 0, 0.6, 0.35, 0.8, 0.8, 0.6);
+  mk.box(0x2a3d4a, 0, 1.12, 0.62, 0.84, 0.36, 0.04, -0.35);
+  mk.cyl(0x1b1c22, 0.15, 1.08, 0.2, 0.14, 0.03, 0.14, 1.1);
+  // the outboard on the transom: cowl, leg and skeg
+  mk.box(0x1b1c22, 0, 0.95, -L / 2 - 0.22, 0.42, 0.55, 0.48);
+  mk.box(0xf2f2f0, 0, 1.05, -L / 2 - 0.22, 0.43, 0.06, 0.49);
+  mk.box(0x2b2d33, 0, 0.3, -L / 2 - 0.3, 0.12, 0.8, 0.18);
+  // the coach, standing at the console in a cardinal jacket, megaphone in hand
+  person(mk, 0.25, 0.2, -0.35, 0x8c1515, 0xf2f2f0);
+  mk.cone(0xf2f2f0, 0.62, 1.55, 0.05, 0.12, 0.38, 0.12, Math.PI / 2);
+  // (running lights, red to port and green to starboard, and a white one astern on its pole)
+  mk.light(0xff3b2a, r * 0.95, 0.85, L * 0.3);
+  mk.light(0x3bff6a, -r * 0.95, 0.85, L * 0.3);
+  mk.cyl(0x9aa0a8, -0.6, 1.2, -L / 2 + 0.3, 0.025, 1.0, 0.025);
+  mk.light(0xffe6a0, -0.6, 1.72, -L / 2 + 0.3);
+}
+
+/** A gravel barge pushed by a tug: rusty steel and a heap of aggregate; the tug black with a red stripe, white house. */
+function bargeModel(mk: ModelKit, len: number, r: number) {
+  const bl = len - 9;
+  const bz = 4.5;
+  const w = r * 2;
+  // the barge: a box hull with raked ends, its coaming and the heaped load, bitts and tires for fenders
+  mk.box(0x5a4a3e, 0, 0.75, bz, w, 1.5, bl - 2.4);
+  for (const sd of [-1, 1]) mk.box(0x5a4a3e, 0, 0.95, bz + sd * (bl / 2 - 0.7), w, 1.1, 1.8, sd * 0.55);
+  mk.box(0x3f342c, 0, 1.55, bz, w + 0.08, 0.12, bl - 2);
+  mk.box(0x6a3b24, 0, 1.0, bz, w + 0.04, 0.16, bl - 2.2);
+  for (let k = 0; k < 5; k++) {
+    const z = bz - bl / 2 + 3.5 + k * ((bl - 7) / 4);
+    mk.ball(0xa59479, 0, 1.55, z, w * 0.42, 1.0 + (k % 2) * 0.35, (bl - 6) / 7);
+  }
+  mk.ball(0xb4a386, 0.4, 1.9, bz + 1, w * 0.3, 0.8, 3.2);
+  for (const sd of [-1, 1]) for (const z of [bz - bl / 2 + 1.5, bz + bl / 2 - 1.5]) mk.cyl(0x1b1c22, sd * (w / 2 - 0.4), 1.75, z, 0.14, 0.4, 0.14);
+  for (const sd of [-1, 1]) for (let k = 0; k < 6; k++) mk.cyl(0x141416, sd * (w / 2 + 0.12), 0.9, bz - bl / 2 + 2.5 + k * (bl - 5) / 5, 0.38, 0.22, 0.38, 0, 0, Math.PI / 2);
+  // the tug: hull, red sheer stripe, push knees with fenders, the house, wheelhouse, mast and stack
+  const tz = -len / 2 + 4.5;
+  mk.geo(boatHull(mk.THREE, 9, w * 0.82, 1.5, true), 0x1c1c22, 0, 0, tz);
+  for (const sd of [-1, 1]) mk.box(0xa8231a, sd * w * 0.41, 1.35, tz - 0.3, 0.06, 0.26, 7.2);
+  for (const sd of [-1, 1]) mk.box(0x141416, sd * 1.0, 1.9, tz + 4.4, 0.35, 1.8, 0.5);
+  mk.box(0xf2f2f0, 0, 2.25, tz - 0.6, w * 0.6, 1.5, 4.2);
+  mk.box(0xf2f2f0, 0, 3.6, tz - 0.2, w * 0.5, 1.2, 2.4);
+  mk.box(0x22303a, 0, 3.75, tz - 0.2, w * 0.51, 0.45, 2.41);
+  mk.box(0x2b2d33, 0, 4.25, tz - 0.2, w * 0.56, 0.1, 2.7);
+  mk.cyl(0xa8231a, 0, 4.9, tz - 2.2, 0.32, 1.6, 0.32);
+  mk.cyl(0x141416, 0, 5.8, tz - 2.2, 0.33, 0.25, 0.33);
+  mk.cyl(0x9aa0a8, 0, 5.4, tz + 0.3, 0.05, 2.2, 0.05);
+  mk.box(0x9aa0a8, 0, 5.9, tz + 0.3, 1.2, 0.05, 0.05);
+  for (const sd of [-1, 1]) for (let k = 0; k < 4; k++) mk.cyl(0x141416, sd * (w * 0.41 + 0.12), 1.0, tz - 3 + k * 1.8, 0.3, 0.2, 0.3, 0, 0, Math.PI / 2);
+  // (its lamps: the masthead, port and starboard on the barge's bow, and the wheelhouse)
+  mk.light(0xffe6a0, 0, 6.5, tz + 0.3, 0.18);
+  mk.light(0xffe6a0, 0, 4.4, tz + 1, 0.15);
+  mk.light(0xff3b2a, r, 1.8, len / 2 - 0.5, 0.2);
+  mk.light(0x3bff6a, -r, 1.8, len / 2 - 0.5, 0.2);
+}
+
+/** A drifting log: bark, a couple of snapped-off branches and its pale cut ends. */
+function logModel(mk: ModelKit, len: number, r: number) {
+  // (round its own axis, so it can roll)
+  mk.cyl(0x5e4129, 0, 0, 0, r, len, r, Math.PI / 2);
+  mk.cyl(0x4c3420, 0, 0, len * 0.15, r * 1.04, len * 0.2, r * 1.04, Math.PI / 2);
+  for (const sd of [-1, 1]) mk.cyl(0xcaa676, 0, 0, sd * len * 0.501, r * 0.9, 0.02, r * 0.9, Math.PI / 2);
+  mk.cyl(0x5e4129, 0.1, 0.23, len * 0.2, 0.07, 0.8, 0.07, 0.5, 0, -0.6);
+  mk.cyl(0x5e4129, -0.15, 0.18, -len * 0.25, 0.06, 0.6, 0.06, -0.3, 0, 0.8);
+}
+
+/** The chain ferry: a steel pontoon, hinged ramps at both ends, yellow rails, the operator's cabin and a car aboard. */
+function ferryModel(mk: ModelKit, r: number) {
+  const w = r * 2;
+  const l = r * 2.6;
+  mk.box(0x3d6f7a, 0, 0.32, 0, w, 0.55, l);
+  mk.box(0x6d737a, 0, 0.62, 0, w - 0.1, 0.06, l - 0.1);
+  for (const sd of [-1, 1]) {
+    // (ramps raised a little at each end, and the rails down each side)
+    mk.box(0x6d737a, 0, 0.75, sd * (l / 2 + 0.6), w * 0.8, 0.08, 1.4, sd * -0.18);
+    mk.box(0xffc21a, sd * (w / 2 - 0.05), 1.15, 0, 0.06, 0.06, l - 0.4);
+    for (let k = -2; k <= 2; k++) mk.box(0xffc21a, sd * (w / 2 - 0.05), 0.9, (k * (l - 0.6)) / 4, 0.06, 0.5, 0.06);
+    // (the chain's sheaves at each end)
+    mk.cyl(0x1b1c22, 0, 0.5, sd * (l / 2 - 0.2), 0.25, 0.3, 0.25, 0, 0, Math.PI / 2);
+  }
+  // the operator's cabin on one side, and a little car aboard
+  mk.box(0xf2f2f0, w / 2 - 0.75, 1.45, 0, 1.2, 1.6, 1.6);
+  mk.box(0x2a3d4a, w / 2 - 0.75, 1.75, 0, 1.22, 0.5, 1.4);
+  mk.box(0x8c1515, w / 2 - 0.75, 2.3, 0, 1.4, 0.12, 1.8);
+  mk.box(0x3c6fa8, -0.55, 0.95, 0, 1.4, 0.6, 2.6);
+  mk.box(0x2a3d4a, -0.55, 1.4, -0.1, 1.3, 0.45, 1.4);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) mk.cyl(0x141416, -0.55 + sx * 0.66, 0.75, sz * 0.85, 0.22, 0.14, 0.22, 0, 0, Math.PI / 2);
+  mk.light(0xffb347, w / 2 - 0.75, 2.5, 0, 0.16);
+}
+
+/** A wake's foam: broken streaks along the arm, bright at the bow end (v = 0) and fading out behind. */
+function wakeTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(64, 128, (g) => {
+      const r = scatter(55);
+      for (let i = 0; i < 160; i++) {
+        const y = r() * 128;
+        // (flipped: the canvas's foot is v = 0)
+        const a = 0.9 * (y / 128) ** 1.4;
+        g.fillStyle = `rgba(250,248,240,${a * (0.3 + r() * 0.7)})`;
+        const x = 32 + (r() - 0.5) * 44 * (0.4 + (1 - y / 128) * 0.6);
+        g.beginPath();
+        g.ellipse(x, y, 1.5 + r() * 4, 3 + r() * 9, 0, 0, Math.PI * 2);
+        g.fill();
+      }
     }),
   );
 }
@@ -327,6 +828,9 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     uSkyHigh: col(DAWN.mid),
     uHorizon: col(DAWN.horizon),
     tNormal: { value: rippleNormals(THREE) },
+    uWhirlA: { value: Array.from({ length: WHIRLS }, () => new THREE.Vector3()) },
+    uWhirlB: { value: Array.from({ length: WHIRLS }, () => new THREE.Vector3()) },
+    uWhirlC: { value: Array.from({ length: WHIRLS }, () => new THREE.Vector3()) },
     tRefl: { value: null as T.Texture | null },
     uReflM: { value: new THREE.Matrix4() },
     fogColor: { value: new THREE.Color() },
@@ -385,104 +889,46 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     scene.add(m);
     tongues.push({ tex, f });
   }
-  const capTex = texture(
-    THREE,
-    canvas(128, 128, (g) => {
-      const r2 = scatter(31);
-      for (let i = 0; i < 46; i++) {
-        g.fillStyle = `rgba(255,255,255,${0.35 + r2() * 0.4})`;
-        g.beginPath();
-        g.ellipse(r2() * 128, r2() * 128, 3 + r2() * 5, 0.8 + r2(), 0, 0, Math.PI * 2);
-        g.fill();
-      }
-    }),
-  );
-  capTex.wrapS = capTex.wrapT = THREE.RepeatWrapping;
-  const chops = (COURSES[r.course].surfaces ?? [])
-    .filter((f) => f[3] === 'chop')
-    .map(([s0, s1, , , lap]) => {
-      const tex = capTex.clone();
-      tex.needsUpdate = true;
-      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false });
-      const m = new THREE.Mesh(band(THREE, t, s0, Math.min(s1, t.length), wet(-1), wet(1), 0.048, 9), mat);
-      m.renderOrder = 1;
-      scene.add(m);
-      return { tex, mat, lap: lap ?? 1 };
-    });
+  // (where the water is rough, the chop: see the water shader)
 
   // ---------------------------------------------------------------------------------------------------------------
-  // The banks: where there is no wall, a pale line of mud at the water's edge (the brink, always readable), the
-  // mudflat past it and the pickleweed beyond; where there is a wall, a concrete bulkhead (closer in through the lock)
-  const mudTex = texture(
-    THREE,
-    canvas(64, 64, (g) => {
-      const grad = g.createLinearGradient(0, 0, 64, 0);
-      grad.addColorStop(0, '#d9c7a0');
-      grad.addColorStop(0.25, '#a68d63');
-      grad.addColorStop(1, '#6e5a3c');
-      g.fillStyle = grad;
-      g.fillRect(0, 0, 64, 64);
-      noise(g, 64, 64, 300, 0.12, false);
-      g.fillStyle = 'rgba(255,240,215,0.35)';
-      for (let i = 0; i < 12; i++) g.fillRect((i * 37) % 64, (i * 23) % 64, 6, 1);
-    }),
-  );
-  mudTex.wrapT = THREE.RepeatWrapping;
-  const weedTex = texture(
-    THREE,
-    canvas(128, 128, (g) => {
-      g.fillStyle = '#5f6b34';
-      g.fillRect(0, 0, 128, 128);
-      const r2 = scatter(5);
-      for (let i = 0; i < 500; i++) {
-        g.fillStyle = r2() < 0.35 ? `rgba(150,60,48,${0.4 + r2() * 0.4})` : `rgba(${90 + r2() * 50},${110 + r2() * 40},${40 + r2() * 20},0.7)`;
-        g.fillRect(r2() * 128, r2() * 128, 2 + r2() * 3, 2 + r2() * 3);
-      }
-    }),
-  );
-  weedTex.wrapS = weedTex.wrapT = THREE.RepeatWrapping;
+  // The banks. Where there is no wall: wet mud shining at the water's edge, drying out up the bank to a wrack line and
+  // into the marsh (the same marsh the ground shows beyond, so they join up), and a thin white line at the brink that
+  // shows through the last lap's fog. Where there is a wall: a weathered concrete bulkhead with a waterline of weed and
+  // barnacles, its coping, and the quay behind it sloping down to the marsh.
   const foamMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(water.foam) });
   /** What stays lit and readable through the last lap's fog: the lip of the marsh, the marker posts' lamps, the buoys' and the vessels' lights, the lock's lamps and the whirlpools' foam. */
   const lit: T.MeshBasicMaterial[] = [foamMat];
-  const mudMat = new THREE.MeshLambertMaterial({ map: mudTex });
-  const weedMat = new THREE.MeshLambertMaterial({ map: weedTex });
-  const concreteTex = texture(
-    THREE,
-    canvas(64, 32, (g) => {
-      g.fillStyle = look.wall;
-      g.fillRect(0, 0, 64, 32);
-      g.fillStyle = 'rgba(60,50,40,0.25)';
-      for (let x = 0; x < 64; x += 16) g.fillRect(x, 0, 1, 32);
-      g.fillStyle = 'rgba(40,60,50,0.45)';
-      g.fillRect(0, 24, 64, 8);
-      g.fillStyle = look.band;
-      g.fillRect(0, 0, 64, 5);
-      noise(g, 64, 32, 120, 0.08, false);
-    }),
-  );
+  const brinks: T.Mesh[] = [];
+  const bankMat = marshMaterial(THREE, 'bank');
+  const concreteTex = bulkheadTexture(THREE, look);
   concreteTex.wrapS = THREE.RepeatWrapping;
-  const wallMat = new THREE.MeshLambertMaterial({ map: concreteTex, side: THREE.DoubleSide });
-  const capMat = new THREE.MeshLambertMaterial({ color: 0xd8d2c4 });
+  const wallMat = new THREE.MeshLambertMaterial({ map: concreteTex });
+  const capMat = new THREE.MeshLambertMaterial({ color: 0xcfc8b8 });
+  const quayMat = marshMaterial(THREE, 'quay');
   for (const [side, s0, s1, past] of edgeRuns(t)) {
     const l = lim(side);
     if (past === 'wall') {
-      // the wall's face from below the water line to a meter and a half up, its coping, and the bank behind it
-      scene.add(new THREE.Mesh(face(THREE, t, s0, s1, l, -0.6, 1.5, 4), wallMat));
+      // the wall's face from below the water line to a meter and a half up, its coping, and the quay behind it
+      scene.add(new THREE.Mesh(face(THREE, t, s0, s1, l, -0.6, 1.5, 6), wallMat));
       scene.add(new THREE.Mesh(band(THREE, t, s0, s1, l, (s) => l(s) + side * 0.6, 1.5, 4), capMat));
-      scene.add(new THREE.Mesh(band(THREE, t, s0, s1, (s) => l(s) + side * 0.6, (s) => l(s) + side * 8, 1.45, 8), mudMat));
+      scene.add(new THREE.Mesh(band(THREE, t, s0, s1, (s) => l(s) + side * 0.6, (s) => l(s) + side * 8, 1.45, 8), quayMat));
+      scene.add(new THREE.Mesh(band(THREE, t, s0, s1, (s) => l(s) + side * 8, (s) => l(s) + side * 11, [1.45, -0.04], 8), quayMat));
       continue;
     }
-    // (the line of foam where the water laps the mud, the mud from there to the brink and past it, then the marsh, under
-    // the water so another stretch of the channel close by always shows over it, and never folded over itself on the
-    // inside of a bend)
+    // (out to where it meets the marsh, under the water so another stretch of the channel close by always shows over it,
+    // and never folded over itself on the inside of a bend)
     const far = (s: number) => {
       const c = t.curv[Math.floor(wrapS(t, s) / t.step) % t.n] * side;
-      return l(s) + side * Math.max(2.4, Math.min(14, c > 0.005 ? 0.92 / c - Math.abs(l(s)) : 14));
+      return l(s) + side * Math.max(2.4, Math.min(7, c > 0.005 ? 0.92 / c - Math.abs(l(s)) : 7));
     };
-    scene.add(new THREE.Mesh(band(THREE, t, s0, s1, (s) => wet(side)(s) - side * 0.12, (s) => wet(side)(s) + side * 0.12, 0.06, 2), foamMat));
-    scene.add(new THREE.Mesh(band(THREE, t, s0, s1, wet(side), (s) => l(s) + side * 2.2, 0.038, 3), mudMat));
-    scene.add(new THREE.Mesh(band(THREE, t, s0, s1, (s) => l(s) + side * 2.2, far, 0.03, 10), weedMat));
+    const brink = new THREE.Mesh(band(THREE, t, s0, s1, (s) => wet(side)(s) - side * 0.08, (s) => wet(side)(s) + side * 0.08, 0.06, 2), foamMat);
+    brink.visible = false;
+    brinks.push(brink);
+    scene.add(flat(brink));
+    scene.add(flat(new THREE.Mesh(band(THREE, t, s0, s1, wet(side), far, 0.038, 1, true), bankMat)));
   }
+  const plants = marshPlants(THREE, scene, t, dummy, lim);
   // marker posts with a white reflector every 10 m along the brink, so the edge of the channel reads from far off
   const posts: { x: number; z: number }[] = [];
   for (const [side, s0, s1, past] of edgeRuns(t)) {
@@ -682,115 +1128,64 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   }
 
   // ---------------------------------------------------------------------------------------------------------------
-  // The whirlpools: a still faint ring before their lap, the foam turning as one is about to form, then the spiral
-  // spinning fast with a dark eye and the water darkened round it as far as it pulls
-  const spiral = spiralTexture(THREE);
-  const pullTex = texture(
-    THREE,
-    canvas(64, 64, (g) => {
-      const grad = g.createRadialGradient(32, 32, 2, 32, 32, 31);
-      grad.addColorStop(0, 'rgba(4,16,24,0.6)');
-      grad.addColorStop(0.7, 'rgba(4,16,24,0.25)');
-      grad.addColorStop(1, 'rgba(4,16,24,0)');
-      g.fillStyle = grad;
-      g.fillRect(0, 0, 64, 64);
-    }),
-  );
-  type WhirlView = { h: LiveHazard; disc: T.Mesh; mat: T.MeshBasicMaterial; dark: T.Mesh; darkMat: T.MeshBasicMaterial; eye: T.Mesh; ring: T.Mesh; ringMat: T.MeshBasicMaterial; a: number };
-  const whirls: WhirlView[] = r.whirls.map((h) => {
-    const flat = (m: T.Mesh, y: number, order: number) => {
-      m.rotation.x = -Math.PI / 2;
-      m.position.y = y;
-      m.renderOrder = order;
-      scene.add(m);
-      return m;
-    };
-    const darkMat = new THREE.MeshBasicMaterial({ map: pullTex, transparent: true, depthWrite: false, opacity: 0 });
-    const dark = flat(new THREE.Mesh(geo.plane, darkMat), 0.07, 2);
-    dark.scale.set((h.pull ?? 7) * 2, (h.pull ?? 7) * 2, 1);
-    const mat = new THREE.MeshBasicMaterial({ map: spiral, transparent: true, depthWrite: false, opacity: 0 });
-    const disc = flat(new THREE.Mesh(geo.plane, mat), 0.08, 3);
-    const eye = flat(new THREE.Mesh(new THREE.CircleGeometry(1, 24), new THREE.MeshBasicMaterial({ color: 0x041218 })), 0.09, 4);
+  // The whirlpools, drawn in the water itself (see WATER_FRAG): a still faint ring before their lap, the foam turning
+  // as one is about to form, then a funnel of water spinning down into a dark eye, its arms of foam wound round it, and
+  // spray flung off its rim. The ring stays lit through the fog.
+  type WhirlView = { h: LiveHazard; ring: T.Mesh; ringMat: T.MeshBasicMaterial; a: number; n: number };
+  const whirls: WhirlView[] = r.whirls.slice(0, WHIRLS).map((h, n) => {
     const ringMat = new THREE.MeshBasicMaterial({ color: 0xf4efe6, transparent: true, depthWrite: false, opacity: 0.2 });
-    lit.push(mat, ringMat);
-    const ring = flat(new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 40), ringMat), 0.085, 3);
+    lit.push(ringMat);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 48), ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.085;
+    ring.renderOrder = 3;
     ring.scale.setScalar((h.r ?? 2.6) + 0.6);
-    return { h, disc, mat, dark, darkMat, eye, ring, ringMat, a: 0 };
+    scene.add(flat(ring));
+    return { h, ring, ringMat, a: 0, n };
   });
+  const SPRAY = 18;
+  const spray = whirls.length ? new THREE.InstancedMesh(geo.ball, new THREE.MeshBasicMaterial({ color: 0xf2f6f8, transparent: true, opacity: 0.7, depthWrite: false }), whirls.length * SPRAY) : null;
+  if (spray) {
+    spray.frustumCulled = false;
+    spray.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(spray);
+  }
 
   // ---------------------------------------------------------------------------------------------------------------
-  // The vessels: the coach's launches, the tug and its barge, the logs; the chain ferry; and the lane buoys
-  const alu = new THREE.MeshLambertMaterial({ color: 0xc4cad2 });
+  // The vessels: the coach's launches, the tug and its barge, the logs; the chain ferry; and the lane buoys. Each is one
+  // mesh of vertex-colored parts, and one more for its lights (which shine through the last lap's fog)
+  const vc = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const vcLit = new THREE.MeshBasicMaterial({ vertexColors: true });
+  lit.push(vcLit);
   const dark = new THREE.MeshLambertMaterial({ color: 0x23262c });
-  const cardinal = new THREE.MeshLambertMaterial({ color: 0x8c1515 });
-  const white = new THREE.MeshLambertMaterial({ color: 0xf2f2f0 });
-  const skin = new THREE.MeshLambertMaterial({ color: 0xe8bf98 });
-  const add = (g: T.Group, geom: T.BufferGeometry, mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
-    const m = new THREE.Mesh(geom, mat);
-    m.position.set(x, y, z);
-    m.scale.set(sx, sy, sz);
-    g.add(m);
-    return m;
-  };
-  const portLight = new THREE.MeshBasicMaterial({ color: 0xff3b2a });
-  const starLight = new THREE.MeshBasicMaterial({ color: 0x3bff6a });
-  const sternLight = new THREE.MeshBasicMaterial({ color: 0xffe6a0 });
-  lit.push(portLight, starLight, sternLight);
   type VesselView = { h: LiveHazard; g: T.Group; roll: T.Object3D | null; wake: T.Mesh | null; wakePos: T.BufferAttribute | null };
-  const wakeMat = new THREE.MeshBasicMaterial({ color: 0xf6f2ea, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide });
+  const wakeMat = new THREE.MeshBasicMaterial({ map: wakeTexture(THREE), transparent: true, depthWrite: false, side: THREE.DoubleSide });
   const WAKE_N = 12;
   const vessels: VesselView[] = r.vessels.map((h) => {
-    const g = new THREE.Group();
-    let roll: T.Object3D | null = null;
     const len = lengthOf(h);
-    if (h.kind === 'launch') {
-      // an aluminum launch: the hull, a wedge of bow, the console, the outboard and the coach in a cardinal jacket
-      add(g, geo.box, alu, 0, 0.35, 0, h.r * 2, 0.7, len * 0.8);
-      const bow = add(g, geo.cone, alu, 0, 0.35, len * 0.4 + 0.5, h.r, 1.3, 0.7);
-      bow.rotation.x = Math.PI / 2;
-      add(g, geo.box, cardinal, 0, 0.72, len * 0.1, h.r * 2.02, 0.12, len * 0.6);
-      add(g, geo.box, dark, 0, 0.9, 0.6, 0.8, 0.5, 0.6);
-      add(g, geo.box, dark, 0, 0.75, -len * 0.42, 0.45, 1.1, 0.5);
-      add(g, geo.box, cardinal, 0.3, 1.3, -0.4, 0.5, 0.75, 0.35);
-      add(g, geo.ball, skin, 0.3, 1.85, -0.4, 0.18, 0.2, 0.18);
-      // the megaphone
-      const horn = add(g, geo.cone, white, 0.62, 1.6, -0.1, 0.12, 0.4, 0.12);
-      horn.rotation.x = Math.PI / 2;
-      // (running lights, red to port and green to starboard, and a white one astern)
-      add(g, geo.ball, portLight, h.r, 0.85, len * 0.3, 0.12, 0.12, 0.12);
-      add(g, geo.ball, starLight, -h.r, 0.85, len * 0.3, 0.12, 0.12, 0.12);
-      add(g, geo.ball, sternLight, 0, 1.5, -len * 0.42, 0.12, 0.12, 0.12);
-    } else if (h.kind === 'barge') {
-      // a gravel barge pushed by a black-and-red tug at its stern
-      const bl = len - 9;
-      add(g, geo.box, new THREE.MeshLambertMaterial({ color: 0x5e5248 }), 0, 0.6, 4.5, h.r * 2, 1.4, bl);
-      add(g, geo.box, new THREE.MeshLambertMaterial({ color: 0x9a8a72 }), 0, 1.45, 4.5, h.r * 1.7, 0.5, bl - 1.5);
-      add(g, geo.box, new THREE.MeshLambertMaterial({ color: 0x1c1c22 }), 0, 0.7, -len / 2 + 4.5, h.r * 1.6, 1.4, 8);
-      add(g, geo.box, new THREE.MeshLambertMaterial({ color: 0xa8231a }), 0, 1.45, -len / 2 + 4.5, h.r * 1.62, 0.25, 8.05);
-      add(g, geo.box, white, 0, 2.6, -len / 2 + 3.5, h.r * 1.1, 2, 3.4);
-      add(g, geo.box, dark, 0, 3.9, -len / 2 + 3.5, h.r * 1.15, 0.5, 3.6);
-      add(g, geo.wheel, dark, 0, 4.6, -len / 2 + 2.2, 0.35, 1.6, 0.35);
-      // (a lamp on its wheelhouse)
-      add(g, geo.ball, sternLight, 0, 4.3, -len / 2 + 5.3, 0.18, 0.18, 0.18);
-      add(g, geo.ball, portLight, h.r, 1.7, len / 2 - 0.5, 0.2, 0.2, 0.2);
-      add(g, geo.ball, starLight, -h.r, 1.7, len / 2 - 0.5, 0.2, 0.2, 0.2);
-    } else {
-      // a drifting log, rolling slowly
-      roll = add(g, geo.wheel, new THREE.MeshLambertMaterial({ color: 0x6b4a2e }), 0, 0.12, 0, h.r, len, h.r);
-      roll.rotation.x = Math.PI / 2;
-      const end = add(g, geo.wheel, new THREE.MeshLambertMaterial({ color: 0xc9a476 }), 0, 0.12, len / 2, h.r * 0.92, 0.02, h.r * 0.92);
-      end.rotation.x = Math.PI / 2;
+    const mk = modelKit(THREE);
+    let roll: T.Object3D | null = null;
+    if (h.kind === 'launch') launchModel(mk, len, h.r);
+    else if (h.kind === 'barge') bargeModel(mk, len, h.r);
+    else logModel(mk, len, h.r ?? 0.35);
+    const g = mk.build(vc, vcLit);
+    if (h.kind === 'log') {
+      roll = g.children[0];
+      roll.position.y = 0.12;
     }
     g.visible = false;
     scene.add(g);
     let wake: T.Mesh | null = null;
     let wakePos: T.BufferAttribute | null = null;
     if ((h.wake ?? 0) > 0) {
-      // the V: two arms of WAKE_N quads each, rebuilt from where the vessel is every frame
+      // the V: two arms of WAKE_N quads each, rebuilt from where the vessel is every frame, foam fading out behind
       const geom = new THREE.BufferGeometry();
       wakePos = new THREE.BufferAttribute(new Float32Array(2 * (WAKE_N + 1) * 2 * 3), 3);
       wakePos.setUsage(THREE.DynamicDrawUsage);
       geom.setAttribute('position', wakePos);
+      const uv: number[] = [];
+      for (let arm = 0; arm < 2; arm++) for (let k = 0; k <= WAKE_N; k++) uv.push(0, k / WAKE_N, 1, k / WAKE_N);
+      geom.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
       const idx: number[] = [];
       for (let arm = 0; arm < 2; arm++) {
         const o = arm * (WAKE_N + 1) * 2;
@@ -800,29 +1195,30 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       wake = new THREE.Mesh(geom, wakeMat);
       wake.frustumCulled = false;
       wake.renderOrder = 2;
-      scene.add(wake);
+      scene.add(flat(wake));
     }
     return { h, g, roll, wake, wakePos };
   });
-  // the chain ferry: a pontoon with rails and a little wheelhouse, on its chain across the Port Reach
+  // the chain ferry: a steel pontoon with a ramp at each end, rails, the operator's cabin and a car aboard, hauling
+  // itself across the Port Reach on its chain
   const ferries = r.hazards
     .filter((h) => h.kind === 'ferry')
     .map((h) => {
-      const g = new THREE.Group();
-      const deckMat = new THREE.MeshLambertMaterial({ color: 0x3d6f7a });
-      add(g, geo.box, deckMat, 0, 0.35, 0, h.r * 2, 0.6, h.r * 2.6);
-      add(g, geo.box, new THREE.MeshLambertMaterial({ color: 0xffc21a }), 0, 0.7, 0, h.r * 2.04, 0.1, h.r * 2.64);
-      add(g, geo.box, white, 0, 1.4, 0, 1.4, 1.3, 1.6);
-      add(g, geo.box, cardinal, 0, 2.15, 0, 1.6, 0.2, 1.8);
+      const mk = modelKit(THREE);
+      ferryModel(mk, h.r);
+      const g = mk.build(vc, vcLit);
       g.rotation.y = headingOf(h.tx, h.tz);
       scene.add(g);
-      // (the chain, right across the reach)
+      // (the chain, right across the reach, sagging under the water in the middle)
       const f = frame(h.s);
-      const chain = new THREE.Mesh(geo.box, dark);
-      chain.scale.set(2 * t.edge + 4, 0.08, 0.08);
-      chain.position.set(f.x, 0.12, f.z);
-      chain.rotation.y = f.h;
-      scene.add(chain);
+      for (const sd of [-1, 1]) {
+        const chain = new THREE.Mesh(geo.box, dark);
+        chain.scale.set(t.edge + 2, 0.07, 0.07);
+        const c = pointAt(t, h.s, sd * (t.edge / 2 + 1));
+        chain.position.set(c.x - f.tx * 0.6, 0.06, c.z - f.tz * 0.6);
+        chain.rotation.set(0, f.h, sd * 0.02);
+        scene.add(chain);
+      }
       return { h, g };
     });
   // the lane buoys: orange with a white band, bobbing
@@ -1016,6 +1412,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   shared.tRefl.value = rt.texture;
   const reflect = (renderer: T.WebGLRenderer, sc: T.Scene, camera: T.PerspectiveCamera) => {
     camera.layers.enable(FLAT);
+    if ((globalThis as unknown as { __noRefl?: boolean }).__noRefl) return shared.uReflOn.value = 0, undefined; // TEMP-DEBUG
     renderer.getDrawingBufferSize(size);
     const w = Math.max(16, Math.round(size.x * REFLECT_RES));
     const h = Math.max(16, Math.round(size.y * REFLECT_RES));
@@ -1075,6 +1472,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
           m.needsUpdate = true;
         }
         if (buoyLamps) buoyLamps.visible = fogNow;
+        for (const b of brinks) b.visible = fogNow;
       }
       // the currents run in the water (the other way once the tide has turned)
       for (const run of runs) {
@@ -1088,15 +1486,15 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
         run.streak.value = damp(run.streak.value, Math.min(1, Math.abs(along) / 1.5), 2, dt);
       }
       shared.uTime.value = clock;
+      {
+        const k = race.karts[me];
+        plants.tick(clock, k ? windAt(race, k.s, race.time, lap) * 0.02 : 0);
+      }
       shared.uFogLift.value = (globalThis as unknown as { __dbg?: number }).__dbg ?? 0; // TEMP-DEBUG
       shared.uLap.value = lap;
       for (const tg of tongues) {
         const v = tg.f.tide && lap >= TIDE_LAP ? -tg.f.tongue![2] : tg.f.tongue![2];
         tg.tex.offset.y = (tg.tex.offset.y - (v * dt) / 5) % 1;
-      }
-      for (const c of chops) {
-        c.mat.opacity = lap >= c.lap ? 0.55 : 0;
-        c.tex.offset.set((clock * 0.05) % 1, (clock * 0.11) % 1);
       }
       for (const tex of pours) tex.offset.y = (tex.offset.y + dt * 2.4) % 1;
       if (traffic) {
@@ -1146,25 +1544,37 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
         sv.ang = st.live ? st.ang : dampAngle(sv.ang, 0, 2, dt);
         sv.g.rotation.y = sv.f.h - sv.ang;
       }
-      // the whirlpools
+      // the whirlpools: where each is and how far it has formed, for the water shader, and the spray off the rim
+      for (let n = 0; n < WHIRLS; n++) shared.uWhirlA.value[n].z = 0;
       for (const w of whirls) {
         const st = hazState(race, w.h, race.time, lap);
         const p = pointAt(t, w.h.s, st.d);
         const k = st.live ? st.lift : 0;
         const spin = w.h.spin ?? 1;
-        w.a += spin * dt * (st.live ? 1.2 + 3 * k : st.warn > 0 ? 1.2 * st.warn : 0);
-        for (const m of [w.disc, w.dark, w.eye, w.ring]) m.position.set(p.x, m.position.y, p.z);
         // (turning the way it pulls you round: see whirlPull)
-        w.disc.rotation.z = w.a;
-        const size = (w.h.pull ?? 7) * (0.45 + 0.35 * Math.max(k, st.warn * 0.7));
-        w.disc.scale.set(size * 2, size * 2, 1);
-        w.mat.opacity = st.live ? 0.55 + 0.4 * k : st.warn > 0 ? 0.3 + 0.5 * st.warn : 0;
-        w.darkMat.opacity = st.live ? 0.9 * k : st.warn > 0 ? 0.3 * st.warn : 0;
-        const eye = st.live ? (w.h.core ?? 1.3) * (0.4 + 0.9 * k) : 0.01;
-        w.eye.scale.set(eye, eye, 1);
-        w.eye.visible = st.live;
+        w.a += spin * dt * (st.live ? 1.2 + 3 * k : st.warn > 0 ? 1.2 * st.warn : 0.15);
+        const size = (w.h.pull ?? 7) * (0.55 + 0.35 * Math.max(k, st.warn * 0.7));
+        shared.uWhirlA.value[w.n].set(p.x, p.z, st.phase === 'off' && !st.live ? 0 : size);
+        shared.uWhirlB.value[w.n].set(st.live ? 0.25 + 0.75 * k : 0, w.a, spin);
+        shared.uWhirlC.value[w.n].set((w.h.core ?? 1.3) * (0.4 + 0.9 * k) * (st.live ? 1 : 0), st.warn, 0);
+        w.ring.position.set(p.x, w.ring.position.y, p.z);
         // (a faint still ring marks it before its lap, and a brighter one while it warns)
-        w.ringMat.opacity = st.phase === 'off' ? 0.18 : st.warn > 0 ? 0.35 + 0.5 * st.warn * (Math.floor(clock * 6) % 2 ? 1 : 0.6) : st.live ? 0.5 : 0.25;
+        w.ringMat.opacity = st.phase === 'off' ? 0.18 : st.warn > 0 ? 0.35 + 0.5 * st.warn * (Math.floor(clock * 6) % 2 ? 1 : 0.6) : st.live ? 0.35 : 0.22;
+        if (spray) {
+          for (let j = 0; j < SPRAY; j++) {
+            const ang = -spin * (clock * (2.2 + (j % 3) * 0.7)) + (j / SPRAY) * Math.PI * 2;
+            const rad = size * (0.35 + 0.25 * ((j * 7) % 5) / 5);
+            const life = (clock * 1.3 + j * 0.37) % 1;
+            dummy.position.set(p.x + Math.cos(ang) * rad, 0.1 + Math.sin(life * Math.PI) * 0.9 * k, p.z + Math.sin(ang) * rad);
+            dummy.scale.setScalar(k > 0.05 ? (0.06 + 0.1 * (1 - life)) * k : 0);
+            dummy.updateMatrix();
+            spray.setMatrixAt(w.n * SPRAY + j, dummy.matrix);
+          }
+        }
+      }
+      if (spray) {
+        dummy.scale.setScalar(1);
+        spray.instanceMatrix.needsUpdate = true;
       }
       // the vessels, where they are on the clock, with their wakes spreading behind them
       for (const v of vessels) {
@@ -1174,7 +1584,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
         if (h.gone) continue;
         v.g.position.set(h.x, Math.sin(clock * 1.7 + h.s) * 0.05, h.z);
         v.g.rotation.y = headingOf(h.tx, h.tz);
-        if (v.roll) v.roll.rotation.y = clock * 0.6;
+        if (v.roll) v.roll.rotation.z = clock * 0.6;
         if (v.wakePos) {
           const len = lengthOf(h);
           for (let arm = 0; arm < 2; arm++) {
@@ -1244,8 +1654,8 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
           puddleMesh.setColorAt(n, black);
           dummy.scale.setScalar(0);
         } else {
-          puddleMesh.setColorAt(n, tint.setScalar(0.32 * (1 - age / PUDDLE_T)));
-          dummy.scale.setScalar(0.5 + age * 0.8);
+          puddleMesh.setColorAt(n, tint.setScalar(0.2 * (1 - age / PUDDLE_T) ** 1.5));
+          dummy.scale.setScalar(0.35 + age * 0.45);
         }
         dummy.position.set(p.x, 0.07, p.z);
         dummy.rotation.set(0, 0, 0);
