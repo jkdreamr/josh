@@ -11,7 +11,7 @@ type Three = typeof import('three');
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />}>
       <Play />
     </GameShell>
   );
@@ -376,14 +376,6 @@ function Setup() {
   );
 }
 
-/** Online: the host picks how strong a bot opponent plays. */
-function OnlineSetup() {
-  const online = useOnline();
-  const [level, setLevel] = useSetting(LEVEL);
-  if (!online?.isHost || online.bots.length === 0) return null;
-  return <Segmented label="Bot Level" value={level} options={levelOptions} onChange={setLevel} />;
-}
-
 function Play() {
   const shell = useShell();
   const online = useOnline();
@@ -398,6 +390,13 @@ function Play() {
   const [score, setScore] = useState<[number, number]>([0, 0]);
   const [pop, setPop] = useState<{ text: string; id: number } | null>(null);
   const [touched, setTouched] = useState(false);
+  const seen = useRef(false);
+  // the first-play hint goes away as soon as the player does anything
+  const used = () => {
+    if (seen.current) return;
+    seen.current = true;
+    setTouched(true);
+  };
   const [hud, setHud] = useState<{ left: boolean; top: number; below: number }>({ left: false, top: 10, below: 46 });
   const pointers = useRef(new Map<number, { side: 0 | 1; x: number; z: number }>());
   const lastTick = useRef(0);
@@ -407,11 +406,9 @@ function Play() {
   const remoteState = useRef<State | null>(null);
   const sendAt = useRef(0);
   const snapshotAt = useRef(0);
-  // online, the host plays a bot in the second seat when nobody holds it
-  const botTop = !!online && online.seat === 0 && online.bots.some((b) => b.seat === 1) && !online.players.some((p) => p.seat === 1);
   const shared = !online && mode === '2p';
-  const cfg = useRef({ mode: online ? ('2p' as Mode) : mode, difficulty, botTop });
-  cfg.current = { mode: online ? '2p' : mode, difficulty, botTop };
+  const cfg = useRef({ mode: online ? ('2p' as Mode) : mode, difficulty });
+  cfg.current = { mode: online ? '2p' : mode, difficulty };
 
   // Setup changes made on the Start card apply to the match that is about to begin.
   useEffect(() => {
@@ -423,6 +420,7 @@ function Play() {
     snapshotAt.current = 0;
     setScore([0, 0]);
     setTouched(false);
+    seen.current = false;
     shell.invalidate();
   }, [mode, difficulty, shell.status, shell.invalidate, online?.seat]);
 
@@ -440,7 +438,7 @@ function Play() {
 
   /** Who the seat is, as this player sees it. */
   const nameOf = (seat: number, s: State) => {
-    if (online) return online.players.find((p) => p.seat === seat)?.name ?? online.bots.find((b) => b.seat === seat)?.name ?? (seat === 0 ? 'Blue' : 'Pink');
+    if (online) return online.players.find((p) => p.seat === seat)?.name ?? (seat === 0 ? 'Blue' : 'Pink');
     if (s.mode === 'cpu' && seat === 1) return 'Computer';
     return seat === 0 ? 'Blue' : 'Pink';
   };
@@ -489,10 +487,7 @@ function Play() {
       const won = mine === null || ev.win === mine;
       sfx.play(won ? 'win' : 'lose');
       const title = mine !== null && ev.win === mine ? 'You Win' : `${nameOf(ev.win, s)} Wins`;
-      if (online) {
-        const bot = online.bots.some((b) => b.seat === ev.win) && !online.players.some((p) => p.seat === ev.win);
-        online.reportResult(online.round, bot ? null : ev.win);
-      }
+      if (online) online.reportResult(online.round, ev.win);
       const us = mine === 1 ? s.score[1] : s.score[0];
       const them = mine === 1 ? s.score[0] : s.score[1];
       shell.gameOver(cpu ? s.score[0] : undefined, { title, detail: `${us} to ${them}${cpu ? ` against the ${levelLabel(s.difficulty).toLowerCase()} computer.` : '.'}` });
@@ -521,7 +516,7 @@ function Play() {
         announce(event, s);
       }
     }
-  }), [online?.onMessage, online?.seat, online?.players, online?.bots, shell.round, shell.gameOver]);
+  }), [online?.onMessage, online?.seat, online?.players, shell.round, shell.gameOver]);
 
   useEffect(() => {
     if (shell.status !== 'playing') lastTick.current = 0;
@@ -596,6 +591,7 @@ function Play() {
     if (e.pointerType === 'mouse') pointers.current.delete(-1);
     if ([...pointers.current.values()].some((q) => q.side === side)) return;
     pointers.current.set(e.pointerId, { side, x: p.x, z: p.z });
+    used();
   };
   const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const ptr = pointers.current.get(e.pointerId);
@@ -624,6 +620,7 @@ function Play() {
   /** Keyboard for one mallet; the keys win over a mouse that is only hovering. */
   const keyDrive = (s: State, side: 0 | 1, kx: number, kz: number, dt: number) => {
     if (kx || kz) {
+      used();
       pointers.current.delete(-1);
       nudgeMallet(s, side, kx, kz, dt);
     } else {
@@ -636,6 +633,9 @@ function Play() {
     const driven = new Set<number>();
     const kb = [...wasd(), ...arrows()];
     const solo = s.mode === 'cpu' || !!online;
+    // sharing a wide screen the table lies sideways, blue on the left, so turn the keys to match the screen
+    if (s.mode === '2p' && !online && (world.current?.camera.aspect ?? 0) >= 1)
+      for (const i of [0, 2]) [kb[i], kb[i + 1]] = [kb[i + 1], -kb[i]];
     // a key press takes over from a hovering mouse
     if (solo && kb.some(Boolean)) pointers.current.delete(-1);
     for (const ptr of pointers.current.values()) {
@@ -646,8 +646,7 @@ function Play() {
     // keyboard: WASD for blue and arrows for pink when sharing a screen, either set when playing alone
     if (!driven.has(0)) keyDrive(s, 0, kb[0] + (solo ? kb[2] : 0), kb[1] + (solo ? kb[3] : 0), dt);
     if (online?.seat === 0) {
-      if (cfg.current.botTop) stepAI(s, dt);
-      else if (remoteTarget.current) moveMalletTo(s, 1, remoteTarget.current, dt, 9);
+      if (remoteTarget.current) moveMalletTo(s, 1, remoteTarget.current, dt, 9);
       else {
         s.mallets[1].vx = 0;
         s.mallets[1].vz = 0;
@@ -706,7 +705,7 @@ function Play() {
         const n = Math.max(1, Math.ceil(simDt / SUBSTEP));
         const h = simDt / n;
         const ev: Event = {};
-        const aiTop = s.mode === 'cpu' || cfg.current.botTop;
+        const aiTop = s.mode === 'cpu';
         for (let i = 0; i < n && s.winner === null; i++) {
           driveMallets(s, h);
           const e = step(s, h);
@@ -794,7 +793,7 @@ function Play() {
       ? 'Each player drags on their own side'
       : 'Drag to move your mallet'
     : shared
-      ? 'Blue: WASD or mouse. Pink: arrow keys or mouse'
+      ? 'Blue: WASD. Pink: arrow keys.'
       : 'Move the mouse or use WASD';
   return (
     <>

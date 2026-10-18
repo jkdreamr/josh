@@ -13,11 +13,10 @@ export const meta: GameMeta = {
     "Swing through the puck to hit it harder, since your mallet's speed carries into the shot.",
     "After a goal, the puck waits on the side that was scored on until a mallet touches it.",
     "Play the computer on Easy, Normal or Hard, or pick 2 Players to share one screen. On touch, each player drags on their own half.",
-    "Online, play a friend, or add a bot while you wait for one.",
   ],
   accent: '#34c3ff',
   glyph: 'M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM12 5v14M9 12h6M22 10v4M2 10v4',
   order: 5,
   music: 'house',
-  online: { seats: 2, bots: true },
+  online: { seats: 2 },
 };
