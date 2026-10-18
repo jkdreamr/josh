@@ -4,6 +4,7 @@ import type { GameProps } from '../../types';
 import { createWorld, fitBoard, keyHeading, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket, type NetEvent, type RoundPacket } from './net.ts';
+import { finalLine, freeSpans, packChips, rosterLine, type Span } from './hud.ts';
 import { meta } from './meta';
 import './tank-maze.css';
 
@@ -116,6 +117,14 @@ function TankMaze() {
   const { ref, size, ctx } = useCanvas();
   const [banner, setBanner] = useState<{ text: string; sub: string } | null>(null);
   const [waiting, setWaiting] = useState(false);
+  const [notice, setNotice] = useState<{ text: string; sub: string; id: number } | null>(null);
+  /** Online: the name of everyone seen in the room by seat, so a seat whose player left still reads as them. */
+  const known = useRef(new Map<number, string>());
+  const prevPlayers = useRef<number[]>([]);
+  /** The Game Over card this game put up (null when the shell's own card is up), redrawn when someone leaves. */
+  const lastEnd = useRef<{ title: string; scores: number[]; rounds: number } | null>(null);
+  /** On-screen scale of the canvas (framed iPads draw it at ~0.82) and the shell pills that sit over the HUD row. */
+  const view = useRef<{ at: number; u: number; badge: Span | null; ctrlX: number | null }>({ at: -1e9, u: 1, badge: null, ctrlX: null });
   const [mode] = useSetting(MODE);
   const [rivals] = useSetting(RIVALS);
   const [levelName] = useSetting(LEVEL);
@@ -162,6 +171,8 @@ function TankMaze() {
   const nameOf = (match: Match, id: number) => {
     if (!online) return NAMES[id];
     const seat = match.seats[id];
+    const gone = !online.players.some((pl) => pl.seat === seat) && !online.bots.some((b) => b.seat === seat);
+    if (gone && known.current.has(seat)) return `${known.current.get(seat)} (Left)`;
     const name = seatNames(match.seats, online.players, online.bots)[id] ?? `Seat ${seat}`;
     return match.departed.has(seat) && online.players.some((pl) => pl.seat === seat) ? `${name} (Bot)` : name;
   };
@@ -263,8 +274,15 @@ function TankMaze() {
     const { w, h } = sizeRef.current;
     const lay = layout(w || 800, h || 500);
     let match: Match;
+    const prev = m.current;
+    lastEnd.current = null;
     if (online) {
-      const seats = [...new Set([...online.players.map((p) => p.seat), ...online.bots.map((b) => b.seat)])].sort((a, b) => a - b).slice(0, 4);
+      // Someone who left between matches keeps their seat, driven by a bot and labeled as having left.
+      const carried =
+        !isGuest && prev?.ended
+          ? prev.seats.filter((s) => known.current.has(s) && !online.players.some((p) => p.seat === s) && !online.bots.some((b) => b.seat === s))
+          : [];
+      const seats = [...new Set([...online.players.map((p) => p.seat), ...online.bots.map((b) => b.seat), ...carried])].sort((a, b) => a - b).slice(0, 4);
       const bots = online.bots.map((b) => b.seat).filter((s) => seats.includes(s));
       if (isGuest) {
         // Guests wait for the host's round packet; build a placeholder world meanwhile.
@@ -274,6 +292,7 @@ function TankMaze() {
       }
       match.seats = seats;
       match.bots = bots;
+      for (const s of carried) if (seats.includes(s)) match.departed.add(s);
       match.level = cfg.current.level;
       for (let i = 0; i < match.world.tanks.length; i++) match.minds[i] = makeMemory();
       if (!isGuest) hostSendRound(match);
@@ -490,7 +509,7 @@ function TankMaze() {
           // winner stays null for them because nobody scores the room win.
           const champ = pkt.champ;
           const title = champ === null ? 'Draw' : champ === online.seat ? 'You Win' : `${seatName(match, champ)} Wins`;
-          shell.gameOver(undefined, { title, detail: `${pkt.scores.join(' to ')} in ${pkt.rounds} rounds.` });
+          showOver(match, title, pkt.scores, pkt.rounds);
         }
       }),
     [online?.onMessage, online?.seat, online?.round],
@@ -526,6 +545,53 @@ function TankMaze() {
     startBanner(match);
   };
 
+  /** Labeled final score, plus (online) who is in the room. */
+  const overDetail = (match: Match, scores: number[], rounds: number) => {
+    const ids = match.world.tanks.map((t) => t.id);
+    if (!online) {
+      const cpu = cfg.current.mode === 'cpu';
+      return finalLine(ids.map((i) => (cpu && i === 0 ? 'You' : NAMES[i])), scores, rounds);
+    }
+    const names = ids.map((i) => (match.seats[i] === online.seat ? 'You' : nameOf(match, i)));
+    const people = [...online.players].sort((a, b) => (a.seat === online.seat ? -1 : b.seat === online.seat ? 1 : a.seat - b.seat)).map((p) => (p.seat === online.seat ? 'You' : p.name));
+    return `${finalLine(names, scores, rounds)} ${rosterLine(people)}`.trim();
+  };
+
+  const showOver = (match: Match, title: string, scores: number[], rounds: number) => {
+    lastEnd.current = { title, scores: scores.slice(), rounds };
+    // keepDetail: the score stays on the card even in the short framed windows, where the shell hides details
+    shell.gameOver(undefined, { title, detail: overDetail(match, scores, rounds), keepDetail: true });
+  };
+
+  // Online: say when someone leaves. Mid-round a bot takes their tank and the round goes on; on the Game Over card the
+  // roster updates and their seat reads as left.
+  useEffect(() => {
+    if (!online) {
+      known.current.clear();
+      prevPlayers.current = [];
+      return;
+    }
+    const now = online.players;
+    const gone = prevPlayers.current.filter((s) => s !== online.seat && !now.some((p) => p.seat === s));
+    for (const p of now) known.current.set(p.seat, p.name);
+    prevPlayers.current = now.map((p) => p.seat);
+    const match = m.current;
+    if (!gone.length || !match) return;
+    const names = gone.map((s) => known.current.get(s) ?? `Seat ${s}`);
+    if (shell.status === 'playing' && !match.ended && gone.some((s) => match.seats.includes(s))) {
+      setNotice({ text: `${names.join(' and ')} Left`, sub: 'A bot takes over their tank.', id: performance.now() });
+    } else if (shell.status === 'over' && lastEnd.current) {
+      const e = lastEnd.current;
+      shell.updateOver({ title: e.title, detail: overDetail(match, e.scores, e.rounds), keepDetail: true });
+    }
+  }, [online?.players]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [notice]);
+
   // -----------------------------------------------------------------------------------------------------------------
   // Sim
 
@@ -550,8 +616,7 @@ function TankMaze() {
       const cpuMode = cfg.current.mode === 'cpu';
       title = winner < 0 ? 'Draw' : cpuMode ? (winner === 0 ? 'You Win' : `${NAMES[winner]} Wins`) : `${NAMES[winner]} Wins`;
     }
-    const detail = `${w.scores.join(' to ')} in ${w.round} rounds.`;
-    shell.gameOver(undefined, { title, detail });
+    showOver(match, title, w.scores, w.round);
     if (winner === 0) sfx.play('win');
     else sfx.play('lose');
   };
@@ -715,6 +780,32 @@ function TankMaze() {
 
   // -----------------------------------------------------------------------------------------------------------------
   // Render
+
+  /** Re-measured a few times a second: the canvas's on-screen scale and the shell pills over the HUD row, in canvas px. */
+  const measureView = (hudH: number) => {
+    const v = view.current;
+    const now = performance.now();
+    if (now - v.at < 400) return v;
+    v.at = now;
+    const cv = ref.current;
+    const root = shell.root.current;
+    if (!cv || !cv.offsetWidth) return v;
+    const r = cv.getBoundingClientRect();
+    const k = r.width / cv.offsetWidth;
+    if (!(k > 0.2)) return v;
+    const u = Math.max(1, 1 / k);
+    if (u !== v.u) root?.style.setProperty('--g-tank-maze-u', String(u));
+    v.u = u;
+    const rel = (el: Element | null | undefined) => {
+      if (!el) return null;
+      const b = el.getBoundingClientRect();
+      if (!b.width || (b.top - r.top) / k > hudH) return null;
+      return { x0: (b.left - r.left) / k, x1: (b.right - r.left) / k };
+    };
+    v.badge = rel(root?.querySelector('.arcade-online-status'));
+    v.ctrlX = rel(root?.querySelector('.arcade-ctrl'))?.x0 ?? null;
+    return v;
+  };
 
   const render = () => {
     const c = ctx();
@@ -1024,62 +1115,77 @@ function TankMaze() {
     const compactHud = hudH < 30;
     const scores = isGuest ? match.guestScores : world.scores;
     const chips = viewTanks.map((_, i) => i);
-    // chips live in [12, w-176] so they never sit under the shell's top-right controls;
-    // online they split into two groups around the centered transport badge (~112px at w/2)
-    const chipLeft = 12;
-    const chipRight = w - 176;
-    const leftW = w / 2 - 56 - chipLeft;
-    const rightW = chipRight - (w / 2 + 56);
-    const groups: { idxs: number[]; x0: number; x1: number }[] =
-      online && leftW >= 80 && rightW >= 80
-        ? [
-            { idxs: chips.slice(0, Math.ceil(chips.length / 2)), x0: chipLeft, x1: w / 2 - 56 },
-            { idxs: chips.slice(Math.ceil(chips.length / 2)), x0: w / 2 + 56, x1: chipRight },
-          ]
-        : [{ idxs: chips, x0: chipLeft, x1: chipRight }];
-    for (const g of groups) {
-      const avail = Math.max(0, g.x1 - g.x0);
-      let chipFont = Math.max(11, Math.min(13, hudH * 0.4));
-      let gap = compactHud ? 8 : 14;
-      const measure = () => {
-        c.font = `600 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-        const ws = g.idxs.map((i) => {
-          const name = nameOf(match, i);
-          return 10 + c.measureText(name).width + 8 + c.measureText(`${scores[i] ?? 0}`).width + 6;
-        });
-        return { ws, total: ws.reduce((a, b) => a + b, 0) + gap * Math.max(0, g.idxs.length - 1) };
-      };
-      let { ws: widths, total } = measure();
-      if (total > avail && gap > 4) {
-        gap = 4;
-        ({ ws: widths, total } = measure());
-      }
-      while (total > avail && chipFont > 11) {
-        chipFont--;
-        ({ ws: widths, total } = measure());
-      }
-      let cx = g.x0 + Math.max(0, (avail - total) / 2);
-      for (let ci = 0; ci < g.idxs.length; ci++) {
-        const i = g.idxs[ci];
-        const cw = widths[ci];
-        c.fillStyle = 'rgba(255,255,255,0.65)';
-        c.beginPath();
-        c.roundRect(cx, hudH / 2 - hudH * 0.32, cw, hudH * 0.64, hudH * 0.32);
-        c.fill();
-        c.fillStyle = COLORS[i % COLORS.length];
-        c.beginPath();
-        c.arc(cx + 9, hudH / 2, 4, 0, Math.PI * 2);
-        c.fill();
-        c.fillStyle = '#2e2d2a';
-        const name = nameOf(match, i);
-        c.fillText(name, cx + 17, hudH / 2 + chipFont * 0.36);
-        const nw = c.measureText(name).width;
-        c.font = `700 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-        c.fillStyle = '#1d1c19';
-        c.fillText(`${scores[i] ?? 0}`, cx + 17 + nw + 8, hudH / 2 + chipFont * 0.36);
-        c.font = `600 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-        cx += cw + gap;
-      }
+    // Chips stay out of the shell's top-right controls and, online, the centered Direct/Relayed badge (both measured).
+    const v = measureView(hudH);
+    const u = v.u;
+    const ctrlX = v.ctrlX !== null && v.ctrlX > w / 2 ? v.ctrlX : w - 176;
+    const spans = freeSpans(12, ctrlX - 8, online && v.badge ? [v.badge] : []);
+    const fontOf = (f: number, weight: number) => `${weight} ${f}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+    // A seat's "(Left)" or "(Bot)" tag survives the clip; only the name is shortened.
+    const clip = (label: string, max: number) => {
+      const tag = /\s\((Left|Bot)\)$/.exec(label)?.[0] ?? '';
+      const name = label.slice(0, label.length - tag.length);
+      return name.length > Math.max(max, 5) ? `${name.slice(0, Math.max(1, max - 1)).trimEnd()}…${tag}` : label;
+    };
+    const maxFont = 13 * u;
+    const minFont = 11.25 * u;
+    let chipFont = Math.max(minFont, Math.min(maxFont, hudH * 0.4 * u));
+    let gap = (compactHud ? 8 : 14) * u;
+    let maxName = 24;
+    const labels = () => chips.map((i) => clip(nameOf(match, i), maxName));
+    const widthsFor = () => {
+      c.font = fontOf(chipFont, 600);
+      const names = labels();
+      return chips.map((i, ci) => {
+        const nw = c.measureText(names[ci]).width;
+        c.font = fontOf(chipFont, 700);
+        const sw = c.measureText(`${scores[i] ?? 0}`).width;
+        c.font = fontOf(chipFont, 600);
+        return 17 * u + nw + 8 * u + sw + 7 * u;
+      });
+    };
+    let widths = widthsFor();
+    let xs = packChips(widths, spans, gap);
+    if (!xs && gap > 4 * u) {
+      gap = 4 * u;
+      widths = widthsFor();
+      xs = packChips(widths, spans, gap);
+    }
+    while (!xs && chipFont > minFont) {
+      chipFont = Math.max(minFont, chipFont - 1);
+      widths = widthsFor();
+      xs = packChips(widths, spans, gap);
+    }
+    while (!xs && maxName > 4) {
+      maxName--;
+      widths = widthsFor();
+      xs = packChips(widths, spans, gap);
+    }
+    if (!xs) {
+      let x = 12;
+      xs = widths.map((cw) => ((x += cw + gap), x - cw - gap));
+    }
+    const names = labels();
+    const pillH = Math.max(hudH * 0.64, chipFont + 6 * u);
+    for (let ci = 0; ci < chips.length; ci++) {
+      const i = chips[ci];
+      const cw = widths[ci];
+      const cx = xs[ci];
+      c.fillStyle = 'rgba(255,255,255,0.65)';
+      c.beginPath();
+      c.roundRect(cx, hudH / 2 - pillH / 2, cw, pillH, pillH / 2);
+      c.fill();
+      c.fillStyle = COLORS[i % COLORS.length];
+      c.beginPath();
+      c.arc(cx + 9 * u, hudH / 2, 4 * u, 0, Math.PI * 2);
+      c.fill();
+      c.font = fontOf(chipFont, 600);
+      c.fillStyle = '#2e2d2a';
+      c.fillText(names[ci], cx + 17 * u, hudH / 2 + chipFont * 0.36);
+      const nw = c.measureText(names[ci]).width;
+      c.font = fontOf(chipFont, 700);
+      c.fillStyle = '#1d1c19';
+      c.fillText(`${scores[i] ?? 0}`, cx + 17 * u + nw + 8 * u, hudH / 2 + chipFont * 0.36);
     }
 
     // touch sticks
@@ -1157,9 +1263,19 @@ function TankMaze() {
           {banner.sub && <span>{banner.sub}</span>}
         </div>
       )}
-      {waiting && (
-        <div className="g-tank-maze-banner g-tank-maze-waiting" aria-live="polite">
-          <strong>Waiting for host</strong>
+      {(waiting || notice) && (
+        <div className="g-tank-maze-toasts" aria-live="polite">
+          {notice && (
+            <div className="g-tank-maze-banner g-tank-maze-toast" key={notice.id}>
+              <strong>{notice.text}</strong>
+              <span>{notice.sub}</span>
+            </div>
+          )}
+          {waiting && (
+            <div className="g-tank-maze-banner g-tank-maze-toast">
+              <strong>Waiting for host</strong>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -55,23 +55,43 @@
   }
 }
 .g-tank-maze .g-tank-maze-banner strong {
-  font-size: 18px;
+  font-size: calc(18px * var(--g-tank-maze-u, 1));
   font-weight: 700;
   letter-spacing: -0.01em;
   color: #f6f3ec;
   white-space: nowrap;
 }
 .g-tank-maze .g-tank-maze-banner span {
-  font-size: 12.5px;
+  /* framed iPads draw the game at ~0.82x; --g-tank-maze-u scales text back up to its intended on-screen size */
+  font-size: calc(13px * var(--g-tank-maze-u, 1));
   font-weight: 500;
   color: rgba(246, 243, 236, 0.62);
   white-space: nowrap;
 }
-.g-tank-maze .g-tank-maze-waiting {
-  top: auto;
+.g-tank-maze .g-tank-maze-toasts {
+  position: absolute;
+  left: 50%;
   bottom: 18px;
-  padding: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
-.g-tank-maze .g-tank-maze-waiting strong {
-  font-size: 13px;
+.g-tank-maze .g-tank-maze-toasts .g-tank-maze-toast {
+  position: static;
+  gap: 2px;
+  padding: 8px 16px;
+  transform: none;
+  animation: g-tank-maze-rise 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes g-tank-maze-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.g-tank-maze .g-tank-maze-toasts .g-tank-maze-toast strong {
+  font-size: calc(14px * var(--g-tank-maze-u, 1));
 }
