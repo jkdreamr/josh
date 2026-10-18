@@ -843,6 +843,8 @@ export type Look = {
    * neon lip where it ends, glass rails where it has walls, and campus far below (see skyway()).
    */
   glass?: boolean;
+  /** From this lap of your own the road's glow fades to almost nothing and the fog closes in (the Skyway's last lap). */
+  blackout?: number;
 };
 export const LOOKS: Record<CourseId, Look> = {
   palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE', road: '#4a4a52' },
@@ -856,7 +858,7 @@ export const LOOKS: Record<CourseId, Look> = {
   // a bright late afternoon: deep green rough all round, the fairway mown in stripes beside the road
   golf: { fog: [0xf1e2bf, 150, 720], sky: 0xfff2d6, ground: 0x4f7a34, sun: [0xffe0a8, 1.6], field: '#4c8a32', lawn: '#6fb34a', curb: ['#f4f1ea', '#2f7a3a'], wall: '#efe9da', band: '#2f6b3a', banner: 'STANFORD GOLF', road: '#57575f', edge: 'stakes', rescue: 'retriever' },
   // night ninety meters up: a deep blue haze that swallows campus far below, starlight and the glow off the road
-  skyway: { fog: [0x0b0d26, 120, 470], sky: 0x8d93d8, ground: 0x2a1030, sun: [0xc8ccff, 0.75], field: '#05060c', lawn: '#14161d', curb: ['#ffffff', '#ff2d6f'], wall: '#9fe8ff', band: '#c8143c', banner: 'CARDINAL SKYWAY', road: '#4a0a18', night: true, rescue: 'drone', glass: true },
+  skyway: { fog: [0x0b0d26, 120, 470], sky: 0x8d93d8, ground: 0x2a1030, sun: [0xc8ccff, 0.75], field: '#05060c', lawn: '#14161d', curb: ['#ffffff', '#ff2d6f'], wall: '#9fe8ff', band: '#c8143c', banner: 'CARDINAL SKYWAY', road: '#4a0a18', night: true, rescue: 'drone', glass: true, blackout: 5 },
 };
 
 /** What a course's scenery builder gets: the scene, the track and shared helpers. */

@@ -30,7 +30,7 @@ export const TIER: Record<Difficulty, Tier> = {
   4: { pace: 1.03, paceCc: { '200cc': 1 / 0.97 }, band: [0.97, 1.1, 450], harsh: 1.3, rocket: 0.9, fallT: 1.7, fallCoins: 3, brink: 0.6 },
   // (the course is limited by its corners, its edge and the wind more than by top speed, so the CPUs are no faster than
   // the class here, a touch slower at 200cc, but drive far more cleanly: see skillLift)
-  5: { pace: 1.0, paceCc: { '200cc': 0.98 }, band: [1.0, 1.12, 400], harsh: 1.45, rocket: 1.0, fallT: 2.0, fallCoins: 3, brink: 0.5, skillLift: 0.3 },
+  5: { pace: 1.0, paceCc: { '150cc': 0.97, '200cc': 0.98 }, band: [1.0, 1.12, 400], harsh: 1.45, rocket: 1.0, fallT: 2.0, fallCoins: 3, brink: 0.5, skillLift: 0.3 },
 };
 
 /**
@@ -908,7 +908,7 @@ export const COURSES: Record<CourseId, Course> = {
       });
     },
     sky: 'linear-gradient(180deg, #020313 0%, #070b2a 24%, #15123e 38%, #2a1a4a 44%, #3a2340 47%, #120a18 52%)',
-    laps: { 2: 'Wind, blinking glass, bells', 3: 'Frost on the hairpins', 4: 'Bonfire flares, jet stream', 5: 'A second beam on the deck' },
+    laps: { 2: 'Wind, blinking glass, bells', 3: 'Frost on the hairpins', 4: 'Bonfire flares, jet stream', 5: 'Blackout: a second beam' },
   },
 };
 
