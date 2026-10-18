@@ -6,8 +6,10 @@ export const BALL_R = 1.8;
 export const WIN_SCORE = 11;
 export const SERVE_DELAY = 0.9;
 export const PADDLE_SPEED = 95;
-const BASE_SPEED = 62;
-const MAX_SPEED = 150;
+/** Keyboard paddle speed, a little quicker than the spin reference so late rallies stay playable on keys. */
+export const KEY_SPEED = 118;
+export const BASE_SPEED = 62;
+export const MAX_SPEED = 150;
 const SPEED_UP = 1.045;
 const SPIN_FROM_PADDLE = 0.55;
 const SPIN_DECAY = 1.6;
@@ -177,28 +179,66 @@ export function predictY(b: Ball, x: number): number {
 }
 
 export type AiLevel = 0 | 1 | 2;
-export type AiState = { target: number; think: number };
+export type AiState = { target: number; think: number; aim: number; heading: number };
+/**
+ * speed: paddle speed. error: aim noise in court units. every: seconds between re-aims.
+ * idle: how far it drifts back to center while the ball is away. aim: how hard it angles returns away from you.
+ */
 const AI = [
-  { speed: 52, error: 9, every: 0.34, idle: 0.25 },
-  { speed: 74, error: 4.5, every: 0.18, idle: 0.5 },
-  { speed: 100, error: 1.2, every: 0.07, idle: 0.85 },
+  { speed: 56, error: 9, every: 0.3, idle: 0.3, aim: 0 },
+  { speed: 78, error: 4, every: 0.16, idle: 0.55, aim: 0.4 },
+  { speed: 98, error: 2.6, every: 0.07, idle: 0.85, aim: 0.75 },
 ] as const;
+/** Seconds before contact when the computer commits to an angled return. */
+const AIM_WINDOW = 0.35;
 
-export const createAi = (): AiState => ({ target: COURT.h / 2, think: 0 });
+export const createAi = (): AiState => ({ target: COURT.h / 2, think: 0, aim: 0, heading: 0 });
 
-/** Computer paddle: re-aims every so often at a noisy prediction, drifts to center while the ball leaves. */
+/** Computer paddle: re-aims every so often at a noisy prediction, angles its returns, drifts to center while the ball leaves. */
 export function aiStep(m: Match, side: Side, level: AiLevel, ai: AiState, dt: number, rng: Rng = Math.random) {
   const cfg = AI[level];
   const b = m.ball;
   const toward = side === 0 ? b.vx < 0 : b.vx > 0;
+  const heading = Math.sign(b.vx);
+  if (heading !== ai.heading) {
+    ai.heading = heading;
+    // A new aim per incoming ball: hit with the paddle edge that sends it away from the opponent.
+    const opp = m.paddles[other(side)].y;
+    const away = opp < COURT.h / 2 ? 1 : -1;
+    ai.aim = toward && cfg.aim > 0 ? away * cfg.aim * (0.5 + rng() * 0.5) : 0;
+  }
   ai.think -= dt;
   if (ai.think <= 0) {
     ai.think = cfg.every;
     if (m.serveIn > 0 || b.vx === 0) ai.target = COURT.h / 2;
-    else if (toward) ai.target = predictY(b, paddleX(side)) + (rng() * 2 - 1) * cfg.error;
-    else ai.target = COURT.h / 2 + (b.y - COURT.h / 2) * (1 - cfg.idle);
+    else if (toward) {
+      const x = paddleX(side);
+      const eta = Math.abs((x - b.x) / b.vx);
+      const lean = eta < AIM_WINDOW ? ai.aim * (PADDLE.h / 2) : 0;
+      // Faster balls are harder to read, so the error grows with ball speed.
+      const pace = Math.hypot(b.vx, b.vy) / BASE_SPEED;
+      ai.target = predictY(b, x) - lean + (rng() * 2 - 1) * cfg.error * pace * pace;
+    } else ai.target = COURT.h / 2 + (b.y - COURT.h / 2) * (1 - cfg.idle);
   }
   steerPaddle(m.paddles[side], ai.target, dt, cfg.speed);
+}
+
+/** Guest-side prediction between host snapshots: the ball keeps flying and bouncing off walls, nothing scores. */
+export function extrapolateBall(m: Match, dt: number) {
+  if (m.winner !== null || m.serveIn > 0 || dt <= 0) return;
+  const b = m.ball;
+  if (b.x < 0 || b.x > COURT.w) return;
+  b.vy += b.spin * dt * 30;
+  b.spin -= b.spin * Math.min(1, SPIN_DECAY * dt);
+  b.x += b.vx * dt;
+  b.y += b.vy * dt;
+  if (b.y < BALL_R) {
+    b.y = BALL_R + (BALL_R - b.y);
+    b.vy = Math.abs(b.vy);
+  } else if (b.y > COURT.h - BALL_R) {
+    b.y = COURT.h - BALL_R - (b.y - (COURT.h - BALL_R));
+    b.vy = -Math.abs(b.vy);
+  }
 }
 
 export const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
