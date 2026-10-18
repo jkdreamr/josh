@@ -2,14 +2,16 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { AMMO_BOX, AMMO_TYPES, ARMOR_CUT, ARMOR_KINDS, BOOST, HP_MAX, MAX_ARMOR, MAX_PACK, MAX_RARITY, MELEE, MELEE_IDS, SHIELD_MAX, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, WOOD_MAX, ammoCap, armorMult, damageOf, lootName, parseLoot, rng32, rollLoot, throwCap, useCap, type LootDef, type WeaponId } from '../src/os/arcade/games/scramble/items.ts';
+import { AMMO_BOX, AMMO_TYPES, ARMOR_CUT, ARMOR_KINDS, BOOST, FLARE_WAIT, HP_MAX, SIP, legendary, type ThrowId, MAX_ARMOR, MAX_PACK, MAX_RARITY, MELEE, MELEE_IDS, SHIELD_MAX, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, WOOD_MAX, ammoCap, armorMult, damageOf, lootName, parseLoot, rng32, rollLoot, throwCap, useCap, type LootDef, type WeaponId } from '../src/os/arcade/games/scramble/items.ts';
 import {
   BEACH,
   BUS_Y,
   DOOR,
   DROP_BASE,
   EDGE,
+  FLARE_DROPS,
   HALF,
+  SUPPLY_HALF,
   PEEK,
   POND_SLOW,
   STORM_PHASES,
@@ -19,8 +21,10 @@ import {
   buildingAt,
   busAt,
   coverAt,
+  dropFits,
   generateMap,
   peekAt,
+  pondAt,
   pushBox,
   pushCircle,
   pushObb,
@@ -44,7 +48,13 @@ import {
   FALL,
   FIGHTER_COLORS,
   FIGHTER_R,
+  F_ALL,
+  F_HEALING,
   F_PAN,
+  F_SMOOTHIE,
+  F_SPIN,
+  F_TART,
+  GROWN,
   INTERP,
   LEVELS,
   LEVEL_SPECS,
@@ -61,6 +71,8 @@ import {
   autopilot,
   bestUse,
   botNames,
+  callDrop,
+  canUse,
   canSee,
   castRay,
   clearLine,
@@ -68,10 +80,13 @@ import {
   createMatch,
   damageCrate,
   dropId,
+  dropSpot,
+  flagsOf,
   held,
   hurt,
   makeWall,
   noInput,
+  openable,
   panBlocks,
   prompt,
   scoreOf,
@@ -86,7 +101,7 @@ import {
   type Level,
   type Match,
 } from '../src/os/arcade/games/scramble/logic.ts';
-import { applyNet, configOf, endOf, guestState, hitCap, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
+import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
 import { END_PAUSE, FIRST_GRACE, FLUSH, STALE, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
 
@@ -111,6 +126,7 @@ function openSpot(m: Match) {
   m.map.buildings = [];
   m.map.containers = [];
   m.map.drops = [];
+  m.map.flares = [];
   m.opened = [];
   m.crateHp = [];
   m.loot.clear();
@@ -186,7 +202,9 @@ test('every island has all its buildings, each with the doorways it should have,
     assert.ok(kinds('chest').length >= 20, 'a chest in every house and farm, and more besides');
     assert.equal(kinds('chest').filter((c) => c.gold).length, 1, 'one golden chest, in the Golden Coop');
     assert.ok(kinds('barrel').length >= 16, 'barrels about');
-    assert.equal(kinds('supply').length, 3);
+    assert.equal(kinds('supply').filter((c) => !c.flare).length, 3);
+    assert.equal(m.flares.length, FLARE_DROPS, 'and the ones flare guns call, waiting');
+    for (const id of m.flares) assert.ok(m.containers[id].flare && m.containers[id].at === Infinity && m.containers[id].kind === 'supply');
   }
 });
 
@@ -472,7 +490,9 @@ test('a bullet hits shields first, the storm goes straight for health', () => {
 
 test('rarer guns hit harder and reload faster', () => {
   for (const w of Object.keys(WEAPONS) as (keyof typeof WEAPONS)[]) {
-    for (let r = 1; r <= 4; r++) assert.ok(damageOf(w, r) > damageOf(w, r - 1));
+    // a flare gun hurts nobody, at any rarity
+    if (WEAPONS[w].call) for (let r = 0; r <= 4; r++) assert.equal(damageOf(w, r), 0);
+    else for (let r = 1; r <= 4; r++) assert.ok(damageOf(w, r) > damageOf(w, r - 1));
   }
 });
 
@@ -490,8 +510,9 @@ test('no gun cracks a full-health egg with one pull of the trigger at any rarity
   }
   for (const w of MELEE_IDS) assert.ok(MELEE[w].dmg < HP_MAX, w);
 
-  // and for real, a legendary of each fired once from two steps away
+  // and for real, a legendary of each fired once from two steps away (but a flare, which only calls a drop)
   for (const w of WEAPON_IDS) {
+    if (WEAPONS[w].call) continue;
     const m = quiet();
     const [a, b] = m.fighters;
     openSpot(m);
@@ -499,6 +520,8 @@ test('no gun cracks a full-health egg with one pull of the trigger at any rarity
     land(b, 0, 2);
     a.guns[0] = { w, r: MAX_RARITY, mag: WEAPONS[w].mag };
     a.slot = 0;
+    // a minigun already spun up
+    if (WEAPONS[w].spin) a.spin = 1;
     a.input.aim = 0;
     a.input.fire = true;
     run(m, DT);
@@ -879,6 +902,11 @@ test('a hit from another client can do no more than that weapon ever could', () 
     return !!p && p.k === 'e' && p.groups[0]?.[1].length === 1;
   };
   for (const w of WEAPON_IDS) {
+    if (WEAPONS[w].call) {
+      assert.equal(hitCap(w), 0);
+      assert.ok(!hit(1, w), 'a flare hits nobody');
+      continue;
+    }
     const most = perHit(w, MAX_RARITY);
     assert.equal(hitCap(w), most);
     assert.ok(hit(most, w), w);
@@ -888,7 +916,7 @@ test('a hit from another client can do no more than that weapon ever could', () 
   assert.ok(hit(MELEE.cleaver.dmg, 'cleaver') && !hit(MELEE.cleaver.dmg + 1, 'cleaver'));
   assert.ok(hit(THROWS.grenade.dmg!, 'grenade') && !hit(THROWS.grenade.dmg! + 1, 'grenade'));
   // each client works these out for its own egg, so they never come as hits
-  for (const w of ['storm', 'sauce', 'barrel', 'left']) assert.ok(!hit(1, w), w);
+  for (const w of ['storm', 'sauce', 'barrel', 'impulse', 'left']) assert.ok(!hit(1, w), w);
 });
 
 test('what happens here becomes network news only when someone else needs it', () => {
@@ -1167,7 +1195,7 @@ test('a guest slow to load gets a while to send its first report; one that repor
  * A host and one guest on bare grass a few seconds in: the host's egg 8 m east of the guest's. `toHost` and
  * `toGuest` pass on whatever has happened on that side since, through the room.
  */
-function pair() {
+function pair(open = true) {
   const players: Player[] = [{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }];
   const host = hostMatch(players, 0, 4, 'normal', 0, 0);
   const h = host.match;
@@ -1178,7 +1206,7 @@ function pair() {
   const gMe: Me = { seat: 1, isHost: false, round: 1 };
   for (const m of [h, g]) {
     m.time = 5;
-    openSpot(m);
+    if (open) openSpot(m);
     land(m.fighters[0], 8, 0);
     land(m.fighters[1], 0, 0);
   }
@@ -2022,6 +2050,480 @@ test('a host’s report of twenty eggs fits well inside one room message, and ne
   assert.ok(e && e.k === 'e');
   assert.deepEqual(e.groups[0][1], [ok], 'only the sane throw gets through');
   assert.deepEqual(toNet({ t: 'throw', f: 3, k: 'sauce', x: 1, z: 2, lx: 10, lz: 12, ft: 0.8 }), ok);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// More loot: the marksman rifle, heavy SMG, minigun and flare gun, impulse eggs, jam and bushes in a can, smoothies
+// and golden egg tarts.
+
+/** A spot on the open grass of a match's island where a supply drop could come down, well away from `not`. */
+function grass(m: Match, not?: { x: number; z: number }) {
+  for (let x = -120; x <= 120; x += 7)
+    for (let z = -120; z <= 120; z += 7) if (dropFits(m.map, x, z) && (!not || Math.hypot(x - not.x, z - not.z) > 90)) return { x, z };
+  throw new Error('no open grass');
+}
+
+/** Clears the island right down, ponds and cornfields too. */
+function bare(m: Match) {
+  openSpot(m);
+  m.map.ponds = [];
+  m.map.fields = [];
+}
+
+test('a marksman rifle sits between a rifle and a scout; a heavy SMG and a minigun hit hard but never in one pull', () => {
+  const [mk, rf, sc] = [WEAPONS.marksman, WEAPONS.rifle, WEAPONS.scout];
+  for (const k of ['dmg', 'range', 'zoom', 'speed'] as const) assert.ok(mk[k] > rf[k] && mk[k] < sc[k], k);
+  assert.ok(mk.rate < rf.rate && mk.rate > sc.rate, 'one careful shot at a time');
+  assert.ok(WEAPONS.hsmg.dmg > WEAPONS.smg.dmg && WEAPONS.hsmg.ammo === 'heavy' && WEAPONS.hsmg.kick, 'a heavy SMG climbs');
+  assert.ok(WEAPONS.minigun.mag >= 100 && WEAPONS.minigun.move < WEAPONS.lmg.move && WEAPONS.minigun.spin, 'a minigun spins and slows you');
+  for (const w of ['marksman', 'hsmg', 'minigun'] as const) assert.ok(perHit(w, MAX_RARITY) < HP_MAX / 2, w);
+});
+
+test('a heavy SMG climbs with every shot and settles when you let go, and the network carries how far it climbed', () => {
+  const m = quiet();
+  const [a] = m.fighters;
+  bare(m);
+  land(a, 0, 0);
+  a.guns[0] = { w: 'hsmg', r: 0, mag: WEAPONS.hsmg.mag };
+  a.slot = 0;
+  a.input.aim = 0;
+  a.input.fire = true;
+  const ks = run(m, 1.2).flatMap((e) => (e.t === 'shot' ? [e.k] : []));
+  assert.ok(ks.length > 8, `${ks.length} shots`);
+  assert.equal(ks[0], 1, 'the first shot goes where you aim');
+  for (let i = 1; i < ks.length; i++) assert.ok(ks[i] >= ks[i - 1], 'each one wider');
+  assert.ok(ks[ks.length - 1] >= 1.9 && ks[ks.length - 1] <= MAX_KICK, `climbed to ${ks[ks.length - 1]}`);
+  a.input.fire = false;
+  run(m, 0.6);
+  assert.equal(a.heat, 0, 'settled');
+  // the widest a shot can be gets through; anything wider doesn't
+  const shot = (k: number) => parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, [{ y: 's', f: 1, w: 'hsmg', r: 0, x: 0, z: 0, a: 0, s: 5, k }]]] });
+  const got = (k: number) => {
+    const p = shot(k);
+    return !!p && p.k === 'e' && p.groups.length === 1;
+  };
+  assert.ok(got(MAX_KICK) && !got(MAX_KICK + 0.1) && !got(0.9));
+});
+
+test('a minigun spins up before it fires, slows you while it spins, and spins down when you let go', () => {
+  const m = quiet();
+  const [a] = m.fighters;
+  bare(m);
+  land(a, 0, 0);
+  a.guns[0] = { w: 'minigun', r: 0, mag: WEAPONS.minigun.mag };
+  a.slot = 0;
+  a.input.fire = true;
+  assert.ok(!run(m, WEAPONS.minigun.spin!.up - 0.1).some((e) => e.t === 'shot'), 'not while it spins up');
+  assert.ok(a.spin > 0.8 && (flagsOf(a) & F_SPIN) !== 0, 'and everyone sees it spin');
+  assert.ok(run(m, 1).filter((e) => e.t === 'shot').length >= 12, 'then a stream');
+  a.input.mz = 1;
+  run(m, 0.5);
+  const spinning = Math.hypot(a.vx, a.vz);
+  a.input.fire = false;
+  run(m, 1.5);
+  assert.equal(a.spin, 0, 'spun down');
+  const idle = Math.hypot(a.vx, a.vz);
+  assert.ok(Math.abs(idle - SPEED * WEAPONS.minigun.move) < 0.05, `${idle}`);
+  assert.ok(Math.abs(spinning / idle - WEAPONS.minigun.spin!.slow) < 0.02, `${spinning} vs ${idle}`);
+  // switching away stops it at once
+  a.input.fire = true;
+  run(m, 0.5);
+  a.input.slot = SLOT_MELEE;
+  run(m, DT);
+  assert.equal(a.spin, 0);
+});
+
+test('a flare gun fires once, straight up, and the host sends a supply drop down near it a while later', () => {
+  const m = quiet(5);
+  const [a, b] = m.fighters;
+  const p = grass(m);
+  land(a, p.x, p.z);
+  const q = grass(m, p);
+  land(b, q.x, q.z);
+  a.guns[0] = { w: 'flare', r: MAX_RARITY, mag: 1 };
+  a.slot = 0;
+  a.input.fire = true;
+  const evs = run(m, DT);
+  a.input.fire = false;
+  assert.ok(evs.some((e) => e.t === 'shot' && e.w === 'flare'));
+  assert.equal(m.bullets.length, 0, 'no bullet flies');
+  assert.equal(a.guns[0], null, 'the gun is spent');
+  assert.equal(a.slot, SLOT_MELEE);
+  const call = evs.find((e) => e.t === 'called');
+  assert.ok(call && call.t === 'called' && call.f === a.id);
+  const c = m.map.containers[call.c];
+  assert.ok(c.flare && c.kind === 'supply' && m.map.flares.includes(c.id));
+  assert.ok(Math.abs(c.at - (m.time + FLARE_WAIT)) < 0.1, `lands at ${c.at}`);
+  assert.ok(Math.hypot(c.x - p.x, c.z - p.z) < 0.2, 'right where it was fired, with room there');
+  for (const l of c.loot) assert.ok(Math.hypot(l.x - c.x, l.z - c.z) < 3, 'its loot comes with it');
+  assert.ok(!openable(m, c), 'still up in the sky');
+  assert.equal(callDrop(m, a.id, p.x, p.z), -1, 'one flare an egg every ten seconds');
+  // it floats down like any supply drop, and everyone hears it coming
+  assert.ok(run(m, FLARE_WAIT - SUPPLY_FALL + 0.1).some((e) => e.t === 'supply' && e.c === c.id));
+  run(m, SUPPLY_FALL);
+  assert.ok(openable(m, c), 'down, and ready to open');
+  assert.equal(castRay(m, c.x - 2, c.z, 1, 0, 4, -1, false)?.what, 'chest', 'and in the way like one');
+  // and only so many drops a match
+  m.time += 11;
+  const more = [callDrop(m, a.id, p.x, p.z), callDrop(m, b.id, q.x, q.z)];
+  m.time += 11;
+  more.push(callDrop(m, a.id, p.x, p.z), callDrop(m, b.id, q.x, q.z));
+  assert.equal(more.filter((id) => id >= 0).length, FLARE_DROPS - 1, 'the rest of them, and no more');
+  assert.ok(more.slice(0, FLARE_DROPS - 1).every((id, i) => id >= 0 && id !== c.id && more.indexOf(id) === i));
+});
+
+test('a called supply drop always comes down on open grass, clear of buildings and anything solid, where an egg can get to it', () => {
+  for (let seed = 1; seed <= 10; seed++) {
+    const m = createMatch({ seed, role: 'solo', level: 'normal', entrants: [{ name: 'a', color: '#fff', kind: 'player', seat: -1 }], me: 0, countdown: 0 });
+    // fired from inside every building, from the middle of the ponds and the cornfields, and from the very corner
+    const from = [...m.map.buildings, ...m.map.ponds, ...m.map.fields, { x: EDGE, z: -EDGE }];
+    for (const p of from) {
+      const s = dropSpot(m, p.x, p.z);
+      assert.ok(s, `seed ${seed}: room near ${p.x},${p.z}`);
+      assert.ok(Math.hypot(s.x - p.x, s.z - p.z) < 45, 'not far off');
+      assert.ok(dropFits(m.map, s.x, s.z));
+      assert.ok(m.map.buildings.every((b) => Math.abs(s.x - b.x) >= b.w / 2 + 3 || Math.abs(s.z - b.z) >= b.d / 2 + 3), 'nowhere near a roof');
+      assert.ok(pondAt(m.map, s.x, s.z) < 0 && coverAt(m.map, s.x, s.z) < 0 && Math.abs(s.x) < HALF - BEACH && Math.abs(s.z) < HALF - BEACH, 'on the grass');
+      const reach = walkable(m.map, s.x - 8, s.z - 8, s.x + 8, s.z + 8);
+      assert.ok(reach(s.x, s.z, SUPPLY_HALF + 0.6), `seed ${seed}: open ground round it`);
+    }
+    assert.ok(!dropFits(m.map, m.map.buildings[0].x, m.map.buildings[0].z), 'never on a building');
+  }
+});
+
+test('online, a guest’s flare calls a drop the host places, and every client has it in the same place at the same time', () => {
+  const { h, g, hs, hMe, toHost, toGuest } = pair(false);
+  const p = grass(h);
+  for (const m of [h, g]) land(m.fighters[1], p.x, p.z);
+  const mine = g.fighters[1];
+  mine.guns[0] = { w: 'flare', r: MAX_RARITY, mag: 1 };
+  mine.slot = 0;
+  mine.input.fire = true;
+  step(g, DT);
+  mine.input.fire = false;
+  const id = g.map.flares[0];
+  assert.equal(g.map.containers[id].at, Infinity, 'only the host calls a drop');
+  toHost();
+  const hc = h.map.containers[id];
+  assert.ok(hc.at < Infinity && Math.hypot(hc.x - p.x, hc.z - p.z) < 0.2, 'the host placed it where it sees the guest');
+  toGuest();
+  const gc = g.map.containers[id];
+  assert.deepEqual([gc.x, gc.z, gc.at], [hc.x, hc.z, hc.at]);
+  assert.deepEqual(gc.loot, hc.loot);
+  assert.ok(g.events.some((e) => e.t === 'called' && e.net));
+  // a guest can't place one itself, and nobody can move one that has been called
+  const fake: NetEv = { y: 'fd', f: 1, c: h.map.flares[1], x: 0, z: 0, at: 1 };
+  receive(hs, h, hMe, 1, JSON.parse(JSON.stringify({ t: 'pk', r: 1, k: 'e', g: [[1, [fake]]] })), () => h, 0);
+  assert.equal(h.map.containers[h.map.flares[1]].at, Infinity, 'the host ignores a guest that says it called one');
+  applyNet(g, { y: 'fd', f: 0, c: id, x: 10, z: 10, at: 99 });
+  assert.deepEqual([gc.x, gc.z, gc.at], [hc.x, hc.z, hc.at], 'a drop on its way stays put');
+  applyNet(g, { y: 'fd', f: 0, c: 0, x: 10, z: 10, at: 99 });
+  assert.equal(g.map.containers[0].at, 0, 'and only a drop kept for flares can be called');
+  // the news is checked on the way in
+  const ok = { y: 'fd', f: 0, c: 70, x: 12.5, z: -40, at: 60 };
+  const e = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[0, [ok, { ...ok, x: HALF + 1 }, { ...ok, at: -1 }, { ...ok, at: 9999 }, { ...ok, c: -1 }, { ...ok, c: 1.5 }, { ...ok, f: 20 }, { ...ok, z: 'x' }]]] });
+  assert.ok(e && e.k === 'e');
+  assert.deepEqual(e.groups[0][1], [ok], 'only the sane one gets through');
+  assert.deepEqual(toNet({ t: 'called', f: 0, c: 70, x: 12.5, z: -40, at: 60 }), ok);
+  assert.equal(toNet({ t: 'called', f: 0, c: 70, x: 12.5, z: -40, at: 60, net: true }), null);
+});
+
+/** Has egg `a` throw what it has of a kind straight north, `reach` meters. */
+function throwNorth(m: Match, a: Fighter, k: ThrowId, reach: number) {
+  a.throws[k] = Math.max(1, a.throws[k]);
+  a.input.pick = k;
+  run(m, 0.25);
+  a.fireT = 0;
+  a.input.aim = 0;
+  a.input.reach = reach;
+  a.input.fire = true;
+  const evs = run(m, 0.02);
+  a.input.fire = false;
+  return evs.find((e) => e.t === 'throw');
+}
+
+test('a bush in a can grows where it lands and hides whoever stands in it until they fire, for half a minute', () => {
+  const m = quiet(7, 2);
+  const [a, b] = m.fighters;
+  bare(m);
+  land(a, 0, 0);
+  land(b, 0, 10);
+  assert.ok(canSee(m, a, b, 60));
+  assert.ok(throwNorth(m, a, 'bush', 10));
+  run(m, 1);
+  assert.equal(m.zones.length, 1);
+  assert.equal(m.zones[0].k, 'bush');
+  assert.equal(b.bush, GROWN, 'in the bush');
+  assert.ok(concealed(m, b, a) && !canSee(m, a, b, 60), 'and out of sight');
+  b.firedAt = m.clock;
+  assert.ok(!concealed(m, b, a), 'firing gives it away');
+  b.firedAt = -99;
+  // on another client the bush grows from the same throw, and hides the egg there too
+  const g = createMatch({ seed: 7, role: 'guest', level: 'normal', entrants: [{ name: 'a', color: '#fff', kind: 'remote', seat: 0 }, { name: 'b', color: '#fff', kind: 'player', seat: 1 }], me: 1, countdown: 0 });
+  g.time = 5;
+  bare(g);
+  land(g.fighters[0], 0, 0);
+  land(g.fighters[1], 0, 10);
+  applyNet(g, { y: 'th', f: 0, k: 'bush', x: 0, z: 0, lx: 0, lz: 10, ft: 0.6 });
+  run(g, 1);
+  assert.equal(g.fighters[1].bush, GROWN);
+  run(m, THROWS.bush.time!);
+  assert.equal(m.zones.length, 0, 'it dies back');
+  assert.equal(b.bush, -1);
+  assert.ok(canSee(m, a, b, 60));
+});
+
+test('an impulse egg shoves eggs and loot away and barely scratches; each client shoves only its own eggs, the host the loot', () => {
+  const m = quiet(7, 3);
+  const [a, b, c] = m.fighters;
+  bare(m);
+  land(a, 0, 0);
+  land(b, 0, 8.6);
+  land(c, -2.6, 10.6);
+  m.loot.set(77, { id: 77, def: { kind: 'wood', n: 10 }, x: 2.5, z: 9.5, by: -1, at: 0 });
+  assert.ok(throwNorth(m, a, 'impulse', 9.5));
+  const evs = run(m, 2);
+  const pulse = evs.find((e) => e.t === 'pulse');
+  assert.ok(pulse && pulse.t === 'pulse' && pulse.net, 'every client sets off its own');
+  assert.ok(b.z < 8.6 - 1.5, `b was shoved back toward the thrower (${b.z})`);
+  assert.ok(Math.hypot(c.x + 2.6, c.z - 10.6) > 1, 'c was shoved too');
+  assert.ok(Math.hypot(c.x, c.z - 9.5) > Math.hypot(-2.6, 1.1), 'away from where it went off');
+  assert.ok(b.hp < 100 && b.hp >= 100 - THROWS.impulse.dmg!, `a scratch (${b.hp})`);
+  assert.equal(b.lastBy, a.id);
+  assert.equal(a.hp, 100);
+  assert.ok(Math.hypot(a.x, a.z) < 0.01, 'never the thrower');
+  const l = m.loot.get(77)!;
+  assert.ok(l.x > 3, `the wood slid away (${l.x})`);
+  const moved = evs.find((e) => e.t === 'moved');
+  assert.ok(moved && moved.t === 'moved' && moved.id === 77 && !moved.net);
+  assert.deepEqual(toNet(moved), { y: 'lv', id: 77, x: l.x, z: l.z });
+  assert.equal(toNet(pulse), null, 'nobody needs telling');
+  // the shove wears off
+  run(m, 1.5);
+  assert.ok(Math.hypot(b.kx, b.kz) === 0 && Math.hypot(b.vx, b.vz) < 0.1);
+
+  // on a guest: our own egg is shoved, someone else's is theirs to shove, and the loot waits for the host
+  const g = createMatch({ seed: 7, role: 'guest', level: 'normal', entrants: [{ name: 'a', color: '#fff', kind: 'remote', seat: 0 }, { name: 'b', color: '#fff', kind: 'player', seat: 1 }, { name: 'c', color: '#fff', kind: 'remote', seat: 2 }], me: 1, countdown: 0 });
+  g.time = 5;
+  bare(g);
+  land(g.fighters[0], 0, 0);
+  land(g.fighters[1], 0, 8.6);
+  land(g.fighters[2], -2.6, 10.6);
+  g.loot.set(77, { id: 77, def: { kind: 'wood', n: 10 }, x: 2.5, z: 9.5, by: -1, at: 0 });
+  applyNet(g, { y: 'th', f: 0, k: 'impulse', x: 0, z: 0, lx: 0, lz: 9.5, ft: 0.56 });
+  const gevs = run(g, 2);
+  assert.ok(g.fighters[1].z < 8.6 - 1.5, 'ours flew');
+  assert.ok(Math.hypot(g.fighters[2].x + 2.6, g.fighters[2].z - 10.6) < 1e-9, 'theirs waits for its owner');
+  assert.deepEqual([g.loot.get(77)!.x, g.loot.get(77)!.z], [2.5, 9.5], 'the loot waits for the host');
+  assert.ok(!gevs.some((e) => e.t === 'moved'));
+  applyNet(g, { y: 'lv', id: 77, x: l.x, z: l.z });
+  assert.deepEqual([g.loot.get(77)!.x, g.loot.get(77)!.z], [l.x, l.z], 'and moves on its word');
+  // someone shoved reports how fast it's really going
+  b.kx = 6;
+  b.vx = 1;
+  assert.equal(stateOf(b).vx, 7);
+  const e = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[0, [{ y: 'lv', id: 77, x: 1, z: 2 }, { y: 'lv', id: -1, x: 1, z: 2 }, { y: 'lv', id: 77, x: HALF + 1, z: 2 }, { y: 'lv', id: 77, x: 1 }]]] });
+  assert.ok(e && e.k === 'e' && e.groups[0][1].length === 1, 'loot moves only to the island');
+});
+
+test('jam slows anyone wading through it to a crawl until it dries up', () => {
+  const m = quiet(7, 2);
+  const [a, b] = m.fighters;
+  bare(m);
+  land(a, 0, 0);
+  land(b, 0, 10);
+  assert.ok(throwNorth(m, a, 'jam', 10));
+  run(m, 1);
+  assert.equal(m.zones[0]?.k, 'jam');
+  b.input.mx = 1;
+  run(m, 0.5);
+  const pace = SPEED * MELEE.spatula.move;
+  assert.ok(Math.abs(Math.hypot(b.vx, b.vz) - pace * THROWS.jam.slow!) < 0.05, `stuck at ${Math.hypot(b.vx, b.vz)}`);
+  b.input.mx = 0;
+  run(m, THROWS.jam.time!);
+  assert.equal(m.zones.length, 0);
+  b.input.mx = -1;
+  run(m, 0.5);
+  assert.ok(Math.abs(Math.hypot(b.vx, b.vz) - pace) < 0.05, 'dried up');
+});
+
+test('a smoothie tops up the shield a little at a time; a golden egg tart fills health and boost', () => {
+  const m = quiet();
+  const [a] = m.fighters;
+  bare(m);
+  land(a, 0, 0);
+  a.items.smoothie = 1;
+  a.input.use = 'smoothie';
+  run(m, USES.smoothie.time + 0.05);
+  assert.equal(a.items.smoothie, 0);
+  assert.ok(a.shield < 2, 'not all at once');
+  run(m, 5);
+  assert.ok(Math.abs(a.shield - 5 * SIP) < 1, `${a.shield}`);
+  run(m, 10);
+  assert.ok(Math.abs(a.shield - USES.smoothie.sip!) < 0.01, 'and no more than it holds');
+  // never past the cap, and a full shield has no use for one
+  a.shield = 80;
+  a.sip = USES.smoothie.sip!;
+  run(m, 12);
+  assert.equal(a.shield, SHIELD_MAX);
+  assert.ok(!canUse(a, 'smoothie'));
+  // the tart
+  a.hp = 20;
+  a.boost = 0;
+  a.items.tart = 1;
+  a.input.use = 'tart';
+  run(m, USES.tart.time + 0.05);
+  assert.equal(a.hp, HP_MAX);
+  assert.ok(a.boost > BOOST.max - 1);
+  assert.ok(!canUse(a, 'tart'), 'nothing left for one to do');
+  // which one the heal and shield keys reach for
+  a.items = { ...a.items, bandage: 3, medkit: 1, tart: 1, mini: 1, smoothie: 1, shield: 1 };
+  a.shield = 0;
+  a.hp = 30;
+  assert.equal(bestUse(a, 'heal'), 'tart', 'nearly cracked');
+  a.hp = 50;
+  assert.equal(bestUse(a, 'heal'), 'medkit');
+  assert.equal(bestUse(a, 'shield'), 'mini');
+  a.items.mini = 0;
+  assert.equal(bestUse(a, 'shield'), 'smoothie');
+});
+
+test('crates mostly hold a box of ammo besides; a flare gun is rare, always legendary, and legendary loot is marked to glow', () => {
+  const rng = rng32(3);
+  let crates = 0;
+  let boxed = 0;
+  let flares = 0;
+  let guns = 0;
+  for (let i = 0; i < 3000; i++) {
+    const defs = rollLoot(rng, 'crate');
+    crates++;
+    if (defs.some((d) => d.kind === 'ammo')) boxed++;
+    for (const tier of ['floor', 'crate', 'chest', 'gold', 'supply'] as const)
+      for (const d of tier === 'crate' ? defs : rollLoot(rng, tier)) {
+        if (d.kind !== 'gun') continue;
+        guns++;
+        if (d.w !== 'flare') continue;
+        flares++;
+        assert.equal(d.r, MAX_RARITY);
+        assert.ok(tier !== 'gold' && tier !== 'supply', 'a supply drop never holds what calls one');
+      }
+  }
+  assert.ok(boxed / crates > 0.6, `${boxed} of ${crates} crates`);
+  assert.ok(flares > 0 && flares / guns < 0.02, `${flares} flare guns of ${guns}`);
+  assert.ok(legendary({ kind: 'gun', w: 'rifle', r: MAX_RARITY }) && legendary({ kind: 'gun', w: 'flare', r: MAX_RARITY }) && legendary({ kind: 'use', w: 'tart', n: 1 }));
+  assert.ok(!legendary({ kind: 'gun', w: 'rifle', r: 3 }) && !legendary({ kind: 'use', w: 'medkit', n: 1 }) && !legendary({ kind: 'helmet', lv: 3 }));
+  // the new things travel
+  for (const def of [{ kind: 'gun', w: 'minigun', r: 2, mag: 50 }, { kind: 'throw', w: 'bush', n: 2 }, { kind: 'use', w: 'tart', n: 1 }, { kind: 'use', w: 'smoothie', n: 2 }] as LootDef[]) assert.deepEqual(parseLoot(JSON.parse(JSON.stringify(def))), def);
+  assert.equal(parseLoot({ kind: 'gun', w: 'minigun', r: 2, mag: WEAPONS.minigun.mag + 1 }), null);
+});
+
+test('a computer egg fires a flare gun it finds once nobody is about, then opens the drop it called', () => {
+  const m = quiet(5);
+  const [a, b] = m.fighters;
+  const p = grass(m);
+  land(a, p.x, p.z);
+  const q = grass(m, p);
+  land(b, q.x, q.z);
+  autopilot(m, a);
+  a.guns[1] = { w: 'flare', r: MAX_RARITY, mag: 1 };
+  a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  a.slot = 0;
+  const evs = run(m, 3);
+  const call = evs.find((e) => e.t === 'called');
+  assert.ok(call && call.t === 'called' && call.f === a.id, 'it called one');
+  assert.ok(!a.guns.some((g) => g?.w === 'flare'), 'and the flare gun is spent');
+  let opened = false;
+  run(m, FLARE_WAIT + 25, () => (opened ||= m.opened[call.c]));
+  assert.ok(opened, 'and went and opened it');
+});
+
+test('a hurt computer egg backs off into a bush of its own to patch up; one with an egg up close shoves it off', () => {
+  const m = quiet(3);
+  const [a, b] = m.fighters;
+  bare(m);
+  land(a, 0, 0);
+  land(b, 0, 16);
+  autopilot(m, a);
+  a.ai!.tossCool = 0;
+  a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  a.ammo.heavy = 90;
+  a.slot = 0;
+  a.hp = 30;
+  a.throws.bush = 1;
+  a.items.bandage = 5;
+  let threw: Ev | undefined;
+  let hid = false;
+  let healed = false;
+  run(m, 8, (evs) => {
+    threw ??= evs.find((e) => e.t === 'throw' && e.f === a.id && e.k === 'bush');
+    hid ||= a.bush === GROWN;
+    healed ||= evs.some((e) => e.t === 'use' && e.f === a.id);
+    b.hp = 100;
+  });
+  assert.ok(threw && threw.t === 'throw' && threw.lz < 0, 'thrown away from the egg it fights');
+  assert.ok(hid, 'and hid in it');
+  assert.ok(healed, 'and patched up');
+
+  const n = quiet(3);
+  const [c, d] = n.fighters;
+  bare(n);
+  land(c, 0, 0);
+  land(d, 0, 4.5);
+  autopilot(n, c);
+  c.ai!.tossCool = 0;
+  c.guns[0] = { w: 'smg', r: 0, mag: 30 };
+  c.ammo.light = 90;
+  c.slot = 0;
+  c.throws.impulse = 1;
+  let pushed = false;
+  run(n, 4, (evs) => {
+    pushed ||= evs.some((e) => e.t === 'pulse' && e.f === c.id);
+    d.hp = 100;
+  });
+  assert.ok(pushed, 'an impulse egg at close range');
+  assert.ok(Math.hypot(d.x, d.z - 4.5) > 2.5, 'and the other egg went flying');
+});
+
+test('a computer egg with a minigun keeps it spinning in a fight, and walks out of jam', () => {
+  const m = quiet(3);
+  const [a, b] = m.fighters;
+  bare(m);
+  land(a, 0, 0);
+  land(b, 0, 12);
+  autopilot(m, a);
+  a.guns[0] = { w: 'minigun', r: 0, mag: WEAPONS.minigun.mag };
+  a.ammo.light = 150;
+  a.slot = 0;
+  let shots = 0;
+  run(m, 5, (evs) => {
+    shots += evs.filter((e) => e.t === 'shot' && e.w === 'minigun').length;
+    b.hp = 100;
+  });
+  assert.ok(shots > 20, `${shots} rounds`);
+
+  const n = quiet(3);
+  const [c] = n.fighters;
+  bare(n);
+  land(c, 0, 0);
+  autopilot(n, c);
+  n.zones.push({ k: 'jam', x: 0, z: 0, r: THROWS.jam.radius, from: n.time, until: n.time + 8, by: 1 });
+  let out = false;
+  run(n, 4, () => (out ||= Math.hypot(c.x, c.z) > THROWS.jam.radius));
+  assert.ok(out, 'out of it');
+});
+
+test('the new flags travel with an egg’s state, and nothing past them', () => {
+  const m = quiet();
+  const f = m.fighters[0];
+  land(f, 1, 2);
+  const s = { ...stateOf(f), flags: F_ALL };
+  assert.deepEqual(parsePacket(guestState(1, s)), { k: 's', round: 1, state: s });
+  assert.equal(parsePacket(guestState(1, { ...s, flags: F_ALL + 1 })), null);
+  assert.ok((F_SPIN | F_SMOOTHIE | F_TART) <= F_ALL && F_TART > 255);
+  f.using = 'smoothie';
+  assert.equal(flagsOf(f) & F_SMOOTHIE, F_SMOOTHIE);
+  f.using = 'tart';
+  assert.equal(flagsOf(f) & (F_TART | F_HEALING), F_TART);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------

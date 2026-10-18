@@ -33,7 +33,7 @@ import { configOf, parsePacket, type Bots } from './net';
 import { END_PAUSE, FLUSH, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
 import { ARMOR_NAMES, MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { HALF, SUPPLY_FALL } from './map';
-import { AmmoIcon, ArmorIcon, EggIcon, HowToPlay, IslandArt, PackIcon, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon } from './hud';
+import { AmmoIcon, ArmorIcon, EggIcon, HowToPlay, IslandArt, PackIcon, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon, keyCode } from './hud';
 import { meta } from './meta';
 import './scramble.css';
 
@@ -232,7 +232,7 @@ type Pop = { el: HTMLDivElement | null; x: number; y: number; z: number; age: nu
 type Taps = { build: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number };
 const noTaps = (): Taps => ({ build: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0 });
 
-const BUSY_TEXT: Record<UseId, string> = { bandage: 'bandaging', medkit: 'using a medkit', mini: 'drinking a mini shield', shield: 'drinking a shield potion', coffee: 'drinking coffee' };
+const BUSY_TEXT: Record<UseId, string> = { bandage: 'bandaging', medkit: 'using a medkit', mini: 'drinking a mini shield', shield: 'drinking a shield potion', coffee: 'drinking coffee', smoothie: 'drinking a smoothie', tart: 'eating a golden egg tart' };
 /** A name with its article, for the kill feed: "with a pistol", "with an smg", "with hot sauce". */
 const withA = (name: string) => `${/^[aeiou]|^SMG/.test(name) ? 'an' : 'a'} ${name}`;
 function causeName(w: Cause) {
@@ -240,6 +240,7 @@ function causeName(w: Cause) {
   if (w === 'left') return '';
   if (w === 'sauce') return 'hot sauce';
   if (w === 'grenade' || w === 'barrel') return withA(w);
+  if (w === 'impulse') return withA('impulse egg');
   if (isMelee(w)) return withA(MELEE[w].name);
   return withA(WEAPONS[w].name);
 }
@@ -284,6 +285,7 @@ function Play({ mode }: { mode: Mode }) {
   const bannerRef = useRef({ text: '', until: -1 });
   const spectate = useRef(-1);
   const soloEnd = useRef(-1);
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__scramble = { match: () => match.current, view: () => view.current, net: () => net.current };
 
   // input that arrives between frames
   const mouse = useRef({ x: 0, y: 0, inside: false, down: false, clicked: false });
@@ -530,7 +532,7 @@ function Play({ mode }: { mode: Mode }) {
     if (keys.pressed('KeyR') || t.reload) inp.reload = true;
     if (keys.pressed('KeyE', 'KeyF') || t.interact) inp.interact = true;
     USE_IDS.forEach((w) => {
-      if (keys.pressed(`Digit${USE_KEYS[w]}`)) inp.use = w;
+      if (keys.pressed(keyCode(USE_KEYS[w]))) inp.use = w;
     });
     if (keys.pressed('KeyH')) inp.use = 'bestHeal';
     if (keys.pressed('KeyG')) inp.use = 'bestShield';
@@ -739,6 +741,23 @@ function Play({ mode }: { mode: Mode }) {
         sfx.tone({ freq: 220, to: 560, dur: 0.25, type: 'sawtooth', vol: 0.07 * k });
         sfx.noise(0.15, 0.1 * k);
         break;
+      case 'hsmg':
+        sfx.noise(0.05, 0.13 * k);
+        sfx.tone({ freq: 640, to: 160, dur: 0.05, type: 'square', vol: 0.05 * k });
+        break;
+      case 'marksman':
+        sfx.noise(0.12, 0.2 * k);
+        sfx.tone({ freq: 800, to: 120, dur: 0.15, type: 'sawtooth', vol: 0.07 * k });
+        break;
+      case 'minigun':
+        sfx.noise(0.03, 0.09 * k);
+        sfx.tone({ freq: 300, to: 120, dur: 0.035, type: 'sawtooth', vol: 0.04 * k });
+        break;
+      case 'flare':
+        // a pop and a whistle going up
+        sfx.noise(0.1, 0.18 * k);
+        sfx.tone({ freq: 500, to: 1800, dur: 0.9, type: 'triangle', vol: 0.06 * k });
+        break;
     }
   }
 
@@ -798,7 +817,11 @@ function Play({ mode }: { mode: Mode }) {
         const k = near(e.x, e.z);
         if (k <= 0) break;
         if (e.k === 'flour') sfx.noise(0.35, 0.2 * k);
-        else {
+        else if (e.k === 'bush') sfx.tone({ freq: 220, to: 520, dur: 0.3, type: 'triangle', vol: 0.08 * k });
+        else if (e.k === 'jam') {
+          sfx.noise(0.2, 0.1 * k);
+          sfx.tone({ freq: 140, to: 80, dur: 0.25, type: 'triangle', vol: 0.07 * k });
+        } else {
           sfx.noise(0.5, 0.12 * k);
           sfx.tone({ freq: 160, to: 90, dur: 0.4, type: 'sawtooth', vol: 0.05 * k });
         }
@@ -834,6 +857,17 @@ function Play({ mode }: { mode: Mode }) {
         sfx.tone({ freq: 120, to: 40, dur: 0.4, type: 'sawtooth', vol: 0.12 * k });
         break;
       }
+      case 'pulse': {
+        // a soft thump and a whoosh
+        const k = near(e.x, e.z);
+        if (k <= 0) break;
+        sfx.tone({ freq: 90, to: 260, dur: 0.3, type: 'sine', vol: 0.14 * k });
+        sfx.noise(0.25, 0.12 * k);
+        break;
+      }
+      case 'called':
+        if (e.f === m.me) say('flare away: a supply drop is on its way', 3);
+        break;
       case 'reload':
         if (mine) sfx.play('tick', 0.7);
         break;
@@ -975,6 +1009,9 @@ function Play({ mode }: { mode: Mode }) {
     } else if (own && focus.using) {
       busy = 1 - focus.useT / USES[focus.using].time;
       busyText = BUSY_TEXT[focus.using];
+    } else if (own && g && WEAPONS[g.w].spin && focus.spin > 0 && focus.spin < 1) {
+      busy = focus.spin;
+      busyText = 'spinning up';
     }
     let promptText: string | null = null;
     if (me && me === focus && me.phase === 'ground') {
@@ -1003,8 +1040,9 @@ function Play({ mode }: { mode: Mode }) {
       melee: own ? focus.melee : isMelee(h.w) ? h.w : 'spatula',
       toss,
       mag: g ? g.mag : -1,
-      reserve: g && gw ? focus.ammo[gw.ammo] : 0,
-      ammo: gw ? gw.ammo : null,
+      reserve: g && gw && !gw.call ? focus.ammo[gw.ammo] : 0,
+      // a flare gun takes no ammo
+      ammo: gw && !gw.call ? gw.ammo : null,
       wood: own ? focus.wood : -1,
       items: own ? { ...focus.items } : null,
       scope: own ? focus.scope : 0,
@@ -1164,7 +1202,7 @@ function Play({ mode }: { mode: Mode }) {
   const s = m.storm;
   const stormPath = `M${-HALF - 40} ${-HALF - 40}H${HALF + 40}V${HALF + 40}H${-HALF - 40}Z M${(s.x - s.r).toFixed(1)} ${s.z.toFixed(1)}a${s.r.toFixed(1)} ${s.r.toFixed(1)} 0 1 0 ${(2 * s.r).toFixed(1)} 0a${s.r.toFixed(1)} ${s.r.toFixed(1)} 0 1 0 ${(-2 * s.r).toFixed(1)} 0Z`;
   // supply drops show on the map from the moment they're on their way until someone opens them
-  const drops = map.drops.map((id) => map.containers[id]).filter((c) => m.time >= c.at - SUPPLY_FALL && !m.opened[c.id]);
+  const drops = [...map.drops, ...map.flares].map((id) => map.containers[id]).filter((c) => c && m.time >= c.at - SUPPLY_FALL && !m.opened[c.id]);
   const mapMarks = (big: boolean) => (
     <>
       <path d={stormPath} fill="rgba(122, 60, 240, 0.45)" fillRule="evenodd" />
@@ -1182,8 +1220,8 @@ function Play({ mode }: { mode: Mode }) {
   );
   const box = `${-HALF - 8} ${-HALF - 8} ${2 * HALF + 16} ${2 * HALF + 16}`;
   const slotLabel = (i: number) => (touchMode ? '' : String(i + 1));
-  const heals = hud.items ? hud.items.bandage + hud.items.medkit : 0;
-  const shields = hud.items ? hud.items.mini + hud.items.shield : 0;
+  const heals = hud.items ? hud.items.bandage + hud.items.medkit + hud.items.tart : 0;
+  const shields = hud.items ? hud.items.mini + hud.items.shield + hud.items.smoothie : 0;
 
   return (
     <>
@@ -1395,7 +1433,7 @@ function Play({ mode }: { mode: Mode }) {
                       {on && i < 2 && g && hud.mag >= 0 && (
                         <em>
                           {hud.mag}
-                          <span>/{hud.reserve}</span>
+                          {hud.ammo && <span>/{hud.reserve}</span>}
                         </em>
                       )}
                     </button>
@@ -1488,11 +1526,11 @@ function Play({ mode }: { mode: Mode }) {
                 <span>reload</span>
               </button>
               <button type="button" tabIndex={-1} aria-label="Heal" className={heals ? undefined : 'is-none'} {...tap((t) => (t.use = 'bestHeal'))}>
-                <UseIcon w={hud.items && !hud.items.bandage && hud.items.medkit ? 'medkit' : 'bandage'} size={22} />
+                <UseIcon w={hud.items && !hud.items.bandage ? (hud.items.medkit ? 'medkit' : hud.items.tart ? 'tart' : 'bandage') : 'bandage'} size={22} />
                 <span>{heals}</span>
               </button>
               <button type="button" tabIndex={-1} aria-label="Top up shield" className={shields ? undefined : 'is-none'} {...tap((t) => (t.use = 'bestShield'))}>
-                <UseIcon w={hud.items && !hud.items.mini && hud.items.shield ? 'shield' : 'mini'} size={22} />
+                <UseIcon w={hud.items && !hud.items.mini ? (hud.items.smoothie ? 'smoothie' : hud.items.shield ? 'shield' : 'mini') : 'mini'} size={22} />
                 <span>{shields}</span>
               </button>
               <button type="button" tabIndex={-1} aria-label="Drink a coffee" className={hud.items?.coffee ? undefined : 'is-none'} {...tap((t) => (t.use = 'coffee'))}>

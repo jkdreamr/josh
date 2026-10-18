@@ -31,7 +31,7 @@ const clampInt = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi
 // ---------------------------------------------------------------------------------------------------------------------
 // Guns.
 
-export const WEAPON_IDS = ['pistol', 'revolver', 'smg', 'micro', 'rifle', 'burst', 'scout', 'lmg', 'shotgun', 'auto', 'double', 'sniper', 'crossbow', 'launcher'] as const;
+export const WEAPON_IDS = ['pistol', 'revolver', 'flare', 'smg', 'micro', 'hsmg', 'rifle', 'burst', 'marksman', 'scout', 'lmg', 'minigun', 'shotgun', 'auto', 'double', 'sniper', 'crossbow', 'launcher'] as const;
 export type WeaponId = (typeof WEAPON_IDS)[number];
 export const isWeapon = (v: unknown): v is WeaponId => WEAPON_IDS.includes(v as WeaponId);
 
@@ -74,17 +74,27 @@ export type WeaponSpec = {
   move: number;
   /** Extra meters of view while holding it (a built-in scope). */
   zoom: number;
+  /** Each shot adds `per` to the spread multiplier, up to `max` more, and it settles at `cool` a second. */
+  kick?: { per: number; max: number; cool: number };
+  /** Seconds the barrels take to spin up before the first shot, and how much slower you walk while they spin. */
+  spin?: { up: number; slow: number };
+  /** A flare gun: one flare straight up that calls a supply drop, then it's spent. No ammo, no reload. */
+  call?: boolean;
 };
 
 export const WEAPONS: Record<WeaponId, WeaponSpec> = {
   pistol: { name: 'pistol', cls: 'pistol', dmg: 16, rate: 4.5, mag: 14, reload: 1.3, spread: 0.035, speed: 120, range: 50, ammo: 'light', pellets: 1, wallMult: 1, move: 1, zoom: 0 },
+  flare: { name: 'flare gun', cls: 'pistol', dmg: 0, rate: 1, mag: 1, reload: 0, spread: 0, speed: 0, range: 0, ammo: 'rockets', pellets: 0, wallMult: 0, move: 1, zoom: 0, call: true },
   revolver: { name: 'hand cannon', cls: 'pistol', dmg: 33, rate: 1.7, mag: 7, reload: 2, spread: 0.02, speed: 160, range: 62, ammo: 'heavy', pellets: 1, wallMult: 1.2, move: 1, zoom: 2 },
   smg: { name: 'SMG', cls: 'smg', dmg: 11, rate: 11, mag: 30, reload: 1.9, spread: 0.1, speed: 110, range: 38, ammo: 'light', pellets: 1, wallMult: 1, move: 1, zoom: 0 },
   micro: { name: 'micro SMG', cls: 'smg', dmg: 8, rate: 16, mag: 24, reload: 1.6, spread: 0.14, speed: 105, range: 30, ammo: 'light', pellets: 1, wallMult: 1, move: 1.04, zoom: 0 },
+  hsmg: { name: 'heavy SMG', cls: 'smg', dmg: 13, rate: 11.5, mag: 28, reload: 2.1, spread: 0.07, speed: 120, range: 42, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.98, zoom: 0, kick: { per: 0.11, max: 1, cool: 2.4 } },
   rifle: { name: 'rifle', cls: 'rifle', dmg: 20, rate: 5.5, mag: 30, reload: 2.3, spread: 0.045, speed: 140, range: 70, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.96, zoom: 2 },
   burst: { name: 'burst rifle', cls: 'rifle', dmg: 19, rate: 1.9, mag: 30, reload: 2.4, spread: 0.03, speed: 150, range: 75, ammo: 'heavy', pellets: 1, burst: { n: 3, gap: 0.075 }, wallMult: 1, move: 0.96, zoom: 3 },
+  marksman: { name: 'marksman rifle', cls: 'rifle', dmg: 27, rate: 2.8, mag: 12, reload: 2.4, spread: 0.016, speed: 175, range: 88, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.95, zoom: 5 },
   scout: { name: 'scout rifle', cls: 'sniper', dmg: 34, rate: 2.2, mag: 10, reload: 2.5, spread: 0.01, speed: 190, range: 100, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.94, zoom: 8 },
   lmg: { name: 'machine gun', cls: 'heavy', dmg: 16, rate: 9, mag: 80, reload: 4.6, spread: 0.09, speed: 135, range: 65, ammo: 'heavy', pellets: 1, wallMult: 1.3, move: 0.82, zoom: 2 },
+  minigun: { name: 'minigun', cls: 'heavy', dmg: 9, rate: 18, mag: 120, reload: 5.2, spread: 0.12, speed: 125, range: 55, ammo: 'light', pellets: 1, wallMult: 1.3, move: 0.74, zoom: 2, spin: { up: 0.9, slow: 0.8 } },
   shotgun: { name: 'pump shotgun', cls: 'shotgun', dmg: 8, rate: 1.1, mag: 6, reload: 2.6, spread: 0.24, speed: 95, range: 22, ammo: 'shells', pellets: 9, falloff: { near: 7, far: 20, min: 0.35 }, wallMult: 1, move: 0.96, zoom: 0 },
   auto: { name: 'auto shotgun', cls: 'shotgun', dmg: 7, rate: 3, mag: 8, reload: 3, spread: 0.22, speed: 95, range: 20, ammo: 'shells', pellets: 6, falloff: { near: 6, far: 18, min: 0.35 }, wallMult: 1, move: 0.95, zoom: 0 },
   double: { name: 'double barrel', cls: 'shotgun', dmg: 7, rate: 4, mag: 2, reload: 2.3, spread: 0.3, speed: 90, range: 16, ammo: 'shells', pellets: 10, falloff: { near: 5, far: 14, min: 0.3 }, wallMult: 1, move: 0.98, zoom: 0 },
@@ -99,6 +109,8 @@ const DMG_MULT = [1, 1.07, 1.14, 1.21, 1.3];
 const RELOAD_MULT = [1, 0.95, 0.9, 0.85, 0.8];
 export const MAX_RARITY = 4;
 export const clampRarity = (r: number) => clampInt(r, 0, MAX_RARITY);
+/** How long a flare takes from the shot to the supply drop it calls landing. */
+export const FLARE_WAIT = 15;
 export const damageOf = (w: WeaponId, rarity: number) => Math.round(WEAPONS[w].dmg * DMG_MULT[clampRarity(rarity)] * 10) / 10;
 export const reloadOf = (w: WeaponId, rarity: number) => WEAPONS[w].reload * RELOAD_MULT[clampRarity(rarity)];
 
@@ -141,7 +153,7 @@ export const PAN_ARC = 1;
 // ---------------------------------------------------------------------------------------------------------------------
 // Throwables.
 
-export const THROW_IDS = ['grenade', 'flour', 'sauce'] as const;
+export const THROW_IDS = ['grenade', 'impulse', 'flour', 'sauce', 'jam', 'bush'] as const;
 export type ThrowId = (typeof THROW_IDS)[number];
 export const isThrow = (v: unknown): v is ThrowId => THROW_IDS.includes(v as ThrowId);
 
@@ -154,15 +166,22 @@ export type ThrowSpec = {
   /** Grenades: seconds from the throw to the bang, and the damage at the center. */
   fuse?: number;
   dmg?: number;
-  /** Flour and hot sauce: seconds the cloud or the puddle lasts, and the puddle's burn per second. */
+  /** Flour, hot sauce, jam and the bush: seconds the cloud, puddle or bush lasts, and the hot sauce's burn per second. */
   time?: number;
   dps?: number;
+  /** An impulse egg's shove (meters a second at the middle). */
+  push?: number;
+  /** Jam: the share of its pace an egg keeps wading through it. */
+  slow?: number;
 };
 
 export const THROWS: Record<ThrowId, ThrowSpec> = {
   grenade: { name: 'grenade', plural: 'grenades', carry: 3, radius: 5.5, fuse: 2.2, dmg: 90 },
   flour: { name: 'flour bomb', plural: 'flour bombs', carry: 2, radius: 6.5, time: 11 },
   sauce: { name: 'hot sauce', plural: 'hot sauces', carry: 2, radius: 3.8, time: 6, dps: 12 },
+  impulse: { name: 'impulse egg', plural: 'impulse eggs', carry: 3, radius: 5.5, fuse: 1.2, dmg: 8, push: 22 },
+  jam: { name: 'jam jar', plural: 'jam jars', carry: 2, radius: 3.6, time: 8, slow: 0.35 },
+  bush: { name: 'bush in a can', plural: 'bushes in a can', carry: 2, radius: 1.9, time: 30 },
 };
 /** How far a throw lands (meters), how fast it flies, and the wait before the next one. */
 export const THROW = { min: 3, max: 20, speed: 17, cool: 0.7 };
@@ -170,7 +189,7 @@ export const THROW = { min: 3, max: 20, speed: 17, cool: 0.7 };
 // ---------------------------------------------------------------------------------------------------------------------
 // Consumables.
 
-export const USE_IDS = ['bandage', 'medkit', 'mini', 'shield', 'coffee'] as const;
+export const USE_IDS = ['bandage', 'medkit', 'mini', 'shield', 'coffee', 'smoothie', 'tart'] as const;
 export type UseId = (typeof USE_IDS)[number];
 export const isUse = (v: unknown): v is UseId => USE_IDS.includes(v as UseId);
 
@@ -189,6 +208,8 @@ export type UseSpec = {
   shieldCap?: number;
   /** Boost it gives: health over time and a quicker step while it lasts. */
   boost?: number;
+  /** Shield it gives a little at a time afterwards (SIP a second), up to SHIELD_MAX. */
+  sip?: number;
 };
 
 export const USES: Record<UseId, UseSpec> = {
@@ -197,7 +218,11 @@ export const USES: Record<UseId, UseSpec> = {
   mini: { name: 'mini shield', plural: 'mini shields', time: 2, carry: 4, shield: 25, shieldCap: 50 },
   shield: { name: 'shield potion', plural: 'shield potions', time: 4, carry: 2, shield: 50, shieldCap: 100 },
   coffee: { name: 'coffee', plural: 'coffees', time: 2.5, carry: 2, boost: 50 },
+  smoothie: { name: 'smoothie', plural: 'smoothies', time: 2.5, carry: 2, sip: 60 },
+  tart: { name: 'golden egg tart', plural: 'golden egg tarts', time: 5, carry: 2, hp: 100, hpCap: 100, boost: 100 },
 };
+/** Shield a second while a smoothie works. */
+export const SIP = 6;
 /** Boost drains this much a second, healing `heal` health a second and putting a spring in your step while it lasts. */
 export const BOOST = { max: 100, drain: 2.5, heal: 1.2, speed: 1.08 };
 
@@ -270,10 +295,14 @@ const RARITY_ODDS: Record<LootTier, number[]> = {
   supply: [0, 0, 25, 45, 30],
   gold: [0, 0, 0, 45, 55],
 };
-const GUN_ODDS: Record<WeaponId, number> = { pistol: 14, revolver: 7, smg: 13, micro: 8, rifle: 14, burst: 9, scout: 6, lmg: 5, shotgun: 12, auto: 6, double: 7, sniper: 5, crossbow: 4, launcher: 4 };
+const GUN_ODDS: Record<WeaponId, number> = { pistol: 13, revolver: 7, flare: 1.5, smg: 12, micro: 7, hsmg: 7, rifle: 13, burst: 8, marksman: 6, scout: 5, lmg: 4, minigun: 3, shotgun: 11, auto: 6, double: 6, sniper: 5, crossbow: 4, launcher: 4 };
+/** Supply drops and the golden chest never hold a flare gun: they are what it calls. */
+const TOP_GUN_ODDS: Partial<Record<WeaponId, number>> = { ...GUN_ODDS, flare: 0 };
 const MELEE_ODDS: Partial<Record<MeleeId, number>> = { whisk: 22, knife: 20, cleaver: 18, pan: 22, pin: 18 };
-const THROW_ODDS: Record<ThrowId, number> = { grenade: 45, flour: 25, sauce: 30 };
-const USE_ODDS: Record<UseId, number> = { bandage: 36, medkit: 10, mini: 26, shield: 14, coffee: 14 };
+const THROW_ODDS: Record<ThrowId, number> = { grenade: 36, impulse: 16, flour: 18, sauce: 20, jam: 14, bush: 12 };
+const USE_ODDS: Record<UseId, number> = { bandage: 34, medkit: 10, mini: 24, shield: 13, coffee: 12, smoothie: 10, tart: 1 };
+/** A chest's extra consumable is more often a good one, and a golden egg tart now and then. */
+const CHEST_USE_ODDS: Record<UseId, number> = { ...USE_ODDS, medkit: 14, shield: 16, smoothie: 13, tart: 5 };
 
 function rollRarity(rng: Rng, tier: LootTier) {
   const odds = RARITY_ODDS[tier];
@@ -288,19 +317,27 @@ function rollRarity(rng: Rng, tier: LootTier) {
 
 /** A gun with ammo for it. */
 function gunDrop(rng: Rng, tier: LootTier): LootDef[] {
-  const w = weighted(rng, GUN_ODDS);
-  // launchers are never common, so one is always worth the walk
+  const w = weighted(rng, tier === 'gold' || tier === 'supply' ? TOP_GUN_ODDS : GUN_ODDS);
+  // a flare gun is always legendary and needs no ammo; launchers are never common, so one is always worth the walk
+  if (w === 'flare') return [{ kind: 'gun', w, r: MAX_RARITY }];
   const r = w === 'launcher' ? Math.max(2, rollRarity(rng, tier)) : rollRarity(rng, tier);
   const a = WEAPONS[w].ammo;
-  const boxes = tier === 'gold' || tier === 'supply' ? 3 : tier === 'chest' ? 2 : 1;
+  // a minigun empties a box in no time, so it comes with a second
+  const boxes = (tier === 'gold' || tier === 'supply' ? 3 : tier === 'chest' ? 2 : 1) + (w === 'minigun' ? 1 : 0);
   return [
     { kind: 'gun', w, r },
     { kind: 'ammo', a, n: AMMO_BOX[a] * boxes },
   ];
 }
 
-function useDrop(rng: Rng): LootDef {
-  const w = weighted(rng, USE_ODDS);
+/** A box of ammo of any kind. */
+const ammoDrop = (rng: Rng): LootDef => {
+  const a = weighted(rng, { light: 36, heavy: 36, shells: 20, rockets: 8 });
+  return { kind: 'ammo', a, n: AMMO_BOX[a] };
+};
+
+function useDrop(rng: Rng, odds: Record<UseId, number> = USE_ODDS): LootDef {
+  const w = weighted(rng, odds);
   const n = w === 'bandage' ? 2 + Math.floor(rng() * 2) : w === 'mini' && rng() < 0.4 ? 2 : 1;
   return { kind: 'use', w, n };
 }
@@ -344,9 +381,11 @@ const armorDrop = (rng: Rng, tier: LootTier): LootDef => {
 /** What a loot spot, crate or chest holds. Deterministic for a given generator state. At most six things. */
 export function rollLoot(rng: Rng, tier: LootTier): LootDef[] {
   if (tier === 'gold' || tier === 'supply') {
-    // a top gun with plenty of ammo, the good potions, something to throw, a scope or backpack, and a piece of armor
+    // a top gun with plenty of ammo, the good potions (or a golden egg tart), something to throw, a scope or backpack,
+    // and a piece of armor
     const out = gunDrop(rng, tier);
-    out.push(rng() < 0.55 ? { kind: 'use', w: 'shield', n: 2 } : { kind: 'use', w: 'medkit', n: 2 });
+    const treat = rng();
+    out.push(treat < 0.45 ? { kind: 'use', w: 'shield', n: 2 } : treat < 0.75 ? { kind: 'use', w: 'medkit', n: 2 } : { kind: 'use', w: 'tart', n: 1 });
     out.push({ kind: 'throw', w: rng() < 0.6 ? 'grenade' : 'sauce', n: 2 });
     out.push(levelDrop(rng, rng() < 0.5 ? 'scope' : 'pack', true));
     out.push(armorDrop(rng, tier));
@@ -355,18 +394,23 @@ export function rollLoot(rng: Rng, tier: LootTier): LootDef[] {
   if (tier === 'chest') {
     const out = gunDrop(rng, 'chest');
     const extra = rng();
-    out.push(extra < 0.4 ? useDrop(rng) : extra < 0.6 ? throwDrop(rng) : extra < 0.85 ? armorDrop(rng, 'chest') : levelDrop(rng, rng() < 0.5 ? 'scope' : 'pack', false));
+    out.push(extra < 0.4 ? useDrop(rng, CHEST_USE_ODDS) : extra < 0.6 ? throwDrop(rng) : extra < 0.85 ? armorDrop(rng, 'chest') : levelDrop(rng, rng() < 0.5 ? 'scope' : 'pack', false));
     out.push({ kind: 'wood', n: 30 });
     return out;
   }
-  const pick = weighted(rng, tier === 'crate' ? { gun: 37, ammo: 12, use: 19, throw: 9, melee: 5, scope: 4, pack: 4, armor: 9, wood: 4 } : { gun: 43, ammo: 13, use: 17, throw: 8, melee: 5, scope: 3, pack: 3, armor: 8, wood: 4 });
+  const pick = weighted(rng, tier === 'crate' ? { gun: 37, ammo: 10, use: 19, throw: 11, melee: 5, scope: 4, pack: 4, armor: 9, wood: 4 } : { gun: 42, ammo: 12, use: 17, throw: 10, melee: 5, scope: 3, pack: 3, armor: 8, wood: 4 });
+  const out = pickDrop(rng, tier, pick);
+  // most crates hold a box of ammo besides
+  if (tier === 'crate' && pick !== 'ammo' && rng() < 0.65) out.push(ammoDrop(rng));
+  return out;
+}
+
+function pickDrop(rng: Rng, tier: LootTier, pick: string): LootDef[] {
   switch (pick) {
     case 'gun':
       return gunDrop(rng, tier);
-    case 'ammo': {
-      const a = weighted(rng, { light: 36, heavy: 36, shells: 20, rockets: 8 });
-      return [{ kind: 'ammo', a, n: AMMO_BOX[a] }];
-    }
+    case 'ammo':
+      return [ammoDrop(rng)];
     case 'use':
       return [useDrop(rng)];
     case 'throw':
@@ -375,7 +419,7 @@ export function rollLoot(rng: Rng, tier: LootTier): LootDef[] {
       return [{ kind: 'melee', w: weighted(rng, MELEE_ODDS) }];
     case 'scope':
     case 'pack':
-      return [levelDrop(rng, pick, false)];
+      return [levelDrop(rng, pick as 'scope' | 'pack', false)];
     case 'armor':
       return [armorDrop(rng, tier)];
     default:
@@ -384,6 +428,9 @@ export function rollLoot(rng: Rng, tier: LootTier): LootDef[] {
 }
 
 const count = (n: number, one: string, many: string) => (n > 1 ? `${n} ${many}` : `a ${one}`);
+
+/** The best of the best: a legendary gun (every flare gun is one) or a golden egg tart. It glows gold on the ground. */
+export const legendary = (def: LootDef) => (def.kind === 'gun' && def.r >= MAX_RARITY) || (def.kind === 'use' && def.w === 'tart');
 
 /** One line naming a pickup, for the interact prompt. */
 export function lootName(def: LootDef) {
