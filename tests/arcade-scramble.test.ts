@@ -21,6 +21,7 @@ import {
   MILL_NAMES,
   PAD,
   PEEK,
+  PEEK_GLASS,
   POND_SLOW,
   RIVER_HALF,
   ROAD_HALF,
@@ -68,6 +69,7 @@ import {
   type Building,
   type Door,
   type GameMap,
+  type Pane,
 } from '../src/os/arcade/games/scramble/map.ts';
 import {
   BARREL,
@@ -101,6 +103,7 @@ import {
   armored,
   autopilot,
   bestUse,
+  breakGlass,
   botNames,
   callDrop,
   canUse,
@@ -133,7 +136,7 @@ import {
   type Level,
   type Match,
 } from '../src/os/arcade/games/scramble/logic.ts';
-import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
+import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packEvents, packGlass, parsePacket, placesOf, stateOf, toNet, unpackGlass, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
 import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
 
@@ -209,7 +212,8 @@ const KIND_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, wareho
 const DOOR_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 3, farm: 3, house: 2, shed: 1, container: 1, diner: 2, mill: 1 };
 /** Total wall length a building would have with no gaps at all (corners counted once), as its walls are laid out. */
 const fullWalls = (b: Building) => 2 * (b.w + WALL_T) + 2 * (b.d - WALL_T);
-const wallLength = (b: Building) => b.walls.reduce((s, w) => s + 2 * Math.max(w.hw, w.hd), 0);
+/** Its walls and the windows in them: a window is no way in. */
+const wallLength = (b: Building) => [...b.walls, ...b.windows].reduce((s, w) => s + 2 * Math.max(w.hw, w.hd), 0);
 
 test('every island has all its buildings, each with the doorways it should have, and nothing outdoors inside them', () => {
   for (let seed = 1; seed <= 40; seed++) {
@@ -346,10 +350,10 @@ test('standing at a doorway, or lined up with one a few steps out, peeks into th
         const beyond = out(d, PEEK + 1);
         assert.notEqual(peekAt(m, beyond.x, beyond.z), i, 'too far to peek in');
       }
-      // three meters out from the middle of a wall with no door in it, you can't see in
+      // three meters out from the middle of a wall with no door or window in it, you can't see in
       if (!b.roof || b.kind === 'container') return;
       for (const [ox, oz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
-        if (b.doors.some((d) => d.ox === ox && d.oz === oz)) continue;
+        if (b.doors.some((d) => d.ox === ox && d.oz === oz) || b.windows.some((p) => p.ox === ox && p.oz === oz)) continue;
         const x = b.x + ox * (b.w / 2 + 3);
         const z = b.z + oz * (b.d / 2 + 3);
         assert.notEqual(peekAt(m, x, z), i, `seed ${seed}: no peeking into a ${b.kind} through a blank wall`);
@@ -1100,9 +1104,9 @@ test('packets survive the trip and anything malformed is turned away', () => {
   assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(4, s, 7)))), { k: 's', round: 4, state: s, watch: 7 });
   assert.equal(parsePacket({ ...guestState(4, s), v: MAX_FIGHTERS }), null);
   const host = parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, -2.5, 'hard', [0, 1, -1], [[0, s], [2, s]]))));
-  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]] });
+  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null });
   // the roster only goes with some of the host's reports
-  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]] });
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null });
   assert.equal(parsePacket({ ...hostState(4, 99, 3, 'hard', null, []), ro: 'all' }), null);
   assert.deepEqual(parsePacket(endOf(4, 2, [[2, 1, 3], [0, 2, 1]])), { k: 'end', round: 4, winner: 2, places: [[2, 1, 3], [0, 2, 1]] });
   assert.deepEqual(parsePacket(configOf(4, 'none', 'easy')), { k: 'cfg', round: 4, bots: 'none', level: 'easy' });
@@ -3667,4 +3671,283 @@ test('meta: twenty seats with late joining, bots and quick play, and a board per
   assert.match(meta.controls, /Play with Bots/);
   assert.deepEqual(Object.keys(meta.leaderboard!.variants!), [...LEVELS]);
   assert.equal(noInput().slot, -1);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Windows.
+
+const GLAZED: Building['kind'][] = ['house', 'farm', 'shed', 'diner', 'warehouse'];
+
+test('windows sit in the outer walls of houses, farms, sheds, diners and warehouses, filling their openings, clear of doors and corners', () => {
+  for (let seed = 1; seed <= 25; seed++) {
+    const m = generateMap(seed);
+    m.windows.forEach((p, i) => assert.equal(p.i, i, 'numbered in order'));
+    assert.ok(m.windows.length >= 150, `seed ${seed}: windows about (${m.windows.length})`);
+    m.buildings.forEach((b, bi) => {
+      if (!GLAZED.includes(b.kind)) return assert.equal(b.windows.length, 0, `seed ${seed}: no window in a ${b.kind}`);
+      assert.ok(b.windows.length >= 1, `seed ${seed}: a ${b.kind} with no window`);
+      for (const p of b.windows) {
+        assert.equal(m.windows[p.i], p);
+        assert.equal(p.b, bi);
+        const alongX = p.ox === 0;
+        // on the wall line, facing out
+        if (alongX) assert.ok(Math.abs(p.z - (b.z + p.oz * (b.d / 2))) < 1e-9 && Math.abs(p.hd - WALL_T / 2) < 1e-9);
+        else assert.ok(Math.abs(p.x - (b.x + p.ox * (b.w / 2))) < 1e-9 && Math.abs(p.hw - WALL_T / 2) < 1e-9);
+        const half = alongX ? p.hw : p.hd;
+        const u = alongX ? p.x : p.z;
+        // wall right up to both ends: no gap either side
+        for (const end of [u - half, u + half]) {
+          const meets = b.walls.some((w) =>
+            alongX
+              ? Math.abs(w.z - p.z) < 1e-9 && (Math.abs(w.x - w.hw - end) < 0.01 || Math.abs(w.x + w.hw - end) < 0.01)
+              : Math.abs(w.x - p.x) < 1e-9 && (Math.abs(w.z - w.hd - end) < 0.01 || Math.abs(w.z + w.hd - end) < 0.01),
+          );
+          assert.ok(meets, `seed ${seed}: a window in a ${b.kind} at ${p.x},${p.z} with no wall at its end`);
+        }
+        // and well clear of the corners and the doorways in the same wall
+        const room = ((alongX ? b.w : b.d) - WALL_T) / 2;
+        assert.ok(Math.abs(u - (alongX ? b.x : b.z)) + half <= room - 0.85, `seed ${seed}: a window too near a corner`);
+        for (const d of b.doors) if (d.ox === p.ox && d.oz === p.oz) assert.ok(Math.abs((alongX ? d.x : d.z) - u) >= half + d.w / 2 + 0.85, `seed ${seed}: a window crowding a door`);
+        // a solid of its own
+        assert.ok(m.solids.some((s) => s.what === 'window' && s.ref === p.i && s.x === p.x && s.z === p.z), 'a solid for every window');
+      }
+    });
+    // warehouse windows run along the long sides only, a shed's across from its door
+    for (const b of m.buildings) {
+      if (b.kind === 'warehouse') for (const p of b.windows) assert.equal(p.ox === 0, b.w > b.d, 'along the long sides');
+      if (b.kind === 'shed') for (const p of b.windows) assert.ok(b.doors.every((d) => d.ox === -p.ox && d.oz === -p.oz), 'across from the door');
+    }
+  }
+});
+
+test('nobody walks into a building through a window: with its doors shut, a house or a shed is out of reach', () => {
+  for (let seed = 1; seed <= 6; seed++) {
+    const m = generateMap(seed);
+    const shut = m.buildings.filter((b) => b.kind === 'house' || b.kind === 'shed').slice(0, 8);
+    for (const b of shut) for (const d of b.doors) m.solids.push({ shape: 'box', x: d.x, z: d.z, hw: d.ox ? WALL_T / 2 : d.w / 2 + 0.1, hd: d.ox ? d.w / 2 + 0.1 : WALL_T / 2, what: 'wall', ref: 0 });
+    reindex(m);
+    for (const b of shut) {
+      assert.ok(b.windows.length > 0);
+      const reach = walkable(m, b.x - b.w / 2 - 3, b.z - b.d / 2 - 3, b.x + b.w / 2 + 3, b.z + b.d / 2 + 3);
+      assert.ok(!reach(b.x, b.z, Math.min(b.w, b.d) / 2 - 0.8), `seed ${seed}: walked into a ${b.kind} at ${b.x},${b.z} with its doors shut`);
+    }
+  }
+});
+
+test('standing a few steps out from a window peeks in under the roof, glass or no glass', () => {
+  for (let seed = 1; seed <= 10; seed++) {
+    const m = generateMap(seed);
+    m.buildings.forEach((b, i) => {
+      for (const p of b.windows)
+        for (const k of [0.8, 2.5, PEEK_GLASS - 0.3]) {
+          const x = p.x + p.ox * k;
+          const z = p.z + p.oz * k;
+          const at = peekAt(m, x, z);
+          // a doorway in view wins
+          if (at !== i) assert.ok(at >= 0 && m.buildings[at].doors.some((d) => Math.hypot(x - d.x, z - d.z) < PEEK + 3), `seed ${seed}: ${k} m out from a ${b.kind}'s window`);
+        }
+    });
+  }
+});
+
+/** A wall across the way at z = 5 with a window in the middle of it, on open ground. */
+function windowSpot(m: Match): Pane {
+  openSpot(m);
+  const pane: Pane = { x: 0, z: 5, hw: 0.8, hd: WALL_T / 2, i: 0, b: -1, ox: 0, oz: 1 };
+  m.map.windows = [pane];
+  m.broken = [false];
+  m.map.solids = [
+    { shape: 'box', x: -5.8, z: 5, hw: 5, hd: WALL_T / 2, what: 'wall', ref: 0 },
+    { shape: 'box', x: 5.8, z: 5, hw: 5, hd: WALL_T / 2, what: 'wall', ref: 0 },
+    { shape: 'box', x: 0, z: 5, hw: 0.8, hd: WALL_T / 2, what: 'window', ref: 0 },
+  ];
+  reindex(m.map);
+  return pane;
+}
+
+/** One pull of the trigger (or swing), then let go. */
+function oneShot(m: Match, f: Fighter) {
+  f.fireT = 0;
+  f.input.fire = true;
+  const evs = run(m, 1 / 60);
+  f.input.fire = false;
+  return [...evs, ...run(m, 0.6)];
+}
+
+test('window glass lets the eye through, stops the first bullet and breaks; then bullets and throws go through, but never feet', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  windowSpot(m);
+  land(a, 0, 0);
+  land(b, 0, 12);
+  assert.ok(canSee(m, a, b, 40) && clearLine(m, 0, 0, 0, 12), 'seen through the glass');
+  assert.equal(castRay(m, 0, 0, 0, 1, 20, a.id, true)?.what, 'window', 'a bullet meets it');
+  // a grenade lobbed at it lands short, and the bang breaks the glass
+  a.throws.grenade = 2;
+  a.input.pick = 'grenade';
+  run(m, 0.25);
+  a.input.aim = 0;
+  a.input.reach = 10;
+  a.input.fire = true;
+  const thrown = run(m, 0.02).find((e) => e.t === 'throw');
+  a.input.fire = false;
+  assert.ok(thrown && thrown.t === 'throw' && thrown.lz < 4.6, 'short of the glass');
+  const bang = run(m, THROWS.grenade.fuse! + 0.2);
+  assert.ok(m.broken[0] && bang.some((e) => e.t === 'glass' && e.i === 0 && e.f === a.id && !e.net), 'the blast broke it');
+  assert.equal(b.hp, 100);
+  // glass again: the first bullet breaks it and stops there, the next goes through
+  m.broken[0] = false;
+  a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  a.ammo.heavy = 90;
+  a.input.slot = 0;
+  run(m, 0.3);
+  const first = oneShot(m, a);
+  assert.ok(m.broken[0] && first.some((e) => e.t === 'glass' && e.i === 0), 'the first bullet broke it');
+  assert.equal(b.hp, 100, 'and stopped there');
+  assert.equal(castRay(m, 0, 0, 0, 1, 20, a.id, true)?.what, 'egg', 'nothing in the way now');
+  oneShot(m, a);
+  assert.ok(b.hp < 100, 'the next one got through');
+  // a throw sails through the opening
+  a.input.pick = 'grenade';
+  run(m, 0.25);
+  a.fireT = 0;
+  a.input.fire = true;
+  const through = run(m, 0.02).find((e) => e.t === 'throw');
+  a.input.fire = false;
+  assert.ok(through && through.t === 'throw' && Math.abs(through.lz - 10) < 0.05, 'through the broken window');
+  run(m, THROWS.grenade.fuse! + 0.2);
+  // but nobody walks through, broken or not
+  assert.equal(castRay(m, 0, 0, 0, 1, 20, a.id, false, true)?.what, 'window', 'feet still meet it');
+  land(a, 0, 3);
+  a.input.mz = 1;
+  run(m, 1.5);
+  a.input.mz = 0;
+  assert.ok(a.z < 5 - WALL_T / 2 - FIGHTER_R + 0.05, `stopped at the sill (${a.z.toFixed(2)})`);
+});
+
+test('a swing breaks window glass, and a barrel going up breaks every window near it (on the host)', () => {
+  const m = quiet();
+  const [a] = m.fighters;
+  windowSpot(m);
+  land(a, 0, 5 - WALL_T / 2 - FIGHTER_R - 0.1);
+  a.input.slot = SLOT_MELEE;
+  a.input.aim = 0;
+  run(m, 0.2);
+  const evs = oneShot(m, a);
+  assert.ok(m.broken[0] && evs.some((e) => e.t === 'glass'), 'smashed');
+  // swinging again only bonks the sill
+  const again = oneShot(m, a);
+  assert.ok(again.some((e) => e.t === 'thud' && e.what === 'window') && !again.some((e) => e.t === 'glass'));
+
+  // a barrel by a real window, broken on the host: the glass goes too; a guest leaves it to the host's word
+  const h = quiet(5);
+  const g = createMatch({ seed: 5, role: 'guest', level: 'normal', entrants: [{ name: 'g', color: '#fff', kind: 'player', seat: 1 }], me: 0, countdown: 0 });
+  const p = h.map.windows[0];
+  const barrel = h.map.containers.find((c) => c.kind === 'barrel')!;
+  for (const m2 of [h, g]) {
+    const c = m2.map.containers[barrel.id];
+    c.x = p.x + p.ox * 2;
+    c.z = p.z + p.oz * 2;
+  }
+  damageCrate(h, barrel.id, BARREL.hp, 1, true);
+  assert.ok(h.opened[barrel.id] && h.broken[p.i] && h.events.some((e) => e.t === 'glass' && e.i === p.i && !e.net));
+  applyNet(g, { y: 'opd', c: barrel.id, f: 1 });
+  assert.ok(g.opened[barrel.id] && !g.broken[p.i], 'a guest waits to hear');
+  assert.equal(applyNet(g, { y: 'gl', f: 1, i: p.i }), true);
+  assert.ok(g.broken[p.i]);
+});
+
+test('broken windows reach every client: the breaker tells the host, the host passes it on once, and its reports list them for anyone who missed it', () => {
+  const { h, g, hs, hMe, toHost } = pair(false);
+  const shooter = g.fighters[1];
+  const p = g.map.windows.find((w) => w.oz === 1 && g.map.buildings[w.b].kind === 'house')!;
+  for (const m of [h, g]) {
+    land(m.fighters[1], p.x, p.z + 3);
+    land(m.fighters[0], p.x + 60, p.z + 60);
+    m.events.length = 0;
+  }
+  shooter.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  shooter.slot = 0;
+  shooter.input.aim = Math.PI;
+  shooter.input.fire = true;
+  for (let i = 0; i < 6 && !g.broken[p.i]; i++) step(g, DT);
+  shooter.input.fire = false;
+  assert.ok(g.broken[p.i], 'broken on the shooter’s own screen at once');
+  const news = g.events.filter((e) => e.t === 'glass');
+  assert.equal(news.length, 1);
+  assert.deepEqual(toNet(news[0]), { y: 'gl', f: 1, i: p.i });
+  assert.ok(!h.broken[p.i]);
+  toHost();
+  assert.ok(h.broken[p.i], 'the host has it');
+  assert.ok(hs.queue.some(([seat, e]) => seat === 1 && e.y === 'gl' && e.i === p.i), 'and passes it on');
+  hs.queue.length = 0;
+  assert.equal(applyNet(h, { y: 'gl', f: 1, i: p.i }), false, 'old news is not passed on again');
+  // someone who missed it hears it from the host's next full report, quietly
+  const late = guestMatch([{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }, { seat: 2, name: 'l' }], 2, 4, 'normal', 0, [0, 1, 2]);
+  const ls = newSession(true, [0, 1, 2]);
+  let full: { d: object; fast: boolean; to?: number } | undefined;
+  for (let i = 0; i < 6 && !full; i++) full = tick(hs, h, hMe, [0, 1, 2], 1).find((o) => !o.fast && o.to === 2);
+  assert.ok(full);
+  const wire = JSON.parse(JSON.stringify(full.d));
+  assert.equal(typeof wire.gl, 'string');
+  late.events.length = 0;
+  receive(ls, late, { seat: 2, isHost: false, round: 1 }, 0, wire, () => late, 1);
+  assert.ok(late.broken[p.i] && late.broken.filter(Boolean).length === 1, 'the late one has the same broken window, and only that');
+  assert.ok(!late.events.some((e) => e.t === 'glass'));
+});
+
+test('broken window lists pack small and anything malformed is turned away', () => {
+  const broken = Array.from({ length: 230 }, (_, i) => i % 7 === 3 || i === 229);
+  const packed = packGlass(broken);
+  assert.ok(packed.length <= 58);
+  assert.deepEqual(unpackGlass(packed), broken.flatMap((b, i) => (b ? [i] : [])));
+  assert.equal(packGlass(broken.map(() => false)), '', 'none broken, nothing to send');
+  assert.equal(packGlass([false, false, false, false, true]), '01');
+  for (const bad of ['xyz', 'A1', 7, '0'.repeat(5000)]) assert.equal(unpackGlass(bad), null, String(bad).slice(0, 10));
+  const s = stateOf(quiet().fighters[0]);
+  assert.equal(parsePacket({ ...hostState(1, 1, 0, 'easy', [0], [[0, s]]), gl: 'zz' }), null);
+  const ok = parsePacket(JSON.parse(JSON.stringify(hostState(1, 1, 0, 'easy', [0], [[0, s]], [false, true]))));
+  assert.ok(ok && ok.k === 'S' && ok.glass?.join() === '1');
+  assert.ok(!('gl' in hostState(1, 1, 0, 'easy', null, [], [true])), 'only the full reports list them');
+  const e = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, [{ y: 'gl', f: 1, i: 3 }, { y: 'gl', f: -1, i: 0 }, { y: 'gl', f: 1, i: -1 }, { y: 'gl', f: 1, i: 1e7 }, { y: 'gl', f: MAX_FIGHTERS, i: 2 }, { y: 'gl', f: 1, i: 2.5 }]]] });
+  assert.ok(e && e.k === 'e');
+  assert.deepEqual(e.groups[0][1], [{ y: 'gl', f: 1, i: 3 }, { y: 'gl', f: -1, i: 0 }]);
+  // a window past the island's list breaks nothing
+  const m = quiet();
+  assert.equal(breakGlass(m, m.broken.length + 3, 0, false), false);
+});
+
+test('a computer egg indoors shoots out through a window at an egg it sees, breaking the glass to do it', () => {
+  let tried = 0;
+  for (const seed of [3, 4, 6]) {
+    const m = quiet(seed);
+    const [a, b] = m.fighters;
+    // a house window on a south wall, with room to stand inside it and out in front of it
+    const free = (x: number, z: number) => {
+      let ok = true;
+      solidsNear(m.map, x, z, 2, (_i, s) => {
+        if (s.shape === 'circle' ? pushCircle(x, z, FIGHTER_R + 0.2, s.x, s.z, s.r) : pushBox(x, z, FIGHTER_R + 0.2, s.x, s.z, s.hw, s.hd)) ok = false;
+      });
+      return ok;
+    };
+    const p = m.map.windows.find((w) => w.oz === 1 && m.map.buildings[w.b].kind === 'house' && free(w.x, w.z - 1.4) && free(w.x, w.z + 7));
+    if (!p) continue;
+    tried++;
+    autopilot(m, a);
+    land(a, p.x, p.z - 1.4);
+    land(b, p.x, p.z + 7);
+    a.guns[0] = { w: 'smg', r: 1, mag: 30 };
+    a.ammo.light = 120;
+    a.slot = 0;
+    let saw = false;
+    for (let t = 0; t < 6 && b.hp >= 100; t += DT) {
+      step(m, DT);
+      m.events.length = 0;
+      saw ||= a.ai!.target === b.id;
+    }
+    assert.ok(saw, `seed ${seed}: spotted through the glass`);
+    assert.ok(m.broken[p.i], `seed ${seed}: broke the window`);
+    assert.ok(b.hp < 100, `seed ${seed}: and hit the egg outside`);
+  }
+  assert.ok(tried >= 2);
 });

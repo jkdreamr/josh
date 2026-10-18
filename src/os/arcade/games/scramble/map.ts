@@ -141,7 +141,13 @@ export type Rock = Circle & { look: number };
  * how tall the walls are drawn.
  */
 export type BuildingKind = 'house' | 'farm' | 'shed' | 'warehouse' | 'container' | 'ruin' | 'coop' | 'diner' | 'mill';
-export type Building = { kind: BuildingKind; x: number; z: number; w: number; d: number; walls: Box[]; doors: Door[]; inner: Door[]; look: number; roof: boolean; h: number };
+export type Building = { kind: BuildingKind; x: number; z: number; w: number; d: number; walls: Box[]; doors: Door[]; inner: Door[]; windows: Pane[]; look: number; roof: boolean; h: number };
+/**
+ * A window in an outer wall: the glass filling its opening (wall thick), `i` its place in the island's list, `b` its
+ * building and (`ox`, `oz`) the way out. Eggs never get through, glass or no glass (there is wall below it); the glass
+ * lets the view through but stops bullets and throws until something breaks it (see logic.ts).
+ */
+export type Pane = Box & { i: number; b: number; ox: number; oz: number };
 /**
  * A way in through the outer walls: the middle of the opening, the way out (one step along x or z), and how wide it
  * is. A doorway between two rooms (`inner`) points across the wall it is in.
@@ -157,12 +163,12 @@ export type LootSpawn = { id: number; def: LootDef; x: number; z: number };
 export type ContainerKind = 'crate' | 'chest' | 'barrel' | 'supply' | 'fridge' | 'toilet' | 'hay';
 export type Container = { id: number; kind: ContainerKind; x: number; z: number; face: 1 | -1; loot: LootSpawn[]; solid: number; gold: boolean; at: number; flare: boolean };
 /**
- * Something that stops eggs. `ref` is the tree, rock, building, container, car, yard or prop it belongs to. Toilets
- * and hay bales are `crate` solids and fridges `chest` ones, since they break and open the same way.
+ * Something that stops eggs. `ref` is the tree, rock, building, window, container, car, yard or prop it belongs to.
+ * Toilets and hay bales are `crate` solids and fridges `chest` ones, since they break and open the same way.
  */
 export type Solid =
   | { shape: 'circle'; x: number; z: number; r: number; what: 'tree' | 'rock' | 'barrel' | 'post' | 'fire' | 'log'; ref: number }
-  | { shape: 'box'; x: number; z: number; hw: number; hd: number; what: 'wall' | 'crate' | 'chest' | 'car' | 'fence' | 'table' | 'log' | 'shelf' | 'seat'; ref: number };
+  | { shape: 'box'; x: number; z: number; hw: number; hd: number; what: 'wall' | 'window' | 'crate' | 'chest' | 'car' | 'fence' | 'table' | 'log' | 'shelf' | 'seat'; ref: number };
 /**
  * Low things (fences and bridge rails, picnic tables, fire pits, fallen logs and stumps, and beds, tables and booths
  * indoors) stop eggs walking but not bullets, throws or the view.
@@ -219,6 +225,8 @@ export type GameMap = {
   stumps: Circle[];
   furniture: Furniture[];
   buildings: Building[];
+  /** Every building's windows, in one list (a window's `i` is its place in it). */
+  windows: Pane[];
   /** The Golden Coop's building index. */
   coop: number;
   containers: Container[];
@@ -333,16 +341,17 @@ function wallLine(walls: Box[], alongX: boolean, cx: number, cz: number, len: nu
 
 /**
  * Four walls round a w by d floor, and the doorways through them. Sides: 0 north (-z), 1 south (+z), 2 west (-x),
- * 3 east (+x). A fence round a yard is the same thing, thinner.
+ * 3 east (+x). A fence round a yard is the same thing, thinner. `glass` is the window openings (see glaze()), which
+ * the walls leave room for but which are no way through.
  */
-function shell(walls: Box[], x: number, z: number, w: number, d: number, gaps: Gap[][], thick = WALL_T) {
+function shell(walls: Box[], x: number, z: number, w: number, d: number, gaps: Gap[][], thick = WALL_T, glass: Gap[][] = []) {
   const doors: Door[] = [];
   for (let side = 0; side < 4; side++) {
     const alongX = side < 2;
     const len = alongX ? w + thick : d - thick;
     const cx = alongX ? x : side === 2 ? x - w / 2 : x + w / 2;
     const cz = alongX ? (side === 0 ? z - d / 2 : z + d / 2) : z;
-    wallLine(walls, alongX, cx, cz, len, gaps[side] ?? [], thick);
+    wallLine(walls, alongX, cx, cz, len, [...(gaps[side] ?? []), ...(glass[side] ?? [])], thick);
     // an opening ends where the walls either side of it begin
     const room = ((alongX ? w : d) - thick) / 2;
     for (const [u, width] of gaps[side] ?? []) {
@@ -362,6 +371,80 @@ function doorAt(rng: Rng, span: number, width: number) {
 }
 
 const sides = (): Gap[][] => [[], [], [], []];
+
+/** How wide each kind's windows are and how far apart they stand along a wall; the rest have none. */
+const GLAZING: Partial<Record<BuildingKind, { w: number; gap: number }>> = {
+  house: { w: 1.6, gap: 7 },
+  farm: { w: 1.6, gap: 7 },
+  shed: { w: 1.2, gap: 6 },
+  diner: { w: 2.4, gap: 4.5 },
+  warehouse: { w: 2.4, gap: 7 },
+};
+/** The wall a window keeps either side of it, to a corner, a doorway or a wall inside that meets this one. */
+const PIER = 0.9;
+
+/**
+ * Where a kind's windows go along sides `on` of a w by d building (sides as in shell()): spread evenly along each
+ * stretch of wall clear of the corners, the doorways (`gaps`) and the walls inside that meet it (`posts`, along each
+ * side). Only + - * / and floor, so every client lays them out alike.
+ */
+function glaze(kind: BuildingKind, w: number, d: number, gaps: Gap[][], on: number[], posts: number[][] = []): Gap[][] {
+  const out = sides();
+  const spec = GLAZING[kind];
+  if (!spec) return out;
+  for (const side of on) {
+    const room = ((side < 2 ? w : d) - WALL_T) / 2;
+    const cuts: [number, number][] = [
+      ...(gaps[side] ?? []).map(([u, width]): [number, number] => [u - width / 2 - PIER, u + width / 2 + PIER]),
+      ...(posts[side] ?? []).map((u): [number, number] => [u - WALL_T / 2 - PIER, u + WALL_T / 2 + PIER]),
+    ].sort((a, b) => a[0] - b[0]);
+    let at = -room + PIER;
+    for (const [lo, hi] of [...cuts, [room - PIER, Infinity]]) {
+      const span = lo - at;
+      if (span >= spec.w + 1.6) {
+        const n = Math.floor((span - spec.w) / spec.gap) + 1;
+        for (let k = 0; k < n; k++) out[side].push([r1(at + (span * (k + 0.5)) / n), spec.w]);
+      }
+      at = Math.max(at, hi);
+    }
+  }
+  return out;
+}
+
+/** Runs of wall end to end (a window between two counts as wall too) joined into one long box each. */
+function joined(boxes: Box[]): Box[] {
+  const out: Box[] = [];
+  for (const w of [...boxes].sort((p, q) => p.x - p.hw - (q.x - q.hw) || p.z - p.hd - (q.z - q.hd))) {
+    const alongX = w.hw > w.hd;
+    const o = out.find((o) => (alongX ? o.hw > o.hd && o.z === w.z && o.hd === w.hd && Math.abs(o.x + o.hw - (w.x - w.hw)) < 0.01 : o.hd > o.hw && o.x === w.x && o.hw === w.hw && Math.abs(o.z + o.hd - (w.z - w.hd)) < 0.01));
+    if (!o) {
+      out.push({ x: w.x, z: w.z, hw: w.hw, hd: w.hd });
+      continue;
+    }
+    const lo = alongX ? o.x - o.hw : o.z - o.hd;
+    const hi = alongX ? w.x + w.hw : w.z + w.hd;
+    if (alongX) {
+      o.x = (lo + hi) / 2;
+      o.hw = (hi - lo) / 2;
+    } else {
+      o.z = (lo + hi) / 2;
+      o.hd = (hi - lo) / 2;
+    }
+  }
+  return out;
+}
+
+/** The glass filling a w by d building's window openings (as glaze() gives them), not yet numbered. */
+function panesOf(x: number, z: number, w: number, d: number, glass: Gap[][]): Pane[] {
+  const out: Pane[] = [];
+  glass.forEach((list, side) => {
+    for (const [u, width] of list) {
+      if (side < 2) out.push({ x: x + u, z: side === 0 ? z - d / 2 : z + d / 2, hw: width / 2, hd: WALL_T / 2, i: -1, b: -1, ox: 0, oz: side === 0 ? -1 : 1 });
+      else out.push({ x: side === 2 ? x - w / 2 : x + w / 2, z: z + u, hw: WALL_T / 2, hd: width / 2, i: -1, b: -1, ox: side === 2 ? -1 : 1, oz: 0 });
+    }
+  });
+  return out;
+}
 
 // -------------------------------------------------------------------------------------------------------------------
 // What is where. Each grid cell lists, in order, the things whose footprint reaches into it, so asking what stands at
@@ -440,13 +523,19 @@ export function roomAt(map: GameMap, x: number, z: number) {
 /** How far out from a doorway you can still peek in through it. */
 export const PEEK = 8;
 
+/** How far out from a window you can still look in through it (glass or no glass). */
+export const PEEK_GLASS = 4;
+
 /**
  * The roofed building a point outside it looks into through a doorway, or -1: standing at a door, or lined up with one
- * up to PEEK meters out, in a wedge that widens away from it. The nearest door wins. The view thins that roof.
+ * up to PEEK meters out, in a wedge that widens away from it. The nearest door wins. Failing a door, the nearest
+ * window up to PEEK_GLASS out does. The view thins that roof.
  */
 export function peekAt(map: GameMap, x: number, z: number) {
   let best = -1;
   let near = Infinity;
+  let glass = -1;
+  let nearGlass = Infinity;
   for (let i = 0; i < map.buildings.length; i++) {
     const b = map.buildings[i];
     if (!b.roof || Math.abs(x - b.x) > b.w / 2 + PEEK || Math.abs(z - b.z) > b.d / 2 + PEEK) continue;
@@ -457,8 +546,15 @@ export function peekAt(map: GameMap, x: number, z: number) {
       best = i;
       near = out;
     }
+    for (const p of b.windows) {
+      const out = (x - p.x) * p.ox + (z - p.z) * p.oz;
+      const side = Math.abs((x - p.x) * p.oz - (z - p.z) * p.ox);
+      if (out < 0 || out > PEEK_GLASS || out >= nearGlass || side > Math.max(p.hw, p.hd) + 0.6 + out * 0.3) continue;
+      glass = i;
+      nearGlass = out;
+    }
   }
-  return best;
+  return best >= 0 ? best : glass;
 }
 
 /** The bush hiding a point, or -1. */
@@ -814,6 +910,7 @@ export function generateMap(seed: number): GameMap {
     stumps: [],
     furniture: [],
     buildings: [],
+    windows: [],
     coop: -1,
     containers: [],
     drops: [],
@@ -971,9 +1068,12 @@ export function generateMap(seed: number): GameMap {
           }),
       ),
     );
-  const build = (kind: BuildingKind, x: number, z: number, w: number, d: number, walls: Box[], doors: Door[], look: number, h: number) => {
-    map.buildings.push({ kind, x, z, w, d, walls, doors, inner: [], look, roof: kind !== 'ruin', h });
-    return map.buildings[map.buildings.length - 1];
+  const build = (kind: BuildingKind, x: number, z: number, w: number, d: number, walls: Box[], doors: Door[], look: number, h: number, glass: Gap[][] = []) => {
+    const b = map.buildings.length;
+    const windows = panesOf(x, z, w, d, glass).map((p, k) => ({ ...p, i: map.windows.length + k, b }));
+    map.windows.push(...windows);
+    map.buildings.push({ kind, x, z, w, d, walls, doors, inner: [], windows, look, roof: kind !== 'ruin', h });
+    return map.buildings[b];
   };
 
   // Furniture. Anything that stops feet stands flush against a wall or something else, or leaves a way past it at
@@ -996,7 +1096,7 @@ export function generateMap(seed: number): GameMap {
       const zone = { x: d.x - d.ox * k * 1.3, z: d.z - d.oz * k * 1.3, hw: ax * (d.w / 2 + 0.5) + az * 1.3, hd: az * (d.w / 2 + 0.5) + ax * 1.3 };
       if (gap(box, zone) < 0) return false;
     }
-    for (const w of b.walls) if (gap(box, w) < -0.01 || (stops && !roomy(gap(box, w)))) return false;
+    for (const w of b.windows.length ? joined([...b.walls, ...b.windows]) : b.walls) if (gap(box, w) < -0.01 || (stops && !roomy(gap(box, w)))) return false;
     for (const c of map.containers) {
       if (Math.abs(c.x - b.x) > b.w / 2 || Math.abs(c.z - b.z) > b.d / 2) continue;
       const [chw, chd] = half(c);
@@ -1119,7 +1219,9 @@ export function generateMap(seed: number): GameMap {
         gaps[front].push([Math.round((rng() * 2 - 1) * 3) / 2, DOOR]);
         const back = (rng() < 0.5 ? -1 : 1) * (w / 2 - 3);
         gaps[1 - front].push([back, DOOR]);
-        const b = build('diner', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), 3.6);
+        // big windows along the front and the ends, none behind the kitchen
+        const glass = glaze('diner', w, d, gaps, [front, 2, 3]);
+        const b = build('diner', x, z, w, d, walls, shell(walls, x, z, w, d, gaps, WALL_T, glass), Math.floor(rng() * 4), 3.6, glass);
         const bi = map.buildings.length - 1;
         ownName.set(bi, nameFrom(DINER_NAMES));
         // the kitchen's stash
@@ -1171,23 +1273,26 @@ export function generateMap(seed: number): GameMap {
           const first = Math.floor(rng() * 4);
           const second = (first + 1 + Math.floor(rng() * 3)) % 4;
           for (const s of [first, second]) gaps[s].push([doorAt(rng, s < 2 ? w : d, DOOR), DOOR]);
-          const doors = shell(walls, x, z, w, d, gaps);
+          const glass = glaze('house', w, d, gaps, [0, 1, 2, 3]);
+          const doors = shell(walls, x, z, w, d, gaps, WALL_T, glass);
           if (facing(doors)) {
             lots.pop();
             continue;
           }
-          build('house', x, z, w, d, walls, doors, Math.floor(rng() * 4), WALL_H);
+          build('house', x, z, w, d, walls, doors, Math.floor(rng() * 4), WALL_H, glass);
           furnish({ x, z, w, d }, true, true);
           decorate(map.buildings.length - 1);
         } else if (kind === 'shed') {
           const s = Math.floor(rng() * 4);
           gaps[s].push([Math.round((rng() * 2 - 1) * 2) / 2, DOOR]);
-          const doors = shell(walls, x, z, w, d, gaps);
+          // a little window in the wall across from the door
+          const glass = glaze('shed', w, d, gaps, [s ^ 1]);
+          const doors = shell(walls, x, z, w, d, gaps, WALL_T, glass);
           if (facing(doors)) {
             lots.pop();
             continue;
           }
-          build('shed', x, z, w, d, walls, doors, Math.floor(rng() * 4), 2.8);
+          build('shed', x, z, w, d, walls, doors, Math.floor(rng() * 4), 2.8, glass);
           if (rng() < 0.5) addContainer('crate', x, z, 1, 'crate');
           else addSpot(x, z);
           decorate(map.buildings.length - 1);
@@ -1235,12 +1340,14 @@ export function generateMap(seed: number): GameMap {
         for (const s of [e0, e1]) gaps[s].push([Math.round((rng() * 2 - 1) * (endSpan / 2 - wide / 2 - 1.5) * 2) / 2, wide]);
         const long = rot ? (rng() < 0.5 ? 2 : 3) : rng() < 0.5 ? 0 : 1;
         gaps[long].push([doorAt(rng, rot ? d : w, DOOR), DOOR]);
-        const doors = shell(walls, x, z, w, d, gaps);
+        // a row of windows high along each long side
+        const glass = glaze('warehouse', w, d, gaps, rot ? [2, 3] : [0, 1]);
+        const doors = shell(walls, x, z, w, d, gaps, WALL_T, glass);
         if (facing(doors)) {
           lots.pop();
           continue;
         }
-        build('warehouse', x, z, w, d, walls, doors, Math.floor(rng() * 4), 4.4);
+        build('warehouse', x, z, w, d, walls, doors, Math.floor(rng() * 4), 4.4, glass);
         // rows of crates with a lane down the middle, loot between, and a chest in one corner
         for (const a of [-7.5, 0, 7.5])
           for (const b of [-4.6, 4.6]) {
@@ -1281,7 +1388,9 @@ export function generateMap(seed: number): GameMap {
         const lo = bigC - x - bigW / 2 + DOOR / 2 + 1;
         const hi = bigC - x + bigW / 2 - DOOR / 2 - 1;
         gaps[rng() < 0.5 ? 0 : 1].push([Math.round((lo + rng() * (hi - lo)) * 2) / 2, DOOR]);
-        const doors = shell(walls, x, z, w, d, gaps);
+        // windows all round, clear of where the wall between the rooms meets the north and south walls
+        const glass = glaze('farm', w, d, gaps, [0, 1, 2, 3], [[px - x], [px - x]]);
+        const doors = shell(walls, x, z, w, d, gaps, WALL_T, glass);
         if (facing(doors)) continue;
         lots.push({ x, z, hw: w / 2, hd: d / 2 }, { x: fx, z, hw: 7, hd: d / 2 }, { x: yx, z, hw: yhw, hd: yhd });
         map.fields.push({ x: fx, z, hw: 7, hd: d / 2 });
@@ -1292,7 +1401,7 @@ export function generateMap(seed: number): GameMap {
         for (const hz of [-d / 2 + 1.5, 0, d / 2 - 1.5]) addContainer('hay', fx + fs * 5.4, z + hz, 1, 'hay');
         const iu = doorAt(rng, d, DOOR);
         wallLine(walls, false, px, z, d - WALL_T, [[iu, DOOR]]);
-        build('farm', x, z, w, d, walls, doors, Math.floor(rng() * 4), 3.4).inner.push({ x: px, z: z + iu, ox: 1, oz: 0, w: DOOR });
+        build('farm', x, z, w, d, walls, doors, Math.floor(rng() * 4), 3.4, glass).inner.push({ x: px, z: z + iu, ox: 1, oz: 0, w: DOOR });
         // the small room is the kitchen: a fridge at one end and a toilet at the other
         const kz = rng() < 0.5 ? -1 : 1;
         addContainer('fridge', smallC, z + (kz * d) / 4, kz > 0 ? -1 : 1, 'fridge');
@@ -1677,6 +1786,7 @@ export function generateMap(seed: number): GameMap {
   map.buildings.forEach((b, i) => {
     for (const w of b.walls) map.solids.push({ shape: 'box', ...w, what: 'wall', ref: i });
   });
+  for (const p of map.windows) map.solids.push({ shape: 'box', x: p.x, z: p.z, hw: p.hw, hd: p.hd, what: 'window', ref: p.i });
   map.trees.forEach((t, i) => map.solids.push({ shape: 'circle', x: t.x, z: t.z, r: t.r, what: 'tree', ref: i }));
   map.rocks.forEach((r, i) => map.solids.push({ shape: 'circle', x: r.x, z: r.z, r: r.r, what: 'rock', ref: i }));
   for (const c of map.containers) {

@@ -146,6 +146,8 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
       const f = m.fighters[fid];
       if (f && f.kind === 'remote') applyState(m, f, st);
     }
+    // the windows the host has broken: quietly, since any news of them has come and gone
+    for (const i of p.glass ?? []) if (i < m.broken.length) m.broken[i] = true;
   } else if (p.k === 'e') {
     if (!s.synced || (!me.isHost && from !== 0)) return m;
     for (const [origin, evs] of p.groups) {
@@ -209,7 +211,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
     let sent = s.sent.get(seat);
     if (!sent) s.sent.set(seat, (sent = []));
     const list = g ? statesFor(m, g, states, keys, sent, s.ticks, s.watching.get(g.id) ?? -1) : [];
-    out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list), fast, to: seat });
+    out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list, m.broken), fast, to: seat });
   }
   if (s.end && s.endSends < 4) {
     s.endSends++;

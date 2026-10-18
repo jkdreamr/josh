@@ -4,7 +4,8 @@
 // computer players and sends everyone the whole match. Things that happen (shots, hits, drops, walls, pickups) travel
 // as events: a guest sends its own to the host, and the host applies them and passes them on to everyone else, in the
 // order it applied them, together with its own. Guests ask the host for pickups and chests (fridges and supply drops
-// too) and hear back who got them. Bounce pads and campfires need no packets: a glide and a heal are an owner's own
+// too) and hear back who got them. Broken windows travel as news too, and every reliable report from the host lists
+// them all, so a guest who missed the news (or synced late) still has them. Bounce pads and campfires need no packets: a glide and a heal are an owner's own
 // business, and show in its state.
 import { MAX_ARMOR, MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import { HALF } from './map.ts';
@@ -20,6 +21,7 @@ import {
   applyCalled,
   applyOut,
   applyTook,
+  breakGlass,
   callDrop,
   damageCrate,
   damageWall,
@@ -57,6 +59,7 @@ export type NetEv =
   | { y: 'th'; f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; ft: number }
   | { y: 'd'; f: number; to: number; d: number; w: Cause; x: number; z: number }
   | { y: 'm'; f: number; k: 'wall' | 'crate'; id: number; d: number }
+  | { y: 'gl'; f: number; i: number }
   | { y: 'b'; f: number; x: number; z: number }
   | { y: 'o'; f: number; by: number; w: Cause }
   | { y: 'dr'; id: number; x: number; z: number; by: number; it: LootDef }
@@ -74,7 +77,7 @@ export type Group = [origin: number, events: NetEv[]];
 
 export type Packet =
   | { k: 's'; round: number; state: State; watch: number }
-  | { k: 'S'; round: number; seed: number; time: number; level: Level; roster: number[] | null; states: [number, State][] }
+  | { k: 'S'; round: number; seed: number; time: number; level: Level; roster: number[] | null; states: [number, State][]; glass: number[] | null }
   | { k: 'e'; round: number; groups: Group[] }
   | { k: 'end'; round: number; winner: number; places: [number, number, number][] }
   | { k: 'cfg'; round: number; bots: Bots; level: Level };
@@ -164,17 +167,45 @@ export const guestState = (round: number, s: State, watch = -1) => ({ t: 'pk', r
 /** A state as a string, to tell whether it has changed since it was last sent. */
 export const stateKey = (s: State) => packState(s).join();
 
-/** The host's report of the eggs: the roster goes with every reliable one (null for the rest), which a guest needs to join. */
-export const hostState = (round: number, seed: number, time: number, level: Level, roster: number[] | null, states: [number, State][]) => ({
-  t: 'pk',
-  r: round,
-  k: 'S',
-  sd: seed,
-  tm: r2(time),
-  lv: level,
-  ...(roster ? { ro: roster } : {}),
-  c: states.map(([f, s]) => [f, ...packState(s)]),
-});
+/**
+ * The host's report of the eggs: the roster goes with every reliable one (null for the rest), which a guest needs to
+ * join, and so do the broken windows (`broken`, by window) once there are any.
+ */
+export const hostState = (round: number, seed: number, time: number, level: Level, roster: number[] | null, states: [number, State][], broken: boolean[] = []) => {
+  const gl = roster ? packGlass(broken) : '';
+  return {
+    t: 'pk',
+    r: round,
+    k: 'S',
+    sd: seed,
+    tm: r2(time),
+    lv: level,
+    ...(roster ? { ro: roster } : {}),
+    ...(gl ? { gl } : {}),
+    c: states.map(([f, s]) => [f, ...packState(s)]),
+  };
+};
+
+/** The most windows a report can list (an island has a couple of hundred). */
+const MAX_GLASS = 4000;
+
+/** Broken windows as hex digits, four windows a digit (the first in the lowest bit), trailing zeros left off. */
+export function packGlass(broken: boolean[]) {
+  let out = '';
+  for (let k = 0; k * 4 < broken.length; k++) out += ((broken[k * 4] ? 1 : 0) | (broken[k * 4 + 1] ? 2 : 0) | (broken[k * 4 + 2] ? 4 : 0) | (broken[k * 4 + 3] ? 8 : 0)).toString(16);
+  return out.replace(/0+$/, '');
+}
+
+/** The windows a hex list says are broken, or null when it isn't one. */
+export function unpackGlass(v: unknown): number[] | null {
+  if (typeof v !== 'string' || v.length > MAX_GLASS / 4 || !/^[0-9a-f]*$/.test(v)) return null;
+  const out: number[] = [];
+  for (let k = 0; k < v.length; k++) {
+    const n = parseInt(v[k], 16);
+    for (let j = 0; j < 4; j++) if (n & (1 << j)) out.push(k * 4 + j);
+  }
+  return out;
+}
 
 export const endOf = (round: number, winner: number, places: [number, number, number][]) => ({ t: 'pk', r: round, k: 'end', w: winner, pl: places });
 
@@ -198,6 +229,8 @@ export function toNet(e: Ev): NetEv | null {
       return e.local ? null : { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z };
     case 'smash':
       return { y: 'm', f: e.f, k: e.kind, id: e.id, d: e.d };
+    case 'glass':
+      return { y: 'gl', f: e.f, i: e.i };
     case 'boom':
       return { y: 'b', f: e.f, x: e.x, z: e.z };
     case 'out':
@@ -258,6 +291,8 @@ function parseEv(v: unknown): NetEv | null {
       return fid(e.f) && fid(e.to) && num(e.d) && isCause(e.w) && e.d > 0 && e.d <= hitCap(e.w) && num(e.x) && num(e.z) ? { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z } : null;
     case 'm':
       return fid(e.f) && (e.k === 'wall' || e.k === 'crate') && id(e.id) && num(e.d) && e.d > 0 && e.d <= 1000 ? { y: 'm', f: e.f, k: e.k, id: e.id, d: e.d } : null;
+    case 'gl':
+      return int(e.f) && e.f >= -1 && e.f < MAX_FIGHTERS && int(e.i) && e.i >= 0 && e.i < MAX_GLASS ? { y: 'gl', f: e.f, i: e.i } : null;
     case 'b':
       return fid(e.f) && num(e.x) && num(e.z) ? { y: 'b', f: e.f, x: e.x, z: e.z } : null;
     case 'o':
@@ -325,6 +360,9 @@ export function applyNet(m: Match, e: NetEv): boolean {
       if (e.k === 'wall') damageWall(m, e.id, e.d, true);
       else damageCrate(m, e.id, e.d, e.f, true);
       return true;
+    case 'gl':
+      // passed on only the first time: glass that is already broken is old news
+      return breakGlass(m, e.i, e.f, false);
     case 'b':
       m.events.push({ t: 'boom', f: e.f, x: e.x, z: e.z, net: true });
       return true;
@@ -405,6 +443,8 @@ export function parsePacket(value: unknown): Packet | null {
   }
   if (p.k === 'S') {
     if (!int(p.sd) || !num(p.tm) || !isLevel(p.lv) || !Array.isArray(p.c) || (p.ro !== undefined && !Array.isArray(p.ro))) return null;
+    const glass = p.gl === undefined ? null : unpackGlass(p.gl);
+    if (p.gl !== undefined && !glass) return null;
     let roster: number[] | null = null;
     if (Array.isArray(p.ro)) {
       if (p.ro.length < 1 || p.ro.length > MAX_FIGHTERS || !p.ro.every(seat)) return null;
@@ -418,7 +458,7 @@ export function parsePacket(value: unknown): Packet | null {
       const s = unpackState(raw.slice(1));
       if (s) states.push([raw[0], s]);
     }
-    return { k: 'S', round, seed: p.sd, time: p.tm, level: p.lv, roster, states };
+    return { k: 'S', round, seed: p.sd, time: p.tm, level: p.lv, roster, states, glass };
   }
   if (p.k === 'e') {
     if (!Array.isArray(p.g)) return null;

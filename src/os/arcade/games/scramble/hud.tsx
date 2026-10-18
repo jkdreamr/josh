@@ -469,6 +469,16 @@ function DoorMark({ b, d }: { b: Building; d: Door }) {
   return <rect x={x - hw} y={z - hd} width={hw * 2} height={hd * 2} fill={open ? '#1d2025' : b.kind === 'ruin' ? '#e4dccb' : '#fff6d6'} />;
 }
 
+/** Every window as a light blue mark along its wall, a little wider and thicker than the opening, as one path. */
+const windowMarks = (map: GameMap) =>
+  map.windows
+    .map((p) => {
+      const hw = p.hw + (p.ox ? 0.6 : 0.2);
+      const hd = p.hd + (p.ox ? 0.2 : 0.6);
+      return `M${(p.x - hw).toFixed(1)} ${(p.z - hd).toFixed(1)}h${(hw * 2).toFixed(1)}v${(hd * 2).toFixed(1)}h${(-hw * 2).toFixed(1)}Z`;
+    })
+    .join('');
+
 /** Many round dots as one path (hundreds of trees in one element, not hundreds of elements). */
 const dots = <P extends { x: number; z: number }>(list: P[], r: (p: P) => number) =>
   list.map((p) => `M${(p.x - r(p)).toFixed(1)} ${p.z.toFixed(1)}a${r(p)} ${r(p)} 0 1 0 ${2 * r(p)} 0a${r(p)} ${r(p)} 0 1 0 ${-2 * r(p)} 0Z`).join('');
@@ -514,6 +524,7 @@ export function IslandArt({ map }: { map: GameMap }) {
         <rect key={`b${i}`} x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={MAP_ROOF[b.kind]} stroke={b.kind === 'ruin' ? 'none' : '#f1e6d2'} strokeWidth="1" />
       ))}
       {map.buildings.map((b, i) => b.doors.map((d, k) => <DoorMark key={`d${i}-${k}`} b={b} d={d} />))}
+      {map.windows.length > 0 && <path d={windowMarks(map)} fill="#bfe6f5" />}
       {map.cars.map((c, i) => (
         <rect key={`c${i}`} x={c.x - c.hw} y={c.z - c.hd} width={c.hw * 2} height={c.hd * 2} rx="0.6" fill={c.truck ? '#4a4e55' : '#e4e7ec'} stroke="#2b2d33" strokeWidth="0.5" />
       ))}
@@ -771,7 +782,10 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Towns and sites.</b> Every town, farm, camp and yard has a name. They're all on the big map, the little map shows the one you're in, and the name comes up when you walk or land in. Dirt roads link the places near each other, and you walk a little quicker on them.
           </li>
           <li>
-            <b>Houses, farmhouses and sheds.</b> Loot inside, often a chest. The roof lifts off while you're in, and nobody outside can see you.
+            <b>Houses, farmhouses and sheds.</b> Loot inside, often a chest. The roof lifts off while you're in, and nobody outside can see you unless they look in through a door or a window.
+          </li>
+          <li>
+            <b>Windows.</b> Houses, farmhouses, sheds, diners and warehouses have windows (light blue marks along the walls on the map). You can see through the glass, but it stops bullets and throws: the first shot, a swing or a blast nearby breaks it, and then bullets and throws fly through. Nobody climbs through a window, broken or not. Stand by one and the roof thins so you can look in.
           </li>
           <li>
             <b>Furniture.</b> Tables, beds and diner booths only stop your feet; kitchen counters, shelves and flour sacks stop bullets too. Rugs and chairs are just there to look at.

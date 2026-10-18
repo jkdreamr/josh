@@ -6,7 +6,9 @@
 // client sees them, then sent to the egg's owner; grenades and launcher eggs work the same way. Things the whole
 // island sees (a barrel going up, a puddle of hot sauce) are felt by each client on the eggs it owns. The host settles
 // everything shared: who got a pickup, when a chest opens or a crate, barrel or wall breaks, and who won. `world` is
-// true where those calls are made (solo and the host).
+// true where those calls are made (solo and the host). Window glass is simpler: whoever's shot, swing or blast breaks
+// it breaks it on their own screen and tells the host, who tells everyone (glass only ever breaks, so nobody can
+// disagree about it).
 import {
   BOOST,
   FLARE_WAIT,
@@ -343,7 +345,7 @@ export type Toss = { f: number; k: ThrowId; x: number; z: number; lx: number; lz
  */
 export type Zone = { k: 'flour' | 'sauce' | 'jam' | 'bush'; x: number; z: number; r: number; from: number; until: number; by: number };
 
-export type Thud = 'tree' | 'rock' | 'wall' | 'crate' | 'chest' | 'barrel' | 'car' | 'fence' | 'table' | 'post' | 'fire' | 'log' | 'shelf' | 'seat' | 'built' | 'egg' | 'pan' | 'ground';
+export type Thud = 'tree' | 'rock' | 'wall' | 'window' | 'crate' | 'chest' | 'barrel' | 'car' | 'fence' | 'table' | 'post' | 'fire' | 'log' | 'shelf' | 'seat' | 'built' | 'egg' | 'pan' | 'ground';
 
 /** Things that happened this frame, for sounds, effects and the network. `net` marks news that came from it. */
 export type Ev = (
@@ -362,6 +364,7 @@ export type Ev = (
   | { t: 'hurt'; f: number; d: number; by: number; storm: boolean; shield: boolean }
   | { t: 'thud'; x: number; z: number; what: Thud }
   | { t: 'smash'; f: number; kind: 'wall' | 'crate'; id: number; d: number; x: number; z: number }
+  | { t: 'glass'; f: number; i: number }
   | { t: 'boom'; f: number; x: number; z: number }
   | { t: 'pulse'; f: number; x: number; z: number }
   | { t: 'moved'; id: number; x: number; z: number }
@@ -408,6 +411,8 @@ export type Match = {
   opened: boolean[];
   /** What crates and barrels have left before they break. */
   crateHp: number[];
+  /** Which windows have had their glass broken, by window. */
+  broken: boolean[];
   /** When each egg last called a supply drop with a flare (the host's record). */
   calls: Map<number, number>;
   storm: StormNow;
@@ -751,6 +756,7 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
     goneWalls: new Set(),
     opened: map.containers.map(() => false),
     crateHp: map.containers.map((c) => (c.kind === 'barrel' ? BARREL.hp : c.kind === 'toilet' ? TOILET_HP : c.kind === 'hay' ? HAY_HP : CRATE_HP)),
+    broken: map.windows.map(() => false),
     calls: new Map(),
     storm: stormAt(map.storm, 0),
     events: [],
@@ -1370,6 +1376,7 @@ function swing(m: Match, f: Fighter) {
     emit(m, { t: 'harvest', f: f.id, x, z, n });
   } else if (hit.what === 'crate' || hit.what === 'barrel') smashCrate(m, f, hit.ref, spec.dmg * spec.wallMult, x, z);
   else if (hit.what === 'built') smashWall(m, f, hit.ref, spec.dmg * spec.wallMult, x, z);
+  else if (hit.what === 'window' && !m.broken[hit.ref]) breakGlass(m, hit.ref, f.id, true);
   else emit(m, { t: 'thud', x, z, what: hit.what });
 }
 
@@ -1517,11 +1524,16 @@ type RayHit = { t: number; what: Thud; ref: number; fighter: Fighter | null };
  * The first thing a ray meets within `len`: trees, rocks, building walls, cars, posts, crates and barrels still
  * standing, chests, landed supply drops, built walls, and (when `eggs`) any egg in the fight except `skip`. Low
  * things (fences, tables, fire pits) only count when `lows`: bullets and eyes go over them, feet and swings don't.
+ * A window stops bullets and throws until its glass is broken (`glass`), the eye never (`open`), and feet and swings
+ * always (`shut`, and whenever `lows`: there's wall below it).
  */
-export function castRay(m: Match, x: number, z: number, dx: number, dz: number, len: number, skip: number, eggs: boolean, lows = false): RayHit | null {
+export function castRay(m: Match, x: number, z: number, dx: number, dz: number, len: number, skip: number, eggs: boolean, lows = false, windows: 'glass' | 'open' | 'shut' = 'glass'): RayHit | null {
   let best = null as RayHit | null;
+  const glass = lows ? 'shut' : windows;
   solidsAlong(m.map, x, z, x + dx * len, z + dz * len, (_i, s) => {
-    if (!standing(m, s) || (!lows && low(s))) return;
+    if (s.what === 'window') {
+      if (glass === 'open' || (glass === 'glass' && m.broken[s.ref])) return;
+    } else if (!standing(m, s) || (!lows && low(s))) return;
     const t = raySolid(s, x, z, dx, dz, len);
     if (t < (best?.t ?? Infinity)) best = { t, what: s.what, ref: s.ref, fighter: null };
   });
@@ -1550,11 +1562,25 @@ export function castRay(m: Match, x: number, z: number, dx: number, dz: number, 
   return best;
 }
 
-/** True when nothing solid stands between two points. */
+/** True when nothing solid stands between two points: the line of sight, which goes through windows. */
 export function clearLine(m: Match, x0: number, z0: number, x1: number, z1: number) {
   const len = Math.hypot(x1 - x0, z1 - z0);
   if (len < 1e-6) return true;
-  return castRay(m, x0, z0, (x1 - x0) / len, (z1 - z0) / len, len, -1, false) === null;
+  return castRay(m, x0, z0, (x1 - x0) / len, (z1 - z0) / len, len, -1, false, false, 'open') === null;
+}
+
+/** True when the line between two points is clear to the eye, but only through a window (broken or not). */
+function inWindow(m: Match, x0: number, z0: number, x1: number, z1: number) {
+  const len = Math.hypot(x1 - x0, z1 - z0);
+  if (len < 1e-6 || !clearLine(m, x0, z0, x1, z1)) return false;
+  return castRay(m, x0, z0, (x1 - x0) / len, (z1 - z0) / len, len, -1, false, false, 'shut')?.what === 'window';
+}
+
+/** True when nothing that stops bullets stands between two points, nor a window (a way you could walk, give or take a fence). */
+function openWay(m: Match, x0: number, z0: number, x1: number, z1: number) {
+  const len = Math.hypot(x1 - x0, z1 - z0);
+  if (len < 1e-6) return true;
+  return castRay(m, x0, z0, (x1 - x0) / len, (z1 - z0) / len, len, -1, false, false, 'shut') === null;
 }
 
 const falloff = (w: WeaponId, dist: number) => {
@@ -1581,7 +1607,7 @@ function moveBullets(m: Match, dt: number) {
     const z = b.z + b.dz * hit.t;
     const pan = !!hit.fighter && b.w !== 'launcher' && panBlocks(hit.fighter, b.dx, b.dz);
     if (!b.local) {
-      // someone else's bullet: their client decides what it did, we only draw where it stopped
+      // someone else's bullet: their client decides what it did (glass too), we only draw where it stopped
       if (b.w !== 'launcher') emit(m, { t: 'thud', x, z, what: pan ? 'pan' : hit.what, net: true });
       continue;
     }
@@ -1595,6 +1621,8 @@ function moveBullets(m: Match, dt: number) {
     else if (hit.fighter && shooter) strike(m, shooter, hit.fighter, d, b.w, x, z);
     else if ((hit.what === 'crate' || hit.what === 'barrel') && shooter) smashCrate(m, shooter, hit.ref, d * WEAPONS[b.w].wallMult, x, z);
     else if (hit.what === 'built' && shooter) smashWall(m, shooter, hit.ref, d * WEAPONS[b.w].wallMult, x, z);
+    // the first bullet through a window breaks the glass and stops there; the next goes through
+    else if (hit.what === 'window') breakGlass(m, hit.ref, b.f, true);
     else emit(m, { t: 'thud', x, z, what: hit.what });
   }
   m.bullets = keep;
@@ -1622,6 +1650,28 @@ function blast(m: Match, fid: number, x: number, z: number, R: number, dmg: numb
     const d = Math.max(0, Math.hypot(c.x - x, c.z - z) - 0.7);
     if (d < R) smashCrate(m, shooter, c.id, dmg * wallMult * (1 - (0.6 * d) / R), c.x, c.z);
   }
+  shatter(m, fid, x, z, R);
+}
+
+/** Every window whose glass is within `R` of a blast breaks. */
+function shatter(m: Match, by: number, x: number, z: number, R: number) {
+  for (const p of m.map.windows) {
+    if (m.broken[p.i] || Math.abs(p.x - x) > R + 2 || Math.abs(p.z - z) > R + 2) continue;
+    const dx = Math.max(0, Math.abs(x - p.x) - p.hw);
+    const dz = Math.max(0, Math.abs(z - p.z) - p.hd);
+    if (dx * dx + dz * dz < R * R) breakGlass(m, p.i, by, true);
+  }
+}
+
+/**
+ * A window's glass breaks, on this client's word (`announce`: what it hit, for the network) or on the news. Glass only
+ * ever breaks, so whoever breaks it first is right. False when it was already broken.
+ */
+export function breakGlass(m: Match, i: number, by: number, announce: boolean) {
+  if (i < 0 || i >= m.broken.length || m.broken[i]) return false;
+  m.broken[i] = true;
+  emit(m, announce ? { t: 'glass', f: by, i } : { t: 'glass', f: by, i, net: true });
+  return true;
 }
 
 function smashWall(m: Match, by: Fighter, id: number, dmg: number, x: number, z: number) {
@@ -1697,6 +1747,7 @@ function explode(m: Match, box: Container, by: number) {
     const d = Math.max(0, Math.hypot(c.x - box.x, c.z - box.z) - 0.7);
     if (d < R) damageCrate(m, c.id, Math.round(BARREL.dmg * (1 - (0.6 * d) / R)), by, true);
   }
+  shatter(m, by, box.x, box.z, R);
 }
 
 /** Eight ways round a point, a step apart, for looking for room. */
@@ -2565,6 +2616,8 @@ function think(m: Match, f: Fighter, dt: number) {
         if (f.hp < 90 && bestUse(f, 'heal')) inp.use = 'bestHeal';
         else if (bestUse(f, 'shield')) inp.use = 'bestShield';
       }
+    } else if (inWindow(m, f.x, f.z, tgt.x, tgt.z)) {
+      // seen through a window: stand and hold the line (a step aside loses it), shooting out the glass if need be
     } else {
       const pref = fightRange(f, g);
       let mx = 0;
@@ -2903,7 +2956,7 @@ function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, 
   const pick = (list: Door[], inward: boolean) => {
     let best = Infinity;
     for (const dr of list) {
-      const d = Math.hypot(dr.x - f.x, dr.z - f.z) + Math.hypot(tx - dr.x, tz - dr.z) + (clearLine(m, f.x, f.z, dr.x + dr.ox * (inward ? 1 : -1), dr.z + dr.oz * (inward ? 1 : -1)) ? 0 : 20);
+      const d = Math.hypot(dr.x - f.x, dr.z - f.z) + Math.hypot(tx - dr.x, tz - dr.z) + (openWay(m, f.x, f.z, dr.x + dr.ox * (inward ? 1 : -1), dr.z + dr.oz * (inward ? 1 : -1)) ? 0 : 20);
       if (d < best) {
         ai.exit = dr;
         best = d;

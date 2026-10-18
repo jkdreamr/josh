@@ -84,15 +84,24 @@ const DRESS: Record<BuildingKind, { frame: number; porch: number; mat: number; a
 };
 /** The stone footing along each kind's outer walls. */
 const FOOTINGS: Record<BuildingKind, number> = { house: 0x8f8a80, farm: 0x7d766c, shed: 0x6e6a62, warehouse: 0x6c747c, container: 0, ruin: 0, coop: 0xb08a4a, diner: 0x9aa3a8, mill: 0x8a8378 };
-/** Windows along each kind's outer walls: their size, how high their middle sits, how far apart, and shutters or not. */
-const WINDOWS: Partial<Record<BuildingKind, { w: number; h: number; y: number; gap: number; shutters: boolean }>> = {
-  house: { w: 1.1, h: 1, y: 1.65, gap: 3.4, shutters: true },
-  farm: { w: 1, h: 1, y: 1.8, gap: 4, shutters: true },
-  shed: { w: 0.8, h: 0.6, y: 1.9, gap: 6, shutters: false },
-  warehouse: { w: 2.2, h: 0.6, y: 3.4, gap: 5, shutters: false },
-  coop: { w: 0.7, h: 0.55, y: 1.9, gap: 3, shutters: false },
-  diner: { w: 2.2, h: 1.2, y: 1.7, gap: 3.4, shutters: false },
-  mill: { w: 0.7, h: 0.9, y: 3.6, gap: 4, shutters: false },
+/**
+ * Little windows only for show along the outer walls of the kinds without real ones: their size, how high their
+ * middle sits and how far apart. The windmill's are glass high up the tower; the Golden Coop's are barred vents.
+ */
+const WINDOWS: Partial<Record<BuildingKind, { w: number; h: number; y: number; gap: number; bars: boolean }>> = {
+  coop: { w: 0.7, h: 0.55, y: 1.9, gap: 3, bars: true },
+  mill: { w: 0.7, h: 0.9, y: 3.6, gap: 4, bars: false },
+};
+/**
+ * Real windows (see map.ts), by kind: the height of the wall below the opening (a warehouse's sit high), and shutters
+ * or not. The opening runs up to the eaves, so from above it reads as a gap along the top of the wall.
+ */
+const GLASS_LOOK: Partial<Record<BuildingKind, { sill: number; shutters: boolean }>> = {
+  house: { sill: 1.05, shutters: true },
+  farm: { sill: 1.1, shutters: true },
+  shed: { sill: 1.3, shutters: false },
+  diner: { sill: 0.8, shutters: false },
+  warehouse: { sill: 2.7, shutters: false },
 };
 const SHUTTERS = [0x3f6f9e, 0x4f8a4a, 0xb0473a, 0x6b4f8a, 0x2f7a7a];
 /** Glow under a pickup, by how good it is (the rarity colors). */
@@ -348,6 +357,27 @@ function glassTexture(THREE: Three) {
       g.fill();
     }),
   );
+}
+
+/**
+ * What's left in a frame once its glass breaks: jagged slivers in the corners and along the bottom, flat in a unit
+ * square facing z.
+ */
+function jaggedGlass(THREE: Three) {
+  const tris = [
+    [-0.5, -0.5, -0.12, -0.5, -0.5, 0.18],
+    [-0.12, -0.5, 0.1, -0.5, -0.02, -0.32],
+    [0.1, -0.5, 0.5, -0.5, 0.5, -0.1],
+    [0.5, 0.5, 0.22, 0.5, 0.5, 0.02],
+    [-0.5, 0.5, -0.34, 0.5, -0.5, 0.28],
+    [-0.5, 0.18, -0.5, 0.0, -0.36, 0.06],
+  ];
+  const pos: number[] = [];
+  for (const [ax, ay, bx, by, cx, cy] of tris) pos.push(ax, ay, 0, bx, by, 0, cx, cy, 0);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
 }
 
 /** Black and white tiles, for the diner's floor. */
@@ -1362,7 +1392,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     }
   };
   const darker = (hex: number, k: number) => color.setHex(hex).multiplyScalar(k).getHex();
-  const wallCount = map.buildings.reduce((n, b) => n + b.walls.length, 0);
+  // a window's wall below the opening is a wall piece too
+  const wallCount = map.buildings.reduce((n, b) => n + b.walls.length + b.windows.length, 0);
   const buildingWalls = many(G.box, lambert(0xffffff), wallCount);
   const wallRnd = scatter(17);
   const doorRnd = scatter(31);
@@ -1371,9 +1402,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const sails: T.Mesh[] = [];
   // door frames, porches, mats, paving and container doors, all one instanced mesh; lamps another
   const bits: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number; c: number }[] = [];
-  // wall caps, footings, window frames, sills and shutters (one instanced mesh), and the glass (another)
+  // wall caps, footings, window frames, sills and shutters (one instanced mesh), and the glass (another); the glass in
+  // the windows that break is its own
   const trims: Part[] = [];
   const panes: Part[] = [];
+  const glassParts: (Part & { ry: number })[] = [];
   const lamps: { x: number; y: number; z: number; sx: number; sz: number }[] = [];
   map.buildings.forEach((b, bi) => {
     const floorMat =
@@ -1427,9 +1460,45 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         const y = Math.min(b.h - win.h / 2 - 0.4, win.y);
         face(trims, u, y, 0.02, win.w + 0.2, win.h + 0.2, 0.06, dress.trim === dress.frame ? 0xf6f1e4 : dress.trim);
         face(trims, u, y - win.h / 2 - 0.12, 0.06, win.w + 0.36, 0.1, 0.14, dress.trim === dress.frame ? 0xe0d8c4 : darker(dress.trim, 0.85));
-        face(panes, u, y, 0.06, win.w, win.h, 0.04, 0xffffff);
-        if (win.shutters) for (const side of [-1, 1]) face(trims, u + side * (win.w / 2 + 0.28), y, 0.04, 0.36, win.h + 0.1, 0.05, SHUTTERS[b.look % SHUTTERS.length]);
+        if (!win.bars) face(panes, u, y, 0.06, win.w, win.h, 0.04, 0xffffff);
+        else {
+          // a dark vent behind three gold bars
+          face(trims, u, y, 0.05, win.w, win.h, 0.04, 0x3a2a12);
+          for (const t of [-1, 0, 1]) face(trims, u + t * (win.w / 4), y, 0.08, 0.06, win.h, 0.05, dress.edge === 0xffffff ? 0xd9a441 : dress.edge);
+        }
       }
+    }
+    // the real windows: wall below the opening, a sill along it, posts either side, a bar across the middle, a lintel
+    // under the eaves, shutters on houses and farms, and the glass (which breaks, leaving the frame)
+    const look = GLASS_LOOK[b.kind];
+    for (const p of b.windows) {
+      if (!look) break;
+      const alongX = p.hw > p.hd;
+      const len = 2 * (alongX ? p.hw : p.hd);
+      const top = b.h - 0.12;
+      const mid = (look.sill + top) / 2;
+      const frame = dress.trim === dress.frame ? 0xf6f1e4 : dress.trim;
+      const wc = wallColor(b, wallRnd).getHex();
+      dummy.position.set(p.x, look.sill / 2, p.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(p.hw * 2, look.sill, p.hd * 2);
+      dummy.updateMatrix();
+      buildingWalls.setMatrixAt(wi, dummy.matrix);
+      buildingWalls.setColorAt(wi, color.setHex(wc));
+      wi++;
+      /** A box `u` along the window from its middle and `o` out from the middle of the wall, `sl` long and `so` deep. */
+      const at = (u: number, y: number, o: number, sl: number, sy: number, so: number, c: number) =>
+        trims.push({ x: p.x + (alongX ? u : p.ox * o), y, z: p.z + (alongX ? p.oz * o : u), sx: alongX ? sl : so, sy, sz: alongX ? so : sl, c });
+      at(0, look.sill + 0.04, 0, len + 0.12, 0.08, WALL_T + 0.16, frame);
+      at(0, top + 0.06, 0, len + 0.08, 0.12, WALL_T * 0.7, frame);
+      for (const k of [-1, 1]) at(k * (len / 2 - 0.05), mid, 0, 0.1, top - look.sill, WALL_T * 0.7, frame);
+      at(0, mid, 0, len - 0.1, 0.07, 0.09, frame);
+      if (len >= 2) at(0, mid, 0, 0.07, top - look.sill, 0.09, frame);
+      if (look.shutters)
+        for (const k of [-1, 1]) at(k * (len / 2 + 0.24), mid + 0.1, WALL_T / 2 + 0.03, 0.4, Math.min(1.4, top - look.sill), 0.05, SHUTTERS[b.look % SHUTTERS.length]);
+      // and a footing along it like the rest of the wall
+      at(0, 0.17, WALL_T / 2, len + 0.04, 0.34, 0.12, FOOTINGS[b.kind]);
+      glassParts[p.i] = { x: p.x, y: mid, z: p.z, sx: len - 0.08, sy: top - look.sill - 0.04, sz: 0.05, ry: alongX ? 0 : Math.PI / 2, c: 0xffffff };
     }
 
     const s = DRESS[b.kind];
@@ -1632,6 +1701,40 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     paneMesh.setMatrixAt(i, dummy.matrix);
   });
   scene.add(trimMesh, paneMesh);
+  // the glass in the windows that break, a little see-through with a shine across it, and the jagged bits a broken
+  // pane leaves in its frame
+  const windowGlass = many(G.box, lambert(0xffffff, { map: keep(glassTexture(THREE)), emissive: 0x1d3a52, transparent: true, opacity: 0.62, depthWrite: false }), glassParts.length);
+  const glassEdges = many(geo(jaggedGlass(THREE)), lambert(0xd9f1ff, { emissive: 0x24445e, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide }), glassParts.length);
+  const glassShown = map.windows.map(() => true);
+  const placeGlass = (i: number, whole: boolean) => {
+    const p = glassParts[i];
+    dummy.position.set(p.x, p.y, p.z);
+    dummy.rotation.set(0, p.ry, 0);
+    dummy.scale.set(whole ? p.sx : 0, whole ? p.sy : 0, whole ? p.sz : 0);
+    dummy.updateMatrix();
+    windowGlass.setMatrixAt(i, dummy.matrix);
+    dummy.scale.set(whole ? 0 : p.sx, whole ? 0 : p.sy, 1);
+    dummy.updateMatrix();
+    glassEdges.setMatrixAt(i, dummy.matrix);
+  };
+  glassParts.forEach((_, i) => placeGlass(i, true));
+  windowGlass.renderOrder = 2;
+  glassEdges.renderOrder = 2;
+  scene.add(windowGlass, glassEdges);
+  /** Shows each window's glass whole or broken, as the match has it (news of a break comes as an event too, for the shards). */
+  const placeWindows = () => {
+    let changed = false;
+    for (let i = 0; i < glassShown.length; i++) {
+      const whole = !m.broken[i];
+      if (whole === glassShown[i] || !glassParts[i]) continue;
+      glassShown[i] = whole;
+      placeGlass(i, whole);
+      changed = true;
+    }
+    if (!changed) return;
+    windowGlass.instanceMatrix.needsUpdate = true;
+    glassEdges.instanceMatrix.needsUpdate = true;
+  };
 
   // trees: oaks (a trunk and two round crowns), pines (two cones), birches (a white trunk with dark marks and a pale
   // narrow crown) and fruit trees (one round crown hung with fruit)
@@ -2426,6 +2529,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       const alongX = w.hw >= w.hd;
       wallShades.push({ x: w.x + SUN.x * 0.45, z: w.z + SUN.z * 0.45, sx: 2 * (alongX ? w.hw : w.hd) + 0.3, sz: 2 * (alongX ? w.hd : w.hw) + 2.4, ry: alongX ? 0 : Math.PI / 2, id: -1 });
     }
+  // a window's wall and frame throw their shade too
+  for (const p of map.windows) {
+    const alongX = p.hw > p.hd;
+    wallShades.push({ x: p.x + SUN.x * 0.45, z: p.z + SUN.z * 0.45, sx: 2 * (alongX ? p.hw : p.hd) + 0.3, sz: 2 * (alongX ? p.hd : p.hw) + 2.4, ry: alongX ? 0 : Math.PI / 2, id: -1 });
+  }
   for (const c of map.cars) shadeBox(c.x, c.z, c.hw, c.hd, 0.5, 0.8);
   for (const l of map.logs) shadeBox(l.x, l.z, l.hw, l.hd, 0.2, 0.3);
   for (const t of map.tables) shadeBox(t.x, t.z, t.alongX ? TABLE_HW : TABLE_HD, t.alongX ? TABLE_HD : TABLE_HW, 0.4, 0.25);
@@ -2848,7 +2956,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   // changes as the match goes on (crates break, chests and fridges open, fires flicker, furniture shows as a roof
   // lifts, shadows go with what breaks) stays as it is.
 
-  const moving = new Set<T.InstancedMesh>([crates, chestBase, chestLid, chestGlow, barrels, barrelBands, flames, fireGlow, fridgeBase, fridgeDoor, fridgeHandles, fridgeInside, bowls, tanks, seats, hay, roundShade, squareShade, ...furnished]);
+  const moving = new Set<T.InstancedMesh>([windowGlass, glassEdges, crates, chestBase, chestLid, chestGlow, barrels, barrelBands, flames, fireGlow, fridgeBase, fridgeDoor, fridgeHandles, fridgeInside, bowls, tanks, seats, hay, roundShade, squareShade, ...furnished]);
   const SPAN = 120;
   for (const im of [...instanced]) {
     if (moving.has(im) || !im.parent || !im.visible || im.count < 16) continue;
@@ -3301,6 +3409,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     splash: basic(0xbfe6f5, { transparent: true, opacity: 0.8, depthWrite: false }),
     jam: basic(0xa3214a),
     glass: basic(0xe6f2f7, { transparent: true, opacity: 0.7, depthWrite: false }),
+    shine: basic(0xffffff),
     shove: basic(0x8fc4ff),
     straw: lambert(0xe2c25a),
   };
@@ -3853,6 +3962,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
 
       placeChests(false);
       placeCrates(clock);
+      placeWindows();
       placeFridges(false);
       placeKitchen(clock);
       placeShades();
@@ -4229,6 +4339,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             burst(e.x, 1, e.z, 5, 4, 0.07, 0.3, [partMat.spark, partMat.metal]);
             flash(e.x, 1, e.z, 0.2, 0.05, 0, flashMat);
           } else if (e.what === 'fire') burst(e.x, 0.6, e.z, 6, 3, 0.08, 0.5, [partMat.spark, partMat.fire], 3);
+          else if (e.what === 'window') burst(e.x, 1.2, e.z, 4, 3, 0.07, 0.35, [partMat.glass, partMat.spark]);
           else burst(e.x, 1, e.z, 4, 3, 0.1, 0.35, [partMat.wood, partMat.dust]);
           break;
         case 'hit': {
@@ -4252,6 +4363,20 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         case 'harvest':
           burst(e.x, 1.4, e.z, 6, 3, 0.13, 0.45, [partMat.wood, partMat.leaf]);
           break;
+        case 'glass': {
+          // the pane shatters: shards burst both ways out of the frame and glint as they fall
+          const p = map.windows[e.i];
+          const g = glassParts[e.i];
+          if (!p || !g || !near(p.x, p.z)) break;
+          const alongX = p.hw > p.hd;
+          const len = 2 * (alongX ? p.hw : p.hd);
+          for (let k = 0; k < 3; k++) {
+            const u = (k - 1) * len * 0.3;
+            burst(p.x + (alongX ? u : 0), g.y, p.z + (alongX ? 0 : u), 6, 4.5, 0.11, 0.8, [partMat.glass, partMat.glass, partMat.shine]);
+          }
+          flash(p.x, g.y, p.z, 0.35, 0.08, 0, flashMat);
+          break;
+        }
         case 'pulse': {
           if (!near(e.x, e.z)) break;
           const w = waves[waveAt];

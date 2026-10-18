@@ -897,6 +897,15 @@ function Play({ mode }: { mode: Mode }) {
       case 'smash':
         if (mine) sfx.tone({ freq: 240, to: 180, dur: 0.05, type: 'square', vol: 0.06 });
         break;
+      case 'glass': {
+        // a crash and the tinkle of shards falling
+        const p = m.map.windows[e.i];
+        const k = mine ? 1 : p ? near(p.x, p.z) : 0;
+        if (k <= 0.05) break;
+        sfx.noise(0.16, 0.16 * k);
+        for (const [i, f] of [2600, 3400, 2200, 3900].entries()) sfx.tone({ freq: f, to: f * 0.8, dur: 0.08, type: 'triangle', vol: 0.05 * k, delay: 0.03 + i * 0.05 });
+        break;
+      }
       case 'harvest':
         if (mine) sfx.tone({ freq: 330, to: 220, dur: 0.06, type: 'triangle', vol: 0.1 });
         break;
