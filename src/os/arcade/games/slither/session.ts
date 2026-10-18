@@ -1,5 +1,5 @@
 import type { World, Pellet } from './world.ts';
-import { addSnake, bodyCount, setPellet, wrapAngle } from './world.ts';
+import { FIELD_NAMES, addSnake, bodyCount, setPellet, wrapAngle } from './world.ts';
 import type { NetOp, RosterEntry, SnakeState } from './net.ts';
 
 export type RoomSeat = { seat: number; name: string; bot?: boolean; color?: number; skin?: number };
@@ -23,11 +23,12 @@ export function makeRoster(players: readonly RoomSeat[], bots: readonly RoomSeat
     });
   }
   const total = Math.min(16, Math.max(roster.length, fillTo));
+  const names = fillerNames(roster.map((entry) => entry.name), total - roster.length);
   for (let i = 0; roster.length < total; i++) {
     roster.push({
       id: roster.length,
       seat: -1,
-      name: ['Orzo', 'Penne', 'Fusilli', 'Udon', 'Ramen', 'Ziti', 'Soba', 'Rotini'][i % 8],
+      name: names[i],
       color: (roster.length + 2) % 8,
       skin: (roster.length + 2) % 8,
       bot: true,
@@ -35,6 +36,26 @@ export function makeRoster(players: readonly RoomSeat[], bots: readonly RoomSeat
     });
   }
   return roster;
+}
+
+const EXTRA_NAMES = ['Bucatini', 'Orecchiette', 'Ravioli', 'Cavatappi', 'Lasagna', 'Vermicelli', 'Somen', 'Conchiglie', 'Tortellini'];
+
+/** Arena filler names that no seat in the room already uses, so Top 10 and the winner title name one noodle each. */
+export function fillerNames(taken: readonly string[], count: number): string[] {
+  const used = new Set(taken.map((name) => name.trim().toLowerCase()));
+  const names: string[] = [];
+  for (const name of [...FIELD_NAMES, ...EXTRA_NAMES]) {
+    if (names.length >= count) break;
+    if (!used.has(name.toLowerCase())) {
+      used.add(name.toLowerCase());
+      names.push(name);
+    }
+  }
+  for (let n = 2; names.length < count; n++) {
+    const name = `Noodle ${n}`;
+    if (!used.has(name.toLowerCase())) names.push(name);
+  }
+  return names;
 }
 
 const peopleSeats = (players: readonly RoomSeat[]) => new Set(players.filter((p) => !p.bot && p.seat >= 0).map((p) => p.seat));
@@ -235,10 +256,10 @@ export function startsSoloRound(previous: ShellStatus | null, status: ShellStatu
   return status === 'playing' && (!hasWorld || previous !== 'paused');
 }
 
-/** CSS size that still renders at least `min` px when a framed device scales the whole screen down. */
-export function touchTarget(renderedWidth: number, layoutWidth: number, min = 44): number {
+/** CSS size that still renders at least `min` px when a framed device scales the whole screen down, capped at `max`. */
+export function touchTarget(renderedWidth: number, layoutWidth: number, min = 44, max = 64): number {
   const scale = layoutWidth > 0 && renderedWidth > 0 ? renderedWidth / layoutWidth : 1;
-  return Math.ceil(min / Math.min(1, scale));
+  return Math.min(max, Math.ceil(min / Math.min(1, scale)));
 }
 
 /** Who left (a person's noodle now steered by a bot) and who joined (a person now steering one) between two rosters. */
