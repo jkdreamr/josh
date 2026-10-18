@@ -51,10 +51,12 @@ for (const id of COURSE_IDS) {
       assert.ok(s0 >= 0 && s1 > s0 && s1 <= t.length, `${where} lies inside the lap`);
       assert.ok([-1, 0, 1].includes(side), where);
       if (past !== 'wall') assert.ok(s0 >= 60 && s1 <= t.length - 60, `${where} is within 60 m of the start line`);
-      if (at !== undefined) assert.ok(past === 'wall' ? at >= t.half + 1.5 : at >= t.half + 0.5, where);
+      // (on Insane the road can narrow over the sky, to no less than 7 m of it)
+      if (at !== undefined) assert.ok(past === 'wall' ? at >= t.half + 1.5 : past === 'void' && c.difficulty === 5 ? at >= 3.5 + 0.4 : at >= t.half + 0.5, where);
     }
     const lay = c.layout(t);
-    const plates = (s: number) => lay.hazards.some((h) => h.kind === 'trench' && deltaS(t, h.s, s) > -t.step && deltaS(t, h.s, s) < (h.len ?? 0) + t.step);
+    // (a gap right across the road has no plates: past it either side is the drop anyway)
+    const plates = (s: number) => lay.hazards.some((h) => h.kind === 'trench' && (h.w ?? h.r) < t.half + 1 && deltaS(t, h.s, s) > -t.step && deltaS(t, h.s, s) < (h.len ?? 0) + t.step);
     for (let i = 0; i < t.n; i++) {
       const s = i * t.step;
       for (const side of [-1, 1]) {
@@ -64,7 +66,7 @@ for (const id of COURSE_IDS) {
           assert.ok(s >= 60 && s <= t.length - 60, `${id} drops away ${s.toFixed(0)} m from the start line`);
           // over a trench, its plates; anywhere else at least half a meter past the edge of the road
           if (plates(s)) assert.ok(Math.abs(lim - (t.half - 0.4)) < 1e-6, `${id} plates at s=${s}`);
-          else assert.ok(lim >= t.half + 0.5 - 1e-6, `${id} brink ${lim.toFixed(2)} at s=${s}`);
+          else assert.ok(lim >= (c.difficulty === 5 ? 3.9 : t.half + 0.5) - 1e-6, `${id} brink ${lim.toFixed(2)} at s=${s}`);
         } else assert.ok(lim >= t.half + 1.5 - 1e-6, `${id} wall ${lim.toFixed(2)} at s=${s}`);
       }
     }

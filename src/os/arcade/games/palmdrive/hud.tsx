@@ -468,6 +468,11 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>The trench</b> across the causeway at Hoover Nights: jump it off the ramp at speed, or take a steel plate either side of the hole.
           </li>
           <li>
+            <b>Insane: no walls.</b> The Cardinal Skyway is a ribbon of glass in the sky. Glass is slick and frost is slicker, so drift through the corners. Gusts shove you sideways: watch
+            the streamers on the lip. Pink pads kick you toward the edge. The panels blink out under you: they flicker first. Fall and the drone fishes you out: about three and a half
+            seconds and three coins.
+          </li>
+          <li>
             <b>The Marguerite buses</b> drive their rounds slower than you, both in the right-hand lane. Pass on the left: run into one and you spin out. Shells break on them too.
             And they have right of way: the pile drivers, bollards, sprinklers and wrecking balls stand aside as a bus comes through.
           </li>

@@ -2,7 +2,8 @@
 // scenery is in scenery.ts). It reads a Race every frame and never changes it.
 import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
-import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, deltaS, dropAt, edgeAt, edgeRuns, gridSpot, headingOf, inTrench, locate, pointAt, wrapAngle, wrapS, type Past, type Track } from './track';
+import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, deltaS, dropAt, edgeAt, edgeRuns, gridSpot, headingOf, inTrench, locate, pointAt, roadEdge, wrapAngle, wrapS, type Past, type Track } from './track';
+import { COURSES } from './courses';
 import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, makeStatue, noise, scatter, swingAt, texture, waterTexture } from './scenery';
 import { COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, RAMP_H, RAMP_LEN, TURBO_AT, hazState, hazardV, hurt, turboLevel, type Ev, type Hat, type HazPhase, type Kart, type LiveHazard, type Race, type ThingKind } from './logic';
 
@@ -401,7 +402,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(2600, 2600, 88, 88), new THREE.MeshLambertMaterial({ map: field }));
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.05;
-  scene.add(ground);
+  // (a road in the sky has no ground under it: see skyway() for campus far below)
+  if (!look.glass) scene.add(ground);
   const lawn = texture(
     THREE,
     canvas(64, 64, (g) => {
@@ -414,8 +416,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   );
   lawn.wrapS = lawn.wrapT = THREE.RepeatWrapping;
   const lawnMat = new THREE.MeshLambertMaterial({ map: lawn });
-  scene.add(new THREE.Mesh(ribbon(THREE, t, t.half, t.edge + 0.4, 0.02, 8), lawnMat));
-  scene.add(new THREE.Mesh(ribbon(THREE, t, -t.edge - 0.4, -t.half, 0.02, 8), lawnMat));
+  if (!look.glass) {
+    scene.add(new THREE.Mesh(ribbon(THREE, t, t.half, t.edge + 0.4, 0.02, 8), lawnMat));
+    scene.add(new THREE.Mesh(ribbon(THREE, t, -t.edge - 0.4, -t.half, 0.02, 8), lawnMat));
+  }
 
   // the road, curbs, walls and the start
   const asphalt = texture(
@@ -447,7 +451,44 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   );
   asphalt.wrapS = asphalt.wrapT = THREE.RepeatWrapping;
   const roadLen = t.length / Math.round(t.length / 12);
-  scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half, t.half, 0.04, roadLen), new THREE.MeshLambertMaterial({ map: asphalt })));
+  // the glass road in the sky: a lit cardinal ribbon with a faint white grid, as wide as the road is where it is
+  // (narrower over the Wire), with nothing at all where the Gap is or the panes of the Blink lie (they are drawn below)
+  const glassTex = look.glass
+    ? texture(
+        THREE,
+        canvas(128, 128, (g) => {
+          const grad = g.createLinearGradient(0, 0, 128, 0);
+          grad.addColorStop(0, '#7a1430');
+          grad.addColorStop(0.12, look.road);
+          grad.addColorStop(0.88, look.road);
+          grad.addColorStop(1, '#7a1430');
+          g.fillStyle = grad;
+          g.fillRect(0, 0, 128, 128);
+          g.fillStyle = 'rgba(255,255,255,0.13)';
+          for (let k = 0; k < 128; k += 32) {
+            g.fillRect(k, 0, 1.5, 128);
+            g.fillRect(0, k, 128, 1.5);
+          }
+          g.fillStyle = 'rgba(255,190,210,0.06)';
+          for (let k = 0; k < 40; k++) g.fillRect((k * 53) % 128, (k * 29) % 128, 6, 1);
+        }),
+      )
+    : null;
+  const glassMat = glassTex ? new THREE.MeshBasicMaterial({ map: glassTex }) : null;
+  if (glassTex) glassTex.wrapS = glassTex.wrapT = THREE.RepeatWrapping;
+  /** Where the glass road has no glass of its own: the Gap, and the panes of the Blink. */
+  const gaps: [number, number][] = [];
+  for (const h of r.hazards) if ((h.kind === 'trench' && (h.w ?? h.r) >= t.half + 1) || (h.kind === 'panel' && h.d < 0)) gaps.push([h.s, h.s + (h.len ?? 0)]);
+  gaps.sort((a, b) => a[0] - b[0]);
+  const lo = (s: number) => -roadEdge(t, s, -1);
+  const hi = (s: number) => roadEdge(t, s, 1);
+  if (glassMat) {
+    let from = 0;
+    for (const [a, b] of [...gaps, [t.length, t.length] as [number, number]]) {
+      if (a > from + 0.1) scene.add(new THREE.Mesh(strip(THREE, t, from, a, lo, hi, 0.04, 6), glassMat));
+      from = b;
+    }
+  } else scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half, t.half, 0.04, roadLen), new THREE.MeshLambertMaterial({ map: asphalt })));
   const curbTex = texture(
     THREE,
     canvas(16, 64, (g) => {
@@ -461,8 +502,21 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const curbLen = t.length / Math.round(t.length / 3);
   // after dark the curbs glow a little, so the edge of the road always reads
   const curbMat = new THREE.MeshLambertMaterial({ map: curbTex, ...(look.night ? { emissive: 0xffffff, emissiveMap: curbTex, emissiveIntensity: 0.35 } : {}) });
-  scene.add(new THREE.Mesh(ribbon(THREE, t, t.half, t.half + CURB, 0.07, curbLen), curbMat));
-  scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half - CURB, -t.half, 0.07, curbLen), curbMat));
+  if (look.glass) {
+    // bright white edge lines, always where the road ends (but over the Gap and the panes)
+    const lineMat2 = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    let from = 0;
+    for (const [a, b] of [...gaps, [t.length, t.length] as [number, number]]) {
+      if (a > from + 0.1) {
+        scene.add(new THREE.Mesh(strip(THREE, t, from, a, (s) => lo(s), (s) => lo(s) + 0.22, 0.07, 4), lineMat2));
+        scene.add(new THREE.Mesh(strip(THREE, t, from, a, (s) => hi(s) - 0.22, (s) => hi(s), 0.07, 4), lineMat2));
+      }
+      from = b;
+    }
+  } else {
+    scene.add(new THREE.Mesh(ribbon(THREE, t, t.half, t.half + CURB, 0.07, curbLen), curbMat));
+    scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half - CURB, -t.half, 0.07, curbLen), curbMat));
+  }
   // sandstone walls with a cardinal red band, so the edge of the course always reads
   const wallTex = texture(
     THREE,
@@ -522,8 +576,24 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const reflectorMat = new THREE.MeshBasicMaterial({ color: 0xffb300 });
   const posts: { x: number; z: number; ry: number }[] = [];
   const open = runs.filter((run) => run[3] !== 'wall');
+  // (in the sky: brushed steel decking out to glass rails, wherever they stand)
+  const deckMat = look.glass ? new THREE.MeshLambertMaterial({ color: 0x5d6270, emissive: 0x23262e }) : null;
+  const railMat = look.glass ? new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }) : null;
+  const railTop = look.glass ? new THREE.MeshBasicMaterial({ color: 0xdff8ff }) : null;
   for (const [side, s0, s1, past] of runs) {
     if (past !== 'wall') continue;
+    if (deckMat && railMat && railTop) {
+      const at = (s: number) => side * edgeAt(t, s, side).lim;
+      scene.add(new THREE.Mesh(strip(THREE, t, s0, s1, (s) => side * t.half, at, 0.03, 4), deckMat));
+      const rail = strip(THREE, t, s0, s1, (s) => at(s), (s) => at(s), 0, 3);
+      // (stood up: the strip's two edges at the rail, one at the deck and one a meter up)
+      const pos = rail.getAttribute('position');
+      for (let k = 0; k < pos.count; k++) if (k % 2 === 1) pos.setY(k, 1.1);
+      rail.computeVertexNormals();
+      scene.add(new THREE.Mesh(rail, railMat));
+      scene.add(new THREE.Mesh(strip(THREE, t, s0, s1, (s) => at(s) - 0.08, (s) => at(s) + 0.08, 1.12, 4), railTop));
+      continue;
+    }
     scene.add(new THREE.Mesh(fence(THREE, t, side * t.edge, 1.25, 3, s0, s1), wallMat));
     scene.add(new THREE.Mesh(ribbon(THREE, t, side * t.edge - 0.3, side * t.edge + 0.3, 1.25, 4, s0, s1), capMat));
     if (s1 - s0 >= t.length - 0.01) continue;
@@ -572,9 +642,36 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const pondMat = pondTex ? new THREE.MeshBasicMaterial({ map: pondTex, color: 0x9fe6f0 }) : null;
   const copingMat = new THREE.MeshLambertMaterial({ color: 0xcdb48a, ...(look.night ? { emissive: 0x2a2214 } : {}) });
   const netting: { x: number; z: number; ry: number; len: number }[] = [];
+  // (over the sky: a neon lip from the edge of the glass to the brink, lit posts along it and a dark edge under it)
+  const neonMat = look.glass ? new THREE.MeshBasicMaterial({ color: 0xff2d6f }) : null;
+  const skirtMat = look.glass ? new THREE.MeshBasicMaterial({ color: 0x1a0610, side: THREE.DoubleSide }) : null;
+  const lipPosts: { x: number; z: number }[] = [];
   for (const [side, s0, s1, past] of open) {
     const lim = limit(side);
     const far = reachAt(side);
+    if (past === 'void' && neonMat && skirtMat) {
+      const edgeOf = (s: number) => side * roadEdge(t, s, side);
+      let from = s0;
+      for (const [a, b] of [...gaps, [s1, s1] as [number, number]]) {
+        if (b < from) continue;
+        const end = Math.min(a, s1);
+        if (end > from + 0.1) {
+          scene.add(new THREE.Mesh(strip(THREE, t, from, end, edgeOf, lim, 0.072, 2), neonMat));
+          const skirt = strip(THREE, t, from, end, lim, lim, 0, 3);
+          const pos = skirt.getAttribute('position');
+          for (let k = 0; k < pos.count; k++) if (k % 2 === 1) pos.setY(k, -0.8);
+          scene.add(new THREE.Mesh(skirt, skirtMat));
+        }
+        from = Math.max(from, b);
+        if (from >= s1) break;
+      }
+      for (let s = s0 + 3; s < s1; s += 6) {
+        if (gaps.some(([a, b]) => s > a - 1 && s < b + 1)) continue;
+        const p = pointAt(t, s, side * (edgeAt(t, s, side).lim - 0.15));
+        lipPosts.push({ x: p.x, z: p.z });
+      }
+      continue;
+    }
     if (look.edge === 'stakes') {
       for (let s = s0 + 2; s < s1; s += 6) {
         const p = pointAt(t, s, side * (edgeAt(t, s, side).lim + 0.35));
@@ -604,6 +701,16 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         netting.push({ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, ry: Math.atan2(b.x - a.x, b.z - a.z), len: Math.hypot(b.x - a.x, b.z - a.z) });
       }
     }
+  }
+  if (lipPosts.length) {
+    const m = new THREE.InstancedMesh(geo.box, new THREE.MeshBasicMaterial({ color: 0xffd6e4 }), lipPosts.length);
+    lipPosts.forEach((p, k) => {
+      dummy.position.set(p.x, 0.45, p.z);
+      dummy.scale.set(0.14, 0.9, 0.14);
+      dummy.updateMatrix();
+      m.setMatrixAt(k, dummy.matrix);
+    });
+    scene.add(m);
   }
   const studMat = new THREE.MeshBasicMaterial({ color: 0xffa000 });
   if (studs.length) {
@@ -755,11 +862,37 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     [1, 2],
   );
   const dashMat = new THREE.MeshBasicMaterial({ map: dashTex });
+  // a kicker is pink, and its chevrons lean the way it shoves you
+  const kickTex = (sign: number) =>
+    texture(
+      THREE,
+      canvas(64, 128, (g) => {
+        g.fillStyle = '#ff2d9a';
+        g.fillRect(0, 0, 64, 128);
+        g.fillStyle = '#ffe6f4';
+        for (let i = 0; i < 2; i++) {
+          const y = i * 64;
+          const lean = -sign * 14;
+          g.beginPath();
+          g.moveTo(6, y + 10);
+          g.lineTo(32 + lean, y + 40);
+          g.lineTo(58, y + 10);
+          g.lineTo(58, y + 26);
+          g.lineTo(32 + lean, y + 56);
+          g.lineTo(6, y + 26);
+          g.closePath();
+          g.fill();
+        }
+      }),
+      [1, 2],
+    );
+  const kickMats = new Map<number, T.MeshBasicMaterial>();
   for (const d of r.dashes) {
     const g = new THREE.Group();
     g.position.set(d.x, 0.09, d.z);
     g.rotation.y = d.h;
-    const pad = new THREE.Mesh(geo.plane, dashMat);
+    if (d.kick && !kickMats.has(Math.sign(d.kick))) kickMats.set(Math.sign(d.kick), new THREE.MeshBasicMaterial({ map: kickTex(Math.sign(d.kick)) }));
+    const pad = new THREE.Mesh(geo.plane, d.kick ? kickMats.get(Math.sign(d.kick))! : dashMat);
     pad.rotation.x = -Math.PI / 2;
     pad.scale.set(2.2, 4.4, 1);
     g.add(pad);
@@ -826,7 +959,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     const out = -Math.sign(c);
     const open = dropAt(t, i, out);
     if (open && look.edge === 'stakes') continue;
-    const p = pointAt(t, s, open ? out * ((out > 0 ? beyond.hi : beyond.lo)[i] + 0.6) : out * (t.edge - 0.4));
+    const p = pointAt(t, s, open ? out * (look.glass ? edgeAt(t, s, out).lim + 0.7 : (out > 0 ? beyond.hi : beyond.lo)[i] + 0.6) : out * (look.glass ? edgeAt(t, s, out).lim - 0.4 : t.edge - 0.4));
     const sign = new THREE.Mesh(geo.plane, chevronMat);
     sign.scale.set(1.6, 1.6, 1);
     sign.position.set(p.x, 1.9, p.z);
@@ -986,6 +1119,12 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     const w = h.w ?? h.r;
     const s0 = h.s;
     const s1 = h.s + len;
+    if (w >= t.half + 1) {
+      // the Gap: nothing there at all, just its rims glowing orange in the Bonfire's light
+      const rim = new THREE.MeshBasicMaterial({ color: 0xff8a2a });
+      for (const [a, b] of [[s0 - 0.5, s0], [s1, s1 + 0.5]]) scene.add(new THREE.Mesh(strip(THREE, t, a, b, (s) => -edgeAt(t, s, -1).lim, (s) => edgeAt(t, s, 1).lim, 0.075, 0.5), rim));
+      return;
+    }
     const plate = edgeAt(t, s0 + len / 2, 1).lim;
     const hole = texture(
       THREE,
@@ -1221,7 +1360,110 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     scene.add(decal, mist);
     wets.push({ i, decal, mist, mistMat });
   };
+  // the Blink's panes: glass tiles with a bright rim, strobing as they are about to go, gone while they are open (and
+  // the sky right through), back as they close; and the Wire's flare grates, glowing before they blow a column of flame
+  const paneTex = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = 'rgba(150,30,70,0.9)';
+      g.fillRect(0, 0, 64, 64);
+      g.fillStyle = 'rgba(255,255,255,0.18)';
+      for (let k = 8; k < 64; k += 16) g.fillRect(k, 0, 1, 64);
+      g.strokeStyle = '#ffffff';
+      g.lineWidth = 5;
+      g.strokeRect(2.5, 2.5, 59, 59);
+    }),
+  );
+  const rimTex = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.strokeStyle = '#ffffff';
+      g.lineWidth = 4;
+      g.strokeRect(2, 2, 60, 60);
+    }),
+  );
+  type PaneView = { i: number; tile: T.Mesh; mat: T.MeshBasicMaterial; rim: T.Mesh; rimMat: T.MeshBasicMaterial; was: boolean };
+  const panes: PaneView[] = [];
+  const buildPanel = (h: LiveHazard, i: number) => {
+    const len = h.len ?? 0;
+    const w = h.w ?? h.r;
+    const mat = new THREE.MeshBasicMaterial({ map: paneTex });
+    const tile = new THREE.Mesh(strip(THREE, t, h.s, h.s + len, () => h.d - w, () => h.d + w, 0.05, len), mat);
+    const rimMat = new THREE.MeshBasicMaterial({ map: rimTex, transparent: true, depthWrite: false });
+    const rim = new THREE.Mesh(strip(THREE, t, h.s, h.s + len, () => h.d - w, () => h.d + w, 0.06, len), rimMat);
+    scene.add(tile, rim);
+    panes.push({ i, tile, mat, rim, rimMat, was: false });
+  };
+  const grateTex = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = '#2a1410';
+      g.beginPath();
+      g.arc(32, 32, 31, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#ffb36a';
+      for (let k = 10; k < 56; k += 8) g.fillRect(k, 12, 3, 40);
+      g.strokeStyle = '#ffd9a0';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(32, 32, 29, 0, Math.PI * 2);
+      g.stroke();
+    }),
+  );
+  const flameGeo = new THREE.CylinderGeometry(0.75, 1.05, 5, 12, 1, true);
+  flameGeo.translate(0, 2.5, 0);
+  type FlareView = { i: number; grate: T.Mesh; gmat: T.MeshBasicMaterial; flame: T.Mesh; fmat: T.MeshBasicMaterial; glow: T.Sprite };
+  const flares: FlareView[] = [];
+  const buildFlare = (h: LiveHazard, i: number) => {
+    const gmat = new THREE.MeshBasicMaterial({ map: grateTex, transparent: true, depthWrite: false });
+    const grate = new THREE.Mesh(new THREE.CircleGeometry(h.r, 20), gmat);
+    grate.rotation.x = -Math.PI / 2;
+    grate.position.set(h.x, 0.08, h.z);
+    const fmat = new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const flame = new THREE.Mesh(flameGeo, fmat);
+    flame.position.set(h.x, 0, h.z);
+    flame.visible = false;
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xff7a1a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    glow.position.set(h.x, 2, h.z);
+    glow.visible = false;
+    scene.add(grate, flame, glow);
+    flares.push({ i, grate, gmat, flame, fmat, glow });
+  };
+  // frost: a pale crystalline sheet over the stretches where it forms, from its lap (faint the lap before, forming)
+  const frostTex = look.glass
+    ? texture(
+        THREE,
+        canvas(128, 128, (g) => {
+          g.fillStyle = 'rgba(200,235,255,0.35)';
+          g.fillRect(0, 0, 128, 128);
+          const sc = scatter(17);
+          for (let k = 0; k < 120; k++) {
+            g.strokeStyle = `rgba(255,255,255,${0.3 + sc() * 0.5})`;
+            g.lineWidth = 1;
+            const x = sc() * 128;
+            const y = sc() * 128;
+            const a = sc() * Math.PI;
+            g.beginPath();
+            g.moveTo(x - Math.cos(a) * 6, y - Math.sin(a) * 6);
+            g.lineTo(x + Math.cos(a) * 6, y + Math.sin(a) * 6);
+            g.stroke();
+          }
+        }),
+      )
+    : null;
+  if (frostTex) frostTex.wrapS = frostTex.wrapT = THREE.RepeatWrapping;
+  const frosts = (COURSES[r.course].surfaces ?? [])
+    .filter((f) => f[3] === 'frost' && frostTex)
+    .map(([s0, s1, , , lap]) => {
+      const mat = new THREE.MeshBasicMaterial({ map: frostTex, transparent: true, opacity: 0, depthWrite: false });
+      const m = new THREE.Mesh(strip(THREE, t, s0, s1, lo, hi, 0.055, 8), mat);
+      m.renderOrder = 1;
+      scene.add(m);
+      return { mat, lap: lap ?? 1 };
+    });
   r.hazards.forEach((h, i) => {
+    if (h.kind === 'panel') return buildPanel(h, i);
+    if (h.kind === 'geyser') return buildFlare(h, i);
     if (h.kind === 'hammer') return buildHammer(h, i);
     if (h.kind === 'bollard') return buildBank(h, i);
     if (h.kind === 'wrecker') return buildWrecker(h, i);
@@ -2101,6 +2343,35 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         setAt(standbyMesh, n, rv.f, 0, 1.36, 0, 0.16 * z, 0.16 * z, 0.16 * z);
       });
       for (const m of [jetMesh, sheenMesh, capMesh2, standbyMesh]) if (m) m.instanceMatrix.needsUpdate = true;
+      for (const pv of panes) {
+        const h = race.hazards[pv.i];
+        const st = hazState(race, h, race.time, lapNow);
+        const open = st.live;
+        // (strobing at 8 Hz through its warning; gone while it is open, its rim glowing orange)
+        pv.tile.visible = !open;
+        pv.mat.color.setHex(st.warn > 0 && Math.floor(clock * 8) % 2 === 0 ? 0xffffff : st.phase === 'off' ? 0x9a8a90 : 0xffffff);
+        pv.mat.map = st.warn > 0 && Math.floor(clock * 8) % 2 === 0 ? null : paneTex;
+        pv.mat.needsUpdate = st.warn > 0 || open !== pv.was;
+        pv.rimMat.color.setHex(open ? 0xff7a1a : st.warn > 0 ? 0xffe14d : 0xffffff);
+        if (open && !pv.was) burst(geo.box, [partMat.white, partMat.spray], h.x, 0.3, h.z, 12, 3, 0.35, 0.5, 18);
+        pv.was = open;
+      }
+      for (const fv of flares) {
+        const h = race.hazards[fv.i];
+        const st = hazState(race, h, race.time, lapNow);
+        fv.flame.visible = st.live;
+        fv.glow.visible = st.live || st.warn > 0;
+        fv.gmat.color.setHex(st.phase === 'off' ? 0x555555 : st.live ? 0xffffff : st.warn > 0 ? 0xffd0a0 : 0xa08070);
+        if (st.live) {
+          fv.flame.scale.set(1 + Math.sin(clock * 23 + fv.i) * 0.08, 0.9 + Math.sin(clock * 17 + fv.i) * 0.12, 1);
+          fv.fmat.opacity = 0.7 + Math.sin(clock * 31) * 0.15;
+        }
+        if (fv.glow.visible) {
+          const g = st.live ? 7 : 2 + 3 * st.warn;
+          fv.glow.scale.set(g, g, 1);
+        }
+      }
+      for (const f of frosts) f.mat.opacity = lapNow >= f.lap ? 0.75 : lapNow === f.lap - 1 ? 0.18 : 0;
       for (const w of wets) {
         const h = race.hazards[w.i];
         const on = hazState(race, h, race.time, lapNow).live;
@@ -2214,7 +2485,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
             }
           }
           // bubbles while it is under the water, dust coming up out of a pit
-          if (pose.y < -0.5 && Math.random() < dt * 14) emit(geo.ball, k.fell?.past === 'water' || !k.fell ? partMat.white : partMat.dust, pose.x + (Math.random() - 0.5) * 1.6, 0.08, pose.z + (Math.random() - 0.5) * 1.6, 0, 0.6, 0, 0.5, 0.14, -3);
+          if (pose.y < -0.5 && k.fell?.past !== 'void' && Math.random() < dt * 14) emit(geo.ball, k.fell?.past === 'water' || !k.fell ? partMat.white : partMat.dust, pose.x + (Math.random() - 0.5) * 1.6, 0.08, pose.z + (Math.random() - 0.5) * 1.6, 0, 0.6, 0, 0.5, 0.14, -3);
           return;
         }
         if (v.smoke > 0 || k.y > 0.2 || Math.abs(k.v) < 6) return;
@@ -2386,13 +2657,13 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         effect(k.x, 0.4, k.z, 2.6, false);
         if (e.k === me) shake = Math.max(shake, 0.5);
       } else if (e.t === 'fall') {
-        // down into the pit: a cloud of dust, and a jolt
+        // down into the pit: a cloud of dust, and a jolt (off into the sky, just the jolt)
         const k = race.karts[e.k];
         if (!k) return;
-        burst(geo.ball, [partMat.dust], k.x, 0.3, k.z, 22, 6, 0.4, 0.9, 10);
+        if (e.kind !== 'void') burst(geo.ball, [partMat.dust], k.x, 0.3, k.z, 22, 6, 0.4, 0.9, 10);
         if (e.k === me) shake = Math.max(shake, 0.7);
       } else if (e.t === 'sank') {
-        burst(geo.ball, [e.kind === 'water' ? partMat.spray : partMat.dust], e.x, 0.2, e.z, 8, 4, 0.2, 0.5, 14);
+        if (e.kind !== 'void') burst(geo.ball, [e.kind === 'water' ? partMat.spray : partMat.dust], e.x, 0.2, e.z, 8, 4, 0.2, 0.5, 14);
       } else if (e.t === 'set') {
         const k = race.karts[e.k];
         if (k) effect(k.x, 0.5, k.z, 1.4, false);
@@ -2456,8 +2727,9 @@ function fallPose(r: Race, k: Kart, clock: number): Pose {
   const u = 1 - Math.min(1, k.sunk / T);
   const fell = k.fell;
   const at = locate(t, k.x, k.z, k.i);
-  const past: Past = fell?.past ?? (r.holes.some((h) => inTrench(t, h, at.s, at.d)) ? 'pit' : edgeAt(t, at.s, at.d >= 0 ? 1 : -1).past);
-  const depth = past === 'water' ? 1.4 : 3;
+  // (someone else's kart online: whatever is under it, a trench or a pane of the Blink, or past the edge)
+  const past: Past = fell?.past ?? (r.holes.some((h) => inTrench(t, h, at.s, at.d)) ? r.holePast : r.panels.some((h) => inTrench(t, h, at.s, at.d)) ? 'void' : edgeAt(t, at.s, at.d >= 0 ? 1 : -1).past);
+  const depth = past === 'water' ? 1.4 : past === 'void' ? 14 : 3;
   if (!fell) return { x: k.x, z: k.z, y: -depth, h: k.h, hook: 1 + Math.sin(clock * 2) * 0.5 };
   const ease = (q: number) => q * q * (3 - 2 * q);
   // sliding on over the edge as it drops, slowing to a stop (not far, down a trench)

@@ -12,6 +12,7 @@ import {
   FALL_SINK,
   HAMMER,
   ITEMS,
+  gustWarn,
   hazState,
   hazardV,
   boom,
@@ -371,6 +372,8 @@ type Hud = {
   note: string | null;
   wrong: boolean;
   results: boolean;
+  /** Wind across the road just ahead: 0 still, else its way (+ to the right) times 1 about to blow, 2 blowing. */
+  gust: number;
 };
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => a[k] === b[k]);
 
@@ -430,7 +433,7 @@ function Play({ mode }: { mode: Mode }) {
   const tap = useRef({ back: false, gas: false, cash: false, slam: false });
   /** The item button was holding a banana or shell out behind last frame. */
   const holding = useRef(false);
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, note: null, wrong: false, results: false });
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, note: null, wrong: false, results: false, gust: 0 });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
@@ -463,6 +466,8 @@ function Play({ mode }: { mode: Mode }) {
   const pieceCyc = useRef(new Map<number, number>());
   const pieceTick = useRef(0);
   const hissT = useRef(0);
+  /** The wind warning last time round (for the whoosh as a gust starts to blow). */
+  const gustWas = useRef(0);
   /** A short buzz on phones that can. */
   const buzz = (ms: number) => {
     if (!shellRef.current.touch) return;
@@ -981,6 +986,12 @@ function Play({ mode }: { mode: Mode }) {
         }
         break;
       case 'fall':
+        // off the Skyway: a long falling whistle
+        if (mine && e.kind === 'void') {
+          sfx.tone({ freq: 1200, to: 300, dur: 0.6, type: 'sine', vol: 0.16 });
+          buzz(90);
+          break;
+        }
         // down into a pit: a thud and a clatter
         if (mine) {
           sfx.tone({ freq: 110, to: 38, dur: 0.4, type: 'sine', vol: 0.24 });
@@ -1148,7 +1159,20 @@ function Play({ mode }: { mode: Mode }) {
       note,
       wrong: me.wrong > 1.2 && me.done === null,
       results: me.done !== null && clock.current - (doneAt.current ?? 0) >= 3,
+      gust: 0,
     };
+    // the wind just ahead: the strongest gust warning or blowing within 80 m (see gustWarn)
+    if (r.gusts.length && me.done === null && me.sunk === 0) {
+      let best: ReturnType<typeof gustWarn> = null;
+      for (let a = 0; a <= 80; a += 10) {
+        const g = gustWarn(r, me.s + a, r.time, me.lap);
+        if (g && (!best || g.a * g.k > best.a * best.k)) best = g;
+      }
+      if (best) next.gust = best.dir * (best.k >= 1 ? 2 : 1);
+      // a whoosh as it starts to blow
+      if (Math.abs(next.gust) === 2 && gustWas.current !== 2) sfx.noise(0.7, 0.07);
+    }
+    gustWas.current = Math.abs(next.gust);
     setHud((h) => (sameHud(h, next) ? h : next));
     const delta = me.coins - lastCoins.current;
     lastCoins.current = me.coins;
@@ -1318,6 +1342,11 @@ function Play({ mode }: { mode: Mode }) {
             </div>
           )}
           {hud.wrong && <div className="g-palmdrive-wrong">wrong way</div>}
+          {hud.gust !== 0 && (
+            <div className={`g-palmdrive-gust${Math.abs(hud.gust) === 2 ? ' is-on' : ''}`} aria-label={`Wind from the ${hud.gust > 0 ? 'left' : 'right'}`}>
+              {hud.gust < 0 ? '\u2190 ' : ''}wind{hud.gust > 0 ? ' \u2192' : ''}
+            </div>
+          )}
           {hud.rear && <div className="g-palmdrive-rear">behind you</div>}
           {hint && (
             <div key={`hint-${hint.id}`} className="g-palmdrive-hint" role="status" onAnimationEnd={() => setHint(null)}>

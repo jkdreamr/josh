@@ -836,8 +836,13 @@ export type Look = {
    * on the golf course just red stakes along the water's edge (the ponds show themselves).
    */
   edge?: 'lip' | 'stakes';
-  /** What fishes a kart out after a fall: the night crew's crane hook (the default), or a giant golf ball retriever. */
-  rescue?: 'hook' | 'retriever';
+  /** What fishes a kart out after a fall: the night crew's crane hook (the default), a giant golf ball retriever, or a drone. */
+  rescue?: 'hook' | 'retriever' | 'drone';
+  /**
+   * A road of glass in the sky (the Cardinal Skyway): no ground under it, the road a lit ribbon with white edge lines and a
+   * neon lip where it ends, glass rails where it has walls, and campus far below (see skyway()).
+   */
+  glass?: boolean;
 };
 export const LOOKS: Record<CourseId, Look> = {
   palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE', road: '#4a4a52' },
@@ -850,6 +855,8 @@ export const LOOKS: Record<CourseId, Look> = {
   hoover: { fog: [0x22325e, 80, 470], sky: 0x8d9fdc, ground: 0x2a3150, sun: [0xb4c8ff, 0.8], field: '#33402c', lawn: '#3b5734', curb: ['#f4f1ea', '#d9a52e'], wall: '#c9c0b0', band: '#ffc53d', banner: 'HOOVER NIGHTS', road: '#4e4e58', night: true },
   // a bright late afternoon: deep green rough all round, the fairway mown in stripes beside the road
   golf: { fog: [0xf1e2bf, 150, 720], sky: 0xfff2d6, ground: 0x4f7a34, sun: [0xffe0a8, 1.6], field: '#4c8a32', lawn: '#6fb34a', curb: ['#f4f1ea', '#2f7a3a'], wall: '#efe9da', band: '#2f6b3a', banner: 'STANFORD GOLF', road: '#57575f', edge: 'stakes', rescue: 'retriever' },
+  // night ninety meters up: a deep blue haze that swallows campus far below, starlight and the glow off the road
+  skyway: { fog: [0x0b0d26, 120, 470], sky: 0x8d93d8, ground: 0x2a1030, sun: [0xc8ccff, 0.75], field: '#05060c', lawn: '#14161d', curb: ['#ffffff', '#ff2d6f'], wall: '#9fe8ff', band: '#c8143c', banner: 'CARDINAL SKYWAY', road: '#4a0a18', night: true, rescue: 'drone', glass: true },
 };
 
 /** What a course's scenery builder gets: the scene, the track and shared helpers. */
@@ -3374,4 +3381,393 @@ function golf(c: Scenery): SceneryTick {
   };
 }
 
-export const SCENERY: Record<CourseId, (c: Scenery) => void | SceneryTick> ={ palm: campus, lake, barn, dish, stadium, quad, hoover, golf };
+/** How far below the Cardinal Skyway campus lies. */
+export const SKY_DROP = 90;
+
+/**
+ * The Cardinal Skyway: night, ninety meters over campus on Big Game eve. Below, campus as a dim diorama: the line of lamps
+ * down Palm Drive to the Oval, the warm arcades of the Main Quad and Memorial Church lit up, the stadium's floodlights,
+ * the Dish turning under the sweeper and Lake Lagunita with the Big Game Bonfire burning on its bed, right under the Gap
+ * and the Wire, its embers drifting up past the road. Hoover Tower rises out of the dark in the middle of the Corkscrew,
+ * its lit lantern at road level. The Bay and the city glow on the northern horizon with the Bay Bridge's lights, under
+ * the stars, the Milky Way and a thin moon.
+ */
+function skyway(c: Scenery): SceneryTick {
+  const { THREE, scene, t, geo, rand, dummy } = c;
+  const { cx, cz, rx, rz } = bounds(t);
+  const Y = -SKY_DROP;
+  const flat = -Math.PI / 2;
+  type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number; rx?: number };
+  // (where things are along the road, and the centres of the Corkscrew's arcs: Hoover Tower stands in the middle of it)
+  const at = (s: number, d = 0) => pointAt(t, s, d);
+  const gap = at(537);
+  const wire = at(730);
+  const tower = { x: -110, z: -36 };
+  const sweep = at(585, -60);
+  // the lake: under the Gap and the Wire, the Bonfire on its bed under the Gap
+  const lake = { x: (gap.x + wire.x) / 2, z: (gap.z + wire.z) / 2, r: 70 };
+  const fire = { x: gap.x, z: gap.z };
+
+  // the ground far below: one big plane painted with campus at night
+  const S = 1800;
+  const W = 1024;
+  const px = (x: number) => ((x - (cx - S / 2)) / S) * W;
+  const py = (z: number) => ((z - (cz - S / 2)) / S) * W;
+  const scale = W / S;
+  const ground = texture(
+    THREE,
+    canvas(W, W, (g) => {
+      g.fillStyle = '#04050b';
+      g.fillRect(0, 0, W, W);
+      // dark lawns and the foothills
+      for (let n = 0; n < 70; n++) {
+        g.fillStyle = `rgba(${10 + rand() * 10},${18 + rand() * 14},${16 + rand() * 10},0.8)`;
+        g.beginPath();
+        g.ellipse(rand() * W, rand() * W, 20 + rand() * 60, 14 + rand() * 40, rand() * 3, 0, Math.PI * 2);
+        g.fill();
+      }
+      // the Bay along the north edge (+z), dark water with a sheen
+      const bay = g.createLinearGradient(0, W, 0, W * 0.82);
+      bay.addColorStop(0, '#0b1a3a');
+      bay.addColorStop(1, 'rgba(8,16,40,0)');
+      g.fillStyle = bay;
+      g.fillRect(0, W * 0.82, W, W * 0.18);
+      // streets: a loose grid of warm lines, lamps along them
+      g.lineCap = 'round';
+      const street = (pts: [number, number][], width: number, lamps: number, color = 'rgba(255,170,90,0.55)') => {
+        g.strokeStyle = color;
+        g.lineWidth = width;
+        g.beginPath();
+        pts.forEach(([x, z], i) => (i ? g.lineTo(px(x), py(z)) : g.moveTo(px(x), py(z))));
+        g.stroke();
+        for (let i = 0; i + 1 < pts.length; i++) {
+          const [ax, az] = pts[i];
+          const [bx, bz] = pts[i + 1];
+          const n = Math.max(1, Math.round(Math.hypot(bx - ax, bz - az) / lamps));
+          for (let k = 0; k <= n; k++) {
+            g.fillStyle = 'rgba(255,226,160,0.95)';
+            g.fillRect(px(ax + ((bx - ax) * k) / n) - 1, py(az + ((bz - az) * k) / n) - 1, 2.5, 2.5);
+          }
+        }
+      };
+      for (let k = -6; k <= 6; k++) {
+        street([[cx - 900, cz + k * 130 + rand() * 30], [cx + 900, cz + k * 130 + rand() * 30]], 1.4, 26, 'rgba(255,150,70,0.28)');
+        street([[cx + k * 140 + rand() * 30, cz - 900], [cx + k * 140 + rand() * 30, cz + 900]], 1.4, 26, 'rgba(255,150,70,0.28)');
+      }
+      // Palm Drive: a straight double line of lamps running south to the Oval
+      const oval = { x: cx + 160, z: cz - 210 };
+      street([[oval.x, oval.z - 40], [oval.x, oval.z - 600]], 3, 9, 'rgba(255,200,120,0.75)');
+      street([[oval.x + 10, oval.z - 40], [oval.x + 10, oval.z - 600]], 1.5, 9, 'rgba(255,200,120,0.5)');
+      g.strokeStyle = 'rgba(255,200,120,0.7)';
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.ellipse(px(oval.x + 5), py(oval.z), 22 * scale * 1.6, 46 * scale * 1.6, 0, 0, Math.PI * 2);
+      g.stroke();
+      g.fillStyle = 'rgba(30,60,30,0.9)';
+      g.fill();
+      // the Main Quad: warm arcades round a court, Memorial Church at its head
+      const quad = { x: oval.x, z: oval.z + 110 };
+      g.strokeStyle = 'rgba(255,190,110,0.9)';
+      g.lineWidth = 4;
+      g.strokeRect(px(quad.x - 50), py(quad.z - 40), 100 * scale, 80 * scale);
+      g.strokeRect(px(quad.x - 28), py(quad.z - 24), 56 * scale, 48 * scale);
+      g.fillStyle = 'rgba(255,214,120,1)';
+      g.fillRect(px(quad.x - 9), py(quad.z + 40), 18 * scale, 12 * scale);
+      // the stadium: a floodlit field in its bowl
+      const stad = { x: cx - 250, z: cz + 230 };
+      const flood = g.createRadialGradient(px(stad.x), py(stad.z), 4, px(stad.x), py(stad.z), 90 * scale);
+      flood.addColorStop(0, 'rgba(220,255,220,0.9)');
+      flood.addColorStop(0.35, 'rgba(110,200,120,0.55)');
+      flood.addColorStop(1, 'rgba(40,80,40,0)');
+      g.fillStyle = flood;
+      g.fillRect(px(stad.x) - 100, py(stad.z) - 100, 200, 200);
+      g.fillStyle = 'rgba(70,170,80,0.95)';
+      g.fillRect(px(stad.x - 34), py(stad.z - 20), 68 * scale, 40 * scale);
+      g.strokeStyle = 'rgba(255,255,255,0.6)';
+      g.lineWidth = 1;
+      for (let k = -3; k <= 3; k++) {
+        g.beginPath();
+        g.moveTo(px(stad.x + k * 9), py(stad.z - 20));
+        g.lineTo(px(stad.x + k * 9), py(stad.z + 20));
+        g.stroke();
+      }
+      // Lake Lagunita: dark water, and the Bonfire's glow on its bed
+      g.fillStyle = '#071226';
+      g.beginPath();
+      g.ellipse(px(lake.x), py(lake.z), lake.r * scale * 1.3, lake.r * scale, 0.4, 0, Math.PI * 2);
+      g.fill();
+      const glow = g.createRadialGradient(px(fire.x), py(fire.z), 2, px(fire.x), py(fire.z), 60 * scale);
+      glow.addColorStop(0, 'rgba(255,200,90,1)');
+      glow.addColorStop(0.3, 'rgba(255,110,30,0.7)');
+      glow.addColorStop(1, 'rgba(255,60,10,0)');
+      g.fillStyle = glow;
+      g.fillRect(0, 0, W, W);
+      // a scatter of lit windows and porch lights all over
+      for (let n = 0; n < 900; n++) {
+        g.fillStyle = `rgba(255,${190 + rand() * 50},${110 + rand() * 80},${0.25 + rand() * 0.5})`;
+        g.fillRect(rand() * W, rand() * W * 0.85, 1.5, 1.5);
+      }
+    }),
+  );
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(S, S), new THREE.MeshBasicMaterial({ map: ground }));
+  floor.rotation.x = flat;
+  floor.position.set(cx, Y, cz);
+  scene.add(floor);
+
+  // campus buildings far below, lit windows and all: the Quad's arcades, Memorial Church, the stadium's stands and its
+  // light towers, halls round about
+  const windows = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = '#2a2018';
+      g.fillRect(0, 0, 64, 64);
+      for (let y = 4; y < 64; y += 10) for (let x = 3; x < 64; x += 8) if (rand() < 0.7) {
+        g.fillStyle = `rgba(255,${200 + rand() * 40},${120 + rand() * 60},${0.6 + rand() * 0.4})`;
+        g.fillRect(x, y, 4, 5);
+      }
+    }),
+    [2, 2],
+  );
+  const blocks: Item[] = [];
+  const oval = { x: cx + 160, z: cz - 210 };
+  const quad = { x: oval.x, z: oval.z + 110 };
+  for (const [dx, dz, w, d] of [[-50, 0, 8, 80], [50, 0, 8, 80], [0, -40, 100, 8], [0, 40, 100, 8], [-28, 0, 6, 48], [28, 0, 6, 48]] as const) blocks.push({ x: quad.x + dx, y: Y + 6, z: quad.z + dz, sx: w, sy: 12, sz: d });
+  for (let n = 0; blocks.length < 44 && n < 400; n++) {
+    const a = rand() * Math.PI * 2;
+    const dist = 60 + rand() * 520;
+    const x = cx + Math.cos(a) * (rx + dist) * 0.8;
+    const z = cz + Math.sin(a) * (rz + dist) * 0.8;
+    if (Math.hypot(x - lake.x, z - lake.z) < lake.r + 20 || Math.hypot(x - tower.x, z - tower.z) < 30) continue;
+    const h = 8 + rand() * 18;
+    blocks.push({ x, y: Y + h / 2, z, sx: 18 + rand() * 26, sy: h, sz: 12 + rand() * 14, ry: rand() * 3 });
+  }
+  instances(THREE, scene, dummy, geo.box, new THREE.MeshBasicMaterial({ map: windows }), blocks);
+  // Memorial Church's mosaic, lit gold
+  const church = new THREE.Mesh(geo.box, new THREE.MeshBasicMaterial({ color: 0xffc860 }));
+  church.position.set(quad.x, Y + 10, quad.z + 46);
+  church.scale.set(20, 20, 10);
+  scene.add(church);
+  // the stadium's light towers, with a glow at each head
+  const stad = { x: cx - 250, z: cz + 230 };
+  const masts: Item[] = [];
+  for (const [dx, dz] of [[-50, -34], [50, -34], [-50, 34], [50, 34]]) masts.push({ x: stad.x + dx, y: Y + 22, z: stad.z + dz, sx: 1.5, sy: 44, sz: 1.5 });
+  instances(THREE, scene, dummy, geo.box, new THREE.MeshBasicMaterial({ color: 0x3a3e48 }), masts);
+  const lampGlow = glowTexture(THREE, '230,255,230', 0.9);
+  for (const m of masts) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: lampGlow, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    sp.position.set(m.x, Y + 45, m.z);
+    sp.scale.set(26, 26, 1);
+    scene.add(sp);
+  }
+
+  // Hoover Tower in the middle of the Corkscrew: the shaft up out of the dark, the lantern and its observation deck lit
+  // at road level, the red dome and the warning light above
+  const stone = new THREE.MeshLambertMaterial({ color: 0xd9b98a, emissive: 0x4a3420 });
+  const lantern = new THREE.MeshBasicMaterial({ color: 0xffd98a });
+  const part = (mat: T.Material, y: number, sx: number, sy: number, sz: number, g2: T.BufferGeometry = geo.box) => {
+    const m = new THREE.Mesh(g2, mat);
+    m.position.set(tower.x, y, tower.z);
+    m.scale.set(sx, sy, sz);
+    scene.add(m);
+    return m;
+  };
+  part(stone, Y + 9, 14, 18, 14);
+  part(stone, (Y + 18 - 7) / 2, 8.6, -7 - (Y + 18), 8.6);
+  part(lantern, -4, 7.8, 6, 7.8);
+  for (const [dx, dz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const pier = new THREE.Mesh(geo.box, stone);
+    pier.position.set(tower.x + dx * 3.7, -4, tower.z + dz * 3.7);
+    pier.scale.set(1.4, 6, 1.4);
+    scene.add(pier);
+  }
+  part(stone, -0.6, 10.4, 1, 10.4);
+  part(new THREE.MeshLambertMaterial({ color: 0xb4553a, emissive: 0x5a1e0c }), 0, 4.2, 5, 4.2, new THREE.SphereGeometry(1, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2));
+  part(stone, 6, 0.9, 2.2, 0.9);
+  const warning = part(new THREE.MeshBasicMaterial({ color: 0xff2a1a }), 7.4, 0.6, 0.6, 0.6);
+  const lanternGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(THREE, '255,214,140', 0.55), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  lanternGlow.position.set(tower.x, -3, tower.z);
+  lanternGlow.scale.set(26, 18, 1);
+  scene.add(lanternGlow);
+  const base = new THREE.Mesh(geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,214,150', 0.5), transparent: true, depthWrite: false }));
+  base.rotation.x = flat;
+  base.scale.set(60, 60, 1);
+  base.position.set(tower.x, Y + 0.2, tower.z);
+  scene.add(base);
+
+  // the Dish, turning slowly far below the sweeper
+  const dishG = new THREE.Group();
+  dishG.position.set(sweep.x, Y, sweep.z);
+  const white = new THREE.MeshLambertMaterial({ color: 0xdfe4ee, emissive: 0x2a2e3a, side: THREE.DoubleSide });
+  const leg = new THREE.Mesh(geo.box, white);
+  leg.scale.set(3, 18, 3);
+  leg.position.y = 9;
+  dishG.add(leg);
+  const bowl = new THREE.Mesh(new THREE.SphereGeometry(16, 18, 8, 0, Math.PI * 2, 0, Math.PI * 0.32), white);
+  bowl.position.y = 22;
+  bowl.rotation.x = Math.PI * 0.75;
+  dishG.add(bowl);
+  scene.add(dishG);
+
+  // the Big Game Bonfire on the lake bed, under the Gap: a stack of flames, its glow, and embers drifting up past the road
+  const flameTex = texture(
+    THREE,
+    canvas(64, 128, (g) => {
+      const grad = g.createRadialGradient(32, 100, 2, 32, 90, 64);
+      grad.addColorStop(0, 'rgba(255,250,210,1)');
+      grad.addColorStop(0.25, 'rgba(255,190,70,0.95)');
+      grad.addColorStop(0.6, 'rgba(255,90,20,0.6)');
+      grad.addColorStop(1, 'rgba(160,20,0,0)');
+      g.fillStyle = grad;
+      g.beginPath();
+      g.moveTo(32, 0);
+      g.quadraticCurveTo(64, 70, 54, 110);
+      g.quadraticCurveTo(32, 132, 10, 110);
+      g.quadraticCurveTo(0, 70, 32, 0);
+      g.fill();
+    }),
+  );
+  const flames = Array.from({ length: 6 }, (_, k) => {
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: flameTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const a = (k / 6) * Math.PI * 2;
+    m.position.set(fire.x + Math.cos(a) * 3, Y + 8, fire.z + Math.sin(a) * 3);
+    scene.add(m);
+    return m;
+  });
+  const fireGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(THREE, '255,140,50', 0.8), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  fireGlow.position.set(fire.x, Y + 12, fire.z);
+  fireGlow.scale.set(90, 70, 1);
+  scene.add(fireGlow);
+  const emberMat = new THREE.SpriteMaterial({ map: glowTexture(THREE, '255,170,60', 1), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const embers = Array.from({ length: 36 }, () => {
+    const m = new THREE.Sprite(emberMat);
+    m.scale.setScalar(0.5);
+    m.position.set(fire.x + (rand() - 0.5) * 30, Y + rand() * (SKY_DROP + 20), fire.z + (rand() - 0.5) * 30);
+    scene.add(m);
+    return { m, v: 4 + rand() * 5, drift: rand() * 6 };
+  });
+
+  // the Bay and the city on the northern horizon, the Bay Bridge's string of lights, the stars, the Milky Way and a thin
+  // moon (none of it in the fog)
+  const skyline = texture(
+    THREE,
+    canvas(1024, 128, (g) => {
+      g.fillStyle = 'rgba(0,0,0,0)';
+      g.clearRect(0, 0, 1024, 128);
+      const glowB = g.createLinearGradient(0, 128, 0, 40);
+      glowB.addColorStop(0, 'rgba(255,150,90,0.35)');
+      glowB.addColorStop(1, 'rgba(255,150,90,0)');
+      g.fillStyle = glowB;
+      g.fillRect(0, 40, 1024, 88);
+      for (let x = 0; x < 1024; ) {
+        const w = 6 + rand() * 18;
+        const h = 10 + rand() * rand() * 80 * (Math.abs(x - 600) < 160 ? 1.4 : 0.5);
+        g.fillStyle = '#0a0d1c';
+        g.fillRect(x, 128 - h, w, h);
+        for (let y = 128 - h + 3; y < 125; y += 4) for (let wx = x + 1; wx < x + w - 1; wx += 3) if (rand() < 0.35) {
+          g.fillStyle = `rgba(255,${200 + rand() * 50},${130 + rand() * 80},0.9)`;
+          g.fillRect(wx, y, 1.5, 1.5);
+        }
+        x += w + rand() * 4;
+      }
+    }),
+  );
+  const city = new THREE.Mesh(new THREE.PlaneGeometry(1400, 175), new THREE.MeshBasicMaterial({ map: skyline, transparent: true, fog: false, depthWrite: false }));
+  city.position.set(cx - 200, Y + 60, cz + 950);
+  city.lookAt(cx, Y + 60, cz);
+  scene.add(city);
+  const bridge: Item[] = [];
+  for (let k = 0; k <= 60; k++) {
+    const u = k / 60;
+    bridge.push({ x: cx - 900 + u * 900, y: Y + 30 + Math.sin(u * Math.PI * 6) * 6, z: cz + 900 - u * 40, sx: 2, sy: 2, sz: 2 });
+  }
+  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 6, 4), new THREE.MeshBasicMaterial({ color: 0xfff0c0, fog: false }), bridge);
+  const stars: Item[] = [];
+  for (let n = 0; n < 420; n++) {
+    const a = rand() * Math.PI * 2;
+    const up = 0.05 + Math.pow(rand(), 0.7) * 1.25;
+    const size = 0.8 + rand() * rand() * 2.6;
+    stars.push({ x: cx + Math.cos(a) * Math.cos(up) * 1150, y: Math.sin(up) * 1150, z: cz + Math.sin(a) * Math.cos(up) * 1150, sx: size, sy: size, sz: size });
+  }
+  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 6, 4), new THREE.MeshBasicMaterial({ color: 0xeef2ff, fog: false }), stars);
+  const milky = new THREE.Mesh(
+    geo.plane,
+    new THREE.MeshBasicMaterial({
+      map: texture(
+        THREE,
+        canvas(256, 64, (g) => {
+          const grad = g.createLinearGradient(0, 0, 0, 64);
+          grad.addColorStop(0, 'rgba(160,170,255,0)');
+          grad.addColorStop(0.5, 'rgba(190,190,255,0.22)');
+          grad.addColorStop(1, 'rgba(160,170,255,0)');
+          g.fillStyle = grad;
+          g.fillRect(0, 0, 256, 64);
+          for (let n = 0; n < 500; n++) {
+            g.fillStyle = `rgba(255,255,255,${rand() * 0.4})`;
+            g.fillRect(rand() * 256, 20 + rand() * rand() * 24 * (rand() < 0.5 ? -1 : 1) + 12, 1, 1);
+          }
+          // (faded out toward both ends, so it has no edges)
+          g.globalCompositeOperation = 'destination-in';
+          const ends = g.createLinearGradient(0, 0, 256, 0);
+          ends.addColorStop(0, 'rgba(0,0,0,0)');
+          ends.addColorStop(0.3, 'rgba(0,0,0,1)');
+          ends.addColorStop(0.7, 'rgba(0,0,0,1)');
+          ends.addColorStop(1, 'rgba(0,0,0,0)');
+          g.fillStyle = ends;
+          g.fillRect(0, 0, 256, 64);
+        }),
+      ),
+      transparent: true,
+      fog: false,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  milky.scale.set(2600, 380, 1);
+  milky.position.set(cx + 300, 700, cz - 300);
+  milky.lookAt(cx, 0, cz);
+  milky.rotateZ(0.6);
+  scene.add(milky);
+  const moon = new THREE.Mesh(
+    new THREE.CircleGeometry(22, 32),
+    new THREE.MeshBasicMaterial({
+      map: texture(
+        THREE,
+        canvas(64, 64, (g) => {
+          g.fillStyle = '#f6f2dc';
+          g.beginPath();
+          g.arc(32, 32, 31, 0, Math.PI * 2);
+          g.fill();
+          g.globalCompositeOperation = 'destination-out';
+          g.beginPath();
+          g.arc(40, 28, 29, 0, Math.PI * 2);
+          g.fill();
+        }),
+      ),
+      transparent: true,
+      fog: false,
+    }),
+  );
+  moon.position.set(cx - 560, 380, cz - 600);
+  moon.lookAt(cx, 0, cz);
+  scene.add(moon);
+
+  return (_race, clock, dt) => {
+    // the Bonfire flickers, the embers drift up past the road and start again at the fire, the Dish turns, the tower's
+    // light blinks
+    flames.forEach((f, k) => {
+      const h = 22 + Math.sin(clock * 7 + k * 1.7) * 4 + Math.sin(clock * 13 + k) * 2;
+      f.scale.set(12 + Math.sin(clock * 5 + k) * 2, h, 1);
+      f.position.y = Y + h * 0.42;
+    });
+    (fireGlow.material as T.SpriteMaterial).opacity = 0.8 + Math.sin(clock * 9) * 0.15;
+    for (const e of embers) {
+      e.m.position.y += e.v * dt;
+      e.m.position.x += Math.sin(clock * 0.7 + e.drift) * dt * 1.5;
+      if (e.m.position.y > 20) e.m.position.set(fire.x + (Math.random() - 0.5) * 30, Y + 4, fire.z + (Math.random() - 0.5) * 30);
+    }
+    dishG.rotation.y = clock * 0.05;
+    warning.visible = Math.floor(clock * 1.2) % 2 === 0;
+  };
+}
+
+export const SCENERY: Record<CourseId, (c: Scenery) => void | SceneryTick> ={ palm: campus, lake, barn, dish, stadium, quad, hoover, golf, skyway };
