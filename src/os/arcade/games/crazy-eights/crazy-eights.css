@@ -15,6 +15,8 @@
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
+  /* Hand cards carry their own z-index; keep them under the shell's Pause and Game Over cards. */
+  isolation: isolate;
   --cw: 64px;
   --ch: 90px;
 }
@@ -956,12 +958,18 @@
   padding-right: 150px;
 }
 
+/* Draw sits on the left, next to the deck and clear of the shell's buttons above the bar */
 .g-crazy-eights .is-short .g-crazy-eights-bar {
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-actions {
+  order: -1;
+  justify-self: start;
 }
 
 .g-crazy-eights .is-short .g-crazy-eights-status {
-  text-align: left;
+  text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -972,9 +980,9 @@
 
 .g-crazy-eights .is-short .g-crazy-eights-rivals {
   grid-column: 1 / -1;
-  min-height: 46px;
+  min-height: 38px;
   align-items: flex-start;
-  padding: 10px 140px 0 64px;
+  padding: 8px 140px 0 64px;
   gap: 4px;
   overflow: hidden;
 }

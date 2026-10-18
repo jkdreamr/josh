@@ -99,7 +99,7 @@ function Table() {
   const [size, setSize] = useState({ w: 640, h: 420 });
   // In the phone and iPad frames the whole screen is scaled down; u grows text and controls back to their real size.
   const [u, setU] = useState(1);
-  const [chrome, setChrome] = useState({ nameH: 42, barH: 44 });
+  const [chrome, setChrome] = useState({ nameH: 42, barH: 44, rowH: 0 });
   const tableRef = useRef<HTMLDivElement>(null);
   const lastRect = useRef<DOMRect | null>(null);
   const prevHand = useRef<Set<Card>>(new Set());
@@ -151,9 +151,11 @@ function Table() {
     if (!el) return;
     const name = el.querySelector<HTMLElement>('.g-crazy-eights-seat.pos-top .g-crazy-eights-name');
     const bar = el.querySelector<HTMLElement>('.g-crazy-eights-bar');
+    const row = el.querySelector<HTMLElement>('.is-short > .g-crazy-eights-rivals');
     const nameH = name ? name.offsetHeight : chrome.nameH;
     const barH = bar ? bar.offsetHeight : chrome.barH;
-    if (Math.abs(nameH - chrome.nameH) > 0.5 || Math.abs(barH - chrome.barH) > 0.5) setChrome({ nameH, barH });
+    const rowH = row ? row.offsetHeight : 0;
+    if (Math.abs(nameH - chrome.nameH) > 0.5 || Math.abs(barH - chrome.barH) > 0.5 || Math.abs(rowH - chrome.rowH) > 0.5) setChrome({ nameH, barH, rowH });
     // The frame can still be animating in when the table first measures, and that never resizes the table, so check again on every render.
     const next = frameU(el, shell.touch);
     if (Math.abs(next - u) > 0.01) setU(next);
@@ -502,7 +504,7 @@ function Table() {
   const dealt = tbl.ev.some((e) => e.k === 'deal');
   const played = tbl.ev.find((e): e is Extract<Ev, { k: 'play' }> => e.k === 'play');
   const seq = tbl.seq;
-  const layout = tableLayout({ w: size.w, h: size.h, n, online: !!online, nameH: chrome.nameH, barH: chrome.barH });
+  const layout = tableLayout({ w: size.w, h: size.h, n, online: !!online, nameH: chrome.nameH, barH: chrome.barH, rowH: chrome.rowH });
   const { short, cw, ch } = layout;
   const rel = (i: number) => (i - v.me + n) % n;
   const posOf = (i: number) => {
@@ -521,7 +523,7 @@ function Table() {
   const room = handW - 24;
   const gap = k > 1 ? Math.min(cw * 0.72, (room - cw) / (k - 1)) : 0;
   const x0 = (handW - (cw + gap * (k - 1))) / 2;
-  const arc = Math.min(9, k * 1.1);
+  const arc = short ? Math.min(4, k * 0.6) : Math.min(9, k * 1.1);
 
   const topCard = top(v);
   const pileShown = v.pile.slice(-4);
@@ -643,7 +645,7 @@ function Table() {
         </div>
       </div>
 
-      <div className="g-crazy-eights-hand" style={{ height: ch + (short ? 10 : 22) }}>
+      <div className="g-crazy-eights-hand" style={{ height: short ? layout.handH : ch + 22 }}>
         {hand.map((c, i) => {
           const t = k > 1 ? (i - (k - 1) / 2) / ((k - 1) / 2) : 0;
           const isNew = fresh || !prevHand.current.has(c);
