@@ -801,7 +801,8 @@ function freeRing(THREE: Three, segments: number) {
   };
 }
 
-type Particle = { mesh: T.Mesh; vx: number; vy: number; vz: number; life: number; max: number; spin: number; grav: number; size: number };
+/** A bit thrown by an effect: where it is, how it moves, how long it has left, and which kind of mesh draws it in what color. */
+type Particle = { x: number; y: number; z: number; rx: number; rz: number; vx: number; vy: number; vz: number; life: number; max: number; spin: number; grav: number; size: number; kind: number; color: T.Color };
 
 /** A model for something in hand: the group, the stripe in its rarity's color, and a minigun's barrels that spin. */
 type HeldModel = { group: T.Group; stripe: T.Mesh | null; spin: T.Object3D | null };
@@ -2409,6 +2410,38 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     o.rotation.x = Math.PI / 2;
     return o;
   };
+  /**
+   * Bakes a model's plain parts (the meshes right under it, but for those in `keep`) into one mesh colored by vertex,
+   * so a gun or a helmet is one draw call, not five. Each kind is baked once (by `key`) and shared from then on.
+   */
+  const baked = new Map<string, T.BufferGeometry>();
+  const partsMat = lambert(0xffffff, { vertexColors: true });
+  const partsMatDouble = lambert(0xffffff, { vertexColors: true, side: THREE.DoubleSide });
+  const bake = (g: T.Group, key: string, keep: T.Object3D[] = [], double = false) => {
+    const plain = g.children.filter((o): o is T.Mesh => (o as T.Mesh).isMesh && !keep.includes(o));
+    let merged = baked.get(key);
+    if (!merged) {
+      const c = new THREE.Color();
+      merged = geo(
+        mergeRoof(
+          THREE,
+          plain.map((o) => {
+            o.updateMatrix();
+            const x = o.material as T.MeshLambertMaterial;
+            // a glowing part keeps some of its glow in its color
+            c.copy(x.color).add(color.copy(x.emissive ?? color.setRGB(0, 0, 0)).multiplyScalar(x.emissiveIntensity ?? 1));
+            return { g: o.geometry.clone().applyMatrix4(o.matrix), c: c.getHex() };
+          }),
+          1,
+          true,
+        ),
+      );
+      baked.set(key, merged);
+    }
+    for (const o of plain) g.remove(o);
+    g.add(new THREE.Mesh(merged, double ? partsMatDouble : partsMat));
+    return g;
+  };
   /** A helmet from the kitchen, upside down, its brim on y = 0: a colander, a saucepan or a stockpot by level. */
   function helmetModel(lv: number): T.Group {
     const g = new THREE.Group();
@@ -2436,7 +2469,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       add(g, G.ball, M.dark, 0, 0.82, 0, 0.09, 0.07, 0.09);
       for (const side of [-1, 1]) add(g, G.box, M.dark, side * 0.6, 0.42, 0, 0.14, 0.08, 0.3);
     }
-    return g;
+    return bake(g, `helmet${lv}`, [], true);
   }
 
   /**
@@ -2457,7 +2490,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       // steel plates
       for (const y of [-0.2, 0.02, 0.24]) add(g, G.box, M.steel, 0, y, 0.67, 0.52, 0.17, 0.03);
     }
-    return g;
+    return bake(g, `vest${lv}`, [], true);
   }
 
   /** A vest on the ground: an apron laid out flat, bib, skirt, neck loop and ties, with the same marks as when worn. */
@@ -2474,6 +2507,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       for (const x of [-0.17, 0.17]) add(g, G.box, M.dark, x, -0.12, 0.03, 0.02, 0.54, 0.02);
     } else for (const y of [-0.26, -0.04, 0.26]) add(g, G.box, M.steel, 0, y, 0.035, y > 0 ? 0.36 : 0.6, 0.17, 0.03);
     // lying back, so its front faces up at the camera
+    bake(g, `apron${lv}`, [], true);
     g.rotation.x = -1.1;
     return g;
   }
@@ -2666,7 +2700,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         stripe = barrel(g, rarity[0], 0, 0.05, 0.75, 0.18, 0.12);
         break;
     }
-    return { group: g, stripe, spin };
+    return { group: bake(g, `held:${w}`, stripe ? [stripe] : []), stripe, spin };
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -2682,9 +2716,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   };
   const faceParts: RoofPart[] = [];
   for (const side of [-1, 1]) {
-    faceParts.push(shaped(new THREE.SphereGeometry(1, 10, 8), side * 0.165, 0, 0.5, 0.11, 0.13, 0.06, 0xffffff));
-    faceParts.push(shaped(new THREE.SphereGeometry(1, 8, 6), side * 0.17, -0.012, 0.545, 0.064, 0.082, 0.04, 0x17181d));
-    faceParts.push(shaped(new THREE.SphereGeometry(1, 6, 4), side * 0.148, 0.03, 0.583, 0.022, 0.022, 0.012, 0xffffff));
+    faceParts.push(shaped(new THREE.SphereGeometry(1, 10, 8), side * 0.17, 0, 0.5, 0.125, 0.145, 0.06, 0xffffff));
+    faceParts.push(shaped(new THREE.SphereGeometry(1, 8, 6), side * 0.175, -0.014, 0.548, 0.074, 0.092, 0.04, 0x17181d));
+    faceParts.push(shaped(new THREE.SphereGeometry(1, 6, 4), side * 0.15, 0.03, 0.588, 0.026, 0.026, 0.012, 0xffffff));
     faceParts.push(shaped(new THREE.SphereGeometry(1, 8, 4), side * 0.3, -0.19, 0.455, 0.075, 0.045, 0.03, 0xff9c8f));
   }
   const faceGeo = geo(mergeRoof(THREE, faceParts, 1, true));
@@ -2758,6 +2792,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const backPan = new THREE.Group();
     add(backPan, G.cyl, M.pan, 0, 0, 0, 0.36, 0.06, 0.36);
     add(backPan, G.box, M.dark, 0, 0, 0.48, 0.06, 0.05, 0.4);
+    bake(backPan, 'backPan');
     backPan.position.set(0, 0.9, -0.5);
     backPan.rotation.set(Math.PI / 2 - 0.25, 0, 0);
     body.add(backPan);
@@ -3024,12 +3059,19 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     straw: lambert(0xe2c25a),
   };
   const padFlash = basic(0x7dffd2, { transparent: true, opacity: 0.7, depthWrite: false });
-  for (let i = 0; i < 320; i++) {
-    const mesh = new THREE.Mesh(G.box, partMat.dust);
-    mesh.visible = false;
-    scene.add(mesh);
-    parts.push({ mesh, vx: 0, vy: 0, vz: 0, life: 0, max: 1, spin: 0, grav: 0, size: 0.1 });
-  }
+  // the bits are drawn as three instanced meshes, whatever material they were thrown with: lit chips (shell, wood,
+  // leaves), see-through wisps (dust, flour, spray) and bright sparks (fire, sauce)
+  const PARTS = 320;
+  const chipMeshes = [lambert(0xffffff), basic(0xffffff, { transparent: true, opacity: 0.68, depthWrite: false }), basic(0xffffff)].map((x) => {
+    const im = many(G.box, x, PARTS);
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    im.setColorAt(0, color.setHex(0xffffff));
+    im.count = 0;
+    im.frustumCulled = false;
+    scene.add(im);
+    return im;
+  });
+  for (let i = 0; i < PARTS; i++) parts.push({ x: 0, y: 0, z: 0, rx: 0, rz: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 1, spin: 0, grav: 0, size: 0.1, kind: 0, color: new THREE.Color() });
   let partAt = 0;
   const burst = (x: number, y: number, z: number, n: number, speed: number, size: number, life: number, material: T.Material[], grav = 14) => {
     for (let i = 0; i < n; i++) {
@@ -3045,10 +3087,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       p.spin = (Math.random() - 0.5) * 18;
       p.grav = grav;
       p.size = size * (0.6 + Math.random() * 0.8);
-      p.mesh.material = material[i % material.length];
-      p.mesh.position.set(x, y, z);
-      p.mesh.scale.setScalar(p.size);
-      p.mesh.visible = true;
+      const x0 = material[i % material.length] as T.MeshLambertMaterial;
+      p.kind = x0.isMeshLambertMaterial ? 0 : x0.transparent && x0.blending !== ADDITIVE ? 1 : 2;
+      p.color.copy(x0.color);
+      if (x0.isMeshLambertMaterial) p.color.add(color.copy(x0.emissive).multiplyScalar(x0.emissiveIntensity));
+      p.x = x;
+      p.y = y;
+      p.z = z;
+      p.rx = 0;
+      p.rz = 0;
     }
   };
   const flashes: { mesh: T.Mesh; life: number; max: number; grow: number }[] = [];
@@ -3792,21 +3839,40 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       }
 
       // effects
+      const chipCount = [0, 0, 0];
       for (const p of parts) {
-        if (!p.mesh.visible) continue;
+        if (p.life <= 0) continue;
         p.life -= dt;
-        if (p.life <= 0) {
-          p.mesh.visible = false;
-          continue;
-        }
+        if (p.life <= 0) continue;
         p.vy -= p.grav * dt;
-        p.mesh.position.x += p.vx * dt;
-        p.mesh.position.y = Math.max(0.05, p.mesh.position.y + p.vy * dt);
-        p.mesh.position.z += p.vz * dt;
-        p.mesh.rotation.x += p.spin * dt;
-        p.mesh.rotation.z += p.spin * 0.7 * dt;
-        p.mesh.scale.setScalar(p.size * Math.min(1, (p.life / p.max) * 2));
+        p.x += p.vx * dt;
+        p.y = Math.max(0.05, p.y + p.vy * dt);
+        p.z += p.vz * dt;
+        p.rx += p.spin * dt;
+        p.rz += p.spin * 0.7 * dt;
+        dummy.position.set(p.x, p.y, p.z);
+        dummy.rotation.set(p.rx, 0, p.rz);
+        dummy.scale.setScalar(p.size * Math.min(1, (p.life / p.max) * 2));
+        dummy.updateMatrix();
+        const im = chipMeshes[p.kind];
+        im.setMatrixAt(chipCount[p.kind], dummy.matrix);
+        im.setColorAt(chipCount[p.kind]++, p.color);
       }
+      chipMeshes.forEach((im, k) => {
+        const n = chipCount[k];
+        im.count = n;
+        im.visible = n > 0;
+        if (!n) return;
+        // only the bits in use go up to the GPU
+        im.instanceMatrix.clearUpdateRanges();
+        im.instanceMatrix.addUpdateRange(0, n * 16);
+        im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) {
+          im.instanceColor.clearUpdateRanges();
+          im.instanceColor.addUpdateRange(0, n * 3);
+          im.instanceColor.needsUpdate = true;
+        }
+      });
       for (const f of flashes) {
         if (!f.mesh.visible) continue;
         f.life -= dt;
