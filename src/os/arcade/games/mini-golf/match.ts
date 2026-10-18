@@ -122,3 +122,19 @@ export function label(strokes: number, par: number): string {
 }
 
 export const fmtPar = (n: number) => (n === 0 ? 'E' : n > 0 ? `+${n}` : `${n}`);
+
+const list = (names: string[]) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
+// Online Game Over line: the winner's score, yours when you didn't win, and the people in the room.
+export function overDetail(m: Match, me: number, w: number | null, people: string[]): string {
+  const who = (g: number) => (g === me ? 'You' : m.golfers[g].name);
+  const parts: string[] = [];
+  if (w !== null) parts.push(`${who(w)} took ${total(m, w)} strokes.`);
+  else {
+    const best = Math.min(...m.golfers.map((gf, g) => (gf.left ? Infinity : total(m, g))));
+    if (Number.isFinite(best)) parts.push(`Tied on ${best} strokes.`);
+  }
+  if (me >= 0 && me !== w) parts.push(`You took ${total(m, me)}.`);
+  if (people.length) parts.push(`${people.length === 1 ? '1 person' : `${people.length} people`} here: ${list(people)}.`);
+  return parts.join(' ');
+}
