@@ -403,6 +403,10 @@
   background: #f4f6ff;
   animation: none;
 }
+/* on phones the lap row and the coins sit up top: below them, where the lights hang before the start */
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-gust {
+  top: 132px;
+}
 .g-palmdrive .g-palmdrive-wrong {
   position: absolute;
   top: 46%;

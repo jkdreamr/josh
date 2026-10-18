@@ -512,12 +512,100 @@ test('CPU-only races on the Skyway at every class: everyone finishes, nobody stu
       assert.ok(times.every((x) => x < 420), `${cc} seed ${seed}: ${times.map((x) => x.toFixed(0))}`);
       assert.equal(stuck, 0, `${cc} seed ${seed}: stuck`);
       assert.ok(rescues.every((n) => n <= 3));
+      assert.ok(r.karts.every((k) => k.falls <= 5), `${cc} seed ${seed}: ${r.karts.map((k) => k.falls)} falls`);
       falls += r.karts.reduce((s, k) => s + k.falls, 0);
     }
     const perCpu = falls / races / 8;
-    if (cc !== '200cc') assert.ok(perCpu <= 1.5, `${cc}: ${perCpu.toFixed(2)} falls per CPU per race`);
+    assert.ok(perCpu <= 1.5, `${cc}: ${perCpu.toFixed(2)} falls per CPU per race`);
     const per = allHits / races / 8;
     assert.ok(per >= 0.5 && per <= 3, `${cc}: ${per.toFixed(2)} piece hits per CPU per race`);
     for (const [key, n] of hits) assert.ok(n / races / 8 <= 1, `${cc}: ${key} ${n}`);
   }
+});
+
+test('a CPU through the Blink, whatever the panes are doing as it comes: on one half all the way, or held short, never through a pane', () => {
+  for (const cc of ['50cc', '200cc'] as const) {
+    for (const who of [RIVALS[0], RIVALS[6]]) {
+      for (const [s0, v0] of [[900, 12], [945, 20]]) {
+        for (let off = 0; off < 3.2; off += 0.2) {
+          const r = createRace({ cc, course: 'skyway', seed: 3, countdown: 0, racers: [who] });
+          r.time = 50 + off;
+          const k = r.karts[0];
+          place(r, k, s0, 0, v0, 2);
+          const t0 = r.time;
+          let still = 0;
+          let longest = 0;
+          while (k.s > 800 && k.s < 1000 && r.time < t0 + 15) {
+            step(r, DT);
+            assert.ok(!r.events.some((e) => e.t === 'fall'), `${cc} ${who.name} from ${s0} at +${off.toFixed(1)}s: fell at ${k.s.toFixed(1)}/${k.d.toFixed(2)}`);
+            r.events.length = 0;
+            still = Math.abs(k.v) < 1 ? still + DT : 0;
+            longest = Math.max(longest, still);
+          }
+          assert.ok(k.s >= 1000 && longest < 6.5, `${cc} ${who.name} from ${s0} at +${off.toFixed(1)}s: at ${k.s.toFixed(0)} after ${(r.time - t0).toFixed(1)}s, held ${longest.toFixed(1)}s`);
+        }
+      }
+    }
+  }
+});
+
+test('a CPU that falls on the Skyway sees what it missed: back on the road it is not dropped by the same blunder again', () => {
+  const r = createRace({ cc: '150cc', course: 'skyway', seed: 3, countdown: 0, racers: [RIVALS[6]] });
+  const k = r.karts[0];
+  r.time = 30;
+  place(r, k, 300, 0, 15, 2);
+  step(r, DT);
+  k.ai!.blunders = { '966:2': true, '221:2': true };
+  k.ai!.blink = 1;
+  place(r, k, 300, 6.5, 15, 2);
+  run(r, DT);
+  assert.ok(k.sunk > 0);
+  assert.deepEqual(k.ai!.blunders, { '966:2': false, '221:2': false });
+  assert.equal(k.ai!.blink, 0);
+});
+
+test('on glass a kart reeling from a hit is only nudged by a kart running into it; elsewhere the shove is as ever', () => {
+  const shove = (course: 'skyway' | 'palm', spinning: boolean) => {
+    const r = createRace({ cc: '150cc', course, seed: 3, countdown: 0, racers: [{ name: 'a', color: '#fff', kind: 'player' }, { name: 'b', color: '#000', kind: 'player' }] });
+    r.time = 30;
+    r.hazards = [];
+    r.panels = [];
+    r.gusts = [];
+    const [a, b] = r.karts;
+    const s = course === 'skyway' ? 1090 : 200;
+    place(r, b, s, 0, 0);
+    place(r, a, s - 2 * KART_R + 0.1, -0.3, 20);
+    if (spinning) b.spin = 1;
+    step(r, DT);
+    return Math.hypot(b.kx, b.kz);
+  };
+  const [sky0, sky1] = [shove('skyway', false), shove('skyway', true)];
+  assert.ok(sky0 > 5 && Math.abs(sky1 / sky0 - 0.25) < 0.05, `${sky0.toFixed(2)} then ${sky1.toFixed(2)}`);
+  const [palm0, palm1] = [shove('palm', false), shove('palm', true)];
+  assert.ok(Math.abs(palm1 / palm0 - 1) < 0.05, `${palm0.toFixed(2)} then ${palm1.toFixed(2)}`);
+});
+
+test('on the Skyway a bullet never hands the kart back in a bend over the sky, nor on the run-up to the Blink; on the deck it does', () => {
+  const ride = (s: number, lap: number) => {
+    const r = sky();
+    r.time = 30;
+    const k = r.karts[0];
+    place(r, k, s, 0, 30, lap);
+    k.bullet = 0.1;
+    let flown = 0;
+    while (k.bullet > 0 && flown < 20) {
+      step(r, DT);
+      r.events.length = 0;
+      flown += DT;
+    }
+    return { at: k.s, flown };
+  };
+  // round the Corkscrew it carries you on into the straight of the Axe Walk
+  const cork = ride(190, 1);
+  assert.ok(cork.at > 360 && cork.at < 420, `${cork.at.toFixed(0)} after ${cork.flown.toFixed(1)}s`);
+  // up to the Blink from lap 2 it carries you over the panes
+  const blink = ride(950, 2);
+  assert.ok(blink.at > 995 || blink.at < 100, `${blink.at.toFixed(0)}`);
+  // on the deck it runs out when it runs out
+  assert.ok(ride(1100, 1).flown < 0.2);
 });

@@ -812,14 +812,15 @@ export const COURSES: Record<CourseId, Course> = {
     half: 5,
     edge: 7.5,
     // the Launch Deck and the Axe Walk have glass rails; everywhere else the road ends at a lip over the sky, and across
-    // the Wire it narrows to 7.2 m (the later spans override the earlier). The Blink has rails too, right at the edge of
+    // the Wire it narrows to 7.2 m (the later spans override the earlier; not until a little way out of the Dish
+    // Sweeper, as a kart comes out of it wide, and on lap 2 on the Bay wind). The Blink has rails too, right at the edge of
     // the road: its panes are the drop there (with the sky beside them as well, a driver set back down before it fell
     // off one side or through the other again and again)
     edges: [
       [70, 372, 0, 'void'],
       [442, 1000, 0, 'void'],
-      [628, 640, 0, 'void', 4.7],
-      [640, 772, 0, 'void', 4.0],
+      [634, 644, 0, 'void', 4.7],
+      [644, 772, 0, 'void', 4.0],
       [772, 784, 0, 'void', 4.7],
       [956, 1000, 0, 'wall', 6.5],
     ],
