@@ -1102,7 +1102,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     { d: BEACH + 3.4, y: -0.72, c: 0xc9b48c },
     { d: BEACH + 6, y: -1.3, c: 0xa8987a },
   ]);
-  scene.add(new THREE.Mesh(geo(beach), lambert(0xe9d7a6, { map: sandTex, vertexColors: true })));
+  scene.add(new THREE.Mesh(geo(beach), lambert(0xfff3dc, { map: sandTex, vertexColors: true })));
   // surf along the waterline, and a wave line that rolls in to meet it
   const foamTex = keep(foamTexture(THREE));
   const surfMat = basic(0xffffff, { map: foamTex, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide });
