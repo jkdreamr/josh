@@ -60,7 +60,7 @@ const seatInfo = (seats: Seat[]): SeatInfo[] => seats.map(({ name, cpu, left }) 
 const sortKey = (c: Card) => (rankOf(c) === 8 ? 100 + SUIT_ORDER.indexOf(suitOf(c)) : SUIT_ORDER.indexOf(suitOf(c)) * 20 + (rankOf(c) === 1 ? 14 : rankOf(c)));
 const frameU = (el: HTMLElement, touch: boolean) => {
   const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
-  return touch && k > 0.2 && k < 0.99 ? Math.round(Math.min(2, 1 / k) * 1000) / 1000 : 1;
+  return touch && k > 0.2 && k < 0.99 ? Math.ceil(Math.min(2, 1 / k) * 1000) / 1000 : 1;
 };
 const sortHand = (hand: readonly Card[]) => hand.slice().sort((a, b) => sortKey(a) - sortKey(b));
 const tilt = (c: Card) => ((c * 37) % 11) - 5;
