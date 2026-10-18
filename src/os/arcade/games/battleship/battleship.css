@@ -17,7 +17,7 @@
   border-radius: 999px;
   background: rgba(5, 18, 34, 0.84);
   color: #dce9f7;
-  font-size: 14px;
+  font-size: calc(14px * var(--g-battleship-u, 1));
   line-height: 1.2;
   text-align: center;
   text-overflow: ellipsis;
@@ -31,13 +31,13 @@
 
 .g-battleship-caption {
   position: absolute;
-  top: -32px;
+  top: calc(-32px * var(--g-battleship-u, 1));
   left: 0;
   width: 100%;
   overflow: hidden;
   color: #bacbde;
-  font-size: 14px;
-  line-height: 16px;
+  font-size: calc(14px * var(--g-battleship-u, 1));
+  line-height: calc(16px * var(--g-battleship-u, 1));
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -169,22 +169,22 @@
   position: absolute;
   display: none;
   color: #c5d6e8;
-  font-size: 14px;
+  font-size: calc(14px * var(--g-battleship-u, 1));
   font-weight: 500;
-  line-height: 12px;
+  line-height: calc(12px * var(--g-battleship-u, 1));
   pointer-events: none;
   z-index: 4;
 }
 
 .g-battleship-coordinate-col {
-  top: -15px;
+  top: calc(-15px * var(--g-battleship-u, 1));
   left: 50%;
   transform: translateX(-50%);
 }
 
 .g-battleship-coordinate-row {
   top: 50%;
-  left: -15px;
+  left: calc(-15px * var(--g-battleship-u, 1));
   transform: translateY(-50%);
 }
 
@@ -325,16 +325,16 @@
 .g-battleship-place-tools {
   position: absolute;
   display: grid;
-  width: 142px;
-  gap: 6px;
+  width: calc(142px * var(--g-battleship-u, 1));
+  gap: calc(6px * var(--g-battleship-u, 1));
   pointer-events: auto;
 }
 
 .g-battleship-place-tools .arcade-btn,
-.g-battleship-fire {
-  min-height: 38px;
-  padding: 7px 10px;
-  font-size: 14px;
+.g-battleship .g-battleship-fire {
+  min-height: calc(38px * var(--g-battleship-u, 1));
+  padding: calc(7px * var(--g-battleship-u, 1)) calc(10px * var(--g-battleship-u, 1));
+  font-size: calc(14px * var(--g-battleship-u, 1));
   line-height: 1.2;
 }
 
@@ -343,11 +343,11 @@
   opacity: 0.58;
 }
 
-.g-battleship-fire {
+.g-battleship .g-battleship-fire {
   position: absolute;
   z-index: 5;
-  width: 120px;
-  min-height: 50px;
+  width: calc(120px * var(--g-battleship-u, 1));
+  min-height: calc(50px * var(--g-battleship-u, 1));
   pointer-events: auto;
 }
 
@@ -374,18 +374,18 @@
 }
 
 .g-battleship-cover p {
-  max-width: 300px;
+  max-width: calc(300px * var(--g-battleship-u, 1));
   margin: 0;
   color: #bacbde;
-  font-size: 14px;
+  font-size: calc(14px * var(--g-battleship-u, 1));
   line-height: 1.4;
 }
 
 .g-battleship-cover .arcade-btn {
-  min-width: 112px;
-  min-height: 44px;
-  padding: 8px 16px;
-  font-size: 14px;
+  min-width: calc(112px * var(--g-battleship-u, 1));
+  min-height: calc(44px * var(--g-battleship-u, 1));
+  padding: calc(8px * var(--g-battleship-u, 1)) calc(16px * var(--g-battleship-u, 1));
+  font-size: calc(14px * var(--g-battleship-u, 1));
 }
 
 .g-battleship-cover .arcade-btn:disabled {
@@ -417,33 +417,37 @@
   display: none;
 }
 
+.g-battleship-stage.portrait .g-battleship-board-wrap.own .g-battleship-caption {
+  display: none;
+}
+
 .g-battleship-stage.compact-height .g-battleship-place-tools {
-  gap: 4px;
+  gap: calc(4px * var(--g-battleship-u, 1));
 }
 
 .g-battleship-stage.compact-height .g-battleship-place-tools .arcade-btn {
-  min-height: 30px;
-  padding: 4px 6px;
-  font-size: 14px;
+  min-height: calc(30px * var(--g-battleship-u, 1));
+  padding: calc(4px * var(--g-battleship-u, 1)) calc(6px * var(--g-battleship-u, 1));
+  font-size: calc(14px * var(--g-battleship-u, 1));
 }
 
-.g-battleship-stage.compact-height .g-battleship-fire {
-  min-height: 40px;
+.g-battleship .g-battleship-stage.compact-height .g-battleship-fire {
+  min-height: calc(40px * var(--g-battleship-u, 1));
 }
 
 @media (min-height: 220px) {
   .g-battleship-stage.portrait .g-battleship-place-tools {
     display: flex;
-    width: min(330px, calc(100% - 20px));
-    gap: 8px;
+    width: min(calc(330px * var(--g-battleship-u, 1)), calc(100% - 20px * var(--g-battleship-u, 1)));
+    gap: calc(8px * var(--g-battleship-u, 1));
   }
 
   .g-battleship-stage.portrait .g-battleship-place-tools .arcade-btn {
     flex: 1;
     min-width: 0;
-    min-height: 50px;
-    padding: 6px 4px;
-    font-size: 14px;
+    min-height: calc(50px * var(--g-battleship-u, 1));
+    padding: calc(6px * var(--g-battleship-u, 1)) calc(4px * var(--g-battleship-u, 1));
+    font-size: calc(14px * var(--g-battleship-u, 1));
   }
 }
 
