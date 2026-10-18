@@ -2393,6 +2393,37 @@ test('computer eggs raid the fridges, break the toilets and hay bales, loot the 
   assert.ok(tried > 100);
 });
 
+test('a computer egg on the booth side of a diner counter walks round it to the kitchen stash', () => {
+  let trips = 0;
+  for (let seed = 1; seed <= 20; seed++) {
+    const base = generateMap(seed);
+    const bi = base.buildings.findIndex((b) => b.kind === 'diner');
+    if (bi < 0) continue;
+    const b = base.buildings[bi];
+    const counter = base.furniture.find((f) => f.b === bi && f.kind === 'counter')!;
+    const stash = base.containers.filter((c) => (c.kind === 'fridge' || c.kind === 'chest') && Math.abs(c.x - b.x) < b.w / 2 && Math.abs(c.z - b.z) < b.d / 2);
+    // the booths are on the far side of the counter from the stash
+    const front = Math.sign(counter.z - stash[0].z);
+    for (const c of stash)
+      for (const u of [-4, 0, 4]) {
+        const m = quiet(seed);
+        const a = alone(m);
+        m.loot.clear();
+        m.opened = m.opened.map((_, i) => i !== c.id);
+        land(a, counter.x + u, counter.z + front * 1.1);
+        let t = 0;
+        for (; t < 20 && !m.opened[c.id]; t += 1 / 30) {
+          step(m, 1 / 30);
+          m.events.length = 0;
+        }
+        assert.ok(m.opened[c.id], `seed ${seed}: from ${a.x.toFixed(1)},${a.z.toFixed(1)} round the counter to the ${c.kind} at ${c.x},${c.z}`);
+        assert.ok(t < 12, `seed ${seed}: and quickly (${t.toFixed(1)} s)`);
+        trips++;
+      }
+  }
+  assert.ok(trips >= 30, `${trips} trips`);
+});
+
 test('a computer egg crosses the river by a bridge near its way, and wades across where there is none', () => {
   let bridged = 0;
   let waded = 0;

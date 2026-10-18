@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AMMO_BOX, BOOST, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, type Ammo, type GunClass, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
-import { CAMP, HALF, PAD, ROAD_HALF, type Building, type Door, type GameMap } from './map';
+import { CAMP, HALF, PAD, RIVER_HALF, ROAD_HALF, type Building, type Door, type GameMap } from './map';
 import type { Held } from './logic';
 
 const Svg = ({ children, size = 28, label }: { children: ReactNode; size?: number; label?: string }) => (
@@ -327,9 +327,12 @@ function DoorMark({ b, d }: { b: Building; d: Door }) {
   return <rect x={x - hw} y={z - hd} width={hw * 2} height={hd * 2} fill={open ? '#1d2025' : b.kind === 'ruin' ? '#e4dccb' : '#fff6d6'} />;
 }
 
+/** The river's middle line as SVG points. */
+const riverPoints = (map: GameMap) => map.river.map((p) => `${p.x},${p.z}`).join(' ');
+
 /**
- * The island drawn in map coordinates (x right, north up), for the minimap and the big map: roads, farm fences, cars,
- * campfires and bounce pads too.
+ * The island drawn in map coordinates (x right, north up), for the minimap and the big map: the river and its bridges,
+ * roads, farm fences, cars, campfires and bounce pads too.
  */
 export function IslandArt({ map }: { map: GameMap }) {
   const coop = map.buildings[map.coop];
@@ -341,8 +344,17 @@ export function IslandArt({ map }: { map: GameMap }) {
       {map.ponds.map((p, i) => (
         <circle key={`p${i}`} cx={p.x} cy={p.z} r={p.r} fill="#4cb3dc" stroke="#d8c690" strokeWidth="1.5" />
       ))}
+      {map.river.length > 1 && (
+        <>
+          <polyline points={riverPoints(map)} fill="none" stroke="#d8c690" strokeWidth={RIVER_HALF * 2 + 3} strokeLinejoin="round" />
+          <polyline points={riverPoints(map)} fill="none" stroke="#4cb3dc" strokeWidth={RIVER_HALF * 2} strokeLinejoin="round" />
+        </>
+      )}
       {map.roads.map((r, i) => (
         <line key={`rd${i}`} x1={r.x0} y1={r.z0} x2={r.x1} y2={r.z1} stroke="#cdb07a" strokeWidth={ROAD_HALF * 2} strokeLinecap="round" />
+      ))}
+      {map.bridges.map((b, i) => (
+        <rect key={`br${i}`} x={b.x - b.hw} y={b.z - b.hd} width={b.hw * 2} height={b.hd * 2} fill="#a57846" stroke="#5a3e24" strokeWidth="0.6" />
       ))}
       {map.fields.map((f, i) => (
         <rect key={`f${i}`} x={f.x - f.hw} y={f.z - f.hd} width={f.hw * 2} height={f.hd * 2} fill="#b8a640" />
@@ -585,7 +597,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Supply drops.</b> Three times a match a crate floats down under a balloon inside the next circle, with a beam of light over it. They're full of epic and legendary gear.
           </li>
           <li>
-            <b>Walls.</b> Swing at trees for wood, then throw up walls for cover. They take a beating before they break.
+            <b>Walls.</b> Swing at trees or fallen logs for wood, then throw up walls for cover. They take a beating before they break.
           </li>
         </ul>
       </section>
@@ -597,6 +609,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>Houses, farmhouses and sheds.</b> Loot inside, often a chest. The roof lifts off while you're in, and nobody outside can see you.
+          </li>
+          <li>
+            <b>Furniture.</b> Tables, beds and diner booths only stop your feet; kitchen counters, shelves and flour sacks stop bullets too. Rugs and chairs are just there to look at.
           </li>
           <li>
             <b>Kitchens.</b> Houses and farmhouses have a fridge, which opens like a chest and holds things to eat and patch up with, and a toilet, which breaks like a crate and might hold anything.
@@ -626,19 +641,22 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>The Golden Coop.</b> The gold-roofed building with a star on the map. One way in, and a golden chest at the back full of legendary gear.
           </li>
           <li>
+            <b>The diner and the windmill.</b> Most islands have one or the other, now and then both, each going by its own name. The diner has booths, a counter and, in the kitchen at the back, two fridges and a chest. The windmill has one way in, flour sacks and a millstone, and a chest across from the door as good as a supply drop.
+          </li>
+          <li>
             <b>Bushes and cornfields.</b> Stand in one and nobody sees you from a distance until you fire.
           </li>
           <li>
             <b>Barrels.</b> Shoot or smack one and it blows up, hurting everyone nearby and setting off other barrels.
           </li>
           <li>
-            <b>Ponds.</b> You can wade through, but slowly.
+            <b>Ponds and the river.</b> You can wade through, but slowly, and the water hides nobody. The river winds right across the island; cross it dry and at a walk on a wooden bridge (brown on the map), whose rails stop your feet but not bullets.
           </li>
           <li>
             <b>Ruins.</b> Broken walls and no roof: cover, but nowhere to hide.
           </li>
           <li>
-            <b>Odds and ends.</b> Lamp posts along the roads, mailboxes by the doors and picnic tables in the yards. Posts stop bullets; a table only stops your feet.
+            <b>Odds and ends.</b> Lamp posts along the roads, mailboxes by the doors, picnic tables in the yards, and fallen logs and stumps in the woods. Posts stop bullets; a table, a log or a stump only stops your feet.
           </li>
         </ul>
       </section>

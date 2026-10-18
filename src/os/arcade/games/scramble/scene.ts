@@ -723,7 +723,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const riverTex = keep(riverTexture(THREE));
   if (riverLine.length > 1) {
     const banks = new THREE.Mesh(geo(ribbon(THREE, riverLine, RIVER_HALF + 1.3, 0.012, 8)), lambert(0xc9b98a, { side: THREE.DoubleSide }));
-    const flow = new THREE.Mesh(geo(ribbon(THREE, riverLine, RIVER_HALF + 0.1, 0.034, 9)), lambert(0xffffff, { map: riverTex, transparent: true, opacity: 0.92, emissive: 0x0b3a52, side: THREE.DoubleSide }));
+    const flow = new THREE.Mesh(geo(ribbon(THREE, riverLine, RIVER_HALF + 0.1, 0.034, 9)), lambert(0xffffff, { map: riverTex, emissive: 0x0b3a52, side: THREE.DoubleSide }));
     scene.add(banks, flow);
   }
 
@@ -787,7 +787,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const doorRnd = scatter(31);
   let wi = 0;
   const roofs: { mesh: T.Mesh; mats: T.MeshLambertMaterial[]; fade: number; at: number }[] = [];
-  const sails: T.Group[] = [];
+  const sails: T.Mesh[] = [];
   // door frames, porches, mats, paving and container doors, all one instanced mesh; lamps another
   const bits: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number; c: number }[] = [];
   const lamps: { x: number; y: number; z: number; sx: number; sz: number }[] = [];
@@ -893,10 +893,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     if (b.kind === 'container') piece(new THREE.BoxGeometry(W, 0.2, D), 0, 0.1, 0, rc);
     else {
       piece(new THREE.BoxGeometry(W, 0.2, D), 0, 0.1, 0, s.trim);
-      // a windmill's roof is a steep one
-      const rise = b.kind === 'warehouse' ? 0.9 : b.kind === 'mill' ? 3.4 : Math.min(1.6, (alongX ? D : W) * 0.16);
-      piece(gableGeometry(THREE, alongX ? W : D, alongX ? D : W, rise), 0, 0.2, 0, rc, alongX ? 0 : Math.PI / 2);
-      piece(new THREE.BoxGeometry(alongX ? W + 0.06 : 0.36, 0.16, alongX ? 0.36 : D + 0.06), 0, 0.2 + rise, 0, darker(rc, 0.62));
+      const rise = b.kind === 'warehouse' ? 0.9 : b.kind === 'mill' ? 4.6 : Math.min(1.6, (alongX ? D : W) * 0.16);
+      if (b.kind === 'mill') {
+        // a windmill's cap is a tall pyramid with a knob on top
+        piece(new THREE.ConeGeometry(W * Math.SQRT1_2, rise, 4), 0, 0.2 + rise / 2, 0, rc, Math.PI / 4);
+        piece(new THREE.SphereGeometry(0.35, 6, 4), 0, 0.3 + rise, 0, s.edge);
+      } else {
+        piece(gableGeometry(THREE, alongX ? W : D, alongX ? D : W, rise), 0, 0.2, 0, rc, alongX ? 0 : Math.PI / 2);
+        piece(new THREE.BoxGeometry(alongX ? W + 0.06 : 0.36, 0.16, alongX ? 0.36 : D + 0.06), 0, 0.2 + rise, 0, darker(rc, 0.62));
+      }
       // a long vent along a warehouse's ridge
       if (b.kind === 'warehouse') piece(new THREE.BoxGeometry(alongX ? W * 0.7 : 1.3, 0.36, alongX ? 1.3 : D * 0.7), 0, 0.3 + rise, 0, 0xd5dbe0);
       top = 0.2 + rise;
@@ -946,25 +951,26 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       mats.push(signMat);
     }
     if (b.kind === 'mill') {
-      // four sails on a hub over the door, turning in the wind
-      const d = b.doors[0];
-      const sailMat = lambert(0xf3eee2, { transparent: true, opacity: 1 });
-      const sparMat = lambert(0x6b4426, { transparent: true, opacity: 1 });
-      const hub = new THREE.Group();
-      hub.position.set(d.ox * (b.w / 2 + 0.7), 1.2, d.oz * (b.d / 2 + 0.7));
-      hub.rotation.y = Math.atan2(d.ox, d.oz);
-      const turn = new THREE.Group();
-      hub.add(turn);
-      add(turn, G.cyl, sparMat, 0, 0, 0, 0.35, 0.5, 0.35).rotation.x = Math.PI / 2;
+      // four sails on a hub high on the south face, turned to the camera so they always show, turning in the wind
+      // (one merged mesh)
+      const parts: RoofPart[] = [];
+      const hubG = new THREE.CylinderGeometry(0.35, 0.35, 0.5, 10);
+      hubG.rotateX(Math.PI / 2);
+      parts.push({ g: hubG, c: 0x6b4426 });
       for (let k = 0; k < 4; k++) {
-        const arm = new THREE.Group();
-        arm.rotation.z = (k * Math.PI) / 2;
-        add(arm, G.box, sparMat, 0, 2.9, 0.1, 0.16, 5.6, 0.12);
-        add(arm, G.box, sailMat, 0.5, 3.3, 0.12, 0.9, 4.2, 0.05);
-        turn.add(arm);
+        const spar = new THREE.BoxGeometry(0.16, 5.6, 0.12);
+        spar.translate(0, 2.9, 0.1);
+        spar.rotateZ((k * Math.PI) / 2);
+        const sail = new THREE.BoxGeometry(0.9, 4.2, 0.05);
+        sail.translate(0.5, 3.3, 0.12);
+        sail.rotateZ((k * Math.PI) / 2);
+        parts.push({ g: spar, c: 0x6b4426 }, { g: sail, c: 0xf3eee2 });
       }
-      roof.add(hub);
-      mats.push(sailMat, sparMat);
+      const sailMat = lambert(0xffffff, { vertexColors: true, transparent: true, opacity: 1 });
+      const turn = new THREE.Mesh(geo(mergeRoof(THREE, parts, 1, true)), sailMat);
+      turn.position.set(0, 1.4, b.d / 2 + over + 0.2);
+      roof.add(turn);
+      mats.push(sailMat);
       sails.push(turn);
     }
     roofs.push({ mesh: roof, mats, fade: 1, at: bi });
@@ -998,7 +1004,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const cones = many(G.pine, lambert(0xffffff, { flatShading: true }), count('pine') * 2);
   const marks = many(G.box, lambert(0x2b2d33), count('birch') * 3);
   const FRUIT = 6;
-  const fruits = many(G.lowBall, lambert(0xffffff, { emissive: 0x220800 }), count('fruit') * FRUIT);
+  const fruits = many(geo(new THREE.SphereGeometry(1, 5, 3)), lambert(0xffffff, { emissive: 0x220800 }), count('fruit') * FRUIT);
   const FRUIT_COLORS = [0xe53935, 0xff9f1c, 0xffd23d];
   let ci = 0;
   let pi = 0;
@@ -1241,8 +1247,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   // fallen logs (bark, with pale cut ends) and stumps
   const bark = lambert(0x6e4a2c);
   const cut = lambert(0xd9b77e);
-  const logBodies = many(G.cyl, bark, map.logs.length + map.stumps.length);
-  const logEnds = many(G.cyl, cut, map.logs.length * 2 + map.stumps.length);
+  const logGeo = geo(new THREE.CylinderGeometry(1, 1, 1, 8));
+  const logBodies = many(logGeo, bark, map.logs.length + map.stumps.length);
+  const logEnds = many(logGeo, cut, map.logs.length * 2 + map.stumps.length);
   map.logs.forEach((l, i) => {
     const len = (l.alongX ? l.hw : l.hd) * 2;
     dummy.position.set(l.x, LOG_R, l.z);
@@ -1265,7 +1272,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   scene.add(logBodies, logEnds);
 
   // bridges: a deck of planks across the water, a rail down each side on posts, and piles where it meets the banks
-  type Part = { x: number; y: number; z: number; sx: number; sy: number; sz: number; c: number };
+  type Part = { x: number; y: number; z: number; sx: number; sy: number; sz: number; c: number; b?: number };
   const planks: Part[] = [];
   const railings: Part[] = [];
   const piles: Part[] = [];
@@ -1304,6 +1311,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const furnRnd = scatter(47);
   for (const f of map.furniture) {
     const b = map.buildings[f.b];
+    const from = [boxes.length, rounds.length, lumps.length];
     // the way to the wall it stands against (`face`), and across that
     const wx = f.face === 2 ? -1 : f.face === 3 ? 1 : 0;
     const wz = f.face === 0 ? -1 : f.face === 1 ? 1 : 0;
@@ -1374,10 +1382,33 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         boxes.push({ x: f.x, y: 0.8, z: f.z, sx: 0.14, sy: 0.9, sz: 0.14, c: 0x6b4426 });
         break;
     }
+    [boxes, rounds, lumps].forEach((list, k) => {
+      for (let i = from[k]; i < list.length; i++) list[i].b = f.b;
+    });
   }
-  instance(G.box, boxes);
-  instance(G.cyl, rounds);
-  instance(G.lowBall, lumps);
+  // every room's furniture stays hidden (not drawn only to be painted over) while its roof is on
+  const furnished = [instance(G.box, boxes), instance(G.cyl, rounds), instance(G.lowBall, lumps)];
+  const placed = furnished.map((im) => {
+    im.computeBoundingSphere();
+    return Array.from({ length: im.count }, (_, i) => {
+      const at = new THREE.Matrix4();
+      im.getMatrixAt(i, at);
+      return at;
+    });
+  });
+  const pieces: [number, number][][] = map.buildings.map(() => []);
+  [boxes, rounds, lumps].forEach((list, k) => list.forEach((p, i) => p.b !== undefined && pieces[p.b].push([k, i])));
+  const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+  const shown = map.buildings.map(() => true);
+  const showFurniture = (bi: number, on: boolean) => {
+    if (shown[bi] === on || !pieces[bi].length) return;
+    shown[bi] = on;
+    for (const [k, i] of pieces[bi]) {
+      furnished[k].setMatrixAt(i, on ? placed[k][i] : hidden);
+      furnished[k].instanceMatrix.needsUpdate = true;
+    }
+  };
+  map.buildings.forEach((b, i) => b.roof && showFurniture(i, false));
 
   // ground detail: tufts of grass, flowers and pebbles, merged into one mesh per 40 m square so only the squares in
   // view are drawn, and none at all from up high, where they'd only be specks
@@ -1408,24 +1439,30 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     decorPos[k].push(...p);
     decorCol[k].push(...c0, ...c1, ...c2);
   };
-  for (let i = 0; i < 2800; i++) {
-    const x = (decorRnd() * 2 - 1) * GRASS;
-    const z = (decorRnd() * 2 - 1) * GRASS;
-    if (bare(x, z)) continue;
-    const k = tileOf(x, z);
-    const base = rgb(0x3d7a2c, 0.6);
-    const tip = rgb(decorRnd() < 0.2 ? 0xc9c65a : 0x9ccf5a, 0.6);
-    const h = 0.32 + decorRnd() * 0.3;
-    const a0 = decorRnd() * 6.3;
-    for (let b = 0; b < 3; b++) {
-      const a = a0 + b * 2.1;
-      const dx = Math.sin(a);
-      const dz = Math.cos(a);
-      tri(k, [x - dz * 0.05, 0, z + dx * 0.05, x + dz * 0.05, 0, z - dx * 0.05, x + dx * 0.16, h * (0.8 + b * 0.12), z + dz * 0.16], base, base, tip);
+  // tufts of grass in clumps of a few, each three blades leaning out
+  for (let i = 0; i < 1500; i++) {
+    const cx = (decorRnd() * 2 - 1) * GRASS;
+    const cz = (decorRnd() * 2 - 1) * GRASS;
+    const n = 2 + Math.floor(decorRnd() * 4);
+    for (let j = 0; j < n; j++) {
+      const x = cx + (decorRnd() - 0.5) * 2.2;
+      const z = cz + (decorRnd() - 0.5) * 2.2;
+      if (bare(x, z)) continue;
+      const k = tileOf(x, z);
+      const base = rgb(0x3d7a2c, 0.6);
+      const tip = rgb(decorRnd() < 0.2 ? 0xc9c65a : 0x9ccf5a, 0.6);
+      const h = 0.4 + decorRnd() * 0.35;
+      const a0 = decorRnd() * 6.3;
+      for (let b = 0; b < 3; b++) {
+        const a = a0 + b * 2.1;
+        const dx = Math.sin(a);
+        const dz = Math.cos(a);
+        tri(k, [x - dz * 0.08, 0, z + dx * 0.08, x + dz * 0.08, 0, z - dx * 0.08, x + dx * 0.22, h * (0.8 + b * 0.12), z + dz * 0.22], base, base, tip);
+      }
     }
   }
   const PETALS = [0xffffff, 0xffd23d, 0xf28ab2, 0xb07ae0, 0xff6b4a];
-  for (let i = 0; i < 150; i++) {
+  for (let i = 0; i < 220; i++) {
     const cx = (decorRnd() * 2 - 1) * GRASS;
     const cz = (decorRnd() * 2 - 1) * GRASS;
     const petal = PETALS[Math.floor(decorRnd() * PETALS.length)];
@@ -1439,7 +1476,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       const mid = [1, 0.85, 0.3];
       const h = 0.26 + decorRnd() * 0.12;
       tri(k, [x - 0.02, 0, z, x + 0.02, 0, z, x, h, z], stem, stem, stem);
-      const r = 0.075;
+      const r = 0.12;
       const ring = [
         [r, 0],
         [0, r],
@@ -2389,6 +2426,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           x.depthWrite = r.fade > 0.98;
         }
         r.mesh.visible = r.fade > 0.03;
+        showFurniture(r.at, r.fade < 0.98);
       }
       // the river runs, the windmills turn, and the grass and flowers show once you're down among them
       riverTex.offset.y = -clock * 0.15;

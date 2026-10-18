@@ -917,7 +917,8 @@ export function generateMap(seed: number): GameMap {
     const rx = room?.x ?? b.x;
     const rw = room?.w ?? b.w;
     dining(bi, rx, b.z, true, look);
-    for (const side of order(0, 1)) if (along(bi, 'bed', side, [rx - b.x, rx - b.x - 1, rx - b.x + 1], 2.1, 1.5, look)) break;
+    // a bed against a long wall, the north one first: the south wall would hide it from the camera
+    for (const side of [0, 1]) if (along(bi, 'bed', side, [0, -1, 1, -2.5, 2.5].map((u) => rx - b.x + u), 2.1, 1.5, look)) break;
     // a kitchen counter along the end wall by the fridge (in a house, the other end will do when a door's in the way)
     const fridge = map.containers.find((c) => c.kind === 'fridge' && Math.abs(c.x - b.x) < b.w / 2 && Math.abs(c.z - b.z) < b.d / 2);
     const by = fridge ? (fridge.x < b.x ? 2 : 3) : rng() < 0.5 ? 2 : 3;

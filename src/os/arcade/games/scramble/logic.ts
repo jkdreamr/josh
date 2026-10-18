@@ -57,6 +57,7 @@ import {
   busAt,
   coverAt,
   fireAt,
+  furnitureSolid,
   generateMap,
   low,
   padAt,
@@ -2441,6 +2442,9 @@ function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, 
   const c = b ? null : around(m, f.x, f.z, px, pz, yard);
   if (c) return steer(m, f, ai, c.x, c.z, dt, 0);
   // inside, with where we're going on the far side of the wall between two rooms: through the doorway in it first
+  let wx = px;
+  let wz = pz;
+  let via = false;
   if (b)
     for (const dr of b.inner) {
       const there = (px - dr.x) * dr.ox + (pz - dr.z) * dr.oz;
@@ -2448,9 +2452,77 @@ function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, 
       if (there * here >= 0) continue;
       const s = there > 0 ? 1 : -1;
       const k = Math.abs((f.x - dr.x) * dr.oz - (f.z - dr.z) * dr.ox) < Math.max(0.3, dr.w / 2 - FIGHTER_R - 0.1) ? 1.5 : -1.2;
-      return steer(m, f, ai, dr.x + dr.ox * s * k, dr.z + dr.oz * s * k, dt, 0);
+      wx = dr.x + dr.ox * s * k;
+      wz = dr.z + dr.oz * s * k;
+      via = true;
+      break;
     }
-  steer(m, f, ai, px, pz, dt, door || over ? 0 : stop);
+  // and round a counter, a bed or a table in the way
+  const r = b && (via || door || Math.hypot(px - f.x, pz - f.z) > stop) ? roundFurniture(m, f.inside, f.x, f.z, wx, wz) : null;
+  if (r) return steer(m, f, ai, r.x, r.z, dt, 0);
+  steer(m, f, ai, wx, wz, dt, via || door || over ? 0 : stop);
+}
+
+/** The furniture that stops feet in each building, worked out once (and again should the list be swapped). */
+const furnished = new WeakMap<GameMap, { of: unknown; by: Box[][] }>();
+function furnitureIn(map: GameMap, bi: number) {
+  let got = furnished.get(map);
+  if (!got || got.of !== map.furniture) {
+    const by: Box[][] = map.buildings.map(() => []);
+    for (const p of map.furniture) if (furnitureSolid(p.kind)) by[p.b]?.push(p);
+    got = { of: map.furniture, by };
+    furnished.set(map, got);
+  }
+  return got.by[bi] ?? [];
+}
+
+/**
+ * Inside building `bi`, when the way from (x, z) to (px, pz) runs into furniture that stops feet, the corner to walk
+ * round the nearest piece by: one indoors and in sight that makes the shortest way, and not the one we're at.
+ */
+function roundFurniture(m: Match, bi: number, x: number, z: number, px: number, pz: number) {
+  const list = furnitureIn(m.map, bi);
+  const len = Math.hypot(px - x, pz - z);
+  if (!list.length || len < 0.5) return null;
+  // the room an egg's middle needs round a piece (a touch less, so one already against it isn't taken to be in it)
+  const pad = FIGHTER_R - 0.08;
+  let near = Infinity;
+  let o: Box | null = null;
+  for (const p of list) {
+    const t = rayBox(x, z, (px - x) / len, (pz - z) / len, len, p.x, p.z, p.hw + pad, p.hd + pad);
+    if (t < near) {
+      near = t;
+      o = p;
+    }
+  }
+  if (!o) return null;
+  const box = o;
+  const b = m.map.buildings[bi];
+  const g = FIGHTER_R + 0.4;
+  const inside = (c: { x: number; z: number }) => Math.abs(c.x - b.x) < b.w / 2 - WALL_T / 2 - FIGHTER_R && Math.abs(c.z - b.z) < b.d / 2 - WALL_T / 2 - FIGHTER_R;
+  const corners = CORNERS.map(([sx, sz]) => ({ x: box.x + sx * (box.hw + g), z: box.z + sz * (box.hd + g) }));
+  const sees = (ax: number, az: number, bx: number, bz: number) => {
+    const l = Math.hypot(bx - ax, bz - az);
+    return l < 1e-6 || rayBox(ax, az, (bx - ax) / l, (bz - az) / l, l, box.x, box.z, box.hw + pad, box.hd + pad) === Infinity;
+  };
+  const rest = (i: number) => {
+    const c = corners[i];
+    if (sees(c.x, c.z, px, pz)) return Math.hypot(px - c.x, pz - c.z);
+    return Math.min(...[corners[(i + 1) % 4], corners[(i + 3) % 4]].map((n) => (inside(n) ? Math.hypot(n.x - c.x, n.z - c.z) + Math.hypot(px - n.x, pz - n.z) : Infinity)));
+  };
+  let best: { x: number; z: number } | null = null;
+  let bestD = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const c = corners[i];
+    const l = Math.hypot(c.x - x, c.z - z);
+    if (l < 0.5 || !inside(c) || !sees(x, z, c.x, c.z)) continue;
+    const d = l + rest(i);
+    if (d < bestD) {
+      best = c;
+      bestD = d;
+    }
+  }
+  return best;
 }
 
 /** A meter waded counts as this many walked: it's slow, and out in the open. */
