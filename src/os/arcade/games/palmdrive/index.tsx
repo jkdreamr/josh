@@ -412,6 +412,8 @@ function Play({ mode }: { mode: Mode }) {
   const view = useRef<View | null>(null);
   const race = useRef<Race | null>(null);
   const [raceKey, setRaceKey] = useState(0);
+  // TEMP-DEBUG
+  if (typeof window !== 'undefined') Object.assign(window, { __pd: race, __pdv: view });
   if (!race.current) {
     if (!live) race.current = soloRace(cc, undefined, lookFor(loadGarage()), course);
     else race.current = onlineRace(online!, cc, course, racersOf(online!), online!.isHost ? COUNTDOWN + HOST_LEAD : 60, lookFor(loadGarage()));

@@ -4,7 +4,7 @@
 // chain ferry, the swell rolling in off the Bay and the weir. It reads a Race every frame and never changes it.
 import type { T } from './gl';
 import { deltaS, edgeAt, edgeRuns, headingOf, lengthOf, pointAt, roadEdge, wrapS, type Track } from './track';
-import { canvas, noise, scatter, texture, type Look } from './scenery';
+import { DAWN, GLSL_NOISE, canvas, noise, scatter, texture, type Look } from './scenery';
 import { COURSES } from './courses';
 import { RAMP_H, TIDE_LAP, WAKE_LEN, WAKE_SPREAD, crestsAt, hazState, hazardV, strokeAt, type LiveHazard, type Race } from './logic';
 
@@ -56,41 +56,179 @@ function face(THREE: Three, t: Track, s0: number, s1: number, d: (s: number) => 
   return g;
 }
 
-/** The channel's water: deep in the middle, shallow toward the banks, with ripples and long streaks that show it running. */
-function channelTexture(THREE: Three, look: Look, seed: number) {
-  const w = look.water!;
-  const tex = texture(
-    THREE,
-    canvas(128, 256, (g) => {
-      const grad = g.createLinearGradient(0, 0, 128, 0);
-      grad.addColorStop(0, w.shallow);
-      grad.addColorStop(0.22, w.deep);
-      grad.addColorStop(0.78, w.deep);
-      grad.addColorStop(1, w.shallow);
-      g.fillStyle = grad;
-      g.fillRect(0, 0, 128, 256);
-      const r = scatter(seed);
-      // the sky's dawn colors caught on small ripples
-      for (let i = 0; i < 140; i++) {
-        g.strokeStyle = i % 3 ? `rgba(255,236,214,${0.05 + r() * 0.08})` : `rgba(250,190,170,${0.06 + r() * 0.08})`;
-        g.lineWidth = 0.8 + r() * 0.8;
-        const x = r() * 128;
-        const y = r() * 256;
-        g.beginPath();
-        g.ellipse(x, y, 2.5 + r() * 5, 0.6 + r() * 0.8, Math.PI / 2, 0, Math.PI);
-        g.stroke();
+/**
+ * The channel's surface for the water shader: a strip from bank to bank (u across from 0 to 1, v the distance along the
+ * track in meters), how wide it is at each sample, and the lap the water turns choppy there (0: never).
+ */
+function waterStrip(THREE: Three, t: Track, s0: number, s1: number, a: (s: number) => number, b: (s: number) => number, y: number, chopAt: (s: number) => number) {
+  const g = band(THREE, t, s0, s1, a, b, y, 1);
+  const n = g.getAttribute('position').count / 2;
+  const wid: number[] = [];
+  const chop: number[] = [];
+  const uv = g.getAttribute('uv');
+  for (let k = 0; k < n; k++) {
+    const s = s0 + ((s1 - s0) * k) / Math.max(1, n - 1);
+    const w = Math.abs(b(s) - a(s));
+    wid.push(w, w);
+    chop.push(chopAt(s), chopAt(s));
+    uv.setY(2 * k, s);
+    uv.setY(2 * k + 1, s);
+  }
+  g.setAttribute('wid', new THREE.Float32BufferAttribute(wid, 1));
+  g.setAttribute('chop', new THREE.Float32BufferAttribute(chop, 1));
+  return g;
+}
+
+/**
+ * A tiling normal map of small wind ripples over a longer swell, made once: the height field is a few octaves of
+ * wrapping value noise and some wave trains that tile, and the normals come from its slopes.
+ */
+function rippleNormals(THREE: Three) {
+  const N = 256;
+  const h = new Float32Array(N * N);
+  const rnd = scatter(41);
+  const octave = (cells: number, amp: number) => {
+    const lat = Array.from({ length: cells * cells }, () => rnd());
+    const at = (i: number, j: number) => lat[(((j % cells) + cells) % cells) * cells + (((i % cells) + cells) % cells)];
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        const fx = (x / N) * cells;
+        const fy = (y / N) * cells;
+        const i = Math.floor(fx);
+        const j = Math.floor(fy);
+        const u = fx - i;
+        const v = fy - j;
+        const su = u * u * (3 - 2 * u);
+        const sv = v * v * (3 - 2 * v);
+        const top = at(i, j) + (at(i + 1, j) - at(i, j)) * su;
+        const bot = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * su;
+        h[y * N + x] += amp * (top + (bot - top) * sv);
       }
-      // long streaks along the channel: they move with the current
-      for (let i = 0; i < 30; i++) {
-        g.fillStyle = `rgba(255,255,255,${0.05 + r() * 0.07})`;
-        g.fillRect(8 + r() * 112, r() * 256, 1, 24 + r() * 50);
+    }
+  };
+  octave(4, 1);
+  octave(8, 0.55);
+  octave(16, 0.3);
+  octave(32, 0.16);
+  // (wave trains on whole-number wave vectors, so they tile, sharpened into crests)
+  for (const [kx, ky, amp] of [[3, 5, 0.35], [-4, 6, 0.28], [7, -2, 0.18], [9, 11, 0.1], [-13, 5, 0.08]]) {
+    const ph = rnd() * Math.PI * 2;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) h[y * N + x] += amp * (1 - Math.abs(Math.sin(((kx * x + ky * y) / N) * Math.PI * 2 + ph)));
+  }
+  const c = canvas(N, N, (g) => {
+    const img = g.createImageData(N, N);
+    const H = (x: number, y: number) => h[((y + N) % N) * N + ((x + N) % N)];
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        const dx = (H(x + 1, y) - H(x - 1, y)) * 2.2;
+        const dy = (H(x, y + 1) - H(x, y - 1)) * 2.2;
+        const l = Math.hypot(dx, dy, 1);
+        const o = (y * N + x) * 4;
+        img.data[o] = Math.round((-dx / l) * 127.5 + 127.5);
+        img.data[o + 1] = Math.round((-dy / l) * 127.5 + 127.5);
+        img.data[o + 2] = Math.round((1 / l) * 127.5 + 127.5);
+        img.data[o + 3] = 255;
       }
-      noise(g, 128, 256, 500, 0.035);
-    }),
-  );
+    }
+    g.putImageData(img, 0, 0);
+  });
+  const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 8;
   return tex;
 }
+
+const WATER_VERT = /* glsl */ `
+  attribute float wid;
+  attribute float chop;
+  varying vec3 vW;
+  varying vec2 vUv;
+  varying float vWid;
+  varying float vChop;
+  #include <fog_pars_vertex>
+  void main() {
+    vec4 w = modelMatrix * vec4(position, 1.0);
+    vW = w.xyz;
+    vUv = uv;
+    vWid = wid;
+    vChop = chop;
+    vec4 mvPosition = viewMatrix * w;
+    gl_Position = projectionMatrix * mvPosition;
+    #include <fog_vertex>
+  }`;
+
+const WATER_FRAG = /* glsl */ `
+  uniform float uTime, uFlow, uStreak, uLap, uReflOn, uFogLift;
+  uniform vec3 uDeep, uShallow, uFoam, uSun, uSunCol, uSkyLow, uSkyHigh, uHorizon;
+  uniform sampler2D tNormal, tRefl;
+  uniform mat4 uReflM;
+  varying vec3 vW;
+  varying vec2 vUv;
+  varying float vWid;
+  varying float vChop;
+  #include <fog_pars_fragment>
+  ${GLSL_NOISE}
+  vec2 rip(vec2 p) { return texture2D(tNormal, p).xy * 2.0 - 1.0; }
+  void main() {
+    float across = vUv.x * vWid;
+    float edge = min(vUv.x, 1.0 - vUv.x) * vWid;
+    float along = vUv.y - uFlow;
+    vec3 toCam = cameraPosition - vW;
+    float dist = length(toCam);
+    vec3 V = toCam / dist;
+    float rough = (vChop > 0.5 && uLap >= vChop - 0.01) ? 1.0 : 0.0;
+    // ripples: two layers drifting over the slough in the breeze, and one carried down the channel by the current
+    vec2 p = vW.xz;
+    vec2 n = rip(p * 0.045 + uTime * vec2(0.011, 0.007)) * 0.55
+           + rip(p * 0.13 - uTime * vec2(0.012, -0.019)) * 0.4
+           + rip(vec2(across * 0.07, along * 0.035)) * 0.45;
+    n += rip(p * 0.31 + uTime * vec2(0.03, 0.021)) * (0.25 + 0.5 * rough);
+    float calm = mix(1.0, 0.3, smoothstep(25.0, 220.0, dist));
+    float str = (0.2 + 0.18 * rough) * calm;
+    vec3 N = normalize(vec3(n.x * str, 1.0, n.y * str));
+    float ndv = max(dot(N, V), 0.0);
+    float fres = clamp(0.03 + 0.97 * pow(1.0 - ndv, 5.0), 0.0, 1.0);
+    vec3 R = reflect(-V, N);
+    // what it mirrors: the scene above it (a reflection pass), or else the sky
+    float hy = max(R.y, 0.0);
+    vec3 sky = mix(uHorizon, uSkyLow, smoothstep(0.0, 0.2, hy));
+    sky = mix(sky, uSkyHigh, smoothstep(0.15, 0.7, hy));
+    vec3 refl = sky;
+    if (uReflOn > 0.5) {
+      vec4 rp = uReflM * vec4(vW, 1.0);
+      vec2 ruv = rp.xy / rp.w + N.xz * (0.045 + 0.03 * rough) * calm;
+      refl = texture2D(tRefl, clamp(ruv, 0.001, 0.999)).rgb;
+    }
+    // the water itself: dark and deep mid-channel, greener and lighter over the shallows by the banks
+    vec3 body = mix(uShallow, uDeep, smoothstep(0.2, 5.0, edge));
+    body *= 0.75 + 0.25 * smoothstep(-0.3, 0.6, N.x * uSun.x + N.z * uSun.z + 0.2);
+    vec3 c = mix(body, refl * mix(vec3(1.0), uDeep * 2.2 + 0.45, 0.25), fres * 0.9);
+    // the current: faint streaks of foam and slick running with it
+    float st = pdNoise(vec2(across * 1.4, along * 0.06)) * pdNoise(vec2(across * 0.6 + 3.1, along * 0.025));
+    c += vec3(0.9, 0.92, 0.95) * smoothstep(0.35, 0.7, st) * 0.09 * uStreak * calm;
+    // shimmer over the shallows, where the light plays on the bottom
+    vec2 q = rip(p * 0.21 + uTime * vec2(0.05, 0.03)) + rip(p * 0.17 - uTime * vec2(0.04, -0.035));
+    float caustic = pow(max(0.0, 1.0 - abs(q.x + q.y) * 1.6), 6.0);
+    c += uSunCol * caustic * 0.12 * (1.0 - smoothstep(0.0, 3.0, edge)) * calm;
+    // the sun on the water: a glitter path toward it, and a broad warm sheen
+    float sd = max(dot(R, uSun), 0.0);
+    vec3 Ns = normalize(vec3(n.x * str * 2.2, 1.0, n.y * str * 2.2));
+    float glint = pow(max(dot(reflect(-V, Ns), uSun), 0.0), 900.0);
+    c += uSunCol * (pow(sd, 60.0) * 0.55 + glint * 9.0 * (0.4 + 0.6 * calm));
+    // foam where the water laps the bank, and a second line a little way out, coming and going
+    float lap = pdNoise(vec2(along * 0.35, uTime * 0.6)) * 0.35 + pdNoise(vec2(along * 1.7, uTime * 1.3)) * 0.2;
+    float foam = 1.0 - smoothstep(0.04, 0.4, edge - lap * 0.7);
+    float ring = (1.0 - smoothstep(0.0, 0.12, abs(edge - 0.8 - 0.3 * sin(uTime * 1.3 + along * 0.4)))) * pdNoise(vec2(along * 2.0, uTime));
+    foam = max(foam, ring * 0.35);
+    // and flecks of white on the chop
+    foam = max(foam, rough * smoothstep(0.55, 0.85, pdNoise(p * 1.8 + uTime * vec2(0.4, 0.1)) * (0.6 + 0.6 * n.x)) * 0.8 * calm);
+    c = mix(c, uFoam, clamp(foam, 0.0, 1.0) * 0.9);
+    gl_FragColor = vec4(c, 1.0);
+    if (uFogLift > 0.5) gl_FragColor = vec4(refl, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    #include <fog_fragment>
+  }`;
 
 /** The whirlpool's spiral: foam arms wound round a dark eye, on a transparent disc. */
 function spiralTexture(THREE: Three) {
@@ -137,7 +275,17 @@ const ADDITIVE = 2 as T.Blending;
 /** Cars on the Hwy 101 deck. */
 const CARS = 32;
 
-export type River = { tick: (race: Race, me: number, clock: number, dt: number) => void };
+export type River = {
+  tick: (race: Race, me: number, clock: number, dt: number) => void;
+  /** Renders what the water mirrors (call before the frame's own render), and lets the camera see the water itself. */
+  reflect: (renderer: T.WebGLRenderer, scene: T.Scene, camera: T.PerspectiveCamera) => void;
+  dispose: () => void;
+};
+
+/** The reflection pass draws at this fraction of the screen's resolution: the ripples blur it anyway. */
+const REFLECT_RES = 0.5;
+/** Where the mirror is: the water's surface. */
+const WATER_Y = 0.04;
 
 /**
  * Builds the water and everything on it for a race in shells (Race.boat). Returns what to do every frame: the currents
@@ -163,16 +311,50 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     cuts.add(Math.max(0, Math.min(t.length, f.s1)));
   }
   const edges = [...cuts].sort((a, b) => a - b);
-  const base = channelTexture(THREE, look, 23);
-  const runs: { tex: T.Texture; s: number }[] = [];
+  // (the water shader's shared uniforms; each stretch adds how far its current has carried the ripples)
+  const col = (c: string | number) => ({ value: new THREE.Color(c) });
+  const shared = {
+    uTime: { value: 0 },
+    uLap: { value: 1 },
+    uReflOn: { value: 0 },
+    uFogLift: { value: 0 },
+    uDeep: col(water.deep),
+    uShallow: col(water.shallow),
+    uFoam: col(water.foam),
+    uSun: { value: new THREE.Vector3(...DAWN.sun).normalize() },
+    uSunCol: col(DAWN.sunColor),
+    uSkyLow: col(DAWN.low),
+    uSkyHigh: col(DAWN.mid),
+    uHorizon: col(DAWN.horizon),
+    tNormal: { value: rippleNormals(THREE) },
+    tRefl: { value: null as T.Texture | null },
+    uReflM: { value: new THREE.Matrix4() },
+    fogColor: { value: new THREE.Color() },
+    fogNear: { value: 1 },
+    fogFar: { value: 1000 },
+    fogDensity: { value: 0 },
+  };
+  const chopSpans = (COURSES[r.course].surfaces ?? []).filter((f) => f[3] === 'chop');
+  const chopAt = (s: number) => {
+    let lap = 0;
+    for (const [s0, s1, , , from] of chopSpans) if (deltaS(t, s0, s) >= 0 && deltaS(t, s, s1) >= 0) lap = lap ? Math.min(lap, from ?? 1) : (from ?? 1);
+    return lap;
+  };
+  const runs: { u: { value: number }; s: number; streak: { value: number } }[] = [];
+  /** What the reflection pass leaves out: the water and everything lying flat on it. */
+  const FLAT = 1;
+  const flat = <O extends T.Object3D>(o: O) => {
+    o.traverse((c) => c.layers.set(FLAT));
+    return o;
+  };
   for (let n = 0; n + 1 < edges.length; n++) {
     const [s0, s1] = [edges[n], edges[n + 1]];
     if (s1 - s0 < 0.5) continue;
-    const tex = base.clone();
-    tex.needsUpdate = true;
-    const mat = new THREE.MeshLambertMaterial({ map: tex });
-    scene.add(new THREE.Mesh(band(THREE, t, s0, s1, wet(-1), wet(1), 0.04, 14), mat));
-    runs.push({ tex, s: (s0 + s1) / 2 });
+    const u = { value: 0 };
+    const streak = { value: 0 };
+    const mat = new THREE.ShaderMaterial({ uniforms: { ...shared, uFlow: u, uStreak: streak }, vertexShader: WATER_VERT, fragmentShader: WATER_FRAG, fog: true });
+    scene.add(flat(new THREE.Mesh(waterStrip(THREE, t, s0, s1, wet(-1), wet(1), 0.04, chopAt), mat)));
+    runs.push({ u, s: (s0 + s1) / 2, streak });
   }
 
   // the tongue of fast water through the tide race: foam chevrons pointing the way it runs, racing along; and where the
@@ -821,7 +1003,67 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     armMesh.setColorAt(n, tint.setScalar(Math.max(0, Math.min(1, k))));
   };
 
+  // ---------------------------------------------------------------------------------------------------------------
+  // The reflection: the scene drawn again from a camera mirrored under the water (clipped at the surface) into a texture
+  // the water samples where each point of it would see itself, nudged by its ripples
+  const rt = new THREE.WebGLRenderTarget(4, 4);
+  const virt = new THREE.PerspectiveCamera();
+  virt.layers.set(0);
+  const v3 = { a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3() };
+  const size = new THREE.Vector2();
+  const bias = new THREE.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
+  const clip = new THREE.Plane();
+  shared.tRefl.value = rt.texture;
+  const reflect = (renderer: T.WebGLRenderer, sc: T.Scene, camera: T.PerspectiveCamera) => {
+    camera.layers.enable(FLAT);
+    renderer.getDrawingBufferSize(size);
+    const w = Math.max(16, Math.round(size.x * REFLECT_RES));
+    const h = Math.max(16, Math.round(size.y * REFLECT_RES));
+    if (rt.width !== w || rt.height !== h) rt.setSize(w, h);
+    camera.updateMatrixWorld();
+    // (the camera's position and where it looks, mirrored in the plane y = WATER_Y)
+    const cam = v3.a.setFromMatrixPosition(camera.matrixWorld);
+    if (cam.y <= WATER_Y + 0.05) {
+      shared.uReflOn.value = 0;
+      return;
+    }
+    const look = v3.b.set(0, 0, -1).transformDirection(camera.matrixWorld).add(cam);
+    virt.position.set(cam.x, 2 * WATER_Y - cam.y, cam.z);
+    const up = v3.c.set(0, 1, 0).transformDirection(camera.matrixWorld);
+    virt.up.set(up.x, -up.y, up.z);
+    virt.lookAt(look.x, 2 * WATER_Y - look.y, look.z);
+    virt.far = camera.far;
+    virt.updateMatrixWorld();
+    virt.projectionMatrix.copy(camera.projectionMatrix);
+    shared.uReflM.value.copy(bias).multiply(virt.projectionMatrix).multiply(virt.matrixWorldInverse);
+    // (an oblique near plane at the water's surface, so nothing under it shows)
+    clip.set(v3.a.set(0, 1, 0), -WATER_Y + 0.02);
+    clip.applyMatrix4(virt.matrixWorldInverse);
+    const e = virt.projectionMatrix.elements;
+    const qx = (Math.sign(clip.normal.x) + e[8]) / e[0];
+    const qy = (Math.sign(clip.normal.y) + e[9]) / e[5];
+    const qz = -1;
+    const qw = (1 + e[10]) / e[14];
+    const k = 2 / (clip.normal.x * qx + clip.normal.y * qy + clip.normal.z * qz + clip.constant * qw);
+    e[2] = clip.normal.x * k;
+    e[6] = clip.normal.y * k;
+    e[10] = clip.normal.z * k + 1;
+    e[14] = clip.constant * k;
+    virt.projectionMatrixInverse.copy(virt.projectionMatrix).invert();
+    const was = renderer.getRenderTarget();
+    renderer.setRenderTarget(rt);
+    renderer.clear();
+    renderer.render(sc, virt);
+    renderer.setRenderTarget(was);
+    shared.uReflOn.value = 1;
+  };
+
   return {
+    reflect,
+    dispose() {
+      rt.dispose();
+      shared.tNormal.value.dispose();
+    },
     tick(race, me, clock, dt) {
       const lap = race.karts[me]?.lap ?? 1;
       // the fog's lap: the lamps and the lip of the marsh shine through it
@@ -841,9 +1083,13 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
           if (deltaS(t, f.s0, run.s) < 0 || deltaS(t, run.s, f.s1) < 0) continue;
           along = f.tide && lap >= TIDE_LAP ? -f.along : f.along;
         }
-        // (and the still water just ripples)
-        run.tex.offset.y = (run.tex.offset.y - ((along || 0.15) * dt) / 14) % 1;
+        // (and the still water just drifts)
+        run.u.value = (run.u.value + (along || 0.15) * dt) % 4000;
+        run.streak.value = damp(run.streak.value, Math.min(1, Math.abs(along) / 1.5), 2, dt);
       }
+      shared.uTime.value = clock;
+      shared.uFogLift.value = (globalThis as unknown as { __dbg?: number }).__dbg ?? 0; // TEMP-DEBUG
+      shared.uLap.value = lap;
       for (const tg of tongues) {
         const v = tg.f.tide && lap >= TIDE_LAP ? -tg.f.tongue![2] : tg.f.tongue![2];
         tg.tex.offset.y = (tg.tex.offset.y - (v * dt) / 5) % 1;

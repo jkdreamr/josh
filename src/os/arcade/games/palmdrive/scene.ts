@@ -561,7 +561,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const camera = new THREE.PerspectiveCamera(68, 1, 0.5, 1600);
   scene.add(new THREE.HemisphereLight(look.sky, look.ground, 1.05));
   const sun = new THREE.DirectionalLight(...look.sun);
-  sun.position.set(160, 260, -220);
+  sun.position.set(...(look.sunAt ?? [160, 260, -220]));
   scene.add(sun);
 
   const dummy = new THREE.Object3D();
@@ -3243,7 +3243,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       return { x: ((v.x + 1) / 2) * w, y: ((1 - v.y) / 2) * h };
     },
     render() {
-      if (!gl.lost()) gl.renderer.render(scene, camera);
+      if (gl.lost()) return;
+      // (on the water, what it mirrors first)
+      river?.reflect(gl.renderer, scene, camera);
+      gl.renderer.render(scene, camera);
     },
     dispose() {
       for (const f of fx) (f.mesh.material as T.Material).dispose();
@@ -3256,6 +3259,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         if ((o as T.InstancedMesh).isInstancedMesh) (o as T.InstancedMesh).dispose();
       });
       disposeTree(scene);
+      river?.dispose();
       for (const g of Object.values(geo)) g.dispose();
       for (const m of Object.values(mats)) m.dispose();
       gl.dispose();

@@ -852,6 +852,8 @@ export type Look = {
   water?: { deep: string; shallow: string; foam: string };
   /** From this lap of your own the fog comes in: near and far, and its color. */
   fogLap?: { lap: number; near: number; far: number; color: number };
+  /** Where the sun's light comes from (the default is high in the south-west). */
+  sunAt?: [number, number, number];
 };
 export const LOOKS: Record<CourseId, Look> = {
   palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE', road: '#4a4a52' },
@@ -867,7 +869,7 @@ export const LOOKS: Record<CourseId, Look> = {
   // night ninety meters up: a deep blue haze that swallows campus far below, starlight and the glow off the road
   skyway: { fog: [0x0b0d26, 120, 470], sky: 0x8d93d8, ground: 0x2a1030, sun: [0xc8ccff, 0.75], field: '#05060c', lawn: '#14161d', curb: ['#ffffff', '#ff2d6f'], wall: '#9fe8ff', band: '#c8143c', banner: 'CARDINAL SKYWAY', road: '#4a0a18', night: true, rescue: 'drone', glass: true, blackout: 5 },
   // dawn on the sloughs: a peach horizon in the east, violet overhead, low mist, and the water the road
-  slough: { fog: [0xf0c9ad, 140, 620], sky: 0xffd9b8, ground: 0x5d5a38, sun: [0xffc08a, 1.35], field: '#6b6a3c', lawn: '#7a6844', curb: ['#e8e2d0', '#8c1515'], wall: '#b7b0a0', band: '#8c1515', banner: 'HEAD OF THE SLOUGH', road: '#3f6f84', water: { deep: '#2f5d74', shallow: '#5d8f9c', foam: '#f4efe6' }, rescue: 'launch', fogLap: { lap: 5, near: 30, far: 150, color: 0xd8d4cc } },
+  slough: { sunAt: [-460, 190, -160], fog: [0xf0c9ad, 140, 620], sky: 0xffd9b8, ground: 0x5d5a38, sun: [0xffc08a, 1.35], field: '#6b6a3c', lawn: '#7a6844', curb: ['#e8e2d0', '#8c1515'], wall: '#b7b0a0', band: '#8c1515', banner: 'HEAD OF THE SLOUGH', road: '#3f6f84', water: { deep: '#173f4d', shallow: '#3f6e66', foam: '#f4efe6' }, rescue: 'launch', fogLap: { lap: 5, near: 30, far: 150, color: 0xd8d4cc } },
 };
 
 /** What a course's scenery builder gets: the scene, the track and shared helpers. */
@@ -3392,7 +3394,180 @@ function golf(c: Scenery): SceneryTick {
   };
 }
 
-/** How far below the Cardinal Skyway campus lies. */
+/** Redwood Slough's dawn: where the sun is (a unit vector toward it: just up in the east, world -x) and the sky's colors. */
+export const DAWN = {
+  sun: [-0.94, 0.1, -0.33] as [number, number, number],
+  zenith: 0x1f2c62,
+  mid: 0x5b5fa3,
+  low: 0xd99aa6,
+  horizon: 0xf3c7ad,
+  /** The horizon under the sun: gold. */
+  glowHorizon: 0xffd29a,
+  sunColor: 0xffb070,
+};
+
+/** GLSL value noise and fbm, for the sky, the water and the marsh. */
+export const GLSL_NOISE = /* glsl */ `
+float pdHash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float pdNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(pdHash(i), pdHash(i + vec2(1.0, 0.0)), u.x), mix(pdHash(i + vec2(0.0, 1.0)), pdHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+float pdFbm(vec2 p) {
+  float a = 0.5;
+  float s = 0.0;
+  for (int i = 0; i < 5; i++) { s += a * pdNoise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; }
+  return s;
+}
+`;
+
+/** The slough's dawn sky: a dome that goes where the camera goes (so its reflection in the water is right too). */
+function sloughSky(THREE: Three) {
+  const col = (hex: number) => ({ value: new THREE.Color(hex) });
+  const uniforms = {
+    uSun: { value: new THREE.Vector3(...DAWN.sun).normalize() },
+    uZenith: col(DAWN.zenith),
+    uMid: col(DAWN.mid),
+    uLow: col(DAWN.low),
+    uHorizon: col(DAWN.horizon),
+    uGlowHorizon: col(DAWN.glowHorizon),
+    uSunCol: col(DAWN.sunColor),
+    uTime: { value: 0 },
+  };
+  const mat = new THREE.ShaderMaterial({
+    uniforms,
+    depthWrite: false,
+    side: THREE.BackSide,
+    fog: false,
+    vertexShader: /* glsl */ `
+      varying vec3 vDir;
+      void main() {
+        vDir = position;
+        gl_Position = projectionMatrix * viewMatrix * vec4(cameraPosition + position * 1400.0, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uSun, uZenith, uMid, uLow, uHorizon, uGlowHorizon, uSunCol;
+      uniform float uTime;
+      varying vec3 vDir;
+      ${GLSL_NOISE}
+      void main() {
+        vec3 d = normalize(vDir);
+        float h = d.y;
+        float mu = dot(d, uSun);
+        float az = dot(normalize(d.xz + 1e-5), normalize(uSun.xz)) * 0.5 + 0.5;
+        float hp = max(h, 0.0);
+        vec3 hor = mix(uHorizon, uGlowHorizon, pow(az, 4.0));
+        vec3 c = mix(hor, uLow, smoothstep(0.02, 0.16, hp) * (1.0 - 0.6 * pow(az, 6.0)));
+        c = mix(c, uMid, smoothstep(0.12, 0.42, hp));
+        c = mix(c, uZenith, smoothstep(0.38, 1.0, hp));
+        // the glow round the sun, wide and warm along the horizon
+        float m = max(mu, 0.0);
+        c += uSunCol * (pow(m, 5.0) * 0.32 + pow(m, 40.0) * 0.5 + pow(m, 400.0) * 0.8);
+        c += uSunCol * pow(az, 10.0) * 0.18 * (1.0 - smoothstep(0.0, 0.25, hp));
+        // clouds: a broken deck of altocumulus, lit pink and gold from below by the low sun, and high streaks of cirrus
+        if (h > 0.0) {
+          vec2 p = d.xz / (h + 0.08);
+          float fade = smoothstep(0.015, 0.2, h);
+          float n = pdFbm(p * 1.1 + vec2(uTime * 0.006, uTime * 0.002));
+          float n2 = pdFbm(p * 2.7 - vec2(uTime * 0.004, 0.0));
+          float cov = smoothstep(0.5, 0.74, n * 0.8 + n2 * 0.3) * fade;
+          float lit = pow(m * 0.5 + 0.5, 4.0);
+          vec3 shade = mix(vec3(0.36, 0.3, 0.5), vec3(0.62, 0.4, 0.5), smoothstep(0.0, 0.5, hp));
+          vec3 glow = mix(vec3(1.0, 0.6, 0.55), vec3(1.0, 0.82, 0.55), lit);
+          vec3 cloud = mix(shade, glow, clamp(0.25 + 0.75 * lit + (n2 - 0.5) * 0.6, 0.0, 1.0));
+          // (their thin edges catch the light)
+          cloud += uSunCol * (1.0 - smoothstep(0.5, 0.62, n * 0.8 + n2 * 0.3)) * lit * 0.6;
+          c = mix(c, cloud, cov * 0.88);
+          vec2 q = vec2(p.x * 0.35 + p.y * 0.2, p.y * 3.0 - p.x * 0.4);
+          float ci = smoothstep(0.55, 0.85, pdFbm(q * 1.4 + vec2(uTime * 0.003, 0.0))) * smoothstep(0.08, 0.45, h);
+          c = mix(c, mix(vec3(1.0, 0.78, 0.8), vec3(1.0, 0.86, 0.66), lit), ci * 0.45);
+        }
+        // the sun's disc, and the haze under the horizon
+        c = mix(c, vec3(1.0, 0.95, 0.82) * 1.6, smoothstep(0.99955, 0.99975, mu));
+        c = mix(c, hor * 0.92, 1.0 - smoothstep(-0.06, 0.0, h));
+        gl_FragColor = vec4(c, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), mat);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = -2;
+  return { mesh, tick: (clock: number) => (uniforms.uTime.value = clock) };
+}
+
+/**
+ * The hills on the slough's horizon, in three layers of haze round (cx, cz): the Santa Cruz Mountains dark against the
+ * sunrise in the east, rolling hills north and south, and across the Bay to the west only a low line of hills, pale in
+ * the sun. Each layer is one open cylinder with a painted silhouette.
+ */
+function ridges(THREE: Three, scene: T.Scene, cx: number, cz: number, r: number) {
+  const sun = Math.atan2(DAWN.sun[0], DAWN.sun[2]);
+  const layers = [
+    { R: r + 900, top: 120, base: [170, 150, 190], sunSide: [120, 92, 140], rim: 0.55, seed: 3, rough: 1 },
+    { R: r + 680, top: 70, base: [128, 112, 156], sunSide: [86, 64, 110], rim: 0.75, seed: 8, rough: 1.4 },
+    { R: r + 470, top: 26, base: [92, 84, 108], sunSide: [62, 50, 78], rim: 0.9, seed: 13, rough: 2.4 },
+  ];
+  const W = 2048;
+  const H = 128;
+  return layers.map((L, n) => {
+    const rnd = scatter(L.seed);
+    // a ridgeline from a few octaves of smooth noise round the circle (it joins up where it wraps)
+    const oct = Array.from({ length: 6 }, (_, k) => ({ f: 2 + k * k * 2 + Math.floor(rnd() * 3), a: 1 / (1 + k * L.rough), p: rnd() * Math.PI * 2 }));
+    const ridge = (u: number) => {
+      let v = 0;
+      let tot = 0;
+      for (const o of oct) {
+        v += o.a * (0.5 + 0.5 * Math.sin(u * Math.PI * 2 * o.f + o.p));
+        tot += o.a;
+      }
+      return v / tot;
+    };
+    const c = canvas(W, H, (g) => {
+      const img = g.createImageData(W, H);
+      for (let x = 0; x < W; x++) {
+        const u = x / W;
+        // (the angle round the circle: u = 0 faces +z; the cylinder's vertices go round with sin(θ) on x)
+        const th = u * Math.PI * 2;
+        const dir = Math.atan2(Math.sin(th), Math.cos(th));
+        const toSun = Math.cos(dir - sun) * 0.5 + 0.5;
+        // (west across the Bay: low)
+        const bay = Math.max(0, Math.sin(th));
+        const tall = n === 0 ? 1 - 0.75 * bay ** 1.5 : 1 - bay ** 0.6;
+        const hgt = Math.max(0, (0.25 + 0.75 * ridge(u)) * tall - (n === 2 ? 0.25 * bay : 0));
+        const top = H - 1 - hgt * (H - 4);
+        const k = toSun ** 3;
+        const rgb = L.base.map((b, i) => b + (L.sunSide[i] - b) * k);
+        for (let y = 0; y < H; y++) {
+          const o = (y * W + x) * 4;
+          if (y < top || hgt <= 0.01) {
+            img.data[o + 3] = 0;
+            continue;
+          }
+          // (a lit rim along the crest on the sun's side, and haze thickening toward the foot)
+          const depth = (y - top) / (H - top + 1);
+          const rim = Math.max(0, 1 - (y - top) / 3) * L.rim * k;
+          const haze = depth * 0.35;
+          img.data[o] = Math.min(255, rgb[0] + (243 - rgb[0]) * haze + 255 * rim * 0.6);
+          img.data[o + 1] = Math.min(255, rgb[1] + (199 - rgb[1]) * haze + 190 * rim * 0.6);
+          img.data[o + 2] = Math.min(255, rgb[2] + (173 - rgb[2]) * haze + 120 * rim * 0.6);
+          img.data[o + 3] = 255;
+        }
+      }
+      g.putImageData(img, 0, 0);
+    });
+    const tex = texture(THREE, c);
+    tex.wrapS = THREE.RepeatWrapping;
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(L.R, L.R, L.top, 160, 1, true), new THREE.MeshBasicMaterial({ map: tex, alphaTest: 0.5, side: THREE.BackSide, fog: false }));
+    m.position.set(cx, L.top / 2 - 2, cz);
+    m.renderOrder = -1;
+    scene.add(m);
+    return m;
+  });
+}
+
 /**
  * Redwood Slough at dawn: the sun just up over the East Bay hills, the Bay itself to the west past the salt ponds' pink
  * and orange brines inside the loop, Bair Island's marsh all round with power-line towers marching across it, the
@@ -3410,23 +3585,13 @@ function slough(c: Scenery): SceneryTick {
     return headingOf(p.tx, p.tz);
   };
 
-  // the sun just up in the east (world -x), its glow, and the East Bay hills under it; hills to the south and west too
-  const sun = new THREE.Mesh(new THREE.CircleGeometry(26, 32), new THREE.MeshBasicMaterial({ color: 0xfff1d0, fog: false }));
-  sun.position.set(cx - 880, 46, cz - 120);
-  sun.lookAt(cx, 0, cz);
-  const glow = new THREE.Mesh(new THREE.RingGeometry(30, 110, 40), new THREE.MeshBasicMaterial({ color: 0xffc58a, transparent: true, opacity: 0.32, fog: false, depthWrite: false }));
-  glow.position.copy(sun.position);
-  glow.lookAt(cx, 0, cz);
-  scene.add(sun, glow);
-  const hillGeo = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-  const hills: Item[] = [];
-  for (let a = 0; a < Math.PI * 2; a += Math.PI / 16) {
-    // (the Bay to the west is open water: no hills there, just a low line of the Peninsula far off)
-    const west = Math.cos(a) > 0.55;
-    const dist = 620 + rand() * 180;
-    hills.push({ x: cx + Math.cos(a) * dist * 1.1, y: -6, z: cz + Math.sin(a) * dist, sx: 120 + rand() * 90, sy: west ? 14 : 40 + rand() * 50, sz: 110 + rand() * 80 });
-  }
-  instances(THREE, scene, dummy, hillGeo, new THREE.MeshLambertMaterial({ color: 0x8a7f9a, flatShading: true }), hills);
+  // the dawn sky (a dome round the camera: the gradient, the sun just up in the east over the hills, its glow, and
+  // clouds lit pink and gold from below), and the hills on the horizon in layers of haze
+  const sky = sloughSky(THREE);
+  scene.add(sky.mesh);
+  // (the last lap's fog swallows them)
+  const hills = ridges(THREE, scene, cx, cz, Math.max(rx, rz));
+  const fogLap = LOOKS.slough.fogLap?.lap ?? Infinity;
 
   // the Bay to the west, past the loop: open water to the horizon
   const bayTex = waterTexture(THREE);
@@ -3667,7 +3832,10 @@ function slough(c: Scenery): SceneryTick {
   const pelicans = new THREE.InstancedMesh(birdGeo, lambert(0xc9c2b4), 15);
   pelicans.frustumCulled = false;
   scene.add(pelicans);
-  return (_race, clock) => {
+  return (race, clock) => {
+    sky.tick(clock);
+    const seen = (race.karts[race.me]?.lap ?? 1) < fogLap;
+    for (const m of hills) m.visible = seen;
     for (let n = 0; n < 5; n++) {
       const a = clock * 0.05 + n * 0.035;
       const x = cx + Math.cos(a) * rx * 0.75 - n * 2;
