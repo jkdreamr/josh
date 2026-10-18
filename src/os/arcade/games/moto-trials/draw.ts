@@ -3,7 +3,7 @@ import { HEAD_R, TOP_SPEED, WHEEL_R, sawAt, segActive, type PhysWorld, type Seg 
 import type { Run } from './logic.ts';
 import type { Level, Theme } from './levels.ts';
 
-export type Cam = { x: number; y: number; scale: number };
+export type Cam = { x: number; y: number; scale: number; drop: number };
 
 export type Ghost = {
   x: number;
@@ -24,7 +24,7 @@ const FONT = '-apple-system, system-ui, sans-serif';
 const OUTLINE = 'rgba(16,14,18,0.85)';
 
 export function newCam(): Cam {
-  return { x: 0, y: 0, scale: 0 };
+  return { x: 0, y: 0, scale: 0, drop: 0 };
 }
 
 /** How the frame should look for this canvas size. The bike stays big. */
@@ -51,15 +51,19 @@ export function render(
   const th = level.theme;
   const fit = viewFit(w, h);
   const spd = Math.hypot(bike.v.x, bike.v.y);
-  const targetScale = fit.scale / (1 + Math.max(0, bike.v.x - 7) * 0.022);
+  const lookX = clamp(bike.v.x * 0.4, 0, 5.5) + 1.4;
+  // big air: zoom out and lead down so the landing stays in view
+  const air = !bike.fw.on && !bike.rw.on;
+  const drop = air ? clamp(bike.p.y - levelBaseY(level, bike.p.x + lookX + 3) - 2, 0, 9) : 0;
+  cam.drop = lerp(cam.drop, drop, Math.min(1, dt * 2));
+  const targetScale = fit.scale / (1 + Math.max(0, bike.v.x - 7) * 0.022) / (1 + cam.drop * 0.07);
   cam.scale = cam.scale ? lerp(cam.scale, targetScale, Math.min(1, dt * 3)) : targetScale;
   const scale = cam.scale;
 
   // camera: lookahead down the track, soft vertical follow, bike sits left of center
-  const lookX = clamp(bike.v.x * 0.4, 0, 5.5) + 1.4;
   const tx = bike.p.x + lookX;
   // on descents the camera lags above the dive line, so lead downward a little
-  const ty = bike.p.y + 1.5 + clamp(-bike.v.y * 0.22, 0, 2.4);
+  const ty = bike.p.y + 1.5 + clamp(-bike.v.y * 0.22, 0, 2.4) - cam.drop * 0.35;
   cam.x = cam.x ? lerp(cam.x, tx, Math.min(1, dt * 5)) : tx;
   cam.y = cam.y ? lerp(cam.y, ty, Math.min(1, dt * 2.5)) : ty;
   const shake = run.shake;
