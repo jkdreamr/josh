@@ -134,7 +134,7 @@ import {
   type Match,
 } from '../src/os/arcade/games/scramble/logic.ts';
 import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
-import { END_PAUSE, FIRST_GRACE, FLUSH, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
+import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, NEAR, OUT_EVERY, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
 
 const DT = 1 / 60;
@@ -1095,9 +1095,15 @@ test('packets survive the trip and anything malformed is turned away', () => {
   f.shield = 33.33;
   const s = stateOf(f);
   const back = parsePacket(JSON.parse(JSON.stringify(guestState(4, s))));
-  assert.deepEqual(back, { k: 's', round: 4, state: s });
+  assert.deepEqual(back, { k: 's', round: 4, state: s, watch: -1 });
+  // once its egg is out, a guest says which egg it watches
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(4, s, 7)))), { k: 's', round: 4, state: s, watch: 7 });
+  assert.equal(parsePacket({ ...guestState(4, s), v: MAX_FIGHTERS }), null);
   const host = parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, -2.5, 'hard', [0, 1, -1], [[0, s], [2, s]]))));
   assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]] });
+  // the roster only goes with some of the host's reports
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]] });
+  assert.equal(parsePacket({ ...hostState(4, 99, 3, 'hard', null, []), ro: 'all' }), null);
   assert.deepEqual(parsePacket(endOf(4, 2, [[2, 1, 3], [0, 2, 1]])), { k: 'end', round: 4, winner: 2, places: [[2, 1, 3], [0, 2, 1]] });
   assert.deepEqual(parsePacket(configOf(4, 'none', 'easy')), { k: 'cfg', round: 4, bots: 'none', level: 'easy' });
   for (const bad of [null, 1, 'x', {}, { t: 'pk', r: 1.5, k: 's', c: [] }, { t: 'pk', r: 1, k: 's', c: [1, 2] }, { t: 'pk', r: 1, k: 'S', sd: 1, tm: 0, lv: 'brutal', ro: [0], c: [] }, { t: 'pk', r: 1, k: 'S', sd: 1, tm: 0, lv: 'easy', ro: [0, 0], c: [] }, { t: 'pk', r: 1, k: 'end', w: MAX_FIGHTERS, pl: [] }, { t: 'pk', r: 1, k: 'cfg', b: 'lots', lv: 'easy' }])
@@ -1210,8 +1216,8 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
   const clients: Client[] = players.map((p) => ({ seat: p.seat, me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], gone: false, call: null, hurtBy: 0, heard: 0, doneAt: -1 }));
   autopilot(host.match, host.match.fighters[host.match.me]);
   let now = 0;
-  const post = (from: Client, d: object, fast: boolean) => {
-    const to = from.me.isHost ? clients.filter((c) => c !== from && !c.gone) : [clients[0]];
+  const post = (from: Client, d: object, fast: boolean, only?: number) => {
+    const to = from.me.isHost ? clients.filter((c) => c !== from && !c.gone && (only === undefined || c.seat === only)) : [clients[0]];
     for (const c of to) {
       if (fast && rng() < opts.loss) continue;
       c.inbox.push({ at: now + opts.delay, from: from.seat, d: JSON.parse(JSON.stringify(d)) });
@@ -1273,7 +1279,10 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
           catchUp(c.s, c.m, c.seat, TICK_MS / 1000);
           for (const p of flush(c.s, 1, FLUSH)) post(c, p, false);
         }
-        for (const out of tick(c.s, c.m, c.me, live.map((x) => x.seat), now)) post(c, out.d, out.fast);
+        // a guest that is out watches the egg that cracked it, or the first one still going
+        const mine = c.m.fighters[c.m.me];
+        if (mine?.phase === 'out') c.s.watch = c.m.fighters[mine.by]?.phase === 'ground' ? mine.by : (c.m.fighters.find((f) => f.phase !== 'out')?.id ?? c.m.me);
+        for (const out of tick(c.s, c.m, c.me, live.map((x) => x.seat), now)) post(c, out.d, out.fast, out.to);
       }
     }
     if (live.every((c) => c.call || stalled(c))) break;
@@ -1294,11 +1303,12 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
 }
 
 for (const [label, opts] of [
-  ['a host, three guests and four computer eggs, with lag and lost packets', { humans: 4, bots: true, seed: 22, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
+  ['a host, three guests and computer eggs to fifty, with lag and lost packets', { humans: 4, bots: true, seed: 22, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
   ['eight people and no computer eggs, one of whom leaves halfway', { humans: 8, bots: false, seed: 34, level: 'normal' as Level, delay: 0.05, loss: 0.05, leave: { seat: 5, at: 30 } }],
   ['a guest whose tab freezes on the bus (still in the room, still reporting)', { humans: 3, bots: true, seed: 8, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 2, at: 2, silent: false } }],
   ['a guest who goes silent mid-match', { humans: 3, bots: true, seed: 14, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 1, at: 30, silent: true } }],
   ['a host who is cracked early and done watching (its timer runs the match from then on)', { humans: 3, bots: true, seed: 5, level: 'normal' as Level, delay: 0.05, loss: 0.05, hostDone: 80 }],
+  ['twenty people and computer eggs to fifty, with lag and lost packets', { humans: 20, bots: true, seed: 41, level: 'normal' as Level, delay: 0.06, loss: 0.08 }],
 ] as const) {
   test(`online: ${label}, all agree on what happened`, () => {
     const clients = simulate(opts);
@@ -2330,10 +2340,10 @@ test('an egg’s helmet and vest travel with its state, within bounds, and show 
   const s = stateOf(f);
   assert.equal(s.helmet, 2);
   assert.equal(s.vest, 3);
-  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(1, s)))), { k: 's', round: 1, state: s });
-  for (const bad of [{ ...s, helmet: MAX_ARMOR + 1 }, { ...s, vest: -1 }, { ...s, helmet: 1.5 }]) assert.equal(parsePacket(guestState(1, bad)), null, JSON.stringify(bad));
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(1, s)))), { k: 's', round: 1, state: s, watch: -1 });
+  for (const bad of [{ ...s, helmet: MAX_ARMOR + 1 }, { ...s, vest: -1 }, { ...s, helmet: 1.5 }, { ...s, vest: MAX_ARMOR + 1 }, { ...s, r: MAX_RARITY + 1 }]) assert.equal(parsePacket(guestState(1, bad)), null, JSON.stringify(bad));
   const packed = guestState(1, s);
-  assert.equal(parsePacket({ ...packed, c: packed.c.slice(0, 12) }), null, 'a report without the armor is no report');
+  assert.equal(parsePacket({ ...packed, c: packed.c.slice(0, 9) }), null, 'a report cut short is no report');
   const g = createMatch({ seed: 2, role: 'guest', level: 'normal', entrants: [{ name: 'h', color: '#fff', kind: 'remote', seat: 0 }, { name: 'a', color: '#fff', kind: 'player', seat: 1 }], me: 1, countdown: 0 });
   applyState(g, g.fighters[0], s);
   assert.equal(g.fighters[0].helmet, 2);
@@ -3018,26 +3028,91 @@ test('a computer egg off somewhere far takes a bounce pad that points the right 
   assert.ok(b.x > 10, 'and on its way on foot');
 });
 
-test('a host’s report of twenty eggs fits well inside one room message, and new holdings travel', () => {
-  const players = Array.from({ length: 8 }, (_, seat) => ({ seat, name: `P${seat}` }));
+test('a host’s report of fifty eggs fits well inside one room message, and new holdings travel', () => {
+  const players = Array.from({ length: 20 }, (_, seat) => ({ seat, name: `P${seat}` }));
   const h = hostMatch(players, 0, 3, 'normal', MAX_FIGHTERS, 3);
-  assert.equal(h.roster.length, 20);
-  assert.equal(h.roster.filter((s) => s < 0).length, 12);
-  const big = { x: -158.88, z: 157.77, y: 54.9, aim: -3.14, vx: -12.5, vz: 12.5, phase: 'ground' as const, hp: 99.9, shield: 99.9, w: 'pan' as const, r: 4, flags: 255, helmet: 3, vest: 3 };
+  assert.equal(h.roster.length, 50);
+  assert.equal(h.roster.filter((s) => s < 0).length, 30);
+  const big = { x: -238.85, z: 237.75, y: 67.9, aim: -3.14, vx: -12.5, vz: 12.5, phase: 'ground' as const, hp: 99.9, shield: 99.9, w: 'pan' as const, r: 4, flags: F_ALL, helmet: 3, vest: 3 };
   const packet = hostState(9, 123456789, 345.67, 'hard', h.roster, h.roster.map((_, i): [number, typeof big] => [i, big]));
-  const text = JSON.stringify({ t: 'msg', to: 1, d: packet });
-  assert.ok(text.length < 4000, `${text.length} bytes`);
+  const text = JSON.stringify({ t: 'msg', to: 19, d: packet });
+  assert.ok(text.length < 3200, `${text.length} bytes`);
   const back = parsePacket(JSON.parse(text).d);
-  assert.ok(back && back.k === 'S' && back.states.length === 20 && back.states[19][1].w === 'pan' && back.states[0][1].flags === 255 && back.states[7][1].vest === 3);
+  assert.ok(back && back.k === 'S' && back.states.length === 50 && back.states[49][1].w === 'pan' && back.states[0][1].flags === F_ALL && back.states[7][1].vest === 3);
+  assert.deepEqual(back.states[3][1], big, 'every number comes back as it went');
   for (const w of ['grenade', 'cleaver', 'lmg'] as const) {
     const s = { ...big, w };
-    assert.deepEqual(parsePacket(guestState(1, s)), { k: 's', round: 1, state: s });
+    assert.deepEqual(parsePacket(guestState(1, s)), { k: 's', round: 1, state: s, watch: -1 });
   }
   const ok = { y: 'th', f: 3, k: 'sauce', x: 1, z: 2, lx: 10, lz: 12, ft: 0.8 };
   const e = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[3, [ok, { ...ok, ft: 9 }, { ...ok, lx: 300 }, { ...ok, k: 'nuke' }, { ...ok, f: MAX_FIGHTERS }]]] });
   assert.ok(e && e.k === 'e');
   assert.deepEqual(e.groups[0][1], [ok], 'only the sane throw gets through');
   assert.deepEqual(toNet({ t: 'throw', f: 3, k: 'sauce', x: 1, z: 2, lx: 10, lz: 12, ft: 0.8 }), ok);
+});
+
+test('the host tells each guest about the eggs near the one it watches whenever they change, and the rest now and then', () => {
+  const players = Array.from({ length: 3 }, (_, seat) => ({ seat, name: `P${seat}` }));
+  const h = hostMatch(players, 0, 4, 'normal', MAX_FIGHTERS, 0);
+  const m = h.match;
+  m.time = 30;
+  const s = newSession(true, h.roster);
+  const me: Me = { seat: 0, isHost: true, round: 1 };
+  for (const f of m.fighters) {
+    land(f, -200 + (f.id % 10) * 40, -200 + Math.floor(f.id / 10) * 40);
+    f.ai = null;
+  }
+  // guest 1's egg at the middle; egg 10 walks round it, egg 11 stands by it, egg 12 is far off and egg 13 is out
+  const g = m.fighters[1];
+  const st = (x: number, z: number, phase: 'ground' | 'out' = 'ground') => ({ x, z, y: 0, aim: 0, vx: 0, vz: 0, phase, hp: 100, shield: 0, w: null, r: 0, flags: 0, helmet: 0, vest: 0 });
+  for (const f of [m.fighters[1], m.fighters[2]]) s.states.set(f.id, st(f.x, f.z));
+  land(g, 0, 0);
+  s.states.set(1, st(0, 0));
+  land(m.fighters[10], 5, 5);
+  land(m.fighters[11], -8, 3);
+  land(m.fighters[12], 0, NEAR + 30);
+  m.fighters[13].phase = 'out';
+  const heard = new Map<number, number[]>();
+  const rosters: number[] = [];
+  const other: unknown[] = [];
+  for (let t = 0; t < 30; t++) {
+    m.fighters[10].x += 0.5;
+    for (const f of m.fighters) s.heard.set(f.id, 0);
+    for (const out of tick(s, m, me, [0, 1, 2, 7], 1 + t * 0.066)) {
+      const p = parsePacket(JSON.parse(JSON.stringify(out.d)));
+      assert.ok(p && p.k === 'S');
+      if (out.to === 7) {
+        other.push(p);
+        continue;
+      }
+      if (out.to !== 1) continue;
+      if (p.roster) rosters.push(t);
+      for (const [fid] of p.states) heard.set(fid, [...(heard.get(fid) ?? []), t]);
+    }
+  }
+  const n = (fid: number) => heard.get(fid)?.length ?? 0;
+  assert.equal(n(1), 0, 'never its own egg');
+  assert.equal(n(10), 30, 'one on the move nearby, every tick');
+  assert.ok(n(11) >= 30 / FAR_EVERY && n(11) <= 30 / FAR_EVERY + 1, `one standing still nearby, now and then (${n(11)})`);
+  assert.equal(n(12), 30 / FAR_EVERY, 'one far off, now and then');
+  assert.equal(n(13), 30 / OUT_EVERY, 'one that is out, seldom');
+  for (const f of m.fighters) if (f.id !== 1) assert.ok(n(f.id) >= 2, `every egg is heard of (${f.id})`);
+  assert.deepEqual(rosters, [4, 9, 14, 19, 24, 29], 'the roster with every reliable report');
+  assert.ok(other.length === 6 && other.every((p) => (p as { states: unknown[]; roster: number[] }).states.length === 0 && (p as { roster: number[] }).roster.length === MAX_FIGHTERS), 'someone not in the match only hears the roster');
+  // once its egg is out, the eggs near the one it watches
+  g.phase = 'out';
+  s.states.set(1, st(0, 0, 'out'));
+  receive(s, m, me, 1, guestState(1, st(0, 0, 'out'), 12), () => m, 2);
+  heard.clear();
+  for (let t = 0; t < 12; t++) {
+    m.fighters[12].x += 0.5;
+    for (const out of tick(s, m, me, [0, 1, 2], 3 + t * 0.066)) {
+      const p = parsePacket(JSON.parse(JSON.stringify(out.d)));
+      if (out.to === 1 && p && p.k === 'S') for (const [fid] of p.states) heard.set(fid, [...(heard.get(fid) ?? []), t]);
+    }
+  }
+  assert.equal(n(12), 12, 'the one it watches, every tick');
+  assert.equal(n(10), 12 / FAR_EVERY, 'and its own neighbors no more than any');
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -3510,7 +3585,7 @@ test('the new flags travel with an egg’s state, and nothing past them', () => 
   const f = m.fighters[0];
   land(f, 1, 2);
   const s = { ...stateOf(f), flags: F_ALL };
-  assert.deepEqual(parsePacket(guestState(1, s)), { k: 's', round: 1, state: s });
+  assert.deepEqual(parsePacket(guestState(1, s)), { k: 's', round: 1, state: s, watch: -1 });
   assert.equal(parsePacket(guestState(1, { ...s, flags: F_ALL + 1 })), null);
   assert.ok((F_SPIN | F_SMOOTHIE | F_TART) <= F_ALL && F_TART > 255);
   f.using = 'smoothie';

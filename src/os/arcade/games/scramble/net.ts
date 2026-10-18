@@ -73,8 +73,8 @@ export type NetEv =
 export type Group = [origin: number, events: NetEv[]];
 
 export type Packet =
-  | { k: 's'; round: number; state: State }
-  | { k: 'S'; round: number; seed: number; time: number; level: Level; roster: number[]; states: [number, State][] }
+  | { k: 's'; round: number; state: State; watch: number }
+  | { k: 'S'; round: number; seed: number; time: number; level: Level; roster: number[] | null; states: [number, State][] }
   | { k: 'e'; round: number; groups: Group[] }
   | { k: 'end'; round: number; winner: number; places: [number, number, number][] }
   | { k: 'cfg'; round: number; bots: Bots; level: Level };
@@ -107,36 +107,72 @@ export const MAX_KICK = r2(1.6 + Math.max(...Object.values(WEAPONS).map((w) => w
 // -------------------------------------------------------------------------------------------------------------------
 // States.
 
+/** Positions travel in twentieths of a meter. */
+const r20 = (n: number) => Math.round(n * 20) / 20;
+
 export function stateOf(f: Fighter): State {
   const h = held(f);
-  return { x: r2(f.x), z: r2(f.z), y: r1(f.y), aim: r2(f.aim), vx: r1(f.vx + f.kx), vz: r1(f.vz + f.kz), phase: f.phase, hp: r1(f.hp), shield: r1(f.shield), w: h.w, r: h.r, flags: flagsOf(f), helmet: f.helmet, vest: f.vest };
+  return { x: r20(f.x), z: r20(f.z), y: r1(f.y), aim: r2(f.aim), vx: r1(f.vx + f.kx), vz: r1(f.vz + f.kz), phase: f.phase, hp: r1(f.hp), shield: r1(f.shield), w: h.w, r: h.r, flags: flagsOf(f), helmet: f.helmet, vest: f.vest };
 }
 
 /** What an egg holds, as a number: 0 for nothing reported yet, then guns, melee weapons and throwables. */
 const HELD_CODES: (Held | null)[] = [null, ...HELD];
-const packState = (s: State) => [s.x, s.z, s.y, s.aim, s.vx, s.vz, PHASES.indexOf(s.phase), s.hp, s.shield, HELD_CODES.indexOf(s.w), s.r, s.flags, s.helmet, s.vest];
+/**
+ * An egg's state as ten whole numbers, the fewest bytes for fifty eggs at a time: where it is (in twentieths of a
+ * meter), how high and how fast (tenths), its aim (hundredths of a radian), what it is up to in one number (its
+ * phase, what it holds and how rare, its helmet and vest, each in bits of its own), health and shield (tenths) and its
+ * flags.
+ */
+const packState = (s: State) => [
+  Math.round(s.x * 20),
+  Math.round(s.z * 20),
+  Math.round(s.y * 10),
+  Math.round(s.aim * 100),
+  Math.round(s.vx * 10),
+  Math.round(s.vz * 10),
+  codeOf(s),
+  Math.round(s.hp * 10),
+  Math.round(s.shield * 10),
+  s.flags,
+];
 
-const armorLv = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) <= MAX_ARMOR;
-
-function unpackState(a: unknown): State | null {
-  if (!Array.isArray(a) || a.length < 14 || !a.slice(0, 14).every(num)) return null;
-  const [x, z, y, aim, vx, vz, ph, hp, shield, w, r, flags, helmet, vest] = a as number[];
-  const phase = PHASES[ph];
-  if (!phase || !int(w) || w < 0 || w >= HELD_CODES.length || !int(r) || r < 0 || r > 4 || !int(flags) || flags < 0 || flags > F_ALL) return null;
-  if (Math.abs(x) > 400 || Math.abs(z) > 400 || y < -1 || y > 100 || hp < 0 || hp > 100 || shield < 0 || shield > 100 || !armorLv(helmet) || !armorLv(vest)) return null;
-  return { x, z, y, aim, vx: Math.max(-40, Math.min(40, vx)), vz: Math.max(-40, Math.min(40, vz)), phase, hp, shield, w: HELD_CODES[w], r, flags, helmet, vest };
+/** Phase, what's in hand and how rare, helmet and vest in one number; -1 (which no report gets past) for nonsense. */
+function codeOf(s: State) {
+  const fields = [s.r, s.helmet, s.vest];
+  if (!fields.every((v) => Number.isInteger(v) && v >= 0) || s.r > MAX_RARITY || s.helmet > MAX_ARMOR || s.vest > MAX_ARMOR) return -1;
+  return PHASES.indexOf(s.phase) + 4 * HELD_CODES.indexOf(s.w) + 256 * s.r + 2048 * s.helmet + 16384 * s.vest;
 }
 
-export const guestState = (round: number, s: State) => ({ t: 'pk', r: round, k: 's', c: packState(s) });
+function unpackState(a: unknown): State | null {
+  if (!Array.isArray(a) || a.length < 10 || !a.slice(0, 10).every(int)) return null;
+  const [x, z, y, aim, vx, vz, code, hp, shield, flags] = a as number[];
+  if (code < 0 || code >= 16384 * (MAX_ARMOR + 1) || flags < 0 || flags > F_ALL) return null;
+  const phase = PHASES[code % 4];
+  const w = Math.floor(code / 4) % 64;
+  const r = Math.floor(code / 256) % 8;
+  const helmet = Math.floor(code / 2048) % 8;
+  const vest = Math.floor(code / 16384);
+  if (w >= HELD_CODES.length || r > MAX_RARITY || helmet > MAX_ARMOR) return null;
+  if (Math.abs(x) > 8000 || Math.abs(z) > 8000 || y < -10 || y > 1000 || Math.abs(aim) > 10_000 || hp < 0 || hp > 1000 || shield < 0 || shield > 1000) return null;
+  const clampV = (v: number) => Math.max(-40, Math.min(40, v / 10));
+  return { x: x / 20, z: z / 20, y: y / 10, aim: aim / 100, vx: clampV(vx), vz: clampV(vz), phase, hp: hp / 10, shield: shield / 10, w: HELD_CODES[w], r, flags, helmet, vest };
+}
 
-export const hostState = (round: number, seed: number, time: number, level: Level, roster: number[], states: [number, State][]) => ({
+/** A guest's report of its egg, and the egg it watches once its own is out (so the host knows what it needs to see). */
+export const guestState = (round: number, s: State, watch = -1) => ({ t: 'pk', r: round, k: 's', c: packState(s), ...(watch >= 0 ? { v: watch } : {}) });
+
+/** A state as a string, to tell whether it has changed since it was last sent. */
+export const stateKey = (s: State) => packState(s).join();
+
+/** The host's report of the eggs: the roster goes with every reliable one (null for the rest), which a guest needs to join. */
+export const hostState = (round: number, seed: number, time: number, level: Level, roster: number[] | null, states: [number, State][]) => ({
   t: 'pk',
   r: round,
   k: 'S',
   sd: seed,
   tm: r2(time),
   lv: level,
-  ro: roster,
+  ...(roster ? { ro: roster } : {}),
   c: states.map(([f, s]) => [f, ...packState(s)]),
 });
 
@@ -365,17 +401,20 @@ export function parsePacket(value: unknown): Packet | null {
   const round = p.r as number;
   if (p.k === 's') {
     const state = unpackState(p.c);
-    return state ? { k: 's', round, state } : null;
+    return state && (p.v === undefined || fid(p.v)) ? { k: 's', round, state, watch: p.v === undefined ? -1 : (p.v as number) } : null;
   }
   if (p.k === 'S') {
-    if (!int(p.sd) || !num(p.tm) || !isLevel(p.lv) || !Array.isArray(p.ro) || !Array.isArray(p.c)) return null;
-    if (p.ro.length < 1 || p.ro.length > MAX_FIGHTERS || !p.ro.every(seat)) return null;
-    const roster = p.ro as number[];
-    const humans = roster.filter((s) => s >= 0);
-    if (new Set(humans).size !== humans.length) return null;
+    if (!int(p.sd) || !num(p.tm) || !isLevel(p.lv) || !Array.isArray(p.c) || (p.ro !== undefined && !Array.isArray(p.ro))) return null;
+    let roster: number[] | null = null;
+    if (Array.isArray(p.ro)) {
+      if (p.ro.length < 1 || p.ro.length > MAX_FIGHTERS || !p.ro.every(seat)) return null;
+      roster = p.ro as number[];
+      const humans = roster.filter((s) => s >= 0);
+      if (new Set(humans).size !== humans.length) return null;
+    }
     const states: [number, State][] = [];
     for (const raw of p.c.slice(0, MAX_FIGHTERS)) {
-      if (!Array.isArray(raw) || !fid(raw[0]) || raw[0] >= roster.length) continue;
+      if (!Array.isArray(raw) || !fid(raw[0]) || (roster && raw[0] >= roster.length)) continue;
       const s = unpackState(raw.slice(1));
       if (s) states.push([raw[0], s]);
     }

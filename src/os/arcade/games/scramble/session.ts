@@ -1,9 +1,9 @@
 // One client's side of an online Scramble match: what it does with each message from the room, what it sends on its
 // regular tick, the events it queues and flushes, and when the match is over. Pure, so a whole room can be simulated
 // in a test; index.tsx connects it to the real room.
-import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, type Entrant, type Ev, type Level, type Match } from './logic.ts';
+import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, type Entrant, type Ev, type Fighter, type Level, type Match } from './logic.ts';
 import { BUS_Y, stormEnd } from './map.ts';
-import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv, type State } from './net.ts';
+import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, placesOf, stateKey, stateOf, toNet, type NetEv, type State } from './net.ts';
 
 /** How often queued events go out. State goes out on its own tick, about 15 times a second. */
 export const FLUSH = 0.05;
@@ -22,6 +22,17 @@ export const FIRST_GRACE = 30;
  * bounce pad) by which it has landed; one still in the air has stopped playing.
  */
 const DOWN_BY = 4 + BUS_Y / FALL + 4;
+
+/**
+ * How far (along x and along z) from the egg a guest watches (its own, or the one it watches once its own is out) the
+ * host reports each egg whenever it has changed: farther than anyone sees on the ground, and gliding down. Everything
+ * else, and eggs still on the bus, goes every FAR_EVERY ticks; eggs that are out every OUT_EVERY (a guest takes one out
+ * on its own a moment after the news of how never comes).
+ */
+export const NEAR = 100;
+export const NEAR_GLIDE = 130;
+export const FAR_EVERY = 6;
+export const OUT_EVERY = 15;
 
 /** Who this client is in the room. */
 export type Me = { seat: number; isHost: boolean; round: number };
@@ -81,10 +92,15 @@ export type Session = {
   left: Set<number>;
   heard: Map<number, number>;
   firstTick: number;
+  /** The egg this client watches once its own is out (-1 for its own); the host's record of each guest's, by egg. */
+  watch: number;
+  watching: Map<number, number>;
+  /** The host's record of the state it last sent each guest for each egg (packed), by seat. */
+  sent: Map<number, (string | undefined)[]>;
 };
 
 export function newSession(synced: boolean, roster: number[] = []): Session {
-  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1 };
+  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1, watch: -1, watching: new Map(), sent: new Map() };
 }
 
 /** Builds a guest's match from the host's first state. */
@@ -104,11 +120,12 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
     if (!f || f.seat !== from || f.kind !== 'remote') return m;
     s.states.set(fid, p.state);
     s.heard.set(fid, clock);
+    s.watching.set(fid, p.watch);
     applyState(m, f, p.state);
   } else if (p.k === 'S') {
     if (me.isHost || from !== 0) return m;
     if (!s.synced) {
-      if (!p.roster.includes(me.seat)) return m;
+      if (!p.roster || !p.roster.includes(me.seat)) return m;
       m = join(p.seed, p.level, p.time, p.roster);
       s.roster = p.roster;
       s.synced = true;
@@ -162,7 +179,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
   const fast = s.ticks % 5 !== 0;
   if (!me.isHost) {
     const f = m.fighters[m.me];
-    return f ? [{ d: guestState(me.round, stateOf(f)), fast }] : [];
+    return f ? [{ d: guestState(me.round, stateOf(f), f.phase === 'out' ? s.watch : -1), fast }] : [];
   }
   if (s.firstTick < 0) s.firstTick = clock;
   for (const seat of s.roster) if (seat >= 0 && !present.includes(seat)) s.left.add(seat);
@@ -172,12 +189,20 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
     const aloft = f.phase === 'bus' ? m.time > m.map.bus.off + DOWN_BY : f.phase === 'drop' && m.time > Math.max(f.dropAt, m.map.bus.off) + DOWN_BY;
     if (s.left.has(f.seat) || quiet || aloft) forfeit(m, f.id);
   }
-  const states: [number, State][] = [];
-  for (const f of m.fighters) {
-    const st = owned(f) ? stateOf(f) : s.states.get(f.id);
-    if (st) states.push([f.id, st]);
+  const states: (State | undefined)[] = m.fighters.map((f) => (owned(f) ? stateOf(f) : s.states.get(f.id)));
+  const keys = states.map((st) => (st ? stateKey(st) : undefined));
+  // each guest its own report (every reliable one with the roster); someone in the room but not in this match only
+  // hears the roster, to know to sit it out
+  const out: { d: object; fast: boolean; to?: number }[] = [];
+  for (const seat of present) {
+    if (seat === me.seat) continue;
+    const g = m.fighters[s.roster.indexOf(seat)];
+    if (!g && fast) continue;
+    let sent = s.sent.get(seat);
+    if (!sent) s.sent.set(seat, (sent = []));
+    const list = g ? statesFor(m, g, states, keys, sent, s.ticks, s.watching.get(g.id) ?? -1) : [];
+    out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list), fast, to: seat });
   }
-  const out: { d: object; fast: boolean }[] = [{ d: hostState(me.round, m.seed, m.time, m.level, s.roster, states), fast }];
   if (s.end && s.endSends < 4) {
     s.endSends++;
     // whatever happened last (the final crack) goes out ahead of the result
@@ -185,6 +210,27 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
     out.push({ d: endOf(me.round, s.end.winner, s.end.places), fast: false });
   }
   return out;
+}
+
+/**
+ * The states a guest whose egg is `g` (watching `watch`) hears about this tick, see NEAR: staggered so each tick
+ * carries a share, and noted in `sent` (the guest's record of what it was last sent, which `keys` are compared with).
+ */
+export function statesFor(m: Match, g: Fighter, states: (State | undefined)[], keys: (string | undefined)[], sent: (string | undefined)[], tick: number, watch: number): [number, State][] {
+  // whoever its own egg is out, the egg it watches (or, until it says, everyone)
+  const at = g.phase === 'out' ? m.fighters[watch] : g;
+  const near = at?.phase === 'ground' ? NEAR : NEAR_GLIDE;
+  const list: [number, State][] = [];
+  for (const f of m.fighters) {
+    const st = states[f.id];
+    if (!st || f === g) continue;
+    const close = !at || (st.phase !== 'bus' && Math.abs(f.x - at.x) < near && Math.abs(f.z - at.z) < near);
+    const due = (tick + f.id) % (st.phase === 'out' ? OUT_EVERY : FAR_EVERY) === 0;
+    if (!due && !(close && st.phase !== 'out' && sent[f.id] !== keys[f.id])) continue;
+    list.push([f.id, st]);
+    sent[f.id] = keys[f.id];
+  }
+  return list;
 }
 
 /** Queues something that happened here for the room, when anyone else needs to hear it. */

@@ -135,7 +135,7 @@ function OnlineSetup() {
       if (from !== 0 || !p) return;
       if (p.k === 'cfg') setPicked({ bots: p.bots, level: p.level });
       // joining while a match is on, the host's state says how it was set up
-      else if (p.k === 'S') {
+      else if (p.k === 'S' && p.roster) {
         const bots: Bots = p.roster.length >= MAX_FIGHTERS ? 'fill' : 'none';
         setPicked((x) => (x && x.bots === bots && x.level === p.level ? x : { bots, level: p.level }));
       }
@@ -430,8 +430,8 @@ function Play({ mode }: { mode: Mode }) {
       const m = match.current;
       if (!o || !m) return;
       // Left out of the host's match (joined just as it was set up): sit it out rather than wait for good.
-      const packet = d as { k?: unknown; round?: unknown; roster?: unknown } | null;
-      if (!n.synced && from === 0 && packet?.k === 'S' && packet.round === o.round && Array.isArray(packet.roster) && !packet.roster.includes(o.seat)) {
+      const packet = !n.synced && from === 0 ? parsePacket(d) : null;
+      if (packet?.k === 'S' && packet.round === o.round && packet.roster && !packet.roster.includes(o.seat)) {
         if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, { title: 'Sitting This One Out', detail: 'You Will Be in the Next Round.' });
         return;
       }
@@ -477,7 +477,9 @@ function Play({ mode }: { mode: Mode }) {
       const call = n.synced ? ending(n, m, me, now) : null;
       if (call) finishRef.current(call === 'report');
       else if (n.early) finishRef.current(false, true);
-      for (const out of tick(n, m, me, o.players.map((p) => p.seat), now)) o.send(out.d, { fast: out.fast });
+      // the host reports the eggs near the one we watch most often (none once we're done watching)
+      n.watch = n.over ? m.me : focusOf(m);
+      for (const out of tick(n, m, me, o.players.map((p) => p.seat), now)) o.send(out.d, { fast: out.fast, to: out.to });
     }, TICK_MS);
     return () => {
       off();
