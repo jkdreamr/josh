@@ -4123,6 +4123,9 @@ test('built pieces and edits travel in a few numbers, every field checked, never
   assert.equal(parse({ ...ev, hp: MAT_SPECS.stone.hp + 1 }), null, 'no more health than its material holds');
   assert.equal(parse({ ...ev, t: MAT_SPECS.stone.time * 10 + 5 }), null, 'no longer to build than it takes');
   assert.equal(parse({ ...ev, p: -3 }), null);
+  assert.equal(parse({ ...ev, f: 7 }), null, "no piece under another egg's ids");
+  assert.deepEqual(parse({ y: 'b', f: 3, x: 1, z: 2, h: LEVEL_H }), { y: 'b', f: 3, x: 1, z: 2, h: LEVEL_H }, 'a blast up on a floor');
+  assert.equal(parse({ y: 'b', f: 3, x: 1, z: 2, h: 99 }), null);
   assert.equal(parse({ y: 'we', f: 42, id: w.id, e: 3 }), null);
   assert.deepEqual(parse({ y: 'we', f: 42, id: w.id, e: 1 }), { y: 'we', f: 42, id: w.id, e: 1 });
   // a guest hears of a piece once, edits and all

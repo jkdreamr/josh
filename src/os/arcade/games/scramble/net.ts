@@ -69,7 +69,7 @@ export type NetEv =
   | { y: 'th'; f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; ft: number; y0?: number; ly?: number }
   | { y: 'd'; f: number; to: number; d: number; w: Cause; x: number; z: number }
   | { y: 'm'; f: number; k: 'wall' | 'crate'; id: number; d: number }
-  | { y: 'b'; f: number; x: number; z: number }
+  | { y: 'b'; f: number; x: number; z: number; h?: number }
   | { y: 'o'; f: number; by: number; w: Cause }
   | { y: 'dr'; id: number; x: number; z: number; by: number; it: LootDef }
   | { y: 'tk'; f: number; id: number }
@@ -257,7 +257,7 @@ export function toNet(e: Ev): NetEv | null {
     case 'smash':
       return { y: 'm', f: e.f, k: e.kind, id: e.id, d: e.d };
     case 'boom':
-      return { y: 'b', f: e.f, x: e.x, z: e.z };
+      return { y: 'b', f: e.f, x: e.x, z: e.z, ...(e.y ? { h: e.y } : {}) };
     case 'out':
       return { y: 'o', f: e.f, by: e.by, w: e.w };
     case 'drop':
@@ -322,7 +322,7 @@ function parseEv(v: unknown): NetEv | null {
     case 'm':
       return fid(e.f) && (e.k === 'wall' || e.k === 'crate') && id(e.id) && num(e.d) && e.d > 0 && e.d <= 1000 ? { y: 'm', f: e.f, k: e.k, id: e.id, d: e.d } : null;
     case 'b':
-      return fid(e.f) && num(e.x) && num(e.z) ? { y: 'b', f: e.f, x: e.x, z: e.z } : null;
+      return fid(e.f) && num(e.x) && num(e.z) && height(e.h) ? { y: 'b', f: e.f, x: e.x, z: e.z, ...(tossH(e.h) ? { h: tossH(e.h) } : {}) } : null;
     case 'o':
       return fid(e.f) && int(e.by) && (e.by === -1 || fid(e.by)) && isCause(e.w) ? { y: 'o', f: e.f, by: e.by, w: e.w } : null;
     case 'dr': {
@@ -341,7 +341,8 @@ function parseEv(v: unknown): NetEv | null {
       return int(e.c) && e.c >= 0 && int(e.f) && e.f >= -1 && e.f < MAX_FIGHTERS ? { y: 'opd', c: e.c, f: e.f } : null;
     case 'wl': {
       const at = unpackPiece(e.p);
-      return at && id(e.id) && fid(e.f) && int(e.hp) && e.hp > 0 && e.hp <= MAT_SPECS[at.mat].hp && int(e.t) && e.t >= 0 && e.t <= MAT_SPECS[at.mat].time * 10 + 1 ? { y: 'wl', id: e.id, f: e.f, p: e.p as number, hp: e.hp, t: e.t } : null;
+      // a piece's id is its builder's (see wallId), so nobody can take the ids another egg's pieces will have
+      return at && id(e.id) && fid(e.f) && Math.floor(e.id / 100_000) === e.f && int(e.hp) && e.hp > 0 && e.hp <= MAT_SPECS[at.mat].hp && int(e.t) && e.t >= 0 && e.t <= MAT_SPECS[at.mat].time * 10 + 1 ? { y: 'wl', id: e.id, f: e.f, p: e.p as number, hp: e.hp, t: e.t } : null;
     }
     case 'we':
       return fid(e.f) && id(e.id) && int(e.e) && e.e >= 0 && e.e <= 2 ? { y: 'we', f: e.f, id: e.id, e: e.e } : null;
@@ -393,7 +394,7 @@ export function applyNet(m: Match, e: NetEv): boolean {
       else damageCrate(m, e.id, e.d, e.f, true);
       return true;
     case 'b':
-      m.events.push({ t: 'boom', f: e.f, x: e.x, z: e.z, net: true });
+      m.events.push({ t: 'boom', f: e.f, x: e.x, z: e.z, y: e.h ?? 0, net: true });
       return true;
     case 'o':
       if (!f || owned(f)) return false;
