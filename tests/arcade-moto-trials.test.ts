@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { LEVELS, LEVEL_IDS, getLevel, worldOf } from '../src/os/arcade/games/moto-trials/levels.ts';
-import { autoInput, currentMs, newRun, nextStarMs, startRun, stepRun } from '../src/os/arcade/games/moto-trials/logic.ts';
+import { LEVELS, LEVEL_IDS, getLevel, propsFor, worldOf } from '../src/os/arcade/games/moto-trials/levels.ts';
+import { BRUSH, FLIP_MIN, SETTLE_BOTH, autoInput, currentMs, flipsIn, newRun, nextStarMs, startRun, stepRun, trackAir } from '../src/os/arcade/games/moto-trials/logic.ts';
 import { buildWorld, newBike, segActive, step, type Seg } from '../src/os/arcade/games/moto-trials/physics.ts';
 import { parseProgress, tourLeft, tourTotal, unlocked } from '../src/os/arcade/games/moto-trials/progress.ts';
 import { meta } from '../src/os/arcade/games/moto-trials/meta.ts';
@@ -142,6 +142,7 @@ test('a landed backflip earns a 1000 ms bonus', () => {
     checkpoints: [],
     finishX: 300,
     stars: [1, 2, 3] as [number, number, number],
+    props: [],
   };
   const run = newRun(level);
   while (run.phase === 'count') stepRun(run, { gas: 0, brake: 0, lean: 0 }, DT);
@@ -294,4 +295,171 @@ test('the tour leaderboard floor is unreachable by a single race', () => {
   const min = meta.leaderboard!.min;
   assert.ok(min < goldSum * 0.85, `min ${min} vs 0.85x gold sum ${goldSum * 0.85}`);
   assert.ok(min > maxBronze * 2, `min ${min} not above 2x max bronze ${maxBronze * 2}`);
+});
+
+const D2R = Math.PI / 180;
+
+/** A flat test level, its run already past the countdown. */
+function flatRun() {
+  const level = {
+    id: 't',
+    name: 'Test',
+    theme: {} as never,
+    segs: flat,
+    saws: [],
+    loops: [],
+    killY: -14,
+    start: { x: 0, y: 1.4 },
+    checkpoints: [],
+    finishX: 190,
+    stars: [1, 2, 3] as [number, number, number],
+    props: [],
+  };
+  const run = newRun(level);
+  while (run.phase === 'count') stepRun(run, { gas: 0, brake: 0, lean: 0 }, DT);
+  return run;
+}
+
+test('flip counting: whole flips from FLIP_MIN, in 360 degree steps', () => {
+  assert.equal(flipsIn(290 * D2R), 0);
+  assert.equal(flipsIn(FLIP_MIN), 1);
+  assert.equal(flipsIn(-310 * D2R), 1);
+  assert.equal(flipsIn(650 * D2R), 1);
+  assert.equal(flipsIn(670 * D2R), 2);
+});
+
+test('a front wheel brush mid-air does not restart the flip count', () => {
+  const run = flatRun();
+  const b = run.bike;
+  const set = (fw: boolean, rw: boolean) => {
+    b.fw.on = fw;
+    b.rw.on = rw;
+  };
+  // 0.5 s of air turning 200 degrees, a 0.05 s front wheel brush, 0.4 s more air for 130 degrees, then both down
+  for (let i = 0; i < 30; i++) (set(false, false), trackAir(run, (200 / 30) * D2R, DT));
+  for (let i = 0; i < 3; i++) (set(true, false), trackAir(run, 0, DT));
+  assert.ok(3 * DT < BRUSH);
+  for (let i = 0; i < 24; i++) (set(false, false), trackAir(run, (130 / 24) * D2R, DT));
+  for (let i = 0; i < Math.ceil(SETTLE_BOTH / DT) + 2; i++) (set(true, true), trackAir(run, 0, DT));
+  assert.equal(run.flips, 1, `accum ${(run.air.accum / D2R).toFixed(0)}`);
+  assert.equal(run.bonusMs, 1000);
+  assert.ok(run.toasts.some((t) => t.text.startsWith('Frontflip') || t.text.startsWith('Backflip')));
+});
+
+test('a 315 degree backflip that lands on the front wheel and pivots onto the rear counts', () => {
+  const run = flatRun();
+  const b = run.bike;
+  // seeded jump: 0.9 s of air already rotated 315 degrees nose up, so the nose is still 45 degrees down,
+  // the front wheel just above the ground, falling, no spin left
+  const a = (315 - 360) * D2R;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const place = (lx: number, ly: number) => ({ x: b.p.x + lx * c - ly * s, y: b.p.y + lx * s + ly * c });
+  b.p.y = 1.15;
+  b.a = a;
+  b.w = 0;
+  b.v = { x: 4, y: -2 };
+  b.fw.p = place(0.625, -0.42);
+  b.rw.p = place(-0.625, -0.42);
+  for (const wh of [b.fw, b.rw]) {
+    wh.v = { ...b.v };
+    wh.on = false;
+  }
+  const lift = Math.min(b.fw.p.y, b.rw.p.y) - 0.34 - 0.02;
+  for (const p of [b.p, b.fw.p, b.rw.p]) p.y -= lift;
+  run.air = { on: true, time: 0.9, accum: 315 * D2R, touch: 0, both: 0 };
+  let firstTouch: number | null = null;
+  let firstWheel = '';
+  for (let i = 0; i < 120 && run.phase === 'run' && run.air.on; i++) {
+    stepRun(run, { gas: 0, brake: 0, lean: 0 }, DT);
+    if (firstTouch === null && (b.fw.on || b.rw.on)) {
+      firstTouch = run.air.accum;
+      firstWheel = b.fw.on ? 'front' : 'rear';
+    }
+  }
+  assert.equal(firstWheel, 'front');
+  // the old rule scored at first touch and needed 330 degrees: this jump got nothing
+  assert.ok(firstTouch !== null && firstTouch < 330 * D2R, `first touch at ${(firstTouch! / D2R).toFixed(0)}`);
+  assert.equal(run.phase, 'run', 'crashed on the pivot');
+  assert.equal(run.flips, 1);
+  assert.ok(run.toasts.some((t) => t.text.startsWith('Backflip')), run.toasts.map((t) => t.text).join());
+});
+
+/** Hold gas only, no lean, no brake, for up to `secs` of race time. */
+function gasOnly(levelId: string, secs = 60) {
+  const run = newRun(getLevel(levelId));
+  while (run.phase !== 'done' && run.t < secs) stepRun(run, { gas: 1, brake: 0, lean: 0 }, DT);
+  return run;
+}
+
+test('gas only clears the two tutorial levels and crashes or stalls on every level after', () => {
+  const rows: string[] = [];
+  LEVELS.forEach((lv, i) => {
+    const run = gasOnly(lv.id);
+    const clean = run.phase === 'done' && run.crashes === 0;
+    rows.push(`${lv.id}: ${run.phase}, ${run.crashes} crash(es)`);
+    if (i < 2) assert.ok(clean, `${lv.id} should be a gas-only tutorial`);
+    else assert.ok(!clean, `${lv.id} finished clean on gas alone`);
+  });
+  console.log('\n' + rows.join('\n'));
+});
+
+test('every level has big kickers, and from level 4 a double flip jump', () => {
+  for (const lv of LEVELS) {
+    const run = newRun(getLevel(lv.id));
+    const airs: number[] = [];
+    let air = 0;
+    while (run.phase !== 'done' && run.t < 140) {
+      stepRun(run, autoInput(run), DT);
+      if (run.phase === 'run' && !run.bike.fw.on && !run.bike.rw.on) air += DT;
+      else {
+        if (air > 0.5) airs.push(air);
+        air = 0;
+      }
+    }
+    const i = LEVEL_IDS.indexOf(lv.id);
+    assert.ok(airs.filter((a) => a >= 1.2).length >= 2, `${lv.id} airtimes ${airs.map((a) => a.toFixed(2))}`);
+    if (i >= 3) assert.ok(airs.some((a) => a >= 1.8), `${lv.id} has no 1.8 s jump: ${airs.map((a) => a.toFixed(2))}`);
+  }
+});
+
+test('gold needs flips: a clean no-flip ride misses it, a stunt rider mostly makes it', () => {
+  let golds = 0;
+  for (const lv of LEVELS) {
+    const run = newRun(getLevel(lv.id));
+    while (run.phase !== 'done' && run.t < 140) stepRun(run, autoInput(run, { flips: true }), DT);
+    if (run.phase === 'done' && run.finalMs <= lv.stars[0]) golds++;
+  }
+  // the clean no-flip side is asserted in 'the autopilot finishes every level' (gold <= its time)
+  assert.ok(golds >= 7, `stunt autopilot made gold on only ${golds} levels`);
+});
+
+test('props sit at fixed level positions on plain ground', () => {
+  for (const lv of LEVELS) {
+    assert.deepEqual(propsFor(lv.id, lv.segs, lv.finishX), lv.props, `${lv.id} props are not deterministic`);
+    assert.ok(lv.props.length >= 5, `${lv.id} has only ${lv.props.length} props`);
+    for (let i = 1; i < lv.props.length; i++) assert.ok(lv.props[i].x > lv.props[i - 1].x);
+    for (const p of lv.props) {
+      const under = lv.segs.filter((s) => s.kind !== 'loop' && p.x >= Math.min(s.ax, s.bx) && p.x <= Math.max(s.ax, s.bx));
+      assert.ok(under.length > 0, `${lv.id} prop at ${p.x} floats over a gap`);
+      assert.ok(!under.some((s) => s.kind === 'wood'), `${lv.id} prop at ${p.x} stands on a ramp`);
+    }
+  }
+});
+
+test('a held lean-back on the first level-1 kicker lands and earns a backflip', () => {
+  // a player taps or holds Left for part of the air: the landing must soak up leftover spin and settle
+  for (const hold of [0.4, 0.6, 1.2]) {
+    const run = newRun(getLevel('level-1'));
+    let airT = 0;
+    while (run.t < 40 && run.phase !== 'done' && run.bike.p.x < 100) {
+      const b = run.bike;
+      const air = !b.fw.on && !b.rw.on;
+      if (air && b.p.x > 40) airT += DT;
+      stepRun(run, { gas: 1, brake: 0, lean: air && b.p.x > 40 && airT < hold ? -1 : 0 }, DT);
+    }
+    assert.equal(run.crashes, 0, `hold ${hold}: crashed`);
+    assert.ok(run.flips >= 1, `hold ${hold}: no flip credited (${run.toasts.map((t) => t.text).join()})`);
+    assert.ok(run.toasts.some((t) => t.text.includes('Backflip')), `hold ${hold}: ${run.toasts.map((t) => t.text).join()}`);
+  }
 });

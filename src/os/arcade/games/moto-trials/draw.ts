@@ -80,8 +80,8 @@ export function render(
 
   sky(c, w, h, th, cam, scale, anchorX);
   parallax(c, w, h, th, cam, scale, anchorX, anchorY, fit.portrait);
-  terrain(c, h, world, level, run, sx, sy, scale, xMin, xMax);
   props(c, level, sx, sy, scale, xMin, xMax);
+  terrain(c, h, world, level, run, sx, sy, scale, xMin, xMax);
   saws(c, world, run, sx, sy, scale);
   checkpointsAndFinish(c, level, run, sx, sy, scale);
   particles(c, run, sx, sy, scale, th);
@@ -472,25 +472,24 @@ function levelBaseY(level: Level, x: number) {
   return best === -Infinity ? 0 : best;
 }
 
-/** Small seeded props on gentle ground: bushes, cacti, pines, rocks, cones. */
+/**
+ * Background props from the level's fixed list (levels.ts), so they never move with the camera. They are drawn
+ * before the terrain, a bit smaller, darker and sunk into the ground, so they read as scenery behind the track.
+ */
 function props(c: CanvasRenderingContext2D, level: Level, sx: (x: number) => number, sy: (y: number) => number, scale: number, xMin: number, xMax: number) {
   const th = level.theme;
-  let x = Math.max(6, xMin - 4);
-  const lvlSeed = parseInt(level.id.slice(6), 10) * 91;
-  while (x < xMax) {
-    const step = 7 + hash(Math.floor(x) + lvlSeed) * 9;
-    x += step;
-    const gy = levelBaseY(level, x);
-    if (gy === -Infinity || Math.abs(levelBaseY(level, x + 1.5) - levelBaseY(level, x - 1.5)) > 0.6) continue;
-    const px = sx(x);
-    const py = sy(gy);
-    const k = hash(x * 3.7 + lvlSeed);
-    const s = scale * (0.8 + k * 0.5);
+  for (const pr of level.props) {
+    if (pr.x < xMin - 2 || pr.x > xMax + 2) continue;
+    const px = sx(pr.x);
+    const py = sy(pr.y - 0.2);
+    const k = pr.k;
+    const s = scale * (0.65 + k * 0.35);
+    c.globalAlpha = 0.85;
     c.save();
     c.translate(px, py);
     switch (th.prop) {
       case 'cactus':
-        c.strokeStyle = '#3f7a44';
+        c.strokeStyle = '#46603c';
         c.lineWidth = Math.max(2, 0.14 * s);
         c.lineCap = 'round';
         c.beginPath();
@@ -556,6 +555,7 @@ function props(c: CanvasRenderingContext2D, level: Level, sx: (x: number) => num
         c.fill();
     }
     c.restore();
+    c.globalAlpha = 1;
   }
 }
 
