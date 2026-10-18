@@ -417,6 +417,10 @@
   display: none;
 }
 
+.g-battleship-stage.portrait .g-battleship-board-wrap.own .g-battleship-caption {
+  display: none;
+}
+
 .g-battleship-stage.compact-height .g-battleship-place-tools {
   gap: calc(4px * var(--g-battleship-u, 1));
 }

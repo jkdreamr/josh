@@ -380,18 +380,20 @@ export function boardGeometry(w: number, h: number, placing: boolean, top: numbe
       fireY: Math.min(ownY + ownSide + 10 * u, h - bottom - 50 * u),
     };
   }
-  const cell = Math.floor(Math.max(18, Math.min((w - 24 * u) / 10, (available - 86 * u) / 15.8)));
+  const cell = Math.floor(Math.max(18, Math.min((w - 24 * u) / 10, (available - 92 * u) / 15.8)));
   const ownCell = Math.max(12, Math.floor(cell * 0.58));
   const targetSide = cell * 10 + 9;
   const ownSide = ownCell * 10 + 9;
-  const gap = 10 * u;
+  const gapAbove = 8 * u;
   const fireHeight = 50 * u;
-  const total = targetSide + gap + fireHeight + gap + ownSide;
+  // The own board's column labels sit 15 units above it, so leave them clear of Fire.
+  const gapBelow = 18 * u;
+  const total = targetSide + gapAbove + fireHeight + gapBelow + ownSide;
   const y = top + Math.max(0, (available - total) / 2);
   return {
     portrait: true, targetCell: cell, targetX: (w - targetSide) / 2, targetY: y,
-    ownCell, ownX: (w - ownSide) / 2, ownY: y + targetSide + gap + fireHeight + gap,
+    ownCell, ownX: (w - ownSide) / 2, ownY: y + targetSide + gapAbove + fireHeight + gapBelow,
     placeCell: cell, placeX: 0, placeY: 0,
-    toolsX: 0, toolsY: 0, fireX: (w - 120 * u) / 2, fireY: y + targetSide + gap,
+    toolsX: 0, toolsY: 0, fireX: (w - 120 * u) / 2, fireY: y + targetSide + gapAbove,
   };
 }

@@ -1035,6 +1035,7 @@ function Battleship() {
             ghostValid={false}
             active={false}
             lastHit={state.lastIncoming[ownSeat]}
+            own
           />
           {showFire && (
             <button
@@ -1076,6 +1077,7 @@ type BoardProps = {
   hover?: number | null;
   cursor?: number;
   lastHit?: number | null;
+  own?: boolean;
   onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerMove?: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerUp?: (event: ReactPointerEvent<HTMLDivElement>) => void;
@@ -1099,6 +1101,7 @@ function Board({
   hover = null,
   cursor = -1,
   lastHit = null,
+  own = false,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -1113,7 +1116,7 @@ function Board({
     lastHit !== null && lastHit !== undefined && (intel.cells[lastHit] === HIT || intel.cells[lastHit] === SUNK) ? 'has-hit' : '',
   ].filter(Boolean).join(' ');
   return (
-    <div className="g-battleship-board-wrap" style={{ left: style.left, top: style.top, width: style.width, height: style.height }}>
+    <div className={`g-battleship-board-wrap${own ? ' own' : ''}`} style={{ left: style.left, top: style.top, width: style.width, height: style.height }}>
       <div className="g-battleship-caption">{caption}</div>
       <div
         ref={refBoard}

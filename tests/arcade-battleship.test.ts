@@ -228,8 +228,8 @@ test('board geometry is unchanged at unit scale', () => {
     placeCell: 79, placeX: 16, placeY: 96, toolsX: 245, toolsY: 907, fireX: 0, fireY: 0,
   });
   assert.deepEqual(boardGeometry(820, 997, false, 64), {
-    portrait: true, targetCell: 53, targetX: 140.5, targetY: 67.5, ownCell: 30, ownX: 255.5, ownY: 676.5,
-    placeCell: 53, placeX: 0, placeY: 0, toolsX: 0, toolsY: 0, fireX: 350, fireY: 616.5,
+    portrait: true, targetCell: 52, targetX: 145.5, targetY: 69.5, ownCell: 30, ownX: 255.5, ownY: 674.5,
+    placeCell: 52, placeX: 0, placeY: 0, toolsX: 0, toolsY: 0, fireX: 350, fireY: 606.5,
   });
   assert.deepEqual(boardGeometry(464, 157, false, 40), {
     portrait: false, targetCell: 10, targetX: 132, targetY: 42, ownCell: 7, ownX: 253, ownY: 57,
@@ -257,8 +257,8 @@ test('scaled board geometry leaves room for the scaled labels, fire button and t
   const targetSide = battle.targetCell * 10 + 9;
   const ownSide = battle.ownCell * 10 + 9;
   assert.ok(battle.targetX >= 15 * u);
-  assert.equal(battle.fireY, battle.targetY + targetSide + 10 * u);
-  assert.equal(battle.ownY, battle.fireY + 50 * u + 10 * u);
+  assert.equal(battle.fireY, battle.targetY + targetSide + 8 * u);
+  assert.ok(battle.ownY - 15 * u >= battle.fireY + 50 * u, 'own column labels stay clear of Fire');
   assert.ok(battle.ownY + ownSide <= h);
   assert.ok(Math.abs(battle.fireX + 60 * u - w / 2) < 1e-9, 'fire is centered');
 });
