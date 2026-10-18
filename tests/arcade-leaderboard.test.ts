@@ -18,6 +18,7 @@ import {
 import { boardOwners, generateArcadeSpecs } from '../scripts/arcade-specs.ts';
 import { appGames } from '../src/os/arcade/apps.ts';
 import { boardFor, boardsOf } from '../src/os/arcade/kit/leaderboard-core.ts';
+import { MAX_SEATS } from '../src/os/arcade/kit/online-core.ts';
 import type { GameMeta, LeaderboardSpec } from '../src/os/arcade/types.ts';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from '../worker/src/specs.gen.ts';
 
@@ -204,7 +205,7 @@ test('committed Worker specs match the generated game metadata', async () => {
   assert.equal(committed, await generateArcadeSpecs());
   const online = [...metas, ...appGames].filter((m) => m.online);
   assert.deepEqual(ONLINE_SPECS, Object.fromEntries(online.map((m) => [m.id, { seats: m.online!.seats, ...(m.online!.lateJoin ? { lateJoin: true } : {}), ...(m.online!.bots ? { bots: true } : {}) }])));
-  for (const m of online) assert.ok(m.online!.seats >= 2 && m.online!.seats <= 8, `${m.id} seats`);
+  for (const m of online) assert.ok(m.online!.seats >= 2 && m.online!.seats <= MAX_SEATS, `${m.id} seats`);
   // Bots fill empty seats beside people, so they need a room with more than two seats, and a game that plays them.
   for (const m of online.filter((game) => game.online!.bots)) assert.ok(m.online!.seats > 2 && !m.online!.race, `${m.id} bots`);
   for (const m of metas.filter((game) => game.online?.race)) assert.ok(m.leaderboard && !m.leaderboard.variants, `${m.id} races need one comparable score`);
