@@ -95,7 +95,7 @@ function Stage() {
     // Phone and iPad frames scale the whole screen down; --g-sumo-u scales text back up to its real size.
     const measure = () => {
       const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
-      el.style.setProperty('--g-sumo-u', (k > 0.2 && k < 0.99 ? Math.min(2, 1 / k) : 1).toFixed(3));
+      el.style.setProperty('--g-sumo-u', String(k > 0.2 && k < 0.99 ? Math.min(2, Math.ceil(100 / k) / 100) : 1));
     };
     measure();
     const ro = new ResizeObserver(measure);
