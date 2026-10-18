@@ -208,12 +208,14 @@ test('the island is the same for a seed and different between seeds', () => {
   assert.notEqual(strip(42), strip(43));
 });
 
-const KIND_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 4, farm: 4, house: 22, shed: 16, ruin: 9 };
-const DOOR_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 3, farm: 3, house: 2, shed: 1, container: 1, diner: 2, mill: 1 };
+const KIND_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 4, farm: 4, house: 22, shed: 16, ruin: 9, police: 1, bank: 1 };
+const DOOR_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 3, farm: 3, house: 2, shed: 1, container: 1, diner: 2, mill: 1, police: 2, bank: 2 };
 /** Total wall length a building would have with no gaps at all (corners counted once), as its walls are laid out. */
 const fullWalls = (b: Building) => 2 * (b.w + WALL_T) + 2 * (b.d - WALL_T);
 /** Its walls and the windows in them: a window is no way in. */
 const wallLength = (b: Building) => [...b.walls, ...b.windows].reduce((s, w) => s + 2 * Math.max(w.hw, w.hd), 0);
+/** The same, for its outer walls alone. */
+const outerLength = (b: Building) => [...b.walls, ...b.windows].filter((w) => Math.abs(Math.abs(w.x - b.x) - b.w / 2) < 0.01 || Math.abs(Math.abs(w.z - b.z) - b.d / 2) < 0.01).reduce((s, w) => s + 2 * Math.max(w.hw, w.hd), 0);
 
 test('every island has all its buildings, each with the doorways it should have, and nothing outdoors inside them', () => {
   for (let seed = 1; seed <= 40; seed++) {
@@ -235,6 +237,13 @@ test('every island has all its buildings, each with the doorways it should have,
       if (b.kind === 'warehouse') assert.ok(Math.abs(gaps - 2 * 6 - DOOR) < 0.31, `seed ${seed}: two loading doors and a side door`);
       if (b.kind === 'farm') assert.ok(Math.abs(gaps + (b.d - WALL_T - DOOR) - 3 * DOOR) < 0.31, `seed ${seed}: three doors and a door between the rooms`);
       if (b.kind === 'container') assert.ok(Math.abs(gaps - (b.w > b.d ? b.d - WALL_T : b.w + WALL_T)) < 0.31, 'open at one end');
+      if (b.kind === 'police' || b.kind === 'bank') {
+        assert.ok(Math.abs(fullWalls(b) - outerLength(b) - 2 * DOOR) < 0.31, `seed ${seed}: a front door and a side door into a ${b.kind}`);
+        assert.equal(b.rooms.length, b.kind === 'police' ? 3 : 2, `seed ${seed}: the rooms of a ${b.kind}`);
+        assert.equal(b.inner.length, b.rooms.length - 1, 'a doorway into each back room');
+      }
+      if (b.kind === 'police') assert.ok(b.inner.some((d) => d.kind === 'bars') && b.bars.length >= 2, `seed ${seed}: a jail cell behind bars`);
+      if (b.kind === 'bank') assert.ok(b.inner.some((d) => d.kind === 'vault'), `seed ${seed}: a vault`);
       if (b.kind !== 'ruin') assert.equal(b.doors.length, DOOR_COUNTS[b.kind], `seed ${seed}: the ways out of a ${b.kind} are on record`);
     }
     const roofed = m.buildings.filter((b) => b.kind !== 'container');
@@ -257,7 +266,7 @@ test('every island has all its buildings, each with the doorways it should have,
     // the kitchens, the farmyards, the camps and everything round the houses
     const diners = m.buildings.filter((b) => b.kind === 'diner').length;
     assert.equal(kinds('fridge').length, 26 + 2 * diners, 'a fridge in every house and farmhouse, and two in a diner');
-    assert.equal(kinds('toilet').length, 26, 'and a toilet');
+    assert.equal(kinds('toilet').length, 27, 'and a toilet (one more in the jail cell)');
     assert.ok(kinds('hay').length >= 12 && kinds('hay').length <= 20, 'three to five hay bales a farm');
     assert.equal(m.yards.length, 4, 'a fence round each farm');
     for (const y of m.yards) {
@@ -365,9 +374,10 @@ test('standing at a doorway, or lined up with one a few steps out, peeks into th
 /**
  * Every spot an egg could stand on a 0.4 m grid over a window of the island, then which ones can be walked to from
  * the window's edge (or from one spot, `from`). Loot is in reach when an egg standing somewhere it can walk to could
- * pick it up. With `dry`, the river counts as a wall: the only way over is a bridge.
+ * pick it up. With `dry`, the river counts as a wall: the only way over is a bridge. Every door is open, unless
+ * `shut`.
  */
-function walkable(m: GameMap, x0: number, z0: number, x1: number, z1: number, opts: { from?: { x: number; z: number }; dry?: boolean } = {}) {
+function walkable(m: GameMap, x0: number, z0: number, x1: number, z1: number, opts: { from?: { x: number; z: number }; dry?: boolean; shut?: boolean } = {}) {
   const step = 0.4;
   const nx = Math.ceil((x1 - x0) / step);
   const nz = Math.ceil((z1 - z0) / step);
@@ -379,6 +389,7 @@ function walkable(m: GameMap, x0: number, z0: number, x1: number, z1: number, op
       let ok = Math.abs(x) <= EDGE && Math.abs(z) <= EDGE && !(opts.dry && riverAt(m, x, z));
       if (ok)
         solidsNear(m, x, z, 3, (_k, s) => {
+          if (s.what === 'door' && !opts.shut) return;
           if (ok && (s.shape === 'circle' ? pushCircle(x, z, FIGHTER_R, s.x, s.z, s.r) : pushBox(x, z, FIGHTER_R, s.x, s.z, s.hw, s.hd))) ok = false;
         });
       free[i + j * nx] = ok ? 1 : 0;
@@ -1104,9 +1115,9 @@ test('packets survive the trip and anything malformed is turned away', () => {
   assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(4, s, 7)))), { k: 's', round: 4, state: s, watch: 7 });
   assert.equal(parsePacket({ ...guestState(4, s), v: MAX_FIGHTERS }), null);
   const host = parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, -2.5, 'hard', [0, 1, -1], [[0, s], [2, s]]))));
-  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null });
+  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: null });
   // the roster only goes with some of the host's reports
-  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null });
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null });
   assert.equal(parsePacket({ ...hostState(4, 99, 3, 'hard', null, []), ro: 'all' }), null);
   assert.deepEqual(parsePacket(endOf(4, 2, [[2, 1, 3], [0, 2, 1]])), { k: 'end', round: 4, winner: 2, places: [[2, 1, 3], [0, 2, 1]] });
   assert.deepEqual(parsePacket(configOf(4, 'none', 'easy')), { k: 'cfg', round: 4, bots: 'none', level: 'easy' });
@@ -1307,7 +1318,7 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
 }
 
 for (const [label, opts] of [
-  ['a host, three guests and computer eggs to fifty, with lag and lost packets', { humans: 4, bots: true, seed: 22, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
+  ['a host, three guests and computer eggs to fifty, with lag and lost packets', { humans: 4, bots: true, seed: 23, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
   ['eight people and no computer eggs, one of whom leaves halfway', { humans: 8, bots: false, seed: 34, level: 'normal' as Level, delay: 0.05, loss: 0.05, leave: { seat: 5, at: 30 } }],
   ['a guest whose tab freezes on the bus (still in the room, still reporting)', { humans: 3, bots: true, seed: 8, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 2, at: 2, silent: false } }],
   ['a guest who goes silent mid-match', { humans: 3, bots: true, seed: 14, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 1, at: 30, silent: true } }],
@@ -3626,7 +3637,7 @@ test('loot tables only roll real things, launchers are never common, and the bes
       if (tier === 'gold' || tier === 'supply') assert.ok(defs.some((d) => d.kind === 'gun') && defs.some((d) => d.kind === 'throw') && defs.some((d) => d.kind === 'helmet' || d.kind === 'vest'));
     }
   }
-  assert.deepEqual([...kinds].sort(), ['ammo', 'gun', 'helmet', 'melee', 'pack', 'scope', 'throw', 'use', 'vest', 'wood'], 'every kind of loot turns up');
+  assert.deepEqual([...kinds].sort(), ['ammo', 'ghillie', 'gun', 'helmet', 'melee', 'pack', 'scope', 'throw', 'use', 'vest', 'wood'], 'every kind of loot turns up');
   // the better the place, the better the armor: level 3 is rare on the floor and the usual thing in a supply drop
   assert.ok(armor.floor[1] > armor.floor[2] && armor.floor[2] > armor.floor[3] && armor.floor[3] > 0, JSON.stringify(armor.floor));
   assert.ok(armor.chest[2] > armor.chest[1] && armor.chest[3] > armor.chest[1], JSON.stringify(armor.chest));
@@ -3676,9 +3687,9 @@ test('meta: twenty seats with late joining, bots and quick play, and a board per
 // ---------------------------------------------------------------------------------------------------------------------
 // Windows.
 
-const GLAZED: Building['kind'][] = ['house', 'farm', 'shed', 'diner', 'warehouse'];
+const GLAZED: Building['kind'][] = ['house', 'farm', 'shed', 'diner', 'warehouse', 'police', 'bank'];
 
-test('windows sit in the outer walls of houses, farms, sheds, diners and warehouses, filling their openings, clear of doors and corners', () => {
+test('windows sit in the outer walls of houses, farms, sheds, diners, warehouses, the police station and the bank, filling their openings, clear of doors and corners', () => {
   for (let seed = 1; seed <= 25; seed++) {
     const m = generateMap(seed);
     m.windows.forEach((p, i) => assert.equal(p.i, i, 'numbered in order'));
