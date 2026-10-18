@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useKeys, useMuted, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { NO_ASSISTS, type Assists, type Input } from './car.ts';
+import { createRaceAudio, type RaceAudio } from './audio.ts';
 import { HowToPlay } from './howto.tsx';
 import { Hud, fmtLap, fmtSec, type HudApi } from './hud.tsx';
 import { P1, P2, SOLO, newDriver, readInput, type Driver as KeyDriver } from './input.ts';
@@ -300,6 +301,8 @@ function Play({ mode }: { mode: StageMode }) {
   const over = useRef(false);
   const touchCam = useRef(false);
   const touchReset = useRef(false);
+  const audio = useRef<RaceAudio | null>(null);
+  const [muted] = useMuted();
   const net = useRef({
     synced: !live || online!.isHost,
     ticks: 0,
@@ -327,6 +330,20 @@ function Play({ mode }: { mode: StageMode }) {
   useEffect(() => {
     if (view.current && race.current) view.current.setRace(race.current);
   }, [raceKey]);
+  // engine and race sound for a session (the car lapping behind the Start card stays quiet)
+  useEffect(() => {
+    if (mode === 'idle') return;
+    const a = createRaceAudio();
+    audio.current = a;
+    return () => {
+      a?.dispose();
+      audio.current = null;
+    };
+  }, [mode]);
+  useEffect(() => audio.current?.setMuted(muted), [muted]);
+  useEffect(() => {
+    if (shell.status !== 'playing') audio.current?.silence();
+  }, [shell.status]);
   useEffect(() => {
     view.current?.resize(size.w, size.h);
     shell.invalidate();
@@ -519,10 +536,10 @@ function Play({ mode }: { mode: StageMode }) {
         break;
       }
       case 'wall':
-        if (hudFor(e.idx)) sfx.noise(0.25, Math.min(0.35, e.speed * 0.02));
+        if (hudFor(e.idx)) audio.current?.impact(e.speed);
         break;
       case 'contact':
-        if (hudFor(e.idx) || hudFor(e.other)) sfx.noise(0.12, Math.min(0.25, e.speed * 0.03));
+        if (hudFor(e.idx) || hudFor(e.other)) audio.current?.impact(e.speed * 0.7);
         break;
       case 'finish': {
         const hud = hudFor(e.idx);
@@ -674,6 +691,9 @@ function Play({ mode }: { mode: StageMode }) {
 
       const views = viewsFor(r).map((vw, k) => ({ ...vw, back: backHeld.current[k] }));
       if (v) v.frame(r, dt, views, ghost);
+      if (mode !== 'idle' && n.synced && views[0]) {
+        audio.current?.update(r, views[0].runner, views[0].cam, dt);
+      }
       if (mode !== 'idle') ps.forEach((p, k) => (k === 0 ? hudA.current : hudB.current)?.update(r, p.idx, r.mode === 'trial' ? refTrace.current : null));
     },
     () => {
