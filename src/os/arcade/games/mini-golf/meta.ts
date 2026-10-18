@@ -20,5 +20,5 @@ export const meta: GameMeta = {
   order: 13,
   music: 'lofi',
   leaderboard: { order: 'asc', min: 9, max: 63, unit: 'strokes', measure: 'Strokes for 9 Holes' },
-  online: { seats: 4, bots: true },
+  online: { seats: 4, bots: true, quick: true },
 };

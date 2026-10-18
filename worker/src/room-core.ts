@@ -15,13 +15,17 @@ export type RoomPlayer = { seat: number; name: string };
  * listed: a public room, which the arcade's Open Rooms lists while someone can join it (see roomListing).
  * inLobby: the room's line is in Open Rooms right now, so only rooms that were listed ever need to take it out.
  * quick: a quick-play room, which gathers people until startAt (epoch ms) and then starts its one round on its own.
+ * watch: the game can be watched (spectators see the host's game, take no seat and send nothing); watchable: the host
+ * lets them (on unless the host turns it off).
  */
-export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; roundBots?: number; allowBots?: boolean; bots?: number; listed?: boolean; inLobby?: boolean; quick?: boolean; startAt?: number };
+export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; roundBots?: number; allowBots?: boolean; bots?: number; listed?: boolean; inLobby?: boolean; quick?: boolean; startAt?: number; watch?: boolean; watchable?: boolean };
 export type ClientRoomMessage =
   | { t: 'start' }
   | { t: 'over'; round: number }
   | { t: 'bots'; n: number }
   | { t: 'listed'; on: boolean }
+  | { t: 'watchable'; on: boolean }
+  | { t: 'watch'; d: unknown }
   | { t: 'msg'; to?: number; d: unknown }
   | { t: 'signal'; to: number; d: unknown }
   | { t: 'result'; round: number; winner: number | null };
@@ -82,17 +86,33 @@ export function nextAlarm(room: RoomState, listed: boolean, current: number | nu
   return start === null ? refresh : Math.min(refresh, start);
 }
 
+/** The most spectators a room takes at once. */
+export const WATCHERS_MAX = 16;
+
+/** Spectators can come in: the game can be watched, the host lets them, and there is room for one more. */
+export const canWatchRoom = (room: RoomState, watchers: number) => !!room.watch && room.watchable !== false && watchers < WATCHERS_MAX;
+
+/** Someone can take a seat now: there is one free, and the room takes people at this point of its round. */
+export function joinable(room: RoomState, people: number): boolean {
+  if (people >= room.seats || (room.started && !room.lateJoin)) return false;
+  return !room.quick || gathering(room);
+}
+
 /**
- * The room's line in the arcade's Open Rooms, or null when it doesn't belong there: private, without its host, full of
- * people (bots step aside, so they never fill it), under way in a game nobody can join mid-game, or a quick-play room
- * past gathering (it plays one round, for the people who were in it).
+ * The room's line in the arcade's Open Rooms, or null when it doesn't belong there: private, without its host, or
+ * nobody can join it (full of people, since bots step aside and never fill it; under way in a game nobody can join
+ * mid-game; a quick-play room past gathering, which plays one round for the people who were in it). A room nobody can
+ * join that is playing a round people can watch stays on, to watch (`watchOnly`).
  */
-export function roomListing(room: RoomState, players: RoomPlayer[], bots: number): OpenRoom | null {
+export function roomListing(room: RoomState, players: RoomPlayer[], bots: number, watchers = 0): OpenRoom | null {
   const host = players.find((player) => player.seat === 0);
-  if (!room.listed || !room.code || !host || players.length >= room.seats || (room.started && !room.lateJoin)) return null;
-  if (room.quick && !gathering(room)) return null;
-  const quick = room.quick ? { quick: true as const, startAt: room.startAt } : {};
-  return { code: room.code, game: room.game, host: host.name, players: players.length, bots, seats: room.seats, started: room.started, lateJoin: !!room.lateJoin, ...quick };
+  if (!room.listed || !room.code || !host) return null;
+  const open = joinable(room, players.length);
+  const watching = !open && room.started && canWatchRoom(room, watchers);
+  if (!open && !watching) return null;
+  const quick = room.quick ? { quick: true as const, ...(gathering(room) ? { startAt: room.startAt } : {}) } : {};
+  const watch = room.watch && room.watchable !== false ? { watch: true as const } : {};
+  return { code: room.code, game: room.game, host: host.name, players: players.length, bots, seats: room.seats, started: room.started, lateJoin: !!room.lateJoin, ...quick, ...watch, ...(watching ? { watchOnly: true as const } : {}) };
 }
 
 /** A line in the Lobby, and when its room last refreshed it. A quick room the Lobby handed out before anyone came in has no host yet. */
@@ -104,15 +124,15 @@ export type LobbyRow = { listing: OpenRoom; updated: number };
  */
 export function pickQuick(rows: LobbyRow[], now: number): OpenRoom | null {
   const open = rows.map((row) => row.listing).filter((r, i) =>
-    r.quick && !r.started && r.players < r.seats && (r.host !== '' || rows[i].updated > now - QUICK_PENDING_MS) && (r.startAt ?? Infinity) > now + QUICK_LATE_MS,
+    r.quick && !r.started && !r.watchOnly && r.players < r.seats && (r.host !== '' || rows[i].updated > now - QUICK_PENDING_MS) && (r.startAt ?? Infinity) > now + QUICK_LATE_MS,
   );
   open.sort((a, b) => b.players - a.players || (a.startAt ?? 0) - (b.startAt ?? 0) || a.code.localeCompare(b.code));
   return open[0] ?? null;
 }
 
-/** Open Rooms order: rooms still gathering first, then the busiest, then the newest code for a stable order. */
+/** Open Rooms order: rooms still gathering first, then the busiest, then the ones only to watch, then by code for a stable order. */
 export function sortListings(rooms: OpenRoom[]): OpenRoom[] {
-  return [...rooms].sort((a, b) => Number(a.started) - Number(b.started) || b.players - a.players || a.code.localeCompare(b.code));
+  return [...rooms].sort((a, b) => Number(!!a.watchOnly) - Number(!!b.watchOnly) || Number(a.started) - Number(b.started) || b.players - a.players || a.code.localeCompare(b.code));
 }
 
 /** Only the host starts, and only with someone to play: another person or a bot. */
@@ -185,6 +205,8 @@ export function parseRoomMessage(raw: string | ArrayBuffer, seats: number): Clie
   // Up to every seat but the host's.
   if (message.t === 'bots') return Number.isInteger(message.n) && (message.n as number) >= 0 && (message.n as number) < seats ? { t: 'bots', n: message.n as number } : null;
   if (message.t === 'listed') return typeof message.on === 'boolean' ? { t: 'listed', on: message.on } : null;
+  if (message.t === 'watchable') return typeof message.on === 'boolean' ? { t: 'watchable', on: message.on } : null;
+  if (message.t === 'watch') return Object.hasOwn(message, 'd') ? { t: 'watch', d: message.d } : null;
   if (message.t === 'msg') {
     if (!Object.hasOwn(message, 'd')) return null;
     if (message.to === undefined) return { t: 'msg', d: message.d };

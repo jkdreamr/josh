@@ -470,6 +470,8 @@ function Play({ mode }: { mode: StageMode }) {
       n.ticks++;
       const me = r.runners.find((x) => x.entry.kind === 'player');
       if (!o.isHost) {
+        // someone who left the room drops out here too, rather than freezing on track
+        for (const rn of r.runners) if (rn.entry.kind === 'remote' && !o.players.some((p) => p.seat === rn.entry.seat) && !o.bots.some((b) => b.seat === rn.entry.seat)) rn.out = true;
         if (me) o.send(guestState(o.round, toNet(me)), { fast: n.ticks % 5 !== 0 && me.fin === null });
         return;
       }

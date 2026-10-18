@@ -60,5 +60,5 @@ export const meta: GameMeta = {
       'slough-200cc': 'Redwood Slough 200cc',
     },
   },
-  online: { seats: 8, lateJoin: true, bots: true },
+  online: { seats: 8, lateJoin: true, bots: true, quick: true },
 };

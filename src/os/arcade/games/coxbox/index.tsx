@@ -278,7 +278,9 @@ function RaceView({ mode }: { mode: Mode }) {
   /** On touch screens the keyboard only opens from a tap, so keep the prompt up until the player taps or types. */
   const [engaged, setEngaged] = useState(false);
   const hudAt = useRef(0);
-  const live = mode !== 'idle';
+  /** A spectator watches the boats and types nothing. */
+  const watching = mode === 'online' && !!online?.watching;
+  const live = mode !== 'idle' && !watching;
 
   const say = useCallback((line: string, priority = 1, hold = 2600) => {
     const r = race.current!;
@@ -354,6 +356,11 @@ function RaceView({ mode }: { mode: Mode }) {
     o?.reportResult(o.round, winner ? winner.seat : null);
     const mine = o ? ranked.findIndex((x) => x.seat === o.seat) : -1;
     const you = r.you;
+    if (o?.watching) {
+      const name = winner ? r.lanes.find((l) => l.seat === winner.seat)?.name ?? 'someone' : '';
+      shellRef.current.gameOver(undefined, { title: winner ? `${capitalize(name)} Won` : 'Race Over', detail: winner ? `At ${Math.round(wpm(r.text.length, winner.doneMs!))} wpm.` : 'Nobody finished the course.' });
+      return;
+    }
     const finished = you.doneMs !== null;
     const speed = finished ? Math.round(wpm(r.text.length, you.doneMs!)) : undefined;
     const acc = Math.floor(accuracy(you.chars, you.errors) * 100);
@@ -368,7 +375,7 @@ function RaceView({ mode }: { mode: Mode }) {
 
   const type = useCallback((raw: string) => {
     const r = race.current!;
-    if (shellRef.current.status !== 'playing' || r.over || r.goAt === null || r.you.doneMs !== null) return;
+    if (shellRef.current.status !== 'playing' || r.over || r.goAt === null || r.you.doneMs !== null || onlineRef.current?.watching) return;
     const now = clock();
     if (now < r.goAt) return;
     const result = typeKey(r.typing, raw);
@@ -637,7 +644,7 @@ function RaceView({ mode }: { mode: Mode }) {
       speeds.current = r.lanes.map((l) => l.speed);
 
       // Cox calls for your own boat.
-      if (mode !== 'idle' && !r.over && r.you.doneMs === null && raceMs > GO_FLASH_MS) {
+      if (live && !r.over && r.you.doneMs === null && raceMs > GO_FLASH_MS) {
         const progress = r.you.chars / len;
         const marks = [0.12, 0.5, 0.75, 0.9];
         const lines = [CALLS.settle, CALLS.half, CALLS.build, CALLS.sprint];
@@ -670,10 +677,10 @@ function RaceView({ mode }: { mode: Mode }) {
         const elapsed = you.doneMs ?? Math.max(0, raceMs);
         const place = ranked.indexOf(you) + 1;
         setHud({
-          wpm: mode === 'idle' || raceMs < 0 ? '--' : String(Math.round(wpm(you.chars, Math.max(elapsed, 1500)))),
-          acc: mode === 'idle' || you.chars + you.errors === 0 ? '--' : `${you.errors ? Math.floor(accuracy(you.chars, you.errors) * 100) : 100}%`,
+          wpm: !live || raceMs < 0 ? '--' : String(Math.round(wpm(you.chars, Math.max(elapsed, 1500)))),
+          acc: !live || you.chars + you.errors === 0 ? '--' : `${you.errors ? Math.floor(accuracy(you.chars, you.errors) * 100) : 100}%`,
           time: formatClock(mode === 'idle' ? 0 : elapsed),
-          place: mode === 'idle' || raceMs < 1500 || (you.chars === 0 && you.doneMs === null) ? '--' : ordinal(place),
+          place: !live || raceMs < 1500 || (you.chars === 0 && you.doneMs === null) ? '--' : ordinal(place),
           field: r.lanes.length,
         });
         if (r.mode === 'online' && you.doneMs !== null) {
@@ -787,7 +794,9 @@ function RaceView({ mode }: { mode: Mode }) {
           focusInput();
         }}
       >
-        {text ? (
+        {watching ? (
+          <p className="g-coxbox-passage is-wait">you're watching. every boat on the water is someone typing.</p>
+        ) : text ? (
           <p className="g-coxbox-passage">
             <span className="is-done">{text.slice(0, ws)}</span>
             <span className="is-word">

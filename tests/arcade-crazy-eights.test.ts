@@ -347,6 +347,24 @@ test('the top rival never covers the draw and discard piles', async () => {
   }
 });
 
+test('short laptop windows fit the rivals row, your bar and your whole hand', async () => {
+  const { tableLayout, SHORT_ROW, SHORT_ROW_ONLINE } = await import('../src/os/arcade/games/crazy-eights/layout.ts');
+  for (const w of [464, 540, 700, 860]) {
+    for (const h of [157, 180, 220, 280, 330]) {
+      for (const online of [false, true]) {
+        for (const barH of [40, 44]) {
+          const l = tableLayout({ w, h, n: 4, online, nameH: 21, barH });
+          if (!l.short || (barH > 40 && h < 180)) continue;
+          const row = online ? SHORT_ROW_ONLINE : SHORT_ROW;
+          assert.ok(row + barH + l.handH <= h, `${w}x${h} online=${online} bar=${barH}: needs ${row + barH + l.handH}px`);
+        }
+      }
+    }
+  }
+  const framed = tableLayout({ w: 464, h: 157, n: 4, online: false, nameH: 21, barH: 40 });
+  assert.ok(framed.cw >= 40, `cards stay readable in the framed laptop, got ${framed.cw}`);
+});
+
 test('the table keeps its old roomy and short layouts where nothing overlapped', async () => {
   const { tableLayout } = await import('../src/os/arcade/games/crazy-eights/layout.ts');
   const short = tableLayout({ w: 700, h: 300, n: 4, online: false, nameH: 42, barH: 44 });
