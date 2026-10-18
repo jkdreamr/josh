@@ -25,8 +25,18 @@ import {
   step,
   swap,
   traceAim,
+  BOMB,
+  ICE,
+  RAINBOW,
+  STONE,
+  hue,
+  parseMap,
+  rainbowColor,
+  starsFor,
   type Game,
 } from '../src/os/arcade/games/bubble-shooter/logic.ts';
+import { LEVELS } from '../src/os/arcade/games/bubble-shooter/levels.ts';
+import { parseProgress, recordClear, unlocked, totalStars } from '../src/os/arcade/games/bubble-shooter/progress.ts';
 
 function emptyGame(seed = 1): Game {
   const game = createGame({ seed });
@@ -64,24 +74,6 @@ test('geometry: row lengths, centers, neighbors, bounds', () => {
   assert.equal(inBounds(1, COLS - 1), false);
   assert.equal(inBounds(0, COLS - 1), true);
   assert.equal(inBounds(-1, 0), false);
-});
-
-test('seeded boards are deterministic and levelConfig scales', () => {
-  const a = createGame({ seed: 42 });
-  const b = createGame({ seed: 42 });
-  assert.deepEqual(a.grid, b.grid);
-  assert.equal(a.current, b.current);
-  assert.equal(a.next, b.next);
-  const c = createGame({ seed: 43 });
-  assert.notDeepEqual(a.grid, c.grid);
-  assert.equal(a.grid.length, 5);
-  assert.ok(a.grid.every((row) => row.every((v) => v >= 0 && v < 4)));
-  assert.equal(a.grid[0].length, COLS);
-  assert.equal(a.grid[1].length, COLS - 1);
-  assert.deepEqual(levelConfig(1), { rows: 5, colors: 4, dropEvery: 8, dropInterval: 32 });
-  assert.deepEqual(levelConfig(3), { rows: 7, colors: 5, dropEvery: 6, dropInterval: 28 });
-  assert.deepEqual(levelConfig(5), { rows: 9, colors: 6, dropEvery: 4, dropInterval: 24 });
-  assert.deepEqual(levelConfig(20), { rows: 9, colors: 6, dropEvery: 4, dropInterval: 14 });
 });
 
 test('traceAim straight up on an empty board lands in row 0', () => {
@@ -125,43 +117,6 @@ test('guide equals result for ~200 angles', () => {
       assert.ok(saw, `angle ${angle}: cell ${cell!.r},${cell!.c} lost without an effect`);
     }
   }
-});
-
-test('three in a row pop, two do not and count toward the drop', () => {
-  const game = emptyGame();
-  game.grid = [row0(), row0(COLS - 1)];
-  game.grid[0][0] = 1;
-  game.grid[1][0] = 1;
-  game.current = 1;
-  game.next = 0;
-  game.dropEvery = 8;
-  game.shotsUntilDrop = 8;
-  game.effects.length = 0;
-  // place at (1,1): neighbors of (1,1) include (0,1)? For odd row 1, c=1: neighbors (0,1),(0,2)... (0,0)? odd: upper (r-1,c),(r-1,c+1) = (0,1),(0,2). So (1,0) neighbors (0,0),(0,1).
-  // Instead shoot at a spot adjacent to both (0,0) and (1,0): cell (1,0) is occupied; use empty (0,1): its neighbors include (0,0) and (1,0) (even row: lower neighbors (1,c-1),(1,c) = (1,0),(1,1)).
-  game.grid[0][1] = 1;
-  // now (0,0),(0,1),(1,0) occupied, all color 1; settle a new 1 at (0,2)
-  game.grid[0][2] = -1;
-  game.grid[0][9] = 3; // anchored leftover so the board is not cleared
-  const target = { r: 0, c: 2 };
-  game.shot = { points: [SHOOTER, cellCenter(game, 0, 2)], seg: 0, along: 0, pos: { ...SHOOTER }, color: 1, target };
-  step(game, 10);
-  const pops = game.effects.filter((e) => e.type === 'pop');
-  assert.equal(pops.length, 4); // the whole connected group of 4 pops
-  assert.equal(game.score, 40);
-  assert.equal(game.combo, 1);
-
-  // two in a row: no pop, shotsUntilDrop decremented
-  const g2 = emptyGame();
-  g2.grid = [row0(), row0(COLS - 1)];
-  g2.grid[0][0] = 2;
-  g2.shotsUntilDrop = 5;
-  g2.effects.length = 0;
-  g2.shot = { points: [SHOOTER, cellCenter(g2, 0, 1)], seg: 0, along: 0, pos: { ...SHOOTER }, color: 2, target: { r: 0, c: 1 } };
-  step(g2, 10);
-  assert.equal(g2.effects.filter((e) => e.type === 'pop').length, 0);
-  assert.equal(g2.shotsUntilDrop, 4);
-  assert.equal(getCell(g2, 0, 1), 2);
 });
 
 test('floating clusters drop and score by the formula', () => {
@@ -214,48 +169,6 @@ test('combo streak doubles points and a miss resets it', () => {
   assert.equal(game.bestCombo, 2);
 });
 
-test('ceiling drops by shot count and timer, ends game past the deadline', () => {
-  const game = emptyGame();
-  game.grid = [row0()];
-  game.grid[0][0] = 0;
-  game.grid[0][5] = 0;
-  game.dropEvery = 4;
-  game.shotsUntilDrop = 4;
-  game.dropInterval = 999;
-  game.dropTimer = 999;
-  // four non-popping shots at safe, non-adjacent cells trigger one drop
-  const spots: [number, number][] = [[0, 1], [0, 3], [0, 7], [0, 9]];
-  for (const [r, c] of spots) {
-    game.effects.length = 0;
-    game.shot = { points: [SHOOTER, cellCenter(game, r, c)], seg: 0, along: 0, pos: { ...SHOOTER }, color: 5, target: { r, c } };
-    step(game, 10);
-  }
-  assert.equal(game.ceiling, ROW_H);
-  assert.equal(game.shotsUntilDrop, 4);
-  assert.ok(game.effects.some((e) => e.type === 'ceiling'));
-  // timed drop only ticks while aiming
-  game.dropTimer = 0.05;
-  const t0 = game.dropTimer;
-  game.shot = { points: [SHOOTER, cellCenter(game, 0, 2)], seg: 0, along: 0, pos: { ...SHOOTER }, color: 5, target: { r: 0, c: 2 } };
-  step(game, 0.03);
-  assert.equal(game.dropTimer, t0); // frozen mid-flight
-  runShot(game);
-  game.dropTimer = 0.05;
-  step(game, 0.06);
-  assert.equal(game.ceiling, 2 * ROW_H);
-  // deadline: ceiling push moves lowest bubble past DEADLINE_Y
-  const g2 = emptyGame();
-  g2.grid = [row0()];
-  g2.grid[0][0] = 0;
-  g2.ceiling = DEADLINE_Y - 2 * R + 1; // bottom already 1 under? bottom = ceiling + 2R = DEADLINE_Y+1
-  g2.dropTimer = 0.01;
-  g2.effects.length = 0;
-  step(g2, 0.02);
-  assert.equal(g2.ended, true);
-  assert.ok(g2.effects.some((e) => e.type === 'over'));
-  assert.equal(fire(g2, Math.PI / 2), false);
-});
-
 test('swap exchanges current/next and emits swap; used colors re-roll to board colors', () => {
   const game = createGame({ seed: 5 });
   const cur = game.current;
@@ -276,27 +189,6 @@ test('swap exchanges current/next and emits swap; used colors re-roll to board c
   step(game, 10);
   const on = boardColors(game);
   assert.ok(on.includes(game.current) && on.includes(game.next));
-});
-
-test('clearing the board pays the level bonus and starts the next level', () => {
-  const game = createGame({ seed: 9 });
-  game.grid = [row0()];
-  game.grid[0][0] = 1;
-  game.grid[0][1] = 1;
-  game.score = 100;
-  game.effects.length = 0;
-  game.shot = { points: [SHOOTER, cellCenter(game, 0, 2)], seg: 0, along: 0, pos: { ...SHOOTER }, color: 1, target: { r: 0, c: 2 } };
-  step(game, 10);
-  assert.equal(game.grid.length, 0);
-  assert.ok(game.levelBanner > 0);
-  assert.equal(game.score, 100 + 30 + 500);
-  assert.ok(game.effects.some((e) => e.type === 'level' && e.bonus === 500 && e.level === 1));
-  assert.equal(fire(game, Math.PI / 2), false);
-  step(game, 1.7);
-  assert.equal(game.level, 2);
-  assert.equal(game.ceiling, 0);
-  assert.equal(game.grid.length, 6);
-  assert.equal(game.score, 630);
 });
 
 test('aimAt and clampAim clamp to the allowed fan', () => {
@@ -321,4 +213,225 @@ test('findMatches and findFloating on hand-built grids', () => {
   const f = findFloating(game);
   assert.deepEqual(f, [{ r: 2, c: 9 }]);
   assert.equal(lowestBubbleBottom(game), cellCenter(game, 2, 9).y + R);
+});
+
+/** Finds an angle whose guide lands exactly in (r, c), then fires it. */
+function shootAt(game: Game, r: number, c: number): void {
+  for (let a = MIN_ANGLE; a <= Math.PI - MIN_ANGLE; a += 0.0005) {
+    const t = traceAim(game, a);
+    if (t.cell && t.cell.r === r && t.cell.c === c) {
+      assert.ok(fire(game, a));
+      runShot(game);
+      return;
+    }
+  }
+  assert.fail(`no angle lands in ${r},${c}`);
+}
+
+function levelGame(level: number, grid: number[][]): Game {
+  const game = createGame({ mode: 'levels', level, seed: 3 });
+  game.grid = grid;
+  game.effects.length = 0;
+  return game;
+}
+
+test('endless boards are deterministic and levelConfig ramps up', () => {
+  assert.deepEqual(createGame({ seed: 42 }).grid, createGame({ seed: 42 }).grid);
+  assert.notDeepEqual(createGame({ seed: 42 }).grid, createGame({ seed: 43 }).grid);
+  assert.deepEqual(levelConfig(1), { rows: 6, colors: 4, dropEvery: 6, dropInterval: 12, specials: 0 });
+  assert.equal(levelConfig(3).colors, 5);
+  assert.equal(levelConfig(3).dropEvery, 5);
+  assert.deepEqual(levelConfig(30), { rows: 6, colors: 8, dropEvery: 2, dropInterval: 5, specials: 0.16 });
+  const g = createGame({ seed: 42 });
+  assert.equal(g.mode, 'endless');
+  assert.equal(g.shotsLeft, Infinity);
+  assert.equal(g.grid.length, 6);
+  for (const row of g.grid) for (const v of row) assert.ok(v >= 0 && v < 4);
+});
+
+test('every level parses, has a fair shot budget and brings in specials after their intro', () => {
+  assert.ok(LEVELS.length >= 30);
+  const intro = { stone: LEVELS.findIndex((l) => l.map.some((m) => m.includes('#'))), bomb: LEVELS.findIndex((l) => l.map.some((m) => m.includes('*'))), ice: LEVELS.findIndex((l) => l.map.some((m) => /[A-Z]/.test(m))) };
+  assert.ok(intro.stone > 5 && intro.bomb > intro.stone && intro.ice > intro.bomb);
+  for (const k of ['stone', 'bomb', 'ice'] as const) assert.ok(LEVELS[intro[k]].tip, `level ${intro[k] + 1} explains the ${k}`);
+  let maxHues = 0;
+  LEVELS.forEach((def, i) => {
+    const grid = parseMap(def.map);
+    const hues = new Set(grid.flat().map(hue).filter((h) => h >= 0));
+    assert.ok(hues.size >= 3, `level ${i + 1} colors`);
+    if (i < 6) assert.ok(hues.size <= 5, `level ${i + 1} starts simple`);
+    maxHues = Math.max(maxHues, hues.size);
+    const [two, three] = def.stars;
+    assert.ok(two >= 1 && two < three && three < def.shots, `level ${i + 1} stars`);
+    const g = createGame({ mode: 'levels', level: i + 1, seed: 1 });
+    assert.equal(g.shotsLeft, def.shots);
+    assert.equal(g.def, def);
+    assert.ok(lowestBubbleBottom(g) < DEADLINE_Y - ROW_H, `level ${i + 1} leaves room`);
+  });
+  assert.equal(maxHues, 8);
+  assert.throws(() => parseMap(['r r r']));
+  assert.throws(() => parseMap(['r r r r r r r r r x']));
+});
+
+test('every shot counts toward the next drop; endless pushes a row in on top', () => {
+  const game = emptyGame();
+  game.level = 1;
+  game.grid = [row0()];
+  game.grid[0][0] = 1;
+  game.current = 2;
+  game.next = 3;
+  game.dropEvery = 2;
+  game.shotsUntilDrop = 2;
+  shootAt(game, 0, 9);
+  assert.equal(game.shotsUntilDrop, 1);
+  shootAt(game, 0, 8);
+  assert.equal(game.parity, 1);
+  assert.equal(game.pushed, 1);
+  assert.equal(game.grid[0].length, rowLength(0, 1));
+  assert.equal(game.grid[1][0], 1);
+  assert.equal(cellCenter(game, 0, 0).x, 2 * R);
+  assert.equal(cellCenter(game, 1, 0).x, R);
+  assert.deepEqual(neighbors(1, 0, 1).map((p) => `${p.r},${p.c}`).sort(), ['0,0', '1,1', '2,0'].sort());
+  assert.equal(game.shotsUntilDrop, 2);
+  assert.ok(game.effects.some((e) => e.type === 'ceiling'));
+  assert.equal(game.shotsLeft, Infinity);
+});
+
+test('levels drop the ceiling by shots and by timer, and end at the line', () => {
+  const game = createGame({ mode: 'levels', level: 7, seed: 4 });
+  game.shotsUntilDrop = 1;
+  assert.ok(fire(game, Math.PI / 2));
+  runShot(game);
+  assert.equal(game.ceiling, ROW_H);
+  assert.equal(game.shotsUntilDrop, game.dropEvery);
+
+  const timed = createGame({ mode: 'levels', level: LEVELS.findIndex((l) => l.time > 0) + 1, seed: 4 });
+  timed.dropTimer = 0.5;
+  step(timed, 0.6);
+  assert.equal(timed.ceiling, ROW_H);
+  timed.ceiling = DEADLINE_Y;
+  timed.dropTimer = 0.1;
+  step(timed, 0.2);
+  assert.ok(timed.ended);
+  assert.equal(timed.outcome, 'line');
+});
+
+test('clearing a level ends it with stars from the shots left; running out fails it', () => {
+  const grid = [row0()];
+  grid[0][0] = 0;
+  grid[0][1] = 0;
+  const game = levelGame(1, grid);
+  game.current = 0;
+  game.shotsLeft = 10;
+  shootAt(game, 0, 2);
+  assert.equal(game.outcome, 'clear');
+  assert.ok(game.ended);
+  assert.equal(game.shotsLeft, 9);
+  assert.equal(game.stars, starsFor(LEVELS[0], 9));
+  assert.ok(game.effects.some((e) => e.type === 'clear' && e.bonus === 1000 + 150 * 9));
+  assert.equal(starsFor(LEVELS[0], LEVELS[0].stars[1]), 3);
+  assert.equal(starsFor(LEVELS[0], LEVELS[0].stars[0]), 2);
+  assert.equal(starsFor(LEVELS[0], 0), 1);
+
+  const grid2 = [row0()];
+  grid2[0][0] = 0;
+  grid2[0][5] = 1;
+  const last = levelGame(1, grid2);
+  last.current = 1;
+  last.shotsLeft = 1;
+  assert.equal(swap(last), false);
+  shootAt(last, 0, 9);
+  assert.equal(last.outcome, 'shots');
+  assert.equal(fire(last, Math.PI / 2), false);
+});
+
+test('a bomb clears the ring around it when hit', () => {
+  const game = emptyGame();
+  game.grid = [row0(), row0(COLS - 1)];
+  game.grid[0][0] = 1;
+  game.grid[0][1] = BOMB;
+  game.grid[0][2] = 2;
+  game.grid[0][3] = 3;
+  game.grid[1][0] = 4;
+  game.current = 0;
+  game.next = 0;
+  shootAt(game, 1, 1);
+  assert.ok(game.effects.some((e) => e.type === 'blast'));
+  assert.equal(getCell(game, 0, 0), -1);
+  assert.equal(getCell(game, 0, 1), -1);
+  assert.equal(getCell(game, 0, 2), -1);
+  assert.equal(getCell(game, 1, 0), -1);
+  assert.equal(getCell(game, 1, 1), -1);
+  assert.equal(getCell(game, 0, 3), 3);
+});
+
+test('ice never matches until a shot lands or a pop happens beside it', () => {
+  const game = emptyGame();
+  game.grid = [row0()];
+  game.grid[0][0] = ICE + 1;
+  game.grid[0][1] = ICE + 1;
+  game.grid[0][9] = 3;
+  assert.deepEqual(findMatches(game, 0, 0), []);
+  game.current = 1;
+  game.next = 1;
+  shootAt(game, 0, 2);
+  assert.equal(getCell(game, 0, 1), 1);
+  assert.equal(getCell(game, 0, 0), ICE + 1);
+  assert.equal(getCell(game, 0, 2), 1);
+
+  const pop = emptyGame();
+  pop.grid = [row0()];
+  pop.grid[0][0] = ICE + 2;
+  pop.grid[0][1] = 1;
+  pop.grid[0][2] = 1;
+  pop.grid[0][9] = 3;
+  pop.current = 1;
+  shootAt(pop, 0, 3);
+  assert.equal(getCell(pop, 0, 0), 2);
+  assert.ok(pop.effects.some((e) => e.type === 'thaw'));
+});
+
+test('stones never pop but fall once cut loose', () => {
+  const game = emptyGame();
+  game.grid = [row0(), row0(COLS - 1)];
+  game.grid[0][0] = 1;
+  game.grid[0][1] = 1;
+  game.grid[1][0] = STONE;
+  game.grid[0][9] = 3;
+  game.current = 1;
+  shootAt(game, 0, 2);
+  assert.equal(getCell(game, 1, 0), -1);
+  assert.ok(game.effects.some((e) => e.type === 'drop' && e.color === STONE));
+  assert.equal(getCell(game, 0, 9), 3);
+});
+
+test('a rainbow bubble takes the color that pops the most, and combos earn one', () => {
+  const game = emptyGame();
+  game.grid = [row0()];
+  game.grid[0][0] = 2;
+  game.grid[0][1] = 2;
+  game.grid[0][3] = 1;
+  game.grid[0][9] = 4;
+  assert.equal(rainbowColor(game, 0, 2), 2);
+  game.current = RAINBOW;
+  game.next = 4;
+  game.combo = 3;
+  shootAt(game, 0, 2);
+  assert.equal(getCell(game, 0, 0), -1);
+  assert.equal(getCell(game, 0, 3), 1);
+  assert.equal(game.combo, 4);
+  assert.ok(game.next === RAINBOW || game.current === RAINBOW);
+  assert.ok(game.effects.some((e) => e.type === 'rainbow'));
+});
+
+test('campaign progress parses safely and unlocks in order', () => {
+  assert.deepEqual(parseProgress(null), { stars: {}, best: {} });
+  assert.deepEqual(parseProgress('not json'), { stars: {}, best: {} });
+  const p = parseProgress(JSON.stringify({ stars: { '1': 3, '2': 9, nope: 2, '3': -1 }, best: { '1': 1200, '2': 'x' } }));
+  assert.deepEqual(p, { stars: { '1': 3 }, best: { '1': 1200 } });
+  assert.ok(unlocked(p, '1') && unlocked(p, '2') && !unlocked(p, '3'));
+  assert.equal(recordClear(p, '2', 2, 800), true);
+  assert.equal(recordClear(p, '2', 1, 100), false);
+  assert.deepEqual([p.stars['2'], p.best['2']], [2, 800]);
+  assert.equal(totalStars(p), 5);
 });
