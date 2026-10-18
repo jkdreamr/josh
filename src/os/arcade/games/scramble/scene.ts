@@ -74,10 +74,10 @@ const DRESS: Record<BuildingKind, { frame: number; porch: number; mat: number; a
 };
 /** Glow under a pickup, by how good it is (the rarity colors). */
 const USE_GLOW: Record<UseId, number> = { bandage: 1, medkit: 2, mini: 2, shield: 3, coffee: 4, smoothie: 3, tart: 4 };
-/** How many legendary things on the ground get a gold beam at once (the nearest, if there are ever more). */
+/** How many legendary things on the ground get a gold beam at once (there are rarely more than a handful). */
 const BEAMS = 40;
 /** A flare climbs this high over this many seconds, then hangs there burning for a few more. */
-const FLARE_UP = { y: 34, rise: 2.4, burn: 4 };
+const FLARE_UP = { y: 15, rise: 2.4, burn: 4 };
 
 function canvas(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void) {
   const c = document.createElement('canvas');
@@ -2144,7 +2144,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       for (let i = ti; i < tracers.length; i++) tracers[i].visible = false;
       for (let i = ri; i < rockets.length; i++) rockets[i].visible = false;
 
-      // gold beams over legendary loot, the nearest ones if there are ever too many
+      // gold beams over legendary loot, taller the farther out the camera is
       let gi = 0;
       const beamH = 9 + Math.min(14, cam.view * 0.25);
       for (const l of m.loot.values()) {

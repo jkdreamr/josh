@@ -85,7 +85,7 @@ const seat = (v: unknown): v is number => int(v) && (v as number) >= -1 && (v as
 const isCause = (v: unknown): v is Cause => CAUSES.includes(v as Cause);
 /**
  * The most one hit from another client can do: a legendary bullet or pellet, a swing, or a grenade right on top. The
- * rest (the storm, hot sauce, barrels) each client works out for its own egg, so never arrives as a hit.
+ * rest (the storm, hot sauce, barrels, impulse eggs) each client works out for its own egg, so never arrives as a hit.
  */
 export function hitCap(w: Cause) {
   if (isWeapon(w)) return Math.round(damageOf(w, MAX_RARITY));

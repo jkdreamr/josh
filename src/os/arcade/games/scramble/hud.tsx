@@ -571,7 +571,7 @@ const GUN_HELP: Record<WeaponId, string> = {
   marksman: 'One careful shot at a time, between a rifle and a scout. Sees a little farther.',
   scout: 'A long rifle with a scope built in.',
   lmg: 'An 80-round belt. You walk slower carrying it.',
-  minigun: `Hold the trigger: it spins up for ${WEAPONS.minigun.spin?.up} seconds, then pours out ${WEAPONS.minigun.mag} rounds. You crawl while it spins.`,
+  minigun: `Hold the trigger: it spins up for ${WEAPONS.minigun.spin?.up} seconds, then pours out ${WEAPONS.minigun.mag} rounds. You walk slowly with it, and slower still while it spins.`,
   shotgun: 'Nine pellets. Huge up close, weak far off.',
   auto: 'Fires as fast as you pull, a little weaker a shot.',
   double: 'Two barrels, then a reload. Brutal at arm’s length.',
@@ -600,7 +600,7 @@ const THROW_HELP: Record<ThrowId, string> = {
   impulse: 'Goes off a moment after it lands and shoves every egg and everything on the ground away from it (not you). Barely scratches.',
   flour: 'Bursts into a cloud. Nobody outside it can see in, or through it.',
   sauce: 'Splashes a burning puddle that hurts anyone standing in it, you too.',
-  jam: `A sticky puddle: anyone wading through it slows to a crawl for ${THROWS.jam.time} seconds.`,
+  jam: `A sticky puddle that lasts ${THROWS.jam.time} seconds: anyone wading through it slows to a crawl.`,
   bush: `Grows a bush where it lands for ${THROWS.bush.time} seconds. Stand in it and nobody sees you from a distance until you fire.`,
 };
 const USE_HELP: Record<UseId, string> = {

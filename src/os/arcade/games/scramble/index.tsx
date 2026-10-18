@@ -285,7 +285,6 @@ function Play({ mode }: { mode: Mode }) {
   const bannerRef = useRef({ text: '', until: -1 });
   const spectate = useRef(-1);
   const soloEnd = useRef(-1);
-  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__scramble = { match: () => match.current, view: () => view.current, net: () => net.current };
 
   // input that arrives between frames
   const mouse = useRef({ x: 0, y: 0, inside: false, down: false, clicked: false });

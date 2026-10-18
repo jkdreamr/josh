@@ -2324,6 +2324,10 @@ test('an impulse egg shoves eggs and loot away and barely scratches; each client
   assert.equal(stateOf(b).vx, 7);
   const e = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[0, [{ y: 'lv', id: 77, x: 1, z: 2 }, { y: 'lv', id: -1, x: 1, z: 2 }, { y: 'lv', id: 77, x: HALF + 1, z: 2 }, { y: 'lv', id: 77, x: 1 }]]] });
   assert.ok(e && e.k === 'e' && e.groups[0][1].length === 1, 'loot moves only to the island');
+  // an egg cracked by one says so, but nobody can claim to have hit someone else with one
+  const o = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, [{ y: 'o', f: 1, by: 0, w: 'impulse' }]]] });
+  assert.ok(o && o.k === 'e' && o.groups[0][1].length === 1);
+  assert.equal(hitCap('impulse'), 0);
 });
 
 test('jam slows anyone wading through it to a crawl until it dries up', () => {
