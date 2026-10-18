@@ -479,6 +479,43 @@ function mergeRoof(THREE: Three, parts: RoofPart[], tile: number, alongX: boolea
   return g;
 }
 
+/** Pieces in one material, each moved by its matrix, merged into one geometry: one draw call for them all. */
+function mergeParts(THREE: Three, parts: { g: T.BufferGeometry; m: T.Matrix4 }[]) {
+  let count = 0;
+  for (const p of parts) count += p.g.index ? p.g.index.count : (p.g.attributes.position as T.BufferAttribute).count;
+  const pos = new Float32Array(count * 3);
+  const nor = new Float32Array(count * 3);
+  const uv = new Float32Array(count * 2);
+  let at = 0;
+  for (const p of parts) {
+    const g = p.g.clone().applyMatrix4(p.m);
+    const P = g.attributes.position as T.BufferAttribute;
+    const N = g.attributes.normal as T.BufferAttribute;
+    const U = g.attributes.uv as T.BufferAttribute | undefined;
+    const n = g.index ? g.index.count : P.count;
+    for (let k = 0; k < n; k++) {
+      const i = g.index ? g.index.getX(k) : k;
+      pos[at * 3] = P.getX(i);
+      pos[at * 3 + 1] = P.getY(i);
+      pos[at * 3 + 2] = P.getZ(i);
+      nor[at * 3] = N.getX(i);
+      nor[at * 3 + 1] = N.getY(i);
+      nor[at * 3 + 2] = N.getZ(i);
+      if (U) {
+        uv[at * 2] = U.getX(i);
+        uv[at * 2 + 1] = U.getY(i);
+      }
+      at++;
+    }
+    g.dispose();
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return g;
+}
+
 /** A ring on the ground whose inner and outer edges move freely (the storm's tint and the next circle). */
 function freeRing(THREE: Three, segments: number) {
   const g = new THREE.BufferGeometry();
@@ -514,13 +551,19 @@ type Particle = { mesh: T.Mesh; vx: number; vy: number; vz: number; life: number
 /** A model for something in hand: the group, the stripe in its rarity's color, and a minigun's barrels that spin. */
 type HeldModel = { group: T.Group; stripe: T.Mesh | null; spin: T.Object3D | null };
 
+/**
+ * Stand-ins (placed, never drawn) for what every egg has, which is drawn instanced across all of them: its shell, its
+ * party hat (cap, band and pom-pom), eyes, cheeks, shadow, and its glider's canopy and knob.
+ */
+type EggSlots = { shell: T.Object3D; cap: T.Object3D; band: T.Object3D; pom: T.Object3D; eyes: T.Object3D[]; cheeks: T.Object3D[]; canopy: T.Object3D; knob: T.Object3D };
+
 type EggView = {
   root: T.Group;
   body: T.Group;
-  skin: T.MeshLambertMaterial;
+  slots: EggSlots;
   hand: T.Group;
   guns: Map<Held, HeldModel>;
-  shadow: T.Mesh;
+  shadow: T.Object3D;
   glider: T.Group;
   heal: T.Group;
   /** The two bars of the cross over the head while healing (gold for a golden egg tart). */
@@ -528,9 +571,7 @@ type EggView = {
   ring: T.Mesh;
   ghost: T.Mesh;
   backPan: T.Group;
-  /** The party hat, hidden under a helmet. */
-  hat: T.Mesh[];
-  /** The helmet and vest it wears, rebuilt when the level changes. */
+  /** The helmet and vest it wears (a helmet takes the party hat's place), rebuilt when the level changes. */
   helmet: T.Group | null;
   helmetLv: number;
   vest: T.Group | null;
@@ -667,6 +708,41 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     parent.add(o);
     return o;
   };
+
+  /**
+   * A model built of many little meshes (what's in hand, helmets, vests, loot) with them merged into one mesh a
+   * material, worked out once for each `key` and shared: a draw call or two where there were a dozen. What's in `keep`
+   * (a stripe that changes color, barrels that spin) stays as it is.
+   */
+  const baked = new Map<string, { g: T.BufferGeometry; m: T.Material }[]>();
+  const relative = new THREE.Matrix4();
+  function bake<X extends T.Object3D>(key: string, root: X, keep: (T.Object3D | null)[] = []): X {
+    root.updateMatrixWorld(true);
+    relative.copy(root.matrixWorld).invert();
+    const kept = (o: T.Object3D) => {
+      for (let p: T.Object3D | null = o; p && p !== root; p = p.parent) if (keep.includes(p)) return true;
+      return false;
+    };
+    const meshes: T.Mesh[] = [];
+    root.traverse((o) => {
+      if ((o as T.Mesh).isMesh && !kept(o)) meshes.push(o as T.Mesh);
+    });
+    let parts = baked.get(key);
+    if (!parts) {
+      const by = new Map<T.Material, { g: T.BufferGeometry; m: T.Matrix4 }[]>();
+      for (const o of meshes) {
+        const material = o.material as T.Material;
+        const list = by.get(material) ?? [];
+        list.push({ g: o.geometry, m: new THREE.Matrix4().multiplyMatrices(relative, o.matrixWorld) });
+        by.set(material, list);
+      }
+      parts = [...by].map(([m, list]) => ({ g: geo(mergeParts(THREE, list)), m }));
+      baked.set(key, parts);
+    }
+    for (const o of meshes) o.parent?.remove(o);
+    for (const p of parts) root.add(new THREE.Mesh(p.g, p.m));
+    return root;
+  }
 
   // ---------------------------------------------------------------------------------------------------------------
   // The island.
@@ -1555,7 +1631,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   // lamp posts: a slim pole, a collar and a glowing bulb on top
   const poles = many(G.cyl, lambert(0x5d6670), map.lamps.length);
   const lampCaps = many(G.cyl, lambert(0x2b2d33), map.lamps.length);
-  const lampHeads = many(G.ball, basic(0xfff0b0), map.lamps.length);
+  const lampHeads = many(G.lowBall, basic(0xfff0b0), map.lamps.length);
   map.lamps.forEach((p, i) => {
     put(poles, i, p.x, 1.5, p.z, LAMP_R * 0.8, 3, LAMP_R * 0.8);
     put(lampCaps, i, p.x, 3.05, p.z, 0.17, 0.16, 0.17);
@@ -1861,7 +1937,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       add(g, G.ball, M.dark, 0, 0.82, 0, 0.09, 0.07, 0.09);
       for (const side of [-1, 1]) add(g, G.box, M.dark, side * 0.6, 0.42, 0, 0.14, 0.08, 0.3);
     }
-    return g;
+    return bake(`helmet:${lv}`, g);
   }
 
   /**
@@ -1882,7 +1958,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       // steel plates
       for (const y of [-0.2, 0.02, 0.24]) add(g, G.box, M.steel, 0, y, 0.67, 0.52, 0.17, 0.03);
     }
-    return g;
+    return bake(`vest:${lv}`, g);
   }
 
   /** A vest on the ground: an apron laid out flat, bib, skirt, neck loop and ties, with the same marks as when worn. */
@@ -1900,7 +1976,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     } else for (const y of [-0.26, -0.04, 0.26]) add(g, G.box, M.steel, 0, y, 0.035, y > 0 ? 0.36 : 0.6, 0.17, 0.03);
     // lying back, so its front faces up at the camera
     g.rotation.x = -1.1;
-    return g;
+    return bake(`apron:${lv}`, g);
   }
 
   function gunModel(w: Held): HeldModel {
@@ -2091,53 +2167,136 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         stripe = barrel(g, rarity[0], 0, 0.05, 0.75, 0.18, 0.12);
         break;
     }
-    return { group: g, stripe, spin };
+    return { group: bake(`held:${w}`, g, [stripe, spin]), stripe, spin };
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Tiles. What never changes once the island is built (trees, rocks, bushes, walls, roads, fences, furniture and the
+  // rest) is split into tiles of the island, each its own instanced mesh, so only the tiles in view are drawn. What
+  // changes as the match goes on (crates break, chests and fridges open, fires flicker) stays as it is.
+
+  const moving = new Set<T.InstancedMesh>([crates, chestBase, chestLid, chestGlow, barrels, barrelBands, flames, fireGlow, fridgeBase, fridgeDoor, fridgeHandles, fridgeInside, bowls, tanks, seats, hay]);
+  const SPAN = 120;
+  for (const im of [...instanced]) {
+    if (moving.has(im) || !im.parent || !im.visible || im.count < 16) continue;
+    const tiles = new Map<number, number[]>();
+    for (let i = 0; i < im.count; i++) {
+      im.getMatrixAt(i, relative);
+      const k = Math.floor((relative.elements[12] + HALF + 60) / SPAN) * 100 + Math.floor((relative.elements[14] + HALF + 60) / SPAN);
+      const list = tiles.get(k);
+      if (list) list.push(i);
+      else tiles.set(k, [i]);
+    }
+    if (tiles.size < 2) continue;
+    for (const ids of tiles.values()) {
+      const t = many(im.geometry, im.material as T.Material, ids.length);
+      ids.forEach((i, j) => {
+        im.getMatrixAt(i, relative);
+        t.setMatrixAt(j, relative);
+        if (im.instanceColor) t.setColorAt(j, im.getColorAt(i, color));
+      });
+      t.position.copy(im.position);
+      t.quaternion.copy(im.quaternion);
+      t.scale.copy(im.scale);
+      t.renderOrder = im.renderOrder;
+      t.computeBoundingSphere();
+      im.parent.add(t);
+    }
+    im.removeFromParent();
   }
 
   // ---------------------------------------------------------------------------------------------------------------
   // Eggs.
 
-  const eggs: EggView[] = m.fighters.map((f) => {
+  // what every egg has, drawn instanced: a draw call a part however many eggs there are (see EggSlots)
+  const N = m.fighters.length;
+  const eggBits = {
+    shell: many(G.egg, lambert(0xffffff), N),
+    cap: many(G.cap, lambert(0xffffff), N),
+    band: many(G.band, lambert(0xffffff), N),
+    pom: many(G.lowBall, lambert(0xffffff), N),
+    eyes: many(G.lowBall, M.black, N * 2),
+    cheeks: many(G.lowBall, M.cream, N * 2),
+    shadow: many(G.disc, M.shadow, N),
+    canopy: many(G.cone, lambert(0xffffff, { side: THREE.DoubleSide }), N),
+    knob: many(G.ball, M.white, N),
+  };
+  for (const im of Object.values(eggBits)) {
+    // they move every frame, so there's no box round them to cull by
+    im.frustumCulled = false;
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(im);
+  }
+  const SKIN = new THREE.Color(0xfff3df);
+  const HIT = new THREE.Color(0xff8a7a);
+  const hatColors = m.fighters.map((f) => new THREE.Color(f.color));
+  // colors from the start, so each mesh is set up for them before it is first drawn
+  for (let i = 0; i < N; i++) for (const im of [eggBits.shell, eggBits.cap, eggBits.band, eggBits.pom, eggBits.canopy]) im.setColorAt(i, hatColors[i]);
+  const slot = (parent: T.Object3D, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+    const o = new THREE.Object3D();
+    o.position.set(x, y, z);
+    o.scale.set(sx, sy, sz);
+    parent.add(o);
+    return o;
+  };
+  const stringGeo = geo(
+    new THREE.BufferGeometry().setFromPoints(
+      // the four strings in one line: down one, across inside the egg, up the next, across under the canopy, and so on
+      [
+        [-1, 0],
+        [0, 1],
+        [1, 0],
+        [0, -1],
+      ].flatMap(([x, z], k) => {
+        const top = new THREE.Vector3(x * 1.8, 2.5, z * 1.8);
+        const low = new THREE.Vector3(x * 0.22, 1.3, z * 0.22);
+        return k % 2 ? [low, top] : [top, low];
+      }),
+    ),
+  );
+  const stringMat = mat(new THREE.LineBasicMaterial({ color: 0x444444 }));
+
+  const eggs: EggView[] = m.fighters.map(() => {
     const root = new THREE.Group();
     const body = new THREE.Group();
     root.add(body);
-    const skin = lambert(0xfff3df, { emissive: 0x000000 });
-    add(body, G.egg, skin, 0, 0, 0, 1, 1, 1);
-    const hatMat = lambert(parseInt(f.color.slice(1), 16));
-    const hat = [add(body, G.cap, hatMat, 0, 1.08, 0, 0.5, 0.52, 0.5), add(body, G.band, hatMat, 0, 1.1, 0, 0.47, 0.47, 0.47), add(body, G.ball, hatMat, 0, 1.64, 0, 0.11, 0.11, 0.11)];
-    hat[1].rotation.x = Math.PI / 2;
-    for (const side of [-1, 1]) add(body, G.ball, M.black, side * 0.17, 1.0, 0.53, 0.065, 0.085, 0.05);
-    for (const side of [-1, 1]) add(body, G.ball, M.cream, side * 0.4, 0.72, 0.42, 0.11, 0.11, 0.11);
+    const band = slot(body, 0, 1.1, 0, 0.47, 0.47, 0.47);
+    band.rotation.x = Math.PI / 2;
+    // a little glider for the drop
+    const glider = new THREE.Group();
+    glider.add(new THREE.Line(stringGeo, stringMat));
+    root.add(glider);
+    const slots: EggSlots = {
+      shell: slot(body, 0, 0, 0, 1, 1, 1),
+      cap: slot(body, 0, 1.08, 0, 0.5, 0.52, 0.5),
+      band,
+      pom: slot(body, 0, 1.64, 0, 0.11, 0.11, 0.11),
+      eyes: [-1, 1].map((side) => slot(body, side * 0.17, 1.0, 0.53, 0.065, 0.085, 0.05)),
+      cheeks: [-1, 1].map((side) => slot(body, side * 0.4, 0.72, 0.42, 0.11, 0.11, 0.11)),
+      canopy: slot(glider, 0, 2.9, 0, 1.9, 0.9, 1.9),
+      knob: slot(glider, 0, 3.35, 0, 0.22, 0.22, 0.22),
+    };
     const hand = new THREE.Group();
     hand.position.set(0.24, 0.78, 0.48);
     body.add(hand);
     // a frying pan slung across the back stops bullets from behind
-    const backPan = new THREE.Group();
-    add(backPan, G.cyl, M.pan, 0, 0, 0, 0.36, 0.06, 0.36);
-    add(backPan, G.box, M.dark, 0, 0, 0.48, 0.06, 0.05, 0.4);
+    const backPan = bake(
+      'backPan',
+      (() => {
+        const g = new THREE.Group();
+        add(g, G.cyl, M.pan, 0, 0, 0, 0.36, 0.06, 0.36);
+        add(g, G.box, M.dark, 0, 0, 0.48, 0.06, 0.05, 0.4);
+        return g;
+      })(),
+    );
     backPan.position.set(0, 0.9, -0.5);
     backPan.rotation.set(Math.PI / 2 - 0.25, 0, 0);
     body.add(backPan);
-    const shadow = new THREE.Mesh(G.disc, M.shadow);
+    const shadow = new THREE.Object3D();
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 0.03;
     shadow.scale.setScalar(0.85);
     root.add(shadow);
-    // a little glider for the drop
-    const glider = new THREE.Group();
-    add(glider, G.cone, lambert(parseInt(f.color.slice(1), 16), { side: THREE.DoubleSide }), 0, 2.9, 0, 1.9, 0.9, 1.9);
-    add(glider, G.ball, M.white, 0, 3.35, 0, 0.22, 0.22, 0.22);
-    for (const [x, z] of [
-      [-1.5, 0],
-      [1.5, 0],
-      [0, 1.5],
-      [0, -1.5],
-    ]) {
-      const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x * 1.2, 2.5, z * 1.2), new THREE.Vector3(x * 0.15, 1.3, z * 0.15)]);
-      geos.push(g);
-      glider.add(new THREE.Line(g, mat(new THREE.LineBasicMaterial({ color: 0x444444 }))));
-    }
-    root.add(glider);
     // a cross over the head while healing; a ring while drinking shield (blue) or coffee (orange)
     const heal = new THREE.Group();
     heal.position.y = 2.15;
@@ -2151,8 +2310,40 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     ghost.renderOrder = 20;
     body.add(ghost);
     scene.add(root);
-    return { root, body, skin, hand, guns: new Map(), shadow, glider, heal, cross, ring, ghost, backPan, hat, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, swing: 0, recoil: 0, lean: 0 };
+    return { root, body, slots, hand, guns: new Map(), shadow, glider, heal, cross, ring, ghost, backPan, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, swing: 0, recoil: 0, lean: 0 };
   });
+
+  /**
+   * How many eggs are drawn this frame, with their party hats, shadows and gliders: only the eggs in view go in, packed
+   * at the front, so eggs out of sight cost nothing.
+   */
+  const drawn = { eggs: 0, hats: 0, shadows: 0, gliders: 0 };
+  /** Puts an egg's instanced parts where its stand-ins are, once its group has been moved. */
+  function placeEgg(v: EggView, hit: boolean, hat: T.Color) {
+    v.root.updateMatrixWorld(true);
+    const s = v.slots;
+    const k = drawn.eggs++;
+    eggBits.shell.setMatrixAt(k, s.shell.matrixWorld);
+    eggBits.shell.setColorAt(k, hit ? HIT : SKIN);
+    for (let j = 0; j < 2; j++) {
+      eggBits.eyes.setMatrixAt(k * 2 + j, s.eyes[j].matrixWorld);
+      eggBits.cheeks.setMatrixAt(k * 2 + j, s.cheeks[j].matrixWorld);
+    }
+    if (v.helmetLv <= 0) {
+      const h = drawn.hats++;
+      eggBits.cap.setMatrixAt(h, s.cap.matrixWorld);
+      eggBits.band.setMatrixAt(h, s.band.matrixWorld);
+      eggBits.pom.setMatrixAt(h, s.pom.matrixWorld);
+      for (const im of [eggBits.cap, eggBits.band, eggBits.pom]) im.setColorAt(h, hat);
+    }
+    if (v.shadow.visible) eggBits.shadow.setMatrixAt(drawn.shadows++, v.shadow.matrixWorld);
+    if (v.glider.visible) {
+      const g = drawn.gliders++;
+      eggBits.canopy.setMatrixAt(g, s.canopy.matrixWorld);
+      eggBits.canopy.setColorAt(g, hat);
+      eggBits.knob.setMatrixAt(g, s.knob.matrixWorld);
+    }
+  }
 
   // the aim line from your gun, and where you'll land while gliding
   const aimLine = new THREE.Mesh(G.plane, M.aim);
@@ -2167,6 +2358,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   // Loot on the ground.
 
   const lootViews = new Map<number, LootView>();
+  /** What a piece of loot looks like, as a key: the same key, the same model. */
+  const lootKey = (def: LootDef) => [def.kind, 'w' in def ? def.w : '', 'r' in def ? def.r : '', 'a' in def ? def.a : '', 'lv' in def ? def.lv : ''].join(':');
   function lootModel(def: LootDef): T.Object3D {
     const g = new THREE.Group();
     switch (def.kind) {
@@ -2251,7 +2444,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         for (let i = 0; i < 3; i++) add(g, G.box, M.wood, 0, i * 0.13 - 0.1, (i - 1) * 0.06, 0.7, 0.11, 0.2).rotation.y = i * 0.4;
         break;
     }
-    return g;
+    return bake(lootKey(def), g);
   }
   function glowFor(def: LootDef) {
     switch (def.kind) {
@@ -2425,7 +2618,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   function syncEgg(v: EggView, f: Fighter, dt: number, clock: number, focus: boolean, hidden: boolean) {
     const shown = f.phase !== 'out' && f.phase !== 'bus' && !hidden;
     v.root.visible = shown;
-    if (!shown) return;
+    if (!shown) return false;
     // wading through a pond sinks an egg to its middle
     v.root.position.set(f.x, f.y - (f.wet && f.phase === 'ground' ? 0.45 : 0), f.z);
     v.body.rotation.y = f.aim;
@@ -2474,7 +2667,6 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         v.body.add(v.helmet);
       }
       v.helmetLv = f.helmet;
-      for (const o of v.hat) o.visible = f.helmet <= 0;
     }
     if (v.vestLv !== f.vest) {
       if (v.vest) v.body.remove(v.vest);
@@ -2485,10 +2677,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       }
       v.vestLv = f.vest;
     }
-    // flash red when hit; healing, shield and coffee show while in use
-    const hit = f.hitT > 0;
-    v.skin.emissive.setHex(hit ? 0xff3b30 : 0x000000);
-    v.skin.emissiveIntensity = hit ? 0.55 : 0;
+    // healing, shield and coffee show while in use
     const flags = f.kind === 'remote' ? f.show.flags : 0;
     const using =
       f.kind === 'remote'
@@ -2521,6 +2710,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       v.ring.scale.setScalar(0.85 - ((clock * 1.4) % 1) * 0.25);
     }
     v.ghost.visible = focus && f.phase === 'ground';
+    return true;
   }
 
   function syncTosses(m: Match, clock: number) {
@@ -2794,14 +2984,30 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         beamMat.opacity = 0.16 + Math.sin(clock * 3) * 0.06;
       }
 
-      // eggs (peeking in through a door shows only who the doorway lets you see)
+      // eggs in view (peeking in through a door shows only who the doorway lets you see); one up high shows nearer the
+      // top of the screen than the ground under it
+      const eggN = dist * FRAME_N + 6;
+      const eggS = dist * FRAME_S + 6;
+      const eggW = dist * FRAME_W * aspect + 6;
+      drawn.eggs = drawn.hats = drawn.shadows = drawn.gliders = 0;
       m.fighters.forEach((f, i) => {
         const v = eggs[i];
         if (!v) return;
         const isFocus = i === focusId;
-        const walled = peek >= 0 && !!focus && f.inside === peek && !clearLine(m, focus.x, focus.z, f.x, f.z);
-        syncEgg(v, f, dt, clock, isFocus, !isFocus && (concealed(m, f, focus) || walled));
+        const inView = Math.abs(f.x - cam.x) < eggW && f.z - cam.z > -eggN - f.y && f.z - cam.z < eggS;
+        const walled = inView && peek >= 0 && !!focus && f.inside === peek && !clearLine(m, focus.x, focus.z, f.x, f.z);
+        // flash red when hit
+        if (syncEgg(v, f, dt, clock, isFocus, !isFocus && (!inView || concealed(m, f, focus) || walled))) placeEgg(v, f.hitT > 0, hatColors[i]);
       });
+      eggBits.shell.count = drawn.eggs;
+      eggBits.eyes.count = eggBits.cheeks.count = drawn.eggs * 2;
+      eggBits.cap.count = eggBits.band.count = eggBits.pom.count = drawn.hats;
+      eggBits.shadow.count = drawn.shadows;
+      eggBits.canopy.count = eggBits.knob.count = drawn.gliders;
+      for (const im of Object.values(eggBits)) {
+        im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) im.instanceColor.needsUpdate = true;
+      }
       syncTosses(m, clock);
       syncZones(m, clock, focus);
 

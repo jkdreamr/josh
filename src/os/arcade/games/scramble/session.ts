@@ -172,7 +172,7 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
  * one). The host also takes out the eggs of people who have left (`present` is the seats in the room now) or who
  * have stopped playing: gone quiet, or still up in the air long after everyone else has landed. `clock` is wall time.
  */
-export function tick(s: Session, m: Match, me: Me, present: number[], clock: number): { d: object; fast: boolean }[] {
+export function tick(s: Session, m: Match, me: Me, present: number[], clock: number): { d: object; fast: boolean; to?: number }[] {
   if (!s.synced) return [];
   s.ticks++;
   // most go on the fast channel, which may drop one; every fifth on the reliable one

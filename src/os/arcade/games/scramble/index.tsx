@@ -51,6 +51,8 @@ const fillOptions = [
   ['fill', 'Fill to 50'],
   ['none', 'Room Bots Only'],
 ] as const;
+/** Name tags shown at once at most, the nearest eggs' (fifty would bury the screen). */
+const TAGS = 12;
 /** The host gives everyone a moment to get its first packet before the countdown. */
 const HOST_LEAD = 1.2;
 const STICK_R = 52;
@@ -975,16 +977,24 @@ function Play({ mode }: { mode: Mode }) {
     }
   }
 
-  /** Name tags and damage numbers, moved straight on the DOM. */
+  /** Name tags (the nearest TAGS of them) and damage numbers, moved straight on the DOM. */
   function placeOverlays(m: Match, v: View, dt: number, focus: number) {
     const eye = m.fighters[focus];
+    const near: [number, Fighter][] = [];
+    for (const f of m.fighters) {
+      if (!eye || f.id === focus || (f.phase !== 'ground' && f.phase !== 'drop')) continue;
+      const d = Math.hypot(f.x - eye.x, f.z - eye.z);
+      if (d < 40 && (f.inside < 0 || f.inside === eye.inside) && !concealed(m, f, eye)) near.push([d, f]);
+    }
+    near.sort((a, b) => a[0] - b[0]);
+    const shown = new Set(near.slice(0, TAGS).map(([, f]) => f.id));
     for (const f of m.fighters) {
       const tag = tags.current.get(f.id);
       if (!tag) continue;
-      const show = f.id !== focus && (f.phase === 'ground' || f.phase === 'drop') && !concealed(m, f, eye) && !!eye && Math.hypot(f.x - eye.x, f.z - eye.z) < 40 && (f.inside < 0 || f.inside === eye.inside);
-      const at = show ? v.project(f.x, f.y + 2.3, f.z) : null;
-      if (!at) tag.style.opacity = '0';
-      else {
+      const at = shown.has(f.id) ? v.project(f.x, f.y + 2.3, f.z) : null;
+      if (!at) {
+        if (tag.style.opacity !== '0') tag.style.opacity = '0';
+      } else {
         tag.style.opacity = '1';
         tag.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
       }
