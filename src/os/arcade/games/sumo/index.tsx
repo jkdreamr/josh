@@ -4,7 +4,7 @@ import type { GameProps } from '../../types';
 import { think } from './ai';
 import { CAR_COLORS, createScene, type View } from './scene';
 import { configOf, endOf, hostState, inputOf, parsePacket, type PackedCar } from './net';
-import { createWorld, matchWinner, step, takeoverDeparted, type CarConfig, type Input, type Level, type World } from './logic';
+import { createWorld, matchWinner, roundBanner, step, takeoverDeparted, type CarConfig, type Input, type Level, type World } from './logic';
 import { meta } from './meta';
 import './sumo.css';
 
@@ -89,6 +89,24 @@ function Stage() {
   const shell = useShell();
   const online = useOnline();
   const stage = useRef<{ key: string; mode: StageMode }>({ key: 'idle', mode: 'idle' });
+  useEffect(() => {
+    const el = shell.root.current;
+    if (!el || !shell.touch) return;
+    // Phone and iPad frames scale the whole screen down; --g-sumo-u scales text back up to its real size.
+    const measure = () => {
+      const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+      el.style.setProperty('--g-sumo-u', (k > 0.2 && k < 0.99 ? Math.min(2, 1 / k) : 1).toFixed(3));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+      el.style.removeProperty('--g-sumo-u');
+    };
+  }, [shell.root, shell.touch]);
   if (shell.status === 'ready') stage.current = { key: 'idle', mode: 'idle' };
   else if (shell.status === 'playing') {
     const key = online ? `online:${online.round}` : 'solo';
@@ -674,7 +692,7 @@ function Play({ mode }: { mode: StageMode }) {
   const centerText = hud.phase === 'count'
     ? `${Math.max(1, Math.ceil(hud.timer))}`
     : hud.phase === 'over'
-      ? current.roundWinner === null ? 'Draw, Go Again' : `${carName(current.roundWinner)} Takes the Round`
+      ? roundBanner(current.roundWinner === null ? null : carName(current.roundWinner))
       : '';
   const statusText = yourCar?.falling || yourCar?.out
     ? "You're in the Water"
@@ -784,7 +802,7 @@ function Play({ mode }: { mode: StageMode }) {
                 '--charge': `${Math.round(chargeFor(player) * 100)}%`,
                 backgroundColor: 'rgba(255, 255, 255, 0.88)',
                 backgroundImage: 'radial-gradient(circle at center, rgba(255, 255, 255, 0.9) 0 28px, transparent 29px), conic-gradient(#ffbd4b var(--charge), rgba(255, 255, 255, 0.88) 0%)',
-                fontSize: '14px',
+                fontSize: 'calc(14px * var(--g-sumo-u, 1))',
               } as CSSProperties}
               onPointerDown={(e) => setDash(e, true, player)}
               onPointerUp={(e) => setDash(e, false, player)}

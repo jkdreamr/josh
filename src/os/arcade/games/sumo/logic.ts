@@ -157,6 +157,11 @@ export function matchWinner(world: World): number | null {
   return index < 0 ? null : world.cars[index]?.id ?? null;
 }
 
+export function roundBanner(winner: string | null) {
+  if (winner === null) return 'Draw, Go Again';
+  return winner === 'You' ? 'You Take the Round' : `${winner} Takes the Round`;
+}
+
 export function takeoverDeparted(world: World, present: readonly number[], level: Level): number[] {
   const changed: number[] = [];
   for (const car of world.cars) {
