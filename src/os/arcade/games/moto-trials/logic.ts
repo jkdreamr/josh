@@ -28,6 +28,11 @@ export const SETTLE_BOTH = 0.1;
 export const SETTLE_ONE = 0.3;
 /** Shorter wheel touches are brushes: the jump keeps going. */
 export const BRUSH = 0.08;
+/** Or once a wheel is down with the chassis within ~30 degrees of that surface. */
+export const SETTLE_SQUARE = Math.cos((30 * Math.PI) / 180);
+/** While landing within ~60 degrees of the surface, spin dies off at this rate (1/s). */
+const LAND_SQUARE = Math.cos((60 * Math.PI) / 180);
+const LAND_DAMP = 40;
 /** Net rotation that earns a flip, so a slightly short but landed flip still counts. */
 export const FLIP_MIN = (300 * Math.PI) / 180;
 
@@ -155,7 +160,8 @@ function crash(run: Run, kind: 'head' | 'saw' | 'fell') {
 
 /**
  * Flip detection. Rotation counts from the moment both wheels leave the ground until the bike has settled:
- * both wheels down for SETTLE_BOTH, or one wheel rolling for SETTLE_ONE. Touches shorter than BRUSH (a wheel
+ * both wheels down for SETTLE_BOTH, one wheel rolling for SETTLE_ONE, or a wheel down with the chassis square
+ * to the surface (SETTLE_SQUARE). Touches shorter than BRUSH (a wheel
  * clipping a lip or a crest) never end the jump, and the pivot from the first wheel onto the second still
  * counts. A crash on the way down resets this in crash(), so only a ride away is credited.
  */
@@ -180,8 +186,13 @@ export function trackAir(run: Run, da: number, dt: number) {
   air.accum += da;
   air.touch += dt;
   air.both = fw && rw ? air.both + dt : 0;
+  // how square the chassis sits on the surface it touched (1 = flat on it)
+  const n = fw ? b.fw.n : b.rw.n;
+  const square = -Math.sin(b.a) * n.x + Math.cos(b.a) * n.y;
+  // touchdown soaks up leftover spin, so a nearly finished flip lands instead of bouncing into another turn
+  if (square > LAND_SQUARE) b.w *= Math.exp(-LAND_DAMP * dt);
   if (air.touch < BRUSH) return;
-  if (air.both < SETTLE_BOTH && air.touch < SETTLE_ONE) return;
+  if (air.both < SETTLE_BOTH && air.touch < SETTLE_ONE && square < SETTLE_SQUARE) return;
   // settled on the wheels; score flips for real airtime only
   if (air.time > 0.12) {
     const flips = flipsIn(air.accum);
