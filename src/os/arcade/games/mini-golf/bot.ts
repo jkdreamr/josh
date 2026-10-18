@@ -100,9 +100,9 @@ export function rng(seed: number) {
 }
 
 const NOISE: Record<Level, { a: number; p: number; pick: number }> = {
-  easy: { a: 0.17, p: 0.28, pick: 4 },
-  normal: { a: 0.11, p: 0.19, pick: 3 },
-  hard: { a: 0.07, p: 0.12, pick: 2 },
+  easy: { a: 0.21, p: 0.48, pick: 4 },
+  normal: { a: 0.13, p: 0.3, pick: 3 },
+  hard: { a: 0.09, p: 0.2, pick: 2 },
 };
 
 function score(h: Hole, from: Ball, end: Ball) {
@@ -122,7 +122,7 @@ export function* planner(h: Hole, ball: Ball, t: number, level: Level, seed: num
     return dev * 1.2 + p * 0.6;
   };
   const A = 56;
-  const powers = [0.15, 0.22, 0.3, 0.38, 0.47, 0.57, 0.68, 0.8, 0.92, 1];
+  const powers = [0.06, 0.1, 0.15, 0.22, 0.3, 0.38, 0.47, 0.57, 0.68, 0.8, 0.92, 1];
   for (let i = 0; i < A; i++) {
     const a = base + ((i / A) * 2 - 1) * Math.PI;
     for (const p of powers) tried.push({ s: score(h, ball, simulate(h, strike(ball, a, p, t))) + human(a, p), a, p });
@@ -134,7 +134,7 @@ export function* planner(h: Hole, ball: Ball, t: number, level: Level, seed: num
   for (const c of top) {
     for (let k = 0; k < 10; k++) {
       const a = c.a + (rand() - 0.5) * 0.08;
-      const p = Math.min(1, Math.max(0.08, c.p + (rand() - 0.5) * 0.08));
+      const p = Math.min(1, Math.max(0.04, c.p + (rand() - 0.5) * 0.06));
       tried.push({ s: score(h, ball, simulate(h, strike(ball, a, p, t))) + human(a, p), a, p });
     }
     yield;
@@ -145,7 +145,7 @@ export function* planner(h: Hole, ball: Ball, t: number, level: Level, seed: num
   const gauss = () => (rand() + rand() + rand() - 1.5) / 0.5;
   // Near-full putts are easy to max out by hand, so they wobble less.
   const slop = pick.p > 0.88 ? 0.25 : 1;
-  return { angle: pick.a + gauss() * n.a, power: Math.min(1, Math.max(0.06, pick.p * (1 + gauss() * n.p * slop))) };
+  return { angle: pick.a + gauss() * n.a, power: Math.min(1, Math.max(0.04, pick.p * (1 + gauss() * n.p * slop))) };
 }
 
 export function planNow(h: Hole, ball: Ball, t: number, level: Level, seed: number): Plan {
