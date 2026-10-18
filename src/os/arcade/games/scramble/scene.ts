@@ -51,6 +51,8 @@ const FRAME_S = Math.cos(TILT) - Math.sin(TILT) / Math.tan(TILT + HALF_FOV);
 const FRAME_W = (Math.sin(TILT) * Math.tan(HALF_FOV)) / (Math.sin(TILT) - Math.tan(HALF_FOV) * Math.cos(TILT));
 /** three's GreaterDepth constant, by value: three-lib.ts exports classes, not constants. */
 const GREATER_DEPTH = 6 as T.DepthModes;
+/** three's AdditiveBlending, by value, for things that glow. */
+const ADDITIVE = 2 as T.Blending;
 
 const QUADS = [
   [-1, -1],
@@ -80,10 +82,25 @@ const DRESS: Record<BuildingKind, { frame: number; porch: number; mat: number; a
   diner: { frame: 0xd64545, porch: 0xc9c3b5, mat: 0x2b2d33, awning: 0xd64545, edge: 0x3fb8af, trim: 0x3fb8af },
   mill: { frame: 0x6b4426, porch: 0xb98250, mat: 0x8a5a2b, awning: 0x7a4a2a, edge: 0xffcf4a, trim: 0xe9e1cf },
 };
+/** The stone footing along each kind's outer walls. */
+const FOOTINGS: Record<BuildingKind, number> = { house: 0x8f8a80, farm: 0x7d766c, shed: 0x6e6a62, warehouse: 0x6c747c, container: 0, ruin: 0, coop: 0xb08a4a, diner: 0x9aa3a8, mill: 0x8a8378 };
+/** Windows along each kind's outer walls: their size, how high their middle sits, how far apart, and shutters or not. */
+const WINDOWS: Partial<Record<BuildingKind, { w: number; h: number; y: number; gap: number; shutters: boolean }>> = {
+  house: { w: 1.1, h: 1, y: 1.65, gap: 3.4, shutters: true },
+  farm: { w: 1, h: 1, y: 1.8, gap: 4, shutters: true },
+  shed: { w: 0.8, h: 0.6, y: 1.9, gap: 6, shutters: false },
+  warehouse: { w: 2.2, h: 0.6, y: 3.4, gap: 5, shutters: false },
+  coop: { w: 0.7, h: 0.55, y: 1.9, gap: 3, shutters: false },
+  diner: { w: 2.2, h: 1.2, y: 1.7, gap: 3.4, shutters: false },
+  mill: { w: 0.7, h: 0.9, y: 3.6, gap: 4, shutters: false },
+};
+const SHUTTERS = [0x3f6f9e, 0x4f8a4a, 0xb0473a, 0x6b4f8a, 0x2f7a7a];
 /** Glow under a pickup, by how good it is (the rarity colors). */
 const USE_GLOW: Record<UseId, number> = { bandage: 1, medkit: 2, mini: 2, shield: 3, coffee: 4, smoothie: 3, tart: 4 };
 /** How many legendary things on the ground get a gold beam at once (there are rarely more than a handful). */
 const BEAMS = 40;
+/** Which way shadows fall along the ground, per meter of height (away from the sun, low in the south west). */
+const SUN = { x: 0.42, z: -0.32 };
 /** A flare climbs this high over this many seconds, then hangs there burning for a few more. */
 const FLARE_UP = { y: 15, rise: 2.4, burn: 4 };
 
@@ -311,6 +328,28 @@ function riverTexture(THREE: Three) {
   );
 }
 
+/** Window glass: sky blue, lighter at the top, with a bright diagonal shine across it. */
+function glassTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(32, 32, (g) => {
+      const grad = g.createLinearGradient(0, 0, 0, 32);
+      grad.addColorStop(0, '#d9f1ff');
+      grad.addColorStop(1, '#6fa9cf');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 32, 32);
+      g.fillStyle = 'rgba(255,255,255,0.7)';
+      g.beginPath();
+      g.moveTo(6, 32);
+      g.lineTo(14, 32);
+      g.lineTo(30, 0);
+      g.lineTo(22, 0);
+      g.closePath();
+      g.fill();
+    }),
+  );
+}
+
 /** Black and white tiles, for the diner's floor. */
 function checkTexture(THREE: Three) {
   return texture(
@@ -376,6 +415,160 @@ function ribbon(THREE: Three, pts: { x: number; z: number }[], half: number, y: 
   return g;
 }
 
+/**
+ * Square bands round the island: band k runs from `rings[k]` to `rings[k + 1]` meters out past `half`, at the heights
+ * and in the colors given for each ring. The sea's shallows and the beach's slope into it.
+ */
+function squareBands(THREE: Three, half: number, rings: { d: number; y: number; c: number }[]) {
+  const pos: number[] = [];
+  const col: number[] = [];
+  const c = new THREE.Color();
+  const corner = [
+    [-1, -1],
+    [1, -1],
+    [1, 1],
+    [-1, 1],
+  ];
+  const at = (k: number, i: number) => {
+    const r = rings[k];
+    const s = half + r.d;
+    c.setHex(r.c);
+    return { p: [corner[i % 4][0] * s, r.y, corner[i % 4][1] * s], c: [c.r, c.g, c.b] };
+  };
+  for (let k = 0; k + 1 < rings.length; k++)
+    for (let i = 0; i < 4; i++) {
+      // a trapezoid along one side, wound to face up
+      const a = at(k, i);
+      const b = at(k, i + 1);
+      const A = at(k + 1, i);
+      const B = at(k + 1, i + 1);
+      for (const v of [a, b, A, b, B, A]) {
+        pos.push(...v.p);
+        col.push(...v.c);
+      }
+    }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  // texture coordinates 0 to 1 across the island, so the sand's texture lines up with itself everywhere
+  const uv: number[] = [];
+  for (let i = 0; i < pos.length; i += 3) uv.push(pos[i] / (2 * HALF) + 0.5, 0.5 - pos[i + 2] / (2 * HALF));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A closed loop round a square `s` from the middle (starting and ending mid side), for ribbons that ring the island. */
+const squareLoop = (s: number) => [
+  { x: 0, z: -s },
+  { x: s, z: -s },
+  { x: s, z: s },
+  { x: -s, z: s },
+  { x: -s, z: -s },
+  { x: 0, z: -s },
+];
+
+/** Surf: white along u = 0 (the shore side) breaking up into lace toward u = 1, v along the shore. */
+function foamTexture(THREE: Three) {
+  const rnd = scatter(53);
+  const tex = texture(
+    THREE,
+    canvas(64, 256, (g) => {
+      for (let y = 0; y < 256; y += 2) {
+        const reach = 18 + Math.sin(y * 0.09) * 6 + Math.sin(y * 0.23 + 1) * 4 + rnd() * 5;
+        const grad = g.createLinearGradient(0, 0, reach + 14, 0);
+        grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+        grad.addColorStop(reach / (reach + 14), 'rgba(255,255,255,0.75)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = grad;
+        g.fillRect(0, y, reach + 14, 2);
+      }
+      // bubbles of lace past the line
+      for (let i = 0; i < 160; i++) {
+        g.fillStyle = `rgba(255,255,255,${0.25 + rnd() * 0.45})`;
+        g.beginPath();
+        g.arc(14 + rnd() * 40, rnd() * 256, 0.8 + rnd() * 1.8, 0, Math.PI * 2);
+        g.fill();
+      }
+    }),
+  );
+  tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+/** The grass's ragged edge over the sand: green from u = 0, giving out in tufts by u = 1. */
+function grassEdgeTexture(THREE: Three) {
+  const rnd = scatter(59);
+  const tex = texture(
+    THREE,
+    canvas(32, 128, (g) => {
+      for (let y = 0; y < 128; y++) {
+        const reach = 8 + Math.abs(Math.sin(y * 0.31)) * 10 + Math.sin(y * 0.11 + 2) * 4 + rnd() * 6;
+        g.fillStyle = '#6dab4f';
+        g.fillRect(0, y, reach, 1);
+        g.fillStyle = 'rgba(40,90,30,0.35)';
+        g.fillRect(Math.max(0, reach - 2), y, 2, 1);
+      }
+    }),
+  );
+  tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+/** Smooth value noise in 0..1 on a grid `cell` meters across, the same everywhere for a seed. */
+function valueNoise(seed: number, cell: number) {
+  const hash = (i: number, j: number) => {
+    let h = (Math.imul(i, 374761393) + Math.imul(j, 668265263) + Math.imul(seed, 2147483647)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  return (x: number, z: number) => {
+    const fx = x / cell;
+    const fz = z / cell;
+    const i = Math.floor(fx);
+    const j = Math.floor(fz);
+    const u = fx - i;
+    const v = fz - j;
+    const su = u * u * (3 - 2 * u);
+    const sv = v * v * (3 - 2 * v);
+    const a = hash(i, j) + (hash(i + 1, j) - hash(i, j)) * su;
+    const b = hash(i, j + 1) + (hash(i + 1, j + 1) - hash(i, j + 1)) * su;
+    return a + (b - a) * sv;
+  };
+}
+
+/** A line moved `d` to its left (negative: to its right), point by point. */
+function offsetLine(pts: { x: number; z: number }[], d: number) {
+  const n = pts.length;
+  return pts.map((p, i) => {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(n - 1, i + 1)];
+    const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    return { x: p.x - ((b.z - a.z) / l) * d, z: p.z + ((b.x - a.x) / l) * d };
+  });
+}
+
+/** Still water: pale over the shallows round the edge, deep blue in the middle, with glints of light. */
+function pondTexture(THREE: Three) {
+  const rnd = scatter(67);
+  return texture(
+    THREE,
+    canvas(128, 128, (g) => {
+      const grad = g.createRadialGradient(64, 64, 4, 64, 64, 64);
+      grad.addColorStop(0, '#2f86bd');
+      grad.addColorStop(0.6, '#3fa6d4');
+      grad.addColorStop(0.9, '#7fd2e8');
+      grad.addColorStop(1, '#a8e6ef');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 128, 128);
+      for (let i = 0; i < 26; i++) {
+        g.fillStyle = `rgba(255,255,255,${0.2 + rnd() * 0.35})`;
+        g.fillRect(20 + rnd() * 88, 20 + rnd() * 88, 3 + rnd() * 7, 1.2);
+      }
+    }),
+  );
+}
+
 /** A soft round glow, white in the middle and fading out (tinted by the material). */
 function glowTexture(THREE: Three) {
   return texture(
@@ -391,6 +584,63 @@ function glowTexture(THREE: Three) {
   );
 }
 
+/** A burst of light: a hot middle, a long spike along v and a short one across, for muzzle flashes and sparks. */
+function starTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      const grad = g.createRadialGradient(32, 32, 0, 32, 32, 30);
+      grad.addColorStop(0, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.25, 'rgba(255,240,200,0.8)');
+      grad.addColorStop(1, 'rgba(255,200,120,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
+      g.fillStyle = 'rgba(255,255,255,0.9)';
+      for (const [w, h] of [
+        [5, 62],
+        [3, 30],
+      ]) {
+        g.beginPath();
+        g.moveTo(32, 32 - h / 2);
+        g.lineTo(32 + w / 2, 32);
+        g.lineTo(32, 32 + h / 2);
+        g.lineTo(32 - w / 2, 32);
+        g.closePath();
+        g.fill();
+        g.beginPath();
+        g.moveTo(32 - h / 2, 32);
+        g.lineTo(32, 32 + w / 4);
+        g.lineTo(32 + h / 2, 32);
+        g.lineTo(32, 32 - w / 4);
+        g.closePath();
+        g.fill();
+      }
+    }),
+  );
+}
+
+/** A streak of light, clear at the tail (v = 1) and hot at the head (v = 0), soft at its sides. */
+function tracerTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(16, 64, (g) => {
+      const img = g.createImageData(16, 64);
+      for (let y = 0; y < 64; y++)
+        for (let x = 0; x < 16; x++) {
+          const i = (y * 16 + x) * 4;
+          const along = y / 63;
+          const across = 1 - Math.abs((x + 0.5) / 8 - 1);
+          const core = Math.pow(across, 3);
+          img.data[i] = 255;
+          img.data[i + 1] = Math.round(230 + 25 * core);
+          img.data[i + 2] = Math.round(150 + 105 * core);
+          img.data[i + 3] = Math.round(Math.pow(along, 1.6) * Math.pow(across, 1.5) * 255);
+        }
+      g.putImageData(img, 0, 0);
+    }),
+  );
+}
+
 function blobTexture(THREE: Three) {
   return texture(
     THREE,
@@ -400,6 +650,84 @@ function blobTexture(THREE: Three) {
       grad.addColorStop(1, 'rgba(0,0,0,0)');
       g.fillStyle = grad;
       g.fillRect(0, 0, 64, 64);
+    }),
+  );
+}
+
+/**
+ * A soft edged square of shade, darkest in the middle (stretched to fit whatever it lies under). As a strip (along a
+ * wall), it fades across v only, darkest along the middle line and falling off fast, like the shade where a wall meets
+ * the ground.
+ */
+function softSquareTexture(THREE: Three, strip = false) {
+  return texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      const img = g.createImageData(64, 64);
+      const edge = (t: number) => {
+        const k = Math.min(1, Math.min(t, 1 - t) / 0.32);
+        return k * k * (3 - 2 * k);
+      };
+      for (let y = 0; y < 64; y++)
+        for (let x = 0; x < 64; x++) {
+          const i = (y * 64 + x) * 4;
+          const u = (x + 0.5) / 64;
+          const v = (y + 0.5) / 64;
+          const across = 1 - Math.abs(2 * v - 1);
+          img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+          img.data[i + 3] = Math.round((strip ? across * across * Math.min(1, Math.min(u, 1 - u) / 0.04) : edge(u) * edge(v)) * 255);
+        }
+      g.putImageData(img, 0, 0);
+    }),
+  );
+}
+
+/**
+ * Cracks round an egg's shell, in white for the material to tint: the first few drawn solid, the rest half see
+ * through, so an alpha test of 0.7 shows the first and 0.3 shows them all. Drawn round its middle, below the hat.
+ */
+function crackTexture(THREE: Three) {
+  const rnd = scatter(61);
+  return texture(
+    THREE,
+    canvas(256, 128, (g) => {
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      const crack = (u: number, v: number, len: number, alpha: number, width: number) => {
+        g.strokeStyle = `rgba(255,255,255,${alpha})`;
+        g.lineWidth = width;
+        g.beginPath();
+        let x = u * 256;
+        let y = v;
+        g.moveTo(x, y);
+        const dir = rnd() > 0.5 ? 1 : -1;
+        for (let i = 0; i < len; i++) {
+          x += dir * (6 + rnd() * 8);
+          y += (i % 2 ? -1 : 1) * (3 + rnd() * 6);
+          g.lineTo(x, y);
+          // a short branch off some corners
+          if (rnd() < 0.3) {
+            g.moveTo(x, y);
+            g.lineTo(x + dir * (3 + rnd() * 5), y + (rnd() - 0.5) * 12);
+            g.moveTo(x, y);
+          }
+        }
+        g.stroke();
+      };
+      for (const [u, v] of [
+        [0.06, 66],
+        [0.4, 74],
+        [0.72, 62],
+      ])
+        crack(u, v, 7, 1, 3);
+      for (const [u, v] of [
+        [0.22, 84],
+        [0.55, 58],
+        [0.88, 80],
+        [0.32, 60],
+        [0.66, 88],
+      ])
+        crack(u, v, 6, 0.5, 2.4);
     }),
   );
 }
@@ -479,6 +807,43 @@ function mergeRoof(THREE: Three, parts: RoofPart[], tile: number, alongX: boolea
   return g;
 }
 
+/** Pieces in one material, each moved by its matrix, merged into one geometry: one draw call for them all. */
+function mergeParts(THREE: Three, parts: { g: T.BufferGeometry; m: T.Matrix4 }[]) {
+  let count = 0;
+  for (const p of parts) count += p.g.index ? p.g.index.count : (p.g.attributes.position as T.BufferAttribute).count;
+  const pos = new Float32Array(count * 3);
+  const nor = new Float32Array(count * 3);
+  const uv = new Float32Array(count * 2);
+  let at = 0;
+  for (const p of parts) {
+    const g = p.g.clone().applyMatrix4(p.m);
+    const P = g.attributes.position as T.BufferAttribute;
+    const N = g.attributes.normal as T.BufferAttribute;
+    const U = g.attributes.uv as T.BufferAttribute | undefined;
+    const n = g.index ? g.index.count : P.count;
+    for (let k = 0; k < n; k++) {
+      const i = g.index ? g.index.getX(k) : k;
+      pos[at * 3] = P.getX(i);
+      pos[at * 3 + 1] = P.getY(i);
+      pos[at * 3 + 2] = P.getZ(i);
+      nor[at * 3] = N.getX(i);
+      nor[at * 3 + 1] = N.getY(i);
+      nor[at * 3 + 2] = N.getZ(i);
+      if (U) {
+        uv[at * 2] = U.getX(i);
+        uv[at * 2 + 1] = U.getY(i);
+      }
+      at++;
+    }
+    g.dispose();
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return g;
+}
+
 /** A ring on the ground whose inner and outer edges move freely (the storm's tint and the next circle). */
 function freeRing(THREE: Three, segments: number) {
   const g = new THREE.BufferGeometry();
@@ -509,18 +874,26 @@ function freeRing(THREE: Three, segments: number) {
   };
 }
 
-type Particle = { mesh: T.Mesh; vx: number; vy: number; vz: number; life: number; max: number; spin: number; grav: number; size: number };
+/** A bit thrown by an effect: where it is, how it moves, how long it has left, and which kind of mesh draws it in what color. */
+type Particle = { x: number; y: number; z: number; rx: number; rz: number; vx: number; vy: number; vz: number; life: number; max: number; spin: number; grav: number; size: number; kind: number; color: T.Color };
 
-/** A model for something in hand: the group, the stripe in its rarity's color, and a minigun's barrels that spin. */
-type HeldModel = { group: T.Group; stripe: T.Mesh | null; spin: T.Object3D | null };
+/** A model for something in hand: the group, and a minigun's barrels that spin. */
+type HeldModel = { group: T.Group; spin: T.Object3D | null };
+
+/**
+ * Stand-ins (placed, never drawn) for what every egg has, which is drawn instanced across all of them: its shell (with
+ * its hands and party hat, which sit as it does), its face, its cracks, and its glider.
+ */
+type EggSlots = { shell: T.Object3D; face: T.Object3D; crack: T.Object3D };
 
 type EggView = {
   root: T.Group;
   body: T.Group;
-  skin: T.MeshLambertMaterial;
+  slots: EggSlots;
   hand: T.Group;
-  guns: Map<Held, HeldModel>;
-  shadow: T.Mesh;
+  /** What it has held, by weapon and rarity. */
+  guns: Map<string, HeldModel>;
+  shadow: T.Object3D;
   glider: T.Group;
   heal: T.Group;
   /** The two bars of the cross over the head while healing (gold for a golden egg tart). */
@@ -528,9 +901,7 @@ type EggView = {
   ring: T.Mesh;
   ghost: T.Mesh;
   backPan: T.Group;
-  /** The party hat, hidden under a helmet. */
-  hat: T.Mesh[];
-  /** The helmet and vest it wears, rebuilt when the level changes. */
+  /** The helmet and vest it wears (a helmet takes the party hat's place), rebuilt when the level changes. */
   helmet: T.Group | null;
   helmetLv: number;
   vest: T.Group | null;
@@ -539,6 +910,18 @@ type EggView = {
   swing: number;
   recoil: number;
   lean: number;
+  /** How cracked it shows (0 whole, 1 a few, 2 many). */
+  cracked: number;
+  /** A shield's shimmer round the egg when a hit lands on it, fading from 1. */
+  bubble: T.Mesh;
+  bubbleMat: T.ShaderMaterial;
+  shimmer: number;
+  /** Squash (below 0) and stretch, sprung back to 0, and how fast it's moving. */
+  sq: number;
+  sqV: number;
+  /** Meters walked since the last puff of dust, and seconds since the last ripple when wading. */
+  step: number;
+  ripple: number;
 };
 
 type LootView = { group: T.Group; model: T.Object3D; spin: number };
@@ -548,13 +931,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   if (!gl) return null;
   const map = m.map;
   const scene = new THREE.Scene();
-  const water = 0x3aa6d4;
+  const water = 0x2380c0;
   scene.background = new THREE.Color(water);
   scene.fog = new THREE.Fog(water, 160, 520);
   const camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 1200);
-  scene.add(new THREE.HemisphereLight(0xfff6e4, 0x5f7f45, 1.1));
-  const sun = new THREE.DirectionalLight(0xfff0d6, 1.35);
-  sun.position.set(-40, 90, 30);
+  // a warm afternoon sun from the south west, and a cool sky filling the shade, so lit and shaded sides read apart
+  scene.add(new THREE.HemisphereLight(0xd6ebff, 0x6f8748, 1.2));
+  const sun = new THREE.DirectionalLight(0xffe0b0, 1.6);
+  sun.position.set(SUN.x * -100, 100, SUN.z * -100);
   scene.add(sun);
   let width = 1;
   let height = 1;
@@ -660,6 +1044,33 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const ammoMat = Object.fromEntries(Object.entries(AMMO_COLORS).map(([k, c]) => [k, lambert(c)])) as Record<keyof typeof AMMO_COLORS, T.MeshLambertMaterial>;
   const ammoGlow = Object.fromEntries(Object.entries(AMMO_COLORS).map(([k, c]) => [k, basic(c, { transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide })])) as Record<keyof typeof AMMO_COLORS, T.MeshBasicMaterial>;
 
+  /**
+   * Leaves and grass sway in the wind, in the vertex shader (nothing moves on the CPU): each point leans by how far it
+   * stands above `base` (in the model's own units), a tree at a time for instanced meshes, a spot at a time otherwise.
+   */
+  const wind = { value: 0 };
+  const sway = <X extends T.Material>(x: X, base: number, amount: number) => {
+    x.onBeforeCompile = (shader) => {
+      shader.uniforms.uWind = wind;
+      shader.uniforms.uSwayBase = { value: base };
+      shader.uniforms.uSway = { value: amount };
+      shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nuniform float uWind;\nuniform float uSwayBase;\nuniform float uSway;').replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        #ifdef USE_INSTANCING
+          vec2 swayAt = vec2(instanceMatrix[3].x, instanceMatrix[3].z);
+        #else
+          vec2 swayAt = position.xz;
+        #endif
+        float swayK = max(0.0, position.y - uSwayBase) * uSway;
+        float gust = sin(uWind * 1.3 + swayAt.x * 0.21 + swayAt.y * 0.17);
+        transformed.x += (sin(uWind * 1.9 + swayAt.x * 0.37 + swayAt.y * 0.29) * 0.6 + gust * 0.5) * swayK;
+        transformed.z += sin(uWind * 1.6 + swayAt.y * 0.41 - swayAt.x * 0.23) * 0.45 * swayK;`,
+      );
+    };
+    return x;
+  };
+
   const add = (parent: T.Object3D, g: T.BufferGeometry, material: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
     const o = new THREE.Mesh(g, material);
     o.position.set(x, y, z);
@@ -667,31 +1078,152 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     parent.add(o);
     return o;
   };
+  /**
+   * A model built of many little meshes (what's in hand, helmets, vests, loot, the bus) merged into as few meshes as it
+   * can, worked out once for each `key` and shared: plain colored parts become one mesh colored by vertex (a glowing
+   * part keeps some of its glow in its color), and the rest (glass, glows, textures) one mesh a material. What's in
+   * `keep` (barrels that spin) stays as it is. `double` draws the plain parts two-sided.
+   */
+  const baked = new Map<string, { g: T.BufferGeometry; m: T.Material }[]>();
+  const partsMat = lambert(0xffffff, { vertexColors: true });
+  const partsMatDouble = lambert(0xffffff, { vertexColors: true, side: THREE.DoubleSide });
+  const relative = new THREE.Matrix4();
+  function bake<X extends T.Object3D>(key: string, root: X, keep: (T.Object3D | null)[] = [], double = false): X {
+    root.updateMatrixWorld(true);
+    relative.copy(root.matrixWorld).invert();
+    const kept = (o: T.Object3D) => {
+      for (let p: T.Object3D | null = o; p && p !== root; p = p.parent) if (keep.includes(p)) return true;
+      return false;
+    };
+    const meshes: T.Mesh[] = [];
+    root.traverse((o) => {
+      if ((o as T.Mesh).isMesh && !kept(o)) meshes.push(o as T.Mesh);
+    });
+    let parts = baked.get(key);
+    if (!parts) {
+      const c = new THREE.Color();
+      const glow = new THREE.Color();
+      const plain = new Map<T.Material, RoofPart[]>();
+      const by = new Map<T.Material, { g: T.BufferGeometry; m: T.Matrix4 }[]>();
+      for (const o of meshes) {
+        const x = o.material as T.MeshLambertMaterial;
+        const m = new THREE.Matrix4().multiplyMatrices(relative, o.matrixWorld);
+        if (x.isMeshLambertMaterial && !x.transparent && !x.map && !x.vertexColors && !Object.prototype.hasOwnProperty.call(x, 'onBeforeCompile')) {
+          const into = double || x.side === THREE.DoubleSide ? partsMatDouble : partsMat;
+          c.copy(x.color);
+          if (x.emissive) c.add(glow.copy(x.emissive).multiplyScalar(x.emissiveIntensity));
+          const list = plain.get(into) ?? [];
+          list.push({ g: o.geometry.clone().applyMatrix4(m), c: c.getHex() });
+          plain.set(into, list);
+        } else {
+          const list = by.get(x) ?? [];
+          list.push({ g: o.geometry, m });
+          by.set(x, list);
+        }
+      }
+      parts = [...[...plain].map(([m, list]) => ({ g: geo(mergeRoof(THREE, list, 1, true)), m })), ...[...by].map(([m, list]) => ({ g: geo(mergeParts(THREE, list)), m }))];
+      baked.set(key, parts);
+    }
+    for (const o of meshes) o.parent?.remove(o);
+    for (const p of parts) root.add(new THREE.Mesh(p.g, p.m));
+    return root;
+  }
 
   // ---------------------------------------------------------------------------------------------------------------
   // The island.
 
-  const sea = new THREE.Mesh(geo(new THREE.PlaneGeometry(2400, 2400)), lambert(water));
+  // the sea: turquoise over the shallows, deepening to blue away from the island, under the far haze
+  const sea = new THREE.Mesh(geo(new THREE.PlaneGeometry(2400, 2400)), basic(water));
   sea.rotation.x = -Math.PI / 2;
-  sea.position.y = -0.7;
+  sea.position.y = -0.74;
   scene.add(sea);
-  const shore = new THREE.Mesh(geo(new THREE.PlaneGeometry(2 * HALF + 14, 2 * HALF + 14)), basic(0x8fd3ee, { transparent: true, opacity: 0.6, depthWrite: false }));
-  shore.rotation.x = -Math.PI / 2;
-  shore.position.y = -0.62;
-  scene.add(shore);
+  const shallows = squareBands(THREE, HALF, [
+    { d: 0, y: -0.7, c: 0x9aeee6 },
+    { d: 6, y: -0.7, c: 0x6edbe2 },
+    { d: 16, y: -0.7, c: 0x48c2de },
+    { d: 34, y: -0.7, c: 0x33a8d6 },
+    { d: 70, y: -0.7, c: 0x2895cc },
+    { d: 140, y: -0.7, c: 0x2488c4 },
+    { d: 900, y: -0.7, c: water },
+  ]);
+  scene.add(new THREE.Mesh(geo(shallows), basic(0xffffff, { vertexColors: true })));
+  // the beach: a ring of sand round the grass (not a slab under it, which would fight the grass for the same depth
+  // from far up), running down into the water, darker where it's wet
   const sandTex = keep(sandTexture(THREE));
-  const block = new THREE.Mesh(geo(new THREE.BoxGeometry(2 * HALF, 1.3, 2 * HALF)), lambert(0xe9d7a6, { map: sandTex }));
-  block.position.y = -0.65;
-  scene.add(block);
-  const grass = new THREE.Mesh(geo(new THREE.PlaneGeometry(2 * (HALF - BEACH), 2 * (HALF - BEACH))), lambert(0xffffff, { map: keep(grassTexture(THREE)) }));
+  const beach = squareBands(THREE, HALF - BEACH, [
+    { d: 0, y: 0, c: 0xffffff },
+    { d: BEACH, y: 0, c: 0xffffff },
+    { d: BEACH + 2.2, y: -0.45, c: 0xf2e4c2 },
+    { d: BEACH + 3.4, y: -0.72, c: 0xc9b48c },
+    { d: BEACH + 6, y: -1.3, c: 0xa8987a },
+  ]);
+  scene.add(new THREE.Mesh(geo(beach), lambert(0xfff3dc, { map: sandTex, vertexColors: true })));
+  // surf along the waterline, and a wave line that rolls in to meet it
+  const foamTex = keep(foamTexture(THREE));
+  const surfMat = basic(0xffffff, { map: foamTex, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide });
+  const surf = new THREE.Mesh(geo(ribbon(THREE, squareLoop(HALF + 3.05), 1.4, -0.69, 26)), surfMat);
+  const waveTex = keep(foamTex.clone());
+  // wrapping round, so what shows behind the rolling line is the foam's clear far side
+  waveTex.wrapS = THREE.RepeatWrapping;
+  const waveMat = basic(0xffffff, { map: waveTex, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
+  const wave = new THREE.Mesh(geo(ribbon(THREE, squareLoop(HALF + 6), 3, -0.695, 34)), waveMat);
+  surf.renderOrder = 1;
+  wave.renderOrder = 1;
+  scene.add(surf, wave);
+  // the grass, in big soft patches of lusher and drier green, darker under the trees
+  const GRASS_HALF = HALF - BEACH;
+  const grassGeo = new THREE.PlaneGeometry(2 * GRASS_HALF, 2 * GRASS_HALF, 64, 64);
+  {
+    const p = grassGeo.attributes.position as T.BufferAttribute;
+    const cols = new Float32Array(p.count * 3);
+    const big = valueNoise(map.seed, 34);
+    const small = valueNoise(map.seed + 7, 11);
+    const dry = valueNoise(map.seed + 13, 52);
+    // trees by 10 m square, for the shade under them
+    const grid = new Map<number, { x: number; z: number }[]>();
+    const key = (x: number, z: number) => Math.floor(x / 10) * 4096 + Math.floor(z / 10);
+    for (const t of map.trees) {
+      const k = key(t.x, t.z);
+      if (!grid.has(k)) grid.set(k, []);
+      grid.get(k)!.push(t);
+    }
+    for (let i = 0; i < p.count; i++) {
+      // the plane lies in x, y before it's turned flat: its y is the island's -z
+      const x = p.getX(i);
+      const z = -p.getY(i);
+      const n = big(x, z) * 0.65 + small(x, z) * 0.35;
+      let shadeK = 0;
+      for (let gx = -1; gx <= 1; gx++)
+        for (let gz = -1; gz <= 1; gz++)
+          for (const t of grid.get(key(x + gx * 10, z + gz * 10)) ?? []) {
+            const d2 = (t.x - x) * (t.x - x) + (t.z - z) * (t.z - z);
+            if (d2 < 49) shadeK += 1 - d2 / 49;
+          }
+      const lush = Math.min(1, shadeK * 0.5);
+      const d = Math.max(0, dry(x, z) - 0.55) * 2.2;
+      const l = 0.84 + n * 0.3 - lush * 0.18;
+      cols[i * 3] = l * (1 + d * 0.16) * (1 - lush * 0.08);
+      cols[i * 3 + 1] = l * (1 + d * 0.03);
+      cols[i * 3 + 2] = l * (1 - d * 0.22) * (1 - lush * 0.04);
+    }
+    grassGeo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  }
+  const grass = new THREE.Mesh(geo(grassGeo), lambert(0xffffff, { map: keep(grassTexture(THREE)), vertexColors: true }));
   grass.rotation.x = -Math.PI / 2;
   grass.position.y = 0.005;
   scene.add(grass);
+  // its ragged edge over the sand
+  const lip = new THREE.Mesh(geo(ribbon(THREE, squareLoop(GRASS_HALF + 0.55), 0.55, 0.007, 4)), lambert(0xffffff, { map: keep(grassEdgeTexture(THREE)), transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+  scene.add(lip);
 
-  // ponds: a sandy rim, the water, and a few lily pads
-  const pondWater = lambert(0x4cb3dc, { transparent: true, opacity: 0.88, emissive: 0x0b3a52 });
+  // ponds: a sandy rim, the water (pale in the shallows, deep in the middle), a lapping white edge, and a few lily
+  // pads, some in flower
+  const pondWater = lambert(0xffffff, { map: keep(pondTexture(THREE)), transparent: true, opacity: 0.92, emissive: 0x0b3a52 });
   const rimMat = lambert(0xd8c690);
   const padMat = lambert(0x4f9a3c);
+  const bloomMat = lambert(0xff9cc8, { emissive: 0x3a1020 });
+  const lapMat = basic(0xffffff, { transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide });
+  const lapGeo = geo(new THREE.RingGeometry(0.93, 1, 64));
   for (const p of map.ponds) {
     const rim = new THREE.Mesh(G.bigDisc, rimMat);
     rim.rotation.x = -Math.PI / 2;
@@ -703,6 +1235,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     pool.position.set(p.x, 0.03, p.z);
     pool.scale.setScalar(p.r);
     scene.add(pool);
+    const lap = new THREE.Mesh(lapGeo, lapMat);
+    lap.rotation.x = -Math.PI / 2;
+    lap.position.set(p.x, 0.036, p.z);
+    lap.scale.setScalar(p.r);
+    scene.add(lap);
     const rnd = scatter(Math.round(p.x * 31 + p.z * 7) >>> 0);
     for (let i = 0; i < 4; i++) {
       const a = rnd() * Math.PI * 2;
@@ -712,6 +1249,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       pad.position.set(p.x + Math.cos(a) * d, 0.05, p.z + Math.sin(a) * d);
       pad.scale.setScalar(0.45 + rnd() * 0.3);
       scene.add(pad);
+      if (i % 2 === 0) add(scene, G.lowBall, bloomMat, pad.position.x + 0.1, 0.12, pad.position.z - 0.05, 0.16, 0.12, 0.16);
     }
   }
 
@@ -730,7 +1268,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
   const shade = (rnd: () => number, base: number, spread: number) => color.setHex(base).offsetHSL((rnd() - 0.5) * spread * 0.2, 0, (rnd() - 0.5) * spread * 0.2);
-  const stalks = many(G.stalk, lambert(0xffffff, { flatShading: true }), stalkSpots.length);
+  const stalks = many(G.stalk, sway(lambert(0xffffff, { flatShading: true }), -1.15, 0.05), stalkSpots.length);
   stalkSpots.forEach((p, i) => {
     dummy.position.set(p.x, 1.15, p.z);
     dummy.rotation.set((cornRnd() - 0.5) * 0.16, cornRnd() * 6, (cornRnd() - 0.5) * 0.16);
@@ -756,6 +1294,19 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const flow = new THREE.Mesh(geo(ribbon(THREE, riverLine, RIVER_HALF + 0.1, 0.034, 9)), lambert(0xffffff, { map: riverTex, emissive: 0x0b3a52, side: THREE.DoubleSide }));
     scene.add(banks, flow);
   }
+  // white water along both banks, drifting downstream with the river (the far bank's strip runs backward, so its
+  // foam faces the shore too)
+  const riverFoam: T.Texture[] = [];
+  if (riverLine.length > 1)
+    for (const side of [1, -1]) {
+      const line = offsetLine(riverLine, side * (RIVER_HALF - 0.3));
+      if (side < 0) line.reverse();
+      const t = keep(foamTexture(THREE));
+      riverFoam.push(t);
+      const strip = new THREE.Mesh(geo(ribbon(THREE, line, 0.55, 0.037, 7)), basic(0xffffff, { map: t, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide }));
+      strip.renderOrder = 1;
+      scene.add(strip);
+    }
 
   // buildings: a floor, walls, and at every doorway a frame, a porch with a lamp and an awning, so the ways in read
   // from the ground and from the sky. All but the ruins have a roof that lifts away while you're inside and thins
@@ -820,6 +1371,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const sails: T.Mesh[] = [];
   // door frames, porches, mats, paving and container doors, all one instanced mesh; lamps another
   const bits: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number; c: number }[] = [];
+  // wall caps, footings, window frames, sills and shutters (one instanced mesh), and the glass (another)
+  const trims: Part[] = [];
+  const panes: Part[] = [];
   const lamps: { x: number; y: number; z: number; sx: number; sz: number }[] = [];
   map.buildings.forEach((b, bi) => {
     const floorMat =
@@ -842,14 +1396,40 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     floor.position.set(b.x, 0.02, b.z);
     floor.scale.set(b.w, b.d, 1);
     scene.add(floor);
+    const dress = DRESS[b.kind];
     for (const w of b.walls) {
       dummy.position.set(w.x, b.h / 2, w.z);
       dummy.rotation.set(0, 0, 0);
       dummy.scale.set(w.hw * 2, b.h, w.hd * 2);
       dummy.updateMatrix();
       buildingWalls.setMatrixAt(wi, dummy.matrix);
-      buildingWalls.setColorAt(wi, wallColor(b, wallRnd));
+      const wc = wallColor(b, wallRnd).getHex();
+      buildingWalls.setColorAt(wi, color.setHex(wc));
       wi++;
+      // a cap along the top of every wall, a shade darker, so the rooms read from above with the roof off
+      trims.push({ x: w.x, y: b.h + 0.04, z: w.z, sx: w.hw * 2 + 0.06, sy: 0.1, sz: w.hd * 2 + 0.06, c: darker(wc, 0.82) });
+      if (b.kind === 'container') continue;
+      // the outside of the outer walls: a stone footing, and windows with sills (shutters on houses and farms)
+      const alongX = w.hw >= w.hd;
+      const off = alongX ? w.z - b.z : w.x - b.x;
+      if (Math.abs(off) < (alongX ? b.d : b.w) / 2 - WALL_T / 2 - 0.05) continue;
+      const out = Math.sign(off);
+      const len = 2 * (alongX ? w.hw : w.hd);
+      /** A box `u` along the wall from its middle and `o` out from its outer face, `sl` long and `so` deep. */
+      const face = (list: Part[], u: number, y: number, o: number, sl: number, sy: number, so: number, c: number) =>
+        list.push({ x: w.x + (alongX ? u : out * (WALL_T / 2 + o)), y, z: w.z + (alongX ? out * (WALL_T / 2 + o) : u), sx: alongX ? sl : so, sy, sz: alongX ? so : sl, c });
+      face(trims, 0, 0.17, 0, len + 0.04, 0.34, 0.12, b.kind === 'ruin' ? darker(wc, 0.8) : FOOTINGS[b.kind]);
+      const win = WINDOWS[b.kind];
+      if (!win || len < win.w + 1.4) continue;
+      const n = Math.max(1, Math.floor((len - 0.8) / win.gap));
+      for (let k = 0; k < n; k++) {
+        const u = (k - (n - 1) / 2) * ((len - 0.4) / n);
+        const y = Math.min(b.h - win.h / 2 - 0.4, win.y);
+        face(trims, u, y, 0.02, win.w + 0.2, win.h + 0.2, 0.06, dress.trim === dress.frame ? 0xf6f1e4 : dress.trim);
+        face(trims, u, y - win.h / 2 - 0.12, 0.06, win.w + 0.36, 0.1, 0.14, dress.trim === dress.frame ? 0xe0d8c4 : darker(dress.trim, 0.85));
+        face(panes, u, y, 0.06, win.w, win.h, 0.04, 0xffffff);
+        if (win.shutters) for (const side of [-1, 1]) face(trims, u + side * (win.w / 2 + 0.28), y, 0.04, 0.36, win.h + 0.1, 0.05, SHUTTERS[b.look % SHUTTERS.length]);
+      }
     }
 
     const s = DRESS[b.kind];
@@ -931,6 +1511,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       } else {
         piece(gableGeometry(THREE, alongX ? W : D, alongX ? D : W, rise), 0, 0.2, 0, rc, alongX ? 0 : Math.PI / 2);
         piece(new THREE.BoxGeometry(alongX ? W + 0.06 : 0.36, 0.16, alongX ? 0.36 : D + 0.06), 0, 0.2 + rise, 0, darker(rc, 0.62));
+        if (b.kind === 'house' || b.kind === 'farm') {
+          // a brick chimney through the back slope, with a cap
+          const along = (alongX ? W : D) * (b.look % 2 ? 0.28 : -0.28);
+          const across = -(alongX ? D : W) * 0.2;
+          const h = rise * 0.6 + 0.9;
+          const [cx, cz] = alongX ? [along, across] : [across, along];
+          piece(new THREE.BoxGeometry(0.7, h, 0.7), cx, 0.2 + h / 2, cz, 0xa4553a);
+          piece(new THREE.BoxGeometry(0.86, 0.14, 0.86), cx, 0.2 + h, cz, 0x5a5550);
+        }
       }
       // a long vent along a warehouse's ridge
       if (b.kind === 'warehouse') piece(new THREE.BoxGeometry(alongX ? W * 0.7 : 1.3, 0.36, alongX ? 1.3 : D * 0.7), 0, 0.3 + rise, 0, 0xd5dbe0);
@@ -1024,14 +1613,33 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     doorLamps.setMatrixAt(i, dummy.matrix);
   });
   scene.add(doorBits, doorLamps);
+  const trimMesh = many(G.box, lambert(0xffffff), trims.length);
+  trims.forEach((p, i) => {
+    dummy.position.set(p.x, p.y, p.z);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(p.sx, p.sy, p.sz);
+    dummy.updateMatrix();
+    trimMesh.setMatrixAt(i, dummy.matrix);
+    trimMesh.setColorAt(i, color.setHex(p.c));
+  });
+  // glass catches the sky: pale blue with a bright diagonal shine
+  const paneMesh = many(G.box, lambert(0xffffff, { map: keep(glassTexture(THREE)), emissive: 0x1d3a52 }), panes.length);
+  panes.forEach((p, i) => {
+    dummy.position.set(p.x, p.y, p.z);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(p.sx, p.sy, p.sz);
+    dummy.updateMatrix();
+    paneMesh.setMatrixAt(i, dummy.matrix);
+  });
+  scene.add(trimMesh, paneMesh);
 
   // trees: oaks (a trunk and two round crowns), pines (two cones), birches (a white trunk with dark marks and a pale
   // narrow crown) and fruit trees (one round crown hung with fruit)
   const treeRnd = scatter(3);
   const count = (k: string) => map.trees.filter((t) => t.kind === k).length;
   const trunks = many(geo(new THREE.CylinderGeometry(0.32, 0.48, 1, 7)), lambert(0xffffff), map.trees.length);
-  const crowns = many(G.lowBall, lambert(0xffffff, { flatShading: true }), count('oak') * 2 + count('birch') * 2 + count('fruit'));
-  const cones = many(G.pine, lambert(0xffffff, { flatShading: true }), count('pine') * 2);
+  const crowns = many(G.lowBall, sway(lambert(0xffffff, { flatShading: true }), -0.6, 0.05), count('oak') * 2 + count('birch') * 2 + count('fruit'));
+  const cones = many(G.pine, sway(lambert(0xffffff, { flatShading: true }), -0.5, 0.07), count('pine') * 2);
   const marks = many(G.box, lambert(0x2b2d33), count('birch') * 3);
   const FRUIT = 6;
   const fruits = many(geo(new THREE.SphereGeometry(1, 5, 3)), lambert(0xffffff, { emissive: 0x220800 }), count('fruit') * FRUIT);
@@ -1122,7 +1730,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   scene.add(rocks);
 
   const bushRnd = scatter(9);
-  const bushes = many(geo(new THREE.SphereGeometry(1, 9, 7)), lambert(0xffffff, { flatShading: true }), map.bushes.length);
+  const bushes = many(geo(new THREE.SphereGeometry(1, 9, 7)), sway(lambert(0xffffff, { flatShading: true }), -0.4, 0.035), map.bushes.length);
   map.bushes.forEach((b, i) => {
     dummy.position.set(b.x, 0.95, b.z);
     dummy.rotation.set(0, bushRnd() * 6, 0);
@@ -1227,12 +1835,31 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const supplyMat = lambert(0xffffff, { map: keep(supplyTexture(THREE)) });
   const supplyOpen = lambert(0x50607a);
   const beamMat = basic(0x7fc4ff, { transparent: true, opacity: 0.22, depthWrite: false });
+  /** A balloon in two colors of stripe, top to bottom. */
+  const stripedBall = (a: number, b: number) => {
+    const g = new THREE.SphereGeometry(1, 16, 12).toNonIndexed();
+    const p = g.attributes.position as T.BufferAttribute;
+    const cols = new Float32Array(p.count * 3);
+    const ca = new THREE.Color(a);
+    const cb = new THREE.Color(b);
+    for (let i = 0; i < p.count; i += 3) {
+      // the stripe each triangle falls in, by the angle round to its middle
+      const x = p.getX(i) + p.getX(i + 1) + p.getX(i + 2);
+      const z = p.getZ(i) + p.getZ(i + 1) + p.getZ(i + 2);
+      const c = Math.floor(((Math.atan2(z, x) + Math.PI) / (Math.PI * 2)) * 16) % 2 ? cb : ca;
+      for (let k = 0; k < 3; k++) cols.set([c.r, c.g, c.b], (i + k) * 3);
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return geo(g);
+  };
+  const stripes = lambert(0xffffff, { vertexColors: true });
+  const supplyBalloon = stripedBall(0xff5a5a, 0xfff3e6);
   const supplies = [...map.drops, ...map.flares].map((id) => {
     const c = map.containers[id];
     const group = new THREE.Group();
     const box = add(group, G.box, supplyMat, 0, SUPPLY_HALF, 0, SUPPLY_HALF * 2, SUPPLY_HALF * 2, SUPPLY_HALF * 2);
     const balloon = new THREE.Group();
-    add(balloon, G.ball, lambert(0xff5a5a), 0, 6, 0, 1.7, 2, 1.7);
+    add(balloon, supplyBalloon, stripes, 0, 6, 0, 1.7, 2, 1.7);
     add(balloon, G.ball, M.white, 0, 6, 0, 1.72, 0.35, 1.72);
     for (const [x, z] of [
       [-0.8, -0.8],
@@ -1537,7 +2164,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     }
   }
   const decor = new THREE.Group();
-  const decorMat = lambert(0xffffff, { vertexColors: true, flatShading: true, side: THREE.DoubleSide });
+  const decorMat = sway(lambert(0xffffff, { vertexColors: true, flatShading: true, side: THREE.DoubleSide }), 0.05, 0.16);
   decorPos.forEach((p, k) => {
     if (!p.length) return;
     const g = geo(new THREE.BufferGeometry());
@@ -1555,7 +2182,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   // lamp posts: a slim pole, a collar and a glowing bulb on top
   const poles = many(G.cyl, lambert(0x5d6670), map.lamps.length);
   const lampCaps = many(G.cyl, lambert(0x2b2d33), map.lamps.length);
-  const lampHeads = many(G.ball, basic(0xfff0b0), map.lamps.length);
+  const lampHeads = many(G.lowBall, basic(0xfff0b0), map.lamps.length);
   map.lamps.forEach((p, i) => {
     put(poles, i, p.x, 1.5, p.z, LAMP_R * 0.8, 3, LAMP_R * 0.8);
     put(lampCaps, i, p.x, 3.05, p.z, 0.17, 0.16, 0.17);
@@ -1777,15 +2404,130 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   placeKitchen(0);
 
   // ---------------------------------------------------------------------------------------------------------------
+  // Contact shadows: soft dark pools under everything that stands on the ground, nudged away from the sun so they all
+  // fall the same way, and along both sides of every wall (shade where walls meet the floor). Two instanced meshes,
+  // round and square; a crate's or barrel's goes when it breaks.
+
+  type Shade = { x: number; z: number; sx: number; sz: number; ry: number; id: number };
+  const roundShades: Shade[] = [];
+  const squareShades: Shade[] = [];
+  const wallShades: Shade[] = [];
+  const shadeRound = (x: number, z: number, r: number, up: number, id = -1) => roundShades.push({ x: x + SUN.x * up, z: z + SUN.z * up, sx: r * 2, sz: r * 2, ry: 0, id });
+  const shadeBox = (x: number, z: number, hw: number, hd: number, up: number, edge: number, id = -1, ry = 0) => squareShades.push({ x: x + SUN.x * up, z: z + SUN.z * up, sx: hw * 2 + edge * 2, sz: hd * 2 + edge * 2, ry, id });
+  for (const t of map.trees) shadeRound(t.x, t.z, t.kind === 'pine' ? 1.9 : t.kind === 'birch' ? 1.5 : 2.1, 1.4);
+  for (const b of map.bushes) shadeRound(b.x, b.z, BUSH_R * 1.25, 0.5);
+  for (const r of map.rocks) shadeRound(r.x, r.z, r.r * 1.35, r.r * 0.5);
+  for (const s of map.stumps) shadeRound(s.x, s.z, s.r * 1.5, 0.2);
+  for (const c of map.fires) shadeRound(c.x, c.z, CAMP.pit + 0.5, 0);
+  for (const p of map.lamps) shadeRound(p.x, p.z, 0.45, 0.2);
+  // a wall's strip runs its length (texture u), soft across it
+  for (const b of map.buildings)
+    for (const w of b.walls) {
+      const alongX = w.hw >= w.hd;
+      wallShades.push({ x: w.x + SUN.x * 0.45, z: w.z + SUN.z * 0.45, sx: 2 * (alongX ? w.hw : w.hd) + 0.3, sz: 2 * (alongX ? w.hd : w.hw) + 2.4, ry: alongX ? 0 : Math.PI / 2, id: -1 });
+    }
+  for (const c of map.cars) shadeBox(c.x, c.z, c.hw, c.hd, 0.5, 0.8);
+  for (const l of map.logs) shadeBox(l.x, l.z, l.hw, l.hd, 0.2, 0.3);
+  for (const t of map.tables) shadeBox(t.x, t.z, t.alongX ? TABLE_HW : TABLE_HD, t.alongX ? TABLE_HD : TABLE_HW, 0.4, 0.25);
+  for (const c of map.containers) {
+    if (c.kind === 'crate') shadeBox(c.x, c.z, CRATE_HALF, CRATE_HALF, 0.5, 0.5, c.id);
+    else if (c.kind === 'hay') shadeBox(c.x, c.z, HAY_HW, HAY_HD, 0.4, 0.3, c.id);
+    else if (c.kind === 'chest') shadeBox(c.x, c.z, CHEST_HW, CHEST_HD, 0.3, 0.25);
+    else if (c.kind === 'barrel') shadeRound(c.x, c.z, BARREL_R * 1.5, 0.4, c.id);
+  }
+  const shadeMat = (t: T.Texture, opacity: number) => basic(0x10182a, { map: t, transparent: true, opacity, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+  const roundShade = many(G.plane, shadeMat(blob, 0.85), roundShades.length);
+  const squareShade = many(G.plane, shadeMat(keep(softSquareTexture(THREE)), 0.5), squareShades.length);
+  const wallShade = many(G.plane, shadeMat(keep(softSquareTexture(THREE, true)), 0.5), wallShades.length);
+  const placeShade = (im: T.InstancedMesh, s: Shade, i: number, on: boolean) => {
+    dummy.position.set(s.x, 0.028, s.z);
+    dummy.rotation.set(-Math.PI / 2, 0, s.ry);
+    dummy.scale.set(on ? s.sx : 0, on ? s.sz : 0, 1);
+    dummy.updateMatrix();
+    im.setMatrixAt(i, dummy.matrix);
+  };
+  roundShades.forEach((s, i) => placeShade(roundShade, s, i, true));
+  squareShades.forEach((s, i) => placeShade(squareShade, s, i, true));
+  wallShades.forEach((s, i) => placeShade(wallShade, s, i, true));
+  roundShade.renderOrder = 1;
+  squareShade.renderOrder = 1;
+  wallShade.renderOrder = 1;
+  scene.add(roundShade, squareShade, wallShade);
+  /** The shadows of things that break, and whether each is drawn. */
+  const breakable = [
+    ...roundShades.map((s, i) => ({ s, i, im: roundShade, on: true })),
+    ...squareShades.map((s, i) => ({ s, i, im: squareShade, on: true })),
+  ].filter((x) => x.s.id >= 0);
+  const placeShades = () => {
+    for (const b of breakable) {
+      const on = !m.opened[b.s.id];
+      if (on === b.on) continue;
+      b.on = on;
+      placeShade(b.im, b.s, b.i, on);
+      b.im.instanceMatrix.needsUpdate = true;
+    }
+  };
+
+  // ---------------------------------------------------------------------------------------------------------------
   // The storm: a purple wall, a tint over everything outside it, and a white ring where it is headed.
 
-  const stormWall = new THREE.Mesh(geo(new THREE.CylinderGeometry(1, 1, 90, 160, 1, true)), basic(0x8a4dff, { transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }));
+  // the wall is a curtain of swirling purple, thickest and glowing pink where it meets the ground, thinning upward
+  const stormUniforms = { uTime: wind, uR: { value: 100 } };
+  const stormWall = new THREE.Mesh(
+    geo(new THREE.CylinderGeometry(1, 1, 90, 160, 1, true)),
+    mat(
+      new THREE.ShaderMaterial({
+        uniforms: stormUniforms,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        vertexShader: `
+          varying vec2 vUv;
+          varying float vY;
+          void main() {
+            vUv = uv;
+            vec4 wp = modelMatrix * vec4(position, 1.0);
+            vY = wp.y;
+            gl_Position = projectionMatrix * viewMatrix * wp;
+          }`,
+        fragmentShader: `
+          uniform float uTime;
+          uniform float uR;
+          varying vec2 vUv;
+          varying float vY;
+          void main() {
+            // meters round the wall, so the swirls keep their size as it shrinks
+            float s = vUv.x * uR * 6.2832;
+            float h = clamp(vY / 46.0, 0.0, 1.0);
+            float a1 = sin(s * 0.55 + vY * 0.32 - uTime * 1.7) * 0.5 + 0.5;
+            float a2 = sin(s * 0.21 - vY * 0.18 + uTime * 0.8) * 0.5 + 0.5;
+            float a3 = sin(s * 1.3 + vY * 0.9 - uTime * 3.1) * 0.5 + 0.5;
+            float swirl = a1 * 0.5 + a2 * 0.35 + a3 * 0.15;
+            float foot = 1.0 - smoothstep(0.0, 3.0, vY);
+            vec3 deep = vec3(0.36, 0.16, 0.86);
+            vec3 light = vec3(0.70, 0.46, 1.0);
+            vec3 glow = vec3(1.0, 0.55, 0.95);
+            vec3 col = mix(deep, light, swirl) ;
+            col = mix(col, glow, foot * 0.75);
+            float a = (0.24 + swirl * 0.36) * pow(1.0 - h, 1.2) + foot * 0.4;
+            gl_FragColor = vec4(col, a);
+          }`,
+      }),
+    ),
+  );
   stormWall.position.y = 44;
   stormWall.renderOrder = 3;
   scene.add(stormWall);
+  // a bright seam along the ground where the storm begins
+  const seam = freeRing(THREE, 160);
+  geos.push(seam.geometry);
+  const seamMesh = new THREE.Mesh(seam.geometry, basic(0xe9a6ff, { transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }));
+  seamMesh.position.y = 0.13;
+  seamMesh.renderOrder = 2;
+  scene.add(seamMesh);
   const tint = freeRing(THREE, 160);
   geos.push(tint.geometry);
-  const stormTint = new THREE.Mesh(tint.geometry, basic(0x7a3cf0, { transparent: true, opacity: 0.26, depthWrite: false, side: THREE.DoubleSide }));
+  const stormTint = new THREE.Mesh(tint.geometry, basic(0x7a3cf0, { transparent: true, opacity: 0.36, depthWrite: false, side: THREE.DoubleSide }));
   stormTint.position.y = 0.12;
   stormTint.renderOrder = 2;
   scene.add(stormTint);
@@ -1811,7 +2553,12 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     [1.1, 2.6],
   ])
     add(bus, G.cyl, M.dark, x, -1.25, z, 0.55, 0.4, 0.55).rotation.z = Math.PI / 2;
-  add(bus, G.ball, lambert(0x8a4dff), 0, 8.4, 0, 3.2, 3.7, 3.2);
+  // a yellow band round it, a windshield and headlights up front
+  add(bus, G.box, lambert(0xffc83d), 0, -0.55, 0, 3.04, 0.26, 8.04);
+  add(bus, G.box, M.dark, 0, 0.35, 4.01, 2.5, 0.85, 0.06);
+  for (const side of [-1, 1]) add(bus, G.box, lambert(0xfff6c8, { emissive: 0x7a6a30 }), side * 1.05, -0.75, 4.02, 0.4, 0.26, 0.06);
+  const busBalloon = add(bus, stripedBall(0x8a4dff, 0xf4ecff), stripes, 0, 8.4, 0, 3.2, 3.7, 3.2);
+  bake('bus', bus, [busBalloon]);
   for (const [x, z] of [
     [-1.3, -3.6],
     [1.3, -3.6],
@@ -1861,7 +2608,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       add(g, G.ball, M.dark, 0, 0.82, 0, 0.09, 0.07, 0.09);
       for (const side of [-1, 1]) add(g, G.box, M.dark, side * 0.6, 0.42, 0, 0.14, 0.08, 0.3);
     }
-    return g;
+    return bake(`helmet:${lv}`, g, [], true);
   }
 
   /**
@@ -1882,7 +2629,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       // steel plates
       for (const y of [-0.2, 0.02, 0.24]) add(g, G.box, M.steel, 0, y, 0.67, 0.52, 0.17, 0.03);
     }
-    return g;
+    return bake(`vest:${lv}`, g, [], true);
   }
 
   /** A vest on the ground: an apron laid out flat, bib, skirt, neck loop and ties, with the same marks as when worn. */
@@ -1900,12 +2647,13 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     } else for (const y of [-0.26, -0.04, 0.26]) add(g, G.box, M.steel, 0, y, 0.035, y > 0 ? 0.36 : 0.6, 0.17, 0.03);
     // lying back, so its front faces up at the camera
     g.rotation.x = -1.1;
-    return g;
+    return bake(`apron:${lv}`, g, [], true);
   }
 
-  function gunModel(w: Held): HeldModel {
+  /** What's in hand, a gun's stripe in rarity `r`'s color (baked in, so a model for each rarity). */
+  function gunModel(w: Held, r = 0): HeldModel {
     const g = new THREE.Group();
-    let stripe: T.Mesh | null = null;
+    const tint = rarity[r] ?? rarity[0];
     let spin: T.Object3D | null = null;
     switch (w) {
       case 'spatula':
@@ -1968,7 +2716,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       case 'pistol':
         add(g, G.box, M.dark, 0, 0, 0.12, 0.12, 0.14, 0.42);
         add(g, G.box, M.dark, 0, -0.14, 0, 0.1, 0.22, 0.12);
-        stripe = add(g, G.box, rarity[0], 0, 0.08, 0.12, 0.13, 0.03, 0.34);
+        add(g, G.box, tint, 0, 0.08, 0.12, 0.13, 0.03, 0.34);
         break;
       case 'flare':
         // a stubby orange pistol with a wide mouth, the flare showing in it
@@ -1976,25 +2724,25 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         barrel(g, M.flare, 0, 0.01, 0.36, 0.1, 0.22);
         barrel(g, M.custard, 0, 0.01, 0.47, 0.07, 0.02);
         add(g, G.box, M.flare, 0, -0.15, -0.02, 0.1, 0.22, 0.12);
-        stripe = add(g, G.box, rarity[0], 0, 0.085, 0.06, 0.135, 0.03, 0.22);
+        add(g, G.box, tint, 0, 0.085, 0.06, 0.135, 0.03, 0.22);
         break;
       case 'revolver':
         barrel(g, M.metal, 0, 0.04, 0.36, 0.05, 0.5);
         barrel(g, M.dark, 0, 0.0, 0.08, 0.1, 0.16);
         add(g, G.box, M.wood, 0, -0.15, -0.04, 0.1, 0.24, 0.12);
-        stripe = add(g, G.box, rarity[0], 0, 0.1, 0.08, 0.06, 0.03, 0.2);
+        add(g, G.box, tint, 0, 0.1, 0.08, 0.06, 0.03, 0.2);
         break;
       case 'smg':
         add(g, G.box, M.dark, 0, 0, 0.18, 0.14, 0.17, 0.62);
         add(g, G.box, M.metal, 0, -0.18, 0.2, 0.08, 0.26, 0.1);
         add(g, G.box, M.dark, 0, -0.12, -0.06, 0.1, 0.2, 0.1);
-        stripe = add(g, G.box, rarity[0], 0, 0.1, 0.18, 0.15, 0.03, 0.5);
+        add(g, G.box, tint, 0, 0.1, 0.18, 0.15, 0.03, 0.5);
         break;
       case 'micro':
         add(g, G.box, M.dark, 0, 0, 0.12, 0.13, 0.16, 0.4);
         add(g, G.box, M.metal, 0, -0.2, 0.06, 0.07, 0.3, 0.08);
         barrel(g, M.metal, 0, 0.02, 0.38, 0.035, 0.16);
-        stripe = add(g, G.box, rarity[0], 0, 0.09, 0.12, 0.14, 0.03, 0.3);
+        add(g, G.box, tint, 0, 0.09, 0.12, 0.14, 0.03, 0.3);
         break;
       case 'hsmg':
         // chunky, with a fat green box of heavy rounds and a grip out front
@@ -2003,7 +2751,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         add(g, G.box, ammoMat.heavy, 0, -0.21, 0.2, 0.1, 0.3, 0.14);
         add(g, G.box, M.dark, 0, -0.14, 0.45, 0.07, 0.18, 0.07);
         add(g, G.box, M.dark, 0, -0.12, -0.08, 0.1, 0.2, 0.1);
-        stripe = add(g, G.box, rarity[0], 0, 0.115, 0.18, 0.18, 0.03, 0.5);
+        add(g, G.box, tint, 0, 0.115, 0.18, 0.18, 0.03, 0.5);
         break;
       case 'marksman':
         // long and tan, a scope on top and a short magazine
@@ -2011,33 +2759,33 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         barrel(g, M.dark, 0, 0.02, 0.92, 0.035, 0.42);
         barrel(g, M.dark, 0, 0.15, 0.3, 0.05, 0.34);
         add(g, G.box, M.dark, 0, -0.15, 0.32, 0.07, 0.16, 0.12);
-        stripe = add(g, G.box, rarity[0], 0, 0.085, 0.55, 0.13, 0.03, 0.34);
+        add(g, G.box, tint, 0, 0.085, 0.55, 0.13, 0.03, 0.34);
         break;
       case 'rifle':
         add(g, G.box, M.dark, 0, 0, 0.3, 0.12, 0.16, 1.05);
         add(g, G.box, M.metal, 0, -0.17, 0.3, 0.08, 0.24, 0.12);
         add(g, G.box, M.dark, 0, 0.14, 0.2, 0.06, 0.1, 0.3);
-        stripe = add(g, G.box, rarity[0], 0, 0.09, 0.45, 0.13, 0.03, 0.5);
+        add(g, G.box, tint, 0, 0.09, 0.45, 0.13, 0.03, 0.5);
         break;
       case 'burst':
         add(g, G.box, M.tan, 0, 0, 0.22, 0.14, 0.2, 0.78);
         barrel(g, M.dark, 0, 0.03, 0.72, 0.04, 0.3);
         add(g, G.box, M.dark, 0, 0.16, 0.25, 0.05, 0.08, 0.5);
         add(g, G.box, M.metal, 0, -0.16, 0.0, 0.08, 0.2, 0.12);
-        stripe = add(g, G.box, rarity[0], 0, 0.11, 0.35, 0.15, 0.03, 0.3);
+        add(g, G.box, tint, 0, 0.11, 0.35, 0.15, 0.03, 0.3);
         break;
       case 'scout':
         add(g, G.box, M.olive, 0, 0, 0.25, 0.11, 0.14, 0.9);
         barrel(g, M.metal, 0, 0.02, 0.85, 0.035, 0.4);
         barrel(g, M.dark, 0, 0.15, 0.25, 0.05, 0.3);
-        stripe = add(g, G.box, rarity[0], 0, 0.08, 0.05, 0.12, 0.03, 0.3);
+        add(g, G.box, tint, 0, 0.08, 0.05, 0.12, 0.03, 0.3);
         break;
       case 'lmg':
         add(g, G.box, M.dark, 0, 0, 0.3, 0.16, 0.2, 1.0);
         barrel(g, M.metal, 0, 0.03, 0.95, 0.05, 0.5);
         add(g, G.box, M.olive, 0, -0.2, 0.25, 0.2, 0.22, 0.26);
         add(g, G.box, M.metal, 0, -0.2, 0.95, 0.03, 0.3, 0.03).rotation.x = 0.4;
-        stripe = add(g, G.box, rarity[0], 0, 0.11, 0.35, 0.17, 0.03, 0.5);
+        add(g, G.box, tint, 0, 0.11, 0.35, 0.17, 0.03, 0.5);
         break;
       case 'minigun': {
         // a drum of a body, a carry handle, and six barrels that spin
@@ -2053,61 +2801,233 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         barrel(bundle, M.dark, 0, 0, 0.18, 0.11, 0.05);
         g.add(bundle);
         spin = bundle;
-        stripe = add(g, G.box, rarity[0], 0, 0.135, 0.02, 0.27, 0.03, 0.2);
+        add(g, G.box, tint, 0, 0.135, 0.02, 0.27, 0.03, 0.2);
         break;
       }
       case 'shotgun':
         add(g, G.box, M.wood, 0, -0.02, 0, 0.13, 0.16, 0.45);
         barrel(g, M.dark, 0, 0.03, 0.48, 0.07, 0.75);
-        stripe = add(g, G.box, rarity[0], 0, -0.06, 0.4, 0.12, 0.08, 0.28);
+        add(g, G.box, tint, 0, -0.06, 0.4, 0.12, 0.08, 0.28);
         break;
       case 'auto':
         add(g, G.box, M.dark, 0, 0, 0.15, 0.15, 0.18, 0.6);
         barrel(g, M.metal, 0, 0.03, 0.62, 0.06, 0.4);
         barrel(g, M.metal, 0, -0.18, 0.25, 0.14, 0.12).rotation.set(0, 0, Math.PI / 2);
-        stripe = add(g, G.box, rarity[0], 0, 0.1, 0.15, 0.16, 0.03, 0.4);
+        add(g, G.box, tint, 0, 0.1, 0.15, 0.16, 0.03, 0.4);
         break;
       case 'double':
         add(g, G.box, M.wood, 0, -0.03, 0, 0.13, 0.15, 0.42);
         barrel(g, M.dark, -0.045, 0.04, 0.5, 0.05, 0.72);
         barrel(g, M.dark, 0.045, 0.04, 0.5, 0.05, 0.72);
-        stripe = add(g, G.box, rarity[0], 0, -0.05, 0.3, 0.14, 0.06, 0.12);
+        add(g, G.box, tint, 0, -0.05, 0.3, 0.14, 0.06, 0.12);
         break;
       case 'sniper':
         add(g, G.box, M.dark, 0, 0, 0.2, 0.11, 0.14, 0.75);
         barrel(g, M.metal, 0, 0.02, 0.85, 0.035, 0.7);
         barrel(g, M.dark, 0, 0.16, 0.25, 0.06, 0.38);
-        stripe = add(g, G.box, rarity[0], 0, 0.08, 0.05, 0.12, 0.03, 0.3);
+        add(g, G.box, tint, 0, 0.08, 0.05, 0.12, 0.03, 0.3);
         break;
       case 'crossbow':
         add(g, G.box, M.wood, 0, 0, 0.2, 0.1, 0.12, 0.75);
         add(g, G.box, M.dark, 0, 0.02, 0.56, 0.9, 0.05, 0.06);
         add(g, G.box, M.bolt, 0, 0.08, 0.4, 0.03, 0.03, 0.7);
-        stripe = add(g, G.box, rarity[0], 0, -0.07, 0.1, 0.11, 0.04, 0.3);
+        add(g, G.box, tint, 0, -0.07, 0.1, 0.11, 0.04, 0.3);
         break;
       case 'launcher':
         barrel(g, M.launcher, 0, 0.05, 0.3, 0.17, 1.1);
         add(g, G.box, M.dark, 0, -0.16, 0.2, 0.08, 0.24, 0.12);
-        stripe = barrel(g, rarity[0], 0, 0.05, 0.75, 0.18, 0.12);
+        barrel(g, tint, 0, 0.05, 0.75, 0.18, 0.12);
         break;
     }
-    return { group: g, stripe, spin };
+    return { group: bake(`held:${w}:${isWeapon(w) ? r : 0}`, g, [spin]), spin };
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Tiles. What never changes once the island is built (trees, rocks, bushes, walls, roads, fences, furniture and the
+  // rest) is split into tiles of the island, each its own instanced mesh, so only the tiles in view are drawn. What
+  // changes as the match goes on (crates break, chests and fridges open, fires flicker, furniture shows as a roof
+  // lifts, shadows go with what breaks) stays as it is.
+
+  const moving = new Set<T.InstancedMesh>([crates, chestBase, chestLid, chestGlow, barrels, barrelBands, flames, fireGlow, fridgeBase, fridgeDoor, fridgeHandles, fridgeInside, bowls, tanks, seats, hay, roundShade, squareShade, ...furnished]);
+  const SPAN = 120;
+  for (const im of [...instanced]) {
+    if (moving.has(im) || !im.parent || !im.visible || im.count < 16) continue;
+    const tiles = new Map<number, number[]>();
+    for (let i = 0; i < im.count; i++) {
+      im.getMatrixAt(i, relative);
+      const k = Math.floor((relative.elements[12] + HALF + 60) / SPAN) * 100 + Math.floor((relative.elements[14] + HALF + 60) / SPAN);
+      const list = tiles.get(k);
+      if (list) list.push(i);
+      else tiles.set(k, [i]);
+    }
+    if (tiles.size < 2) continue;
+    for (const ids of tiles.values()) {
+      const t = many(im.geometry, im.material as T.Material, ids.length);
+      ids.forEach((i, j) => {
+        im.getMatrixAt(i, relative);
+        t.setMatrixAt(j, relative);
+        if (im.instanceColor) t.setColorAt(j, im.getColorAt(i, color));
+      });
+      t.position.copy(im.position);
+      t.quaternion.copy(im.quaternion);
+      t.scale.copy(im.scale);
+      t.renderOrder = im.renderOrder;
+      t.computeBoundingSphere();
+      im.parent.add(t);
+    }
+    im.removeFromParent();
   }
 
   // ---------------------------------------------------------------------------------------------------------------
   // Eggs.
 
-  const eggs: EggView[] = m.fighters.map((f) => {
+  // What every egg has, drawn instanced: a draw call a part however many eggs there are (see EggSlots). The face (eyes
+  // with whites, pupils and a glint, and rosy cheeks, around the eyes' middle so it can blink and squint), both hands
+  // and the party hat (cap, band and bobble) are each merged into one geometry.
+  const shaped = (g: T.BufferGeometry, x: number, y: number, z: number, sx: number, sy: number, sz: number, c: number, rx = 0): RoofPart => {
+    g.scale(sx, sy, sz);
+    if (rx) g.rotateX(rx);
+    g.translate(x, y, z);
+    return { g, c };
+  };
+  const faceParts: RoofPart[] = [];
+  for (const side of [-1, 1]) {
+    faceParts.push(shaped(new THREE.SphereGeometry(1, 10, 8), side * 0.17, 0, 0.5, 0.125, 0.145, 0.06, 0xffffff));
+    faceParts.push(shaped(new THREE.SphereGeometry(1, 8, 6), side * 0.175, -0.014, 0.548, 0.074, 0.092, 0.04, 0x17181d));
+    faceParts.push(shaped(new THREE.SphereGeometry(1, 6, 4), side * 0.15, 0.03, 0.588, 0.026, 0.026, 0.012, 0xffffff));
+    faceParts.push(shaped(new THREE.SphereGeometry(1, 8, 4), side * 0.3, -0.19, 0.455, 0.075, 0.045, 0.03, 0xff9c8f));
+  }
+  const faceGeo = geo(mergeRoof(THREE, faceParts, 1, true));
+  const handGeo = geo(mergeRoof(THREE, [-1, 1].map((side) => shaped(new THREE.SphereGeometry(1, 10, 8), side * 0.4, 0.72, 0.42, 0.11, 0.11, 0.11, 0xffffff)), 1, true));
+  const hatGeo = geo(
+    mergeRoof(THREE, [shaped(new THREE.SphereGeometry(1, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2), 0, 1.08, 0, 0.5, 0.52, 0.5, 0xffffff), shaped(new THREE.TorusGeometry(1, 0.12, 6, 24), 0, 1.1, 0, 0.47, 0.47, 0.47, 0xffffff, Math.PI / 2), shaped(new THREE.SphereGeometry(1, 8, 6), 0, 1.64, 0, 0.11, 0.11, 0.11, 0xffffff)], 1, true),
+  );
+  // a glider canopy in the egg's color with white panels between, the white ones and the knob on top their own mesh
+  const canopyBase = new THREE.ConeGeometry(1, 1, 12, 1, true).toNonIndexed();
+  canopyBase.computeVertexNormals();
+  const panels = [new THREE.BufferGeometry(), new THREE.BufferGeometry()];
+  {
+    const P = canopyBase.attributes.position.array as Float32Array;
+    const Nn = canopyBase.attributes.normal.array as Float32Array;
+    // three points a triangle, two triangles a panel, every other panel white
+    for (const [k, g] of panels.entries()) {
+      const pos: number[] = [];
+      const nor: number[] = [];
+      for (let t = 0; t * 9 < P.length; t++) {
+        if (Math.floor(t / 2) % 2 !== k) continue;
+        for (let j = t * 9; j < t * 9 + 9; j++) {
+          pos.push(P[j]);
+          nor.push(Nn[j]);
+        }
+      }
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+      g.scale(1.9, 0.9, 1.9);
+      g.translate(0, 2.9, 0);
+    }
+  }
+  canopyBase.dispose();
+  const canopyGeo = geo(mergeRoof(THREE, [{ g: panels[0], c: 0xffffff }], 1, true));
+  const panelGeo = geo(mergeRoof(THREE, [{ g: panels[1], c: 0xffffff }, shaped(new THREE.SphereGeometry(1, 12, 9), 0, 3.35, 0, 0.22, 0.22, 0.22, 0xffffff)], 1, true));
+  // cracks spread over a hurt egg: the light ones below two thirds health, all of them below a third
+  const crackTex = keep(crackTexture(THREE));
+  /** A glossy shell: a little shine, and a warm rim of light round the edge so eggs stand off the ground. */
+  const shell = (color: number) => {
+    const x = mat(new THREE.MeshPhongMaterial({ color, specular: 0x3a3530, shininess: 42 }));
+    x.onBeforeCompile = (shader) => {
+      shader.uniforms.uRim = { value: new THREE.Color(0xfff2d8).multiplyScalar(0.42) };
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform vec3 uRim;')
+        .replace('#include <opaque_fragment>', 'float rimK = 1.0 - max(dot(normal, normalize(vViewPosition)), 0.0);\noutgoingLight += uRim * rimK * rimK * rimK;\n#include <opaque_fragment>');
+    };
+    return x;
+  };
+  const gliderMat = lambert(0xffffff, { side: THREE.DoubleSide });
+  const N = m.fighters.length;
+  const eggBits = {
+    shell: many(G.egg, shell(0xffffff), N),
+    hands: many(handGeo, M.cream, N),
+    face: many(faceGeo, lambert(0xffffff, { vertexColors: true, emissive: 0x202020 }), N),
+    hat: many(hatGeo, lambert(0xffffff), N),
+    crackLight: many(G.egg, lambert(0x6b4a2a, { map: crackTex, alphaTest: 0.7 }), N),
+    crackHeavy: many(G.egg, lambert(0x5a3a1e, { map: crackTex, alphaTest: 0.3 }), N),
+    shadow: many(G.disc, M.shadow, N),
+    canopy: many(canopyGeo, gliderMat, N),
+    panels: many(panelGeo, gliderMat, N),
+  };
+  for (const im of Object.values(eggBits)) {
+    // they move every frame, so there's no box round them to cull by
+    im.frustumCulled = false;
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(im);
+  }
+  const SKIN = new THREE.Color(0xfff3df);
+  const HIT = new THREE.Color(0xff8a7a);
+  const hatColors = m.fighters.map((f) => new THREE.Color(f.color));
+  // colors from the start, so each mesh is set up for them before it is first drawn
+  for (let i = 0; i < N; i++) for (const im of [eggBits.shell, eggBits.hat, eggBits.canopy]) im.setColorAt(i, hatColors[i]);
+  const slot = (parent: T.Object3D, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+    const o = new THREE.Object3D();
+    o.position.set(x, y, z);
+    o.scale.set(sx, sy, sz);
+    parent.add(o);
+    return o;
+  };
+  const stringGeo = geo(
+    new THREE.BufferGeometry().setFromPoints(
+      // the four strings in one line: down one, across inside the egg, up the next, across under the canopy, and so on
+      [
+        [-1, 0],
+        [0, 1],
+        [1, 0],
+        [0, -1],
+      ].flatMap(([x, z], k) => {
+        const top = new THREE.Vector3(x * 1.8, 2.5, z * 1.8);
+        const low = new THREE.Vector3(x * 0.22, 1.3, z * 0.22);
+        return k % 2 ? [low, top] : [top, low];
+      }),
+    ),
+  );
+  const stringMat = mat(new THREE.LineBasicMaterial({ color: 0x444444 }));
+  const bubbleShader = {
+    vertexShader: `
+      varying vec3 vN;
+      varying vec3 vV;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vN = normalize(normalMatrix * normal);
+        vV = -mv.xyz;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform float uA;
+      uniform float uTime;
+      varying vec3 vN;
+      varying vec3 vV;
+      void main() {
+        float f = 1.0 - abs(dot(normalize(vN), normalize(vV)));
+        float ripple = sin(f * 18.0 - uTime * 9.0) * 0.5 + 0.5;
+        vec3 col = mix(vec3(0.35, 0.7, 1.0), vec3(0.92, 0.98, 1.0), f);
+        gl_FragColor = vec4(col, (0.08 + f * f * 0.85 + ripple * 0.1) * uA);
+      }`,
+  };
+
+  const eggs: EggView[] = m.fighters.map(() => {
     const root = new THREE.Group();
     const body = new THREE.Group();
     root.add(body);
-    const skin = lambert(0xfff3df, { emissive: 0x000000 });
-    add(body, G.egg, skin, 0, 0, 0, 1, 1, 1);
-    const hatMat = lambert(parseInt(f.color.slice(1), 16));
-    const hat = [add(body, G.cap, hatMat, 0, 1.08, 0, 0.5, 0.52, 0.5), add(body, G.band, hatMat, 0, 1.1, 0, 0.47, 0.47, 0.47), add(body, G.ball, hatMat, 0, 1.64, 0, 0.11, 0.11, 0.11)];
-    hat[1].rotation.x = Math.PI / 2;
-    for (const side of [-1, 1]) add(body, G.ball, M.black, side * 0.17, 1.0, 0.53, 0.065, 0.085, 0.05);
-    for (const side of [-1, 1]) add(body, G.ball, M.cream, side * 0.4, 0.72, 0.42, 0.11, 0.11, 0.11);
+    // a little glider for the drop
+    const glider = new THREE.Group();
+    glider.add(new THREE.Line(stringGeo, stringMat));
+    root.add(glider);
+    const slots: EggSlots = {
+      shell: slot(body, 0, 0, 0, 1, 1, 1),
+      face: slot(body, 0, 1.0, 0, 1, 1, 1),
+      crack: slot(body, 0, -0.008, 0, 1.012, 1.008, 1.012),
+    };
+    const bubbleMat = mat(new THREE.ShaderMaterial({ ...bubbleShader, uniforms: { uA: { value: 0 }, uTime: wind }, transparent: true, depthWrite: false }));
+    const bubble = add(root, G.ball, bubbleMat, 0, 0.85, 0, 1.05, 1.2, 1.05);
+    bubble.visible = false;
     const hand = new THREE.Group();
     hand.position.set(0.24, 0.78, 0.48);
     body.add(hand);
@@ -2115,29 +3035,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const backPan = new THREE.Group();
     add(backPan, G.cyl, M.pan, 0, 0, 0, 0.36, 0.06, 0.36);
     add(backPan, G.box, M.dark, 0, 0, 0.48, 0.06, 0.05, 0.4);
+    bake('backPan', backPan);
     backPan.position.set(0, 0.9, -0.5);
     backPan.rotation.set(Math.PI / 2 - 0.25, 0, 0);
     body.add(backPan);
-    const shadow = new THREE.Mesh(G.disc, M.shadow);
+    const shadow = new THREE.Object3D();
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 0.03;
     shadow.scale.setScalar(0.85);
     root.add(shadow);
-    // a little glider for the drop
-    const glider = new THREE.Group();
-    add(glider, G.cone, lambert(parseInt(f.color.slice(1), 16), { side: THREE.DoubleSide }), 0, 2.9, 0, 1.9, 0.9, 1.9);
-    add(glider, G.ball, M.white, 0, 3.35, 0, 0.22, 0.22, 0.22);
-    for (const [x, z] of [
-      [-1.5, 0],
-      [1.5, 0],
-      [0, 1.5],
-      [0, -1.5],
-    ]) {
-      const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x * 1.2, 2.5, z * 1.2), new THREE.Vector3(x * 0.15, 1.3, z * 0.15)]);
-      geos.push(g);
-      glider.add(new THREE.Line(g, mat(new THREE.LineBasicMaterial({ color: 0x444444 }))));
-    }
-    root.add(glider);
     // a cross over the head while healing; a ring while drinking shield (blue) or coffee (orange)
     const heal = new THREE.Group();
     heal.position.y = 2.15;
@@ -2151,8 +3057,38 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     ghost.renderOrder = 20;
     body.add(ghost);
     scene.add(root);
-    return { root, body, skin, hand, guns: new Map(), shadow, glider, heal, cross, ring, ghost, backPan, hat, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, swing: 0, recoil: 0, lean: 0 };
+    return { root, body, slots, hand, guns: new Map(), shadow, glider, heal, cross, ring, ghost, backPan, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, swing: 0, recoil: 0, lean: 0, cracked: 0, bubble, bubbleMat, shimmer: 0, sq: 0, sqV: 0, step: 0, ripple: 0 };
   });
+
+  /**
+   * How many eggs are drawn this frame, with their party hats, shadows and gliders: only the eggs in view go in, packed
+   * at the front, so eggs out of sight cost nothing.
+   */
+  const drawn = { eggs: 0, hats: 0, light: 0, heavy: 0, shadows: 0, gliders: 0 };
+  /** Puts an egg's instanced parts where its stand-ins are, once its group has been moved. */
+  function placeEgg(v: EggView, hit: boolean, hat: T.Color) {
+    v.root.updateMatrixWorld(true);
+    const s = v.slots;
+    const k = drawn.eggs++;
+    eggBits.shell.setMatrixAt(k, s.shell.matrixWorld);
+    eggBits.shell.setColorAt(k, hit ? HIT : SKIN);
+    eggBits.hands.setMatrixAt(k, s.shell.matrixWorld);
+    eggBits.face.setMatrixAt(k, s.face.matrixWorld);
+    if (v.cracked > 1) eggBits.crackHeavy.setMatrixAt(drawn.heavy++, s.crack.matrixWorld);
+    else if (v.cracked > 0) eggBits.crackLight.setMatrixAt(drawn.light++, s.crack.matrixWorld);
+    if (v.helmetLv <= 0) {
+      const h = drawn.hats++;
+      eggBits.hat.setMatrixAt(h, s.shell.matrixWorld);
+      eggBits.hat.setColorAt(h, hat);
+    }
+    if (v.shadow.visible) eggBits.shadow.setMatrixAt(drawn.shadows++, v.shadow.matrixWorld);
+    if (v.glider.visible) {
+      const g = drawn.gliders++;
+      eggBits.canopy.setMatrixAt(g, v.glider.matrixWorld);
+      eggBits.canopy.setColorAt(g, hat);
+      eggBits.panels.setMatrixAt(g, v.glider.matrixWorld);
+    }
+  }
 
   // the aim line from your gun, and where you'll land while gliding
   const aimLine = new THREE.Mesh(G.plane, M.aim);
@@ -2167,14 +3103,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   // Loot on the ground.
 
   const lootViews = new Map<number, LootView>();
+  /** What a piece of loot looks like, as a key: the same key, the same model. */
+  const lootKey = (def: LootDef) => [def.kind, 'w' in def ? def.w : '', 'r' in def ? def.r : '', 'a' in def ? def.a : '', 'lv' in def ? def.lv : ''].join(':');
   function lootModel(def: LootDef): T.Object3D {
     const g = new THREE.Group();
     switch (def.kind) {
       case 'gun':
       case 'melee':
       case 'throw': {
-        const gun = gunModel(def.w);
-        if (gun.stripe && def.kind === 'gun') gun.stripe.material = rarity[def.r] ?? rarity[0];
+        const gun = gunModel(def.w, def.kind === 'gun' ? def.r : 0);
         gun.group.scale.setScalar(def.kind === 'throw' ? 1.6 : 1.25);
         gun.group.rotation.set(0, 0, def.kind === 'throw' ? 0 : Math.PI / 2.4);
         g.add(gun.group);
@@ -2251,7 +3188,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         for (let i = 0; i < 3; i++) add(g, G.box, M.wood, 0, i * 0.13 - 0.1, (i - 1) * 0.06, 0.7, 0.11, 0.2).rotation.y = i * 0.4;
         break;
     }
-    return g;
+    return bake(lootKey(def), g);
   }
   function glowFor(def: LootDef) {
     switch (def.kind) {
@@ -2298,6 +3235,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   // bullets and rockets
   const tracers: T.Mesh[] = [];
   const tracerGeo = geo(new THREE.BoxGeometry(0.08, 0.08, 1));
+  // a bullet is a glowing streak laid flat along its path (a crossbow bolt stays a little brown stick)
+  const streakGeo = geo(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2));
+  const streakMat = basic(0xffffff, { map: keep(tracerTexture(THREE)), transparent: true, depthWrite: false, blending: ADDITIVE, side: THREE.DoubleSide });
   const rockets: T.Mesh[] = [];
 
   // things thrown, and the clouds and puddles they leave
@@ -2350,6 +3290,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     dust: basic(0xe8dcc0, { transparent: true, opacity: 0.6, depthWrite: false }),
     fire: basic(0xffa53a),
     spark: basic(0xfff1a8),
+    ember: basic(0xffa040, { blending: ADDITIVE, transparent: true, depthWrite: false }),
     smoke: basic(0x777777, { transparent: true, opacity: 0.55, depthWrite: false }),
     yolk: M.yolk,
     purple: basic(0xb48cff),
@@ -2364,12 +3305,19 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     straw: lambert(0xe2c25a),
   };
   const padFlash = basic(0x7dffd2, { transparent: true, opacity: 0.7, depthWrite: false });
-  for (let i = 0; i < 320; i++) {
-    const mesh = new THREE.Mesh(G.box, partMat.dust);
-    mesh.visible = false;
-    scene.add(mesh);
-    parts.push({ mesh, vx: 0, vy: 0, vz: 0, life: 0, max: 1, spin: 0, grav: 0, size: 0.1 });
-  }
+  // the bits are drawn as three instanced meshes, whatever material they were thrown with: lit chips (shell, wood,
+  // leaves), see-through wisps (dust, flour, spray) and bright sparks (fire, sauce)
+  const PARTS = 320;
+  const chipMeshes = [lambert(0xffffff), basic(0xffffff, { transparent: true, opacity: 0.68, depthWrite: false }), basic(0xffffff)].map((x) => {
+    const im = many(G.box, x, PARTS);
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    im.setColorAt(0, color.setHex(0xffffff));
+    im.count = 0;
+    im.frustumCulled = false;
+    scene.add(im);
+    return im;
+  });
+  for (let i = 0; i < PARTS; i++) parts.push({ x: 0, y: 0, z: 0, rx: 0, rz: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 1, spin: 0, grav: 0, size: 0.1, kind: 0, color: new THREE.Color() });
   let partAt = 0;
   const burst = (x: number, y: number, z: number, n: number, speed: number, size: number, life: number, material: T.Material[], grav = 14) => {
     for (let i = 0; i < n; i++) {
@@ -2385,10 +3333,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       p.spin = (Math.random() - 0.5) * 18;
       p.grav = grav;
       p.size = size * (0.6 + Math.random() * 0.8);
-      p.mesh.material = material[i % material.length];
-      p.mesh.position.set(x, y, z);
-      p.mesh.scale.setScalar(p.size);
-      p.mesh.visible = true;
+      const x0 = material[i % material.length] as T.MeshLambertMaterial;
+      p.kind = x0.isMeshLambertMaterial ? 0 : x0.transparent && x0.blending !== ADDITIVE ? 1 : 2;
+      p.color.copy(x0.color);
+      if (x0.isMeshLambertMaterial) p.color.add(color.copy(x0.emissive).multiplyScalar(x0.emissiveIntensity));
+      p.x = x;
+      p.y = y;
+      p.z = z;
+      p.rx = 0;
+      p.rz = 0;
     }
   };
   const flashes: { mesh: T.Mesh; life: number; max: number; grow: number }[] = [];
@@ -2415,6 +3368,100 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const puddles = new THREE.Group();
   scene.add(puddles);
 
+  // soft puffs that swell and fade as they drift: dust from feet and landings, smoke from blasts, flares and fires
+  type Puff = { mesh: T.Mesh; mat: T.MeshLambertMaterial; life: number; max: number; vx: number; vy: number; vz: number; size: number; grow: number; alpha: number };
+  const puffs: Puff[] = [];
+  for (let i = 0; i < 56; i++) {
+    const pm = lambert(0xffffff, { transparent: true, opacity: 0, depthWrite: false, emissive: 0x2a2a2a });
+    const mesh = new THREE.Mesh(G.ball, pm);
+    mesh.visible = false;
+    scene.add(mesh);
+    puffs.push({ mesh, mat: pm, life: 0, max: 1, vx: 0, vy: 0, vz: 0, size: 1, grow: 1, alpha: 1 });
+  }
+  let puffAt = 0;
+  const puff = (x: number, y: number, z: number, size: number, life: number, hex: number, alpha: number, vx = 0, vy = 0.6, vz = 0, grow = 1.6) => {
+    const p = puffs[puffAt];
+    puffAt = (puffAt + 1) % puffs.length;
+    p.mesh.position.set(x, y, z);
+    p.mesh.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+    p.mesh.scale.setScalar(size * 0.4);
+    p.mesh.visible = true;
+    p.mat.color.setHex(hex);
+    p.mat.opacity = alpha;
+    Object.assign(p, { life, max: life, vx, vy, vz, size, grow, alpha });
+  };
+  /** A ring of dust kicked out along the ground (a landing, a bounce, a blast). */
+  const dustRing = (x: number, z: number, n: number, r: number, size: number, hex: number, alpha: number, speed: number) => {
+    const a0 = Math.random() * 6.3;
+    for (let i = 0; i < n; i++) {
+      const a = a0 + (i / n) * Math.PI * 2;
+      puff(x + Math.sin(a) * r, 0.25, z + Math.cos(a) * r, size, 0.55 + Math.random() * 0.25, hex, alpha, Math.sin(a) * speed, 0.35, Math.cos(a) * speed, 1.4);
+    }
+  };
+
+  // rings spreading over water where an egg wades or splashes down, and the shockwave of a blast
+  const rippleMats: T.MeshBasicMaterial[] = [];
+  const ripples: { mesh: T.Mesh; life: number; max: number; r: number }[] = [];
+  for (let i = 0; i < 18; i++) {
+    const rm = basic(0xffffff, { transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+    rippleMats.push(rm);
+    const mesh = new THREE.Mesh(G.ring, rm);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.visible = false;
+    scene.add(mesh);
+    ripples.push({ mesh, life: 0, max: 1, r: 1 });
+  }
+  let rippleAt = 0;
+  const ripple = (x: number, y: number, z: number, r: number, life: number, hex = 0xffffff) => {
+    const i = rippleAt;
+    rippleAt = (rippleAt + 1) % ripples.length;
+    const rp = ripples[i];
+    rp.mesh.position.set(x, y, z);
+    rp.mesh.scale.setScalar(0.2);
+    rp.mesh.visible = true;
+    rippleMats[i].color.setHex(hex);
+    Object.assign(rp, { life, max: life, r });
+  };
+
+  // muzzle flashes and hit sparks: a bright star laid flat, glowing over whatever is under it
+  const starMat = basic(0xffe9a8, { map: keep(starTexture(THREE)), transparent: true, depthWrite: false, blending: ADDITIVE });
+  const sparkMat = basic(0xffffff, { map: starMat.map, transparent: true, depthWrite: false, blending: ADDITIVE });
+  const stars: { mesh: T.Mesh; life: number; max: number; size: number }[] = [];
+  for (let i = 0; i < 20; i++) {
+    const mesh = new THREE.Mesh(G.plane, starMat);
+    mesh.visible = false;
+    mesh.renderOrder = 6;
+    scene.add(mesh);
+    stars.push({ mesh, life: 0, max: 1, size: 1 });
+  }
+  let starAt = 0;
+  const star = (x: number, y: number, z: number, a: number, len: number, wide: number, life: number, material: T.Material) => {
+    const s = stars[starAt];
+    starAt = (starAt + 1) % stars.length;
+    s.mesh.material = material;
+    s.mesh.position.set(x, y, z);
+    // laid flat, its length along `a`
+    s.mesh.rotation.set(-Math.PI / 2, a, 0, 'YXZ');
+    s.mesh.scale.set(wide, len, 1);
+    s.size = 1;
+    s.mesh.visible = true;
+    s.life = life;
+    s.max = life;
+  };
+
+  // scorch marks where things blew up, the oldest cleared for the newest
+  const scorchMat = basic(0x1a1410, { map: blob, transparent: true, opacity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+  const scorches: T.Mesh[] = [];
+  for (let i = 0; i < 8; i++) {
+    const mesh = new THREE.Mesh(G.plane, scorchMat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.visible = false;
+    mesh.renderOrder = 1;
+    scene.add(mesh);
+    scorches.push(mesh);
+  }
+  let scorchAt = 0;
+
   let shake = 0;
   let now = 0;
   const fog = scene.fog as T.Fog;
@@ -2425,7 +3472,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   function syncEgg(v: EggView, f: Fighter, dt: number, clock: number, focus: boolean, hidden: boolean) {
     const shown = f.phase !== 'out' && f.phase !== 'bus' && !hidden;
     v.root.visible = shown;
-    if (!shown) return;
+    if (!shown) return false;
     // wading through a pond sinks an egg to its middle
     v.root.position.set(f.x, f.y - (f.wet && f.phase === 'ground' ? 0.45 : 0), f.z);
     v.body.rotation.y = f.aim;
@@ -2441,6 +3488,49 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const fz = Math.cos(f.aim);
     v.body.rotation.x = (mx * fx + mz * fz) * v.lean;
     v.body.rotation.z = -(mx * fz - mz * fx) * v.lean;
+    // squash on landing and stretch on a bounce, sprung back (in small steps, so a slow frame can't fling it), and a
+    // little give in every step
+    for (let k = 0, step = Math.min(dt, 0.05) / 2; k < 2; k++) {
+      v.sqV += (-260 * v.sq - 16 * v.sqV) * step;
+      v.sq = Math.max(-0.35, Math.min(0.35, v.sq + v.sqV * step));
+    }
+    const give = f.phase === 'ground' && speed > 0.4 ? Math.sin(v.walk * 2) * 0.035 : 0;
+    const sq = v.sq + give;
+    v.body.scale.set(1 - sq * 0.5, 1 + sq, 1 - sq * 0.5);
+    const close = Math.abs(f.x - cam.x) < cam.view * 1.6 && Math.abs(f.z - cam.z) < cam.view * 1.6;
+    if (f.phase === 'ground' && close) {
+      if (f.wet) {
+        // rings spread round an egg wading, quicker the faster it goes
+        v.ripple += dt * (0.8 + speed * 0.5);
+        if (v.ripple > 1) {
+          v.ripple = 0;
+          ripple(f.x, 0.07, f.z, 1.6 + speed * 0.12, 1.1, 0xe6f7ff);
+        }
+      } else if (speed > 2) {
+        // a puff of dust every few steps
+        v.step += speed * dt;
+        if (v.step > 2.2) {
+          v.step = 0;
+          puff(f.x - mx * 0.4 + (Math.random() - 0.5) * 0.3, 0.12, f.z - mz * 0.4, 0.32, 0.45, roadAt(map, f.x, f.z) ? 0xe2cfa0 : 0xd8e0b8, 0.55, -mx * 0.4, 0.5, -mz * 0.4, 1.3);
+        }
+      }
+    }
+    // blinks now and then, squints when hit
+    const blink = (clock * 0.9 + f.id * 0.37) % 3.7 < 0.1;
+    v.slots.face.scale.set(1, f.hitT > 0 ? 0.35 : blink ? 0.12 : 1, 1);
+    // cracks by health, and bits of shell fly off as they spread
+    const cracked = f.phase !== 'ground' ? 0 : f.hp < 34 ? 2 : f.hp < 67 ? 1 : 0;
+    if (cracked !== v.cracked) {
+      if (cracked > v.cracked && close) burst(f.x, 1.1, f.z, 5, 2.5, 0.09, 0.5, [partMat.shell]);
+      v.cracked = cracked;
+    }
+    // a shield's shimmer where a hit landed on it
+    v.shimmer = Math.max(0, v.shimmer - dt * 2.4);
+    v.bubble.visible = v.shimmer > 0;
+    if (v.bubble.visible) {
+      v.bubbleMat.uniforms.uA.value = v.shimmer;
+      v.bubble.scale.set(1.05 + (1 - v.shimmer) * 0.15, 1.2 + (1 - v.shimmer) * 0.15, 1.05 + (1 - v.shimmer) * 0.15);
+    }
     v.glider.visible = f.phase === 'drop';
     v.shadow.visible = (f.phase === 'ground' && !f.wet) || (f.phase === 'drop' && f.y < 25);
     v.shadow.position.y = 0.03 - f.y;
@@ -2448,14 +3538,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     // what it holds
     const h = held(f);
     const key = h.w;
-    for (const [k, g] of v.guns) g.group.visible = k === key && f.phase === 'ground';
-    let gun = v.guns.get(key);
+    const look = `${key}:${h.r}`;
+    for (const [k, g] of v.guns) g.group.visible = k === look && f.phase === 'ground';
+    let gun = v.guns.get(look);
     if (!gun && f.phase === 'ground') {
-      gun = gunModel(key);
+      gun = gunModel(key, h.r);
       v.hand.add(gun.group);
-      v.guns.set(key, gun);
+      v.guns.set(look, gun);
     }
-    if (gun?.stripe) gun.stripe.material = rarity[h.r] ?? rarity[0];
     if (gun?.spin && ((f.kind === 'remote' ? f.show.flags & F_SPIN : f.spin > 0) || 0)) gun.spin.rotation.z += dt * (f.kind === 'remote' ? 30 : 6 + f.spin * 26);
     const melee = isMelee(key);
     v.recoil = Math.max(0, v.recoil - dt * 6);
@@ -2474,7 +3564,6 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         v.body.add(v.helmet);
       }
       v.helmetLv = f.helmet;
-      for (const o of v.hat) o.visible = f.helmet <= 0;
     }
     if (v.vestLv !== f.vest) {
       if (v.vest) v.body.remove(v.vest);
@@ -2485,10 +3574,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       }
       v.vestLv = f.vest;
     }
-    // flash red when hit; healing, shield and coffee show while in use
-    const hit = f.hitT > 0;
-    v.skin.emissive.setHex(hit ? 0xff3b30 : 0x000000);
-    v.skin.emissiveIntensity = hit ? 0.55 : 0;
+    // healing, shield and coffee show while in use
     const flags = f.kind === 'remote' ? f.show.flags : 0;
     const using =
       f.kind === 'remote'
@@ -2521,6 +3607,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       v.ring.scale.setScalar(0.85 - ((clock * 1.4) % 1) * 0.25);
     }
     v.ghost.visible = focus && f.phase === 'ground';
+    return true;
   }
 
   function syncTosses(m: Match, clock: number) {
@@ -2728,6 +3815,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       }
       // the river runs, the windmills turn, and the grass and flowers show once you're down among them
       riverTex.offset.y = -clock * 0.15;
+      wind.value = clock;
+      riverFoam.forEach((t, k) => (t.offset.y = (k ? 1 : -1) * clock * 0.2));
+      lapMat.opacity = 0.42 + Math.sin(clock * 1.3) * 0.18;
+      // the surf drifts along the shore, and a wave rolls in every few seconds and fades on the sand
+      foamTex.offset.y = clock * 0.012;
+      const roll = (clock / 4.5) % 1;
+      waveTex.offset.x = -0.85 * (1 - roll);
+      waveMat.opacity = Math.sin(roll * Math.PI) * 0.6;
+      surfMat.opacity = 0.7 + Math.sin(clock * 0.9) * 0.12;
       for (const t of sails) t.rotation.z = -clock * 0.6;
       decor.visible = cam.view < 34;
 
@@ -2742,9 +3838,13 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         stormWall.visible = s.r > 0.05 && onLand;
         stormWall.position.set(s.x, 44, s.z);
         stormWall.scale.set(Math.max(0.05, s.r), 1, Math.max(0.05, s.r));
+        stormUniforms.uR.value = Math.max(0.05, s.r);
         stormTint.position.set(s.x, 0.12, s.z);
         tint.set(Math.max(0, s.r), 900);
         stormTint.visible = onLand;
+        seamMesh.visible = onLand && s.r > 0.5;
+        seamMesh.position.set(s.x, 0.13, s.z);
+        seam.set(Math.max(0, s.r - 0.35), s.r + 0.25);
         const showNext = s.next.r < s.r - 0.5 || s.shrinking;
         nextMesh.visible = showNext && s.next.r > 0.3;
         nextMesh.position.set(nx, 0.14, nz);
@@ -2755,11 +3855,17 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       placeCrates(clock);
       placeFridges(false);
       placeKitchen(clock);
+      placeShades();
       chestGlowMat.opacity = 0.35 + Math.sin(clock * 4) * 0.2;
 
       // campfires flicker (and throw the odd spark when you're close), pads pulse
       placeFires(clock);
-      for (const c of map.fires) if (Math.random() < 0.08 && Math.abs(c.x - cam.x) < cam.view * 2 && Math.abs(c.z - cam.z) < cam.view * 2) burst(c.x, 1, c.z, 1, 1.2, 0.08, 0.7, [partMat.spark], -2);
+      for (const c of map.fires) {
+        if (Math.abs(c.x - cam.x) > cam.view * 2 || Math.abs(c.z - cam.z) > cam.view * 2) continue;
+        // embers float up, and a thin smoke curls away
+        if (Math.random() < 0.14) burst(c.x + (Math.random() - 0.5) * 0.4, 0.9, c.z + (Math.random() - 0.5) * 0.4, 1, 1, 0.07, 1, [partMat.ember], -2.2);
+        if (Math.random() < 0.035) puff(c.x, 1.4, c.z, 0.38, 2.4, 0xa8a8a8, 0.22, 0.25, 0.9, -0.1, 2.4);
+      }
       fireGlowMat.opacity = 0.5 + Math.sin(clock * 11) * 0.07 + Math.sin(clock * 23) * 0.04;
       for (const [i, pd] of pads.entries()) {
         const k = (clock * 0.8 + i * 0.3) % 1;
@@ -2794,14 +3900,31 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         beamMat.opacity = 0.16 + Math.sin(clock * 3) * 0.06;
       }
 
-      // eggs (peeking in through a door shows only who the doorway lets you see)
+      // eggs in view (peeking in through a door shows only who the doorway lets you see); one up high shows nearer the
+      // top of the screen than the ground under it
+      const eggN = dist * FRAME_N + 6;
+      const eggS = dist * FRAME_S + 6;
+      const eggW = dist * FRAME_W * aspect + 6;
+      drawn.eggs = drawn.hats = drawn.light = drawn.heavy = drawn.shadows = drawn.gliders = 0;
       m.fighters.forEach((f, i) => {
         const v = eggs[i];
         if (!v) return;
         const isFocus = i === focusId;
-        const walled = peek >= 0 && !!focus && f.inside === peek && !clearLine(m, focus.x, focus.z, f.x, f.z);
-        syncEgg(v, f, dt, clock, isFocus, !isFocus && (concealed(m, f, focus) || walled));
+        const inView = Math.abs(f.x - cam.x) < eggW && f.z - cam.z > -eggN - f.y && f.z - cam.z < eggS;
+        const walled = inView && peek >= 0 && !!focus && f.inside === peek && !clearLine(m, focus.x, focus.z, f.x, f.z);
+        // flash red when hit
+        if (syncEgg(v, f, dt, clock, isFocus, !isFocus && (!inView || concealed(m, f, focus) || walled))) placeEgg(v, f.hitT > 0, hatColors[i]);
       });
+      eggBits.shell.count = eggBits.hands.count = eggBits.face.count = drawn.eggs;
+      eggBits.hat.count = drawn.hats;
+      eggBits.crackLight.count = drawn.light;
+      eggBits.crackHeavy.count = drawn.heavy;
+      eggBits.shadow.count = drawn.shadows;
+      eggBits.canopy.count = eggBits.panels.count = drawn.gliders;
+      for (const im of Object.values(eggBits)) {
+        im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) im.instanceColor.needsUpdate = true;
+      }
       syncTosses(m, clock);
       syncZones(m, clock, focus);
 
@@ -2825,8 +3948,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         landMark.scale.setScalar(1.2 + Math.sin(clock * 6) * 0.15);
       }
 
-      // loot in frame (with a little to spare), once it's close enough to make out (from the sky it's specks)
-      const showLoot = cam.view < LOOT_VIEW;
+      // loot in frame (with a little to spare), once it's close enough to make out (from the sky it's specks, and from
+      // the bus too, which a tall screen frames narrower)
+      const showLoot = cam.view < LOOT_VIEW && focus?.phase !== 'bus';
       const lootN = dist * FRAME_N + 3;
       const lootS = dist * FRAME_S + 3;
       const lootW = dist * FRAME_W * aspect + 3;
@@ -2893,7 +4017,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           // the egg's long axis (+y) laid along the flight
           r.rotation.set(Math.PI / 2, Math.atan2(b.dx, b.dz), 0, 'YXZ');
           r.scale.setScalar(0.3);
-          if (Math.random() < 0.6) burst(b.x - b.dx * 0.4, 0.85, b.z - b.dz * 0.4, 1, 0.6, 0.18, 0.5, [partMat.smoke], -1);
+          if (Math.random() < 0.5) puff(b.x - b.dx * 0.5, 0.9, b.z - b.dz * 0.5, 0.32, 0.8, 0xdcdcdc, 0.55, 0, 0.3, 0, 1.7);
           continue;
         }
         if (b.traveled < 0.6) continue;
@@ -2906,12 +4030,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         ti++;
         // a crossbow bolt is a short brown arrow; everything else a streak of light
         const bolt = b.w === 'crossbow';
-        const len = bolt ? 0.9 : Math.min(2.4, b.traveled - 0.5);
+        const len = bolt ? 0.9 : Math.min(3.2, (b.traveled - 0.5) * 1.3);
         tr.visible = true;
-        tr.material = bolt ? M.bolt : M.tracer;
+        tr.geometry = bolt ? tracerGeo : streakGeo;
+        tr.material = bolt ? M.bolt : streakMat;
+        tr.renderOrder = bolt ? 0 : 6;
         tr.position.set(b.x - (b.dx * len) / 2, 1.0, b.z - (b.dz * len) / 2);
         tr.rotation.set(0, Math.atan2(b.dx, b.dz), 0);
-        tr.scale.set(bolt ? 0.7 : 1, bolt ? 0.7 : 1, len);
+        tr.scale.set(bolt ? 0.7 : 0.34, bolt ? 0.7 : 1, len);
       }
       for (let i = ti; i < tracers.length; i++) tracers[i].visible = false;
       for (let i = ri; i < rockets.length; i++) rockets[i].visible = false;
@@ -2970,25 +4096,44 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         fl.glow.position.set(fl.x, y, fl.z);
         fl.core.scale.setScalar(0.35 * fade);
         fl.glow.scale.setScalar((1.3 + Math.sin(clock * 30) * 0.2) * fade);
-        if (Math.random() < 0.5) burst(fl.x, y - 0.3, fl.z, 1, 0.5, 0.3, 1.2, [partMat.smoke], -0.5);
+        if (Math.random() < 0.4) puff(fl.x, y - 0.3, fl.z, 0.45, 1.6, 0xffc4ae, 0.45, 0, -0.3, 0, 2);
       }
 
       // effects
+      const chipCount = [0, 0, 0];
       for (const p of parts) {
-        if (!p.mesh.visible) continue;
+        if (p.life <= 0) continue;
         p.life -= dt;
-        if (p.life <= 0) {
-          p.mesh.visible = false;
-          continue;
-        }
+        if (p.life <= 0) continue;
         p.vy -= p.grav * dt;
-        p.mesh.position.x += p.vx * dt;
-        p.mesh.position.y = Math.max(0.05, p.mesh.position.y + p.vy * dt);
-        p.mesh.position.z += p.vz * dt;
-        p.mesh.rotation.x += p.spin * dt;
-        p.mesh.rotation.z += p.spin * 0.7 * dt;
-        p.mesh.scale.setScalar(p.size * Math.min(1, (p.life / p.max) * 2));
+        p.x += p.vx * dt;
+        p.y = Math.max(0.05, p.y + p.vy * dt);
+        p.z += p.vz * dt;
+        p.rx += p.spin * dt;
+        p.rz += p.spin * 0.7 * dt;
+        dummy.position.set(p.x, p.y, p.z);
+        dummy.rotation.set(p.rx, 0, p.rz);
+        dummy.scale.setScalar(p.size * Math.min(1, (p.life / p.max) * 2));
+        dummy.updateMatrix();
+        const im = chipMeshes[p.kind];
+        im.setMatrixAt(chipCount[p.kind], dummy.matrix);
+        im.setColorAt(chipCount[p.kind]++, p.color);
       }
+      chipMeshes.forEach((im, k) => {
+        const n = chipCount[k];
+        im.count = n;
+        im.visible = n > 0;
+        if (!n) return;
+        // only the bits in use go up to the GPU
+        im.instanceMatrix.clearUpdateRanges();
+        im.instanceMatrix.addUpdateRange(0, n * 16);
+        im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) {
+          im.instanceColor.clearUpdateRanges();
+          im.instanceColor.addUpdateRange(0, n * 3);
+          im.instanceColor.needsUpdate = true;
+        }
+      });
       for (const f of flashes) {
         if (!f.mesh.visible) continue;
         f.life -= dt;
@@ -2997,6 +4142,39 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           continue;
         }
         f.mesh.scale.multiplyScalar(1 + f.grow * dt);
+      }
+      for (const p of puffs) {
+        if (!p.mesh.visible) continue;
+        p.life -= dt;
+        if (p.life <= 0) {
+          p.mesh.visible = false;
+          continue;
+        }
+        const u = 1 - p.life / p.max;
+        // swells fast, then drifts and thins
+        p.mesh.scale.setScalar(p.size * (0.4 + (1 - (1 - u) * (1 - u)) * p.grow));
+        p.mat.opacity = p.alpha * (1 - u) * (1 - u);
+        p.mesh.position.x += p.vx * dt;
+        p.mesh.position.y += p.vy * dt;
+        p.mesh.position.z += p.vz * dt;
+        p.vx *= 1 - dt * 3;
+        p.vz *= 1 - dt * 3;
+      }
+      ripples.forEach((rp, i) => {
+        if (!rp.mesh.visible) return;
+        rp.life -= dt;
+        if (rp.life <= 0) {
+          rp.mesh.visible = false;
+          return;
+        }
+        const u = 1 - rp.life / rp.max;
+        rp.mesh.scale.setScalar(0.2 + (1 - (1 - u) * (1 - u)) * rp.r);
+        rippleMats[i].opacity = 0.75 * (1 - u);
+      });
+      for (const s of stars) {
+        if (!s.mesh.visible) continue;
+        s.life -= dt;
+        if (s.life <= 0) s.mesh.visible = false;
       }
     },
     react(e, m, focus) {
@@ -3016,7 +4194,12 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             burst(e.x, 1, e.z, 8, 3, 0.18, 0.6, [partMat.spark, partMat.smoke]);
             break;
           }
-          if (f && near(f.x, f.z) && e.w !== 'launcher' && e.w !== 'crossbow') flash(f.x + Math.sin(e.a) * 1.2, 0.95, f.z + Math.cos(e.a) * 1.2, cls === 'shotgun' ? 0.32 : e.w === 'micro' ? 0.15 : 0.2, 0.05, 0, flashMat);
+          if (f && near(f.x, f.z) && e.w !== 'launcher' && e.w !== 'crossbow') {
+            flash(f.x + Math.sin(e.a) * 1.2, 0.95, f.z + Math.cos(e.a) * 1.2, cls === 'shotgun' ? 0.32 : e.w === 'micro' ? 0.15 : 0.2, 0.05, 0, flashMat);
+            // and a star of light out of the muzzle, bigger for the big guns
+            const [len, wide] = cls === 'shotgun' ? [1.5, 1] : cls === 'sniper' ? [1.7, 0.75] : e.w === 'micro' || e.w === 'pistol' ? [0.75, 0.5] : [1.05, 0.62];
+            star(f.x + Math.sin(e.a) * (1.15 + len * 0.3), 0.97, f.z + Math.cos(e.a) * (1.15 + len * 0.3), e.a, len, wide, 0.055, starMat);
+          } else if (f && near(f.x, f.z) && e.w === 'launcher') puff(f.x - Math.sin(e.a) * 0.6, 1, f.z - Math.cos(e.a) * 0.6, 0.6, 0.7, 0xd8d8d8, 0.6, -Math.sin(e.a) * 2, 0.4, -Math.cos(e.a) * 2, 2);
           if (e.f === focus) shake = Math.max(shake, cls === 'shotgun' || cls === 'sniper' || e.w === 'launcher' || e.w === 'revolver' ? 0.35 : 0.08);
           break;
         }
@@ -3048,9 +4231,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           } else if (e.what === 'fire') burst(e.x, 0.6, e.z, 6, 3, 0.08, 0.5, [partMat.spark, partMat.fire], 3);
           else burst(e.x, 1, e.z, 4, 3, 0.1, 0.35, [partMat.wood, partMat.dust]);
           break;
-        case 'hit':
-          if (near(e.x, e.z)) burst(e.x, 1, e.z, 5, 3.5, 0.1, 0.4, e.shield ? [partMat.purple, partMat.shell] : [partMat.shell, partMat.yolk]);
+        case 'hit': {
+          if (!near(e.x, e.z)) break;
+          burst(e.x, 1, e.z, 5, 3.5, 0.1, 0.4, e.shield ? [partMat.purple, partMat.shell] : [partMat.shell, partMat.yolk]);
+          star(e.x, 1.05, e.z, Math.random() * 3, 0.75, 0.75, 0.07, sparkMat);
+          const v = eggs[e.to];
+          if (v && e.shield) v.shimmer = 1;
           break;
+        }
         case 'hurt':
           if (e.f === focus) shake = Math.max(shake, e.storm ? 0.12 : 0.35);
           break;
@@ -3079,7 +4267,23 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         }
         case 'boom':
           flash(e.x, 1, e.z, 1.2, 0.35, 9, boomMat);
-          burst(e.x, 1, e.z, 22, 9, 0.28, 0.9, [partMat.fire, partMat.spark, partMat.smoke]);
+          burst(e.x, 1, e.z, 16, 9, 0.24, 0.8, [partMat.fire, partMat.spark]);
+          if (near(e.x, e.z)) {
+            // a fireball that rolls up into smoke, a shockwave along the ground, and a scorch left behind
+            for (let i = 0; i < 4; i++) puff(e.x + (Math.random() - 0.5) * 1.2, 0.8 + Math.random(), e.z + (Math.random() - 0.5) * 1.2, 0.8, 0.3, i % 2 ? 0xffc35a : 0xff8a3a, 0.8, 0, 2.5, 0, 1.4);
+            for (let i = 0; i < 7; i++) {
+              const a = (i / 7) * Math.PI * 2;
+              puff(e.x + Math.sin(a) * 1.2, 1 + Math.random() * 1.5, e.z + Math.cos(a) * 1.2, 1.1, 1.5 + Math.random() * 0.8, i % 3 ? 0xa4a4a8 : 0xc4c4c8, 0.55, Math.sin(a) * 1.5, 1.4 + Math.random(), Math.cos(a) * 1.5, 1.8);
+            }
+            ripple(e.x, 0.2, e.z, 8, 0.45, 0xffd9a0);
+            dustRing(e.x, e.z, 8, 1.5, 0.7, 0xc9b38a, 0.6, 7);
+            const sc = scorches[scorchAt];
+            scorchAt = (scorchAt + 1) % scorches.length;
+            sc.position.set(e.x, 0.029, e.z);
+            sc.scale.setScalar(3.6 + Math.random());
+            sc.rotation.z = Math.random() * 6;
+            sc.visible = true;
+          }
           {
             const f = m.fighters[focus];
             if (f && Math.hypot(f.x - e.x, f.z - e.z) < 25) shake = Math.max(shake, 1.1);
@@ -3098,8 +4302,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         }
         case 'bounce': {
           const f = m.fighters[e.f];
+          const v = eggs[e.f];
+          if (v) v.sqV = 7;
           if (!f || !near(f.x, f.z)) break;
-          burst(f.x, 0.3, f.z, 14, 5, 0.2, 0.6, [partMat.dust], 2);
+          burst(f.x, 0.3, f.z, 10, 5, 0.2, 0.6, [partMat.dust], 2);
+          dustRing(f.x, f.z, 8, 1.3, 0.55, 0xbff5e2, 0.6, 5);
           flash(f.x, 0.3, f.z, 0.8, 0.25, 8, padFlash);
           if (e.f === focus) shake = Math.max(shake, 0.3);
           break;
@@ -3109,7 +4316,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           break;
         case 'land': {
           const f = m.fighters[e.f];
-          if (f && near(f.x, f.z)) burst(f.x, 0.2, f.z, 10, 3, 0.25, 0.5, f.wet ? [partMat.splash] : [partMat.dust], 2);
+          const v = eggs[e.f];
+          // a thump: squashed flat for a moment, and dust (or spray) thrown out round it
+          if (v) v.sqV = -6.5;
+          if (!f || !near(f.x, f.z)) break;
+          if (f.wet) {
+            burst(f.x, 0.3, f.z, 14, 4, 0.18, 0.6, [partMat.splash], 6);
+            ripple(f.x, 0.07, f.z, 3.2, 0.9, 0xe6f7ff);
+            ripple(f.x, 0.07, f.z, 1.8, 0.7, 0xe6f7ff);
+          } else dustRing(f.x, f.z, 9, 0.7, 0.55, 0xd9cfae, 0.65, 3.2);
           break;
         }
         case 'out': {
@@ -3117,6 +4332,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           if (!f) break;
           // the egg cracks: shell flies, a yolk stays behind
           burst(f.x, 1, f.z, 26, 6, 0.2, 1, [partMat.shell, partMat.shell, partMat.yolk]);
+          if (near(f.x, f.z)) {
+            star(f.x, 1, f.z, 0, 2.4, 2.4, 0.12, sparkMat);
+            dustRing(f.x, f.z, 7, 0.8, 0.6, 0xfff3df, 0.7, 3.5);
+          }
           const yolk = new THREE.Group();
           yolk.position.set(f.x, 0.04, f.z);
           const white = new THREE.Mesh(G.disc, M.eggWhite);

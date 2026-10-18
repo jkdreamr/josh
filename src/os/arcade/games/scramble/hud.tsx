@@ -469,6 +469,10 @@ function DoorMark({ b, d }: { b: Building; d: Door }) {
   return <rect x={x - hw} y={z - hd} width={hw * 2} height={hd * 2} fill={open ? '#1d2025' : b.kind === 'ruin' ? '#e4dccb' : '#fff6d6'} />;
 }
 
+/** Many round dots as one path (hundreds of trees in one element, not hundreds of elements). */
+const dots = <P extends { x: number; z: number }>(list: P[], r: (p: P) => number) =>
+  list.map((p) => `M${(p.x - r(p)).toFixed(1)} ${p.z.toFixed(1)}a${r(p)} ${r(p)} 0 1 0 ${2 * r(p)} 0a${r(p)} ${r(p)} 0 1 0 ${-2 * r(p)} 0Z`).join('');
+
 /** The river's middle line as SVG points. */
 const riverPoints = (map: GameMap) => map.river.map((p) => `${p.x},${p.z}`).join(' ');
 
@@ -504,12 +508,8 @@ export function IslandArt({ map }: { map: GameMap }) {
       {map.yards.map((y, i) => (
         <rect key={`y${i}`} x={y.x - y.hw} y={y.z - y.hd} width={y.hw * 2} height={y.hd * 2} fill="none" stroke="#c49a5c" strokeWidth="1.2" strokeDasharray="5 3" />
       ))}
-      {map.trees.map((t, i) => (
-        <circle key={`t${i}`} cx={t.x} cy={t.z} r="2" fill="#3f8f3a" />
-      ))}
-      {map.rocks.map((r, i) => (
-        <circle key={`r${i}`} cx={r.x} cy={r.z} r={r.r} fill="#9aa0a6" />
-      ))}
+      <path d={dots(map.trees, () => 2)} fill="#3f8f3a" />
+      <path d={dots(map.rocks, (r) => r.r)} fill="#9aa0a6" />
       {map.buildings.map((b, i) => (
         <rect key={`b${i}`} x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={MAP_ROOF[b.kind]} stroke={b.kind === 'ruin' ? 'none' : '#f1e6d2'} strokeWidth="1" />
       ))}
@@ -686,7 +686,7 @@ export const keyCode = (k: string) => (/^\d$/.test(k) ? `Digit${k}` : `Key${k}`)
 export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; touch: boolean; onClose: () => void }) {
   return (
     <Sheet root={root} title="How to Play" onClose={onClose}>
-      <p className="g-scramble-lede">Twenty eggs drop onto the island. Grab guns, crack the others, and stay inside the circle as the storm closes in. The last egg standing wins.</p>
+      <p className="g-scramble-lede">Fifty eggs drop onto the island. Grab guns, crack the others, and stay inside the circle as the storm closes in. The last egg standing wins.</p>
       <section>
         <h3>Controls</h3>
         <dl className="g-scramble-keys">
@@ -748,7 +748,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Legendary loot.</b> Legendary guns, flare guns and golden egg tarts glow gold on the ground, with a beam of light you can spot from far off.
           </li>
           <li>
-            <b>Health and shield.</b> You have 100 health and up to 100 shield, which takes hits first.
+            <b>Health and shield.</b> You have 100 health and up to 100 shield, which takes hits first. An egg's shell cracks as its health runs low, and its shield shimmers blue when a hit lands on it.
           </li>
           <li>
             <b>Armor.</b> A helmet and a vest from the kitchen, three levels each, take a cut of every bullet, swing and blast (not the storm, not hot sauce). Walk over a better one to put it on; your old one drops. {touch ? 'Tap pick up' : 'Press E'} to swap for a worse one if you really want it.
@@ -757,7 +757,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>The storm.</b> The white ring shows where the safe circle is heading. Outside the circle the storm eats your health (shields don't help), and it bites harder each time it closes.
           </li>
           <li>
-            <b>Supply drops.</b> Three times a match a crate floats down under a balloon inside the next circle, with a beam of light over it. They're full of epic and legendary gear. Fire a flare gun to call one more down near you.
+            <b>Supply drops.</b> Before the storm moves each of the first three times, two crates float down under balloons inside the circle it will close to (one more before the fourth time), each with a beam of light over it. They're full of epic and legendary gear. Fire a flare gun to call one more down near you.
           </li>
           <li>
             <b>Walls.</b> Swing at trees or fallen logs for wood, then throw up walls for cover. They take a beating before they break.
@@ -804,7 +804,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>The Golden Coop.</b> The gold-roofed building with a star on the map. One way in, and a golden chest at the back full of legendary gear.
           </li>
           <li>
-            <b>The diner and the windmill.</b> Most islands have one or the other, now and then both, each going by its own name. The diner has booths, a counter and, in the kitchen at the back, two fridges and a chest. The windmill has one way in, flour sacks and a millstone, and a chest across from the door as good as a supply drop.
+            <b>The diner and the windmill.</b> Every island has one of each, now and then a second of one, each going by its own name. The diner has booths, a counter and, in the kitchen at the back, two fridges and a chest. The windmill has one way in, flour sacks and a millstone, and a chest across from the door as good as a supply drop.
           </li>
           <li>
             <b>Bushes and cornfields.</b> Stand in one and nobody sees you from a distance until you fire.
@@ -924,8 +924,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
       </section>
       <section>
         <h3>Online</h3>
-        <p>Up to eight friends in one room. The host adds computer eggs with Bots, then picks whether more fill the island up to twenty and how sharp they are.</p>
-        <p>Cracked? Watch the rest, or press done watching for your result while the match plays on for everyone else. The host can do the same, and starts the next match once this one is over.</p>
+        <p>Play joins a match with whoever else is starting one, like an .io game: it starts on its own about twenty seconds after the first egg comes in (sooner once twenty people are in), and computer eggs fill the island up to fifty. Arrive once one is under way and you go into the next. Play with Bots is you against forty-nine computer eggs, as sharp as you pick.</p>
+        <p>Play with Friends makes a room of your own for up to twenty: the host adds computer eggs with Bots, then picks whether more fill the island up to fifty and how sharp they are.</p>
+        <p>Cracked? Watch the rest, or press done watching for your result while the match plays on for everyone else. Whoever hosts runs the match, so they can play again (or start the next one, in a room of your own) once it is over; if the host leaves first, the match ends for everyone.</p>
       </section>
     </Sheet>
   );

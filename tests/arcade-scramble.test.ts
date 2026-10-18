@@ -34,11 +34,15 @@ import {
   bridgeAt,
   buildingAt,
   busAt,
+  bushAt,
   coverAt,
   dropFits,
+  fieldAt,
+  fireAt,
   furnitureSolid,
   generateMap,
   low,
+  padAt,
   peekAt,
   placeAt,
   pondAt,
@@ -54,6 +58,7 @@ import {
   riverCrossings,
   riverDist2,
   roadAt,
+  roomAt,
   solidsNear,
   stormAt,
   stormEnd,
@@ -111,6 +116,7 @@ import {
   held,
   hurt,
   makeWall,
+  moveLoot,
   noInput,
   openable,
   panBlocks,
@@ -128,7 +134,7 @@ import {
   type Match,
 } from '../src/os/arcade/games/scramble/logic.ts';
 import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
-import { END_PAUSE, FIRST_GRACE, FLUSH, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
+import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
 
 const DT = 1 / 60;
@@ -199,7 +205,7 @@ test('the island is the same for a seed and different between seeds', () => {
   assert.notEqual(strip(42), strip(43));
 });
 
-const KIND_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 2, farm: 2, house: 9, shed: 7, ruin: 4 };
+const KIND_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 4, farm: 4, house: 22, shed: 16, ruin: 9 };
 const DOOR_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 3, farm: 3, house: 2, shed: 1, container: 1, diner: 2, mill: 1 };
 /** Total wall length a building would have with no gaps at all (corners counted once), as its walls are laid out. */
 const fullWalls = (b: Building) => 2 * (b.w + WALL_T) + 2 * (b.d - WALL_T);
@@ -209,12 +215,12 @@ test('every island has all its buildings, each with the doorways it should have,
   for (let seed = 1; seed <= 40; seed++) {
     const m = generateMap(seed);
     for (const [kind, n] of Object.entries(KIND_COUNTS)) assert.equal(m.buildings.filter((b) => b.kind === kind).length, n, `seed ${seed}: ${kind}`);
-    assert.ok(m.buildings.filter((b) => b.kind === 'container').length >= 6, `seed ${seed}: two yards of containers`);
+    assert.ok(m.buildings.filter((b) => b.kind === 'container').length >= 12, `seed ${seed}: four yards of containers`);
     assert.equal(m.buildings[m.coop]?.kind, 'coop');
     const special = m.buildings.filter((b) => b.kind === 'diner' || b.kind === 'mill');
-    assert.ok(special.length >= 1 && special.length <= 2 && new Set(special.map((b) => b.kind)).size === special.length, `seed ${seed}: a diner or a windmill, or one of each`);
-    assert.equal(m.fields.length, 2, 'a cornfield beside each farm');
-    assert.equal(m.ponds.length, 3);
+    assert.ok(special.length >= 2 && special.length <= 3 && new Set(special.map((b) => b.kind)).size === 2, `seed ${seed}: a diner and a windmill, now and then a second of one`);
+    assert.equal(m.fields.length, 4, 'a cornfield beside each farm');
+    assert.equal(m.ponds.length, 7);
     for (const b of m.buildings) {
       assert.ok(Math.abs(b.x) + b.w / 2 < HALF - BEACH && Math.abs(b.z) + b.d / 2 < HALF - BEACH, 'buildings stand on grass');
       assert.equal(b.roof, b.kind !== 'ruin', 'everything but ruins has a roof');
@@ -236,20 +242,20 @@ test('every island has all its buildings, each with the doorways it should have,
       assert.ok(!wet(t.x, t.z, 0), 'nor in a pond');
     }
     for (const l of m.floor) assert.ok(!wet(l.x, l.z, 0), 'no loot lies in a pond');
-    assert.ok(m.trees.length >= 220 && m.rocks.length >= 60 && m.bushes.length >= 100, `seed ${seed} scenery`);
+    assert.ok(m.trees.length >= 540 && m.rocks.length >= 150 && m.bushes.length >= 240, `seed ${seed} scenery`);
     const kinds = (k: string) => m.containers.filter((c) => c.kind === k);
-    assert.ok(kinds('chest').length >= 20, 'a chest in every house and farm, and more besides');
+    assert.ok(kinds('chest').length >= 48, 'a chest in every house and farm, and more besides');
     assert.equal(kinds('chest').filter((c) => c.gold).length, 1, 'one golden chest, in the Golden Coop');
-    assert.ok(kinds('barrel').length >= 16, 'barrels about');
-    assert.equal(kinds('supply').filter((c) => !c.flare).length, 3);
+    assert.ok(kinds('barrel').length >= 40, 'barrels about');
+    assert.equal(kinds('supply').filter((c) => !c.flare).length, 7, 'two drops for each of the first three circles and one for the fourth');
     assert.equal(m.flares.length, FLARE_DROPS, 'and the ones flare guns call, waiting');
     for (const id of m.flares) assert.ok(m.containers[id].flare && m.containers[id].at === Infinity && m.containers[id].kind === 'supply');
     // the kitchens, the farmyards, the camps and everything round the houses
     const diners = m.buildings.filter((b) => b.kind === 'diner').length;
-    assert.equal(kinds('fridge').length, 11 + 2 * diners, 'a fridge in every house and farmhouse, and two in a diner');
-    assert.equal(kinds('toilet').length, 11, 'and a toilet');
-    assert.ok(kinds('hay').length >= 6 && kinds('hay').length <= 10, 'three to five hay bales a farm');
-    assert.equal(m.yards.length, 2, 'a fence round each farm');
+    assert.equal(kinds('fridge').length, 26 + 2 * diners, 'a fridge in every house and farmhouse, and two in a diner');
+    assert.equal(kinds('toilet').length, 26, 'and a toilet');
+    assert.ok(kinds('hay').length >= 12 && kinds('hay').length <= 20, 'three to five hay bales a farm');
+    assert.equal(m.yards.length, 4, 'a fence round each farm');
     for (const y of m.yards) {
       assert.equal(y.gates.length, 4, 'a gate in every side');
       for (const g of y.gates) assert.ok(Math.abs(g.w - GATE) < 0.01);
@@ -257,11 +263,11 @@ test('every island has all its buildings, each with the doorways it should have,
       assert.ok(farm && m.fields.some((f) => Math.abs(f.x - y.x) < y.hw && Math.abs(f.z - y.z) < y.hd), 'the farmhouse and its field inside it');
       for (const c of kinds('hay')) if (Math.abs(c.x - y.x) < y.hw && Math.abs(c.z - y.z) < y.hd) assert.ok(Math.abs(c.x - farm.x) > farm.w / 2 + 1 || Math.abs(c.z - farm.z) > farm.d / 2 + 1, 'hay outdoors');
     }
-    assert.ok(m.fires.length >= 3 && m.fires.length <= 12, `seed ${seed}: three camps and a few house fires (${m.fires.length})`);
-    assert.equal(m.pads.length, 5, 'five bounce pads');
+    assert.ok(m.fires.length >= 7 && m.fires.length <= 24, `seed ${seed}: seven camps and a few house fires (${m.fires.length})`);
+    assert.equal(m.pads.length, 12, 'twelve bounce pads');
     for (const p of m.pads) assert.ok(Math.abs(Math.hypot(p.dx, p.dz) - 1) < 0.01 && p.x * p.dx + p.z * p.dz < 0, 'each pointing in toward the island');
-    assert.ok(m.cars.length >= 3 && m.lamps.length >= 20 && m.mailboxes.length >= 12 && m.tables.length >= 3 && m.roads.length >= 15, `seed ${seed}: props and roads`);
-    assert.ok(m.places.length >= 5, `seed ${seed}: named places`);
+    assert.ok(m.cars.length >= 8 && m.lamps.length >= 90 && m.mailboxes.length >= 35 && m.tables.length >= 7 && m.roads.length >= 60, `seed ${seed}: props and roads`);
+    assert.ok(m.places.length >= 18, `seed ${seed}: named places`);
     assert.equal(new Set(m.places.map((p) => p.name)).size, m.places.length, 'no two places share a name');
     for (const b of m.buildings) if (b.kind === 'farm' || b.kind === 'warehouse' || b.kind === 'coop') assert.ok(placeAt(m, b.x, b.z) >= 0, `seed ${seed}: a ${b.kind} is somewhere with a name`);
     for (const f of m.fires) assert.ok(placeAt(m, f.x, f.z) >= 0 || m.buildings.some((b) => Math.hypot(b.x - f.x, b.z - f.z) < 20), 'a fire is at a camp or by a house');
@@ -555,6 +561,89 @@ test('the grid finds everything a ray could hit, the same as checking every soli
     const d = Math.abs(cells[i] - cells[i - 1]);
     assert.ok(d === 1 || d === cols, 'neighbors');
   }
+});
+
+test('what stands at a point is found by its grid cell, the same as looking at everything, and a list swapped is seen', () => {
+  const seg2 = (x: number, z: number, x0: number, z0: number, x1: number, z1: number) => {
+    const dx = x1 - x0;
+    const dz = z1 - z0;
+    const l2 = dx * dx + dz * dz;
+    const u = l2 > 0 ? Math.max(0, Math.min(1, ((x - x0) * dx + (z - z0) * dz) / l2)) : 0;
+    return (x0 + dx * u - x) ** 2 + (z0 + dz * u - z) ** 2;
+  };
+  for (const seed of [3, 8]) {
+    const map = generateMap(seed);
+    const brute = (x: number, z: number) => ({
+      bush: map.bushes.findIndex((b) => (x - b.x) ** 2 + (z - b.z) ** 2 < b.r * b.r * 0.72),
+      field: map.fields.findIndex((f) => Math.abs(x - f.x) < f.hw - 0.3 && Math.abs(z - f.z) < f.hd - 0.3),
+      pond: map.ponds.findIndex((p) => (x - p.x) ** 2 + (z - p.z) ** 2 < p.r * p.r),
+      fire: map.fires.findIndex((f) => (x - f.x) ** 2 + (z - f.z) ** 2 < CAMP.r * CAMP.r),
+      pad: map.pads.findIndex((p) => (x - p.x) ** 2 + (z - p.z) ** 2 < PAD.r * PAD.r),
+      yard: map.yards.findIndex((y) => Math.abs(x - y.x) < y.hw - FENCE_T / 2 && Math.abs(z - y.z) < y.hd - FENCE_T / 2),
+      building: map.buildings.findIndex((b) => b.roof && Math.abs(x - b.x) < b.w / 2 - WALL_T / 2 && Math.abs(z - b.z) < b.d / 2 - WALL_T / 2),
+      room: map.buildings.findIndex((b) => b.roof && Math.abs(x - b.x) < (b.w + WALL_T) / 2 && Math.abs(z - b.z) < (b.d + WALL_T) / 2),
+      bridge: map.bridges.findIndex((b) => Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd),
+      road: map.roads.some((r) => seg2(x, z, r.x0, r.z0, r.x1, r.z1) < ROAD_HALF * ROAD_HALF),
+      river: riverDist2(map, x, z) < RIVER_HALF * RIVER_HALF && !map.bridges.some((b) => Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd),
+    });
+    const fast = (x: number, z: number) => ({
+      bush: bushAt(map, x, z),
+      field: fieldAt(map, x, z),
+      pond: pondAt(map, x, z),
+      fire: fireAt(map, x, z),
+      pad: padAt(map, x, z),
+      yard: yardAt(map, x, z),
+      building: buildingAt(map, x, z),
+      room: roomAt(map, x, z),
+      bridge: bridgeAt(map, x, z),
+      road: roadAt(map, x, z),
+      river: riverAt(map, x, z),
+    });
+    // all over the island and just off it, then right at things, where the edges are
+    const rng = rng32(seed);
+    const points: [number, number][] = Array.from({ length: 4000 }, () => [(rng() * 2 - 1) * (HALF + 30), (rng() * 2 - 1) * (HALF + 30)]);
+    for (const t of [...map.bushes, ...map.ponds, ...map.fires, ...map.pads, ...map.yards, ...map.buildings, ...map.bridges, ...map.river]) for (let k = 0; k < 6; k++) points.push([t.x + (rng() * 2 - 1) * 12, t.z + (rng() * 2 - 1) * 12]);
+    for (const r of map.roads) for (let k = 0; k < 4; k++) points.push([r.x0 + (r.x1 - r.x0) * rng() + (rng() * 2 - 1) * 3, r.z0 + (r.z1 - r.z0) * rng() + (rng() * 2 - 1) * 3]);
+    let hits = 0;
+    for (const [x, z] of points) {
+      const want = brute(x, z);
+      assert.deepEqual(fast(x, z), want, `seed ${seed} at ${x.toFixed(2)},${z.toFixed(2)}`);
+      if (Object.values(want).some((v) => v !== -1 && v !== false)) hits++;
+    }
+    assert.ok(hits > 1000, `most points were at something (${hits})`);
+    // a list swapped for another (as tests do) or grown is seen at once
+    const p = map.pads[0];
+    assert.equal(padAt(map, p.x, p.z), 0);
+    map.pads = [];
+    assert.equal(padAt(map, p.x, p.z), -1);
+    map.pads.push({ ...p });
+    assert.equal(padAt(map, p.x, p.z), 0);
+  }
+});
+
+test('loot is found where it lies however it got there: spilled, dropped, shoved, or set down by hand', () => {
+  const m = quiet(9, 2);
+  const [a, b] = m.fighters;
+  openSpot(m);
+  land(a, 0, 0);
+  land(b, 40, 40);
+  // set down by hand while nobody was looking, then again in place of something else with the same count
+  m.loot.set(1, { id: 1, def: { kind: 'ammo', a: 'light', n: 10 }, x: 0.3, z: 0, by: -1, at: 0 });
+  run(m, 0.05);
+  assert.equal(a.ammo.light, 10);
+  m.loot.set(2, { id: 2, def: { kind: 'ammo', a: 'heavy', n: 5 }, x: 30, z: 30, by: -1, at: 0 });
+  run(m, 0.05);
+  m.loot.delete(2);
+  m.loot.set(3, { id: 3, def: { kind: 'ammo', a: 'shells', n: 4 }, x: 0, z: 0.4, by: -1, at: 0 });
+  run(m, 0.05);
+  assert.equal(a.ammo.shells, 4, 'the new one, not the one taken away');
+  // shoved from far off to right under b: picked up where it ended
+  m.loot.set(4, { id: 4, def: { kind: 'ammo', a: 'heavy', n: 6 }, x: -100, z: -100, by: -1, at: 0 });
+  run(m, 0.05);
+  moveLoot(m, 4, 40.2, 40, true);
+  run(m, 0.05);
+  assert.equal(b.ammo.heavy, 6);
+  assert.ok(!m.loot.has(4));
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1006,9 +1095,15 @@ test('packets survive the trip and anything malformed is turned away', () => {
   f.shield = 33.33;
   const s = stateOf(f);
   const back = parsePacket(JSON.parse(JSON.stringify(guestState(4, s))));
-  assert.deepEqual(back, { k: 's', round: 4, state: s });
+  assert.deepEqual(back, { k: 's', round: 4, state: s, watch: -1 });
+  // once its egg is out, a guest says which egg it watches
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(4, s, 7)))), { k: 's', round: 4, state: s, watch: 7 });
+  assert.equal(parsePacket({ ...guestState(4, s), v: MAX_FIGHTERS }), null);
   const host = parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, -2.5, 'hard', [0, 1, -1], [[0, s], [2, s]]))));
   assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]] });
+  // the roster only goes with some of the host's reports
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]] });
+  assert.equal(parsePacket({ ...hostState(4, 99, 3, 'hard', null, []), ro: 'all' }), null);
   assert.deepEqual(parsePacket(endOf(4, 2, [[2, 1, 3], [0, 2, 1]])), { k: 'end', round: 4, winner: 2, places: [[2, 1, 3], [0, 2, 1]] });
   assert.deepEqual(parsePacket(configOf(4, 'none', 'easy')), { k: 'cfg', round: 4, bots: 'none', level: 'easy' });
   for (const bad of [null, 1, 'x', {}, { t: 'pk', r: 1.5, k: 's', c: [] }, { t: 'pk', r: 1, k: 's', c: [1, 2] }, { t: 'pk', r: 1, k: 'S', sd: 1, tm: 0, lv: 'brutal', ro: [0], c: [] }, { t: 'pk', r: 1, k: 'S', sd: 1, tm: 0, lv: 'easy', ro: [0, 0], c: [] }, { t: 'pk', r: 1, k: 'end', w: MAX_FIGHTERS, pl: [] }, { t: 'pk', r: 1, k: 'cfg', b: 'lots', lv: 'easy' }])
@@ -1121,8 +1216,8 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
   const clients: Client[] = players.map((p) => ({ seat: p.seat, me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], gone: false, call: null, hurtBy: 0, heard: 0, doneAt: -1 }));
   autopilot(host.match, host.match.fighters[host.match.me]);
   let now = 0;
-  const post = (from: Client, d: object, fast: boolean) => {
-    const to = from.me.isHost ? clients.filter((c) => c !== from && !c.gone) : [clients[0]];
+  const post = (from: Client, d: object, fast: boolean, only?: number) => {
+    const to = from.me.isHost ? clients.filter((c) => c !== from && !c.gone && (only === undefined || c.seat === only)) : [clients[0]];
     for (const c of to) {
       if (fast && rng() < opts.loss) continue;
       c.inbox.push({ at: now + opts.delay, from: from.seat, d: JSON.parse(JSON.stringify(d)) });
@@ -1184,7 +1279,10 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
           catchUp(c.s, c.m, c.seat, TICK_MS / 1000);
           for (const p of flush(c.s, 1, FLUSH)) post(c, p, false);
         }
-        for (const out of tick(c.s, c.m, c.me, live.map((x) => x.seat), now)) post(c, out.d, out.fast);
+        // a guest that is out watches the egg that cracked it, or the first one still going
+        const mine = c.m.fighters[c.m.me];
+        if (mine?.phase === 'out') c.s.watch = c.m.fighters[mine.by]?.phase === 'ground' ? mine.by : (c.m.fighters.find((f) => f.phase !== 'out')?.id ?? c.m.me);
+        for (const out of tick(c.s, c.m, c.me, live.map((x) => x.seat), now)) post(c, out.d, out.fast, out.to);
       }
     }
     if (live.every((c) => c.call || stalled(c))) break;
@@ -1205,11 +1303,12 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
 }
 
 for (const [label, opts] of [
-  ['a host, three guests and four computer eggs, with lag and lost packets', { humans: 4, bots: true, seed: 22, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
+  ['a host, three guests and computer eggs to fifty, with lag and lost packets', { humans: 4, bots: true, seed: 22, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
   ['eight people and no computer eggs, one of whom leaves halfway', { humans: 8, bots: false, seed: 34, level: 'normal' as Level, delay: 0.05, loss: 0.05, leave: { seat: 5, at: 30 } }],
   ['a guest whose tab freezes on the bus (still in the room, still reporting)', { humans: 3, bots: true, seed: 8, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 2, at: 2, silent: false } }],
   ['a guest who goes silent mid-match', { humans: 3, bots: true, seed: 14, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 1, at: 30, silent: true } }],
-  ['a host who is cracked early and done watching (its timer runs the match from then on)', { humans: 3, bots: true, seed: 5, level: 'normal' as Level, delay: 0.05, loss: 0.05, hostDone: 50 }],
+  ['a host who is cracked early and done watching (its timer runs the match from then on)', { humans: 3, bots: true, seed: 5, level: 'normal' as Level, delay: 0.05, loss: 0.05, hostDone: 80 }],
+  ['twenty people and computer eggs to fifty, with lag and lost packets', { humans: 20, bots: true, seed: 41, level: 'normal' as Level, delay: 0.06, loss: 0.08 }],
 ] as const) {
   test(`online: ${label}, all agree on what happened`, () => {
     const clients = simulate(opts);
@@ -1238,7 +1337,8 @@ for (const [label, opts] of [
     }
     if (!('stall' in opts)) assert.ok(live.slice(1).some((c) => c.hurtBy > 0), 'guests took hits decided on other clients');
     assert.ok(host.time > 25, `a real match (${host.time.toFixed(0)} s)`);
-    if (!('stall' in opts)) for (const c of live) assert.ok(c.heard > 10, `seat ${c.seat} heard ${c.heard} shots from other clients`);
+    // with fifty eggs about, the host's guests may crack early: then it hears only a few of their shots
+    if (!('stall' in opts)) for (const c of live) assert.ok(c.heard > (c.me.isHost ? 0 : 10), `seat ${c.seat} heard ${c.heard} shots from other clients`);
     if ('hostDone' in opts) {
       const done = live[0];
       assert.ok(done.doneAt > 0, 'the host was done watching');
@@ -1744,18 +1844,28 @@ test('a computer egg in a farmyard breaks down a wall someone built across its w
   land(b, 0, 0);
   autopilot(m, a);
   const ai = a.ai!;
-  const y = m.map.yards.findIndex((yd) => Math.abs(yd.x - 7.5) < 0.1 && Math.abs(yd.z + 74) < 0.1);
-  assert.ok(y >= 0, 'the farm on seed 4');
-  // between the farmhouse and the north fence, with a wall in front of the north gate (where one came up in a match)
-  land(a, 5.5, -63.8);
+  // a farm whose south gate has nothing else round it inside the fence
+  const clearAt = (x: number, z: number) => {
+    let ok = true;
+    solidsNear(m.map, x, z, 3, (_i, s) => {
+      if (s.what !== 'fence' && (s.shape === 'circle' ? pushCircle(x, z, 2, s.x, s.z, s.r) : pushBox(x, z, 2, s.x, s.z, s.hw, s.hd))) ok = false;
+    });
+    return ok;
+  };
+  const y = m.map.yards.findIndex((yd) => clearAt(yd.x - 1, yd.z + yd.hd - 1.6));
+  assert.ok(y >= 0, 'a farm on seed 4');
+  const g = m.map.yards[y].gates.find((gt) => gt.oz > 0)!;
+  // between the farmhouse and the south fence, with a wall in front of the gate (where one came up in a match)
+  land(a, g.x - 2, g.z - 1.8);
   const id = 999;
-  m.walls.set(id, makeWall(id, b.id, 6.76, -63.4, 0.79, WALL_HP));
+  m.walls.set(id, makeWall(id, b.id, g.x - 0.74, g.z - 1.4, 0.79, WALL_HP));
   ai.think = 1e9;
   ai.goal = 'roam';
-  ai.gx = 11;
-  ai.gz = -34;
+  ai.gx = g.x + 3.5;
+  ai.gz = g.z + 28;
   run(m, 12);
   assert.ok(yardAt(m.map, a.x, a.z) !== y, `out of the yard, at (${a.x.toFixed(1)}, ${a.z.toFixed(1)})`);
+  assert.ok(!m.walls.has(id), 'through the wall');
 });
 
 test('an egg cracked against a wall spills nothing through it, nor under a bed out of reach', () => {
@@ -1812,12 +1922,12 @@ test('a computer egg gives up on loot lying where it cannot reach, and goes for 
 // ---------------------------------------------------------------------------------------------------------------------
 // The kitchen drawer: guns, melee, throwables, barrels, supply drops, scopes and backpacks.
 
-test('a solo match is you and nineteen computer eggs, each with its own name and color', () => {
+test('a solo match is you and forty-nine computer eggs, each with its own name and color', () => {
   const m = soloMatch(5, 'hard');
-  assert.equal(m.fighters.length, 20);
-  assert.equal(MAX_FIGHTERS, 20);
-  assert.equal(new Set(m.fighters.map((f) => f.name)).size, 20);
-  assert.equal(new Set(m.fighters.map((f) => f.color)).size, 20);
+  assert.equal(m.fighters.length, 50);
+  assert.equal(MAX_FIGHTERS, 50);
+  assert.equal(new Set(m.fighters.map((f) => f.name)).size, 50);
+  assert.equal(new Set(m.fighters.map((f) => f.color)).size, 50);
   assert.ok(m.fighters.slice(1).every((f) => f.kind === 'bot' && f.ai));
   assert.equal(new Set(FIGHTER_COLORS).size, FIGHTER_COLORS.length);
 });
@@ -2038,9 +2148,13 @@ test('a barrel blows up when broken, hurting everyone near it and setting off th
 test('supply drops float down inside the next circle, open only once they land, and hold the good stuff', () => {
   for (let seed = 1; seed <= 20; seed++) {
     const map = generateMap(seed);
-    assert.equal(map.drops.length, 3);
-    map.drops.forEach((id, k) => {
+    // two for each of the first three circles, one for the fourth, apart from each other
+    const phases = [0, 0, 1, 1, 2, 2, 3];
+    assert.equal(map.drops.length, phases.length);
+    for (const [i, a] of map.drops.entries()) for (const b of map.drops.slice(i + 1)) assert.ok(Math.hypot(map.containers[a].x - map.containers[b].x, map.containers[a].z - map.containers[b].z) > 4, `seed ${seed}: drops apart`);
+    map.drops.forEach((id, j) => {
       const c = map.containers[id];
+      const k = phases[j];
       const circle = map.storm.circles[k + 1];
       assert.equal(c.kind, 'supply');
       assert.ok(Math.hypot(c.x - circle.x, c.z - circle.z) <= circle.r * 0.75 + 4, `seed ${seed}: drop ${k} lands in the next circle`);
@@ -2226,10 +2340,10 @@ test('an egg’s helmet and vest travel with its state, within bounds, and show 
   const s = stateOf(f);
   assert.equal(s.helmet, 2);
   assert.equal(s.vest, 3);
-  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(1, s)))), { k: 's', round: 1, state: s });
-  for (const bad of [{ ...s, helmet: MAX_ARMOR + 1 }, { ...s, vest: -1 }, { ...s, helmet: 1.5 }]) assert.equal(parsePacket(guestState(1, bad)), null, JSON.stringify(bad));
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(1, s)))), { k: 's', round: 1, state: s, watch: -1 });
+  for (const bad of [{ ...s, helmet: MAX_ARMOR + 1 }, { ...s, vest: -1 }, { ...s, helmet: 1.5 }, { ...s, vest: MAX_ARMOR + 1 }, { ...s, r: MAX_RARITY + 1 }]) assert.equal(parsePacket(guestState(1, bad)), null, JSON.stringify(bad));
   const packed = guestState(1, s);
-  assert.equal(parsePacket({ ...packed, c: packed.c.slice(0, 12) }), null, 'a report without the armor is no report');
+  assert.equal(parsePacket({ ...packed, c: packed.c.slice(0, 9) }), null, 'a report cut short is no report');
   const g = createMatch({ seed: 2, role: 'guest', level: 'normal', entrants: [{ name: 'h', color: '#fff', kind: 'remote', seat: 0 }, { name: 'a', color: '#fff', kind: 'player', seat: 1 }], me: 1, countdown: 0 });
   applyState(g, g.fighters[0], s);
   assert.equal(g.fighters[0].helmet, 2);
@@ -2541,7 +2655,7 @@ function deckEnds(br: { x: number; z: number; hw: number; hd: number; alongX: bo
   ];
 }
 
-test('a river winds from shore to shore with two to four bridges over it, and nothing but a bridge stands in the water', () => {
+test('a river winds from shore to shore with three to five bridges over it, and nothing but a bridge stands in the water', () => {
   for (let seed = 1; seed <= 30; seed++) {
     const m = generateMap(seed);
     const [a, b] = [m.river[0], m.river[m.river.length - 1]];
@@ -2550,7 +2664,7 @@ test('a river winds from shore to shore with two to four bridges over it, and no
     let len = 0;
     for (let i = 1; i < m.river.length; i++) len += Math.hypot(m.river[i].x - m.river[i - 1].x, m.river[i].z - m.river[i - 1].z);
     assert.ok(len > 2 * HALF * 1.05, `seed ${seed}: it winds (${len.toFixed(0)} m)`);
-    assert.ok(m.bridges.length >= 2 && m.bridges.length <= 4, `seed ${seed}: ${m.bridges.length} bridges`);
+    assert.ok(m.bridges.length >= 3 && m.bridges.length <= 5, `seed ${seed}: ${m.bridges.length} bridges`);
     const dry = (x: number, z: number, r = 0) => riverDist2(m, x, z) >= (RIVER_HALF + r) * (RIVER_HALF + r);
     for (const br of m.bridges) {
       const [e0, e1] = deckEnds(br, 0.3);
@@ -2663,11 +2777,13 @@ test('furniture: counters, shelves and sacks stop eggs and bullets, beds, tables
   assert.ok(!clearLine(m, 0, 0, 8, 0) && clearLine(m, 0, 0, -8, 0), 'nobody sees through a shelf');
 });
 
-test('every island has a diner or a windmill (now and then both), each going by its own name, with good loot', () => {
+test('every island has a diner and a windmill (now and then a second of one), each going by its own name, with good loot', () => {
   let diners = 0;
   let mills = 0;
   for (let seed = 1; seed <= 40; seed++) {
     const m = generateMap(seed);
+    const own = m.buildings.filter((b) => b.kind === 'diner' || b.kind === 'mill').map((b) => m.places[placeAt(m, b.x, b.z)]?.name);
+    assert.equal(new Set(own).size, own.length, `seed ${seed}: never two of one name`);
     for (const b of m.buildings) {
       if (b.kind !== 'diner' && b.kind !== 'mill') continue;
       const p = placeAt(m, b.x, b.z);
@@ -2685,7 +2801,7 @@ test('every island has a diner or a windmill (now and then both), each going by 
       }
     }
   }
-  assert.ok(diners >= 10 && mills >= 10 && diners + mills < 70, `${diners} diners and ${mills} windmills in 40 islands`);
+  assert.ok(diners >= 40 && mills >= 40 && diners + mills > 90 && diners + mills < 120, `${diners} diners and ${mills} windmills in 40 islands`);
 });
 
 test('fallen logs and stumps lie out in the open, stop feet but not bullets, and give wood like a tree; trees come in four kinds', () => {
@@ -2912,26 +3028,91 @@ test('a computer egg off somewhere far takes a bounce pad that points the right 
   assert.ok(b.x > 10, 'and on its way on foot');
 });
 
-test('a host’s report of twenty eggs fits well inside one room message, and new holdings travel', () => {
-  const players = Array.from({ length: 8 }, (_, seat) => ({ seat, name: `P${seat}` }));
+test('a host’s report of fifty eggs fits well inside one room message, and new holdings travel', () => {
+  const players = Array.from({ length: 20 }, (_, seat) => ({ seat, name: `P${seat}` }));
   const h = hostMatch(players, 0, 3, 'normal', MAX_FIGHTERS, 3);
-  assert.equal(h.roster.length, 20);
-  assert.equal(h.roster.filter((s) => s < 0).length, 12);
-  const big = { x: -158.88, z: 157.77, y: 54.9, aim: -3.14, vx: -12.5, vz: 12.5, phase: 'ground' as const, hp: 99.9, shield: 99.9, w: 'pan' as const, r: 4, flags: 255, helmet: 3, vest: 3 };
+  assert.equal(h.roster.length, 50);
+  assert.equal(h.roster.filter((s) => s < 0).length, 30);
+  const big = { x: -238.85, z: 237.75, y: 67.9, aim: -3.14, vx: -12.5, vz: 12.5, phase: 'ground' as const, hp: 99.9, shield: 99.9, w: 'pan' as const, r: 4, flags: F_ALL, helmet: 3, vest: 3 };
   const packet = hostState(9, 123456789, 345.67, 'hard', h.roster, h.roster.map((_, i): [number, typeof big] => [i, big]));
-  const text = JSON.stringify({ t: 'msg', to: 1, d: packet });
-  assert.ok(text.length < 4000, `${text.length} bytes`);
+  const text = JSON.stringify({ t: 'msg', to: 19, d: packet });
+  assert.ok(text.length < 3200, `${text.length} bytes`);
   const back = parsePacket(JSON.parse(text).d);
-  assert.ok(back && back.k === 'S' && back.states.length === 20 && back.states[19][1].w === 'pan' && back.states[0][1].flags === 255 && back.states[7][1].vest === 3);
+  assert.ok(back && back.k === 'S' && back.states.length === 50 && back.states[49][1].w === 'pan' && back.states[0][1].flags === F_ALL && back.states[7][1].vest === 3);
+  assert.deepEqual(back.states[3][1], big, 'every number comes back as it went');
   for (const w of ['grenade', 'cleaver', 'lmg'] as const) {
     const s = { ...big, w };
-    assert.deepEqual(parsePacket(guestState(1, s)), { k: 's', round: 1, state: s });
+    assert.deepEqual(parsePacket(guestState(1, s)), { k: 's', round: 1, state: s, watch: -1 });
   }
   const ok = { y: 'th', f: 3, k: 'sauce', x: 1, z: 2, lx: 10, lz: 12, ft: 0.8 };
-  const e = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[3, [ok, { ...ok, ft: 9 }, { ...ok, lx: 300 }, { ...ok, k: 'nuke' }, { ...ok, f: 20 }]]] });
+  const e = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[3, [ok, { ...ok, ft: 9 }, { ...ok, lx: 300 }, { ...ok, k: 'nuke' }, { ...ok, f: MAX_FIGHTERS }]]] });
   assert.ok(e && e.k === 'e');
   assert.deepEqual(e.groups[0][1], [ok], 'only the sane throw gets through');
   assert.deepEqual(toNet({ t: 'throw', f: 3, k: 'sauce', x: 1, z: 2, lx: 10, lz: 12, ft: 0.8 }), ok);
+});
+
+test('the host tells each guest about the eggs near the one it watches whenever they change, and the rest now and then', () => {
+  const players = Array.from({ length: 3 }, (_, seat) => ({ seat, name: `P${seat}` }));
+  const h = hostMatch(players, 0, 4, 'normal', MAX_FIGHTERS, 0);
+  const m = h.match;
+  m.time = 30;
+  const s = newSession(true, h.roster);
+  const me: Me = { seat: 0, isHost: true, round: 1 };
+  for (const f of m.fighters) {
+    land(f, -200 + (f.id % 10) * 40, -200 + Math.floor(f.id / 10) * 40);
+    f.ai = null;
+  }
+  // guest 1's egg at the middle; egg 10 walks round it, egg 11 stands by it, egg 12 is far off and egg 13 is out
+  const g = m.fighters[1];
+  const st = (x: number, z: number, phase: 'ground' | 'out' = 'ground') => ({ x, z, y: 0, aim: 0, vx: 0, vz: 0, phase, hp: 100, shield: 0, w: null, r: 0, flags: 0, helmet: 0, vest: 0 });
+  for (const f of [m.fighters[1], m.fighters[2]]) s.states.set(f.id, st(f.x, f.z));
+  land(g, 0, 0);
+  s.states.set(1, st(0, 0));
+  land(m.fighters[10], 5, 5);
+  land(m.fighters[11], -8, 3);
+  land(m.fighters[12], 0, NEAR + 30);
+  m.fighters[13].phase = 'out';
+  const heard = new Map<number, number[]>();
+  const rosters: number[] = [];
+  const other: unknown[] = [];
+  for (let t = 0; t < 30; t++) {
+    m.fighters[10].x += 0.5;
+    for (const f of m.fighters) s.heard.set(f.id, 0);
+    for (const out of tick(s, m, me, [0, 1, 2, 7], 1 + t * 0.066)) {
+      const p = parsePacket(JSON.parse(JSON.stringify(out.d)));
+      assert.ok(p && p.k === 'S');
+      if (out.to === 7) {
+        other.push(p);
+        continue;
+      }
+      if (out.to !== 1) continue;
+      if (p.roster) rosters.push(t);
+      for (const [fid] of p.states) heard.set(fid, [...(heard.get(fid) ?? []), t]);
+    }
+  }
+  const n = (fid: number) => heard.get(fid)?.length ?? 0;
+  assert.equal(n(1), 0, 'never its own egg');
+  assert.equal(n(10), 30, 'one on the move nearby, every tick');
+  assert.ok(n(11) >= 30 / FAR_EVERY && n(11) <= 30 / FAR_EVERY + 1, `one standing still nearby, now and then (${n(11)})`);
+  assert.equal(n(12), 30 / FAR_EVERY, 'one far off, now and then');
+  assert.equal(n(13), 30 / OUT_EVERY, 'one that is out, seldom');
+  for (const f of m.fighters) if (f.id !== 1) assert.ok(n(f.id) >= 2, `every egg is heard of (${f.id})`);
+  assert.deepEqual(rosters, [4, 9, 14, 19, 24, 29], 'the roster with every reliable report');
+  assert.ok(other.length === 6 && other.every((p) => (p as { states: unknown[]; roster: number[] }).states.length === 0 && (p as { roster: number[] }).roster.length === MAX_FIGHTERS), 'someone not in the match only hears the roster');
+  // once its egg is out, the eggs near the one it watches
+  g.phase = 'out';
+  s.states.set(1, st(0, 0, 'out'));
+  receive(s, m, me, 1, guestState(1, st(0, 0, 'out'), 12), () => m, 2);
+  heard.clear();
+  for (let t = 0; t < 12; t++) {
+    m.fighters[12].x += 0.5;
+    for (const out of tick(s, m, me, [0, 1, 2], 3 + t * 0.066)) {
+      const p = parsePacket(JSON.parse(JSON.stringify(out.d)));
+      if (out.to === 1 && p && p.k === 'S') for (const [fid] of p.states) heard.set(fid, [...(heard.get(fid) ?? []), t]);
+    }
+  }
+  assert.equal(n(12), 12, 'the one it watches, every tick');
+  assert.equal(n(10), 12 / FAR_EVERY, 'and its own neighbors no more than any');
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -3046,10 +3227,11 @@ test('a flare gun fires once, straight up, and the host sends a supply drop down
   assert.ok(openable(m, c), 'down, and ready to open');
   assert.equal(castRay(m, c.x - 2, c.z, 1, 0, 4, -1, false)?.what, 'chest', 'and in the way like one');
   // and only so many drops a match
-  m.time += 11;
-  const more = [callDrop(m, a.id, p.x, p.z), callDrop(m, b.id, q.x, q.z)];
-  m.time += 11;
-  more.push(callDrop(m, a.id, p.x, p.z), callDrop(m, b.id, q.x, q.z));
+  const more: number[] = [];
+  while (more.length <= FLARE_DROPS) {
+    m.time += 11;
+    more.push(callDrop(m, a.id, p.x, p.z), callDrop(m, b.id, q.x, q.z));
+  }
   assert.equal(more.filter((id) => id >= 0).length, FLARE_DROPS - 1, 'the rest of them, and no more');
   assert.ok(more.slice(0, FLARE_DROPS - 1).every((id, i) => id >= 0 && id !== c.id && more.indexOf(id) === i));
 });
@@ -3103,7 +3285,7 @@ test('online, a guest’s flare calls a drop the host places, and every client h
   assert.equal(g.map.containers[0].at, 0, 'and only a drop kept for flares can be called');
   // the news is checked on the way in
   const ok = { y: 'fd', f: 0, c: 70, x: 12.5, z: -40, at: 60 };
-  const e = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[0, [ok, { ...ok, x: HALF + 1 }, { ...ok, at: -1 }, { ...ok, at: 9999 }, { ...ok, c: -1 }, { ...ok, c: 1.5 }, { ...ok, f: 20 }, { ...ok, z: 'x' }]]] });
+  const e = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[0, [ok, { ...ok, x: HALF + 1 }, { ...ok, at: -1 }, { ...ok, at: 9999 }, { ...ok, c: -1 }, { ...ok, c: 1.5 }, { ...ok, f: MAX_FIGHTERS }, { ...ok, z: 'x' }]]] });
   assert.ok(e && e.k === 'e');
   assert.deepEqual(e.groups[0][1], [ok], 'only the sane one gets through');
   assert.deepEqual(toNet({ t: 'called', f: 0, c: 70, x: 12.5, z: -40, at: 60 }), ok);
@@ -3403,7 +3585,7 @@ test('the new flags travel with an egg’s state, and nothing past them', () => 
   const f = m.fighters[0];
   land(f, 1, 2);
   const s = { ...stateOf(f), flags: F_ALL };
-  assert.deepEqual(parsePacket(guestState(1, s)), { k: 's', round: 1, state: s });
+  assert.deepEqual(parsePacket(guestState(1, s)), { k: 's', round: 1, state: s, watch: -1 });
   assert.equal(parsePacket(guestState(1, { ...s, flags: F_ALL + 1 })), null);
   assert.ok((F_SPIN | F_SMOOTHIE | F_TART) <= F_ALL && F_TART > 255);
   f.using = 'smoothie';
@@ -3460,8 +3642,29 @@ test('the scene only uses three.js classes the shared chunk exports', () => {
   }
 });
 
-test('meta: eight seats with late joining and bots, and a board per level', () => {
-  assert.deepEqual(meta.online, { seats: 8, lateJoin: true, bots: true });
+test('quick play always fills the island to fifty at normal, whoever hosts and however full the room is', () => {
+  assert.equal(QUICK_LEVEL, 'normal');
+  // a full room of twenty people has no room bots left, and quick play still fills the rest
+  assert.equal(hostBots(true, 0, false), MAX_FIGHTERS);
+  assert.equal(hostBots(true, 19, false), MAX_FIGHTERS);
+  // a room of your own: its bots, and more to fifty only with Fill to 50
+  assert.equal(hostBots(false, 5, true), MAX_FIGHTERS);
+  assert.equal(hostBots(false, 5, false), 5);
+  assert.equal(hostBots(false, 0, true), 0);
+  const people = Array.from({ length: 20 }, (_, seat) => ({ seat, name: `P${seat}` }));
+  for (const n of [1, 3, 20]) {
+    const { match, roster } = hostMatch(people.slice(0, n), 0, 4242, QUICK_LEVEL, hostBots(true, 0, true), 3);
+    assert.equal(match.fighters.length, MAX_FIGHTERS, `${n} people`);
+    assert.equal(roster.filter((seat) => seat >= 0).length, n);
+    assert.equal(match.fighters.filter((f) => f.kind === 'bot').length, MAX_FIGHTERS - n);
+    assert.equal(match.level, 'normal');
+  }
+});
+
+test('meta: twenty seats with late joining, bots and quick play, and a board per level', () => {
+  assert.deepEqual(meta.online, { seats: 20, lateJoin: true, bots: true, quick: true });
+  assert.match(meta.controls, /Play joins the next match/);
+  assert.match(meta.controls, /Play with Bots/);
   assert.deepEqual(Object.keys(meta.leaderboard!.variants!), [...LEVELS]);
   assert.equal(noInput().slot, -1);
 });
