@@ -15,6 +15,7 @@ import {
   type LevelDef,
 } from '../src/os/arcade/games/roll-block/logic.ts';
 import { LEVELS } from '../src/os/arcade/games/roll-block/levels.ts';
+import { recordClear, selectLevel, type Progress } from '../src/os/arcade/games/roll-block/storage.ts';
 
 const DIRS: Dir[] = ['up', 'down', 'left', 'right'];
 const lvl = (def: LevelDef) => parseLevel(def);
@@ -390,4 +391,45 @@ test('levels: some optimal solution presses the same switch twice, some level us
   assert.ok(revisit, 'no level presses the same switch cell twice in its optimal path');
   const hasOff = LEVELS.some((def) => Object.values(def.switches ?? {}).some((s) => s.act === 'off'));
   assert.ok(hasOff, "no level uses act 'off'");
+});
+
+test('recordClear: beating the last level with others unplayed is a normal clear, not the end', () => {
+  const ids = LEVELS.map((d) => d.id);
+  const last = ids.length - 1;
+  const p: Progress = { current: 0, best: { [ids[0]]: 9, [ids[1]]: 9, [ids[3]]: 9, [ids[6]]: 9, [ids[10]]: 9 } };
+  const c = recordClear(p, ids, last, 31);
+  assert.equal(c.allCleared, false);
+  assert.equal(c.next, 2, 'next goes to the first unplayed level');
+  assert.equal(c.progress.current, 2);
+  assert.equal(c.progress.best[ids[last]], 31);
+  assert.equal(c.prev, undefined);
+});
+
+test('recordClear: all cleared only once every level has a best', () => {
+  const ids = LEVELS.map((d) => d.id);
+  const all = Object.fromEntries(ids.map((id) => [id, 50]));
+  const missing5 = { ...all };
+  delete missing5[ids[4]];
+  const c = recordClear({ current: 4, best: missing5 }, ids, 4, 20);
+  assert.equal(c.allCleared, true, 'finishing the final unplayed level ends the campaign');
+  assert.equal(c.progress.current, 0);
+  const replayMid = recordClear({ current: 4, best: all }, ids, 4, 60);
+  assert.equal(replayMid.allCleared, false, 'replaying a middle level after finishing is a normal clear');
+  assert.equal(replayMid.best, 50);
+  assert.equal(replayMid.next, 5);
+  const replayLast = recordClear({ current: ids.length - 1, best: all }, ids, ids.length - 1, 40);
+  assert.equal(replayLast.allCleared, true);
+  assert.equal(replayLast.best, 40);
+  const mid = recordClear({ current: 2, best: {} }, ids, 2, 7);
+  assert.equal(mid.allCleared, false);
+  assert.equal(mid.next, 3);
+  assert.equal(mid.progress.current, 3);
+});
+
+test('selectLevel: a picked level is the one a restart reopens', () => {
+  const p: Progress = { current: 2, best: { a: 3 } };
+  const s = selectLevel(p, 0);
+  assert.equal(s.current, 0);
+  assert.deepEqual(s.best, p.best);
+  assert.equal(p.current, 2, 'input not mutated');
 });

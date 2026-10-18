@@ -5,7 +5,7 @@ import type { GameProps } from '../../types';
 import { clamp, createGL, disposeTree, type GL } from './gl';
 import { bridgeOn, cells, initialState, parseLevel, step, swipeDir, type Block, type Dir, type Level, type State } from './logic';
 import { LEVELS } from './levels';
-import { readProgress, writeProgress, type Progress } from './storage';
+import { readProgress, recordClear, selectLevel, writeProgress, type Progress } from './storage';
 import { meta } from './meta';
 import './roll-block.css';
 
@@ -358,6 +358,7 @@ function buildLevel(THREE: Three, world: World, level: Level) {
 }
 
 const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+const LEVEL_IDS = LEVELS.map((d) => d.id);
 const KEY_DIRS: Record<string, Dir> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', KeyW: 'up', KeyS: 'down', KeyA: 'left', KeyD: 'right' };
 
 function Play() {
@@ -374,14 +375,14 @@ function Play() {
   const queue = useRef<Dir[]>([]);
   const anim = useRef<Anim | null>({ kind: 'intro', t: 0 });
   const [moves, setMoves] = useState(0);
-  const [cleared, setCleared] = useState<{ moves: number; par: number; best: number; isBest: boolean } | null>(null);
+  const [cleared, setCleared] = useState<{ moves: number; par: number; best: number; isBest: boolean; next: number } | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const [undoCount, setUndoCount] = useState(0);
   const barRef = useRef<HTMLDivElement>(null);
-  // low = bar dropped to a second row because it would hit the shell control row;
+  // low = bar dropped below the shell control row because it would hit it; top = bar offset from the host top;
   // uiTop = px offset below the host top where hint/panel may start
-  const [barLayout, setBarLayout] = useState<{ low: boolean; uiTop: number }>({ low: false, uiTop: 50 });
+  const [barLayout, setBarLayout] = useState<{ low: boolean; top: number; uiTop: number }>({ low: false, top: 10, uiTop: 50 });
   const [, bump] = useState(0);
   const drag = useRef<{ id: number; x: number; y: number } | null>(null);
 
@@ -420,13 +421,14 @@ function Play() {
     const host = ref.current;
     const bar = barRef.current;
     let top = size.w < 640 ? 86 : 46;
-    if (host && bar) top = bar.getBoundingClientRect().bottom - host.getBoundingClientRect().top + 8;
+    if (host && bar) top = bar.offsetTop + bar.offsetHeight + 8;
     let bottom = 12;
     if (shell.touch && size.h > size.w) bottom = Math.min(190, size.h * 0.34);
     return { top, bottom };
   };
 
   const loadLevel = (idx: number) => {
+    if (idx !== progress.current.current) persist(selectLevel(progress.current, idx));
     const l = parseLevel(LEVELS[idx]);
     st.current = initialState(l);
     undoStack.current = [];
@@ -519,7 +521,7 @@ function Play() {
   };
 
   const nextLevel = () => {
-    if (levelIdx + 1 < LEVELS.length) loadLevel(levelIdx + 1);
+    if (cleared) loadLevel(cleared.next);
   };
 
   useKeys((code, e) => {
@@ -560,23 +562,59 @@ function Play() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [THREE]);
 
-  // measure the bar vs the shell control row; drop the bar a row if they collide
-  useEffect(() => {
+  // measure the bar vs the shell control row; drop the bar below it if they collide.
+  // Works in layout px (rects divided by the frame scale) so the phone and iPad frames measure right.
+  const layoutBar = () => {
     const host = ref.current;
     const bar = barRef.current;
-    if (host && bar) {
-      const hostR = host.getBoundingClientRect();
-      const ctrlR = shell.root.current?.querySelector('.arcade-ctrl')?.getBoundingClientRect();
-      const ctrlL = ctrlR ? ctrlR.left : hostR.right - 170;
-      const r = bar.getBoundingClientRect();
-      const low = r.right > ctrlL - 8;
-      const barTop = low ? 48 : 10;
-      const uiTop = Math.max(barTop + r.height + 4, (ctrlR ? ctrlR.bottom - hostR.top : 44) + 4);
-      if (low !== barLayout.low || uiTop !== barLayout.uiTop) setBarLayout({ low, uiTop });
-    }
+    if (!host || !bar) return;
+    const hostR = host.getBoundingClientRect();
+    const k = host.offsetWidth ? hostR.width / host.offsetWidth : 1;
+    const ctrlR = shell.root.current?.querySelector('.arcade-ctrl')?.getBoundingClientRect();
+    const ctrlLeft = ctrlR ? (ctrlR.left - hostR.left) / k : host.offsetWidth - 170;
+    const ctrlBottom = ctrlR ? (ctrlR.bottom - hostR.top) / k : 44;
+    const low = 12 + bar.offsetWidth > ctrlLeft - 8;
+    const top = low ? Math.round(ctrlBottom + 6) : 10;
+    const uiTop = Math.round(Math.max(top + bar.offsetHeight + 8, ctrlBottom + 6));
+    setBarLayout((b) => (b.low === low && b.top === top && b.uiTop === uiTop ? b : { low, top, uiTop }));
+  };
+  useEffect(() => {
+    layoutBar();
     world.current?.fit(size.w, size.h, fitMargins());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.w, size.h, THREE, barLayout, levelIdx, undoCount]);
+  }, [size.w, size.h, THREE, barLayout, levelIdx, undoCount, moves > 0]);
+  useEffect(() => {
+    const els = [barRef.current, shell.root.current?.querySelector('.arcade-ctrl')].filter((e): e is HTMLElement => e instanceof HTMLElement);
+    const ro = new ResizeObserver(() => layoutBar());
+    for (const el of els) ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // touch frames (phone, iPad) scale the whole stage down; --g-roll-block-u undoes that for finger-sized controls and text
+  useEffect(() => {
+    const el = shell.root.current;
+    if (!el || !shell.touch) return;
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+        const u = k > 0.2 && k < 0.99 ? Math.min(2, 1 / k) : 1;
+        el.style.setProperty('--g-roll-block-u', u.toFixed(3));
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+      el.style.removeProperty('--g-roll-block-u');
+    };
+  }, [shell.touch, shell.root]);
 
 
 
@@ -697,26 +735,13 @@ function Play() {
       setBlockPose(w.blockMesh, st.current.block, -1.15 * ease(a.t));
       if (a.t >= 1) {
         anim.current = null;
-        const id = level.def.id;
-        const p = progress.current;
-        const prev = p.best[id];
-        const best = Math.min(prev ?? Infinity, st.current.moves);
-        const isLast = levelIdx + 1 >= LEVELS.length;
-        const best2 = { ...p.best, [id]: best };
-        if (isLast) {
-          let cur = 0;
-          for (let i = 0; i < LEVELS.length; i++) {
-            if (best2[LEVELS[i].id] === undefined) {
-              cur = i;
-              break;
-            }
-          }
-          persist({ current: cur, best: best2 });
-          const atPar = LEVELS.filter((d) => (best2[d.id] ?? Infinity) <= d.par).length;
+        const c = recordClear(progress.current, LEVEL_IDS, levelIdx, st.current.moves);
+        persist(c.progress);
+        if (c.allCleared) {
+          const atPar = LEVELS.filter((d) => (c.progress.best[d.id] ?? Infinity) <= d.par).length;
           shell.gameOver(undefined, { title: 'All Levels Cleared', detail: `${atPar} of ${LEVELS.length} at par` });
         } else {
-          persist({ current: levelIdx + 1, best: best2 });
-          setCleared({ moves: st.current.moves, par: level.def.par, best, isBest: prev === undefined || best < prev });
+          setCleared({ moves: st.current.moves, par: level.def.par, best: c.best, isBest: c.prev === undefined || c.best < c.prev, next: c.next });
         }
       }
     },
@@ -760,7 +785,7 @@ function Play() {
   return (
     <>
       <div ref={ref} className="g-roll-block-host" onPointerDown={swipeStart} onPointerUp={swipeEnd} onPointerCancel={() => (drag.current = null)} />
-      <div ref={barRef} className={`g-roll-block-bar${barLayout.low ? ' is-low' : ''}`}>
+      <div ref={barRef} className={`g-roll-block-bar${barLayout.low ? ' is-low' : ''}`} style={{ top: barLayout.top }}>
         <div className="g-roll-block-pill">
           <strong>level {levelIdx + 1}</strong>
           <span>par {def.par}</span>
