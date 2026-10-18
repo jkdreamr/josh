@@ -12,6 +12,14 @@ const HUMAN: Color = RED;
 const STEP_MS = 190;
 const MIN_THINK_MS = 420;
 const NAMES: Record<Color, string> = { [RED]: 'Red', [BLACK]: 'Black' };
+const SIDE_W = 176;
+// Online, the host plays Red in odd rounds and Black in even ones, so the first move alternates.
+const onlineColorOf = (seat: number, round: number): Color => ((round % 2 === 1) === (seat === 0) ? RED : BLACK);
+const seatOfColor = (color: Color, round: number) => (onlineColorOf(0, round) === color ? 0 : 1);
+const frameU = (el: HTMLElement) => {
+  const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+  return k > 0.2 && k < 0.99 ? Math.min(2, 1 / k) : 1;
+};
 type GameTimer = { remaining: number; fn: () => void };
 type PendingAI = { game: CheckersGame; id: number; started: number; move: Move | null; ready: boolean; scheduled: boolean; cleanup?: () => void };
 
@@ -74,6 +82,7 @@ function Checkers() {
   const [thinking, setThinking] = useState(false);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [gone, setGone] = useState<number[]>([]);
+  const [nope, setNope] = useState<number | null>(null);
   const drag = useRef<Drag | null>(null);
   const [mode] = useSetting(MODE);
   const [levelName] = useSetting(LEVEL);
@@ -91,7 +100,13 @@ function Checkers() {
   const later = useGameTimers();
 
   const lastMove = game.history.at(-1);
-  const humanTurn = game.status === 'playing' && !anim && (online ? game.turn === (online.seat === 0 ? RED : BLACK) : cfg.current.mode === '2p' || game.turn === HUMAN);
+  // The color this screen plays, or null when both sides share it (pass and play).
+  const myColor: Color | null = online ? onlineColorOf(online.seat, online.round) : cfg.current.mode === 'cpu' ? HUMAN : null;
+  const myColorRef = useRef(myColor);
+  myColorRef.current = myColor;
+  const flip = myColor === BLACK;
+  const view = (i: number) => (flip ? 63 - i : i);
+  const humanTurn = game.status === 'playing' && !anim && (myColor === null || game.turn === myColor);
   const fromSquares = useMemo(() => new Set(game.legal.map((m) => m.from)), [game.legal]);
   const targets = useMemo(() => (sel === null ? new Map<number, Move>() : new Map(movesFrom(game.legal, sel).map((m) => [m.to, m]))), [sel, game.legal]);
 
@@ -131,7 +146,8 @@ function Checkers() {
         setAnim(null);
         setGone([]);
         if (isKing(next.board[m.to]) && !isKing(piece)) sfx.play('coin');
-        if (next.status !== 'playing') sfx.play(next.status === 'draw' ? 'select' : cfg.current.mode === 'cpu' && next.status !== 'red' ? 'lose' : 'win');
+        const mine = myColorRef.current;
+        if (next.status !== 'playing') sfx.play(next.status === 'draw' ? 'select' : mine !== null && next.status !== (mine === RED ? 'red' : 'black') ? 'lose' : 'win');
       }, 30 + m.path.length * STEP_MS + 40);
     },
     [game, later],
@@ -147,14 +163,15 @@ function Checkers() {
     setVis(g.board);
     setAnim(null);
     setSel(null);
+    setCursor(null);
     setGone([]);
-  }, [mode, levelName, shell.status, online?.seat]);
+  }, [mode, levelName, shell.status, online?.seat, online?.round]);
 
   // The opponent's move. One that arrives while our own move is still animating (the turn hasn't passed yet here,
   // e.g. in a tab that was hidden) waits for it instead of being lost, which would leave both sides waiting.
   const pendingRemote = useRef<{ from: number; move: Move } | null>(null);
   const takeRemote = (from: number, move: Move) => {
-    const expected = gameRef.current.turn === RED ? 0 : 1;
+    const expected = online ? seatOfColor(gameRef.current.turn, online.round) : -1;
     if (from !== expected || anim) return false;
     const legal = gameRef.current.legal.find((candidate) =>
       candidate.from === move.from && candidate.to === move.to && candidate.path.join() === move.path.join() && candidate.captured.join() === move.captured.join(),
@@ -273,7 +290,7 @@ function Checkers() {
       }
       else {
         const winner: Color = game.status === 'red' ? RED : BLACK;
-        const winnerSeat = winner === RED ? 0 : 1;
+        const winnerSeat = online ? seatOfColor(winner, online.round) : winner === RED ? 0 : 1;
         const winnerName = online?.players.find((player) => player.seat === winnerSeat)?.name ?? NAMES[winner];
         const title = online ? (winnerSeat === online.seat ? 'You Win' : `${winnerName} Wins`) : mode === 'cpu' ? (winner === HUMAN ? 'You Win' : 'Computer Wins') : `${NAMES[winner]} Wins`;
         const left = count(game.board, winner);
@@ -284,11 +301,30 @@ function Checkers() {
     }, 500);
   }, [game, shell.round, shell.status, shell.gameOver, later, online]);
 
-  // Geometry: 44px status row on top, counts row below the board.
+  // Touch frames (phone, iPad) are scaled down; --g-checkers-u grows text and controls back to full size on screen.
+  useEffect(() => {
+    const el = shell.root.current;
+    if (!el || !shell.touch || typeof ResizeObserver === 'undefined') return;
+    const measure = () => el.style.setProperty('--g-checkers-u', frameU(el).toFixed(3));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      el.style.removeProperty('--g-checkers-u');
+    };
+  }, [shell.touch]);
+
+  // Geometry: a tall stage stacks status, board and counts; a short wide one (the framed laptop window) puts them beside the board.
   const TOP = 44;
   const FOOT = 40;
-  const boardPx = Math.max(120, Math.floor(Math.min(size.w - 24, size.h - TOP - FOOT - 16)));
-  const sqPx = boardPx / 8;
+  const stacked = Math.floor(Math.min(size.w - 24, size.h - TOP - FOOT - 16));
+  const besideBoard = Math.floor(Math.min(size.h - 16, size.w - 40 - SIDE_W));
+  const beside = besideBoard > stacked + 24;
+  const boardPx = Math.max(96, beside ? besideBoard : stacked);
+  const rim = Math.round(Math.max(4, Math.min(14, boardPx * 0.026)));
+  const gridPx = boardPx - rim * 2;
+  const sqPx = gridPx / 8;
 
   const squareFromEvent = (e: { clientX: number; clientY: number }) => {
     const b = boardRef.current;
@@ -297,8 +333,9 @@ function Checkers() {
     const col = Math.floor(((e.clientX - r.left) / r.width) * 8);
     const row = Math.floor(((e.clientY - r.top) / r.height) * 8);
     if (col < 0 || col > 7 || row < 0 || row > 7) return -1;
-    return sq(row, col);
+    return view(sq(row, col));
   };
+  const place = (i: number) => `translate(${colOf(view(i)) * 100}%, ${rowOf(view(i)) * 100}%)`;
 
   const tryMove = (from: number, to: number) => {
     const m = movesFrom(game.legal, from).find((x) => x.to === to);
@@ -308,20 +345,28 @@ function Checkers() {
     return true;
   };
 
+  // A piece of yours that can't move (usually because a capture is forced elsewhere) shakes, and the jumpers light up.
+  const refuse = (s: number) => {
+    setNope(s);
+    sfx.play('blip', 0.5);
+    later(() => setNope((n) => (n === s ? null : n)), 450);
+  };
+  const ownPiece = (s: number) => !!game.board[s] && colorOf(game.board[s]) === game.turn;
+
   const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
-    if (!humanTurn) return;
+    if (!humanTurn || e.button > 0) return;
     const s = squareFromEvent(e);
     if (s < 0) return;
     setCursor(null);
     if (fromSquares.has(s)) {
+      if (sel !== s) sfx.play('tick', 1.4);
       setSel(s);
       drag.current = { pid: e.pointerId, from: s, moved: false };
       boardRef.current?.setPointerCapture(e.pointerId);
       return;
     }
     if (sel !== null && tryMove(sel, s)) return;
-    const p = game.board[s];
-    if (p && colorOf(p) === game.turn && !fromSquares.has(s)) sfx.play('blip', 0.5);
+    if (ownPiece(s)) refuse(s);
     setSel(null);
   };
   const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
@@ -329,118 +374,176 @@ function Checkers() {
     const b = boardRef.current;
     if (!d || d.pid !== e.pointerId || !b) return;
     const r = b.getBoundingClientRect();
-    const x = e.clientX - r.left;
-    const y = e.clientY - r.top;
+    const k = b.offsetWidth ? r.width / b.offsetWidth : 1;
+    const x = (e.clientX - r.left) / k;
+    const y = (e.clientY - r.top) / k;
     if (!d.moved) {
-      const hx = colOf(d.from) * sqPx + sqPx / 2;
-      const hy = rowOf(d.from) * sqPx + sqPx / 2;
+      const hx = colOf(view(d.from)) * sqPx + sqPx / 2;
+      const hy = rowOf(view(d.from)) * sqPx + sqPx / 2;
       if (Math.hypot(x - hx, y - hy) < 5) return;
       d.moved = true;
       setDragFrom(d.from);
     }
     const el = b.querySelector<HTMLDivElement>(`[data-sq="${d.from}"]`);
-    if (el) el.style.transform = `translate(${x - sqPx / 2}px, ${y - sqPx / 2}px) scale(1.1)`;
+    if (el) el.style.transform = `translate(${x - sqPx / 2}px, ${y - sqPx / 2}px)`;
   };
   const endDrag = (e: RPointerEvent<HTMLDivElement>, cancelled = false) => {
     const d = drag.current;
     if (!d || d.pid !== e.pointerId) return;
     drag.current = null;
     const el = boardRef.current?.querySelector<HTMLDivElement>(`[data-sq="${d.from}"]`);
-    if (el) el.style.transform = `translate(${colOf(d.from) * 100}%, ${rowOf(d.from) * 100}%)`;
+    if (el) el.style.transform = place(d.from);
     setDragFrom(null);
     if (!d.moved || cancelled) return;
     const to = squareFromEvent(e);
-    if (to >= 0 && to !== d.from && !tryMove(d.from, to)) setSel(fromSquares.has(to) ? to : null);
+    if (to >= 0 && to !== d.from && !tryMove(d.from, to)) setSel(fromSquares.has(to) ? to : d.from);
   };
 
+  // Keyboard: the first arrow or Enter lands on a piece that can move, then arrows step across the board as seen.
+  const firstPick = () => {
+    const list = [...fromSquares].sort((x, y) => view(y) - view(x));
+    return list[Math.floor((list.length - 1) / 2)] ?? null;
+  };
   useKeys((code, e) => {
     const dirs: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], KeyA: [-1, 0], KeyD: [1, 0], KeyW: [0, -1], KeyS: [0, 1] };
     if (dirs[code]) {
-      const [dx, dy] = dirs[code];
-      setCursor((c) => {
-        const cur = c ?? sel ?? sq(5, 2);
-        return sq(Math.max(0, Math.min(7, rowOf(cur) + dy)), Math.max(0, Math.min(7, colOf(cur) + dx)));
-      });
+      if (!humanTurn) return;
+      const [dx, dy] = flip ? [-dirs[code][0], -dirs[code][1]] : dirs[code];
+      const cur = cursor ?? sel;
+      if (cur === null) setCursor(firstPick());
+      else setCursor(sq(Math.max(0, Math.min(7, rowOf(cur) + dy)), Math.max(0, Math.min(7, colOf(cur) + dx))));
       return;
     }
-    if ((code === 'Enter' || code === 'Space') && !e?.repeat && cursor !== null && humanTurn) {
+    if ((code === 'Enter' || code === 'Space') && !e?.repeat && humanTurn) {
+      if (cursor === null) {
+        setCursor(sel ?? firstPick());
+        return;
+      }
       if (sel !== null && cursor !== sel && tryMove(sel, cursor)) return;
-      setSel(fromSquares.has(cursor) ? cursor : null);
+      if (fromSquares.has(cursor)) {
+        sfx.play('tick', 1.4);
+        setSel(cursor);
+        const first = movesFrom(game.legal, cursor)[0];
+        if (first) setCursor(first.to);
+      } else {
+        if (ownPiece(cursor)) refuse(cursor);
+        setSel(null);
+      }
     }
     if (code === 'Escape') setSel(null);
   });
 
+  const nameOf = (c: Color) => {
+    if (c === myColor && (online || cfg.current.mode === 'cpu')) return 'You';
+    if (online) return online.players.find((p) => p.seat === seatOfColor(c, online.round))?.name ?? NAMES[c];
+    return cfg.current.mode === 'cpu' ? 'Computer' : NAMES[c];
+  };
+  const mustJump = game.status === 'playing' && !!game.legal[0]?.captured.length;
   const status = (() => {
     if (game.status === 'draw') return 'Draw';
-    if (game.status !== 'playing') return `${NAMES[game.status === 'red' ? RED : BLACK]} wins`;
-    const must = game.legal[0]?.captured.length ? ' · capture' : '';
-    if (cfg.current.mode === 'cpu') return (thinking || game.turn !== HUMAN ? 'Computer is thinking' : 'Your move') + must;
-    return `${NAMES[game.turn]} to move${must}`;
+    if (game.status !== 'playing') return `${nameOf(game.status === 'red' ? RED : BLACK)} ${game.status === (myColor === RED ? 'red' : 'black') ? 'win' : 'wins'}`;
+    if (nope !== null && mustJump) return 'You have to jump';
+    if (myColor !== null && game.turn !== myColor) return cfg.current.mode === 'cpu' && !online ? 'Thinking' : `${nameOf(game.turn)} to move`;
+    const who = myColor !== null ? 'Your move' : `${NAMES[game.turn]} to move`;
+    return mustJump ? `${who}, jump` : who;
   })();
 
-  const red = count(vis, RED);
-  const black = count(vis, BLACK);
+  const counts = { [RED]: count(vis, RED), [BLACK]: count(vis, BLACK) } as Record<Color, ReturnType<typeof count>>;
+  const near: Color = flip ? BLACK : RED;
+  const far: Color = flip ? RED : BLACK;
   const squares = useMemo(() => Array.from({ length: 64 }, (_, i) => i), []);
+  const modeLabel = online ? 'Online' : cfg.current.mode === 'cpu' ? levelLabel(LEVEL_NAMES[cfg.current.level]) : 'Pass and Play';
+  const side = (c: Color, cls = '') => {
+    const n = counts[c];
+    const on = game.turn === c && game.status === 'playing';
+    return (
+      <span className={`g-checkers-side ${c === RED ? 'red' : 'black'} ${on ? 'on' : ''} ${cls}`}>
+        <i />
+        <span className="g-checkers-who">{nameOf(c)}</span>
+        <b>{n.men + n.kings}</b>
+      </span>
+    );
+  };
+  const statusEl = (
+    <div className={`g-checkers-status ${thinking ? 'busy' : ''} ${nope !== null && mustJump ? 'warn' : ''}`} aria-live="polite">
+      {thinking && <span className="g-checkers-dots" aria-hidden="true" />}
+      <span>{status}</span>
+    </div>
+  );
 
   return (
-    <div ref={stageRef} className="g-checkers-stage">
-      <div className={`g-checkers-status ${thinking ? 'busy' : ''}`} aria-live="polite">
-            {thinking && <span className="g-checkers-dots" aria-hidden="true" />}
-            {status}
-          </div>
-          <div className="g-checkers-body" style={{ paddingTop: TOP }}>
-            <div
-              ref={boardRef}
-              className={`g-checkers-board ${humanTurn ? 'live' : ''}`}
-              style={{ width: boardPx, height: boardPx }}
-              role="grid"
-              aria-label="Checkers board"
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={endDrag}
-              onPointerCancel={(e) => endDrag(e, true)}
-              onContextMenu={(e) => e.preventDefault()}
-            >
-              {squares.map((i) => {
-                const darkSq = (rowOf(i) + colOf(i)) % 2 === 1;
-                const isLast = !!lastMove && !anim && (lastMove.from === i || lastMove.path.includes(i));
-                const hint = targets.has(i);
-                const canPick = humanTurn && fromSquares.has(i) && sel === null;
-                const cls = ['g-checkers-sq', darkSq ? 'dark' : 'light', sel === i ? 'sel' : '', isLast ? 'last' : '', cursor === i ? 'cursor' : '', hint ? 'hint' : '', canPick ? 'pick' : ''].join(' ');
-                return <div key={i} className={cls} style={{ left: `${colOf(i) * 12.5}%`, top: `${rowOf(i) * 12.5}%` }} role="gridcell" />;
-              })}
-              {squares.map((i) => {
-                const p = vis[i];
-                if (!p) return null;
-                const c = colorOf(p);
-                return (
-                  <div
-                    key={i}
-                    data-sq={i}
-                    className={`g-checkers-piece ${c === RED ? 'red' : 'black'} ${isKing(p) ? 'king' : ''} ${dragFrom === i ? 'drag' : ''} ${gone.includes(i) ? 'gone' : ''}`}
-                    style={{ transform: `translate(${colOf(i) * 100}%, ${rowOf(i) * 100}%)` }}
-                  >
-                    <Crown show={isKing(p)} />
-                  </div>
-                );
-              })}
-              {anim && (
-                <div ref={moverRef} className={`g-checkers-piece mover ${colorOf(anim.piece) === RED ? 'red' : 'black'} ${isKing(anim.piece) ? 'king' : ''}`} style={{ transform: `translate(${colOf(anim.at) * 100}%, ${rowOf(anim.at) * 100}%)` }}>
-                  <Crown show={isKing(anim.piece)} />
+    <div ref={stageRef} className={`g-checkers-stage ${beside ? 'beside' : 'stacked'}`}>
+      {!beside && statusEl}
+      <div className="g-checkers-body" style={beside ? undefined : { paddingTop: TOP }}>
+        <div className="g-checkers-frame" style={{ width: boardPx, height: boardPx, padding: rim }}>
+          <div
+            ref={boardRef}
+            className={`g-checkers-board ${humanTurn ? 'live' : ''}`}
+            style={{ width: gridPx, height: gridPx, ['--g-checkers-sq' as string]: `${sqPx}px` }}
+            role="grid"
+            aria-label="Checkers board"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={endDrag}
+            onPointerCancel={(e) => endDrag(e, true)}
+            onLostPointerCapture={(e) => endDrag(e, true)}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            {squares.map((i) => {
+              const darkSq = (rowOf(i) + colOf(i)) % 2 === 1;
+              const isLast = !!lastMove && !anim && (lastMove.from === i || lastMove.path.includes(i));
+              const hint = targets.has(i);
+              const canPick = humanTurn && fromSquares.has(i) && sel === null;
+              const v = view(i);
+              const cls = ['g-checkers-sq', darkSq ? 'dark' : 'light', sel === i ? 'sel' : '', isLast ? 'last' : '', cursor === i ? 'cursor' : '', hint ? 'hint' : '', canPick ? (mustJump ? 'pick jump' : 'pick') : '', canPick && nope !== null && mustJump ? 'flash' : ''].join(' ');
+              return <div key={i} className={cls} style={{ left: `${colOf(v) * 12.5}%`, top: `${rowOf(v) * 12.5}%` }} role="gridcell" />;
+            })}
+            {squares.map((i) => {
+              const p = vis[i];
+              if (!p) return null;
+              const c = colorOf(p);
+              return (
+                <div
+                  key={i}
+                  data-sq={i}
+                  className={`g-checkers-piece ${c === RED ? 'red' : 'black'} ${isKing(p) ? 'king' : ''} ${dragFrom === i ? 'drag' : ''} ${gone.includes(i) ? 'gone' : ''} ${nope === i ? 'nope' : ''} ${sel === i && dragFrom !== i ? 'up' : ''}`}
+                  style={{ transform: place(i) }}
+                >
+                  <Disc king={isKing(p)} />
                 </div>
-              )}
-            </div>
-            <div className="g-checkers-foot" style={{ width: boardPx }}>
-              <span className={`g-checkers-side red ${game.turn === RED && game.status === 'playing' ? 'on' : ''}`}>
-                <i /> {cfg.current.mode === 'cpu' ? 'You' : 'Red'} <b>{red.men + red.kings}</b>
-              </span>
-              <span className="g-checkers-mode">{cfg.current.mode === 'cpu' ? levelLabel(LEVEL_NAMES[cfg.current.level]) : 'Pass and Play'}</span>
-              <span className={`g-checkers-side black ${game.turn === BLACK && game.status === 'playing' ? 'on' : ''}`}>
-                <b>{black.men + black.kings}</b> {cfg.current.mode === 'cpu' ? 'Computer' : 'Black'} <i />
-              </span>
-            </div>
+              );
+            })}
+            {anim && (
+              <div ref={moverRef} className={`g-checkers-piece mover ${colorOf(anim.piece) === RED ? 'red' : 'black'} ${isKing(anim.piece) ? 'king' : ''}`} style={{ transform: place(anim.at) }}>
+                <Disc key={anim.step} king={isKing(anim.piece)} hop={anim.captured.length > 0 && anim.step > 0} />
+              </div>
+            )}
           </div>
+        </div>
+        {beside ? (
+          <div className="g-checkers-panel" style={{ width: SIDE_W }}>
+            {side(far, 'far')}
+            {statusEl}
+            {side(near, 'near')}
+            <span className="g-checkers-mode">{modeLabel}</span>
+          </div>
+        ) : (
+          <div className="g-checkers-foot" style={{ width: boardPx }}>
+            {side(near)}
+            <span className="g-checkers-mode">{modeLabel}</span>
+            {side(far, 'end')}
+          </div>
+        )}
+      </div>
     </div>
+  );
+}
+
+function Disc({ king, hop = false }: { king: boolean; hop?: boolean }) {
+  return (
+    <span className={`g-checkers-disc ${hop ? 'hop' : ''}`}>
+      <Crown show={king} />
+    </span>
   );
 }
 

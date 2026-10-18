@@ -2,26 +2,37 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: #15100f;
+  background:
+    radial-gradient(120% 90% at 50% 20%, #2a1e19 0%, #17110f 55%, #0e0a09 100%);
 }
 .g-checkers .g-checkers-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  font-size: calc(13px * var(--g-checkers-u, 1));
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.75);
+  white-space: nowrap;
+  overflow: hidden;
+  transition: color 0.2s ease;
+}
+.g-checkers .g-checkers-status > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.g-checkers .stacked > .g-checkers-status {
   position: absolute;
   top: 14px;
   left: 14px;
   z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 8px;
   max-width: 55%;
-  height: 22px;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: rgba(245, 245, 247, 0.72);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+.g-checkers .g-checkers-status.warn {
+  color: #ffd60a;
 }
 .g-checkers .g-checkers-dots {
+  flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -50,15 +61,38 @@
   padding: 0 12px 8px;
   box-sizing: border-box;
 }
-.g-checkers .g-checkers-board {
+.g-checkers .beside .g-checkers-body {
+  flex-direction: row;
+  gap: 16px;
+  padding: 8px 12px;
+}
+
+/* Board: a walnut frame around maple and walnut squares. */
+.g-checkers .g-checkers-frame {
   position: relative;
   flex: none;
-  border-radius: 8px;
-  overflow: hidden;
+  box-sizing: border-box;
+  border-radius: 10px;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 40%),
+    repeating-linear-gradient(94deg, rgba(0, 0, 0, 0) 0 7px, rgba(0, 0, 0, 0.08) 7px 9px, rgba(0, 0, 0, 0) 9px 15px),
+    linear-gradient(180deg, #5b3a27, #3d251a);
   box-shadow:
-    0 0 0 0.5px rgba(255, 255, 255, 0.12),
-    0 24px 60px rgba(0, 0, 0, 0.5);
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+    0 0 0 0.5px rgba(0, 0, 0, 0.6),
+    0 24px 60px rgba(0, 0, 0, 0.55),
+    0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.g-checkers .g-checkers-board {
+  position: relative;
+  overflow: hidden;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .g-checkers .g-checkers-board.live {
   cursor: pointer;
@@ -69,10 +103,14 @@
   height: 12.5%;
 }
 .g-checkers .g-checkers-sq.light {
-  background: #e9dfd0;
+  background:
+    repeating-linear-gradient(88deg, rgba(160, 110, 60, 0) 0 5px, rgba(160, 110, 60, 0.07) 5px 6px),
+    linear-gradient(135deg, #f1e3c8, #e4d1ae);
 }
 .g-checkers .g-checkers-sq.dark {
-  background: #6b4f44;
+  background:
+    repeating-linear-gradient(92deg, rgba(0, 0, 0, 0) 0 4px, rgba(0, 0, 0, 0.07) 4px 5px),
+    linear-gradient(135deg, #7d5038, #683f2b);
 }
 .g-checkers .g-checkers-sq.last::before,
 .g-checkers .g-checkers-sq.sel::before,
@@ -82,23 +120,37 @@
   inset: 0;
 }
 .g-checkers .g-checkers-sq.last::before {
-  background: rgba(255, 214, 10, 0.22);
+  background: rgba(255, 204, 0, 0.2);
 }
 .g-checkers .g-checkers-sq.sel::before {
-  background: rgba(255, 214, 10, 0.45);
+  background: rgba(255, 204, 0, 0.42);
 }
 .g-checkers .g-checkers-sq.cursor::after {
   box-shadow: inset 0 0 0 3px #fff;
   border-radius: 2px;
-  z-index: 2;
+  z-index: 4;
+  pointer-events: none;
 }
 .g-checkers .g-checkers-sq.pick::after {
   content: '';
   position: absolute;
-  inset: 6%;
+  inset: 7%;
   border-radius: 50%;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.3);
   pointer-events: none;
+}
+.g-checkers .g-checkers-sq.pick.jump::after {
+  box-shadow: 0 0 0 2px rgba(255, 214, 10, 0.75);
+  animation: g-checkers-ring 1.4s ease-in-out infinite;
+}
+.g-checkers .g-checkers-sq.pick.flash::after {
+  box-shadow: 0 0 0 3px #ffd60a, 0 0 14px rgba(255, 214, 10, 0.7);
+  animation: g-checkers-ring 0.45s ease-in-out;
+}
+@keyframes g-checkers-ring {
+  50% {
+    opacity: 0.45;
+  }
 }
 .g-checkers .g-checkers-sq.hint::after {
   content: '';
@@ -108,9 +160,16 @@
   width: 30%;
   height: 30%;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
   transform: translate(-50%, -50%);
   animation: g-checkers-hint 0.18s ease;
+  pointer-events: none;
+}
+.g-checkers .g-checkers-board.live .g-checkers-sq.hint:hover::after {
+  background: rgba(255, 255, 255, 0.8);
+  width: 38%;
+  height: 38%;
 }
 @keyframes g-checkers-hint {
   from {
@@ -118,6 +177,8 @@
     transform: translate(-50%, -50%) scale(0.6);
   }
 }
+
+/* Pieces: the outer box moves between squares, the disc inside lifts, hops and shakes. */
 .g-checkers .g-checkers-piece {
   position: absolute;
   top: 0;
@@ -125,119 +186,256 @@
   width: 12.5%;
   height: 12.5%;
   pointer-events: none;
-  transition: transform 0.19s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.14s ease;
+  transition: transform 0.19s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.14s ease;
   will-change: transform;
   z-index: 1;
 }
-.g-checkers .g-checkers-piece::before {
+.g-checkers .g-checkers-disc {
+  position: absolute;
+  inset: 10%;
+  border-radius: 50%;
+  transition: transform 0.16s cubic-bezier(0.3, 1.4, 0.5, 1), filter 0.16s ease;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.45));
+}
+/* Milled rim, a groove, then a flat face with a soft top light. */
+.g-checkers .g-checkers-disc::before {
   content: '';
   position: absolute;
-  inset: 11%;
+  inset: 0;
   border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, var(--g-checkers-face) 0 58%, var(--g-checkers-edge) 59% 63%, var(--g-checkers-face) 64% 77%, transparent 78%),
+    repeating-conic-gradient(var(--g-checkers-face) 0 5deg, var(--g-checkers-edge) 5deg 10deg);
   box-shadow:
-    inset 0 -3px 4px rgba(0, 0, 0, 0.35),
-    inset 0 2px 3px rgba(255, 255, 255, 0.35),
-    0 2px 3px rgba(0, 0, 0, 0.35);
+    inset 0 -2px 3px rgba(0, 0, 0, 0.35),
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.3);
 }
-.g-checkers .g-checkers-piece::after {
+.g-checkers .g-checkers-disc::after {
   content: '';
   position: absolute;
-  inset: 26%;
+  inset: 0;
   border-radius: 50%;
-  box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.18);
+  background: radial-gradient(circle at 36% 28%, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 48%);
+  pointer-events: none;
 }
-.g-checkers .g-checkers-piece.red::before {
-  background: radial-gradient(circle at 40% 35%, #ff6b6b, #d9262c 70%, #a3151a);
+.g-checkers .g-checkers-piece.red {
+  --g-checkers-face: #d6262b;
+  --g-checkers-edge: #a3171c;
+  --g-checkers-under: #7c0f13;
 }
-.g-checkers .g-checkers-piece.black::before {
-  background: radial-gradient(circle at 40% 35%, #5a5a66, #26262e 70%, #121216);
+.g-checkers .g-checkers-piece.black {
+  --g-checkers-face: #2f2f37;
+  --g-checkers-edge: #1b1b21;
+  --g-checkers-under: #0b0b0e;
 }
-.g-checkers .g-checkers-piece svg {
+/* A king is two men stacked. */
+.g-checkers .g-checkers-piece.king .g-checkers-disc {
+  transform: translateY(-5%);
+}
+.g-checkers .g-checkers-piece.king .g-checkers-disc::before {
+  box-shadow:
+    inset 0 -2px 3px rgba(0, 0, 0, 0.35),
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.3),
+    0 calc(var(--g-checkers-sq, 40px) * 0.06) 0 var(--g-checkers-under),
+    0 calc(var(--g-checkers-sq, 40px) * 0.06 + 1px) 0 rgba(0, 0, 0, 0.35);
+}
+.g-checkers .g-checkers-disc svg {
   position: absolute;
-  inset: 30%;
-  width: 40%;
-  height: 40%;
-  color: rgba(255, 215, 90, 0.95);
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.4));
-  animation: g-checkers-crown 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  inset: 27%;
+  z-index: 1;
+  width: 46%;
+  height: 46%;
+  color: #ffd25a;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+  animation: g-checkers-crown 0.42s cubic-bezier(0.3, 1.5, 0.5, 1);
 }
 @keyframes g-checkers-crown {
   from {
-    transform: scale(0.4);
+    transform: scale(0.2) rotate(-25deg);
     opacity: 0;
   }
+}
+.g-checkers .g-checkers-piece.up .g-checkers-disc {
+  transform: translateY(-6%) scale(1.06);
+  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.45));
 }
 .g-checkers .g-checkers-piece.drag {
   transition: none;
-  z-index: 3;
+  z-index: 5;
 }
-.g-checkers .g-checkers-piece.drag::before {
-  box-shadow:
-    inset 0 -3px 4px rgba(0, 0, 0, 0.35),
-    inset 0 2px 3px rgba(255, 255, 255, 0.35),
-    0 10px 16px rgba(0, 0, 0, 0.5);
+.g-checkers .g-checkers-piece.drag .g-checkers-disc {
+  transform: scale(1.14);
+  filter: drop-shadow(0 12px 10px rgba(0, 0, 0, 0.5));
 }
 .g-checkers .g-checkers-piece.mover {
-  z-index: 3;
+  z-index: 5;
 }
-.g-checkers .g-checkers-piece.mover::before {
-  box-shadow:
-    inset 0 -3px 4px rgba(0, 0, 0, 0.35),
-    inset 0 2px 3px rgba(255, 255, 255, 0.35),
-    0 8px 14px rgba(0, 0, 0, 0.45);
+.g-checkers .g-checkers-piece.mover .g-checkers-disc {
+  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.45));
+}
+.g-checkers .g-checkers-disc.hop {
+  animation: g-checkers-hop 0.19s ease-out;
+}
+@keyframes g-checkers-hop {
+  0% {
+    transform: scale(1.22);
+    filter: drop-shadow(0 14px 10px rgba(0, 0, 0, 0.45));
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 .g-checkers .g-checkers-piece.gone {
+  transition: opacity 0.2s ease;
   opacity: 0;
-  transform-origin: center;
-  animation: g-checkers-gone 0.14s ease forwards;
+}
+.g-checkers .g-checkers-piece.gone .g-checkers-disc {
+  animation: g-checkers-gone 0.2s ease-in forwards;
 }
 @keyframes g-checkers-gone {
   to {
-    opacity: 0;
+    transform: scale(1.35);
+    filter: brightness(1.6) drop-shadow(0 0 0 rgba(0, 0, 0, 0));
   }
 }
+.g-checkers .g-checkers-piece.nope .g-checkers-disc {
+  animation: g-checkers-nope 0.36s ease;
+}
+@keyframes g-checkers-nope {
+  20%,
+  60% {
+    transform: translateX(-7%);
+  }
+  40%,
+  80% {
+    transform: translateX(7%);
+  }
+}
+
+/* Counts: a bar under the board, or a column beside it. */
 .g-checkers .g-checkers-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 32px;
+  height: calc(32px * var(--g-checkers-u, 1));
   padding: 0 12px;
   box-sizing: border-box;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.05);
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.1);
-  font-size: 12px;
+  font-size: calc(12px * var(--g-checkers-u, 1));
   font-weight: 500;
   color: rgba(245, 245, 247, 0.6);
+}
+.g-checkers .g-checkers-panel {
+  flex: none;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding-top: 40px;
+  box-sizing: border-box;
+  font-size: calc(13px * var(--g-checkers-u, 1));
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.6);
+}
+.g-checkers .g-checkers-panel .g-checkers-side {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+}
+.g-checkers .g-checkers-panel .g-checkers-side.on {
+  background: rgba(255, 255, 255, 0.1);
+}
+.g-checkers .g-checkers-panel .g-checkers-status {
+  padding: 0 4px;
+}
+.g-checkers .g-checkers-panel .g-checkers-mode {
+  padding: 0 4px;
 }
 .g-checkers .g-checkers-side {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  transition: color 0.2s ease;
+  gap: 7px;
+  min-width: 0;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+.g-checkers .g-checkers-foot .g-checkers-side.end {
+  flex-direction: row-reverse;
 }
 .g-checkers .g-checkers-side.on {
   color: #fff;
+}
+.g-checkers .g-checkers-who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-checkers .g-checkers-panel .g-checkers-who {
+  flex: 1;
 }
 .g-checkers .g-checkers-side b {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .g-checkers .g-checkers-side i {
+  flex: none;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   box-shadow: inset 0 -1px 2px rgba(0, 0, 0, 0.4);
+  transition: box-shadow 0.2s ease;
 }
 .g-checkers .g-checkers-side.red i {
-  background: #e0302f;
+  background: #d6262b;
 }
 .g-checkers .g-checkers-side.black i {
-  background: #2a2a32;
+  background: #2f2f37;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
 }
+.g-checkers .g-checkers-side.on i {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
+}
 .g-checkers .g-checkers-mode {
-  font-size: 11px;
-  color: rgba(245, 245, 247, 0.4);
+  font-size: calc(11px * var(--g-checkers-u, 1));
+  color: rgba(245, 245, 247, 0.45);
+  white-space: nowrap;
+}
+
+/* Touch: finger-sized shell controls, grown by --g-checkers-u so they stay that size inside a scaled phone or iPad frame. */
+@media (pointer: coarse) {
+  .g-checkers .arcade-ctrl button {
+    width: calc(44px * var(--g-checkers-u, 1));
+    height: calc(44px * var(--g-checkers-u, 1));
+  }
+  .g-checkers .arcade-ctrl svg {
+    width: calc(16px * var(--g-checkers-u, 1));
+    height: calc(16px * var(--g-checkers-u, 1));
+  }
+  .g-checkers .arcade-ov > .arcade-card {
+    zoom: var(--g-checkers-u, 1);
+  }
+  .g-checkers .arcade-ov > .arcade-card .arcade-btn,
+  .g-checkers .arcade-ov > .arcade-card .arcade-seg > button,
+  .g-checkers .arcade-ov > .arcade-card .arcade-input {
+    min-height: 42px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-checkers .g-checkers-disc.hop,
+  .g-checkers .g-checkers-piece.nope .g-checkers-disc,
+  .g-checkers .g-checkers-sq.pick.jump::after {
+    animation: none;
+  }
+}
+/* Beside layout: the online chip would sit on the board, so it moves over the side column. */
+.g-checkers:has(.g-checkers-stage.beside) .arcade-online-status {
+  top: 52px;
+  left: auto;
+  right: 12px;
+  transform: none;
 }
