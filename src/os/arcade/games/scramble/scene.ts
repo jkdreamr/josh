@@ -2,8 +2,8 @@
 // effects. It reads a Match every frame and never changes it. Only classes kit/three-lib.ts exports are used.
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
-import { BARREL_R, BEACH, BUSH_R, BUS_Y, CHEST_HD, CHEST_HW, CRATE_HALF, HALF, SUPPLY_FALL, SUPPLY_HALF, WALL_T, busAt, peekAt, type Building, type BuildingKind } from './map';
-import { BARREL, CRATE_HP, F_DRINKING, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_TART, WALL_HALF, WALL_HP, WALL_THICK, clearLine, concealed, held, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Toss, type Zone } from './logic';
+import { BARREL_R, BEACH, BRIDGE_HALF, BUSH_R, BUS_Y, CAMP, CHEST_HD, CHEST_HW, CRATE_HALF, FENCE_T, FRIDGE_HD, FRIDGE_HW, HALF, HAY_HD, HAY_HW, LAMP_R, LOG_R, PAD, RIVER_HALF, ROAD_HALF, SUPPLY_FALL, SUPPLY_HALF, TABLE_HD, TABLE_HW, TOILET_R, WALL_T, bridgeAt, busAt, fieldAt, padAt, peekAt, riverDist2, roadAt, type Building, type BuildingKind } from './map';
+import { BARREL, CRATE_HP, F_DRINKING, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_TART, HAY_HP, TOILET_HP, WALL_HALF, WALL_HP, WALL_THICK, clearLine, concealed, held, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Toss, type Zone } from './logic';
 import { MELEE, RARITY_COLORS, THROWS, WEAPONS, isMelee, isThrow, isWeapon, legendary, type LootDef, type UseId } from './items';
 
 type Three = typeof import('three');
@@ -52,6 +52,12 @@ const FRAME_W = (Math.sin(TILT) * Math.tan(HALF_FOV)) / (Math.sin(TILT) - Math.t
 /** three's GreaterDepth constant, by value: three-lib.ts exports classes, not constants. */
 const GREATER_DEPTH = 6 as T.DepthModes;
 
+const QUADS = [
+  [-1, -1],
+  [1, -1],
+  [1, 1],
+  [-1, 1],
+] as const;
 const AMMO_COLORS = { light: 0xf2c94c, heavy: 0x6fcf97, shells: 0xeb5757, rockets: 0xbb6bd9 } as const;
 const ROOF_COLORS = [0xd0623f, 0x5b84b0, 0x7ea55a, 0xa06b98];
 const SHED_ROOFS = [0x6aa69a, 0xa3adb5, 0xc06a40, 0x86a85c];
@@ -71,6 +77,8 @@ const DRESS: Record<BuildingKind, { frame: number; porch: number; mat: number; a
   container: { frame: 0, porch: 0, mat: 0, awning: 0, edge: 0, trim: 0 },
   ruin: { frame: 0, porch: 0xcfc6b2, mat: 0, awning: 0, edge: 0, trim: 0 },
   coop: { frame: 0xc0392b, porch: 0xd9a441, mat: 0xc0392b, awning: 0xc0392b, edge: 0xffffff, trim: 0xfff1c9 },
+  diner: { frame: 0xd64545, porch: 0xc9c3b5, mat: 0x2b2d33, awning: 0xd64545, edge: 0x3fb8af, trim: 0x3fb8af },
+  mill: { frame: 0x6b4426, porch: 0xb98250, mat: 0x8a5a2b, awning: 0x7a4a2a, edge: 0xffcf4a, trim: 0xe9e1cf },
 };
 /** Glow under a pickup, by how good it is (the rarity colors). */
 const USE_GLOW: Record<UseId, number> = { bandage: 1, medkit: 2, mini: 2, shield: 3, coffee: 4, smoothie: 3, tart: 4 };
@@ -253,6 +261,132 @@ function supplyTexture(THREE: Three) {
       g.fillStyle = '#2f7de1';
       g.fillRect(60, 46, 8, 22);
       g.fillRect(60, 72, 8, 7);
+    }),
+  );
+}
+
+/** Straw: a warm yellow with strands across it. */
+function hayTexture(THREE: Three) {
+  const rnd = scatter(13);
+  return texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = '#d9b14a';
+      g.fillRect(0, 0, 64, 64);
+      for (let i = 0; i < 160; i++) {
+        g.strokeStyle = rnd() > 0.5 ? 'rgba(255,240,170,0.5)' : 'rgba(120,80,20,0.35)';
+        g.lineWidth = 1;
+        const x = rnd() * 64;
+        const y = rnd() * 64;
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + (rnd() - 0.5) * 14, y + (rnd() - 0.5) * 6);
+        g.stroke();
+      }
+      // two bands of twine round the bale
+      g.fillStyle = 'rgba(110,70,25,0.75)';
+      for (const y of [18, 44]) g.fillRect(0, y, 64, 3);
+    }),
+  );
+}
+
+/** Running water: deeper down the middle, paler at the edges, with streaks of light along it (v runs downstream). */
+function riverTexture(THREE: Three) {
+  const rnd = scatter(41);
+  return texture(
+    THREE,
+    canvas(64, 128, (g) => {
+      const grad = g.createLinearGradient(0, 0, 64, 0);
+      grad.addColorStop(0, '#8fd8ee');
+      grad.addColorStop(0.5, '#2f8fc4');
+      grad.addColorStop(1, '#8fd8ee');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 128);
+      for (let i = 0; i < 46; i++) {
+        g.fillStyle = `rgba(255,255,255,${0.12 + rnd() * 0.28})`;
+        g.fillRect(6 + rnd() * 52, rnd() * 128, 1 + rnd() * 1.5, 6 + rnd() * 16);
+      }
+    }),
+    [1, 1],
+  );
+}
+
+/** Black and white tiles, for the diner's floor. */
+function checkTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      for (let y = 0; y < 4; y++)
+        for (let x = 0; x < 4; x++) {
+          g.fillStyle = (x + y) % 2 ? '#2b2d33' : '#f4f1ea';
+          g.fillRect(x * 16, y * 16, 16, 16);
+        }
+    }),
+    [1, 1],
+  );
+}
+
+/** A diner's sign: a red board with its name in white. */
+function signTexture(THREE: Three, text: string) {
+  return texture(
+    THREE,
+    canvas(512, 128, (g) => {
+      g.fillStyle = '#d64545';
+      g.fillRect(0, 0, 512, 128);
+      g.strokeStyle = '#fff6d6';
+      g.lineWidth = 8;
+      g.strokeRect(10, 10, 492, 108);
+      g.fillStyle = '#fff6d6';
+      g.font = 'bold 60px sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(text.toUpperCase(), 256, 68, 470);
+    }),
+  );
+}
+
+/**
+ * A flat ribbon `half` wide either side of a line on the ground, at height y: u runs across it and v along it, a
+ * repeat every `tile` meters.
+ */
+function ribbon(THREE: Three, pts: { x: number; z: number }[], half: number, y: number, tile: number) {
+  const n = pts.length;
+  const pos = new Float32Array(n * 6);
+  const nor = new Float32Array(n * 6);
+  const uv = new Float32Array(n * 4);
+  const idx: number[] = [];
+  let along = 0;
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(n - 1, i + 1)];
+    const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    const nx = -(b.z - a.z) / l;
+    const nz = (b.x - a.x) / l;
+    if (i) along += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z);
+    pos.set([pts[i].x + nx * half, y, pts[i].z + nz * half, pts[i].x - nx * half, y, pts[i].z - nz * half], i * 6);
+    nor.set([0, 1, 0, 0, 1, 0], i * 6);
+    uv.set([0, along / tile, 1, along / tile], i * 4);
+    if (i) idx.push(i * 2 - 2, i * 2, i * 2 - 1, i * 2 - 1, i * 2, i * 2 + 1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
+
+/** A soft round glow, white in the middle and fading out (tinted by the material). */
+function glowTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      const grad = g.createRadialGradient(32, 32, 1, 32, 32, 31);
+      grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+      grad.addColorStop(0.45, 'rgba(255,255,255,0.45)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
     }),
   );
 }
@@ -607,10 +741,27 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   });
   scene.add(stalks);
 
+  // the river: muddy banks, then the water, its streaks drifting downstream (the line drawn a little smoother than
+  // the one the game wades through, which is near enough)
+  const riverLine = map.river.length ? [map.river[0]] : [];
+  for (let i = 1; i < map.river.length; i++) {
+    const a = map.river[i - 1];
+    const b = map.river[i];
+    riverLine.push({ x: a.x * 0.75 + b.x * 0.25, z: a.z * 0.75 + b.z * 0.25 }, { x: a.x * 0.25 + b.x * 0.75, z: a.z * 0.25 + b.z * 0.75 });
+  }
+  if (map.river.length) riverLine.push(map.river[map.river.length - 1]);
+  const riverTex = keep(riverTexture(THREE));
+  if (riverLine.length > 1) {
+    const banks = new THREE.Mesh(geo(ribbon(THREE, riverLine, RIVER_HALF + 1.3, 0.012, 8)), lambert(0xc9b98a, { side: THREE.DoubleSide }));
+    const flow = new THREE.Mesh(geo(ribbon(THREE, riverLine, RIVER_HALF + 0.1, 0.034, 9)), lambert(0xffffff, { map: riverTex, emissive: 0x0b3a52, side: THREE.DoubleSide }));
+    scene.add(banks, flow);
+  }
+
   // buildings: a floor, walls, and at every doorway a frame, a porch with a lamp and an awning, so the ways in read
   // from the ground and from the sky. All but the ruins have a roof that lifts away while you're inside and thins
   // while you stand at a door or line up with one, so you can peek in.
   const floorTex = keep(planksTexture(THREE, '#c9935a', '#9c6b3a', [1, 1]));
+  const checks = keep(checkTexture(THREE));
   const shingles = keep(shingleTexture(THREE));
   const ribs = keep(ribTexture(THREE));
   const concrete = lambert(0x9aa1a6);
@@ -633,6 +784,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         return shade(rnd, 0xa39e93, 0.7);
       case 'coop':
         return color.setHex(0xfff1c9);
+      case 'diner':
+        return color.setHex(0xeef6f4);
+      case 'mill':
+        return color.setHex(0xe9e1cf);
     }
   };
   const roofColor = (b: Building) => {
@@ -647,6 +802,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         return CONTAINER_COLORS[b.look % CONTAINER_COLORS.length];
       case 'coop':
         return 0xffc21a;
+      case 'diner':
+        return 0xd64545;
+      case 'mill':
+        return 0x7a4a2a;
       default:
         return ROOF_COLORS[b.look % ROOF_COLORS.length];
     }
@@ -658,6 +817,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const doorRnd = scatter(31);
   let wi = 0;
   const roofs: { mesh: T.Mesh; mats: T.MeshLambertMaterial[]; fade: number; at: number }[] = [];
+  const sails: T.Mesh[] = [];
   // door frames, porches, mats, paving and container doors, all one instanced mesh; lamps another
   const bits: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number; c: number }[] = [];
   const lamps: { x: number; y: number; z: number; sx: number; sz: number }[] = [];
@@ -670,7 +830,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           : b.kind === 'ruin'
             ? dirt
             : (() => {
-                const tex = keep(floorTex.clone());
+                const tex = keep((b.kind === 'diner' ? checks : floorTex).clone());
                 tex.repeat.set(b.w / 4, b.d / 4);
                 tex.wrapS = THREE.RepeatWrapping;
                 tex.wrapT = THREE.RepeatWrapping;
@@ -763,9 +923,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     if (b.kind === 'container') piece(new THREE.BoxGeometry(W, 0.2, D), 0, 0.1, 0, rc);
     else {
       piece(new THREE.BoxGeometry(W, 0.2, D), 0, 0.1, 0, s.trim);
-      const rise = b.kind === 'warehouse' ? 0.9 : Math.min(1.6, (alongX ? D : W) * 0.16);
-      piece(gableGeometry(THREE, alongX ? W : D, alongX ? D : W, rise), 0, 0.2, 0, rc, alongX ? 0 : Math.PI / 2);
-      piece(new THREE.BoxGeometry(alongX ? W + 0.06 : 0.36, 0.16, alongX ? 0.36 : D + 0.06), 0, 0.2 + rise, 0, darker(rc, 0.62));
+      const rise = b.kind === 'warehouse' ? 0.9 : b.kind === 'mill' ? 4.6 : Math.min(1.6, (alongX ? D : W) * 0.16);
+      if (b.kind === 'mill') {
+        // a windmill's cap is a tall pyramid with a knob on top
+        piece(new THREE.ConeGeometry(W * Math.SQRT1_2, rise, 4), 0, 0.2 + rise / 2, 0, rc, Math.PI / 4);
+        piece(new THREE.SphereGeometry(0.35, 6, 4), 0, 0.3 + rise, 0, s.edge);
+      } else {
+        piece(gableGeometry(THREE, alongX ? W : D, alongX ? D : W, rise), 0, 0.2, 0, rc, alongX ? 0 : Math.PI / 2);
+        piece(new THREE.BoxGeometry(alongX ? W + 0.06 : 0.36, 0.16, alongX ? 0.36 : D + 0.06), 0, 0.2 + rise, 0, darker(rc, 0.62));
+      }
       // a long vent along a warehouse's ridge
       if (b.kind === 'warehouse') piece(new THREE.BoxGeometry(alongX ? W * 0.7 : 1.3, 0.36, alongX ? 1.3 : D * 0.7), 0, 0.3 + rise, 0, 0xd5dbe0);
       top = 0.2 + rise;
@@ -804,6 +970,39 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       roof.add(egg);
       mats.push(eggMat);
     }
+    if (b.kind === 'diner') {
+      // the sign along the ridge, readable from the south, and again from the north
+      const name = map.places.find((p) => Math.hypot(p.x - b.x, p.z - b.z) < p.r)?.name ?? 'Diner';
+      const signMat = lambert(0xffffff, { map: keep(signTexture(THREE, name)), transparent: true, opacity: 1, side: THREE.DoubleSide, emissive: 0x330000 });
+      const sign = new THREE.Mesh(G.plane, signMat);
+      sign.position.set(0, top + 1.1, 0);
+      sign.scale.set(8, 2, 1);
+      roof.add(sign);
+      mats.push(signMat);
+    }
+    if (b.kind === 'mill') {
+      // four sails on a hub high on the south face, turned to the camera so they always show, turning in the wind
+      // (one merged mesh)
+      const parts: RoofPart[] = [];
+      const hubG = new THREE.CylinderGeometry(0.35, 0.35, 0.5, 10);
+      hubG.rotateX(Math.PI / 2);
+      parts.push({ g: hubG, c: 0x6b4426 });
+      for (let k = 0; k < 4; k++) {
+        const spar = new THREE.BoxGeometry(0.16, 5.6, 0.12);
+        spar.translate(0, 2.9, 0.1);
+        spar.rotateZ((k * Math.PI) / 2);
+        const sail = new THREE.BoxGeometry(0.9, 4.2, 0.05);
+        sail.translate(0.5, 3.3, 0.12);
+        sail.rotateZ((k * Math.PI) / 2);
+        parts.push({ g: spar, c: 0x6b4426 }, { g: sail, c: 0xf3eee2 });
+      }
+      const sailMat = lambert(0xffffff, { vertexColors: true, transparent: true, opacity: 1 });
+      const turn = new THREE.Mesh(geo(mergeRoof(THREE, parts, 1, true)), sailMat);
+      turn.position.set(0, 1.4, b.d / 2 + over + 0.2);
+      roof.add(turn);
+      mats.push(sailMat);
+      sails.push(turn);
+    }
     roofs.push({ mesh: roof, mats, fade: 1, at: bi });
   });
   scene.add(buildingWalls);
@@ -826,22 +1025,38 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   });
   scene.add(doorBits, doorLamps);
 
-  // trees: round ones (a trunk and two crowns) and pines (a trunk and two cones)
+  // trees: oaks (a trunk and two round crowns), pines (two cones), birches (a white trunk with dark marks and a pale
+  // narrow crown) and fruit trees (one round crown hung with fruit)
   const treeRnd = scatter(3);
-  const pine = map.trees.map(() => treeRnd() < 0.35);
-  const pines = pine.filter(Boolean).length;
-  const trunks = many(geo(new THREE.CylinderGeometry(0.32, 0.48, 1, 7)), lambert(0x8a6240), map.trees.length);
-  const crowns = many(G.lowBall, lambert(0xffffff, { flatShading: true }), (map.trees.length - pines) * 2);
-  const cones = many(G.pine, lambert(0xffffff, { flatShading: true }), pines * 2);
+  const count = (k: string) => map.trees.filter((t) => t.kind === k).length;
+  const trunks = many(geo(new THREE.CylinderGeometry(0.32, 0.48, 1, 7)), lambert(0xffffff), map.trees.length);
+  const crowns = many(G.lowBall, lambert(0xffffff, { flatShading: true }), count('oak') * 2 + count('birch') * 2 + count('fruit'));
+  const cones = many(G.pine, lambert(0xffffff, { flatShading: true }), count('pine') * 2);
+  const marks = many(G.box, lambert(0x2b2d33), count('birch') * 3);
+  const FRUIT = 6;
+  const fruits = many(geo(new THREE.SphereGeometry(1, 5, 3)), lambert(0xffffff, { emissive: 0x220800 }), count('fruit') * FRUIT);
+  const FRUIT_COLORS = [0xe53935, 0xff9f1c, 0xffd23d];
   let ci = 0;
   let pi = 0;
+  let mi = 0;
+  let fi = 0;
+  const crown = (x: number, y: number, z: number, sx: number, sy: number, base: number, spread: number) => {
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(0, treeRnd() * 6, 0);
+    dummy.scale.set(sx, sy, sx);
+    dummy.updateMatrix();
+    crowns.setMatrixAt(ci, dummy.matrix);
+    crowns.setColorAt(ci++, shade(treeRnd, base, spread));
+  };
   map.trees.forEach((t, i) => {
-    dummy.position.set(t.x, 1.6, t.z);
+    const birch = t.kind === 'birch';
+    dummy.position.set(t.x, birch ? 2 : 1.6, t.z);
     dummy.rotation.set(0, 0, 0);
-    dummy.scale.set(1, 3.2, 1);
+    dummy.scale.set(birch ? 0.62 : 1, birch ? 4 : 3.2, birch ? 0.62 : 1);
     dummy.updateMatrix();
     trunks.setMatrixAt(i, dummy.matrix);
-    if (pine[i]) {
+    trunks.setColorAt(i, color.setHex(birch ? 0xf1ede2 : 0x8a6240));
+    if (t.kind === 'pine') {
       const big = 1.9 + treeRnd() * 0.5;
       dummy.position.set(t.x, 3.6, t.z);
       dummy.rotation.set(0, treeRnd() * 6, 0);
@@ -857,20 +1072,42 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       cones.setColorAt(pi++, shade(treeRnd, 0x3f8a4a, 0.3));
       return;
     }
+    if (birch) {
+      for (const y of [1.1, 2.1, 3.1]) {
+        dummy.position.set(t.x, y + treeRnd() * 0.3, t.z);
+        dummy.rotation.set(0, treeRnd() * 6, 0);
+        dummy.scale.set(0.42, 0.07, 0.42);
+        dummy.updateMatrix();
+        marks.setMatrixAt(mi++, dummy.matrix);
+      }
+      const big = 1.3 + treeRnd() * 0.3;
+      crown(t.x, 4.6, t.z, big, big * 1.25, 0x9cc95a, 0.6);
+      crown(t.x + (treeRnd() - 0.5) * 0.5, 5.8, t.z + (treeRnd() - 0.5) * 0.5, big * 0.7, big * 0.85, 0xb3d66a, 0.6);
+      return;
+    }
     const big = 1.7 + treeRnd() * 0.5;
-    dummy.position.set(t.x, 3.7, t.z);
-    dummy.rotation.set(0, treeRnd() * 6, 0);
-    dummy.scale.set(big, big * 0.9, big);
-    dummy.updateMatrix();
-    crowns.setMatrixAt(ci, dummy.matrix);
-    crowns.setColorAt(ci++, shade(treeRnd, 0x3f8f3a, 1));
-    dummy.position.set(t.x + (treeRnd() - 0.5) * 0.6, 4.9, t.z + (treeRnd() - 0.5) * 0.6);
-    dummy.scale.set(big * 0.68, big * 0.62, big * 0.68);
-    dummy.updateMatrix();
-    crowns.setMatrixAt(ci, dummy.matrix);
-    crowns.setColorAt(ci++, shade(treeRnd, 0x56a648, 1));
+    if (t.kind === 'fruit') {
+      crown(t.x, 3.9, t.z, big, big * 0.85, 0x4ea83f, 0.6);
+      const fruit = FRUIT_COLORS[Math.floor(treeRnd() * FRUIT_COLORS.length)];
+      // fruit round the crown's lower half, where you'd see it from above and from the side
+      for (let k = 0; k < FRUIT; k++) {
+        const a = (k / FRUIT) * Math.PI * 2 + treeRnd();
+        const y = 3.4 + treeRnd() * 1.1;
+        const r = big * Math.sqrt(Math.max(0.15, 1 - ((y - 3.9) / (big * 0.85)) ** 2)) * 0.98;
+        dummy.position.set(t.x + Math.sin(a) * r, y, t.z + Math.cos(a) * r);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.setScalar(0.2);
+        dummy.updateMatrix();
+        fruits.setMatrixAt(fi, dummy.matrix);
+        fruits.setColorAt(fi++, color.setHex(fruit));
+      }
+      return;
+    }
+    crown(t.x, 3.7, t.z, big, big * 0.9, 0x3f8f3a, 1);
+    crown(t.x + (treeRnd() - 0.5) * 0.6, 4.9, t.z + (treeRnd() - 0.5) * 0.6, big * 0.68, big * 0.62, 0x56a648, 1);
   });
-  scene.add(trunks, crowns, cones);
+  scene.add(trunks, crowns, cones, marks, fruits);
+
 
   const rocks = many(G.rock, lambert(0xffffff, { flatShading: true }), map.rocks.length);
   map.rocks.forEach((r, i) => {
@@ -1023,6 +1260,521 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     scene.add(beam);
     return { c, group, box, balloon, glow, beam };
   });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Around the buildings: dirt roads with lamp posts along them, fences round the farms, parked cars and trucks,
+  // mailboxes and picnic tables. All instanced: one draw call a kind.
+
+  const put = (im: T.InstancedMesh, i: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, ry = 0, c?: T.Color) => {
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(0, ry, 0);
+    dummy.scale.set(sx, sy, sz);
+    dummy.updateMatrix();
+    im.setMatrixAt(i, dummy.matrix);
+    if (c) im.setColorAt(i, c);
+  };
+
+  // fallen logs (bark, with pale cut ends) and stumps
+  const bark = lambert(0x6e4a2c);
+  const cut = lambert(0xd9b77e);
+  const logGeo = geo(new THREE.CylinderGeometry(1, 1, 1, 8));
+  const logBodies = many(logGeo, bark, map.logs.length + map.stumps.length);
+  const logEnds = many(logGeo, cut, map.logs.length * 2 + map.stumps.length);
+  map.logs.forEach((l, i) => {
+    const len = (l.alongX ? l.hw : l.hd) * 2;
+    dummy.position.set(l.x, LOG_R, l.z);
+    dummy.rotation.set(l.alongX ? 0 : Math.PI / 2, 0, l.alongX ? Math.PI / 2 : 0);
+    dummy.scale.set(LOG_R, len, LOG_R);
+    dummy.updateMatrix();
+    logBodies.setMatrixAt(i, dummy.matrix);
+    for (const k of [-1, 1]) {
+      dummy.position.set(l.x + (l.alongX ? (k * len) / 2 : 0), LOG_R, l.z + (l.alongX ? 0 : (k * len) / 2));
+      dummy.scale.set(LOG_R * 0.85, 0.03, LOG_R * 0.85);
+      dummy.updateMatrix();
+      logEnds.setMatrixAt(i * 2 + (k > 0 ? 1 : 0), dummy.matrix);
+    }
+  });
+  map.stumps.forEach((t, i) => {
+    const h = 0.4 + (i % 3) * 0.08;
+    put(logBodies, map.logs.length + i, t.x, h / 2, t.z, t.r, h, t.r);
+    put(logEnds, map.logs.length * 2 + i, t.x, h + 0.01, t.z, t.r * 0.85, 0.03, t.r * 0.85);
+  });
+  scene.add(logBodies, logEnds);
+
+  // bridges: a deck of planks across the water, a rail down each side on posts, and piles where it meets the banks
+  type Part = { x: number; y: number; z: number; sx: number; sy: number; sz: number; c: number; b?: number };
+  const planks: Part[] = [];
+  const railings: Part[] = [];
+  const piles: Part[] = [];
+  const plankRnd = scatter(43);
+  for (const br of map.bridges) {
+    const len = 2 * (br.alongX ? br.hw : br.hd);
+    // a point `u` along the deck and `v` across it
+    const at = (u: number, v: number) => (br.alongX ? { x: br.x + u, z: br.z + v } : { x: br.x + v, z: br.z + u });
+    const size = (along: number, across: number) => (br.alongX ? { sx: along, sz: across } : { sx: across, sz: along });
+    for (let u = -len / 2 + 0.25; u < len / 2; u += 0.5) planks.push({ ...at(u, (plankRnd() - 0.5) * 0.06), y: 0.05, ...size(0.46, BRIDGE_HALF * 2 - 0.05), sy: 0.08, c: shade(plankRnd, 0xa57846, 0.5).getHex() });
+    for (const v of [-1, 1]) {
+      const side = v * (BRIDGE_HALF - FENCE_T / 2);
+      for (const y of [0.55, 0.98]) railings.push({ ...at(0, side), y, ...size(len, 0.12), sy: 0.09, c: 0x8a5a2b });
+      for (let u = -len / 2 + 0.1; u <= len / 2; u += len / Math.ceil(len / 2)) railings.push({ ...at(Math.min(u, len / 2 - 0.1), side), y: 0.52, ...size(0.16, 0.16), sy: 1.05, c: 0x6b4426 });
+      for (const u of [-1, 1]) piles.push({ ...at(u * (len / 2 - 1.9), v * (BRIDGE_HALF - 0.3)), y: -0.25, sx: 0.2, sy: 0.7, sz: 0.2, c: 0x5a3e24 });
+    }
+  }
+  const instance = (g: T.BufferGeometry, list: Part[]) => {
+    const im = many(g, lambert(0xffffff), list.length);
+    list.forEach((p, i) => put(im, i, p.x, p.y, p.z, p.sx, p.sy, p.sz, 0, color.setHex(p.c)));
+    scene.add(im);
+    return im;
+  };
+  instance(G.box, planks);
+  instance(G.box, railings);
+  instance(G.cyl, piles);
+
+  // furniture, all of it three instanced meshes: boxes, round things and lumpy things (flour sacks)
+  const boxes: Part[] = [];
+  const rounds: Part[] = [];
+  const lumps: Part[] = [];
+  const RUGS = [0xb33c2e, 0x2f6fb0, 0x6a8f3a, 0xc08a2e];
+  const BLANKETS = [0x5b84b0, 0xd0623f, 0x7ea55a, 0xa06b98];
+  const CABINETS = [0xf4f1ea, 0x9fc5c0, 0xe8dccb, 0xc9935a];
+  const BOOKS = [0xc0392b, 0x2e86de, 0x27ae60, 0xf2c94c, 0x8e44ad, 0xe67e22];
+  const furnRnd = scatter(47);
+  for (const f of map.furniture) {
+    const b = map.buildings[f.b];
+    const from = [boxes.length, rounds.length, lumps.length];
+    // the way to the wall it stands against (`face`), and across that
+    const wx = f.face === 2 ? -1 : f.face === 3 ? 1 : 0;
+    const wz = f.face === 0 ? -1 : f.face === 1 ? 1 : 0;
+    const deep = 2 * (wx ? f.hw : f.hd);
+    const wide = 2 * (wx ? f.hd : f.hw);
+    /** A box `u` toward the wall from the middle, `along` deep (toward the wall) and `across` wide. */
+    const part = (list: Part[], u: number, y: number, along: number, sy: number, across: number, c: number) =>
+      list.push({ x: f.x + wx * u, y, z: f.z + wz * u, sx: wx ? along : across, sy, sz: wx ? across : along, c });
+    switch (f.kind) {
+      case 'rug':
+        boxes.push({ x: f.x, y: 0.03, z: f.z, sx: f.hw * 2, sy: 0.02, sz: f.hd * 2, c: RUGS[f.look % 4] });
+        boxes.push({ x: f.x, y: 0.042, z: f.z, sx: f.hw * 2 - 0.36, sy: 0.006, sz: f.hd * 2 - 0.36, c: color.setHex(RUGS[f.look % 4]).offsetHSL(0, 0, 0.18).getHex() });
+        break;
+      case 'table':
+        boxes.push({ x: f.x, y: 0.76, z: f.z, sx: f.hw * 2, sy: 0.07, sz: f.hd * 2, c: 0xa5713f });
+        for (const [sx, sz] of QUADS) boxes.push({ x: f.x + sx * (f.hw - 0.12), y: 0.37, z: f.z + sz * (f.hd - 0.12), sx: 0.09, sy: 0.74, sz: 0.09, c: 0x7a4f28 });
+        break;
+      case 'chair':
+        boxes.push({ x: f.x, y: 0.46, z: f.z, sx: 0.44, sy: 0.06, sz: 0.44, c: 0x9a6a3a });
+        boxes.push({ x: f.x, y: 0.22, z: f.z, sx: 0.08, sy: 0.44, sz: 0.08, c: 0x6b4426 });
+        part(boxes, 0.19, 0.74, 0.06, 0.52, 0.44, 0x9a6a3a);
+        break;
+      case 'bed':
+        boxes.push({ x: f.x, y: 0.2, z: f.z, sx: f.hw * 2, sy: 0.4, sz: f.hd * 2, c: 0x8a5a2b });
+        boxes.push({ x: f.x, y: 0.47, z: f.z, sx: f.hw * 2 - 0.12, sy: 0.14, sz: f.hd * 2 - 0.12, c: 0xf6f3ec });
+        part(boxes, -deep * 0.17, 0.55, deep * 0.62, 0.06, wide - 0.04, BLANKETS[f.look % 4]);
+        part(boxes, deep / 2 - 0.36, 0.6, 0.38, 0.12, wide * 0.72, 0xffffff);
+        part(boxes, deep / 2 - 0.04, 0.55, 0.08, 1.1, wide, 0x6b4426);
+        break;
+      case 'counter': {
+        const diner = b.kind === 'diner';
+        boxes.push({ x: f.x, y: 0.44, z: f.z, sx: f.hw * 2, sy: 0.88, sz: f.hd * 2, c: diner ? 0x3fb8af : b.kind === 'shed' ? 0x8a5a2b : CABINETS[f.look % 4] });
+        boxes.push({ x: f.x, y: 0.91, z: f.z, sx: f.hw * 2 + 0.04, sy: 0.06, sz: f.hd * 2 + 0.04, c: diner ? 0xdfe5ea : b.kind === 'shed' ? 0x6b4426 : 0xc9ccd1 });
+        if (!diner && b.kind !== 'shed') boxes.push({ x: f.x, y: 0.94, z: f.z, sx: Math.min(0.5, f.hw * 2 - 0.2), sy: 0.02, sz: Math.min(0.5, f.hd * 2 - 0.2), c: 0x5b616b });
+        break;
+      }
+      case 'shelf': {
+        const racks = b.kind === 'warehouse';
+        boxes.push({ x: f.x, y: racks ? 1.2 : 0.95, z: f.z, sx: f.hw * 2, sy: racks ? 2.4 : 1.9, sz: f.hd * 2, c: racks ? 0x4f6d8f : 0x6b4426 });
+        // what's on it sticks out a little from the open side
+        for (const y of racks ? [0.45, 1.25, 2.05] : [0.4, 0.95, 1.5]) part(boxes, -0.06, y, deep * 0.9, racks ? 0.55 : 0.3, wide - 0.14, racks ? shade(furnRnd, 0xc9a26b, 0.4).getHex() : BOOKS[Math.floor(furnRnd() * BOOKS.length)]);
+        break;
+      }
+      case 'booth':
+        part(boxes, 0, 0.76, 0.7, 0.06, wide - 0.3, 0xf4f1ea);
+        part(boxes, 0, 0.38, 0.12, 0.74, 0.12, 0xb7bcc2);
+        for (const k of [-1, 1]) {
+          part(boxes, k * (deep / 2 - 0.3), 0.22, 0.56, 0.44, wide, 0xa83232);
+          part(boxes, k * (deep / 2 - 0.3), 0.48, 0.5, 0.1, wide - 0.04, 0xd64545);
+          part(boxes, k * (deep / 2 - 0.06), 0.78, 0.12, 0.7, wide, 0xd64545);
+        }
+        break;
+      case 'stool':
+        rounds.push({ x: f.x, y: 0.74, z: f.z, sx: 0.22, sy: 0.08, sz: 0.22, c: 0xd64545 });
+        boxes.push({ x: f.x, y: 0.36, z: f.z, sx: 0.07, sy: 0.72, sz: 0.07, c: 0xb7bcc2 });
+        break;
+      case 'sacks':
+        for (const [x, y, z, k] of [
+          [-0.18, 0.24, -0.15, 1],
+          [0.2, 0.24, 0.13, 0.95],
+          [0.02, 0.58, 0, 0.9],
+        ])
+          lumps.push({ x: f.x + x, y, z: f.z + z, sx: 0.3 * k, sy: 0.25 * k, sz: 0.27 * k, c: shade(furnRnd, 0xe2d3ae, 0.3).getHex() });
+        break;
+      case 'millstone':
+        rounds.push({ x: f.x, y: 0.16, z: f.z, sx: f.hw, sy: 0.32, sz: f.hd, c: 0x9aa0a6 });
+        rounds.push({ x: f.x, y: 0.43, z: f.z, sx: f.hw * 0.86, sy: 0.22, sz: f.hd * 0.86, c: 0xb9bec3 });
+        boxes.push({ x: f.x, y: 0.8, z: f.z, sx: 0.14, sy: 0.9, sz: 0.14, c: 0x6b4426 });
+        break;
+    }
+    [boxes, rounds, lumps].forEach((list, k) => {
+      for (let i = from[k]; i < list.length; i++) list[i].b = f.b;
+    });
+  }
+  // every room's furniture stays hidden (not drawn only to be painted over) while its roof is on
+  const furnished = [instance(G.box, boxes), instance(G.cyl, rounds), instance(G.lowBall, lumps)];
+  const placed = furnished.map((im) => {
+    im.computeBoundingSphere();
+    return Array.from({ length: im.count }, (_, i) => {
+      const at = new THREE.Matrix4();
+      im.getMatrixAt(i, at);
+      return at;
+    });
+  });
+  const pieces: [number, number][][] = map.buildings.map(() => []);
+  [boxes, rounds, lumps].forEach((list, k) => list.forEach((p, i) => p.b !== undefined && pieces[p.b].push([k, i])));
+  const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+  const shown = map.buildings.map(() => true);
+  const showFurniture = (bi: number, on: boolean) => {
+    if (shown[bi] === on || !pieces[bi].length) return;
+    shown[bi] = on;
+    for (const [k, i] of pieces[bi]) {
+      furnished[k].setMatrixAt(i, on ? placed[k][i] : hidden);
+      furnished[k].instanceMatrix.needsUpdate = true;
+    }
+  };
+  map.buildings.forEach((b, i) => b.roof && showFurniture(i, false));
+
+  // ground detail: tufts of grass, flowers and pebbles, merged into one mesh per 40 m square so only the squares in
+  // view are drawn, and none at all from up high, where they'd only be specks
+  const TILE = 40;
+  const GRASS = HALF - BEACH;
+  const tiles = Math.ceil((2 * GRASS) / TILE);
+  const decorPos: number[][] = Array.from({ length: tiles * tiles }, () => []);
+  const decorCol: number[][] = Array.from({ length: tiles * tiles }, () => []);
+  const decorRnd = scatter((map.seed ^ 0x5bd1e995) >>> 0);
+  const bare = (x: number, z: number) =>
+    Math.abs(x) > GRASS - 0.5 ||
+    Math.abs(z) > GRASS - 0.5 ||
+    map.buildings.some((b) => Math.abs(x - b.x) < b.w / 2 + 0.4 && Math.abs(z - b.z) < b.d / 2 + 0.4) ||
+    roadAt(map, x, z) ||
+    riverDist2(map, x, z) < (RIVER_HALF + 1.4) * (RIVER_HALF + 1.4) ||
+    map.ponds.some((p) => Math.hypot(x - p.x, z - p.z) < p.r + 1.3) ||
+    fieldAt(map, x, z) >= 0 ||
+    padAt(map, x, z) >= 0 ||
+    bridgeAt(map, x, z) >= 0 ||
+    map.fires.some((f) => Math.hypot(x - f.x, z - f.z) < CAMP.pit + 0.4);
+  const tileOf = (x: number, z: number) => Math.min(tiles - 1, Math.floor((x + GRASS) / TILE)) + Math.min(tiles - 1, Math.floor((z + GRASS) / TILE)) * tiles;
+  const rgb = (hex: number, spread: number) => {
+    shade(decorRnd, hex, spread);
+    return [color.r, color.g, color.b];
+  };
+  /** One triangle into the square at (x, z), its corners' colors given. */
+  const tri = (k: number, p: number[], c0: number[], c1: number[], c2: number[]) => {
+    decorPos[k].push(...p);
+    decorCol[k].push(...c0, ...c1, ...c2);
+  };
+  // tufts of grass in clumps of a few, each three blades leaning out
+  for (let i = 0; i < 1500; i++) {
+    const cx = (decorRnd() * 2 - 1) * GRASS;
+    const cz = (decorRnd() * 2 - 1) * GRASS;
+    const n = 2 + Math.floor(decorRnd() * 4);
+    for (let j = 0; j < n; j++) {
+      const x = cx + (decorRnd() - 0.5) * 2.2;
+      const z = cz + (decorRnd() - 0.5) * 2.2;
+      if (bare(x, z)) continue;
+      const k = tileOf(x, z);
+      const base = rgb(0x3d7a2c, 0.6);
+      const tip = rgb(decorRnd() < 0.2 ? 0xc9c65a : 0x9ccf5a, 0.6);
+      const h = 0.4 + decorRnd() * 0.35;
+      const a0 = decorRnd() * 6.3;
+      for (let b = 0; b < 3; b++) {
+        const a = a0 + b * 2.1;
+        const dx = Math.sin(a);
+        const dz = Math.cos(a);
+        tri(k, [x - dz * 0.08, 0, z + dx * 0.08, x + dz * 0.08, 0, z - dx * 0.08, x + dx * 0.22, h * (0.8 + b * 0.12), z + dz * 0.22], base, base, tip);
+      }
+    }
+  }
+  const PETALS = [0xffffff, 0xffd23d, 0xf28ab2, 0xb07ae0, 0xff6b4a];
+  for (let i = 0; i < 220; i++) {
+    const cx = (decorRnd() * 2 - 1) * GRASS;
+    const cz = (decorRnd() * 2 - 1) * GRASS;
+    const petal = PETALS[Math.floor(decorRnd() * PETALS.length)];
+    for (let j = 0; j < 6; j++) {
+      const x = cx + (decorRnd() - 0.5) * 3;
+      const z = cz + (decorRnd() - 0.5) * 3;
+      if (bare(x, z)) continue;
+      const k = tileOf(x, z);
+      const stem = rgb(0x4f8a35, 0.4);
+      const head = rgb(petal, 0.3);
+      const mid = [1, 0.85, 0.3];
+      const h = 0.26 + decorRnd() * 0.12;
+      tri(k, [x - 0.02, 0, z, x + 0.02, 0, z, x, h, z], stem, stem, stem);
+      const r = 0.12;
+      const ring = [
+        [r, 0],
+        [0, r],
+        [-r, 0],
+        [0, -r],
+      ];
+      for (let q = 0; q < 4; q++) {
+        const [ax, az] = ring[q];
+        const [bx, bz] = ring[(q + 1) % 4];
+        tri(k, [x, h + 0.05, z, x + ax, h - 0.01, z + az, x + bx, h - 0.01, z + bz], mid, head, head);
+      }
+    }
+  }
+  for (let i = 0; i < 600; i++) {
+    const x = (decorRnd() * 2 - 1) * GRASS;
+    const z = (decorRnd() * 2 - 1) * GRASS;
+    if (bare(x, z)) continue;
+    const k = tileOf(x, z);
+    const r = 0.1 + decorRnd() * 0.16;
+    const h = r * (0.4 + decorRnd() * 0.4);
+    const a = decorRnd() * 6.3;
+    const top = rgb(0xb5b9bd, 0.5);
+    const side = rgb(0x8a8f95, 0.5);
+    for (let q = 0; q < 4; q++) {
+      const a0 = a + (q * Math.PI) / 2;
+      const a1 = a0 + Math.PI / 2;
+      tri(k, [x, h, z, x + Math.sin(a0) * r, 0.01, z + Math.cos(a0) * r, x + Math.sin(a1) * r, 0.01, z + Math.cos(a1) * r], top, side, side);
+    }
+  }
+  const decor = new THREE.Group();
+  const decorMat = lambert(0xffffff, { vertexColors: true, flatShading: true, side: THREE.DoubleSide });
+  decorPos.forEach((p, k) => {
+    if (!p.length) return;
+    const g = geo(new THREE.BufferGeometry());
+    g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(decorCol[k], 3));
+    g.computeVertexNormals();
+    decor.add(new THREE.Mesh(g, decorMat));
+  });
+  scene.add(decor);
+  const roads = many(G.box, lambert(0xcdb07a), map.roads.length);
+  map.roads.forEach((r, i) => {
+    const len = Math.hypot(r.x1 - r.x0, r.z1 - r.z0);
+    put(roads, i, (r.x0 + r.x1) / 2, 0.012, (r.z0 + r.z1) / 2, ROAD_HALF * 2, 0.012, len + ROAD_HALF, Math.atan2(r.x1 - r.x0, r.z1 - r.z0));
+  });
+  // lamp posts: a slim pole, a collar and a glowing bulb on top
+  const poles = many(G.cyl, lambert(0x5d6670), map.lamps.length);
+  const lampCaps = many(G.cyl, lambert(0x2b2d33), map.lamps.length);
+  const lampHeads = many(G.ball, basic(0xfff0b0), map.lamps.length);
+  map.lamps.forEach((p, i) => {
+    put(poles, i, p.x, 1.5, p.z, LAMP_R * 0.8, 3, LAMP_R * 0.8);
+    put(lampCaps, i, p.x, 3.05, p.z, 0.17, 0.16, 0.17);
+    put(lampHeads, i, p.x, 3.32, p.z, 0.3, 0.3, 0.3);
+  });
+  const MAIL_COLORS = [0x2f7de1, 0xe53935, 0x3fae4a, 0xfdd835];
+  const mailPosts = many(G.box, M.wood, map.mailboxes.length);
+  const mailBoxes = many(G.box, lambert(0xffffff), map.mailboxes.length);
+  map.mailboxes.forEach((p, i) => {
+    put(mailPosts, i, p.x, 0.5, p.z, 0.12, 1, 0.12);
+    put(mailBoxes, i, p.x, 1.14, p.z, 0.36, 0.34, 0.52, 0, color.setHex(MAIL_COLORS[p.look % MAIL_COLORS.length]));
+  });
+  const tableTops = many(G.box, lambert(0xa5713f), map.tables.length);
+  const benches = many(G.box, lambert(0xa5713f), map.tables.length * 2);
+  const tableLegs = many(G.box, lambert(0x7a4f28), map.tables.length * 2);
+  map.tables.forEach((t, i) => {
+    const ry = t.alongX ? 0 : Math.PI / 2;
+    put(tableTops, i, t.x, 0.72, t.z, TABLE_HW * 2, 0.08, 0.8, ry);
+    for (const [k, side] of [-1, 1].entries()) {
+      const ox = t.alongX ? 0 : side * 0.62;
+      const oz = t.alongX ? side * 0.62 : 0;
+      put(benches, i * 2 + k, t.x + ox, 0.42, t.z + oz, TABLE_HW * 2, 0.06, 0.3, ry);
+      const lx = t.alongX ? side * (TABLE_HW - 0.3) : 0;
+      const lz = t.alongX ? 0 : side * (TABLE_HW - 0.3);
+      put(tableLegs, i * 2 + k, t.x + lx, 0.36, t.z + lz, 0.1, 0.72, TABLE_HD * 2 - 0.1, ry);
+    }
+  });
+  // fences: two rails along every run, a post every two meters
+  const rails: { x: number; z: number; hw: number; hd: number }[] = map.yards.flatMap((y) => y.fences);
+  const postSpots: { x: number; z: number }[] = [];
+  for (const r of rails) {
+    const alongX = r.hw > r.hd;
+    const len = 2 * (alongX ? r.hw : r.hd);
+    for (let s = 0; s <= len + 0.01; s += 2) {
+      const u = -len / 2 + Math.min(s, len);
+      postSpots.push({ x: alongX ? r.x + u : r.x, z: alongX ? r.z : r.z + u });
+    }
+  }
+  const fenceRails = many(G.box, lambert(0xc49a5c), rails.length * 2);
+  const fencePosts = many(G.box, lambert(0x8f6a3c), postSpots.length);
+  rails.forEach((r, i) => {
+    for (const [k, y] of [0.5, 0.95].entries()) put(fenceRails, i * 2 + k, r.x, y, r.z, r.hw * 2, 0.1, r.hd * 2);
+  });
+  postSpots.forEach((p, i) => put(fencePosts, i, p.x, 0.6, p.z, FENCE_T + 0.1, 1.2, FENCE_T + 0.1));
+  // cars: a body, glass with a roof on it (a cab and a bed on a truck) and four wheels
+  const CAR_COLORS = [0xe53935, 0x1e88e5, 0xf5f7fa, 0x43a047, 0xfdd835, 0x5e35b1];
+  const carBodies = many(G.box, lambert(0xffffff), map.cars.length);
+  const carCabins = many(G.box, lambert(0xffffff), map.cars.length);
+  const carTops = many(G.box, lambert(0xffffff), map.cars.length);
+  const wheels = many(G.cyl, M.dark, map.cars.length * 4);
+  map.cars.forEach((c, i) => {
+    const ry = c.alongX ? Math.PI / 2 : 0;
+    const len = c.alongX ? c.hw * 2 : c.hd * 2;
+    const wide = c.alongX ? c.hd * 2 : c.hw * 2;
+    const paint = CAR_COLORS[c.look % CAR_COLORS.length];
+    // a point `u` meters along the car from its middle (toward the nose)
+    const at = (u: number) => [c.x + (c.alongX ? u : 0), c.z + (c.alongX ? 0 : u)] as const;
+    if (c.truck) {
+      put(carBodies, i, c.x, 0.62, c.z, wide, 0.6, len, ry, color.setHex(paint));
+      // the cab at the nose, the bed behind it
+      const [nx, nz] = at(len / 2 - 0.85);
+      put(carCabins, i, nx, 1.45, nz, wide - 0.1, 1.05, 1.6, ry, color.setHex(paint));
+      const [bx, bz] = at(-0.85);
+      put(carTops, i, bx, 1.02, bz, wide - 0.08, 0.22, len - 1.9, ry, color.setHex(0x4a4e55));
+    } else {
+      put(carBodies, i, c.x, 0.55, c.z, wide, 0.6, len, ry, color.setHex(paint));
+      put(carCabins, i, c.x, 1.08, c.z, wide - 0.2, 0.5, len * 0.55, ry, color.setHex(0x9ecbe8));
+      put(carTops, i, c.x, 1.36, c.z, wide - 0.36, 0.07, len * 0.42, ry, color.setHex(paint));
+    }
+    for (const [k, [a, b]] of [
+      [-1, -1],
+      [1, -1],
+      [-1, 1],
+      [1, 1],
+    ].entries()) {
+      const ax = a * (len / 2 - 0.7);
+      const bz = b * (wide / 2 - 0.08);
+      dummy.position.set(c.x + (c.alongX ? ax : bz), 0.38, c.z + (c.alongX ? bz : ax));
+      // axles run across the car
+      dummy.rotation.set(c.alongX ? Math.PI / 2 : 0, 0, c.alongX ? 0 : Math.PI / 2);
+      dummy.scale.set(0.38, 0.26, 0.38);
+      dummy.updateMatrix();
+      wheels.setMatrixAt(i * 4 + k, dummy.matrix);
+    }
+  });
+  scene.add(roads, poles, lampHeads, lampCaps, mailPosts, mailBoxes, tableTops, benches, tableLegs, fenceRails, fencePosts, carBodies, carCabins, carTops, wheels);
+
+  // campfires: a ring of stones round crossed logs, flames that flicker, and a warm glow on the ground. All instanced.
+  const STONES = 8;
+  const fireStones = many(G.rock, lambert(0x8d9298, { flatShading: true }), map.fires.length * STONES);
+  const fireLogs = many(G.box, M.wood, map.fires.length * 3);
+  const flames = many(G.pine, basic(0xffffff), map.fires.length * 3);
+  const fireGlowMat = basic(0xff8a2a, { map: keep(glowTexture(THREE)), transparent: true, opacity: 0.55, depthWrite: false });
+  const fireGlow = many(G.disc, fireGlowMat, map.fires.length);
+  const FLAME_COLORS = [0xff6a1a, 0xffd34a, 0xff9a2a];
+  map.fires.forEach((c, i) => {
+    for (let k = 0; k < STONES; k++) {
+      const a = (k / STONES) * Math.PI * 2 + i;
+      const r = CAMP.pit + 0.05;
+      dummy.position.set(c.x + Math.sin(a) * r, 0.1, c.z + Math.cos(a) * r);
+      dummy.rotation.set(0, a * 3, 0);
+      dummy.scale.set(0.2, 0.15, 0.17);
+      dummy.updateMatrix();
+      fireStones.setMatrixAt(i * STONES + k, dummy.matrix);
+    }
+    for (let k = 0; k < 3; k++) put(fireLogs, i * 3 + k, c.x, 0.14, c.z, 0.16, 0.16, 1.1, (k * Math.PI) / 3 + i);
+    FLAME_COLORS.forEach((f, k) => flames.setColorAt(i * 3 + k, color.setHex(f)));
+  });
+  const placeFires = (clock: number) => {
+    map.fires.forEach((c, i) => {
+      for (let k = 0; k < 3; k++) {
+        // a tall middle tongue and two lower ones either side, each flickering on its own beat
+        const s = 0.75 + Math.abs(Math.sin(clock * (7 + k * 1.7) + i * 1.3 + k)) * 0.5;
+        const h = (k === 1 ? 0.75 : 1.15) * s;
+        const ox = k === 2 ? 0.14 : k === 0 ? -0.12 : 0;
+        put(flames, i * 3 + k, c.x + ox, 0.2 + h / 2, c.z + (k === 0 ? 0.08 : -0.05), k === 1 ? 0.24 : 0.34, h, k === 1 ? 0.24 : 0.34, clock * (1.5 + k));
+      }
+      dummy.position.set(c.x, 0.04, c.z);
+      dummy.rotation.set(-Math.PI / 2, 0, 0);
+      dummy.scale.setScalar((CAMP.r + 0.4) * (0.94 + Math.sin(clock * 9 + i) * 0.04));
+      dummy.updateMatrix();
+      fireGlow.setMatrixAt(i, dummy.matrix);
+    });
+    flames.instanceMatrix.needsUpdate = true;
+    fireGlow.instanceMatrix.needsUpdate = true;
+  };
+  placeFires(0);
+  scene.add(fireStones, fireLogs, flames, fireGlow);
+
+  // bounce pads: a bright disc in a dark rim, chevrons for the way it throws you, and a ring that pulses out from it
+  const bounceMat = lambert(0x2ee6a6, { emissive: 0x168f62 });
+  const padRingMat = basic(0x8dffdc, { transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide });
+  const pads = map.pads.map((p) => {
+    const group = new THREE.Group();
+    group.position.set(p.x, 0, p.z);
+    group.rotation.y = Math.atan2(p.dx, p.dz);
+    add(group, G.cyl, M.dark, 0, 0.1, 0, PAD.r + 0.3, 0.2, PAD.r + 0.3);
+    const top = add(group, G.cyl, bounceMat, 0, 0.2, 0, PAD.r + 0.05, 0.1, PAD.r + 0.05);
+    // two chevrons, flat on the top, pointing +z (the way out)
+    for (const at of [-0.35, 0.25])
+      for (const side of [-1, 1]) {
+        const bar = add(group, G.box, M.white, side * 0.22, 0.27, at, 0.14, 0.04, 0.62);
+        bar.rotation.y = -side * 0.8;
+      }
+    const ring = add(group, G.ring, padRingMat, 0, 0.06, 0, 2, 2, 1);
+    ring.rotation.x = -Math.PI / 2;
+    scene.add(group);
+    return { p, group, top, ring };
+  });
+
+  // the kitchen: fridges open like chests, toilets break like crates, hay bales out in the yard too
+  const fridgeList = map.containers.filter((c) => c.kind === 'fridge');
+  const toiletList = map.containers.filter((c) => c.kind === 'toilet');
+  const hayList = map.containers.filter((c) => c.kind === 'hay');
+  const fridgeBase = many(G.box, lambert(0xf4f1ea), fridgeList.length);
+  const fridgeDoor = many(G.box, lambert(0xffffff), fridgeList.length);
+  const fridgeHandles = many(G.box, M.metal, fridgeList.length);
+  const fridgeInside = many(G.box, lambert(0xbfe3ff, { emissive: 0x1a3a55 }), fridgeList.length);
+  const bowls = many(G.cyl, lambert(0xffffff), toiletList.length);
+  const tanks = many(G.box, lambert(0xffffff), toiletList.length);
+  const seats = many(G.band, lambert(0xe8e8ec), toiletList.length);
+  const hay = many(G.box, lambert(0xffffff, { map: keep(hayTexture(THREE)) }), hayList.length);
+  scene.add(fridgeBase, fridgeDoor, fridgeHandles, fridgeInside, bowls, tanks, seats, hay);
+  const fridgeState = fridgeList.map(() => -1);
+  const placeFridges = (force: boolean) => {
+    fridgeList.forEach((c, i) => {
+      const open = m.opened[c.id] ? 1 : 0;
+      if (!force && fridgeState[i] === open) return;
+      fridgeState[i] = open;
+      // open, the front of the box is the lit inside; the door hangs on the hinge at one edge and swings wide
+      put(fridgeBase, i, c.x - 0, 0.95, c.z - (open ? c.face * 0.1 : 0), FRIDGE_HW * 2, 1.9, FRIDGE_HD * 2 - (open ? 0.2 : 0));
+      put(fridgeInside, i, c.x, 0.95, c.z + c.face * (FRIDGE_HD - 0.1), (FRIDGE_HW * 2 - 0.1) * open, 1.78 * open, 0.2 * open);
+      const hx = c.x - FRIDGE_HW;
+      const hz = c.z + c.face * (FRIDGE_HD + 0.04);
+      const ry = open ? -c.face * 1.9 : 0;
+      const dx = Math.cos(ry) * FRIDGE_HW;
+      const dz = -Math.sin(ry) * FRIDGE_HW;
+      put(fridgeDoor, i, hx + dx, 0.95, hz + dz, FRIDGE_HW * 2 - 0.02, 1.86, 0.08, ry);
+      put(fridgeHandles, i, hx + dx * 1.7 - (open ? 0 : 0) + (open ? Math.sin(ry) * 0.07 : 0), 1.0, hz + dz * 1.7 + (open ? Math.cos(ry) * c.face * 0.07 : c.face * 0.07), 0.05, 0.7, 0.05, ry);
+    });
+    fridgeBase.instanceMatrix.needsUpdate = true;
+    fridgeDoor.instanceMatrix.needsUpdate = true;
+    fridgeHandles.instanceMatrix.needsUpdate = true;
+    fridgeInside.instanceMatrix.needsUpdate = true;
+  };
+  placeFridges(true);
+  const placeKitchen = (clock: number) => {
+    toiletList.forEach((c, i) => {
+      const gone = m.opened[c.id];
+      const shake = crateShake.get(c.id) ?? -9;
+      const jiggle = clock - shake < 0.18 ? Math.sin((clock - shake) * 80) * 0.05 : 0;
+      const s = gone ? 0 : 1;
+      put(bowls, i, c.x, 0.22, c.z, TOILET_R * 0.95 * s, 0.44 * s, TOILET_R * 0.95 * s, jiggle);
+      put(tanks, i, c.x, 0.62, c.z - c.face * (TOILET_R - 0.1), (TOILET_R * 2 - 0.1) * s, 0.7 * s, 0.26 * s, jiggle);
+      dummy.position.set(c.x, 0.46, c.z + c.face * 0.03);
+      dummy.rotation.set(Math.PI / 2, 0, 0);
+      dummy.scale.set(TOILET_R * 0.85 * s, TOILET_R * 0.85 * s, s);
+      dummy.updateMatrix();
+      seats.setMatrixAt(i, dummy.matrix);
+      const hp = Math.max(0, m.crateHp[c.id] / TOILET_HP);
+      bowls.setColorAt(i, color.setRGB(1, 0.85 + hp * 0.15, 0.85 + hp * 0.15));
+    });
+    bowls.instanceMatrix.needsUpdate = true;
+    tanks.instanceMatrix.needsUpdate = true;
+    seats.instanceMatrix.needsUpdate = true;
+    if (bowls.instanceColor) bowls.instanceColor.needsUpdate = true;
+    hayList.forEach((c, i) => {
+      const gone = m.opened[c.id];
+      const shake = crateShake.get(c.id) ?? -9;
+      const jiggle = clock - shake < 0.18 ? Math.sin((clock - shake) * 80) * 0.05 : 0;
+      const s = gone ? 0 : 1;
+      put(hay, i, c.x, 0.6, c.z, HAY_HW * 2 * s, 1.2 * s, HAY_HD * 2 * s, jiggle);
+      const hp = Math.max(0, m.crateHp[c.id] / HAY_HP);
+      hay.setColorAt(i, color.setRGB(0.6 + hp * 0.4, 0.55 + hp * 0.45, 0.5 + hp * 0.5));
+    });
+    hay.instanceMatrix.needsUpdate = true;
+    if (hay.instanceColor) hay.instanceColor.needsUpdate = true;
+  };
+  placeKitchen(0);
 
   // ---------------------------------------------------------------------------------------------------------------
   // The storm: a purple wall, a tint over everything outside it, and a white ring where it is headed.
@@ -1609,7 +2361,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     jam: basic(0xa3214a),
     glass: basic(0xe6f2f7, { transparent: true, opacity: 0.7, depthWrite: false }),
     shove: basic(0x8fc4ff),
+    straw: lambert(0xe2c25a),
   };
+  const padFlash = basic(0x7dffd2, { transparent: true, opacity: 0.7, depthWrite: false });
   for (let i = 0; i < 320; i++) {
     const mesh = new THREE.Mesh(G.box, partMat.dust);
     mesh.visible = false;
@@ -1970,7 +2724,12 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           x.depthWrite = r.fade > 0.98;
         }
         r.mesh.visible = r.fade > 0.03;
+        showFurniture(r.at, r.fade < 0.98);
       }
+      // the river runs, the windmills turn, and the grass and flowers show once you're down among them
+      riverTex.offset.y = -clock * 0.15;
+      for (const t of sails) t.rotation.z = -clock * 0.6;
+      decor.visible = cam.view < 34;
 
       // the storm
       const s = m.storm;
@@ -1994,7 +2753,20 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
 
       placeChests(false);
       placeCrates(clock);
+      placeFridges(false);
+      placeKitchen(clock);
       chestGlowMat.opacity = 0.35 + Math.sin(clock * 4) * 0.2;
+
+      // campfires flicker (and throw the odd spark when you're close), pads pulse
+      placeFires(clock);
+      for (const c of map.fires) if (Math.random() < 0.08 && Math.abs(c.x - cam.x) < cam.view * 2 && Math.abs(c.z - cam.z) < cam.view * 2) burst(c.x, 1, c.z, 1, 1.2, 0.08, 0.7, [partMat.spark], -2);
+      fireGlowMat.opacity = 0.5 + Math.sin(clock * 11) * 0.07 + Math.sin(clock * 23) * 0.04;
+      for (const [i, pd] of pads.entries()) {
+        const k = (clock * 0.8 + i * 0.3) % 1;
+        pd.ring.scale.setScalar(PAD.r + 0.3 + k * 1.2);
+        pd.top.position.y = 0.17 + Math.sin(clock * 3 + i) * 0.03;
+      }
+      padRingMat.opacity = 0.7 - ((clock * 0.8) % 1) * 0.6;
 
       // supply drops float down under their balloons, then sit with a beam over them until someone opens them
       for (const sp of supplies) {
@@ -2270,6 +3042,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           } else if (e.what === 'tree') burst(e.x, 1, e.z, 4, 3, 0.1, 0.4, [partMat.wood, partMat.leaf]);
           else if (e.what === 'rock') burst(e.x, 1, e.z, 4, 3, 0.09, 0.35, [partMat.stone, partMat.dust]);
           else if (e.what === 'barrel') burst(e.x, 1, e.z, 4, 3, 0.09, 0.35, [partMat.red, partMat.metal]);
+          else if (e.what === 'car' || e.what === 'post') {
+            burst(e.x, 1, e.z, 5, 4, 0.07, 0.3, [partMat.spark, partMat.metal]);
+            flash(e.x, 1, e.z, 0.2, 0.05, 0, flashMat);
+          } else if (e.what === 'fire') burst(e.x, 0.6, e.z, 6, 3, 0.08, 0.5, [partMat.spark, partMat.fire], 3);
           else burst(e.x, 1, e.z, 4, 3, 0.1, 0.35, [partMat.wood, partMat.dust]);
           break;
         case 'hit':
@@ -2278,11 +3054,13 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         case 'hurt':
           if (e.f === focus) shake = Math.max(shake, e.storm ? 0.12 : 0.35);
           break;
-        case 'smash':
+        case 'smash': {
           if (!near(e.x, e.z)) break;
-          burst(e.x, 1, e.z, 4, 3, 0.12, 0.4, map.containers[e.id]?.kind === 'barrel' && e.kind === 'crate' ? [partMat.red, partMat.metal] : [partMat.wood]);
+          const kind = e.kind === 'crate' ? map.containers[e.id]?.kind : 'wall';
+          burst(e.x, 1, e.z, 4, 3, 0.12, 0.4, kind === 'barrel' ? [partMat.red, partMat.metal] : kind === 'toilet' ? [partMat.shell, partMat.splash] : kind === 'hay' ? [partMat.straw] : [partMat.wood]);
           if (e.kind === 'crate') crateShake.set(e.id, now);
           break;
+        }
         case 'harvest':
           burst(e.x, 1.4, e.z, 6, 3, 0.13, 0.45, [partMat.wood, partMat.leaf]);
           break;
@@ -2312,7 +3090,18 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           if (!c || !near(c.x, c.z)) break;
           if (c.kind === 'crate') burst(c.x, 1, c.z, 18, 6, 0.2, 0.8, [partMat.wood]);
           else if (c.kind === 'barrel') burst(c.x, 0.8, c.z, 20, 8, 0.22, 0.9, [partMat.red, partMat.metal, partMat.fire]);
+          else if (c.kind === 'toilet') burst(c.x, 0.6, c.z, 18, 6, 0.16, 0.8, [partMat.shell, partMat.shell, partMat.splash]);
+          else if (c.kind === 'hay') burst(c.x, 0.8, c.z, 22, 5, 0.18, 0.9, [partMat.straw], 6);
+          else if (c.kind === 'fridge') burst(c.x + 0, 1.2, c.z + c.face * 0.8, 10, 3, 0.14, 0.6, [partMat.splash, partMat.shell], 4);
           else burst(c.x, 1, c.z, c.kind === 'supply' ? 22 : 12, 4, 0.2, 0.8, [partMat.spark, M.gold]);
+          break;
+        }
+        case 'bounce': {
+          const f = m.fighters[e.f];
+          if (!f || !near(f.x, f.z)) break;
+          burst(f.x, 0.3, f.z, 14, 5, 0.2, 0.6, [partMat.dust], 2);
+          flash(f.x, 0.3, f.z, 0.8, 0.25, 8, padFlash);
+          if (e.f === focus) shake = Math.max(shake, 0.3);
           break;
         }
         case 'wall':

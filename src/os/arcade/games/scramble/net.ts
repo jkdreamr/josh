@@ -3,7 +3,9 @@
 // Rooms are a star around the host. Every client reports the egg it owns about 15 times a second; the host owns the
 // computer players and sends everyone the whole match. Things that happen (shots, hits, drops, walls, pickups) travel
 // as events: a guest sends its own to the host, and the host applies them and passes them on to everyone else, in the
-// order it applied them, together with its own. Guests ask the host for pickups and chests and hear back who got them.
+// order it applied them, together with its own. Guests ask the host for pickups and chests (fridges and supply drops
+// too) and hear back who got them. Bounce pads and campfires need no packets: a glide and a heal are an owner's own
+// business, and show in its state.
 import { MAX_ARMOR, MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import { HALF } from './map.ts';
 import {
@@ -302,9 +304,9 @@ export function applyNet(m: Match, e: NetEv): boolean {
       if (!m.world) applyTook(m, e.f, e.id, e.it);
       return true;
     case 'op': {
-      // a chest, or a supply drop that has landed (give or take the second a guest's clock may be ahead)
+      // a chest or a fridge, or a supply drop that has landed (give or take the second a guest's clock may be ahead)
       const c = m.map.containers[e.c];
-      if (m.world && c && (c.kind === 'chest' || (c.kind === 'supply' && m.time >= c.at - 1))) openContainer(m, e.c, e.f, true);
+      if (m.world && c && (c.kind === 'chest' || c.kind === 'fridge' || (c.kind === 'supply' && m.time >= c.at - 1))) openContainer(m, e.c, e.f, true);
       return false;
     }
     case 'opd':

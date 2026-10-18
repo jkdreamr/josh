@@ -5,25 +5,42 @@ import { test } from 'node:test';
 import { AMMO_BOX, AMMO_TYPES, ARMOR_CUT, ARMOR_KINDS, BOOST, FLARE_WAIT, HP_MAX, SIP, legendary, type ThrowId, MAX_ARMOR, MAX_PACK, MAX_RARITY, MELEE, MELEE_IDS, SHIELD_MAX, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, WOOD_MAX, ammoCap, armorMult, damageOf, lootName, parseLoot, rng32, rollLoot, throwCap, useCap, type LootDef, type WeaponId } from '../src/os/arcade/games/scramble/items.ts';
 import {
   BEACH,
+  BRIDGE_HALF,
   BUS_Y,
+  CAMP,
+  DINER_NAMES,
   DOOR,
   DROP_BASE,
   EDGE,
+  FENCE_T,
   FLARE_DROPS,
+  GATE,
   HALF,
-  SUPPLY_HALF,
+  HAY_HW,
+  LOG_R,
+  MILL_NAMES,
+  PAD,
   PEEK,
   POND_SLOW,
+  RIVER_HALF,
+  ROAD_HALF,
+  ROAD_SPEED,
   STORM_PHASES,
   STORM_R0,
   SUPPLY_FALL,
+  SUPPLY_HALF,
+  TOILET_R,
   WALL_T,
+  bridgeAt,
   buildingAt,
   busAt,
   coverAt,
   dropFits,
+  furnitureSolid,
   generateMap,
+  low,
   peekAt,
+  placeAt,
   pondAt,
   pushBox,
   pushCircle,
@@ -32,10 +49,17 @@ import {
   rayCircle,
   rayObb,
   raySolid,
+  reindex,
+  riverAt,
+  riverCrossings,
+  riverDist2,
+  roadAt,
   solidsNear,
   stormAt,
   stormEnd,
   walkCells,
+  waterAt,
+  yardAt,
   type Building,
   type Door,
   type GameMap,
@@ -59,11 +83,13 @@ import {
   LEVELS,
   LEVEL_SPECS,
   MAX_FIGHTERS,
+  PAD_FLY,
   PICK_R,
   SLOT_MELEE,
   SLOT_THROW,
   SPEED,
   STORM_TICK,
+  TOILET_HP,
   WALL_HP,
   aliveCount,
   applyState,
@@ -118,12 +144,22 @@ function run(m: Match, seconds: number, each?: (evs: Ev[]) => void) {
   return all;
 }
 
-/** Clears the island down to bare grass (no trees, rocks, buildings, bushes, crates, barrels or loot) and returns its middle. */
+/**
+ * Clears the island down to bare grass (no trees, rocks, buildings, bushes, crates, barrels, loot, fences, cars,
+ * roads, river, campfires or bounce pads) and returns its middle.
+ */
 function openSpot(m: Match) {
   m.map.solids = [];
   m.map.grid = m.map.grid.map(() => []);
   m.map.bushes = [];
   m.map.buildings = [];
+  m.map.yards = [];
+  m.map.cars = [];
+  m.map.roads = [];
+  m.map.river = [];
+  m.map.bridges = [];
+  m.map.fires = [];
+  m.map.pads = [];
   m.map.containers = [];
   m.map.drops = [];
   m.map.flares = [];
@@ -164,7 +200,7 @@ test('the island is the same for a seed and different between seeds', () => {
 });
 
 const KIND_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 2, farm: 2, house: 9, shed: 7, ruin: 4 };
-const DOOR_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 3, farm: 3, house: 2, shed: 1, container: 1 };
+const DOOR_COUNTS: Partial<Record<Building['kind'], number>> = { coop: 1, warehouse: 3, farm: 3, house: 2, shed: 1, container: 1, diner: 2, mill: 1 };
 /** Total wall length a building would have with no gaps at all (corners counted once), as its walls are laid out. */
 const fullWalls = (b: Building) => 2 * (b.w + WALL_T) + 2 * (b.d - WALL_T);
 const wallLength = (b: Building) => b.walls.reduce((s, w) => s + 2 * Math.max(w.hw, w.hd), 0);
@@ -175,6 +211,8 @@ test('every island has all its buildings, each with the doorways it should have,
     for (const [kind, n] of Object.entries(KIND_COUNTS)) assert.equal(m.buildings.filter((b) => b.kind === kind).length, n, `seed ${seed}: ${kind}`);
     assert.ok(m.buildings.filter((b) => b.kind === 'container').length >= 6, `seed ${seed}: two yards of containers`);
     assert.equal(m.buildings[m.coop]?.kind, 'coop');
+    const special = m.buildings.filter((b) => b.kind === 'diner' || b.kind === 'mill');
+    assert.ok(special.length >= 1 && special.length <= 2 && new Set(special.map((b) => b.kind)).size === special.length, `seed ${seed}: a diner or a windmill, or one of each`);
     assert.equal(m.fields.length, 2, 'a cornfield beside each farm');
     assert.equal(m.ponds.length, 3);
     for (const b of m.buildings) {
@@ -182,7 +220,8 @@ test('every island has all its buildings, each with the doorways it should have,
       assert.equal(b.roof, b.kind !== 'ruin', 'everything but ruins has a roof');
       const gaps = fullWalls(b) - wallLength(b);
       if (b.kind === 'house') assert.ok(Math.abs(gaps - 2 * DOOR) < 0.31, `seed ${seed}: a house has two doorways`);
-      if (b.kind === 'shed' || b.kind === 'coop') assert.ok(Math.abs(gaps - DOOR) < 0.31, `seed ${seed}: one way into a ${b.kind}`);
+      if (b.kind === 'shed' || b.kind === 'coop' || b.kind === 'mill') assert.ok(Math.abs(gaps - DOOR) < 0.31, `seed ${seed}: one way into a ${b.kind}`);
+      if (b.kind === 'diner') assert.ok(Math.abs(gaps - 2 * DOOR) < 0.31, `seed ${seed}: a front door and a back door`);
       if (b.kind === 'warehouse') assert.ok(Math.abs(gaps - 2 * 6 - DOOR) < 0.31, `seed ${seed}: two loading doors and a side door`);
       if (b.kind === 'farm') assert.ok(Math.abs(gaps + (b.d - WALL_T - DOOR) - 3 * DOOR) < 0.31, `seed ${seed}: three doors and a door between the rooms`);
       if (b.kind === 'container') assert.ok(Math.abs(gaps - (b.w > b.d ? b.d - WALL_T : b.w + WALL_T)) < 0.31, 'open at one end');
@@ -205,6 +244,72 @@ test('every island has all its buildings, each with the doorways it should have,
     assert.equal(kinds('supply').filter((c) => !c.flare).length, 3);
     assert.equal(m.flares.length, FLARE_DROPS, 'and the ones flare guns call, waiting');
     for (const id of m.flares) assert.ok(m.containers[id].flare && m.containers[id].at === Infinity && m.containers[id].kind === 'supply');
+    // the kitchens, the farmyards, the camps and everything round the houses
+    const diners = m.buildings.filter((b) => b.kind === 'diner').length;
+    assert.equal(kinds('fridge').length, 11 + 2 * diners, 'a fridge in every house and farmhouse, and two in a diner');
+    assert.equal(kinds('toilet').length, 11, 'and a toilet');
+    assert.ok(kinds('hay').length >= 6 && kinds('hay').length <= 10, 'three to five hay bales a farm');
+    assert.equal(m.yards.length, 2, 'a fence round each farm');
+    for (const y of m.yards) {
+      assert.equal(y.gates.length, 4, 'a gate in every side');
+      for (const g of y.gates) assert.ok(Math.abs(g.w - GATE) < 0.01);
+      const farm = m.buildings.find((b) => b.kind === 'farm' && Math.abs(b.x - y.x) < y.hw && Math.abs(b.z - y.z) < y.hd)!;
+      assert.ok(farm && m.fields.some((f) => Math.abs(f.x - y.x) < y.hw && Math.abs(f.z - y.z) < y.hd), 'the farmhouse and its field inside it');
+      for (const c of kinds('hay')) if (Math.abs(c.x - y.x) < y.hw && Math.abs(c.z - y.z) < y.hd) assert.ok(Math.abs(c.x - farm.x) > farm.w / 2 + 1 || Math.abs(c.z - farm.z) > farm.d / 2 + 1, 'hay outdoors');
+    }
+    assert.ok(m.fires.length >= 3 && m.fires.length <= 12, `seed ${seed}: three camps and a few house fires (${m.fires.length})`);
+    assert.equal(m.pads.length, 5, 'five bounce pads');
+    for (const p of m.pads) assert.ok(Math.abs(Math.hypot(p.dx, p.dz) - 1) < 0.01 && p.x * p.dx + p.z * p.dz < 0, 'each pointing in toward the island');
+    assert.ok(m.cars.length >= 3 && m.lamps.length >= 20 && m.mailboxes.length >= 12 && m.tables.length >= 3 && m.roads.length >= 15, `seed ${seed}: props and roads`);
+    assert.ok(m.places.length >= 5, `seed ${seed}: named places`);
+    assert.equal(new Set(m.places.map((p) => p.name)).size, m.places.length, 'no two places share a name');
+    for (const b of m.buildings) if (b.kind === 'farm' || b.kind === 'warehouse' || b.kind === 'coop') assert.ok(placeAt(m, b.x, b.z) >= 0, `seed ${seed}: a ${b.kind} is somewhere with a name`);
+    for (const f of m.fires) assert.ok(placeAt(m, f.x, f.z) >= 0 || m.buildings.some((b) => Math.hypot(b.x - f.x, b.z - f.z) < 20), 'a fire is at a camp or by a house');
+  }
+});
+
+test('roads run edge to edge between places, never through a building, a pond or a fence; lamp posts stand beside them', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const m = generateMap(seed);
+    for (const r of m.roads) {
+      const len = Math.hypot(r.x1 - r.x0, r.z1 - r.z0);
+      const ux = (r.x1 - r.x0) / len;
+      const uz = (r.z1 - r.z0) / len;
+      assert.ok(len >= 6, 'long enough to be a road');
+      for (const b of m.buildings) assert.equal(rayBox(r.x0, r.z0, ux, uz, len, b.x, b.z, b.w / 2, b.d / 2), Infinity, `seed ${seed}: a road through a ${b.kind}`);
+      for (const p of m.ponds) assert.equal(rayCircle(r.x0, r.z0, ux, uz, len, p.x, p.z, p.r), Infinity, 'a road through a pond');
+      for (const y of m.yards) for (const f of y.fences) assert.equal(rayBox(r.x0, r.z0, ux, uz, len, f.x, f.z, f.hw, f.hd), Infinity, 'a road through a fence (the gate is the way in)');
+      assert.ok(roadAt(m, (r.x0 + r.x1) / 2, (r.z0 + r.z1) / 2), 'you can stand on it');
+      assert.ok(Math.abs(r.x0) < EDGE && Math.abs(r.z0) < EDGE && Math.abs(r.x1) < EDGE && Math.abs(r.z1) < EDGE);
+    }
+    for (const l of m.lamps) {
+      assert.ok(!roadAt(m, l.x, l.z), 'a lamp post stands beside the road, not on it');
+      assert.ok(m.roads.some((r) => Math.hypot(l.x - (r.x0 + r.x1) / 2, l.z - (r.z0 + r.z1) / 2) < Math.hypot(r.x1 - r.x0, r.z1 - r.z0) / 2 + 4), 'near one');
+    }
+    for (const t of m.trees) assert.ok(!roadAt(m, t.x, t.z), 'no tree grows in the road');
+  }
+});
+
+test('campfires, bounce pads, cars and tables stand in the open where an egg can walk up to them, and never indoors', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const m = generateMap(seed);
+    const indoors = (x: number, z: number) => m.buildings.some((b) => Math.abs(x - b.x) < b.w / 2 + 0.5 && Math.abs(z - b.z) < b.d / 2 + 0.5);
+    const wet = (x: number, z: number) => m.ponds.some((p) => Math.hypot(x - p.x, z - p.z) < p.r + 1);
+    const check = (x: number, z: number, reach: number, what: string) => {
+      assert.ok(!indoors(x, z) && !wet(x, z), `seed ${seed}: a ${what} indoors or in a pond`);
+      const walk = walkable(m, x - 9, z - 9, x + 9, z + 9);
+      assert.ok(walk(x, z, reach), `seed ${seed}: no way up to the ${what} at ${x},${z}`);
+    };
+    for (const f of m.fires) check(f.x, f.z, CAMP.r - 0.3, 'campfire');
+    for (const p of m.pads) check(p.x, p.z, PAD.r - 0.2, 'bounce pad');
+    for (const c of m.cars) check(c.x, c.z, Math.max(c.hw, c.hd) + 1.4, 'car');
+    for (const t of m.tables) check(t.x, t.z, 2.6, 'picnic table');
+    for (const l of [...m.lamps, ...m.mailboxes]) check(l.x, l.z, 1.4, 'post');
+    for (const p of m.pads) {
+      assert.ok(yardAt(m, p.x, p.z) < 0, 'no pad inside a farmyard');
+      // and nowhere near a door, so nobody gets thrown about leaving a house
+      for (const b of m.buildings) for (const d of b.doors) assert.ok(Math.hypot(p.x - d.x, p.z - d.z) > 5, `seed ${seed}: a pad by a doorway`);
+    }
   }
 });
 
@@ -222,9 +327,13 @@ test('standing at a doorway, or lined up with one a few steps out, peeks into th
         for (const [k, side] of [[0, 0], [1.2, 0], [1.5, d.w / 2 + 0.8], [4, d.w / 2 + 1.5]]) {
           const p = out(d, k, side);
           const at = peekAt(m, p.x, p.z);
-          // in a yard of containers, the next one's open end can be nearer
+          // in a yard of containers, the next one's open end can be nearer; so can a shed's door facing this one
           if (b.kind === 'container') assert.ok(at >= 0 && m.buildings[at].kind === 'container', `seed ${seed}: peeking into a container`);
-          else assert.equal(at, i, `seed ${seed}: ${k} m out from a ${b.kind}'s door`);
+          else if (at !== i) {
+            const other = m.buildings[at];
+            const nearer = other?.doors.some((o) => (p.x - o.x) * o.ox + (p.z - o.z) * o.oz < k - 0.5);
+            assert.ok(nearer, `seed ${seed}: ${k} m out from a ${b.kind}'s door`);
+          }
         }
         const far = out(d, 6);
         assert.ok(peekAt(m, far.x, far.z) >= 0, `seed ${seed}: lined up with a door from six meters`);
@@ -245,9 +354,10 @@ test('standing at a doorway, or lined up with one a few steps out, peeks into th
 
 /**
  * Every spot an egg could stand on a 0.4 m grid over a window of the island, then which ones can be walked to from
- * the window's edge. Loot is in reach when an egg standing somewhere it can walk to could pick it up.
+ * the window's edge (or from one spot, `from`). Loot is in reach when an egg standing somewhere it can walk to could
+ * pick it up. With `dry`, the river counts as a wall: the only way over is a bridge.
  */
-function walkable(m: GameMap, x0: number, z0: number, x1: number, z1: number) {
+function walkable(m: GameMap, x0: number, z0: number, x1: number, z1: number, opts: { from?: { x: number; z: number }; dry?: boolean } = {}) {
   const step = 0.4;
   const nx = Math.ceil((x1 - x0) / step);
   const nz = Math.ceil((z1 - z0) / step);
@@ -256,7 +366,7 @@ function walkable(m: GameMap, x0: number, z0: number, x1: number, z1: number) {
     for (let i = 0; i < nx; i++) {
       const x = x0 + i * step;
       const z = z0 + j * step;
-      let ok = Math.abs(x) <= EDGE && Math.abs(z) <= EDGE;
+      let ok = Math.abs(x) <= EDGE && Math.abs(z) <= EDGE && !(opts.dry && riverAt(m, x, z));
       if (ok)
         solidsNear(m, x, z, 3, (_k, s) => {
           if (ok && (s.shape === 'circle' ? pushCircle(x, z, FIGHTER_R, s.x, s.z, s.r) : pushBox(x, z, FIGHTER_R, s.x, s.z, s.hw, s.hd))) ok = false;
@@ -266,11 +376,13 @@ function walkable(m: GameMap, x0: number, z0: number, x1: number, z1: number) {
   const seen = new Uint8Array(nx * nz);
   const queue: number[] = [];
   for (let i = 0; i < nx; i++)
-    for (let j = 0; j < nz; j++)
-      if ((i === 0 || j === 0 || i === nx - 1 || j === nz - 1) && free[i + j * nx]) {
+    for (let j = 0; j < nz; j++) {
+      const start = opts.from ? Math.hypot(x0 + i * step - opts.from.x, z0 + j * step - opts.from.z) < 0.3 : i === 0 || j === 0 || i === nx - 1 || j === nz - 1;
+      if (start && free[i + j * nx]) {
         seen[i + j * nx] = 1;
         queue.push(i + j * nx);
       }
+    }
   while (queue.length) {
     const c = queue.pop()!;
     const i = c % nx;
@@ -298,19 +410,28 @@ function walkable(m: GameMap, x0: number, z0: number, x1: number, z1: number) {
   };
 }
 
-test('every building can be walked into, and everything in it reached', () => {
+test('every building and farmyard can be walked into, furniture and all, and everything in it reached', () => {
   for (let seed = 1; seed <= 30; seed++) {
     const m = generateMap(seed);
-    for (const b of m.buildings) {
-      const reach = walkable(m, b.x - b.w / 2 - 4, b.z - b.d / 2 - 4, b.x + b.w / 2 + 4, b.z + b.d / 2 + 4);
-      const inBuilding = (x: number, z: number) => Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2;
-      for (const l of m.floor) if (inBuilding(l.x, l.z)) assert.ok(reach(l.x, l.z, PICK_R - 0.1), `seed ${seed}: loot at ${l.x},${l.z} in a ${b.kind}`);
+    // a farm's lot is its whole fenced yard: the way in is through a gate
+    const lots = [...m.buildings.map((b) => ({ kind: b.kind, x: b.x, z: b.z, hw: b.w / 2, hd: b.d / 2, b })), ...m.yards.map((y) => ({ kind: 'yard', x: y.x, z: y.z, hw: y.hw, hd: y.hd, b: null }))];
+    for (const b of lots) {
+      const reach = walkable(m, b.x - b.hw - 4, b.z - b.hd - 4, b.x + b.hw + 4, b.z + b.hd + 4);
+      // every doorway stays open from the inside too, both sides of a doorway between rooms (a ruin's gaps are just
+      // where its walls fell)
+      if (b.b && b.kind !== 'ruin')
+        for (const [d, ks] of [...b.b.doors.map((d) => [d, [-1]] as const), ...b.b.inner.map((d) => [d, [-1, 1]] as const)])
+          for (const k of ks) assert.ok(reach(d.x + d.ox * k * 1.1, d.z + d.oz * k * 1.1, 0.45), `seed ${seed}: in through a ${b.kind}'s doorway at ${d.x},${d.z}`);
+      const inLot = (x: number, z: number) => Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd;
+      for (const l of m.floor) if (inLot(l.x, l.z)) assert.ok(reach(l.x, l.z, PICK_R - 0.1), `seed ${seed}: loot at ${l.x},${l.z} in a ${b.kind}`);
       for (const c of m.containers) {
-        if (!inBuilding(c.x, c.z)) continue;
-        if (c.kind === 'chest') assert.ok(reach(c.x, c.z, CHEST_R - 0.1), `seed ${seed}: the chest in a ${b.kind}`);
-        // a crate is broken from wherever a gun can see it; its loot spills where it stood
-        if (c.kind === 'crate') assert.ok(reach(c.x, c.z, PICK_R + 0.7), `seed ${seed}: the crate in a ${b.kind}`);
+        if (!inLot(c.x, c.z)) continue;
+        if (c.kind === 'chest' || c.kind === 'fridge') assert.ok(reach(c.x, c.z, CHEST_R - 0.1), `seed ${seed}: the ${c.kind} in a ${b.kind}`);
+        // a crate, toilet or hay bale is broken from wherever a gun can see it; its loot spills where it stood
+        if (c.kind === 'crate' || c.kind === 'toilet') assert.ok(reach(c.x, c.z, PICK_R + 0.7), `seed ${seed}: the ${c.kind} in a ${b.kind}`);
+        if (c.kind === 'hay') assert.ok(reach(c.x, c.z, PICK_R + 1), `seed ${seed}: the hay in a ${b.kind}`);
       }
+      if (b.kind === 'yard') for (const g of m.yards.find((y) => y.x === b.x && y.z === b.z)!.gates) assert.ok(reach(g.x, g.z, 0.5), `seed ${seed}: a gate is open`);
     }
   }
 });
@@ -414,10 +535,15 @@ test('the grid finds everything a ray could hit, the same as checking every soli
     const len = 1 + rng() * 60;
     const dx = Math.sin(a);
     const dz = Math.cos(a);
-    const grid = castRay(m, x, z, dx, dz, len, -1, false);
+    const grid = castRay(m, x, z, dx, dz, len, -1, false, true);
     let brute = Infinity;
     for (const s of m.map.solids) if (standing(m, s)) brute = Math.min(brute, raySolid(s, x, z, dx, dz, len));
     assert.equal(grid?.t ?? Infinity, brute, `ray ${i}`);
+    // bullets and eyes go over fences, tables and fire pits
+    const high = castRay(m, x, z, dx, dz, len, -1, false);
+    let tall = Infinity;
+    for (const s of m.map.solids) if (standing(m, s) && !low(s)) tall = Math.min(tall, raySolid(s, x, z, dx, dz, len));
+    assert.equal(high?.t ?? Infinity, tall, `high ray ${i}`);
   }
   // cells along a diagonal come in order, each next to the last
   const cells: number[] = [];
@@ -1049,10 +1175,10 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
 }
 
 for (const [label, opts] of [
-  ['a host, three guests and four computer eggs, with lag and lost packets', { humans: 4, bots: true, seed: 21, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
-  ['eight people and no computer eggs, one of whom leaves halfway', { humans: 8, bots: false, seed: 34, level: 'normal' as Level, delay: 0.05, loss: 0.05, leave: { seat: 5, at: 40 } }],
+  ['a host, three guests and four computer eggs, with lag and lost packets', { humans: 4, bots: true, seed: 22, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
+  ['eight people and no computer eggs, one of whom leaves halfway', { humans: 8, bots: false, seed: 34, level: 'normal' as Level, delay: 0.05, loss: 0.05, leave: { seat: 5, at: 30 } }],
   ['a guest whose tab freezes on the bus (still in the room, still reporting)', { humans: 3, bots: true, seed: 8, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 2, at: 2, silent: false } }],
-  ['a guest who goes silent mid-match', { humans: 3, bots: true, seed: 13, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 1, at: 30, silent: true } }],
+  ['a guest who goes silent mid-match', { humans: 3, bots: true, seed: 14, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 1, at: 30, silent: true } }],
 ] as const) {
   test(`online: ${label}, all agree on what happened`, () => {
     const clients = simulate(opts);
@@ -1461,22 +1587,26 @@ test('a computer egg under fire builds a wall in the open, but never indoors', (
   autopilot(m, a);
   a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
   a.ammo.heavy = 90;
-  // inside a shipping container, with someone shooting in through its open end
+  // cornered inside a shipping container, with someone shooting in through its open end
   const c = doorOf(m, 'container', (d) => {
     const [p, q] = [through(d, -2), through(d, 10)];
     return clearLine(m, p.x, p.z, q.x, q.z) && coverAt(m.map, q.x, q.z) < 0;
   });
-  land(a, through(c.door, -2).x, through(c.door, -2).z);
+  const corner = through(c.door, -2);
+  land(a, corner.x, corner.z);
   land(b, through(c.door, 10).x, through(c.door, 10).z);
+  let pinned = true;
   const hot = (seconds: number) =>
     run(m, seconds, () => {
       a.hitT = 0.25;
       a.hp = 60;
       b.hp = 100;
+      if (pinned) land(a, corner.x, corner.z);
     });
   assert.ok(!hot(2).some((e) => e.t === 'wall'), 'no wall shuts it in');
   assert.equal(a.ai!.target, b.id, 'it was fighting');
   assert.equal(buildingAt(m.map, a.x, a.z), c.i, 'still inside');
+  pinned = false;
   openSpot(m);
   land(a, 0, 0);
   land(b, 0, 12);
@@ -2028,6 +2158,592 @@ test('ponds slow you down and cornfields hide you', () => {
   assert.ok(b.bush >= 0 && coverAt(m.map, b.x, b.z) >= 0);
   assert.ok(concealed(m, b, a), 'hidden in the corn');
   assert.ok(!concealed(m, a, b));
+});
+
+test('dirt roads put a spring in your step', () => {
+  const m = quiet();
+  const a = m.fighters[0];
+  openSpot(m);
+  m.map.roads = [{ x0: -30, z0: 0, x1: 30, z1: 0 }];
+  land(a, -20, 0);
+  a.input.mx = 1;
+  run(m, 0.5);
+  assert.ok(roadAt(m.map, a.x, a.z));
+  assert.ok(Math.abs(Math.hypot(a.vx, a.vz) - SPEED * MELEE.spatula.move * ROAD_SPEED) < 0.05, 'on the road');
+  land(a, -20, 6);
+  run(m, 0.5);
+  assert.ok(Math.abs(Math.hypot(a.vx, a.vz) - SPEED * MELEE.spatula.move) < 0.05, 'beside it');
+});
+
+test('a campfire heals whoever stands by it a little at a time, up to full, on its owner’s client', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  m.map.fires = [{ x: 0, z: 0, r: CAMP.pit }];
+  land(a, 1.8, 0);
+  land(b, CAMP.r + 1, 0);
+  a.hp = 50;
+  b.hp = 50;
+  run(m, 2);
+  assert.ok(a.warm && !b.warm);
+  assert.ok(Math.abs(a.hp - (50 + CAMP.hps * 2)) < 0.2, `${a.hp}`);
+  assert.equal(b.hp, 50, 'a step too far');
+  run(m, 30);
+  assert.equal(a.hp, HP_MAX, 'all the way to full');
+  // nobody walks into the fire itself
+  a.input.mx = -1;
+  run(m, 1);
+  assert.ok(Math.hypot(a.x, a.z) >= CAMP.pit + FIGHTER_R - 0.01, 'stopped at the fire pit');
+
+  // someone else's egg is healed by its owner, and only shows as warming up here
+  const g = createMatch({ seed: 7, role: 'guest', level: 'normal', entrants: [{ name: 'g', color: '#fff', kind: 'player', seat: 1 }, { name: 'h', color: '#fff', kind: 'remote', seat: 0 }], me: 0, countdown: 0 });
+  g.time = 5;
+  openSpot(g);
+  g.map.fires = [{ x: 0, z: 0, r: CAMP.pit }];
+  const r = g.fighters[1];
+  applyState(g, r, { x: 1.8, z: 0, y: 0, aim: 0, vx: 0, vz: 0, phase: 'ground', hp: 40, shield: 0, w: null, r: 0, flags: 0 });
+  run(g, 2);
+  assert.ok(r.warm);
+  assert.equal(r.hp, 40, 'until its owner says otherwise');
+});
+
+test('a bounce pad throws an egg up for a glide the way its arrow points, out of reach of everything until it lands', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  m.map.pads = [{ x: 0, z: 0, dx: 1, dz: 0 }];
+  land(a, -3, 0);
+  land(b, -3, 6);
+  a.hp = 60;
+  a.items.bandage = 3;
+  a.input.mx = 1;
+  let evs = run(m, 0.6);
+  assert.ok(evs.some((e) => e.t === 'bounce' && e.f === a.id));
+  assert.equal(a.phase, 'drop');
+  assert.ok(a.y > PAD.y - FALL * 0.6 - 0.5, `up high: ${a.y}`);
+  assert.equal(hurt(m, a, 50, b.id, 'smg', false), 0, 'nothing hits an egg in the air');
+  a.input.use = 'bandage';
+  run(m, 0.1);
+  assert.equal(a.using, null, 'nor does it patch up up there');
+  // let go of the stick: the glide carries on along the arrow
+  a.input.mx = 0;
+  evs = [];
+  for (let t = 0; t < 6 && a.phase !== 'ground'; t += DT) evs.push(...run(m, DT));
+  assert.equal(a.phase, 'ground');
+  assert.ok(evs.some((e) => e.t === 'land' && e.f === a.id));
+  assert.ok(Math.abs(a.x - PAD_FLY) < PAD_FLY * 0.2 && Math.abs(a.z) < 0.5, `landed ${a.x.toFixed(1)}, ${a.z.toFixed(1)} (about ${PAD_FLY} m on)`);
+  // steering takes it wherever you like, as off the bus
+  land(a, -3, 0);
+  a.input.mx = 1;
+  for (let t = 0; t < 2 && a.phase === 'ground'; t += DT) run(m, DT);
+  a.input.mx = 0;
+  a.input.mz = 1;
+  for (let t = 0; t < 6 && a.phase !== 'ground'; t += DT) run(m, DT);
+  assert.ok(a.z > 25 && a.x < 15, `steered off to ${a.x.toFixed(1)}, ${a.z.toFixed(1)}`);
+});
+
+test('a guest gliding off a bounce pad long after the bus is not taken for one that stopped playing', () => {
+  const { h, g, hs, hMe } = pair();
+  for (const m of [h, g]) {
+    m.time = m.map.bus.off + 60;
+    m.map.pads = [{ x: 0, z: 0, dx: 0, dz: 1 }];
+  }
+  const mine = g.fighters[1];
+  land(mine, 0, -3);
+  mine.input.mz = 1;
+  const evs = run(g, 0.6);
+  assert.ok(evs.some((e) => e.t === 'bounce' && e.f === 1) && mine.phase === 'drop');
+  receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(mine)))), () => h, 0.1);
+  const r = h.fighters[1];
+  assert.equal(r.phase, 'drop');
+  assert.ok(h.events.some((e) => e.t === 'bounce' && e.f === 1 && e.net), 'the host sees it go up');
+  tick(hs, h, hMe, [0, 1], 0.2);
+  assert.notEqual(r.phase, 'out');
+  // one that hangs up there far longer than a glide takes has stopped playing
+  h.time += BUS_Y / FALL + 9;
+  receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(mine)))), () => h, 0.3);
+  tick(hs, h, hMe, [0, 1], 0.4);
+  assert.equal(r.phase, 'out');
+});
+
+test('fridges open like chests and hold food and healing; toilets and hay bales break like crates', () => {
+  const m = quiet(9);
+  const me = m.fighters[0];
+  for (const seed of [1, 2, 3]) {
+    for (const c of generateMap(seed).containers) {
+      if (c.kind !== 'fridge') continue;
+      assert.equal(c.loot.length, 2);
+      assert.ok(c.loot.every((l) => l.def.kind === 'use') && c.loot[0].def.kind === 'use' && c.loot[1].def.kind === 'use' && c.loot[0].def.w !== c.loot[1].def.w, 'two different things to eat or patch up with');
+    }
+  }
+  const fridge = m.map.containers.find((c) => c.kind === 'fridge')!;
+  land(me, fridge.x, fridge.z + fridge.face * 1.4);
+  m.loot.clear();
+  const p = prompt(m, me);
+  assert.ok(p && 'chest' in p && p.chest === fridge.id);
+  me.input.aim = fridge.face > 0 ? Math.PI : 0;
+  me.input.fire = true;
+  run(m, 1);
+  assert.ok(!m.opened[fridge.id], 'it opens, it does not break');
+  me.input.fire = false;
+  me.input.interact = true;
+  run(m, 0.05);
+  assert.ok(m.opened[fridge.id]);
+  assert.ok(fridge.loot.every((l) => m.loot.has(l.id) || m.gone.has(l.id)), 'out it comes');
+
+  // a guest asks the host to open one, as with a chest
+  const h = quiet(9);
+  assert.equal(applyNet(h, { y: 'op', f: 1, c: fridge.id }), false);
+  assert.ok(h.opened[fridge.id]);
+  assert.ok(h.events.some((e) => e.t === 'opened' && e.c === fridge.id && !e.net));
+  // but a toilet or a hay bale only breaks
+  const toilet = h.map.containers.find((c) => c.kind === 'toilet')!;
+  const hay = h.map.containers.find((c) => c.kind === 'hay')!;
+  applyNet(h, { y: 'op', f: 1, c: toilet.id });
+  applyNet(h, { y: 'op', f: 1, c: hay.id });
+  assert.ok(!h.opened[toilet.id] && !h.opened[hay.id]);
+  applyNet(h, { y: 'm', f: 1, k: 'crate', id: toilet.id, d: TOILET_HP - 1 });
+  assert.ok(!h.opened[toilet.id]);
+  applyNet(h, { y: 'm', f: 1, k: 'crate', id: toilet.id, d: 1 });
+  assert.ok(h.opened[toilet.id], 'flushed');
+  assert.ok(toilet.loot.length >= 1 && toilet.loot.every((l) => h.loot.has(l.id)), 'and whatever was in it spills out');
+
+  // two smacks of the spatula break a hay bale
+  const a = m.fighters[0];
+  land(a, hay.x - (HAY_HW + 1.2), hay.z);
+  a.slot = SLOT_MELEE;
+  a.fireT = 0;
+  a.input.aim = Math.PI / 2;
+  a.input.fire = true;
+  run(m, 0.1);
+  assert.ok(!m.opened[hay.id]);
+  run(m, 0.6);
+  assert.ok(m.opened[hay.id], 'the bale comes apart');
+});
+
+test('cars and lamp posts stop bullets; fences, picnic tables and fire pits only stop your feet', () => {
+  const m = quiet();
+  const [a] = m.fighters;
+  openSpot(m);
+  m.map.solids = [
+    { shape: 'box', x: 6, z: 0, hw: 0.55, hd: 1.1, what: 'car', ref: 0 },
+    { shape: 'circle', x: -6, z: 0, r: 0.18, what: 'post', ref: 0 },
+    { shape: 'box', x: 0, z: 6, hw: 3, hd: FENCE_T / 2, what: 'fence', ref: 0 },
+    { shape: 'box', x: 0, z: -6, hw: 1.1, hd: 0.8, what: 'table', ref: 0 },
+    { shape: 'circle', x: 6, z: 6, r: CAMP.pit, what: 'fire', ref: 0 },
+  ];
+  reindex(m.map);
+  assert.equal(castRay(m, 0, 0, 1, 0, 20, -1, true)?.what, 'car');
+  assert.equal(castRay(m, 0, 0, -1, 0, 20, -1, true)?.what, 'post');
+  for (const [dx, dz] of [[0, 1], [0, -1], [Math.SQRT1_2, Math.SQRT1_2]]) {
+    assert.equal(castRay(m, 0, 0, dx, dz, 20, -1, true), null, 'bullets fly over');
+    assert.ok(castRay(m, 0, 0, dx, dz, 20, -1, true, true), 'feet and swings do not');
+  }
+  assert.ok(clearLine(m, 0, 0, 0, 12) && !clearLine(m, 0, 0, 12, 0), 'you can see over a fence, not through a car');
+  // walking into each stops you at it
+  for (const [x, z, mx, mz] of [[0, 3, 0, 1], [0, -3, 0, -1], [3, 0, 1, 0], [3.5, 3.5, 1, 1]]) {
+    land(a, x, z);
+    a.input.mx = mx;
+    a.input.mz = mz;
+    run(m, 1.2);
+    let inside = false;
+    for (const s of m.map.solids) if (s.shape === 'circle' ? pushCircle(a.x, a.z, FIGHTER_R - 0.02, s.x, s.z, s.r) : pushBox(a.x, a.z, FIGHTER_R - 0.02, s.x, s.z, s.hw, s.hd)) inside = true;
+    assert.ok(!inside && Math.hypot(a.x - x, a.z - z) < 5, `stopped walking from ${x},${z}: at ${a.x.toFixed(2)},${a.z.toFixed(2)}`);
+  }
+  a.input.mx = 0;
+  a.input.mz = 0;
+  // and a bullet from one side of a fence finds an egg on the other
+  const b = m.fighters[1];
+  land(a, 0, 3);
+  land(b, 0, 10);
+  a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  a.slot = 0;
+  a.input.aim = 0;
+  a.input.fire = true;
+  run(m, 0.3);
+  assert.ok(b.hp < HP_MAX, 'shot over the fence');
+});
+
+/** A bridge's two ends, a little in from each end of its deck (or out past them, when `inset` is below zero). */
+function deckEnds(br: { x: number; z: number; hw: number; hd: number; alongX: boolean }, inset: number) {
+  const ax = br.alongX ? 1 : 0;
+  const az = 1 - ax;
+  const h = (br.alongX ? br.hw : br.hd) - inset;
+  return [
+    { x: br.x - ax * h, z: br.z - az * h },
+    { x: br.x + ax * h, z: br.z + az * h },
+  ];
+}
+
+test('a river winds from shore to shore with two to four bridges over it, and nothing but a bridge stands in the water', () => {
+  for (let seed = 1; seed <= 30; seed++) {
+    const m = generateMap(seed);
+    const [a, b] = [m.river[0], m.river[m.river.length - 1]];
+    const onEdge = (p: { x: number; z: number }) => Math.abs(Math.abs(p.x) - HALF) < 0.2 || Math.abs(Math.abs(p.z) - HALF) < 0.2;
+    assert.ok(onEdge(a) && onEdge(b) && Math.hypot(a.x - b.x, a.z - b.z) > 2 * HALF - 1, `seed ${seed}: shore to shore across the island`);
+    let len = 0;
+    for (let i = 1; i < m.river.length; i++) len += Math.hypot(m.river[i].x - m.river[i - 1].x, m.river[i].z - m.river[i - 1].z);
+    assert.ok(len > 2 * HALF * 1.05, `seed ${seed}: it winds (${len.toFixed(0)} m)`);
+    assert.ok(m.bridges.length >= 2 && m.bridges.length <= 4, `seed ${seed}: ${m.bridges.length} bridges`);
+    const dry = (x: number, z: number, r = 0) => riverDist2(m, x, z) >= (RIVER_HALF + r) * (RIVER_HALF + r);
+    for (const br of m.bridges) {
+      const [e0, e1] = deckEnds(br, 0.3);
+      assert.ok(dry(e0.x, e0.z) && dry(e1.x, e1.z), `seed ${seed}: both ends of a bridge on the bank`);
+      assert.equal(riverCrossings(m, e0.x, e0.z, e1.x, e1.z) % 2, 1, 'and the river in between');
+      assert.equal(Math.min(br.hw, br.hd), BRIDGE_HALF);
+      assert.ok(!waterAt(m, br.x, br.z) && bridgeAt(m, br.x, br.z) >= 0, 'nobody wades on the deck');
+      // two bridges on one bend would be one too many
+      for (const o of m.bridges) if (o !== br) assert.ok(Math.hypot(o.x - br.x, o.z - br.z) >= 45);
+    }
+    // everything built or grown stays out of the water
+    const boxDry = (x: number, z: number, hw: number, hd: number) => {
+      for (let u = -1; u <= 1; u += 0.25) for (let v = -1; v <= 1; v += 0.25) if (!dry(x + u * hw, z + v * hd)) return false;
+      return true;
+    };
+    for (const bd of m.buildings) assert.ok(boxDry(bd.x, bd.z, bd.w / 2, bd.d / 2), `seed ${seed}: a ${bd.kind} in the river`);
+    for (const y of [...m.yards, ...m.fields]) assert.ok(boxDry(y.x, y.z, y.hw, y.hd), `seed ${seed}: a farm in the river`);
+    for (const p of m.ponds) assert.ok(dry(p.x, p.z, p.r), 'a pond runs into it');
+    const things = [...m.trees, ...m.rocks, ...m.bushes, ...m.containers.filter((c) => !c.flare), ...m.floor, ...m.cars, ...m.lamps, ...m.mailboxes, ...m.tables, ...m.fires, ...m.pads, ...m.logs, ...m.stumps];
+    for (const t of things) assert.ok(dry(t.x, t.z, 0.4), `seed ${seed}: something at ${t.x},${t.z} in the river`);
+    // roads come down to a bridge, never into the water
+    for (const r of m.roads) {
+      const l = Math.hypot(r.x1 - r.x0, r.z1 - r.z0);
+      for (let k = 0; k <= l; k += 1) {
+        const x = r.x0 + ((r.x1 - r.x0) * k) / l;
+        const z = r.z0 + ((r.z1 - r.z0) * k) / l;
+        assert.ok(dry(x, z, 0.5) || bridgeAt(m, x, z) >= 0, `seed ${seed}: a road into the river at ${x.toFixed(1)},${z.toFixed(1)}`);
+      }
+    }
+    assert.ok(m.roads.some((r) => m.bridges.some((br) => deckEnds(br, 0).some((e) => Math.hypot(e.x - r.x0, e.z - r.z0) < 0.2))), `seed ${seed}: a road leads to a bridge`);
+    // and with no wading, a bridge takes you from one bank to the other
+    for (const br of m.bridges) {
+      const [e0, e1] = deckEnds(br, -2);
+      const w = walkable(m, Math.min(e0.x, e1.x) - 6, Math.min(e0.z, e1.z) - 6, Math.max(e0.x, e1.x) + 6, Math.max(e0.z, e1.z) + 6, { from: e0, dry: true });
+      assert.ok(w(e1.x, e1.z, 0.5), `seed ${seed}: over the bridge at ${br.x},${br.z}`);
+    }
+  }
+});
+
+test('wading the river is as slow as a pond, a bridge is no slower than grass, and its rails only stop your feet', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  // a river along x, and a bridge over it along z
+  m.map.river = [
+    { x: -HALF, z: 0 },
+    { x: HALF, z: 0 },
+  ];
+  m.map.bridges = [{ x: 0, z: 0, hw: BRIDGE_HALF, hd: RIVER_HALF + 2, alongX: false }];
+  m.map.solids = [-1, 1].map((k) => ({ shape: 'box' as const, x: k * (BRIDGE_HALF - FENCE_T / 2), z: 0, hw: FENCE_T / 2, hd: RIVER_HALF + 2, what: 'fence' as const, ref: 0 }));
+  reindex(m.map);
+  land(a, 20, -RIVER_HALF - 1);
+  a.input.mz = 1;
+  run(m, 0.5);
+  assert.ok(a.wet && riverAt(m.map, a.x, a.z));
+  assert.ok(Math.abs(Math.hypot(a.vx, a.vz) - SPEED * MELEE.spatula.move * POND_SLOW) < 0.05, 'wading');
+  land(a, 0, -RIVER_HALF - 3);
+  run(m, 0.6);
+  assert.ok(!a.wet && bridgeAt(m.map, a.x, a.z) >= 0, 'up on the deck');
+  assert.ok(Math.abs(Math.hypot(a.vx, a.vz) - SPEED * MELEE.spatula.move) < 0.05, 'at a walk');
+  // the rails keep you on the deck, but a shot goes over them
+  a.input.mz = 0;
+  a.input.mx = 1;
+  run(m, 1);
+  assert.ok(a.x < BRIDGE_HALF - FENCE_T, `held by the rail (${a.x.toFixed(2)})`);
+  a.input.mx = 0;
+  land(a, 0, 0);
+  land(b, 8, 0);
+  a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  a.slot = 0;
+  a.input.aim = Math.PI / 2;
+  a.input.fire = true;
+  run(m, 0.3);
+  assert.ok(b.hp < HP_MAX, 'shot over the rail at an egg in the water');
+  // water hides nobody
+  assert.ok(b.wet && !concealed(m, b, a));
+});
+
+test('furniture: counters, shelves and sacks stop eggs and bullets, beds, tables and booths only feet, rugs and chairs nothing', () => {
+  for (let seed = 1; seed <= 10; seed++) {
+    const m = generateMap(seed);
+    const kinds = new Set(m.furniture.map((f) => f.kind));
+    for (const k of ['rug', 'chair', 'table', 'bed', 'counter', 'shelf'] as const) assert.ok(kinds.has(k), `seed ${seed}: a ${k} somewhere`);
+    for (const [i, f] of m.furniture.entries()) {
+      const b = m.buildings[f.b];
+      assert.ok(Math.abs(f.x - b.x) + f.hw <= b.w / 2 && Math.abs(f.z - b.z) + f.hd <= b.d / 2, `seed ${seed}: a ${f.kind} sticks out of its ${b.kind}`);
+      const solid = m.solids.find((s) => (s.what === 'shelf' || s.what === 'seat') && s.ref === i);
+      assert.equal(solid?.what ?? null, furnitureSolid(f.kind), `a ${f.kind}`);
+    }
+    // every house and farmhouse is furnished; a warehouse has racks
+    for (const b of m.buildings) {
+      const mine = m.furniture.filter((f) => m.buildings[f.b] === b);
+      const has = (k: string) => mine.some((f) => f.kind === k);
+      if (b.kind === 'house' || b.kind === 'farm') assert.ok(has('table') && has('rug') && has('counter'), `seed ${seed}: a ${b.kind} with a table and a kitchen counter`);
+      if (b.kind === 'warehouse') assert.ok(has('shelf'), `seed ${seed}: racks in a warehouse`);
+      if (b.kind === 'diner') assert.ok(mine.filter((f) => f.kind === 'booth').length === 4 && has('counter') && has('stool'), `seed ${seed}: booths and a counter in a diner`);
+      if (b.kind === 'mill') assert.ok(has('millstone') && has('sacks'), `seed ${seed}: a millstone and flour sacks`);
+    }
+  }
+  const m = quiet();
+  openSpot(m);
+  m.map.solids = [
+    { shape: 'box', x: 4, z: 0, hw: 0.3, hd: 1.5, what: 'shelf', ref: 0 },
+    { shape: 'box', x: -4, z: 0, hw: 1, hd: 0.75, what: 'seat', ref: 1 },
+  ];
+  reindex(m.map);
+  assert.equal(castRay(m, 0, 0, 1, 0, 10, -1, true)?.what, 'shelf', 'a shelf stops a bullet');
+  assert.equal(castRay(m, 0, 0, -1, 0, 10, -1, true), null, 'it flies over a bed');
+  assert.ok(castRay(m, 0, 0, -1, 0, 10, -1, true, true), 'but feet stop at it');
+  assert.ok(!clearLine(m, 0, 0, 8, 0) && clearLine(m, 0, 0, -8, 0), 'nobody sees through a shelf');
+});
+
+test('every island has a diner or a windmill (now and then both), each going by its own name, with good loot', () => {
+  let diners = 0;
+  let mills = 0;
+  for (let seed = 1; seed <= 40; seed++) {
+    const m = generateMap(seed);
+    for (const b of m.buildings) {
+      if (b.kind !== 'diner' && b.kind !== 'mill') continue;
+      const p = placeAt(m, b.x, b.z);
+      assert.ok(p >= 0, `seed ${seed}: a ${b.kind} is somewhere with a name`);
+      assert.ok((b.kind === 'diner' ? DINER_NAMES : MILL_NAMES).includes(m.places[p].name), `seed ${seed}: the ${b.kind} is called ${m.places[p].name}`);
+      const inside = m.containers.filter((c) => Math.abs(c.x - b.x) < b.w / 2 && Math.abs(c.z - b.z) < b.d / 2);
+      if (b.kind === 'diner') {
+        diners++;
+        assert.equal(inside.filter((c) => c.kind === 'fridge').length, 2, 'a fridge stash');
+        assert.equal(inside.filter((c) => c.kind === 'chest').length, 1);
+      } else {
+        mills++;
+        const chest = inside.find((c) => c.kind === 'chest');
+        assert.ok(chest && chest.loot.some((l) => l.def.kind === 'gun' && l.def.r >= 2), 'a chest of rare or better');
+      }
+    }
+  }
+  assert.ok(diners >= 10 && mills >= 10 && diners + mills < 70, `${diners} diners and ${mills} windmills in 40 islands`);
+});
+
+test('fallen logs and stumps lie out in the open, stop feet but not bullets, and give wood like a tree; trees come in four kinds', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const m = generateMap(seed);
+    assert.ok(m.logs.length >= 8 && m.stumps.length >= 12, `seed ${seed}: ${m.logs.length} logs, ${m.stumps.length} stumps`);
+    const indoors = (x: number, z: number, r: number) => m.buildings.some((b) => Math.abs(x - b.x) < b.w / 2 + r && Math.abs(z - b.z) < b.d / 2 + r) || m.yards.some((y) => Math.abs(x - y.x) < y.hw + r && Math.abs(z - y.z) < y.hd + r);
+    for (const l of m.logs) {
+      assert.ok(!indoors(l.x, l.z, Math.max(l.hw, l.hd)) && !roadAt(m, l.x, l.z) && !roadAt(m, l.x + l.hw, l.z + l.hd) && !roadAt(m, l.x - l.hw, l.z - l.hd), `seed ${seed}: a log in the way at ${l.x},${l.z}`);
+      assert.ok(walkable(m, l.x - 8, l.z - 8, l.x + 8, l.z + 8)(l.x, l.z, Math.max(l.hw, l.hd) + 1.2), 'and you can walk up to it');
+    }
+    for (const t of m.stumps) assert.ok(!indoors(t.x, t.z, 1) && !roadAt(m, t.x, t.z));
+    const kinds = new Set(m.trees.map((t) => t.kind));
+    assert.deepEqual([...kinds].sort(), ['birch', 'fruit', 'oak', 'pine'], `seed ${seed}: oaks, pines, birches and fruit trees`);
+    // the fruit trees stand in orchards beside the farms
+    for (const t of m.trees) if (t.kind === 'fruit') assert.ok(m.yards.some((y) => Math.abs(t.x - y.x) < y.hw + 16 && Math.abs(t.z - y.z) < y.hd + 16), 'an orchard by a farm');
+  }
+  const m = quiet();
+  const a = m.fighters[0];
+  openSpot(m);
+  m.map.solids = [{ shape: 'box', x: 2, z: 0, hw: LOG_R, hd: 2, what: 'log', ref: 0 }];
+  reindex(m.map);
+  assert.equal(castRay(m, 0, 0, 1, 0, 10, -1, true), null, 'bullets fly over a log');
+  land(a, 0.5, 0);
+  a.slot = SLOT_MELEE;
+  a.wood = 0;
+  a.input.aim = Math.PI / 2;
+  a.input.fire = true;
+  run(m, 0.2);
+  assert.ok(a.wood > 0, 'wood from a fallen log');
+  a.input.fire = false;
+  a.input.mx = 1;
+  run(m, 1);
+  assert.ok(a.x < 2 - LOG_R - FIGHTER_R + 0.02, 'and it stops your feet');
+});
+
+/** A computer egg alone on the island with everything else put out of the way: the other egg hangs in the sky. */
+function alone(m: Match) {
+  const [a, b] = m.fighters;
+  b.phase = 'drop';
+  b.y = 1e9;
+  autopilot(m, a);
+  a.ai!.goal = 'roam';
+  return a;
+}
+
+/** A spot `d` meters from (x, z) on open, dry ground, outside every building and farmyard, or null. */
+function startNear(m: Match, x: number, z: number, d: number) {
+  for (let k = 0; k < 16; k++) {
+    const a = (k * Math.PI) / 8;
+    const sx = x + Math.sin(a) * d;
+    const sz = z + Math.cos(a) * d;
+    if (Math.abs(sx) > EDGE - 3 || Math.abs(sz) > EDGE - 3) continue;
+    if (m.map.buildings.some((b) => Math.abs(sx - b.x) < b.w / 2 + 2 && Math.abs(sz - b.z) < b.d / 2 + 2)) continue;
+    if (m.map.yards.some((y) => Math.abs(sx - y.x) < y.hw + 1.5 && Math.abs(sz - y.z) < y.hd + 1.5)) continue;
+    if (m.map.ponds.some((p) => Math.hypot(sx - p.x, sz - p.z) < p.r + 1) || riverDist2(m.map, sx, sz) < (RIVER_HALF + 1) * (RIVER_HALF + 1)) continue;
+    let hit = false;
+    solidsNear(m.map, sx, sz, 3, (_i, s) => {
+      if (s.shape === 'circle' ? pushCircle(sx, sz, FIGHTER_R + 0.5, s.x, s.z, s.r) : pushBox(sx, sz, FIGHTER_R + 0.5, s.x, s.z, s.hw, s.hd)) hit = true;
+    });
+    if (!hit) return { x: sx, z: sz };
+  }
+  return null;
+}
+
+test('computer eggs raid the fridges, break the toilets and hay bales, loot the diners and windmills, and warm up at campfires when hurt, never stuck on a fence, a car or the furniture', () => {
+  let tried = 0;
+  for (const seed of [1, 2, 3, 4]) {
+    const base = generateMap(seed);
+    const special = (c: { x: number; z: number }) => base.buildings.some((b) => (b.kind === 'diner' || b.kind === 'mill') && Math.abs(c.x - b.x) < b.w / 2 && Math.abs(c.z - b.z) < b.d / 2);
+    const jobs = [...base.containers.filter((c) => c.kind === 'fridge' || c.kind === 'toilet' || c.kind === 'hay' || (c.kind === 'chest' && special(c))).map((c) => ({ kind: c.kind, x: c.x, z: c.z, c: c.id })), ...base.fires.map((f) => ({ kind: 'fire', x: f.x, z: f.z, c: -1 }))];
+    for (const job of jobs) {
+      const m = quiet(seed);
+      const a = alone(m);
+      m.loot.clear();
+      // everything else already opened, so this is the one worth going to
+      m.opened = m.opened.map((_, i) => i !== job.c);
+      const at = startNear(m, job.x, job.z, 14) ?? startNear(m, job.x, job.z, 20);
+      assert.ok(at, `seed ${seed}: somewhere to start from near the ${job.kind}`);
+      land(a, at.x, at.z);
+      if (job.kind === 'fire') a.hp = 30;
+      let done = false;
+      for (let t = 0; t < 30 && !done; t += 1 / 30) {
+        step(m, 1 / 30);
+        m.events.length = 0;
+        done = job.kind === 'fire' ? a.warm : m.opened[job.c];
+      }
+      assert.ok(done, `seed ${seed}: a computer egg from ${at.x.toFixed(1)},${at.z.toFixed(1)} got to the ${job.kind} at ${job.x},${job.z} (stuck at ${a.x.toFixed(1)},${a.z.toFixed(1)})`);
+      if (job.kind === 'fire') {
+        const hp = a.hp;
+        run(m, 8);
+        assert.ok(a.hp > hp + 10, `seed ${seed}: and stayed by the fire to heal (${hp.toFixed(0)} to ${a.hp.toFixed(0)})`);
+      }
+      tried++;
+    }
+  }
+  assert.ok(tried > 100);
+});
+
+test('a computer egg on the booth side of a diner counter walks round it to the kitchen stash', () => {
+  let trips = 0;
+  for (let seed = 1; seed <= 20; seed++) {
+    const base = generateMap(seed);
+    const bi = base.buildings.findIndex((b) => b.kind === 'diner');
+    if (bi < 0) continue;
+    const b = base.buildings[bi];
+    const counter = base.furniture.find((f) => f.b === bi && f.kind === 'counter')!;
+    const stash = base.containers.filter((c) => (c.kind === 'fridge' || c.kind === 'chest') && Math.abs(c.x - b.x) < b.w / 2 && Math.abs(c.z - b.z) < b.d / 2);
+    // the booths are on the far side of the counter from the stash
+    const front = Math.sign(counter.z - stash[0].z);
+    for (const c of stash)
+      for (const u of [-4, 0, 4]) {
+        const m = quiet(seed);
+        const a = alone(m);
+        m.loot.clear();
+        m.opened = m.opened.map((_, i) => i !== c.id);
+        land(a, counter.x + u, counter.z + front * 1.1);
+        let t = 0;
+        for (; t < 20 && !m.opened[c.id]; t += 1 / 30) {
+          step(m, 1 / 30);
+          m.events.length = 0;
+        }
+        assert.ok(m.opened[c.id], `seed ${seed}: from ${a.x.toFixed(1)},${a.z.toFixed(1)} round the counter to the ${c.kind} at ${c.x},${c.z}`);
+        assert.ok(t < 12, `seed ${seed}: and quickly (${t.toFixed(1)} s)`);
+        trips++;
+      }
+  }
+  assert.ok(trips >= 30, `${trips} trips`);
+});
+
+test('a computer egg crosses the river by a bridge near its way, and wades across where there is none', () => {
+  let bridged = 0;
+  let waded = 0;
+  for (const seed of [1, 2, 3, 4, 5]) {
+    const base = generateMap(seed);
+    const open = (x: number, z: number) => {
+      const m = quiet(seed);
+      for (const d of [0, 2, 4, 6]) {
+        const p = startNear(m, x, z, d);
+        if (p) return p;
+      }
+      return null;
+    };
+    /** A computer egg with nothing to do but get from one spot to another, and whether it got wet on the way. */
+    const trip = (from: { x: number; z: number }, to: { x: number; z: number }) => {
+      const m = quiet(seed);
+      const a = alone(m);
+      m.loot.clear();
+      m.opened = m.opened.map(() => true);
+      land(a, from.x, from.z);
+      a.ai!.gx = to.x;
+      a.ai!.gz = to.z;
+      let wet = false;
+      let deck = false;
+      for (let t = 0; t < 40 && Math.hypot(a.x - to.x, a.z - to.z) > 3; t += 1 / 30) {
+        step(m, 1 / 30);
+        m.events.length = 0;
+        wet ||= a.wet;
+        deck ||= bridgeAt(m.map, a.x, a.z) >= 0;
+      }
+      return { there: Math.hypot(a.x - to.x, a.z - to.z) <= 3, wet, deck, at: a };
+    };
+    // from beside a bridge's end to well past its far end: over the deck, dry
+    for (const br of base.bridges) {
+      const ax = br.alongX ? 1 : 0;
+      const az = 1 - ax;
+      const h = br.alongX ? br.hw : br.hd;
+      for (const k of [-1, 1]) {
+        const from = open(br.x - ax * k * (h + 7) + az * 3, br.z - az * k * (h + 7) + ax * 3);
+        const to = open(br.x + ax * k * (h + 9) - az * 2, br.z + az * k * (h + 9) - ax * 2);
+        if (!from || !to || riverCrossings(base, from.x, from.z, to.x, to.z) % 2 === 0) continue;
+        const r = trip(from, to);
+        assert.ok(r.there, `seed ${seed}: from ${from.x.toFixed(1)},${from.z.toFixed(1)} over the bridge at ${br.x},${br.z} to ${to.x.toFixed(1)},${to.z.toFixed(1)} (stuck at ${r.at.x.toFixed(1)},${r.at.z.toFixed(1)})`);
+        assert.ok(r.deck && !r.wet, `seed ${seed}: kept dry over the bridge at ${br.x},${br.z}`);
+        bridged++;
+      }
+    }
+    // straight across, far from any bridge: wading
+    const r = base.river;
+    for (let i = 4; i < r.length - 4; i += 4) {
+      const p = r[i];
+      if (Math.abs(p.x) > HALF - 30 || Math.abs(p.z) > HALF - 30 || base.bridges.some((b) => Math.hypot(b.x - p.x, b.z - p.z) < 50)) continue;
+      const dx = r[i + 1].x - r[i - 1].x;
+      const dz = r[i + 1].z - r[i - 1].z;
+      const l = Math.hypot(dx, dz);
+      const nx = -dz / l;
+      const nz = dx / l;
+      const from = open(p.x + nx * (RIVER_HALF + 7), p.z + nz * (RIVER_HALF + 7));
+      const to = open(p.x - nx * (RIVER_HALF + 7), p.z - nz * (RIVER_HALF + 7));
+      if (!from || !to || riverCrossings(base, from.x, from.z, to.x, to.z) !== 1) continue;
+      const t = trip(from, to);
+      assert.ok(t.there && t.wet && !t.deck, `seed ${seed}: waded across at ${p.x},${p.z} (at ${t.at.x.toFixed(1)},${t.at.z.toFixed(1)})`);
+      waded++;
+    }
+  }
+  assert.ok(bridged >= 12 && waded >= 10, `${bridged} trips over bridges, ${waded} wading`);
+});
+
+test('a computer egg off somewhere far takes a bounce pad that points the right way', () => {
+  const m = quiet(3);
+  const a = alone(m);
+  openSpot(m);
+  m.map.pads = [{ x: 0, z: 0, dx: 1, dz: 0 }];
+  land(a, -8, 2);
+  // somewhere far east, inside the circle
+  a.ai!.goal = 'roam';
+  a.ai!.gx = 90;
+  a.ai!.gz = 0;
+  const evs: Ev[] = [];
+  for (let t = 0; t < 4 && a.phase === 'ground'; t += DT) evs.push(...run(m, DT));
+  assert.ok(evs.some((e) => e.t === 'bounce' && e.f === a.id), 'up it goes');
+  for (let t = 0; t < 6 && a.phase !== 'ground'; t += DT) run(m, DT);
+  assert.ok(a.phase === 'ground' && a.x > 35, `and down far along the way (${a.x.toFixed(1)})`);
+  // one pointing the wrong way is walked past
+  const w = quiet(3);
+  const b = alone(w);
+  openSpot(w);
+  w.map.pads = [{ x: 0, z: 0, dx: -1, dz: 0 }];
+  land(b, -8, 0.4);
+  b.ai!.gx = 90;
+  b.ai!.gz = 0;
+  const more = run(w, 4);
+  assert.ok(!more.some((e) => e.t === 'bounce'), 'round it, not over it');
+  assert.ok(b.x > 10, 'and on its way on foot');
 });
 
 test('a host’s report of twenty eggs fits well inside one room message, and new holdings travel', () => {

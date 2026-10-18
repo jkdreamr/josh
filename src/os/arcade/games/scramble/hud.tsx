@@ -1,8 +1,8 @@
 // Pictures and sheets for Scramble's interface: weapon and item icons, the island map, and How to Play.
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AMMO_BOX, ARMOR_CUT, ARMOR_NAMES, BOOST, FLARE_WAIT, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, SIP, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, type Ammo, type ArmorKind, type GunClass, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
-import { HALF, type Building, type Door, type GameMap } from './map';
+import { CAMP, HALF, PAD, RIVER_HALF, ROAD_HALF, type Building, type Door, type GameMap } from './map';
 import type { Held } from './logic';
 
 const Svg = ({ children, size = 28, label }: { children: ReactNode; size?: number; label?: string }) => (
@@ -449,7 +449,7 @@ export function EggIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-const MAP_ROOF: Record<Building['kind'], string> = { house: '#b5523b', farm: '#8b2f23', shed: '#7a5534', warehouse: '#6f7c88', container: '#4f6d8f', ruin: '#a39e93', coop: '#f5b301' };
+const MAP_ROOF: Record<Building['kind'], string> = { house: '#b5523b', farm: '#8b2f23', shed: '#7a5534', warehouse: '#6f7c88', container: '#4f6d8f', ruin: '#a39e93', coop: '#f5b301', diner: '#d64545', mill: '#7a4a2a' };
 
 /**
  * A doorway on the map: a light tab through the wall that pokes out the way in, or a dark band across a shipping
@@ -469,7 +469,13 @@ function DoorMark({ b, d }: { b: Building; d: Door }) {
   return <rect x={x - hw} y={z - hd} width={hw * 2} height={hd * 2} fill={open ? '#1d2025' : b.kind === 'ruin' ? '#e4dccb' : '#fff6d6'} />;
 }
 
-/** The island drawn in map coordinates (x right, north up), for the minimap and the big map. */
+/** The river's middle line as SVG points. */
+const riverPoints = (map: GameMap) => map.river.map((p) => `${p.x},${p.z}`).join(' ');
+
+/**
+ * The island drawn in map coordinates (x right, north up), for the minimap and the big map: the river and its bridges,
+ * roads, farm fences, cars, campfires and bounce pads too.
+ */
 export function IslandArt({ map }: { map: GameMap }) {
   const coop = map.buildings[map.coop];
   return (
@@ -480,8 +486,23 @@ export function IslandArt({ map }: { map: GameMap }) {
       {map.ponds.map((p, i) => (
         <circle key={`p${i}`} cx={p.x} cy={p.z} r={p.r} fill="#4cb3dc" stroke="#d8c690" strokeWidth="1.5" />
       ))}
+      {map.river.length > 1 && (
+        <>
+          <polyline points={riverPoints(map)} fill="none" stroke="#d8c690" strokeWidth={RIVER_HALF * 2 + 3} strokeLinejoin="round" />
+          <polyline points={riverPoints(map)} fill="none" stroke="#4cb3dc" strokeWidth={RIVER_HALF * 2} strokeLinejoin="round" />
+        </>
+      )}
+      {map.roads.map((r, i) => (
+        <line key={`rd${i}`} x1={r.x0} y1={r.z0} x2={r.x1} y2={r.z1} stroke="#cdb07a" strokeWidth={ROAD_HALF * 2} strokeLinecap="round" />
+      ))}
+      {map.bridges.map((b, i) => (
+        <rect key={`br${i}`} x={b.x - b.hw} y={b.z - b.hd} width={b.hw * 2} height={b.hd * 2} fill="#a57846" stroke="#5a3e24" strokeWidth="0.6" />
+      ))}
       {map.fields.map((f, i) => (
         <rect key={`f${i}`} x={f.x - f.hw} y={f.z - f.hd} width={f.hw * 2} height={f.hd * 2} fill="#b8a640" />
+      ))}
+      {map.yards.map((y, i) => (
+        <rect key={`y${i}`} x={y.x - y.hw} y={y.z - y.hd} width={y.hw * 2} height={y.hd * 2} fill="none" stroke="#c49a5c" strokeWidth="1.2" strokeDasharray="5 3" />
       ))}
       {map.trees.map((t, i) => (
         <circle key={`t${i}`} cx={t.x} cy={t.z} r="2" fill="#3f8f3a" />
@@ -493,7 +514,50 @@ export function IslandArt({ map }: { map: GameMap }) {
         <rect key={`b${i}`} x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={MAP_ROOF[b.kind]} stroke={b.kind === 'ruin' ? 'none' : '#f1e6d2'} strokeWidth="1" />
       ))}
       {map.buildings.map((b, i) => b.doors.map((d, k) => <DoorMark key={`d${i}-${k}`} b={b} d={d} />))}
+      {map.cars.map((c, i) => (
+        <rect key={`c${i}`} x={c.x - c.hw} y={c.z - c.hd} width={c.hw * 2} height={c.hd * 2} rx="0.6" fill={c.truck ? '#4a4e55' : '#e4e7ec'} stroke="#2b2d33" strokeWidth="0.5" />
+      ))}
+      {map.fires.map((f, i) => (
+        <circle key={`fi${i}`} cx={f.x} cy={f.z} r={CAMP.r * 0.7} fill="#ff8a2a" stroke="#ffd36a" strokeWidth="1" />
+      ))}
+      {map.pads.map((p, i) => (
+        <g key={`pd${i}`}>
+          <circle cx={p.x} cy={p.z} r={PAD.r + 1} fill="#2ee6a6" stroke="#0c6b4a" strokeWidth="0.8" />
+          <line x1={p.x} y1={p.z} x2={p.x + p.dx * 6} y2={p.z + p.dz * 6} stroke="#0c6b4a" strokeWidth="1.4" strokeLinecap="round" />
+        </g>
+      ))}
       {coop && <path d={star(coop.x, coop.z, 9)} fill="#ffd23d" stroke="#7a4a00" strokeWidth="1.4" strokeLinejoin="round" />}
+    </>
+  );
+}
+
+/**
+ * Where each place's name goes on the big map: above its middle, or below it, or on it, whichever first clears the
+ * names already placed (sizes in island meters, for the map's 9 m type).
+ */
+function labelSpots(map: GameMap) {
+  const placed: { x: number; y: number; hw: number }[] = [];
+  return map.places.map((p) => {
+    const hw = p.name.length * 2.7 + 2;
+    const x = Math.max(-HALF + hw, Math.min(HALF - hw, p.x));
+    const up = Math.min(p.r * 0.5, 16);
+    const tries = [p.z - up, p.z + up + 8, p.z + 3, p.z - up - 11, p.z + up + 19].map((y) => Math.max(-HALF + 12, Math.min(HALF - 4, y)));
+    const y = tries.find((t) => placed.every((o) => Math.abs(o.x - x) > o.hw + hw || Math.abs(o.y - t) > 10)) ?? tries[0];
+    placed.push({ x, y, hw });
+    return { x, y };
+  });
+}
+
+/** The name of every town and site, for the big map (the minimap names only the place you're in, under it). */
+export function PlaceNames({ map }: { map: GameMap }) {
+  const spots = useMemo(() => labelSpots(map), [map]);
+  return (
+    <>
+      {map.places.map((p, i) => (
+        <text key={i} className="g-scramble-place" x={spots[i].x} y={spots[i].y} textAnchor="middle">
+          {p.name}
+        </text>
+      ))}
     </>
   );
 }
@@ -643,7 +707,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>+, shield, coffee</dt>
               <dd>Heal, top up your shield, or drink a coffee. The right item is picked for you (a golden egg tart when you're nearly cracked, a smoothie after the minis)</dd>
               <dt>pick up</dt>
-              <dd>Shows up when you stand on something or next to a chest</dd>
+              <dd>Shows up when you stand on something or next to a chest or a fridge</dd>
             </>
           ) : (
             <>
@@ -654,7 +718,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>Space</dt>
               <dd>Jump from the bus, then build a wall where you aim ({WALL_COST} wood). Right click builds too</dd>
               <dt>E or F</dt>
-              <dd>Pick up, swap, open chests and supply drops</dd>
+              <dd>Pick up, swap, open chests, fridges and supply drops</dd>
               <dt>R</dt>
               <dd>Reload</dd>
               <dt>1 2 3 4</dt>
@@ -676,7 +740,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>The bus.</b> It flies across the island. Jump any time while it's over land, then glide down and steer to where you want to land.
           </li>
           <li>
-            <b>Loot.</b> Guns, ammo, healing and more lie in buildings and around the island. Smash crates (most hold a box of ammo too) and open the golden chests for better ones. Walking over ammo, healing and throwables picks them up.
+            <b>Loot.</b> Guns, ammo, healing and more lie in buildings and around the island. Smash crates (most hold a box of ammo too), toilets and hay bales, raid the fridges and open the golden chests for better ones. Walking over ammo, healing and throwables picks them up.
           </li>
           <li>
             <b>Legendary loot.</b> Legendary guns, flare guns and golden egg tarts glow gold on the ground, with a beam of light you can spot from far off.
@@ -694,7 +758,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Supply drops.</b> Three times a match a crate floats down under a balloon inside the next circle, with a beam of light over it. They're full of epic and legendary gear. Fire a flare gun to call one more down near you.
           </li>
           <li>
-            <b>Walls.</b> Swing at trees for wood, then throw up walls for cover. They take a beating before they break.
+            <b>Walls.</b> Swing at trees or fallen logs for wood, then throw up walls for cover. They take a beating before they break.
           </li>
         </ul>
       </section>
@@ -702,7 +766,28 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         <h3>Around the island</h3>
         <ul>
           <li>
+            <b>Towns and sites.</b> Every town, farm, camp and yard has a name. They're all on the big map, the little map shows the one you're in, and the name comes up when you walk or land in. Dirt roads link the places near each other, and you walk a little quicker on them.
+          </li>
+          <li>
             <b>Houses, farmhouses and sheds.</b> Loot inside, often a chest. The roof lifts off while you're in, and nobody outside can see you.
+          </li>
+          <li>
+            <b>Furniture.</b> Tables, beds and diner booths only stop your feet; kitchen counters, shelves and flour sacks stop bullets too. Rugs and chairs are just there to look at.
+          </li>
+          <li>
+            <b>Kitchens.</b> Houses and farmhouses have a fridge, which opens like a chest and holds things to eat and patch up with, and a toilet, which breaks like a crate and might hold anything.
+          </li>
+          <li>
+            <b>Campfires.</b> By some houses and out at the camps (orange dots on the map). Stand within a few steps of one and it heals you {CAMP.hps} health a second, all the way to full, as long as nobody chases you off.
+          </li>
+          <li>
+            <b>Bounce pads.</b> The glowing green discs with arrows on (green dots on the map). Step on one and up you go, gliding off the way the arrows point: steer as you did from the bus, or let go and it carries you on, and land somewhere new. Nothing can hit you up there, but you can't shoot or heal either.
+          </li>
+          <li>
+            <b>Farms.</b> A wooden fence rings the farmhouse and its field, with a gate in the middle of every side. Fences stop you walking, not bullets. The hay bales are cover that breaks when shot or smacked, and sometimes something falls out.
+          </li>
+          <li>
+            <b>Cars and trucks.</b> Parked in driveways, by the warehouses and the container yards. Solid cover: nothing gets through one.
           </li>
           <li>
             <b>Doors.</b> Every way in has a bright frame, a lamp, a porch and an awning sticking out from the roof, and shows as a light tab on the map. Walk up to a door, or line up with one, and the roof thins so you can peek in.
@@ -717,16 +802,22 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>The Golden Coop.</b> The gold-roofed building with a star on the map. One way in, and a golden chest at the back full of legendary gear.
           </li>
           <li>
+            <b>The diner and the windmill.</b> Most islands have one or the other, now and then both, each going by its own name. The diner has booths, a counter and, in the kitchen at the back, two fridges and a chest. The windmill has one way in, flour sacks and a millstone, and a chest across from the door as good as a supply drop.
+          </li>
+          <li>
             <b>Bushes and cornfields.</b> Stand in one and nobody sees you from a distance until you fire.
           </li>
           <li>
             <b>Barrels.</b> Shoot or smack one and it blows up, hurting everyone nearby and setting off other barrels.
           </li>
           <li>
-            <b>Ponds.</b> You can wade through, but slowly.
+            <b>Ponds and the river.</b> You can wade through, but slowly, and the water hides nobody. The river winds right across the island; cross it dry and at a walk on a wooden bridge (brown on the map), whose rails stop your feet but not bullets.
           </li>
           <li>
             <b>Ruins.</b> Broken walls and no roof: cover, but nowhere to hide.
+          </li>
+          <li>
+            <b>Odds and ends.</b> Lamp posts along the roads, mailboxes by the doors, picnic tables in the yards, and fallen logs and stumps in the woods. Posts stop bullets; a table, a log or a stump only stops your feet.
           </li>
         </ul>
       </section>

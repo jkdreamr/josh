@@ -44,27 +44,45 @@ import {
 } from './items.ts';
 import {
   BUS_Y,
+  CAMP,
+  CRATE_HALF,
   EDGE,
   DROP_BASE,
+  HAY_HW,
+  PAD,
   POND_SLOW,
+  RIVER_HALF,
+  ROAD_SPEED,
   SUPPLY_FALL,
+  TOILET_R,
   WALL_T,
+  bridgeAt,
   buildingAt,
   busAt,
   coverAt,
   dropFits,
+  fireAt,
+  furnitureSolid,
   generateMap,
+  low,
+  padAt,
   placeDrop,
-  pondAt,
   pushBox,
   pushCircle,
   pushObb,
+  rayBox,
   rayCircle,
   rayObb,
   raySolid,
+  riverCrossings,
+  roadAt,
   solidsAlong,
   solidsNear,
   stormAt,
+  waterAt,
+  yardAt,
+  type Box,
+  type Bridge,
   type Container,
   type Door,
   type GameMap,
@@ -91,8 +109,12 @@ export const WALL_DIST = 2.1;
 export const BUILD_COOL = 0.3;
 export const STORM_TICK = 0.5;
 export const CRATE_HP = 60;
+export const TOILET_HP = 35;
+export const HAY_HP = 50;
 /** A barrel takes this much before it goes up, then hurts everything within `radius`. */
 export const BARREL = { hp: 40, radius: 5, dmg: 75 };
+/** About how far a bounce pad carries an egg that glides straight on. */
+export const PAD_FLY = Math.round((PAD.y / FALL) * GLIDE);
 /** Remote eggs are drawn this far in the past, between the last two updates. */
 export const INTERP = 0.1;
 /** The slot numbers: two guns, the melee weapon, and whatever there is to throw. */
@@ -160,11 +182,21 @@ export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload
 export type Snap = { at: number; x: number; z: number; y: number; aim: number; vx: number; vz: number };
 
 export type Ai = {
-  goal: 'drop' | 'loot' | 'chest' | 'zone' | 'roam' | 'chase';
+  /** Where we're off to: loot, a chest (or fridge) to open, a crate (or toilet, or hay bale) to smash, a campfire to warm up at. */
+  goal: 'drop' | 'loot' | 'chest' | 'smash' | 'fire' | 'zone' | 'roam' | 'chase';
   gx: number;
   gz: number;
   item: number;
+  /** The container (for chest and smash goals) or the campfire (fire) we're going to. */
   chest: number;
+  /** A bounce pad on the way to somewhere far, or -1. */
+  pad: number;
+  /** The bridge we're crossing the river by, or -1. */
+  bridge: number;
+  /** When to give up on a crate or a campfire. */
+  until: number;
+  /** The last container we gave up smashing. */
+  tried: number;
   target: number;
   react: number;
   strafe: number;
@@ -179,8 +211,9 @@ export type Ai = {
   /** Knocking down the wall or crate in our way, for this long, swinging this way. */
   smashT: number;
   smashA: number;
-  /** The doorway we're on our way out through. */
+  /** The doorway we're on our way out through (or the gate we're on our way in through, when `inward`). */
   exit: Door | null;
+  inward: boolean;
   err: number;
   errT: number;
   /** Seconds the aim has held steady on the target, for a scoped shot. */
@@ -273,6 +306,13 @@ export type Fighter = {
   inside: number;
   /** Wading through a pond. */
   wet: boolean;
+  /** Warming up at a campfire. */
+  warm: boolean;
+  /** Match time the current glide began (from the bus or a bounce pad). */
+  dropAt: number;
+  /** The way a bounce pad threw us: unsteered, the glide carries on that way (still, off the bus). */
+  flingX: number;
+  flingZ: number;
   input: Input;
   ai: Ai | null;
   /** Remote eggs: recent reports, newest last, and what they hold. */
@@ -299,7 +339,7 @@ export type Toss = { f: number; k: ThrowId; x: number; z: number; lx: number; lz
  */
 export type Zone = { k: 'flour' | 'sauce' | 'jam' | 'bush'; x: number; z: number; r: number; from: number; until: number; by: number };
 
-export type Thud = 'tree' | 'rock' | 'wall' | 'crate' | 'chest' | 'barrel' | 'built' | 'egg' | 'pan' | 'ground';
+export type Thud = 'tree' | 'rock' | 'wall' | 'crate' | 'chest' | 'barrel' | 'car' | 'fence' | 'table' | 'post' | 'fire' | 'log' | 'shelf' | 'seat' | 'built' | 'egg' | 'pan' | 'ground';
 
 /** Things that happened this frame, for sounds, effects and the network. `net` marks news that came from it. */
 export type Ev = (
@@ -308,6 +348,7 @@ export type Ev = (
   | { t: 'storm'; phase: number; shrinking: boolean }
   | { t: 'supply'; c: number }
   | { t: 'jump'; f: number }
+  | { t: 'bounce'; f: number }
   | { t: 'land'; f: number }
   | { t: 'shot'; f: number; w: WeaponId; r: number; x: number; z: number; a: number; s: number; k: number }
   | { t: 'swing'; f: number }
@@ -521,6 +562,10 @@ function newFighter(id: number, e: Entrant, x: number, z: number): Fighter {
     bush: -1,
     inside: -1,
     wet: false,
+    warm: false,
+    dropAt: 0,
+    flingX: 0,
+    flingZ: 0,
     input: noInput(),
     ai: null,
     snaps: [],
@@ -554,6 +599,10 @@ function newAi(m: Match, f: Fighter): Ai {
     gz: pick.z + (rng() * 2 - 1) * 3,
     item: -1,
     chest: -1,
+    pad: -1,
+    bridge: -1,
+    until: 0,
+    tried: -1,
     target: -1,
     react: 0,
     strafe: rng() < 0.5 ? 1 : -1,
@@ -568,6 +617,7 @@ function newAi(m: Match, f: Fighter): Ai {
     smashT: 0,
     smashA: 0,
     exit: null,
+    inward: false,
     err: 0,
     errT: 0,
     steady: 0,
@@ -612,7 +662,7 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
     gone: new Set(),
     goneWalls: new Set(),
     opened: map.containers.map(() => false),
-    crateHp: map.containers.map((c) => (c.kind === 'barrel' ? BARREL.hp : CRATE_HP)),
+    crateHp: map.containers.map((c) => (c.kind === 'barrel' ? BARREL.hp : c.kind === 'toilet' ? TOILET_HP : c.kind === 'hay' ? HAY_HP : CRATE_HP)),
     calls: new Map(),
     storm: stormAt(map.storm, 0),
     events: [],
@@ -675,10 +725,10 @@ export function standing(m: Match, s: Solid) {
 
 /** A supply drop is down once its time comes; everything else always is. */
 export const landed = (m: Match, c: Container | undefined) => !!c && (c.kind !== 'supply' || m.time >= c.at);
-/** Chests and landed supply drops open with the interact key. */
-export const openable = (m: Match, c: Container | undefined) => !!c && (c.kind === 'chest' || c.kind === 'supply') && landed(m, c) && !m.opened[c.id];
-/** Crates and barrels break when hit. */
-const breakable = (c: Container | undefined) => !!c && (c.kind === 'crate' || c.kind === 'barrel');
+/** Chests, fridges and landed supply drops open with the interact key. */
+export const openable = (m: Match, c: Container | undefined) => !!c && (c.kind === 'chest' || c.kind === 'supply' || c.kind === 'fridge') && landed(m, c) && !m.opened[c.id];
+/** Crates, toilets, hay bales and barrels break when hit. */
+export const breakable = (c: Container | undefined) => !!c && (c.kind === 'crate' || c.kind === 'barrel' || c.kind === 'toilet' || c.kind === 'hay');
 
 // -------------------------------------------------------------------------------------------------------------------
 // The frame.
@@ -784,6 +834,9 @@ function act(m: Match, f: Fighter, dt: number) {
       f.y = BUS_Y - 1.5;
       f.vx = 0;
       f.vz = 0;
+      f.flingX = 0;
+      f.flingZ = 0;
+      f.dropAt = m.time;
       emit(m, { t: 'jump', f: f.id });
     }
     clearOneShots(inp);
@@ -792,8 +845,8 @@ function act(m: Match, f: Fighter, dt: number) {
   if (f.phase === 'drop') {
     const len = Math.hypot(inp.mx, inp.mz);
     const k = 1 - Math.exp(-5 * dt);
-    f.vx += ((len > 0 ? (inp.mx / Math.max(1, len)) * GLIDE : 0) - f.vx) * k;
-    f.vz += ((len > 0 ? (inp.mz / Math.max(1, len)) * GLIDE : 0) - f.vz) * k;
+    f.vx += ((len > 0 ? (inp.mx / Math.max(1, len)) * GLIDE : f.flingX * GLIDE) - f.vx) * k;
+    f.vz += ((len > 0 ? (inp.mz / Math.max(1, len)) * GLIDE : f.flingZ * GLIDE) - f.vz) * k;
     f.x = clamp(f.x + f.vx * dt, -EDGE, EDGE);
     f.z = clamp(f.z + f.vz * dt, -EDGE, EDGE);
     f.y -= FALL * dt;
@@ -866,11 +919,12 @@ function act(m: Match, f: Fighter, dt: number) {
   if (inp.interact) interact(m, f);
   if (inp.fire && f.fireT <= 0 && f.burst <= 0) trigger(m, f);
 
-  // walking (slower spinning a minigun, and much slower through jam)
-  f.wet = pondAt(m.map, f.x, f.z) >= 0;
+  // walking: slow through a pond or the river and much slower through jam, a little quicker on a road, slower
+  // spinning a minigun
+  f.wet = waterAt(m.map, f.x, f.z);
   const jam = m.zones.length > 0 && zoneAt(m, 'jam', f.x, f.z) !== null;
   const spun = f.spin > 0 && hs?.spin ? hs.spin.slow : 1;
-  const speed = SPEED * paceOf(f) * (f.using ? 0.5 : 1) * (f.boost > 0 ? BOOST.speed : 1) * (f.wet ? POND_SLOW : 1) * (jam ? (THROWS.jam.slow ?? 1) : 1) * spun;
+  const speed = SPEED * paceOf(f) * (f.using ? 0.5 : 1) * (f.boost > 0 ? BOOST.speed : 1) * (f.wet ? POND_SLOW : roadAt(m.map, f.x, f.z) ? ROAD_SPEED : 1) * (jam ? (THROWS.jam.slow ?? 1) : 1) * spun;
   const len = Math.hypot(inp.mx, inp.mz);
   const tx = len > 0 ? (inp.mx / Math.max(1, len)) * speed : 0;
   const tz = len > 0 ? (inp.mz / Math.max(1, len)) * speed : 0;
@@ -910,6 +964,32 @@ function act(m: Match, f: Fighter, dt: number) {
 
   autoPickup(m, f);
 
+  // a bounce pad throws us up for a glide, off the way its arrows point
+  const pad = padAt(m.map, f.x, f.z);
+  if (pad >= 0) {
+    const p = m.map.pads[pad];
+    f.phase = 'drop';
+    f.y = PAD.y;
+    f.dropAt = m.time;
+    f.flingX = p.dx;
+    f.flingZ = p.dz;
+    f.vx = p.dx * GLIDE;
+    f.vz = p.dz * GLIDE;
+    f.using = null;
+    f.useT = 0;
+    f.reloadT = 0;
+    f.burst = 0;
+    f.stormT = 0;
+    f.burnT = 0;
+    f.bush = -1;
+    f.inside = -1;
+    f.wet = false;
+    f.warm = false;
+    emit(m, { t: 'bounce', f: f.id });
+    clearOneShots(inp);
+    return;
+  }
+
   if (f.boost > 0) {
     f.hp = Math.min(HP_MAX, f.hp + BOOST.heal * Math.min(dt, f.boost / BOOST.drain));
     f.boost = Math.max(0, f.boost - BOOST.drain * dt);
@@ -918,6 +998,9 @@ function act(m: Match, f: Fighter, dt: number) {
     f.shield = Math.min(SHIELD_MAX, f.shield + Math.min(f.sip, SIP * dt));
     f.sip = Math.max(0, f.sip - SIP * dt);
   }
+  // a campfire warms you back up, slowly
+  f.warm = fireAt(m.map, f.x, f.z) >= 0;
+  if (f.warm && f.hp < HP_MAX) f.hp = Math.min(HP_MAX, f.hp + CAMP.hps * dt);
 
   const s = m.storm;
   const sx = f.x - s.x;
@@ -1176,14 +1259,14 @@ function swing(m: Match, f: Fighter) {
     bestD = d;
   }
   if (best) return strike(m, f, best, spec.dmg, f.melee, best.x, best.z);
-  // then a wall, crate, barrel or tree just ahead
+  // then a wall, crate, barrel, tree or fallen log just ahead (a fence or a table too, for the bonk)
   const fx = Math.sin(f.aim);
   const fz = Math.cos(f.aim);
-  const hit = castRay(m, f.x, f.z, fx, fz, spec.range, -1, false);
+  const hit = castRay(m, f.x, f.z, fx, fz, spec.range, -1, false, true);
   if (!hit) return;
   const x = f.x + fx * hit.t;
   const z = f.z + fz * hit.t;
-  if (hit.what === 'tree') {
+  if (hit.what === 'tree' || hit.what === 'log') {
     const n = Math.min(spec.wood, WOOD_MAX - f.wood);
     f.wood += n;
     emit(m, { t: 'harvest', f: f.id, x, z, n });
@@ -1330,13 +1413,14 @@ export function forfeit(m: Match, fid: number) {
 type RayHit = { t: number; what: Thud; ref: number; fighter: Fighter | null };
 
 /**
- * The first thing a ray meets within `len`: trees, rocks, building walls, crates and barrels still standing, chests,
- * landed supply drops, built walls, and (when `eggs`) any egg in the fight except `skip`.
+ * The first thing a ray meets within `len`: trees, rocks, building walls, cars, posts, crates and barrels still
+ * standing, chests, landed supply drops, built walls, and (when `eggs`) any egg in the fight except `skip`. Low
+ * things (fences, tables, fire pits) only count when `lows`: bullets and eyes go over them, feet and swings don't.
  */
-export function castRay(m: Match, x: number, z: number, dx: number, dz: number, len: number, skip: number, eggs: boolean): RayHit | null {
+export function castRay(m: Match, x: number, z: number, dx: number, dz: number, len: number, skip: number, eggs: boolean, lows = false): RayHit | null {
   let best = null as RayHit | null;
   solidsAlong(m.map, x, z, x + dx * len, z + dz * len, (_i, s) => {
-    if (!standing(m, s)) return;
+    if (!standing(m, s) || (!lows && low(s))) return;
     const t = raySolid(s, x, z, dx, dz, len);
     if (t < (best?.t ?? Infinity)) best = { t, what: s.what, ref: s.ref, fighter: null };
   });
@@ -2000,7 +2084,14 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
   }
   f.outSeen = -1;
   const snaps = f.snaps;
-  if (f.phase !== s.phase) snaps.length = 0;
+  if (f.phase !== s.phase) {
+    snaps.length = 0;
+    if (s.phase === 'drop') {
+      f.dropAt = m.time;
+      // up off the ground again: a bounce pad (its owner's word is the glide itself, so no news travels for it)
+      if (f.phase === 'ground') emit(m, { t: 'bounce', f: f.id, net: true });
+    }
+  }
   f.phase = s.phase;
   f.hp = s.hp;
   f.shield = s.shield;
@@ -2041,11 +2132,13 @@ function follow(m: Match, f: Fighter) {
   if (f.phase === 'ground') {
     f.bush = coverOf(m, f.x, f.z);
     f.inside = buildingAt(m.map, f.x, f.z);
-    f.wet = pondAt(m.map, f.x, f.z) >= 0;
+    f.wet = waterAt(m.map, f.x, f.z);
+    f.warm = fireAt(m.map, f.x, f.z) >= 0;
   } else {
     f.bush = -1;
     f.inside = -1;
     f.wet = false;
+    f.warm = false;
   }
 }
 
@@ -2146,6 +2239,8 @@ function think(m: Match, f: Fighter, dt: number) {
     return;
   }
   if (f.phase === 'drop') {
+    // gliding (from the bus, or a bounce pad on the way somewhere): steer for where we meant to go
+    ai.pad = -1;
     const dx = ai.gx - f.x;
     const dz = ai.gz - f.z;
     const d = Math.hypot(dx, dz);
@@ -2336,20 +2431,36 @@ function think(m: Match, f: Fighter, dt: number) {
     if (pick >= 0 && pick !== f.slot) inp.slot = pick;
     else if (pick < 0 && f.slot === SLOT_THROW) inp.slot = SLOT_MELEE;
   }
+  const via = ai.pad >= 0 ? m.map.pads[ai.pad] : null;
   if (burn) away(burn);
   else if (f.using && !outside) {
     // stand still behind cover while it takes
   } else if (hiding) head(m, f, ai, ai.hideX, ai.hideZ, dt, 0.5);
-  else head(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : 0.4);
+  else if (via) head(m, f, ai, via.x, via.z, dt, 0);
+  else head(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : ai.goal === 'smash' ? 1.4 : 0.4);
   inp.aim = Math.hypot(f.vx, f.vz) > 0.5 ? Math.atan2(f.vx, f.vz) : f.aim;
   if (ai.smashT > 0) {
-    // knock down what's in the way
+    // knock down what's in the way (or what we came to break)
     inp.slot = SLOT_MELEE;
     inp.aim = ai.smashA;
     inp.fire = true;
   }
 
-  if (ai.goal === 'loot') {
+  if (ai.goal === 'smash') {
+    const c = m.map.containers[ai.chest];
+    if (!c || m.opened[c.id] || m.time > ai.until) {
+      // broken, or taking too long: leave it be
+      if (c && !m.opened[c.id]) ai.tried = c.id;
+      ai.think = 0;
+    } else {
+      const d = Math.hypot(c.x - f.x, c.z - f.z);
+      const half = c.kind === 'hay' ? HAY_HW : c.kind === 'toilet' ? TOILET_R : CRATE_HALF;
+      if (d < MELEE[f.melee].range + half - 0.2) {
+        ai.smashT = 0.3;
+        ai.smashA = Math.atan2(c.x - f.x, c.z - f.z);
+      }
+    }
+  } else if (ai.goal === 'loot') {
     const l = m.loot.get(ai.item);
     if (!l) ai.think = 0;
     else if (Math.hypot(l.x - f.x, l.z - f.z) < PICK_R - 0.2 && (l.def.kind === 'gun' || l.def.kind === 'melee')) {
@@ -2388,7 +2499,30 @@ function startToss(ai: Ai, f: Fighter, k: ThrowId, d: number, a = NaN) {
 /** Melee weapons worth trading the spatula for, best first. */
 const MELEE_VALUE: Record<MeleeId, number> = { spatula: 0, whisk: 2, knife: 4, cleaver: 4, pan: 5, pin: 3 };
 
+/** Picks what to do, then whether a bounce pad on the way would get us somewhere far quicker. */
 function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
+  pickGoal(m, f, ai, L);
+  ai.pad = -1;
+  if (ai.target >= 0 || ai.goal === 'fire' || ai.goal === 'smash' || ai.goal === 'chase') return;
+  const far = Math.hypot(ai.gx - f.x, ai.gz - f.z);
+  if (far < 35) return;
+  const s = m.storm;
+  const safe = s.shrinking || s.timer < 20 ? s.next : { x: s.x, z: s.z, r: s.r };
+  let best = far - 8;
+  m.map.pads.forEach((p, i) => {
+    const d = Math.hypot(p.x - f.x, p.z - f.z);
+    if (d > 26) return;
+    // a pad pointing our way, that lands us inside the circle and leaves less of the way to walk
+    const lx = p.x + p.dx * PAD_FLY;
+    const lz = p.z + p.dz * PAD_FLY;
+    const walk = d + Math.hypot(ai.gx - lx, ai.gz - lz);
+    if ((ai.gx - f.x) * p.dx + (ai.gz - f.z) * p.dz < far * 0.6 || Math.hypot(lx - safe.x, lz - safe.z) > safe.r - 2 || walk >= best) return;
+    ai.pad = i;
+    best = walk;
+  });
+}
+
+function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   // a target: the nearest egg we can see, sticking with the one we have, and turning on whoever just shot us
   const far = f.guns.some((x) => x && WEAPONS[x.w].cls === 'sniper' && hasAmmo(f, x));
   const sight = L.sight + (far ? 20 : 0) + SCOPE_VIEW[f.scope];
@@ -2432,6 +2566,33 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   }
 
   const inSafe = (x: number, z: number) => Math.hypot(x - safe.x, z - safe.z) < safe.r - 2;
+  // hurt, with nobody about: warm up at a campfire nearby, when we have nothing to patch up with or it's right there
+  if (ai.goal === 'fire') {
+    const c = m.map.fires[ai.chest];
+    if (c && f.hp < HP_MAX - 2 && m.time < ai.until && inSafe(c.x, c.z)) return;
+  }
+  if (f.hp < L.heal + 15) {
+    let fire = -1;
+    let fireD = bestUse(f, 'heal') ? 12 : 45;
+    m.map.fires.forEach((c, i) => {
+      const d = Math.hypot(c.x - f.x, c.z - f.z);
+      if (d < fireD && inSafe(c.x, c.z)) {
+        fire = i;
+        fireD = d;
+      }
+    });
+    if (fire >= 0) {
+      // stand beside it, on our side of it
+      const c = m.map.fires[fire];
+      const d = Math.max(0.1, Math.hypot(f.x - c.x, f.z - c.z));
+      ai.goal = 'fire';
+      ai.chest = fire;
+      ai.until = m.time + 45;
+      ai.gx = c.x + ((f.x - c.x) / d) * 1.8;
+      ai.gz = c.z + ((f.z - c.z) / d) * 1.8;
+      return;
+    }
+  }
   const worst = Math.min(gunValue(f.guns[0]), gunValue(f.guns[1]));
   // the gun a find would take the place of, when both hands are full
   const weakest = f.guns[0] && f.guns[1] ? f.guns[gunValue(f.guns[0]) <= gunValue(f.guns[1]) ? 0 : 1] : null;
@@ -2499,13 +2660,33 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     ai.gz = c.z + c.face * (c.kind === 'supply' ? 1.5 : 1.1);
     return;
   }
+  // a crate, toilet or hay bale nearby to break open for whatever's in it (from farther off when we're unarmed)
+  let smash = -1;
+  let smashD = armed ? 14 : 26;
+  for (const c of m.map.containers) {
+    if (!breakable(c) || c.kind === 'barrel' || m.opened[c.id] || c.id === ai.tried || !inSafe(c.x, c.z)) continue;
+    const d = Math.hypot(c.x - f.x, c.z - f.z);
+    if (d < smashD) {
+      smash = c.id;
+      smashD = d;
+    }
+  }
+  if (smash >= 0) {
+    const c = m.map.containers[smash];
+    if (ai.goal !== 'smash' || ai.chest !== smash) ai.until = m.time + 15;
+    ai.goal = 'smash';
+    ai.chest = smash;
+    ai.gx = c.x;
+    ai.gz = c.z;
+    return;
+  }
   if (ai.goal !== 'roam' || Math.hypot(ai.gx - f.x, ai.gz - f.z) < 3 || !inSafe(ai.gx, ai.gz)) {
     ai.goal = 'roam';
     const r = Math.max(2, safe.r * 0.7);
     for (let i = 0; i < 8; i++) {
       const x = safe.x + (m.rng() * 2 - 1) * r;
       const z = safe.z + (m.rng() * 2 - 1) * r;
-      if (Math.abs(x) > EDGE - 4 || Math.abs(z) > EDGE - 4 || !inSafe(x, z)) continue;
+      if (Math.abs(x) > EDGE - 4 || Math.abs(z) > EDGE - 4 || !inSafe(x, z) || waterAt(m.map, x, z)) continue;
       ai.gx = x;
       ai.gz = z;
       break;
@@ -2524,27 +2705,263 @@ function shutsIn(m: Match, f: Fighter, aim: number) {
   );
 }
 
-/** Steers toward a goal. From inside a building the goal isn't in, that's out through a doorway first. */
+/**
+ * Steers toward a goal. From inside a building the goal isn't in, that's out through a doorway first; from inside a
+ * fenced yard it isn't in, out through a gate. Going the other way, it's in through a gate, then a doorway. With the
+ * river in the way, it's over a bridge first, unless wading across is quicker.
+ */
 function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, stop: number) {
   const b = f.inside >= 0 ? m.map.buildings[f.inside] : undefined;
-  if (b && buildingAt(m.map, tx, tz) !== f.inside) {
-    // the doorway that makes the shortest way there, one in sight if there is one
+  const yard = b ? -1 : yardAt(m.map, f.x, f.z);
+  const ways = b ? b.doors : yard >= 0 ? m.map.yards[yard].gates : null;
+  // the way through that makes the shortest way there, one in sight if there is one
+  const pick = (list: Door[], inward: boolean) => {
     let best = Infinity;
-    for (const dr of b.doors) {
-      const d = Math.hypot(dr.x - f.x, dr.z - f.z) + Math.hypot(tx - dr.x, tz - dr.z) + (clearLine(m, f.x, f.z, dr.x - dr.ox, dr.z - dr.oz) ? 0 : 20);
+    for (const dr of list) {
+      const d = Math.hypot(dr.x - f.x, dr.z - f.z) + Math.hypot(tx - dr.x, tz - dr.z) + (clearLine(m, f.x, f.z, dr.x + dr.ox * (inward ? 1 : -1), dr.z + dr.oz * (inward ? 1 : -1)) ? 0 : 20);
       if (d < best) {
         ai.exit = dr;
         best = d;
       }
     }
-  } else if (b || (ai.exit && Math.hypot(f.x - ai.exit.x, f.z - ai.exit.z) >= 1.5)) ai.exit = null;
+    ai.inward = inward;
+  };
+  const yardIn = !b && yard < 0 ? yardAt(m.map, tx, tz) : -1;
+  const roomIn = !b && yardIn < 0 ? buildingAt(m.map, tx, tz) : -1;
+  if (b && buildingAt(m.map, tx, tz) !== f.inside) pick(b.doors, false);
+  else if (yard >= 0 && yardAt(m.map, tx, tz) !== yard) pick(m.map.yards[yard].gates, false);
+  else if (yardIn >= 0) pick(m.map.yards[yardIn].gates, true);
+  else if (roomIn >= 0) pick(m.map.buildings[roomIn].doors, true);
+  else if (ways || (ai.exit && (ai.inward || Math.hypot(f.x - ai.exit.x, f.z - ai.exit.z) >= 1.5))) ai.exit = null;
   const door = ai.exit;
-  if (!door) return steer(m, f, ai, tx, tz, dt, stop);
-  // square in front of it (or through it), straight out; off to one side, line up in front of it first
-  const across = (f.x - door.x) * door.oz - (f.z - door.z) * door.ox;
-  const k = !b || Math.abs(across) < Math.max(0.3, door.w / 2 - FIGHTER_R - 0.1) ? 1.5 : -1.2;
-  steer(m, f, ai, door.x + door.ox * k, door.z + door.oz * k, dt, 0);
+  let px = tx;
+  let pz = tz;
+  if (door) {
+    // square in front of it (or in it), straight on through; off to one side or behind, line up in front of it first
+    const lined = Math.abs((f.x - door.x) * door.oz - (f.z - door.z) * door.ox) < Math.max(0.3, door.w / 2 - FIGHTER_R - 0.1);
+    const k = ai.inward ? (lined && (f.x - door.x) * door.ox + (f.z - door.z) * door.oz > -0.3 ? -1.5 : 1.6) : !ways || lined ? 1.5 : -1.2;
+    px = door.x + door.ox * k;
+    pz = door.z + door.oz * k;
+  }
+  const over = b ? null : bridgeWay(m, f, ai, px, pz);
+  if (over) {
+    px = over.x;
+    pz = over.z;
+  }
+  // outdoors, with a building or a fenced yard across the way: round it by a corner
+  const c = b ? null : around(m, f.x, f.z, px, pz, yard);
+  if (c) return steer(m, f, ai, c.x, c.z, dt, 0);
+  // inside, with where we're going on the far side of the wall between two rooms: through the doorway in it first
+  let wx = px;
+  let wz = pz;
+  let via = false;
+  if (b)
+    for (const dr of b.inner) {
+      const there = (px - dr.x) * dr.ox + (pz - dr.z) * dr.oz;
+      const here = (f.x - dr.x) * dr.ox + (f.z - dr.z) * dr.oz;
+      if (there * here >= 0) continue;
+      const s = there > 0 ? 1 : -1;
+      const k = Math.abs((f.x - dr.x) * dr.oz - (f.z - dr.z) * dr.ox) < Math.max(0.3, dr.w / 2 - FIGHTER_R - 0.1) ? 1.5 : -1.2;
+      wx = dr.x + dr.ox * s * k;
+      wz = dr.z + dr.oz * s * k;
+      via = true;
+      break;
+    }
+  // and round a counter, a bed or a table in the way
+  const r = b && (via || door || Math.hypot(px - f.x, pz - f.z) > stop) ? roundFurniture(m, f.inside, f.x, f.z, wx, wz) : null;
+  if (r) return steer(m, f, ai, r.x, r.z, dt, 0);
+  steer(m, f, ai, wx, wz, dt, via || door || over ? 0 : stop);
 }
+
+/** The furniture that stops feet in each building, worked out once (and again should the list be swapped). */
+const furnished = new WeakMap<GameMap, { of: unknown; by: Box[][] }>();
+function furnitureIn(map: GameMap, bi: number) {
+  let got = furnished.get(map);
+  if (!got || got.of !== map.furniture) {
+    const by: Box[][] = map.buildings.map(() => []);
+    for (const p of map.furniture) if (furnitureSolid(p.kind)) by[p.b]?.push(p);
+    got = { of: map.furniture, by };
+    furnished.set(map, got);
+  }
+  return got.by[bi] ?? [];
+}
+
+/**
+ * Inside building `bi`, when the way from (x, z) to (px, pz) runs into furniture that stops feet, the corner to walk
+ * round the nearest piece by: one indoors and in sight that makes the shortest way, and not the one we're at.
+ */
+function roundFurniture(m: Match, bi: number, x: number, z: number, px: number, pz: number) {
+  const list = furnitureIn(m.map, bi);
+  const len = Math.hypot(px - x, pz - z);
+  if (!list.length || len < 0.5) return null;
+  // the room an egg's middle needs round a piece (a touch less, so one already against it isn't taken to be in it)
+  const pad = FIGHTER_R - 0.08;
+  let near = Infinity;
+  let o: Box | null = null;
+  for (const p of list) {
+    const t = rayBox(x, z, (px - x) / len, (pz - z) / len, len, p.x, p.z, p.hw + pad, p.hd + pad);
+    if (t < near) {
+      near = t;
+      o = p;
+    }
+  }
+  if (!o) return null;
+  const box = o;
+  const b = m.map.buildings[bi];
+  const g = FIGHTER_R + 0.4;
+  const inside = (c: { x: number; z: number }) => Math.abs(c.x - b.x) < b.w / 2 - WALL_T / 2 - FIGHTER_R && Math.abs(c.z - b.z) < b.d / 2 - WALL_T / 2 - FIGHTER_R;
+  const corners = CORNERS.map(([sx, sz]) => ({ x: box.x + sx * (box.hw + g), z: box.z + sz * (box.hd + g) }));
+  const sees = (ax: number, az: number, bx: number, bz: number) => {
+    const l = Math.hypot(bx - ax, bz - az);
+    return l < 1e-6 || rayBox(ax, az, (bx - ax) / l, (bz - az) / l, l, box.x, box.z, box.hw + pad, box.hd + pad) === Infinity;
+  };
+  const rest = (i: number) => {
+    const c = corners[i];
+    if (sees(c.x, c.z, px, pz)) return Math.hypot(px - c.x, pz - c.z);
+    return Math.min(...[corners[(i + 1) % 4], corners[(i + 3) % 4]].map((n) => (inside(n) ? Math.hypot(n.x - c.x, n.z - c.z) + Math.hypot(px - n.x, pz - n.z) : Infinity)));
+  };
+  let best: { x: number; z: number } | null = null;
+  let bestD = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const c = corners[i];
+    const l = Math.hypot(c.x - x, c.z - z);
+    if (l < 0.5 || !inside(c) || !sees(x, z, c.x, c.z)) continue;
+    const d = l + rest(i);
+    if (d < bestD) {
+      best = c;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/** A meter waded counts as this many walked: it's slow, and out in the open. */
+const WADE = 2.4;
+
+/** Where to step on and off a bridge: just past each end of its deck. */
+function bridgeEnds(b: Bridge) {
+  const ax = b.alongX ? 1 : 0;
+  const az = 1 - ax;
+  const h = (b.alongX ? b.hw : b.hd) + 1.2;
+  return [
+    { x: b.x - ax * h, z: b.z - az * h },
+    { x: b.x + ax * h, z: b.z + az * h },
+  ];
+}
+
+/**
+ * With the river between us and (tx, tz), the point to make for on the way over the bridge that makes the quickest
+ * way there: its near end, then (lined up there, or once on the deck) its far end. Null to go straight on: no river in
+ * the way, wading is quicker, or we're already in the water.
+ */
+function bridgeWay(m: Match, f: Fighter, ai: Ai, tx: number, tz: number) {
+  const map = m.map;
+  const on = bridgeAt(map, f.x, f.z);
+  if (on >= 0) {
+    ai.bridge = on;
+    if (bridgeAt(map, tx, tz) === on) return null;
+    const [a, c] = bridgeEnds(map.bridges[on]);
+    // off the end on the same bank as where we're going
+    return riverCrossings(map, a.x, a.z, tx, tz) % 2 === 0 ? a : c;
+  }
+  const n = map.bridges.length && !f.wet ? riverCrossings(map, f.x, f.z, tx, tz) : 0;
+  if (n % 2 === 0) {
+    ai.bridge = -1;
+    return null;
+  }
+  // which end is which from here, for each bridge, and the way round by it (the one we chose counts a little shorter)
+  let best = -1;
+  let bestD = Math.hypot(tx - f.x, tz - f.z) + n * RIVER_HALF * 2 * (WADE - 1);
+  let near = { x: 0, z: 0 };
+  let far = near;
+  map.bridges.forEach((br, i) => {
+    const [a, c] = bridgeEnds(br);
+    const [p, q] = riverCrossings(map, f.x, f.z, a.x, a.z) % 2 === 0 ? [a, c] : [c, a];
+    const d = Math.hypot(p.x - f.x, p.z - f.z) + Math.hypot(q.x - p.x, q.z - p.z) + Math.hypot(tx - q.x, tz - q.z) - (i === ai.bridge ? 4 : 0);
+    if (d < bestD) {
+      best = i;
+      bestD = d;
+      near = p;
+      far = q;
+    }
+  });
+  ai.bridge = best;
+  if (best < 0) return null;
+  // lined up with the deck at its near end, or past that already: on over it
+  const len = Math.hypot(far.x - near.x, far.z - near.z);
+  const ux = (far.x - near.x) / len;
+  const uz = (far.z - near.z) / len;
+  const t = (f.x - near.x) * ux + (f.z - near.z) * uz;
+  return t > -1.2 && Math.abs((f.x - near.x) * uz - (f.z - near.z) * ux) < 1.2 ? far : near;
+}
+
+/**
+ * When the way from (x, z) to (px, pz) cuts across a roofed building or a fenced yard (but the one we're in), the
+ * corner to walk round the nearest one by: the one in sight that makes the shortest way, and not the one we're at.
+ */
+function around(m: Match, x: number, z: number, px: number, pz: number, yard: number) {
+  const len = Math.hypot(px - x, pz - z);
+  if (len < 1) return null;
+  const dx = (px - x) / len;
+  const dz = (pz - z) / len;
+  let near = Infinity;
+  let o: Box | null = null;
+  for (const b of blockersOf(m.map)) {
+    // never one we're standing in (a doorway) or one the point is in
+    if (b.yard === yard || (Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd) || (Math.abs(px - b.x) < b.hw && Math.abs(pz - b.z) < b.hd)) continue;
+    const t = rayBox(x, z, dx, dz, len, b.x, b.z, b.hw, b.hd);
+    if (t < near) {
+      near = t;
+      o = b;
+    }
+  }
+  if (!o) return null;
+  const box = o;
+  const corners = CORNERS.map(([sx, sz]) => ({ x: box.x + sx * (box.hw + 1.4), z: box.z + sz * (box.hd + 1.4) }));
+  const sees = (ax: number, az: number, bx: number, bz: number) => {
+    const l = Math.hypot(bx - ax, bz - az);
+    return l < 1e-6 || rayBox(ax, az, (bx - ax) / l, (bz - az) / l, l, box.x, box.z, box.hw, box.hd) === Infinity;
+  };
+  // the rest of the way from a corner: straight on when the point is in sight, else by the next corner round
+  const rest = (i: number) => {
+    const c = corners[i];
+    if (sees(c.x, c.z, px, pz)) return Math.hypot(px - c.x, pz - c.z);
+    return Math.min(...[corners[(i + 1) % 4], corners[(i + 3) % 4]].map((n) => Math.hypot(n.x - c.x, n.z - c.z) + Math.hypot(px - n.x, pz - n.z)));
+  };
+  let best: { x: number; z: number } | null = null;
+  let bestD = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const c = corners[i];
+    const l = Math.hypot(c.x - x, c.z - z);
+    if (l < 1 || !sees(x, z, c.x, c.z)) continue;
+    const d = l + rest(i);
+    if (d < bestD) {
+      best = c;
+      bestD = d;
+    }
+  }
+  return best;
+}
+/**
+ * The roofed buildings and fenced yards of an island (`yard` is the yard's index, or -2 for a building), worked out
+ * once (and again should the lists be swapped for others, as tests do).
+ */
+const blockers = new WeakMap<GameMap, { of: [unknown, unknown]; list: (Box & { yard: number })[] }>();
+function blockersOf(map: GameMap) {
+  let got = blockers.get(map);
+  if (!got || got.of[0] !== map.buildings || got.of[1] !== map.yards) {
+    const list = [...map.buildings.filter((b) => b.roof).map((b) => ({ x: b.x, z: b.z, hw: (b.w + WALL_T) / 2, hd: (b.d + WALL_T) / 2, yard: -2 })), ...map.yards.map((y, i) => ({ x: y.x, z: y.z, hw: y.hw, hd: y.hd, yard: i }))];
+    got = { of: [map.buildings, map.yards], list };
+    blockers.set(map, got);
+  }
+  return got.list;
+}
+const CORNERS = [
+  [-1, -1],
+  [1, -1],
+  [1, 1],
+  [-1, 1],
+] as const;
 
 /** The roofed building whose outer walls stand round a point, or -1. */
 const roomAt = (m: Match, x: number, z: number) => m.map.buildings.findIndex((b) => b.roof && Math.abs(x - b.x) < (b.w + WALL_T) / 2 && Math.abs(z - b.z) < (b.d + WALL_T) / 2);
@@ -2564,16 +2981,25 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
     ai.detourT -= dt;
     a = ai.detourA;
   } else {
-    // try straight on, then ever wider either side, and never into a building (doorways too) the point isn't in
+    // try straight on, then ever wider either side, and never into a building (doorways too) or a fenced yard the
+    // point isn't in, nor over a bounce pad we aren't making for
     const look = Math.min(2.4, d);
     const into = roomAt(m, tx, tz);
+    const intoYard = yardAt(m.map, tx, tz);
+    const fromYard = yardAt(m.map, f.x, f.z);
+    const onPad = padAt(m.map, tx, tz);
     for (const turn of [0, 0.5, -0.5, 1, -1, 1.5, -1.5, 2.2, -2.2]) {
       const b = a + turn;
       const ex = Math.sin(b);
       const ez = Math.cos(b);
       const side = 0.45;
       const room = roomAt(m, f.x + ex * look, f.z + ez * look);
-      const blocked = (room >= 0 && room !== f.inside && room !== into) || [-side, 0, side].some((o) => castRay(m, f.x + ez * o, f.z - ex * o, ex, ez, look, f.id, false) !== null);
+      const yard = yardAt(m.map, f.x + ex * look, f.z + ez * look);
+      const blocked =
+        (room >= 0 && room !== f.inside && room !== into) ||
+        (yard >= 0 && yard !== fromYard && yard !== intoYard) ||
+        m.map.pads.some((p, i) => i !== onPad && rayCircle(f.x, f.z, ex, ez, look, p.x, p.z, PAD.r + FIGHTER_R * 0.5) < Infinity) ||
+        [-side, 0, side].some((o) => castRay(m, f.x + ez * o, f.z - ex * o, ex, ez, look, f.id, false, true) !== null);
       if (!blocked) {
         a = b;
         break;
@@ -2591,7 +3017,7 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
     ai.lastZ = f.z;
     if (moved < 0.8 && ai.detourT <= 0) {
       // a wall someone built or a crate: break through it; anything else, go round
-      const hit = castRay(m, f.x, f.z, inp.mx, inp.mz, 1.8, f.id, false);
+      const hit = castRay(m, f.x, f.z, inp.mx, inp.mz, 1.8, f.id, false, true);
       if (hit && (hit.what === 'built' || hit.what === 'crate')) {
         ai.smashT = 1;
         ai.smashA = a;

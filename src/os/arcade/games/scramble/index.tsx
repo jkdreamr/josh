@@ -32,8 +32,8 @@ import {
 import { configOf, parsePacket, type Bots } from './net';
 import { END_PAUSE, FLUSH, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
 import { ARMOR_NAMES, MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
-import { HALF, SUPPLY_FALL } from './map';
-import { AmmoIcon, ArmorIcon, EggIcon, HowToPlay, IslandArt, PackIcon, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon, keyCode } from './hud';
+import { HALF, SUPPLY_FALL, placeAt } from './map';
+import { AmmoIcon, ArmorIcon, EggIcon, HowToPlay, IslandArt, PackIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon, keyCode } from './hud';
 import { meta } from './meta';
 import './scramble.css';
 
@@ -213,6 +213,11 @@ type Hud = {
   shrinking: boolean;
   outside: boolean;
   low: boolean;
+  /** Warming up at a campfire. */
+  warm: boolean;
+  /** The place just walked (or landed) into, while its name is up, and the place the egg we see is in. */
+  arrive: string | null;
+  where: string | null;
   banner: string | null;
   prompt: string | null;
   jump: boolean;
@@ -222,7 +227,7 @@ type Hud = {
 };
 const deep = new Set<keyof Hud>(['slots', 'toss', 'items']);
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, wood: 0, items: null, scope: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, wood: 0, items: null, scope: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
@@ -283,6 +288,8 @@ function Play({ mode }: { mode: Mode }) {
   const [feed, setFeed] = useState<Feed[]>([]);
   const [bigMap, setBigMap] = useState(false);
   const bannerRef = useRef({ text: '', until: -1 });
+  /** The named place our egg is in, the last one whose name went up, when it last came or went, and until when the name shows. */
+  const placeRef = useRef({ in: -1, said: -1, at: -99, until: -1 });
   const spectate = useRef(-1);
   const soloEnd = useRef(-1);
 
@@ -603,6 +610,17 @@ function Play({ mode }: { mode: Mode }) {
         v?.react(e, m, focus);
         if (live && o) share(n, e, o.seat);
       }
+      // the name goes up on walking or landing into a named place (not again for one we only just stepped out of)
+      const here = me && me.phase === 'ground' ? placeAt(m.map, me.x, me.z) : -1;
+      const pl = placeRef.current;
+      if (here !== pl.in) {
+        pl.in = here;
+        if (here >= 0 && !n.over && (here !== pl.said || clock.current - pl.at > 20)) {
+          pl.said = here;
+          pl.until = clock.current + 3;
+        }
+        pl.at = clock.current;
+      }
       if (live && o) for (const packet of flush(n, o.round, dt)) o.send(packet);
 
       if (v) {
@@ -795,6 +813,14 @@ function Play({ mode }: { mode: Mode }) {
       case 'jump':
         if (mine) sfx.play('jump');
         break;
+      case 'bounce':
+        if (f && (mine || near(f.x, f.z) > 0.2)) {
+          const k = mine ? 1 : near(f.x, f.z);
+          sfx.tone({ freq: 240, to: 720, dur: 0.28, type: 'triangle', vol: 0.12 * k });
+          sfx.tone({ freq: 480, to: 1100, dur: 0.2, type: 'sine', vol: 0.06 * k, delay: 0.08 });
+          if (mine) buzz(30);
+        }
+        break;
       case 'land':
         if (mine) sfx.noise(0.12, 0.12);
         break;
@@ -835,6 +861,8 @@ function Play({ mode }: { mode: Mode }) {
       case 'thud':
         // a frying pan turning a bullet away, near us
         if (e.what === 'pan' && near(e.x, e.z) > 0.5) sfx.tone({ freq: 1500, to: 900, dur: 0.12, type: 'square', vol: 0.06 });
+        // and the clang of a bullet off a car or a lamp post
+        else if ((e.what === 'car' || e.what === 'post') && near(e.x, e.z) > 0.6) sfx.tone({ freq: 2100, to: 1300, dur: 0.06, type: 'square', vol: 0.035 });
         break;
       case 'hit':
         if (e.f === m.me) {
@@ -895,7 +923,9 @@ function Play({ mode }: { mode: Mode }) {
         if (e.f === m.me) {
           const c = m.map.containers[e.c];
           if (c?.kind === 'chest' || c?.kind === 'supply') sfx.play('coin', c.kind === 'supply' || c.gold ? 0.8 : 1);
-          else if (c?.kind === 'crate') sfx.noise(0.15, 0.15);
+          else if (c?.kind === 'fridge') sfx.play('coin', 1.2);
+          else if (c?.kind === 'toilet') sfx.tone({ freq: 900, to: 300, dur: 0.12, type: 'square', vol: 0.07 });
+          else if (c?.kind === 'crate' || c?.kind === 'hay') sfx.noise(0.15, 0.15);
         }
         break;
       case 'wall':
@@ -1023,7 +1053,7 @@ function Play({ mode }: { mode: Mode }) {
       const p = prompt(m, me);
       if (p && 'chest' in p) {
         const c = m.map.containers[p.chest];
-        promptText = c.kind === 'supply' ? 'open supply drop' : c.gold ? 'open the golden chest' : 'open chest';
+        promptText = c.kind === 'supply' ? 'open supply drop' : c.kind === 'fridge' ? 'open the fridge' : c.gold ? 'open the golden chest' : 'open chest';
       } else if (p) {
         const k = p.item.def.kind;
         const have = k === 'melee' ? MELEE[me.melee].name : k === 'helmet' || k === 'vest' ? ARMOR_NAMES[k][me[k]] : 'gun';
@@ -1060,6 +1090,9 @@ function Play({ mode }: { mode: Mode }) {
       shrinking: s.shrinking,
       outside,
       low: own && focus.hp <= 30 && focus.phase === 'ground',
+      warm: focus.warm && focus.phase === 'ground',
+      arrive: clock.current < placeRef.current.until && placeRef.current.said >= 0 ? m.map.places[placeRef.current.said]?.name ?? null : null,
+      where: focus.phase === 'ground' ? (m.map.places[placeAt(m.map, focus.x, focus.z)]?.name ?? null) : null,
       banner,
       prompt: promptText,
       jump: !!me && me === focus && me.phase === 'bus' && m.time >= m.map.bus.on,
@@ -1305,22 +1338,38 @@ function Play({ mode }: { mode: Mode }) {
                 <b>{hud.vest}</b>
               </span>
             )}
+            {hud.warm && (
+              <span className="g-scramble-pill is-warm" role="status">
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                  <path d="M12 3c1 3 4 4.5 4 9a4 4 0 0 1-8 0c0-2 1-3 1.5-4 .5 1.5 1.5 2 2.5 2 0-3-1-4 0-7z" fill="currentColor" />
+                </svg>
+                warming up
+              </span>
+            )}
           </div>
           {hud.storm && <div className={`g-scramble-storm${hud.shrinking ? ' is-moving' : ''}`}>{hud.storm}</div>}
-          <svg
+          {hud.arrive && (
+            <div key={hud.arrive} className="g-scramble-arrive" role="status">
+              <small>entering</small>
+              <b>{hud.arrive}</b>
+            </div>
+          )}
+          <div
             className="g-scramble-map"
-            viewBox={box}
             role="button"
-            aria-label="Island map"
+            aria-label={hud.where ? `Island map: you're in ${hud.where}` : 'Island map'}
             onPointerDown={(e) => {
               e.preventDefault();
               e.stopPropagation();
               setBigMap((b) => !b);
             }}
           >
-            {islandArt}
-            {mapMarks(false)}
-          </svg>
+            <svg viewBox={box} aria-hidden="true">
+              {islandArt}
+              {mapMarks(false)}
+            </svg>
+            {hud.where && <span>{hud.where}</span>}
+          </div>
           <ol className="g-scramble-feed" aria-live="polite">
             {feed.map((f) => (
               <li key={f.id} className={f.mine ? 'is-mine' : undefined}>
@@ -1491,6 +1540,7 @@ function Play({ mode }: { mode: Mode }) {
         >
           <svg viewBox={box} role="img" aria-label="Island map">
             {islandArt}
+            <PlaceNames map={map} />
             {mapMarks(true)}
           </svg>
           <small>{touchMode ? 'tap to close' : 'M or click to close'}</small>

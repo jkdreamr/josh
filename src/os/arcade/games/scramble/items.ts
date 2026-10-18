@@ -285,8 +285,11 @@ export type LootDef =
   | { kind: 'vest'; lv: number }
   | { kind: 'wood'; n: number };
 
-/** Where loot is found: on the floor, in a crate, a chest, the Golden Coop's chest, or a supply drop. */
-export type LootTier = 'floor' | 'crate' | 'chest' | 'gold' | 'supply';
+/**
+ * Where loot is found: on the floor, in a crate, a chest, the Golden Coop's chest, a supply drop, a fridge (healing
+ * and food) or a hay bale (often nothing).
+ */
+export type LootTier = 'floor' | 'crate' | 'chest' | 'gold' | 'supply' | 'fridge' | 'hay';
 
 const RARITY_ODDS: Record<LootTier, number[]> = {
   floor: [46, 30, 16, 6, 2],
@@ -294,10 +297,14 @@ const RARITY_ODDS: Record<LootTier, number[]> = {
   chest: [0, 28, 40, 22, 10],
   supply: [0, 0, 25, 45, 30],
   gold: [0, 0, 0, 45, 55],
+  fridge: [46, 30, 16, 6, 2],
+  hay: [46, 30, 16, 6, 2],
 };
 const GUN_ODDS: Record<WeaponId, number> = { pistol: 13, revolver: 7, flare: 1.5, smg: 12, micro: 7, hsmg: 7, rifle: 13, burst: 8, marksman: 6, scout: 5, lmg: 4, minigun: 3, shotgun: 11, auto: 6, double: 6, sniper: 5, crossbow: 4, launcher: 4 };
 /** Supply drops and the golden chest never hold a flare gun: they are what it calls. */
 const TOP_GUN_ODDS: Partial<Record<WeaponId, number>> = { ...GUN_ODDS, flare: 0 };
+/** What a fridge holds: mostly things to eat and drink and patch up with. */
+const FRIDGE_ODDS: Record<UseId, number> = { bandage: 28, medkit: 13, mini: 20, shield: 11, coffee: 20, smoothie: 14, tart: 1 };
 const MELEE_ODDS: Partial<Record<MeleeId, number>> = { whisk: 22, knife: 20, cleaver: 18, pan: 22, pin: 18 };
 const THROW_ODDS: Record<ThrowId, number> = { grenade: 36, impulse: 16, flour: 18, sauce: 20, jam: 14, bush: 12 };
 const USE_ODDS: Record<UseId, number> = { bandage: 34, medkit: 10, mini: 24, shield: 13, coffee: 12, smoothie: 10, tart: 1 };
@@ -360,6 +367,8 @@ const ARMOR_ODDS: Record<LootTier, number[]> = {
   chest: [0, 12, 56, 32],
   supply: [0, 0, 30, 70],
   gold: [0, 0, 0, 100],
+  fridge: [0, 62, 32, 6],
+  hay: [0, 62, 32, 6],
 };
 
 /** A helmet or a vest, as good as the place it's found. */
@@ -391,6 +400,13 @@ export function rollLoot(rng: Rng, tier: LootTier): LootDef[] {
     out.push(armorDrop(rng, tier));
     return out;
   }
+  if (tier === 'fridge') {
+    // two things from the shelves, the second one different from the first
+    const a = weighted(rng, FRIDGE_ODDS);
+    const b = weighted(rng, { ...FRIDGE_ODDS, [a]: 0 });
+    return [a, b].map((w): LootDef => ({ kind: 'use', w, n: w === 'bandage' ? 3 : w === 'mini' ? 2 : 1 }));
+  }
+  if (tier === 'hay') return rng() < 0.45 ? [] : rollLoot(rng, 'floor');
   if (tier === 'chest') {
     const out = gunDrop(rng, 'chest');
     const extra = rng();

@@ -17,7 +17,10 @@ export const STALE = 15;
  * sending (and one that never does is still put off the bus with everyone else).
  */
 export const FIRST_GRACE = 30;
-/** Seconds past the bus leaving land by which every egg is down; one still in the air has stopped playing. */
+/**
+ * Seconds past the bus leaving land by which every egg is down, and seconds after any glide began (from the bus or a
+ * bounce pad) by which it has landed; one still in the air has stopped playing.
+ */
 const DOWN_BY = 4 + BUS_Y / FALL + 4;
 
 /** Who this client is in the room. */
@@ -160,7 +163,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
   for (const f of m.fighters) {
     if (f.seat < 0 || f.kind !== 'remote' || f.phase === 'out' || m.ended) continue;
     const quiet = clock - (s.heard.get(f.id) ?? s.firstTick + FIRST_GRACE) > STALE;
-    const aloft = (f.phase === 'bus' || f.phase === 'drop') && m.time > m.map.bus.off + DOWN_BY;
+    const aloft = f.phase === 'bus' ? m.time > m.map.bus.off + DOWN_BY : f.phase === 'drop' && m.time > Math.max(f.dropAt, m.map.bus.off) + DOWN_BY;
     if (s.left.has(f.seat) || quiet || aloft) forfeit(m, f.id);
   }
   const states: [number, State][] = [];
