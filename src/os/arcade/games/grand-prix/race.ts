@@ -272,8 +272,9 @@ export function stepRace(r: Race, dt: number, inputs: Map<number, Input>) {
       input = drive(rn.driver, car, c, r.line, rivals(rn), dt);
     }
     if (!started) {
-      // on the grid: the engine revs with the throttle but the car is held until the lights go out
-      const thr = input.throttle;
+      // on the grid: the engine revs with the throttle but the car is held until the lights go out. Computer drivers
+      // idle, then hold steady revs for the start once the last couple of seconds before lights out come
+      const thr = rn.entry.kind === 'ai' ? (r.time > -2.5 ? 0.5 : 0) : input.throttle;
       car.throttle = thr;
       car.rpm += (4000 + thr * 7500 - car.rpm) * Math.min(1, dt * 6);
       continue;

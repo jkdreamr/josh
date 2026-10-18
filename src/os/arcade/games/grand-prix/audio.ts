@@ -2,7 +2,8 @@
 // pulses per crank turn, so its note follows the simulated rpm exactly, with a harmonic spectrum, rasp that grows
 // with throttle, the turbo's whine, crackle on the overrun and the limiter's stutter. The nearest rivals get their
 // own voices, panned and Doppler shifted as they pass. Tyre squeal follows how hard the tyres slide, and wind, road
-// roar, kerbs and gravel follow speed and surface. Everything is heard from the first view's car.
+// roar, kerbs and gravel follow speed and surface. Everything is heard from the first view's car, with a touch of
+// outdoor reverb.
 import { SPEC, type Car } from './car.ts';
 import type { Race } from './race.ts';
 import { ENGINE_SAMPLES, layersFor } from './samples.ts';
@@ -28,9 +29,8 @@ const ENGINE_HARMONICS = [0, 1, 0.55, 0.42, 0.3, 0.2, 0.16, 0.1, 0.08, 0.05, 0.0
 export const firingHz = (rpm: number) => (rpm / 60) * 3;
 
 type Voice = {
-  /** The engine note, a slightly detuned second layer (the two banks' exhausts) and its half and one-and-a-half orders. */
+  /** The engine note and its half and one-and-a-half orders. */
   osc: OscillatorNode;
-  osc2: OscillatorNode;
   half: OscillatorNode;
   half3: OscillatorNode;
   orders: GainNode;
@@ -58,6 +58,9 @@ type Voice = {
   /** Smoothed firing frequency and load, so frame-to-frame jitter in the simulation never reaches the ear. */
   f: number;
   load: number;
+  drift: number;
+  /** How muffled this voice is by distance (1 near, smaller far away). */
+  near: number;
   /** Which runner this voice follows (-1 for none). */
   target: number;
   lastDist: number;
@@ -108,11 +111,6 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
   const makeVoice = (out: AudioNode): Voice => {
     const osc = ctx.createOscillator();
     osc.setPeriodicWave(wave);
-    const osc2 = ctx.createOscillator();
-    osc2.setPeriodicWave(wave);
-    osc2.detune.value = 7;
-    const osc2Gain = ctx.createGain();
-    osc2Gain.gain.value = 0.55;
     // the half and one-and-a-half orders (uneven firing between the banks) give the note its depth
     const half = ctx.createOscillator();
     half.type = 'sine';
@@ -160,7 +158,6 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     gain.gain.value = 0;
     const pan = ctx.createStereoPanner();
     osc.connect(filter);
-    osc2.connect(osc2Gain).connect(filter);
     half.connect(orders).connect(filter);
     half3.connect(half3Gain).connect(orders);
     const synth = ctx.createGain();
@@ -169,12 +166,34 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     amp.connect(cut).connect(gain);
     whine.connect(whineGain).connect(gain);
     gain.connect(pan).connect(out);
-    for (const o of [osc, osc2, half, half3, rough, cutLfo, whine]) o.start();
-    return { osc, osc2, half, half3, orders, filter, presence, rough, roughDepth, amp, cutLfo, cutDepth, cut, rasp, raspFilter, raspGain, gain, pan, whine, whineGain, synth, layers: null, f: 0, load: 0, target: -1, lastDist: 0 };
+    for (const o of [osc, half, half3, rough, cutLfo, whine]) o.start();
+    return { osc, half, half3, orders, filter, presence, rough, roughDepth, amp, cutLfo, cutDepth, cut, rasp, raspFilter, raspGain, gain, pan, whine, whineGain, synth, layers: null, f: 0, load: 0, drift: 0, near: 1, target: -1, lastDist: 0 };
   };
 
   const engineBus = ctx.createGain();
   engineBus.connect(master);
+  // a touch of outdoor space: the engines bouncing off the walls, stands and trees, a short soft tail
+  const verb = ctx.createConvolver();
+  {
+    const len = Math.floor(ctx.sampleRate * 0.9);
+    const ir = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = ir.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        const t = i / ctx.sampleRate;
+        // a few early reflections, then a diffuse tail that darkens as it fades
+        const early = [0.011, 0.023, 0.037, 0.052].some((e) => Math.abs(t - e - ch * 0.003) < 0.0004) ? 0.5 : 0;
+        d[i] = (early + (Math.random() * 2 - 1) * 0.35) * Math.exp(-t * 6.5);
+      }
+    }
+    verb.buffer = ir;
+  }
+  const verbTone = ctx.createBiquadFilter();
+  verbTone.type = 'lowpass';
+  verbTone.frequency.value = 3200;
+  const verbGain = ctx.createGain();
+  verbGain.gain.value = 0.16;
+  engineBus.connect(verb).connect(verbTone).connect(verbGain).connect(master);
   const me = makeVoice(engineBus);
   const others: Voice[] = Array.from({ length: OTHER_VOICES }, () => makeVoice(engineBus));
 
@@ -270,7 +289,7 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     p.linearRampToValueAtTime(v, t + time);
   };
 
-  /** A short burst: overrun pops, gear shift kicks, impacts. */
+  /** A short burst: overrun pops and impacts. */
   const burst = (opts: { dur: number; vol: number; freq: number; q?: number; type?: BiquadFilterType; pan?: number; tone?: number }) => {
     const t = ctx.currentTime;
     const src = ctx.createBufferSource();
@@ -308,17 +327,18 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     const load = thr * (car.gear !== 0 && car.clutch > 0.5 ? 1 : 0.6);
     const k = v.f === 0 ? 1 : Math.min(1, dt / 0.035);
     v.f += (target - v.f) * k;
-    v.load += (load - v.load) * Math.min(1, dt / 0.05);
-    const f = v.f;
+    // a real engine never holds a perfectly steady note: a slow, tiny drift in pitch (a tenth of a percent)
+    v.drift += (Math.random() - 0.5) * dt * 0.02 - v.drift * dt * 0.8;
+    v.load += (load - v.load) * Math.min(1, dt / 0.12);
+    const f = v.f * (1 + Math.max(-0.002, Math.min(0.002, v.drift)));
     const L = v.load;
     glide(v.osc.frequency, f);
-    glide(v.osc2.frequency, f);
     glide(v.half.frequency, f * 0.5);
     glide(v.half3.frequency, f * 1.5);
     glide(v.rough.frequency, f / 3);
     glide(v.whine.frequency, 2600 + car.rpm * 0.42, 0.1);
     // open throttle: brighter, with a scream in the upper mids; closed: a darker, rounder burble
-    glide(v.filter.frequency, Math.min(9000, 250 + f * (1.3 + 3.2 * L)));
+    glide(v.filter.frequency, Math.min(9000, 250 + f * (1.3 + 3.2 * L)) * v.near);
     glide(v.presence.gain, 1 + 5 * L * Math.min(1, car.rpm / 11000), 0.1);
     glide(v.orders.gain, 0.14 + 0.16 * (1 - L), 0.1);
     glide(v.roughDepth.gain, 0.06 + 0.1 * (1 - L), 0.1);
@@ -339,11 +359,10 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
         glide(l.gain.gain, layer.gain);
       }
       glide(v.gain.gain, (0.6 + 0.4 * L) * gain);
-    } else glide(v.gain.gain, (0.35 + 0.65 * L) * rpmLoud * gain);
+    } else glide(v.gain.gain, (0.4 + 0.6 * L) * (0.75 + 0.25 * rpmLoud) * gain, 0.12);
     glide(v.pan.pan, pan, 0.1);
   };
 
-  let lastGear = 0;
   let popT = 0;
   let lastTick = performance.now();
   // the frame loop stops when the game is hidden or paused; this keeps the engines from droning on alone
@@ -372,11 +391,6 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
       drive(me, car, inside ? 0.95 : 0.75, 1, 0, inside, limiter, dt);
       engineBus.gain.value = 1;
 
-      // gear changes: a sharp kick through the drivetrain
-      if (car.gear !== lastGear) {
-        if (lastGear !== 0 && car.gear !== 0) burst({ dur: 0.09, vol: car.gear > lastGear ? 0.32 : 0.22, freq: 160, q: 0.7, type: 'lowpass', tone: 90 });
-        lastGear = car.gear;
-      }
       // overrun: crackles and pops when lifting at high revs
       popT -= dt;
       if (car.throttle < 0.08 && car.rpm > 7500 && car.vx > 15 && popT <= 0 && Math.random() < dt * 14) {
@@ -415,7 +429,9 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
         const dy = oc.y - car.y;
         const right = dx * sin - dy * cos;
         const pan = Math.max(-0.9, Math.min(0.9, right / Math.max(4, o.d)));
-        const gain = 0.55 / (1 + (o.d / 9) ** 1.5);
+        // rivals sit well under your own engine, and the air takes the edge off them with distance
+        const gain = 0.2 / (1 + (o.d / 12) ** 1.5);
+        v.near = 1 / (1 + o.d / 30);
         drive(v, oc, gain, pitch, pan, false, false, dt);
       });
 
