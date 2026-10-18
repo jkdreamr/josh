@@ -19,5 +19,5 @@ export const meta: GameMeta = {
   glyph: 'M4 18V8h6v6h6V4h4',
   order: 4,
   music: 'synth',
-  online: { seats: 4, bots: true },
+  online: { seats: 4, bots: true, quick: true },
 };

@@ -851,8 +851,19 @@
 .arcade-online-player small {
   font-size: 11px;
 }
-.arcade-online-player.is-bot {
+.arcade-online-player.is-bot,
+.arcade-online-player.is-watching {
   color: rgba(245, 245, 247, 0.7);
+}
+/* Who is still in the room, on the online Game Over card: kept short so Play Again stays in view on a phone. */
+.arcade-online-roster {
+  max-height: 132px;
+  overflow-y: auto;
+}
+@container arcade-ov (max-height: 440px) {
+  .arcade-online-roster {
+    max-height: 84px;
+  }
 }
 /* A line under the Private / Public choice saying who can join. */
 .arcade-online-hint {

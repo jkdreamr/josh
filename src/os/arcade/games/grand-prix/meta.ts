@@ -19,5 +19,5 @@ export const meta: GameMeta = {
     measure: 'Fastest Lap',
     variants: { pro: 'Monza, No Assists', assisted: 'Monza, With Assists' },
   },
-  online: { seats: 8, lateJoin: true, bots: true },
+  online: { seats: 8, lateJoin: true, bots: true, quick: true },
 };
