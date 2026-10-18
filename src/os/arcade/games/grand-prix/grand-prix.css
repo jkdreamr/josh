@@ -556,11 +556,15 @@
   }
 }
 
-.g-grand-prix .g-grand-prix-cambtn {
+.g-grand-prix .g-grand-prix-touchbtns {
   position: absolute;
   top: 140px;
   right: 12px;
-  min-width: 48px;
+  display: flex;
+  gap: 8px;
+}
+.g-grand-prix .g-grand-prix-touchbtns button {
+  min-width: 56px;
   min-height: 40px;
   border: 0;
   border-radius: 10px;
@@ -599,4 +603,120 @@
     opacity: 1;
     transform: translate(-50%, 0);
   }
+}
+
+/* How to Play */
+.g-grand-prix .g-grand-prix-help {
+  align-self: center;
+}
+.g-grand-prix .g-grand-prix-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  text-align: left;
+  background: rgba(8, 8, 12, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: arcadeFade 0.18s ease;
+}
+.g-grand-prix .g-grand-prix-sheet-card {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(30, 30, 36, 0.96);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.14),
+    0 16px 40px rgba(0, 0, 0, 0.45);
+  animation: arcadePop 0.2s ease-out;
+}
+.g-grand-prix .g-grand-prix-sheet-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.g-grand-prix .g-grand-prix-sheet-card h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.g-grand-prix .g-grand-prix-sheet-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 20px 20px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: rgba(245, 245, 247, 0.88);
+}
+.g-grand-prix .g-grand-prix-sheet-body section {
+  margin-top: 18px;
+}
+.g-grand-prix .g-grand-prix-sheet-body h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ff5a4f;
+}
+.g-grand-prix .g-grand-prix-sheet-body h4 {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+.g-grand-prix .g-grand-prix-sheet-body p {
+  margin: 0 0 8px;
+}
+.g-grand-prix .g-grand-prix-sheet-body ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+.g-grand-prix .g-grand-prix-sheet-body b {
+  color: #fff;
+}
+.g-grand-prix .g-grand-prix-lede {
+  font-size: 15px;
+  color: #fff;
+}
+.g-grand-prix .g-grand-prix-sheet-body .g-grand-prix-small {
+  margin-top: 8px;
+  font-size: 13px;
+  opacity: 0.8;
+}
+.g-grand-prix .g-grand-prix-keys {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+.g-grand-prix .g-grand-prix-keyrow {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) 1fr;
+  gap: 14px;
+  align-items: start;
+}
+.g-grand-prix .g-grand-prix-keys dt {
+  justify-self: start;
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+}
+.g-grand-prix .g-grand-prix-keys dd {
+  margin: 0;
 }
