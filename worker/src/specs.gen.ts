@@ -113,7 +113,7 @@ export const LEADERBOARD_SPECS: Record<string, LeaderboardSpec> = {
 
 export const ONLINE_SPECS: Record<string, OnlineSpec> = {
   "2048": {"seats":4},
-  "airhockey": {"seats":2},
+  "airhockey": {"seats":2,"bots":true},
   "badminton": {"seats":2},
   "battleship": {"seats":2},
   "bedwars": {"seats":8,"lateJoin":true},
