@@ -251,7 +251,7 @@ export function build(THREE: Three, host: HTMLElement): World | null {
         m.makeRotationY(s.rot);
         m.setPosition(x, ly + 0.25, z);
         fans.setMatrixAt(n, m);
-        col.setHex(shirts[(i * 5 + r * 3 + (i >> 2)) % shirts.length]).multiplyScalar(0.22 + ((i * 7 + r) % 5) * 0.04);
+        col.setHex(shirts[(i * 5 + r * 3 + (i >> 2)) % shirts.length]).multiplyScalar(0.13 + ((i * 7 + r) % 5) * 0.03);
         fans.setColorAt(n, col);
         n++;
       }
@@ -420,12 +420,11 @@ export function build(THREE: Three, host: HTMLElement): World | null {
     const hf = 2 * Math.atan2(half, boardD);
     vf = Math.max(vf, 2 * Math.atan(Math.tan(hf / 2) / aspect));
     // wide, short windows: keep the hoop big and let the hands drop below the frame
-    const most = 2 * Math.atan(Math.tan(Math.atan2(BOARD_W / 2, boardD) / 0.3) / aspect);
+    const most = 2 * Math.atan(Math.tan(Math.atan2(BOARD_W / 2, boardD) / 0.4) / aspect);
     let tilt = pitch;
     if (vf > most) {
-      const top = Math.atan2(1.74 - ty, handD);
-      vf = Math.max(most, (hi - top) * 1.06);
-      tilt = (hi + top) / 2 + 0.01;
+      vf = most;
+      tilt = hi + 0.02 - vf / 2;
     }
     const fov = clamp((vf * 180) / Math.PI, 30, 88);
     const k = cam.ready ? 3.2 : 1000;
