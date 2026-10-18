@@ -158,7 +158,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         <h4>Assists</h4>
         <Keys
           rows={[
-            ['None', 'No help. Too much throttle spins the rear tyres, too much brake locks the fronts. Real race car, hardest to drive, fastest once mastered.'],
+            ['None', `No help: the real race car. ${touch ? 'Holding Gas or Brake' : 'On a keyboard, holding a pedal key'} presses that pedal as far as the tyres take in a straight line, the way a driver squeezes it. You still have to wait for the car to straighten before full power, and ease off if you brake while turning.${touch ? '' : ' A gamepad gives you the raw pedals.'}`],
             ['TC', 'Traction control: cuts power when the rear tyres start to spin, so you can floor it out of corners. Brakes can still lock.'],
             ['TC + ABS', 'Traction control plus anti-lock brakes: you can stamp on the brake and the wheels keep turning. Best for keyboards and beginners.'],
           ]}

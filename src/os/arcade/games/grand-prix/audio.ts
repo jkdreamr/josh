@@ -18,24 +18,41 @@ export type RaceAudio = {
   dispose: () => void;
 };
 
-/** Harmonic amplitudes of the engine note (the firing frequency is harmonic 1). */
-const ENGINE_HARMONICS = [0, 1, 0.72, 0.55, 0.5, 0.34, 0.36, 0.2, 0.24, 0.14, 0.13, 0.09, 0.08, 0.05, 0.05, 0.03, 0.03];
+/**
+ * Harmonic amplitudes of the engine note (the firing frequency is harmonic 1). They fall away steadily, like the
+ * exhaust note of a real engine, rather than staying strong to the top (which sounds like a synth buzz).
+ */
+const ENGINE_HARMONICS = [0, 1, 0.55, 0.42, 0.3, 0.2, 0.16, 0.1, 0.08, 0.05, 0.04, 0.03, 0.02];
 /** The firing frequency of a four stroke V6 is three pulses per crank revolution. */
 export const firingHz = (rpm: number) => (rpm / 60) * 3;
 
 type Voice = {
+  /** The engine note, a slightly detuned second layer (the two banks' exhausts) and its half and one-and-a-half orders. */
   osc: OscillatorNode;
-  sub: OscillatorNode;
-  subGain: GainNode;
+  osc2: OscillatorNode;
+  half: OscillatorNode;
+  half3: OscillatorNode;
+  orders: GainNode;
+  filter: BiquadFilterNode;
+  presence: BiquadFilterNode;
+  /** Cycle-to-cycle unevenness at crank speed: the growl of a real engine, without any noise. */
+  rough: OscillatorNode;
+  roughDepth: GainNode;
+  amp: GainNode;
+  /** Rev limiter: a square wave cutting the sound in time with the ignition cut, sample accurate. */
+  cutLfo: OscillatorNode;
+  cutDepth: GainNode;
+  cut: GainNode;
   rasp: AudioBufferSourceNode;
   raspFilter: BiquadFilterNode;
   raspGain: GainNode;
-  shaper: WaveShaperNode;
-  filter: BiquadFilterNode;
   gain: GainNode;
   pan: StereoPannerNode;
   whine: OscillatorNode;
   whineGain: GainNode;
+  /** Smoothed firing frequency and load, so frame-to-frame jitter in the simulation never reaches the ear. */
+  f: number;
+  load: number;
   /** Which runner this voice follows (-1 for none). */
   target: number;
   lastDist: number;
@@ -82,39 +99,51 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
   };
 
   const wave = ctx.createPeriodicWave(new Float32Array(ENGINE_HARMONICS.length), Float32Array.from(ENGINE_HARMONICS));
-  const curve = (drive: number) => {
-    const n = 1024;
-    const c = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const x = (i / (n - 1)) * 2 - 1;
-      c[i] = Math.tanh(x * drive) / Math.tanh(drive);
-    }
-    return c;
-  };
-  const shaperCurve = curve(2.2);
 
   const makeVoice = (out: AudioNode): Voice => {
     const osc = ctx.createOscillator();
     osc.setPeriodicWave(wave);
-    // the half order (uneven firing between the banks) gives the note its growl
-    const sub = ctx.createOscillator();
-    sub.type = 'triangle';
-    const subGain = ctx.createGain();
-    subGain.gain.value = 0.22;
-    const shaper = ctx.createWaveShaper();
-    shaper.curve = shaperCurve;
-    shaper.oversample = '2x';
+    const osc2 = ctx.createOscillator();
+    osc2.setPeriodicWave(wave);
+    osc2.detune.value = 7;
+    const osc2Gain = ctx.createGain();
+    osc2Gain.gain.value = 0.55;
+    // the half and one-and-a-half orders (uneven firing between the banks) give the note its depth
+    const half = ctx.createOscillator();
+    half.type = 'sine';
+    const half3 = ctx.createOscillator();
+    half3.type = 'sine';
+    const orders = ctx.createGain();
+    orders.gain.value = 0.2;
+    const half3Gain = ctx.createGain();
+    half3Gain.gain.value = 0.35;
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.Q.value = 0.9;
-    const gain = ctx.createGain();
-    gain.gain.value = 0;
-    const pan = ctx.createStereoPanner();
-    // combustion rasp: noise around the second firing harmonic
+    filter.Q.value = 0.6;
+    const presence = ctx.createBiquadFilter();
+    presence.type = 'peaking';
+    presence.frequency.value = 2800;
+    presence.Q.value = 0.8;
+    const amp = ctx.createGain();
+    amp.gain.value = 1;
+    const rough = ctx.createOscillator();
+    rough.type = 'sine';
+    const roughDepth = ctx.createGain();
+    roughDepth.gain.value = 0.1;
+    rough.connect(roughDepth).connect(amp.gain);
+    const cut = ctx.createGain();
+    cut.gain.value = 1;
+    const cutLfo = ctx.createOscillator();
+    cutLfo.type = 'square';
+    cutLfo.frequency.value = 17;
+    const cutDepth = ctx.createGain();
+    cutDepth.gain.value = 0;
+    cutLfo.connect(cutDepth).connect(cut.gain);
+    // a whisper of intake and exhaust air, low passed so it never hisses
     const rasp = loop();
     const raspFilter = ctx.createBiquadFilter();
-    raspFilter.type = 'bandpass';
-    raspFilter.Q.value = 1.4;
+    raspFilter.type = 'lowpass';
+    raspFilter.Q.value = 0.5;
     const raspGain = ctx.createGain();
     raspGain.gain.value = 0;
     // turbo whine
@@ -122,16 +151,20 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     whine.type = 'sine';
     const whineGain = ctx.createGain();
     whineGain.gain.value = 0;
-    osc.connect(shaper);
-    sub.connect(subGain).connect(shaper);
-    shaper.connect(filter).connect(gain);
-    rasp.connect(raspFilter).connect(raspGain).connect(gain);
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    const pan = ctx.createStereoPanner();
+    osc.connect(filter);
+    osc2.connect(osc2Gain).connect(filter);
+    half.connect(orders).connect(filter);
+    half3.connect(half3Gain).connect(orders);
+    filter.connect(presence).connect(amp);
+    rasp.connect(raspFilter).connect(raspGain).connect(amp);
+    amp.connect(cut).connect(gain);
     whine.connect(whineGain).connect(gain);
     gain.connect(pan).connect(out);
-    osc.start();
-    sub.start();
-    whine.start();
-    return { osc, sub, subGain, rasp, raspFilter, raspGain, shaper, filter, gain, pan, whine, whineGain, target: -1, lastDist: 0 };
+    for (const o of [osc, osc2, half, half3, rough, cutLfo, whine]) o.start();
+    return { osc, osc2, half, half3, orders, filter, presence, rough, roughDepth, amp, cutLfo, cutDepth, cut, rasp, raspFilter, raspGain, gain, pan, whine, whineGain, f: 0, load: 0, target: -1, lastDist: 0 };
   };
 
   const engineBus = ctx.createGain();
@@ -195,6 +228,16 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
   dirtSrc.connect(dirtFilter).connect(dirtGain).connect(master);
 
   const smooth = (p: AudioParam, v: number, tc = 0.03) => p.setTargetAtTime(v, ctx.currentTime, tc);
+  /**
+   * Moves a parameter to a new value along a straight ramp a little longer than a frame, starting from where it is
+   * now. Values arrive once a frame; ramping (instead of stepping) keeps the frame rate itself out of the sound.
+   */
+  const glide = (p: AudioParam, v: number, time = 0.06) => {
+    const t = ctx.currentTime;
+    p.cancelScheduledValues(t);
+    p.setValueAtTime(p.value, t);
+    p.linearRampToValueAtTime(v, t + time);
+  };
 
   /** A short burst: overrun pops, gear shift kicks, impacts. */
   const burst = (opts: { dur: number; vol: number; freq: number; q?: number; type?: BiquadFilterType; pan?: number; tone?: number }) => {
@@ -228,28 +271,39 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
   };
 
   /** Drives one engine voice from a car: pitch from rpm, brightness and loudness from throttle. */
-  const drive = (v: Voice, car: Car, gain: number, pitch: number, pan: number, inside: boolean, limiterCut: boolean) => {
-    const f = Math.max(30, firingHz(car.rpm) * pitch);
+  const drive = (v: Voice, car: Car, gain: number, pitch: number, pan: number, inside: boolean, limiter: boolean, dt: number) => {
+    const target = Math.max(30, firingHz(car.rpm) * pitch);
     const thr = car.throttle;
     const load = thr * (car.gear !== 0 && car.clutch > 0.5 ? 1 : 0.6);
-    smooth(v.osc.frequency, f, 0.012);
-    smooth(v.sub.frequency, f * 0.5, 0.012);
-    smooth(v.whine.frequency, 2600 + car.rpm * 0.42, 0.05);
-    // open throttle: brighter, raspier and louder; closed: a darker burble
-    smooth(v.filter.frequency, Math.min(14000, 380 + f * (1.6 + 4.2 * load)), 0.02);
-    smooth(v.raspFilter.frequency, f * 2, 0.02);
-    smooth(v.raspGain.gain, (0.05 + 0.32 * load) * (inside ? 0.8 : 1), 0.03);
-    smooth(v.subGain.gain, 0.16 + 0.14 * (1 - load), 0.05);
-    smooth(v.whineGain.gain, Math.max(0, (car.rpm - 6500) / 6000) * 0.035 * (0.4 + load), 0.08);
+    const k = v.f === 0 ? 1 : Math.min(1, dt / 0.035);
+    v.f += (target - v.f) * k;
+    v.load += (load - v.load) * Math.min(1, dt / 0.05);
+    const f = v.f;
+    const L = v.load;
+    glide(v.osc.frequency, f);
+    glide(v.osc2.frequency, f);
+    glide(v.half.frequency, f * 0.5);
+    glide(v.half3.frequency, f * 1.5);
+    glide(v.rough.frequency, f / 3);
+    glide(v.whine.frequency, 2600 + car.rpm * 0.42, 0.1);
+    // open throttle: brighter, with a scream in the upper mids; closed: a darker, rounder burble
+    glide(v.filter.frequency, Math.min(9000, 250 + f * (1.3 + 3.2 * L)));
+    glide(v.presence.gain, 1 + 5 * L * Math.min(1, car.rpm / 11000), 0.1);
+    glide(v.orders.gain, 0.14 + 0.16 * (1 - L), 0.1);
+    glide(v.roughDepth.gain, 0.06 + 0.1 * (1 - L), 0.1);
+    glide(v.raspFilter.frequency, Math.min(6000, f * 3), 0.1);
+    glide(v.raspGain.gain, (0.015 + 0.05 * L) * (inside ? 0.7 : 1), 0.1);
+    glide(v.whineGain.gain, Math.max(0, (car.rpm - 6500) / 6000) * 0.02 * (0.4 + L), 0.15);
+    // the limiter cuts the sound to about half, seventeen times a second, while it holds the revs
+    glide(v.cutDepth.gain, limiter ? 0.28 : 0, 0.03);
+    glide(v.cut.gain, limiter ? 0.72 : 1, 0.03);
     const rpmLoud = 0.45 + 0.55 * Math.min(1, car.rpm / SPEC.limiter);
-    const body = (0.32 + 0.68 * load) * rpmLoud;
-    smooth(v.gain.gain, limiterCut ? body * gain * 0.25 : body * gain, limiterCut ? 0.004 : 0.025);
-    smooth(v.pan.pan, pan, 0.05);
+    glide(v.gain.gain, (0.35 + 0.65 * L) * rpmLoud * gain);
+    glide(v.pan.pan, pan, 0.1);
   };
 
   let lastGear = 0;
   let popT = 0;
-  let clock = 0;
   let lastTick = performance.now();
   // the frame loop stops when the game is hidden or paused; this keeps the engines from droning on alone
   const watchdog = live
@@ -264,7 +318,6 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
   return {
     update(r, listener, cam, dt) {
       lastTick = performance.now();
-      clock += dt;
       if (live && live.state === 'suspended') void live.resume().catch(() => {});
       smooth(master.gain, muted ? 0 : 0.55, 0.08);
       const rn = r.runners[listener];
@@ -274,8 +327,8 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
       const speed = Math.hypot(car.vx, car.vy);
 
       // your engine, and the limiter cutting the sparks at 12,500 rpm
-      const limiter = car.rpm >= SPEC.limiter - 40 && car.throttle > 0.8 && Math.floor(clock * 28) % 2 === 0;
-      drive(me, car, inside ? 0.95 : 0.75, 1, 0, inside, limiter);
+      const limiter = car.rpm >= SPEC.limiter - 40 && car.throttle > 0.8;
+      drive(me, car, inside ? 0.95 : 0.75, 1, 0, inside, limiter, dt);
       engineBus.gain.value = 1;
 
       // gear changes: a sharp kick through the drivetrain
@@ -302,14 +355,16 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
       others.forEach((v, k) => {
         const o = near[k];
         if (!o) {
-          smooth(v.gain.gain, 0, 0.1);
+          glide(v.gain.gain, 0, 0.15);
           v.target = -1;
           return;
         }
         const oc = o.x.car;
         if (v.target !== o.x.idx) {
+          // a voice moving to another car starts from that car's note rather than sliding across to it
           v.target = o.x.idx;
           v.lastDist = o.d;
+          v.f = 0;
         }
         // closing speed from the change in distance, for the Doppler shift
         const closing = (v.lastDist - o.d) / Math.max(1e-3, dt);
@@ -320,7 +375,7 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
         const right = dx * sin - dy * cos;
         const pan = Math.max(-0.9, Math.min(0.9, right / Math.max(4, o.d)));
         const gain = 0.55 / (1 + (o.d / 9) ** 1.5);
-        drive(v, oc, gain, pitch, pan, false, false);
+        drive(v, oc, gain, pitch, pan, false, false, dt);
       });
 
       // tyres: squeal from sliding on tarmac, louder and higher as the slide grows
@@ -336,22 +391,22 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
         if (w.surface === 'gravel') gravel += 0.25;
       }
       const sq = Math.max(0, Math.min(1, (slide - 2.2) / 7));
-      smooth(squealGain.gain, sq * sq * 0.5, 0.04);
-      smooth(squealFilter.frequency, 950 + sq * 400 + Math.min(200, speed * 2), 0.05);
-      smooth(squealFilter2.frequency, 1600 + sq * 500, 0.05);
+      glide(squealGain.gain, sq * sq * 0.5, 0.08);
+      glide(squealFilter.frequency, 950 + sq * 400 + Math.min(200, speed * 2), 0.08);
+      glide(squealFilter2.frequency, 1600 + sq * 500, 0.08);
 
       // wind and road roar follow speed; the cockpit hears more wind, the chase camera more road
       const v = speed / 90;
-      smooth(windGain.gain, Math.min(0.5, v * v * (inside ? 0.42 : 0.24)), 0.1);
-      smooth(windFilter.frequency, 500 + speed * 18, 0.1);
-      smooth(roadGain.gain, Math.min(0.35, (speed / 60) * (inside ? 0.16 : 0.24)) * (dirt + gravel > 0.5 ? 0.4 : 1), 0.1);
+      glide(windGain.gain, Math.min(0.5, v * v * (inside ? 0.42 : 0.24)), 0.08);
+      glide(windFilter.frequency, 500 + speed * 18, 0.08);
+      glide(roadGain.gain, Math.min(0.35, (speed / 60) * (inside ? 0.16 : 0.24)) * (dirt + gravel > 0.5 ? 0.4 : 1), 0.08);
       // kerb ridges about every half meter
-      smooth(kerbOsc.frequency, Math.max(18, Math.min(110, speed * 1.6)), 0.03);
-      smooth(kerbGain.gain, kerb * Math.min(1, speed / 20) * 0.32, 0.02);
+      glide(kerbOsc.frequency, Math.max(18, Math.min(110, speed * 1.6)), 0.08);
+      glide(kerbGain.gain, kerb * Math.min(1, speed / 20) * 0.32, 0.08);
       // gravel crunches (jittery), grass swishes
-      const grit = gravel * Math.min(1, speed / 15) * (0.6 + Math.random() * 0.4) * 0.5 + dirt * Math.min(1, speed / 25) * 0.2;
-      smooth(dirtGain.gain, grit, 0.02);
-      smooth(dirtFilter.frequency, gravel > dirt ? 2200 : 700, 0.05);
+      const grit = gravel * Math.min(1, speed / 15) * 0.4 + dirt * Math.min(1, speed / 25) * 0.2;
+      glide(dirtGain.gain, grit, 0.08);
+      glide(dirtFilter.frequency, gravel > dirt ? 2200 : 700, 0.08);
     },
     impact(speed) {
       const vol = Math.min(0.9, 0.15 + speed * 0.04);
