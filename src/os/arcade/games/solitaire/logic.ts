@@ -412,3 +412,14 @@ export const isDealRequest = (d: unknown): boolean =>
   !!d && typeof d === 'object' && (d as { t?: unknown }).t === 'deal?';
 
 export const randomSeed = (): number => (Math.random() * 2 ** 32) >>> 0;
+
+export type Shortcut = { t: 'draw' } | { t: 'undo' } | { t: 'waste' } | { t: 'column'; col: number };
+/** The keyboard map. Space and Enter always draw, even right after a click on one of the game's own buttons. */
+export function shortcut(code: string): Shortcut | null {
+  const digit = /^(Digit|Numpad)([1-7])$/.exec(code);
+  if (digit) return { t: 'column', col: Number(digit[2]) - 1 };
+  if (code === 'KeyW' || code === 'Digit0') return { t: 'waste' };
+  if (code === 'Space' || code === 'Enter' || code === 'KeyD') return { t: 'draw' };
+  if (code === 'KeyZ' || code === 'KeyU' || code === 'Backspace') return { t: 'undo' };
+  return null;
+}

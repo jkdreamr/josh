@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent } from 'react';
 import { defineSetting, GameShell, Segmented, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import {
@@ -22,6 +22,7 @@ import {
   randomSeed,
   redealFor,
   score,
+  shortcut,
   TABLEAU,
   TIME_LIMIT,
   undo,
@@ -61,16 +62,26 @@ export default function Game({ compact, onExit, roomCode }: GameProps) {
 }
 
 function Setup() {
-  const [draw, setDraw] = useSetting(DRAW);
-  return <Segmented label="Draw" value={draw} options={drawOptions} onChange={setDraw} />;
+  return <DrawPicker />;
 }
 
 /** Online, the host picks the draw for everyone; the round's deal carries it. */
 function HostSetup() {
   const online = useOnline();
-  const [draw, setDraw] = useSetting(DRAW);
   if (!online?.isHost) return null;
-  return <Segmented label="Draw" value={draw} options={drawOptions} onChange={setDraw} />;
+  return <DrawPicker />;
+}
+
+/** Touch gets taller segments and larger text, since the iPad frame scales the page to about 0.82. */
+function DrawPicker() {
+  const { touch } = useShell();
+  const [draw, setDraw] = useSetting(DRAW);
+  return (
+    <div className={`g-solitaire-field${touch ? ' is-touch' : ''}`} role="group" aria-label="Draw">
+      <span aria-hidden="true">Draw</span>
+      <Segmented value={draw} options={drawOptions} onChange={setDraw} className={`g-solitaire-seg${touch ? ' is-touch' : ''}`} />
+    </div>
+  );
 }
 
 type Pos = { x: number; y: number };
@@ -440,14 +451,23 @@ function Play() {
 
   useKeys((code, e) => {
     if (e?.repeat || phase.current !== 'play' || !st.current) return;
-    const digit = /^(Digit|Numpad)([1-7])$/.exec(code);
-    if (digit) playColumn(TABLEAU[Number(digit[2]) - 1]);
-    else if (code === 'KeyW' || code === 'Digit0') {
+    const k = shortcut(code);
+    if (k?.t === 'column') playColumn(TABLEAU[k.col]);
+    else if (k?.t === 'waste') {
       const w = st.current.waste;
       if (w.length) tap('waste', w.length - 1);
-    } else if (code === 'Space' || code === 'Enter' || code === 'KeyD') drawCard();
-    else if (code === 'KeyZ' || code === 'KeyU' || code === 'Backspace') doUndo();
+    } else if (k?.t === 'draw') drawCard();
+    else if (k?.t === 'undo') doUndo();
   });
+
+  /**
+   * A clicked button keeps focus, and the shell lets Space and Enter through to a focused button, so they would
+   * click it again instead of drawing. A pointer click hands focus back to the game (a disabled button drops it).
+   */
+  const clicked = (fn: () => void) => (e: RMouseEvent<HTMLButtonElement>) => {
+    fn();
+    if (e.detail > 0) shell.root.current?.focus({ preventScroll: true });
+  };
 
   useGameLoop((dt0) => {
     const now = performance.now();
@@ -627,7 +647,7 @@ function Play() {
   return (
     <div
       ref={ref}
-      className={`g-solitaire-stage${L?.side ? ' is-side' : ''}${L?.low ? ' is-low' : ''}${shell.touch ? ' is-touch' : ''}${drag ? ' is-dragging' : ''}`}
+      className={`g-solitaire-stage${L?.side ? ' is-side' : ''}${L?.low ? ' is-low' : ''}${shell.touch ? ' is-touch' : ''}${online ? ' is-online' : ''}${drag ? ' is-dragging' : ''}`}
       style={vars}
       onPointerDown={onDown}
       onPointerMove={onMove}
@@ -640,11 +660,14 @@ function Play() {
         <div key={i} className={`g-solitaire-corner is-c${i}`} ref={(el) => void (corners.current[i] = el)} />
       ))}
       <div className="g-solitaire-hud">
-        <span className={`g-solitaire-time${left <= 60 ? ' is-late' : ''}`} aria-label={`Time ${clock(sec)}`}>
-          {clock(sec)}
+        {/* Online, the shell's connection badge sits at the top center, so the HUD parts around it. */}
+        <span className="g-solitaire-hud-l">
+          <span className={`g-solitaire-time${left <= 60 ? ' is-late' : ''}`} aria-label={`Time ${clock(sec)}`}>
+            {clock(sec)}
+          </span>
+          {s && <span className="g-solitaire-mode">Draw {s.draw}</span>}
         </span>
-        {s && <span className="g-solitaire-mode">Draw {s.draw}</span>}
-        <button type="button" className="g-solitaire-btn" disabled={!s?.history.length || phase.current !== 'play'} onClick={doUndo}>
+        <button type="button" className="g-solitaire-btn" disabled={!s?.history.length || phase.current !== 'play'} onClick={clicked(doUndo)}>
           Undo
         </button>
       </div>
@@ -694,7 +717,7 @@ function Play() {
         <div className="g-solitaire-toast" role="status">
           <span>No moves left</span>
           {s?.history.length ? (
-            <button type="button" className="g-solitaire-btn" onClick={doUndo}>
+            <button type="button" className="g-solitaire-btn" onClick={clicked(doUndo)}>
               Undo
             </button>
           ) : null}
