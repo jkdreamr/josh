@@ -51,6 +51,8 @@ const FRAME_S = Math.cos(TILT) - Math.sin(TILT) / Math.tan(TILT + HALF_FOV);
 const FRAME_W = (Math.sin(TILT) * Math.tan(HALF_FOV)) / (Math.sin(TILT) - Math.tan(HALF_FOV) * Math.cos(TILT));
 /** three's GreaterDepth constant, by value: three-lib.ts exports classes, not constants. */
 const GREATER_DEPTH = 6 as T.DepthModes;
+/** three's AdditiveBlending, by value, for things that glow. */
+const ADDITIVE = 2 as T.Blending;
 
 const QUADS = [
   [-1, -1],
@@ -511,6 +513,63 @@ function glowTexture(THREE: Three) {
   );
 }
 
+/** A burst of light: a hot middle, a long spike along v and a short one across, for muzzle flashes and sparks. */
+function starTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      const grad = g.createRadialGradient(32, 32, 0, 32, 32, 30);
+      grad.addColorStop(0, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.25, 'rgba(255,240,200,0.8)');
+      grad.addColorStop(1, 'rgba(255,200,120,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
+      g.fillStyle = 'rgba(255,255,255,0.9)';
+      for (const [w, h] of [
+        [5, 62],
+        [3, 30],
+      ]) {
+        g.beginPath();
+        g.moveTo(32, 32 - h / 2);
+        g.lineTo(32 + w / 2, 32);
+        g.lineTo(32, 32 + h / 2);
+        g.lineTo(32 - w / 2, 32);
+        g.closePath();
+        g.fill();
+        g.beginPath();
+        g.moveTo(32 - h / 2, 32);
+        g.lineTo(32, 32 + w / 4);
+        g.lineTo(32 + h / 2, 32);
+        g.lineTo(32, 32 - w / 4);
+        g.closePath();
+        g.fill();
+      }
+    }),
+  );
+}
+
+/** A streak of light, clear at the tail (v = 1) and hot at the head (v = 0), soft at its sides. */
+function tracerTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(16, 64, (g) => {
+      const img = g.createImageData(16, 64);
+      for (let y = 0; y < 64; y++)
+        for (let x = 0; x < 16; x++) {
+          const i = (y * 16 + x) * 4;
+          const along = y / 63;
+          const across = 1 - Math.abs((x + 0.5) / 8 - 1);
+          const core = Math.pow(across, 3);
+          img.data[i] = 255;
+          img.data[i + 1] = Math.round(230 + 25 * core);
+          img.data[i + 2] = Math.round(150 + 105 * core);
+          img.data[i + 3] = Math.round(Math.pow(along, 1.6) * Math.pow(across, 1.5) * 255);
+        }
+      g.putImageData(img, 0, 0);
+    }),
+  );
+}
+
 function blobTexture(THREE: Three) {
   return texture(
     THREE,
@@ -548,6 +607,56 @@ function softSquareTexture(THREE: Three, strip = false) {
           img.data[i + 3] = Math.round((strip ? across * across * Math.min(1, Math.min(u, 1 - u) / 0.04) : edge(u) * edge(v)) * 255);
         }
       g.putImageData(img, 0, 0);
+    }),
+  );
+}
+
+/**
+ * Cracks round an egg's shell, in white for the material to tint: the first few drawn solid, the rest half see
+ * through, so an alpha test of 0.7 shows the first and 0.3 shows them all. Drawn round its middle, below the hat.
+ */
+function crackTexture(THREE: Three) {
+  const rnd = scatter(61);
+  return texture(
+    THREE,
+    canvas(256, 128, (g) => {
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      const crack = (u: number, v: number, len: number, alpha: number, width: number) => {
+        g.strokeStyle = `rgba(255,255,255,${alpha})`;
+        g.lineWidth = width;
+        g.beginPath();
+        let x = u * 256;
+        let y = v;
+        g.moveTo(x, y);
+        const dir = rnd() > 0.5 ? 1 : -1;
+        for (let i = 0; i < len; i++) {
+          x += dir * (6 + rnd() * 8);
+          y += (i % 2 ? -1 : 1) * (3 + rnd() * 6);
+          g.lineTo(x, y);
+          // a short branch off some corners
+          if (rnd() < 0.3) {
+            g.moveTo(x, y);
+            g.lineTo(x + dir * (3 + rnd() * 5), y + (rnd() - 0.5) * 12);
+            g.moveTo(x, y);
+          }
+        }
+        g.stroke();
+      };
+      for (const [u, v] of [
+        [0.06, 66],
+        [0.4, 74],
+        [0.72, 62],
+      ])
+        crack(u, v, 7, 1, 3);
+      for (const [u, v] of [
+        [0.22, 84],
+        [0.55, 58],
+        [0.88, 80],
+        [0.32, 60],
+        [0.66, 88],
+      ])
+        crack(u, v, 6, 0.5, 2.4);
     }),
   );
 }
@@ -665,7 +774,7 @@ type HeldModel = { group: T.Group; stripe: T.Mesh | null; spin: T.Object3D | nul
 type EggView = {
   root: T.Group;
   body: T.Group;
-  skin: T.MeshLambertMaterial;
+  skin: T.MeshPhongMaterial;
   hand: T.Group;
   guns: Map<Held, HeldModel>;
   shadow: T.Mesh;
@@ -687,6 +796,21 @@ type EggView = {
   swing: number;
   recoil: number;
   lean: number;
+  /** The face, for blinking and squinting. */
+  face: T.Mesh;
+  /** Cracks over the shell, and how cracked it shows (0 whole, 1 a few, 2 many). */
+  crack: T.Mesh;
+  cracked: number;
+  /** A shield's shimmer round the egg when a hit lands on it, fading from 1. */
+  bubble: T.Mesh;
+  bubbleMat: T.ShaderMaterial;
+  shimmer: number;
+  /** Squash (below 0) and stretch, sprung back to 0, and how fast it's moving. */
+  sq: number;
+  sqV: number;
+  /** Meters walked since the last puff of dust, and seconds since the last ripple when wading. */
+  step: number;
+  ripple: number;
 };
 
 type LootView = { group: T.Group; model: T.Object3D; spin: number };
@@ -2456,17 +2580,85 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   // ---------------------------------------------------------------------------------------------------------------
   // Eggs.
 
+  // What every egg shares, each merged into one mesh: the face (eyes with whites, pupils and a glint, and rosy
+  // cheeks, around the eyes' middle so it can blink and squint), both hands, and the hat's cap, band and bobble.
+  const shaped = (g: T.BufferGeometry, x: number, y: number, z: number, sx: number, sy: number, sz: number, c: number, rx = 0): RoofPart => {
+    g.scale(sx, sy, sz);
+    if (rx) g.rotateX(rx);
+    g.translate(x, y, z);
+    return { g, c };
+  };
+  const faceParts: RoofPart[] = [];
+  for (const side of [-1, 1]) {
+    faceParts.push(shaped(new THREE.SphereGeometry(1, 10, 8), side * 0.165, 0, 0.5, 0.11, 0.13, 0.06, 0xffffff));
+    faceParts.push(shaped(new THREE.SphereGeometry(1, 8, 6), side * 0.17, -0.012, 0.545, 0.064, 0.082, 0.04, 0x17181d));
+    faceParts.push(shaped(new THREE.SphereGeometry(1, 6, 4), side * 0.148, 0.03, 0.583, 0.022, 0.022, 0.012, 0xffffff));
+    faceParts.push(shaped(new THREE.SphereGeometry(1, 8, 4), side * 0.3, -0.19, 0.455, 0.075, 0.045, 0.03, 0xff9c8f));
+  }
+  const faceGeo = geo(mergeRoof(THREE, faceParts, 1, true));
+  const handGeo = geo(mergeRoof(THREE, [-1, 1].map((side) => shaped(new THREE.SphereGeometry(1, 10, 8), side * 0.4, 0.72, 0.42, 0.11, 0.11, 0.11, 0xffffff)), 1, true));
+  const hatGeo = geo(
+    mergeRoof(THREE, [shaped(new THREE.SphereGeometry(1, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2), 0, 1.08, 0, 0.5, 0.52, 0.5, 0xffffff), shaped(new THREE.TorusGeometry(1, 0.12, 6, 24), 0, 1.1, 0, 0.47, 0.47, 0.47, 0xffffff, Math.PI / 2), shaped(new THREE.SphereGeometry(1, 8, 6), 0, 1.64, 0, 0.11, 0.11, 0.11, 0xffffff)], 1, true),
+  );
+  // a glider canopy in the egg's color with white panels
+  const canopyBase = new THREE.ConeGeometry(1, 1, 12, 1, true).toNonIndexed();
+  canopyBase.computeVertexNormals();
+  geos.push(canopyBase);
+  const faceMat = lambert(0xffffff, { vertexColors: true, emissive: 0x202020 });
+  // cracks spread over a hurt egg: the light ones below two thirds health, all of them below a third
+  const crackTex = keep(crackTexture(THREE));
+  const crackLight = lambert(0x6b4a2a, { map: crackTex, alphaTest: 0.7 });
+  const crackHeavy = lambert(0x5a3a1e, { map: crackTex, alphaTest: 0.3 });
+  /** A glossy shell: a little shine, and a warm rim of light round the edge so eggs stand off the ground. */
+  const shell = (color: number) => {
+    const x = mat(new THREE.MeshPhongMaterial({ color, specular: 0x3a3530, shininess: 42 }));
+    x.onBeforeCompile = (shader) => {
+      shader.uniforms.uRim = { value: new THREE.Color(0xfff2d8).multiplyScalar(0.42) };
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform vec3 uRim;')
+        .replace('#include <opaque_fragment>', 'float rimK = 1.0 - max(dot(normal, normalize(vViewPosition)), 0.0);\noutgoingLight += uRim * rimK * rimK * rimK;\n#include <opaque_fragment>');
+    };
+    return x;
+  };
+  const bubbleShader = {
+    vertexShader: `
+      varying vec3 vN;
+      varying vec3 vV;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vN = normalize(normalMatrix * normal);
+        vV = -mv.xyz;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform float uA;
+      uniform float uTime;
+      varying vec3 vN;
+      varying vec3 vV;
+      void main() {
+        float f = 1.0 - abs(dot(normalize(vN), normalize(vV)));
+        float ripple = sin(f * 18.0 - uTime * 9.0) * 0.5 + 0.5;
+        vec3 col = mix(vec3(0.35, 0.7, 1.0), vec3(0.92, 0.98, 1.0), f);
+        gl_FragColor = vec4(col, (0.08 + f * f * 0.85 + ripple * 0.1) * uA);
+      }`,
+  };
+
   const eggs: EggView[] = m.fighters.map((f) => {
     const root = new THREE.Group();
     const body = new THREE.Group();
     root.add(body);
-    const skin = lambert(0xfff3df, { emissive: 0x000000 });
+    const tone = parseInt(f.color.slice(1), 16);
+    const skin = shell(0xfff3df);
     add(body, G.egg, skin, 0, 0, 0, 1, 1, 1);
-    const hatMat = lambert(parseInt(f.color.slice(1), 16));
-    const hat = [add(body, G.cap, hatMat, 0, 1.08, 0, 0.5, 0.52, 0.5), add(body, G.band, hatMat, 0, 1.1, 0, 0.47, 0.47, 0.47), add(body, G.ball, hatMat, 0, 1.64, 0, 0.11, 0.11, 0.11)];
-    hat[1].rotation.x = Math.PI / 2;
-    for (const side of [-1, 1]) add(body, G.ball, M.black, side * 0.17, 1.0, 0.53, 0.065, 0.085, 0.05);
-    for (const side of [-1, 1]) add(body, G.ball, M.cream, side * 0.4, 0.72, 0.42, 0.11, 0.11, 0.11);
+    const hatMat = lambert(tone);
+    const hat = [add(body, hatGeo, hatMat, 0, 0, 0, 1, 1, 1)];
+    const face = add(body, faceGeo, faceMat, 0, 1.0, 0, 1, 1, 1);
+    add(body, handGeo, M.cream, 0, 0, 0, 1, 1, 1);
+    const crack = add(body, G.egg, crackLight, 0, -0.008, 0, 1.012, 1.008, 1.012);
+    crack.visible = false;
+    const bubbleMat = mat(new THREE.ShaderMaterial({ ...bubbleShader, uniforms: { uA: { value: 0 }, uTime: wind }, transparent: true, depthWrite: false }));
+    const bubble = add(root, G.ball, bubbleMat, 0, 0.85, 0, 1.05, 1.2, 1.05);
+    bubble.visible = false;
     const hand = new THREE.Group();
     hand.position.set(0.24, 0.78, 0.48);
     body.add(hand);
@@ -2484,7 +2676,20 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     root.add(shadow);
     // a little glider for the drop
     const glider = new THREE.Group();
-    add(glider, G.cone, lambert(parseInt(f.color.slice(1), 16), { side: THREE.DoubleSide }), 0, 2.9, 0, 1.9, 0.9, 1.9);
+    const canopy = canopyBase.clone();
+    geos.push(canopy);
+    {
+      const n = canopy.attributes.position.count;
+      const cols = new Float32Array(n * 3);
+      const c = new THREE.Color(tone);
+      // every other panel white (three points a triangle, two triangles a panel)
+      for (let i = 0; i < n; i++) {
+        const white = Math.floor(i / 6) % 2 === 1;
+        cols.set(white ? [1, 1, 1] : [c.r, c.g, c.b], i * 3);
+      }
+      canopy.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    }
+    add(glider, canopy, lambert(0xffffff, { vertexColors: true, side: THREE.DoubleSide }), 0, 2.9, 0, 1.9, 0.9, 1.9);
     add(glider, G.ball, M.white, 0, 3.35, 0, 0.22, 0.22, 0.22);
     for (const [x, z] of [
       [-1.5, 0],
@@ -2510,7 +2715,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     ghost.renderOrder = 20;
     body.add(ghost);
     scene.add(root);
-    return { root, body, skin, hand, guns: new Map(), shadow, glider, heal, cross, ring, ghost, backPan, hat, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, swing: 0, recoil: 0, lean: 0 };
+    return { root, body, skin, hand, guns: new Map(), shadow, glider, heal, cross, ring, ghost, backPan, hat, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, swing: 0, recoil: 0, lean: 0, face, crack, cracked: 0, bubble, bubbleMat, shimmer: 0, sq: 0, sqV: 0, step: 0, ripple: 0 };
   });
 
   // the aim line from your gun, and where you'll land while gliding
@@ -2657,6 +2862,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   // bullets and rockets
   const tracers: T.Mesh[] = [];
   const tracerGeo = geo(new THREE.BoxGeometry(0.08, 0.08, 1));
+  // a bullet is a glowing streak laid flat along its path (a crossbow bolt stays a little brown stick)
+  const streakGeo = geo(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2));
+  const streakMat = basic(0xffffff, { map: keep(tracerTexture(THREE)), transparent: true, depthWrite: false, blending: ADDITIVE, side: THREE.DoubleSide });
   const rockets: T.Mesh[] = [];
 
   // things thrown, and the clouds and puddles they leave
@@ -2709,6 +2917,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     dust: basic(0xe8dcc0, { transparent: true, opacity: 0.6, depthWrite: false }),
     fire: basic(0xffa53a),
     spark: basic(0xfff1a8),
+    ember: basic(0xffa040, { blending: ADDITIVE, transparent: true, depthWrite: false }),
     smoke: basic(0x777777, { transparent: true, opacity: 0.55, depthWrite: false }),
     yolk: M.yolk,
     purple: basic(0xb48cff),
@@ -2774,6 +2983,100 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const puddles = new THREE.Group();
   scene.add(puddles);
 
+  // soft puffs that swell and fade as they drift: dust from feet and landings, smoke from blasts, flares and fires
+  type Puff = { mesh: T.Mesh; mat: T.MeshLambertMaterial; life: number; max: number; vx: number; vy: number; vz: number; size: number; grow: number; alpha: number };
+  const puffs: Puff[] = [];
+  for (let i = 0; i < 56; i++) {
+    const pm = lambert(0xffffff, { transparent: true, opacity: 0, depthWrite: false, emissive: 0x2a2a2a });
+    const mesh = new THREE.Mesh(G.ball, pm);
+    mesh.visible = false;
+    scene.add(mesh);
+    puffs.push({ mesh, mat: pm, life: 0, max: 1, vx: 0, vy: 0, vz: 0, size: 1, grow: 1, alpha: 1 });
+  }
+  let puffAt = 0;
+  const puff = (x: number, y: number, z: number, size: number, life: number, hex: number, alpha: number, vx = 0, vy = 0.6, vz = 0, grow = 1.6) => {
+    const p = puffs[puffAt];
+    puffAt = (puffAt + 1) % puffs.length;
+    p.mesh.position.set(x, y, z);
+    p.mesh.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+    p.mesh.scale.setScalar(size * 0.4);
+    p.mesh.visible = true;
+    p.mat.color.setHex(hex);
+    p.mat.opacity = alpha;
+    Object.assign(p, { life, max: life, vx, vy, vz, size, grow, alpha });
+  };
+  /** A ring of dust kicked out along the ground (a landing, a bounce, a blast). */
+  const dustRing = (x: number, z: number, n: number, r: number, size: number, hex: number, alpha: number, speed: number) => {
+    const a0 = Math.random() * 6.3;
+    for (let i = 0; i < n; i++) {
+      const a = a0 + (i / n) * Math.PI * 2;
+      puff(x + Math.sin(a) * r, 0.25, z + Math.cos(a) * r, size, 0.55 + Math.random() * 0.25, hex, alpha, Math.sin(a) * speed, 0.35, Math.cos(a) * speed, 1.4);
+    }
+  };
+
+  // rings spreading over water where an egg wades or splashes down, and the shockwave of a blast
+  const rippleMats: T.MeshBasicMaterial[] = [];
+  const ripples: { mesh: T.Mesh; life: number; max: number; r: number }[] = [];
+  for (let i = 0; i < 18; i++) {
+    const rm = basic(0xffffff, { transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+    rippleMats.push(rm);
+    const mesh = new THREE.Mesh(G.ring, rm);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.visible = false;
+    scene.add(mesh);
+    ripples.push({ mesh, life: 0, max: 1, r: 1 });
+  }
+  let rippleAt = 0;
+  const ripple = (x: number, y: number, z: number, r: number, life: number, hex = 0xffffff) => {
+    const i = rippleAt;
+    rippleAt = (rippleAt + 1) % ripples.length;
+    const rp = ripples[i];
+    rp.mesh.position.set(x, y, z);
+    rp.mesh.scale.setScalar(0.2);
+    rp.mesh.visible = true;
+    rippleMats[i].color.setHex(hex);
+    Object.assign(rp, { life, max: life, r });
+  };
+
+  // muzzle flashes and hit sparks: a bright star laid flat, glowing over whatever is under it
+  const starMat = basic(0xffe9a8, { map: keep(starTexture(THREE)), transparent: true, depthWrite: false, blending: ADDITIVE });
+  const sparkMat = basic(0xffffff, { map: starMat.map, transparent: true, depthWrite: false, blending: ADDITIVE });
+  const stars: { mesh: T.Mesh; life: number; max: number; size: number }[] = [];
+  for (let i = 0; i < 20; i++) {
+    const mesh = new THREE.Mesh(G.plane, starMat);
+    mesh.visible = false;
+    mesh.renderOrder = 6;
+    scene.add(mesh);
+    stars.push({ mesh, life: 0, max: 1, size: 1 });
+  }
+  let starAt = 0;
+  const star = (x: number, y: number, z: number, a: number, len: number, wide: number, life: number, material: T.Material) => {
+    const s = stars[starAt];
+    starAt = (starAt + 1) % stars.length;
+    s.mesh.material = material;
+    s.mesh.position.set(x, y, z);
+    // laid flat, its length along `a`
+    s.mesh.rotation.set(-Math.PI / 2, a, 0, 'YXZ');
+    s.mesh.scale.set(wide, len, 1);
+    s.size = 1;
+    s.mesh.visible = true;
+    s.life = life;
+    s.max = life;
+  };
+
+  // scorch marks where things blew up, the oldest cleared for the newest
+  const scorchMat = basic(0x1a1410, { map: blob, transparent: true, opacity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+  const scorches: T.Mesh[] = [];
+  for (let i = 0; i < 8; i++) {
+    const mesh = new THREE.Mesh(G.plane, scorchMat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.visible = false;
+    mesh.renderOrder = 1;
+    scene.add(mesh);
+    scorches.push(mesh);
+  }
+  let scorchAt = 0;
+
   let shake = 0;
   let now = 0;
   const fog = scene.fog as T.Fog;
@@ -2800,6 +3103,51 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const fz = Math.cos(f.aim);
     v.body.rotation.x = (mx * fx + mz * fz) * v.lean;
     v.body.rotation.z = -(mx * fz - mz * fx) * v.lean;
+    // squash on landing and stretch on a bounce, sprung back (in small steps, so a slow frame can't fling it), and a
+    // little give in every step
+    for (let k = 0, step = Math.min(dt, 0.05) / 2; k < 2; k++) {
+      v.sqV += (-260 * v.sq - 16 * v.sqV) * step;
+      v.sq = Math.max(-0.35, Math.min(0.35, v.sq + v.sqV * step));
+    }
+    const give = f.phase === 'ground' && speed > 0.4 ? Math.sin(v.walk * 2) * 0.035 : 0;
+    const sq = v.sq + give;
+    v.body.scale.set(1 - sq * 0.5, 1 + sq, 1 - sq * 0.5);
+    const close = Math.abs(f.x - cam.x) < cam.view * 1.6 && Math.abs(f.z - cam.z) < cam.view * 1.6;
+    if (f.phase === 'ground' && close) {
+      if (f.wet) {
+        // rings spread round an egg wading, quicker the faster it goes
+        v.ripple += dt * (0.8 + speed * 0.5);
+        if (v.ripple > 1) {
+          v.ripple = 0;
+          ripple(f.x, 0.07, f.z, 1.6 + speed * 0.12, 1.1, 0xe6f7ff);
+        }
+      } else if (speed > 2) {
+        // a puff of dust every few steps
+        v.step += speed * dt;
+        if (v.step > 2.2) {
+          v.step = 0;
+          puff(f.x - mx * 0.4 + (Math.random() - 0.5) * 0.3, 0.12, f.z - mz * 0.4, 0.32, 0.45, roadAt(map, f.x, f.z) ? 0xe2cfa0 : 0xd8e0b8, 0.55, -mx * 0.4, 0.5, -mz * 0.4, 1.3);
+        }
+      }
+    }
+    // blinks now and then, squints when hit
+    const blink = (clock * 0.9 + f.id * 0.37) % 3.7 < 0.1;
+    v.face.scale.set(1, f.hitT > 0 ? 0.35 : blink ? 0.12 : 1, 1);
+    // cracks by health, and bits of shell fly off as they spread
+    const cracked = f.phase !== 'ground' ? 0 : f.hp < 34 ? 2 : f.hp < 67 ? 1 : 0;
+    if (cracked !== v.cracked) {
+      if (cracked > v.cracked && close) burst(f.x, 1.1, f.z, 5, 2.5, 0.09, 0.5, [partMat.shell]);
+      v.cracked = cracked;
+      v.crack.visible = cracked > 0;
+      v.crack.material = cracked > 1 ? crackHeavy : crackLight;
+    }
+    // a shield's shimmer where a hit landed on it
+    v.shimmer = Math.max(0, v.shimmer - dt * 2.4);
+    v.bubble.visible = v.shimmer > 0;
+    if (v.bubble.visible) {
+      v.bubbleMat.uniforms.uA.value = v.shimmer;
+      v.bubble.scale.set(1.05 + (1 - v.shimmer) * 0.15, 1.2 + (1 - v.shimmer) * 0.15, 1.05 + (1 - v.shimmer) * 0.15);
+    }
     v.glider.visible = f.phase === 'drop';
     v.shadow.visible = (f.phase === 'ground' && !f.wet) || (f.phase === 'drop' && f.y < 25);
     v.shadow.position.y = 0.03 - f.y;
@@ -3130,7 +3478,12 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
 
       // campfires flicker (and throw the odd spark when you're close), pads pulse
       placeFires(clock);
-      for (const c of map.fires) if (Math.random() < 0.08 && Math.abs(c.x - cam.x) < cam.view * 2 && Math.abs(c.z - cam.z) < cam.view * 2) burst(c.x, 1, c.z, 1, 1.2, 0.08, 0.7, [partMat.spark], -2);
+      for (const c of map.fires) {
+        if (Math.abs(c.x - cam.x) > cam.view * 2 || Math.abs(c.z - cam.z) > cam.view * 2) continue;
+        // embers float up, and a thin smoke curls away
+        if (Math.random() < 0.14) burst(c.x + (Math.random() - 0.5) * 0.4, 0.9, c.z + (Math.random() - 0.5) * 0.4, 1, 1, 0.07, 1, [partMat.ember], -2.2);
+        if (Math.random() < 0.035) puff(c.x, 1.4, c.z, 0.38, 2.4, 0xa8a8a8, 0.22, 0.25, 0.9, -0.1, 2.4);
+      }
       fireGlowMat.opacity = 0.5 + Math.sin(clock * 11) * 0.07 + Math.sin(clock * 23) * 0.04;
       for (const [i, pd] of pads.entries()) {
         const k = (clock * 0.8 + i * 0.3) % 1;
@@ -3264,7 +3617,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           // the egg's long axis (+y) laid along the flight
           r.rotation.set(Math.PI / 2, Math.atan2(b.dx, b.dz), 0, 'YXZ');
           r.scale.setScalar(0.3);
-          if (Math.random() < 0.6) burst(b.x - b.dx * 0.4, 0.85, b.z - b.dz * 0.4, 1, 0.6, 0.18, 0.5, [partMat.smoke], -1);
+          if (Math.random() < 0.5) puff(b.x - b.dx * 0.5, 0.9, b.z - b.dz * 0.5, 0.32, 0.8, 0xdcdcdc, 0.55, 0, 0.3, 0, 1.7);
           continue;
         }
         if (b.traveled < 0.6) continue;
@@ -3277,12 +3630,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         ti++;
         // a crossbow bolt is a short brown arrow; everything else a streak of light
         const bolt = b.w === 'crossbow';
-        const len = bolt ? 0.9 : Math.min(2.4, b.traveled - 0.5);
+        const len = bolt ? 0.9 : Math.min(3.2, (b.traveled - 0.5) * 1.3);
         tr.visible = true;
-        tr.material = bolt ? M.bolt : M.tracer;
+        tr.geometry = bolt ? tracerGeo : streakGeo;
+        tr.material = bolt ? M.bolt : streakMat;
+        tr.renderOrder = bolt ? 0 : 6;
         tr.position.set(b.x - (b.dx * len) / 2, 1.0, b.z - (b.dz * len) / 2);
         tr.rotation.set(0, Math.atan2(b.dx, b.dz), 0);
-        tr.scale.set(bolt ? 0.7 : 1, bolt ? 0.7 : 1, len);
+        tr.scale.set(bolt ? 0.7 : 0.34, bolt ? 0.7 : 1, len);
       }
       for (let i = ti; i < tracers.length; i++) tracers[i].visible = false;
       for (let i = ri; i < rockets.length; i++) rockets[i].visible = false;
@@ -3341,7 +3696,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         fl.glow.position.set(fl.x, y, fl.z);
         fl.core.scale.setScalar(0.35 * fade);
         fl.glow.scale.setScalar((1.3 + Math.sin(clock * 30) * 0.2) * fade);
-        if (Math.random() < 0.5) burst(fl.x, y - 0.3, fl.z, 1, 0.5, 0.3, 1.2, [partMat.smoke], -0.5);
+        if (Math.random() < 0.4) puff(fl.x, y - 0.3, fl.z, 0.45, 1.6, 0xffc4ae, 0.45, 0, -0.3, 0, 2);
       }
 
       // effects
@@ -3369,6 +3724,39 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         }
         f.mesh.scale.multiplyScalar(1 + f.grow * dt);
       }
+      for (const p of puffs) {
+        if (!p.mesh.visible) continue;
+        p.life -= dt;
+        if (p.life <= 0) {
+          p.mesh.visible = false;
+          continue;
+        }
+        const u = 1 - p.life / p.max;
+        // swells fast, then drifts and thins
+        p.mesh.scale.setScalar(p.size * (0.4 + (1 - (1 - u) * (1 - u)) * p.grow));
+        p.mat.opacity = p.alpha * (1 - u) * (1 - u);
+        p.mesh.position.x += p.vx * dt;
+        p.mesh.position.y += p.vy * dt;
+        p.mesh.position.z += p.vz * dt;
+        p.vx *= 1 - dt * 3;
+        p.vz *= 1 - dt * 3;
+      }
+      ripples.forEach((rp, i) => {
+        if (!rp.mesh.visible) return;
+        rp.life -= dt;
+        if (rp.life <= 0) {
+          rp.mesh.visible = false;
+          return;
+        }
+        const u = 1 - rp.life / rp.max;
+        rp.mesh.scale.setScalar(0.2 + (1 - (1 - u) * (1 - u)) * rp.r);
+        rippleMats[i].opacity = 0.75 * (1 - u);
+      });
+      for (const s of stars) {
+        if (!s.mesh.visible) continue;
+        s.life -= dt;
+        if (s.life <= 0) s.mesh.visible = false;
+      }
     },
     react(e, m, focus) {
       const near = (x: number, z: number) => Math.abs(x - cam.x) < cam.view * 2.5 && Math.abs(z - cam.z) < cam.view * 2.5;
@@ -3387,7 +3775,12 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             burst(e.x, 1, e.z, 8, 3, 0.18, 0.6, [partMat.spark, partMat.smoke]);
             break;
           }
-          if (f && near(f.x, f.z) && e.w !== 'launcher' && e.w !== 'crossbow') flash(f.x + Math.sin(e.a) * 1.2, 0.95, f.z + Math.cos(e.a) * 1.2, cls === 'shotgun' ? 0.32 : e.w === 'micro' ? 0.15 : 0.2, 0.05, 0, flashMat);
+          if (f && near(f.x, f.z) && e.w !== 'launcher' && e.w !== 'crossbow') {
+            flash(f.x + Math.sin(e.a) * 1.2, 0.95, f.z + Math.cos(e.a) * 1.2, cls === 'shotgun' ? 0.32 : e.w === 'micro' ? 0.15 : 0.2, 0.05, 0, flashMat);
+            // and a star of light out of the muzzle, bigger for the big guns
+            const [len, wide] = cls === 'shotgun' ? [1.5, 1] : cls === 'sniper' ? [1.7, 0.75] : e.w === 'micro' || e.w === 'pistol' ? [0.75, 0.5] : [1.05, 0.62];
+            star(f.x + Math.sin(e.a) * (1.15 + len * 0.3), 0.97, f.z + Math.cos(e.a) * (1.15 + len * 0.3), e.a, len, wide, 0.055, starMat);
+          } else if (f && near(f.x, f.z) && e.w === 'launcher') puff(f.x - Math.sin(e.a) * 0.6, 1, f.z - Math.cos(e.a) * 0.6, 0.6, 0.7, 0xd8d8d8, 0.6, -Math.sin(e.a) * 2, 0.4, -Math.cos(e.a) * 2, 2);
           if (e.f === focus) shake = Math.max(shake, cls === 'shotgun' || cls === 'sniper' || e.w === 'launcher' || e.w === 'revolver' ? 0.35 : 0.08);
           break;
         }
@@ -3419,9 +3812,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           } else if (e.what === 'fire') burst(e.x, 0.6, e.z, 6, 3, 0.08, 0.5, [partMat.spark, partMat.fire], 3);
           else burst(e.x, 1, e.z, 4, 3, 0.1, 0.35, [partMat.wood, partMat.dust]);
           break;
-        case 'hit':
-          if (near(e.x, e.z)) burst(e.x, 1, e.z, 5, 3.5, 0.1, 0.4, e.shield ? [partMat.purple, partMat.shell] : [partMat.shell, partMat.yolk]);
+        case 'hit': {
+          if (!near(e.x, e.z)) break;
+          burst(e.x, 1, e.z, 5, 3.5, 0.1, 0.4, e.shield ? [partMat.purple, partMat.shell] : [partMat.shell, partMat.yolk]);
+          star(e.x, 1.05, e.z, Math.random() * 3, 0.75, 0.75, 0.07, sparkMat);
+          const v = eggs[e.to];
+          if (v && e.shield) v.shimmer = 1;
           break;
+        }
         case 'hurt':
           if (e.f === focus) shake = Math.max(shake, e.storm ? 0.12 : 0.35);
           break;
@@ -3450,7 +3848,23 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         }
         case 'boom':
           flash(e.x, 1, e.z, 1.2, 0.35, 9, boomMat);
-          burst(e.x, 1, e.z, 22, 9, 0.28, 0.9, [partMat.fire, partMat.spark, partMat.smoke]);
+          burst(e.x, 1, e.z, 16, 9, 0.24, 0.8, [partMat.fire, partMat.spark]);
+          if (near(e.x, e.z)) {
+            // a fireball that rolls up into smoke, a shockwave along the ground, and a scorch left behind
+            for (let i = 0; i < 4; i++) puff(e.x + (Math.random() - 0.5) * 1.2, 0.8 + Math.random(), e.z + (Math.random() - 0.5) * 1.2, 0.8, 0.3, i % 2 ? 0xffc35a : 0xff8a3a, 0.8, 0, 2.5, 0, 1.4);
+            for (let i = 0; i < 7; i++) {
+              const a = (i / 7) * Math.PI * 2;
+              puff(e.x + Math.sin(a) * 1.2, 1 + Math.random() * 1.5, e.z + Math.cos(a) * 1.2, 1.1, 1.5 + Math.random() * 0.8, i % 3 ? 0xa4a4a8 : 0xc4c4c8, 0.55, Math.sin(a) * 1.5, 1.4 + Math.random(), Math.cos(a) * 1.5, 1.8);
+            }
+            ripple(e.x, 0.2, e.z, 8, 0.45, 0xffd9a0);
+            dustRing(e.x, e.z, 8, 1.5, 0.7, 0xc9b38a, 0.6, 7);
+            const sc = scorches[scorchAt];
+            scorchAt = (scorchAt + 1) % scorches.length;
+            sc.position.set(e.x, 0.029, e.z);
+            sc.scale.setScalar(3.6 + Math.random());
+            sc.rotation.z = Math.random() * 6;
+            sc.visible = true;
+          }
           {
             const f = m.fighters[focus];
             if (f && Math.hypot(f.x - e.x, f.z - e.z) < 25) shake = Math.max(shake, 1.1);
@@ -3469,8 +3883,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         }
         case 'bounce': {
           const f = m.fighters[e.f];
+          const v = eggs[e.f];
+          if (v) v.sqV = 7;
           if (!f || !near(f.x, f.z)) break;
-          burst(f.x, 0.3, f.z, 14, 5, 0.2, 0.6, [partMat.dust], 2);
+          burst(f.x, 0.3, f.z, 10, 5, 0.2, 0.6, [partMat.dust], 2);
+          dustRing(f.x, f.z, 8, 1.3, 0.55, 0xbff5e2, 0.6, 5);
           flash(f.x, 0.3, f.z, 0.8, 0.25, 8, padFlash);
           if (e.f === focus) shake = Math.max(shake, 0.3);
           break;
@@ -3480,7 +3897,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           break;
         case 'land': {
           const f = m.fighters[e.f];
-          if (f && near(f.x, f.z)) burst(f.x, 0.2, f.z, 10, 3, 0.25, 0.5, f.wet ? [partMat.splash] : [partMat.dust], 2);
+          const v = eggs[e.f];
+          // a thump: squashed flat for a moment, and dust (or spray) thrown out round it
+          if (v) v.sqV = -6.5;
+          if (!f || !near(f.x, f.z)) break;
+          if (f.wet) {
+            burst(f.x, 0.3, f.z, 14, 4, 0.18, 0.6, [partMat.splash], 6);
+            ripple(f.x, 0.07, f.z, 3.2, 0.9, 0xe6f7ff);
+            ripple(f.x, 0.07, f.z, 1.8, 0.7, 0xe6f7ff);
+          } else dustRing(f.x, f.z, 9, 0.7, 0.55, 0xd9cfae, 0.65, 3.2);
           break;
         }
         case 'out': {
@@ -3488,6 +3913,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           if (!f) break;
           // the egg cracks: shell flies, a yolk stays behind
           burst(f.x, 1, f.z, 26, 6, 0.2, 1, [partMat.shell, partMat.shell, partMat.yolk]);
+          if (near(f.x, f.z)) {
+            star(f.x, 1, f.z, 0, 2.4, 2.4, 0.12, sparkMat);
+            dustRing(f.x, f.z, 7, 0.8, 0.6, 0xfff3df, 0.7, 3.5);
+          }
           const yolk = new THREE.Group();
           yolk.position.set(f.x, 0.04, f.z);
           const white = new THREE.Mesh(G.disc, M.eggWhite);
