@@ -13,14 +13,15 @@ const colorAlpha = (hex: string, alpha: number) => {
   return `rgba(${r},${g},${b},${alpha})`;
 };
 
-export function overlayLayout(size: { w: number; h: number }) {
+/** Where the minimap and Top 10 sit; `textScale` is how much the HUD text is enlarged to stay readable in a scaled frame. */
+export function overlayLayout(size: { w: number; h: number }, textScale = 1) {
   const miniDiameter = clamp(Math.min(size.w, size.h) * 0.34, 58, 88);
   const miniPad = size.h < 200 ? 4 : 12;
   const miniTop = size.h - miniDiameter - miniPad;
   const compact = size.h <= 190;
   const boardTop = 50;
-  const boardChrome = compact ? 6 : 28;
-  const boardRowHeight = compact ? 11 : 13;
+  const boardChrome = (compact ? 6 : 28) * textScale;
+  const boardRowHeight = (compact ? 11 : 13) * textScale;
   const maxBoardRows = Math.max(1, Math.floor((miniTop - boardTop - boardChrome) / boardRowHeight));
   return { miniDiameter, miniPad, miniTop, boardTop, boardChrome, boardRowHeight, maxBoardRows };
 }

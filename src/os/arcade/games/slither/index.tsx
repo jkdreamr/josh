@@ -15,7 +15,8 @@ import {
   type Input, type Level, type World,
 } from './world.ts';
 import {
-  applyHeadState, applyOps, loadSnapshot, makeRoster, resultRows, startsSoloRound, syncRoster, touchTarget, winnerOf, winnerSeat,
+  applyHeadState, applyOps, loadSnapshot, makeRoster, ordinal, peopleLine, peopleResults, resultRows, rosterChanges, rosterNotice,
+  startsSoloRound, syncRoster, touchTarget, winnerOf, winnerSeat, type PersonResult,
 } from './session.ts';
 import './slither.css';
 
@@ -136,8 +137,6 @@ function interpolateStates(before: RemoteSample, after: RemoteSample, alpha: num
   });
 }
 
-const ordinal = (place: number) => place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`;
-
 function Play() {
   const shell = useShell();
   const shellRef = useRef(shell);
@@ -182,10 +181,26 @@ function Play() {
   const [hud, setHud] = useState<Hud>({ length: 10, peak: 10, kills: 0, rank: 1, time: 0, status: '', rows: [], respawn: null });
   const [boostPressed, setBoostPressed] = useState(false);
   const [stick, setStick] = useState<TouchPoint | null>(null);
+  /** Joined while a round was under way: the host's round this player is in, and the room round the shell still shows. */
+  const lateRef = useRef<{ round: number; lobbyRound: number } | null>(null);
+  const lateEnded = useRef(new Set<number>());
+  const [late, setLate] = useState(false);
+  const [lateOver, setLateOver] = useState<{ title: string; people: PersonResult[] } | null>(null);
+  const [notice, setNotice] = useState<{ text: string; at: number } | null>(null);
+  const [textScale, setTextScale] = useState(1);
   const roomPlayers = online?.players.map((p) => ({ seat: p.seat, name: p.name })) ?? [];
   const roomBots = online?.bots.map((b) => ({ seat: b.seat, name: b.name, bot: true })) ?? [];
   const rosterKey = JSON.stringify([roomPlayers, roomBots]);
 
+  const currentRound = () => lateRef.current?.round ?? onlineRef.current?.round ?? 0;
+  const showNotice = (text: string) => {
+    if (text) setNotice({ text, at: performance.now() });
+  };
+  const leaveLate = () => {
+    lateRef.current = null;
+    setLate(false);
+    setLateOver(null);
+  };
   const sendToRoom = (value: Packet, to?: number, fast = false) => {
     if (packetBytes(value) > PACKET_LIMIT) return;
     onlineRef.current?.send(value, to === undefined ? (fast ? { fast: true } : undefined) : { to, fast });
@@ -231,6 +246,9 @@ function Play() {
     previousStatus.current = shell.status;
     if (shell.status !== 'playing') return;
     const room = onlineRef.current;
+    // Joined mid-round: the world already came from the host, and the room's next start begins a normal round.
+    if (room && lateRef.current && room.round === lateRef.current.lobbyRound) return;
+    if (lateRef.current) leaveLate();
     if (room) {
       if (room.isHost) startOnlineHost();
       else {
@@ -274,6 +292,7 @@ function Play() {
       return !old || entry.seat !== old.seat || entry.name !== old.name || entry.bot !== old.bot || entry.eligible !== old.eligible;
     });
     if (!changed) return;
+    showNotice(rosterNotice(rosterChanges(rosterRef.current, next, room.seat)));
     rosterRef.current = next;
     const world = worldRef.current;
     for (const entry of next) {
@@ -299,16 +318,23 @@ function Play() {
     const world = worldRef.current;
     if (!room || !world) return;
     const seat = seatOverride === undefined ? winnerSeat(world, winner) : seatOverride;
-    room.reportResult(room.round, seat);
+    const people = peopleResults(ranking, world.snakes, room.seat);
     const winningSnake = world.snakes.find((snake) => snake.id === winner);
     const title = seat === room.seat ? 'You Win' : winningSnake ? `${winningSnake.name} Wins` : 'Round Over';
+    if (lateRef.current) {
+      // Joined mid-round: wins count only for the people who started it, so this player shows the results and waits.
+      lateEnded.current.add(lateRef.current.round);
+      setLateOver({ title, people });
+      return;
+    }
+    room.reportResult(room.round, seat);
     const ownResult = ranking.find((row) => row[0] === currentId.current);
     const place = ranking.findIndex((row) => row[0] === currentId.current) + 1;
     const length = Math.floor(ownResult?.[2] ?? world.snakes[currentId.current]?.peak ?? 0);
     const kills = ownResult?.[3] ?? world.snakes[currentId.current]?.kills ?? 0;
     shellRef.current.gameOver(undefined, {
       title,
-      detail: `you finished ${ordinal(place || ranking.length)} of ${ranking.length} with length ${length}, ${kills} kills.`,
+      detail: `you finished ${ordinal(place || ranking.length)} of ${ranking.length} with length ${length}, ${kills} kills. ${peopleLine(people)}`.trim(),
     });
   };
 
@@ -317,8 +343,23 @@ function Play() {
     if (!room) return;
     const off = room.onMessage((from, data) => {
       const msg = parsePacket(data);
-      if (!msg || msg.r !== onlineRef.current?.round) return;
+      if (!msg) return;
       if (!room.isHost && from !== 0) return;
+      // Still in the lobby while the host runs a round: this room takes people mid-round, so ask the host to sync us in.
+      if (!room.isHost && !lateRef.current && shellRef.current.status === 'ready' && (msg.k === 'S' || msg.k === 'I')
+        && msg.r > 0 && !lateEnded.current.has(msg.r)) {
+        lateRef.current = { round: msg.r, lobbyRound: room.round };
+        worldRef.current = null;
+        rosterRef.current = [];
+        roundRef.current = msg.r;
+        currentId.current = -1;
+        ended.current = false;
+        remoteSamples.current = [];
+        receivedStateTick.current = -1;
+        sendToRoom(helloPacket(msg.r));
+        if (msg.k === 'S') return;
+      }
+      if (msg.r !== currentRound()) return;
       if (room.isHost) {
         const world = worldRef.current;
         if (!world) return;
@@ -329,13 +370,15 @@ function Play() {
           if (msg.seq <= last) return;
           receivedMoveSeq.current.set(from, msg.seq);
           remoteInputs.current.set(snake.id, { target: msg.target, boost: msg.boost });
-        } else if (msg.k === 'H' || msg.k === 'Q') {
+        } else if ((msg.k === 'H' || msg.k === 'Q') && !ended.current) {
           sendToRoom(initPacket(room.round, seedRef.current, ARENA_RADIUS, durationRef.current, levelRef.current, opSeq.current, rosterRef.current), from);
           for (const part of snapshotPackets(world, room.round, world.tick + 1)) sendToRoom(part, from);
         }
         return;
       }
       if (msg.k === 'I') {
+        if (rosterRef.current.length && roundRef.current === msg.r) showNotice(rosterNotice(rosterChanges(rosterRef.current, msg.roster, room.seat)));
+        roundRef.current = msg.r;
         const world = createWorld({ seed: msg.seed, radius: msg.radius });
         for (const entry of msg.roster) addSnake(world, {
           id: entry.id, name: entry.name, seat: entry.seat, bot: entry.bot, eligible: entry.eligible,
@@ -355,6 +398,12 @@ function Play() {
         remoteSamples.current = [];
         receivedStateTick.current = -1;
         away.current = false;
+        if (lateRef.current && currentId.current >= 0 && shellRef.current.status === 'ready') {
+          setLate(true);
+          setLateOver(null);
+          camera.current = { x: world.snakes[currentId.current].x, y: world.snakes[currentId.current].y, zoom: camera.current.zoom, shake: 0 };
+          shellRef.current.start();
+        }
       } else if (msg.k === 'S') {
         const world = worldRef.current;
         if (!world) return;
@@ -365,7 +414,7 @@ function Play() {
       } else if (msg.k === 'O') {
         if (msg.seq <= receivedOpSeq.current) return;
         if (msg.seq !== receivedOpSeq.current + 1) {
-          sendToRoom({ t: 'sl', r: room.round, k: 'Q' });
+          sendToRoom({ t: 'sl', r: currentRound(), k: 'Q' });
           return;
         }
         const world = worldRef.current;
@@ -409,6 +458,62 @@ function Play() {
     });
     return off;
   }, [online?.round, online?.isHost, online?.seat]);
+
+  // The host left mid-round: the round they ran is over for someone who joined it late as well.
+  const handoffsSeen = useRef(online?.handoffs ?? 0);
+  useEffect(() => {
+    const handoffs = online?.handoffs ?? 0;
+    if (handoffs === handoffsSeen.current) return;
+    handoffsSeen.current = handoffs;
+    const lateRound = lateRef.current;
+    if (!lateRound || ended.current) return;
+    ended.current = true;
+    lateEnded.current.add(lateRound.round);
+    setLateOver({ title: 'Host Left', people: [] });
+  }, [online?.handoffs]);
+  useEffect(() => {
+    if (!online && lateRef.current) leaveLate();
+  }, [online]);
+
+  // A late joiner plays in the shell's lobby state, so its Pause, Restart and Esc stay off like in any online round.
+  useEffect(() => {
+    const root = shell.root.current;
+    if (!root || !late) return;
+    root.classList.add('g-slither-late');
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code !== 'Escape' && event.code !== 'KeyP') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    root.addEventListener('keydown', onKey, true);
+    return () => {
+      root.classList.remove('g-slither-late');
+      root.removeEventListener('keydown', onKey, true);
+    };
+  }, [late, shell.root]);
+  useEffect(() => {
+    if (late && shell.status === 'paused' && shell.active) shell.resume();
+  }, [late, shell.status, shell.active]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice((n) => (n === notice ? null : n)), 4200);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  // Framed phones and iPads scale the whole screen down; keep HUD text at least 11px on screen.
+  useLayoutEffect(() => {
+    const root = shell.root.current;
+    if (!root || !shell.touch) {
+      setTextScale(1);
+      return;
+    }
+    const rendered = root.getBoundingClientRect().width;
+    const scale = root.offsetWidth > 0 && rendered > 0 ? rendered / root.offsetWidth : 1;
+    setTextScale(scale < 0.99 ? Math.min(1.6, 1 / scale) : 1);
+  }, [size.w, size.h, shell.touch, shell.root]);
+  const textScaleRef = useRef(textScale);
+  textScaleRef.current = textScale;
 
   useEffect(() => {
     if (!online?.isHost || shell.status !== 'playing') return;
@@ -587,7 +692,7 @@ function Play() {
         if (changed || world.tick % 3 === 0) {
           input.current.lastTarget = target;
           input.current.lastBoost = input.current.boost;
-          sendToRoom(movePacket(room!.round, ++sentMoveSeq.current, target, input.current.boost), undefined, true);
+          sendToRoom(movePacket(currentRound(), ++sentMoveSeq.current, target, input.current.boost), undefined, true);
         }
       }
     }
@@ -649,7 +754,7 @@ function Play() {
       const currentSnake = world.snakes.find((snake) => snake.id === currentId.current);
       const order = world.snakes.filter((snake) => snake.alive).sort((a, b) => b.mass - a.mass || b.kills - a.kills || a.id - b.id);
       const rank = Math.max(1, order.findIndex((snake) => snake.id === currentId.current) + 1);
-      const layout = overlayLayout(size);
+      const layout = overlayLayout(size, textScaleRef.current);
       const topCount = size.h >= 400 ? 10 : Math.min(5, layout.maxBoardRows);
       const rows = order.slice(0, topCount).map((snake, i) => ({
         id: snake.id, name: snake.name, length: snake.mass, skin: snake.skin, rank: i + 1,
@@ -691,7 +796,7 @@ function Play() {
     return { x: dx * scale, y: dy * scale };
   })() : null;
   return (
-    <div className={`g-slither-stage${size.h <= 190 ? ' is-compact' : ''}`}>
+    <div className={`g-slither-stage${size.h <= 190 ? ' is-compact' : ''}`} style={{ '--g-slither-u': textScale } as CSSProperties}>
       <canvas
         ref={ref}
         className="g-slither-canvas"
@@ -721,7 +826,25 @@ function Play() {
           <div className="g-slither-stick-knob" style={{ '--stick-x': `${stickOffset.x}px`, '--stick-y': `${stickOffset.y}px` } as CSSProperties} />
         </div>
       )}
-      {dead && isOnline && <div className="g-slither-respawn">{hud.respawn !== null ? `Back in ${Math.ceil(hud.respawn)}` : 'Watching the field'}</div>}
+      {notice && <div className="g-slither-notice" role="status">{notice.text}</div>}
+      {lateOver && (
+        <div className="g-slither-results" role="dialog" aria-label={lateOver.title}>
+          <h3>{lateOver.title}</h3>
+          {lateOver.people.length > 0 && (
+            <ol>
+              {lateOver.people.map((person) => (
+                <li key={person.seat} className={person.me ? 'is-me' : undefined}>
+                  <span>{ordinal(person.place)}</span>
+                  <span>{person.me ? 'You' : person.name}</span>
+                  <span>{person.length}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+          <p>{lateOver.title === 'Host Left' ? 'The New Host Can Start the Next Round.' : 'Waiting For the Host to Start the Next Round.'}</p>
+        </div>
+      )}
+      {dead && isOnline && !lateOver && <div className="g-slither-respawn">{hud.respawn !== null ? `Back in ${Math.ceil(hud.respawn)}` : 'Watching the field'}</div>}
       {shell.touch && shell.status === 'playing' && (
         <button
           type="button"

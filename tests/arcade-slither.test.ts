@@ -10,7 +10,8 @@ import {
   wrapAngle, type World,
 } from '../src/os/arcade/games/slither/world.ts';
 import {
-  applyHeadState, applyOps, loadSnapshot, makeRoster, resultRows, standings, startsSoloRound, syncRoster, touchTarget, takeOverSeats, winnerSeat,
+  applyHeadState, applyOps, loadSnapshot, makeRoster, peopleLine, peopleResults, resultRows, rosterChanges, rosterNotice, standings, startsSoloRound,
+  syncRoster, touchTarget, takeOverSeats, winnerSeat,
 } from '../src/os/arcade/games/slither/session.ts';
 import { overlayLayout } from '../src/os/arcade/games/slither/render.ts';
 
@@ -373,4 +374,49 @@ test('touch targets grow to stay 44px on screen when the device frame scales dow
   assert.equal(touchTarget(245.24, 300), 54);
   assert.equal(touchTarget(600, 300), 44);
   assert.equal(touchTarget(0, 0), 44);
+});
+
+test('a person who joins mid-round takes the bot seat the round still lists, and steers that noodle', () => {
+  const roster = makeRoster([{ seat: 0, name: 'Host' }], [{ seat: 1, name: 'Orzo', bot: true }, { seat: 2, name: 'Penne', bot: true }], 6);
+  assert.deepEqual(roster.slice(0, 3).map((entry) => entry.bot), [false, true, true]);
+  // The room gave seat 1 to Sam; the round's bot list (fixed at start) still says seat 1 is a bot.
+  const next = syncRoster(roster, [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Sam' }], [{ seat: 1, name: 'Orzo', bot: true }, { seat: 2, name: 'Penne', bot: true }]);
+  const sam = next.find((entry) => entry.seat === 1)!;
+  assert.equal(sam.name, 'Sam');
+  assert.equal(sam.bot, false);
+  assert.equal(sam.id, roster[1].id);
+  assert.equal(next.find((entry) => entry.seat === 2)!.bot, true);
+  // A fresh roster built with the same overlap also seats the person, not a bot.
+  const fresh = makeRoster([{ seat: 0, name: 'Host' }, { seat: 1, name: 'Sam' }], [{ seat: 1, name: 'Orzo', bot: true }], 4);
+  assert.equal(fresh.find((entry) => entry.seat === 1)!.bot, false);
+  assert.deepEqual(rosterChanges(roster, next), { left: [], joined: ['Sam'] });
+  assert.deepEqual(rosterChanges(roster, next, 1), { left: [], joined: [] });
+});
+
+test('a person leaving mid-round hands their noodle to a bot and everyone gets a notice', () => {
+  const roster = makeRoster([{ seat: 0, name: 'Host' }, { seat: 3, name: 'Guest' }], [], 5);
+  const next = syncRoster(roster, [{ seat: 0, name: 'Host' }], []);
+  const guest = next.find((entry) => entry.name === 'Guest')!;
+  assert.equal(guest.bot, true);
+  assert.equal(guest.eligible, false);
+  const change = rosterChanges(roster, next, 0);
+  assert.deepEqual(change, { left: ['Guest'], joined: [] });
+  assert.equal(rosterNotice(change), 'Guest left, a bot took over');
+  assert.equal(rosterNotice({ left: ['A', 'B'], joined: ['C'] }), 'A and B left, a bot took over. C joined');
+  assert.equal(rosterNotice({ left: [], joined: [] }), '');
+});
+
+test('the online game over line names every person still in the room with their place', () => {
+  const snakes = [
+    { id: 0, seat: 0, bot: false, name: 'Host' },
+    { id: 1, seat: 1, bot: true, name: 'Orzo' },
+    { id: 2, seat: 2, bot: false, name: 'Sam' },
+    { id: 3, seat: 3, bot: true, name: 'Gone' },
+    { id: 4, seat: -1, bot: true, name: 'Penne' },
+  ];
+  const ranking: [number, number, number, number][] = [[1, 1, 90, 2], [2, 2, 64.4, 1], [4, -1, 50, 0], [0, 0, 31, 0], [3, 3, 20, 0]];
+  const people = peopleResults(ranking, snakes, 2);
+  assert.deepEqual(people.map((p) => [p.name, p.place, p.length, p.me]), [['Sam', 2, 64, true], ['Host', 4, 31, false]]);
+  assert.equal(peopleLine(people), '2 people in the room: you 2nd, length 64; Host 4th, length 31.');
+  assert.equal(peopleLine([]), '');
 });
