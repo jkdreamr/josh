@@ -204,10 +204,12 @@ test('committed Worker specs match the generated game metadata', async () => {
   const committed = readFileSync(join(import.meta.dirname, '..', 'worker', 'src', 'specs.gen.ts'), 'utf8');
   assert.equal(committed, await generateArcadeSpecs());
   const online = [...metas, ...appGames].filter((m) => m.online);
-  assert.deepEqual(ONLINE_SPECS, Object.fromEntries(online.map((m) => [m.id, { seats: m.online!.seats, ...(m.online!.lateJoin ? { lateJoin: true } : {}), ...(m.online!.bots ? { bots: true } : {}) }])));
+  assert.deepEqual(ONLINE_SPECS, Object.fromEntries(online.map((m) => [m.id, { seats: m.online!.seats, ...(m.online!.lateJoin ? { lateJoin: true } : {}), ...(m.online!.bots ? { bots: true } : {}), ...(m.online!.quick ? { quick: true } : {}) }])));
   for (const m of online) assert.ok(m.online!.seats >= 2 && m.online!.seats <= MAX_SEATS, `${m.id} seats`);
   // Bots fill empty seats beside people, so they need a room with more than two seats, and a game that plays them.
   for (const m of online.filter((game) => game.online!.bots)) assert.ok(m.online!.seats > 2 && !m.online!.race, `${m.id} bots`);
+  // Quick play starts with bots in every seat nobody takes.
+  for (const m of online.filter((game) => game.online!.quick)) assert.ok(m.online!.bots, `${m.id} quick play`);
   for (const m of metas.filter((game) => game.online?.race)) assert.ok(m.leaderboard && !m.leaderboard.variants, `${m.id} races need one comparable score`);
 });
 
