@@ -499,6 +499,25 @@ test('chooseShot returns a legal input at every level within budget', () => {
   }
 });
 
+test('the computer never fouls on its break, including the rack that scratched on Normal', () => {
+  const seeds = [1660717149];
+  for (let i = 0; i < 60; i++) seeds.push((i * 2654435761) >>> 0);
+  for (const seed of seeds) {
+    for (const opener of [0, 1] as const) {
+      const g = newGame(seed, opener);
+      for (const level of [0, 1, 2] as const) {
+        const t0 = performance.now();
+        const shot = chooseShot(g, level);
+        const dt = performance.now() - t0;
+        assert.equal(legalShot(g, shot), null, `level ${level} seed ${seed}`);
+        const after = play(cloneGame(g), shot);
+        assert.equal(after.foul, false, `level ${level} seed ${seed} broke with a foul: ${after.reason}`);
+        assert.ok(dt < 400, `level ${level} break took ${dt.toFixed(0)}ms`);
+      }
+    }
+  }
+});
+
 test('the computer never hits the wrong ball first or misses everything', () => {
   const rand = rng(4321);
   const budgets = { 0: 15, 1: 60, 2: 100 };
