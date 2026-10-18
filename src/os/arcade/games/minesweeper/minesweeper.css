@@ -83,3 +83,19 @@
     height: calc(40px * var(--g-minesweeper-u));
   }
 }
+/* The kit drops card text in short windows to keep Play in view; the result line is worth keeping on Game Over. */
+@container arcade-ov (max-height: 460px) {
+  .g-minesweeper.st-over .arcade-card:has(.arcade-setup) > p {
+    display: block;
+    margin: 0;
+  }
+}
+@container arcade-ov (max-height: 220px) {
+  .g-minesweeper.st-over .arcade-card:has(.arcade-setup) > .arcade-setup {
+    display: none;
+  }
+}
+.g-minesweeper .arcade-seg.g-minesweeper-levels > button {
+  flex: 1 1 auto;
+  padding: 0 10px;
+}
