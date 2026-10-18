@@ -477,41 +477,48 @@ function drawHud(c: CanvasRenderingContext2D, fit: Fit, v: View) {
   c.textBaseline = 'middle';
   c.textAlign = 'center';
 
-  c.fillStyle = 'rgba(245,245,247,0.6)';
-  c.font = font(600, ts(12));
-  c.fillText('Next', sx(NEXT.x), Math.max(sy(DEADLINE_Y) + 9, sy(NEXT.y - NEXT_R - 6) - 9));
-
+  const campaign = g.mode === 'levels' && g.def;
   const rx = sx(SHOOTER.x + 104);
   const ry = sy(SHOOTER.y + 4);
-  const campaign = g.mode === 'levels' && g.def;
-  c.fillStyle = 'rgba(245,245,247,0.7)';
-  c.font = font(600, ts(12));
-  c.fillText(campaign ? `Level ${g.level}` : `Endless, Speed ${g.level}`, rx, ry - ts(16));
-  if (campaign) {
-    const few = g.shotsLeft <= 5;
-    c.fillStyle = few ? '#ff6961' : '#f5f5f7';
-    c.font = font(700, ts(16));
-    c.fillText(`${g.shotsLeft} ${g.shotsLeft === 1 ? 'Shot' : 'Shots'}`, rx, ry);
-    // the stars this board would earn if cleared right now
-    const now = g.ended && g.outcome === 'clear' ? g.stars : starsFor(g.def!, g.shotsLeft);
-    const sr = ts(12) * 0.5;
-    for (let i = 0; i < 3; i++) star(c, sx(NEXT.x) + (i - 1) * sr * 2.6, Math.min(sy(FIELD_H) - sr - 3, sy(NEXT.y + NEXT_R + 6) + sr + 5), sr, i < now);
+  // a tiny board (the framed laptop window) only has room for the shot count
+  if ((FIELD_H - DEADLINE_Y) * fit.scale < 64) {
+    c.fillStyle = campaign && g.shotsLeft <= 5 ? '#ff6961' : '#f5f5f7';
+    c.font = font(700, ts(12));
+    c.fillText(String(campaign ? g.shotsLeft : g.shots), rx, ry);
   } else {
-    c.fillStyle = '#f5f5f7';
-    c.font = font(700, ts(16));
-    c.fillText(`${g.shots} ${g.shots === 1 ? 'Shot' : 'Shots'}`, rx, ry);
-  }
-  const n = g.dropEvery;
-  if (n > 0) {
-    const room = (FIELD_W - SHOOTER.x - R - 16) * fit.scale;
-    const gap = Math.min(10, room / n);
-    const dot = Math.min(3.2, gap * 0.36);
-    const warn = g.shotsUntilDrop <= 1;
-    for (let i = 0; i < n; i++) {
-      c.fillStyle = i < g.shotsUntilDrop ? (warn ? '#ff453a' : 'rgba(245,245,247,0.8)') : 'rgba(245,245,247,0.18)';
-      c.beginPath();
-      c.arc(rx - ((n - 1) * gap) / 2 + i * gap, ry + ts(15), dot, 0, Math.PI * 2);
-      c.fill();
+    c.fillStyle = 'rgba(245,245,247,0.6)';
+    c.font = font(600, ts(12));
+    c.fillText('Next', sx(NEXT.x), Math.max(sy(DEADLINE_Y) + 9, sy(NEXT.y - NEXT_R - 6) - 9));
+
+    c.fillStyle = 'rgba(245,245,247,0.7)';
+    c.font = font(600, ts(12));
+    c.fillText(campaign ? `Level ${g.level}` : `Endless, Speed ${g.level}`, rx, ry - ts(16));
+    if (campaign) {
+      const few = g.shotsLeft <= 5;
+      c.fillStyle = few ? '#ff6961' : '#f5f5f7';
+      c.font = font(700, ts(16));
+      c.fillText(`${g.shotsLeft} ${g.shotsLeft === 1 ? 'Shot' : 'Shots'}`, rx, ry);
+      // the stars this board would earn if cleared right now
+      const now = g.ended && g.outcome === 'clear' ? g.stars : starsFor(g.def!, g.shotsLeft);
+      const sr = ts(12) * 0.5;
+      for (let i = 0; i < 3; i++) star(c, sx(NEXT.x) + (i - 1) * sr * 2.6, Math.min(sy(FIELD_H) - sr - 3, sy(NEXT.y + NEXT_R + 6) + sr + 5), sr, i < now);
+    } else {
+      c.fillStyle = '#f5f5f7';
+      c.font = font(700, ts(16));
+      c.fillText(`${g.shots} ${g.shots === 1 ? 'Shot' : 'Shots'}`, rx, ry);
+    }
+    const n = g.dropEvery;
+    if (n > 0) {
+      const room = (FIELD_W - SHOOTER.x - R - 16) * fit.scale;
+      const gap = Math.min(10, room / n);
+      const dot = Math.min(3.2, gap * 0.36);
+      const warn = g.shotsUntilDrop <= 1;
+      for (let i = 0; i < n; i++) {
+        c.fillStyle = i < g.shotsUntilDrop ? (warn ? '#ff453a' : 'rgba(245,245,247,0.8)') : 'rgba(245,245,247,0.18)';
+        c.beginPath();
+        c.arc(rx - ((n - 1) * gap) / 2 + i * gap, ry + ts(15), dot, 0, Math.PI * 2);
+        c.fill();
+      }
     }
   }
 
