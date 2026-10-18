@@ -990,18 +990,18 @@ export const COURSES: Record<CourseId, Course> = {
       [1072, 1150, -1, 'marsh'],
       // (Corkscrew Slough's meanders a little wider, for a long hull to come round its hairpins)
       [438, 753, 0, 'marsh', 6.5],
-      // the lock chamber, a little narrower than the channel
-      [112, 168, 0, 'wall', 4.8],
+      // the lock chamber
+      [112, 168, 0, 'wall', 6],
     ],
     holePast: 'water',
     // calm water is slick, the tide race and the run-up to the weir are rough, and so is the Bay Reach from lap 2 and the
     // Corkscrew from lap 4
     surfaces: [
-      [0, 1300, 0.76, 'water'],
-      [790, 868, 0.62, 'chop'],
-      [958, 997, 0.62, 'chop'],
-      [868, 958, 0.62, 'chop', 2],
-      [438, 753, 0.68, 'chop', 4],
+      [0, 1300, 0.7, 'water'],
+      [790, 868, 0.56, 'chop'],
+      [958, 997, 0.56, 'chop'],
+      [868, 958, 0.56, 'chop', 2],
+      [438, 753, 0.62, 'chop', 4],
     ],
     // the tide: with you downstream, against you upstream (hug the bank, by the brink), a tongue of fast water through the
     // tide race and the helical flow of the meanders pushing you wide, into the whirlpools; the tide turns on the last lap
@@ -1050,7 +1050,7 @@ export const COURSES: Record<CourseId, Course> = {
       // the Tide Gates: three rows of two miter leaves, one leaf of each row always open, the open side swapping from row
       // to row at racing speed so you zig-zag down the lock (the third row from lap 3)
       const gate = (s: number, phase: number, lap: number) =>
-        [-1, 1].map((side) => ({ kind: 'bollard' as const, s, d: side * 2.4, w: 4.8, every: 3.2, on: 1.2, warn: 0.9, phase: phase + (side > 0 ? 1.6 : 0), lap, look: 'gate' }));
+        [-1, 1].map((side) => ({ kind: 'bollard' as const, s, d: side * 3, w: 6, every: 3.2, on: 1.2, warn: 0.9, phase: phase + (side > 0 ? 1.6 : 0), lap, look: 'gate' }));
       return placed(t, {
         boxes: [30, 380, 770, 1100],
         coins: [
@@ -1061,7 +1061,7 @@ export const COURSES: Record<CourseId, Course> = {
           [470, 0, 5],
           [610, 0, 4],
           [680, 0, 4],
-          [788, -3, 4],
+          [788, 1.5, 4],
           [1020, 2, 4],
           [1150, -3, 5],
         ],
@@ -1109,7 +1109,7 @@ export const COURSES: Record<CourseId, Course> = {
     sky: 'linear-gradient(180deg, #27356a 0%, #5f62a2 18%, #e19c9b 34%, #f6c597 41%, #fbe3c2 45%, #a5bcbc 47%)',
     laps: { 2: 'More whirlpools, chop on the Bay', 3: 'Whirlpools at the apexes, the third lock gate', 4: 'Whirlpools wander, chop in the Corkscrew', 5: 'The tide turns, fog, the Maelstrom' },
     // a fall costs more here than anywhere (calibrated against the braking ladder: see the PR)
-    tier: { fallT: 2.6, fallCoins: 4, harsh: 1.6, paceCc: { '150cc': 0.97, '200cc': 1 } },
+    tier: { fallT: 2.6, fallCoins: 4, harsh: 1.6, brink: 0.3, paceCc: { '150cc': 1, '200cc': 1.03 } },
   },
 };
 

@@ -104,10 +104,12 @@ test('the water is only on the slough: no shells, currents, whirlpools, vessels 
   // calm water slick everywhere, rougher where it runs
   const t = trackOf('slough');
   const f = Math.fround;
-  assert.equal(gripAt(t, 20, 1), f(0.8));
-  assert.equal(gripAt(t, 820, 1), f(0.65));
-  assert.equal(gripAt(t, 900, 2), f(0.8));
-  assert.equal(gripAt(t, 900, 3), f(0.65));
+  assert.equal(gripAt(t, 20, 1), f(0.7));
+  assert.equal(gripAt(t, 820, 1), f(0.56));
+  assert.equal(gripAt(t, 900, 1), f(0.7));
+  assert.equal(gripAt(t, 900, 2), f(0.56));
+  assert.equal(gripAt(t, 600, 3), f(0.7));
+  assert.equal(gripAt(t, 600, 4), f(0.62));
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -281,7 +283,7 @@ function pass(h: Race['whirls'][number], v: number, off: number) {
 test('a whirlpool: a quick shell passing wide of it is pulled in a little and gets away, a slow one close by goes under', () => {
   const r = slough();
   // (one of the Corkscrew's, moved onto Westpoint Slough's straight so that a shell not steering goes straight past it)
-  const w = r.whirls.find((h) => Math.round(h.s) === 647)!;
+  const w = r.whirls.find((h) => Math.round(h.s) === 648)!;
   const p = pointAt(r.track, 1100, 0);
   const h = { ...w, wander: undefined, lap: 1, s: 1100, d: 0, back: 1075, x: p.x, z: p.z };
   // (either side of it: the swirl carries you round it on one side and drags you in on the other)
@@ -346,7 +348,7 @@ test('set back down never in a whirlpool\'s pull, nor just short of one spinning
   }
 });
 
-test('out of a whirlpool the launch tows you out past it, across the river; out of the marsh, into mid-channel', () => {
+test('out of a whirlpool the launch tows you out past it, away from the next one down the river; out of the marsh, into mid-channel', () => {
   for (const h0 of slough().whirls) {
     const r = slough();
     const k = r.karts[0];
@@ -362,7 +364,10 @@ test('out of a whirlpool the launch tows you out past it, across the river; out 
     const past = deltaS(r.track, h.s, s);
     // (past its pull, unless that spot is not clear, when it is back short of it as before: never in the pull)
     assert.ok(past > (h.pull ?? 7) || past < -(h.pull ?? 7), `${h.s}: set down at ${s.toFixed(0)}`);
-    if (past > 0) assert.ok(Math.sign(d) !== Math.sign(h.d), `${h.s}: across from it (${d.toFixed(1)})`);
+    // (on the side of the channel away from the next whirlpool, if there is one just down the river; across from this one
+    // if not)
+    const next = r.whirls.find((w) => w !== h && (w.lap ?? 1) <= lap && deltaS(r.track, wrapS(r.track, h.s + (h.pull ?? 7) + 3), w.s) > 0 && deltaS(r.track, wrapS(r.track, h.s + (h.pull ?? 7) + 3), w.s) < 70);
+    if (past > 0) assert.ok(Math.sign(d) !== Math.sign(next ? next.d : -h.d), `${h.s}: on the side of the next one (${d.toFixed(1)})`);
   }
   // run aground: back on the water in the middle, well clear of the mud it went up
   const r = bare();

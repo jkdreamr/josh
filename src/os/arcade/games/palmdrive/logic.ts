@@ -89,7 +89,7 @@ export const FALL_CARRY = 0.54;
  * A straight hop within CATCH_WIN of a beat is a clean catch: CATCH_DV more top speed for CATCH_T, and POWER_TEN of them in
  * a row is a Power Ten, a boost of POWER_T.
  */
-export const HULL_TURN = 0.88;
+export const HULL_TURN = 0.85;
 export const STROKE_T = 1.6;
 export const SURGE = 0.04;
 export const CATCH_WIN = 0.12;
