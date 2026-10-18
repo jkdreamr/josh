@@ -84,6 +84,8 @@ const DRESS: Record<BuildingKind, { frame: number; porch: number; mat: number; a
 const USE_GLOW: Record<UseId, number> = { bandage: 1, medkit: 2, mini: 2, shield: 3, coffee: 4, smoothie: 3, tart: 4 };
 /** How many legendary things on the ground get a gold beam at once (there are rarely more than a handful). */
 const BEAMS = 40;
+/** Which way shadows fall along the ground, per meter of height (away from the sun, low in the south west). */
+const SUN = { x: 0.42, z: -0.32 };
 /** A flare climbs this high over this many seconds, then hangs there burning for a few more. */
 const FLARE_UP = { y: 15, rise: 2.4, burn: 4 };
 
@@ -376,6 +378,124 @@ function ribbon(THREE: Three, pts: { x: number; z: number }[], half: number, y: 
   return g;
 }
 
+/**
+ * Square bands round the island: band k runs from `rings[k]` to `rings[k + 1]` meters out past `half`, at the heights
+ * and in the colors given for each ring. The sea's shallows and the beach's slope into it.
+ */
+function squareBands(THREE: Three, half: number, rings: { d: number; y: number; c: number }[]) {
+  const pos: number[] = [];
+  const col: number[] = [];
+  const c = new THREE.Color();
+  const corner = [
+    [-1, -1],
+    [1, -1],
+    [1, 1],
+    [-1, 1],
+  ];
+  const at = (k: number, i: number) => {
+    const r = rings[k];
+    const s = half + r.d;
+    c.setHex(r.c);
+    return { p: [corner[i % 4][0] * s, r.y, corner[i % 4][1] * s], c: [c.r, c.g, c.b] };
+  };
+  for (let k = 0; k + 1 < rings.length; k++)
+    for (let i = 0; i < 4; i++) {
+      // a trapezoid along one side, wound to face up
+      const a = at(k, i);
+      const b = at(k, i + 1);
+      const A = at(k + 1, i);
+      const B = at(k + 1, i + 1);
+      for (const v of [a, A, b, b, A, B]) {
+        pos.push(...v.p);
+        col.push(...v.c);
+      }
+    }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A closed loop round a square `s` from the middle (starting and ending mid side), for ribbons that ring the island. */
+const squareLoop = (s: number) => [
+  { x: 0, z: -s },
+  { x: s, z: -s },
+  { x: s, z: s },
+  { x: -s, z: s },
+  { x: -s, z: -s },
+  { x: 0, z: -s },
+];
+
+/** Surf: white along u = 0 (the shore side) breaking up into lace toward u = 1, v along the shore. */
+function foamTexture(THREE: Three) {
+  const rnd = scatter(53);
+  const tex = texture(
+    THREE,
+    canvas(64, 256, (g) => {
+      for (let y = 0; y < 256; y += 2) {
+        const reach = 18 + Math.sin(y * 0.09) * 6 + Math.sin(y * 0.23 + 1) * 4 + rnd() * 5;
+        const grad = g.createLinearGradient(0, 0, reach + 14, 0);
+        grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+        grad.addColorStop(reach / (reach + 14), 'rgba(255,255,255,0.75)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = grad;
+        g.fillRect(0, y, reach + 14, 2);
+      }
+      // bubbles of lace past the line
+      for (let i = 0; i < 160; i++) {
+        g.fillStyle = `rgba(255,255,255,${0.25 + rnd() * 0.45})`;
+        g.beginPath();
+        g.arc(14 + rnd() * 40, rnd() * 256, 0.8 + rnd() * 1.8, 0, Math.PI * 2);
+        g.fill();
+      }
+    }),
+  );
+  tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+/** The grass's ragged edge over the sand: green from u = 0, giving out in tufts by u = 1. */
+function grassEdgeTexture(THREE: Three) {
+  const rnd = scatter(59);
+  const tex = texture(
+    THREE,
+    canvas(32, 128, (g) => {
+      for (let y = 0; y < 128; y++) {
+        const reach = 8 + Math.abs(Math.sin(y * 0.31)) * 10 + Math.sin(y * 0.11 + 2) * 4 + rnd() * 6;
+        g.fillStyle = '#6dab4f';
+        g.fillRect(0, y, reach, 1);
+        g.fillStyle = 'rgba(40,90,30,0.35)';
+        g.fillRect(Math.max(0, reach - 2), y, 2, 1);
+      }
+    }),
+  );
+  tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+/** Smooth value noise in 0..1 on a grid `cell` meters across, the same everywhere for a seed. */
+function valueNoise(seed: number, cell: number) {
+  const hash = (i: number, j: number) => {
+    let h = (Math.imul(i, 374761393) + Math.imul(j, 668265263) + Math.imul(seed, 2147483647)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  return (x: number, z: number) => {
+    const fx = x / cell;
+    const fz = z / cell;
+    const i = Math.floor(fx);
+    const j = Math.floor(fz);
+    const u = fx - i;
+    const v = fz - j;
+    const su = u * u * (3 - 2 * u);
+    const sv = v * v * (3 - 2 * v);
+    const a = hash(i, j) + (hash(i + 1, j) - hash(i, j)) * su;
+    const b = hash(i, j + 1) + (hash(i + 1, j + 1) - hash(i, j + 1)) * su;
+    return a + (b - a) * sv;
+  };
+}
+
 /** A soft round glow, white in the middle and fading out (tinted by the material). */
 function glowTexture(THREE: Three) {
   return texture(
@@ -400,6 +520,34 @@ function blobTexture(THREE: Three) {
       grad.addColorStop(1, 'rgba(0,0,0,0)');
       g.fillStyle = grad;
       g.fillRect(0, 0, 64, 64);
+    }),
+  );
+}
+
+/**
+ * A soft edged square of shade, darkest in the middle (stretched to fit whatever it lies under). As a strip (along a
+ * wall), it fades across v only, darkest along the middle line and falling off fast, like the shade where a wall meets
+ * the ground.
+ */
+function softSquareTexture(THREE: Three, strip = false) {
+  return texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      const img = g.createImageData(64, 64);
+      const edge = (t: number) => {
+        const k = Math.min(1, Math.min(t, 1 - t) / 0.32);
+        return k * k * (3 - 2 * k);
+      };
+      for (let y = 0; y < 64; y++)
+        for (let x = 0; x < 64; x++) {
+          const i = (y * 64 + x) * 4;
+          const u = (x + 0.5) / 64;
+          const v = (y + 0.5) / 64;
+          const across = 1 - Math.abs(2 * v - 1);
+          img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+          img.data[i + 3] = Math.round((strip ? across * across * Math.min(1, Math.min(u, 1 - u) / 0.04) : edge(u) * edge(v)) * 255);
+        }
+      g.putImageData(img, 0, 0);
     }),
   );
 }
@@ -548,13 +696,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   if (!gl) return null;
   const map = m.map;
   const scene = new THREE.Scene();
-  const water = 0x3aa6d4;
+  const water = 0x2380c0;
   scene.background = new THREE.Color(water);
   scene.fog = new THREE.Fog(water, 160, 520);
   const camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 1200);
-  scene.add(new THREE.HemisphereLight(0xfff6e4, 0x5f7f45, 1.1));
-  const sun = new THREE.DirectionalLight(0xfff0d6, 1.35);
-  sun.position.set(-40, 90, 30);
+  // a warm afternoon sun from the south west, and a cool sky filling the shade, so lit and shaded sides read apart
+  scene.add(new THREE.HemisphereLight(0xd6ebff, 0x6f8748, 1.2));
+  const sun = new THREE.DirectionalLight(0xffe0b0, 1.6);
+  sun.position.set(SUN.x * -100, 100, SUN.z * -100);
   scene.add(sun);
   let width = 1;
   let height = 1;
@@ -660,6 +809,33 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const ammoMat = Object.fromEntries(Object.entries(AMMO_COLORS).map(([k, c]) => [k, lambert(c)])) as Record<keyof typeof AMMO_COLORS, T.MeshLambertMaterial>;
   const ammoGlow = Object.fromEntries(Object.entries(AMMO_COLORS).map(([k, c]) => [k, basic(c, { transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide })])) as Record<keyof typeof AMMO_COLORS, T.MeshBasicMaterial>;
 
+  /**
+   * Leaves and grass sway in the wind, in the vertex shader (nothing moves on the CPU): each point leans by how far it
+   * stands above `base` (in the model's own units), a tree at a time for instanced meshes, a spot at a time otherwise.
+   */
+  const wind = { value: 0 };
+  const sway = <X extends T.Material>(x: X, base: number, amount: number) => {
+    x.onBeforeCompile = (shader) => {
+      shader.uniforms.uWind = wind;
+      shader.uniforms.uSwayBase = { value: base };
+      shader.uniforms.uSway = { value: amount };
+      shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nuniform float uWind;\nuniform float uSwayBase;\nuniform float uSway;').replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        #ifdef USE_INSTANCING
+          vec2 swayAt = vec2(instanceMatrix[3].x, instanceMatrix[3].z);
+        #else
+          vec2 swayAt = position.xz;
+        #endif
+        float swayK = max(0.0, position.y - uSwayBase) * uSway;
+        float gust = sin(uWind * 1.3 + swayAt.x * 0.21 + swayAt.y * 0.17);
+        transformed.x += (sin(uWind * 1.9 + swayAt.x * 0.37 + swayAt.y * 0.29) * 0.6 + gust * 0.5) * swayK;
+        transformed.z += sin(uWind * 1.6 + swayAt.y * 0.41 - swayAt.x * 0.23) * 0.45 * swayK;`,
+      );
+    };
+    return x;
+  };
+
   const add = (parent: T.Object3D, g: T.BufferGeometry, material: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
     const o = new THREE.Mesh(g, material);
     o.position.set(x, y, z);
@@ -671,22 +847,90 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   // ---------------------------------------------------------------------------------------------------------------
   // The island.
 
-  const sea = new THREE.Mesh(geo(new THREE.PlaneGeometry(2400, 2400)), lambert(water));
+  // the sea: turquoise over the shallows, deepening to blue away from the island, under the far haze
+  const sea = new THREE.Mesh(geo(new THREE.PlaneGeometry(2400, 2400)), basic(water));
   sea.rotation.x = -Math.PI / 2;
-  sea.position.y = -0.7;
+  sea.position.y = -0.74;
   scene.add(sea);
-  const shore = new THREE.Mesh(geo(new THREE.PlaneGeometry(2 * HALF + 14, 2 * HALF + 14)), basic(0x8fd3ee, { transparent: true, opacity: 0.6, depthWrite: false }));
-  shore.rotation.x = -Math.PI / 2;
-  shore.position.y = -0.62;
-  scene.add(shore);
+  const shallows = squareBands(THREE, HALF, [
+    { d: 0, y: -0.7, c: 0x9aeee6 },
+    { d: 6, y: -0.7, c: 0x6edbe2 },
+    { d: 16, y: -0.7, c: 0x48c2de },
+    { d: 34, y: -0.7, c: 0x33a8d6 },
+    { d: 70, y: -0.7, c: 0x2895cc },
+    { d: 140, y: -0.7, c: 0x2488c4 },
+    { d: 900, y: -0.7, c: water },
+  ]);
+  scene.add(new THREE.Mesh(geo(shallows), basic(0xffffff, { vertexColors: true })));
   const sandTex = keep(sandTexture(THREE));
   const block = new THREE.Mesh(geo(new THREE.BoxGeometry(2 * HALF, 1.3, 2 * HALF)), lambert(0xe9d7a6, { map: sandTex }));
   block.position.y = -0.65;
   scene.add(block);
-  const grass = new THREE.Mesh(geo(new THREE.PlaneGeometry(2 * (HALF - BEACH), 2 * (HALF - BEACH))), lambert(0xffffff, { map: keep(grassTexture(THREE)) }));
+  // the beach runs down into the water, darker where it's wet
+  const slope = squareBands(THREE, HALF, [
+    { d: 0, y: 0, c: 0xe9d7a6 },
+    { d: 2.2, y: -0.45, c: 0xdcc58f },
+    { d: 3.4, y: -0.72, c: 0xb9a172 },
+    { d: 6, y: -1.3, c: 0x9c8a62 },
+  ]);
+  scene.add(new THREE.Mesh(geo(slope), lambert(0xffffff, { vertexColors: true })));
+  // surf along the waterline, and a wave line that rolls in to meet it
+  const foamTex = keep(foamTexture(THREE));
+  const surfMat = basic(0xffffff, { map: foamTex, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide });
+  const surf = new THREE.Mesh(geo(ribbon(THREE, squareLoop(HALF + 3.05), 1.4, -0.69, 26)), surfMat);
+  const waveTex = keep(foamTex.clone());
+  // wrapping round, so what shows behind the rolling line is the foam's clear far side
+  waveTex.wrapS = THREE.RepeatWrapping;
+  const waveMat = basic(0xffffff, { map: waveTex, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
+  const wave = new THREE.Mesh(geo(ribbon(THREE, squareLoop(HALF + 6), 3, -0.695, 34)), waveMat);
+  surf.renderOrder = 1;
+  wave.renderOrder = 1;
+  scene.add(surf, wave);
+  // the grass, in big soft patches of lusher and drier green, darker under the trees
+  const GRASS_HALF = HALF - BEACH;
+  const grassGeo = new THREE.PlaneGeometry(2 * GRASS_HALF, 2 * GRASS_HALF, 96, 96);
+  {
+    const p = grassGeo.attributes.position as T.BufferAttribute;
+    const cols = new Float32Array(p.count * 3);
+    const big = valueNoise(map.seed, 34);
+    const small = valueNoise(map.seed + 7, 11);
+    const dry = valueNoise(map.seed + 13, 52);
+    // trees by 10 m square, for the shade under them
+    const grid = new Map<number, { x: number; z: number }[]>();
+    const key = (x: number, z: number) => Math.floor(x / 10) * 4096 + Math.floor(z / 10);
+    for (const t of map.trees) {
+      const k = key(t.x, t.z);
+      if (!grid.has(k)) grid.set(k, []);
+      grid.get(k)!.push(t);
+    }
+    for (let i = 0; i < p.count; i++) {
+      // the plane lies in x, y before it's turned flat: its y is the island's -z
+      const x = p.getX(i);
+      const z = -p.getY(i);
+      const n = big(x, z) * 0.65 + small(x, z) * 0.35;
+      let shadeK = 0;
+      for (let gx = -1; gx <= 1; gx++)
+        for (let gz = -1; gz <= 1; gz++)
+          for (const t of grid.get(key(x + gx * 10, z + gz * 10)) ?? []) {
+            const d2 = (t.x - x) * (t.x - x) + (t.z - z) * (t.z - z);
+            if (d2 < 49) shadeK += 1 - d2 / 49;
+          }
+      const lush = Math.min(1, shadeK * 0.5);
+      const d = Math.max(0, dry(x, z) - 0.55) * 2.2;
+      const l = 0.84 + n * 0.3 - lush * 0.18;
+      cols[i * 3] = l * (1 + d * 0.16) * (1 - lush * 0.08);
+      cols[i * 3 + 1] = l * (1 + d * 0.03);
+      cols[i * 3 + 2] = l * (1 - d * 0.22) * (1 - lush * 0.04);
+    }
+    grassGeo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  }
+  const grass = new THREE.Mesh(geo(grassGeo), lambert(0xffffff, { map: keep(grassTexture(THREE)), vertexColors: true }));
   grass.rotation.x = -Math.PI / 2;
   grass.position.y = 0.005;
   scene.add(grass);
+  // its ragged edge over the sand
+  const lip = new THREE.Mesh(geo(ribbon(THREE, squareLoop(GRASS_HALF + 0.55), 0.55, 0.007, 4)), lambert(0xffffff, { map: keep(grassEdgeTexture(THREE)), transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+  scene.add(lip);
 
   // ponds: a sandy rim, the water, and a few lily pads
   const pondWater = lambert(0x4cb3dc, { transparent: true, opacity: 0.88, emissive: 0x0b3a52 });
@@ -730,7 +974,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
   const shade = (rnd: () => number, base: number, spread: number) => color.setHex(base).offsetHSL((rnd() - 0.5) * spread * 0.2, 0, (rnd() - 0.5) * spread * 0.2);
-  const stalks = many(G.stalk, lambert(0xffffff, { flatShading: true }), stalkSpots.length);
+  const stalks = many(G.stalk, sway(lambert(0xffffff, { flatShading: true }), -1.15, 0.05), stalkSpots.length);
   stalkSpots.forEach((p, i) => {
     dummy.position.set(p.x, 1.15, p.z);
     dummy.rotation.set((cornRnd() - 0.5) * 0.16, cornRnd() * 6, (cornRnd() - 0.5) * 0.16);
@@ -1030,8 +1274,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const treeRnd = scatter(3);
   const count = (k: string) => map.trees.filter((t) => t.kind === k).length;
   const trunks = many(geo(new THREE.CylinderGeometry(0.32, 0.48, 1, 7)), lambert(0xffffff), map.trees.length);
-  const crowns = many(G.lowBall, lambert(0xffffff, { flatShading: true }), count('oak') * 2 + count('birch') * 2 + count('fruit'));
-  const cones = many(G.pine, lambert(0xffffff, { flatShading: true }), count('pine') * 2);
+  const crowns = many(G.lowBall, sway(lambert(0xffffff, { flatShading: true }), -0.6, 0.05), count('oak') * 2 + count('birch') * 2 + count('fruit'));
+  const cones = many(G.pine, sway(lambert(0xffffff, { flatShading: true }), -0.5, 0.07), count('pine') * 2);
   const marks = many(G.box, lambert(0x2b2d33), count('birch') * 3);
   const FRUIT = 6;
   const fruits = many(geo(new THREE.SphereGeometry(1, 5, 3)), lambert(0xffffff, { emissive: 0x220800 }), count('fruit') * FRUIT);
@@ -1122,7 +1366,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   scene.add(rocks);
 
   const bushRnd = scatter(9);
-  const bushes = many(geo(new THREE.SphereGeometry(1, 9, 7)), lambert(0xffffff, { flatShading: true }), map.bushes.length);
+  const bushes = many(geo(new THREE.SphereGeometry(1, 9, 7)), sway(lambert(0xffffff, { flatShading: true }), -0.4, 0.035), map.bushes.length);
   map.bushes.forEach((b, i) => {
     dummy.position.set(b.x, 0.95, b.z);
     dummy.rotation.set(0, bushRnd() * 6, 0);
@@ -1537,7 +1781,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     }
   }
   const decor = new THREE.Group();
-  const decorMat = lambert(0xffffff, { vertexColors: true, flatShading: true, side: THREE.DoubleSide });
+  const decorMat = sway(lambert(0xffffff, { vertexColors: true, flatShading: true, side: THREE.DoubleSide }), 0.05, 0.16);
   decorPos.forEach((p, k) => {
     if (!p.length) return;
     const g = geo(new THREE.BufferGeometry());
@@ -1777,12 +2021,127 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   placeKitchen(0);
 
   // ---------------------------------------------------------------------------------------------------------------
+  // Contact shadows: soft dark pools under everything that stands on the ground, nudged away from the sun so they all
+  // fall the same way, and along both sides of every wall (shade where walls meet the floor). Two instanced meshes,
+  // round and square; a crate's or barrel's goes when it breaks.
+
+  type Shade = { x: number; z: number; sx: number; sz: number; ry: number; id: number };
+  const roundShades: Shade[] = [];
+  const squareShades: Shade[] = [];
+  const wallShades: Shade[] = [];
+  const shadeRound = (x: number, z: number, r: number, up: number, id = -1) => roundShades.push({ x: x + SUN.x * up, z: z + SUN.z * up, sx: r * 2, sz: r * 2, ry: 0, id });
+  const shadeBox = (x: number, z: number, hw: number, hd: number, up: number, edge: number, id = -1, ry = 0) => squareShades.push({ x: x + SUN.x * up, z: z + SUN.z * up, sx: hw * 2 + edge * 2, sz: hd * 2 + edge * 2, ry, id });
+  for (const t of map.trees) shadeRound(t.x, t.z, t.kind === 'pine' ? 1.9 : t.kind === 'birch' ? 1.5 : 2.1, 1.4);
+  for (const b of map.bushes) shadeRound(b.x, b.z, BUSH_R * 1.25, 0.5);
+  for (const r of map.rocks) shadeRound(r.x, r.z, r.r * 1.35, r.r * 0.5);
+  for (const s of map.stumps) shadeRound(s.x, s.z, s.r * 1.5, 0.2);
+  for (const c of map.fires) shadeRound(c.x, c.z, CAMP.pit + 0.5, 0);
+  for (const p of map.lamps) shadeRound(p.x, p.z, 0.45, 0.2);
+  // a wall's strip runs its length (texture u), soft across it
+  for (const b of map.buildings)
+    for (const w of b.walls) {
+      const alongX = w.hw >= w.hd;
+      wallShades.push({ x: w.x + SUN.x * 0.45, z: w.z + SUN.z * 0.45, sx: 2 * (alongX ? w.hw : w.hd) + 0.3, sz: 2 * (alongX ? w.hd : w.hw) + 2.4, ry: alongX ? 0 : Math.PI / 2, id: -1 });
+    }
+  for (const c of map.cars) shadeBox(c.x, c.z, c.hw, c.hd, 0.5, 0.8);
+  for (const l of map.logs) shadeBox(l.x, l.z, l.hw, l.hd, 0.2, 0.3);
+  for (const t of map.tables) shadeBox(t.x, t.z, t.alongX ? TABLE_HW : TABLE_HD, t.alongX ? TABLE_HD : TABLE_HW, 0.4, 0.25);
+  for (const c of map.containers) {
+    if (c.kind === 'crate') shadeBox(c.x, c.z, CRATE_HALF, CRATE_HALF, 0.5, 0.5, c.id);
+    else if (c.kind === 'hay') shadeBox(c.x, c.z, HAY_HW, HAY_HD, 0.4, 0.3, c.id);
+    else if (c.kind === 'chest') shadeBox(c.x, c.z, CHEST_HW, CHEST_HD, 0.3, 0.25);
+    else if (c.kind === 'barrel') shadeRound(c.x, c.z, BARREL_R * 1.5, 0.4, c.id);
+  }
+  const shadeMat = (t: T.Texture, opacity: number) => basic(0x10182a, { map: t, transparent: true, opacity, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+  const roundShade = many(G.plane, shadeMat(blob, 0.85), roundShades.length);
+  const squareShade = many(G.plane, shadeMat(keep(softSquareTexture(THREE)), 0.5), squareShades.length);
+  const wallShade = many(G.plane, shadeMat(keep(softSquareTexture(THREE, true)), 0.5), wallShades.length);
+  const placeShade = (im: T.InstancedMesh, s: Shade, i: number, on: boolean) => {
+    dummy.position.set(s.x, 0.028, s.z);
+    dummy.rotation.set(-Math.PI / 2, 0, s.ry);
+    dummy.scale.set(on ? s.sx : 0, on ? s.sz : 0, 1);
+    dummy.updateMatrix();
+    im.setMatrixAt(i, dummy.matrix);
+  };
+  roundShades.forEach((s, i) => placeShade(roundShade, s, i, true));
+  squareShades.forEach((s, i) => placeShade(squareShade, s, i, true));
+  wallShades.forEach((s, i) => placeShade(wallShade, s, i, true));
+  roundShade.renderOrder = 1;
+  squareShade.renderOrder = 1;
+  wallShade.renderOrder = 1;
+  scene.add(roundShade, squareShade, wallShade);
+  /** The shadows of things that break, and whether each is drawn. */
+  const breakable = [
+    ...roundShades.map((s, i) => ({ s, i, im: roundShade, on: true })),
+    ...squareShades.map((s, i) => ({ s, i, im: squareShade, on: true })),
+  ].filter((x) => x.s.id >= 0);
+  const placeShades = () => {
+    for (const b of breakable) {
+      const on = !m.opened[b.s.id];
+      if (on === b.on) continue;
+      b.on = on;
+      placeShade(b.im, b.s, b.i, on);
+      b.im.instanceMatrix.needsUpdate = true;
+    }
+  };
+
+  // ---------------------------------------------------------------------------------------------------------------
   // The storm: a purple wall, a tint over everything outside it, and a white ring where it is headed.
 
-  const stormWall = new THREE.Mesh(geo(new THREE.CylinderGeometry(1, 1, 90, 160, 1, true)), basic(0x8a4dff, { transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }));
+  // the wall is a curtain of swirling purple, thickest and glowing pink where it meets the ground, thinning upward
+  const stormUniforms = { uTime: wind, uR: { value: 100 } };
+  const stormWall = new THREE.Mesh(
+    geo(new THREE.CylinderGeometry(1, 1, 90, 160, 1, true)),
+    mat(
+      new THREE.ShaderMaterial({
+        uniforms: stormUniforms,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        vertexShader: `
+          varying vec2 vUv;
+          varying float vY;
+          void main() {
+            vUv = uv;
+            vec4 wp = modelMatrix * vec4(position, 1.0);
+            vY = wp.y;
+            gl_Position = projectionMatrix * viewMatrix * wp;
+          }`,
+        fragmentShader: `
+          uniform float uTime;
+          uniform float uR;
+          varying vec2 vUv;
+          varying float vY;
+          void main() {
+            // meters round the wall, so the swirls keep their size as it shrinks
+            float s = vUv.x * uR * 6.2832;
+            float h = clamp(vY / 46.0, 0.0, 1.0);
+            float a1 = sin(s * 0.55 + vY * 0.32 - uTime * 1.7) * 0.5 + 0.5;
+            float a2 = sin(s * 0.21 - vY * 0.18 + uTime * 0.8) * 0.5 + 0.5;
+            float a3 = sin(s * 1.3 + vY * 0.9 - uTime * 3.1) * 0.5 + 0.5;
+            float swirl = a1 * 0.5 + a2 * 0.35 + a3 * 0.15;
+            float foot = 1.0 - smoothstep(0.0, 3.0, vY);
+            vec3 deep = vec3(0.36, 0.16, 0.86);
+            vec3 light = vec3(0.70, 0.46, 1.0);
+            vec3 glow = vec3(1.0, 0.55, 0.95);
+            vec3 col = mix(deep, light, swirl) ;
+            col = mix(col, glow, foot * 0.75);
+            float a = (0.18 + swirl * 0.34) * pow(1.0 - h, 1.6) + foot * 0.4;
+            gl_FragColor = vec4(col, a);
+          }`,
+      }),
+    ),
+  );
   stormWall.position.y = 44;
   stormWall.renderOrder = 3;
   scene.add(stormWall);
+  // a bright seam along the ground where the storm begins
+  const seam = freeRing(THREE, 160);
+  geos.push(seam.geometry);
+  const seamMesh = new THREE.Mesh(seam.geometry, basic(0xe9a6ff, { transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }));
+  seamMesh.position.y = 0.13;
+  seamMesh.renderOrder = 2;
+  scene.add(seamMesh);
   const tint = freeRing(THREE, 160);
   geos.push(tint.geometry);
   const stormTint = new THREE.Mesh(tint.geometry, basic(0x7a3cf0, { transparent: true, opacity: 0.26, depthWrite: false, side: THREE.DoubleSide }));
@@ -2728,6 +3087,13 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       }
       // the river runs, the windmills turn, and the grass and flowers show once you're down among them
       riverTex.offset.y = -clock * 0.15;
+      wind.value = clock;
+      // the surf drifts along the shore, and a wave rolls in every few seconds and fades on the sand
+      foamTex.offset.y = clock * 0.012;
+      const roll = (clock / 4.5) % 1;
+      waveTex.offset.x = -0.85 * (1 - roll);
+      waveMat.opacity = Math.sin(roll * Math.PI) * 0.6;
+      surfMat.opacity = 0.7 + Math.sin(clock * 0.9) * 0.12;
       for (const t of sails) t.rotation.z = -clock * 0.6;
       decor.visible = cam.view < 34;
 
@@ -2742,9 +3108,13 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         stormWall.visible = s.r > 0.05 && onLand;
         stormWall.position.set(s.x, 44, s.z);
         stormWall.scale.set(Math.max(0.05, s.r), 1, Math.max(0.05, s.r));
+        stormUniforms.uR.value = Math.max(0.05, s.r);
         stormTint.position.set(s.x, 0.12, s.z);
         tint.set(Math.max(0, s.r), 900);
         stormTint.visible = onLand;
+        seamMesh.visible = onLand && s.r > 0.5;
+        seamMesh.position.set(s.x, 0.13, s.z);
+        seam.set(Math.max(0, s.r - 0.35), s.r + 0.25);
         const showNext = s.next.r < s.r - 0.5 || s.shrinking;
         nextMesh.visible = showNext && s.next.r > 0.3;
         nextMesh.position.set(nx, 0.14, nz);
@@ -2755,6 +3125,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       placeCrates(clock);
       placeFridges(false);
       placeKitchen(clock);
+      placeShades();
       chestGlowMat.opacity = 0.35 + Math.sin(clock * 4) * 0.2;
 
       // campfires flicker (and throw the odd spark when you're close), pads pulse
