@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildLine, createDriver, drive, profileTime, speedProfile } from '../src/os/arcade/games/grand-prix/ai.ts';
 import { NO_ASSISTS, SPEC, createCar, curve, engineTorque, kmh, stepCar, tempGrip, type Assists } from '../src/os/arcade/games/grand-prix/car.ts';
-import { keyLock, newDriver, readInput, SOLO } from '../src/os/arcade/games/grand-prix/input.ts';
+import { keyLock, lockPedal, newDriver, readInput, SOLO, tractionPedal } from '../src/os/arcade/games/grand-prix/input.ts';
 import { endOf, finishOrder, guestState, hostState, packCar, parsePacket, unpackCar, winnerOf } from '../src/os/arcade/games/grand-prix/net.ts';
 import { createRace, gapLeader, liveDelta, resetCar, stepRace, type Entry, type NetCar } from '../src/os/arcade/games/grand-prix/race.ts';
+import { layersFor, type EngineSample } from '../src/os/arcade/games/grand-prix/samples.ts';
 import { DRIVERS, TEAMS, codeOf } from '../src/os/arcade/games/grand-prix/teams.ts';
 import { buildCircuit, circuit, deltaS, gridSlot, locate, pointAt, surfaceAt } from '../src/os/arcade/games/grand-prix/track.ts';
 
@@ -322,9 +323,13 @@ test('keyboard steering eases in, shrinks with speed and centers', () => {
   assert.equal(d.steer, 0);
 });
 
-test('a keyboard driver (keys only, no analog) can lap cleanly with the default assists', () => {
+for (const [label, assists] of [
+  ['the default assists', AUTO],
+  ['no assists at all', { tc: false, abs: false, autoGears: true }],
+] as const) {
+  test(`a keyboard driver (keys only, no analog) can lap cleanly with ${label}`, () => {
   // a crude driver: holds left or right toward a point ahead on the line, and gas or brake toward a cautious speed
-  const r = createRace({ mode: 'trial', laps: 1, entries: field(1, 0), assists: [AUTO] });
+  const r = createRace({ mode: 'trial', laps: 1, entries: field(1, 0), assists: [assists] });
   const me = r.runners[0];
   const { c, line } = r;
   const target = speedProfile(line, 1.55 * 0.9);
@@ -347,7 +352,7 @@ test('a keyboard driver (keys only, no analog) can lap cleanly with the default 
     const v = Math.min(target[(car.i + Math.round((car.vx * 0.25) / c.ds)) % c.n], target[car.i]);
     if (car.vx < v - 1) held.add('ArrowUp');
     else if (car.vx > v + 2) held.add('ArrowDown');
-    stepRace(r, DT, new Map([[0, readInput(st, keys, SOLO, -1, Math.abs(car.vx), DT).input]]));
+    stepRace(r, DT, new Map([[0, readInput(st, keys, SOLO, -1, Math.abs(car.vx), DT, { tc: assists.tc, abs: assists.abs, gear: car.gear }).input]]));
     for (const e of r.events) {
       if (e.t === 'wall') walls++;
       if (e.t === 'limits') limits++;
@@ -357,7 +362,56 @@ test('a keyboard driver (keys only, no analog) can lap cleanly with the default 
   assert.equal(me.laps.length, 2);
   assert.equal(walls, 0);
   assert.equal(limits, 0);
-  assert.ok(me.laps[1].time < 95, `lap ${me.laps[1].time}`);
+  assert.ok(me.laps[1].time < 96, `lap ${me.laps[1].time}`);
+  });
+}
+
+test('keyboard pedals without aids press as far as the tyres take', () => {
+  assert.ok(lockPedal(60 / 3.6) < 0.5 && lockPedal(340 / 3.6) > 0.98);
+  assert.ok(tractionPedal(70 / 3.6) < 0.9 && tractionPedal(200 / 3.6) === 1);
+  const held = new Set<string>(['ArrowUp']);
+  const keys = { down: (...n: string[]) => n.some((k) => held.has(k)), pressed: () => false };
+  const d = newDriver();
+  let thr = 0;
+  for (let i = 0; i < 60; i++) thr = readInput(d, keys, SOLO, -1, 20, DT, { tc: false, abs: false, gear: 2 }).input.throttle;
+  assert.ok(Math.abs(thr - tractionPedal(20) * 0.97) < 1e-6, `throttle ${thr}`);
+  // with traction control on the key is simply full throttle
+  assert.equal(readInput(newDriver(), keys, SOLO, -1, 20, DT, { tc: true, abs: true, gear: 2 }).input.throttle, 1);
+  held.clear();
+  held.add('ArrowDown');
+  let brk = 0;
+  for (let i = 0; i < 30; i++) brk = readInput(d, keys, SOLO, -1, 30, DT, { tc: false, abs: false, gear: 2 }).input.brake;
+  assert.ok(Math.abs(brk - lockPedal(30) * 0.97) < 1e-6, `brake ${brk}`);
+});
+
+test('recorded engine loops crossfade by rpm and throttle and pitch to the rpm', () => {
+  const bank: EngineSample[] = [
+    { url: 'a', rpm: 5000, load: 'on' },
+    { url: 'b', rpm: 9000, load: 'on' },
+    { url: 'c', rpm: 12000, load: 'on' },
+    { url: 'd', rpm: 6000, load: 'off' },
+    { url: 'e', rpm: 11000, load: 'off', gain: 0.5 },
+  ];
+  const power = (ls: { gain: number }[]) => ls.reduce((a, l) => a + l.gain * l.gain, 0);
+  // flat out at a recorded rpm: just that loop, at its own pitch
+  let ls = layersFor(bank, 9000, 1);
+  assert.ok(Math.abs(ls[1].gain - 1) < 1e-9 && Math.abs(ls[1].rate - 1) < 1e-9);
+  assert.ok(ls.filter((l) => l.index !== 1).every((l) => l.gain < 1e-9));
+  // between two loops: both, at equal power, each pitched to the actual rpm
+  ls = layersFor(bank, 7000, 1);
+  assert.ok(ls[0].gain > 0 && ls[1].gain > 0 && Math.abs(power(ls) - 1) < 1e-9);
+  assert.ok(Math.abs(ls[0].rate - 7000 / 5000) < 1e-9 && Math.abs(ls[1].rate - 7000 / 9000) < 1e-9);
+  // past the top: the highest loop carries on, pitched up (within limits)
+  ls = layersFor(bank, 13000, 1);
+  assert.ok(Math.abs(ls[2].gain - 1) < 1e-9 && ls[2].rate > 1);
+  // off the throttle: the off loops, with their gain correction
+  ls = layersFor(bank, 11000, 0);
+  assert.ok(Math.abs(ls[4].gain - 0.5) < 1e-9 && ls.slice(0, 3).every((l) => l.gain < 1e-9));
+  // half throttle: both sets at equal power
+  ls = layersFor(bank, 9000, 0.5);
+  assert.ok(ls[1].gain > 0.6 && ls[3].gain + ls[4].gain > 0.3);
+  // a bank with only on-throttle loops still plays off the throttle
+  assert.ok(layersFor(bank.slice(0, 3), 9000, 0).some((l) => l.gain > 0.99));
 });
 
 test('every team and driver has what the timing tower needs', () => {

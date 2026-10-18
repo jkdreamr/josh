@@ -6,7 +6,7 @@
 import { rng32, rollLoot, type LootDef, type LootTier, type Rng } from './items.ts';
 
 /** Land spans -HALF..HALF on x and z; water lies beyond. */
-export const HALF = 160;
+export const HALF = 240;
 /** The sandy band along the shore. */
 export const BEACH = 8;
 /** Fighters stop this far inside the shore. */
@@ -96,6 +96,30 @@ export const PLACE_NAMES = [
   'Florentine Fields',
   'Carton Crossing',
   'Dozen Docks',
+  'Brunch Bay',
+  'Griddle Gulch',
+  'Skillet Springs',
+  'Toast Town',
+  'Waffle Wharf',
+  'Pancake Pass',
+  'Hollandaise Hill',
+  'Bacon Bend',
+  'Muffin Mesa',
+  'Biscuit Bluffs',
+  'Clucker Creek',
+  'Henhouse Hamlet',
+  'Rooster Ridge',
+  'Nest Nook',
+  'Feather Falls',
+  'Pullet Plains',
+  'Speckle Spit',
+  'Bantam Bridge',
+  'Crumpet Crest',
+  'Jam Junction',
+  'Butter Basin',
+  'Shellfire Shoals',
+  'Yolkshire',
+  'Cracked Canyon',
 ];
 /** The diner and the windmill go by their own names. */
 export const DINER_NAMES = ['Greasy Spoon', 'Hash House', 'Sunny Side Diner', 'Waffle Stop', 'Short Stack Diner'];
@@ -223,26 +247,42 @@ export type GameMap = {
   mark: number;
 };
 
-export const BUS_Y = 55;
-export const BUS_SPEED = 22;
-export const STORM_R0 = 235;
+export const BUS_Y = 68;
+export const BUS_SPEED = 30;
+export const STORM_R0 = 350;
 /** Each phase: the wait before the storm moves, how long it takes to close, the new radius, and its bite per second. */
 export const STORM_PHASES = [
-  { wait: 70, shrink: 40, r: 110, dps: 1 },
-  { wait: 40, shrink: 32, r: 62, dps: 2 },
-  { wait: 32, shrink: 26, r: 32, dps: 4 },
-  { wait: 24, shrink: 20, r: 15, dps: 7 },
-  { wait: 18, shrink: 16, r: 6, dps: 10 },
+  { wait: 80, shrink: 45, r: 165, dps: 1 },
+  { wait: 45, shrink: 35, r: 95, dps: 2 },
+  { wait: 35, shrink: 30, r: 50, dps: 4 },
+  { wait: 26, shrink: 22, r: 24, dps: 7 },
+  { wait: 18, shrink: 16, r: 9, dps: 10 },
   { wait: 12, shrink: 16, r: 0, dps: 16 },
 ] as const;
-/** Seconds before the first three storm phases begin to move that a supply drop lands inside the circle it closes to. */
-const DROP_LEAD = [10, 8, 6];
+/**
+ * Seconds before each of the first four storm phases begins to move that its supply drops land inside the circle it
+ * closes to, and how many land.
+ */
+const DROP_LEAD = [10, 8, 6, 5];
+const DROP_COUNT = [2, 2, 2, 1];
 /** How many supply drops flare guns can call in a match. */
-export const FLARE_DROPS = 3;
+export const FLARE_DROPS = 6;
 
-/** The buildings an island has, placed in this order (the biggest first, so they always fit); `special` is a diner, a windmill or both. */
-const plan = (special: BuildingKind[]): BuildingKind[] => ['coop', 'warehouse', 'warehouse', 'farm', 'farm', ...special, 'container', 'container', ...Array<BuildingKind>(9).fill('house'), ...Array<BuildingKind>(7).fill('shed'), ...Array<BuildingKind>(4).fill('ruin')];
-const COUNTS = { forests: 6, forestTrees: 16, trees: 150, rocks: 70, bushes: 110, crates: 50, chests: 8, spots: 70, barrels: 14, ponds: 3, camps: 3, pads: 5, logs: 12, stumps: 16 };
+/**
+ * The buildings an island has, placed in this order (the biggest first, so they always fit); `special` is a diner and a
+ * windmill, now and then with a second of one of them.
+ */
+const plan = (special: BuildingKind[]): BuildingKind[] => [
+  'coop',
+  ...Array<BuildingKind>(4).fill('warehouse'),
+  ...Array<BuildingKind>(4).fill('farm'),
+  ...special,
+  ...Array<BuildingKind>(4).fill('container'),
+  ...Array<BuildingKind>(22).fill('house'),
+  ...Array<BuildingKind>(16).fill('shed'),
+  ...Array<BuildingKind>(9).fill('ruin'),
+];
+const COUNTS = { forests: 14, forestTrees: 16, trees: 340, rocks: 160, bushes: 250, crates: 115, chests: 18, spots: 160, barrels: 32, ponds: 7, camps: 7, pads: 12, logs: 28, stumps: 36 };
 /** A bridge's deck runs this far onto each bank, and nothing else is built within `clear` of either end. */
 const BRIDGE_STEP = 1.5;
 const BRIDGE_CLEAR = 6;
@@ -323,11 +363,76 @@ function doorAt(rng: Rng, span: number, width: number) {
 
 const sides = (): Gap[][] => [[], [], [], []];
 
+// -------------------------------------------------------------------------------------------------------------------
+// What is where. Each grid cell lists, in order, the things whose footprint reaches into it, so asking what stands at
+// a point only looks at what is near it: the same answer as looking at everything, much sooner.
+
+type Lists = 'bushes' | 'fields' | 'ponds' | 'fires' | 'pads' | 'yards' | 'rooms' | 'bridges' | 'roads' | 'river';
+type Lookup = { of: unknown[]; cells: Record<Lists, number[][]> };
+const lookups = new WeakMap<GameMap, Lookup>();
+/** The lists a lookup was worked out from, and how long each was (so one swapped for another, or grown, is noticed). */
+const sources = (map: GameMap) => [map.bushes, map.fields, map.ponds, map.fires, map.pads, map.yards, map.buildings, map.bridges, map.roads, map.river];
+
+function lookup(map: GameMap): Lookup {
+  const got = lookups.get(map);
+  if (got) {
+    const of = got.of;
+    // checked one by one, since this is asked many times a frame
+    if (
+      of[0] === map.bushes && of[1] === map.bushes.length && of[2] === map.fields && of[3] === map.fields.length && of[4] === map.ponds && of[5] === map.ponds.length &&
+      of[6] === map.fires && of[7] === map.fires.length && of[8] === map.pads && of[9] === map.pads.length && of[10] === map.yards && of[11] === map.yards.length &&
+      of[12] === map.buildings && of[13] === map.buildings.length && of[14] === map.bridges && of[15] === map.bridges.length && of[16] === map.roads &&
+      of[17] === map.roads.length && of[18] === map.river && of[19] === map.river.length
+    )
+      return got;
+  }
+  const cells = {} as Record<Lists, number[][]>;
+  const put = (k: Lists, i: number, x0: number, z0: number, x1: number, z1: number) => {
+    const list = (cells[k] ??= Array.from({ length: COLS * COLS }, () => []));
+    for (let cz = cellOf(z0); cz <= cellOf(z1); cz++) for (let cx = cellOf(x0); cx <= cellOf(x1); cx++) list[cx + cz * COLS].push(i);
+  };
+  const keys: Lists[] = ['bushes', 'fields', 'ponds', 'fires', 'pads', 'yards', 'rooms', 'bridges', 'roads', 'river'];
+  for (const k of keys) cells[k] = Array.from({ length: COLS * COLS }, () => []);
+  map.bushes.forEach((b, i) => put('bushes', i, b.x - b.r, b.z - b.r, b.x + b.r, b.z + b.r));
+  map.fields.forEach((f, i) => put('fields', i, f.x - f.hw, f.z - f.hd, f.x + f.hw, f.z + f.hd));
+  map.ponds.forEach((p, i) => put('ponds', i, p.x - p.r, p.z - p.r, p.x + p.r, p.z + p.r));
+  map.fires.forEach((f, i) => put('fires', i, f.x - CAMP.r, f.z - CAMP.r, f.x + CAMP.r, f.z + CAMP.r));
+  map.pads.forEach((p, i) => put('pads', i, p.x - PAD.r, p.z - PAD.r, p.x + PAD.r, p.z + PAD.r));
+  map.yards.forEach((y, i) => put('yards', i, y.x - y.hw, y.z - y.hd, y.x + y.hw, y.z + y.hd));
+  // roofed buildings out to the outside of their walls, a little more
+  map.buildings.forEach((b, i) => b.roof && put('rooms', i, b.x - b.w / 2 - WALL_T, b.z - b.d / 2 - WALL_T, b.x + b.w / 2 + WALL_T, b.z + b.d / 2 + WALL_T));
+  map.bridges.forEach((b, i) => put('bridges', i, b.x - b.hw, b.z - b.hd, b.x + b.hw, b.z + b.hd));
+  map.roads.forEach((r, i) => put('roads', i, Math.min(r.x0, r.x1) - ROAD_HALF, Math.min(r.z0, r.z1) - ROAD_HALF, Math.max(r.x0, r.x1) + ROAD_HALF, Math.max(r.z0, r.z1) + ROAD_HALF));
+  // a stretch of river by the segment that ends at each point
+  for (let i = 1; i < map.river.length; i++) {
+    const a = map.river[i - 1];
+    const b = map.river[i];
+    put('river', i, Math.min(a.x, b.x) - RIVER_HALF, Math.min(a.z, b.z) - RIVER_HALF, Math.max(a.x, b.x) + RIVER_HALF, Math.max(a.z, b.z) + RIVER_HALF);
+  }
+  const of: unknown[] = [];
+  for (const list of sources(map)) of.push(list, list.length);
+  const made = { of, cells };
+  lookups.set(map, made);
+  return made;
+}
+
+/** The things of one kind whose footprint reaches the grid cell a point is in, in order. */
+const near = (map: GameMap, k: Lists, x: number, z: number) => lookup(map).cells[k][cellOf(x) + cellOf(z) * COLS];
+
 /** The building whose floor (inside the walls, under a roof) holds a point, or -1. */
 export function buildingAt(map: GameMap, x: number, z: number) {
-  for (let i = 0; i < map.buildings.length; i++) {
+  for (const i of near(map, 'rooms', x, z)) {
     const b = map.buildings[i];
     if (b.roof && Math.abs(x - b.x) < b.w / 2 - WALL_T / 2 && Math.abs(z - b.z) < b.d / 2 - WALL_T / 2) return i;
+  }
+  return -1;
+}
+
+/** The roofed building whose outer walls stand round a point, or -1. */
+export function roomAt(map: GameMap, x: number, z: number) {
+  for (const i of near(map, 'rooms', x, z)) {
+    const b = map.buildings[i];
+    if (b.roof && Math.abs(x - b.x) < (b.w + WALL_T) / 2 && Math.abs(z - b.z) < (b.d + WALL_T) / 2) return i;
   }
   return -1;
 }
@@ -358,7 +463,7 @@ export function peekAt(map: GameMap, x: number, z: number) {
 
 /** The bush hiding a point, or -1. */
 export function bushAt(map: GameMap, x: number, z: number) {
-  for (let i = 0; i < map.bushes.length; i++) {
+  for (const i of near(map, 'bushes', x, z)) {
     const b = map.bushes[i];
     const dx = x - b.x;
     const dz = z - b.z;
@@ -369,7 +474,7 @@ export function bushAt(map: GameMap, x: number, z: number) {
 
 /** The cornfield a point stands in, or -1. */
 export function fieldAt(map: GameMap, x: number, z: number) {
-  for (let i = 0; i < map.fields.length; i++) {
+  for (const i of near(map, 'fields', x, z)) {
     const f = map.fields[i];
     if (Math.abs(x - f.x) < f.hw - 0.3 && Math.abs(z - f.z) < f.hd - 0.3) return i;
   }
@@ -386,7 +491,7 @@ export function coverAt(map: GameMap, x: number, z: number) {
 
 /** The pond a point is in, or -1. */
 export function pondAt(map: GameMap, x: number, z: number) {
-  for (let i = 0; i < map.ponds.length; i++) {
+  for (const i of near(map, 'ponds', x, z)) {
     const p = map.ponds[i];
     const dx = x - p.x;
     const dz = z - p.z;
@@ -408,7 +513,10 @@ function segDist2(x: number, z: number, x0: number, z0: number, x1: number, z1: 
 
 /** True on a dirt road. */
 export function roadAt(map: GameMap, x: number, z: number) {
-  for (const r of map.roads) if (segDist2(x, z, r.x0, r.z0, r.x1, r.z1) < ROAD_HALF * ROAD_HALF) return true;
+  for (const i of near(map, 'roads', x, z)) {
+    const r = map.roads[i];
+    if (segDist2(x, z, r.x0, r.z0, r.x1, r.z1) < ROAD_HALF * ROAD_HALF) return true;
+  }
   return false;
 }
 
@@ -429,7 +537,7 @@ export function riverDist2(map: GameMap, x: number, z: number) {
 
 /** The bridge whose deck a point is on, or -1. */
 export function bridgeAt(map: GameMap, x: number, z: number) {
-  for (let i = 0; i < map.bridges.length; i++) {
+  for (const i of near(map, 'bridges', x, z)) {
     const b = map.bridges[i];
     if (Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd) return i;
   }
@@ -438,7 +546,16 @@ export function bridgeAt(map: GameMap, x: number, z: number) {
 
 /** In the river (and not up on a bridge over it). */
 export function riverAt(map: GameMap, x: number, z: number) {
-  return riverDist2(map, x, z) < RIVER_HALF * RIVER_HALF && bridgeAt(map, x, z) < 0;
+  // only the stretches of river near the point can reach it
+  const r = map.river;
+  let wet = false;
+  for (const i of near(map, 'river', x, z)) {
+    if (segDist2(x, z, r[i - 1].x, r[i - 1].z, r[i].x, r[i].z) < RIVER_HALF * RIVER_HALF) {
+      wet = true;
+      break;
+    }
+  }
+  return wet && bridgeAt(map, x, z) < 0;
 }
 
 /** Wading: in a pond or the river. */
@@ -472,7 +589,7 @@ export function riverSegDist2(map: GameMap, x0: number, z0: number, x1: number, 
 
 /** The campfire warming a point, or -1. */
 export function fireAt(map: GameMap, x: number, z: number) {
-  for (let i = 0; i < map.fires.length; i++) {
+  for (const i of near(map, 'fires', x, z)) {
     const f = map.fires[i];
     const dx = x - f.x;
     const dz = z - f.z;
@@ -483,7 +600,7 @@ export function fireAt(map: GameMap, x: number, z: number) {
 
 /** The bounce pad under a point, or -1. */
 export function padAt(map: GameMap, x: number, z: number) {
-  for (let i = 0; i < map.pads.length; i++) {
+  for (const i of near(map, 'pads', x, z)) {
     const p = map.pads[i];
     const dx = x - p.x;
     const dz = z - p.z;
@@ -494,7 +611,7 @@ export function padAt(map: GameMap, x: number, z: number) {
 
 /** The fenced yard a point is in (inside the fence line), or -1. */
 export function yardAt(map: GameMap, x: number, z: number) {
-  for (let i = 0; i < map.yards.length; i++) {
+  for (const i of near(map, 'yards', x, z)) {
     const y = map.yards[i];
     if (Math.abs(x - y.x) < y.hw - FENCE_T / 2 && Math.abs(z - y.z) < y.hd - FENCE_T / 2) return i;
   }
@@ -520,8 +637,8 @@ export function placeAt(map: GameMap, x: number, z: number) {
 
 function planBus(rng: Rng): Bus {
   // across the island from one side to the opposite one, passing near the middle
-  const u = (rng() * 2 - 1) * 110;
-  const off = (rng() * 2 - 1) * 48;
+  const u = (rng() * 2 - 1) * 160;
+  const off = (rng() * 2 - 1) * 70;
   const far = HALF + 22;
   const side = Math.floor(rng() * 4);
   let x0: number, z0: number, x1: number, z1: number;
@@ -549,14 +666,14 @@ function planRiver(rng: Rng): River {
   const alongX = rng() < 0.5;
   const flip = rng() < 0.5 ? 1 : -1;
   let u = -HALF;
-  let v = Math.round((rng() * 2 - 1) * 60);
+  let v = Math.round((rng() * 2 - 1) * 90);
   let hu = 1;
   let hv = (rng() * 2 - 1) * 0.4;
   let turn = 0;
   const far = HALF - 40;
   let pts: [number, number][] = [[u, v]];
   while (u < HALF) {
-    turn = turn * 0.75 + (rng() * 2 - 1) * 0.3 - v / 900;
+    turn = turn * 0.75 + (rng() * 2 - 1) * 0.3 - v / 1350;
     const nu = Math.max(0.5, hu - hv * turn);
     const nv = hv + hu * turn;
     const l = Math.sqrt(nu * nu + nv * nv);
@@ -725,7 +842,7 @@ export function generateMap(seed: number): GameMap {
   // Footprints already taken by bridges, buildings, yards and fields; everything keeps its distance from them.
   const lots: Box[] = [];
 
-  // the river, and two to four bridges spread along it, each square across it along x or z from dry bank to dry bank
+  // the river, and three to five bridges spread along it, each square across it along x or z from dry bank to dry bank
   map.river = planRiver(rng);
   const reach = map.river.slice(1).map((b, i) => {
     const a = map.river[i];
@@ -735,7 +852,7 @@ export function generateMap(seed: number): GameMap {
   const total = reach.reduce((n, r) => n + r.len, 0);
   const wet = (x: number, z: number) => riverDist2(map, x, z) < RIVER_HALF * RIVER_HALF;
   const bridgeLots: Box[] = [];
-  const bridges = 2 + Math.floor(rng() * 3);
+  const bridges = 3 + Math.floor(rng() * 3);
   for (let k = 0; k < bridges; k++) {
     for (let tries = 0; tries < 12; tries++) {
       let s = total * ((k + 0.5) / bridges + (rng() * 2 - 1) * 0.12);
@@ -975,13 +1092,18 @@ export function generateMap(seed: number): GameMap {
     }
   };
 
-  // a diner, a windmill, or now and then both, each going by its own name
+  // a diner and a windmill, now and then a second of one of them, each going by its own name
   const special: BuildingKind[] = rng() < 0.5 ? ['diner', 'mill'] : ['mill', 'diner'];
   const ownName = new Map<number, string>();
+  /** A name from the list that no other building has taken yet. */
+  const nameFrom = (list: string[]) => {
+    const left = list.filter((n) => ![...ownName.values()].includes(n));
+    return left[Math.floor(rng() * left.length)];
+  };
   // far enough apart that each makes a place of its own
   const apart = (x: number, z: number) => map.buildings.every((o) => (o.kind !== 'diner' && o.kind !== 'mill') || dist(o.x, o.z, x, z) >= 90);
-  for (const kind of plan(rng() < 0.4 ? special : special.slice(0, 1))) {
-    for (let tries = 0; tries < 150; tries++) {
+  for (const kind of plan(rng() < 0.5 ? [...special, special[0]] : special)) {
+    for (let tries = 0; tries < 200; tries++) {
       if (kind === 'diner') {
         // a long dining room: booths along the front, a counter with stools across the middle, and behind it the
         // kitchen with two fridges, a chest and a back door. `fz` points out the front.
@@ -999,7 +1121,7 @@ export function generateMap(seed: number): GameMap {
         gaps[1 - front].push([back, DOOR]);
         const b = build('diner', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), 3.6);
         const bi = map.buildings.length - 1;
-        ownName.set(bi, DINER_NAMES[Math.floor(rng() * DINER_NAMES.length)]);
+        ownName.set(bi, nameFrom(DINER_NAMES));
         // the kitchen's stash
         const s = back > 0 ? -1 : 1;
         for (const u of [3, 1.6]) addContainer('fridge', x + u * s, z - fz * (d / 2 - WALL_T / 2 - FRIDGE_HD - 0.05), fz as 1 | -1, 'fridge');
@@ -1026,7 +1148,7 @@ export function generateMap(seed: number): GameMap {
         gaps[door].push([0, DOOR]);
         const b = build('mill', x, z, w, w, walls, shell(walls, x, z, w, w, gaps), Math.floor(rng() * 4), 6);
         const bi = map.buildings.length - 1;
-        ownName.set(bi, MILL_NAMES[Math.floor(rng() * MILL_NAMES.length)]);
+        ownName.set(bi, nameFrom(MILL_NAMES));
         // the chest faces along z, so it goes against the north or south wall, whichever has no door
         const cz = door === 0 ? 1 : -1;
         addContainer('chest', x, z + cz * (w / 2 - 1.1), (-cz) as 1 | -1, 'supply');
@@ -1128,8 +1250,9 @@ export function generateMap(seed: number): GameMap {
             else addSpot(cx, cz);
           }
         addSpot(x, z, 'crate');
-        // the chest in a north corner, where the tall south wall can't hide it
-        const qx = rng() < 0.5 ? -1 : 1;
+        // the chest in a north corner, where the tall south wall can't hide it, and not in front of a door in that wall
+        let qx = rng() < 0.5 ? -1 : 1;
+        if (doors.some((dr) => dr.oz < 0 && Math.abs(dr.x - (x + qx * (w / 2 - 2.2))) < dr.w / 2 + 1.6)) qx = -qx;
         addContainer('chest', x + qx * (w / 2 - 2.2), z - (d / 2 - 1.8), 1, 'chest');
         decorate(map.buildings.length - 1);
         barrelsAround(x, z, w / 2, d / 2, 2 + Math.floor(rng() * 2));
@@ -1502,23 +1625,24 @@ export function generateMap(seed: number): GameMap {
 
   // supply drops: each lands inside the circle the storm is about to close to, a little before it moves
   const storm = map.storm;
-  for (let k = 0; k < DROP_LEAD.length; k++) {
-    const c = storm.circles[k + 1];
-    const at = storm.starts[k] - DROP_LEAD[k];
-    let x = r1(Math.max(-(HALF - BEACH - 4), Math.min(HALF - BEACH - 4, c.x)));
-    let z = r1(Math.max(-(HALF - BEACH - 4), Math.min(HALF - BEACH - 4, c.z)));
-    for (let tries = 0; tries < 80; tries++) {
-      const spread = c.r * (0.3 + (tries / 80) * 0.4);
-      const tx = r1(c.x + (rng() * 2 - 1) * spread);
-      const tz = r1(c.z + (rng() * 2 - 1) * spread);
-      if (Math.abs(tx) > HALF - BEACH - 4 || Math.abs(tz) > HALF - BEACH - 4 || nearLot(tx, tz, 2) || !free(tx, tz, 2.4)) continue;
-      x = tx;
-      z = tz;
-      break;
+  for (let k = 0; k < DROP_LEAD.length; k++)
+    for (let n = 0; n < DROP_COUNT[k]; n++) {
+      const c = storm.circles[k + 1];
+      const at = storm.starts[k] - DROP_LEAD[k];
+      let x = r1(Math.max(-(HALF - BEACH - 4), Math.min(HALF - BEACH - 4, c.x)));
+      let z = r1(Math.max(-(HALF - BEACH - 4), Math.min(HALF - BEACH - 4, c.z)));
+      for (let tries = 0; tries < 80; tries++) {
+        const spread = c.r * (0.3 + (tries / 80) * 0.4);
+        const tx = r1(c.x + (rng() * 2 - 1) * spread);
+        const tz = r1(c.z + (rng() * 2 - 1) * spread);
+        if (Math.abs(tx) > HALF - BEACH - 4 || Math.abs(tz) > HALF - BEACH - 4 || nearLot(tx, tz, 2) || !free(tx, tz, 2.4) || !offDoors(tx, tz, 2.5)) continue;
+        x = tx;
+        z = tz;
+        break;
+      }
+      taken.push({ x, z, r: 2.4 });
+      map.drops.push(addContainer('supply', x, z, 1, 'supply', at));
     }
-    taken.push({ x, z, r: 2.4 });
-    map.drops.push(addContainer('supply', x, z, 1, 'supply', at));
-  }
   // and the ones a flare gun calls, packed and waiting: they get a place and a time when one is fired
   for (let k = 0; k < FLARE_DROPS; k++) map.flares.push(addContainer('supply', 0, 0, 1, 'supply', Infinity));
 

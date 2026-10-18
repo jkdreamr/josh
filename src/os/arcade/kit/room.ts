@@ -14,8 +14,9 @@ type RoomEvents = {
   /**
    * started: a round is already under way (rooms that allow joining between rounds). round: the room's latest round.
    * bots: seats bots would take if the host started now, or null when the room has no bots (see the bots event).
+   * quick: a quick-play room; startIn: while it gathers people, milliseconds until it starts on its own, else null.
    */
-  welcome: { seat: number; code: string; game: string; seats: number; players: RoomPlayer[]; started: boolean; round: number; bots: number[] | null };
+  welcome: { seat: number; code: string; game: string; seats: number; players: RoomPlayer[]; started: boolean; round: number; bots: number[] | null; quick: boolean; startIn: number | null };
   players: RoomPlayer[];
   /** Whether a round is under way, when the room says it changed: a round ends, or one stops for want of players. */
   started: boolean;
@@ -28,6 +29,8 @@ type RoomEvents = {
   bots: number[];
   /** Whether the room is public (listed in the arcade's Open Rooms); servers from before public rooms never say. */
   listed: boolean;
+  /** A quick-play room gathering people: milliseconds until it starts on its own, each time the room says. Null once it no longer gathers. */
+  gather: number | null;
   /** round: the room's shared round number, or null from a server that does not send one. bots: the seats bots play this round. */
   start: { players: RoomPlayer[]; round: number | null; bots: number[] };
   msg: { from: number; d: unknown };
@@ -52,6 +55,19 @@ export async function createRoom(game: string, { listed = false }: { listed?: bo
   return body.code;
 }
 
+/**
+ * Quick play: the code of a room of this game that is gathering people for a match that starts on its own, a new one
+ * when there is none. Throws when the Worker can't find one (or is from before quick play).
+ */
+export async function quickRoom(game: string, api = ARCADE_API): Promise<string> {
+  if (!api) throw new Error('Online Play Is Unavailable');
+  const response = await fetch(`${api.replace(/\/+$/, '')}/rooms/quick?game=${encodeURIComponent(game)}`, { method: 'POST' });
+  if (!response.ok) throw new Error('Could Not Find A Match');
+  const body = (await response.json()) as { code?: unknown };
+  if (typeof body.code !== 'string' || !/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/.test(body.code)) throw new Error('Invalid Room Code');
+  return body.code;
+}
+
 /** Public rooms someone can join now, for one game or every game. Throws when Open Rooms can't be reached. */
 export async function listRooms(game?: string, api = ARCADE_API): Promise<OpenRoom[]> {
   if (!api) throw new Error('Online Play Is Unavailable');
@@ -71,6 +87,8 @@ export class RoomLink {
   bots: number[] | null = null;
   /** Whether the room is public, or null from a server that does not say. */
   listed: boolean | null = null;
+  /** A quick-play room, which starts on its own. */
+  quick = false;
   private readonly socket: WebSocket;
   private readonly listeners = new Map<keyof RoomEvents, Set<Listener<never>>>();
   private readonly peers = new Map<number, Peer>();
@@ -189,10 +207,13 @@ export class RoomLink {
       this.players = this.asPlayers(message.players);
       this.bots = Array.isArray(message.bots) ? this.asSeats(message.bots) : null;
       const round = Number.isSafeInteger(message.round) && (message.round as number) > 0 ? message.round as number : 0;
-      this.emit('welcome', { seat: this.seat, code: this.code, game: this.game, seats: this.seats, players: this.players, started: message.started === true, round, bots: this.bots });
+      this.quick = message.quick === true;
+      const startIn = this.startIn(message);
+      this.emit('welcome', { seat: this.seat, code: this.code, game: this.game, seats: this.seats, players: this.players, started: message.started === true, round, bots: this.bots, quick: this.quick, startIn });
       this.emit('players', this.players);
       if (this.bots) this.emit('bots', this.bots);
       this.takeListed(message.listed);
+      if (this.quick) this.emit('gather', startIn);
     } else if (message.t === 'players' || (message.t === 'host' && Number.isInteger(message.from))) {
       this.players = this.asPlayers(message.players);
       if (message.t === 'host') {
@@ -208,6 +229,7 @@ export class RoomLink {
         this.emit('bots', this.bots);
       }
       this.takeListed(message.listed);
+      if (this.quick) this.emit('gather', this.startIn(message));
       if (typeof message.started === 'boolean') this.emit('started', message.started);
       this.updateTransport();
     } else if (message.t === 'start') {
@@ -372,6 +394,12 @@ export class RoomLink {
     return value.filter((player): player is RoomPlayer =>
       !!player && typeof player === 'object' && Number.isInteger((player as RoomPlayer).seat) && typeof (player as RoomPlayer).name === 'string',
     ).map(({ seat, name }) => ({ seat, name }));
+  }
+
+  /** A gathering quick-play room's time to its start, in milliseconds (a minute at most), or null. */
+  private startIn(message: Record<string, unknown>): number | null {
+    const ms = message.startIn;
+    return this.quick && typeof ms === 'number' && Number.isFinite(ms) ? Math.max(0, Math.min(60_000, ms)) : null;
   }
 
   private takeListed(value: unknown) {

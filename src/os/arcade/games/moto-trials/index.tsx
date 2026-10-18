@@ -43,10 +43,42 @@ function Lock() {
   );
 }
 
+/**
+ * A phone or iPad frame is scaled down to fit the screen. Publish 1 / that scale as --g-moto-trials-u on the shell
+ * root so touch styles can keep the level buttons finger sized and the text readable on screen.
+ */
+function useFrameScale() {
+  const shell = useShell();
+  const { root, touch } = shell;
+  useEffect(() => {
+    const el = root.current;
+    if (!el || !touch) return;
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+        const u = k > 0.2 && k < 0.99 ? Math.min(2, 1 / k) : 1;
+        el.style.setProperty('--g-moto-trials-u', u.toFixed(3));
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [root, touch]);
+}
+
 /** The level strip: one row of square number buttons, then a line about the pick. */
 function LevelPicker({ value, onChange, all }: { value: string; onChange?: (id: string) => void; all?: boolean }) {
   const prog = loadProgress();
   const rowRef = useRef<HTMLDivElement>(null);
+  useFrameScale();
   useEffect(() => {
     rowRef.current?.querySelector('.is-on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
   }, []);
@@ -157,6 +189,9 @@ function Play({ online }: { online: OnlineApi | null }) {
   const run = useRef<Run | null>(null);
   if (!run.current) run.current = newRun(getLevel(levelSetting), live && !isHost);
   const net = useRef({ posT: 0, startT: 0, ended: false, toastSeen: 0 });
+  // the idle preview behind the Start card only redraws on request: ask again once a new size has rendered
+  const { invalidate } = shell;
+  useEffect(() => invalidate(), [size.w, size.h, size.dpr, invalidate]);
   const dtRef = useRef(1 / 60);
 
   // guests adopt the host's level and start signal

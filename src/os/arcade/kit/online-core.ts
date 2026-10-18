@@ -2,8 +2,14 @@ export function advanceOnlineRound(round: number) {
   return round + 1;
 }
 
-/** A public room as the arcade's Open Rooms lists it (GET /rooms). players counts people; bots fill other seats. */
-export type OpenRoom = { code: string; game: string; host: string; players: number; bots: number; seats: number; started: boolean; lateJoin: boolean };
+/** The most seats a room has: a game's own room holds as many as its meta says, never more than this. */
+export const MAX_SEATS = 20;
+
+/**
+ * A public room as the arcade's Open Rooms lists it (GET /rooms). players counts people; bots fill other seats. quick:
+ * a quick-play room, gathering people until it starts on its own (at startAt, epoch ms on the Worker's clock).
+ */
+export type OpenRoom = { code: string; game: string; host: string; players: number; bots: number; seats: number; started: boolean; lateJoin: boolean; quick?: true; startAt?: number };
 /** The most open rooms listed at once. */
 export const OPEN_ROOMS_MAX = 40;
 
@@ -19,22 +25,23 @@ export function parseOpenRooms(body: unknown): OpenRoom[] {
     const r = raw as Record<string, unknown>;
     if (typeof r.code !== 'string' || !/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/.test(r.code)) continue;
     if (typeof r.game !== 'string' || !/^[a-z0-9-]{1,40}$/.test(r.game) || typeof r.host !== 'string') continue;
-    if (!count(r.seats, 16) || r.seats < 2 || !count(r.players, r.seats) || !count(r.bots, r.seats)) continue;
-    rooms.push({ code: r.code, game: r.game, host: r.host.slice(0, 32), players: r.players, bots: r.bots, seats: r.seats, started: r.started === true, lateJoin: r.lateJoin === true });
+    if (!count(r.seats, MAX_SEATS) || r.seats < 2 || !count(r.players, r.seats) || !count(r.bots, r.seats)) continue;
+    rooms.push({ code: r.code, game: r.game, host: r.host.slice(0, 32), players: r.players, bots: r.bots, seats: r.seats, started: r.started === true, lateJoin: r.lateJoin === true, ...(r.quick === true ? { quick: true as const } : {}) });
   }
   return rooms;
 }
 
 const botCount = (room: OpenRoom) => (room.bots ? (room.bots === 1 ? '1 Bot' : `${room.bots} Bots`) : '');
 
-/** How full an open room is, for its line in Open Rooms: "2/8 · 3 Bots · Playing". */
+/** How full an open room is, for its line in Open Rooms: "2/8 · 3 Bots · Playing", or "Quick Play · 2/20 · 18 Bots". */
 export function openRoomLine(room: OpenRoom): string {
-  return [`${room.players}/${room.seats}`, botCount(room), room.started ? 'Playing' : ''].filter(Boolean).join(' · ');
+  return [room.quick ? 'Quick Play' : '', `${room.players}/${room.seats}`, botCount(room), room.started ? 'Playing' : ''].filter(Boolean).join(' · ');
 }
 
 /** An open room's line in the Lounge's list, saying what joining it means: "1/4 · 2 Bots · Waiting for players". */
 export function openRoomDetail(room: OpenRoom): string {
-  return [`${room.players}/${room.seats}`, botCount(room), room.started ? 'Playing, join for the next round' : 'Waiting for players'].filter(Boolean).join(' · ');
+  const what = room.quick ? 'Starting soon' : room.started ? 'Playing, join for the next round' : 'Waiting for players';
+  return [room.quick ? 'Quick Play' : '', `${room.players}/${room.seats}`, botCount(room), what].filter(Boolean).join(' · ');
 }
 
 /** Bots in seat order, named from the game's list or Bot 1, Bot 2 and so on, so every player sees the same names. */
@@ -94,7 +101,7 @@ export function parseRacePacket(value: unknown): { t: 'race'; round: number; sco
   const scores: RaceScores = {};
   for (const [key, score] of Object.entries(packet.scores as Record<string, unknown>)) {
     const seat = Number(key);
-    if (Number.isInteger(seat) && seat >= 0 && seat < 16 && validScore(score)) scores[seat] = score;
+    if (Number.isInteger(seat) && seat >= 0 && seat < MAX_SEATS && validScore(score)) scores[seat] = score;
   }
   return { t: 'race-all', round, scores };
 }

@@ -391,8 +391,10 @@ function substep(car: Car, input: Input, h: number, c: Circuit, assists: Assists
     const bite = 6200;
     const absWr = Math.abs(wr);
     if (absWr < bite && Math.abs(gear) <= 2) {
+      // as the clutch bites, the engine is pulled down onto the wheels' speed, meeting it exactly at full engagement
       const launch = S.idle + thr * (bite + 2000 - S.idle);
-      engineRpm += (Math.max(launch, absWr) - engineRpm) * Math.min(1, h * 8);
+      const bitten = Math.min(1, absWr / bite) ** 2;
+      engineRpm += (Math.max(absWr, launch + (absWr - launch) * bitten) - engineRpm) * Math.min(1, h * 8);
       car.clutch = Math.min(1, absWr / bite);
       // a slipping clutch passes the engine's torque through while the engine is spinning faster than the wheels
       const slipping = engineRpm > absWr + 50;

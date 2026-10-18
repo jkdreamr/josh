@@ -101,6 +101,23 @@
   fill: #ffd23f;
 }
 
+/* touch: finger sized buttons and readable text, grown by --g-moto-trials-u (1 / the phone or iPad frame scale) */
+@media (pointer: coarse) {
+  .g-moto-trials .g-moto-trials-pick {
+    width: calc(40px * var(--g-moto-trials-u, 1));
+    height: calc(40px * var(--g-moto-trials-u, 1));
+    border-radius: calc(9px * var(--g-moto-trials-u, 1));
+    font-size: calc(13px * var(--g-moto-trials-u, 1));
+  }
+  .g-moto-trials .g-moto-trials-pick em {
+    font-size: calc(11px * var(--g-moto-trials-u, 1));
+  }
+  .g-moto-trials .g-moto-trials-info {
+    font-size: calc(12px * var(--g-moto-trials-u, 1));
+    min-height: calc(14px * var(--g-moto-trials-u, 1));
+  }
+}
+
 /* short cards: drop the extras so Play stays in view */
 @container arcade-ov (max-height: 340px) {
   .g-moto-trials .g-moto-trials-info,

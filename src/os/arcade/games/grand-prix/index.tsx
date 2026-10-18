@@ -613,7 +613,7 @@ function Play({ mode }: { mode: StageMode }) {
       if (mode !== 'idle' && n.synced) {
         ps.forEach((p, k) => {
           const bind = ps.length > 1 ? (k === 0 ? P1 : P2) : SOLO;
-          const { input, extra } = readInput(drivers.current[k], keys, bind, k, Math.abs(p.car.vx), dt);
+          const { input, extra } = readInput(drivers.current[k], keys, bind, k, Math.abs(p.car.vx), dt, { tc: p.assists.tc, abs: p.assists.abs, gear: p.car.gear });
           if (k === 0 && touchCam.current) {
             extra.cam = true;
             touchCam.current = false;
