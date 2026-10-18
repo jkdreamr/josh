@@ -1948,6 +1948,8 @@ const CARE_T = 12;
 /** A CPU that falls again within this long of its last fall drives very carefully for SHAKEN_T (see Ai.shaken). */
 const SHAKEN_WITHIN = 20;
 const SHAKEN_T = 20;
+/** On the water a CPU drives very carefully this long after any fall (see Ai.shaken). */
+const BOAT_SHAKEN_T = 0;
 
 /**
  * Off the road: a splash into the water (or a drop into a pit or a trench), and you sit there until the crane fishes you
@@ -1962,9 +1964,12 @@ function fallIn(r: Race, k: Kart, past: Past, at: Spot, hole: Hazard | null = nu
   // (only from the run-up, past where the crane puts you back: never carried forward; the same before the glass panes
   // that blink out)
   const trench = hole ?? (r.panels.length ? [...r.holes, ...r.panels] : r.holes).find((h) => deltaS(t, h.back ?? h.s, at.s) > 0 && deltaS(t, h.s, at.s) <= (h.len ?? 0)) ?? null;
-  const from = trench ? (trench.back ?? at.s) : at.s;
-  // (out of a whirlpool, across the river from it: not where its pull reaches as it comes by again)
-  const d0 = hole?.kind === 'whirl' ? -Math.sign(hole.d || 1) * 3 : at.d;
+  // (out of a whirlpool the launch tows you out the far side of it, across the river, past where its pull reaches: put
+  // back short of it, a shell only just under way meets it spinning up again)
+  const whirl = hole?.kind === 'whirl';
+  const from = whirl ? wrapS(t, hole.s + (hole.pull ?? 7) + 3) : trench ? (trench.back ?? at.s) : at.s;
+  // (and on the water, from the marsh, in the middle of the channel: well clear of the brink it went over)
+  const d0 = whirl ? -Math.sign(hole.d || 1) * 3 : r.boat ? 0 : at.d;
   k.fell = { past, hole: hole !== null, v: Math.abs(k.v), to: spotFor(r, k, from, d0, r.time + r.tier.fallT) };
   k.sunk = r.tier.fallT;
   k.falls++;
@@ -1988,6 +1993,8 @@ function fallIn(r: Race, k: Kart, past: Past, at: Spot, hole: Hazard | null = nu
       if (r.time - k.ai.fellAt < SHAKEN_WITHIN) k.ai.shaken = SHAKEN_T;
       k.ai.fellAt = r.time;
     }
+    // (on the water any fall shakes it a while: the marsh, the whirlpools and the buoys come thick and fast there)
+    if (r.boat) k.ai.shaken = Math.max(k.ai.shaken, BOAT_SHAKEN_T);
   }
   k.v = 0;
   k.kx = 0;
@@ -2176,7 +2183,8 @@ export function rescue(r: Race, k: Kart, spot = spotFor(r, k, k.s, k.d)) {
   k.vy = 0;
   k.tumble = 0;
   k.safe = Math.max(k.safe, 1.2);
-  k.calm = CALM_T;
+  // (on the water the launch holds the shell a little longer, until it is under way)
+  k.calm = r.boat ? CALM_T + 1 : CALM_T;
 }
 /** How long the drone holds a kart it has just set down steady against the wind (see Kart.calm). */
 export const CALM_T = 1.5;
@@ -2897,8 +2905,9 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
       // (a jet is thin and its tip sweeps fast: sampled closer in time, and given more room; over a pane of glass the
       // kart keeps to the middle of the half that holds, as a bump or a slide off the seam drops it through; and a
       // flare is only as wide as its column)
-      // (and a whirlpool with a wide berth, wider still for a while after a fall)
-      const room = KART_R + (h.kind === 'rotor' ? 1.0 : h.kind === 'panel' ? 1.4 : h.kind === 'geyser' ? 0.3 : h.kind === 'whirl' ? (ai.care > 0 ? 1.9 : 0.9) : 0.7);
+      // (and a whirlpool with a wide berth, wider still for a while after a fall, and the slower it is going the wider:
+      // its pull draws a slow shell in from well outside where it would catch a fast one)
+      const room = KART_R + (h.kind === 'rotor' ? 1.0 : h.kind === 'panel' ? 1.4 : h.kind === 'geyser' ? 0.3 : h.kind === 'whirl' ? (ai.care > 0 ? 1.9 : 0.9) + 2.2 * clamp((16 - k.v) / 10, 0, 1) : 0.7);
       // (a sprinkler's jet is met along a stretch of road, not on one line: every so far along it; and a pane of glass
       // from its near end to its far end)
       const arm = h.arm ?? 5;
@@ -3149,6 +3158,8 @@ function fromBrink(r: Race, k: Kart) {
 const HAIRPIN = 18;
 const BRAKE_PLAN = 18;
 
+/** On the water a CPU dodging with a clean line looks at least this many seconds ahead (see think()). */
+const BOAT_LOOK = 0.4;
 /** How much less than a kart's the CPU counts on turning off a drift (a racing shell's long hull: see HULL_TURN). */
 const turnK = (r: Race) => (r.boat ? HULL_TURN : 1);
 /** An Expert course, or harder. */
@@ -3209,6 +3220,11 @@ function think(r: Race, k: Kart, dt: number) {
   if (dodge !== null) lane = dodge.lane;
   // aim closer in while dodging, beside whatever is in the way, to get across in time
   let look = dodge === null ? 7 + Math.abs(k.v) * 0.5 : clamp(dodge.ds, 4, 5 + Math.abs(k.v) * 0.25);
+  // (on the water, with a clean line past it, not so close in: the shell slides on through every turn, and a short look
+  // at speed has it weave across its line and into the buoys)
+  // (but a ferry crossing is met on a short look, as anything that moves across)
+  const ferry = r.boat && ferryAhead(r, k);
+  if (r.boat && dodge?.clear && !ferry) look = Math.max(look, Math.min(7 + Math.abs(k.v) * 0.5, BOAT_LOOK * Math.abs(k.v)));
   let aim = lane * t.half;
   if (band.open) {
     // aiming at a point that far ahead cuts the inside of a tight bend by look^2/8R: with a drop beside it, look less far
@@ -3245,7 +3261,8 @@ function think(r: Race, k: Kart, dt: number) {
     const out = edgeAt(t, k.s + sp * 0.2, -k.drift);
     const room = out.past === 'wall' ? Infinity : out.lim + k.d * k.drift;
     if (room < 2.4) inp.steer = k.drift;
-    if ((turboLevel(k.charge) >= goal && ending && aligned) || k.drift * rate < -0.35 || ai.driftT > 3 || swerve || room < 1.1 || ai.shaken > 0) inp.drift = false;
+    // (and on the water it lets go well before a ferry crossing: the shell slides on a long way out of a carve)
+    if ((turboLevel(k.charge) >= goal && ending && aligned) || k.drift * rate < -0.35 || ai.driftT > 3 || swerve || room < 1.1 || ai.shaken > 0 || ferry) inp.drift = false;
   } else if (k.y === 0) {
     inp.steer = clamp(need, -1, 1);
     const bend = curveAhead(t, k.s, 4, 30).mean;
@@ -3253,7 +3270,7 @@ function think(r: Race, k: Kart, dt: number) {
     // on a clean line past it
     // (and the less able don't drift at all where the road drops away)
     // (nor in the wind unless it is very good, as a drift cannot correct for it; nor at all shaken by a fall)
-    const open = (dodge === null || (dodge.clear && Math.abs(dodge.lane * t.half - k.d) < 1) || dodge.ds > 6 + k.v * 0.6) && !(band.open && ai.skill < 0.6) && !(wind !== 0 && ai.skill < 0.8) && !(ai.shaken > 0) && !(r.panels.length > 0 && r.panels.some((h) => deltaS(t, k.s, h.s) > 0 && deltaS(t, k.s, h.s) < 45 && awake(h, k.lap))) && !(r.whirls.length > 0 && ai.skill < 0.9 && whirlAhead(r, k));
+    const open = (dodge === null || (dodge.clear && Math.abs(dodge.lane * t.half - k.d) < 1) || dodge.ds > 6 + k.v * 0.6) && !(band.open && ai.skill < 0.6) && !(wind !== 0 && ai.skill < 0.8) && !(ai.shaken > 0) && !(r.panels.length > 0 && r.panels.some((h) => deltaS(t, k.s, h.s) > 0 && deltaS(t, k.s, h.s) < 45 && awake(h, k.lap))) && !(r.whirls.length > 0 && ai.skill < 0.9 && whirlAhead(r, k)) && !ferry;
     inp.drift = Math.abs(bend) > 0.02 && k.v > 14 && Math.sign(bend) === Math.sign(need) && r.rand() < ai.skill && open;
     inp.hop = inp.drift;
     ai.driftT = 0;
@@ -3426,8 +3443,10 @@ function think(r: Race, k: Kart, dt: number) {
     const fz = Math.cos(k.h);
     for (const h of r.hazards) {
       // (and on the water a buoy it has nosed into: it backs off and swings round it)
+      // (but never backing toward the marsh: beside it, it slides on off the buoy instead)
       const buoy = h.kind === 'buoy';
       if ((!timed(h.kind) && !buoy) || h.kind === 'bollard' || h.kind === 'wrecker') continue;
+      if (buoy && fromBrink(r, k) < 3.5) continue;
       const dx = h.x - k.x;
       const dz = h.z - k.z;
       if (Math.abs(dx) > 12 || Math.abs(dz) > 12) continue;
@@ -3507,6 +3526,24 @@ function think(r: Race, k: Kart, dt: number) {
       }
     }
   }
+  // on the water: never sitting on the brakes beside a whirlpool that spins (or is about to), as a slow shell is the one
+  // it draws in; and stopped short of the weir, too slow to clear the stopper from there, back off for a run at it
+  if (r.boat) {
+    if (inp.brake && ai.backT === 0 && !held && !backOut && k.v < 15 && whirlNear(r, k, 2)) inp.brake = false;
+    if (band.wide && k.y === 0 && !hurt(k)) {
+      for (const h of r.holes) {
+        const ds = deltaS(t, k.s, h.s);
+        if (ds < 0 || ds > 16) continue;
+        // (straight back, square to the weir, not swinging off toward the marsh)
+        if (ai.backT > 0) {
+          inp.steer = clamp(wrapAngle(headingOf(t.tx[k.i], t.tz[k.i]) - k.h) * 2, -1, 1);
+          continue;
+        }
+        const lip = Math.sqrt(Math.max(0, k.v * Math.abs(k.v) + 2 * 0.85 * CLASSES[r.cc].accel * Math.max(0, ds - 1)));
+        if (facing && ds < 14 && lip < 14.5 && k.boost <= 0) ai.backT = 2;
+      }
+    }
+  }
   // on the water: catches on the beat, hopping the swell and (the best of them) a log in the way
   if (r.boat && !inp.hop && !inp.drift && k.drift === 0 && k.y === 0 && !hurt(k) && !band.hole && !held && !backOut && ai.goT === 0 && ai.backT === 0) waterHop(r, k, ai, dodge);
 
@@ -3527,7 +3564,8 @@ function think(r: Race, k: Kart, dt: number) {
       return Math.abs(dx * Math.sin(k.h) + dz * Math.cos(k.h)) < 2.4 && across > 1 && across < 3.4;
     });
     // (on the Skyway it never shoves another CPU over the brink: its tricks there are for the people it races)
-    if (beside && !(r.slick && beside.kind === 'cpu' && fromBrink(r, beside) < 3) && (!hunt || fromBrink(r, beside) < 3 || r.rand() < 0.5)) inp.slam = true;
+    // (on the water, where a shove carries a long way, nowhere near it)
+    if (beside && !(r.slick && beside.kind === 'cpu' && fromBrink(r, beside) < (r.boat ? 5.5 : 3)) && (!hunt || fromBrink(r, beside) < 3 || r.rand() < 0.5)) inp.slam = true;
   }
 
   // keep the pack close: CPUs ease off well ahead of the leading driver who isn't one (you, solo) and push when far behind
@@ -3665,6 +3703,27 @@ function waterAhead(r: Race, k: Kart) {
     return 0;
   };
   return { lean, lo, hi, lane };
+}
+
+/** Whether a ferry is crossing the channel within a couple of seconds' run ahead of kart k. */
+function ferryAhead(r: Race, k: Kart) {
+  for (const h of r.hazards) {
+    if (h.kind !== 'ferry') continue;
+    const ds = deltaS(r.track, k.s, h.s);
+    if (ds > -3 && ds < 12 + 1.5 * Math.abs(k.v)) return true;
+  }
+  return false;
+}
+
+/** Whether kart k is within `pad` meters of the pull of a whirlpool that spins, or is about to. */
+function whirlNear(r: Race, k: Kart, pad: number) {
+  for (const h of r.whirls) {
+    const st = hazState(r, h, r.time, k.lap);
+    if (!st.live && st.warn <= 0) continue;
+    const c = pointAt(r.track, h.s, st.d);
+    if (Math.hypot(c.x - k.x, c.z - k.z) < (h.pull ?? 7) + pad) return true;
+  }
+  return false;
 }
 
 /** Whether a whirlpool spinning (or about to) lies just ahead of kart k, near enough to pull it in. */
