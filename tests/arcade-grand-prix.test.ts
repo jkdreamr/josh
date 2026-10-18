@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { createCommentary, spokenTime } from '../src/os/arcade/games/grand-prix/commentary.ts';
 import { buildLine, createDriver, drive, profileTime, speedProfile } from '../src/os/arcade/games/grand-prix/ai.ts';
 import { NO_ASSISTS, SPEC, createCar, curve, engineTorque, kmh, stepCar, tempGrip, type Assists } from '../src/os/arcade/games/grand-prix/car.ts';
 import { keyLock, lockPedal, newDriver, readInput, SOLO, tractionPedal } from '../src/os/arcade/games/grand-prix/input.ts';
@@ -262,6 +263,40 @@ test('a time trial times laps from the line, with sectors, delta and track limit
   assert.equal(me.car.vx, 0);
 });
 
+test('rolling back over the line and driving on again does not count a lap', () => {
+  const A: Assists = { ...NO_ASSISTS, tc: true, abs: true, autoGears: true };
+  const r = createRace({ mode: 'race', laps: 3, entries: [{ name: 'You', team: 0, kind: 'player', seat: -1, pad: 0 }], assists: [A], lead: 0, hold: 0.2 });
+  const me = r.runners[0];
+  const c = r.c;
+  const dt = 1 / 60;
+  const inputs = new Map();
+  while (r.time < 0.1) stepRace(r, dt, inputs);
+  // as if one lap is nearly done: 15 m before the line
+  const p = pointAt(c, c.length - 15, 0);
+  me.car = createCar(c, p.x, p.y, p.heading, 0, 90);
+  me.dist = c.length - 15;
+  const over = () => {
+    for (let n = 0; n < 2000 && !(me.car.s > 8 && me.car.s < 60); n++) {
+      inputs.set(0, { steer: 0, throttle: 0.5, brake: 0 });
+      stepRace(r, dt, inputs);
+    }
+  };
+  const back = () => {
+    for (let n = 0; n < 4000 && !(me.car.s > c.length - 30 && me.car.s < c.length - 5); n++) {
+      inputs.set(0, { steer: 0, throttle: 0, brake: 1 });
+      stepRace(r, dt, inputs);
+    }
+  };
+  over();
+  assert.equal(me.lap, 1);
+  for (let k = 0; k < 3; k++) {
+    back();
+    over();
+  }
+  assert.equal(me.lap, 1);
+  assert.equal(me.fin, null);
+});
+
 test('the grid fills two by two behind the line', () => {
   const c = circuit();
   for (let k = 0; k < 20; k++) {
@@ -412,6 +447,51 @@ test('recorded engine loops crossfade by rpm and throttle and pitch to the rpm',
   assert.ok(ls[1].gain > 0.6 && ls[3].gain + ls[4].gain > 0.3);
   // a bank with only on-throttle loops still plays off the throttle
   assert.ok(layersFor(bank.slice(0, 3), 9000, 0).some((l) => l.gain > 0.99));
+});
+
+test('the announcer calls the start, places held, fastest laps and the flag', () => {
+  assert.equal(spokenTime(91.37), '1 31 point 4');
+  assert.equal(spokenTime(65.04), '1 oh 5 point 0');
+  assert.equal(spokenTime(59.96), '1 oh 0 point 0');
+  const entries: Entry[] = [
+    { name: 'M. Kova', team: 1, kind: 'ai', seat: -1, pad: -1, pace: 0.9 },
+    { name: 'You', team: 0, kind: 'player', seat: -1, pad: 0 },
+  ];
+  const A: Assists = { ...NO_ASSISTS, tc: true, abs: true, autoGears: true };
+  const r = createRace({ mode: 'race', laps: 3, entries, assists: [A, A], lead: 0, hold: 0.2 });
+  const me = r.runners[1];
+  const lines: [string, number][] = [];
+  const com = createCommentary(() => [me], (text, p) => lines.push([text, p]));
+  com.event(r, { t: 'go' });
+  assert.deepEqual(lines.pop(), ['Lights out, and away we go! 3 laps of Monza.', 3]);
+  // a place is called only once it has held for a moment
+  r.time = 10;
+  r.order = [0, 1];
+  com.update(r, 0.1);
+  com.update(r, 0.1);
+  r.order = [1, 0];
+  com.update(r, 0.1);
+  com.update(r, 1);
+  assert.equal(lines.length, 0);
+  com.update(r, 1);
+  assert.deepEqual(lines.pop(), ['And you take the lead!', 2]);
+  com.update(r, 1);
+  assert.equal(lines.length, 0);
+  // fastest lap and the final lap, as the line is crossed
+  me.laps.push({ time: 95, valid: true, sectors: [] }, { time: 91.37, valid: true, sectors: [] });
+  me.lap = 2;
+  com.event(r, { t: 'lap', idx: 1, lap: me.laps[1], best: true, overall: true });
+  assert.deepEqual(lines.splice(0), [
+    ['Fastest lap for you! 1 31 point 4.', 2],
+    ['Final lap. Leading the race.', 2],
+  ]);
+  com.event(r, { t: 'finish', idx: 1, place: 1, penalty: 0 });
+  assert.deepEqual(lines.pop(), ['Chequered flag, and you win it! What a drive.', 3]);
+  com.event(r, { t: 'finish', idx: 1, place: 1, penalty: 5 });
+  assert.match(lines.pop()![0], /5 second penalty/);
+  // a reset is not a track limits call
+  com.event(r, { t: 'limits', idx: 1, warnings: 3, penalty: false, invalid: true, reset: true });
+  assert.equal(lines.length, 0);
 });
 
 test('every team and driver has what the timing tower needs', () => {
