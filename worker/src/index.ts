@@ -10,7 +10,7 @@ import { Chat, type ChatEnv } from './chat';
 import { Lobby } from './lobby';
 import { Lounge, type LoungeEnv } from './lounge';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
-import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, LISTING_REFRESH_MS, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
+import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, GATHER_MS, gatherFull, gathering, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, seatsFor, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
 export { Chat, Lobby, Lounge };
 
@@ -166,12 +166,18 @@ export class Room extends DurableObject<Env> {
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
-  /** listed: a public room, shown in the arcade's Open Rooms once its host is in. */
-  open(code: string, game: string, spec: OnlineSpec, listed = false): Promise<boolean> {
+  /**
+   * listed: a public room, shown in the arcade's Open Rooms once its host is in. quick: a quick-play room (public, with
+   * bots in every seat nobody holds), which starts on its own GATHER_MS from now, or closes then if nobody came.
+   */
+  open(code: string, game: string, spec: OnlineSpec, listed = false, quick = false): Promise<boolean> {
     return this.exclusive(async () => {
       if (await this.ctx.storage.get<RoomState>('room')) return false;
-      await this.ctx.storage.put<RoomState>('room', { code, game, seats: spec.seats, started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: 0 } : {}), ...(listed ? { listed: true } : {}) });
+      const seats = seatsFor(spec);
+      const gather = quick ? { quick: true, startAt: Date.now() + GATHER_MS } : {};
+      await this.ctx.storage.put<RoomState>('room', { code, game, seats, started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: quick ? seats - 1 : 0 } : {}), ...(listed || quick ? { listed: true } : {}), ...gather });
       await this.ctx.storage.put<RoomResults>('results', { reports: {}, recorded: [] });
+      if (quick) await this.ctx.storage.setAlarm(gather.startAt!);
       return true;
     });
   }
@@ -184,12 +190,34 @@ export class Room extends DurableObject<Env> {
     return this.exclusive(() => this.handleMessage(ws, message));
   }
 
-  /** While the room is listed, its line in Open Rooms is refreshed every minute, so it never goes stale. */
+  /**
+   * While the room is listed, its line in Open Rooms is refreshed every minute, so it never goes stale. A quick-play
+   * room starts when its gathering time is up (or closes, if nobody came; one that can't start yet gathers longer).
+   */
   async alarm() {
     await this.exclusive(async () => {
       const room = await this.ctx.storage.get<RoomState>('room');
-      if (room) await this.publish(room, this.players());
+      if (!room) return;
+      if (gathering(room) && room.startAt! <= Date.now()) {
+        const players = this.players();
+        if (!players.length) return this.close();
+        if (await this.begin(room, players)) return;
+        room.startAt = Date.now() + GATHER_MS;
+        await this.ctx.storage.put('room', room);
+      }
+      await this.publish(room, this.players());
     });
+  }
+
+  /** Starts the next round, when there is someone to play: everyone in the room, and the bots. */
+  private async begin(room: RoomState, players: RoomPlayer[]): Promise<boolean> {
+    const lineup = this.lineup(room, players);
+    if (!canStartRoom(0, lineup.players.length, lineup.bots?.length)) return false;
+    const round = beginRound(room, lineup.players.map(({ seat }) => seat), lineup.bots?.length ?? 0);
+    await this.ctx.storage.put('room', room);
+    this.broadcast({ t: 'start', ...this.lineup(room, lineup.players), round });
+    await this.publish(room, lineup.players);
+    return true;
   }
 
   private async handleMessage(ws: WebSocket, message: string | ArrayBuffer) {
@@ -200,13 +228,9 @@ export class Room extends DurableObject<Env> {
     const parsed = parseRoomMessage(message, room.seats);
     if (!parsed) return;
 
+    // A quick-play room starts on its own.
     if (parsed.t === 'start') {
-      const lineup = this.lineup(room, this.players());
-      if (!canStartRoom(attachment.seat, lineup.players.length, lineup.bots?.length)) return;
-      const round = beginRound(room, lineup.players.map(({ seat }) => seat), lineup.bots?.length ?? 0);
-      await this.ctx.storage.put('room', room);
-      this.broadcast({ t: 'start', ...lineup, round });
-      await this.publish(room, lineup.players);
+      if (attachment.seat === 0 && !room.quick) await this.begin(room, this.players());
       return;
     }
 
@@ -301,10 +325,8 @@ export class Room extends DurableObject<Env> {
     const server = pair[1];
     server.serializeAttachment({ seat, name, ...(Number.isSafeInteger(version) && version > 1 ? { v: version } : {}) } satisfies Attachment);
     this.ctx.acceptWebSocket(server);
-    if (room.started) {
-      benchSeat(room, seat);
-      await this.ctx.storage.put('room', room);
-    }
+    if (room.started) benchSeat(room, seat);
+    if (room.started || gatherFull(room, existingPlayers.length + 1, Date.now())) await this.ctx.storage.put('room', room);
     const lineup = this.lineup(room, [...existingPlayers, { seat, name }].sort((a, b) => a.seat - b.seat));
     server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, ...lineup, started: room.started, round: room.round ?? 0 }));
     this.broadcast({ t: 'players', ...lineup, started: room.started });
@@ -313,12 +335,13 @@ export class Room extends DurableObject<Env> {
   }
 
   /**
-   * Who is in the room, the seats bots would take if the host started now (rooms that allow bots), and whether the
-   * room is public.
+   * Who is in the room, the seats bots would take if the host started now (rooms that allow bots), whether the room is
+   * public, and for a quick-play room that it is one and, while it gathers, how many milliseconds until it starts.
    */
-  private lineup(room: RoomState, players: RoomPlayer[]): { players: RoomPlayer[]; bots?: number[]; listed: boolean } {
+  private lineup(room: RoomState, players: RoomPlayer[]): { players: RoomPlayer[]; bots?: number[]; listed: boolean; quick?: true; startIn?: number } {
     const listed = !!room.listed;
-    return room.allowBots ? { players, bots: botSeats(room.seats, players.map(({ seat }) => seat), room.bots ?? 0), listed } : { players, listed };
+    const quick = room.quick ? { quick: true as const, ...(gathering(room) ? { startIn: Math.max(0, room.startAt! - Date.now()) } : {}) } : {};
+    return room.allowBots ? { players, bots: botSeats(room.seats, players.map(({ seat }) => seat), room.bots ?? 0), listed, ...quick } : { players, listed, ...quick };
   }
 
   /**
@@ -329,11 +352,11 @@ export class Room extends DurableObject<Env> {
   private async publish(room: RoomState, players: RoomPlayer[]) {
     if (!room.code) return;
     const listing = roomListing(room, players, this.lineup(room, players).bots?.length ?? 0);
-    if (!listing && !room.inLobby) return;
+    if (!listing && !room.inLobby && !gathering(room)) return;
     try {
       const lobby = this.env.LOBBY.get(this.env.LOBBY.idFromName('global'));
       if (listing) await lobby.put(listing);
-      else await lobby.drop(room.code);
+      else if (room.inLobby) await lobby.drop(room.code);
     } catch {
       /* listed again on the next change or refresh, or dropped once nobody refreshes it */
     }
@@ -341,8 +364,10 @@ export class Room extends DurableObject<Env> {
       room.inLobby = !!listing;
       await this.ctx.storage.put('room', room);
     }
-    if (listing && (await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + LISTING_REFRESH_MS);
-    else if (!listing) await this.ctx.storage.deleteAlarm();
+    const current = await this.ctx.storage.getAlarm();
+    const next = nextAlarm(room, !!listing, current, Date.now());
+    if (next === null) await this.ctx.storage.deleteAlarm();
+    else if (next !== current) await this.ctx.storage.setAlarm(next);
   }
 
   /** People in the room: open sockets, in seat order. */
@@ -668,6 +693,24 @@ export default {
       } catch {
         return withCors(json({ error: 'unavailable' }, 503));
       }
+    }
+    // Quick play: a quick-play room of the game that is still gathering people, or a new one.
+    if (url.pathname === '/rooms/quick' && request.method === 'POST') {
+      const game = url.searchParams.get('game') ?? '';
+      const spec = Object.hasOwn(ONLINE_SPECS, game) ? ONLINE_SPECS[game] : undefined;
+      if (!spec?.quick) return withCors(json({ error: 'unknown game' }, 404));
+      try {
+        const lobby = env.LOBBY.get(env.LOBBY.idFromName('global'));
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const fresh = makeRoomCode(crypto.getRandomValues(new Uint8Array(4)));
+          const code = await lobby.quick(game, fresh, seatsFor(spec), !!spec.lateJoin);
+          if (code !== fresh || (await env.ROOMS.get(env.ROOMS.idFromName(fresh)).open(fresh, game, spec, true, true))) return withCors(json({ code }));
+          await lobby.drop(fresh);
+        }
+      } catch {
+        /* answered below */
+      }
+      return withCors(json({ error: 'could not find a room' }, 503));
     }
     if (url.pathname === '/rooms' && request.method === 'POST') {
       const game = url.searchParams.get('game') ?? '';

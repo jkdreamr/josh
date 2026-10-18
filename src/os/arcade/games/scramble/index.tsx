@@ -30,7 +30,7 @@ import {
   type Match,
 } from './logic';
 import { configOf, parsePacket, type Bots } from './net';
-import { FLUSH, TICK_MS, catchUp, ending, flush, guestMatch, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Session } from './session';
+import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Session } from './session';
 import { ARMOR_NAMES, MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { HALF, SUPPLY_FALL, placeAt } from './map';
 import { AmmoIcon, ArmorIcon, EggIcon, HowToPlay, IslandArt, PackIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon, keyCode } from './hud';
@@ -43,14 +43,18 @@ const levelOptions = [
   ['normal', 'Normal'],
   ['hard', 'Hard'],
 ] as const;
-/** With computer eggs in the room, whether more of them fill the island up to twenty. */
+/** With computer eggs in the room, whether more of them fill the island up to fifty. */
 const FILL = defineSetting('scramble:fill', ['fill', 'none'] as const, 'fill');
-/** A Scramble room starts full: seven bots with the host, and Fill to 20 adds the rest. */
+/** A Scramble room starts full: nineteen bots with the host, and Fill to 50 adds the rest. */
 const ROOM_BOTS = (meta.online?.seats ?? 8) - 1;
 const fillOptions = [
-  ['fill', 'Fill to 20'],
+  ['fill', 'Fill to 50'],
   ['none', 'Room Bots Only'],
 ] as const;
+/** Quick play's card, under the people in the match so far. */
+const QUICK_NOTE = `Computer eggs fill the island to ${MAX_FIGHTERS}.`;
+/** Name tags shown at once at most, the nearest eggs' (fifty would bury the screen). */
+const TAGS = 12;
 /** The host gives everyone a moment to get its first packet before the countdown. */
 const HOST_LEAD = 1.2;
 const STICK_R = 52;
@@ -62,7 +66,7 @@ const TOSS_WAIT = 0.8;
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} defaultBots={ROOM_BOTS}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} defaultBots={ROOM_BOTS} quickNote={QUICK_NOTE}>
       <Stage />
     </GameShell>
   );
@@ -112,7 +116,7 @@ function Extras() {
 /**
  * Settings for online matches. The room's bots are its computer eggs (the host adds them in the room, and they fill
  * every empty seat unless the host takes some away). With any in the room, the host picks whether more fill the island
- * to twenty, and how sharp they all are, and tells the room.
+ * to fifty, and how sharp they all are, and tells the room. Quick play always fills it, at normal.
  */
 function OnlineSetup() {
   const online = useOnline();
@@ -122,7 +126,7 @@ function OnlineSetup() {
   const host = online?.isHost ?? true;
   const bots = online?.bots.length ?? 0;
   useEffect(() => {
-    if (!online?.isHost) return;
+    if (!online?.isHost || online.quick) return;
     const say = () => online.send(configOf(online.round, fill, level));
     say();
     const timer = window.setInterval(say, 2000);
@@ -135,7 +139,7 @@ function OnlineSetup() {
       if (from !== 0 || !p) return;
       if (p.k === 'cfg') setPicked({ bots: p.bots, level: p.level });
       // joining while a match is on, the host's state says how it was set up
-      else if (p.k === 'S') {
+      else if (p.k === 'S' && p.roster) {
         const bots: Bots = p.roster.length >= MAX_FIGHTERS ? 'fill' : 'none';
         setPicked((x) => (x && x.bots === bots && x.level === p.level ? x : { bots, level: p.level }));
       }
@@ -143,7 +147,7 @@ function OnlineSetup() {
   }, [online]);
   return (
     <>
-      {bots > 0 &&
+      {bots > 0 && !online?.quick &&
         (host ? (
           <>
             <Segmented label="Computer Eggs" value={fill} options={fillOptions} onChange={setFill} />
@@ -153,7 +157,7 @@ function OnlineSetup() {
           <div className="arcade-field">
             <span>Computer Eggs</span>
             <div className="g-scramble-hostpick">
-              <b>{picked ? `${picked.bots === 'fill' ? 'fill to 20' : 'room bots only'}, ${picked.level}` : '…'}</b>
+              <b>{picked ? `${picked.bots === 'fill' ? 'fill to 50' : 'room bots only'}, ${picked.level}` : '…'}</b>
               <small>picked by the host</small>
             </div>
           </div>
@@ -274,9 +278,10 @@ function Play({ mode }: { mode: Mode }) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
     else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0]);
     else if (online!.isHost) {
-      // the room's bots, and with any of them, more to fill the island when the host wants it
-      const bots = online!.bots.length;
-      const h = hostMatch(online!.players, online!.seat, randomSeed(), level, bots > 0 && fill === 'fill' ? MAX_FIGHTERS : bots, COUNTDOWN + HOST_LEAD);
+      // the room's bots, and with any of them, more to fill the island when the host wants it (quick play always does)
+      const quick = online!.quick;
+      const bots = hostBots(quick, online!.bots.length, fill === 'fill');
+      const h = hostMatch(online!.players, online!.seat, randomSeed(), quick ? QUICK_LEVEL : level, bots, COUNTDOWN + HOST_LEAD);
       match.current = h.match;
       net.current.roster = h.roster;
     } else match.current = waitingMatch(level);
@@ -430,8 +435,8 @@ function Play({ mode }: { mode: Mode }) {
       const m = match.current;
       if (!o || !m) return;
       // Left out of the host's match (joined just as it was set up): sit it out rather than wait for good.
-      const packet = d as { k?: unknown; round?: unknown; roster?: unknown } | null;
-      if (!n.synced && from === 0 && packet?.k === 'S' && packet.round === o.round && Array.isArray(packet.roster) && !packet.roster.includes(o.seat)) {
+      const packet = !n.synced && from === 0 ? parsePacket(d) : null;
+      if (packet?.k === 'S' && packet.round === o.round && packet.roster && !packet.roster.includes(o.seat)) {
         if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, { title: 'Sitting This One Out', detail: 'You Will Be in the Next Round.' });
         return;
       }
@@ -477,7 +482,9 @@ function Play({ mode }: { mode: Mode }) {
       const call = n.synced ? ending(n, m, me, now) : null;
       if (call) finishRef.current(call === 'report');
       else if (n.early) finishRef.current(false, true);
-      for (const out of tick(n, m, me, o.players.map((p) => p.seat), now)) o.send(out.d, { fast: out.fast });
+      // the host reports the eggs near the one we watch most often (none once we're done watching)
+      n.watch = n.over ? m.me : focusOf(m);
+      for (const out of tick(n, m, me, o.players.map((p) => p.seat), now)) o.send(out.d, { fast: out.fast, to: out.to });
     }, TICK_MS);
     return () => {
       off();
@@ -973,16 +980,24 @@ function Play({ mode }: { mode: Mode }) {
     }
   }
 
-  /** Name tags and damage numbers, moved straight on the DOM. */
+  /** Name tags (the nearest TAGS of them) and damage numbers, moved straight on the DOM. */
   function placeOverlays(m: Match, v: View, dt: number, focus: number) {
     const eye = m.fighters[focus];
+    const near: [number, Fighter][] = [];
+    for (const f of m.fighters) {
+      if (!eye || f.id === focus || (f.phase !== 'ground' && f.phase !== 'drop')) continue;
+      const d = Math.hypot(f.x - eye.x, f.z - eye.z);
+      if (d < 40 && (f.inside < 0 || f.inside === eye.inside) && !concealed(m, f, eye)) near.push([d, f]);
+    }
+    near.sort((a, b) => a[0] - b[0]);
+    const shown = new Set(near.slice(0, TAGS).map(([, f]) => f.id));
     for (const f of m.fighters) {
       const tag = tags.current.get(f.id);
       if (!tag) continue;
-      const show = f.id !== focus && (f.phase === 'ground' || f.phase === 'drop') && !concealed(m, f, eye) && !!eye && Math.hypot(f.x - eye.x, f.z - eye.z) < 40 && (f.inside < 0 || f.inside === eye.inside);
-      const at = show ? v.project(f.x, f.y + 2.3, f.z) : null;
-      if (!at) tag.style.opacity = '0';
-      else {
+      const at = shown.has(f.id) ? v.project(f.x, f.y + 2.3, f.z) : null;
+      if (!at) {
+        if (tag.style.opacity !== '0') tag.style.opacity = '0';
+      } else {
         tag.style.opacity = '1';
         tag.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
       }
@@ -1371,6 +1386,9 @@ function Play({ mode }: { mode: Mode }) {
           >
             <svg viewBox={box} aria-hidden="true">
               {islandArt}
+            </svg>
+            {/* the storm and the arrow on a layer of their own, so the island under them isn't drawn again as they move */}
+            <svg viewBox={box} aria-hidden="true" className="is-marks">
               {mapMarks(false)}
             </svg>
             {hud.where && <span>{hud.where}</span>}

@@ -48,6 +48,7 @@ import {
   CRATE_HALF,
   EDGE,
   DROP_BASE,
+  HALF,
   HAY_HW,
   PAD,
   POND_SLOW,
@@ -76,6 +77,7 @@ import {
   raySolid,
   riverCrossings,
   roadAt,
+  roomAt,
   solidsAlong,
   solidsNear,
   stormAt,
@@ -92,7 +94,7 @@ import {
 } from './map.ts';
 
 export const COUNTDOWN = 3;
-export const MAX_FIGHTERS = 20;
+export const MAX_FIGHTERS = 50;
 export const FIGHTER_R = 0.6;
 /** Bullets hit an egg a little wider than it pushes. */
 export const HIT_R = 0.75;
@@ -413,9 +415,28 @@ export type Match = {
   rng: Rng;
   ended: boolean;
   winner: number;
+  /** Frames stepped, for what is worked out once a frame. */
+  frame: number;
 };
 
 export type Entrant = { name: string; color: string; kind: Kind; seat: number };
+
+/** The loot on the ground by id, counting every change to it (so what is worked out from it knows to look again). */
+export class LootMap extends Map<number, LootItem> {
+  changes = 0;
+  set(id: number, l: LootItem) {
+    this.changes++;
+    return super.set(id, l);
+  }
+  delete(id: number) {
+    this.changes++;
+    return super.delete(id);
+  }
+  clear() {
+    this.changes++;
+    super.clear();
+  }
+}
 
 export const FIGHTER_COLORS = [
   '#e53935',
@@ -438,6 +459,36 @@ export const FIGHTER_COLORS = [
   '#7cb342',
   '#37474f',
   '#ff8a65',
+  '#b71c1c',
+  '#0d47a1',
+  '#1b5e20',
+  '#4fc3f7',
+  '#81c784',
+  '#ba68c8',
+  '#ffd54f',
+  '#4db6ac',
+  '#e57373',
+  '#9575cd',
+  '#a1887f',
+  '#90a4ae',
+  '#f06292',
+  '#7986cb',
+  '#aed581',
+  '#ff7043',
+  '#26a69a',
+  '#d4e157',
+  '#880e4f',
+  '#004d40',
+  '#3e2723',
+  '#bf360c',
+  '#283593',
+  '#827717',
+  '#00695c',
+  '#6a1b9a',
+  '#ff4081',
+  '#40c4ff',
+  '#69f0ae',
+  '#ffab40',
 ];
 export const BOT_NAMES = [
   'Benedict',
@@ -466,6 +517,40 @@ export const BOT_NAMES = [
   'Crepe',
   'Hollandaise',
   'Bennie',
+  'Brioche',
+  'Waffles',
+  'Pancake',
+  'Hashbrown',
+  'Toastie',
+  'Muffin',
+  'Croissant',
+  'Biscuit',
+  'Sriracha',
+  'Paprika',
+  'Chive',
+  'Gruyere',
+  'Cheddar',
+  'Feta',
+  'Dumpling',
+  'Tortilla',
+  'Kedgeree',
+  'Carbonara',
+  'Scotch',
+  'Pickles',
+  'Clucky',
+  'Henrietta',
+  'Rooster',
+  'Nugget',
+  'Pullet',
+  'Bantam',
+  'Speckles',
+  'Tempura',
+  'Mayo',
+  'Aioli',
+  'Flan',
+  'Pavlova',
+  'Brulee',
+  'Eggroll',
 ];
 
 /** Computer player names for a match, the same on every client for a seed. */
@@ -592,7 +677,7 @@ function newAi(m: Match, f: Fighter): Ai {
     const u = along(p);
     return Math.hypot(bus.x0 + dx * u - p.x, bus.z0 + dz * u - p.z);
   };
-  const near = spots.filter((p) => off(p) < 80);
+  const near = spots.filter((p) => off(p) < 110);
   const pick = (near.length ? near : spots)[Math.floor(rng() * (near.length || spots.length))] ?? { x: 0, z: 0 };
   const jumpAt = clamp(along(pick) * bus.dur - off(pick) / GLIDE - 0.5 + rng() * 1.5, bus.on + rng() * 0.6, bus.off - 0.05);
   return {
@@ -660,7 +745,7 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
     bullets: [],
     tosses: [],
     zones: [],
-    loot: new Map(map.floor.map((s) => [s.id, { id: s.id, def: s.def, x: s.x, z: s.z, by: -1, at: 0 }])),
+    loot: new LootMap(),
     walls: new Map(),
     gone: new Set(),
     goneWalls: new Set(),
@@ -672,7 +757,9 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
     rng: rng32((opts.seed * 31 + 7 + Math.max(0, opts.me)) >>> 0),
     ended: false,
     winner: -1,
+    frame: 0,
   };
+  for (const s of map.floor) m.loot.set(s.id, { id: s.id, def: s.def, x: s.x, z: s.z, by: -1, at: 0 });
   opts.entrants.slice(0, MAX_FIGHTERS).forEach((e, i) => {
     const f = newFighter(i, e, start.x, start.z);
     m.fighters.push(f);
@@ -686,7 +773,7 @@ export function autopilot(m: Match, f: Fighter) {
   f.ai = newAi(m, f);
 }
 
-/** A solo match: you and nineteen computer players. */
+/** A solo match: you and forty-nine computer players. */
 export function soloMatch(seed: number, level: Level, name = 'you', color = FIGHTER_COLORS[0]): Match {
   const bots = botNames(seed);
   const entrants: Entrant[] = [{ name, color, kind: 'player', seat: -1 }];
@@ -740,6 +827,7 @@ export function step(m: Match, dt: number) {
   const before = m.time;
   m.time += dt;
   m.clock += dt;
+  m.frame++;
   if (before < 0) {
     // a beep as each number comes up, the first one too when the countdown starts right on it
     for (let k = COUNTDOWN; k >= 1; k--) if (before <= -k && m.time > -k) emit(m, { t: 'beep' });
@@ -748,11 +836,8 @@ export function step(m: Match, dt: number) {
   const prev = m.storm;
   m.storm = stormAt(m.map.storm, Math.max(0, m.time));
   if (m.storm.phase !== prev.phase || m.storm.shrinking !== prev.shrinking) emit(m, { t: 'storm', phase: m.storm.phase, shrinking: m.storm.shrinking });
-  for (const list of [m.map.drops, m.map.flares])
-    for (const c of list) {
-      const at = (m.map.containers[c]?.at ?? Infinity) - SUPPLY_FALL;
-      if (before < at && m.time >= at) emit(m, { t: 'supply', c });
-    }
+  for (const c of m.map.drops) supplyDue(m, c, before);
+  for (const c of m.map.flares) supplyDue(m, c, before);
 
   for (const f of m.fighters) {
     if (f.kind === 'remote') {
@@ -770,6 +855,12 @@ export function step(m: Match, dt: number) {
   moveTosses(m);
   if (m.zones.length && m.zones.some((z) => z.until <= m.time)) m.zones = m.zones.filter((z) => z.until > m.time);
   if (m.world) settle(m);
+}
+
+/** Everyone hears a supply drop coming as it starts down. */
+function supplyDue(m: Match, c: number, before: number) {
+  const at = (m.map.containers[c]?.at ?? Infinity) - SUPPLY_FALL;
+  if (before < at && m.time >= at) emit(m, { t: 'supply', c });
 }
 
 function clearOneShots(inp: Input) {
@@ -1059,6 +1150,8 @@ function switchTo(f: Fighter, slot: number) {
 /** Pushes an egg out of everything solid and keeps it on the island. */
 function resolve(m: Match, f: Fighter) {
   for (let pass = 0; pass < 2; pass++) {
+    const ox = f.x;
+    const oz = f.z;
     solidsNear(m.map, f.x, f.z, FIGHTER_R + 2.5, (_i, s) => {
       if (!standing(m, s)) return;
       const p = s.shape === 'circle' ? pushCircle(f.x, f.z, FIGHTER_R, s.x, s.z, s.r) : pushBox(f.x, f.z, FIGHTER_R, s.x, s.z, s.hw, s.hd);
@@ -1076,7 +1169,7 @@ function resolve(m: Match, f: Fighter) {
       }
     }
     for (const o of m.fighters) {
-      if (o === f || !fighting(o)) continue;
+      if (o === f || Math.abs(o.x - f.x) >= 2 * FIGHTER_R || Math.abs(o.z - f.z) >= 2 * FIGHTER_R || !fighting(o)) continue;
       const p = pushCircle(f.x, f.z, FIGHTER_R, o.x, o.z, FIGHTER_R);
       if (p) {
         f.x += p.x * 0.5;
@@ -1085,6 +1178,8 @@ function resolve(m: Match, f: Fighter) {
     }
     f.x = clamp(f.x, -EDGE, EDGE);
     f.z = clamp(f.z, -EDGE, EDGE);
+    // nothing in the way: a second look would find nothing either
+    if (f.x === ox && f.z === oz) break;
   }
 }
 
@@ -1441,8 +1536,13 @@ export function castRay(m: Match, x: number, z: number, dx: number, dz: number, 
     if (t < (best?.t ?? Infinity)) best = { t, what: 'built', ref: w.id, fighter: null };
   }
   if (eggs) {
+    // the box round the ray, for a cheap miss first
+    const x0 = Math.min(x, x + dx * len) - HIT_R;
+    const x1 = Math.max(x, x + dx * len) + HIT_R;
+    const z0 = Math.min(z, z + dz * len) - HIT_R;
+    const z1 = Math.max(z, z + dz * len) + HIT_R;
     for (const o of m.fighters) {
-      if (o.id === skip || !fighting(o)) continue;
+      if (o.x < x0 || o.x > x1 || o.z < z0 || o.z > z1 || o.id === skip || !fighting(o)) continue;
       const t = rayCircle(x, z, dx, dz, len, o.x, o.z, HIT_R);
       if (t < (best?.t ?? Infinity)) best = { t, what: 'egg', ref: o.id, fighter: o };
     }
@@ -1569,7 +1669,7 @@ export function openContainer(m: Match, c: number, by: number, announce: boolean
   const box = m.map.containers[c];
   if (!box || m.opened[c]) return;
   m.opened[c] = true;
-  for (const l of box.loot) if (!m.gone.has(l.id)) m.loot.set(l.id, { id: l.id, def: l.def, x: l.x, z: l.z, by: -1, at: m.time });
+  for (const l of box.loot) if (!m.gone.has(l.id)) putLoot(m, { id: l.id, def: l.def, x: l.x, z: l.z, by: -1, at: m.time });
   emit(m, announce ? { t: 'opened', c, f: by } : { t: 'opened', c, f: by, net: true });
   if (box.kind === 'barrel') explode(m, box, by);
 }
@@ -1766,8 +1866,10 @@ function pulse(m: Match, fid: number, x: number, z: number) {
 export function moveLoot(m: Match, id: number, x: number, z: number, announce: boolean) {
   const l = m.loot.get(id);
   if (!l) return;
+  takeLoot(m, id);
   l.x = r1(x);
   l.z = r1(z);
+  putLoot(m, l);
   emit(m, announce ? { t: 'moved', id, x: l.x, z: l.z } : { t: 'moved', id, x: l.x, z: l.z, net: true });
 }
 
@@ -1887,6 +1989,79 @@ export function nearestChest(m: Match, f: Fighter, reach = CHEST_R) {
   return best;
 }
 
+/** Loot and containers are looked up by where they lie, in cells this many meters square. */
+const SPOT = 16;
+const SPOTS = Math.ceil((2 * HALF) / SPOT);
+const spotOf = (v: number) => Math.max(0, Math.min(SPOTS - 1, Math.floor((v + HALF) / SPOT)));
+const lootCells = new WeakMap<Match, { seen: number; cells: LootItem[][] }>();
+
+/**
+ * Loot by the cell it lies in: kept up as loot comes and goes here (see putLoot and takeLoot), and worked out afresh
+ * after any other change (a test that changes the loot itself).
+ */
+function lootGrid(m: Match) {
+  let got = lootCells.get(m);
+  const changes = m.loot instanceof LootMap ? m.loot.changes : -1;
+  if (!got || changes < 0 || got.seen !== changes) {
+    got = { seen: changes, cells: Array.from({ length: SPOTS * SPOTS }, () => []) };
+    for (const l of m.loot.values()) got.cells[spotOf(l.x) + spotOf(l.z) * SPOTS].push(l);
+    lootCells.set(m, got);
+  }
+  return got;
+}
+
+/** Whether the grid saw every change to the loot until the one about to be made (so it can follow it). */
+const inStep = (m: Match, got: { seen: number } | undefined): got is { seen: number; cells: LootItem[][] } => !!got && m.loot instanceof LootMap && got.seen === m.loot.changes;
+
+/** Puts loot on the ground. */
+function putLoot(m: Match, l: LootItem) {
+  if (m.loot.has(l.id)) takeLoot(m, l.id);
+  const got = lootCells.get(m);
+  const follow = inStep(m, got);
+  m.loot.set(l.id, l);
+  if (!follow) return;
+  got.cells[spotOf(l.x) + spotOf(l.z) * SPOTS].push(l);
+  got.seen++;
+}
+
+/** Takes loot off the ground. */
+function takeLoot(m: Match, id: number) {
+  const l = m.loot.get(id);
+  if (!l) return;
+  const got = lootCells.get(m);
+  const follow = inStep(m, got);
+  m.loot.delete(id);
+  if (!follow) return;
+  const cell = got.cells[spotOf(l.x) + spotOf(l.z) * SPOTS];
+  const at = cell.indexOf(l);
+  if (at >= 0) cell.splice(at, 1);
+  got.seen++;
+}
+
+/** Each piece of loot in the cells within `r` of a point: what an egg walks over, and what a computer egg looks for. */
+function lootNear(m: Match, x: number, z: number, r: number, visit: (l: LootItem) => void) {
+  const { cells } = lootGrid(m);
+  for (let cz = spotOf(z - r); cz <= spotOf(z + r); cz++)
+    for (let cx = spotOf(x - r); cx <= spotOf(x + r); cx++) {
+      const cell = cells[cx + cz * SPOTS];
+      // backwards, so a pickup taken along the way doesn't skip the next
+      for (let i = cell.length - 1; i >= 0; i--) if (i < cell.length) visit(cell[i]);
+    }
+}
+
+const boxCells = new WeakMap<GameMap, { of: Container[]; n: number; cells: number[][] }>();
+/** The containers (but supply drops, which come down later) in the cells within `r` of a point. */
+function containersNear(map: GameMap, x: number, z: number, r: number, visit: (c: Container) => void) {
+  let got = boxCells.get(map);
+  if (!got || got.of !== map.containers || got.n !== map.containers.length) {
+    const cells: number[][] = Array.from({ length: SPOTS * SPOTS }, () => []);
+    for (const c of map.containers) if (c.kind !== 'supply') cells[spotOf(c.x) + spotOf(c.z) * SPOTS].push(c.id);
+    got = { of: map.containers, n: map.containers.length, cells };
+    boxCells.set(map, got);
+  }
+  for (let cz = spotOf(z - r); cz <= spotOf(z + r); cz++) for (let cx = spotOf(x - r); cx <= spotOf(x + r); cx++) for (const id of got.cells[cx + cz * SPOTS]) visit(map.containers[id]);
+}
+
 /** What the interact key would do right now: open a chest, or pick something up (a gun or melee weapon swaps). */
 export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootItem; swap: boolean } | null {
   if (f.phase !== 'ground') return null;
@@ -1916,13 +2091,13 @@ function interact(m: Match, f: Fighter) {
 }
 
 function autoPickup(m: Match, f: Fighter) {
-  for (const l of m.loot.values()) {
-    if (Math.abs(l.x - f.x) > AUTO_R || Math.abs(l.z - f.z) > AUTO_R) continue;
-    if ((l.x - f.x) * (l.x - f.x) + (l.z - f.z) * (l.z - f.z) > AUTO_R * AUTO_R) continue;
+  lootNear(m, f.x, f.z, AUTO_R, (l) => {
+    if (Math.abs(l.x - f.x) > AUTO_R || Math.abs(l.z - f.z) > AUTO_R) return;
+    if ((l.x - f.x) * (l.x - f.x) + (l.z - f.z) * (l.z - f.z) > AUTO_R * AUTO_R) return;
     // never straight back up what we just put down (armor we took off stays off until we ask for it)
-    if (l.by === f.id && (m.time - l.at < 3 || l.def.kind === 'helmet' || l.def.kind === 'vest')) continue;
+    if (l.by === f.id && (m.time - l.at < 3 || l.def.kind === 'helmet' || l.def.kind === 'vest')) return;
     if (wants(f, l.def, false)) requestTake(m, f, l);
-  }
+  });
 }
 
 function requestTake(m: Match, f: Fighter, l: LootItem, key = false) {
@@ -1951,7 +2126,7 @@ export function grantTake(m: Match, fid: number, id: number, announce: boolean) 
   const l = m.loot.get(id);
   const f = m.fighters[fid];
   if (!l || !f || f.phase !== 'ground') return false;
-  m.loot.delete(id);
+  takeLoot(m, id);
   m.gone.add(id);
   if (owned(f)) give(m, f, l.def, f.keyAsk === id);
   emit(m, announce ? { t: 'took', f: fid, id, def: l.def } : { t: 'took', f: fid, id, def: l.def, net: true });
@@ -1960,7 +2135,7 @@ export function grantTake(m: Match, fid: number, id: number, announce: boolean) 
 
 /** The host says someone got a pickup. If it's ours, it goes in our pockets. */
 export function applyTook(m: Match, fid: number, id: number, def: LootDef) {
-  m.loot.delete(id);
+  takeLoot(m, id);
   m.gone.add(id);
   const f = m.fighters[fid];
   if (!f) return;
@@ -2046,14 +2221,14 @@ function give(m: Match, f: Fighter, def: LootDef, key: boolean) {
 /** Puts something an egg owned here dropped on the ground, numbered from that egg's own range. */
 function dropItem(m: Match, f: Fighter, def: LootDef, x: number, z: number) {
   const item: LootItem = { id: dropId(f.id, f.dropSeq++), def, x: r1(x), z: r1(z), by: f.id, at: m.time };
-  m.loot.set(item.id, item);
+  putLoot(m, item);
   emit(m, { t: 'drop', item });
 }
 
 /** Something another client dropped. */
 export function addLoot(m: Match, item: LootItem) {
   if (m.loot.has(item.id) || m.gone.has(item.id)) return;
-  m.loot.set(item.id, item);
+  putLoot(m, item);
   emit(m, { t: 'drop', item, net: true });
 }
 
@@ -2602,12 +2777,12 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   const worst = Math.min(gunValue(f.guns[0]), gunValue(f.guns[1]));
   // the gun a find would take the place of, when both hands are full
   const weakest = f.guns[0] && f.guns[1] ? f.guns[gunValue(f.guns[0]) <= gunValue(f.guns[1]) ? 0 : 1] : null;
-  let item: LootItem | null = null;
+  let item = null as LootItem | null;
   let itemD = 70;
   if (ai.goal === 'loot' && m.time > ai.until) ai.lost = ai.item;
-  for (const l of m.loot.values()) {
+  lootNear(m, f.x, f.z, itemD, (l) => {
     const d = Math.hypot(l.x - f.x, l.z - f.z);
-    if (d >= itemD || l.id === ai.lost || !inSafe(l.x, l.z)) continue;
+    if (d >= itemD || l.id === ai.lost || !inSafe(l.x, l.z)) return;
     const def = l.def;
     let useful: boolean;
     switch (def.kind) {
@@ -2637,21 +2812,23 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
       default:
         useful = false;
     }
-    if (!useful || (l.by === f.id && m.time - l.at < 3)) continue;
+    if (!useful || (l.by === f.id && m.time - l.at < 3)) return;
     item = l;
     itemD = d;
-  }
+  });
   let chest = -1;
   let chestD = armed ? 30 : 45;
-  for (const c of m.map.containers) {
-    if (!openable(m, c) || !inSafe(c.x, c.z)) continue;
+  const tryChest = (c: Container) => {
+    if (!openable(m, c) || !inSafe(c.x, c.z)) return;
     // a supply drop is worth the walk from farther off
     const d = Math.hypot(c.x - f.x, c.z - f.z) - (c.kind === 'supply' ? 40 : 0);
     if (d < chestD) {
       chest = c.id;
       chestD = d;
     }
-  }
+  };
+  containersNear(m.map, f.x, f.z, chestD, tryChest);
+  for (const list of [m.map.drops, m.map.flares]) for (const id of list) tryChest(m.map.containers[id]);
   if (item && (chest < 0 || itemD < chestD + 6)) {
     if (ai.goal !== 'loot' || ai.item !== item.id) ai.until = m.time + 20;
     ai.goal = 'loot';
@@ -2671,14 +2848,14 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   // a crate, toilet or hay bale nearby to break open for whatever's in it (from farther off when we're unarmed)
   let smash = -1;
   let smashD = armed ? 14 : 26;
-  for (const c of m.map.containers) {
-    if (!breakable(c) || c.kind === 'barrel' || m.opened[c.id] || c.id === ai.tried || !inSafe(c.x, c.z)) continue;
+  containersNear(m.map, f.x, f.z, smashD, (c) => {
+    if (!breakable(c) || c.kind === 'barrel' || m.opened[c.id] || c.id === ai.tried || !inSafe(c.x, c.z)) return;
     const d = Math.hypot(c.x - f.x, c.z - f.z);
     if (d < smashD) {
       smash = c.id;
       smashD = d;
     }
-  }
+  });
   if (smash >= 0) {
     const c = m.map.containers[smash];
     if (ai.goal !== 'smash' || ai.chest !== smash) ai.until = m.time + 15;
@@ -2914,9 +3091,13 @@ function around(m: Match, x: number, z: number, px: number, pz: number, yard: nu
   const dz = (pz - z) / len;
   let near = Infinity;
   let o: Box | null = null;
+  const x0 = Math.min(x, px);
+  const x1 = Math.max(x, px);
+  const z0 = Math.min(z, pz);
+  const z1 = Math.max(z, pz);
   for (const b of blockersOf(m.map)) {
-    // never one we're standing in (a doorway) or one the point is in
-    if (b.yard === yard || (Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd) || (Math.abs(px - b.x) < b.hw && Math.abs(pz - b.z) < b.hd)) continue;
+    // nowhere near the way (a cheap miss first), one we're standing in (a doorway) or one the point is in
+    if (b.x + b.hw < x0 || b.x - b.hw > x1 || b.z + b.hd < z0 || b.z - b.hd > z1 || b.yard === yard || (Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd) || (Math.abs(px - b.x) < b.hw && Math.abs(pz - b.z) < b.hd)) continue;
     const t = rayBox(x, z, dx, dz, len, b.x, b.z, b.hw, b.hd);
     if (t < near) {
       near = t;
@@ -2971,8 +3152,10 @@ const CORNERS = [
   [-1, 1],
 ] as const;
 
-/** The roofed building whose outer walls stand round a point, or -1. */
-const roomAt = (m: Match, x: number, z: number) => m.map.buildings.findIndex((b) => b.roof && Math.abs(x - b.x) < (b.w + WALL_T) / 2 && Math.abs(z - b.z) < (b.d + WALL_T) / 2);
+
+/** The ways to try, straight on first, and how far either side of the middle a way must be clear. */
+const TURNS = [0, 0.5, -0.5, 1, -1, 1.5, -1.5, 2.2, -2.2];
+const SIDE = 0.45;
 
 /** Walks a computer player toward a point, feeling its way around whatever is in the way. */
 function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, stop: number) {
@@ -2992,22 +3175,23 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
     // try straight on, then ever wider either side, and never into a building (doorways too) or a fenced yard the
     // point isn't in, nor over a bounce pad we aren't making for
     const look = Math.min(2.4, d);
-    const into = roomAt(m, tx, tz);
+    const into = roomAt(m.map, tx, tz);
     const intoYard = yardAt(m.map, tx, tz);
     const fromYard = yardAt(m.map, f.x, f.z);
     const onPad = padAt(m.map, tx, tz);
-    for (const turn of [0, 0.5, -0.5, 1, -1, 1.5, -1.5, 2.2, -2.2]) {
+    for (const turn of TURNS) {
       const b = a + turn;
       const ex = Math.sin(b);
       const ez = Math.cos(b);
-      const side = 0.45;
-      const room = roomAt(m, f.x + ex * look, f.z + ez * look);
+      const room = roomAt(m.map, f.x + ex * look, f.z + ez * look);
       const yard = yardAt(m.map, f.x + ex * look, f.z + ez * look);
       const blocked =
         (room >= 0 && room !== f.inside && room !== into) ||
         (yard >= 0 && yard !== fromYard && yard !== intoYard) ||
         m.map.pads.some((p, i) => i !== onPad && rayCircle(f.x, f.z, ex, ez, look, p.x, p.z, PAD.r + FIGHTER_R * 0.5) < Infinity) ||
-        [-side, 0, side].some((o) => castRay(m, f.x + ez * o, f.z - ex * o, ex, ez, look, f.id, false, true) !== null);
+        castRay(m, f.x, f.z, ex, ez, look, f.id, false, true) !== null ||
+        castRay(m, f.x + ez * SIDE, f.z - ex * SIDE, ex, ez, look, f.id, false, true) !== null ||
+        castRay(m, f.x - ez * SIDE, f.z + ex * SIDE, ex, ez, look, f.id, false, true) !== null;
       if (!blocked) {
         a = b;
         break;

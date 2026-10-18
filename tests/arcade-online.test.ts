@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
-import { advanceOnlineRound, botPlayers, canStartNext, nextOnlineRound, RoundRouter, tagRound, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
-import { createRoom, listRooms, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
-import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, lowestFreeSeat, markRoundRecorded, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, sortListings, type RoomState } from '../worker/src/room-core.ts';
+import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, RoundRouter, tagRound, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
+import { createRoom, listRooms, quickRoom, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
+import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, type LobbyRow, type RoomState } from '../worker/src/room-core.ts';
+import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
 
 /** A stand-in for the browser's WebSocket: records what RoomLink sends and lets a test play the server's side. */
 class FakeWebSocket {
@@ -337,6 +338,31 @@ test('only the host makes a room public, and the message is checked', () => {
   assert.equal(parseRoomMessage('{"t":"listed"}', 4), null);
 });
 
+test('rooms hold up to twenty seats: each game keeps its own count, and nothing past the cap gets through', () => {
+  assert.equal(MAX_SEATS, 20);
+  for (const [game, spec] of Object.entries(ONLINE_SPECS)) assert.ok(spec.seats >= 2 && spec.seats <= MAX_SEATS, `${game}: ${spec.seats} seats`);
+  assert.equal(ONLINE_SPECS.scramble.seats, 20);
+  assert.equal(ONLINE_SPECS.pong.seats, 2, 'other games keep their own seats');
+  assert.equal(seatsFor({ seats: 20 }), 20);
+  assert.equal(seatsFor({ seats: 8 }), 8);
+  assert.equal(seatsFor({ seats: 64 }), MAX_SEATS);
+  assert.equal(seatsFor({ seats: 0 }), 2);
+  // a full room of twenty: the lowest free seat, then none; bots fill the rest of the seats and step aside
+  const people = Array.from({ length: 19 }, (_, i) => i);
+  assert.equal(lowestFreeSeat(20, people), 19);
+  assert.equal(lowestFreeSeat(20, [...people, 19]), null);
+  assert.deepEqual(botSeats(20, [0, 3], 19), Array.from({ length: 20 }, (_, i) => i).filter((i) => i !== 0 && i !== 3).slice(0, 18));
+  assert.deepEqual(parseRoomMessage('{"t":"msg","to":19,"d":1}', 20), { t: 'msg', to: 19, d: 1 });
+  assert.equal(parseRoomMessage('{"t":"msg","to":20,"d":1}', 20), null);
+  assert.deepEqual(parseRoomMessage('{"t":"bots","n":19}', 20), { t: 'bots', n: 19 });
+  assert.equal(parseRoomMessage('{"t":"bots","n":20}', 20), null);
+  const room = { code: 'ABCD', game: 'scramble', host: 'Josh', players: 12, bots: 8, seats: 20, started: true, lateJoin: true };
+  assert.deepEqual(parseOpenRooms({ rooms: [room, { ...room, seats: 21 }] }), [room]);
+  assert.equal(openRoomLine(room), '12/20 · 8 Bots · Playing');
+  const race = parseRacePacket({ t: 'race-all', round: 1, scores: { 0: 5, 19: 7, 20: 9 } });
+  assert.deepEqual(race, { t: 'race-all', round: 1, scores: { 0: 5, 19: 7 } });
+});
+
 test('open rooms from the Worker are checked before the arcade shows them', () => {
   const good = { code: 'ABCD', game: 'lightcycles', host: 'Josh', players: 2, bots: 1, seats: 4, started: false, lateJoin: false };
   assert.deepEqual(parseOpenRooms({ rooms: [good] }), [good]);
@@ -436,4 +462,109 @@ test('game messages land in the round they were sent for', async () => {
   router.listen((from, d) => got.push(`late:${from}:${d}`));
   await tick();
   assert.equal(got.at(-1), 'late:1:nobody listening');
+});
+
+test('a quick-play room gathers people until it starts on its own, sooner once people fill it, and plays one round', () => {
+  const now = 1_000_000;
+  const room: RoomState = { code: 'QQQQ', game: 'scramble', seats: 20, started: false, lateJoin: true, allowBots: true, bots: 19, listed: true, quick: true, startAt: now + GATHER_MS };
+  assert.equal(gathering(room), true);
+  assert.equal(gathering({ ...room, quick: false }), false, 'only quick rooms gather');
+  // listed while it gathers, with when it starts
+  const host = { seat: 0, name: 'Josh' };
+  assert.deepEqual(roomListing(room, [host], 19), { code: 'QQQQ', game: 'scramble', host: 'Josh', players: 1, bots: 19, seats: 20, started: false, lateJoin: true, quick: true, startAt: now + GATHER_MS });
+  // nineteen people: no change; twenty: it starts in a moment, and never later than it would have
+  assert.equal(gatherFull(room, 19, now), false);
+  assert.equal(room.startAt, now + GATHER_MS);
+  assert.equal(gatherFull(room, 20, now), true);
+  assert.equal(room.startAt, now + GATHER_FULL_MS);
+  assert.equal(gatherFull(room, 20, now + 2000), false, 'a start already that close stays');
+  // the alarm: its start, or the listing refresh when that comes first
+  assert.equal(nextAlarm(room, false, null, now), now + GATHER_FULL_MS);
+  assert.equal(nextAlarm(room, true, null, now), now + GATHER_FULL_MS);
+  assert.equal(nextAlarm({ ...room, startAt: now + 90_000 }, true, null, now), now + LISTING_REFRESH_MS);
+  assert.equal(nextAlarm({ ...room, startAt: now + 90_000 }, true, now + 5000, now), now + 5000, 'a refresh already due sooner is kept');
+  // once its round begins it no longer gathers and comes off Open Rooms, and stays off once it is over
+  beginRound(room, [0, 1], 18);
+  assert.equal(gathering(room), false);
+  assert.equal(roomListing(room, [host], 18), null);
+  assert.equal(nextAlarm(room, false, null, now), null);
+  endRound(room);
+  assert.equal(gathering(room), false);
+  assert.equal(roomListing(room, [host], 18), null, 'a finished quick room is nobody else\'s next match');
+  // rooms of your own alarm only to refresh while listed
+  const plain: RoomState = { code: 'PPPP', game: 'scramble', seats: 20, started: false, listed: true };
+  assert.equal(nextAlarm(plain, true, null, now), now + LISTING_REFRESH_MS);
+  assert.equal(nextAlarm(plain, false, now + 5000, now), null);
+  assert.equal(roomListing(plain, [host], 0)?.quick, undefined, 'only quick rooms say they are');
+});
+
+test('quick play sends people to the fullest quick room still gathering, never one about to start, under way or full', () => {
+  const now = 5_000_000;
+  const line = (code: string, more: Partial<OpenRoom> = {}): LobbyRow => ({ listing: { code, game: 'scramble', host: 'H', players: 2, bots: 18, seats: 20, started: false, lateJoin: true, quick: true, startAt: now + 15_000, ...more }, updated: now - 1000 });
+  assert.equal(pickQuick([], now), null);
+  assert.equal(pickQuick([line('AAAA'), line('BBBB', { players: 5 }), line('CCCC', { players: 3 })], now)?.code, 'BBBB', 'the fullest, so rooms fill rather than split');
+  assert.equal(pickQuick([line('AAAA', { startAt: now + 9000 }), line('BBBB')], now)?.code, 'AAAA', 'then the one starting soonest');
+  const skipped = [
+    line('DDDD', { quick: undefined }),
+    line('EEEE', { started: true }),
+    line('FFFF', { players: 20 }),
+    line('GGGG', { startAt: now + QUICK_LATE_MS - 1 }),
+    { ...line('HHHH', { host: '' }), updated: now - QUICK_PENDING_MS - 1 },
+  ];
+  assert.equal(pickQuick(skipped, now), null, 'a room of your own, under way, full, about to start, or handed out and never come to');
+  // a room just handed out, before its first person is in, is where the next person goes too
+  assert.equal(pickQuick([...skipped, { ...line('JJJJ', { host: '', players: 1 }), updated: now - 2000 }], now)?.code, 'JJJJ');
+  // open rooms say which are quick play, and the line says so
+  const listed = parseOpenRooms({ rooms: [line('KKKK').listing, { ...line('MMMM').listing, quick: 'yes' }] });
+  assert.deepEqual(listed.map((r) => r.quick), [true, undefined]);
+  assert.equal(openRoomLine(listed[0]), 'Quick Play · 2/20 · 18 Bots');
+  assert.equal(openRoomDetail(listed[0]), 'Quick Play · 2/20 · 18 Bots · Starting soon');
+  assert.deepEqual(ONLINE_SPECS.scramble, { seats: 20, lateJoin: true, bots: true, quick: true });
+  for (const [game, spec] of Object.entries(ONLINE_SPECS)) if (spec.quick) assert.ok(spec.bots, `${game}: quick play fills seats with bots`);
+});
+
+test('RoomLink follows a quick-play room gathering and starting, and quick play asks the Worker for a room', async () => {
+  await withFakeRoom(async () => {
+    const link = new RoomLink('QWKR', 'Bea', 'https://arcade.test');
+    const socket = FakeWebSocket.last;
+    const seen: unknown[] = [];
+    link.on('welcome', (w) => seen.push(['welcome', w.quick, w.startIn]));
+    link.on('gather', (ms) => seen.push(['gather', ms]));
+    socket.open();
+    socket.receive({ t: 'welcome', seat: 1, code: 'QWKR', game: 'scramble', seats: 20, players: [{ seat: 0, name: 'Ann' }, { seat: 1, name: 'Bea' }], bots: [2], started: false, round: 0, quick: true, startIn: 14_000 });
+    socket.receive({ t: 'players', players: [{ seat: 0, name: 'Ann' }, { seat: 1, name: 'Bea' }, { seat: 2, name: 'Cy' }], bots: [3], quick: true, startIn: 9_000 });
+    // a nonsense time is held to a minute; once it starts there is none
+    socket.receive({ t: 'players', players: [{ seat: 0, name: 'Ann' }, { seat: 1, name: 'Bea' }], quick: true, startIn: 1e12 });
+    socket.receive({ t: 'start', round: 1, players: [{ seat: 0, name: 'Ann' }, { seat: 1, name: 'Bea' }], bots: [2, 3], quick: true });
+    socket.receive({ t: 'players', players: [{ seat: 0, name: 'Ann' }, { seat: 1, name: 'Bea' }], quick: true, started: true });
+    assert.equal(link.quick, true);
+    assert.deepEqual(seen, [['welcome', true, 14_000], ['gather', 14_000], ['gather', 9_000], ['gather', 60_000], ['gather', null]]);
+    link.close();
+    // a room of your own never says it gathers
+    const own = new RoomLink('WWNN', 'Bea', 'https://arcade.test');
+    const ownSocket = FakeWebSocket.last;
+    const ownSeen: unknown[] = [];
+    own.on('welcome', (w) => ownSeen.push([w.quick, w.startIn]));
+    own.on('gather', (ms) => ownSeen.push(['gather', ms]));
+    ownSocket.open();
+    ownSocket.receive({ t: 'welcome', seat: 0, code: 'WWNN', game: 'scramble', seats: 20, players: [{ seat: 0, name: 'Bea' }], started: false, startIn: 5000 });
+    assert.deepEqual(ownSeen, [[false, null]]);
+    own.close();
+  });
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  try {
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(input)}`);
+      return new Response(JSON.stringify({ code: 'QWKR' }));
+    }) as typeof fetch;
+    assert.equal(await quickRoom('scramble', 'https://arcade.test/'), 'QWKR');
+    assert.deepEqual(calls, ['POST https://arcade.test/rooms/quick?game=scramble']);
+    globalThis.fetch = (async () => new Response(JSON.stringify({ code: 'nope' }))) as typeof fetch;
+    await assert.rejects(quickRoom('scramble', 'https://arcade.test'), /Invalid Room Code/);
+    globalThis.fetch = (async () => new Response('{}', { status: 404 })) as typeof fetch;
+    await assert.rejects(quickRoom('scramble', 'https://arcade.test'), /Could Not Find A Match/, 'a Worker from before quick play');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

@@ -20,6 +20,8 @@ type OnlineValue = {
   transport: RoomTransport;
   /** Bumps each time the host leaves and hands the room on: a round the old host's game ran is over. */
   handoffs: number;
+  /** A quick-play room: it started on its own, and the game sets the match up the same way every time. */
+  quick: boolean;
 };
 
 const OnlineContext = createContext<OnlineValue | null>(null);
@@ -34,11 +36,12 @@ export function OnlineProvider({
   bots,
   transport,
   handoffs,
+  quick,
   children,
 }: Omit<OnlineValue, 'seat' | 'link' | 'isHost'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
   const value = useMemo(
-    () => link && seat !== null ? { link, router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs } : null,
-    [link, router, seat, seats, round, players, bots, transport, handoffs],
+    () => link && seat !== null ? { link, router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs, quick } : null,
+    [link, router, seat, seats, round, players, bots, transport, handoffs, quick],
   );
   return <OnlineContext.Provider value={value}>{children}</OnlineContext.Provider>;
 }
@@ -56,6 +59,7 @@ export function useOnline() {
       isHost: room.isHost,
       transport: room.transport,
       handoffs: room.handoffs,
+      quick: room.quick,
       // Tagged with the round this player is in at the moment it's sent, which a game that kept an old handle still gets.
       send: (d: unknown, options?: { to?: number; fast?: boolean }) => room.link.send(tagRound(room.router.round, d), options),
       onMessage: (listener: (from: number, d: unknown) => void) => room.router.listen(listener),
@@ -166,6 +170,118 @@ export function BotStepper({ count, max, onChange, disabled }: { count: number; 
         <button type="button" aria-label="More Bots" disabled={disabled || shown >= max} onClick={() => change(shown + 1)}>
           {glyph('M6 12h12M12 6v12')}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** Whole seconds until `at` (a performance.now() time), counted down on screen; null without one. */
+function useSecondsTo(at: number | null): number | null {
+  const [now, setNow] = useState(() => performance.now());
+  useEffect(() => {
+    if (at === null) return;
+    setNow(performance.now());
+    const t = window.setInterval(() => setNow(performance.now()), 250);
+    return () => window.clearInterval(t);
+  }, [at]);
+  return at === null ? null : Math.max(0, Math.ceil((at - now) / 1000));
+}
+
+/** Focus without scrolling (the laptop screen is projected HTML and must never scroll), once, as it appears. */
+const focusOnce = (el: HTMLInputElement | null) => el?.focus({ preventScroll: true });
+
+/**
+ * Quick play's card: a name to play under (while it's still blank), then finding a match, then the people in it so far
+ * and a countdown to the start, which the room makes on its own. Bots take every seat nobody holds.
+ */
+export function QuickPanel({
+  code,
+  linked,
+  players,
+  seat,
+  seats,
+  startAt,
+  busy,
+  error,
+  name,
+  onName,
+  onFind,
+  onLeave,
+  note,
+  setup,
+}: {
+  code: string;
+  /** On the way into a room (or in one). */
+  linked: boolean;
+  players: RoomPlayer[];
+  seat: number | null;
+  seats: number;
+  /** When the match starts (a performance.now() time), or null until the room says. */
+  startAt: number | null;
+  busy: boolean;
+  error: string;
+  name: string;
+  onName: (value: string) => void;
+  /** Looks for a match (again). */
+  onFind: () => void;
+  onLeave: () => void;
+  /** One line about who else plays, e.g. that bots fill the rest. */
+  note?: string;
+  setup?: ReactNode;
+}) {
+  const secs = useSecondsTo(code ? startAt : null);
+  const inRoom = !!code && seat !== null;
+  const naming = !inRoom && !busy && !linked;
+  return (
+    <div className="arcade-ov">
+      <div className="arcade-card arcade-online-card arcade-quick-card">
+        <h2>{inRoom ? 'Match Starting' : 'Play'}</h2>
+        {naming ? (
+          <>
+            <label className="arcade-online-field">
+              <span>Your Name</span>
+              <input
+                ref={focusOnce}
+                className="arcade-input"
+                value={name}
+                maxLength={16}
+                autoComplete="nickname"
+                onChange={(e) => onName(e.target.value)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter' && name.trim()) onFind();
+                }}
+              />
+            </label>
+            <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" disabled={!name.trim()} onClick={onFind}>
+              {error ? 'Try Again' : 'Find a Match'}
+            </button>
+          </>
+        ) : !inRoom ? (
+          <p className="arcade-quick-finding" aria-live="polite">Finding a Match…</p>
+        ) : (
+          <>
+            <div className="arcade-quick-count" aria-live="polite">
+              <b>{secs === null || secs > 0 ? secs ?? '…' : 'Go'}</b>
+              <span>{secs === 0 ? 'Starting' : 'Starting In'}</span>
+            </div>
+            <div className="arcade-online-players">
+              <strong>Players {players.length}/{seats}</strong>
+              {players.map((player) => (
+                <div key={player.seat} className="arcade-online-player">
+                  <span>{player.name}</span>
+                  {player.seat === seat && <small>You</small>}
+                </div>
+              ))}
+            </div>
+            {note && <p className="arcade-online-note">{note}</p>}
+          </>
+        )}
+        {setup && <div className="arcade-setup">{setup}</div>}
+        <button type="button" className="arcade-btn" onClick={onLeave}>
+          {inRoom ? 'Leave' : 'Back'}
+        </button>
+        {error && <p className="arcade-online-error" role="alert">{error}</p>}
       </div>
     </div>
   );

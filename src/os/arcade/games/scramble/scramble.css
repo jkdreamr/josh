@@ -255,6 +255,11 @@
   width: 100%;
   height: 100%;
 }
+.g-scramble .g-scramble-map svg.is-marks {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
 /* the place you're in, along the bottom of the little map */
 .g-scramble .g-scramble-map span {
   position: absolute;

@@ -905,3 +905,36 @@
   margin: 0;
   font-size: 12px;
 }
+
+/* Quick play: the countdown to a match that starts on its own, over the people in it so far. */
+.arcade-quick-count {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.arcade-quick-count b {
+  font-size: clamp(38px, 11vw, 56px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--accent) 45%, #fff);
+}
+.arcade-quick-count span,
+.arcade-quick-finding {
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.62);
+}
+.arcade-quick-card .arcade-online-players {
+  max-height: 168px;
+  overflow-y: auto;
+}
+@container arcade-ov (max-height: 440px) {
+  .arcade-quick-count b {
+    font-size: 34px;
+  }
+  .arcade-quick-card .arcade-online-players {
+    max-height: 96px;
+  }
+}
