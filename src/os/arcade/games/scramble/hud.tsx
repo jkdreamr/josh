@@ -748,7 +748,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Legendary loot.</b> Legendary guns, flare guns and golden egg tarts glow gold on the ground, with a beam of light you can spot from far off.
           </li>
           <li>
-            <b>Health and shield.</b> You have 100 health and up to 100 shield, which takes hits first.
+            <b>Health and shield.</b> You have 100 health and up to 100 shield, which takes hits first. An egg's shell cracks as its health runs low, and its shield shimmers blue when a hit lands on it.
           </li>
           <li>
             <b>Armor.</b> A helmet and a vest from the kitchen, three levels each, take a cut of every bullet, swing and blast (not the storm, not hot sauce). Walk over a better one to put it on; your old one drops. {touch ? 'Tap pick up' : 'Press E'} to swap for a worse one if you really want it.
