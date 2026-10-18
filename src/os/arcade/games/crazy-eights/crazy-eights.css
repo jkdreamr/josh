@@ -15,6 +15,8 @@
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
+  /* Hand cards carry their own z-index; keep them under the shell's Pause and Game Over cards. */
+  isolation: isolate;
   --cw: 64px;
   --ch: 90px;
 }
@@ -111,7 +113,7 @@
   padding: 4px 11px 5px;
   border-radius: 11px;
   background: rgba(0, 0, 0, 0.26);
-  font-size: 13px;
+  font-size: calc(13px * var(--g-crazy-eights-u, 1));
   line-height: 1.25;
   transition: background 0.2s, color 0.2s;
 }
@@ -123,14 +125,14 @@
 
 .g-crazy-eights .g-crazy-eights-name span,
 .g-crazy-eights .g-crazy-eights-me span {
-  font-size: 12px;
+  font-size: calc(12px * var(--g-crazy-eights-u, 1));
   opacity: 0.78;
   font-variant-numeric: tabular-nums;
 }
 
 .g-crazy-eights .g-crazy-eights-name em {
   font-style: normal;
-  font-size: 11px;
+  font-size: calc(11px * var(--g-crazy-eights-u, 1));
   opacity: 0.75;
 }
 
@@ -219,7 +221,7 @@
   left: 50%;
   bottom: -22px;
   translate: -50% 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--g-crazy-eights-u, 1));
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
 }
@@ -268,7 +270,7 @@
   padding: 3px 10px;
   border-radius: 12px;
   background: #fff;
-  font-size: 13px;
+  font-size: calc(13px * var(--g-crazy-eights-u, 1));
   font-weight: 600;
   color: #1d1d1f;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
@@ -327,7 +329,7 @@
   padding: 4px 11px;
   border-radius: 11px;
   background: rgba(0, 0, 0, 0.26);
-  font-size: 13px;
+  font-size: calc(13px * var(--g-crazy-eights-u, 1));
   transition: background 0.2s, color 0.2s;
 }
 
@@ -458,14 +460,14 @@
 }
 
 .g-crazy-eights .g-crazy-eights-corner b {
-  font-size: max(13px, calc(var(--cw) * 0.25));
+  font-size: max(calc(13px * var(--g-crazy-eights-u, 1)), calc(var(--cw) * 0.25));
   font-weight: 700;
   letter-spacing: -0.04em;
 }
 
 .g-crazy-eights .g-crazy-eights-corner i {
   font-style: normal;
-  font-size: max(11px, calc(var(--cw) * 0.2));
+  font-size: max(calc(11px * var(--g-crazy-eights-u, 1)), calc(var(--cw) * 0.2));
 }
 
 .g-crazy-eights .g-crazy-eights-corner.is-flip {
@@ -643,7 +645,7 @@
   padding: 7px 10px;
   border-radius: 10px;
   background: #fff;
-  font-size: 13px;
+  font-size: calc(13px * var(--g-crazy-eights-u, 1));
 }
 
 .g-crazy-eights .g-crazy-eights-summary li.is-winner {
@@ -658,7 +660,7 @@
 .g-crazy-eights .g-crazy-eights-left {
   grid-area: left;
   color: #6e6e73;
-  font-size: 12px;
+  font-size: calc(12px * var(--g-crazy-eights-u, 1));
 }
 
 .g-crazy-eights .g-crazy-eights-summary li b {
@@ -687,16 +689,12 @@
 
 .g-crazy-eights .g-crazy-eights-note {
   margin: 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--g-crazy-eights-u, 1));
   color: #6e6e73;
 }
 
 
 @media (max-height: 420px) {
-  .g-crazy-eights .g-crazy-eights-seat.pos-top {
-    top: 4px;
-  }
-
   .g-crazy-eights .g-crazy-eights-bar {
     min-height: 40px;
   }
@@ -884,7 +882,7 @@
 
 .g-crazy-eights .is-short .g-crazy-eights-called {
   bottom: -26px;
-  font-size: 12px;
+  font-size: calc(12px * var(--g-crazy-eights-u, 1));
 }
 
 .g-crazy-eights .is-short .g-crazy-eights-bar {
@@ -900,7 +898,7 @@
 }
 
 .g-crazy-eights .is-short .g-crazy-eights-status {
-  font-size: 13px;
+  font-size: calc(13px * var(--g-crazy-eights-u, 1));
 }
 
 .g-crazy-eights .is-short .g-crazy-eights-actions .arcade-btn {
@@ -937,7 +935,7 @@
   min-height: 44px;
   flex-direction: column;
   gap: 2px;
-  font-size: 13px;
+  font-size: calc(13px * var(--g-crazy-eights-u, 1));
 }
 
 .g-crazy-eights .is-short .g-crazy-eights-summary ul {
@@ -960,12 +958,18 @@
   padding-right: 150px;
 }
 
+/* Draw sits on the left, next to the deck and clear of the shell's buttons above the bar */
 .g-crazy-eights .is-short .g-crazy-eights-bar {
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.g-crazy-eights .is-short .g-crazy-eights-actions {
+  order: -1;
+  justify-self: start;
 }
 
 .g-crazy-eights .is-short .g-crazy-eights-status {
-  text-align: left;
+  text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -976,9 +980,9 @@
 
 .g-crazy-eights .is-short .g-crazy-eights-rivals {
   grid-column: 1 / -1;
-  min-height: 46px;
+  min-height: 38px;
   align-items: flex-start;
-  padding: 10px 140px 0 64px;
+  padding: 8px 140px 0 64px;
   gap: 4px;
   overflow: hidden;
 }
@@ -992,7 +996,7 @@
 .g-crazy-eights .is-short .g-crazy-eights-seat .g-crazy-eights-name {
   gap: 4px;
   padding: 3px 7px;
-  font-size: 12px;
+  font-size: calc(12px * var(--g-crazy-eights-u, 1));
   min-width: 0;
   overflow: hidden;
 }
@@ -1033,4 +1037,42 @@
 
 .g-crazy-eights .is-short .g-crazy-eights-hand {
   margin-bottom: 0;
+}
+
+/* Touch: controls stay finger-sized on screen, even inside the scaled phone and iPad frames */
+.g-crazy-eights .g-crazy-eights-table .arcade-btn {
+  font-size: calc(13px * var(--g-crazy-eights-u, 1));
+}
+
+.g-crazy-eights .g-crazy-eights-table.is-touch .arcade-btn {
+  min-width: calc(64px * var(--g-crazy-eights-u, 1));
+  min-height: calc(44px * var(--g-crazy-eights-u, 1));
+  padding: 0 calc(16px * var(--g-crazy-eights-u, 1));
+  border-radius: calc(10px * var(--g-crazy-eights-u, 1));
+}
+
+.g-crazy-eights .g-crazy-eights-table.is-touch .g-crazy-eights-bar {
+  min-height: calc(50px * var(--g-crazy-eights-u, 1));
+}
+
+.g-crazy-eights .g-crazy-eights-table.is-touch .g-crazy-eights-suit {
+  min-height: calc(56px * var(--g-crazy-eights-u, 1));
+}
+
+/* Phones: the status line wraps so Draw and Keep It stay on the table */
+.g-crazy-eights .g-crazy-eights-table.is-narrow .g-crazy-eights-bar {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.g-crazy-eights .g-crazy-eights-table.is-narrow .g-crazy-eights-me {
+  white-space: nowrap;
+}
+
+.g-crazy-eights .g-crazy-eights-table.is-narrow .g-crazy-eights-status {
+  min-width: 0;
+  white-space: normal;
+  text-wrap: balance;
+  line-height: 1.2;
 }

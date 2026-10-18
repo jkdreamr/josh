@@ -7,7 +7,8 @@ import { KeyState, scrollKeys } from './keys';
 import { useHighScore } from './score';
 import { ARCADE_API, NAME_MAX, boardFor, cleanName, formatBoardScore, saveName, savedName } from './leaderboard';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
-import { sfx, useMuted } from './sfx';
+import { sfx, useMusicOn, useMuted } from './sfx';
+import { useBackgroundMusic } from './music';
 import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange, useSetting } from './settings';
 import { BotStepper, OnlinePanel, OnlineProvider, QuickPanel, ROOM_VISIBILITY, ROOM_WATCHERS, RoomCode, RoomRoster, VisibilityPicker, WatchPicker } from './online';
 import { MAX_SEATS, botPlayers, canStartNext, nextOnlineRound, parseRacePacket, raceStandings, RoundRouter, type RaceScores } from './online-core';
@@ -79,6 +80,8 @@ const ic = {
   restart: 'M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5',
   sound: 'M4 9.5h3.5L12 5.5v13l-4.5-4H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11',
   muted: 'M4 9.5h3.5L12 5.5v13l-4.5-4H4zM16.5 9.5l5 5M21.5 9.5l-5 5',
+  music: 'M9 18V6l11-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',
+  musicOff: 'M9 18V6l11-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM3 3l18 18',
   grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
   chat: 'M20 12.5a7.5 7.5 0 0 1-11 6.6L4 20.5l1.4-4.6A7.5 7.5 0 1 1 20 12.5z',
 };
@@ -109,6 +112,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [touch, setTouch] = useState(false);
   const { best, submit } = useHighScore(meta.id, { lowerIsBetter });
   const [muted, setMuted] = useMuted();
+  const [musicOn, setMusicOn] = useMusicOn();
+  /** The How to Play card is up over the Start or Pause card. */
+  const [howOpen, setHowOpen] = useState(false);
+  const howRef = useRef(false);
+  howRef.current = howOpen;
   const keys = useMemo(() => new KeyState(), []);
   const statusRef = useRef(status);
   statusRef.current = status;
@@ -183,6 +191,10 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
 
   useEffect(() => setTouch(!!os?.mobile || isTouchDevice()), [os?.mobile]);
   useEffect(() => sfx.retain(), []);
+  useBackgroundMusic(meta.id, compact ? undefined : meta.music, round, status === 'playing');
+  useEffect(() => {
+    if (status !== 'ready' && status !== 'paused') setHowOpen(false);
+  }, [status]);
   // Opening a game counts as a play, and so does every round after it. The New Tab strip counts only once someone starts it.
   useEffect(() => {
     if (!compact || autoStart) countPlay(meta.id);
@@ -685,6 +697,14 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       if (t.closest?.('input, textarea, select, [contenteditable="true"]')) return;
       const st = statusRef.current;
       const onButton = t !== el && !!t.closest?.('button, a');
+      // How to Play is up: Escape closes it, and nothing starts or resumes behind it
+      if (howRef.current) {
+        if (onButton && (e.code === 'Enter' || e.code === 'Space')) return void e.stopPropagation();
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.code === 'Escape' && !e.repeat) setHowOpen(false);
+        return;
+      }
       if (e.code === 'Escape' || e.code === 'KeyP') {
         if (onlineMode) {
           if (e.code === 'KeyP') {
@@ -886,6 +906,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             <button type="button" aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute' : 'Mute'} onClick={ctl(() => setMuted(!muted))}>
               <Icon d={muted ? ic.muted : ic.sound} />
             </button>
+            {meta.music && (
+              <button type="button" aria-label={musicOn ? 'Music off' : 'Music on'} aria-pressed={musicOn} title={musicOn ? 'Music off' : 'Music on'} onClick={ctl(() => setMusicOn(!musicOn))}>
+                <Icon d={musicOn ? ic.music : ic.musicOff} />
+              </button>
+            )}
             {/* The Lounge opens next to the game (over it on a phone), so you can chat while you play. */}
             {os && (
               <button type="button" className={loungeUnread ? 'has-dot' : undefined} aria-label={loungeUnread ? `Lounge, ${loungeUnread} unread` : 'Lounge'} title="Lounge" onClick={() => os.open('lounge')}>
@@ -954,7 +979,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
           />
         )}
 
-        {status === 'ready' && !onlineOpen &&
+        {(status === 'ready' || status === 'paused') && !onlineOpen && !compact && howOpen && meta.howTo && <HowToCard meta={meta} onClose={() => setHowOpen(false)} />}
+
+        {status === 'ready' && !onlineOpen && !howOpen &&
           (compact ? (
             <button type="button" className="arcade-ov arcade-ov-compact" onClick={start}>
               {glyph}
@@ -988,12 +1015,17 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     {quickOn ? 'Play with Friends' : 'Play Online'}
                   </button>
                 )}
+                {meta.howTo && (
+                  <button type="button" className="arcade-btn" onClick={() => setHowOpen(true)}>
+                    How to Play
+                  </button>
+                )}
                 {best !== null && <small>Best {fmt(best)}</small>}
               </div>
             </div>
           ))}
 
-        {status === 'paused' &&
+        {status === 'paused' && !howOpen &&
           (compact ? (
             <button type="button" className="arcade-ov arcade-ov-compact" onClick={resume}>
               <Icon d={ic.play} />
@@ -1027,6 +1059,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     </button>
                   )}
                 </div>
+                {meta.howTo && (
+                  <button type="button" className="arcade-btn" onClick={() => setHowOpen(true)}>
+                    How to Play
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -1217,6 +1254,28 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       </div>
     </ShellContext.Provider>
     </OnlineProvider>
+  );
+}
+
+/** The game's rules (meta.howTo) and its controls line, over the Start or Pause card. */
+function HowToCard({ meta, onClose }: { meta: GameMeta; onClose: () => void }) {
+  return (
+    <div className="arcade-ov">
+      <div className="arcade-card arcade-howto" role="dialog" aria-label={`How to play ${meta.title}`}>
+        <h2>How to Play</h2>
+        <ol>
+          {meta.howTo?.map((step, i) => (
+            <li key={i}>{step}</li>
+          ))}
+        </ol>
+        <p className="arcade-howto-controls">
+          <b>Controls</b> {meta.controls}
+        </p>
+        <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={onClose} ref={autoFocus}>
+          Got It
+        </button>
+      </div>
+    </div>
   );
 }
 
