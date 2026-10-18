@@ -1,0 +1,602 @@
+.g-grand-prix .g-grand-prix-host {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  background: linear-gradient(#5d8cc7, #b9cde0 60%, #6d7f5a);
+}
+
+.g-grand-prix .g-grand-prix-huds {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: grid;
+  font-family: 'SF Pro Display', -apple-system, 'Segoe UI', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+}
+.g-grand-prix .g-grand-prix-huds.is-side {
+  grid-template-columns: 1fr 1fr;
+}
+.g-grand-prix .g-grand-prix-huds.is-stack {
+  grid-template-rows: 1fr 1fr;
+}
+.g-grand-prix .g-grand-prix-hudslot {
+  position: relative;
+  overflow: hidden;
+}
+.g-grand-prix .g-grand-prix-huds.is-side .g-grand-prix-hudslot + .g-grand-prix-hudslot {
+  border-left: 2px solid rgba(0, 0, 0, 0.6);
+}
+.g-grand-prix .g-grand-prix-huds.is-stack .g-grand-prix-hudslot + .g-grand-prix-hudslot {
+  border-top: 2px solid rgba(0, 0, 0, 0.6);
+}
+
+.g-grand-prix .g-grand-prix-hud {
+  position: absolute;
+  inset: 0;
+  container-type: size;
+  --panel: rgba(12, 14, 20, 0.72);
+  --edge: rgba(255, 255, 255, 0.1);
+  --purple: #b04dff;
+  --green: #22d36b;
+  --yellow: #f2c230;
+  --red: #ff3b30;
+}
+
+/* top left: position, lap, tower */
+.g-grand-prix .g-grand-prix-top {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 46%;
+}
+.g-grand-prix .g-grand-prix-poslap {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  width: max-content;
+}
+.g-grand-prix .g-grand-prix-pos {
+  padding: 4px 10px;
+  background: #e10600;
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+.g-grand-prix .g-grand-prix-pos:empty,
+.g-grand-prix .g-grand-prix-pos b:empty {
+  display: none;
+}
+.g-grand-prix .g-grand-prix-pos:has(b:empty) {
+  display: none;
+}
+.g-grand-prix .g-grand-prix-pos b {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.g-grand-prix .g-grand-prix-pos small {
+  font-size: 12px;
+  opacity: 0.85;
+}
+.g-grand-prix .g-grand-prix-lap {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  align-self: center;
+}
+.g-grand-prix .g-grand-prix-tower {
+  list-style: none;
+  margin: 0;
+  padding: 3px 0;
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  width: 168px;
+  font-size: 12px;
+}
+.g-grand-prix .g-grand-prix-tower li {
+  display: grid;
+  grid-template-columns: 20px 4px 40px 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+}
+.g-grand-prix .g-grand-prix-tower li[data-me='1'] {
+  background: rgba(255, 255, 255, 0.92);
+  color: #111;
+}
+.g-grand-prix .g-grand-prix-tower i {
+  height: 12px;
+  border-radius: 1px;
+}
+.g-grand-prix .g-grand-prix-tpos {
+  text-align: right;
+  font-weight: 700;
+}
+.g-grand-prix .g-grand-prix-tcode {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.g-grand-prix .g-grand-prix-tgap {
+  text-align: right;
+  opacity: 0.85;
+}
+
+/* top right: lap timing */
+.g-grand-prix .g-grand-prix-timing {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  margin-top: 40px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 12px;
+  align-items: baseline;
+  min-width: 190px;
+}
+.g-grand-prix .g-grand-prix-laptime {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.g-grand-prix .g-grand-prix-laptime[data-invalid='1'] {
+  color: var(--red);
+}
+.g-grand-prix .g-grand-prix-delta {
+  text-align: right;
+  font-weight: 800;
+  font-size: 16px;
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+.g-grand-prix .g-grand-prix-delta[data-tone='good'] {
+  background: var(--green);
+  color: #04210f;
+}
+.g-grand-prix .g-grand-prix-delta[data-tone='bad'] {
+  background: var(--red);
+}
+.g-grand-prix .g-grand-prix-sectors {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  margin: 3px 0;
+}
+.g-grand-prix .g-grand-prix-sector {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.g-grand-prix .g-grand-prix-sector[data-tone='purple'] {
+  background: var(--purple);
+}
+.g-grand-prix .g-grand-prix-sector[data-tone='green'] {
+  background: var(--green);
+}
+.g-grand-prix .g-grand-prix-sector[data-tone='yellow'] {
+  background: var(--yellow);
+}
+.g-grand-prix .g-grand-prix-last,
+.g-grand-prix .g-grand-prix-best {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.8;
+}
+.g-grand-prix .g-grand-prix-last b,
+.g-grand-prix .g-grand-prix-best b {
+  font-size: 13px;
+  letter-spacing: 0;
+  margin-left: 4px;
+  opacity: 1;
+}
+
+/* start lights */
+.g-grand-prix .g-grand-prix-lights {
+  position: absolute;
+  top: 14%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #0b0c0f;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+.g-grand-prix .g-grand-prix-lights[data-show='1'] {
+  opacity: 1;
+}
+.g-grand-prix .g-grand-prix-lights span {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 8px;
+  background: #16181d;
+}
+.g-grand-prix .g-grand-prix-light {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #2a0d0d;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+.g-grand-prix .g-grand-prix-light[data-on='1'] {
+  background: radial-gradient(circle at 40% 35%, #ff9b8f, #ff1a0a 55%, #b00000);
+  box-shadow: 0 0 18px rgba(255, 30, 10, 0.9);
+}
+
+/* messages */
+.g-grand-prix .g-grand-prix-msg {
+  position: absolute;
+  top: 30%;
+  left: 50%;
+  transform: translate(-50%, -6px);
+  padding: 7px 16px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  white-space: nowrap;
+  opacity: 0;
+}
+.g-grand-prix .g-grand-prix-msg[data-show='1'] {
+  animation: g-grand-prix-msg 2.2s ease forwards;
+}
+.g-grand-prix .g-grand-prix-msg[data-tone='warn'] {
+  background: rgba(200, 30, 20, 0.9);
+}
+.g-grand-prix .g-grand-prix-msg[data-tone='good'] {
+  background: rgba(20, 150, 70, 0.9);
+}
+.g-grand-prix .g-grand-prix-msg[data-tone='purple'] {
+  background: rgba(140, 50, 220, 0.92);
+}
+@keyframes g-grand-prix-msg {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+  10%,
+  80% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* bottom: the dash */
+.g-grand-prix .g-grand-prix-dash {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 12px 9px;
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--edge), 0 10px 30px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 300px;
+}
+.g-grand-prix .g-grand-prix-leds {
+  display: grid;
+  grid-template-columns: repeat(15, 1fr);
+  gap: 3px;
+}
+.g-grand-prix .g-grand-prix-led {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.g-grand-prix .g-grand-prix-led[data-on='g'] {
+  background: #1fe36a;
+  box-shadow: 0 0 6px #1fe36a;
+}
+.g-grand-prix .g-grand-prix-led[data-on='r'] {
+  background: #ff2a1f;
+  box-shadow: 0 0 6px #ff2a1f;
+}
+.g-grand-prix .g-grand-prix-led[data-on='b'] {
+  background: #3b8bff;
+  box-shadow: 0 0 8px #3b8bff;
+}
+.g-grand-prix .g-grand-prix-dashrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.g-grand-prix .g-grand-prix-pedals {
+  display: flex;
+  gap: 4px;
+  height: 48px;
+}
+.g-grand-prix .g-grand-prix-thr,
+.g-grand-prix .g-grand-prix-brk {
+  width: 9px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+}
+.g-grand-prix .g-grand-prix-thr i,
+.g-grand-prix .g-grand-prix-brk i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: bottom;
+  transform: scaleY(0);
+}
+.g-grand-prix .g-grand-prix-thr i {
+  background: var(--green);
+}
+.g-grand-prix .g-grand-prix-brk i {
+  background: var(--red);
+}
+.g-grand-prix .g-grand-prix-gearbox {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.g-grand-prix .g-grand-prix-gear {
+  font-size: 44px;
+  font-weight: 800;
+  line-height: 1;
+  width: 32px;
+  text-align: center;
+}
+.g-grand-prix .g-grand-prix-speed {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.85;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.g-grand-prix .g-grand-prix-speed b {
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+.g-grand-prix .g-grand-prix-tyres {
+  display: grid;
+  grid-template-columns: 22px 22px;
+  gap: 3px 8px;
+}
+.g-grand-prix .g-grand-prix-tyre {
+  height: 21px;
+  border-radius: 5px;
+  background: #555;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.g-grand-prix .g-grand-prix-tyre b {
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.75);
+}
+.g-grand-prix .g-grand-prix-ers {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.g-grand-prix .g-grand-prix-ers i {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #f2c230, #ffe27a);
+  transform-origin: left;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+.g-grand-prix .g-grand-prix-ers[data-on='1'] span {
+  color: #ffe27a;
+}
+.g-grand-prix .g-grand-prix-drs {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 2px 8px;
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.35);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.18);
+}
+.g-grand-prix .g-grand-prix-drs[data-state='armed'] {
+  color: rgba(255, 255, 255, 0.75);
+}
+.g-grand-prix .g-grand-prix-drs[data-state='ready'] {
+  color: var(--green);
+  box-shadow: inset 0 0 0 1.5px var(--green);
+}
+.g-grand-prix .g-grand-prix-drs[data-state='open'] {
+  color: #03210f;
+  background: var(--green);
+  box-shadow: none;
+}
+
+/* minimap */
+.g-grand-prix .g-grand-prix-map {
+  position: absolute;
+  left: 12px;
+  bottom: 14px;
+  width: 128px;
+  height: 128px;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
+}
+.g-grand-prix .g-grand-prix-map path {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 7;
+  stroke-linejoin: round;
+}
+.g-grand-prix .g-grand-prix-map circle {
+  stroke: #111;
+  stroke-width: 2;
+}
+
+/* split screen and small windows: tighter */
+.g-grand-prix .g-grand-prix-hud.is-split .g-grand-prix-dash,
+.g-grand-prix .g-grand-prix-hud.is-touch .g-grand-prix-dash {
+  width: 236px;
+  padding: 6px 9px 7px;
+  gap: 5px;
+}
+.g-grand-prix .g-grand-prix-hud.is-split .g-grand-prix-gear {
+  font-size: 34px;
+}
+.g-grand-prix .g-grand-prix-hud.is-split .g-grand-prix-timing {
+  margin-top: 36px;
+  min-width: 0;
+  padding: 6px 9px;
+}
+.g-grand-prix .g-grand-prix-hud.is-split .g-grand-prix-laptime {
+  font-size: 18px;
+}
+.g-grand-prix .g-grand-prix-hud.is-touch .g-grand-prix-dash {
+  bottom: 132px;
+}
+.g-grand-prix .g-grand-prix-hud.is-touch .g-grand-prix-map {
+  display: none;
+}
+@container (max-height: 560px) {
+  .g-grand-prix .g-grand-prix-dash {
+    width: 230px;
+    padding: 5px 8px 6px;
+    gap: 4px;
+    bottom: 8px;
+  }
+  .g-grand-prix .g-grand-prix-gear {
+    font-size: 30px;
+    width: 24px;
+  }
+  .g-grand-prix .g-grand-prix-speed b {
+    font-size: 21px;
+  }
+  .g-grand-prix .g-grand-prix-pedals {
+    height: 34px;
+  }
+  .g-grand-prix .g-grand-prix-tyre {
+    height: 15px;
+  }
+  .g-grand-prix .g-grand-prix-tyres {
+    grid-template-columns: 20px 20px;
+  }
+  .g-grand-prix .g-grand-prix-led {
+    height: 6px;
+  }
+  .g-grand-prix .g-grand-prix-map {
+    width: 96px;
+    height: 96px;
+    bottom: 8px;
+  }
+  .g-grand-prix .g-grand-prix-tower li {
+    padding: 1px 8px;
+  }
+}
+@container (max-width: 620px) {
+  .g-grand-prix .g-grand-prix-timing {
+    min-width: 0;
+    padding: 6px 9px;
+    margin-top: 44px;
+  }
+  .g-grand-prix .g-grand-prix-laptime {
+    font-size: 18px;
+  }
+  .g-grand-prix .g-grand-prix-tower {
+    width: 132px;
+    font-size: 11px;
+  }
+  .g-grand-prix .g-grand-prix-tower li {
+    grid-template-columns: 16px 3px 32px 1fr;
+    gap: 4px;
+    padding: 1px 6px;
+  }
+  .g-grand-prix .g-grand-prix-map {
+    display: none;
+  }
+}
+
+.g-grand-prix .g-grand-prix-cambtn {
+  position: absolute;
+  top: 140px;
+  right: 12px;
+  min-width: 48px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(12, 14, 20, 0.72);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.g-grand-prix .g-grand-prix-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+.g-grand-prix .g-grand-prix-note {
+  font-size: 12px;
+  opacity: 0.75;
+  text-align: center;
+  max-width: 360px;
+  align-self: center;
+}
+.g-grand-prix .g-grand-prix-hostpick {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.g-grand-prix .g-grand-prix-hostpick small {
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-grand-prix .g-grand-prix-msg[data-show='1'] {
+    animation: none;
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
