@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { createWorld, fitBoard, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
+import { createWorld, fitBoard, keyHeading, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket, type NetEvent, type RoundPacket } from './net.ts';
 import { meta } from './meta';
@@ -125,8 +125,8 @@ function TankMaze() {
   const fireQueued = useRef<boolean[]>([false, false, false, false]);
   const fireHeld = useRef<boolean[]>([false, false, false, false]);
   const guestFireCount = useRef(0);
-  const guestLastSent = useRef<{ turn: number; move: number; t: number }>({ turn: 0, move: 0, t: 0 });
-  const hostIn = useRef(new Map<number, { turn: -1 | 0 | 1; move: -1 | 0 | 1; fc: number; lastFc: number }>());
+  const guestLastSent = useRef<{ turn: number; move: number; dir: number | undefined; t: number }>({ turn: 0, move: 0, dir: undefined, t: 0 });
+  const hostIn = useRef(new Map<number, { turn: -1 | 0 | 1; move: -1 | 0 | 1; dir: number | undefined; fc: number; lastFc: number }>());
   const bounceTick = useRef(0);
   const sizeRef = useRef(size);
   sizeRef.current = size;
@@ -312,32 +312,22 @@ function TankMaze() {
     if (code === 'KeyU' && humans[2] !== undefined) fireQueued.current[humans[2]] = true;
   });
 
-  /** Live driving input for a local human tank from the keyboard. */
+  /** Live driving input for a local human tank: its keys point the tank up/left/down/right on screen. */
   const keyInput = (id: number): TankInput => {
     const match = m.current;
     if (!match) return { turn: 0, move: 0, fire: false };
     const keys = shell.keys;
     const solo = !online && cfg.current.mode === 'cpu';
     const humans = humanIds(match);
-    let move = 0;
-    let turn = 0;
+    const held = (up: string, left: string, down: string, right: string) => keyHeading(keys.down(up), keys.down(down), keys.down(left), keys.down(right));
+    let dir: number | undefined;
     if (id === (humans[0] ?? -1)) {
-      move = (keys.down('KeyW') ? 1 : 0) - (keys.down('KeyS') ? 1 : 0);
-      turn = (keys.down('KeyD') ? 1 : 0) - (keys.down('KeyA') ? 1 : 0);
-      if (solo || online) {
-        move = move || (keys.down('ArrowUp') ? 1 : 0) - (keys.down('ArrowDown') ? 1 : 0);
-        turn = turn || (keys.down('ArrowRight') ? 1 : 0) - (keys.down('ArrowLeft') ? 1 : 0);
-      }
+      dir = held('KeyW', 'KeyA', 'KeyS', 'KeyD');
+      if (dir === undefined && (solo || online)) dir = held('ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight');
     }
-    if (!online && id === (humans[1] ?? -1)) {
-      move = (keys.down('ArrowUp') ? 1 : 0) - (keys.down('ArrowDown') ? 1 : 0);
-      turn = (keys.down('ArrowRight') ? 1 : 0) - (keys.down('ArrowLeft') ? 1 : 0);
-    }
-    if (!online && id === (humans[2] ?? -1)) {
-      move = (keys.down('KeyI') ? 1 : 0) - (keys.down('KeyK') ? 1 : 0);
-      turn = (keys.down('KeyL') ? 1 : 0) - (keys.down('KeyJ') ? 1 : 0);
-    }
-    return { turn: Math.max(-1, Math.min(1, turn)) as -1 | 0 | 1, move: Math.max(-1, Math.min(1, move)) as -1 | 0 | 1, fire: false };
+    if (!online && id === (humans[1] ?? -1)) dir = held('ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight');
+    if (!online && id === (humans[2] ?? -1)) dir = held('KeyI', 'KeyJ', 'KeyK', 'KeyL');
+    return dir === undefined ? { turn: 0, move: 0, fire: false } : { turn: 0, move: 0, fire: false, dir };
   };
 
   // Touch sticks
@@ -401,12 +391,8 @@ function TankMaze() {
       const lay = layout(sizeRef.current.w, sizeRef.current.h);
       const flip = zi >= 0 && lay.zones[zi]?.flip;
       const angle = Math.atan2(dy, dx) + (flip ? Math.PI : 0);
-      const tank = match.world.tanks[id];
-      if (tank) {
-        const si = stickInput(tank.a, angle, mag);
-        input.turn = si.turn;
-        input.move = si.move;
-      }
+      const si = stickInput(angle, mag);
+      if (si.dir !== undefined) input.dir = si.dir;
     }
     if (fireQueued.current[id] || fireHeld.current[id]) {
       input.fire = true;
@@ -458,8 +444,8 @@ function TankMaze() {
         const match = m.current;
         if (!match) return;
         if (pkt.k === 'in' && online.seat === 0) {
-          const cur = hostIn.current.get(from) ?? { turn: 0 as const, move: 0 as const, fc: 0, lastFc: -1 };
-          hostIn.current.set(from, { turn: pkt.turn, move: pkt.move, fc: pkt.fireCount, lastFc: cur.lastFc });
+          const cur = hostIn.current.get(from) ?? { turn: 0 as const, move: 0 as const, dir: undefined, fc: 0, lastFc: -1 };
+          hostIn.current.set(from, { turn: pkt.turn, move: pkt.move, dir: pkt.dir, fc: pkt.fireCount, lastFc: cur.lastFc });
           return;
         }
         if (online.seat === 0) return;
@@ -610,12 +596,13 @@ function TankMaze() {
       const input = mine() >= 0 ? humanInput(mine()) : { turn: 0 as const, move: 0 as const, fire: false };
       const last = guestLastSent.current;
       const now = performance.now();
-      const changed = input.turn !== last.turn || input.move !== last.move;
+      const changed =
+        input.turn !== last.turn || input.move !== last.move || (input.dir === undefined) !== (last.dir === undefined) || (input.dir !== undefined && Math.abs(input.dir - last.dir!) > 0.02);
       const fireNow = input.fire;
       if (fireNow) guestFireCount.current++;
       if (online && (changed || fireNow || now - last.t > 33)) {
-        guestLastSent.current = { turn: input.turn, move: input.move, t: now };
-        online.send(inputPacket({ k: 'in', roomRound: online.round, turn: input.turn, move: input.move, fireCount: guestFireCount.current }), { fast: true });
+        guestLastSent.current = { turn: input.turn, move: input.move, dir: input.dir, t: now };
+        online.send(inputPacket({ k: 'in', roomRound: online.round, turn: input.turn, move: input.move, dir: input.dir, fireCount: guestFireCount.current }), { fast: true });
       }
       return;
     }
@@ -649,7 +636,7 @@ function TankMaze() {
           if (g) {
             const fire = g.fc > g.lastFc;
             if (fire) g.lastFc = g.fc;
-            inputs[t.id] = { turn: g.turn, move: g.move, fire };
+            inputs[t.id] = g.dir === undefined ? { turn: g.turn, move: g.move, fire } : { turn: 0, move: 0, fire, dir: g.dir };
           }
         } else {
           inputs[t.id] = humanInput(t.id);

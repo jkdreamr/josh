@@ -18,7 +18,8 @@
   border: none;
   background: rgba(59, 58, 62, 0.85);
   color: #f4f1ea;
-  font-size: 12px;
+  /* framed iPads draw the game at ~0.8x: 15px keeps the label above 11px on screen */
+  font-size: 15px;
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;

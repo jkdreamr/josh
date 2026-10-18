@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   FIRE_CD,
+  DIR_TURN,
+  FWD,
   MAX_SHELLS,
   MINE_ARM,
   SHELL_LIFE,
@@ -13,6 +15,7 @@ import {
   createMaze,
   createWorld,
   fitBoard,
+  keyHeading,
   mulberry32,
   noInput,
   pickSpawns,
@@ -485,15 +488,66 @@ test('a parked bot charges after the standoff timeout', () => {
 // -----------------------------------------------------------------------------------------------------------------
 // stickInput
 
-test('stickInput maps stick deflection to tank input', () => {
-  assert.deepEqual(stickInput(0, 0, 0), { turn: 0, move: 0, fire: false });
-  assert.deepEqual(stickInput(0, 0, 1), { turn: 0, move: 1, fire: false });
-  assert.deepEqual(stickInput(0, Math.PI / 2, 1), { turn: 1, move: 0, fire: false });
-  const back = stickInput(0, Math.PI, 1);
-  assert.equal(back.move, -1);
-  assert.equal(stickInput(0, 0.2, 1).turn, 1);
-  assert.equal(stickInput(0, -0.2, 1).turn, -1);
-  assert.equal(stickInput(0, Math.PI, 0.1).move, 0);
+test('stickInput points the tank where the stick points, never reversing', () => {
+  assert.deepEqual(stickInput(0, 0), { turn: 0, move: 0, fire: false });
+  assert.deepEqual(stickInput(Math.PI, 0.1), { turn: 0, move: 0, fire: false });
+  assert.deepEqual(stickInput(0, 1), { turn: 0, move: 0, fire: false, dir: 0 });
+  // a stick pulled behind the tank is a heading, not a reverse
+  const back = stickInput(-Math.PI / 2, 1);
+  assert.equal(back.move, 0);
+  assert.ok(Math.abs(back.dir! + Math.PI / 2) < 1e-9);
+  assert.ok(Math.abs(stickInput(3 * Math.PI, 1).dir! - Math.PI) < 1e-9);
+});
+
+test('keyHeading maps held keys to screen directions', () => {
+  assert.equal(keyHeading(false, false, false, false), undefined);
+  assert.equal(keyHeading(false, false, false, true), 0);
+  assert.equal(keyHeading(false, true, false, false), Math.PI / 2);
+  assert.equal(keyHeading(false, false, true, false), Math.PI);
+  assert.equal(keyHeading(true, false, false, false), -Math.PI / 2);
+  assert.ok(Math.abs(keyHeading(true, false, false, true)! + Math.PI / 4) < 1e-9);
+  assert.equal(keyHeading(false, false, true, true), undefined);
+  assert.equal(keyHeading(true, true, false, false), undefined);
+});
+
+test('a dir input turns the tank to face it and drives that way on screen', () => {
+  // open 5x5 room, tank in the middle facing right
+  const open = (): World => {
+    const w = createWorld({ cols: 5, rows: 5, seed: 3, count: 2, target: 5 });
+    w.maze.rects = [];
+    w.phase = 'play';
+    w.tanks[0].x = 2.5;
+    w.tanks[0].y = 2.5;
+    w.tanks[0].a = 0;
+    w.tanks[1].x = 4.5;
+    w.tanks[1].y = 4.5;
+    w.pickups = [];
+    return w;
+  };
+  // hold "left" for 0.4 s: faces left and has moved left, never right of the start
+  const w = open();
+  const left = { turn: 0, move: 0, fire: false, dir: Math.PI } as TankInput;
+  let maxX = w.tanks[0].x;
+  for (let i = 0; i < 24; i++) {
+    step(w, [left, idle]);
+    maxX = Math.max(maxX, w.tanks[0].x);
+  }
+  const t = w.tanks[0];
+  assert.ok(Math.abs(Math.abs(t.a) - Math.PI) < 1e-6, `not facing left: ${t.a}`);
+  assert.ok(t.x < 2.5 - FWD * 0.4 * 0.9, `did not drive left: ${t.x}`);
+  assert.ok(maxX <= 2.5 + 1e-9, 'drifted right');
+  assert.ok(Math.abs(t.y - 2.5) < 1e-6);
+  // a quarter turn finishes within a few frames
+  const u = open();
+  step(u, [{ turn: 0, move: 0, fire: false, dir: -Math.PI / 2 }, idle]);
+  assert.ok(Math.abs(u.tanks[0].a) > 0 && Math.abs(u.tanks[0].a) <= DIR_TURN / 60 + 1e-9);
+  for (let i = 0; i < 8; i++) step(u, [{ turn: 0, move: 0, fire: false, dir: -Math.PI / 2 }, idle]);
+  assert.ok(Math.abs(u.tanks[0].a + Math.PI / 2) < 1e-9, 'quarter turn not done in 9 frames');
+  assert.ok(u.tanks[0].y < 2.5);
+  // firing still leaves along the barrel
+  step(u, [{ turn: 0, move: 0, fire: true, dir: -Math.PI / 2 }, idle]);
+  assert.equal(u.shells.length, 1);
+  assert.ok(u.shells[0].vy < 0 && Math.abs(u.shells[0].vx) < 1e-9);
 });
 
 // -----------------------------------------------------------------------------------------------------------------
@@ -559,7 +613,9 @@ test('state and input packets round trip', () => {
   }
   const i = inputPacket({ k: 'in', roomRound: 1, turn: -1, move: 1, fireCount: 3 });
   const pi = parsePacket(i);
-  assert.ok(pi && pi.k === 'in' && pi.fireCount === 3);
+  assert.ok(pi && pi.k === 'in' && pi.fireCount === 3 && pi.dir === undefined);
+  const di = parsePacket(inputPacket({ k: 'in', roomRound: 1, turn: 0, move: 0, fireCount: 0, dir: -Math.PI / 2 }));
+  assert.ok(di && di.k === 'in' && Math.abs(di.dir! + Math.PI / 2) < 0.001);
   const e = parsePacket(endPacket({ k: 'end', roomRound: 1, winner: 2, champ: 2, scores: [5, 3], rounds: 9 }));
   assert.ok(e && e.k === 'end' && e.winner === 2);
 });
@@ -598,6 +654,8 @@ test('malformed packets are rejected', () => {
   assert.equal(parsePacket({ game: 'tank-maze', type: 'round', room: 'x' }), null);
   assert.equal(parsePacket({ game: 'tank-maze', type: 'round', room: 1, round: 1, seed: 1, cols: 99, rows: 6, seats: [0], bots: [], scores: [0], target: 5, level: 0, spawns: [{ x: 1, y: 1, a: 0 }] }), null);
   assert.equal(parsePacket({ game: 'tank-maze', type: 'in', room: 1, turn: 2, move: 0, fc: 0 }), null);
+  assert.equal(parsePacket({ game: 'tank-maze', type: 'in', room: 1, turn: 0, move: 0, fc: 0, d: 9000 }), null);
+  assert.equal(parsePacket({ game: 'tank-maze', type: 'in', room: 1, turn: 0, move: 0, fc: 0, d: 1.5 }), null);
   assert.equal(parsePacket({ game: 'tank-maze', type: 's', room: 1, tick: 1, pt: 0, phase: 'nope', tanks: [], shells: [], scores: [] }), null);
 });
 

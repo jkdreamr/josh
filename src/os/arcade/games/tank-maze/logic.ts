@@ -198,7 +198,11 @@ export const cellOf = (m: Maze, x: number, y: number) => Math.min(m.rows - 1, Ma
 export type Special = 'laser' | 'triple' | 'mine';
 export type Phase = 'ready' | 'play' | 'settle' | 'done';
 
-export type TankInput = { turn: -1 | 0 | 1; move: -1 | 0 | 1; fire: boolean };
+/**
+ * `turn`/`move` steer relative to the barrel (bots). `dir` is a screen heading in radians (players):
+ * the tank swings to face it and drives that way, so it overrides turn/move when set.
+ */
+export type TankInput = { turn: -1 | 0 | 1; move: -1 | 0 | 1; fire: boolean; dir?: number };
 export const noInput: TankInput = { turn: 0, move: 0, fire: false };
 
 export type Tank = {
@@ -269,6 +273,8 @@ export const TANK_R = 0.26;
 export const FWD = 1.9;
 export const REV = 1.3;
 export const TURN = 3.8;
+/** How fast a player's tank swings to face its `dir` heading (rad/s): a full about-face takes ~0.25 s. */
+export const DIR_TURN = 13;
 export const SHELL_SPEED = 3.2;
 export const SHELL_R = 0.07;
 export const SHELL_LIFE = 9;
@@ -534,11 +540,18 @@ const applyInput = (w: World, t: Tank, input: TankInput, dt: number) => {
   if (!t.alive) return;
   t.cooldown = Math.max(0, t.cooldown - dt);
   t.recoil = Math.max(0, t.recoil - dt * 6);
-  t.a = wrapA(t.a + input.turn * TURN * dt);
-  if (input.move !== 0) {
-    const sp = input.move > 0 ? FWD : REV;
-    t.x += Math.cos(t.a) * sp * input.move * dt;
-    t.y += Math.sin(t.a) * sp * input.move * dt;
+  const direct = input.dir !== undefined && Number.isFinite(input.dir);
+  if (direct) {
+    const err = wrapA(input.dir! - t.a);
+    const swing = DIR_TURN * dt;
+    t.a = Math.abs(err) <= swing ? wrapA(input.dir!) : wrapA(t.a + Math.sign(err) * swing);
+  } else t.a = wrapA(t.a + input.turn * TURN * dt);
+  if (direct || input.move !== 0) {
+    const sp = direct ? FWD : input.move > 0 ? FWD : REV;
+    const heading = direct ? input.dir! : t.a;
+    const sign = direct ? 1 : input.move;
+    t.x += Math.cos(heading) * sp * sign * dt;
+    t.y += Math.sin(heading) * sp * sign * dt;
     t.tread += sp * dt;
     pushOut(w.maze, t, TANK_R);
     t.x = Math.max(TANK_R, Math.min(w.maze.cols - TANK_R, t.x));
@@ -870,17 +883,18 @@ export function toCanvas(clientX: number, clientY: number, rect: { left: number;
   };
 }
 
+/** Screen heading (radians, y down) for held up/down/left/right keys, or undefined when none or they cancel. */
+export function keyHeading(up: boolean, down: boolean, left: boolean, right: boolean): number | undefined {
+  const x = (right ? 1 : 0) - (left ? 1 : 0);
+  const y = (down ? 1 : 0) - (up ? 1 : 0);
+  return x || y ? Math.atan2(y, x) : undefined;
+}
+
 /**
- * Touch stick -> TankInput. The stick is a desired heading plus magnitude (0..1): the tank turns
- * toward it and drives when roughly aligned; a stick pointed almost behind reverses instead of U-turning.
+ * Touch stick -> TankInput. The stick is a screen heading plus magnitude (0..1): past the dead zone the
+ * tank turns to face where the stick points and drives that way, never backing up.
  */
-export function stickInput(tankAngle: number, stickAngle: number, magnitude: number): TankInput {
+export function stickInput(stickAngle: number, magnitude: number): TankInput {
   if (magnitude < 0.3) return { turn: 0, move: 0, fire: false };
-  const err = wrapA(stickAngle - tankAngle);
-  if (Math.abs(err) > 2.4) {
-    return { turn: err > 0 ? -1 : 1, move: -1, fire: false };
-  }
-  const move = Math.abs(err) < 0.7 ? 1 : 0;
-  const turn = Math.abs(err) < 0.12 ? 0 : err > 0 ? 1 : -1;
-  return { turn, move, fire: false } as TankInput;
+  return { turn: 0, move: 0, fire: false, dir: wrapA(stickAngle) };
 }
