@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
-import { advanceOnlineRound, botPlayers, canStartNext, nextOnlineRound, RoundRouter, tagRound, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, RoundRouter, tagRound, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
-import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, lowestFreeSeat, markRoundRecorded, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, sortListings, type RoomState } from '../worker/src/room-core.ts';
+import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, lowestFreeSeat, markRoundRecorded, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, type RoomState } from '../worker/src/room-core.ts';
+import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
 
 /** A stand-in for the browser's WebSocket: records what RoomLink sends and lets a test play the server's side. */
 class FakeWebSocket {
@@ -335,6 +336,31 @@ test('only the host makes a room public, and the message is checked', () => {
   assert.deepEqual(parseRoomMessage('{"t":"listed","on":false}', 4), { t: 'listed', on: false });
   assert.equal(parseRoomMessage('{"t":"listed","on":1}', 4), null);
   assert.equal(parseRoomMessage('{"t":"listed"}', 4), null);
+});
+
+test('rooms hold up to twenty seats: each game keeps its own count, and nothing past the cap gets through', () => {
+  assert.equal(MAX_SEATS, 20);
+  for (const [game, spec] of Object.entries(ONLINE_SPECS)) assert.ok(spec.seats >= 2 && spec.seats <= MAX_SEATS, `${game}: ${spec.seats} seats`);
+  assert.equal(ONLINE_SPECS.scramble.seats, 20);
+  assert.equal(ONLINE_SPECS.pong.seats, 2, 'other games keep their own seats');
+  assert.equal(seatsFor({ seats: 20 }), 20);
+  assert.equal(seatsFor({ seats: 8 }), 8);
+  assert.equal(seatsFor({ seats: 64 }), MAX_SEATS);
+  assert.equal(seatsFor({ seats: 0 }), 2);
+  // a full room of twenty: the lowest free seat, then none; bots fill the rest of the seats and step aside
+  const people = Array.from({ length: 19 }, (_, i) => i);
+  assert.equal(lowestFreeSeat(20, people), 19);
+  assert.equal(lowestFreeSeat(20, [...people, 19]), null);
+  assert.deepEqual(botSeats(20, [0, 3], 19), Array.from({ length: 20 }, (_, i) => i).filter((i) => i !== 0 && i !== 3).slice(0, 18));
+  assert.deepEqual(parseRoomMessage('{"t":"msg","to":19,"d":1}', 20), { t: 'msg', to: 19, d: 1 });
+  assert.equal(parseRoomMessage('{"t":"msg","to":20,"d":1}', 20), null);
+  assert.deepEqual(parseRoomMessage('{"t":"bots","n":19}', 20), { t: 'bots', n: 19 });
+  assert.equal(parseRoomMessage('{"t":"bots","n":20}', 20), null);
+  const room = { code: 'ABCD', game: 'scramble', host: 'Josh', players: 12, bots: 8, seats: 20, started: true, lateJoin: true };
+  assert.deepEqual(parseOpenRooms({ rooms: [room, { ...room, seats: 21 }] }), [room]);
+  assert.equal(openRoomLine(room), '12/20 · 8 Bots · Playing');
+  const race = parseRacePacket({ t: 'race-all', round: 1, scores: { 0: 5, 19: 7, 20: 9 } });
+  assert.deepEqual(race, { t: 'race-all', round: 1, scores: { 0: 5, 19: 7 } });
 });
 
 test('open rooms from the Worker are checked before the arcade shows them', () => {

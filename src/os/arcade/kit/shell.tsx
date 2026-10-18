@@ -10,7 +10,7 @@ import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMuted } from './sfx';
 import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange, useSetting } from './settings';
 import { BotStepper, OnlinePanel, OnlineProvider, ROOM_VISIBILITY, RoomCode, VisibilityPicker } from './online';
-import { botPlayers, canStartNext, nextOnlineRound, parseRacePacket, raceStandings, RoundRouter, type RaceScores } from './online-core';
+import { MAX_SEATS, botPlayers, canStartNext, nextOnlineRound, parseRacePacket, raceStandings, RoundRouter, type RaceScores } from './online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { countPlay } from '../../stats';
 import { useBadge } from '../../badges';
@@ -50,8 +50,8 @@ export type GameShellProps = {
 const KEY_LOCKOUT_MS = 900;
 
 type Result = { id: number; score?: number; best: number | null; isBest: boolean } & GameOverInfo;
-/** A room holds sixteen seats at most, so a host never asks for more bots than that. */
-const BOT_COUNTS = Array.from({ length: 16 }, (_, i) => String(i));
+/** A room holds MAX_SEATS seats at most, so a host never asks for more bots than that. */
+const BOT_COUNTS = Array.from({ length: MAX_SEATS }, (_, i) => String(i));
 
 const Icon = ({ d, size = 14 }: { d: string; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -131,7 +131,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const loungeUnread = useBadge('lounge');
   const [visibility, setVisibility] = useSetting(ROOM_VISIBILITY);
   /** How many bots this game's rooms start with when this player hosts: the last number they picked. */
-  const botsSetting = useMemo(() => defineSetting(`${meta.id}:bots`, BOT_COUNTS, String(Math.max(0, Math.min(15, Math.floor(defaultBots))))), [meta.id, defaultBots]);
+  const botsSetting = useMemo(() => defineSetting(`${meta.id}:bots`, BOT_COUNTS, String(Math.max(0, Math.min(MAX_SEATS - 1, Math.floor(defaultBots))))), [meta.id, defaultBots]);
   const [onlineMode, setOnlineMode] = useState(false);
   const onlineModeRef = useRef(onlineMode);
   onlineModeRef.current = onlineMode;

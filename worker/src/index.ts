@@ -10,7 +10,7 @@ import { Chat, type ChatEnv } from './chat';
 import { Lobby } from './lobby';
 import { Lounge, type LoungeEnv } from './lounge';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
-import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, LISTING_REFRESH_MS, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
+import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, LISTING_REFRESH_MS, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, seatsFor, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
 export { Chat, Lobby, Lounge };
 
@@ -170,7 +170,7 @@ export class Room extends DurableObject<Env> {
   open(code: string, game: string, spec: OnlineSpec, listed = false): Promise<boolean> {
     return this.exclusive(async () => {
       if (await this.ctx.storage.get<RoomState>('room')) return false;
-      await this.ctx.storage.put<RoomState>('room', { code, game, seats: spec.seats, started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: 0 } : {}), ...(listed ? { listed: true } : {}) });
+      await this.ctx.storage.put<RoomState>('room', { code, game, seats: seatsFor(spec), started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: 0 } : {}), ...(listed ? { listed: true } : {}) });
       await this.ctx.storage.put<RoomResults>('results', { reports: {}, recorded: [] });
       return true;
     });

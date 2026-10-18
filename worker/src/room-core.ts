@@ -1,8 +1,11 @@
-import type { OpenRoom } from '../../src/os/arcade/kit/online-core.ts';
+import { MAX_SEATS, type OpenRoom } from '../../src/os/arcade/kit/online-core.ts';
 
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const ROOM_CODE_LENGTH = 4;
 export const ROOM_MESSAGE_MAX_BYTES = 8 * 1024;
+
+/** The seats a new room for a game gets: what its spec asks for, two at least and MAX_SEATS at most. */
+export const seatsFor = (spec: { seats: number }) => Math.max(2, Math.min(MAX_SEATS, Math.floor(spec.seats) || 2));
 
 export type RoomPlayer = { seat: number; name: string };
 /**

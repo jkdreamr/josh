@@ -2,6 +2,9 @@ export function advanceOnlineRound(round: number) {
   return round + 1;
 }
 
+/** The most seats a room has: a game's own room holds as many as its meta says, never more than this. */
+export const MAX_SEATS = 20;
+
 /** A public room as the arcade's Open Rooms lists it (GET /rooms). players counts people; bots fill other seats. */
 export type OpenRoom = { code: string; game: string; host: string; players: number; bots: number; seats: number; started: boolean; lateJoin: boolean };
 /** The most open rooms listed at once. */
@@ -19,7 +22,7 @@ export function parseOpenRooms(body: unknown): OpenRoom[] {
     const r = raw as Record<string, unknown>;
     if (typeof r.code !== 'string' || !/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/.test(r.code)) continue;
     if (typeof r.game !== 'string' || !/^[a-z0-9-]{1,40}$/.test(r.game) || typeof r.host !== 'string') continue;
-    if (!count(r.seats, 16) || r.seats < 2 || !count(r.players, r.seats) || !count(r.bots, r.seats)) continue;
+    if (!count(r.seats, MAX_SEATS) || r.seats < 2 || !count(r.players, r.seats) || !count(r.bots, r.seats)) continue;
     rooms.push({ code: r.code, game: r.game, host: r.host.slice(0, 32), players: r.players, bots: r.bots, seats: r.seats, started: r.started === true, lateJoin: r.lateJoin === true });
   }
   return rooms;
@@ -94,7 +97,7 @@ export function parseRacePacket(value: unknown): { t: 'race'; round: number; sco
   const scores: RaceScores = {};
   for (const [key, score] of Object.entries(packet.scores as Record<string, unknown>)) {
     const seat = Number(key);
-    if (Number.isInteger(seat) && seat >= 0 && seat < 16 && validScore(score)) scores[seat] = score;
+    if (Number.isInteger(seat) && seat >= 0 && seat < MAX_SEATS && validScore(score)) scores[seat] = score;
   }
   return { t: 'race-all', round, scores };
 }
