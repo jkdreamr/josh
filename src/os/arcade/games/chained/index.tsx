@@ -421,6 +421,8 @@ function Play({ kind }: { kind: Kind }) {
   const tickAt = useRef(-1);
   const tap = useRef({ swap: false });
   const clock = useRef(0);
+  /** Frame cost counters, read by the dev hook. */
+  const perf = useRef({ frames: 0, dt: 0, step: 0, view: 0, render: 0, hud: 0 });
   const hudTick = useRef(0);
   const [hud, setHud] = useState<Hud>(() => ({ time: '0:00.00', zone: 0, cp: 0, lit: LEVEL.checkpoints.map((_, i) => i === 0), lava: -3, souls: [], active: 0, heat: 0, fade: 0, wind: 'calm', countdown: 1, started: false, race: null }));
   const [card, setCard] = useState<{ id: number; zone: number } | null>(null);
@@ -512,6 +514,15 @@ function Play({ kind }: { kind: Kind }) {
           clock.current += 1 / 60;
           view.current?.frame(g, focusOf(g), 1 / 60, clock.current, team && !live);
         }
+      },
+      // average frame costs since the last call, and what the renderer drew last frame
+      perf: () => {
+        const c = perf.current;
+        const n = Math.max(1, c.frames);
+        const info = view.current?.gl.renderer.info;
+        const out = { frames: c.frames, msFrame: (c.dt * 1000) / n, msStep: c.step / n, msView: c.view / n, msRender: c.render / n, msHud: c.hud / n, calls: info?.render.calls ?? 0, triangles: info?.render.triangles ?? 0, geometries: info?.memory.geometries ?? 0, textures: info?.memory.textures ?? 0, programs: info?.programs?.length ?? 0 };
+        perf.current = { frames: 0, dt: 0, step: 0, view: 0, render: 0, hud: 0 };
+        return out;
       },
       // lets the shades climb your chain too, so a playtest can watch a whole climb or race
       auto: (level: ShadeLevel = 'swift') => {
@@ -745,7 +756,9 @@ function Play({ kind }: { kind: Kind }) {
       }
       tap.current.swap = false;
 
+      const t0 = performance.now();
       step(g, dt);
+      perf.current.step += performance.now() - t0;
       // a race counts down out loud
       if (g.mode === 'race' && g.time < 0 && g.time > -RACE_COUNTDOWN) {
         const left = Math.ceil(-g.time);
@@ -769,9 +782,13 @@ function Play({ kind }: { kind: Kind }) {
       }
 
       if (v) {
+        const t1 = performance.now();
         v.frame(g, focusOf(g), dt, clock.current, team && !live);
         placeTags(g, v);
+        perf.current.view += performance.now() - t1;
       }
+      perf.current.frames++;
+      perf.current.dt += dt;
 
       // the end of the climb
       if (!live) {
@@ -781,9 +798,15 @@ function Play({ kind }: { kind: Kind }) {
         if (g.won !== null && onlineRef.current?.isHost) finish(true, g.won, TOP, g.winner ?? 0);
         else if (g.lost) finish(false, g.time, g.lost.height, -1);
       }
+      const t2 = performance.now();
       updateHud(g, dt);
+      perf.current.hud += performance.now() - t2;
     },
-    () => view.current?.render(),
+    () => {
+      const t0 = performance.now();
+      view.current?.render();
+      perf.current.render += performance.now() - t0;
+    },
   );
 
   /** The lowest soul still climbing on your chain. */

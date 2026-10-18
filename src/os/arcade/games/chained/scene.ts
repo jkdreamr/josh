@@ -226,7 +226,8 @@ function softDisc(THREE: Three) {
 /** Builds the view. lite trims particles and detail for phones. */
 export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: { lite?: boolean } = {}): View | null {
   const lite = !!opts.lite;
-  const gl = createGL(THREE, host, { alpha: true, maxDpr: lite ? 1.5 : 2 });
+  // a lower pixel ratio than the screen's: the glows and fog are fill rate work, and the HUD is DOM so it stays crisp
+  const gl = createGL(THREE, host, { alpha: true, maxDpr: lite ? 1.25 : 1.5 });
   if (!gl) return null;
   const scene = new THREE.Scene();
   const fog = new THREE.Fog(ZONES[0].palette.fog, ZONES[0].palette.fogNear, ZONES[0].palette.fogFar);
@@ -1657,7 +1658,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     const grounded = main.grounded || main.hanging;
     if (!cam.init) cam.gy = my;
     else if (grounded) cam.gy = damp(cam.gy, my, 7, dt);
-    else if (my - cam.gy > 2.2) cam.gy = damp(cam.gy, my - 2.2, 5, dt);
+    else if (my - cam.gy > 1.2) cam.gy = damp(cam.gy, my - 1.2, 4, dt);
     else if (my < cam.gy - 1.2) cam.gy = damp(cam.gy, my + 1.2, 9, dt);
     // the target: mostly the lead soul, a little toward the others, a little ahead of where it is going
     let ox = 0;
