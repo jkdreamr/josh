@@ -190,7 +190,7 @@ function build(THREE: Three, host: HTMLElement): World | null {
       scene.add(led);
     }
   // goal mouths: they light up when someone scores
-  const mouths = [-1, 1].map((sz) => {
+  const mouths = [-1, 1].map((sz): T.Mesh => {
     const mouth = new THREE.Mesh(new THREE.BoxGeometry(GOAL_W, 0.02, 0.26), new THREE.MeshBasicMaterial({ color: sz > 0 ? P1 : P2, transparent: true, opacity: 0.55 }));
     mouth.position.set(0, 0.005, sz * (L / 2 + 0.12));
     scene.add(mouth);
@@ -301,7 +301,11 @@ function burst(w: World, at: V2, color: number, size: number, max = 0.36) {
 }
 
 const TABLE_CORNERS: [number, number, number][] = [];
-for (const x of [-1, 1]) for (const z of [-1, 1]) for (const y of [0, RAIL_H]) TABLE_CORNERS.push([x * (W / 2 + RAIL_T), y, z * (L / 2 + RAIL_T)]);
+for (const x of [-1, 1])
+  for (const z of [-1, 1]) {
+    for (const y of [0, RAIL_H]) TABLE_CORNERS.push([x * (W / 2 + RAIL_T), y, z * (L / 2 + RAIL_T)]);
+    TABLE_CORNERS.push([(x * GOAL_W) / 2, 0, z * (L / 2 + 0.25)]);
+  }
 
 /**
  * Camera: a perspective from your own end of the table (the top end for the second online seat); top-down for two
@@ -321,7 +325,8 @@ function placeCamera(w: World, shared: boolean, flipped: boolean, hudTop: number
     dir = [0, 1, 0];
   } else {
     cam.up.set(0, 1, 0);
-    const elev = ((w.portrait ? 58 : 52) * Math.PI) / 180;
+    // wide, short windows look along the table a little more so it comes out bigger
+    const elev = ((w.portrait ? 58 : a > 1.6 ? 44 : 50) * Math.PI) / 180;
     cam.fov = w.portrait ? 50 : 42;
     dir = [0, Math.sin(elev), Math.cos(elev) * (flipped ? -1 : 1)];
   }
@@ -790,7 +795,7 @@ function Play() {
       : 'Drag to move your mallet'
     : shared
       ? 'Blue: WASD or mouse. Pink: arrow keys or mouse'
-      : 'Move the mouse, or use WASD or the arrow keys';
+      : 'Move the mouse or use WASD';
   return (
     <>
       <div ref={ref} className="g-airhockey-host" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onPointerLeave={onUp} />
