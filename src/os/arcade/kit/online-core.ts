@@ -47,6 +47,15 @@ export function nextOnlineRound(round: number, server: number | null) {
   return server ?? advanceOnlineRound(round);
 }
 
+/**
+ * Whether the host's Play Again starts the next round now: someone to play, the round over for everyone (`waiting`: the
+ * host is out early and its game still runs the round for the others), and in a race nobody still playing unless
+ * `force`d (starting then ends their round).
+ */
+export function canStartNext(next: { ready: boolean; waiting: boolean; racing: boolean }, force = false) {
+  return next.ready && !next.waiting && (!next.racing || force);
+}
+
 /** Final scores of a score race by seat. null means the player finished without a score. */
 export type RaceScores = Record<number, number | null>;
 export type RaceStanding = { seat: number; score: number | null; place: number | null };

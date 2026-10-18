@@ -10,6 +10,11 @@ export type GameOverInfo = {
   board?: string;
   /** Score to rank on the leaderboard when the round shows no score of its own (games that track bests per level). */
   rank?: number;
+  /**
+   * Online, a round that goes on after this player is out: the host's Play Again waits, with this note, and the room
+   * isn't told the round is over, until the game clears it with updateOver once it is over for everyone.
+   */
+  wait?: string;
 };
 
 export type ShellApi = {
@@ -30,6 +35,8 @@ export type ShellApi = {
   restart: () => void;
   /** Ends the round and shows the Game Over overlay. Pass a score to record it against the best. */
   gameOver: (score?: number, info?: GameOverInfo) => void;
+  /** While the Game Over card is up, replaces its title, detail and wait (a round still going on for others). */
+  updateOver: (info: GameOverInfo) => void;
   /** Live score shown in the top-left pill (null hides it). */
   setScore: (score: number | null) => void;
   /** Ask idle games to redraw once (useCanvas calls this after a resize). */

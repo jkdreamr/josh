@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, MAX_DT, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
 import {
@@ -30,10 +30,10 @@ import {
   type Match,
 } from './logic';
 import { configOf, parsePacket, type Bots } from './net';
-import { END_PAUSE, FLUSH, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
-import { MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
-import { HALF, SUPPLY_FALL } from './map';
-import { AmmoIcon, EggIcon, HowToPlay, IslandArt, PackIcon, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon } from './hud';
+import { FLUSH, TICK_MS, catchUp, ending, flush, guestMatch, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Session } from './session';
+import { ARMOR_NAMES, MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
+import { HALF, SUPPLY_FALL, placeAt } from './map';
+import { AmmoIcon, ArmorIcon, EggIcon, HowToPlay, IslandArt, PackIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon, keyCode } from './hud';
 import { meta } from './meta';
 import './scramble.css';
 
@@ -203,6 +203,9 @@ type Hud = {
   items: Record<UseId, number> | null;
   scope: number;
   pack: number;
+  /** Helmet and vest levels (shown for someone else's egg too, as its owner reports them). */
+  helmet: number;
+  vest: number;
   /** 0..1 while reloading or using something, else -1. */
   busy: number;
   busyText: string;
@@ -210,6 +213,11 @@ type Hud = {
   shrinking: boolean;
   outside: boolean;
   low: boolean;
+  /** Warming up at a campfire. */
+  warm: boolean;
+  /** The place just walked (or landed) into, while its name is up, and the place the egg we see is in. */
+  arrive: string | null;
+  where: string | null;
   banner: string | null;
   prompt: string | null;
   jump: boolean;
@@ -219,7 +227,7 @@ type Hud = {
 };
 const deep = new Set<keyof Hud>(['slots', 'toss', 'items']);
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, wood: 0, items: null, scope: 0, pack: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, wood: 0, items: null, scope: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
@@ -229,7 +237,7 @@ type Pop = { el: HTMLDivElement | null; x: number; y: number; z: number; age: nu
 type Taps = { build: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number };
 const noTaps = (): Taps => ({ build: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0 });
 
-const BUSY_TEXT: Record<UseId, string> = { bandage: 'bandaging', medkit: 'using a medkit', mini: 'drinking a mini shield', shield: 'drinking a shield potion', coffee: 'drinking coffee' };
+const BUSY_TEXT: Record<UseId, string> = { bandage: 'bandaging', medkit: 'using a medkit', mini: 'drinking a mini shield', shield: 'drinking a shield potion', coffee: 'drinking coffee', smoothie: 'drinking a smoothie', tart: 'eating a golden egg tart' };
 /** A name with its article, for the kill feed: "with a pistol", "with an smg", "with hot sauce". */
 const withA = (name: string) => `${/^[aeiou]|^SMG/.test(name) ? 'an' : 'a'} ${name}`;
 function causeName(w: Cause) {
@@ -237,6 +245,7 @@ function causeName(w: Cause) {
   if (w === 'left') return '';
   if (w === 'sauce') return 'hot sauce';
   if (w === 'grenade' || w === 'barrel') return withA(w);
+  if (w === 'impulse') return withA('impulse egg');
   if (isMelee(w)) return withA(MELEE[w].name);
   return withA(WEAPONS[w].name);
 }
@@ -279,6 +288,8 @@ function Play({ mode }: { mode: Mode }) {
   const [feed, setFeed] = useState<Feed[]>([]);
   const [bigMap, setBigMap] = useState(false);
   const bannerRef = useRef({ text: '', until: -1 });
+  /** The named place our egg is in, the last one whose name went up, when it last came or went, and until when the name shows. */
+  const placeRef = useRef({ in: -1, said: -1, at: -99, until: -1 });
   const spectate = useRef(-1);
   const soloEnd = useRef(-1);
 
@@ -380,28 +391,33 @@ function Play({ mode }: { mode: Mode }) {
   // -------------------------------------------------------------------------------------------------------------
   // Online: state about 15 times a second, events as they happen, the result from the host.
 
+  /** Whether this game runs the match (the host when it started), and the room's host hand-offs by then. */
+  const hosting = useRef(!!online?.isHost);
+  const handoffs = useRef(online?.handoffs ?? 0);
   /**
-   * The result card for an online match. `report` once the host has called it; `early` when a guest who is out has
-   * seen enough before the end (the match goes on for everyone else, and the result is still reported when it comes).
+   * The result card for an online match. `report` once the host has called it; `early` when we are out and have seen
+   * enough before the end: the match goes on for everyone else (the host's timer keeps running it), and the card
+   * keeps up with it until the result comes, which is still reported.
    */
   const finishOnline = (report: boolean, early = false) => {
     const n = net.current;
     const o = onlineRef.current;
     const m = match.current!;
-    const me = m.fighters[m.me];
     const winner = m.fighters[m.winner];
     if (report && !n.reported && o) {
       n.reported = true;
       o.reportResult(o.round, winner && winner.seat >= 0 ? winner.seat : null);
     }
-    if (n.over) return;
+    if (n.over && !n.early) return;
+    const { won, ...card } = resultCard(m, early, hosting.current);
+    n.early = early;
+    if (n.over) {
+      shellRef.current.updateOver(card);
+      return;
+    }
     n.over = true;
-    const won = !!me && m.winner === me.id;
-    const title = won ? 'Last Egg Standing' : me ? `${ordinal(me.place || m.fighters.length)} of ${m.fighters.length}` : 'Match Over';
-    const stats = me ? `${me.kills} ${me.kills === 1 ? 'elimination' : 'eliminations'}, ${Math.round(me.dealt)} damage.` : '';
-    const who = early ? ` ${aliveCount(m)} eggs still going.` : winner && !won ? ` ${winner.name} won.` : !winner ? ' Nobody survived the storm.' : '';
     sfx.play(won ? 'win' : 'lose');
-    shellRef.current.gameOver(undefined, { title, detail: `${stats}${who}`.trim() });
+    shellRef.current.gameOver(undefined, card);
   };
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
@@ -431,9 +447,20 @@ function Play({ mode }: { mode: Mode }) {
       if (!o || !m) return;
       const me = { seat: o.seat, isHost: o.isHost, round: o.round };
       const now = performance.now() / 1000;
+      // the host left and someone took over: the match its game ran is over (the shell has said so), and a card that
+      // went up early stops waiting for it
+      if (o.handoffs !== handoffs.current) {
+        if (n.early) {
+          n.early = false;
+          const card = resultCard(m, false, false);
+          shellRef.current.updateOver({ title: card.title, detail: `${card.detail} The host left before the end.` });
+        }
+        return;
+      }
       // a hidden tab gets no frames, so the match carries on from here: our egg stands still but the storm still
-      // bites and the glide still lands, and a hidden host keeps the computer eggs and everyone's pickups going
-      if (document.hidden && n.synced && shellRef.current.status === 'playing') {
+      // bites and the glide still lands. A host keeps the computer eggs and everyone's pickups going, hidden or done
+      // watching.
+      if (offscreen(n, me, document.hidden, shellRef.current.status === 'playing')) {
         const mine = m.fighters[m.me];
         if (mine) {
           mine.input.fire = false;
@@ -441,23 +468,15 @@ function Play({ mode }: { mode: Mode }) {
           mine.input.mz = 0;
         }
         mouse.current.down = false;
-        let left = Math.min(2, Math.max(0, now - lastStep.current));
-        while (left > 1e-4) {
-          const d = Math.min(MAX_DT, left);
-          step(m, d);
-          left -= d;
-          for (const e of m.events.splice(0)) share(n, e, o.seat);
-        }
+        catchUp(n, m, o.seat, now - lastStep.current);
         lastStep.current = now;
         for (const packet of flush(n, o.round, FLUSH)) o.send(packet);
-        const call = ending(n, m, me, now);
-        if (call) finishRef.current(call === 'report');
       }
-      if (n.over) {
-        // done watching before the end: nothing draws the match any more, but the room still hears who won from us
-        m.events.length = 0;
-        if (!n.reported && n.end && now - n.endAt > END_PAUSE) finishRef.current(true);
-      }
+      // done watching: nothing draws the match any more, but the card keeps count and the room still hears who won from us
+      if (n.over) m.events.length = 0;
+      const call = n.synced ? ending(n, m, me, now) : null;
+      if (call) finishRef.current(call === 'report');
+      else if (n.early) finishRef.current(false, true);
       for (const out of tick(n, m, me, o.players.map((p) => p.seat), now)) o.send(out.d, { fast: out.fast });
     }, TICK_MS);
     return () => {
@@ -533,7 +552,7 @@ function Play({ mode }: { mode: Mode }) {
     if (keys.pressed('KeyR') || t.reload) inp.reload = true;
     if (keys.pressed('KeyE', 'KeyF') || t.interact) inp.interact = true;
     USE_IDS.forEach((w) => {
-      if (keys.pressed(`Digit${USE_KEYS[w]}`)) inp.use = w;
+      if (keys.pressed(keyCode(USE_KEYS[w]))) inp.use = w;
     });
     if (keys.pressed('KeyH')) inp.use = 'bestHeal';
     if (keys.pressed('KeyG')) inp.use = 'bestShield';
@@ -599,6 +618,17 @@ function Play({ mode }: { mode: Mode }) {
         v?.react(e, m, focus);
         if (live && o) share(n, e, o.seat);
       }
+      // the name goes up on walking or landing into a named place (not again for one we only just stepped out of)
+      const here = me && me.phase === 'ground' ? placeAt(m.map, me.x, me.z) : -1;
+      const pl = placeRef.current;
+      if (here !== pl.in) {
+        pl.in = here;
+        if (here >= 0 && !n.over && (here !== pl.said || clock.current - pl.at > 20)) {
+          pl.said = here;
+          pl.until = clock.current + 3;
+        }
+        pl.at = clock.current;
+      }
       if (live && o) for (const packet of flush(n, o.round, dt)) o.send(packet);
 
       if (v) {
@@ -634,21 +664,18 @@ function Play({ mode }: { mode: Mode }) {
     spectate.current = alive[(at + step + alive.length) % alive.length].id;
   }
 
-  /**
-   * Out, and seen enough: on to the results. Online that's only for guests; the host's game runs the match for
-   * everyone, so the host watches it to the end.
-   */
+  /** Out, and seen enough: on to the results. Online the match goes on without us (the host's game still runs it). */
   const canLeave = () => {
     const m = match.current;
     const me = m?.fighters[m.me];
-    return !!me && me.phase === 'out' && !net.current.over && (!live || !onlineRef.current?.isHost);
+    return !!me && me.phase === 'out' && !net.current.over;
   };
   function leave() {
     const m = match.current!;
     const me = m.fighters[m.me];
     if (!canLeave() || !me) return;
     if (!live) finishSolo(m, me);
-    else finishRef.current(false, !m.ended);
+    else finishRef.current(false, true);
   }
 
   function finishSolo(m: Match, me: Fighter) {
@@ -742,6 +769,23 @@ function Play({ mode }: { mode: Mode }) {
         sfx.tone({ freq: 220, to: 560, dur: 0.25, type: 'sawtooth', vol: 0.07 * k });
         sfx.noise(0.15, 0.1 * k);
         break;
+      case 'hsmg':
+        sfx.noise(0.05, 0.13 * k);
+        sfx.tone({ freq: 640, to: 160, dur: 0.05, type: 'square', vol: 0.05 * k });
+        break;
+      case 'marksman':
+        sfx.noise(0.12, 0.2 * k);
+        sfx.tone({ freq: 800, to: 120, dur: 0.15, type: 'sawtooth', vol: 0.07 * k });
+        break;
+      case 'minigun':
+        sfx.noise(0.03, 0.09 * k);
+        sfx.tone({ freq: 300, to: 120, dur: 0.035, type: 'sawtooth', vol: 0.04 * k });
+        break;
+      case 'flare':
+        // a pop and a whistle going up
+        sfx.noise(0.1, 0.18 * k);
+        sfx.tone({ freq: 500, to: 1800, dur: 0.9, type: 'triangle', vol: 0.06 * k });
+        break;
     }
   }
 
@@ -774,6 +818,14 @@ function Play({ mode }: { mode: Mode }) {
       case 'jump':
         if (mine) sfx.play('jump');
         break;
+      case 'bounce':
+        if (f && (mine || near(f.x, f.z) > 0.2)) {
+          const k = mine ? 1 : near(f.x, f.z);
+          sfx.tone({ freq: 240, to: 720, dur: 0.28, type: 'triangle', vol: 0.12 * k });
+          sfx.tone({ freq: 480, to: 1100, dur: 0.2, type: 'sine', vol: 0.06 * k, delay: 0.08 });
+          if (mine) buzz(30);
+        }
+        break;
       case 'land':
         if (mine) sfx.noise(0.12, 0.12);
         break;
@@ -801,7 +853,11 @@ function Play({ mode }: { mode: Mode }) {
         const k = near(e.x, e.z);
         if (k <= 0) break;
         if (e.k === 'flour') sfx.noise(0.35, 0.2 * k);
-        else {
+        else if (e.k === 'bush') sfx.tone({ freq: 220, to: 520, dur: 0.3, type: 'triangle', vol: 0.08 * k });
+        else if (e.k === 'jam') {
+          sfx.noise(0.2, 0.1 * k);
+          sfx.tone({ freq: 140, to: 80, dur: 0.25, type: 'triangle', vol: 0.07 * k });
+        } else {
           sfx.noise(0.5, 0.12 * k);
           sfx.tone({ freq: 160, to: 90, dur: 0.4, type: 'sawtooth', vol: 0.05 * k });
         }
@@ -810,10 +866,12 @@ function Play({ mode }: { mode: Mode }) {
       case 'thud':
         // a frying pan turning a bullet away, near us
         if (e.what === 'pan' && near(e.x, e.z) > 0.5) sfx.tone({ freq: 1500, to: 900, dur: 0.12, type: 'square', vol: 0.06 });
+        // and the clang of a bullet off a car or a lamp post
+        else if ((e.what === 'car' || e.what === 'post') && near(e.x, e.z) > 0.6) sfx.tone({ freq: 2100, to: 1300, dur: 0.06, type: 'square', vol: 0.035 });
         break;
       case 'hit':
         if (e.f === m.me) {
-          popNumber(e.x, e.z, String(e.d), e.shield);
+          popNumber(e.x, e.z, String(Math.round(e.took)), e.shield);
           sfx.tone({ freq: e.shield ? 1500 : 1100, dur: 0.035, type: 'triangle', vol: 0.1 });
         }
         break;
@@ -837,6 +895,17 @@ function Play({ mode }: { mode: Mode }) {
         sfx.tone({ freq: 120, to: 40, dur: 0.4, type: 'sawtooth', vol: 0.12 * k });
         break;
       }
+      case 'pulse': {
+        // a soft thump and a whoosh
+        const k = near(e.x, e.z);
+        if (k <= 0) break;
+        sfx.tone({ freq: 90, to: 260, dur: 0.3, type: 'sine', vol: 0.14 * k });
+        sfx.noise(0.25, 0.12 * k);
+        break;
+      }
+      case 'called':
+        if (e.f === m.me) say('flare away: a supply drop is on its way', 3);
+        break;
       case 'reload':
         if (mine) sfx.play('tick', 0.7);
         break;
@@ -859,7 +928,9 @@ function Play({ mode }: { mode: Mode }) {
         if (e.f === m.me) {
           const c = m.map.containers[e.c];
           if (c?.kind === 'chest' || c?.kind === 'supply') sfx.play('coin', c.kind === 'supply' || c.gold ? 0.8 : 1);
-          else if (c?.kind === 'crate') sfx.noise(0.15, 0.15);
+          else if (c?.kind === 'fridge') sfx.play('coin', 1.2);
+          else if (c?.kind === 'toilet') sfx.tone({ freq: 900, to: 300, dur: 0.12, type: 'square', vol: 0.07 });
+          else if (c?.kind === 'crate' || c?.kind === 'hay') sfx.noise(0.15, 0.15);
         }
         break;
       case 'wall':
@@ -978,14 +1049,21 @@ function Play({ mode }: { mode: Mode }) {
     } else if (own && focus.using) {
       busy = 1 - focus.useT / USES[focus.using].time;
       busyText = BUSY_TEXT[focus.using];
+    } else if (own && g && WEAPONS[g.w].spin && focus.spin > 0 && focus.spin < 1) {
+      busy = focus.spin;
+      busyText = 'spinning up';
     }
     let promptText: string | null = null;
     if (me && me === focus && me.phase === 'ground') {
       const p = prompt(m, me);
       if (p && 'chest' in p) {
         const c = m.map.containers[p.chest];
-        promptText = c.kind === 'supply' ? 'open supply drop' : c.gold ? 'open the golden chest' : 'open chest';
-      } else if (p) promptText = `${p.swap ? `swap ${p.item.def.kind === 'melee' ? MELEE[me.melee].name : 'gun'} for` : 'pick up'} ${lootName(p.item.def)}`;
+        promptText = c.kind === 'supply' ? 'open supply drop' : c.kind === 'fridge' ? 'open the fridge' : c.gold ? 'open the golden chest' : 'open chest';
+      } else if (p) {
+        const k = p.item.def.kind;
+        const have = k === 'melee' ? MELEE[me.melee].name : k === 'helmet' || k === 'vest' ? ARMOR_NAMES[k][me[k]] : 'gun';
+        promptText = `${p.swap ? `swap ${have} for` : 'pick up'} ${lootName(p.item.def)}`;
+      }
     }
     const out = me && me.phase === 'out' ? (me.by >= 0 && me.by !== me.id && m.fighters[me.by] ? `cracked by ${m.fighters[me.by].name}` : me.outCause === 'storm' ? 'lost to the storm' : 'out') + ` · ${ordinal(me.place)} of ${m.fighters.length}` : null;
     const gw = g ? WEAPONS[g.w] : null;
@@ -1002,18 +1080,24 @@ function Play({ mode }: { mode: Mode }) {
       melee: own ? focus.melee : isMelee(h.w) ? h.w : 'spatula',
       toss,
       mag: g ? g.mag : -1,
-      reserve: g && gw ? focus.ammo[gw.ammo] : 0,
-      ammo: gw ? gw.ammo : null,
+      reserve: g && gw && !gw.call ? focus.ammo[gw.ammo] : 0,
+      // a flare gun takes no ammo
+      ammo: gw && !gw.call ? gw.ammo : null,
       wood: own ? focus.wood : -1,
       items: own ? { ...focus.items } : null,
       scope: own ? focus.scope : 0,
       pack: own ? focus.pack : 0,
+      helmet: focus.helmet,
+      vest: focus.vest,
       busy: Math.round(busy * 30) / 30,
       busyText,
       storm,
       shrinking: s.shrinking,
       outside,
       low: own && focus.hp <= 30 && focus.phase === 'ground',
+      warm: focus.warm && focus.phase === 'ground',
+      arrive: clock.current < placeRef.current.until && placeRef.current.said >= 0 ? m.map.places[placeRef.current.said]?.name ?? null : null,
+      where: focus.phase === 'ground' ? (m.map.places[placeAt(m.map, focus.x, focus.z)]?.name ?? null) : null,
       banner,
       prompt: promptText,
       jump: !!me && me === focus && me.phase === 'bus' && m.time >= m.map.bus.on,
@@ -1161,7 +1245,7 @@ function Play({ mode }: { mode: Mode }) {
   const s = m.storm;
   const stormPath = `M${-HALF - 40} ${-HALF - 40}H${HALF + 40}V${HALF + 40}H${-HALF - 40}Z M${(s.x - s.r).toFixed(1)} ${s.z.toFixed(1)}a${s.r.toFixed(1)} ${s.r.toFixed(1)} 0 1 0 ${(2 * s.r).toFixed(1)} 0a${s.r.toFixed(1)} ${s.r.toFixed(1)} 0 1 0 ${(-2 * s.r).toFixed(1)} 0Z`;
   // supply drops show on the map from the moment they're on their way until someone opens them
-  const drops = map.drops.map((id) => map.containers[id]).filter((c) => m.time >= c.at - SUPPLY_FALL && !m.opened[c.id]);
+  const drops = [...map.drops, ...map.flares].map((id) => map.containers[id]).filter((c) => c && m.time >= c.at - SUPPLY_FALL && !m.opened[c.id]);
   const mapMarks = (big: boolean) => (
     <>
       <path d={stormPath} fill="rgba(122, 60, 240, 0.45)" fillRule="evenodd" />
@@ -1179,8 +1263,8 @@ function Play({ mode }: { mode: Mode }) {
   );
   const box = `${-HALF - 8} ${-HALF - 8} ${2 * HALF + 16} ${2 * HALF + 16}`;
   const slotLabel = (i: number) => (touchMode ? '' : String(i + 1));
-  const heals = hud.items ? hud.items.bandage + hud.items.medkit : 0;
-  const shields = hud.items ? hud.items.mini + hud.items.shield : 0;
+  const heals = hud.items ? hud.items.bandage + hud.items.medkit + hud.items.tart : 0;
+  const shields = hud.items ? hud.items.mini + hud.items.shield + hud.items.smoothie : 0;
 
   return (
     <>
@@ -1247,22 +1331,50 @@ function Play({ mode }: { mode: Mode }) {
                 <b>{hud.pack}</b>
               </span>
             )}
+            {hud.helmet > 0 && (
+              <span className="g-scramble-pill is-gear" aria-label={`${ARMOR_NAMES.helmet[hud.helmet]}, a level ${hud.helmet} helmet`}>
+                <ArmorIcon kind="helmet" size={15} lv={hud.helmet} />
+                <b>{hud.helmet}</b>
+              </span>
+            )}
+            {hud.vest > 0 && (
+              <span className="g-scramble-pill is-gear" aria-label={`${ARMOR_NAMES.vest[hud.vest]}, a level ${hud.vest} vest`}>
+                <ArmorIcon kind="vest" size={15} lv={hud.vest} />
+                <b>{hud.vest}</b>
+              </span>
+            )}
+            {hud.warm && (
+              <span className="g-scramble-pill is-warm" role="status">
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                  <path d="M12 3c1 3 4 4.5 4 9a4 4 0 0 1-8 0c0-2 1-3 1.5-4 .5 1.5 1.5 2 2.5 2 0-3-1-4 0-7z" fill="currentColor" />
+                </svg>
+                warming up
+              </span>
+            )}
           </div>
           {hud.storm && <div className={`g-scramble-storm${hud.shrinking ? ' is-moving' : ''}`}>{hud.storm}</div>}
-          <svg
+          {hud.arrive && (
+            <div key={hud.arrive} className="g-scramble-arrive" role="status">
+              <small>entering</small>
+              <b>{hud.arrive}</b>
+            </div>
+          )}
+          <div
             className="g-scramble-map"
-            viewBox={box}
             role="button"
-            aria-label="Island map"
+            aria-label={hud.where ? `Island map: you're in ${hud.where}` : 'Island map'}
             onPointerDown={(e) => {
               e.preventDefault();
               e.stopPropagation();
               setBigMap((b) => !b);
             }}
           >
-            {islandArt}
-            {mapMarks(false)}
-          </svg>
+            <svg viewBox={box} aria-hidden="true">
+              {islandArt}
+              {mapMarks(false)}
+            </svg>
+            {hud.where && <span>{hud.where}</span>}
+          </div>
           <ol className="g-scramble-feed" aria-live="polite">
             {feed.map((f) => (
               <li key={f.id} className={f.mine ? 'is-mine' : undefined}>
@@ -1303,6 +1415,11 @@ function Play({ mode }: { mode: Mode }) {
                   className="g-scramble-leave"
                   onPointerDown={(e) => {
                     e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  // on the click, not the press: the result card comes up where the finger is, and the click a lifted
+                  // finger makes would land on its Play Again
+                  onClick={(e) => {
                     e.stopPropagation();
                     leave();
                   }}
@@ -1380,7 +1497,7 @@ function Play({ mode }: { mode: Mode }) {
                       {on && i < 2 && g && hud.mag >= 0 && (
                         <em>
                           {hud.mag}
-                          <span>/{hud.reserve}</span>
+                          {hud.ammo && <span>/{hud.reserve}</span>}
                         </em>
                       )}
                     </button>
@@ -1433,6 +1550,7 @@ function Play({ mode }: { mode: Mode }) {
         >
           <svg viewBox={box} role="img" aria-label="Island map">
             {islandArt}
+            <PlaceNames map={map} />
             {mapMarks(true)}
           </svg>
           <small>{touchMode ? 'tap to close' : 'M or click to close'}</small>
@@ -1473,11 +1591,11 @@ function Play({ mode }: { mode: Mode }) {
                 <span>reload</span>
               </button>
               <button type="button" tabIndex={-1} aria-label="Heal" className={heals ? undefined : 'is-none'} {...tap((t) => (t.use = 'bestHeal'))}>
-                <UseIcon w={hud.items && !hud.items.bandage && hud.items.medkit ? 'medkit' : 'bandage'} size={22} />
+                <UseIcon w={hud.items && !hud.items.bandage ? (hud.items.medkit ? 'medkit' : hud.items.tart ? 'tart' : 'bandage') : 'bandage'} size={22} />
                 <span>{heals}</span>
               </button>
               <button type="button" tabIndex={-1} aria-label="Top up shield" className={shields ? undefined : 'is-none'} {...tap((t) => (t.use = 'bestShield'))}>
-                <UseIcon w={hud.items && !hud.items.mini && hud.items.shield ? 'shield' : 'mini'} size={22} />
+                <UseIcon w={hud.items && !hud.items.mini ? (hud.items.smoothie ? 'smoothie' : hud.items.shield ? 'shield' : 'mini') : 'mini'} size={22} />
                 <span>{shields}</span>
               </button>
               <button type="button" tabIndex={-1} aria-label="Drink a coffee" className={hud.items?.coffee ? undefined : 'is-none'} {...tap((t) => (t.use = 'coffee'))}>

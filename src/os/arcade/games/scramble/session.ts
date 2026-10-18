@@ -1,7 +1,7 @@
 // One client's side of an online Scramble match: what it does with each message from the room, what it sends on its
 // regular tick, the events it queues and flushes, and when the match is over. Pure, so a whole room can be simulated
 // in a test; index.tsx connects it to the real room.
-import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, applyOut, applyState, botNames, createMatch, endMatch, forfeit, owned, type Entrant, type Ev, type Level, type Match } from './logic.ts';
+import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, type Entrant, type Ev, type Level, type Match } from './logic.ts';
 import { BUS_Y, stormEnd } from './map.ts';
 import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv, type State } from './net.ts';
 
@@ -17,7 +17,10 @@ export const STALE = 15;
  * sending (and one that never does is still put off the bus with everyone else).
  */
 export const FIRST_GRACE = 30;
-/** Seconds past the bus leaving land by which every egg is down; one still in the air has stopped playing. */
+/**
+ * Seconds past the bus leaving land by which every egg is down, and seconds after any glide began (from the bus or a
+ * bounce pad) by which it has landed; one still in the air has stopped playing.
+ */
 const DOWN_BY = 4 + BUS_Y / FALL + 4;
 
 /** Who this client is in the room. */
@@ -67,7 +70,13 @@ export type Session = {
   endAt: number;
   endSends: number;
   reported: boolean;
+  /** The result card is up. */
   over: boolean;
+  /**
+   * The card went up before the end (out, and done watching): the match goes on for everyone else, and this client
+   * keeps the card up to date until it has the result. A host keeps running the match from its timer meanwhile.
+   */
+  early: boolean;
   /** The host's view of the room: seats that have left (for good, even if someone new sits there) and when each guest last reported. */
   left: Set<number>;
   heard: Map<number, number>;
@@ -75,7 +84,7 @@ export type Session = {
 };
 
 export function newSession(synced: boolean, roster: number[] = []): Session {
-  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, left: new Set(), heard: new Map(), firstTick: -1 };
+  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1 };
 }
 
 /** Builds a guest's match from the host's first state. */
@@ -160,7 +169,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
   for (const f of m.fighters) {
     if (f.seat < 0 || f.kind !== 'remote' || f.phase === 'out' || m.ended) continue;
     const quiet = clock - (s.heard.get(f.id) ?? s.firstTick + FIRST_GRACE) > STALE;
-    const aloft = (f.phase === 'bus' || f.phase === 'drop') && m.time > m.map.bus.off + DOWN_BY;
+    const aloft = f.phase === 'bus' ? m.time > m.map.bus.off + DOWN_BY : f.phase === 'drop' && m.time > Math.max(f.dropAt, m.map.bus.off) + DOWN_BY;
     if (s.left.has(f.seat) || quiet || aloft) forfeit(m, f.id);
   }
   const states: [number, State][] = [];
@@ -194,14 +203,57 @@ export function flush(s: Session, round: number, dt: number): object[] {
 
 /**
  * Whether it's time to show the result: 'report' once the host has called it (then everyone reports the winner),
- * 'quiet' if the host never did long after the storm closed (show what we know, report nothing), else null.
+ * 'quiet' if the host never did long after the storm closed (show what we know, report nothing), else null. A card
+ * that went up early still hears it.
  */
 export function ending(s: Session, m: Match, me: Me, clock: number): 'report' | 'quiet' | null {
-  if (s.over) return null;
+  if (s.reported || (s.over && !s.early)) return null;
   if (me.isHost && m.ended && !s.end) {
     s.end = { winner: m.winner, places: placesOf(m) };
     s.endAt = clock;
   }
   if (s.end) return clock - s.endAt > END_PAUSE ? 'report' : null;
   return m.time > stormEnd(m.map.storm) + 45 ? 'quiet' : null;
+}
+
+/** The longest step the match takes without frames, the same as a frame's. */
+const STEP_MAX = 1 / 20;
+
+/**
+ * Whether the timer moves the match on instead of the frame loop: a hidden tab gets no frames, and a host who is done
+ * watching draws none, but the computer eggs, the storm and everyone's pickups still run on the host.
+ */
+export const offscreen = (s: Session, me: Me, hidden: boolean, playing: boolean) => s.synced && ((hidden && playing) || (me.isHost && s.early));
+
+/** Moves the match on by `seconds` (two at most) in short steps, sharing whatever happens with the room. */
+export function catchUp(s: Session, m: Match, seat: number, seconds: number) {
+  let left = Math.min(2, Math.max(0, seconds));
+  while (left > 1e-4) {
+    const d = Math.min(STEP_MAX, left);
+    step(m, d);
+    left -= d;
+    for (const e of m.events.splice(0)) share(s, e, seat);
+  }
+}
+
+/**
+ * The result card for our egg online: where it placed and what it did, then who won. One that goes up while the match
+ * is still going (`early`) says how many eggs are left: a guest's in the detail, the host's in the note under its Play
+ * Again, which waits for the end.
+ */
+export function resultCard(m: Match, early: boolean, host: boolean): { title: string; detail: string; wait?: string; won: boolean } {
+  const me = m.fighters[m.me];
+  const winner = m.ended ? m.fighters[m.winner] : undefined;
+  const won = !!me && !!winner && winner.id === me.id;
+  const title = won ? 'Last Egg Standing' : me ? `${ordinal(me.place || m.fighters.length)} of ${m.fighters.length}` : 'Match Over';
+  const stats = me ? `${me.kills} ${me.kills === 1 ? 'elimination' : 'eliminations'}, ${Math.round(me.dealt)} damage.` : '';
+  const left = aliveCount(m);
+  const going = early && !m.ended;
+  let how = '';
+  if (winner && !won) how = `${winner.name} won.`;
+  else if (m.ended && !winner) how = 'Nobody survived the storm.';
+  else if (going && !host) how = `${left} ${left === 1 ? 'egg' : 'eggs'} still going.`;
+  const detail = `${stats} ${how}`.trim();
+  if (!early || !host) return { title, detail, won };
+  return { title, detail, wait: going ? `${left} ${left === 1 ? 'Egg' : 'Eggs'} Still Going. Play Again Once the Match Ends.` : 'The Match Is Over. Play Again in a Moment.', won };
 }

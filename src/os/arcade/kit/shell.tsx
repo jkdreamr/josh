@@ -10,7 +10,7 @@ import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMuted } from './sfx';
 import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange, useSetting } from './settings';
 import { BotStepper, OnlinePanel, OnlineProvider, ROOM_VISIBILITY, RoomCode, VisibilityPicker } from './online';
-import { botPlayers, nextOnlineRound, parseRacePacket, raceStandings, RoundRouter, type RaceScores } from './online-core';
+import { botPlayers, canStartNext, nextOnlineRound, parseRacePacket, raceStandings, RoundRouter, type RaceScores } from './online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { countPlay } from '../../stats';
 import { useBadge } from '../../badges';
@@ -112,6 +112,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [onlineRound, setOnlineRound] = useState(0);
   const [onlinePlayers, setOnlinePlayers] = useState<RoomPlayer[]>([]);
   const [onlineTransport, setOnlineTransport] = useState<RoomTransport>('relay');
+  const [onlineHandoffs, setOnlineHandoffs] = useState(0);
   const [onlineBusy, setOnlineBusy] = useState(false);
   const [onlineError, setOnlineError] = useState('');
   const [onlineInProgress, setOnlineInProgress] = useState(false);
@@ -218,12 +219,15 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     },
     [keys, submit, race, finishRace],
   );
-  /** Whether the host can start the next round now: someone to play, and (in a race) nobody still playing unless forced. */
-  const nextRound = useRef({ ready: true, racing: false });
+  /** Changes the card that is up, for a round that goes on after this player is out. */
+  const updateOver = useCallback((info: GameOverInfo) => {
+    setResult((r) => (!r || (r.title === info.title && r.detail === info.detail && r.wait === info.wait) ? r : { ...r, title: info.title, detail: info.detail, wait: info.wait }));
+  }, []);
+  /** What the host's Play Again waits on (see canStartNext). */
+  const nextRound = useRef({ ready: true, waiting: false, racing: false });
   const playAgain = useCallback((force = false) => {
     if (onlineModeRef.current) {
-      const { ready, racing } = nextRound.current;
-      if (onlineSeat === 0 && ready && (!racing || force)) onlineLink?.start();
+      if (onlineSeat === 0 && canStartNext(nextRound.current, force)) onlineLink?.start();
       return;
     }
     restart();
@@ -306,6 +310,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineSeat(seat);
       setOnlineInProgress(false);
       const host = players.find((player) => player.seat === 0);
+      setOnlineHandoffs((n) => n + 1);
+      // a card waiting on the round the old host ran waits no more
+      setResult((r) => (r?.wait ? { ...r, wait: undefined } : r));
       if (onlineModeRef.current && statusRef.current === 'playing') {
         gameOver(undefined, { title: 'Host Left', detail: seat === 0 ? 'You Are the Host Now.' : `${host?.name ?? 'Someone Else'} Is the Host Now.` });
       }
@@ -538,8 +545,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   }, [keys, onlineMode, pause, playAgain, restart, resume, start]);
 
   const api = useMemo<ShellApi>(
-    () => ({ meta, status, round, active, compact, touch, keys, root, start, pause, resume, restart, gameOver, setScore, invalidate, onInvalidate }),
-    [meta, status, round, active, compact, touch, keys, start, pause, resume, restart, gameOver, setScore, invalidate, onInvalidate],
+    () => ({ meta, status, round, active, compact, touch, keys, root, start, pause, resume, restart, gameOver, updateOver, setScore, invalidate, onInvalidate }),
+    [meta, status, round, active, compact, touch, keys, start, pause, resume, restart, gameOver, updateOver, setScore, invalidate, onInvalidate],
   );
 
   // Party games keep scores and secrets in the round, so Restart asks for a second tap within a few seconds.
@@ -592,7 +599,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const raceWinner = raceNow?.winner ?? null;
   const roomReady = onlinePlayers.length + (lobbyBots?.length ?? 0) >= 2;
   const stillRacing = !!raceNow && !raceDone && racers.length >= 2;
-  nextRound.current = { ready: roomReady, racing: stillRacing };
+  // a player out early: the round goes on for the others until the game says it's over
+  const waiting = gameOnline && status === 'over' && !!result?.wait;
+  nextRound.current = { ready: roomReady, waiting, racing: stillRacing };
   const hostPlayAgain = () => {
     if (stillRacing && !startArmed) setStartArmed(true);
     else {
@@ -605,10 +614,10 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   // The host tells the room when its round is over (a race once everyone has finished), so people can join for the next.
   const endedRound = useRef(0);
   useEffect(() => {
-    if (!gameOnline || onlineSeat !== 0 || status !== 'over' || stillRacing || !onlineLink || endedRound.current === onlineRound) return;
+    if (!gameOnline || onlineSeat !== 0 || status !== 'over' || stillRacing || waiting || !onlineLink || endedRound.current === onlineRound) return;
     endedRound.current = onlineRound;
     onlineLink.endRound(onlineRound);
-  }, [gameOnline, onlineSeat, status, stillRacing, onlineLink, onlineRound]);
+  }, [gameOnline, onlineSeat, status, stillRacing, waiting, onlineLink, onlineRound]);
   const boardFmt = result?.rank !== undefined && roundBoard ? (n: number) => formatBoardScore(n, roundBoard.spec) : fmt;
 
   // Every player reports the race winner once all scores are in; the Worker records it when they agree.
@@ -633,6 +642,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       players={onlinePlayers}
       bots={gameBots}
       transport={onlineTransport}
+      handoffs={onlineHandoffs}
     >
     <ShellContext.Provider value={api}>
       <div
@@ -805,7 +815,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     Leave
                   </button>
                 ) : gameOnline ? (
-                  <button type="button" className="arcade-btn arcade-btn-primary" disabled={!roomReady} onClick={hostPlayAgain}>
+                  <button type="button" className="arcade-btn arcade-btn-primary" disabled={!roomReady || waiting} onClick={hostPlayAgain}>
                     {playAgainLabel}
                   </button>
                 ) : (
@@ -901,11 +911,12 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 {gameOnline && <RoomCode game={meta.id} code={onlineCode} onShare={os ? shareRoom : undefined} onLeave={leaveRoom} />}
                 {gameOnline ? onlineSeat === 0 ? (
                   <>
-                    <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" disabled={!roomReady} onClick={hostPlayAgain}>
+                    <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" disabled={!roomReady || waiting} onClick={hostPlayAgain}>
                       {playAgainLabel}
                     </button>
-                    {!roomReady && <small>{onlineListed ? 'Anyone Can Join From Open Rooms.' : 'Share the Code to Play Again.'}</small>}
-                    {roomReady && stillRacing && <small>Starting Now Ends the Round for Anyone Still Playing.</small>}
+                    {waiting && <small>{result?.wait}</small>}
+                    {!roomReady && !waiting && <small>{onlineListed ? 'Anyone Can Join From Open Rooms.' : 'Share the Code to Play Again.'}</small>}
+                    {roomReady && stillRacing && !waiting && <small>Starting Now Ends the Round for Anyone Still Playing.</small>}
                   </>
                 ) : (
                   <p>{onlinePlayers.length < 2 ? 'Waiting For Players' : 'Waiting For The Host'}</p>

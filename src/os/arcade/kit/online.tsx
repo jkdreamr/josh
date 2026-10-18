@@ -18,6 +18,8 @@ type OnlineValue = {
   bots: RoomPlayer[];
   isHost: boolean;
   transport: RoomTransport;
+  /** Bumps each time the host leaves and hands the room on: a round the old host's game ran is over. */
+  handoffs: number;
 };
 
 const OnlineContext = createContext<OnlineValue | null>(null);
@@ -31,11 +33,12 @@ export function OnlineProvider({
   players,
   bots,
   transport,
+  handoffs,
   children,
 }: Omit<OnlineValue, 'seat' | 'link' | 'isHost'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
   const value = useMemo(
-    () => link && seat !== null ? { link, router, seat, seats, round, players, bots, isHost: seat === 0, transport } : null,
-    [link, router, seat, seats, round, players, bots, transport],
+    () => link && seat !== null ? { link, router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs } : null,
+    [link, router, seat, seats, round, players, bots, transport, handoffs],
   );
   return <OnlineContext.Provider value={value}>{children}</OnlineContext.Provider>;
 }
@@ -52,6 +55,7 @@ export function useOnline() {
       bots: room.bots,
       isHost: room.isHost,
       transport: room.transport,
+      handoffs: room.handoffs,
       // Tagged with the round this player is in at the moment it's sent, which a game that kept an old handle still gets.
       send: (d: unknown, options?: { to?: number; fast?: boolean }) => room.link.send(tagRound(room.router.round, d), options),
       onMessage: (listener: (from: number, d: unknown) => void) => room.router.listen(listener),

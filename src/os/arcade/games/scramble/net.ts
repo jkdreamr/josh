@@ -3,17 +3,23 @@
 // Rooms are a star around the host. Every client reports the egg it owns about 15 times a second; the host owns the
 // computer players and sends everyone the whole match. Things that happen (shots, hits, drops, walls, pickups) travel
 // as events: a guest sends its own to the host, and the host applies them and passes them on to everyone else, in the
-// order it applied them, together with its own. Guests ask the host for pickups and chests and hear back who got them.
-import { MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
+// order it applied them, together with its own. Guests ask the host for pickups and chests (fridges and supply drops
+// too) and hear back who got them. Bounce pads and campfires need no packets: a glide and a heal are an owner's own
+// business, and show in its state.
+import { MAX_ARMOR, MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
+import { HALF } from './map.ts';
 import {
   CAUSES,
+  F_ALL,
   HELD,
   MAX_FIGHTERS,
   PHASES,
   addLoot,
   addWall,
+  applyCalled,
   applyOut,
   applyTook,
+  callDrop,
   damageCrate,
   damageWall,
   fire,
@@ -24,6 +30,7 @@ import {
   isLevel,
   launch,
   makeWall,
+  moveLoot,
   openContainer,
   owned,
   removeWall,
@@ -40,8 +47,8 @@ import {
 export type Bots = 'fill' | 'none';
 export const isBots = (v: unknown): v is Bots => v === 'fill' || v === 'none';
 
-/** An egg as its owner reports it. */
-export type State = { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number };
+/** An egg as its owner reports it, down to the helmet and vest it wears. */
+export type State = { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number };
 
 export type NetEv =
   | { y: 's'; f: number; w: WeaponId; r: number; x: number; z: number; a: number; s: number; k: number }
@@ -57,7 +64,9 @@ export type NetEv =
   | { y: 'op'; f: number; c: number }
   | { y: 'opd'; c: number; f: number }
   | { y: 'wl'; id: number; f: number; x: number; z: number; a: number; hp: number }
-  | { y: 'wg'; id: number };
+  | { y: 'wg'; id: number }
+  | { y: 'lv'; id: number; x: number; z: number }
+  | { y: 'fd'; f: number; c: number; x: number; z: number; at: number };
 
 /** Events grouped by the seat they came from, in the order the host applied them. */
 export type Group = [origin: number, events: NetEv[]];
@@ -78,7 +87,7 @@ const seat = (v: unknown): v is number => int(v) && (v as number) >= -1 && (v as
 const isCause = (v: unknown): v is Cause => CAUSES.includes(v as Cause);
 /**
  * The most one hit from another client can do: a legendary bullet or pellet, a swing, or a grenade right on top. The
- * rest (the storm, hot sauce, barrels) each client works out for its own egg, so never arrives as a hit.
+ * rest (the storm, hot sauce, barrels, impulse eggs) each client works out for its own egg, so never arrives as a hit.
  */
 export function hitCap(w: Cause) {
   if (isWeapon(w)) return Math.round(damageOf(w, MAX_RARITY));
@@ -87,26 +96,32 @@ export function hitCap(w: Cause) {
 }
 /** Loot and wall ids: whole numbers well inside what JSON carries exactly. */
 const id = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) < 1e9;
+/** A point on the island. */
+const onLand = (x: unknown, z: unknown) => num(x) && num(z) && Math.abs(x) <= HALF && Math.abs(z) <= HALF;
+/** The most a shot's spread can be widened: on the move, with a heavy SMG climbing as far as it goes. */
+export const MAX_KICK = r2(1.6 + Math.max(...Object.values(WEAPONS).map((w) => w.kick?.max ?? 0)));
 
 // -------------------------------------------------------------------------------------------------------------------
 // States.
 
 export function stateOf(f: Fighter): State {
   const h = held(f);
-  return { x: r2(f.x), z: r2(f.z), y: r1(f.y), aim: r2(f.aim), vx: r1(f.vx), vz: r1(f.vz), phase: f.phase, hp: r1(f.hp), shield: r1(f.shield), w: h.w, r: h.r, flags: flagsOf(f) };
+  return { x: r2(f.x), z: r2(f.z), y: r1(f.y), aim: r2(f.aim), vx: r1(f.vx + f.kx), vz: r1(f.vz + f.kz), phase: f.phase, hp: r1(f.hp), shield: r1(f.shield), w: h.w, r: h.r, flags: flagsOf(f), helmet: f.helmet, vest: f.vest };
 }
 
 /** What an egg holds, as a number: 0 for nothing reported yet, then guns, melee weapons and throwables. */
 const HELD_CODES: (Held | null)[] = [null, ...HELD];
-const packState = (s: State) => [s.x, s.z, s.y, s.aim, s.vx, s.vz, PHASES.indexOf(s.phase), s.hp, s.shield, HELD_CODES.indexOf(s.w), s.r, s.flags];
+const packState = (s: State) => [s.x, s.z, s.y, s.aim, s.vx, s.vz, PHASES.indexOf(s.phase), s.hp, s.shield, HELD_CODES.indexOf(s.w), s.r, s.flags, s.helmet, s.vest];
+
+const armorLv = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) <= MAX_ARMOR;
 
 function unpackState(a: unknown): State | null {
-  if (!Array.isArray(a) || a.length < 12 || !a.slice(0, 12).every(num)) return null;
-  const [x, z, y, aim, vx, vz, ph, hp, shield, w, r, flags] = a as number[];
+  if (!Array.isArray(a) || a.length < 14 || !a.slice(0, 14).every(num)) return null;
+  const [x, z, y, aim, vx, vz, ph, hp, shield, w, r, flags, helmet, vest] = a as number[];
   const phase = PHASES[ph];
-  if (!phase || !int(w) || w < 0 || w >= HELD_CODES.length || !int(r) || r < 0 || r > 4 || !int(flags) || flags < 0 || flags > 255) return null;
-  if (Math.abs(x) > 400 || Math.abs(z) > 400 || y < -1 || y > 100 || hp < 0 || hp > 100 || shield < 0 || shield > 100) return null;
-  return { x, z, y, aim, vx: Math.max(-40, Math.min(40, vx)), vz: Math.max(-40, Math.min(40, vz)), phase, hp, shield, w: HELD_CODES[w], r, flags };
+  if (!phase || !int(w) || w < 0 || w >= HELD_CODES.length || !int(r) || r < 0 || r > 4 || !int(flags) || flags < 0 || flags > F_ALL) return null;
+  if (Math.abs(x) > 400 || Math.abs(z) > 400 || y < -1 || y > 100 || hp < 0 || hp > 100 || shield < 0 || shield > 100 || !armorLv(helmet) || !armorLv(vest)) return null;
+  return { x, z, y, aim, vx: Math.max(-40, Math.min(40, vx)), vz: Math.max(-40, Math.min(40, vz)), phase, hp, shield, w: HELD_CODES[w], r, flags, helmet, vest };
 }
 
 export const guestState = (round: number, s: State) => ({ t: 'pk', r: round, k: 's', c: packState(s) });
@@ -162,6 +177,10 @@ export function toNet(e: Ev): NetEv | null {
       return { y: 'wl', id: e.wall.id, f: e.wall.f, x: e.wall.x, z: e.wall.z, a: e.wall.a, hp: Math.round(e.wall.hp) };
     case 'wallgone':
       return { y: 'wg', id: e.id };
+    case 'moved':
+      return { y: 'lv', id: e.id, x: e.x, z: e.z };
+    case 'called':
+      return { y: 'fd', f: e.f, c: e.c, x: e.x, z: e.z, at: e.at };
     default:
       return null;
   }
@@ -174,6 +193,8 @@ export function actorOf(e: NetEv) {
       return e.by;
     case 'opd':
     case 'wg':
+    case 'lv':
+    case 'fd':
       return -1;
     default:
       return e.f;
@@ -185,7 +206,7 @@ function parseEv(v: unknown): NetEv | null {
   const e = v as Record<string, unknown>;
   switch (e.y) {
     case 's':
-      return fid(e.f) && isWeapon(e.w) && int(e.r) && num(e.x) && num(e.z) && num(e.a) && int(e.s) && num(e.k) && e.k >= 1 && e.k <= 2
+      return fid(e.f) && isWeapon(e.w) && int(e.r) && num(e.x) && num(e.z) && num(e.a) && int(e.s) && num(e.k) && e.k >= 1 && e.k <= MAX_KICK
         ? { y: 's', f: e.f, w: e.w, r: Math.max(0, Math.min(4, e.r)), x: e.x, z: e.z, a: e.a, s: e.s, k: e.k }
         : null;
     case 'sw':
@@ -220,6 +241,10 @@ function parseEv(v: unknown): NetEv | null {
       return id(e.id) && fid(e.f) && num(e.x) && num(e.z) && num(e.a) && num(e.hp) && e.hp > 0 && e.hp <= 1000 ? { y: 'wl', id: e.id, f: e.f, x: e.x, z: e.z, a: e.a, hp: e.hp } : null;
     case 'wg':
       return id(e.id) ? { y: 'wg', id: e.id } : null;
+    case 'lv':
+      return id(e.id) && onLand(e.x, e.z) ? { y: 'lv', id: e.id, x: e.x as number, z: e.z as number } : null;
+    case 'fd':
+      return fid(e.f) && int(e.c) && e.c >= 0 && e.c < 10_000 && onLand(e.x, e.z) && num(e.at) && e.at >= 0 && e.at <= 3600 ? { y: 'fd', f: e.f, c: e.c, x: e.x as number, z: e.z as number, at: e.at } : null;
     default:
       return null;
   }
@@ -238,6 +263,8 @@ export function applyNet(m: Match, e: NetEv): boolean {
       if (!WEAPONS[e.w].silent) f.firedAt = m.clock;
       fire(m, e.f, e.w, e.r, e.x, e.z, e.a, e.s, e.k, false);
       m.events.push({ t: 'shot', f: e.f, w: e.w, r: e.r, x: e.x, z: e.z, a: e.a, s: e.s, k: e.k, net: true });
+      // a flare: the host sends a supply drop to where it sees that egg, whatever the shot says
+      if (WEAPONS[e.w].call && m.world) callDrop(m, e.f, f.x, f.z);
       return true;
     case 'sw':
       if (!f || owned(f)) return false;
@@ -277,9 +304,9 @@ export function applyNet(m: Match, e: NetEv): boolean {
       if (!m.world) applyTook(m, e.f, e.id, e.it);
       return true;
     case 'op': {
-      // a chest, or a supply drop that has landed (give or take the second a guest's clock may be ahead)
+      // a chest or a fridge, or a supply drop that has landed (give or take the second a guest's clock may be ahead)
       const c = m.map.containers[e.c];
-      if (m.world && c && (c.kind === 'chest' || (c.kind === 'supply' && m.time >= c.at - 1))) openContainer(m, e.c, e.f, true);
+      if (m.world && c && (c.kind === 'chest' || c.kind === 'fridge' || (c.kind === 'supply' && m.time >= c.at - 1))) openContainer(m, e.c, e.f, true);
       return false;
     }
     case 'opd':
@@ -290,6 +317,12 @@ export function applyNet(m: Match, e: NetEv): boolean {
       return true;
     case 'wg':
       if (!m.world) removeWall(m, e.id, false);
+      return true;
+    case 'lv':
+      if (!m.world) moveLoot(m, e.id, e.x, e.z, false);
+      return true;
+    case 'fd':
+      if (!m.world) applyCalled(m, e.f, e.c, e.x, e.z, e.at);
       return true;
   }
 }
