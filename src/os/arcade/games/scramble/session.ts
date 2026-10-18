@@ -3,7 +3,7 @@
 // in a test; index.tsx connects it to the real room.
 import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, type Entrant, type Ev, type Fighter, type Level, type Match } from './logic.ts';
 import { BUS_Y, stormEnd } from './map.ts';
-import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, placesOf, stateKey, stateOf, toNet, type NetEv, type State } from './net.ts';
+import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, pieceEv, placesOf, stateKey, stateOf, toNet, type NetEv, type State } from './net.ts';
 
 /** How often queued events go out. State goes out on its own tick, about 15 times a second. */
 export const FLUSH = 0.05;
@@ -105,10 +105,12 @@ export type Session = {
   watching: Map<number, number>;
   /** The host's record of the state it last sent each guest for each egg (packed), by seat. */
   sent: Map<number, (string | undefined)[]>;
+  /** Seats the host has just heard from for the first time: they hear what has been built so far. */
+  fresh: Set<number>;
 };
 
 export function newSession(synced: boolean, roster: number[] = []): Session {
-  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1, watch: -1, watching: new Map(), sent: new Map() };
+  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1, watch: -1, watching: new Map(), sent: new Map(), fresh: new Set() };
 }
 
 /** Builds a guest's match from the host's first state. */
@@ -126,6 +128,7 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
     const fid = s.roster.indexOf(from);
     const f = m.fighters[fid];
     if (!f || f.seat !== from || f.kind !== 'remote') return m;
+    if (!s.heard.has(fid)) s.fresh.add(from);
     s.states.set(fid, p.state);
     s.heard.set(fid, clock);
     s.watching.set(fid, p.watch);
@@ -211,6 +214,9 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
     const list = g ? statesFor(m, g, states, keys, sent, s.ticks, s.watching.get(g.id) ?? -1) : [];
     out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list), fast, to: seat });
   }
+  // a guest that has only now started reporting may have missed pieces built before it was ready: here they all are
+  for (const seat of s.fresh) if (present.includes(seat) && m.walls.size) for (const d of packEvents(me.round, [...m.walls.values()].filter((w) => w.dir >= 0).map((w): [number, NetEv] => [me.seat, pieceEv(w)]))) out.push({ d, fast: false, to: seat });
+  s.fresh.clear();
   if (s.end && s.endSends < 4) {
     s.endSends++;
     // whatever happened last (the final crack) goes out ahead of the result

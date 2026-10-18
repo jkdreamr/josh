@@ -1,23 +1,28 @@
 // Online packets for Scramble. Pure, so it can be tested.
 //
 // Rooms are a star around the host. Every client reports the egg it owns about 15 times a second; the host owns the
-// computer players and sends everyone the whole match. Things that happen (shots, hits, drops, walls, pickups) travel
-// as events: a guest sends its own to the host, and the host applies them and passes them on to everyone else, in the
-// order it applied them, together with its own. Guests ask the host for pickups and chests (fridges and supply drops
-// too) and hear back who got them. Bounce pads and campfires need no packets: a glide and a heal are an owner's own
-// business, and show in its state.
-import { MAX_ARMOR, MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
+// computer players and sends everyone the whole match. Things that happen (shots, hits, drops, built pieces and edits,
+// pickups) travel as events: a guest sends its own to the host, and the host applies them and passes them on to
+// everyone else, in the order it applied them, together with its own. Guests ask the host for pickups and chests
+// (fridges and supply drops too) and hear back who got them. Bounce pads and campfires need no packets: a glide and a
+// heal are an owner's own business, and show in its state, as does how high an egg stands on what's been built.
+import { MATS, MAT_SPECS, MAX_ARMOR, MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import { HALF } from './map.ts';
 import { meta } from './meta.ts';
 import {
   CAUSES,
+  CELL_B,
   F_ALL,
   HELD,
+  LEVEL_H,
   MAX_FIGHTERS,
+  MAX_LEVEL,
   PHASES,
+  PIECE_KINDS,
   addLoot,
   addWall,
   applyCalled,
+  applyEdit,
   applyOut,
   applyTook,
   callDrop,
@@ -30,7 +35,7 @@ import {
   hurt,
   isLevel,
   launch,
-  makeWall,
+  makePiece,
   moveLoot,
   openContainer,
   owned,
@@ -42,6 +47,8 @@ import {
   type Level,
   type Match,
   type Phase,
+  type PieceKind,
+  type Wall,
 } from './logic.ts';
 
 /** Whether the host fills empty places with computer players. */
@@ -51,10 +58,15 @@ export const isBots = (v: unknown): v is Bots => v === 'fill' || v === 'none';
 /** An egg as its owner reports it, down to the helmet and vest it wears. */
 export type State = { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number };
 
+/**
+ * `h` is the level a shot was fired from, `y0` and `ly` how high a throw starts and comes down (left out when 0). A
+ * built piece goes as its id, its builder, where and what it is in one number (`p`, see packPiece), its health and the
+ * tenths of a second it has still to build up (`t`); an edit as the wall and its edit.
+ */
 export type NetEv =
-  | { y: 's'; f: number; w: WeaponId; r: number; x: number; z: number; a: number; s: number; k: number }
+  | { y: 's'; f: number; w: WeaponId; r: number; x: number; z: number; a: number; s: number; k: number; h?: number }
   | { y: 'sw'; f: number }
-  | { y: 'th'; f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; ft: number }
+  | { y: 'th'; f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; ft: number; y0?: number; ly?: number }
   | { y: 'd'; f: number; to: number; d: number; w: Cause; x: number; z: number }
   | { y: 'm'; f: number; k: 'wall' | 'crate'; id: number; d: number }
   | { y: 'b'; f: number; x: number; z: number }
@@ -64,7 +76,8 @@ export type NetEv =
   | { y: 'tko'; f: number; id: number; it: LootDef }
   | { y: 'op'; f: number; c: number }
   | { y: 'opd'; c: number; f: number }
-  | { y: 'wl'; id: number; f: number; x: number; z: number; a: number; hp: number }
+  | { y: 'wl'; id: number; f: number; p: number; hp: number; t: number }
+  | { y: 'we'; f: number; id: number; e: number }
   | { y: 'wg'; id: number }
   | { y: 'lv'; id: number; x: number; z: number }
   | { y: 'fd'; f: number; c: number; x: number; z: number; at: number };
@@ -103,6 +116,51 @@ const id = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as nu
 const onLand = (x: unknown, z: unknown) => num(x) && num(z) && Math.abs(x) <= HALF && Math.abs(z) <= HALF;
 /** The most a shot's spread can be widened: on the move, with a heavy SMG climbing as far as it goes. */
 export const MAX_KICK = r2(1.6 + Math.max(...Object.values(WEAPONS).map((w) => w.kick?.max ?? 0)));
+/** The highest anything thrown starts or comes down: the top level. */
+const MAX_Y = MAX_LEVEL * LEVEL_H + 1;
+const height = (v: unknown) => v === undefined || (num(v) && v >= 0 && v <= MAX_Y);
+const tossH = (v: unknown) => (num(v) ? v : 0);
+
+// -------------------------------------------------------------------------------------------------------------------
+// Built pieces.
+
+/** Grid squares are numbered from -GRID_OFF along each side, GRID_N of them: the whole island and a little more. */
+const GRID_OFF = 80;
+const GRID_N = 160;
+const PIECE_CODES = 4 * 4 * 4 * MATS.length * 3 * GRID_N * GRID_N;
+
+/** Where a piece is, what it is and its edit in one whole number: kind, way, level, material, edit and grid square. */
+export function packPiece(w: Wall) {
+  const cell = w.cx + GRID_OFF + GRID_N * (w.cz + GRID_OFF);
+  return PIECE_KINDS.indexOf(w.k) + 4 * (w.dir + 4 * (w.lv + 4 * (MATS.indexOf(w.mat) + MATS.length * (w.e + 3 * cell))));
+}
+
+/** A packed piece back, or null for anything no piece could be: off the island, on no level, a way or edit it can't have. */
+export function unpackPiece(p: unknown): { k: PieceKind; dir: number; lv: number; mat: (typeof MATS)[number]; e: number; cx: number; cz: number } | null {
+  if (!int(p) || p < 0 || p >= PIECE_CODES) return null;
+  let v = p;
+  const take = (n: number) => {
+    const out = v % n;
+    v = Math.floor(v / n);
+    return out;
+  };
+  const k = PIECE_KINDS[take(4)];
+  const dir = take(4);
+  const lv = take(4);
+  const mat = MATS[take(MATS.length)];
+  const e = take(3);
+  const cx = take(GRID_N) - GRID_OFF;
+  const cz = v - GRID_OFF;
+  if (Math.abs((cx + 0.5) * CELL_B) > HALF || Math.abs((cz + 0.5) * CELL_B) > HALF) return null;
+  if (k === 'wall') return dir >= 2 && lv <= MAX_LEVEL ? { k, dir, lv, mat, e, cx, cz } : null;
+  if (e) return null;
+  if (k === 'ramp') return lv < MAX_LEVEL ? { k, dir, lv, mat, e, cx, cz } : null;
+  if (dir) return null;
+  return lv >= 1 && lv <= (k === 'roof' ? MAX_LEVEL + 1 : MAX_LEVEL) ? { k, dir, lv, mat, e, cx, cz } : null;
+}
+
+/** A piece as news: how it is now, for someone who hasn't seen it (just built, or for a guest that joins late). */
+export const pieceEv = (w: Wall): NetEv => ({ y: 'wl', id: w.id, f: w.f, p: packPiece(w), hp: Math.max(1, Math.round(w.hp)), t: Math.round(w.left * 10) });
 
 // -------------------------------------------------------------------------------------------------------------------
 // States.
@@ -189,11 +247,11 @@ export function toNet(e: Ev): NetEv | null {
   if (e.net) return null;
   switch (e.t) {
     case 'shot':
-      return { y: 's', f: e.f, w: e.w, r: e.r, x: e.x, z: e.z, a: e.a, s: e.s, k: e.k };
+      return { y: 's', f: e.f, w: e.w, r: e.r, x: e.x, z: e.z, a: e.a, s: e.s, k: e.k, ...(e.h ? { h: e.h } : {}) };
     case 'swing':
       return { y: 'sw', f: e.f };
     case 'throw':
-      return { y: 'th', f: e.f, k: e.k, x: e.x, z: e.z, lx: e.lx, lz: e.lz, ft: e.ft };
+      return { y: 'th', f: e.f, k: e.k, x: e.x, z: e.z, lx: e.lx, lz: e.lz, ft: e.ft, ...(e.y0 ? { y0: e.y0 } : {}), ...(e.ly ? { ly: e.ly } : {}) };
     case 'hit':
       return e.local ? null : { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z };
     case 'smash':
@@ -213,7 +271,10 @@ export function toNet(e: Ev): NetEv | null {
     case 'opened':
       return { y: 'opd', c: e.c, f: e.f };
     case 'wall':
-      return { y: 'wl', id: e.wall.id, f: e.wall.f, x: e.wall.x, z: e.wall.z, a: e.wall.a, hp: Math.round(e.wall.hp) };
+      // a wall put down by hand (in a test) is nowhere on the grid, so nobody else hears of it
+      return e.wall.dir >= 0 ? pieceEv(e.wall) : null;
+    case 'edit':
+      return { y: 'we', f: e.f, id: e.id, e: e.e };
     case 'wallgone':
       return { y: 'wg', id: e.id };
     case 'moved':
@@ -244,15 +305,17 @@ function parseEv(v: unknown): NetEv | null {
   if (!v || typeof v !== 'object') return null;
   const e = v as Record<string, unknown>;
   switch (e.y) {
-    case 's':
-      return fid(e.f) && isWeapon(e.w) && int(e.r) && num(e.x) && num(e.z) && num(e.a) && int(e.s) && num(e.k) && e.k >= 1 && e.k <= MAX_KICK
-        ? { y: 's', f: e.f, w: e.w, r: Math.max(0, Math.min(4, e.r)), x: e.x, z: e.z, a: e.a, s: e.s, k: e.k }
+    case 's': {
+      const h = e.h === undefined ? 0 : e.h;
+      return fid(e.f) && isWeapon(e.w) && int(e.r) && num(e.x) && num(e.z) && num(e.a) && int(e.s) && num(e.k) && e.k >= 1 && e.k <= MAX_KICK && int(h) && h >= 0 && h <= MAX_LEVEL
+        ? { y: 's', f: e.f, w: e.w, r: Math.max(0, Math.min(4, e.r)), x: e.x, z: e.z, a: e.a, s: e.s, k: e.k, ...(h ? { h } : {}) }
         : null;
+    }
     case 'sw':
       return fid(e.f) ? { y: 'sw', f: e.f } : null;
     case 'th':
-      return fid(e.f) && isThrow(e.k) && num(e.x) && num(e.z) && num(e.lx) && num(e.lz) && num(e.ft) && e.ft > 0 && e.ft <= 3 && Math.hypot(e.lx - e.x, e.lz - e.z) <= 25
-        ? { y: 'th', f: e.f, k: e.k, x: e.x, z: e.z, lx: e.lx, lz: e.lz, ft: e.ft }
+      return fid(e.f) && isThrow(e.k) && num(e.x) && num(e.z) && num(e.lx) && num(e.lz) && num(e.ft) && e.ft > 0 && e.ft <= 3 && Math.hypot(e.lx - e.x, e.lz - e.z) <= 25 && height(e.y0) && height(e.ly)
+        ? { y: 'th', f: e.f, k: e.k, x: e.x, z: e.z, lx: e.lx, lz: e.lz, ft: e.ft, ...(tossH(e.y0) ? { y0: tossH(e.y0) } : {}), ...(tossH(e.ly) ? { ly: tossH(e.ly) } : {}) }
         : null;
     case 'd':
       return fid(e.f) && fid(e.to) && num(e.d) && isCause(e.w) && e.d > 0 && e.d <= hitCap(e.w) && num(e.x) && num(e.z) ? { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z } : null;
@@ -276,8 +339,12 @@ function parseEv(v: unknown): NetEv | null {
       return fid(e.f) && int(e.c) && e.c >= 0 ? { y: 'op', f: e.f, c: e.c } : null;
     case 'opd':
       return int(e.c) && e.c >= 0 && int(e.f) && e.f >= -1 && e.f < MAX_FIGHTERS ? { y: 'opd', c: e.c, f: e.f } : null;
-    case 'wl':
-      return id(e.id) && fid(e.f) && num(e.x) && num(e.z) && num(e.a) && num(e.hp) && e.hp > 0 && e.hp <= 1000 ? { y: 'wl', id: e.id, f: e.f, x: e.x, z: e.z, a: e.a, hp: e.hp } : null;
+    case 'wl': {
+      const at = unpackPiece(e.p);
+      return at && id(e.id) && fid(e.f) && int(e.hp) && e.hp > 0 && e.hp <= MAT_SPECS[at.mat].hp && int(e.t) && e.t >= 0 && e.t <= MAT_SPECS[at.mat].time * 10 + 1 ? { y: 'wl', id: e.id, f: e.f, p: e.p as number, hp: e.hp, t: e.t } : null;
+    }
+    case 'we':
+      return fid(e.f) && id(e.id) && int(e.e) && e.e >= 0 && e.e <= 2 ? { y: 'we', f: e.f, id: e.id, e: e.e } : null;
     case 'wg':
       return id(e.id) ? { y: 'wg', id: e.id } : null;
     case 'lv':
@@ -300,8 +367,8 @@ export function applyNet(m: Match, e: NetEv): boolean {
       if (!f || owned(f)) return false;
       // a silent shot keeps the shooter hidden here too, as it does on the shooter's own screen
       if (!WEAPONS[e.w].silent) f.firedAt = m.clock;
-      fire(m, e.f, e.w, e.r, e.x, e.z, e.a, e.s, e.k, false);
-      m.events.push({ t: 'shot', f: e.f, w: e.w, r: e.r, x: e.x, z: e.z, a: e.a, s: e.s, k: e.k, net: true });
+      fire(m, e.f, e.w, e.r, e.x, e.z, e.a, e.s, e.k, false, e.h ?? 0);
+      m.events.push({ t: 'shot', f: e.f, w: e.w, r: e.r, x: e.x, z: e.z, a: e.a, s: e.s, k: e.k, h: e.h ?? 0, net: true });
       // a flare: the host sends a supply drop to where it sees that egg, whatever the shot says
       if (WEAPONS[e.w].call && m.world) callDrop(m, e.f, f.x, f.z);
       return true;
@@ -313,8 +380,8 @@ export function applyNet(m: Match, e: NetEv): boolean {
     case 'th':
       if (!f || owned(f)) return false;
       f.firedAt = m.clock;
-      launch(m, e.f, e.k, e.x, e.z, e.lx, e.lz, e.ft, false);
-      m.events.push({ t: 'throw', f: e.f, k: e.k, x: e.x, z: e.z, lx: e.lx, lz: e.lz, ft: e.ft, net: true });
+      launch(m, e.f, e.k, e.x, e.z, e.lx, e.lz, e.ft, false, e.y0 ?? 0, e.ly ?? 0);
+      m.events.push({ t: 'throw', f: e.f, k: e.k, x: e.x, z: e.z, lx: e.lx, lz: e.lz, ft: e.ft, y0: e.y0 ?? 0, ly: e.ly ?? 0, net: true });
       return true;
     case 'd': {
       const to = m.fighters[e.to];
@@ -351,9 +418,13 @@ export function applyNet(m: Match, e: NetEv): boolean {
     case 'opd':
       if (!m.world && m.map.containers[e.c]) openContainer(m, e.c, e.f, false);
       return true;
-    case 'wl':
-      addWall(m, makeWall(e.id, e.f, e.x, e.z, e.a, e.hp));
-      return true;
+    case 'wl': {
+      // a piece already here (a packet heard twice) isn't news, nor one the host turns down for standing where another does
+      const at = unpackPiece(e.p);
+      return !!at && addWall(m, makePiece(e.id, e.f, at.k, at.mat, at.cx, at.cz, at.lv, at.dir, e.hp, e.t / 10, at.e));
+    }
+    case 'we':
+      return applyEdit(m, e.f, e.id, e.e);
     case 'wg':
       if (!m.world) removeWall(m, e.id, false);
       return true;
