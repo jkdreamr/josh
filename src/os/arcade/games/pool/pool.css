@@ -218,8 +218,9 @@
     zoom: var(--g-pool-u, 1);
   }
   .g-pool .arcade-ov > .arcade-card .arcade-btn,
-  .g-pool .arcade-ov > .arcade-card .arcade-seg > button {
-    min-height: 40px;
+  .g-pool .arcade-ov > .arcade-card .arcade-seg > button,
+  .g-pool .arcade-ov > .arcade-card .arcade-input {
+    min-height: 42px;
   }
   .g-pool .g-pool-spin {
     scale: var(--g-pool-u, 1);
