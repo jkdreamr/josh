@@ -127,7 +127,7 @@
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
-.g-slither-boost {
+.g-slither-stage > .g-slither-boost {
   position: absolute;
   z-index: 3;
   bottom: 12px;
@@ -167,7 +167,7 @@
   background: rgba(196, 255, 226, 0.38);
   transform: translate(calc(-50% + var(--stick-x)), calc(-50% + var(--stick-y)));
 }
-.g-slither-boost.is-pressed {
+.g-slither-stage > .g-slither-boost.is-pressed {
   border-color: rgba(184, 255, 218, 0.85);
   background: rgba(37, 115, 87, 0.94);
 }
