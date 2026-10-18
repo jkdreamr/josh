@@ -335,6 +335,11 @@ export function frameUnit(screenWidth: number, layoutWidth: number): number {
   return scale > 0.2 && scale < 0.99 ? Math.min(2, 1 / scale) : 1;
 }
 
+/** Board top under a status pill that wrapped below the toolbar; the column labels sit 15 units above the board. */
+export function boardTopBelow(statusBottom: number, u = 1): number {
+  return Math.ceil(statusBottom + 18 * u);
+}
+
 /** Board placement inside the stage; fixed-size chrome (buttons, labels, gaps) grows with u. */
 export function boardGeometry(w: number, h: number, placing: boolean, top: number, u = 1) {
   const wide = w / Math.max(1, h) >= 1.25 || h < 220;

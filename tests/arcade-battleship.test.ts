@@ -9,6 +9,7 @@ import {
   UNKNOWN,
   applyResult,
   boardGeometry,
+  boardTopBelow,
   canPlace,
   chooseShot,
   consistent,
@@ -261,4 +262,13 @@ test('scaled board geometry leaves room for the scaled labels, fire button and t
   assert.ok(battle.ownY - 15 * u >= battle.fireY + 50 * u, 'own column labels stay clear of Fire');
   assert.ok(battle.ownY + ownSide <= h);
   assert.ok(Math.abs(battle.fireX + 60 * u - w / 2) < 1e-9, 'fire is centered');
+});
+
+test('a wrapped status pill leaves room for the column labels above the board', () => {
+  for (const u of [1, 1 / 0.8175]) {
+    const statusBottom = 170.8;
+    const top = boardTopBelow(statusBottom, u);
+    // Column labels span 15u to 3u above the board.
+    assert.ok(top - 15 * u >= statusBottom + 2, `labels clear the status at u=${u}`);
+  }
 });

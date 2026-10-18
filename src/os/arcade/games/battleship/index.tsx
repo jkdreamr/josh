@@ -10,6 +10,7 @@ import {
   UNKNOWN,
   applyResult,
   boardGeometry,
+  boardTopBelow,
   canPlace,
   chooseShot,
   consistent,
@@ -252,7 +253,7 @@ function Battleship() {
       const scoreBottom = scoreRect ? (scoreRect.bottom - stageRect.top) / scaleY : 0;
       const top = Math.ceil(Math.max(controlBottom, scoreBottom) + 8);
       const statusHeight = status.getBoundingClientRect().height / scaleY;
-      const boardTop = Math.ceil(top + statusHeight + 8);
+      const boardTop = boardTopBelow(top + statusHeight, unit);
       setStatusLayout((current) =>
         current.top === top && current.left === null && current.boardTop === boardTop && current.below
           ? current
