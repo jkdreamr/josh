@@ -14,8 +14,9 @@ export type RoomPlayer = { seat: number; name: string };
  * allowBots: the game can fill empty seats with bots; bots: how many the host asked for (see botSeats).
  * listed: a public room, which the arcade's Open Rooms lists while someone can join it (see roomListing).
  * inLobby: the room's line is in Open Rooms right now, so only rooms that were listed ever need to take it out.
+ * quick: a quick-play room, which gathers people until startAt (epoch ms) and then starts its one round on its own.
  */
-export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; roundBots?: number; allowBots?: boolean; bots?: number; listed?: boolean; inLobby?: boolean };
+export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; roundBots?: number; allowBots?: boolean; bots?: number; listed?: boolean; inLobby?: boolean; quick?: boolean; startAt?: number };
 export type ClientRoomMessage =
   | { t: 'start' }
   | { t: 'over'; round: number }
@@ -51,14 +52,62 @@ export function botSeats(seats: number, people: Iterable<number>, bots: number):
 export const LISTING_REFRESH_MS = 60_000;
 export const LISTING_TTL_MS = 3 * 60_000;
 
+/** A quick-play room gathers people for this long after it opens, then starts with bots in every other seat. */
+export const GATHER_MS = 20_000;
+/** It starts this soon once people hold every seat. */
+export const GATHER_FULL_MS = 3_000;
+/** A quick room the Lobby has handed out keeps its place this long before anyone is in it. */
+export const QUICK_PENDING_MS = 15_000;
+/** The Lobby sends nobody to a quick room starting sooner than this: they could get there after the start. */
+export const QUICK_LATE_MS = 2_500;
+
+/** A quick-play room still waiting for its round: it starts at startAt. */
+export const gathering = (room: RoomState) => !!room.quick && !room.started && !room.round && room.startAt !== undefined;
+
+/** Someone came in: once people hold every seat, a gathering room starts in a moment. True when that moved the start. */
+export function gatherFull(room: RoomState, people: number, now: number): boolean {
+  if (!gathering(room) || people < room.seats || room.startAt! <= now + GATHER_FULL_MS) return false;
+  room.startAt = now + GATHER_FULL_MS;
+  return true;
+}
+
+/**
+ * When the room's alarm should next go off, or null for none: a gathering room's start, and every LISTING_REFRESH_MS
+ * while it is `listed` (an alarm already set for sooner is kept, so changes never put the refresh off).
+ */
+export function nextAlarm(room: RoomState, listed: boolean, current: number | null, now: number): number | null {
+  const refresh = listed ? (current !== null && current > now ? current : now + LISTING_REFRESH_MS) : null;
+  const start = gathering(room) ? room.startAt! : null;
+  if (refresh === null) return start;
+  return start === null ? refresh : Math.min(refresh, start);
+}
+
 /**
  * The room's line in the arcade's Open Rooms, or null when it doesn't belong there: private, without its host, full of
- * people (bots step aside, so they never fill it), or under way in a game nobody can join mid-game.
+ * people (bots step aside, so they never fill it), under way in a game nobody can join mid-game, or a quick-play room
+ * past gathering (it plays one round, for the people who were in it).
  */
 export function roomListing(room: RoomState, players: RoomPlayer[], bots: number): OpenRoom | null {
   const host = players.find((player) => player.seat === 0);
   if (!room.listed || !room.code || !host || players.length >= room.seats || (room.started && !room.lateJoin)) return null;
-  return { code: room.code, game: room.game, host: host.name, players: players.length, bots, seats: room.seats, started: room.started, lateJoin: !!room.lateJoin };
+  if (room.quick && !gathering(room)) return null;
+  const quick = room.quick ? { quick: true as const, startAt: room.startAt } : {};
+  return { code: room.code, game: room.game, host: host.name, players: players.length, bots, seats: room.seats, started: room.started, lateJoin: !!room.lateJoin, ...quick };
+}
+
+/** A line in the Lobby, and when its room last refreshed it. A quick room the Lobby handed out before anyone came in has no host yet. */
+export type LobbyRow = { listing: OpenRoom; updated: number };
+
+/**
+ * The quick-play room to send someone to: of the ones still gathering with a seat to spare and time left to get
+ * there, the fullest (so rooms fill up rather than split), then the one starting soonest.
+ */
+export function pickQuick(rows: LobbyRow[], now: number): OpenRoom | null {
+  const open = rows.map((row) => row.listing).filter((r, i) =>
+    r.quick && !r.started && r.players < r.seats && (r.host !== '' || rows[i].updated > now - QUICK_PENDING_MS) && (r.startAt ?? Infinity) > now + QUICK_LATE_MS,
+  );
+  open.sort((a, b) => b.players - a.players || (a.startAt ?? 0) - (b.startAt ?? 0) || a.code.localeCompare(b.code));
+  return open[0] ?? null;
 }
 
 /** Open Rooms order: rooms still gathering first, then the busiest, then the newest code for a stable order. */

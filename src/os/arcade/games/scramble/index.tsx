@@ -30,7 +30,7 @@ import {
   type Match,
 } from './logic';
 import { configOf, parsePacket, type Bots } from './net';
-import { FLUSH, TICK_MS, catchUp, ending, flush, guestMatch, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Session } from './session';
+import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Session } from './session';
 import { ARMOR_NAMES, MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { HALF, SUPPLY_FALL, placeAt } from './map';
 import { AmmoIcon, ArmorIcon, EggIcon, HowToPlay, IslandArt, PackIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon, keyCode } from './hud';
@@ -51,6 +51,8 @@ const fillOptions = [
   ['fill', 'Fill to 50'],
   ['none', 'Room Bots Only'],
 ] as const;
+/** Quick play's card, under the people in the match so far. */
+const QUICK_NOTE = `Computer eggs fill the island to ${MAX_FIGHTERS}.`;
 /** Name tags shown at once at most, the nearest eggs' (fifty would bury the screen). */
 const TAGS = 12;
 /** The host gives everyone a moment to get its first packet before the countdown. */
@@ -64,7 +66,7 @@ const TOSS_WAIT = 0.8;
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} defaultBots={ROOM_BOTS}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} defaultBots={ROOM_BOTS} quickNote={QUICK_NOTE}>
       <Stage />
     </GameShell>
   );
@@ -114,7 +116,7 @@ function Extras() {
 /**
  * Settings for online matches. The room's bots are its computer eggs (the host adds them in the room, and they fill
  * every empty seat unless the host takes some away). With any in the room, the host picks whether more fill the island
- * to fifty, and how sharp they all are, and tells the room.
+ * to fifty, and how sharp they all are, and tells the room. Quick play always fills it, at normal.
  */
 function OnlineSetup() {
   const online = useOnline();
@@ -124,7 +126,7 @@ function OnlineSetup() {
   const host = online?.isHost ?? true;
   const bots = online?.bots.length ?? 0;
   useEffect(() => {
-    if (!online?.isHost) return;
+    if (!online?.isHost || online.quick) return;
     const say = () => online.send(configOf(online.round, fill, level));
     say();
     const timer = window.setInterval(say, 2000);
@@ -145,7 +147,7 @@ function OnlineSetup() {
   }, [online]);
   return (
     <>
-      {bots > 0 &&
+      {bots > 0 && !online?.quick &&
         (host ? (
           <>
             <Segmented label="Computer Eggs" value={fill} options={fillOptions} onChange={setFill} />
@@ -276,9 +278,10 @@ function Play({ mode }: { mode: Mode }) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
     else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0]);
     else if (online!.isHost) {
-      // the room's bots, and with any of them, more to fill the island when the host wants it
-      const bots = online!.bots.length;
-      const h = hostMatch(online!.players, online!.seat, randomSeed(), level, bots > 0 && fill === 'fill' ? MAX_FIGHTERS : bots, COUNTDOWN + HOST_LEAD);
+      // the room's bots, and with any of them, more to fill the island when the host wants it (quick play always does)
+      const quick = online!.quick;
+      const bots = hostBots(quick, online!.bots.length, fill === 'fill');
+      const h = hostMatch(online!.players, online!.seat, randomSeed(), quick ? QUICK_LEVEL : level, bots, COUNTDOWN + HOST_LEAD);
       match.current = h.match;
       net.current.roster = h.roster;
     } else match.current = waitingMatch(level);

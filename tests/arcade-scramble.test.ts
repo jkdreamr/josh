@@ -134,7 +134,7 @@ import {
   type Match,
 } from '../src/os/arcade/games/scramble/logic.ts';
 import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
-import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, NEAR, OUT_EVERY, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
+import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
 
 const DT = 1 / 60;
@@ -3642,8 +3642,29 @@ test('the scene only uses three.js classes the shared chunk exports', () => {
   }
 });
 
-test('meta: twenty seats with late joining and bots, and a board per level', () => {
-  assert.deepEqual(meta.online, { seats: 20, lateJoin: true, bots: true });
+test('quick play always fills the island to fifty at normal, whoever hosts and however full the room is', () => {
+  assert.equal(QUICK_LEVEL, 'normal');
+  // a full room of twenty people has no room bots left, and quick play still fills the rest
+  assert.equal(hostBots(true, 0, false), MAX_FIGHTERS);
+  assert.equal(hostBots(true, 19, false), MAX_FIGHTERS);
+  // a room of your own: its bots, and more to fifty only with Fill to 50
+  assert.equal(hostBots(false, 5, true), MAX_FIGHTERS);
+  assert.equal(hostBots(false, 5, false), 5);
+  assert.equal(hostBots(false, 0, true), 0);
+  const people = Array.from({ length: 20 }, (_, seat) => ({ seat, name: `P${seat}` }));
+  for (const n of [1, 3, 20]) {
+    const { match, roster } = hostMatch(people.slice(0, n), 0, 4242, QUICK_LEVEL, hostBots(true, 0, true), 3);
+    assert.equal(match.fighters.length, MAX_FIGHTERS, `${n} people`);
+    assert.equal(roster.filter((seat) => seat >= 0).length, n);
+    assert.equal(match.fighters.filter((f) => f.kind === 'bot').length, MAX_FIGHTERS - n);
+    assert.equal(match.level, 'normal');
+  }
+});
+
+test('meta: twenty seats with late joining, bots and quick play, and a board per level', () => {
+  assert.deepEqual(meta.online, { seats: 20, lateJoin: true, bots: true, quick: true });
+  assert.match(meta.controls, /Play joins the next match/);
+  assert.match(meta.controls, /Play with Bots/);
   assert.deepEqual(Object.keys(meta.leaderboard!.variants!), [...LEVELS]);
   assert.equal(noInput().slot, -1);
 });

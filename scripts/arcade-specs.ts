@@ -24,7 +24,8 @@ export async function generateArcadeSpecs(): Promise<string> {
   for (const owner of await boardOwners()) {
     for (const board of boardsOf(owner)) specs.push([board.id, board.spec]);
     if (owner.online && (owner.online.seats < 2 || owner.online.seats > MAX_SEATS)) throw new Error(`${owner.id}: rooms hold 2 to ${MAX_SEATS} seats`);
-    if (owner.online) onlineSpecs.push([owner.id, { seats: owner.online.seats, ...(owner.online.lateJoin ? { lateJoin: true } : {}), ...(owner.online.bots ? { bots: true } : {}) }]);
+    if (owner.online?.quick && !owner.online.bots) throw new Error(`${owner.id}: quick play needs bots, to fill the seats nobody takes`);
+    if (owner.online) onlineSpecs.push([owner.id, { seats: owner.online.seats, ...(owner.online.lateJoin ? { lateJoin: true } : {}), ...(owner.online.bots ? { bots: true } : {}), ...(owner.online.quick ? { quick: true } : {}) }]);
   }
   specs.sort(([a], [b]) => a.localeCompare(b));
   onlineSpecs.sort(([a], [b]) => a.localeCompare(b));

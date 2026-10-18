@@ -53,6 +53,14 @@ export function hostMatch(players: Player[], mySeat: number, seed: number, level
   return { match, roster: entrants.map((e) => e.seat) };
 }
 
+/**
+ * How many computer eggs the host asks hostMatch for: in a quick-play match always enough to fill the island (people
+ * take seats from the room's bots, so a full room has none left), otherwise the room's, and with any of them more to
+ * fill it when the host picked that. The level a quick-play match plays at is always normal.
+ */
+export const hostBots = (quick: boolean, roomBots: number, fill: boolean) => (quick || (roomBots > 0 && fill) ? MAX_FIGHTERS : roomBots);
+export const QUICK_LEVEL: Level = 'normal';
+
 /** A guest's match, laid out from the host's first state: the same eggs, names and colors, ours to play. */
 export function guestMatch(players: Player[], mySeat: number, seed: number, level: Level, time: number, roster: number[]): Match {
   const names = botNames(seed);

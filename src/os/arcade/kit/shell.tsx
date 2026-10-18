@@ -5,13 +5,13 @@ import { ShellContext, type GameOverInfo, type GameStatus, type ShellApi } from 
 import { ArcadeHost, ArcadeInvite } from './host';
 import { KeyState, scrollKeys } from './keys';
 import { useHighScore } from './score';
-import { ARCADE_API, NAME_MAX, boardFor, formatBoardScore, savedName } from './leaderboard';
+import { ARCADE_API, NAME_MAX, boardFor, cleanName, formatBoardScore, saveName, savedName } from './leaderboard';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMuted } from './sfx';
 import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange, useSetting } from './settings';
-import { BotStepper, OnlinePanel, OnlineProvider, ROOM_VISIBILITY, RoomCode, VisibilityPicker } from './online';
+import { BotStepper, OnlinePanel, OnlineProvider, QuickPanel, ROOM_VISIBILITY, RoomCode, VisibilityPicker } from './online';
 import { MAX_SEATS, botPlayers, canStartNext, nextOnlineRound, parseRacePacket, raceStandings, RoundRouter, type RaceScores } from './online-core';
-import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
+import { createRoom, quickRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { countPlay } from '../../stats';
 import { useBadge } from '../../badges';
 import { usePlayingReport } from '../playing';
@@ -42,6 +42,8 @@ export type GameShellProps = {
   botNames?: readonly string[];
   /** Bots a host's room starts with until they pick a number of their own, which is remembered (default none). */
   defaultBots?: number;
+  /** Quick play (games with `online.quick`): one line on its card about who else plays, e.g. that bots fill the rest. */
+  quickNote?: string;
   className?: string;
   style?: CSSProperties;
 };
@@ -79,7 +81,7 @@ const isTouchDevice = () =>
  * (pause, restart, mute, back to arcade), live score, key capture and auto-pause.
  * Put the game's logic in a child component and read the shell with useShell().
  */
-export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, botNames, defaultBots = 0, roomCode, className, style }: GameShellProps) {
+export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, botNames, defaultBots = 0, quickNote, roomCode, className, style }: GameShellProps) {
   const host = useContext(ArcadeHost);
   const invite = useContext(ArcadeInvite);
   const joinCode = roomCode ?? invite;
@@ -126,6 +128,16 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [lostCode, setLostCode] = useState('');
   /** Whether the room is listed in Open Rooms (null: the server doesn't say), and the kind of room Create Room makes. */
   const [onlineListed, setOnlineListed] = useState<boolean | null>(null);
+  /**
+   * Quick play: whether this is a quick-play room (or the card that finds one is up), when its match starts (a
+   * performance.now() time, while it gathers), and how many rooms in a row turned out to be under way or full.
+   */
+  const [quick, setQuick] = useState(false);
+  const quickRef = useRef(false);
+  quickRef.current = quick;
+  const [gatherAt, setGatherAt] = useState<number | null>(null);
+  const quickTries = useRef(0);
+  const findMatchRef = useRef<() => void>(() => {});
   // The Lounge shows what you're playing, and your room while it's public, so people there can join you.
   usePlayingReport(compact ? null : meta.id, onlineLink && onlineListed && onlineCode ? onlineCode : null);
   const loungeUnread = useBadge('lounge');
@@ -136,6 +148,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const onlineModeRef = useRef(onlineMode);
   onlineModeRef.current = onlineMode;
   const race = !!meta.online?.race;
+  /** The Start card's Play is quick play, and Play with Bots plays alone. */
+  const quickOn = !compact && !!meta.online?.quick && !!ARCADE_API;
   const [raceScores, setRaceScores] = useState<RaceScores>({});
   const raceRef = useRef<{ link: RoomLink | null; seat: number | null; round: number; scores: RaceScores }>({ link: null, seat: null, round: 0, scores: {} });
   const raceReported = useRef(-1);
@@ -226,6 +240,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   /** What the host's Play Again waits on (see canStartNext). */
   const nextRound = useRef({ ready: true, waiting: false, racing: false });
   const playAgain = useCallback((force = false) => {
+    if (onlineModeRef.current && quickRef.current) {
+      // quick play goes back in the queue for the next match, once this one is over for everyone the host runs it for
+      if (!nextRound.current.waiting) requeue();
+      return;
+    }
     if (onlineModeRef.current) {
       if (onlineSeat === 0 && canStartNext(nextRound.current, force)) onlineLink?.start();
       return;
@@ -265,11 +284,33 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineOpen(false);
     setOnlineError('');
     setOnlineInProgress(false);
+    setQuick(false);
+    setGatherAt(null);
     clearBots();
   }, [clearBots, onlineLink]);
 
-  const connectRoom = useCallback((code: string) => {
+  /** Off the Game Over card (or out of a round) and back to the Start card, or on to the next quick match. */
+  const toStart = useCallback(() => {
+    keys.clear();
+    leaveRoom();
+    setResult(null);
+    setBoardOpen(false);
+    setScoreState(null);
+    setRound((r) => r + 1);
+    setStatus('ready');
+  }, [keys, leaveRoom]);
+  function requeue() {
+    toStart();
+    quickTries.current = 0;
+    findMatchRef.current();
+  }
+
+  /** `quick`: a room quick play found. A room that says it is a quick-play room plays as one however it was joined. */
+  const connectRoom = useCallback((code: string, quickPlay = false) => {
     setOnlineError('');
+    setQuick(quickPlay);
+    quickRef.current = quickPlay;
+    setGatherAt(null);
     onlineModeRef.current = false;
     setOnlineMode(false);
     setOnlineRound(0);
@@ -287,6 +328,21 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     router.join(0);
     link.on('msg', ({ from, d }) => router.receive(from, d, onlineModeRef.current || router.holding));
     link.on('welcome', (message) => {
+      // Quick play only joins a match that is gathering: one under way (or over) means on to the next.
+      if (message.quick && (message.started || message.startIn === null)) {
+        link.close();
+        if (quickTries.current++ < 3) findMatchRef.current();
+        else {
+          setOnlineLink(null);
+          setOnlineCode('');
+          setOnlineError('No Match Is Starting. Try Again in a Moment.');
+        }
+        return;
+      }
+      if (message.quick) {
+        quickRef.current = true;
+        setQuick(true);
+      }
       router.join(message.round);
       raceRef.current.seat = message.seat;
       setOnlineCode(message.code);
@@ -296,8 +352,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineInProgress(message.started);
       setOnlineBots(message.bots);
       const remembered = Math.min(Number(getSetting(botsSetting)), message.seats - 1);
-      if (message.seat === 0 && message.bots && remembered > 0) link.setBots(remembered);
+      if (message.seat === 0 && message.bots && remembered > 0 && !message.quick) link.setBots(remembered);
     });
+    link.on('gather', (ms) => setGatherAt(ms === null ? null : performance.now() + ms));
     link.on('bots', setOnlineBots);
     link.on('listed', setOnlineListed);
     // Someone joining for the next round sees when the one under way ends.
@@ -314,7 +371,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       // a card waiting on the round the old host ran waits no more
       setResult((r) => (r?.wait ? { ...r, wait: undefined } : r));
       if (onlineModeRef.current && statusRef.current === 'playing') {
-        gameOver(undefined, { title: 'Host Left', detail: seat === 0 ? 'You Are the Host Now.' : `${host?.name ?? 'Someone Else'} Is the Host Now.` });
+        const detail = quickRef.current ? 'The Match Ended With Them. Play Again for the Next One.' : seat === 0 ? 'You Are the Host Now.' : `${host?.name ?? 'Someone Else'} Is the Host Now.`;
+        gameOver(undefined, { title: 'Host Left', detail });
       }
     });
     link.on('players', (players) => {
@@ -361,6 +419,12 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       });
     }
     link.on('closed', ({ reason }) => {
+      // a quick-play room that filled up as we got there: another one
+      if (quickRef.current && link.seat === null && quickTries.current++ < 3) {
+        link.close();
+        findMatchRef.current();
+        return;
+      }
       onlineModeRef.current = false;
       raceRef.current = { link: null, seat: null, round: 0, scores: {} };
       setRaceScores({});
@@ -377,6 +441,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineError(reason === 'host-left' ? 'Host Left' : 'Connection Lost');
       setOnlineOpen(true);
       setStatus('ready');
+      setGatherAt(null);
       clearBots();
     });
     return link;
@@ -394,6 +459,37 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineBusy(false);
     }
   }, [connectRoom, meta.id, visibility]);
+
+  /** Quick play: into a match that is gathering people, or a new one for others to find. */
+  const findMatch = useCallback(async () => {
+    setOnlineOpen(true);
+    setQuick(true);
+    quickRef.current = true;
+    setOnlineBusy(true);
+    setOnlineError('');
+    try {
+      const code = await quickRoom(meta.id);
+      if (quickRef.current) connectRoom(code, true);
+    } catch (error) {
+      setOnlineError(error instanceof Error ? error.message : 'Could Not Find A Match');
+    } finally {
+      setOnlineBusy(false);
+    }
+  }, [connectRoom, meta.id]);
+  findMatchRef.current = () => void findMatch();
+  /** The Start card's Play: straight to finding a match, or first a name to play under (kept for next time). */
+  const play = useCallback((named = false) => {
+    sfx.unlock();
+    quickTries.current = 0;
+    if (onlineName.trim()) {
+      if (named) saveName(cleanName(onlineName));
+      void findMatch();
+    } else {
+      setOnlineError('');
+      setQuick(true);
+      setOnlineOpen(true);
+    }
+  }, [findMatch, onlineName]);
 
   const joinRoom = useCallback((code: string) => {
     setOnlineBusy(true);
@@ -519,7 +615,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       if (st === 'ready' || st === 'over' || st === 'paused') {
         // Online, a key still held or mashed from the round never starts the next one for everybody.
         if (st === 'over' && onlineMode && performance.now() - overAt.current < KEY_LOCKOUT_MS) return;
-        if ((e.code === 'Enter' || e.code === 'Space') && !e.repeat) (st === 'ready' ? start : st === 'over' ? playAgain : setupChanges.current.size ? restart : resume)();
+        // with quick play, Play finds a match (and nothing starts while its card is up)
+        if (st === 'ready' && quickOn && (onlineOpen || quickRef.current)) return;
+        if ((e.code === 'Enter' || e.code === 'Space') && !e.repeat) (st === 'ready' ? (quickOn ? () => play() : start) : st === 'over' ? playAgain : setupChanges.current.size ? restart : resume)();
         return;
       }
       if (st === 'playing') keys.press(e.code, e);
@@ -542,7 +640,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       el.removeEventListener('focusout', onOut);
       window.removeEventListener('blur', onBlur);
     };
-  }, [keys, onlineMode, pause, playAgain, restart, resume, start]);
+  }, [keys, onlineMode, onlineOpen, pause, play, playAgain, quickOn, restart, resume, start]);
 
   const api = useMemo<ShellApi>(
     () => ({ meta, status, round, active, compact, touch, keys, root, start, pause, resume, restart, gameOver, updateOver, setScore, invalidate, onInvalidate }),
@@ -643,6 +741,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       bots={gameBots}
       transport={onlineTransport}
       handoffs={onlineHandoffs}
+      quick={quick}
     >
     <ShellContext.Provider value={api}>
       <div
@@ -704,7 +803,25 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
           </div>
         )}
 
-        {status === 'ready' && onlineOpen && canPlayOnline && (
+        {status === 'ready' && onlineOpen && canPlayOnline && quick && (
+          <QuickPanel
+            code={onlineCode}
+            players={onlinePlayers}
+            seat={onlineSeat}
+            seats={onlineSeats}
+            startAt={gatherAt}
+            busy={onlineBusy}
+            error={onlineError}
+            name={onlineName}
+            onName={setOnlineName}
+            onFind={() => play(true)}
+            onLeave={leaveRoom}
+            note={quickNote}
+            setup={hostSetup}
+          />
+        )}
+
+        {status === 'ready' && onlineOpen && canPlayOnline && !quick && (
           <OnlinePanel
             game={meta.id}
             code={onlineCode}
@@ -749,12 +866,17 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 <h2>{meta.title}</h2>
                 <p>{meta.controls}</p>
                 {setup && <div className="arcade-setup">{setup}</div>}
-                <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={start} ref={autoFocus}>
+                <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={quickOn ? () => play() : start} ref={autoFocus}>
                   Play
                 </button>
+                {quickOn && (
+                  <button type="button" className="arcade-btn arcade-btn-lg" onClick={start}>
+                    Play with Bots
+                  </button>
+                )}
                 {canPlayOnline && (
-                  <button type="button" className="arcade-btn arcade-btn-lg" onClick={() => { setOnlineError(''); setOnlineOpen(true); }}>
-                    Play Online
+                  <button type="button" className={quickOn ? 'arcade-btn' : 'arcade-btn arcade-btn-lg'} onClick={() => { setOnlineError(''); setOnlineOpen(true); }}>
+                    {quickOn ? 'Play with Friends' : 'Play Online'}
                   </button>
                 )}
                 {best !== null && <small>Best {fmt(best)}</small>}
@@ -810,7 +932,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 <button type="button" className="arcade-btn" onClick={() => setBoardOpen(false)}>
                   Back
                 </button>
-                {gameOnline && onlineSeat !== 0 ? (
+                {gameOnline && quick ? (
+                  <button type="button" className="arcade-btn arcade-btn-primary" disabled={waiting} onClick={() => playAgain()}>
+                    Play Again
+                  </button>
+                ) : gameOnline && onlineSeat !== 0 ? (
                   <button type="button" className="arcade-btn" onClick={leaveRoom}>
                     Leave
                   </button>
@@ -900,7 +1026,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                   </form>
                 )}
                 {setup && !gameOnline && <div className="arcade-setup">{setup}</div>}
-                {gameOnline && (hostListed || hostBots || hostSetup) && (
+                {gameOnline && !quick && (hostListed || hostBots || hostSetup) && (
                   <div className="arcade-setup">
                     {hostListed}
                     {hostBots}
@@ -908,8 +1034,24 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                   </div>
                 )}
                 {/* Online, nothing is focused: a key or tap carried over from the round must not start or leave anything. */}
-                {gameOnline && <RoomCode game={meta.id} code={onlineCode} onShare={os ? shareRoom : undefined} onLeave={leaveRoom} />}
-                {gameOnline ? onlineSeat === 0 ? (
+                {gameOnline && !quick && <RoomCode game={meta.id} code={onlineCode} onShare={os ? shareRoom : undefined} onLeave={leaveRoom} />}
+                {/* Quick play: Play Again finds the next match (a host first sees this one out for everyone it runs it for). */}
+                {gameOnline && quick ? (
+                  <>
+                    <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" disabled={waiting} onClick={() => playAgain()}>
+                      Play Again
+                    </button>
+                    {waiting && <small>{result?.wait}</small>}
+                    <div className="arcade-row">
+                      <button type="button" className="arcade-btn" disabled={waiting} onClick={() => { toStart(); start(); }}>
+                        Play with Bots
+                      </button>
+                      <button type="button" className="arcade-btn" onClick={toStart}>
+                        Leave
+                      </button>
+                    </div>
+                  </>
+                ) : gameOnline ? onlineSeat === 0 ? (
                   <>
                     <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" disabled={!roomReady || waiting} onClick={hostPlayAgain}>
                       {playAgainLabel}
