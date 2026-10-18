@@ -1,7 +1,7 @@
 // Pure race rules for Palm Drive: kart physics, drifting and mini-turbos, items, CPU drivers, laps and places.
 // No DOM, no three.js. Distances are meters, times seconds; see track.ts for the axes and heading convention.
-import { COURSES, tierOf, trackOf, type CourseId, type Tier } from './courses.ts';
-import { BALL_WINDOW, CURB, KART_R, WET, awake, ballDue, ballNear, cycleAt, deltaS, dropAt, drives, edgeAt, gridSpot, headingOf, inTrench, lengthOf, locate, pointAt, shoreOf, solid, timed, wrapAngle, wrapS, type Hazard, type HazardKind, type Layout, type Past, type Shore, type Spot, type Track } from './track.ts';
+import { COURSES, tierOf, trackOf, type CourseId, type Gust, type Tier } from './courses.ts';
+import { BALL_WINDOW, CURB, KART_R, PASTS, WET, awake, ballDue, ballNear, cycleAt, deltaS, dropAt, drives, edgeAt, gripAt, gridSpot, headingOf, inTrench, lengthOf, locate, pointAt, shoreOf, solid, timed, wrapAngle, wrapS, type Hazard, type HazardKind, type Layout, type Past, type Shore, type Spot, type Track } from './track.ts';
 export { WET };
 
 export const LAPS = 5;
@@ -111,7 +111,11 @@ export const HATS: Hat[] = ['cap', 'tree', 'top', 'bow', 'tower', 'axe', 'dish',
  * early or late it judges the set pieces this lap (errLap), blunders: the set pieces it simply failed to see (by where
  * and which lap), waitT: how long it has sat waiting for one.
  */
-export type Ai = { pace: number; skill: number; band: number; lane: number; laneTo: number; laneT: number; itemT: number; held: number; driftT: number; care: number; dropGo: boolean; reactS: number; react: boolean; err: number; errLap: number; blunders: Record<string, boolean>; waitT: number; backT: number; backs: number; backAt: number; heldT: number; goT: number; goD: number };
+/**
+ * shaken: seconds left driving very carefully after falling twice in quick succession (fellAt: when it last fell), on
+ * the courses where the road itself is the danger (see Race.slick).
+ */
+export type Ai = { pace: number; skill: number; band: number; lane: number; laneTo: number; laneT: number; itemT: number; held: number; driftT: number; care: number; dropGo: boolean; reactS: number; react: boolean; err: number; errLap: number; blunders: Record<string, boolean>; waitT: number; backT: number; backs: number; backAt: number; heldT: number; goT: number; goD: number; shaken: number; fellAt: number };
 /** A fall off the road: into what (and whether down a trench), how fast the kart was going, and where it is put back [s, d]. */
 export type Fell = { past: Past; hole: boolean; v: number; to: [number, number] };
 /** What the network last said about a remote kart. */
@@ -197,6 +201,8 @@ export type Kart = {
   dropMiss: boolean;
   fell: Fell | null;
   falls: number;
+  /** Just set back down after a fall or a rescue: the drone holds it steady against the wind this much longer. */
+  calm: number;
   wrong: number;
   stuck: number;
   gas: number | null;
@@ -230,7 +236,7 @@ export type Thing = {
 
 export type Box = { x: number; z: number; s: number; t: number };
 export type Coin = { x: number; z: number; t: number };
-export type Dash = { x: number; z: number; s: number; d: number; h: number };
+export type Dash = { x: number; z: number; s: number; d: number; h: number; kick?: number };
 export type Ramp = { x: number; z: number; s: number; d: number; w: number; h: number };
 
 export type Ev =
@@ -248,7 +254,8 @@ export type Ev =
   | { t: 'coin'; k: number }
   | { t: 'cash'; k: number }
   | { t: 'turbo'; k: number; level: number }
-  | { t: 'dash'; k: number }
+  /** (and a kicker's shove across the road: see Layout.dashes) */
+  | { t: 'dash'; k: number; kick?: number }
   | { t: 'bolt'; k: number }
   | { t: 'boom'; x: number; z: number }
   | { t: 'lap'; k: number; lap: number }
@@ -303,6 +310,17 @@ export type Race = {
   shore: Shore | null;
   /** The trenches across the road. */
   holes: LiveHazard[];
+  /** What lies under them: a pit, or on the Cardinal Skyway the sky. */
+  holePast: Past;
+  /** The panes of glass road that blink out on the clock (see the 'panel' hazard). */
+  panels: LiveHazard[];
+  /** The course's gusts of wind (see Course.gusts). */
+  gusts: Gust[];
+  /**
+   * A course where the road itself is the danger (slick surfaces or wind): the karts slide on it and the wind shoves
+   * them, and the CPUs drive for it. Nothing about it runs anywhere else.
+   */
+  slick: boolean;
   /** How hard the CPUs push and what mistakes cost on this course (from its difficulty). */
   tier: Tier;
   rand: Rng;
@@ -358,6 +376,9 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
   const lay = COURSES[course].layout(track);
   const seed = opts.seed ?? (Math.random() * 2 ** 32) >>> 0;
   const rand = rng32(seed);
+  const tier = tierOf(course);
+  // (on Insane every CPU drives a good deal more cleanly than its own skill: lifted that share of the way to perfect)
+  const lift = tier.skillLift ?? 0;
   const karts = opts.racers.map((rc, idx): Kart => {
     const g = gridSpot(track, idx);
     const at = locate(track, g.x, g.z);
@@ -428,11 +449,12 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
       dropMiss: false,
       fell: null,
       falls: 0,
+      calm: 0,
       wrong: 0,
       stuck: 0,
       gas: null,
       input: noInput(),
-      ai: cpu ? newAi(rc.pace ?? 0.95, rc.skill ?? 0.5, rand) : null,
+      ai: cpu ? newAi(rc.pace ?? 0.95, lift ? lift + (1 - lift) * (rc.skill ?? 0.5) : (rc.skill ?? 0.5), rand) : null,
       auto: false,
       net: null,
     };
@@ -447,7 +469,7 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
   });
   const dashes = lay.dashes.map((c) => {
     const p = pointAt(track, c.s, c.d);
-    return { x: p.x, z: p.z, s: c.s, d: c.d, h: headingOf(p.tx, p.tz) };
+    return { x: p.x, z: p.z, s: c.s, d: c.d, h: headingOf(p.tx, p.tz), ...(c.kick ? { kick: c.kick } : {}) };
   });
   const ramps = lay.ramps.map((c) => {
     const p = pointAt(track, c.s, c.d);
@@ -473,7 +495,11 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
     hazards,
     shore: shoreOf(track, lay.hazards),
     holes: hazards.filter((h) => h.kind === 'trench'),
-    tier: tierOf(course),
+    holePast: COURSES[course].edges?.some((e) => e[3] === 'void') ? 'void' : 'pit',
+    panels: hazards.filter((h) => h.kind === 'panel'),
+    gusts: COURSES[course].gusts ?? [],
+    slick: !!(COURSES[course].surfaces || COURSES[course].gusts),
+    tier,
     rand,
     nextId: opts.idBase ?? 1,
     events: [],
@@ -544,7 +570,7 @@ const blocks = (r: Race, h: LiveHazard, x: number, z: number, pad: number, lap: 
 };
 
 function newAi(pace: number, skill: number, rand: Rng): Ai {
-  return { pace, skill, band: 1, lane: (rand() - 0.5) * 0.8, laneTo: 0, laneT: rand() * 2, itemT: 1 + rand() * 2, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0 };
+  return { pace, skill, band: 1, lane: (rand() - 0.5) * 0.8, laneTo: 0, laneT: rand() * 2, itemT: 1 + rand() * 2, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0, shaken: 0, fellAt: -99 };
 }
 
 /** A solo Grand Prix: seven CPU rivals ahead of you on the grid, like the first race of a cup. */
@@ -664,7 +690,7 @@ function drive(r: Race, k: Kart, dt: number) {
   const C = CLASSES[r.cc];
   const inp = k.input;
   const flying = k.bullet > 0;
-  for (const key of ['boost', 'star', 'shrink', 'spin', 'tumble', 'squash', 'safe', 'dashCool', 'slamCool', 'slamT', 'wobble', 'rampCool', 'trickT', 'mega', 'bullet', 'ink'] as const) k[key] = Math.max(0, k[key] - dt);
+  for (const key of ['boost', 'star', 'shrink', 'spin', 'tumble', 'squash', 'safe', 'dashCool', 'slamCool', 'slamT', 'wobble', 'rampCool', 'trickT', 'mega', 'bullet', 'ink', 'calm'] as const) k[key] = Math.max(0, k[key] - dt);
   // a bullet hands the kart back with a little boost
   if (flying && k.bullet === 0) k.boost = Math.max(k.boost, 0.6);
   if (k.goldT > 0) {
@@ -722,10 +748,12 @@ function drive(r: Race, k: Kart, dt: number) {
   }
 
   const top = topOf(r, k);
+  // on slick glass or frost the wheels bite less: slower to get going and to stop (see gripAt; the road is 1 elsewhere)
+  const g0 = r.slick && k.y <= 0.05 ? gripAt(r.track, k.s, k.lap) : 1;
   if (k.bullet > 0) k.v = approach(k.v, C.top + BULLET_DV, 40 * dt);
   else if (!control) k.v = approach(k.v, 0, (k.tumble > 0 ? 30 : 14) * dt);
-  else if (inp.brake) k.v = k.v > 0.5 ? Math.max(0, k.v - 26 * dt) : Math.max(-REVERSE, k.v - 9 * dt);
-  else if (k.v < top) k.v = Math.min(top, k.v + (k.boost > 0 ? 34 : k.v < 0 ? 20 : C.accel) * dt);
+  else if (inp.brake) k.v = k.v > 0.5 ? Math.max(0, k.v - 26 * (g0 < 1 ? 0.5 + 0.5 * g0 : 1) * dt) : Math.max(-REVERSE, k.v - 9 * dt);
+  else if (k.v < top) k.v = Math.min(top, k.v + (k.boost > 0 ? 34 : k.v < 0 ? 20 : C.accel) * (g0 < 1 ? 0.6 + 0.4 * g0 : 1) * dt);
   else k.v = Math.max(top, k.v - ((k.offroad || k.mud) && k.boost <= 0 ? 24 : 8) * dt);
 
   if (inp.slam && control && k.y === 0 && k.slamCool === 0 && k.v > 3) slamStart(r, k);
@@ -786,6 +814,9 @@ function drive(r: Race, k: Kart, dt: number) {
   else rate = k.steer * TURN * Math.min(1, sp / 5) * (1 - 0.3 * Math.min(1, sp / 30));
   // on wet road the kart turns less (a drift holds better than the front wheels do)
   if (k.wet) rate *= k.drift !== 0 ? 0.85 : 0.7;
+  // and on glass and frost less again, on the ground (in the air it steers as ever); a drift holds best on ice
+  const grip = r.slick && k.y <= 0.05 ? gripAt(r.track, k.s, k.lap) : 1;
+  if (grip < 1) rate *= k.drift !== 0 ? 0.8 + 0.2 * grip : 0.55 + 0.45 * grip;
   if (k.v < 0) rate = -rate;
   if (k.spin > 0) rate = 0;
   if (k.bullet > 0) {
@@ -797,11 +828,31 @@ function drive(r: Race, k: Kart, dt: number) {
     const p = pointAt(r.track, k.s + (open ? Math.min(ahead, Math.sqrt(12 / bend)) : ahead), 0);
     const diff = wrapAngle(headingOf(p.x - k.x, p.z - k.z) - k.h);
     k.h = wrapAngle(k.h + clamp(diff, -5 * dt, 5 * dt));
-  } else k.h = wrapAngle(k.h - rate * dt);
+  } else {
+    const h0 = k.h;
+    k.h = wrapAngle(k.h - rate * dt);
+    if (grip < 1) {
+      // the slide: the kart turns, but its momentum carries on the way it was going, the more the slicker the road
+      // (half as much in a drift, which is how to take a corner on ice)
+      const carry = (1 - grip) * (k.drift !== 0 ? 0.5 : 1);
+      k.kx += (Math.sin(h0) - Math.sin(k.h)) * k.v * carry;
+      k.kz += (Math.cos(h0) - Math.cos(k.h)) * k.v * carry;
+    }
+  }
+  // the wind shoves you sideways across the road, in the air too (a light kart further, a mega one less; not a kart just
+  // set back down, until it is under way)
+  if (r.gusts.length && k.bullet <= 0 && k.calm <= 0) {
+    const wa = windAt(r, k.s, r.time, k.lap) * (k.mega > 0 ? 0.5 : k.shrink > 0 ? 1.6 : 1);
+    if (wa !== 0) {
+      k.kx += -r.track.tz[k.i] * wa * dt;
+      k.kz += r.track.tx[k.i] * wa * dt;
+    }
+  }
 
   k.x += (Math.sin(k.h) * k.v + k.kx) * dt;
   k.z += (Math.cos(k.h) * k.v + k.kz) * dt;
-  const decay = Math.exp(-5 * dt);
+  // (and a slide or a shove carries further on ice)
+  const decay = Math.exp(-5 * (grip < 1 ? 0.3 + 0.7 * grip : 1) * dt);
   k.kx *= decay;
   k.kz *= decay;
   wall(r, k);
@@ -814,6 +865,53 @@ function drive(r: Race, k: Kart, dt: number) {
 }
 
 export const turboLevel = (charge: number) => (charge >= TURBO_AT[3] ? 3 : charge >= TURBO_AT[2] ? 2 : charge >= TURBO_AT[1] ? 1 : 0);
+
+/** A gust's ramp up and down: it blows full for `on` seconds less this much either end. */
+export const GUST_RAMP = 0.25;
+/**
+ * Where a gust is in its cycle at race time `time` for a kart at s on lap `lap`: how hard it blows there (live, 0 to 1:
+ * up over GUST_RAMP, held, down), how far through its warning it is (warn, 0 to 1, in the `warn` seconds before it
+ * blows) and how much of it reaches s (taper: in over the first 10 m and out over the last). Null where or when it
+ * does not blow.
+ */
+export function gustState(r: Race, g: Gust, s: number, time: number, lap: number) {
+  if (lap < (g.lap ?? 1)) return null;
+  const a0 = deltaS(r.track, g.s0, s);
+  const a1 = deltaS(r.track, s, g.s1);
+  if (a0 < 0 || a1 < 0) return null;
+  const taper = Math.min(1, a0 / 10, a1 / 10);
+  const c = (((time - g.phase) % g.every) + g.every) % g.every;
+  const live = c < GUST_RAMP ? c / GUST_RAMP : c < g.on - GUST_RAMP ? 1 : c < g.on ? (g.on - c) / GUST_RAMP : 0;
+  const warn = c >= g.every - g.warn ? (c - (g.every - g.warn)) / g.warn : 0;
+  return { live, warn, taper };
+}
+/**
+ * The wind at s at race time `time` for a kart on lap `lap`: meters a second squared across the road, to the right if
+ * positive. A pure function of where, when and which lap, so every screen agrees about it without a word sent.
+ */
+export function windAt(r: Race, s: number, time: number, lap: number) {
+  let a = 0;
+  for (const g of r.gusts) {
+    const st = gustState(r, g, s, time, lap);
+    if (st && st.live > 0) a += g.a * st.live * st.taper;
+  }
+  return a;
+}
+/**
+ * The gust warning at s: the strongest gust blowing or about to blow there (dir: which way, +1 to the right; a: how
+ * hard it blows at its height; k: 0 to 1 through its warning, 1 once it blows). Null when the air is still.
+ */
+export function gustWarn(r: Race, s: number, time: number, lap: number): { dir: number; a: number; k: number } | null {
+  let best: { dir: number; a: number; k: number } | null = null;
+  for (const g of r.gusts) {
+    const st = gustState(r, g, s, time, lap);
+    if (!st || (st.live <= 0 && st.warn <= 0)) continue;
+    const k = st.live > 0 ? 1 : st.warn;
+    const a = Math.abs(g.a) * st.taper;
+    if (!best || a * k > best.a * best.k) best = { dir: Math.sign(g.a), a, k };
+  }
+  return best;
+}
 
 const rightOf = (k: Kart) => ({ rx: -Math.cos(k.h), rz: Math.sin(k.h) });
 
@@ -956,7 +1054,9 @@ function wall(r: Race, k: Kart) {
   const grounded = k.y <= 0.05 && k.bullet <= 0 && k.sunk === 0;
   const low = k.y <= 0.3 && k.bullet <= 0 && k.sunk === 0;
   if (grounded) {
-    for (const h of r.holes) if (inTrench(t, h, at.s, at.d)) return fallIn(r, k, 'pit', at, h);
+    for (const h of r.holes) if (inTrench(t, h, at.s, at.d)) return fallIn(r, k, r.holePast, at, h);
+    // (a pane of the glass road that has blinked out, under the kart's middle, on the kart's own lap)
+    for (const h of r.panels) if (inTrench(t, h, at.s, at.d) && hazState(r, h, r.time, k.lap).live) return fallIn(r, k, 'void', at, h);
   }
   const edge = edgeAt(t, at.s, at.d >= 0 ? 1 : -1);
   // (the same for everyone: a CPU that fell a moment ago keeps clear of the edge in its planning, nothing holds it on)
@@ -1143,7 +1243,7 @@ export function rightOfWay(r: Race, h: Hazard, time: number) {
  * comes. d: where across the road it is (the ball swings); ang: a rotor's arm angle. A pure function of (hazard, time,
  * lap) and the buses, which are functions of time themselves, so every screen agrees about it.
  */
-export type HazPhase = 'off' | 'idle' | 'slam' | 'down' | 'rise' | 'pop' | 'up' | 'fall' | 'on';
+export type HazPhase = 'off' | 'idle' | 'slam' | 'down' | 'rise' | 'pop' | 'up' | 'fall' | 'on' | 'open';
 export type HazState = { live: boolean; solid: boolean; lift: number; warn: number; d: number; ang: number; phase: HazPhase };
 export function hazState(r: Race, h: Hazard, time: number, lap: number): HazState {
   const st: HazState = { live: false, solid: false, lift: 0, warn: 0, d: h.kind === 'wrecker' ? hazardD(h, time) : h.d, ang: 0, phase: 'off' };
@@ -1153,6 +1253,20 @@ export function hazState(r: Race, h: Hazard, time: number, lap: number): HazStat
     return st;
   }
   const out = awake(h, lap);
+  if (h.kind === 'panel' || h.kind === 'geyser') {
+    // a pane of glass that blinks out (open: a hole), or a grate that blows flame (on): `on` seconds from the start of
+    // each cycle, with `warn` seconds of telegraph before it (no bus ever comes this way)
+    if (!out) return st;
+    st.phase = 'idle';
+    const every = h.every ?? 3;
+    const c = cycleAt(h, time, every);
+    if (c < (h.on ?? 1)) {
+      st.phase = h.kind === 'panel' ? 'open' : 'on';
+      st.live = true;
+      st.lift = 1;
+    } else if (c >= every - (h.warn ?? 0.8)) st.warn = (c - (every - (h.warn ?? 0.8))) / (h.warn ?? 0.8);
+    return st;
+  }
   const yielding = out && rightOfWay(r, h, time);
   if (h.kind === 'rotor') {
     st.ang = (h.a0 ?? 0) + (h.spin ?? 0) * time;
@@ -1240,6 +1354,11 @@ export function hazState(r: Race, h: Hazard, time: number, lap: number): HazStat
 export function hazSpans(r: Race, h: Hazard, time: number, lap: number, ds = 0, st = hazState(r, h, time, lap)): [number, number][] {
   const out: [number, number][] = [];
   if (h.kind === 'wet') return out;
+  if (h.kind === 'panel') {
+    // (a pane is `len` long from s, so it is on the lines from 0 to len past it)
+    if (st.live && ds >= 0 && ds <= (h.len ?? 0)) out.push([h.d - (h.w ?? h.r), h.d + (h.w ?? h.r)]);
+    return out;
+  }
   if (h.kind === 'bollard') {
     if (st.solid && Math.abs(ds) <= BANK.thick) out.push([h.d - (h.w ?? 0) / 2, h.d + (h.w ?? 0) / 2]);
     return out;
@@ -1290,6 +1409,14 @@ function pieceHit(r: Race, k: Kart, h: LiveHazard, dx: number, dz: number, tough
   const caught = (how: HitHow) => {
     if (hitKart(r, k, how, -1)) r.events.push({ t: 'haz', k: k.idx, kind: h.kind });
   };
+  // (a pane that blinks out drops you through it: see wall())
+  if (h.kind === 'panel') return;
+  if (h.kind === 'geyser') {
+    // a column of flame: it spins you, in the air or not (it reaches higher than a hop)
+    if (!st.live || tough) return;
+    if (Math.hypot(dx, dz) < h.r + R) caught('spin');
+    return;
+  }
   if (h.kind === 'bollard') {
     // a slab across the road, `thick` either way along it and half its width either side of d: flush, it is nothing
     if (!st.solid || tough) return;
@@ -1408,8 +1535,14 @@ function pieceHit(r: Race, k: Kart, h: LiveHazard, dx: number, dz: number, tough
   }
 }
 
+/** The code the track stores the open sky by (see PASTS). */
+const VOID = PASTS.indexOf('void');
+
 /** Seconds after a fall a CPU keeps well clear of the edge (and the edge holds it like a wall). */
 const CARE_T = 12;
+/** A CPU that falls again within this long of its last fall drives very carefully for SHAKEN_T (see Ai.shaken). */
+const SHAKEN_WITHIN = 20;
+const SHAKEN_T = 20;
 
 /**
  * Off the road: a splash into the water (or a drop into a pit or a trench), and you sit there until the crane fishes you
@@ -1421,8 +1554,9 @@ const CARE_T = 12;
 function fallIn(r: Race, k: Kart, past: Past, at: Spot, hole: Hazard | null = null) {
   if (k.sunk > 0) return;
   const t = r.track;
-  // (only from the run-up, past where the crane puts you back: never carried forward)
-  const trench = hole ?? r.holes.find((h) => deltaS(t, h.back ?? h.s, at.s) > 0 && deltaS(t, h.s, at.s) <= (h.len ?? 0)) ?? null;
+  // (only from the run-up, past where the crane puts you back: never carried forward; the same before the glass panes
+  // that blink out)
+  const trench = hole ?? (r.panels.length ? [...r.holes, ...r.panels] : r.holes).find((h) => deltaS(t, h.back ?? h.s, at.s) > 0 && deltaS(t, h.s, at.s) <= (h.len ?? 0)) ?? null;
   const from = trench ? (trench.back ?? at.s) : at.s;
   k.fell = { past, hole: hole !== null, v: Math.abs(k.v), to: spotFor(r, k, from, at.d, r.time + r.tier.fallT) };
   k.sunk = r.tier.fallT;
@@ -1440,6 +1574,11 @@ function fallIn(r: Race, k: Kart, past: Past, at: Spot, hole: Hazard | null = nu
   if (k.ai && k.kind === 'cpu') {
     k.ai.care = CARE_T;
     k.ai.dropGo = r.rand() < k.ai.skill;
+    // (and where the road itself is the danger, a second fall soon after the first shakes it: very careful for a while)
+    if (r.slick) {
+      if (r.time - k.ai.fellAt < SHAKEN_WITHIN) k.ai.shaken = SHAKEN_T;
+      k.ai.fellAt = r.time;
+    }
   }
   k.v = 0;
   k.kx = 0;
@@ -1514,6 +1653,20 @@ function clearFor(r: Race, k: Kart, s: number, d: number, at = r.time) {
   const t = r.track;
   const C = CLASSES[r.cc];
   for (const h of r.hazards) {
+    if (h.kind === 'panel') {
+      // never where a pane will open under the kart as it gets going, foot down from a standstill: nor on its way over
+      const ds = deltaS(t, s, h.s);
+      const len = h.len ?? 0;
+      if (ds < -len - KART_R || ds > 0.5 * C.accel * (SET_T + 1) ** 2 + 2) continue;
+      if (Math.abs(d - h.d) > (h.w ?? h.r) + 0.3) continue;
+      for (let u = 0; u <= SET_T + 1; u += 0.05) {
+        // (with its foot down, or off on a drop start's boost)
+        const lo = Math.min(0.5 * C.accel * u * u, C.top * u) - ds;
+        const hi = Math.min(0.5 * 34 * u * u, (C.top + BOOST_DV) * u) - ds;
+        if (hi > -KART_R - 0.5 && lo < len + KART_R + 0.5 && hazState(r, h, at + u, k.lap).live) return false;
+      }
+      continue;
+    }
     if (timed(h.kind)) {
       // nothing a set piece will block in that lane while the kart gets going, nor where it has got to by then with its
       // foot down from a standstill (they run on the clock, so this is known): a spot just short of one is as bad as one
@@ -1599,7 +1752,10 @@ export function rescue(r: Race, k: Kart, spot = spotFor(r, k, k.s, k.d)) {
   k.vy = 0;
   k.tumble = 0;
   k.safe = Math.max(k.safe, 1.2);
+  k.calm = CALM_T;
 }
+/** How long the drone holds a kart it has just set down steady against the wind (see Kart.calm). */
+export const CALM_T = 1.5;
 
 function progress(r: Race, k: Kart, dt: number) {
   const t = r.track;
@@ -1965,8 +2121,8 @@ function moveThings(r: Race, dt: number) {
         sink(r, th, edge.past);
         continue;
       }
-      if (th.y === 0 && r.holes.some((h) => inTrench(t, h, at.s, at.d))) {
-        sink(r, th, 'pit');
+      if (th.y === 0 && (r.holes.some((h) => inTrench(t, h, at.s, at.d)) || overPanel(r, th, at))) {
+        sink(r, th, r.holePast);
         continue;
       }
       if (th.kind === 'bomb') {
@@ -2043,8 +2199,8 @@ function moveThings(r: Race, dt: number) {
     th.i = at.i;
     // over the brink of a drop, or into a trench, a shell is gone
     const edge = edgeAt(t, at.s, at.d >= 0 ? 1 : -1);
-    if ((edge.past !== 'wall' && Math.abs(at.d) > edge.lim) || r.holes.some((h) => inTrench(t, h, at.s, at.d))) {
-      sink(r, th, edge.past === 'wall' ? 'pit' : edge.past);
+    if ((edge.past !== 'wall' && Math.abs(at.d) > edge.lim) || r.holes.some((h) => inTrench(t, h, at.s, at.d)) || overPanel(r, th, at)) {
+      sink(r, th, edge.past === 'wall' ? r.holePast : edge.past);
       continue;
     }
     if (edge.past === 'wall' && Math.abs(at.d) > edge.lim - 0.5) {
@@ -2067,6 +2223,9 @@ function moveThings(r: Race, dt: number) {
     }
   }
 }
+
+/** Whether an item at `at` is over a pane of the glass road that has blinked out (on its thrower's lap). */
+const overPanel = (r: Race, th: Thing, at: Spot) => r.panels.length > 0 && r.panels.some((h) => inTrench(r.track, h, at.s, at.d) && hazState(r, h, r.time, r.karts[th.owner]?.lap ?? 1).live);
 
 /** A banana, a bomb or a shell over the edge where the road drops away: it sinks out of sight (a splash or a puff). */
 function sink(r: Race, th: Thing, kind: Past) {
@@ -2148,7 +2307,12 @@ function pickups(r: Race, dt: number) {
       if (ds < 2.4 && Math.abs(k.d - d.d) < 1.6) {
         k.boost = Math.max(k.boost, DASH_T);
         k.dashCool = 0.6;
-        r.events.push({ t: 'dash', k: k.idx });
+        if (d.kick) {
+          // a kicker: and a shove across the road toward its own side
+          k.kx += -r.track.tz[k.i] * d.kick;
+          k.kz += r.track.tx[k.i] * d.kick;
+          r.events.push({ t: 'dash', k: k.idx, kick: d.kick });
+        } else r.events.push({ t: 'dash', k: k.idx });
       }
     }
   }
@@ -2157,7 +2321,7 @@ function pickups(r: Race, dt: number) {
 // ---------------------------------------------------------------------------------------------------------------
 // CPU drivers (and the autopilot that brings you home after the flag)
 
-const AUTO: Ai = { pace: 1, skill: 0.6, band: 1, lane: 0, laneTo: 0, laneT: 0, itemT: 1, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0 };
+const AUTO: Ai = { pace: 1, skill: 0.6, band: 1, lane: 0, laneTo: 0, laneT: 0, itemT: 1, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0, shaken: 0, fellAt: -99 };
 
 function curveAhead(t: Track, s: number, from: number, to: number) {
   let sum = 0;
@@ -2218,7 +2382,8 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
     // a bus or a cart is in the way from its tail to its nose, so still while the kart is alongside it
     const long = drives(h) ? lengthOf(h) / 2 + KART_R : 0;
     const ds = deltaS(t, k.s, h.along);
-    if (ds + long < -1) continue;
+    // (and a pane of glass all the way along it)
+    if (ds + long + (h.kind === 'panel' ? (h.len ?? 0) : 0) < -1) continue;
     const until = Math.max(0, ds - long);
     // how long the kart takes to get there at a speed: a bus drives on ahead, so the kart only closes on it as fast as
     // it outruns it
@@ -2228,7 +2393,8 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
     if (far > reach) continue;
     if (timed(h.kind)) {
       const v0 = Math.max(0, k.v);
-      const acc = CLASSES[r.cc].accel;
+      // (on a slick course it counts on a boost too: off a drop start, say, it gets there a good deal sooner)
+      const acc = r.slick && k.boost > 0 ? 34 : CLASSES[r.cc].accel;
       // (how long to go `dist` from here getting up to `speed`)
       const reachAt = (speed: number, dist = until) => {
         if (dist <= 0) return 0;
@@ -2293,15 +2459,18 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
       if (ai.blunders[key]) continue;
       piece = true;
       const slop = 0.1 + 0.25 * (1 - ai.skill);
-      // (a jet is thin and its tip sweeps fast: sampled closer in time, and given more room)
-      const room = KART_R + (h.kind === 'rotor' ? 1.0 : 0.7);
-      // (a sprinkler's jet is met along a stretch of road, not on one line: every so far along it)
+      // (a jet is thin and its tip sweeps fast: sampled closer in time, and given more room; over a pane of glass the
+      // kart keeps to the middle of the half that holds, as a bump or a slide off the seam drops it through; and a
+      // flare is only as wide as its column)
+      const room = KART_R + (h.kind === 'rotor' ? 1.0 : h.kind === 'panel' ? 1.4 : h.kind === 'geyser' ? 0.3 : 0.7);
+      // (a sprinkler's jet is met along a stretch of road, not on one line: every so far along it; and a pane of glass
+      // from its near end to its far end)
       const arm = h.arm ?? 5;
-      const offs = h.kind === 'rotor' ? [-0.9 * arm, -0.6 * arm, -0.3 * arm, 0, 0.3 * arm, 0.6 * arm, 0.9 * arm] : [0];
+      const offs = h.kind === 'rotor' ? [-0.9 * arm, -0.6 * arm, -0.3 * arm, 0, 0.3 * arm, 0.6 * arm, 0.9 * arm] : h.kind === 'panel' ? [0, (h.len ?? 0) / 2, h.len ?? 0] : [0];
       const spansAt = (t0: number, out: Span[]) => {
         for (const o of offs) for (const dt of h.kind === 'rotor' ? [-slop, -slop / 2, 0, slop / 2, slop] : [-slop, 0, slop]) for (const [lo, hi] of hazSpans(r, h, t0 + dt + o / v, k.lap, o)) out.push({ lo, hi, room, far });
       };
-      const ext = h.kind === 'bollard' ? BANK.thick : h.kind === 'rotor' ? JET.w : h.r;
+      const ext = h.kind === 'bollard' ? BANK.thick : h.kind === 'rotor' ? JET.w : h.kind === 'panel' ? 0 : h.r;
       const crossing = (speed: number, out: Span[]) => {
         for (const o of offs) {
           const t0 = r.time + ai.err + at(speed, until + o - ext - KART_R) - slop;
@@ -2317,6 +2486,10 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
         crossing(keepOn ? fast : 6, later);
         // and from a crawl, better well wide of where the ball swings at all
         if (h.kind === 'wrecker') pieces.push({ lo: h.d - (h.swing ?? 0) - h.r, hi: h.d + (h.swing ?? 0) + h.r, room: 0.5, far });
+      } else if (h.kind === 'panel') {
+        // (a pane is judged over the whole time the kart is on it, at its speed or eased off)
+        crossing(v, pieces);
+        crossing(Math.max(6, v - 7), later);
       } else {
         spansAt(r.time + when(v) + ai.err, pieces);
         spansAt(keepOn ? r.time + when(v) + ai.err : r.time + when(Math.max(6, v - 7)) + ai.err, later);
@@ -2329,6 +2502,21 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
         pieces.push(seam);
         later.push(seam);
       }
+    }
+  }
+  // a kicker coming up: kept off its outer part, the side that throws you toward the edge (the whole of it for the less
+  // able, and for a kart that has just fallen twice), as one more thing it would rather not run over
+  if (r.slick) {
+    for (const p of r.dashes) {
+      if (!p.kick) continue;
+      const far = deltaS(t, k.s, p.s);
+      if (far < -2 || far > reach) continue;
+      const sg = Math.sign(p.kick);
+      const whole = ai.skill < 0.8 || ai.shaken > 0;
+      const a = whole ? { lo: p.d - 1.6, hi: p.d + 1.6 } : { lo: Math.min(p.d - sg * 0.55, p.d + sg * 1.6), hi: Math.max(p.d - sg * 0.55, p.d + sg * 1.6) };
+      const pad = { ...a, room: 0.6, solid: false, soft: true };
+      ahead.push(pad);
+      if (gap(lane * t.half, pad) < pad.room) near = Math.min(near, Math.max(1, far));
     }
   }
   // where the road drops away (water, a pit): keep well over from that side all the way past it, and further still for a
@@ -2415,28 +2603,49 @@ function dropOutside(r: Race, s: number, ahead: number, turn: number) {
  * brink; from a wall, just clear of it. dodgeHazard keeps EDGE_KEEP from it where it can.
  */
 const EDGE_KEEP = 2.6;
-type Band = { lo: number; hi: number; open: boolean; hole: boolean };
+type Band = { lo: number; hi: number; open: boolean; hole: boolean; wide?: boolean };
 const FREE: Band = { lo: -Infinity, hi: Infinity, open: false, hole: false };
-const edgeRoom = (k: Kart, ai: Ai) => KART_R + 0.9 + 0.025 * Math.abs(k.v) + 0.8 * (1 - ai.skill) + (ai.care > 0 ? 1.2 : 0);
+const edgeRoom = (r: Race, k: Kart, ai: Ai) => KART_R + 0.9 + 0.025 * Math.abs(k.v) + 0.8 * (1 - ai.skill) + (ai.care > 0 ? 1.2 : 0) + (r.slick ? 0.25 * Math.hypot(k.kx, k.kz) + (ai.shaken > 0 ? 2 : 0) : 0);
 
 /**
  * The stretch across the road (lateral offsets lo to hi) a CPU keeps to over the road ahead: clear of the brink wherever
  * it drops away, by `room`, and of the walls. Coming up to a trench it lines up with the ramp over it (or, the best of
  * them, or one going too slowly to make the jump, with a steel plate beside the hole). open: a drop somewhere in it.
  */
-function edgeBand(r: Race, k: Kart, room: number): Band {
+function edgeBand(r: Race, k: Kart, room: number, roomLo = room, roomHi = room): Band {
   const t = r.track;
   const v = Math.max(8, Math.abs(k.v));
   let lo = -Infinity;
   let hi = Infinity;
   let open = false;
+  // (and the narrowest the road gets over the sky, where it narrows: see below)
+  let narrow = Infinity;
   for (let a = 0; a <= 10 + v * 0.7; a += 3) {
     const i = Math.floor(wrapS(t, k.s + a) / t.step) % t.n;
-    lo = Math.max(lo, t.lo[i] + (t.pastLo[i] ? room : KART_R + 0.4));
-    hi = Math.min(hi, t.hi[i] - (t.pastHi[i] ? room : KART_R + 0.4));
+    lo = Math.max(lo, t.lo[i] + (t.pastLo[i] ? roomLo : KART_R + 0.4));
+    hi = Math.min(hi, t.hi[i] - (t.pastHi[i] ? roomHi : KART_R + 0.4));
     open ||= t.pastLo[i] !== 0 || t.pastHi[i] !== 0;
+    if (t.pastLo[i] === VOID && -t.lo[i] < t.half) narrow = Math.min(narrow, -t.lo[i]);
+    if (t.pastHi[i] === VOID && t.hi[i] < t.half) narrow = Math.min(narrow, t.hi[i]);
+  }
+  // where the road narrows over the sky, however wide of the brink it means to keep, it may go to within a kart and a
+  // meter and a half of it: any further in and the narrows leave it no room to get round anything at all
+  // (less on the side the wind is blowing toward)
+  if (narrow < Infinity && narrow - KART_R - 1.5 > 0) {
+    lo = Math.min(lo, -(narrow - KART_R - 1.5 - (roomLo - room)));
+    hi = Math.max(hi, narrow - KART_R - 1.5 - (roomHi - room));
+  }
+  // through the Blink a kart has to be squarely over one half of each row or the other (the halves meet in the middle):
+  // so however wide of the brink it means to keep, it may go as far out as the middle of a half
+  for (const h of r.panels) {
+    const ds = deltaS(t, k.s, h.s);
+    if (ds < -(h.len ?? 0) - 1 || ds > 14 + v * 1.2 || !awake(h, k.lap)) continue;
+    const mid = Math.abs(h.d) + 0.2;
+    lo = Math.min(lo, -mid);
+    hi = Math.max(hi, mid);
   }
   let hole = false;
+  let wide = false;
   for (const h of r.holes) {
     const ds = deltaS(t, k.s, h.s);
     if (ds < -(h.len ?? 0) || ds > 14 + v * 1.2) continue;
@@ -2444,6 +2653,12 @@ function edgeBand(r: Race, k: Kart, room: number): Band {
     if (r.hazards.some((p) => timed(p.kind) && deltaS(t, k.s, p.s) > -p.r && deltaS(t, k.s, p.s) < ds - 2)) continue;
     hole = true;
     const ramp = r.ramps.find((p) => Math.abs(deltaS(t, p.s, h.s)) < 3);
+    // a gap right across the road with a ramp just as wide: anywhere on the road will do, foot down (no plates to fall
+    // back on)
+    if (ramp && ramp.w >= 2 * t.half - 1) {
+      wide = true;
+      continue;
+    }
     const w = h.w ?? h.r;
     const plate = edgeAt(t, h.s + (h.len ?? 0) / 2, 1).lim;
     // (how fast it will be going at the lip with its foot down all the way, as it takes 13.5 m/s to clear the hole, and
@@ -2465,7 +2680,7 @@ function edgeBand(r: Race, k: Kart, room: number): Band {
     }
   }
   if (lo > hi) lo = hi = (lo + hi) / 2;
-  return { lo, hi, open, hole };
+  return wide ? { lo, hi, open, hole, wide } : { lo, hi, open, hole };
 }
 
 /** How far kart k is from the brink of a drop on either side here (Infinity with walls both sides). */
@@ -2485,8 +2700,8 @@ function fromBrink(r: Race, k: Kart) {
 const HAIRPIN = 18;
 const BRAKE_PLAN = 18;
 
-/** An Expert course. */
-const expert = (r: Race) => COURSES[r.course].difficulty === 4;
+/** An Expert course, or harder. */
+const expert = (r: Race) => COURSES[r.course].difficulty >= 4;
 
 /** Who the CPUs keep pace with: the furthest kart a person drives (you, solo; whoever leads them online). */
 export function pacer(r: Race): Kart | null {
@@ -2500,6 +2715,7 @@ function think(r: Race, k: Kart, dt: number) {
   const ai = (k.ai ??= { ...AUTO, blunders: {} });
   const inp = k.input;
   ai.care = Math.max(0, ai.care - dt);
+  ai.shaken = Math.max(0, ai.shaken - dt);
   if (k.sunk > 0) {
     // in the water: nothing to do but be ready to time a drop start for the moment it is set back down
     inp.steer = 0;
@@ -2525,9 +2741,14 @@ function think(r: Race, k: Kart, dt: number) {
   ai.lane = approach(ai.lane, ai.laneTo, 0.9 * dt);
 
   const curve = curveAhead(t, k.s, 8, 40);
-  // keep clear of the brink where the road drops away, and line up for a trench
-  const band = edgeBand(r, k, edgeRoom(k, ai));
-  let lane = clamp(clamp(ai.lane + clamp(curve.mean * 40, -0.55, 0.55) * ai.skill, -0.82, 0.82), band.lo / t.half, band.hi / t.half);
+  // keep clear of the brink where the road drops away, and line up for a trench; with the wind about to blow (or
+  // blowing) where it is going, lean into it and keep more room on the side it blows toward
+  const wind = r.gusts.length ? windAhead(r, k) : 0;
+  const room = edgeRoom(r, k, ai);
+  const band = wind ? edgeBand(r, k, room, room + (wind < 0 ? 0.1 * -wind : 0), room + (wind > 0 ? 0.1 * wind : 0)) : edgeBand(r, k, room);
+  let want = ai.lane + clamp(curve.mean * 40, -0.55, 0.55) * ai.skill;
+  if (wind) want -= (Math.sign(wind) * Math.min(1.2, 0.12 * Math.abs(wind))) / t.half;
+  let lane = clamp(clamp(want, -0.82, 0.82), band.lo / t.half, band.hi / t.half);
   let dodge = dodgeHazard(r, k, lane, band);
   if (dodge !== null) lane = dodge.lane;
   // aim closer in while dodging, beside whatever is in the way, to get across in time
@@ -2544,7 +2765,10 @@ function think(r: Race, k: Kart, dt: number) {
     }
   }
   const p = pointAt(t, k.s + look, aim);
-  const diff = wrapAngle(headingOf(p.x - k.x, p.z - k.z) - k.h);
+  // (on a slick road it steers by the way it is actually going over the ground, slide and all, not the way its nose
+  // points)
+  const course = r.slick && Math.abs(k.v) > 5 ? headingOf(Math.sin(k.h) * k.v + k.kx, Math.cos(k.h) * k.v + k.kz) : k.h;
+  const diff = wrapAngle(headingOf(p.x - k.x, p.z - k.z) - course);
   // beside a drop it steers for the turn that takes it through the point it aims at, rather than just turning toward
   // it: a kart that only turns toward its aim lags round a tight bend and runs wide, and out there is no wall
   const sp = Math.abs(k.v);
@@ -2565,14 +2789,15 @@ function think(r: Race, k: Kart, dt: number) {
     const out = edgeAt(t, k.s + sp * 0.2, -k.drift);
     const room = out.past === 'wall' ? Infinity : out.lim + k.d * k.drift;
     if (room < 2.4) inp.steer = k.drift;
-    if ((turboLevel(k.charge) >= goal && ending && aligned) || k.drift * rate < -0.35 || ai.driftT > 3 || swerve || room < 1.1) inp.drift = false;
+    if ((turboLevel(k.charge) >= goal && ending && aligned) || k.drift * rate < -0.35 || ai.driftT > 3 || swerve || room < 1.1 || ai.shaken > 0) inp.drift = false;
   } else if (k.y === 0) {
     inp.steer = clamp(need, -1, 1);
     const bend = curveAhead(t, k.s, 4, 30).mean;
     // no drifting into a corner with something in the way just ahead (a drift can't swerve), unless the kart is already
     // on a clean line past it
     // (and the less able don't drift at all where the road drops away)
-    const open = (dodge === null || (dodge.clear && Math.abs(dodge.lane * t.half - k.d) < 1) || dodge.ds > 6 + k.v * 0.6) && !(band.open && ai.skill < 0.6);
+    // (nor in the wind unless it is very good, as a drift cannot correct for it; nor at all shaken by a fall)
+    const open = (dodge === null || (dodge.clear && Math.abs(dodge.lane * t.half - k.d) < 1) || dodge.ds > 6 + k.v * 0.6) && !(band.open && ai.skill < 0.6) && !(wind !== 0 && ai.skill < 0.8) && !(ai.shaken > 0) && !(r.panels.length > 0 && r.panels.some((h) => deltaS(t, k.s, h.s) > 0 && deltaS(t, k.s, h.s) < 45 && awake(h, k.lap)));
     inp.drift = Math.abs(bend) > 0.02 && k.v > 14 && Math.sign(bend) === Math.sign(need) && r.rand() < ai.skill && open;
     inp.hop = inp.drift;
     ai.driftT = 0;
@@ -2586,15 +2811,18 @@ function think(r: Race, k: Kart, dt: number) {
   const bendAhead = curveAhead(t, k.s, 0, 20 + k.v * 0.8).peak;
   const peak = Math.abs(bendAhead);
   const wet = peak > 0.02 && dropOutside(r, k.s, 20 + k.v * 0.8, Math.sign(bendAhead));
-  // (and on wet road the wheels turn it less: see drive())
+  // (on the run-up to the Blink and over it: see the panes)
+  const blink = r.panels.length > 0 && r.panels.some((h) => deltaS(t, k.s, h.s) > -(h.len ?? 0) && deltaS(t, k.s, h.s) < 30 && awake(h, k.lap));
+  // (and on wet road the wheels turn it less: see drive(); on glass or frost less again, by the slickest of the next 30 m)
   const damp = r.hazards.some((h) => h.kind === 'wet' && awake(h, k.lap) && deltaS(t, k.s, h.s) > -h.r && deltaS(t, k.s, h.s) < 30);
-  const cap = (k.drift !== 0 || inp.drift ? 1.85 : 1.55) * (wet ? 0.92 : 1) * (damp ? 0.7 : 1);
+  const slick = r.slick ? Math.min(gripAt(t, k.s, k.lap), gripAt(t, k.s + 15, k.lap), gripAt(t, k.s + 30, k.lap)) : 1;
+  const cap = (k.drift !== 0 || inp.drift ? 1.85 : 1.55) * (wet ? 0.92 : 1) * (damp ? 0.7 : 1) * (slick < 1 ? 0.55 + 0.45 * slick : 1);
   let tooFast = peak > 0 && k.v > cap / peak;
   if (tooFast && peak > 1 / HAIRPIN) {
     tooFast = false;
     for (let a = 0; a <= 20 + k.v * 0.8 && !tooFast; a += t.step) {
       const c = Math.abs(t.curv[Math.floor(wrapS(t, k.s + a) / t.step) % t.n]);
-      tooFast = c > 0 && k.v * k.v > (cap / c) ** 2 + 2 * BRAKE_PLAN * Math.max(0, a - 2);
+      tooFast = c > 0 && k.v * k.v > (cap / c) ** 2 + 2 * BRAKE_PLAN * (slick < 1 ? 0.5 + 0.5 * slick : 1) * Math.max(0, a - 2);
     }
   }
   inp.brake = tooFast && (k.boost <= 0 || wet);
@@ -2769,13 +2997,16 @@ function think(r: Race, k: Kart, dt: number) {
       slope = acrossRoad(t, k);
     }
     const swerve = (2 * Math.abs(lane * t.half - k.d - slope * ds)) / ds ** 2;
-    if ((bend + swerve > 0 && k.v > 1.55 / (bend + swerve)) || (!dodge.clear && dodge.ds < 4 + k.v * 0.5 && k.v > 9)) inp.brake = true;
+    // (except through the Blink, where its timing over the panes is its speed: it steers for its lane and keeps going)
+    if (((bend + swerve > 0 && k.v > 1.55 / (bend + swerve)) || (!dodge.clear && dodge.ds < 4 + k.v * 0.5 && k.v > 9)) && !(blink && dodge.clear)) inp.brake = true;
   }
   if (Math.abs(diff) > 2.2 && k.v < 4) inp.brake = false;
   // lined up for a trench: foot down for the jump, and a mushroom if it is going too slowly to make it
   if (band.hole) {
     inp.brake = false;
-    if (k.v < 15 && k.roll === 0 && (k.item === 'mushroom' || k.item === 'triple' || k.item === 'golden') && r.holes.some((h) => deltaS(t, k.s, h.s) > 0 && deltaS(t, k.s, h.s) < 30)) inp.use = true;
+    // (a gap right across the road wants more speed, from further out)
+    const [slow, within] = band.wide ? [20, 40] : [15, 30];
+    if (k.v < slow && k.roll === 0 && (k.item === 'mushroom' || k.item === 'triple' || k.item === 'golden') && r.holes.some((h) => deltaS(t, k.s, h.s) > 0 && deltaS(t, k.s, h.s) < within)) inp.use = true;
   }
   // (committed to a run across a bank, it does not lift halfway over)
   if (ai.goT > 0 && !hurt(k)) inp.brake = false;
@@ -2803,13 +3034,14 @@ function think(r: Race, k: Kart, dt: number) {
     if (e.past !== 'wall' && Math.abs(k.d) > e.lim - KART_R - 0.9 && side * acrossRoad(t, k) > -0.05) {
       if (Math.abs(deltaS(t, ai.reactS, k.s)) > 30) {
         ai.reactS = k.s;
-        ai.react = r.rand() < 0.55 + 0.45 * ai.skill;
+        // (shaken by a fall, it always does)
+        ai.react = ai.shaken > 0 || r.rand() < 0.55 + 0.45 * ai.skill;
       }
       if (ai.react) {
         inp.steer = -side;
         inp.drift = false;
         inp.hop = false;
-        if (k.v > 15) inp.brake = true;
+        if (k.v > 15 && !blink) inp.brake = true;
       }
     }
   }
@@ -2919,7 +3151,26 @@ function think(r: Race, k: Kart, dt: number) {
 /** The lane the CPU driver would pick for kart k right now, as dodgeHazard sees it (for the tests). */
 export function cpuLane(r: Race, k: Kart) {
   const ai = (k.ai ??= { ...AUTO, blunders: {} });
-  return dodgeHazard(r, k, clamp(ai.lane, -0.82, 0.82), edgeBand(r, k, edgeRoom(k, ai)));
+  return dodgeHazard(r, k, clamp(ai.lane, -0.82, 0.82), edgeBand(r, k, edgeRoom(r, k, ai)));
+}
+
+/**
+ * The wind a CPU is driving into: the strongest gust blowing, or about to, over the road it covers in the next moment
+ * (by the time it gets to each point of it), in meters a second squared to the right. 0 in still air.
+ */
+function windAhead(r: Race, k: Kart) {
+  const v = Math.max(8, Math.abs(k.v));
+  let best = 0;
+  for (let a = 0; a <= 10 + v * 0.7; a += 4) {
+    const when = r.time + a / v;
+    let sum = 0;
+    for (const g of r.gusts) {
+      const st = gustState(r, g, k.s + a, when, k.lap);
+      if (st && (st.live > 0 || st.warn > 0)) sum += g.a * st.taper;
+    }
+    if (Math.abs(sum) > Math.abs(best)) best = sum;
+  }
+  return best;
 }
 
 /** Gas pressed during the countdown; the last press decides the rocket start. */

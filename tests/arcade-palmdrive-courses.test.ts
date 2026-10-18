@@ -4,7 +4,7 @@ import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf } from '../src/os/ar
 import { CCS, CLASSES, KART_R, RIVALS, WET, createRace, hazardD, soloRace, step } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { meta } from '../src/os/arcade/games/palmdrive/meta.ts';
 import { configOf, hostState, parsePacket } from '../src/os/arcade/games/palmdrive/net.ts';
-import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, dropAt, gridSpot, lengthOf, locate, openRuns, pointAt, shoreOf, solid, timed, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
+import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, dropAt, gridSpot, lengthOf, locate, openRuns, pointAt, roadEdge, shoreOf, solid, timed, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
 
 /** The widest stretch of road left clear between things standing across it, given as [from, to] lateral spans. */
 function widest(t: Track, spans: [number, number][]) {
@@ -29,8 +29,8 @@ test('the course list and its ids agree', () => {
   assert.deepEqual([trackOf('palm').half, trackOf('palm').edge], [ROAD_HALF, EDGE]);
   for (const id of COURSE_IDS) {
     const t = trackOf(id);
-    // (the walls at least a kart's width and a half past the edge of the road)
-    assert.ok(t.half >= 5.5 && t.half <= 11 && t.edge - t.half >= 2.5, `${id} road ${t.half}/${t.edge}`);
+    // (the walls at least a kart's width and a half past the edge of the road; on Insane the road can be narrower)
+    assert.ok(t.half >= (COURSES[id].difficulty === 5 ? 4.5 : 5.5) && t.half <= 11 && t.edge - t.half >= 2.5, `${id} road ${t.half}/${t.edge}`);
   }
   for (const junk of ['', 'moon', null, 3]) assert.equal(isCourse(junk), false);
 });
@@ -58,10 +58,10 @@ for (const id of COURSE_IDS) {
       const radius = 1 / Math.max(1e-9, Math.abs(t.curv[i]));
       assert.ok(radius > limit(i, Math.sign(t.curv[i]) || 1) + 3, `${id}: a ${radius.toFixed(1)} m bend at s=${(i * t.step).toFixed(0)}`);
     }
-    // a bend tighter than a hairpin's 18 m only where the course is Expert, the walls everywhere else
+    // a bend tighter than a hairpin's 18 m only where the course is Expert (or Insane), the walls everywhere else
     let tightest = Infinity;
     for (let i = 0; i < t.n; i++) tightest = Math.min(tightest, 1 / Math.max(1e-9, Math.abs(t.curv[i])));
-    assert.ok(tightest > (COURSES[id].difficulty === 4 ? 12 : 18), `tightest bend ${tightest}`);
+    assert.ok(tightest > (COURSES[id].difficulty === 5 ? 11 : COURSES[id].difficulty === 4 ? 12 : 18), `tightest bend ${tightest}`);
     // index 0 is the start line
     const start = COURSES[id].start;
     const sp = { x: -start[0] * 0.8, z: start[1] * 0.8 };
@@ -76,7 +76,9 @@ for (const id of COURSE_IDS) {
     assert.ok(lay.dashes.length >= 2 && lay.ramps.length >= 1);
     // (coins can be bait out on the curb where the road drops away, within reach of a kart still on the road)
     const bait = (p: { s: number; d: number }) => lay.coins.includes(p) && dropAt(t, Math.round(p.s / t.step), Math.sign(p.d));
-    for (const p of [...lay.boxes, ...lay.coins, ...lay.dashes]) assert.ok(Math.abs(p.d) <= t.half - (bait(p) ? 0.5 : 1.5), `${id} pickup at s=${p.s} d=${p.d}`);
+    // (on Insane, within a meter of the edge of the road where it is, narrows and all)
+    const insane = COURSES[id].difficulty === 5;
+    for (const p of [...lay.boxes, ...lay.coins, ...lay.dashes]) assert.ok(Math.abs(p.d) <= (insane ? roadEdge(t, p.s, Math.sign(p.d) || 1) - (bait(p) ? 0.5 : 1) : t.half - (bait(p) ? 0.5 : 1.5)), `${id} pickup at s=${p.s} d=${p.d}`);
     for (const ramp of lay.ramps) assert.ok(Math.abs(ramp.d) + ramp.w / 2 <= t.half + 0.5, `${id} ramp at s=${ramp.s}`);
     const curv = (s: number) => Math.abs(t.curv[Math.floor(s / t.step) % t.n]);
     for (const p of [...lay.dashes, ...lay.ramps]) {
@@ -102,9 +104,10 @@ for (const id of COURSE_IDS) {
       if (h.kind !== 'water' && h.kind !== 'bollard') assert.ok(Math.abs(h.d) + (h.swing ?? 0) <= t.half, `${where} stays on the road`);
       // buses drive the whole lap, so where they start says nothing about the boxes and boosts (see below)
       if (!solid(h.kind) || h.drive) continue;
-      // a gap at least two karts wide beside anything solid, and none of them in front of an item box row
+      // a gap at least two karts wide beside anything solid, and none of them in front of an item box row (the set
+      // pieces leave a way through by the clock instead, on a course built round them: see the timed tests)
       const room = Math.max(t.half - (h.d + h.r), h.d - h.r + t.half);
-      if (!h.swing && h.kind !== 'bollard') assert.ok(room >= 4.5, `${where} leaves ${room} m`);
+      if (!h.swing && h.kind !== 'bollard' && !(timed(h.kind) && COURSES[id].difficulty === 5)) assert.ok(room >= 4.5, `${where} leaves ${room} m`);
       for (const b of lay.boxes) assert.ok(Math.abs(deltaS(t, h.s, b.s)) > 10, `${where} is in front of the boxes at s=${b.s}`);
       for (const o of lay.hazards) if (o !== h && solid(o.kind) && !h.swing && !o.swing && !o.drive && h.kind !== 'bollard' && o.kind !== 'bollard') assert.ok(Math.abs(deltaS(t, h.s, o.s)) > 8 || Math.abs(h.d - o.d) > 2 * h.r + 5, `${where} crowds another`);
     }
@@ -126,7 +129,8 @@ for (const id of COURSE_IDS) {
     // solid (buses and carts driving their rounds have their own test below; golfers crossing together keep in step)
     const together = (a: Hazard, b: Hazard) => a.swing === b.swing && a.speed === b.speed && a.phase === b.phase && a.d === b.d;
     for (const h of lay.hazards) {
-      if (!h.swing || !solid(h.kind)) continue;
+      // (on Insane the swinging set pieces leave their way past by the clock: see the timed tests)
+      if (!h.swing || !solid(h.kind) || (timed(h.kind) && COURSES[id].difficulty === 5)) continue;
       const where = `${id} ${h.kind} at s=${h.s}`;
       const near = lay.hazards.filter((o) => o !== h && solid(o.kind) && !o.drive && Math.abs(deltaS(t, h.s, o.s)) < h.r + o.r + 8);
       for (let k = 0; k < 48; k++) {

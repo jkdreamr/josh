@@ -2,13 +2,13 @@
 // three.js; the scene builds each course's scenery (scene.ts) and the logic races on its track (logic.ts).
 import { EDGE, HAZARD_R, KART_R, PASTS, ROAD_HALF, ROUTE, START, WET, buildTrack, deltaS, layout as palmLayout, shoreOf, wrapS, type EdgeSpan, type Hazard, type HazardKind, type Layout, type Track } from './track.ts';
 
-export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium' | 'quad' | 'hoover' | 'golf';
-export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium', 'quad', 'hoover', 'golf'];
+export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium' | 'quad' | 'hoover' | 'golf' | 'skyway';
+export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium', 'quad', 'hoover', 'golf', 'skyway'];
 export const isCourse = (v: unknown): v is CourseId => COURSE_IDS.includes(v as CourseId);
 
 /** How hard a course is, for the picker: narrower roads, tighter bends and more in the way as it goes up. */
-export const DIFFICULTY = ['Easy', 'Medium', 'Hard', 'Expert'] as const;
-export type Difficulty = 1 | 2 | 3 | 4;
+export const DIFFICULTY = ['Easy', 'Medium', 'Hard', 'Expert', 'Insane'] as const;
+export type Difficulty = 1 | 2 | 3 | 4 | 5;
 
 /**
  * How the race itself gets harder with the course, past what is on the road. pace: the CPUs' top speed, on top of
@@ -17,16 +17,33 @@ export type Difficulty = 1 | 2 | 3 | 4;
  * a spin, a squash or a tumble lasts, whatever the cause. rocket: how often the CPUs nail a rocket start (times their
  * skill). fallT and fallCoins: what falling off the road costs, into water or a pit (seconds before you are back on
  * it, and coins). brink: where the road drops away with no wall, how far past the edge of the road the kart's middle can
- * go before it falls (on Expert about half the kart is over the drop by then).
+ * go before it falls (on Expert about half the kart is over the drop by then). skillLift: how much better the CPUs
+ * drive than their own skill, lifting each toward a perfect driver by this share (on Insane the course, not their top
+ * speed, is what beats them, so it is their consistency that is raised).
  */
-export type Tier = { pace: number; paceCc?: Partial<Record<'50cc' | '100cc' | '150cc' | '200cc', number>>; band: [number, number, number]; harsh: number; rocket: number; fallT: number; fallCoins: number; brink: number };
+export type Tier = { pace: number; paceCc?: Partial<Record<'50cc' | '100cc' | '150cc' | '200cc', number>>; band: [number, number, number]; harsh: number; rocket: number; fallT: number; fallCoins: number; brink: number; skillLift?: number };
 export const TIER: Record<Difficulty, Tier> = {
   1: { pace: 0.97, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1, brink: 1 },
   2: { pace: 0.98, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1, brink: 1 },
   3: { pace: 0.985, band: [0.93, 1.09, 500], harsh: 1.15, rocket: 0.75, fallT: 1.5, fallCoins: 2, brink: 1 },
   // (at 200cc the CPUs' usual 3% off the class pace is waived too: a good driver was still winning a quarter of races)
   4: { pace: 1.03, paceCc: { '200cc': 1 / 0.97 }, band: [0.97, 1.1, 450], harsh: 1.3, rocket: 0.9, fallT: 1.7, fallCoins: 3, brink: 0.6 },
+  // (the course is limited by its corners, its edge and the wind more than by top speed, so the CPUs are no faster than
+  // the class here, a touch slower at 200cc, but drive far more cleanly: see skillLift)
+  5: { pace: 1.0, paceCc: { '200cc': 0.98 }, band: [1.0, 1.12, 400], harsh: 1.45, rocket: 1.0, fallT: 2.0, fallCoins: 3, brink: 0.5, skillLift: 0.3 },
 };
+
+/**
+ * A stretch of slick road: from s0 to s1, its grip (1 is ordinary road), how it looks, and the lap it comes on from (the
+ * first if none). Where two overlap the slicker wins.
+ */
+export type Surface = [s0: number, s1: number, grip: number, look: 'glass' | 'frost', lap?: number];
+/**
+ * A gust of wind across the road from s0 to s1 (it eases in over the first and last 10 m): `a` meters a second squared
+ * toward the right of the road (negative to the left), blowing `on` seconds every `every`, the first at race time
+ * `phase`, with `warn` seconds of warning before each, from the kart's own lap `lap` on.
+ */
+export type Gust = { s0: number; s1: number; a: number; every: number; on: number; warn: number; phase: number; lap?: number };
 
 export type Course = {
   id: CourseId;
@@ -51,6 +68,10 @@ export type Course = {
   edges?: EdgeSpan[];
   /** The leaderboard the course's times go on, if not its id (a course rebuilt so its old times no longer compare). */
   board?: string;
+  /** Slick stretches of road (see Surface): glass, and frost that forms as the race goes on. */
+  surfaces?: Surface[];
+  /** Gusts of wind across the road (see Gust). */
+  gusts?: Gust[];
 };
 
 /**
@@ -62,7 +83,8 @@ function placed(
   spec: {
     boxes: number[];
     coins: [number, number, number][];
-    dashes: [number, number][];
+    /** [s, d], and for a kicker how hard it shoves you across the road toward its side (meters a second). */
+    dashes: ([number, number] | [number, number, number])[];
     ramps: [number, number, number][];
     /** [kind, s, d, size], and for cows how far they wander, how fast and when they set off; then the lap it joins in. */
     hazards?: [HazardKind, number, number, number?, number?, number?, number?, number?][];
@@ -88,7 +110,7 @@ function placed(
   return {
     boxes: spec.boxes.flatMap((s) => [-3 * gap, -gap, gap, 3 * gap].map((d) => ({ s: wrapS(t, s), d }))),
     coins: spec.coins.flatMap(([s, d, count]) => Array.from({ length: count }, (_, k) => ({ s: wrapS(t, s + k * 3.2), d }))),
-    dashes: spec.dashes.map(([s, d]) => ({ s: wrapS(t, s), d })),
+    dashes: spec.dashes.map(([s, d, kick]) => ({ s: wrapS(t, s), d, ...(kick ? { kick } : {}) })),
     ramps: spec.ramps.map(([s, d, w]) => ({ s: wrapS(t, s), d, w })),
     hazards: [
       ...(spec.hazards ?? []).map(([kind, s, d, r, swing, speed, phase, lap]) => ({ kind, s: wrapS(t, s), d, r: r ?? HAZARD_R[kind], swing, speed, phase, ...(lap ? { lap } : {}) })),
@@ -242,6 +264,57 @@ const GOLF: [number, number][] = [
   // and down the 18th fairway home
   [-180, 140], [-215, 90], [-232, 10], [-238, -70], [-224, -132],
 ];
+
+/**
+ * The Cardinal Skyway, in straights and arcs: ['S', meters] straight on, or ['L' | 'R', radius, degrees] round a bend to
+ * the left or the right, from the start of the Launch Deck heading east, in world meters. The two free straights (the
+ * end of the Wire and the Blink) were solved so the loop closes exactly, a full turn to the left.
+ */
+type Leg = ['S', number] | ['L' | 'R', number, number];
+const SKYWAY: Leg[] = [
+  // the Launch Deck (the start line 40 m in)
+  ['S', 110],
+  // the Hoover Corkscrew: in round the tower, the Eye (right, then left), and out round it again
+  ['R', 36, 180], ['R', 12, 180], ['L', 12, 180], ['L', 36, 180],
+  // the Axe Walk
+  ['S', 70],
+  // Lasuen Turn, and the Gap
+  ['L', 26, 90], ['S', 62],
+  // the Dish Sweeper
+  ['L', 50, 90],
+  // the Wire, with its kink
+  ['S', 40], ['L', 70, 18], ['R', 70, 36], ['L', 70, 18], ['S', 85.4752],
+  // the Frost Switchbacks
+  ['R', 12, 180], ['L', 12, 180],
+  // Tower Turn and the Blink
+  ['S', 20], ['L', 14, 90], ['S', 46],
+  // and back onto the deck
+  ['L', 30, 90], ['S', 60],
+];
+/** Points along legs of straights and arcs (see SKYWAY), from [0, 0] heading east, about every 4 m; the closing point left off. */
+function turtle(legs: Leg[]): [number, number][] {
+  const out: [number, number][] = [[0, 0]];
+  let [x, y, h] = [0, 0, 0];
+  for (const g of legs) {
+    if (g[0] === 'S') {
+      const n = Math.max(1, Math.ceil(g[1] / 4));
+      for (let k = 1; k <= n; k++) out.push([x + (Math.cos(h) * g[1] * k) / n, y + (Math.sin(h) * g[1] * k) / n]);
+      [x, y] = [x + Math.cos(h) * g[1], y + Math.sin(h) * g[1]];
+      continue;
+    }
+    const [, R, deg] = g;
+    const dir = g[0] === 'L' ? 1 : -1;
+    const a = (deg * Math.PI) / 180;
+    const [cx, cy] = [x - Math.sin(h) * R * dir, y + Math.cos(h) * R * dir];
+    const a0 = Math.atan2(y - cy, x - cx);
+    const n = Math.max(2, Math.ceil((R * a) / 4));
+    for (let k = 1; k <= n; k++) out.push([cx + Math.cos(a0 + (dir * a * k) / n) * R, cy + Math.sin(a0 + (dir * a * k) / n) * R]);
+    [x, y, h] = [cx + Math.cos(a0 + dir * a) * R, cy + Math.sin(a0 + dir * a) * R, h + dir * a];
+  }
+  return out.slice(0, -1);
+}
+/** (map points are world meters times 1.25, like Hoover Nights') */
+const SKYWAY_K = 1.25;
 
 export const COURSES: Record<CourseId, Course> = {
   palm: {
@@ -729,6 +802,114 @@ export const COURSES: Record<CourseId, Course> = {
     tier: { pace: 1.04 },
     laps: { 3: 'The range opens up', 5: 'The gallery at the 18th' },
   },
+  skyway: {
+    id: 'skyway',
+    name: 'Cardinal Skyway',
+    blurb: 'A ribbon of red glass over campus on Big Game eve: no walls, ice, wind off the Bay, the Axe, and a jump over the bonfire.',
+    difficulty: 5,
+    route: turtle(SKYWAY).map(([e, n]) => [e * SKYWAY_K, n * SKYWAY_K]),
+    start: [40 * SKYWAY_K, 0],
+    half: 5,
+    edge: 7.5,
+    // the Launch Deck and the Axe Walk have glass rails; everywhere else the road ends at a lip over the sky, and across
+    // the Wire it narrows to 7.2 m (the later spans override the earlier). The Blink has rails too, right at the edge of
+    // the road: its panes are the drop there (with the sky beside them as well, a driver set back down before it fell
+    // off one side or through the other again and again)
+    edges: [
+      [70, 372, 0, 'void'],
+      [442, 1000, 0, 'void'],
+      [628, 640, 0, 'void', 4.7],
+      [640, 772, 0, 'void', 4.0],
+      [772, 784, 0, 'void', 4.7],
+      [956, 1000, 0, 'wall', 6.5],
+    ],
+    // glass off the deck, slick all race; frost in the Eye and the switchbacks from lap 3, and on the Wire's kink on
+    // the last lap
+    surfaces: [
+      [70, 1000, 0.85, 'glass'],
+      [183, 258, 0.55, 'frost', 3],
+      [836, 912, 0.55, 'frost', 3],
+      [663, 751, 0.7, 'frost', 5],
+    ],
+    gusts: [
+      // the Bay wind pushing you wide round the Dish Sweeper from lap 2
+      { s0: 550, s1: 623, a: 8, every: 5, on: 1.6, warn: 1, phase: 0, lap: 2 },
+      // gusts from the north across the Wire; from lap 3 back the other way between them too (with a calm in between),
+      // and on lap 4 both harder
+      { s0: 630, s1: 830, a: -9, every: 4.4, on: 1.4, warn: 1, phase: 0.4, lap: 2 },
+      { s0: 630, s1: 830, a: 9, every: 4.4, on: 1.4, warn: 1, phase: 2.6, lap: 3 },
+      { s0: 630, s1: 830, a: -4, every: 4.4, on: 1.4, warn: 1, phase: 0.4, lap: 4 },
+      { s0: 630, s1: 830, a: 4, every: 4.4, on: 1.4, warn: 1, phase: 2.6, lap: 4 },
+      // and a jet stream across the Gap (and whoever is flying over it) from lap 4
+      { s0: 520, s1: 560, a: 7, every: 3, on: 1, warn: 0.9, phase: 1, lap: 4 },
+    ],
+    layout: (t) => {
+      // the Blink: three rows of glass, each in two halves out to the rails, that blink out in turn, one half of a row
+      // always solid; the open half travels down the rows about as fast as a kart does
+      const blink = (s: number, left: number, right: number) =>
+        [
+          [-2.75, left],
+          [2.75, right],
+        ].map(([d, phase]) => ({ kind: 'panel' as const, s, d, r: 2.75, len: 5, w: 2.75, every: 3.2, on: 1.3, warn: 0.8, phase, lap: 2, back: 954 }));
+      return placed(t, {
+        boxes: [30, 495, 624, 920],
+        coins: [
+          // bait on the outer lip of the spiral in
+          [100, -4.2, 4],
+          [300, 0, 5],
+          [425, 0, 4],
+          [455, 0, 4],
+          [520, 0, 4],
+          // the inside lip of the sweeper
+          [560, -3.8, 4],
+          // a meter from the brink where the Wire narrows
+          [668, -3, 4],
+          [780, 0, 5],
+          [880, 1.2, 3],
+          [940, 0, 3],
+          [1090, -3, 5],
+        ],
+        // a boost onto the Corkscrew; the kickers (pink, they shove you toward their own side): one on the inside of the
+        // spiral, two on the Wire; and a dash panel right across the road onto the ramp, so everyone hits the lip boosted
+        dashes: [
+          [48, 0],
+          [88, 2.6, 9],
+          [512, -3.4],
+          [512, 0],
+          [512, 3.4],
+          [655, -1.8, -6],
+          [805, 1.8, 6],
+        ],
+        ramps: [[532, 0, 10]],
+        // the Gap: the whole road missing for ten meters over the Bonfire (no plates; past either side is sky anyway)
+        holes: [[532.5, 10, 0, 6.5, 486]],
+        pieces: [
+          // Hoover's carillon bells slam down in the Eye from lap 2, and at both switchback apexes from lap 3
+          { kind: 'hammer', s: 221, d: 0, r: 1.6, every: 3.6, on: 0.7, phase: 0, lap: 2, look: 'bell' },
+          { kind: 'hammer', s: 855, d: 2.4, r: 1.5, every: 3.6, on: 0.7, phase: 0.9, lap: 3, look: 'bell' },
+          { kind: 'hammer', s: 893, d: -2.4, r: 1.5, every: 3.6, on: 0.7, phase: 2.7, lap: 3, look: 'bell' },
+          // two giant Stanford Axes swinging across the Axe Walk, the one walled stretch past the start (a knock off the
+          // road there would be a fall you could do nothing about)
+          { kind: 'wrecker', s: 395, d: 0, r: 1.3, swing: 3.6, speed: 1.7, phase: 0, look: 'axe' },
+          { kind: 'wrecker', s: 420, d: 0, r: 1.3, swing: 3.6, speed: 1.9, phase: 1.6, look: 'axe' },
+          // bonfire flares up through the Wire from lap 4, each leaving a lane inside the narrows
+          { kind: 'geyser', s: 700, d: 1.6, r: 1.1, every: 2.4, on: 0.8, warn: 0.8, phase: 0, lap: 4, look: 'flare' },
+          { kind: 'geyser', s: 716, d: -1.6, r: 1.1, every: 2.4, on: 0.8, warn: 0.8, phase: 0.6, lap: 4, look: 'flare' },
+          { kind: 'geyser', s: 732, d: 1.6, r: 1.1, every: 2.4, on: 0.8, warn: 0.8, phase: 1.2, lap: 4, look: 'flare' },
+          // the Blink, from lap 2 (on lap 1 the panes show their outlines)
+          ...blink(966, 0, 1.6),
+          ...blink(978, 0.5, 2.1),
+          ...blink(990, 1, 2.6),
+          // the relay dish's beam sweeping the walled deck from lap 2, and a second turning the other way on the last
+          // lap (a spin beside the sky is a fall: the pieces that spin or knock stand where there are walls)
+          { kind: 'rotor', s: 1075, d: 0, r: 0.6, arm: 4.6, spin: 2, a0: 0, lap: 2, look: 'beam' },
+          { kind: 'rotor', s: 1060, d: 0, r: 0.6, arm: 4.6, spin: -2, a0: 1.6, lap: 5, look: 'beam' },
+        ],
+      });
+    },
+    sky: 'linear-gradient(180deg, #020313 0%, #070b2a 24%, #15123e 38%, #2a1a4a 44%, #3a2340 47%, #120a18 52%)',
+    laps: { 2: 'Wind, blinking glass, bells', 3: 'Frost on the hairpins', 4: 'Bonfire flares, jet stream', 5: 'A second beam on the deck' },
+  },
 };
 
 /** A course's tier: its difficulty's, with anything the course sets itself. */
@@ -742,9 +923,22 @@ export function trackOf(id: CourseId): Track {
     const c = COURSES[id];
     t = buildTrack(c.route, c.start, c.half ?? ROAD_HALF, c.edge ?? EDGE);
     edgesOf(t, c);
+    if (c.surfaces) t.grips = gripsOf(t, c.surfaces);
     tracks.set(id, t);
   }
   return t;
+}
+
+/** The grip at every sample of the track on each lap from 1 to 5 (see Surface): the slickest surface there. */
+function gripsOf(t: Track, surfaces: Surface[]) {
+  return [1, 2, 3, 4, 5].map((lap) => {
+    const g = new Float32Array(t.n).fill(1);
+    for (const [s0, s1, grip, , from] of surfaces) {
+      if ((from ?? 1) > lap) continue;
+      for (let i = 0; i < t.n; i++) if (i * t.step >= s0 && i * t.step <= s1) g[i] = Math.min(g[i], grip);
+    }
+    return g;
+  });
 }
 
 /** Fills in a track's edges: the course's own spans, then its ponds and the steel plates over any trench. */
@@ -776,7 +970,8 @@ function edgesOf(t: Track, c: Course) {
   // over a trench, steel plates take the road on either side of the hole, and past them it drops away (from the sample
   // before it to the one after, so the edge is the plates' all the way along it)
   for (const h of lay.hazards) {
-    if (h.kind !== 'trench') continue;
+    // (a gap right across the road has no plates: past it either side is the drop anyway)
+    if (h.kind !== 'trench' || (h.w ?? h.r) >= t.half + 1) continue;
     for (let i = 0; i < t.n; i++) {
       const ds = deltaS(t, h.s, i * t.step);
       if (ds > -t.step && ds < (h.len ?? 0) + t.step) set(i, 0, t.half - 0.4, PASTS.indexOf('pit'));

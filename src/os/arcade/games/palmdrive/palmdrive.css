@@ -165,6 +165,9 @@
   stroke: #fff;
   stroke-dasharray: 10 8;
 }
+.g-palmdrive .g-palmdrive-map-edge.is-void {
+  stroke: #ff3d7f;
+}
 /* a Marguerite bus: white with a cardinal edge */
 .g-palmdrive .g-palmdrive-map-bus {
   fill: #f2f2ee;
@@ -377,6 +380,28 @@
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
   }
+}
+/* wind across the road just ahead: amber blinking as it is about to blow, white while it blows */
+.g-palmdrive .g-palmdrive-gust {
+  position: absolute;
+  top: 12%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 14px;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #1a1030;
+  background: #ffcf4a;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+  animation: g-palmdrive-blink 0.5s steps(2) infinite;
+}
+.g-palmdrive .g-palmdrive-gust.is-on {
+  background: #f4f6ff;
+  animation: none;
 }
 .g-palmdrive .g-palmdrive-wrong {
   position: absolute;
@@ -1011,6 +1036,25 @@
 }
 .g-palmdrive .g-palmdrive-course small.is-expert {
   color: #ff6b6b;
+}
+/* Insane: the one label in the picker that shimmers through the rainbow */
+.g-palmdrive .g-palmdrive-course small.is-insane {
+  background: linear-gradient(90deg, #ff3d7f, #ffd23f, #3dff9e, #3dc8ff, #b13dff, #ff3d7f);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: g-palmdrive-rainbow 3s linear infinite;
+}
+@keyframes g-palmdrive-rainbow {
+  to {
+    background-position: 200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-palmdrive .g-palmdrive-course small.is-insane {
+    animation: none;
+  }
 }
 /* the golden mushroom glows while it lasts */
 .g-palmdrive .g-palmdrive-item.is-golden {

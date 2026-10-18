@@ -54,12 +54,13 @@ export const LANDMARKS = {
 };
 
 /**
- * What lies past the edge of the road on one side: a wall, or a drop (water, a pit, or out of bounds on the golf course).
- * Run a kart's middle over the brink of a drop and you fall in, and the crane fishes you out.
+ * What lies past the edge of the road on one side: a wall, or a drop (water, a pit, out of bounds on the golf course, or
+ * on the Cardinal Skyway the open sky, ninety meters above campus). Run a kart's middle over the brink of a drop and you
+ * fall in, and the crane (or the drone) fishes you out.
  */
-export type Past = 'wall' | 'water' | 'pit' | 'ob';
+export type Past = 'wall' | 'water' | 'pit' | 'ob' | 'void';
 /** The codes the track stores them by (pastLo, pastHi). */
-export const PASTS: readonly Past[] = ['wall', 'water', 'pit', 'ob'];
+export const PASTS: readonly Past[] = ['wall', 'water', 'pit', 'ob', 'void'];
 /**
  * A stretch of a course's edge, from s0 to s1, on one side (-1 left, 1 right) or both (0): what lies past it, and where.
  * For a drop `at` is the brink the kart's middle may not cross (by default a little past the edge of the road, see
@@ -92,6 +93,11 @@ export type Track = {
   hi: Float32Array;
   pastLo: Uint8Array;
   pastHi: Uint8Array;
+  /**
+   * How much grip the road has at every sample on each lap (1 to 5), on a course with slick stretches (see
+   * Course.surfaces): 1 is ordinary road. Undefined on every other course.
+   */
+  grips?: Float32Array[];
 };
 
 export type Spot = { i: number; s: number; d: number; x: number; z: number; tx: number; tz: number };
@@ -202,6 +208,19 @@ export function edgeAt(t: Track, s: number, side: number): { lim: number; past: 
   const near = u < 0.5 ? i : j;
   return { lim: pa === pb ? a + (b - a) * u : near === i ? a : b, past: PASTS[(side > 0 ? t.pastHi : t.pastLo)[near]] };
 }
+
+/**
+ * Where the road itself ends on one side (1 right, -1 left) at s, as a positive distance from the centerline: its half
+ * width, except where it narrows over the sky (a brink closer in than the road's edge, see Course.edges), where the
+ * glass stops just short of the brink. The renderer, the minimap and the pickups go by this rather than t.half.
+ */
+export function roadEdge(t: Track, s: number, side: number) {
+  const e = edgeAt(t, s, side);
+  return e.past === 'void' ? Math.min(t.half, e.lim - 0.4) : t.half;
+}
+
+/** How much grip the road has at s for a kart on lap `lap` (1 everywhere on a course with no slick stretches). */
+export const gripAt = (t: Track, s: number, lap: number) => (t.grips ? t.grips[Math.min(5, Math.max(1, lap)) - 1][Math.floor(wrapS(t, s) / t.step) % t.n] : 1);
 
 /** Whether the road drops away on that side (1 right, -1 left) at sample i. */
 export const dropAt = (t: Track, i: number, side: number) => (side > 0 ? t.pastHi : t.pastLo)[((i % t.n) + t.n) % t.n] !== 0;
@@ -334,8 +353,14 @@ export const sOf = (t: Track, e: number, n: number) => {
  * hub of radius r with a jet `arm` meters long turning at `spin` radians a second from angle `a0` (0 along the road,
  * +pi/2 to the right): the jet spins you. A wrecker is a wrecking ball swinging across the road like a cow walks
  * (swing, speed, phase): it tumbles you and throws you aside. Wet is a patch of wet road: no grip.
+ *
+ * A panel is a pane of the glass road that blinks out on the clock, a timed hole: `len` long from s and `w` either side
+ * of d, open (nothing under you, and you fall) for `on` seconds every `every`, flickering `warn` seconds before; fall
+ * through and you are put back at `back`. A geyser is a grate in the road that blows a column of flame up for `on`
+ * seconds every `every`, glowing `warn` seconds before: it spins you. `look` is how the scene dresses a set piece on a
+ * course of its own (a pile driver as a carillon bell, say); nothing else reads it.
  */
-export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus' | 'cart' | 'golfer' | 'ball' | 'sand' | 'water' | 'pin' | 'statue' | 'trench' | 'hammer' | 'bollard' | 'wrecker' | 'rotor' | 'wet';
+export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus' | 'cart' | 'golfer' | 'ball' | 'sand' | 'water' | 'pin' | 'statue' | 'trench' | 'hammer' | 'bollard' | 'wrecker' | 'rotor' | 'wet' | 'panel' | 'geyser';
 export type Hazard = {
   kind: HazardKind;
   s: number;
@@ -360,9 +385,10 @@ export type Hazard = {
   arm?: number;
   spin?: number;
   a0?: number;
+  look?: string;
 };
 /** How big each kind is unless a course says otherwise (a bollard's r is the bank's thickness along the road). */
-export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1, bus: 1.3, cart: 0.8, golfer: 0.8, ball: 0.55, sand: 2.8, water: 20, pin: 0.5, statue: 1.4, trench: 2, hammer: 1.7, bollard: 0.35, wrecker: 1.3, rotor: 0.6, wet: 5 };
+export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1, bus: 1.3, cart: 0.8, golfer: 0.8, ball: 0.55, sand: 2.8, water: 20, pin: 0.5, statue: 1.4, trench: 2, hammer: 1.7, bollard: 0.35, wrecker: 1.3, rotor: 0.6, wet: 5, panel: 2.7, geyser: 1.1 };
 /** A bus is this long, nose to tail, and so is a golf cart. */
 export const BUS_LEN = 9.6;
 export const CART_LEN = 3.1;
@@ -373,9 +399,9 @@ export const lengthOf = (h: Hazard) => (h.kind === 'bus' ? BUS_LEN : CART_LEN);
 /** Whether a hazard is there yet for a kart on lap `lap` (see `lap` above). */
 export const awake = (h: Hazard, lap: number) => !h.lap || lap >= h.lap;
 /** Things you bounce off (or that spin you out when you run into them); the rest you drive through or over. */
-export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil' && kind !== 'sand' && kind !== 'water' && kind !== 'ball' && kind !== 'trench' && kind !== 'wet';
+export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil' && kind !== 'sand' && kind !== 'water' && kind !== 'ball' && kind !== 'trench' && kind !== 'wet' && kind !== 'panel' && kind !== 'geyser';
 /** The set pieces that come and go on the race clock: solid or in the way only some of the time (see hazState). */
-export const timed = (kind: HazardKind) => kind === 'hammer' || kind === 'bollard' || kind === 'wrecker' || kind === 'rotor';
+export const timed = (kind: HazardKind) => kind === 'hammer' || kind === 'bollard' || kind === 'wrecker' || kind === 'rotor' || kind === 'panel' || kind === 'geyser';
 /**
  * How far into its cycle (0 up to `every`) a timed hazard is at race time `time`: the cycle is `every` seconds long
  * and the first starts at `phase` (golf balls land on that beat, a hammer slams on it, a bank rises on it).
@@ -454,7 +480,8 @@ export type Shore = NonNullable<ReturnType<typeof shoreOf>>;
 export type Layout = {
   boxes: { s: number; d: number }[];
   coins: { s: number; d: number }[];
-  dashes: { s: number; d: number }[];
+  /** Dash panels; a kicker (`kick`, meters a second across the road, + to the right) also shoves you toward its side. */
+  dashes: { s: number; d: number; kick?: number }[];
   /** Jump ramps: the lip at s, centered d to the right, w wide. */
   ramps: { s: number; d: number; w: number }[];
   hazards: Hazard[];
