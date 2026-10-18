@@ -154,11 +154,15 @@ for (const id of COURSE_IDS) {
   test(`${id}: buses and carts keep to a lane on the road, slower than the karts, and leave a way past wherever they are`, () => {
     const t = trackOf(id);
     const lay = COURSES[id].layout(t);
+    // (on the water: the coach's launches, a tug and its barge, and logs drifting with the current, the barge and the logs
+    // only on their stretch of the course)
+    const onSpan = (b: Hazard, s: number) => !b.span || (deltaS(t, b.span[0], s) >= 0 && deltaS(t, s, b.span[1]) >= 0);
     for (const b of lay.hazards.filter((h) => h.drive)) {
       const where = `${id} ${b.kind} from s=${b.s}`;
-      assert.ok(b.kind === 'bus' || b.kind === 'cart', where);
+      assert.ok(b.kind === 'bus' || b.kind === 'cart' || b.kind === 'launch' || b.kind === 'barge' || b.kind === 'log', where);
       assert.ok(!b.swing, `${where} keeps to its lane`);
-      assert.ok(b.drive! > 0 && b.drive! < CLASSES['50cc'].top * 0.6, `${where} drives at ${b.drive} m/s`);
+      if (b.kind === 'log') assert.ok(b.drive! > 0 && b.drive! <= 2, `${where} drifts at ${b.drive} m/s`);
+      else assert.ok(b.drive! > 0 && b.drive! < CLASSES['50cc'].top * 0.6, `${where} drives at ${b.drive} m/s`);
       assert.ok(Math.abs(b.d) + b.r <= t.half - 0.5, `${where} keeps to a lane on the road`);
       const bus: [number, number] = [b.d - b.r, b.d + b.r];
       assert.ok(widest(t, [bus]) >= 4.5, `${where} leaves room to pass`);
@@ -167,9 +171,12 @@ for (const id of COURSE_IDS) {
         // balls come and go (the CPU drivers and the ball tests see to those), and the set pieces stand aside for it
         // (right of way: see the timed tests)
         if (o === b || o.kind === 'mud' || o.kind === 'sand' || o.kind === 'water' || o.kind === 'ball' || o.kind === 'wet' || o.swing || timed(o.kind)) continue;
+        // (a vessel on a stretch of the course only passes what is on it, and rides the weir: a gap right across the road)
+        if (!onSpan(b, o.s) || (o.kind === 'trench' && (o.w ?? o.r) >= t.half + 1)) continue;
         if (o.drive) {
-          // two on the same timetable never meet; any others have room to pass between them
-          if (o.drive === b.drive) assert.ok(Math.abs(deltaS(t, b.s, o.s)) > Math.max(lengthOf(b), lengthOf(o)) + 20, `${where} sits on the ${o.kind} from s=${o.s}`);
+          // two on the same timetable never meet; any others have room to pass between them (vessels on the same stretch
+          // keep to their timetables: see the river tests)
+          if (o.drive === b.drive && !o.span && !b.span) assert.ok(Math.abs(deltaS(t, b.s, o.s)) > Math.max(lengthOf(b), lengthOf(o)) + 20, `${where} sits on the ${o.kind} from s=${o.s}`);
           else assert.ok(widest(t, [bus, [o.d - o.r, o.d + o.r]]) >= 4.5, `${where} and the ${o.kind} from s=${o.s} block the road`);
           continue;
         }
@@ -180,7 +187,7 @@ for (const id of COURSE_IDS) {
       // anyone or anything crossing the road is over on the far side whenever it comes by (never driven through); the
       // wrecking ball is hauled up for it instead
       for (const o of lay.hazards) {
-        if (!o.swing || !solid(o.kind) || timed(o.kind)) continue;
+        if (!o.swing || !solid(o.kind) || timed(o.kind) || !onSpan(b, o.s)) continue;
         for (let lap = 0; lap < 6; lap++) {
           const when = (((o.s - b.s + t.length) % t.length) + lap * t.length) / b.drive!;
           for (const dt of [-0.6, 0, 0.6]) {

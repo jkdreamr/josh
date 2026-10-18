@@ -1,9 +1,9 @@
 // The courses you can race: each is a loop of control points, where its pickups sit and how its sky looks. Pure, no
 // three.js; the scene builds each course's scenery (scene.ts) and the logic races on its track (logic.ts).
-import { EDGE, HAZARD_R, KART_R, PASTS, ROAD_HALF, ROUTE, START, WET, buildTrack, deltaS, layout as palmLayout, shoreOf, wrapS, type EdgeSpan, type Hazard, type HazardKind, type Layout, type Track } from './track.ts';
+import { EDGE, HAZARD_R, KART_R, PASTS, ROAD_HALF, ROUTE, START, WET, buildTrack, deltaS, layout as palmLayout, shoreOf, wrapS, type EdgeSpan, type Hazard, type HazardKind, type Layout, type Past, type Track } from './track.ts';
 
-export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium' | 'quad' | 'hoover' | 'golf' | 'skyway';
-export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium', 'quad', 'hoover', 'golf', 'skyway'];
+export type CourseId = 'palm' | 'lake' | 'barn' | 'dish' | 'stadium' | 'quad' | 'hoover' | 'golf' | 'skyway' | 'slough';
+export const COURSE_IDS: CourseId[] = ['palm', 'lake', 'barn', 'dish', 'stadium', 'quad', 'hoover', 'golf', 'skyway', 'slough'];
 export const isCourse = (v: unknown): v is CourseId => COURSE_IDS.includes(v as CourseId);
 
 /** How hard a course is, for the picker: narrower roads, tighter bends and more in the way as it goes up. */
@@ -35,15 +35,31 @@ export const TIER: Record<Difficulty, Tier> = {
 
 /**
  * A stretch of slick road: from s0 to s1, its grip (1 is ordinary road), how it looks, and the lap it comes on from (the
- * first if none). Where two overlap the slicker wins.
+ * first if none). Where two overlap the slicker wins. (On the water: calm water, and chop where it runs rough.)
  */
-export type Surface = [s0: number, s1: number, grip: number, look: 'glass' | 'frost', lap?: number];
+export type Surface = [s0: number, s1: number, grip: number, look: 'glass' | 'frost' | 'water' | 'chop', lap?: number];
 /**
  * A gust of wind across the road from s0 to s1 (it eases in over the first and last 10 m): `a` meters a second squared
  * toward the right of the road (negative to the left), blowing `on` seconds every `every`, the first at race time
  * `phase`, with `warn` seconds of warning before each, from the kart's own lap `lap` on.
  */
 export type Gust = { s0: number; s1: number; a: number; every: number; on: number; warn: number; phase: number; lap?: number };
+/**
+ * A current from s0 to s1 (eased in over the first and last 10 m), on the water: `along` meters a second with you (negative
+ * against you) in the main channel, `bank` instead within 2.5 m of a bank or the brink of the marsh (the slack water you hug
+ * going upstream), a `tongue` [d0, d1, along] of faster water across part of the channel (blended over a meter), and
+ * `outward` meters a second toward the outside of a bend, the more the tighter it is (a meander's helical flow). A `tide`
+ * flow runs the other way (every along term, not the outward push) from a kart's own lap TIDE_LAP on.
+ */
+export type Flow = { s0: number; s1: number; along: number; bank?: number; tongue?: [number, number, number]; outward?: number; tide?: boolean; lap?: number };
+/**
+ * Swell rolling in across the channel from s0 to s1 (eased in over the first and last 10 m): every `every` seconds, the
+ * first at race time `phase`, a set of `n` crests `gap` seconds apart rolls across at `c` meters a second from the side
+ * -dir (dir -1: from the right toward the left), starting 20 m out past the edge of the road; each shoves a kart on the
+ * water it rolls under `kick` meters a second its way (a hop clears it), with `warn` seconds of warning before the first
+ * reaches the channel, from the kart's own lap `lap` to `until`.
+ */
+export type Swell = { s0: number; s1: number; every: number; n: number; gap: number; c: number; kick: number; dir: -1 | 1; phase: number; warn: number; lap?: number; until?: number };
 
 export type Course = {
   id: CourseId;
@@ -72,6 +88,14 @@ export type Course = {
   surfaces?: Surface[];
   /** Gusts of wind across the road (see Gust). */
   gusts?: Gust[];
+  /** What you race in: a kart (the default) or, on the water, a single scull (see Race.boat). */
+  vehicle?: 'shell';
+  /** Currents on the water (see Flow). */
+  flows?: Flow[];
+  /** Swell rolling in across the channel (see Swell). */
+  swells?: Swell[];
+  /** What lies under a trench right across the road, if not a pit (or the sky where the edges are): the weir's stopper. */
+  holePast?: Past;
 };
 
 /**
@@ -315,6 +339,38 @@ function turtle(legs: Leg[]): [number, number][] {
 }
 /** (map points are world meters times 1.25, like Hoover Nights') */
 const SKYWAY_K = 1.25;
+
+/**
+ * Redwood Slough, in straights and arcs like the Skyway: from the Stanford Rowing Center's docks heading east (the start
+ * line 40 m in), round Docktown Bend, through the Tide Gates, under Hwy 101 and the Caltrain swing span, round the Turning
+ * Basin, along the Port Reach, through Corkscrew Slough's hairpins, round Bair Island Bend and down the Bay Reach (with its
+ * kink) to the weir, round Westpoint Bend and back up Westpoint Slough. The two free straights were solved so the loop
+ * closes exactly, a full turn to the left.
+ */
+const SLOUGH: Leg[] = [
+  // the Boathouse Reach, and Docktown Bend
+  ['S', 90],
+  ['L', 35, 90],
+  // the Tide Gates (the lock), and Bair Bend
+  ['S', 70],
+  ['R', 50, 45],
+  // under the bridges, round the Turning Basin and along the Port Reach
+  ['S', 80],
+  ['L', 40, 135],
+  ['S', 50],
+  // Corkscrew Slough
+  ['L', 20, 90], ['R', 20, 180], ['L', 20, 180], ['R', 20, 180], ['L', 20, 180], ['R', 20, 90],
+  // Bair Island Bend and the tide race
+  ['S', 30], ['L', 50, 90],
+  // the Bay Reach, with its kink, to the weir
+  ['S', 12], ['R', 90, 14], ['L', 90, 28], ['R', 90, 14], ['S', 36.1163],
+  // Westpoint Bend, and Westpoint Slough back to the boathouse
+  ['L', 40, 90],
+  ['S', 122.0711],
+];
+const SLOUGH_K = 1.25;
+/** The coach's launches go round at this speed, from the green light (the chain ferry keeps time with them). */
+const LAUNCH_V = 11;
 
 export const COURSES: Record<CourseId, Course> = {
   palm: {
@@ -910,6 +966,140 @@ export const COURSES: Record<CourseId, Course> = {
     sky: 'linear-gradient(180deg, #020313 0%, #070b2a 24%, #15123e 38%, #2a1a4a 44%, #3a2340 47%, #120a18 52%)',
     laps: { 2: 'Wind, blinking glass, bells', 3: 'Frost on the hairpins', 4: 'Bonfire flares, jet stream', 5: 'Blackout: a second beam' },
   },
+  slough: {
+    id: 'slough',
+    name: 'Redwood Slough',
+    blurb: 'Racing shells on the slough at dawn: marsh for banks, whirlpools in the Corkscrew, wakes, swell and wind off the Bay, a lock, a weir, and fog when the tide turns.',
+    difficulty: 5,
+    vehicle: 'shell',
+    route: turtle(SLOUGH).map(([e, n]) => [e * SLOUGH_K, n * SLOUGH_K]),
+    start: [40 * SLOUGH_K, 0],
+    half: 7,
+    edge: 9.5,
+    // marsh and mudflat for banks on seven tenths of the lap (run aground and the coach's launch tows you off), wharves
+    // and bulkheads elsewhere, and the lock's concrete walls closer in (the later spans override the earlier)
+    edges: [
+      // the mudflat inside Docktown Bend, out of the lock into the marsh, and the Turning Basin
+      [70, 105, -1, 'marsh'],
+      [175, 214, 0, 'marsh'],
+      [294, 388, 0, 'marsh'],
+      // Corkscrew Slough, Bair Island Bend, the Bay Reach and the weir
+      [438, 1010, 0, 'marsh'],
+      // the mudflat outside Westpoint Bend, and Bair Island along Westpoint Slough
+      [1010, 1072, 1, 'marsh'],
+      [1072, 1140, -1, 'marsh'],
+      // the lock chamber
+      [112, 168, 0, 'wall', 6],
+    ],
+    holePast: 'water',
+    // calm water is slick, the tide race and the run-up to the weir are rough, and from lap 3 so is the Bay Reach
+    surfaces: [
+      [0, 1300, 0.8, 'water'],
+      [790, 868, 0.65, 'chop'],
+      [958, 997, 0.65, 'chop'],
+      [868, 958, 0.65, 'chop', 3],
+    ],
+    // the tide: with you downstream, against you upstream (hug the bank), a tongue of fast water through the tide race and
+    // the helical flow of the meanders pushing you wide; the tide turns on the last lap (all but the weir's draw)
+    flows: [
+      { s0: 50, s1: 175, along: -1.5, bank: -0.3, tide: true },
+      { s0: 214, s1: 294, along: 2, bank: 1, tide: true },
+      { s0: 294, s1: 388, along: 1, outward: 1, tide: true },
+      { s0: 438, s1: 753, along: 1.5, outward: 1.5, tide: true },
+      { s0: 790, s1: 868, along: 1, tongue: [-2.5, 2.5, 4], outward: 1, tide: true },
+      { s0: 868, s1: 958, along: 1, tide: true },
+      { s0: 958, s1: 985, along: 3 },
+      { s0: 1060, s1: 1182, along: -1, bank: -0.2, tide: true },
+    ],
+    gusts: [
+      // off the Bay toward the salt ponds down the Bay Reach from lap 2, and back the other way from lap 3 with a calm in
+      // between; on lap 4 both harder
+      { s0: 868, s1: 958, a: -8, every: 4.8, on: 1.5, warn: 1, phase: 0.6, lap: 2 },
+      { s0: 868, s1: 958, a: 8, every: 4.8, on: 1.5, warn: 1, phase: 3, lap: 3 },
+      { s0: 868, s1: 958, a: -4, every: 4.8, on: 1.5, warn: 1, phase: 0.6, lap: 4 },
+      { s0: 868, s1: 958, a: 4, every: 4.8, on: 1.5, warn: 1, phase: 3, lap: 4 },
+      // and the Port gust, outward round the Turning Basin, from lap 3
+      { s0: 300, s1: 385, a: 7, every: 6, on: 2, warn: 1.2, phase: 2, lap: 3 },
+    ],
+    // swell rolling in off the Bay across the Bay Reach toward the salt ponds: three crests a set on laps 2 and 3, four and
+    // harder from lap 4
+    swells: [
+      { s0: 868, s1: 958, every: 9, n: 3, gap: 0.9, c: 7, kick: 4, dir: -1, phase: 1.5, warn: 1.5, lap: 2, until: 3 },
+      { s0: 868, s1: 958, every: 9, n: 4, gap: 0.9, c: 7, kick: 5, dir: -1, phase: 1.5, warn: 1.5, lap: 4 },
+    ],
+    layout: (t) => {
+      // whirlpools at the exits of Corkscrew Slough's hairpins, on the outside, from laps 2 and 3, wandering across the
+      // channel from lap 4; and on the last lap the Maelstrom in the Turning Basin
+      const whirl = (s: number, d: number, phase: number, lap: number, spin: number) => ({ kind: 'whirl' as const, s, d, r: 2.8, pull: 7, core: 1.5, power: 14, every: 7, on: 4.5, warn: 1.5, phase, lap, spin, wander: [1.2, 0.5, 4] as [number, number, number], back: s - 25 });
+      // the chain ferry across the Port Reach keeps time with the launches: over on the far side as each comes by (they
+      // are half a lap apart, and it crosses an even number of times a lap)
+      const launches = [300, 911];
+      const lapT = t.length / LAUNCH_V;
+      const ferryS = 404;
+      const ferrySpeed = (2 * Math.PI * 12) / lapT;
+      const [a, b] = launches.map((from) => ((((ferryS - from) % t.length) + t.length) % t.length) / LAUNCH_V);
+      const gap = ((((ferrySpeed * (b - a)) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+      return placed(t, {
+        boxes: [30, 424, 770, 1100],
+        coins: [
+          [60, 3, 5],
+          [180, 0, 4],
+          [255, -4, 4],
+          [392, 2, 4],
+          [470, 0, 5],
+          [610, 0, 4],
+          [680, 0, 4],
+          [800, -3.5, 5],
+          [1020, 2, 4],
+          [1150, -3, 5],
+        ],
+        // a boost onto the bridges; and the weir: dash pads right across the run-up, a ramp right across the crest and the
+        // stopper below it
+        dashes: [
+          [192, 0],
+          [962, -4.6],
+          [962, 0],
+          [962, 4.6],
+        ],
+        ramps: [[985, 0, 14]],
+        holes: [[985.5, 8, 0, 8, 950]],
+        pieces: [
+          // the Tide Gates: two rows of two miter leaves from lap 2, one leaf of each row always open, the open side
+          // alternating down the lock
+          { kind: 'bollard', s: 120, d: -3, w: 6, every: 3.2, on: 1.2, warn: 0.9, phase: 0, lap: 2, look: 'gate' },
+          { kind: 'bollard', s: 120, d: 3, w: 6, every: 3.2, on: 1.2, warn: 0.9, phase: 1.6, lap: 2, look: 'gate' },
+          { kind: 'bollard', s: 160, d: -3, w: 6, every: 3.2, on: 1.2, warn: 0.9, phase: 0.3, lap: 2, look: 'gate' },
+          { kind: 'bollard', s: 160, d: 3, w: 6, every: 3.2, on: 1.2, warn: 0.9, phase: 1.9, lap: 2, look: 'gate' },
+          // Hwy 101's piers down the middle of the channel, and the Caltrain swing span on its pier, sweeping from lap 2
+          { kind: 'statue', s: 226, d: 0, r: 1.1, look: 'pier' },
+          { kind: 'statue', s: 246, d: 0, r: 1.1, look: 'pier' },
+          { kind: 'rotor', s: 272, d: 0, r: 1.2, arm: 6.6, spin: 0.8, a0: 0, lap: 2, look: 'swing' },
+          // the whirlpools
+          whirl(520, -3.2, 0, 2, 1),
+          whirl(585, 3.2, 1.75, 3, -1),
+          whirl(647, -3.2, 3.5, 2, 1),
+          whirl(708, 3.2, 5.25, 3, -1),
+          { kind: 'whirl', s: 340, d: 3, r: 2.9, pull: 9, core: 1.6, power: 14, every: 9, on: 6, warn: 2, phase: 0, lap: 5, spin: 1, back: 315, look: 'maelstrom' },
+          // the regatta course down the Bay Reach: two lines of lane buoys, three lanes (from a little way past the bend, so
+          // there is time to pick one)
+          ...Array.from({ length: 20 }, (_, n) => ({ kind: 'buoy' as const, s: 880 + 8.5 * (n % 10), d: n < 10 ? -2.9 : 2.9 })),
+          // the coach's launches round the lap in the right-hand lane, with right of way through the set pieces
+          ...launches.map((s) => ({ kind: 'launch' as const, s, d: 4.4, drive: LAUNCH_V, wake: 0.6, priority: true })),
+          // a tug pushing its barge up Westpoint Slough and over the line to Docktown, from 50 s
+          { kind: 'barge', s: 1065, d: 3.2, drive: 4.5, span: [1065, 1272] as [number, number], every: 70, phase: 50, wake: 1 },
+          // logs drifting down the Bay Reach with the current in the lane on the salt ponds' side (where the wind and the
+          // swell push you), one every 22.5 m: over the weir they go
+          ...[0, 22.5, 45, 67.5].map((phase) => ({ kind: 'log' as const, s: 868, d: -5.3, drive: 1, span: [868, 958] as [number, number], every: 90, phase })),
+          // the chain ferry
+          { kind: 'ferry', s: ferryS, d: 0, swing: 4.6, speed: ferrySpeed, phase: 1.5 * Math.PI - ferrySpeed * a - gap / 2 },
+        ],
+      });
+    },
+    sky: 'linear-gradient(180deg, #27356a 0%, #5f62a2 18%, #e19c9b 34%, #f6c597 41%, #fbe3c2 45%, #a5bcbc 47%)',
+    laps: { 2: 'Lock, swing span, whirlpools', 3: 'More whirlpools, chop', 4: 'Whirlpools wander, big swell', 5: 'The tide turns, fog' },
+    // (calibrated against the braking ladder: see the PR)
+    tier: { paceCc: { '150cc': 0.97, '200cc': 1 } },
+  },
 };
 
 /** A course's tier: its difficulty's, with anything the course sets itself. */
@@ -922,6 +1112,7 @@ export function trackOf(id: CourseId): Track {
   if (!t) {
     const c = COURSES[id];
     t = buildTrack(c.route, c.start, c.half ?? ROAD_HALF, c.edge ?? EDGE);
+    if (c.vehicle === 'shell') t.boat = true;
     edgesOf(t, c);
     if (c.surfaces) t.grips = gripsOf(t, c.surfaces);
     tracks.set(id, t);

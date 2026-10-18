@@ -58,9 +58,9 @@ export const LANDMARKS = {
  * on the Cardinal Skyway the open sky, ninety meters above campus). Run a kart's middle over the brink of a drop and you
  * fall in, and the crane (or the drone) fishes you out.
  */
-export type Past = 'wall' | 'water' | 'pit' | 'ob' | 'void';
-/** The codes the track stores them by (pastLo, pastHi). */
-export const PASTS: readonly Past[] = ['wall', 'water', 'pit', 'ob', 'void'];
+export type Past = 'wall' | 'water' | 'pit' | 'ob' | 'void' | 'marsh';
+/** The codes the track stores them by (pastLo, pastHi). (On Redwood Slough the channel's banks are marsh and mudflat.) */
+export const PASTS: readonly Past[] = ['wall', 'water', 'pit', 'ob', 'void', 'marsh'];
 /**
  * A stretch of a course's edge, from s0 to s1, on one side (-1 left, 1 right) or both (0): what lies past it, and where.
  * For a drop `at` is the brink the kart's middle may not cross (by default a little past the edge of the road, see
@@ -98,6 +98,8 @@ export type Track = {
    * Course.surfaces): 1 is ordinary road. Undefined on every other course.
    */
   grips?: Float32Array[];
+  /** On the water (Course.vehicle): the channel is open water right out to its banks and walls (see roadEdge). */
+  boat?: boolean;
 };
 
 export type Spot = { i: number; s: number; d: number; x: number; z: number; tx: number; tz: number };
@@ -216,6 +218,9 @@ export function edgeAt(t: Track, s: number, side: number): { lim: number; past: 
  */
 export function roadEdge(t: Track, s: number, side: number) {
   const e = edgeAt(t, s, side);
+  // (on the water the channel runs out to just short of the brink of the marsh, and to a little short of a wall's foot
+  // where one narrows it, as through the lock)
+  if (t.boat) return e.past === 'wall' ? Math.min(t.half, e.lim - KART_R + 0.3) : e.lim - 0.4;
   return e.past === 'void' ? Math.min(t.half, e.lim - 0.4) : t.half;
 }
 
@@ -359,8 +364,17 @@ export const sOf = (t: Track, e: number, n: number) => {
  * through and you are put back at `back`. A geyser is a grate in the road that blows a column of flame up for `on`
  * seconds every `every`, glowing `warn` seconds before: it spins you. `look` is how the scene dresses a set piece on a
  * course of its own (a pile driver as a carillon bell, say); nothing else reads it.
+ *
+ * On the water (Redwood Slough): a whirl is a whirlpool that spins up on the clock like a panel opens, `on` seconds every
+ * `every` with `warn` seconds of foam turning first, pulling a kart within `pull` of its middle toward it (`power` meters a
+ * second squared at the middle) and round it (`spin`: +1 one way, -1 the other), and sucking one under within `core` of
+ * it; its r is how close the CPUs keep (the core and a margin), and from a lap `wander` [swing, speed, from lap] it drifts
+ * across the channel. A launch (the coach's), a barge (a tug and its barge) and a log drive in their lanes like a bus,
+ * a span vessel only on its stretch `span` of the course, once every `every` seconds from race time `phase` (gone the rest
+ * of the time); a vessel with a `wake` leaves one behind it, and one with `priority` has right of way through the set
+ * pieces as a bus does. A ferry crosses the channel on its chain like a golf cart on its path, and a buoy stands solid.
  */
-export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus' | 'cart' | 'golfer' | 'ball' | 'sand' | 'water' | 'pin' | 'statue' | 'trench' | 'hammer' | 'bollard' | 'wrecker' | 'rotor' | 'wet' | 'panel' | 'geyser';
+export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus' | 'cart' | 'golfer' | 'ball' | 'sand' | 'water' | 'pin' | 'statue' | 'trench' | 'hammer' | 'bollard' | 'wrecker' | 'rotor' | 'wet' | 'panel' | 'geyser' | 'whirl' | 'launch' | 'barge' | 'log' | 'ferry' | 'buoy';
 export type Hazard = {
   kind: HazardKind;
   s: number;
@@ -386,22 +400,34 @@ export type Hazard = {
   spin?: number;
   a0?: number;
   look?: string;
+  /** A whirlpool (see HazardKind): how far its pull reaches, its core, how hard it pulls, and [swing, speed, from lap]. */
+  pull?: number;
+  core?: number;
+  power?: number;
+  wander?: [number, number, number];
+  /** A vessel that drives only from s0 to s1 (s1 past the end of the lap for one over the line), once every `every` s. */
+  span?: [number, number];
+  /** How big a wake a vessel leaves (0 to 1), and whether the set pieces stand aside for it. */
+  wake?: number;
+  priority?: boolean;
 };
 /** How big each kind is unless a course says otherwise (a bollard's r is the bank's thickness along the road). */
-export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1, bus: 1.3, cart: 0.8, golfer: 0.8, ball: 0.55, sand: 2.8, water: 20, pin: 0.5, statue: 1.4, trench: 2, hammer: 1.7, bollard: 0.35, wrecker: 1.3, rotor: 0.6, wet: 5, panel: 2.7, geyser: 1.1 };
+export const HAZARD_R: Record<HazardKind, number> = { mud: 3.4, oil: 2.3, hay: 1.25, rock: 1.4, planter: 1.6, cow: 1.5, bike: 1, bus: 1.3, cart: 0.8, golfer: 0.8, ball: 0.55, sand: 2.8, water: 20, pin: 0.5, statue: 1.4, trench: 2, hammer: 1.7, bollard: 0.35, wrecker: 1.3, rotor: 0.6, wet: 5, panel: 2.7, geyser: 1.1, whirl: 2.6, launch: 1.1, barge: 3, log: 0.35, ferry: 2.2, buoy: 0.3 };
 /** A bus is this long, nose to tail, and so is a golf cart. */
 export const BUS_LEN = 9.6;
 export const CART_LEN = 3.1;
-/** Something that drives laps of the course in its own lane, collided with as a box. */
-export const drives = (h: Hazard) => (h.kind === 'bus' || h.kind === 'cart') && !!h.drive;
-/** How long a bus or a driving cart is. */
-export const lengthOf = (h: Hazard) => (h.kind === 'bus' ? BUS_LEN : CART_LEN);
+/** And on the water a coach's launch, a tug with its barge, and a drifting log. */
+export const VESSEL_LEN = { launch: 6.5, barge: 34, log: 5 };
+/** Something that drives laps of the course in its own lane (or a stretch of it), collided with as a box. */
+export const drives = (h: Hazard) => (h.kind === 'bus' || h.kind === 'cart' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'log') && !!h.drive;
+/** How long a bus, a driving cart or a vessel is. */
+export const lengthOf = (h: Hazard) => (h.kind === 'bus' ? BUS_LEN : h.kind === 'launch' || h.kind === 'barge' || h.kind === 'log' ? VESSEL_LEN[h.kind] : CART_LEN);
 /** Whether a hazard is there yet for a kart on lap `lap` (see `lap` above). */
 export const awake = (h: Hazard, lap: number) => !h.lap || lap >= h.lap;
 /** Things you bounce off (or that spin you out when you run into them); the rest you drive through or over. */
-export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil' && kind !== 'sand' && kind !== 'water' && kind !== 'ball' && kind !== 'trench' && kind !== 'wet' && kind !== 'panel' && kind !== 'geyser';
+export const solid = (kind: HazardKind) => kind !== 'mud' && kind !== 'oil' && kind !== 'sand' && kind !== 'water' && kind !== 'ball' && kind !== 'trench' && kind !== 'wet' && kind !== 'panel' && kind !== 'geyser' && kind !== 'whirl';
 /** The set pieces that come and go on the race clock: solid or in the way only some of the time (see hazState). */
-export const timed = (kind: HazardKind) => kind === 'hammer' || kind === 'bollard' || kind === 'wrecker' || kind === 'rotor' || kind === 'panel' || kind === 'geyser';
+export const timed = (kind: HazardKind) => kind === 'hammer' || kind === 'bollard' || kind === 'wrecker' || kind === 'rotor' || kind === 'panel' || kind === 'geyser' || kind === 'whirl';
 /**
  * How far into its cycle (0 up to `every`) a timed hazard is at race time `time`: the cycle is `every` seconds long
  * and the first starts at `phase` (golf balls land on that beat, a hammer slams on it, a bank rises on it).

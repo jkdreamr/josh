@@ -92,7 +92,7 @@ test('Insane is a fifth tier above Expert: harder in every cost, a closer brink,
   assert.ok(ins.harsh >= ex.harsh && ins.fallT >= ex.fallT && ins.fallCoins >= ex.fallCoins && ins.band[0] >= ex.band[0] && ins.rocket >= ex.rocket);
   assert.ok(ins.brink <= ex.brink);
   assert.equal(COURSES.skyway.difficulty, 5);
-  assert.deepEqual(COURSE_IDS.filter((id) => COURSES[id].difficulty === 5), ['skyway']);
+  assert.deepEqual(COURSE_IDS.filter((id) => COURSES[id].difficulty === 5), ['skyway', 'slough']);
   // a CPU of skill 0.3 races at 0.3 + 0.7 * 0.3 = 0.51; anywhere else at its own skill
   const lift = ins.skillLift ?? 0;
   assert.ok(lift > 0 && lift < 1);
@@ -120,9 +120,12 @@ test('the Skyway: most of the lap open to the sky on both sides, walled at the s
   assert.ok(Math.abs(roadEdge(t, 700, 1) - 3.6) < 1e-6 && Math.abs(roadEdge(t, 700, -1) - 3.6) < 1e-6);
 });
 
-test('nothing that spins or knocks you stands beside the sky on a bend you have to steer round (the beam lesson)', () => {
-  const t = trackOf('skyway');
-  const lay = COURSES.skyway.layout(t);
+test('nothing that spins or knocks you stands beside the sky (or the marsh) on a bend you have to steer round (the beam lesson)', () => {
+  for (const id of COURSE_IDS.filter((c) => COURSES[c].difficulty === 5)) beamLesson(id);
+});
+function beamLesson(id: (typeof COURSE_IDS)[number]) {
+  const t = trackOf(id);
+  const lay = COURSES[id].layout(t);
   for (const h of lay.hazards) {
     if (h.kind !== 'rotor' && h.kind !== 'wrecker' && h.kind !== 'geyser') continue;
     const reach = Math.max(h.r, h.arm ?? 0, h.swing ?? 0);
@@ -132,14 +135,14 @@ test('nothing that spins or knocks you stands beside the sky on a bend you have 
       const drop = dropAt(t, i, -1) || dropAt(t, i, 1);
       // (the Wire's kink, at 70 m (66 once the spline has smoothed it), is taken flat out; the Dish Sweeper's 50 m is
       // where the beam threw karts off)
-      assert.ok(!(drop && curv > 1 / 60), `${h.kind} at s=${h.s} by an open bend at s=${(h.s + ds).toFixed(0)} (r ${(1 / curv).toFixed(0)})`);
+      assert.ok(!(drop && curv > 1 / 60), `${id}: ${h.kind} at s=${h.s} by an open bend at s=${(h.s + ds).toFixed(0)} (r ${(1 / curv).toFixed(0)})`);
     }
   }
-});
+}
 
-test('grip: ordinary road everywhere but the Skyway, where nothing about other courses changes', () => {
+test('grip: ordinary road everywhere but the Skyway (and the slough\'s water), where nothing about other courses changes', () => {
   for (const id of COURSE_IDS) {
-    if (id === 'skyway') continue;
+    if (id === 'skyway' || id === 'slough') continue;
     const t = trackOf(id);
     assert.equal(t.grips, undefined, id);
     for (let s = 0; s < t.length; s += 13) assert.equal(gripAt(t, s, 3), 1);

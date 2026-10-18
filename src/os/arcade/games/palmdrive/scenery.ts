@@ -836,8 +836,11 @@ export type Look = {
    * on the golf course just red stakes along the water's edge (the ponds show themselves).
    */
   edge?: 'lip' | 'stakes';
-  /** What fishes a kart out after a fall: the night crew's crane hook (the default), a giant golf ball retriever, or a drone. */
-  rescue?: 'hook' | 'retriever' | 'drone';
+  /**
+   * What fishes a kart out after a fall: the night crew's crane hook (the default), a giant golf ball retriever, a drone,
+   * or on the water the coach's launch, towing you off the mud.
+   */
+  rescue?: 'hook' | 'retriever' | 'drone' | 'launch';
   /**
    * A road of glass in the sky (the Cardinal Skyway): no ground under it, the road a lit ribbon with white edge lines and a
    * neon lip where it ends, glass rails where it has walls, and campus far below (see skyway()).
@@ -845,6 +848,10 @@ export type Look = {
   glass?: boolean;
   /** From this lap of your own the road's glow fades to almost nothing and the fog closes in (the Skyway's last lap). */
   blackout?: number;
+  /** On the water (Redwood Slough): the channel's colors, deep in the middle to shallow at its banks, and its foam. */
+  water?: { deep: string; shallow: string; foam: string };
+  /** From this lap of your own the fog comes in: near and far, and its color. */
+  fogLap?: { lap: number; near: number; far: number; color: number };
 };
 export const LOOKS: Record<CourseId, Look> = {
   palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE', road: '#4a4a52' },
@@ -859,6 +866,8 @@ export const LOOKS: Record<CourseId, Look> = {
   golf: { fog: [0xf1e2bf, 150, 720], sky: 0xfff2d6, ground: 0x4f7a34, sun: [0xffe0a8, 1.6], field: '#4c8a32', lawn: '#6fb34a', curb: ['#f4f1ea', '#2f7a3a'], wall: '#efe9da', band: '#2f6b3a', banner: 'STANFORD GOLF', road: '#57575f', edge: 'stakes', rescue: 'retriever' },
   // night ninety meters up: a deep blue haze that swallows campus far below, starlight and the glow off the road
   skyway: { fog: [0x0b0d26, 120, 470], sky: 0x8d93d8, ground: 0x2a1030, sun: [0xc8ccff, 0.75], field: '#05060c', lawn: '#14161d', curb: ['#ffffff', '#ff2d6f'], wall: '#9fe8ff', band: '#c8143c', banner: 'CARDINAL SKYWAY', road: '#4a0a18', night: true, rescue: 'drone', glass: true, blackout: 5 },
+  // dawn on the sloughs: a peach horizon in the east, violet overhead, low mist, and the water the road
+  slough: { fog: [0xf0c9ad, 140, 620], sky: 0xffd9b8, ground: 0x5d5a38, sun: [0xffc08a, 1.35], field: '#6b6a3c', lawn: '#7a6844', curb: ['#e8e2d0', '#8c1515'], wall: '#b7b0a0', band: '#8c1515', banner: 'HEAD OF THE SLOUGH', road: '#3f6f84', water: { deep: '#2f5d74', shallow: '#5d8f9c', foam: '#f4efe6' }, rescue: 'launch', fogLap: { lap: 5, near: 30, far: 150, color: 0xd8d4cc } },
 };
 
 /** What a course's scenery builder gets: the scene, the track and shared helpers. */
@@ -3384,6 +3393,226 @@ function golf(c: Scenery): SceneryTick {
 }
 
 /** How far below the Cardinal Skyway campus lies. */
+/**
+ * Redwood Slough at dawn: the sun just up over the East Bay hills, the Bay itself to the west past the salt ponds' pink
+ * and orange brines inside the loop, Bair Island's marsh all round with power-line towers marching across it, the
+ * Stanford Rowing Center's boathouse and docks by the start, Docktown's houseboats along Westpoint Slough, the Port's
+ * gantry cranes and aggregate piles past the Turning Basin, and the lock-keeper's hut on the Tide Gates.
+ */
+function slough(c: Scenery): SceneryTick {
+  const { THREE, scene, t, geo, rand, clear, dummy } = c;
+  const { cx, cz, rx, rz } = bounds(t);
+  type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number; rx?: number };
+  const lambert = (color: number, extra: T.MeshLambertMaterialParameters = {}) => new THREE.MeshLambertMaterial({ color, ...extra });
+  const at = (s: number, d: number) => pointAt(t, s, d);
+  const face = (s: number) => {
+    const p = at(s, 0);
+    return headingOf(p.tx, p.tz);
+  };
+
+  // the sun just up in the east (world -x), its glow, and the East Bay hills under it; hills to the south and west too
+  const sun = new THREE.Mesh(new THREE.CircleGeometry(26, 32), new THREE.MeshBasicMaterial({ color: 0xfff1d0, fog: false }));
+  sun.position.set(cx - 880, 46, cz - 120);
+  sun.lookAt(cx, 0, cz);
+  const glow = new THREE.Mesh(new THREE.RingGeometry(30, 110, 40), new THREE.MeshBasicMaterial({ color: 0xffc58a, transparent: true, opacity: 0.32, fog: false, depthWrite: false }));
+  glow.position.copy(sun.position);
+  glow.lookAt(cx, 0, cz);
+  scene.add(sun, glow);
+  const hillGeo = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+  const hills: Item[] = [];
+  for (let a = 0; a < Math.PI * 2; a += Math.PI / 16) {
+    // (the Bay to the west is open water: no hills there, just a low line of the Peninsula far off)
+    const west = Math.cos(a) > 0.55;
+    const dist = 620 + rand() * 180;
+    hills.push({ x: cx + Math.cos(a) * dist * 1.1, y: -6, z: cz + Math.sin(a) * dist, sx: 120 + rand() * 90, sy: west ? 14 : 40 + rand() * 50, sz: 110 + rand() * 80 });
+  }
+  instances(THREE, scene, dummy, hillGeo, new THREE.MeshLambertMaterial({ color: 0x8a7f9a, flatShading: true }), hills);
+
+  // the Bay to the west, past the loop: open water to the horizon
+  const bayTex = waterTexture(THREE);
+  bayTex.repeat.set(30, 30);
+  const bay = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1800, 20, 20), new THREE.MeshLambertMaterial({ map: bayTex, color: 0x9fb8c8 }));
+  bay.rotation.x = -Math.PI / 2;
+  bay.position.set(cx + rx + 60 + 700, -0.02, cz);
+  scene.add(bay);
+
+  // the Cargill salt ponds inside the loop: flat colored brines between low levees
+  const pondColors = [0xe46f8a, 0xf0a35a, 0x8bb36a, 0xd9839a, 0xe8b46a];
+  const ponds: { x: number; z: number; w: number; d: number; c: number }[] = [];
+  for (let n = 0; n < 60 && ponds.length < 7; n++) {
+    const x = cx + (rand() - 0.2) * rx * 1.3;
+    const z = cz + (rand() - 0.5) * rz * 1.3;
+    const w = 40 + rand() * 50;
+    const d = 30 + rand() * 40;
+    if (!insideLoop(t, x, z) || !clear(x, z, Math.max(w, d) / 2 + 12)) continue;
+    if (ponds.some((p) => Math.abs(p.x - x) < (p.w + w) / 2 + 6 && Math.abs(p.z - z) < (p.d + d) / 2 + 6)) continue;
+    ponds.push({ x, z, w, d, c: pondColors[ponds.length % pondColors.length] });
+  }
+  for (const p of ponds) {
+    const m = new THREE.Mesh(geo.plane, lambert(p.c));
+    m.rotation.x = -Math.PI / 2;
+    m.scale.set(p.w, p.d, 1);
+    m.position.set(p.x, 0.02, p.z);
+    scene.add(m);
+  }
+  instances(
+    THREE,
+    scene,
+    dummy,
+    geo.box,
+    lambert(0xa89878),
+    ponds.flatMap((p) => [
+      { x: p.x, y: 0.4, z: p.z - p.d / 2 - 1, sx: p.w + 4, sy: 0.8, sz: 2 },
+      { x: p.x, y: 0.4, z: p.z + p.d / 2 + 1, sx: p.w + 4, sy: 0.8, sz: 2 },
+      { x: p.x - p.w / 2 - 1, y: 0.4, z: p.z, sx: 2, sy: 0.8, sz: p.d + 4 },
+      { x: p.x + p.w / 2 + 1, y: 0.4, z: p.z, sx: 2, sy: 0.8, sz: p.d + 4 },
+    ]),
+  );
+
+  // power-line towers marching across the marsh, and the lines between them
+  const towers: Item[] = [];
+  const lines: Item[] = [];
+  for (const [ax, az, bx, bz] of [
+    [cx - rx - 120, cz - rz * 0.4, cx + rx + 80, cz + rz * 0.2],
+    [cx - rx * 0.3, cz - rz - 140, cx + rx * 0.1, cz + rz + 160],
+  ]) {
+    const len = Math.hypot(bx - ax, bz - az);
+    const n = Math.round(len / 70);
+    const ry = Math.atan2(bx - ax, bz - az);
+    let last: { x: number; z: number } | null = null;
+    for (let k = 0; k <= n; k++) {
+      const x = ax + ((bx - ax) * k) / n;
+      const z = az + ((bz - az) * k) / n;
+      if (!clear(x, z, 30)) {
+        last = null;
+        continue;
+      }
+      towers.push({ x, y: 12, z, sx: 2.2, sy: 24, sz: 2.2, ry });
+      towers.push({ x, y: 22, z, sx: 9, sy: 0.4, sz: 0.5, ry });
+      if (last) lines.push({ x: (x + last.x) / 2, y: 21.5, z: (z + last.z) / 2, sx: 0.08, sy: 0.08, sz: Math.hypot(x - last.x, z - last.z), ry });
+      last = { x, z };
+    }
+  }
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.12, 1, 1, 4), lambert(0x7b7f88), towers);
+  instances(THREE, scene, dummy, geo.box, lambert(0x2b2b30), lines);
+
+  // the Stanford Rowing Center: a two-story boathouse with cardinal trim beside the start, its bay doors open on the
+  // racks of shells, and the docks in front
+  {
+    const s = 1196;
+    const d = t.edge + 14;
+    const p = at(s, d);
+    const h = face(s);
+    const g = new THREE.Group();
+    const add = (geom: T.BufferGeometry, mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+      const m = new THREE.Mesh(geom, mat);
+      m.position.set(x, y, z);
+      m.scale.set(sx, sy, sz);
+      g.add(m);
+      return m;
+    };
+    const wallMat = lambert(0xe9e1d0);
+    const trim = lambert(0x8c1515);
+    add(geo.box, wallMat, 0, 4.5, 0, 12, 9, 34);
+    add(geo.box, trim, 0, 9.3, 0, 12.6, 0.6, 34.6);
+    const roof = add(geo.roof, lambert(0x5a5f66), 0, 11.2, 0, 9.5, 3.4, 26);
+    roof.rotation.y = Math.PI / 4;
+    // (its front, toward the water: local +x faces back across the channel to the left)
+    for (let k = -1; k <= 1; k++) add(geo.box, lambert(0x2a2622), 6.05, 2.4, k * 10, 0.2, 4.2, 6.5);
+    for (let k = -3; k <= 3; k++) add(geo.box, lambert(0x9cc2d8, { emissive: 0x24343c }), 6.05, 7, k * 4.5, 0.15, 1.6, 2.2);
+    // (racks of shells, end on, through the bay doors)
+    for (let k = -1; k <= 1; k++) for (let j = 0; j < 3; j++) add(geo.box, [trim, lambert(0xf2f2f0), lambert(0x2f6fb5)][(k + j + 3) % 3], 5.6, 1.1 + j * 1.1, k * 10, 1.2, 0.25, 5.5);
+    // a banner on its side: STANFORD ROWING
+    const sign = texture(
+      THREE,
+      canvas(512, 64, (q) => {
+        q.fillStyle = '#8c1515';
+        q.fillRect(0, 0, 512, 64);
+        q.fillStyle = '#ffffff';
+        q.font = 'bold 36px Georgia, serif';
+        q.textAlign = 'center';
+        q.textBaseline = 'middle';
+        q.fillText('STANFORD ROWING CENTER', 256, 34);
+      }),
+    );
+    const banner = add(geo.plane, new THREE.MeshLambertMaterial({ map: sign }), 6.12, 8.2, 0, 26, 2.2, 1);
+    banner.rotation.y = Math.PI / 2;
+    g.position.set(p.x, 1.45, p.z);
+    g.rotation.y = h;
+    scene.add(g);
+  }
+
+  // Docktown's houseboats along Westpoint Slough and outside Docktown Bend: pastel boxes with dark roofs
+  const boats: Item[] = [];
+  const roofs: Item[] = [];
+  const pastel = [0xf2b8a2, 0xa8d0c6, 0xf3dca0, 0xc6b7e2, 0xe6e6dc];
+  const boatMats = pastel.map((c) => lambert(c));
+  const byColor: Item[][] = pastel.map(() => []);
+  for (let s = 1068; s < 1150; s += 9) {
+    const p = at(s, t.edge + 6 + rand() * 3);
+    if (!clear(p.x, p.z, 3)) continue;
+    const it = { x: p.x, y: 1.4, z: p.z, sx: 5, sy: 2.8, sz: 7, ry: face(s) + (rand() - 0.5) * 0.3 };
+    byColor[boats.length % pastel.length].push(it);
+    boats.push(it);
+    roofs.push({ ...it, y: 3.1, sx: 5.6, sy: 0.4, sz: 7.6 });
+  }
+  byColor.forEach((items, n) => instances(THREE, scene, dummy, geo.box, boatMats[n], items));
+  instances(THREE, scene, dummy, geo.box, lambert(0x4a4440), roofs);
+
+  // the Port of Redwood City past the Turning Basin: two gantry cranes and the aggregate piles
+  {
+    const cranes: Item[] = [];
+    for (const [s, d] of [[345, 58], [400, 50]] as const) {
+      const p = at(s, d);
+      const h = face(s);
+      const ox = Math.cos(h);
+      const oz = -Math.sin(h);
+      for (const side of [-1, 1]) cranes.push({ x: p.x + ox * side * 5, y: 14, z: p.z + oz * side * 5, sx: 1.2, sy: 28, sz: 1.2, ry: h });
+      cranes.push({ x: p.x, y: 27, z: p.z, sx: 12, sy: 2, sz: 2, ry: h });
+      cranes.push({ x: p.x - Math.sin(h) * 6, y: 29, z: p.z - Math.cos(h) * 6, sx: 2.2, sy: 2.2, sz: 30, ry: h });
+    }
+    instances(THREE, scene, dummy, geo.box, lambert(0xd8452c), cranes);
+    const piles: Item[] = [];
+    for (let k = 0; k < 6; k++) {
+      const p = at(330 + k * 15, 70 + rand() * 20);
+      if (clear(p.x, p.z, 10)) piles.push({ x: p.x, y: 5, z: p.z, sx: 9 + rand() * 4, sy: 10 + rand() * 5, sz: 9 + rand() * 4 });
+    }
+    instances(THREE, scene, dummy, geo.cone, lambert(0xb9aa92, { flatShading: true }), piles);
+  }
+
+  // the lock-keeper's hut on the Tide Gates
+  {
+    const p = at(140, edgeAtLim(t, 140, 1) + 4);
+    const hut = new THREE.Mesh(geo.box, lambert(0xd9d2c0));
+    hut.scale.set(4, 3, 5);
+    hut.position.set(p.x, 3, p.z);
+    hut.rotation.y = face(140);
+    const roof = new THREE.Mesh(geo.box, lambert(0x8c1515));
+    roof.scale.set(4.6, 0.4, 5.6);
+    roof.position.set(p.x, 4.7, p.z);
+    roof.rotation.y = face(140);
+    scene.add(hut, roof);
+  }
+
+  // egrets standing in the marsh here and there
+  const egrets: Item[] = [];
+  for (let n = 0; n < 400 && egrets.length < 24; n++) {
+    const s = rand() * t.length;
+    const side = rand() < 0.5 ? -1 : 1;
+    const p = at(s, side * (t.edge + 4 + rand() * 12));
+    if (!clear(p.x, p.z, 2.5)) continue;
+    egrets.push({ x: p.x, y: 0.7, z: p.z, sx: 0.35, sy: 0.9, sz: 0.5 });
+  }
+  instances(THREE, scene, dummy, geo.ball, lambert(0xfbfbf6), egrets);
+  return () => {};
+}
+
+/** How far out the edge of the course stands on one side at s (a wall's foot, or the brink of a drop). */
+function edgeAtLim(t: Track, s: number, side: number) {
+  const i = Math.floor((((s % t.length) + t.length) % t.length) / t.step) % t.n;
+  return side > 0 ? t.hi[i] : -t.lo[i];
+}
+
 export const SKY_DROP = 90;
 
 /**
@@ -3772,4 +4001,4 @@ function skyway(c: Scenery): SceneryTick {
   };
 }
 
-export const SCENERY: Record<CourseId, (c: Scenery) => void | SceneryTick> ={ palm: campus, lake, barn, dish, stadium, quad, hoover, golf, skyway };
+export const SCENERY: Record<CourseId, (c: Scenery) => void | SceneryTick> ={ palm: campus, lake, barn, dish, stadium, quad, hoover, golf, skyway, slough };

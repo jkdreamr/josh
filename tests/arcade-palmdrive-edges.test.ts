@@ -46,13 +46,15 @@ for (const id of COURSE_IDS) {
   test(`${id}: the edges lie inside the lap, well clear of the start line, with brinks and walls far enough out`, () => {
     const t = trackOf(id);
     const c = COURSES[id];
+    const lock = c.difficulty === 5 && c.vehicle === 'shell';
     for (const [s0, s1, side, past, at] of c.edges ?? []) {
       const where = `${id} ${past} ${s0}-${s1}`;
       assert.ok(s0 >= 0 && s1 > s0 && s1 <= t.length, `${where} lies inside the lap`);
       assert.ok([-1, 0, 1].includes(side), where);
       if (past !== 'wall') assert.ok(s0 >= 60 && s1 <= t.length - 60, `${where} is within 60 m of the start line`);
-      // (on Insane the road can narrow over the sky, to no less than 7 m of it)
-      if (at !== undefined) assert.ok(past === 'wall' ? at >= t.half + 1.5 : past === 'void' && c.difficulty === 5 ? at >= 3.5 + 0.4 : at >= t.half + 0.5, where);
+      // (on Insane the road can narrow over the sky, to no less than 7 m of it, and on the water the lock's walls stand in
+      // closer, leaving a kart's middle 4.95 m either side)
+      if (at !== undefined) assert.ok(past === 'wall' ? at >= (lock ? 6 : t.half + 1.5) : past === 'void' && c.difficulty === 5 ? at >= 3.5 + 0.4 : at >= t.half + 0.5, where);
     }
     const lay = c.layout(t);
     // (a gap right across the road has no plates: past it either side is the drop anyway)
@@ -67,7 +69,7 @@ for (const id of COURSE_IDS) {
           // over a trench, its plates; anywhere else at least half a meter past the edge of the road
           if (plates(s)) assert.ok(Math.abs(lim - (t.half - 0.4)) < 1e-6, `${id} plates at s=${s}`);
           else assert.ok(lim >= (c.difficulty === 5 ? 3.9 : t.half + 0.5) - 1e-6, `${id} brink ${lim.toFixed(2)} at s=${s}`);
-        } else assert.ok(lim >= t.half + 1.5 - 1e-6, `${id} wall ${lim.toFixed(2)} at s=${s}`);
+        } else assert.ok(lim >= (lock ? 6 : t.half + 1.5) - 1e-6, `${id} wall ${lim.toFixed(2)} at s=${s}`);
       }
     }
     // the runs of wall and drop cover each side of the lap once
