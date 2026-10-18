@@ -485,6 +485,7 @@ function Play({ mode }: { mode: Mode }) {
   /** On the water: when the weir last roared and which eight seconds the foghorn last sounded in. */
   const roarT = useRef(0);
   const fogHorn = useRef(-1);
+  const tugAt = useRef(-1);
   /** A short buzz on phones that can. */
   const buzz = (ms: number) => {
     if (!shellRef.current.touch) return;
@@ -827,6 +828,18 @@ function Play({ mode }: { mode: Mode }) {
       for (const h of r.holes) {
         const dist = Math.hypot(h.x - me.x, h.z - me.z);
         if (dist < 80) sfx.noise(0.34, 0.05 * (1 - dist / 80) ** 1.5);
+      }
+    }
+    // (the tug's horn as it comes up Westpoint Slough, once a transit, near enough to hear)
+    for (const v of r.vessels) {
+      if (v.kind !== 'barge' || v.gone) continue;
+      const dist = Math.hypot(v.x - me.x, v.z - me.z);
+      const transit = Math.floor((r.time - (v.phase ?? 0)) / (v.every ?? 60));
+      if (dist < 90 && tugAt.current !== transit) {
+        tugAt.current = transit;
+        const vol = 1 - dist / 90;
+        sfx.tone({ freq: 82, dur: 1.2, type: 'sawtooth', vol: 0.09 * vol });
+        sfx.tone({ freq: 123, dur: 1.2, type: 'triangle', vol: 0.05 * vol });
       }
     }
     // (gulls wheeling over the Port's wharves, now and then)
@@ -1220,6 +1233,11 @@ function Play({ mode }: { mode: Mode }) {
         if (mine) {
           buzz(e.how === 'spin' || e.how === 'squash' ? 60 : 120);
           sfx.play(e.how === 'spin' || e.how === 'squash' ? 'hit' : 'boom');
+          // (on the water a spin is a crab: the oar's clack in its gate and a splash)
+          if (r.boat && e.how === 'spin') {
+            sfx.tone({ freq: 1100, to: 700, dur: 0.05, type: 'square', vol: 0.08 });
+            sfx.noise(0.3, 0.09, 0.05);
+          }
           setFlash({ id: Date.now(), kind: 'hit' });
         }
         break;
