@@ -572,7 +572,6 @@ function Stage({ team, className, children }: { team: TeamIndex; className: stri
 }
 
 function Zone({ kind, disabled, onPress }: { kind: 'skip' | 'got'; disabled: boolean; onPress: () => void }) {
-  const { touch } = useShell();
   const got = kind === 'got';
   return (
     <button
@@ -592,7 +591,6 @@ function Zone({ kind, disabled, onPress }: { kind: 'skip' | 'got'; disabled: boo
         )}
       </svg>
       <span>{got ? 'Got It' : 'Skip'}</span>
-      {!touch && <kbd>{got ? '→ or Space' : '← key'}</kbd>}
     </button>
   );
 }
