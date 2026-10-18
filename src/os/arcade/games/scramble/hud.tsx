@@ -469,6 +469,10 @@ function DoorMark({ b, d }: { b: Building; d: Door }) {
   return <rect x={x - hw} y={z - hd} width={hw * 2} height={hd * 2} fill={open ? '#1d2025' : b.kind === 'ruin' ? '#e4dccb' : '#fff6d6'} />;
 }
 
+/** Many round dots as one path (hundreds of trees in one element, not hundreds of elements). */
+const dots = <P extends { x: number; z: number }>(list: P[], r: (p: P) => number) =>
+  list.map((p) => `M${(p.x - r(p)).toFixed(1)} ${p.z.toFixed(1)}a${r(p)} ${r(p)} 0 1 0 ${2 * r(p)} 0a${r(p)} ${r(p)} 0 1 0 ${-2 * r(p)} 0Z`).join('');
+
 /** The river's middle line as SVG points. */
 const riverPoints = (map: GameMap) => map.river.map((p) => `${p.x},${p.z}`).join(' ');
 
@@ -504,12 +508,8 @@ export function IslandArt({ map }: { map: GameMap }) {
       {map.yards.map((y, i) => (
         <rect key={`y${i}`} x={y.x - y.hw} y={y.z - y.hd} width={y.hw * 2} height={y.hd * 2} fill="none" stroke="#c49a5c" strokeWidth="1.2" strokeDasharray="5 3" />
       ))}
-      {map.trees.map((t, i) => (
-        <circle key={`t${i}`} cx={t.x} cy={t.z} r="2" fill="#3f8f3a" />
-      ))}
-      {map.rocks.map((r, i) => (
-        <circle key={`r${i}`} cx={r.x} cy={r.z} r={r.r} fill="#9aa0a6" />
-      ))}
+      <path d={dots(map.trees, () => 2)} fill="#3f8f3a" />
+      <path d={dots(map.rocks, (r) => r.r)} fill="#9aa0a6" />
       {map.buildings.map((b, i) => (
         <rect key={`b${i}`} x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={MAP_ROOF[b.kind]} stroke={b.kind === 'ruin' ? 'none' : '#f1e6d2'} strokeWidth="1" />
       ))}
@@ -757,7 +757,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>The storm.</b> The white ring shows where the safe circle is heading. Outside the circle the storm eats your health (shields don't help), and it bites harder each time it closes.
           </li>
           <li>
-            <b>Supply drops.</b> Three times a match a crate floats down under a balloon inside the next circle, with a beam of light over it. They're full of epic and legendary gear. Fire a flare gun to call one more down near you.
+            <b>Supply drops.</b> Before the storm moves each of the first three times, two crates float down under balloons inside the circle it will close to (one more before the fourth time), each with a beam of light over it. They're full of epic and legendary gear. Fire a flare gun to call one more down near you.
           </li>
           <li>
             <b>Walls.</b> Swing at trees or fallen logs for wood, then throw up walls for cover. They take a beating before they break.
@@ -804,7 +804,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>The Golden Coop.</b> The gold-roofed building with a star on the map. One way in, and a golden chest at the back full of legendary gear.
           </li>
           <li>
-            <b>The diner and the windmill.</b> Most islands have one or the other, now and then both, each going by its own name. The diner has booths, a counter and, in the kitchen at the back, two fridges and a chest. The windmill has one way in, flour sacks and a millstone, and a chest across from the door as good as a supply drop.
+            <b>The diner and the windmill.</b> Every island has one of each, now and then a second of one, each going by its own name. The diner has booths, a counter and, in the kitchen at the back, two fridges and a chest. The windmill has one way in, flour sacks and a millstone, and a chest across from the door as good as a supply drop.
           </li>
           <li>
             <b>Bushes and cornfields.</b> Stand in one and nobody sees you from a distance until you fire.

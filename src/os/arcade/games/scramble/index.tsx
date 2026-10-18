@@ -1383,6 +1383,9 @@ function Play({ mode }: { mode: Mode }) {
           >
             <svg viewBox={box} aria-hidden="true">
               {islandArt}
+            </svg>
+            {/* the storm and the arrow on a layer of their own, so the island under them isn't drawn again as they move */}
+            <svg viewBox={box} aria-hidden="true" className="is-marks">
               {mapMarks(false)}
             </svg>
             {hud.where && <span>{hud.where}</span>}
