@@ -535,7 +535,7 @@ function Table() {
   return (
     <div
       ref={tableRef}
-      className={['g-crazy-eights-table', `n-${n}`, short ? 'is-short' : '', online ? 'is-online' : '', shell.touch ? 'is-touch' : '', paused ? 'is-paused' : '', myTurn ? 'is-mine' : ''].join(' ')}
+      className={['g-crazy-eights-table', `n-${n}`, short ? 'is-short' : '', online ? 'is-online' : '', shell.touch ? 'is-touch' : '', !short && size.w < 560 ? 'is-narrow' : '', paused ? 'is-paused' : '', myTurn ? 'is-mine' : ''].join(' ')}
       style={{ '--cw': `${cw}px`, '--ch': `${ch}px`, '--g-crazy-eights-u': u } as CSSProperties}
     >
       <div className="g-crazy-eights-rivals">

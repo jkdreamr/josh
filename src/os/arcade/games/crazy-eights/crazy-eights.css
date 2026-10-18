@@ -1050,3 +1050,21 @@
 .g-crazy-eights .g-crazy-eights-table.is-touch .g-crazy-eights-suit {
   min-height: calc(56px * var(--g-crazy-eights-u, 1));
 }
+
+/* Phones: the status line wraps so Draw and Keep It stay on the table */
+.g-crazy-eights .g-crazy-eights-table.is-narrow .g-crazy-eights-bar {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.g-crazy-eights .g-crazy-eights-table.is-narrow .g-crazy-eights-me {
+  white-space: nowrap;
+}
+
+.g-crazy-eights .g-crazy-eights-table.is-narrow .g-crazy-eights-status {
+  min-width: 0;
+  white-space: normal;
+  text-wrap: balance;
+  line-height: 1.2;
+}
