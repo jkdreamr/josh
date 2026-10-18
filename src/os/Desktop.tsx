@@ -1589,6 +1589,7 @@ const desktopItems: DesktopItem[] = [
   { key: 'about', label: 'about me.txt', icon: 'doc', run: (os) => os.open('notes', { note: 'about' }) },
   ...folders.map<DesktopItem>((f) => ({ key: f.id, label: f.label, icon: 'folder', run: (os) => os.open('finder', { folder: f.id }) })),
   ...games.map<DesktopItem>((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: (os) => os.open(id) })),
+  { key: 'coffee', label: apps.coffee.title, icon: apps.coffee.icon, run: (os) => os.open('coffee') },
 ];
 
 function DesktopIcons() {
