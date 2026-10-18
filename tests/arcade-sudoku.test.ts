@@ -123,3 +123,34 @@ test('hint picks the selected cell, then wrong entries, then the most constraine
   assert.equal(EASY[open], 0);
   assert.equal(hintCell(EASY_SOLUTION, EASY_SOLUTION, locked, 5), -1);
 });
+
+test('layout keeps every part inside the game area and clear of the shell controls', async () => {
+  const { layout } = await import('../src/os/arcade/games/sudoku/layout.ts');
+  const sizes: [number, number, boolean, number][] = [
+    [464, 157, false, 1],
+    [601, 260, false, 1],
+    [1000, 560, false, 1],
+    [1440, 820, false, 1],
+    [390, 648, true, 1],
+    [820, 998, true, 1.224],
+    [540, 360, false, 1],
+  ];
+  for (const [W, H, touch, u] of sizes) {
+    const pill = { left: W - 110, bottom: 40 };
+    const L = layout(W, H, pill, touch, u);
+    const parts = [L.board, L.info, L.tools, L.pad];
+    for (const b of parts) {
+      assert.ok(b.x >= 0 && b.y >= 0 && b.x + b.w <= W && b.y + b.h <= H, `${W}x${H} ${L.kind} ${JSON.stringify(b)}`);
+      assert.ok(!(b.x + b.w > pill.left && b.y < pill.bottom), `${W}x${H} ${L.kind} under the pill ${JSON.stringify(b)}`);
+    }
+    for (let a = 0; a < parts.length; a++)
+      for (let b = a + 1; b < parts.length; b++) {
+        const p = parts[a];
+        const q = parts[b];
+        assert.ok(p.x + p.w <= q.x || q.x + q.w <= p.x || p.y + p.h <= q.y || q.y + q.h <= p.y, `${W}x${H} ${L.kind} overlap ${a} ${b}`);
+      }
+    const key = Math.min(L.pad.w / L.padCols, L.pad.h / Math.ceil(9 / L.padCols));
+    assert.ok(key >= (touch ? 40 : 24), `${W}x${H} pad key ${key}`);
+    assert.ok(L.board.w >= 120, `${W}x${H} board ${L.board.w}`);
+  }
+});
