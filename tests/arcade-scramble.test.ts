@@ -72,6 +72,7 @@ import {
 import {
   BARREL,
   BOX_TAP,
+  BUILD_COOL,
   BUILD_START,
   CELL_B,
   CHEST_R,
@@ -3763,6 +3764,21 @@ test('the build key twice in quick succession builds its piece, then boxes you i
   const apart = run(m, DT).filter((e) => e.t === 'wall');
   assert.equal(apart.length, 1);
   assert.equal(a.wood, 100 - 6 * PIECE_COST);
+  // a piece asked for while the last one goes up waits its turn, rather than being lost
+  land(a, mid(12), mid(4));
+  run(m, 0.5);
+  a.input.piece = 'wall';
+  run(m, DT);
+  a.input.aim = Math.PI / 2;
+  a.input.piece = 'ramp';
+  assert.equal(run(m, DT).filter((e) => e.t === 'wall').length, 0, 'not yet');
+  const later = run(m, BUILD_COOL).filter((e) => e.t === 'wall');
+  assert.deepEqual(later.map((e) => e.t === 'wall' && e.wall.k), ['ramp'], 'then it goes up');
+  // and an edit needn't wait for building at all: the north wall, just after the ramp
+  assert.ok(a.buildT > 0);
+  a.input.aim = 0;
+  a.input.edit = true;
+  assert.ok(run(m, DT).some((e) => e.t === 'edit'));
 });
 
 test('pieces build up from a tenth of their health, wood quickest and metal toughest, and can be shot down while they do', () => {
@@ -3950,7 +3966,7 @@ test('editing: a wall of yours becomes a doorway, then a window, then solid agai
   assert.equal(applyEdit(m, b.id, w.id, 1), false, 'only the egg that built it edits it');
   assert.equal(editable(m, b), undefined);
   const edit = () => {
-    a.buildT = 0;
+    a.editT = 0;
     a.input.aim = 0;
     a.input.edit = true;
     return run(m, DT).find((e) => e.t === 'edit');
@@ -3993,11 +4009,11 @@ test('a roof hides whoever is under it from anyone outside and turns throws away
   assert.equal(roofOver(m, a.x, a.z, a.y), roof.id);
   assert.equal(roofOver(m, b.x, b.z, b.y), -1);
   // a window to the north, to look out of
-  a.buildT = 0;
+  a.editT = 0;
   a.input.aim = 0;
   a.input.edit = true;
   run(m, DT);
-  a.buildT = 0;
+  a.editT = 0;
   a.input.edit = true;
   run(m, DT);
   assert.equal(pieceIn(m, wallSlot(0, 0, 0, 0))?.e, 2);

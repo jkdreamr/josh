@@ -1079,8 +1079,29 @@
 
 /* short screens, like a phone on its side: one row along the bottom, buttons in the corner */
 @container (max-height: 460px) {
+  /* the build menu folds into a block in the bottom left corner: the materials down one side, the pieces in two rows */
   .g-scramble .g-scramble-hud.is-touch .g-scramble-build {
-    bottom: 132px;
+    left: 10px;
+    right: auto;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    grid-template-columns: auto auto;
+    align-items: center;
+    justify-items: start;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-matbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-matbar button {
+    height: 26px;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-pieces {
+    display: grid;
+    grid-template-columns: repeat(3, 40px);
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-pieces button {
+    width: 40px;
+    height: 40px;
   }
   .g-scramble .g-scramble-buttons {
     bottom: 10px;
@@ -1117,8 +1138,11 @@
   .g-scramble .g-scramble-buttons {
     bottom: calc(max(10px, env(safe-area-inset-bottom)) + 56px);
   }
+  /* no room in the corner beside the bottom row: just over the row instead */
   .g-scramble .g-scramble-hud.is-touch .g-scramble-build {
-    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 178px);
+    left: 50%;
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 60px);
+    transform: translateX(-50%);
   }
   .g-scramble .g-scramble-hud.is-touch .g-scramble-bottom {
     left: 50%;

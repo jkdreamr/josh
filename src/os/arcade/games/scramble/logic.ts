@@ -112,6 +112,9 @@ export const WALL_THICK = 0.2;
 /** A wood wall's health once built. */
 export const WALL_HP = MAT_SPECS.wood.hp;
 export const BUILD_COOL = 0.3;
+/** The wait between edits; a build key pressed while the last piece is still going up waits for its turn this long. */
+export const EDIT_COOL = 0.15;
+export const BUILD_WAIT = 0.5;
 /** Two presses of the build key closer than this box you in. */
 export const BOX_TAP = 0.35;
 /**
@@ -361,6 +364,10 @@ export type Fighter = {
   using: UseId | null;
   useT: number;
   buildT: number;
+  editT: number;
+  /** A build key pressed during the wait between pieces, and when: it builds once the wait is over. */
+  queued: Plan | null;
+  queuedAt: number;
   stormT: number;
   burnT: number;
   /** Seconds left on the hit flash. */
@@ -832,6 +839,9 @@ function newFighter(id: number, e: Entrant, x: number, z: number): Fighter {
     using: null,
     useT: 0,
     buildT: 0,
+    editT: 0,
+    queued: null,
+    queuedAt: 0,
     stormT: 0,
     burnT: 0,
     hitT: 0,
@@ -1185,6 +1195,7 @@ function act(m: Match, f: Fighter, dt: number) {
   // on the ground
   f.fireT = Math.max(0, f.fireT - dt);
   f.buildT = Math.max(0, f.buildT - dt);
+  f.editT = Math.max(0, f.editT - dt);
   f.hitT = Math.max(0, f.hitT - dt);
   f.aim = inp.aim;
   if (!usable(f, f.slot)) f.slot = SLOT_MELEE;
@@ -1235,6 +1246,11 @@ function act(m: Match, f: Fighter, dt: number) {
     if (what) startUse(m, f, what);
   }
   if (inp.mat) switchMat(f, inp.mat);
+  if (f.queued && f.buildT <= 0) {
+    const plan = f.queued;
+    f.queued = null;
+    if (m.clock - f.queuedAt < BUILD_WAIT) build(m, f, plan);
+  }
   if (inp.piece) {
     // a piece by its own key: picked for the build key, and built at once
     f.piece = inp.piece;
@@ -2394,7 +2410,12 @@ function switchMat(f: Fighter, v: number) {
 /** Builds what the build key makes for an egg (`force` for a box, which needn't wait for the last piece). */
 function build(m: Match, f: Fighter, plan: Plan, force = false) {
   const built: Wall[] = [];
-  if ((f.buildT > 0 && !force) || f.phase !== 'ground') return built;
+  if (f.phase !== 'ground') return built;
+  if (f.buildT > 0 && !force) {
+    f.queued = plan;
+    f.queuedAt = m.clock;
+    return built;
+  }
   for (const s of planPiece(m, f, plan)) {
     const mat = matFor(f);
     if (!mat) break;
@@ -2504,12 +2525,12 @@ export function editable(m: Match, f: Fighter) {
 
 /** Cuts a doorway into the wall of ours in front of us, then a window in place of it, then fills it back in. */
 function edit(m: Match, f: Fighter) {
-  if (f.buildT > 0 || f.phase !== 'ground') return;
+  if (f.editT > 0 || f.phase !== 'ground') return;
   const w = editable(m, f);
   if (!w) return;
   const e = (w.e + 1) % 3;
   setEdit(w, e);
-  f.buildT = BUILD_COOL;
+  f.editT = EDIT_COOL;
   emit(m, { t: 'edit', f: f.id, id: w.id, e });
 }
 
@@ -4100,7 +4121,7 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       const front = breaks(hit) ? null : castRay(m, f.x, f.z, Math.sin(ahead), Math.cos(ahead), Math.min(1.8, d), f.id, false, true, lv);
       const wall = breaks(hit) ? hit : breaks(front) ? front : null;
       const ours = wall?.what === 'built' ? m.walls.get(wall.ref) : undefined;
-      if (ours && ours.f === f.id && ours.e === 0 && f.buildT <= 0) ai.editA = wall === hit ? a : ahead;
+      if (ours && ours.f === f.id && ours.e === 0 && f.editT <= 0) ai.editA = wall === hit ? a : ahead;
       else if (wall) {
         ai.smashT = 1;
         ai.smashA = wall === hit ? a : ahead;
