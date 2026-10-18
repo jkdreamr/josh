@@ -63,7 +63,7 @@ export const appGames: AppGame[] = [
     id: 'badminton',
     title: 'Badminton',
     app: 'badminton',
-    leaderboard: { order: 'desc', min: 1, max: 63, unit: 'pts', measure: 'Point Margin in a Win vs Computer', variants: { easy: 'Easy', normal: 'Normal', hard: 'Hard' } },
+    leaderboard: { order: 'desc', min: 1, max: 63, unit: 'pts', measure: 'Point Margin in a Win vs Computer', variants: { easy: 'Easy', normal: 'Normal', hard: 'Hard', pro: 'Pro' } },
     online: { seats: 2 },
     accent: '#2f7a6d',
     // A shuttlecock.
