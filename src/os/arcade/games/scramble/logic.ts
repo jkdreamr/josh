@@ -2393,7 +2393,7 @@ export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootIt
   const door = doorNear(m, f);
   const itemD = item ? Math.hypot(item.x - f.x, item.z - f.z) : Infinity;
   const chestD = chest >= 0 ? Math.hypot(m.map.containers[chest].x - f.x, m.map.containers[chest].z - f.z) : Infinity;
-  if (door >= 0 && !asking(m, f, -1_000_000 - door) && slabGap(m.map.slabs[door], f.x, f.z) + 0.6 < Math.min(itemD, chestD)) return { door };
+  if (door >= 0 && !asking(m, f, -1_000_000 - door) && slabGap(m.map.slabs[door], f.x, f.z) + 1 < Math.min(itemD, chestD)) return { door };
   if (chest >= 0 && chestD < itemD) return { chest };
   if (!item) return null;
   const def = item.def;
@@ -3005,8 +3005,9 @@ function think(m: Match, f: Fighter, dt: number) {
   } else if (ai.goal === 'chest') {
     const c = m.map.containers[ai.chest];
     if (!openable(m, c)) ai.think = 0;
-    else if (Math.hypot(c.x - f.x, c.z - f.z) < CHEST_R - 0.3) {
-      inp.interact = true;
+    else if (Math.hypot(c.x - f.x, c.z - f.z) < CHEST_R - 0.3 && inReach(m, f, c)) {
+      // straight for it (the key might take a door that happens to be nearer)
+      requestOpen(m, f, c.id);
       ai.think = 0;
     }
   }
