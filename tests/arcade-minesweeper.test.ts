@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createGame, LEVELS, neighbors, reveal, tick, toggleFlag, type Level, type MinesGame, type Position } from '../src/os/arcade/games/minesweeper/logic.ts';
+import { cleared, createGame, LEVELS, neighbors, reveal, tick, toggleFlag, type Level, type MinesGame, type Position } from '../src/os/arcade/games/minesweeper/logic.ts';
+import { generate, solve } from '../src/os/arcade/games/minesweeper/solver.ts';
 
 function seeded(seed: number) {
   let value = seed;
@@ -106,4 +107,43 @@ test('the clock begins at first reveal and stops once the round ends', () => {
   game.over = true;
   tick(game, 2);
   assert.equal(game.seconds, 1.25);
+});
+
+test('every board can be cleared without guessing, from the middle or a corner', () => {
+  for (const level of Object.keys(LEVELS) as Level[]) for (let seed = 1; seed <= 25; seed++) {
+    const { rows, cols, mines } = LEVELS[level];
+    for (const [row, col] of [[Math.floor(rows / 2), Math.floor(cols / 2)], [0, 0], [rows - 1, cols - 1]] as Position[]) {
+      const out = generate(rows, cols, mines, row, col, { rand: seeded(seed * 31 + row), budgetMs: 2000 });
+      assert.equal(out.solvable, true, `${level} seed ${seed} at ${row},${col}`);
+      assert.equal(out.mines.reduce((sum, m) => sum + m, 0), mines);
+      assert.equal(solve(rows, cols, out.mines, row * cols + col).solved, true);
+      for (const [r, c] of [[row, col], ...neighbors({ rows, cols }, row, col)]) assert.equal(out.mines[r * cols + c], 0);
+    }
+  }
+});
+
+test('the solver refuses a coin flip', () => {
+  // The last mine of a 2x3 strip could sit in either left square, and nothing tells them apart.
+  const mines = Uint8Array.from([0, 0, 0, 1, 0, 0]);
+  assert.equal(solve(2, 3, mines, 2).solved, false);
+  // Here the pair rule finds it: the 1 in the middle sees everything the 1 above it sees.
+  const easy = Uint8Array.from([0, 0, 0, 0, 0, 1, 0, 0, 0]);
+  assert.equal(solve(3, 3, easy, 0).solved, true);
+});
+
+test('generation stays fast enough for a first tap on expert', () => {
+  let worst = 0;
+  for (let seed = 1; seed <= 20; seed++) {
+    const t = performance.now();
+    reveal(createGame('expert'), 8, 15, seeded(seed));
+    worst = Math.max(worst, performance.now() - t);
+  }
+  assert.ok(worst < 400, `slowest expert first dig took ${worst.toFixed(0)}ms`);
+});
+
+test('cleared reports the share of safe squares uncovered', () => {
+  const game = prepared('beginner', [[0, 0]]);
+  assert.equal(cleared(game), 0);
+  reveal(game, 0, 1);
+  assert.equal(cleared(game), 1 / 80);
 });
