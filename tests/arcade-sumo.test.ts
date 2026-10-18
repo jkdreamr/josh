@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { think } from '../src/os/arcade/games/sumo/ai.ts';
-import { CAR_RADIUS, STEP, TARGET, createWorld, matchWinner, step, takeoverDeparted, type Car, type Input, type Level, type World } from '../src/os/arcade/games/sumo/logic.ts';
+import { CAR_RADIUS, STEP, TARGET, createWorld, matchWinner, roundBanner, step, takeoverDeparted, type Car, type Input, type Level, type World } from '../src/os/arcade/games/sumo/logic.ts';
 import { configOf, endOf, hostState, inputOf, parsePacket } from '../src/os/arcade/games/sumo/net.ts';
 
 const entries = (count: number, level: Level | null = null) =>
@@ -340,4 +340,11 @@ test('departed human seats are taken over by bots without changing active player
   assert.equal(world.cars[1].left, true);
   assert.equal(world.cars[0].ai, null);
   assert.deepEqual(takeoverDeparted(world, [0, 1, 2], 2), []);
+});
+
+test('round banner agrees with the winner name', () => {
+  assert.equal(roundBanner('You'), 'You Take the Round');
+  assert.equal(roundBanner('Pebble'), 'Pebble Takes the Round');
+  assert.equal(roundBanner('P2'), 'P2 Takes the Round');
+  assert.equal(roundBanner(null), 'Draw, Go Again');
 });
