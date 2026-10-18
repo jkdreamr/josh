@@ -3,8 +3,8 @@
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
 import { BARREL_R, BEACH, BRIDGE_HALF, BUSH_R, BUS_Y, CAMP, CHEST_HD, CHEST_HW, CRATE_HALF, FENCE_T, FRIDGE_HD, FRIDGE_HW, HALF, HAY_HD, HAY_HW, LAMP_R, LOG_R, PAD, RIVER_HALF, ROAD_HALF, SUPPLY_FALL, SUPPLY_HALF, TABLE_HD, TABLE_HW, TOILET_R, WALL_T, bridgeAt, busAt, fieldAt, padAt, peekAt, riverDist2, roadAt, type Building, type BuildingKind } from './map';
-import { BARREL, CRATE_HP, F_DRINKING, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_TART, HAY_HP, TOILET_HP, WALL_HALF, WALL_HP, WALL_THICK, clearLine, concealed, held, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Toss, type Zone } from './logic';
-import { MELEE, RARITY_COLORS, THROWS, WEAPONS, isMelee, isThrow, isWeapon, legendary, type LootDef, type UseId } from './items';
+import { BARREL, BUILD_START, CELL_B, CRATE_HP, DIR_X, DIR_Z, F_DRINKING, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_TART, GAP, HAY_HP, LEVEL_H, TOILET_HP, clearLine, concealed, editable, gridOf, held, levelOf, makePiece, owned, pieceIn, planPiece, roofOver, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Plan, type Toss, type Wall, type Zone } from './logic';
+import { MATS, MAT_SPECS, MELEE, RARITY_COLORS, THROWS, WEAPONS, isMelee, isThrow, isWeapon, legendary, type LootDef, type Mat, type UseId } from './items';
 
 type Three = typeof import('three');
 
@@ -13,6 +13,8 @@ export type FrameOpts = {
   aimLine: boolean;
   /** Pull the camera back over the whole island (before the match, behind the Start card). */
   overview: boolean;
+  /** Show a blueprint of where the build key would build this (or the wall the edit key would edit). */
+  preview?: Plan | 'edit' | null;
 };
 
 export type View = {
@@ -192,6 +194,59 @@ function planksTexture(THREE: Three, base: string, line: string, repeat: [number
       }
     }),
     repeat,
+  );
+}
+
+/** Stone blocks in rows, each a slightly different grey, with mortar between. */
+function stoneTexture(THREE: Three) {
+  const rnd = scatter(53);
+  return texture(
+    THREE,
+    canvas(128, 128, (g) => {
+      g.fillStyle = '#7d8187';
+      g.fillRect(0, 0, 128, 128);
+      for (let y = 0; y < 128; y += 32)
+        for (let x = (y / 32) % 2 ? -21 : 0; x < 128; x += 42) {
+          const v = 150 + Math.floor(rnd() * 45);
+          g.fillStyle = `rgb(${v},${v + 3},${v + 8})`;
+          g.fillRect(x + 2, y + 2, 38, 28);
+          g.fillStyle = 'rgba(255,255,255,0.18)';
+          g.fillRect(x + 2, y + 2, 38, 3);
+          for (let i = 0; i < 6; i++) {
+            g.fillStyle = `rgba(40,40,45,${0.08 + rnd() * 0.1})`;
+            g.fillRect(x + 4 + rnd() * 30, y + 6 + rnd() * 20, 3 + rnd() * 5, 2);
+          }
+        }
+    }),
+  );
+}
+
+/** Steel plates with a seam down the middle and rivets round the edge. */
+function metalTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(128, 128, (g) => {
+      const grad = g.createLinearGradient(0, 0, 128, 128);
+      grad.addColorStop(0, '#b9c3cc');
+      grad.addColorStop(1, '#8f9aa5');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 128, 128);
+      g.fillStyle = '#5e6873';
+      g.fillRect(0, 62, 128, 4);
+      g.fillRect(62, 0, 4, 128);
+      g.strokeStyle = '#5e6873';
+      g.lineWidth = 4;
+      g.strokeRect(2, 2, 124, 124);
+      g.fillStyle = '#e8eef3';
+      for (const v of [10, 52, 76, 118])
+        for (const u of [10, 52, 76, 118]) {
+          g.beginPath();
+          g.arc(u, v, 2.6, 0, Math.PI * 2);
+          g.fill();
+        }
+      g.fillStyle = 'rgba(255,255,255,0.16)';
+      for (let x = 0; x < 128; x += 16) g.fillRect(x, 0, 3, 128);
+    }),
   );
 }
 
@@ -3187,6 +3242,12 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       case 'wood':
         for (let i = 0; i < 3; i++) add(g, G.box, M.wood, 0, i * 0.13 - 0.1, (i - 1) * 0.06, 0.7, 0.11, 0.2).rotation.y = i * 0.4;
         break;
+      case 'stone':
+        for (let i = 0; i < 3; i++) add(g, G.box, partMat.stone, (i - 1) * 0.22, -0.08 + (i === 1 ? 0.18 : 0), 0, 0.26, 0.2, 0.3).rotation.y = i * 0.5;
+        break;
+      case 'metal':
+        for (let i = 0; i < 2; i++) add(g, G.box, M.steel, 0, i * 0.08 - 0.06, 0, 0.62, 0.05, 0.42).rotation.y = i * 0.6;
+        break;
     }
     return bake(lootKey(def), g);
   }
@@ -3226,11 +3287,119 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     return { group, model, spin: (l.id % 17) * 0.37 };
   }
 
-  // built walls
-  const wallGeo = geo(new THREE.BoxGeometry(WALL_HALF * 2, 3, WALL_THICK * 2 + 0.12));
-  const wallTex = keep(planksTexture(THREE, '#c58b4c', '#8c5a2c', [2, 1.5]));
-  const wallMat = [lambert(0xffffff, { map: wallTex }), lambert(0xd8b49a, { map: wallTex }), lambert(0xb08070, { map: wallTex })];
-  const wallViews = new Map<number, { mesh: T.Mesh; born: number }>();
+  // Built pieces (walls, ramps, floors and roofs) in wood, stone or metal: boxes in one instanced mesh a material (and
+  // the roofs in one more), a soft shade on the ground under each that falls farther off the higher it is, and a pale
+  // blue blueprint of what's still building up (and of where the build key would build next).
+  const matLook: Record<Mat, { tex: T.Texture; trim: number; bits: T.Material[] }> = {
+    wood: { tex: keep(planksTexture(THREE, '#c58b4c', '#8c5a2c', [1, 1])), trim: 0x7a4a22, bits: [] },
+    stone: { tex: keep(stoneTexture(THREE)), trim: 0x6f747b, bits: [] },
+    metal: { tex: keep(metalTexture(THREE)), trim: 0x4a5560, bits: [] },
+  };
+  const BUILT_MAX = 3000;
+  const builtBoxes = Object.fromEntries(MATS.map((k) => [k, many(G.box, lambert(0xffffff, { map: matLook[k].tex }), BUILT_MAX)])) as Record<Mat, T.InstancedMesh>;
+  const roofGeo = geo(new THREE.ConeGeometry(CELL_B * 0.74, 1.4, 4, 1).rotateY(Math.PI / 4).translate(0, 0.7, 0));
+  const builtRoofs = Object.fromEntries(MATS.map((k) => [k, many(roofGeo, lambert(0xffffff, { map: matLook[k].tex }), 400)])) as Record<Mat, T.InstancedMesh>;
+  const printMat = basic(0x7fd4ff, { transparent: true, opacity: 0.3, depthWrite: false });
+  const printBad = basic(0xff6b6b, { transparent: true, opacity: 0.3, depthWrite: false });
+  const printBoxes = many(G.box, printMat, 600);
+  const printRoofs = many(roofGeo, printMat, 60);
+  const planBoxes = many(G.box, printMat, 40);
+  const planBad = many(G.box, printBad, 40);
+  const planRoofs = many(roofGeo, printMat, 4);
+  const editMark = many(G.box, basic(0xffd75e, { transparent: true, opacity: 0.55, depthWrite: false }), 4);
+  const builtShade = many(G.plane, basic(0x10182a, { map: keep(softSquareTexture(THREE)), transparent: true, opacity: 0.4, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }), BUILT_MAX / 2);
+  builtShade.renderOrder = 1;
+  for (const im of [...Object.values(builtBoxes), ...Object.values(builtRoofs), printBoxes, printRoofs, planBoxes, planBad, planRoofs, editMark, builtShade]) {
+    im.setColorAt(0, color.setHex(0xffffff));
+    im.count = 0;
+    im.frustumCulled = false;
+    scene.add(im);
+  }
+  for (const im of [printBoxes, printRoofs, planBoxes, planBad, planRoofs, editMark]) im.renderOrder = 5;
+  const ramp = { len: Math.hypot(CELL_B, LEVEL_H), tilt: Math.atan2(LEVEL_H, CELL_B) };
+  /** Counts of what's drawn so far this frame, by instanced mesh. */
+  const drawnAt = new Map<T.InstancedMesh, number>();
+  /** One box (or roof) in an instanced mesh, turned `ry` about the up axis, then tilted `rx`. */
+  const part = (im: T.InstancedMesh, x: number, y: number, z: number, sx: number, sy: number, sz: number, ry: number, rx: number, c: number) => {
+    const i = drawnAt.get(im) ?? 0;
+    if (i >= im.instanceMatrix.count) return;
+    drawnAt.set(im, i + 1);
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(rx, ry, 0, 'YXZ');
+    dummy.scale.set(sx, sy, sz);
+    dummy.updateMatrix();
+    im.setMatrixAt(i, dummy.matrix);
+    im.setColorAt(i, color.setHex(c));
+  };
+  /** A piece's color: its material's, paler blue the less it has built up, darker the more it has been hit. */
+  const pieceTint = (w: Wall, built: number) => {
+    const full = w.max * (BUILD_START + (1 - BUILD_START) * built);
+    const hurt = 1 - Math.max(0, Math.min(1, w.hp / Math.max(1, full)));
+    return color.setHex(0xffffff).lerp(tmpColor.setHex(0x6b5048), hurt * 0.55).lerp(tmpColor.setHex(0x8fdcff), (1 - built) * 0.65).getHex();
+  };
+  const tmpColor = new THREE.Color();
+  /**
+   * Draws a piece into `boxes` and `roofs` (a built one's own, or a blueprint's): a wall with its doorway or window
+   * cut out, a floor on four posts with a dark rim round its edge, a ramp with steps across it, a roof. `grow` is how
+   * far a wall stands up (0..1), `hide` leaves out a floor or roof over our own egg (just its rim stays).
+   */
+  function drawPiece(w: Wall, boxes: T.InstancedMesh, roofs: T.InstancedMesh, c: number, trim: number, grow: number, hide: boolean) {
+    const y0 = w.lv * LEVEL_H;
+    if (w.k === 'wall') {
+      const h = LEVEL_H * grow;
+      const full = !w.parts || w.e === 0;
+      if (full) part(boxes, w.x, y0 + h / 2, w.z, CELL_B + 0.08, h, 0.3, w.a, 0, c);
+      else {
+        for (const p of w.parts!) part(boxes, p.x, y0 + h / 2, p.z, p.hw * 2 + 0.04, h, 0.3, w.a, 0, c);
+        // a doorway leaves a lintel over the gap; a window, a sill below it too
+        part(boxes, w.x, y0 + 2.45, w.z, GAP * 2, LEVEL_H - 2.3, 0.3, w.a, 0, c);
+        if (w.e === 2) part(boxes, w.x, y0 + 0.55, w.z, GAP * 2, 1.1, 0.3, w.a, 0, c);
+      }
+      // a darker cap along the top, so the line of it reads from above
+      if (grow >= 1) part(boxes, w.x, y0 + LEVEL_H + 0.05, w.z, CELL_B + 0.14, 0.12, 0.38, w.a, 0, trim);
+      return;
+    }
+    if (w.k === 'floor') {
+      if (!hide) part(boxes, w.x, y0 - 0.13, w.z, CELL_B, 0.26, CELL_B, 0, 0, c);
+      part(boxes, w.x, y0 - 0.32, w.z, CELL_B + 0.16, 0.14, CELL_B + 0.16, 0, 0, trim);
+      for (const [sx, sz] of QUADS) part(boxes, w.x + sx * (CELL_B / 2 - 0.2), (y0 - 0.38) / 2, w.z + sz * (CELL_B / 2 - 0.2), 0.22, y0 - 0.38, 0.22, 0, 0, trim);
+      return;
+    }
+    if (w.k === 'ramp') {
+      const dx = DIR_X[w.dir];
+      const dz = DIR_Z[w.dir];
+      const ux = dx * Math.cos(ramp.tilt);
+      const uy = Math.sin(ramp.tilt);
+      const uz = dz * Math.cos(ramp.tilt);
+      const cy = y0 + LEVEL_H / 2;
+      part(boxes, w.x, cy, w.z, CELL_B, 0.26, ramp.len, w.a, -ramp.tilt, c);
+      // steps across it, the way up plain from above
+      for (let i = 0; i < 5; i++) {
+        const t = ramp.len * ((i + 0.5) / 5 - 0.5);
+        part(boxes, w.x + ux * t - dx * uy * 0.15, cy + uy * t + Math.cos(ramp.tilt) * 0.15, w.z + uz * t - dz * uy * 0.15, CELL_B - 0.3, 0.07, 0.16, w.a, -ramp.tilt, trim);
+      }
+      return;
+    }
+    if (!hide) part(roofs, w.x, y0, w.z, 1, 0.3 + 0.7 * grow, 1, 0, 0, c);
+    part(boxes, w.x, y0 + 0.04, w.z, CELL_B + 0.1, 0.08, CELL_B + 0.1, 0, 0, trim);
+  }
+  /** Its shade on the ground: under it, nudged away from the sun the higher it stands. */
+  function shadePiece(w: Wall) {
+    const up = w.lv * LEVEL_H + (w.k === 'wall' || w.k === 'ramp' ? LEVEL_H / 2 : w.k === 'roof' ? 0.7 : 0);
+    const i = drawnAt.get(builtShade) ?? 0;
+    if (i >= builtShade.instanceMatrix.count) return;
+    drawnAt.set(builtShade, i + 1);
+    const long = w.k === 'wall' ? CELL_B + 0.6 : CELL_B + 0.8;
+    const wide = w.k === 'wall' ? 1.6 : CELL_B + 0.8;
+    dummy.position.set(w.x + SUN.x * up, 0.03, w.z + SUN.z * up);
+    dummy.rotation.set(-Math.PI / 2, 0, w.k === 'wall' ? -w.a : 0);
+    dummy.scale.set(long, wide, 1);
+    dummy.updateMatrix();
+    builtShade.setMatrixAt(i, dummy.matrix);
+    builtShade.setColorAt(i, color.setHex(0xffffff));
+  }
+  /** Where pieces were last seen, to know where to burst when one breaks. */
+  const builtSeen = new Map<number, Wall>();
 
   // bullets and rockets
   const tracers: T.Mesh[] = [];
@@ -3533,8 +3702,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     }
     v.glider.visible = f.phase === 'drop';
     v.shadow.visible = (f.phase === 'ground' && !f.wet) || (f.phase === 'drop' && f.y < 25);
-    v.shadow.position.y = 0.03 - f.y;
-    v.shadow.scale.setScalar(0.85 * (1 + f.y * 0.02));
+    // on the ground or on whatever it stands on; gliding, on the ground far below
+    v.shadow.position.y = f.phase === 'ground' ? 0.03 : 0.03 - f.y;
+    v.shadow.scale.setScalar(0.85 * (1 + (f.phase === 'ground' ? 0 : f.y * 0.02)));
+    // an egg up on something built is drawn a little bigger, so the high ground reads from above
+    v.root.scale.setScalar(f.phase === 'ground' ? 1 + levelOf(f.y) * 0.1 : 1);
     // what it holds
     const h = held(f);
     const key = h.w;
@@ -3652,7 +3824,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       let v = zoneViews.get(z);
       if (!v) {
         const group = new THREE.Group();
-        group.position.set(z.x, 0, z.z);
+        group.position.set(z.x, z.y, z.z);
         const flames: T.Mesh[] = [];
         let material: T.MeshBasicMaterial | T.MeshLambertMaterial;
         if (z.k === 'flour') {
@@ -3938,7 +4110,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         const len = aimGun ? Math.min(WEAPONS[aimGun].range, 26) : Math.min(20, me.input.reach > 0 ? me.input.reach : 14);
         const fx = Math.sin(me.aim);
         const fz = Math.cos(me.aim);
-        aimLine.position.set(me.x + fx * (0.9 + len / 2), 0.95, me.z + fz * (0.9 + len / 2));
+        aimLine.position.set(me.x + fx * (0.9 + len / 2), me.y + 0.95, me.z + fz * (0.9 + len / 2));
         aimLine.rotation.set(-Math.PI / 2, 0, me.aim);
         aimLine.scale.set(aimThrow ? 0.09 : 0.05, len, 1);
       }
@@ -3976,28 +4148,43 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         lv.model.position.y = 0.45 + Math.sin(clock * 2.4 + lv.spin) * 0.07;
       }
 
-      // walls
-      for (const [id, wv] of wallViews) {
-        if (!m.walls.has(id)) {
-          scene.remove(wv.mesh);
-          wallViews.delete(id);
-          burst(wv.mesh.position.x, 1.2, wv.mesh.position.z, 14, 5, 0.18, 0.7, [partMat.wood]);
-        }
+      // built pieces in frame (a wall stands up as it builds, under a blueprint of all of it), the build key's
+      // blueprint, and a burst of bits where one breaks
+      for (const [id, w] of builtSeen) {
+        if (m.walls.has(id)) continue;
+        builtSeen.delete(id);
+        if (Math.abs(w.x - cam.x) < cam.view * 2 && Math.abs(w.z - cam.z) < cam.view * 2) burst(w.x, w.lv * LEVEL_H + 1.2, w.z, 14, 5, 0.18, 0.7, [w.mat === 'wood' ? partMat.wood : w.mat === 'stone' ? partMat.stone : partMat.metal]);
       }
+      drawnAt.clear();
+      const pieceN = dist * FRAME_N + 12;
+      const pieceS = dist * FRAME_S + 6;
+      const pieceW = dist * FRAME_W * aspect + 6;
+      const overhead = afoot ? roofOver(m, focus.x, focus.z, focus.y) : -1;
       for (const w of m.walls.values()) {
-        let wv = wallViews.get(w.id);
-        if (!wv) {
-          const mesh = new THREE.Mesh(wallGeo, wallMat[0]);
-          mesh.position.set(w.x, 1.5, w.z);
-          mesh.rotation.y = w.a;
-          scene.add(mesh);
-          wv = { mesh, born: clock };
-          wallViews.set(w.id, wv);
-        }
-        const grow = Math.min(1, (clock - wv.born) / 0.15);
-        wv.mesh.scale.y = 0.15 + grow * 0.85;
-        wv.mesh.position.y = 1.5 * wv.mesh.scale.y;
-        wv.mesh.material = wallMat[w.hp > WALL_HP * 0.66 ? 0 : w.hp > WALL_HP * 0.33 ? 1 : 2];
+        if (!builtSeen.has(w.id)) builtSeen.set(w.id, w);
+        if (Math.abs(w.x - cam.x) > pieceW || w.z - cam.z < -pieceN || w.z - cam.z > pieceS) continue;
+        const built = w.left > 0 ? Math.max(0, 1 - w.left / MAT_SPECS[w.mat].time) : 1;
+        // a floor or roof over our own egg's head lifts off, as a building's roof does
+        const over = w.id === overhead || (afoot && w.k === 'floor' && w.cx === gridOf(focus.x) && w.cz === gridOf(focus.z) && w.lv * LEVEL_H > focus.y + 1);
+        drawPiece(w, builtBoxes[w.mat], builtRoofs[w.mat], pieceTint(w, built), matLook[w.mat].trim, w.k === 'wall' ? 0.15 + 0.85 * built : built, over);
+        if (built < 1) drawPiece(w, printBoxes, printRoofs, 0xffffff, 0xffffff, 1, over);
+        shadePiece(w);
+      }
+      if (opts.preview && afoot && opts.aimLine && owned(focus)) {
+        if (opts.preview === 'edit') {
+          const w = editable(m, focus);
+          if (w) part(editMark, w.x, w.lv * LEVEL_H + LEVEL_H / 2, w.z, CELL_B + 0.2, LEVEL_H + 0.2, 0.42, w.a, 0, 0xffffff);
+        } else
+          for (const s of planPiece(m, focus, opts.preview)) {
+            const w = makePiece(-1, focus.id, s.k, 'wood', s.cx, s.cz, s.lv, s.dir, 1, 0);
+            drawPiece(w, pieceIn(m, s) ? planBad : planBoxes, planRoofs, 0xffffff, 0xffffff, 1, false);
+          }
+      }
+      for (const im of [...Object.values(builtBoxes), ...Object.values(builtRoofs), printBoxes, printRoofs, planBoxes, planBad, planRoofs, editMark, builtShade]) {
+        im.count = drawnAt.get(im) ?? 0;
+        if (!im.count) continue;
+        im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) im.instanceColor.needsUpdate = true;
       }
 
       // bullets
@@ -4013,7 +4200,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           }
           ri++;
           r.visible = true;
-          r.position.set(b.x, 0.9, b.z);
+          r.position.set(b.x, 0.9 + b.lv * LEVEL_H, b.z);
           // the egg's long axis (+y) laid along the flight
           r.rotation.set(Math.PI / 2, Math.atan2(b.dx, b.dz), 0, 'YXZ');
           r.scale.setScalar(0.3);
@@ -4035,7 +4222,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         tr.geometry = bolt ? tracerGeo : streakGeo;
         tr.material = bolt ? M.bolt : streakMat;
         tr.renderOrder = bolt ? 0 : 6;
-        tr.position.set(b.x - (b.dx * len) / 2, 1.0, b.z - (b.dz * len) / 2);
+        // a shot aimed up at high ground climbs to it over its first few meters
+        tr.position.set(b.x - (b.dx * len) / 2, 1.0 + (b.from + (b.lv - b.from) * Math.min(1, b.traveled / 14)) * LEVEL_H, b.z - (b.dz * len) / 2);
         tr.rotation.set(0, Math.atan2(b.dx, b.dz), 0);
         tr.scale.set(bolt ? 0.7 : 0.34, bolt ? 0.7 : 1, len);
       }
@@ -4195,10 +4383,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             break;
           }
           if (f && near(f.x, f.z) && e.w !== 'launcher' && e.w !== 'crossbow') {
-            flash(f.x + Math.sin(e.a) * 1.2, 0.95, f.z + Math.cos(e.a) * 1.2, cls === 'shotgun' ? 0.32 : e.w === 'micro' ? 0.15 : 0.2, 0.05, 0, flashMat);
+            flash(f.x + Math.sin(e.a) * 1.2, f.y + 0.95, f.z + Math.cos(e.a) * 1.2, cls === 'shotgun' ? 0.32 : e.w === 'micro' ? 0.15 : 0.2, 0.05, 0, flashMat);
             // and a star of light out of the muzzle, bigger for the big guns
             const [len, wide] = cls === 'shotgun' ? [1.5, 1] : cls === 'sniper' ? [1.7, 0.75] : e.w === 'micro' || e.w === 'pistol' ? [0.75, 0.5] : [1.05, 0.62];
-            star(f.x + Math.sin(e.a) * (1.15 + len * 0.3), 0.97, f.z + Math.cos(e.a) * (1.15 + len * 0.3), e.a, len, wide, 0.055, starMat);
+            star(f.x + Math.sin(e.a) * (1.15 + len * 0.3), f.y + 0.97, f.z + Math.cos(e.a) * (1.15 + len * 0.3), e.a, len, wide, 0.055, starMat);
           } else if (f && near(f.x, f.z) && e.w === 'launcher') puff(f.x - Math.sin(e.a) * 0.6, 1, f.z - Math.cos(e.a) * 0.6, 0.6, 0.7, 0xd8d8d8, 0.6, -Math.sin(e.a) * 2, 0.4, -Math.cos(e.a) * 2, 2);
           if (e.f === focus) shake = Math.max(shake, cls === 'shotgun' || cls === 'sniper' || e.w === 'launcher' || e.w === 'revolver' ? 0.35 : 0.08);
           break;
@@ -4233,8 +4421,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           break;
         case 'hit': {
           if (!near(e.x, e.z)) break;
-          burst(e.x, 1, e.z, 5, 3.5, 0.1, 0.4, e.shield ? [partMat.purple, partMat.shell] : [partMat.shell, partMat.yolk]);
-          star(e.x, 1.05, e.z, Math.random() * 3, 0.75, 0.75, 0.07, sparkMat);
+          const y = m.fighters[e.to]?.y ?? 0;
+          burst(e.x, y + 1, e.z, 5, 3.5, 0.1, 0.4, e.shield ? [partMat.purple, partMat.shell] : [partMat.shell, partMat.yolk]);
+          star(e.x, y + 1.05, e.z, Math.random() * 3, 0.75, 0.75, 0.07, sparkMat);
           const v = eggs[e.to];
           if (v && e.shield) v.shimmer = 1;
           break;
@@ -4245,12 +4434,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         case 'smash': {
           if (!near(e.x, e.z)) break;
           const kind = e.kind === 'crate' ? map.containers[e.id]?.kind : 'wall';
-          burst(e.x, 1, e.z, 4, 3, 0.12, 0.4, kind === 'barrel' ? [partMat.red, partMat.metal] : kind === 'toilet' ? [partMat.shell, partMat.splash] : kind === 'hay' ? [partMat.straw] : [partMat.wood]);
+          const piece = e.kind === 'wall' ? m.walls.get(e.id) : undefined;
+          const bits = piece?.mat === 'stone' ? [partMat.stone, partMat.dust] : piece?.mat === 'metal' ? [partMat.spark, partMat.metal] : [partMat.wood];
+          burst(e.x, (piece ? piece.lv * LEVEL_H + (piece.k === 'floor' ? -0.2 : 1) : 1), e.z, 4, 3, 0.12, 0.4, kind === 'barrel' ? [partMat.red, partMat.metal] : kind === 'toilet' ? [partMat.shell, partMat.splash] : kind === 'hay' ? [partMat.straw] : bits);
           if (e.kind === 'crate') crateShake.set(e.id, now);
           break;
         }
         case 'harvest':
-          burst(e.x, 1.4, e.z, 6, 3, 0.13, 0.45, [partMat.wood, partMat.leaf]);
+          burst(e.x, 1.4, e.z, 6, 3, 0.13, 0.45, e.mat === 'stone' ? [partMat.stone, partMat.dust] : e.mat === 'metal' ? [partMat.spark, partMat.metal] : [partMat.wood, partMat.leaf]);
           break;
         case 'pulse': {
           if (!near(e.x, e.z)) break;
@@ -4265,16 +4456,20 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           if (f && Math.hypot(f.x - e.x, f.z - e.z) < 12) shake = Math.max(shake, 0.4);
           break;
         }
-        case 'boom':
-          flash(e.x, 1, e.z, 1.2, 0.35, 9, boomMat);
-          burst(e.x, 1, e.z, 16, 9, 0.24, 0.8, [partMat.fire, partMat.spark]);
+        case 'boom': {
+          // up on something built, or down on the ground
+          const y = e.y ?? 0;
+          flash(e.x, y + 1, e.z, 1.2, 0.35, 9, boomMat);
+          burst(e.x, y + 1, e.z, 16, 9, 0.24, 0.8, [partMat.fire, partMat.spark]);
           if (near(e.x, e.z)) {
             // a fireball that rolls up into smoke, a shockwave along the ground, and a scorch left behind
-            for (let i = 0; i < 4; i++) puff(e.x + (Math.random() - 0.5) * 1.2, 0.8 + Math.random(), e.z + (Math.random() - 0.5) * 1.2, 0.8, 0.3, i % 2 ? 0xffc35a : 0xff8a3a, 0.8, 0, 2.5, 0, 1.4);
+            for (let i = 0; i < 4; i++) puff(e.x + (Math.random() - 0.5) * 1.2, y + 0.8 + Math.random(), e.z + (Math.random() - 0.5) * 1.2, 0.8, 0.3, i % 2 ? 0xffc35a : 0xff8a3a, 0.8, 0, 2.5, 0, 1.4);
             for (let i = 0; i < 7; i++) {
               const a = (i / 7) * Math.PI * 2;
-              puff(e.x + Math.sin(a) * 1.2, 1 + Math.random() * 1.5, e.z + Math.cos(a) * 1.2, 1.1, 1.5 + Math.random() * 0.8, i % 3 ? 0xa4a4a8 : 0xc4c4c8, 0.55, Math.sin(a) * 1.5, 1.4 + Math.random(), Math.cos(a) * 1.5, 1.8);
+              puff(e.x + Math.sin(a) * 1.2, y + 1 + Math.random() * 1.5, e.z + Math.cos(a) * 1.2, 1.1, 1.5 + Math.random() * 0.8, i % 3 ? 0xa4a4a8 : 0xc4c4c8, 0.55, Math.sin(a) * 1.5, 1.4 + Math.random(), Math.cos(a) * 1.5, 1.8);
             }
+          }
+          if (near(e.x, e.z) && y < 0.5) {
             ripple(e.x, 0.2, e.z, 8, 0.45, 0xffd9a0);
             dustRing(e.x, e.z, 8, 1.5, 0.7, 0xc9b38a, 0.6, 7);
             const sc = scorches[scorchAt];
@@ -4284,11 +4479,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             sc.rotation.z = Math.random() * 6;
             sc.visible = true;
           }
-          {
-            const f = m.fighters[focus];
-            if (f && Math.hypot(f.x - e.x, f.z - e.z) < 25) shake = Math.max(shake, 1.1);
-          }
+          const f = m.fighters[focus];
+          if (f && Math.hypot(f.x - e.x, f.z - e.z) < 25) shake = Math.max(shake, 1.1);
           break;
+        }
         case 'opened': {
           const c = map.containers[e.c];
           if (!c || !near(c.x, c.z)) break;
@@ -4312,7 +4506,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           break;
         }
         case 'wall':
-          if (near(e.wall.x, e.wall.z)) burst(e.wall.x, 0.3, e.wall.z, 6, 2, 0.16, 0.4, [partMat.dust]);
+          if (near(e.wall.x, e.wall.z)) burst(e.wall.x, e.wall.lv * LEVEL_H + 0.3, e.wall.z, 6, 2, 0.16, 0.4, [partMat.dust]);
           break;
         case 'land': {
           const f = m.fighters[e.f];
