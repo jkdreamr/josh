@@ -1117,7 +1117,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   scene.add(surf, wave);
   // the grass, in big soft patches of lusher and drier green, darker under the trees
   const GRASS_HALF = HALF - BEACH;
-  const grassGeo = new THREE.PlaneGeometry(2 * GRASS_HALF, 2 * GRASS_HALF, 96, 96);
+  const grassGeo = new THREE.PlaneGeometry(2 * GRASS_HALF, 2 * GRASS_HALF, 64, 64);
   {
     const p = grassGeo.attributes.position as T.BufferAttribute;
     const cols = new Float32Array(p.count * 3);
@@ -2454,7 +2454,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             vec3 glow = vec3(1.0, 0.55, 0.95);
             vec3 col = mix(deep, light, swirl) ;
             col = mix(col, glow, foot * 0.75);
-            float a = (0.18 + swirl * 0.34) * pow(1.0 - h, 1.6) + foot * 0.4;
+            float a = (0.24 + swirl * 0.36) * pow(1.0 - h, 1.2) + foot * 0.4;
             gl_FragColor = vec4(col, a);
           }`,
       }),
@@ -2472,7 +2472,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   scene.add(seamMesh);
   const tint = freeRing(THREE, 160);
   geos.push(tint.geometry);
-  const stormTint = new THREE.Mesh(tint.geometry, basic(0x7a3cf0, { transparent: true, opacity: 0.26, depthWrite: false, side: THREE.DoubleSide }));
+  const stormTint = new THREE.Mesh(tint.geometry, basic(0x7a3cf0, { transparent: true, opacity: 0.36, depthWrite: false, side: THREE.DoubleSide }));
   stormTint.position.y = 0.12;
   stormTint.renderOrder = 2;
   scene.add(stormTint);
