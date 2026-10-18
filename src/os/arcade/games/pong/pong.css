@@ -1,4 +1,7 @@
 .g-pong .g-pong-canvas {
-  background: #0d0f16;
+  background: radial-gradient(120% 90% at 50% 45%, #151a28 0%, #0c0e15 62%, #08090e 100%);
   touch-action: none;
+}
+.g-pong .g-pong-canvas.is-playing {
+  cursor: none;
 }
