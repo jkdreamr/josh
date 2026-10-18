@@ -523,14 +523,15 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       group.add(slab);
       for (const side of [-1, 1]) {
         const rod = new THREE.Mesh(geo.rod, mats.iron);
+        // hung from the inner edge, against the core, so nothing stands in the walkway
         const ra = side * p.span * 0.7;
-        const rr = (p.r0 + p.r1) / 2;
+        const rr = p.r0 + 0.14;
         rod.position.set(Math.cos(ra) * rr, 1.1, Math.sin(ra) * rr);
         rod.scale.set(0.05, 2.2, 0.05);
         group.add(rod);
       }
       scene.add(group);
-      const railGeo = new THREE.TorusGeometry((p.r0 + p.r1) / 2, 0.07, 6, 32, p.span * 2 + p.amp * 2 + 0.3);
+      const railGeo = new THREE.TorusGeometry(p.r0 + 0.14, 0.07, 6, 32, p.span * 2 + p.amp * 2 + 0.3);
       disposables.push(railGeo);
       const rail = new THREE.Mesh(railGeo, mats.iron);
       rail.rotation.x = Math.PI / 2;
@@ -540,7 +541,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       for (const side of [-1, 1]) {
         const post = new THREE.Mesh(geo.rod, mats.iron);
         const pa = p.a + side * (p.span + p.amp + 0.12);
-        post.position.set(Math.cos(pa) * ((p.r0 + p.r1) / 2), p.y + 1.1, Math.sin(pa) * ((p.r0 + p.r1) / 2));
+        post.position.set(Math.cos(pa) * (p.r0 + 0.14), p.y + 1.1, Math.sin(pa) * (p.r0 + 0.14));
         post.scale.set(0.08, 2.3, 0.08);
         decor.add(post);
       }
@@ -702,7 +703,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
 
   // dust and sparks that burst from events: they fade by taking the fog's colour, not by alpha
   const PUFFS = 96;
-  const puffMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false });
+  const puffMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false });
   const puffMesh = new THREE.InstancedMesh(geo.ball, puffMat, PUFFS);
   disposables.push(puffMat);
   puffMesh.frustumCulled = false;
@@ -1391,10 +1392,13 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       const near = set.zone === camZone || (Math.abs(set.zone - camZone) === 1 && Math.abs(cy - door) < 4);
       let count = 0;
       const k = set.kind;
+      // a few spawns per frame, so a circle's weather fills in rather than popping in as one cluster
+      let budget = Math.max(2, Math.ceil(set.n / 30));
       for (let i = 0; i < set.n; i++) {
         const i3 = i * 3;
         if (set.life[i] < 0) {
-          if (!near) continue;
+          if (!near || budget <= 0) continue;
+          budget--;
           // spawn around the camera, inside this circle's band and never on the lens
           const y = cy + (Math.random() - 0.5) * 24;
           if (y < z.from - 1 || y > z.to + 1) continue;

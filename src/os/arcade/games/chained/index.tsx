@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree, type GameOverInfo } from '../../kit';
 import type { GameProps } from '../../types';
 import { TOP, ZONES, buildLevel, zoneIndex } from './level';
 import { COUNTDOWN, FALL_TOO_FAR, LAVA_DELAY, MODES, MODE_INFO, RANKED_MODES, RESPAWN_T, applyRemote, createGame, doRespawn, fmtTime, liveOf, lose, scheduleRespawn, seatSouls, step, teamHeight, win, type Ev, type Game, type Input, type Mode, type Seating, type Soul, type SoulSpec } from './logic';
@@ -545,6 +545,13 @@ function Play({ kind }: { kind: Kind }) {
   // ---------------------------------------------------------------------------------------------------------------
   // Online: souls at 15 Hz, crumbles and respawns as events, the result from the host.
 
+  /** The result card waits a beat so the win or the burn plays out in the view before it covers them. */
+  const holdTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(holdTimer.current), []);
+  const showCard = (info: GameOverInfo, hold = 1500) => {
+    window.clearTimeout(holdTimer.current);
+    holdTimer.current = window.setTimeout(() => shellRef.current.gameOver(undefined, info), hold);
+  };
   const finish = (won: boolean, time: number, height: number, winner: number) => {
     const n = net.current;
     if (n.over) return;
@@ -559,12 +566,12 @@ function Play({ kind }: { kind: Kind }) {
       if (winner === mine) {
         playJingle(JINGLE_OUT);
         lastOver.sub = `${rival === 'The shades' ? 'the shades' : rival} ${gap < 2 ? 'right behind you' : `${gap} m below you`}`;
-        shellRef.current.gameOver(undefined, { title: 'You Won the Race', detail: 'Out of the tower first.' });
+        showCard({ title: 'You Won the Race', detail: 'Out of the tower first.' }, 1800);
       } else {
         sfx.play('lose');
         const z = ZONES[zoneIndex(teamHeight(g, mine))];
         lastOver.sub = `you were ${gap} m below, in ${z.name}`;
-        shellRef.current.gameOver(undefined, { title: `${rival === 'The shades' ? 'The Shades' : rival} Won the Race`, detail: 'They stood on the way out first.' });
+        showCard({ title: `${rival === 'The shades' ? 'The Shades' : rival} Won the Race`, detail: 'They stood on the way out first.' });
       }
       if (live && onlineRef.current) onlineRef.current.reportResult(onlineRef.current.round, winner >= 0 ? winnerSeat(g, winner) : null);
       return;
@@ -574,7 +581,7 @@ function Play({ kind }: { kind: Kind }) {
       playJingle(JINGLE_OUT);
       lastOver.big = fmtTime(time);
       lastOver.sub = newBest ? 'a new best' : 'from the pit to the stars';
-      shellRef.current.gameOver(undefined, {
+      showCard({
         title: 'You Climbed Out',
         detail: team ? 'Nobody let go.' : 'Both souls made it.',
         board: boardOf(team, g.mode),
@@ -585,7 +592,7 @@ function Play({ kind }: { kind: Kind }) {
       sfx.play('lose');
       lastOver.big = `${Math.floor(height)} m`;
       lastOver.sub = `up the tower, in ${z.name}`;
-      shellRef.current.gameOver(undefined, { title: 'Burned', detail: 'The lava caught the team.' });
+      showCard({ title: 'Burned', detail: 'The lava caught the team.' });
     }
     if (live && onlineRef.current) onlineRef.current.reportResult(onlineRef.current.round, null);
   };
