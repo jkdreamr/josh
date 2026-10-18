@@ -53,7 +53,7 @@ type KartView = {
   wheelA: number;
   smoke: number;
   /** A racing shell's oars (each turning on its rigger pin, its blade at the end) and the rower's body, on the water. */
-  oars?: { pins: T.Group[]; blades: T.Mesh[]; rower: T.Group; off: number; tuck: number; crab: number; carve: number; side: 1 | -1; puddle: number };
+  oars?: { pins: T.Group[]; blades: T.Mesh[]; rower: T.Group; off: number; tuck: number; crab: number; carve: number; side: 1 | -1; puddle: number; eight: T.Group; crew: { pin: T.Group; side: number; body: T.Mesh }[] };
 };
 
 type KartGeo = { box: T.BoxGeometry; wheel: T.CylinderGeometry; ball: T.SphereGeometry; ring: T.TorusGeometry; cone: T.ConeGeometry; plane: T.PlaneGeometry };
@@ -399,13 +399,37 @@ function makeShell(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: 
   add(view.bullet, geo.box, shared.red, 0, 0.82, 0.3, 2.04, 0.14, 3.6);
   add(view.bullet, geo.cone, alu, 0, 0.4, 3.05, 1, 1.3, 0.8).rotation.x = Math.PI / 2;
   add(view.bullet, geo.box, dark, 0, 1.05, 0.9, 0.9, 0.5, 0.7);
-  add(view.bullet, geo.box, dark, 0, 0.9, -2.75, 0.5, 1.2, 0.55);
+  add(view.bullet, geo.box, shared.dark, 0, 0.75, -2.75, 0.42, 0.75, 0.5);
   add(view.bullet, geo.box, shared.red, 0.35, 1.45, -0.3, 0.55, 0.8, 0.4);
   add(view.bullet, geo.ball, skin, 0.35, 2.02, -0.3, 0.19, 0.21, 0.19);
   add(view.bullet, geo.cone, white, 0.72, 1.75, 0.05, 0.13, 0.42, 0.13).rotation.x = Math.PI / 2;
   // (a bow wave either side of it)
   for (const sx of [-1, 1]) add(view.bullet, geo.box, white, sx * 1.25, 0.12, 1.6, 0.25, 0.08, 3.2).rotation.y = sx * 0.35;
-  view.oars = { pins, blades, rower, off: idx * 0.04, tuck: 0, crab: 0, carve: 0, side: idx % 2 ? 1 : -1, puddle: -1 };
+  // a Mega on the water makes it an eight: a longer hull, more of the crew (each with one sweep oar, sides alternating)
+  // and a cox in the stern
+  const eight = new THREE.Group();
+  // (most of the extra length out ahead of you, so the chase camera is not sat in the cox's lap)
+  add(eight, geo.ball, paint, 0, 0.19, 1.3, 0.47, 0.21, 4.9);
+  add(eight, geo.box, white, 0, 0.37, 1.5, 0.08, 0.04, 8.6);
+  const crew: { pin: T.Group; side: number; body: T.Mesh }[] = [];
+  [4.35, 3.3, 2.25, 1.2, -1.4].forEach((z, n) => {
+    const side = n % 2 ? 1 : -1;
+    const body = add(eight, geo.box, paint, 0, 0.75, z, 0.4, 0.52, 0.25);
+    add(body, geo.ball, skin, 0, 0.8, 0, 0.36, 0.33, 0.6);
+    const pin = new THREE.Group();
+    pin.position.set(side * 0.62, 0.52, z + 0.35);
+    add(pin, geo.box, white, side * 1.6, 0, 0, 3.4, 0.05, 0.05);
+    add(pin, geo.box, bladeMat, side * 3.25, 0, 0, 0.5, 0.03, 0.16);
+    eight.add(pin);
+    crew.push({ pin, side, body });
+  });
+  // (the cox, low in the stern, facing the bow, with the megaphone)
+  add(eight, geo.box, shared.red, 0, 0.5, -2.65, 0.36, 0.34, 0.28);
+  add(eight, geo.ball, skin, 0, 0.8, -2.65, 0.14, 0.16, 0.14);
+  add(eight, geo.cone, white, 0, 0.75, -2.42, 0.07, 0.22, 0.07).rotation.x = Math.PI / 2;
+  eight.visible = false;
+  body.add(eight);
+  view.oars = { pins, blades, rower, off: idx * 0.04, tuck: 0, crab: 0, carve: 0, side: idx % 2 ? 1 : -1, puddle: -1, eight, crew };
   return view;
 }
 
@@ -460,6 +484,14 @@ function syncOars(v: KartView, k: Kart, time: number, me: boolean, dt: number, c
     // (squared through the water, feathered flat over it)
     o.blades[n].rotation.x = square && o.tuck < 0.5 ? Math.PI / 2 : 0;
   });
+  // (an eight: the rest of the crew rowing with you)
+  o.eight.visible = k.mega > 0;
+  if (o.eight.visible) {
+    for (const c of o.crew) {
+      c.pin.rotation.set(0, -c.side * (sweep + (-1.42 - sweep) * o.tuck), c.side * (dip + (0.07 - dip) * o.tuck));
+      c.body.rotation.x = rowing ? (phase < drive ? -0.35 + 0.6 * u : 0.25 - 0.6 * u) * (1 - o.tuck) : 0;
+    }
+  }
   // the seat slides toward the bow through the drive and back toward the stern on the recovery (the rower faces the
   // stern), and the body swings with it (thrown back by a crab)
   const still = Math.max(o.tuck, o.crab);

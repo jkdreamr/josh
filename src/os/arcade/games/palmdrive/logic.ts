@@ -1948,8 +1948,6 @@ const CARE_T = 12;
 /** A CPU that falls again within this long of its last fall drives very carefully for SHAKEN_T (see Ai.shaken). */
 const SHAKEN_WITHIN = 20;
 const SHAKEN_T = 20;
-/** On the water a CPU drives very carefully this long after any fall (see Ai.shaken). */
-const BOAT_SHAKEN_T = 0;
 
 /**
  * Off the road: a splash into the water (or a drop into a pit or a trench), and you sit there until the crane fishes you
@@ -1993,8 +1991,6 @@ function fallIn(r: Race, k: Kart, past: Past, at: Spot, hole: Hazard | null = nu
       if (r.time - k.ai.fellAt < SHAKEN_WITHIN) k.ai.shaken = SHAKEN_T;
       k.ai.fellAt = r.time;
     }
-    // (on the water any fall shakes it a while: the marsh, the whirlpools and the buoys come thick and fast there)
-    if (r.boat) k.ai.shaken = Math.max(k.ai.shaken, BOAT_SHAKEN_T);
   }
   k.v = 0;
   k.kx = 0;

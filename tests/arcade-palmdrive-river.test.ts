@@ -346,6 +346,49 @@ test('set back down never in a whirlpool\'s pull, nor just short of one spinning
   }
 });
 
+test('out of a whirlpool the launch tows you out past it, across the river; out of the marsh, into mid-channel', () => {
+  for (const h0 of slough().whirls) {
+    const r = slough();
+    const k = r.karts[0];
+    const h = r.whirls.find((w) => w.s === h0.s)!;
+    const lap = Math.max(h.lap ?? 1, 5);
+    let time = 40;
+    while (hazState(r, h, time, lap).lift < 0.9) time += 0.01;
+    r.time = time;
+    place(r, k, h.s, hazState(r, h, time, lap).d, 4, lap);
+    step(r, DT);
+    assert.ok(k.sunk > 0 && k.fell, `under at ${h.s}`);
+    const [s, d] = k.fell!.to;
+    const past = deltaS(r.track, h.s, s);
+    // (past its pull, unless that spot is not clear, when it is back short of it as before: never in the pull)
+    assert.ok(past > (h.pull ?? 7) || past < -(h.pull ?? 7), `${h.s}: set down at ${s.toFixed(0)}`);
+    if (past > 0) assert.ok(Math.sign(d) !== Math.sign(h.d), `${h.s}: across from it (${d.toFixed(1)})`);
+  }
+  // run aground: back on the water in the middle, well clear of the mud it went up
+  const r = bare();
+  const k = r.karts[0];
+  place(r, k, 600, -7.3, 12);
+  k.h = headingOf(-r.track.tz[k.i] * -1 + r.track.tx[k.i], r.track.tx[k.i] * -1 + r.track.tz[k.i]);
+  run(r, 1);
+  assert.ok(k.fell?.past === 'marsh');
+  assert.ok(Math.abs(k.fell!.to[1]) < 0.5, `set down at d ${k.fell!.to[1].toFixed(1)}`);
+});
+
+test('a CPU stopped at the lip of the weir backs off for a run at it rather than creep into the stopper', () => {
+  for (const cc of ['50cc', '200cc'] as const) {
+    const r = createRace({ cc, course: 'slough', seed: 3, countdown: 0, racers: [{ ...RIVALS[0] }] });
+    const k = r.karts[0];
+    r.time = 30;
+    place(r, k, 982, 0, 0);
+    let fell = false;
+    run(r, 8, () => {
+      if (k.sunk > 0) fell = true;
+    });
+    assert.equal(fell, false, `${cc}: into the stopper`);
+    assert.ok(deltaS(r.track, 994, k.s) > 0, `${cc}: over the weir (at ${k.s.toFixed(0)})`);
+  }
+});
+
 // ---------------------------------------------------------------------------------------------------------------
 // 5. Currents
 
@@ -674,14 +717,22 @@ test('CPU-only races on the slough at every class: everyone finishes, nobody stu
   for (const cc of ['50cc', '100cc', '150cc', '200cc'] as const) {
     let falls = 0;
     let races = 0;
+    let doubles = 0;
     const hits = new Map<string, number>();
     for (const seed of [1, 2, 3]) {
       const r = createRace({ cc, course: 'slough', seed, racers: [...RIVALS, { ...RIVALS[3], name: 'extra' }] });
       let stuck = 0;
       const rescues = r.karts.map(() => 0);
+      // (and falling again soon after a fall: the whirlpool that took it spinning up as it gets going, say)
+      const fellAt = r.karts.map(() => -99);
+      let twice = false;
       while (r.time < 600 && r.karts.some((k) => k.done === null)) {
         step(r, DT);
         for (const e of r.events.splice(0)) {
+          if (e.t === 'fall' || e.t === 'splash') {
+            if (r.time - fellAt[e.k] < 12) twice = true;
+            fellAt[e.k] = r.time;
+          }
           if (e.t === 'haz') {
             const key = `${e.kind}@${Math.round(r.karts[e.k].s / 10)}`;
             hits.set(key, (hits.get(key) ?? 0) + 1);
@@ -693,6 +744,7 @@ test('CPU-only races on the slough at every class: everyone finishes, nobody stu
         }
       }
       races++;
+      if (twice) doubles++;
       const times = r.karts.map((k) => k.done ?? Infinity);
       assert.ok(times.every((x) => x < 420), `${cc} seed ${seed}: ${times.map((x) => x.toFixed(0))}`);
       assert.ok(stuck <= 12, `${cc} seed ${seed}: stuck ${stuck}`);
@@ -701,6 +753,7 @@ test('CPU-only races on the slough at every class: everyone finishes, nobody stu
     }
     const perCpu = falls / races / 8;
     assert.ok(perCpu <= 1.8, `${cc}: ${perCpu.toFixed(2)} falls per CPU per race`);
+    assert.ok(doubles <= 1, `${cc}: a CPU fell twice within 12 s in ${doubles} of ${races} races`);
     for (const [key, n] of hits) assert.ok(n / races / 8 <= 1, `${cc}: ${key} ${n}`);
   }
 });

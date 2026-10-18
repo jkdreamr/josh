@@ -131,6 +131,9 @@ function spiralTexture(THREE: Three) {
   );
 }
 
+/** THREE.AdditiveBlending, by value: the shared three.js chunk (kit/three-lib.ts) does not export the constant. */
+const ADDITIVE = 2 as T.Blending;
+
 /** Cars on the Hwy 101 deck. */
 const CARS = 32;
 
@@ -771,7 +774,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   const PUDDLE_T = 2.2;
   const puddleGeo = new THREE.PlaneGeometry(1, 1);
   puddleGeo.rotateX(-Math.PI / 2);
-  const puddleMesh = new THREE.InstancedMesh(puddleGeo, new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }), PUDDLES);
+  const puddleMesh = new THREE.InstancedMesh(puddleGeo, new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, depthWrite: false, blending: ADDITIVE }), PUDDLES);
   puddleMesh.frustumCulled = false;
   puddleMesh.renderOrder = 2;
   puddleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -802,7 +805,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   // (from its end at the stern out along local -z)
   armGeo.translate(0, 0, -0.5);
   const ARMS = 2 * r.karts.length + 2 * ferries.length;
-  const armMesh = new THREE.InstancedMesh(armGeo, new THREE.MeshBasicMaterial({ map: vTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }), ARMS);
+  const armMesh = new THREE.InstancedMesh(armGeo, new THREE.MeshBasicMaterial({ map: vTex, transparent: true, depthWrite: false, blending: ADDITIVE, side: THREE.DoubleSide }), ARMS);
   armMesh.frustumCulled = false;
   armMesh.renderOrder = 2;
   armMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -955,9 +958,9 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
         // (a narrow V off the stern, longer and brighter the faster it goes)
         const sx = k.x - Math.sin(k.h) * 2.4;
         const sz = k.z - Math.cos(k.h) * 2.4;
-        const len = 2 + sp * 0.4;
+        const len = 2 + sp * 0.3;
         // (your own, right under the camera, only faintly)
-        for (const sg of [-1, 1]) armAt(2 * n + (sg > 0 ? 1 : 0), sx, sz, k.h + sg * 0.16, len, 0.4, under && sp > 4 ? Math.min(0.55, sp / 40) * (n === me ? 0.35 : 1) : 0);
+        for (const sg of [-1, 1]) armAt(2 * n + (sg > 0 ? 1 : 0), sx, sz, k.h + sg * 0.16, len, 0.4, under && sp > 4 ? Math.min(0.3, sp / 90) * (n === me ? 0.5 : 1) : 0);
         // (the puddles: at each finish, where the blades come out)
         const phase = strokeAt(race.time - (n === me ? 0 : n * 0.04));
         const was = lastPhase.get(n) ?? phase;
