@@ -82,7 +82,7 @@ function Play() {
     graceUsed: false,
     death: 0,
     shake: 0,
-    foodAge: 0,
+    foodAge: 1,
     elapsed: 0,
     nextBlink: 2.5,
     nextTongue: 1.6,
