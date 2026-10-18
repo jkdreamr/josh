@@ -533,6 +533,38 @@ function valueNoise(seed: number, cell: number) {
   };
 }
 
+/** A line moved `d` to its left (negative: to its right), point by point. */
+function offsetLine(pts: { x: number; z: number }[], d: number) {
+  const n = pts.length;
+  return pts.map((p, i) => {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(n - 1, i + 1)];
+    const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    return { x: p.x - ((b.z - a.z) / l) * d, z: p.z + ((b.x - a.x) / l) * d };
+  });
+}
+
+/** Still water: pale over the shallows round the edge, deep blue in the middle, with glints of light. */
+function pondTexture(THREE: Three) {
+  const rnd = scatter(67);
+  return texture(
+    THREE,
+    canvas(128, 128, (g) => {
+      const grad = g.createRadialGradient(64, 64, 4, 64, 64, 64);
+      grad.addColorStop(0, '#2f86bd');
+      grad.addColorStop(0.6, '#3fa6d4');
+      grad.addColorStop(0.9, '#7fd2e8');
+      grad.addColorStop(1, '#a8e6ef');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 128, 128);
+      for (let i = 0; i < 26; i++) {
+        g.fillStyle = `rgba(255,255,255,${0.2 + rnd() * 0.35})`;
+        g.fillRect(20 + rnd() * 88, 20 + rnd() * 88, 3 + rnd() * 7, 1.2);
+      }
+    }),
+  );
+}
+
 /** A soft round glow, white in the middle and fading out (tinted by the material). */
 function glowTexture(THREE: Three) {
   return texture(
@@ -1092,10 +1124,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const lip = new THREE.Mesh(geo(ribbon(THREE, squareLoop(GRASS_HALF + 0.55), 0.55, 0.007, 4)), lambert(0xffffff, { map: keep(grassEdgeTexture(THREE)), transparent: true, depthWrite: false, side: THREE.DoubleSide }));
   scene.add(lip);
 
-  // ponds: a sandy rim, the water, and a few lily pads
-  const pondWater = lambert(0x4cb3dc, { transparent: true, opacity: 0.88, emissive: 0x0b3a52 });
+  // ponds: a sandy rim, the water (pale in the shallows, deep in the middle), a lapping white edge, and a few lily
+  // pads, some in flower
+  const pondWater = lambert(0xffffff, { map: keep(pondTexture(THREE)), transparent: true, opacity: 0.92, emissive: 0x0b3a52 });
   const rimMat = lambert(0xd8c690);
   const padMat = lambert(0x4f9a3c);
+  const bloomMat = lambert(0xff9cc8, { emissive: 0x3a1020 });
+  const lapMat = basic(0xffffff, { transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide });
+  const lapGeo = geo(new THREE.RingGeometry(0.93, 1, 64));
   for (const p of map.ponds) {
     const rim = new THREE.Mesh(G.bigDisc, rimMat);
     rim.rotation.x = -Math.PI / 2;
@@ -1107,6 +1143,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     pool.position.set(p.x, 0.03, p.z);
     pool.scale.setScalar(p.r);
     scene.add(pool);
+    const lap = new THREE.Mesh(lapGeo, lapMat);
+    lap.rotation.x = -Math.PI / 2;
+    lap.position.set(p.x, 0.036, p.z);
+    lap.scale.setScalar(p.r);
+    scene.add(lap);
     const rnd = scatter(Math.round(p.x * 31 + p.z * 7) >>> 0);
     for (let i = 0; i < 4; i++) {
       const a = rnd() * Math.PI * 2;
@@ -1116,6 +1157,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       pad.position.set(p.x + Math.cos(a) * d, 0.05, p.z + Math.sin(a) * d);
       pad.scale.setScalar(0.45 + rnd() * 0.3);
       scene.add(pad);
+      if (i % 2 === 0) add(scene, G.lowBall, bloomMat, pad.position.x + 0.1, 0.12, pad.position.z - 0.05, 0.16, 0.12, 0.16);
     }
   }
 
@@ -1160,6 +1202,19 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const flow = new THREE.Mesh(geo(ribbon(THREE, riverLine, RIVER_HALF + 0.1, 0.034, 9)), lambert(0xffffff, { map: riverTex, emissive: 0x0b3a52, side: THREE.DoubleSide }));
     scene.add(banks, flow);
   }
+  // white water along both banks, drifting downstream with the river (the far bank's strip runs backward, so its
+  // foam faces the shore too)
+  const riverFoam: T.Texture[] = [];
+  if (riverLine.length > 1)
+    for (const side of [1, -1]) {
+      const line = offsetLine(riverLine, side * (RIVER_HALF - 0.3));
+      if (side < 0) line.reverse();
+      const t = keep(foamTexture(THREE));
+      riverFoam.push(t);
+      const strip = new THREE.Mesh(geo(ribbon(THREE, line, 0.55, 0.037, 7)), basic(0xffffff, { map: t, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide }));
+      strip.renderOrder = 1;
+      scene.add(strip);
+    }
 
   // buildings: a floor, walls, and at every doorway a frame, a porch with a lamp and an awning, so the ways in read
   // from the ground and from the sky. All but the ruins have a roof that lifts away while you're inside and thins
@@ -3575,6 +3630,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       // the river runs, the windmills turn, and the grass and flowers show once you're down among them
       riverTex.offset.y = -clock * 0.15;
       wind.value = clock;
+      riverFoam.forEach((t, k) => (t.offset.y = (k ? 1 : -1) * clock * 0.2));
+      lapMat.opacity = 0.42 + Math.sin(clock * 1.3) * 0.18;
       // the surf drifts along the shore, and a wave rolls in every few seconds and fades on the sand
       foamTex.offset.y = clock * 0.012;
       const roll = (clock / 4.5) % 1;
