@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { COURSES, COURSE_IDS, TIER, tierOf, type CourseId, type Difficulty } from '../src/os/arcade/games/palmdrive/courses.ts';
-import { CLASSES, GREEN_V, RIVALS, createRace, hitKart, spawn, step, type Ev, type Kart, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
+import { CLASSES, GREEN_V, RIVALS, TIDE_LAP, createRace, hitKart, spawn, step, type Ev, type Kart, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { awake, ballSince, headingOf, locate, pointAt } from '../src/os/arcade/games/palmdrive/track.ts';
 
 const DT = 1 / 60;
@@ -118,7 +118,15 @@ test('the CPUs nail more rocket starts on the harder courses', () => {
 test('every lap something joins in on has a line for the lap banner, and only those laps', () => {
   for (const id of COURSE_IDS) {
     const t = createRace({ cc: '150cc', course: id, racers: [RIVALS[0]] }).track;
-    const laps = new Set(COURSES[id].layout(t).hazards.filter((h) => h.lap && h.lap > 1).map((h) => h.lap!));
+    const c = COURSES[id];
+    // (the set pieces, and the wind, the frost, the swell, a whirlpool that starts to wander and the tide that turns)
+    const laps = new Set([
+      ...c.layout(t).hazards.flatMap((h) => [h.lap ?? 1, h.wander?.[2] ?? 1]),
+      ...(c.gusts ?? []).map((g) => g.lap ?? 1),
+      ...(c.surfaces ?? []).map((f) => f[4] ?? 1),
+      ...(c.swells ?? []).map((sw) => sw.lap ?? 1),
+      ...((c.flows ?? []).some((f) => f.tide) ? [TIDE_LAP] : []),
+    ].filter((lap) => lap > 1));
     assert.deepEqual(Object.keys(COURSES[id].laps ?? {}).map(Number).sort(), [...laps].sort(), id);
     for (const note of Object.values(COURSES[id].laps ?? {})) assert.ok(note.length > 4 && note.length <= 28, `${id}: "${note}" fits on a phone`);
   }

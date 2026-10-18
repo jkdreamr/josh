@@ -473,6 +473,12 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             seconds and three coins.
           </li>
           <li>
+            <b>Insane, on the water: Redwood Slough.</b> You race a single scull. The water is slick, so carve (drift) through the bends. Tap hop just as the ring closes for a clean
+            catch; ten in a row is a Power Ten. Leave the channel and you run aground in the marsh: the coach&apos;s launch tows you off (about three and a half seconds and three
+            coins). Whirlpools spin up at the bends: when the foam turns, keep wide and keep your speed. Wakes and the Bay swell shove you sideways; hop the crest. The current helps
+            downstream and fights you upstream, so hug the bank going up. On the last lap the tide turns and the fog comes in.
+          </li>
+          <li>
             <b>The Marguerite buses</b> drive their rounds slower than you, both in the right-hand lane. Pass on the left: run into one and you spin out. Shells break on them too.
             And they have right of way: the pile drivers, bollards, sprinklers and wrecking balls stand aside as a bus comes through.
           </li>
