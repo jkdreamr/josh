@@ -29,7 +29,7 @@
   position: absolute;
   top: 14px;
   left: 18px;
-  width: min(34%, 320px);
+  width: min(28%, 300px);
   height: 22px;
   pointer-events: none;
   z-index: 2;
