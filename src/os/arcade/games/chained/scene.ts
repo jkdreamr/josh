@@ -201,6 +201,28 @@ type Moving = { p: Platform; mesh: T.Object3D; parts?: T.Object3D[] };
 type Crumbly = { p: Platform; mesh: T.Mesh; mat: T.MeshLambertMaterial; debris: { mesh: T.Mesh; vx: number; vy: number; vz: number; rx: number; rz: number; life: number }[]; gone: boolean };
 type Spring = { p: Platform; pad: T.Mesh; coil: T.Mesh; squash: number };
 
+/** A radial falloff drawn once on a small canvas: white at the centre to black at the rim (alphaMap reads green). */
+function softDisc(THREE: Three) {
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, '#ffffff');
+    grad.addColorStop(0.35, '#bfbfbf');
+    grad.addColorStop(0.7, '#383838');
+    grad.addColorStop(1, '#000000');
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  return tex;
+}
+
 /** Builds the view. lite trims particles and detail for phones. */
 export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: { lite?: boolean } = {}): View | null {
   const lite = !!opts.lite;
@@ -237,6 +259,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     link: new THREE.TorusGeometry(0.1, 0.035, 5, 8),
     disc: new THREE.CircleGeometry(1, 32),
     plane: new THREE.PlaneGeometry(1, 1),
+    soft: softDisc(THREE),
   };
   for (const g of Object.values(geo)) disposables.push(g);
   const flat = (color: number | string, extra: Partial<T.MeshLambertMaterialParameters> = {}) => {
@@ -257,6 +280,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     ice: flat('#d8f1ff', { transparent: true, opacity: 0.86 }),
     gold: flat('#d6a93c'),
     stoneGrey: flat('#6d6a72'),
+    debris: flat('#3e3c3b'),
     flame: basic('#ffa24a'),
     flameCore: basic('#fff1c2'),
     ghost: basic('#9df0b2', { transparent: true, opacity: 0.75 }),
@@ -501,8 +525,8 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
         const rod = new THREE.Mesh(geo.rod, mats.iron);
         const ra = side * p.span * 0.7;
         const rr = (p.r0 + p.r1) / 2;
-        rod.position.set(Math.cos(ra) * rr, 1.6, Math.sin(ra) * rr);
-        rod.scale.set(0.05, 3.2, 0.05);
+        rod.position.set(Math.cos(ra) * rr, 1.1, Math.sin(ra) * rr);
+        rod.scale.set(0.05, 2.2, 0.05);
         group.add(rod);
       }
       scene.add(group);
@@ -511,13 +535,13 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       const rail = new THREE.Mesh(railGeo, mats.iron);
       rail.rotation.x = Math.PI / 2;
       rail.rotation.z = -(p.a - p.span - p.amp - 0.15);
-      rail.position.y = p.y + 3.2;
+      rail.position.y = p.y + 2.2;
       scene.add(rail);
       for (const side of [-1, 1]) {
         const post = new THREE.Mesh(geo.rod, mats.iron);
         const pa = p.a + side * (p.span + p.amp + 0.12);
-        post.position.set(Math.cos(pa) * ((p.r0 + p.r1) / 2), p.y + 1.6, Math.sin(pa) * ((p.r0 + p.r1) / 2));
-        post.scale.set(0.08, 3.4, 0.08);
+        post.position.set(Math.cos(pa) * ((p.r0 + p.r1) / 2), p.y + 1.1, Math.sin(pa) * ((p.r0 + p.r1) / 2));
+        post.scale.set(0.08, 2.3, 0.08);
         decor.add(post);
       }
       movers.push({ p, mesh: group });
@@ -669,9 +693,9 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     particleSets.push(set);
   };
   const scaleP = lite ? 0.55 : 1;
-  makeParticles('ember', 0, lite ? 90 : 160, '#ffffff', 0.03, { ramp: ['#ff5a1a', '#ff9a3a', '#ffd27a'] });
+  makeParticles('ember', 0, lite ? 90 : 160, '#ffffff', 0.022, { ramp: ['#ff5a1a', '#ff9a3a', '#ffd27a'] });
   makeParticles('ash', 1, Math.round(120 * scaleP), '#b4b7bf', 0.035, { boxy: true, opacity: 0.5 });
-  makeParticles('spark', 2, Math.round(70 * scaleP), '#ffd27a', 0.035);
+  makeParticles('spark', 2, Math.round(70 * scaleP), '#ffd27a', 0.028);
   makeParticles('snow', 3, Math.round(200 * scaleP), '#eaf6ff', 0.02, { opacity: 0.85 });
   makeParticles('mote', 4, Math.round(110 * scaleP), '#ffffff', 0.03, { opacity: 0.55, ramp: ['#fff1d6', '#ffe2a8', '#ffd27a', '#d33b3b', '#2f5fd8', '#e2b437', '#3fae6a'], rampW: [0.25, 0.25, 0.25, 0.0625, 0.0625, 0.0625, 0.0625] });
   makeParticles('stardust', 5, Math.round(140 * scaleP), '#eef2ff', 0.026, { opacity: 0.9 });
@@ -832,11 +856,11 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
     halo.scale.setScalar(0.28);
     root.add(halo);
     // on the ground: a contact shadow and two discs of warm lantern light, soft edged by the pair
-    const shadowMat = basic('#120806', { transparent: true, opacity: 0.32, depthWrite: false });
+    const shadowMat = basic('#120806', { transparent: true, opacity: 0.42, depthWrite: false, alphaMap: geo.soft });
     const shadow = new THREE.Mesh(geo.disc, shadowMat);
     shadow.rotation.x = -Math.PI / 2;
-    const poolMat = basic('#ffb46a', { transparent: true, opacity: 0.22, depthWrite: false });
-    const poolOutMat = basic('#ffb46a', { transparent: true, opacity: 0.07, depthWrite: false });
+    const poolMat = basic('#ffb46a', { transparent: true, opacity: 0.3, depthWrite: false, alphaMap: geo.soft });
+    const poolOutMat = basic('#ffb46a', { transparent: true, opacity: 0.10, depthWrite: false, alphaMap: geo.soft });
     const poolIn = new THREE.Mesh(geo.disc, poolMat);
     poolIn.rotation.x = -Math.PI / 2;
     const poolOut = new THREE.Mesh(geo.disc, poolOutMat);
@@ -1140,7 +1164,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       const k = sv.burnScale * (1 - 0.6 * ghost);
       sv.shadow.position.set(ix, gy + 0.015, iz);
       sv.shadow.scale.setScalar(0.38 * clamp(1 - h / 7, 0.35, 1));
-      sv.shadowMat.opacity = 0.32 * clamp(1 - h / 9, 0.3, 1) * k;
+      sv.shadowMat.opacity = 0.45 * clamp(1 - h / 9, 0.3, 1) * k;
       const zi = zoneIndex(iy);
       const pale = zi === 3 || zi === 5;
       sv.poolMat.color.lerp(POOL_BY_ZONE[zi], 1 - Math.exp(-3 * dt));
@@ -1150,8 +1174,8 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
       sv.poolOut.position.set(ix, gy + 0.025, iz);
       sv.poolIn.scale.setScalar(0.45 + h * 0.06);
       sv.poolOut.scale.setScalar(0.85 + h * 0.06);
-      sv.poolMat.opacity = Math.min(pale ? 0.16 : 1, 0.22 + flicker) * k;
-      sv.poolOutMat.opacity = Math.min(pale ? 0.16 : 1, 0.07 + flicker * 0.5) * k;
+      sv.poolMat.opacity = Math.min(pale ? 0.24 : 1, 0.36 + flicker) * k;
+      sv.poolOutMat.opacity = Math.min(pale ? 0.2 : 1, 0.14 + flicker * 0.5) * k;
     }
     // spray behind a soul sliding on ice
     const sliding = s.grounded && s.surface === 'ice' && speed > 2.5 && s.input.side === 0 && s.input.fwd === 0;
@@ -1378,7 +1402,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
           const r = R_CORE + 0.8 + Math.random() * Math.max(0.5, rMax - R_CORE - 0.8);
           const x = Math.cos(a) * r;
           const zz = Math.sin(a) * r;
-          if (Math.hypot(x - camX, y - camY, zz - camZ) < 2.5) continue;
+          if (Math.hypot(x - camX, y - camY, zz - camZ) < 3.5) continue;
           set.pos[i3] = x;
           set.pos[i3 + 1] = y;
           set.pos[i3 + 2] = zz;
@@ -1422,7 +1446,10 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
         dummy.position.set(set.pos[i3], py, set.pos[i3 + 2]);
         const fade = clamp(set.life[i], 0, 1) * clamp((set.life0[i] - set.life[i]) / 0.6, 0, 1);
         const dist = Math.hypot(set.pos[i3] - camX, py - camY, set.pos[i3 + 2] - camZ);
-        let sc = set.size * set.sz[i] * (0.6 + fade * 0.6) * clamp((dist - 1.2) / 2.5, 0, 1);
+        // nothing within arm's reach of the lens, and a long fade in past it, so no flake ever reads as a blob
+        if (dist < 2) set.life[i] = -1;
+        let sc = set.size * set.sz[i] * (0.6 + fade * 0.6) * clamp((dist - 2) / 5, 0, 1);
+        if (set.life[i] < 0) continue;
         if (k === 'spark') sc *= 1 + Math.random() * 0.6;
         else if (k === 'ember') sc *= 0.85 + 0.15 * Math.sin(clock * 9 + i);
         else if (k === 'stardust') sc *= 0.75 + 0.25 * Math.sin(clock * 4 + i * 1.7);
@@ -1828,7 +1855,7 @@ export function buildView(THREE: Three, host: HTMLElement, level: Level, opts: {
         const c = crumblies.find((x) => x.p.id === e.id);
         if (c) {
           for (let i = 0; i < 6; i++) {
-            const mesh = new THREE.Mesh(geo.box, mats.stone);
+            const mesh = new THREE.Mesh(geo.box, mats.debris);
             const a = c.p.a + (Math.random() - 0.5) * c.p.span * 2;
             const r = c.p.r0 + Math.random() * (c.p.r1 - c.p.r0);
             mesh.position.set(Math.cos(a) * r, c.p.y - 0.2, Math.sin(a) * r);

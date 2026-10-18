@@ -83,7 +83,7 @@ export const ZONES: Zone[] = [
     line: 'where the fire never sleeps',
     from: 0,
     to: 20,
-    palette: { sky: ['#1b0806', '#4a140c', '#8a2a10'], fog: '#45140b', fogNear: 14, fogFar: 40, hemi: ['#ff8a5a', '#4a1208'], sun: '#ffb080', stone: ['#705750', '#3a2a26'], core: '#221412', glow: '#ff7a2a', ink: '#ff9e6e' },
+    palette: { sky: ['#140504', '#3a0f09', '#7a2410'], fog: '#34100a', fogNear: 13, fogFar: 40, hemi: ['#ff8a5a', '#300c06'], sun: '#ffb080', stone: ['#705750', '#3a2a26'], core: '#221412', glow: '#ff7a2a', ink: '#ff9e6e' },
   },
   {
     id: 'catacombs',
@@ -101,7 +101,7 @@ export const ZONES: Zone[] = [
     line: 'iron, steam and a thousand sparks',
     from: 40,
     to: 60,
-    palette: { sky: ['#120b07', '#3a1d0e', '#7a3f12'], fog: '#2c1a0f', fogNear: 18, fogFar: 58, hemi: ['#ffb878', '#4a1c0a'], sun: '#ffd9a0', stone: ['#5e544d', '#26221f'], core: '#1c1f24', glow: '#ffa63a', ink: '#ffc98a' },
+    palette: { sky: ['#0b0604', '#24110a', '#5a2a0e'], fog: '#1a0e08', fogNear: 16, fogFar: 52, hemi: ['#f0a060', '#2a1006'], sun: '#ffd9a0', stone: ['#5e544d', '#26221f'], core: '#1c1f24', glow: '#ffa63a', ink: '#ffc98a' },
   },
   {
     id: 'frost',
