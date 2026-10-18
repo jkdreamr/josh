@@ -56,6 +56,8 @@ export type Wheel = {
   rot: number;
   /** Touched terrain this step. */
   on: boolean;
+  /** Surface normal of the last contact. */
+  n: Vec;
 };
 
 export type Bike = {
@@ -157,8 +159,8 @@ export function newBike(x: number, y: number): Bike {
     v: { x: 0, y: 0 },
     a: 0,
     w: 0,
-    fw: { p: { x: x + ANCHOR_F.x, y: y + ANCHOR_F.y - SUS_LEN }, v: { x: 0, y: 0 }, spin: 0, rot: 0, on: false },
-    rw: { p: { x: x + ANCHOR_R.x, y: y + ANCHOR_R.y - SUS_LEN }, v: { x: 0, y: 0 }, spin: 0, rot: 0, on: false },
+    fw: { p: { x: x + ANCHOR_F.x, y: y + ANCHOR_F.y - SUS_LEN }, v: { x: 0, y: 0 }, spin: 0, rot: 0, on: false, n: { x: 0, y: 1 } },
+    rw: { p: { x: x + ANCHOR_R.x, y: y + ANCHOR_R.y - SUS_LEN }, v: { x: 0, y: 0 }, spin: 0, rot: 0, on: false, n: { x: 0, y: 1 } },
     crashed: false,
   };
 }
@@ -233,6 +235,8 @@ function collideWheel(world: PhysWorld, wh: Wheel): void {
       if (nx * s.nx + ny * s.ny < 0) continue;
     }
     wh.on = true;
+    wh.n.x = nx;
+    wh.n.y = ny;
     // position correction
     const pen = WHEEL_R - d;
     wh.p.x += nx * pen;
@@ -370,6 +374,10 @@ export function step(bike: Bike, world: PhysWorld, input: Input, dt: number): St
       hits.head = true;
       break;
     }
+  }
+  // wheels down with the chassis rolled past ~100 degrees from the surface: the rider is on their back
+  for (const wh of [bike.fw, bike.rw]) {
+    if (wh.on && -s * wh.n.x + c * wh.n.y < -0.2) hits.head = true;
   }
   // saws touch any of head, chassis or wheels
   for (const saw of world.saws) {
