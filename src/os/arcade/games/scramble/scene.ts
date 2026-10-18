@@ -3948,8 +3948,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         landMark.scale.setScalar(1.2 + Math.sin(clock * 6) * 0.15);
       }
 
-      // loot in frame (with a little to spare), once it's close enough to make out (from the sky it's specks)
-      const showLoot = cam.view < LOOT_VIEW;
+      // loot in frame (with a little to spare), once it's close enough to make out (from the sky it's specks, and from
+      // the bus too, which a tall screen frames narrower)
+      const showLoot = cam.view < LOOT_VIEW && focus?.phase !== 'bus';
       const lootN = dist * FRAME_N + 3;
       const lootS = dist * FRAME_S + 3;
       const lootW = dist * FRAME_W * aspect + 3;
