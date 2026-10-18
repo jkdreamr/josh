@@ -32,11 +32,13 @@ export type AppDef = {
   /** On a computer, opened next to a game it docks down the right edge at this width, out of the game's way. */
   side?: number;
   dock?: boolean;
+  /** A computer app (Finder, Terminal): left off the phone and iPad home screens and search, though links can still open it. */
+  laptopOnly?: boolean;
   keywords?: string;
 };
 
 export const apps: Record<AppId, AppDef> = {
-  finder: { id: 'finder', title: 'Finder', icon: 'finder', Component: Finder, w: 780, h: 470, frame: 'overlay', dock: true, keywords: 'files folders school work projects' },
+  finder: { id: 'finder', title: 'Finder', icon: 'finder', Component: Finder, w: 780, h: 470, frame: 'overlay', dock: true, laptopOnly: true, keywords: 'files folders school work projects' },
   chrome: { id: 'chrome', title: 'Chrome', icon: 'chrome', Component: Chrome, w: 1000, h: 640, frame: 'overlay', dock: true, keywords: 'browser web internet games arcade' },
   messages: { id: 'messages', title: 'Messages', icon: 'messages', Component: Messages, w: 430, h: 580, frame: 'overlay', dock: true, keywords: 'chat text imessage talk' },
   lounge: { id: 'lounge', title: 'Lounge', icon: 'lounge', Component: Lounge, w: 900, h: 600, side: 380, theme: 'dark', dock: true, keywords: 'chat global arcade lounge channels players friends find a game lfg ideas talk' },
@@ -49,7 +51,7 @@ export const apps: Record<AppId, AppDef> = {
   github: { id: 'github', title: 'GitHub', icon: 'github', Component: GitHub, w: 720, h: 580, theme: 'dark', dock: true, keywords: 'code repos jkdreamr' },
   coffee: { id: 'coffee', title: 'Buy Me a Coffee', icon: 'coffee', Component: BuyMeACoffee, w: 380, h: 560, frame: 'overlay', dock: true, keywords: 'buy me a coffee tip support joshuakoo' },
   mail: { id: 'mail', title: 'Mail', icon: 'mail', Component: Mail, w: 580, h: 480, dock: true, keywords: 'email contact' },
-  terminal: { id: 'terminal', title: 'Terminal', icon: 'terminal', Component: Terminal, w: 660, h: 420, theme: 'dark', frame: 'overlay', dock: true, keywords: 'shell zsh command line' },
+  terminal: { id: 'terminal', title: 'Terminal', icon: 'terminal', Component: Terminal, w: 660, h: 420, theme: 'dark', frame: 'overlay', dock: true, laptopOnly: true, keywords: 'shell zsh command line' },
   arcade: { id: 'arcade', title: 'Arcade', icon: 'arcade', Component: Arcade, w: 920, h: 640, dock: false, keywords: 'arcade games play chrome://games leaderboards snake chess 2048 sudoku pong blocks party group mafia imposter charades drinking kings cup' },
   coxbox: { id: 'coxbox', title: 'Cox Box', icon: 'coxbox', Component: CoxBox, w: 900, h: 620, theme: 'dark', dock: false, keywords: 'rowing stanford typing race regatta game multiplayer online wpm' },
   baduk: { id: 'baduk', title: 'Baduk', icon: 'baduk', Component: Baduk, w: 620, h: 680, theme: 'dark', dock: false, keywords: 'go baduk 바둑 board game strategy omok gomoku five in a row' },

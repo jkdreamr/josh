@@ -8,8 +8,9 @@ Little games that live inside the Chrome app at `chrome://games`, and in the Arc
 // src/os/arcade/types.ts
 export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer' | 'party' | 'drinking';
 export type LeaderboardSpec = { order: 'desc' | 'asc'; max: number; min?: number; format?: 'number' | 'time'; unit?: string; measure?: string; variants?: Record<string, string> };
-export type OnlineSpec = { seats: number; race?: boolean; lateJoin?: boolean; bots?: boolean };
-export type GameMeta = { id: string; title: string; blurb: string; category: GameCategory; players: string; controls: string; accent: string; glyph: string; order: number; leaderboard?: LeaderboardSpec; online?: OnlineSpec };
+export type OnlineSpec = { seats: number; race?: boolean; lateJoin?: boolean; bots?: boolean; quick?: boolean; watch?: boolean };
+export type MusicStyle = 'chip' | 'bouncy' | 'synth' | 'house' | 'drive' | 'tension' | 'lofi' | 'ambient';
+export type GameMeta = { id: string; title: string; blurb: string; category: GameCategory; players: string; controls: string; howTo?: readonly string[]; accent: string; glyph: string; order: number; leaderboard?: LeaderboardSpec; online?: OnlineSpec; music?: MusicStyle };
 export type GameProps = { compact?: boolean; onExit?: () => void; roomCode?: string };
 ```
 
@@ -29,11 +30,13 @@ src/os/arcade/games/<id>/
 | `category` | section on the arcade page: Arcade, Puzzles, 3D, Multiplayer, Group Games, Drinking Games |
 | `players` | `'1P'`, `'2P'`, `'1-2P'`, or a range like `'3-20P'` for group games |
 | `controls` | one line how-to, shown on the Start and Pause cards |
+| `howTo` | the rules, one short step per line, for the How to Play card the Start and Pause cards open (with `controls` under them). Every game has one; leave it out only when the game shows its own How to Play (party games' setup steps, Palm Drive's sheet) |
 | `accent` | CSS color for the tile icon and shell accents |
 | `glyph` | SVG path data (`d`) for a 24x24 viewBox, drawn as a white 2px stroke |
 | `order` | sort order inside its category (lower first) |
 | `leaderboard` | optional, opts the game into a top 100 board (see Leaderboards) |
-| `online` | optional, enables online rooms for the configured number of seats (see Online Rooms). Rooms lock when the host starts, unless `lateJoin: true` lets people join between rounds (they wait in the lobby and play the next one). `bots: true` lets the host fill empty seats with computer players (see Bots) |
+| `music` | background music while a round plays, in one of the kit's styles (see Music). Leave it out for games that are better quiet: board and card games against someone, and party and drinking games played out loud |
+| `online` | optional, enables online rooms for the configured number of seats (see Online Rooms). Rooms lock when the host starts, unless `lateJoin: true` lets people join between rounds (they wait in the lobby and play the next one). `bots: true` lets the host fill empty seats with computer players (see Bots), `quick: true` makes Play quick play (see Quick Play) and `watch: true` lets people watch rounds (see Spectators) |
 
 `manifest.ts` reads every `games/*/meta.ts` eagerly (they are tiny) and every `games/*/index.tsx` lazily through `React.lazy`, so each game is its own chunk and downloads only when opened. A deploy renames the chunks it changed, so production builds keep a week of older chunks alongside their own (`scripts/keep-old-assets.ts`) and a page left open across a deploy keeps playing its own version. If a chunk is still missing (a tab older than that), the server answers with `scripts/missing-file.js` and `GameFrame` says so and offers a Reload that comes straight back to the game (hosts pass `resume` to say how, see `src/os/reload.ts`); it never reloads on its own. The stand-in also gives pages from before any of this (they show an older "didn't load" card) the same Reload. A game that throws while running gets a Restart card instead. Folders starting with `_` are ignored. In dev you can list them with `localStorage.setItem('arcade:dev', '1')` and a reload; `_example` then appears as "Catch".
 
@@ -111,6 +114,8 @@ function useThree(): typeof import('three') | null;   // null until loaded
 **TouchControls** renders an on-screen d-pad (left) and round buttons (right) on touch devices only, while playing. They feed the same `KeyState`, so `keys.down('left')` works for both. Example: `<TouchControls dpad buttons={[{ key: 'Space', label: 'jump' }]} />`. Tapping the canvas is also fine; use pointer events.
 
 **sfx** is a tiny WebAudio synth. No audio files. The mute state is shared by every game and persisted in localStorage (`arcade:muted`). For music, schedule notes a little ahead with `tone({ delay })` (and drums with `noise(dur, vol, delay)`) against `sfx.clock()`, which is null while muted or before the first tap, so a song never bunches up when sound comes back (Palm Drive's `music.ts` is an example).
+
+**Music** comes with the shell: name a style in `meta.music` and the game gets its own tune while a round plays. `kit/music-core.ts` writes it from the style (tempo, scale, chord progressions, drums, instruments) and the game's id (key and melody), so two games in one style still sound different: sixteen bars on a loop, starting over each round, holding its place through a pause. The styles are `chip` (8-bit), `bouncy` (playful, major), `synth` (synthwave), `house`, `drive` (rock), `tension`, `lofi` and `ambient` (calm, no drums; lofi and ambient suit puzzles). The notes go through the synth's music bus, which fades out on pause and Game Over. A Music button joins the control row, a switch every game shares (`arcade:music`, `useMusicOn()`); Mute still silences everything. Games with a soundtrack of their own (Palm Drive, Paper.io, Chained) leave `music` out and keep their own Music setting.
 
 **loadThree / useThree** import `three` dynamically, so every 3D game shares one lazily loaded chunk and none of it lands in the initial bundle.
 
@@ -193,6 +198,18 @@ Add `bots: true` to `online` and the lobby (and the online Game Over card, betwe
 
 `useOnline().bots` lists the bots as `{ seat, name }`: the ones playing this round while it is under way, otherwise the ones the host has added so far, so a lobby setting can appear only when there are bots to tune. The host's game drives them like its computer players and shares them through its own messages; everyone else just shows them. Bots send nothing, never report results and never block a round's result, and a round a bot wins counts for nobody's Online Wins. Name them with `botNames` (Palm Drive's are its CPU drivers, Cox Box's the rival crews). Light Cycles, Cox Box, Palm Drive and Scramble have bots; two-seat games have no empty seat to fill, and score races have no computer players.
 
+### Quick Play
+
+Add `quick: true` (with `bots`) and the Start card's Play finds a match like an .io game: it joins a public quick-play room of the game that is gathering people, or opens one, and the room starts on its own about 20 seconds later (3 once people fill it) with bots in every seat nobody holds. Whoever came in first hosts. The game's own settings move next to the second button, `soloLabel` (Play Offline by default, Scramble's says Play with Bots), and Play with Friends makes rooms of your own as before. `useOnline().quick` is true in a quick match. The shell never ends a quick round because someone left, so the game must cope: the host hands a departed player's car, snake or rider to a bot, or takes it off the field. Play Again after a quick match finds the next one. Scramble, Slither, Sumo, Tank Maze, Cox Box, Mini Golf, Grand Prix, Palm Drive and Light Cycles have it.
+
+### Spectators
+
+Add `watch: true` and people can watch a room's rounds without a seat. Joining a room that is playing a round nobody can join (or that is full) watches it instead, and a public room like that stays in Open Rooms with Watch on its tile (in the Lounge too). A spectator comes in mid-round straight into the game, sees the lobby between rounds, and gets Play the Next Round (Play Instead in the lobby) once a seat is free. Hosts switch Spectators between Allowed (the default) and Off in the lobby and on the online Game Over card, remembered on their device; Off sends anyone watching away. Everyone sees who is watching, in the room's list and in the status pill.
+
+To the game, a spectator is a guest with seat -1 and `useOnline().watching`: it gets everything the host broadcasts (`send` without `to`, fast messages a few times a second) and never messages addressed to one seat, and its `send` and `reportResult` do nothing. So it should draw the host's state for every player, steer nothing, name the winner instead of saying You, and not wait for its own player to appear in a roster. Pong, Air Hockey, Sumo, Cox Box, Tank Maze and the Badminton app (through `useAppRoom().watching`) support it. Games where guests only see their own seat's view, or rebuild state from a hello, need a public broadcast first.
+
+The online Game Over card also lists who is still in the room (people, bots and spectators), so everyone sees who is there for the next round as people come and go.
+
 Invite links (`/?game=<id>&room=<code>`) open the game and join the room automatically. Online wins go to the game's Online Wins board when every player reports the same winner. After adding `online` to a game, run `npm run arcade:specs` and redeploy the Worker.
 
 ## Lounge
@@ -216,7 +233,7 @@ It connects only while the app is open (minimized included), through `LoungeLink
 
 ## Checklist
 
-- [ ] `games/<id>/meta.ts` exports `meta` with `meta.id === '<id>'` and every field filled
+- [ ] `games/<id>/meta.ts` exports `meta` with `meta.id === '<id>'` and every field filled, `howTo` included, and `music` unless the game is better quiet
 - [ ] `games/<id>/index.tsx` default exports the game wrapped in `<GameShell meta={meta} compact={compact} onExit={onExit}>`
 - [ ] CSS selectors and keyframes prefixed `.g-<id>` / `g-<id>-`
 - [ ] Uses `useGameLoop`, `useKeys`, `useCanvas` (or `useThree`) instead of raw rAF and listeners

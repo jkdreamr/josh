@@ -80,7 +80,8 @@ function Pong() {
     if (online.seat === 0 && from !== 0 && message.type === 'paddle' && typeof message.y === 'number' && Number.isFinite(message.y)) {
       st.remoteTarget = message.y;
     } else if (online.seat !== 0 && from === 0 && message.type === 'snapshot' && message.match && typeof message.match === 'object') {
-      st.match = mergeGuestSnapshot(st.match, message.match as typeof st.match);
+      // a spectator steers nothing, so both paddles are the host's
+      st.match = online.watching ? (message.match as typeof st.match) : mergeGuestSnapshot(st.match, message.match as typeof st.match);
     } else if (online.seat !== 0 && from === 0 && message.type === 'events' && Array.isArray(message.events)) {
       onEvents(message.events as PongEvent[]);
     }
@@ -161,7 +162,7 @@ function Pong() {
       if (dt <= 0) return;
       const m = st.match;
       const guest = !!online && online.seat !== 0;
-      const sides: Side[] = guest ? [1] : online ? [0] : st.mode === '2p' ? [0, 1] : [0];
+      const sides: Side[] = online?.watching ? [] : guest ? [1] : online ? [0] : st.mode === '2p' ? [0, 1] : [0];
       st.sendAt += dt;
       st.snapshotAt += dt;
       // Keyboard: 1P uses either cluster, 2P splits W/S and arrows.
@@ -175,7 +176,7 @@ function Pong() {
         else if (axis !== 0) movePaddle(m.paddles[side], axis * 95 * dt, dt);
         else m.paddles[side].vy *= Math.max(0, 1 - dt * 14);
       }
-      if (guest && st.sendAt >= 0.05) {
+      if (guest && !online!.watching && st.sendAt >= 0.05) {
         online!.send({ game: 'pong', type: 'paddle', y: m.paddles[1].y }, { fast: true });
         st.sendAt %= 0.05;
       }
@@ -193,7 +194,7 @@ function Pong() {
         }
       } else {
         const target = [...st.pointers.values()].find((p) => p.side === 1) ?? (st.hover?.side === 1 ? st.hover : null);
-        if (target) m.paddles[1].y += (target.y - m.paddles[1].y) * Math.min(1, dt * 12);
+        if (target && !online!.watching) m.paddles[1].y += (target.y - m.paddles[1].y) * Math.min(1, dt * 12);
       }
 
       if (m.serveIn <= 0 && m.winner === null) {
@@ -328,8 +329,13 @@ function Pong() {
       c.textAlign = 'center';
       c.textBaseline = 'top';
       c.fillStyle = 'rgba(255,255,255,0.3)';
-      c.fillText(st.mode === 'cpu' ? 'You' : 'Player 1', ox + (COURT.w / 2 - 22) * s, oy + 30 * s);
-      c.fillText(st.mode === 'cpu' ? `Computer · ${levelLabel(LEVEL_NAMES[st.level])}` : 'Player 2', ox + (COURT.w / 2 + 22) * s, oy + 30 * s);
+      // online, each side is the person playing it (a spectator, in mid-round, never saw the lobby set the mode)
+      const named = (side: Side) => {
+        const name = online!.players.find((player) => player.seat === side)?.name ?? `Player ${side + 1}`;
+        return side === online!.seat ? `${name} (You)` : name;
+      };
+      c.fillText(online ? named(0) : st.mode === 'cpu' ? 'You' : 'Player 1', ox + (COURT.w / 2 - 22) * s, oy + 30 * s);
+      c.fillText(online ? named(1) : st.mode === 'cpu' ? `Computer · ${levelLabel(LEVEL_NAMES[st.level])}` : 'Player 2', ox + (COURT.w / 2 + 22) * s, oy + 30 * s);
 
       if (st.flash > 0) {
         c.globalAlpha = st.flash * 0.35;

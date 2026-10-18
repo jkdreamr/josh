@@ -490,7 +490,6 @@ function Play({ mode }: { mode: StageMode }) {
           if (!rn) continue;
           rn.net = car;
           rn.netAt = rr.time;
-          rn.out = false;
         }
       } else if (p.k === 'end') {
         if (from !== 0 || o.isHost || n.end) return;
@@ -505,8 +504,8 @@ function Play({ mode }: { mode: StageMode }) {
       n.ticks++;
       const me = r.runners.find((x) => x.entry.kind === 'player');
       if (!o.isHost) {
-        // the host stops sending cars whose drivers left, so a car not heard of for two seconds is gone
-        for (const rn of r.runners) if (rn.entry.kind === 'remote' && rn.net && r.time - rn.netAt > 2) rn.out = true;
+        // someone who left the room drops out here too, rather than freezing on track
+        for (const rn of r.runners) if (rn.entry.kind === 'remote' && !o.players.some((p) => p.seat === rn.entry.seat) && !o.bots.some((b) => b.seat === rn.entry.seat)) rn.out = true;
         if (me) o.send(guestState(o.round, toNet(me)), { fast: n.ticks % 5 !== 0 && me.fin === null });
         return;
       }

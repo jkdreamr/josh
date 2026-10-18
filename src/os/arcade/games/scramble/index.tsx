@@ -69,7 +69,7 @@ const TOSS_WAIT = 0.8;
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} defaultBots={ROOM_BOTS} quickNote={QUICK_NOTE}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} defaultBots={ROOM_BOTS} quickNote={QUICK_NOTE} soloLabel="Play with Bots">
       <Stage />
     </GameShell>
   );

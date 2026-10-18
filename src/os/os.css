@@ -983,6 +983,7 @@ kbd {
   gap: 6px;
   z-index: 1;
   touch-action: none;
+  container: desk-icons / size;
 }
 .desk-icon {
   width: 92px;
@@ -1021,6 +1022,12 @@ kbd {
 .desk-icon:active .icon-tile,
 .desk-icon:active .icon-bare {
   transform: scale(0.94);
+}
+/* A short screen fits two icons per column, so narrow the columns to keep every icon on screen. */
+@container desk-icons (max-height: 300px) {
+  .desk-icon {
+    width: 82px;
+  }
 }
 .selection-marquee {
   position: absolute;

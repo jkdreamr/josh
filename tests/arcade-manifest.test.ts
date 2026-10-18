@@ -107,3 +107,21 @@ for (const folder of folders) {
     }
   });
 }
+
+// Games that show a How to Play of their own instead of the shell's card (party games put theirs on the setup step).
+const OWN_HOW_TO = new Set(['bedwars', 'chained', 'grand-prix', 'palmdrive', 'paperio', 'scramble']);
+const MUSIC_STYLES = ['chip', 'bouncy', 'synth', 'house', 'drive', 'tension', 'lofi', 'ambient'];
+for (const folder of folders) {
+  test(`game ${folder} has a How to Play and valid music`, async () => {
+    const dir = join(root, folder);
+    const { meta } = await import(pathToFileURL(join(dir, 'meta.ts')).href);
+    if (meta.music !== undefined) assert.ok(MUSIC_STYLES.includes(meta.music), `unknown music style ${meta.music}`);
+    if (meta.howTo !== undefined) {
+      assert.ok(Array.isArray(meta.howTo) && meta.howTo.length >= 2, 'howTo needs a few steps');
+      for (const step of meta.howTo) assert.ok(typeof step === 'string' && step.trim() && !/[–—]/.test(step), `bad howTo step: ${step}`);
+      return;
+    }
+    const own = OWN_HOW_TO.has(meta.id) || ((meta.category === 'party' || meta.category === 'drinking') && /<HowToPlay\b/.test(readFileSync(join(dir, 'index.tsx'), 'utf8')));
+    assert.ok(own, 'add meta.howTo, or a How to Play of the game\'s own');
+  });
+}

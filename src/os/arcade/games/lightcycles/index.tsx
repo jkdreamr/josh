@@ -164,6 +164,19 @@ function Cycles() {
     if (shell.status === 'ready' || !m.current || (online?.isHost && m.current.onlineRound !== online.round)) reset();
   }, [playMode, rivals, levelName, shell.status, online?.seat, online?.players.length, online?.bots.length, online?.round]);
 
+  // Someone who leaves mid-match hands their rider to the computer, on the host that runs the arena, rather than
+  // riding straight into the wall every round.
+  useEffect(() => {
+    const match = m.current;
+    if (!online?.isHost || !match || match.onlineRound !== online.round) return;
+    for (const seat of match.seats) {
+      if (match.bots.includes(seat) || online.players.some((p) => p.seat === seat)) continue;
+      match.bots.push(seat);
+      const rider = match.arena.riders[match.seats.indexOf(seat)];
+      if (rider) rider.cpu = true;
+    }
+  }, [online?.isHost, online?.players, online?.round]);
+
   const push = (rider: number, d: Dir) => {
     const match = m.current;
     if (!match || match.phase !== 'run') return;

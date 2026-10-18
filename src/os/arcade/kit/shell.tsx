@@ -7,9 +7,10 @@ import { KeyState, scrollKeys } from './keys';
 import { useHighScore } from './score';
 import { ARCADE_API, NAME_MAX, boardFor, cleanName, formatBoardScore, saveName, savedName } from './leaderboard';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
-import { sfx, useMuted } from './sfx';
+import { sfx, useMusicOn, useMuted } from './sfx';
+import { useBackgroundMusic } from './music';
 import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange, useSetting } from './settings';
-import { BotStepper, OnlinePanel, OnlineProvider, QuickPanel, ROOM_VISIBILITY, RoomCode, VisibilityPicker } from './online';
+import { BotStepper, OnlinePanel, OnlineProvider, QuickPanel, ROOM_VISIBILITY, ROOM_WATCHERS, RoomCode, RoomRoster, VisibilityPicker, WatchPicker } from './online';
 import { MAX_SEATS, botPlayers, canStartNext, nextOnlineRound, parseRacePacket, raceStandings, RoundRouter, type RaceScores } from './online-core';
 import { createRoom, quickRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { countPlay } from '../../stats';
@@ -44,9 +45,22 @@ export type GameShellProps = {
   defaultBots?: number;
   /** Quick play (games with `online.quick`): one line on its card about who else plays, e.g. that bots fill the rest. */
   quickNote?: string;
+  /** Quick play: the Start card's button for playing on this device with the game's own settings (default Play Offline). */
+  soloLabel?: string;
   className?: string;
   style?: CSSProperties;
 };
+
+/** What to tell someone the room is gone for, or turned them away (see RoomLink's closed event). */
+const closedReason = (reason: string) =>
+  ({
+    'host-left': 'Host Left',
+    'room-closed': 'The Room Closed',
+    'not-found': 'No Room Has That Code',
+    started: 'That Room Is Already Playing',
+    full: 'That Room Is Full',
+    'no-watching': 'The Host Turned Watching Off',
+  })[reason] ?? 'Connection Lost';
 
 /** How long keys are ignored on an online Game Over card after the round ends. */
 const KEY_LOCKOUT_MS = 900;
@@ -66,6 +80,8 @@ const ic = {
   restart: 'M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5',
   sound: 'M4 9.5h3.5L12 5.5v13l-4.5-4H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11',
   muted: 'M4 9.5h3.5L12 5.5v13l-4.5-4H4zM16.5 9.5l5 5M21.5 9.5l-5 5',
+  music: 'M9 18V6l11-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',
+  musicOff: 'M9 18V6l11-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM3 3l18 18',
   grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
   chat: 'M20 12.5a7.5 7.5 0 0 1-11 6.6L4 20.5l1.4-4.6A7.5 7.5 0 1 1 20 12.5z',
 };
@@ -81,7 +97,7 @@ const isTouchDevice = () =>
  * (pause, restart, mute, back to arcade), live score, key capture and auto-pause.
  * Put the game's logic in a child component and read the shell with useShell().
  */
-export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, botNames, defaultBots = 0, quickNote, roomCode, className, style }: GameShellProps) {
+export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, botNames, defaultBots = 0, quickNote, soloLabel = 'Play Offline', roomCode, className, style }: GameShellProps) {
   const host = useContext(ArcadeHost);
   const invite = useContext(ArcadeInvite);
   const joinCode = roomCode ?? invite;
@@ -96,6 +112,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [touch, setTouch] = useState(false);
   const { best, submit } = useHighScore(meta.id, { lowerIsBetter });
   const [muted, setMuted] = useMuted();
+  const [musicOn, setMusicOn] = useMusicOn();
+  /** The How to Play card is up over the Start or Pause card. */
+  const [howOpen, setHowOpen] = useState(false);
+  const howRef = useRef(false);
+  howRef.current = howOpen;
   const keys = useMemo(() => new KeyState(), []);
   const statusRef = useRef(status);
   statusRef.current = status;
@@ -138,6 +159,16 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [gatherAt, setGatherAt] = useState<number | null>(null);
   const quickTries = useRef(0);
   const findMatchRef = useRef<() => void>(() => {});
+  /**
+   * Spectating (games with `online.watch`): in as a spectator, who is watching the room, whether its host lets people
+   * watch (null: nobody can watch this game), and whether the room is playing a round right now.
+   */
+  const [watching, setWatching] = useState(false);
+  const [watchers, setWatchers] = useState<string[]>([]);
+  const [watchable, setWatchable] = useState<boolean | null>(null);
+  const [roomStarted, setRoomStarted] = useState(false);
+  const [, setWatchSetting] = useSetting(ROOM_WATCHERS);
+  const connectRef = useRef<(code: string, quickPlay?: boolean, watch?: boolean) => RoomLink>(null!);
   // The Lounge shows what you're playing, and your room while it's public, so people there can join you.
   usePlayingReport(compact ? null : meta.id, onlineLink && onlineListed && onlineCode ? onlineCode : null);
   const loungeUnread = useBadge('lounge');
@@ -160,6 +191,10 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
 
   useEffect(() => setTouch(!!os?.mobile || isTouchDevice()), [os?.mobile]);
   useEffect(() => sfx.retain(), []);
+  useBackgroundMusic(meta.id, compact ? undefined : meta.music, round, status === 'playing');
+  useEffect(() => {
+    if (status !== 'ready' && status !== 'paused') setHowOpen(false);
+  }, [status]);
   // Opening a game counts as a play, and so does every round after it. The New Tab strip counts only once someone starts it.
   useEffect(() => {
     if (!compact || autoStart) countPlay(meta.id);
@@ -266,6 +301,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setRoundSeats([]);
     setOnlineBots(null);
     setOnlineListed(null);
+    setWatchers([]);
+    setWatchable(null);
+    setRoomStarted(false);
   }, []);
 
   const leaveRoom = useCallback(() => {
@@ -286,6 +324,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineInProgress(false);
     setQuick(false);
     setGatherAt(null);
+    setWatching(false);
     clearBots();
   }, [clearBots, onlineLink]);
 
@@ -306,8 +345,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   }
 
   /** `quick`: a room quick play found. A room that says it is a quick-play room plays as one however it was joined. */
-  const connectRoom = useCallback((code: string, quickPlay = false) => {
+  const connectRoom = useCallback((code: string, quickPlay = false, watch = false) => {
     setOnlineError('');
+    setWatching(watch);
     setQuick(quickPlay);
     quickRef.current = quickPlay;
     setGatherAt(null);
@@ -315,7 +355,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineMode(false);
     setOnlineRound(0);
     setOnlineTransport('relay');
-    const link = new RoomLink(code, onlineName);
+    const link = new RoomLink(code, onlineName, ARCADE_API, { watch });
     raceRef.current = { link, seat: null, round: 0, scores: {} };
     setRaceScores({});
     setOnlineLink(link);
@@ -329,8 +369,13 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     link.on('msg', ({ from, d }) => router.receive(from, d, onlineModeRef.current || router.holding));
     link.on('welcome', (message) => {
       // Quick play only joins a match that is gathering: one under way (or over) means on to the next.
-      if (message.quick && (message.started || message.startIn === null)) {
+      if (message.quick && !message.watching && (message.started || message.startIn === null)) {
         link.close();
+        // a quick match someone picked from Open Rooms or a link, under way: watch it, when people can
+        if (!quickRef.current && message.started && message.watchable) {
+          connectRef.current(link.code, false, true);
+          return;
+        }
         if (quickTries.current++ < 3) findMatchRef.current();
         else {
           setOnlineLink(null);
@@ -350,15 +395,39 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineSeats(message.seats);
       setOnlinePlayers(message.players);
       setOnlineInProgress(message.started);
+      setRoomStarted(message.started);
       setOnlineBots(message.bots);
       const remembered = Math.min(Number(getSetting(botsSetting)), message.seats - 1);
       if (message.seat === 0 && message.bots && remembered > 0 && !message.quick) link.setBots(remembered);
+      // A spectator who comes in mid-round watches it from here: the game draws the host's next broadcasts.
+      if (message.watching && message.started) {
+        roundBotsRef.current = message.roundBots;
+        setRoundBots(message.roundBots);
+        roundSeatsRef.current = message.players.map((player) => player.seat);
+        setRoundSeats(roundSeatsRef.current);
+        raceRef.current.round = message.round;
+        setOnlineRound(message.round);
+        setOnlineOpen(false);
+        setOnlineInProgress(false);
+        onlineModeRef.current = true;
+        setOnlineMode(true);
+        start();
+      }
+    });
+    let watchSaid = false;
+    link.on('watchers', ({ names, on }) => {
+      setWatchers(names);
+      setWatchable(on);
+      // the host's own choice, the first time the room says (a quick-play room is everyone's, so it stays open)
+      if (!watchSaid && link.seat === 0 && !link.quick && on && getSetting(ROOM_WATCHERS) === 'off') link.setWatchable(false);
+      watchSaid = true;
     });
     link.on('gather', (ms) => setGatherAt(ms === null ? null : performance.now() + ms));
     link.on('bots', setOnlineBots);
     link.on('listed', setOnlineListed);
     // Someone joining for the next round sees when the one under way ends.
     link.on('started', (started) => {
+      setRoomStarted(started);
       if (!onlineModeRef.current) setOnlineInProgress(started);
     });
     // The host left and someone took over. Their game ran the round, so it's over; everyone stays in the room.
@@ -371,7 +440,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       // a card waiting on the round the old host ran waits no more
       setResult((r) => (r?.wait ? { ...r, wait: undefined } : r));
       if (onlineModeRef.current && statusRef.current === 'playing') {
-        const detail = quickRef.current ? 'The Match Ended With Them. Play Again for the Next One.' : seat === 0 ? 'You Are the Host Now.' : `${host?.name ?? 'Someone Else'} Is the Host Now.`;
+        const detail = quickRef.current && !link.watching ? 'The Match Ended With Them. Play Again for the Next One.' : seat === 0 ? 'You Are the Host Now.' : `${host?.name ?? 'Someone Else'} Is the Host Now.`;
         gameOver(undefined, { title: 'Host Left', detail });
       }
     });
@@ -383,12 +452,14 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       if (!onlineModeRef.current || statusRef.current !== 'playing' || quickRef.current) return;
       const left = players.filter((player) => roundSeatsRef.current.includes(player.seat)).length;
       if (left + roundBotsRef.current.length >= 2) return;
-      gameOver(undefined, { title: 'Opponent Left', detail: players.length > 1 ? 'Nobody Is Left in This Round.' : 'Your Opponent Left the Room.' });
+      if (link.watching) gameOver(undefined, { title: 'Round Over', detail: 'A Player Left, So Nobody Is Left to Play This Round.' });
+      else gameOver(undefined, { title: 'Opponent Left', detail: players.length > 1 ? 'Nobody Is Left in This Round.' : 'Your Opponent Left the Room.' });
     });
     link.on('transport', setOnlineTransport);
     link.on('start', ({ round: serverRound, bots, players }) => {
       setOnlineOpen(false);
       setOnlineInProgress(false);
+      setRoomStarted(true);
       roundBotsRef.current = bots;
       setRoundBots(bots);
       roundSeatsRef.current = players.map((player) => player.seat);
@@ -419,11 +490,17 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
         }
       });
     }
-    link.on('closed', ({ reason }) => {
+    link.on('closed', ({ reason, watch: canWatch }) => {
       // a quick-play room that filled up as we got there: another one
-      if (quickRef.current && link.seat === null && quickTries.current++ < 3) {
+      if (quickRef.current && link.seat === null && !link.watching && quickTries.current++ < 3) {
         link.close();
         findMatchRef.current();
+        return;
+      }
+      // A room that is playing (or full) and lets people watch: watch it, and take a seat once one opens up.
+      if (!quickRef.current && !link.watching && (reason === 'started' || reason === 'full') && canWatch) {
+        link.close();
+        connectRef.current(link.code, false, true);
         return;
       }
       onlineModeRef.current = false;
@@ -439,7 +516,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineMode(false);
       setOnlineCode('');
       setLostCode(link.code);
-      setOnlineError(reason === 'host-left' ? 'Host Left' : 'Connection Lost');
+      setOnlineError(closedReason(reason));
+      setWatching(false);
       setOnlineOpen(true);
       setStatus('ready');
       setGatherAt(null);
@@ -447,6 +525,33 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     });
     return link;
   }, [applyRaceScores, botsSetting, clearBots, gameOver, meta.online?.seats, onlineName, race, restart, router, start]);
+  connectRef.current = connectRoom;
+  /** A spectator takes a seat: out of the room as a spectator and straight back in to play the next round. */
+  const takeSeat = useCallback(() => {
+    if (!onlineLink) return;
+    const code = onlineLink.code;
+    keys.clear();
+    leaveRoom();
+    setResult(null);
+    setBoardOpen(false);
+    setScoreState(null);
+    setRound((r) => r + 1);
+    setStatus('ready');
+    setOnlineOpen(true);
+    connectRoom(code);
+  }, [connectRoom, keys, leaveRoom, onlineLink]);
+  /** Someone waiting for the next round watches this one: back in as a spectator, with Play the Next Round after it. */
+  const watchRound = useCallback(() => {
+    if (!onlineLink) return;
+    const code = onlineLink.code;
+    leaveRoom();
+    setOnlineOpen(true);
+    connectRoom(code, false, true);
+  }, [connectRoom, leaveRoom, onlineLink]);
+  const setRoomWatchable = useCallback((on: boolean) => {
+    setWatchSetting(on ? 'on' : 'off');
+    onlineLink?.setWatchable(on);
+  }, [onlineLink, setWatchSetting]);
 
   const makeRoom = useCallback(async () => {
     setOnlineBusy(true);
@@ -592,6 +697,14 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       if (t.closest?.('input, textarea, select, [contenteditable="true"]')) return;
       const st = statusRef.current;
       const onButton = t !== el && !!t.closest?.('button, a');
+      // How to Play is up: Escape closes it, and nothing starts or resumes behind it
+      if (howRef.current) {
+        if (onButton && (e.code === 'Enter' || e.code === 'Space')) return void e.stopPropagation();
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.code === 'Escape' && !e.repeat) setHowOpen(false);
+        return;
+      }
       if (e.code === 'Escape' || e.code === 'KeyP') {
         if (onlineMode) {
           if (e.code === 'KeyP') {
@@ -691,6 +804,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const setListed = useCallback((on: boolean) => onlineLink?.setListed(on), [onlineLink]);
   // Anyone can join between rounds, so the host can still open the room up (or close it) on the Game Over card.
   const hostListed = gameOnline && onlineSeat === 0 && onlineListed !== null ? <VisibilityPicker value={onlineListed ? 'public' : 'private'} onChange={(v) => setListed(v === 'public')} /> : null;
+  const hostWatch = gameOnline && onlineSeat === 0 && watchable !== null && !quick ? <WatchPicker value={watchable} onChange={setRoomWatchable} /> : null;
   // The race is between the people who started it and are still here; anyone who joined since waits for the next.
   const racers = onlinePlayers.filter((p) => !roundSeats.length || roundSeats.includes(p.seat)).map((p) => p.seat);
   const raceNow = race && gameOnline ? raceStandings(raceScores, racers, lowerIsBetter) : null;
@@ -743,6 +857,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       transport={onlineTransport}
       handoffs={onlineHandoffs}
       quick={quick}
+      watching={watching}
+      watchers={watchers}
     >
     <ShellContext.Provider value={api}>
       <div
@@ -766,7 +882,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
         </div>
 
         {score !== null && status !== 'ready' && <div className="arcade-score">{fmt(score)}</div>}
-        {gameOnline && status === 'playing' && <div className="arcade-online-status">{onlineTransport === 'direct' ? 'Direct' : 'Relayed'}</div>}
+        {gameOnline && status === 'playing' && <div className="arcade-online-status">{watching ? `Watching${watchers.length > 1 ? ` · ${watchers.length} Watching` : ''}` : onlineTransport === 'direct' ? 'Direct' : 'Relayed'}</div>}
 
         {!compact && (
           <div className="arcade-ctrl">
@@ -790,6 +906,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             <button type="button" aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute' : 'Mute'} onClick={ctl(() => setMuted(!muted))}>
               <Icon d={muted ? ic.muted : ic.sound} />
             </button>
+            {meta.music && (
+              <button type="button" aria-label={musicOn ? 'Music off' : 'Music on'} aria-pressed={musicOn} title={musicOn ? 'Music off' : 'Music on'} onClick={ctl(() => setMusicOn(!musicOn))}>
+                <Icon d={musicOn ? ic.music : ic.musicOff} />
+              </button>
+            )}
             {/* The Lounge opens next to the game (over it on a phone), so you can chat while you play. */}
             {os && (
               <button type="button" className={loungeUnread ? 'has-dot' : undefined} aria-label={loungeUnread ? `Lounge, ${loungeUnread} unread` : 'Lounge'} title="Lounge" onClick={() => os.open('lounge')}>
@@ -847,12 +968,20 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             onLeave={leaveRoom}
             onShare={os && onlineCode ? shareRoom : undefined}
             lastCode={lostCode}
+            watching={watching}
+            watchers={watchers}
+            watchable={watchable}
+            onWatchable={setRoomWatchable}
+            onTakeSeat={takeSeat}
+            onWatchRound={watchRound}
             note={race ? 'A score race: everyone plays their own round at the same time and the best score wins.' : undefined}
             setup={hostSetup}
           />
         )}
 
-        {status === 'ready' && !onlineOpen &&
+        {(status === 'ready' || status === 'paused') && !onlineOpen && !compact && howOpen && meta.howTo && <HowToCard meta={meta} onClose={() => setHowOpen(false)} />}
+
+        {status === 'ready' && !onlineOpen && !howOpen &&
           (compact ? (
             <button type="button" className="arcade-ov arcade-ov-compact" onClick={start}>
               {glyph}
@@ -871,13 +1000,13 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={quickOn ? () => play() : start} ref={autoFocus}>
                   Play
                 </button>
-                {/* with quick play, the game's settings are for playing alone, so they go with Play with Bots */}
+                {/* with quick play, the game's settings are for playing on this device, so they go with that button */}
                 {quickOn && (
                   <>
                     <div className="arcade-online-divider"><span>Or Alone</span></div>
                     {setup && <div className="arcade-setup">{setup}</div>}
                     <button type="button" className="arcade-btn arcade-btn-lg" onClick={start}>
-                      Play with Bots
+                      {soloLabel}
                     </button>
                   </>
                 )}
@@ -886,12 +1015,17 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     {quickOn ? 'Play with Friends' : 'Play Online'}
                   </button>
                 )}
+                {meta.howTo && (
+                  <button type="button" className="arcade-btn" onClick={() => setHowOpen(true)}>
+                    How to Play
+                  </button>
+                )}
                 {best !== null && <small>Best {fmt(best)}</small>}
               </div>
             </div>
           ))}
 
-        {status === 'paused' &&
+        {status === 'paused' && !howOpen &&
           (compact ? (
             <button type="button" className="arcade-ov arcade-ov-compact" onClick={resume}>
               <Icon d={ic.play} />
@@ -925,6 +1059,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     </button>
                   )}
                 </div>
+                {meta.howTo && (
+                  <button type="button" className="arcade-btn" onClick={() => setHowOpen(true)}>
+                    How to Play
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -1033,9 +1172,14 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                   </form>
                 )}
                 {setup && !gameOnline && <div className="arcade-setup">{setup}</div>}
-                {gameOnline && !quick && (hostListed || hostBots || hostSetup) && (
+                {/* who is still here for the next round, as people come and go */}
+                {gameOnline && (
+                  <RoomRoster players={onlinePlayers} bots={quick ? [] : lobbyBots ?? []} watchers={watchers} seat={onlineSeat} seats={quick ? 0 : onlineSeats} label={quick ? 'Still Here' : 'In the Room'} />
+                )}
+                {gameOnline && !quick && !watching && (hostListed || hostWatch || hostBots || hostSetup) && (
                   <div className="arcade-setup">
                     {hostListed}
+                    {hostWatch}
                     {hostBots}
                     {hostSetup}
                   </div>
@@ -1046,12 +1190,12 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 {gameOnline && quick ? (
                   <>
                     <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" disabled={waiting} onClick={() => playAgain()}>
-                      Play Again
+                      {watching ? 'Play' : 'Play Again'}
                     </button>
                     {waiting && <small>{result?.wait}</small>}
                     <div className="arcade-row">
                       <button type="button" className="arcade-btn" disabled={waiting} onClick={() => { toStart(); start(); }}>
-                        Play with Bots
+                        {soloLabel}
                       </button>
                       <button type="button" className="arcade-btn" onClick={toStart}>
                         Leave
@@ -1066,6 +1210,15 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     {waiting && <small>{result?.wait}</small>}
                     {!roomReady && !waiting && <small>{onlineListed ? 'Anyone Can Join From Open Rooms.' : 'Share the Code to Play Again.'}</small>}
                     {roomReady && stillRacing && !waiting && <small>Starting Now Ends the Round for Anyone Still Playing.</small>}
+                  </>
+                ) : watching ? (
+                  <>
+                    <p>{roomStarted ? 'The Next Round Is Starting.' : 'You Are Watching. The Next Round Shows Here When the Host Starts It.'}</p>
+                    {!roomStarted && onlinePlayers.length < onlineSeats && (
+                      <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={takeSeat}>
+                        Play the Next Round
+                      </button>
+                    )}
                   </>
                 ) : (
                   <p>{onlinePlayers.length < 2 ? 'Waiting For Players' : 'Waiting For The Host'}</p>
@@ -1101,6 +1254,28 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       </div>
     </ShellContext.Provider>
     </OnlineProvider>
+  );
+}
+
+/** The game's rules (meta.howTo) and its controls line, over the Start or Pause card. */
+function HowToCard({ meta, onClose }: { meta: GameMeta; onClose: () => void }) {
+  return (
+    <div className="arcade-ov">
+      <div className="arcade-card arcade-howto" role="dialog" aria-label={`How to play ${meta.title}`}>
+        <h2>How to Play</h2>
+        <ol>
+          {meta.howTo?.map((step, i) => (
+            <li key={i}>{step}</li>
+          ))}
+        </ol>
+        <p className="arcade-howto-controls">
+          <b>Controls</b> {meta.controls}
+        </p>
+        <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={onClose} ref={autoFocus}>
+          Got It
+        </button>
+      </div>
+    </div>
   );
 }
 

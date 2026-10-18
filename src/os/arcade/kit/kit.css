@@ -168,6 +168,46 @@
   color: rgba(245, 245, 247, 0.55);
   font-variant-numeric: tabular-nums;
 }
+/* How to Play: the rules as a numbered list over the Start or Pause card */
+.arcade-card.arcade-howto {
+  width: min(400px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.arcade-howto ol {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0;
+  padding: 0 0 0 22px;
+  text-align: left;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: rgba(245, 245, 247, 0.86);
+}
+.arcade-howto ol li::marker {
+  color: var(--accent);
+  font-weight: 650;
+}
+.arcade-card .arcade-howto-controls {
+  align-self: stretch;
+  margin: 2px 0 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  text-align: left;
+  font-size: 12.5px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.arcade-howto-controls b {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(245, 245, 247, 0.86);
+}
 .arcade-glyph {
   display: grid;
   place-items: center;
@@ -811,8 +851,19 @@
 .arcade-online-player small {
   font-size: 11px;
 }
-.arcade-online-player.is-bot {
+.arcade-online-player.is-bot,
+.arcade-online-player.is-watching {
   color: rgba(245, 245, 247, 0.7);
+}
+/* Who is still in the room, on the online Game Over card: kept short so Play Again stays in view on a phone. */
+.arcade-online-roster {
+  max-height: 132px;
+  overflow-y: auto;
+}
+@container arcade-ov (max-height: 440px) {
+  .arcade-online-roster {
+    max-height: 84px;
+  }
 }
 /* A line under the Private / Public choice saying who can join. */
 .arcade-online-hint {
