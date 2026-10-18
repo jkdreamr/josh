@@ -32,6 +32,32 @@
   transform: translateX(-50%);
   white-space: nowrap;
 }
+.g-solitaire .g-solitaire-hud-l {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* The shell's Direct/Relayed badge is centered at the top (about 70px wide), so the two halves sit either side. */
+.g-solitaire .is-online:not(.is-low) .g-solitaire-hud {
+  width: 0;
+  height: 28px;
+  transform: none;
+}
+.g-solitaire .is-online.is-touch:not(.is-low) .g-solitaire-hud {
+  height: 50px;
+}
+.g-solitaire .is-online:not(.is-low) .g-solitaire-hud > * {
+  position: absolute;
+  width: max-content;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.g-solitaire .is-online:not(.is-low) .g-solitaire-hud > .g-solitaire-hud-l {
+  right: 46px;
+}
+.g-solitaire .is-online:not(.is-low) .g-solitaire-hud > .g-solitaire-btn {
+  left: 46px;
+}
 .g-solitaire .g-solitaire-time,
 .g-solitaire .g-solitaire-mode {
   padding: 5px 10px;
@@ -118,6 +144,31 @@
 .g-solitaire .is-touch .g-solitaire-mode {
   font-size: 14px;
   padding: 8px 11px;
+}
+
+.g-solitaire .g-solitaire-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  text-align: left;
+}
+.g-solitaire .g-solitaire-field > span {
+  padding-left: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.6);
+}
+.g-solitaire .g-solitaire-field.is-touch > span {
+  font-size: 14px;
+}
+/* 50px and 15px stay over 40px and 11px on screen in the iPad frame. */
+.g-solitaire .arcade-seg.g-solitaire-seg.is-touch {
+  border-radius: 12px;
+}
+.g-solitaire .arcade-seg.g-solitaire-seg.is-touch > button {
+  height: 50px;
+  border-radius: 10px;
+  font-size: 15px;
 }
 
 .g-solitaire .g-solitaire-slot,

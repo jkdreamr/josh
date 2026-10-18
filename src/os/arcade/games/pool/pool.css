@@ -213,6 +213,15 @@
   .g-pool .arcade-seg > button {
     min-height: calc(40px * var(--g-pool-u, 1));
   }
+  /* Shell cards (Start, Paused, Game Over, Online) grow as a whole so their text and controls read at full size. */
+  .g-pool .arcade-ov > .arcade-card {
+    zoom: var(--g-pool-u, 1);
+  }
+  .g-pool .arcade-ov > .arcade-card .arcade-btn,
+  .g-pool .arcade-ov > .arcade-card .arcade-seg > button,
+  .g-pool .arcade-ov > .arcade-card .arcade-input {
+    min-height: 42px;
+  }
   .g-pool .g-pool-spin {
     scale: var(--g-pool-u, 1);
   }

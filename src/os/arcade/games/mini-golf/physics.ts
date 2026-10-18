@@ -2,9 +2,9 @@
 import type { Hole, Mover, V } from './holes';
 
 export const R = 0.14;
-export const CUP_R = 0.24;
+// A real cup is 4.25 in across for a 1.68 in ball, about 2.5 times the ball's radius.
+export const CUP_R = 0.34;
 export const STEP = 1 / 120;
-export const VMAX = 8;
 export const MAX_TICKS = 120 * 25;
 const ROLL = 1.05;
 const DRAG = 0.18;
@@ -29,7 +29,29 @@ export type Ball = {
 
 export const restBall = (x: number, z: number, t = 0): Ball => ({ x, z, vx: 0, vz: 0, t, state: 'rest', lip: false, loop: null, safe: { x, z } });
 
-export const shotSpeed = (power: number) => VMAX * Math.pow(Math.min(1, Math.max(0, power)), 1.2);
+// Power maps to how far the putt rolls on a flat green, so a short drag is a short putt.
+export const DMAX = 16.5;
+export const MIN_ROLL = 0.5;
+const CUP_SLOW = 3.5;
+const CUP_FAST = 5;
+
+export const shotDistance = (power: number) => (power > 0 ? Math.max(MIN_ROLL, Math.min(1, power) * DMAX) : 0);
+
+// Flat roll from speed v under dv/dt = -(ROLL + DRAG v).
+export const rollDistance = (v: number) => (v - (ROLL / DRAG) * Math.log(1 + (DRAG * v) / ROLL)) / DRAG;
+
+export function shotSpeed(power: number) {
+  const d = shotDistance(power);
+  if (!d) return 0;
+  let lo = 0;
+  let hi = 16;
+  for (let i = 0; i < 40; i++) {
+    const v = (lo + hi) / 2;
+    if (rollDistance(v) < d) lo = v;
+    else hi = v;
+  }
+  return (lo + hi) / 2;
+}
 
 const smooth = (a: number, b: number, v: number) => {
   const k = Math.min(1, Math.max(0, (v - a) / (b - a)));
@@ -335,8 +357,8 @@ export function step(h: Hole, b: Ball): StepEvent {
   sp = Math.hypot(b.vx, b.vz);
   const dc = Math.hypot(b.x - h.cup.x, b.z - h.cup.z);
   if (dc < CUP_R) {
-    const deep = dc < CUP_R - 0.35 * R;
-    if (sp < (deep ? 2.4 : 1.1)) {
+    // Drops when it arrives slowly, or runs close to the middle at a firm pace; anything quicker rides over and lips out.
+    if ((!b.lip && sp < CUP_SLOW) || (dc < CUP_R * 0.5 && sp < CUP_FAST) || sp < 1) {
       b.state = 'holed';
       b.x = h.cup.x;
       b.z = h.cup.z;
@@ -344,18 +366,18 @@ export function step(h: Hole, b: Ball): StepEvent {
       ev.cup = true;
       return ev;
     }
-    if (!b.lip) {
-      b.lip = true;
-      ev.lip = true;
-      const cross = ((b.x - h.cup.x) * b.vz - (b.z - h.cup.z) * b.vx) / (sp * CUP_R || 1);
-      const a = Math.max(-0.6, Math.min(0.6, cross * 0.5));
-      const c = Math.cos(a);
-      const s = Math.sin(a);
-      const vx = (b.vx * c - b.vz * s) * 0.82;
-      b.vz = (b.vx * s + b.vz * c) * 0.82;
-      b.vx = vx;
-    }
-  } else if (dc > CUP_R + 0.05) b.lip = false;
+    b.lip = true;
+  } else if (b.lip) {
+    b.lip = false;
+    ev.lip = true;
+    const cross = ((b.x - h.cup.x) * b.vz - (b.z - h.cup.z) * b.vx) / (sp * CUP_R || 1);
+    const a = Math.max(-0.6, Math.min(0.6, cross * 0.5));
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    const vx = (b.vx * c - b.vz * s) * 0.82;
+    b.vz = (b.vx * s + b.vz * c) * 0.82;
+    b.vx = vx;
+  }
   if (sp < REST_V) {
     const g2 = grad(h, b.x, b.z);
     if (GR * Math.hypot(g2.gx, g2.gz) < ROLL) {

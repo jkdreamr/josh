@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { distTo, planNow } from '../src/os/arcade/games/mini-golf/bot.ts';
 import { HOLES, TOTAL_PAR } from '../src/os/arcade/games/mini-golf/holes.ts';
-import { MAX_STROKES, applyPutt, forfeitHole, holeDone, label, newMatch, nextUp, startHole, total, winner, type Golfer } from '../src/os/arcade/games/mini-golf/match.ts';
+import { MAX_STROKES, applyPutt, forfeitHole, holeDone, label, newMatch, nextUp, overDetail, startHole, total, winner, type Golfer } from '../src/os/arcade/games/mini-golf/match.ts';
 import { parse } from '../src/os/arcade/games/mini-golf/net.ts';
-import { inside, restBall, simulate, strike } from '../src/os/arcade/games/mini-golf/physics.ts';
+import { CUP_R, MIN_ROLL, R, inside, restBall, shotDistance, simulate, strike, type Ball } from '../src/os/arcade/games/mini-golf/physics.ts';
 
 const golfers = (n: number): Golfer[] => Array.from({ length: n }, (_, i) => ({ name: `G${i}`, color: '#fff', kind: 'human', level: 'normal', left: false }));
 
@@ -34,7 +34,36 @@ test('a soft putt rolls a little and stops', () => {
   const h = HOLES[0];
   const end = simulate(h, strike(restBall(h.tee.x, h.tee.z), 0, 0.2, 0));
   assert.equal(end.state, 'rest');
-  assert.ok(end.x > h.tee.x + 0.3 && end.x < h.tee.x + 3);
+  assert.ok(end.x > h.tee.x + 2.5 && end.x < h.tee.x + 4.2);
+});
+
+// A big flat green with the cup at (cx, 0).
+const flat = (cx = 40) => ({ ...HOLES[0], ground: [], ponds: [], posts: [], movers: [], walls: [], loop: undefined, tee: { x: 0, z: 0 }, cup: { x: cx, z: 0 }, outline: [{ x: -50, z: -50 }, { x: 50, z: -50 }, { x: 50, z: 50 }, { x: -50, z: 50 }] });
+const roll = (x: number, z: number, vx: number): Ball => ({ ...restBall(x, z), state: 'roll', vx });
+
+test('putt distance grows in step with power, so short putts are short', () => {
+  const h = flat();
+  for (const [p, lo, hi] of [[0.1, 1.4, 1.9], [0.2, 3, 3.6], [0.5, 7.6, 8.8], [1, 15.5, 17.5]]) {
+    const end = simulate(h, strike(restBall(0, 0), 0, p, 0));
+    assert.ok(end.x > lo && end.x < hi, `power ${p} rolled ${end.x.toFixed(2)} ft`);
+    assert.ok(Math.abs(end.x - shotDistance(p)) < 0.15, `preview length matches the roll at ${p}`);
+  }
+  const tiny = simulate(h, strike(restBall(0, 0), 0, 0.01, 0));
+  assert.ok(tiny.x > MIN_ROLL - 0.05, 'the softest putt still moves the ball');
+});
+
+test('a light tap holes a short putt', () => {
+  for (const [d, p] of [[1, 0.1], [2, 0.15], [3, 0.22]]) assert.equal(simulate(flat(d), strike(restBall(0, 0), 0, p, 0)).state, 'holed', `${d} ft at ${p}`);
+});
+
+test('the cup is sized like a real one and takes firm putts through the middle', () => {
+  assert.ok(CUP_R / R > 2.3 && CUP_R / R < 2.7);
+  const h = flat(5);
+  const edge = 5 - CUP_R - 0.005;
+  assert.equal(simulate(h, roll(edge, 0.8 * CUP_R, 3.3)).state, 'holed', 'slow ball dropping on the edge');
+  assert.notEqual(simulate(h, roll(edge, 0.8 * CUP_R, 4.2)).state, 'holed', 'quick ball on the edge lips out');
+  assert.equal(simulate(h, roll(edge, 0, 4.8)).state, 'holed', 'firm ball through the middle');
+  assert.notEqual(simulate(h, roll(edge, 0, 6)).state, 'holed', 'a blast rides over');
 });
 
 test('Palm Drive can be aced and the Dish loop can be cleared', () => {
@@ -91,6 +120,18 @@ test('farthest from the cup putts next, winner is the lowest total', () => {
   assert.equal(winner(m), 0);
   forfeitHole(m, 0);
   assert.equal(m.lies[0].done, true);
+});
+
+test('online game over names the winner score and the people in the room', () => {
+  const m = newMatch([...golfers(2), { name: 'Ellie', color: '#fff', kind: 'bot', level: 'normal', left: false }]);
+  m.card = [[7, 7, 7], [6, 6, 6], [2, 3, 2]].map((r) => [...r, ...Array(6).fill(-1)]);
+  const w = winner(m);
+  assert.equal(w, 2);
+  const d = overDetail(m, 0, w, ['You', 'Sam']);
+  assert.match(d, /Ellie took 7 strokes/);
+  assert.match(d, /You took 21/);
+  assert.match(d, /2 people here: You and Sam/);
+  assert.match(overDetail(m, 2, 2, ['Sam']), /^You took 7 strokes\. 1 person here: Sam\.$/);
 });
 
 test('score names', () => {

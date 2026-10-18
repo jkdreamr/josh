@@ -51,7 +51,8 @@ export type StatePacket = {
 };
 
 export type EndPacket = { k: 'end'; roomRound: number; winner: number | null; champ: number | null; scores: number[]; rounds: number };
-export type InputPacket = { k: 'in'; roomRound: number; turn: -1 | 0 | 1; move: -1 | 0 | 1; fireCount: number };
+/** `dir` is the player's screen heading (see TankInput), sent as milliradians in `d`. */
+export type InputPacket = { k: 'in'; roomRound: number; turn: -1 | 0 | 1; move: -1 | 0 | 1; fireCount: number; dir?: number };
 
 export type Packet = RoundPacket | StatePacket | EndPacket | InputPacket;
 
@@ -93,7 +94,15 @@ export const statePacket = (p: Omit<StatePacket, 'k'>) => ({
 });
 
 export const endPacket = (p: EndPacket) => ({ game: 'tank-maze', type: 'end', room: p.roomRound, winner: p.winner, champ: p.champ, scores: p.scores, rounds: p.rounds });
-export const inputPacket = (p: InputPacket) => ({ game: 'tank-maze', type: 'in', room: p.roomRound, turn: p.turn, move: p.move, fc: p.fireCount });
+export const inputPacket = (p: InputPacket) => ({
+  game: 'tank-maze',
+  type: 'in',
+  room: p.roomRound,
+  turn: p.turn,
+  move: p.move,
+  fc: p.fireCount,
+  ...(p.dir !== undefined && Number.isFinite(p.dir) ? { d: Math.round(p.dir * 1000) } : {}),
+});
 
 // -----------------------------------------------------------------------------------------------------------------
 // Parser
@@ -203,7 +212,9 @@ export function parsePacket(value: unknown): Packet | null {
       const move = p.move as number;
       const fc = p.fc as number;
       if (turn < -1 || turn > 1 || move < -1 || move > 1 || fc < 0 || fc > 1e9) return null;
-      return { k: 'in', roomRound, turn: turn as -1 | 0 | 1, move: move as -1 | 0 | 1, fireCount: fc };
+      if (p.d !== undefined && (!int(p.d) || Math.abs(p.d as number) > 3200)) return null;
+      const dir = p.d === undefined ? undefined : (p.d as number) / 1000;
+      return { k: 'in', roomRound, turn: turn as -1 | 0 | 1, move: move as -1 | 0 | 1, fireCount: fc, ...(dir === undefined ? {} : { dir }) };
     }
   }
   return null;

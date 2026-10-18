@@ -2,7 +2,7 @@
 import type { T } from './gl';
 import { createGL, disposeTree, damp } from './gl';
 import type { Decor, Hole } from './holes';
-import { type Ball, CUP_R, R, ballPos, height, segments, slidePos, sweepAngle } from './physics';
+import { type Ball, CUP_R, R, WALL_R, ballPos, height, segments, shotDistance, slidePos, sweepAngle } from './physics';
 
 type Three = typeof import('three');
 export type BallView = { ball: Ball | null; color: string; ghost: boolean };
@@ -62,20 +62,27 @@ export function build(THREE: Three, host: HTMLElement): World | null {
   const shadowGeo = new THREE.CircleGeometry(R * 1.05, 18);
   const ballGeo = new THREE.SphereGeometry(R, 20, 14);
 
+  // The aim preview is a dotted line out to where a putt that strength stops on a flat green.
   const aimGroup = new THREE.Group();
   const aimMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false });
-  const shaft = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), aimMat);
-  shaft.rotation.x = -Math.PI / 2;
+  const dotGeo = new THREE.CircleGeometry(0.038, 10).rotateX(-Math.PI / 2);
+  const DOT_GAP = 0.26;
+  const dots: T.Mesh[] = [];
+  for (let i = 0; i < 72; i++) {
+    const d = new THREE.Mesh(dotGeo, aimMat);
+    dots.push(d);
+    aimGroup.add(d);
+  }
+  const endMark = new THREE.Mesh(new THREE.RingGeometry(R * 0.82, R * 1.12, 28).rotateX(-Math.PI / 2), aimMat);
+  aimGroup.add(endMark);
   const tri = (pts: number[]) => {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute([pts[0], pts[1], 0, pts[2], pts[3], 0, pts[4], pts[5], 0], 3));
     g.computeVertexNormals();
     return g;
   };
-  const head = new THREE.Mesh(tri([0, 0.17, 0, -0.17, 0.26, 0]), aimMat);
-  head.rotation.x = -Math.PI / 2;
-  aimGroup.add(shaft, head);
   aimGroup.visible = false;
+  aimGroup.renderOrder = 2;
   scene.add(aimGroup);
 
   type Fx = { o: T.Mesh; life: number; max: number; kind: 'ring' | 'bit'; vx?: number; vy?: number; vz?: number };
@@ -253,6 +260,36 @@ export function build(THREE: Three, host: HTMLElement): World | null {
     }
   }
 
+  function onGround(h: Hole, r0: number, r1: number, color: string, lift: number) {
+    const g = new THREE.RingGeometry(r0, r1, 40, 2).rotateX(-Math.PI / 2);
+    const pos = g.getAttribute('position');
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i) + h.cup.x;
+      const z = pos.getZ(i) + h.cup.z;
+      pos.setXYZ(i, x, height(h, x, z) + lift, z);
+    }
+    g.computeVertexNormals();
+    const m = new THREE.MeshBasicMaterial({ color, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+    return mesh(g, m);
+  }
+
+  // How far a putt from (x, z) along `angle` can go before its center meets a wall.
+  function clearRun(h: Hole, x: number, z: number, angle: number, max: number) {
+    const dx = Math.cos(angle);
+    const dz = Math.sin(angle);
+    let best = max;
+    for (const sg of segments(h)) {
+      const ex = sg.bx - sg.ax;
+      const ez = sg.bz - sg.az;
+      const den = dx * ez - dz * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      const t = ((sg.ax - x) * ez - (sg.az - z) * ex) / den;
+      const u = ((sg.ax - x) * dz - (sg.az - z) * dx) / den;
+      if (t > 0 && u >= 0 && u <= 1) best = Math.min(best, t - WALL_R / Math.max(0.2, Math.abs(den) / Math.hypot(ex, ez)));
+    }
+    return Math.max(0, best);
+  }
+
   function setHole(h: Hole, fly: boolean) {
     disposeTree(root);
     scene.remove(root);
@@ -280,10 +317,9 @@ export function build(THREE: Three, host: HTMLElement): World | null {
     const tee = mesh(new THREE.PlaneGeometry(0.7, 0.6), lam('#2f7d3e'), h.tee.x, ty, h.tee.z);
     tee.rotation.x = -Math.PI / 2;
     const cy = height(h, h.cup.x, h.cup.z);
-    const cup = mesh(new THREE.CircleGeometry(CUP_R, 28), new THREE.MeshBasicMaterial({ color: '#141712' }), h.cup.x, cy + 0.006, h.cup.z);
-    cup.rotation.x = -Math.PI / 2;
-    const rim = mesh(new THREE.RingGeometry(CUP_R, CUP_R + 0.035, 28), lam('#f4f1ea'), h.cup.x, cy + 0.007, h.cup.z);
-    rim.rotation.x = -Math.PI / 2;
+    // Drawn on the turf itself (the green dips toward the cup), so the whole hole and its liner show.
+    onGround(h, 0, CUP_R, '#101310', 0.004);
+    onGround(h, CUP_R - 0.04, CUP_R, '#f1eee6', 0.005);
     const f = new THREE.Group();
     f.position.set(h.cup.x + CUP_R * 0.55, cy, h.cup.z);
     root.add(f);
@@ -508,13 +544,20 @@ export function build(THREE: Three, host: HTMLElement): World | null {
         return;
       }
       aimGroup.visible = true;
-      const len = 0.35 + a.power * 2.3;
-      aimGroup.position.set(a.x, height(hole, a.x, a.z) + 0.03, a.z);
+      const y0 = height(hole, a.x, a.z);
+      const full = shotDistance(a.power);
+      const run = clearRun(hole, a.x, a.z, a.angle, full);
+      const dx = Math.cos(a.angle);
+      const dz = Math.sin(a.angle);
+      aimGroup.position.set(a.x, y0, a.z);
       aimGroup.rotation.y = -a.angle;
-      shaft.scale.set(len, 0.07 + a.power * 0.05, 1);
-      shaft.position.x = R + len / 2;
-      head.position.x = R + len;
-      head.scale.setScalar(0.8 + a.power * 0.5);
+      dots.forEach((d, i) => {
+        const at = R + 0.12 + i * DOT_GAP;
+        d.visible = at < run - (run < full ? 0 : R);
+        if (d.visible) d.position.set(at, height(hole!, a.x + dx * at, a.z + dz * at) - y0 + 0.02, 0);
+      });
+      endMark.visible = run >= full;
+      if (endMark.visible) endMark.position.set(full, height(hole, a.x + dx * full, a.z + dz * full) - y0 + 0.02, 0);
       const c = new THREE.Color('#ffffff').lerp(new THREE.Color(a.power > 0.55 ? '#f0533f' : '#ffd24a'), a.power > 0.55 ? (a.power - 0.55) / 0.45 : a.power / 0.55);
       aimMat.color.copy(c);
     },

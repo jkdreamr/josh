@@ -1,16 +1,28 @@
 import { useSyncExternalStore } from 'react';
 
 export type SfxName = 'blip' | 'select' | 'jump' | 'coin' | 'hit' | 'boom' | 'win' | 'lose' | 'tick';
-export type Tone = { freq: number; to?: number; dur?: number; type?: OscillatorType; vol?: number; delay?: number };
+/** `music` sends the note through the music bus, which the shell fades out on pause and the music switch turns off. */
+export type Tone = { freq: number; to?: number; dur?: number; type?: OscillatorType; vol?: number; delay?: number; music?: boolean };
 
 const MUTE_KEY = 'arcade:muted';
+const MUSIC_KEY = 'arcade:music';
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
+let musicBus: GainNode | null = null;
+/** Level of the background music under the sound effects. */
+const MUSIC_LEVEL = 0.75;
 let muted = (() => {
   try {
     return typeof window !== 'undefined' && window.localStorage.getItem(MUTE_KEY) === '1';
   } catch {
     return false;
+  }
+})();
+let musicOn = (() => {
+  try {
+    return typeof window === 'undefined' || window.localStorage.getItem(MUSIC_KEY) !== '0';
+  } catch {
+    return true;
   }
 })();
 const subs = new Set<() => void>();
@@ -25,6 +37,9 @@ function audio(): AudioContext | null {
       master = ctx.createGain();
       master.gain.value = 0.5;
       master.connect(ctx.destination);
+      musicBus = ctx.createGain();
+      musicBus.gain.value = 0;
+      musicBus.connect(master);
     } catch {
       return null;
     }
@@ -49,10 +64,10 @@ if (typeof document !== 'undefined') {
   });
 }
 
-function tone({ freq, to, dur = 0.12, type = 'square', vol = 0.18, delay = 0 }: Tone) {
+function tone({ freq, to, dur = 0.12, type = 'square', vol = 0.18, delay = 0, music = false }: Tone) {
   if (muted) return;
   const ac = audio();
-  if (!ac || !master) return;
+  if (!ac || !master || !musicBus) return;
   const t = ac.currentTime + delay;
   const o = ac.createOscillator();
   const g = ac.createGain();
@@ -61,15 +76,15 @@ function tone({ freq, to, dur = 0.12, type = 'square', vol = 0.18, delay = 0 }: 
   if (to) o.frequency.exponentialRampToValueAtTime(Math.max(1, to), t + dur);
   g.gain.setValueAtTime(vol, t);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(master);
+  o.connect(g).connect(music ? musicBus : master);
   o.start(t);
   o.stop(t + dur + 0.02);
 }
 
-function noise(dur = 0.25, vol = 0.25, delay = 0) {
+function noise(dur = 0.25, vol = 0.25, delay = 0, music = false) {
   if (muted) return;
   const ac = audio();
-  if (!ac || !master) return;
+  if (!ac || !master || !musicBus) return;
   const len = Math.max(1, Math.floor(ac.sampleRate * dur));
   const buf = ac.createBuffer(1, len, ac.sampleRate);
   const d = buf.getChannelData(0);
@@ -78,7 +93,7 @@ function noise(dur = 0.25, vol = 0.25, delay = 0) {
   const g = ac.createGain();
   g.gain.value = vol;
   src.buffer = buf;
-  src.connect(g).connect(master);
+  src.connect(g).connect(music ? musicBus : master);
   src.start(ac.currentTime + delay);
 }
 
@@ -122,7 +137,26 @@ export const sfx = {
   clock(): number | null {
     return !muted && ctx && ctx.state === 'running' ? ctx.currentTime : null;
   },
+  /** Fades the music bus in or out, cutting notes already scheduled (the shell does this as a round plays and stops). */
+  fadeMusic(on: boolean) {
+    if (!ctx || !musicBus) return;
+    const t = ctx.currentTime;
+    musicBus.gain.cancelScheduledValues(t);
+    musicBus.gain.setValueAtTime(musicBus.gain.value, t);
+    musicBus.gain.linearRampToValueAtTime(on ? MUSIC_LEVEL : 0, t + (on ? 0.05 : 0.12));
+  },
   isMuted: () => muted,
+  /** The shared Music switch: whether games play their background music. */
+  isMusicOn: () => musicOn,
+  setMusicOn(on: boolean) {
+    musicOn = on;
+    try {
+      window.localStorage.setItem(MUSIC_KEY, on ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+    subs.forEach((f) => f());
+  },
   setMuted(m: boolean) {
     muted = m;
     try {
@@ -142,6 +176,12 @@ export const sfx = {
     };
   },
 };
+
+/** Reactive Music switch, shared by every game. */
+export function useMusicOn(): [boolean, (on: boolean) => void] {
+  const on = useSyncExternalStore(sfx.subscribe, sfx.isMusicOn, () => true);
+  return [on, sfx.setMusicOn];
+}
 
 /** Reactive muted flag, shared by every game. */
 export function useMuted(): [boolean, (m: boolean) => void] {

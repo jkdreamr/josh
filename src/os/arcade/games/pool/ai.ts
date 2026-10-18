@@ -294,6 +294,53 @@ function legalize(
   return shot;
 }
 
+function breakShot(game: Game, yOff: number, power: number, spin: number): Shot {
+  const place = clampPlace(game, HEAD_X * 0.6, W / 2 + yOff) ?? clampPlace(game, HEAD_X * 0.5, W / 2);
+  const from = place ?? { x: game.balls[0].x, y: game.balls[0].y };
+  // aim at the apex ball (smallest x in the rack)
+  let apex = game.balls[1];
+  for (const b of game.balls) if (!b.down && b.id !== 0 && b.x < apex.x) apex = b;
+  const dir = unit(apex.x - from.x, apex.y - from.y);
+  const shot: Shot = { dx: dir.x, dy: dir.y, power, spin };
+  if (place) shot.place = place;
+  return shot;
+}
+
+// grade a break for the breaker: any foul is out, then balls down and keeping the table
+function breakScore(game: Game, shot: Shot): number {
+  const sim = runSim(startShot(cloneGame(game), shot));
+  const g2 = resolve(cloneGame(game), shot, sim);
+  if (g2.foul) return -1000;
+  const down = sim.potted.filter((id) => id !== 0).length;
+  return down * 100 + (g2.turn === game.turn ? 60 : 0) + sim.breakRails.length;
+}
+
+// Easy breaks softer, Hard harder and picks the best of its tries; every level
+// simulates its break and drops tries that scratch or fail the four-rail rule.
+function chooseBreak(game: Game, level: Level, rand: () => number, deadline: number): Shot {
+  const base = level === 2 ? 1 : level === 1 ? 0.95 : 0.75 + rand() * 0.15;
+  const tries: Shot[] = [breakShot(game, (rand() - 0.5) * 0.1, base, 0)];
+  for (const spin of [-0.4, 0, -0.8, 0.3]) {
+    for (const yOff of [0, 0.04, -0.04, 0.08, -0.08]) {
+      for (const p of level === 0 ? [base, 0.9] : [base, base - 0.05]) tries.push(breakShot(game, yOff, p, spin));
+    }
+  }
+  let best = tries[0];
+  let bestS = -Infinity;
+  for (let i = 0; i < tries.length; i++) {
+    // always look at a handful even on a slow machine, so a foul is never chosen for lack of time
+    if (i >= 6 && performance.now() > deadline) break;
+    const s = breakScore(game, tries[i]);
+    if (s > bestS) {
+      bestS = s;
+      best = tries[i];
+    }
+    if (s > -1000 && level < 2) break; // easy and normal take the first clean break
+    if (level === 2 && i >= 12 && bestS > 100) break;
+  }
+  return best;
+}
+
 export function chooseShot(game: Game, level: Level, opts?: { budgetMs?: number; seed?: number }): Shot {
   const t0 = performance.now();
   const budget = opts?.budgetMs ?? BUDGET[level];
@@ -302,19 +349,7 @@ export function chooseShot(game: Game, level: Level, opts?: { budgetMs?: number;
   const me = game.turn;
 
   // --- the break ---
-  if (game.phase === 'break') {
-    const yOff = (rand() - 0.5) * 0.1;
-    const place = clampPlace(game, HEAD_X * 0.6, W / 2 + yOff) ?? clampPlace(game, HEAD_X * 0.5, W / 2);
-    const from = place ?? { x: game.balls[0].x, y: game.balls[0].y };
-    // aim at the apex ball (smallest x in the rack)
-    let apex = game.balls[1];
-    for (const b of game.balls) if (!b.down && b.id !== 0 && b.x < apex.x) apex = b;
-    const dir = unit(apex.x - from.x, apex.y - from.y);
-    const power = level === 2 ? 1 : level === 1 ? 0.95 : 0.75 + rand() * 0.15;
-    const shot: Shot = { dx: dir.x, dy: dir.y, power };
-    if (place) shot.place = place;
-    return shot;
-  }
+  if (game.phase === 'break') return chooseBreak(game, level, rand, t0 + budget);
 
   const on8 = game.groups[me] !== null && remaining(game, game.groups[me] as Group).length === 0;
   const cands = candidates(game, me);

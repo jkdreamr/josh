@@ -50,7 +50,7 @@ export default function HomeScreen() {
   const dock = os.tablet ? tabletDock : mobileDock;
   const items = useMemo<Item[]>(
     () => [
-      ...dockOrder.filter((id) => !dock.includes(id)).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: (from: Origin) => os.open(id, {}, from) })),
+      ...dockOrder.filter((id) => !dock.includes(id) && !apps[id].laptopOnly).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: (from: Origin) => os.open(id, {}, from) })),
       ...games.filter((id) => !dockOrder.includes(id) && !dock.includes(id)).map((id) => ({ key: id, label: apps[id].title, icon: apps[id].icon, run: (from: Origin) => os.open(id, {}, from) })),
       ...folders.map((f) => ({ key: f.id, label: f.label, icon: 'folder' as IconKind, run: (from: Origin) => os.open('finder', { folder: f.id }, from) })),
     ],

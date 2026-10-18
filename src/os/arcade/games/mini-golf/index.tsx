@@ -3,7 +3,7 @@ import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelOptions, sfx, us
 import type { GameProps } from '../../types';
 import { planner, rng, type Level, type Plan } from './bot';
 import { TOTAL_PAR } from './holes';
-import { BOT_NAMES, COLORS, MAX_STROKES, applyPutt, fmtPar, forfeitHole, hole, holeDone, label, lastHole, newMatch, nextUp, startHole, toPar, total, winner, type Golfer, type Match, type Outcome } from './match';
+import { BOT_NAMES, COLORS, MAX_STROKES, applyPutt, fmtPar, forfeitHole, hole, holeDone, label, lastHole, newMatch, nextUp, overDetail, startHole, toPar, total, winner, type Golfer, type Match, type Outcome } from './match';
 import { GAME, parse, type Result, type Sync } from './net';
 import { MAX_TICKS, R, STEP, height, restBall, step, strike, simulate, type Ball } from './physics';
 import { build, type BallView, type World } from './scene';
@@ -97,7 +97,7 @@ function Golf() {
   const [cardOpen, setCardOpen] = useState(false);
   const [hint, setHint] = useState(true);
   const drag = useRef<{ id: number; sx: number; sy: number; x: number; y: number } | null>(null);
-  const aim = useRef({ angle: 0, power: 0, keys: false, holding: false });
+  const aim = useRef({ angle: 0, power: 0, keys: false, holding: false, since: 0 });
   const keys = useKeys((code) => {
     const s = st.current;
     if (!s || shell.status !== 'playing') return;
@@ -155,7 +155,7 @@ function Golf() {
     const s = makeState();
     st.current = s;
     drag.current = null;
-    aim.current = { angle: 0, power: 0, keys: false, holding: false };
+    aim.current = { angle: 0, power: 0, keys: false, holding: false, since: 0 };
     world.current?.setHole(hole(s.m), true);
     world.current?.aim(null);
     setBanner(null);
@@ -186,6 +186,30 @@ function Golf() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [THREE]);
+
+  // Phone and iPad frames scale the game down; grow the game's own buttons back so they stay finger sized.
+  useEffect(() => {
+    const el = shell.root.current;
+    if (!el || !shell.touch) return;
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+        el.style.setProperty('--g-mini-golf-u', (k > 0.2 && k < 0.99 ? Math.min(2, 1 / k) : 1).toFixed(3));
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+      el.style.removeProperty('--g-mini-golf-u');
+    };
+  }, [shell.touch, shell.root]);
 
   useEffect(() => {
     world.current?.resize(size.w, size.h);
@@ -353,9 +377,8 @@ function Golf() {
     if (online) {
       const seat = w === null ? null : s.seats[w];
       online.reportResult(online.round, seat);
-      const mine = s.me >= 0 ? `${total(s.m, s.me)} strokes, ${fmtPar(toPar(s.m, s.me))}.` : '';
       sfx.play(w === s.me ? 'win' : 'lose');
-      shell.gameOver(undefined, { title: w === null ? 'All Square' : w === s.me ? 'You Win' : `${nameOf(w)} Wins`, detail: mine });
+      shell.gameOver(undefined, { title: w === null ? 'All Square' : w === s.me ? 'You Win' : `${nameOf(w)} Wins`, detail: overDetail(s.m, s.me, w, online.players.map((p) => (p.seat === online.seat ? 'You' : p.name))) });
       return;
     }
     if (s.humans === 1) {
@@ -557,9 +580,12 @@ function Golf() {
         }
         const hold = keys.down('Space', 'ArrowUp', 'Enter');
         if (hold) {
+          // Charged from wall time, so a slow frame rate doesn't weaken the putt.
+          const now = performance.now();
+          if (!a.holding) a.since = now;
           a.keys = true;
           a.holding = true;
-          a.power = Math.min(1, a.power + dt * 0.75);
+          a.power = Math.min(1, ((now - a.since) / 1000) * 0.75);
         } else if (a.holding) {
           a.holding = false;
           if (a.power > 0.04) shoot(me, a.angle, a.power);

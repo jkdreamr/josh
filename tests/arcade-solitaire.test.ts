@@ -19,6 +19,7 @@ import {
   redealFor,
   pileCards,
   score,
+  shortcut,
   shuffled,
   undo,
   MAX_SCORE,
@@ -305,4 +306,27 @@ test('a deal already played is never redealt for a new draw', () => {
   const played = drawStock(deal(77, 1));
   assert.ok(played);
   assert.equal(redealFor(played, 3), null);
+});
+
+test('space and enter draw, and never map to undo', () => {
+  for (const code of ['Space', 'Enter', 'KeyD']) assert.deepEqual(shortcut(code), { t: 'draw' });
+  for (const code of ['KeyZ', 'KeyU', 'Backspace']) assert.deepEqual(shortcut(code), { t: 'undo' });
+  assert.deepEqual(shortcut('KeyW'), { t: 'waste' });
+  assert.deepEqual(shortcut('Digit0'), { t: 'waste' });
+  assert.deepEqual(shortcut('Digit1'), { t: 'column', col: 0 });
+  assert.deepEqual(shortcut('Numpad7'), { t: 'column', col: 6 });
+  assert.equal(shortcut('Digit8'), null);
+  assert.equal(shortcut('KeyQ'), null);
+});
+
+test('draw after undo moves one card from stock to waste again', () => {
+  let s = deal(9001, 1);
+  s = drawStock(s)!;
+  s = drawStock(s)!;
+  assert.equal(s.stock.length, 22);
+  assert.equal(s.waste.length, 2);
+  s = undo(s)!;
+  assert.deepEqual([s.stock.length, s.waste.length], [23, 1]);
+  s = drawStock(s)!;
+  assert.deepEqual([s.stock.length, s.waste.length], [22, 2]);
 });

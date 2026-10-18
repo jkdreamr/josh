@@ -290,4 +290,12 @@
   .g-mini-golf .g-mini-golf-top {
     max-width: calc(100% - 240px);
   }
+  /* --g-mini-golf-u undoes the phone or iPad frame's scale, so these stay 40px and 11px or more on screen. */
+  .g-mini-golf .g-mini-golf-btn,
+  .g-mini-golf .g-mini-golf-card-head button {
+    min-height: calc(44px * var(--g-mini-golf-u, 1));
+    padding: 0 calc(14px * var(--g-mini-golf-u, 1));
+    border-radius: calc(10px * var(--g-mini-golf-u, 1));
+    font-size: calc(13.5px * var(--g-mini-golf-u, 1));
+  }
 }

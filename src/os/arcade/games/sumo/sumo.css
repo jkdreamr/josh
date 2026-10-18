@@ -339,6 +339,35 @@
   }
 }
 
+/* Framed phone and iPad screens are scaled down; --g-sumo-u keeps every label at its CSS size on screen. */
+.g-sumo .arcade-card {
+  zoom: var(--g-sumo-u, 1);
+}
+
+.g-sumo .arcade-online-status {
+  font-size: calc(12px * var(--g-sumo-u, 1));
+}
+
+.g-sumo .g-sumo-round {
+  font-size: calc(12px * var(--g-sumo-u, 1));
+}
+
+.g-sumo .g-sumo-banner {
+  font-size: calc(clamp(18px, 3vw, 26px) * var(--g-sumo-u, 1));
+}
+
+.g-sumo .g-sumo-warning,
+.g-sumo .g-sumo-status,
+.g-sumo .g-sumo-toast,
+.g-sumo .g-sumo-tag.is-compact {
+  font-size: calc(11px * var(--g-sumo-u, 1));
+}
+
+.g-sumo .g-sumo-tag,
+.g-sumo .g-sumo-dash {
+  font-size: calc(14px * var(--g-sumo-u, 1));
+}
+
 @media (max-width: 560px) {
   .g-sumo-scores {
     top: 11px;
