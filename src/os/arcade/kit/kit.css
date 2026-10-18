@@ -572,7 +572,7 @@
     padding: 16px 18px 14px;
   }
   .arcade-card:has(.arcade-setup) > .arcade-glyph,
-  .arcade-card:has(.arcade-setup) > p {
+  .arcade-card:has(.arcade-setup) > p:not(.arcade-detail) {
     display: none;
   }
   .arcade-card:has(.arcade-setup) h2 {
