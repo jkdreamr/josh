@@ -877,8 +877,8 @@ function freeRing(THREE: Three, segments: number) {
 /** A bit thrown by an effect: where it is, how it moves, how long it has left, and which kind of mesh draws it in what color. */
 type Particle = { x: number; y: number; z: number; rx: number; rz: number; vx: number; vy: number; vz: number; life: number; max: number; spin: number; grav: number; size: number; kind: number; color: T.Color };
 
-/** A model for something in hand: the group, the stripe in its rarity's color, and a minigun's barrels that spin. */
-type HeldModel = { group: T.Group; stripe: T.Mesh | null; spin: T.Object3D | null };
+/** A model for something in hand: the group, and a minigun's barrels that spin. */
+type HeldModel = { group: T.Group; spin: T.Object3D | null };
 
 /**
  * Stand-ins (placed, never drawn) for what every egg has, which is drawn instanced across all of them: its shell (with
@@ -891,7 +891,8 @@ type EggView = {
   body: T.Group;
   slots: EggSlots;
   hand: T.Group;
-  guns: Map<Held, HeldModel>;
+  /** What it has held, by weapon and rarity. */
+  guns: Map<string, HeldModel>;
   shadow: T.Object3D;
   glider: T.Group;
   heal: T.Group;
@@ -1081,7 +1082,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
    * A model built of many little meshes (what's in hand, helmets, vests, loot, the bus) merged into as few meshes as it
    * can, worked out once for each `key` and shared: plain colored parts become one mesh colored by vertex (a glowing
    * part keeps some of its glow in its color), and the rest (glass, glows, textures) one mesh a material. What's in
-   * `keep` (a stripe that changes color, barrels that spin) stays as it is. `double` draws the plain parts two-sided.
+   * `keep` (barrels that spin) stays as it is. `double` draws the plain parts two-sided.
    */
   const baked = new Map<string, { g: T.BufferGeometry; m: T.Material }[]>();
   const partsMat = lambert(0xffffff, { vertexColors: true });
@@ -2649,9 +2650,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     return bake(`apron:${lv}`, g, [], true);
   }
 
-  function gunModel(w: Held): HeldModel {
+  /** What's in hand, a gun's stripe in rarity `r`'s color (baked in, so a model for each rarity). */
+  function gunModel(w: Held, r = 0): HeldModel {
     const g = new THREE.Group();
-    let stripe: T.Mesh | null = null;
+    const tint = rarity[r] ?? rarity[0];
     let spin: T.Object3D | null = null;
     switch (w) {
       case 'spatula':
@@ -2714,7 +2716,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       case 'pistol':
         add(g, G.box, M.dark, 0, 0, 0.12, 0.12, 0.14, 0.42);
         add(g, G.box, M.dark, 0, -0.14, 0, 0.1, 0.22, 0.12);
-        stripe = add(g, G.box, rarity[0], 0, 0.08, 0.12, 0.13, 0.03, 0.34);
+        add(g, G.box, tint, 0, 0.08, 0.12, 0.13, 0.03, 0.34);
         break;
       case 'flare':
         // a stubby orange pistol with a wide mouth, the flare showing in it
@@ -2722,25 +2724,25 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         barrel(g, M.flare, 0, 0.01, 0.36, 0.1, 0.22);
         barrel(g, M.custard, 0, 0.01, 0.47, 0.07, 0.02);
         add(g, G.box, M.flare, 0, -0.15, -0.02, 0.1, 0.22, 0.12);
-        stripe = add(g, G.box, rarity[0], 0, 0.085, 0.06, 0.135, 0.03, 0.22);
+        add(g, G.box, tint, 0, 0.085, 0.06, 0.135, 0.03, 0.22);
         break;
       case 'revolver':
         barrel(g, M.metal, 0, 0.04, 0.36, 0.05, 0.5);
         barrel(g, M.dark, 0, 0.0, 0.08, 0.1, 0.16);
         add(g, G.box, M.wood, 0, -0.15, -0.04, 0.1, 0.24, 0.12);
-        stripe = add(g, G.box, rarity[0], 0, 0.1, 0.08, 0.06, 0.03, 0.2);
+        add(g, G.box, tint, 0, 0.1, 0.08, 0.06, 0.03, 0.2);
         break;
       case 'smg':
         add(g, G.box, M.dark, 0, 0, 0.18, 0.14, 0.17, 0.62);
         add(g, G.box, M.metal, 0, -0.18, 0.2, 0.08, 0.26, 0.1);
         add(g, G.box, M.dark, 0, -0.12, -0.06, 0.1, 0.2, 0.1);
-        stripe = add(g, G.box, rarity[0], 0, 0.1, 0.18, 0.15, 0.03, 0.5);
+        add(g, G.box, tint, 0, 0.1, 0.18, 0.15, 0.03, 0.5);
         break;
       case 'micro':
         add(g, G.box, M.dark, 0, 0, 0.12, 0.13, 0.16, 0.4);
         add(g, G.box, M.metal, 0, -0.2, 0.06, 0.07, 0.3, 0.08);
         barrel(g, M.metal, 0, 0.02, 0.38, 0.035, 0.16);
-        stripe = add(g, G.box, rarity[0], 0, 0.09, 0.12, 0.14, 0.03, 0.3);
+        add(g, G.box, tint, 0, 0.09, 0.12, 0.14, 0.03, 0.3);
         break;
       case 'hsmg':
         // chunky, with a fat green box of heavy rounds and a grip out front
@@ -2749,7 +2751,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         add(g, G.box, ammoMat.heavy, 0, -0.21, 0.2, 0.1, 0.3, 0.14);
         add(g, G.box, M.dark, 0, -0.14, 0.45, 0.07, 0.18, 0.07);
         add(g, G.box, M.dark, 0, -0.12, -0.08, 0.1, 0.2, 0.1);
-        stripe = add(g, G.box, rarity[0], 0, 0.115, 0.18, 0.18, 0.03, 0.5);
+        add(g, G.box, tint, 0, 0.115, 0.18, 0.18, 0.03, 0.5);
         break;
       case 'marksman':
         // long and tan, a scope on top and a short magazine
@@ -2757,33 +2759,33 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         barrel(g, M.dark, 0, 0.02, 0.92, 0.035, 0.42);
         barrel(g, M.dark, 0, 0.15, 0.3, 0.05, 0.34);
         add(g, G.box, M.dark, 0, -0.15, 0.32, 0.07, 0.16, 0.12);
-        stripe = add(g, G.box, rarity[0], 0, 0.085, 0.55, 0.13, 0.03, 0.34);
+        add(g, G.box, tint, 0, 0.085, 0.55, 0.13, 0.03, 0.34);
         break;
       case 'rifle':
         add(g, G.box, M.dark, 0, 0, 0.3, 0.12, 0.16, 1.05);
         add(g, G.box, M.metal, 0, -0.17, 0.3, 0.08, 0.24, 0.12);
         add(g, G.box, M.dark, 0, 0.14, 0.2, 0.06, 0.1, 0.3);
-        stripe = add(g, G.box, rarity[0], 0, 0.09, 0.45, 0.13, 0.03, 0.5);
+        add(g, G.box, tint, 0, 0.09, 0.45, 0.13, 0.03, 0.5);
         break;
       case 'burst':
         add(g, G.box, M.tan, 0, 0, 0.22, 0.14, 0.2, 0.78);
         barrel(g, M.dark, 0, 0.03, 0.72, 0.04, 0.3);
         add(g, G.box, M.dark, 0, 0.16, 0.25, 0.05, 0.08, 0.5);
         add(g, G.box, M.metal, 0, -0.16, 0.0, 0.08, 0.2, 0.12);
-        stripe = add(g, G.box, rarity[0], 0, 0.11, 0.35, 0.15, 0.03, 0.3);
+        add(g, G.box, tint, 0, 0.11, 0.35, 0.15, 0.03, 0.3);
         break;
       case 'scout':
         add(g, G.box, M.olive, 0, 0, 0.25, 0.11, 0.14, 0.9);
         barrel(g, M.metal, 0, 0.02, 0.85, 0.035, 0.4);
         barrel(g, M.dark, 0, 0.15, 0.25, 0.05, 0.3);
-        stripe = add(g, G.box, rarity[0], 0, 0.08, 0.05, 0.12, 0.03, 0.3);
+        add(g, G.box, tint, 0, 0.08, 0.05, 0.12, 0.03, 0.3);
         break;
       case 'lmg':
         add(g, G.box, M.dark, 0, 0, 0.3, 0.16, 0.2, 1.0);
         barrel(g, M.metal, 0, 0.03, 0.95, 0.05, 0.5);
         add(g, G.box, M.olive, 0, -0.2, 0.25, 0.2, 0.22, 0.26);
         add(g, G.box, M.metal, 0, -0.2, 0.95, 0.03, 0.3, 0.03).rotation.x = 0.4;
-        stripe = add(g, G.box, rarity[0], 0, 0.11, 0.35, 0.17, 0.03, 0.5);
+        add(g, G.box, tint, 0, 0.11, 0.35, 0.17, 0.03, 0.5);
         break;
       case 'minigun': {
         // a drum of a body, a carry handle, and six barrels that spin
@@ -2799,45 +2801,45 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         barrel(bundle, M.dark, 0, 0, 0.18, 0.11, 0.05);
         g.add(bundle);
         spin = bundle;
-        stripe = add(g, G.box, rarity[0], 0, 0.135, 0.02, 0.27, 0.03, 0.2);
+        add(g, G.box, tint, 0, 0.135, 0.02, 0.27, 0.03, 0.2);
         break;
       }
       case 'shotgun':
         add(g, G.box, M.wood, 0, -0.02, 0, 0.13, 0.16, 0.45);
         barrel(g, M.dark, 0, 0.03, 0.48, 0.07, 0.75);
-        stripe = add(g, G.box, rarity[0], 0, -0.06, 0.4, 0.12, 0.08, 0.28);
+        add(g, G.box, tint, 0, -0.06, 0.4, 0.12, 0.08, 0.28);
         break;
       case 'auto':
         add(g, G.box, M.dark, 0, 0, 0.15, 0.15, 0.18, 0.6);
         barrel(g, M.metal, 0, 0.03, 0.62, 0.06, 0.4);
         barrel(g, M.metal, 0, -0.18, 0.25, 0.14, 0.12).rotation.set(0, 0, Math.PI / 2);
-        stripe = add(g, G.box, rarity[0], 0, 0.1, 0.15, 0.16, 0.03, 0.4);
+        add(g, G.box, tint, 0, 0.1, 0.15, 0.16, 0.03, 0.4);
         break;
       case 'double':
         add(g, G.box, M.wood, 0, -0.03, 0, 0.13, 0.15, 0.42);
         barrel(g, M.dark, -0.045, 0.04, 0.5, 0.05, 0.72);
         barrel(g, M.dark, 0.045, 0.04, 0.5, 0.05, 0.72);
-        stripe = add(g, G.box, rarity[0], 0, -0.05, 0.3, 0.14, 0.06, 0.12);
+        add(g, G.box, tint, 0, -0.05, 0.3, 0.14, 0.06, 0.12);
         break;
       case 'sniper':
         add(g, G.box, M.dark, 0, 0, 0.2, 0.11, 0.14, 0.75);
         barrel(g, M.metal, 0, 0.02, 0.85, 0.035, 0.7);
         barrel(g, M.dark, 0, 0.16, 0.25, 0.06, 0.38);
-        stripe = add(g, G.box, rarity[0], 0, 0.08, 0.05, 0.12, 0.03, 0.3);
+        add(g, G.box, tint, 0, 0.08, 0.05, 0.12, 0.03, 0.3);
         break;
       case 'crossbow':
         add(g, G.box, M.wood, 0, 0, 0.2, 0.1, 0.12, 0.75);
         add(g, G.box, M.dark, 0, 0.02, 0.56, 0.9, 0.05, 0.06);
         add(g, G.box, M.bolt, 0, 0.08, 0.4, 0.03, 0.03, 0.7);
-        stripe = add(g, G.box, rarity[0], 0, -0.07, 0.1, 0.11, 0.04, 0.3);
+        add(g, G.box, tint, 0, -0.07, 0.1, 0.11, 0.04, 0.3);
         break;
       case 'launcher':
         barrel(g, M.launcher, 0, 0.05, 0.3, 0.17, 1.1);
         add(g, G.box, M.dark, 0, -0.16, 0.2, 0.08, 0.24, 0.12);
-        stripe = barrel(g, rarity[0], 0, 0.05, 0.75, 0.18, 0.12);
+        barrel(g, tint, 0, 0.05, 0.75, 0.18, 0.12);
         break;
     }
-    return { group: bake(`held:${w}`, g, [stripe, spin]), stripe, spin };
+    return { group: bake(`held:${w}:${isWeapon(w) ? r : 0}`, g, [spin]), spin };
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -3109,8 +3111,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       case 'gun':
       case 'melee':
       case 'throw': {
-        const gun = gunModel(def.w);
-        if (gun.stripe && def.kind === 'gun') gun.stripe.material = rarity[def.r] ?? rarity[0];
+        const gun = gunModel(def.w, def.kind === 'gun' ? def.r : 0);
         gun.group.scale.setScalar(def.kind === 'throw' ? 1.6 : 1.25);
         gun.group.rotation.set(0, 0, def.kind === 'throw' ? 0 : Math.PI / 2.4);
         g.add(gun.group);
@@ -3537,14 +3538,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     // what it holds
     const h = held(f);
     const key = h.w;
-    for (const [k, g] of v.guns) g.group.visible = k === key && f.phase === 'ground';
-    let gun = v.guns.get(key);
+    const look = `${key}:${h.r}`;
+    for (const [k, g] of v.guns) g.group.visible = k === look && f.phase === 'ground';
+    let gun = v.guns.get(look);
     if (!gun && f.phase === 'ground') {
-      gun = gunModel(key);
+      gun = gunModel(key, h.r);
       v.hand.add(gun.group);
-      v.guns.set(key, gun);
+      v.guns.set(look, gun);
     }
-    if (gun?.stripe) gun.stripe.material = rarity[h.r] ?? rarity[0];
     if (gun?.spin && ((f.kind === 'remote' ? f.show.flags & F_SPIN : f.spin > 0) || 0)) gun.spin.rotation.z += dt * (f.kind === 'remote' ? 30 : 6 + f.spin * 26);
     const melee = isMelee(key);
     v.recoil = Math.max(0, v.recoil - dt * 6);
