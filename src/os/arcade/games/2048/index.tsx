@@ -140,6 +140,7 @@ function Play() {
 
   // Online: the host picks the seed, so everyone gets the same tiles for the same moves.
   const onlineRef = useRef(online);
+  const dealtRound = useRef<number | null>(online ? online.round : null);
   onlineRef.current = online;
   const isOnline = !!online;
   const isHost = !!online?.isHost;
@@ -160,10 +161,23 @@ function Play() {
       shell.invalidate();
     });
     let ask = 0;
-    if (room.isHost && state.current?.seed != null) room.send({ t: '2048-seed', seed: state.current.seed });
-    else if (!room.isHost) {
-      if (state.current?.seed !== -1) state.current = waiting();
-      room.send({ t: '2048-seed?' }, { to: 0 });
+    // A new online round (or a board dealt before the room was ready) gets a fresh deal.
+    const stale = dealtRound.current !== room.round;
+    dealtRound.current = room.round;
+    if (room.isHost) {
+      if (stale || state.current?.seed == null || state.current.seed < 0) {
+        state.current = fresh(randomSeed());
+        refresh();
+        shell.invalidate();
+      }
+      room.send({ t: '2048-seed', seed: state.current!.seed });
+    } else {
+      if (stale || state.current?.seed == null) {
+        state.current = waiting();
+        refresh();
+        shell.invalidate();
+      }
+      if (state.current?.seed === -1) room.send({ t: '2048-seed?' }, { to: 0 });
       ask = window.setInterval(() => {
         if (state.current?.seed === -1) onlineRef.current?.send({ t: '2048-seed?' }, { to: 0 });
         else window.clearInterval(ask);
@@ -174,7 +188,7 @@ function Play() {
       window.clearInterval(ask);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOnline, isHost]);
+  }, [isOnline, isHost, online?.round]);
 
   useEffect(() => {
     lastNow.current = null;
