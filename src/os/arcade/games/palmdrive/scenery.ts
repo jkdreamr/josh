@@ -3604,7 +3604,92 @@ function slough(c: Scenery): SceneryTick {
     egrets.push({ x: p.x, y: 0.7, z: p.z, sx: 0.35, sy: 0.9, sz: 0.5 });
   }
   instances(THREE, scene, dummy, geo.ball, lambert(0xfbfbf6), egrets);
-  return () => {};
+
+  // the Dumbarton Bridge low across the Bay on the horizon, its hump over the shipping channel
+  {
+    const x0 = cx + rx + 330;
+    const z0 = cz - rz - 420;
+    const z1 = cz + rz + 420;
+    const deck: Item[] = [];
+    const legs: Item[] = [];
+    const n = 36;
+    for (let k = 0; k < n; k++) {
+      const u = (k + 0.5) / n;
+      const z = z0 + (z1 - z0) * u;
+      const hump = 4 + 22 * Math.max(0, 1 - Math.abs(u - 0.62) / 0.12);
+      const len = (z1 - z0) / n + 0.6;
+      deck.push({ x: x0, y: hump, z, sx: 7, sy: 1.2, sz: len });
+      legs.push({ x: x0, y: hump / 2, z, sx: 2.2, sy: hump, sz: 2.2 });
+    }
+    instances(THREE, scene, dummy, geo.box, lambert(0xbcb3ad), deck);
+    instances(THREE, scene, dummy, geo.box, lambert(0x9d948f), legs);
+  }
+
+  // a bulk carrier at the Port's wharf, loading from the aggregate piles by a conveyor up to its hold
+  {
+    const s = 372;
+    const d = 62;
+    const p = at(s, d);
+    const h = face(s);
+    if (clear(p.x, p.z, 16)) {
+      const g = new THREE.Group();
+      const part = (mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+        const m = new THREE.Mesh(geo.box, mat);
+        m.position.set(x, y, z);
+        m.scale.set(sx, sy, sz);
+        g.add(m);
+        return m;
+      };
+      const hull = lambert(0x34495e);
+      part(hull, 0, 3.5, 0, 13, 7, 74);
+      part(lambert(0x8c2a1e), 0, 0.6, 0, 13.1, 1.2, 74.2);
+      const bow = new THREE.Mesh(geo.cone, hull);
+      bow.scale.set(6.5, 8, 7);
+      bow.rotation.x = Math.PI / 2;
+      bow.position.set(0, 3.5, 40.5);
+      g.add(bow);
+      for (let k = -2; k <= 2; k++) part(lambert(0x4a5866), 0, 7.4, k * 11 + 6, 10, 0.8, 8);
+      part(lambert(0xf2efe8), 0, 11, -30, 12, 8, 10);
+      part(lambert(0xf2efe8), 0, 16, -31, 9, 3, 7);
+      part(lambert(0x23262c), 0, 19.5, -33, 2, 5, 2);
+      // (the conveyor, from the piles up over its rail)
+      const belt = part(lambert(0x8a8f96), -14, 9, 12, 2, 1, 34);
+      belt.rotation.x = -0.25;
+      belt.rotation.y = 0.9;
+      g.position.set(p.x, 0, p.z);
+      g.rotation.y = h;
+      scene.add(g);
+    }
+  }
+
+  // pelicans gliding in a line over the marsh, round and round
+  const birdGeo = new THREE.BoxGeometry(1, 1, 1);
+  const pelicans = new THREE.InstancedMesh(birdGeo, lambert(0xc9c2b4), 15);
+  pelicans.frustumCulled = false;
+  scene.add(pelicans);
+  return (_race, clock) => {
+    for (let n = 0; n < 5; n++) {
+      const a = clock * 0.05 + n * 0.035;
+      const x = cx + Math.cos(a) * rx * 0.75 - n * 2;
+      const z = cz + Math.sin(a) * rz * 0.7 + (n % 2 ? 3 : -3) * n * 0.6;
+      const y = 22 + Math.sin(clock * 0.4 + n) * 1.5;
+      const ry = Math.atan2(-Math.sin(a), Math.cos(a));
+      const flap = Math.sin(clock * 4 + n * 1.3) * 0.35;
+      const set = (i: number, ox: number, sx: number, sy: number, sz: number, rz: number) => {
+        dummy.position.set(x + Math.cos(ry) * ox, y + Math.abs(ox) * Math.sin(rz) * 0.5, z - Math.sin(ry) * ox);
+        dummy.rotation.set(0, ry, rz);
+        dummy.scale.set(sx, sy, sz);
+        dummy.updateMatrix();
+        pelicans.setMatrixAt(i, dummy.matrix);
+      };
+      set(n * 3, 0, 0.45, 0.4, 1.5, 0);
+      set(n * 3 + 1, 1.3, 2.2, 0.08, 0.6, flap);
+      set(n * 3 + 2, -1.3, 2.2, 0.08, 0.6, -flap);
+    }
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.setScalar(1);
+    pelicans.instanceMatrix.needsUpdate = true;
+  };
 }
 
 /** How far out the edge of the course stands on one side at s (a wall's foot, or the brink of a drop). */

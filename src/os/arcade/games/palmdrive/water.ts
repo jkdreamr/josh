@@ -6,7 +6,7 @@ import type { T } from './gl';
 import { deltaS, edgeAt, edgeRuns, headingOf, lengthOf, pointAt, roadEdge, wrapS, type Track } from './track';
 import { canvas, noise, scatter, texture, type Look } from './scenery';
 import { COURSES } from './courses';
-import { TIDE_LAP, WAKE_LEN, WAKE_SPREAD, crestsAt, hazState, type LiveHazard, type Race } from './logic';
+import { RAMP_H, TIDE_LAP, WAKE_LEN, WAKE_SPREAD, crestsAt, hazState, hazardV, strokeAt, type LiveHazard, type Race } from './logic';
 
 type Three = typeof import('three');
 type Geo = { box: T.BoxGeometry; wheel: T.CylinderGeometry; ball: T.SphereGeometry; plane: T.PlaneGeometry; cone: T.ConeGeometry };
@@ -131,6 +131,9 @@ function spiralTexture(THREE: Three) {
   );
 }
 
+/** Cars on the Hwy 101 deck. */
+const CARS = 32;
+
 export type River = { tick: (race: Race, me: number, clock: number, dt: number) => void };
 
 /**
@@ -254,6 +257,8 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   );
   weedTex.wrapS = weedTex.wrapT = THREE.RepeatWrapping;
   const foamMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(water.foam) });
+  /** What stays lit and readable through the last lap's fog: the lip of the marsh, the marker posts' lamps, the buoys' and the vessels' lights, the lock's lamps and the whirlpools' foam. */
+  const lit: T.MeshBasicMaterial[] = [foamMat];
   const mudMat = new THREE.MeshLambertMaterial({ map: mudTex });
   const weedMat = new THREE.MeshLambertMaterial({ map: weedTex });
   const concreteTex = texture(
@@ -304,7 +309,9 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   }
   if (posts.length) {
     const post = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x5a4632 }), posts.length);
-    const cap = new THREE.InstancedMesh(geo.box, new THREE.MeshBasicMaterial({ color: 0xfff6e0 }), posts.length);
+    const capMat = new THREE.MeshBasicMaterial({ color: 0xfff6e0 });
+    lit.push(capMat);
+    const cap = new THREE.InstancedMesh(geo.box, capMat, posts.length);
     posts.forEach((p, k) => {
       dummy.position.set(p.x, 0.55, p.z);
       dummy.scale.set(0.16, 1.1, 0.16);
@@ -373,6 +380,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   );
   const latticeMat = new THREE.MeshLambertMaterial({ map: latticeTex, transparent: true, side: THREE.DoubleSide, color: 0x9aa6b2 });
   let piers = 0;
+  let traffic: { cars: T.InstancedMesh; f: ReturnType<typeof frame> } | null = null;
   r.hazards.forEach((h, i) => {
     if (h.kind === 'bollard' && h.look === 'gate') {
       const w = h.w ?? 6;
@@ -384,6 +392,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       leaf.scale.set(0.45, 1.6, w);
       scene.add(leaf);
       const lampMat = new THREE.MeshBasicMaterial({ color: 0x27e36a });
+      lit.push(lampMat);
       const lamp = new THREE.Mesh(geo.ball, lampMat);
       lamp.scale.setScalar(0.32);
       lamp.position.set(f.x - nx * 0.6 - f.tx * 1.2, 2.4, f.z - nz * 0.6 - f.tz * 1.2);
@@ -464,6 +473,27 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     const shade = new THREE.Mesh(band(THREE, t, mid - 17, mid + 17, () => -9, () => 9, 0.055, 4), new THREE.MeshBasicMaterial({ color: 0x0a1820, transparent: true, opacity: 0.35, depthWrite: false }));
     shade.renderOrder = 1;
     scene.add(shade);
+    // and the morning traffic on it, four lanes each way, streaming across on the clock (headlights one way, tail lights
+    // the other)
+    const cars = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xffffff }), CARS);
+    const carColors = [0xd8dde2, 0x2b2f36, 0x8c1515, 0x3c6fa8, 0xe8e2d4, 0x6a6f74, 0xb8a27a];
+    for (let n = 0; n < CARS; n++) cars.setColorAt(n, new THREE.Color(carColors[(n * 5) % carColors.length]));
+    cars.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    cars.frustumCulled = false;
+    scene.add(cars);
+    traffic = { cars, f };
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Slack water along the banks where the current runs against you (hug it going upstream): a darker, stiller strip
+  for (const f of r.flows) {
+    if (f.bank === undefined) continue;
+    const slack = new THREE.MeshBasicMaterial({ color: 0x0b2430, transparent: true, opacity: 0.22, depthWrite: false });
+    for (const side of [-1, 1]) {
+      const m = new THREE.Mesh(band(THREE, t, f.s0 + 6, f.s1 - 6, (s) => wet(side)(s) - side * 2.5, wet(side), 0.046, 6), slack);
+      m.renderOrder = 1;
+      scene.add(m);
+    }
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -497,6 +527,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     const disc = flat(new THREE.Mesh(geo.plane, mat), 0.08, 3);
     const eye = flat(new THREE.Mesh(new THREE.CircleGeometry(1, 24), new THREE.MeshBasicMaterial({ color: 0x041218 })), 0.09, 4);
     const ringMat = new THREE.MeshBasicMaterial({ color: 0xf4efe6, transparent: true, depthWrite: false, opacity: 0.2 });
+    lit.push(mat, ringMat);
     const ring = flat(new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 40), ringMat), 0.085, 3);
     ring.scale.setScalar((h.r ?? 2.6) + 0.6);
     return { h, disc, mat, dark, darkMat, eye, ring, ringMat, a: 0 };
@@ -516,6 +547,10 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     g.add(m);
     return m;
   };
+  const portLight = new THREE.MeshBasicMaterial({ color: 0xff3b2a });
+  const starLight = new THREE.MeshBasicMaterial({ color: 0x3bff6a });
+  const sternLight = new THREE.MeshBasicMaterial({ color: 0xffe6a0 });
+  lit.push(portLight, starLight, sternLight);
   type VesselView = { h: LiveHazard; g: T.Group; roll: T.Object3D | null; wake: T.Mesh | null; wakePos: T.BufferAttribute | null };
   const wakeMat = new THREE.MeshBasicMaterial({ color: 0xf6f2ea, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide });
   const WAKE_N = 12;
@@ -536,6 +571,10 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       // the megaphone
       const horn = add(g, geo.cone, white, 0.62, 1.6, -0.1, 0.12, 0.4, 0.12);
       horn.rotation.x = Math.PI / 2;
+      // (running lights, red to port and green to starboard, and a white one astern)
+      add(g, geo.ball, portLight, h.r, 0.85, len * 0.3, 0.12, 0.12, 0.12);
+      add(g, geo.ball, starLight, -h.r, 0.85, len * 0.3, 0.12, 0.12, 0.12);
+      add(g, geo.ball, sternLight, 0, 1.5, -len * 0.42, 0.12, 0.12, 0.12);
     } else if (h.kind === 'barge') {
       // a gravel barge pushed by a black-and-red tug at its stern
       const bl = len - 9;
@@ -547,7 +586,9 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       add(g, geo.box, dark, 0, 3.9, -len / 2 + 3.5, h.r * 1.15, 0.5, 3.6);
       add(g, geo.wheel, dark, 0, 4.6, -len / 2 + 2.2, 0.35, 1.6, 0.35);
       // (a lamp on its wheelhouse)
-      add(g, geo.ball, new THREE.MeshBasicMaterial({ color: 0xffd36a }), 0, 4.3, -len / 2 + 5.3, 0.18, 0.18, 0.18);
+      add(g, geo.ball, sternLight, 0, 4.3, -len / 2 + 5.3, 0.18, 0.18, 0.18);
+      add(g, geo.ball, portLight, h.r, 1.7, len / 2 - 0.5, 0.2, 0.2, 0.2);
+      add(g, geo.ball, starLight, -h.r, 1.7, len / 2 - 0.5, 0.2, 0.2, 0.2);
     } else {
       // a drifting log, rolling slowly
       roll = add(g, geo.wheel, new THREE.MeshLambertMaterial({ color: 0x6b4a2e }), 0, 0.12, 0, h.r, len, h.r);
@@ -603,10 +644,16 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   const buoys = r.hazards.filter((h) => h.kind === 'buoy');
   const buoyMesh = buoys.length ? new THREE.InstancedMesh(geo.ball, new THREE.MeshLambertMaterial({ color: 0xff6a10, emissive: 0x9a3200 }), buoys.length) : null;
   const bandMesh = buoys.length ? new THREE.InstancedMesh(geo.wheel, new THREE.MeshBasicMaterial({ color: 0xffffff }), buoys.length) : null;
-  if (buoyMesh && bandMesh) {
-    buoyMesh.frustumCulled = bandMesh.frustumCulled = false;
-    scene.add(buoyMesh, bandMesh);
+  // (and on the last lap, in the fog, a lamp on each)
+  const buoyLampMat = new THREE.MeshBasicMaterial({ color: 0xffb347 });
+  lit.push(buoyLampMat);
+  const buoyLamps = buoys.length ? new THREE.InstancedMesh(geo.ball, buoyLampMat, buoys.length) : null;
+  if (buoyMesh && bandMesh && buoyLamps) {
+    buoyMesh.frustumCulled = bandMesh.frustumCulled = buoyLamps.frustumCulled = false;
+    buoyLamps.visible = false;
+    scene.add(buoyMesh, bandMesh, buoyLamps);
   }
+  let fogLit = false;
 
   // ---------------------------------------------------------------------------------------------------------------
   // The swell: each crest a line of whitecaps along the Bay Reach, rolling in from the Bay across the channel
@@ -647,6 +694,8 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   );
   foamTex.wrapS = foamTex.wrapT = THREE.RepeatWrapping;
   const stoppers: T.Texture[] = [];
+  // (and the white water pouring over the crest into it)
+  const pours: T.Texture[] = [];
   for (const h of r.holes) {
     if ((h.w ?? h.r) < t.half + 1) continue;
     const tex = foamTex.clone();
@@ -655,6 +704,21 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     const m = new THREE.Mesh(band(THREE, t, h.s - 0.3, h.s + (h.len ?? 0), wet(-1), wet(1), 0.07, 3), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
     m.renderOrder = 2;
     scene.add(m);
+    {
+      const pour = foamTex.clone();
+      pour.needsUpdate = true;
+      pour.repeat.set(4, 1);
+      pours.push(pour);
+      const f = frame(h.s - 0.2);
+      const w = wet(1)(h.s) - wet(-1)(h.s);
+      const sheet = new THREE.Mesh(geo.plane, new THREE.MeshBasicMaterial({ map: pour, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+      sheet.scale.set(w, RAMP_H + 0.5, 1);
+      const c = pointAt(t, h.s - 0.2, (wet(1)(h.s) + wet(-1)(h.s)) / 2);
+      sheet.position.set(c.x, (RAMP_H - 0.5) / 2 + 0.04, c.z);
+      sheet.rotation.y = f.h;
+      sheet.renderOrder = 2;
+      scene.add(sheet);
+    }
     const board = new THREE.MeshBasicMaterial({
       map: texture(
         THREE,
@@ -687,9 +751,86 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     }
   }
 
+  // ---------------------------------------------------------------------------------------------------------------
+  // What the shells leave on the water: a puddle where each blade comes out at the finish of the stroke (they spread
+  // and fade), and a narrow V of wake off the stern; and the chain ferry's wash as it crosses. All of it additive, so a
+  // color fading to black is a fade.
+  const ringTex = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      const grad = g.createRadialGradient(32, 32, 8, 32, 32, 31);
+      grad.addColorStop(0, 'rgba(255,255,255,0.0)');
+      grad.addColorStop(0.55, 'rgba(255,255,255,0.35)');
+      grad.addColorStop(0.8, 'rgba(255,255,255,0.9)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
+    }),
+  );
+  const PUDDLES = 64;
+  const PUDDLE_T = 2.2;
+  const puddleGeo = new THREE.PlaneGeometry(1, 1);
+  puddleGeo.rotateX(-Math.PI / 2);
+  const puddleMesh = new THREE.InstancedMesh(puddleGeo, new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }), PUDDLES);
+  puddleMesh.frustumCulled = false;
+  puddleMesh.renderOrder = 2;
+  puddleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const puddles = Array.from({ length: PUDDLES }, () => ({ x: 0, z: 0, born: -99 }));
+  let nextPuddle = 0;
+  const lastPhase = new Map<number, number>();
+  const black = new THREE.Color(0, 0, 0);
+  for (let n = 0; n < PUDDLES; n++) puddleMesh.setColorAt(n, black);
+  scene.add(puddleMesh);
+  // the V off a stern: a strip that fades out along its length
+  const vTex = texture(
+    THREE,
+    canvas(16, 64, (g) => {
+      // (bright at the stern, the bottom of the canvas, fading out behind, and soft at its edges)
+      const img = g.createImageData(16, 64);
+      for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 16; x++) {
+          const o = (y * 16 + x) * 4;
+          img.data[o] = img.data[o + 1] = img.data[o + 2] = 255;
+          img.data[o + 3] = Math.round(255 * 0.85 * (y / 63) ** 1.5 * Math.sin((Math.PI * (x + 0.5)) / 16) ** 2);
+        }
+      }
+      g.putImageData(img, 0, 0);
+    }),
+  );
+  const armGeo = new THREE.PlaneGeometry(1, 1);
+  armGeo.rotateX(-Math.PI / 2);
+  // (from its end at the stern out along local -z)
+  armGeo.translate(0, 0, -0.5);
+  const ARMS = 2 * r.karts.length + 2 * ferries.length;
+  const armMesh = new THREE.InstancedMesh(armGeo, new THREE.MeshBasicMaterial({ map: vTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }), ARMS);
+  armMesh.frustumCulled = false;
+  armMesh.renderOrder = 2;
+  armMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  for (let n = 0; n < ARMS; n++) armMesh.setColorAt(n, black);
+  scene.add(armMesh);
+  const tint = new THREE.Color();
+  const armAt = (n: number, x: number, z: number, h: number, len: number, w: number, k: number) => {
+    dummy.position.set(x, 0.075, z);
+    dummy.rotation.set(0, h, 0);
+    dummy.scale.set(w, 1, len);
+    dummy.updateMatrix();
+    armMesh.setMatrixAt(n, dummy.matrix);
+    armMesh.setColorAt(n, tint.setScalar(Math.max(0, Math.min(1, k))));
+  };
+
   return {
     tick(race, me, clock, dt) {
       const lap = race.karts[me]?.lap ?? 1;
+      // the fog's lap: the lamps and the lip of the marsh shine through it
+      const fogNow = !!look.fogLap && lap >= look.fogLap.lap;
+      if (fogNow !== fogLit) {
+        fogLit = fogNow;
+        for (const m of lit) {
+          m.fog = !fogNow;
+          m.needsUpdate = true;
+        }
+        if (buoyLamps) buoyLamps.visible = fogNow;
+      }
       // the currents run in the water (the other way once the tide has turned)
       for (const run of runs) {
         let along = 0;
@@ -707,6 +848,30 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       for (const c of chops) {
         c.mat.opacity = lap >= c.lap ? 0.55 : 0;
         c.tex.offset.set((clock * 0.05) % 1, (clock * 0.11) % 1);
+      }
+      for (const tex of pours) tex.offset.y = (tex.offset.y + dt * 2.4) % 1;
+      if (traffic) {
+        const { cars, f } = traffic;
+        const ax = Math.cos(f.h);
+        const az = -Math.sin(f.h);
+        const bx = Math.sin(f.h);
+        const bz = Math.cos(f.h);
+        for (let n = 0; n < CARS; n++) {
+          const lane = n % 8;
+          const dir = lane < 4 ? 1 : -1;
+          const z = (lane < 4 ? -1 : 1) * (2.4 + (lane % 4) * 3.4);
+          const speed = 24 + (lane % 4) * 3;
+          const u = ((((clock * speed * dir + n * 37.3) % 120) + 120) % 120) - 60;
+          const truck = n % 9 === 0;
+          dummy.position.set(f.x + ax * u + bx * z, truck ? 11.25 : 10.7, f.z + az * u + bz * z);
+          dummy.rotation.set(0, f.h + Math.PI / 2, 0);
+          dummy.scale.set(1.8, truck ? 2.4 : 1.3, truck ? 9 : 4.2);
+          dummy.updateMatrix();
+          cars.setMatrixAt(n, dummy.matrix);
+        }
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.setScalar(1);
+        cars.instanceMatrix.needsUpdate = true;
       }
       for (const tex of stoppers) {
         tex.offset.y = (tex.offset.y + dt * 1.6) % 1;
@@ -783,6 +948,64 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       for (const f of ferries) {
         f.g.position.set(f.h.x, Math.sin(clock * 1.3) * 0.04, f.h.z);
       }
+      // the shells' puddles and wakes, and the ferry's wash
+      race.karts.forEach((k, n) => {
+        const under = k.sunk === 0 && k.y < 0.3 && k.bullet <= 0;
+        const sp = Math.abs(k.v);
+        // (a narrow V off the stern, longer and brighter the faster it goes)
+        const sx = k.x - Math.sin(k.h) * 2.4;
+        const sz = k.z - Math.cos(k.h) * 2.4;
+        const len = 2 + sp * 0.4;
+        // (your own, right under the camera, only faintly)
+        for (const sg of [-1, 1]) armAt(2 * n + (sg > 0 ? 1 : 0), sx, sz, k.h + sg * 0.16, len, 0.4, under && sp > 4 ? Math.min(0.55, sp / 40) * (n === me ? 0.35 : 1) : 0);
+        // (the puddles: at each finish, where the blades come out)
+        const phase = strokeAt(race.time - (n === me ? 0 : n * 0.04));
+        const was = lastPhase.get(n) ?? phase;
+        lastPhase.set(n, phase);
+        if (!(was < 0.38 && phase >= 0.38) || !under || sp < 3 || k.drift !== 0 || k.spin > 0) return;
+        const cam = race.karts[me];
+        if (cam && Math.hypot(cam.x - k.x, cam.z - k.z) > 90) return;
+        for (const side of [-1, 1]) {
+          // (only on the water, not out on the mud)
+          if (Math.abs(k.d - side * 2.9) > roadEdge(t, k.s, k.d - side * 2.9 >= 0 ? 1 : -1) - 0.3) continue;
+          const lx = side * 2.9;
+          const lz = -1.3;
+          const p = puddles[nextPuddle];
+          p.x = k.x + Math.cos(k.h) * lx + Math.sin(k.h) * lz;
+          p.z = k.z - Math.sin(k.h) * lx + Math.cos(k.h) * lz;
+          p.born = clock;
+          nextPuddle = (nextPuddle + 1) % PUDDLES;
+        }
+      });
+      // (and the ferry's wash, a short V trailing it the way it has come across)
+      ferries.forEach((f, n) => {
+        const v = hazardV(f.h, race.time);
+        const p = pointAt(t, f.h.s);
+        const nx = -p.tz * Math.sign(v || 1);
+        const nz = p.tx * Math.sign(v || 1);
+        const h = headingOf(nx, nz);
+        for (const sg of [-1, 1]) armAt(2 * race.karts.length + n * 2 + (sg > 0 ? 1 : 0), f.h.x - nx * f.h.r, f.h.z - nz * f.h.r, h + sg * 0.5, 2 + Math.abs(v) * 1.6, 0.7, Math.min(0.7, Math.abs(v) / 3));
+      });
+      armMesh.instanceMatrix.needsUpdate = true;
+      if (armMesh.instanceColor) armMesh.instanceColor.needsUpdate = true;
+      for (let n = 0; n < PUDDLES; n++) {
+        const p = puddles[n];
+        const age = clock - p.born;
+        if (age > PUDDLE_T) {
+          puddleMesh.setColorAt(n, black);
+          dummy.scale.setScalar(0);
+        } else {
+          puddleMesh.setColorAt(n, tint.setScalar(0.32 * (1 - age / PUDDLE_T)));
+          dummy.scale.setScalar(0.5 + age * 0.8);
+        }
+        dummy.position.set(p.x, 0.07, p.z);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        puddleMesh.setMatrixAt(n, dummy.matrix);
+      }
+      dummy.scale.setScalar(1);
+      puddleMesh.instanceMatrix.needsUpdate = true;
+      if (puddleMesh.instanceColor) puddleMesh.instanceColor.needsUpdate = true;
       if (buoyMesh && bandMesh) {
         buoys.forEach((h, n) => {
           const bob = Math.sin(clock * 2.2 + n * 1.3) * 0.08;
@@ -794,9 +1017,16 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
           dummy.scale.set(h.r * 1.45, 0.12, h.r * 1.45);
           dummy.updateMatrix();
           bandMesh.setMatrixAt(n, dummy.matrix);
+          if (buoyLamps?.visible) {
+            dummy.position.y = 0.72 + bob;
+            dummy.scale.setScalar(0.13 + 0.03 * Math.sin(clock * 5 + n));
+            dummy.updateMatrix();
+            buoyLamps.setMatrixAt(n, dummy.matrix);
+          }
         });
         buoyMesh.instanceMatrix.needsUpdate = true;
         bandMesh.instanceMatrix.needsUpdate = true;
+        if (buoyLamps) buoyLamps.instanceMatrix.needsUpdate = true;
       }
       // the swell's crests (as this screen's shell's lap has them)
       if (r.swells.length) {
