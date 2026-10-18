@@ -381,13 +381,13 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dd>Hold while turning to drift; tap in the air off a ramp for a trick</dd>
               <dt>X</dt>
               <dd>Use your item; hold it to keep a banana or shell behind you</dd>
-              <dt>Z</dt>
+              <dt>Z or J</dt>
               <dd>Throw your item backwards</dd>
               <dt>C</dt>
               <dd>Slam the kart beside you</dd>
-              <dt>B</dt>
+              <dt>B or H</dt>
               <dd>Cash 5 coins for a boost</dd>
-              <dt>↓</dt>
+              <dt>↓ or S</dt>
               <dd>Brake and reverse</dd>
               <dt>V</dt>
               <dd>Look behind</dd>
@@ -401,7 +401,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         <h3>Go faster</h3>
         <ul>
           <li>
-            <b>Rocket start.</b> {touch ? 'Tap the screen' : 'Press Up'} just before the lights turn green.
+            <b>Rocket start.</b> {touch ? 'Tap the screen' : 'Press Up or W'} just before the lights turn green.
           </li>
           <li>
             <b>Drift.</b> Hold {touch ? 'drift' : 'Space'} while turning to hop into a slide. The sparks go <span className="g-palmdrive-blue">blue</span>, <span className="g-palmdrive-orange">orange</span>, then{' '}
@@ -414,7 +414,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Dash panels and ramps.</b> The orange arrows boost you. Press {touch ? 'drift' : 'Space'} as you fly off a ramp for a trick and land with a boost.
           </li>
           <li>
-            <b>Coins.</b> Every coin adds a little top speed (up to 10). {touch ? 'Tap your coins' : 'Press B'} to cash in 5 for a quick boost. Getting hit drops coins.
+            <b>Coins.</b> Every coin adds a little top speed (up to 10). {touch ? 'Tap your coins' : 'Press B or H'} to cash in 5 for a quick boost. Getting hit drops coins.
           </li>
         </ul>
       </section>
