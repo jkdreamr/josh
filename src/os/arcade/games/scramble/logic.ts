@@ -402,8 +402,11 @@ export type Fighter = {
   outSeen: number;
 };
 
-/** A bullet flies at the level it was fired from (`lv`), from (ox, oz); `chip` is the last piece it passed under. */
-export type Bullet = { f: number; w: WeaponId; r: number; x: number; z: number; dx: number; dz: number; speed: number; left: number; traveled: number; dmg: number; local: boolean; lv: number; ox: number; oz: number; chip: number };
+/**
+ * A bullet flies at level `lv` (see aimLevel), fired from level `from` at (ox, oz); `chip` is the last piece it chipped on
+ * its way up.
+ */
+export type Bullet = { f: number; w: WeaponId; r: number; x: number; z: number; dx: number; dz: number; speed: number; left: number; traveled: number; dmg: number; local: boolean; lv: number; from: number; ox: number; oz: number; chip: number };
 export type LootItem = { id: number; def: LootDef; x: number; z: number; by: number; at: number };
 /**
  * A built piece: a wall, a ramp, a floor or a roof, of wood, stone or metal. `cx`, `cz` is its grid square (a wall
@@ -1497,8 +1500,8 @@ function shoot(m: Match, f: Fighter, g: Gun) {
   const a = r2(f.aim);
   const x = r2(f.x);
   const z = r2(f.z);
-  const h = levelOf(f.y);
-  fire(m, f.id, g.w, g.r, x, z, a, s, k, true, h);
+  const h = aimLevel(m, f, spec.range);
+  fire(m, f.id, g.w, g.r, x, z, a, s, k, true, h, levelOf(f.y));
   emit(m, { t: 'shot', f: f.id, w: g.w, r: g.r, x, z, a, s, k, h });
   if (spec.call) {
     // the flare goes up and the gun is spent; the host sends a supply drop to land near here
@@ -1519,8 +1522,41 @@ function shoot(m: Match, f: Fighter, g: Gun) {
   }
 }
 
-/** Puts a shot's bullets in the air. The same seed gives the same pellets on every client. */
-export function fire(m: Match, fid: number, w: WeaponId, r: number, x: number, z: number, a: number, seed: number, k: number, local: boolean, lv = 0) {
+/**
+ * The level a shot flies at: our own, or higher when it's aimed up at an egg up high (or, with no egg in its way, at
+ * something built up high), so it goes over what's lower than that (see castRay).
+ */
+function aimLevel(m: Match, f: Fighter, range: number) {
+  const lv = levelOf(f.y);
+  if (lv >= MAX_LEVEL || (!m.walls.size && f.y <= 0)) return lv;
+  const dx = Math.sin(f.aim);
+  const dz = Math.cos(f.aim);
+  let best = Infinity;
+  let at = lv;
+  for (const o of m.fighters) {
+    if (o === f || !fighting(o) || Math.abs(o.x - f.x) > range || Math.abs(o.z - f.z) > range) continue;
+    const t = rayCircle(f.x, f.z, dx, dz, range, o.x, o.z, HIT_R + 0.5);
+    if (t < best) {
+      best = t;
+      at = Math.max(lv, levelOf(o.y));
+    }
+  }
+  if (best < Infinity) return at;
+  const cx = gridOf(f.x);
+  const cz = gridOf(f.z);
+  m.walls.along(f.x, f.z, f.x + dx * range, f.z + dz * range, (w) => {
+    if (w.k === 'wall' || (w.cx === cx && w.cz === cz) || (w.k === 'ramp' ? w.lv < lv : w.lv <= lv)) return;
+    const t = rayObb(f.x, f.z, dx, dz, range, w);
+    if (t < best) {
+      best = t;
+      at = Math.min(MAX_LEVEL, w.lv);
+    }
+  });
+  return at;
+}
+
+/** Puts a shot's bullets in the air, at level `lv` (fired from level `from`). The same seed gives the same pellets on every client. */
+export function fire(m: Match, fid: number, w: WeaponId, r: number, x: number, z: number, a: number, seed: number, k: number, local: boolean, lv = 0, from = lv) {
   const spec = WEAPONS[w];
   const rng = rng32(seed);
   const dmg = damageOf(w, r);
@@ -1528,7 +1564,7 @@ export function fire(m: Match, fid: number, w: WeaponId, r: number, x: number, z
     // pellets spread evenly across the cone, each jittered a little
     const u = spec.pellets > 1 ? ((p + rng()) / spec.pellets) * 2 - 1 : rng() * 2 - 1;
     const ang = a + u * spec.spread * k;
-    m.bullets.push({ f: fid, w, r, x, z, dx: Math.sin(ang), dz: Math.cos(ang), speed: spec.speed * (spec.pellets > 1 ? 0.92 + rng() * 0.16 : 1), left: spec.range, traveled: 0, dmg, local, lv, ox: x, oz: z, chip: -1 });
+    m.bullets.push({ f: fid, w, r, x, z, dx: Math.sin(ang), dz: Math.cos(ang), speed: spec.speed * (spec.pellets > 1 ? 0.92 + rng() * 0.16 : 1), left: spec.range, traveled: 0, dmg, local, lv, from, ox: x, oz: z, chip: -1 });
   }
   if (m.bullets.length > 900) m.bullets.splice(0, m.bullets.length - 900);
 }
@@ -1898,12 +1934,15 @@ function moveBullets(m: Match, dt: number) {
   m.bullets = keep;
 }
 
-/** Bullet damage to the floors, roofs and ramps a bullet from here passes under (or through) within `len`. */
+/**
+ * Bullet damage to the floors, roofs and ramps a bullet aimed up from lower down passes under (or through) within
+ * `len`, up to the level it flies at: shooting up at an egg on a tower chips the tower.
+ */
 function chipUnder(m: Match, b: Bullet, len: number) {
   const shooter = m.fighters[b.f];
   if (!shooter) return;
   m.walls.along(b.x, b.z, b.x + b.dx * len, b.z + b.dz * len, (w) => {
-    if (w.id === b.chip || w.k === 'wall' || (w.k === 'ramp' ? w.lv < b.lv : w.lv <= b.lv)) return;
+    if (w.id === b.chip || w.k === 'wall' || w.lv > b.lv || (w.k === 'ramp' ? w.lv < b.from : w.lv <= b.from)) return;
     if (gridOf(b.ox) === w.cx && gridOf(b.oz) === w.cz) return;
     if (rayObb(b.x, b.z, b.dx, b.dz, len, w) === Infinity) return;
     b.chip = w.id;
@@ -2379,6 +2418,7 @@ function growPieces(m: Match, dt: number) {
     const d = Math.min(dt, w.left);
     w.left = Math.max(0, w.left - dt);
     w.hp = Math.min(w.max, w.hp + (d * w.max * (1 - BUILD_START)) / MAT_SPECS[w.mat].time);
+    if (w.left <= 0) w.hp = Math.round(w.hp * 100) / 100;
   }
 }
 
