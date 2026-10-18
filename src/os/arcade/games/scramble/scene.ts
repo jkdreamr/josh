@@ -82,6 +82,19 @@ const DRESS: Record<BuildingKind, { frame: number; porch: number; mat: number; a
   diner: { frame: 0xd64545, porch: 0xc9c3b5, mat: 0x2b2d33, awning: 0xd64545, edge: 0x3fb8af, trim: 0x3fb8af },
   mill: { frame: 0x6b4426, porch: 0xb98250, mat: 0x8a5a2b, awning: 0x7a4a2a, edge: 0xffcf4a, trim: 0xe9e1cf },
 };
+/** The stone footing along each kind's outer walls. */
+const FOOTINGS: Record<BuildingKind, number> = { house: 0x8f8a80, farm: 0x7d766c, shed: 0x6e6a62, warehouse: 0x6c747c, container: 0, ruin: 0, coop: 0xb08a4a, diner: 0x9aa3a8, mill: 0x8a8378 };
+/** Windows along each kind's outer walls: their size, how high their middle sits, how far apart, and shutters or not. */
+const WINDOWS: Partial<Record<BuildingKind, { w: number; h: number; y: number; gap: number; shutters: boolean }>> = {
+  house: { w: 1.1, h: 1, y: 1.65, gap: 3.4, shutters: true },
+  farm: { w: 1, h: 1, y: 1.8, gap: 4, shutters: true },
+  shed: { w: 0.8, h: 0.6, y: 1.9, gap: 6, shutters: false },
+  warehouse: { w: 2.2, h: 0.6, y: 3.4, gap: 5, shutters: false },
+  coop: { w: 0.7, h: 0.55, y: 1.9, gap: 3, shutters: false },
+  diner: { w: 2.2, h: 1.2, y: 1.7, gap: 3.4, shutters: false },
+  mill: { w: 0.7, h: 0.9, y: 3.6, gap: 4, shutters: false },
+};
+const SHUTTERS = [0x3f6f9e, 0x4f8a4a, 0xb0473a, 0x6b4f8a, 0x2f7a7a];
 /** Glow under a pickup, by how good it is (the rarity colors). */
 const USE_GLOW: Record<UseId, number> = { bandage: 1, medkit: 2, mini: 2, shield: 3, coffee: 4, smoothie: 3, tart: 4 };
 /** How many legendary things on the ground get a gold beam at once (there are rarely more than a handful). */
@@ -312,6 +325,28 @@ function riverTexture(THREE: Three) {
       }
     }),
     [1, 1],
+  );
+}
+
+/** Window glass: sky blue, lighter at the top, with a bright diagonal shine across it. */
+function glassTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(32, 32, (g) => {
+      const grad = g.createLinearGradient(0, 0, 0, 32);
+      grad.addColorStop(0, '#d9f1ff');
+      grad.addColorStop(1, '#6fa9cf');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 32, 32);
+      g.fillStyle = 'rgba(255,255,255,0.7)';
+      g.beginPath();
+      g.moveTo(6, 32);
+      g.lineTo(14, 32);
+      g.lineTo(30, 0);
+      g.lineTo(22, 0);
+      g.closePath();
+      g.fill();
+    }),
   );
 }
 
@@ -1188,6 +1223,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const sails: T.Mesh[] = [];
   // door frames, porches, mats, paving and container doors, all one instanced mesh; lamps another
   const bits: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number; c: number }[] = [];
+  // wall caps, footings, window frames, sills and shutters (one instanced mesh), and the glass (another)
+  const trims: Part[] = [];
+  const panes: Part[] = [];
   const lamps: { x: number; y: number; z: number; sx: number; sz: number }[] = [];
   map.buildings.forEach((b, bi) => {
     const floorMat =
@@ -1210,14 +1248,40 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     floor.position.set(b.x, 0.02, b.z);
     floor.scale.set(b.w, b.d, 1);
     scene.add(floor);
+    const dress = DRESS[b.kind];
     for (const w of b.walls) {
       dummy.position.set(w.x, b.h / 2, w.z);
       dummy.rotation.set(0, 0, 0);
       dummy.scale.set(w.hw * 2, b.h, w.hd * 2);
       dummy.updateMatrix();
       buildingWalls.setMatrixAt(wi, dummy.matrix);
-      buildingWalls.setColorAt(wi, wallColor(b, wallRnd));
+      const wc = wallColor(b, wallRnd).getHex();
+      buildingWalls.setColorAt(wi, color.setHex(wc));
       wi++;
+      // a cap along the top of every wall, a shade darker, so the rooms read from above with the roof off
+      trims.push({ x: w.x, y: b.h + 0.04, z: w.z, sx: w.hw * 2 + 0.06, sy: 0.1, sz: w.hd * 2 + 0.06, c: darker(wc, 0.82) });
+      if (b.kind === 'container') continue;
+      // the outside of the outer walls: a stone footing, and windows with sills (shutters on houses and farms)
+      const alongX = w.hw >= w.hd;
+      const off = alongX ? w.z - b.z : w.x - b.x;
+      if (Math.abs(off) < (alongX ? b.d : b.w) / 2 - WALL_T / 2 - 0.05) continue;
+      const out = Math.sign(off);
+      const len = 2 * (alongX ? w.hw : w.hd);
+      /** A box `u` along the wall from its middle and `o` out from its outer face, `sl` long and `so` deep. */
+      const face = (list: Part[], u: number, y: number, o: number, sl: number, sy: number, so: number, c: number) =>
+        list.push({ x: w.x + (alongX ? u : out * (WALL_T / 2 + o)), y, z: w.z + (alongX ? out * (WALL_T / 2 + o) : u), sx: alongX ? sl : so, sy, sz: alongX ? so : sl, c });
+      face(trims, 0, 0.17, 0, len + 0.04, 0.34, 0.12, b.kind === 'ruin' ? darker(wc, 0.8) : FOOTINGS[b.kind]);
+      const win = WINDOWS[b.kind];
+      if (!win || len < win.w + 1.4) continue;
+      const n = Math.max(1, Math.floor((len - 0.8) / win.gap));
+      for (let k = 0; k < n; k++) {
+        const u = (k - (n - 1) / 2) * ((len - 0.4) / n);
+        const y = Math.min(b.h - win.h / 2 - 0.4, win.y);
+        face(trims, u, y, 0.02, win.w + 0.2, win.h + 0.2, 0.06, dress.trim === dress.frame ? 0xf6f1e4 : dress.trim);
+        face(trims, u, y - win.h / 2 - 0.12, 0.06, win.w + 0.36, 0.1, 0.14, dress.trim === dress.frame ? 0xe0d8c4 : darker(dress.trim, 0.85));
+        face(panes, u, y, 0.06, win.w, win.h, 0.04, 0xffffff);
+        if (win.shutters) for (const side of [-1, 1]) face(trims, u + side * (win.w / 2 + 0.28), y, 0.04, 0.36, win.h + 0.1, 0.05, SHUTTERS[b.look % SHUTTERS.length]);
+      }
     }
 
     const s = DRESS[b.kind];
@@ -1299,6 +1363,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       } else {
         piece(gableGeometry(THREE, alongX ? W : D, alongX ? D : W, rise), 0, 0.2, 0, rc, alongX ? 0 : Math.PI / 2);
         piece(new THREE.BoxGeometry(alongX ? W + 0.06 : 0.36, 0.16, alongX ? 0.36 : D + 0.06), 0, 0.2 + rise, 0, darker(rc, 0.62));
+        if (b.kind === 'house' || b.kind === 'farm') {
+          // a brick chimney through the back slope, with a cap
+          const along = (alongX ? W : D) * (b.look % 2 ? 0.28 : -0.28);
+          const across = -(alongX ? D : W) * 0.2;
+          const h = rise * 0.6 + 0.9;
+          const [cx, cz] = alongX ? [along, across] : [across, along];
+          piece(new THREE.BoxGeometry(0.7, h, 0.7), cx, 0.2 + h / 2, cz, 0xa4553a);
+          piece(new THREE.BoxGeometry(0.86, 0.14, 0.86), cx, 0.2 + h, cz, 0x5a5550);
+        }
       }
       // a long vent along a warehouse's ridge
       if (b.kind === 'warehouse') piece(new THREE.BoxGeometry(alongX ? W * 0.7 : 1.3, 0.36, alongX ? 1.3 : D * 0.7), 0, 0.3 + rise, 0, 0xd5dbe0);
@@ -1392,6 +1465,25 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     doorLamps.setMatrixAt(i, dummy.matrix);
   });
   scene.add(doorBits, doorLamps);
+  const trimMesh = many(G.box, lambert(0xffffff), trims.length);
+  trims.forEach((p, i) => {
+    dummy.position.set(p.x, p.y, p.z);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(p.sx, p.sy, p.sz);
+    dummy.updateMatrix();
+    trimMesh.setMatrixAt(i, dummy.matrix);
+    trimMesh.setColorAt(i, color.setHex(p.c));
+  });
+  // glass catches the sky: pale blue with a bright diagonal shine
+  const paneMesh = many(G.box, lambert(0xffffff, { map: keep(glassTexture(THREE)), emissive: 0x1d3a52 }), panes.length);
+  panes.forEach((p, i) => {
+    dummy.position.set(p.x, p.y, p.z);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(p.sx, p.sy, p.sz);
+    dummy.updateMatrix();
+    paneMesh.setMatrixAt(i, dummy.matrix);
+  });
+  scene.add(trimMesh, paneMesh);
 
   // trees: oaks (a trunk and two round crowns), pines (two cones), birches (a white trunk with dark marks and a pale
   // narrow crown) and fruit trees (one round crown hung with fruit)
