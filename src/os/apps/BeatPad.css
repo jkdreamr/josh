@@ -1577,3 +1577,104 @@
 .is-coarse .beatpad-perform-side > .gbtn {
   min-height: 44px;
 }
+
+@container (max-height: 360px) {
+  .beatpad-groove-select {
+    height: 22px;
+    min-height: 22px;
+  }
+
+  .beatpad-melody-header .beatpad-control-segment {
+    padding: 1px;
+  }
+
+  .beatpad-melody-header .beatpad-control-segment > button,
+  .beatpad-new-melody {
+    height: 20px;
+    min-height: 20px;
+  }
+
+  .beatpad-pads-content {
+    gap: 6px;
+  }
+
+  .beatpad-pads {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .beatpad-pad {
+    min-height: 40px;
+  }
+
+  .beatpad-perform {
+    flex-direction: row;
+    gap: 6px;
+  }
+
+  .beatpad-perform-side {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .beatpad-xy {
+    min-height: 58px;
+  }
+
+  .beatpad-repeat > button,
+  .beatpad-perform-side > .gbtn {
+    height: 24px;
+    min-height: 24px;
+  }
+}
+
+@container (min-height: 640px) and (min-width: 600px) {
+  .beatpad-app .beatpad-pad {
+    min-height: 110px;
+    font-size: 16px;
+  }
+
+  .beatpad-perform {
+    flex: 0 1 auto;
+  }
+
+  .beatpad-xy {
+    min-height: 260px;
+  }
+}
+
+@container (max-height: 260px) {
+  .beatpad-pads-content {
+    gap: 4px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .beatpad-pads {
+    gap: 4px;
+  }
+
+  .beatpad-pad {
+    min-height: 25px;
+    font-size: 13px;
+  }
+
+  .beatpad-perform-side {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .beatpad-perform-side > .beatpad-select-field > .beatpad-section-label {
+    display: none;
+  }
+
+  .beatpad-xy {
+    min-height: 40px;
+  }
+
+  .beatpad-xy-label {
+    top: 4px;
+    font-size: 12px;
+  }
+}
