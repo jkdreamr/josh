@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type Pointe
 import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
-import { cycleAt, openRuns, pointAt, timed, type Past, type Track } from './track';
+import { cycleAt, gripAt, openRuns, pointAt, timed, type Past, type Track } from './track';
 import {
   BANK,
   CASH_COST,
@@ -709,7 +709,11 @@ function Play({ mode }: { mode: Mode }) {
       }
       // the crane's winch whirring as it hauls you back
       const carrying = !!me && me.sunk > 0 && 1 - me.sunk / r.tier.fallT >= FALL_SINK;
-      if (carrying && !winching.current) sfx.tone({ freq: 180, to: 460, dur: FALL_CARRY * r.tier.fallT, type: 'sawtooth', vol: 0.045 });
+      // (the drone's buzz on the Skyway)
+      if (carrying && !winching.current) {
+        if (r.holePast === 'void') sfx.tone({ freq: 140, to: 160, dur: FALL_CARRY * r.tier.fallT, type: 'sawtooth', vol: 0.04 });
+        else sfx.tone({ freq: 180, to: 460, dur: FALL_CARRY * r.tier.fallT, type: 'sawtooth', vol: 0.045 });
+      }
       winching.current = carrying;
       if (me) pieceSounds(r, me, dt);
       const level = me && me.drift ? turboLevel(me.charge) : 0;
@@ -795,6 +799,11 @@ function Play({ mode }: { mode: Mode }) {
       hissT.current = 0.1;
       sfx.noise(0.12, 0.025);
     }
+    // the tyres squealing as you slide on frost
+    if (r.slick && me.y <= 0.05 && me.sunk === 0 && Math.hypot(me.kx, me.kz) > 3 && gripAt(r.track, me.s, me.lap) < 0.6 && hissT.current <= 0) {
+      hissT.current = 0.12;
+      sfx.tone({ freq: 1700 + Math.random() * 300, dur: 0.1, type: 'sawtooth', vol: 0.025 });
+    }
     r.hazards.forEach((h, i) => {
       if (!timed(h.kind)) return;
       const dist = Math.hypot(h.x - me.x, h.z - me.z);
@@ -812,8 +821,34 @@ function Play({ mode }: { mode: Mode }) {
       if (h.kind === 'rotor') {
         const was = pieceCyc.current.get(i) ?? 0;
         pieceCyc.current.set(i, st.live ? 1 : 0);
+        if (h.look === 'beam') {
+          // the relay beam: a rising tone as it comes on, then a low hum as it sweeps
+          if (st.live && !was) sfx.tone({ freq: 220, to: 660, dur: 0.4, type: 'sine', vol: 0.06 * vol });
+          if (st.live && tick && dist < 40) sfx.tone({ freq: 110, dur: 0.19, type: 'triangle', vol: 0.035 * (1 - dist / 40) });
+          return;
+        }
         if (st.live && !was && dist < 70) sfx.noise(0.5, 0.08 * vol);
         if (st.live && tick && dist < 40) sfx.tone({ freq: 2400, dur: 0.012, type: 'square', vol: 0.03 * (1 - dist / 40) });
+        return;
+      }
+      if (h.kind === 'panel' || h.kind === 'geyser') {
+        // a pane: a rising chime through its warning, a tinkle of glass as it goes and a shing as it comes back; a flare:
+        // a crackle as its grate glows and a whoomph as it blows
+        const was = pieceCyc.current.get(i) ?? 0;
+        const now = st.live ? 2 : st.warn > 0 ? 1 : 0;
+        pieceCyc.current.set(i, now);
+        if (now === was || st.phase === 'off') return;
+        if (h.kind === 'panel') {
+          if (now === 1) sfx.tone({ freq: 1320, to: 2640, dur: 0.6, type: 'triangle', vol: 0.03 * vol });
+          else if (now === 2) {
+            sfx.noise(0.12, 0.05 * vol);
+            sfx.tone({ freq: 3400, to: 1700, dur: 0.18, type: 'triangle', vol: 0.05 * vol });
+          } else if (was === 2) sfx.tone({ freq: 1800, to: 3600, dur: 0.12, type: 'sine', vol: 0.04 * vol });
+        } else if (now === 1) sfx.noise(0.3, 0.025 * vol);
+        else if (now === 2) {
+          sfx.noise(0.5, 0.12 * vol);
+          sfx.tone({ freq: 95, to: 55, dur: 0.45, type: 'sawtooth', vol: 0.08 * vol });
+        }
         return;
       }
       if (st.phase === 'off') return;
@@ -828,9 +863,16 @@ function Play({ mode }: { mode: Mode }) {
       if (h.kind === 'hammer') {
         if (crossed(warn) && st.phase === 'idle' && st.warn > 0) sfx.noise(0.5, 0.05 * vol);
         if (crossed(HAMMER.slam) && (st.phase === 'down' || st.phase === 'slam')) {
-          // thoom
-          sfx.noise(0.22, 0.2 * vol);
-          sfx.tone({ freq: 45, to: 32, dur: 0.4, type: 'sine', vol: 0.22 * vol });
+          if (h.look === 'bell') {
+            // BONG: Hoover's carillon, a struck bell and its inharmonic partials
+            sfx.tone({ freq: 196, dur: 1.6, type: 'sine', vol: 0.2 * vol });
+            sfx.tone({ freq: 196 * 2.76, dur: 0.9, type: 'sine', vol: 0.07 * vol });
+            sfx.tone({ freq: 196 * 5.4, dur: 0.5, type: 'sine', vol: 0.04 * vol });
+          } else {
+            // thoom
+            sfx.noise(0.22, 0.2 * vol);
+            sfx.tone({ freq: 45, to: 32, dur: 0.4, type: 'sine', vol: 0.22 * vol });
+          }
           if (dist < 25) buzz(30);
         }
       } else {
@@ -1063,6 +1105,8 @@ function Play({ mode }: { mode: Mode }) {
         break;
       case 'dash':
         if (mine) sfx.tone({ freq: 380, to: 1200, dur: 0.22, type: 'triangle', vol: 0.14 });
+        // a kicker's sideways zip
+        if (mine && e.kick) sfx.tone({ freq: 1400, to: 300, dur: 0.2, type: 'sawtooth', vol: 0.07, delay: 0.05 });
         break;
       case 'bolt':
         sfx.play('boom', 1.6);

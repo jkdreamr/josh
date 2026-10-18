@@ -2504,6 +2504,18 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
       }
     }
   }
+  // a kart ahead at a crawl or reeling from a hit (stopped by a shell, say): steered round like anything else in the way,
+  // as ramming it shoves it off the glass
+  if (r.slick) {
+    for (const o of r.karts) {
+      if (o === k || o.sunk > 0 || o.done !== null || (Math.abs(o.v) > 12 && !hurt(o))) continue;
+      const far = deltaS(t, k.s, o.s);
+      if (far < 1 || far > reach || k.v - o.v < 4) continue;
+      const a = { lo: o.d, hi: o.d, room: 2 * KART_R + 0.5, solid: true, close: far < 6 + v * 0.5 };
+      ahead.push(a);
+      if (gap(lane * t.half, a) < a.room || (far < reach * 0.6 && gap(k.d, a) < a.room)) near = Math.min(near, far);
+    }
+  }
   // a kicker coming up: kept off its outer part, the side that throws you toward the edge (the whole of it for the less
   // able, and for a kart that has just fallen twice), as one more thing it would rather not run over
   if (r.slick) {
@@ -3062,7 +3074,8 @@ function think(r: Race, k: Kart, dt: number) {
       const across = Math.abs(dx * rx + dz * rz);
       return Math.abs(dx * Math.sin(k.h) + dz * Math.cos(k.h)) < 2.4 && across > 1 && across < 3.4;
     });
-    if (beside && (!hunt || fromBrink(r, beside) < 3 || r.rand() < 0.5)) inp.slam = true;
+    // (on the Skyway it never shoves another CPU over the brink: its tricks there are for the people it races)
+    if (beside && !(r.slick && beside.kind === 'cpu' && fromBrink(r, beside) < 3) && (!hunt || fromBrink(r, beside) < 3 || r.rand() < 0.5)) inp.slam = true;
   }
 
   // keep the pack close: CPUs ease off well ahead of the leading driver who isn't one (you, solo) and push when far behind
@@ -3089,7 +3102,7 @@ function think(r: Race, k: Kart, dt: number) {
     case 'banana':
     case 'bananas':
       // (on Expert, dropped on the apex of a bend beside a drop for whoever is following)
-      go = (behind && !inp.hold) || ai.held > 9 || (expert(r) && band.open && Math.abs(curveAhead(t, k.s, -10, 10).peak) > 0.04 && r.karts.some((o) => o !== k && o.done === null && deltaS(t, o.s, k.s) > 2 && deltaS(t, o.s, k.s) < 40));
+      go = (behind && !inp.hold) || ai.held > 9 || (expert(r) && band.open && Math.abs(curveAhead(t, k.s, -10, 10).peak) > 0.04 && r.karts.some((o) => o !== k && o.done === null && deltaS(t, o.s, k.s) > 2 && deltaS(t, o.s, k.s) < 40 && !(r.slick && o.kind === 'cpu')));
       inp.back = true;
       break;
     case 'bomb':
