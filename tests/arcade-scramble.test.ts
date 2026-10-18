@@ -1738,6 +1738,77 @@ test('a computer egg walled into a shipping container breaks out, and leaves a s
   assert.ok(Math.hypot(a.x - back.x, a.z - back.z) < 2.5, `got round to (${back.x}, ${back.z}), at (${a.x.toFixed(1)}, ${a.z.toFixed(1)})`);
 });
 
+test('a computer egg in a farmyard breaks down a wall someone built across its way to the gate', () => {
+  const m = quiet(4, 3);
+  const [a, b] = m.fighters;
+  land(b, 0, 0);
+  autopilot(m, a);
+  const ai = a.ai!;
+  const y = m.map.yards.findIndex((yd) => Math.abs(yd.x - 7.5) < 0.1 && Math.abs(yd.z + 74) < 0.1);
+  assert.ok(y >= 0, 'the farm on seed 4');
+  // between the farmhouse and the north fence, with a wall in front of the north gate (where one came up in a match)
+  land(a, 5.5, -63.8);
+  const id = 999;
+  m.walls.set(id, makeWall(id, b.id, 6.76, -63.4, 0.79, WALL_HP));
+  ai.think = 1e9;
+  ai.goal = 'roam';
+  ai.gx = 11;
+  ai.gz = -34;
+  run(m, 12);
+  assert.ok(yardAt(m.map, a.x, a.z) !== y, `out of the yard, at (${a.x.toFixed(1)}, ${a.z.toFixed(1)})`);
+});
+
+test('an egg cracked against a wall spills nothing through it, nor under a bed out of reach', () => {
+  const m = quiet(3, 2);
+  const [, b] = m.fighters;
+  openSpot(m);
+  // a wall just east of the egg, a bed just west
+  const wall = { x: 1, z: 0, hw: 0.25, hd: 5 };
+  const bed = { x: -1.8, z: 0, hw: 0.9, hd: 1.1 };
+  m.map.solids.push({ shape: 'box', ...wall, what: 'wall', ref: 0 }, { shape: 'box', ...bed, what: 'seat', ref: 0 });
+  reindex(m.map);
+  land(b, 0.1, 0);
+  b.guns = [{ w: 'rifle', r: 2, mag: 10 }, { w: 'shotgun', r: 1, mag: 2 }];
+  b.ammo.heavy = 30;
+  b.ammo.shells = 10;
+  b.items.bandage = 3;
+  b.items.medkit = 1;
+  b.items.smoothie = 1;
+  b.throws.grenade = 2;
+  b.throws.jam = 1;
+  b.melee = 'pan';
+  b.helmet = 2;
+  b.vest = 3;
+  b.wood = 40;
+  hurt(m, b, 500, -1, 'storm', true);
+  const drops = m.events.filter((e) => e.t === 'drop').map((e) => (e.t === 'drop' ? e.item : null)!);
+  assert.ok(drops.length >= 12, `everything spilled (${drops.length})`);
+  for (const l of drops) {
+    assert.ok(l.x < wall.x - wall.hw, `nothing through the wall (${l.x}, ${l.z})`);
+    assert.ok(Math.abs(l.x - bed.x) >= bed.hw || Math.abs(l.z - bed.z) >= bed.hd, `nothing under the bed (${l.x}, ${l.z})`);
+  }
+});
+
+test('a computer egg gives up on loot lying where it cannot reach, and goes for the next thing', () => {
+  const m = quiet(3, 2);
+  const [a] = m.fighters;
+  openSpot(m);
+  // a legendary gun stuck in the middle of a big rock, and a plain one out on the grass
+  m.map.solids.push({ shape: 'circle', x: 0, z: 0, r: 1.6, what: 'rock', ref: 0 });
+  reindex(m.map);
+  m.loot.set(1, { id: 1, def: { kind: 'gun', w: 'rifle', r: 4 }, x: 0, z: 0, by: -1, at: 0 });
+  m.loot.set(2, { id: 2, def: { kind: 'gun', w: 'pistol', r: 0 }, x: -30, z: 0, by: -1, at: 0 });
+  land(a, 8, 0);
+  autopilot(m, a);
+  let lost = -1;
+  run(m, 40, () => {
+    if (lost < 0 && a.ai!.lost === 1) lost = m.time;
+  });
+  assert.ok(lost > 0, 'it gave up on the gun in the rock');
+  assert.ok(m.loot.has(1), 'which is still there');
+  assert.ok(!m.loot.has(2) && a.guns.some((g) => g?.w === 'pistol'), 'and picked up the other one');
+});
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The kitchen drawer: guns, melee, throwables, barrels, supply drops, scopes and backpacks.
 

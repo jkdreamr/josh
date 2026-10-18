@@ -193,10 +193,12 @@ export type Ai = {
   pad: number;
   /** The bridge we're crossing the river by, or -1. */
   bridge: number;
-  /** When to give up on a crate or a campfire. */
+  /** When to give up on a crate, a campfire or something on the ground. */
   until: number;
   /** The last container we gave up smashing. */
   tried: number;
+  /** The last thing on the ground we gave up walking to (it lay somewhere we couldn't reach). */
+  lost: number;
   target: number;
   react: number;
   strafe: number;
@@ -603,6 +605,7 @@ function newAi(m: Match, f: Fighter): Ai {
     bridge: -1,
     until: 0,
     tried: -1,
+    lost: -1,
     target: -1,
     react: 0,
     strafe: rng() < 0.5 ? 1 : -1,
@@ -1377,7 +1380,10 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   const rad = spill.length > 1 ? 1 + spill.length * 0.07 : 0;
   spill.forEach((def, i) => {
     const a = (i / spill.length) * Math.PI * 2;
-    dropItem(m, f, def, clamp(f.x + Math.sin(a) * rad, -EDGE, EDGE), clamp(f.z + Math.cos(a) * rad, -EDGE, EDGE));
+    // in a ring round the egg, short of anything solid (never through a wall, or under a bed out of reach)
+    const hit = rad > 0 ? castRay(m, f.x, f.z, Math.sin(a), Math.cos(a), rad + 0.4, -1, false, true) : null;
+    const r = hit ? Math.max(0, hit.t - 0.4) : rad;
+    dropItem(m, f, def, clamp(f.x + Math.sin(a) * r, -EDGE, EDGE), clamp(f.z + Math.cos(a) * r, -EDGE, EDGE));
   });
   emit(m, { t: 'out', f: f.id, by, w, place });
 }
@@ -1749,7 +1755,7 @@ function pulse(m: Match, fid: number, x: number, z: number) {
     const uz = d > 0.05 ? dz / d : 1;
     // out from the middle, short of anything solid
     const want = 1 + 3 * (1 - d / R);
-    const hit = castRay(m, l.x, l.z, ux, uz, want + 0.4, -1, false);
+    const hit = castRay(m, l.x, l.z, ux, uz, want + 0.4, -1, false, true);
     const go = hit ? Math.max(0, hit.t - 0.4) : want;
     if (go < 0.2) continue;
     moveLoot(m, l.id, clamp(l.x + ux * go, -EDGE, EDGE), clamp(l.z + uz * go, -EDGE, EDGE), true);
@@ -2598,9 +2604,10 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   const weakest = f.guns[0] && f.guns[1] ? f.guns[gunValue(f.guns[0]) <= gunValue(f.guns[1]) ? 0 : 1] : null;
   let item: LootItem | null = null;
   let itemD = 70;
+  if (ai.goal === 'loot' && m.time > ai.until) ai.lost = ai.item;
   for (const l of m.loot.values()) {
     const d = Math.hypot(l.x - f.x, l.z - f.z);
-    if (d >= itemD || !inSafe(l.x, l.z)) continue;
+    if (d >= itemD || l.id === ai.lost || !inSafe(l.x, l.z)) continue;
     const def = l.def;
     let useful: boolean;
     switch (def.kind) {
@@ -2646,6 +2653,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     }
   }
   if (item && (chest < 0 || itemD < chestD + 6)) {
+    if (ai.goal !== 'loot' || ai.item !== item.id) ai.until = m.time + 20;
     ai.goal = 'loot';
     ai.item = item.id;
     ai.gx = item.x;
@@ -3016,11 +3024,14 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
     ai.lastX = f.x;
     ai.lastZ = f.z;
     if (moved < 0.8 && ai.detourT <= 0) {
-      // a wall someone built or a crate: break through it; anything else, go round
+      // a wall someone built or a crate, this way or straight on: break through it; anything else, go round
+      const ahead = Math.atan2(dx, dz);
+      const breaks = (h: ReturnType<typeof castRay>) => !!h && (h.what === 'built' || h.what === 'crate');
       const hit = castRay(m, f.x, f.z, inp.mx, inp.mz, 1.8, f.id, false, true);
-      if (hit && (hit.what === 'built' || hit.what === 'crate')) {
+      const front = breaks(hit) ? null : castRay(m, f.x, f.z, Math.sin(ahead), Math.cos(ahead), Math.min(1.8, d), f.id, false, true);
+      if (breaks(hit) || breaks(front)) {
         ai.smashT = 1;
-        ai.smashA = a;
+        ai.smashA = breaks(hit) ? a : ahead;
       } else {
         ai.detourT = 0.7 + m.rng() * 0.6;
         ai.detourA = a + (m.rng() < 0.5 ? 1 : -1) * (1.2 + m.rng() * 1.4);
