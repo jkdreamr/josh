@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { NO_ASSISTS, type Assists, type Input } from './car.ts';
+import { HowToPlay } from './howto.tsx';
 import { Hud, fmtLap, fmtSec, type HudApi } from './hud.tsx';
 import { P1, P2, SOLO, newDriver, readInput, type Driver as KeyDriver } from './input.ts';
 import { meta } from './meta';
@@ -23,7 +24,8 @@ const GEARS = defineSetting<'auto' | 'manual'>('grand-prix:gears', ['auto', 'man
 const CAM = defineSetting<CamMode>('grand-prix:cam', CAM_MODES, 'chase', { live: true });
 const CAM2 = defineSetting<CamMode>('grand-prix:cam2', CAM_MODES, 'chase', { live: true });
 
-const PACE: Record<Level, number> = { easy: 0.86, medium: 0.92, hard: 0.97, legend: 1 };
+/** Share of the racing line's grip each level dares to use: clean laps of about 1:34, 1:29, 1:27 and 1:26. */
+const PACE: Record<Level, number> = { easy: 0.7, medium: 0.86, hard: 0.95, legend: 1 };
 const modeOptions = [
   ['trial', 'Time Trial'],
   ['race', 'Race'],
@@ -112,15 +114,17 @@ function Setup() {
       {mode !== 'trial' && <Segmented label="Rivals" value={ai} options={aiOptions} onChange={setAi} />}
       {mode === 'race' && <Segmented label="Start" value={grid} options={gridOptions} onChange={setGrid} />}
       <Segmented label="Assists" value={aids} options={aidOptions} onChange={setAids} />
-      <Segmented label="Gears" value={gears} options={gearOptions} onChange={setGears} />
+      {!shell.touch && <Segmented label="Gears" value={gears} options={gearOptions} onChange={setGears} />}
       {mode === 'split' && <small className="g-grand-prix-note">Player 1: WASD, Q/E gears, Space DRS. Player 2: arrows, comma/period gears, right Shift DRS. Gamepads work for both.</small>}
       {mode === 'trial' && best !== null && <small className="g-grand-prix-note">Your best: {fmtLap(best)} ({aids === 'none' ? 'no assists' : 'with assists'})</small>}
+      <HelpButton />
     </div>
   );
 }
 
 /** Online: the host picks the laps and how quick the bots are for everyone; aids and gears are each driver's own. */
 function OnlineSetup() {
+  const shell = useShell();
   const online = useOnline();
   const [laps, setLaps] = useSetting(LAPS);
   const [ai, setAi] = useSetting(AI);
@@ -159,8 +163,32 @@ function OnlineSetup() {
         </div>
       )}
       <Segmented label="Assists" value={aids} options={aidOptions} onChange={setAids} />
-      <Segmented label="Gears" value={gears} options={gearOptions} onChange={setGears} />
+      {!shell.touch && <Segmented label="Gears" value={gears} options={gearOptions} onChange={setGears} />}
+      <HelpButton />
     </div>
+  );
+}
+
+/** Opens How to Play over the card, and hands focus back to the game when it closes. */
+function HelpButton() {
+  const shell = useShell();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="arcade-btn g-grand-prix-help" onClick={() => setOpen(true)}>
+        How to Play
+      </button>
+      {open && (
+        <HowToPlay
+          root={shell.root.current}
+          touch={shell.touch}
+          onClose={() => {
+            setOpen(false);
+            shell.root.current?.focus({ preventScroll: true });
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -246,7 +274,7 @@ function Play({ mode }: { mode: StageMode }) {
   const [cam2, setCam2] = useSetting(CAM2);
   const camRef = useRef([cam, cam2]);
   camRef.current = [cam, cam2];
-  const settings = { mode: shell.touch && modeSetting === 'split' ? ('race' as const) : modeSetting, laps: Number(laps), ai, grid, assists: assistsOf(aids, gears) };
+  const settings = { mode: shell.touch && modeSetting === 'split' ? ('race' as const) : modeSetting, laps: Number(laps), ai, grid, assists: assistsOf(aids, shell.touch ? 'auto' : gears) };
   const split = mode === 'solo' && settings.mode === 'split';
   const { ref, size } = useCanvas<HTMLDivElement>();
   const view = useRef<World3D | null>(null);
@@ -271,6 +299,7 @@ function Play({ mode }: { mode: StageMode }) {
   const doneAt = useRef<number | null>(null);
   const over = useRef(false);
   const touchCam = useRef(false);
+  const touchReset = useRef(false);
   const net = useRef({
     synced: !live || online!.isHost,
     ticks: 0,
@@ -572,6 +601,10 @@ function Play({ mode }: { mode: StageMode }) {
             extra.cam = true;
             touchCam.current = false;
           }
+          if (k === 0 && touchReset.current) {
+            extra.reset = true;
+            touchReset.current = false;
+          }
           inputs.set(p.idx, input);
           if (extra.cam) {
             const cur = camRef.current[k];
@@ -668,9 +701,14 @@ function Play({ mode }: { mode: StageMode }) {
         </div>
       )}
       {mode !== 'idle' && shell.touch && shell.status === 'playing' && (
-        <button type="button" className="g-grand-prix-cambtn" onPointerDown={() => (touchCam.current = true)} aria-label="Change camera">
-          Cam
-        </button>
+        <div className="g-grand-prix-touchbtns">
+          <button type="button" onPointerDown={() => (touchCam.current = true)} aria-label="Change camera">
+            Cam
+          </button>
+          <button type="button" onPointerDown={() => (touchReset.current = true)} aria-label="Reset to the track">
+            Reset
+          </button>
+        </div>
       )}
       {mode !== 'idle' && !split && (
         <TouchControls
