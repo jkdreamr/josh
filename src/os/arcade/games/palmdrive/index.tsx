@@ -686,11 +686,11 @@ function Play({ mode }: { mode: Mode }) {
         if (keys.pressed('Space', 'ShiftLeft', 'ShiftRight')) inp.hop = true;
         inp.fwd = keys.down('up');
         // Bananas and shells trail behind as a shield while the item button is held and fly when it is let go; other
-        // items go off on the press. Z (or the back button) throws backwards right away.
+        // items go off on the press. Z or J (or the back button) throws backwards right away.
         const trails = me.roll === 0 && trailable(me.item);
         const itemDown = keys.down('KeyX', 'KeyE', 'Enter');
         const itemPress = keys.pressed('KeyX', 'KeyE', 'Enter');
-        const backPress = keys.pressed('KeyZ', 'KeyQ') || tap.current.back;
+        const backPress = keys.pressed('KeyZ', 'KeyJ', 'KeyQ') || tap.current.back;
         let use = itemPress;
         if (backPress) use = true;
         else if (trails) use = (holding.current && !itemDown) || (itemPress && !itemDown);
@@ -701,7 +701,7 @@ function Play({ mode }: { mode: Mode }) {
         inp.hold = trails && itemDown && !backPress;
         holding.current = inp.hold;
         if (keys.pressed('KeyC') || tap.current.slam) inp.slam = true;
-        if (keys.pressed('KeyB') || tap.current.cash) inp.cash = true;
+        if (keys.pressed('KeyB', 'KeyH') || tap.current.cash) inp.cash = true;
         if (r.time < 0 && (keys.pressed('up') || tap.current.gas)) pressGas(r, me);
       }
       tap.current = { back: false, gas: false, cash: false, slam: false };
@@ -1404,7 +1404,7 @@ function Play({ mode }: { mode: Mode }) {
     if (delta !== 0 && r.time > 0) setCoinPop({ id: Date.now(), text: delta > 0 ? `+${delta}` : `−${-delta}`, loss: delta < 0 });
     // tips for the moves that need a moment: a kart right beside you, a pocketful of coins
     if (hints.current!.on && me.done === null && r.time > 3) {
-      if (me.coins >= CASH_COST) showHint('cash', `Press B to cash ${CASH_COST} coins for a boost.`, `Tap your coins to cash ${CASH_COST} for a boost.`);
+      if (me.coins >= CASH_COST) showHint('cash', `Press B or H to cash ${CASH_COST} coins for a boost.`, `Tap your coins to cash ${CASH_COST} for a boost.`);
       const fx = Math.sin(me.h);
       const fz = Math.cos(me.h);
       const beside = r.karts.some((o) => o !== me && o.done === null && Math.abs((o.x - me.x) * fx + (o.z - me.z) * fz) < 2.4 && Math.abs((o.x - me.x) * -fz + (o.z - me.z) * fx) < 3.4);
@@ -1535,7 +1535,7 @@ function Play({ mode }: { mode: Mode }) {
               <span className={`g-palmdrive-coins${hud.cashReady ? ' is-ready' : ''}`}>
                 <CoinIcon />
                 {hud.coins}
-                {hud.cashReady && <kbd title={`Press B to cash ${CASH_COST} coins for a boost`}>B</kbd>}
+                {hud.cashReady && <kbd title={`Press B or H to cash ${CASH_COST} coins for a boost`}>B</kbd>}
                 {coinPop && (
                   <em key={coinPop.id} className={`g-palmdrive-coinpop${coinPop.loss ? ' is-loss' : ''}`} onAnimationEnd={() => setCoinPop(null)}>
                     {coinPop.text}
