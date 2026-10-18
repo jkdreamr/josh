@@ -1075,7 +1075,7 @@ export default function Badminton({ args }: AppProps) {
 
   const helpLine = (() => {
     if (touch) {
-      if (settings.mode === 'two') return 'Each player drags on their half to move. Tap to hit, flick up to smash, flick down for a drop. Hold before you let go for a harder smash.';
+      if (settings.mode === 'two') return 'Each player drags on their half to move. Tap to hit, flick up to smash, flick down for a drop. Hold first for a full smash.';
       return 'Flick up on Hit to smash, flick down for a drop. Hold Hit first for a full smash. You can also drag on the court to move.';
     }
     if (settings.mode === 'two') return 'Player 1: A and D move, W jumps, S softens, Space hits. Player 2: Arrow Keys move and jump, Down softens, Enter hits. Hold the hit key and let go for a full smash.';
@@ -1171,14 +1171,14 @@ export default function Badminton({ args }: AppProps) {
           <div className="bd-howto-grid">
             <section>
               <h3>Shots</h3>
-              <p>Where you meet the shuttle decides the shot. High overhead is a clear. Hold Soft for a drop. Jump and hit for a smash. Around shoulder height is a drive. Low near the net is a net shot, low and deep is a lift.</p>
+              <p>Where you meet the shuttle decides the shot. High overhead is a clear. Hold Soft for a drop. Jump and hit for a smash. Hold the hit for a full smash: faster and steeper, but harder to aim and slower to recover from. Smashes from the back lose pace on the way. Around shoulder height is a drive. Low near the net is a net shot, low and deep is a lift.</p>
             </section>
             <section>
               <h3>Controls</h3>
               {touch ? (
-                <p>Drag on the court or use the pads to move. Tap Hit to play the shuttle, flick up on Hit to smash, flick down for a drop. A quick flick is a half smash: steady and easy to recover from. Hold Hit for a moment before you flick for a full smash. It comes down fast and steep, but it is harder to aim and leaves you off balance. With two players, each one drags and taps on their own half.</p>
+                <p>Drag on the court or use the pads to move. Tap Hit to play the shuttle, flick up on Hit to smash, flick down for a drop. Hold Hit before you flick for a full smash. With two players, each one drags and taps on their own half.</p>
               ) : (
-                <p>A and D move, W jumps, Space hits, S makes the shot soft. Jump and hit a high shuttle to smash. A tap is a half smash: steady and easy to recover from. Hold Space as the shuttle comes down and let go to hit a full smash. It comes down fast and steep, but it is harder to aim and leaves you off balance. Smashes from the back lose pace on the way, so the best kills come from mid court. The mouse works too: drag on the court to move, click to hit, flick up for power or down for a drop, and hold the click for a full smash. Player 2 uses the Arrow Keys and Enter. Press P to pause.</p>
+                <p>A and D move, W jumps, Space hits, S makes the shot soft. Hold Space and let go for a full smash. The mouse works too: drag on the court to move, click to hit, flick up for power or down for a drop. Player 2 uses the Arrow Keys and Enter. Press P to pause.</p>
               )}
             </section>
             <section>
