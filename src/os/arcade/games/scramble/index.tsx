@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, MAX_DT, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
 import {
@@ -30,7 +30,7 @@ import {
   type Match,
 } from './logic';
 import { configOf, parsePacket, type Bots } from './net';
-import { END_PAUSE, FLUSH, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Session } from './session';
+import { FLUSH, TICK_MS, catchUp, ending, flush, guestMatch, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Session } from './session';
 import { ARMOR_NAMES, MELEE, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, WOOD_MAX, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { HALF, SUPPLY_FALL, placeAt } from './map';
 import { AmmoIcon, ArmorIcon, EggIcon, HowToPlay, IslandArt, PackIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, WoodIcon, keyCode } from './hud';
@@ -391,28 +391,33 @@ function Play({ mode }: { mode: Mode }) {
   // -------------------------------------------------------------------------------------------------------------
   // Online: state about 15 times a second, events as they happen, the result from the host.
 
+  /** Whether this game runs the match (the host when it started), and the room's host hand-offs by then. */
+  const hosting = useRef(!!online?.isHost);
+  const handoffs = useRef(online?.handoffs ?? 0);
   /**
-   * The result card for an online match. `report` once the host has called it; `early` when a guest who is out has
-   * seen enough before the end (the match goes on for everyone else, and the result is still reported when it comes).
+   * The result card for an online match. `report` once the host has called it; `early` when we are out and have seen
+   * enough before the end: the match goes on for everyone else (the host's timer keeps running it), and the card
+   * keeps up with it until the result comes, which is still reported.
    */
   const finishOnline = (report: boolean, early = false) => {
     const n = net.current;
     const o = onlineRef.current;
     const m = match.current!;
-    const me = m.fighters[m.me];
     const winner = m.fighters[m.winner];
     if (report && !n.reported && o) {
       n.reported = true;
       o.reportResult(o.round, winner && winner.seat >= 0 ? winner.seat : null);
     }
-    if (n.over) return;
+    if (n.over && !n.early) return;
+    const { won, ...card } = resultCard(m, early, hosting.current);
+    n.early = early;
+    if (n.over) {
+      shellRef.current.updateOver(card);
+      return;
+    }
     n.over = true;
-    const won = !!me && m.winner === me.id;
-    const title = won ? 'Last Egg Standing' : me ? `${ordinal(me.place || m.fighters.length)} of ${m.fighters.length}` : 'Match Over';
-    const stats = me ? `${me.kills} ${me.kills === 1 ? 'elimination' : 'eliminations'}, ${Math.round(me.dealt)} damage.` : '';
-    const who = early ? ` ${aliveCount(m)} eggs still going.` : winner && !won ? ` ${winner.name} won.` : !winner ? ' Nobody survived the storm.' : '';
     sfx.play(won ? 'win' : 'lose');
-    shellRef.current.gameOver(undefined, { title, detail: `${stats}${who}`.trim() });
+    shellRef.current.gameOver(undefined, card);
   };
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
@@ -442,9 +447,20 @@ function Play({ mode }: { mode: Mode }) {
       if (!o || !m) return;
       const me = { seat: o.seat, isHost: o.isHost, round: o.round };
       const now = performance.now() / 1000;
+      // the host left and someone took over: the match its game ran is over (the shell has said so), and a card that
+      // went up early stops waiting for it
+      if (o.handoffs !== handoffs.current) {
+        if (n.early) {
+          n.early = false;
+          const card = resultCard(m, false, false);
+          shellRef.current.updateOver({ title: card.title, detail: `${card.detail} The host left before the end.` });
+        }
+        return;
+      }
       // a hidden tab gets no frames, so the match carries on from here: our egg stands still but the storm still
-      // bites and the glide still lands, and a hidden host keeps the computer eggs and everyone's pickups going
-      if (document.hidden && n.synced && shellRef.current.status === 'playing') {
+      // bites and the glide still lands. A host keeps the computer eggs and everyone's pickups going, hidden or done
+      // watching.
+      if (offscreen(n, me, document.hidden, shellRef.current.status === 'playing')) {
         const mine = m.fighters[m.me];
         if (mine) {
           mine.input.fire = false;
@@ -452,23 +468,15 @@ function Play({ mode }: { mode: Mode }) {
           mine.input.mz = 0;
         }
         mouse.current.down = false;
-        let left = Math.min(2, Math.max(0, now - lastStep.current));
-        while (left > 1e-4) {
-          const d = Math.min(MAX_DT, left);
-          step(m, d);
-          left -= d;
-          for (const e of m.events.splice(0)) share(n, e, o.seat);
-        }
+        catchUp(n, m, o.seat, now - lastStep.current);
         lastStep.current = now;
         for (const packet of flush(n, o.round, FLUSH)) o.send(packet);
-        const call = ending(n, m, me, now);
-        if (call) finishRef.current(call === 'report');
       }
-      if (n.over) {
-        // done watching before the end: nothing draws the match any more, but the room still hears who won from us
-        m.events.length = 0;
-        if (!n.reported && n.end && now - n.endAt > END_PAUSE) finishRef.current(true);
-      }
+      // done watching: nothing draws the match any more, but the card keeps count and the room still hears who won from us
+      if (n.over) m.events.length = 0;
+      const call = n.synced ? ending(n, m, me, now) : null;
+      if (call) finishRef.current(call === 'report');
+      else if (n.early) finishRef.current(false, true);
       for (const out of tick(n, m, me, o.players.map((p) => p.seat), now)) o.send(out.d, { fast: out.fast });
     }, TICK_MS);
     return () => {
@@ -656,21 +664,18 @@ function Play({ mode }: { mode: Mode }) {
     spectate.current = alive[(at + step + alive.length) % alive.length].id;
   }
 
-  /**
-   * Out, and seen enough: on to the results. Online that's only for guests; the host's game runs the match for
-   * everyone, so the host watches it to the end.
-   */
+  /** Out, and seen enough: on to the results. Online the match goes on without us (the host's game still runs it). */
   const canLeave = () => {
     const m = match.current;
     const me = m?.fighters[m.me];
-    return !!me && me.phase === 'out' && !net.current.over && (!live || !onlineRef.current?.isHost);
+    return !!me && me.phase === 'out' && !net.current.over;
   };
   function leave() {
     const m = match.current!;
     const me = m.fighters[m.me];
     if (!canLeave() || !me) return;
     if (!live) finishSolo(m, me);
-    else finishRef.current(false, !m.ended);
+    else finishRef.current(false, true);
   }
 
   function finishSolo(m: Match, me: Fighter) {

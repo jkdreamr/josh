@@ -128,7 +128,7 @@ import {
   type Match,
 } from '../src/os/arcade/games/scramble/logic.ts';
 import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
-import { END_PAUSE, FIRST_GRACE, FLUSH, STALE, TICK_MS, ending, flush, guestMatch, hostMatch, newSession, receive, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
+import { END_PAUSE, FIRST_GRACE, FLUSH, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
 
 const DT = 1 / 60;
@@ -1108,13 +1108,17 @@ test('events pack into packets well under the room limit, in order', () => {
 // A whole room, simulated: the host and its guests passing real packets through a pretend network, with delay and
 // a share of the fast packets lost.
 
-type Client = { seat: number; me: Me; s: Session; m: Match | null; inbox: { at: number; from: number; d: unknown }[]; gone: boolean; call: 'report' | 'quiet' | null; hurtBy: number; heard: number };
+type Client = { seat: number; me: Me; s: Session; m: Match | null; inbox: { at: number; from: number; d: unknown }[]; gone: boolean; call: 'report' | 'quiet' | null; hurtBy: number; heard: number; doneAt: number };
 
-function simulate(opts: { humans: number; bots: boolean; seed: number; level: Level; delay: number; loss: number; leave?: { seat: number; at: number }; stall?: { seat: number; at: number; silent: boolean } }) {
+/**
+ * `hostDone`: past this time, the host's egg cracks (once it has landed) and the host is done watching: from then on
+ * its game draws no frames, and only its timer moves the match on, as index.tsx does.
+ */
+function simulate(opts: { humans: number; bots: boolean; seed: number; level: Level; delay: number; loss: number; leave?: { seat: number; at: number }; stall?: { seat: number; at: number; silent: boolean }; hostDone?: number }) {
   const players: Player[] = Array.from({ length: opts.humans }, (_, seat) => ({ seat, name: `P${seat + 1}` }));
   const rng = rng32(opts.seed * 7 + 1);
   const host = hostMatch(players, 0, opts.seed, opts.level, opts.bots ? MAX_FIGHTERS : 0, COUNTDOWN + 1.2);
-  const clients: Client[] = players.map((p) => ({ seat: p.seat, me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], gone: false, call: null, hurtBy: 0, heard: 0 }));
+  const clients: Client[] = players.map((p) => ({ seat: p.seat, me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], gone: false, call: null, hurtBy: 0, heard: 0, doneAt: -1 }));
   autopilot(host.match, host.match.fighters[host.match.me]);
   let now = 0;
   const post = (from: Client, d: object, fast: boolean) => {
@@ -1144,6 +1148,25 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
         c.m = receive(c.s, c.m ?? createMatch({ seed: 1, role: 'guest', level: 'normal', entrants: [], me: -1 }), c.me, msg.from, msg.d, join(c), now);
       }
       if (!c.s.synced || !c.m) continue;
+      if (opts.hostDone !== undefined && c.me.isHost && !c.s.over && now > opts.hostDone) {
+        const egg = c.m.fighters[c.m.me];
+        if (egg.phase === 'ground') hurt(c.m, egg, 999, -1, 'storm', true);
+        if (egg.phase === 'out') {
+          c.s.over = true;
+          c.s.early = true;
+          c.doneAt = c.m.time;
+        }
+      }
+      if (c.s.over) {
+        // nothing draws the match here any more: it moves on with the timer
+        const call = ending(c.s, c.m, c.me, now);
+        if (call) {
+          c.call ??= call;
+          c.s.reported = true;
+          c.s.early = false;
+        }
+        continue;
+      }
       step(c.m, DT);
       for (const e of c.m.events.splice(0)) {
         if (e.t === 'hurt' && e.f === c.m.me && e.by >= 0 && e.by !== c.m.me) c.hurtBy++;
@@ -1155,7 +1178,14 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
     }
     if (now >= tickAt) {
       tickAt += TICK_MS / 1000;
-      for (const c of live) if (c.m && !(stalled(c) && opts.stall!.silent)) for (const out of tick(c.s, c.m, c.me, live.map((x) => x.seat), now)) post(c, out.d, out.fast);
+      for (const c of live) {
+        if (!c.m || (stalled(c) && opts.stall!.silent)) continue;
+        if (offscreen(c.s, c.me, false, !c.s.over)) {
+          catchUp(c.s, c.m, c.seat, TICK_MS / 1000);
+          for (const p of flush(c.s, 1, FLUSH)) post(c, p, false);
+        }
+        for (const out of tick(c.s, c.m, c.me, live.map((x) => x.seat), now)) post(c, out.d, out.fast);
+      }
     }
     if (live.every((c) => c.call || stalled(c))) break;
   }
@@ -1179,6 +1209,7 @@ for (const [label, opts] of [
   ['eight people and no computer eggs, one of whom leaves halfway', { humans: 8, bots: false, seed: 34, level: 'normal' as Level, delay: 0.05, loss: 0.05, leave: { seat: 5, at: 30 } }],
   ['a guest whose tab freezes on the bus (still in the room, still reporting)', { humans: 3, bots: true, seed: 8, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 2, at: 2, silent: false } }],
   ['a guest who goes silent mid-match', { humans: 3, bots: true, seed: 14, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 1, at: 30, silent: true } }],
+  ['a host who is cracked early and done watching (its timer runs the match from then on)', { humans: 3, bots: true, seed: 5, level: 'normal' as Level, delay: 0.05, loss: 0.05, hostDone: 50 }],
 ] as const) {
   test(`online: ${label}, all agree on what happened`, () => {
     const clients = simulate(opts);
@@ -1208,6 +1239,15 @@ for (const [label, opts] of [
     if (!('stall' in opts)) assert.ok(live.slice(1).some((c) => c.hurtBy > 0), 'guests took hits decided on other clients');
     assert.ok(host.time > 25, `a real match (${host.time.toFixed(0)} s)`);
     if (!('stall' in opts)) for (const c of live) assert.ok(c.heard > 10, `seat ${c.seat} heard ${c.heard} shots from other clients`);
+    if ('hostDone' in opts) {
+      const done = live[0];
+      assert.ok(done.doneAt > 0, 'the host was done watching');
+      assert.equal(host.fighters[host.me].phase, 'out');
+      assert.ok(host.time > done.doneAt + 30, `the match ran on long after (${(host.time - done.doneAt).toFixed(0)} s)`);
+      assert.ok(host.fighters.some((f) => f.kind === 'bot' && f.phase === 'out' && f.outAt > done.doneAt), 'computer eggs kept fighting');
+      assert.ok(done.s.reported && !done.s.early, 'the host reported the result');
+      assert.equal(offscreen(done.s, done.me, false, false), false, 'and stopped running the match');
+    }
     const gone = 'leave' in opts ? opts.leave.seat : 'stall' in opts ? opts.stall.seat : -1;
     if (gone >= 0) {
       const egg = host.fighters.find((f) => f.seat === gone)!;
@@ -1285,6 +1325,61 @@ test('the host sends what happened last before it sends the result', () => {
   const out = tick(s, host.match, { seat: 0, isHost: true, round: 1 }, [0, 1], 0).map((o) => parsePacket(o.d)!.k);
   assert.deepEqual(out, ['S', 'e', 'end']);
   assert.equal(s.queue.length, 0);
+});
+
+test('done watching early: the card keeps count and holds the next match, the host keeps running the match, and the result still comes', () => {
+  const host = hostMatch([{ seat: 0, name: 'p0' }], 0, 6, 'normal', 4, 0);
+  const m = host.match;
+  const s = newSession(true, host.roster);
+  const me: Me = { seat: 0, isHost: true, round: 1 };
+  for (const f of m.fighters) land(f, f.id * 6, 0);
+  m.time = 5;
+  hurt(m, m.fighters[0], 999, -1, 'storm', true);
+  m.events.length = 0;
+  // pressing done watching
+  s.over = true;
+  s.early = true;
+  let card = resultCard(m, true, true);
+  assert.equal(card.title, '5th of 5');
+  assert.equal(card.detail, '0 eliminations, 0 damage.');
+  assert.equal(card.wait, '4 Eggs Still Going. Play Again Once the Match Ends.', 'the host waits for the end before the next match');
+  // a guest's card counts in the detail, and has no next match to hold
+  const guest = resultCard(m, true, false);
+  assert.equal(guest.detail, '0 eliminations, 0 damage. 4 eggs still going.');
+  assert.equal(guest.wait, undefined);
+  assert.equal(offscreen(s, me, false, false), true, 'the host runs the match without frames');
+  assert.equal(offscreen(s, { ...me, isHost: false, seat: 1 }, false, false), false, 'a guest has nothing to run');
+  assert.equal(offscreen(newSession(true), me, true, true), true, 'a hidden tab still runs it too');
+  assert.equal(offscreen(newSession(true), me, false, true), false, 'frames do it in a tab on screen');
+  const before = m.time;
+  catchUp(s, m, 0, 0.5);
+  assert.ok(Math.abs(m.time - before - 0.5) < 1e-6);
+  catchUp(s, m, 0, 30);
+  assert.ok(Math.abs(m.time - before - 2.5) < 1e-6, 'two seconds at most at a time');
+  assert.equal(m.events.length, 0, 'whatever happened went to the room');
+  // a computer egg cracks: the card counts it
+  hurt(m, m.fighters[1], 999, 2, 'smg', false);
+  assert.ok(s.queue.length > 0 || m.events.length > 0);
+  assert.equal(resultCard(m, true, true).wait, '3 Eggs Still Going. Play Again Once the Match Ends.');
+  assert.equal(ending(s, m, me, 10), null);
+  // the last egg standing: the host calls it, and after the pause reports it
+  for (const f of m.fighters.slice(1, 4)) if (f.phase !== 'out') hurt(m, f, 999, 4, 'smg', false);
+  catchUp(s, m, 0, 0.05);
+  assert.ok(m.ended && m.winner === 4);
+  assert.ok(resultCard(m, true, true).wait, 'still held until the result goes out');
+  assert.equal(ending(s, m, me, 20), null);
+  assert.equal(ending(s, m, me, 20 + END_PAUSE + 0.1), 'report');
+  card = resultCard(m, false, true);
+  assert.equal(card.detail, `0 eliminations, 0 damage. ${m.fighters[4].name} won.`);
+  assert.equal(card.wait, undefined, 'the next match can start');
+  s.reported = true;
+  s.early = false;
+  assert.equal(ending(s, m, me, 30), null, 'said once');
+  assert.equal(offscreen(s, me, false, false), false, 'and the host stops running it');
+  // a card that went up normally hears nothing more
+  const plain = newSession(true);
+  plain.over = true;
+  assert.equal(ending(plain, m, me, 40), null);
 });
 
 test('someone who leaves stays out, even if a newcomer takes their seat before the bus goes', () => {

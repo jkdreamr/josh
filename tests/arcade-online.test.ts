@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
-import { advanceOnlineRound, botPlayers, nextOnlineRound, RoundRouter, tagRound, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, botPlayers, canStartNext, nextOnlineRound, RoundRouter, tagRound, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
 import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, lowestFreeSeat, markRoundRecorded, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, sortListings, type RoomState } from '../worker/src/room-core.ts';
 
@@ -284,6 +284,16 @@ test('score races rank the best score and wait for every seat', () => {
   assert.equal(raceStandings({ 0: 9000, 1: 7000 }, [0, 1], true).winner, 1, 'times: lower wins');
   assert.equal(raceStandings({ 0: 10, 1: 5 }, [0]).done, false, 'a race needs two players');
   assert.equal(raceStandings({ 0: 10, 1: 5, 2: 1 }, [0, 1]).winner, 0, 'players who left do not count');
+});
+
+test('the host starts the next round only once it is over for everyone', () => {
+  const free = { ready: true, waiting: false, racing: false };
+  assert.equal(canStartNext(free), true);
+  assert.equal(canStartNext({ ...free, ready: false }), false, 'nobody to play');
+  assert.equal(canStartNext({ ...free, racing: true }), false, 'someone still racing');
+  assert.equal(canStartNext({ ...free, racing: true }, true), true, 'unless the host insists');
+  assert.equal(canStartNext({ ...free, waiting: true }), false, 'the host is out early and its game still runs the round');
+  assert.equal(canStartNext({ ...free, waiting: true, racing: true }, true), false, 'which no insisting skips');
 });
 
 test('race packets are validated', () => {
