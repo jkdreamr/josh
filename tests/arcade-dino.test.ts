@@ -10,6 +10,7 @@ import {
   START_SPEED,
   autopilot,
   collides,
+  courseSeed,
   createState,
   gapFor,
   isNight,
@@ -169,4 +170,18 @@ test('obstacles leave the world once off screen', () => {
   s.obstacles.push({ ...cactus(-100) });
   step(s, 1 / 60, idle, rng32(1));
   assert.equal(s.obstacles.length, 0);
+});
+
+test('everyone in an online round gets the same course seed, whatever the roster order', () => {
+  const a = courseSeed(3, ['ana', 'ben', 'cy']);
+  assert.equal(a, courseSeed(3, ['cy', 'ana', 'ben']));
+  assert.notEqual(a, courseSeed(4, ['ana', 'ben', 'cy']));
+  assert.notEqual(a, courseSeed(3, ['ana', 'ben']));
+  const course = (seed: number) => {
+    const s = createState();
+    const rng = rng32(seed);
+    run(s, 20, idle, rng);
+    return s.obstacles.map((o) => o.kind).join(',');
+  };
+  assert.equal(course(a), course(courseSeed(3, ['ben', 'cy', 'ana'])));
 });
