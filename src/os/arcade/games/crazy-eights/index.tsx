@@ -5,6 +5,7 @@ import { decide, type Level } from './ai.ts';
 import { applyMut, isLegal, legalMoves, newMatch, nextHand, observe, parseMove, rankLabel, rankOf, suitLabel, suitOf, top, viewMoves, type Card, type Ev, type Move, type State, type View } from './logic.ts';
 import { meta } from './meta';
 import type { AiReply, AiRequest } from './worker.ts';
+import { tableLayout } from './layout.ts';
 import './crazy-eights.css';
 
 const RIVALS = defineSetting('crazy-eights:rivals', ['1', '2', '3'] as const, '2');
@@ -92,6 +93,9 @@ function Table() {
   const [dealing, setDealing] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [size, setSize] = useState({ w: 640, h: 420 });
+  // In the phone and iPad frames the whole screen is scaled down; u grows text and controls back to their real size.
+  const [u, setU] = useState(1);
+  const [chrome, setChrome] = useState({ nameH: 42, barH: 44 });
   const tableRef = useRef<HTMLDivElement>(null);
   const lastRect = useRef<DOMRect | null>(null);
   const prevHand = useRef<Set<Card>>(new Set());
@@ -123,11 +127,31 @@ function Table() {
   useEffect(() => {
     const el = tableRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+    const measure = () => {
+      setSize({ w: el.clientWidth, h: el.clientHeight });
+      const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+      setU(shell.touch && k > 0.2 && k < 0.99 ? Math.round(Math.min(2, 1 / k) * 1000) / 1000 : 1);
+    };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setSize({ w: el.clientWidth, h: el.clientHeight });
-    return () => ro.disconnect();
-  }, []);
+    window.addEventListener('resize', measure);
+    measure();
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [shell.touch]);
+
+  // The top rival's label and your bar set how much height is left for the cards.
+  useLayoutEffect(() => {
+    const el = tableRef.current;
+    if (!el) return;
+    const name = el.querySelector<HTMLElement>('.g-crazy-eights-seat.pos-top .g-crazy-eights-name');
+    const bar = el.querySelector<HTMLElement>('.g-crazy-eights-bar');
+    const nameH = name ? name.offsetHeight : chrome.nameH;
+    const barH = bar ? bar.offsetHeight : chrome.barH;
+    if (Math.abs(nameH - chrome.nameH) > 0.5 || Math.abs(barH - chrome.barH) > 0.5) setChrome({ nameH, barH });
+  });
 
   function nameFor(seat: number) {
     if (!online) return 'You';
@@ -472,12 +496,8 @@ function Table() {
   const dealt = tbl.ev.some((e) => e.k === 'deal');
   const played = tbl.ev.find((e): e is Extract<Ev, { k: 'play' }> => e.k === 'play');
   const seq = tbl.seq;
-  // Short laptop windows put the pile on the left and the rivals in a row above your hand.
-  const short = size.h < 340 && size.w > size.h * 1.4;
-  const cw = short
-    ? Math.round(Math.max(online ? 34 : 40, Math.min(size.h * 0.34, size.w * 0.1, 80, (size.h - (online ? 110 : 96)) / 1.4)))
-    : Math.round(Math.max(46, Math.min(size.w < 560 ? size.w * 0.15 : size.w * 0.11, size.h * (size.h < 460 ? 0.24 : 0.2), 104)));
-  const ch = Math.round(cw * 1.4);
+  const layout = tableLayout({ w: size.w, h: size.h, n, online: !!online, nameH: chrome.nameH, barH: chrome.barH });
+  const { short, cw, ch } = layout;
   const rel = (i: number) => (i - v.me + n) % n;
   const posOf = (i: number) => {
     const r = rel(i);
@@ -515,8 +535,8 @@ function Table() {
   return (
     <div
       ref={tableRef}
-      className={['g-crazy-eights-table', `n-${n}`, short ? 'is-short' : '', online ? 'is-online' : '', paused ? 'is-paused' : '', myTurn ? 'is-mine' : ''].join(' ')}
-      style={{ '--cw': `${cw}px`, '--ch': `${ch}px` } as CSSProperties}
+      className={['g-crazy-eights-table', `n-${n}`, short ? 'is-short' : '', online ? 'is-online' : '', shell.touch ? 'is-touch' : '', paused ? 'is-paused' : '', myTurn ? 'is-mine' : ''].join(' ')}
+      style={{ '--cw': `${cw}px`, '--ch': `${ch}px`, '--g-crazy-eights-u': u } as CSSProperties}
     >
       <div className="g-crazy-eights-rivals">
       {tbl.seats.map((seat, i) => {
@@ -525,7 +545,12 @@ function Table() {
         const shown = Math.min(count, 10);
         const prev = fresh ? 0 : Math.min(prevCounts.current[i] ?? 0, 10);
         return (
-          <div key={i} className={`g-crazy-eights-seat pos-${posOf(i)}${v.turn === i && v.phase === 'play' ? ' is-turn' : ''}`} data-anchor={`seat-${i}`}>
+          <div
+            key={i}
+            className={`g-crazy-eights-seat pos-${posOf(i)}${v.turn === i && v.phase === 'play' ? ' is-turn' : ''}`}
+            style={!short && posOf(i) === 'top' ? { top: layout.seatTop } : undefined}
+            data-anchor={`seat-${i}`}
+          >
             <div className="g-crazy-eights-backs">
               {Array.from({ length: shown }, (_, j) => (
                 <div
@@ -546,8 +571,8 @@ function Table() {
       })}
       </div>
 
-      <div className="g-crazy-eights-middle">
-        <div className={`g-crazy-eights-ring dir-${v.dir === 1 ? 'cw' : 'ccw'}`} aria-hidden="true" />
+      <div className="g-crazy-eights-middle" style={short ? undefined : { paddingTop: layout.pad }}>
+        <div className={`g-crazy-eights-ring dir-${v.dir === 1 ? 'cw' : 'ccw'}`} style={short ? undefined : { top: `calc(50% + ${layout.pad / 2}px)` }} aria-hidden="true" />
         <button
           type="button"
           className={`g-crazy-eights-deck${canDraw ? ' can-draw' : ''}`}
@@ -657,7 +682,7 @@ function Table() {
                 </button>
               ))}
             </div>
-            <button type="button" className="arcade-btn" onClick={() => setPicker(null)}>
+            <button type="button" className="arcade-btn is-light" onClick={() => setPicker(null)}>
               Cancel
             </button>
           </div>
