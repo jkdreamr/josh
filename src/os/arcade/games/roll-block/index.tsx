@@ -74,7 +74,7 @@ type World = {
   bridgeCells: Map<string, TileRec[]>;
   switchCells: Map<number, TileRec>;
   bounds: { cx: number; cz: number; w: number; h: number };
-  fit: (w: number, h: number, margins?: { top?: number; bottom?: number }) => void;
+  fit: (w: number, h: number, margins?: { top?: number; bottom?: number; left?: number }) => void;
   dispose: () => void;
 };
 
@@ -195,11 +195,12 @@ function build(THREE: Three, host: HTMLElement): World | null {
       ];
       // pixel margins -> NDC bounds (ndc y is up, screen top is +1)
       const nx = 1 - 16 / w;
+      const nxl = margins?.left ? -1 + (2 * margins.left) / w : -nx;
       const nyt = 1 - (2 * topPx) / h;
       const nyb = -1 + (2 * bottomPx) / h;
       // the projected bbox must fit the free-area span; we recenter afterwards,
       // so the search only checks its size, not its (uncentered) position
-      const spanX = 2 * nx;
+      const spanX = nx - nxl;
       const spanY = nyt - nyb;
       let lo = 2;
       let hi = 60;
@@ -230,9 +231,14 @@ function build(THREE: Three, host: HTMLElement): World | null {
       const targetY = (nyt + nyb) / 2;
       const p0 = new THREE.Vector3(cx, 0.9, cz).project(camera);
       const off = p0.y - targetY;
-      if (Math.abs(off) > 0.002) {
+      // only recenter sideways when a side margin is set (touch d-pad on the left)
+      const offX = margins?.left ? p0.x - (nx + nxl) / 2 : 0;
+      if (Math.abs(off) > 0.002 || Math.abs(offX) > 0.002) {
+        const half = hi * Math.tan(((camera.fov / 2) * Math.PI) / 180);
         const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
-        look.addScaledVector(camUp, off * hi * Math.tan(((camera.fov / 2) * Math.PI) / 180));
+        const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+        look.addScaledVector(camUp, off * half);
+        look.addScaledVector(camRight, offX * half * camera.aspect);
         camera.position.copy(look).addScaledVector(dir, hi);
         camera.lookAt(look);
       }
@@ -379,10 +385,19 @@ function Play() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const [undoCount, setUndoCount] = useState(0);
+  const padShown = shell.touch && shell.status === 'playing' && !panelOpen && !cleared;
   const barRef = useRef<HTMLDivElement>(null);
-  // low = bar dropped below the shell control row because it would hit it; top = bar offset from the host top;
-  // uiTop = px offset below the host top where hint/panel may start
-  const [barLayout, setBarLayout] = useState<{ low: boolean; top: number; uiTop: number }>({ low: false, top: 10, uiTop: 50 });
+  // low = bar dropped below the shell control row because it would hit it; top/left = bar offset in the host;
+  // uiTop = px offset below the host top where hint/panel may start; padRight = right edge of a side d-pad column (0 = none)
+  const [barLayout, setBarLayout] = useState<{ low: boolean; top: number; left: number; uiTop: number; padRight: number }>({
+    low: false,
+    top: 10,
+    left: 12,
+    uiTop: 50,
+    padRight: 0,
+  });
+  // last measured touch d-pad box (left/right edges, height, gap to the host bottom), kit sizes until it first mounts
+  const padBox = useRef({ left: 14, right: 182, h: 168, bottom: 26 });
   const [, bump] = useState(0);
   const drag = useRef<{ id: number; x: number; y: number } | null>(null);
 
@@ -424,7 +439,7 @@ function Play() {
     if (host && bar) top = bar.offsetTop + bar.offsetHeight + 8;
     let bottom = 12;
     if (shell.touch && size.h > size.w) bottom = Math.min(190, size.h * 0.34);
-    return { top, bottom };
+    return { top, bottom, left: barLayout.padRight ? barLayout.padRight + 8 : undefined };
   };
 
   const loadLevel = (idx: number) => {
@@ -573,16 +588,40 @@ function Play() {
     const ctrlR = shell.root.current?.querySelector('.arcade-ctrl')?.getBoundingClientRect();
     const ctrlLeft = ctrlR ? (ctrlR.left - hostR.left) / k : host.offsetWidth - 170;
     const ctrlBottom = ctrlR ? (ctrlR.bottom - hostR.top) / k : 44;
-    const low = 12 + bar.offsetWidth > ctrlLeft - 8;
-    const top = low ? Math.round(ctrlBottom + 6) : 10;
+    // touch d-pad sits bottom-left. Landscape keeps the board clear of it, and on short stages it reaches
+    // up to the bar's row, so the bar moves to its right.
+    let padRight = 0;
+    let padTop = Infinity;
+    if (shell.touch) {
+      const padR = shell.root.current?.querySelector('.arcade-dpad')?.getBoundingClientRect();
+      if (padR && padR.width > 0) {
+        padBox.current = {
+          left: (padR.left - hostR.left) / k,
+          right: (padR.right - hostR.left) / k,
+          h: padR.height / k,
+          bottom: (hostR.bottom - padR.bottom) / k,
+        };
+      }
+      const pad = padBox.current;
+      padTop = host.offsetHeight - pad.bottom - pad.h;
+      if (host.offsetWidth >= host.offsetHeight) padRight = Math.round(pad.right);
+    }
+    const place = (left: number) => {
+      const low = left + bar.offsetWidth > ctrlLeft - 8;
+      return { left, low, top: low ? Math.round(ctrlBottom + 6) : 10 };
+    };
+    let { left, low, top } = place(12);
+    if (top + bar.offsetHeight > padTop - 6) ({ left, low, top } = place(Math.round(padBox.current.right + 10)));
     const uiTop = Math.round(Math.max(top + bar.offsetHeight + 8, ctrlBottom + 6));
-    setBarLayout((b) => (b.low === low && b.top === top && b.uiTop === uiTop ? b : { low, top, uiTop }));
+    setBarLayout((b) =>
+      b.low === low && b.top === top && b.left === left && b.uiTop === uiTop && b.padRight === padRight ? b : { low, top, left, uiTop, padRight },
+    );
   };
   useEffect(() => {
     layoutBar();
     world.current?.fit(size.w, size.h, fitMargins());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.w, size.h, THREE, barLayout, levelIdx, undoCount, moves > 0]);
+  }, [size.w, size.h, THREE, barLayout, levelIdx, undoCount, moves > 0, padShown]);
   useEffect(() => {
     const els = [barRef.current, shell.root.current?.querySelector('.arcade-ctrl')].filter((e): e is HTMLElement => e instanceof HTMLElement);
     const ro = new ResizeObserver(() => layoutBar());
@@ -785,7 +824,7 @@ function Play() {
   return (
     <>
       <div ref={ref} className="g-roll-block-host" onPointerDown={swipeStart} onPointerUp={swipeEnd} onPointerCancel={() => (drag.current = null)} />
-      <div ref={barRef} className={`g-roll-block-bar${barLayout.low ? ' is-low' : ''}`} style={{ top: barLayout.top }}>
+      <div ref={barRef} className={`g-roll-block-bar${barLayout.low ? ' is-low' : ''}`} style={{ top: barLayout.top, left: barLayout.left }}>
         <div className="g-roll-block-pill">
           <strong>level {levelIdx + 1}</strong>
           <span>par {def.par}</span>
@@ -850,7 +889,7 @@ function Play() {
           </div>
         </div>
       )}
-      {playing && !panelOpen && !cleared && <TouchControls dpad />}
+      {padShown && <TouchControls dpad />}
     </>
   );
 }
