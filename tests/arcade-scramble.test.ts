@@ -34,11 +34,15 @@ import {
   bridgeAt,
   buildingAt,
   busAt,
+  bushAt,
   coverAt,
   dropFits,
+  fieldAt,
+  fireAt,
   furnitureSolid,
   generateMap,
   low,
+  padAt,
   peekAt,
   placeAt,
   pondAt,
@@ -54,6 +58,7 @@ import {
   riverCrossings,
   riverDist2,
   roadAt,
+  roomAt,
   solidsNear,
   stormAt,
   stormEnd,
@@ -111,6 +116,7 @@ import {
   held,
   hurt,
   makeWall,
+  moveLoot,
   noInput,
   openable,
   panBlocks,
@@ -555,6 +561,89 @@ test('the grid finds everything a ray could hit, the same as checking every soli
     const d = Math.abs(cells[i] - cells[i - 1]);
     assert.ok(d === 1 || d === cols, 'neighbors');
   }
+});
+
+test('what stands at a point is found by its grid cell, the same as looking at everything, and a list swapped is seen', () => {
+  const seg2 = (x: number, z: number, x0: number, z0: number, x1: number, z1: number) => {
+    const dx = x1 - x0;
+    const dz = z1 - z0;
+    const l2 = dx * dx + dz * dz;
+    const u = l2 > 0 ? Math.max(0, Math.min(1, ((x - x0) * dx + (z - z0) * dz) / l2)) : 0;
+    return (x0 + dx * u - x) ** 2 + (z0 + dz * u - z) ** 2;
+  };
+  for (const seed of [3, 8]) {
+    const map = generateMap(seed);
+    const brute = (x: number, z: number) => ({
+      bush: map.bushes.findIndex((b) => (x - b.x) ** 2 + (z - b.z) ** 2 < b.r * b.r * 0.72),
+      field: map.fields.findIndex((f) => Math.abs(x - f.x) < f.hw - 0.3 && Math.abs(z - f.z) < f.hd - 0.3),
+      pond: map.ponds.findIndex((p) => (x - p.x) ** 2 + (z - p.z) ** 2 < p.r * p.r),
+      fire: map.fires.findIndex((f) => (x - f.x) ** 2 + (z - f.z) ** 2 < CAMP.r * CAMP.r),
+      pad: map.pads.findIndex((p) => (x - p.x) ** 2 + (z - p.z) ** 2 < PAD.r * PAD.r),
+      yard: map.yards.findIndex((y) => Math.abs(x - y.x) < y.hw - FENCE_T / 2 && Math.abs(z - y.z) < y.hd - FENCE_T / 2),
+      building: map.buildings.findIndex((b) => b.roof && Math.abs(x - b.x) < b.w / 2 - WALL_T / 2 && Math.abs(z - b.z) < b.d / 2 - WALL_T / 2),
+      room: map.buildings.findIndex((b) => b.roof && Math.abs(x - b.x) < (b.w + WALL_T) / 2 && Math.abs(z - b.z) < (b.d + WALL_T) / 2),
+      bridge: map.bridges.findIndex((b) => Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd),
+      road: map.roads.some((r) => seg2(x, z, r.x0, r.z0, r.x1, r.z1) < ROAD_HALF * ROAD_HALF),
+      river: riverDist2(map, x, z) < RIVER_HALF * RIVER_HALF && !map.bridges.some((b) => Math.abs(x - b.x) < b.hw && Math.abs(z - b.z) < b.hd),
+    });
+    const fast = (x: number, z: number) => ({
+      bush: bushAt(map, x, z),
+      field: fieldAt(map, x, z),
+      pond: pondAt(map, x, z),
+      fire: fireAt(map, x, z),
+      pad: padAt(map, x, z),
+      yard: yardAt(map, x, z),
+      building: buildingAt(map, x, z),
+      room: roomAt(map, x, z),
+      bridge: bridgeAt(map, x, z),
+      road: roadAt(map, x, z),
+      river: riverAt(map, x, z),
+    });
+    // all over the island and just off it, then right at things, where the edges are
+    const rng = rng32(seed);
+    const points: [number, number][] = Array.from({ length: 4000 }, () => [(rng() * 2 - 1) * (HALF + 30), (rng() * 2 - 1) * (HALF + 30)]);
+    for (const t of [...map.bushes, ...map.ponds, ...map.fires, ...map.pads, ...map.yards, ...map.buildings, ...map.bridges, ...map.river]) for (let k = 0; k < 6; k++) points.push([t.x + (rng() * 2 - 1) * 12, t.z + (rng() * 2 - 1) * 12]);
+    for (const r of map.roads) for (let k = 0; k < 4; k++) points.push([r.x0 + (r.x1 - r.x0) * rng() + (rng() * 2 - 1) * 3, r.z0 + (r.z1 - r.z0) * rng() + (rng() * 2 - 1) * 3]);
+    let hits = 0;
+    for (const [x, z] of points) {
+      const want = brute(x, z);
+      assert.deepEqual(fast(x, z), want, `seed ${seed} at ${x.toFixed(2)},${z.toFixed(2)}`);
+      if (Object.values(want).some((v) => v !== -1 && v !== false)) hits++;
+    }
+    assert.ok(hits > 1000, `most points were at something (${hits})`);
+    // a list swapped for another (as tests do) or grown is seen at once
+    const p = map.pads[0];
+    assert.equal(padAt(map, p.x, p.z), 0);
+    map.pads = [];
+    assert.equal(padAt(map, p.x, p.z), -1);
+    map.pads.push({ ...p });
+    assert.equal(padAt(map, p.x, p.z), 0);
+  }
+});
+
+test('loot is found where it lies however it got there: spilled, dropped, shoved, or set down by hand', () => {
+  const m = quiet(9, 2);
+  const [a, b] = m.fighters;
+  openSpot(m);
+  land(a, 0, 0);
+  land(b, 40, 40);
+  // set down by hand while nobody was looking, then again in place of something else with the same count
+  m.loot.set(1, { id: 1, def: { kind: 'ammo', a: 'light', n: 10 }, x: 0.3, z: 0, by: -1, at: 0 });
+  run(m, 0.05);
+  assert.equal(a.ammo.light, 10);
+  m.loot.set(2, { id: 2, def: { kind: 'ammo', a: 'heavy', n: 5 }, x: 30, z: 30, by: -1, at: 0 });
+  run(m, 0.05);
+  m.loot.delete(2);
+  m.loot.set(3, { id: 3, def: { kind: 'ammo', a: 'shells', n: 4 }, x: 0, z: 0.4, by: -1, at: 0 });
+  run(m, 0.05);
+  assert.equal(a.ammo.shells, 4, 'the new one, not the one taken away');
+  // shoved from far off to right under b: picked up where it ended
+  m.loot.set(4, { id: 4, def: { kind: 'ammo', a: 'heavy', n: 6 }, x: -100, z: -100, by: -1, at: 0 });
+  run(m, 0.05);
+  moveLoot(m, 4, 40.2, 40, true);
+  run(m, 0.05);
+  assert.equal(b.ammo.heavy, 6);
+  assert.ok(!m.loot.has(4));
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
