@@ -55,6 +55,9 @@ const fillOptions = [
 const HOST_LEAD = 1.2;
 const STICK_R = 52;
 const randomSeed = () => Math.floor(Math.random() * 0x7fffffff);
+/** Whether the player asked for less motion (looked up once). */
+let calmed: boolean | null = null;
+const calmMotion = () => (calmed ??= typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
 /** How far a touch throw goes for how far the right thumb is pushed (pixels from where it came down). */
 const tossReach = (len: number) => THROW.min + Math.max(0, Math.min(1, (len - 12) / (STICK_R - 12))) * (THROW.max - THROW.min);
 /** Seconds a touch throw let go of too soon after the last one waits to go. */
@@ -705,7 +708,7 @@ function Play({ mode }: { mode: Mode }) {
     setFeed((f) => [...f.slice(-4), { id, text, mine, until: clock.current + 6 }]);
   }
 
-  function popNumber(x: number, z: number, text: string, shield: boolean) {
+  function popNumber(x: number, z: number, text: string, shield: boolean, big: boolean) {
     const p = pops.current[popAt.current];
     popAt.current = (popAt.current + 1) % pops.current.length;
     if (!p.el) return;
@@ -716,6 +719,7 @@ function Play({ mode }: { mode: Mode }) {
     p.live = true;
     p.el.textContent = text;
     p.el.classList.toggle('is-shield', shield);
+    p.el.classList.toggle('is-big', big);
   }
 
   function gunSound(w: WeaponId, k: number) {
@@ -871,7 +875,7 @@ function Play({ mode }: { mode: Mode }) {
         break;
       case 'hit':
         if (e.f === m.me) {
-          popNumber(e.x, e.z, String(Math.round(e.took)), e.shield);
+          popNumber(e.x, e.z, String(Math.round(e.took)), e.shield, e.took >= 40);
           sfx.tone({ freq: e.shield ? 1500 : 1100, dur: 0.035, type: 'triangle', vol: 0.1 });
         }
         break;
@@ -975,6 +979,7 @@ function Play({ mode }: { mode: Mode }) {
 
   /** Name tags and damage numbers, moved straight on the DOM. */
   function placeOverlays(m: Match, v: View, dt: number, focus: number) {
+    const calm = calmMotion();
     const eye = m.fighters[focus];
     for (const f of m.fighters) {
       const tag = tags.current.get(f.id);
@@ -995,13 +1000,16 @@ function Play({ mode }: { mode: Mode }) {
         p.el.style.opacity = '0';
         continue;
       }
-      const at = v.project(p.x, p.y + p.age * 1.6, p.z);
+      // it pops up big, settles, and floats off slowing down (or just rises, for those who'd rather less motion)
+      const u = p.age / 0.9;
+      const at = v.project(p.x, p.y + (1 - (1 - u) * (1 - u)) * 1.6, p.z);
       if (!at) {
         p.el.style.opacity = '0';
         continue;
       }
+      const scale = calm ? 1 : p.age < 0.08 ? 0.6 + (p.age / 0.08) * 0.9 : Math.max(1, 1.5 - (p.age - 0.08) * 4);
       p.el.style.opacity = String(Math.min(1, (0.9 - p.age) * 4));
-      p.el.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -50%) scale(${(1.25 - Math.min(0.25, p.age)).toFixed(2)})`;
+      p.el.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -50%) scale(${scale.toFixed(2)})`;
     }
   }
 
@@ -1455,10 +1463,12 @@ function Play({ mode }: { mode: Mode }) {
                   </div>
                 )}
                 <div className="g-scramble-bar is-shield">
+                  <b style={{ width: `${hud.shield}%` }} />
                   <i style={{ width: `${hud.shield}%` }} />
                   <span>{hud.shield}</span>
                 </div>
                 <div className={`g-scramble-bar is-hp${hud.hp <= 30 ? ' is-low' : ''}`}>
+                  <b style={{ width: `${hud.hp}%` }} />
                   <i style={{ width: `${hud.hp}%` }} />
                   <span>{hud.hp}</span>
                 </div>
