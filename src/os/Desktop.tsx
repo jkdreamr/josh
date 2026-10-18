@@ -1949,10 +1949,11 @@ function DockBadge({ app }: { app: AppId }) {
 
 type Hit = { key: string; label: string; sub: string; icon: IconKind; run: (os: OSApi) => void; hay: string };
 
-function buildIndex(): Hit[] {
+function buildIndex(mobile: boolean): Hit[] {
   const hits: Hit[] = [];
   for (const id of [...dockOrder, ...games.filter((game) => !dockOrder.includes(game)), 'about' as AppId, 'trash' as AppId]) {
     const a = apps[id];
+    if (mobile && a.laptopOnly) continue;
     hits.push({ key: `app-${id}`, label: a.title, sub: 'Application', icon: a.icon, run: (os) => os.open(id), hay: `${a.title} ${a.keywords ?? ''}` });
   }
   for (const f of folders) {
@@ -1977,7 +1978,7 @@ function Launcher({ onClose }: { onClose: () => void }) {
   const os = useOSLocal();
   const [q, setQ] = useState('');
   const [i, setI] = useState(0);
-  const index = useMemo(buildIndex, []);
+  const index = useMemo(() => buildIndex(os.mobile), [os.mobile]);
   const results = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return index.filter((h) => h.key.startsWith('app-')).slice(0, 8);
