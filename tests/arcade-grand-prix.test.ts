@@ -5,6 +5,7 @@ import { NO_ASSISTS, SPEC, createCar, curve, engineTorque, kmh, stepCar, tempGri
 import { keyLock, lockPedal, newDriver, readInput, SOLO, tractionPedal } from '../src/os/arcade/games/grand-prix/input.ts';
 import { endOf, finishOrder, guestState, hostState, packCar, parsePacket, unpackCar, winnerOf } from '../src/os/arcade/games/grand-prix/net.ts';
 import { createRace, gapLeader, liveDelta, resetCar, stepRace, type Entry, type NetCar } from '../src/os/arcade/games/grand-prix/race.ts';
+import { layersFor, type EngineSample } from '../src/os/arcade/games/grand-prix/samples.ts';
 import { DRIVERS, TEAMS, codeOf } from '../src/os/arcade/games/grand-prix/teams.ts';
 import { buildCircuit, circuit, deltaS, gridSlot, locate, pointAt, surfaceAt } from '../src/os/arcade/games/grand-prix/track.ts';
 
@@ -381,6 +382,36 @@ test('keyboard pedals without aids press as far as the tyres take', () => {
   let brk = 0;
   for (let i = 0; i < 30; i++) brk = readInput(d, keys, SOLO, -1, 30, DT, { tc: false, abs: false, gear: 2 }).input.brake;
   assert.ok(Math.abs(brk - lockPedal(30) * 0.97) < 1e-6, `brake ${brk}`);
+});
+
+test('recorded engine loops crossfade by rpm and throttle and pitch to the rpm', () => {
+  const bank: EngineSample[] = [
+    { url: 'a', rpm: 5000, load: 'on' },
+    { url: 'b', rpm: 9000, load: 'on' },
+    { url: 'c', rpm: 12000, load: 'on' },
+    { url: 'd', rpm: 6000, load: 'off' },
+    { url: 'e', rpm: 11000, load: 'off', gain: 0.5 },
+  ];
+  const power = (ls: { gain: number }[]) => ls.reduce((a, l) => a + l.gain * l.gain, 0);
+  // flat out at a recorded rpm: just that loop, at its own pitch
+  let ls = layersFor(bank, 9000, 1);
+  assert.ok(Math.abs(ls[1].gain - 1) < 1e-9 && Math.abs(ls[1].rate - 1) < 1e-9);
+  assert.ok(ls.filter((l) => l.index !== 1).every((l) => l.gain < 1e-9));
+  // between two loops: both, at equal power, each pitched to the actual rpm
+  ls = layersFor(bank, 7000, 1);
+  assert.ok(ls[0].gain > 0 && ls[1].gain > 0 && Math.abs(power(ls) - 1) < 1e-9);
+  assert.ok(Math.abs(ls[0].rate - 7000 / 5000) < 1e-9 && Math.abs(ls[1].rate - 7000 / 9000) < 1e-9);
+  // past the top: the highest loop carries on, pitched up (within limits)
+  ls = layersFor(bank, 13000, 1);
+  assert.ok(Math.abs(ls[2].gain - 1) < 1e-9 && ls[2].rate > 1);
+  // off the throttle: the off loops, with their gain correction
+  ls = layersFor(bank, 11000, 0);
+  assert.ok(Math.abs(ls[4].gain - 0.5) < 1e-9 && ls.slice(0, 3).every((l) => l.gain < 1e-9));
+  // half throttle: both sets at equal power
+  ls = layersFor(bank, 9000, 0.5);
+  assert.ok(ls[1].gain > 0.6 && ls[3].gain + ls[4].gain > 0.3);
+  // a bank with only on-throttle loops still plays off the throttle
+  assert.ok(layersFor(bank.slice(0, 3), 9000, 0).some((l) => l.gain > 0.99));
 });
 
 test('every team and driver has what the timing tower needs', () => {

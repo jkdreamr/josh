@@ -5,6 +5,7 @@
 // roar, kerbs and gravel follow speed and surface. Everything is heard from the first view's car.
 import { SPEC, type Car } from './car.ts';
 import type { Race } from './race.ts';
+import { ENGINE_SAMPLES, layersFor } from './samples.ts';
 import type { CamMode } from './scene.ts';
 
 export type RaceAudio = {
@@ -50,6 +51,10 @@ type Voice = {
   pan: StereoPannerNode;
   whine: OscillatorNode;
   whineGain: GainNode;
+  /** The synthesized engine's output, faded out once recorded loops have loaded. */
+  synth: GainNode;
+  /** Recorded loops (samples.ts), one looping source each, once loaded. */
+  layers: { src: AudioBufferSourceNode; gain: GainNode }[] | null;
   /** Smoothed firing frequency and load, so frame-to-frame jitter in the simulation never reaches the ear. */
   f: number;
   load: number;
@@ -158,19 +163,45 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     osc2.connect(osc2Gain).connect(filter);
     half.connect(orders).connect(filter);
     half3.connect(half3Gain).connect(orders);
-    filter.connect(presence).connect(amp);
-    rasp.connect(raspFilter).connect(raspGain).connect(amp);
+    const synth = ctx.createGain();
+    filter.connect(presence).connect(synth).connect(amp);
+    rasp.connect(raspFilter).connect(raspGain).connect(synth);
     amp.connect(cut).connect(gain);
     whine.connect(whineGain).connect(gain);
     gain.connect(pan).connect(out);
     for (const o of [osc, osc2, half, half3, rough, cutLfo, whine]) o.start();
-    return { osc, osc2, half, half3, orders, filter, presence, rough, roughDepth, amp, cutLfo, cutDepth, cut, rasp, raspFilter, raspGain, gain, pan, whine, whineGain, f: 0, load: 0, target: -1, lastDist: 0 };
+    return { osc, osc2, half, half3, orders, filter, presence, rough, roughDepth, amp, cutLfo, cutDepth, cut, rasp, raspFilter, raspGain, gain, pan, whine, whineGain, synth, layers: null, f: 0, load: 0, target: -1, lastDist: 0 };
   };
 
   const engineBus = ctx.createGain();
   engineBus.connect(master);
   const me = makeVoice(engineBus);
   const others: Voice[] = Array.from({ length: OTHER_VOICES }, () => makeVoice(engineBus));
+
+  // recorded engine loops: once they have all loaded, every voice switches over to them
+  let disposed = false;
+  if (ENGINE_SAMPLES.length && typeof fetch !== 'undefined') {
+    Promise.all(ENGINE_SAMPLES.map((s) => fetch(s.url).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(s.url)))).then((b) => ctx.decodeAudioData(b))))
+      .then((bufs) => {
+        if (disposed) return;
+        for (const v of [me, ...others]) {
+          v.layers = bufs.map((buf) => {
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.loop = true;
+            const gain = ctx.createGain();
+            gain.gain.value = 0;
+            src.connect(gain).connect(v.cut);
+            src.start(0, Math.random() * buf.duration);
+            return { src, gain };
+          });
+          v.synth.gain.value = 0;
+        }
+      })
+      .catch(() => {
+        /* the synthesized engine carries on */
+      });
+  }
 
   // tyre squeal: resonant noise in the 1 kHz region
   const squealSrc = loop();
@@ -293,12 +324,22 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     glide(v.roughDepth.gain, 0.06 + 0.1 * (1 - L), 0.1);
     glide(v.raspFilter.frequency, Math.min(6000, f * 3), 0.1);
     glide(v.raspGain.gain, (0.015 + 0.05 * L) * (inside ? 0.7 : 1), 0.1);
-    glide(v.whineGain.gain, Math.max(0, (car.rpm - 6500) / 6000) * 0.02 * (0.4 + L), 0.15);
+    // (recordings carry their own turbo)
+    glide(v.whineGain.gain, v.layers ? 0 : Math.max(0, (car.rpm - 6500) / 6000) * 0.02 * (0.4 + L), 0.15);
     // the limiter cuts the sound to about half, seventeen times a second, while it holds the revs
     glide(v.cutDepth.gain, limiter ? 0.28 : 0, 0.03);
     glide(v.cut.gain, limiter ? 0.72 : 1, 0.03);
     const rpmLoud = 0.45 + 0.55 * Math.min(1, car.rpm / SPEC.limiter);
-    glide(v.gain.gain, (0.35 + 0.65 * L) * rpmLoud * gain);
+    if (v.layers) {
+      // recordings: the two loops nearest the rpm, pitched to it (and Doppler shifted), blended on and off throttle
+      const rpm = (f / pitch / 3) * 60;
+      for (const layer of layersFor(ENGINE_SAMPLES, rpm, L)) {
+        const l = v.layers[layer.index];
+        glide(l.src.playbackRate, layer.rate * pitch);
+        glide(l.gain.gain, layer.gain);
+      }
+      glide(v.gain.gain, (0.6 + 0.4 * L) * gain);
+    } else glide(v.gain.gain, (0.35 + 0.65 * L) * rpmLoud * gain);
     glide(v.pan.pan, pan, 0.1);
   };
 
@@ -422,6 +463,7 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
       if (m) smooth(master.gain, 0, 0.02);
     },
     dispose() {
+      disposed = true;
       if (watchdog) window.clearInterval(watchdog);
       try {
         void live?.close();
