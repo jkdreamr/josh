@@ -1,5 +1,5 @@
 // Canvas renderer for Moto Trials. Draws the world, bike, ghosts, particles and HUD.
-import { HEAD_R, TOP_SPEED, WHEEL_R, segActive, type PhysWorld, type Seg } from './physics.ts';
+import { HEAD_R, TOP_SPEED, WHEEL_R, sawAt, segActive, type PhysWorld, type Seg } from './physics.ts';
 import type { Run } from './logic.ts';
 import type { Level, Theme } from './levels.ts';
 
@@ -561,9 +561,23 @@ function props(c: CanvasRenderingContext2D, level: Level, sx: (x: number) => num
 
 function saws(c: CanvasRenderingContext2D, world: PhysWorld, run: Run, sx: (x: number) => number, sy: (y: number) => number, scale: number) {
   for (const s of world.saws) {
-    const cx = sx(s.x);
-    const cy = sy(s.y);
+    const at = sawAt(s, world.clock);
+    if (s.kind === 'mine') {
+      mine(c, sx(at.x), sy(at.y), s.r * scale, scale, run.t + s.x);
+      continue;
+    }
+    const cx = sx(at.x);
+    const cy = sy(at.y);
     const r = s.r * scale;
+    if (s.period) {
+      // the rail a moving saw rides on
+      c.strokeStyle = 'rgba(0,0,0,0.35)';
+      c.lineWidth = Math.max(2, 0.12 * scale);
+      c.beginPath();
+      c.moveTo(sx(s.x - (s.mx ?? 0)), sy(s.y - (s.my ?? 0)) + (s.my ? r * 1.2 : 0));
+      c.lineTo(sx(s.x + (s.mx ?? 0)), sy(s.y + (s.my ?? 0)) - (s.my ? r * 1.2 : 0));
+      c.stroke();
+    }
     // motion blur halo
     c.strokeStyle = 'rgba(220,220,230,0.28)';
     c.lineWidth = Math.max(2, 0.16 * scale);
@@ -602,6 +616,36 @@ function saws(c: CanvasRenderingContext2D, world: PhysWorld, run: Run, sx: (x: n
     c.moveTo(cx, cy - r * 1.1);
     c.lineTo(cx, cy - r * 1.1 - 2.2 * scale);
     c.stroke();
+  }
+}
+
+/** A round mine sitting on the ground, with a blinking light on top. */
+function mine(c: CanvasRenderingContext2D, cx: number, cy: number, r: number, scale: number, t: number) {
+  c.fillStyle = '#2b2b33';
+  c.strokeStyle = OUTLINE;
+  c.lineWidth = Math.max(1, 0.04 * scale);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    c.beginPath();
+    c.arc(cx + Math.cos(a) * r * 0.95, cy + Math.sin(a) * r * 0.95, r * 0.2, 0, Math.PI * 2);
+    c.fill();
+  }
+  c.beginPath();
+  c.arc(cx, cy, r, 0, Math.PI * 2);
+  c.fill();
+  c.stroke();
+  c.fillStyle = '#d9473a';
+  c.fillRect(cx - r, cy - r * 0.18, r * 2, r * 0.36);
+  const on = Math.sin(t * 7) > 0;
+  c.fillStyle = on ? '#ff5a4a' : '#7a2a24';
+  c.beginPath();
+  c.arc(cx, cy - r * 0.95, r * 0.22, 0, Math.PI * 2);
+  c.fill();
+  if (on) {
+    c.fillStyle = 'rgba(255,90,74,0.25)';
+    c.beginPath();
+    c.arc(cx, cy - r * 0.95, r * 0.6, 0, Math.PI * 2);
+    c.fill();
   }
 }
 
