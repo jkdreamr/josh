@@ -1966,8 +1966,11 @@ function fallIn(r: Race, k: Kart, past: Past, at: Spot, hole: Hazard | null = nu
   // back short of it, a shell only just under way meets it spinning up again)
   const whirl = hole?.kind === 'whirl';
   const from = whirl ? wrapS(t, hole.s + (hole.pull ?? 7) + 3) : trench ? (trench.back ?? at.s) : at.s;
-  // (and on the water, from the marsh, in the middle of the channel: well clear of the brink it went over)
-  const d0 = whirl ? -Math.sign(hole.d || 1) * 3 : r.boat ? 0 : at.d;
+  // (and on the water, from the marsh, in the middle of the channel: well clear of the brink it went over; out of a
+  // whirlpool on the side of the channel away from the next one down the river, if one is near, so a shell only just
+  // under way is not set down in the lane it is about to be drawn out of)
+  const next = whirl ? r.whirls.find((w) => w !== hole && awake(w, k.lap) && deltaS(t, from, w.s) > 0 && deltaS(t, from, w.s) < 70) : undefined;
+  const d0 = whirl ? -Math.sign((next ? next.d : -hole.d) || 1) * 2.5 : r.boat ? 0 : at.d;
   k.fell = { past, hole: hole !== null, v: Math.abs(k.v), to: spotFor(r, k, from, d0, r.time + r.tier.fallT) };
   k.sunk = r.tier.fallT;
   k.falls++;
@@ -2147,7 +2150,8 @@ function spotFor(r: Race, k: Kart, s0: number, d0: number, at = r.time): [number
   const t = r.track;
   // (where the set pieces are, a lane further over, as one sweeping or rippling across the road can leave only those)
   const pieces = r.hazards.some((h) => timed(h.kind));
-  for (let back = 0; back <= 40; back += 4) {
+  // (on the water, with whirlpools all down a stretch, the launch may have to tow you further back to find a quiet spot)
+  for (let back = 0; back <= (r.boat ? 64 : 40); back += 4) {
     const s = wrapS(t, s0 - back);
     const [lo, hi] = setDown(r, s);
     const d = clamp(d0, lo, hi);
@@ -2998,11 +3002,13 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
   // the closer it is, the dearer a lane on the far side of it
   const stay = 0.05 + 1.5 / Math.max(4, near);
   // (only lanes inside the edges' safe band)
-  const [cLo, cHi] = [Math.max(-0.85, band.lo / t.half), Math.min(0.85, band.hi / t.half)];
+  // (on the water's narrow channel, where the wharves and the bridge abutments stand well back, out as far as them)
+  const cMax = r.boat ? BOAT_LANES : 0.85;
+  const [cLo, cHi] = [Math.max(-cMax, band.lo / t.half), Math.min(cMax, band.hi / t.half)];
   const lanes: number[] = [];
   // (c is summed in floating point, so the last is a hair over 0.85: compare with a little slack or the right-hand
   // lane is lost on every course, walls or not)
-  for (let c = -0.85; c <= 0.851; c += 0.05) if (c >= cLo - 1e-6 && c <= cHi + 1e-6) lanes.push(c);
+  for (let c = -cMax; c <= cMax + 0.001; c += 0.05) if (c >= cLo - 1e-6 && c <= cHi + 1e-6) lanes.push(c);
   // (round the set pieces the curb will do too: the gap a row of bollards leaves can be the one against the wall)
   if (piece) for (const c of [-0.95, -0.9, 0.9, 0.95]) if (c >= band.lo / t.half - 1e-6 && c <= band.hi / t.half + 1e-6) lanes.push(c);
   if (!lanes.length) lanes.push(clamp((cLo + cHi) / 2, -0.85, 0.85));
@@ -3059,7 +3065,16 @@ function dropOutside(r: Race, s: number, ahead: number, turn: number) {
 const EDGE_KEEP = 2.6;
 type Band = { lo: number; hi: number; open: boolean; hole: boolean; wide?: boolean };
 const FREE: Band = { lo: -Infinity, hi: Infinity, open: false, hole: false };
-const edgeRoom = (r: Race, k: Kart, ai: Ai) => KART_R + 0.9 + 0.025 * Math.abs(k.v) + 0.8 * (1 - ai.skill) + (ai.care > 0 ? 1.2 : 0) + (r.slick ? 0.25 * Math.hypot(k.kx, k.kz) + (ai.shaken > 0 ? 2 : 0) : 0);
+const edgeRoom = (r: Race, k: Kart, ai: Ai) => {
+  const room = KART_R + 0.9 + 0.025 * Math.abs(k.v) + 0.8 * (1 - ai.skill) + (ai.care > 0 ? 1.2 : 0) + (r.slick ? 0.25 * Math.hypot(k.kx, k.kz) + (ai.shaken > 0 ? 2 : 0) : 0);
+  // (on the water's narrow channel never so far that it leaves no room to steer round a whirlpool: there the middle of
+  // the channel is no safer than its edge)
+  return r.boat ? Math.min(room, BOAT_ROOM) : room;
+};
+/** How far out (a share of half the channel) a CPU's lanes go on the water, where the walls stand back (see dodgeHazard). */
+const BOAT_LANES = 1.2;
+/** The most a CPU keeps from the brink of the marsh (see edgeRoom). */
+const BOAT_ROOM = 3.3;
 
 /**
  * The stretch across the road (lateral offsets lo to hi) a CPU keeps to over the road ahead: clear of the brink wherever
@@ -3156,6 +3171,8 @@ const BRAKE_PLAN = 18;
 
 /** On the water a CPU dodging with a clean line looks at least this many seconds ahead (see think()). */
 const BOAT_LOOK = 0.4;
+/** On the water a CPU takes a bend this much slower than it would on a slick road: the shell slides on wide out of a carve. */
+const BOAT_CAP = 0.88;
 /** How much less than a kart's the CPU counts on turning off a drift (a racing shell's long hull: see HULL_TURN). */
 const turnK = (r: Race) => (r.boat ? HULL_TURN : 1);
 /** An Expert course, or harder. */
@@ -3287,7 +3304,7 @@ function think(r: Race, k: Kart, dt: number) {
   const slick = r.slick ? Math.min(gripAt(t, k.s, k.lap), gripAt(t, k.s + 15, k.lap), gripAt(t, k.s + 30, k.lap)) : 1;
   // (and on the water a current setting it toward the outside of the bend has it take the bend slower)
   const outward = r.flows.length && peak > 0.02 ? Math.max(0, -Math.sign(bendAhead) * flowAt(r, k.s + 15, k.d, k.lap).across) : 0;
-  const cap = (k.drift !== 0 || inp.drift ? 1.85 : 1.55 * turnK(r)) * (wet ? 0.92 : 1) * (damp ? 0.7 : 1) * (slick < 1 ? 0.55 + 0.45 * slick : 1) / (1 + 0.12 * outward);
+  const cap = ((k.drift !== 0 || inp.drift ? 1.85 : 1.55 * turnK(r)) * (wet ? 0.92 : 1) * (damp ? 0.7 : 1) * (slick < 1 ? 0.55 + 0.45 * slick : 1) * (r.boat ? BOAT_CAP : 1)) / (1 + 0.12 * outward);
   // (on the water by its speed over the ground, the current and all: that is what takes it round the bend)
   const gv = r.flows.length ? k.v + flowAt(r, k.s, k.d, k.lap).along : k.v;
   let tooFast = peak > 0 && gv > cap / peak;
