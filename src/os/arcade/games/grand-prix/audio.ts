@@ -1,11 +1,13 @@
-// Race sound, synthesized live with WebAudio (no audio files). The engine is a 1.6 litre turbo V6: three firing
-// pulses per crank turn, so its note follows the simulated rpm exactly, with a harmonic spectrum, rasp that grows
-// with throttle, the turbo's whine, crackle on the overrun and the limiter's stutter. The nearest rivals get their
+// Race sound, synthesized live with WebAudio (no audio files). The engine is a 1.6 litre turbo V6: a train of uneven
+// exhaust pulses (engine.ts), three per crank turn so its note follows the simulated rpm exactly, ringing through a
+// fixed exhaust pipe and body, brighter and harder on the throttle, with the turbo's whistle, crackle on the overrun
+// and the limiter's stutter. The nearest rivals get their
 // own voices, panned and Doppler shifted as they pass. Tyre squeal follows how hard the tyres slide, and wind, road
 // roar, kerbs and gravel follow speed and surface. Everything is heard from the first view's car, with a touch of
 // outdoor reverb.
 import { SPEC, type Car } from './car.ts';
 import type { Race } from './race.ts';
+import { OFF_AIR, OFF_TONE, ON_AIR, ON_TONE, renderEngineLoop } from './engine.ts';
 import { ENGINE_SAMPLES, layersFor } from './samples.ts';
 import type { CamMode } from './scene.ts';
 
@@ -20,33 +22,26 @@ export type RaceAudio = {
   dispose: () => void;
 };
 
-/**
- * Harmonic amplitudes of the engine note (the firing frequency is harmonic 1). They fall away steadily, like the
- * exhaust note of a real engine, rather than staying strong to the top (which sounds like a synth buzz).
- */
-const ENGINE_HARMONICS = [0, 1, 0.55, 0.42, 0.3, 0.2, 0.16, 0.1, 0.08, 0.05, 0.04, 0.03, 0.02];
 /** The firing frequency of a four stroke V6 is three pulses per crank revolution. */
 export const firingHz = (rpm: number) => (rpm / 60) * 3;
 
 type Voice = {
-  /** The engine note and its half and one-and-a-half orders. */
-  osc: OscillatorNode;
-  half: OscillatorNode;
-  half3: OscillatorNode;
-  orders: GainNode;
+  /** The exhaust pulse loop, played at rpm over its reference rpm. */
+  src: AudioBufferSourceNode;
+  /** The loop's four channels: tone and breath, on and off the throttle. */
+  onTone: GainNode;
+  onAir: GainNode;
+  offTone: GainNode;
+  offAir: GainNode;
+  /** Brightness: opens with throttle, closes with distance. */
   filter: BiquadFilterNode;
-  presence: BiquadFilterNode;
-  /** Cycle-to-cycle unevenness at crank speed: the growl of a real engine, without any noise. */
-  rough: OscillatorNode;
-  roughDepth: GainNode;
+  /** The hard edge of a loaded engine in the upper mids. */
+  bite: BiquadFilterNode;
   amp: GainNode;
   /** Rev limiter: a square wave cutting the sound in time with the ignition cut, sample accurate. */
   cutLfo: OscillatorNode;
   cutDepth: GainNode;
   cut: GainNode;
-  rasp: AudioBufferSourceNode;
-  raspFilter: BiquadFilterNode;
-  raspGain: GainNode;
   gain: GainNode;
   pan: StereoPannerNode;
   whine: OscillatorNode;
@@ -106,34 +101,63 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     return src;
   };
 
-  const wave = ctx.createPeriodicWave(new Float32Array(ENGINE_HARMONICS.length), Float32Array.from(ENGINE_HARMONICS));
+  // the exhaust pulses, rendered once for every voice
+  const engine = renderEngineLoop(ctx.sampleRate);
+  const engineBuf = ctx.createBuffer(4, engine.length, ctx.sampleRate);
+  engine.channels.forEach((ch, k) => engineBuf.getChannelData(k).set(ch));
 
   const makeVoice = (out: AudioNode): Voice => {
-    const osc = ctx.createOscillator();
-    osc.setPeriodicWave(wave);
-    // the half and one-and-a-half orders (uneven firing between the banks) give the note its depth
-    const half = ctx.createOscillator();
-    half.type = 'sine';
-    const half3 = ctx.createOscillator();
-    half3.type = 'sine';
-    const orders = ctx.createGain();
-    orders.gain.value = 0.2;
-    const half3Gain = ctx.createGain();
-    half3Gain.gain.value = 0.35;
+    const src = ctx.createBufferSource();
+    src.buffer = engineBuf;
+    src.loop = true;
+    src.playbackRate.value = 0.5;
+    const split = ctx.createChannelSplitter(4);
+    src.connect(split);
+    const mix = ctx.createGain();
+    const part = (ch: number) => {
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      split.connect(g, ch).connect(mix);
+      return g;
+    };
+    const onTone = part(ON_TONE);
+    const onAir = part(ON_AIR);
+    const offTone = part(OFF_TONE);
+    const offAir = part(OFF_AIR);
+    // the exhaust pipe: a fixed length of hot gas whose echoes reinforce some notes and cancel others, so the tone
+    // changes as the revs sweep through them
+    const pipe = ctx.createGain();
+    const echo = ctx.createDelay(0.05);
+    echo.delayTime.value = 0.0042;
+    // (only the upper harmonics ring: the firing note itself passing a resonance would swell and fade with the revs)
+    const echoTone = ctx.createBiquadFilter();
+    echoTone.type = 'bandpass';
+    echoTone.frequency.value = 1500;
+    echoTone.Q.value = 0.7;
+    const echoGain = ctx.createGain();
+    echoGain.gain.value = 0.3;
+    mix.connect(pipe);
+    pipe.connect(echo).connect(echoTone).connect(echoGain).connect(pipe);
+    // the body: weight in the low end where the half orders growl, and the hard edge of a working engine
+    const low = ctx.createBiquadFilter();
+    low.type = 'highpass';
+    low.frequency.value = 35;
+    const body = ctx.createBiquadFilter();
+    body.type = 'peaking';
+    body.frequency.value = 150;
+    body.Q.value = 0.7;
+    body.gain.value = 7;
+    const bite = ctx.createBiquadFilter();
+    bite.type = 'peaking';
+    bite.frequency.value = 1300;
+    bite.Q.value = 0.9;
+    bite.gain.value = 0;
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.Q.value = 0.6;
-    const presence = ctx.createBiquadFilter();
-    presence.type = 'peaking';
-    presence.frequency.value = 2800;
-    presence.Q.value = 0.8;
+    filter.Q.value = 0.5;
+    filter.frequency.value = 2000;
     const amp = ctx.createGain();
-    amp.gain.value = 1;
-    const rough = ctx.createOscillator();
-    rough.type = 'sine';
-    const roughDepth = ctx.createGain();
-    roughDepth.gain.value = 0.1;
-    rough.connect(roughDepth).connect(amp.gain);
+    amp.gain.value = 1.4;
     const cut = ctx.createGain();
     cut.gain.value = 1;
     const cutLfo = ctx.createOscillator();
@@ -142,14 +166,7 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     const cutDepth = ctx.createGain();
     cutDepth.gain.value = 0;
     cutLfo.connect(cutDepth).connect(cut.gain);
-    // a whisper of intake and exhaust air, low passed so it never hisses
-    const rasp = loop();
-    const raspFilter = ctx.createBiquadFilter();
-    raspFilter.type = 'lowpass';
-    raspFilter.Q.value = 0.5;
-    const raspGain = ctx.createGain();
-    raspGain.gain.value = 0;
-    // turbo whine
+    // the turbo's whistle, faint
     const whine = ctx.createOscillator();
     whine.type = 'sine';
     const whineGain = ctx.createGain();
@@ -157,17 +174,15 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     const gain = ctx.createGain();
     gain.gain.value = 0;
     const pan = ctx.createStereoPanner();
-    osc.connect(filter);
-    half.connect(orders).connect(filter);
-    half3.connect(half3Gain).connect(orders);
     const synth = ctx.createGain();
-    filter.connect(presence).connect(synth).connect(amp);
-    rasp.connect(raspFilter).connect(raspGain).connect(synth);
+    pipe.connect(low).connect(body).connect(bite).connect(filter).connect(synth).connect(amp);
     amp.connect(cut).connect(gain);
     whine.connect(whineGain).connect(gain);
     gain.connect(pan).connect(out);
-    for (const o of [osc, half, half3, rough, cutLfo, whine]) o.start();
-    return { osc, half, half3, orders, filter, presence, rough, roughDepth, amp, cutLfo, cutDepth, cut, rasp, raspFilter, raspGain, gain, pan, whine, whineGain, synth, layers: null, f: 0, load: 0, drift: 0, near: 1, target: -1, lastDist: 0 };
+    // each voice starts at its own place in the loop, so rivals never pulse in step with you
+    src.start(0, Math.random() * engineBuf.duration);
+    for (const o of [cutLfo, whine]) o.start();
+    return { src, onTone, onAir, offTone, offAir, filter, bite, amp, cutLfo, cutDepth, cut, gain, pan, whine, whineGain, synth, layers: null, f: 0, load: 0, drift: 0, near: 1, target: -1, lastDist: 0 };
   };
 
   const engineBus = ctx.createGain();
@@ -332,20 +347,22 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     v.load += (load - v.load) * Math.min(1, dt / 0.12);
     const f = v.f * (1 + Math.max(-0.002, Math.min(0.002, v.drift)));
     const L = v.load;
-    glide(v.osc.frequency, f);
-    glide(v.half.frequency, f * 0.5);
-    glide(v.half3.frequency, f * 1.5);
-    glide(v.rough.frequency, f / 3);
-    glide(v.whine.frequency, 2600 + car.rpm * 0.42, 0.1);
-    // open throttle: brighter, with a scream in the upper mids; closed: a darker, rounder burble
-    glide(v.filter.frequency, Math.min(9000, 250 + f * (1.3 + 3.2 * L)) * v.near);
-    glide(v.presence.gain, 1 + 5 * L * Math.min(1, car.rpm / 11000), 0.1);
-    glide(v.orders.gain, 0.14 + 0.16 * (1 - L), 0.1);
-    glide(v.roughDepth.gain, 0.06 + 0.1 * (1 - L), 0.1);
-    glide(v.raspFilter.frequency, Math.min(6000, f * 3), 0.1);
-    glide(v.raspGain.gain, (0.015 + 0.05 * L) * (inside ? 0.7 : 1), 0.1);
+    // the loop plays at the engine's speed over the speed it was rendered at
+    glide(v.src.playbackRate, Math.max(0.2, Math.min(3, ((f / 3) * 60) / engine.refRpm)));
+    glide(v.whine.frequency, 1700 + car.rpm * 0.22, 0.1);
+    // on the throttle: hard, even pulses with a breath of exhaust; off it: the softer, uneven burble of the overrun
+    const on = Math.sin((L * Math.PI) / 2);
+    const off = Math.cos((L * Math.PI) / 2);
+    glide(v.onTone.gain, on, 0.08);
+    // (the cockpit sits by the airbox, so it hears more of the breath)
+    glide(v.onAir.gain, on * (inside ? 0.42 : 0.32), 0.08);
+    glide(v.offTone.gain, off * 0.6, 0.08);
+    glide(v.offAir.gain, off * 0.4, 0.08);
+    // brightness opens with the throttle and a little with the revs; distance takes the top off
+    glide(v.filter.frequency, Math.min(9000, (1300 + 2500 * L + 0.1 * car.rpm) * v.near), 0.08);
+    glide(v.bite.gain, 4 * L * Math.min(1, car.rpm / 10000), 0.1);
     // (recordings carry their own turbo)
-    glide(v.whineGain.gain, v.layers ? 0 : Math.max(0, (car.rpm - 6500) / 6000) * 0.02 * (0.4 + L), 0.15);
+    glide(v.whineGain.gain, v.layers ? 0 : Math.max(0, (car.rpm - 7000) / 5500) * 0.006 * (0.3 + L), 0.15);
     // the limiter cuts the sound to about half, seventeen times a second, while it holds the revs
     glide(v.cutDepth.gain, limiter ? 0.28 : 0, 0.03);
     glide(v.cut.gain, limiter ? 0.72 : 1, 0.03);
@@ -430,7 +447,7 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
         const right = dx * sin - dy * cos;
         const pan = Math.max(-0.9, Math.min(0.9, right / Math.max(4, o.d)));
         // rivals sit well under your own engine, and the air takes the edge off them with distance
-        const gain = 0.2 / (1 + (o.d / 12) ** 1.5);
+        const gain = 0.16 / (1 + (o.d / 12) ** 1.5);
         v.near = 1 / (1 + o.d / 30);
         drive(v, oc, gain, pitch, pan, false, false, dt);
       });

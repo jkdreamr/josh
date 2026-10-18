@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createCommentary, spokenTime } from '../src/os/arcade/games/grand-prix/commentary.ts';
+import { CYLINDERS, OFF_TONE, ON_TONE, renderEngineLoop } from '../src/os/arcade/games/grand-prix/engine.ts';
 import { buildLine, createDriver, drive, profileTime, speedProfile } from '../src/os/arcade/games/grand-prix/ai.ts';
 import { NO_ASSISTS, SPEC, createCar, curve, engineTorque, kmh, stepCar, tempGrip, type Assists } from '../src/os/arcade/games/grand-prix/car.ts';
 import { keyLock, lockPedal, newDriver, readInput, SOLO, tractionPedal } from '../src/os/arcade/games/grand-prix/input.ts';
@@ -417,6 +418,44 @@ test('keyboard pedals without aids press as far as the tyres take', () => {
   let brk = 0;
   for (let i = 0; i < 30; i++) brk = readInput(d, keys, SOLO, -1, 30, DT, { tc: false, abs: false, gear: 2 }).input.brake;
   assert.ok(Math.abs(brk - lockPedal(30) * 0.97) < 1e-6, `brake ${brk}`);
+});
+
+test('the engine loop is a seamless train of uneven exhaust pulses, not a pure buzz', () => {
+  for (const sr of [44100, 48000]) {
+    const loop = renderEngineLoop(sr);
+    const cycle = (sr * 120) / loop.refRpm;
+    assert.ok(Math.abs(cycle - Math.round(cycle)) < 1e-9, 'a cycle is whole samples');
+    assert.equal(loop.length % Math.round(cycle), 0, 'whole engine cycles');
+    assert.ok(Math.abs(loop.length / sr - 3) < 0.05);
+    for (const ch of loop.channels) {
+      let peak = 0;
+      for (const x of ch) {
+        assert.ok(Number.isFinite(x));
+        peak = Math.max(peak, Math.abs(x));
+      }
+      assert.ok(Math.abs(peak - 1) < 1e-6);
+      // no jump where the loop wraps around
+      assert.ok(Math.abs(ch[0] - ch[ch.length - 1]) < 0.25);
+    }
+    // energy at the engine cycle's orders: the firing note, and the half orders between (cylinder unevenness)
+    const at = (ch: Float32Array, hz: number) => {
+      let re = 0;
+      let im = 0;
+      for (let i = 0; i < ch.length; i++) {
+        re += ch[i] * Math.cos((2 * Math.PI * hz * i) / sr);
+        im += ch[i] * Math.sin((2 * Math.PI * hz * i) / sr);
+      }
+      return Math.hypot(re, im);
+    };
+    const cycleHz = loop.refRpm / 120;
+    for (const k of [ON_TONE, OFF_TONE]) {
+      const firing = at(loop.channels[k], cycleHz * CYLINDERS);
+      const halves = [1, 2, 3, 4, 5].map((n) => at(loop.channels[k], cycleHz * n));
+      const strongest = Math.max(...halves);
+      assert.ok(strongest > firing * 0.05, `half orders present (${(strongest / firing).toFixed(3)})`);
+      assert.ok(strongest < firing, 'the firing note still leads');
+    }
+  }
 });
 
 test('recorded engine loops crossfade by rpm and throttle and pitch to the rpm', () => {
