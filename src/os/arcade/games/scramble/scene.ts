@@ -442,7 +442,7 @@ function squareBands(THREE: Three, half: number, rings: { d: number; y: number; 
       const b = at(k, i + 1);
       const A = at(k + 1, i);
       const B = at(k + 1, i + 1);
-      for (const v of [a, A, b, b, A, B]) {
+      for (const v of [a, b, A, b, B, A]) {
         pos.push(...v.p);
         col.push(...v.c);
       }
@@ -450,6 +450,10 @@ function squareBands(THREE: Three, half: number, rings: { d: number; y: number; 
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  // texture coordinates 0 to 1 across the island, so the sand's texture lines up with itself everywhere
+  const uv: number[] = [];
+  for (let i = 0; i < pos.length; i += 3) uv.push(pos[i] / (2 * HALF) + 0.5, 0.5 - pos[i + 2] / (2 * HALF));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.computeVertexNormals();
   return g;
 }
@@ -1035,6 +1039,40 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     parent.add(o);
     return o;
   };
+  /**
+   * Bakes a model's plain parts (the meshes right under it, but for those in `keep`) into one mesh colored by vertex,
+   * so a gun or a helmet is one draw call, not five. Each kind is baked once (by `key`) and shared from then on.
+   */
+  const baked = new Map<string, T.BufferGeometry>();
+  const partsMat = lambert(0xffffff, { vertexColors: true });
+  const partsMatDouble = lambert(0xffffff, { vertexColors: true, side: THREE.DoubleSide });
+  const bake = (g: T.Group, key: string, keep: T.Object3D[] = [], double = false) => {
+    const plain = g.children.filter((o): o is T.Mesh => (o as T.Mesh).isMesh && !keep.includes(o));
+    let merged = baked.get(key);
+    if (!merged) {
+      const c = new THREE.Color();
+      const glow = new THREE.Color();
+      merged = geo(
+        mergeRoof(
+          THREE,
+          plain.map((o) => {
+            o.updateMatrix();
+            const x = o.material as T.MeshLambertMaterial;
+            // a glowing part keeps some of its glow in its color
+            c.copy(x.color);
+            if (x.emissive) c.add(glow.copy(x.emissive).multiplyScalar(x.emissiveIntensity));
+            return { g: o.geometry.clone().applyMatrix4(o.matrix), c: c.getHex() };
+          }),
+          1,
+          true,
+        ),
+      );
+      baked.set(key, merged);
+    }
+    for (const o of plain) g.remove(o);
+    g.add(new THREE.Mesh(merged, double ? partsMatDouble : partsMat));
+    return g;
+  };
 
   // ---------------------------------------------------------------------------------------------------------------
   // The island.
@@ -1054,18 +1092,17 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     { d: 900, y: -0.7, c: water },
   ]);
   scene.add(new THREE.Mesh(geo(shallows), basic(0xffffff, { vertexColors: true })));
+  // the beach: a ring of sand round the grass (not a slab under it, which would fight the grass for the same depth
+  // from far up), running down into the water, darker where it's wet
   const sandTex = keep(sandTexture(THREE));
-  const block = new THREE.Mesh(geo(new THREE.BoxGeometry(2 * HALF, 1.3, 2 * HALF)), lambert(0xe9d7a6, { map: sandTex }));
-  block.position.y = -0.65;
-  scene.add(block);
-  // the beach runs down into the water, darker where it's wet
-  const slope = squareBands(THREE, HALF, [
-    { d: 0, y: 0, c: 0xe9d7a6 },
-    { d: 2.2, y: -0.45, c: 0xdcc58f },
-    { d: 3.4, y: -0.72, c: 0xb9a172 },
-    { d: 6, y: -1.3, c: 0x9c8a62 },
+  const beach = squareBands(THREE, HALF - BEACH, [
+    { d: 0, y: 0, c: 0xffffff },
+    { d: BEACH, y: 0, c: 0xffffff },
+    { d: BEACH + 2.2, y: -0.45, c: 0xf2e4c2 },
+    { d: BEACH + 3.4, y: -0.72, c: 0xc9b48c },
+    { d: BEACH + 6, y: -1.3, c: 0xa8987a },
   ]);
-  scene.add(new THREE.Mesh(geo(slope), lambert(0xffffff, { vertexColors: true })));
+  scene.add(new THREE.Mesh(geo(beach), lambert(0xe9d7a6, { map: sandTex, vertexColors: true })));
   // surf along the waterline, and a wave line that rolls in to meet it
   const foamTex = keep(foamTexture(THREE));
   const surfMat = basic(0xffffff, { map: foamTex, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide });
@@ -1743,12 +1780,31 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const supplyMat = lambert(0xffffff, { map: keep(supplyTexture(THREE)) });
   const supplyOpen = lambert(0x50607a);
   const beamMat = basic(0x7fc4ff, { transparent: true, opacity: 0.22, depthWrite: false });
+  /** A balloon in two colors of stripe, top to bottom. */
+  const stripedBall = (a: number, b: number) => {
+    const g = new THREE.SphereGeometry(1, 16, 12).toNonIndexed();
+    const p = g.attributes.position as T.BufferAttribute;
+    const cols = new Float32Array(p.count * 3);
+    const ca = new THREE.Color(a);
+    const cb = new THREE.Color(b);
+    for (let i = 0; i < p.count; i += 3) {
+      // the stripe each triangle falls in, by the angle round to its middle
+      const x = p.getX(i) + p.getX(i + 1) + p.getX(i + 2);
+      const z = p.getZ(i) + p.getZ(i + 1) + p.getZ(i + 2);
+      const c = Math.floor(((Math.atan2(z, x) + Math.PI) / (Math.PI * 2)) * 16) % 2 ? cb : ca;
+      for (let k = 0; k < 3; k++) cols.set([c.r, c.g, c.b], (i + k) * 3);
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return geo(g);
+  };
+  const stripes = lambert(0xffffff, { vertexColors: true });
+  const supplyBalloon = stripedBall(0xff5a5a, 0xfff3e6);
   const supplies = [...map.drops, ...map.flares].map((id) => {
     const c = map.containers[id];
     const group = new THREE.Group();
     const box = add(group, G.box, supplyMat, 0, SUPPLY_HALF, 0, SUPPLY_HALF * 2, SUPPLY_HALF * 2, SUPPLY_HALF * 2);
     const balloon = new THREE.Group();
-    add(balloon, G.ball, lambert(0xff5a5a), 0, 6, 0, 1.7, 2, 1.7);
+    add(balloon, supplyBalloon, stripes, 0, 6, 0, 1.7, 2, 1.7);
     add(balloon, G.ball, M.white, 0, 6, 0, 1.72, 0.35, 1.72);
     for (const [x, z] of [
       [-0.8, -0.8],
@@ -2442,7 +2498,12 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     [1.1, 2.6],
   ])
     add(bus, G.cyl, M.dark, x, -1.25, z, 0.55, 0.4, 0.55).rotation.z = Math.PI / 2;
-  add(bus, G.ball, lambert(0x8a4dff), 0, 8.4, 0, 3.2, 3.7, 3.2);
+  // a yellow band round it, a windshield and headlights up front
+  add(bus, G.box, lambert(0xffc83d), 0, -0.55, 0, 3.04, 0.26, 8.04);
+  add(bus, G.box, M.dark, 0, 0.35, 4.01, 2.5, 0.85, 0.06);
+  for (const side of [-1, 1]) add(bus, G.box, lambert(0xfff6c8, { emissive: 0x7a6a30 }), side * 1.05, -0.75, 4.02, 0.4, 0.26, 0.06);
+  const busBalloon = add(bus, stripedBall(0x8a4dff, 0xf4ecff), stripes, 0, 8.4, 0, 3.2, 3.7, 3.2);
+  bake(bus, 'bus', [busBalloon]);
   for (const [x, z] of [
     [-1.3, -3.6],
     [1.3, -3.6],
@@ -2464,38 +2525,6 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const o = add(g, G.cyl, material, x, y, z, r, len, r);
     o.rotation.x = Math.PI / 2;
     return o;
-  };
-  /**
-   * Bakes a model's plain parts (the meshes right under it, but for those in `keep`) into one mesh colored by vertex,
-   * so a gun or a helmet is one draw call, not five. Each kind is baked once (by `key`) and shared from then on.
-   */
-  const baked = new Map<string, T.BufferGeometry>();
-  const partsMat = lambert(0xffffff, { vertexColors: true });
-  const partsMatDouble = lambert(0xffffff, { vertexColors: true, side: THREE.DoubleSide });
-  const bake = (g: T.Group, key: string, keep: T.Object3D[] = [], double = false) => {
-    const plain = g.children.filter((o): o is T.Mesh => (o as T.Mesh).isMesh && !keep.includes(o));
-    let merged = baked.get(key);
-    if (!merged) {
-      const c = new THREE.Color();
-      merged = geo(
-        mergeRoof(
-          THREE,
-          plain.map((o) => {
-            o.updateMatrix();
-            const x = o.material as T.MeshLambertMaterial;
-            // a glowing part keeps some of its glow in its color
-            c.copy(x.color).add(color.copy(x.emissive ?? color.setRGB(0, 0, 0)).multiplyScalar(x.emissiveIntensity ?? 1));
-            return { g: o.geometry.clone().applyMatrix4(o.matrix), c: c.getHex() };
-          }),
-          1,
-          true,
-        ),
-      );
-      baked.set(key, merged);
-    }
-    for (const o of plain) g.remove(o);
-    g.add(new THREE.Mesh(merged, double ? partsMatDouble : partsMat));
-    return g;
   };
   /** A helmet from the kitchen, upside down, its brim on y = 0: a colander, a saucepan or a stockpot by level. */
   function helmetModel(lv: number): T.Group {
