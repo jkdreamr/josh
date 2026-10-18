@@ -317,3 +317,44 @@ test('sampled worlds preserve hidden counts and exclude known cards from hidden 
   const known = new Set([...view.hand, ...view.pile]);
   assert.equal(hidden.some((card) => known.has(card)), false);
 });
+
+test('the top rival never covers the draw and discard piles', async () => {
+  const { tableLayout, topSeatBottom, pileTop } = await import('../src/os/arcade/games/crazy-eights/layout.ts');
+  const sizes = [
+    { w: 1280, h: 496 },
+    { w: 1280, h: 620 },
+    { w: 1440, h: 780 },
+    { w: 1920, h: 980 },
+    { w: 900, h: 420 },
+    { w: 820, h: 1000 },
+    { w: 390, h: 700 },
+    { w: 560, h: 360 },
+  ];
+  for (const { w, h } of sizes) {
+    for (const n of [2, 4]) {
+      for (const online of [false, true]) {
+        for (const [nameH, barH] of [[42, 44], [56, 61]]) {
+          const l = tableLayout({ w, h, n, online, nameH, barH });
+          if (l.short) continue;
+          const seat = topSeatBottom(l, nameH);
+          const pile = pileTop(l, h, barH);
+          assert.ok(pile >= seat + 8, `${w}x${h} n=${n} online=${online} name=${nameH}: rival ends at ${seat.toFixed(1)}, piles start at ${pile.toFixed(1)}`);
+          if (h >= 400) assert.ok(pile + l.ch + 30 <= h - barH - l.handH + 1, `${w}x${h} n=${n}: pile labels run into your bar`);
+          if (online) assert.ok(l.seatTop >= 40, 'online, the top rival sits below the room badge');
+        }
+      }
+    }
+  }
+});
+
+test('the table keeps its old roomy and short layouts where nothing overlapped', async () => {
+  const { tableLayout } = await import('../src/os/arcade/games/crazy-eights/layout.ts');
+  const short = tableLayout({ w: 700, h: 300, n: 4, online: false, nameH: 42, barH: 44 });
+  assert.equal(short.short, true);
+  const roomy = tableLayout({ w: 1440, h: 900, n: 3, online: false, nameH: 42, barH: 44 });
+  assert.equal(roomy.short, false);
+  assert.equal(roomy.cw, 104);
+  assert.equal(roomy.pad, Math.round(roomy.ch * 0.3));
+  const fourUp = tableLayout({ w: 1280, h: 496, n: 4, online: false, nameH: 42, barH: 44 });
+  assert.ok(fourUp.cw >= 70, `cards stay readable at fullscreen 1280x720, got ${fourUp.cw}`);
+});
