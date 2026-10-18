@@ -10,6 +10,7 @@ export const meta: GameMeta = {
   accent: '#7b3fd1',
   glyph: 'M12 2.5c-4 0-7 6.3-7 11a7 7 0 0 0 14 0c0-4.7-3-11-7-11zM8.5 12.5l2 1.6 1.6-2.2 1.9 1.7 1.6-1.4',
   order: 2,
+  music: 'tension',
   // solo matches against forty-nine computer eggs, one board per difficulty: damage dealt, 100 an elimination, 500 a win
   leaderboard: { order: 'desc', max: 10_000, unit: 'pts', measure: 'Best Match vs Computer', variants: { easy: 'Easy', normal: 'Normal', hard: 'Hard' } },
   online: { seats: 20, lateJoin: true, bots: true, quick: true },

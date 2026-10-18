@@ -7,9 +7,17 @@ export const meta: GameMeta = {
   category: 'arcade',
   players: '1P',
   controls: 'Up or W for gas, Down or S to brake, Left and Right lean back and forward. Flip in the air for time bonuses. On touch, use the buttons.',
+  howTo: [
+    "Ride from the start to the finish line as fast as you can.",
+    "Lean back and forward to keep the bike balanced over ramps, gaps and loops.",
+    "Bump your head, hit a saw or fall off the track and you crash, then respawn at the last checkpoint you passed while the clock keeps running.",
+    "Land a full flip on your wheels to knock a second off your time for each flip.",
+    "Beat the bronze, silver and gold times to earn stars. Clearing a level unlocks the next one.",
+  ],
   accent: '#ff6a2b',
   glyph: 'M4 17a3.5 3.5 0 1 0 7 0 3.5 3.5 0 0 0-7 0zm10 0a3.5 3.5 0 1 0 7 0 3.5 3.5 0 0 0-7 0zM7.5 17l3-5h4l3.5 5M10.5 12L8 7h3M17.5 17L14 9l-1.5-2.5',
   order: 8,
+  music: 'drive',
   // race games may not use variant boards, so the one board ranks the Full Tour:
   // the sum of a rider's best time on every level. min sits far above any single
   // race time so online finishes are never plausible tour entries.

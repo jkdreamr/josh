@@ -1,3 +1,5 @@
+import type { MusicStyle } from './kit/music-core.ts';
+
 export type GameCategory = 'arcade' | 'puzzle' | '3d' | 'multiplayer' | 'party' | 'drinking';
 
 /** Opt-in global leaderboard. The server uses it to validate submissions. */
@@ -52,6 +54,13 @@ export type GameMeta = {
   leaderboard?: LeaderboardSpec;
   /** Set to allow online rooms with this many seats. */
   online?: OnlineSpec;
+  /**
+   * Background music while a round plays, in one of the kit's styles (the tune itself is written from the id). Leave
+   * it out for games that are better quiet (board, card and word games, games played out loud) or play their own.
+   */
+  music?: MusicStyle;
+  /** The rules, a step per line, for the How to Play card the Start and Pause cards open. Leave out if the game has its own. */
+  howTo?: readonly string[];
 };
 
 export type GameProps = { compact?: boolean; onExit?: () => void; roomCode?: string };

@@ -36,6 +36,21 @@ function parseRoomMessage(value: unknown, size: number): RoomMessage | null {
   return null;
 }
 type GameMode = 'go' | 'omok';
+
+const GO_RULES = [
+  'Black and White take turns placing a stone on an empty point. Black goes first.',
+  'Stones next to each other along the lines form a group. The empty points touching a group are its liberties.',
+  'Take away a group\'s last liberty and it is captured and comes off the board. You can\'t play a stone that would have no liberties unless it captures.',
+  'Ko: you can\'t make a move that repeats an earlier board position.',
+  'Pass when there is nothing useful left to play. Two passes in a row end the game: tap any dead groups, then count.',
+  'Area scoring: your stones plus the empty points you surround. White gets 7.5 komi for going second, and the higher score wins.',
+];
+const OMOK_RULES = [
+  'Black and White take turns placing a stone on any empty point. Black goes first.',
+  'Stones never move and are never captured.',
+  'Get five or more of your stones in an unbroken line, across, down or diagonal, to win.',
+  'Block your opponent: an open row of three or four needs an answer right away.',
+];
 type WorkerResponse =
   | { id: number; type: 'ai'; move: Point | null }
   | { id: number; type: 'ownership'; values: Ownership[] }
@@ -738,6 +753,12 @@ export default function Baduk({ args }: AppProps) {
             </section>
           )}
           {ranked && <AppBoard key={`${ranked.board.id}:${gameNo}`} board={ranked.board} score={ranked.score} round={gameNo} />}
+          <details className="baduk-howto">
+            <summary>How to Play</summary>
+            <ol>
+              {(gameMode === 'omok' ? OMOK_RULES : GO_RULES).map((step) => <li key={step}>{step}</li>)}
+            </ol>
+          </details>
           <footer>{gameMode === 'omok' ? 'Black plays first · five or more in a row wins' : 'Black plays first · area scoring · 7.5 komi'}</footer>
         </aside>
       </main>
