@@ -3885,9 +3885,17 @@ function slough(c: Scenery): SceneryTick {
       mk.place();
       mk.geo(g, hex, x, -0.2, z, r, h, r);
     };
+    // (none of them spilling into the bulk carrier's berth: see water.ts)
+    const berth = lot(sp - 32, 62);
+    const inBerth = (x: number, z: number, r: number) => {
+      const dx = x - berth.x;
+      const dz = z - berth.z;
+      return Math.abs(dx * Math.sin(berth.ry) + dz * Math.cos(berth.ry)) < 50 + r && Math.abs(dx * Math.cos(berth.ry) - dz * Math.sin(berth.ry)) < 14 + r;
+    };
     for (let k = 0; k < 6; k++) {
       const p = at(sp - 74 + k * 15, 72 + rand() * 18);
-      if (clear(p.x, p.z, 12)) mound(p.x, p.z, 8 + rand() * 4, 7 + rand() * 4, [0xb9aa92, 0x9a8e7a, 0xc9b896][k % 3]);
+      const rr = 8 + rand() * 4;
+      if (clear(p.x, p.z, 12) && !inBerth(p.x, p.z, rr)) mound(p.x, p.z, rr, 7 + rand() * 4, [0xb9aa92, 0x9a8e7a, 0xc9b896][k % 3]);
     }
     {
       const p = at(sp - 20, 110);

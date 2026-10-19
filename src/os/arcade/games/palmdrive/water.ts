@@ -1,7 +1,8 @@
 // three.js view of Redwood Slough's water and what is on it (scene.ts builds it for a course raced in shells): the
 // channel itself, its currents running in the water, the marsh and mudflat past the brink, the lock and its gates,
-// Hwy 101's piers and deck, the Caltrain swing span, the whirlpools, the vessels and their wakes, the lane buoys, the
-// chain ferry, the swell rolling in off the Bay and the weir. It reads a Race every frame and never changes it.
+// Hwy 101's piers and deck, the Caltrain swing span, the Port crane, Docktown's floats, the rocks in the rapids, the
+// whirlpools, the vessels and their wakes, any buoys, the chain ferry, the swell rolling in off the Bay and the weir. It
+// reads a Race every frame and never changes it.
 import type { T } from './gl';
 import { deltaS, edgeAt, edgeRuns, headingOf, lengthOf, locate, pointAt, roadEdge, wrapS, type Track } from './track';
 import { DAWN, GLSL_NOISE, canvas, noise, scatter, texture, type Look } from './scenery';
@@ -45,8 +46,8 @@ export function band(THREE: Three, t: Track, s0: number, s1: number, a: (s: numb
   return g;
 }
 
-/** A vertical strip at lateral offset d(s) from s0 to s1, from height y0 to y1 (a wall's face). */
-function face(THREE: Three, t: Track, s0: number, s1: number, d: (s: number) => number, y0: number, y1: number, uLen: number) {
+/** A vertical strip at lateral offset d(s) from s0 to s1, from height y0 to y1: a wall's face, facing back across the channel from the wall on `side`. */
+function face(THREE: Three, t: Track, s0: number, s1: number, d: (s: number) => number, y0: number, y1: number, uLen: number, side: number) {
   const count = Math.max(1, Math.round((s1 - s0) / (t.step / 2)));
   const pos: number[] = [];
   const uv: number[] = [];
@@ -56,7 +57,8 @@ function face(THREE: Three, t: Track, s0: number, s1: number, d: (s: number) => 
     const p = pointAt(t, s, d(s));
     pos.push(p.x, y0, p.z, p.x, y1, p.z);
     uv.push(s / uLen, 0, s / uLen, 1);
-    if (k < count) idx.push(2 * k, 2 * k + 2, 2 * k + 1, 2 * k + 1, 2 * k + 2, 2 * k + 3);
+    // (wound so it faces the channel: toward the right from the left-hand wall, and the other way from the right-hand one)
+    if (k < count) idx.push(...(side < 0 ? [2 * k, 2 * k + 2, 2 * k + 1, 2 * k + 1, 2 * k + 2, 2 * k + 3] : [2 * k, 2 * k + 1, 2 * k + 2, 2 * k + 1, 2 * k + 3, 2 * k + 2]));
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -668,6 +670,10 @@ function wakeTexture(THREE: Three) {
 /** THREE.AdditiveBlending, by value: the shared three.js chunk (kit/three-lib.ts) does not export the constant. */
 const ADDITIVE = 2 as T.Blending;
 
+/** The Port crane's load hangs from its jib head this high over the middle of the reach, on this much rope (as the wrecker swings: see hazState). */
+const CRANE_PIVOT = 9.5;
+const CRANE_ROPE = 8.2;
+
 /** Cars on the Hwy 101 deck. */
 const CARS = 32;
 
@@ -776,6 +782,24 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     bay.position.set(maxX + 60 + 700, 0.03, (minZ + maxZ) / 2);
     scene.add(flat(bay));
   }
+  // the Port's berth, where the bulk carrier lies at the wharf (see scenery.ts): a basin of the same water, walled round
+  const ferry = r.hazards.find((h) => h.kind === 'ferry');
+  if (ferry) {
+    const p = pointAt(t, ferry.s - 32, 62);
+    const g = new THREE.PlaneGeometry(24, 96, 1, 1);
+    g.rotateX(-Math.PI / 2);
+    g.setAttribute('wid', new THREE.Float32BufferAttribute([1e4, 1e4, 1e4, 1e4], 1));
+    g.setAttribute('chop', new THREE.Float32BufferAttribute([0, 0, 0, 0], 1));
+    const berth = new THREE.Mesh(g, new THREE.ShaderMaterial({ uniforms: { ...shared, uFlow: { value: 0 }, uStreak: { value: 0 } }, vertexShader: WATER_VERT, fragmentShader: WATER_FRAG, fog: true }));
+    const h = headingOf(p.tx, p.tz);
+    berth.position.set(p.x, 0.04, p.z);
+    berth.rotation.y = h;
+    scene.add(flat(berth));
+    const rim = modelKit(THREE);
+    rim.place(p.x, 0, p.z, h);
+    for (const [x, z, sx, sz] of [[-13, 0, 2, 100], [13, 0, 2, 100], [0, -49, 28, 2], [0, 49, 28, 2]]) rim.box(0xbdb6a6, x, 0.7, z, sx, 1.6, sz);
+    scene.add(rim.build(new THREE.MeshLambertMaterial({ vertexColors: true }), new THREE.MeshBasicMaterial({ vertexColors: true })));
+  }
 
   // the tongue of fast water through the tide race: foam chevrons pointing the way it runs, racing along; and where the
   // water is rough (the chop), whitecaps flecking it, from their lap
@@ -806,6 +830,18 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     tongues.push({ tex, f });
   }
   // (where the water is rough, the chop: see the water shader)
+  // the rocks in the rapids: white water piled up round the foot of each, and a tail of foam trailing off downstream
+  const rocks = r.hazards.filter((h) => h.kind === 'rock');
+  const foamRing = new THREE.RingGeometry(0.75, 1, 20);
+  foamRing.rotateX(-Math.PI / 2);
+  const rockFoamMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(water.foam), transparent: true, depthWrite: false, blending: ADDITIVE });
+  const rockFoam = rocks.length ? new THREE.InstancedMesh(foamRing, rockFoamMat, rocks.length * 3) : null;
+  if (rockFoam) {
+    rockFoam.renderOrder = 2;
+    rockFoam.frustumCulled = false;
+    rockFoam.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(flat(rockFoam));
+  }
 
   // ---------------------------------------------------------------------------------------------------------------
   // The banks. Where there is no wall: wet mud shining at the water's edge, drying out up the bank to a wrack line and
@@ -822,16 +858,48 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   const wallMat = new THREE.MeshLambertMaterial({ map: concreteTex });
   const capMat = new THREE.MeshLambertMaterial({ color: 0xcfc8b8 });
   const quayMat = marshMaterial(THREE, 'quay');
-  for (const [side, s0, s1, past] of edgeRuns(t)) {
+  // Docktown along Westpoint Slough: where its houseboats lie (see scenery.ts), the wall is the line of their floats,
+  // with the water running on under them to the shore behind
+  const barge = r.hazards.find((h) => h.kind === 'barge');
+  const dock = barge?.span ? [barge.span[0] - 1, barge.span[0] + 91] : null;
+  const DOCK_SIDE = 1;
+  const DOCK_W = 13;
+  const floatMat = new THREE.MeshLambertMaterial({ color: 0x34373c });
+  const deckMat = new THREE.MeshLambertMaterial({ color: 0x8a7a64 });
+  const piles: { s: number; d: number }[] = [];
+  const quayEnds: { s: number; d: number }[] = [];
+  for (const [side, r0, r1, past] of edgeRuns(t)) {
     const l = lim(side);
     if (past === 'wall') {
-      // the wall's face from below the water line to a meter and a half up, its coping, and the quay behind it
-      scene.add(new THREE.Mesh(face(THREE, t, s0, s1, l, -0.6, 1.5, 6), wallMat));
-      scene.add(new THREE.Mesh(band(THREE, t, s0, s1, l, (s) => l(s) + side * 0.6, 1.5, 4), capMat));
-      scene.add(new THREE.Mesh(band(THREE, t, s0, s1, (s) => l(s) + side * 0.6, (s) => l(s) + side * 8, 1.45, 8), quayMat));
-      scene.add(new THREE.Mesh(band(THREE, t, s0, s1, (s) => l(s) + side * 8, (s) => l(s) + side * 11, [1.45, -0.04], 8), quayMat));
+      // (cut round Docktown's floats)
+      const into = dock && side === DOCK_SIDE ? [Math.max(0, deltaS(t, r0, dock[0])), Math.min(r1 - r0, deltaS(t, r0, dock[1]))] : null;
+      const cut = into && into[1] - into[0] > 2 ? [r0 + into[0], r0 + into[1]] : null;
+      const spans = cut ? [[r0, cut[0]], [cut[1], r1]] : [[r0, r1]];
+      for (const [s0, s1] of spans) {
+        if (s1 - s0 < 0.5) continue;
+        // the wall's face from below the water line to a meter and a half up, its coping, and the quay behind it
+        scene.add(new THREE.Mesh(face(THREE, t, s0, s1, l, -0.6, 1.5, 6, side), wallMat));
+        scene.add(new THREE.Mesh(band(THREE, t, s0, s1, l, (s) => l(s) + side * 0.6, 1.5, 4), capMat));
+        scene.add(new THREE.Mesh(band(THREE, t, s0, s1, (s) => l(s) + side * 0.6, (s) => l(s) + side * 8, 1.45, 8), quayMat));
+        scene.add(new THREE.Mesh(band(THREE, t, s0, s1, (s) => l(s) + side * 8, (s) => l(s) + side * 11, [1.45, -0.04], 8), quayMat));
+      }
+      if (cut) {
+        const [s0, s1] = cut;
+        // the floats: a low dark pontoon along the channel with its timber deck, piles to moor to every few meters
+        scene.add(new THREE.Mesh(face(THREE, t, s0, s1, l, -0.3, 0.5, 6, side), floatMat));
+        scene.add(new THREE.Mesh(band(THREE, t, s0, s1, l, (s) => l(s) + side * 1.6, 0.5, 4), deckMat));
+        scene.add(new THREE.Mesh(face(THREE, t, s0, s1, (s) => l(s) + side * 1.6, -0.3, 0.5, 6, -side), floatMat));
+        for (let s = s0 + 1; s < s1; s += 6) piles.push({ s, d: side * (l(s) * side + 0.2) });
+        // the water on behind them, under the houseboats, to the mudflat at the shore
+        const back = new THREE.ShaderMaterial({ uniforms: { ...shared, uFlow: { value: 0 }, uStreak: { value: 0 } }, vertexShader: WATER_VERT, fragmentShader: WATER_FRAG, fog: true });
+        scene.add(flat(new THREE.Mesh(waterStrip(THREE, t, s0 - 0.6, s1 + 0.6, (s) => l(s) + side * 1.6, (s) => l(s) + side * DOCK_W, 0.04, () => 0), back)));
+        scene.add(flat(new THREE.Mesh(band(THREE, t, s0 - 0.6, s1 + 0.6, (s) => l(s) + side * DOCK_W, (s) => l(s) + side * (DOCK_W + 4), 0.038, 1, true), bankMat)));
+        // (and the quay's ends either side: see the piles)
+        quayEnds.push({ s: s0, d: side * (l(s0) * side + 4.3) }, { s: s1, d: side * (l(s1) * side + 4.3) });
+      }
       continue;
     }
+    const [s0, s1] = [r0, r1];
     // (out to where it meets the marsh, under the water so another stretch of the channel close by always shows over it,
     // and never folded over itself on the inside of a bend)
     const far = (s: number) => {
@@ -890,9 +958,15 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   };
 
   // the lock: where its walls stand in closer than the channel's, a handrail along their tops, black bollards to tie up
-  // to and ladders down the walls
-  for (const [side, s0, s1, past] of edgeRuns(t)) {
-    if (past !== 'wall' || edgeAt(t, (s0 + s1) / 2, side).lim > t.edge - 0.5) continue;
+  // to and ladders down the walls (a wall's run can go on past the lock, at the channel's own width)
+  const inLock = (s: number, side: number) => edgeAt(t, s, side).lim <= t.edge - 0.5;
+  for (const [side, r0, r1, past] of edgeRuns(t)) {
+    if (past !== 'wall') continue;
+    let s0 = r0;
+    while (s0 < r1 && !inLock(s0 + 0.5, side)) s0 += 0.5;
+    let s1 = s0;
+    while (s1 < r1 && inLock(s1 + 0.5, side)) s1 += 0.5;
+    if (s1 - s0 < 4) continue;
     for (let s = s0 + 1; s < s1 - 0.5; s += 2) {
       const f = frame(s, side * (edgeAt(t, s, side).lim + 0.45));
       sets.place(f.x, 1.5, f.z, f.h);
@@ -910,6 +984,19 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       for (const sd of [-1, 1]) sets.box(0x6a7076, sd * 0.25, 0.45, 0, 0.05, 2.1, 0.06, 0, Math.PI / 2, 0);
       for (let y = -0.4; y < 1.5; y += 0.3) sets.box(0x6a7076, 0, y, 0, 0.5, 0.04, 0.04, 0, Math.PI / 2, 0);
     }
+  }
+
+  // Docktown's mooring piles along its floats
+  for (const p of piles) {
+    const f = frame(p.s, p.d);
+    sets.place(f.x, 0, f.z, f.h);
+    sets.cyl(0x4a3a2c, 0, 0.6, 0, 0.16, 2.4, 0.16);
+    sets.cyl(0xe8e2d4, 0, 1.85, 0, 0.17, 0.12, 0.17);
+  }
+  for (const q of quayEnds) {
+    const f = frame(q.s, q.d);
+    sets.place(f.x, 0, f.z, f.h);
+    sets.box(0xb8b1a2, 0, 0.73, 0, 8.6, 1.5, 0.5);
   }
 
   // the Tide Gates: a steel miter leaf hinged on each lock wall, swinging shut across its half of the chamber, a
@@ -940,7 +1027,127 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   );
   const latticeMat = new THREE.MeshLambertMaterial({ map: latticeTex, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide, color: 0x8f9cab });
   const piers: LiveHazard[] = [];
+  // the Port crane: its load swinging on its hoist right across the reach (see the wrecker in hazState)
+  type CraneView = { i: number; f: ReturnType<typeof frame>; load: T.Group; cable: T.Mesh; shade: T.Mesh; shadeMat: T.MeshBasicMaterial; lift: number };
+  const cranes: CraneView[] = [];
   let traffic: { body: T.InstancedMesh; cab: T.InstancedMesh; road: { x: number; z: number; w: number; y: number }[]; len: number[] } | null = null;
+  /**
+   * A level-luffing dockside crane on the Port's wharf, in the red of the Port's gantry cranes: a portal on rails
+   * straddling the quay, the machinery house and its cab on the slewing ring, an A-frame, and a lattice jib out over the
+   * middle of the reach with its stays, its hoist hanging from the jib head to a grab bucket of scrap that swings right
+   * across the channel (CRANE_PIVOT, CRANE_ROPE: the wrecker's pendulum). Its static parts go in with the other set
+   * pieces; the load, its rope and its shadow on the water move.
+   */
+  const ropeMat = new THREE.MeshLambertMaterial({ color: 0x23262c });
+  const blotTex = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      const grad = g.createRadialGradient(32, 32, 4, 32, 32, 31);
+      grad.addColorStop(0, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.6, 'rgba(255,255,255,0.6)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
+    }),
+  );
+  const portCrane = (h: LiveHazard, i: number): CraneView => {
+    const f = frame(h.s);
+    // (on the Port's side of the reach, the outside of the Turning Basin: in the frame, something d to the right is at x = -d)
+    const side = 1;
+    const X = (d: number) => -side * d;
+    const lim = edgeAt(t, h.s, side).lim;
+    const quay = 1.45;
+    const red = 0xd8452c;
+    const steel = 0x3a3d42;
+    const d0 = lim + 1.6;
+    const d1 = lim + 7.4;
+    const dc = (d0 + d1) / 2;
+    sets.place(f.x, 0, f.z, f.h);
+    /** A member from (d0, y0) to (d1, y1) across the channel, at z along it. */
+    const strut = (hex: number, da: number, ya: number, db: number, yb: number, z: number, w: number) => {
+      const dx = X(db) - X(da);
+      const dy = yb - ya;
+      sets.box(hex, (X(da) + X(db)) / 2, (ya + yb) / 2, z, w, Math.hypot(dx, dy), w, 0, 0, Math.atan2(-dx, dy));
+    };
+    // the rails along the quay, and the portal: four legs on their bogies, beams round the top, braced
+    for (const d of [d0, d1]) sets.box(0x6a7076, X(d), quay + 0.04, 0, 0.22, 0.1, 16);
+    for (const d of [d0, d1]) {
+      for (const z of [-3, 3]) {
+        sets.box(steel, X(d), quay + 0.4, z, 0.8, 0.8, 1.9);
+        sets.box(red, X(d), (quay + 0.8 + 8) / 2, z, 0.7, 8 - quay - 0.8, 0.7);
+      }
+      sets.box(red, X(d), 8.2, 0, 0.75, 0.8, 6.75);
+      for (const sg of [-1, 1]) sets.box(red, X(d), 5.2, 0, 0.22, 0.22, 7.2, sg * 0.72, 0, 0);
+    }
+    for (const z of [-3, 3]) sets.box(red, X(dc), 8.2, z, d1 - d0 + 0.75, 0.8, 0.75);
+    // the slewing ring, the machinery house with its cab out front, and the counterweight behind
+    sets.cyl(steel, X(dc), 8.9, 0, 2.3, 0.6, 2.3);
+    sets.box(0xe8e2d4, X(dc + 0.7), 10.7, 0, 4.4, 3, 3.6);
+    sets.box(red, X(dc + 0.7), 12.25, 0, 4.6, 0.16, 3.8);
+    sets.box(0x55585c, X(dc + 3.6), 10.3, 0, 1.5, 2.4, 3.2);
+    sets.box(0xe8e2d4, X(dc - 2.1), 10.4, -1.1, 1.4, 1.9, 1.3);
+    sets.box(0x2a3d4a, X(dc - 2.82), 10.6, -1.1, 0.05, 1.0, 1.1);
+    sets.box(0x2a3d4a, X(dc - 2.1), 10.6, -1.77, 1.1, 1.0, 0.05);
+    // the A-frame over it all
+    const apex = 18.5;
+    for (const z of [-1.3, 1.3]) {
+      strut(red, dc + 2.4, 12.3, dc + 0.3, apex, z, 0.45);
+      strut(red, dc - 1.4, 12.3, dc + 0.3, apex, z, 0.45);
+    }
+    sets.box(red, X(dc + 0.3), apex, 0, 0.6, 0.6, 3.2);
+    // the jib: two lattice girders from its heel on the house out to the head over the middle of the reach, laced
+    const heel = dc - 1.6;
+    const head = h.d;
+    const yb = (d: number) => 9.6 + ((heel - d) / (heel - head)) * (CRANE_PIVOT + 0.15 - 9.6);
+    const yt = (d: number) => yb(d) + 1.2 - ((heel - d) / (heel - head)) * 0.7;
+    for (const z of [-0.55, 0.55]) {
+      strut(red, heel, yb(heel), head, yb(head), z, 0.2);
+      strut(red, heel, yt(heel), head, yt(head), z, 0.2);
+      const n = 9;
+      for (let k = 0; k < n; k++) {
+        const a = heel + ((head - heel) * k) / n;
+        const b = heel + ((head - heel) * (k + 1)) / n;
+        strut(red, a, k % 2 ? yt(a) : yb(a), b, k % 2 ? yb(b) : yt(b), z, 0.1);
+      }
+    }
+    for (let k = 0; k <= 9; k++) {
+      const d = heel + ((head - heel) * k) / 9;
+      sets.box(red, X(d), yb(d), 0, 0.12, 0.12, 1.2);
+    }
+    // its stays from the top of the A-frame, the head and its sheaves, and the lamps on top
+    for (const z of [-0.5, 0.5]) {
+      strut(0x2b2b30, dc + 0.3, apex, head, yt(head), z, 0.07);
+      strut(0x2b2b30, dc + 0.3, apex, (heel + head) / 2, yt((heel + head) / 2), z, 0.07);
+    }
+    sets.box(0xffc21a, X(head), CRANE_PIVOT + 0.25, 0, 0.9, 0.6, 1.3);
+    sets.light(0xff2a1a, X(head), yt(head) + 0.25, 0, 0.18);
+    sets.light(0xff2a1a, X(dc + 0.3), apex + 0.45, 0, 0.18);
+    // the load: a hook block on the hoist, and a clamshell grab heaped with scrap (its middle where the wrecker's ball is)
+    const mk = modelKit(THREE);
+    const r0 = h.r;
+    mk.box(0xffc21a, 0, r0 + 0.55, 0, 0.55, 0.7, 0.4);
+    mk.box(0x2b2b30, 0, r0 + 0.1, 0, 0.12, 0.4, 0.12);
+    mk.box(0x55585c, 0, r0 - 0.15, 0, r0 * 0.9, 0.3, r0 * 1.1);
+    for (const sg of [-1, 1]) for (const sz of [-1, 1]) mk.box(0x2b2b30, sg * r0 * 0.42, r0 * 0.45 - 0.15, sz * r0 * 0.5, 0.06, r0 * 0.8, 0.06, 0, 0, -sg * 0.45);
+    for (const sg of [-1, 1]) {
+      mk.box(0x4a4d55, sg * r0 * 0.45, -0.05, 0, r0 * 0.9, r0 * 0.95, r0 * 1.5, 0, 0, sg * 0.32);
+      mk.box(0xffc21a, sg * r0 * 0.47, 0.3, 0, r0 * 0.92, 0.14, r0 * 1.52, 0, 0, sg * 0.32);
+      mk.box(0x3a3d42, sg * r0 * 0.75, -0.7, 0, 0.12, 0.5, r0 * 1.5, 0, 0, sg * 0.32);
+    }
+    for (const [x, z, c] of [[-0.3, 0.2, 0x8a5a3a], [0.35, -0.3, 0x6a7076], [0, 0.45, 0x9a6a4a], [0.15, -0.05, 0x7a7f86]] as const) mk.box(c, x * r0, 0.55, z * r0, r0 * 0.5, r0 * 0.3, r0 * 0.6, x, z, 0.3);
+    mk.light(0xffb300, 0, r0 + 0.95, 0, 0.12);
+    const load = mk.build(vcSet, vcSetLit);
+    scene.add(load);
+    const cable = new THREE.Mesh(geo.box, ropeMat);
+    scene.add(cable);
+    // (its shadow on the water, darker the lower it hangs, so where it will pass reads from the boat)
+    const shadeMat = new THREE.MeshBasicMaterial({ map: blotTex, color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false });
+    const shade = new THREE.Mesh(geo.plane, shadeMat);
+    shade.rotation.x = -Math.PI / 2;
+    shade.renderOrder = 2;
+    scene.add(flat(shade));
+    return { i, f, load, cable, shade, shadeMat, lift: 0 };
+  };
   r.hazards.forEach((h, i) => {
     if (h.kind === 'bollard' && h.look === 'gate') {
       const w = h.w ?? 6;
@@ -974,6 +1181,10 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       lamp.position.set(px - f.tx * 0.2, 3.9, pz - f.tz * 0.2);
       scene.add(lamp);
       gates.push({ i, leaf, lampMat, hinge: { x: f.x, z: f.z }, shut: [nx, nz], open: [-f.tx, -f.tz], w, lift: 0 });
+      return;
+    }
+    if (h.kind === 'wrecker' && h.look === 'crane') {
+      cranes.push(portCrane(h, i));
       return;
     }
     if (h.kind === 'statue' && h.look === 'pier') {
@@ -1023,12 +1234,13 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
           const d = sd * (edgeAt(t, h.s, sd).lim + 1 + k * 2);
           const q = frame(h.s, d);
           if (!away(q.x, q.z, 0.5)) continue;
+          // (its deck just over the quay, where the line comes down to the span's level at the wall)
           sets.place(q.x, 0, q.z, f.h + Math.PI / 2);
-          sets.box(0x5a4632, 0, 1.24, 0, 2.1, 0.08, 0.22);
-          sets.box(0x8a8f96, 0, 1.33, 0.36, 2.05, 0.08, 0.06);
-          sets.box(0x8a8f96, 0, 1.33, -0.36, 2.05, 0.08, 0.06);
-          sets.box(0x6a5a48, 0, 1.0, 0, 2.05, 0.4, 1.6);
-          if (k % 2 === 0) for (const z of [-0.6, 0.6]) sets.cyl(0x4a3a2c, 0, 0.4, z, 0.14, 1.3, 0.14);
+          sets.box(0x5a4632, 0, 1.64, 0, 2.1, 0.08, 0.22);
+          sets.box(0x8a8f96, 0, 1.73, 0.36, 2.05, 0.08, 0.06);
+          sets.box(0x8a8f96, 0, 1.73, -0.36, 2.05, 0.08, 0.06);
+          sets.box(0x6a5a48, 0, 1.4, 0, 2.05, 0.4, 1.6);
+          if (k % 2 === 0) for (const z of [-0.6, 0.6]) sets.cyl(0x4a3a2c, 0, 0.6, z, 0.14, 1.7, 0.14);
         }
       }
     }
@@ -1141,7 +1353,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       sign.rotation.y = f.h + (sd > 0 ? Math.PI / 2 : -Math.PI / 2);
       scene.add(sign);
     }
-    const shade = new THREE.Mesh(band(THREE, t, mid - W / 2, mid + W / 2, () => -9.5, () => 9.5, 0.055, 4), new THREE.MeshBasicMaterial({ color: 0x0a1820, transparent: true, opacity: 0.4, depthWrite: false }));
+    const shade = new THREE.Mesh(band(THREE, t, mid - W / 2, mid + W / 2, wet(-1), wet(1), 0.055, 4), new THREE.MeshBasicMaterial({ color: 0x0a1820, transparent: true, opacity: 0.4, depthWrite: false }));
     shade.renderOrder = 1;
     scene.add(flat(shade));
     // and the morning traffic on it, four lanes each way, streaming across on the clock: a body and a cabin each
@@ -1757,6 +1969,55 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
         const st = hazState(race, h, race.time, lap);
         sv.ang = st.live ? st.ang : dampAngle(sv.ang, 0, 2, dt);
         sv.g.rotation.y = sv.f.h - sv.ang;
+      }
+      // the foam round the rocks, pulsing as the current piles up on them and streams off
+      if (rockFoam) {
+        rocks.forEach((h, n) => {
+          const p = pointAt(t, h.s, h.d);
+          for (let j = 0; j < 3; j++) {
+            const life = (clock * 0.7 + j / 3 + n * 0.29) % 1;
+            // (each ring spreads and drifts off downstream, fading, as the next forms at the rock's foot)
+            const down = life * 2.2;
+            dummy.position.set(p.x + p.tx * down, 0.075 + j * 0.002, p.z + p.tz * down);
+            dummy.scale.set(h.r * (1.15 + life * 0.9), 1, h.r * (1.15 + life * 1.6));
+            dummy.rotation.set(0, headingOf(p.tx, p.tz), 0);
+            dummy.updateMatrix();
+            rockFoam.setMatrixAt(n * 3 + j, dummy.matrix);
+            rockFoam.setColorAt(n * 3 + j, tint.setScalar(0.75 * (1 - life) ** 1.3));
+          }
+        });
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.setScalar(1);
+        rockFoam.instanceMatrix.needsUpdate = true;
+        if (rockFoam.instanceColor) rockFoam.instanceColor.needsUpdate = true;
+      }
+      // the Port crane's load swinging on its hoist (and hoisted clear for a launch going through)
+      for (const cv of cranes) {
+        const h = race.hazards[cv.i];
+        const st = hazState(race, h, race.time, lap);
+        cv.lift = damp(cv.lift, st.lift, 4, dt);
+        const sw = st.d - h.d;
+        const y = CRANE_PIVOT - Math.sqrt(Math.max(0, CRANE_ROPE * CRANE_ROPE - sw * sw)) + cv.lift * 4;
+        // (the rope from the jib head down to the hook block, and the load hanging square to it)
+        const up = CRANE_PIVOT - y;
+        const len = Math.hypot(sw, up) || 0.01;
+        const tilt = Math.atan2(-sw, up);
+        const c = Math.cos(cv.f.h);
+        const sn = Math.sin(cv.f.h);
+        const at = (d: number) => [cv.f.x - d * c, cv.f.z + d * sn] as const;
+        const [lx, lz] = at(st.d);
+        cv.load.position.set(lx, y, lz);
+        cv.load.rotation.set(0, cv.f.h, tilt, 'YXZ');
+        const top = h.r + 0.9;
+        const rope = Math.max(0.05, len - top);
+        const mid = top + rope / 2;
+        const [mx, mz] = at(st.d - (sw / len) * mid);
+        cv.cable.position.set(mx, y + (up / len) * mid, mz);
+        cv.cable.rotation.set(0, cv.f.h, tilt, 'YXZ');
+        cv.cable.scale.set(0.07, rope, 0.07);
+        cv.shade.position.set(lx, 0.07, lz);
+        cv.shade.scale.setScalar(h.r * 2.4);
+        cv.shadeMat.opacity = 0.42 * Math.max(0, 1 - (y - h.r) / 6);
       }
       // the whirlpools: where each is and how far it has formed, for the water shader, and the spray off the rim
       for (let n = 0; n < WHIRLS; n++) shared.uWhirlA.value[n].z = 0;

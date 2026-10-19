@@ -487,7 +487,7 @@ function syncOars(THREE: Three, v: KartView, k: Kart, time: number, me: boolean,
 
 /**
  * Whether anything is within an oar's length of shell k's side: another boat (and its oars), a wall, a vessel, the
- * ferry, a buoy or a pier. Its oars come in for it.
+ * ferry, a buoy, a pier, a rock or the crane's load. Its oars come in for it.
  */
 function crowded(r: Race, k: Kart) {
   const t = r.track;
@@ -505,7 +505,7 @@ function crowded(r: Race, k: Kart) {
     if (Math.abs(dx * fx + dz * fz) < 3 && Math.abs(dx * fz - dz * fx) < 5) return true;
   }
   for (const h of r.hazards) {
-    if (h.gone || !(h.kind === 'buoy' || h.kind === 'ferry' || h.kind === 'statue' || h.kind === 'rotor' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'log')) continue;
+    if (h.gone || !(h.kind === 'buoy' || h.kind === 'ferry' || h.kind === 'statue' || h.kind === 'rotor' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'log' || h.kind === 'rock' || h.kind === 'wrecker')) continue;
     const dx = h.x - k.x;
     const dz = h.z - k.z;
     const reach = (h.drive ? lengthOf(h) / 2 : 0) + h.r + 3.4;
@@ -1325,6 +1325,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const cowMats = cowMaterials(THREE);
   const rockGeo = new THREE.SphereGeometry(1, 7, 5);
   const rockMat = new THREE.MeshLambertMaterial({ color: 0x8d8780, flatShading: true });
+  let wetRockMat: T.MeshPhongMaterial | undefined;
   type CowView = { g: T.Group; legs: T.Mesh[]; head: T.Group; h: number };
   const cows: { view: CowView; i: number }[] = [];
   let kit: ReturnType<typeof bikeKit> | null = null;
@@ -1765,11 +1766,12 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       scene.add(m);
       return { mat, lap: lap ?? 1 };
     });
-  // (on the water: the whirlpools, the vessels, the ferry, the buoys, the gates, the piers and the swing span: water.ts)
+  // (on the water: the whirlpools, the vessels, the ferry, the buoys, the gates, the piers, the swing span and the Port
+  // crane: water.ts)
   const river = boat ? buildRiver(THREE, scene, r, look, geo, dummy) : null;
   r.hazards.forEach((h, i) => {
     if (h.kind === 'whirl' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'log' || h.kind === 'ferry' || h.kind === 'buoy') return;
-    if (boat && ((h.kind === 'bollard' && h.look === 'gate') || (h.kind === 'statue' && h.look === 'pier') || (h.kind === 'rotor' && h.look === 'swing'))) return;
+    if (boat && ((h.kind === 'bollard' && h.look === 'gate') || (h.kind === 'statue' && h.look === 'pier') || (h.kind === 'rotor' && h.look === 'swing') || (h.kind === 'wrecker' && h.look === 'crane'))) return;
     if (h.kind === 'panel') return buildPanel(h, i);
     if (h.kind === 'geyser') return buildFlare(h, i);
     if (h.kind === 'hammer') return buildHammer(h, i);
@@ -1910,11 +1912,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       bale.position.set(h.x, h.r, h.z);
       scene.add(bale);
     } else if (h.kind === 'rock') {
-      // a boulder down off the hillside
-      const rock = new THREE.Mesh(rockGeo, rockMat);
+      // a boulder down off the hillside (on the water a dark, wet one, its foot in the white water: see water.ts)
+      const rock = new THREE.Mesh(rockGeo, boat ? (wetRockMat ??= new THREE.MeshPhongMaterial({ color: 0x4e4a45, specular: 0x30363a, shininess: 30, flatShading: true })) : rockMat);
       rock.scale.set(h.r * 1.1, h.r * 0.9, h.r * 1.05);
       rock.rotation.set(rand() * 0.6, rand() * Math.PI * 2, rand() * 0.4);
-      rock.position.set(h.x, h.r * 0.55, h.z);
+      rock.position.set(h.x, boat ? h.r * 0.4 : h.r * 0.55, h.z);
       scene.add(rock);
     } else if (h.kind === 'planter') {
       const planter = makePlanter(THREE, geo, h.r, rand);
