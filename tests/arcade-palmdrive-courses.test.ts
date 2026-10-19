@@ -309,7 +309,8 @@ for (const id of COURSE_IDS) {
         step(r, 1 / 60);
         r.events.length = 0;
         for (const k of r.karts) {
-          widest = Math.max(widest, Math.abs(k.d));
+          // (on the water a shell thrown out over the marsh, or run aground on it, is past the brink: not through a wall)
+          if (!(r.boat && (k.sunk > 0 || edgeAt(r.track, k.s, Math.sign(k.d) || 1).past !== 'wall'))) widest = Math.max(widest, Math.abs(k.d));
           if (k.stuck > 2) rescues++;
         }
       }
