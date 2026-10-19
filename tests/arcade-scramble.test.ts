@@ -1532,11 +1532,31 @@ test('a guest slow to load gets a while to send its first report; one that repor
   // seat 1 reports straight away, then stops; seat 2 is still building the island
   const state = guestState(1, stateOf(host.match.fighters[1]));
   receive(s, host.match, me, 1, JSON.parse(JSON.stringify(state)), () => host.match, 100.1);
-  tick(s, host.match, me, present, 100 + STALE + 1);
+  for (let t = 100.5; t <= 100 + STALE + 1; t += 0.5) tick(s, host.match, me, present, t);
   assert.equal(host.match.fighters[1].phase, 'out', 'quiet for longer than STALE after reporting');
   assert.notEqual(host.match.fighters[2].phase, 'out', 'still loading: not counted out yet');
-  tick(s, host.match, me, present, 100 + STALE + FIRST_GRACE + 1);
+  for (let t = 100 + STALE + 1; t <= 100 + STALE + FIRST_GRACE + 1; t += 0.5) tick(s, host.match, me, present, t);
   assert.equal(host.match.fighters[2].phase, 'out', 'but not forever');
+});
+
+test('a host that froze a while (a phone off in another app) does not count its guests out for the quiet', () => {
+  const players = [0, 1].map((seat) => ({ seat, name: `p${seat}` }));
+  const host = hostMatch(players, 0, 4, 'normal', MAX_FIGHTERS, 4.2);
+  const s = newSession(true, host.roster);
+  const me: Me = { seat: 0, isHost: true, round: 1 };
+  const report = (clock: number) => receive(s, host.match, me, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(host.match.fighters[1])))), () => host.match, clock);
+  tick(s, host.match, me, [0, 1], 100);
+  report(100.05);
+  tick(s, host.match, me, [0, 1], 100.1);
+  // nothing runs for a minute; the first tick back comes before the reports that waited
+  tick(s, host.match, me, [0, 1], 160);
+  assert.notEqual(host.match.fighters[1].phase, 'out');
+  report(160.01);
+  for (let t = 160.5; t < 160 + STALE - 1; t += 0.5) tick(s, host.match, me, [0, 1], t);
+  assert.notEqual(host.match.fighters[1].phase, 'out');
+  // a guest that really went quiet still goes
+  for (let t = 160 + STALE - 1; t <= 160 + STALE + 1; t += 0.5) tick(s, host.match, me, [0, 1], t);
+  assert.equal(host.match.fighters[1].phase, 'out');
 });
 
 /**
@@ -1583,7 +1603,7 @@ test('a guest the host takes out for going quiet hears it is out, and nothing it
   tick(hs, h, hMe, [0, 1], 0);
   receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(mine)))), () => h, 0.1);
   // the guest's phone locks for longer than STALE; when it wakes it fires before the news reaches it
-  tick(hs, h, hMe, [0, 1], STALE + 1);
+  for (let t = 0.5; t <= STALE + 1; t += 0.5) tick(hs, h, hMe, [0, 1], t);
   assert.equal(h.fighters[1].outCause, 'left');
   aimEast(mine, 'rifle');
   for (let i = 0; i < 30 && !g.events.some((e) => e.t === 'hit'); i++) step(g, DT);

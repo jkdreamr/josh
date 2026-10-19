@@ -100,6 +100,8 @@ export type Session = {
   left: Set<number>;
   heard: Map<number, number>;
   firstTick: number;
+  /** The host's clock at its last tick: a host that froze (a phone off in another app) doesn't blame guests for the quiet. */
+  lastTick: number;
   /** The egg this client watches once its own is out (-1 for its own); the host's record of each guest's, by egg. */
   watch: number;
   watching: Map<number, number>;
@@ -110,7 +112,7 @@ export type Session = {
 };
 
 export function newSession(synced: boolean, roster: number[] = []): Session {
-  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1, watch: -1, watching: new Map(), sent: new Map(), fresh: new Set() };
+  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1, lastTick: -1, watch: -1, watching: new Map(), sent: new Map(), fresh: new Set() };
 }
 
 /** Builds a guest's match from the host's first state. */
@@ -193,6 +195,13 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
     return f ? [{ d: guestState(me.round, stateOf(f), f.phase === 'out' ? s.watch : -1), fast }] : [];
   }
   if (s.firstTick < 0) s.firstTick = clock;
+  // the host itself was frozen a while: what it hadn't read of the guests' reports while it was counts as heard
+  const away = s.lastTick < 0 ? 0 : clock - s.lastTick - 1;
+  if (away > 0) {
+    for (const [id, at] of s.heard) s.heard.set(id, Math.min(clock, at + away));
+    s.firstTick = Math.min(clock, s.firstTick + away);
+  }
+  s.lastTick = clock;
   for (const seat of s.roster) if (seat >= 0 && !present.includes(seat)) s.left.add(seat);
   for (const f of m.fighters) {
     if (f.seat < 0 || f.kind !== 'remote' || f.phase === 'out' || m.ended) continue;
