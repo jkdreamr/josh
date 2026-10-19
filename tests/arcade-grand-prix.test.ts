@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createCommentary, spokenTime } from '../src/os/arcade/games/grand-prix/commentary.ts';
+import { readFileSync, existsSync } from 'node:fs';
+import { createCommentary } from '../src/os/arcade/games/grand-prix/commentary.ts';
+import { CORNERS, EXCITED, LINES, clipFile, nameKey, spoken } from '../src/os/arcade/games/grand-prix/lines.ts';
 import { CYLINDERS, OFF_TONE, ON_TONE, renderEngineLoop } from '../src/os/arcade/games/grand-prix/engine.ts';
 import { buildLine, createDriver, drive, profileTime, speedProfile } from '../src/os/arcade/games/grand-prix/ai.ts';
 import { NO_ASSISTS, SPEC, createCar, curve, engineTorque, kmh, stepCar, tempGrip, type Assists } from '../src/os/arcade/games/grand-prix/car.ts';
@@ -488,49 +490,135 @@ test('recorded engine loops crossfade by rpm and throttle and pitch to the rpm',
   assert.ok(layersFor(bank.slice(0, 3), 9000, 0).some((l) => l.gain > 0.99));
 });
 
-test('the announcer calls the start, places held, fastest laps and the flag', () => {
-  assert.equal(spokenTime(91.37), '1 31 point 4');
-  assert.equal(spokenTime(65.04), '1 oh 5 point 0');
-  assert.equal(spokenTime(59.96), '1 oh 0 point 0');
+test('every commentary line has a recording of exactly its words', () => {
+  const dir = 'public/sounds/grand-prix/commentary/';
+  const manifest = JSON.parse(readFileSync(dir + 'manifest.json', 'utf8')) as Record<string, string>;
+  let clips = 0;
+  for (const [key, variants] of Object.entries(LINES)) {
+    variants.forEach((text, n) => {
+      clips++;
+      assert.ok(existsSync(dir + clipFile(key, n)), `${key} ${n} is recorded`);
+      const tag = manifest[`${key}-${n}`] ?? '';
+      assert.ok(tag.endsWith(`|${spoken(text)}`), `${key} ${n} was recorded from its current text`);
+      assert.ok(tag.includes(EXCITED.has(key) ? '|1.16|' : '|1.08|'), `${key} ${n} at its pace`);
+    });
+  }
+  assert.equal(Object.keys(manifest).length, clips, 'no recordings left over');
+  // the numbered and named lines the commentator builds keys for
+  for (let p = 1; p <= 20; p++) for (const k of ['up', 'down', 'running']) assert.ok(LINES[`${k}-${p}`], `${k}-${p}`);
+  for (let p = 2; p <= 20; p++) assert.ok(LINES[`finish-${p}`]);
+  for (let n = 2; n <= 9; n++) assert.ok(LINES[`to-go-${n}`]);
+  for (const c of new Set(Object.values(CORNERS))) assert.ok(LINES[`wide-${c}`] && LINES[`corner-${c}`], c);
+  for (const d of DRIVERS) assert.ok(LINES[nameKey(d)], d);
+  // and every key named in the director's code exists (a typo would silently say nothing)
+  const source = readFileSync('src/os/arcade/games/grand-prix/commentary.ts', 'utf8');
+  const notKeys = new Set(['light', 'go', 'contact', 'wall', 'limits', 'lap', 'sector', 'drs', 'finish', 'race', 'trial', 'remote', 'utf8']);
+  for (const [, key] of source.matchAll(/(?:say|about)\((?:me, )?\[([^\]]*)\]/g)) {
+    for (const [, k] of key.matchAll(/'([a-z0-9-]+)'/g)) if (!notKeys.has(k) || LINES[k]) assert.ok(LINES[k], `line ${k}`);
+  }
+});
+
+test('the commentator calls the race like a broadcaster', () => {
   const entries: Entry[] = [
     { name: 'M. Kova', team: 1, kind: 'ai', seat: -1, pad: -1, pace: 0.9 },
     { name: 'You', team: 0, kind: 'player', seat: -1, pad: 0 },
+    { name: 'R. Sato', team: 2, kind: 'ai', seat: -1, pad: -1, pace: 0.9 },
   ];
   const A: Assists = { ...NO_ASSISTS, tc: true, abs: true, autoGears: true };
-  const r = createRace({ mode: 'race', laps: 3, entries, assists: [A, A], lead: 0, hold: 0.2 });
+  const r = createRace({ mode: 'race', laps: 5, entries, assists: [A, A, A], lead: 6.5, hold: 0.2 });
   const me = r.runners[1];
-  const lines: [string, number][] = [];
-  const com = createCommentary(() => [me], (text, p) => lines.push([text, p]));
+  const said: { clips: string[]; priority: number }[] = [];
+  let quiet = 0;
+  const com = createCommentary({ locals: () => [me], speak: (clips, priority) => said.push({ clips, priority }), quiet: () => quiet, random: () => 0.9 });
+  const keys = () => said.splice(0).map((s) => s.clips.map((c) => c.replace(/-\d+$/, '')).join(' '));
+  // the welcome before the lights, then lights out cutting in
+  com.update(r, 0.016);
+  assert.deepEqual(keys(), ['intro-race']);
   com.event(r, { t: 'go' });
-  assert.deepEqual(lines.pop(), ['Lights out, and away we go! 3 laps of Monza.', 3]);
-  // a place is called only once it has held for a moment
-  r.time = 10;
-  r.order = [0, 1];
+  assert.equal(said[0].priority, 3);
+  assert.deepEqual(keys(), ['go']);
+  // through the first chicane having gained a place from the grid
+  r.time = 6;
+  r.order = [1, 0, 2];
+  me.car.s = 720;
+  com.update(r, 0.016);
+  assert.deepEqual(keys(), ['start-good']);
+  // a place held for a moment is called once
+  r.time = 30;
+  r.order = [0, 1, 2];
+  com.update(r, 0.1);
+  assert.deepEqual(keys(), []);
+  com.update(r, 1.3);
+  assert.deepEqual(keys(), ['lost-lead down-2']);
+  com.update(r, 1);
+  assert.deepEqual(keys(), []);
+  r.order = [1, 0, 2];
+  com.update(r, 0.1);
+  com.update(r, 1.3);
+  assert.deepEqual(keys(), ['lead']);
+  r.order = [0, 2, 1];
+  com.update(r, 0.1);
+  com.update(r, 1.3);
+  assert.deepEqual(keys(), ['lost-lead down-3']);
+  r.order = [0, 1, 2];
+  com.update(r, 0.1);
+  com.update(r, 1.3);
+  assert.deepEqual(keys(), ['pass up-2']);
+  // a spin, said once
+  me.car.yaw += Math.PI;
+  me.car.vx = 10;
   com.update(r, 0.1);
   com.update(r, 0.1);
-  r.order = [1, 0];
-  com.update(r, 0.1);
-  com.update(r, 1);
-  assert.equal(lines.length, 0);
-  com.update(r, 1);
-  assert.deepEqual(lines.pop(), ['And you take the lead!', 2]);
-  com.update(r, 1);
-  assert.equal(lines.length, 0);
-  // fastest lap and the final lap, as the line is crossed
-  me.laps.push({ time: 95, valid: true, sectors: [] }, { time: 91.37, valid: true, sectors: [] });
-  me.lap = 2;
-  com.event(r, { t: 'lap', idx: 1, lap: me.laps[1], best: true, overall: true });
-  assert.deepEqual(lines.splice(0), [
-    ['Fastest lap for you! 1 31 point 4.', 2],
-    ['Final lap. Leading the race.', 2],
-  ]);
-  com.event(r, { t: 'finish', idx: 1, place: 1, penalty: 0 });
-  assert.deepEqual(lines.pop(), ['Chequered flag, and you win it! What a drive.', 3]);
-  com.event(r, { t: 'finish', idx: 1, place: 1, penalty: 5 });
-  assert.match(lines.pop()![0], /5 second penalty/);
-  // a reset is not a track limits call
+  assert.deepEqual(keys(), ['spin']);
+  me.car.yaw -= Math.PI;
+  me.car.vx = 60;
+  // wide at a named corner
+  me.car.s = 4800;
+  com.event(r, { t: 'limits', idx: 1, warnings: 1, penalty: false, invalid: true });
+  assert.deepEqual(keys(), ['wide-parabolica']);
   com.event(r, { t: 'limits', idx: 1, warnings: 3, penalty: false, invalid: true, reset: true });
-  assert.equal(lines.length, 0);
+  assert.deepEqual(keys(), ['reset']);
+  // laps to go, the final lap, and the flag
+  me.lap = 3;
+  me.laps.push({ time: 95, valid: true, sectors: [] }, { time: 93, valid: true, sectors: [] }, { time: 92, valid: true, sectors: [] });
+  com.event(r, { t: 'lap', idx: 1, lap: me.laps[2], best: true, overall: false });
+  assert.deepEqual(keys(), ['to-go-2']);
+  me.lap = 4;
+  com.event(r, { t: 'lap', idx: 1, lap: me.laps[2], best: false, overall: true });
+  assert.deepEqual(keys(), ['fastest-mine', 'final-lap running-2']);
+  com.event(r, { t: 'finish', idx: 1, place: 1, penalty: 0 });
+  assert.deepEqual(keys(), ['win']);
+  com.event(r, { t: 'finish', idx: 1, place: 7, penalty: 0 });
+  assert.deepEqual(keys(), ['finish-7']);
+  // the quiet moments get colour, but never over the commentator talking
+  me.car.s = 100;
+  com.update(r, 0.1);
+  assert.deepEqual(keys(), []);
+  quiet = 20;
+  com.update(r, 0.1);
+  assert.equal(said.length, 1);
+  assert.equal(said[0].priority, 0);
+  said.length = 0;
+});
+
+test('the commentator works through every variant of a line before repeating one', () => {
+  const r = createRace({ mode: 'trial', laps: 3, entries: [{ name: 'You', team: 0, kind: 'player', seat: -1, pad: 0 }], assists: [NO_ASSISTS] });
+  const said: string[] = [];
+  let quiet = 0;
+  const com = createCommentary({ locals: () => [r.runners[0]], speak: (clips) => said.push(...clips), quiet: () => quiet });
+  com.update(r, 0.016);
+  assert.match(said.pop()!, /^intro-trial-\d$/);
+  const n = LINES.colour.length + LINES['colour-trial'].length;
+  quiet = 100;
+  r.runners[0].car.s = 100;
+  for (let k = 0; k < n * 3; k++) {
+    r.time += 1;
+    com.update(r, 0.016);
+  }
+  const colour = said.filter((c) => c.startsWith('colour-'));
+  const first = colour.filter((c) => /^colour-\d+$/.test(c)).slice(0, LINES.colour.length);
+  assert.equal(new Set(first).size, first.length, 'no repeats within a cycle');
+  assert.ok(colour.length >= n);
 });
 
 test('every team and driver has what the timing tower needs', () => {
