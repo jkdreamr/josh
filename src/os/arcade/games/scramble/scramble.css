@@ -940,10 +940,12 @@
   padding: 50px 16px 16px;
   background: rgba(8, 8, 12, 0.6);
   cursor: pointer;
+  /* the map fits the game's own box (a phone on its side is far shorter than the screen) */
+  container-type: size;
 }
 .g-scramble .g-scramble-bigmap svg {
-  width: min(78vmin, 560px);
-  height: min(78vmin, 560px);
+  width: min(100cqw, 100cqh - 28px, 560px);
+  height: min(100cqw, 100cqh - 28px, 560px);
   border-radius: 16px;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85);
 }
@@ -1193,6 +1195,20 @@
   /* nothing else sits at the bottom on the bus, and the bus itself is in the middle */
   .g-scramble .g-scramble-hud.is-touch .g-scramble-jump {
     bottom: 12px;
+  }
+}
+
+/* a short screen has no room to spare over the map */
+@media (max-height: 460px) {
+  .g-scramble .g-scramble-bigmap {
+    padding-top: 10px;
+    padding-bottom: 8px;
+  }
+}
+/* shorter still, the buttons come up to the news: just the newest line */
+@container (max-height: 320px) {
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-feed li:nth-last-child(n + 2) {
+    display: none;
   }
 }
 

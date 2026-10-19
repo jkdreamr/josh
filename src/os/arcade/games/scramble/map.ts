@@ -1160,7 +1160,8 @@ export function generateMap(seed: number): GameMap {
     }
     if (stops) {
       for (const l of map.floor) if (Math.abs(l.x - box.x) < hw + 0.6 && Math.abs(l.z - box.z) < hd + 0.6) return false;
-      for (const f of map.furniture) if (f.b === bi && furnitureSolid(f.kind) && !roomy(gap(box, f))) return false;
+      // (and a piece of furniture never into another one)
+      for (const f of map.furniture) if (f.b === bi && furnitureSolid(f.kind) && (!roomy(gap(box, f)) || (!stash && gap(box, f) < -0.01))) return false;
       // and what it holds spills somewhere an egg can stand, clear of the rest
       const spill = { x: x + (face === 2 ? 1.3 : face === 3 ? -1.3 : 0), z: z + (face === 0 ? 1.3 : face === 1 ? -1.3 : 0), hw: face >= 2 ? 0.4 : hw + 0.4, hd: face >= 2 ? hd + 0.4 : 0.4 };
       if (stash && map.furniture.some((f) => f.b === bi && furnitureSolid(f.kind) && gap(spill, f) < 0.2)) return false;
