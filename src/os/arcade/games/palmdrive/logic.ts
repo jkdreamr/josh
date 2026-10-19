@@ -3173,6 +3173,9 @@ const BRAKE_PLAN = 18;
 const BOAT_LOOK = 0.4;
 /** On the water a CPU takes a bend this much slower than it would on a slick road: the shell slides on wide out of a carve. */
 const BOAT_CAP = 0.88;
+/** And slower again on rough water (grip under BOAT_CHOP): the shell slides out of the bend on it far more than it turns. */
+const BOAT_CHOP = 0.65;
+const BOAT_CHOP_CAP = 0.85;
 /** How much less than a kart's the CPU counts on turning off a drift (a racing shell's long hull: see HULL_TURN). */
 const turnK = (r: Race) => (r.boat ? HULL_TURN : 1);
 /** An Expert course, or harder. */
@@ -3305,7 +3308,7 @@ function think(r: Race, k: Kart, dt: number) {
   const slick = r.slick ? Math.min(gripAt(t, k.s, k.lap), gripAt(t, k.s + 15, k.lap), gripAt(t, k.s + 30, k.lap)) : 1;
   // (and on the water a current setting it toward the outside of the bend has it take the bend slower)
   const outward = r.flows.length && peak > 0.02 ? Math.max(0, -Math.sign(bendAhead) * flowAt(r, k.s + 15, k.d, k.lap).across) : 0;
-  const cap = ((k.drift !== 0 || inp.drift ? 1.85 : 1.55 * turnK(r)) * (wet ? 0.92 : 1) * (damp ? 0.7 : 1) * (slick < 1 ? 0.55 + 0.45 * slick : 1) * (r.boat ? BOAT_CAP : 1)) / (1 + 0.12 * outward);
+  const cap = ((k.drift !== 0 || inp.drift ? 1.85 : 1.55 * turnK(r)) * (wet ? 0.92 : 1) * (damp ? 0.7 : 1) * (slick < 1 ? 0.55 + 0.45 * slick : 1) * (r.boat ? BOAT_CAP * (slick < BOAT_CHOP ? BOAT_CHOP_CAP : 1) : 1)) / (1 + 0.12 * outward);
   // (on the water by its speed over the ground, the current and all: that is what takes it round the bend)
   const gv = r.flows.length ? k.v + flowAt(r, k.s, k.d, k.lap).along : k.v;
   let tooFast = peak > 0 && gv > cap / peak;
@@ -3545,7 +3548,7 @@ function think(r: Race, k: Kart, dt: number) {
   if (r.boat) {
     // (and a shell just set back down, still slow, eases up short of the next whirlpool's pull until it can be through it
     // before it spins, rather than be drawn in a second time; never for long)
-    ai.whirlHold = ai.care > 0 && k.v < 18 && !held && !backOut && whirlDue(r, k) ? ai.whirlHold + dt : 0;
+    ai.whirlHold = ai.care > 0 && k.v < 22 && !held && !backOut && whirlDue(r, k) ? ai.whirlHold + dt : 0;
     if (ai.whirlHold > 0 && ai.whirlHold < WHIRL_HOLD) {
       inp.brake = k.v > 4;
       inp.drift = false;
@@ -3759,7 +3762,7 @@ function whirlDue(r: Race, k: Kart) {
     if (!awake(h, k.lap)) continue;
     const pull = h.pull ?? 7;
     const ds = deltaS(t, k.s, h.s);
-    if (ds < pull + 3 || ds > pull + 25) continue;
+    if (ds < pull + 3 || ds > pull + 35) continue;
     const v = Math.max(10, k.v + 4);
     for (let u = (ds - pull) / v; u <= (ds + pull) / v; u += 0.1) if (hazState(r, h, r.time + u, k.lap).live) return true;
   }

@@ -1013,7 +1013,7 @@ export const COURSES: Record<CourseId, Course> = {
       { s0: 214, s1: 294, along: 2, bank: 1, tide: true },
       { s0: 294, s1: 388, along: 1, outward: 1, tide: true },
       { s0: 438, s1: 753, along: 1.5, outward: 1.7, tide: true },
-      { s0: 790, s1: 868, along: 1, tongue: [-2, 2, 4], outward: 1, tide: true },
+      { s0: 790, s1: 868, along: 1, tongue: [-2, 2, 3], outward: 0.6, tide: true },
       { s0: 868, s1: 958, along: 1, tide: true },
       { s0: 958, s1: 985, along: 3 },
       { s0: 1060, s1: 1182, along: -1, bank: -0.2, tide: true },
@@ -1021,11 +1021,11 @@ export const COURSES: Record<CourseId, Course> = {
     gusts: [
       // off the Bay toward the salt ponds down the Bay Reach from the start, harder from lap 2, back the other way from lap
       // 3 between them (with a calm in between), and on lap 4 both harder again
-      { s0: 868, s1: 958, a: -5, every: 4.2, on: 1.5, warn: 1, phase: 0.6 },
-      { s0: 868, s1: 958, a: -3, every: 4.2, on: 1.5, warn: 1, phase: 0.6, lap: 2 },
-      { s0: 868, s1: 958, a: 8, every: 4.2, on: 1.5, warn: 1, phase: 2.7, lap: 3 },
-      { s0: 868, s1: 958, a: -3, every: 4.2, on: 1.5, warn: 1, phase: 0.6, lap: 4 },
-      { s0: 868, s1: 958, a: 3, every: 4.2, on: 1.5, warn: 1, phase: 2.7, lap: 4 },
+      { s0: 878, s1: 958, a: -5, every: 4.2, on: 1.5, warn: 1, phase: 0.6 },
+      { s0: 878, s1: 958, a: -3, every: 4.2, on: 1.5, warn: 1, phase: 0.6, lap: 2 },
+      { s0: 878, s1: 958, a: 6, every: 4.2, on: 1.5, warn: 1, phase: 2.7, lap: 3 },
+      { s0: 878, s1: 958, a: -3, every: 4.2, on: 1.5, warn: 1, phase: 0.6, lap: 4 },
+      { s0: 878, s1: 958, a: 3, every: 4.2, on: 1.5, warn: 1, phase: 2.7, lap: 4 },
       // the Port gust, outward round the Turning Basin, from lap 2
       { s0: 300, s1: 385, a: 7, every: 5, on: 2, warn: 1.2, phase: 2, lap: 2 },
       // and gusts across Westpoint Slough toward Bair Island's marsh from lap 3
@@ -1048,8 +1048,8 @@ export const COURSES: Record<CourseId, Course> = {
       // are half a lap apart, and it crosses an even number of times a lap)
       const launches = [300, 911];
       const lapT = t.length / LAUNCH_V;
-      const ferryS = 404;
-      const ferrySpeed = (2 * Math.PI * 10) / lapT;
+      const ferryS = 410;
+      const ferrySpeed = (2 * Math.PI * 8) / lapT;
       const [a, b] = launches.map((from) => ((((ferryS - from) % t.length) + t.length) % t.length) / LAUNCH_V);
       const gap = ((((ferrySpeed * (b - a)) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
       // the Tide Gates: three rows of two miter leaves, one leaf of each row always open, the open side swapping from row
@@ -1089,7 +1089,7 @@ export const COURSES: Record<CourseId, Course> = {
           { kind: 'statue', s: 246, d: -2.2, r: 1, look: 'pier' },
           { kind: 'rotor', s: 272, d: 0, r: 1.2, arm: 6.6, spin: 0.8, a0: 0, lap: 2, look: 'swing' },
           // a Port crane swinging its load right across the Port Reach (walled: wharves both sides)
-          { kind: 'wrecker', s: 418, d: 0, r: 1.3, swing: 3.4, speed: 1.5, phase: 0.8, look: 'crane' },
+          { kind: 'wrecker', s: 422, d: 0, r: 1.3, swing: 3.4, speed: 1.5, phase: 0.8, look: 'crane' },
           // the whirlpools
           whirl(522, -2.6, 0, 1),
           whirl(585, 2.6, 1.6, 2),
@@ -1097,7 +1097,7 @@ export const COURSES: Record<CourseId, Course> = {
           whirl(710, 2.6, 4.9, 2),
           { kind: 'whirl', s: 352, d: 1.4, r: 3, pull: 9.5, core: 1.7, power: 16, every: 8, on: 5.5, warn: 2, phase: 0, lap: 4, spin: -1, back: 300, look: 'maelstrom' },
           // the rapids through the tide race: rocks on the inside of the bend, where you would cut the corner
-          ...[806, 830, 854].map((s) => ({ kind: 'rock' as const, s, d: -3, r: 0.9 })),
+          ...[806, 830, 854].map((s) => ({ kind: 'rock' as const, s, d: -3.6, r: 0.9 })),
           // the coach's launches round the lap in the right-hand lane, with right of way through the set pieces
           ...launches.map((s) => ({ kind: 'launch' as const, s, d: 3.4, drive: LAUNCH_V, wake: 1, priority: true })),
           // a tug pushing its barge up Westpoint Slough and over the line to Docktown, from 40 s
@@ -1106,7 +1106,7 @@ export const COURSES: Record<CourseId, Course> = {
           // swell push you), one every 22.5 m: over the weir they go
           ...[0, 22.5, 45, 67.5].map((phase) => ({ kind: 'log' as const, s: 868, d: -3.8, drive: 1, span: [868, 958] as [number, number], every: 90, phase })),
           // the chain ferry
-          { kind: 'ferry', s: ferryS, d: 0, r: 1.6, swing: 3.4, speed: ferrySpeed, phase: 1.5 * Math.PI - ferrySpeed * a - gap / 2 },
+          { kind: 'ferry', s: ferryS, d: 0, r: 1.3, swing: 3.4, speed: ferrySpeed, phase: 1.5 * Math.PI - ferrySpeed * a - gap / 2 },
         ],
       });
     },
