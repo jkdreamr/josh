@@ -604,9 +604,12 @@ test('a wake: one shove a crossing, none in the air, and off a big one at speed 
 // 8. The weir
 
 test('the weir: shot flat out at 50cc, short of it you are caught in the stopper and set back to run it again', () => {
+  // (the weir alone: no vessels, and no wind or swell off the Bay setting an unsteered shell across the channel)
   const r = createRace({ cc: '50cc', course: 'slough', seed: 2, countdown: 0, racers: [{ name: 'p', color: '#fff', kind: 'player' }] });
   r.vessels = [];
   r.hazards = r.hazards.filter((h) => !h.drive);
+  r.gusts = [];
+  r.swells = [];
   const t = r.track;
   const hole = r.holes[0];
   assert.ok(hole && (hole.w ?? 0) >= t.half + 1, 'right across the channel');
@@ -619,6 +622,8 @@ test('the weir: shot flat out at 50cc, short of it you are caught in the stopper
   const q = createRace({ cc: '50cc', course: 'slough', seed: 2, countdown: 0, racers: [{ name: 'p', color: '#fff', kind: 'player' }] });
   q.vessels = [];
   q.hazards = q.hazards.filter((h) => !h.drive);
+  q.gusts = [];
+  q.swells = [];
   const j = q.karts[0];
   place(q, j, 984.5, 0, 12);
   j.input.brake = true;

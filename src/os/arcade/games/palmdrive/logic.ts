@@ -139,7 +139,7 @@ export const HATS: Hat[] = ['cap', 'tree', 'top', 'bow', 'tower', 'axe', 'dish',
  * the courses where the road itself is the danger (see Race.slick).
  */
 /** On the water: catchBeat and catchAt, the next beat it means to catch and when it presses for it (NaN: it lets it go); hopKey and hopGo: the last crest of swell it decided about, and whether it hops it. */
-export type Ai = { pace: number; skill: number; band: number; lane: number; laneTo: number; laneT: number; itemT: number; held: number; driftT: number; care: number; dropGo: boolean; reactS: number; react: boolean; err: number; errLap: number; blunders: Record<string, boolean>; waitT: number; backT: number; backs: number; backAt: number; heldT: number; goT: number; goD: number; shaken: number; fellAt: number; catchBeat: number; catchAt: number; hopKey: string; hopGo: boolean };
+export type Ai = { pace: number; skill: number; band: number; lane: number; laneTo: number; laneT: number; itemT: number; held: number; driftT: number; care: number; dropGo: boolean; reactS: number; react: boolean; err: number; errLap: number; blunders: Record<string, boolean>; waitT: number; backT: number; backs: number; backAt: number; heldT: number; goT: number; goD: number; shaken: number; fellAt: number; catchBeat: number; catchAt: number; hopKey: string; hopGo: boolean; whirlHold: number };
 /** A fall off the road: into what (and whether down a trench), how fast the kart was going, and where it is put back [s, d]. */
 export type Fell = { past: Past; hole: boolean; v: number; to: [number, number] };
 /** What the network last said about a remote kart. */
@@ -660,7 +660,7 @@ const blocks = (r: Race, h: LiveHazard, x: number, z: number, pad: number, lap: 
 };
 
 function newAi(pace: number, skill: number, rand: Rng): Ai {
-  return { pace, skill, band: 1, lane: (rand() - 0.5) * 0.8, laneTo: 0, laneT: rand() * 2, itemT: 1 + rand() * 2, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0, shaken: 0, fellAt: -99, catchBeat: -1e9, catchAt: NaN, hopKey: '', hopGo: false };
+  return { pace, skill, band: 1, lane: (rand() - 0.5) * 0.8, laneTo: 0, laneT: rand() * 2, itemT: 1 + rand() * 2, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0, shaken: 0, fellAt: -99, catchBeat: -1e9, catchAt: NaN, hopKey: '', hopGo: false, whirlHold: 0 };
 }
 
 /** A solo Grand Prix: seven CPU rivals ahead of you on the grid, like the first race of a cup. */
@@ -2762,7 +2762,7 @@ function pickups(r: Race, dt: number) {
 // ---------------------------------------------------------------------------------------------------------------
 // CPU drivers (and the autopilot that brings you home after the flag)
 
-const AUTO: Ai = { pace: 1, skill: 0.6, band: 1, lane: 0, laneTo: 0, laneT: 0, itemT: 1, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0, shaken: 0, fellAt: -99, catchBeat: -1e9, catchAt: NaN, hopKey: '', hopGo: false };
+const AUTO: Ai = { pace: 1, skill: 0.6, band: 1, lane: 0, laneTo: 0, laneT: 0, itemT: 1, held: 0, driftT: 0, care: 0, dropGo: false, reactS: -1e9, react: true, err: 0, errLap: 0, blunders: {}, waitT: 0, backT: 0, backs: 0, backAt: -99, heldT: 0, goT: 0, goD: 0, shaken: 0, fellAt: -99, catchBeat: -1e9, catchAt: NaN, hopKey: '', hopGo: false, whirlHold: 0 };
 
 function curveAhead(t: Track, s: number, from: number, to: number) {
   let sum = 0;
@@ -3542,6 +3542,13 @@ function think(r: Race, k: Kart, dt: number) {
   // on the water: never sitting on the brakes beside a whirlpool that spins (or is about to), as a slow shell is the one
   // it draws in; and stopped short of the weir, too slow to clear the stopper from there, back off for a run at it
   if (r.boat) {
+    // (and a shell just set back down, still slow, eases up short of the next whirlpool's pull until it can be through it
+    // before it spins, rather than be drawn in a second time; never for long)
+    ai.whirlHold = ai.care > 0 && k.v < 18 && !held && !backOut && whirlDue(r, k) ? ai.whirlHold + dt : 0;
+    if (ai.whirlHold > 0 && ai.whirlHold < WHIRL_HOLD) {
+      inp.brake = k.v > 4;
+      inp.drift = false;
+    }
     if (inp.brake && ai.backT === 0 && !held && !backOut && k.v < 15 && whirlNear(r, k, 2)) inp.brake = false;
     if (band.wide && k.y === 0 && !hurt(k)) {
       for (const h of r.holes) {
@@ -3739,6 +3746,24 @@ function whirlNear(r: Race, k: Kart, pad: number) {
   return false;
 }
 
+/** The longest a CPU holds short of a whirlpool (see think()). */
+const WHIRL_HOLD = 4;
+/**
+ * Whether kart k, not yet in the pull of the whirlpool just ahead, would still be in it while it spins if it went on now
+ * (at the speed it is getting up to): the time to wait for it to die away.
+ */
+function whirlDue(r: Race, k: Kart) {
+  const t = r.track;
+  for (const h of r.whirls) {
+    if (!awake(h, k.lap)) continue;
+    const pull = h.pull ?? 7;
+    const ds = deltaS(t, k.s, h.s);
+    if (ds < pull + 3 || ds > pull + 25) continue;
+    const v = Math.max(10, k.v + 4);
+    for (let u = (ds - pull) / v; u <= (ds + pull) / v; u += 0.1) if (hazState(r, h, r.time + u, k.lap).live) return true;
+  }
+  return false;
+}
 /** Whether a whirlpool spinning (or about to) lies just ahead of kart k, near enough to pull it in. */
 function whirlAhead(r: Race, k: Kart) {
   const v = Math.max(8, Math.abs(k.v));

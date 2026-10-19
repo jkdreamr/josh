@@ -991,7 +991,7 @@ export const COURSES: Record<CourseId, Course> = {
       // (Corkscrew Slough's meanders a little wider, for a long hull to come round its hairpins; Bair Island's side of
       // Westpoint Slough narrower)
       [438, 753, 0, 'marsh', 6.5],
-      [1082, 1142, -1, 'marsh', 4.3],
+      [1108, 1145, -1, 'marsh', 4.3],
       // the lock chamber
       [112, 168, 0, 'wall', 6],
     ],
@@ -1049,7 +1049,7 @@ export const COURSES: Record<CourseId, Course> = {
       const launches = [300, 911];
       const lapT = t.length / LAUNCH_V;
       const ferryS = 404;
-      const ferrySpeed = (2 * Math.PI * 12) / lapT;
+      const ferrySpeed = (2 * Math.PI * 10) / lapT;
       const [a, b] = launches.map((from) => ((((ferryS - from) % t.length) + t.length) % t.length) / LAUNCH_V);
       const gap = ((((ferrySpeed * (b - a)) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
       // the Tide Gates: three rows of two miter leaves, one leaf of each row always open, the open side swapping from row
@@ -1106,14 +1106,14 @@ export const COURSES: Record<CourseId, Course> = {
           // swell push you), one every 22.5 m: over the weir they go
           ...[0, 22.5, 45, 67.5].map((phase) => ({ kind: 'log' as const, s: 868, d: -3.8, drive: 1, span: [868, 958] as [number, number], every: 90, phase })),
           // the chain ferry
-          { kind: 'ferry', s: ferryS, d: 0, r: 1.8, swing: 3.4, speed: ferrySpeed, phase: 1.5 * Math.PI - ferrySpeed * a - gap / 2 },
+          { kind: 'ferry', s: ferryS, d: 0, r: 1.6, swing: 3.4, speed: ferrySpeed, phase: 1.5 * Math.PI - ferrySpeed * a - gap / 2 },
         ],
       });
     },
     sky: 'linear-gradient(180deg, #27356a 0%, #5f62a2 18%, #e19c9b 34%, #f6c597 41%, #fbe3c2 45%, #a5bcbc 47%)',
-    laps: { 2: 'Lock, swing span, more whirlpools, swell', 3: 'Whirlpools wander, wind on Westpoint', 4: 'The Maelstrom, big swell, chop in the Corkscrew', 5: 'The tide turns, fog' },
+    laps: { 2: 'Lock, swing span, swell', 3: 'Whirlpools wander, wind', 4: 'The Maelstrom, big swell', 5: 'The tide turns, fog' },
     // a fall costs more here than anywhere (calibrated against the braking ladder: see the PR)
-    tier: { fallT: 2.6, fallCoins: 4, harsh: 1.6, brink: 0.3, paceCc: { '150cc': 1, '200cc': 1.03 } },
+    tier: { fallT: 2.6, fallCoins: 4, harsh: 1.6, brink: 0.3, skillLift: 0.45, paceCc: { '150cc': 1.02, '200cc': 1.03 } },
   },
 };
 
