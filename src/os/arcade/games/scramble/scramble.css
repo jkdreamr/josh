@@ -101,6 +101,52 @@
 .g-scramble .g-scramble-pop.is-big.is-shield {
   color: #c4e6ff;
 }
+/* a hit mark where your shot landed: a white X, red when it cracked the egg */
+.g-scramble .g-scramble-hitmark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 22px;
+  height: 22px;
+  will-change: transform, opacity;
+}
+.g-scramble .g-scramble-hitmark::before,
+.g-scramble .g-scramble-hitmark::after {
+  content: '';
+  position: absolute;
+  inset: 9px 0;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+.g-scramble .g-scramble-hitmark::after {
+  inset: 0 9px;
+}
+.g-scramble .g-scramble-hitmark.is-kill::before,
+.g-scramble .g-scramble-hitmark.is-kill::after {
+  background: #ff4a3a;
+}
+/* the name of a piece of loot, in its rarity's color */
+.g-scramble .g-scramble-loot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--loot, #fff);
+  background: rgba(14, 15, 22, 0.72);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loot, #fff) 45%, transparent);
+  will-change: transform, opacity;
+}
+/* dazed by a stun grenade's flash */
+.g-scramble .g-scramble-daze {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.92) 25%, rgba(255, 252, 235, 0.75));
+}
 
 /* the heads-up display */
 .g-scramble .g-scramble-hud {
@@ -167,6 +213,24 @@
 }
 .g-scramble .g-scramble-pill.is-gear b {
   font-size: 13px;
+}
+.g-scramble .g-scramble-pill.is-hidden {
+  color: #a8e07a;
+}
+.g-scramble .g-scramble-pill.is-leader {
+  gap: 4px;
+  max-width: 170px;
+  color: #ffd23d;
+}
+.g-scramble .g-scramble-pill.is-leader span {
+  overflow: hidden;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #fff6d6;
+}
+.g-scramble .g-scramble-pill.is-leader.is-mine {
+  box-shadow: var(--g-edge), 0 0 0 2px rgba(255, 210, 61, 0.55), var(--g-drop);
 }
 .g-scramble .g-scramble-pill.is-warm {
   gap: 5px;
