@@ -1043,7 +1043,7 @@ export const COURSES: Record<CourseId, Course> = {
       // whirlpools right on the line through Corkscrew Slough's hairpins: at each one's exit (where the meander's flow sets
       // you) from the start, and on the inside at its apex from lap 3, so you weave out round one and back in round the
       // next; wandering across the channel from lap 4. One in the Turning Basin from lap 3, and on the last lap the Maelstrom
-      const whirl = (s: number, d: number, phase: number, lap: number) => ({ kind: 'whirl' as const, s, d, r: 2.8, pull: 7.5, core: 1.5, power: 16, every: 6.5, on: 4.5, warn: 1.5, phase, lap, spin: d < 0 ? 1 : -1, wander: [1.6, 0.9, 3] as [number, number, number], back: s - 25 });
+      const whirl = (s: number, d: number, phase: number, lap: number) => ({ kind: 'whirl' as const, s, d, r: 2.8, pull: 7.5, core: 1.5, power: 16, every: 6.5, on: 4.5, warn: 1.5, phase, lap, spin: d < 0 ? 1 : -1, wander: [1.3, 0.8, 3] as [number, number, number], back: s - 25 });
       // the chain ferry across the Port Reach keeps time with the launches: over on the far side as each comes by (they
       // are half a lap apart, and it crosses an even number of times a lap)
       const launches = [300, 911];
@@ -1055,7 +1055,7 @@ export const COURSES: Record<CourseId, Course> = {
       // the Tide Gates: three rows of two miter leaves, one leaf of each row always open, the open side swapping from row
       // to row at racing speed so you zig-zag down the lock (the third row from lap 3)
       const gate = (s: number, phase: number, lap: number) =>
-        [-1, 1].map((side) => ({ kind: 'bollard' as const, s, d: side * 3, w: 6, every: 3.2, on: 1.2, warn: 0.9, phase: phase + (side > 0 ? 1.6 : 0), lap, look: 'gate' }));
+        [-1, 1].map((side) => ({ kind: 'bollard' as const, s, d: side * 3, w: 6, every: 3.2, on: 1, warn: 0.9, phase: phase + (side > 0 ? 1.6 : 0), lap, look: 'gate' }));
       return placed(t, {
         boxes: [30, 380, 770, 1100],
         coins: [
@@ -1081,8 +1081,8 @@ export const COURSES: Record<CourseId, Course> = {
         ramps: [[985, 0, 11]],
         holes: [[985.5, 8, 0, 6, 950]],
         pieces: [
-          ...gate(120, 0, 2),
-          ...gate(160, 0.3, 2),
+          ...gate(128, 0, 2),
+          ...gate(162, 0.25, 2),
           // Hwy 101's piers in a slalom down the channel, and the Caltrain swing span on its pier, sweeping from the start
           { kind: 'statue', s: 226, d: -2.2, r: 1, look: 'pier' },
           { kind: 'statue', s: 236, d: 1.3, r: 0.8, look: 'pier' },

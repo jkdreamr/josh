@@ -3237,7 +3237,8 @@ function think(r: Race, k: Kart, dt: number) {
   // at speed has it weave across its line and into the buoys)
   // (but a ferry crossing is met on a short look, as anything that moves across)
   const ferry = r.boat && ferryAhead(r, k);
-  if (r.boat && dodge?.clear && !ferry) look = Math.max(look, Math.min(7 + Math.abs(k.v) * 0.5, BOAT_LOOK * Math.abs(k.v)));
+  // (though never further than the thing it is getting round: it has to be over in its lane by then)
+  if (r.boat && dodge?.clear && !ferry) look = Math.max(look, Math.min(7 + Math.abs(k.v) * 0.5, BOAT_LOOK * Math.abs(k.v), Math.max(8, dodge.ds)));
   let aim = lane * t.half;
   if (band.open) {
     // aiming at a point that far ahead cuts the inside of a tight bend by look^2/8R: with a drop beside it, look less far
