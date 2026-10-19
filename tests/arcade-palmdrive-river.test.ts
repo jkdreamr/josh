@@ -771,10 +771,73 @@ test('CPU-only races on the slough at every class: everyone finishes, nobody stu
     assert.ok(perCpu <= (cc === '200cc' ? 2.1 : 1.8), `${cc}: ${perCpu.toFixed(2)} falls per CPU per race`);
     for (const [key, n] of hits) assert.ok(n / races / 8 <= 1, `${cc}: ${key} ${n}`);
   }
-  // (with about a fall a CPU a race on a channel this narrow, one of the eight falling twice within 12 s somewhere in a
-  // race is to be expected now and then, as on the Skyway: in no more than half the races; the 36-seed calibration
-  // measures it class by class)
-  assert.ok(doubles <= 6, `a CPU fell twice within 12 s in ${doubles} of 12 races`);
+  // (with about a fall a CPU a race on a channel this narrow, a CPU falling twice within 12 s is rare now, as on the
+  // Skyway: the brink and the whirlpools let a CPU just set down go, see the tests below; the 24-seed calibration has it
+  // at most 1 in 24 a class)
+  assert.ok(doubles <= 2, `a CPU fell twice within 12 s in ${doubles} of 12 races`);
+});
+
+test('on the slough the marsh holds a CPU the launch set down a moment ago, or one spinning from a hit; not one otherwise, nor you', () => {
+  const shove = (who: 'cpu' | 'player', how: 'settling' | 'spun' | 'tumbled') => {
+    const r = createRace({ cc: '150cc', course: 'slough', seed: 3, countdown: 0, racers: [who === 'cpu' ? RIVALS[6] : { name: 'p', color: '#fff', kind: 'player' }] });
+    r.time = 30;
+    r.gusts = [];
+    const k = r.karts[0];
+    place(r, k, 1030, 2, 12, 2);
+    step(r, DT);
+    if (k.ai && how === 'settling') {
+      k.ai.care = 8;
+      k.ai.fellAt = r.time - 1;
+    }
+    // (knocked about, it can do nothing about it, and sliding hard at the brink on the right)
+    if (how === 'tumbled') k.tumble = 1.2;
+    else k.spin = 1;
+    const p = pointAt(r.track, 1030);
+    k.kx = -p.tz * 14;
+    k.kz = p.tx * 14;
+    let widest = 0;
+    const evs = run(r, 1.2, () => (widest = Math.max(widest, k.d)));
+    return { fell: evs.some((e) => e.t === 'fall'), widest };
+  };
+  const lim = edgeAt(trackOf('slough'), 1030, 1).lim;
+  for (const how of ['settling', 'spun'] as const) {
+    const held = shove('cpu', how);
+    assert.ok(!held.fell && held.widest <= lim, `${how}: held at ${held.widest.toFixed(2)} (brink ${lim.toFixed(2)})`);
+  }
+  assert.ok(shove('cpu', 'tumbled').fell, 'on its feet, tumbled by a wake: into the marsh it goes, like anyone');
+  assert.ok(shove('player', 'spun').fell, 'you: into the marsh you go');
+  assert.ok(shove('player', 'settling').fell, 'you, just set down: the same');
+});
+
+test('on the slough a whirlpool lets go of a CPU the launch has only just set down, but never you', () => {
+  for (const who of ['cpu', 'player'] as const) {
+    const r = createRace({ cc: '150cc', course: 'slough', seed: 3, countdown: 0, racers: [who === 'cpu' ? RIVALS[6] : { name: 'p', color: '#fff', kind: 'player' }] });
+    const h = r.whirls.find((w) => Math.round(w.s) === 522)!;
+    let t0 = 20;
+    while (!(hazState(r, h, t0, 1).live && hazState(r, h, t0, 1).lift > 0.9)) t0 += 0.05;
+    r.time = t0;
+    r.gusts = [];
+    const k = r.karts[0];
+    place(r, k, h.s, hazState(r, h, t0, 1).d, 0, 1);
+    if (k.ai) {
+      k.ai.care = 10;
+      k.ai.fellAt = r.time - 2;
+    }
+    const evs = run(r, 0.5);
+    assert.equal(evs.some((e) => e.t === 'splash'), who === 'player', who);
+  }
+});
+
+test('on the slough the launch stays with a CPU it has set down until it is under way; you get the usual moment', () => {
+  for (const [who, want] of [
+    ['cpu', 3.5],
+    ['player', 1.2],
+  ] as const) {
+    const r = createRace({ cc: '150cc', course: 'slough', seed: 3, countdown: 0, racers: [who === 'cpu' ? RIVALS[6] : { name: 'p', color: '#fff', kind: 'player' }] });
+    const k = r.karts[0];
+    rescue(r, k);
+    assert.equal(k.safe, want, who);
+  }
 });
 
 // ---------------------------------------------------------------------------------------------------------------

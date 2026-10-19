@@ -1107,13 +1107,16 @@ function whirlPull(r: Race, k: Kart, dt: number) {
     const pull = h.pull ?? 7;
     if (dist >= pull || dist < 1e-3) continue;
     const f = 1 - dist / pull;
-    const a = (h.power ?? 12) * f * st.lift * (k.mega > 0 ? 0.5 : k.shrink > 0 ? 1.6 : 1);
+    // (a CPU the launch has only just set down rows clear of the worst of it: see settling)
+    const a = (h.power ?? 12) * f * st.lift * (k.mega > 0 ? 0.5 : k.shrink > 0 ? 1.6 : 1) * (settling(r, k) ? SETTLED_PULL : 1);
     const spin = h.spin ?? 1;
     k.kx += ((dx - dz * 0.6 * spin) / dist) * a * dt;
     k.kz += ((dz + dx * 0.6 * spin) / dist) * a * dt;
     if (k.y <= 0.05) k.h = wrapAngle(k.h - spin * f * f * st.lift * dt);
   }
 }
+/** How much of a whirlpool's pull a CPU just set down feels (see settling). */
+const SETTLED_PULL = 0.35;
 /** Whether (x, z) is over a whirlpool's core while it is strong enough to suck you under (for a kart, or an item, on lap `lap`). */
 export function inCore(r: Race, x: number, z: number, lap: number) {
   for (const h of r.whirls) {
@@ -1432,16 +1435,17 @@ function wall(r: Race, k: Kart) {
     for (const h of r.holes) if (inTrench(t, h, at.s, at.d)) return fallIn(r, k, r.holePast, at, h);
     // (a pane of the glass road that has blinked out, under the kart's middle, on the kart's own lap)
     for (const h of r.panels) if (inTrench(t, h, at.s, at.d) && hazState(r, h, r.time, k.lap).live) return fallIn(r, k, 'void', at, h);
-    // (and on the water a whirlpool's core, strong enough to suck you under)
-    if (r.whirls.length) {
+    // (and on the water a whirlpool's core, strong enough to suck you under; but, like the lip, not a CPU the launch set
+    // down a moment ago: see settling and whirlPull)
+    if (r.whirls.length && !settling(r, k)) {
       const h = inCore(r, k.x, k.z, k.lap);
       if (h) return fallIn(r, k, 'water', at, h);
     }
   }
   const edge = edgeAt(t, at.s, at.d >= 0 ? 1 : -1);
   // (the same for everyone: a CPU that fell a moment ago keeps clear of the edge in its planning, nothing holds it on;
-  // but on the glass see lipHolds)
-  const held = edge.past === 'void' && lipHolds(r, k);
+  // but on the glass and the water see lipHolds)
+  const held = (edge.past === 'void' || (r.boat && edge.past === 'marsh')) && lipHolds(r, k);
   if (edge.past !== 'wall' && !held) {
     if ((edge.past === 'water' ? low : grounded) && Math.abs(at.d) > edge.lim) return fallIn(r, k, edge.past, at);
   } else {
@@ -1478,9 +1482,18 @@ function wall(r: Race, k: Kart) {
  * On the Skyway's glass, where a shove or a slide carries a long way and the drone has only just set it down, a CPU still
  * finding its feet after a fall (see Ai.care) is held by the lip like a rail, its wheels on the brink: a fallback for
  * whatever its planning did not see coming (it keeps well clear of the brink then anyway), so it never goes straight
- * back over. Only the lip: a pane or the Gap drops it like anyone. You get no such help.
+ * back over. Only the lip: a pane or the Gap drops it like anyone. On the slough the same at the brink of the marsh,
+ * where a shell slides on as far (and a whirlpool's core lets it go: see settling), and the brink holds a CPU spinning
+ * from a hit as well, so an item is not a free tow into the marsh; the weir takes it like anyone. You get no such help.
  */
-const lipHolds = (r: Race, k: Kart) => glass(r) && k.kind === 'cpu' && k.ai !== null && k.ai.care > 0 && k.sunk === 0;
+const lipHolds = (r: Race, k: Kart) => settling(r, k) || (r.boat && k.kind === 'cpu' && k.spin > 0 && k.sunk === 0);
+/**
+ * A CPU still finding its feet after a fall, on the courses where it gets help for that (see lipHolds). (On the water a
+ * CPU is careful a moment after a spin by the brink too, but that is not a fall.)
+ */
+const settling = (r: Race, k: Kart) => cpuHelp(r) && k.kind === 'cpu' && k.ai !== null && k.ai.care > 0 && k.sunk === 0 && (!r.boat || r.time - k.ai.fellAt < CARE_T);
+/** The courses where a CPU gets the help after a fall that you do not (see lipHolds): the Skyway's glass and the water. */
+const cpuHelp = (r: Race) => glass(r) || r.boat;
 /** How far short of the lip itself (its middle over the brink) it holds a kart (see lipHolds). */
 const LIP_HOLD = 0.1;
 
@@ -2237,8 +2250,8 @@ export function rescue(r: Race, k: Kart, spot = spotFor(r, k, k.s, k.d)) {
   k.tumble = 0;
   // (on the Skyway's glass the drone stays with a CPU a while longer, until it is under way: a CPU set down at a standstill
   // in front of the Blink or on the Wire is a sitting duck for the pack coming through, and a hit there is as good as
-  // another fall; you get the usual moment, as you can see it coming)
-  k.safe = Math.max(k.safe, glass(r) && k.kind === 'cpu' ? DRONE_GRACE : 1.2);
+  // another fall; the launch likewise on the narrow slough; you get the usual moment, as you can see it coming)
+  k.safe = Math.max(k.safe, cpuHelp(r) && k.kind === 'cpu' ? DRONE_GRACE : 1.2);
   // (on the water the launch holds the shell a little longer, until it is under way)
   k.calm = r.boat ? CALM_T + 1 : CALM_T;
 }
@@ -2350,9 +2363,9 @@ function bumpKarts(r: Race) {
       if (rel > 0) {
         const j = rel * 0.9 + 2;
         // (on glass a shove carries a long way, so a kart reeling from a hit, which can do nothing about it, is only
-        // nudged out of the way, not knocked over the brink)
-        const ja = glass(r) && hurt(A) ? REELING : 1;
-        const jb = glass(r) && hurt(B) ? REELING : 1;
+        // nudged out of the way, not knocked over the brink; on the water likewise, but a CPU only)
+        const ja = hurt(A) && (glass(r) || (r.boat && A.kind === 'cpu')) ? REELING : 1;
+        const jb = hurt(B) && (glass(r) || (r.boat && B.kind === 'cpu')) ? REELING : 1;
         A.kx -= nx * j * shareA * 1.6 * ja;
         A.kz -= nz * j * shareA * 1.6 * ja;
         B.kx += nx * j * shareB * 1.6 * jb;
@@ -2366,7 +2379,7 @@ function bumpKarts(r: Race) {
   }
 }
 
-/** How much of a shove a kart reeling from a hit takes on the glass (see bumpKarts). */
+/** How much of a shove a kart reeling from a hit takes on the glass (and a CPU on the water: see bumpKarts). */
 const REELING = 0.25;
 
 /**
