@@ -66,6 +66,8 @@ const fillOptions = [
 const QUICK_NOTE = `Computer eggs fill the island to ${MAX_FIGHTERS}.`;
 /** Name tags shown at once at most, the nearest eggs' (fifty would bury the screen). */
 const TAGS = 12;
+/** How tall a name tag is on screen: one that would sit on a nearer one's waits till they part. */
+const TAG_H = 16;
 /** The host gives everyone a moment to get its first packet before the countdown. */
 const HOST_LEAD = 1.2;
 const STICK_R = 52;
@@ -1175,11 +1177,22 @@ function Play({ mode }: { mode: Mode }) {
       if (d < 40 && (f.inside < 0 || f.inside === eye.inside) && !concealed(m, f, eye)) near.push([d, f]);
     }
     near.sort((a, b) => a[0] - b[0]);
-    const shown = new Set(near.slice(0, TAGS).map(([, f]) => f.id));
+    // nearest first; one that would cover a name already up stays hidden (sized from its text, not measured)
+    const shown = new Map<number, { x: number; y: number }>();
+    const put: { x: number; y: number; w: number }[] = [];
+    for (const [, f] of near) {
+      if (shown.size >= TAGS) break;
+      const at = v.project(f.x, f.y + 2.3, f.z);
+      if (!at) continue;
+      const w = Math.min(120, f.name.length * 6.4 + 16);
+      if (put.some((p) => Math.abs(at.x - p.x) < (w + p.w) / 2 && Math.abs(at.y - p.y) < TAG_H)) continue;
+      put.push({ x: at.x, y: at.y, w });
+      shown.set(f.id, at);
+    }
     for (const f of m.fighters) {
       const tag = tags.current.get(f.id);
       if (!tag) continue;
-      const at = shown.has(f.id) ? v.project(f.x, f.y + 2.3, f.z) : null;
+      const at = shown.get(f.id);
       if (!at) {
         if (tag.style.opacity !== '0') tag.style.opacity = '0';
       } else {

@@ -404,7 +404,7 @@
   display: grid;
   justify-items: end;
   gap: 4px;
-  width: min(260px, 60vw);
+  width: min(340px, 45cqw);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1266,6 +1266,14 @@
 @container (max-width: 520px) and (min-height: 461px) {
   .g-scramble .g-scramble-out {
     top: 36%;
+  }
+  /* the banner sits as low, and the news keeps to its newest few over either, so neither runs into it */
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-banner {
+    top: 36%;
+  }
+  .g-scramble .g-scramble-hud.is-touch:has(> .g-scramble-out) .g-scramble-feed li:nth-last-child(n + 4),
+  .g-scramble .g-scramble-hud.is-touch:has(> .g-scramble-banner) .g-scramble-feed li:nth-last-child(n + 3) {
+    display: none;
   }
   /* two rows of three, so they stay low, under the pick-up prompt over your egg, and the build menu just over them */
   .g-scramble .g-scramble-buttons {

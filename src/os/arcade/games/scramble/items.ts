@@ -523,7 +523,7 @@ function pickDrop(rng: Rng, tier: LootTier, pick: string): LootDef[] {
   }
 }
 
-const count = (n: number, one: string, many: string) => (n > 1 ? `${n} ${many}` : `a ${one}`);
+const count = (n: number, one: string, many: string) => (n > 1 ? `${n} ${many}` : `${/^[aeiou]/.test(one) ? 'an' : 'a'} ${one}`);
 
 /** The best of the best: a legendary gun (every flare gun is one) or a golden egg tart. It glows gold on the ground. */
 export const legendary = (def: LootDef) => (def.kind === 'gun' && def.r >= MAX_RARITY) || (def.kind === 'use' && def.w === 'tart');
