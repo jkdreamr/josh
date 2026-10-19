@@ -3053,6 +3053,11 @@ test('furniture: counters, shelves and sacks stop eggs and bullets, beds, tables
       const solid = m.solids.find((s) => (s.what === 'shelf' || s.what === 'seat') && s.ref === i);
       assert.equal(solid?.what ?? null, furnitureSolid(f.kind), `a ${f.kind}`);
     }
+    // nothing solid is built into something else solid (a shelf through a shelf)
+    const solidOnes = m.furniture.filter((f) => furnitureSolid(f.kind));
+    for (const [i, a] of solidOnes.entries())
+      for (const b of solidOnes.slice(i + 1))
+        if (a.b === b.b) assert.ok(Math.abs(a.x - b.x) >= a.hw + b.hw - 0.01 || Math.abs(a.z - b.z) >= a.hd + b.hd - 0.01, `seed ${seed}: a ${a.kind} into a ${b.kind}`);
     // every house and farmhouse is furnished; a warehouse has racks
     for (const b of m.buildings) {
       const mine = m.furniture.filter((f) => m.buildings[f.b] === b);
@@ -5378,6 +5383,8 @@ test('a ghillie suit hides an egg keeping still on the grass from all but those 
   hurt(c, p, 999, -1, 'storm', true);
   assert.ok([...c.loot.values()].some((l) => l.def.kind === 'ghillie'), 'it drops');
   assert.equal(lootName({ kind: 'ghillie' }), 'ghillie suit');
+  assert.equal(lootName({ kind: 'throw', w: 'impulse', n: 1 }), 'an impulse egg', 'an, before a vowel');
+  assert.equal(lootName({ kind: 'throw', w: 'grenade', n: 1 }), 'a grenade');
 });
 
 test('the egg with the most kills, three at least, is the kill leader until someone has more or it is out', () => {

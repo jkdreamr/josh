@@ -4715,8 +4715,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       }
 
       // loot in frame (with a little to spare), once it's close enough to make out (from the sky it's specks, and from
-      // the bus too, which a tall screen frames narrower)
-      const showLoot = cam.view < LOOT_VIEW && focus?.phase !== 'bus';
+      // the bus too, which a tall screen frames narrower); on foot always, however far a scope or high ground looks
+      const showLoot = (cam.view < LOOT_VIEW || focus?.phase === 'ground') && focus?.phase !== 'bus';
       const lootN = dist * FRAME_N + 3;
       const lootS = dist * FRAME_S + 3;
       const lootW = dist * FRAME_W * aspect + 3;
