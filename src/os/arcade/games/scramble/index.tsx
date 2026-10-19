@@ -1162,13 +1162,16 @@ function Play({ mode }: { mode: Mode }) {
     const me = m.fighters[m.me];
     const named: LootItem[] = [];
     if (me && me.phase === 'ground' && eye === me) {
+      // not the one the pick up prompt already names, and fewer on a small touch screen
+      const p = prompt(m, me);
+      const said = p && 'item' in p ? p.item : null;
       const close: [number, LootItem][] = [];
       for (const l of m.loot.values()) {
         const d = Math.hypot(l.x - me.x, l.z - me.z);
-        if (d < 3.2) close.push([d, l]);
+        if (d < 3.2 && l !== said) close.push([d, l]);
       }
       close.sort((a, b) => a[0] - b[0]);
-      for (const [, l] of close.slice(0, LABELS - 1)) named.push(l);
+      for (const [, l] of close.slice(0, touchRef.current ? 2 : LABELS - 1)) named.push(l);
       const g = mouse.current.inside && !touchRef.current ? v.ground(mouse.current.x, mouse.current.y, 0.45) : null;
       if (g) {
         let over: LootItem | null = null;

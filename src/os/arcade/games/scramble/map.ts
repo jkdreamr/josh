@@ -1132,10 +1132,10 @@ export function generateMap(seed: number): GameMap {
   const gap = (a: Box, b: Box) => Math.max(Math.abs(a.x - b.x) - a.hw - b.hw, Math.abs(a.z - b.z) - a.hd - b.hd);
   const roomy = (g: number) => g <= 0.05 || g >= 1.3;
   /**
-   * Puts a piece of furniture (or, for a stash kind, a container that opens) at (x, z), `face` the side of the wall it
-   * stands against, if it fits.
+   * Puts a piece of furniture (or, for a stash kind, a container that opens, or a row of `n` of them side by side
+   * along the wall) at (x, z), `face` the side of the wall it stands against, if it fits.
    */
-  const fit = (bi: number, kind: FurnitureKind | StashKind, x: number, z: number, hw: number, hd: number, face = 0, look = 0) => {
+  const fit = (bi: number, kind: FurnitureKind | StashKind, x: number, z: number, hw: number, hd: number, face = 0, look = 0, n = 1) => {
     const b = map.buildings[bi];
     const box = { x, z, hw, hd };
     if (Math.abs(box.x - b.x) + hw > b.w / 2 - WALL_T / 2 + 0.01 || Math.abs(box.z - b.z) + hd > b.d / 2 - WALL_T / 2 + 0.01) return false;
@@ -1149,14 +1149,14 @@ export function generateMap(seed: number): GameMap {
       const zone = { x: d.x - d.ox * k * 1.3, z: d.z - d.oz * k * 1.3, hw: ax * (d.w / 2 + 0.5) + az * 1.3, hd: az * (d.w / 2 + 0.5) + ax * 1.3 };
       if (gap(box, zone) < 0) return false;
     }
-    for (const w of b.windows.length || b.bars.length ? joined([...b.walls, ...b.windows, ...b.bars]) : b.walls) if (gap(box, w) < -0.01 || (stops && !roomy(gap(box, w)))) return false;
+    for (const w of b.windows.length ? joined([...b.walls, ...b.windows]) : b.walls) if (gap(box, w) < -0.01 || (stops && !roomy(gap(box, w)))) return false;
+    // a jail cell's bars only need keeping out of (they end at a wall, so nothing squeezes past them)
+    for (const w of b.bars) if (gap(box, w) < -0.01) return false;
     for (const c of map.containers) {
       if (Math.abs(c.x - b.x) > b.w / 2 || Math.abs(c.z - b.z) > b.d / 2) continue;
       const [chw, chd] = containerHalf(c);
       const g = gap(box, { x: c.x, z: c.z, hw: chw, hd: chd });
-      // stash furniture can stand in a row, side by side against the same wall
-      const row = stash && isStash(c.kind) && c.ax === (face >= 2) && Math.abs(c.ax ? c.x - x : c.z - z) < 0.05 && g > -0.01;
-      if (g < (stops ? (row ? -1 : 1.3) : 0.15)) return false;
+      if (g < (stops ? 1.3 : 0.15)) return false;
     }
     if (stops) {
       for (const l of map.floor) if (Math.abs(l.x - box.x) < hw + 0.6 && Math.abs(l.z - box.z) < hd + 0.6) return false;
@@ -1167,19 +1167,37 @@ export function generateMap(seed: number): GameMap {
     }
     if (stash) {
       // it faces away from the wall it stands against
-      addContainer(kind, x, z, face === 1 || face === 3 ? -1 : 1, STASH[kind].tier, 0, face >= 2);
+      const ax = face >= 2;
+      const step = (2 * (ax ? hd : hw)) / n;
+      for (let k = 0; k < n; k++) {
+        const u = (k - (n - 1) / 2) * step;
+        const c = map.containers[addContainer(kind, ax ? x : x + u, ax ? z + u : z, face === 1 || face === 3 ? -1 : 1, STASH[kind].tier, 0, ax)];
+        // what it holds stays indoors, even from one in a corner: the row of it slides along the wall
+        const iw = b.w / 2 - WALL_T / 2 - 0.4;
+        const id = b.d / 2 - WALL_T / 2 - 0.4;
+        const slide = (vs: number[], lo: number, hi: number) => (vs.length && Math.min(...vs) < lo ? lo - Math.min(...vs) : vs.length && Math.max(...vs) > hi ? hi - Math.max(...vs) : 0);
+        const sx = slide(c.loot.map((l) => l.x), b.x - iw, b.x + iw);
+        const sz = slide(c.loot.map((l) => l.z), b.z - id, b.z + id);
+        for (const l of c.loot) {
+          l.x = r1(l.x + sx);
+          l.z = r1(l.z + sz);
+        }
+      }
       return true;
     }
     map.furniture.push({ ...box, kind: kind as FurnitureKind, face, b: bi, look });
     return true;
   };
-  /** Up against the inside of wall `side` (sides as in shell()), `l` along it, `deep` out from it and `long` along it. */
-  const against = (bi: number, kind: FurnitureKind | StashKind, side: number, l: number, deep: number, long: number, look = 0) => {
+  /**
+   * Up against the inside of wall `side` (sides as in shell()), `l` along it, `deep` out from it and `long` along it (a
+   * row of `n` stash pieces in that length).
+   */
+  const against = (bi: number, kind: FurnitureKind | StashKind, side: number, l: number, deep: number, long: number, look = 0, n = 1) => {
     const b = map.buildings[bi];
     const o = (side < 2 ? b.d : b.w) / 2 - WALL_T / 2 - deep / 2;
     const x = side < 2 ? b.x + l : b.x + (side === 2 ? -o : o);
     const z = side < 2 ? b.z + (side === 0 ? -o : o) : b.z + l;
-    return fit(bi, kind, x, z, side < 2 ? long / 2 : deep / 2, side < 2 ? deep / 2 : long / 2, side, look);
+    return fit(bi, kind, x, z, side < 2 ? long / 2 : deep / 2, side < 2 ? deep / 2 : long / 2, side, look, n);
   };
   /** The first of a few spots along a wall that fits. */
   const along = (bi: number, kind: FurnitureKind | StashKind, side: number, spots: number[], deep: number, long: number, look = 0) => spots.some((l) => against(bi, kind, side, l, deep, long, look));
@@ -1248,9 +1266,7 @@ export function generateMap(seed: number): GameMap {
   const lockers = (bi: number, side: number, spots: number[], n: number) =>
     spots.some((l) => {
       const [deep, long] = [STASH.locker.deep * 2, STASH.locker.along * 2];
-      if (!against(bi, 'locker', side, l, deep, long)) return false;
-      for (let k = 1; k < n; k++) against(bi, 'locker', side, l + k * long, deep, long);
-      return true;
+      return against(bi, 'locker', side, l + ((n - 1) * long) / 2, deep, long * n, 0, n);
     });
 
   // everything outdoors keeps its distance from buildings and from each other
@@ -1338,7 +1354,10 @@ export function generateMap(seed: number): GameMap {
         const gaps = sides();
         gaps[front].push([Math.round((rng() * 2 - 1) * 4) / 2, DOOR]);
         gaps[sc > 0 ? 2 : 3].push([fz * 2.5, DOOR]);
-        const glass = glaze('police', w, d, gaps, [front, 2, 3], [[], [], [zi - z], [zi - z]]);
+        // no windows where the lobby's lockers stand, at the cell's end (see below)
+        const posts = [[], [], [zi - z], [zi - z]];
+        posts[sc > 0 ? 3 : 2].push(fz * (fz > 0 ? 0.4 : 4.95));
+        const glass = glaze('police', w, d, gaps, [front, 2, 3], posts);
         const doors = shell(walls, x, z, w, d, gaps, WALL_T, glass);
         if (facing(doors)) {
           lots.pop();
@@ -1361,9 +1380,11 @@ export function generateMap(seed: number): GameMap {
           { x: x + sc * 7, z: z - fz * 4.25, hw: 2.75, hd: 2.5 },
           { x: x - sc * 3, z: z - fz * 4.25, hw: 6.75, hd: 2.5 },
         ];
-        // the stash: its chest against the back wall and an ammo crate
-        addContainer('chest', x - sc * 7, z - fz * (d / 2 - WALL_T / 2 - CHEST_HD - 0.08), fz as 1 | -1, 'police');
-        addContainer('crate', x + sc * 1.9, z - fz * 4.6, 1, 'crate');
+        // the stash: its chest against its north wall (the back wall or the lobby's, so it shows from the south), and an
+        // ammo crate
+        const chestZ = fz > 0 ? d / 2 - WALL_T / 2 - CHEST_HD - 0.08 : 1.5 + WALL_T / 2 + CHEST_HD + 0.08;
+        addContainer('chest', x - sc * 7, z - fz * chestZ, 1, 'police');
+        addContainer('crate', x + sc * 0.5, z - fz * 4.4, 1, 'crate');
         // the cell: a toilet, and whatever the last one in left behind
         addContainer('toilet', x + sc * 9.2, z - fz * 6.2, fz as 1 | -1, 'crate');
         addSpot(x + sc * 6.4, z - fz * 3.6, 'crate');
@@ -1373,9 +1394,14 @@ export function generateMap(seed: number): GameMap {
         fit(bi, 'bench', x + sc * 6.6, z - fz * (d / 2 - WALL_T / 2 - 0.3), 0.85, 0.3, back, b.look);
         fit(bi, 'desk', x + sc * 3.5, z + fz * 2.4, 1.4, 0.45, 0, b.look);
         fit(bi, 'chair', x + sc * 3.5, z + fz * 1.45, 0.22, 0.22, front, b.look);
-        // lockers along the back of the stash, and a row in the lobby with their backs to the stash's wall
-        lockers(bi, back, [-sc * 3.2, -sc * 2.6], 3);
-        for (let k = 0; k < 3; k++) fit(bi, 'locker', x - sc * (6 + k * STASH.locker.along * 2), zi + fz * (WALL_T / 2 + STASH.locker.deep), STASH.locker.along, STASH.locker.deep, back);
+        // a row of lockers in the stash against the wall to the cell, and one in the lobby against its end by the cell,
+        // each in the room's north corner (a wall to the north hides nothing behind it from the camera, in the south)
+        const { along: la, deep: ld } = STASH.locker;
+        const toward = sc > 0 ? 3 : 2;
+        const stashRow = fz > 0 ? d / 2 - WALL_T / 2 - la * 3 : 1.5 + WALL_T / 2 + la * 3;
+        const lobbyRow = fz > 0 ? 1.5 - BARS_T / 2 - 0.02 - la * 3 : -(d / 2 - WALL_T / 2 - la * 3);
+        fit(bi, 'locker', xd - sc * (WALL_T / 2 + ld), z - fz * stashRow, ld, la * 3, toward, 0, 3);
+        fit(bi, 'locker', xb - sc * ld, z - fz * lobbyRow, ld, la * 3, toward, 0, 3);
         break;
       }
       if (kind === 'bank') {

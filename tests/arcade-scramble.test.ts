@@ -4266,7 +4266,13 @@ test('the police station has a lobby of lockers, a jail cell behind bars and a s
     const b = m.map.buildings[bi];
     const inside = (c: { x: number; z: number }) => Math.abs(c.x - b.x) < b.w / 2 && Math.abs(c.z - b.z) < b.d / 2;
     const lockers = m.map.containers.filter((c) => c.kind === 'locker' && inside(c));
-    assert.ok(lockers.length >= 4, `seed ${seed}: lockers (${lockers.length})`);
+    assert.equal(lockers.length, 6, `seed ${seed}: two rows of lockers`);
+    // both rows stand against walls that run north and south, with their backs to the wall, so the camera (south) sees them
+    for (const c of lockers) assert.ok(c.ax, `seed ${seed}: a locker along a wall across the screen`);
+    // and the stash's chest against the north wall of its room (the biggest of the back two), opening south
+    const room = b.rooms.slice(1).sort((p, q) => q.hw - p.hw)[0];
+    const chest = m.map.containers.find((c) => c.kind === 'chest' && inside(c))!;
+    assert.ok(chest.face === 1 && chest.z < room.z && Math.abs(chest.z - (room.z - room.hd)) < 1, `seed ${seed}: the stash's chest by its north wall`);
     const stash = m.map.containers.find((c) => c.kind === 'chest' && inside(c));
     assert.ok(stash, `seed ${seed}: the stash's chest`);
     assert.ok(stash.loot.some((l) => l.def.kind === 'gun') && stash.loot.some((l) => l.def.kind === 'helmet' || l.def.kind === 'vest'), 'a gun and armor in it');

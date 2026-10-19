@@ -3639,6 +3639,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     }
     const g = geo(mergeRoof(THREE, parts, 1, true));
     kingCrown.add(new THREE.Mesh(g, lambert(0xffffff, { vertexColors: true, emissive: 0x4a3200, side: THREE.DoubleSide })));
+    // big enough to pick out across the screen
+    kingCrown.scale.setScalar(1.45);
   }
   let kingOn = -1;
 
@@ -4502,7 +4504,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         kingOn = king;
       }
       if (king >= 0) {
-        kingCrown.position.y = (eggs[king].helmetLv > 0 ? 2.0 : 1.86) + Math.sin(clock * 3) * 0.04;
+        kingCrown.position.y = (eggs[king].helmetLv > 0 ? 2.12 : 1.98) + Math.sin(clock * 3) * 0.05;
         kingCrown.rotation.y = clock * 1.2;
       }
       eggBits.shell.count = eggBits.hands.count = eggBits.face.count = drawn.eggs;
