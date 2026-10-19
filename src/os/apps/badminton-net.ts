@@ -98,7 +98,7 @@ export function parseSnapshot(value: unknown): NetSnapshot | null {
     ? value.marks.filter((m): m is LandingMark => isObject(m) && num(m.x) && num(m.at) && ['in', 'out', 'net'].includes(m.kind as string)).slice(0, 8)
     : [];
   const imp = value.impact;
-  const impact = isObject(imp) && num(imp.x) && num(imp.y) && num(imp.at) && bool(imp.strong) ? { x: imp.x, y: imp.y, at: imp.at, strong: imp.strong } : null;
+  const impact = isObject(imp) && num(imp.x) && num(imp.y) && num(imp.at) && bool(imp.strong) ? { x: imp.x, y: imp.y, at: imp.at, strong: imp.strong, ...(num(imp.charge) ? { charge: Math.max(0, Math.min(1, imp.charge)) } : {}) } : null;
   const ls = value.lastShot;
   const lastShot = isObject(ls) && SHOTS.includes(ls.type as ShotType) && num(ls.speed) ? { type: ls.type as ShotType, speed: ls.speed, ...(num(ls.power) && ls.power >= 0 && ls.power <= 1 ? { power: ls.power } : {}) }
       : null;

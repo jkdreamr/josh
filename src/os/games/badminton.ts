@@ -102,14 +102,19 @@ export function chargePower(heldMs: number): number {
   return HALF_SMASH_POWER + (1 - HALF_SMASH_POWER) * amount;
 }
 
-/** Smash initial speed in m/s: about 40 to 46 for a half smash, 74 to 80 for a full one. */
+/** 0..1, how far past a half smash this power is: 0 for a tap, 1 for a full charge. */
+export function smashCharge(power: number): number {
+  return Math.max(0, Math.min(1, (power - HALF_SMASH_POWER) / (1 - HALF_SMASH_POWER)));
+}
+
+/** Smash initial speed in m/s: about 36 to 40 for a half smash, 90 to 94 for a full one. */
 export function smashSpeed(power: number, roll: number): number {
-  return 40 + 34 * Math.max(0, Math.min(1, power)) + roll * 6;
+  return 36 + 54 * smashCharge(power) + roll * 4;
 }
 
 /** How long a smash leaves the hitter off balance and slow, in ms. A full jump smash takes longest to recover from. */
 export function smashRecoveryMs(power: number): number {
-  return 120 + 380 * Math.max(0, Math.min(1, power));
+  return 100 + 450 * smashCharge(power);
 }
 
 /** 0..1, how little time the receiver had: a smash that reaches them in 0.35 s or less is full pressure. */
@@ -350,7 +355,7 @@ export function planShot(type: ShotType, direction: Direction, start: Point2D, r
   const roll = (deep = false) => (options.depth === undefined ? random() : deep ? 1 - options.depth : options.depth);
 
   if (actualType === 'smash') {
-    // Pros exceed 100 m/s off the racket; 40 to 80 m/s keeps this playable. Drag bleeds most of it over a long flight,
+    // Pros exceed 100 m/s off the racket; 36 to 94 m/s keeps this playable. Drag bleeds most of it over a long flight,
     // so a smash from the back reaches the receiver far slower than a kill from the front.
     const power = Math.max(0, Math.min(1, options.power ?? 0.5));
     const pace = smashSpeed(power, random());
@@ -360,7 +365,7 @@ export function planShot(type: ShotType, direction: Direction, start: Point2D, r
     const smashSpread = 1 + (1 - Math.max(0, Math.min(1.15, swingAccuracy))) * 3.2;
     const smashScatter = (amount: number) => (random() - 0.5) * 2 * amount * smashSpread;
     // When the tape and the baseline leave no room at this pace, the nearest pace that fits is used.
-    const paces = [pace, ...[40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80].sort((a, b) => Math.abs(a - pace) - Math.abs(b - pace))];
+    const paces = [pace, ...[36, 40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84, 88, 92].sort((a, b) => Math.abs(a - pace) - Math.abs(b - pace))];
     for (const speed of paces) {
       const steepest = steepestClearingSmash(start, direction, speed);
       if (steepest === null) continue;
@@ -672,7 +677,7 @@ export type CpuReturn = { kind: 'miss' } | { kind: 'hit'; type: ShotType; accura
 
 /**
  * What the computer does with a shuttle in reach: a fast smash can beat it outright or force a short block,
- * more often on the lower levels. Anything else is its normal stroke choice.
+ * more often on the lower levels and far more often off a full smash than a half one. Anything else is its normal stroke choice.
  */
 export function cpuReturn(
   contact: Point2D,
@@ -681,14 +686,19 @@ export function cpuReturn(
   opponentDistanceFromNet: number,
   difficulty: Difficulty,
   random: () => number = Math.random,
+  incomingPower = 0.5,
 ): CpuReturn {
   const profile = CPU_PROFILES[difficulty];
   const pressure = smashPressure(incoming, flightSeconds);
   if (pressure > 0) {
     const defense = SMASH_DEFENSE[difficulty];
+    // A half smash beats the receiver half as often as the table says, a full one half again as often.
+    const weight = 0.5 + smashCharge(incomingPower);
+    const miss = defense.miss * pressure * weight;
+    const block = Math.min(0.95 - miss, defense.block * pressure * (0.7 + 0.6 * smashCharge(incomingPower)));
     const roll = random();
-    if (roll < defense.miss * pressure) return { kind: 'miss' };
-    if (roll < (defense.miss + defense.block) * pressure) {
+    if (roll < miss) return { kind: 'miss' };
+    if (roll < miss + block) {
       return { kind: 'hit', type: 'net', accuracy: pressuredAccuracy(Math.min(1, profile.accuracy), pressure), options: {} };
     }
   }

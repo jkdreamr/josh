@@ -93,7 +93,9 @@ test('a full smash is faster than a half smash, and a deep one arrives slower th
   assert.ok(fullBeatsHalf >= 36, `${fullBeatsHalf}`);
   assert.ok(kills >= 36, `${kills}`);
   const offRacket = Math.hypot(...Object.values(planShot('smash', 1, { x: -5.8, y: 2.7 }, () => 0.5, 1, { power: 1 }).velocity) as [number, number]);
-  assert.ok(offRacket > 70 && offRacket < 80, `${offRacket}`);
+  assert.ok(offRacket > 88 && offRacket < 96, `${offRacket}`);
+  const halfOffRacket = Math.hypot(...Object.values(planShot('smash', 1, { x: -2.2, y: 2.7 }, () => 0.5, 1, { power: HALF_SMASH_POWER }).velocity) as [number, number]);
+  assert.ok(halfOffRacket < 42, `${halfOffRacket}`);
 });
 
 test('a fast smash forces more misses and short blocks, more so on easier levels', () => {
@@ -115,6 +117,20 @@ test('a fast smash forces more misses and short blocks, more so on easier levels
   for (let i = 1; i < results.length; i++) assert.ok(results[i].miss < results[i - 1].miss);
   assert.ok(results[3].miss > 0 && results[3].block > 0, 'even pro gets caught out sometimes');
   assert.ok(SMASH_DEFENSE.easy.miss > SMASH_DEFENSE.pro.miss);
+});
+
+test('a full smash beats the computer far more often than a half smash', () => {
+  for (const level of ['easy', 'normal', 'hard', 'pro'] as Difficulty[]) {
+    const beaten = (power: number) => {
+      const random = seeded(11);
+      let count = 0;
+      for (let i = 0; i < 4000; i++) if (cpuReturn({ x: -4, y: 1.1 }, 'smash', 0.3, 3, level, random, power).kind === 'miss') count++;
+      return count;
+    };
+    const half = beaten(HALF_SMASH_POWER);
+    const full = beaten(1);
+    assert.ok(full > half * 2.5, `${level}: full ${full} vs half ${half}`);
+  }
 });
 
 test('the guest can send a smash power with a hit', () => {
