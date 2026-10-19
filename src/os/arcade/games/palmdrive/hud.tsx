@@ -474,8 +474,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>Insane, on the water: Redwood Slough.</b> You race a single scull. The water is slick, so carve (drift) through the bends. Tap hop just as the ring closes for a clean
-            catch; ten in a row is a Power Ten. Leave the channel and you run aground in the marsh: the coach&apos;s launch tows you off (about three and a half seconds and three
-            coins). Whirlpools spin up at the bends: when the foam turns, keep wide and keep your speed. Wakes and the Bay swell shove you sideways; hop the crest. The current helps
+            catch; ten in a row is a Power Ten. The channel is narrow: leave it and you run aground in the marsh, and the coach&apos;s launch tows you off (about four seconds and
+            four coins). Whirlpools spin up right on the line out of the bends: when the foam turns, steer round and keep your speed. Wakes, the Bay swell and the wind shove you
+            sideways; hop the crest. Mind the rocks in the rapids and the crane&apos;s load swinging across the Port. The current helps
             downstream and fights you upstream, so hug the bank going up. On the last lap the tide turns and the fog comes in.
           </li>
           <li>
