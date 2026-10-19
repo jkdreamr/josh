@@ -1111,7 +1111,7 @@ export const COURSES: Record<CourseId, Course> = {
         ],
       });
     },
-    sky: 'linear-gradient(180deg, #27356a 0%, #5f62a2 18%, #e19c9b 34%, #f6c597 41%, #fbe3c2 45%, #a5bcbc 47%)',
+    sky: 'linear-gradient(180deg, #1f2c62 0%, #5b5fa3 20%, #d99aa6 36%, #f3c7ad 43%, #ffd29a 46%, #5c6a46 47%, #3f5f5c 52%)',
     laps: { 2: 'Lock, swing span, swell', 3: 'Whirlpools wander, wind', 4: 'The Maelstrom, big swell', 5: 'The tide turns, fog' },
     // a fall costs more here than anywhere (calibrated against the braking ladder: see the PR)
     tier: { fallT: 2.6, fallCoins: 4, brink: 0.3, skillLift: 0.45, paceCc: { '150cc': 1.05, '200cc': 1.07 } },
