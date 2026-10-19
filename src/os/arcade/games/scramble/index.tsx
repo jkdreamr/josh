@@ -293,6 +293,7 @@ function Play({ mode }: { mode: Mode }) {
   const match = useRef<Match | null>(null);
   const net = useRef<Session>(null as unknown as Session);
   net.current ??= newSession(!live || online!.isHost);
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__scramble = { match: () => match.current, view: () => view.current, net: () => net.current };
   if (!match.current) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
     else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0]);
