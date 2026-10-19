@@ -3355,8 +3355,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         part(boxes, w.x, y0 + 2.45, w.z, GAP * 2, LEVEL_H - 2.3, 0.3, w.a, 0, c);
         if (w.e === 2) part(boxes, w.x, y0 + 0.55, w.z, GAP * 2, 1.1, 0.3, w.a, 0, c);
       }
-      // a darker cap along the top, so the line of it reads from above
-      if (grow >= 1) part(boxes, w.x, y0 + LEVEL_H + 0.05, w.z, CELL_B + 0.14, 0.12, 0.38, w.a, 0, trim);
+      // a darker cap along the top, so the line of it reads from above; it breaks over a doorway or window
+      if (grow < 1) return;
+      if (full) part(boxes, w.x, y0 + LEVEL_H + 0.05, w.z, CELL_B + 0.14, 0.12, 0.38, w.a, 0, trim);
+      else for (const p of w.parts!) part(boxes, p.x, y0 + LEVEL_H + 0.05, p.z, p.hw * 2 + 0.1, 0.12, 0.38, w.a, 0, trim);
       return;
     }
     if (w.k === 'floor') {
