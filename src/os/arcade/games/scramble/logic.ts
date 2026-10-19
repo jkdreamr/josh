@@ -269,6 +269,8 @@ export type Ai = {
   react: number;
   strafe: number;
   strafeT: number;
+  /** How long we've stood holding a line through a window (a while, then we move on). */
+  sillT: number;
   think: number;
   jumpAt: number;
   stuckT: number;
@@ -976,6 +978,7 @@ function newAi(m: Match, f: Fighter): Ai {
     react: 0,
     strafe: rng() < 0.5 ? 1 : -1,
     strafeT: 0,
+    sillT: 0,
     think: 0,
     jumpAt,
     stuckT: 0,
@@ -3659,10 +3662,12 @@ function think(m: Match, f: Fighter, dt: number) {
         if (f.hp < 90 && bestUse(f, 'heal')) inp.use = 'bestHeal';
         else if (bestUse(f, 'shield')) inp.use = 'bestShield';
       }
-    } else if (inWindow(m, f.x, f.z, tgt.x, tgt.z)) {
-      // seen through a window: stand and hold the line (a step aside loses it), shooting out the glass if need be
-    } else if (f.ghillie && d > 16 && g && WEAPONS[g.w].range > d && grassAt(m.map, f.x, f.z)) {
-      // in a ghillie suit out on the grass, far off: keep still (and so hard to see) and shoot from there
+    } else if (ai.sillT < SILL && d < fightRange(f, g) + 4 && inWindow(m, f.x, f.z, tgt.x, tgt.z)) {
+      // seen through a window in reach: stand and hold the line (a step aside loses it), shooting out the glass if
+      // need be, for a while (farther off, close in rather than trade misses all day)
+      ai.sillT += dt;
+    } else if (f.ghillie && f.y < 0.5 && d > 16 && g && WEAPONS[g.w].range > d && grassAt(m.map, f.x, f.z) && m.clock - f.lastByAt > 2) {
+      // in a ghillie suit out on the grass, far off: keep still (and so hard to see) and shoot from there, until hit
     } else {
       const pref = fightRange(f, g);
       let mx = 0;
@@ -3827,6 +3832,8 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
 
 /** The widest a computer egg's aim strays (radians), however far off and quick the target. */
 const MISS = 0.35;
+/** The longest a computer egg holds still at a window on one target (seconds). */
+const SILL = 8;
 
 /** Meters farther off a target seems for every other computer egg already fighting it. */
 const CROWD = 12;
@@ -3865,9 +3872,12 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     }
   }
   const armed = f.guns.some((x) => fightGun(f, x));
-  // unarmed eggs only fight what is right in front of them
-  if (best && !armed && Math.hypot(best.x - f.x, best.z - f.z) > 6) best = null;
-  if ((best?.id ?? -1) !== ai.target) ai.react = best ? L.react * (0.7 + m.rng() * 0.6) : 0;
+  // unarmed eggs only fight what is right in front of them (not through a window)
+  if (best && !armed && (Math.hypot(best.x - f.x, best.z - f.z) > 6 || inWindow(m, f.x, f.z, best.x, best.z))) best = null;
+  if ((best?.id ?? -1) !== ai.target) {
+    ai.react = best ? L.react * (0.7 + m.rng() * 0.6) : 0;
+    ai.sillT = 0;
+  }
   // the count stays right for the others still to pick this step
   if (ai.target >= 0 && hunted[ai.target] > 0) hunted[ai.target]--;
   ai.target = best?.id ?? -1;
@@ -4588,7 +4598,7 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
     return;
   }
   // a shut door just ahead: open it (it swings away from us)
-  const ahead = castRay(m, f.x, f.z, dx / d, dz / d, Math.min(d, 2), f.id, false, true);
+  const ahead = castRay(m, f.x, f.z, dx / d, dz / d, Math.min(d, 2), f.id, false, true, levelOf(f.y));
   if (ahead?.what === 'door' && m.doors[ahead.ref] === DOOR_SHUT) requestDoor(m, f, ahead.ref);
   let a = Math.atan2(dx, dz);
   if (ai.detourT > 0) {
@@ -4641,16 +4651,33 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       const front = breaks(hit) ? null : castRay(m, f.x, f.z, Math.sin(ahead), Math.cos(ahead), Math.min(1.8, d), f.id, false, true, lv);
       const wall = breaks(hit) ? hit : breaks(front) ? front : null;
       const ours = wall?.what === 'built' ? m.walls.get(wall.ref) : undefined;
+      // wedged against a built wall some other way (say a tree in our own box), now and then break out through it
+      const side = wall || m.rng() < 0.5 ? -1 : builtBeside(m, f, lv);
       if (ours && ours.f === f.id && ours.e === 0 && f.editT <= 0) ai.editA = wall === hit ? a : ahead;
-      else if (wall) {
+      else if (wall || side >= 0) {
         ai.smashT = 1;
-        ai.smashA = wall === hit ? a : ahead;
+        ai.smashA = wall ? (wall === hit ? a : ahead) : side;
       } else {
         ai.detourT = 0.7 + m.rng() * 0.6;
         ai.detourA = a + (m.rng() < 0.5 ? 1 : -1) * (1.2 + m.rng() * 1.4);
       }
     }
   }
+}
+
+/** The way to the nearest built wall within a swing round an egg, on its level, or -1. */
+function builtBeside(m: Match, f: Fighter, lv: number) {
+  let best = -1;
+  let bestT = 1.4;
+  for (let k = 0; k < 8; k++) {
+    const b = (k / 8) * Math.PI * 2;
+    const hit = castRay(m, f.x, f.z, Math.sin(b), Math.cos(b), bestT, f.id, false, true, lv);
+    if (hit?.what === 'built' && hit.t < bestT) {
+      best = b;
+      bestT = hit.t;
+    }
+  }
+  return best;
 }
 
 // -------------------------------------------------------------------------------------------------------------------
