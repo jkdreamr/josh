@@ -1041,25 +1041,6 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     });
     scene.add(m);
   }
-  if (fencePosts.length) {
-    const wood = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x6e5236 }), fencePosts.length);
-    const wire = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x4d4f52 }), fencePosts.length);
-    fencePosts.forEach((p, k) => {
-      dummy.position.set(p.x, 0.55, p.z);
-      // (leaning out down the hill: about the line of the fence)
-      dummy.rotation.set(0, p.ry, p.lean, 'YXZ');
-      dummy.scale.set(0.15, 1.15, 0.15);
-      dummy.updateMatrix();
-      wood.setMatrixAt(k, dummy.matrix);
-      dummy.rotation.set(0, p.ry, 0);
-      dummy.position.set(p.x + Math.sin(p.ry) * p.len * 0.5, 0.75, p.z + Math.cos(p.ry) * p.len * 0.5);
-      dummy.scale.set(0.035, 0.035, p.len);
-      dummy.updateMatrix();
-      wire.setMatrixAt(k, dummy.matrix);
-    });
-    dummy.rotation.set(0, 0, 0);
-    scene.add(wood, wire);
-  }
   if (netting.length) {
     // orange posts and netting along the far side of a pit, with a red lamp on every other post
     const netTex = texture(
@@ -1101,6 +1082,25 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     });
     dummy.rotation.set(0, 0, 0);
     scene.add(net, pole, lamp);
+  }
+  if (fencePosts.length) {
+    const wood = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x6e5236 }), fencePosts.length);
+    const wire = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x4d4f52 }), fencePosts.length);
+    fencePosts.forEach((p, k) => {
+      dummy.position.set(p.x, 0.55, p.z);
+      // (leaning out down the hill: about the line of the fence)
+      dummy.rotation.set(0, p.ry, p.lean, 'YXZ');
+      dummy.scale.set(0.15, 1.15, 0.15);
+      dummy.updateMatrix();
+      wood.setMatrixAt(k, dummy.matrix);
+      dummy.rotation.set(0, p.ry, 0);
+      dummy.position.set(p.x + Math.sin(p.ry) * p.len * 0.5, 0.75, p.z + Math.cos(p.ry) * p.len * 0.5);
+      dummy.scale.set(0.035, 0.035, p.len);
+      dummy.updateMatrix();
+      wire.setMatrixAt(k, dummy.matrix);
+    });
+    dummy.rotation.set(0, 0, 0);
+    scene.add(wood, wire);
   }
   // a chevron board on the post where each open run starts, pointing back in toward the road
   const startBoards: { s: number; side: number }[] = look.edge === 'stakes' || boat ? [] : open.map(([side, s0]) => ({ s: s0, side }));
@@ -1798,7 +1798,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   // the Dish's boulders (see BOULDER): a rough lump of sandstone up a chute of scree between two knolls on the uphill
   // side, behind a falling-rocks sign. Through its warning it tips over the crest and comes down the chute in a cloud of
   // dust, then bounds over the wall, rolls right across the road, over the far wall and away down the hill
-  const boulderGeo = new THREE.DodecahedronGeometry(1, 1);
+  const boulderGeo = new THREE.IcosahedronGeometry(1, 1);
   {
     // (lumpy, the same at every copy of a vertex, so the faces still meet)
     const pos = boulderGeo.getAttribute('position');
@@ -2591,6 +2591,15 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       for (const { view: cv, i } of cows) {
         const h = race.hazards[i];
         if (!h) continue;
+        if (!awake(h, lapNow)) {
+          // one that wanders on later: grazing the far side of the fence until its lap comes round
+          const by = pointAt(race.track, h.along, race.track.edge + 2.2);
+          cv.g.position.set(by.x, 0, by.z);
+          cv.g.rotation.y = headingOf(by.tx, by.tz) + 0.4;
+          cv.legs.forEach((leg) => (leg.rotation.x = 0));
+          cv.head.rotation.x = 0.9;
+          continue;
+        }
         const at = pointAt(race.track, h.along, h.at);
         const face = headingOf(-at.tz * h.walk, at.tx * h.walk);
         cv.h = dampAngle(cv.h, face, 3, dt);
@@ -2988,12 +2997,12 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
           // dust: down the chute through its warning, kicked up behind it on the road, and a burst each time it lands
           // off a wall
           const near = Math.hypot(camera.position.x - p.x, camera.position.z - p.z) < 120;
-          if (near && b.warn > 0 && Math.random() < dt * 22) emit(geo.ball, partMat.dust, p.x + (Math.random() - 0.5) * 3, 0.6 + Math.random(), p.z + (Math.random() - 0.5) * 3, 0, 1.2 + Math.random(), 0, 0.9, 0.5 + Math.random() * 0.5, -1, true);
+          if (near && b.warn > 0 && Math.random() < dt * 14) emit(geo.ball, partMat.dust, p.x + (Math.random() - 0.5) * 3, 0.4 + Math.random(), p.z + (Math.random() - 0.5) * 3, 0, 1 + Math.random(), 0, 0.7, 0.22 + Math.random() * 0.2, -1, true);
           if (near && b.warn > 0.5 && Math.random() < dt * 10) {
             const q = pointAt(race.track, h.s + (Math.random() - 0.5) * 4, from - up * (2 + Math.random() * 3));
             emit(geo.ball, partMat.mud, q.x, 0.3, q.z, 0, 1.5, 0, 0.5, 0.12, 12);
           }
-          if (near && b.rolling && Math.abs(d) < edge && Math.random() < dt * 16) emit(geo.ball, partMat.dust, p.x, 0.3, p.z, 0, 0.8, 0, 0.8, 0.6, -0.5, true);
+          if (near && b.rolling && Math.abs(d) < edge && Math.random() < dt * 12) emit(geo.ball, partMat.dust, p.x, 0.25, p.z, 0, 0.6, 0, 0.6, 0.28, -0.5, true);
           const landed = b.rolling && Math.abs(Math.abs(d) - edge) > 2.2 && Math.abs(d) < edge;
           if (near && landed && !bv.land) {
             burst(geo.ball, [partMat.dust], p.x, 0.3, p.z, 12, 4, 0.45, 0.7, 8);
@@ -3440,8 +3449,9 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         // caught by a set piece: sparks off the steel (spray off the jet), and a jolt if it was you
         const k = race.karts[e.k];
         if (!k) return;
+        // (a boulder throws up a cloud of dust and grit as well)
+        if (e.kind === 'boulder') burst(geo.ball, [partMat.dust, partMat.mud], k.x, 0.8, k.z, 18, 6, 0.35, 0.7, 10);
         if (e.kind === 'rotor') burst(geo.ball, [partMat.spray, partMat.white], k.x, 0.8, k.z, 14, 5, 0.25, 0.6, 10);
-        else if (e.kind === 'boulder') burst(geo.ball, [partMat.dust, partMat.mud], k.x, 0.8, k.z, 18, 6, 0.35, 0.7, 10);
         else burst(geo.box, [partMat.white, partMat.star], k.x, 0.9, k.z, 12, 6, 0.16, 0.5);
         if (e.k === me) shake = Math.max(shake, e.kind === 'rotor' ? 0.35 : 0.7);
       } else if (e.t === 'power') {

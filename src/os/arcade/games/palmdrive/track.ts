@@ -365,6 +365,11 @@ export const sOf = (t: Track, e: number, n: number) => {
  * seconds every `every`, glowing `warn` seconds before: it spins you. `look` is how the scene dresses a set piece on a
  * course of its own (a pile driver as a carillon bell, say); nothing else reads it.
  *
+ * On the Dish a boulder rolls down off the hillside and right across the road at s every `every` seconds (the first at
+ * race time `phase`): `warn` seconds of dust and rumble up the chute first, then it rolls from `cross` past the middle of
+ * the road (the uphill side: negative is the left) to as far past it on the other side, `speed` meters a second, and on
+ * down the hill. It tumbles you and throws you the way it is rolling.
+ *
  * On the water (Redwood Slough): a whirl is a whirlpool that spins up on the clock like a panel opens, `on` seconds every
  * `every` with `warn` seconds of foam turning first, pulling a kart within `pull` of its middle toward it (`power` meters a
  * second squared at the middle) and round it (`spin`: +1 one way, -1 the other), and sucking one under within `core` of
@@ -373,11 +378,6 @@ export const sOf = (t: Track, e: number, n: number) => {
  * a span vessel only on its stretch `span` of the course, once every `every` seconds from race time `phase` (gone the rest
  * of the time); a vessel with a `wake` leaves one behind it, and one with `priority` has right of way through the set
  * pieces as a bus does. A ferry crosses the channel on its chain like a golf cart on its path, and a buoy stands solid.
- *
- * On the Dish a boulder rolls down off the hillside and right across the road at s every `every` seconds (the first at
- * race time `phase`): `warn` seconds of dust and rumble up the chute first, then it rolls from `cross` past the middle of
- * the road (the uphill side: negative is the left) to as far past it on the other side, `speed` meters a second, and on
- * down the hill. It tumbles you and throws you the way it is rolling.
  */
 export type HazardKind = 'mud' | 'oil' | 'hay' | 'rock' | 'planter' | 'cow' | 'bike' | 'bus' | 'cart' | 'golfer' | 'ball' | 'sand' | 'water' | 'pin' | 'statue' | 'trench' | 'hammer' | 'bollard' | 'wrecker' | 'rotor' | 'wet' | 'panel' | 'geyser' | 'whirl' | 'launch' | 'barge' | 'log' | 'ferry' | 'buoy' | 'boulder';
 export type Hazard = {

@@ -1629,31 +1629,6 @@ export const JET = { w: 0.4, high: 1.4 };
 export const WRECK_KNOCK = 6;
 export const WRECK_MAX = 12;
 /**
- * A boulder off the hillside (see HazardKind): every `every` seconds, `warn` of dust and rumble, then it rolls across at
- * `speed` from `out` past the wall on its uphill side (unless the course says where, Hazard.cross) to as far past the
- * other.
- */
-export const BOULDER = { every: 7, warn: 1.2, speed: 7, out: 4 };
-
-/**
- * Where a boulder is across the road at race time `time` (d), whether it is rolling (and u, how far across it has got,
- * 0 to 1), the way it rolls (dir: +1 toward the right) and how far into its warning it is (0 to 1). Up the chute on its
- * uphill side until it goes, gone down the hill on the far side after. Pure in time, like the other set pieces.
- */
-export function boulderAt(r: Race, h: Hazard, time: number) {
-  const every = h.every ?? BOULDER.every;
-  const warn = h.warn ?? BOULDER.warn;
-  const from = h.cross ?? -(r.track.edge + BOULDER.out);
-  const dir = from < 0 ? 1 : -1;
-  const span = 2 * Math.abs(from);
-  const c = cycleAt(h, time, every);
-  if (c < warn) return { d: from, rolling: false, u: 0, dir, warn: c / warn };
-  const run = (c - warn) * (h.speed ?? BOULDER.speed);
-  if (run > span) return { d: -from, rolling: false, u: 1, dir, warn: 0 };
-  return { d: from + dir * run, rolling: true, u: run / span, dir, warn: 0 };
-}
-
-/**
  * Whether a bus (or a cart on its rounds) has been within right-of-way reach of h at any time in the last `span`
  * seconds up to `time`. The vehicles run at a steady speed, so the piece's offset from one slides by drive·span over
  * the window: pure in time, like rightOfWay itself.
@@ -1709,6 +1684,17 @@ export function hazState(r: Race, h: Hazard, time: number, lap: number): HazStat
     return st;
   }
   const out = awake(h, lap);
+  if (h.kind === 'boulder') {
+    // a boulder: in play while it is rolling across the road (and a little past its edges, as wide as it is)
+    if (!out) return st;
+    const b = boulderAt(r, h, time);
+    st.d = b.d;
+    st.warn = b.warn;
+    st.lift = b.u;
+    st.phase = b.rolling ? 'on' : 'idle';
+    st.live = st.solid = b.rolling && Math.abs(b.d) < r.track.edge + h.r;
+    return st;
+  }
   if (h.kind === 'whirl') {
     // a whirlpool: its foam turning for `warn` seconds, then spinning up, `on` seconds strong (lift is how strong), and
     // dying away; broken up by a launch going through, and a cycle only kept if its whole warning was shown
@@ -1742,17 +1728,6 @@ export function hazState(r: Race, h: Hazard, time: number, lap: number): HazStat
       st.live = true;
       st.lift = 1;
     } else if (c >= every - (h.warn ?? 0.8)) st.warn = (c - (every - (h.warn ?? 0.8))) / (h.warn ?? 0.8);
-    return st;
-  }
-  if (h.kind === 'boulder') {
-    // a boulder: in play while it is rolling across the road (and a little past its edges, as wide as it is)
-    if (!out) return st;
-    const b = boulderAt(r, h, time);
-    st.d = b.d;
-    st.warn = b.warn;
-    st.lift = b.u;
-    st.phase = b.rolling ? 'on' : 'idle';
-    st.live = st.solid = b.rolling && Math.abs(b.d) < r.track.edge + h.r;
     return st;
   }
   const yielding = out && rightOfWay(r, h, time);
@@ -1896,6 +1871,31 @@ export function hazSpans(r: Race, h: Hazard, time: number, lap: number, ds = 0, 
     out.push([st.d - hc, st.d + hc]);
   }
   return out;
+}
+
+/**
+ * A boulder off the hillside (see HazardKind): every `every` seconds, `warn` of dust and rumble, then it rolls across at
+ * `speed` from `out` past the wall on its uphill side (unless the course says where, Hazard.cross) to as far past the
+ * other.
+ */
+export const BOULDER = { every: 7, warn: 1.2, speed: 7, out: 4 };
+
+/**
+ * Where a boulder is across the road at race time `time` (d), whether it is rolling (and u, how far across it has got,
+ * 0 to 1), the way it rolls (dir: +1 toward the right) and how far into its warning it is (0 to 1). Up the chute on its
+ * uphill side until it goes, gone down the hill on the far side after. Pure in time, like the other set pieces.
+ */
+export function boulderAt(r: Race, h: Hazard, time: number) {
+  const every = h.every ?? BOULDER.every;
+  const warn = h.warn ?? BOULDER.warn;
+  const from = h.cross ?? -(r.track.edge + BOULDER.out);
+  const dir = from < 0 ? 1 : -1;
+  const span = 2 * Math.abs(from);
+  const c = cycleAt(h, time, every);
+  if (c < warn) return { d: from, rolling: false, u: 0, dir, warn: c / warn };
+  const run = (c - warn) * (h.speed ?? BOULDER.speed);
+  if (run > span) return { d: -from, rolling: false, u: 1, dir, warn: 0 };
+  return { d: from + dir * run, rolling: true, u: run / span, dir, warn: 0 };
 }
 
 /** Caught by a set piece: what each one does to a kart that is in its way right now (see HazardKind). */

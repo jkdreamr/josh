@@ -895,23 +895,6 @@ function Play({ mode }: { mode: Mode }) {
         if (st.live && dist < 20 && Math.sign(v) !== Math.sign(was)) sfx.noise(0.3, 0.09 * (1 - dist / 20) + 0.02);
         return;
       }
-      if (h.kind === 'boulder') {
-        // a boulder: a low rumble as it works loose and comes down its chute, and a thud each time it lands off a wall
-        const b = boulderAt(r, h, r.time);
-        const was = pieceCyc.current.get(i) ?? 0;
-        const now = b.rolling ? 2 : b.warn > 0 ? 1 : 0;
-        pieceCyc.current.set(i, now);
-        if (now === 1 && was === 0) {
-          sfx.tone({ freq: 48, to: 38, dur: 1.3, type: 'sawtooth', vol: 0.05 * vol });
-          sfx.noise(1.1, 0.05 * vol);
-        }
-        if (now === 2 && was !== 2) {
-          sfx.tone({ freq: 62, to: 34, dur: 0.4, type: 'sine', vol: 0.16 * vol });
-          sfx.noise(0.25, 0.08 * vol);
-        }
-        if (now === 2 && tick && Math.abs(b.d) < r.track.edge && Math.random() < 0.5) sfx.tone({ freq: 55 + Math.random() * 20, dur: 0.12, type: 'triangle', vol: 0.06 * vol });
-        return;
-      }
       if (h.kind === 'whirl') {
         // a whirlpool: a rising gurgle as its foam starts to turn, a roar as it spins up, churning while it spins
         const was = pieceCyc.current.get(i) ?? 0;
@@ -946,6 +929,23 @@ function Play({ mode }: { mode: Mode }) {
         }
         if (st.live && !was && dist < 70) sfx.noise(0.5, 0.08 * vol);
         if (st.live && tick && dist < 40) sfx.tone({ freq: 2400, dur: 0.012, type: 'square', vol: 0.03 * (1 - dist / 40) });
+        return;
+      }
+      if (h.kind === 'boulder') {
+        // a boulder: a low rumble as it works loose and comes down its chute, and a thud each time it lands off a wall
+        const b = boulderAt(r, h, r.time);
+        const was = pieceCyc.current.get(i) ?? 0;
+        const now = b.rolling ? 2 : b.warn > 0 ? 1 : 0;
+        pieceCyc.current.set(i, now);
+        if (now === 1 && was === 0) {
+          sfx.tone({ freq: 48, to: 38, dur: 1.3, type: 'sawtooth', vol: 0.05 * vol });
+          sfx.noise(1.1, 0.05 * vol);
+        }
+        if (now === 2 && was !== 2) {
+          sfx.tone({ freq: 62, to: 34, dur: 0.4, type: 'sine', vol: 0.16 * vol });
+          sfx.noise(0.25, 0.08 * vol);
+        }
+        if (now === 2 && tick && Math.abs(b.d) < r.track.edge && Math.random() < 0.5) sfx.tone({ freq: 55 + Math.random() * 20, dur: 0.12, type: 'triangle', vol: 0.06 * vol });
         return;
       }
       if (h.kind === 'panel' || h.kind === 'geyser') {

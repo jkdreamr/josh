@@ -154,13 +154,13 @@ function placed(
  * says how wide the middle two are (on a road with a wide verge, the outer two then take in the verge as well, so a kart
  * can still get through one of them on the road).
  */
-function bollards(t: Track, s: number, lap: number, phases: [number, number, number, number], inner?: number): NonNullable<Parameters<typeof placed>[1]['pieces']> {
+function bollards(t: Track, s: number, lap: number, phases: [number, number, number, number], inner?: number, on = 1.6): NonNullable<Parameters<typeof placed>[1]['pieces']> {
   if (inner === undefined) {
     const w = (2 * t.edge) / 4;
-    return phases.map((phase, i) => ({ kind: 'bollard' as const, s, d: (i - 1.5) * w, w, every: 3.2, on: 1.6, warn: 0.9, phase, lap }));
+    return phases.map((phase, i) => ({ kind: 'bollard' as const, s, d: (i - 1.5) * w, w, every: 3.2, on, warn: 0.9, phase, lap }));
   }
   const cuts = [-t.edge, -inner, 0, inner, t.edge];
-  return phases.map((phase, i) => ({ kind: 'bollard' as const, s, d: (cuts[i] + cuts[i + 1]) / 2, w: cuts[i + 1] - cuts[i], every: 3.2, on: 1.6, warn: 0.9, phase, lap }));
+  return phases.map((phase, i) => ({ kind: 'bollard' as const, s, d: (cuts[i] + cuts[i + 1]) / 2, w: cuts[i + 1] - cuts[i], every: 3.2, on, warn: 0.9, phase, lap }));
 }
 
 /** Lake Lagunita, scaled from map meters like Palm Drive's route. */
@@ -492,6 +492,9 @@ export const COURSES: Record<CourseId, Course> = {
       [548, 640, 1, 'pit'],
     ],
     laps: { 3: 'Another cow on the road' },
+    // (with the drops and the boulders the field loses a little more to the course than a clean driver does at 150cc and
+    // up: the CPUs a touch slower there keeps a good driver winning a third to a half of races, as on Hard it should)
+    tier: { paceCc: { '150cc': 0.993, '200cc': 0.993 } },
     layout: (t) =>
       placed(t, {
         boxes: [95, 430, 790, 1150],
@@ -594,6 +597,9 @@ export const COURSES: Record<CourseId, Course> = {
     half: 6.5,
     edge: 10,
     laps: { 2: 'Bollards on the straights', 3: 'The sprinkler comes on' },
+    // (the bollards cost a clean driver more than the field at 150cc and up, as on Hoover Nights: the CPUs a little
+    // slower there keeps a good driver winning a third to a half of races; see the PR)
+    tier: { paceCc: { '150cc': 0.97, '200cc': 0.97 } },
     layout: (t) =>
       placed(t, {
         boxes: [48, 372, 636],
@@ -637,8 +643,8 @@ export const COURSES: Record<CourseId, Course> = {
           // from lap 2 bollards right across the start straight (never the first lap: the pack is on it two seconds
           // after the lights) and the straight between the east side's dog-legs, rippling opposite ways (the outer
           // banks take in the verge too, so each bank's gap is on the road)
-          ...bollards(t, 22, 2, [0, 0.8, 1.6, 2.4], 4.25),
-          ...bollards(t, 290, 2, [2.4, 1.6, 0.8, 0], 4.25),
+          ...bollards(t, 22, 2, [0, 0.8, 1.6, 2.4], 4.25, 1.2),
+          ...bollards(t, 290, 2, [2.4, 1.6, 0.8, 0], 4.25, 1.2),
           // and from lap 3 a sprinkler on the west side, before the kicker
           { kind: 'rotor', s: 788, d: 0, r: 0.6, arm: 6, spin: 2, a0: 0, lap: 3 },
         ],
