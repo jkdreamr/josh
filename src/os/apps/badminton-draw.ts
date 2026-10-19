@@ -8,13 +8,16 @@ export type AthleteView = {
   facing: Direction;
   /** 0..1 progress through the current swing, or null when idle */
   swing: number | null;
+  /** 0..1 how far a held smash has been wound up */
+  charge?: number;
   intent: Intent;
   label: string;
   isHuman: boolean;
 };
 
 export type LandingMark = { x: number; at: number; kind: 'in' | 'out' | 'net' };
-export type Impact = { x: number; y: number; at: number; strong: boolean };
+/** charge: 0..1 from a half smash to a full one, on strong impacts */
+export type Impact = { x: number; y: number; at: number; strong: boolean; charge?: number };
 
 export type SceneView = {
   athletes: AthleteView[];
@@ -305,9 +308,11 @@ function drawAthlete(ctx: CanvasRenderingContext2D, athlete: AthleteView, now: n
   // arms and racket
   let racketX: number;
   let racketY: number;
+  const charge = swing === null ? athlete.charge ?? 0 : 0;
   if (swing === null) {
-    racketX = facing * 0.5;
-    racketY = 1.12;
+    // Winding up a smash draws the racket back behind the head.
+    racketX = facing * 0.5 + (-facing * 0.25 - facing * 0.5) * charge;
+    racketY = 1.12 + (2.0 - 1.12) * charge;
   } else if (overhead) {
     const start = { x: -facing * 0.1, y: 1.95 };
     const end = { x: facing * 0.7, y: 1.1 };
@@ -327,7 +332,7 @@ function drawAthlete(ctx: CanvasRenderingContext2D, athlete: AthleteView, now: n
   ctx.moveTo(-facing * 0.17, 1.06);
   ctx.lineTo(-facing * 0.34, swing !== null && overhead ? 1.25 : 0.8);
   ctx.stroke();
-  const handleAngle = swing === null ? facing * 0.5 : overhead ? facing * (1.3 - swing * 1.9) : facing * (-0.9 + swing * 1.6);
+  const handleAngle = swing === null ? facing * (0.5 + 1.0 * charge) : overhead ? facing * (1.3 - swing * 1.9) : facing * (-0.9 + swing * 1.6);
   ctx.save();
   ctx.translate(racketX, racketY);
   ctx.rotate(handleAngle);
@@ -368,6 +373,25 @@ function drawAthlete(ctx: CanvasRenderingContext2D, athlete: AthleteView, now: n
 
   if (reflection) return;
 
+  // Charge ring over the head: fills while a smash is held and pulses gold once it is full.
+  if (charge > 0) {
+    const full = charge >= 1;
+    const pulse = full ? 0.5 + 0.5 * Math.sin(now * 0.025) : 0;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 0.05;
+    ctx.strokeStyle = 'rgba(255,255,255,.18)';
+    ctx.beginPath();
+    ctx.arc(x, lift + 1.95, 0.17, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = full ? `rgba(255,198,92,${0.75 + 0.25 * pulse})` : 'rgba(248,246,231,.85)';
+    ctx.lineWidth = 0.05 + 0.025 * pulse;
+    ctx.beginPath();
+    ctx.arc(x, lift + 1.95, 0.17, Math.PI / 2, Math.PI / 2 - Math.PI * 2 * charge, true);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // name tag on the floor
   ctx.save();
   ctx.scale(px, -px);
@@ -384,21 +408,28 @@ function drawShuttle(ctx: CanvasRenderingContext2D, view: SceneView, px: number)
   const shuttle = flight.shuttle;
   const { now } = view;
 
-  if (view.impact && now - view.impact.at < 220) {
-    const progress = Math.max(0, now - view.impact.at) / 220;
+  // A full smash bursts bigger, brighter and for longer than a half one.
+  const impactCharge = view.impact?.strong ? view.impact.charge ?? 0 : 0;
+  const impactMs = 220 + 200 * impactCharge;
+  if (view.impact && now - view.impact.at < impactMs) {
+    const progress = Math.max(0, now - view.impact.at) / impactMs;
+    const reach = 1 + 1.2 * impactCharge;
     ctx.save();
     ctx.globalAlpha = 1 - progress;
-    ctx.strokeStyle = view.impact.strong ? '#fff1c2' : 'rgba(255,255,255,.7)';
-    ctx.lineWidth = (view.impact.strong ? 2.4 : 1.4) * px;
+    ctx.strokeStyle = view.impact.strong ? (impactCharge > 0.7 ? '#ffc65c' : '#fff1c2') : 'rgba(255,255,255,.7)';
+    ctx.lineWidth = (view.impact.strong ? 2.4 + 2 * impactCharge : 1.4) * px;
     ctx.beginPath();
-    ctx.arc(view.impact.x, view.impact.y, 0.14 + progress * (view.impact.strong ? 0.6 : 0.3), 0, Math.PI * 2);
+    ctx.arc(view.impact.x, view.impact.y, 0.14 + progress * (view.impact.strong ? 0.6 * reach : 0.3), 0, Math.PI * 2);
     ctx.stroke();
     if (view.impact.strong) {
-      for (let ray = 0; ray < 8; ray += 1) {
-        const angle = ray * Math.PI / 4 + 0.3;
+      const rays = impactCharge > 0.7 ? 12 : 8;
+      for (let ray = 0; ray < rays; ray += 1) {
+        const angle = ray * Math.PI * 2 / rays + 0.3;
+        const inner = (0.22 + progress * 0.3) * reach;
+        const outer = (0.4 + progress * 0.5) * reach;
         ctx.beginPath();
-        ctx.moveTo(view.impact.x + Math.cos(angle) * (0.22 + progress * 0.3), view.impact.y + Math.sin(angle) * (0.22 + progress * 0.3));
-        ctx.lineTo(view.impact.x + Math.cos(angle) * (0.4 + progress * 0.5), view.impact.y + Math.sin(angle) * (0.4 + progress * 0.5));
+        ctx.moveTo(view.impact.x + Math.cos(angle) * inner, view.impact.y + Math.sin(angle) * inner);
+        ctx.lineTo(view.impact.x + Math.cos(angle) * outer, view.impact.y + Math.sin(angle) * outer);
         ctx.stroke();
       }
     }
@@ -422,10 +453,14 @@ function drawShuttle(ctx: CanvasRenderingContext2D, view: SceneView, px: number)
     ctx.lineCap = 'round';
     const speed = Math.hypot(shuttle.vx, shuttle.vy);
     const strength = Math.min(1, speed / 35);
+    // Past half smash pace the streak runs hot: thicker, brighter and gold at full smash speed.
+    const heat = Math.max(0, Math.min(1, (speed - 40) / 40));
+    const green = Math.round(246 - 66 * heat);
+    const blue = Math.round(231 - 151 * heat);
     for (let index = 1; index < view.trail.length; index += 1) {
-      const alpha = (index / view.trail.length) * (0.14 + strength * 0.3);
-      ctx.strokeStyle = `rgba(248,246,231,${alpha})`;
-      ctx.lineWidth = (0.03 + strength * 0.05) * (index / view.trail.length);
+      const alpha = (index / view.trail.length) * (0.14 + strength * 0.3 + heat * 0.35);
+      ctx.strokeStyle = `rgba(255,${green},${blue},${alpha})`;
+      ctx.lineWidth = (0.03 + strength * 0.05 + heat * 0.07) * (index / view.trail.length);
       ctx.beginPath();
       ctx.moveTo(view.trail[index - 1].x, view.trail[index - 1].y);
       ctx.lineTo(view.trail[index].x, view.trail[index].y);

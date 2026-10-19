@@ -3,8 +3,10 @@ import {
   awardPoint,
   chooseShot,
   contactAccuracy,
-  cpuChooseShot,
+  chargePower,
+  cpuReturn,
   CPU_PROFILES,
+  HALF_SMASH_POWER,
   COURT_HALF_LENGTH,
   createFlight,
   directionOf,
@@ -14,13 +16,17 @@ import {
   newStats,
   opposite,
   planShot,
+  pressuredAccuracy,
   pointSituation,
   recordRally,
   recordSmash,
   serviceCourt,
   shotLabel,
   sideAt,
-  simulateLanding,
+  smashCharge,
+  smashLabel,
+  smashPressure,
+  smashRecoveryMs,
   startNextGame,
   stepFlight,
   takeInterval,
@@ -31,11 +37,13 @@ import {
   type MatchState,
   type MatchStats,
   type Point2D,
+  type ShotOptions,
   type RallyCause,
   type RallyOutcome,
   type ShotType,
   type Side,
 } from '../games/badminton';
+import { clampToHalf, PLAYER_GRAVITY, PLAYER_JUMP_VELOCITY, PLAYER_STEP, RACKET_REACH, stepCpuBody, type CpuMind } from '../games/badminton-cpu';
 import { useOS, type AppProps } from '../types';
 import { countPlay } from '../stats';
 import { getAppGame } from '../arcade/apps';
@@ -69,6 +77,12 @@ type Athlete = {
   swingUntil: number;
   intent: Intent;
   seekX: number | null;
+  /** clock when the hit input went down and is still held, for a charged smash */
+  chargeStart: number | null;
+  /** smash power of the swing in progress */
+  power: number;
+  /** off balance after a smash until this clock */
+  recoverUntil: number;
 };
 type Announcement = { key: number; title: string; detail: string };
 type Hud = { rally: number; shot: string };
@@ -86,22 +100,23 @@ type Sim = {
   shake: number;
   rallyShots: number;
   rallyStart: number;
-  lastShot: { type: ShotType; speed: number } | null;
-  cpuReactAt: number;
+  lastShot: { type: ShotType; speed: number; power?: number } | null;
+  cpu: CpuMind;
   cpuServeAt: number;
-  cpuHome: number;
-  cpuTarget: number | null;
-  cpuPredictAt: number;
+  /** the computer whiffed this flight and gets no second go */
+  cpuMissed: boolean;
 };
 
 const SIDES: Side[] = ['a', 'b'];
-const STEP = 1 / 240;
-const REACH = 0.95;
+const STEP = PLAYER_STEP;
+const REACH = RACKET_REACH;
 const SWING_MS = 170;
 const SWING_DRAW_MS = 230;
 const RUN_SPEED = 5.3;
-const JUMP_VELOCITY = 5.2;
-const GRAVITY = 12.4;
+const JUMP_VELOCITY = PLAYER_JUMP_VELOCITY;
+const GRAVITY = PLAYER_GRAVITY;
+/** A hold shorter than this is a tap: the press swing already played it. */
+const CHARGE_MIN_MS = 150;
 const SETTINGS_KEY = 'jk-badminton';
 const DEFAULT_SETTINGS: Settings = { mode: 'cpu', difficulty: 'normal', length: 'game', sound: true };
 
@@ -111,7 +126,7 @@ const KEYS: Record<'p1' | 'p2', Record<keyof Controls | 'hit', string[]>> = {
 };
 
 const LENGTH_LABEL: Record<MatchLength, string> = { quick: 'Quick to 11', game: 'Game to 21', match: 'Best of Three' };
-const DIFFICULTY_LABEL: Record<Difficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard' };
+const DIFFICULTY_LABEL: Record<Difficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard', pro: 'Pro' };
 
 function loadSettings(): Settings {
   try {
@@ -130,7 +145,7 @@ function loadSettings(): Settings {
 }
 
 function newAthlete(side: Side): Athlete {
-  return { side, x: 0, vx: 0, jump: 0, jumpVelocity: 0, jumpRequested: false, swingStart: -1e9, swingUntil: 0, intent: 'normal', seekX: null };
+  return { side, x: 0, vx: 0, jump: 0, jumpVelocity: 0, jumpRequested: false, swingStart: -1e9, swingUntil: 0, intent: 'normal', seekX: null, chargeStart: null, power: HALF_SMASH_POWER, recoverUntil: 0 };
 }
 
 function newSim(): Sim {
@@ -148,20 +163,14 @@ function newSim(): Sim {
     rallyShots: 0,
     rallyStart: 0,
     lastShot: null,
-    cpuReactAt: 0,
+    cpu: { reactAt: 0, target: null, predictAt: 0, home: 3.2 },
     cpuServeAt: 0,
-    cpuHome: 3.2,
-    cpuTarget: null,
-    cpuPredictAt: 0,
+    cpuMissed: false,
   };
 }
 
 function newControls(): Controls {
   return { left: false, right: false, jump: false, soft: false };
-}
-
-function clampToHalf(x: number, direction: 1 | -1) {
-  return direction > 0 ? Math.max(-COURT_HALF_LENGTH - 0.3, Math.min(-0.55, x)) : Math.max(0.55, Math.min(COURT_HALF_LENGTH + 0.3, x));
 }
 
 function kmh(speed: number) {
@@ -212,6 +221,20 @@ export default function Badminton({ args }: AppProps) {
     if (roleRef.current !== 'guest') return;
     sendRef.current({ t: 'in', c: { ...controlsRef.current.b } });
     if (jumped) sendRef.current({ t: 'jump' });
+  };
+
+  /** performance.now() when each side's hit input went down, while it is held */
+  const chargeRef = useRef<Record<Side, number | null>>({ a: null, b: null });
+  const startCharge = (side: Side) => {
+    chargeRef.current[side] = performance.now();
+    if (roleRef.current !== 'guest') simRef.current.athletes[side].chargeStart = simRef.current.clock;
+  };
+  /** Ends a hold and returns how long it lasted in ms. */
+  const endCharge = (side: Side) => {
+    const start = chargeRef.current[side];
+    chargeRef.current[side] = null;
+    simRef.current.athletes[side].chargeStart = null;
+    return start === null ? 0 : performance.now() - start;
   };
 
   matchRef.current = match;
@@ -268,8 +291,10 @@ export default function Badminton({ args }: AppProps) {
       athlete.jumpRequested = false;
       athlete.swingUntil = 0;
       athlete.seekX = null;
+      athlete.chargeStart = null;
+      athlete.recoverUntil = 0;
     }
-    sim.cpuHome = 3.1;
+    sim.cpu.home = 3.1;
   }, []);
 
   const beginServe = useCallback(
@@ -314,31 +339,32 @@ export default function Badminton({ args }: AppProps) {
   );
 
   const strike = useCallback(
-    (side: Side, intent: Intent, contact: Point2D, accuracy: number) => {
+    (side: Side, type: ShotType, contact: Point2D, accuracy: number, options: ShotOptions) => {
       const sim = simRef.current;
       const state = matchRef.current;
       const direction = directionOf(side, state);
-      const opponent = sim.athletes[opposite(side)];
-      const type = isCpu(side)
-        ? cpuChooseShot(contact, Math.abs(opponent.x), CPU_PROFILES[settingsRef.current.difficulty])
-        : chooseShot(intent, contact);
-      const plan = planShot(type, direction, contact, Math.random, accuracy);
+      const plan = planShot(type, direction, contact, Math.random, accuracy, options);
+      const power = options.power ?? HALF_SMASH_POWER;
       const heading = sim.flight ? sim.flight.heading : 0;
       sim.flight = createFlight(contact, plan.velocity, side, direction, false, heading);
       sim.trail = [];
       sim.rallyShots += 1;
       const speed = Math.hypot(plan.velocity.vx, plan.velocity.vy);
-      sim.lastShot = { type: plan.type, speed };
+      sim.lastShot = plan.type === 'smash' ? { type: plan.type, speed, power } : { type: plan.type, speed };
+      sim.cpuMissed = false;
       const strong = plan.type === 'smash';
-      sim.impact = { x: contact.x, y: contact.y, at: sim.clock, strong };
+      const charge = strong ? smashCharge(power) : 0;
+      sim.impact = { x: contact.x, y: contact.y, at: sim.clock, strong, charge };
       if (strong) {
-        sim.shake = Math.min(6, 2 + speed / 14);
-        sim.freezeUntil = sim.clock + 45;
+        // A full smash shakes the court hard and holds the frame for a beat; a half smash barely does.
+        sim.shake = 1.5 + 6.5 * charge;
+        sim.freezeUntil = sim.clock + 30 + 90 * charge;
         statsRef.current = recordSmash(statsRef.current, side, speed);
+        sim.athletes[side].recoverUntil = sim.clock + smashRecoveryMs(power);
       } else if (plan.type === 'drive') {
         sim.shake = 1.2;
       }
-      if (isCpu(opposite(side))) sim.cpuReactAt = sim.clock + CPU_PROFILES[settingsRef.current.difficulty].reactionMs;
+      if (isCpu(opposite(side))) sim.cpu.reactAt = sim.clock + CPU_PROFILES[settingsRef.current.difficulty].reactionMs;
       audio().hit(plan.type, speed);
     },
     [isCpu],
@@ -367,8 +393,9 @@ export default function Badminton({ args }: AppProps) {
       sim.rallyStart = sim.clock;
       sim.rallyShots = 1;
       sim.lastShot = { type: plan.type, speed: Math.hypot(plan.velocity.vx, plan.velocity.vy) };
+      sim.cpuMissed = false;
       sim.impact = { x: start.x, y: start.y, at: sim.clock, strong: false };
-      if (isCpu(opposite(side))) sim.cpuReactAt = sim.clock + CPU_PROFILES[settingsRef.current.difficulty].reactionMs;
+      if (isCpu(opposite(side))) sim.cpu.reactAt = sim.clock + CPU_PROFILES[settingsRef.current.difficulty].reactionMs;
       setPhase('rally');
       audio().hit(plan.type, sim.lastShot.speed);
     },
@@ -396,14 +423,14 @@ export default function Badminton({ args }: AppProps) {
   }, [beginServe]);
 
   const swing = useCallback(
-    (side: Side, explicit?: Intent) => {
+    (side: Side, explicit?: Intent, power = HALF_SMASH_POWER) => {
       if (screenRef.current !== 'play' || pausedRef.current) return;
       const sim = simRef.current;
       const athlete = sim.athletes[side];
       const controls = controlsRef.current[side];
       const intent: Intent = explicit ?? (controls.soft ? 'soft' : controls.jump || athlete.jump > 0.05 ? 'power' : 'normal');
       if (roleRef.current === 'guest') {
-        sendRef.current({ t: 'hit', intent });
+        sendRef.current({ t: 'hit', intent, power });
         return;
       }
       if (sim.phase === 'serve') {
@@ -415,6 +442,7 @@ export default function Badminton({ args }: AppProps) {
         athlete.swingStart = sim.clock;
         athlete.swingUntil = sim.clock + SWING_MS + (settingsRef.current.mode === 'online' && side === 'b' ? REMOTE_SWING_MS : 0);
         athlete.intent = intent;
+        athlete.power = Math.max(0, Math.min(1, power));
         return;
       }
       if (sim.phase === 'interval' || sim.phase === 'game-end') continueFlow();
@@ -510,7 +538,9 @@ export default function Badminton({ args }: AppProps) {
       } else {
         move = (controls.right ? 1 : 0) - (controls.left ? 1 : 0);
       }
-      const targetVx = move * RUN_SPEED;
+      // Off balance after a smash, and set on the spot while winding one up.
+      const charging = athlete.chargeStart !== null && sim.clock - athlete.chargeStart > CHARGE_MIN_MS;
+      const targetVx = move * RUN_SPEED * (sim.clock < athlete.recoverUntil ? 0.5 : charging ? 0.75 : 1);
       const rate = Math.abs(targetVx) > Math.abs(athlete.vx) ? 28 : 34;
       athlete.vx += Math.max(-rate * STEP, Math.min(rate * STEP, targetVx - athlete.vx));
       if (Math.abs(athlete.vx) < 0.02 && move === 0) athlete.vx = 0;
@@ -527,54 +557,14 @@ export default function Badminton({ args }: AppProps) {
     };
 
     const stepCpu = (sim: Sim, state: MatchState) => {
-      const cpu = sim.athletes.b;
-      const direction = directionOf('b', state);
-      const profile = CPU_PROFILES[settingsRef.current.difficulty];
-      const flight = sim.flight;
-      let target: number | null = null;
-      if (sim.phase === 'rally' && flight && flight.status === 'flying') {
-        if (flight.hitter !== 'b') {
-          if (sim.clock >= sim.cpuReactAt) {
-            if (sim.cpuTarget === null || sim.clock >= sim.cpuPredictAt) {
-              const prediction = simulateLanding({ x: flight.shuttle.x, y: flight.shuttle.y }, { vx: flight.shuttle.vx, vy: flight.shuttle.vy });
-              sim.cpuTarget = clampToHalf(prediction.x - direction * 0.4, direction);
-              sim.cpuPredictAt = sim.clock + 120;
-            }
-            target = sim.cpuTarget;
-            const racketX = cpu.x + direction * 0.5;
-            if (
-              flight.shuttle.y > 2.25 &&
-              flight.shuttle.vy < 1.5 &&
-              Math.abs(flight.shuttle.x - racketX) < 1.4 &&
-              cpu.jump <= 0.001 &&
-              cpu.jumpVelocity <= 0
-            ) {
-              cpu.jumpRequested = true;
-            }
-          }
-        } else {
-          sim.cpuTarget = null;
-          target = -direction * sim.cpuHome;
-        }
-      }
-      if (target === null) {
-        cpu.vx *= 0.8;
-        if (Math.abs(cpu.vx) < 0.05) cpu.vx = 0;
-      } else {
-        const gap = target - cpu.x;
-        const desired = Math.abs(gap) > 0.08 ? Math.sign(gap) * Math.min(profile.speed, Math.abs(gap) * 7) : 0;
-        cpu.vx += Math.max(-28 * STEP, Math.min(28 * STEP, desired - cpu.vx));
-      }
-      cpu.x = clampToHalf(cpu.x + cpu.vx * STEP, direction);
-      if (cpu.jumpRequested) {
-        cpu.jumpRequested = false;
-        cpu.jumpVelocity = JUMP_VELOCITY * 0.92;
-      }
-      if (cpu.jumpVelocity !== 0 || cpu.jump > 0) {
-        cpu.jumpVelocity -= GRAVITY * STEP;
-        cpu.jump = Math.max(0, cpu.jump + cpu.jumpVelocity * STEP);
-        if (cpu.jump === 0 && cpu.jumpVelocity < 0) cpu.jumpVelocity = 0;
-      }
+      stepCpuBody(sim.athletes.b, sim.cpu, {
+        clock: sim.clock,
+        rallying: sim.phase === 'rally',
+        flight: sim.flight,
+        side: 'b',
+        direction: directionOf('b', state),
+        profile: CPU_PROFILES[settingsRef.current.difficulty],
+      });
     };
 
     const tryContacts = (sim: Sim, state: MatchState) => {
@@ -588,16 +578,26 @@ export default function Badminton({ args }: AppProps) {
       const racket = { x: athlete.x + direction * 0.5, y: 1.2 + athlete.jump };
       const distance = Math.hypot(shuttle.x - racket.x, shuttle.y - racket.y);
       if (distance > REACH) return;
+      const contact = { x: shuttle.x, y: shuttle.y };
+      const incoming = sim.lastShot?.type ?? null;
       if (isCpu(side)) {
-        if (sim.clock < sim.cpuReactAt) return;
+        if (sim.clock < sim.cpu.reactAt || sim.cpuMissed) return;
         athlete.swingStart = sim.clock - 70;
         athlete.intent = shuttle.y >= 1.6 ? 'normal' : 'soft';
-        strike(side, 'normal', { x: shuttle.x, y: shuttle.y }, CPU_PROFILES[settingsRef.current.difficulty].accuracy);
+        const reply = cpuReturn(contact, incoming, flight.elapsed, Math.abs(sim.athletes[opposite(side)].x), settingsRef.current.difficulty, Math.random, sim.lastShot?.power);
+        if (reply.kind === 'miss') {
+          sim.cpuMissed = true;
+          return;
+        }
+        strike(side, reply.type, contact, reply.accuracy, reply.options);
         return;
       }
       if (sim.clock > athlete.swingUntil) return;
       athlete.swingUntil = 0;
-      strike(side, athlete.intent, { x: shuttle.x, y: shuttle.y }, contactAccuracy(distance, REACH));
+      // A held key hits at whatever it has charged to by contact.
+      const power = athlete.chargeStart !== null ? chargePower(sim.clock - athlete.chargeStart) : athlete.power;
+      const accuracy = pressuredAccuracy(contactAccuracy(distance, REACH), smashPressure(incoming, flight.elapsed));
+      strike(side, chooseShot(athlete.intent, contact), contact, accuracy, { power });
     };
 
     const settleFlight = (sim: Sim) => {
@@ -665,7 +665,7 @@ export default function Badminton({ args }: AppProps) {
         rally: sim.phase === 'rally' || sim.phase === 'point' ? sim.rallyShots : 0,
         shot: sim.lastShot
           ? sim.lastShot.type === 'smash' || sim.lastShot.type === 'drive'
-            ? `${shotLabel(sim.lastShot.type)} ${kmh(sim.lastShot.speed)} km/h`
+            ? `${sim.lastShot.type === 'smash' ? smashLabel(sim.lastShot.power ?? HALF_SMASH_POWER) : shotLabel(sim.lastShot.type)} ${kmh(sim.lastShot.speed)} km/h`
             : shotLabel(sim.lastShot.type)
           : '',
       };
@@ -681,6 +681,9 @@ export default function Badminton({ args }: AppProps) {
       const athletes: AthleteView[] = SIDES.map((side) => {
         const athlete = sim.athletes[side];
         const progress = (sim.clock - athlete.swingStart) / SWING_DRAW_MS;
+        // The host times holds on the sim clock; a guest only knows its own hold, on the wall clock.
+        const localHold = chargeRef.current[side];
+        const held = athlete.chargeStart !== null ? sim.clock - athlete.chargeStart : localHold !== null ? performance.now() - localHold : 0;
         return {
           side,
           x: athlete.x,
@@ -688,6 +691,7 @@ export default function Badminton({ args }: AppProps) {
           jump: athlete.jump,
           facing: directionOf(side, state),
           swing: progress >= 0 && progress < 1 ? progress : null,
+          charge: held > CHARGE_MIN_MS ? smashCharge(chargePower(held)) : 0,
           intent: athlete.intent,
           label: nameOf(side, false),
           isHuman: !isCpu(side),
@@ -854,6 +858,7 @@ export default function Badminton({ args }: AppProps) {
       const controls = controlsRef.current[hit.side];
       if (hit.action === 'hit') {
         swing(hit.side);
+        startCharge(hit.side);
         return;
       }
       controls[hit.action] = true;
@@ -862,11 +867,19 @@ export default function Badminton({ args }: AppProps) {
     };
     const onKeyUp = (event: KeyboardEvent) => {
       const hit = resolve(event.code);
-      if (!hit || hit.action === 'hit') return;
+      if (!hit) return;
+      if (hit.action === 'hit') {
+        const held = endCharge(hit.side);
+        // Letting go of a held key swings again, at the power it built up.
+        if (held >= CHARGE_MIN_MS) swing(hit.side, undefined, chargePower(held));
+        return;
+      }
       controlsRef.current[hit.side][hit.action] = false;
       pushControls();
     };
     const onBlur = () => {
+      endCharge('a');
+      endCharge('b');
       controlsRef.current = { a: newControls(), b: newControls() };
       pushControls();
     };
@@ -897,7 +910,7 @@ export default function Badminton({ args }: AppProps) {
       if (message.t === 'in') controlsRef.current.b = { ...message.c };
       else if (message.t === 'jump') athlete.jumpRequested = true;
       else if (message.t === 'seek') athlete.seekX = message.x === null ? null : clampToHalf(message.x, directionOf('b', matchRef.current));
-      else if (message.t === 'hit') swing('b', message.intent);
+      else if (message.t === 'hit') swing('b', message.intent, message.power);
       else if (message.t === 'go') continueFlow();
       return;
     }
@@ -968,6 +981,7 @@ export default function Badminton({ args }: AppProps) {
     for (const pointer of pointersRef.current.values()) if (pointer.side === side) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     pointersRef.current.set(event.pointerId, { side, startX: event.clientX, startY: event.clientY, startAt: performance.now(), moved: false });
+    startCharge(side);
     audio().unlock();
   };
   const onStagePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -989,11 +1003,12 @@ export default function Badminton({ args }: AppProps) {
     if (!pointer) return;
     pointersRef.current.delete(event.pointerId);
     simRef.current.athletes[pointer.side].seekX = null;
+    const held = endCharge(pointer.side);
     if (roleRef.current === 'guest' && pointer.sentX !== undefined) sendRef.current({ t: 'seek', x: null });
     if (event.type === 'pointercancel') return;
-    if (!pointer.moved && performance.now() - pointer.startAt < 400) {
+    if (!pointer.moved && held < 1200) {
       const dy = event.clientY - pointer.startY;
-      swing(pointer.side, dy < -24 ? 'power' : dy > 24 ? 'soft' : undefined);
+      swing(pointer.side, dy < -24 ? 'power' : dy > 24 ? 'soft' : undefined, chargePower(held));
     }
   };
 
@@ -1021,17 +1036,21 @@ export default function Badminton({ args }: AppProps) {
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
       hitPadStart.current = { y: event.clientY, at: performance.now() };
+      startCharge(settingsRef.current.mode === 'online' ? mySide() : 'a');
       audio().unlock();
     },
     onPointerUp: (event: ReactPointerEvent<HTMLButtonElement>) => {
       const start = hitPadStart.current;
       hitPadStart.current = null;
       if (!start) return;
+      const side = settingsRef.current.mode === 'online' ? mySide() : 'a';
+      const held = endCharge(side);
       const dy = event.clientY - start.y;
-      swing(settingsRef.current.mode === 'online' ? mySide() : 'a', dy < -18 ? 'power' : dy > 18 ? 'soft' : undefined);
+      swing(side, dy < -18 ? 'power' : dy > 18 ? 'soft' : undefined, chargePower(held));
     },
     onPointerCancel: () => {
       hitPadStart.current = null;
+      endCharge(settingsRef.current.mode === 'online' ? mySide() : 'a');
     },
   };
 
@@ -1068,11 +1087,11 @@ export default function Badminton({ args }: AppProps) {
 
   const helpLine = (() => {
     if (touch) {
-      if (settings.mode === 'two') return 'Each player drags on their half to move. Tap to hit, flick up to smash, flick down for a drop.';
-      return 'Flick up on Hit to smash, flick down for a drop. You can also drag on the court to move.';
+      if (settings.mode === 'two') return 'Each player drags on their half to move. Tap to hit, flick up to smash, flick down for a drop. Hold first for a full smash.';
+      return 'Flick up on Hit to smash, flick down for a drop. Hold Hit first for a full smash. You can also drag on the court to move.';
     }
-    if (settings.mode === 'two') return 'Player 1: A and D move, W jumps, S softens, Space hits. Player 2: Arrow Keys move and jump, Down softens, Enter hits.';
-    return 'A and D move, W jumps, Space hits. Hold S for a drop. Jump and hit for a smash. Click or drag on the court works too.';
+    if (settings.mode === 'two') return 'Player 1: A and D move, W jumps, S softens, Space hits. Player 2: Arrow Keys move and jump, Down softens, Enter hits. Hold the hit key and let go for a full smash.';
+    return 'A and D move, W jumps, Space hits. Hold S for a drop. Jump and hit for a smash, or hold Space and let go for a full smash.';
   })();
 
   const winner = match.matchWinner;
@@ -1164,14 +1183,14 @@ export default function Badminton({ args }: AppProps) {
           <div className="bd-howto-grid">
             <section>
               <h3>Shots</h3>
-              <p>Where you meet the shuttle decides the shot. High overhead is a clear. Hold Soft for a drop. Jump and hit for a smash. Around shoulder height is a drive. Low near the net is a net shot, low and deep is a lift.</p>
+              <p>Where you meet the shuttle decides the shot. High overhead is a clear. Hold Soft for a drop. Jump and hit for a smash. A tap is a half smash. Hold the hit and a ring fills over your head; let go once it glows gold for a full smash, more than twice as fast, but harder to aim and slower to recover from. Smashes from the back lose pace on the way. Around shoulder height is a drive. Low near the net is a net shot, low and deep is a lift.</p>
             </section>
             <section>
               <h3>Controls</h3>
               {touch ? (
-                <p>Drag on the court or use the pads to move. Tap Hit to play the shuttle, flick up on Hit to smash, flick down for a drop. With two players, each one drags and taps on their own half.</p>
+                <p>Drag on the court or use the pads to move. Tap Hit to play the shuttle, flick up on Hit to smash, flick down for a drop. Hold Hit before you flick for a full smash. With two players, each one drags and taps on their own half.</p>
               ) : (
-                <p>A and D move, W jumps, Space hits, S makes the shot soft. The mouse works too: drag on the court to move, click to hit, flick up for power or down for a drop. Player 2 uses the Arrow Keys and Enter. Press P to pause.</p>
+                <p>A and D move, W jumps, Space hits, S makes the shot soft. Hold Space and let go for a full smash. The mouse works too: drag on the court to move, click to hit, flick up for power or down for a drop. Player 2 uses the Arrow Keys and Enter. Press P to pause.</p>
               )}
             </section>
             <section>

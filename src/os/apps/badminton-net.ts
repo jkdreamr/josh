@@ -20,13 +20,13 @@ export type NetSnapshot = {
   impact: Impact | null;
   shake: number;
   rallyShots: number;
-  lastShot: { type: ShotType; speed: number } | null;
+  lastShot: { type: ShotType; speed: number; power?: number } | null;
 };
 export type NetScore = { t: 'm'; match: MatchState; stats: MatchStats; phase: NetPhase; call: { key: number; title: string; detail: string } | null };
 export type GuestMessage =
   | { t: 'in'; c: NetControls }
   | { t: 'jump' }
-  | { t: 'hit'; intent?: Intent }
+  | { t: 'hit'; intent?: Intent; power?: number }
   | { t: 'seek'; x: number | null }
   | { t: 'go' };
 
@@ -46,7 +46,14 @@ export function parseGuestMessage(value: unknown): GuestMessage | null {
     return bool(c.left) && bool(c.right) && bool(c.jump) && bool(c.soft) ? { t: 'in', c: { left: c.left, right: c.right, jump: c.jump, soft: c.soft } } : null;
   }
   if (value.t === 'jump' || value.t === 'go') return { t: value.t };
-  if (value.t === 'hit') return value.intent === undefined ? { t: 'hit' } : INTENTS.includes(value.intent as Intent) ? { t: 'hit', intent: value.intent as Intent } : null;
+  if (value.t === 'hit') {
+    if (value.intent !== undefined && !INTENTS.includes(value.intent as Intent)) return null;
+    if (value.power !== undefined && !(typeof value.power === 'number' && value.power >= 0 && value.power <= 1)) return null;
+    const hit: { t: 'hit'; intent?: Intent; power?: number } = { t: 'hit' };
+    if (value.intent !== undefined) hit.intent = value.intent as Intent;
+    if (value.power !== undefined) hit.power = value.power;
+    return hit;
+  }
   if (value.t === 'seek') return value.x === null ? { t: 'seek', x: null } : num(value.x) && Math.abs(value.x) < 20 ? { t: 'seek', x: value.x } : null;
   return null;
 }
@@ -91,9 +98,10 @@ export function parseSnapshot(value: unknown): NetSnapshot | null {
     ? value.marks.filter((m): m is LandingMark => isObject(m) && num(m.x) && num(m.at) && ['in', 'out', 'net'].includes(m.kind as string)).slice(0, 8)
     : [];
   const imp = value.impact;
-  const impact = isObject(imp) && num(imp.x) && num(imp.y) && num(imp.at) && bool(imp.strong) ? { x: imp.x, y: imp.y, at: imp.at, strong: imp.strong } : null;
+  const impact = isObject(imp) && num(imp.x) && num(imp.y) && num(imp.at) && bool(imp.strong) ? { x: imp.x, y: imp.y, at: imp.at, strong: imp.strong, ...(num(imp.charge) ? { charge: Math.max(0, Math.min(1, imp.charge)) } : {}) } : null;
   const ls = value.lastShot;
-  const lastShot = isObject(ls) && SHOTS.includes(ls.type as ShotType) && num(ls.speed) ? { type: ls.type as ShotType, speed: ls.speed } : null;
+  const lastShot = isObject(ls) && SHOTS.includes(ls.type as ShotType) && num(ls.speed) ? { type: ls.type as ShotType, speed: ls.speed, ...(num(ls.power) && ls.power >= 0 && ls.power <= 1 ? { power: ls.power } : {}) }
+      : null;
   return { t: 's', clock: value.clock, phase: value.phase as NetPhase, a, b, flight: f, marks, impact, shake: value.shake, rallyShots: value.rallyShots, lastShot };
 }
 

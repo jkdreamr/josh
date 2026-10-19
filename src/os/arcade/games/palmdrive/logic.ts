@@ -30,9 +30,16 @@ export const SHRINK_T = 5;
 export const ROLL_T = 1.3;
 export const BOX_RESPAWN = 2.5;
 export const COIN_RESPAWN = 8;
-/** Mini-turbo charge needed for blue, orange and purple sparks, and how long each boost lasts. */
+/**
+ * Mini-turbo charge needed for blue, orange and purple sparks, and how long each boost lasts. A mini-turbo is a gentler
+ * boost than the rest (TURBO_DV on top speed, not BOOST_DV), worth about half the time a boost that long would be, so
+ * a drift pays without being the whole race. Any other boost on top of one still runs at full strength.
+ */
 export const TURBO_AT = [0, 0.75, 1.6, 2.6];
 export const TURBO_T = [0, 0.5, 0.95, 1.5];
+export const TURBO_DV = 4.75;
+/** While a mini-turbo runs, Kart.boost is held at no more than this (see drive), less than any other boost lasts. */
+const TURBO_HOLD = 0.05;
 /** Slam: the sideways shove you give a kart beside you. */
 export const SLAM_COOL = 1.1;
 export const SLAM_T = 0.32;
@@ -176,6 +183,8 @@ export type Kart = {
   charge: number;
   hopDir: number;
   boost: number;
+  /** What is left of a mini-turbo (gentler than a boost: see TURBO_DV). */
+  turbo: number;
   star: number;
   shrink: number;
   spin: number;
@@ -468,6 +477,7 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
       charge: 0,
       hopDir: 0,
       boost: 0,
+      turbo: 0,
       star: 0,
       shrink: 0,
       spin: 0,
@@ -771,7 +781,7 @@ function topOf(r: Race, k: Kart) {
   if (k.shrink > 0) top *= 0.72;
   if (k.star > 0) top += STAR_DV;
   if (k.mega > 0) top += MEGA_DV;
-  if (k.boost > 0) top += BOOST_DV;
+  if (k.boost > 0) top += k.turbo > 0 && k.boost <= TURBO_HOLD ? TURBO_DV : BOOST_DV;
   else if ((k.offroad || k.mud) && k.star <= 0 && k.mega <= 0) top *= OFFROAD;
   if (k.drift) top *= 0.985;
   // (on the water, the clean catch's surge of speed)
@@ -786,7 +796,7 @@ function drive(r: Race, k: Kart, dt: number) {
   const C = CLASSES[r.cc];
   const inp = k.input;
   const flying = k.bullet > 0;
-  for (const key of ['boost', 'star', 'shrink', 'spin', 'tumble', 'squash', 'safe', 'dashCool', 'slamCool', 'slamT', 'wobble', 'rampCool', 'trickT', 'mega', 'bullet', 'ink', 'calm'] as const) k[key] = Math.max(0, k[key] - dt);
+  for (const key of ['boost', 'turbo', 'star', 'shrink', 'spin', 'tumble', 'squash', 'safe', 'dashCool', 'slamCool', 'slamT', 'wobble', 'rampCool', 'trickT', 'mega', 'bullet', 'ink', 'calm'] as const) k[key] = Math.max(0, k[key] - dt);
   // (on the glass a bullet never hands the kart back in a bend over the sky, far too fast to make it, nor on the
   // run-up to the Blink: it carries it on to where the road straightens, or past the panes)
   if (flying && k.bullet === 0 && glass(r) && bulletBend(r, k)) k.bullet = dt;
@@ -837,6 +847,11 @@ function drive(r: Race, k: Kart, dt: number) {
   if (!control) {
     k.drift = 0;
     k.charge = 0;
+    k.turbo = 0;
+  } else if (k.turbo > 0) {
+    // a mini-turbo keeps the kart on a boost (for everything that asks), but only just, so that any other boost takes
+    // over at full strength for as long as it lasts
+    k.boost = Math.max(k.boost, Math.min(k.turbo, TURBO_HOLD));
   }
   const want = control && k.bullet <= 0 ? clamp(inp.steer, -1, 1) * (k.wobble > 0 ? 0.3 : 1) : 0;
   k.steer = approach(k.steer, want, (want === 0 ? 9 : 6) * dt);
@@ -900,7 +915,8 @@ function drive(r: Race, k: Kart, dt: number) {
     if (!inp.drift || !control || k.v < 7) {
       const level = turboLevel(k.charge);
       if (inp.drift === false && control && level > 0) {
-        k.boost = Math.max(k.boost, TURBO_T[level]);
+        k.turbo = Math.max(k.turbo, TURBO_T[level]);
+        k.boost = Math.max(k.boost, Math.min(k.turbo, TURBO_HOLD));
         r.events.push({ t: 'turbo', k: k.idx, level });
       }
       k.drift = 0;
@@ -2039,6 +2055,7 @@ function fallIn(r: Race, k: Kart, past: Past, at: Spot, hole: Hazard | null = nu
   k.drift = 0;
   k.charge = 0;
   k.boost = 0;
+  k.turbo = 0;
   k.mud = false;
   k.sand = false;
   k.stuck = 0;
@@ -2365,6 +2382,7 @@ export function hitKart(r: Race, k: Kart, how: HitHow, by: number) {
   k.drift = 0;
   k.charge = 0;
   k.boost = 0;
+  k.turbo = 0;
   k.wobble = 0;
   if (k.trail) {
     // a banana or shell held out behind is lost in the crash
