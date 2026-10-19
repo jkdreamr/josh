@@ -940,7 +940,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   );
   const latticeMat = new THREE.MeshLambertMaterial({ map: latticeTex, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide, color: 0x8f9cab });
   const piers: LiveHazard[] = [];
-  let traffic: { body: T.InstancedMesh; cab: T.InstancedMesh; f: ReturnType<typeof frame>; reach: number } | null = null;
+  let traffic: { body: T.InstancedMesh; cab: T.InstancedMesh; f: ReturnType<typeof frame>; from: number; to: number; flat: number[]; ramps: number[] } | null = null;
   r.hazards.forEach((h, i) => {
     if (h.kind === 'bollard' && h.look === 'gate') {
       const w = h.w ?? 6;
@@ -1040,41 +1040,71 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     const mid = piers.reduce((a, h) => a + h.s, 0) / piers.length;
     const f = frame(mid);
     const W = 34;
-    let reach = 30;
     const mk = modelKit(THREE);
     mk.place(f.x, 0, f.z, f.h);
-    // (the deck runs across the channel, along local x, as far either way as there is marsh or quay under it)
-    for (let x = -24; x >= -150; x -= 24) {
-      const q = { x: f.x + Math.cos(f.h) * x, z: f.z - Math.sin(f.h) * x };
-      if (!away(q.x, q.z, 1)) break;
-      reach = Math.max(reach, -x + 12);
-    }
-    for (let x = 24; x <= 150; x += 24) {
-      const q = { x: f.x + Math.cos(f.h) * x, z: f.z - Math.sin(f.h) * x };
-      if (!away(q.x, q.z, 1)) break;
-      reach = Math.max(reach, x + 12);
-    }
-    mk.box(0xc4bdae, 0, 9.55, 0, reach * 2, 1.0, W);
-    mk.box(0x55585c, 0, 10.07, 0, reach * 2, 0.04, W - 1.4);
-    for (const z of [-12, -4, 4, 12]) mk.box(0xa8a194, 0, 8.6, z, reach * 2, 1.0, 2.6);
+    // (the deck runs across the channel along local x, level until a ramp brings it down to the marsh before it would
+    // cross any other stretch of the channel)
+    const spot = (x: number, z: number) => ({ x: f.x + Math.cos(f.h) * x + Math.sin(f.h) * z, z: f.z - Math.sin(f.h) * x + Math.cos(f.h) * z });
+    const dry = (x: number, margin: number) => [-W / 2, 0, W / 2].every((z) => {
+      const q = spot(x, z);
+      return away(q.x, q.z, margin);
+    });
+    const ends = [-1, 1].map((sg) => {
+      let water = 190;
+      for (let x = 18; x < 190; x += 3) {
+        if (!dry(sg * x, 8)) {
+          water = x;
+          break;
+        }
+      }
+      const flatEnd = Math.max(18, water - 44);
+      return { sg, flatEnd, ramp: Math.max(6, Math.min(40, water - 4 - flatEnd)) };
+    });
+    const [L, Rt] = ends;
+    const cxd = (Rt.flatEnd - L.flatEnd) / 2;
+    const len = Rt.flatEnd + L.flatEnd;
+    mk.box(0xc4bdae, cxd, 9.55, 0, len, 1.0, W);
+    mk.box(0x55585c, cxd, 10.07, 0, len, 0.04, W - 1.4);
+    for (const z of [-12, -4, 4, 12]) mk.box(0xa8a194, cxd, 8.6, z, len, 1.0, 2.6);
     for (const z of [-W / 2 + 0.3, 0, W / 2 - 0.3]) {
-      mk.box(0xd8d2c4, 0, 10.45, z, reach * 2, 0.8, 0.5);
-      mk.box(0xe8e2d4, 0, 10.88, z, reach * 2, 0.08, 0.3);
+      mk.box(0xd8d2c4, cxd, 10.45, z, len, 0.8, 0.5);
+      mk.box(0xe8e2d4, cxd, 10.88, z, len, 0.08, 0.3);
     }
-    for (const z of [-W / 2 + 0.1, W / 2 - 0.1]) mk.box(0x8c1515, 0, 9.55, z, reach * 2, 0.35, 0.06);
-    for (let x = -reach + 10; x < reach; x += 25) {
+    for (const z of [-W / 2 + 0.1, W / 2 - 0.1]) mk.box(0x8c1515, cxd, 9.55, z, len, 0.35, 0.06);
+    for (const e of ends) {
+      // (the ramp down, on columns shortening as it goes)
+      const th = Math.atan2(9.5, e.ramp);
+      const run = Math.hypot(9.5, e.ramp);
+      const mx = e.sg * (e.flatEnd + e.ramp / 2);
+      mk.box(0xc4bdae, mx, 9.55 / 2 + 0.3, 0, run, 1.0, W, 0, 0, -e.sg * th);
+      mk.box(0x55585c, mx, 9.55 / 2 + 0.82, 0, run, 0.04, W - 1.4, 0, 0, -e.sg * th);
+      for (const z of [-W / 2 + 0.3, W / 2 - 0.3]) mk.box(0xd8d2c4, mx, 9.55 / 2 + 1.2, z, run, 0.8, 0.5, 0, 0, -e.sg * th);
+      for (let k = 6; k < e.ramp - 2; k += 8) {
+        const x = e.sg * (e.flatEnd + k);
+        const y = 9.1 * (1 - k / e.ramp);
+        for (const z of [-11, 0, 11]) {
+          const q = spot(x, z);
+          if (away(q.x, q.z, 2)) mk.cyl(0xbdb6a6, x, y / 2, z, 0.8, y, 0.8);
+        }
+      }
+    }
+    for (let x = -L.flatEnd + 10; x < Rt.flatEnd; x += 25) {
       mk.cyl(0x8a8f96, x, 13.5, 0, 0.1, 6, 0.1);
       for (const sd of [-1, 1]) {
         mk.box(0x8a8f96, x, 16.4, sd * 1.4, 0.08, 0.08, 2.8);
         mk.glow(0xfff0c8, x, 16.3, sd * 2.6, 0.5, 0.12, 0.25);
       }
     }
-    for (let x = -reach + 12; x < reach - 6; x += 24) {
-      if (Math.abs(x) < 14) continue;
-      const q = { x: f.x + Math.cos(f.h) * x, z: f.z - Math.sin(f.h) * x };
-      if (!away(q.x, q.z, 1.5)) continue;
-      for (const z of [-11, 0, 11]) mk.cyl(0xbdb6a6, x, 4.3, z, 0.9, 8.6, 0.9);
-      mk.box(0xb0a99a, x, 8.4, 0, 2, 1.2, W - 2);
+    for (const sg of [-1, 1]) {
+      const e = sg < 0 ? L : Rt;
+      for (let k = 24; k <= e.flatEnd; k += 24) {
+        const x = sg * k;
+        for (const z of [-11, 0, 11]) {
+          const q = spot(x, z);
+          if (away(q.x, q.z, 2)) mk.cyl(0xbdb6a6, x, 4.3, z, 0.9, 8.6, 0.9);
+        }
+        mk.box(0xb0a99a, x, 8.4, 0, 2, 1.2, W - 2);
+      }
     }
     // (the sign gantry over the eastbound lanes)
     const gx = -18;
@@ -1121,7 +1151,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       m.frustumCulled = false;
       scene.add(m);
     }
-    traffic = { body, cab, f, reach };
+    traffic = { body, cab, f, from: -(L.flatEnd + L.ramp), to: Rt.flatEnd + Rt.ramp, flat: [-L.flatEnd, Rt.flatEnd], ramps: [L.ramp, Rt.ramp] };
   }
   sets.place();
   if (sets.count()) scene.add(sets.build(vcSet, vcSetLit));
@@ -1641,26 +1671,29 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       }
       for (const tex of pours) tex.offset.y = (tex.offset.y + dt * 2.4) % 1;
       if (traffic) {
-        const { body, cab, f, reach } = traffic;
+        const { body, cab, f, from, to, flat, ramps } = traffic;
         const ax = Math.cos(f.h);
         const az = -Math.sin(f.h);
         const bx = Math.sin(f.h);
         const bz = Math.cos(f.h);
-        const span = reach * 2 - 6;
+        const span = to - from;
+        // (the road's height under a car: level over the channel, down the ramps at either end)
+        const roadY = (u: number) => (u < flat[0] ? 9.5 * (1 - (flat[0] - u) / ramps[0]) : u > flat[1] ? 9.5 * (1 - (u - flat[1]) / ramps[1]) : 9.5) + 0.6;
         for (let n = 0; n < CARS; n++) {
           const lane = n % 8;
           const dir = lane < 4 ? 1 : -1;
           const z = (lane < 4 ? -1 : 1) * (2.2 + (lane % 4) * 3.5);
           const speed = 24 + (lane % 4) * 3;
-          const u = ((((clock * speed * dir + n * 37.3) % span) + span) % span) - span / 2;
+          const u = from + ((((clock * speed * dir + n * 37.3) % span) + span) % span);
           const truck = n % 9 === 0;
           const len = truck ? 9 : 4.3;
-          dummy.position.set(f.x + ax * u + bx * z, truck ? 11.4 : 10.6, f.z + az * u + bz * z);
+          const y = roadY(u);
+          dummy.position.set(f.x + ax * u + bx * z, y + (truck ? 0.8 : 0), f.z + az * u + bz * z);
           dummy.rotation.set(0, f.h + Math.PI / 2, 0);
           dummy.scale.set(1.8, truck ? 2.6 : 0.9, len);
           dummy.updateMatrix();
           body.setMatrixAt(n, dummy.matrix);
-          dummy.position.set(f.x + ax * (u + dir * (truck ? 3.3 : -0.2)) + bx * z, truck ? 11.0 : 11.3, f.z + az * (u + dir * (truck ? 3.3 : -0.2)) + bz * z);
+          dummy.position.set(f.x + ax * (u + dir * (truck ? 3.3 : -0.2)) + bx * z, y + (truck ? 0.4 : 0.7), f.z + az * (u + dir * (truck ? 3.3 : -0.2)) + bz * z);
           dummy.scale.set(1.7, truck ? 1.8 : 0.6, truck ? 2.2 : 2.2);
           dummy.updateMatrix();
           cab.setMatrixAt(n, dummy.matrix);
