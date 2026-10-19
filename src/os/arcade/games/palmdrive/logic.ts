@@ -77,6 +77,45 @@ export const GREEN_V = 42;
 export const RED_V = 40;
 export const BLUE_V = 60;
 export const BOOM_R = 7;
+/** Up in the air this high, a blue shell's blast passes underneath you (a feather jump, timed right). */
+export const BLAST_CLEAR = 1.8;
+/**
+ * Boomerang: thrown this much faster than you are going, it slows at BOOMERANG_PULL, so it gets about 40 m ahead, turns
+ * round and flies back past you, sweeping the road behind you too before it is gone.
+ */
+export const BOOMERANG_V = 50;
+export const BOOMERANG_PULL = 31;
+export const BOOMERANG_LIFE = 4.4;
+/** Fire flower: bouncing fireballs for this long once lit, one every FIRE_GAP seconds at most. */
+export const FIRE_T = 4;
+export const FIRE_GAP = 0.3;
+export const FIRE_V = 36;
+export const FIRE_LIFE = 2.2;
+/** Ice flower: two ice balls; a kart one hits is frozen solid this long, sliding on with no say in where it goes. */
+export const ICE_V = 34;
+export const ICE_LIFE = 3;
+export const FREEZE_T = 1.3;
+/** Piranha plant: how long it rides on your kart, how far ahead it snaps, how often, its lunge and the boost each bite gives. */
+export const PIRANHA_T = 7;
+export const PIRANHA_R = 6.5;
+export const PIRANHA_GAP = 0.9;
+export const PIRANHA_LUNGE = 0.3;
+export const PIRANHA_BOOST = 0.5;
+/** Boo: see-through, and nothing anyone throws or drives can touch you, for this long. */
+export const BOO_T = 5;
+/** Feather: the jump's launch speed (about 2.8 m up, most of a second in the air). */
+export const FEATHER_V = 12.5;
+/** Thunder cloud: the time before it zaps you, its extra speed, and how long a kart that just got it must keep it. */
+export const CLOUD_T = 8;
+export const CLOUD_DV = 3;
+export const CLOUD_HOLD = 1;
+/** How long a thunder cloud's zap leaves you small (lightning's is longer). */
+export const ZAP_SHRINK = 3;
+/** POW block: a warning thump every POW_GAP seconds, three of them, and it goes off on the fourth beat (POW_T). */
+export const POW_GAP = 0.4;
+export const POW_T = 1.6;
+/** No lightning or POW block within this long of the last one. */
+const BIG_GAP = 12;
 /**
  * Off the road where it drops away (into water or a pit; how long until you are fished out, and what it costs, go with
  * the course: see Tier), press drift this close either side of being set back down on the road for a drop start, a
@@ -122,14 +161,21 @@ export const CLASSES: Record<Cc, { top: number; accel: number; cpu: number }> = 
 };
 export const isCc = (v: unknown): v is Cc => CCS.includes(v as Cc);
 
-export type Item = 'banana' | 'bananas' | 'green' | 'greens' | 'red' | 'bomb' | 'mushroom' | 'triple' | 'golden' | 'coin' | 'star' | 'mega' | 'bullet' | 'ink' | 'horn' | 'bolt' | 'blue';
-export const ITEMS: Item[] = ['banana', 'bananas', 'green', 'greens', 'red', 'bomb', 'mushroom', 'triple', 'golden', 'coin', 'star', 'mega', 'bullet', 'ink', 'horn', 'bolt', 'blue'];
-export type ThingKind = 'banana' | 'green' | 'red' | 'blue' | 'bomb';
+export type Item =
+  | 'banana' | 'bananas' | 'green' | 'greens' | 'red' | 'bomb' | 'mushroom' | 'triple' | 'golden' | 'coin' | 'star' | 'mega' | 'bullet' | 'ink' | 'horn' | 'bolt' | 'blue'
+  | 'boomerang' | 'fire' | 'ice' | 'piranha' | 'boo' | 'feather' | 'cloud' | 'pow';
+export const ITEMS: Item[] = [
+  'banana', 'bananas', 'green', 'greens', 'red', 'bomb', 'mushroom', 'triple', 'golden', 'coin', 'star', 'mega', 'bullet', 'ink', 'horn', 'bolt', 'blue',
+  'boomerang', 'fire', 'ice', 'piranha', 'boo', 'feather', 'cloud', 'pow',
+];
+export type ThingKind = 'banana' | 'green' | 'red' | 'blue' | 'bomb' | 'boomerang' | 'fire' | 'ice';
 /** Bananas and shells can be held out behind as a shield. */
 export const trailable = (item: Item | null) => item === 'banana' || item === 'bananas' || item === 'green' || item === 'greens' || item === 'red';
-/** How many goes an item gives (the golden mushroom runs on a timer instead). */
-const USES: Partial<Record<Item, number>> = { triple: 3, bananas: 3, greens: 3 };
-export type HitHow = 'spin' | 'tumble' | 'squash' | 'boom';
+/** How many goes an item gives (the golden mushroom and the fire flower run on a timer instead). */
+const USES: Partial<Record<Item, number>> = { triple: 3, bananas: 3, greens: 3, boomerang: 3, ice: 2 };
+/** Things that never hurt whoever threw them, even coming back their way. */
+const ownSafe = (kind: ThingKind) => kind === 'boomerang' || kind === 'fire' || kind === 'ice';
+export type HitHow = 'spin' | 'tumble' | 'squash' | 'boom' | 'freeze';
 
 /** hold: the item button is held (bananas and shells trail behind as a shield until it is let go). */
 export type Input = { steer: number; brake: boolean; drift: boolean; hop: boolean; use: boolean; back: boolean; fwd: boolean; hold: boolean; slam: boolean; cash: boolean };
@@ -204,11 +250,22 @@ export type Kart = {
   draft: number;
   /** A banana or shell held out behind as a shield. */
   trail: boolean;
-  /** Golden mushroom time left once it has been started. */
+  /** Golden mushroom time left once it has been started, and the same for a fire flower. */
   goldT: number;
+  fireT: number;
   mega: number;
   bullet: number;
   ink: number;
+  /** A piranha plant riding up front: time left, and the countdown to its next bite (it lunges for a moment). */
+  piranha: number;
+  bite: number;
+  /** See-through under a Boo: nothing anyone throws or drives touches you. */
+  boo: number;
+  /** A thunder cloud overhead: time until it zaps you, and how long until you can bump it onto someone else. */
+  cloud: number;
+  cloudHold: number;
+  /** Frozen in a block of ice by an ice ball: sliding on along the road with no say in it. */
+  frozen: number;
   /** Off a ramp: airborne, the window to press for a trick, and whether one was pulled. */
   air: boolean;
   trickT: number;
@@ -343,7 +400,18 @@ export type Ev =
   | { t: 'power'; k: number }
   | { t: 'wake'; k: number; amp: number }
   | { t: 'swell'; k: number }
-  | { t: 'bonk'; k: number };
+  | { t: 'bonk'; k: number }
+  /** A piranha plant snapping at whatever is at (x, z). */
+  | { t: 'chomp'; k: number; x: number; z: number }
+  /** A Boo taking kart k's item for kart `by` (sent online when k is someone else's), and the item it got. */
+  | { t: 'boo'; k: number; by: number; item: Item }
+  /** The thunder cloud moving from kart `by` to kart `k` with `left` seconds to go, and a cloud zapping its kart. */
+  | { t: 'cloud'; k: number; by: number; left: number }
+  | { t: 'zap'; k: number }
+  /** A POW block used at race time `at` (sent online), its warning thumps and the moment it goes off. */
+  | { t: 'pow'; k: number; at: number }
+  | { t: 'thump'; by: number; n: number }
+  | { t: 'quake'; by: number };
 
 export type Rng = () => number;
 
@@ -395,9 +463,13 @@ export type Race = {
   me: number;
   /** Race time of the first finish, from any kart. */
   first: number | null;
-  /** Race time the last lightning struck, so two never land back to back. */
+  /** Race time the last lightning struck (or POW block went off), so two never land back to back. */
   boltAt: number;
+  /** POW blocks counting down: who used one, when, and how many warning thumps so far. */
+  pows: Pow[];
 };
+
+export type Pow = { by: number; at: number; n: number };
 
 /**
  * A hazard on the road and where it is now: how far along the lap and across the road, which way the road runs
@@ -493,9 +565,16 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
       draft: 0,
       trail: false,
       goldT: 0,
+      fireT: 0,
       mega: 0,
       bullet: 0,
       ink: 0,
+      piranha: 0,
+      bite: 0,
+      boo: 0,
+      cloud: 0,
+      cloudHold: 0,
+      frozen: 0,
       air: false,
       trickT: 0,
       trick: false,
@@ -585,6 +664,7 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
     me: opts.me ?? karts.findIndex((k) => k.kind === 'player'),
     first: null,
     boltAt: -99,
+    pows: [],
   };
   moveHazards(race);
   rankKarts(race);
@@ -684,7 +764,7 @@ export function soloRace(cc: Cc, seed?: number, look: { color: string; hat: Hat 
 
 export const racing = (r: Race) => r.time >= 0;
 const scaleOf = (k: Kart) => (k.shrink > 0 ? 0.62 : k.mega > 0 ? 1.5 : 1);
-export const hurt = (k: Kart) => k.spin > 0 || k.tumble > 0 || k.sunk > 0;
+export const hurt = (k: Kart) => k.spin > 0 || k.tumble > 0 || k.sunk > 0 || k.frozen > 0;
 const local = (k: Kart) => k.kind !== 'remote';
 
 export function step(r: Race, dt: number) {
@@ -724,7 +804,8 @@ export function step(r: Race, dt: number) {
     }
     if (k.ai || k.auto) think(r, k, dt);
     drive(r, k, dt);
-    if (k.input.use) useItem(r, k);
+    // (a thunder cloud can't be held: it settles over your head as soon as the roulette stops)
+    if (k.input.use || (k.item === 'cloud' && k.roll === 0)) useItem(r, k);
     k.input.use = false;
     k.input.hop = false;
     k.input.slam = false;
@@ -733,6 +814,9 @@ export function step(r: Race, dt: number) {
   bumpKarts(r);
   moveThings(r, dt);
   hitThings(r);
+  // piranha plants snap on every screen (each client only bites what it drives), and POW blocks count down
+  for (const k of r.karts) if (k.piranha > 0) chomp(r, k, dt);
+  if (r.pows.length) movePows(r);
   pickups(r, dt);
   for (const k of r.karts) if (local(k)) progress(r, k, dt);
   rankKarts(r);
@@ -781,8 +865,10 @@ function topOf(r: Race, k: Kart) {
   if (k.shrink > 0) top *= 0.72;
   if (k.star > 0) top += STAR_DV;
   if (k.mega > 0) top += MEGA_DV;
+  // (a thunder cloud overhead pushes you along, through the rough too)
+  if (k.cloud > 0) top += CLOUD_DV;
   if (k.boost > 0) top += k.turbo > 0 && k.boost <= TURBO_HOLD ? TURBO_DV : BOOST_DV;
-  else if ((k.offroad || k.mud) && k.star <= 0 && k.mega <= 0) top *= OFFROAD;
+  else if ((k.offroad || k.mud) && k.star <= 0 && k.mega <= 0 && k.cloud <= 0) top *= OFFROAD;
   if (k.drift) top *= 0.985;
   // (on the water, the clean catch's surge of speed)
   if (r.boat && k.catchT > 0) top += CATCH_DV;
@@ -796,7 +882,10 @@ function drive(r: Race, k: Kart, dt: number) {
   const C = CLASSES[r.cc];
   const inp = k.input;
   const flying = k.bullet > 0;
-  for (const key of ['boost', 'turbo', 'star', 'shrink', 'spin', 'tumble', 'squash', 'safe', 'dashCool', 'slamCool', 'slamT', 'wobble', 'rampCool', 'trickT', 'mega', 'bullet', 'ink', 'calm'] as const) k[key] = Math.max(0, k[key] - dt);
+  const clouded = k.cloud > 0;
+  for (const key of ['boost', 'turbo', 'star', 'shrink', 'spin', 'tumble', 'squash', 'safe', 'dashCool', 'slamCool', 'slamT', 'wobble', 'rampCool', 'trickT', 'mega', 'bullet', 'ink', 'calm', 'piranha', 'boo', 'cloud', 'cloudHold', 'frozen'] as const) k[key] = Math.max(0, k[key] - dt);
+  // a thunder cloud nobody took goes off
+  if (clouded && k.cloud === 0) zap(r, k);
   // (on the glass a bullet never hands the kart back in a bend over the sky, far too fast to make it, nor on the
   // run-up to the Blink: it carries it on to where the road straightens, or past the panes)
   if (flying && k.bullet === 0 && glass(r) && bulletBend(r, k)) k.bullet = dt;
@@ -805,6 +894,13 @@ function drive(r: Race, k: Kart, dt: number) {
   if (k.goldT > 0) {
     k.goldT = Math.max(0, k.goldT - dt);
     if (k.goldT === 0 && k.item === 'golden') {
+      k.item = null;
+      k.uses = 0;
+    }
+  }
+  if (k.fireT > 0) {
+    k.fireT = Math.max(0, k.fireT - dt);
+    if (k.fireT === 0 && k.item === 'fire') {
       k.item = null;
       k.uses = 0;
     }
@@ -865,7 +961,8 @@ function drive(r: Race, k: Kart, dt: number) {
   // on slick glass or frost the wheels bite less: slower to get going and to stop (see gripAt; the road is 1 elsewhere)
   const g0 = r.slick && k.y <= 0.05 ? gripAt(r.track, k.s, k.lap) : 1;
   if (k.bullet > 0) k.v = approach(k.v, C.top + BULLET_DV, 40 * dt);
-  else if (!control) k.v = approach(k.v, 0, (k.tumble > 0 ? 30 : 14) * dt);
+  // (frozen solid, a kart slides on and only slowly loses its speed)
+  else if (!control) k.v = approach(k.v, 0, (k.tumble > 0 ? 30 : k.frozen > 0 ? 8 : 14) * dt);
   else if (inp.brake) k.v = k.v > 0.5 ? Math.max(0, k.v - 26 * (g0 < 1 ? 0.5 + 0.5 * g0 : 1) * dt) : Math.max(-REVERSE, k.v - 9 * dt);
   else if (k.v < top) k.v = Math.min(top, k.v + (k.boost > 0 ? 34 : k.v < 0 ? 20 : C.accel) * (g0 < 1 ? 0.6 + 0.4 * g0 : 1) * dt);
   else k.v = Math.max(top, k.v - ((k.offroad || k.mud) && k.boost <= 0 ? 24 : 8) * dt);
@@ -938,6 +1035,11 @@ function drive(r: Race, k: Kart, dt: number) {
   if (grip < 1) rate *= k.drift !== 0 ? 0.8 + 0.2 * grip : 0.55 + 0.45 * grip;
   if (k.v < 0) rate = -rate;
   if (k.spin > 0) rate = 0;
+  if (k.frozen > 0) {
+    // a block of ice slides on along the road like a sled in a run, turning with it only gently
+    const along = Math.sign(Math.sin(k.h) * r.track.tx[k.i] + Math.cos(k.h) * r.track.tz[k.i]) || 1;
+    rate = clamp(wrapAngle(k.h - headingOf(r.track.tx[k.i] * along, r.track.tz[k.i] * along)) * 3, -1.2, 1.2);
+  }
   if (k.bullet > 0) {
     // on rails down the middle of the road, looking less far ahead round a tight bend with a drop beside it so it never
     // cuts across it (with walls both sides it rides as it always has)
@@ -1400,7 +1502,8 @@ function rideRamps(r: Race, k: Kart) {
   const at = locate(r.track, k.x, k.z, k.i);
   const on = onRamp(r, { s: at.s, d: at.d });
   if (!on || k.v < 2) return;
-  if (on.ds > -0.35 && k.rampCool <= 0 && k.v > 8 && k.vy <= 0) {
+  // (coming down from high above it, say off a feather, the kart lands rather than being thrown up off the lip again)
+  if (on.ds > -0.35 && k.rampCool <= 0 && k.v > 8 && k.vy <= 0 && k.y <= on.height + 0.3) {
     k.vy = 5.5 + k.v * 0.13;
     k.y = Math.max(k.y, on.height);
     k.air = true;
@@ -2303,6 +2406,8 @@ const massOf = (k: Kart) => (k.star > 0 || k.bullet > 0 || k.mega > 0 ? 4 : k.sh
 const crushes = (k: Kart) => k.star > 0 || k.bullet > 0;
 
 const slamPad = (S: Kart, V: Kart) => (!local(S) && local(V) ? SLAM_PAD : 0);
+/** Kart S can bump its thunder cloud onto V (the client that drives S decides). */
+const canPass = (S: Kart, V: Kart) => S.cloud > 0 && S.cloudHold <= 0 && local(S) && V.cloud <= 0 && V.done === null && V.sunk === 0;
 
 function bumpKarts(r: Race) {
   const ks = r.karts;
@@ -2314,6 +2419,8 @@ function bumpKarts(r: Race) {
       if (A.done !== null && B.done !== null) continue;
       // a kart in the water is out of everyone's way until it is fished out
       if (A.sunk > 0 || B.sunk > 0) continue;
+      // and one under a Boo drives straight through the others
+      if (A.boo > 0 || B.boo > 0) continue;
       const dx = B.x - A.x;
       const dz = B.z - A.z;
       const reach = KART_R * (scaleOf(A) + scaleOf(B));
@@ -2333,6 +2440,9 @@ function bumpKarts(r: Race) {
       else if (B.mega > 0 && A.mega <= 0 && local(A)) hitKart(r, A, 'squash', B.idx);
       else if (A.shrink > 0 && B.shrink <= 0 && local(A)) hitKart(r, A, 'squash', B.idx);
       else if (B.shrink > 0 && A.shrink <= 0 && local(B)) hitKart(r, B, 'squash', A.idx);
+      // a thunder cloud jumps to whoever its kart touches, once it has been overhead a moment
+      if (canPass(A, B)) passCloud(r, A, B);
+      else if (canPass(B, A)) passCloud(r, B, A);
       const ma = massOf(A);
       const mb = massOf(B);
       const shareA = !local(A) ? 0 : !local(B) ? 1 : mb / (ma + mb);
@@ -2366,11 +2476,12 @@ function bumpKarts(r: Race) {
 const REELING = 0.25;
 
 /**
- * Hits a kart this client simulates. Stars shrug everything off; a kart already reeling is not hit twice, and one that
- * has fallen off the road is out of it until it is set back down.
+ * Hits a kart this client simulates. Stars shrug everything off, and under a Boo whatever other karts throw or do; a kart
+ * already reeling is not hit twice, and one that has fallen off the road is out of it until it is set back down.
  */
 export function hitKart(r: Race, k: Kart, how: HitHow, by: number) {
   if (!local(k) || k.sunk > 0 || k.star > 0 || k.bullet > 0 || k.done !== null) return false;
+  if (k.boo > 0 && by >= 0) return false;
   // a mega kart only notices explosions, and they shrink it back down
   if (k.mega > 0 && how !== 'boom') return false;
   if (how !== 'boom' && (hurt(k) || k.safe > 0)) return false;
@@ -2388,8 +2499,13 @@ export function hitKart(r: Race, k: Kart, how: HitHow, by: number) {
   }
   // on the harder courses a hit keeps you down for longer
   const harsh = r.tier.harsh;
-  const down = (how === 'spin' ? 1.05 : how === 'squash' ? 0.8 : how === 'boom' ? 1.8 : 1.3) * harsh;
-  if (how === 'spin' || how === 'squash') {
+  const down = (how === 'spin' ? 1.05 : how === 'squash' ? 0.8 : how === 'boom' ? 1.8 : how === 'freeze' ? FREEZE_T : 1.3) * harsh;
+  if (how === 'freeze') {
+    // iced over: it keeps most of its speed and slides on, steering nowhere
+    k.frozen = down;
+    k.v *= 0.85;
+    k.coins = Math.max(0, k.coins - 1);
+  } else if (how === 'spin' || how === 'squash') {
     k.spin = down;
     k.v *= how === 'squash' ? 0.5 : 0.4;
     k.coins = Math.max(0, k.coins - 1);
@@ -2409,20 +2525,28 @@ export function hitKart(r: Race, k: Kart, how: HitHow, by: number) {
 // ---------------------------------------------------------------------------------------------------------------
 // Items
 
-/** Item odds by how far back you are: leaders get defense, the back of the pack gets the big guns. */
-const ODDS: [number, Partial<Record<Item, number>>][] = [
-  [0.15, { banana: 28, bananas: 8, green: 28, greens: 6, red: 10, mushroom: 6, coin: 10, horn: 4 }],
-  [0.45, { banana: 10, bananas: 8, green: 14, greens: 10, red: 22, bomb: 8, mushroom: 14, triple: 6, coin: 4, ink: 4 }],
-  [0.75, { greens: 6, red: 20, bomb: 8, mushroom: 12, triple: 16, golden: 6, star: 8, mega: 5, ink: 8, bolt: 3, blue: 5, horn: 3 }],
-  [1.01, { red: 10, triple: 16, golden: 12, star: 16, mega: 10, bullet: 14, bolt: 10, blue: 8, ink: 4 }],
+/**
+ * Item odds by how far back you are: leaders get defense, the back of the pack gets the big guns. (The batch with the
+ * boomerang in it takes its share further back from the shells and ink, so the back keeps its boosts.)
+ */
+export const ODDS: [number, Partial<Record<Item, number>>][] = [
+  [0.15, { banana: 28, bananas: 8, green: 28, greens: 6, red: 10, mushroom: 6, coin: 10, horn: 4, feather: 5, boomerang: 3, cloud: 3 }],
+  [0.45, { banana: 10, bananas: 8, green: 14, greens: 10, red: 22, bomb: 8, mushroom: 14, triple: 6, coin: 4, ink: 4, boomerang: 6, ice: 4, fire: 3, feather: 3, cloud: 2, boo: 2 }],
+  [0.75, { greens: 4, red: 16, bomb: 7, mushroom: 12, triple: 16, golden: 6, star: 8, mega: 5, ink: 6, bolt: 3, blue: 5, horn: 3, piranha: 5, fire: 4, ice: 3, boo: 3, boomerang: 2, pow: 2 }],
+  [1.01, { red: 7, triple: 16, golden: 12, star: 16, mega: 10, bullet: 14, bolt: 9, blue: 8, ink: 2, piranha: 6, boo: 3, fire: 2, pow: 2 }],
 ];
 
 export function rollItem(r: Race, k: Kart): Item {
   const frac = r.karts.length > 1 ? (k.place - 1) / (r.karts.length - 1) : 0;
   const table = { ...ODDS.find(([upTo]) => frac < upTo)![1] };
-  // only one blue shell at a time and no lightning twice in a row
+  // only one blue shell, POW block and thunder cloud out at a time, and no lightning or POW block straight after another
   if (r.things.some((t) => t.kind === 'blue')) delete table.blue;
-  if (r.time - r.boltAt < 12) delete table.bolt;
+  if (r.time - r.boltAt < BIG_GAP) {
+    delete table.bolt;
+    delete table.pow;
+  }
+  if (r.pows.length) delete table.pow;
+  if (r.karts.some((o) => o.cloud > 0 || o.item === 'cloud')) delete table.cloud;
   const entries = Object.entries(table) as [Item, number][];
   let pick = r.rand() * entries.reduce((sum, [, w]) => sum + w, 0);
   for (const [item, w] of entries) {
@@ -2440,6 +2564,8 @@ export function giveItem(r: Race, k: Kart, item: Item, roll = ROLL_T) {
 }
 
 const fwdOf = (k: Kart) => ({ fx: Math.sin(k.h), fz: Math.cos(k.h) });
+/** How long each kind of thing lasts once it is out (bananas sit there until someone runs into them). */
+const LIFE: Record<ThingKind, number> = { banana: Infinity, green: 7, red: 10, blue: 25, bomb: BOMB_LIFE, boomerang: BOOMERANG_LIFE, fire: FIRE_LIFE, ice: ICE_LIFE };
 
 export function spawn(r: Race, thing: Omit<Thing, 'id' | 'i' | 'life' | 'bounces' | 'local'> & { id?: number; life?: number }, isLocal = true): Thing {
   const t: Thing = {
@@ -2448,7 +2574,7 @@ export function spawn(r: Race, thing: Omit<Thing, 'id' | 'i' | 'life' | 'bounces
     local: isLocal,
     ...thing,
     id: thing.id ?? r.nextId++,
-    life: thing.life ?? (thing.kind === 'banana' ? Infinity : thing.kind === 'green' ? 7 : thing.kind === 'red' ? 10 : thing.kind === 'bomb' ? BOMB_LIFE : 25),
+    life: thing.life ?? LIFE[thing.kind],
   };
   r.things.push(t);
   if (r.things.length > 40) {
@@ -2488,6 +2614,55 @@ export function useItem(r: Race, k: Kart): Item | null {
       r.events.push({ t: 'use', k: k.idx, item });
       return item;
     }
+  } else if (item === 'fire') {
+    // a fireball per press until the flower wilts (not too many at once), each a hair off the last so they fan out
+    if (r.things.some((th) => th.kind === 'fire' && th.owner === k.idx && th.life > FIRE_LIFE - FIRE_GAP)) return null;
+    if (k.fireT === 0) k.fireT = FIRE_T;
+    const dir = back ? -1 : 1;
+    const h = k.h + ((r.nextId % 3) - 1) * 0.06;
+    const speed = FIRE_V + (back ? 0 : Math.max(0, k.v) * 0.5);
+    spawn(r, { ...base, kind: 'fire', x: k.x + fx * 2.4 * dir, z: k.z + fz * 2.4 * dir, y: 0.6, vx: Math.sin(h) * speed * dir, vz: Math.cos(h) * speed * dir, vy: 3 });
+    r.events.push({ t: 'use', k: k.idx, item });
+    return item;
+  } else if (item === 'ice') {
+    const dir = back ? -1 : 1;
+    const speed = ICE_V + (back ? 0 : Math.max(0, k.v) * 0.5);
+    spawn(r, { ...base, kind: 'ice', x: k.x + fx * 2.4 * dir, z: k.z + fz * 2.4 * dir, y: 0.6, vx: fx * speed * dir, vz: fz * speed * dir, vy: 2 });
+  } else if (item === 'boomerang') {
+    // one at a time: the next throw waits until this one has come back past you
+    if (r.things.some((th) => th.kind === 'boomerang' && th.owner === k.idx && deltaS(r.track, k.s, locate(r.track, th.x, th.z, th.i).s) > 0)) return null;
+    const speed = Math.max(0, k.v) + BOOMERANG_V;
+    spawn(r, { ...base, kind: 'boomerang', x: k.x + fx * 2.4, z: k.z + fz * 2.4, y: 0.9, vx: fx * speed, vz: fz * speed });
+  } else if (item === 'piranha') {
+    k.piranha = PIRANHA_T;
+    k.bite = PIRANHA_GAP / 2;
+  } else if (item === 'boo') {
+    // see-through for a while, and it makes off with the item of someone ahead
+    k.item = null;
+    k.uses = 0;
+    k.trail = false;
+    k.boo = BOO_T;
+    r.events.push({ t: 'use', k: k.idx, item });
+    steal(r, k);
+    return item;
+  } else if (item === 'feather') {
+    // a big jump, from the ground; trick in the air like off a ramp
+    if (k.y > 0.05 || k.vy > 0) return null;
+    k.vy = FEATHER_V;
+    k.y = 0.01;
+    k.air = true;
+    k.trickT = 0.6;
+    k.trick = false;
+    k.hopDir = 0;
+    k.drift = 0;
+    k.charge = 0;
+    k.turbo = 0;
+  } else if (item === 'cloud') {
+    k.cloud = CLOUD_T;
+    k.cloudHold = 0;
+  } else if (item === 'pow') {
+    r.boltAt = r.time;
+    r.pows.push({ by: k.idx, at: r.time, n: 0 });
   } else if (item === 'coin') {
     k.coins = Math.min(MAX_COINS, k.coins + 2);
     k.earned += 2;
@@ -2521,15 +2696,16 @@ export function useItem(r: Race, k: Kart): Item | null {
   if (item === 'bolt') r.events.push({ t: 'bolt', k: k.idx });
   if (item === 'ink') r.events.push({ t: 'ink', k: k.idx });
   if (item === 'horn') r.events.push({ t: 'horn', k: k.idx, x: k.x, z: k.z });
+  if (item === 'pow') r.events.push({ t: 'pow', k: k.idx, at: r.time });
   return item;
 }
 
-/** Ink over every kart ahead of the user that this client drives (stars and bullets stay clean). */
+/** Ink over every kart ahead of the user that this client drives (stars, bullets and Boos stay clean). */
 export function inkFrom(r: Race, from: number) {
   const user = r.karts[from];
   if (!user) return;
   for (const o of r.karts) {
-    if (o.idx === from || !local(o) || o.done !== null || o.star > 0 || o.bullet > 0 || o.place >= user.place) continue;
+    if (o.idx === from || !local(o) || o.done !== null || o.star > 0 || o.bullet > 0 || o.boo > 0 || o.place >= user.place) continue;
     o.ink = INK_T;
     r.events.push({ t: 'inked', k: o.idx });
   }
@@ -2542,21 +2718,170 @@ export function hornAt(r: Race, from: number, x: number, z: number) {
   r.events.push({ t: 'blast', x, z });
 }
 
-/** Lightning: everyone but the user (and anyone under a star) spins, shrinks and drops their item. */
+/** Lightning: everyone but the user (and anyone under a star or a Boo) spins, shrinks and drops their item. */
 export function strike(r: Race, from: number) {
   for (const o of r.karts) {
-    if (o.idx === from || !local(o) || o.sunk > 0 || o.star > 0 || o.bullet > 0 || o.done !== null) continue;
-    o.mega = 0;
-    o.goldT = 0;
-    o.shrink = SHRINK_T * (o.place <= 3 ? 1.2 : 0.8);
-    o.spin = Math.max(o.spin, 0.6 * r.tier.harsh);
-    o.v *= 0.5;
-    o.drift = 0;
-    o.charge = 0;
+    if (o.idx === from || !local(o) || o.sunk > 0 || o.star > 0 || o.bullet > 0 || o.boo > 0 || o.done !== null) continue;
+    shock(r, o, from, SHRINK_T * (o.place <= 3 ? 1.2 : 0.8));
+  }
+}
+
+/** A bolt of lightning on one kart: it shrinks for `time`, spins and drops its item. */
+function shock(r: Race, o: Kart, by: number, time: number) {
+  o.mega = 0;
+  o.goldT = 0;
+  o.fireT = 0;
+  o.shrink = time;
+  o.spin = Math.max(o.spin, 0.6 * r.tier.harsh);
+  o.v *= 0.5;
+  o.drift = 0;
+  o.charge = 0;
+  o.item = null;
+  o.uses = 0;
+  o.roll = 0;
+  r.events.push({ t: 'hit', k: o.idx, how: 'spin', by });
+}
+
+/**
+ * A Boo makes off with the item of the nearest kart ahead holding one (out in front, the nearest behind), unless it is
+ * already being used. When that kart is someone else's online, its own client lets go of it on hearing of the 'boo'
+ * (see robbed); the thief has it straight away either way.
+ */
+function steal(r: Race, k: Kart) {
+  const gap = (o: Kart) => (o.place < k.place ? k.place - o.place : 100 + o.place - k.place);
+  let mark: Kart | null = null;
+  for (const o of r.karts) {
+    if (o === k || o.done !== null || !o.item || o.roll > 0 || o.goldT > 0 || o.fireT > 0 || o.boo > 0 || o.sunk > 0) continue;
+    if (!mark || gap(o) < gap(mark)) mark = o;
+  }
+  if (!mark?.item) return;
+  const item = mark.item;
+  const uses = local(mark) ? mark.uses : (USES[item] ?? 1);
+  r.events.push({ t: 'boo', k: mark.idx, by: k.idx, item });
+  if (local(mark)) robbed(r, mark);
+  giveItem(r, k, item, ROLL_T / 2);
+  k.uses = uses;
+}
+
+/** A Boo took kart k's item. */
+export function robbed(r: Race, k: Kart) {
+  k.item = null;
+  k.uses = 0;
+  k.roll = 0;
+  k.trail = false;
+  k.goldT = 0;
+  k.fireT = 0;
+}
+
+/** A thunder cloud nobody took goes off over its own kart (unless it has a star, a bullet or a Boo, or is out of it). */
+function zap(r: Race, k: Kart) {
+  r.events.push({ t: 'zap', k: k.idx });
+  if (k.star > 0 || k.bullet > 0 || k.boo > 0 || k.sunk > 0 || k.done !== null) return;
+  shock(r, k, -1, ZAP_SHRINK);
+}
+
+/**
+ * A thunder cloud jumps from kart S to kart V when they touch, decided by the client that drives S. When V is someone
+ * else's kart online, its own client takes it on through catchCloud() (net 'cloud').
+ */
+function passCloud(r: Race, S: Kart, V: Kart) {
+  const left = S.cloud;
+  S.cloud = 0;
+  S.cloudHold = 0;
+  if (local(V)) catchCloud(r, V, left, S.idx);
+  else {
+    V.cloud = left;
+    V.cloudHold = CLOUD_HOLD;
+    r.events.push({ t: 'cloud', k: V.idx, by: S.idx, left });
+  }
+}
+
+/** Kart k takes on a thunder cloud with `left` seconds to go (always long enough to try passing it on). */
+export function catchCloud(r: Race, k: Kart, left: number, by: number) {
+  if (k.done !== null) return;
+  k.cloud = clamp(left, CLOUD_HOLD + 1.5, CLOUD_T);
+  k.cloudHold = CLOUD_HOLD;
+  r.events.push({ t: 'cloud', k: k.idx, by, left: k.cloud });
+}
+
+/** What a piranha plant on kart k can reach: the nearest kart or item just ahead of it, if any. */
+function preyOf(r: Race, k: Kart): { kart: Kart | null; thing: Thing | null; x: number; z: number } | null {
+  const { fx, fz } = fwdOf(k);
+  const { rx, rz } = rightOf(k);
+  let best: { kart: Kart | null; thing: Thing | null; x: number; z: number } | null = null;
+  let near = PIRANHA_R;
+  const reach = (x: number, z: number, y: number) => {
+    const dx = x - k.x;
+    const dz = z - k.z;
+    const along = dx * fx + dz * fz;
+    if (along < 0.5 || along > near || Math.abs(dx * rx + dz * rz) > 2.4 || Math.abs(y - k.y) > 1.6) return false;
+    near = along;
+    return true;
+  };
+  for (const o of r.karts) if (o !== k && o.done === null && o.boo <= 0 && o.sunk === 0 && reach(o.x, o.z, o.y)) best = { kart: o, thing: null, x: o.x, z: o.z };
+  for (const th of r.things) {
+    if (th.kind === 'blue' || th.kind === 'boomerang' || (th.owner === k.idx && (th.grace > 0 || ownSafe(th.kind)))) continue;
+    if (reach(th.x, th.z, th.y)) best = { kart: null, thing: th, x: th.x, z: th.z };
+  }
+  return best;
+}
+
+/**
+ * A piranha plant riding on kart k lunges at whatever comes just ahead: it eats items and spins karts out, and every
+ * lunge gives k a little boost. With nothing in reach it still snaps at the air now and then. Every client runs it for
+ * every plant; each one only spins the karts it drives and eats items only for its own karts' plants (the item's 'gone'
+ * goes online).
+ */
+function chomp(r: Race, k: Kart, dt: number) {
+  k.bite -= dt;
+  if (k.bite > 0 || hurt(k) || k.done !== null) return;
+  const prey = preyOf(r, k);
+  if (!prey && k.bite > -PIRANHA_GAP) return;
+  k.bite = PIRANHA_GAP;
+  const { fx, fz } = fwdOf(k);
+  r.events.push({ t: 'chomp', k: k.idx, x: prey ? prey.x : k.x + fx * 3, z: prey ? prey.z : k.z + fz * 3 });
+  if (local(k)) k.boost = Math.max(k.boost, PIRANHA_BOOST);
+  if (prey?.kart && local(prey.kart)) hitKart(r, prey.kart, 'spin', k.idx);
+  if (prey?.thing && local(k)) removeThing(r, prey.thing.id, true);
+}
+
+/** Someone's POW block, used at race time `at` (online it arrives a moment late, so it never starts in the past). */
+export function powFrom(r: Race, by: number, at: number) {
+  if (!r.karts[by] || r.pows.some((p) => p.by === by)) return;
+  r.boltAt = r.time;
+  r.pows.push({ by, at: clamp(at, r.time - POW_GAP, r.time), n: 0 });
+}
+
+/** POW blocks thump three times as a warning, then go off. */
+function movePows(r: Race) {
+  for (const p of [...r.pows]) {
+    const age = r.time - p.at;
+    while (p.n < 3 && age >= (p.n + 1) * POW_GAP) {
+      p.n++;
+      r.events.push({ t: 'thump', by: p.by, n: p.n });
+    }
+    if (age < POW_T) continue;
+    r.pows.splice(r.pows.indexOf(p), 1);
+    quake(r, p.by);
+  }
+}
+
+/**
+ * A POW block goes off: every kart ahead of its user on the ground (and that this client drives) spins and drops its
+ * item. One in the air just then, off a hop say, rides it out.
+ */
+function quake(r: Race, by: number) {
+  const user = r.karts[by];
+  r.events.push({ t: 'quake', by });
+  if (!user) return;
+  for (const o of r.karts) {
+    if (o.idx === by || !local(o) || o.place >= user.place || o.y > 0.05) continue;
+    if (!hitKart(r, o, 'spin', by)) continue;
     o.item = null;
     o.uses = 0;
     o.roll = 0;
-    r.events.push({ t: 'hit', k: o.idx, how: 'spin', by: from });
+    o.goldT = 0;
+    o.fireT = 0;
   }
 }
 
@@ -2567,9 +2892,9 @@ export function removeThing(r: Race, id: number, announce = true) {
   r.events.push({ t: 'gone', id, x: t.x, z: t.z, local: announce });
 }
 
-/** A blue shell explodes: everyone this client drives within reach is blown up. */
+/** A blue shell explodes: everyone this client drives within reach is blown up, unless high enough in the air. */
 export function boom(r: Race, x: number, z: number, by: number) {
-  for (const k of r.karts) if (Math.hypot(k.x - x, k.z - z) < BOOM_R) hitKart(r, k, 'boom', by);
+  for (const k of r.karts) if (Math.hypot(k.x - x, k.z - z) < BOOM_R && k.y < BLAST_CLEAR) hitKart(r, k, 'boom', by);
   for (const t of [...r.things]) if (t.kind !== 'blue' && Math.hypot(t.x - x, t.z - z) < BOOM_R) removeThing(r, t.id, false);
 }
 
@@ -2667,6 +2992,34 @@ function moveThings(r: Race, dt: number) {
       }
       continue;
     }
+    if (th.kind === 'boomerang') {
+      // it flies along the road, slowing all the while, until it turns round and comes back down it; up in the air it
+      // sails over trenches and the water, and never leaves the road
+      const at = locate(t, th.x, th.z, th.i);
+      th.i = at.i;
+      const along = th.vx * at.tx + th.vz * at.tz - BOOMERANG_PULL * dt;
+      th.vx = at.tx * along;
+      th.vz = at.tz * along;
+      th.x += th.vx * dt;
+      th.z += th.vz * dt;
+      const now = locate(t, th.x, th.z, th.i);
+      const lim = edgeAt(t, now.s, now.d >= 0 ? 1 : -1).lim - 0.8;
+      if (Math.abs(now.d) > lim) {
+        const sg = Math.sign(now.d);
+        th.x -= -now.tz * sg * (Math.abs(now.d) - lim);
+        th.z -= now.tx * sg * (Math.abs(now.d) - lim);
+      }
+      continue;
+    }
+    if (th.kind === 'fire' || th.kind === 'ice') {
+      // fireballs bounce along the road, ice balls skip low over it
+      th.vy -= GRAVITY * dt;
+      th.y += th.vy * dt;
+      if (th.y <= 0.3) {
+        th.y = 0.3;
+        th.vy = th.kind === 'fire' ? 6.5 : 3.5;
+      }
+    }
     if (th.kind === 'red') {
       const at = locate(t, th.x, th.z, th.i);
       const target = r.karts[th.target];
@@ -2711,7 +3064,7 @@ function moveThings(r: Race, dt: number) {
         removeThing(r, th.id, th.local);
         continue;
       }
-      // green shells bounce off the walls
+      // green shells, fireballs and ice balls bounce off the walls
       const sg = Math.sign(at.d);
       const nx = -at.tz * sg;
       const nz = at.tx * sg;
@@ -2736,31 +3089,40 @@ function sink(r: Race, th: Thing, kind: Past) {
   r.events.push({ t: 'sank', x: th.x, z: th.z, kind });
 }
 
+/** How a kart that runs into each kind of thing is hit. */
+const HIT_BY: Record<ThingKind, HitHow> = { banana: 'spin', green: 'tumble', red: 'tumble', blue: 'boom', bomb: 'boom', boomerang: 'spin', fire: 'spin', ice: 'freeze' };
+
 function hitThings(r: Race) {
-  // shells break on bananas and other shells
+  // shells break on bananas and other shells, and a boomerang knocks them aside and flies on
   for (let a = 0; a < r.things.length; a++) {
     for (let b = a + 1; b < r.things.length; b++) {
       const A = r.things[a];
       const B = r.things[b];
       if (A.kind === 'blue' || B.kind === 'blue' || A.kind === 'bomb' || B.kind === 'bomb' || (A.kind === 'banana' && B.kind === 'banana')) continue;
+      // (a stream of fireballs never trips over itself)
+      if ((A.owner === B.owner && ownSafe(A.kind) && ownSafe(B.kind)) || (A.kind === 'boomerang' && B.kind === 'boomerang')) continue;
       if (A.y > 1.2 || B.y > 1.2) continue;
       if (Math.hypot(A.x - B.x, A.z - B.z) < 1.3) {
-        removeThing(r, A.id, true);
-        removeThing(r, B.id, true);
+        if (A.kind !== 'boomerang') removeThing(r, A.id, true);
+        if (B.kind !== 'boomerang') removeThing(r, B.id, true);
         return hitThings(r);
       }
     }
   }
   for (const k of r.karts) {
-    if (!local(k) || k.done !== null || k.sunk > 0) continue;
+    // (everything passes through a kart under a Boo, and well under one up in the air)
+    if (!local(k) || k.done !== null || k.sunk > 0 || k.boo > 0) continue;
     const reach = KART_R * scaleOf(k) + 0.6;
     for (const th of [...r.things]) {
-      if (th.kind === 'blue' || th.kind === 'bomb' || th.y > 1.2 + k.y) continue;
-      if (th.owner === k.idx && th.grace > 0) continue;
+      if (th.kind === 'blue' || th.kind === 'bomb' || th.y > 1.2 + k.y || k.y > th.y + 1.2) continue;
+      if (th.owner === k.idx && (th.grace > 0 || ownSafe(th.kind))) continue;
       if (Math.hypot(th.x - k.x, th.z - k.z) > reach) continue;
-      removeThing(r, th.id, true);
+      // (a boomerang flies on through whoever it hits)
+      const flies = th.kind === 'boomerang';
+      if (!flies) removeThing(r, th.id, true);
       // a banana or shell held out behind soaks one hit from behind
       if (k.trail && (th.x - k.x) * Math.sin(k.h) + (th.z - k.z) * Math.cos(k.h) < -0.3) {
+        if (flies) removeThing(r, th.id, true);
         k.trail = false;
         k.uses--;
         if (k.uses <= 0) {
@@ -2770,7 +3132,7 @@ function hitThings(r: Race) {
         r.events.push({ t: 'block', k: k.idx, x: th.x, z: th.z });
         continue;
       }
-      hitKart(r, k, th.kind === 'banana' ? 'spin' : 'tumble', th.owner);
+      hitKart(r, k, HIT_BY[th.kind], th.owner);
     }
   }
 }
@@ -3283,6 +3645,12 @@ function think(r: Race, k: Kart, dt: number) {
   let want = ai.lane + clamp(curve.mean * 40, -0.55, 0.55) * ai.skill;
   if (wind) want -= (Math.sign(wind) * Math.min(1.2, 0.12 * Math.abs(wind))) / t.half;
   if (water) want = (want * t.half - water.lean) / t.half + water.lane(want);
+  // with a thunder cloud overhead, go and bump into whoever is just ahead to pass it on (not where a shove carries a long
+  // way, nor anyone near the brink of a drop)
+  if (k.cloud > 0 && k.cloudHold <= 0 && !r.slick) {
+    const mark = r.karts.find((o) => o !== k && o.done === null && o.cloud <= 0 && o.boo <= 0 && o.sunk === 0 && deltaS(t, k.s, o.s) > 0 && deltaS(t, k.s, o.s) < 14 && fromBrink(r, o) > 4);
+    if (mark) want = mark.d / t.half;
+  }
   // through the Blink, square in the middle of the half of the rows it has picked (or holds short of them on), all the
   // way (see blinkPlan)
   const blinkGo = r.panels.length ? blinkPlan(r, k, ai, dt) : null;
@@ -3635,8 +4003,12 @@ function think(r: Race, k: Kart, dt: number) {
   // cash in a full purse for a boost on a straight with nothing in the way
   if (k.coins >= MAX_COINS && k.boost <= 0 && !dodge && Math.abs(curveAhead(t, k.s, 0, 30).peak) < 0.012 && r.rand() < dt * 0.3) inp.cash = true;
 
-  // tricks off ramps, and a shove for anyone driving alongside
+  // tricks off ramps, a hop just as a POW block goes off, and a shove for anyone driving alongside
   if (k.air && k.trickT > 0 && !k.trick && r.rand() < ai.skill * 0.25) inp.hop = true;
+  for (const p of r.pows) {
+    const left = POW_T - (r.time - p.at);
+    if (p.by !== k.idx && left > 0.04 && left < 0.24 && k.y === 0 && r.rand() < ai.skill * 0.08) inp.hop = true;
+  }
   // (never from near the brink of a drop itself; on Expert the best of them go for anyone beside a drop)
   const hunt = expert(r) && ai.skill >= 0.8;
   if (k.slamCool === 0 && k.drift === 0 && r.rand() < dt * (0.5 + ai.skill) * (hunt ? 2 : 1) && fromBrink(r, k) > 3) {
@@ -3733,6 +4105,44 @@ function think(r: Race, k: Kart, dt: number) {
       break;
     case 'blue':
       go = k.place > 1 && ai.held > 0.8;
+      break;
+    case 'boomerang':
+      go = r.karts.some((o) => o !== k && o.done === null && deltaS(t, k.s, o.s) > 6 && deltaS(t, k.s, o.s) < 38 && Math.abs(o.d - k.d) < 4) || ai.held > 6;
+      break;
+    case 'fire':
+    case 'ice':
+      // (once the fire flower is lit, keep throwing)
+      if (aheadNear) go = true;
+      else if (behind) go = inp.back = true;
+      else go = k.fireT > 0 || ai.held > 6;
+      break;
+    case 'piranha':
+      go = ai.held > 0.5 && !held && !backOut && ai.goT === 0 && ai.blink === 0;
+      break;
+    case 'boo': {
+      // vanish when a shell is coming for you, or as soon as someone ahead has something worth taking
+      const chased = r.things.some((th) => th.owner !== k.idx && ((th.kind === 'red' && th.target === k.idx) || (th.kind === 'blue' && leaderFor(r) === k)) && Math.hypot(th.x - k.x, th.z - k.z) < 25);
+      go = chased || (ai.held > 1.5 && r.karts.some((o) => o.place < k.place && o.item !== null && o.roll === 0)) || ai.held > 8;
+      break;
+    }
+    case 'feather': {
+      // jump whatever is lying in the way, or a blue shell about to land; never toward a trench, a pane or the brink
+      const safe = !band.hole && fromBrink(r, k) > 5 && !r.holes.some((h) => deltaS(t, k.s, h.s) > -5 && deltaS(t, k.s, h.s) < 40) && !r.panels.length && !held && !backOut && ai.goT === 0;
+      const inWay = r.things.some((th) => {
+        if (th.owner === k.idx || th.kind === 'blue') return false;
+        const at = locate(t, th.x, th.z, th.i);
+        const ds = deltaS(t, k.s, at.s);
+        return ds > 3 && ds < 4 + k.v * 0.4 && Math.abs(at.d - k.d) < 2.4;
+      });
+      const blue = leaderFor(r) === k && r.things.some((th) => th.kind === 'blue' && Math.hypot(th.x - k.x, th.z - k.z) < 9);
+      go = safe && (inWay || blue || (ai.held > 8 && straight && !dodge));
+      break;
+    }
+    case 'cloud':
+      go = true;
+      break;
+    case 'pow':
+      go = k.place > 1 && ai.held > 1;
       break;
   }
   inp.use = go;

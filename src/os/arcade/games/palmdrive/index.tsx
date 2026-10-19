@@ -22,13 +22,16 @@ import {
   TIDE_LAP,
   hazardV,
   boom,
+  catchCloud,
   createRace,
   fmtTime,
   isCc,
   lapOf,
   ordinal,
+  powFrom,
   pressGas,
   removeThing,
+  robbed,
   RIVALS,
   soloRace,
   spawn,
@@ -358,9 +361,11 @@ type Hud = {
   /** Enough coins to cash in for a boost. */
   cashReady: boolean;
   item: Item | null;
-  /** Ink over your view (0 to 1) and a golden mushroom still running. */
+  /** Ink over your view (0 to 1), a golden mushroom or a fire flower still running, and frozen in ice. */
   ink: number;
   golden: boolean;
+  fire: boolean;
+  frozen: boolean;
   uses: number;
   rolling: boolean;
   /** The banana or shell is held out behind as a shield. */
@@ -441,7 +446,7 @@ function Play({ mode }: { mode: Mode }) {
   const tap = useRef({ back: false, gas: false, cash: false, slam: false });
   /** The item button was holding a banana or shell out behind last frame. */
   const holding = useRef(false);
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, note: null, wrong: false, results: false, gust: 0, swell: 0 });
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, fire: false, frozen: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, note: null, wrong: false, results: false, gust: 0, swell: 0 });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
@@ -587,7 +592,16 @@ function Play({ mode }: { mode: Mode }) {
       // the coin goes to the kart whose slam it was, if this client drives it: this player's, or a bot on the host
       const k = r.karts.find((x) => x.seat === ev.to);
       if (k && (k.idx === r.me || k.kind === 'cpu')) stolen(r, k);
-    }
+    } else if (ev.y === 'boo' || ev.y === 'cloud') {
+      // someone's Boo took the item of a kart we drive, or their thunder cloud jumped onto it
+      const k = r.karts.find((x) => x.seat === ev.to);
+      if (!k || (k.idx !== r.me && k.kind !== 'cpu')) return;
+      if (ev.y === 'cloud') catchCloud(r, k, ev.left, idx(from));
+      else {
+        if (k.item) r.events.push({ t: 'boo', k: k.idx, by: idx(from), item: k.item });
+        robbed(r, k);
+      }
+    } else if (ev.y === 'pow') powFrom(r, idx(from), ev.at);
   };
 
   useEffect(() => {
@@ -1016,6 +1030,12 @@ function Play({ mode }: { mode: Mode }) {
     else if (e.t === 'boom') send(me, { y: 'boom', x: round(e.x), z: round(e.z) });
     // a kart we drive was slammed by someone else's: tell them they won its coin
     else if (e.t === 'slammed' && e.coin && (e.k === r.me || r.karts[e.k]?.kind === 'cpu') && r.karts[e.by]?.kind === 'remote') send(by(e.k), { y: 'stole', to: r.karts[e.by].seat });
+    else if (e.t === 'pow') send(by(e.k), { y: 'pow', at: round(e.at) });
+    // a kart we drive took someone else's item with a Boo, or bumped its thunder cloud onto them: their client takes it
+    // from here
+    else if ((e.t === 'boo' || e.t === 'cloud') && (e.by === r.me || r.karts[e.by]?.kind === 'cpu') && r.karts[e.k]?.kind === 'remote') {
+      send(by(e.by), e.t === 'boo' ? { y: 'boo', to: r.karts[e.k].seat } : { y: 'cloud', to: r.karts[e.k].seat, left: round(e.left) });
+    }
   }
 
   function react(r: Race, e: Ev) {
@@ -1055,7 +1075,62 @@ function Play({ mode }: { mode: Mode }) {
           sfx.tone({ freq: 160, to: 90, dur: 0.6, type: 'sawtooth', vol: 0.12 });
         } else if (e.item === 'ink') sfx.tone({ freq: 500, to: 180, dur: 0.25, type: 'sine', vol: 0.15 });
         else if (e.item === 'horn') [349, 440, 523].forEach((f) => sfx.tone({ freq: f, dur: 0.45, type: 'sawtooth', vol: 0.07 }));
-        else if (e.item !== 'bolt' && e.item !== 'coin') sfx.tone({ freq: 700, to: 300, dur: 0.18, type: 'triangle', vol: 0.15 });
+        else if (e.item === 'fire') {
+          // a whoosh
+          sfx.noise(0.12, 0.08);
+          sfx.tone({ freq: 620, to: 240, dur: 0.16, type: 'sawtooth', vol: 0.08 });
+        } else if (e.item === 'ice') sfx.tone({ freq: 1500, to: 900, dur: 0.18, type: 'triangle', vol: 0.12 });
+        else if (e.item === 'boomerang') sfx.tone({ freq: 380, to: 760, dur: 0.3, type: 'triangle', vol: 0.12 });
+        else if (e.item === 'boo') {
+          // the Boo's giggle, down and away
+          sfx.tone({ freq: 620, to: 300, dur: 0.5, type: 'sine', vol: 0.13 });
+          sfx.tone({ freq: 880, to: 520, dur: 0.18, type: 'sine', vol: 0.06, delay: 0.12 });
+        } else if (e.item === 'feather') sfx.tone({ freq: 400, to: 1400, dur: 0.35, type: 'sine', vol: 0.12 });
+        else if (e.item === 'piranha') [196, 247, 294].forEach((f, i) => sfx.tone({ freq: f, dur: 0.12, type: 'square', vol: 0.07, delay: i * 0.08 }));
+        else if (e.item === 'cloud') {
+          // thunder rumbling overhead
+          sfx.noise(0.6, 0.06);
+          sfx.tone({ freq: 70, to: 50, dur: 0.7, type: 'sawtooth', vol: 0.08 });
+          setFlash({ id: Date.now(), kind: 'cloud' });
+        } else if (e.item !== 'bolt' && e.item !== 'coin' && e.item !== 'pow') sfx.tone({ freq: 700, to: 300, dur: 0.18, type: 'triangle', vol: 0.15 });
+        break;
+      case 'chomp': {
+        // your own plant snapping, or someone else's snapping right at you
+        const you = r.karts[r.me];
+        if (mine || (you && Math.hypot(e.x - you.x, e.z - you.z) < 4)) sfx.tone({ freq: 240, to: 110, dur: 0.1, type: 'square', vol: 0.11 });
+        break;
+      }
+      case 'boo':
+        // your item taken by someone's Boo, or someone's taken by yours
+        if (mine) sfx.tone({ freq: 520, to: 200, dur: 0.6, type: 'sine', vol: 0.14 });
+        else if (e.by === r.me) sfx.tone({ freq: 500, to: 1000, dur: 0.25, type: 'triangle', vol: 0.1, delay: 0.2 });
+        break;
+      case 'cloud':
+        // a thunder cloud lands over you, or you got rid of yours
+        if (mine) {
+          sfx.noise(0.5, 0.06);
+          sfx.tone({ freq: 70, to: 50, dur: 0.6, type: 'sawtooth', vol: 0.08 });
+          setFlash({ id: Date.now(), kind: 'cloud' });
+        } else if (e.by === r.me) sfx.tone({ freq: 300, to: 900, dur: 0.25, type: 'triangle', vol: 0.1 });
+        break;
+      case 'zap':
+        if (!mine) break;
+        sfx.play('boom', 1.6);
+        setFlash({ id: Date.now(), kind: 'bolt' });
+        buzz(120);
+        break;
+      case 'thump': {
+        // the POW block's warning, louder each time for whoever it is coming for
+        const you = r.karts[r.me];
+        const user = r.karts[e.by];
+        const coming = !!you && !!user && you !== user && you.place < user.place && you.done === null;
+        sfx.tone({ freq: 70, to: 45, dur: 0.18, type: 'sine', vol: (coming ? 0.12 : 0.05) + e.n * 0.04 });
+        sfx.noise(0.06, (coming ? 0.05 : 0.02) + e.n * 0.02);
+        if (coming && e.n === 1) showHint('pow', 'A POW block! Hop with Space on the fourth beat to ride it out.', 'A POW block! Tap drift on the fourth beat to ride it out.');
+        break;
+      }
+      case 'quake':
+        sfx.play('boom', 0.5);
         break;
       case 'inked':
         if (!mine) break;
@@ -1239,14 +1314,18 @@ function Play({ mode }: { mode: Mode }) {
         break;
       case 'hit':
         if (mine) {
-          buzz(e.how === 'spin' || e.how === 'squash' ? 60 : 120);
-          sfx.play(e.how === 'spin' || e.how === 'squash' ? 'hit' : 'boom');
+          buzz(e.how === 'spin' || e.how === 'squash' || e.how === 'freeze' ? 60 : 120);
+          // (iced over: a crackle of frost)
+          if (e.how === 'freeze') {
+            sfx.tone({ freq: 1800, to: 500, dur: 0.4, type: 'triangle', vol: 0.12 });
+            sfx.noise(0.15, 0.06);
+          } else sfx.play(e.how === 'spin' || e.how === 'squash' ? 'hit' : 'boom');
           // (on the water a spin is a crab: the oar's clack in its gate and a splash)
           if (r.boat && e.how === 'spin') {
             sfx.tone({ freq: 1100, to: 700, dur: 0.05, type: 'square', vol: 0.08 });
             sfx.noise(0.3, 0.09, 0.05);
           }
-          setFlash({ id: Date.now(), kind: 'hit' });
+          setFlash({ id: Date.now(), kind: e.how === 'freeze' ? 'ice' : 'hit' });
         }
         break;
       case 'bump':
@@ -1367,6 +1446,8 @@ function Play({ mode }: { mode: Mode }) {
       item: me.roll > 0 ? ITEMS[Math.floor(clock.current * 12) % ITEMS.length] : me.item,
       ink: me.done === null ? Math.round(Math.min(1, me.ink / 1.5) * 10) / 10 : 0,
       golden: me.goldT > 0,
+      fire: me.fireT > 0,
+      frozen: me.frozen > 0 && me.done === null,
       uses: me.uses,
       rolling: me.roll > 0,
       trailing: me.trail,
@@ -1462,7 +1543,7 @@ function Play({ mode }: { mode: Mode }) {
       {shell.status !== 'ready' && !shell.compact && (
         <div className={`g-palmdrive-hud${shell.touch ? ' is-touch' : ''}`}>
           {hud.boosting && <div className="g-palmdrive-speed" aria-hidden="true" />}
-          <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}${hud.trailing ? ' is-trailing' : ''}${hud.golden ? ' is-golden' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}${hud.trailing ? ' behind you' : ''}` : 'No item'}>
+          <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}${hud.trailing ? ' is-trailing' : ''}${hud.golden ? ' is-golden' : ''}${hud.fire ? ' is-fire' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}${hud.trailing ? ' behind you' : ''}` : 'No item'}>
             {hud.item ? <ItemIcon item={hud.item} /> : null}
             {!hud.rolling && hud.uses > 1 && <b>{hud.uses}</b>}
           </div>
@@ -1627,6 +1708,7 @@ function Play({ mode }: { mode: Mode }) {
         </div>
       )}
       {flash && <div key={flash.id} className={`g-palmdrive-flash is-${flash.kind}`} onAnimationEnd={() => setFlash(null)} />}
+      {hud.frozen && <div className="g-palmdrive-frost" aria-hidden="true" />}
       {hud.ink > 0 && (
         <div className="g-palmdrive-ink" style={{ opacity: hud.ink }} aria-hidden="true">
           {INK_BLOTS.map(([x, y, size], i) => (
@@ -1744,6 +1826,14 @@ const ITEM_NAMES: Record<Item, string> = {
   horn: 'a horn',
   bolt: 'lightning',
   blue: 'a blue shell',
+  boomerang: 'a boomerang',
+  fire: 'a fire flower',
+  ice: 'an ice flower',
+  piranha: 'a piranha plant',
+  boo: 'a Boo',
+  feather: 'a feather',
+  cloud: 'a thunder cloud',
+  pow: 'a POW block',
 };
 const itemName = (item: Item) => ITEM_NAMES[item];
 
