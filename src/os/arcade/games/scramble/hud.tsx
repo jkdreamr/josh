@@ -1044,6 +1044,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         <h3>Online</h3>
         <p>Play joins a match with whoever else is starting one, like an .io game: it starts on its own about twenty seconds after the first egg comes in (sooner once twenty people are in), and computer eggs fill the island up to fifty. Arrive once one is under way and you go into the next. Play with Bots is you against forty-nine computer eggs, as sharp as you pick.</p>
         <p>Play with Friends makes a room of your own for up to twenty: the host adds computer eggs with Bots, then picks whether more fill the island up to fifty and how sharp they are.</p>
+        <p>Easy computer eggs are slow to spot you and miss most shots past thirty meters. Normal ones, the kind Play always brings, fight fair. Hard ones see farther, react quicker and aim well up close, but are never dead on far off. At every level they pace their fire and a pack of them takes turns, so none cracks you from full health in a second.</p>
         <p>Cracked? Watch the rest, or press done watching for your result while the match plays on for everyone else. Whoever hosts runs the match, so they can play again (or start the next one, in a room of your own) once it is over; if the host leaves first, the match ends for everyone.</p>
       </section>
     </Sheet>

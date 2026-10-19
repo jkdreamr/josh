@@ -263,6 +263,10 @@ export type Ai = {
   steady: number;
   burst: number;
   rest: number;
+  /** What we've let fly lately: [clock, damage if it all lands] for each shot or swing (see LevelSpec `pour`). */
+  poured: [number, number][];
+  /** When the last of it went. */
+  pouredAt: number;
   buildCool: number;
   swapCool: number;
   /** A throw in progress: what, how far, how long it may take, and how many there were before it. `tossA` is the way
@@ -407,6 +411,8 @@ export type Fighter = {
   dropSeq: number;
   /** Remote eggs whose owner says they are out, though the news of how hasn't arrived yet. */
   outSeen: number;
+  /** What computer eggs have let fly at it lately, as in Ai `poured` (see FOCUS). */
+  incoming: [number, number][];
 };
 
 /**
@@ -765,14 +771,24 @@ export function botNames(seed: number): string[] {
 /**
  * How sharp the computer players are. `toss` is the seconds between throws (0: never); `build` between walls and boxes,
  * `ramp` between ramping up for the high ground (0: never). `far` is how much wider the aim gets for every 10 meters
- * past 20, and `settle` the seconds a scoped shot waits for a steady aim.
+ * past 20, and `settle` the seconds a scoped shot waits for a steady aim. `pour` is the most damage it lets fly in any
+ * POUR_T seconds (every shot landing, and one shot bigger than that waits as much longer), under a full egg's health,
+ * so none cracks an egg from full in about a second.
  */
-type LevelSpec = { err: number; react: number; turn: number; sight: number; lead: number; burst: number; rest: number; build: number; ramp: number; heal: number; toss: number; far: number; settle: number };
+type LevelSpec = { err: number; react: number; turn: number; sight: number; lead: number; burst: number; rest: number; build: number; ramp: number; heal: number; toss: number; far: number; settle: number; pour: number };
 export const LEVEL_SPECS: Record<Level, LevelSpec> = {
-  easy: { err: 0.2, react: 0.85, turn: 3.2, sight: 32, lead: 0, burst: 0.45, rest: 0.6, build: 24, ramp: 0, heal: 45, toss: 22, far: 0.5, settle: 1.1 },
-  normal: { err: 0.11, react: 0.5, turn: 6, sight: 42, lead: 0.5, burst: 0.8, rest: 0.35, build: 12, ramp: 18, heal: 60, toss: 11, far: 0.35, settle: 0.7 },
-  hard: { err: 0.055, react: 0.28, turn: 9, sight: 52, lead: 1, burst: 1.4, rest: 0.2, build: 5, ramp: 9, heal: 70, toss: 6, far: 0.15, settle: 0.4 },
+  easy: { err: 0.2, react: 0.85, turn: 3.2, sight: 32, lead: 0, burst: 0.45, rest: 0.6, build: 24, ramp: 0, heal: 45, toss: 22, far: 0.9, settle: 1.1, pour: 60 },
+  normal: { err: 0.11, react: 0.5, turn: 6, sight: 42, lead: 0.5, burst: 0.8, rest: 0.35, build: 12, ramp: 18, heal: 60, toss: 11, far: 0.9, settle: 0.7, pour: 75 },
+  hard: { err: 0.055, react: 0.28, turn: 9, sight: 52, lead: 1, burst: 1.4, rest: 0.2, build: 5, ramp: 9, heal: 70, toss: 6, far: 0.25, settle: 0.4, pour: 90 },
 };
+
+/** The seconds a computer egg's `pour`, and a pack's FOCUS, are counted over. */
+export const POUR_T = 1.2;
+/**
+ * The most every computer egg together lets fly at one egg in POUR_T seconds: a pack takes turns, and doesn't crack
+ * it from full in about a second either.
+ */
+export const FOCUS = 95;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -870,6 +886,7 @@ function newFighter(id: number, e: Entrant, x: number, z: number): Fighter {
     wallSeq: 0,
     dropSeq: 0,
     outSeen: -1,
+    incoming: [],
   };
 }
 
@@ -919,6 +936,8 @@ function newAi(m: Match, f: Fighter): Ai {
     steady: 0,
     burst: 0,
     rest: 0,
+    poured: [],
+    pouredAt: -99,
     buildCool: 0,
     swapCool: 0,
     toss: null,
@@ -1508,6 +1527,7 @@ function shoot(m: Match, f: Fighter, g: Gun) {
   const spec = WEAPONS[g.w];
   g.mag--;
   if (!spec.silent) f.firedAt = m.clock;
+  if (f.ai) pour(m, f.ai, damageOf(g.w, g.r) * spec.pellets);
   const moving = clamp(Math.hypot(f.vx, f.vz) / SPEED, 0, 1);
   // a heavy SMG climbs: each shot wider than the last until you let it settle
   const k = r2(1 + moving * 0.6 + f.heat);
@@ -1651,6 +1671,7 @@ function swing(m: Match, f: Fighter) {
   const spec = MELEE[f.melee];
   f.fireT = 1 / spec.rate;
   f.firedAt = m.clock;
+  if (f.ai) pour(m, f.ai, spec.dmg);
   emit(m, { t: 'swing', f: f.id });
   // an egg in front of us first
   let best: Fighter | null = null;
@@ -3046,6 +3067,45 @@ const fightGun = (f: Fighter, g: Gun | null) => hasAmmo(f, g) && !WEAPONS[g!.w].
 
 const scopedGun = (g: Gun | null) => !!g && WEAPONS[g.w].cls === 'sniper';
 
+/** What one pull of the trigger lets fly if it all lands: every pellet of every shot of a burst, or a swing. */
+function pullOf(f: Fighter, g: Gun | null) {
+  if (!g) return MELEE[f.melee].dmg;
+  const spec = WEAPONS[g.w];
+  return damageOf(g.w, g.r) * spec.pellets * (spec.burst?.n ?? 1);
+}
+
+/** What a list of [clock, damage] let fly in the last POUR_T seconds (dropping what's older). */
+function lately(m: Match, p: [number, number][]) {
+  while (p.length && m.clock - p[0][0] >= POUR_T) p.shift();
+  let sum = 0;
+  for (const [, d] of p) sum += d;
+  return sum;
+}
+
+/** A shot or swing a computer egg let fly, on its own tally and its target's. */
+function pour(m: Match, ai: Ai, d: number) {
+  lately(m, ai.poured);
+  ai.poured.push([m.clock, d]);
+  ai.pouredAt = m.clock;
+  const t = m.fighters[ai.target];
+  if (!t) return;
+  lately(m, t.incoming);
+  t.incoming.push([m.clock, d]);
+}
+
+/**
+ * Room for another pull of the trigger: what we let fly in the last POUR_T seconds and this pull stay within the
+ * level's `pour`, and what every computer egg let fly at the target within FOCUS. A pull bigger than the pour on its
+ * own (a pump shotgun on easy, a sniper) needs a quiet as much longer than POUR_T before it.
+ */
+function room(m: Match, f: Fighter, ai: Ai, L: LevelSpec, g: Gun | null, tgt: Fighter) {
+  const pull = pullOf(f, g);
+  if (pull > L.pour && m.clock - ai.pouredAt < (POUR_T * pull) / L.pour) return false;
+  const mine = lately(m, ai.poured);
+  const all = lately(m, tgt.incoming);
+  return (!mine || mine + pull <= L.pour) && (!all || all + pull <= FOCUS);
+}
+
 /** A loaded gun other than `g` for closer in than a scope, or null. */
 const closerGun = (f: Fighter, g: Gun | null) => f.guns.find((x) => x && x !== g && !scopedGun(x) && fightGun(f, x)) ?? null;
 
@@ -3165,7 +3225,7 @@ function think(m: Match, f: Fighter, dt: number) {
       ai.errT = 0.3 + m.rng() * 0.4;
       // the farther off and the quicker it moves, the wider the miss
       const moving = Math.min(1, Math.hypot(tgt.vx, tgt.vz) / SPEED);
-      ai.err = (m.rng() * 2 - 1) * L.err * (0.6 + moving * 0.8) * (1 + (Math.max(0, d - 20) / 10) * L.far);
+      ai.err = clamp((m.rng() * 2 - 1) * L.err * (0.6 + moving * 0.8) * (1 + (Math.max(0, d - 20) / 10) * L.far), -MISS, MISS);
     }
     // a throw away from the target (a bush to hide in) turns that way instead
     const aside = !!ai.toss && !Number.isNaN(ai.tossA);
@@ -3173,7 +3233,8 @@ function think(m: Match, f: Fighter, dt: number) {
     const maxTurn = L.turn * dt;
     inp.aim = f.aim + clamp(turn, -maxTurn, maxTurn);
     ai.steady = scoped && f.fireT <= 0 && f.hitT <= 0 && Math.abs(angleDiff(inp.aim, ideal + ai.err)) < 0.03 ? ai.steady + dt : 0;
-    const aligned = Math.abs(angleDiff(inp.aim, ideal)) < 0.22 + (g ? WEAPONS[g.w].spread : 0.4) && (!scoped || ai.steady >= L.settle);
+    // on the aim it means to take, miss and all (so a wide aim far off really does miss, and doesn't just wait)
+    const aligned = Math.abs(angleDiff(inp.aim, ideal + ai.err)) < 0.12 + (g ? WEAPONS[g.w].spread : 0.4) && (!scoped || ai.steady >= L.settle);
     // a minigun keeps up its fire rather than bursts, or it would never spin up
     const spinner = !!g && !!WEAPONS[g.w].spin;
     // bursts: shoot a while, rest a beat (a scoped gun keeps its own beat, the settle)
@@ -3229,12 +3290,14 @@ function think(m: Match, f: Fighter, dt: number) {
       // hiding, it holds its fire unless the target is right on top of it
       const hold = hiding && d > 6;
       if (f.slot !== SLOT_THROW && !hold && ai.react <= 0 && aligned && d < reach && (ai.burst > 0 || scoped || spinner) && clearBetween(m, f, tgt)) {
-        inp.fire = true;
-        // after a scoped shot, aim afresh and settle again
-        if (scoped && f.fireT <= 0) {
-          ai.steady = 0;
-          ai.errT = 0;
-        }
+        if (room(m, f, ai, L, g, tgt)) {
+          inp.fire = true;
+          // after a scoped shot, aim afresh and settle again
+          if (scoped && f.fireT <= 0) {
+            ai.steady = 0;
+            ai.errT = 0;
+          }
+        } else if (spinner && f.spin < 0.9) inp.fire = true; // waiting our turn, the barrels keep turning (short of firing)
       }
     }
     if (L.build && !ai.toss && ai.buildCool <= 0 && f.y < 0.5 && !boxed && !leaving && ai.climbT <= 0 && ai.highT <= 0 && !outside) buildInFight(m, f, ai, L, d, ideal);
@@ -3410,18 +3473,40 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   });
 }
 
+/** The widest a computer egg's aim strays (radians), however far off and quick the target. */
+const MISS = 0.35;
+
+/** Meters farther off a target seems for every other computer egg already fighting it. */
+const CROWD = 12;
+const hunters = new WeakMap<Match, { frame: number; n: number[] }>();
+/** How many computer eggs have each egg for their target, counted once a step. */
+function huntersOf(m: Match) {
+  let got = hunters.get(m);
+  if (!got) hunters.set(m, (got = { frame: -1, n: [] }));
+  if (got.frame !== m.frame) {
+    got.frame = m.frame;
+    got.n.length = m.fighters.length;
+    got.n.fill(0);
+    for (const f of m.fighters) if (f.ai && f.ai.target >= 0 && fighting(f)) got.n[f.ai.target]++;
+  }
+  return got.n;
+}
+
 function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   // a target: the nearest egg we can see, sticking with the one we have, and turning on whoever just shot us
   const far = f.guns.some((x) => x && WEAPONS[x.w].cls === 'sniper' && hasAmmo(f, x));
   const sight = L.sight + (far ? 20 : 0) + SCOPE_VIEW[f.scope] + levelOf(f.y) * HIGH_VIEW;
   let best: Fighter | null = null;
   let bestScore = Infinity;
+  const hunted = huntersOf(m);
   for (const o of m.fighters) {
     if (o === f || !fighting(o)) continue;
     const d = Math.hypot(o.x - f.x, o.z - f.z);
     const hitMe = o.id === f.lastBy && m.clock - f.lastByAt < 3;
     if (d > sight + 15 || !canSee(m, f, o, hitMe ? sight + 15 : sight)) continue;
-    const score = d - (o.id === ai.target ? 8 : 0) - (hitMe ? 12 : 0);
+    // rather one nobody else is on than piling onto one already in a fight
+    const others = hunted[o.id] - (o.id === ai.target ? 1 : 0);
+    const score = d - (o.id === ai.target ? 8 : 0) - (hitMe ? 12 : 0) + (hitMe ? 0 : others * CROWD);
     if (score < bestScore) {
       best = o;
       bestScore = score;
@@ -3431,8 +3516,13 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   // unarmed eggs only fight what is right in front of them
   if (best && !armed && Math.hypot(best.x - f.x, best.z - f.z) > 6) best = null;
   if ((best?.id ?? -1) !== ai.target) ai.react = best ? L.react * (0.7 + m.rng() * 0.6) : 0;
+  // the count stays right for the others still to pick this step
+  if (ai.target >= 0 && hunted[ai.target] > 0) hunted[ai.target]--;
   ai.target = best?.id ?? -1;
-  if (best) return;
+  if (best) {
+    hunted[best.id]++;
+    return;
+  }
 
   // somebody shot us from out of sight: go and look
   const s = m.storm;

@@ -96,6 +96,8 @@ import {
   INTERP,
   LEVELS,
   LEVEL_SPECS,
+  FOCUS,
+  POUR_T,
   MAX_FIGHTERS,
   PAD_FLY,
   PICK_R,
@@ -1789,6 +1791,207 @@ test('computer eggs miss more the farther off the target is, the easy ones far m
   assert.ok(hardFar < hardNear * 0.7, `hard far ${hardFar}`);
   assert.ok(hardFar > 0.15, `hard is still sharp ${hardFar}`);
   assert.ok(easyFar < hardFar * 0.6, `easy far ${easyFar}`);
+});
+
+let cleared: GameMap | null = null;
+/** A match on bare grass (the island cleared once, then shared) with `n` people, until autopilot takes some over. */
+function arena(level: Level, n: number, seed: number) {
+  if (!cleared) {
+    const m0 = quiet();
+    openSpot(m0);
+    cleared = m0.map;
+  }
+  const entrants: Entrant[] = Array.from({ length: n }, (_, i) => ({ name: `p${i}`, color: '#fff', kind: 'player', seat: -1 }));
+  const m = createMatch({ seed, role: 'solo', level, entrants, me: 0, countdown: 0, map: cleared });
+  m.time = 5;
+  m.loot.clear();
+  return m;
+}
+
+/** Strafes an egg about (hx, hz) like a person dodging, a new way every 0.4 to 1.2 seconds: call it every step. */
+function dodger(f: Fighter, hx: number, hz: number, seed: number) {
+  const rng = rng32(seed);
+  let a = 0;
+  let t = 0;
+  return () => {
+    t -= DT;
+    if (t <= 0) {
+      t = 0.4 + rng() * 0.8;
+      a = rng() * Math.PI * 2;
+    }
+    const mx = Math.sin(a) - (f.x - hx) / 8;
+    const mz = Math.cos(a) - (f.z - hz) / 8;
+    const len = Math.hypot(mx, mz) || 1;
+    f.input.mx = mx / len;
+    f.input.mz = mz / len;
+  };
+}
+
+/** The first `n` eggs feel shot at by `by` just now, as if it sprayed at them all (so they all turn on it). */
+function shotBy(m: Match, by: Fighter, n: number) {
+  for (let i = 0; i < n; i++) {
+    m.fighters[i].lastBy = by.id;
+    m.fighters[i].lastByAt = m.clock;
+  }
+}
+
+/** A computer egg in a match, holding a fresh gun with plenty to shoot. */
+function armBot(m: Match, f: Fighter, w: WeaponId, r: number, x: number, z: number) {
+  land(f, x, z);
+  autopilot(m, f);
+  f.guns = [{ w, r, mag: WEAPONS[w].mag }, null];
+  f.slot = 0;
+  f.ammo = { light: 999, heavy: 999, shells: 999, rockets: 999 };
+}
+
+/**
+ * Computer eggs at `spots`, each with a `w` of rarity `r`, against a dodging egg in the middle with full health, no
+ * shield and no armor, that never shoots back: the seconds from its first hit to its crack (Infinity if it lasts).
+ */
+function focused(level: Level, w: WeaponId, r: number, spots: [number, number][], seed: number, limit = 8) {
+  const m = arena(level, spots.length + 1, seed);
+  const target = m.fighters[spots.length];
+  land(target, 0, 0);
+  spots.forEach(([x, z], i) => armBot(m, m.fighters[i], w, r, x, z));
+  const dodge = dodger(target, 0, 0, seed);
+  let first = -1;
+  for (let t = 0; t < limit; t += DT) {
+    dodge();
+    shotBy(m, target, spots.length);
+    step(m, DT);
+    for (const e of m.events.splice(0)) {
+      if (e.t === 'hit' && e.to === target.id && first < 0) first = m.time;
+      if (e.t === 'out' && e.f === target.id) return m.time - first;
+    }
+  }
+  return Infinity;
+}
+
+/** How far off each family of guns fights. */
+const FIGHT_AT: Record<string, number> = { pistol: 14, smg: 9, rifle: 20, shotgun: 5, sniper: 30, heavy: 16 };
+
+test('no computer egg cracks a dodging egg from full health in about a second, with any gun at any level, alone or three at once', () => {
+  for (const level of LEVELS) {
+    let cracked = 0;
+    for (const w of WEAPON_IDS) {
+      if (WEAPONS[w].call) continue;
+      const d = FIGHT_AT[WEAPONS[w].cls];
+      // the best of each gun, alone and in a pack of three round the egg (each nearer it than to the others)
+      const alone = focused(level, w, MAX_RARITY, [[0, -d]], 3);
+      const pack = focused(level, w, MAX_RARITY, [[0, -d], [d * 0.87, d * 0.5], [-d * 0.87, d * 0.5]], 4);
+      for (const t of [alone, pack]) {
+        assert.ok(t >= 1, `${level} ${w}: cracked ${t.toFixed(2)} s after the first hit`);
+        if (t < Infinity) cracked++;
+      }
+    }
+    assert.ok(cracked >= { easy: 6, normal: 16, hard: 20 }[level], `${level}: they do crack it in the end (${cracked})`);
+  }
+});
+
+test('a computer egg lets fly no more than its level allows in any stretch, and a pack no more than FOCUS at one egg', () => {
+  for (const level of LEVELS) {
+    const m = arena(level, 4, 9);
+    const target = m.fighters[3];
+    land(target, 0, 0);
+    [[0, -9], [8, 4.5], [-8, 4.5]].forEach(([x, z], i) => armBot(m, m.fighters[i], 'hsmg', MAX_RARITY, x, z));
+    const dodge = dodger(target, 0, 0, 2);
+    // [clock, shooter, damage, at whom]
+    const shots: [number, number, number, number][] = [];
+    for (let t = 0; t < 6; t += DT) {
+      dodge();
+      shotBy(m, target, 3);
+      target.hp = HP_MAX;
+      step(m, DT);
+      for (const e of m.events.splice(0)) if (e.t === 'shot') shots.push([m.clock, e.f, damageOf(e.w as WeaponId, e.r), m.fighters[e.f].ai!.target]);
+    }
+    const sum = (list: typeof shots) => list.reduce((n, [, , d]) => n + d, 0);
+    assert.ok(shots.filter((s) => s[3] === target.id).length > 12, `${level}: they shot at it (${shots.length})`);
+    for (const [t] of shots) {
+      const late = shots.filter(([s]) => s > t - POUR_T + 1e-6 && s <= t);
+      assert.ok(sum(late.filter((s) => s[3] === target.id)) <= FOCUS + 1e-6, `${level}: the pack at ${t.toFixed(2)}`);
+      for (let f = 0; f < 3; f++) assert.ok(sum(late.filter((s) => s[1] === f)) <= LEVEL_SPECS[level].pour + 1e-6, `${level}: egg ${f}`);
+    }
+  }
+});
+
+test('a scoped shot at a dodging egg misses more the farther off it is: on easy and normal clearly so past thirty meters, and never laser sharp on hard', () => {
+  const acc = (level: Level, dist: number) => {
+    let shots = 0;
+    let hits = 0;
+    for (const w of ['scout', 'sniper', 'crossbow', 'marksman'] as WeaponId[])
+      for (let k = 0; k < 5; k++) {
+        const m = arena(level, 2, 11 + k);
+        const [a, b] = m.fighters;
+        armBot(m, a, w, 0, 0, 0);
+        land(b, 0, dist);
+        const dodge = dodger(b, 0, dist, k + 1);
+        for (let t = 0; t < 10; t += DT) {
+          dodge();
+          b.hp = HP_MAX;
+          land(a, 0, 0);
+          step(m, DT);
+          for (const e of m.events.splice(0)) {
+            if (e.t === 'shot' && e.f === a.id) shots++;
+            if (e.t === 'hit' && e.f === a.id) hits++;
+          }
+        }
+      }
+    assert.ok(shots > 30, `${level} at ${dist}: ${shots} shots`);
+    return hits / shots;
+  };
+  const near = Object.fromEntries(LEVELS.map((l) => [l, acc(l, 15)])) as Record<Level, number>;
+  const mid = Object.fromEntries(LEVELS.map((l) => [l, acc(l, 30)])) as Record<Level, number>;
+  const far = Object.fromEntries(LEVELS.map((l) => [l, acc(l, 40)])) as Record<Level, number>;
+  const all = JSON.stringify({ near, mid, far });
+  for (const l of LEVELS) assert.ok(near[l] > mid[l] && mid[l] > far[l], `${l} falls off with distance: ${all}`);
+  assert.ok(near.easy < near.normal && near.normal < near.hard, `sharper up the levels: ${all}`);
+  assert.ok(far.easy < far.normal && far.normal < far.hard, all);
+  assert.ok(mid.easy < 0.1 && mid.normal < 0.15 && far.easy < 0.06 && far.normal < 0.1, `easy and normal miss most past thirty meters: ${all}`);
+  assert.ok(near.hard < 0.95 && mid.hard < 0.45 && far.hard < 0.35, `hard is never laser sharp: ${all}`);
+});
+
+test('two computer eggs with two eggs in front of them, as near the one as the other, take one each', () => {
+  const m = arena('normal', 4, 3);
+  const [a, b, c, d] = m.fighters;
+  armBot(m, a, 'rifle', 0, 0, 18);
+  armBot(m, b, 'rifle', 0, 0, -18);
+  land(c, -3, 0);
+  land(d, 3, 0);
+  run(m, 0.8, () => {
+    c.hp = HP_MAX;
+    d.hp = HP_MAX;
+  });
+  assert.deepEqual([a.ai!.target, b.ai!.target].sort(), [c.id, d.id]);
+});
+
+test('a computer egg loses sight of an egg that slips into a bush, a flour cloud or behind a wall, and stops hitting it', () => {
+  const hide: [string, (m: Match) => void][] = [
+    ['a bush', (m) => m.zones.push({ k: 'bush', x: 0, z: 15, y: 0, r: THROWS.bush.radius, from: m.time, until: m.time + 30, by: -1 })],
+    ['a flour cloud', (m) => m.zones.push({ k: 'flour', x: 0, z: 15, y: 0, r: THROWS.flour.radius, from: m.time, until: m.time + 30, by: -1 })],
+    ['a wall', (m) => [-1, 0].forEach((cx, i) => put(m, 900 + i, 1, 'wall', cx, 2, 0, 2))],
+  ];
+  for (const [what, cover] of hide) {
+    const m = arena('hard', 2, 5);
+    const [a, b] = m.fighters;
+    armBot(m, a, 'rifle', 0, 0, 0);
+    land(b, 0, 15);
+    let hits = 0;
+    const go = (s: number) =>
+      run(m, s, (evs) => {
+        land(a, 0, 0);
+        land(b, 0, 15);
+        b.hp = HP_MAX;
+        hits += evs.filter((e) => e.t === 'hit' && e.f === a.id).length;
+      });
+    go(2);
+    assert.ok(hits > 3, `${what}: it fought in the open (${hits})`);
+    cover(m);
+    go(0.6);
+    hits = 0;
+    go(3);
+    assert.equal(hits, 0, `${what}: no more hits`);
+    assert.equal(a.ai!.target, -1, `${what}: and no target`);
+  }
 });
 
 test('a computer egg with a scope and a rifle closes in and fights with the rifle, keeping the scope for far off', () => {
