@@ -165,7 +165,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         />
         <p className="g-grand-prix-small">Time Trial keeps two leaderboards: No Assists (None) and With Assists (TC or TC + ABS).</p>
         <h4>Commentary</h4>
-        <p>A race announcer calls the start, the places you win and lose, fastest laps, penalties, the last lap and the flag. Turn it off here, or mute the game to silence it along with everything else.</p>
+        <p>A commentator talks you through the race like a TV broadcast: the build-up and the start, overtakes and battles, spins and trips over the kerbs, the fight up front, laps to go and the flag, and stories about Monza and the corner ahead when things are quiet. Turn it off here, or mute the game to silence it along with everything else.</p>
         {touch ? (
           <>
             <h4>Gears</h4>
