@@ -6,6 +6,7 @@ export const LEADERBOARD_SPECS: Record<string, LeaderboardSpec> = {
   "badminton-easy": {"order":"desc","min":1,"max":63,"unit":"pts","measure":"Point Margin in a Win vs Computer"},
   "badminton-hard": {"order":"desc","min":1,"max":63,"unit":"pts","measure":"Point Margin in a Win vs Computer"},
   "badminton-normal": {"order":"desc","min":1,"max":63,"unit":"pts","measure":"Point Margin in a Win vs Computer"},
+  "badminton-pro": {"order":"desc","min":1,"max":63,"unit":"pts","measure":"Point Margin in a Win vs Computer"},
   "blitz-21": {"order":"desc","max":500000},
   "blocks": {"order":"desc","max":10000000},
   "breakout": {"order":"desc","max":1000000},

@@ -8,6 +8,8 @@ export type AthleteView = {
   facing: Direction;
   /** 0..1 progress through the current swing, or null when idle */
   swing: number | null;
+  /** 0..1 how far a held smash has been wound up */
+  charge?: number;
   intent: Intent;
   label: string;
   isHuman: boolean;
@@ -305,9 +307,11 @@ function drawAthlete(ctx: CanvasRenderingContext2D, athlete: AthleteView, now: n
   // arms and racket
   let racketX: number;
   let racketY: number;
+  const charge = swing === null ? athlete.charge ?? 0 : 0;
   if (swing === null) {
-    racketX = facing * 0.5;
-    racketY = 1.12;
+    // Winding up a smash draws the racket back behind the head.
+    racketX = facing * 0.5 + (-facing * 0.25 - facing * 0.5) * charge;
+    racketY = 1.12 + (2.0 - 1.12) * charge;
   } else if (overhead) {
     const start = { x: -facing * 0.1, y: 1.95 };
     const end = { x: facing * 0.7, y: 1.1 };
@@ -327,7 +331,7 @@ function drawAthlete(ctx: CanvasRenderingContext2D, athlete: AthleteView, now: n
   ctx.moveTo(-facing * 0.17, 1.06);
   ctx.lineTo(-facing * 0.34, swing !== null && overhead ? 1.25 : 0.8);
   ctx.stroke();
-  const handleAngle = swing === null ? facing * 0.5 : overhead ? facing * (1.3 - swing * 1.9) : facing * (-0.9 + swing * 1.6);
+  const handleAngle = swing === null ? facing * (0.5 + 1.0 * charge) : overhead ? facing * (1.3 - swing * 1.9) : facing * (-0.9 + swing * 1.6);
   ctx.save();
   ctx.translate(racketX, racketY);
   ctx.rotate(handleAngle);
