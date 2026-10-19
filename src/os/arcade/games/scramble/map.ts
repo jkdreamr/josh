@@ -1154,8 +1154,9 @@ export function generateMap(seed: number): GameMap {
       if (Math.abs(c.x - b.x) > b.w / 2 || Math.abs(c.z - b.z) > b.d / 2) continue;
       const [chw, chd] = containerHalf(c);
       const g = gap(box, { x: c.x, z: c.z, hw: chw, hd: chd });
-      // stash furniture can stand in a row, side by side
-      if (g < (stops ? (stash && isStash(c.kind) && g > -0.01 && g < 0.06 ? -1 : 1.3) : 0.15)) return false;
+      // stash furniture can stand in a row, side by side against the same wall
+      const row = stash && isStash(c.kind) && c.ax === (face >= 2) && Math.abs(c.ax ? c.x - x : c.z - z) < 0.05 && g > -0.01;
+      if (g < (stops ? (row ? -1 : 1.3) : 0.15)) return false;
     }
     if (stops) {
       for (const l of map.floor) if (Math.abs(l.x - box.x) < hw + 0.6 && Math.abs(l.z - box.z) < hd + 0.6) return false;
@@ -1369,7 +1370,7 @@ export function generateMap(seed: number): GameMap {
         // the lobby
         addSpot(x - sc * 1.5, z + fz * 4.6);
         addSpot(x + sc * 7.5, z + fz * 4.8);
-        fit(bi, 'bench', x + sc * 6, z - fz * (d / 2 - WALL_T / 2 - 0.3), 1, 0.3, back, b.look);
+        fit(bi, 'bench', x + sc * 6.6, z - fz * (d / 2 - WALL_T / 2 - 0.3), 0.85, 0.3, back, b.look);
         fit(bi, 'desk', x + sc * 3.5, z + fz * 2.4, 1.4, 0.45, 0, b.look);
         fit(bi, 'chair', x + sc * 3.5, z + fz * 1.45, 0.22, 0.22, front, b.look);
         // lockers along the back of the stash, and a row in the lobby with their backs to the stash's wall
@@ -1708,7 +1709,8 @@ export function generateMap(seed: number): GameMap {
       const dx = p1.x - p0.x;
       const dz = p1.z - p0.z;
       const l = Math.sqrt(dx * dx + dz * dz);
-      if (l < 6 || (p0.x - a.x) * ux + (p0.z - a.z) * uz > (p1.x - a.x) * ux + (p1.z - a.z) * uz) continue;
+      // 6 m at least, once its ends are rounded
+      if (l < 6.2 || (p0.x - a.x) * ux + (p0.z - a.z) * uz > (p1.x - a.x) * ux + (p1.z - a.z) * uz) continue;
       const blocked = lots.some((lot) => !own(a, lot) && !own(b, lot) && rayBox(p0.x, p0.z, dx / l, dz / l, l, lot.x, lot.z, lot.hw + 1.5, lot.hd + 1.5) < Infinity);
       // and never along or through a fence, a farm's own included
       const fenced = map.yards.some((y) => y.fences.some((fc) => rayBox(p0.x, p0.z, dx / l, dz / l, l, fc.x, fc.z, fc.hw + 0.4, fc.hd + 0.4) < Infinity));
@@ -1734,7 +1736,7 @@ export function generateMap(seed: number): GameMap {
         const dx = p1.x - ex;
         const dz = p1.z - ez;
         const l = Math.sqrt(dx * dx + dz * dz);
-        if (l < 6) continue;
+        if (l < 6.2) continue;
         // from a few steps off the deck on, the road keeps clear of the water
         const sx = ex + (dx / l) * 4;
         const sz = ez + (dz / l) * 4;

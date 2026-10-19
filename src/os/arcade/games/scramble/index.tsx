@@ -75,6 +75,8 @@ const tossReach = (len: number) => THROW.min + Math.max(0, Math.min(1, (len - 12
 const TOSS_WAIT = 0.8;
 /** Loot named on screen at once: the nearest few by your feet, and the one the mouse is over. */
 const LABELS = 5;
+/** How tall a loot name is on screen, with a little gap. */
+const LABEL_H = 20;
 /** What the interact key says it will open. */
 const OPEN_TEXT: Partial<Record<ContainerKind, string>> = { supply: 'open supply drop', fridge: 'open the fridge', drawer: 'open the drawers', books: 'search the bookshelf', locker: 'open the locker', safe: 'open the safe', deposit: 'open the deposit box' };
 /** The color a piece of loot's name shows in: its rarity's (or its level's), gold for the best. */
@@ -1181,6 +1183,8 @@ function Play({ mode }: { mode: Mode }) {
         if (over && !named.includes(over)) named.push(over);
       }
     }
+    // nearest first; one that would cover a name already up goes above it (sized from its text, not measured)
+    const placed: { x: number; y: number; w: number }[] = [];
     labels.current.forEach((el, i) => {
       if (!el) return;
       const l = named[i];
@@ -1191,12 +1195,23 @@ function Play({ mode }: { mode: Mode }) {
       }
       const text = lootName(l.def);
       if (el.textContent !== text) el.textContent = text;
+      const w = text.length * 6.6 + 18;
+      let y = at.y;
+      for (let moved = true, n = 0; moved && n < LABELS; n++) {
+        moved = false;
+        for (const p of placed)
+          if (Math.abs(at.x - p.x) < (w + p.w) / 2 && Math.abs(y - p.y) < LABEL_H) {
+            y = p.y - LABEL_H;
+            moved = true;
+          }
+      }
+      placed.push({ x: at.x, y, w });
       el.style.setProperty('--loot', lootColor(l.def));
       el.style.opacity = '1';
-      el.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
+      el.style.transform = `translate(${at.x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
     });
     // dazed by a stun grenade: the screen washes out white and blurs, clearing as it wears off
-    const daze = !eye || eye.phase !== 'ground' ? 0 : eye.kind === 'remote' ? ((eye.show.flags & F_STUN) !== 0 ? 0.8 : 0) : Math.min(1, eye.stunT / 2);
+    const daze = !eye || eye.phase !== 'ground' ? 0 : eye.kind === 'remote' ? ((eye.show.flags & F_STUN) !== 0 ? 0.8 : 0) : Math.min(0.9, eye.stunT / 2);
     if (dazeEl.current) dazeEl.current.style.opacity = daze.toFixed(2);
     const host = ref.current;
     if (host) {
