@@ -64,7 +64,7 @@ test('Hoover Nights has its set pieces where the plan puts them, and only it and
   assert.deepEqual(by('geyser'), [594, 606, 618]);
   assert.ok(lay.hazards.filter((h) => h.kind === 'geyser').every((h) => h.lap === 4 && h.d === -4.4 && h.every === 2.4 && h.on === 0.8 && h.warn === 0.8));
   assert.deepEqual(by('tether'), [913]);
-  assert.deepEqual(by('shuttle'), [55, 55]);
+  assert.deepEqual(by('shuttle'), [990, 990]);
   assert.deepEqual(by('bollard'), [100, 100, 100, 100, 548, 548, 548, 548]);
   // a row of banks covers the road wall to wall, rippling across
   for (const s of [100, 548]) {

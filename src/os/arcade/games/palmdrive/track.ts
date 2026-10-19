@@ -375,8 +375,8 @@ export const sOf = (t: Track, e: number, n: number) => {
  * pieces as a bus does. A ferry crosses the channel on its chain like a golf cart on its path, and a buoy stands solid.
  *
  * Traffic (Hoover Nights): a car or a van drives a stretch of the course `span` like a vessel, oncoming with a negative
- * drive, pulling out of a side street at its start and turning off into one at its end (`bay`: how far out the street is,
- * past the wall); a shuttle is an articulated Marguerite crossing the road at s, `len` long (across the road) and 2r
+ * drive, pulling out of a side street at its start and turning off into one at its end (`bay`: where across the road the
+ * side streets meet it, past the wall); a shuttle is an articulated Marguerite crossing the road at s, `len` long (across the road) and 2r
  * wide (along it), at `speed` meters a second across (+ to the right), starting `cross` past the middle of the road, once
  * every `every` seconds from race time `phase`; it sits out any crossing a bus doing its rounds would meet. A tether is
  * the Stanford Tree on a bungee from its post at d: every `every` seconds (from `phase`) it crouches, lunges out to `aim`
@@ -419,7 +419,7 @@ export type Hazard = {
   /** How big a wake a vessel leaves (0 to 1), and whether the set pieces stand aside for it. */
   wake?: number;
   priority?: boolean;
-  /** Traffic (see HazardKind): a shuttle's start past the middle of the road, a car's side street past the wall. */
+  /** Traffic (see HazardKind): a shuttle's start past the middle of the road; where a car's side streets meet the road (d). */
   cross?: number;
   bay?: number;
   /** The Tree's lunge: where across the road it springs out to. */
