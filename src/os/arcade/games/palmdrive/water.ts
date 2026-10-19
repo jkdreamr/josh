@@ -1863,8 +1863,10 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
             const wz = m.z + clock * 0.5;
             const x = k.x + ((((wx - k.x) % 200) + 300) % 200) - 100;
             const z = k.z + ((((wz - k.z) % 200) + 300) % 200) - 100;
-            // (thinning out right round you, so it never blinds the view)
-            const near = Math.min(1, Math.max(0.15, (Math.hypot(x - k.x, z - k.z) - 6) / 30));
+            // (thinning out right round you, and none at all close by, so it never blinds the view: a bank shrunk small
+            // right in front of the camera reads as a white blot over your own shell)
+            const near0 = (Math.hypot(x - k.x, z - k.z) - 14) / 30;
+            const near = near0 < 0.15 ? 0 : Math.min(1, near0);
             dummy.position.set(x, m.y, z);
             dummy.rotation.set(0, k.h + Math.PI + Math.sin(n) * 0.4, 0);
             dummy.scale.set(m.w * near, m.h * near, 1);
