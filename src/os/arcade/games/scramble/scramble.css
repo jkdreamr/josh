@@ -742,6 +742,110 @@
   font-size: 10px;
   opacity: 0.7;
 }
+/* the build bar, bottom left: the three materials (the one picked lit), the pieces (the one Space builds lit) and
+   the edit key (dim with no wall of yours in front) */
+.g-scramble .g-scramble-build {
+  position: absolute;
+  left: 10px;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  display: grid;
+  gap: 5px;
+  padding: 7px 8px;
+  border-radius: 12px;
+  background: var(--g-glass);
+  box-shadow: var(--g-edge), var(--g-drop);
+}
+.g-scramble .g-scramble-matbar,
+.g-scramble .g-scramble-pieces {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.g-scramble .g-scramble-matbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 26px;
+  padding: 0 8px 0 5px;
+  border: 0;
+  border-radius: 999px;
+  font: 800 12px/1 system-ui, sans-serif;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+}
+.g-scramble .g-scramble-matbar button.is-on {
+  background: rgba(255, 255, 255, 0.24);
+  box-shadow: inset 0 0 0 1.5px #fff;
+}
+.g-scramble .g-scramble-matbar button.is-none b {
+  opacity: 0.5;
+}
+.g-scramble .g-scramble-matbar button.is-full b {
+  color: #ffd75e;
+}
+.g-scramble .g-scramble-pieces button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+.g-scramble .g-scramble-pieces button.is-on {
+  background: rgba(127, 212, 255, 0.3);
+  box-shadow: inset 0 0 0 2px #7fd4ff;
+}
+.g-scramble .g-scramble-pieces button.is-edit {
+  background: rgba(255, 215, 94, 0.2);
+}
+.g-scramble .g-scramble-pieces button.is-none {
+  opacity: 0.4;
+}
+.g-scramble .g-scramble-build kbd {
+  min-width: 0;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 13px;
+}
+.g-scramble .g-scramble-pieces kbd {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+}
+.g-scramble .g-scramble-build small {
+  font-size: 10px;
+  opacity: 0.85;
+}
+.g-scramble .g-scramble-pill.is-high {
+  color: #9fe0ff;
+}
+.g-scramble .g-scramble-buttons button.is-on {
+  background: rgba(127, 212, 255, 0.32);
+  box-shadow:
+    inset 0 0 0 2px #7fd4ff,
+    0 3px 10px rgba(8, 10, 24, 0.25);
+}
+/* on a touchscreen, the build menu opens over the buttons on the right */
+.g-scramble .g-scramble-hud.is-touch .g-scramble-build {
+  left: auto;
+  right: 10px;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 300px);
+  z-index: 4;
+  justify-items: end;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-pieces button {
+  width: 44px;
+  height: 44px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-matbar button {
+  height: 32px;
+}
 .g-scramble .g-scramble-stormfx {
   position: absolute;
   inset: 0;
@@ -966,8 +1070,39 @@
   z-index: 4;
 }
 
+/* a desktop window too narrow for the build bar beside the bottom row: it sits above the row's left end instead */
+@container (max-width: 1320px) {
+  .g-scramble .g-scramble-hud:not(.is-touch) .g-scramble-build {
+    bottom: 96px;
+  }
+}
+
 /* short screens, like a phone on its side: one row along the bottom, buttons in the corner */
 @container (max-height: 460px) {
+  /* the build menu folds into a block in the bottom left corner: the materials down one side, the pieces in two rows */
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-build {
+    left: 10px;
+    right: auto;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    grid-template-columns: auto auto;
+    align-items: center;
+    justify-items: start;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-matbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-matbar button {
+    height: 26px;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-pieces {
+    display: grid;
+    grid-template-columns: repeat(3, 40px);
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-pieces button {
+    width: 40px;
+    height: 40px;
+  }
   .g-scramble .g-scramble-buttons {
     bottom: 10px;
     grid-template-columns: repeat(3, 52px);
@@ -1002,6 +1137,12 @@
 @container (max-height: 460px) and (max-width: 575px) {
   .g-scramble .g-scramble-buttons {
     bottom: calc(max(10px, env(safe-area-inset-bottom)) + 56px);
+  }
+  /* no room in the corner beside the bottom row: just over the row instead */
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-build {
+    left: 50%;
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 60px);
+    transform: translateX(-50%);
   }
   .g-scramble .g-scramble-hud.is-touch .g-scramble-bottom {
     left: 50%;
@@ -1062,9 +1203,12 @@
   .g-scramble .g-scramble-out {
     top: 36%;
   }
-  /* two rows of three, so they stay low, under the pick-up prompt over your egg */
+  /* two rows of three, so they stay low, under the pick-up prompt over your egg, and the build menu just over them */
   .g-scramble .g-scramble-buttons {
     grid-template-columns: repeat(3, 52px);
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-build {
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 236px);
   }
 }
 

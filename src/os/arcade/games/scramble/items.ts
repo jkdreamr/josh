@@ -228,8 +228,28 @@ export const BOOST = { max: 100, drain: 2.5, heal: 1.2, speed: 1.08 };
 
 export const HP_MAX = 100;
 export const SHIELD_MAX = 100;
-export const WOOD_MAX = 300;
-export const WALL_COST = 10;
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Building materials.
+
+/** Wood from trees and logs, stone from rocks, metal from cars and lamp posts: a swing at one gathers some. */
+export const MATS = ['wood', 'stone', 'metal'] as const;
+export type Mat = (typeof MATS)[number];
+export const isMat = (v: unknown): v is Mat => MATS.includes(v as Mat);
+/**
+ * What a piece of each material holds once built, the seconds it takes to build up to that (from a tenth of it), and
+ * the share of a swing's wood it gathers of it. Wood goes up quickest and breaks soonest; metal is slow but tough.
+ */
+export const MAT_SPECS: Record<Mat, { name: string; hp: number; time: number; yield: number }> = {
+  wood: { name: 'wood', hp: 150, time: 0.8, yield: 1 },
+  stone: { name: 'stone', hp: 300, time: 1.6, yield: 0.8 },
+  metal: { name: 'metal', hp: 450, time: 2.6, yield: 0.6 },
+};
+/** The most of each material an egg carries, and what one piece takes. */
+export const MAT_MAX = 300;
+export const PIECE_COST = 10;
+export const WOOD_MAX = MAT_MAX;
+export const WALL_COST = PIECE_COST;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Scopes and backpacks.
@@ -283,7 +303,9 @@ export type LootDef =
   | { kind: 'pack'; lv: number }
   | { kind: 'helmet'; lv: number }
   | { kind: 'vest'; lv: number }
-  | { kind: 'wood'; n: number };
+  | { kind: 'wood'; n: number }
+  | { kind: 'stone'; n: number }
+  | { kind: 'metal'; n: number };
 
 /**
  * Where loot is found: on the floor, in a crate, a chest, the Golden Coop's chest, a supply drop, a fridge (healing
@@ -469,7 +491,9 @@ export function lootName(def: LootDef) {
     case 'vest':
       return `${ARMOR_NAMES[def.kind][clampInt(def.lv, 1, MAX_ARMOR)]} (level ${clampInt(def.lv, 1, MAX_ARMOR)} ${def.kind})`;
     case 'wood':
-      return `${def.n} wood`;
+    case 'stone':
+    case 'metal':
+      return `${def.n} ${def.kind}`;
   }
 }
 
@@ -512,9 +536,11 @@ export function parseLoot(v: unknown): LootDef | null {
       const lv = n(d.lv, MAX_ARMOR);
       return lv === null ? null : { kind: d.kind, lv };
     }
-    case 'wood': {
-      const k = n(d.n, WOOD_MAX);
-      return k === null ? null : { kind: 'wood', n: k };
+    case 'wood':
+    case 'stone':
+    case 'metal': {
+      const k = n(d.n, MAT_MAX);
+      return k === null ? null : { kind: d.kind, n: k };
     }
     default:
       return null;

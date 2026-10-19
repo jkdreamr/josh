@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { AMMO_BOX, AMMO_TYPES, ARMOR_CUT, ARMOR_KINDS, BOOST, FLARE_WAIT, HP_MAX, SIP, legendary, type ThrowId, MAX_ARMOR, MAX_PACK, MAX_RARITY, MELEE, MELEE_IDS, SHIELD_MAX, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, WOOD_MAX, ammoCap, armorMult, damageOf, lootName, parseLoot, rng32, rollLoot, throwCap, useCap, type LootDef, type WeaponId } from '../src/os/arcade/games/scramble/items.ts';
+import { AMMO_BOX, AMMO_TYPES, ARMOR_CUT, ARMOR_KINDS, BOOST, FLARE_WAIT, HP_MAX, MATS, MAT_MAX, MAT_SPECS, PIECE_COST, SIP, legendary, type ThrowId, MAX_ARMOR, MAX_PACK, MAX_RARITY, MELEE, MELEE_IDS, SHIELD_MAX, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, WOOD_MAX, ammoCap, armorMult, damageOf, lootName, parseLoot, rng32, rollLoot, throwCap, useCap, type LootDef, type WeaponId } from '../src/os/arcade/games/scramble/items.ts';
 import {
   BEACH,
   BRIDGE_HALF,
@@ -71,8 +71,17 @@ import {
 } from '../src/os/arcade/games/scramble/map.ts';
 import {
   BARREL,
+  BOX_TAP,
+  BUILD_COOL,
+  BUILD_START,
+  CELL_B,
   CHEST_R,
   COUNTDOWN,
+  GAP,
+  HIGH_VIEW,
+  LEVEL_H,
+  MAX_LEVEL,
+  PIECE_KINDS,
   CRATE_HP,
   FALL,
   FIGHTER_COLORS,
@@ -87,6 +96,8 @@ import {
   INTERP,
   LEVELS,
   LEVEL_SPECS,
+  FOCUS,
+  POUR_T,
   MAX_FIGHTERS,
   PAD_FLY,
   PICK_R,
@@ -97,6 +108,7 @@ import {
   TOILET_HP,
   WALL_HP,
   aliveCount,
+  applyEdit,
   applyState,
   armored,
   autopilot,
@@ -112,28 +124,40 @@ import {
   damageCrate,
   dropId,
   dropSpot,
+  editable,
   flagsOf,
+  gridOf,
   held,
   hurt,
+  levelOf,
+  makePiece,
   makeWall,
   moveLoot,
   noInput,
   openable,
   panBlocks,
+  pieceIn,
+  planPiece,
   prompt,
+  removeWall,
+  roofOver,
   scoreOf,
   soloMatch,
   standing,
   step,
+  surfaceAt,
   viewOf,
+  wallSlot,
   wants,
   type Entrant,
   type Ev,
   type Fighter,
   type Level,
   type Match,
+  type Plan,
+  type Wall,
 } from '../src/os/arcade/games/scramble/logic.ts';
-import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packEvents, parsePacket, placesOf, stateOf, toNet, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
+import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packEvents, packPiece, parsePacket, pieceEv, placesOf, stateOf, toNet, unpackPiece, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
 import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
 
@@ -802,12 +826,12 @@ test('the same shot gives the same pellets on every client, and shotgun pellets 
   assert.ok(far > 0 && far < near * 0.5, `far ${far} vs near ${near}`);
 });
 
-test('walls cost wood, face the way you aim, stop bullets and break', () => {
+test('walls cost wood, stand on the side of your square you face, stop bullets and break', () => {
   const m = quiet();
   const [a, b] = m.fighters;
-  const spot = openSpot(m);
-  land(a, spot.x, spot.z);
-  land(b, spot.x, spot.z + 9);
+  openSpot(m);
+  land(a, CELL_B / 2, CELL_B / 2);
+  land(b, CELL_B / 2, CELL_B / 2 + 9);
   a.wood = WALL_COST + 1;
   a.input.aim = 0.1;
   a.input.build = true;
@@ -815,11 +839,15 @@ test('walls cost wood, face the way you aim, stop bullets and break', () => {
   const built = evs.find((e) => e.t === 'wall');
   assert.ok(built && built.t === 'wall');
   assert.equal(a.wood, 1);
-  assert.equal(built.wall.a, 0, 'squared to the nearest eighth of a turn');
-  assert.ok(Math.abs(built.wall.z - (a.z + 2.1)) < 0.05);
+  assert.equal(built.wall.a, 0, 'square to the grid, across the way it faces');
+  assert.equal(built.wall.z, (gridOf(a.z) + 1) * CELL_B, 'on the north side of its square');
+  run(m, 0.5);
   a.input.build = true;
   run(m, 0.5);
   assert.equal(m.walls.size, 1, 'no wood, no wall');
+  // it builds up to its full health before the shooting starts
+  run(m, 1);
+  assert.equal(m.walls.get(built.wall.id)!.hp, WALL_HP);
   // b shoots at a through the wall: the wall soaks it
   b.guns[0] = { w: 'rifle', r: 0, mag: 30 };
   b.ammo.heavy = 200;
@@ -838,7 +866,8 @@ test('walls cost wood, face the way you aim, stop bullets and break', () => {
 test('only the host knocks walls down and breaks crates; a guest waits to hear it', () => {
   const g = createMatch({ seed: 5, role: 'guest', level: 'normal', entrants: [{ name: 'g', color: '#fff', kind: 'player', seat: 1 }], me: 0, countdown: 0 });
   const crate = g.map.containers.find((c) => c.kind === 'crate')!;
-  applyNet(g, { y: 'wl', id: 7, f: 0, x: 0, z: 0, a: 0, hp: 50 });
+  const wl = { y: 'wl', id: 7, f: 0, p: packPiece(makePiece(7, 0, 'wall', 'wood', 0, 0, 0, 2)), hp: 50, t: 0 } as const;
+  applyNet(g, wl);
   applyNet(g, { y: 'm', f: 0, k: 'wall', id: 7, d: 80 });
   applyNet(g, { y: 'm', f: 0, k: 'crate', id: crate.id, d: CRATE_HP * 2 });
   assert.ok(g.walls.has(7) && !g.opened[crate.id], 'still standing until the host says');
@@ -846,7 +875,7 @@ test('only the host knocks walls down and breaks crates; a guest waits to hear i
   applyNet(g, { y: 'opd', c: crate.id, f: 0 });
   assert.ok(!g.walls.has(7) && g.opened[crate.id]);
   for (const l of crate.loot) assert.ok(g.loot.has(l.id), 'the crate spilled its own loot ids');
-  applyNet(g, { y: 'wl', id: 7, f: 0, x: 0, z: 0, a: 0, hp: 50 });
+  applyNet(g, wl);
   assert.ok(!g.walls.has(7), 'a late echo never brings a fallen wall back');
 
   const h = quiet(5);
@@ -1505,11 +1534,31 @@ test('a guest slow to load gets a while to send its first report; one that repor
   // seat 1 reports straight away, then stops; seat 2 is still building the island
   const state = guestState(1, stateOf(host.match.fighters[1]));
   receive(s, host.match, me, 1, JSON.parse(JSON.stringify(state)), () => host.match, 100.1);
-  tick(s, host.match, me, present, 100 + STALE + 1);
+  for (let t = 100.5; t <= 100 + STALE + 1; t += 0.5) tick(s, host.match, me, present, t);
   assert.equal(host.match.fighters[1].phase, 'out', 'quiet for longer than STALE after reporting');
   assert.notEqual(host.match.fighters[2].phase, 'out', 'still loading: not counted out yet');
-  tick(s, host.match, me, present, 100 + STALE + FIRST_GRACE + 1);
+  for (let t = 100 + STALE + 1; t <= 100 + STALE + FIRST_GRACE + 1; t += 0.5) tick(s, host.match, me, present, t);
   assert.equal(host.match.fighters[2].phase, 'out', 'but not forever');
+});
+
+test('a host that froze a while (a phone off in another app) does not count its guests out for the quiet', () => {
+  const players = [0, 1].map((seat) => ({ seat, name: `p${seat}` }));
+  const host = hostMatch(players, 0, 4, 'normal', MAX_FIGHTERS, 4.2);
+  const s = newSession(true, host.roster);
+  const me: Me = { seat: 0, isHost: true, round: 1 };
+  const report = (clock: number) => receive(s, host.match, me, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(host.match.fighters[1])))), () => host.match, clock);
+  tick(s, host.match, me, [0, 1], 100);
+  report(100.05);
+  tick(s, host.match, me, [0, 1], 100.1);
+  // nothing runs for a minute; the first tick back comes before the reports that waited
+  tick(s, host.match, me, [0, 1], 160);
+  assert.notEqual(host.match.fighters[1].phase, 'out');
+  report(160.01);
+  for (let t = 160.5; t < 160 + STALE - 1; t += 0.5) tick(s, host.match, me, [0, 1], t);
+  assert.notEqual(host.match.fighters[1].phase, 'out');
+  // a guest that really went quiet still goes
+  for (let t = 160 + STALE - 1; t <= 160 + STALE + 1; t += 0.5) tick(s, host.match, me, [0, 1], t);
+  assert.equal(host.match.fighters[1].phase, 'out');
 });
 
 /**
@@ -1556,7 +1605,7 @@ test('a guest the host takes out for going quiet hears it is out, and nothing it
   tick(hs, h, hMe, [0, 1], 0);
   receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(mine)))), () => h, 0.1);
   // the guest's phone locks for longer than STALE; when it wakes it fires before the news reaches it
-  tick(hs, h, hMe, [0, 1], STALE + 1);
+  for (let t = 0.5; t <= STALE + 1; t += 0.5) tick(hs, h, hMe, [0, 1], t);
   assert.equal(h.fighters[1].outCause, 'left');
   aimEast(mine, 'rifle');
   for (let i = 0; i < 30 && !g.events.some((e) => e.t === 'hit'); i++) step(g, DT);
@@ -1644,8 +1693,12 @@ test('a wall goes out with the health it was built with, whatever hits it the sa
   const evs = run(m, DT);
   const built = evs.find((e) => e.t === 'wall');
   assert.ok(built && built.t === 'wall');
-  assert.equal(built.wall.hp, WALL_HP);
-  assert.equal(toNet(built)?.y === 'wl' && (toNet(built) as { hp: number }).hp, WALL_HP);
+  const start = Math.round(WALL_HP * BUILD_START);
+  assert.equal(built.wall.hp, start, 'a tenth of its health, to build up from');
+  const ne = toNet(built);
+  assert.ok(ne && ne.y === 'wl');
+  assert.equal(ne.hp, start);
+  assert.equal(ne.t, MAT_SPECS.wood.time * 10, 'and all of its building still to do');
 });
 
 test('a computer egg never picks straight back up the gun it just swapped away', () => {
@@ -1738,6 +1791,207 @@ test('computer eggs miss more the farther off the target is, the easy ones far m
   assert.ok(hardFar < hardNear * 0.7, `hard far ${hardFar}`);
   assert.ok(hardFar > 0.15, `hard is still sharp ${hardFar}`);
   assert.ok(easyFar < hardFar * 0.6, `easy far ${easyFar}`);
+});
+
+let cleared: GameMap | null = null;
+/** A match on bare grass (the island cleared once, then shared) with `n` people, until autopilot takes some over. */
+function arena(level: Level, n: number, seed: number) {
+  if (!cleared) {
+    const m0 = quiet();
+    openSpot(m0);
+    cleared = m0.map;
+  }
+  const entrants: Entrant[] = Array.from({ length: n }, (_, i) => ({ name: `p${i}`, color: '#fff', kind: 'player', seat: -1 }));
+  const m = createMatch({ seed, role: 'solo', level, entrants, me: 0, countdown: 0, map: cleared });
+  m.time = 5;
+  m.loot.clear();
+  return m;
+}
+
+/** Strafes an egg about (hx, hz) like a person dodging, a new way every 0.4 to 1.2 seconds: call it every step. */
+function dodger(f: Fighter, hx: number, hz: number, seed: number) {
+  const rng = rng32(seed);
+  let a = 0;
+  let t = 0;
+  return () => {
+    t -= DT;
+    if (t <= 0) {
+      t = 0.4 + rng() * 0.8;
+      a = rng() * Math.PI * 2;
+    }
+    const mx = Math.sin(a) - (f.x - hx) / 8;
+    const mz = Math.cos(a) - (f.z - hz) / 8;
+    const len = Math.hypot(mx, mz) || 1;
+    f.input.mx = mx / len;
+    f.input.mz = mz / len;
+  };
+}
+
+/** The first `n` eggs feel shot at by `by` just now, as if it sprayed at them all (so they all turn on it). */
+function shotBy(m: Match, by: Fighter, n: number) {
+  for (let i = 0; i < n; i++) {
+    m.fighters[i].lastBy = by.id;
+    m.fighters[i].lastByAt = m.clock;
+  }
+}
+
+/** A computer egg in a match, holding a fresh gun with plenty to shoot. */
+function armBot(m: Match, f: Fighter, w: WeaponId, r: number, x: number, z: number) {
+  land(f, x, z);
+  autopilot(m, f);
+  f.guns = [{ w, r, mag: WEAPONS[w].mag }, null];
+  f.slot = 0;
+  f.ammo = { light: 999, heavy: 999, shells: 999, rockets: 999 };
+}
+
+/**
+ * Computer eggs at `spots`, each with a `w` of rarity `r`, against a dodging egg in the middle with full health, no
+ * shield and no armor, that never shoots back: the seconds from its first hit to its crack (Infinity if it lasts).
+ */
+function focused(level: Level, w: WeaponId, r: number, spots: [number, number][], seed: number, limit = 8) {
+  const m = arena(level, spots.length + 1, seed);
+  const target = m.fighters[spots.length];
+  land(target, 0, 0);
+  spots.forEach(([x, z], i) => armBot(m, m.fighters[i], w, r, x, z));
+  const dodge = dodger(target, 0, 0, seed);
+  let first = -1;
+  for (let t = 0; t < limit; t += DT) {
+    dodge();
+    shotBy(m, target, spots.length);
+    step(m, DT);
+    for (const e of m.events.splice(0)) {
+      if (e.t === 'hit' && e.to === target.id && first < 0) first = m.time;
+      if (e.t === 'out' && e.f === target.id) return m.time - first;
+    }
+  }
+  return Infinity;
+}
+
+/** How far off each family of guns fights. */
+const FIGHT_AT: Record<string, number> = { pistol: 14, smg: 9, rifle: 20, shotgun: 5, sniper: 30, heavy: 16 };
+
+test('no computer egg cracks a dodging egg from full health in about a second, with any gun at any level, alone or three at once', () => {
+  for (const level of LEVELS) {
+    let cracked = 0;
+    for (const w of WEAPON_IDS) {
+      if (WEAPONS[w].call) continue;
+      const d = FIGHT_AT[WEAPONS[w].cls];
+      // the best of each gun, alone and in a pack of three round the egg (each nearer it than to the others)
+      const alone = focused(level, w, MAX_RARITY, [[0, -d]], 3);
+      const pack = focused(level, w, MAX_RARITY, [[0, -d], [d * 0.87, d * 0.5], [-d * 0.87, d * 0.5]], 4);
+      for (const t of [alone, pack]) {
+        assert.ok(t >= 1, `${level} ${w}: cracked ${t.toFixed(2)} s after the first hit`);
+        if (t < Infinity) cracked++;
+      }
+    }
+    assert.ok(cracked >= { easy: 6, normal: 16, hard: 20 }[level], `${level}: they do crack it in the end (${cracked})`);
+  }
+});
+
+test('a computer egg lets fly no more than its level allows in any stretch, and a pack no more than FOCUS at one egg', () => {
+  for (const level of LEVELS) {
+    const m = arena(level, 4, 9);
+    const target = m.fighters[3];
+    land(target, 0, 0);
+    [[0, -9], [8, 4.5], [-8, 4.5]].forEach(([x, z], i) => armBot(m, m.fighters[i], 'hsmg', MAX_RARITY, x, z));
+    const dodge = dodger(target, 0, 0, 2);
+    // [clock, shooter, damage, at whom]
+    const shots: [number, number, number, number][] = [];
+    for (let t = 0; t < 6; t += DT) {
+      dodge();
+      shotBy(m, target, 3);
+      target.hp = HP_MAX;
+      step(m, DT);
+      for (const e of m.events.splice(0)) if (e.t === 'shot') shots.push([m.clock, e.f, damageOf(e.w as WeaponId, e.r), m.fighters[e.f].ai!.target]);
+    }
+    const sum = (list: typeof shots) => list.reduce((n, [, , d]) => n + d, 0);
+    assert.ok(shots.filter((s) => s[3] === target.id).length > 12, `${level}: they shot at it (${shots.length})`);
+    for (const [t] of shots) {
+      const late = shots.filter(([s]) => s > t - POUR_T + 1e-6 && s <= t);
+      assert.ok(sum(late.filter((s) => s[3] === target.id)) <= FOCUS + 1e-6, `${level}: the pack at ${t.toFixed(2)}`);
+      for (let f = 0; f < 3; f++) assert.ok(sum(late.filter((s) => s[1] === f)) <= LEVEL_SPECS[level].pour + 1e-6, `${level}: egg ${f}`);
+    }
+  }
+});
+
+test('a scoped shot at a dodging egg misses more the farther off it is: on easy and normal clearly so past thirty meters, and never laser sharp on hard', () => {
+  const acc = (level: Level, dist: number) => {
+    let shots = 0;
+    let hits = 0;
+    for (const w of ['scout', 'sniper', 'crossbow', 'marksman'] as WeaponId[])
+      for (let k = 0; k < 5; k++) {
+        const m = arena(level, 2, 11 + k);
+        const [a, b] = m.fighters;
+        armBot(m, a, w, 0, 0, 0);
+        land(b, 0, dist);
+        const dodge = dodger(b, 0, dist, k + 1);
+        for (let t = 0; t < 10; t += DT) {
+          dodge();
+          b.hp = HP_MAX;
+          land(a, 0, 0);
+          step(m, DT);
+          for (const e of m.events.splice(0)) {
+            if (e.t === 'shot' && e.f === a.id) shots++;
+            if (e.t === 'hit' && e.f === a.id) hits++;
+          }
+        }
+      }
+    assert.ok(shots > 30, `${level} at ${dist}: ${shots} shots`);
+    return hits / shots;
+  };
+  const near = Object.fromEntries(LEVELS.map((l) => [l, acc(l, 15)])) as Record<Level, number>;
+  const mid = Object.fromEntries(LEVELS.map((l) => [l, acc(l, 30)])) as Record<Level, number>;
+  const far = Object.fromEntries(LEVELS.map((l) => [l, acc(l, 40)])) as Record<Level, number>;
+  const all = JSON.stringify({ near, mid, far });
+  for (const l of LEVELS) assert.ok(near[l] > mid[l] && mid[l] > far[l], `${l} falls off with distance: ${all}`);
+  assert.ok(near.easy < near.normal && near.normal < near.hard, `sharper up the levels: ${all}`);
+  assert.ok(far.easy < far.normal && far.normal < far.hard, all);
+  assert.ok(mid.easy < 0.1 && mid.normal < 0.15 && far.easy < 0.06 && far.normal < 0.1, `easy and normal miss most past thirty meters: ${all}`);
+  assert.ok(near.hard < 0.95 && mid.hard < 0.45 && far.hard < 0.35, `hard is never laser sharp: ${all}`);
+});
+
+test('two computer eggs with two eggs in front of them, as near the one as the other, take one each', () => {
+  const m = arena('normal', 4, 3);
+  const [a, b, c, d] = m.fighters;
+  armBot(m, a, 'rifle', 0, 0, 18);
+  armBot(m, b, 'rifle', 0, 0, -18);
+  land(c, -3, 0);
+  land(d, 3, 0);
+  run(m, 0.8, () => {
+    c.hp = HP_MAX;
+    d.hp = HP_MAX;
+  });
+  assert.deepEqual([a.ai!.target, b.ai!.target].sort(), [c.id, d.id]);
+});
+
+test('a computer egg loses sight of an egg that slips into a bush, a flour cloud or behind a wall, and stops hitting it', () => {
+  const hide: [string, (m: Match) => void][] = [
+    ['a bush', (m) => m.zones.push({ k: 'bush', x: 0, z: 15, y: 0, r: THROWS.bush.radius, from: m.time, until: m.time + 30, by: -1 })],
+    ['a flour cloud', (m) => m.zones.push({ k: 'flour', x: 0, z: 15, y: 0, r: THROWS.flour.radius, from: m.time, until: m.time + 30, by: -1 })],
+    ['a wall', (m) => [-1, 0].forEach((cx, i) => put(m, 900 + i, 1, 'wall', cx, 2, 0, 2))],
+  ];
+  for (const [what, cover] of hide) {
+    const m = arena('hard', 2, 5);
+    const [a, b] = m.fighters;
+    armBot(m, a, 'rifle', 0, 0, 0);
+    land(b, 0, 15);
+    let hits = 0;
+    const go = (s: number) =>
+      run(m, s, (evs) => {
+        land(a, 0, 0);
+        land(b, 0, 15);
+        b.hp = HP_MAX;
+        hits += evs.filter((e) => e.t === 'hit' && e.f === a.id).length;
+      });
+    go(2);
+    assert.ok(hits > 3, `${what}: it fought in the open (${hits})`);
+    cover(m);
+    go(0.6);
+    hits = 0;
+    go(3);
+    assert.equal(hits, 0, `${what}: no more hits`);
+    assert.equal(a.ai!.target, -1, `${what}: and no target`);
+  }
 });
 
 test('a computer egg with a scope and a rifle closes in and fights with the rifle, keeping the scope for far off', () => {
@@ -2049,7 +2303,7 @@ test('a grenade lands where it is thrown or short of a wall, goes off on its fus
   assert.equal(b.hp, 100 - THROWS.grenade.dmg!, 'right on top of it');
   assert.equal(a.hp, 100);
   // a wall in the way stops it short
-  m.walls.set(1, { id: 1, f: 0, x: 0, z: 5, a: 0, sa: 0, ca: 1, hw: 1.7, hd: 0.2, hp: 150 });
+  m.walls.set(1, makeWall(1, 0, 0, 5, 0, 150));
   a.fireT = 0;
   a.input.pick = 'grenade';
   a.input.fire = true;
@@ -3631,6 +3885,681 @@ test('loot tables only roll real things, launchers are never common, and the bes
   const guns = new Set<string>();
   for (let i = 0; i < 4000; i++) for (const def of rollLoot(rng, 'floor')) if (def.kind === 'gun') guns.add(def.w);
   assert.deepEqual([...guns].sort(), [...WEAPON_IDS].sort(), 'every gun turns up on the floor');
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Building.
+
+/** Builds `piece` facing `aim` with whatever an egg carries; returns what went up. */
+function buildNow(m: Match, f: Fighter, piece: Plan, aim: number) {
+  f.input.aim = aim;
+  f.input.piece = piece;
+  f.buildT = 0;
+  return run(m, DT).flatMap((e) => (e.t === 'wall' && e.wall.f === f.id ? [e.wall] : []));
+}
+
+/** A piece put straight on the grid, built and at full health. */
+function put(m: Match, id: number, f: number, k: Wall['k'], cx: number, cz: number, lv: number, dir: number, e = 0) {
+  const w = makePiece(id, f, k, 'wood', cx, cz, lv, dir, MAT_SPECS.wood.hp, 0, e);
+  m.walls.set(id, w);
+  return w;
+}
+
+/** The middle of a grid square. */
+const mid = (c: number) => (c + 0.5) * CELL_B;
+
+/** Walks an egg with its own legs the way (mx, mz) for up to `seconds`, until `done`. */
+function walk(m: Match, f: Fighter, mx: number, mz: number, seconds: number, done: () => boolean = () => false) {
+  f.input.mx = mx;
+  f.input.mz = mz;
+  for (let t = 0; t < seconds && !done(); t += DT) {
+    step(m, DT);
+    m.events.length = 0;
+  }
+  f.input.mx = 0;
+  f.input.mz = 0;
+  run(m, 0.2);
+}
+
+test('the build bar: a wall on the side of your square you face, a ramp and a floor in front, a roof overhead and a box all round, each ten of a material', () => {
+  const m = quiet();
+  const [a] = m.fighters;
+  openSpot(m);
+  land(a, mid(0), mid(0));
+  a.wood = 100;
+  const [w] = buildNow(m, a, 'wall', 0.3);
+  assert.deepEqual([w.k, w.cx, w.cz, w.lv, w.dir], ['wall', 0, 1, 0, 2], 'facing north: the north side of our square (the south side of the one above)');
+  assert.equal(a.wood, 100 - PIECE_COST);
+  const [r] = buildNow(m, a, 'ramp', Math.PI / 2);
+  assert.deepEqual([r.k, r.cx, r.cz, r.lv, r.dir], ['ramp', 1, 0, 0, 1], 'a ramp on the square to the east, rising east');
+  const [fl] = buildNow(m, a, 'floor', Math.PI);
+  assert.deepEqual([fl.k, fl.cx, fl.cz, fl.lv], ['floor', 0, -1, 1], 'a floor on the square to the south, a storey up');
+  const box = buildNow(m, a, 'box', 0);
+  assert.equal(box.length, 3, 'a box goes round us: the north wall was there already');
+  assert.deepEqual(box.map((x) => [x.cx, x.cz, x.dir]).sort(), [[0, 0, 2], [0, 0, 3], [1, 0, 3]].sort());
+  const [roof] = buildNow(m, a, 'roof', 0);
+  assert.deepEqual([roof.k, roof.cx, roof.cz, roof.lv], ['roof', 0, 0, 1], 'a roof over our square');
+  assert.equal(a.wood, 100 - 7 * PIECE_COST);
+  assert.equal(buildNow(m, a, 'wall', 0).length, 0, 'never two pieces in one place');
+  assert.equal(a.piece, 'wall', 'the last piece picked is what the build key makes');
+  // out of the material picked, the next one there is enough of
+  a.wood = 5;
+  a.stone = 10;
+  a.metal = 20;
+  const [s] = buildNow(m, a, 'ramp', -Math.PI / 2);
+  assert.equal(s.mat, 'stone');
+  assert.equal(MATS[a.mat], 'stone');
+  const [mt] = buildNow(m, a, 'floor', 0);
+  assert.equal(mt.mat, 'metal');
+  assert.equal(a.metal, 10);
+  a.input.mat = 1;
+  run(m, DT);
+  assert.equal(MATS[a.mat], 'wood', 'the material key goes round them');
+  a.metal = 0;
+  assert.equal(buildNow(m, a, 'ramp', 0.1).length, 0, 'nothing to build with');
+  // a roof needs something to rest on
+  land(a, mid(20), mid(20));
+  a.wood = 50;
+  assert.equal(buildNow(m, a, 'roof', 0).length, 0, 'not over open ground');
+});
+
+test('the build key twice in quick succession builds its piece, then boxes you in', () => {
+  const m = quiet();
+  const [a] = m.fighters;
+  openSpot(m);
+  land(a, mid(4), mid(4));
+  a.wood = 100;
+  a.input.aim = Math.PI;
+  a.input.build = true;
+  const first = run(m, DT).filter((e) => e.t === 'wall');
+  assert.equal(first.length, 1, 'the first press: a wall at once');
+  a.input.build = true;
+  const second = run(m, DT).filter((e) => e.t === 'wall');
+  assert.equal(second.length, 3, 'the second, quickly: the other three sides');
+  assert.ok(BOX_TAP < 0.5);
+  // two presses further apart are two walls
+  run(m, 0.5);
+  land(a, mid(8), mid(4));
+  a.input.build = true;
+  run(m, BOX_TAP + 0.1);
+  a.input.aim = 0;
+  a.input.build = true;
+  const apart = run(m, DT).filter((e) => e.t === 'wall');
+  assert.equal(apart.length, 1);
+  assert.equal(a.wood, 100 - 6 * PIECE_COST);
+  // a piece asked for while the last one goes up waits its turn, rather than being lost
+  land(a, mid(12), mid(4));
+  run(m, 0.5);
+  a.input.piece = 'wall';
+  run(m, DT);
+  a.input.aim = Math.PI / 2;
+  a.input.piece = 'ramp';
+  assert.equal(run(m, DT).filter((e) => e.t === 'wall').length, 0, 'not yet');
+  const later = run(m, BUILD_COOL).filter((e) => e.t === 'wall');
+  assert.deepEqual(later.map((e) => e.t === 'wall' && e.wall.k), ['ramp'], 'then it goes up');
+  // and an edit needn't wait for building at all: the north wall, just after the ramp
+  assert.ok(a.buildT > 0);
+  a.input.aim = 0;
+  a.input.edit = true;
+  assert.ok(run(m, DT).some((e) => e.t === 'edit'));
+});
+
+test('pieces build up from a tenth of their health, wood quickest and metal toughest, and can be shot down while they do', () => {
+  const [wood, stone, metal] = MATS.map((k) => MAT_SPECS[k]);
+  assert.ok(wood.time < stone.time && stone.time < metal.time, 'wood goes up quickest');
+  assert.ok(wood.hp < stone.hp && stone.hp < metal.hp, 'metal is toughest');
+  MATS.forEach((mat, i) => {
+    const m = quiet();
+    const [a] = m.fighters;
+    openSpot(m);
+    land(a, mid(0), mid(0));
+    a.wood = a.stone = a.metal = 50;
+    a.mat = i;
+    const [w] = buildNow(m, a, 'wall', 0);
+    const spec = MAT_SPECS[mat];
+    assert.equal(w.mat, mat);
+    assert.equal(w.hp, Math.round(spec.hp * BUILD_START));
+    const piece = m.walls.get(w.id)!;
+    run(m, spec.time / 2);
+    assert.ok(piece.hp > spec.hp * 0.4 && piece.hp < spec.hp * 0.7, `${mat} halfway: ${piece.hp}`);
+    run(m, spec.time);
+    assert.equal(piece.hp, spec.hp, `${mat} all built`);
+    assert.equal(piece.left, 0);
+  });
+  // a sniper shot breaks a wood wall just up, but not one that's finished
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  land(a, mid(0), mid(0));
+  land(b, mid(0), mid(5));
+  a.wood = 50;
+  b.guns[0] = { w: 'sniper', r: 4, mag: 4 };
+  b.slot = 0;
+  b.input.aim = Math.PI;
+  const [w] = buildNow(m, a, 'wall', 0);
+  b.input.fire = true;
+  const shot = run(m, 0.1);
+  b.input.fire = false;
+  assert.ok(shot.some((e) => e.t === 'wallgone' && e.id === w.id), 'shot down while it went up');
+  const [w2] = buildNow(m, a, 'wall', 0);
+  assert.ok(w2, 'a new one in its place');
+  run(m, 1);
+  b.fireT = 0;
+  b.input.fire = true;
+  const again = run(m, 0.2);
+  b.input.fire = false;
+  assert.ok(again.some((e) => e.t === 'smash' && e.id === w2.id), 'hit');
+  assert.ok(m.walls.has(w2.id), 'a finished one takes the shot');
+  assert.ok(m.walls.get(w2.id)!.hp < WALL_HP);
+});
+
+test('a swing gathers wood from trees and logs, stone from rocks, and metal from cars and lamp posts, up to what an egg carries', () => {
+  const m = quiet();
+  const [a] = m.fighters;
+  openSpot(m);
+  m.map.solids = [
+    { shape: 'circle', x: 0, z: 2.2, r: 0.9, what: 'rock', ref: 0 },
+    { shape: 'box', x: 2.6, z: 0, hw: 0.9, hd: 1.9, what: 'car', ref: 0 },
+    { shape: 'circle', x: 0, z: -1.5, r: 0.18, what: 'post', ref: 0 },
+    { shape: 'circle', x: -1.9, z: 0, r: 0.7, what: 'tree', ref: 0 },
+  ];
+  reindex(m.map);
+  land(a, 0, 0);
+  a.wood = 0;
+  const swing = (aim: number) => {
+    a.input.aim = aim;
+    a.input.fire = true;
+    const evs = run(m, 0.45).filter((e) => e.t === 'harvest');
+    a.input.fire = false;
+    run(m, 0.5);
+    return evs;
+  };
+  const spat = MELEE.spatula.wood;
+  const rock = swing(0);
+  assert.ok(rock.length && rock.every((e) => e.t === 'harvest' && e.mat === 'stone'));
+  assert.equal(a.stone, rock.length * Math.round(spat * MAT_SPECS.stone.yield));
+  const car = swing(Math.PI / 2);
+  assert.ok(car.length && car.every((e) => e.t === 'harvest' && e.mat === 'metal'));
+  const before = a.metal;
+  swing(Math.PI);
+  assert.ok(a.metal > before, 'a lamp post gives metal too');
+  swing(-Math.PI / 2);
+  assert.ok(a.wood > 0, 'and a tree wood');
+  a.stone = MAT_MAX - 1;
+  swing(0);
+  assert.equal(a.stone, MAT_MAX, 'no more than an egg can carry');
+});
+
+test('an egg walks up a ramp onto a floor; walls stop only eggs on their level; it drops when it walks off, or the floor goes', () => {
+  const m = quiet();
+  const [a] = m.fighters;
+  openSpot(m);
+  land(a, mid(0), mid(0));
+  a.wood = 200;
+  const [ramp] = buildNow(m, a, 'ramp', 0);
+  run(m, 1);
+  walk(m, a, 0, 1, 2, () => a.y > 2.3);
+  assert.equal(a.on, ramp.id, 'up the ramp');
+  assert.equal(levelOf(a.y), 1);
+  const [floor] = buildNow(m, a, 'floor', 0);
+  assert.deepEqual([floor.cx, floor.cz, floor.lv], [0, 2, 1], 'a floor at the top of the ramp');
+  run(m, 1);
+  walk(m, a, 0, 1, 1, () => gridOf(a.z) === 2 && Math.abs(a.z - mid(2)) < 0.5);
+  assert.equal(a.y, LEVEL_H, 'standing on it');
+  assert.equal(a.on, floor.id);
+  assert.equal(surfaceAt(m, a.x, a.z, a.y + 0.5).id, floor.id);
+  // a wall on its level (on the floor's east side) stops it; one on the ground under the west side doesn't
+  put(m, 900, 1, 'wall', 1, 2, 1, 3);
+  walk(m, a, 1, 0, 1);
+  assert.ok(a.x < CELL_B - 0.5 && a.y === LEVEL_H, `the wall up here stops it (${a.x.toFixed(2)})`);
+  const ground = put(m, 901, 1, 'wall', 0, 2, 0, 3);
+  walk(m, a, -1, 0, 1, () => a.y < 0.01);
+  assert.ok(a.x < ground.x - 0.6, `over the ground wall and off the floor's edge (${a.x.toFixed(2)})`);
+  assert.equal(a.y, 0, 'down on the ground');
+  assert.equal(a.on, -1);
+  // back up, and the floor goes from under it
+  land(a, mid(0), mid(2));
+  a.y = LEVEL_H;
+  run(m, 0.2);
+  assert.equal(a.on, floor.id);
+  removeWall(m, floor.id, true);
+  run(m, 0.6);
+  assert.equal(a.y, 0, 'it fell');
+  assert.ok(Math.abs(a.x - mid(0)) < 0.1, 'straight down');
+});
+
+test('high ground: an egg up high sees farther, shoots over crates, rocks and walls lower than it, and anyone it can see shoots back', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  m.map.solids = [{ shape: 'circle', x: mid(0), z: 14, r: 1, what: 'rock', ref: 0 }];
+  reindex(m.map);
+  const floor = put(m, 800, 0, 'floor', 0, 0, 1, 0);
+  land(a, mid(0), mid(0));
+  a.y = LEVEL_H;
+  land(b, mid(0), 21);
+  run(m, 0.1);
+  assert.equal(a.on, floor.id);
+  // a wall on the ground and a rock between them
+  put(m, 801, 1, 'wall', 0, 3, 0, 2);
+  assert.ok(!clearLine(m, a.x, a.z, b.x, b.z), 'on the ground, both are in the way');
+  assert.ok(canSee(m, a, b, 60) && canSee(m, b, a, 60), 'one up high sees over them, and is seen');
+  assert.equal(viewOf(a) - viewOf(b), HIGH_VIEW, 'and sees farther');
+  // the shots go both ways too
+  for (const [f, aim] of [
+    [a, 0],
+    [b, Math.PI],
+  ] as const) {
+    f.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+    f.slot = 0;
+    f.input.aim = aim;
+    f.shield = 100;
+  }
+  a.input.fire = true;
+  run(m, 0.6);
+  a.input.fire = false;
+  assert.ok(b.shield < 100, 'a hits b over the wall and the rock');
+  assert.equal(m.walls.get(801)!.hp, WALL_HP, 'the wall was never in the way');
+  b.input.fire = true;
+  run(m, 0.6);
+  b.input.fire = false;
+  assert.ok(a.shield < 100, 'b hits back');
+  assert.ok(m.walls.get(800)!.hp < WALL_HP, 'and chips the floor a stands on, from under it');
+  // a wall on a's level stops both
+  put(m, 802, 0, 'wall', 0, 1, 1, 2);
+  assert.ok(!canSee(m, a, b, 60) && !canSee(m, b, a, 60));
+  const hp = b.shield;
+  a.input.fire = true;
+  run(m, 0.4);
+  a.input.fire = false;
+  assert.equal(b.shield, hp, 'its own wall takes its shots');
+  assert.ok(m.walls.get(802)!.hp < WALL_HP);
+});
+
+test('editing: a wall of yours becomes a doorway, then a window, then solid again; a doorway lets eggs and bullets through, a window only bullets', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  land(a, mid(0), mid(0));
+  land(b, mid(0), 12);
+  a.wood = 100;
+  const w = m.walls.get(buildNow(m, a, 'wall', 0)[0].id)!;
+  run(m, 1);
+  assert.equal(editable(m, a)?.id, w.id);
+  assert.equal(applyEdit(m, b.id, w.id, 1), false, 'only the egg that built it edits it');
+  assert.equal(editable(m, b), undefined);
+  const edit = () => {
+    a.editT = 0;
+    a.input.aim = 0;
+    a.input.edit = true;
+    return run(m, DT).find((e) => e.t === 'edit');
+  };
+  const cut = edit();
+  assert.ok(cut && cut.t === 'edit' && cut.e === 1 && w.e === 1, 'a doorway');
+  assert.ok(clearLine(m, a.x, a.z, b.x, b.z), 'you can see through it');
+  assert.ok(!clearLine(m, a.x + GAP + 0.2, a.z, b.x + GAP + 0.2, b.z), 'but not through the wall either side of it');
+  walk(m, a, 0, 1, 1);
+  assert.ok(a.z > w.z + 1, `and walk through it (${a.z.toFixed(2)})`);
+  land(a, mid(0), mid(0));
+  edit();
+  assert.equal(w.e, 2, 'a window');
+  assert.ok(clearLine(m, a.x, a.z, b.x, b.z), 'bullets and eyes still go through');
+  walk(m, a, 0, 1, 1);
+  assert.ok(a.z < w.z - 0.5, `feet don't (${a.z.toFixed(2)})`);
+  b.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  b.slot = 0;
+  b.input.aim = Math.PI;
+  b.input.fire = true;
+  run(m, 0.5);
+  b.input.fire = false;
+  assert.ok(a.hp < 100, 'shot through the window');
+  land(a, mid(0), mid(0));
+  edit();
+  assert.equal(w.e, 0, 'and solid again');
+  assert.ok(!clearLine(m, a.x, a.z, b.x, b.z));
+});
+
+test('a roof hides whoever is under it from anyone outside and turns throws away; something thrown lands on a floor', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  land(a, mid(0), mid(0));
+  land(b, mid(0), 15);
+  a.wood = 100;
+  assert.equal(buildNow(m, a, 'box', 0).length, 4);
+  const [roof] = buildNow(m, a, 'roof', 0);
+  run(m, 2);
+  assert.equal(roofOver(m, a.x, a.z, a.y), roof.id);
+  assert.equal(roofOver(m, b.x, b.z, b.y), -1);
+  // a window to the north, to look out of
+  a.editT = 0;
+  a.input.aim = 0;
+  a.input.edit = true;
+  run(m, DT);
+  a.editT = 0;
+  a.input.edit = true;
+  run(m, DT);
+  assert.equal(pieceIn(m, wallSlot(0, 0, 0, 0))?.e, 2);
+  a.firedAt = -99;
+  assert.ok(concealed(m, a, b) && !canSee(m, b, a, 60), 'nobody sees in under the roof');
+  assert.ok(canSee(m, a, b, 60), 'but it sees out');
+  a.firedAt = m.clock;
+  assert.ok(!concealed(m, a, b), 'until it fires');
+  a.firedAt = -99;
+  // a grenade thrown in through the window comes down off the roof outside
+  b.throws.grenade = 1;
+  b.input.pick = 'grenade';
+  run(m, 0.3);
+  b.input.aim = Math.PI;
+  b.input.reach = 15 - mid(0);
+  b.input.fire = true;
+  const th = run(m, DT).find((e) => e.t === 'throw');
+  b.input.fire = false;
+  assert.ok(th && th.t === 'throw' && th.lz > CELL_B, `off the roof (${th && th.t === 'throw' && th.lz})`);
+  // something thrown from a floor onto a floor stays up there
+  const n = quiet();
+  const [c] = n.fighters;
+  openSpot(n);
+  put(n, 1, 0, 'floor', 0, 0, 1, 0);
+  put(n, 2, 0, 'floor', 0, 3, 1, 0);
+  land(c, mid(0), mid(0));
+  c.y = LEVEL_H;
+  c.throws.flour = 1;
+  c.input.pick = 'flour';
+  run(n, 0.3);
+  c.input.aim = 0;
+  c.input.reach = mid(3) - mid(0);
+  c.input.fire = true;
+  const up = run(n, DT).find((e) => e.t === 'throw');
+  c.input.fire = false;
+  assert.ok(up && up.t === 'throw' && up.ly === LEVEL_H && up.y0 === LEVEL_H, 'from up high onto the floor');
+  const lands = run(n, 2).find((e) => e.t === 'zone');
+  assert.ok(lands && lands.t === 'zone' && lands.y === LEVEL_H);
+});
+
+test('pieces resting on one that breaks come down with it, on the host; on its own a piece needs the ground or something to rest on', () => {
+  const m = quiet();
+  // a wall, a wall on top of it and a roof over the square
+  put(m, 1, 0, 'wall', 5, 5, 0, 2);
+  put(m, 2, 0, 'wall', 5, 5, 1, 2);
+  put(m, 3, 0, 'roof', 5, 5, 1, 0);
+  const gone = (fn: () => void) => {
+    m.events.length = 0;
+    fn();
+    return m.events.flatMap((e) => (e.t === 'wallgone' ? [e.id] : [])).sort();
+  };
+  assert.deepEqual(gone(() => removeWall(m, 1, true)), [1, 2, 3], 'the wall below goes, and all it held up');
+  // another wall under the roof keeps it (and the wall on top, which rests on the roof) standing
+  put(m, 1, 0, 'wall', 5, 5, 0, 2);
+  put(m, 2, 0, 'wall', 5, 5, 1, 2);
+  put(m, 3, 0, 'roof', 5, 5, 1, 0);
+  put(m, 4, 0, 'wall', 5, 5, 0, 3);
+  assert.deepEqual(gone(() => removeWall(m, 1, true)), [1]);
+  // a floor stands on posts of its own
+  put(m, 5, 0, 'floor', 9, 9, 1, 0);
+  put(m, 6, 0, 'wall', 9, 9, 1, 2);
+  assert.deepEqual(gone(() => removeWall(m, 5, true)), [5, 6]);
+  // a guest only takes down what the host says
+  const g = createMatch({ seed: 5, role: 'guest', level: 'normal', entrants: [{ name: 'g', color: '#fff', kind: 'player', seat: 1 }], me: 0, countdown: 0 });
+  put(g, 1, 0, 'wall', 5, 5, 0, 2);
+  put(g, 2, 0, 'wall', 5, 5, 1, 2);
+  removeWall(g, 1, false);
+  assert.ok(g.walls.has(2));
+});
+
+test('built pieces and edits travel in a few numbers, every field checked, never twice; the host turns down a second piece in one place', () => {
+  const kinds: [Wall['k'], number, number][] = [
+    ['wall', 0, 2],
+    ['wall', 2, 3],
+    ['ramp', 0, 0],
+    ['ramp', 1, 3],
+    ['floor', 1, 0],
+    ['floor', 2, 0],
+    ['roof', 3, 0],
+  ];
+  for (const [k, lv, dir] of kinds)
+    for (const mat of MATS)
+      for (const [cx, cz] of [
+        [0, 0],
+        [-70, 69],
+        [33, -12],
+      ]) {
+        const e = k === 'wall' ? 2 : 0;
+        const w = makePiece(5, 3, k, mat, cx, cz, lv, dir, 20, 0.4, e);
+        assert.deepEqual(unpackPiece(packPiece(w)), { k, dir, lv, mat, e, cx, cz });
+      }
+  const bad = (k: Wall['k'], cx: number, cz: number, lv: number, dir: number, e = 0) => unpackPiece(packPiece({ ...makePiece(1, 0, k, 'wood', cx, cz, lv, dir), e }));
+  assert.equal(bad('wall', 0, 0, 0, 0), null, 'walls are kept on the south or west side of a square');
+  assert.equal(bad('floor', 0, 0, 0, 0), null, 'no floor on the ground');
+  assert.equal(bad('ramp', 0, 0, MAX_LEVEL, 0), null, 'no ramp up past the top');
+  assert.equal(bad('floor', 0, 0, 1, 0, 1), null, 'only walls are edited');
+  assert.equal(bad('wall', 75, 0, 0, 2), null, 'off the island');
+  for (const p of [-1, 1.5, 'x', 1e12]) assert.equal(unpackPiece(p), null);
+  const w = makePiece(4_200_017, 42, 'wall', 'stone', 3, -4, 0, 3);
+  const ev = pieceEv(w);
+  assert.ok(JSON.stringify(ev).length < 70, `small: ${JSON.stringify(ev)}`);
+  const parse = (e: object) => {
+    const p = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, [e]]] });
+    return p && p.k === 'e' ? (p.groups[0]?.[1][0] ?? null) : null;
+  };
+  assert.deepEqual(parse(ev), ev);
+  assert.equal(parse({ ...ev, hp: MAT_SPECS.stone.hp + 1 }), null, 'no more health than its material holds');
+  assert.equal(parse({ ...ev, t: MAT_SPECS.stone.time * 10 + 5 }), null, 'no longer to build than it takes');
+  assert.equal(parse({ ...ev, p: -3 }), null);
+  assert.equal(parse({ ...ev, f: 7 }), null, "no piece under another egg's ids");
+  assert.deepEqual(parse({ y: 'b', f: 3, x: 1, z: 2, h: LEVEL_H }), { y: 'b', f: 3, x: 1, z: 2, h: LEVEL_H }, 'a blast up on a floor');
+  assert.equal(parse({ y: 'b', f: 3, x: 1, z: 2, h: 99 }), null);
+  assert.equal(parse({ y: 'we', f: 42, id: w.id, e: 3 }), null);
+  assert.deepEqual(parse({ y: 'we', f: 42, id: w.id, e: 1 }), { y: 'we', f: 42, id: w.id, e: 1 });
+  // a guest hears of a piece once, edits and all
+  const g = createMatch({ seed: 5, role: 'guest', level: 'normal', entrants: Array.from({ length: 50 }, (_, i) => ({ name: `e${i}`, color: '#fff', kind: i === 1 ? 'player' : 'remote', seat: i === 1 ? 1 : -1 })), me: 1, countdown: 0 });
+  assert.equal(applyNet(g, ev), true);
+  assert.equal(applyNet(g, ev), false, 'a packet heard twice is no news');
+  assert.equal(g.walls.size, 1);
+  const got = g.walls.get(w.id)!;
+  assert.deepEqual([got.k, got.mat, got.cx, got.cz, got.dir, got.hp, got.left], ['wall', 'stone', 3, -4, 3, Math.round(MAT_SPECS.stone.hp * BUILD_START), MAT_SPECS.stone.time]);
+  assert.equal(applyNet(g, { y: 'we', f: 42, id: w.id, e: 1 }), true);
+  assert.equal(got.e, 1);
+  assert.ok(got.parts && got.parts.length === 2, 'the doorway is cut here too');
+  assert.equal(applyNet(g, { y: 'we', f: 7, id: w.id, e: 2 }), false, "nobody edits someone else's wall");
+  assert.equal(got.e, 1);
+  // the host turns down a second piece where one already stands, and tells everyone it is gone
+  const h = quiet(5, 50);
+  assert.equal(applyNet(h, pieceEv(makePiece(100_001, 1, 'ramp', 'wood', 2, 2, 0, 1))), true);
+  h.events.length = 0;
+  assert.equal(applyNet(h, pieceEv(makePiece(200_001, 2, 'ramp', 'metal', 2, 2, 0, 3))), false);
+  assert.ok(!h.walls.has(200_001));
+  assert.ok(h.events.some((e) => e.t === 'wallgone' && e.id === 200_001 && !e.net));
+  // shots and throws carry how high they start, but only when they don't start on the ground
+  const shot = (h: number): Ev => ({ t: 'shot', f: 1, w: 'smg', r: 0, x: 0, z: 0, a: 0, s: 5, k: 1, h });
+  assert.equal((toNet(shot(0)) as { h?: number }).h, undefined);
+  assert.equal((toNet(shot(2)) as { h?: number }).h, 2);
+  assert.equal(parse({ ...(toNet(shot(0)) as object), h: 3 }), null);
+});
+
+test('a guest that only starts reporting once pieces are up hears about every one of them, and only once', () => {
+  const players: Player[] = [
+    { seat: 0, name: 'H' },
+    { seat: 1, name: 'G' },
+  ];
+  const host = hostMatch(players, 0, 5, 'normal', 0, 0);
+  const s = newSession(true, host.roster);
+  const m = host.match;
+  put(m, 1, 0, 'wall', 2, 2, 0, 2, 1);
+  put(m, 2, 0, 'ramp', 3, 2, 0, 1);
+  put(m, 3, 0, 'floor', 4, 2, 1, 0);
+  const me: Me = { seat: 0, isHost: true, round: 1 };
+  const g = m.fighters[1];
+  land(g, 0, 0);
+  receive(s, m, me, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(g)))), () => m, 0);
+  const sent = tick(s, m, me, [0, 1], 0.1).filter((o) => o.to === 1 && (o.d as { k: string }).k === 'e');
+  assert.ok(sent.length >= 1 && sent.every((o) => !o.fast));
+  const gm = guestMatch(players, 1, 5, 'normal', m.time, host.roster);
+  const gs = newSession(true, host.roster);
+  for (const o of sent) receive(gs, gm, { seat: 1, isHost: false, round: 1 }, 0, JSON.parse(JSON.stringify(o.d)), () => gm, 0);
+  assert.deepEqual([...gm.walls.keys()].sort(), [1, 2, 3]);
+  assert.equal(gm.walls.get(1)!.e, 1, 'edits and all');
+  assert.equal(tick(s, m, me, [0, 1], 0.2).filter((o) => o.to === 1 && (o.d as { k: string }).k === 'e').length, 0, 'only once');
+});
+
+test('a tower of ramps and a floor is walked up from the ground to the top level, and a box walked into by a doorway cut in it', () => {
+  const m = quiet();
+  const [a] = m.fighters;
+  openSpot(m);
+  put(m, 1, 0, 'ramp', 0, 1, 0, 0);
+  put(m, 2, 0, 'ramp', 0, 2, 1, 0);
+  const top = put(m, 3, 0, 'floor', 0, 3, MAX_LEVEL, 0);
+  land(a, mid(0), mid(0));
+  walk(m, a, 0, 1, 3, () => a.on === top.id && a.z > mid(3));
+  assert.equal(a.on, top.id, 'up both ramps onto the floor');
+  assert.equal(a.y, MAX_LEVEL * LEVEL_H);
+  assert.equal(levelOf(a.y), MAX_LEVEL);
+  // a box with a doorway in it, from outside
+  const n = quiet();
+  const [b] = n.fighters;
+  openSpot(n);
+  for (let d = 0; d < 4; d++) {
+    const s = wallSlot(5, 5, d, 0);
+    put(n, 10 + d, 0, 'wall', s.cx, s.cz, 0, s.dir, d === 0 ? 1 : 0);
+  }
+  land(b, mid(5), mid(5) + 6);
+  walk(n, b, 0, -1, 2);
+  assert.deepEqual([gridOf(b.x), gridOf(b.z)], [5, 5], 'in through the doorway');
+  land(b, mid(5) + 6, mid(5));
+  walk(n, b, -1, 0, 2);
+  assert.ok(gridOf(b.x) > 5, 'never through a wall');
+});
+
+test('a computer egg that is hurt in a fight boxes up, roofs it over, patches up inside and leaves by a doorway it cuts', () => {
+  const m = quiet(3);
+  const [a, b] = m.fighters;
+  bare(m);
+  land(a, mid(0), mid(0));
+  land(b, mid(0), 20);
+  autopilot(m, a);
+  a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  a.ammo.heavy = 90;
+  a.slot = 0;
+  a.wood = 100;
+  a.hp = 40;
+  a.items.medkit = 1;
+  let boxed = 0;
+  let roofed = false;
+  let cut = false;
+  run(m, 20, (evs) => {
+    b.hp = 100;
+    if (!boxed) {
+      a.hitT = 0.25;
+      a.lastBy = b.id;
+      a.lastByAt = m.clock;
+    }
+    const walls = evs.filter((e) => e.t === 'wall' && e.wall.f === a.id);
+    if (walls.length >= 3) boxed = walls.length;
+    roofed ||= evs.some((e) => e.t === 'wall' && e.wall.f === a.id && e.wall.k === 'roof');
+    cut ||= evs.some((e) => e.t === 'edit' && e.f === a.id && e.e === 1);
+  });
+  assert.equal(boxed, 4, 'boxed in');
+  assert.ok(roofed, 'and roofed over');
+  assert.equal(a.items.medkit, 0, 'patched up');
+  assert.ok(a.hp > 90);
+  assert.ok(cut, 'out by a doorway it cut');
+  assert.ok(gridOf(a.x) !== 0 || gridOf(a.z) !== 0, `and out (${a.x.toFixed(1)}, ${a.z.toFixed(1)})`);
+});
+
+test('a computer egg shot at from two sides at once boxes up, but never in a doorway', () => {
+  const m = quiet(3, 3);
+  const [a, b, c] = m.fighters;
+  bare(m);
+  land(a, mid(0), mid(0));
+  land(b, mid(0), 20);
+  land(c, 20, mid(0));
+  autopilot(m, a);
+  a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  a.ammo.heavy = 90;
+  a.slot = 0;
+  a.wood = 100;
+  let n = 0;
+  const evs = run(m, 2, () => {
+    b.hp = c.hp = 100;
+    a.hp = a.shield = 100;
+    n++;
+    // hit by one, then the other
+    a.hitT = 0.25;
+    a.lastBy = n % 20 < 10 ? b.id : c.id;
+    a.lastByAt = m.clock;
+  });
+  assert.ok(evs.filter((e) => e.t === 'wall' && e.wall.f === a.id).length >= 4, 'a crossfire: box up');
+  // by a doorway: no box
+  const h = quiet(3, 3);
+  const [d, e2, f3] = h.fighters;
+  const dr = doorOf(h, 'house');
+  land(d, through(dr.door, 1.2).x, through(dr.door, 1.2).z);
+  land(e2, through(dr.door, 14).x, through(dr.door, 14).z);
+  land(f3, through(dr.door, 14).x + 6, through(dr.door, 14).z);
+  autopilot(h, d);
+  d.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+  d.ammo.heavy = 90;
+  d.slot = 0;
+  d.wood = 100;
+  let k = 0;
+  let most = 0;
+  run(h, 2, (evs) => {
+    e2.hp = f3.hp = 100;
+    d.hp = 30;
+    k++;
+    d.hitT = 0.25;
+    d.lastBy = k % 20 < 10 ? e2.id : f3.id;
+    d.lastByAt = h.clock;
+    land(d, through(dr.door, 1.2).x, through(dr.door, 1.2).z);
+    most = Math.max(most, evs.filter((e) => e.t === 'wall' && e.wall.f === d.id).length);
+  });
+  assert.ok(most < 2, 'no box by a doorway');
+});
+
+test('a computer egg in a fight ramps up for the high ground, stands on a floor up top a while and comes back down', () => {
+  for (const level of ['normal', 'hard'] as const) {
+    const m = quiet();
+    m.level = level;
+    const [a, b] = m.fighters;
+    bare(m);
+    land(a, mid(0), mid(0));
+    land(b, mid(0), 24);
+    autopilot(m, a);
+    a.guns[0] = { w: 'rifle', r: 0, mag: 30 };
+    a.ammo.heavy = 300;
+    a.slot = 0;
+    a.wood = 100;
+    a.ai!.rampCool = 0;
+    let top = 0;
+    let downAfter = false;
+    const kinds: string[] = [];
+    run(m, 18, (evs) => {
+      b.hp = 100;
+      for (const e of evs) if (e.t === 'wall' && e.wall.f === a.id) kinds.push(e.wall.k);
+      top = Math.max(top, levelOf(a.y));
+      if (top > 0 && a.y === 0) downAfter = true;
+    });
+    assert.equal(top, level === 'hard' ? 2 : 1, `${level}: up to level ${top}`);
+    assert.deepEqual(kinds.slice(0, level === 'hard' ? 3 : 2), level === 'hard' ? ['ramp', 'ramp', 'floor'] : ['ramp', 'floor']);
+    assert.ok(downAfter, `${level}: and down again`);
+  }
+});
+
+test('a computer egg short of building material swings at a rock or a car nearby for stone and metal', () => {
+  const m = quiet(3);
+  const [a, b] = m.fighters;
+  bare(m);
+  m.map.solids = [
+    { shape: 'circle', x: 0, z: 7, r: 1.1, what: 'rock', ref: 0 },
+    { shape: 'box', x: 8, z: 0, hw: 1.9, hd: 0.9, what: 'car', ref: 0 },
+  ];
+  reindex(m.map);
+  land(a, 0, 0);
+  land(b, 150, 150);
+  autopilot(m, a);
+  a.ai!.harvestCool = 0;
+  run(m, 40);
+  assert.ok(a.stone + a.metal > 20, `it gathered ${a.stone} stone and ${a.metal} metal`);
 });
 
 test('the scene only uses three.js classes the shared chunk exports', () => {
