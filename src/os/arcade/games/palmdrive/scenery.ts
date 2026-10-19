@@ -853,6 +853,8 @@ export type Look = {
   water?: { deep: string; shallow: string; foam: string };
   /** From this lap of your own the fog comes in: near and far, and its color. */
   fogLap?: { lap: number; near: number; far: number; color: number };
+  /** From this lap of your own the night closes in and half the street lamps go out (Hoover Nights' last lap). */
+  lightsOut?: number;
   /** Where the sun's light comes from (the default is high in the south-west). */
   sunAt?: [number, number, number];
 };
@@ -864,7 +866,7 @@ export const LOOKS: Record<CourseId, Look> = {
   stadium: { fog: [0xe2e8ef, 170, 760], sky: 0xf4f8ff, ground: 0x5f7a4a, sun: [0xfff4e0, 1.55], field: '#c4b98a', lawn: '#5aa04a', curb: ['#f4f1ea', '#8c1515'], wall: '#ebe6db', band: '#8c1515', banner: 'STANFORD STADIUM', road: '#4c4c54' },
   quad: { fog: [0xf1e3c6, 150, 700], sky: 0xfff4e0, ground: 0x8a7a55, sun: [0xffecc8, 1.55], field: '#d8c39a', lawn: '#7fae58', curb: ['#f4efe4', '#8c1515'], wall: '#efe0bf', band: '#8c1515', banner: 'MAIN QUAD', road: '#c9b089', joints: '#a08766' },
   // cool moonlight, low enough to read as night with the road and karts still clear
-  hoover: { fog: [0x22325e, 80, 470], sky: 0x8d9fdc, ground: 0x2a3150, sun: [0xb4c8ff, 0.8], field: '#33402c', lawn: '#3b5734', curb: ['#f4f1ea', '#d9a52e'], wall: '#c9c0b0', band: '#ffc53d', banner: 'HOOVER NIGHTS', road: '#4e4e58', night: true },
+  hoover: { fog: [0x22325e, 80, 470], sky: 0x8d9fdc, ground: 0x2a3150, sun: [0xb4c8ff, 0.8], field: '#33402c', lawn: '#3b5734', curb: ['#f4f1ea', '#d9a52e'], wall: '#c9c0b0', band: '#ffc53d', banner: 'HOOVER NIGHTS', road: '#4e4e58', night: true, lightsOut: 5 },
   // a bright late afternoon: deep green rough all round, the fairway mown in stripes beside the road
   golf: { fog: [0xf1e2bf, 150, 720], sky: 0xfff2d6, ground: 0x4f7a34, sun: [0xffe0a8, 1.6], field: '#4c8a32', lawn: '#6fb34a', curb: ['#f4f1ea', '#2f7a3a'], wall: '#efe9da', band: '#2f6b3a', banner: 'STANFORD GOLF', road: '#57575f', edge: 'stakes', rescue: 'retriever' },
   // night ninety meters up: a deep blue haze that swallows campus far below, starlight and the glow off the road
@@ -1053,7 +1055,7 @@ function insideLoop(t: Track, x: number, z: number) {
 
 /** Instanced meshes from a list of transforms. */
 function instances(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.BufferGeometry, mat: T.Material, items: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number; rx?: number }[]) {
-  if (!items.length) return;
+  if (!items.length) return null;
   const mesh = new THREE.InstancedMesh(geo, mat, items.length);
   items.forEach((it, i) => {
     dummy.position.set(it.x, it.y, it.z);
@@ -1064,6 +1066,7 @@ function instances(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.Buffe
   });
   dummy.rotation.set(0, 0, 0);
   scene.add(mesh);
+  return mesh;
 }
 
 /** Oaks scattered where there is room. */
@@ -2554,12 +2557,17 @@ function hoover(c: Scenery): SceneryTick {
   }
   instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x2f6a3a, emissive: 0x0a2010, side: THREE.DoubleSide }), ferns);
 
-  // lamp posts down alternate sides of the road, each with a glowing head and a pool of light across the road
+  // lamp posts down alternate sides of the road, each with a glowing head and a pool of light across the road; on the
+  // last lap every other one down Memorial Church's straight and the west straight goes out (see the tick), leaving the
+  // headlights and the beacons
   const posts: Item[] = [];
   const arms: Item[] = [];
   const heads: Item[] = [];
   const pools: Item[] = [];
+  const outHeads: Item[] = [];
+  const outPools: Item[] = [];
   let side = 1;
+  let dark = 0;
   for (let s = 6; s < t.length - 4; s += 23) {
     side = -side;
     const base = pointAt(t, s, side * (t.edge + 0.9));
@@ -2569,14 +2577,21 @@ function hoover(c: Scenery): SceneryTick {
     const pool = pointAt(t, s, side * (t.edge - 4.5));
     posts.push({ x: base.x, y: 3.2, z: base.z, sx: 0.2, sy: 6.4, sz: 0.2 });
     arms.push({ x: (base.x + head.x) / 2, y: 6.35, z: (base.z + head.z) / 2, sx: 1.8, sy: 0.12, sz: 0.12, ry });
-    heads.push({ x: head.x, y: 6.2, z: head.z, sx: 0.9, sy: 0.2, sz: 0.5, ry });
-    pools.push({ x: pool.x, y: 0.075, z: pool.z, sx: 12, sy: 12, sz: 1, rx: flat });
+    const goes = ((s > 762 && s < 898) || (s > 928 && s < 1052)) && dark++ % 2 === 0;
+    (goes ? outHeads : heads).push({ x: head.x, y: 6.2, z: head.z, sx: 0.9, sy: 0.2, sz: 0.5, ry });
+    (goes ? outPools : pools).push({ x: pool.x, y: 0.075, z: pool.z, sx: 12, sy: 12, sz: 1, rx: flat });
   }
   const metal = new THREE.MeshLambertMaterial({ color: 0x30333c });
   instances(THREE, scene, dummy, geo.box, metal, posts);
   instances(THREE, scene, dummy, geo.box, metal, arms);
-  instances(THREE, scene, dummy, geo.box, new THREE.MeshBasicMaterial({ color: 0xfff0c8 }), heads);
-  instances(THREE, scene, dummy, geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,222,160', 0.34), transparent: true, depthWrite: false }), pools);
+  const headMat = new THREE.MeshBasicMaterial({ color: 0xfff0c8 });
+  const poolMat = new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,222,160', 0.34), transparent: true, depthWrite: false });
+  instances(THREE, scene, dummy, geo.box, headMat, heads);
+  instances(THREE, scene, dummy, geo.plane, poolMat, pools);
+  const goingOut = [instances(THREE, scene, dummy, geo.box, headMat, outHeads), instances(THREE, scene, dummy, geo.plane, poolMat, outPools)];
+  const deadHeads = instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color: 0x3a3a40 }), outHeads);
+  if (deadHeads) deadHeads.visible = false;
+  let outAt = -1;
 
   // sandstone halls round the course with their long sides to the road, most of their windows lit (but none down the
   // start straight, to keep the view of the tower)
@@ -2705,7 +2720,14 @@ function hoover(c: Scenery): SceneryTick {
   }
   instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 6, 4), new THREE.MeshBasicMaterial({ color: 0xeef2ff, fog: false }), stars);
 
-  return (_race, clock) => {
+  return (race, clock) => {
+    // lights out on the last lap (with a flicker as they go)
+    const out = (race.karts[race.me]?.lap ?? 1) >= (LOOKS.hoover.lightsOut ?? 5);
+    if (out && outAt < 0) outAt = clock;
+    if (!out) outAt = -1;
+    const lit = !out || (clock - outAt < 1.4 && Math.floor((clock - outAt) * 9) % 3 === 1);
+    for (const m of goingOut) if (m) m.visible = lit;
+    if (deadHeads) deadHeads.visible = !lit;
     // the fountain's jets dance, the crane's jib swings slowly to and fro and its beacon blinks
     jets.forEach((j, k) => {
       const h = k === 6 ? 5 + Math.sin(clock * 1.7) * 1.2 : 2 + Math.sin(clock * 2.3 + k) * 0.6;

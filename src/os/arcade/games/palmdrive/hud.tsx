@@ -481,7 +481,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>The Marguerite buses</b> drive their rounds slower than you, both in the right-hand lane. Pass on the left: run into one and you spin out. Shells break on them too.
-            And they have right of way: the pile drivers, bollards, sprinklers and wrecking balls stand aside as a bus comes through.
+            And they have right of way: the pile drivers, bollards, sprinklers, wrecking balls, fountain jets and the Tree stand aside as a bus comes through, and the crossing waits for one to pass.
           </li>
           <li>
             <b>Pile drivers</b> slam down on the corners every few seconds and sit a moment: the beacon strobes and the head shakes just before it drops. Go under it while it is up, or take the long way round. It flattens you on the way down, it is solid on the ground, and shells break on it there.
@@ -497,6 +497,24 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>Wrecking balls</b> swing across the road on the clock. A hit tumbles you and throws you aside, and beside the Dig that means the drop. Go through fast on the side the ball is leaving.
+          </li>
+          <li>
+            <b>Oncoming traffic</b> down Memorial Church&apos;s straight: cars come at you in the left lane, headlights blazing, and later a delivery van with them. Keep right. Hit one head on and you
+            tumble, and the item in your hand goes flying.
+          </li>
+          <li>
+            <b>The Marguerite crossing</b> on the west straight: the bells ring, the lights flash and the gates come down, then a bendy bus crosses the road. Go behind it, beat it across, or wait.
+            Later in the race one comes the other way too.
+          </li>
+          <li>
+            <b>The Stanford Tree</b> is on a bungee on the inside of the bend after the church. It crouches, its eyes go red, then it lunges across the inside line and bowls you over. The
+            outside, by the ditch, is always clear.
+          </li>
+          <li>
+            <b>Fountain jets</b> blow on the inside of the Claw from lap 4. The water ripples just before one goes up, and it spins you.
+          </li>
+          <li>
+            <b>Lap 5 at Hoover Nights: lights out.</b> Half the street lamps go out and the night closes in. Watch for headlights.
           </li>
           <li>
             <b>Golf carts</b> drive their rounds like the buses, and more cross the road on the cart paths. Run into one and you spin out.
