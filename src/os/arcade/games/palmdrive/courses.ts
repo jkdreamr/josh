@@ -748,6 +748,13 @@ export const COURSES: Record<CourseId, Course> = {
     start: [-120 * GOLF_K, -163 * GOLF_K],
     half: 6.5,
     edge: 10,
+    // out of bounds (white stakes, and past them the barranca) on the outside of the bunker esses and the two dog-legs,
+    // and on into the island green's pond and back out of it: the walls stand along half the lap
+    edges: [
+      [330, 390, -1, 'ob'],
+      [612, 700, -1, 'ob'],
+      [738, 828, 1, 'ob'],
+    ],
     layout: (t) => {
       // Three carts drive their rounds in the right-hand lane a third of a lap apart, so the left is always clear.
       // Everything that crosses the road keeps time with them: a whole number of crossings between one cart and the
@@ -761,6 +768,11 @@ export const COURSES: Record<CourseId, Course> = {
         const pass = ((((s0 - 180) % third) + third) % third) / cartV;
         return [kind, s, 0, size, swing, speed, -Math.PI / 2 - speed * pass, lap];
       };
+      // the gang mower crosses the end of the first-tee straight twice between one cart and the next, back and forth,
+      // its first crossing at the end of the first lap and each well clear of the carts (one passes 7 s before it sets off)
+      const mowS = 302;
+      const mowEvery = every / 2;
+      const mowAt = (mowS - 180) / cartV + 7;
       return placed(t, {
         boxes: [22, 285, 600, 812],
         coins: [
@@ -790,13 +802,14 @@ export const COURSES: Record<CourseId, Course> = {
           [846, 0, 5.5],
         ],
         hazards: [
-          // the bunker esses, a bunker on each apex so the line slaloms, more on the apexes of the back nine, and one in
-          // the middle of the 18th fairway that the jump clears
+          // the bunker esses, a bunker on each apex so the line slaloms; on the back nine's two dog-legs one out wide,
+          // guarding the out of bounds (run wide and the sand catches you first); one more on an apex, and one in the
+          // middle of the 18th fairway that the jump clears
           ['sand', 310, -3.6],
           ['sand', 348, 3.6],
           ['sand', 388, -3.6],
-          ['sand', 662, 3.6],
-          ['sand', 752, -3.6],
+          ['sand', 662, -4.2],
+          ['sand', 752, 4.2],
           ['sand', 858, 0, 3],
           ['sand', 1028, -3.6],
           // carts crossing the road on the cart paths, and back
@@ -814,6 +827,13 @@ export const COURSES: Record<CourseId, Course> = {
           // the flagsticks where the road crosses two greens
           ['pin', 725, -2.6],
           ['pin', 1006, -2.4],
+        ],
+        pieces: [
+          // Canada geese guarding the island green's bank: they go for you across the inside line, and from the fourth lap
+          // they get angry and go for you more often (sitting tight while a cart goes by)
+          { kind: 'tether', s: 470, d: -8.4, r: 1, aim: -2, every: 3.4, phase: 0, rush: [4, 2.6], look: 'goose' },
+          { kind: 'tether', s: 566, d: -8.4, r: 1, aim: -2, every: 3.4, phase: 1.7, rush: [4, 2.6], look: 'goose' },
+          { kind: 'mower', s: mowS, d: 0, r: 2.2, speed: 5, cross: 16, every: mowEvery, phase: mowAt + mowEvery * Math.ceil((40 - mowAt) / mowEvery) },
         ],
         carts: [
           [180, 3.8, cartV],
@@ -854,9 +874,11 @@ export const COURSES: Record<CourseId, Course> = {
       });
     },
     sky: 'linear-gradient(180deg, #3a7fd0 0%, #85b8ea 24%, #d3e5f1 36%, #f6e3b6 42%, #e9cf96 46%, #5d9a3c 47%)',
-    // a good line misses most of what is on the road here, so the CPUs need a touch more pace to keep up with one
-    tier: { pace: 1.04 },
-    laps: { 3: 'The range opens up', 5: 'The gallery at the 18th' },
+    // (with the out of bounds, the geese and the mower the course itself now costs a good line more than it costs the
+    // CPUs, so they need no more pace than the class's to keep up with one, and at 200cc they keep their usual 3% off it:
+    // a strong driver with items wins about one race in five)
+    tier: { pace: 1.0, paceCc: { '200cc': 1 } },
+    laps: { 3: 'The range opens up', 4: 'The geese get angry', 5: 'The gallery at the 18th' },
   },
   skyway: {
     id: 'skyway',

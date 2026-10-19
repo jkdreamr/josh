@@ -4,7 +4,7 @@ import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf } from '../src/os/ar
 import { CCS, CLASSES, KART_R, RIVALS, WET, createRace, hazardD, soloRace, step } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { meta } from '../src/os/arcade/games/palmdrive/meta.ts';
 import { configOf, hostState, parsePacket } from '../src/os/arcade/games/palmdrive/net.ts';
-import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, dropAt, gridSpot, lengthOf, locate, openRuns, pointAt, roadEdge, shoreOf, solid, timed, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
+import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, dropAt, edgeAt, gridSpot, lengthOf, locate, openRuns, pointAt, roadEdge, shoreOf, solid, timed, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
 
 /** The widest stretch of road left clear between things standing across it, given as [from, to] lateral spans. */
 function widest(t: Track, spans: [number, number][]) {
@@ -101,13 +101,16 @@ for (const id of COURSE_IDS) {
       assert.ok(h.s > 40 && h.s < t.length - 30, `${where} is clear of the start`);
       // (a pond lies off beside the road: see below; a bank of bollards runs wall to wall by design, and the set pieces
       // leave a way through by the clock: see the timed tests)
-      if (h.kind !== 'water' && h.kind !== 'bollard') assert.ok(Math.abs(h.d) + (h.swing ?? 0) <= t.half, `${where} stays on the road`);
+      // (something on a leash has its post off the road, beside it: where it lunges to is on it)
+      if (h.kind === 'tether') assert.ok(Math.abs(h.d) > t.half && Math.abs(h.aim ?? 0) + h.r <= t.half, `${where} lunges onto the road from beside it`);
+      else if (h.kind !== 'water' && h.kind !== 'bollard') assert.ok(Math.abs(h.d) + (h.swing ?? 0) <= t.half, `${where} stays on the road`);
       // buses drive the whole lap, so where they start says nothing about the boxes and boosts (see below)
       if (!solid(h.kind) || h.drive) continue;
       // a gap at least two karts wide beside anything solid, and none of them in front of an item box row (the set
       // pieces leave a way through by the clock instead, on a course built round them: see the timed tests)
       const room = Math.max(t.half - (h.d + h.r), h.d - h.r + t.half);
-      if (!h.swing && h.kind !== 'bollard' && !(timed(h.kind) && COURSES[id].difficulty === 5)) assert.ok(room >= 4.5, `${where} leaves ${room} m`);
+      // (nor a mower crossing the road: it leaves its way past by the clock as well)
+      if (!h.swing && h.kind !== 'bollard' && h.kind !== 'mower' && !(timed(h.kind) && COURSES[id].difficulty === 5)) assert.ok(room >= 4.5, `${where} leaves ${room} m`);
       for (const b of lay.boxes) assert.ok(Math.abs(deltaS(t, h.s, b.s)) > 10, `${where} is in front of the boxes at s=${b.s}`);
       for (const o of lay.hazards) if (o !== h && solid(o.kind) && !h.swing && !o.swing && !o.drive && h.kind !== 'bollard' && o.kind !== 'bollard') assert.ok(Math.abs(deltaS(t, h.s, o.s)) > 8 || Math.abs(h.d - o.d) > 2 * h.r + 5, `${where} crowds another`);
     }
@@ -228,9 +231,10 @@ for (const id of COURSE_IDS) {
       }
       assert.ok(wet >= 12, `${where} can be driven into along ${wet} m`);
     }
-    // the wall is left out where the water comes inside it, and only there
-    const gaps = openRuns(t);
-    assert.ok(gaps.length > 0 && gaps.every(([, , , past]) => past === 'water'));
+    // the wall is left out where the water comes inside it, and only there (and where the course says it drops away)
+    const declared = (COURSES[id].edges ?? []).map(([, , , past]) => past);
+    const gaps = openRuns(t).filter(([, , , past]) => past === 'water');
+    assert.ok(gaps.length > 0 && openRuns(t).every(([, , , past]) => past === 'water' || declared.includes(past)));
     // and wherever it is left out, the water comes right up to the curb somewhere: run a wheel over and you are in
     for (const [side, from, to] of gaps) {
       let closest = Infinity;
@@ -240,8 +244,9 @@ for (const id of COURSE_IDS) {
     for (let i = 0; i < t.n; i++) {
       for (const side of [-1, 1]) {
         const w = side < 0 ? shore.left[i] : shore.right[i];
-        const open = dropAt(t, i, side);
-        // (where the water is inside where a wall would hold a kart anyway; a little past that the wall stands as ever)
+        const open = dropAt(t, i, side) && edgeAt(t, i * t.step, side).past === 'water';
+        // (where the water is inside where a wall would hold a kart anyway; a little past that the wall stands as ever,
+        // or the course's own edge)
         if (w - WET < t.edge - KART_R) assert.ok(open, `${id} wall stands in the water at s=${i * t.step}`);
         else assert.ok(!open, `${id} wall missing at s=${i * t.step} with the water held off by it anyway`);
         if (open) assert.ok(w < t.edge + 3, `${id} wall missing at s=${i * t.step} with the water ${w.toFixed(1)} m out`);

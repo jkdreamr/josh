@@ -894,6 +894,29 @@ function Play({ mode }: { mode: Mode }) {
         if (st.live && dist < 20 && Math.sign(v) !== Math.sign(was)) sfx.noise(0.3, 0.09 * (1 - dist / 20) + 0.02);
         return;
       }
+      if (h.kind === 'mower') {
+        // the gang mower: a reversing beeper before it sets off across, and the rattle of its reels while it is across
+        const beat = Math.floor(r.time / 0.45);
+        const was = pieceCyc.current.get(i) ?? beat;
+        pieceCyc.current.set(i, beat);
+        if (beat !== was && st.warn > 0 && !st.live && beat % 2 === 0) sfx.tone({ freq: 1180, dur: 0.16, type: 'square', vol: 0.05 * vol });
+        if (st.live && tick && dist < 45) sfx.noise(0.16, 0.035 * (1 - dist / 45));
+        return;
+      }
+      if (h.kind === 'tether') {
+        // a goose: a hiss as it crouches, and a honk as it goes for you
+        const was = pieceCyc.current.get(i) ?? 0;
+        const now = st.live ? 2 : st.warn > 0 ? 1 : 0;
+        pieceCyc.current.set(i, now);
+        if (dist > 45 || st.phase === 'off') return;
+        const near = 1 - dist / 45;
+        if (now === 1 && was === 0) sfx.noise(0.45, 0.04 * near, 0.01);
+        if (now === 2 && was !== 2) {
+          sfx.tone({ freq: 330, to: 250, dur: 0.16, type: 'sawtooth', vol: 0.07 * near });
+          sfx.tone({ freq: 340, to: 240, dur: 0.22, type: 'sawtooth', vol: 0.07 * near, delay: 0.2 });
+        }
+        return;
+      }
       if (h.kind === 'whirl') {
         // a whirlpool: a rising gurgle as its foam starts to turn, a roar as it spins up, churning while it spins
         const was = pieceCyc.current.get(i) ?? 0;
@@ -1128,6 +1151,16 @@ function Play({ mode }: { mode: Mode }) {
         } else if (e.kind === 'log') {
           sfx.tone({ freq: 130, to: 70, dur: 0.25, type: 'sine', vol: 0.2 });
           sfx.noise(0.12, 0.1);
+        } else if (e.kind === 'tether') {
+          // a goose: HONK, and a flap of wings
+          sfx.tone({ freq: 360, to: 260, dur: 0.2, type: 'sawtooth', vol: 0.14 });
+          sfx.tone({ freq: 380, to: 250, dur: 0.26, type: 'sawtooth', vol: 0.12, delay: 0.22 });
+          sfx.noise(0.25, 0.08);
+        } else if (e.kind === 'mower') {
+          // into the mower: a crunch and the groundskeeper's horn
+          sfx.noise(0.3, 0.18);
+          sfx.tone({ freq: 140, to: 60, dur: 0.3, type: 'sawtooth', vol: 0.14 });
+          sfx.tone({ freq: 440, dur: 0.35, type: 'square', vol: 0.06, delay: 0.1 });
         } else {
           sfx.tone({ freq: 520, to: 180, dur: 0.3, type: 'sawtooth', vol: 0.14 });
           sfx.noise(0.2, 0.1);
@@ -1181,6 +1214,14 @@ function Play({ mode }: { mode: Mode }) {
         if (mine && e.kind === 'void') {
           sfx.tone({ freq: 1200, to: 300, dur: 0.6, type: 'sine', vol: 0.16 });
           buzz(90);
+          break;
+        }
+        // out of bounds on the golf course: a referee's whistle (two blasts) and a thud into the gully
+        if (mine && e.kind === 'ob') {
+          sfx.tone({ freq: 2300, to: 2200, dur: 0.18, type: 'sine', vol: 0.1 });
+          sfx.tone({ freq: 2300, to: 2150, dur: 0.38, type: 'sine', vol: 0.1, delay: 0.24 });
+          sfx.tone({ freq: 110, to: 45, dur: 0.35, type: 'sine', vol: 0.18 });
+          buzz(80);
           break;
         }
         // run aground in the marsh: a squelch

@@ -7,6 +7,7 @@ import { COURSES } from './courses';
 import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, makeStatue, noise, scatter, swingAt, texture, waterTexture } from './scenery';
 import { COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, RAMP_H, RAMP_LEN, TURBO_AT, gustWarn, hazState, hazardV, hurt, strokeAt, turboLevel, windAt, type Ev, type Hat, type HazPhase, type Kart, type LiveHazard, type Race, type ThingKind } from './logic';
 import { buildRiver } from './water';
+import { buildFairway, mowerGaps, onPath } from './fairway';
 
 type Three = typeof import('three');
 
@@ -802,7 +803,25 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const deckMat = look.glass ? new THREE.MeshLambertMaterial({ color: 0x5d6270, emissive: 0x23262e }) : null;
   const railMat = look.glass ? new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }) : null;
   const railTop = look.glass ? new THREE.MeshBasicMaterial({ color: 0xdff8ff }) : null;
-  for (const [side, s0, s1, past] of runs) {
+  // (the walls open for the golf course's mower path, drawn but not there: see fairway.ts)
+  const openings = mowerGaps(r);
+  const walls = runs.flatMap((run): typeof runs => {
+    let parts: [number, number][] = [[run[1], run[2]]];
+    for (const [side, g0, g1] of openings) {
+      if (side !== run[0] || run[3] !== 'wall') continue;
+      parts = parts.flatMap(([a, b]): [number, number][] => {
+        // (a run may be counted on past the start line)
+        for (const off of [0, t.length, -t.length]) {
+          const [c0, c1] = [g0 + off, g1 + off];
+          if (c1 <= a || c0 >= b) continue;
+          return [...(c0 > a ? [[a, c0] as [number, number]] : []), ...(c1 < b ? [[c1, b] as [number, number]] : [])];
+        }
+        return [[a, b]];
+      });
+    }
+    return parts.map(([a, b]): (typeof runs)[number] => [run[0], a, b, run[3]]);
+  });
+  for (const [side, s0, s1, past] of walls) {
     if (past !== 'wall' || boat) continue;
     if (deckMat && railMat && railTop) {
       const at = (s: number) => side * edgeAt(t, s, side).lim;
@@ -847,6 +866,23 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   (lipMat.map as T.Texture).wrapT = THREE.RepeatWrapping;
   const studs: { x: number; z: number }[] = [];
   const stakes: { x: number; z: number }[] = [];
+  // (and out of bounds on the golf course: white stakes, and past them the barranca, a grassy gully)
+  const whiteStakes: { x: number; z: number }[] = [];
+  const obBoards: { x: number; z: number; ry: number }[] = [];
+  const gullyMat = new THREE.MeshBasicMaterial({
+    map: texture(
+      THREE,
+      canvas(64, 8, (g) => {
+        const grad = g.createLinearGradient(0, 0, 64, 0);
+        grad.addColorStop(0, '#5f8f3a');
+        grad.addColorStop(0.15, '#3f6a26');
+        grad.addColorStop(0.45, '#1f3a14');
+        grad.addColorStop(1, '#0c1708');
+        g.fillStyle = grad;
+        g.fillRect(0, 0, 64, 8);
+      }),
+    ),
+  });
   const pitTex = texture(
     THREE,
     canvas(64, 8, (g) => {
@@ -905,9 +941,18 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       continue;
     }
     if (look.edge === 'stakes') {
-      for (let s = s0 + 2; s < s1; s += 6) {
+      const ob = past === 'ob';
+      for (let s = s0 + 2; s < s1; s += ob ? 4 : 6) {
         const p = pointAt(t, s, side * (edgeAt(t, s, side).lim + 0.35));
-        stakes.push({ x: p.x, z: p.z });
+        (ob ? whiteStakes : stakes).push({ x: p.x, z: p.z });
+      }
+      if (ob) {
+        scene.add(new THREE.Mesh(strip(THREE, t, s0, s1, (s) => lim(s) + side * 0.6, far, 0.031, 4), gullyMat));
+        // an OB board where it starts, and where it ends, facing up the road
+        for (const s of [s0 + 1, s1 - 3]) {
+          const p = pointAt(t, s, side * (edgeAt(t, s, side).lim + 0.9));
+          obBoards.push({ x: p.x, z: p.z, ry: headingOf(p.tx, p.tz) + Math.PI });
+        }
       }
       continue;
     }
@@ -993,15 +1038,51 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     });
     scene.add(m);
   }
-  if (stakes.length) {
-    const m = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xd8312a }), stakes.length);
-    stakes.forEach((p, k) => {
-      dummy.position.set(p.x, 0.45, p.z);
-      dummy.scale.set(0.12, 0.9, 0.12);
+  for (const [list, color] of [[stakes, 0xd8312a], [whiteStakes, 0xf6f6f2]] as const) {
+    if (!list.length) continue;
+    const m = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color, ...(color === 0xf6f6f2 ? { emissive: 0x8a8a8a } : {}) }), list.length);
+    list.forEach((p, k) => {
+      dummy.position.set(p.x, 0.5, p.z);
+      dummy.scale.set(color === 0xf6f6f2 ? 0.17 : 0.12, color === 0xf6f6f2 ? 1 : 0.9, color === 0xf6f6f2 ? 0.17 : 0.12);
       dummy.updateMatrix();
       m.setMatrixAt(k, dummy.matrix);
     });
     scene.add(m);
+  }
+  if (obBoards.length) {
+    const board = new THREE.MeshBasicMaterial({
+      map: texture(
+        THREE,
+        canvas(128, 64, (g) => {
+          g.fillStyle = '#ffffff';
+          g.fillRect(0, 0, 128, 64);
+          g.strokeStyle = '#1a1a1a';
+          g.lineWidth = 6;
+          g.strokeRect(3, 3, 122, 58);
+          g.fillStyle = '#1a1a1a';
+          g.font = 'bold 44px Inter, Arial, sans-serif';
+          g.textAlign = 'center';
+          g.textBaseline = 'middle';
+          g.fillText('OB', 64, 35);
+        }),
+      ),
+      side: THREE.DoubleSide,
+    });
+    const postMesh = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xf6f6f2 }), obBoards.length);
+    const boardMesh = new THREE.InstancedMesh(geo.plane, board, obBoards.length);
+    obBoards.forEach((p, k) => {
+      dummy.rotation.set(0, p.ry, 0);
+      dummy.position.set(p.x, 0.8, p.z);
+      dummy.scale.set(0.14, 1.6, 0.14);
+      dummy.updateMatrix();
+      postMesh.setMatrixAt(k, dummy.matrix);
+      dummy.position.set(p.x, 1.75, p.z);
+      dummy.scale.set(1.5, 0.75, 1);
+      dummy.updateMatrix();
+      boardMesh.setMatrixAt(k, dummy.matrix);
+    });
+    dummy.rotation.set(0, 0, 0);
+    scene.add(postMesh, boardMesh);
   }
   if (netting.length) {
     // orange posts and netting along the far side of a pit, with a red lamp on every other post
@@ -1257,7 +1338,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     const side = at.d >= 0 ? 1 : -1;
     const i = Math.round(at.s / t.step) % t.n;
     const out = dropAt(t, i, side) ? Math.max(t.edge, (side > 0 ? beyond.hi : beyond.lo)[i]) : t.edge;
-    return Math.abs(at.d) > out + margin;
+    return Math.abs(at.d) > out + margin && !onPath(t, r, at.s, at.d, margin + 1);
   };
   const sceneryTick = SCENERY[r.course]({ THREE, scene, t, r, geo, mats, rand, clear, dummy }) || null;
 
@@ -1772,8 +1853,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     });
   // (on the water: the whirlpools, the vessels, the ferry, the buoys, the gates, the piers and the swing span: water.ts)
   const river = boat ? buildRiver(THREE, scene, r, look, geo, dummy) : null;
+  // (and the golf course's geese and its gang mower: fairway.ts)
+  const fairway = buildFairway(THREE, scene, r, geo);
   r.hazards.forEach((h, i) => {
     if (h.kind === 'whirl' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'log' || h.kind === 'ferry' || h.kind === 'buoy') return;
+    if ((h.kind === 'tether' && h.look === 'goose') || h.kind === 'mower') return;
     if (boat && ((h.kind === 'bollard' && h.look === 'gate') || (h.kind === 'statue' && h.look === 'pier') || (h.kind === 'rotor' && h.look === 'swing'))) return;
     if (h.kind === 'panel') return buildPanel(h, i);
     if (h.kind === 'geyser') return buildFlare(h, i);
@@ -2886,6 +2970,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       if (waterTex) waterTex.offset.set((clock * 0.01) % 1, (clock * 0.006) % 1);
       sceneryTick?.(race, clock, dt);
       river?.tick(race, me, clock, dt);
+      fairway?.tick(race, me, clock, dt);
       // things people shout, floating up and fading
       for (let n = pops.length - 1; n >= 0; n--) {
         const pop = pops[n];
@@ -3199,7 +3284,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         if (!k) return;
         // (run aground: a spatter of mud)
         if (e.kind === 'marsh') burst(geo.ball, [partMat.mud, partMat.spray], k.x, 0.3, k.z, 14, 4, 0.22, 0.6, 14);
-        else if (e.kind !== 'void') burst(geo.ball, [partMat.dust], k.x, 0.3, k.z, 22, 6, 0.4, 0.9, 10);
+        else if (e.kind === 'ob') {
+          // out of bounds on the golf course: a puff of grass and dust, and the call
+          burst(geo.ball, [partMat.dust, partMat.white], k.x, 0.4, k.z, 22, 6, 0.36, 0.8, 10);
+          say('OB!', k.x, 3.2, k.z, '#ffffff');
+        } else if (e.kind !== 'void') burst(geo.ball, [partMat.dust], k.x, 0.3, k.z, 22, 6, 0.4, 0.9, 10);
         if (e.k === me) shake = Math.max(shake, 0.7);
       } else if (e.t === 'sank') {
         if (e.kind !== 'void') burst(geo.ball, [e.kind === 'water' ? partMat.spray : partMat.dust], e.x, 0.2, e.z, 8, 4, 0.2, 0.5, 14);
@@ -3219,7 +3308,14 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         const k = race.karts[e.k];
         if (!k) return;
         if (e.kind === 'rotor') burst(geo.ball, [partMat.spray, partMat.white], k.x, 0.8, k.z, 14, 5, 0.25, 0.6, 10);
-        else burst(geo.box, [partMat.white, partMat.star], k.x, 0.9, k.z, 12, 6, 0.16, 0.5);
+        else if (e.kind === 'tether') {
+          // bowled over by a goose: a flurry of feathers
+          burst(geo.box, [partMat.white, partMat.dust], k.x, 1.2, k.z, 16, 5, 0.2, 0.9, 4);
+          say('HONK!', k.x, 3.2, k.z, '#ffffff');
+        } else if (e.kind === 'mower') {
+          burst(geo.box, [partMat.dust, partMat.white], k.x, 0.9, k.z, 14, 6, 0.18, 0.6);
+          say('CRUNCH!', k.x, 3.2, k.z, '#ffe14d');
+        } else burst(geo.box, [partMat.white, partMat.star], k.x, 0.9, k.z, 12, 6, 0.16, 0.5);
         if (e.k === me) shake = Math.max(shake, e.kind === 'rotor' ? 0.35 : 0.7);
       } else if (e.t === 'power') {
         // a Power Ten
