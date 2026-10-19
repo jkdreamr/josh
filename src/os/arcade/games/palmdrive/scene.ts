@@ -4,6 +4,7 @@ import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
 import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, deltaS, dropAt, edgeAt, edgeRuns, gridSpot, headingOf, inTrench, lengthOf, locate, pointAt, roadEdge, wrapAngle, wrapS, type Past, type Track } from './track';
 import { COURSES } from './courses';
+import { buildTraffic, onStreet, streetsOf, wallGaps } from './traffic';
 import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, makeStatue, noise, scatter, swingAt, texture, waterTexture } from './scenery';
 import { COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, RAMP_H, RAMP_LEN, TURBO_AT, gustWarn, hazState, hazardV, hurt, strokeAt, turboLevel, windAt, type Ev, type Hat, type HazPhase, type Kart, type LiveHazard, type Race, type ThingKind } from './logic';
 import { buildRiver } from './water';
@@ -559,7 +560,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(...look.fog);
   const camera = new THREE.PerspectiveCamera(68, 1, 0.5, 1600);
-  scene.add(new THREE.HemisphereLight(look.sky, look.ground, 1.05));
+  const hemi = new THREE.HemisphereLight(look.sky, look.ground, 1.05);
+  scene.add(hemi);
   const sun = new THREE.DirectionalLight(...look.sun);
   sun.position.set(160, 260, -220);
   scene.add(sun);
@@ -802,7 +804,25 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const deckMat = look.glass ? new THREE.MeshLambertMaterial({ color: 0x5d6270, emissive: 0x23262e }) : null;
   const railMat = look.glass ? new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }) : null;
   const railTop = look.glass ? new THREE.MeshBasicMaterial({ color: 0xdff8ff }) : null;
-  for (const [side, s0, s1, past] of runs) {
+  // (the walls open for the side streets the traffic comes and goes by, drawn but not there: see traffic.ts)
+  const openings = wallGaps(r);
+  const walls = runs.flatMap((run): typeof runs => {
+    let parts: [number, number][] = [[run[1], run[2]]];
+    for (const [side, g0, g1] of openings) {
+      if (side !== run[0] || run[3] !== 'wall') continue;
+      parts = parts.flatMap(([a, b]): [number, number][] => {
+        // (a gap may be over the start line from where the run is counted)
+        for (const off of [0, t.length, -t.length]) {
+          const [c0, c1] = [g0 + off, g1 + off];
+          if (c1 <= a || c0 >= b) continue;
+          return [...(c0 > a ? [[a, c0] as [number, number]] : []), ...(c1 < b ? [[c1, b] as [number, number]] : [])];
+        }
+        return [[a, b]];
+      });
+    }
+    return parts.map(([a, b]): (typeof runs)[number] => [run[0], a, b, run[3]]);
+  });
+  for (const [side, s0, s1, past] of walls) {
     if (past !== 'wall' || boat) continue;
     if (deckMat && railMat && railTop) {
       const at = (s: number) => side * edgeAt(t, s, side).lim;
@@ -972,6 +992,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   }
   /** Lap 5 on the Skyway: the road's glow fades and the fog closes in (see Look.blackout). */
   let dark = 0;
+  /** And at Hoover Nights the lights go out (see Look.lightsOut). */
+  let dim = 0;
   /** And on the slough the fog comes in (see Look.fogLap). */
   let fogIn = 0;
   const fogColor = new THREE.Color(look.fogLap?.color ?? 0xffffff);
@@ -1252,12 +1274,13 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
 
   // the course's own scenery
   const rand = scatter(7);
+  const streets = streetsOf(r);
   const clear = (x: number, z: number, margin: number) => {
     const at = locate(t, x, z);
     const side = at.d >= 0 ? 1 : -1;
     const i = Math.round(at.s / t.step) % t.n;
     const out = dropAt(t, i, side) ? Math.max(t.edge, (side > 0 ? beyond.hi : beyond.lo)[i]) : t.edge;
-    return Math.abs(at.d) > out + margin;
+    return Math.abs(at.d) > out + margin && !onStreet(t, streets, at.s, at.d, margin + 1);
   };
   const sceneryTick = SCENERY[r.course]({ THREE, scene, t, r, geo, mats, rand, clear, dummy }) || null;
 
@@ -1772,8 +1795,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     });
   // (on the water: the whirlpools, the vessels, the ferry, the buoys, the gates, the piers and the swing span: water.ts)
   const river = boat ? buildRiver(THREE, scene, r, look, geo, dummy) : null;
+  // (and Hoover Nights' traffic, the Tree and the fountain jets: traffic.ts)
+  const cars = buildTraffic(THREE, scene, r, geo);
   r.hazards.forEach((h, i) => {
     if (h.kind === 'whirl' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'log' || h.kind === 'ferry' || h.kind === 'buoy') return;
+    if (h.kind === 'car' || h.kind === 'van' || h.kind === 'shuttle' || h.kind === 'tether' || (h.kind === 'geyser' && h.look === 'fountain')) return;
     if (boat && ((h.kind === 'bollard' && h.look === 'gate') || (h.kind === 'statue' && h.look === 'pier') || (h.kind === 'rotor' && h.look === 'swing'))) return;
     if (h.kind === 'panel') return buildPanel(h, i);
     if (h.kind === 'geyser') return buildFlare(h, i);
@@ -2861,6 +2887,16 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
           fogDome.position.copy(camera.position);
         }
       }
+      // lights out on its lap: the night closes in, and the headlights and the beacons are what is left (half the lamps
+      // go out with it: see the scenery)
+      if (look.lightsOut) {
+        dim = damp(dim, lapNow >= look.lightsOut ? 1 : 0, 1.5, dt);
+        hemi.intensity = 1.05 * (1 - 0.5 * dim);
+        sun.intensity = look.sun[1] * (1 - 0.6 * dim);
+        const fog = scene.fog as T.Fog;
+        fog.near = look.fog[1] + (40 - look.fog[1]) * dim;
+        fog.far = look.fog[2] + (300 - look.fog[2]) * dim;
+      }
       // the blackout on its lap
       if (look.blackout && glassMat) {
         dark = damp(dark, lapNow >= look.blackout ? 1 : 0, 1.2, dt);
@@ -2886,6 +2922,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       if (waterTex) waterTex.offset.set((clock * 0.01) % 1, (clock * 0.006) % 1);
       sceneryTick?.(race, clock, dt);
       river?.tick(race, me, clock, dt);
+      cars?.tick(race, me, clock, dt);
       // things people shout, floating up and fading
       for (let n = pops.length - 1; n >= 0; n--) {
         const pop = pops[n];
