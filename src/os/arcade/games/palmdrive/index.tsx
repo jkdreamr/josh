@@ -14,6 +14,7 @@ import {
   ITEMS,
   gustWarn,
   hazState,
+  boulderAt,
   beatAt,
   strokeAt,
   swellWarn,
@@ -894,6 +895,23 @@ function Play({ mode }: { mode: Mode }) {
         if (st.live && dist < 20 && Math.sign(v) !== Math.sign(was)) sfx.noise(0.3, 0.09 * (1 - dist / 20) + 0.02);
         return;
       }
+      if (h.kind === 'boulder') {
+        // a boulder: a low rumble as it works loose and comes down its chute, and a thud each time it lands off a wall
+        const b = boulderAt(r, h, r.time);
+        const was = pieceCyc.current.get(i) ?? 0;
+        const now = b.rolling ? 2 : b.warn > 0 ? 1 : 0;
+        pieceCyc.current.set(i, now);
+        if (now === 1 && was === 0) {
+          sfx.tone({ freq: 48, to: 38, dur: 1.3, type: 'sawtooth', vol: 0.05 * vol });
+          sfx.noise(1.1, 0.05 * vol);
+        }
+        if (now === 2 && was !== 2) {
+          sfx.tone({ freq: 62, to: 34, dur: 0.4, type: 'sine', vol: 0.16 * vol });
+          sfx.noise(0.25, 0.08 * vol);
+        }
+        if (now === 2 && tick && Math.abs(b.d) < r.track.edge && Math.random() < 0.5) sfx.tone({ freq: 55 + Math.random() * 20, dur: 0.12, type: 'triangle', vol: 0.06 * vol });
+        return;
+      }
       if (h.kind === 'whirl') {
         // a whirlpool: a rising gurgle as its foam starts to turn, a roar as it spins up, churning while it spins
         const was = pieceCyc.current.get(i) ?? 0;
@@ -1117,7 +1135,11 @@ function Play({ mode }: { mode: Mode }) {
           sfx.noise(0.08, 0.12);
           sfx.tone({ freq: 240, to: 110, dur: 0.2, type: 'sawtooth', vol: 0.14 });
         } else if (e.kind === 'rotor') sfx.noise(0.35, 0.14);
-        else if (e.kind === 'launch') {
+        else if (e.kind === 'boulder') {
+          // a boulder: a deep crunch
+          sfx.tone({ freq: 70, to: 30, dur: 0.45, type: 'sine', vol: 0.26 });
+          sfx.noise(0.35, 0.18);
+        } else if (e.kind === 'launch') {
           // the launch's horn
           sfx.tone({ freq: 392, dur: 0.22, type: 'square', vol: 0.08 });
           sfx.tone({ freq: 330, dur: 0.35, type: 'square', vol: 0.08, delay: 0.2 });

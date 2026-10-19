@@ -2,7 +2,7 @@
 // around it. buildView (scene.ts) lays the road and walls and then hands a course's builder here the scene to fill.
 import type { T } from './gl';
 import type { CourseId } from './courses';
-import { LANDMARKS, fromMap, headingOf, locate, pointAt, type P2, type Track } from './track';
+import { LANDMARKS, deltaS, fromMap, headingOf, locate, pointAt, type P2, type Track } from './track';
 import type { Race } from './logic';
 
 export type Three = typeof import('three');
@@ -832,10 +832,11 @@ export type Look = {
   /** After dark: the curbs, wall tops, signs and oil slicks glow a little so the edges and hazards always read. */
   night?: boolean;
   /**
-   * Where the road drops away: a striped lip with blinking studs and lit water or a dark pit past it (the default), or
-   * on the golf course just red stakes along the water's edge (the ponds show themselves).
+   * Where the road drops away: a striped lip with blinking studs and lit water or a dark pit past it (the default), on
+   * the golf course just red stakes along the water's edge (the ponds show themselves), or on the Dish the lip with the
+   * hillside falling away past it, a broken-down ranch fence on the slope.
    */
-  edge?: 'lip' | 'stakes';
+  edge?: 'lip' | 'stakes' | 'slope';
   /**
    * What fishes a kart out after a fall: the night crew's crane hook (the default), a giant golf ball retriever, a drone,
    * or on the water the coach's launch, towing you off the mud.
@@ -857,7 +858,7 @@ export const LOOKS: Record<CourseId, Look> = {
   palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE', road: '#4a4a52' },
   lake: { fog: [0xeeb08e, 120, 640], sky: 0xffd8c2, ground: 0x5d6b4a, sun: [0xffb07a, 1.4], field: '#b8a862', lawn: '#79a85a', curb: ['#f4f1ea', '#2f6fb5'], wall: '#b98b5e', band: '#2f6fb5', banner: 'LAKE LAGUNITA', road: '#4a4a52' },
   barn: { fog: [0xe9e4cf, 150, 720], sky: 0xfff4dd, ground: 0x6b7a44, sun: [0xfff0d0, 1.5], field: '#c9b26a', lawn: '#88ad59', curb: ['#efe6cf', '#9a3a28'], wall: '#f3efe4', band: '#9a3a28', banner: 'RED BARN', road: '#8f6f4d' },
-  dish: { fog: [0xe6e0c8, 160, 760], sky: 0xfff6e6, ground: 0x7a7448, sun: [0xfff2d8, 1.55], field: '#cdb46c', lawn: '#b0a95e', curb: ['#f2efe6', '#5d7a3a'], wall: '#d9cfb8', band: '#5d7a3a', banner: 'THE DISH', road: '#5e5d62' },
+  dish: { fog: [0xe6e0c8, 160, 760], sky: 0xfff6e6, ground: 0x7a7448, sun: [0xfff2d8, 1.55], field: '#cdb46c', lawn: '#b0a95e', curb: ['#f2efe6', '#5d7a3a'], wall: '#d9cfb8', band: '#5d7a3a', banner: 'THE DISH', road: '#5e5d62', edge: 'slope' },
   stadium: { fog: [0xe2e8ef, 170, 760], sky: 0xf4f8ff, ground: 0x5f7a4a, sun: [0xfff4e0, 1.55], field: '#c4b98a', lawn: '#5aa04a', curb: ['#f4f1ea', '#8c1515'], wall: '#ebe6db', band: '#8c1515', banner: 'STANFORD STADIUM', road: '#4c4c54' },
   quad: { fog: [0xf1e3c6, 150, 700], sky: 0xfff4e0, ground: 0x8a7a55, sun: [0xffecc8, 1.55], field: '#d8c39a', lawn: '#7fae58', curb: ['#f4efe4', '#8c1515'], wall: '#efe0bf', band: '#8c1515', banner: 'MAIN QUAD', road: '#c9b089', joints: '#a08766' },
   // cool moonlight, low enough to read as night with the road and karts still clear
@@ -1741,11 +1742,13 @@ function dish(c: Scenery) {
   // barbed wire on wooden posts outside the walls
   const posts: { x: number; y: number; z: number; sx: number; sy: number; sz: number }[] = [];
   const wires: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number }[] = [];
+  // (with a gap where a boulder chute comes down to the road)
+  const chutes = c.r.hazards.filter((h) => h.kind === 'boulder').map((h) => h.s);
   for (const side of [-1, 1]) {
     let last: { x: number; z: number } | null = null;
     for (let s = 0; s <= t.length; s += 7) {
       const p = pointAt(t, s, side * (t.edge + 3));
-      const ok = clear(p.x, p.z, 2);
+      const ok = clear(p.x, p.z, 2) && !chutes.some((at) => Math.abs(deltaS(t, at, s)) < 7);
       if (ok) posts.push({ x: p.x, y: 0.7, z: p.z, sx: 0.16, sy: 1.4, sz: 0.16 });
       if (ok && last) {
         const len = Math.hypot(p.x - last.x, p.z - last.z);

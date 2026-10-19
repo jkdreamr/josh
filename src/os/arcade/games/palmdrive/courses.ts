@@ -150,11 +150,17 @@ function placed(
 
 /**
  * A row of four bollard banks right across the road, wall to wall, at s from lap `lap`: each rises in turn (`phases`
- * seconds into the cycle, left to right), so the gap ripples across the road.
+ * seconds into the cycle, left to right), so the gap ripples across the road. The banks are all as wide unless `inner`
+ * says how wide the middle two are (on a road with a wide verge, the outer two then take in the verge as well, so a kart
+ * can still get through one of them on the road).
  */
-function bollards(t: Track, s: number, lap: number, phases: [number, number, number, number]): NonNullable<Parameters<typeof placed>[1]['pieces']> {
-  const w = (2 * t.edge) / 4;
-  return phases.map((phase, i) => ({ kind: 'bollard' as const, s, d: (i - 1.5) * w, w, every: 3.2, on: 1.6, warn: 0.9, phase, lap }));
+function bollards(t: Track, s: number, lap: number, phases: [number, number, number, number], inner?: number): NonNullable<Parameters<typeof placed>[1]['pieces']> {
+  if (inner === undefined) {
+    const w = (2 * t.edge) / 4;
+    return phases.map((phase, i) => ({ kind: 'bollard' as const, s, d: (i - 1.5) * w, w, every: 3.2, on: 1.6, warn: 0.9, phase, lap }));
+  }
+  const cuts = [-t.edge, -inner, 0, inner, t.edge];
+  return phases.map((phase, i) => ({ kind: 'bollard' as const, s, d: (cuts[i] + cuts[i + 1]) / 2, w: cuts[i + 1] - cuts[i], every: 3.2, on: 1.6, warn: 0.9, phase, lap }));
 }
 
 /** Lake Lagunita, scaled from map meters like Palm Drive's route. */
@@ -472,12 +478,20 @@ export const COURSES: Record<CourseId, Course> = {
   dish: {
     id: 'dish',
     name: 'The Dish',
-    blurb: 'Switchbacks up the foothills and along the ridge past the radio telescope. Narrow, long, and the cows are out.',
+    blurb: 'Switchbacks up the foothills and along the ridge past the radio telescope. No wall round the hairpins, boulders rolling down, and the cows are out.',
     difficulty: 3,
     route: DISH.map(([e, n]) => [e * DISH_K, n * DISH_K]),
     start: [16 * DISH_K, -196 * DISH_K],
     half: 6.5,
     edge: 10.5,
+    // no wall round the outside of both hairpins and the ridge sweeper: the road falls away down the hillside (drawn as
+    // a slope, see Look.edge)
+    edges: [
+      [150, 214, 1, 'pit'],
+      [332, 398, -1, 'pit'],
+      [548, 640, 1, 'pit'],
+    ],
+    laps: { 3: 'Another cow on the road' },
     layout: (t) =>
       placed(t, {
         boxes: [95, 430, 790, 1150],
@@ -510,6 +524,8 @@ export const COURSES: Record<CourseId, Course> = {
           ['cow', 470, 0, undefined, 4.2, 0.6, 2],
           ['cow', 760, 0, undefined, 4.2, 0.5, 4],
           ['cow', 1180, 0, undefined, 4.2, 0.5, 1],
+          // and from lap 3 a fifth, just short of the dash panel off the ridge
+          ['cow', 700, 0, undefined, 4.2, 0.5, 3, 3],
           // puddles waiting on the inside of both hairpins, and on the climb to the ridge
           ['mud', 183, -3.8, 2.8],
           ['mud', 365, 3.8, 2.8],
@@ -518,6 +534,12 @@ export const COURSES: Record<CourseId, Course> = {
           // boulders come down off the hillside
           ['rock', 840, 3.5],
           ['rock', 1220, -3.5],
+        ],
+        // and more roll right across the road down three chutes off the uphill side, one after another (see BOULDER)
+        pieces: [
+          { kind: 'boulder', s: 260, d: 0, cross: t.edge + 4, every: 7, warn: 1.2, speed: 7, phase: 0 },
+          { kind: 'boulder', s: 450, d: 0, cross: -(t.edge + 4), every: 7, warn: 1.2, speed: 7, phase: 2.3 },
+          { kind: 'boulder', s: 1135, d: 0, cross: -(t.edge + 4), every: 7, warn: 1.2, speed: 7, phase: 4.6 },
         ],
       }),
     sky: 'linear-gradient(180deg, #2a6fc9 0%, #6aa6e6 22%, #bcd8ee 35%, #e9dcb0 41%, #d6bd7a 46%, #b7a45c 47%)',
@@ -565,21 +587,22 @@ export const COURSES: Record<CourseId, Course> = {
   quad: {
     id: 'quad',
     name: 'Main Quad',
-    blurb: 'Square corners round the sandstone arcades, a chicane at the church, and bikes everywhere. Tight and twisty.',
+    blurb: 'Square corners round the sandstone arcades, a chicane at the church and bikes everywhere. From lap 2 the bollards come up.',
     difficulty: 3,
     route: squared(QUAD, 22).map(([e, n]) => [e * QUAD_K, n * QUAD_K]),
     start: [-40 * QUAD_K, -100.6 * QUAD_K],
     half: 6.5,
     edge: 10,
+    laps: { 2: 'Bollards on the straights', 3: 'The sprinkler comes on' },
     layout: (t) =>
       placed(t, {
-        boxes: [48, 350, 636],
+        boxes: [48, 372, 636],
         coins: [
-          [14, 3, 5],
+          [28, 3, 5],
           [107, 2.5, 4],
           [168, 0, 4],
           [207, -2.5, 4],
-          [276, -3, 5],
+          [268, -3, 3],
           [382, 2, 4],
           [430, -2, 5],
           [552, 3, 4],
@@ -605,10 +628,19 @@ export const COURSES: Record<CourseId, Course> = {
           ['planter', 684, 2.6],
           // and cyclists riding across, back and forth between classes
           ['bike', 66, 0, undefined, 5, 1.1, 0],
-          ['bike', 288, 0, undefined, 5, 1.2, 2],
-          ['bike', 366, 0, undefined, 5, 1.1, 4],
+          ['bike', 356, 0, undefined, 5, 1.2, 2],
+          ['bike', 384, 0, undefined, 5, 1.1, 4],
           ['bike', 512, 0, undefined, 5, 1.25, 1],
-          ['bike', 798, 0, undefined, 5, 0.8, 3],
+          ['bike', 745, 0, undefined, 5, 0.8, 3],
+        ],
+        pieces: [
+          // from lap 2 bollards right across the start straight (never the first lap: the pack is on it two seconds
+          // after the lights) and the straight between the east side's dog-legs, rippling opposite ways (the outer
+          // banks take in the verge too, so each bank's gap is on the road)
+          ...bollards(t, 22, 2, [0, 0.8, 1.6, 2.4], 4.25),
+          ...bollards(t, 290, 2, [2.4, 1.6, 0.8, 0], 4.25),
+          // and from lap 3 a sprinkler on the west side, before the kicker
+          { kind: 'rotor', s: 788, d: 0, r: 0.6, arm: 6, spin: 2, a0: 0, lap: 3 },
         ],
       }),
     sky: 'linear-gradient(180deg, #2a68c4 0%, #6aa3e3 24%, #bcd6ee 36%, #f1dfbf 42%, #dcc596 46%, #c9b07e 47%)',

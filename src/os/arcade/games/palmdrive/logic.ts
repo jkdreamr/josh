@@ -629,6 +629,14 @@ export const hazardS = (t: Track, h: Hazard, time: number) => {
  */
 export function moveHazards(r: Race) {
   for (const h of r.hazards) {
+    if (h.kind === 'boulder') {
+      // (a boulder rolls across at its own s, on the clock: see boulderAt)
+      h.at = boulderAt(r, h, r.time).d;
+      const p = pointAt(r.track, h.s, h.at);
+      h.x = p.x;
+      h.z = p.z;
+      continue;
+    }
     if (!h.swing && !h.drive) continue;
     h.at = hazardD(h, r.time);
     h.along = hazardS(r.track, h, r.time);
@@ -1620,6 +1628,30 @@ export const JET = { w: 0.4, high: 1.4 };
 /** The wrecking ball throws you clear at this much plus its own sideways speed, up to the most. */
 export const WRECK_KNOCK = 6;
 export const WRECK_MAX = 12;
+/**
+ * A boulder off the hillside (see HazardKind): every `every` seconds, `warn` of dust and rumble, then it rolls across at
+ * `speed` from `out` past the wall on its uphill side (unless the course says where, Hazard.cross) to as far past the
+ * other.
+ */
+export const BOULDER = { every: 7, warn: 1.2, speed: 7, out: 4 };
+
+/**
+ * Where a boulder is across the road at race time `time` (d), whether it is rolling (and u, how far across it has got,
+ * 0 to 1), the way it rolls (dir: +1 toward the right) and how far into its warning it is (0 to 1). Up the chute on its
+ * uphill side until it goes, gone down the hill on the far side after. Pure in time, like the other set pieces.
+ */
+export function boulderAt(r: Race, h: Hazard, time: number) {
+  const every = h.every ?? BOULDER.every;
+  const warn = h.warn ?? BOULDER.warn;
+  const from = h.cross ?? -(r.track.edge + BOULDER.out);
+  const dir = from < 0 ? 1 : -1;
+  const span = 2 * Math.abs(from);
+  const c = cycleAt(h, time, every);
+  if (c < warn) return { d: from, rolling: false, u: 0, dir, warn: c / warn };
+  const run = (c - warn) * (h.speed ?? BOULDER.speed);
+  if (run > span) return { d: -from, rolling: false, u: 1, dir, warn: 0 };
+  return { d: from + dir * run, rolling: true, u: run / span, dir, warn: 0 };
+}
 
 /**
  * Whether a bus (or a cart on its rounds) has been within right-of-way reach of h at any time in the last `span`
@@ -1710,6 +1742,17 @@ export function hazState(r: Race, h: Hazard, time: number, lap: number): HazStat
       st.live = true;
       st.lift = 1;
     } else if (c >= every - (h.warn ?? 0.8)) st.warn = (c - (every - (h.warn ?? 0.8))) / (h.warn ?? 0.8);
+    return st;
+  }
+  if (h.kind === 'boulder') {
+    // a boulder: in play while it is rolling across the road (and a little past its edges, as wide as it is)
+    if (!out) return st;
+    const b = boulderAt(r, h, time);
+    st.d = b.d;
+    st.warn = b.warn;
+    st.lift = b.u;
+    st.phase = b.rolling ? 'on' : 'idle';
+    st.live = st.solid = b.rolling && Math.abs(b.d) < r.track.edge + h.r;
     return st;
   }
   const yielding = out && rightOfWay(r, h, time);
@@ -1944,7 +1987,8 @@ function pieceHit(r: Race, k: Kart, h: LiveHazard, dx: number, dz: number, tough
     }
     return;
   }
-  if (h.kind === 'wrecker') {
+  if (h.kind === 'wrecker' || h.kind === 'boulder') {
+    // (a boulder rolling across hits like the ball: it is as heavy and moves as fast)
     if (!st.live || tough) return;
     const reach = h.r + R;
     if (dist >= reach) return;
@@ -1962,7 +2006,7 @@ function pieceHit(r: Race, k: Kart, h: LiveHazard, dx: number, dz: number, tough
     k.x = h.x + nx * reach;
     k.z = h.z + nz * reach;
     if (hitKart(r, k, 'tumble', -1)) {
-      const knock = Math.min(WRECK_KNOCK + Math.abs(hazardV(h, r.time)), WRECK_MAX);
+      const knock = Math.min(WRECK_KNOCK + (h.kind === 'boulder' ? (h.speed ?? BOULDER.speed) : Math.abs(hazardV(h, r.time))), WRECK_MAX);
       k.kx += nx * knock;
       k.kz += nz * knock;
       k.safe += 0.6;
@@ -2971,13 +3015,15 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
       // flare is only as wide as its column)
       // (and a whirlpool with a wide berth, wider still for a while after a fall, and the slower it is going the wider:
       // its pull draws a slow shell in from well outside where it would catch a fast one)
-      const room = KART_R + (h.kind === 'rotor' ? 1.0 : h.kind === 'panel' ? 1.4 : h.kind === 'geyser' ? 0.3 : h.kind === 'whirl' ? (ai.care > 0 ? 1.9 : 0.9) + 2.2 * clamp((16 - k.v) / 10, 0, 1) : 0.7);
+      const room = KART_R + (h.kind === 'rotor' ? 1.0 : h.kind === 'panel' ? 1.4 : h.kind === 'geyser' ? 0.3 : h.kind === 'whirl' ? (ai.care > 0 ? 1.9 : 0.9) + 2.2 * clamp((16 - k.v) / 10, 0, 1) : h.kind === 'boulder' ? 0.9 : 0.7);
       // (a sprinkler's jet is met along a stretch of road, not on one line: every so far along it; and a pane of glass
       // from its near end to its far end)
       const arm = h.arm ?? 5;
-      const offs = h.kind === 'rotor' ? [-0.9 * arm, -0.6 * arm, -0.3 * arm, 0, 0.3 * arm, 0.6 * arm, 0.9 * arm] : h.kind === 'panel' ? [0, (h.len ?? 0) / 2, h.len ?? 0] : [0];
+      // (and a boulder, rolling across as the kart goes by, from its near side to its far side and closer in time)
+      const offs = h.kind === 'rotor' ? [-0.9 * arm, -0.6 * arm, -0.3 * arm, 0, 0.3 * arm, 0.6 * arm, 0.9 * arm] : h.kind === 'panel' ? [0, (h.len ?? 0) / 2, h.len ?? 0] : h.kind === 'boulder' ? [-0.7 * h.r, 0, 0.7 * h.r] : [0];
+      const fine = h.kind === 'rotor' || h.kind === 'boulder';
       const spansAt = (t0: number, out: Span[]) => {
-        for (const o of offs) for (const dt of h.kind === 'rotor' ? [-slop, -slop / 2, 0, slop / 2, slop] : [-slop, 0, slop]) for (const [lo, hi] of hazSpans(r, h, t0 + dt + o / v, k.lap, o)) out.push({ lo, hi, room, far });
+        for (const o of offs) for (const dt of fine ? [-slop, -slop / 2, 0, slop / 2, slop] : [-slop, 0, slop]) for (const [lo, hi] of hazSpans(r, h, t0 + dt + o / v, k.lap, o)) out.push({ lo, hi, room, far });
       };
       const ext = h.kind === 'bollard' ? BANK.thick : h.kind === 'rotor' ? JET.w : h.kind === 'panel' ? 0 : h.r;
       const crossing = (speed: number, out: Span[]) => {
@@ -3445,9 +3491,9 @@ function think(r: Race, k: Kart, dt: number) {
     }
     // a wrecking ball, likewise, from a crawl (thrown back by it, say): it goes across the ball's path only when the
     // ball will be clear of its lane the whole way, and otherwise backs off for a run-up (from a standstill right in
-    // front of it, getting across takes longer than the ball ever leaves a lane clear) and waits there
+    // front of it, getting across takes longer than the ball ever leaves a lane clear) and waits there (and a boulder's)
     for (const h of r.hazards) {
-      if (h.kind !== 'wrecker' || !awake(h, k.lap)) continue;
+      if ((h.kind !== 'wrecker' && h.kind !== 'boulder') || !awake(h, k.lap)) continue;
       const ds = deltaS(t, k.s, h.s);
       const zone = h.r + KART_R + 0.15;
       if (ds < 0 || ds > zone + 8) continue;
@@ -3526,7 +3572,7 @@ function think(r: Race, k: Kart, dt: number) {
       // (and on the water a buoy it has nosed into: it backs off and swings round it)
       // (but never backing toward the marsh: beside it, it slides on off the buoy instead)
       const buoy = h.kind === 'buoy';
-      if ((!timed(h.kind) && !buoy) || h.kind === 'bollard' || h.kind === 'wrecker') continue;
+      if ((!timed(h.kind) && !buoy) || h.kind === 'bollard' || h.kind === 'wrecker' || h.kind === 'boulder') continue;
       if (buoy && fromBrink(r, k) < 3.5) continue;
       const dx = h.x - k.x;
       const dz = h.z - k.z;
