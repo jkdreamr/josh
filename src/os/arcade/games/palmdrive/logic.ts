@@ -2,6 +2,7 @@
 // No DOM, no three.js. Distances are meters, times seconds; see track.ts for the axes and heading convention.
 import { COURSES, tierOf, trackOf, type CourseId, type Flow, type Gust, type Swell, type Tier } from './courses.ts';
 import { BALL_WINDOW, CURB, KART_R, PASTS, WET, awake, ballDue, ballNear, cycleAt, deltaS, dropAt, drives, edgeAt, gripAt, gridSpot, headingOf, inTrench, lengthOf, locate, pointAt, shoreOf, solid, timed, wrapAngle, wrapS, type Hazard, type HazardKind, type Layout, type Past, type Shore, type Spot, type Track } from './track.ts';
+import type { Gear, Look } from './garage.ts';
 export { WET };
 
 export const LAPS = 5;
@@ -133,8 +134,9 @@ export type HitHow = 'spin' | 'tumble' | 'squash' | 'boom';
 
 /** hold: the item button is held (bananas and shells trail behind as a shield until it is let go). */
 export type Input = { steer: number; brake: boolean; drift: boolean; hop: boolean; use: boolean; back: boolean; fwd: boolean; hold: boolean; slam: boolean; cash: boolean };
-export type Hat = 'cap' | 'tree' | 'top' | 'bow' | 'tower' | 'axe' | 'dish' | 'claw';
-export const HATS: Hat[] = ['cap', 'tree', 'top', 'bow', 'tower', 'axe', 'dish', 'claw'];
+export type Hat = 'cap' | 'tree' | 'top' | 'bow' | 'tower' | 'axe' | 'dish' | 'claw' | 'grad' | 'palm' | 'bike' | 'band' | 'boater' | 'golf' | 'prop' | 'laurel';
+/** Every hat, in Garage order (a look sends the place in this list in 4 bits: at most 16, new ones on the end). */
+export const HATS: Hat[] = ['cap', 'tree', 'top', 'bow', 'tower', 'axe', 'dish', 'claw', 'grad', 'palm', 'bike', 'band', 'boater', 'golf', 'prop', 'laurel'];
 /**
  * care: seconds left keeping well away from the edge after a fall; dropGo: this time it times the drop start. reactS and
  * react: where it last decided whether it catches itself in time on the brink of a drop, and whether it does. err: how
@@ -159,6 +161,8 @@ export type Kart = {
   name: string;
   color: string;
   hat: Hat;
+  /** The rest of its look from the garage (paint finish, wheels, boost trail): just for show. */
+  gear?: Gear;
   kind: 'player' | 'cpu' | 'remote';
   seat: number;
   x: number;
@@ -405,7 +409,7 @@ export type Race = {
  */
 export type LiveHazard = Hazard & { x: number; z: number; along: number; at: number; tx: number; tz: number; walk: number; gone?: boolean };
 
-export type Racer = { name: string; color: string; kind: Kart['kind']; seat?: number; pace?: number; skill?: number; hat?: Hat };
+export type Racer = { name: string; color: string; kind: Kart['kind']; seat?: number; pace?: number; skill?: number; hat?: Hat; gear?: Gear };
 
 /** The CPU field, quickest first. */
 export const RIVALS: Racer[] = [
@@ -453,6 +457,7 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
       name: rc.name,
       color: rc.color,
       hat: rc.hat ?? 'cap',
+      gear: rc.gear,
       kind: rc.kind,
       seat: rc.seat ?? -1,
       x: g.x,
@@ -678,8 +683,8 @@ function newAi(pace: number, skill: number, rand: Rng): Ai {
 }
 
 /** A solo Grand Prix: seven CPU rivals ahead of you on the grid, like the first race of a cup. */
-export function soloRace(cc: Cc, seed?: number, look: { color: string; hat: Hat } = { color: PLAYER_COLOR, hat: 'cap' }, course: CourseId = 'palm') {
-  return createRace({ cc, seed, course, racers: [...RIVALS, { name: 'you', color: look.color, kind: 'player', hat: look.hat }] });
+export function soloRace(cc: Cc, seed?: number, look: Pick<Look, 'color' | 'hat'> & Partial<Look> = { color: PLAYER_COLOR, hat: 'cap' }, course: CourseId = 'palm') {
+  return createRace({ cc, seed, course, racers: [...RIVALS, { name: 'you', color: look.color, kind: 'player', hat: look.hat, gear: look.gear }] });
 }
 
 export const racing = (r: Race) => r.time >= 0;
