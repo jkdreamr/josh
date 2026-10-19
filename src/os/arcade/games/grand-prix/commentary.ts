@@ -1,15 +1,31 @@
-// The race commentator. It watches the race the way a broadcaster does (the build-up, the start and the first
+// The commentary booth. James calls the race the way a broadcaster does (the build-up, the start and the first
 // chicane, overtakes, battles and DRS attacks, spins, lock-ups and trips over the kerbs, the race up front, laps to go
-// and the flag), and between the big moments fills the quiet with talk about Monza and the corner coming up. Its
-// lines are recorded clips (lines.ts) strung together and played one at a time. The director is a pure module,
-// testable under node; the voice plays the clips with WebAudio.
+// and the flag), Sophie comes in with her read on what just happened, and between the big moments the two of them
+// chat about Monza and the corner coming up. Their lines are recorded clips (lines.ts) strung together and played one
+// exchange at a time. The director is a pure module, testable under node; the voice plays the clips with WebAudio.
 import type { Race, RaceEvent, Runner } from './race.ts';
-import { CLIP_DIR, CORNERS, LINES, clipFile, nameKey } from './lines.ts';
+import { CLIP_DIR, CORNERS, LINES, clipFile, nameKey, type Turn } from './lines.ts';
 
 /** 0 filler, 1 news, 2 the big moments, 3 cuts in over anything less (lights out, the flag). */
 export type Priority = 0 | 1 | 2 | 3;
-/** Line keys to say back to back, how much it matters, and how long it stays worth saying (seconds). */
-export type Speak = (clips: string[], priority: Priority, stale?: number) => void;
+/** One recorded turn, and the pause before it (a breath between two speakers, almost none within one sentence). */
+export type Part = { clip: string; gap: number };
+/** Turns to play back to back, how much they matter, and how long they stay worth saying (seconds). */
+export type Speak = (parts: Part[], priority: Priority, stale?: number) => void;
+
+/** Sophie's take after some of James's calls: her line, and how often she chimes in. */
+const REPLIES: Record<string, [string, number]> = {
+  pass: ['react-pass', 0.55],
+  'passed-by': ['react-passed', 0.45],
+  'gets-by': ['react-passed', 0.45],
+  'lost-lead': ['react-lost-lead', 0.8],
+  spin: ['react-spin', 0.85],
+  wall: ['react-wall', 0.7],
+  contact: ['react-contact', 0.5],
+  lockup: ['react-lockup', 0.6],
+  wide: ['react-wide', 0.4],
+  leads: ['react-leads', 0.5],
+};
 
 export type Commentary = {
   event: (r: Race, e: RaceEvent) => void;
@@ -55,7 +71,7 @@ export function createCommentary(opts: { locals: () => Runner[]; speak: Speak; q
   /** A variant of a line, working through them all in a shuffled order before repeating any. */
   const pick = (key: string) => {
     const n = LINES[key]?.length ?? 0;
-    if (n <= 1) return `${key}-0`;
+    if (n <= 1) return 0;
     let left = order.get(key);
     if (!left || !left.length) {
       left = Array.from({ length: n }, (_, k) => k);
@@ -65,11 +81,30 @@ export function createCommentary(opts: { locals: () => Runner[]; speak: Speak; q
       }
       order.set(key, left);
     }
-    return `${key}-${left.pop()}`;
+    return left.pop()!;
   };
-  const say = (keys: (string | null)[], priority: Priority, stale?: number) => {
+  /**
+   * Says lines back to back, then maybe Sophie's reply: `reply` names it outright, otherwise the last line's entry in
+   * REPLIES decides (with its chance). A line about a missing name says nothing at all.
+   */
+  const say = (keys: (string | null)[], priority: Priority, stale?: number, reply?: string) => {
     if (keys.some((k) => k === null || !LINES[k])) return;
-    speak((keys as string[]).map(pick), priority, stale);
+    const all = keys as string[];
+    const last = all[all.length - 1].replace(/^wide-.*/, 'wide');
+    const follow = reply ?? (REPLIES[last] && random() < REPLIES[last][1] ? REPLIES[last][0] : null);
+    if (follow && LINES[follow]) all.push(follow);
+    const parts: Part[] = [];
+    let prev: Turn | null = null;
+    for (const key of all) {
+      const v = pick(key);
+      LINES[key][v].forEach((turn, t) => {
+        // within a sentence the words run on; a new speaker takes a breath first, less when they are excited
+        const gap = !prev ? 0 : prev.who === turn.who ? 0.06 : turn.mood === 'hype' ? 0.12 : 0.3;
+        parts.push({ clip: `${key}-${v}-${t}`, gap });
+        prev = turn;
+      });
+    }
+    speak(parts, priority, stale);
   };
   /** True, and starts the cooldown, when `key` has not been said in the last `secs` of race time. */
   const ready = (r: Race, key: string, secs: number) => {
@@ -135,7 +170,8 @@ export function createCommentary(opts: { locals: () => Runner[]; speak: Speak; q
         case 'contact': {
           if (r.time < 15) contactsAtStart++;
           const me = local(e.idx) ?? local(e.other);
-          if (me && e.speed > 6 && r.time > 15 && ready(r, 'contact', 20)) say(about(me, ['contact']), 1, 2);
+          // (not in the scrum before the first chicane, which gets its own call)
+          if (me && e.speed > 6 && (r.mode !== 'race' || stateOf(r, me).start) && ready(r, 'contact', 20)) say(about(me, ['contact']), 1, 2);
           break;
         }
         case 'wall': {
@@ -212,7 +248,7 @@ export function createCommentary(opts: { locals: () => Runner[]; speak: Speak; q
           if (me) {
             if (e.place === 1 && e.penalty === 0) say(about(me, ['win']), 3);
             else if (e.penalty) say(about(me, ['flag-penalty']), 3);
-            else say(about(me, [`finish-${e.place}`]), 3);
+            else say(about(me, [`finish-${e.place}`]), 3, undefined, e.place <= 3 ? 'react-podium' : e.place <= 10 ? 'react-points' : 'react-back');
           } else if (e.place === 1 && locals().every((p) => p.fin === null)) say([nameOf(r.runners[e.idx]), 'takes-flag'], 2, 4);
           break;
         }
@@ -268,7 +304,9 @@ export function createCommentary(opts: { locals: () => Runner[]; speak: Speak; q
           s.called = pos;
           const behind = r.runners[r.order[pos]];
           const ahead = r.runners[r.order[pos - 2]];
-          if (pos === 1) say(about(me, ['lead']), 2, 2.5);
+          const lastLap = me.lap === r.laps - 1;
+          if (pos === 1) say(about(me, [lastLap ? 'lead-final' : 'lead']), 2, 2.5);
+          else if (pos < was && lastLap) say(about(me, ['pass-final', `up-${pos}`]), 2, 2.5);
           else if (was === 1) say(about(me, ['lost-lead', `down-${pos}`]), 2, 2.5);
           else if (pos < was) say(about(me, random() < 0.5 && was - pos === 1 && nameOf(behind) ? ['past', nameOf(behind), `up-${pos}`] : ['pass', `up-${pos}`]), 1, 2.5);
           else if (pos - was <= 2) say(random() < 0.5 && pos - was === 1 && nameOf(ahead) ? [nameOf(ahead), 'gets-by', ...about(me, [`down-${pos}`])] : about(me, ['passed-by', `down-${pos}`]), 1, 2.5);
@@ -330,7 +368,13 @@ export function createCommentary(opts: { locals: () => Runner[]; speak: Speak; q
       const lead = r.runners[r.order[0]];
       const hot = Math.max(me.car.wheels[2].temp, me.car.wheels[3].temp) > 118;
       const cold = me.car.wheels.some((w) => w.temp < 70);
-      if (corner && LINES[`corner-${corner}`] && ready(r, `corner-${corner}`, 150)) return say([`corner-${corner}`], 0, 1.5);
+      // a corner preview at most once a minute, and the same corner not for a while longer
+      const free = (key: string) => r.time >= (cool.get(key) ?? -Infinity);
+      if (corner && LINES[`corner-${corner}`] && free('corner') && free(`corner-${corner}`)) {
+        ready(r, 'corner', 60);
+        ready(r, `corner-${corner}`, 150);
+        return say([`corner-${corner}`], 0, 1.5);
+      }
       if (hot && ready(r, 'tyres-hot', 120)) return say(about(me, ['tyres-hot']), 0, 2);
       if (cold && me.laps.length === 0 && ready(r, 'tyres-cold', 600)) return say(about(me, ['tyres-cold']), 0, 2);
       if (r.mode === 'race') {
@@ -344,21 +388,29 @@ export function createCommentary(opts: { locals: () => Runner[]; speak: Speak; q
           const a = r.runners[r.order[k]];
           const b = r.runners[r.order[k + 1]];
           if (local(a.idx) || local(b.idx) || !nameOf(a) || !nameOf(b) || gap(a, b) > 0.5) continue;
-          if (ready(r, 'battle', 90)) return say(['battle', nameOf(a), 'and', nameOf(b)], 0, 2);
+          if (ready(r, 'battle', 90)) return say(['battle', nameOf(a), 'and', nameOf(b)], 0, 2, random() < 0.7 ? 'react-battle' : undefined);
         }
         const ahead = r.runners[r.order[pos - 2]];
         const behind = r.runners[r.order[pos]];
         if ((!ahead || gap(ahead, me) > 3) && (!behind || gap(me, behind) > 3) && ready(r, 'lonely', 150)) return say(about(me, ['lonely']), 0, 2);
       }
-      say([r.mode === 'trial' && random() < 0.5 ? 'colour-trial' : 'colour'], 0, 2);
+      say([r.mode === 'trial' && random() < 0.5 ? 'banter-trial' : 'banter'], 0, 2);
     },
   };
 }
 
-/** How long after one line ends before the next may start, so the commentator breathes between them. */
+/** How long after one exchange ends before the next may start, so the booth breathes between them. */
 const BREATH = 0.35;
 
-export type Voice = { speak: Speak; quiet: () => number; silence: () => void; dispose: () => void };
+export type Voice = {
+  speak: Speak;
+  quiet: () => number;
+  /** Stops talking at once (pause). */
+  silence: () => void;
+  /** Lets the current exchange finish but says nothing more (the results screen). */
+  finish: () => void;
+  dispose: () => void;
+};
 
 /**
  * Plays the recorded lines through `out`, one at a time: a new line waits for the current one (or replaces a waiting
@@ -371,20 +423,21 @@ export function createVoice(io: { ctx: BaseAudioContext; out: AudioNode; duck: (
   const load = (clip: string) => {
     let f = files.get(clip);
     if (!f) {
-      const [, key, n] = /^(.*)-(\d+)$/.exec(clip) ?? [];
-      f = fetch(CLIP_DIR + clipFile(key, Number(n))).then((res) => (res.ok ? res.arrayBuffer() : Promise.reject(new Error(clip))));
+      const [, key, v, t] = /^(.*)-(\d+)-(\d+)$/.exec(clip) ?? [];
+      f = fetch(CLIP_DIR + clipFile(key, Number(v), Number(t))).then((res) => (res.ok ? res.arrayBuffer() : Promise.reject(new Error(clip))));
       f.catch(() => files.delete(clip));
       files.set(clip, f);
     }
     return f.then((b) => ctx.decodeAudioData(b.slice(0)));
   };
-  type Req = { clips: string[]; priority: Priority; at: number; stale: number };
+  type Req = { parts: Part[]; priority: Priority; at: number; stale: number };
   const now = () => performance.now() / 1000;
   let current: { priority: Priority; sources: AudioBufferSourceNode[] } | null = null;
   let loading: Req | null = null;
   let pending: Req | null = null;
   let lastEnd = now();
   let disposed = false;
+  let finished = false;
   let timer = 0;
 
   const next = () => {
@@ -402,18 +455,19 @@ export function createVoice(io: { ctx: BaseAudioContext; out: AudioNode; duck: (
   };
   const start = (req: Req) => {
     loading = req;
-    Promise.all(req.clips.map(load))
+    Promise.all(req.parts.map((p) => load(p.clip)))
       .then((bufs) => {
         if (loading !== req || disposed) return;
         loading = null;
         if (now() - req.at > req.stale + 0.5) return next();
         let t = ctx.currentTime + 0.03;
-        const sources = bufs.map((buf) => {
+        const sources = bufs.map((buf, k) => {
+          t += req.parts[k].gap;
           const src = ctx.createBufferSource();
           src.buffer = buf;
           src.connect(out);
           src.start(t);
-          t += buf.duration + 0.06;
+          t += buf.duration;
           return src;
         });
         const mine = { priority: req.priority, sources };
@@ -448,13 +502,13 @@ export function createVoice(io: { ctx: BaseAudioContext; out: AudioNode; duck: (
 
   // the start of a race is said straight away, so have those lines ready before it begins
   for (const key of ['intro-race', 'intro-trial', 'lights', 'go', 'start-lead', 'start-good', 'start-bad', 'start-hold', 'turn1-clean', 'turn1-contact']) {
-    LINES[key]?.forEach((_, n) => void load(`${key}-${n}`).catch(() => {}));
+    LINES[key]?.forEach((turns, v) => turns.forEach((_, t) => void load(`${key}-${v}-${t}`).catch(() => {})));
   }
 
   return {
-    speak(clips, priority, stale = 2.5) {
-      if (disposed) return;
-      const req = { clips, priority, at: now(), stale };
+    speak(parts, priority, stale = 2.5) {
+      if (disposed || finished || !parts.length) return;
+      const req = { parts, priority, at: now(), stale };
       if (priority === 3 && (current?.priority ?? loading?.priority ?? 0) < 3) {
         stop();
         pending = null;
@@ -474,6 +528,10 @@ export function createVoice(io: { ctx: BaseAudioContext; out: AudioNode; duck: (
       pending = null;
       stop();
       lastEnd = now();
+    },
+    finish() {
+      finished = true;
+      pending = null;
     },
     dispose() {
       disposed = true;

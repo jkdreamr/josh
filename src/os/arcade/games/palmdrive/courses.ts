@@ -265,6 +265,14 @@ const QUAD: [number, number][] = [
  * the Lasuen sweeper, up to the Claw hairpin, the esses and Memorial Church, and home down the west side.
  */
 const HOOVER_K = 1.25;
+/**
+ * Hoover Nights' traffic, in traffic time (see Hazard.tau): when the Marguerite first crosses (the pack is long gone up
+ * the road by then), how many of its crossings go by before one the other way joins it, and how many rounds of the
+ * oncoming cars before the delivery van joins them.
+ */
+const SHUTTLE_PHASE = 9;
+const SHUTTLE_BACK = 7;
+const VAN_FROM = 6;
 const HOOVER: [number, number, number][] = [
   [-130, -120, 20], [84, -120, 14], [84, -92, 14], [-35, -92, 15], [-35, -62, 15], [130, -62, 40],
   [130, 91, 13], [104, 91, 13], [104, 22, 16], [50, 22, 22], [37.3, 44, 22], [-130, 44, 18],
@@ -616,7 +624,7 @@ export const COURSES: Record<CourseId, Course> = {
   hoover: {
     id: 'hoover',
     name: 'Hoover Nights',
-    blurb: 'Campus after dark: hairpins round the fountains, a plank road over the Dig, pile drivers, a wrecking ball, and no wall where you need one.',
+    blurb: 'Campus after dark: hairpins round the fountains, a plank road over the Dig, pile drivers, the Tree on a leash, oncoming traffic, and no wall where you need one.',
     difficulty: 4,
     route: rounded(HOOVER).map(([e, n]) => [e * HOOVER_K, n * HOOVER_K]),
     start: [-60 * HOOVER_K, -120 * HOOVER_K],
@@ -730,11 +738,25 @@ export const COURSES: Record<CourseId, Course> = {
           { kind: 'wrecker', s: 642, d: 0.8, r: 1.3, swing: 3.1, speed: 1.9, phase: 1.5 },
           // a third pile driver on the inside of the last bend from lap 3
           { kind: 'hammer', s: 1068, d: -1.6, r: 1.7, every: 3.6, on: 0.7, phase: 2.4, lap: 3 },
+          // the Claw's fountain jets on its inside lip from lap 4, rippling round the hairpin at about a kart's speed
+          ...[0, 0.6, 1.2].map((phase, k) => ({ kind: 'geyser' as const, s: 594 + 12 * k, d: -4.4, r: 1.1, every: 2.4, on: 0.8, warn: 0.8, phase, lap: 4, look: 'fountain' })),
+          // the Stanford Tree on its bungee on the inside of the left-hander after Memorial Church: it lunges across the
+          // inside line, and the outside, by the ditch, is always clear of it
+          { kind: 'tether', s: 913, d: -7.4, aim: -1.8, r: 1.2, every: 3.2, phase: 0.4 },
+          // the Marguerite crossing the west straight from its depot, keeping time with the class; from about lap 4 one
+          // the other way too, between the first one's crossings (out here there is open campus either side for its
+          // side streets: on the start straight the second hairpin's leg runs too close by)
+          { kind: 'shuttle', s: 990, d: 0, r: 1.4, cross: 16, speed: 7, every: 17, phase: SHUTTLE_PHASE, tau: true },
+          { kind: 'shuttle', s: 990, d: 0, r: 1.4, cross: 16, speed: -7, every: 17, phase: SHUTTLE_PHASE + 8.5 + 17 * SHUTTLE_BACK, tau: true },
+          // oncoming traffic down Memorial Church's straight in the left lane, out of a side street at its far end and
+          // off into one at its near end; and from about lap 3 a delivery van among it
+          ...[0, 5.3, 10.6].map((phase) => ({ kind: 'car' as const, s: 892, d: -3.6, drive: -11, span: [782, 892] as [number, number], bay: -11, every: 16, phase, tau: true })),
+          { kind: 'van', s: 892, d: -3.6, drive: -11, span: [782, 892] as [number, number], bay: -11, every: 16, phase: 2.6 + 16 * VAN_FROM, tau: true },
         ],
       });
     },
     sky: 'linear-gradient(180deg, #03061a 0%, #0a1434 22%, #16264e 36%, #2a3a68 43%, #22325e 46%, #121a2a 47%)',
-    laps: { 2: 'Bollards and sprinklers on', 3: 'Wet road and a third hammer', 5: 'Causeway: double pile driver' },
+    laps: { 2: 'Bollards and sprinklers on', 3: 'Wet road, hammer, a van', 4: 'Fountains, two-way crossing', 5: 'Two pile drivers, lights out' },
     // the set pieces cost the CPU field more than a clean driver at 200cc: a little more pace there keeps a strong
     // driver with items to about one win in three (golf, the other Expert course, keeps TIER[4]'s 1/0.97)
     tier: { paceCc: { '200cc': 1.055 } },
@@ -992,87 +1014,104 @@ export const COURSES: Record<CourseId, Course> = {
   slough: {
     id: 'slough',
     name: 'Redwood Slough',
-    blurb: 'Racing shells on the slough at dawn: marsh for banks, whirlpools in the Corkscrew, wakes, swell and wind off the Bay, a lock, a weir, and fog when the tide turns.',
+    blurb: 'Racing shells on the slough at dawn: a narrow channel through the marsh, whirlpools on the line, rapids and rocks, wakes, swell and wind off the Bay, a lock, a weir, and fog when the tide turns.',
     difficulty: 5,
     vehicle: 'shell',
     route: turtle(SLOUGH).map(([e, n]) => [e * SLOUGH_K, n * SLOUGH_K]),
     start: [40 * SLOUGH_K, 0],
-    half: 7,
-    edge: 9.5,
-    // marsh and mudflat for banks on seven tenths of the lap (run aground and the coach's launch tows you off), wharves
-    // and bulkheads elsewhere, and the lock's concrete walls closer in (the later spans override the earlier)
+    // a narrow channel, ten meters of water as the Skyway has road, with marsh and mudflat for banks on four fifths of the lap
+    half: 5,
+    edge: 7.5,
+    // marsh and mudflat on both sides wherever there are no wharves, bulkheads or bridge abutments (run aground and the
+    // coach's launch tows you off), and the lock's concrete walls closer in still (the later spans override the earlier)
     edges: [
-      // the mudflat inside Docktown Bend, out of the lock into the marsh, and the Turning Basin
-      [70, 105, -1, 'marsh'],
-      [175, 214, 0, 'marsh'],
+      // the mudflat inside Docktown Bend (the houseboats outside), out of the lock round Bair Bend, and the Turning Basin
+      [64, 112, -1, 'marsh'],
+      [168, 214, 0, 'marsh'],
       [294, 388, 0, 'marsh'],
-      // Corkscrew Slough, Bair Island Bend, the Bay Reach and the weir
-      [438, 1010, 0, 'marsh'],
-      // the mudflat outside Westpoint Bend, and Bair Island along Westpoint Slough
-      [1010, 1072, 1, 'marsh'],
-      [1072, 1140, -1, 'marsh'],
+      // Corkscrew Slough, Bair Island Bend, the Bay Reach, the weir and Westpoint Bend, and Bair Island along Westpoint
+      // Slough (Docktown's floats on the other side)
+      [438, 1072, 0, 'marsh'],
+      [1072, 1150, -1, 'marsh'],
+      // (Corkscrew Slough's meanders a little wider, for a long hull to come round its hairpins; Bair Island's side of
+      // Westpoint Slough narrower)
+      [438, 753, 0, 'marsh', 6.5],
+      [1108, 1145, -1, 'marsh', 4.3],
       // the lock chamber
       [112, 168, 0, 'wall', 6],
     ],
     holePast: 'water',
-    // calm water is slick, the tide race and the run-up to the weir are rough, and from lap 3 so is the Bay Reach
+    // calm water is slick, the tide race and the run-up to the weir are rough, and so is the Bay Reach from lap 2 and the
+    // Corkscrew from lap 4
     surfaces: [
-      [0, 1300, 0.8, 'water'],
-      [790, 868, 0.65, 'chop'],
-      [958, 997, 0.65, 'chop'],
-      [868, 958, 0.65, 'chop', 3],
+      [0, 1300, 0.7, 'water'],
+      [790, 868, 0.56, 'chop'],
+      [958, 997, 0.56, 'chop'],
+      [868, 958, 0.56, 'chop', 2],
+      [438, 753, 0.62, 'chop', 4],
     ],
-    // the tide: with you downstream, against you upstream (hug the bank), a tongue of fast water through the tide race and
-    // the helical flow of the meanders pushing you wide; the tide turns on the last lap (all but the weir's draw)
+    // the tide: with you downstream, against you upstream (hug the bank, by the brink), a tongue of fast water through the
+    // tide race and the helical flow of the meanders pushing you wide, into the whirlpools; the tide turns on the last lap
+    // (all but the weir's draw)
     flows: [
       { s0: 50, s1: 175, along: -1.5, bank: -0.3, tide: true },
       { s0: 214, s1: 294, along: 2, bank: 1, tide: true },
       { s0: 294, s1: 388, along: 1, outward: 1, tide: true },
-      { s0: 438, s1: 753, along: 1.5, outward: 1.5, tide: true },
-      { s0: 790, s1: 868, along: 1, tongue: [-2.5, 2.5, 4], outward: 1, tide: true },
+      { s0: 438, s1: 753, along: 1.5, outward: 1.7, tide: true },
+      { s0: 790, s1: 868, along: 1, tongue: [-2, 2, 3], outward: 0.6, tide: true },
       { s0: 868, s1: 958, along: 1, tide: true },
       { s0: 958, s1: 985, along: 3 },
       { s0: 1060, s1: 1182, along: -1, bank: -0.2, tide: true },
     ],
     gusts: [
-      // off the Bay toward the salt ponds down the Bay Reach from lap 2, and back the other way from lap 3 with a calm in
-      // between; on lap 4 both harder
-      { s0: 868, s1: 958, a: -8, every: 4.8, on: 1.5, warn: 1, phase: 0.6, lap: 2 },
-      { s0: 868, s1: 958, a: 8, every: 4.8, on: 1.5, warn: 1, phase: 3, lap: 3 },
-      { s0: 868, s1: 958, a: -4, every: 4.8, on: 1.5, warn: 1, phase: 0.6, lap: 4 },
-      { s0: 868, s1: 958, a: 4, every: 4.8, on: 1.5, warn: 1, phase: 3, lap: 4 },
-      // and the Port gust, outward round the Turning Basin, from lap 3
-      { s0: 300, s1: 385, a: 7, every: 6, on: 2, warn: 1.2, phase: 2, lap: 3 },
+      // off the Bay toward the salt ponds down the Bay Reach from the start, harder from lap 2, back the other way from lap
+      // 3 between them (with a calm in between), and on lap 4 both harder again
+      { s0: 878, s1: 958, a: -5, every: 4.2, on: 1.5, warn: 1, phase: 0.6 },
+      { s0: 878, s1: 958, a: -3, every: 4.2, on: 1.5, warn: 1, phase: 0.6, lap: 2 },
+      { s0: 878, s1: 958, a: 6, every: 4.2, on: 1.5, warn: 1, phase: 2.7, lap: 3 },
+      { s0: 878, s1: 958, a: -3, every: 4.2, on: 1.5, warn: 1, phase: 0.6, lap: 4 },
+      { s0: 878, s1: 958, a: 3, every: 4.2, on: 1.5, warn: 1, phase: 2.7, lap: 4 },
+      // the Port gust, outward round the Turning Basin, from lap 2
+      { s0: 300, s1: 385, a: 7, every: 5, on: 2, warn: 1.2, phase: 2, lap: 2 },
+      // and gusts across Westpoint Slough toward Bair Island's marsh from lap 3
+      { s0: 1075, s1: 1145, a: -7, every: 5.5, on: 1.6, warn: 1, phase: 1, lap: 3 },
     ],
-    // swell rolling in off the Bay across the Bay Reach toward the salt ponds: three crests a set on laps 2 and 3, four and
-    // harder from lap 4
+    // swell rolling in off the Bay across the Bay Reach toward the salt ponds from the start: three crests a set, four and
+    // harder from lap 3, five and harder still on the last
     swells: [
-      { s0: 868, s1: 958, every: 9, n: 3, gap: 0.9, c: 7, kick: 4, dir: -1, phase: 1.5, warn: 1.5, lap: 2, until: 3 },
-      { s0: 868, s1: 958, every: 9, n: 4, gap: 0.9, c: 7, kick: 5, dir: -1, phase: 1.5, warn: 1.5, lap: 4 },
+      { s0: 868, s1: 958, every: 8, n: 3, gap: 0.9, c: 7, kick: 3, dir: -1, phase: 1.5, warn: 1.5, until: 1 },
+      { s0: 868, s1: 958, every: 8, n: 3, gap: 0.9, c: 7, kick: 4, dir: -1, phase: 1.5, warn: 1.5, lap: 2, until: 3 },
+      { s0: 868, s1: 958, every: 7, n: 4, gap: 0.85, c: 7, kick: 4.5, dir: -1, phase: 1.5, warn: 1.5, lap: 4, until: 4 },
+      { s0: 868, s1: 958, every: 7, n: 4, gap: 0.8, c: 7.5, kick: 5, dir: -1, phase: 1.5, warn: 1.5, lap: 5 },
     ],
     layout: (t) => {
-      // whirlpools at the exits of Corkscrew Slough's hairpins, on the outside, from laps 2 and 3, wandering across the
-      // channel from lap 4; and on the last lap the Maelstrom in the Turning Basin
-      const whirl = (s: number, d: number, phase: number, lap: number, spin: number) => ({ kind: 'whirl' as const, s, d, r: 2.8, pull: 7, core: 1.5, power: 14, every: 7, on: 4.5, warn: 1.5, phase, lap, spin, wander: [1.2, 0.5, 4] as [number, number, number], back: s - 25 });
+      // whirlpools right on the line through Corkscrew Slough's hairpins: at each one's exit (where the meander's flow sets
+      // you) from the start, and on the inside at its apex from lap 3, so you weave out round one and back in round the
+      // next; wandering across the channel from lap 4. One in the Turning Basin from lap 3, and on the last lap the Maelstrom
+      const whirl = (s: number, d: number, phase: number, lap: number) => ({ kind: 'whirl' as const, s, d, r: 2.8, pull: 7.5, core: 1.5, power: 16, every: 6.5, on: 4.5, warn: 1.5, phase, lap, spin: d < 0 ? 1 : -1, wander: [1.3, 0.8, 3] as [number, number, number], back: s - 25 });
       // the chain ferry across the Port Reach keeps time with the launches: over on the far side as each comes by (they
       // are half a lap apart, and it crosses an even number of times a lap)
       const launches = [300, 911];
       const lapT = t.length / LAUNCH_V;
-      const ferryS = 404;
-      const ferrySpeed = (2 * Math.PI * 12) / lapT;
+      const ferryS = 410;
+      const ferrySpeed = (2 * Math.PI * 8) / lapT;
       const [a, b] = launches.map((from) => ((((ferryS - from) % t.length) + t.length) % t.length) / LAUNCH_V);
       const gap = ((((ferrySpeed * (b - a)) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+      // the Tide Gates: three rows of two miter leaves, one leaf of each row always open, the open side swapping from row
+      // to row at racing speed so you zig-zag down the lock (the third row from lap 3)
+      const gate = (s: number, phase: number, lap: number) =>
+        [-1, 1].map((side) => ({ kind: 'bollard' as const, s, d: side * 3, w: 6, every: 3.2, on: 1, warn: 0.9, phase: phase + (side > 0 ? 1.6 : 0), lap, look: 'gate' }));
       return placed(t, {
-        boxes: [30, 424, 770, 1100],
+        boxes: [30, 380, 770, 1100],
         coins: [
-          [60, 3, 5],
+          [60, 2.5, 5],
           [180, 0, 4],
-          [255, -4, 4],
-          [392, 2, 4],
+          [255, -3.5, 4],
+          [395, 2, 4],
           [470, 0, 5],
           [610, 0, 4],
           [680, 0, 4],
-          [800, -3.5, 5],
+          [788, 1.5, 4],
           [1020, 2, 4],
           [1150, -3, 5],
         ],
@@ -1080,48 +1119,46 @@ export const COURSES: Record<CourseId, Course> = {
         // stopper below it
         dashes: [
           [192, 0],
-          [962, -4.6],
+          [962, -3.4],
           [962, 0],
-          [962, 4.6],
+          [962, 3.4],
         ],
-        ramps: [[985, 0, 14]],
-        holes: [[985.5, 8, 0, 8, 950]],
+        ramps: [[985, 0, 11]],
+        holes: [[985.5, 8, 0, 6, 950]],
         pieces: [
-          // the Tide Gates: two rows of two miter leaves from lap 2, one leaf of each row always open, the open side
-          // alternating down the lock
-          { kind: 'bollard', s: 120, d: -3, w: 6, every: 3.2, on: 1.2, warn: 0.9, phase: 0, lap: 2, look: 'gate' },
-          { kind: 'bollard', s: 120, d: 3, w: 6, every: 3.2, on: 1.2, warn: 0.9, phase: 1.6, lap: 2, look: 'gate' },
-          { kind: 'bollard', s: 160, d: -3, w: 6, every: 3.2, on: 1.2, warn: 0.9, phase: 0.3, lap: 2, look: 'gate' },
-          { kind: 'bollard', s: 160, d: 3, w: 6, every: 3.2, on: 1.2, warn: 0.9, phase: 1.9, lap: 2, look: 'gate' },
-          // Hwy 101's piers down the middle of the channel, and the Caltrain swing span on its pier, sweeping from lap 2
-          { kind: 'statue', s: 226, d: 0, r: 1.1, look: 'pier' },
-          { kind: 'statue', s: 246, d: 0, r: 1.1, look: 'pier' },
+          ...gate(128, 0, 2),
+          ...gate(162, 0.25, 2),
+          // Hwy 101's piers in a slalom down the channel, and the Caltrain swing span on its pier, sweeping from the start
+          { kind: 'statue', s: 226, d: -2.2, r: 1, look: 'pier' },
+          { kind: 'statue', s: 236, d: 1.3, r: 0.8, look: 'pier' },
+          { kind: 'statue', s: 246, d: -2.2, r: 1, look: 'pier' },
           { kind: 'rotor', s: 272, d: 0, r: 1.2, arm: 6.6, spin: 0.8, a0: 0, lap: 2, look: 'swing' },
+          // a Port crane swinging its load right across the Port Reach (walled: wharves both sides)
+          { kind: 'wrecker', s: 422, d: 0, r: 1.3, swing: 3.4, speed: 1.5, phase: 0.8, look: 'crane' },
           // the whirlpools
-          whirl(520, -3.2, 0, 2, 1),
-          whirl(585, 3.2, 1.75, 3, -1),
-          whirl(647, -3.2, 3.5, 2, 1),
-          whirl(708, 3.2, 5.25, 3, -1),
-          { kind: 'whirl', s: 340, d: 3, r: 2.9, pull: 9, core: 1.6, power: 14, every: 9, on: 6, warn: 2, phase: 0, lap: 5, spin: 1, back: 315, look: 'maelstrom' },
-          // the regatta course down the Bay Reach: two lines of lane buoys, three lanes (from a little way past the bend, so
-          // there is time to pick one)
-          ...Array.from({ length: 20 }, (_, n) => ({ kind: 'buoy' as const, s: 880 + 8.5 * (n % 10), d: n < 10 ? -2.9 : 2.9 })),
+          whirl(522, -2.6, 0, 1),
+          whirl(585, 2.6, 1.6, 2),
+          whirl(648, -2.6, 3.25, 1),
+          whirl(710, 2.6, 4.9, 2),
+          { kind: 'whirl', s: 352, d: 1.4, r: 3, pull: 9.5, core: 1.7, power: 16, every: 8, on: 5.5, warn: 2, phase: 0, lap: 4, spin: -1, back: 300, look: 'maelstrom' },
+          // the rapids through the tide race: rocks on the inside of the bend, where you would cut the corner
+          ...[806, 830, 854].map((s) => ({ kind: 'rock' as const, s, d: -3.6, r: 0.9 })),
           // the coach's launches round the lap in the right-hand lane, with right of way through the set pieces
-          ...launches.map((s) => ({ kind: 'launch' as const, s, d: 4.4, drive: LAUNCH_V, wake: 0.6, priority: true })),
-          // a tug pushing its barge up Westpoint Slough and over the line to Docktown, from 50 s
-          { kind: 'barge', s: 1065, d: 3.2, drive: 4.5, span: [1065, 1272] as [number, number], every: 70, phase: 50, wake: 1 },
+          ...launches.map((s) => ({ kind: 'launch' as const, s, d: 3.4, drive: LAUNCH_V, wake: 1, priority: true })),
+          // a tug pushing its barge up Westpoint Slough and over the line to Docktown, from 40 s
+          { kind: 'barge', s: 1065, d: 2.9, r: 1.6, drive: 4.5, span: [1065, 1272] as [number, number], every: 55, phase: 40, wake: 1 },
           // logs drifting down the Bay Reach with the current in the lane on the salt ponds' side (where the wind and the
           // swell push you), one every 22.5 m: over the weir they go
-          ...[0, 22.5, 45, 67.5].map((phase) => ({ kind: 'log' as const, s: 868, d: -5.3, drive: 1, span: [868, 958] as [number, number], every: 90, phase })),
+          ...[0, 22.5, 45, 67.5].map((phase) => ({ kind: 'log' as const, s: 868, d: -3.8, drive: 1, span: [868, 958] as [number, number], every: 90, phase })),
           // the chain ferry
-          { kind: 'ferry', s: ferryS, d: 0, swing: 4.6, speed: ferrySpeed, phase: 1.5 * Math.PI - ferrySpeed * a - gap / 2 },
+          { kind: 'ferry', s: ferryS, d: 0, r: 1.3, swing: 3.4, speed: ferrySpeed, phase: 1.5 * Math.PI - ferrySpeed * a - gap / 2 },
         ],
       });
     },
-    sky: 'linear-gradient(180deg, #27356a 0%, #5f62a2 18%, #e19c9b 34%, #f6c597 41%, #fbe3c2 45%, #a5bcbc 47%)',
-    laps: { 2: 'Lock, swing span, whirlpools', 3: 'More whirlpools, chop', 4: 'Whirlpools wander, big swell', 5: 'The tide turns, fog' },
-    // (calibrated against the braking ladder: see the PR)
-    tier: { paceCc: { '150cc': 0.97, '200cc': 1 } },
+    sky: 'linear-gradient(180deg, #1f2c62 0%, #5b5fa3 20%, #d99aa6 36%, #f3c7ad 43%, #ffd29a 46%, #5c6a46 47%, #3f5f5c 52%)',
+    laps: { 2: 'Lock, swing span, swell', 3: 'Whirlpools wander, wind', 4: 'The Maelstrom, big swell', 5: 'The tide turns, fog' },
+    // a fall costs more here than anywhere (calibrated against the braking ladder: see the PR)
+    tier: { fallT: 2.6, fallCoins: 4, brink: 0.3, skillLift: 0.45, paceCc: { '150cc': 1.05, '200cc': 1.07 } },
   },
 };
 

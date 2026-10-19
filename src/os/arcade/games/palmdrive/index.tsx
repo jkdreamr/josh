@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type Pointe
 import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
-import { cycleAt, gripAt, openRuns, pointAt, timed, type Past, type Track } from './track';
+import { cycleAt, gripAt, openRuns, pointAt, timed, traffic, type Past, type Track } from './track';
+import { bearingDown } from './traffic';
 import {
   BANK,
   CASH_COST,
@@ -473,6 +474,8 @@ function Play({ mode }: { mode: Mode }) {
   /** The set pieces' clocks last frame (by hazard index), for the sounds they make as they go off; and the tyres' hiss. */
   const pieceCyc = useRef(new Map<number, number>());
   const pieceTick = useRef(0);
+  /** When each car or van last honked at you, by hazard index. */
+  const honked = useRef(new Map<number, number>());
   const hissT = useRef(0);
   /** The wind warning last time round (for the whoosh as a gust starts to blow), and the swell's. */
   const gustWas = useRef(0);
@@ -881,11 +884,48 @@ function Play({ mode }: { mode: Mode }) {
       sfx.tone({ freq: 1700 + Math.random() * 300, dur: 0.1, type: 'sawtooth', vol: 0.025 });
     }
     r.hazards.forEach((h, i) => {
+      // an oncoming car or van bearing down on you leans on its horn (no more than every couple of seconds)
+      if (traffic(h.kind)) {
+        if (me.done === null && bearingDown(h, me) && r.time - (honked.current.get(i) ?? -99) > 2) {
+          honked.current.set(i, r.time);
+          const [a, b] = h.kind === 'van' ? [330, 415] : [440, 554];
+          sfx.tone({ freq: a, dur: 0.45, type: 'square', vol: 0.05 });
+          sfx.tone({ freq: b, dur: 0.45, type: 'square', vol: 0.045 });
+        }
+        return;
+      }
       if (!timed(h.kind)) return;
       const dist = Math.hypot(h.x - me.x, h.z - me.z);
+      if (h.kind === 'shuttle') {
+        // the crossing's bells while a bus is due or across, and the bus's diesel as it goes over
+        if (dist > 110) return;
+        const st = hazState(r, h, r.time, me.lap);
+        // (one set of bells for the crossing, whichever bus is due)
+        const key = -1 - Math.round(h.s);
+        const beat = Math.floor(r.time / 0.45);
+        const near = 1 - dist / 110;
+        if (st.warn > 0 && beat !== (pieceCyc.current.get(key) ?? beat - 1)) {
+          pieceCyc.current.set(key, beat);
+          sfx.tone({ freq: beat % 2 ? 1180 : 940, dur: 0.22, type: 'triangle', vol: 0.06 * near });
+        }
+        if (st.live && tick && dist < 45) sfx.tone({ freq: 55, dur: 0.18, type: 'sawtooth', vol: 0.05 * (1 - dist / 45) });
+        return;
+      }
       if (dist > 70) return;
       const vol = 1 - dist / 70;
       const st = hazState(r, h, r.time, me.lap);
+      if (h.kind === 'tether' && h.look !== 'goose') {
+        // the Tree: a creak of the bungee as it crouches, a kazoo whoop as it springs
+        const now = st.live ? 2 : st.warn > 0 ? 1 : 0;
+        const was = pieceCyc.current.get(i) ?? 0;
+        pieceCyc.current.set(i, now);
+        if (now === 1 && was === 0) sfx.tone({ freq: 160, to: 110, dur: 0.5, type: 'triangle', vol: 0.06 * vol });
+        if (now === 2 && was !== 2) {
+          sfx.tone({ freq: 330, to: 780, dur: 0.22, type: 'square', vol: 0.05 * vol });
+          sfx.tone({ freq: 780, to: 520, dur: 0.3, type: 'square', vol: 0.05 * vol, delay: 0.2 });
+        }
+        return;
+      }
       if (h.kind === 'wrecker') {
         // the ball passing through the middle of its swing, close by
         const v = hazardV(h, r.time);
@@ -966,6 +1006,13 @@ function Play({ mode }: { mode: Mode }) {
             sfx.noise(0.12, 0.05 * vol);
             sfx.tone({ freq: 3400, to: 1700, dur: 0.18, type: 'triangle', vol: 0.05 * vol });
           } else if (was === 2) sfx.tone({ freq: 1800, to: 3600, dur: 0.12, type: 'sine', vol: 0.04 * vol });
+        } else if (h.look === 'fountain') {
+          // a fountain jet: a gurgle as the water ripples, a rushing whoosh as it blows
+          if (now === 1) sfx.tone({ freq: 140, to: 260, dur: 0.5, type: 'sine', vol: 0.04 * vol });
+          else if (now === 2) {
+            sfx.noise(0.6, 0.1 * vol);
+            sfx.tone({ freq: 520, to: 260, dur: 0.4, type: 'sine', vol: 0.04 * vol });
+          }
         } else if (now === 1) sfx.noise(0.3, 0.025 * vol);
         else if (now === 2) {
           sfx.noise(0.5, 0.12 * vol);
@@ -1151,6 +1198,17 @@ function Play({ mode }: { mode: Mode }) {
         } else if (e.kind === 'log') {
           sfx.tone({ freq: 130, to: 70, dur: 0.25, type: 'sine', vol: 0.2 });
           sfx.noise(0.12, 0.1);
+        } else if (e.kind === 'car' || e.kind === 'van' || e.kind === 'shuttle') {
+          // a crunch, and the horn held down
+          sfx.noise(0.35, 0.2);
+          sfx.tone({ freq: 140, to: 60, dur: 0.3, type: 'sawtooth', vol: 0.14 });
+          const [a, b] = e.kind === 'shuttle' ? [415, 330] : e.kind === 'van' ? [330, 415] : [440, 554];
+          sfx.tone({ freq: a, dur: 0.7, type: 'square', vol: 0.06, delay: 0.1 });
+          sfx.tone({ freq: b, dur: 0.7, type: 'square', vol: 0.05, delay: 0.1 });
+        } else if (e.kind === 'tether' && !r.hazards.some((h) => h.kind === 'tether' && h.look === 'goose')) {
+          // bowled over by the Tree (a tether on the golf course is a goose, below): boing
+          sfx.tone({ freq: 220, to: 660, dur: 0.18, type: 'sine', vol: 0.16 });
+          sfx.tone({ freq: 660, to: 180, dur: 0.35, type: 'triangle', vol: 0.12, delay: 0.16 });
         } else if (e.kind === 'tether') {
           // a goose: HONK, and a flap of wings
           sfx.tone({ freq: 360, to: 260, dur: 0.2, type: 'sawtooth', vol: 0.14 });
@@ -1523,7 +1581,7 @@ function Play({ mode }: { mode: Mode }) {
             <path d={minimap.d} className="g-palmdrive-map-line" />
             {r.hazards.map(
               (h, i) =>
-                (h.kind === 'bus' || h.kind === 'cart' || h.kind === 'launch' || h.kind === 'barge') && (
+                (h.kind === 'bus' || h.kind === 'cart' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'car' || h.kind === 'van') && (
                   <rect
                     key={`bus${i}`}
                     ref={(el) => {
@@ -1536,7 +1594,7 @@ function Play({ mode }: { mode: Mode }) {
                     height={h.kind === 'bus' || h.kind === 'barge' ? 16 : 12}
                     rx={3}
                     transform={`translate(${-h.x} ${-h.z})`}
-                    className={h.kind === 'bus' ? 'g-palmdrive-map-bus' : h.kind === 'cart' ? 'g-palmdrive-map-cart' : `g-palmdrive-map-vessel is-${h.kind}`}
+                    className={h.kind === 'bus' ? 'g-palmdrive-map-bus' : h.kind === 'cart' ? 'g-palmdrive-map-cart' : h.kind === 'car' || h.kind === 'van' ? 'g-palmdrive-map-car' : `g-palmdrive-map-vessel is-${h.kind}`}
                   />
                 ),
             )}
