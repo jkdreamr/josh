@@ -3557,9 +3557,10 @@ function think(r: Race, k: Kart, dt: number) {
     const fx = Math.sin(k.h);
     const fz = Math.cos(k.h);
     for (const h of r.hazards) {
-      // (and on the water a buoy it has nosed into: it backs off and swings round it)
+      // (and on the water a buoy, or one of Hwy 101's piers, it has nosed into: it backs off and swings round it, as
+      // the current would only hold it there)
       // (but never backing toward the marsh: beside it, it slides on off the buoy instead)
-      const buoy = h.kind === 'buoy';
+      const buoy = h.kind === 'buoy' || (r.boat && h.kind === 'statue');
       if ((!timed(h.kind) && !buoy) || h.kind === 'bollard' || h.kind === 'wrecker') continue;
       if (buoy && fromBrink(r, k) < 3.5) continue;
       const dx = h.x - k.x;
