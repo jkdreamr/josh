@@ -3,7 +3,7 @@
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
 import { BARREL_R, BEACH, BRIDGE_HALF, BUSH_R, BUS_Y, CAMP, CHEST_HD, CHEST_HW, CRATE_HALF, FENCE_T, FRIDGE_HD, FRIDGE_HW, HALF, HAY_HD, HAY_HW, LAMP_R, LOG_R, PAD, RIVER_HALF, ROAD_HALF, STASH, SUPPLY_FALL, SUPPLY_HALF, TABLE_HD, TABLE_HW, TOILET_R, WALL_T, bridgeAt, busAt, fieldAt, isStash, padAt, peekAt, riverDist2, roadAt, type Building, type BuildingKind, type Container } from './map';
-import { BARREL, CRATE_HP, DOOR_GONE, DOOR_IN, DOOR_OPENING, DOOR_OUT, F_DRINKING, F_GHILLIE, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_STUN, F_TART, HAY_HP, TOILET_HP, WALL_HALF, WALL_HP, WALL_THICK, camouflaged, clearLine, concealed, held, shut, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Toss, type Zone } from './logic';
+import { BARREL, CRATE_HP, DOOR_GONE, DOOR_IN, DOOR_OPENING, DOOR_OUT, F_DRINKING, F_GHILLIE, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_STUN, F_TART, HAY_HP, TOILET_HP, WALL_HALF, WALL_HP, WALL_THICK, clearLine, concealed, held, shut, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Toss, type Zone } from './logic';
 import { MELEE, RARITY_COLORS, THROWS, WEAPONS, isMelee, isThrow, isWeapon, legendary, type LootDef, type UseId } from './items';
 
 type Three = typeof import('three');
