@@ -4,6 +4,7 @@
 // (hands away, body over, up the slide). Static parts share a mesh per material; the rower's limbs are posed by a little
 // two-bone solver each frame.
 import type { T } from './gl';
+import { merge } from './model';
 
 type Three = typeof import('three');
 
@@ -25,34 +26,6 @@ const SHIN = 0.46;
 const TORSO = 0.5;
 const UPPER = 0.3;
 const FORE = 0.3;
-
-/** A geometry made of several, each placed by its own matrix (and given a vertex color when `color` is set). */
-export function merge(THREE: Three, parts: { g: T.BufferGeometry; m: T.Matrix4; color?: [number, number, number] }[]) {
-  const pos: number[] = [];
-  const nrm: number[] = [];
-  const col: number[] = [];
-  const v = new THREE.Vector3();
-  const nm = new THREE.Matrix4();
-  for (const part of parts) {
-    const g = part.g.index ? part.g.toNonIndexed() : part.g;
-    const p = g.getAttribute('position');
-    const n = g.getAttribute('normal');
-    nm.copy(part.m).invert().transpose();
-    for (let k = 0; k < p.count; k++) {
-      v.fromBufferAttribute(p, k).applyMatrix4(part.m);
-      pos.push(v.x, v.y, v.z);
-      v.fromBufferAttribute(n, k).transformDirection(nm);
-      nrm.push(v.x, v.y, v.z);
-      if (part.color) col.push(...part.color);
-    }
-    if (g !== part.g) g.dispose();
-  }
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
-  if (col.length) out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  return out;
-}
 
 /** The hull's half-width at z (fine at both ends, fullest a little aft of the middle). */
 const halfBeam = (z: number) => {

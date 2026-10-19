@@ -5,7 +5,7 @@
 import type { T } from './gl';
 import { deltaS, edgeAt, edgeRuns, headingOf, lengthOf, locate, pointAt, roadEdge, wrapS, type Track } from './track';
 import { DAWN, GLSL_NOISE, canvas, noise, scatter, texture, type Look } from './scenery';
-import { merge } from './shell';
+import { boatHull, modelKit, person, type ModelKit } from './model';
 import { COURSES } from './courses';
 import { RAMP_H, TIDE_LAP, WAKE_LEN, WAKE_SPREAD, crestsAt, hazState, hazardV, strokeAt, windAt, type LiveHazard, type Race } from './logic';
 
@@ -545,110 +545,6 @@ function marshPlants(THREE: Three, scene: T.Scene, t: Track, dummy: T.Object3D, 
   };
 }
 
-type RGB = [number, number, number];
-/**
- * Builds a model out of boxes, cylinders, balls and cones (and any geometry), each placed in the model's own frame and
- * colored: all of them one mesh, and its lights another.
- */
-function modelKit(THREE: Three) {
-  const prims = { box: new THREE.BoxGeometry(1, 1, 1), cyl: new THREE.CylinderGeometry(1, 1, 1, 10), ball: new THREE.SphereGeometry(1, 10, 8), cone: new THREE.ConeGeometry(1, 1, 10) };
-  const parts: { g: T.BufferGeometry; m: T.Matrix4; color: RGB }[] = [];
-  const lights: { g: T.BufferGeometry; m: T.Matrix4; color: RGB }[] = [];
-  const rgb = (hex: number): RGB => {
-    const c = new THREE.Color(hex);
-    return [c.r, c.g, c.b];
-  };
-  const M = (x: number, y: number, z: number, sx: number, sy: number, sz: number, rx = 0, ry = 0, rz = 0) =>
-    new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
-  const put = (kind: keyof typeof prims) => (hex: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, rx = 0, ry = 0, rz = 0) => {
-    parts.push({ g: prims[kind], m: M(x, y, z, sx, sy, sz, rx, ry, rz), color: rgb(hex) });
-  };
-  return {
-    THREE,
-    box: put('box'),
-    cyl: put('cyl'),
-    ball: put('ball'),
-    cone: put('cone'),
-    geo: (g: T.BufferGeometry, hex: number, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0) => {
-      parts.push({ g, m: M(x, y, z, sx, sy, sz, rx, ry, rz), color: rgb(hex) });
-    },
-    /** A running light (or a lamp): a small bright ball. */
-    light: (hex: number, x: number, y: number, z: number, r = 0.12) => {
-      lights.push({ g: prims.ball, m: M(x, y, z, r, r, r), color: rgb(hex) });
-    },
-    build(mat: T.Material, litMat: T.Material) {
-      const g = new THREE.Group();
-      g.add(new THREE.Mesh(merge(THREE, parts), mat));
-      if (lights.length) g.add(new THREE.Mesh(merge(THREE, lights), litMat));
-      for (const p of Object.values(prims)) p.dispose();
-      return g;
-    },
-  };
-}
-type ModelKit = ReturnType<typeof modelKit>;
-
-/**
- * A boat's hull: flat-bottomed and flared, fine at the bow (where its forefoot rises), square at the transom, from
- * -len/2 to +len/2 along z, `beam` wide and `depth` deep; closed over the top when decked.
- */
-function boatHull(THREE: Three, len: number, beam: number, depth: number, decked: boolean) {
-  const N = 18;
-  const pos: number[] = [];
-  const idx: number[] = [];
-  const sec = (z: number) => {
-    const u = (z + len / 2) / len;
-    const w = (beam / 2) * (u < 0.62 ? 1 - 0.08 * (1 - u / 0.62) : Math.sqrt(Math.max(0, 1 - ((u - 0.62) / 0.38) ** 2)));
-    const keel = u < 0.7 ? 0 : depth * 0.85 * ((u - 0.7) / 0.3) ** 1.6;
-    const top = depth * (1 + 0.12 * Math.max(0, u - 0.6));
-    // (gunwale, chine, bottom, keel, and back up the other side)
-    return [[-w, top], [-w * 0.96, depth * 0.3 + keel * 0.6], [-w * 0.55, keel + 0.02], [0, keel], [w * 0.55, keel + 0.02], [w * 0.96, depth * 0.3 + keel * 0.6], [w, top]];
-  };
-  const P = 7;
-  for (let i = 0; i <= N; i++) {
-    const z = -len / 2 + (len * i) / N;
-    for (const [x, y] of sec(z)) pos.push(x, y, z);
-  }
-  for (let i = 0; i < N; i++) {
-    for (let j = 0; j < P - 1; j++) {
-      const a = i * P + j;
-      idx.push(a, a + P, a + 1, a + 1, a + P, a + P + 1);
-    }
-  }
-  // the transom: a fan from the middle of the stern section
-  const c0 = pos.length / 3;
-  pos.push(0, depth * 0.5, -len / 2);
-  for (let j = 0; j < P - 1; j++) idx.push(c0, j + 1, j);
-  idx.push(c0, 0, P - 1);
-  if (decked) {
-    // (a deck across the top, a little crowned)
-    const d0 = pos.length / 3;
-    for (let i = 0; i <= N; i++) {
-      const z = -len / 2 + (len * i) / N;
-      const q = sec(z);
-      pos.push(q[0][0], q[0][1], z, 0, q[0][1] + 0.06, z, q[6][0], q[6][1], z);
-    }
-    for (let i = 0; i < N; i++) {
-      const a = d0 + i * 3;
-      idx.push(a, a + 1, a + 3, a + 1, a + 4, a + 3, a + 1, a + 2, a + 4, a + 2, a + 5, a + 4);
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  return g;
-}
-
-/** A person standing: legs, a jacket, arms, a head and a cap; facing +z, their feet at (x, y, z). */
-function person(mk: ModelKit, x: number, y: number, z: number, coat: number, cap: number) {
-  for (const sd of [-1, 1]) mk.cyl(0x2b3340, x + sd * 0.11, y + 0.42, z, 0.08, 0.84, 0.08);
-  mk.box(coat, x, y + 1.12, z, 0.46, 0.6, 0.28);
-  for (const sd of [-1, 1]) mk.cyl(coat, x + sd * 0.29, y + 1.1, z + 0.05, 0.065, 0.55, 0.065, 0.2, 0, sd * 0.12);
-  mk.ball(0xe8bf98, x, y + 1.58, z, 0.14, 0.16, 0.14);
-  mk.ball(cap, x, y + 1.66, z, 0.15, 0.08, 0.15);
-  mk.box(cap, x, y + 1.64, z + 0.14, 0.2, 0.025, 0.14);
-}
-
 /** The coach's launch: a white aluminum hull with a cardinal band, the console and windscreen, the outboard, the coach. */
 function launchModel(mk: ModelKit, len: number, r: number) {
   const L = len * 0.86;
@@ -859,6 +755,28 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     const mat = new THREE.ShaderMaterial({ uniforms: { ...shared, uFlow: u, uStreak: streak }, vertexShader: WATER_VERT, fragmentShader: WATER_FRAG, fog: true });
     scene.add(flat(new THREE.Mesh(waterStrip(THREE, t, s0, s1, wet(-1), wet(1), 0.04, chopAt), mat)));
     runs.push({ u, s: (s0 + s1) / 2, streak });
+  }
+
+  // the Bay to the west past the loop: open water to the horizon, the same water as the channel's (the shore at its
+  // east edge, u = 0, where it laps)
+  {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i < t.n; i++) {
+      minX = Math.min(minX, t.x[i]);
+      maxX = Math.max(maxX, t.x[i]);
+      minZ = Math.min(minZ, t.z[i]);
+      maxZ = Math.max(maxZ, t.z[i]);
+    }
+    const g = new THREE.PlaneGeometry(1400, 1800, 1, 1);
+    g.rotateX(-Math.PI / 2);
+    g.setAttribute('wid', new THREE.Float32BufferAttribute([1e4, 1e4, 1e4, 1e4], 1));
+    g.setAttribute('chop', new THREE.Float32BufferAttribute([0, 0, 0, 0], 1));
+    const bay = new THREE.Mesh(g, new THREE.ShaderMaterial({ uniforms: { ...shared, uFlow: { value: 0 }, uStreak: { value: 0 } }, vertexShader: WATER_VERT, fragmentShader: WATER_FRAG, fog: true }));
+    bay.position.set(maxX + 60 + 700, 0.03, (minZ + maxZ) / 2);
+    scene.add(flat(bay));
   }
 
   // the tongue of fast water through the tide race: foam chevrons pointing the way it runs, racing along; and where the
