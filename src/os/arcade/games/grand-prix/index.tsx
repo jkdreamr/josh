@@ -222,7 +222,7 @@ type OnlineApi = NonNullable<ReturnType<typeof useOnline>>;
 const racersOf = (o: OnlineApi) => [...new Set([...o.players.map((p) => p.seat), ...o.bots.map((b) => b.seat)])].sort((a, b) => a - b);
 
 /** Builds the session a round plays: solo modes from the settings, online from the room (and the host's packet). */
-function makeRace(mode: StageMode, s: { mode: Mode; laps: number; ai: Level; grid: string; assists: Assists }, o: OnlineApi | null, sync?: { roster: number[]; teams: number[]; laps: number; go: number }): Race {
+function makeRace(mode: StageMode, s: { mode: Mode; laps: number; ai: Level; grid: string; assists: Assists; talk?: boolean }, o: OnlineApi | null, sync?: { roster: number[]; teams: number[]; laps: number; go: number }): Race {
   if (mode === 'idle') {
     const r = createRace({ mode: 'trial', laps: 99, entries: [{ name: DRIVERS[0], team: 0, kind: 'ai', seat: -1, pad: -1, pace: 0.96 }], assists: [assistsOf('full', 'auto')] });
     return r;
@@ -262,7 +262,8 @@ function makeRace(mode: StageMode, s: { mode: Mode; laps: number; ai: Level; gri
     // the faster drivers start further up, with a little spread through the field
     return { name: DRIVERS[d], team, kind: 'ai', seat: -1, pad: -1, pace: base * (1 - (k / field) * 0.035) };
   });
-  return createRace({ mode: 'race', laps: s.laps, entries, assists: entries.map((e) => (e.kind === 'player' ? s.assists : assistsOf('full', 'auto'))) });
+  // with commentary on, a longer wait before the lights gives the commentator time to welcome everyone
+  return createRace({ mode: 'race', laps: s.laps, entries, assists: entries.map((e) => (e.kind === 'player' ? s.assists : assistsOf('full', 'auto'))), lead: s.talk ? 6.5 : undefined });
 }
 
 function Play({ mode }: { mode: StageMode }) {
@@ -286,7 +287,7 @@ function Play({ mode }: { mode: StageMode }) {
   const [cam2, setCam2] = useSetting(CAM2);
   const camRef = useRef([cam, cam2]);
   camRef.current = [cam, cam2];
-  const settings = { mode: shell.touch && modeSetting === 'split' ? ('race' as const) : modeSetting, laps: Number(laps), ai, grid, assists: assistsOf(aids, shell.touch ? 'auto' : gears) };
+  const settings = { mode: shell.touch && modeSetting === 'split' ? ('race' as const) : modeSetting, laps: Number(laps), ai, grid, assists: assistsOf(aids, shell.touch ? 'auto' : gears), talk: voiceOn === 'on' };
   const split = mode === 'solo' && settings.mode === 'split';
   const { ref, size } = useCanvas<HTMLDivElement>();
   const view = useRef<World3D | null>(null);
@@ -354,23 +355,25 @@ function Play({ mode }: { mode: StageMode }) {
     };
   }, [mode]);
   useEffect(() => audio.current?.setMuted(muted), [muted]);
-  // the announcer, for a session with commentary on; its calls start afresh with each race
+  // the commentator, for a session with commentary on (it plays through the race sound, so mute covers it); its
+  // calls start afresh with each race
   useEffect(() => {
-    if (mode === 'idle' || voiceOn !== 'on') return;
-    const v = createVoice();
+    const a = audio.current;
+    if (mode === 'idle' || voiceOn !== 'on' || !a) return;
+    const v = createVoice(a.voice);
     voice.current = v;
     return () => {
-      v?.dispose();
+      v.dispose();
       voice.current = null;
     };
   }, [mode, voiceOn]);
   useEffect(() => {
-    commentary.current = createCommentary(
-      () => (race.current ? players(race.current) : []),
-      (text, priority) => voice.current?.say(text, priority),
-    );
+    commentary.current = createCommentary({
+      locals: () => (race.current ? players(race.current) : []),
+      speak: (clips, priority, stale) => voice.current?.speak(clips, priority, stale),
+      quiet: () => voice.current?.quiet() ?? 0,
+    });
   }, [raceKey]);
-  useEffect(() => voice.current?.setMuted(muted), [muted, voiceOn, mode]);
   useEffect(() => {
     if (shell.status !== 'playing') {
       audio.current?.silence();
@@ -738,7 +741,6 @@ function Play({ mode }: { mode: StageMode }) {
       if (mode !== 'idle' && n.synced && views[0]) {
         audio.current?.update(r, views[0].runner, views[0].cam, dt);
         commentary.current?.update(r, dt);
-        voice.current?.tick();
       }
       if (mode !== 'idle') ps.forEach((p, k) => (k === 0 ? hudA.current : hudB.current)?.update(r, p.idx, r.mode === 'trial' ? refTrace.current : null));
     },

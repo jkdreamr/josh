@@ -19,6 +19,8 @@ export type RaceAudio = {
   /** Fades everything out (pause, game over); the next update brings it back. */
   silence: () => void;
   setMuted: (muted: boolean) => void;
+  /** Where the commentator's voice plays, and a dip of everything else while it talks (the broadcast mix). */
+  voice: { ctx: BaseAudioContext; out: AudioNode; duck: (on: boolean) => void };
   dispose: () => void;
 };
 
@@ -83,7 +85,12 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
   comp.ratio.value = 4;
   comp.attack.value = 0.005;
   comp.release.value = 0.2;
-  master.connect(comp).connect(ctx.destination);
+  // everything but the commentator dips while it talks
+  const duckGain = ctx.createGain();
+  master.connect(duckGain).connect(comp).connect(ctx.destination);
+  // the commentator, beside the compressor rather than through it (it would pump the engines with every word)
+  const voiceBus = ctx.createGain();
+  voiceBus.connect(ctx.destination);
   let muted = false;
 
   // shared noise: two seconds of white noise looped by every noisy layer
@@ -397,6 +404,7 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
       lastTick = performance.now();
       if (live && live.state === 'suspended') void live.resume().catch(() => {});
       smooth(master.gain, muted ? 0 : 0.55, 0.08);
+      smooth(voiceBus.gain, muted ? 0 : 1, 0.08);
       const rn = r.runners[listener];
       if (!rn) return;
       const car = rn.car;
@@ -489,12 +497,17 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
     },
     silence() {
       smooth(master.gain, 0, 0.05);
+      smooth(voiceBus.gain, 0, 0.05);
       lastTick = 0;
     },
     setMuted(m) {
       muted = m;
-      if (m) smooth(master.gain, 0, 0.02);
+      if (m) {
+        smooth(master.gain, 0, 0.02);
+        smooth(voiceBus.gain, 0, 0.02);
+      }
     },
+    voice: { ctx, out: voiceBus, duck: (on) => smooth(duckGain.gain, on ? 0.6 : 1, on ? 0.08 : 0.35) },
     dispose() {
       disposed = true;
       if (watchdog) window.clearInterval(watchdog);
