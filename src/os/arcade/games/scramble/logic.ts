@@ -4652,7 +4652,8 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       const wall = breaks(hit) ? hit : breaks(front) ? front : null;
       const ours = wall?.what === 'built' ? m.walls.get(wall.ref) : undefined;
       // wedged against a built wall some other way (say a tree in our own box), now and then break out through it
-      const side = wall || m.rng() < 0.5 ? -1 : builtBeside(m, f, lv);
+      let side = wall ? -1 : builtBeside(m, f, lv);
+      if (side >= 0 && m.rng() < 0.5) side = -1;
       if (ours && ours.f === f.id && ours.e === 0 && f.editT <= 0) ai.editA = wall === hit ? a : ahead;
       else if (wall || side >= 0) {
         ai.smashT = 1;

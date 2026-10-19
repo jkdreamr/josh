@@ -1380,7 +1380,7 @@ for (const [label, opts] of [
   ['a host, three guests and computer eggs to fifty, with lag and lost packets', { humans: 4, bots: true, seed: 23, level: 'hard' as Level, delay: 0.08, loss: 0.15 }],
   ['eight people and no computer eggs, one of whom leaves halfway', { humans: 8, bots: false, seed: 34, level: 'normal' as Level, delay: 0.05, loss: 0.05, leave: { seat: 5, at: 30 } }],
   ['a guest whose tab freezes on the bus (still in the room, still reporting)', { humans: 3, bots: true, seed: 8, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 2, at: 2, silent: false } }],
-  ['a guest who goes silent mid-match', { humans: 3, bots: true, seed: 15, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 1, at: 30, silent: true } }],
+  ['a guest who goes silent mid-match', { humans: 3, bots: true, seed: 15, level: 'normal' as Level, delay: 0.05, loss: 0.05, stall: { seat: 1, at: 20, silent: true } }],
   ['a host who is cracked early and done watching (its timer runs the match from then on)', { humans: 3, bots: true, seed: 5, level: 'normal' as Level, delay: 0.05, loss: 0.05, hostDone: 80 }],
   ['twenty people and computer eggs to fifty, with lag and lost packets', { humans: 20, bots: true, seed: 41, level: 'normal' as Level, delay: 0.06, loss: 0.08 }],
 ] as const) {
