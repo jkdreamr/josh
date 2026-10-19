@@ -265,6 +265,14 @@ const QUAD: [number, number][] = [
  * the Lasuen sweeper, up to the Claw hairpin, the esses and Memorial Church, and home down the west side.
  */
 const HOOVER_K = 1.25;
+/**
+ * Hoover Nights' traffic, in traffic time (see Hazard.tau): when the Marguerite first crosses (the pack is long gone up
+ * the road by then), how many of its crossings go by before one the other way joins it, and how many rounds of the
+ * oncoming cars before the delivery van joins them.
+ */
+const SHUTTLE_PHASE = 9;
+const SHUTTLE_BACK = 7;
+const VAN_FROM = 6;
 const HOOVER: [number, number, number][] = [
   [-130, -120, 20], [84, -120, 14], [84, -92, 14], [-35, -92, 15], [-35, -62, 15], [130, -62, 40],
   [130, 91, 13], [104, 91, 13], [104, 22, 16], [50, 22, 22], [37.3, 44, 22], [-130, 44, 18],
@@ -616,7 +624,7 @@ export const COURSES: Record<CourseId, Course> = {
   hoover: {
     id: 'hoover',
     name: 'Hoover Nights',
-    blurb: 'Campus after dark: hairpins round the fountains, a plank road over the Dig, pile drivers, a wrecking ball, and no wall where you need one.',
+    blurb: 'Campus after dark: hairpins round the fountains, a plank road over the Dig, pile drivers, the Tree on a leash, oncoming traffic, and no wall where you need one.',
     difficulty: 4,
     route: rounded(HOOVER).map(([e, n]) => [e * HOOVER_K, n * HOOVER_K]),
     start: [-60 * HOOVER_K, -120 * HOOVER_K],
@@ -730,11 +738,25 @@ export const COURSES: Record<CourseId, Course> = {
           { kind: 'wrecker', s: 642, d: 0.8, r: 1.3, swing: 3.1, speed: 1.9, phase: 1.5 },
           // a third pile driver on the inside of the last bend from lap 3
           { kind: 'hammer', s: 1068, d: -1.6, r: 1.7, every: 3.6, on: 0.7, phase: 2.4, lap: 3 },
+          // the Claw's fountain jets on its inside lip from lap 4, rippling round the hairpin at about a kart's speed
+          ...[0, 0.6, 1.2].map((phase, k) => ({ kind: 'geyser' as const, s: 594 + 12 * k, d: -4.4, r: 1.1, every: 2.4, on: 0.8, warn: 0.8, phase, lap: 4, look: 'fountain' })),
+          // the Stanford Tree on its bungee on the inside of the left-hander after Memorial Church: it lunges across the
+          // inside line, and the outside, by the ditch, is always clear of it
+          { kind: 'tether', s: 913, d: -7.4, aim: -1.8, r: 1.2, every: 3.2, phase: 0.4 },
+          // the Marguerite crossing the west straight from its depot, keeping time with the class; from about lap 4 one
+          // the other way too, between the first one's crossings (out here there is open campus either side for its
+          // side streets: on the start straight the second hairpin's leg runs too close by)
+          { kind: 'shuttle', s: 990, d: 0, r: 1.4, cross: 16, speed: 7, every: 17, phase: SHUTTLE_PHASE, tau: true },
+          { kind: 'shuttle', s: 990, d: 0, r: 1.4, cross: 16, speed: -7, every: 17, phase: SHUTTLE_PHASE + 8.5 + 17 * SHUTTLE_BACK, tau: true },
+          // oncoming traffic down Memorial Church's straight in the left lane, out of a side street at its far end and
+          // off into one at its near end; and from about lap 3 a delivery van among it
+          ...[0, 5.3, 10.6].map((phase) => ({ kind: 'car' as const, s: 892, d: -3.6, drive: -11, span: [782, 892] as [number, number], bay: -11, every: 16, phase, tau: true })),
+          { kind: 'van', s: 892, d: -3.6, drive: -11, span: [782, 892] as [number, number], bay: -11, every: 16, phase: 2.6 + 16 * VAN_FROM, tau: true },
         ],
       });
     },
     sky: 'linear-gradient(180deg, #03061a 0%, #0a1434 22%, #16264e 36%, #2a3a68 43%, #22325e 46%, #121a2a 47%)',
-    laps: { 2: 'Bollards and sprinklers on', 3: 'Wet road and a third hammer', 5: 'Causeway: double pile driver' },
+    laps: { 2: 'Bollards and sprinklers on', 3: 'Wet road, hammer, a van', 4: 'Fountains, two-way crossing', 5: 'Two pile drivers, lights out' },
     // the set pieces cost the CPU field more than a clean driver at 200cc: a little more pace there keeps a strong
     // driver with items to about one win in three (golf, the other Expert course, keeps TIER[4]'s 1/0.97)
     tier: { paceCc: { '200cc': 1.055 } },

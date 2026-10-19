@@ -101,7 +101,9 @@ for (const id of COURSE_IDS) {
       assert.ok(h.s > 40 && h.s < t.length - 30, `${where} is clear of the start`);
       // (a pond lies off beside the road: see below; a bank of bollards runs wall to wall by design, and the set pieces
       // leave a way through by the clock: see the timed tests)
-      if (h.kind !== 'water' && h.kind !== 'bollard') assert.ok(Math.abs(h.d) + (h.swing ?? 0) <= t.half, `${where} stays on the road`);
+      // (the Tree's post stands beside the road, and it lunges out onto it)
+      if (h.kind !== 'water' && h.kind !== 'bollard' && h.kind !== 'tether') assert.ok(Math.abs(h.d) + (h.swing ?? 0) <= t.half, `${where} stays on the road`);
+      if (h.kind === 'tether') assert.ok(Math.abs(h.d) > t.half && Math.abs(h.d) < t.edge && Math.abs(h.aim ?? 0) < t.half, `${where} beside the road, lunging onto it`);
       // buses drive the whole lap, so where they start says nothing about the boxes and boosts (see below)
       if (!solid(h.kind) || h.drive) continue;
       // a gap at least two karts wide beside anything solid, and none of them in front of an item box row (the set
@@ -109,7 +111,7 @@ for (const id of COURSE_IDS) {
       const room = Math.max(t.half - (h.d + h.r), h.d - h.r + t.half);
       if (!h.swing && h.kind !== 'bollard' && !(timed(h.kind) && COURSES[id].difficulty === 5)) assert.ok(room >= 4.5, `${where} leaves ${room} m`);
       for (const b of lay.boxes) assert.ok(Math.abs(deltaS(t, h.s, b.s)) > 10, `${where} is in front of the boxes at s=${b.s}`);
-      for (const o of lay.hazards) if (o !== h && solid(o.kind) && !h.swing && !o.swing && !o.drive && h.kind !== 'bollard' && o.kind !== 'bollard') assert.ok(Math.abs(deltaS(t, h.s, o.s)) > 8 || Math.abs(h.d - o.d) > 2 * h.r + 5, `${where} crowds another`);
+      for (const o of lay.hazards) if (o !== h && solid(o.kind) && !h.swing && !o.swing && !o.drive && h.kind !== 'bollard' && o.kind !== 'bollard' && !(h.kind === 'shuttle' && o.kind === 'shuttle')) assert.ok(Math.abs(deltaS(t, h.s, o.s)) > 8 || Math.abs(h.d - o.d) > 2 * h.r + 5, `${where} crowds another`);
     }
     // nothing solid right where a dash panel or a ramp sends you
     for (const p of [...lay.dashes, ...lay.ramps]) {
@@ -159,9 +161,11 @@ for (const id of COURSE_IDS) {
     const onSpan = (b: Hazard, s: number) => !b.span || (deltaS(t, b.span[0], s) >= 0 && deltaS(t, s, b.span[1]) >= 0);
     for (const b of lay.hazards.filter((h) => h.drive)) {
       const where = `${id} ${b.kind} from s=${b.s}`;
-      assert.ok(b.kind === 'bus' || b.kind === 'cart' || b.kind === 'launch' || b.kind === 'barge' || b.kind === 'log', where);
+      assert.ok(b.kind === 'bus' || b.kind === 'cart' || b.kind === 'launch' || b.kind === 'barge' || b.kind === 'log' || b.kind === 'car' || b.kind === 'van', where);
       assert.ok(!b.swing, `${where} keeps to its lane`);
       if (b.kind === 'log') assert.ok(b.drive! > 0 && b.drive! <= 2, `${where} drifts at ${b.drive} m/s`);
+      // (oncoming traffic on its stretch of the course, in the left lane)
+      else if (b.kind === 'car' || b.kind === 'van') assert.ok(b.drive! < 0 && -b.drive! < CLASSES['50cc'].top * 0.6 && b.span && b.d < 0, `${where} drives at ${b.drive} m/s`);
       else assert.ok(b.drive! > 0 && b.drive! < CLASSES['50cc'].top * 0.6, `${where} drives at ${b.drive} m/s`);
       assert.ok(Math.abs(b.d) + b.r <= t.half - 0.5, `${where} keeps to a lane on the road`);
       const bus: [number, number] = [b.d - b.r, b.d + b.r];

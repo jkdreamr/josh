@@ -386,11 +386,14 @@ test('CPU-only races at Hoover Nights at every class: everyone finishes, nobody 
       while (r.time < 600 && r.karts.some((k) => k.done === null)) {
         step(r, DT);
         for (const k of r.karts) if (k.stuck > 2) stuck++;
-        for (const e of r.events.splice(0)) {
+        const evs = r.events.splice(0);
+        // (a hit that a set piece or the traffic dealt, beside something that stays put, is not that thing's)
+        const dealt = new Set(evs.filter((e) => e.t === 'haz').map((e) => e.k));
+        for (const e of evs) {
           if (e.t === 'fall' || e.t === 'splash') at[e.k].push(r.time);
           // (the set pieces catch them now and then by design: those are counted apart, below)
           if (e.t === 'haz') caught++;
-          if (e.t === 'hit' && e.by === -1) {
+          if (e.t === 'hit' && e.by === -1 && !dealt.has(e.k)) {
             const k = r.karts[e.k];
             const h = r.hazards.find((o) => !o.swing && !o.drive && !timed(o.kind) && o.kind !== 'wet' && Math.hypot(o.x - k.x, o.z - k.z) < o.r + 3);
             if (h) hits[`${h.kind}@${h.s}`] = (hits[`${h.kind}@${h.s}`] ?? 0) + 1;

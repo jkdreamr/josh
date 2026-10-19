@@ -1,7 +1,7 @@
 // Pure race rules for Palm Drive: kart physics, drifting and mini-turbos, items, CPU drivers, laps and places.
 // No DOM, no three.js. Distances are meters, times seconds; see track.ts for the axes and heading convention.
 import { COURSES, tierOf, trackOf, type CourseId, type Flow, type Gust, type Swell, type Tier } from './courses.ts';
-import { BALL_WINDOW, CURB, KART_R, PASTS, WET, awake, ballDue, ballNear, cycleAt, deltaS, dropAt, drives, edgeAt, gripAt, gridSpot, headingOf, inTrench, lengthOf, locate, pointAt, shoreOf, solid, timed, wrapAngle, wrapS, type Hazard, type HazardKind, type Layout, type Past, type Shore, type Spot, type Track } from './track.ts';
+import { BALL_WINDOW, CURB, KART_R, PASTS, WET, awake, ballDue, ballNear, cycleAt, deltaS, dropAt, drives, edgeAt, gripAt, gridSpot, headingOf, inTrench, lengthOf, locate, pointAt, shoreOf, solid, timed, traffic, wrapAngle, wrapS, type Hazard, type HazardKind, type Layout, type Past, type Shore, type Spot, type Track } from './track.ts';
 export { WET };
 
 export const LAPS = 5;
@@ -549,7 +549,11 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
     const p = pointAt(track, c.s, c.d);
     return { x: p.x, z: p.z, s: c.s, d: c.d, w: c.w, h: headingOf(p.tx, p.tz) };
   });
-  const hazards = lay.hazards.map((h): LiveHazard => {
+  // (traffic that keeps time with the class runs on traffic time, race time times the class's top speed over 150cc's:
+  // the cars and the crossing Marguerite drive that much faster at 200cc, and come as often for the laps the karts do)
+  const tk = CLASSES[opts.cc].top / CLASSES['150cc'].top;
+  const hazards = lay.hazards.map((h0): LiveHazard => {
+    const h = h0.tau ? { ...h0, ...(h0.drive ? { drive: h0.drive * tk } : {}), ...(h0.speed ? { speed: h0.speed * tk } : {}), every: (h0.every ?? 60) / tk, phase: (h0.phase ?? 0) / tk } : h0;
     const p = pointAt(track, h.s, h.d);
     return { ...h, x: p.x, z: p.z, along: h.s, at: h.d, tx: p.tx, tz: p.tz, walk: 0 };
   });
@@ -623,6 +627,19 @@ export const hazardS = (t: Track, h: Hazard, time: number) => {
   return h.drive ? wrapS(t, h.s + h.drive * Math.max(0, time)) : h.s;
 };
 
+/** How far a car takes to pull out of its side street into its lane (and to turn off into the other at the far end). */
+export const BAY_RUN = 12;
+/**
+ * Where across the road a car or a van on its stretch is at race time `time`: in its lane, easing out of the side street
+ * (at d = h.bay) over the first BAY_RUN meters and back into the other over the last. Pure in time, like spanRun.
+ */
+export function trafficD(h: Hazard, time: number) {
+  if (h.bay === undefined || !h.span) return h.d;
+  const run = Math.max(0, spanRun(h, time));
+  const u = clamp(Math.min(run, h.span[1] - h.span[0] - run) / BAY_RUN, 0, 1);
+  return h.bay + (h.d - h.bay) * u * u * (3 - 2 * u);
+}
+
 /**
  * Cows and cyclists cross the road and back, and buses drive their laps, on the race clock, so every screen has them
  * in the same place.
@@ -630,7 +647,7 @@ export const hazardS = (t: Track, h: Hazard, time: number) => {
 export function moveHazards(r: Race) {
   for (const h of r.hazards) {
     if (!h.swing && !h.drive) continue;
-    h.at = hazardD(h, r.time);
+    h.at = h.bay !== undefined ? trafficD(h, r.time) : hazardD(h, r.time);
     h.along = hazardS(r.track, h, r.time);
     if (h.span) h.gone = spanGone(h, r.time);
     if (h.swing) h.walk = Math.cos(r.time * (h.speed ?? 0.5) + (h.phase ?? 0)) >= 0 ? 1 : -1;
@@ -664,6 +681,16 @@ const blocks = (r: Race, h: LiveHazard, x: number, z: number, pad: number, lap: 
   if (timed(h.kind)) {
     // the set pieces by what they are doing now: a bank that is up, a hammer down or low, the ball, a sprinkler's hub
     if (h.kind === 'rotor') return Math.hypot(h.x - x, h.z - z) < h.r + pad;
+    if (h.kind === 'shuttle' || h.kind === 'tether') {
+      // (the Marguerite across the road and the Tree where it is now)
+      const st = hazState(r, h, r.time, lap);
+      if (!st.solid) return false;
+      const c = pointAt(r.track, h.s, st.d);
+      if (h.kind === 'tether') return Math.hypot(c.x - x, c.z - z) < h.r + pad;
+      const ox = x - c.x;
+      const oz = z - c.z;
+      return Math.abs(ox * c.tx + oz * c.tz) < h.r + pad && Math.abs(-ox * c.tz + oz * c.tx) < lengthOf(h) / 2 + pad;
+    }
     if (!hazState(r, h, r.time, lap).solid) return false;
     if (h.kind !== 'bollard') return Math.hypot(h.x - x, h.z - z) < h.r + pad;
     if (Math.hypot(h.x - x, h.z - z) > (h.w ?? 0) / 2 + pad + 1) return false;
@@ -1503,7 +1530,7 @@ function hazards(r: Race, k: Kart) {
     if (h.kind === 'water' || h.kind === 'trench') continue;
     // (a bank of bollards reaches a long way either side of its middle, and so does a sprinkler's jet)
     // (and a vessel along its length: a barge is 34 m long)
-    const near = h.kind === 'bollard' || h.kind === 'rotor' ? 16 : drives(h) ? Math.max(9, lengthOf(h) / 2 + 3) : 9;
+    const near = h.kind === 'bollard' || h.kind === 'rotor' ? 16 : h.kind === 'shuttle' ? (h.cross ?? 16) + lengthOf(h) : drives(h) ? Math.max(9, lengthOf(h) / 2 + 3) : 9;
     if (Math.abs(dx) > near || Math.abs(dz) > near) continue;
     // (a sprinkler's hub stands there whether or not its jet has come on yet)
     if (!awake(h, k.lap) && h.kind !== 'rotor') continue;
@@ -1513,6 +1540,11 @@ function hazards(r: Race, k: Kart) {
     }
     if (h.kind === 'wet') {
       if (!flying && !tough && dx * dx + dz * dz < h.r * h.r) k.wet = true;
+      continue;
+    }
+    if (traffic(h.kind)) {
+      // (off its stretch it is not there at all; in the air it still gets you)
+      if (!tough && !h.gone) trafficHit(r, k, h);
       continue;
     }
     if (drives(h)) {
@@ -1620,6 +1652,21 @@ export const JET = { w: 0.4, high: 1.4 };
 /** The wrecking ball throws you clear at this much plus its own sideways speed, up to the most. */
 export const WRECK_KNOCK = 6;
 export const WRECK_MAX = 12;
+/**
+ * The Marguerite crossing: bells and flashing lights `warn` seconds before its nose reaches the road, the gate arms down
+ * `gate` seconds before (they lower over `drop`), and it sits out any crossing a bus doing its rounds comes within
+ * `clear` meters of (its own length aside) from the first bell to its tail clearing the road.
+ */
+export const SHUTTLE = { warn: 3, gate: 1, drop: 0.6, clear: 22 };
+/**
+ * The Stanford Tree's cycle, in seconds before the end of each: it crouches (its eyes going red) from `crouch`, lunges
+ * out from `out`, holds from `hold` and springs back from `back`; it sits `rest` in from its post the rest of the time.
+ */
+export const TREE = { crouch: 1.85, out: 1.25, hold: 0.95, back: 0.6, rest: 1.2 };
+/** A car hits you this hard and you only bump off it; harder spins you; harder still (head on, say) tumbles you. */
+export const CAR_BUMP = 3;
+export const CAR_TUMBLE = 9;
+export const CAR_KNOCK = 12;
 
 /**
  * Whether a bus (or a cart on its rounds) has been within right-of-way reach of h at any time in the last `span`
@@ -1641,6 +1688,42 @@ export function yieldedWithin(r: Race, h: Hazard, time: number, span: number) {
 }
 /** Who has right of way: the buses and carts on their rounds, and on the water the coach's launches (Hazard.priority). */
 const yields = (v: Hazard) => (v.kind === 'bus' || v.kind === 'cart' || !!v.priority) && drives(v) && !v.span;
+/**
+ * Whether a bus (or a cart on its rounds) comes within `reach` of h (its own length aside) along the road at any time
+ * from t0 to t1. They run at a steady speed, so this is exact and pure in time.
+ */
+function nearWithin(r: Race, h: Hazard, t0: number, t1: number, reach: number) {
+  const t = r.track;
+  for (const v of r.hazards) {
+    if (!yields(v)) continue;
+    const far = reach + lengthOf(v) / 2;
+    const d0 = deltaS(t, hazardS(t, v, Math.max(0, t0)), h.s);
+    const d1 = d0 - (v.drive ?? 0) * Math.max(0, t1 - Math.max(0, t0));
+    if (Math.min(d0, d1) < far && Math.max(d0, d1) > -far) return true;
+  }
+  return false;
+}
+/**
+ * The Marguerite crossing the road (see HazardKind): where its middle is across the road `c` seconds into a crossing, how
+ * long a crossing takes, and when in it its nose reaches the road and its tail leaves it.
+ */
+export function shuttleRun(r: Race, h: Hazard) {
+  const v = h.speed ?? 7;
+  const dir = Math.sign(v) || 1;
+  const half = lengthOf(h) / 2;
+  const from = (h.cross ?? 16) + half;
+  const edge = r.track.edge;
+  return { v, dir, half, from, pass: (2 * from) / Math.abs(v), enter: (from - half - edge) / Math.abs(v), leave: (from + half + edge) / Math.abs(v), at: (c: number) => -dir * from + v * c };
+}
+/**
+ * Whether the crossing that starts at race time c0 is sat out: a bus on its rounds near the crossing then, or before its
+ * first (at race time `phase`).
+ */
+export function shuttleSkips(r: Race, h: Hazard, c0: number) {
+  if (c0 < (h.phase ?? 0) - 1e-6) return true;
+  const run = shuttleRun(r, h);
+  return nearWithin(r, h, c0 + run.enter - SHUTTLE.warn, c0 + run.leave, SHUTTLE.clear);
+}
 /** The ball stays hauled up this long after a bus has gone by, while it visibly comes back down. */
 export const WRECK_GRACE = 0.5;
 
@@ -1705,6 +1788,8 @@ export function hazState(r: Race, h: Hazard, time: number, lap: number): HazStat
     st.phase = 'idle';
     const every = h.every ?? 3;
     const c = cycleAt(h, time, every);
+    // (a fountain jet beside the bus lane stands aside for a bus like any set piece, keeping only beats it warned of)
+    if (h.kind === 'geyser' && (rightOfWay(r, h, time) || (c < (h.on ?? 1) && yieldedWithin(r, h, time, c + (h.warn ?? 0.8))) || (c >= every - (h.warn ?? 0.8) && yieldedWithin(r, h, time, c - (every - (h.warn ?? 0.8)))))) return st;
     if (c < (h.on ?? 1)) {
       st.phase = h.kind === 'panel' ? 'open' : 'on';
       st.live = true;
@@ -1712,7 +1797,65 @@ export function hazState(r: Race, h: Hazard, time: number, lap: number): HazStat
     } else if (c >= every - (h.warn ?? 0.8)) st.warn = (c - (every - (h.warn ?? 0.8))) / (h.warn ?? 0.8);
     return st;
   }
+  if (h.kind === 'shuttle') {
+    // the Marguerite across the road: bells and lights first, the gates down, then across it goes, nose to tail; or it
+    // waits in its side street this time round, a bus doing its rounds being near
+    const run = shuttleRun(r, h);
+    const every = h.every ?? 17;
+    const c = cycleAt(h, time, every);
+    const c0 = time - c;
+    st.phase = 'idle';
+    st.d = run.at(0);
+    // (this crossing, or the next one's warning)
+    const skip = shuttleSkips(r, h, c0);
+    if (!skip && c < run.pass) {
+      st.d = run.at(c);
+      if (c > run.enter && c < run.leave) {
+        st.live = st.solid = true;
+        st.phase = 'on';
+        st.warn = 1;
+        st.lift = 1;
+        return st;
+      }
+    }
+    const next = c < run.enter && !skip ? c0 : c0 + every;
+    const due = next + run.enter - time;
+    if (due > 0 && due <= SHUTTLE.warn && !(next === c0 ? skip : shuttleSkips(r, h, next))) {
+      st.warn = 1 - due / SHUTTLE.warn;
+      st.lift = clamp((SHUTTLE.gate - due) / SHUTTLE.drop, 0, 1);
+      if (next !== c0) st.d = run.at(0);
+    }
+    // (and the gates lift as its tail clears the road)
+    else if (!skip && c >= run.leave && c < run.leave + SHUTTLE.drop) st.lift = 1 - (c - run.leave) / SHUTTLE.drop;
+    return st;
+  }
   const yielding = out && rightOfWay(r, h, time);
+  if (h.kind === 'tether') {
+    // the Tree: sat by its post (solid there, like a planter), it crouches, lunges out to its mark, holds a moment and
+    // springs back; while it lunges it tumbles whoever it catches. It sits tight while a bus goes by, and a lunge is
+    // only made if its whole crouch was shown
+    const rest = h.d - TREE.rest * Math.sign(h.d || 1);
+    const aim = h.aim ?? 0;
+    st.d = rest;
+    st.solid = out;
+    if (!out) return st;
+    st.phase = 'idle';
+    if (yielding) return st;
+    const every = h.every ?? 3.2;
+    const left = every - cycleAt(h, time, every);
+    if (left > TREE.crouch || yieldedWithin(r, h, time, TREE.crouch - left)) return st;
+    const ease = (u: number) => u * u * (3 - 2 * u);
+    if (left > TREE.out) {
+      st.warn = (TREE.crouch - left) / (TREE.crouch - TREE.out);
+      return st;
+    }
+    st.live = true;
+    st.phase = 'on';
+    st.warn = 1;
+    st.lift = left > TREE.hold ? ease((TREE.out - left) / (TREE.out - TREE.hold)) : left > TREE.back ? 1 : ease(left / TREE.back);
+    st.d = rest + (aim - rest) * st.lift;
+    return st;
+  }
   if (h.kind === 'rotor') {
     st.ang = (h.a0 ?? 0) + (h.spin ?? 0) * time;
     // the hub stands there from the first lap; the jet comes on with its lap
@@ -1816,6 +1959,11 @@ export function hazSpans(r: Race, h: Hazard, time: number, lap: number, ds = 0, 
     if (st.solid && Math.abs(ds) <= BANK.thick) out.push([h.d - (h.w ?? 0) / 2, h.d + (h.w ?? 0) / 2]);
     return out;
   }
+  if (h.kind === 'shuttle') {
+    // (the Marguerite is a box across the road, its length across it and its width along it)
+    if (st.live && Math.abs(ds) <= h.r) out.push([st.d - lengthOf(h) / 2, st.d + lengthOf(h) / 2]);
+    return out;
+  }
   if (h.kind === 'rotor') {
     if (Math.abs(ds) < h.r) {
       const hc = Math.sqrt(h.r * h.r - ds * ds);
@@ -1868,6 +2016,46 @@ function pieceHit(r: Race, k: Kart, h: LiveHazard, dx: number, dz: number, tough
     // a column of flame: it spins you, in the air or not (it reaches higher than a hop)
     if (!st.live || tough) return;
     if (Math.hypot(dx, dz) < h.r + R) caught('spin');
+    return;
+  }
+  if (h.kind === 'shuttle') {
+    if (!st.live || tough) return;
+    shuttleHit(r, k, h, st.d);
+    return;
+  }
+  if (h.kind === 'tether') {
+    if (!st.solid || tough) return;
+    // the Tree where it is now: on the end of its bungee, or sat by its post (on its own stretch of road)
+    if (Math.abs(deltaS(r.track, h.s, k.s)) > h.r + R + 2) return;
+    const p = pointAt(r.track, h.s, st.d);
+    const ox = k.x - p.x;
+    const oz = k.z - p.z;
+    const dist = Math.hypot(ox, oz);
+    const reach = h.r + R;
+    if (dist >= reach) return;
+    const nx = dist > 1e-6 ? ox / dist : -Math.sin(k.h);
+    const nz = dist > 1e-6 ? oz / dist : -Math.cos(k.h);
+    k.x = p.x + nx * reach;
+    k.z = p.z + nz * reach;
+    const vx = Math.sin(k.h) * k.v + k.kx;
+    const vz = Math.cos(k.h) * k.v + k.kz;
+    const into = -(vx * nx + vz * nz);
+    if (st.live) {
+      // lunging: bowled over and thrown clear, in the air or not (it is taller than a hop)
+      if (hitKart(r, k, 'tumble', -1)) {
+        k.kx += nx * WRECK_KNOCK;
+        k.kz += nz * WRECK_KNOCK;
+        k.safe += 0.6;
+        r.events.push({ t: 'haz', k: k.idx, kind: h.kind });
+      }
+      return;
+    }
+    // sat by its post it is a planter you bounce off
+    if (flying || into <= 0) return;
+    k.kx += nx * into * 1.3;
+    k.kz += nz * into * 1.3;
+    k.v *= 1 - Math.min(0.9, (0.6 * into) / (Math.hypot(vx, vz) || 1));
+    if (into > 5) r.events.push({ t: 'wall', k: k.idx, power: into });
     return;
   }
   if (h.kind === 'bollard') {
@@ -2096,6 +2284,103 @@ function busHit(r: Race, k: Kart, h: LiveHazard) {
   else if (into > 5) r.events.push({ t: 'wall', k: k.idx, power: into });
 }
 
+/**
+ * Run into by traffic, or running into it: how hard the two closed on each other decides it. Hardly at all and you bump
+ * off it; harder and you spin out; harder still (head on into an oncoming car, say) you tumble, and the item in your
+ * hand goes flying. A shrunken kart is squashed flat. You are thrown clear by up to CAR_KNOCK.
+ */
+function crash(r: Race, k: Kart, h: Hazard, into: number, nx: number, nz: number) {
+  const knock = Math.min(1.3 * into, CAR_KNOCK);
+  k.kx += nx * knock;
+  k.kz += nz * knock;
+  if (into <= CAR_BUMP) {
+    k.v *= 0.85;
+    return;
+  }
+  const how: HitHow = k.shrink > 0 ? 'squash' : into > CAR_TUMBLE && expert(r) ? 'tumble' : 'spin';
+  const held = k.item;
+  if (!hitKart(r, k, how, -1)) {
+    if (into > 5) r.events.push({ t: 'wall', k: k.idx, power: into });
+    return;
+  }
+  if (how === 'tumble' && held && k.roll === 0 && !k.trail) {
+    k.item = null;
+    k.uses = 0;
+  }
+  r.events.push({ t: 'haz', k: k.idx, kind: h.kind });
+}
+
+/**
+ * A kart touching a car or a van: it is never carried along by it (an oncoming car would drive you back down the
+ * road), but put out the side of it, the side its middle is on (into the road rather than the wall unless it is well over
+ * that way), with a crash as hard as the two closed on each other face on.
+ */
+function trafficHit(r: Race, k: Kart, h: LiveHazard) {
+  const R = KART_R * scaleOf(k);
+  const at = inBus(h, k.x, k.z, R);
+  if (!at) return;
+  // (the face it met: its nose, its tail, or a side)
+  let fx: number;
+  let fz: number;
+  if (at.inL < at.inW) {
+    const sg = Math.sign(at.along) || -1;
+    fx = h.tx * sg;
+    fz = h.tz * sg;
+  } else {
+    const sg = Math.sign(at.across) || 1;
+    fx = -h.tz * sg;
+    fz = h.tx * sg;
+  }
+  const vx = Math.sin(k.h) * k.v + k.kx;
+  const vz = Math.cos(k.h) * k.v + k.kz;
+  const drive = h.drive ?? 0;
+  const into = (drive * h.tx - vx) * fx + (drive * h.tz - vz) * fz;
+  // out the side: toward the middle of the road unless well over on the wall's side of it
+  const inward = -Math.sign(h.at) || 1;
+  const side = at.across * inward > -h.r * 0.5 ? inward : -inward;
+  const over = side * (h.r + R + 0.05) - at.across;
+  k.x += -h.tz * over;
+  k.z += h.tx * over;
+  if (into <= 0) return;
+  const own = -(vx * fx + vz * fz);
+  if (own > 0) k.v *= 1 - Math.min(0.9, (0.6 * own) / (Math.hypot(vx, vz) || 1));
+  // (thrown clear mostly sideways, out of its lane, and back the way it was going)
+  const ox = -h.tz * side * 0.8 + fx * 0.6;
+  const oz = h.tx * side * 0.8 + fz * 0.6;
+  crash(r, k, h, into, ox, oz);
+}
+
+/**
+ * A kart touching the Marguerite crossing the road (its middle at st.d): put out along the road, the side of it the kart
+ * is on (never carried across with it), with a crash as hard as it ran into the bus's side, or the bus's nose into it.
+ */
+function shuttleHit(r: Race, k: Kart, h: LiveHazard, d: number) {
+  const R = KART_R * scaleOf(k);
+  // (only on its own stretch of road: never another one that passes near its side streets)
+  if (Math.abs(deltaS(r.track, h.s, k.s)) > h.r + R + 2) return;
+  const c = pointAt(r.track, h.s, d);
+  const ox = k.x - c.x;
+  const oz = k.z - c.z;
+  const along = ox * c.tx + oz * c.tz;
+  const across = -ox * c.tz + oz * c.tx;
+  const inL = h.r + R - Math.abs(along);
+  const inW = lengthOf(h) / 2 + R - Math.abs(across);
+  if (inL <= 0 || inW <= 0) return;
+  const sg = Math.sign(along) || -1;
+  k.x += c.tx * sg * inL;
+  k.z += c.tz * sg * inL;
+  const vx = Math.sin(k.h) * k.v + k.kx;
+  const vz = Math.cos(k.h) * k.v + k.kz;
+  const own = -(vx * c.tx + vz * c.tz) * sg;
+  // (and at its nose or tail, how fast it came across into the kart)
+  const v = h.speed ?? 0;
+  const nose = inW < inL ? (v - (-vx * c.tz + vz * c.tx)) * Math.sign(across) : 0;
+  const into = Math.max(own, nose);
+  if (into <= 0) return;
+  if (own > 0) k.v *= 1 - Math.min(0.9, (0.6 * own) / (Math.hypot(vx, vz) || 1));
+  crash(r, k, h, into, c.tx * sg, c.tz * sg);
+}
+
 /** Seconds a kart set back on the road takes to get going: nothing should come through its spot before then. */
 const SET_T = 1.5;
 
@@ -2145,6 +2430,16 @@ function clearFor(r: Race, k: Kart, s: number, d: number, at = r.time) {
       }
       continue;
     }
+    if (h.kind === 'shuttle') {
+      // never on the crossing or just short of it while the bells ring or the bus is across, whichever lane
+      const ds = deltaS(t, s, h.s);
+      if (ds < -(h.r + KART_R + 1) || ds > 14) continue;
+      for (let u = 0; u <= SET_T + 1; u += 0.1) {
+        const st = hazState(r, h, at + u, k.lap);
+        if (st.live || st.warn > 0) return false;
+      }
+      continue;
+    }
     if (timed(h.kind)) {
       // nothing a set piece will block in that lane while the kart gets going, nor where it has got to by then with its
       // foot down from a standstill (they run on the clock, so this is known): a spot just short of one is as bad as one
@@ -2171,6 +2466,14 @@ function clearFor(r: Race, k: Kart, s: number, d: number, at = r.time) {
       const ds = deltaS(t, s, h.s);
       // (on the run-up to it or over it; once past its far end the road is clear)
       if (ds > -(h.len ?? 0) && ds < 14 && Math.abs(h.d - d) < room) return false;
+      continue;
+    }
+    if (traffic(h.kind) && h.span) {
+      // a car or a van: nowhere it will be (give or take) while the kart gets going, oncoming as it may be
+      for (let u = 0; u <= SET_T + 1; u += 0.25) {
+        if (spanGone(h, at + u)) continue;
+        if (Math.abs(deltaS(t, hazardS(t, h, at + u), s)) < lengthOf(h) / 2 + KART_R + 3 && Math.abs(trafficD(h, at + u) - d) < room + 0.5) return false;
+      }
       continue;
     }
     if (drives(h)) {
@@ -2858,7 +3161,7 @@ function acrossRoad(t: Track, k: Kart) {
  * kart gets there, and a pond beside the road keeps the kart over toward the other side. Also says how far the kart
  * goes before it reaches the nearest thing in the way, and whether the lane misses everything solid.
  */
-type Dodge = { lane: number; ds: number; clear: boolean; wet?: boolean; wait?: boolean };
+type Dodge = { lane: number; ds: number; clear: boolean; wet?: boolean; wait?: boolean; hold?: number };
 /** A stretch across the road something covers, how far from it the kart keeps, and how far on it is. */
 type Span = { lo: number; hi: number; room: number; far: number };
 function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge | null {
@@ -2897,7 +3200,9 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
     const when = (speed: number) => until / Math.max(2, speed - (h.drive ?? 0));
     // and so how far the kart goes before it gets there (for anything standing still, just how far ahead it is)
     const far = until * (v / Math.max(2, v - (h.drive ?? 0)));
-    if (far > reach) continue;
+    // (oncoming traffic is seen further off once on its stretch: headlights are, and it closes fast)
+    const oncoming = traffic(h.kind) && (h.drive ?? 0) < 0 && !!h.span && deltaS(t, h.span[0], k.s) > 0;
+    if (far > (oncoming ? Math.max(reach, v * 2.2) : reach)) continue;
     if (timed(h.kind)) {
       const v0 = Math.max(0, k.v);
       // (on a slick course it counts on a boost too: off a drop start, say, it gets there a good deal sooner)
@@ -2937,7 +3242,7 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
     // way past (it spins you out as surely as anything solid)
     const a = { lo: Infinity, hi: -Infinity, room, solid: solid(h.kind) || h.kind === 'ball' || h.kind === 'oil', close, soft };
     for (const time of [when(v + 8) - 0.1, when(v), when(Math.max(6, v - 6)) + 0.1]) {
-      const d = hazardD(h, r.time + time);
+      const d = h.bay !== undefined ? trafficD(h, r.time + time) : hazardD(h, r.time + time);
       a.lo = Math.min(a.lo, d);
       a.hi = Math.max(a.hi, d);
     }
@@ -2971,13 +3276,15 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
       // flare is only as wide as its column)
       // (and a whirlpool with a wide berth, wider still for a while after a fall, and the slower it is going the wider:
       // its pull draws a slow shell in from well outside where it would catch a fast one)
-      const room = KART_R + (h.kind === 'rotor' ? 1.0 : h.kind === 'panel' ? 1.4 : h.kind === 'geyser' ? 0.3 : h.kind === 'whirl' ? (ai.care > 0 ? 1.9 : 0.9) + 2.2 * clamp((16 - k.v) / 10, 0, 1) : 0.7);
+      // (the Marguerite crossing, and the Tree's lunge, with room to spare: both move fast across the road)
+      const room = KART_R + (h.kind === 'rotor' ? 1.0 : h.kind === 'panel' ? 1.4 : h.kind === 'geyser' ? (h.look === 'fountain' ? 0.8 : 0.3) : h.kind === 'whirl' ? (ai.care > 0 ? 1.9 : 0.9) + 2.2 * clamp((16 - k.v) / 10, 0, 1) : h.kind === 'shuttle' ? 1.1 : h.kind === 'tether' ? 0.9 : 0.7);
       // (a sprinkler's jet is met along a stretch of road, not on one line: every so far along it; and a pane of glass
       // from its near end to its far end)
       const arm = h.arm ?? 5;
-      const offs = h.kind === 'rotor' ? [-0.9 * arm, -0.6 * arm, -0.3 * arm, 0, 0.3 * arm, 0.6 * arm, 0.9 * arm] : h.kind === 'panel' ? [0, (h.len ?? 0) / 2, h.len ?? 0] : [0];
+      const offs = h.kind === 'rotor' ? [-0.9 * arm, -0.6 * arm, -0.3 * arm, 0, 0.3 * arm, 0.6 * arm, 0.9 * arm] : h.kind === 'panel' ? [0, (h.len ?? 0) / 2, h.len ?? 0] : h.kind === 'shuttle' || h.kind === 'tether' ? [-0.7 * h.r, 0, 0.7 * h.r] : [0];
+      const fine = h.kind === 'rotor' || h.kind === 'shuttle' || h.kind === 'tether';
       const spansAt = (t0: number, out: Span[]) => {
-        for (const o of offs) for (const dt of h.kind === 'rotor' ? [-slop, -slop / 2, 0, slop / 2, slop] : [-slop, 0, slop]) for (const [lo, hi] of hazSpans(r, h, t0 + dt + o / v, k.lap, o)) out.push({ lo, hi, room, far });
+        for (const o of offs) for (const dt of fine ? [-slop, -slop / 2, 0, slop / 2, slop] : [-slop, 0, slop]) for (const [lo, hi] of hazSpans(r, h, t0 + dt + o / v, k.lap, o)) out.push({ lo, hi, room, far });
       };
       const ext = h.kind === 'bollard' ? BANK.thick : h.kind === 'rotor' ? JET.w : h.kind === 'panel' ? 0 : h.r;
       const crossing = (speed: number, out: Span[]) => {
@@ -2996,9 +3303,12 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
         crossing(keepOn ? fast : 6, later);
         // and from a crawl, better well wide of where the ball swings at all
         if (h.kind === 'wrecker') pieces.push({ lo: h.d - (h.swing ?? 0) - h.r, hi: h.d + (h.swing ?? 0) + h.r, room: 0.5, far });
-      } else if (h.kind === 'panel') {
-        // (a pane is judged over the whole time the kart is on it, at its speed or eased off)
+      } else if (h.kind === 'panel' || h.kind === 'shuttle' || h.look === 'fountain') {
+        // (a pane is judged over the whole time the kart is on it, at its speed or eased off; a fountain jet in a hairpin
+        // over the whole time it is beside it, braking for the bend as it may be; and the Marguerite likewise, nose to
+        // tail across its path)
         crossing(v, pieces);
+        if (h.kind !== 'panel') crossing(Math.max(6, v * 0.7), pieces);
         crossing(Math.max(6, v - 7), later);
       } else {
         spansAt(r.time + when(v) + ai.err, pieces);
@@ -3107,6 +3417,10 @@ function dodgeHazard(r: Race, k: Kart, lane: number, band: Band = FREE): Dodge |
   // nothing gets through the set pieces at this speed: if easing off opens a way (the hammer up by then, the bank
   // down), take that lane and slow for it; if not, the cheapest lane now and no slowing, as stopping dead in front of
   // one only causes pile-ups
+  // the Marguerite across the road with no way past it: stop short of the crossing and wait for it to go by (easing off
+  // to get there later is no plan for a bus: a kart that only eases arrives as it comes across)
+  const xing = coming.find((c) => c.h.kind === 'shuttle' && c.far <= first + 14 && c.until > 3);
+  if (xing) return { ...best, clear: false, wait: true, hold: Math.max(0, xing.until - 8) };
   const eased = judge(later.filter(soon));
   if (eased.clear) return { ...eased, clear: false, wait: true };
   return { ...best, clear: judge([]).clear };
@@ -3386,7 +3700,7 @@ function think(r: Race, k: Kart, dt: number) {
   const bendBrake = inp.brake;
   // (waiting for a set piece to get out of the way, but never for long: the road is clear again by then)
   ai.waitT = dodge?.wait ? ai.waitT + dt : 0;
-  if (dodge?.wait && ai.waitT > 3) dodge = { ...dodge, wait: false, clear: true };
+  if (dodge?.wait && ai.waitT > 3) dodge = { ...dodge, wait: false, clear: true, hold: undefined };
   // crawling up to a bank of bollards standing in this lane (knocked back by it, say): hold short of it until it drops
   // rather than nose into it again and again, and go only when it will stay down for as long as getting across it takes
   // from here (but once on it, get off it). Held for long (stopped between two banks, say) it backs off for room to
@@ -3398,6 +3712,9 @@ function think(r: Race, k: Kart, dt: number) {
   let creep = false;
   let bankHeld = false;
   let lineD = NaN;
+  /** Held short of the Marguerite crossing: a lane the bus has already left to edge over to, and how far ahead to aim. */
+  let xLane = NaN;
+  let xAt = 0;
   const facing = Math.sin(k.h) * t.tx[k.i] + Math.cos(k.h) * t.tz[k.i] > 0.5;
   ai.goT = Math.max(0, ai.goT - dt);
   if (k.v < 8 && facing && ai.goT === 0 && !hurt(k)) {
@@ -3461,6 +3778,39 @@ function think(r: Race, k: Kart, dt: number) {
       if (!blocked) goRun = Math.max(goRun, tOut);
       else if (ds > zone + 6) held = true;
       else backOut = true;
+    }
+    // and the Marguerite crossing, from a crawl (stopped short of it, say): it goes over only when the bus will be clear of
+    // its lane the whole way across, and otherwise holds short of it, edging over toward a lane the bus has already
+    // left if there is one near; on it with the bus coming, it backs off
+    for (const h of r.hazards) {
+      if (h.kind !== 'shuttle') continue;
+      const ds = deltaS(t, k.s, h.s);
+      const zone = h.r + KART_R + 0.3;
+      if (ds < -zone || ds > zone + 8) continue;
+      const tIn = reach(Math.max(0, ds - zone));
+      const tOut = reach(ds + zone);
+      const free = (d: number) => {
+        for (let u = Math.max(0, tIn - 0.2); u <= tOut + 0.3; u += 0.05) {
+          const st = hazState(r, h, r.time + u, k.lap);
+          if (st.live && Math.abs(st.d - d) < lengthOf(h) / 2 + KART_R + 0.6) return false;
+        }
+        return true;
+      };
+      if (free(k.d)) {
+        goRun = Math.max(goRun, tOut);
+        continue;
+      }
+      if (ds <= zone + 0.5) {
+        backOut = true;
+        continue;
+      }
+      held = true;
+      for (const off of [1, -1, 2, -2, 3, -3, 4, -4, 5, -5]) {
+        if (Math.abs(k.d + off) > t.half - 1.3 || !free(k.d + off)) continue;
+        xLane = k.d + off;
+        xAt = Math.max(2, ds - zone);
+        break;
+      }
     }
     if (!held && !backOut && goRun > 0) {
       ai.goT = goRun;
@@ -3562,6 +3912,8 @@ function think(r: Race, k: Kart, dt: number) {
     // (except through the Blink, where its timing over the panes is its speed: it steers for its lane and keeps going)
     if (((bend + swerve > 0 && k.v > 1.55 / (bend + swerve)) || (!dodge.clear && dodge.ds < 4 + k.v * 0.5 && k.v > 9)) && !(blink && dodge.clear)) inp.brake = true;
   }
+  // (and stopping short of the Marguerite crossing, braking as late as it can)
+  if (dodge?.hold !== undefined && ai.goT === 0 && !hurt(k)) inp.brake = k.v > Math.max(0.3, Math.sqrt(2 * 20 * dodge.hold));
   if (Math.abs(diff) > 2.2 && k.v < 4) inp.brake = false;
   // lined up for a trench: foot down for the jump, and a mushroom if it is going too slowly to make it
   if (band.hole) {
@@ -3577,6 +3929,14 @@ function think(r: Race, k: Kart, dt: number) {
   // (committed to a run across a bank, it does not lift halfway over)
   if (ai.goT > 0 && !hurt(k)) inp.brake = false;
   if (held && ai.backT === 0) inp.brake = k.v > (creep ? 2.5 : 0.3);
+  if (held && ai.backT === 0 && !Number.isNaN(xLane)) {
+    // (edging over at a crawl toward the lane the bus has left, steering hard for it)
+    const p = pointAt(t, k.s + xAt, xLane);
+    inp.steer = clamp(-wrapAngle(headingOf(p.x - k.x, p.z - k.z) - k.h) * 6, -1, 1);
+    inp.brake = k.v > 3;
+    inp.drift = false;
+    inp.hop = false;
+  }
   if (backOut && ai.backT === 0) {
     inp.brake = true;
     inp.steer = 0;
