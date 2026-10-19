@@ -171,7 +171,7 @@ const WATER_VERT = /* glsl */ `
   }`;
 
 const WATER_FRAG = /* glsl */ `
-  uniform float uTime, uFlow, uStreak, uLap, uReflOn, uFogLift;
+  uniform float uTime, uFlow, uStreak, uLap, uReflOn;
   uniform vec3 uDeep, uShallow, uFoam, uSun, uSunCol, uSkyLow, uSkyHigh, uHorizon;
   uniform sampler2D tNormal, tRefl;
   uniform mat4 uReflM;
@@ -275,7 +275,6 @@ const WATER_FRAG = /* glsl */ `
     c = mix(c, uFoam * 0.92, clamp(wFoam, 0.0, 1.0) * 0.85);
     c = mix(c, vec3(0.004, 0.015, 0.02), wEye);
     gl_FragColor = vec4(c, 1.0);
-    if (uFogLift > 0.5) gl_FragColor = vec4(refl, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>
@@ -714,7 +713,6 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     uTime: { value: 0 },
     uLap: { value: 1 },
     uReflOn: { value: 0 },
-    uFogLift: { value: 0 },
     uDeep: col(water.deep),
     uShallow: col(water.shallow),
     uFoam: col(water.foam),
@@ -1251,22 +1249,38 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   let fogLit = false;
 
   // ---------------------------------------------------------------------------------------------------------------
-  // The swell: each crest a line of whitecaps along the Bay Reach, rolling in from the Bay across the channel
+  // The swell: each crest a ridge of water along the Bay Reach, steeper on its leading face, breaking white along its top,
+  // rolling in from the Bay across the channel
   const CRESTS = 10;
   const crestPts = 24;
+  /** Across each crest: from the leading foot (in the way it rolls) over the top to the trailing foot: offset, height, color. */
+  const RIDGE: [number, number, number, number, number, number][] = [
+    [1.1, 0.03, 0.18, 0.4, 0.44, 0],
+    [0.45, 0.26, 0.42, 0.66, 0.68, 0.75],
+    [0, 0.42, 0.95, 0.97, 0.95, 1],
+    [-0.6, 0.32, 0.86, 0.9, 0.9, 0.9],
+    [-2.4, 0.03, 0.18, 0.4, 0.44, 0],
+  ];
+  const R = RIDGE.length;
   const crestGeo = new THREE.BufferGeometry();
-  const crestPos = new THREE.BufferAttribute(new Float32Array(CRESTS * (crestPts + 1) * 2 * 3), 3);
+  const crestPos = new THREE.BufferAttribute(new Float32Array(CRESTS * (crestPts + 1) * R * 3), 3);
   crestPos.setUsage(THREE.DynamicDrawUsage);
   crestGeo.setAttribute('position', crestPos);
   {
     const idx: number[] = [];
+    const colr: number[] = [];
     for (let c = 0; c < CRESTS; c++) {
-      const o = c * (crestPts + 1) * 2;
-      for (let k = 0; k < crestPts; k++) idx.push(o + 2 * k, o + 2 * k + 1, o + 2 * k + 2, o + 2 * k + 1, o + 2 * k + 3, o + 2 * k + 2);
+      const o = c * (crestPts + 1) * R;
+      for (let k = 0; k <= crestPts; k++) for (const row of RIDGE) colr.push(row[2], row[3], row[4], row[5]);
+      for (let k = 0; k < crestPts; k++) for (let j = 0; j < R - 1; j++) {
+        const a0 = o + k * R + j;
+        idx.push(a0, a0 + 1, a0 + R, a0 + 1, a0 + R + 1, a0 + R);
+      }
     }
     crestGeo.setIndex(idx);
+    crestGeo.setAttribute('color', new THREE.Float32BufferAttribute(colr, 4));
   }
-  const crestMesh = new THREE.Mesh(crestGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }));
+  const crestMesh = new THREE.Mesh(crestGeo, new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, emissive: 0x23303a }));
   crestMesh.frustumCulled = false;
   crestMesh.renderOrder = 3;
   if (r.swells.length) scene.add(crestMesh);
@@ -1516,10 +1530,11 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   shared.tRefl.value = rt.texture;
   const reflect = (renderer: T.WebGLRenderer, sc: T.Scene, camera: T.PerspectiveCamera) => {
     camera.layers.enable(FLAT);
-    if ((globalThis as unknown as { __noRefl?: boolean }).__noRefl) return shared.uReflOn.value = 0, undefined; // TEMP-DEBUG
     renderer.getDrawingBufferSize(size);
-    const w = Math.max(16, Math.round(size.x * REFLECT_RES));
-    const h = Math.max(16, Math.round(size.y * REFLECT_RES));
+    // (a phone's small screen gets a coarser reflection: it is blurred by the ripples anyway)
+    const res = Math.min(size.x, size.y) < 900 ? REFLECT_RES * 0.7 : REFLECT_RES;
+    const w = Math.max(16, Math.round(size.x * res));
+    const h = Math.max(16, Math.round(size.y * res));
     if (rt.width !== w || rt.height !== h) rt.setSize(w, h);
     camera.updateMatrixWorld();
     // (the camera's position and where it looks, mirrored in the plane y = WATER_Y)
@@ -1619,7 +1634,6 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
         const k = race.karts[me];
         plants.tick(clock, k ? windAt(race, k.s, race.time, lap) * 0.02 : 0);
       }
-      shared.uFogLift.value = (globalThis as unknown as { __dbg?: number }).__dbg ?? 0; // TEMP-DEBUG
       shared.uLap.value = lap;
       for (const tg of tongues) {
         const v = tg.f.tide && lap >= TIDE_LAP ? -tg.f.tongue![2] : tg.f.tongue![2];
@@ -1843,24 +1857,26 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
         let c = 0;
         for (const sw of race.swells) {
           if (lap < (sw.lap ?? 1) || lap > (sw.until ?? Infinity)) continue;
+          const dir = sw.dir ?? -1;
           for (const d of crestsAt(race, sw, race.time)) {
             if (c >= CRESTS) break;
+            // (taller as it gathers over the channel, and ragged along its length)
+            const gather = 0.55 + 0.45 * (1 - Math.min(1, Math.abs(d) / 25));
             for (let k = 0; k <= crestPts; k++) {
               const s = sw.s0 + 4 + ((sw.s1 - sw.s0 - 8) * k) / crestPts;
-              // (a ragged line: whitecaps, thicker as it gathers over the channel)
-              const w = 0.25 + 0.35 * (1 - Math.min(1, Math.abs(d) / 25)) + 0.15 * Math.sin(k * 2.3 + clock * 4);
-              const p0 = pointAt(t, s, d - w);
-              const p1 = pointAt(t, s, d + w);
-              const o = (c * (crestPts + 1) + k) * 2;
-              crestPos.setXYZ(o, p0.x, 0.09, p0.z);
-              crestPos.setXYZ(o + 1, p1.x, 0.09, p1.z);
+              const rag = 1 + 0.25 * Math.sin(k * 2.3 + clock * 3) + 0.12 * Math.sin(k * 5.1 - clock * 5);
+              RIDGE.forEach(([off, y], j) => {
+                const p = pointAt(t, s, d + dir * off * (0.8 + 0.4 * gather));
+                crestPos.setXYZ((c * (crestPts + 1) + k) * R + j, p.x, 0.04 + y * gather * rag, p.z);
+              });
             }
             c++;
           }
         }
         // (the rest folded away)
-        for (; c < CRESTS; c++) for (let k = 0; k <= crestPts; k++) for (const q of [0, 1]) crestPos.setXYZ((c * (crestPts + 1) + k) * 2 + q, 0, -10, 0);
+        for (; c < CRESTS; c++) for (let k = 0; k <= crestPts; k++) for (let j = 0; j < R; j++) crestPos.setXYZ((c * (crestPts + 1) + k) * R + j, 0, -10, 0);
         crestPos.needsUpdate = true;
+        crestGeo.computeVertexNormals();
       }
     },
   };

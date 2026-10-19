@@ -914,7 +914,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   }
   // (and on each post a white streamer that shows the wind: limp in still air, fluttering as a gust is about to blow,
   // standing straight out downwind while it blows)
-  const streamGeo = new THREE.BoxGeometry(0.09, 1, 0.02);
+  // (on the water a broader pennant of a streamer, so it reads across the marsh)
+  const streamGeo = new THREE.BoxGeometry(boat ? 0.2 : 0.09, 1, 0.02);
   streamGeo.translate(0, 0.5, 0);
   const streamers = lipPosts.length ? new THREE.InstancedMesh(streamGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }), lipPosts.length) : null;
   for (const p of lipPosts) p.windy = r.gusts.some((g) => deltaS(t, g.s0, p.s) >= 0 && deltaS(t, p.s, g.s1) >= 0);
