@@ -151,6 +151,15 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
       const f = m.fighters[fid];
       if (f && f.kind === 'remote') applyState(m, f, st);
     }
+    // the windows the host has broken: quietly, since any news of them has come and gone
+    for (const i of p.glass ?? []) if (i < m.broken.length) m.broken[i] = true;
+    // and its doors, all of them (shut past the end of the list), but not one whose news came in just now: this
+    // report may have set out before it
+    if (p.doors)
+      for (let i = 0; i < m.doors.length; i++) {
+        const st = p.doors[i] ?? 0;
+        if (m.doors[i] !== st && m.clock - m.doorAt[i] > 1) m.doors[i] = st;
+      }
   } else if (p.k === 'e') {
     if (!s.synced || (!me.isHost && from !== 0)) return m;
     for (const [origin, evs] of p.groups) {
@@ -221,7 +230,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
     let sent = s.sent.get(seat);
     if (!sent) s.sent.set(seat, (sent = []));
     const list = g ? statesFor(m, g, states, keys, sent, s.ticks, s.watching.get(g.id) ?? -1) : [];
-    out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list), fast, to: seat });
+    out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list, m.broken, m.doors), fast, to: seat });
   }
   // a guest that has only now started reporting may have missed pieces built before it was ready: here they all are
   for (const seat of s.fresh) if (present.includes(seat) && m.walls.size) for (const d of packEvents(me.round, [...m.walls.values()].filter((w) => w.dir >= 0).map((w): [number, NetEv] => [me.seat, pieceEv(w)]))) out.push({ d, fast: false, to: seat });

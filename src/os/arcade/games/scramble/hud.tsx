@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AMMO_BOX, ARMOR_CUT, ARMOR_NAMES, BOOST, FLARE_WAIT, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, SIP, THROWS, THROW_IDS, USES, USE_IDS, MAT_SPECS, PIECE_COST, WEAPONS, WEAPON_IDS, type Ammo, type ArmorKind, type GunClass, type Mat, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
+import { LEADER_MIN, VAULT_TIME } from './logic';
 import { CAMP, HALF, PAD, RIVER_HALF, ROAD_HALF, type Building, type Door, type GameMap } from './map';
 import type { Held, Plan } from './logic';
 
@@ -109,6 +110,30 @@ export function WeaponIcon({ w, size }: { w: Held | null; size?: number }) {
           <path d="M10 5.5v5M14 5.5v5M18 5.5v5M22 5.5v5" stroke="#e53935" strokeWidth="1.2" />
           <rect x="11" y="15" width="10" height="7.5" rx="1.5" fill="#fff3df" />
           <circle cx="16" cy="18.7" r="2" fill="#a3214a" />
+        </Svg>
+      );
+    case 'mirv':
+      // a red canister with a black band and three bomblets on top, and the scatter they make
+      return (
+        <Svg size={size}>
+          <rect x="10.5" y="12" width="11" height="15" rx="3" fill="#c0392b" />
+          <rect x="10.5" y="17.5" width="11" height="3" fill="#2b2d33" />
+          <circle cx="11.5" cy="9.5" r="2.6" fill="#6f9f45" />
+          <circle cx="16" cy="7.5" r="2.6" fill="#6f9f45" />
+          <circle cx="20.5" cy="9.5" r="2.6" fill="#6f9f45" />
+          <path d="M4 6l2 1.5M28 6l-2 1.5M3.5 12.5h2.4M28.5 12.5h-2.4" stroke="#ffb07a" strokeWidth="1.4" strokeLinecap="round" />
+        </Svg>
+      );
+    case 'stun':
+      // a pale blue can with white bands, a ring pull, and the flash bursting off it
+      return (
+        <Svg size={size}>
+          <path d="M16 2.5v3.5M8 5.5l2 3M24 5.5l-2 3M4.5 12.5h3M27.5 12.5h-3" stroke="#fff6c9" strokeWidth="1.6" strokeLinecap="round" />
+          <rect x="11" y="11" width="10" height="17" rx="2.5" fill="#9fb8d6" />
+          <rect x="11" y="14" width="10" height="2.2" fill="#fff" />
+          <rect x="11" y="23" width="10" height="2.2" fill="#fff" />
+          <rect x="14" y="8" width="4" height="3.5" rx="1" fill="#9aa3ad" />
+          <circle cx="20" cy="8.5" r="2.2" fill="none" stroke="#c9d0d8" strokeWidth="1.3" />
         </Svg>
       );
     case 'bush':
@@ -432,6 +457,41 @@ export function ArmorIcon({ kind, size, lv = 1 }: { kind: ArmorKind; size?: numb
   );
 }
 
+/** A ghillie suit: an egg shape covered in leafy tufts. */
+export function GhillieIcon({ size }: { size?: number }) {
+  return (
+    <Svg size={size}>
+      <path d="M16 4c-5 0-8.5 7.6-8.5 13.2a8.5 8.5 0 0 0 17 0C24.5 11.6 21 4 16 4z" fill="#4c7a2c" />
+      {[
+        [10, 15],
+        [14, 10],
+        [19, 9.5],
+        [22, 15],
+        [12, 21],
+        [17, 18],
+        [21, 22],
+        [15, 25],
+      ].map(([x, y]) => (
+        <path key={`${x},${y}`} d={`M${x - 2.5} ${y + 1.5}q2.5-4 5 0q-2.5 1.6-5 0z`} fill={(x + y) % 3 ? '#7a9a3a' : '#3d6624'} />
+      ))}
+      <path d="M13 4.5l1-3M16 4l0-3.2M19 4.5l-1-3" stroke="#6b7f3a" strokeWidth="1.3" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+/** The kill leader's crown. */
+export function CrownIcon({ size }: { size?: number }) {
+  return (
+    <Svg size={size}>
+      <path d="M5 23l-1.5-12 6.5 5 6-9 6 9 6.5-5L27 23z" fill="#ffc83d" stroke="#a8691c" strokeWidth="1.2" strokeLinejoin="round" />
+      <rect x="5" y="23" width="22" height="4" rx="1" fill="#ffd23d" stroke="#a8691c" strokeWidth="1.2" />
+      <circle cx="16" cy="18.5" r="1.8" fill="#e53935" />
+      <circle cx="10" cy="20" r="1.3" fill="#3f8cff" />
+      <circle cx="22" cy="20" r="1.3" fill="#3f8cff" />
+    </Svg>
+  );
+}
+
 export function WoodIcon({ size }: { size?: number }) {
   return (
     <Svg size={size}>
@@ -532,7 +592,7 @@ export function EggIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-const MAP_ROOF: Record<Building['kind'], string> = { house: '#b5523b', farm: '#8b2f23', shed: '#7a5534', warehouse: '#6f7c88', container: '#4f6d8f', ruin: '#a39e93', coop: '#f5b301', diner: '#d64545', mill: '#7a4a2a' };
+const MAP_ROOF: Record<Building['kind'], string> = { house: '#b5523b', farm: '#8b2f23', shed: '#7a5534', warehouse: '#6f7c88', container: '#4f6d8f', ruin: '#a39e93', coop: '#f5b301', diner: '#d64545', mill: '#7a4a2a', police: '#2b3f66', bank: '#4f7d5c' };
 
 /**
  * A doorway on the map: a light tab through the wall that pokes out the way in, or a dark band across a shipping
@@ -551,6 +611,16 @@ function DoorMark({ b, d }: { b: Building; d: Door }) {
   const hd = d.ox ? wide / 2 : (hi - lo) / 2;
   return <rect x={x - hw} y={z - hd} width={hw * 2} height={hd * 2} fill={open ? '#1d2025' : b.kind === 'ruin' ? '#e4dccb' : '#fff6d6'} />;
 }
+
+/** Every window as a light blue mark along its wall, a little wider and thicker than the opening, as one path. */
+const windowMarks = (map: GameMap) =>
+  map.windows
+    .map((p) => {
+      const hw = p.hw + (p.ox ? 0.6 : 0.2);
+      const hd = p.hd + (p.ox ? 0.2 : 0.6);
+      return `M${(p.x - hw).toFixed(1)} ${(p.z - hd).toFixed(1)}h${(hw * 2).toFixed(1)}v${(hd * 2).toFixed(1)}h${(-hw * 2).toFixed(1)}Z`;
+    })
+    .join('');
 
 /** Many round dots as one path (hundreds of trees in one element, not hundreds of elements). */
 const dots = <P extends { x: number; z: number }>(list: P[], r: (p: P) => number) =>
@@ -597,6 +667,7 @@ export function IslandArt({ map }: { map: GameMap }) {
         <rect key={`b${i}`} x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={MAP_ROOF[b.kind]} stroke={b.kind === 'ruin' ? 'none' : '#f1e6d2'} strokeWidth="1" />
       ))}
       {map.buildings.map((b, i) => b.doors.map((d, k) => <DoorMark key={`d${i}-${k}`} b={b} d={d} />))}
+      {map.windows.length > 0 && <path d={windowMarks(map)} fill="#bfe6f5" />}
       {map.cars.map((c, i) => (
         <rect key={`c${i}`} x={c.x - c.hw} y={c.z - c.hd} width={c.hw * 2} height={c.hd * 2} rx="0.6" fill={c.truck ? '#4a4e55' : '#e4e7ec'} stroke="#2b2d33" strokeWidth="0.5" />
       ))}
@@ -749,6 +820,8 @@ const THROW_HELP: Record<ThrowId, string> = {
   sauce: 'Splashes a burning puddle that hurts anyone standing in it, you too.',
   jam: `A sticky puddle that lasts ${THROWS.jam.time} seconds: anyone wading through it slows to a crawl.`,
   bush: `Grows a bush where it lands for ${THROWS.bush.time} seconds. Stand in it and nobody sees you from a distance until you fire.`,
+  mirv: `Goes off ${THROWS.mirv.fuse} seconds after you throw it, then scatters ${THROWS.mirv.split?.n} bomblets that each go off a moment later. Clears a room.`,
+  stun: `A blinding flash ${THROWS.stun.fuse} seconds after you throw it. Every egg that can see it (not you) is dazed for up to ${THROWS.stun.time} seconds: slowed, and its screen washed out.`,
 };
 const USE_HELP: Record<UseId, string> = {
   bandage: `+${USES.bandage.hp} health, up to ${USES.bandage.hpCap}.`,
@@ -796,7 +869,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>+, shield, coffee</dt>
               <dd>Heal, top up your shield, or drink a coffee. The right item is picked for you (a golden egg tart when you're nearly cracked, a smoothie after the minis)</dd>
               <dt>pick up</dt>
-              <dd>Shows up when you stand on something or next to a chest or a fridge</dd>
+              <dd>Shows up when you stand on something or next to a chest, a fridge, a locker or a door: tap it to pick up, open, or open and shut the door</dd>
             </>
           ) : (
             <>
@@ -813,7 +886,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>{EDIT_KEY}</dt>
               <dd>Edit the wall of yours you face: a doorway, then a window, then solid again</dd>
               <dt>E</dt>
-              <dd>Pick up, swap, open chests, fridges and supply drops</dd>
+              <dd>Pick up, swap, open chests, fridges, lockers and supply drops, and open and shut doors</dd>
               <dt>R</dt>
               <dd>Reload</dd>
               <dt>1 2 3 4</dt>
@@ -854,6 +927,12 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           <li>
             <b>Supply drops.</b> Before the storm moves each of the first three times, two crates float down under balloons inside the circle it will close to (one more before the fourth time), each with a beam of light over it. They're full of epic and legendary gear. Fire a flare gun to call one more down near you.
           </li>
+          <li>
+            <b>The kill leader.</b> The egg with the most eliminations ({LEADER_MIN} at least) wears a gold crown everyone can see, and shows on the big map. Everyone hears when it changes hands.
+          </li>
+          <li>
+            <b>Listen.</b> You hear the footsteps of eggs walking nearby, even ones you can't see. When your shots land you hear a soft tick and see a hit mark, red when it cracks the egg. Hover over loot (or stand by it) to see what it is.
+          </li>
         </ul>
       </section>
       <section>
@@ -889,7 +968,10 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Towns and sites.</b> Every town, farm, camp and yard has a name. They're all on the big map, the little map shows the one you're in, and the name comes up when you walk or land in. Dirt roads link the places near each other, and you walk a little quicker on them.
           </li>
           <li>
-            <b>Houses, farmhouses and sheds.</b> Loot inside, often a chest. The roof lifts off while you're in, and nobody outside can see you.
+            <b>Houses, farmhouses and sheds.</b> Loot inside, often a chest, and a chest of drawers and a bookshelf to go through (a bookshelf mostly holds books). The roof lifts off while you're in, and nobody outside can see you unless they look in through an open door or a window.
+          </li>
+          <li>
+            <b>Windows.</b> Houses, farmhouses, sheds, diners and warehouses have windows (light blue marks along the walls on the map). You can see through the glass, but it stops bullets and throws: the first shot, a swing or a blast nearby breaks it, and then bullets and throws fly through. Nobody climbs through a window, broken or not. Stand by one and the roof thins so you can look in.
           </li>
           <li>
             <b>Furniture.</b> Tables, beds and diner booths only stop your feet; kitchen counters, shelves and flour sacks stop bullets too. Rugs and chairs are just there to look at.
@@ -910,10 +992,19 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Cars and trucks.</b> Parked in driveways, by the warehouses and the container yards. Solid cover: nothing gets through one.
           </li>
           <li>
-            <b>Doors.</b> Every way in has a bright frame, a lamp, a porch and an awning sticking out from the roof, and shows as a light tab on the map. Walk up to a door, or line up with one, and the roof thins so you can peek in.
+            <b>Doors.</b> Every way in has a bright frame, a lamp, a porch and an awning sticking out from the roof, and shows as a light tab on the map. Most have a door, shut to begin with: {touch ? 'tap' : 'press E by'} it to open it (it swings away from you) or shut it again. A shut door stops eggs, bullets and the view; shoot or smash one enough and it comes off its hinges. Walk up to an open door, or line up with one, and the roof thins so you can peek in.
           </li>
           <li>
-            <b>Warehouses.</b> Full of crates, with a chest in a corner and barrels outside.
+            <b>The police station.</b> A lobby with a desk and a row of lockers, a jail cell behind bars (bullets and the eye go through bars, eggs don't) and a stash room with a chest of good guns and armor. The lockers hold guns, armor, ammo and stun grenades. It goes by its own name on the map.
+          </li>
+          <li>
+            <b>The bank.</b> The vault across the back has a heavy steel door: open it and it takes {VAULT_TIME} seconds to grind open (everyone nearby sees the lamp flashing), and it never breaks or shuts. Inside are two safes full of legendary loot and deposit boxes with smaller things. It goes by its own name on the map.
+          </li>
+          <li>
+            <b>Lockers.</b> In the police station, the warehouses and some sheds. Open one like a chest for what's inside.
+          </li>
+          <li>
+            <b>Warehouses.</b> Full of crates, with a chest in a corner, a pair of lockers and barrels outside.
           </li>
           <li>
             <b>Shipping containers.</b> Rows of them, each open at one end, where the doors swing wide and it's dark inside (a dark band on the map). Good cover, and sometimes something inside.
@@ -1036,6 +1127,12 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <ArmorIcon kind="vest" size={30} lv={2} />
             <span>
               <b>Vests.</b> {armorLine('vest')} The two cuts multiply.
+            </span>
+          </li>
+          <li>
+            <GhillieIcon size={30} />
+            <span>
+              <b>Ghillie suit.</b> Rare. Stand still out on the grass and nobody sees you from more than a few steps away until you move or fire. Bullets still hit you.
             </span>
           </li>
         </ul>

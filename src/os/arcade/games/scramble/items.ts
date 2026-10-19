@@ -153,7 +153,7 @@ export const PAN_ARC = 1;
 // ---------------------------------------------------------------------------------------------------------------------
 // Throwables.
 
-export const THROW_IDS = ['grenade', 'impulse', 'flour', 'sauce', 'jam', 'bush'] as const;
+export const THROW_IDS = ['grenade', 'impulse', 'flour', 'sauce', 'jam', 'bush', 'mirv', 'stun'] as const;
 export type ThrowId = (typeof THROW_IDS)[number];
 export const isThrow = (v: unknown): v is ThrowId => THROW_IDS.includes(v as ThrowId);
 
@@ -171,8 +171,10 @@ export type ThrowSpec = {
   dps?: number;
   /** An impulse egg's shove (meters a second at the middle). */
   push?: number;
-  /** Jam: the share of its pace an egg keeps wading through it. */
+  /** Jam, and a stun grenade's daze: the share of its pace an egg keeps. */
   slow?: number;
+  /** A MIRV grenade: how many bomblets it splits into, how far they scatter, and each one's blast. */
+  split?: { n: number; reach: number; radius: number; dmg: number };
 };
 
 export const THROWS: Record<ThrowId, ThrowSpec> = {
@@ -182,6 +184,9 @@ export const THROWS: Record<ThrowId, ThrowSpec> = {
   impulse: { name: 'impulse egg', plural: 'impulse eggs', carry: 3, radius: 5.5, fuse: 1.2, dmg: 8, push: 22 },
   jam: { name: 'jam jar', plural: 'jam jars', carry: 2, radius: 3.6, time: 8, slow: 0.35 },
   bush: { name: 'bush in a can', plural: 'bushes in a can', carry: 2, radius: 1.9, time: 30 },
+  mirv: { name: 'MIRV grenade', plural: 'MIRV grenades', carry: 2, radius: 3.5, fuse: 1.8, dmg: 40, split: { n: 6, reach: 5.5, radius: 2.8, dmg: 38 } },
+  // a stun grenade's flash dazes every egg that sees it within `radius`, for up to `time` seconds (less the farther off)
+  stun: { name: 'stun grenade', plural: 'stun grenades', carry: 3, radius: 9, fuse: 1.6, time: 3.5, slow: 0.55 },
 };
 /** How far a throw lands (meters), how fast it flies, and the wait before the next one. */
 export const THROW = { min: 3, max: 20, speed: 17, cool: 0.7 };
@@ -303,15 +308,17 @@ export type LootDef =
   | { kind: 'pack'; lv: number }
   | { kind: 'helmet'; lv: number }
   | { kind: 'vest'; lv: number }
+  | { kind: 'ghillie' }
   | { kind: 'wood'; n: number }
   | { kind: 'stone'; n: number }
   | { kind: 'metal'; n: number };
 
 /**
  * Where loot is found: on the floor, in a crate, a chest, the Golden Coop's chest, a supply drop, a fridge (healing
- * and food) or a hay bale (often nothing).
+ * and food), a hay bale (often nothing), a chest of drawers or a bookshelf (small things, a bookshelf often nothing),
+ * a police locker (a gun, armor or ammo), the police station's stash, a bank's deposit box or a bank safe (legendary).
  */
-export type LootTier = 'floor' | 'crate' | 'chest' | 'gold' | 'supply' | 'fridge' | 'hay';
+export type LootTier = 'floor' | 'crate' | 'chest' | 'gold' | 'supply' | 'fridge' | 'hay' | 'drawer' | 'books' | 'locker' | 'police' | 'deposit' | 'safe';
 
 const RARITY_ODDS: Record<LootTier, number[]> = {
   floor: [46, 30, 16, 6, 2],
@@ -321,14 +328,22 @@ const RARITY_ODDS: Record<LootTier, number[]> = {
   gold: [0, 0, 0, 45, 55],
   fridge: [46, 30, 16, 6, 2],
   hay: [46, 30, 16, 6, 2],
+  drawer: [56, 30, 11, 3, 0],
+  books: [46, 30, 16, 6, 2],
+  locker: [10, 34, 34, 16, 6],
+  police: [0, 20, 40, 28, 12],
+  deposit: [0, 28, 40, 22, 10],
+  safe: [0, 0, 0, 25, 75],
 };
 const GUN_ODDS: Record<WeaponId, number> = { pistol: 13, revolver: 7, flare: 1.5, smg: 12, micro: 7, hsmg: 7, rifle: 13, burst: 8, marksman: 6, scout: 5, lmg: 4, minigun: 3, shotgun: 11, auto: 6, double: 6, sniper: 5, crossbow: 4, launcher: 4 };
-/** Supply drops and the golden chest never hold a flare gun: they are what it calls. */
+/** Supply drops, the golden chest and bank safes never hold a flare gun: they are what it calls. */
 const TOP_GUN_ODDS: Partial<Record<WeaponId, number>> = { ...GUN_ODDS, flare: 0 };
 /** What a fridge holds: mostly things to eat and drink and patch up with. */
 const FRIDGE_ODDS: Record<UseId, number> = { bandage: 28, medkit: 13, mini: 20, shield: 11, coffee: 20, smoothie: 14, tart: 1 };
 const MELEE_ODDS: Partial<Record<MeleeId, number>> = { whisk: 22, knife: 20, cleaver: 18, pan: 22, pin: 18 };
-const THROW_ODDS: Record<ThrowId, number> = { grenade: 36, impulse: 16, flour: 18, sauce: 20, jam: 14, bush: 12 };
+const THROW_ODDS: Record<ThrowId, number> = { grenade: 36, impulse: 16, flour: 18, sauce: 20, jam: 14, bush: 12, mirv: 9, stun: 14 };
+/** What the police keep to throw: mostly stun grenades. */
+const POLICE_THROWS: Partial<Record<ThrowId, number>> = { stun: 60, grenade: 25, mirv: 15 };
 const USE_ODDS: Record<UseId, number> = { bandage: 34, medkit: 10, mini: 24, shield: 13, coffee: 12, smoothie: 10, tart: 1 };
 /** A chest's extra consumable is more often a good one, and a golden egg tart now and then. */
 const CHEST_USE_ODDS: Record<UseId, number> = { ...USE_ODDS, medkit: 14, shield: 16, smoothie: 13, tart: 5 };
@@ -346,13 +361,14 @@ function rollRarity(rng: Rng, tier: LootTier) {
 
 /** A gun with ammo for it. */
 function gunDrop(rng: Rng, tier: LootTier): LootDef[] {
-  const w = weighted(rng, tier === 'gold' || tier === 'supply' ? TOP_GUN_ODDS : GUN_ODDS);
+  const top = tier === 'gold' || tier === 'supply' || tier === 'safe';
+  const w = weighted(rng, top ? TOP_GUN_ODDS : GUN_ODDS);
   // a flare gun is always legendary and needs no ammo; launchers are never common, so one is always worth the walk
   if (w === 'flare') return [{ kind: 'gun', w, r: MAX_RARITY }];
   const r = w === 'launcher' ? Math.max(2, rollRarity(rng, tier)) : rollRarity(rng, tier);
   const a = WEAPONS[w].ammo;
   // a minigun empties a box in no time, so it comes with a second
-  const boxes = (tier === 'gold' || tier === 'supply' ? 3 : tier === 'chest' ? 2 : 1) + (w === 'minigun' ? 1 : 0);
+  const boxes = (top ? 3 : tier === 'chest' || tier === 'police' ? 2 : 1) + (w === 'minigun' ? 1 : 0);
   return [
     { kind: 'gun', w, r },
     { kind: 'ammo', a, n: AMMO_BOX[a] * boxes },
@@ -371,9 +387,9 @@ function useDrop(rng: Rng, odds: Record<UseId, number> = USE_ODDS): LootDef {
   return { kind: 'use', w, n };
 }
 
-function throwDrop(rng: Rng): LootDef {
-  const w = weighted(rng, THROW_ODDS);
-  return { kind: 'throw', w, n: w === 'grenade' && rng() < 0.4 ? 2 : 1 };
+function throwDrop(rng: Rng, odds: Partial<Record<ThrowId, number>> = THROW_ODDS): LootDef {
+  const w = weighted(rng, odds);
+  return { kind: 'throw', w, n: (w === 'grenade' || w === 'stun') && rng() < 0.4 ? 2 : 1 };
 }
 
 const levelDrop = (rng: Rng, kind: 'scope' | 'pack', better: boolean): LootDef => {
@@ -391,6 +407,12 @@ const ARMOR_ODDS: Record<LootTier, number[]> = {
   gold: [0, 0, 0, 100],
   fridge: [0, 62, 32, 6],
   hay: [0, 62, 32, 6],
+  drawer: [0, 62, 32, 6],
+  books: [0, 62, 32, 6],
+  locker: [0, 30, 50, 20],
+  police: [0, 10, 50, 40],
+  deposit: [0, 12, 56, 32],
+  safe: [0, 0, 0, 100],
 };
 
 /** A helmet or a vest, as good as the place it's found. */
@@ -429,14 +451,48 @@ export function rollLoot(rng: Rng, tier: LootTier): LootDef[] {
     return [a, b].map((w): LootDef => ({ kind: 'use', w, n: w === 'bandage' ? 3 : w === 'mini' ? 2 : 1 }));
   }
   if (tier === 'hay') return rng() < 0.45 ? [] : rollLoot(rng, 'floor');
+  if (tier === 'safe') {
+    // a legendary gun more often than not, ammo to spare, the best healing and the best armor now and then
+    const out = gunDrop(rng, 'safe');
+    const treat = rng();
+    out.push(treat < 0.4 ? { kind: 'use', w: 'tart', n: 1 } : treat < 0.7 ? { kind: 'use', w: 'shield', n: 2 } : { kind: 'use', w: 'medkit', n: 2 });
+    if (rng() < 0.4) out.push(armorDrop(rng, 'safe'));
+    return out;
+  }
+  if (tier === 'police') {
+    // the stash: a good gun with plenty of ammo, armor, and something to throw (mostly stun grenades)
+    const out = gunDrop(rng, 'police');
+    out.push(armorDrop(rng, 'police'));
+    out.push(rng() < 0.7 ? throwDrop(rng, POLICE_THROWS) : ammoDrop(rng));
+    if (rng() < 0.12) out.push({ kind: 'ghillie' });
+    return out;
+  }
+  if (tier === 'locker') {
+    // a gun with its ammo, a piece of armor, or ammo; often a stun grenade on the shelf besides
+    const pick = weighted(rng, { gun: 45, armor: 35, ammo: 20 });
+    const out = pickDrop(rng, 'locker', pick);
+    if (rng() < 0.3) out.push(throwDrop(rng, POLICE_THROWS));
+    return out;
+  }
+  if (tier === 'drawer') {
+    // odds and ends: ammo, a bandage or a mini, now and then a pistol or a scope
+    const pick = weighted(rng, { ammo: 30, use: 34, throw: 14, scope: 5, gun: 8, wood: 6, none: 3 });
+    return pick === 'none' ? [] : pickDrop(rng, 'drawer', pick);
+  }
+  if (tier === 'books') {
+    // mostly just books, but now and then something tucked behind them
+    if (rng() < 0.4) return [];
+    return pickDrop(rng, 'books', weighted(rng, { use: 38, throw: 26, scope: 14, pack: 12, ghillie: 4, gun: 6 }));
+  }
+  if (tier === 'deposit') return pickDrop(rng, 'deposit', weighted(rng, { use: 28, throw: 18, scope: 16, pack: 16, armor: 12, gun: 10 }));
   if (tier === 'chest') {
     const out = gunDrop(rng, 'chest');
     const extra = rng();
-    out.push(extra < 0.4 ? useDrop(rng, CHEST_USE_ODDS) : extra < 0.6 ? throwDrop(rng) : extra < 0.85 ? armorDrop(rng, 'chest') : levelDrop(rng, rng() < 0.5 ? 'scope' : 'pack', false));
+    out.push(extra < 0.4 ? useDrop(rng, CHEST_USE_ODDS) : extra < 0.6 ? throwDrop(rng) : extra < 0.83 ? armorDrop(rng, 'chest') : extra < 0.96 ? levelDrop(rng, rng() < 0.5 ? 'scope' : 'pack', false) : { kind: 'ghillie' });
     out.push({ kind: 'wood', n: 30 });
     return out;
   }
-  const pick = weighted(rng, tier === 'crate' ? { gun: 37, ammo: 10, use: 19, throw: 11, melee: 5, scope: 4, pack: 4, armor: 9, wood: 4 } : { gun: 42, ammo: 12, use: 17, throw: 10, melee: 5, scope: 3, pack: 3, armor: 8, wood: 4 });
+  const pick = weighted(rng, tier === 'crate' ? { gun: 37, ammo: 10, use: 19, throw: 11, melee: 5, scope: 4, pack: 4, armor: 9, wood: 4, ghillie: 1.2 } : { gun: 42, ammo: 12, use: 17, throw: 10, melee: 5, scope: 3, pack: 3, armor: 8, wood: 4, ghillie: 0.6 });
   const out = pickDrop(rng, tier, pick);
   // most crates hold a box of ammo besides
   if (tier === 'crate' && pick !== 'ammo' && rng() < 0.65) out.push(ammoDrop(rng));
@@ -460,6 +516,8 @@ function pickDrop(rng: Rng, tier: LootTier, pick: string): LootDef[] {
       return [levelDrop(rng, pick as 'scope' | 'pack', false)];
     case 'armor':
       return [armorDrop(rng, tier)];
+    case 'ghillie':
+      return [{ kind: 'ghillie' }];
     default:
       return [{ kind: 'wood', n: 20 }];
   }
@@ -490,6 +548,8 @@ export function lootName(def: LootDef) {
     case 'helmet':
     case 'vest':
       return `${ARMOR_NAMES[def.kind][clampInt(def.lv, 1, MAX_ARMOR)]} (level ${clampInt(def.lv, 1, MAX_ARMOR)} ${def.kind})`;
+    case 'ghillie':
+      return 'ghillie suit';
     case 'wood':
     case 'stone':
     case 'metal':
@@ -542,6 +602,8 @@ export function parseLoot(v: unknown): LootDef | null {
       const k = n(d.n, MAT_MAX);
       return k === null ? null : { kind: d.kind, n: k };
     }
+    case 'ghillie':
+      return { kind: 'ghillie' };
     default:
       return null;
   }

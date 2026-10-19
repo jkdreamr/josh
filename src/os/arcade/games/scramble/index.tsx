@@ -4,14 +4,20 @@ import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
 import {
   COUNTDOWN,
+  DOOR_GONE,
+  DOOR_OPENING,
+  DOOR_SHUT,
   FIGHTER_COLORS,
+  F_STUN,
   LEVELS,
   MAX_FIGHTERS,
   PLANS,
   SLOT_MELEE,
   SLOT_THROW,
+  VAULT_TIME,
   aliveCount,
   angleDiff,
+  camouflaged,
   concealed,
   createMatch,
   editable,
@@ -30,14 +36,15 @@ import {
   type Fighter,
   type Input,
   type Level,
+  type LootItem,
   type Match,
   type Plan,
 } from './logic';
 import { configOf, parsePacket, type Bots } from './net';
 import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Session } from './session';
-import { ARMOR_NAMES, MATS, MAT_MAX, MELEE, PIECE_COST, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, ammoCap, isMelee, isThrow, isWeapon, lootName, reloadOf, type Ammo, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
-import { HALF, SUPPLY_FALL, placeAt } from './map';
-import { AmmoIcon, ArmorIcon, EDIT_KEY, EditIcon, EggIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PackIcon, PieceIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
+import { ARMOR_NAMES, MATS, MAT_MAX, MELEE, PIECE_COST, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, ammoCap, isMelee, isThrow, isWeapon, legendary, lootName, reloadOf, type Ammo, type LootDef, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
+import { HALF, SUPPLY_FALL, placeAt, type ContainerKind } from './map';
+import { AMMO_FILL, AmmoIcon, ArmorIcon, CrownIcon, EDIT_KEY, EditIcon, EggIcon, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PackIcon, PieceIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
 import { meta } from './meta';
 import './scramble.css';
 
@@ -70,6 +77,34 @@ const calmMotion = () => (calmed ??= typeof matchMedia === 'function' && matchMe
 const tossReach = (len: number) => THROW.min + Math.max(0, Math.min(1, (len - 12) / (STICK_R - 12))) * (THROW.max - THROW.min);
 /** Seconds a touch throw let go of too soon after the last one waits to go. */
 const TOSS_WAIT = 0.8;
+/** Loot named on screen at once: the nearest few by your feet, and the one the mouse is over. */
+const LABELS = 5;
+/** How tall a loot name is on screen, with a little gap. */
+const LABEL_H = 20;
+/** What the interact key says it will open. */
+const OPEN_TEXT: Partial<Record<ContainerKind, string>> = { supply: 'open supply drop', fridge: 'open the fridge', drawer: 'open the drawers', books: 'search the bookshelf', locker: 'open the locker', safe: 'open the safe', deposit: 'open the deposit box' };
+/** The color a piece of loot's name shows in: its rarity's (or its level's), gold for the best. */
+function lootColor(def: LootDef) {
+  if (legendary(def)) return RARITY_COLORS[4];
+  switch (def.kind) {
+    case 'gun':
+      return RARITY_COLORS[def.r];
+    case 'scope':
+    case 'pack':
+    case 'helmet':
+    case 'vest':
+      return RARITY_COLORS[Math.min(4, def.lv + 1)];
+    case 'ammo':
+      return AMMO_FILL[def.a];
+    case 'throw':
+    case 'ghillie':
+      return RARITY_COLORS[3];
+    case 'melee':
+      return RARITY_COLORS[2];
+    default:
+      return '#f4f5f7';
+  }
+}
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
@@ -232,6 +267,11 @@ type Hud = {
   low: boolean;
   /** Warming up at a campfire. */
   warm: boolean;
+  /** Hidden from anyone more than a few steps off (in cover, or still in a ghillie suit), and wearing a ghillie suit. */
+  hidden: boolean;
+  ghillie: boolean;
+  /** The kill leader's name (or 'you') and kills, or null. */
+  leader: { name: string; kills: number; mine: boolean } | null;
   /** The place just walked (or landed) into, while its name is up, and the place the egg we see is in. */
   arrive: string | null;
   where: string | null;
@@ -242,9 +282,9 @@ type Hud = {
   out: string | null;
   mine: boolean;
 };
-const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats']);
+const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader']);
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
@@ -268,6 +308,7 @@ function causeName(w: Cause) {
   if (w === 'left') return '';
   if (w === 'sauce') return 'hot sauce';
   if (w === 'grenade' || w === 'barrel') return withA(w);
+  if (w === 'mirv') return withA('MIRV grenade');
   if (w === 'impulse') return withA('impulse egg');
   if (isMelee(w)) return withA(MELEE[w].name);
   return withA(WEAPONS[w].name);
@@ -347,6 +388,14 @@ function Play({ mode }: { mode: Mode }) {
   const pops = useRef<Pop[]>(Array.from({ length: 24 }, () => ({ el: null, x: 0, y: 0, z: 0, age: 9, live: false })));
   const popAt = useRef(0);
   const tags = useRef(new Map<number, HTMLDivElement>());
+  // hit marks where our shots land, the names of loot near us, and the wash of a stun grenade's flash
+  const marks = useRef<Pop[]>(Array.from({ length: 6 }, () => ({ el: null, x: 0, y: 0, z: 0, age: 9, live: false })));
+  const markAt = useRef(0);
+  const labels = useRef<(HTMLDivElement | null)[]>([]);
+  const dazeEl = useRef<HTMLDivElement | null>(null);
+  /** Meters each egg has walked since its last footstep, and how long until the next one may sound. */
+  const strides = useRef(new Map<number, number>());
+  const stepGap = useRef(0);
 
   const buzz = (ms: number) => {
     if (!shellRef.current.touch) return;
@@ -659,6 +708,7 @@ function Play({ mode }: { mode: Mode }) {
         v?.react(e, m, focus);
         if (live && o) share(n, e, o.seat);
       }
+      footsteps(m, focus, dt);
       // the name goes up on walking or landing into a named place (not again for one we only just stepped out of)
       const here = me && me.phase === 'ground' ? placeAt(m.map, me.x, me.z) : -1;
       const pl = placeRef.current;
@@ -748,6 +798,38 @@ function Play({ mode }: { mode: Mode }) {
   function addFeed(text: string, mine: boolean) {
     const id = Date.now() + Math.random();
     setFeed((f) => [...f.slice(-4), { id, text, mine, until: clock.current + 6 }]);
+  }
+
+  /** A hit mark over where our shot landed (red when it cracked the egg). */
+  function hitMark(x: number, z: number, kill: boolean, y = 0) {
+    const p = marks.current[markAt.current];
+    markAt.current = (markAt.current + 1) % marks.current.length;
+    if (!p.el) return;
+    Object.assign(p, { x, y: y + 1.1, z, age: 0, live: true });
+    p.el.classList.toggle('is-kill', kill);
+  }
+
+  /** Footsteps of the eggs walking near the one we watch, seen or not: a soft scuff every couple of meters, louder the nearer. */
+  function footsteps(m: Match, focus: number, dt: number) {
+    const eye = m.fighters[focus];
+    stepGap.current = Math.max(0, stepGap.current - dt);
+    if (!eye || eye.phase !== 'ground' || net.current.over) return;
+    for (const f of m.fighters) {
+      if (f.phase !== 'ground') continue;
+      const d = Math.hypot(f.x - eye.x, f.z - eye.z);
+      const speed = Math.hypot(f.vx, f.vz);
+      if (d > 22 || speed < 1.2) continue;
+      const walked = (strides.current.get(f.id) ?? 0) + speed * dt;
+      strides.current.set(f.id, walked >= 1.9 ? 0 : walked);
+      if (walked < 1.9 || stepGap.current > 0) continue;
+      stepGap.current = 0.05;
+      const k = f === eye ? 0.3 : Math.max(0, 1 - d / 22);
+      if (f.wet) sfx.noise(0.07, 0.06 * k);
+      else {
+        sfx.noise(0.025, 0.05 * k);
+        sfx.tone({ freq: 110, to: 70, dur: 0.04, type: 'sine', vol: 0.06 * k });
+      }
+    }
   }
 
   /** A damage number popping up over a hit, `y` up from the ground (the egg's height up on something built). */
@@ -919,7 +1001,9 @@ function Play({ mode }: { mode: Mode }) {
       case 'hit':
         if (e.f === m.me) {
           popNumber(e.x, e.z, String(Math.round(e.took)), e.shield, e.took >= 40, m.fighters[e.to]?.y ?? 0);
-          sfx.tone({ freq: e.shield ? 1500 : 1100, dur: 0.035, type: 'triangle', vol: 0.1 });
+          hitMark(e.x, e.z, false, m.fighters[e.to]?.y ?? 0);
+          // a soft tick that it landed (higher off a shield)
+          sfx.tone({ freq: e.shield ? 1600 : 1200, to: e.shield ? 1350 : 950, dur: 0.045, type: 'sine', vol: 0.1 });
         }
         break;
       case 'hurt':
@@ -933,14 +1017,65 @@ function Play({ mode }: { mode: Mode }) {
       case 'smash':
         if (mine) sfx.tone({ freq: 240, to: 180, dur: 0.05, type: 'square', vol: 0.06 });
         break;
+      case 'door': {
+        const s = m.map.slabs[e.i];
+        const k = !s ? 0 : e.f === m.me ? 1 : near(s.x, s.z);
+        if (k <= 0.05) break;
+        if (e.s === DOOR_GONE) {
+          // splintered off its hinges
+          sfx.noise(0.25, 0.22 * k);
+          sfx.tone({ freq: 160, to: 60, dur: 0.25, type: 'sawtooth', vol: 0.08 * k });
+        } else if (e.s === DOOR_OPENING) {
+          // the vault's alarm, and its bolts grinding back
+          for (let i = 0; i < 5; i++) sfx.tone({ freq: 880, to: 640, dur: 0.22, type: 'square', vol: 0.05 * k, delay: i * 0.45 });
+          sfx.noise(0.8, 0.07 * k);
+          if (e.f === m.me) say('the vault is opening', 3);
+        } else if (s?.vault) sfx.tone({ freq: 120, to: 60, dur: 0.7, type: 'sawtooth', vol: 0.1 * k });
+        else {
+          // a creak as it swings, a knock as it shuts
+          sfx.tone({ freq: e.s === DOOR_SHUT ? 320 : 420, to: e.s === DOOR_SHUT ? 200 : 640, dur: 0.14, type: 'triangle', vol: 0.07 * k });
+          if (e.s === DOOR_SHUT) sfx.noise(0.05, 0.12 * k, 0.1);
+        }
+        break;
+      }
+      case 'stun': {
+        // a sharp bang and a ringing in the ears
+        const k = Math.max(0.1, near(e.x, e.z));
+        sfx.noise(0.2, 0.3 * k);
+        sfx.tone({ freq: 3200, to: 2900, dur: 0.9, type: 'sine', vol: 0.05 * k, delay: 0.05 });
+        break;
+      }
+      case 'leader': {
+        const who = m.fighters[e.f];
+        if (!who) break;
+        const mine = e.f === m.me;
+        addFeed(`${mine ? 'you are' : `${who.name} is`} the kill leader (${e.kills} kills)`, mine);
+        say(mine ? 'you are the kill leader!' : `${who.name} is the kill leader`, 2.6);
+        sfx.tone({ freq: 660, to: 990, dur: 0.18, type: 'triangle', vol: 0.09 });
+        sfx.tone({ freq: 990, to: 1320, dur: 0.2, type: 'triangle', vol: 0.09, delay: 0.16 });
+        break;
+      }
+      case 'glass': {
+        // a crash and the tinkle of shards falling
+        const p = m.map.windows[e.i];
+        const k = mine ? 1 : p ? near(p.x, p.z) : 0;
+        if (k <= 0.05) break;
+        sfx.noise(0.16, 0.16 * k);
+        for (const [i, f] of [2600, 3400, 2200, 3900].entries()) sfx.tone({ freq: f, to: f * 0.8, dur: 0.08, type: 'triangle', vol: 0.05 * k, delay: 0.03 + i * 0.05 });
+        break;
+      }
       case 'harvest':
         // a knock for wood, a clack for stone, a clang for metal
         if (mine) sfx.tone(e.mat === 'wood' ? { freq: 330, to: 220, dur: 0.06, type: 'triangle', vol: 0.1 } : e.mat === 'stone' ? { freq: 520, to: 300, dur: 0.05, type: 'square', vol: 0.06 } : { freq: 1600, to: 1100, dur: 0.08, type: 'square', vol: 0.04 });
         break;
       case 'boom': {
-        const k = Math.max(0.15, near(e.x, e.z));
-        sfx.noise(0.45, 0.3 * k);
-        sfx.tone({ freq: 120, to: 40, dur: 0.4, type: 'sawtooth', vol: 0.12 * k });
+        // a MIRV's bomblets pop, smaller and quieter
+        const small = e.r !== undefined;
+        const k = Math.max(0.15, near(e.x, e.z)) * (small ? 0.55 : 1);
+        if (small && clock.current - soundGap.current < 0.05) break;
+        if (small) soundGap.current = clock.current;
+        sfx.noise(small ? 0.25 : 0.45, 0.3 * k);
+        sfx.tone({ freq: small ? 180 : 120, to: 40, dur: small ? 0.22 : 0.4, type: 'sawtooth', vol: 0.12 * k });
         break;
       }
       case 'pulse': {
@@ -975,8 +1110,10 @@ function Play({ mode }: { mode: Mode }) {
       case 'opened':
         if (e.f === m.me) {
           const c = m.map.containers[e.c];
-          if (c?.kind === 'chest' || c?.kind === 'supply') sfx.play('coin', c.kind === 'supply' || c.gold ? 0.8 : 1);
-          else if (c?.kind === 'fridge') sfx.play('coin', 1.2);
+          if (c?.kind === 'chest' || c?.kind === 'supply' || c?.kind === 'safe') sfx.play('coin', c.kind === 'supply' || c.kind === 'safe' || c.gold ? 0.8 : 1);
+          else if (c?.kind === 'fridge' || c?.kind === 'deposit') sfx.play('coin', 1.2);
+          else if (c?.kind === 'locker') sfx.tone({ freq: 700, to: 420, dur: 0.1, type: 'square', vol: 0.06 });
+          else if (c?.kind === 'drawer' || c?.kind === 'books') sfx.noise(0.12, 0.1);
           else if (c?.kind === 'toilet') sfx.tone({ freq: 900, to: 300, dur: 0.12, type: 'square', vol: 0.07 });
           else if (c?.kind === 'crate' || c?.kind === 'hay') sfx.noise(0.15, 0.15);
         }
@@ -1005,9 +1142,10 @@ function Play({ mode }: { mode: Mode }) {
               ? `${name(who)} ${who.id === m.me ? 'were' : 'was'} lost to the storm`
               : by === who
                 ? `${name(who)} cracked`
-                : `${name(by)} cracked ${name(who)} with ${causeName(e.w)}`;
+                : `${name(by)} eliminated ${name(who)} with ${causeName(e.w)} (${by.kills} ${by.kills === 1 ? 'kill' : 'kills'})`;
         addFeed(text, yours || e.f === m.me);
         if (yours) {
+          hitMark(who.x, who.z, true, who.y);
           say(`you cracked ${who.name}`);
           sfx.play('coin', 1.4);
           buzz(30);
@@ -1048,6 +1186,82 @@ function Play({ mode }: { mode: Mode }) {
         tag.style.opacity = '1';
         tag.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
       }
+    }
+    // hit marks: a quick X that grows a little and fades
+    for (const p of marks.current) {
+      if (!p.live || !p.el) continue;
+      p.age += dt;
+      const at = p.age < 0.32 ? v.project(p.x, p.y, p.z) : null;
+      if (!at) {
+        p.live = false;
+        p.el.style.opacity = '0';
+        continue;
+      }
+      p.el.style.opacity = String(Math.min(1, (0.32 - p.age) * 6));
+      p.el.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -50%) rotate(45deg) scale(${(calm ? 1 : 0.8 + p.age * 1.2).toFixed(2)})`;
+    }
+    // the names of the loot by our feet, and of whatever the mouse is over
+    const me = m.fighters[m.me];
+    const named: LootItem[] = [];
+    if (me && me.phase === 'ground' && eye === me) {
+      // not the one the pick up prompt already names, and fewer on a small touch screen
+      const p = prompt(m, me);
+      const said = p && 'item' in p ? p.item : null;
+      const close: [number, LootItem][] = [];
+      for (const l of m.loot.values()) {
+        const d = Math.hypot(l.x - me.x, l.z - me.z);
+        if (d < 3.2 && l !== said) close.push([d, l]);
+      }
+      close.sort((a, b) => a[0] - b[0]);
+      for (const [, l] of close.slice(0, touchRef.current ? 2 : LABELS - 1)) named.push(l);
+      const g = mouse.current.inside && !touchRef.current ? v.ground(mouse.current.x, mouse.current.y, 0.45) : null;
+      if (g) {
+        let over: LootItem | null = null;
+        let best = 1.1;
+        for (const l of m.loot.values()) {
+          const d = Math.hypot(l.x - g.x, l.z - g.z);
+          if (d < best && Math.hypot(l.x - me.x, l.z - me.z) < 40) {
+            over = l;
+            best = d;
+          }
+        }
+        if (over && !named.includes(over)) named.push(over);
+      }
+    }
+    // nearest first; one that would cover a name already up goes above it (sized from its text, not measured)
+    const placed: { x: number; y: number; w: number }[] = [];
+    labels.current.forEach((el, i) => {
+      if (!el) return;
+      const l = named[i];
+      const at = l ? v.project(l.x, 1.2, l.z) : null;
+      if (!l || !at) {
+        if (el.style.opacity !== '0') el.style.opacity = '0';
+        return;
+      }
+      const text = lootName(l.def);
+      if (el.textContent !== text) el.textContent = text;
+      const w = text.length * 6.6 + 18;
+      let y = at.y;
+      for (let moved = true, n = 0; moved && n < LABELS; n++) {
+        moved = false;
+        for (const p of placed)
+          if (Math.abs(at.x - p.x) < (w + p.w) / 2 && Math.abs(y - p.y) < LABEL_H) {
+            y = p.y - LABEL_H;
+            moved = true;
+          }
+      }
+      placed.push({ x: at.x, y, w });
+      el.style.setProperty('--loot', lootColor(l.def));
+      el.style.opacity = '1';
+      el.style.transform = `translate(${at.x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
+    });
+    // dazed by a stun grenade: the screen washes out white and blurs, clearing as it wears off
+    const daze = !eye || eye.phase !== 'ground' ? 0 : eye.kind === 'remote' ? ((eye.show.flags & F_STUN) !== 0 ? 0.8 : 0) : Math.min(0.9, eye.stunT / 2);
+    if (dazeEl.current) dazeEl.current.style.opacity = daze.toFixed(2);
+    const host = ref.current;
+    if (host) {
+      const blur = daze > 0.02 && !calm ? `blur(${(daze * 3.5).toFixed(1)}px)` : '';
+      if (host.style.filter !== blur) host.style.filter = blur;
     }
     for (const p of pops.current) {
       if (!p.live || !p.el) continue;
@@ -1117,13 +1331,23 @@ function Play({ mode }: { mode: Mode }) {
     } else if (own && g && WEAPONS[g.w].spin && focus.spin > 0 && focus.spin < 1) {
       busy = focus.spin;
       busyText = 'spinning up';
+    } else if (focus.phase === 'ground') {
+      // a bank vault grinding open nearby
+      const vault = m.vaults.find((i) => m.doors[i] === DOOR_OPENING && Math.hypot(m.map.slabs[i].x - focus.x, m.map.slabs[i].z - focus.z) < 14);
+      if (vault !== undefined) {
+        busy = Math.min(1, (m.clock - m.doorAt[vault]) / VAULT_TIME);
+        busyText = 'the vault is opening';
+      }
     }
     let promptText: string | null = null;
     if (me && me === focus && me.phase === 'ground') {
       const p = prompt(m, me);
       if (p && 'chest' in p) {
         const c = m.map.containers[p.chest];
-        promptText = c.kind === 'supply' ? 'open supply drop' : c.kind === 'fridge' ? 'open the fridge' : c.gold ? 'open the golden chest' : 'open chest';
+        promptText = OPEN_TEXT[c.kind] ?? (c.gold ? 'open the golden chest' : 'open chest');
+      } else if (p && 'door' in p) {
+        const s = m.map.slabs[p.door];
+        promptText = s.vault ? 'open the vault' : `${m.doors[p.door] === DOOR_SHUT ? 'open' : 'shut'} the ${s.bars ? 'cell door' : 'door'}`;
       } else if (p) {
         const k = p.item.def.kind;
         const have = k === 'melee' ? MELEE[me.melee].name : k === 'helmet' || k === 'vest' ? ARMOR_NAMES[k][me[k]] : 'gun';
@@ -1165,6 +1389,9 @@ function Play({ mode }: { mode: Mode }) {
       outside,
       low: own && focus.hp <= 30 && focus.phase === 'ground',
       warm: focus.warm && focus.phase === 'ground',
+      hidden: focus.phase === 'ground' && ((focus.bush >= 0 && m.clock - focus.firedAt > 1.2) || camouflaged(m, focus)),
+      ghillie: focus.ghillie,
+      leader: m.fighters[m.leader] ? { name: m.leader === m.me ? 'you' : m.fighters[m.leader].name, kills: m.fighters[m.leader].kills, mine: m.leader === m.me } : null,
       arrive: clock.current < placeRef.current.until && placeRef.current.said >= 0 ? m.map.places[placeRef.current.said]?.name ?? null : null,
       where: focus.phase === 'ground' ? (m.map.places[placeAt(m.map, focus.x, focus.z)]?.name ?? null) : null,
       banner,
@@ -1315,6 +1542,7 @@ function Play({ mode }: { mode: Mode }) {
   const stormPath = `M${-HALF - 40} ${-HALF - 40}H${HALF + 40}V${HALF + 40}H${-HALF - 40}Z M${(s.x - s.r).toFixed(1)} ${s.z.toFixed(1)}a${s.r.toFixed(1)} ${s.r.toFixed(1)} 0 1 0 ${(2 * s.r).toFixed(1)} 0a${s.r.toFixed(1)} ${s.r.toFixed(1)} 0 1 0 ${(-2 * s.r).toFixed(1)} 0Z`;
   // supply drops show on the map from the moment they're on their way until someone opens them
   const drops = [...map.drops, ...map.flares].map((id) => map.containers[id]).filter((c) => c && m.time >= c.at - SUPPLY_FALL && !m.opened[c.id]);
+  const leader = m.fighters[m.leader];
   const mapMarks = (big: boolean) => (
     <>
       <path d={stormPath} fill="rgba(122, 60, 240, 0.45)" fillRule="evenodd" />
@@ -1323,6 +1551,13 @@ function Play({ mode }: { mode: Mode }) {
       {drops.map((c) => (
         <rect key={c.id} x={c.x - (big ? 5 : 8)} y={c.z - (big ? 5 : 8)} width={big ? 10 : 16} height={big ? 10 : 16} rx="2" fill="#2f7de1" stroke="#fff" strokeWidth={big ? 1.6 : 2.6} />
       ))}
+      {big && leader && leader.phase === 'ground' && leader !== focusFighter && (
+        // the kill leader, wherever it is
+        <g transform={`translate(${leader.x.toFixed(1)} ${leader.z.toFixed(1)})`}>
+          <circle r="7.5" fill="rgba(20, 16, 4, 0.55)" stroke="#ffd23d" strokeWidth="1.4" />
+          <path d="M-5 3l-1-6 3.2 2.6L0 -4.5l2.8 5.1L6 -3l-1 6z" fill="#ffd23d" stroke="#7a4a00" strokeWidth="0.8" strokeLinejoin="round" />
+        </g>
+      )}
       {focusFighter && focusFighter.phase !== 'out' && (
         <g transform={`translate(${focusFighter.x.toFixed(1)} ${focusFighter.z.toFixed(1)}) rotate(${((-focusFighter.aim * 180) / Math.PI + 180).toFixed(0)})`}>
           <path d={big ? 'M0 -7L5 5L0 2.5L-5 5Z' : 'M0 -13L9.5 9.5L0 4.6L-9.5 9.5Z'} fill={focusFighter.color} stroke="#fff" strokeWidth={big ? 1.2 : 2.2} strokeLinejoin="round" />
@@ -1362,6 +1597,27 @@ function Play({ mode }: { mode: Mode }) {
         ),
       )}
       <div className="g-scramble-pops" aria-hidden="true">
+        <div ref={dazeEl} className="g-scramble-daze" style={{ opacity: 0 }} />
+        {marks.current.map((p, i) => (
+          <div
+            key={`m${i}`}
+            ref={(el) => {
+              p.el = el;
+            }}
+            className="g-scramble-hitmark"
+            style={{ opacity: 0 }}
+          />
+        ))}
+        {Array.from({ length: LABELS }, (_, i) => (
+          <div
+            key={`l${i}`}
+            ref={(el) => {
+              labels.current[i] = el;
+            }}
+            className="g-scramble-loot"
+            style={{ opacity: 0 }}
+          />
+        ))}
         {pops.current.map((p, i) => (
           <div
             key={i}
@@ -1418,6 +1674,23 @@ function Play({ mode }: { mode: Mode }) {
                   <path d="M12 3l7 8h-4.5v10h-5V11H5z" fill="currentColor" />
                 </svg>
                 high ground
+              </span>
+            )}
+            {hud.ghillie && (
+              <span className="g-scramble-pill is-gear" aria-label="ghillie suit">
+                <GhillieIcon size={15} />
+              </span>
+            )}
+            {hud.hidden && (
+              <span className="g-scramble-pill is-hidden" role="status">
+                hidden
+              </span>
+            )}
+            {hud.leader && (
+              <span className={`g-scramble-pill is-leader${hud.leader.mine ? ' is-mine' : ''}`} aria-label={`kill leader: ${hud.leader.name}, ${hud.leader.kills} eliminations`}>
+                <CrownIcon size={15} />
+                <b>{hud.leader.kills}</b>
+                <span>{hud.leader.name}</span>
               </span>
             )}
             {hud.warm && (
