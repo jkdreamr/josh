@@ -110,6 +110,7 @@ export function simulateCpuRally(
   if (serve.fault) return { winner: opposite(server), shots: 0 };
   let flight = createFlight(serveStart, serve.velocity, server, directions[server], true);
   let incoming: ShotType | null = serve.type;
+  let incomingPower = HALF_SMASH_POWER;
   let missed = false;
   let shots = 1;
   let clock = 0;
@@ -128,7 +129,7 @@ export function simulateCpuRally(
     const racket = racketPoint(bodies[side].x, bodies[side].jump, direction);
     if (Math.hypot(shuttle.x - racket.x, shuttle.y - racket.y) > RACKET_REACH) continue;
     const contact = { x: shuttle.x, y: shuttle.y };
-    const reply = cpuReturn(contact, incoming, flight.elapsed, Math.abs(bodies[flight.hitter].x), levels[side], random);
+    const reply = cpuReturn(contact, incoming, flight.elapsed, Math.abs(bodies[flight.hitter].x), levels[side], random, incomingPower);
     if (reply.kind === 'miss') {
       missed = true;
       continue;
@@ -137,6 +138,7 @@ export function simulateCpuRally(
     if (plan.type === 'smash') bodies[side].recoverUntil = clock + smashRecoveryMs(reply.options.power ?? HALF_SMASH_POWER);
     flight = createFlight(contact, plan.velocity, side, direction);
     incoming = plan.type;
+    incomingPower = reply.options.power ?? HALF_SMASH_POWER;
     missed = false;
     shots += 1;
     minds[opposite(side)].reactAt = clock + CPU_PROFILES[levels[opposite(side)]].reactionMs;

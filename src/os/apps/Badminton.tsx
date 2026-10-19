@@ -23,6 +23,7 @@ import {
   serviceCourt,
   shotLabel,
   sideAt,
+  smashCharge,
   smashLabel,
   smashPressure,
   smashRecoveryMs,
@@ -352,10 +353,12 @@ export default function Badminton({ args }: AppProps) {
       sim.lastShot = plan.type === 'smash' ? { type: plan.type, speed, power } : { type: plan.type, speed };
       sim.cpuMissed = false;
       const strong = plan.type === 'smash';
-      sim.impact = { x: contact.x, y: contact.y, at: sim.clock, strong };
+      const charge = strong ? smashCharge(power) : 0;
+      sim.impact = { x: contact.x, y: contact.y, at: sim.clock, strong, charge };
       if (strong) {
-        sim.shake = Math.min(6, 2 + speed / 14);
-        sim.freezeUntil = sim.clock + 45;
+        // A full smash shakes the court hard and holds the frame for a beat; a half smash barely does.
+        sim.shake = 1.5 + 6.5 * charge;
+        sim.freezeUntil = sim.clock + 30 + 90 * charge;
         statsRef.current = recordSmash(statsRef.current, side, speed);
         sim.athletes[side].recoverUntil = sim.clock + smashRecoveryMs(power);
       } else if (plan.type === 'drive') {
@@ -581,7 +584,7 @@ export default function Badminton({ args }: AppProps) {
         if (sim.clock < sim.cpu.reactAt || sim.cpuMissed) return;
         athlete.swingStart = sim.clock - 70;
         athlete.intent = shuttle.y >= 1.6 ? 'normal' : 'soft';
-        const reply = cpuReturn(contact, incoming, flight.elapsed, Math.abs(sim.athletes[opposite(side)].x), settingsRef.current.difficulty);
+        const reply = cpuReturn(contact, incoming, flight.elapsed, Math.abs(sim.athletes[opposite(side)].x), settingsRef.current.difficulty, Math.random, sim.lastShot?.power);
         if (reply.kind === 'miss') {
           sim.cpuMissed = true;
           return;
@@ -678,6 +681,9 @@ export default function Badminton({ args }: AppProps) {
       const athletes: AthleteView[] = SIDES.map((side) => {
         const athlete = sim.athletes[side];
         const progress = (sim.clock - athlete.swingStart) / SWING_DRAW_MS;
+        // The host times holds on the sim clock; a guest only knows its own hold, on the wall clock.
+        const localHold = chargeRef.current[side];
+        const held = athlete.chargeStart !== null ? sim.clock - athlete.chargeStart : localHold !== null ? performance.now() - localHold : 0;
         return {
           side,
           x: athlete.x,
@@ -685,7 +691,7 @@ export default function Badminton({ args }: AppProps) {
           jump: athlete.jump,
           facing: directionOf(side, state),
           swing: progress >= 0 && progress < 1 ? progress : null,
-          charge: athlete.chargeStart !== null && sim.clock - athlete.chargeStart > CHARGE_MIN_MS ? Math.min(1, (sim.clock - athlete.chargeStart) / 600) : 0,
+          charge: held > CHARGE_MIN_MS ? smashCharge(chargePower(held)) : 0,
           intent: athlete.intent,
           label: nameOf(side, false),
           isHuman: !isCpu(side),
@@ -1177,7 +1183,7 @@ export default function Badminton({ args }: AppProps) {
           <div className="bd-howto-grid">
             <section>
               <h3>Shots</h3>
-              <p>Where you meet the shuttle decides the shot. High overhead is a clear. Hold Soft for a drop. Jump and hit for a smash. Hold the hit for a full smash: faster and steeper, but harder to aim and slower to recover from. Smashes from the back lose pace on the way. Around shoulder height is a drive. Low near the net is a net shot, low and deep is a lift.</p>
+              <p>Where you meet the shuttle decides the shot. High overhead is a clear. Hold Soft for a drop. Jump and hit for a smash. A tap is a half smash. Hold the hit and a ring fills over your head; let go once it glows gold for a full smash, more than twice as fast, but harder to aim and slower to recover from. Smashes from the back lose pace on the way. Around shoulder height is a drive. Low near the net is a net shot, low and deep is a lift.</p>
             </section>
             <section>
               <h3>Controls</h3>
