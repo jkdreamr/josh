@@ -5540,3 +5540,114 @@ test('a computer egg in a ghillie suit keeps still out on the grass and shoots f
   assert.ok(shots >= 3, `it shot (${shots})`);
   assert.ok(moved < 1.5, `and kept still (${moved.toFixed(2)} m)`);
 });
+
+test('up on what has been built a window is wall and a doorway open; on the ground the glass and a shut door stop a bullet', () => {
+  const m = quiet();
+  windowSpot(m);
+  assert.equal(castRay(m, 0, 0, 0, 1, 20, -1, false)?.what, 'window');
+  assert.equal(castRay(m, 0, 0, 0, 1, 20, -1, false, false, 1)?.what, 'wall', 'a storey up there is wall above the window');
+  m.broken[0] = true;
+  assert.equal(castRay(m, 0, 0, 0, 1, 20, -1, false), null, 'broken, a bullet goes through');
+  assert.equal(castRay(m, 0, 0, 0, 1, 20, -1, false, false, 1)?.what, 'wall', 'but not up above it');
+  assert.equal(castRay(m, 0, 0, 0, 1, 20, -1, false, false, MAX_LEVEL), null, 'and over the roof all goes');
+  const d = quiet();
+  doorSpot(d);
+  assert.equal(castRay(d, 0, 0, 0, 1, 20, -1, false)?.what, 'door');
+  assert.equal(castRay(d, 0, 0, 0, 1, 20, -1, false, false, 1), null, 'over a door is open, as over a doorway');
+});
+
+test('a blast up on a floor keeps its height, and a MIRV bomblet its size, there and back', () => {
+  const e = toNet({ t: 'boom', f: 3, x: 1, z: 2, y: LEVEL_H, r: 2.8 });
+  assert.deepEqual(e, { y: 'b', f: 3, x: 1, z: 2, h: LEVEL_H, r: 2.8 });
+  const parse = (x: object) => {
+    const p = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, [x]]] });
+    return p && p.k === 'e' ? (p.groups[0]?.[1][0] ?? null) : null;
+  };
+  assert.deepEqual(parse(e!), e);
+  assert.equal(parse({ ...e, r: 99 }), null);
+  assert.equal(parse({ ...e, r: -1 }), null);
+  assert.equal(parse({ ...e, h: 99 }), null);
+  assert.deepEqual(toNet({ t: 'boom', f: 3, x: 1, z: 2, y: 0 }), { y: 'b', f: 3, x: 1, z: 2 }, 'nothing extra for a grenade on the ground');
+  const g = createMatch({ seed: 2, role: 'guest', level: 'normal', entrants: [{ name: 'a', color: '#fff', kind: 'remote', seat: 0 }, { name: 'b', color: '#fff', kind: 'player', seat: 1 }], me: 1, countdown: 0 });
+  applyNet(g, e!);
+  const got = g.events.find((x) => x.t === 'boom');
+  assert.ok(got && got.t === 'boom' && got.y === LEVEL_H && got.r === 2.8, JSON.stringify(got));
+});
+
+test('a MIRV burst up on a floor scatters its bomblets up there', () => {
+  const m = quiet();
+  openSpot(m);
+  const [a] = m.fighters;
+  land(a, 0, 0);
+  m.tosses.push({ f: a.id, k: 'mirv', x: 0, z: 0, lx: 0, lz: 8, t0: m.time, ft: 0.4, fuse: m.time + 0.5, local: true, landed: false, y0: LEVEL_H, ly: LEVEL_H });
+  run(m, 0.6);
+  const small = m.tosses.filter((t) => t.small);
+  assert.ok(small.length > 2, `bomblets (${small.length})`);
+  for (const t of small) assert.deepEqual([t.y0, t.ly], [LEVEL_H, LEVEL_H]);
+});
+
+test('a computer egg in a ghillie suit stops keeping still once it is hit, and one with no gun takes no notice of an egg behind a window', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  openSpot(m);
+  autopilot(m, a);
+  land(a, 0, 0);
+  land(b, 0, 28);
+  a.guns[0] = { w: 'scout', r: 2, mag: 10 };
+  a.ammo.heavy = 60;
+  a.ghillie = true;
+  let moved = 0;
+  let px = a.x;
+  let pz = a.z;
+  run(m, 6, () => {
+    moved += Math.hypot(a.x - px, a.z - pz);
+    px = a.x;
+    pz = a.z;
+    b.hp = 100;
+    a.hp = 100;
+    a.lastBy = b.id;
+    a.lastByAt = m.clock;
+  });
+  assert.ok(moved > 3, `it moved (${moved.toFixed(2)} m)`);
+  const w = quiet();
+  const [c, e] = w.fighters;
+  windowSpot(w);
+  autopilot(w, c);
+  // both held where they stand
+  const pin = (ex: number, ez: number) => () => {
+    land(c, 0, 3);
+    land(e, ex, ez);
+    e.hp = 100;
+  };
+  run(w, 1.5, pin(0, 7));
+  assert.equal(c.ai!.target, -1, 'unarmed, the glass between');
+  run(w, 1, pin(1.5, 3));
+  assert.equal(c.ai!.target, e.id, 'but right in front of it, it fights');
+});
+
+test('a computer egg holds a line through a window a while, then moves on', () => {
+  const m = quiet();
+  const [a, b] = m.fighters;
+  windowSpot(m);
+  armBot(m, a, 'rifle', 0, 0, 0);
+  land(b, 0, 12);
+  const hold = (t: number) => {
+    let moved = 0;
+    let px = a.x;
+    let pz = a.z;
+    run(m, t, () => {
+      moved += Math.hypot(a.x - px, a.z - pz);
+      px = a.x;
+      pz = a.z;
+      b.hp = 100;
+      b.x = 0;
+      b.z = 12;
+      a.hp = 100;
+    });
+    return moved;
+  };
+  const first = hold(6);
+  assert.ok(first < 1, `held still (${first.toFixed(2)} m)`);
+  const then = hold(6);
+  assert.ok(then > 2, `then moved (${then.toFixed(2)} m)`);
+});
