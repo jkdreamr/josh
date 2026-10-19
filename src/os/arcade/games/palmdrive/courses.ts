@@ -988,8 +988,10 @@ export const COURSES: Record<CourseId, Course> = {
       // Slough (Docktown's floats on the other side)
       [438, 1072, 0, 'marsh'],
       [1072, 1150, -1, 'marsh'],
-      // (Corkscrew Slough's meanders a little wider, for a long hull to come round its hairpins)
+      // (Corkscrew Slough's meanders a little wider, for a long hull to come round its hairpins; Bair Island's side of
+      // Westpoint Slough narrower)
       [438, 753, 0, 'marsh', 6.5],
+      [1082, 1142, -1, 'marsh', 4.3],
       // the lock chamber
       [112, 168, 0, 'wall', 6],
     ],
@@ -1024,13 +1026,16 @@ export const COURSES: Record<CourseId, Course> = {
       { s0: 868, s1: 958, a: 8, every: 4.2, on: 1.5, warn: 1, phase: 2.7, lap: 3 },
       { s0: 868, s1: 958, a: -3, every: 4.2, on: 1.5, warn: 1, phase: 0.6, lap: 4 },
       { s0: 868, s1: 958, a: 3, every: 4.2, on: 1.5, warn: 1, phase: 2.7, lap: 4 },
-      // and the Port gust, outward round the Turning Basin, from lap 2
+      // the Port gust, outward round the Turning Basin, from lap 2
       { s0: 300, s1: 385, a: 7, every: 5, on: 2, warn: 1.2, phase: 2, lap: 2 },
+      // and gusts across Westpoint Slough toward Bair Island's marsh from lap 3
+      { s0: 1075, s1: 1145, a: -7, every: 5.5, on: 1.6, warn: 1, phase: 1, lap: 3 },
     ],
     // swell rolling in off the Bay across the Bay Reach toward the salt ponds from the start: three crests a set, four and
     // harder from lap 3, five and harder still on the last
     swells: [
-      { s0: 868, s1: 958, every: 8, n: 3, gap: 0.9, c: 7, kick: 3.5, dir: -1, phase: 1.5, warn: 1.5, lap: 2, until: 3 },
+      { s0: 868, s1: 958, every: 8, n: 3, gap: 0.9, c: 7, kick: 3, dir: -1, phase: 1.5, warn: 1.5, until: 1 },
+      { s0: 868, s1: 958, every: 8, n: 3, gap: 0.9, c: 7, kick: 4, dir: -1, phase: 1.5, warn: 1.5, lap: 2, until: 3 },
       { s0: 868, s1: 958, every: 7, n: 4, gap: 0.85, c: 7, kick: 4.5, dir: -1, phase: 1.5, warn: 1.5, lap: 4, until: 4 },
       { s0: 868, s1: 958, every: 7, n: 4, gap: 0.8, c: 7.5, kick: 5, dir: -1, phase: 1.5, warn: 1.5, lap: 5 },
     ],
@@ -1038,7 +1043,7 @@ export const COURSES: Record<CourseId, Course> = {
       // whirlpools right on the line through Corkscrew Slough's hairpins: at each one's exit (where the meander's flow sets
       // you) from the start, and on the inside at its apex from lap 3, so you weave out round one and back in round the
       // next; wandering across the channel from lap 4. One in the Turning Basin from lap 3, and on the last lap the Maelstrom
-      const whirl = (s: number, d: number, phase: number, lap: number) => ({ kind: 'whirl' as const, s, d, r: 2.8, pull: 7.5, core: 1.5, power: 15, every: 6.5, on: 4.5, warn: 1.5, phase, lap, spin: d < 0 ? 1 : -1, wander: [1.4, 0.8, 4] as [number, number, number], back: s - 25 });
+      const whirl = (s: number, d: number, phase: number, lap: number) => ({ kind: 'whirl' as const, s, d, r: 2.8, pull: 7.5, core: 1.5, power: 16, every: 6.5, on: 4.5, warn: 1.5, phase, lap, spin: d < 0 ? 1 : -1, wander: [1.6, 0.9, 3] as [number, number, number], back: s - 25 });
       // the chain ferry across the Port Reach keeps time with the launches: over on the far side as each comes by (they
       // are half a lap apart, and it crosses an even number of times a lap)
       const launches = [300, 911];
@@ -1090,16 +1095,15 @@ export const COURSES: Record<CourseId, Course> = {
           whirl(585, 2.6, 1.6, 2),
           whirl(648, -2.6, 3.25, 1),
           whirl(710, 2.6, 4.9, 2),
-          { kind: 'whirl', s: 326, d: -1.8, r: 2.8, pull: 7.5, core: 1.5, power: 15, every: 7, on: 4.5, warn: 1.5, phase: 3, lap: 3, spin: 1, back: 300 },
-          { kind: 'whirl', s: 352, d: 1.4, r: 3, pull: 9.5, core: 1.7, power: 16, every: 8, on: 5.5, warn: 2, phase: 0, lap: 5, spin: -1, back: 300, look: 'maelstrom' },
+          { kind: 'whirl', s: 352, d: 1.4, r: 3, pull: 9.5, core: 1.7, power: 16, every: 8, on: 5.5, warn: 2, phase: 0, lap: 4, spin: -1, back: 300, look: 'maelstrom' },
           // the rapids through the tide race: rocks on the inside of the bend, where you would cut the corner
           ...[806, 830, 854].map((s) => ({ kind: 'rock' as const, s, d: -3, r: 0.9 })),
           // the coach's launches round the lap in the right-hand lane, with right of way through the set pieces
-          ...launches.map((s) => ({ kind: 'launch' as const, s, d: 3.4, drive: LAUNCH_V, wake: 0.8, priority: true })),
+          ...launches.map((s) => ({ kind: 'launch' as const, s, d: 3.4, drive: LAUNCH_V, wake: 1, priority: true })),
           // a tug pushing its barge up Westpoint Slough and over the line to Docktown, from 40 s
-          { kind: 'barge', s: 1065, d: 2.4, r: 2, drive: 4.5, span: [1065, 1272] as [number, number], every: 55, phase: 40, wake: 1 },
-          // logs drifting down the Bay Reach with the current, in the salt ponds' lane (where the wind and the swell push
-          // you) and the middle one by turns, one every 12 m: over the weir they go
+          { kind: 'barge', s: 1065, d: 2.9, r: 1.6, drive: 4.5, span: [1065, 1272] as [number, number], every: 55, phase: 40, wake: 1 },
+          // logs drifting down the Bay Reach with the current in the lane on the salt ponds' side (where the wind and the
+          // swell push you), one every 22.5 m: over the weir they go
           ...[0, 22.5, 45, 67.5].map((phase) => ({ kind: 'log' as const, s: 868, d: -3.8, drive: 1, span: [868, 958] as [number, number], every: 90, phase })),
           // the chain ferry
           { kind: 'ferry', s: ferryS, d: 0, r: 1.8, swing: 3.4, speed: ferrySpeed, phase: 1.5 * Math.PI - ferrySpeed * a - gap / 2 },
@@ -1107,7 +1111,7 @@ export const COURSES: Record<CourseId, Course> = {
       });
     },
     sky: 'linear-gradient(180deg, #27356a 0%, #5f62a2 18%, #e19c9b 34%, #f6c597 41%, #fbe3c2 45%, #a5bcbc 47%)',
-    laps: { 2: 'More whirlpools, chop on the Bay', 3: 'Whirlpools at the apexes, the third lock gate', 4: 'Whirlpools wander, chop in the Corkscrew', 5: 'The tide turns, fog, the Maelstrom' },
+    laps: { 2: 'Lock, swing span, more whirlpools, swell', 3: 'Whirlpools wander, wind on Westpoint', 4: 'The Maelstrom, big swell, chop in the Corkscrew', 5: 'The tide turns, fog' },
     // a fall costs more here than anywhere (calibrated against the braking ladder: see the PR)
     tier: { fallT: 2.6, fallCoins: 4, harsh: 1.6, brink: 0.3, paceCc: { '150cc': 1, '200cc': 1.03 } },
   },

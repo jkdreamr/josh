@@ -467,10 +467,12 @@ test('swell: pure, warned in time, a crest shoves a shell on the water once its 
     }
   }
   // warned before the first crest reaches the channel
-  const sw = r.swells[0];
+  // (on lap 1 a smaller swell than from lap 2)
+  const sw = r.swells.find((x) => (x.lap ?? 1) === 2)!;
   const edge = sw.phase + 9 * sw.every + (20 - 0.5) / sw.c;
   assert.ok(swellWarn(r, 910, edge - sw.warn + 0.1, 2)!.k > 0);
-  assert.equal(swellWarn(r, 910, edge - sw.warn + 0.1, 1), null, 'not on lap 1');
+  assert.ok(swellWarn(r, 910, edge - sw.warn + 0.1, 1)!.kick < swellWarn(r, 910, edge - sw.warn + 0.1, 2)!.kick, 'smaller on lap 1');
+  assert.equal(swellWarn(r, 300, edge - sw.warn + 0.1, 2), null, 'only off the Bay');
   /** A shell sat at the Bay Reach as a set rolls through (hopping each crest, or not), against the same with no swell. */
   const shove = (hop: boolean, swell = true) => {
     const q = slough();
