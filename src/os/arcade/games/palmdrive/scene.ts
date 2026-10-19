@@ -867,7 +867,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   // (over the sky: a neon lip from the edge of the glass to the brink, lit posts along it and a dark edge under it)
   const neonMat = look.glass ? new THREE.MeshBasicMaterial({ color: 0xff2d6f }) : null;
   const skirtMat = look.glass ? new THREE.MeshBasicMaterial({ color: 0x1a0610, side: THREE.DoubleSide }) : null;
-  const lipPosts: { x: number; z: number; s: number; nx: number; nz: number; tx: number; tz: number }[] = [];
+  // (windy: whether a gust ever blows where it stands)
+  const lipPosts: { x: number; z: number; s: number; nx: number; nz: number; tx: number; tz: number; windy?: boolean }[] = [];
   for (const [side, s0, s1, past] of open) {
     if (boat) {
       // (on the water the wind's streamers fly from the marker posts along the marsh, where it blows: see water.ts)
@@ -938,6 +939,9 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const streamGeo = new THREE.BoxGeometry(0.09, 1, 0.02);
   streamGeo.translate(0, 0.5, 0);
   const streamers = lipPosts.length ? new THREE.InstancedMesh(streamGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }), lipPosts.length) : null;
+  for (const p of lipPosts) p.windy = r.gusts.some((g) => deltaS(t, g.s0, p.s) >= 0 && deltaS(t, p.s, g.s1) >= 0);
+  // (those where no gust ever blows hang limp and still: posed once, on the first frame)
+  let streamersPosed = false;
   if (streamers) {
     streamers.frustumCulled = false;
     scene.add(streamers);
@@ -2805,10 +2809,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       // the streamers on the lip, by the wind where each stands
       if (streamers) {
         lipPosts.forEach((p, n) => {
-          const wa = windAt(race, p.s, race.time, lapNow);
-          const warn = gustWarn(race, p.s, race.time, lapNow);
+          if (streamersPosed && !p.windy) return;
+          const wa = p.windy ? windAt(race, p.s, race.time, lapNow) : 0;
+          const warn = p.windy ? gustWarn(race, p.s, race.time, lapNow) : null;
           const k = Math.min(1, Math.abs(wa) / 9);
-          const flutter = (warn && warn.k < 1 ? 0.35 * warn.k : 0.08) + 0.1 * k;
+          const flutter = p.windy ? (warn && warn.k < 1 ? 0.35 * warn.k : 0.08) + 0.1 * k : 0;
           const sway = Math.sin(clock * 11 + n * 1.7) * flutter;
           const sg = Math.sign(wa) || 1;
           scratchV.set(p.nx * sg * k + p.tx * sway, -(1 - k) * 0.95 + 0.05, p.nz * sg * k + p.tz * sway).normalize();
@@ -2820,6 +2825,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         });
         dummy.quaternion.identity();
         streamers.instanceMatrix.needsUpdate = true;
+        streamersPosed = true;
       }
       // streaks across the road round this screen's kart while a gust blows there
       if (streaks && meK) {
@@ -3342,7 +3348,7 @@ const scratch = { color: 0 };
 function syncKart(v: KartView, k: Kart, dt: number, clock: number, pose: Pose | null) {
   if (k.hat !== v.hatName) v.wear(k.hat);
   // a moment's grace after a hit or being set back on the road: the kart blinks
-  v.root.visible = !(k.safe > 0 && !hurt(k) && Math.floor(clock * 15) % 2 === 1);
+  v.root.visible = !k.left && !(k.safe > 0 && !hurt(k) && Math.floor(clock * 15) % 2 === 1);
   scratch.color = parseInt(k.color.slice(1), 16);
   if (scratch.color !== v.color) v.color = scratch.color;
   v.root.position.set(pose ? pose.x : k.x, 0, pose ? pose.z : k.z);

@@ -386,7 +386,9 @@ function Play() {
       if (!w) return;
       sendAt.current += dt;
       snapshotAt.current += dt;
-      if (online?.seat === 1 && remoteState.current) {
+      // a guest draws the host's table, and so does a spectator (seat -1), who moves neither mallet
+      const viewer = !!online && online.seat !== 0;
+      if (viewer && remoteState.current) {
         const target = remoteState.current;
         const t = Math.min(1, dt * 18);
         s.puck.x += (target.puck.x - s.puck.x) * t;
@@ -394,7 +396,7 @@ function Play() {
         s.puck.vx = target.puck.vx;
         s.puck.vz = target.puck.vz;
         s.mallets.forEach((mallet, index) => {
-          if (index === 1) return;
+          if (index === 1 && !online!.watching) return;
           mallet.x += (target.mallets[index].x - mallet.x) * t;
           mallet.z += (target.mallets[index].z - mallet.z) * t;
           mallet.vx = target.mallets[index].vx;
@@ -427,7 +429,7 @@ function Play() {
       const gap = lastTick.current ? (now - lastTick.current) / 1000 : dt;
       lastTick.current = now;
       const simDt = gap > 0.5 ? dt : Math.min(0.25, Math.max(dt, gap));
-      if (s.winner === null && online?.seat !== 1) {
+      if (s.winner === null && !viewer) {
         const n = Math.max(1, Math.ceil(simDt / SUBSTEP));
         const h = simDt / n;
         const ev: Event = {};

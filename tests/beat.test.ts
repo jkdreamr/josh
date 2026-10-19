@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  GROOVES,
   advancePosition,
   beatStepTime,
   changeStepDegree,
@@ -48,7 +49,7 @@ const V1_HOUSE_LINK = 'eyJ2IjoxLCJiIjoxMjQsInMiOjgsImsiOiJEIG1pbm9yIiwicCI6WzQzN
 
 function busyState(): BeatState {
   let state = createBeatState('trap');
-  state = { ...state, bpm: 173, swing: 33, root: 7, scale: 'dorian', kit: 'acoustic', current: 2, song: [0, 1, 1, 2, 3, 0, 2], songMode: true, fx: { filter: 12, reverb: 77, delay: 100 } };
+  state = { ...state, bpm: 173, swing: 33, root: 7, scale: 'dorian', kit: 'acoustic', current: 2, song: [0, 1, 1, 2, 3, 0, 2], songMode: true, fx: { filter: 12, reverb: 77, delay: 100, pump: 40 } };
   state = updateTrack(state, 'kick', { volume: 100, pitch: -12, decay: 0, muted: true });
   state = updateTrack(state, 'lead', { volume: 0, pitch: 12, decay: 100 });
   const patterns = state.patterns.slice();
@@ -61,7 +62,7 @@ function busyState(): BeatState {
 }
 
 test('every preset survives the link codec exactly', () => {
-  for (const preset of ['kelix lofi', 'boom bap', 'house', 'trap'] as const) {
+  for (const preset of GROOVES) {
     const state = createBeatState(preset);
     assert.deepEqual(decodeBeatState(encodeBeatState(state)), normalize(state));
   }

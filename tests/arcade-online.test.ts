@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
-import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, RoundRouter, tagRound, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, RoundRouter, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, quickRoom, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
-import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, type LobbyRow, type RoomState } from '../worker/src/room-core.ts';
+import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, joinable, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, WATCHERS_MAX, type LobbyRow, type RoomState } from '../worker/src/room-core.ts';
 import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
 
 /** A stand-in for the browser's WebSocket: records what RoomLink sends and lets a test play the server's side. */
@@ -198,7 +198,7 @@ test('RoomLink uses host-only relay fallback without WebRTC', async () => {
     const events: unknown[] = [];
     link.on('welcome', (welcome) => events.push(['welcome', welcome.started]));
     link.on('start', (start) => events.push(['start', start.round, start.players.length]));
-    assert.equal(socket.url.href, 'wss://arcade.test/rooms/ABCD/ws?name=Guest&v=2', 'names the protocol, so the room can hand it the host role');
+    assert.equal(socket.url.href, 'wss://arcade.test/rooms/ABCD/ws?name=Guest&v=3', 'names the protocol, so the room can hand it the host role');
     socket.readyState = FakeWebSocket.OPEN;
     socket.emit('open', new Event('open'));
     socket.emit('message', { data: JSON.stringify({ t: 'welcome', seat: 1, code: 'ABCD', game: 'pong', seats: 2, players: [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Guest' }] }) });
@@ -567,4 +567,118 @@ test('RoomLink follows a quick-play room gathering and starting, and quick play 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('people can watch a room when its game allows it and its host lets them, up to a limit', () => {
+  const room: RoomState = { code: 'ABCD', game: 'pong', seats: 2, started: true, listed: true, watch: true, watchable: true };
+  assert.equal(canWatchRoom(room, 0), true);
+  assert.equal(canWatchRoom(room, WATCHERS_MAX), false, 'a room takes so many spectators at most');
+  assert.equal(canWatchRoom({ ...room, watchable: false }, 0), false, 'the host turned it off');
+  assert.equal(canWatchRoom({ ...room, watch: undefined, watchable: undefined }, 0), false, 'a game nobody can watch');
+  assert.equal(canWatchRoom({ ...room, watchable: undefined }, 0), true, 'on unless the host says otherwise');
+});
+
+test('a room nobody can join stays in Open Rooms to watch while it plays a round people can watch', () => {
+  const host = { seat: 0, name: 'Josh' };
+  const guest = { seat: 1, name: 'Sam' };
+  const pong: RoomState = { code: 'PPPP', game: 'pong', seats: 2, started: false, listed: true, watch: true, watchable: true };
+  assert.equal(joinable(pong, 1), true);
+  assert.equal(roomListing(pong, [host], 0)?.watchOnly, undefined, 'a seat free and waiting: join it');
+  assert.equal(roomListing(pong, [host], 0)?.watch, true, 'and say it can be watched');
+  assert.equal(roomListing(pong, [host, guest], 0), null, 'full and waiting to start: nothing to see yet');
+  const playing = { ...pong, started: true };
+  assert.equal(joinable(playing, 2), false);
+  assert.deepEqual(roomListing(playing, [host, guest], 0), { code: 'PPPP', game: 'pong', host: 'Josh', players: 2, bots: 0, seats: 2, started: true, lateJoin: false, watch: true, watchOnly: true });
+  assert.equal(roomListing({ ...playing, watchable: false }, [host, guest], 0), null, 'not once the host turns watching off');
+  assert.equal(roomListing(playing, [host, guest], 0, WATCHERS_MAX), null, 'nor once it holds every spectator it can');
+  assert.equal(roomListing({ ...playing, listed: false }, [host, guest], 0), null, 'private rooms stay off the list');
+  // a quick match under way: not to join, but to watch
+  const quick: RoomState = { code: 'QQQQ', game: 'sumo', seats: 8, started: true, lateJoin: true, listed: true, quick: true, round: 1, watch: true, watchable: true };
+  assert.equal(joinable(quick, 1), false);
+  assert.equal(roomListing(quick, [host], 7)?.watchOnly, true);
+  assert.equal(roomListing({ ...quick, watch: undefined }, [host], 7), null);
+  assert.equal(openRoomAction(roomListing(playing, [host, guest], 0)!), 'Watch');
+  assert.equal(openRoomAction(roomListing(pong, [host], 0)!), 'Join');
+  assert.match(openRoomDetail(roomListing(playing, [host, guest], 0)!), /watch it live/);
+});
+
+test('rooms only to watch come last in Open Rooms, and quick play never sends anyone to one', () => {
+  const base = { game: 'sumo', host: 'h', bots: 0, seats: 8, lateJoin: true };
+  const rooms: OpenRoom[] = [
+    { ...base, code: 'AAAA', players: 5, started: true, watch: true, watchOnly: true },
+    { ...base, code: 'BBBB', players: 1, started: false },
+  ];
+  assert.deepEqual(sortListings(rooms).map((r) => r.code), ['BBBB', 'AAAA']);
+  const now = 1_000_000;
+  const row = { listing: { ...base, code: 'CCCC', players: 2, started: false, quick: true as const, startAt: now + 10_000, watch: true as const, watchOnly: true as const }, updated: now };
+  assert.equal(pickQuick([row], now), null);
+  assert.equal(pickQuick([{ ...row, listing: { ...row.listing, watchOnly: undefined } }], now)?.code, 'CCCC');
+  // what the Worker sends is checked: watchOnly only means something for a room people can watch
+  const parsed = parseOpenRooms({ rooms: [{ ...base, code: 'DDDD', players: 2, started: true, watch: true, watchOnly: true }, { ...base, code: 'EEEE', players: 2, started: true, watchOnly: true }] });
+  assert.deepEqual(parsed.map((r) => [r.code, r.watch, r.watchOnly]), [['DDDD', true, true], ['EEEE', undefined, undefined]]);
+});
+
+test('only the host turns watching on or off and shares with spectators, and both messages are checked', () => {
+  assert.deepEqual(parseRoomMessage('{"t":"watchable","on":false}', 2), { t: 'watchable', on: false });
+  assert.equal(parseRoomMessage('{"t":"watchable","on":"no"}', 2), null);
+  assert.deepEqual(parseRoomMessage('{"t":"watch","d":{"k":"S"}}', 2), { t: 'watch', d: { k: 'S' } });
+  assert.equal(parseRoomMessage('{"t":"watch"}', 2), null);
+});
+
+test('RoomLink watches as a spectator: no seat, nothing sent, and the room round it walks into', async () => {
+  await withFakeRoom(async () => {
+    const link = new RoomLink('PPPP', 'Ana', 'https://arcade.test', { watch: true });
+    const socket = FakeWebSocket.last;
+    assert.equal(socket.url.href, 'wss://arcade.test/rooms/PPPP/ws?name=Ana&v=3&watch=1');
+    const seen: unknown[] = [];
+    link.on('welcome', (w) => seen.push(['welcome', w.seat, w.watching, w.started, w.round]));
+    link.on('watchers', (w) => seen.push(['watchers', w.names, w.on]));
+    link.on('host', (h) => seen.push(['host', h.seat]));
+    socket.open();
+    socket.receive({ t: 'welcome', seat: -1, watch: true, code: 'PPPP', game: 'pong', seats: 2, players: [{ seat: 0, name: 'Josh' }, { seat: 1, name: 'Sam' }], started: true, round: 3, watchers: ['Ana'], watchable: true });
+    assert.equal(link.seat, null, 'a spectator holds no seat');
+    link.send({ paddle: 1 });
+    link.reportResult(3, 0);
+    link.start();
+    assert.deepEqual(socket.sent, [], 'and sends nothing');
+    socket.receive({ t: 'host', from: 1, players: [{ seat: 0, name: 'Sam' }], watchers: ['Ana', 'Bo'], watchable: true });
+    assert.deepEqual(seen, [['welcome', -1, true, true, 3], ['watchers', ['Ana'], true], ['host', -1], ['watchers', ['Ana', 'Bo'], true]]);
+    link.close();
+  });
+});
+
+test('RoomLink shares what the host broadcasts with spectators, fast snapshots a few times a second', async () => {
+  await withFakeRoom(async () => {
+    const link = new RoomLink('PPPP', 'Josh', 'https://arcade.test');
+    const socket = FakeWebSocket.last;
+    socket.open();
+    socket.receive({ t: 'welcome', seat: 0, code: 'PPPP', game: 'pong', seats: 2, players: [{ seat: 0, name: 'Josh' }], watchers: [], watchable: true });
+    link.send(tagRound(1, { type: 'snapshot' }), { fast: true });
+    assert.deepEqual(socket.sent, [], 'nobody watching, nothing extra');
+    socket.receive({ t: 'players', players: [{ seat: 0, name: 'Josh' }], watchers: ['Ana'], watchable: true });
+    link.send(tagRound(1, { type: 'snapshot' }), { fast: true });
+    link.send(tagRound(1, { type: 'snapshot' }), { fast: true });
+    link.send(tagRound(1, { type: 'events' }), { fast: true });
+    link.send(tagRound(1, { type: 'score' }));
+    link.send(tagRound(1, { type: 'private' }), { to: 1 });
+    const watch = socket.sent.map((m) => JSON.parse(m)).filter((m) => m.t === 'watch').map((m) => m.d.d.type);
+    assert.deepEqual(watch, ['snapshot', 'events', 'score'], 'one snapshot of each kind per moment, every reliable one, never one meant for a seat');
+    link.setWatchable(false);
+    assert.deepEqual(JSON.parse(socket.sent.at(-1)!), { t: 'watchable', on: false });
+    link.close();
+  });
+});
+
+test('RoomLink says why a room turned it away, and whether it could watch instead', async () => {
+  await withFakeRoom(async () => {
+    const link = new RoomLink('PPPP', 'Ana', 'https://arcade.test');
+    const socket = FakeWebSocket.last;
+    const closed: unknown[] = [];
+    link.on('closed', (c) => closed.push(c));
+    socket.open();
+    socket.receive({ t: 'closed', reason: 'started', watch: true });
+    socket.emit('close', {});
+    assert.deepEqual(closed, [{ reason: 'started', watch: true }], 'said once, not again as a lost connection');
+    assert.equal(socket.closed, true);
+  });
 });

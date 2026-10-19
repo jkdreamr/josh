@@ -7,9 +7,18 @@ export const meta: GameMeta = {
   category: 'arcade',
   players: '1P',
   controls: 'Arrow keys or A/D to move, Space to fire. Touch pad and fire button on touch. P pauses.',
+  howTo: [
+    "Move along the bottom and shoot the invaders before they reach you. You can have two shots in the air at once.",
+    "Top row invaders are worth 30, the middle rows 20 and the bottom rows 10.",
+    "Hit the saucer that crosses the top for a bonus of 50 to 300 points.",
+    "Shields block shots from both sides but wear away as they're hit.",
+    "You have three lives. The invaders speed up as their numbers drop, and if they reach your line the game ends.",
+    "Clear a wave for 100 bonus points. Each new wave starts lower and moves faster.",
+  ],
   accent: '#5e5ce6',
   glyph: 'M4 9l2-3 2 2 4-4 4 4 2-2 2 3v6l-3-2-2 3-3-2-3 2-2-3-3 2zM8 12h.1M16 12h.1',
   order: 4,
+  music: 'tension',
   leaderboard: { order: 'desc', max: 1_000_000 },
   online: { seats: 4, race: true },
 };

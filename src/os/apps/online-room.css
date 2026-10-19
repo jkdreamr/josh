@@ -56,6 +56,9 @@
   color: var(--gc-text-2);
   font-size: 11px;
 }
+.oroom-players li.is-watching {
+  color: var(--gc-text-2);
+}
 .oroom-note {
   margin: 0;
   color: var(--gc-text-2);

@@ -318,6 +318,23 @@
   font-size: 12px;
 }
 
+.baduk-howto summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.baduk-howto ol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--gc-text-2);
+}
+
 .baduk-touch-hint,
 .baduk-screenreader {
   position: absolute;
@@ -393,6 +410,10 @@
   }
 
   .baduk-actions {
+    grid-column: 1 / -1;
+  }
+
+  .baduk-howto {
     grid-column: 1 / -1;
   }
 

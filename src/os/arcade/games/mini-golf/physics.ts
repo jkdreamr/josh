@@ -23,17 +23,23 @@ export type Ball = {
   t: number;
   state: 'roll' | 'rest' | 'holed' | 'water';
   lip: boolean;
+  off: number;
   loop: { s: number; vs: number } | null;
   safe: V;
 };
 
-export const restBall = (x: number, z: number, t = 0): Ball => ({ x, z, vx: 0, vz: 0, t, state: 'rest', lip: false, loop: null, safe: { x, z } });
+export const restBall = (x: number, z: number, t = 0): Ball => ({ x, z, vx: 0, vz: 0, t, state: 'rest', lip: false, off: 0, loop: null, safe: { x, z } });
 
 // Power maps to how far the putt rolls on a flat green, so a short drag is a short putt.
 export const DMAX = 16.5;
 export const MIN_ROLL = 0.5;
-const CUP_SLOW = 3.5;
-const CUP_FAST = 5;
+// Over the cup a ball falls about its own radius before it reaches the far rim when it is slow enough, so the
+// fastest putt that drops scales with the chord its center crosses: firm through the middle, gentle at the edge.
+export const CUP_V = 6;
+export const captureSpeed = (off: number) => (off >= CUP_R ? 0 : CUP_V * Math.sqrt(1 - (off / CUP_R) ** 2));
+// The green dishes toward the cup, so slow balls near it curl in.
+const PULL_R = 0.75;
+const PULL_D = 0.06;
 
 export const shotDistance = (power: number) => (power > 0 ? Math.max(MIN_ROLL, Math.min(1, power) * DMAX) : 0);
 
@@ -82,7 +88,7 @@ export function height(h: Hole, x: number, z: number) {
     y -= p.depth * (1 - smooth(0.82, 1.18, k));
   }
   const dc = Math.hypot(x - h.cup.x, z - h.cup.z);
-  if (dc < 0.55) y -= 0.025 * (1 - dc / 0.55) ** 2;
+  if (dc < PULL_R) y -= PULL_D * (1 - dc / PULL_R) ** 2;
   return y;
 }
 
@@ -355,33 +361,31 @@ export function step(h: Hole, b: Ball): StepEvent {
     return ev;
   }
   sp = Math.hypot(b.vx, b.vz);
-  const dc = Math.hypot(b.x - h.cup.x, b.z - h.cup.z);
-  if (dc < CUP_R) {
-    // Drops when it arrives slowly, or runs close to the middle at a firm pace; anything quicker rides over and lips out.
-    if ((!b.lip && sp < CUP_SLOW) || (dc < CUP_R * 0.5 && sp < CUP_FAST) || sp < 1) {
-      b.state = 'holed';
-      b.x = h.cup.x;
-      b.z = h.cup.z;
-      b.vx = b.vz = 0;
-      ev.cup = true;
-      return ev;
+  const cx = h.cup.x;
+  const cz = h.cup.z;
+  const dc = Math.hypot(b.x - cx, b.z - cz);
+  if (!b.lip) {
+    // Swept over the whole step, so a quick ball can't hop the rim between two steps.
+    const mx = b.x - px;
+    const mz = b.z - pz;
+    const l2 = mx * mx + mz * mz;
+    const k = l2 > 1e-12 ? Math.min(1, Math.max(0, ((cx - px) * mx + (cz - pz) * mz) / l2)) : 1;
+    const near = Math.hypot(px + mx * k - cx, pz + mz * k - cz);
+    if (near < CUP_R) {
+      const cross = l2 > 1e-12 ? (mx * (cz - pz) - mz * (cx - px)) / Math.sqrt(l2) : 0;
+      const off = Math.min(near, Math.abs(cross));
+      if (sp < captureSpeed(off) || sp < 0.5) return holed(h, b, ev);
+      b.lip = true;
+      b.off = cross >= 0 ? off : -off;
+      if (dc >= CUP_R) lipOut(b, ev);
     }
-    b.lip = true;
-  } else if (b.lip) {
-    b.lip = false;
-    ev.lip = true;
-    const cross = ((b.x - h.cup.x) * b.vz - (b.z - h.cup.z) * b.vx) / (sp * CUP_R || 1);
-    const a = Math.max(-0.6, Math.min(0.6, cross * 0.5));
-    const c = Math.cos(a);
-    const s = Math.sin(a);
-    const vx = (b.vx * c - b.vz * s) * 0.82;
-    b.vz = (b.vx * s + b.vz * c) * 0.82;
-    b.vx = vx;
-  }
+  } else if (dc >= CUP_R) lipOut(b, ev);
   if (sp < REST_V) {
     const g2 = grad(h, b.x, b.z);
     if (GR * Math.hypot(g2.gx, g2.gz) < ROLL) {
       if (moverZoneNudge(h, b)) return ev;
+      // Hanging on the lip, it tips in.
+      if (Math.hypot(b.x - cx, b.z - cz) < CUP_R + R * 0.25) return holed(h, b, ev);
       b.vx = b.vz = 0;
       b.state = 'rest';
     }
@@ -389,9 +393,35 @@ export function step(h: Hole, b: Ball): StepEvent {
   return ev;
 }
 
+function holed(h: Hole, b: Ball, ev: StepEvent) {
+  b.state = 'holed';
+  b.x = h.cup.x;
+  b.z = h.cup.z;
+  b.vx = b.vz = 0;
+  b.lip = false;
+  ev.cup = true;
+  return ev;
+}
+
+// Too quick to drop: it dips, catches the far rim and is turned toward the side the cup was on, losing pace.
+// Dead center it hops straight on; off center it curls the most; a ball that only clips the edge barely turns.
+function lipOut(b: Ball, ev: StepEvent) {
+  const f = Math.min(1, Math.abs(b.off) / CUP_R);
+  const a = Math.sign(b.off) * 0.6 * Math.sin(2 * Math.asin(f));
+  const keep = 0.62 + 0.3 * f * f;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const vx = (b.vx * c - b.vz * s) * keep;
+  b.vz = (b.vx * s + b.vz * c) * keep;
+  b.vx = vx;
+  b.lip = false;
+  b.off = 0;
+  ev.lip = true;
+}
+
 export function strike(b: Ball, angle: number, power: number, t: number): Ball {
   const v = shotSpeed(power);
-  return { ...b, safe: { ...b.safe }, loop: null, lip: false, t, state: 'roll', vx: Math.cos(angle) * v, vz: Math.sin(angle) * v };
+  return { ...b, safe: { ...b.safe }, loop: null, lip: false, off: 0, t, state: 'roll', vx: Math.cos(angle) * v, vz: Math.sin(angle) * v };
 }
 
 export function simulate(h: Hole, b0: Ball, maxTicks = MAX_TICKS, path?: V[], every = 6): Ball {
