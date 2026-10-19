@@ -58,6 +58,8 @@ export type Runner = {
   flying: boolean;
   /** A car out of the race (left the room). */
   out: boolean;
+  /** Seconds a computer car has been stuck (stopped or facing the wrong way), for the marshals. */
+  stuck: number;
 };
 
 /** A car as the network sees it. */
@@ -83,12 +85,12 @@ export type NetCar = {
 export type RaceEvent =
   | { t: 'lap'; idx: number; lap: Lap; best: boolean; overall: boolean }
   | { t: 'sector'; idx: number; sector: number; time: number; best: boolean; overall: boolean }
-  | { t: 'limits'; idx: number; warnings: number; penalty: boolean; invalid: boolean }
+  | { t: 'limits'; idx: number; warnings: number; penalty: boolean; invalid: boolean; reset?: boolean }
   | { t: 'contact'; idx: number; other: number; speed: number }
   | { t: 'wall'; idx: number; speed: number }
   | { t: 'light'; n: number }
   | { t: 'go' }
-  | { t: 'finish'; idx: number; place: number }
+  | { t: 'finish'; idx: number; place: number; penalty: number }
   | { t: 'drs'; idx: number; open: boolean };
 
 export type Race = {
@@ -163,6 +165,7 @@ function makeRunner(r: Pick<Race, 'c' | 'line'>, idx: number, entry: Entry, assi
     netAt: 0,
     flying: false,
     out: false,
+    stuck: 0,
   };
 }
 
@@ -266,14 +269,29 @@ export function stepRace(r: Race, dt: number, inputs: Map<number, Input>) {
     }
     let input = inputs.get(rn.idx) ?? NONE;
     // finished cars (and players in the cool-down lap) are brought home by the AI at a gentle pace
-    if (rn.driver && (rn.entry.kind === 'ai' || rn.fin !== null)) input = drive(rn.driver, car, c, r.line, rivals(rn), dt);
+    if (rn.driver && (rn.entry.kind === 'ai' || rn.fin !== null)) {
+      input = drive(rn.driver, car, c, r.line, rivals(rn), dt);
+      // computer drivers only ever go forwards
+      if (car.gear < 1) car.gear = 1;
+      // a computer car stopped or facing the wrong way for a few seconds is put back on track, as marshals would
+      if (started) {
+        const heading = Math.atan2(c.ty[car.i], c.tx[car.i]);
+        const wrongWay = Math.cos(car.yaw - heading) < 0;
+        rn.stuck = car.vx < 3 || wrongWay ? rn.stuck + dt : 0;
+        if (rn.stuck > 4) {
+          resetCar(r, rn);
+          rn.stuck = 0;
+        }
+      }
+    }
     else if (rn.fin !== null) {
       rn.driver = createDriver(r.line, 0.8, rn.idx);
       input = drive(rn.driver, car, c, r.line, rivals(rn), dt);
     }
     if (!started) {
-      // on the grid: the engine revs with the throttle but the car is held until the lights go out
-      const thr = input.throttle;
+      // on the grid: the engine revs with the throttle but the car is held until the lights go out. Computer drivers
+      // idle, then hold steady revs for the start once the last couple of seconds before lights out come
+      const thr = rn.entry.kind === 'ai' ? (r.time > -2.5 ? 0.5 : 0) : input.throttle;
       car.throttle = thr;
       car.rpm += (4000 + thr * 7500 - car.rpm) * Math.min(1, dt * 6);
       continue;
@@ -354,8 +372,9 @@ function progress(r: Race, rn: Runner, prevS: number, before: number) {
 }
 
 function crossLine(r: Race, rn: Runner, at: number) {
-  // the grid sits behind the line, so a race's first crossing is just the start of lap 1 (timed from lights out)
-  if (r.mode === 'race' && rn.dist < r.c.length / 2) return;
+  // only a crossing after most of a lap counts, so rolling back over the line and driving on adds nothing. The grid
+  // sits behind the line, so a race's first crossing is just the start of lap 1 (timed from lights out)
+  if (rn.dist < (rn.lap + (r.mode === 'race' ? 1 : 0)) * r.c.length - r.c.length / 2) return;
   const time = at - rn.lapStart;
   if (rn.flying && rn.fin === null) {
     const s1 = rn.splits[0] ?? NaN;
@@ -388,8 +407,9 @@ function crossLine(r: Race, rn: Runner, at: number) {
   if (r.mode === 'race' && rn.fin === null && rn.lap >= r.laps) {
     rn.fin = at + rn.penalty;
     if (r.leaderFin === null) r.leaderFin = at;
-    const place = r.runners.filter((x) => x.fin !== null).length;
-    r.events.push({ t: 'finish', idx: rn.idx, place });
+    // the place on the road; with a penalty to serve, cars still to finish may yet move ahead
+    const place = r.runners.filter((x) => x.fin !== null && x.fin <= rn.fin!).length;
+    r.events.push({ t: 'finish', idx: rn.idx, place, penalty: rn.penalty });
   }
 }
 
@@ -551,6 +571,6 @@ export function resetCar(r: Race, rn: Runner) {
   rn.car = fresh;
   if (rn.lapValid) {
     rn.lapValid = false;
-    r.events.push({ t: 'limits', idx: rn.idx, warnings: rn.warnings, penalty: false, invalid: true });
+    r.events.push({ t: 'limits', idx: rn.idx, warnings: rn.warnings, penalty: false, invalid: true, reset: true });
   }
 }

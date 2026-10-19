@@ -87,7 +87,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               ['↓ or S', 'Brake. Held at a standstill with auto gears, it reverses'],
               ['← → or A D', 'Steer'],
               ['E or Shift', 'Shift up (manual gears)'],
-              ['Q or Ctrl', 'Shift down (manual gears)'],
+              ['Q', 'Shift down (manual gears)'],
               ['Space', 'Open DRS in a DRS zone'],
               ['C', 'Change camera: chase, T-cam, cockpit, nose'],
               ['V', 'Look behind'],
@@ -119,7 +119,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         <section>
           <h3>2P Split</h3>
           <p>
-            Player 1 drives with <b>WASD</b>, <b>Q/E</b> to shift, <b>Space</b> for DRS and <b>C</b> for camera. Player 2 uses the <b>arrows</b>, <b>comma/period</b> to shift, <b>right Shift</b> for DRS and <b>L</b> for camera. Two
+            Player 1 drives with <b>WASD</b>, <b>Q/E</b> to shift, <b>Space</b> for DRS, <b>C</b> for camera and <b>R</b> to reset. Player 2 uses the <b>arrows</b>, <b>comma/period</b> to shift, <b>right Shift</b> for DRS, <b>L</b> for camera and <b>O</b> to reset. Two
             gamepads work too.
           </p>
         </section>
@@ -141,10 +141,10 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         <p>How fast the computer drivers are. They all drive the same car as you; the level sets how hard they push in the corners. The times are a clean lap for the fastest car in the field, the rest are up to about 3% slower.</p>
         <Keys
           rows={[
-            ['Easy', 'About 1:34 a lap. Brakes early and takes corners gently.'],
-            ['Medium', 'About 1:29. A good target for a tidy lap with assists on.'],
-            ['Hard', 'About 1:27. Needs late braking and clean exits.'],
-            ['Legend', 'About 1:26, right on the limit of grip.'],
+            ['Easy', 'About 1:38 a lap. Brakes early and takes corners gently.'],
+            ['Medium', 'About 1:30. A good target for a tidy lap with assists on.'],
+            ['Hard', 'About 1:28. Needs late braking and clean exits.'],
+            ['Legend', 'About 1:27, right on the limit of grip.'],
           ]}
         />
         <h4>Start</h4>
@@ -164,6 +164,8 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           ]}
         />
         <p className="g-grand-prix-small">Time Trial keeps two leaderboards: No Assists (None) and With Assists (TC or TC + ABS).</p>
+        <h4>Commentary</h4>
+        <p>A race announcer calls the start, the places you win and lose, fastest laps, penalties, the last lap and the flag. Turn it off here, or mute the game to silence it along with everything else.</p>
         {touch ? (
           <>
             <h4>Gears</h4>

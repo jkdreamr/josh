@@ -3,6 +3,7 @@ import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, use
 import type { GameProps } from '../../types';
 import { NO_ASSISTS, type Assists, type Input } from './car.ts';
 import { createRaceAudio, type RaceAudio } from './audio.ts';
+import { createCommentary, createVoice, type Commentary, type Voice } from './commentary.ts';
 import { HowToPlay } from './howto.tsx';
 import { Hud, fmtLap, fmtSec, type HudApi } from './hud.tsx';
 import { P1, P2, SOLO, newDriver, readInput, type Driver as KeyDriver } from './input.ts';
@@ -24,8 +25,9 @@ const AIDS = defineSetting<Aids>('grand-prix:aids', ['none', 'tc', 'full'], 'ful
 const GEARS = defineSetting<'auto' | 'manual'>('grand-prix:gears', ['auto', 'manual'], 'auto');
 const CAM = defineSetting<CamMode>('grand-prix:cam', CAM_MODES, 'chase', { live: true });
 const CAM2 = defineSetting<CamMode>('grand-prix:cam2', CAM_MODES, 'chase', { live: true });
+const VOICE = defineSetting<'on' | 'off'>('grand-prix:commentary', ['on', 'off'], 'on');
 
-/** Share of the racing line's grip each level dares to use: clean laps of about 1:34, 1:29, 1:27 and 1:26. */
+/** Share of the racing line's grip each level dares to use: clean laps of about 1:38, 1:30, 1:28 and 1:27. */
 const PACE: Record<Level, number> = { easy: 0.7, medium: 0.86, hard: 0.95, legend: 1 };
 const modeOptions = [
   ['trial', 'Time Trial'],
@@ -56,6 +58,10 @@ const aidOptions = [
 const gearOptions = [
   ['auto', 'Auto'],
   ['manual', 'Manual'],
+] as const;
+const voiceOptions = [
+  ['on', 'On'],
+  ['off', 'Off'],
 ] as const;
 
 const BOT_NAMES = DRIVERS;
@@ -106,6 +112,7 @@ function Setup() {
   const [grid, setGrid] = useSetting(GRID);
   const [aids, setAids] = useSetting(AIDS);
   const [gears, setGears] = useSetting(GEARS);
+  const [voice, setVoice] = useSetting(VOICE);
   const [best, setBest] = useState<number | null>(null);
   useEffect(() => setBest(loadBest(boardOf(aids))?.ms ?? null), [aids]);
   return (
@@ -116,6 +123,7 @@ function Setup() {
       {mode === 'race' && <Segmented label="Start" value={grid} options={gridOptions} onChange={setGrid} />}
       <Segmented label="Assists" value={aids} options={aidOptions} onChange={setAids} />
       {!shell.touch && <Segmented label="Gears" value={gears} options={gearOptions} onChange={setGears} />}
+      <Segmented label="Commentary" value={voice} options={voiceOptions} onChange={setVoice} />
       {mode === 'split' && <small className="g-grand-prix-note">Player 1: WASD, Q/E gears, Space DRS. Player 2: arrows, comma/period gears, right Shift DRS. Gamepads work for both.</small>}
       {mode === 'trial' && best !== null && <small className="g-grand-prix-note">Your best: {fmtLap(best)} ({aids === 'none' ? 'no assists' : 'with assists'})</small>}
       <HelpButton />
@@ -131,6 +139,7 @@ function OnlineSetup() {
   const [ai, setAi] = useSetting(AI);
   const [aids, setAids] = useSetting(AIDS);
   const [gears, setGears] = useSetting(GEARS);
+  const [voice, setVoice] = useSetting(VOICE);
   const [hostLaps, setHostLaps] = useState<number | null>(null);
   const host = online?.isHost ?? true;
   useEffect(() => {
@@ -165,6 +174,7 @@ function OnlineSetup() {
       )}
       <Segmented label="Assists" value={aids} options={aidOptions} onChange={setAids} />
       {!shell.touch && <Segmented label="Gears" value={gears} options={gearOptions} onChange={setGears} />}
+      <Segmented label="Commentary" value={voice} options={voiceOptions} onChange={setVoice} />
       <HelpButton />
     </div>
   );
@@ -271,6 +281,7 @@ function Play({ mode }: { mode: StageMode }) {
   const [grid] = useSetting(GRID);
   const [aids] = useSetting(AIDS);
   const [gears] = useSetting(GEARS);
+  const [voiceOn] = useSetting(VOICE);
   const [cam, setCam] = useSetting(CAM);
   const [cam2, setCam2] = useSetting(CAM2);
   const camRef = useRef([cam, cam2]);
@@ -302,6 +313,8 @@ function Play({ mode }: { mode: StageMode }) {
   const touchCam = useRef(false);
   const touchReset = useRef(false);
   const audio = useRef<RaceAudio | null>(null);
+  const voice = useRef<Voice | null>(null);
+  const commentary = useRef<Commentary | null>(null);
   const [muted] = useMuted();
   const net = useRef({
     synced: !live || online!.isHost,
@@ -341,8 +354,28 @@ function Play({ mode }: { mode: StageMode }) {
     };
   }, [mode]);
   useEffect(() => audio.current?.setMuted(muted), [muted]);
+  // the announcer, for a session with commentary on; its calls start afresh with each race
   useEffect(() => {
-    if (shell.status !== 'playing') audio.current?.silence();
+    if (mode === 'idle' || voiceOn !== 'on') return;
+    const v = createVoice();
+    voice.current = v;
+    return () => {
+      v?.dispose();
+      voice.current = null;
+    };
+  }, [mode, voiceOn]);
+  useEffect(() => {
+    commentary.current = createCommentary(
+      () => (race.current ? players(race.current) : []),
+      (text, priority) => voice.current?.say(text, priority),
+    );
+  }, [raceKey]);
+  useEffect(() => voice.current?.setMuted(muted), [muted, voiceOn, mode]);
+  useEffect(() => {
+    if (shell.status !== 'playing') {
+      audio.current?.silence();
+      voice.current?.silence();
+    }
   }, [shell.status]);
   useEffect(() => {
     view.current?.resize(size.w, size.h);
@@ -449,7 +482,8 @@ function Play({ mode }: { mode: StageMode }) {
           setRaceKey((x) => x + 1);
         }
         const rr = race.current!;
-        if (rr.time < 0) rr.time = -p.go;
+        // follow the host's countdown, ignoring small steps back from packet jitter (they would replay a light's beep)
+        if (rr.time < 0 && (-p.go > rr.time || rr.time + p.go > 0.25)) rr.time = -p.go;
         for (const [seat, car] of p.cars) {
           if (seat === o.seat) continue;
           const rn = rr.runners.find((x) => x.entry.seat === seat);
@@ -482,7 +516,9 @@ function Play({ mode }: { mode: StageMode }) {
       // the race is called once every person still here has finished, or a minute after the winner
       const people = r.runners.filter((x) => !x.out && x.entry.kind !== 'ai');
       const allIn = people.every((x) => x.fin !== null);
-      const timeUp = r.leaderFin !== null && r.time - r.leaderFin > 60;
+      const fins = r.runners.filter((x) => !x.out && x.fin !== null && x.entry.kind === 'remote').map((x) => x.fin!);
+      const first = Math.min(r.leaderFin ?? Infinity, ...fins);
+      const timeUp = first < Infinity && r.time - first > 60;
       if (!n.end && r.time > 0 && (allIn || timeUp)) {
         const order = finishOrder(r.runners.filter((x) => !x.out).map((x) => ({ seat: x.entry.seat, fin: x.fin === null ? -1 : Math.round(x.fin * 1000), dist: x.dist })));
         n.end = { w: winnerOf(order), order };
@@ -520,7 +556,8 @@ function Play({ mode }: { mode: StageMode }) {
         const hud = hudFor(e.idx);
         if (!hud) break;
         sfx.tone({ freq: 300, dur: 0.12, type: 'square', vol: 0.06 });
-        if (e.penalty) hud.flash('Track Limits: +5s Penalty', 'warn');
+        if (e.reset) hud.flash('Lap Invalidated', 'warn');
+        else if (e.penalty) hud.flash('Track Limits: +5s Penalty', 'warn');
         else if (r.mode === 'race' && e.warnings > 0) hud.flash(e.warnings >= 3 ? 'Track Limits: Final Warning' : `Track Limits: Warning ${e.warnings}`, 'warn');
         else hud.flash('Lap Invalidated', 'warn');
         break;
@@ -546,8 +583,9 @@ function Play({ mode }: { mode: StageMode }) {
       case 'finish': {
         const hud = hudFor(e.idx);
         if (hud) {
-          sfx.play(e.place === 1 ? 'win' : 'coin');
-          hud.flash(e.place === 1 ? 'Chequered Flag: You Win' : `Chequered Flag: P${e.place}`, e.place === 1 ? 'purple' : 'good');
+          const win = e.place === 1 && e.penalty === 0;
+          sfx.play(win ? 'win' : 'coin');
+          hud.flash(win ? 'Chequered Flag: You Win' : e.penalty ? `Chequered Flag: P${e.place} After +${e.penalty}s` : `Chequered Flag: P${e.place}`, win ? 'purple' : 'good');
         }
         break;
       }
@@ -637,7 +675,11 @@ function Play({ mode }: { mode: StageMode }) {
       }
       if (n.synced) stepRace(r, dt, inputs);
 
-      for (const e of r.events.splice(0)) if (mode !== 'idle') react(r, e);
+      for (const e of r.events.splice(0)) {
+        if (mode === 'idle') continue;
+        react(r, e);
+        commentary.current?.event(r, e);
+      }
 
       // laps just completed in a time trial: keep a new personal best (its trace and ghost)
       if (mode === 'solo' && r.mode === 'trial') {
@@ -695,6 +737,8 @@ function Play({ mode }: { mode: StageMode }) {
       if (v) v.frame(r, dt, views, ghost);
       if (mode !== 'idle' && n.synced && views[0]) {
         audio.current?.update(r, views[0].runner, views[0].cam, dt);
+        commentary.current?.update(r, dt);
+        voice.current?.tick();
       }
       if (mode !== 'idle') ps.forEach((p, k) => (k === 0 ? hudA.current : hudB.current)?.update(r, p.idx, r.mode === 'trial' ? refTrace.current : null));
     },
