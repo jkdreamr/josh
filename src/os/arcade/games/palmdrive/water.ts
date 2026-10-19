@@ -486,7 +486,7 @@ function marshPlants(THREE: Three, scene: T.Scene, t: Track, dummy: T.Object3D, 
   };
   for (const [side, s0, s1, past] of edgeRuns(t)) {
     if (past !== 'marsh') continue;
-    for (let s = s0; s < s1; s += 0.7) {
+    for (let s = s0; s < s1; s += 0.9) {
       const rows = 3 + Math.floor(rnd() * 3);
       for (let row = 0; row < rows; row++) {
         const out = 2.6 + row * 1.6 + rnd() * 2.4 + (row > 2 ? rnd() * 10 : 0);
@@ -880,32 +880,44 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     const c = pointAt(t, s, d);
     return { x: c.x, z: c.z, h: headingOf(c.tx, c.tz), tx: c.tx, tz: c.tz };
   };
-  const steel = new THREE.MeshLambertMaterial({ color: 0x47505a, emissive: 0x0d1014 });
-  const concrete = new THREE.MeshLambertMaterial({ color: 0xbdb6a6 });
+  const vcSet = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const vcSetLit = new THREE.MeshBasicMaterial({ vertexColors: true });
+  lit.push(vcSetLit);
   const lampColor = { open: new THREE.Color(0x27e36a), warn: new THREE.Color(0xffb300), shut: new THREE.Color(0xff2a1a), dim: new THREE.Color(0x163a22) };
+  const sets = modelKit(THREE);
+  const away = (x: number, z: number, margin: number) => {
+    const at = locate(t, x, z);
+    const side = at.d >= 0 ? 1 : -1;
+    return Math.abs(at.d) > edgeAt(t, at.s, side).lim + margin;
+  };
 
-  // the Tide Gates: a steel miter leaf hinged on each lock wall, swinging shut across its half of the chamber, with a
-  // lamp on the wall beside it (green open, amber flashing before it swings, red shut)
-  const gateTex = texture(
-    THREE,
-    canvas(64, 32, (g) => {
-      g.fillStyle = '#56616b';
-      g.fillRect(0, 0, 64, 32);
-      g.fillStyle = '#ffcf1f';
-      for (let k = -2; k < 10; k++) {
-        g.beginPath();
-        g.moveTo(k * 8, 0);
-        g.lineTo(k * 8 + 4, 0);
-        g.lineTo(k * 8 + 4 + 8, 8);
-        g.lineTo(k * 8 + 8, 8);
-        g.fill();
-      }
-      g.fillStyle = 'rgba(0,0,0,0.25)';
-      for (let y = 12; y < 32; y += 6) g.fillRect(0, y, 64, 1);
-    }),
-  );
-  const gateMat = new THREE.MeshLambertMaterial({ map: gateTex, emissive: 0x111418 });
-  type GateView = { i: number; leaf: T.Mesh; lamp: T.Mesh; lampMat: T.MeshBasicMaterial; hinge: { x: number; z: number }; shut: [number, number]; open: [number, number]; w: number; lift: number };
+  // the lock: where its walls stand in closer than the channel's, a handrail along their tops, black bollards to tie up
+  // to and ladders down the walls
+  for (const [side, s0, s1, past] of edgeRuns(t)) {
+    if (past !== 'wall' || edgeAt(t, (s0 + s1) / 2, side).lim > t.edge - 0.5) continue;
+    for (let s = s0 + 1; s < s1 - 0.5; s += 2) {
+      const f = frame(s, side * (edgeAt(t, s, side).lim + 0.45));
+      sets.place(f.x, 1.5, f.z, f.h);
+      sets.box(0xe8e2d4, 0, 0.5, 0, 0.05, 1.0, 0.05);
+      sets.box(0xe8e2d4, 0, 1.0, 0, 0.05, 0.05, 2.02);
+      sets.box(0xe8e2d4, 0, 0.55, 0, 0.04, 0.04, 2.02);
+    }
+    for (let s = s0 + 4; s < s1 - 2; s += 9) {
+      const f = frame(s, side * (edgeAt(t, s, side).lim + 0.3));
+      sets.place(f.x, 1.5, f.z, f.h);
+      sets.cyl(0x1b1c22, 0, 0.22, 0, 0.16, 0.44, 0.16);
+      sets.cyl(0x1b1c22, 0, 0.46, 0, 0.24, 0.08, 0.24);
+      const lad = frame(s + 4.5, side * (edgeAt(t, s + 4.5, side).lim - 0.04));
+      sets.place(lad.x, 0, lad.z, lad.h);
+      for (const sd of [-1, 1]) sets.box(0x6a7076, sd * 0.25, 0.45, 0, 0.05, 2.1, 0.06, 0, Math.PI / 2, 0);
+      for (let y = -0.4; y < 1.5; y += 0.3) sets.box(0x6a7076, 0, y, 0, 0.5, 0.04, 0.04, 0, Math.PI / 2, 0);
+    }
+  }
+
+  // the Tide Gates: a steel miter leaf hinged on each lock wall, swinging shut across its half of the chamber, a
+  // walkway along its top and a balance beam back over the wall; a signal on the wall beside it (green open, amber
+  // flashing before it swings, red shut)
+  type GateView = { i: number; leaf: T.Group; lampMat: T.MeshBasicMaterial; hinge: { x: number; z: number }; shut: [number, number]; open: [number, number]; w: number; lift: number };
   const gates: GateView[] = [];
   // the Hwy 101 piers and the Caltrain swing span, sweeping round on its pivot pier from lap 2
   type SwingView = { i: number; g: T.Group; f: ReturnType<typeof frame>; ang: number };
@@ -913,23 +925,24 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   const latticeTex = texture(
     THREE,
     canvas(128, 32, (g) => {
-      g.strokeStyle = '#2f3740';
-      g.lineWidth = 4;
+      g.strokeStyle = '#3a4550';
+      g.lineWidth = 5;
       g.strokeRect(2, 2, 124, 28);
       g.lineWidth = 3;
       for (let x = 0; x < 128; x += 16) {
         g.beginPath();
-        g.moveTo(x, 2);
+        g.moveTo(x, 30);
+        g.lineTo(x + 8, 2);
         g.lineTo(x + 16, 30);
-        g.moveTo(x + 16, 2);
-        g.lineTo(x, 30);
+        g.moveTo(x + 8, 2);
+        g.lineTo(x + 8, 30);
         g.stroke();
       }
     }),
   );
-  const latticeMat = new THREE.MeshLambertMaterial({ map: latticeTex, transparent: true, side: THREE.DoubleSide, color: 0x9aa6b2 });
-  let piers = 0;
-  let traffic: { cars: T.InstancedMesh; f: ReturnType<typeof frame> } | null = null;
+  const latticeMat = new THREE.MeshLambertMaterial({ map: latticeTex, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide, color: 0x8f9cab });
+  const piers: LiveHazard[] = [];
+  let traffic: { body: T.InstancedMesh; cab: T.InstancedMesh; f: ReturnType<typeof frame>; reach: number } | null = null;
   r.hazards.forEach((h, i) => {
     if (h.kind === 'bollard' && h.look === 'gate') {
       const w = h.w ?? 6;
@@ -937,101 +950,183 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       const f = frame(h.s, side * edgeAt(t, h.s, side).lim);
       const nx = -f.tz * -side;
       const nz = f.tx * -side;
-      const leaf = new THREE.Mesh(geo.box, gateMat);
-      leaf.scale.set(0.45, 1.6, w);
+      const mk = modelKit(THREE);
+      // (the leaf from its hinge, z = -w/2, to its tip: a riveted frame of girders, the stripe along its top)
+      mk.box(0x56616b, 0, 0.55, 0, 0.45, 1.6, w);
+      for (const y of [-0.05, 0.45, 0.95]) for (const sd of [-1, 1]) mk.box(0x47515a, sd * 0.24, y, 0, 0.06, 0.16, w);
+      for (let k = -2; k <= 2; k++) for (const sd of [-1, 1]) mk.box(0x47515a, sd * 0.24, 0.55, (k * w) / 5, 0.06, 1.6, 0.12);
+      mk.box(0xffcf1f, 0, 1.37, 0, 0.47, 0.06, w);
+      for (let k = 0; k < 6; k++) mk.box(0x1b1c22, 0, 1.37, -w / 2 + 0.5 + k * ((w - 1) / 5), 0.48, 0.065, 0.28);
+      // (the walkway's handrail, and the balance beam back over the wall)
+      for (let k = 0; k <= 4; k++) mk.box(0xe8e2d4, -0.2, 1.8, -w / 2 + 0.2 + (k * (w - 0.4)) / 4, 0.04, 0.8, 0.04);
+      mk.box(0xe8e2d4, -0.2, 2.2, 0, 0.05, 0.05, w - 0.3);
+      mk.box(0x3a2a20, 0, 1.75, -w / 2 - 2.6, 0.32, 0.36, 5.4);
+      const leaf = mk.build(vcSet, vcSetLit);
       scene.add(leaf);
+      // (the signal: a black head on a post, its lamp lit, a visor over it)
+      const px = f.x - nx * 0.6 - f.tx * 1.2;
+      const pz = f.z - nz * 0.6 - f.tz * 1.2;
+      sets.place(px, 1.5, pz, f.h + (side > 0 ? Math.PI : 0));
+      sets.cyl(0x2b2f36, 0, 1.1, 0, 0.07, 2.2, 0.07);
+      sets.box(0x141416, 0, 2.4, 0, 0.5, 0.75, 0.4);
       const lampMat = new THREE.MeshBasicMaterial({ color: 0x27e36a });
       lit.push(lampMat);
       const lamp = new THREE.Mesh(geo.ball, lampMat);
-      lamp.scale.setScalar(0.32);
-      lamp.position.set(f.x - nx * 0.6 - f.tx * 1.2, 2.4, f.z - nz * 0.6 - f.tz * 1.2);
+      lamp.scale.set(0.2, 0.2, 0.12);
+      lamp.position.set(px - f.tx * 0.2, 3.9, pz - f.tz * 0.2);
       scene.add(lamp);
-      // (a lamp post on the wall)
-      const pole = new THREE.Mesh(geo.box, steel);
-      pole.scale.set(0.16, 2.2, 0.16);
-      pole.position.set(lamp.position.x, 1.2, lamp.position.z);
-      scene.add(pole);
-      gates.push({ i, leaf, lamp, lampMat, hinge: { x: f.x, z: f.z }, shut: [nx, nz], open: [-f.tx, -f.tz], w, lift: 0 });
+      gates.push({ i, leaf, lampMat, hinge: { x: f.x, z: f.z }, shut: [nx, nz], open: [-f.tx, -f.tz], w, lift: 0 });
       return;
     }
     if (h.kind === 'statue' && h.look === 'pier') {
-      // a concrete pier, its footing in the water, up to the deck
-      const col = new THREE.Mesh(geo.box, concrete);
-      col.scale.set(h.r * 2, 9, h.r * 2.6);
-      col.position.set(h.x, 4.4, h.z);
-      col.rotation.y = headingOf(h.tx, h.tz);
-      scene.add(col);
-      const foot = new THREE.Mesh(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x7c776a }));
-      foot.scale.set(h.r * 1.5, 0.5, h.r * 1.5);
-      foot.position.set(h.x, 0.15, h.z);
-      scene.add(foot);
-      piers++;
+      // a concrete pier on its footing, a hammerhead cap under the deck
+      sets.place(h.x, 0, h.z, headingOf(h.tx, h.tz));
+      sets.cyl(0x8a8578, 0, 0.12, 0, h.r * 1.6, 0.5, h.r * 1.6);
+      sets.box(0xbdb6a6, 0, 4.2, 0, h.r * 1.8, 8.4, h.r * 2.2);
+      sets.box(0xa8a194, 0, 0.6, 0, h.r * 1.84, 1.2, h.r * 2.24);
+      sets.box(0xc4bdae, 0, 8.6, 0, h.r * 2.6, 0.8, 5.5);
+      piers.push(h);
       return;
     }
     if (h.kind === 'rotor' && h.look === 'swing') {
       const f = frame(h.s, h.d);
-      const pier = new THREE.Mesh(geo.wheel, concrete);
-      pier.scale.set(h.r, 1.6, h.r);
-      pier.position.set(f.x, 0.5, f.z);
-      scene.add(pier);
-      // the span: a steel truss from the pivot out over the water, low enough to hit
+      // the pivot pier, its fender ring of timbers, and the operator's house on the span
+      sets.place(f.x, 0, f.z, 0);
+      sets.cyl(0xbdb6a6, 0, 0.5, 0, h.r, 1.6, h.r);
+      sets.cyl(0x5a4632, 0, 0.35, 0, h.r + 0.35, 0.5, h.r + 0.35);
+      // the span: a steel through-truss from the pivot out over the water, the track on its deck, low enough to hit
       const g = new THREE.Group();
       const arm = h.arm ?? 6.6;
-      for (const x of [-0.55, 0.55]) {
+      const mk = modelKit(THREE);
+      mk.box(0x47505a, 0, 1.05, arm / 2, 1.4, 0.3, arm + 0.6);
+      for (let k = 0; k < arm; k += 0.6) mk.box(0x5a4632, 0, 1.24, k + 0.1, 1.3, 0.08, 0.18);
+      for (const sd of [-1, 1]) mk.box(0x8a8f96, sd * 0.36, 1.32, arm / 2, 0.06, 0.08, arm + 0.6);
+      for (const sd of [-1, 1]) mk.box(0x47505a, sd * 0.68, 2.9, arm / 2, 0.16, 0.2, arm + 0.6);
+      mk.box(0x47505a, 0, 2.95, arm / 2, 1.4, 0.06, 0.2);
+      mk.cyl(0x47505a, 0, 1.25, 0, 1.3, 0.6, 1.3);
+      mk.box(0xe8e2d4, 0, 2.0, -0.6, 1.2, 1.4, 1.0);
+      mk.box(0x2a3d4a, 0, 2.2, -0.1, 1.1, 0.5, 0.05);
+      mk.light(0xff2a1a, 0, 3.15, arm, 0.22);
+      mk.light(0xff2a1a, 0, 3.15, 0, 0.15);
+      const span = mk.build(vcSet, vcSetLit);
+      g.add(span);
+      for (const x of [-0.68, 0.68]) {
         const truss = new THREE.Mesh(geo.box, latticeMat);
-        truss.scale.set(0.12, 1.8, arm);
+        truss.scale.set(0.05, 1.8, arm + 0.4);
         truss.position.set(x, 1.95, arm / 2);
         g.add(truss);
       }
-      const deck = new THREE.Mesh(geo.box, steel);
-      deck.scale.set(1.2, 0.3, arm);
-      deck.position.set(0, 1.05, arm / 2);
-      const top = new THREE.Mesh(geo.box, steel);
-      top.scale.set(1.2, 0.18, arm);
-      top.position.set(0, 2.85, arm / 2);
-      const hub = new THREE.Mesh(geo.wheel, steel);
-      hub.scale.set(1.3, 0.6, 1.3);
-      hub.position.set(0, 1.25, 0);
-      const tip = new THREE.Mesh(geo.ball, new THREE.MeshBasicMaterial({ color: 0xff2a1a }));
-      tip.scale.setScalar(0.25);
-      tip.position.set(0, 3.1, arm);
-      g.add(deck, top, hub, tip);
       g.position.set(f.x, 0, f.z);
       scene.add(g);
       swings.push({ i, g, f, ang: 0 });
+      // (and the trestle carrying the line up to the channel on either bank, square across it)
+      for (const sd of [-1, 1]) {
+        for (let k = 0; k < 20; k++) {
+          const d = sd * (edgeAt(t, h.s, sd).lim + 1 + k * 2);
+          const q = frame(h.s, d);
+          if (!away(q.x, q.z, 0.5)) continue;
+          sets.place(q.x, 0, q.z, f.h + Math.PI / 2);
+          sets.box(0x5a4632, 0, 1.24, 0, 2.1, 0.08, 0.22);
+          sets.box(0x8a8f96, 0, 1.33, 0.36, 2.05, 0.08, 0.06);
+          sets.box(0x8a8f96, 0, 1.33, -0.36, 2.05, 0.08, 0.06);
+          sets.box(0x6a5a48, 0, 1.0, 0, 2.05, 0.4, 1.6);
+          if (k % 2 === 0) for (const z of [-0.6, 0.6]) sets.cyl(0x4a3a2c, 0, 0.4, z, 0.14, 1.3, 0.14);
+        }
+      }
     }
   });
-  // Hwy 101's deck over the piers, its shade on the water under it, and the Caltrain's tracks on their trestle
-  if (piers) {
-    const ps = r.hazards.filter((h) => h.kind === 'statue' && h.look === 'pier');
-    const mid = (ps[0].s + ps[ps.length - 1].s) / 2;
+  // Hwy 101 on its viaduct over the piers: a deck on box girders, Jersey barriers, light poles down the median, a
+  // gantry with the big green sign, bents of columns where it crosses the marsh, its shade on the water, and the
+  // morning traffic streaming across
+  if (piers.length) {
+    const mid = piers.reduce((a, h) => a + h.s, 0) / piers.length;
     const f = frame(mid);
-    const deck = new THREE.Mesh(geo.box, concrete);
-    deck.scale.set(70, 1.3, 34);
-    deck.position.set(f.x, 9.4, f.z);
-    deck.rotation.y = f.h;
-    scene.add(deck);
-    const rail = new THREE.Mesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x8c1515 }));
-    for (const z of [-16.5, 16.5]) {
-      const m = rail.clone();
-      m.scale.set(70, 0.9, 0.3);
-      m.position.set(f.x + Math.sin(f.h) * z, 10.4, f.z + Math.cos(f.h) * z);
-      m.rotation.y = f.h;
+    const W = 34;
+    let reach = 30;
+    const mk = modelKit(THREE);
+    mk.place(f.x, 0, f.z, f.h);
+    // (the deck runs across the channel, along local x, as far either way as there is marsh or quay under it)
+    for (let x = -24; x >= -150; x -= 24) {
+      const q = { x: f.x + Math.cos(f.h) * x, z: f.z - Math.sin(f.h) * x };
+      if (!away(q.x, q.z, 1)) break;
+      reach = Math.max(reach, -x + 12);
+    }
+    for (let x = 24; x <= 150; x += 24) {
+      const q = { x: f.x + Math.cos(f.h) * x, z: f.z - Math.sin(f.h) * x };
+      if (!away(q.x, q.z, 1)) break;
+      reach = Math.max(reach, x + 12);
+    }
+    mk.box(0xc4bdae, 0, 9.55, 0, reach * 2, 1.0, W);
+    mk.box(0x55585c, 0, 10.07, 0, reach * 2, 0.04, W - 1.4);
+    for (const z of [-12, -4, 4, 12]) mk.box(0xa8a194, 0, 8.6, z, reach * 2, 1.0, 2.6);
+    for (const z of [-W / 2 + 0.3, 0, W / 2 - 0.3]) {
+      mk.box(0xd8d2c4, 0, 10.45, z, reach * 2, 0.8, 0.5);
+      mk.box(0xe8e2d4, 0, 10.88, z, reach * 2, 0.08, 0.3);
+    }
+    for (const z of [-W / 2 + 0.1, W / 2 - 0.1]) mk.box(0x8c1515, 0, 9.55, z, reach * 2, 0.35, 0.06);
+    for (let x = -reach + 10; x < reach; x += 25) {
+      mk.cyl(0x8a8f96, x, 13.5, 0, 0.1, 6, 0.1);
+      for (const sd of [-1, 1]) {
+        mk.box(0x8a8f96, x, 16.4, sd * 1.4, 0.08, 0.08, 2.8);
+        mk.glow(0xfff0c8, x, 16.3, sd * 2.6, 0.5, 0.12, 0.25);
+      }
+    }
+    for (let x = -reach + 12; x < reach - 6; x += 24) {
+      if (Math.abs(x) < 14) continue;
+      const q = { x: f.x + Math.cos(f.h) * x, z: f.z - Math.sin(f.h) * x };
+      if (!away(q.x, q.z, 1.5)) continue;
+      for (const z of [-11, 0, 11]) mk.cyl(0xbdb6a6, x, 4.3, z, 0.9, 8.6, 0.9);
+      mk.box(0xb0a99a, x, 8.4, 0, 2, 1.2, W - 2);
+    }
+    // (the sign gantry over the eastbound lanes)
+    const gx = -18;
+    for (const z of [-W / 2 + 0.5, -1]) mk.box(0x8a8f96, gx, 13, z, 0.3, 5.5, 0.3);
+    mk.box(0x8a8f96, gx, 15.6, -W / 4, 0.4, 0.4, W / 2);
+    mk.place();
+    scene.add(mk.build(vcSet, vcSetLit));
+    const signTex = texture(
+      THREE,
+      canvas(256, 96, (g) => {
+        g.fillStyle = '#1f6b3a';
+        g.fillRect(0, 0, 256, 96);
+        g.strokeStyle = '#f2f2f0';
+        g.lineWidth = 4;
+        g.strokeRect(5, 5, 246, 86);
+        g.fillStyle = '#f2f2f0';
+        g.font = 'bold 26px Arial, sans-serif';
+        g.textAlign = 'center';
+        g.fillText('101 NORTH', 128, 40);
+        g.font = '22px Arial, sans-serif';
+        g.fillText('San Francisco', 128, 72);
+      }),
+    );
+    for (const sd of [-1, 1]) {
+      const sign = new THREE.Mesh(geo.plane, new THREE.MeshLambertMaterial({ map: signTex, side: THREE.DoubleSide }));
+      sign.scale.set(7, 2.6, 1);
+      const sx = f.x + Math.cos(f.h) * (gx + sd * 0.25) + Math.sin(f.h) * -W / 4;
+      const sz = f.z - Math.sin(f.h) * (gx + sd * 0.25) + Math.cos(f.h) * -W / 4;
+      sign.position.set(sx, 14.4, sz);
+      sign.rotation.y = f.h + (sd > 0 ? Math.PI / 2 : -Math.PI / 2);
+      scene.add(sign);
+    }
+    const shade = new THREE.Mesh(band(THREE, t, mid - W / 2, mid + W / 2, () => -9.5, () => 9.5, 0.055, 4), new THREE.MeshBasicMaterial({ color: 0x0a1820, transparent: true, opacity: 0.4, depthWrite: false }));
+    shade.renderOrder = 1;
+    scene.add(flat(shade));
+    // and the morning traffic on it, four lanes each way, streaming across on the clock: a body and a cabin each
+    const carMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const body = new THREE.InstancedMesh(geo.box, carMat, CARS);
+    const cab = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x2a3640 }), CARS);
+    const carColors = [0xd8dde2, 0x2b2f36, 0x8c1515, 0x3c6fa8, 0xe8e2d4, 0x6a6f74, 0xb8a27a, 0xf2f2f0];
+    for (let n = 0; n < CARS; n++) body.setColorAt(n, new THREE.Color(carColors[(n * 5) % carColors.length]));
+    for (const m of [body, cab]) {
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      m.frustumCulled = false;
       scene.add(m);
     }
-    const shade = new THREE.Mesh(band(THREE, t, mid - 17, mid + 17, () => -9, () => 9, 0.055, 4), new THREE.MeshBasicMaterial({ color: 0x0a1820, transparent: true, opacity: 0.35, depthWrite: false }));
-    shade.renderOrder = 1;
-    scene.add(shade);
-    // and the morning traffic on it, four lanes each way, streaming across on the clock (headlights one way, tail lights
-    // the other)
-    const cars = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xffffff }), CARS);
-    const carColors = [0xd8dde2, 0x2b2f36, 0x8c1515, 0x3c6fa8, 0xe8e2d4, 0x6a6f74, 0xb8a27a];
-    for (let n = 0; n < CARS; n++) cars.setColorAt(n, new THREE.Color(carColors[(n * 5) % carColors.length]));
-    cars.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    cars.frustumCulled = false;
-    scene.add(cars);
-    traffic = { cars, f };
+    traffic = { body, cab, f, reach };
   }
+  sets.place();
+  if (sets.count()) scene.add(sets.build(vcSet, vcSetLit));
 
   // ---------------------------------------------------------------------------------------------------------------
   // Slack water along the banks where the current runs against you (hug it going upstream): a darker, stiller strip
@@ -1062,7 +1157,8 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     return { h, ring, ringMat, a: 0, n };
   });
   const SPRAY = 18;
-  const spray = whirls.length ? new THREE.InstancedMesh(geo.ball, new THREE.MeshBasicMaterial({ color: 0xf2f6f8, transparent: true, opacity: 0.7, depthWrite: false }), whirls.length * SPRAY) : null;
+  const blob = new THREE.IcosahedronGeometry(1, 0);
+  const spray = whirls.length ? new THREE.InstancedMesh(blob, new THREE.MeshBasicMaterial({ color: 0xf2f6f8, transparent: true, opacity: 0.7, depthWrite: false }), whirls.length * SPRAY) : null;
   if (spray) {
     spray.frustumCulled = false;
     spray.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -1077,7 +1173,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   lit.push(vcLit);
   const dark = new THREE.MeshLambertMaterial({ color: 0x23262c });
   type VesselView = { h: LiveHazard; g: T.Group; roll: T.Object3D | null; wake: T.Mesh | null; wakePos: T.BufferAttribute | null };
-  const wakeMat = new THREE.MeshBasicMaterial({ map: wakeTexture(THREE), transparent: true, depthWrite: false, side: THREE.DoubleSide });
+  const wakeMat = new THREE.MeshBasicMaterial({ map: wakeTexture(THREE), transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide });
   const WAKE_N = 12;
   const vessels: VesselView[] = r.vessels.map((h) => {
     const len = lengthOf(h);
@@ -1176,47 +1272,97 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   if (r.swells.length) scene.add(crestMesh);
 
   // ---------------------------------------------------------------------------------------------------------------
-  // The weir: the stopper boiling white below its crest, and DANGER WEIR boards on both banks
+  // The weir: a glassy tongue of water pouring over the concrete crest into the stopper boiling white below it, spray
+  // thrown up off the boil, the abutments and a footbridge over it all, and DANGER WEIR boards on both banks
   const foamTex = texture(
     THREE,
-    canvas(64, 64, (g) => {
-      g.fillStyle = 'rgba(240,244,240,0.85)';
-      g.fillRect(0, 0, 64, 64);
+    canvas(128, 128, (g) => {
+      g.fillStyle = 'rgba(236,242,240,0.92)';
+      g.fillRect(0, 0, 128, 128);
       const r3 = scatter(9);
-      for (let i = 0; i < 90; i++) {
-        g.fillStyle = `rgba(90,140,150,${0.2 + r3() * 0.3})`;
+      for (let i = 0; i < 260; i++) {
+        const x = r3() * 128;
+        const y = r3() * 128;
+        const rad = 1 + r3() * 6;
+        const grad = g.createRadialGradient(x - rad * 0.3, y - rad * 0.3, 0, x, y, rad);
+        grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+        grad.addColorStop(0.7, `rgba(150,185,190,${0.25 + r3() * 0.3})`);
+        grad.addColorStop(1, 'rgba(90,140,150,0)');
+        g.fillStyle = grad;
         g.beginPath();
-        g.arc(r3() * 64, r3() * 64, 1 + r3() * 4, 0, Math.PI * 2);
+        g.arc(x, y, rad, 0, Math.PI * 2);
         g.fill();
       }
     }),
   );
   foamTex.wrapS = foamTex.wrapT = THREE.RepeatWrapping;
+  const tongueTex = texture(
+    THREE,
+    canvas(64, 128, (g) => {
+      const grad = g.createLinearGradient(0, 0, 0, 128);
+      grad.addColorStop(0, 'rgba(40,96,104,0.75)');
+      grad.addColorStop(0.55, 'rgba(120,175,180,0.8)');
+      grad.addColorStop(1, 'rgba(240,246,244,0.95)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 128);
+      const r3 = scatter(4);
+      for (let i = 0; i < 40; i++) {
+        g.fillStyle = `rgba(255,255,255,${0.15 + r3() * 0.35})`;
+        g.fillRect(r3() * 64, r3() * 128, 1 + r3() * 2, 10 + r3() * 40);
+      }
+    }),
+  );
+  tongueTex.wrapS = tongueTex.wrapT = THREE.RepeatWrapping;
   const stoppers: T.Texture[] = [];
   // (and the white water pouring over the crest into it)
   const pours: T.Texture[] = [];
+  const boils: { x: number; z: number; w: number; h: number; tx: number; tz: number }[] = [];
+  const weirKit = modelKit(THREE);
   for (const h of r.holes) {
     if ((h.w ?? h.r) < t.half + 1) continue;
-    const tex = foamTex.clone();
-    tex.needsUpdate = true;
-    stoppers.push(tex);
-    const m = new THREE.Mesh(band(THREE, t, h.s - 0.3, h.s + (h.len ?? 0), wet(-1), wet(1), 0.07, 3), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
-    m.renderOrder = 2;
-    scene.add(m);
+    for (const [rep, y, order] of [[3, 0.07, 2], [2.2, 0.075, 3]] as const) {
+      const tex = foamTex.clone();
+      tex.needsUpdate = true;
+      tex.repeat.set(rep, 1);
+      stoppers.push(tex);
+      const m = new THREE.Mesh(band(THREE, t, h.s - 0.3, h.s + (h.len ?? 0), wet(-1), wet(1), y, 3), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: order === 3 ? 0.55 : 1, depthWrite: false }));
+      m.renderOrder = order;
+      scene.add(flat(m));
+    }
     {
-      const pour = foamTex.clone();
+      const pour = tongueTex.clone();
       pour.needsUpdate = true;
-      pour.repeat.set(4, 1);
+      pour.repeat.set(5, 1);
       pours.push(pour);
       const f = frame(h.s - 0.2);
       const w = wet(1)(h.s) - wet(-1)(h.s);
-      const sheet = new THREE.Mesh(geo.plane, new THREE.MeshBasicMaterial({ map: pour, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+      const sheet = new THREE.Mesh(geo.plane, new THREE.MeshBasicMaterial({ map: pour, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
       sheet.scale.set(w, RAMP_H + 0.5, 1);
       const c = pointAt(t, h.s - 0.2, (wet(1)(h.s) + wet(-1)(h.s)) / 2);
       sheet.position.set(c.x, (RAMP_H - 0.5) / 2 + 0.04, c.z);
       sheet.rotation.y = f.h;
       sheet.renderOrder = 2;
       scene.add(sheet);
+      boils.push({ x: c.x, z: c.z, w, h: f.h, tx: f.tx, tz: f.tz });
+    }
+    // (the abutments at either end of the crest, and a footbridge high over it with its rails)
+    const f = frame(h.s);
+    for (const side of [-1, 1]) {
+      const q = frame(h.s, side * (edgeAt(t, h.s, side).lim + 1.4));
+      weirKit.place(q.x, 0, q.z, f.h);
+      weirKit.box(0xbdb6a6, 0, 3.2, 0, 2.4, 6.4, 4.2);
+      weirKit.box(0x9a9385, 0, 0.6, 0, 2.5, 1.2, 4.3);
+      weirKit.box(0xd8d2c4, 0, 6.5, 0, 2.7, 0.25, 4.5);
+    }
+    const span = edgeAt(t, h.s, 1).lim + edgeAt(t, h.s, -1).lim + 2.8;
+    const mid = (edgeAt(t, h.s, 1).lim - edgeAt(t, h.s, -1).lim) / 2;
+    const q = frame(h.s, mid);
+    weirKit.place(q.x, 0, q.z, f.h);
+    weirKit.box(0x6a7076, 0, 6.2, 0, span, 0.35, 1.8);
+    for (const sd of [-1, 1]) {
+      weirKit.box(0xe8e2d4, 0, 7.25, sd * 0.85, span, 0.06, 0.06);
+      for (let k = 0; k <= 12; k++) weirKit.box(0xe8e2d4, -span / 2 + (k * span) / 12, 6.8, sd * 0.85, 0.05, 0.9, 0.05);
+      weirKit.box(0xffcf1f, 0, 6.02, sd * 0.88, span, 0.12, 0.04);
     }
     const board = new THREE.MeshBasicMaterial({
       map: texture(
@@ -1237,17 +1383,25 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       side: THREE.DoubleSide,
     });
     for (const side of [-1, 1]) {
-      const f = frame(h.s - 30, side * (edgeAt(t, h.s - 30, side).lim + 2.5));
+      const fs = frame(h.s - 30, side * (edgeAt(t, h.s - 30, side).lim + 2.5));
       const sign = new THREE.Mesh(geo.plane, board);
       sign.scale.set(4, 1.5, 1);
-      sign.position.set(f.x, 2.6, f.z);
-      sign.rotation.y = f.h + Math.PI;
+      sign.position.set(fs.x, 2.6, fs.z);
+      sign.rotation.y = fs.h + Math.PI;
       scene.add(sign);
-      const pole = new THREE.Mesh(geo.box, steel);
-      pole.scale.set(0.15, 2, 0.15);
-      pole.position.set(f.x, 1, f.z);
-      scene.add(pole);
+      weirKit.place(fs.x, 0, fs.z, fs.h);
+      for (const sd of [-1, 1]) weirKit.box(0x47505a, sd * 1.6, 1, 0, 0.14, 2, 0.14);
     }
+  }
+  weirKit.place();
+  if (weirKit.count()) scene.add(weirKit.build(vcSet, vcSetLit));
+  // the spray off the boil
+  const BOIL = 40;
+  const boilMesh = boils.length ? new THREE.InstancedMesh(blob, new THREE.MeshBasicMaterial({ color: 0xf4f8f8, transparent: true, opacity: 0.75, depthWrite: false }), boils.length * BOIL) : null;
+  if (boilMesh) {
+    boilMesh.frustumCulled = false;
+    boilMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(boilMesh);
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -1316,6 +1470,38 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     armMesh.setMatrixAt(n, dummy.matrix);
     armMesh.setColorAt(n, tint.setScalar(Math.max(0, Math.min(1, k))));
   };
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // The last lap's fog: banks of mist lying on the water and drifting over the marsh, thicker in some places than
+  // others, wrapping round wherever you are (one instanced draw)
+  const MIST = 44;
+  const mistTex = texture(
+    THREE,
+    canvas(128, 64, (g) => {
+      const r3 = scatter(61);
+      for (let i = 0; i < 26; i++) {
+        const x = 20 + r3() * 88;
+        const y = 22 + r3() * 26;
+        const rad = 10 + r3() * 18;
+        const grad = g.createRadialGradient(x, y, 0, x, y, rad);
+        grad.addColorStop(0, 'rgba(255,255,255,0.38)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = grad;
+        g.fillRect(0, 0, 128, 64);
+      }
+    }),
+  );
+  const mistMat = new THREE.MeshBasicMaterial({ map: mistTex, color: new THREE.Color(look.fogLap?.color ?? 0xd8d4cc), transparent: true, opacity: 0, depthWrite: false, fog: false, side: THREE.DoubleSide });
+  const mist = look.fogLap ? new THREE.InstancedMesh(geo.plane, mistMat, MIST) : null;
+  const mistAt = Array.from({ length: MIST }, (_, n) => ({ x: ((n * 97.3) % 200) - 100, z: ((n * 61.7) % 200) - 100, w: 26 + ((n * 13) % 30), h: 5 + ((n * 7) % 7), y: 1.5 + ((n * 3) % 4) * 0.8 }));
+  let mistIn = 0;
+  if (mist) {
+    mist.frustumCulled = false;
+    mist.visible = false;
+    mist.renderOrder = 4;
+    mist.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(flat(mist));
+  }
 
   // ---------------------------------------------------------------------------------------------------------------
   // The reflection: the scene drawn again from a camera mirrored under the water (clipped at the surface) into a texture
@@ -1404,6 +1590,31 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
         run.streak.value = damp(run.streak.value, Math.min(1, Math.abs(along) / 1.5), 2, dt);
       }
       shared.uTime.value = clock;
+      if (mist && look.fogLap) {
+        mistIn = damp(mistIn, lap >= look.fogLap.lap ? 1 : 0, 0.6, dt);
+        mist.visible = mistIn > 0.01;
+        const k = race.karts[me];
+        if (mist.visible && k) {
+          mistMat.opacity = 0.75 * mistIn;
+          mistAt.forEach((m, n) => {
+            // (fixed in the world but drifting on the breeze, each wrapped into a 200 m square round you)
+            const wx = m.x + clock * 1.2;
+            const wz = m.z + clock * 0.5;
+            const x = k.x + ((((wx - k.x) % 200) + 300) % 200) - 100;
+            const z = k.z + ((((wz - k.z) % 200) + 300) % 200) - 100;
+            // (thinning out right round you, so it never blinds the view)
+            const near = Math.min(1, Math.max(0.15, (Math.hypot(x - k.x, z - k.z) - 6) / 30));
+            dummy.position.set(x, m.y, z);
+            dummy.rotation.set(0, k.h + Math.PI + Math.sin(n) * 0.4, 0);
+            dummy.scale.set(m.w * near, m.h * near, 1);
+            dummy.updateMatrix();
+            mist.setMatrixAt(n, dummy.matrix);
+          });
+          dummy.rotation.set(0, 0, 0);
+          dummy.scale.setScalar(1);
+          mist.instanceMatrix.needsUpdate = true;
+        }
+      }
       {
         const k = race.karts[me];
         plants.tick(clock, k ? windAt(race, k.s, race.time, lap) * 0.02 : 0);
@@ -1416,27 +1627,49 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       }
       for (const tex of pours) tex.offset.y = (tex.offset.y + dt * 2.4) % 1;
       if (traffic) {
-        const { cars, f } = traffic;
+        const { body, cab, f, reach } = traffic;
         const ax = Math.cos(f.h);
         const az = -Math.sin(f.h);
         const bx = Math.sin(f.h);
         const bz = Math.cos(f.h);
+        const span = reach * 2 - 6;
         for (let n = 0; n < CARS; n++) {
           const lane = n % 8;
           const dir = lane < 4 ? 1 : -1;
-          const z = (lane < 4 ? -1 : 1) * (2.4 + (lane % 4) * 3.4);
+          const z = (lane < 4 ? -1 : 1) * (2.2 + (lane % 4) * 3.5);
           const speed = 24 + (lane % 4) * 3;
-          const u = ((((clock * speed * dir + n * 37.3) % 120) + 120) % 120) - 60;
+          const u = ((((clock * speed * dir + n * 37.3) % span) + span) % span) - span / 2;
           const truck = n % 9 === 0;
-          dummy.position.set(f.x + ax * u + bx * z, truck ? 11.25 : 10.7, f.z + az * u + bz * z);
+          const len = truck ? 9 : 4.3;
+          dummy.position.set(f.x + ax * u + bx * z, truck ? 11.4 : 10.6, f.z + az * u + bz * z);
           dummy.rotation.set(0, f.h + Math.PI / 2, 0);
-          dummy.scale.set(1.8, truck ? 2.4 : 1.3, truck ? 9 : 4.2);
+          dummy.scale.set(1.8, truck ? 2.6 : 0.9, len);
           dummy.updateMatrix();
-          cars.setMatrixAt(n, dummy.matrix);
+          body.setMatrixAt(n, dummy.matrix);
+          dummy.position.set(f.x + ax * (u + dir * (truck ? 3.3 : -0.2)) + bx * z, truck ? 11.0 : 11.3, f.z + az * (u + dir * (truck ? 3.3 : -0.2)) + bz * z);
+          dummy.scale.set(1.7, truck ? 1.8 : 0.6, truck ? 2.2 : 2.2);
+          dummy.updateMatrix();
+          cab.setMatrixAt(n, dummy.matrix);
         }
         dummy.rotation.set(0, 0, 0);
         dummy.scale.setScalar(1);
-        cars.instanceMatrix.needsUpdate = true;
+        body.instanceMatrix.needsUpdate = true;
+        cab.instanceMatrix.needsUpdate = true;
+      }
+      if (boilMesh) {
+        boils.forEach((b, n) => {
+          for (let j = 0; j < BOIL; j++) {
+            const life = (clock * (0.9 + (j % 5) * 0.12) + j * 0.618) % 1;
+            const across = ((j * 0.377) % 1) - 0.5;
+            const fwd = 0.5 + life * 3 + ((j * 0.71) % 1) * 2;
+            dummy.position.set(b.x + Math.cos(b.h) * across * b.w + b.tx * fwd, 0.15 + Math.sin(life * Math.PI) * (0.8 + (j % 3) * 0.4), b.z - Math.sin(b.h) * across * b.w + b.tz * fwd);
+            dummy.scale.setScalar(0.12 + 0.22 * (1 - life));
+            dummy.updateMatrix();
+            boilMesh.setMatrixAt(n * BOIL + j, dummy.matrix);
+          }
+        });
+        dummy.scale.setScalar(1);
+        boilMesh.instanceMatrix.needsUpdate = true;
       }
       for (const tex of stoppers) {
         tex.offset.y = (tex.offset.y + dt * 1.6) % 1;

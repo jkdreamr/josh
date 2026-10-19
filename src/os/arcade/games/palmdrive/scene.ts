@@ -1200,6 +1200,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   );
   // reflective, so they still show up at night
   const chevronMat = look.night ? new THREE.MeshBasicMaterial({ map: chevron, side: THREE.DoubleSide }) : new THREE.MeshLambertMaterial({ map: chevron, side: THREE.DoubleSide });
+  const boardPosts: { x: number; z: number; h: number }[] = [];
   for (let s = 0; s < t.length; s += 9) {
     const i = Math.floor(s / t.step) % t.n;
     const c = t.curv[i];
@@ -1214,8 +1215,23 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     sign.position.set(p.x, 1.9, p.z);
     // face the karts coming at it; the arrow points the way the road turns
     sign.rotation.y = headingOf(p.tx, p.tz) + Math.PI;
+    // (on the water each board stands on a pair of piles in the marsh)
+    if (boat) boardPosts.push({ x: p.x, z: p.z, h: headingOf(p.tx, p.tz) });
     if (c < 0) sign.scale.x = -1.6;
     scene.add(sign);
+  }
+  if (boardPosts.length) {
+    const m = new THREE.InstancedMesh(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x4a3a2c }), boardPosts.length * 2);
+    boardPosts.forEach((p, k) => {
+      for (const sd of [-1, 1]) {
+        dummy.position.set(p.x + Math.cos(p.h) * sd * 0.6, 0.6, p.z - Math.sin(p.h) * sd * 0.6);
+        dummy.scale.set(0.09, 2.6, 0.09);
+        dummy.updateMatrix();
+        m.setMatrixAt(k * 2 + (sd > 0 ? 1 : 0), dummy.matrix);
+      }
+    });
+    dummy.scale.setScalar(1);
+    scene.add(m);
   }
   for (const { s, side } of startBoards) {
     const p = pointAt(t, s, side * t.edge);
