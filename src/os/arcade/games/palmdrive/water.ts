@@ -940,7 +940,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
   );
   const latticeMat = new THREE.MeshLambertMaterial({ map: latticeTex, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide, color: 0x8f9cab });
   const piers: LiveHazard[] = [];
-  let traffic: { body: T.InstancedMesh; cab: T.InstancedMesh; f: ReturnType<typeof frame>; from: number; to: number; flat: number[]; ramps: number[] } | null = null;
+  let traffic: { body: T.InstancedMesh; cab: T.InstancedMesh; road: { x: number; z: number; w: number; y: number }[]; len: number[] } | null = null;
   r.hazards.forEach((h, i) => {
     if (h.kind === 'bollard' && h.look === 'gate') {
       const w = h.w ?? 6;
@@ -1041,71 +1041,75 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
     const f = frame(mid);
     const W = 34;
     const mk = modelKit(THREE);
+    // (its line: straight across the channel, then out across the marsh on piers. Heading out of the course it bends away
+    // and runs on into the haze; inside the loop it narrows to a two-lane flyover that curves away from the water into
+    // the middle of the marsh and comes down there on its piers)
+    const ferryS = r.hazards.find((h) => h.kind === 'ferry')?.s ?? 404;
+    const tall = [[ferryS - 59, 58, 22], [ferryS - 4, 50, 22], [ferryS - 32, 62, 48], [ferryS - 20, 110, 34], [t.length - 26, t.edge + 16, 30]].map(([s0, d, rr]) => {
+      const p = pointAt(t, s0, d);
+      return { x: p.x, z: p.z, r: rr };
+    });
+    const lines = highwayLine(t, f.x, f.z, Math.cos(f.h), -Math.sin(f.h), W / 2, tall);
+    const NARROW = 14;
+    /** The road: one polyline from the inner end to the outer, its width and the height of its deck at each point. */
+    const road: { x: number; z: number; w: number; y: number }[] = [];
+    for (const { pts, out } of [...lines].sort((p, q) => Number(p.out) - Number(q.out))) {
+      const n = pts.length;
+      const list = pts.map((p, i) => {
+        const run = i * 8;
+        const w = out || run <= 24 ? W : run >= 48 ? NARROW : W + ((NARROW - W) * (run - 24)) / 24;
+        // (the flyover inside comes down over its last 64 m)
+        const down = out ? 1 : Math.min(1, Math.max(0, ((n - 1 - i) * 8) / 64));
+        return { x: p.x, z: p.z, w, y: 0.6 + 8.95 * (out ? 1 : down) };
+      });
+      if (out) road.push(...list.slice(1));
+      else road.push(...list.reverse());
+    }
+    const hw = modelKit(THREE);
+    const len: number[] = [0];
+    for (let i = 1; i < road.length; i++) len.push(len[i - 1] + Math.hypot(road[i].x - road[i - 1].x, road[i].z - road[i - 1].z));
+    for (let i = 0; i + 1 < road.length; i++) {
+      const a = road[i];
+      const b = road[i + 1];
+      const segLen = Math.hypot(b.x - a.x, b.z - a.z) + 0.6;
+      const ry = Math.atan2(b.x - a.x, b.z - a.z);
+      const pitch = Math.atan2(b.y - a.y, segLen);
+      const w = (a.w + b.w) / 2;
+      const y = (a.y + b.y) / 2;
+      hw.place((a.x + b.x) / 2, 0, (a.z + b.z) / 2, ry);
+      // (along local z: the slab, its asphalt, girders under it, Jersey barriers along its edges and down the median)
+      hw.box(0xc4bdae, 0, y, 0, w, 1.0, segLen, -pitch);
+      hw.box(0x55585c, 0, y + 0.52, 0, w - 1.4, 0.04, segLen, -pitch);
+      for (const gz of w > 20 ? [-12, -4, 4, 12] : [-3.5, 3.5]) hw.box(0xa8a194, gz, y - 0.95, 0, 2.6, 1.0, segLen, -pitch);
+      for (const ez of w > 20 ? [-w / 2 + 0.3, 0, w / 2 - 0.3] : [-w / 2 + 0.3, w / 2 - 0.3]) {
+        hw.box(0xd8d2c4, ez, y + 0.9, 0, 0.5, 0.8, segLen, -pitch);
+        hw.box(0xe8e2d4, ez, y + 1.33, 0, 0.3, 0.08, segLen, -pitch);
+      }
+      for (const ez of [-w / 2 + 0.1, w / 2 - 0.1]) hw.box(0x8c1515, ez, y, 0, 0.06, 0.35, segLen, -pitch);
+      // (piers every third span, each column clear of the water; lights down the middle)
+      if (i % 3 === 1) {
+        const cols = w > 20 ? [-11, 0, 11] : [0];
+        let any = false;
+        for (const cz of cols) {
+          const qx = (a.x + b.x) / 2 + Math.cos(ry) * cz;
+          const qz = (a.z + b.z) / 2 - Math.sin(ry) * cz;
+          if (!away(qx, qz, 1.5) || y < 1.5) continue;
+          any = true;
+          hw.cyl(0xbdb6a6, cz, (y - 1) / 2, 0, w > 20 ? 0.9 : 0.75, y - 1, w > 20 ? 0.9 : 0.75);
+        }
+        if (any) hw.box(0xb0a99a, 0, y - 1.15, 0, w - 2, 1.2, 2);
+        if (y > 8) {
+          hw.cyl(0x8a8f96, 0, y + 4, 0, 0.1, 6, 0.1);
+          for (const sd of [-1, 1]) {
+            hw.box(0x8a8f96, sd * 1.4, y + 6.9, 0, 2.8, 0.08, 0.08);
+            hw.glow(0xfff0c8, sd * 2.6, y + 6.8, 0, 0.25, 0.12, 0.5);
+          }
+        }
+      }
+    }
+    hw.place();
+    scene.add(hw.build(vcSet, vcSetLit));
     mk.place(f.x, 0, f.z, f.h);
-    // (the deck runs across the channel along local x, level until a ramp brings it down to the marsh before it would
-    // cross any other stretch of the channel)
-    const spot = (x: number, z: number) => ({ x: f.x + Math.cos(f.h) * x + Math.sin(f.h) * z, z: f.z - Math.sin(f.h) * x + Math.cos(f.h) * z });
-    const dry = (x: number, margin: number) => [-W / 2, 0, W / 2].every((z) => {
-      const q = spot(x, z);
-      return away(q.x, q.z, margin);
-    });
-    const ends = [-1, 1].map((sg) => {
-      let water = 190;
-      for (let x = 18; x < 190; x += 3) {
-        if (!dry(sg * x, 8)) {
-          water = x;
-          break;
-        }
-      }
-      const flatEnd = Math.max(18, water - 44);
-      return { sg, flatEnd, ramp: Math.max(6, Math.min(40, water - 4 - flatEnd)) };
-    });
-    const [L, Rt] = ends;
-    const cxd = (Rt.flatEnd - L.flatEnd) / 2;
-    const len = Rt.flatEnd + L.flatEnd;
-    mk.box(0xc4bdae, cxd, 9.55, 0, len, 1.0, W);
-    mk.box(0x55585c, cxd, 10.07, 0, len, 0.04, W - 1.4);
-    for (const z of [-12, -4, 4, 12]) mk.box(0xa8a194, cxd, 8.6, z, len, 1.0, 2.6);
-    for (const z of [-W / 2 + 0.3, 0, W / 2 - 0.3]) {
-      mk.box(0xd8d2c4, cxd, 10.45, z, len, 0.8, 0.5);
-      mk.box(0xe8e2d4, cxd, 10.88, z, len, 0.08, 0.3);
-    }
-    for (const z of [-W / 2 + 0.1, W / 2 - 0.1]) mk.box(0x8c1515, cxd, 9.55, z, len, 0.35, 0.06);
-    for (const e of ends) {
-      // (the ramp down, on columns shortening as it goes)
-      const th = Math.atan2(9.5, e.ramp);
-      const run = Math.hypot(9.5, e.ramp);
-      const mx = e.sg * (e.flatEnd + e.ramp / 2);
-      mk.box(0xc4bdae, mx, 9.55 / 2 + 0.3, 0, run, 1.0, W, 0, 0, -e.sg * th);
-      mk.box(0x55585c, mx, 9.55 / 2 + 0.82, 0, run, 0.04, W - 1.4, 0, 0, -e.sg * th);
-      for (const z of [-W / 2 + 0.3, W / 2 - 0.3]) mk.box(0xd8d2c4, mx, 9.55 / 2 + 1.2, z, run, 0.8, 0.5, 0, 0, -e.sg * th);
-      for (let k = 6; k < e.ramp - 2; k += 8) {
-        const x = e.sg * (e.flatEnd + k);
-        const y = 9.1 * (1 - k / e.ramp);
-        for (const z of [-11, 0, 11]) {
-          const q = spot(x, z);
-          if (away(q.x, q.z, 2)) mk.cyl(0xbdb6a6, x, y / 2, z, 0.8, y, 0.8);
-        }
-      }
-    }
-    for (let x = -L.flatEnd + 10; x < Rt.flatEnd; x += 25) {
-      mk.cyl(0x8a8f96, x, 13.5, 0, 0.1, 6, 0.1);
-      for (const sd of [-1, 1]) {
-        mk.box(0x8a8f96, x, 16.4, sd * 1.4, 0.08, 0.08, 2.8);
-        mk.glow(0xfff0c8, x, 16.3, sd * 2.6, 0.5, 0.12, 0.25);
-      }
-    }
-    for (const sg of [-1, 1]) {
-      const e = sg < 0 ? L : Rt;
-      for (let k = 24; k <= e.flatEnd; k += 24) {
-        const x = sg * k;
-        for (const z of [-11, 0, 11]) {
-          const q = spot(x, z);
-          if (away(q.x, q.z, 2)) mk.cyl(0xbdb6a6, x, 4.3, z, 0.9, 8.6, 0.9);
-        }
-        mk.box(0xb0a99a, x, 8.4, 0, 2, 1.2, W - 2);
-      }
-    }
     // (the sign gantry over the eastbound lanes)
     const gx = -18;
     for (const z of [-W / 2 + 0.5, -1]) mk.box(0x8a8f96, gx, 13, z, 0.3, 5.5, 0.3);
@@ -1151,7 +1155,7 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       m.frustumCulled = false;
       scene.add(m);
     }
-    traffic = { body, cab, f, from: -(L.flatEnd + L.ramp), to: Rt.flatEnd + Rt.ramp, flat: [-L.flatEnd, Rt.flatEnd], ramps: [L.ramp, Rt.ramp] };
+    traffic = { body, cab, road, len };
   }
   sets.place();
   if (sets.count()) scene.add(sets.build(vcSet, vcSetLit));
@@ -1671,30 +1675,42 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
       }
       for (const tex of pours) tex.offset.y = (tex.offset.y + dt * 2.4) % 1;
       if (traffic) {
-        const { body, cab, f, from, to, flat, ramps } = traffic;
-        const ax = Math.cos(f.h);
-        const az = -Math.sin(f.h);
-        const bx = Math.sin(f.h);
-        const bz = Math.cos(f.h);
-        const span = to - from;
-        // (the road's height under a car: level over the channel, down the ramps at either end)
-        const roadY = (u: number) => (u < flat[0] ? 9.5 * (1 - (flat[0] - u) / ramps[0]) : u > flat[1] ? 9.5 * (1 - (u - flat[1]) / ramps[1]) : 9.5) + 0.6;
+        const { body, cab, road, len } = traffic;
+        const total = len[len.length - 1];
+        let seg = 0;
+        // (where a car is, `u` meters along the road from its inner end: the point, the heading, the width and height)
+        const along = (u: number) => {
+          while (seg > 0 && len[seg] > u) seg--;
+          while (seg < len.length - 2 && len[seg + 1] < u) seg++;
+          const a = road[seg];
+          const b = road[seg + 1];
+          const k = Math.min(1, Math.max(0, (u - len[seg]) / (len[seg + 1] - len[seg] || 1)));
+          return { x: a.x + (b.x - a.x) * k, z: a.z + (b.z - a.z) * k, y: a.y + (b.y - a.y) * k, w: a.w + (b.w - a.w) * k, h: Math.atan2(b.x - a.x, b.z - a.z) };
+        };
         for (let n = 0; n < CARS; n++) {
           const lane = n % 8;
           const dir = lane < 4 ? 1 : -1;
-          const z = (lane < 4 ? -1 : 1) * (2.2 + (lane % 4) * 3.5);
           const speed = 24 + (lane % 4) * 3;
-          const u = from + ((((clock * speed * dir + n * 37.3) % span) + span) % span);
+          const u = (((clock * speed * dir + n * 61.3) % total) + total) % total;
+          seg = 0;
+          const p = along(u);
+          // (four lanes each way across the full deck, two each way on the narrow flyover)
+          const narrow = p.w < 30;
+          const lz = narrow ? (lane < 4 ? -1 : 1) * (1.8 + (lane % 2) * 3.4) : (lane < 4 ? -1 : 1) * (2.2 + (lane % 4) * 3.5);
           const truck = n % 9 === 0;
-          const len = truck ? 9 : 4.3;
-          const y = roadY(u);
-          dummy.position.set(f.x + ax * u + bx * z, y + (truck ? 0.8 : 0), f.z + az * u + bz * z);
-          dummy.rotation.set(0, f.h + Math.PI / 2, 0);
-          dummy.scale.set(1.8, truck ? 2.6 : 0.9, len);
+          const lenCar = truck ? 9 : 4.3;
+          const px = p.x + Math.cos(p.h) * lz;
+          const pz = p.z - Math.sin(p.h) * lz;
+          const fx = Math.sin(p.h) * dir;
+          const fz = Math.cos(p.h) * dir;
+          dummy.position.set(px, p.y + 1.05 + (truck ? 0.8 : 0), pz);
+          dummy.rotation.set(0, p.h, 0);
+          dummy.scale.set(1.8, truck ? 2.6 : 0.9, lenCar);
           dummy.updateMatrix();
           body.setMatrixAt(n, dummy.matrix);
-          dummy.position.set(f.x + ax * (u + dir * (truck ? 3.3 : -0.2)) + bx * z, y + (truck ? 0.4 : 0.7), f.z + az * (u + dir * (truck ? 3.3 : -0.2)) + bz * z);
-          dummy.scale.set(1.7, truck ? 1.8 : 0.6, truck ? 2.2 : 2.2);
+          const off = truck ? 3.3 : -0.2;
+          dummy.position.set(px + fx * off, p.y + (truck ? 1.45 : 1.75), pz + fz * off);
+          dummy.scale.set(1.7, truck ? 1.8 : 0.6, 2.2);
           dummy.updateMatrix();
           cab.setMatrixAt(n, dummy.matrix);
         }
@@ -1921,3 +1937,97 @@ const dampAngle = (a: number, b: number, k: number, dt: number) => {
   d -= Math.round(d / (Math.PI * 2)) * Math.PI * 2;
   return a + d * (1 - Math.exp(-k * dt));
 };
+
+/**
+ * Hwy 101's line across the slough: from its crossing at (x, z), out both ways along (dx, dz) and its opposite, on piers,
+ * each end steering gently round any other stretch of the channel and anything tall in `avoid`. The end heading out of
+ * the course bends away from it, off into the distance; the end inside the loop of the channel (which it could only
+ * leave by crossing the channel again) keeps to the middle of the marsh, as far from the water as it can. Each end is
+ * a list of points `step` apart from the crossing, and whether it heads out.
+ */
+export function highwayLine(t: Track, x: number, z: number, dx: number, dz: number, half: number, avoid: { x: number; z: number; r: number }[], far = 1100, inner = 320, step = 8, innerHalf = 7) {
+  let cx = 0;
+  let cz = 0;
+  for (let i = 0; i < t.n; i++) {
+    cx += t.x[i] / t.n;
+    cz += t.z[i] / t.n;
+  }
+  /** How far the deck (its whole width) is from the water past any brink, and from everything to avoid (or < 0 in it). */
+  const room = (px: number, pz: number, hx: number, hz: number, w = half) => {
+    let r = Infinity;
+    for (const o of [-w - 2, 0, w + 2]) {
+      const qx = px - hz * o;
+      const qz = pz + hx * o;
+      const at = locate(t, qx, qz);
+      const side = at.d >= 0 ? 1 : -1;
+      r = Math.min(r, Math.abs(at.d) - edgeAt(t, at.s, side).lim);
+      for (const a of avoid) r = Math.min(r, Math.hypot(qx - a.x, qz - a.z) - a.r);
+    }
+    return r;
+  };
+  // (inside the loop, it makes for the middle of the marsh there: the spot furthest from any water)
+  let goal = { x: cx, z: cz, room: -Infinity };
+  for (let gx = -300; gx <= 300; gx += 12) {
+    for (let gz = -300; gz <= 300; gz += 12) {
+      const qx = cx + gx;
+      const qz = cz + gz;
+      let inside = false;
+      for (let i = 0, j = t.n - 1; i < t.n; j = i++) if (t.z[i] > qz !== t.z[j] > qz && qx < ((t.x[j] - t.x[i]) * (qz - t.z[i])) / (t.z[j] - t.z[i]) + t.x[i]) inside = !inside;
+      if (!inside) continue;
+      const rm = room(qx, qz, 1, 0, 0);
+      if (rm > goal.room) goal = { x: qx, z: qz, room: rm };
+    }
+  }
+  return [1, -1].map((sg) => {
+    const pts: { x: number; z: number }[] = [{ x, z }];
+    let h = Math.atan2(sg * dx, sg * dz);
+    const out = ((x - cx) * Math.sin(h) + (z - cz) * Math.cos(h)) > 0;
+    const len = out ? far : inner;
+    let px = x;
+    let pz = z;
+    for (let n = 0; n * step < len; n++) {
+      const run = (n + 1) * step;
+      let best: number | null = null;
+      let bestScore = -Infinity;
+      for (let k = -8; k <= 8; k++) {
+        // (straight out over its own crossing, then picking its way: gently out on the open marsh, harder inside the loop)
+        const th = run < 24 ? h : h + k * (out ? 0.016 : 0.05);
+        const hx = Math.sin(th);
+        const hz = Math.cos(th);
+        let clear = Infinity;
+        // (looking a few spans on, still turning as it is, so it never turns into a corner it cannot get out of)
+        if (run >= 24) {
+          let ax = px;
+          let az = pz;
+          for (let ahead = 0; ahead < 4; ahead++) {
+            const ta = th + (th - h) * ahead;
+            ax += Math.sin(ta) * step;
+            az += Math.cos(ta) * step;
+            clear = Math.min(clear, room(ax, az, Math.sin(ta), Math.cos(ta), out ? half : innerHalf));
+          }
+        }
+        if (clear < 5) continue;
+        const nx = px + hx * step - cx;
+        const nz = pz + hz * step - cz;
+        const away = (nx * hx + nz * hz) / (Math.hypot(nx, nz) || 1);
+        const gx = goal.x - (px + hx * step);
+        const gz = goal.z - (pz + hz * step);
+        const toward = (gx * hx + gz * hz) / (Math.hypot(gx, gz) || 1);
+        const score = -Math.abs(k) * (out ? 0.25 : 0.04) + (out ? (run > 60 ? away * 2 : 0) : toward * 3);
+        if (score > bestScore) {
+          bestScore = score;
+          best = th;
+        }
+        if (run < 24) break;
+      }
+      if (best === null) break;
+      // (inside, it stops once it is there)
+      if (!out && Math.hypot(goal.x - px, goal.z - pz) < 24) break;
+      h = best;
+      px += Math.sin(h) * step;
+      pz += Math.cos(h) * step;
+      pts.push({ x: px, z: pz });
+    }
+    return { pts, out };
+  });
+}
