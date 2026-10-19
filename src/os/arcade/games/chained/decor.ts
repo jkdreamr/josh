@@ -18,6 +18,8 @@ export type Geo = {
   disc: T.CircleGeometry;
   plane: T.PlaneGeometry;
   link: T.TorusGeometry;
+  /** a radial falloff (white centre to clear rim) for alphaMap on disc glows, so light pools have soft edges */
+  soft: T.Texture;
 };
 
 /** The shared materials. stone is the vertex coloured flat lambert the static mesh uses. */
@@ -29,6 +31,8 @@ export type Mats = {
   ice: T.MeshLambertMaterial;
   gold: T.MeshLambertMaterial;
   stoneGrey: T.MeshLambertMaterial;
+  /** plain flat stone for loose pieces that carry no vertex colours */
+  debris: T.MeshLambertMaterial;
   flame: T.MeshBasicMaterial;
   flameCore: T.MeshBasicMaterial;
   ghost: T.MeshBasicMaterial;

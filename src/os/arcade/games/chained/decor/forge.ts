@@ -167,9 +167,10 @@ export const dressForge: Dresser = (d: Dress) => {
   const rods = new Instancer(THREE, geo.rod, d.flat('#6a707c'), 64);
   const rings = new Instancer(THREE, geo.ring, mats.iron, 40);
   const links = new Instancer(THREE, geo.link, mats.chain, 160);
-  const hotMat = d.basic('#ff8a2a');
+  const hotMat = d.basic('#ff8a2a', { transparent: true, alphaMap: geo.soft });
   const hot = new Instancer(THREE, geo.disc, hotMat, 24);
-  const crucibles = new Instancer(THREE, geo.cone, mats.darkIron, 8);
+  // lit iron, not the silhouette black the dark iron reads as against the fog
+  const crucibles = new Instancer(THREE, geo.cone, d.flat('#7a6b5e'), 8);
   const gearGeo = d.track((() => {
     const t: Tri = { pos: [], nor: [], col: [] };
     gearTri(t, 0.6, 12, 0.12, iron.top, iron.side);

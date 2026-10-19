@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree, type GameOverInfo } from '../../kit';
 import type { GameProps } from '../../types';
 import { TOP, ZONES, buildLevel, zoneIndex } from './level';
 import { COUNTDOWN, FALL_TOO_FAR, LAVA_DELAY, MODES, MODE_INFO, RANKED_MODES, RESPAWN_T, applyRemote, createGame, doRespawn, fmtTime, liveOf, lose, scheduleRespawn, seatSouls, step, teamHeight, win, type Ev, type Game, type Input, type Mode, type Seating, type Soul, type SoulSpec } from './logic';
@@ -421,6 +421,8 @@ function Play({ kind }: { kind: Kind }) {
   const tickAt = useRef(-1);
   const tap = useRef({ swap: false });
   const clock = useRef(0);
+  /** Frame cost counters, read by the dev hook. */
+  const perf = useRef({ frames: 0, dt: 0, step: 0, view: 0, render: 0, hud: 0 });
   const hudTick = useRef(0);
   const [hud, setHud] = useState<Hud>(() => ({ time: '0:00.00', zone: 0, cp: 0, lit: LEVEL.checkpoints.map((_, i) => i === 0), lava: -3, souls: [], active: 0, heat: 0, fade: 0, wind: 'calm', countdown: 1, started: false, race: null }));
   const [card, setCard] = useState<{ id: number; zone: number } | null>(null);
@@ -513,6 +515,15 @@ function Play({ kind }: { kind: Kind }) {
           view.current?.frame(g, focusOf(g), 1 / 60, clock.current, team && !live);
         }
       },
+      // average frame costs since the last call, and what the renderer drew last frame
+      perf: () => {
+        const c = perf.current;
+        const n = Math.max(1, c.frames);
+        const info = view.current?.gl.renderer.info;
+        const out = { frames: c.frames, msFrame: (c.dt * 1000) / n, msStep: c.step / n, msView: c.view / n, msRender: c.render / n, msHud: c.hud / n, calls: info?.render.calls ?? 0, triangles: info?.render.triangles ?? 0, geometries: info?.memory.geometries ?? 0, textures: info?.memory.textures ?? 0, programs: info?.programs?.length ?? 0 };
+        perf.current = { frames: 0, dt: 0, step: 0, view: 0, render: 0, hud: 0 };
+        return out;
+      },
       // lets the shades climb your chain too, so a playtest can watch a whole climb or race
       auto: (level: ShadeLevel = 'swift') => {
         const g = game.current;
@@ -545,6 +556,13 @@ function Play({ kind }: { kind: Kind }) {
   // ---------------------------------------------------------------------------------------------------------------
   // Online: souls at 15 Hz, crumbles and respawns as events, the result from the host.
 
+  /** The result card waits a beat so the win or the burn plays out in the view before it covers them. */
+  const holdTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(holdTimer.current), []);
+  const showCard = (info: GameOverInfo, hold = 1500) => {
+    window.clearTimeout(holdTimer.current);
+    holdTimer.current = window.setTimeout(() => shellRef.current.gameOver(undefined, info), hold);
+  };
   const finish = (won: boolean, time: number, height: number, winner: number) => {
     const n = net.current;
     if (n.over) return;
@@ -559,12 +577,12 @@ function Play({ kind }: { kind: Kind }) {
       if (winner === mine) {
         playJingle(JINGLE_OUT);
         lastOver.sub = `${rival === 'The shades' ? 'the shades' : rival} ${gap < 2 ? 'right behind you' : `${gap} m below you`}`;
-        shellRef.current.gameOver(undefined, { title: 'You Won the Race', detail: 'Out of the tower first.' });
+        showCard({ title: 'You Won the Race', detail: 'Out of the tower first.' }, 1800);
       } else {
         sfx.play('lose');
         const z = ZONES[zoneIndex(teamHeight(g, mine))];
         lastOver.sub = `you were ${gap} m below, in ${z.name}`;
-        shellRef.current.gameOver(undefined, { title: `${rival === 'The shades' ? 'The Shades' : rival} Won the Race`, detail: 'They stood on the way out first.' });
+        showCard({ title: `${rival === 'The shades' ? 'The Shades' : rival} Won the Race`, detail: 'They stood on the way out first.' });
       }
       if (live && onlineRef.current) onlineRef.current.reportResult(onlineRef.current.round, winner >= 0 ? winnerSeat(g, winner) : null);
       return;
@@ -574,7 +592,7 @@ function Play({ kind }: { kind: Kind }) {
       playJingle(JINGLE_OUT);
       lastOver.big = fmtTime(time);
       lastOver.sub = newBest ? 'a new best' : 'from the pit to the stars';
-      shellRef.current.gameOver(undefined, {
+      showCard({
         title: 'You Climbed Out',
         detail: team ? 'Nobody let go.' : 'Both souls made it.',
         board: boardOf(team, g.mode),
@@ -585,7 +603,7 @@ function Play({ kind }: { kind: Kind }) {
       sfx.play('lose');
       lastOver.big = `${Math.floor(height)} m`;
       lastOver.sub = `up the tower, in ${z.name}`;
-      shellRef.current.gameOver(undefined, { title: 'Burned', detail: 'The lava caught the team.' });
+      showCard({ title: 'Burned', detail: 'The lava caught the team.' });
     }
     if (live && onlineRef.current) onlineRef.current.reportResult(onlineRef.current.round, null);
   };
@@ -738,7 +756,9 @@ function Play({ kind }: { kind: Kind }) {
       }
       tap.current.swap = false;
 
+      const t0 = performance.now();
       step(g, dt);
+      perf.current.step += performance.now() - t0;
       // a race counts down out loud
       if (g.mode === 'race' && g.time < 0 && g.time > -RACE_COUNTDOWN) {
         const left = Math.ceil(-g.time);
@@ -762,9 +782,13 @@ function Play({ kind }: { kind: Kind }) {
       }
 
       if (v) {
+        const t1 = performance.now();
         v.frame(g, focusOf(g), dt, clock.current, team && !live);
         placeTags(g, v);
+        perf.current.view += performance.now() - t1;
       }
+      perf.current.frames++;
+      perf.current.dt += dt;
 
       // the end of the climb
       if (!live) {
@@ -774,9 +798,15 @@ function Play({ kind }: { kind: Kind }) {
         if (g.won !== null && onlineRef.current?.isHost) finish(true, g.won, TOP, g.winner ?? 0);
         else if (g.lost) finish(false, g.time, g.lost.height, -1);
       }
+      const t2 = performance.now();
       updateHud(g, dt);
+      perf.current.hud += performance.now() - t2;
     },
-    () => view.current?.render(),
+    () => {
+      const t0 = performance.now();
+      view.current?.render();
+      perf.current.render += performance.now() - t0;
+    },
   );
 
   /** The lowest soul still climbing on your chain. */
