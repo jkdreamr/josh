@@ -492,7 +492,8 @@ export function parsePacket(value: unknown): Packet | null {
     if (!int(p.sd) || !num(p.tm) || !isLevel(p.lv) || !Array.isArray(p.c) || (p.ro !== undefined && !Array.isArray(p.ro))) return null;
     const glass = p.gl === undefined ? null : unpackGlass(p.gl);
     if (p.gl !== undefined && !glass) return null;
-    const doors = p.dz === undefined ? null : unpackDoors(p.dz);
+    // a reliable report with no doors listed has them all shut
+    const doors = p.dz === undefined ? (p.ro !== undefined ? [] : null) : unpackDoors(p.dz);
     if (p.dz !== undefined && !doors) return null;
     let roster: number[] | null = null;
     if (Array.isArray(p.ro)) {

@@ -1145,7 +1145,7 @@ test('packets survive the trip and anything malformed is turned away', () => {
   assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(4, s, 7)))), { k: 's', round: 4, state: s, watch: 7 });
   assert.equal(parsePacket({ ...guestState(4, s), v: MAX_FIGHTERS }), null);
   const host = parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, -2.5, 'hard', [0, 1, -1], [[0, s], [2, s]]))));
-  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: null });
+  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: [] });
   // the roster only goes with some of the host's reports
   assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null });
   assert.equal(parsePacket({ ...hostState(4, 99, 3, 'hard', null, []), ro: 'all' }), null);
@@ -4219,6 +4219,12 @@ test('a guest asks the host to open a door; the host decides, tells everyone, an
   setDoorNews(late, far.i);
   receive(ls, late, { seat: 2, isHost: false, round: 1 }, 0, wire, () => late, 1);
   assert.equal(late.doors[far.i], DOOR_OUT);
+  // and once every door is shut again, a full report lists none, which shuts any the guest still has open
+  const shutAll = parsePacket(JSON.parse(JSON.stringify(hostState(1, h.seed, 0, 'normal', [0, 1, 2], [], [], h.doors.map(() => DOOR_SHUT)))));
+  assert.ok(shutAll && shutAll.k === 'S' && shutAll.doors?.length === 0);
+  late.clock += 5;
+  receive(ls, late, { seat: 2, isHost: false, round: 1 }, 0, JSON.parse(JSON.stringify(hostState(1, h.seed, 0, 'normal', [0, 1, 2], [], [], []))), () => late, 1);
+  assert.ok(late.doors.every((d) => d === DOOR_SHUT));
 });
 
 /** News from the host that a door is open, just now. */

@@ -606,7 +606,6 @@ function pondTexture(THREE: Three) {
   );
 }
 
-/** A soft round glow, white in the middle and fading out (tinted by the material). */
 /** A shelf's worth of book spines, all sorts of colors and heights, for the bookshelves. */
 function booksTexture(THREE: Three) {
   const rnd = scatter(71);
@@ -629,6 +628,7 @@ function booksTexture(THREE: Three) {
   );
 }
 
+/** A soft round glow, white in the middle and fading out (tinted by the material). */
 function glowTexture(THREE: Three) {
   return texture(
     THREE,
