@@ -54,7 +54,7 @@ for (const id of COURSE_IDS) {
       if (past !== 'wall') assert.ok(s0 >= 60 && s1 <= t.length - 60, `${where} is within 60 m of the start line`);
       // (on Insane the road can narrow over the sky, to no less than 7 m of it, and on the water the lock's walls stand in
       // closer, leaving a kart's middle 4.95 m either side)
-      if (at !== undefined) assert.ok(past === 'wall' ? at >= (lock ? 6 : t.half + 1.5) : past === 'void' && c.difficulty === 5 ? at >= 3.5 + 0.4 : at >= t.half + 0.5, where);
+      if (at !== undefined) assert.ok(past === 'wall' ? at >= (lock ? 6 : t.half + 1.5) : (past === 'void' || (past === 'marsh' && lock)) && c.difficulty === 5 ? at >= 3.5 + 0.4 : at >= t.half + 0.5, where);
     }
     const lay = c.layout(t);
     // (a gap right across the road has no plates: past it either side is the drop anyway)

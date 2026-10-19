@@ -4,7 +4,7 @@ import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf } from '../src/os/ar
 import { CCS, CLASSES, KART_R, RIVALS, WET, createRace, hazardD, soloRace, step } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { meta } from '../src/os/arcade/games/palmdrive/meta.ts';
 import { configOf, hostState, parsePacket } from '../src/os/arcade/games/palmdrive/net.ts';
-import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, dropAt, gridSpot, lengthOf, locate, openRuns, pointAt, roadEdge, shoreOf, solid, timed, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
+import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, dropAt, edgeAt, gridSpot, lengthOf, locate, openRuns, pointAt, roadEdge, shoreOf, solid, timed, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
 
 /** The widest stretch of road left clear between things standing across it, given as [from, to] lateral spans. */
 function widest(t: Track, spans: [number, number][]) {
@@ -139,12 +139,14 @@ for (const id of COURSE_IDS) {
         const time = (k / 48) * ((Math.PI * 2) / (h.speed ?? 0.5));
         const spans = [h, ...near].map((o) => [hazardD(o, time) - o.r, hazardD(o, time) + o.r]).sort((a, b) => a[0] - b[0]);
         let gap = 0;
-        let reached = -t.half;
+        // (on the water the channel runs right out to the wharves where it is walled: a kart's middle to within a kart of them)
+        const [wl, wr] = t.boat ? [edgeAt(t, h.s, -1).lim - KART_R, edgeAt(t, h.s, 1).lim - KART_R] : [t.half, t.half];
+        let reached = -wl;
         for (const [lo, hi] of spans) {
           gap = Math.max(gap, lo - reached);
           reached = Math.max(reached, hi);
         }
-        gap = Math.max(gap, t.half - reached);
+        gap = Math.max(gap, wr - reached);
         assert.ok(gap >= 4.5, `${where} leaves ${gap} m at t=${time}`);
         for (const o of near) {
           if (Math.abs(deltaS(t, h.s, o.s)) < h.r + o.r + 1 && !together(h, o)) assert.ok(Math.abs(hazardD(h, time) - hazardD(o, time)) > h.r + o.r, `${where} runs into the ${o.kind}`);
@@ -311,7 +313,8 @@ for (const id of COURSE_IDS) {
         step(r, 1 / 60);
         r.events.length = 0;
         for (const k of r.karts) {
-          widest = Math.max(widest, Math.abs(k.d));
+          // (on the water a shell thrown out over the marsh, or run aground on it, is past the brink: not through a wall)
+          if (!(r.boat && (k.sunk > 0 || edgeAt(r.track, k.s, Math.sign(k.d) || 1).past !== 'wall'))) widest = Math.max(widest, Math.abs(k.d));
           if (k.stuck > 2) rescues++;
         }
       }
