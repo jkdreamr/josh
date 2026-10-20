@@ -84,6 +84,9 @@ def main():
     ap.add_argument('--models')
     ap.add_argument('--check')
     ap.add_argument('--force', action='store_true')
+    # record these clips again as a different take (Chatterbox varies from take to take), e.g. after --check
+    ap.add_argument('--retake', default='')
+    ap.add_argument('--take', type=int, default=1)
     args = ap.parse_args()
 
     data = load_lines()
@@ -104,7 +107,7 @@ def main():
 
         def speak(turn, mood):
             # the same take every time a line is recorded again
-            torch.manual_seed(int(hashlib.sha1(turn['said'].encode()).hexdigest()[:8], 16))
+            torch.manual_seed(int(hashlib.sha1(turn['said'].encode()).hexdigest()[:8], 16) + turn.get('take', 0))
             wav = model.generate(turn['said'], audio_prompt_path=f"scripts/grand-prix-voices/{turn['who']}.wav", exaggeration=mood['emotion'], cfg_weight=mood['pace'])
             return wav.squeeze(0).numpy().astype(np.float32), model.sr
     os.makedirs(OUT, exist_ok=True)
@@ -131,7 +134,10 @@ def main():
             break
         setup = hashlib.sha1(json.dumps([PROCESS, voices[turn['who']], mood], sort_keys=True).encode()).hexdigest()[:8]
         tag = f"{args.engine}:{setup}|{turn['who']}|{turn['mood']}|{turn['said']}"
-        if manifest.get(name) == tag and os.path.exists(os.path.join(OUT, name + '.mp3')):
+        retake = name in args.retake.split(',')
+        if retake:
+            turn = {**turn, 'take': args.take}
+        if not retake and manifest.get(name) == tag and os.path.exists(os.path.join(OUT, name + '.mp3')):
             continue
         samples, sr = speak(turn, mood)
         samples = tidy(samples, sr)
