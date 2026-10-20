@@ -11,17 +11,21 @@ export type Speaker = 'james' | 'sophie';
 export type Mood = 'calm' | 'normal' | 'up' | 'hype';
 export type Turn = { who: Speaker; mood: Mood; text: string };
 
-/** The voices (Kokoro voice names, or a blend of them). */
+/** The voices as Kokoro voices (or a blend). Chatterbox records them from scripts/grand-prix-voices/<speaker>.wav,
+ * reference clips made with these Kokoro voices, so no real person's voice is cloned. */
 export const VOICES: Record<Speaker, Record<string, number>> = {
   james: { bm_fable: 1 },
   sophie: { bf_emma: 0.6, bf_alice: 0.4 },
 };
-/** How each mood is rendered: pace, pitch (formants kept) and level in dB. */
-export const MOODS: Record<Mood, { speed: number; pitch: number; gain: number }> = {
-  calm: { speed: 1.0, pitch: 0.985, gain: -1 },
-  normal: { speed: 1.07, pitch: 1, gain: 0 },
-  up: { speed: 1.13, pitch: 1.03, gain: 1.5 },
-  hype: { speed: 1.16, pitch: 1.07, gain: 3 },
+/**
+ * How each mood is rendered. With Chatterbox (the recorded voices): `emotion` is its exaggeration and `pace` its
+ * cfg weight (lower runs faster and freer). With Kokoro (the fallback): pace, pitch (formants kept). Level in dB.
+ */
+export const MOODS: Record<Mood, { emotion: number; pace: number; speed: number; pitch: number; gain: number }> = {
+  calm: { emotion: 0.35, pace: 0.5, speed: 1.0, pitch: 0.985, gain: -1 },
+  normal: { emotion: 0.5, pace: 0.5, speed: 1.07, pitch: 1, gain: 0 },
+  up: { emotion: 0.75, pace: 0.4, speed: 1.13, pitch: 1.03, gain: 1.5 },
+  hype: { emotion: 1.05, pace: 0.3, speed: 1.16, pitch: 1.07, gain: 3 },
 };
 
 const turn = (who: Speaker, mood: Mood) => (text: string): Turn => ({ who, mood, text });
