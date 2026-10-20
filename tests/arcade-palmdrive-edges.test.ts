@@ -345,12 +345,13 @@ test('a CPU fished out of a drop keeps well clear of the edge for a while, but a
   assert.ok(run(s, 0.6).some((e) => e.t === 'fall'), 'in without it');
 });
 
-test('the golf course\'s ponds are drops like any other: the edge is the water\'s', () => {
+test('the golf course\'s ponds are drops like any other: the edge is the water\'s; and out of bounds is a drop too', () => {
   const t = trackOf('golf');
   const lay = COURSES.golf.layout(t);
   assert.ok(lay.hazards.some((h) => h.kind === 'water'));
-  const water = openRuns(t);
-  assert.ok(water.length >= 2 && water.every(([, , , past]) => past === 'water'));
+  const runs = openRuns(t);
+  assert.ok(runs.filter(([, , , past]) => past === 'water').length >= 2);
+  assert.ok(runs.every(([, , , past]) => past === 'water' || past === 'ob'));
   assert.equal(tierOf('golf').brink, 0.6);
 });
 

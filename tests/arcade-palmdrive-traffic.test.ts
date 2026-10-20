@@ -83,7 +83,8 @@ test('Hoover Nights has its traffic and the Tree where the plan puts them, and n
     const p = pointAt(t, 990, d);
     assert.ok(Math.abs(deltaS(t, locate(t, p.x, p.z).s, 990)) < 1, `side street at d=${d} near other road`);
   }
-  for (const id of COURSE_IDS) if (id !== 'hoover') assert.ok(COURSES[id].layout(trackOf(id)).hazards.every((h) => !traffic(h.kind) && h.kind !== 'shuttle' && h.kind !== 'tether'), `${id} has no traffic`);
+  // (the golf course's geese are tethers too, dressed as geese: see the golf tests)
+  for (const id of COURSE_IDS) if (id !== 'hoover') assert.ok(COURSES[id].layout(trackOf(id)).hazards.every((h) => !traffic(h.kind) && h.kind !== 'shuttle' && (h.kind !== 'tether' || (id === 'golf' && h.look === 'goose'))), `${id} has no traffic`);
 });
 
 test('the traffic is a pure function of the race clock and the class: two races agree, and 200cc runs the same timetable faster', () => {

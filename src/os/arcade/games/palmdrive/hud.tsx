@@ -531,6 +531,17 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           <li>
             <b>Water</b> on the golf course comes right up to the road behind its red stakes: the same as a drop, and a giant ball retriever fishes you out.
           </li>
+          <li>
+            <b>Out of bounds</b> is marked with white stakes on the outside of the golf course&apos;s bends: past them the road drops into a gully, the same as water.
+          </li>
+          <li>
+            <b>Canada geese</b> guard the island green&apos;s bank. One crouches and hisses under a <b>!</b>, then flies at you across the inside line and bowls you over.
+            From lap 4 they get angry and come more often. Keep wide of the orange ring while one crouches.
+          </li>
+          <li>
+            <b>The gang mower</b> crosses the end of the first straight, back and forth, from about the second lap: its beacon flashes and it beeps before it sets off. Go
+            round the end it is leaving, or wait for it. Run into it and you spin out (head on, you tumble).
+          </li>
           <li>A star, a Mega Mushroom or a Bullet ploughs straight through all of it.</li>
         </ul>
       </section>

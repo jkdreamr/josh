@@ -61,7 +61,8 @@ export type Traffic = { tick: (race: Race, me: number, clock: number, dt: number
 
 export function buildTraffic(THREE: Three, scene: T.Scene, r: Race, geo: Geo): Traffic | null {
   const t = r.track;
-  const has = r.hazards.some((h) => traffic(h.kind) || h.kind === 'shuttle' || h.kind === 'tether' || (h.kind === 'geyser' && h.look === 'fountain'));
+  // (a tether dressed as a goose is the golf course's, drawn in fairway.ts)
+  const has = r.hazards.some((h) => traffic(h.kind) || h.kind === 'shuttle' || (h.kind === 'tether' && h.look !== 'goose') || (h.kind === 'geyser' && h.look === 'fountain'));
   if (!has) return null;
   const glowTex = texture(
     THREE,
@@ -418,7 +419,7 @@ export function buildTraffic(THREE: Three, scene: T.Scene, r: Race, geo: Geo): T
   const white = new THREE.MeshBasicMaterial({ color: 0xffffff });
   const cordMat = new THREE.MeshLambertMaterial({ color: 0xd32f2f, emissive: 0x3a0606 });
   r.hazards.forEach((h, i) => {
-    if (h.kind !== 'tether') return;
+    if (h.kind !== 'tether' || h.look === 'goose') return;
     const post = at(h.s, h.d);
     const pg = new THREE.Group();
     pg.position.set(post.x, 0, post.z);
