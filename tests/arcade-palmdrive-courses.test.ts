@@ -4,7 +4,7 @@ import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf } from '../src/os/ar
 import { CCS, CLASSES, KART_R, RIVALS, WET, createRace, hazardD, soloRace, step } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { meta } from '../src/os/arcade/games/palmdrive/meta.ts';
 import { configOf, hostState, parsePacket } from '../src/os/arcade/games/palmdrive/net.ts';
-import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, dropAt, gridSpot, lengthOf, locate, openRuns, pointAt, roadEdge, shoreOf, solid, timed, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
+import { BALL_FLIGHT, BALL_ROLL, BALL_WINDOW, EDGE, ROAD_HALF, ballSince, deltaS, dropAt, edgeAt, gridSpot, lengthOf, locate, openRuns, pointAt, roadEdge, shoreOf, solid, timed, wrapS, type Hazard, type Track } from '../src/os/arcade/games/palmdrive/track.ts';
 
 /** The widest stretch of road left clear between things standing across it, given as [from, to] lateral spans. */
 function widest(t: Track, spans: [number, number][]) {
@@ -102,15 +102,18 @@ for (const id of COURSE_IDS) {
       assert.ok(h.s > ((h.lap ?? 1) >= 2 ? 15 : 40) && h.s < t.length - 30, `${where} is clear of the start`);
       // (a pond lies off beside the road: see below; a bank of bollards runs wall to wall by design, and the set pieces
       // leave a way through by the clock: see the timed tests)
-      if (h.kind !== 'water' && h.kind !== 'bollard') assert.ok(Math.abs(h.d) + (h.swing ?? 0) <= t.half, `${where} stays on the road`);
+      // (something on a leash, the Tree or a goose, has its post beside the road: where it lunges to is on it)
+      if (h.kind !== 'water' && h.kind !== 'bollard' && h.kind !== 'tether') assert.ok(Math.abs(h.d) + (h.swing ?? 0) <= t.half, `${where} stays on the road`);
+      if (h.kind === 'tether') assert.ok(Math.abs(h.d) > t.half && Math.abs(h.d) < t.edge && Math.abs(h.aim ?? 0) + h.r <= t.half, `${where} beside the road, lunging onto it`);
       // buses drive the whole lap, so where they start says nothing about the boxes and boosts (see below)
       if (!solid(h.kind) || h.drive) continue;
       // a gap at least two karts wide beside anything solid, and none of them in front of an item box row (the set
       // pieces leave a way through by the clock instead, on a course built round them: see the timed tests)
       const room = Math.max(t.half - (h.d + h.r), h.d - h.r + t.half);
-      if (!h.swing && h.kind !== 'bollard' && !(timed(h.kind) && COURSES[id].difficulty === 5)) assert.ok(room >= 4.5, `${where} leaves ${room} m`);
+      // (nor a mower crossing the road: it leaves its way past by the clock as well)
+      if (!h.swing && h.kind !== 'bollard' && h.kind !== 'mower' && !(timed(h.kind) && COURSES[id].difficulty === 5)) assert.ok(room >= 4.5, `${where} leaves ${room} m`);
       for (const b of lay.boxes) assert.ok(Math.abs(deltaS(t, h.s, b.s)) > 10, `${where} is in front of the boxes at s=${b.s}`);
-      for (const o of lay.hazards) if (o !== h && solid(o.kind) && !h.swing && !o.swing && !o.drive && h.kind !== 'bollard' && o.kind !== 'bollard') assert.ok(Math.abs(deltaS(t, h.s, o.s)) > 8 || Math.abs(h.d - o.d) > 2 * h.r + 5, `${where} crowds another`);
+      for (const o of lay.hazards) if (o !== h && solid(o.kind) && !h.swing && !o.swing && !o.drive && h.kind !== 'bollard' && o.kind !== 'bollard' && !(h.kind === 'shuttle' && o.kind === 'shuttle')) assert.ok(Math.abs(deltaS(t, h.s, o.s)) > 8 || Math.abs(h.d - o.d) > 2 * h.r + 5, `${where} crowds another`);
     }
     // nothing solid right where a dash panel or a ramp sends you
     for (const p of [...lay.dashes, ...lay.ramps]) {
@@ -138,12 +141,14 @@ for (const id of COURSE_IDS) {
         const time = (k / 48) * ((Math.PI * 2) / (h.speed ?? 0.5));
         const spans = [h, ...near].map((o) => [hazardD(o, time) - o.r, hazardD(o, time) + o.r]).sort((a, b) => a[0] - b[0]);
         let gap = 0;
-        let reached = -t.half;
+        // (on the water the channel runs right out to the wharves where it is walled: a kart's middle to within a kart of them)
+        const [wl, wr] = t.boat ? [edgeAt(t, h.s, -1).lim - KART_R, edgeAt(t, h.s, 1).lim - KART_R] : [t.half, t.half];
+        let reached = -wl;
         for (const [lo, hi] of spans) {
           gap = Math.max(gap, lo - reached);
           reached = Math.max(reached, hi);
         }
-        gap = Math.max(gap, t.half - reached);
+        gap = Math.max(gap, wr - reached);
         assert.ok(gap >= 4.5, `${where} leaves ${gap} m at t=${time}`);
         for (const o of near) {
           if (Math.abs(deltaS(t, h.s, o.s)) < h.r + o.r + 1 && !together(h, o)) assert.ok(Math.abs(hazardD(h, time) - hazardD(o, time)) > h.r + o.r, `${where} runs into the ${o.kind}`);
@@ -160,9 +165,11 @@ for (const id of COURSE_IDS) {
     const onSpan = (b: Hazard, s: number) => !b.span || (deltaS(t, b.span[0], s) >= 0 && deltaS(t, s, b.span[1]) >= 0);
     for (const b of lay.hazards.filter((h) => h.drive)) {
       const where = `${id} ${b.kind} from s=${b.s}`;
-      assert.ok(b.kind === 'bus' || b.kind === 'cart' || b.kind === 'launch' || b.kind === 'barge' || b.kind === 'log', where);
+      assert.ok(b.kind === 'bus' || b.kind === 'cart' || b.kind === 'launch' || b.kind === 'barge' || b.kind === 'log' || b.kind === 'car' || b.kind === 'van', where);
       assert.ok(!b.swing, `${where} keeps to its lane`);
       if (b.kind === 'log') assert.ok(b.drive! > 0 && b.drive! <= 2, `${where} drifts at ${b.drive} m/s`);
+      // (oncoming traffic on its stretch of the course, in the left lane)
+      else if (b.kind === 'car' || b.kind === 'van') assert.ok(b.drive! < 0 && -b.drive! < CLASSES['50cc'].top * 0.6 && b.span && b.d < 0, `${where} drives at ${b.drive} m/s`);
       else assert.ok(b.drive! > 0 && b.drive! < CLASSES['50cc'].top * 0.6, `${where} drives at ${b.drive} m/s`);
       assert.ok(Math.abs(b.d) + b.r <= t.half - 0.5, `${where} keeps to a lane on the road`);
       const bus: [number, number] = [b.d - b.r, b.d + b.r];
@@ -229,9 +236,10 @@ for (const id of COURSE_IDS) {
       }
       assert.ok(wet >= 12, `${where} can be driven into along ${wet} m`);
     }
-    // the wall is left out where the water comes inside it, and only there
-    const gaps = openRuns(t);
-    assert.ok(gaps.length > 0 && gaps.every(([, , , past]) => past === 'water'));
+    // the wall is left out where the water comes inside it, and only there (and where the course says it drops away)
+    const declared = (COURSES[id].edges ?? []).map(([, , , past]) => past);
+    const gaps = openRuns(t).filter(([, , , past]) => past === 'water');
+    assert.ok(gaps.length > 0 && openRuns(t).every(([, , , past]) => past === 'water' || declared.includes(past)));
     // and wherever it is left out, the water comes right up to the curb somewhere: run a wheel over and you are in
     for (const [side, from, to] of gaps) {
       let closest = Infinity;
@@ -241,8 +249,9 @@ for (const id of COURSE_IDS) {
     for (let i = 0; i < t.n; i++) {
       for (const side of [-1, 1]) {
         const w = side < 0 ? shore.left[i] : shore.right[i];
-        const open = dropAt(t, i, side);
-        // (where the water is inside where a wall would hold a kart anyway; a little past that the wall stands as ever)
+        const open = dropAt(t, i, side) && edgeAt(t, i * t.step, side).past === 'water';
+        // (where the water is inside where a wall would hold a kart anyway; a little past that the wall stands as ever,
+        // or the course's own edge)
         if (w - WET < t.edge - KART_R) assert.ok(open, `${id} wall stands in the water at s=${i * t.step}`);
         else assert.ok(!open, `${id} wall missing at s=${i * t.step} with the water held off by it anyway`);
         if (open) assert.ok(w < t.edge + 3, `${id} wall missing at s=${i * t.step} with the water ${w.toFixed(1)} m out`);
@@ -308,7 +317,8 @@ for (const id of COURSE_IDS) {
         step(r, 1 / 60);
         r.events.length = 0;
         for (const k of r.karts) {
-          widest = Math.max(widest, Math.abs(k.d));
+          // (on the water a shell thrown out over the marsh, or run aground on it, is past the brink: not through a wall)
+          if (!(r.boat && (k.sunk > 0 || edgeAt(r.track, k.s, Math.sign(k.d) || 1).past !== 'wall'))) widest = Math.max(widest, Math.abs(k.d));
           if (k.stuck > 2) rescues++;
         }
       }

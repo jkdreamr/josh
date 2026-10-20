@@ -4,9 +4,12 @@ import type { T } from './gl';
 import { createGL, disposeTree, type GL } from './gl';
 import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, deltaS, dropAt, edgeAt, edgeRuns, gridSpot, headingOf, inTrench, lengthOf, locate, pointAt, roadEdge, wrapAngle, wrapS, type Past, type Track } from './track';
 import { COURSES } from './courses';
+import { buildTraffic, onStreet, streetsOf, wallGaps } from './traffic';
 import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, makeStatue, noise, scatter, swingAt, texture, waterTexture } from './scenery';
 import { BOULDER, COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, RAMP_H, RAMP_LEN, TURBO_AT, boulderAt, gustWarn, hazState, hazardV, hurt, strokeAt, turboLevel, windAt, type Ev, type Hat, type HazPhase, type Kart, type LiveHazard, type Race, type ThingKind } from './logic';
-import { buildRiver } from './water';
+import { buildRiver, marshMaterial } from './water';
+import { buildScull, poseScull, scullKit, strokeBody, type Scull, type ScullKit } from './shell';
+import { buildFairway, mowerGaps, onPath } from './fairway';
 
 type Three = typeof import('three');
 
@@ -53,7 +56,7 @@ type KartView = {
   wheelA: number;
   smoke: number;
   /** A racing shell's oars (each turning on its rigger pin, its blade at the end) and the rower's body, on the water. */
-  oars?: { pins: T.Group[]; blades: T.Mesh[]; rower: T.Group; off: number; tuck: number; crab: number; carve: number; side: 1 | -1; puddle: number; eight: T.Group; crew: { pin: T.Group; side: number; body: T.Mesh }[] };
+  oars?: { scull: Scull; off: number; tuck: number; crab: number; carve: number; side: 1 | -1; puddle: number; eight: T.Group; crew: { pin: T.Group; side: number; body: T.Mesh }[] };
 };
 
 type KartGeo = { box: T.BoxGeometry; wheel: T.CylinderGeometry; ball: T.SphereGeometry; ring: T.TorusGeometry; cone: T.ConeGeometry; plane: T.PlaneGeometry };
@@ -331,7 +334,7 @@ function makeKart(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: K
  * riggers out to either side with an oar on each, and the rower in the racer's hat on a sliding seat. It goes by the same
  * view as a kart (the flames are the white water off a boost, the sparks the carve's spray).
  */
-function makeShell(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: KartMats, idx: number): KartView {
+function makeShell(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: KartMats, idx: number, kit: ScullKit): KartView {
   const view = makeKart(THREE, geo, color, hat, shared);
   const { body, paint } = view;
   // (the kart's own parts go: the shell keeps only the groups the view animates)
@@ -347,44 +350,15 @@ function makeShell(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: 
     return o;
   };
   const { dark, white, skin } = shared;
-  // the hull, its stripe, the deck at the bow and stern, the bow ball, the washbox and the fin
-  add(body, geo.ball, paint, 0, 0.2, 0, 0.46, 0.22, 2.9);
-  add(body, geo.box, white, 0, 0.38, 0.2, 0.08, 0.04, 4.6);
-  add(body, geo.box, white, 0, 0.36, 1.6, 0.5, 0.05, 2.2).scale.x = 0.42;
-  add(body, geo.ball, white, 0, 0.32, 2.88, 0.09, 0.09, 0.09);
-  add(body, geo.box, dark, 0, 0.42, 0.75, 0.5, 0.12, 0.08);
-  add(body, geo.box, dark, 0, 0.0, -2.1, 0.04, 0.3, 0.3);
-  // the cockpit and the riggers
-  add(body, geo.box, dark, 0, 0.36, -0.3, 0.5, 0.04, 1.2);
-  for (const side of [-1, 1]) add(body, geo.box, dark, side * 0.48, 0.5, 0.05, 0.85, 0.05, 0.08);
-  // the rower: on the seat, facing the stern, rowing to the beat (see syncOars); the racer's hat on top
-  const rower = new THREE.Group();
-  rower.position.set(0, 0.4, -0.35);
-  add(rower, geo.box, paint, 0, 0.36, 0, 0.42, 0.55, 0.26);
-  add(rower, geo.box, dark, 0, 0.08, -0.3, 0.36, 0.16, 0.6);
-  add(rower, geo.ball, skin, 0, 0.78, 0, 0.15, 0.17, 0.15);
-  for (const side of [-1, 1]) add(rower, geo.box, skin, side * 0.25, 0.48, -0.25, 0.08, 0.08, 0.5);
-  body.add(rower);
-  // (the racer's hat on the rower's head, which faces the stern)
-  rower.add(view.hat);
-  view.hat.scale.setScalar(0.62);
+  // the scull itself and its rower (see shell.ts): the hull in the racer's color, the rower in a unisuit of it, and the
+  // racer's hat on the rower's head (which faces the stern)
+  paint.side = THREE.DoubleSide;
+  const scull = buildScull(THREE, body, kit, paint, skin, color);
+  scull.head.add(view.hat);
+  view.hat.scale.setScalar(0.5);
   view.hat.rotation.y = Math.PI;
-  view.hat.position.set(0, 0.92 - 1.58 * 0.62, -0.26 * 0.62);
-  // the oars: a shaft on each rigger pin, the blade at its end (cardinal with a white tip for you, your color for the rest)
+  view.hat.position.set(0, 0.11 - 1.58 * 0.5, 0.26 * 0.5);
   const bladeMat = new THREE.MeshLambertMaterial({ color });
-  const tipMat = shared.white;
-  const pins: T.Group[] = [];
-  const blades: T.Mesh[] = [];
-  for (const side of [-1, 1]) {
-    const pin = new THREE.Group();
-    pin.position.set(side * 0.86, 0.52, 0.05);
-    add(pin, geo.box, white, side * 1.1, 0, 0, 2.9, 0.05, 0.05);
-    const blade = add(pin, geo.box, bladeMat, side * 2.45, 0, 0, 0.5, 0.03, 0.14);
-    add(blade, geo.box, tipMat, side * 0.42, 0, 0, 0.18, 1.1, 1.05);
-    body.add(pin);
-    pins.push(pin);
-    blades.push(blade);
-  }
   // (the flames are white water off the stern on a boost; the sparks spray off the inside blade in a carve)
   view.flames.position.set(0, -0.3, -1.4);
   view.flames.scale.set(1.4, 1, 1);
@@ -429,7 +403,7 @@ function makeShell(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: 
   add(eight, geo.cone, white, 0, 0.75, -2.42, 0.07, 0.22, 0.07).rotation.x = Math.PI / 2;
   eight.visible = false;
   body.add(eight);
-  view.oars = { pins, blades, rower, off: idx * 0.04, tuck: 0, crab: 0, carve: 0, side: idx % 2 ? 1 : -1, puddle: -1, eight, crew };
+  view.oars = { scull, off: idx * 0.04, tuck: 0, crab: 0, carve: 0, side: idx % 2 ? 1 : -1, puddle: -1, eight, crew };
   return view;
 }
 
@@ -441,7 +415,7 @@ function makeShell(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: 
  * end, swamped it sits low rather than squashed flat, and its shadow is long and narrow. crowd: something within an oar's
  * length to the side.
  */
-function syncOars(v: KartView, k: Kart, time: number, me: boolean, dt: number, clock: number, crowd: boolean, posed: boolean) {
+function syncOars(THREE: Three, v: KartView, k: Kart, time: number, me: boolean, dt: number, clock: number, crowd: boolean, posed: boolean) {
   const o = v.oars;
   if (!o) return;
   // (everyone rows to the race's beat; the field a little off it from one boat to the next, yours right on it)
@@ -456,34 +430,38 @@ function syncOars(v: KartView, k: Kart, time: number, me: boolean, dt: number, c
   const u = phase < drive ? phase / drive : (phase - drive) / (1 - drive);
   const sweep = rowing ? (phase < drive ? 0.87 - 1.48 * u : -0.61 + 1.48 * u) : k.sunk > 0 ? 0 : -0.15;
   const dip = rowing ? (phase < drive ? -0.18 : 0.12 + 0.05 * Math.sin(u * Math.PI)) : 0.05;
-  // (the inside of a carve: the right-hand oar, pins[0], is on the -x side)
+  // (the inside of a carve: the right-hand oar, the first, is on the -x side)
   const inside = k.drift > 0 ? 0 : k.drift < 0 ? 1 : -1;
-  o.pins.forEach((pin, n) => {
+  // (squared through the water, turned flat over it: feathered just after the finish, squared again before the catch)
+  const feather = !rowing ? 1 : phase < drive ? 0 : clamp01((phase - drive) / 0.06) * (1 - clamp01((phase - 0.9) / 0.08));
+  const pose = [0, 1].map((n) => {
     const side = n ? 1 : -1;
     let sw = sweep;
     let dp = dip;
-    let square = phase < drive && rowing;
+    let fe = feather;
     // (the inside blade laid back and dragged through the water in a carve)
     if (n === inside) {
       sw += (-0.35 - sw) * o.carve;
       dp += (-0.22 - dp) * o.carve;
-      if (o.carve > 0.5) square = false;
+      fe += (0.5 - fe) * o.carve;
     }
     // (a crab: one oar jammed deep and dragged back, the other let go)
     if (o.crab > 0.01) {
       const jam = side === o.side;
       sw += ((jam ? -0.95 : 0.4) - sw) * o.crab;
       dp += ((jam ? -0.5 : 0.25) - dp) * o.crab;
-      square = jam;
+      fe += ((jam ? 0 : 1) - fe) * o.crab;
     }
-    // (in along the hull, the blades trailing just clear of the water)
+    // (in along the hull, the blades trailing flat just clear of the water)
     sw += (-1.42 - sw) * o.tuck;
     dp += (0.07 - dp) * o.tuck;
-    // (sweep: toward the bow at the catch; dip: the blade's end down into the water)
-    pin.rotation.set(0, -side * sw, side * dp);
-    // (squared through the water, feathered flat over it)
-    o.blades[n].rotation.x = square && o.tuck < 0.5 ? Math.PI / 2 : 0;
+    fe += (1 - fe) * o.tuck;
+    return { sweep: sw, dip: dp, feather: fe };
   });
+  // the rower: up and down the slide and swinging the back on the stroke (still, sat at the finish, when not rowing)
+  const still = Math.max(o.tuck, o.crab);
+  const b = rowing ? strokeBody(phase, drive) : { slide: 0.75, lean: 0.55 };
+  poseScull(THREE, o.scull, pose, 0.75 + (b.slide - 0.75) * (1 - still), 0.55 + (b.lean - 0.55) * (1 - still), o.crab);
   // (an eight: the rest of the crew rowing with you)
   o.eight.visible = k.mega > 0;
   if (o.eight.visible) {
@@ -492,11 +470,6 @@ function syncOars(v: KartView, k: Kart, time: number, me: boolean, dt: number, c
       c.body.rotation.x = rowing ? (phase < drive ? -0.35 + 0.6 * u : 0.25 - 0.6 * u) * (1 - o.tuck) : 0;
     }
   }
-  // the seat slides toward the bow through the drive and back toward the stern on the recovery (the rower faces the
-  // stern), and the body swings with it (thrown back by a crab)
-  const still = Math.max(o.tuck, o.crab);
-  o.rower.position.z = -0.35 + (rowing ? (phase < drive ? -0.15 + 0.3 * u : 0.15 - 0.3 * u) : 0) * (1 - still);
-  o.rower.rotation.x = (rowing ? (phase < drive ? -0.35 + 0.6 * u : 0.25 - 0.6 * u) : 0) * (1 - still) - 0.5 * o.crab;
   // the hull: heeled into a carve, slewed round a crab (not spun like a kart), rolled over sideways in a capsize, low in
   // the water swamped, and bobbing on the water the rest of the time
   const size = k.shrink > 0 ? 0.62 : k.mega > 0 ? 1.5 : 1;
@@ -516,7 +489,7 @@ function syncOars(v: KartView, k: Kart, time: number, me: boolean, dt: number, c
 
 /**
  * Whether anything is within an oar's length of shell k's side: another boat (and its oars), a wall, a vessel, the
- * ferry, a buoy or a pier. Its oars come in for it.
+ * ferry, a buoy, a pier, a rock or the crane's load. Its oars come in for it.
  */
 function crowded(r: Race, k: Kart) {
   const t = r.track;
@@ -534,7 +507,7 @@ function crowded(r: Race, k: Kart) {
     if (Math.abs(dx * fx + dz * fz) < 3 && Math.abs(dx * fz - dz * fx) < 5) return true;
   }
   for (const h of r.hazards) {
-    if (h.gone || !(h.kind === 'buoy' || h.kind === 'ferry' || h.kind === 'statue' || h.kind === 'rotor' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'log')) continue;
+    if (h.gone || !(h.kind === 'buoy' || h.kind === 'ferry' || h.kind === 'statue' || h.kind === 'rotor' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'log' || h.kind === 'rock' || h.kind === 'wrecker')) continue;
     const dx = h.x - k.x;
     const dz = h.z - k.z;
     const reach = (h.drive ? lengthOf(h) / 2 : 0) + h.r + 3.4;
@@ -544,6 +517,7 @@ function crowded(r: Race, k: Kart) {
 }
 
 const SPARK = [0, 0x4fc3ff, 0xff9d2e, 0xd36bff];
+const clamp01 = (u: number) => Math.max(0, Math.min(1, u));
 const damp = (a: number, b: number, k: number, dt: number) => a + (b - a) * (1 - Math.exp(-k * dt));
 const dampAngle = (a: number, b: number, k: number, dt: number) => {
   let d = b - a;
@@ -559,9 +533,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(...look.fog);
   const camera = new THREE.PerspectiveCamera(68, 1, 0.5, 1600);
-  scene.add(new THREE.HemisphereLight(look.sky, look.ground, 1.05));
+  const hemi = new THREE.HemisphereLight(look.sky, look.ground, 1.05);
+  scene.add(hemi);
   const sun = new THREE.DirectionalLight(...look.sun);
-  sun.position.set(160, 260, -220);
+  sun.position.set(...(look.sunAt ?? [160, 260, -220]));
   scene.add(sun);
 
   const dummy = new THREE.Object3D();
@@ -622,8 +597,14 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(2600, 2600, 88, 88), new THREE.MeshLambertMaterial({ map: field }));
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.05;
-  // (a road in the sky has no ground under it: see skyway() for campus far below)
+  // (a road in the sky has no ground under it: see skyway() for campus far below; on the water, the marsh all round)
   if (!look.glass) scene.add(ground);
+  if (r.boat) {
+    (ground.material as T.Material).dispose();
+    field.dispose();
+    ground.material = marshMaterial(THREE, 'ground');
+    ground.layers.set(1);
+  }
   const lawn = texture(
     THREE,
     canvas(64, 64, (g) => {
@@ -802,7 +783,26 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const deckMat = look.glass ? new THREE.MeshLambertMaterial({ color: 0x5d6270, emissive: 0x23262e }) : null;
   const railMat = look.glass ? new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }) : null;
   const railTop = look.glass ? new THREE.MeshBasicMaterial({ color: 0xdff8ff }) : null;
-  for (const [side, s0, s1, past] of runs) {
+  // (the walls open for the side streets the traffic comes and goes by, and for the golf course's mower path, drawn but
+  // not there: see traffic.ts and fairway.ts)
+  const openings = [...wallGaps(r), ...mowerGaps(r)];
+  const walls = runs.flatMap((run): typeof runs => {
+    let parts: [number, number][] = [[run[1], run[2]]];
+    for (const [side, g0, g1] of openings) {
+      if (side !== run[0] || run[3] !== 'wall') continue;
+      parts = parts.flatMap(([a, b]): [number, number][] => {
+        // (a gap may be over the start line from where the run is counted)
+        for (const off of [0, t.length, -t.length]) {
+          const [c0, c1] = [g0 + off, g1 + off];
+          if (c1 <= a || c0 >= b) continue;
+          return [...(c0 > a ? [[a, c0] as [number, number]] : []), ...(c1 < b ? [[c1, b] as [number, number]] : [])];
+        }
+        return [[a, b]];
+      });
+    }
+    return parts.map(([a, b]): (typeof runs)[number] => [run[0], a, b, run[3]]);
+  });
+  for (const [side, s0, s1, past] of walls) {
     if (past !== 'wall' || boat) continue;
     if (deckMat && railMat && railTop) {
       const at = (s: number) => side * edgeAt(t, s, side).lim;
@@ -847,6 +847,23 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   (lipMat.map as T.Texture).wrapT = THREE.RepeatWrapping;
   const studs: { x: number; z: number }[] = [];
   const stakes: { x: number; z: number }[] = [];
+  // (and out of bounds on the golf course: white stakes, and past them the barranca, a grassy gully)
+  const whiteStakes: { x: number; z: number }[] = [];
+  const obBoards: { x: number; z: number; ry: number }[] = [];
+  const gullyMat = new THREE.MeshBasicMaterial({
+    map: texture(
+      THREE,
+      canvas(64, 8, (g) => {
+        const grad = g.createLinearGradient(0, 0, 64, 0);
+        grad.addColorStop(0, '#5f8f3a');
+        grad.addColorStop(0.15, '#3f6a26');
+        grad.addColorStop(0.45, '#1f3a14');
+        grad.addColorStop(1, '#0c1708');
+        g.fillStyle = grad;
+        g.fillRect(0, 0, 64, 8);
+      }),
+    ),
+  });
   const pitTex = texture(
     THREE,
     canvas(64, 8, (g) => {
@@ -935,9 +952,18 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       continue;
     }
     if (look.edge === 'stakes') {
-      for (let s = s0 + 2; s < s1; s += 6) {
+      const ob = past === 'ob';
+      for (let s = s0 + 2; s < s1; s += ob ? 4 : 6) {
         const p = pointAt(t, s, side * (edgeAt(t, s, side).lim + 0.35));
-        stakes.push({ x: p.x, z: p.z });
+        (ob ? whiteStakes : stakes).push({ x: p.x, z: p.z });
+      }
+      if (ob) {
+        scene.add(new THREE.Mesh(strip(THREE, t, s0, s1, (s) => lim(s) + side * 0.6, far, 0.031, 4), gullyMat));
+        // an OB board where it starts, and where it ends, facing up the road
+        for (const s of [s0 + 1, s1 - 3]) {
+          const p = pointAt(t, s, side * (edgeAt(t, s, side).lim + 0.9));
+          obBoards.push({ x: p.x, z: p.z, ry: headingOf(p.tx, p.tz) + Math.PI });
+        }
       }
       continue;
     }
@@ -974,7 +1000,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   }
   // (and on each post a white streamer that shows the wind: limp in still air, fluttering as a gust is about to blow,
   // standing straight out downwind while it blows)
-  const streamGeo = new THREE.BoxGeometry(0.09, 1, 0.02);
+  // (on the water a broader pennant of a streamer, so it reads across the marsh)
+  const streamGeo = new THREE.BoxGeometry(boat ? 0.2 : 0.09, 1, 0.02);
   streamGeo.translate(0, 0.5, 0);
   const streamers = lipPosts.length ? new THREE.InstancedMesh(streamGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }), lipPosts.length) : null;
   for (const p of lipPosts) p.windy = r.gusts.some((g) => deltaS(t, g.s0, p.s) >= 0 && deltaS(t, p.s, g.s1) >= 0);
@@ -1010,6 +1037,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   }
   /** Lap 5 on the Skyway: the road's glow fades and the fog closes in (see Look.blackout). */
   let dark = 0;
+  /** And at Hoover Nights the lights go out (see Look.lightsOut). */
+  let dim = 0;
   /** And on the slough the fog comes in (see Look.fogLap). */
   let fogIn = 0;
   const fogColor = new THREE.Color(look.fogLap?.color ?? 0xffffff);
@@ -1031,15 +1060,51 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     });
     scene.add(m);
   }
-  if (stakes.length) {
-    const m = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xd8312a }), stakes.length);
-    stakes.forEach((p, k) => {
-      dummy.position.set(p.x, 0.45, p.z);
-      dummy.scale.set(0.12, 0.9, 0.12);
+  for (const [list, color] of [[stakes, 0xd8312a], [whiteStakes, 0xf6f6f2]] as const) {
+    if (!list.length) continue;
+    const m = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color, ...(color === 0xf6f6f2 ? { emissive: 0x8a8a8a } : {}) }), list.length);
+    list.forEach((p, k) => {
+      dummy.position.set(p.x, 0.5, p.z);
+      dummy.scale.set(color === 0xf6f6f2 ? 0.17 : 0.12, color === 0xf6f6f2 ? 1 : 0.9, color === 0xf6f6f2 ? 0.17 : 0.12);
       dummy.updateMatrix();
       m.setMatrixAt(k, dummy.matrix);
     });
     scene.add(m);
+  }
+  if (obBoards.length) {
+    const board = new THREE.MeshBasicMaterial({
+      map: texture(
+        THREE,
+        canvas(128, 64, (g) => {
+          g.fillStyle = '#ffffff';
+          g.fillRect(0, 0, 128, 64);
+          g.strokeStyle = '#1a1a1a';
+          g.lineWidth = 6;
+          g.strokeRect(3, 3, 122, 58);
+          g.fillStyle = '#1a1a1a';
+          g.font = 'bold 44px Inter, Arial, sans-serif';
+          g.textAlign = 'center';
+          g.textBaseline = 'middle';
+          g.fillText('OB', 64, 35);
+        }),
+      ),
+      side: THREE.DoubleSide,
+    });
+    const postMesh = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xf6f6f2 }), obBoards.length);
+    const boardMesh = new THREE.InstancedMesh(geo.plane, board, obBoards.length);
+    obBoards.forEach((p, k) => {
+      dummy.rotation.set(0, p.ry, 0);
+      dummy.position.set(p.x, 0.8, p.z);
+      dummy.scale.set(0.14, 1.6, 0.14);
+      dummy.updateMatrix();
+      postMesh.setMatrixAt(k, dummy.matrix);
+      dummy.position.set(p.x, 1.75, p.z);
+      dummy.scale.set(1.5, 0.75, 1);
+      dummy.updateMatrix();
+      boardMesh.setMatrixAt(k, dummy.matrix);
+    });
+    dummy.rotation.set(0, 0, 0);
+    scene.add(postMesh, boardMesh);
   }
   if (netting.length) {
     // orange posts and netting along the far side of a pit, with a red lamp on every other post
@@ -1279,6 +1344,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   );
   // reflective, so they still show up at night
   const chevronMat = look.night ? new THREE.MeshBasicMaterial({ map: chevron, side: THREE.DoubleSide }) : new THREE.MeshLambertMaterial({ map: chevron, side: THREE.DoubleSide });
+  const boardPosts: { x: number; z: number; h: number }[] = [];
   for (let s = 0; s < t.length; s += 9) {
     const i = Math.floor(s / t.step) % t.n;
     const c = t.curv[i];
@@ -1293,8 +1359,23 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     sign.position.set(p.x, 1.9, p.z);
     // face the karts coming at it; the arrow points the way the road turns
     sign.rotation.y = headingOf(p.tx, p.tz) + Math.PI;
+    // (on the water each board stands on a pair of piles in the marsh)
+    if (boat) boardPosts.push({ x: p.x, z: p.z, h: headingOf(p.tx, p.tz) });
     if (c < 0) sign.scale.x = -1.6;
     scene.add(sign);
+  }
+  if (boardPosts.length) {
+    const m = new THREE.InstancedMesh(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x4a3a2c }), boardPosts.length * 2);
+    boardPosts.forEach((p, k) => {
+      for (const sd of [-1, 1]) {
+        dummy.position.set(p.x + Math.cos(p.h) * sd * 0.6, 0.6, p.z - Math.sin(p.h) * sd * 0.6);
+        dummy.scale.set(0.09, 2.6, 0.09);
+        dummy.updateMatrix();
+        m.setMatrixAt(k * 2 + (sd > 0 ? 1 : 0), dummy.matrix);
+      }
+    });
+    dummy.scale.setScalar(1);
+    scene.add(m);
   }
   for (const { s, side } of startBoards) {
     const p = pointAt(t, s, side * t.edge);
@@ -1309,12 +1390,13 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
 
   // the course's own scenery
   const rand = scatter(7);
+  const streets = streetsOf(r);
   const clear = (x: number, z: number, margin: number) => {
     const at = locate(t, x, z);
     const side = at.d >= 0 ? 1 : -1;
     const i = Math.round(at.s / t.step) % t.n;
     const out = dropAt(t, i, side) ? Math.max(t.edge, (side > 0 ? beyond.hi : beyond.lo)[i]) : t.edge;
-    return Math.abs(at.d) > out + margin;
+    return Math.abs(at.d) > out + margin && !onStreet(t, streets, at.s, at.d, margin + 1) && !onPath(t, r, at.s, at.d, margin + 1);
   };
   const sceneryTick = SCENERY[r.course]({ THREE, scene, t, r, geo, mats, rand, clear, dummy }) || null;
 
@@ -1387,6 +1469,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const cowMats = cowMaterials(THREE);
   const rockGeo = new THREE.SphereGeometry(1, 7, 5);
   const rockMat = new THREE.MeshLambertMaterial({ color: 0x8d8780, flatShading: true });
+  let wetRockMat: T.MeshPhongMaterial | undefined;
   type CowView = { g: T.Group; legs: T.Mesh[]; head: T.Group; h: number };
   const cows: { view: CowView; i: number }[] = [];
   let kit: ReturnType<typeof bikeKit> | null = null;
@@ -1936,11 +2019,17 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       scene.add(m);
       return { mat, lap: lap ?? 1 };
     });
-  // (on the water: the whirlpools, the vessels, the ferry, the buoys, the gates, the piers and the swing span: water.ts)
+  // (on the water: the whirlpools, the vessels, the ferry, the buoys, the gates, the piers, the swing span and the Port
+  // crane: water.ts)
   const river = boat ? buildRiver(THREE, scene, r, look, geo, dummy) : null;
+  // (and Hoover Nights' traffic, the Tree and the fountain jets: traffic.ts; the golf course's geese and its gang mower:
+  // fairway.ts)
+  const cars = buildTraffic(THREE, scene, r, geo);
+  const fairway = buildFairway(THREE, scene, r, geo);
   r.hazards.forEach((h, i) => {
     if (h.kind === 'whirl' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'log' || h.kind === 'ferry' || h.kind === 'buoy') return;
-    if (boat && ((h.kind === 'bollard' && h.look === 'gate') || (h.kind === 'statue' && h.look === 'pier') || (h.kind === 'rotor' && h.look === 'swing'))) return;
+    if (h.kind === 'car' || h.kind === 'van' || h.kind === 'shuttle' || h.kind === 'tether' || h.kind === 'mower' || (h.kind === 'geyser' && h.look === 'fountain')) return;
+    if (boat && ((h.kind === 'bollard' && h.look === 'gate') || (h.kind === 'statue' && h.look === 'pier') || (h.kind === 'rotor' && h.look === 'swing') || (h.kind === 'wrecker' && h.look === 'crane'))) return;
     if (h.kind === 'panel') return buildPanel(h, i);
     if (h.kind === 'geyser') return buildFlare(h, i);
     if (h.kind === 'hammer') return buildHammer(h, i);
@@ -2082,11 +2171,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       bale.position.set(h.x, h.r, h.z);
       scene.add(bale);
     } else if (h.kind === 'rock') {
-      // a boulder down off the hillside
-      const rock = new THREE.Mesh(rockGeo, rockMat);
+      // a boulder down off the hillside (on the water a dark, wet one, its foot in the white water: see water.ts)
+      const rock = new THREE.Mesh(rockGeo, boat ? (wetRockMat ??= new THREE.MeshPhongMaterial({ color: 0x4e4a45, specular: 0x30363a, shininess: 30, flatShading: true })) : rockMat);
       rock.scale.set(h.r * 1.1, h.r * 0.9, h.r * 1.05);
       rock.rotation.set(rand() * 0.6, rand() * Math.PI * 2, rand() * 0.4);
-      rock.position.set(h.x, h.r * 0.55, h.z);
+      rock.position.set(h.x, boat ? h.r * 0.4 : h.r * 0.55, h.z);
       scene.add(rock);
     } else if (h.kind === 'planter') {
       const planter = makePlanter(THREE, geo, h.r, rand);
@@ -2307,9 +2396,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const coins = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.5, 0.5, 0.12, 18), coinFace ? [coinMat, coinFace, coinFace] : coinMat, Math.max(1, r.coins.length));
   scene.add(coins);
 
-  // karts
+  // karts (or, on the water, racing shells)
+  const scullParts = boat ? scullKit(THREE) : null;
   const karts = r.karts.map((k) => {
-    const v = boat ? makeShell(THREE, geo, k.color, k.hat, kartShared, k.idx) : makeKart(THREE, geo, k.color, k.hat, kartShared);
+    const v = scullParts ? makeShell(THREE, geo, k.color, k.hat, kartShared, k.idx, scullParts) : makeKart(THREE, geo, k.color, k.hat, kartShared);
     scene.add(v.root);
     return v;
   });
@@ -3092,6 +3182,16 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
           fogDome.position.copy(camera.position);
         }
       }
+      // lights out on its lap: the night closes in, and the headlights and the beacons are what is left (half the lamps
+      // go out with it: see the scenery)
+      if (look.lightsOut) {
+        dim = damp(dim, lapNow >= look.lightsOut ? 1 : 0, 1.5, dt);
+        hemi.intensity = 1.05 * (1 - 0.5 * dim);
+        sun.intensity = look.sun[1] * (1 - 0.6 * dim);
+        const fog = scene.fog as T.Fog;
+        fog.near = look.fog[1] + (40 - look.fog[1]) * dim;
+        fog.far = look.fog[2] + (300 - look.fog[2]) * dim;
+      }
       // the blackout on its lap
       if (look.blackout && glassMat) {
         dark = damp(dark, lapNow >= look.blackout ? 1 : 0, 1.2, dt);
@@ -3117,6 +3217,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       if (waterTex) waterTex.offset.set((clock * 0.01) % 1, (clock * 0.006) % 1);
       sceneryTick?.(race, clock, dt);
       river?.tick(race, me, clock, dt);
+      cars?.tick(race, me, clock, dt);
+      fairway?.tick(race, me, clock, dt);
       // things people shout, floating up and fading
       for (let n = pops.length - 1; n >= 0; n--) {
         const pop = pops[n];
@@ -3186,7 +3288,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         const pose = k.sunk > 0 ? fallPose(race, k, clock) : null;
         poses[i] = pose;
         syncKart(v, k, dt, clock, pose);
-        if (v.oars) syncOars(v, k, race.time, i === me, dt, clock, crowded(race, k), !!pose);
+        if (v.oars) syncOars(THREE, v, k, race.time, i === me, dt, clock, crowded(race, k), !!pose);
         v.smoke -= dt;
         if (pose) {
           // the hook (or the retriever) on its way down for it, carrying it back and letting go
@@ -3430,7 +3532,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         if (!k) return;
         // (run aground: a spatter of mud)
         if (e.kind === 'marsh') burst(geo.ball, [partMat.mud, partMat.spray], k.x, 0.3, k.z, 14, 4, 0.22, 0.6, 14);
-        else if (e.kind !== 'void') burst(geo.ball, [partMat.dust], k.x, 0.3, k.z, 22, 6, 0.4, 0.9, 10);
+        else if (e.kind === 'ob') {
+          // out of bounds on the golf course: a puff of grass and dust, and the call
+          burst(geo.ball, [partMat.dust, partMat.white], k.x, 0.4, k.z, 22, 6, 0.36, 0.8, 10);
+          say('OB!', k.x, 3.2, k.z, '#ffffff');
+        } else if (e.kind !== 'void') burst(geo.ball, [partMat.dust], k.x, 0.3, k.z, 22, 6, 0.4, 0.9, 10);
         if (e.k === me) shake = Math.max(shake, 0.7);
       } else if (e.t === 'sank') {
         if (e.kind !== 'void') burst(geo.ball, [e.kind === 'water' ? partMat.spray : partMat.dust], e.x, 0.2, e.z, 8, 4, 0.2, 0.5, 14);
@@ -3452,7 +3558,14 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         // (a boulder throws up a cloud of dust and grit as well)
         if (e.kind === 'boulder') burst(geo.ball, [partMat.dust, partMat.mud], k.x, 0.8, k.z, 18, 6, 0.35, 0.7, 10);
         if (e.kind === 'rotor') burst(geo.ball, [partMat.spray, partMat.white], k.x, 0.8, k.z, 14, 5, 0.25, 0.6, 10);
-        else burst(geo.box, [partMat.white, partMat.star], k.x, 0.9, k.z, 12, 6, 0.16, 0.5);
+        else if (e.kind === 'tether' && race.hazards.some((h) => h.kind === 'tether' && h.look === 'goose')) {
+          // bowled over by a goose: a flurry of feathers
+          burst(geo.box, [partMat.white, partMat.dust], k.x, 1.2, k.z, 16, 5, 0.2, 0.9, 4);
+          say('HONK!', k.x, 3.2, k.z, '#ffffff');
+        } else if (e.kind === 'mower') {
+          burst(geo.box, [partMat.dust, partMat.white], k.x, 0.9, k.z, 14, 6, 0.18, 0.6);
+          say('CRUNCH!', k.x, 3.2, k.z, '#ffe14d');
+        } else burst(geo.box, [partMat.white, partMat.star], k.x, 0.9, k.z, 12, 6, 0.16, 0.5);
         if (e.k === me) shake = Math.max(shake, e.kind === 'rotor' ? 0.35 : 0.7);
       } else if (e.t === 'power') {
         // a Power Ten
@@ -3476,7 +3589,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       return { x: ((v.x + 1) / 2) * w, y: ((1 - v.y) / 2) * h };
     },
     render() {
-      if (!gl.lost()) gl.renderer.render(scene, camera);
+      if (gl.lost()) return;
+      // (on the water, what it mirrors first)
+      river?.reflect(gl.renderer, scene, camera);
+      gl.renderer.render(scene, camera);
     },
     dispose() {
       for (const f of fx) (f.mesh.material as T.Material).dispose();
@@ -3489,6 +3605,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         if ((o as T.InstancedMesh).isInstancedMesh) (o as T.InstancedMesh).dispose();
       });
       disposeTree(scene);
+      river?.dispose();
       for (const g of Object.values(geo)) g.dispose();
       for (const m of Object.values(mats)) m.dispose();
       gl.dispose();

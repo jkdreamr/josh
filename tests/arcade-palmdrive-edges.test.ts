@@ -54,7 +54,7 @@ for (const id of COURSE_IDS) {
       if (past !== 'wall') assert.ok(s0 >= 60 && s1 <= t.length - 60, `${where} is within 60 m of the start line`);
       // (on Insane the road can narrow over the sky, to no less than 7 m of it, and on the water the lock's walls stand in
       // closer, leaving a kart's middle 4.95 m either side)
-      if (at !== undefined) assert.ok(past === 'wall' ? at >= (lock ? 6 : t.half + 1.5) : past === 'void' && c.difficulty === 5 ? at >= 3.5 + 0.4 : at >= t.half + 0.5, where);
+      if (at !== undefined) assert.ok(past === 'wall' ? at >= (lock ? 6 : t.half + 1.5) : (past === 'void' || (past === 'marsh' && lock)) && c.difficulty === 5 ? at >= 3.5 + 0.4 : at >= t.half + 0.5, where);
     }
     const lay = c.layout(t);
     // (a gap right across the road has no plates: past it either side is the drop anyway)
@@ -345,12 +345,13 @@ test('a CPU fished out of a drop keeps well clear of the edge for a while, but a
   assert.ok(run(s, 0.6).some((e) => e.t === 'fall'), 'in without it');
 });
 
-test('the golf course\'s ponds are drops like any other: the edge is the water\'s', () => {
+test('the golf course\'s ponds are drops like any other: the edge is the water\'s; and out of bounds is a drop too', () => {
   const t = trackOf('golf');
   const lay = COURSES.golf.layout(t);
   assert.ok(lay.hazards.some((h) => h.kind === 'water'));
-  const water = openRuns(t);
-  assert.ok(water.length >= 2 && water.every(([, , , past]) => past === 'water'));
+  const runs = openRuns(t);
+  assert.ok(runs.filter(([, , , past]) => past === 'water').length >= 2);
+  assert.ok(runs.every(([, , , past]) => past === 'water' || past === 'ob'));
   assert.equal(tierOf('golf').brink, 0.6);
 });
 
@@ -386,11 +387,14 @@ test('CPU-only races at Hoover Nights at every class: everyone finishes, nobody 
       while (r.time < 600 && r.karts.some((k) => k.done === null)) {
         step(r, DT);
         for (const k of r.karts) if (k.stuck > 2) stuck++;
-        for (const e of r.events.splice(0)) {
+        const evs = r.events.splice(0);
+        // (a hit that a set piece or the traffic dealt, beside something that stays put, is not that thing's)
+        const dealt = new Set(evs.filter((e) => e.t === 'haz').map((e) => e.k));
+        for (const e of evs) {
           if (e.t === 'fall' || e.t === 'splash') at[e.k].push(r.time);
           // (the set pieces catch them now and then by design: those are counted apart, below)
           if (e.t === 'haz') caught++;
-          if (e.t === 'hit' && e.by === -1) {
+          if (e.t === 'hit' && e.by === -1 && !dealt.has(e.k)) {
             const k = r.karts[e.k];
             const h = r.hazards.find((o) => !o.swing && !o.drive && !timed(o.kind) && o.kind !== 'wet' && Math.hypot(o.x - k.x, o.z - k.z) < o.r + 3);
             if (h) hits[`${h.kind}@${h.s}`] = (hits[`${h.kind}@${h.s}`] ?? 0) + 1;

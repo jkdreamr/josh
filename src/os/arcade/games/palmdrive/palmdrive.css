@@ -227,6 +227,12 @@
   stroke: #8c1515;
   stroke-width: 4;
 }
+/* a car or a van on Hoover Nights: dark with its headlights' amber edge */
+.g-palmdrive .g-palmdrive-map-car {
+  fill: #50525c;
+  stroke: #ffd36a;
+  stroke-width: 3;
+}
 /* a golf cart: white with a green edge */
 .g-palmdrive .g-palmdrive-map-cart {
   fill: #f4f3ee;
