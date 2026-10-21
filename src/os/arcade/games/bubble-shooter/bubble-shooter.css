@@ -5,3 +5,116 @@
   touch-action: none;
   cursor: crosshair;
 }
+
+/* level picker: one scrollable row of square buttons, no visible scrollbar */
+.g-bubble-shooter .g-bubble-shooter-strip {
+  display: flex;
+  gap: 5px;
+  /* zero intrinsic width so 36 buttons can't widen the card */
+  width: 0;
+  min-width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding: 1px;
+}
+.g-bubble-shooter .g-bubble-shooter-strip::-webkit-scrollbar {
+  display: none;
+}
+.g-bubble-shooter .arcade-field:has(.g-bubble-shooter-strip) {
+  min-width: 0;
+}
+.g-bubble-shooter .g-bubble-shooter-pick {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f5f5f7;
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
+  cursor: pointer;
+}
+.g-bubble-shooter .g-bubble-shooter-pick:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+.g-bubble-shooter .g-bubble-shooter-pick.is-on {
+  color: #fff;
+  background: var(--accent);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.3),
+    0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.g-bubble-shooter .g-bubble-shooter-pick:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.g-bubble-shooter .g-bubble-shooter-pick em {
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 1px;
+  color: #ffd60a;
+}
+.g-bubble-shooter .g-bubble-shooter-pick.is-on em {
+  color: #fff;
+}
+.g-bubble-shooter .g-bubble-shooter-lock {
+  color: rgba(255, 255, 255, 0.7);
+}
+.g-bubble-shooter .g-bubble-shooter-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 8px;
+  min-height: 14px;
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.7);
+}
+.g-bubble-shooter .g-bubble-shooter-dots {
+  display: inline-flex;
+  gap: 2px;
+}
+.g-bubble-shooter .g-bubble-shooter-star {
+  fill: rgba(255, 255, 255, 0.22);
+}
+.g-bubble-shooter .g-bubble-shooter-star.is-on {
+  fill: #ffd60a;
+}
+
+/* touch: finger sized buttons and readable text, grown by --g-bubble-shooter-u (1 / the phone or iPad frame scale) */
+@media (pointer: coarse) {
+  .g-bubble-shooter .g-bubble-shooter-pick {
+    width: calc(40px * var(--g-bubble-shooter-u, 1));
+    height: calc(40px * var(--g-bubble-shooter-u, 1));
+    border-radius: calc(9px * var(--g-bubble-shooter-u, 1));
+    font-size: calc(13px * var(--g-bubble-shooter-u, 1));
+  }
+  .g-bubble-shooter .g-bubble-shooter-pick em {
+    font-size: calc(11px * var(--g-bubble-shooter-u, 1));
+  }
+  .g-bubble-shooter .g-bubble-shooter-info {
+    font-size: calc(12px * var(--g-bubble-shooter-u, 1));
+  }
+}
+
+/* short cards: drop the extras so Play stays in view */
+@container arcade-ov (max-height: 340px) {
+  .g-bubble-shooter .g-bubble-shooter-info,
+  .g-bubble-shooter .arcade-field:has(.g-bubble-shooter-strip) > span {
+    display: none;
+  }
+}
