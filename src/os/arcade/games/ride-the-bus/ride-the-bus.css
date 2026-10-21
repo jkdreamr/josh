@@ -149,7 +149,7 @@
   gap: 2px;
 }
 .g-ride-the-bus .g-ride-the-bus-board dt {
-  font-size: 12px;
+  font-size: 13.5px;
   font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
@@ -570,23 +570,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.g-ride-the-bus .g-ride-the-bus-answer kbd {
-  position: absolute;
-  top: 6px;
-  right: 7px;
-  min-width: 17px;
-  padding: 1px 4px;
-  border-radius: 5px;
-  font: 600 10px/14px ui-monospace, SFMono-Regular, Menlo, monospace;
-  text-align: center;
-  color: rgba(29, 26, 22, 0.6);
-  background: rgba(29, 26, 22, 0.08);
-}
-.g-ride-the-bus .g-ride-the-bus-answer.is-red kbd,
-.g-ride-the-bus .g-ride-the-bus-answer.is-black kbd {
-  color: rgba(255, 255, 255, 0.75);
-  background: rgba(0, 0, 0, 0.25);
-}
 .g-ride-the-bus .g-ride-the-bus-duo {
   display: inline-flex;
   gap: 1px;
@@ -801,9 +784,6 @@
   .g-ride-the-bus .g-ride-the-bus-sicon {
     width: 20px;
     height: 20px;
-  }
-  .g-ride-the-bus .g-ride-the-bus-answer kbd {
-    display: none;
   }
   .g-ride-the-bus .g-ride-the-bus-row.is-done {
     --cw-max: 66px;
