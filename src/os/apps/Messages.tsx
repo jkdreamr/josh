@@ -23,9 +23,9 @@ const topics: Topic[] = [
   },
   {
     q: "what's stanford like?",
-    a: ["cs + math. i'm a coxswain on the varsity rowing team, help organize TreeHacks and the Stanford Math Tournament, and play badminton when i can."],
+    a: ["cs + math. i'm a coxswain on the varsity rowing team, previously helped organize Treehacks and the Stanford Math Tournament, and play badminton when i can."],
     actions: [
-      { label: 'School Folder', run: (os) => os.open('finder', { folder: 'school' }) },
+      { label: 'School Note', run: (os) => os.open('notes', { note: 'school' }) },
       { label: 'Race Me in Cox Box', run: (os) => os.open('coxbox') },
     ],
   },
