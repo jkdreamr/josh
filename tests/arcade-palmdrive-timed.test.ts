@@ -52,7 +52,7 @@ function widest(lo: number, hi: number, spans: [number, number][]) {
   return Math.max(best, hi - edge);
 }
 
-test('Hoover Nights has its set pieces where the plan puts them, and only it, the Skyway, the slough and the golf course have any', () => {
+test('Hoover Nights has its set pieces where the plan puts them, and only it, the Skyway, the slough, the golf course and the Hard courses have any', () => {
   const t = trackOf('hoover');
   const lay = COURSES.hoover.layout(t);
   const by = (kind: string) => lay.hazards.filter((h) => h.kind === kind).map((h) => Math.round(h.s));
@@ -85,7 +85,7 @@ test('Hoover Nights has its set pieces where the plan puts them, and only it, th
   const h3 = lay.hazards.find((h) => h.kind === 'hammer' && Math.round(h.s) === 372)!;
   assert.ok(Math.abs(Math.abs((h2.phase ?? 0) - (h3.phase ?? 0)) - 1.8) < 1e-9);
   // (the golf course has its geese and its mower: see the golf tests)
-  for (const id of COURSE_IDS) if (id !== 'hoover' && id !== 'skyway' && id !== 'slough' && id !== 'golf') assert.ok(COURSES[id].layout(trackOf(id)).hazards.every((h) => !timed(h.kind) && h.kind !== 'wet'), `${id} has no set pieces`);
+  for (const id of COURSE_IDS) if (id !== 'hoover' && id !== 'skyway' && id !== 'slough' && id !== 'golf' && id !== 'dish' && id !== 'quad') assert.ok(COURSES[id].layout(trackOf(id)).hazards.every((h) => !timed(h.kind) && h.kind !== 'wet'), `${id} has no set pieces`);
   assert.ok(timed('hammer') && timed('bollard') && timed('wrecker') && timed('rotor') && !timed('wet') && !timed('bike'));
   assert.ok(solid('hammer') && solid('bollard') && solid('rotor') && solid('wrecker') && !solid('wet'));
 });

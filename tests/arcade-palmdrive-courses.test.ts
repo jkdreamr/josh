@@ -97,8 +97,9 @@ for (const id of COURSE_IDS) {
     for (const h of lay.hazards) {
       const where = `${id} ${h.kind} at s=${h.s}`;
       assert.ok(h.r > 0, where);
-      // (a bus or a cart waits here for the green light)
-      assert.ok(h.s > 40 && h.s < t.length - 30, `${where} is clear of the start`);
+      // (a bus or a cart waits here for the green light; a set piece that only joins in from lap 2 can stand closer, as
+      // the pack has long since gone by the time it comes up)
+      assert.ok(h.s > ((h.lap ?? 1) >= 2 ? 15 : 40) && h.s < t.length - 30, `${where} is clear of the start`);
       // (a pond lies off beside the road: see below; a bank of bollards runs wall to wall by design, and the set pieces
       // leave a way through by the clock: see the timed tests)
       // (something on a leash, the Tree or a goose, has its post beside the road: where it lunges to is on it)
