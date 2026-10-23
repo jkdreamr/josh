@@ -35,13 +35,18 @@ function addBox(THREE: Three, parent: T.Object3D, size: [number, number, number]
 function mergeStaticMeshes(THREE: Three, root: T.Scene) {
   type Batch = { material: T.Material; cast: boolean; receive: boolean; order: number; meshes: T.Mesh[] };
   const batches = new Map<string, Batch>();
+  const materialKeys = new Map<string, string>();
   const materialKey = (material: T.Material) => {
+    const cached = materialKeys.get(material.uuid);
+    if (cached) return cached;
     const properties = material.toJSON() as unknown as { uuid?: string; name?: string; metadata?: unknown; userData?: unknown; [key: string]: unknown };
     delete properties.uuid;
     delete properties.name;
     delete properties.metadata;
     delete properties.userData;
-    return JSON.stringify(properties);
+    const key = JSON.stringify(properties);
+    materialKeys.set(material.uuid, key);
+    return key;
   };
   root.updateMatrixWorld(true);
   root.traverse((object) => {
@@ -878,7 +883,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       if (!glContext.lost()) {
         const now = performance.now();
         if (lastRenderAt > 0) {
-          const interval = now - lastRenderAt;
+          const interval = Math.min(now - lastRenderAt, 100);
           frameEma = frameEma ? frameEma * 0.9 + interval * 0.1 : interval;
           if (now - qualityWarmupAt >= 1500 && frameEma > 26) {
             if (!overBudgetSince) overBudgetSince = now;
