@@ -8,6 +8,10 @@ export const SERVE_MAX_HEIGHT = 1.15;
 export const SMASH_MIN_HEIGHT = 2;
 export const OVERHEAD_HEIGHT = 1.75;
 export const LOW_HEIGHT = 1;
+export const PLAYER_RUN_SPEED = 5.3;
+export const PLAYER_MAX_ACCURACY = 1;
+export const PLAYER_MAX_POWER = 1;
+export const RACKET_REACH = 0.95;
 
 /** The two competitors. Side a starts on the left end and is always the first human. */
 export type Side = 'a' | 'b';
@@ -80,19 +84,18 @@ export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
   hard: { label: 'Hard', reactionMs: 110, speed: 5, accuracy: 1, dropChance: 0.42 },
   // Quicker first step and feet than Hard, but no faster than a human runs (5.3 m/s) by much, and the same reach and jump.
   pro: { label: 'Pro', reactionMs: 80, speed: 5.6, accuracy: 1.12, dropChance: 0.5, tactics: true },
-  olympic: { label: 'Olympic', reactionMs: 20, speed: 6, accuracy: 1.15, dropChance: 0.7, tactics: true },
+  olympic: { label: 'Olympic', reactionMs: 20, speed: PLAYER_RUN_SPEED, accuracy: PLAYER_MAX_ACCURACY, dropChance: 0.7, tactics: true },
 };
 
 /**
  * How often the computer fails to get a strong smash back: miss is a whiff, block is a short block to the net.
  * Both scale with smashPressure, so a slow half smash rarely troubles anyone.
  */
-export const SMASH_DEFENSE: Record<Difficulty, { miss: number; block: number }> = {
+export const SMASH_DEFENSE: Record<Exclude<Difficulty, 'olympic'>, { miss: number; block: number }> = {
   easy: { miss: 0.5, block: 0.32 },
   normal: { miss: 0.36, block: 0.32 },
   hard: { miss: 0.24, block: 0.3 },
   pro: { miss: 0.14, block: 0.26 },
-  olympic: { miss: 0.012, block: 0.06 },
 };
 
 /** A tap is a half smash; a full charge is everything the hitter has. */
@@ -101,7 +104,7 @@ export const HALF_SMASH_POWER = 0.25;
 /** Power from how long the hit input was held before release: 80 ms of slack, full after 600 ms. */
 export function chargePower(heldMs: number): number {
   const amount = Math.max(0, Math.min(1, (heldMs - 80) / 520));
-  return HALF_SMASH_POWER + (1 - HALF_SMASH_POWER) * amount;
+  return HALF_SMASH_POWER + (PLAYER_MAX_POWER - HALF_SMASH_POWER) * amount;
 }
 
 /** 0..1, how far past a half smash this power is: 0 for a tap, 1 for a full charge. */
@@ -655,7 +658,7 @@ export function cpuChooseShot(contact: Point2D, opponentDistanceFromNet: number,
 /** How precisely a stroke lands, from how far the shuttle was from the racket's sweet spot. */
 export function contactAccuracy(distance: number, reach: number): number {
   const ratio = Math.max(0, Math.min(1, distance / reach));
-  return 1 - ratio * ratio * 0.9;
+  return PLAYER_MAX_ACCURACY - ratio * ratio * 0.9;
 }
 
 /** The Pro's stroke choice: smash every high lift, kill at the net, and play to whichever end of the court is open. */
@@ -693,11 +696,12 @@ export function cpuReturn(
   difficulty: Difficulty,
   random: () => number = Math.random,
   incomingPower = 0.5,
+  contactDistance = 0,
 ): CpuReturn {
   const profile = CPU_PROFILES[difficulty];
   if (difficulty === 'olympic' && random() < 0.002) return { kind: 'miss' };
   const pressure = smashPressure(incoming, flightSeconds);
-  if (pressure > 0) {
+  if (pressure > 0 && difficulty !== 'olympic') {
     const defense = SMASH_DEFENSE[difficulty];
     // A half smash beats the receiver half as often as the table says, a full one half again as often.
     const weight = 0.5 + smashCharge(incomingPower);
@@ -713,14 +717,13 @@ export function cpuReturn(
   if (difficulty === 'olympic') {
     const fromNet = Math.abs(contact.x);
     const opponentDeep = opponentDistanceFromNet > 3.5;
-    let type: ShotType;
-    if (contact.y >= SMASH_MIN_HEIGHT && fromNet < 3.5) type = 'smash';
-    else if (contact.y >= OVERHEAD_HEIGHT) {
-      type = opponentDeep ? (random() < 0.8 ? 'drop' : 'smash') : 'clear';
-    } else if (fromNet < 2.2) type = opponentDeep ? 'net' : 'lift';
-    else type = opponentDeep ? 'drop' : 'clear';
-    const short = type === 'net' || type === 'drop';
-    return { kind: 'hit', type, accuracy, options: { depth: short ? 0 : 1, ...(type === 'smash' ? { power: fromNet < 3.5 ? 1 : 0.65 } : {}) } };
+    const intent: Intent = contact.y >= SMASH_MIN_HEIGHT && fromNet < 3.5 ? 'power'
+      : opponentDeep ? 'soft' : contact.y < LOW_HEIGHT ? 'power' : 'normal';
+    return {
+      kind: 'hit', type: chooseShot(intent, contact),
+      accuracy: pressuredAccuracy(contactAccuracy(contactDistance, RACKET_REACH), pressure),
+      options: { power: HALF_SMASH_POWER },
+    };
   }
   if (!profile.tactics) {
     const type = cpuChooseShot(contact, opponentDistanceFromNet, profile, random);
