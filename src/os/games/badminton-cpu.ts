@@ -4,6 +4,8 @@ import {
   cpuReturn,
   createFlight,
   HALF_SMASH_POWER,
+  PLAYER_RUN_SPEED,
+  RACKET_REACH,
   opposite,
   planShot,
   simulateLanding,
@@ -21,9 +23,38 @@ import {
 export const PLAYER_STEP = 1 / 240;
 export const PLAYER_JUMP_VELOCITY = 5.2;
 export const PLAYER_GRAVITY = 12.4;
-export const RACKET_REACH = 0.95;
+export { RACKET_REACH } from './badminton.ts';
+export const PLAYER_ACCELERATION = 28;
+export const PLAYER_BRAKING = 34;
+export const PLAYER_SWING_COOLDOWN_MS = 110;
 
-export type CpuBody = { x: number; vx: number; jump: number; jumpVelocity: number; jumpRequested: boolean; recoverUntil: number };
+export function stepPlayerBody(body: CpuBody, move: number, direction: Direction, recovering: boolean, charging = false) {
+  const targetVx = move * PLAYER_RUN_SPEED * (recovering ? 0.5 : charging ? 0.75 : 1);
+  const rate = Math.abs(targetVx) > Math.abs(body.vx) ? PLAYER_ACCELERATION : PLAYER_BRAKING;
+  body.vx += Math.max(-rate * PLAYER_STEP, Math.min(rate * PLAYER_STEP, targetVx - body.vx));
+  if (Math.abs(body.vx) < 0.02 && move === 0) body.vx = 0;
+  body.x = clampToHalf(body.x + body.vx * PLAYER_STEP, direction);
+  if (body.jumpRequested) {
+    body.jumpRequested = false;
+    if (body.jump <= 0.001 && body.jumpVelocity <= 0) body.jumpVelocity = PLAYER_JUMP_VELOCITY;
+  }
+  if (body.jumpVelocity !== 0 || body.jump > 0) {
+    body.jumpVelocity -= PLAYER_GRAVITY * PLAYER_STEP;
+    body.jump = Math.max(0, body.jump + body.jumpVelocity * PLAYER_STEP);
+    if (body.jump === 0 && body.jumpVelocity < 0) body.jumpVelocity = 0;
+  }
+}
+
+export function olympicContactReady(body: CpuBody, flight: FlightState, direction: Direction, clock = Infinity) {
+  if (clock < (body.swingStart ?? -Infinity) + PLAYER_SWING_COOLDOWN_MS) return false;
+  const racket = racketPoint(body.x, body.jump, direction);
+  const distance = Math.hypot(flight.shuttle.x - racket.x, flight.shuttle.y - racket.y);
+  const next = stepFlight(flight, PLAYER_STEP);
+  const nextDistance = Math.hypot(next.shuttle.x - racket.x - body.vx * PLAYER_STEP, next.shuttle.y - racket.y - body.jumpVelocity * PLAYER_STEP);
+  return distance <= 0.18 || nextDistance >= distance || next.status !== 'flying';
+}
+
+export type CpuBody = { x: number; vx: number; jump: number; jumpVelocity: number; jumpRequested: boolean; recoverUntil: number; swingStart?: number };
 export type CpuMind = { reactAt: number; target: number | null; predictAt: number; home: number };
 
 export function clampToHalf(x: number, direction: Direction) {
@@ -57,7 +88,7 @@ export function stepCpuBody(
               if (preview.status !== 'flying') break;
               const { x, y } = preview.shuttle;
               const intercept = clampToHalf(x - direction * 0.5, direction);
-              if (x * direction < 0 && y < 2 && Math.abs(intercept - body.x) < profile.speed * Math.max(0, time - 0.12) + 0.35) {
+              if (x * direction < 0 && y < 2 && Math.abs(intercept - body.x) < profile.speed * Math.max(0, time - 0.12) + 0.15) {
                 mind.target = intercept;
                 break;
               }
@@ -79,8 +110,13 @@ export function stepCpuBody(
       }
     } else {
       mind.target = null;
-      target = -direction * mind.home;
+      target = -direction * (profile === CPU_PROFILES.olympic ? 2.4 : mind.home);
     }
+  }
+  if (profile === CPU_PROFILES.olympic) {
+    const gap = target === null ? 0 : target - body.x;
+    stepPlayerBody(body, Math.abs(gap) > 0.08 ? Math.sign(gap) : 0, direction, clock < body.recoverUntil);
+    return;
   }
   if (target === null) {
     body.vx *= 0.8;
@@ -142,12 +178,14 @@ export function simulateCpuRally(
     const racket = racketPoint(bodies[side].x, bodies[side].jump, direction);
     if (Math.hypot(shuttle.x - racket.x, shuttle.y - racket.y) > RACKET_REACH) continue;
     const contact = { x: shuttle.x, y: shuttle.y };
-    const reply = cpuReturn(contact, incoming, flight.elapsed, Math.abs(bodies[flight.hitter].x), levels[side], random, incomingPower);
+    if (levels[side] === 'olympic' && !olympicContactReady(bodies[side], flight, direction, clock)) continue;
+    const reply = cpuReturn(contact, incoming, flight.elapsed, Math.abs(bodies[flight.hitter].x), levels[side], random, incomingPower, Math.hypot(shuttle.x - racket.x, shuttle.y - racket.y));
     if (reply.kind === 'miss') {
       missed = true;
       continue;
     }
     const plan = planShot(reply.type, direction, contact, random, reply.accuracy, reply.options);
+    if (levels[side] === 'olympic') bodies[side].swingStart = clock;
     if (plan.type === 'smash') bodies[side].recoverUntil = clock + smashRecoveryMs(reply.options.power ?? HALF_SMASH_POWER);
     flight = createFlight(contact, plan.velocity, side, direction);
     incoming = plan.type;
