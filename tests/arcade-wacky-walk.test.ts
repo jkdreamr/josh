@@ -5,7 +5,7 @@ import { createBrain, resetBrain, thinkBot } from '../src/os/arcade/games/wacky-
 import { COLORS, BOT_NAMES, botSkill, offlineEntrants } from '../src/os/arcade/games/wacky-walk/roster.ts';
 import { hash, mulberry32 } from '../src/os/arcade/games/wacky-walk/rng.ts';
 import { createBody, groundBelow, insideZone, poseOf, rayCast, respawn, setPose, STEP, stepBody, updateCourse, RADIUS, HEIGHT, BIG_HIT } from '../src/os/arcade/games/wacky-walk/physics.ts';
-import { COUNT, createShow, INTRO, markFall, markFinish, OUTRO, pickRace, placeOf, playTime, quotas, statusOf, stepShow } from '../src/os/arcade/games/wacky-walk/show.ts';
+import { COUNT, courseOf, createShow, INTRO, markFall, markFinish, OUTRO, pickRace, placeOf, playTime, quotas, statusOf, stepShow } from '../src/os/arcade/games/wacky-walk/show.ts';
 import { fallPacket, finishPacket, Interp, movePacket, packBody, parsePacket, playersPacket, showOf, showPacket, tilePacket, unpackBody } from '../src/os/arcade/games/wacky-walk/net.ts';
 import { EV } from '../src/os/arcade/games/wacky-walk/types.ts';
 import type { Course } from '../src/os/arcade/games/wacky-walk/types.ts';
@@ -145,6 +145,21 @@ test('ray casting and ground height find box tops without clipping through small
   assert.ok(Math.hypot(world.x, world.y, world.z) > 0);
 });
 
+test('camera raycasts ignore hidden and moving non-tile colliders but keep tiles', () => {
+  const course = emptyCourse([{
+    id: 0, shape: { kind: 'box', hx: 1, hy: 1, hz: 1 }, look: 'bar',
+    pose: poseOf(0, 0, 0), prev: poseOf(0, 0, 0), on: true, at: () => {},
+  }]);
+  const from = { x: 0, y: 0, z: -2 }, to = { x: 0, y: 0, z: 2 };
+  assert.equal(rayCast(course, from, to, true), 1);
+  course.colliders[0].tile = { layer: 0, touchedAt: null, fallAt: null };
+  assert.ok(rayCast(course, from, to, true) < 1);
+  delete course.colliders[0].tile;
+  course.colliders[0].look = 'hidden';
+  assert.equal(rayCast(course, from, to, true), 1);
+  assert.ok(rayCast(course, from, to) < 1);
+});
+
 test('courses are deterministic, complete, and expose timed tiles and checkpoint spawns', () => {
   for (const id of ['oval', 'fountain', 'palm', 'tiles', 'hoover'] as const) {
     const a = buildCourse(id, 13), b = buildCourse(id, 13);
@@ -182,7 +197,18 @@ test('courses are deterministic, complete, and expose timed tiles and checkpoint
 });
 
 test('three-round quotas, show flow, elimination, timeout progress, and small fields', () => {
+  assert.deepEqual(quotas(8), [5, 3]);
+  assert.deepEqual(quotas(20), [12, 6]);
   assert.deepEqual([1, 2, 3, 4, 6, 8, 12, 20].map(quotas), [[1, 1], [2, 2], [3, 2], [3, 2], [4, 2], [5, 3], [7, 4], [12, 6]]);
+  for (const [field, raceQuota, survivalQuota] of [[8, 5, 3], [20, 12, 6]]) {
+    const sized = createShow(offlineEntrants(field, field), field, 'oval');
+    assert.equal(sized.quota, raceQuota);
+    sized.phase = 'outro';
+    sized.qualified = Array.from({ length: raceQuota }, (_, i) => i);
+    for (let i = 0; i < OUTRO; i++) stepShow(sized, 1, () => 0);
+    assert.equal(sized.round, 1);
+    assert.equal(sized.quota, survivalQuota);
+  }
   assert.equal(pickRace(9, 'random'), pickRace(9, 'random'));
   assert.equal(pickRace(9, 'palm'), 'palm');
 
@@ -223,7 +249,20 @@ test('three-round quotas, show flow, elimination, timeout progress, and small fi
   timeout.phase = 'play'; timeout.clock = INTRO + COUNT + 120;
   stepShow(timeout, STEP, (id) => id / 10);
   assert.equal(timeout.phase, 'outro');
-  assert.deepEqual(timeout.qualified, [3, 2]);
+  assert.deepEqual(timeout.qualified, [3, 2, 1, 0]);
+
+  const twoBots = createShow(offlineEntrants(2, 1), 1, 'oval');
+  twoBots.phase = 'play';
+  assert.equal(markFinish(twoBots, 0), true);
+  assert.equal(markFinish(twoBots, 1), true);
+  stepShow(twoBots, STEP, () => 0);
+  assert.deepEqual(twoBots.qualified, [0, 1]);
+  for (let i = 0; i < OUTRO; i++) stepShow(twoBots, 1, () => 0);
+  assert.equal(twoBots.round, 2);
+  assert.equal(twoBots.phase, 'intro');
+  assert.deepEqual(twoBots.inRound, [0, 1]);
+  assert.equal(twoBots.quota, 1);
+  assert.equal(courseOf(twoBots), 'hoover');
 
   const single = createShow(offlineEntrants(1, 2), 2, 'oval');
   single.phase = 'play';
@@ -233,8 +272,6 @@ test('three-round quotas, show flow, elimination, timeout progress, and small fi
   assert.equal(single.phase, 'done');
   assert.equal(single.winner, 0);
 
-  const twoBots = createShow(offlineEntrants(2, 1), 1, 'oval');
-  assert.deepEqual(twoBots.inRound, [0, 1]);
 });
 
 test('network packets round trip and reject malformed numeric fields and roster data', () => {
@@ -248,6 +285,10 @@ test('network packets round trip and reject malformed numeric fields and roster 
   assert.equal(parsePacket(tilePacket(8, 1, 3, 2.5))?.k, 'tile');
   assert.equal(parsePacket(playersPacket(8, 1, 4, [{ id: 0, body }]))?.k, 'P');
 
+  const rotated = { ...body, yaw: 9.34 };
+  assert.equal(parsePacket(movePacket(8, 1, rotated))?.k, 'm');
+  assert.equal(parsePacket(playersPacket(8, 1, 4, [{ id: 0, body: rotated }]))?.k, 'P');
+
   const show = createShow(offlineEntrants(6, 44), 44, 'fountain');
   const packet = showPacket(5, show, [[10, 2.25]]);
   const parsed = parsePacket(packet);
@@ -259,6 +300,10 @@ test('network packets round trip and reject malformed numeric fields and roster 
   assert.deepEqual(restored.entrants, show.entrants);
   assert.deepEqual(restored.inRound, show.inRound);
   assert.deepEqual(parsed.tiles, [[10, 2.25]]);
+
+  const fullField = createShow(offlineEntrants(20, 45), 45, 'oval');
+  fullField.entrants.forEach((entrant, seat) => { entrant.seat = seat; });
+  assert.equal(parsePacket(showPacket(5, fullField))?.k, 'S');
 
   assert.equal(parsePacket({ t: 'wacky-walk', k: 'm', r: 0, rd: 0, b: [NaN, 0, 0, 0, 0, 0, 0, 0, 0] }), null);
   assert.equal(parsePacket({ t: 'wacky-walk', k: 'm', r: 0, rd: 3, b: packed }), null);
@@ -284,44 +329,61 @@ test('interpolation wraps yaw, lerps position, extrapolates briefly, and trims h
   assert.ok(out.x > 9);
 });
 
-function simulateBots(id: 'oval' | 'fountain' | 'palm' | 'tiles' | 'hoover', count: number, seed: number) {
+function simulateBots(id: 'oval' | 'fountain' | 'palm' | 'tiles' | 'hoover', count: number, seed: number, frameDt = STEP) {
   const course = buildCourse(id, seed);
   const bodies = course.spawns.slice(0, count).map((spot) => createBody(spot.x, spot.y, spot.z, course.startYaw));
   const brains = bodies.map((_, i) => createBrain(i + 1, botSkill(seed, i + 1), seed));
   brains.forEach((brain) => resetBrain(brain, course));
   const finished = new Set<number>(), fallen = new Set<number>();
-  let ended = false;
+  let ended = false, accumulator = 0, stepsDone = 0;
   const maxSteps = Math.ceil(course.limit / STEP);
-  for (let frame = 0; frame < maxSteps; frame++) {
-    const time = (frame + 1) * STEP;
-    updateCourse(course, time);
-    for (let i = 0; i < bodies.length; i++) {
-      const body = bodies[i];
-      if (finished.has(i) || fallen.has(i)) continue;
-      const input = thinkBot(brains[i], body, course, time, STEP);
-      stepBody(body, input, course, time, STEP, []);
-      if (body.y < course.killY) fallen.add(i);
-      if (course.zones.some((zone) => (zone.kind === 'finish' || zone.kind === 'crown') && insideZone(zone, body.x, body.y + HEIGHT / 2, body.z))) {
-        finished.add(i);
+  while (stepsDone < maxSteps && !ended) {
+    accumulator += Math.max(0, Math.min(0.25, frameDt));
+    let frameSteps = 0;
+    while (accumulator >= STEP && frameSteps < 15 && stepsDone < maxSteps) {
+      const time = (stepsDone + 1) * STEP;
+      updateCourse(course, time);
+      for (let i = 0; i < bodies.length; i++) {
+        const body = bodies[i];
+        if (finished.has(i) || fallen.has(i)) continue;
+        const input = thinkBot(brains[i], body, course, time, STEP);
+        stepBody(body, input, course, time, STEP, []);
+        if (body.y < course.killY) fallen.add(i);
+        if (course.zones.some((zone) => (zone.kind === 'finish' || zone.kind === 'crown') && insideZone(zone, body.x, body.y + HEIGHT / 2, body.z))) {
+          finished.add(i);
+        }
       }
+      accumulator -= STEP;
+      stepsDone++;
+      frameSteps++;
+      if (id === 'tiles' && fallen.size >= Math.max(1, count - 4)) ended = true;
+      if (finished.size > 0 && id === 'hoover') ended = true;
+      if (id !== 'tiles' && id !== 'hoover' && finished.size >= Math.ceil(count * 0.6)) ended = true;
+      if (ended) break;
     }
-    if (id === 'tiles' && fallen.size >= Math.max(1, count - 4)) { ended = true; break; }
-    if (finished.size > 0 && id === 'hoover') { ended = true; break; }
-    if (id !== 'tiles' && id !== 'hoover' && finished.size >= Math.ceil(count * 0.6)) { ended = true; break; }
   }
-  return { course, bodies, finished, fallen, ended };
+  return { course, bodies, finished, fallen, ended, stepsDone };
 }
 
-test('headless bots complete races, crack survival tiles, and reach the hoover crown', { timeout: 19_000 }, () => {
-  const rates: Record<string, string> = {};
+test('headless bots complete courses through normal and low-FPS catch-up steps', { timeout: 40_000 }, () => {
+  const rates: Record<string, { normal: string; lowFps: string }> = {};
   for (const id of RACES) {
-    const result = simulateBots(id, 12, 31);
-    rates[id] = `${result.finished.size}/12`;
-    assert.ok(result.finished.size >= 8, `${id} bot finish rate ${rates[id]}`);
+    const normal = simulateBots(id, 12, 31);
+    const lowFps = simulateBots(id, 12, 31, 0.18);
+    rates[id] = { normal: `${normal.finished.size}/12`, lowFps: `${lowFps.finished.size}/12` };
+    assert.ok(normal.finished.size >= 8, `${id} bot finish rate ${rates[id].normal}`);
+    assert.deepEqual([...lowFps.finished], [...normal.finished], `${id} low-FPS finishers`);
+    assert.equal(lowFps.stepsDone, normal.stepsDone, `${id} low-FPS simulation steps`);
   }
   const tiles = simulateBots('tiles', 12, 43);
+  const lowFpsTiles = simulateBots('tiles', 12, 43, 0.18);
   assert.ok(tiles.fallen.size > 0, `tile field falls: ${tiles.fallen.size}`);
   const hoover = simulateBots('hoover', 6, 54);
+  const lowFpsHoover = simulateBots('hoover', 6, 54, 0.18);
   assert.ok(hoover.finished.size > 0, 'at least one bot should reach the crown');
-  console.log(`wacky walk bot finish rates ${JSON.stringify(rates)}; tiles ${tiles.fallen.size}/12 fell; hoover ${hoover.finished.size}/6 crowned`);
+  assert.deepEqual([...lowFpsTiles.fallen], [...tiles.fallen], 'low-FPS tile fallers');
+  assert.deepEqual([...lowFpsHoover.finished], [...hoover.finished], 'low-FPS crown finishers');
+  assert.equal(lowFpsTiles.stepsDone, tiles.stepsDone, 'low-FPS tile simulation steps');
+  assert.equal(lowFpsHoover.stepsDone, hoover.stepsDone, 'low-FPS hoover simulation steps');
+  console.log(`wacky walk bot counts ${JSON.stringify(rates)}; tiles ${tiles.fallen.size}/${lowFpsTiles.fallen.size} fallen (12); hoover ${hoover.finished.size}/${lowFpsHoover.finished.size} crowned (6), normal/0.18`);
 });

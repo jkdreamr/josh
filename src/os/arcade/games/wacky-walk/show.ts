@@ -27,8 +27,12 @@ export type Show = {
 export function quotas(n: number): [number, number] {
   const count = Math.max(0, Math.floor(n));
   const first = count >= 4 ? Math.max(3, Math.min(count - 1, Math.round(count * 0.6))) : count;
-  const second = first >= 3 ? Math.max(2, Math.round(first * 0.5)) : first;
+  const second = first <= 2 ? first : survivalQuota(first);
   return [first, second];
+}
+
+function survivalQuota(n: number): number {
+  return Math.max(2, Math.min(Math.round(n * 0.5), n - 1));
 }
 
 export function pickRace(seed: number, choice: RaceId | 'random'): RaceId {
@@ -90,19 +94,20 @@ function topByProgress(ids: number[], progress: (id: number) => number): number[
   return [...ids].sort((a, b) => progress(b) - progress(a));
 }
 
-function concludePlay(show: Show, progress: (id: number) => number): void {
+function concludePlay(show: Show, progress: (id: number) => number, timedOut: boolean): void {
   const active = stillRunning(show);
-  const minimum = Math.min(2, show.inRound.length);
   const kind = show.round === 1 ? 'survival' : show.round === 2 ? 'final' : 'race';
   let qualified: number[] = [];
   if (kind === 'race') {
     qualified = show.finished.slice(0, show.quota);
+    const minimum = Math.min(timedOut ? 4 : 2, show.inRound.length);
     if (qualified.length < minimum) {
       const candidates = topByProgress(active.filter((id) => !qualified.includes(id)), progress);
       qualified.push(...candidates.slice(0, minimum - qualified.length));
     }
   } else if (kind === 'survival') {
     qualified = active;
+    const minimum = Math.min(2, show.inRound.length);
     if (qualified.length < minimum) {
       const fallers = show.fallen.slice().reverse();
       qualified.push(...fallers.filter((id) => !qualified.includes(id)).slice(0, minimum - qualified.length));
@@ -126,12 +131,12 @@ function completeRound(show: Show): void {
     show.phaseT = 0;
     return;
   }
-  show.round++;
+  show.round = show.round === 0 && show.qualified.length <= 2 ? 2 : show.round + 1;
   show.inRound = [...show.qualified];
   show.finished = [];
   show.fallen = [];
   show.qualified = [];
-  show.quota = show.round === 1 ? quotas(show.inRound.length)[1] : 1;
+  show.quota = show.round === 1 ? survivalQuota(show.inRound.length) : 1;
   show.clock = 0;
   show.phaseT = 0;
   show.phase = 'intro';
@@ -153,12 +158,13 @@ export function stepShow(show: Show, dt: number, progress: (id: number) => numbe
   }
   if (show.phase === 'play') {
     const timeLimit = LIMITS[courseOf(show)];
+    const timedOut = playTime(show) >= timeLimit;
     const ending = show.round === 1
-      ? stillRunning(show).length <= show.quota || playTime(show) >= timeLimit
+      ? stillRunning(show).length <= show.quota || timedOut
       : show.round === 2
-        ? show.finished.length > 0 || playTime(show) >= timeLimit
-        : show.finished.length >= show.quota || stillRunning(show).length === 0 || playTime(show) >= timeLimit;
-    if (ending) concludePlay(show, progress);
+        ? show.finished.length > 0 || timedOut
+        : show.finished.length >= show.quota || stillRunning(show).length === 0 || timedOut;
+    if (ending) concludePlay(show, progress, timedOut);
   }
   if (show.phase === 'outro' && show.phaseT >= OUTRO) completeRound(show);
   return beforeRound !== show.round || beforePhase !== show.phase;

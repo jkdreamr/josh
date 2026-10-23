@@ -457,11 +457,11 @@ function Play() {
   function handlePacket(from: number, value: unknown) {
     const currentRoom = onlineRef.current;
     const show = showRef.current;
-    if (!currentRoom || !show) return;
+    if (!currentRoom) return;
     const packet = parsePacket(value);
     if (!packet || packet.r !== currentRoom.round) return;
     if (currentRoom.isHost) {
-      if (from === currentRoom.seat || packet.k === 'S' || packet.k === 'P') return;
+      if (!show || from === currentRoom.seat || packet.k === 'S' || packet.k === 'P') return;
       if (packet.rd !== show.round || !show.inRound.includes(from)) return;
       if (packet.k === 'm') {
         const who = entrant(from, show);
@@ -493,6 +493,8 @@ function Play() {
     if (from !== 0) return;
     if (packet.k === 'S') {
       receiveShow(packet);
+    } else if (!show) {
+      return;
     } else if (packet.k === 'P') {
       remoteClockRef.current = packet.c;
       clockErrorRef.current = packet.c - guestClockRef.current;

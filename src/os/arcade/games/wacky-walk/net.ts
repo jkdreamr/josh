@@ -17,6 +17,7 @@ export type Packet = Move | Result | TileEvent | PlayerState | ShowPacket;
 
 const stateCodes: BodyState[] = ['run', 'air', 'dive', 'flop', 'stun'];
 const round2 = (value: number) => Math.round(value * 100) / 100;
+const wrapYaw = (value: number) => Math.atan2(Math.sin(value), Math.cos(value));
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const integer = (value: unknown, min: number, max: number): value is number => Number.isSafeInteger(value) && (value as number) >= min && (value as number) <= max;
 const phaseOk = (value: unknown): value is Phase => value === 'intro' || value === 'count' || value === 'play' || value === 'outro' || value === 'done';
@@ -25,7 +26,7 @@ const raceOk = (value: unknown): value is RaceId => value === 'oval' || value ==
 export function packBody(body: Pick<Body, 'x' | 'y' | 'z' | 'vx' | 'vy' | 'vz' | 'yaw' | 'state' | 'squash'>): PackedBody {
   return [
     round2(body.x), round2(body.y), round2(body.z), round2(body.vx), round2(body.vy), round2(body.vz),
-    round2(body.yaw), stateCodes.indexOf(body.state), round2(body.squash),
+    round2(wrapYaw(body.yaw)), stateCodes.indexOf(body.state), round2(body.squash),
   ];
 }
 
@@ -109,7 +110,7 @@ function entrantsOk(value: unknown): value is ShowPacket['ent'] {
   for (const entry of value) {
     if (!Array.isArray(entry) || entry.length !== 6) return false;
     const [id, seat, name, bot, color, skill] = entry;
-    if (!integer(id, 0, 19) || ids.has(id) || !integer(seat, -1, 15) ||
+    if (!integer(id, 0, 19) || ids.has(id) || !integer(seat, -1, 19) ||
         typeof name !== 'string' || name.length < 1 || name.length > 24 || /[\u0000-\u001f]/.test(name) ||
         (bot !== 0 && bot !== 1) || !integer(color, 0, 0xffffff) || !finite(skill) || skill < 0.3 || skill > 1) return false;
     ids.add(id);

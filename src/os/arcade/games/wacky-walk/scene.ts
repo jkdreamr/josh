@@ -29,6 +29,7 @@ const MAX_PLAYERS = 20;
 const CONFETTI = 360;
 const DROPS = 120;
 const CARDINAL = 0x9b1c1f;
+const CAMERA_ORBITS = [Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, Math.PI];
 
 const LOOK_COLORS: Record<Look, number> = {
   grass: 0x8fd18a, path: 0xf2dfb8, sand: 0xe8c99a, stone: 0xd9cbb5, roof: 0xd9654b, wood: 0xc08a5a, tube: 0xfffaf0,
@@ -38,6 +39,59 @@ const LOOK_COLORS: Record<Look, number> = {
 
 /** A part to bake into a merged, vertex colored mesh. */
 type Part = { g: T.BufferGeometry; m: T.Matrix4; c: number };
+type Aabb = { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number };
+type DecorBounds = { box: Aabb; parts: { box: Aabb; inverse: T.Matrix4 }[] };
+
+function rayBox(from: T.Vector3, to: T.Vector3, box: Aabb): number {
+  let near = 0;
+  let far = 1;
+  const dx = to.x - from.x;
+  if (Math.abs(dx) < 1e-8) {
+    if (from.x < box.minX || from.x > box.maxX) return 1;
+  } else {
+    let a = (box.minX - from.x) / dx;
+    let b = (box.maxX - from.x) / dx;
+    if (a > b) {
+      const swap = a;
+      a = b;
+      b = swap;
+    }
+    near = Math.max(near, a);
+    far = Math.min(far, b);
+    if (near > far) return 1;
+  }
+  const dy = to.y - from.y;
+  if (Math.abs(dy) < 1e-8) {
+    if (from.y < box.minY || from.y > box.maxY) return 1;
+  } else {
+    let a = (box.minY - from.y) / dy;
+    let b = (box.maxY - from.y) / dy;
+    if (a > b) {
+      const swap = a;
+      a = b;
+      b = swap;
+    }
+    near = Math.max(near, a);
+    far = Math.min(far, b);
+    if (near > far) return 1;
+  }
+  const dz = to.z - from.z;
+  if (Math.abs(dz) < 1e-8) {
+    if (from.z < box.minZ || from.z > box.maxZ) return 1;
+  } else {
+    let a = (box.minZ - from.z) / dz;
+    let b = (box.maxZ - from.z) / dz;
+    if (a > b) {
+      const swap = a;
+      a = b;
+      b = swap;
+    }
+    near = Math.max(near, a);
+    far = Math.min(far, b);
+    if (near > far) return 1;
+  }
+  return near <= 1 && far >= 0 ? near : 1;
+}
 
 function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const gl = createGL(THREE, host, { maxDpr: 1.25 });
@@ -145,6 +199,9 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   scene.add(courseRoot);
   let courseOwned: T.BufferGeometry[] = [];
   let moving: { c: Collider; mesh: T.Object3D }[] = [];
+  const decorBounds: DecorBounds[] = [];
+  const decorRayFrom = new THREE.Vector3();
+  const decorRayTo = new THREE.Vector3();
   let tiles: { mesh: T.InstancedMesh; list: Collider[]; base: number[] } | null = null;
   let jets: { z: Course['zones'][number]; mesh: T.Mesh }[] = [];
   let crown: T.Group | null = null;
@@ -290,6 +347,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     for (const p of pads) (p.material as T.Material).dispose();
     courseOwned = [];
     moving = [];
+    decorBounds.length = 0;
     tiles = null;
     jets = [];
     crown = null;
@@ -351,7 +409,48 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       courseRoot.add(mesh);
       moving.push({ c, mesh });
     }
-    for (const d of course.decor) decorParts(d, statics);
+    const solidDecor = new Set<Decor['kind']>(['tower', 'arcade', 'roof', 'stands', 'arch', 'fountain']);
+    for (const d of course.decor) {
+      const first = statics.length;
+      decorParts(d, statics);
+      if (!solidDecor.has(d.kind)) continue;
+      const bounds: DecorBounds = {
+        box: {
+          minX: Infinity, minY: Infinity, minZ: Infinity,
+          maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity,
+        },
+        parts: [],
+      };
+      for (let i = first; i < statics.length; i++) {
+        const part = statics[i];
+        if (!part.g.boundingBox) part.g.computeBoundingBox();
+        const box = part.g.boundingBox;
+        if (!box) continue;
+        const partBox: Aabb = {
+          minX: box.min.x,
+          minY: box.min.y,
+          minZ: box.min.z,
+          maxX: box.max.x,
+          maxY: box.max.y,
+          maxZ: box.max.z,
+        };
+        bounds.parts.push({ box: partBox, inverse: part.m.clone().invert() });
+        for (let corner = 0; corner < 8; corner++) {
+          tmpV.set(
+            corner & 1 ? box.max.x : box.min.x,
+            corner & 2 ? box.max.y : box.min.y,
+            corner & 4 ? box.max.z : box.min.z,
+          ).applyMatrix4(part.m);
+          bounds.box.minX = Math.min(bounds.box.minX, tmpV.x);
+          bounds.box.minY = Math.min(bounds.box.minY, tmpV.y);
+          bounds.box.minZ = Math.min(bounds.box.minZ, tmpV.z);
+          bounds.box.maxX = Math.max(bounds.box.maxX, tmpV.x);
+          bounds.box.maxY = Math.max(bounds.box.maxY, tmpV.y);
+          bounds.box.maxZ = Math.max(bounds.box.maxZ, tmpV.z);
+        }
+      }
+      if (Number.isFinite(bounds.box.minX)) decorBounds.push(bounds);
+    }
     // little grass islands under scenery standing over the lagoon
     for (const d of course.decor) {
       if (d.kind === 'tower' && d.y > 10) continue;
@@ -621,6 +720,24 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const look = new THREE.Vector3();
   let fly = 0;
   const frameMtx = new THREE.Matrix4();
+  const cameraTry = new THREE.Vector3();
+  function cameraClearance(course: Course, from: T.Vector3, to: T.Vector3): number {
+    let fraction = rayCast(course, from, to, true);
+    for (const bounds of decorBounds) {
+      if (rayBox(from, to, bounds.box) >= fraction) continue;
+      for (const part of bounds.parts) {
+        decorRayFrom.copy(from).applyMatrix4(part.inverse);
+        if (
+          decorRayFrom.x >= part.box.minX && decorRayFrom.x <= part.box.maxX &&
+          decorRayFrom.y >= part.box.minY && decorRayFrom.y <= part.box.maxY &&
+          decorRayFrom.z >= part.box.minZ && decorRayFrom.z <= part.box.maxZ
+        ) continue;
+        decorRayTo.copy(to).applyMatrix4(part.inverse);
+        fraction = Math.min(fraction, rayBox(decorRayFrom, decorRayTo, part.box));
+      }
+    }
+    return fraction;
+  }
   function frame(course: Course, t: number, bodies: readonly (BodyView | null)[], focus: number | null, cam: CamState, dt: number) {
     clock += dt;
     const m4 = frameMtx;
@@ -689,17 +806,37 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       const cp = Math.cos(cam.pitch);
       look.set(target.x, target.y + 1.6, target.z);
       want.set(look.x - Math.sin(cam.yaw) * cp * cam.dist, look.y + Math.sin(cam.pitch) * cam.dist, look.z - Math.cos(cam.yaw) * cp * cam.dist);
-      // pull in in front of walls between the bean and the camera
-      const f = rayCast(course, look, want, true);
-      if (f < 1) want.lerpVectors(look, want, Math.max(0.18, f - 0.08));
+      let f = cameraClearance(course, look, want);
+      if (f < 0.85) {
+        for (const offset of CAMERA_ORBITS) {
+          const yaw = cam.yaw + offset;
+          cameraTry.set(
+            look.x - Math.sin(yaw) * cp * cam.dist,
+            look.y + Math.sin(cam.pitch) * cam.dist,
+            look.z - Math.cos(yaw) * cp * cam.dist,
+          );
+          const candidate = cameraClearance(course, look, cameraTry);
+          if (candidate > f) {
+            f = candidate;
+            want.copy(cameraTry);
+          }
+          if (f >= 0.98) break;
+        }
+      }
+      if (f < 1) want.lerpVectors(look, want, Math.max(0.04, f - 0.08));
+      const ground = groundBelow(course, want.x, want.y, want.z);
+      if (ground !== null && want.y < ground + 0.5) want.y = ground + 0.5;
       if (!camReady) {
         camPos.copy(want);
         camLook.copy(look);
         camReady = true;
+      } else if (cameraClearance(course, look, camPos) < 0.98) {
+        camPos.copy(want);
+      } else {
+        camPos.x = damp(camPos.x, want.x, 9, dt);
+        camPos.y = damp(camPos.y, want.y, 7, dt);
+        camPos.z = damp(camPos.z, want.z, 9, dt);
       }
-      camPos.x = damp(camPos.x, want.x, 9, dt);
-      camPos.y = damp(camPos.y, want.y, 7, dt);
-      camPos.z = damp(camPos.z, want.z, 9, dt);
       if (f < 1) camPos.lerp(want, 0.5);
       camLook.x = damp(camLook.x, look.x, 14, dt);
       camLook.y = damp(camLook.y, look.y, 10, dt);
