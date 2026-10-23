@@ -939,7 +939,7 @@ export function stepWorld(world: World, commands: readonly Command[] = [], dt = 
   const events: Event[] = [];
   world.acc += clamp(dt, 0, 0.1);
   let steps = 0;
-  while (world.acc + 1e-9 >= STEP && steps < 16) {
+  while (world.acc + 1e-9 >= STEP && steps < 20) {
     world.ball.prev.x = world.ball.p.x;
     world.ball.prev.y = world.ball.p.y;
     world.ball.prev.z = world.ball.p.z;

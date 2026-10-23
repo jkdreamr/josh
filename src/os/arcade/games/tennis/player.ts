@@ -59,7 +59,7 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
     new THREE.Vector2(0.12, 0.76),
     new THREE.Vector2(0, 0.76),
   ];
-  const trunk = new THREE.Mesh(new THREE.LatheGeometry(trunkProfile, 32), shirt);
+  const trunk = new THREE.Mesh(new THREE.LatheGeometry(trunkProfile, 16), shirt);
   trunk.position.y = 0.86;
   torso.add(trunk);
   const collar = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.026, 6, 14), accent);

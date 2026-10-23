@@ -35,12 +35,20 @@ function addBox(THREE: Three, parent: T.Object3D, size: [number, number, number]
 function mergeStaticMeshes(THREE: Three, root: T.Scene) {
   type Batch = { material: T.Material; cast: boolean; receive: boolean; order: number; meshes: T.Mesh[] };
   const batches = new Map<string, Batch>();
+  const materialKey = (material: T.Material) => {
+    const properties = material.toJSON() as unknown as { uuid?: string; name?: string; metadata?: unknown; userData?: unknown; [key: string]: unknown };
+    delete properties.uuid;
+    delete properties.name;
+    delete properties.metadata;
+    delete properties.userData;
+    return JSON.stringify(properties);
+  };
   root.updateMatrixWorld(true);
   root.traverse((object) => {
     const mesh = object as T.Mesh;
     if (!mesh.isMesh || (mesh as T.InstancedMesh).isInstancedMesh || mesh.userData.keepSeparate
       || Array.isArray(mesh.material) || mesh.material.transparent || !mesh.geometry.getAttribute('position')) return;
-    const key = `${mesh.material.uuid}:${mesh.castShadow}:${mesh.receiveShadow}:${mesh.renderOrder}`;
+    const key = `${materialKey(mesh.material)}:${mesh.castShadow}:${mesh.receiveShadow}:${mesh.renderOrder}`;
     let batch = batches.get(key);
     if (!batch) {
       batch = { material: mesh.material, cast: mesh.castShadow, receive: mesh.receiveShadow, order: mesh.renderOrder, meshes: [] };
@@ -224,10 +232,10 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
   scene.add(seats, backs);
 
   const count = rows.length;
-  const bodies = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.07, 0.19, 5, 10), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.94 }), count);
-  const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.067, 12, 10), standard(THREE, '#c69a78', 0.88), count);
-  const arms = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.025, 0.13, 3, 6), standard(THREE, '#ffffff', 0.91), count * 2);
-  const hats = new THREE.InstancedMesh(new THREE.SphereGeometry(0.073, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.5), standard(THREE, '#ffffff', 0.72), count);
+  const bodies = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.07, 0.19, 2, 6), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.94 }), count);
+  const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.067, 8, 6), standard(THREE, '#c69a78', 0.88), count);
+  const arms = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.025, 0.13, 1, 4), standard(THREE, '#ffffff', 0.91), count * 2);
+  const hats = new THREE.InstancedMesh(new THREE.SphereGeometry(0.073, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.5), standard(THREE, '#ffffff', 0.72), count);
   const crowd: { x: number; y: number; z: number; phase: number; hue: number }[] = [];
   const palette = ['#ece4d4', '#bd293e', '#314c68', '#caa35d', '#406453', '#e4ddd1', '#7e5969', '#b7b8ad'];
   const skinTones = ['#d4a27f', '#b67b5b', '#edc6a3', '#81583f', '#c48d69'];
@@ -354,7 +362,7 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
         new THREE.Vector3(x + dx * 0.8, 7.75, z + dz * 0.8),
         new THREE.Vector3(x + dx * 2.5, 7.15, z + dz * 2.5),
       ]);
-      const leaf = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.045, 5, false), frondMaterial);
+      const leaf = new THREE.Mesh(new THREE.TubeGeometry(curve, 8, 0.045, 3, false), frondMaterial);
       leaf.castShadow = false;
       scene.add(leaf);
       for (const t of [0.35, 0.53, 0.71, 0.88]) {
@@ -462,10 +470,10 @@ function buildNet(THREE: Three, scene: T.Scene) {
     const x = -width / 2 + width * i / 14;
     return new THREE.Vector3(x, netHeight(x) + 0.005, 0);
   }));
-  const tape = new THREE.Mesh(new THREE.TubeGeometry(tapeCurve, 80, 0.046, 6, false), standard(THREE, '#eee9dc', 0.62));
+  const tape = new THREE.Mesh(new THREE.TubeGeometry(tapeCurve, 40, 0.046, 5, false), standard(THREE, '#eee9dc', 0.62));
   tape.castShadow = true;
   group.add(tape);
-  const cord = new THREE.Mesh(new THREE.TubeGeometry(tapeCurve, 80, 0.012, 5, false), standard(THREE, '#f9f5e8', 0.48, 0.1));
+  const cord = new THREE.Mesh(new THREE.TubeGeometry(tapeCurve, 40, 0.012, 4, false), standard(THREE, '#f9f5e8', 0.48, 0.1));
   cord.position.y -= 0.07;
   group.add(cord);
   addBox(THREE, group, [0.075, 0.9, 0.048], [0, 0.47, 0.02], standard(THREE, '#ece8da', 0.85));
@@ -594,7 +602,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   });
 
   const ballMap = ballTexture(THREE, lite);
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS, 24, 18), new THREE.MeshPhysicalMaterial({ map: ballMap, color: '#f6f2ca', roughness: 0.82, sheen: 0.38, clearcoat: 0.12 }));
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS, 16, 12), new THREE.MeshPhysicalMaterial({ map: ballMap, color: '#f6f2ca', roughness: 0.82, sheen: 0.38, clearcoat: 0.12 }));
   ball.castShadow = true;
   scene.add(ball);
   const trail = Array.from({ length: 5 }, (_, index) => {
@@ -633,8 +641,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   let scoreRefresh = 0;
   let playerX = 0;
   let lastRenderAt = 0;
-  let frameTotal = 0;
-  let frameSamples = 0;
+  let frameEma = 0;
+  let qualityTier = 0;
+  let overBudgetSince = 0;
+  let lastQualityStep = 0;
+  const qualityWarmupAt = performance.now();
   let currentDpr = Math.min(window.devicePixelRatio || 1, lite ? 1.25 : 1.5);
 
   function updateScoreboard(world: World) {
@@ -856,6 +867,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     envTarget.dispose();
     pmrem.dispose();
     glContext.dispose();
+    if (import.meta.env.DEV) delete (window as Window & { __tennisRenderStats?: unknown }).__tennisRenderStats;
   }
 
   return {
@@ -866,19 +878,45 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       if (!glContext.lost()) {
         const now = performance.now();
         if (lastRenderAt > 0) {
-          frameTotal += now - lastRenderAt;
-          frameSamples++;
-          if (frameTotal >= 2000) {
-            if (frameTotal / frameSamples > 22 && currentDpr > 0.75) {
-              currentDpr = Math.max(0.75, currentDpr - 0.25);
-              renderer.setPixelRatio(currentDpr);
+          const interval = now - lastRenderAt;
+          frameEma = frameEma ? frameEma * 0.9 + interval * 0.1 : interval;
+          if (now - qualityWarmupAt >= 1500 && frameEma > 26) {
+            if (!overBudgetSince) overBudgetSince = now;
+            if (now - overBudgetSince >= 1000 && now - lastQualityStep >= 1000 && qualityTier < 3) {
+              qualityTier++;
+              lastQualityStep = now;
+              if (qualityTier === 1) {
+                currentDpr = 1;
+                renderer.setPixelRatio(currentDpr);
+              } else if (qualityTier === 2) {
+                renderer.shadowMap.enabled = false;
+                scene.traverse((object) => {
+                  const mesh = object as T.Mesh;
+                  if (!mesh.isMesh) return;
+                  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+                  materials.forEach((material) => { material.needsUpdate = true; });
+                });
+              } else {
+                currentDpr = 0.75;
+                renderer.setPixelRatio(currentDpr);
+                stadium.arms.visible = false;
+                stadium.hats.visible = false;
+              }
+              overBudgetSince = now;
             }
-            frameTotal = 0;
-            frameSamples = 0;
           }
+          else overBudgetSince = 0;
         }
         lastRenderAt = now;
         renderer.render(scene, camera);
+        if (import.meta.env.DEV) {
+          (window as Window & { __tennisRenderStats?: () => object }).__tennisRenderStats = () => ({
+            calls: renderer.info.render.calls,
+            triangles: renderer.info.render.triangles,
+            qualityTier,
+            averageFrameMs: frameEma,
+          });
+        }
       }
     },
     hit(speed: number) {

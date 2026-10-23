@@ -172,6 +172,7 @@ function Play({ mode }: { mode: StageMode }) {
 
   const world = useRef<World | null>(null);
   world.current ??= settingsWorld(mode, format, length, level, online);
+  const lastHit = useRef<{ kind: Swing['kind']; clock: number } | null>(null);
   const view = useRef<View | null>(null);
   const audio = useRef<ReturnType<typeof createAudio> | null>(null);
   const localCommands = useRef<Command[]>([]);
@@ -182,6 +183,7 @@ function Play({ mode }: { mode: StageMode }) {
   const reported = useRef(false);
   const lastMoveSent = useRef<MoveInput>({ x: 0, z: 0 });
   const lastMoveAt = useRef(0);
+  const lastWorldFrameAt = useRef<number | null>(null);
   const stopMovementRef = useRef<() => void>(() => {});
   const hudClock = useRef(0);
   const timingClock = useRef(0);
@@ -217,6 +219,46 @@ function Play({ mode }: { mode: StageMode }) {
       view.current = null;
     };
   }, [THREE, shell.touch]);
+
+  useEffect(() => {
+    lastWorldFrameAt.current = null;
+  }, [shell.status]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const debugWindow = window as Window & { __tennisWorldDebug?: () => object };
+    debugWindow.__tennisWorldDebug = () => {
+      const current = world.current;
+      if (!current) return {};
+      return {
+        phase: current.phase,
+        clock: current.clock,
+        serverSeat: current.serverSeat,
+        ball: {
+          inPlay: current.ball.inPlay,
+          canHitTeam: current.ball.canHitTeam,
+          bounces: current.ball.bounces,
+          p: { ...current.ball.p },
+          v: { ...current.ball.v },
+        },
+        players: current.players.map((player) => ({
+          seat: player.seat,
+          team: player.team,
+          x: player.x,
+          z: player.z,
+          pending: player.pending?.kind ?? null,
+        })),
+        lastHit: lastHit.current,
+      };
+    };
+    return () => { delete debugWindow.__tennisWorldDebug; };
+  }, []);
+
+  useEffect(() => {
+    const reset = () => { lastWorldFrameAt.current = null; };
+    document.addEventListener('visibilitychange', reset);
+    return () => document.removeEventListener('visibilitychange', reset);
+  }, []);
 
   useEffect(() => {
     view.current?.resize(size.w, size.h);
@@ -334,6 +376,7 @@ function Play({ mode }: { mode: StageMode }) {
   const handleEvent = (event: ReturnType<typeof stepWorld>[number], fromHost = false) => {
     const currentView = view.current;
     if (event.type === 'hit') {
+      if (import.meta.env.DEV) lastHit.current = { kind: event.kind, clock: world.current?.clock ?? 0 };
       if (event.delta !== undefined) setTimingResult(event.delta);
       currentView?.hit(event.speed);
       audio.current?.hit(event.speed, event.kind);
@@ -354,7 +397,12 @@ function Play({ mode }: { mode: StageMode }) {
     if (!fromHost && mode === 'online' && o?.isHost) o.send(eventOf(o.round || 1, event), { fast: false });
   };
 
-  const updateWorld = (dt: number) => {
+  const updateWorld = (_frameDt: number) => {
+    const now = performance.now();
+    const previous = lastWorldFrameAt.current;
+    lastWorldFrameAt.current = document.hidden ? null : now;
+    if (document.hidden) return;
+    const dt = previous === null ? 0 : Math.min(0.1, Math.max(0, (now - previous) / 1000));
     const current = world.current;
     if (!current || shellRef.current.status !== 'playing') return;
     const o = onlineRef.current;
@@ -406,7 +454,7 @@ function Play({ mode }: { mode: StageMode }) {
           }
           const input = movementInput();
           prediction.input = input;
-          movePlayer(current, prediction, Math.min(dt, 0.05));
+          movePlayer(current, prediction, dt);
           const error = Math.hypot(local.x - prediction.x, local.z - prediction.z);
           if (error > 1.5) {
             prediction.x = local.x;

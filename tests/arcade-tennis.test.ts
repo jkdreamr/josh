@@ -107,6 +107,12 @@ test('the court uses ITF dimensions and touching a line is in', () => {
   assert.equal(isInCourt(0, COURT_LENGTH / 2 + BALL_RADIUS, 'singles'), true);
 });
 
+test('stepWorld advances a 0.1 second wall-clock frame', () => {
+  const world = createWorld();
+  stepWorld(world, [], 0.1);
+  assert.ok(Math.abs(world.clock - 0.1) < 1e-8);
+});
+
 test('deuce, advantage, and match lengths score the full game', () => {
   const world = createWorld({ length: 'game' });
   world.match.points = [3, 3];
