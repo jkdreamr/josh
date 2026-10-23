@@ -17,6 +17,7 @@ import {
   opposite,
   planShot,
   parseDifficulty,
+  PLAYER_MAX_ACCURACY,
   pressuredAccuracy,
   pointSituation,
   recordRally,
@@ -44,7 +45,7 @@ import {
   type ShotType,
   type Side,
 } from '../games/badminton';
-import { clampToHalf, PLAYER_GRAVITY, PLAYER_JUMP_VELOCITY, PLAYER_STEP, RACKET_REACH, stepCpuBody, type CpuMind } from '../games/badminton-cpu';
+import { clampToHalf, olympicContactReady, PLAYER_GRAVITY, PLAYER_STEP, PLAYER_SWING_COOLDOWN_MS, RACKET_REACH, stepCpuBody, stepPlayerBody, type CpuMind } from '../games/badminton-cpu';
 import { useOS, type AppProps } from '../types';
 import { countPlay } from '../stats';
 import { getAppGame } from '../arcade/apps';
@@ -113,8 +114,6 @@ const STEP = PLAYER_STEP;
 const REACH = RACKET_REACH;
 const SWING_MS = 170;
 const SWING_DRAW_MS = 230;
-const RUN_SPEED = 5.3;
-const JUMP_VELOCITY = PLAYER_JUMP_VELOCITY;
 const GRAVITY = PLAYER_GRAVITY;
 /** A hold shorter than this is a tap: the press swing already played it. */
 const CHARGE_MIN_MS = 150;
@@ -379,7 +378,7 @@ export default function Badminton({ args }: AppProps) {
       const athlete = sim.athletes[side];
       const start = { x: athlete.x + direction * 0.45, y: 1.05 };
       const type: ShotType = intent === 'power' ? 'high-serve' : 'serve';
-      const accuracy = isCpu(side) ? CPU_PROFILES[settingsRef.current.difficulty].accuracy : 1;
+      const accuracy = isCpu(side) ? CPU_PROFILES[settingsRef.current.difficulty].accuracy : PLAYER_MAX_ACCURACY;
       const plan = planShot(type, direction, start, Math.random, accuracy);
       athlete.swingStart = sim.clock;
       athlete.swingUntil = 0;
@@ -439,7 +438,7 @@ export default function Badminton({ args }: AppProps) {
         return;
       }
       if (sim.phase === 'rally') {
-        if (sim.clock < athlete.swingStart + 110) return;
+        if (sim.clock < athlete.swingStart + PLAYER_SWING_COOLDOWN_MS) return;
         athlete.swingStart = sim.clock;
         athlete.swingUntil = sim.clock + SWING_MS + (settingsRef.current.mode === 'online' && side === 'b' ? REMOTE_SWING_MS : 0);
         athlete.intent = intent;
@@ -541,20 +540,7 @@ export default function Badminton({ args }: AppProps) {
       }
       // Off balance after a smash, and set on the spot while winding one up.
       const charging = athlete.chargeStart !== null && sim.clock - athlete.chargeStart > CHARGE_MIN_MS;
-      const targetVx = move * RUN_SPEED * (sim.clock < athlete.recoverUntil ? 0.5 : charging ? 0.75 : 1);
-      const rate = Math.abs(targetVx) > Math.abs(athlete.vx) ? 28 : 34;
-      athlete.vx += Math.max(-rate * STEP, Math.min(rate * STEP, targetVx - athlete.vx));
-      if (Math.abs(athlete.vx) < 0.02 && move === 0) athlete.vx = 0;
-      athlete.x = clampToHalf(athlete.x + athlete.vx * STEP, direction);
-      if (athlete.jumpRequested) {
-        athlete.jumpRequested = false;
-        if (athlete.jump <= 0.001 && athlete.jumpVelocity <= 0) athlete.jumpVelocity = JUMP_VELOCITY;
-      }
-      if (athlete.jumpVelocity !== 0 || athlete.jump > 0) {
-        athlete.jumpVelocity -= GRAVITY * STEP;
-        athlete.jump = Math.max(0, athlete.jump + athlete.jumpVelocity * STEP);
-        if (athlete.jump === 0 && athlete.jumpVelocity < 0) athlete.jumpVelocity = 0;
-      }
+      stepPlayerBody(athlete, move, direction, sim.clock < athlete.recoverUntil, charging);
     };
 
     const stepCpu = (sim: Sim, state: MatchState) => {
@@ -583,9 +569,11 @@ export default function Badminton({ args }: AppProps) {
       const incoming = sim.lastShot?.type ?? null;
       if (isCpu(side)) {
         if (sim.clock < sim.cpu.reactAt || sim.cpuMissed) return;
-        athlete.swingStart = sim.clock - 70;
+        const olympic = settingsRef.current.difficulty === 'olympic';
+        if (olympic && !olympicContactReady(athlete, flight, direction, sim.clock)) return;
+        athlete.swingStart = sim.clock - (olympic ? 0 : 70);
         athlete.intent = shuttle.y >= 1.6 ? 'normal' : 'soft';
-        const reply = cpuReturn(contact, incoming, flight.elapsed, Math.abs(sim.athletes[opposite(side)].x), settingsRef.current.difficulty, Math.random, sim.lastShot?.power);
+        const reply = cpuReturn(contact, incoming, flight.elapsed, Math.abs(sim.athletes[opposite(side)].x), settingsRef.current.difficulty, Math.random, sim.lastShot?.power, distance);
         if (reply.kind === 'miss') {
           sim.cpuMissed = true;
           return;
