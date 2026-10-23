@@ -1,0 +1,400 @@
+.g-tennis-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+  background: #70806b;
+  touch-action: none;
+  user-select: none;
+}
+
+.g-tennis-stage canvas {
+  position: absolute;
+  inset: 0;
+  outline: 0;
+}
+
+.g-tennis-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  color: #f5f2e6;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-shadow: 0 1px 9px rgba(6, 17, 17, .62);
+}
+
+.g-tennis-scorebar {
+  position: absolute;
+  top: clamp(10px, 2.2vh, 24px);
+  left: 50%;
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) auto minmax(100px, 1fr);
+  align-items: center;
+  width: min(570px, calc(100% - 32px));
+  min-height: 68px;
+  padding: 8px 12px;
+  border: 1px solid rgba(245, 244, 226, .32);
+  border-radius: 12px;
+  background: linear-gradient(115deg, rgba(12, 28, 31, .82), rgba(22, 34, 35, .75));
+  box-shadow: 0 8px 30px rgba(15, 23, 18, .18), inset 0 1px rgba(255, 255, 255, .08);
+  backdrop-filter: blur(12px);
+  transform: translateX(-50%);
+}
+
+.g-tennis-side {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.g-tennis-side-b {
+  text-align: right;
+}
+
+.g-tennis-side-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  color: rgba(246, 245, 232, .76);
+  font-size: clamp(9px, 1.1vw, 12px);
+  font-weight: 650;
+  letter-spacing: .045em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.g-tennis-side-b .g-tennis-side-label {
+  justify-content: flex-end;
+}
+
+.g-tennis-side-me .g-tennis-side-label {
+  color: #edf3d5;
+}
+
+.g-tennis-team-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c9e632;
+  box-shadow: 0 0 8px rgba(201, 230, 50, .7);
+}
+
+.g-tennis-side-b .g-tennis-team-dot {
+  background: #e8e2d3;
+  box-shadow: 0 0 8px rgba(232, 226, 211, .48);
+}
+
+.g-tennis-serving {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-left: 1px;
+  border-radius: 50%;
+  background: #f1ce7c;
+  box-shadow: 0 0 8px rgba(255, 212, 116, .72);
+}
+
+.g-tennis-score-numbers {
+  display: flex;
+  align-items: baseline;
+  gap: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.g-tennis-side-b .g-tennis-score-numbers {
+  justify-content: flex-end;
+}
+
+.g-tennis-score-numbers b {
+  line-height: 1;
+}
+
+.g-tennis-sets {
+  color: #d5dfc6;
+  font-size: 16px;
+}
+
+.g-tennis-games {
+  color: #f7f4e8;
+  font-size: 23px;
+  font-weight: 720;
+}
+
+.g-tennis-point {
+  min-width: 28px;
+  color: #c9e632;
+  font-size: 18px;
+  font-weight: 750;
+  text-align: center;
+}
+
+.g-tennis-score-middle {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  min-width: 84px;
+  padding: 0 9px;
+  border-right: 1px solid rgba(243, 239, 219, .2);
+  border-left: 1px solid rgba(243, 239, 219, .2);
+  color: #e9e7d5;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.g-tennis-score-middle small {
+  color: #c3ceb7;
+  font-size: 9px;
+  letter-spacing: .12em;
+}
+
+.g-tennis-status {
+  position: absolute;
+  top: 96px;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  transform: translateX(-50%);
+}
+
+.g-tennis-call {
+  min-height: 16px;
+  color: #fff8dc;
+  font-size: clamp(11px, 1.3vw, 14px);
+  font-weight: 680;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.g-tennis-speed {
+  padding: 3px 9px;
+  border: 1px solid rgba(255, 241, 196, .36);
+  border-radius: 999px;
+  background: rgba(18, 33, 33, .65);
+  color: #f2dfaa;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.g-tennis-speed small {
+  color: #d6d2bd;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.g-tennis-timing {
+  position: absolute;
+  right: 20px;
+  bottom: 62px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f8f3d4;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+  animation: g-tennis-timing-pop .18s ease-out both;
+}
+
+.g-tennis-timing-ring {
+  width: 23px;
+  height: 23px;
+  border: 2px solid rgba(237, 237, 220, .65);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(237, 237, 220, .13), inset 0 0 7px rgba(237, 237, 220, .32);
+}
+
+.g-tennis-timing-perfect .g-tennis-timing-ring {
+  border-color: #d8eb61;
+  box-shadow: 0 0 0 4px rgba(208, 232, 74, .2), 0 0 13px rgba(212, 234, 69, .65);
+}
+
+.g-tennis-timing-early {
+  color: #bde0e9;
+}
+
+.g-tennis-timing-late {
+  color: #f1c394;
+}
+
+.g-tennis-controls-hint {
+  position: absolute;
+  right: 16px;
+  bottom: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(244, 241, 223, .24);
+  border-radius: 8px;
+  background: rgba(12, 27, 30, .59);
+  color: rgba(245, 243, 229, .82);
+  font-size: 10px;
+  font-weight: 650;
+  backdrop-filter: blur(8px);
+}
+
+.g-tennis-controls-hint i {
+  color: #d3dbbf;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.g-tennis-key-hint {
+  padding: 3px 5px;
+  border: 1px solid rgba(247, 244, 225, .35);
+  border-radius: 4px;
+  color: #f3efda;
+  font-size: 9px;
+  letter-spacing: .06em;
+}
+
+.g-tennis-watch-label {
+  position: absolute;
+  bottom: 17px;
+  left: 17px;
+  padding: 6px 9px;
+  border: 1px solid rgba(238, 235, 217, .23);
+  border-radius: 7px;
+  background: rgba(18, 34, 36, .56);
+  color: rgba(242, 238, 223, .79);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.g-tennis-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: linear-gradient(145deg, #173a39, #0e2328);
+  color: #f0efdb;
+  text-align: center;
+}
+
+.g-tennis-error strong {
+  max-width: 340px;
+  font-size: 17px;
+}
+
+@keyframes g-tennis-timing-pop {
+  from { opacity: 0; transform: translateY(5px) scale(.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 600px) {
+  .g-tennis-scorebar {
+    top: 7px;
+    width: min(440px, calc(100% - 18px));
+    min-height: 56px;
+    padding: 6px 7px;
+    border-radius: 9px;
+  }
+
+  .g-tennis-side {
+    gap: 3px;
+    padding: 0 4px;
+  }
+
+  .g-tennis-side-label {
+    font-size: 8px;
+  }
+
+  .g-tennis-score-numbers {
+    gap: 7px;
+  }
+
+  .g-tennis-sets {
+    font-size: 13px;
+  }
+
+  .g-tennis-games {
+    font-size: 19px;
+  }
+
+  .g-tennis-point {
+    min-width: 22px;
+    font-size: 16px;
+  }
+
+  .g-tennis-score-middle {
+    min-width: 57px;
+    padding: 0 5px;
+    font-size: 8px;
+  }
+
+  .g-tennis-score-middle small {
+    font-size: 7px;
+  }
+
+  .g-tennis-status {
+    top: 73px;
+  }
+
+  .g-tennis-call {
+    font-size: 10px;
+  }
+
+  .g-tennis-speed {
+    padding: 2px 7px;
+    font-size: 11px;
+  }
+
+  .g-tennis-controls-hint {
+    right: 9px;
+    bottom: 9px;
+    gap: 6px;
+    padding: 6px 7px;
+    font-size: 9px;
+  }
+
+  .g-tennis-controls-hint i {
+    font-size: 9px;
+  }
+
+  .g-tennis-timing {
+    right: 12px;
+    bottom: 49px;
+    font-size: 10px;
+  }
+
+  .g-tennis-timing-ring {
+    width: 19px;
+    height: 19px;
+  }
+
+  .g-tennis-watch-label {
+    left: 9px;
+    bottom: 10px;
+    font-size: 8px;
+  }
+}
+
+@media (max-height: 500px) {
+  .g-tennis-scorebar {
+    top: 5px;
+    min-height: 48px;
+  }
+
+  .g-tennis-status {
+    top: 57px;
+  }
+
+  .g-tennis-controls-hint {
+    bottom: 6px;
+  }
+}
