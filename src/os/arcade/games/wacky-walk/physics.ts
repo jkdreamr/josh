@@ -424,11 +424,12 @@ function rayShape(from: Vec3, to: Vec3, pose: Pose, shape: Shape): number | null
   return best;
 }
 
-export function rayCast(course: Course, from: Vec3, to: Vec3): number {
+/** camera: skip invisible walls and moving obstacles, so the chase camera only pulls in for solid scenery. */
+export function rayCast(course: Course, from: Vec3, to: Vec3, camera = false): number {
   let best = 1;
   let hit = false;
   for (const collider of course.colliders) {
-    if (!collider.on) continue;
+    if (!collider.on || (camera && (collider.look === 'hidden' || collider.at))) continue;
     const fraction = rayShape(from, to, collider.pose, collider.shape);
     if (fraction !== null && fraction < best) { best = fraction; hit = true; }
   }

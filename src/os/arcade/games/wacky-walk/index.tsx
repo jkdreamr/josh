@@ -190,9 +190,11 @@ function Play() {
   const seedRef = useRef(seedOf());
   const initializedRef = useRef(false);
   const accumulatorRef = useRef(0);
+  const lastUpdateAtRef = useRef(0);
+  const renderDtRef = useRef(0);
   const netClockRef = useRef(0);
   const hudClockRef = useRef(0);
-  const cameraRef = useRef<CamState>({ yaw: 0, pitch: 0.32, dist: 7.5 });
+  const cameraRef = useRef<CamState>({ yaw: 0, pitch: 0.4, dist: 9 });
   const manualOrbitAtRef = useRef(0);
   const lastCountRef = useRef(-1);
   const pendingJumpRef = useRef(false);
@@ -267,8 +269,8 @@ function Play() {
     remoteClockRef.current = show.clock;
     clockErrorRef.current = 0;
     cameraRef.current.yaw = course.startYaw;
-    cameraRef.current.pitch = 0.32;
-    cameraRef.current.dist = portraitPhone ? 9 : 7.5;
+    cameraRef.current.pitch = 0.4;
+    cameraRef.current.dist = portraitPhone ? 10.5 : 9;
     watchIndexRef.current = 0;
     setWatchTarget(null);
     syncSceneCourse(course);
@@ -781,7 +783,11 @@ function Play() {
     const course = courseRef.current;
     const currentRoom = onlineRef.current;
     if (!show || !course) return;
-    dt = Math.max(0, Math.min(0.05, dt));
+    const now = performance.now();
+    const elapsed = lastUpdateAtRef.current ? (now - lastUpdateAtRef.current) / 1000 : dt;
+    lastUpdateAtRef.current = now;
+    dt = Math.max(0, Math.min(0.25, elapsed));
+    renderDtRef.current = dt;
     const currentId = localId(show);
     const local = currentId == null ? undefined : bodiesRef.current.get(currentId);
     const following = local && !show.finished.includes(currentId!)
@@ -813,7 +819,7 @@ function Play() {
       if (keys.pressed('ArrowRight')) cycleWatch(1);
     }
     cameraRef.current.pitch = Math.max(0.05, Math.min(1.1, cameraRef.current.pitch));
-    cameraRef.current.dist = portraitPhone ? 9 : 7.5;
+    cameraRef.current.dist = portraitPhone ? 10.5 : 9;
 
     if (mode === 'online' && currentRoom && !currentRoom.isHost) {
       const jumpPressed = keys.pressed('Space') || touchJumpRef.current;
@@ -828,12 +834,11 @@ function Play() {
 
     accumulatorRef.current += dt;
     let steps = 0;
-    while (accumulatorRef.current >= STEP && steps < 5) {
+    while (accumulatorRef.current >= STEP && steps < 15) {
       advanceOneStep();
       accumulatorRef.current -= STEP;
       steps++;
     }
-    if (steps === 5) accumulatorRef.current = Math.min(accumulatorRef.current, STEP * 5);
 
     const activeShow = showRef.current;
     const activeCourse = courseRef.current;
@@ -948,7 +953,7 @@ function Play() {
       if (!hiddenRef.current.has(id)) bodies[id] = bodiesRef.current.get(id) ?? null;
     }
     const focus = focusFor(show);
-    view.frame(course, time, bodies, focus, cameraRef.current, 1 / 60);
+    view.frame(course, time, bodies, focus, cameraRef.current, renderDtRef.current);
     for (const id of tagIds) {
       const node = tagNodesRef.current.get(id);
       const body = bodiesRef.current.get(id);

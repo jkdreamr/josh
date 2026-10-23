@@ -483,3 +483,9 @@
     min-height: min(76vh, 740px);
   }
 }
+
+@media (max-width: 900px) {
+  .g-wacky-walk .g-wacky-walk-top {
+    top: max(52px, env(safe-area-inset-top));
+  }
+}

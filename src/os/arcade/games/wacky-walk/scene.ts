@@ -40,7 +40,7 @@ const LOOK_COLORS: Record<Look, number> = {
 type Part = { g: T.BufferGeometry; m: T.Matrix4; c: number };
 
 function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
-  const gl = createGL(THREE, host, { maxDpr: touch ? 1.5 : 1.75 });
+  const gl = createGL(THREE, host, { maxDpr: 1.25 });
   if (!gl) return null;
   const { renderer } = gl;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -67,7 +67,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     cone4: keepG(new THREE.ConeGeometry(1, 1, 4, 1).toNonIndexed()),
     prism: keepG(new THREE.CylinderGeometry(1, 1, 1, 3, 1).toNonIndexed()),
     sphere: keepG(new THREE.SphereGeometry(1, 12, 8).toNonIndexed()),
-    ico: keepG(new THREE.IcosahedronGeometry(1, 0).toNonIndexed()),
+    ico: keepG(new THREE.IcosahedronGeometry(1, 0)),
     half: keepG(new THREE.TorusGeometry(1, 0.16, 5, 10, Math.PI).toNonIndexed()),
   };
   const lambert = (color: number, extra: T.MeshLambertMaterialParameters = {}) => new THREE.MeshLambertMaterial({ color, flatShading: true, ...extra });
@@ -78,14 +78,16 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     return m;
   };
 
-  const tmpM = new THREE.Matrix4();
   const tmpQ = new THREE.Quaternion();
   const tmpE = new THREE.Euler();
   const tmpV = new THREE.Vector3();
   const tmpS = new THREE.Vector3();
   const tmpC = new THREE.Color();
+  const scratchMtx = new THREE.Matrix4();
+  const setMtx = (out: T.Matrix4, x: number, y: number, z: number, sx: number, sy: number, sz: number, yaw = 0, pitch = 0, roll = 0) =>
+    out.compose(tmpV.set(x, y, z), tmpQ.setFromEuler(tmpE.set(pitch, yaw, roll, 'YXZ')), tmpS.set(sx, sy, sz));
   const mtx = (x: number, y: number, z: number, sx: number, sy: number, sz: number, yaw = 0, pitch = 0, roll = 0) =>
-    new THREE.Matrix4().compose(tmpV.set(x, y, z), tmpQ.setFromEuler(tmpE.set(pitch, yaw, roll, 'YXZ')), tmpS.set(sx, sy, sz));
+    setMtx(new THREE.Matrix4(), x, y, z, sx, sy, sz, yaw, pitch, roll);
 
   function bake(parts: Part[]): T.BufferGeometry {
     let n = 0;
@@ -440,7 +442,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const beanGeo = keepG(new THREE.SphereGeometry(1, 14, 10));
   const parts = {
     bean: new THREE.InstancedMesh(beanGeo, mat(lambert(0xffffff)), MAX_PLAYERS),
-    gown: new THREE.InstancedMesh(keepG(new THREE.CylinderGeometry(0.47, 0.56, 0.78, 10, 1, true)), mat(lambert(CARDINAL, { side: THREE.DoubleSide })), MAX_PLAYERS),
+    gown: new THREE.InstancedMesh(keepG(new THREE.CylinderGeometry(0.38, 0.5, 0.64, 10, 1, true)), mat(lambert(CARDINAL, { side: THREE.DoubleSide })), MAX_PLAYERS),
     collar: new THREE.InstancedMesh(keepG(new THREE.TorusGeometry(0.4, 0.07, 5, 12)), mat(lambert(0xfff3e0)), MAX_PLAYERS),
     board: new THREE.InstancedMesh(keepG(new THREE.BoxGeometry(0.78, 0.06, 0.78)), mat(lambert(0x22222b)), MAX_PLAYERS),
     skull: new THREE.InstancedMesh(keepG(new THREE.CylinderGeometry(0.31, 0.34, 0.18, 10)), mat(lambert(0x22222b)), MAX_PLAYERS),
@@ -472,11 +474,12 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
 
   const bodyM = new THREE.Matrix4();
   const partM = new THREE.Matrix4();
-  const local = (x: number, y: number, z: number, sx: number, sy: number, sz: number, yaw = 0, pitch = 0, roll = 0) => mtx(x, y, z, sx, sy, sz, yaw, pitch, roll);
+  const local = (x: number, y: number, z: number, sx: number, sy: number, sz: number, yaw = 0, pitch = 0, roll = 0) =>
+    setMtx(new THREE.Matrix4(), x, y, z, sx, sy, sz, yaw, pitch, roll);
   const L = {
-    bean: local(0, 0.7, 0, 0.44, 0.7, 0.42),
-    gown: local(0, 0.39, 0, 1, 1, 1),
-    collar: local(0, 0.86, 0.02, 1.05, 1.05, 0.9, 0, Math.PI / 2),
+    bean: local(0, 0.72, 0, 0.46, 0.72, 0.44),
+    gown: local(0, 0.32, 0, 1, 1, 1),
+    collar: local(0, 0.66, 0.02, 1.0, 1.0, 0.9, 0, Math.PI / 2),
     board: local(0, 1.47, 0, 1, 1, 1, Math.PI / 4, -0.12),
     skull: local(0, 1.38, 0, 1, 1, 1, 0, -0.12),
     eyeL: local(-0.15, 1.08, 0.36, 0.1, 0.12, 0.08),
@@ -505,18 +508,19 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       const sy = 1 - s;
       const sxz = 1 + s * 0.55;
       bodyM.compose(tmpV.set(b.x, b.y, b.z), tmpQ.setFromEuler(tmpE.set(0, b.yaw, 0, 'YXZ')), tmpS.set(1, 1, 1));
-      bodyM.multiply(mtx(0, a.lift, 0, 1, 1, 1, 0, a.pitch, a.roll + Math.sin(a.spin) * 0.6)).multiply(mtx(0, 0, 0, sxz, sy, sxz));
+      bodyM.multiply(setMtx(scratchMtx, 0, a.lift, 0, 1, 1, 1, 0, a.pitch, a.roll + Math.sin(a.spin) * 0.6))
+        .multiply(setMtx(scratchMtx, 0, 0, 0, sxz, sy, sxz));
       parts.bean.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.bean));
       parts.gown.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.gown));
       parts.collar.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.collar));
       parts.board.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.board));
       parts.skull.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.skull));
-      parts.tassel.setMatrixAt(n, partM.multiplyMatrices(bodyM, mtx(0.36, 1.32, 0.08, 1, 1, 1, 0, -a.swing * 0.8, 0.15)));
+      parts.tassel.setMatrixAt(n, partM.multiplyMatrices(bodyM, setMtx(scratchMtx, 0.36, 1.32, 0.08, 1, 1, 1, 0, -a.swing * 0.8, 0.15)));
       const blink = Math.sin(clock * 1.3 + i * 2.1) > 0.985 ? 0.15 : 1;
-      parts.eye.setMatrixAt(n * 2, partM.multiplyMatrices(bodyM, L.eyeL).multiply(mtx(0, 0, 0, 1, blink, 1)));
-      parts.eye.setMatrixAt(n * 2 + 1, partM.multiplyMatrices(bodyM, L.eyeR).multiply(mtx(0, 0, 0, 1, blink, 1)));
-      parts.pupil.setMatrixAt(n * 2, partM.multiplyMatrices(bodyM, L.pupL).multiply(mtx(0, 0, 0, 1, blink, 1)));
-      parts.pupil.setMatrixAt(n * 2 + 1, partM.multiplyMatrices(bodyM, L.pupR).multiply(mtx(0, 0, 0, 1, blink, 1)));
+      parts.eye.setMatrixAt(n * 2, partM.multiplyMatrices(bodyM, L.eyeL).multiply(setMtx(scratchMtx, 0, 0, 0, 1, blink, 1)));
+      parts.eye.setMatrixAt(n * 2 + 1, partM.multiplyMatrices(bodyM, L.eyeR).multiply(setMtx(scratchMtx, 0, 0, 0, 1, blink, 1)));
+      parts.pupil.setMatrixAt(n * 2, partM.multiplyMatrices(bodyM, L.pupL).multiply(setMtx(scratchMtx, 0, 0, 0, 1, blink, 1)));
+      parts.pupil.setMatrixAt(n * 2 + 1, partM.multiplyMatrices(bodyM, L.pupR).multiply(setMtx(scratchMtx, 0, 0, 0, 1, blink, 1)));
       if (parts.bean.instanceColor) {
         tmpC.setHex(looks[i].color);
         parts.bean.setColorAt(n, tmpC);
@@ -526,8 +530,8 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       if (gy !== null) {
         const h = Math.max(0, b.y - gy);
         const k = Math.max(0.25, 1 - h * 0.12);
-        parts.shadow.setMatrixAt(n, mtx(b.x, gy + 0.04, b.z, k, k, k, 0, -Math.PI / 2));
-      } else parts.shadow.setMatrixAt(n, mtx(0, -999, 0, 0, 0, 0));
+        parts.shadow.setMatrixAt(n, setMtx(scratchMtx, b.x, gy + 0.04, b.z, k, k, k, 0, -Math.PI / 2));
+      } else parts.shadow.setMatrixAt(n, setMtx(scratchMtx, 0, -999, 0, 0, 0, 0));
       n++;
     }
     for (const p of Object.values(parts)) {
@@ -537,6 +541,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     if (parts.bean.instanceColor) parts.bean.instanceColor.needsUpdate = true;
     if (parts.tassel.instanceColor) parts.tassel.instanceColor.needsUpdate = true;
   }
+  const playerParts = Object.values(parts);
 
   // ---------------------------------------------------------------- confetti and splashes
   const confettiMesh = new THREE.InstancedMesh(keepG(new THREE.PlaneGeometry(0.16, 0.26)), mat(new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })), CONFETTI);
@@ -546,12 +551,16 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const bits = Array.from({ length: CONFETTI }, () => ({ x: 0, y: -999, z: 0, vx: 0, vy: 0, vz: 0, r: 0, vr: 0, life: 0 }));
   const confettiColors = [0xff6b6b, 0xffd166, 0x06d6a0, 0x4cc9f0, 0xb388ff, 0xff8fab, 0xffffff, CARDINAL];
   for (let i = 0; i < CONFETTI; i++) confettiMesh.setColorAt(i, tmpC.setHex(confettiColors[i % confettiColors.length]));
+  for (let i = 0; i < CONFETTI; i++) confettiMesh.setMatrixAt(i, setMtx(scratchMtx, 0, -999, 0, 0, 0, 0));
+  confettiMesh.instanceMatrix.needsUpdate = true;
   let nextBit = 0;
   const dropMesh = new THREE.InstancedMesh(keepG(new THREE.IcosahedronGeometry(0.16, 0)), mat(lambert(0xd6f6ff)), DROPS);
   dropMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   dropMesh.frustumCulled = false;
   scene.add(dropMesh);
   const drops = Array.from({ length: DROPS }, () => ({ x: 0, y: -999, z: 0, vx: 0, vy: 0, vz: 0, life: 0 }));
+  for (let i = 0; i < DROPS; i++) dropMesh.setMatrixAt(i, setMtx(scratchMtx, 0, -999, 0, 0, 0, 0));
+  dropMesh.instanceMatrix.needsUpdate = true;
   let nextDrop = 0;
 
   function confetti(x: number, y: number, z: number, count = 80) {
@@ -572,31 +581,36 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     }
   }
   function stepParticles(dt: number) {
+    let confettiChanged = false;
     for (let i = 0; i < CONFETTI; i++) {
       const b = bits[i];
-      if (b.life > 0) {
-        b.life -= dt;
-        b.vy -= 7 * dt;
-        b.vx *= 1 - dt * 1.4;
-        b.vz *= 1 - dt * 1.4;
-        b.vy = Math.max(b.vy, -2.2);
-        b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
-        b.r += b.vr * dt;
-      }
-      confettiMesh.setMatrixAt(i, b.life > 0 ? mtx(b.x, b.y, b.z, 1, 1, 1, b.r, b.r * 0.7, b.r * 1.3) : mtx(0, -999, 0, 0, 0, 0));
+      if (b.life <= 0) continue;
+      b.life -= dt;
+      b.vy -= 7 * dt;
+      b.vx *= 1 - dt * 1.4;
+      b.vz *= 1 - dt * 1.4;
+      b.vy = Math.max(b.vy, -2.2);
+      b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
+      b.r += b.vr * dt;
+      confettiMesh.setMatrixAt(i, b.life > 0
+        ? setMtx(scratchMtx, b.x, b.y, b.z, 1, 1, 1, b.r, b.r * 0.7, b.r * 1.3)
+        : setMtx(scratchMtx, 0, -999, 0, 0, 0, 0));
+      confettiChanged = true;
     }
-    confettiMesh.instanceMatrix.needsUpdate = true;
+    if (confettiChanged) confettiMesh.instanceMatrix.needsUpdate = true;
+    let dropsChanged = false;
     for (let i = 0; i < DROPS; i++) {
       const d = drops[i];
-      if (d.life > 0) {
-        d.life -= dt;
-        d.vy -= 18 * dt;
-        d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt;
-      }
-      const k = d.life > 0 ? Math.min(1, d.life * 2) : 0;
-      dropMesh.setMatrixAt(i, mtx(d.x, d.life > 0 ? d.y : -999, d.z, k, k, k));
+      if (d.life <= 0) continue;
+      d.life -= dt;
+      d.vy -= 18 * dt;
+      d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt;
+      const active = d.life > 0;
+      const k = active ? Math.min(1, d.life * 2) : 0;
+      dropMesh.setMatrixAt(i, setMtx(scratchMtx, d.x, active ? d.y : -999, d.z, k, k, k));
+      dropsChanged = true;
     }
-    dropMesh.instanceMatrix.needsUpdate = true;
+    if (dropsChanged) dropMesh.instanceMatrix.needsUpdate = true;
   }
 
   // ---------------------------------------------------------------- frame
@@ -606,9 +620,10 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const want = new THREE.Vector3();
   const look = new THREE.Vector3();
   let fly = 0;
+  const frameMtx = new THREE.Matrix4();
   function frame(course: Course, t: number, bodies: readonly (BodyView | null)[], focus: number | null, cam: CamState, dt: number) {
     clock += dt;
-    const m4 = new THREE.Matrix4();
+    const m4 = frameMtx;
     for (const { c, mesh } of moving) {
       mesh.visible = c.on;
       if (c.on) poseMatrix(c.pose, mesh.matrix);
@@ -626,7 +641,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         }
         const cracking = c.tile?.touchedAt != null && (c.tile.fallAt == null || t < c.tile.fallAt);
         const shake = cracking ? Math.sin(clock * 50 + i) * 0.04 : 0;
-        poseMatrix(c.pose, m4).multiply(mtx(shake, 0, -shake, s.r * 1.02, s.hy * 2, s.r * 1.02));
+        poseMatrix(c.pose, m4).multiply(setMtx(scratchMtx, shake, 0, -shake, s.r * 1.02, s.hy * 2, s.r * 1.02));
         mesh.setMatrixAt(i, m4);
         const wantC = c.tile?.touchedAt != null ? 0xff8a65 : base[i];
         mesh.getColorAt(i, tmpC);
@@ -672,10 +687,10 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     const target = focus !== null ? bodies[focus] : null;
     if (target) {
       const cp = Math.cos(cam.pitch);
-      look.set(target.x, target.y + 1.3, target.z);
+      look.set(target.x, target.y + 1.6, target.z);
       want.set(look.x - Math.sin(cam.yaw) * cp * cam.dist, look.y + Math.sin(cam.pitch) * cam.dist, look.z - Math.cos(cam.yaw) * cp * cam.dist);
       // pull in in front of walls between the bean and the camera
-      const f = rayCast(course, look, want);
+      const f = rayCast(course, look, want, true);
       if (f < 1) want.lerpVectors(look, want, Math.max(0.18, f - 0.08));
       if (!camReady) {
         camPos.copy(want);

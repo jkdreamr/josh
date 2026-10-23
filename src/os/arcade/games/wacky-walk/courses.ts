@@ -100,7 +100,7 @@ function campusDecor(course: Course, finishZ: number, kind: 'oval' | 'fountain' 
     }
   }
   course.decor.push({ kind: 'tower', x: -32, y: 0, z: finishZ + 50, s: 7, yaw: 0 });
-  course.decor.push({ kind: 'stands', x: 0, y: 0, z: 4, s: 1.4, yaw: 0 });
+  course.decor.push({ kind: 'stands', x: 40, y: 0, z: 4, s: 1.4, yaw: 0 });
 }
 
 function makeOval(seed: number): Course {
