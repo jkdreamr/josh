@@ -126,7 +126,7 @@ const KEYS: Record<'p1' | 'p2', Record<keyof Controls | 'hit', string[]>> = {
 };
 
 const LENGTH_LABEL: Record<MatchLength, string> = { quick: 'Quick to 11', game: 'Game to 21', match: 'Best of Three' };
-const DIFFICULTY_LABEL: Record<Difficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard', pro: 'Pro', olympic: 'Olympic' };
+const DIFFICULTY_LABEL: Record<Difficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard', pro: 'Pro', olympic: 'Olympic', impossible: 'Impossible' };
 
 function loadSettings(): Settings {
   try {
@@ -1117,7 +1117,7 @@ export default function Badminton({ args }: AppProps) {
           </div>
           <div className={`bd-field ${settings.mode !== 'cpu' ? 'is-dim' : ''}`}>
             <span className="bd-field-label">Difficulty</span>
-            <div className="gseg" aria-label="Difficulty">
+            <div className="gseg bd-seg-fit" aria-label="Difficulty">
               {(Object.keys(DIFFICULTY_LABEL) as Difficulty[]).map((level) => (
                 <button
                   key={level}

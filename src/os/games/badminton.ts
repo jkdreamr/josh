@@ -24,7 +24,7 @@ export type FlightStatus = 'flying' | 'landed' | 'fault';
 export type FlightFault = 'net' | 'out' | 'own-side' | 'short-service';
 export type MatchLength = 'quick' | 'game' | 'match';
 export type ServiceCourt = 'right' | 'left';
-export type Difficulty = 'easy' | 'normal' | 'hard' | 'pro' | 'olympic';
+export type Difficulty = 'easy' | 'normal' | 'hard' | 'pro' | 'olympic' | 'impossible';
 
 export type Shuttle = Point2D & { vx: number; vy: number };
 
@@ -75,8 +75,14 @@ export type MatchStats = { a: SideStats; b: SideStats; longestRally: number; ral
 export type RallyCause = 'in' | FlightFault | 'serve-fault';
 export type RallyOutcome = { winner: Side; cause: RallyCause; shots: number; seconds: number };
 
-/** tactics: plays to the open court and picks power by situation, instead of the club habits in cpuChooseShot. */
-export type CpuProfile = { label: string; reactionMs: number; speed: number; accuracy: number; dropChance: number; tactics?: boolean };
+/**
+ * tactics: plays to the open court and picks power by situation, instead of the club habits in cpuChooseShot.
+ * ruthless: kills every short lift at full power and plays to whichever end is open (ruthlessChooseShot).
+ * anticipates: runs to the first point it can intercept the shuttle, with this much slack in metres, instead of the landing.
+ * home: metres from the net it recovers to between shots, instead of the default base.
+ * unforcedMiss: chance of fluffing any return, so even a superhuman level is never infallible.
+ */
+export type CpuProfile = { label: string; reactionMs: number; speed: number; accuracy: number; dropChance: number; tactics?: boolean; ruthless?: boolean; anticipates?: number; home?: number; unforcedMiss?: number };
 
 export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
   easy: { label: 'Easy', reactionMs: 260, speed: 3, accuracy: 0.72, dropChance: 0.15 },
@@ -85,6 +91,8 @@ export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
   // Quicker first step and feet than Hard, but no faster than a human runs (5.3 m/s) by much, and the same reach and jump.
   pro: { label: 'Pro', reactionMs: 80, speed: 5.6, accuracy: 1.12, dropChance: 0.5, tactics: true },
   olympic: { label: 'Olympic', reactionMs: 20, speed: PLAYER_RUN_SPEED, accuracy: PLAYER_MAX_ACCURACY, dropChance: 0.7, tactics: true },
+  // Superhuman on purpose: near-instant reads, faster feet than any player and the tightest aim, with the same flight, reach and jump.
+  impossible: { label: 'Impossible', reactionMs: 15, speed: 6.2, accuracy: 1.15, dropChance: 0.7, tactics: true, ruthless: true, anticipates: 0.35, home: 2.4, unforcedMiss: 0.0015 },
 };
 
 /**
@@ -96,6 +104,7 @@ export const SMASH_DEFENSE: Record<Exclude<Difficulty, 'olympic'>, { miss: numbe
   normal: { miss: 0.36, block: 0.32 },
   hard: { miss: 0.24, block: 0.3 },
   pro: { miss: 0.14, block: 0.26 },
+  impossible: { miss: 0.01, block: 0.05 },
 };
 
 /** A tap is a half smash; a full charge is everything the hitter has. */
@@ -678,6 +687,16 @@ export function proChooseShot(contact: Point2D, opponentDistanceFromNet: number,
   return 'drive';
 }
 
+/** Impossible's stroke choice: smash anything high enough, and otherwise play to whichever end the opponent has left open. */
+export function ruthlessChooseShot(contact: Point2D, opponentDistanceFromNet: number, random: () => number = Math.random): ShotType {
+  const fromNet = Math.abs(contact.x);
+  const opponentDeep = opponentDistanceFromNet > 3.5;
+  if (contact.y >= SMASH_MIN_HEIGHT) return 'smash';
+  if (contact.y >= OVERHEAD_HEIGHT) return opponentDeep ? (random() < 0.8 ? 'drop' : 'smash') : 'clear';
+  if (fromNet < 2.2) return opponentDeep ? 'net' : 'lift';
+  return opponentDeep ? 'drop' : 'clear';
+}
+
 export function parseDifficulty(value: unknown): Difficulty {
   return typeof value === 'string' && Object.hasOwn(CPU_PROFILES, value) ? value as Difficulty : 'normal';
 }
@@ -700,6 +719,7 @@ export function cpuReturn(
 ): CpuReturn {
   const profile = CPU_PROFILES[difficulty];
   if (difficulty === 'olympic' && random() < 0.002) return { kind: 'miss' };
+  if (profile.unforcedMiss && random() < profile.unforcedMiss) return { kind: 'miss' };
   const pressure = smashPressure(incoming, flightSeconds);
   if (pressure > 0 && difficulty !== 'olympic') {
     const defense = SMASH_DEFENSE[difficulty];
@@ -724,6 +744,11 @@ export function cpuReturn(
       accuracy: pressuredAccuracy(contactAccuracy(contactDistance, RACKET_REACH), pressure),
       options: { power: HALF_SMASH_POWER },
     };
+  }
+  if (profile.ruthless) {
+    const type = ruthlessChooseShot(contact, opponentDistanceFromNet, random);
+    const short = type === 'net' || type === 'drop';
+    return { kind: 'hit', type, accuracy, options: { depth: short ? 0 : 1, ...(type === 'smash' ? { power: Math.abs(contact.x) < 3.5 ? 1 : 0.65 } : {}) } };
   }
   if (!profile.tactics) {
     const type = cpuChooseShot(contact, opponentDistanceFromNet, profile, random);

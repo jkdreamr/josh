@@ -10,7 +10,7 @@ const seeded = (seed: number) => () => {
 
 test('saved difficulty accepts Olympic and safely defaults missing or invalid settings', () => {
   assert.equal(parseDifficulty(JSON.parse('{"difficulty":"olympic"}').difficulty), 'olympic');
-  for (const value of [undefined, null, '', 'impossible', 'toString', {}, 1]) assert.equal(parseDifficulty(value), 'normal');
+  for (const value of [undefined, null, '', 'Impossible', 'toString', {}, 1]) assert.equal(parseDifficulty(value), 'normal');
   for (const level of Object.keys(CPU_PROFILES)) assert.equal(parseDifficulty(level), level);
 });
 
