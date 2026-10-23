@@ -235,8 +235,8 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
   return { root, torso, racketArm, racketForearm, leadArm, legs, markers, trim, phase: seat * 1.7 };
 }
 
-export function updatePlayer(model: PlayerModel, player: Player, ball: Ball, dt: number, human: boolean) {
-  model.root.position.set(player.x, 0, player.z);
+export function updatePlayer(model: PlayerModel, player: Player, ball: Ball, dt: number, human: boolean, x = player.x, z = player.z, ballX = ball.p.x, ballY = ball.p.y) {
+  model.root.position.set(x, 0, z);
   model.root.rotation.y = player.facing;
   model.phase += dt * (4.5 + Math.hypot(player.vx, player.vz) * 1.2);
   const running = Math.min(1, Math.hypot(player.vx, player.vz) / 4.2);
@@ -246,9 +246,9 @@ export function updatePlayer(model: PlayerModel, player: Player, ball: Ball, dt:
   model.legs[0].rotation.x = Math.sin(model.phase) * 0.58 * running;
   model.legs[1].rotation.x = Math.sin(model.phase + Math.PI) * 0.58 * running;
   const swing = player.swing > 0 ? Math.sin(Math.min(1, player.swing / 0.48) * Math.PI) : 0;
-  const ballSide = Math.sign(ball.p.x - player.x);
-  const localX = Math.max(-1.25, Math.min(1.25, ball.p.x - player.x));
-  const localY = Math.max(-0.7, Math.min(1.4, ball.p.y - 1.4));
+  const ballSide = Math.sign(ballX - x);
+  const localX = Math.max(-1.25, Math.min(1.25, ballX - x));
+  const localY = Math.max(-0.7, Math.min(1.4, ballY - 1.4));
   const serve = player.serveToss > 0;
   model.racketArm.rotation.x = -0.12 - localY * 0.22 - swing * 0.78 + (serve ? 0.64 : 0);
   model.racketArm.rotation.y = -0.1 + localX * 0.22 + swing * 0.48;

@@ -41,14 +41,14 @@ export function Hud({ world, seat, watching, call, timing, touch = false }: HudM
         ))}
       </section>
       <div className="g-tennis-status">
-        <div className="g-tennis-call" aria-live="assertive">{call || (world.phase === 'serve-ready' ? 'first serve' : world.phase === 'serve-toss' ? 'time your serve' : world.phase === 'rally' ? scoreText(world) : '')}</div>
+        <div className="g-tennis-call" aria-live="assertive">{call || (world.phase === 'serve-ready' ? 'first serve' : world.phase === 'serve-toss' ? 'time your serve' : world.phase === 'rally' || world.phase === 'serve-flight' ? scoreText(world) : '')}</div>
         {world.serveSpeed > 0 && world.callClock > 0.05 && <div className="g-tennis-speed">{world.serveSpeed}<small> km/h</small></div>}
       </div>
       {timing && <div className={`g-tennis-timing g-tennis-timing-${timing}`}><span className="g-tennis-timing-ring" />{timing}</div>}
       <div className="g-tennis-controls-hint">
         {touch
-          ? <span className="g-tennis-touch-hint">swipe up to hit · down to slice · slow up to lob</span>
-          : <><span className="g-tennis-key-hint">SPACE</span><span>to swing</span><i>↑ lob</i><i>↓ slice</i></>}
+          ? null
+          : <span>WASD / arrows move · Space hit · K slice · L lob</span>}
       </div>
       {watching && <div className="g-tennis-watch-label">watching</div>}
     </div>

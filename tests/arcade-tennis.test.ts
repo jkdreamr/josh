@@ -10,18 +10,93 @@ import {
   hitServe,
   isInCourt,
   isInServiceBox,
+  movePlayer,
   predictLanding,
   scorePoint,
   serveSide,
   solveShot,
   stepWorld,
+  timingLabel,
   timingQuality,
   tossServe,
   type Level,
+  type Command,
   type Spin3,
 } from '../src/os/arcade/games/tennis/logic.ts';
-import { configOf, parsePacket, stateOf, swingOf } from '../src/os/arcade/games/tennis/net.ts';
+import { commandOf, configOf, moveOf, parsePacket, stateOf, swingOf } from '../src/os/arcade/games/tennis/net.ts';
 import { chooseShot } from '../src/os/arcade/games/tennis/ai.ts';
+
+function scriptedHumanPoints(level: Level, seed: number) {
+  let completed = 0;
+  let humanWins = 0;
+  let rallyShots = 0;
+  let rallies = 0;
+  let matchSeed = seed;
+  let matches = 0;
+  while (completed < 300 && matches < 120) {
+    matches++;
+    const world = createWorld({
+      level,
+      length: 'game',
+      players: [{ ai: null }, { ai: level }],
+      seed: matchSeed++,
+    });
+    let serveQueued = false;
+    let lastPressAt = -1;
+    let currentRallyShots = 0;
+    let jitterState = matchSeed | 0;
+    const jitter = () => {
+      jitterState = (Math.imul(jitterState, 1664525) + 1013904223) | 0;
+      return (jitterState >>> 0) / 4294967296;
+    };
+    for (let step = 0; step < 180_000 && world.phase !== 'done' && completed < 300; step++) {
+      const human = world.players[0]!;
+      const commands: Command[] = [];
+      if (world.serverSeat === human.seat && world.phase === 'serve-ready' && !serveQueued) {
+        commands.push({ seat: human.seat, toss: true });
+        serveQueued = true;
+      } else if (world.serverSeat === human.seat && world.phase === 'serve-toss' && world.serveClock >= 0.52) {
+        commands.push({ seat: human.seat, serve: true, swing: { kind: 'drive', aim: 0, delta: 0 } });
+      }
+      if (world.phase === 'serve-ready' && world.serveNumber === 2) serveQueued = false;
+
+      if ((world.phase === 'rally' || world.phase === 'serve-flight') && world.ball.inPlay && world.ball.canHitTeam === human.team) {
+        const interceptX = world.ball.p.x + world.ball.v.x * 0.22;
+        const interceptZ = world.ball.p.z + world.ball.v.z * 0.22;
+        const side = interceptX >= human.x ? 1 : -1;
+        const targetX = interceptX - side * 0.75;
+        const dx = targetX - human.x;
+        const dz = interceptZ - human.z;
+        const distanceToPlayer = Math.hypot(dx, dz);
+        const moveLength = Math.max(distanceToPlayer, 0.001);
+        commands.push({ seat: human.seat, move: { x: dx / moveLength, z: dz / moveLength } });
+
+        const zoneDistance = Math.hypot(world.ball.p.x - (human.x + side * 0.75), world.ball.p.z - human.z);
+        const closingSpeed = Math.max(4, Math.hypot(world.ball.v.x, world.ball.v.z) + 4);
+        const timeToZone = Math.max(0, (zoneDistance - 1.3) / closingSpeed);
+        const pressLead = 0.18 - (jitter() - 0.5) * 0.12;
+        if (!human.pending && world.clock - lastPressAt >= 0.18 && timeToZone <= pressLead && zoneDistance <= 4) {
+          commands.push({ seat: human.seat, swing: { kind: 'drive', aim: dx < -0.2 ? -1 : dx > 0.2 ? 1 : 0, delta: 0 } });
+          lastPressAt = world.clock;
+        }
+      }
+
+      const events = stepWorld(world, commands, STEP);
+      for (const event of events) {
+        if (event.type === 'hit') currentRallyShots++;
+        else if (event.type === 'point') {
+          completed++;
+          if (event.winner === 0) humanWins++;
+          rallyShots += currentRallyShots;
+          rallies++;
+          currentRallyShots = 0;
+          serveQueued = false;
+        }
+      }
+    }
+  }
+  return { completed, winRate: humanWins / completed, averageRally: rallyShots / rallies };
+}
 
 test('the court uses ITF dimensions and touching a line is in', () => {
   assert.equal(COURT_LENGTH, 23.77);
@@ -143,6 +218,99 @@ test('net collision blocks the ball and timing maps direction and quality', () =
   assert.equal(timingQuality(0.16).hit, true);
 });
 
+test('human movement follows input, respects speed and court bounds, and has no AI drift', () => {
+  const world = createWorld();
+  const human = world.players[0]!;
+  world.phase = 'rally';
+  world.ball.inPlay = false;
+  const start = { x: human.x, z: human.z };
+  for (let i = 0; i < 120; i++) stepWorld(world, i === 0 ? [{ seat: 0, move: { x: 1, z: -1 } }] : [], STEP);
+  assert.ok(Math.hypot(human.vx, human.vz) <= 6.001);
+  assert.notEqual(human.x, start.x);
+  assert.notEqual(human.z, start.z);
+  assert.ok(human.x <= SINGLES_WIDTH / 2 + 1.5);
+  assert.ok(human.z <= COURT_LENGTH / 2 + 3);
+  assert.ok(human.z >= 0.4);
+
+  const stationary = createWorld();
+  stationary.phase = 'rally';
+  stationary.ball.inPlay = false;
+  const player = stationary.players[0]!;
+  const position = { x: player.x, z: player.z };
+  for (let i = 0; i < 120; i++) stepWorld(stationary, [], STEP);
+  assert.deepEqual({ x: player.x, z: player.z }, position);
+
+  player.x = SINGLES_WIDTH / 2 + 2;
+  player.z = 1;
+  player.input = { x: 1, z: -1 };
+  movePlayer(stationary, player, STEP);
+  for (let i = 0; i < 360; i++) movePlayer(stationary, player, STEP);
+  assert.ok(player.x <= SINGLES_WIDTH / 2 + 1.5);
+  assert.ok(player.z >= 0.4);
+});
+
+test('buffered swings contact only in range and expire as whiffs', () => {
+  const world = createWorld();
+  const player = world.players[0]!;
+  world.phase = 'rally';
+  world.clock = 1;
+  world.ball.inPlay = true;
+  world.ball.canHitTeam = player.team;
+  world.ball.p = { x: player.x + 0.75, y: 1, z: player.z };
+  world.ball.prev = { ...world.ball.p };
+  world.ball.v = { x: 0, y: 0, z: 0 };
+  player.pending = { kind: 'slice', at: 0.7, aim: 0 };
+  const contact = stepWorld(world, [], STEP).find((event) => event.type === 'hit' && event.seat === player.seat);
+  assert.ok(contact && contact.type === 'hit');
+  assert.ok(Math.abs(contact.delta ?? 1) < 0.02);
+  assert.equal(player.pending, null);
+  assert.equal(timingLabel(contact.delta ?? 1), 'perfect');
+  assert.equal(timingLabel(-0.2), 'early');
+  assert.equal(timingLabel(0.2), 'late');
+  assert.equal(timingQuality(0).quality, 1);
+  assert.equal(timingQuality(-0.1).direction, -1);
+  assert.equal(timingQuality(0.1).direction, 1);
+
+  const far = createWorld();
+  const hitter = far.players[0]!;
+  far.phase = 'rally';
+  far.ball.inPlay = true;
+  far.ball.canHitTeam = hitter.team;
+  far.ball.p = { x: hitter.x + 3, y: 8, z: hitter.z };
+  far.ball.prev = { ...far.ball.p };
+  far.ball.v = { x: 0, y: 0, z: 0 };
+  const queued = stepWorld(far, [{ seat: hitter.seat, swing: { kind: 'lob', aim: 0, delta: 0 } }], STEP);
+  assert.equal(queued.some((event) => event.type === 'hit'), false);
+  assert.ok(hitter.pending);
+  for (let i = 0; i < 73; i++) stepWorld(far, [], STEP);
+  assert.equal(hitter.pending, null);
+  assert.ok(hitter.swing > 0);
+});
+
+test('a returner can queue during a serve flight but cannot hit before the bounce', () => {
+  const world = createWorld({ players: [{ ai: 1 }, { ai: null }] });
+  const returner = world.players[1]!;
+  assert.equal(Math.abs(returner.z), COURT_LENGTH / 2 + 0.8);
+  assert.equal(Math.abs(returner.x), 2.05);
+  world.phase = 'serve-flight';
+  world.ball.inPlay = true;
+  world.ball.hitByTeam = 0;
+  world.ball.canHitTeam = returner.team;
+  world.ball.targetTeam = returner.team;
+  world.ball.p = { x: returner.x + 0.75, y: 1, z: returner.z };
+  world.ball.prev = { ...world.ball.p };
+  world.ball.v = { x: 0, y: 0, z: 0 };
+  const command = { seat: returner.seat, swing: { kind: 'drive' as const, aim: 0 as const, delta: 0 } };
+  assert.equal(stepWorld(world, [command], STEP).some((event) => event.type === 'hit' && event.seat === returner.seat), false);
+  assert.ok(returner.pending);
+  returner.pending.at = world.clock - 0.3 + STEP;
+  world.ball.bounces = 1;
+  world.ball.p = { x: returner.x + 0.75, y: 1, z: returner.z };
+  world.ball.prev = { ...world.ball.p };
+  world.ball.v = { x: 0, y: 0, z: 0 };
+  assert.ok(stepWorld(world, [], STEP).some((event) => event.type === 'hit' && event.seat === returner.seat));
+});
+
 test('shot solving lands flat, topspin, slice, and lob shots near their target', () => {
   const from = { x: 0.8, y: 1.05, z: 8.6 };
   const target = { x: -1.3, z: -8.8 };
@@ -227,4 +395,65 @@ test('packets round-trip valid settings, swings, and host snapshots and reject b
   if (parsed?.k === 'S') assert.equal(parsed.state.players.length, 4);
   assert.equal(parsePacket({ ...snapshot, state: { ...snapshot.state, ball: { ...snapshot.state.ball, p: { x: 100, y: 1, z: 0 } } } }), null);
   assert.equal(parsePacket({ t: 'tennis', k: 'ev', r: 1, event: { type: 'call', call: 'match-ish' } }), null);
+});
+
+test('movement packets round-trip quantized axes and reject malformed input', () => {
+  const packet = moveOf(7, { x: 0.236, z: -0.876 });
+  assert.equal(packet.x, 0.24);
+  assert.equal(packet.z, -0.88);
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(packet))), { k: 'mv', r: 7, x: 0.24, z: -0.88 });
+  assert.equal(parsePacket({ ...packet, x: Number.NaN }), null);
+  assert.equal(parsePacket({ ...packet, x: 1.01 }), null);
+  assert.equal(parsePacket({ ...packet, r: undefined }), null);
+  assert.equal(parsePacket({ ...packet, r: 1.5 }), null);
+  assert.equal(parsePacket({ ...packet, k: 'sw' }), null);
+});
+
+test('guest movement and buffered shots reach the authoritative host', () => {
+  const host = createWorld({ players: [{ ai: 1 }, { ai: null }] });
+  const guest = host.players[1]!;
+  host.phase = 'rally';
+  host.ball.inPlay = false;
+  const movePacket = parsePacket(JSON.parse(JSON.stringify(moveOf(1, { x: 1, z: 0 }))));
+  assert.ok(movePacket?.k === 'mv');
+  if (movePacket?.k !== 'mv') return;
+  const startX = guest.x;
+  const moveCommand = commandOf(movePacket, guest.seat);
+  assert.ok(moveCommand);
+  stepWorld(host, moveCommand ? [moveCommand] : [], STEP);
+  assert.notEqual(guest.x, startX);
+
+  host.ball.inPlay = true;
+  host.ball.canHitTeam = guest.team;
+  host.ball.targetTeam = 1 - guest.team;
+  host.ball.p = { x: guest.x + 3, y: 8, z: guest.z + 1.1 };
+  host.ball.prev = { ...host.ball.p };
+  host.ball.v = { x: 0, y: 0, z: 0 };
+  const swingPacket = parsePacket(JSON.parse(JSON.stringify(swingOf(1, host.ball.rallyShot, { kind: 'slice', aim: 0, delta: 0 }))));
+  assert.ok(swingPacket?.k === 'sw');
+  if (swingPacket?.k !== 'sw') return;
+  const swingCommand = commandOf(swingPacket, guest.seat);
+  assert.ok(swingCommand);
+  stepWorld(host, swingCommand ? [swingCommand] : [], STEP);
+  for (let i = 0; i < 35; i++) stepWorld(host, [], STEP);
+  guest.input = { x: 0, z: 0 };
+  guest.vx = 0;
+  guest.vz = 0;
+  guest.pending!.at = host.clock - 0.3 + STEP;
+  host.ball.p = { x: guest.x + 0.75, y: 1, z: guest.z + 1.1 };
+  host.ball.prev = { ...host.ball.p };
+  const events = stepWorld(host, [], STEP);
+  assert.ok(events.some((event) => event.type === 'hit' && event.seat === guest.seat));
+});
+
+test('scripted human wins enough 300-point rallies against easy and normal CPUs', () => {
+  const easy = scriptedHumanPoints(0, 91);
+  const normal = scriptedHumanPoints(1, 173);
+  console.log(`scripted human: easy wins ${(easy.winRate * 100).toFixed(1)}%, average ${easy.averageRally.toFixed(2)} shots; normal wins ${(normal.winRate * 100).toFixed(1)}%, average ${normal.averageRally.toFixed(2)} shots`);
+  assert.equal(easy.completed, 300);
+  assert.equal(normal.completed, 300);
+  assert.ok(easy.winRate >= 0.35, `easy win rate was ${(easy.winRate * 100).toFixed(1)}%`);
+  assert.ok(normal.winRate >= 0.2, `normal win rate was ${(normal.winRate * 100).toFixed(1)}%`);
+  assert.ok(easy.averageRally >= 4, `easy average rally was ${easy.averageRally.toFixed(2)} shots`);
+  assert.ok(normal.averageRally >= 4, `normal average rally was ${normal.averageRally.toFixed(2)} shots`);
 });

@@ -1,6 +1,7 @@
 import { cpuSwing, movementTarget } from './ai.ts';
 
 export const STEP = 1 / 120;
+export const STRIKE_RADIUS = 1.3;
 export const COURT_LENGTH = 23.77;
 export const SINGLES_WIDTH = 8.23;
 export const DOUBLES_WIDTH = 10.97;
@@ -19,9 +20,11 @@ export type ShotKind = 'drive' | 'slice' | 'lob';
 export type PointCall = 'fault' | 'double fault' | 'let' | 'out' | 'net' | 'point' | 'game' | 'set' | 'match';
 
 export type Vec3 = { x: number; y: number; z: number };
+export type MoveInput = { x: number; z: number };
 export type Spin3 = { x: number; y: number; z: number };
 export type Ball = {
   p: Vec3;
+  prev: Vec3;
   v: Vec3;
   spin: Spin3;
   inPlay: boolean;
@@ -40,8 +43,12 @@ export type Player = {
   ai: Level | null;
   x: number;
   z: number;
+  prevX: number;
+  prevZ: number;
   vx: number;
   vz: number;
+  input: MoveInput;
+  pending: { kind: ShotKind; at: number; aim: -1 | 0 | 1 } | null;
   facing: number;
   swing: number;
   swingKind: ShotKind;
@@ -83,10 +90,10 @@ export type World = {
   random: () => number;
   acc: number;
 };
-export type Swing = { kind: ShotKind; aim: -1 | 0 | 1; delta: number; swipe?: number };
-export type Command = { seat: number; swing?: Swing; toss?: boolean; serve?: boolean };
+export type Swing = { kind: ShotKind; aim: -1 | 0 | 1; delta: number; depth?: -1 | 0 | 1; swipe?: number };
+export type Command = { seat: number; move?: MoveInput; swing?: Swing; toss?: boolean; serve?: boolean };
 export type Event =
-  | { type: 'hit'; seat: number; serve: boolean; speed: number; kind: ShotKind; shot: number }
+  | { type: 'hit'; seat: number; serve: boolean; speed: number; kind: ShotKind; shot: number; delta?: number }
   | { type: 'bounce'; x: number; z: number; in: boolean; line: boolean; serve: boolean }
   | { type: 'net'; x: number; z: number }
   | { type: 'call'; call: PointCall }
@@ -140,8 +147,12 @@ export function createWorld(options: {
       ai: setup.ai === undefined ? (seat === 0 ? null : level) : setup.ai,
       x,
       z,
+      prevX: x,
+      prevZ: z,
       vx: 0,
       vz: 0,
+      input: { x: 0, z: 0 },
+      pending: null,
       facing: team === 0 ? Math.PI : 0,
       swing: 0,
       swingKind: 'drive',
@@ -166,6 +177,7 @@ export function createWorld(options: {
     players,
     ball: {
       p: { x: 0, y: BALL_RADIUS, z: 0 },
+      prev: { x: 0, y: BALL_RADIUS, z: 0 },
       v: { x: 0, y: 0, z: 0 },
       spin: { x: 0, y: 0, z: 0 },
       inPlay: false,
@@ -239,6 +251,7 @@ function resetBall(world: World) {
   const half = team === 0 ? 1 : -1;
   const boxSign = world.serveBox === 0 ? 1 : -1;
   world.ball.p = { x: (server?.x ?? 0) + boxSign * 0.25, y: 1.05, z: (server?.z ?? half * 10.2) - half * 0.4 };
+  world.ball.prev = { ...world.ball.p };
   world.ball.v = { x: 0, y: 0, z: 0 };
   world.ball.spin = { x: 0, y: 0, z: 0 };
   world.ball.inPlay = false;
@@ -264,6 +277,9 @@ function resetServe(world: World) {
     player.vx = 0;
     player.vz = 0;
     player.swing = 0;
+    player.pending = null;
+    player.input.x = 0;
+    player.input.z = 0;
     player.serveToss = 0;
     const half = player.team === 0 ? 1 : -1;
     const partner = world.format === 'doubles' && player.seat % 2 === 0 ? (player.seat === 0 ? 2 : 0) : (player.seat === 1 ? 3 : 1);
@@ -274,13 +290,15 @@ function resetServe(world: World) {
       player.x = world.format === 'doubles' ? (player.seat === partner ? 2.8 : -2.8) : 0;
       player.z = half * 4.5;
     } else if (player.seat === receiverOf(world)) {
-      player.x = (world.serveBox === 0 ? 1 : -1) * 1.35;
-      player.z = half * (COURT_LENGTH / 2 - 1.8);
+      player.x = (world.serveBox === 0 ? 1 : -1) * 2.05;
+      player.z = half * (COURT_LENGTH / 2 + 0.8);
     } else {
       player.x = world.format === 'doubles' ? (player.seat === partner ? -2.9 : 2.9) : 0;
       player.z = half * 4.7;
     }
     player.facing = player.team === 0 ? Math.PI : 0;
+    player.prevX = player.x;
+    player.prevZ = player.z;
   }
 }
 
@@ -306,6 +324,10 @@ export function timingQuality(delta: number) {
   if (!Number.isFinite(delta) || distance > SWING_WINDOW) return { hit: false, quality: 0, direction: delta < 0 ? -1 : 1 };
   const quality = 1 - distance / SWING_WINDOW;
   return { hit: true, quality, direction: delta < 0 ? -1 : delta > 0 ? 1 : 0 };
+}
+
+export function timingLabel(delta: number): 'early' | 'late' | 'perfect' {
+  return delta < -0.06 ? 'early' : delta > 0.06 ? 'late' : 'perfect';
 }
 
 function acceleration(ball: Ball): Vec3 {
@@ -342,7 +364,7 @@ function integrate(ball: Ball, dt: number) {
 
 function landingPoint(from: Vec3, velocity: Vec3, spin: Spin3, durationLimit = 6) {
   const test: Ball = {
-    p: { ...from }, v: { ...velocity }, spin: { ...spin }, inPlay: true,
+    p: { ...from }, prev: { ...from }, v: { ...velocity }, spin: { ...spin }, inPlay: true,
     hitByTeam: 0, canHitTeam: 0, bounces: 0, lastBounceTeam: -1, targetTeam: 1, rallyShot: 0, netCord: false,
   };
   let crossedNet = false;
@@ -452,6 +474,7 @@ function applyShot(world: World, player: Player, swing: Swing, serve = false, ev
   player.swingKind = swing.kind;
   const quality = timing.quality;
   const target = shotTarget(world, player, swing, quality);
+  target.z += (swing.depth ?? 0) * (player.team === 0 ? -1 : 1) * 1.5;
   const side = player.team === 0 ? -1 : 1;
   const from = {
     x: player.x + clamp(world.ball.p.x - player.x, -0.68, 0.68) + swing.aim * 0.08,
@@ -461,13 +484,21 @@ function applyShot(world: World, player: Player, swing: Swing, serve = false, ev
   const spinScale = swing.kind === 'drive' ? 42 : swing.kind === 'slice' ? -28 : 12;
   const spin: Spin3 = { x: spinScale * 0.12, y: (swing.aim || 0.25) * 4, z: spinScale };
   const apex = swing.kind === 'lob' ? 7.1 : swing.kind === 'slice' ? 2.3 : 3.2;
-  const serveCap = player.ai === 2 ? 190 / 3.6 : player.ai === null ? 180 / 3.6 : player.ai === 1 ? 174 / 3.6 : 155 / 3.6;
+  const serveCap = player.ai === 0 ? 120 / 3.6 : player.ai === 1 ? 145 / 3.6 : player.ai === 2 ? 170 / 3.6 : 175 / 3.6;
   const velocity = serve
     ? solveServe(from, target, spin, Math.min(26 + quality * 24, serveCap))
     : solveShot(from, target, spin, apex);
+  if (serve) {
+    const horizontal = Math.hypot(velocity.x, velocity.z);
+    if (horizontal > serveCap) {
+      velocity.x *= serveCap / horizontal;
+      velocity.z *= serveCap / horizontal;
+    }
+  }
   const swipePace = clamp((swing.swipe ?? 0) / 2000, 0, 1) * 0.13;
   const pace = serve ? 1 : clamp(0.75 + quality * 0.34 + swipePace, 0.68, 1.18);
   world.ball.p = from;
+  world.ball.prev = { ...from };
   world.ball.v = { x: velocity.x * pace, y: velocity.y, z: velocity.z * pace };
   world.ball.spin = spin;
   world.ball.inPlay = true;
@@ -488,6 +519,7 @@ function applyShot(world: World, player: Player, swing: Swing, serve = false, ev
     speed: serve ? world.serveSpeed : Math.round(Math.hypot(world.ball.v.x, world.ball.v.z) * 3.6),
     kind: swing.kind,
     shot: world.rallyShot,
+    ...(player.ai === null && !serve ? { delta: swing.delta } : {}),
   });
   return true;
 }
@@ -637,7 +669,7 @@ function ballTeam(z: number) {
   return z >= 0 ? 0 : 1;
 }
 
-function updateBall(world: World, events: Event[]) {
+export function updateBall(world: World, events: Event[]) {
   if (!world.ball.inPlay) return;
   const ball = world.ball;
   const oldZ = ball.p.z;
@@ -704,39 +736,126 @@ function updateBall(world: World, events: Event[]) {
   }
 }
 
-function movePlayers(world: World) {
-  for (const player of world.players) {
-    if (player.seat === world.serverSeat && world.phase === 'serve-ready') continue;
-    if (player.seat === world.serverSeat && world.phase === 'serve-toss') {
-      player.serveToss = clamp(player.serveToss + STEP * 0.2, 0, 1);
-      continue;
+function playerBounds(world: World, player: Player) {
+  const half = courtWidth(world.format) / 2;
+  const near = player.team === 0;
+  return {
+    xMin: -half - 1.5,
+    xMax: half + 1.5,
+    zMin: near ? 0.4 : -COURT_LENGTH / 2 - 3,
+    zMax: near ? COURT_LENGTH / 2 + 3 : -0.4,
+  };
+}
+
+export function movePlayer(world: World, player: Player, dt = STEP) {
+  const serving = player.seat === world.serverSeat && world.phase === 'serve-ready';
+  if (player.seat === world.serverSeat && world.phase === 'serve-toss') {
+    player.serveToss = clamp(player.serveToss + dt * 0.2, 0, 1);
+    player.vx = 0;
+    player.vz = 0;
+    return;
+  }
+  const bounds = playerBounds(world, player);
+  let desiredX = 0;
+  let desiredZ = 0;
+  if (serving) {
+    const box = world.serveBox === 0 ? -1 : 1;
+    const limit = courtWidth(world.format) / 2 - 0.55;
+    bounds.xMin = box < 0 ? -limit : 0.4;
+    bounds.xMax = box < 0 ? -0.4 : limit;
+    desiredX = clamp(player.input.x, -1, 1) * 6;
+  } else if (player.ai === null) {
+    desiredX = clamp(player.input.x, -1, 1) * 6;
+    desiredZ = clamp(player.input.z, -1, 1) * 6;
+    const pending = player.pending;
+    const ball = world.ball;
+    if (pending && (world.phase === 'rally' || world.phase === 'serve-flight') && ball.inPlay && ball.canHitTeam === player.team) {
+      const distance = Math.hypot(player.x - ball.p.x, player.z - ball.p.z);
+      if (distance <= 2.5) {
+        const side = ball.p.x >= player.x ? 1 : -1;
+        const dx = ball.p.x - side * 0.75 - player.x;
+        const dz = ball.p.z - player.z;
+        const length = Math.hypot(dx, dz);
+        const speed = Math.min(1.5, length * 2);
+        if (length > STRIKE_RADIUS) {
+          desiredX += dx / length * speed;
+          desiredZ += dz / length * speed;
+        }
+      }
     }
+  } else {
     const target = movementTarget(world, player);
-    const targetX = clamp(target.x, -courtWidth(world.format) / 2 + 0.55, courtWidth(world.format) / 2 - 0.55);
-    const targetZ = clamp(target.z, -COURT_LENGTH / 2 + 0.55, COURT_LENGTH / 2 - 0.55);
-    const dx = targetX - player.x;
-    const dz = targetZ - player.z;
+    const dx = clamp(target.x, bounds.xMin, bounds.xMax) - player.x;
+    const dz = clamp(target.z, bounds.zMin, bounds.zMax) - player.z;
     const distance = Math.hypot(dx, dz);
-    const maxSpeed = player.ai === null ? 6.2 : player.ai === 0 ? 5.25 : player.ai === 2 ? 6.45 : 5.9;
-    const desiredSpeed = Math.min(maxSpeed, distance * 2.2);
-    const desiredX = distance > 0.01 ? dx / distance * desiredSpeed : 0;
-    const desiredZ = distance > 0.01 ? dz / distance * desiredSpeed : 0;
-    const accel = (player.ai === null ? 18 : player.ai === 0 ? 14 : player.ai === 2 ? 20 : 17) * STEP;
-    player.vx += clamp(desiredX - player.vx, -accel, accel);
-    player.vz += clamp(desiredZ - player.vz, -accel, accel);
-    player.x += player.vx * STEP;
-    player.z += player.vz * STEP;
-    player.x = clamp(player.x, -courtWidth(world.format) / 2 - 1, courtWidth(world.format) / 2 + 1);
-    player.z = clamp(player.z, -COURT_LENGTH / 2 - 0.7, COURT_LENGTH / 2 + 0.7);
-    if (Math.hypot(player.vx, player.vz) > 0.1) player.facing = Math.atan2(player.vx, -player.vz);
-    player.swing = Math.max(0, player.swing - STEP);
-    player.anim += STEP * (1.8 + Math.hypot(player.vx, player.vz) * 1.2);
+    const maxSpeed = player.ai === 0 ? 5.2 : 6;
+    const speed = Math.min(maxSpeed, distance * 2.2);
+    if (distance > 0.01) {
+      desiredX = dx / distance * speed;
+      desiredZ = dz / distance * speed;
+    }
+  }
+  const desiredSpeed = Math.hypot(desiredX, desiredZ);
+  if (desiredSpeed > 6) {
+    desiredX *= 6 / desiredSpeed;
+    desiredZ *= 6 / desiredSpeed;
+  }
+  const dvx = desiredX - player.vx;
+  const dvz = desiredZ - player.vz;
+  const change = Math.hypot(dvx, dvz);
+  const decelerating = desiredSpeed < Math.hypot(player.vx, player.vz);
+  const maxChange = (decelerating ? 40 : 30) * dt;
+  const scale = change > maxChange && change > 0 ? maxChange / change : 1;
+  player.vx += dvx * scale;
+  player.vz += dvz * scale;
+  player.x = clamp(player.x + player.vx * dt, bounds.xMin, bounds.xMax);
+  player.z = clamp(player.z + player.vz * dt, bounds.zMin, bounds.zMax);
+  if (Math.hypot(player.vx, player.vz) > 0.1) player.facing = Math.atan2(player.vx, -player.vz);
+  player.swing = Math.max(0, player.swing - dt);
+  player.anim += dt * (1.8 + Math.hypot(player.vx, player.vz) * 1.2);
+}
+
+function movePlayers(world: World) {
+  for (const player of world.players) movePlayer(world, player);
+}
+
+function resolvePending(world: World, events: Event[]) {
+  for (const player of world.players) {
+    const pending = player.pending;
+    if (!pending) continue;
+    const receiving = world.ball.inPlay && world.ball.canHitTeam === player.team
+      && (world.phase === 'rally' || (world.phase === 'serve-flight' && world.ball.bounces > 0));
+    if (receiving) {
+      const side = world.ball.p.x >= player.x ? 1 : -1;
+      const dx = world.ball.p.x - (player.x + side * 0.75);
+      const dz = world.ball.p.z - player.z;
+      if (Math.hypot(dx, dz) <= STRIKE_RADIUS && world.ball.p.y >= 0.2 && world.ball.p.y <= 2.6) {
+        const swing: Swing = {
+          kind: pending.kind,
+          aim: player.input.x === 0 ? pending.aim : player.input.x < 0 ? -1 : 1,
+          delta: 0.30 - (world.clock - pending.at),
+          depth: player.input.z === 0 ? 0 : player.input.z < 0 ? 1 : -1,
+        };
+        player.pending = null;
+        if (applyShot(world, player, swing, false, events)) world.serveNumber = 1;
+        continue;
+      }
+    }
+    if (world.clock - pending.at >= 0.6) {
+      player.pending = null;
+      player.swing = 0.42;
+      player.swingKind = pending.kind;
+    }
   }
 }
 
 function processCommand(world: World, command: Command, events: Event[]) {
   const player = world.players.find((p) => p.seat === command.seat);
   if (!player || !player.connected) return;
+  if (command.move) {
+    player.input.x = clamp(command.move.x, -1, 1);
+    player.input.z = clamp(command.move.z, -1, 1);
+  }
   if (world.phase === 'serve-ready' && command.toss) {
     tossServe(world, player.seat);
     return;
@@ -747,11 +866,13 @@ function processCommand(world: World, command: Command, events: Event[]) {
     else events.push({ type: 'hit', seat: player.seat, serve: true, speed: world.serveSpeed, kind: 'drive', shot: world.rallyShot });
     return;
   }
-  if (world.phase !== 'rally' || !command.swing || player.team !== world.ball.canHitTeam) return;
-  const distance = Math.hypot(player.x - world.ball.p.x, player.z - world.ball.p.z);
-  if (distance > 3.6 || world.ball.p.y > 3.6 || world.ball.p.y < BALL_RADIUS + 0.06) return;
-  const valid = applyShot(world, player, command.swing, false, events);
-  if (valid) world.serveNumber = 1;
+  if ((world.phase !== 'rally' && world.phase !== 'serve-flight') || !world.ball.inPlay || !command.swing || player.team !== world.ball.canHitTeam) return;
+  if (player.pending) {
+    player.pending.kind = command.swing.kind;
+    player.pending.aim = command.swing.aim;
+  } else {
+    player.pending = { kind: command.swing.kind, at: world.clock, aim: command.swing.aim };
+  }
 }
 
 function updateAutomatic(world: World, events: Event[]) {
@@ -794,6 +915,8 @@ function simulateStep(world: World, commands: readonly Command[], events: Event[
   if (world.phase === 'serve-toss') {
     world.ball.p.y = Math.max(BALL_RADIUS, 2.05 + 5.5 * world.serveClock - 0.5 * GRAVITY * world.serveClock ** 2);
   }
+  for (const command of commands) processCommand(world, command, events);
+  movePlayers(world);
   if (world.phase === 'serve-flight' || world.phase === 'rally') {
     updateBall(world, events);
     if (world.phase === 'serve-flight' && world.ball.p.z * (serverOf(world)?.team === 0 ? -1 : 1) < 0 && world.ball.p.y < BALL_RADIUS + 0.02) {
@@ -805,9 +928,8 @@ function simulateStep(world: World, commands: readonly Command[], events: Event[
       return;
     }
   }
-  movePlayers(world);
+  resolvePending(world, events);
   updateAutomatic(world, events);
-  for (const command of commands) processCommand(world, command, events);
   if (world.phase === 'serve-toss' && world.serveClock > 1.25 && serverOf(world)?.ai === null) {
     callFault(world, events);
   }
@@ -818,6 +940,13 @@ export function stepWorld(world: World, commands: readonly Command[] = [], dt = 
   world.acc += clamp(dt, 0, 0.1);
   let steps = 0;
   while (world.acc + 1e-9 >= STEP && steps < 16) {
+    world.ball.prev.x = world.ball.p.x;
+    world.ball.prev.y = world.ball.p.y;
+    world.ball.prev.z = world.ball.p.z;
+    for (const player of world.players) {
+      player.prevX = player.x;
+      player.prevZ = player.z;
+    }
     simulateStep(world, commands, events);
     world.acc -= STEP;
     steps++;
