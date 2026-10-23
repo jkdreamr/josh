@@ -414,10 +414,14 @@ function Play({ mode }: { mode: StageMode }) {
       const p2 = localTwoPlayer && playerId === 1;
       const screenX = p2
         ? (keys.down('ArrowRight') ? 1 : 0) - (keys.down('ArrowLeft') ? 1 : 0)
-        : (keys.down('KeyD', 'ArrowRight') ? 1 : 0) - (keys.down('KeyA', 'ArrowLeft') ? 1 : 0);
+        : localTwoPlayer
+          ? (keys.down('KeyD') ? 1 : 0) - (keys.down('KeyA') ? 1 : 0)
+          : (keys.down('KeyD', 'ArrowRight') ? 1 : 0) - (keys.down('KeyA', 'ArrowLeft') ? 1 : 0);
       const screenY = p2
         ? (keys.down('ArrowDown') ? 1 : 0) - (keys.down('ArrowUp') ? 1 : 0)
-        : (keys.down('KeyS', 'ArrowDown') ? 1 : 0) - (keys.down('KeyW', 'ArrowUp') ? 1 : 0);
+        : localTwoPlayer
+          ? (keys.down('KeyS') ? 1 : 0) - (keys.down('KeyW') ? 1 : 0)
+          : (keys.down('KeyS', 'ArrowDown') ? 1 : 0) - (keys.down('KeyW', 'ArrowUp') ? 1 : 0);
       const field = screenToField(viewRef.current ?? makeView(size.w, size.h, 50), screenX, screenY);
       x = field.x;
       y = field.y;
@@ -425,7 +429,7 @@ function Play({ mode }: { mode: StageMode }) {
       if (length > 1) { x /= length; y /= length; }
     }
     const sprintTouch = [...sprintPointers.current.values()].includes(playerId);
-      const sprintKey = localTwoPlayer
+    const sprintKey = localTwoPlayer
       ? playerId === 0 ? keys.down('ShiftLeft') : keys.down('ShiftRight') || keys.down('Enter')
       : keys.down('ShiftLeft', 'ShiftRight', 'Space');
     return { x, y, sprint: sprintTouch || sprintKey };

@@ -15,7 +15,7 @@
   touch-action: none;
 }
 
-.g-the-axe-sprint {
+.g-the-axe-stage .g-the-axe-sprint {
   position: absolute;
   z-index: 2;
   right: calc(16px * var(--g-the-axe-u, 1));
@@ -37,16 +37,16 @@
   user-select: none;
 }
 
-.g-the-axe-sprint:active {
+.g-the-axe-stage .g-the-axe-sprint:active {
   transform: scale(0.94);
 }
 
-.g-the-axe-sprint-left {
+.g-the-axe-stage .g-the-axe-sprint-left {
   right: auto;
   left: calc(16px * var(--g-the-axe-u, 1));
 }
 
-.g-the-axe-sprint-right {
+.g-the-axe-stage .g-the-axe-sprint-right {
   right: calc(16px * var(--g-the-axe-u, 1));
 }
 

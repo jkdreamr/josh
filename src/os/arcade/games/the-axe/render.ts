@@ -17,7 +17,7 @@ const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 /** Fits the field (plus its rim) under the HUD; a tall screen turns it to run up the screen, stanford at the bottom. */
 export function makeView(w: number, h: number, hudTop: number): View {
   const rotate = h > w * 1.15;
-  const top = Math.max(0, hudTop);
+  const top = Math.max(0, hudTop) + (w < 560 ? 44 : 0);
   const bottom = rotate ? 10 : 8;
   const side = 8;
   const fw = (rotate ? W : L) + RIM * 2;
@@ -233,8 +233,7 @@ function drawField(c: CanvasRenderingContext2D, view: View, world: World, t: num
     // big lettering
     c.save();
     c.translate(x0 + end / 2, W / 2);
-    c.rotate(team === 0 ? -Math.PI / 2 : Math.PI / 2);
-    if (view.rotate) c.rotate(team === 0 ? Math.PI / 2 : -Math.PI / 2);
+    c.rotate(view.rotate ? Math.PI / 2 : team === 0 ? -Math.PI / 2 : Math.PI / 2);
     c.fillStyle = TEAM[team].zoneText;
     c.globalAlpha = 0.22;
     c.textAlign = 'center';
@@ -789,7 +788,7 @@ function drawHud(c: CanvasRenderingContext2D, view: View, world: World, fx: Fx, 
 
   // top bar
   const barH = small ? 30 : 34;
-  const top = 8;
+  const top = w < 560 ? 52 : 8;
   const fs = small ? 14 : 16;
   c.textBaseline = 'middle';
   if (world.mode === 'tree') {
