@@ -290,6 +290,8 @@ test('network packets round trip and reject malformed numeric fields and roster 
   assert.equal(parsePacket(playersPacket(8, 1, 4, [{ id: 0, body: rotated }]))?.k, 'P');
 
   const show = createShow(offlineEntrants(6, 44), 44, 'fountain');
+  show.phase = 'outro';
+  show.qualified = [4, 2, 0];
   const packet = showPacket(5, show, [[10, 2.25]]);
   const parsed = parsePacket(packet);
   assert.ok(parsed && parsed.k === 'S');
@@ -299,7 +301,9 @@ test('network packets round trip and reject malformed numeric fields and roster 
   assert.equal(restored.race, show.race);
   assert.deepEqual(restored.entrants, show.entrants);
   assert.deepEqual(restored.inRound, show.inRound);
+  assert.deepEqual(restored.qualified, show.qualified);
   assert.deepEqual(parsed.tiles, [[10, 2.25]]);
+  assert.equal(parsePacket({ ...packet, ql: [4, 4] }), null);
 
   const fullField = createShow(offlineEntrants(20, 45), 45, 'oval');
   fullField.entrants.forEach((entrant, seat) => { entrant.seat = seat; });

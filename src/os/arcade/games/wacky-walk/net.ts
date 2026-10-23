@@ -10,7 +10,7 @@ type TileEvent = Base & { k: 'tile'; rd: number; id: number; at: number };
 type PlayerState = Base & { k: 'P'; rd: number; c: number; b: [number, ...PackedBody][] };
 export type ShowPacket = Base & {
   k: 'S'; seed: number; race: RaceId; ent: [number, number, string, 0 | 1, number, number][];
-  rd: number; ph: Phase; pt: number; c: number; inr: number[]; out: number[]; fin: number[];
+  rd: number; ph: Phase; pt: number; c: number; inr: number[]; out: number[]; fin: number[]; ql: number[];
   fal: number[]; q: number; w: number | null; tiles: [number, number | null][];
 };
 export type Packet = Move | Result | TileEvent | PlayerState | ShowPacket;
@@ -74,7 +74,7 @@ export function showPacket(
     t: 'wacky-walk', k: 'S', r: round, seed: show.seed >>> 0, race: show.race,
     ent: show.entrants.map(({ id, seat, name, bot, color, skill }) => [id, seat, name, bot ? 1 : 0, color, skill]),
     rd: show.round, ph: show.phase, pt: round2(show.phaseT), c: round2(show.clock),
-    inr: [...show.inRound], out: [...show.out], fin: [...show.finished], fal: [...show.fallen],
+    inr: [...show.inRound], out: [...show.out], fin: [...show.finished], ql: [...show.qualified], fal: [...show.fallen],
     q: show.quota, w: show.winner, tiles,
   };
 }
@@ -86,7 +86,7 @@ export function showOf(packet: ShowPacket): Show {
   return {
     seed: packet.seed, race: packet.race, entrants, round: packet.rd, phase: packet.ph, phaseT: packet.pt,
     clock: packet.c, inRound: [...packet.inr], out: [...packet.out], finished: [...packet.fin],
-    fallen: [...packet.fal], qualified: packet.ph === 'outro' || packet.ph === 'done' ? [...packet.inr].filter((id) => !packet.out.includes(id)) : [],
+    fallen: [...packet.fal], qualified: [...packet.ql],
     quota: packet.q, winner: packet.w,
   };
 }
@@ -136,14 +136,14 @@ function parsedShow(packet: Record<string, unknown>, r: number): ShowPacket | nu
       !(packet.w === null || integer(packet.w, 0, 19)) || !tileListOk(packet.tiles)) return null;
   const known = new Set(packet.ent.map((entry) => entry[0]));
   if (packet.w !== null && !known.has(packet.w as number)) return null;
-  if (![packet.inr, packet.out, packet.fin, packet.fal].every((ids) => idsOk(ids, known))) return null;
+  if (![packet.inr, packet.out, packet.fin, packet.ql, packet.fal].every((ids) => idsOk(ids, known))) return null;
   const entrants = packet.ent as ShowPacket['ent'];
   const occupiedSeats = entrants.map((entry) => entry[1]).filter((seat) => seat >= 0);
   if (new Set(occupiedSeats).size !== occupiedSeats.length) return null;
   return {
     t: 'wacky-walk', k: 'S', r, seed: packet.seed, race: packet.race, ent: entrants,
     rd: packet.rd, ph: packet.ph, pt: packet.pt, c: packet.c, inr: packet.inr as number[],
-    out: packet.out as number[], fin: packet.fin as number[], fal: packet.fal as number[],
+    out: packet.out as number[], fin: packet.fin as number[], ql: packet.ql as number[], fal: packet.fal as number[],
     q: packet.q, w: packet.w as number | null, tiles: packet.tiles,
   };
 }
