@@ -210,6 +210,8 @@ function Play({ mode }: { mode: StageMode }) {
   const hudClock = useRef(0);
   const timingClock = useRef(0);
   const [timing, setTiming] = useState<HudModel['timing']>('');
+  const timingRef = useRef<HudModel['timing']>('');
+  timingRef.current = timing;
   const [hud, setHud] = useState<HudModel>(() => hudCopy(world.current!, online?.seat ?? null, !!online?.watching, ''));
   const pointer = useRef<{ id: number; x: number; y: number; at: number } | null>(null);
   const currentSeat = () => mode === 'online' ? onlineRef.current?.seat ?? -1 : 0;
@@ -248,6 +250,7 @@ function Play({ mode }: { mode: StageMode }) {
 
   const setTimingResult = (swing: Swing) => {
     const state = swing.delta < -0.025 ? 'early' : swing.delta > 0.025 ? 'late' : 'perfect';
+    timingRef.current = state;
     setTiming(state);
     timingClock.current = 0.9;
   };
@@ -390,13 +393,16 @@ function Play({ mode }: { mode: StageMode }) {
 
     if (keys.pressed('action')) localPlayerAction();
     timingClock.current = Math.max(0, timingClock.current - dt);
-    if (timingClock.current <= 0 && timing) setTiming('');
+    if (timingClock.current <= 0 && timingRef.current) {
+      timingRef.current = '';
+      setTiming('');
+    }
     const side = myTeam();
     view.current?.update(current, dt, localHumanSeats(), side);
     hudClock.current += dt;
     if (hudClock.current >= 0.1) {
       hudClock.current = 0;
-      setHud(hudCopy(current, currentSeat(), !!o?.watching, timingClock.current > 0 ? timing : ''));
+      setHud(hudCopy(current, currentSeat(), !!o?.watching, timingClock.current > 0 ? timingRef.current : ''));
     }
   };
 
@@ -520,7 +526,7 @@ function Play({ mode }: { mode: StageMode }) {
     >
       {!THREE && <div className="g-tennis-error"><strong>Preparing Taube Stadium…</strong></div>}
       {THREE && !view.current && shell.status === 'playing' && <div className="g-tennis-error"><strong>3D court could not load. Try restarting.</strong></div>}
-      <Hud {...hud} />
+      <Hud {...hud} touch={shell.touch} />
     </div>
   );
 }

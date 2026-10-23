@@ -21,6 +21,7 @@ import {
   type Spin3,
 } from '../src/os/arcade/games/tennis/logic.ts';
 import { configOf, parsePacket, stateOf, swingOf } from '../src/os/arcade/games/tennis/net.ts';
+import { chooseShot } from '../src/os/arcade/games/tennis/ai.ts';
 
 test('the court uses ITF dimensions and touching a line is in', () => {
   assert.equal(COURT_LENGTH, 23.77);
@@ -191,6 +192,24 @@ test('AI matches complete at every level with live rallies', () => {
     assert.ok(hits >= 4, `level ${level} had only ${hits} total hits`);
     if (level === 2) assert.ok(maxRally >= 3, `hard rallies peaked at only ${maxRally} hits`);
   }
+});
+
+test('hard CPU aims away from opponents and favors deep drives', () => {
+  const world = createWorld({ seed: 4 });
+  world.random = () => 0.5;
+  const cpu = world.players[0]!;
+  cpu.ai = 2;
+  world.players[1]!.x = -3.5;
+  const hardShot = chooseShot(world, cpu);
+  assert.equal(hardShot.aim, 1);
+  assert.equal(hardShot.kind, 'drive');
+
+  world.format = 'doubles';
+  cpu.z = 0;
+  assert.equal(chooseShot(world, cpu).kind, 'drive');
+
+  cpu.ai = 0;
+  assert.equal(chooseShot(world, cpu).aim, 0);
 });
 
 test('packets round-trip valid settings, swings, and host snapshots and reject bad ranges', () => {

@@ -28,32 +28,32 @@
 
 .g-tennis-scorebar {
   position: absolute;
-  top: clamp(10px, 2.2vh, 24px);
-  left: 50%;
+  top: 12px;
+  left: 12px;
   display: grid;
-  grid-template-columns: minmax(100px, 1fr) auto minmax(100px, 1fr);
-  align-items: center;
-  width: min(570px, calc(100% - 32px));
-  min-height: 68px;
-  padding: 8px 12px;
+  grid-template-columns: 1fr;
+  gap: 5px;
+  width: min(320px, calc(100% - 24px));
+  min-height: 0;
+  padding: 8px 11px;
   border: 1px solid rgba(245, 244, 226, .32);
-  border-radius: 12px;
+  border-radius: 9px;
   background: linear-gradient(115deg, rgba(12, 28, 31, .82), rgba(22, 34, 35, .75));
   box-shadow: 0 8px 30px rgba(15, 23, 18, .18), inset 0 1px rgba(255, 255, 255, .08);
   backdrop-filter: blur(12px);
-  transform: translateX(-50%);
 }
 
 .g-tennis-side {
   display: grid;
-  grid-template-rows: auto auto;
-  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
-  padding: 0 8px;
+  padding: 1px 0;
 }
 
 .g-tennis-side-b {
-  text-align: right;
+  text-align: left;
 }
 
 .g-tennis-side-label {
@@ -71,7 +71,7 @@
 }
 
 .g-tennis-side-b .g-tennis-side-label {
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .g-tennis-side-me .g-tennis-side-label {
@@ -161,11 +161,10 @@
 .g-tennis-status {
   position: absolute;
   top: 96px;
-  left: 50%;
+  left: 14px;
   display: grid;
-  justify-items: center;
+  justify-items: start;
   gap: 4px;
-  transform: translateX(-50%);
 }
 
 .g-tennis-call {
@@ -299,15 +298,15 @@
 @media (max-width: 600px) {
   .g-tennis-scorebar {
     top: 7px;
-    width: min(440px, calc(100% - 18px));
-    min-height: 56px;
-    padding: 6px 7px;
+    left: 7px;
+    width: min(220px, calc(100% - 156px));
+    padding: 6px 8px;
     border-radius: 9px;
   }
 
   .g-tennis-side {
-    gap: 3px;
-    padding: 0 4px;
+    gap: 5px;
+    padding: 0;
   }
 
   .g-tennis-side-label {
@@ -315,7 +314,7 @@
   }
 
   .g-tennis-score-numbers {
-    gap: 7px;
+    gap: 6px;
   }
 
   .g-tennis-sets {
@@ -331,18 +330,9 @@
     font-size: 16px;
   }
 
-  .g-tennis-score-middle {
-    min-width: 57px;
-    padding: 0 5px;
-    font-size: 8px;
-  }
-
-  .g-tennis-score-middle small {
-    font-size: 7px;
-  }
-
   .g-tennis-status {
-    top: 73px;
+    top: 76px;
+    left: 9px;
   }
 
   .g-tennis-call {
@@ -359,11 +349,17 @@
     bottom: 9px;
     gap: 6px;
     padding: 6px 7px;
+    max-width: calc(100% - 18px);
     font-size: 9px;
   }
 
   .g-tennis-controls-hint i {
     font-size: 9px;
+  }
+
+  .g-tennis-touch-hint {
+    font-size: 8px;
+    line-height: 1.25;
   }
 
   .g-tennis-timing {
@@ -387,11 +383,10 @@
 @media (max-height: 500px) {
   .g-tennis-scorebar {
     top: 5px;
-    min-height: 48px;
   }
 
   .g-tennis-status {
-    top: 57px;
+    top: 67px;
   }
 
   .g-tennis-controls-hint {

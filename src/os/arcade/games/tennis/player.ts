@@ -8,14 +8,15 @@ export type PlayerModel = {
   torso: T.Group;
   racketArm: T.Group;
   racketForearm: T.Group;
+  leadArm: T.Group;
   legs: [T.Group, T.Group];
   markers: T.Mesh[];
   trim: T.Mesh[];
   phase: number;
 };
 
-const teamColors = ['#255a89', '#f3f0e6'];
-const accents = ['#c9e632', '#b5213a', '#f1b858', '#48a38c'];
+const teamColors = ['#f3f0e6', '#26364b'];
+const accents = ['#b5223a', '#c9e632', '#f1b858', '#48a38c'];
 
 function capsule(THREE: Three, radius: number, length: number, material: T.Material) {
   return new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 4, 8), material);
@@ -37,12 +38,12 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
   const shirt = new THREE.MeshStandardMaterial({ color: teamColors[seat % 2], roughness: 0.72, metalness: 0.02 });
   const shorts = new THREE.MeshStandardMaterial({ color: ['#142d49', '#a1a39a', '#384344', '#ece8db'][seat % 4], roughness: 0.84 });
   const shoe = new THREE.MeshStandardMaterial({ color: '#e9e7dd', roughness: 0.55 });
+  const sole = new THREE.MeshStandardMaterial({ color: '#3a4040', roughness: 0.8 });
   const accent = new THREE.MeshStandardMaterial({ color: accents[seat % accents.length], roughness: 0.53 });
   const hairMaterial = new THREE.MeshStandardMaterial({ color: ['#30261f', '#72513c', '#211e20', '#b0a18d'][seat % 4], roughness: 0.91 });
   const dark = new THREE.MeshStandardMaterial({ color: '#172127', roughness: 0.66 });
   const eyes = new THREE.MeshStandardMaterial({ color: '#f2eee2', roughness: 0.55 });
   const racketFrame = new THREE.MeshStandardMaterial({ color: '#242a2a', metalness: 0.65, roughness: 0.29 });
-  const strings = new THREE.LineBasicMaterial({ color: '#e7e6db', transparent: true, opacity: 0.8 });
   const grip = new THREE.MeshStandardMaterial({ color: '#d8d2c0', roughness: 0.88 });
 
   const pelvis = new THREE.Mesh(new THREE.SphereGeometry(0.21, 16, 12), shorts);
@@ -58,7 +59,7 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
     new THREE.Vector2(0.12, 0.76),
     new THREE.Vector2(0, 0.76),
   ];
-  const trunk = new THREE.Mesh(new THREE.LatheGeometry(trunkProfile, 14), shirt);
+  const trunk = new THREE.Mesh(new THREE.LatheGeometry(trunkProfile, 32), shirt);
   trunk.position.y = 0.86;
   torso.add(trunk);
   const collar = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.026, 6, 14), accent);
@@ -72,6 +73,10 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
   head.scale.set(0.88, 1.12, 0.93);
   head.position.set(0, 1.79, 0.035);
   torso.add(head);
+  const headband = new THREE.Mesh(new THREE.TorusGeometry(0.145, 0.027, 8, 24), accent);
+  headband.position.set(0, 1.82, 0.015);
+  headband.rotation.x = Math.PI / 2;
+  torso.add(headband);
   const hair = new THREE.Mesh(new THREE.SphereGeometry(0.144, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), hairMaterial);
   hair.position.set(0, 1.83, 0.02);
   torso.add(hair);
@@ -100,10 +105,6 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
     ear.scale.set(0.55, 0.9, 0.55);
     ear.position.set(side * 0.13, 1.78, 0.01);
     torso.add(ear);
-    const sleeve = capsule(THREE, 0.09, 0.17, shirt);
-    sleeve.position.set(side * 0.34, 1.43, 0);
-    sleeve.rotation.z = side * -0.72;
-    torso.add(sleeve);
   }
 
   const shortsMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.32, 0.24, 12), shorts);
@@ -135,14 +136,21 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
     knee.add(sock);
     const foot = capsule(THREE, 0.08, 0.22, shoe);
     foot.rotation.x = Math.PI / 2;
-    foot.position.set(0, -0.5, 0.075);
+    foot.position.set(0, -0.49, 0.09);
     knee.add(foot);
+    const outsole = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.045, 0.31), sole);
+    outsole.position.set(0, -0.59, 0.09);
+    knee.add(outsole);
     legs[index] = upper;
   }
 
   const racketArm = new THREE.Group();
   racketArm.position.set(0.34, 1.43, 0);
   torso.add(racketArm);
+  const racketSleeve = capsule(THREE, 0.085, 0.18, shirt);
+  racketSleeve.position.set(-0.025, -0.09, 0);
+  racketSleeve.rotation.z = -0.2;
+  racketArm.add(racketSleeve);
   const upperArm = capsule(THREE, 0.072, 0.32, skin);
   upperArm.position.y = -0.21;
   racketArm.add(upperArm);
@@ -155,6 +163,19 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
   const wrist = new THREE.Mesh(new THREE.SphereGeometry(0.062, 9, 8), skin);
   wrist.position.y = -0.4;
   racketForearm.add(wrist);
+  const leadArm = new THREE.Group();
+  leadArm.position.set(-0.34, 1.43, 0);
+  torso.add(leadArm);
+  const leadSleeve = capsule(THREE, 0.085, 0.18, shirt);
+  leadSleeve.position.set(0.02, -0.09, 0);
+  leadSleeve.rotation.z = 0.2;
+  leadArm.add(leadSleeve);
+  const leadUpper = capsule(THREE, 0.07, 0.32, skin);
+  leadUpper.position.set(0, -0.23, 0);
+  leadArm.add(leadUpper);
+  const leadForearm = capsule(THREE, 0.056, 0.3, skin);
+  leadForearm.position.set(0, -0.48, 0.01);
+  leadArm.add(leadForearm);
   const racket = new THREE.Group();
   racket.position.set(0.04, -0.48, 0.12);
   racketForearm.add(racket);
@@ -170,20 +191,28 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
   frame.scale.y = 1.25;
   frame.position.y = 0.29;
   racket.add(frame);
-  const stringPoints: number[] = [];
-  for (let i = -5; i <= 5; i++) {
-    const x = i * 0.041;
-    const halfHeight = 0.31 * Math.sqrt(Math.max(0, 1 - (x / 0.28) ** 2));
-    stringPoints.push(x, 0.29 - halfHeight, 0.025, x, 0.29 + halfHeight, 0.025);
+  const stringCanvas = document.createElement('canvas');
+  stringCanvas.width = stringCanvas.height = 256;
+  const stringContext = stringCanvas.getContext('2d')!;
+  stringContext.strokeStyle = 'rgba(239,239,223,.9)';
+  stringContext.lineWidth = 3;
+  for (let i = 1; i < 8; i++) {
+    const p = i * 256 / 8;
+    stringContext.beginPath();
+    stringContext.moveTo(p, 0);
+    stringContext.lineTo(p, 256);
+    stringContext.moveTo(0, p);
+    stringContext.lineTo(256, p);
+    stringContext.stroke();
   }
-  for (let i = -7; i <= 7; i++) {
-    const y = i * 0.038;
-    const halfWidth = 0.28 * Math.sqrt(Math.max(0, 1 - (y / 0.33) ** 2));
-    stringPoints.push(-halfWidth, 0.29 + y, 0.025, halfWidth, 0.29 + y, 0.025);
-  }
-  const stringGeometry = new THREE.BufferGeometry();
-  stringGeometry.setAttribute('position', new THREE.Float32BufferAttribute(stringPoints, 3));
-  racket.add(new THREE.Line(stringGeometry, strings));
+  const stringTexture = new THREE.CanvasTexture(stringCanvas);
+  stringTexture.colorSpace = THREE.SRGBColorSpace;
+  const stringPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.5, 0.62),
+    new THREE.MeshBasicMaterial({ map: stringTexture, transparent: true, alphaTest: 0.28, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  stringPlane.position.set(0, 0.29, 0.026);
+  racket.add(stringPlane);
   if (!lite) {
     for (let i = 0; i < 16; i++) {
       const angle = i / 16 * Math.PI * 2;
@@ -203,7 +232,7 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
     root.add(marker);
     markers.push(marker);
   }
-  return { root, torso, racketArm, racketForearm, legs, markers, trim, phase: seat * 1.7 };
+  return { root, torso, racketArm, racketForearm, leadArm, legs, markers, trim, phase: seat * 1.7 };
 }
 
 export function updatePlayer(model: PlayerModel, player: Player, ball: Ball, dt: number, human: boolean) {
@@ -213,16 +242,22 @@ export function updatePlayer(model: PlayerModel, player: Player, ball: Ball, dt:
   const running = Math.min(1, Math.hypot(player.vx, player.vz) / 4.2);
   model.torso.position.y = Math.sin(model.phase * 2) * 0.025 * running;
   model.torso.rotation.z = Math.max(-0.14, Math.min(0.14, player.vx * -0.025));
+  model.torso.rotation.y = -Math.min(0.22, Math.abs(player.vx) * 0.035);
   model.legs[0].rotation.x = Math.sin(model.phase) * 0.58 * running;
   model.legs[1].rotation.x = Math.sin(model.phase + Math.PI) * 0.58 * running;
   const swing = player.swing > 0 ? Math.sin(Math.min(1, player.swing / 0.48) * Math.PI) : 0;
   const ballSide = Math.sign(ball.p.x - player.x);
-  const reach = Math.max(-0.45, Math.min(0.45, ball.p.x - player.x));
-  model.racketArm.rotation.x = -0.18 - swing * 0.85 + (player.serveToss > 0 ? 0.45 : 0);
-  model.racketArm.rotation.y = -0.1 + reach * 0.32 + swing * 0.58;
-  model.racketArm.rotation.z = -0.38 + swing * (ballSide > 0 ? 1.15 : 0.35);
-  model.racketForearm.rotation.x = -0.25 - swing * 1.2;
+  const localX = Math.max(-1.25, Math.min(1.25, ball.p.x - player.x));
+  const localY = Math.max(-0.7, Math.min(1.4, ball.p.y - 1.4));
+  const serve = player.serveToss > 0;
+  model.racketArm.rotation.x = -0.12 - localY * 0.22 - swing * 0.78 + (serve ? 0.64 : 0);
+  model.racketArm.rotation.y = -0.1 + localX * 0.22 + swing * 0.48;
+  model.racketArm.rotation.z = -0.38 - localX * 0.38 + swing * (ballSide > 0 ? 1.2 : 0.42);
+  model.racketForearm.rotation.x = -0.2 - swing * 1.05 + (serve ? -0.18 : 0);
   model.racketForearm.rotation.z = -0.18 + swing * 0.65;
+  model.leadArm.rotation.x = serve ? -1.05 : Math.sin(model.phase + Math.PI) * 0.35 * running;
+  model.leadArm.rotation.y = serve ? -0.15 : 0;
+  model.leadArm.rotation.z = serve ? 0.38 : Math.sin(model.phase + Math.PI) * 0.22 * running;
   for (let i = 0; i < model.markers.length; i++) {
     model.markers[i].visible = human;
     const material = model.markers[i].material as T.MeshBasicMaterial;

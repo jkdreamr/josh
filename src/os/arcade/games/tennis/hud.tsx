@@ -7,6 +7,7 @@ export type HudModel = {
   watching: boolean;
   call: string;
   timing: 'early' | 'perfect' | 'late' | '';
+  touch?: boolean;
 };
 
 function teamNames(world: World, team: number, seat: number | null, watching: boolean) {
@@ -16,7 +17,7 @@ function teamNames(world: World, team: number, seat: number | null, watching: bo
     .join(' + ') || `team ${team === 0 ? 'a' : 'b'}`;
 }
 
-export function Hud({ world, seat, watching, call, timing }: HudModel) {
+export function Hud({ world, seat, watching, call, timing, touch = false }: HudModel) {
   const server = serverOf(world);
   const pointA = world.match.tiebreak ? String(world.match.tbPoints[0]) : world.match.points[0] >= 3 && world.match.points[1] >= 3 ? world.match.points[0] === world.match.points[1] ? '40' : world.match.points[0] > world.match.points[1] ? 'AD' : '40' : pointLabel(world.match.points[0]);
   const pointB = world.match.tiebreak ? String(world.match.tbPoints[1]) : world.match.points[0] >= 3 && world.match.points[1] >= 3 ? world.match.points[0] === world.match.points[1] ? '40' : world.match.points[1] > world.match.points[0] ? 'AD' : '40' : pointLabel(world.match.points[1]);
@@ -38,10 +39,6 @@ export function Hud({ world, seat, watching, call, timing }: HudModel) {
             </div>
           </div>
         ))}
-        <div className="g-tennis-score-middle">
-          <span>{world.match.tiebreak ? 'tie-break' : world.match.length === 'set' ? 'set' : world.match.length === 'three' ? 'first to 2' : 'first to 1'}</span>
-          <small>{world.format}</small>
-        </div>
       </section>
       <div className="g-tennis-status">
         <div className="g-tennis-call" aria-live="assertive">{call || (world.phase === 'serve-ready' ? 'first serve' : world.phase === 'serve-toss' ? 'time your serve' : world.phase === 'rally' ? scoreText(world) : '')}</div>
@@ -49,7 +46,9 @@ export function Hud({ world, seat, watching, call, timing }: HudModel) {
       </div>
       {timing && <div className={`g-tennis-timing g-tennis-timing-${timing}`}><span className="g-tennis-timing-ring" />{timing}</div>}
       <div className="g-tennis-controls-hint">
-        <span className="g-tennis-key-hint">SPACE</span><span>to swing</span><i>↑ lob</i><i>↓ slice</i>
+        {touch
+          ? <span className="g-tennis-touch-hint">swipe up to hit · down to slice · slow up to lob</span>
+          : <><span className="g-tennis-key-hint">SPACE</span><span>to swing</span><i>↑ lob</i><i>↓ slice</i></>}
       </div>
       {watching && <div className="g-tennis-watch-label">watching</div>}
     </div>

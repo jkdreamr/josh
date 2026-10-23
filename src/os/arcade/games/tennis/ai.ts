@@ -1,4 +1,4 @@
-import { BALL_RADIUS, type Command, type Player, type Swing, type World } from './logic.ts';
+import { BALL_RADIUS, COURT_LENGTH, DOUBLES_WIDTH, SINGLES_WIDTH, clamp, timingQuality, type Command, type Player, type Swing, type World } from './logic.ts';
 
 export type CourtTarget = { x: number; z: number };
 
@@ -41,7 +41,24 @@ export function chooseShot(world: World, player: Player): Swing {
   let kind: Swing['kind'] = 'drive';
   if (level === 0 && world.random() < 0.18) kind = 'slice';
   if (level === 2 && world.random() < 0.16 && world.ball.p.y < 0.8) kind = 'lob';
-  const aim = (world.random() < 0.5 ? -1 : 1) as -1 | 1;
+  const aim: Swing['aim'] = level === 0 ? 0 : (() => {
+    const width = (world.format === 'singles' ? SINGLES_WIDTH : DOUBLES_WIDTH) / 2;
+    const opponents = world.players.filter((other) => other.team !== player.team);
+    const timingOffset = timingQuality(timing).direction * 2.1;
+    const openness = (direction: -1 | 1) => {
+      const targetX = clamp(timingOffset + direction * 1.6, -width + 0.48, width - 0.48);
+      const clearance = opponents.length
+        ? Math.min(...opponents.map((opponent) => Math.abs(targetX - opponent.x)))
+        : Math.abs(targetX - world.ball.p.x);
+      return clearance + Math.abs(targetX) * (level === 2 ? 0.16 : 0.06);
+    };
+    const left = openness(-1);
+    const right = openness(1);
+    if (level === 1 && world.random() < 0.28) return world.random() < 0.5 ? -1 : 1;
+    if (Math.abs(left - right) < 0.22) return world.random() < 0.5 ? -1 : 1;
+    return left > right ? -1 : 1;
+  })();
+  if (level === 2 && world.format === 'doubles' && Math.abs(player.z) < COURT_LENGTH / 2 - 4) kind = 'drive';
   return { kind, aim, delta: timing };
 }
 

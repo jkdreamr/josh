@@ -1,6 +1,6 @@
 import type * as T from 'three';
 import type { Vec3, World } from './logic.ts';
-import { BALL_RADIUS, COURT_LENGTH, DOUBLES_WIDTH, SERVICE_LINE, SINGLES_WIDTH, courtWidth, netHeight, pointLabel, serverOf } from './logic.ts';
+import { BALL_RADIUS, COURT_LENGTH, DOUBLES_WIDTH, SERVICE_LINE, SINGLES_WIDTH, clamp, courtWidth, netHeight, pointLabel, serverOf } from './logic.ts';
 import { createGL, damp, disposeTree } from './gl.ts';
 import { makePlayer, updatePlayer } from './player.ts';
 import { ballTexture, courtTextures, netTexture, windscreenTexture } from './textures.ts';
@@ -36,7 +36,7 @@ function addCourtLine(THREE: Three, parent: T.Object3D, x: number, z: number, wi
   return addBox(THREE, parent, [width, 0.012, length], [x, height, z], standard(THREE, lineColor, 0.56), false, true);
 }
 
-function buildCourt(THREE: Three, scene: T.Scene, lite: boolean) {
+function buildCourt(THREE: Three, scene: T.Scene, lite: boolean, anisotropy: number) {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 170), standard(THREE, '#8b9561', 0.98));
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.08;
@@ -44,7 +44,7 @@ function buildCourt(THREE: Three, scene: T.Scene, lite: boolean) {
   scene.add(ground);
 
   const court = new THREE.Group();
-  const maps = courtTextures(THREE, lite);
+  const maps = courtTextures(THREE, lite, anisotropy);
   const surf = new THREE.MeshStandardMaterial({
     map: maps.color,
     normalMap: maps.normal,
@@ -130,9 +130,6 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
     for (const side of [-1, 1]) {
       addBox(THREE, scene, [depth, 0.42, 35 + row * 0.35], [side * (7.7 + row * 0.93), h, 0], row < 4 ? bowl : upper);
     }
-    for (const side of [-1, 1]) {
-      addBox(THREE, scene, [21 + row * 0.4, 0.42, depth], [0, h, side * (13.5 + row * 0.87)], row < 4 ? bowl : upper);
-    }
   }
   const seatMaterial = standard(THREE, '#96243b', 0.53, 0.08);
   const seatBackMaterial = standard(THREE, '#a52a42', 0.5, 0.08);
@@ -142,56 +139,87 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
       const x = side * (8.1 + row * 0.82);
       for (let i = 0; i < 42; i++) rows.push([x, 0.72 + row * 0.48, -16.8 + i * 0.82, side]);
     }
-    for (let row = 0; row < 6; row++) {
-      const z = side * (13.8 + row * 0.82);
-      for (let i = 0; i < 24; i++) rows.push([-9.1 + i * 0.79, 0.72 + row * 0.48, z, side]);
-    }
   }
   const seats = new THREE.InstancedMesh(new THREE.BoxGeometry(0.36, 0.11, 0.34), seatMaterial, rows.length);
   const backs = new THREE.InstancedMesh(new THREE.BoxGeometry(0.36, 0.3, 0.055), seatBackMaterial, rows.length);
-  const dummy = new THREE.Object3D();
+  const seatDummy = new THREE.Object3D();
   rows.forEach(([x, y, z, side], index) => {
-    dummy.position.set(x, y, z);
-    dummy.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2;
-    dummy.updateMatrix();
-    seats.setMatrixAt(index, dummy.matrix);
-    dummy.position.set(x, y + 0.17, z - Math.sign(z) * 0.12);
-    dummy.updateMatrix();
-    backs.setMatrixAt(index, dummy.matrix);
+    seatDummy.position.set(x, y, z);
+    seatDummy.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2;
+    seatDummy.updateMatrix();
+    seats.setMatrixAt(index, seatDummy.matrix);
+    seatDummy.position.set(x, y + 0.17, z - Math.sign(z) * 0.12);
+    seatDummy.updateMatrix();
+    backs.setMatrixAt(index, seatDummy.matrix);
   });
   seats.castShadow = !lite;
   seats.receiveShadow = true;
   backs.castShadow = !lite;
   scene.add(seats, backs);
 
-  const count = lite ? 420 : 1050;
-  const bodies = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.07, 0.18, 3, 6), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.94 }), count);
-  const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.067, 7, 6), standard(THREE, '#c69a78', 0.88), count);
+  const count = rows.length;
+  const bodies = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.07, 0.19, 5, 10), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.94 }), count);
+  const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.067, 12, 10), standard(THREE, '#c69a78', 0.88), count);
+  const arms = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.025, 0.13, 3, 6), standard(THREE, '#ffffff', 0.91), count * 2);
+  const hats = new THREE.InstancedMesh(new THREE.SphereGeometry(0.073, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.5), standard(THREE, '#ffffff', 0.72), count);
   const crowd: { x: number; y: number; z: number; phase: number; hue: number }[] = [];
-  for (let i = 0; i < count; i++) {
-    const side = Math.random() < 0.5 ? -1 : 1;
-    const isEnd = Math.random() < 0.28;
-    const row = Math.floor(Math.random() * 7);
-    const x = isEnd ? (Math.random() - 0.5) * 22 : side * (8.2 + row * 0.82 + Math.random() * 0.6);
-    const z = isEnd ? side * (13.5 + row * 0.8) : (Math.random() - 0.5) * 34;
-    const y = 0.94 + row * 0.46;
-    crowd.push({ x, y, z, phase: Math.random() * Math.PI * 2, hue: Math.random() });
-    bodies.setColorAt(i, new THREE.Color(['#ece4d4', '#bd293e', '#314c68', '#caa35d', '#406453', '#e4ddd1'][Math.floor(Math.random() * 6)]));
-  }
+  const palette = ['#ece4d4', '#bd293e', '#314c68', '#caa35d', '#406453', '#e4ddd1', '#7e5969', '#b7b8ad'];
+  const skinTones = ['#d4a27f', '#b67b5b', '#edc6a3', '#81583f', '#c48d69'];
+  const dummy = new THREE.Object3D();
+  rows.forEach(([x, seatY, z], i) => {
+    const y = seatY + 0.32;
+    const hue = Math.random();
+    const phase = Math.random() * Math.PI * 2;
+    crowd.push({ x, y, z, phase, hue });
+    const shirtColor = palette[Math.floor(Math.random() * palette.length)]!;
+    bodies.setColorAt(i, new THREE.Color(shirtColor));
+    heads.setColorAt(i, new THREE.Color(skinTones[Math.floor(Math.random() * skinTones.length)]));
+    arms.setColorAt(i * 2, new THREE.Color(shirtColor));
+    arms.setColorAt(i * 2 + 1, new THREE.Color(shirtColor));
+    dummy.position.set(x, y + 0.32, z);
+    dummy.scale.setScalar(hue > 0.82 ? 1 : 0.001);
+    dummy.updateMatrix();
+    hats.setMatrixAt(i, dummy.matrix);
+    hats.setColorAt(i, new THREE.Color(palette[Math.floor(Math.random() * palette.length)]));
+    dummy.scale.setScalar(1);
+    dummy.position.set(x, y, z);
+    dummy.updateMatrix();
+    bodies.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(x, y + 0.23, z);
+    dummy.updateMatrix();
+    heads.setMatrixAt(i, dummy.matrix);
+    for (const side of [-1, 1]) {
+      dummy.position.set(x + side * 0.105, y - 0.055, z);
+      dummy.rotation.z = side * 0.35;
+      dummy.updateMatrix();
+      arms.setMatrixAt(i * 2 + (side > 0 ? 1 : 0), dummy.matrix);
+    }
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.setScalar(1);
+  });
+  bodies.instanceMatrix.needsUpdate = true;
+  heads.instanceMatrix.needsUpdate = true;
+  arms.instanceMatrix.needsUpdate = true;
+  hats.instanceMatrix.needsUpdate = true;
   bodies.castShadow = !lite;
   heads.castShadow = !lite;
-  scene.add(bodies, heads);
+  arms.castShadow = !lite;
+  hats.castShadow = !lite;
+  scene.add(bodies, heads, arms, hats);
   const crowdJump = { value: 0 };
 
   const screenTexture = windscreenTexture(THREE);
-  const screenMat = new THREE.MeshStandardMaterial({ map: screenTexture, roughness: 0.85, side: THREE.DoubleSide });
+  const screenMat = new THREE.MeshStandardMaterial({ map: screenTexture, roughness: 0.85 });
   for (const side of [-1, 1]) {
-    const screen = new THREE.Mesh(new THREE.PlaneGeometry(14, 2.6), screenMat);
-    screen.position.set(0, 1.42, side * 13.9);
-    screen.rotation.y = side === -1 ? Math.PI : 0;
-    scene.add(screen);
+    const front = new THREE.Mesh(new THREE.PlaneGeometry(14, 1.45), screenMat);
+    front.position.set(0, 0.82, side * 13.9 + 0.004);
+    scene.add(front);
+    const back = new THREE.Mesh(new THREE.PlaneGeometry(14, 1.45), screenMat);
+    back.position.set(0, 0.82, side * 13.9 - 0.004);
+    back.rotation.y = Math.PI;
+    scene.add(back);
     const rail = standard(THREE, '#e8e2d3', 0.55, 0.3);
-    addBox(THREE, scene, [14, 0.08, 0.08], [0, 2.82, side * 13.9], rail);
+    addBox(THREE, scene, [14, 0.06, 0.08], [0, 1.57, side * 13.9], rail);
   }
   const pressBox = addBox(THREE, scene, [5.5, 2.2, 0.24], [0, 5.4, -17.2], standard(THREE, '#172c27', 0.44, 0.08));
   const scoreCanvas = document.createElement('canvas');
@@ -209,6 +237,10 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
   const board = new THREE.Mesh(new THREE.PlaneGeometry(5.3, 2), new THREE.MeshBasicMaterial({ map: scoreTexture }));
   board.position.set(0, 5.4, -17.05);
   scene.add(board);
+  const boardBack = new THREE.Mesh(new THREE.PlaneGeometry(5.3, 2), new THREE.MeshBasicMaterial({ map: scoreTexture }));
+  boardBack.position.set(0, 5.4, -17.055);
+  boardBack.rotation.y = Math.PI;
+  scene.add(boardBack);
   const boardLights = standard(THREE, '#b7b8ad', 0.45, 0.35);
   for (const x of [-2.7, 2.7]) addBox(THREE, scene, [0.12, 2.4, 0.12], [x, 5.2, -17.15], boardLights);
 
@@ -227,16 +259,85 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
     crown.castShadow = !lite;
     scene.add(crown);
   }
-  for (let i = -3; i <= 3; i++) {
-    const hill = new THREE.Mesh(new THREE.ConeGeometry(18 + Math.abs(i) * 2, 12 + Math.random() * 5, 6), standard(THREE, i % 2 ? '#68795f' : '#7f8260', 1));
-    hill.position.set(i * 24, 3, -58 - Math.abs(i) * 2);
-    hill.scale.z = 0.48;
-    scene.add(hill);
+  const palmBark = standard(THREE, '#786044', 0.96);
+  const frondMaterial = standard(THREE, '#527044', 0.9);
+  for (let i = 0; i < 6; i++) {
+    const side = i % 2 ? 1 : -1;
+    const x = side * (18 + (i % 3) * 3);
+    const z = -27 - Math.floor(i / 2) * 10;
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.22, 7.2, 12), palmBark);
+    trunk.position.set(x, 3.6, z);
+    trunk.rotation.z = side * 0.035;
+    trunk.castShadow = !lite;
+    scene.add(trunk);
+    for (let frond = 0; frond < 9; frond++) {
+      const angle = frond / 9 * Math.PI * 2;
+      const dx = Math.cos(angle);
+      const dz = Math.sin(angle);
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(x, 7.1, z),
+        new THREE.Vector3(x + dx * 0.8, 7.75, z + dz * 0.8),
+        new THREE.Vector3(x + dx * 2.5, 7.15, z + dz * 2.5),
+      ]);
+      const leaf = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.045, 5, false), frondMaterial);
+      leaf.castShadow = !lite;
+      scene.add(leaf);
+      for (const t of [0.35, 0.53, 0.71, 0.88]) {
+        const point = curve.getPoint(t);
+        const leaflet = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.72, 5), frondMaterial);
+        leaflet.position.copy(point).add(new THREE.Vector3(-dz * 0.28, -0.12, dx * 0.28));
+        leaflet.rotation.z = Math.PI / 2 - angle;
+        leaflet.rotation.x = -0.3;
+        leaflet.castShadow = !lite;
+        scene.add(leaflet);
+      }
+    }
+  }
+  const towerMetal = standard(THREE, '#505a54', 0.48, 0.6);
+  const lampMaterial = new THREE.MeshBasicMaterial({ color: '#fff1cf' });
+  for (const x of [-15, 15]) {
+    for (const z of [-24, 24]) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.18, 9.2, 10), towerMetal);
+      pole.position.set(x, 4.6, z);
+      pole.castShadow = true;
+      scene.add(pole);
+      addBox(THREE, scene, [1.8, 0.14, 0.18], [x, 9.15, z], towerMetal);
+      for (let lamp = 0; lamp < 4; lamp++) {
+        const fixture = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.08), lampMaterial);
+        fixture.position.set(x - 0.64 + lamp * 0.42, 9.05, z - 0.04);
+        scene.add(fixture);
+      }
+    }
+  }
+  for (let layer = 0; layer < 3; layer++) {
+    const positions: number[] = [];
+    const indices: number[] = [];
+    for (let row = 0; row <= 8; row++) {
+      const z = -48 - layer * 12 - row * 2.5;
+      for (let column = 0; column <= 48; column++) {
+        const x = -96 + column * 4;
+        const ridge = 10 + Math.sin(x * 0.045 + layer * 1.7) * 3.5 + Math.sin(x * 0.13 + layer) * 1.2;
+        positions.push(x, ridge - row * 0.08, z);
+        if (row < 8 && column < 48) {
+          const a = row * 49 + column;
+          indices.push(a, a + 49, a + 1, a + 1, a + 49, a + 50);
+        }
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const ridge = new THREE.Mesh(geometry, standard(THREE, ['#52654d', '#657353', '#798066'][layer], 1));
+    ridge.material.side = THREE.DoubleSide;
+    scene.add(ridge);
   }
 
   return {
     bodies,
     heads,
+    arms,
+    hats,
     crowd,
     crowdJump,
     dummy,
@@ -363,7 +464,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   renderer.shadowMap.enabled = true;
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog('#c9aa87', 42, 98);
-  const camera = new THREE.PerspectiveCamera(43, 1, 0.1, 190);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 190);
 
   const sky = buildSky(THREE, scene);
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -372,34 +473,36 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   scene.environment = envTarget.texture;
   const hemi = new THREE.HemisphereLight('#ffe7c6', '#53695f', lite ? 1.3 : 1.45);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight('#ffe0b1', 3.15);
-  sun.position.set(-25, 17, 27);
+  const sun = new THREE.DirectionalLight('#ffd2a0', 2.7);
+  sun.position.set(-25, 12, 27);
   sun.target.position.set(0, 0, 0);
   sun.castShadow = true;
   sun.shadow.mapSize.set(lite ? 1024 : 2048, lite ? 1024 : 2048);
-  sun.shadow.camera.left = -19;
-  sun.shadow.camera.right = 19;
-  sun.shadow.camera.top = 29;
-  sun.shadow.camera.bottom = -29;
+  sun.shadow.camera.left = -15;
+  sun.shadow.camera.right = 15;
+  sun.shadow.camera.top = 22;
+  sun.shadow.camera.bottom = -22;
   sun.shadow.camera.near = 0.5;
-  sun.shadow.camera.far = 100;
+  sun.shadow.camera.far = 68;
   sun.shadow.bias = -0.00034;
   sun.shadow.normalBias = 0.026;
   scene.add(sun, sun.target);
-  const fill = new THREE.DirectionalLight('#d7e9f2', 0.72);
+  const fill = new THREE.DirectionalLight('#d7e9f2', 0.66);
   fill.position.set(15, 11, -19);
   scene.add(fill);
 
-  buildCourt(THREE, scene, lite);
+  buildCourt(THREE, scene, lite, renderer.capabilities.getMaxAnisotropy());
   const stadium = buildStadium(THREE, scene, lite);
   const net = buildNet(THREE, scene);
   buildOfficial(THREE, scene, -7.3, 0.7, '#f2f0e6', 1.12);
   buildOfficial(THREE, scene, -5.9, -2.1, '#b5273f', 0.86);
   buildOfficial(THREE, scene, 5.9, 1.1, '#f1eee4', 0.88);
   const benches = standard(THREE, '#694d3b', 0.86);
+  const towel = standard(THREE, '#f0ede2', 0.94);
   for (const z of [-8.5, 8.5]) {
     addBox(THREE, scene, [2.7, 0.14, 0.58], [7.5, 0.45, z], benches, true);
     addBox(THREE, scene, [2.7, 0.56, 0.1], [7.5, 0.77, z - Math.sign(z) * 0.2], benches, true);
+    addBox(THREE, scene, [0.56, 0.035, 0.48], [7.3, 0.55, z], towel);
     for (let i = 0; i < 2; i++) buildOfficial(THREE, scene, 6.8 + i * 0.75, z, i === 0 ? '#c8e5dc' : '#d1b269', 0.68);
   }
 
@@ -442,6 +545,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   let currentSide = 0;
   const scoreboard = stadium.scoreCtx;
   let scoreRefresh = 0;
+  let playerX = 0;
 
   function updateScoreboard(world: World) {
     const ctx = scoreboard;
@@ -470,20 +574,20 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     camera.aspect = viewWidth / viewHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(viewWidth, viewHeight, false);
-    positionCamera(0, 0);
+    positionCamera(0);
   }
 
-  function positionCamera(dt: number, ballX: number) {
+  function positionCamera(dt: number) {
     const portrait = camera.aspect < 0.78;
-    const zoom = portrait ? 29 : camera.aspect > 1.55 ? 20.5 : 23;
-    const height = portrait ? 9.5 : 6.5;
+    const zoom = portrait ? COURT_LENGTH / 2 + 10.5 : COURT_LENGTH / 2 + 7;
+    const height = portrait ? 6.4 : 4.5;
     const side = currentSide === 0 ? 1 : -1;
-    const desiredX = ballX * 0.045;
-    camera.position.x = damp(camera.position.x, desiredX, 1.1, dt || 1);
+    const desiredX = clamp(playerX, -3.2, 3.2);
+    camera.position.x = damp(camera.position.x, desiredX, 2.6, dt || 1);
     camera.position.y = height;
     camera.position.z = side * zoom;
-    const targetZ = -side * 0.2;
-    camera.lookAt(desiredX * 0.3, 0.7, targetZ);
+    const targetZ = -side * 1.2;
+    camera.lookAt(desiredX * 0.22, portrait ? 0.8 : 0.5, targetZ);
   }
 
   function update(world: World, dt: number, humanSeats: ReadonlySet<number>, side: number) {
@@ -501,6 +605,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       model.root.visible = true;
       model.root.position.x = Math.max(-half - 1, Math.min(half + 1, player.x));
       updatePlayer(model, player, world.ball, dt, humanSeats.has(player.seat));
+      if (humanSeats.has(player.seat) && player.team === side) playerX = player.x;
     }
     ball.visible = world.ball.inPlay || world.phase === 'serve-ready' || world.phase === 'serve-toss';
     ball.position.set(world.ball.p.x, world.ball.p.y + (world.phase === 'serve-toss' ? Math.sin(world.serveClock * 4) * 0.045 : 0), world.ball.p.z);
@@ -560,13 +665,27 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       dummy.rotation.z = Math.sin(time * 1.1 + person.phase) * 0.035;
       dummy.updateMatrix();
       stadium.bodies.setMatrixAt(i, dummy.matrix);
-      dummy.position.set(person.x, person.y + 0.2 + jump, person.z);
-      dummy.rotation.set(0, 0, 0);
+      dummy.position.set(person.x, person.y + 0.23 + jump, person.z);
+      dummy.rotation.set(0, Math.atan2(world.ball.p.x - person.x, world.ball.p.z - person.z), 0);
       dummy.updateMatrix();
       stadium.heads.setMatrixAt(i, dummy.matrix);
+      dummy.rotation.set(0, 0, 0);
+      dummy.position.set(person.x, person.y + 0.32 + jump, person.z);
+      dummy.scale.setScalar(person.hue > 0.82 ? 1 : 0.001);
+      dummy.updateMatrix();
+      stadium.hats.setMatrixAt(i, dummy.matrix);
+      dummy.scale.setScalar(1);
+      for (const side of [-1, 1]) {
+        dummy.position.set(person.x + side * 0.105, person.y - 0.055 + jump, person.z);
+        dummy.rotation.z = side * (0.35 + Math.sin(time * 1.4 + person.phase) * 0.08);
+        dummy.updateMatrix();
+        stadium.arms.setMatrixAt(i * 2 + (side > 0 ? 1 : 0), dummy.matrix);
+      }
     });
     stadium.bodies.instanceMatrix.needsUpdate = true;
     stadium.heads.instanceMatrix.needsUpdate = true;
+    stadium.arms.instanceMatrix.needsUpdate = true;
+    stadium.hats.instanceMatrix.needsUpdate = true;
     if (world.match.points[0] + world.match.points[1] !== pointsWon) {
       pointsWon = world.match.points[0] + world.match.points[1];
       stadium.crowdJump.value = 1;
@@ -576,7 +695,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       scoreRefresh = 0;
       updateScoreboard(world);
     }
-    positionCamera(dt, world.ball.p.x);
+    positionCamera(dt);
   }
 
   function burst(x: number, z: number, line: boolean) {

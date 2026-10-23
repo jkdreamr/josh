@@ -1,41 +1,27 @@
 type Three = typeof import('three');
 
-function canvasTexture(THREE: Three, canvas: HTMLCanvasElement, color = true) {
+function canvasTexture(THREE: Three, canvas: HTMLCanvasElement, color = true, anisotropy = 8) {
   const texture = new THREE.CanvasTexture(canvas);
   if (color) texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
+  texture.anisotropy = anisotropy;
   texture.needsUpdate = true;
   return texture;
 }
 
-export function courtTextures(THREE: Three, lite: boolean) {
+export function courtTextures(THREE: Three, lite: boolean, anisotropy = 8) {
   const size = lite ? 512 : 1024;
   const color = document.createElement('canvas');
   color.width = color.height = size;
   const ctx = color.getContext('2d')!;
-  ctx.fillStyle = '#245c80';
+  ctx.fillStyle = '#285f82';
   ctx.fillRect(0, 0, size, size);
-  for (let i = 0; i < size * size * 0.12; i++) {
-    const shade = Math.floor(30 + Math.random() * 55);
-    ctx.fillStyle = `rgba(${shade},${shade + 10},${shade + 14},${Math.random() * 0.12})`;
+  for (let i = 0; i < size * size * 0.055; i++) {
+    const shade = 4 + Math.floor(Math.random() * 10);
+    ctx.fillStyle = `rgba(${shade},${shade + 5},${shade + 8},${0.035 + Math.random() * 0.045})`;
     const x = Math.random() * size;
     const y = Math.random() * size;
-    ctx.fillRect(x, y, 1 + Math.random() * 3, 1);
-  }
-  ctx.globalAlpha = 0.13;
-  for (let i = 0; i < 22; i++) {
-    ctx.beginPath();
-    ctx.ellipse(Math.random() * size, Math.random() * size, 14 + Math.random() * 95, 1 + Math.random() * 4, Math.random() * Math.PI, 0, Math.PI * 2);
-    ctx.strokeStyle = '#d8e0dc';
-    ctx.lineWidth = 2 + Math.random() * 2;
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
-  for (let i = 0; i < 18; i++) {
-    ctx.beginPath();
-    ctx.ellipse(size * (0.22 + Math.random() * 0.56), Math.random() * size, 8 + Math.random() * 18, 3 + Math.random() * 6, Math.random() * Math.PI, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(21,31,38,.13)';
-    ctx.fill();
+    const grain = 1 + Math.random() * 2;
+    ctx.fillRect(x, y, grain, grain);
   }
 
   const normal = document.createElement('canvas');
@@ -43,28 +29,34 @@ export function courtTextures(THREE: Three, lite: boolean) {
   const normalCtx = normal.getContext('2d')!;
   normalCtx.fillStyle = '#8080ff';
   normalCtx.fillRect(0, 0, size, size);
-  for (let i = 0; i < size * size * 0.035; i++) {
-    const shade = 110 + Math.floor(Math.random() * 45);
-    normalCtx.fillStyle = `rgb(${shade},${shade},255)`;
-    normalCtx.fillRect(Math.random() * size, Math.random() * size, 1, 1);
+  for (let i = 0; i < size * size * 0.045; i++) {
+    const red = 118 + Math.floor(Math.random() * 21);
+    const green = 118 + Math.floor(Math.random() * 21);
+    normalCtx.fillStyle = `rgb(${red},${green},255)`;
+    const grain = 1 + Math.random() * 2;
+    normalCtx.fillRect(Math.random() * size, Math.random() * size, grain, grain);
   }
   const roughness = document.createElement('canvas');
   roughness.width = roughness.height = size;
   const roughCtx = roughness.getContext('2d')!;
   roughCtx.fillStyle = '#b7b7b7';
   roughCtx.fillRect(0, 0, size, size);
-  for (let i = 0; i < size * size * 0.02; i++) {
-    const shade = 110 + Math.floor(Math.random() * 120);
+  for (let i = 0; i < size * size * 0.025; i++) {
+    const shade = 166 + Math.floor(Math.random() * 40);
     roughCtx.fillStyle = `rgb(${shade},${shade},${shade})`;
-    roughCtx.fillRect(Math.random() * size, Math.random() * size, 1, 1);
+    const grain = 1 + Math.random() * 2;
+    roughCtx.fillRect(Math.random() * size, Math.random() * size, grain, grain);
   }
 
-  const repeats = lite ? 5 : 8;
-  const maps = [canvasTexture(THREE, color), canvasTexture(THREE, normal, false), canvasTexture(THREE, roughness, false)];
+  const maps = [
+    canvasTexture(THREE, color, true, anisotropy),
+    canvasTexture(THREE, normal, false, anisotropy),
+    canvasTexture(THREE, roughness, false, anisotropy),
+  ];
   for (const map of maps) {
     map.wrapS = THREE.RepeatWrapping;
     map.wrapT = THREE.RepeatWrapping;
-    map.repeat.set(repeats, repeats);
+    map.repeat.set(11, 24);
   }
   return { color: maps[0], normal: maps[1], roughness: maps[2] };
 }
@@ -113,7 +105,7 @@ export function ballTexture(THREE: Three, lite: boolean) {
   return canvasTexture(THREE, canvas);
 }
 
-export function windscreenTexture(THREE: Three) {
+export function windscreenTexture(THREE: Three, reversed = false) {
   const canvas = document.createElement('canvas');
   canvas.width = 1024;
   canvas.height = 256;
@@ -125,10 +117,14 @@ export function windscreenTexture(THREE: Three) {
     ctx.fillRect(x, 0, 1, canvas.height);
   }
   ctx.fillStyle = '#f1eee2';
-  ctx.font = '700 96px Georgia, serif';
+  ctx.font = '700 76px Georgia, serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('STANFORD  •  TAUBE STADIUM', canvas.width / 2, canvas.height / 2);
+  if (reversed) {
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+  }
+  ctx.fillText('STANFORD  •  TAUBE', canvas.width / 2, canvas.height / 2);
   return canvasTexture(THREE, canvas);
 }
 
