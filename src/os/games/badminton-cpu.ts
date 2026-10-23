@@ -50,6 +50,19 @@ export function stepCpuBody(
         if (mind.target === null || clock >= mind.predictAt) {
           const prediction = simulateLanding({ x: flight.shuttle.x, y: flight.shuttle.y }, { vx: flight.shuttle.vx, vy: flight.shuttle.vy });
           mind.target = clampToHalf(prediction.x - direction * 0.4, direction);
+          if (profile === CPU_PROFILES.olympic) {
+            let preview = flight;
+            for (let time = PLAYER_STEP; time < 2; time += PLAYER_STEP) {
+              preview = stepFlight(preview, PLAYER_STEP);
+              if (preview.status !== 'flying') break;
+              const { x, y } = preview.shuttle;
+              const intercept = clampToHalf(x - direction * 0.5, direction);
+              if (x * direction < 0 && y < 2 && Math.abs(intercept - body.x) < profile.speed * Math.max(0, time - 0.12) + 0.35) {
+                mind.target = intercept;
+                break;
+              }
+            }
+          }
           mind.predictAt = clock + 120;
         }
         target = mind.target;

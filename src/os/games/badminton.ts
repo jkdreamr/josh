@@ -20,7 +20,7 @@ export type FlightStatus = 'flying' | 'landed' | 'fault';
 export type FlightFault = 'net' | 'out' | 'own-side' | 'short-service';
 export type MatchLength = 'quick' | 'game' | 'match';
 export type ServiceCourt = 'right' | 'left';
-export type Difficulty = 'easy' | 'normal' | 'hard' | 'pro';
+export type Difficulty = 'easy' | 'normal' | 'hard' | 'pro' | 'olympic';
 
 export type Shuttle = Point2D & { vx: number; vy: number };
 
@@ -80,6 +80,7 @@ export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
   hard: { label: 'Hard', reactionMs: 110, speed: 5, accuracy: 1, dropChance: 0.42 },
   // Quicker first step and feet than Hard, but no faster than a human runs (5.3 m/s) by much, and the same reach and jump.
   pro: { label: 'Pro', reactionMs: 80, speed: 5.6, accuracy: 1.12, dropChance: 0.5, tactics: true },
+  olympic: { label: 'Olympic', reactionMs: 20, speed: 6, accuracy: 1.15, dropChance: 0.7, tactics: true },
 };
 
 /**
@@ -91,6 +92,7 @@ export const SMASH_DEFENSE: Record<Difficulty, { miss: number; block: number }> 
   normal: { miss: 0.36, block: 0.32 },
   hard: { miss: 0.24, block: 0.3 },
   pro: { miss: 0.14, block: 0.26 },
+  olympic: { miss: 0.012, block: 0.06 },
 };
 
 /** A tap is a half smash; a full charge is everything the hitter has. */
@@ -673,6 +675,10 @@ export function proChooseShot(contact: Point2D, opponentDistanceFromNet: number,
   return 'drive';
 }
 
+export function parseDifficulty(value: unknown): Difficulty {
+  return typeof value === 'string' && Object.hasOwn(CPU_PROFILES, value) ? value as Difficulty : 'normal';
+}
+
 export type CpuReturn = { kind: 'miss' } | { kind: 'hit'; type: ShotType; accuracy: number; options: ShotOptions };
 
 /**
@@ -689,6 +695,7 @@ export function cpuReturn(
   incomingPower = 0.5,
 ): CpuReturn {
   const profile = CPU_PROFILES[difficulty];
+  if (difficulty === 'olympic' && random() < 0.002) return { kind: 'miss' };
   const pressure = smashPressure(incoming, flightSeconds);
   if (pressure > 0) {
     const defense = SMASH_DEFENSE[difficulty];
@@ -703,6 +710,18 @@ export function cpuReturn(
     }
   }
   const accuracy = pressuredAccuracy(profile.accuracy, pressure);
+  if (difficulty === 'olympic') {
+    const fromNet = Math.abs(contact.x);
+    const opponentDeep = opponentDistanceFromNet > 3.5;
+    let type: ShotType;
+    if (contact.y >= SMASH_MIN_HEIGHT && fromNet < 3.5) type = 'smash';
+    else if (contact.y >= OVERHEAD_HEIGHT) {
+      type = opponentDeep ? (random() < 0.8 ? 'drop' : 'smash') : 'clear';
+    } else if (fromNet < 2.2) type = opponentDeep ? 'net' : 'lift';
+    else type = opponentDeep ? 'drop' : 'clear';
+    const short = type === 'net' || type === 'drop';
+    return { kind: 'hit', type, accuracy, options: { depth: short ? 0 : 1, ...(type === 'smash' ? { power: fromNet < 3.5 ? 1 : 0.65 } : {}) } };
+  }
   if (!profile.tactics) {
     const type = cpuChooseShot(contact, opponentDistanceFromNet, profile, random);
     return { kind: 'hit', type, accuracy, options: type === 'smash' ? { power: 0.3 + random() * 0.6 } : {} };

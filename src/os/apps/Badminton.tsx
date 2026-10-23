@@ -16,6 +16,7 @@ import {
   newStats,
   opposite,
   planShot,
+  parseDifficulty,
   pressuredAccuracy,
   pointSituation,
   recordRally,
@@ -126,7 +127,7 @@ const KEYS: Record<'p1' | 'p2', Record<keyof Controls | 'hit', string[]>> = {
 };
 
 const LENGTH_LABEL: Record<MatchLength, string> = { quick: 'Quick to 11', game: 'Game to 21', match: 'Best of Three' };
-const DIFFICULTY_LABEL: Record<Difficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard', pro: 'Pro' };
+const DIFFICULTY_LABEL: Record<Difficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard', pro: 'Pro', olympic: 'Olympic' };
 
 function loadSettings(): Settings {
   try {
@@ -135,7 +136,7 @@ function loadSettings(): Settings {
     const parsed = JSON.parse(raw) as Partial<Settings>;
     return {
       mode: parsed.mode === 'two' ? 'two' : 'cpu',
-      difficulty: parsed.difficulty && parsed.difficulty in CPU_PROFILES ? parsed.difficulty : 'normal',
+      difficulty: parseDifficulty(parsed.difficulty),
       length: parsed.length && parsed.length in LENGTH_LABEL ? parsed.length : 'game',
       sound: parsed.sound !== false,
     };
