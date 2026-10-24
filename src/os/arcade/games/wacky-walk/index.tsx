@@ -3,7 +3,7 @@ import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useKe
 import type { GameProps } from '../../types';
 import { applyTouch, buildCourse, checkpointAt, COURSE_NAMES, progressOf, respawnPoint } from './courses';
 import { createBrain, resetBrain, thinkBot, type Brain } from './bots';
-import { createBody, insideZone, respawn, STEP, stepBody, updateCourse } from './physics';
+import { cameraRelative, createBody, insideZone, respawn, STEP, stepBody, updateCourse } from './physics';
 import { hash } from './rng';
 import { BOT_NAMES, COLORS, botSkill, offlineEntrants } from './roster';
 import {
@@ -608,9 +608,7 @@ function Play() {
       }
     }
     const cam = cameraRef.current;
-    const cos = Math.cos(cam.yaw), sin = Math.sin(cam.yaw);
-    const mx = localX * cos + localZ * sin;
-    const mz = -localX * sin + localZ * cos;
+    const { mx, mz } = cameraRelative(localX, localZ, cam.yaw);
     const jump = pendingJumpRef.current;
     const dive = pendingDiveRef.current;
     pendingJumpRef.current = false;

@@ -4,7 +4,7 @@ import { buildCourse, checkpointAt, progressOf, respawnPoint, touchTile, tileFal
 import { createBrain, resetBrain, thinkBot } from '../src/os/arcade/games/wacky-walk/bots.ts';
 import { COLORS, BOT_NAMES, botSkill, offlineEntrants } from '../src/os/arcade/games/wacky-walk/roster.ts';
 import { hash, mulberry32 } from '../src/os/arcade/games/wacky-walk/rng.ts';
-import { createBody, groundBelow, insideZone, poseOf, rayCast, respawn, setPose, STEP, stepBody, updateCourse, RADIUS, HEIGHT, BIG_HIT } from '../src/os/arcade/games/wacky-walk/physics.ts';
+import { cameraRelative, createBody, groundBelow, insideZone, poseOf, rayCast, respawn, setPose, STEP, stepBody, updateCourse, RADIUS, HEIGHT, BIG_HIT } from '../src/os/arcade/games/wacky-walk/physics.ts';
 import { COUNT, courseOf, createShow, INTRO, markFall, markFinish, OUTRO, pickRace, placeOf, playTime, quotas, statusOf, stepShow } from '../src/os/arcade/games/wacky-walk/show.ts';
 import { fallPacket, finishPacket, Interp, movePacket, packBody, parsePacket, playersPacket, showOf, showPacket, tilePacket, unpackBody } from '../src/os/arcade/games/wacky-walk/net.ts';
 import { EV } from '../src/os/arcade/games/wacky-walk/types.ts';
@@ -24,6 +24,27 @@ function floorCourse(slip = false): Course {
     pose: p, prev: poseOf(0, -0.25, 0), on: true, ...(slip ? { slip: true } : {}),
   }]);
 }
+
+test('camera-relative movement follows the camera forward and screen-right at every yaw', () => {
+  const look = { x: 2, z: -3 };
+  const distance = 9;
+  for (const yaw of [0, 0.7, Math.PI / 2, Math.PI, -2]) {
+    const camera = {
+      x: look.x - Math.sin(yaw) * distance,
+      z: look.z - Math.cos(yaw) * distance,
+    };
+    const forward = {
+      x: (look.x - camera.x) / distance,
+      z: (look.z - camera.z) / distance,
+    };
+    const movedForward = cameraRelative(0, 1, yaw);
+    assert.ok(Math.abs(movedForward.mx - forward.x) < 1e-12);
+    assert.ok(Math.abs(movedForward.mz - forward.z) < 1e-12);
+    const movedRight = cameraRelative(1, 0, yaw);
+    const screenRight = { x: -forward.z, z: forward.x };
+    assert.ok(Math.abs(movedRight.mx * screenRight.x + movedRight.mz * screenRight.z - 1) < 1e-12);
+  }
+});
 
 test('seeded helpers and roster are stable, bounded, and readable', () => {
   assert.equal(hash(1, 2, 3), hash(1, 2, 3));
