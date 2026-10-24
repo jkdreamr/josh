@@ -1,0 +1,214 @@
+.g-dead-week {
+  --g-dead-week-u: 1;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #fbf8ef;
+  font-family: 'Bricolage Grotesque', 'Arial Rounded MT Bold', system-ui, sans-serif;
+  color: #1d1b22;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.g-dead-week-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+.g-dead-week-board {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(96%, 760px);
+  display: flex;
+  flex-direction: column;
+  gap: calc(6px * var(--g-dead-week-u));
+  pointer-events: none;
+  font-size: calc(13px * var(--g-dead-week-u));
+}
+.g-dead-week-board.is-results {
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(-1deg);
+  background: #fffdf6;
+  border: 3px solid #1d1b22;
+  border-radius: 14px;
+  box-shadow: 5px 6px 0 #1d1b22;
+  padding: calc(10px * var(--g-dead-week-u));
+  animation: g-dead-week-pop 0.22s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+.g-dead-week-board.is-ghost {
+  bottom: calc(52px * var(--g-dead-week-u));
+  max-height: 30%;
+  overflow: auto;
+}
+.g-dead-week-banner {
+  text-align: center;
+  font-weight: 900;
+  font-size: 1.35em;
+  background: linear-gradient(transparent 35%, rgba(255, 240, 74, 0.85) 35%, rgba(255, 240, 74, 0.85) 85%, transparent 85%);
+}
+.g-dead-week-banner b {
+  color: #8c1515;
+}
+.g-dead-week-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(132px * var(--g-dead-week-u)), 1fr));
+  gap: calc(5px * var(--g-dead-week-u));
+}
+.g-dead-week-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+  background: #fff;
+  border: 2px solid #1d1b22;
+  border-radius: 9px;
+  box-shadow: 2px 2px 0 #1d1b22;
+  min-height: calc(42px * var(--g-dead-week-u));
+}
+.g-dead-week-tile.is-you {
+  background: #fff9b0;
+}
+.g-dead-week-tile.is-pass {
+  background: #c9f9cf;
+}
+.g-dead-week-tile.is-fail {
+  background: #ffd0ea;
+  animation: g-dead-week-wobble 0.35s;
+}
+.g-dead-week-tile.is-out {
+  opacity: 0.55;
+  border-style: dashed;
+  box-shadow: none;
+}
+.g-dead-week-name {
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 3.2em;
+}
+.g-dead-week-cups {
+  display: flex;
+  gap: 3px;
+}
+.g-dead-week-cups i {
+  width: 0.9em;
+  height: 1em;
+  border: 2px solid #1d1b22;
+  border-top-width: 4px;
+  border-top-color: #8c1515;
+  border-radius: 1px 1px 4px 4px;
+  background: #eee;
+}
+.g-dead-week-cups i.is-full {
+  background: #9a6a3f;
+}
+.g-dead-week-cups em {
+  font-style: normal;
+  font-weight: 800;
+}
+.g-dead-week-mark {
+  position: absolute;
+  right: 6px;
+  top: 5px;
+  font-weight: 900;
+  font-size: 0.85em;
+  transform: rotate(-8deg);
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  padding: 0 3px;
+  color: #1d8a3a;
+}
+.g-dead-week-tile.is-fail .g-dead-week-mark {
+  color: #8c1515;
+}
+.g-dead-week-mark.is-wait {
+  color: #777;
+  border-color: transparent;
+}
+.g-dead-week-curse {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  font-size: 0.8em;
+  font-weight: 900;
+  background: #ff7fcf;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.g-dead-week-vote {
+  pointer-events: auto;
+  text-align: center;
+  font-weight: 800;
+}
+.g-dead-week-vote > div {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 4px;
+}
+.g-dead-week-vote button {
+  position: relative;
+  min-height: 44px;
+  min-width: 44px;
+  flex: 1;
+  max-width: 180px;
+  font: inherit;
+  font-weight: 900;
+  color: #1d1b22;
+  background: #fff04a;
+  border: 3px solid #1d1b22;
+  border-radius: 10px;
+  box-shadow: 3px 3px 0 #1d1b22;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+}
+.g-dead-week-vote button:nth-child(2) {
+  background: #7cf08a;
+}
+.g-dead-week-vote button:nth-child(3) {
+  background: #ff7fcf;
+}
+.g-dead-week-vote button small {
+  font-weight: 700;
+  font-size: 0.75em;
+}
+.g-dead-week-vote button em {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  font-style: normal;
+  background: #8c1515;
+  color: #fff;
+  border-radius: 999px;
+  min-width: 20px;
+  padding: 1px 5px;
+}
+.g-dead-week-vote button.is-picked {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 #1d1b22;
+  outline: 3px dashed #8c1515;
+  outline-offset: 2px;
+}
+@keyframes g-dead-week-pop {
+  from {
+    transform: translate(-50%, -50%) scale(0.6) rotate(-6deg);
+  }
+}
+@keyframes g-dead-week-wobble {
+  25% {
+    transform: rotate(-3deg);
+  }
+  75% {
+    transform: rotate(3deg);
+  }
+}
