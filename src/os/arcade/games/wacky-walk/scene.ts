@@ -9,7 +9,7 @@ type Three = typeof import('three');
 
 export type BodyView = { x: number; y: number; z: number; vx: number; vy: number; vz: number; yaw: number; state: BodyState; squash: number };
 export type PlayerLook = { id: number; color: number };
-export type CamState = { yaw: number; pitch: number; dist: number };
+export type CamState = { yaw: number; pitch: number; dist: number; lookY?: number; lookAt?: { x: number; y: number; z: number } };
 
 export type View = {
   gl: GL;
@@ -386,8 +386,8 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       const ns = p.g.attributes.normal;
       const surface = p.surface ?? 'plain';
       tmpC.setHex(surface === 'grass' || surface === 'stripe' || surface === 'pad' ? 0xffffff : p.c);
-      const scale = surface === 'grass' ? 0.24 : surface === 'sandstone' ? 0.5 : surface === 'roof' ? 0.42 :
-        surface === 'paper' ? 0.6 : surface === 'stripe' || surface === 'pad' ? 0.32 : surface === 'coconut' ? 0.8 : 1;
+      const scale = surface === 'grass' ? 0.24 : surface === 'sandstone' ? 2 : surface === 'roof' ? 0.42 :
+        surface === 'paper' ? 0.6 : surface === 'stripe' ? 1.5 : surface === 'pad' ? 1.25 : surface === 'coconut' ? 0.8 : 1;
       for (let i = 0; i < ps.count; i++) {
         tmpV.fromBufferAttribute(ps, i).applyMatrix4(p.m);
         pos[o * 3] = tmpV.x;
@@ -397,7 +397,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         nor[o * 3] = tmpV.x;
         nor[o * 3 + 1] = tmpV.y;
         nor[o * 3 + 2] = tmpV.z;
-        const shade = tmpV.y > 0.55 ? 1.12 : tmpV.y < -0.55 ? 0.68 : 0.88;
+        const shade = surface === 'pad' && Math.abs(tmpV.y) < 0.55 ? 0.56 : tmpV.y > 0.55 ? 1.12 : tmpV.y < -0.55 ? 0.68 : 0.88;
         col[o * 3] = Math.min(1, tmpC.r * shade);
         col[o * 3 + 1] = Math.min(1, tmpC.g * shade);
         col[o * 3 + 2] = Math.min(1, tmpC.b * shade);
@@ -505,7 +505,9 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const foamGeo = keepG(new THREE.TorusGeometry(1, 0.12, touch ? 4 : 6, touch ? 12 : 18));
   const foamMat = mat(new THREE.MeshStandardMaterial({ color: 0xf3ffff, transparent: true, opacity: 0.78, roughness: 0.35, depthWrite: false }));
   const jetMat = mat(new THREE.MeshStandardMaterial({ color: 0xd6f7fb, transparent: true, opacity: 0.58, roughness: 0.18, depthWrite: false }));
-  const crownGoldMat = mat(lambert(0xffc93c, { emissive: 0x664400 }));
+  const crownGoldMat = mat(new THREE.MeshStandardMaterial({
+    color: 0xffd23f, emissive: 0xffa800, emissiveIntensity: 0.85, metalness: 0.55, roughness: 0.22,
+  }));
   const crownPaperMat = mat(lambert(0xfffaf0));
 
   // ---------------------------------------------------------------- course
@@ -912,7 +914,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         crown.position.set(z.x, z.y, z.z);
         courseRoot.add(crown);
       }
-      if (z.kind === 'finish') {
+      if (z.kind === 'finish' && course.kind === 'race') {
         const parts: Part[] = [];
         for (let i = 0; i < 2; i++) parts.push({ g: unit.box, m: mtx(z.x + (i ? 1 : -1) * (z.hx + 0.4), z.y + 2.5, z.z, 0.8, 5, 0.8), c: 0xffffff });
         parts.push({ g: unit.box, m: mtx(z.x, z.y + 5.2, z.z, z.hx * 2 + 1.6, 1.2, 0.9), c: CARDINAL });
@@ -949,7 +951,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       courseRoot.add(crowdMesh);
     }
     const flagColors = [0xb12e3e, 0xffcf58, 0x56b99c, 0x7a9dd9, 0xf0eef0];
-    if (course.path.length > 0) {
+    if (course.id !== 'hoover' && course.path.length > 0) {
       for (let i = 0; i < course.path.length; i += 2) {
         const point = course.path[i];
         const before = course.path[Math.max(0, i - 1)];
@@ -981,7 +983,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     const bloomColors = [0xf47d95, 0xfff0ad, 0x9fbaff, 0xd5a5ed, 0xf7f3e8];
     let flowerIndex = 0;
     let bushIndex = 0;
-    for (let i = 2; i < course.path.length - 2; i += 4) {
+    for (let i = 2; course.id !== 'hoover' && i < course.path.length - 2; i += 4) {
       const point = course.path[i];
       const before = course.path[i - 1], after = course.path[i + 1];
       const dx = after.x - before.x, dz = after.z - before.z;
@@ -1020,24 +1022,67 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     scene.fog = new THREE.Fog(pal.fog, center.r * 0.9 + 60, center.r * 2.4 + 200);
   }
   // ---------------------------------------------------------------- players
-  const beanGeo = keepG(new THREE.CapsuleGeometry(0.39, 0.4, touch ? 3 : 5, touch ? 12 : 20));
+  const beanProfile = [
+    new THREE.Vector2(0, -0.6), new THREE.Vector2(0.21, -0.56), new THREE.Vector2(0.34, -0.47),
+    new THREE.Vector2(0.42, -0.32), new THREE.Vector2(0.45, -0.12), new THREE.Vector2(0.44, 0.1),
+    new THREE.Vector2(0.39, 0.28), new THREE.Vector2(0.31, 0.43), new THREE.Vector2(0.19, 0.54),
+    new THREE.Vector2(0.08, 0.59), new THREE.Vector2(0, 0.6),
+  ];
+  const beanGeo = keepG(new THREE.LatheGeometry(beanProfile, touch ? 16 : 24));
   const gownProfile = [
     new THREE.Vector2(0, 0), new THREE.Vector2(0.48, 0.03), new THREE.Vector2(0.55, 0.14),
     new THREE.Vector2(0.42, 0.34), new THREE.Vector2(0.3, 0.68), new THREE.Vector2(0.26, 0.86), new THREE.Vector2(0, 0.88),
   ];
   const gownGeo = keepG(new THREE.LatheGeometry(gownProfile, touch ? 12 : 18));
+  const profileRadius = (profile: typeof beanProfile, y: number) => {
+    for (let i = 1; i < profile.length; i++) {
+      if (y <= profile[i].y) {
+        const before = profile[i - 1], after = profile[i];
+        const t = (y - before.y) / (after.y - before.y);
+        return before.x + (after.x - before.x) * Math.max(0, Math.min(1, t));
+      }
+    }
+    return 0;
+  };
+  const stoleGeo = keepG(new THREE.BufferGeometry());
+  const stolePositions: number[] = [];
+  const stoleIndices: number[] = [];
+  const stoleRows = touch ? 8 : 14;
+  for (const facing of [-1, 1]) {
+    for (const side of [-1, 1]) {
+      const base = stolePositions.length / 3;
+      for (let row = 0; row <= stoleRows; row++) {
+        const t = row / stoleRows;
+        const y = 0.45 + t * 0.9;
+        const centerX = side * (0.17 - t * 0.055);
+        const radius = Math.max(profileRadius(gownProfile, y), profileRadius(beanProfile, y - 0.86) * 1.08);
+        for (const edge of [-1, 1]) {
+          const x = centerX + edge * 0.035;
+          const z = facing * (Math.sqrt(Math.max(0, radius * radius - x * x)) + 0.014);
+          stolePositions.push(x, y, z);
+        }
+        if (row < stoleRows) {
+          const a = base + row * 2;
+          stoleIndices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+        }
+      }
+    }
+  }
+  stoleGeo.setAttribute('position', new THREE.Float32BufferAttribute(stolePositions, 3));
+  stoleGeo.setIndex(stoleIndices);
+  stoleGeo.computeVertexNormals();
   const beanMat = mat(new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.35, clearcoat: 0.62, clearcoatRoughness: 0.24 }));
   const robeMat = mat(new THREE.MeshStandardMaterial({ color: CARDINAL, roughness: 0.72, side: THREE.DoubleSide }));
   const parts = {
     bean: new THREE.InstancedMesh(beanGeo, beanMat, MAX_PLAYERS),
     gown: new THREE.InstancedMesh(gownGeo, robeMat, MAX_PLAYERS),
-    collar: new THREE.InstancedMesh(keepG(new THREE.TorusGeometry(0.34, 0.055, touch ? 5 : 8, touch ? 12 : 18)), mat(new THREE.MeshStandardMaterial({ color: 0xfff3e0, roughness: 0.55 })), MAX_PLAYERS),
+    collar: new THREE.InstancedMesh(keepG(new THREE.TorusGeometry(0.34, 0.03, touch ? 5 : 8, touch ? 12 : 18)), mat(new THREE.MeshStandardMaterial({ color: 0xffcf58, roughness: 0.52 })), MAX_PLAYERS),
     board: new THREE.InstancedMesh(keepG(new THREE.BoxGeometry(0.82, 0.065, 0.82)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.48 })), MAX_PLAYERS),
     skull: new THREE.InstancedMesh(keepG(new THREE.CylinderGeometry(0.29, 0.34, 0.16, touch ? 9 : 14)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55 })), MAX_PLAYERS),
     tassel: new THREE.InstancedMesh(keepG(new THREE.CapsuleGeometry(0.05, 0.44, 2, touch ? 6 : 9)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.45 })), MAX_PLAYERS),
     arm: new THREE.InstancedMesh(keepG(new THREE.CapsuleGeometry(0.1, 0.3, 3, touch ? 7 : 10)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.42 })), MAX_PLAYERS * 2),
     foot: new THREE.InstancedMesh(keepG(new THREE.CapsuleGeometry(0.11, 0.18, 2, touch ? 7 : 10)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.62 })), MAX_PLAYERS * 2),
-    stole: new THREE.InstancedMesh(keepG(new THREE.BoxGeometry(0.17, 0.76, 0.06)), mat(new THREE.MeshStandardMaterial({ color: 0xffcf58, roughness: 0.58 })), MAX_PLAYERS * 2),
+    stole: new THREE.InstancedMesh(stoleGeo, mat(new THREE.MeshStandardMaterial({ color: 0xffcf58, roughness: 0.58, side: THREE.DoubleSide })), MAX_PLAYERS),
     eye: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 8 : 12, touch ? 6 : 9)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.24 })), MAX_PLAYERS * 2),
     pupil: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 6 : 9, touch ? 5 : 7)), mat(new THREE.MeshBasicMaterial({ color: 0x1b1b22 })), MAX_PLAYERS * 2),
     smile: new THREE.InstancedMesh(keepG(new THREE.TorusGeometry(0.085, 0.016, 4, touch ? 9 : 14, Math.PI)), mat(new THREE.MeshBasicMaterial({ color: 0x542c36 })), MAX_PLAYERS),
@@ -1122,6 +1167,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       parts.bean.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.bean));
       parts.gown.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.gown));
       parts.collar.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.collar));
+      parts.stole.setMatrixAt(n, bodyM);
       parts.board.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.board));
       parts.skull.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.skull));
       parts.tassel.setMatrixAt(n, partM.multiplyMatrices(bodyM, setMtx(scratchMtx, 0.42, 1.38, 0.08, 1, 1.2, 1, 0, 0, -a.swing * 1.15)));
@@ -1135,7 +1181,6 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         const phase = a.bob + side * Math.PI;
         const footPitch = Math.PI / 2 + (ground ? Math.sin(phase) * 0.48 : armsUp ? 0.28 : footKick);
         parts.foot.setMatrixAt(n * 2 + side, partM.multiplyMatrices(bodyM, setMtx(scratchMtx, sign * 0.22, 0.1, 0.34, 0.92, 0.72, 0.92, 0, footPitch)));
-        parts.stole.setMatrixAt(n * 2 + side, partM.multiplyMatrices(bodyM, setMtx(scratchMtx, side ? 0.13 : -0.13, 1.05, side ? 0.42 : -0.42, 1, 1, 1, 0, 0, side ? -0.48 : 0.48)));
       }
       const blink = Math.sin(clock * 1.3 + i * 2.1) > 0.985 ? 0.15 : 1;
       parts.eye.setMatrixAt(n * 2, partM.multiplyMatrices(bodyM, L.eyeL).multiply(setMtx(scratchMtx, 0, 0, 0, 1, blink, 1)));
@@ -1163,7 +1208,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       n++;
     }
     for (const p of Object.values(parts)) {
-      p.count = p === parts.eye || p === parts.pupil || p === parts.arm || p === parts.foot || p === parts.stole ? n * 2 : n;
+      p.count = p === parts.eye || p === parts.pupil || p === parts.arm || p === parts.foot ? n * 2 : n;
       p.instanceMatrix.needsUpdate = true;
     }
     if (parts.bean.instanceColor) parts.bean.instanceColor.needsUpdate = true;
@@ -1365,7 +1410,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       }
     }
     if (crown) {
-      crown.rotation.y = clock * 1.4;
+      crown.rotation.y = clock * 0.6;
       crown.position.y = (course.zones.find((z) => z.kind === 'crown')?.y ?? 0) + 0.8 + Math.sin(clock * 2) * 0.15;
     }
     water.position.y = waterY + Math.sin(clock * 0.8) * 0.05;
@@ -1375,9 +1420,15 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     stepParticles(dt);
 
     const target = focus !== null ? bodies[focus] : null;
-    if (target) {
+    const devLookAt = !target && import.meta.env.DEV ? cam.lookAt : undefined;
+    if (target || devLookAt) {
       const cp = Math.cos(cam.pitch);
-      look.set(target.x, target.y + 1.6, target.z);
+      if (target) {
+        const lookY = import.meta.env.DEV ? cam.lookY ?? 0 : 0;
+        look.set(target.x, target.y + 1.6 + lookY, target.z);
+      } else if (devLookAt) {
+        look.set(devLookAt.x, devLookAt.y, devLookAt.z);
+      }
       want.set(look.x - Math.sin(cam.yaw) * cp * cam.dist, look.y + Math.sin(cam.pitch) * cam.dist, look.z - Math.cos(cam.yaw) * cp * cam.dist);
       let f = cameraClearance(course, look, want);
       if (f < 0.85) {

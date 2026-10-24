@@ -7,14 +7,14 @@ import { cameraRelative, createBody, insideZone, respawn, STEP, stepBody, update
 import { hash } from './rng';
 import { BOT_NAMES, COLORS, botSkill, offlineEntrants } from './roster';
 import {
-  courseOf, createShow, markFall, markFinish, pickRace, playTime, placeOf, stillRunning, stepShow,
+  courseOf, createShow, markFall, markFinish, pickRace, playTime, placeOf, quotas, stillRunning, stepShow,
   type Show,
 } from './show';
 import {
   fallPacket, finishPacket, Interp, movePacket, parsePacket, playersPacket, showOf, showPacket,
   tilePacket, unpackBody, type Packet,
 } from './net';
-import type { Body, Course, Entrant, Input, Bump } from './types.ts';
+import type { Body, Course, CourseId, Entrant, Input, Bump } from './types.ts';
 import { EV } from './types.ts';
 import { createScene, type BodyView, type CamState, type View } from './scene';
 import { meta } from './meta';
@@ -174,6 +174,8 @@ function Play() {
   const [watchTarget, setWatchTarget] = useState<number | null>(null);
   const showRef = useRef<Show | null>(null);
   const courseRef = useRef<Course | null>(null);
+  const forcedCourseRef = useRef<CourseId | null>(null);
+  const cameraDistanceOverrideRef = useRef<number | null>(null);
   const viewRef = useRef<View | null>(null);
   const renderBodiesRef = useRef<(BodyView | null)[]>(Array.from({ length: 20 }, () => null));
   const bodiesRef = useRef(new Map<number, Body>());
@@ -206,6 +208,7 @@ function Play() {
   const dragRef = useRef<Drag | null>(null);
   const stickRef = useRef<Stick | null>(null);
   const watchIndexRef = useRef(0);
+  const captureFocusRef = useRef<number | null>(null);
   const hudRef = useRef(hud);
   const onlineRef = useRef(room);
   const shellRef = useRef(shell);
@@ -241,7 +244,7 @@ function Play() {
   }
 
   function resetRound(show: Show) {
-    const course = buildCourse(courseOf(show), hash(show.seed, show.round));
+    const course = buildCourse(forcedCourseRef.current ?? courseOf(show), hash(show.seed, show.round));
     courseRef.current = course;
     updateCourse(course, 0);
     bodiesRef.current.clear();
@@ -272,11 +275,153 @@ function Play() {
     clockErrorRef.current = 0;
     cameraRef.current.yaw = course.startYaw;
     cameraRef.current.pitch = 0.4;
-    cameraRef.current.dist = portraitPhone ? 10.5 : 9;
+    cameraRef.current.dist = portraitPhone ? 10.5 : course.id === 'hoover' ? 11.5 : 9;
+    cameraRef.current.lookY = 0;
+    cameraRef.current.lookAt = undefined;
+    cameraDistanceOverrideRef.current = null;
+    captureFocusRef.current = null;
     watchIndexRef.current = 0;
     setWatchTarget(null);
     syncSceneCourse(course);
   }
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const capture = {
+      ready() {
+        return !!showRef.current && !!viewRef.current;
+      },
+      course() {
+        return courseRef.current?.id ?? null;
+      },
+      forceCourse(id: CourseId) {
+        const show = showRef.current;
+        if (!show) return false;
+        forcedCourseRef.current = id;
+        const entrants = show.entrants.map((entrant) => entrant.id);
+        const [raceQuota, survivalQuota] = quotas(entrants.length);
+        if (id !== 'tiles' && id !== 'hoover') show.race = id;
+        show.round = id === 'tiles' ? 1 : id === 'hoover' ? 2 : 0;
+        show.inRound = id === 'tiles'
+          ? entrants.slice(0, raceQuota)
+          : id === 'hoover'
+            ? entrants.slice(0, survivalQuota)
+            : entrants;
+        show.quota = id === 'tiles' ? survivalQuota : id === 'hoover' ? 1 : raceQuota;
+        show.phase = 'play';
+        show.phaseT = 8;
+        show.clock = 8;
+        show.finished = [];
+        show.qualified = [];
+        show.out = [];
+        show.fallen = [];
+        show.winner = null;
+        resetRound(show);
+        shell.invalidate();
+        return courseRef.current?.id === id;
+      },
+      intro() {
+        const show = showRef.current;
+        if (!show) return false;
+        forcedCourseRef.current = 'oval';
+        show.round = 0;
+        show.phase = 'intro';
+        show.phaseT = 0;
+        show.clock = 0;
+        show.finished = [];
+        show.qualified = [];
+        show.out = [];
+        show.fallen = [];
+        show.winner = null;
+        resetRound(show);
+        shell.invalidate();
+        return courseRef.current?.id === 'oval';
+      },
+      resume() {
+        shell.resume();
+        shell.invalidate();
+      },
+      forceJets() {
+        const course = courseRef.current;
+        if (!course) return false;
+        for (const zone of course.zones) if (zone.kind === 'jet') zone.on = () => true;
+        shell.invalidate();
+        return course.id === 'fountain';
+      },
+      camera(yaw: number, dist: number, pitch?: number, lookY = 0) {
+        cameraRef.current.yaw = yaw;
+        cameraRef.current.dist = dist;
+        if (pitch !== undefined) cameraRef.current.pitch = pitch;
+        cameraRef.current.lookY = lookY;
+        cameraRef.current.lookAt = undefined;
+        cameraDistanceOverrideRef.current = dist;
+        shell.invalidate();
+      },
+      spectate(dist = 9, pitch = 0.45, lookY = 0) {
+        const show = showRef.current;
+        const course = courseRef.current;
+        if (!show || !course) return false;
+        const candidates = watchedIds(show)
+          .filter((id) => id !== localId(show))
+          .map((id) => ({ id, body: bodiesRef.current.get(id) }))
+          .filter((item): item is { id: number; body: Body } => !!item.body && item.body.y > -1);
+        if (!candidates.length) return false;
+        let target = candidates[0];
+        if (course.id === 'hoover') {
+          target = candidates.reduce((best, item) => item.body.y > best.body.y ? item : best);
+        } else if (course.id === 'tiles') {
+          target = candidates.reduce((best, item) =>
+            item.body.x ** 2 + item.body.z ** 2 < best.body.x ** 2 + best.body.z ** 2 ? item : best);
+        } else {
+          target = candidates.reduce((best, item) =>
+            progressOf(course, item.body.x, item.body.y, item.body.z) >
+              progressOf(course, best.body.x, best.body.y, best.body.z) ? item : best);
+        }
+        captureFocusRef.current = target.id;
+        cameraRef.current.yaw = course.id === 'hoover'
+          ? Math.atan2(target.body.x, target.body.z) + Math.PI
+          : course.id === 'tiles'
+            ? Math.atan2(target.body.x, target.body.z)
+            : target.body.yaw;
+        cameraRef.current.pitch = pitch;
+        cameraRef.current.dist = dist;
+        cameraRef.current.lookY = lookY;
+        cameraRef.current.lookAt = undefined;
+        cameraDistanceOverrideRef.current = dist;
+        manualOrbitAtRef.current = performance.now() / 1000;
+        shell.invalidate();
+        return target.id;
+      },
+      overview(x = 0, y = 1.5, z = 0, dist = 36, pitch = 1.45, yaw = 0) {
+        captureFocusRef.current = -1;
+        cameraRef.current.yaw = yaw;
+        cameraRef.current.pitch = pitch;
+        cameraRef.current.dist = dist;
+        cameraRef.current.lookAt = { x, y, z };
+        cameraDistanceOverrideRef.current = null;
+        shell.invalidate();
+        return true;
+      },
+      player() {
+        const id = localId();
+        const body = id == null ? undefined : bodiesRef.current.get(id);
+        return body ? { x: body.x, y: body.y, z: body.z, vx: body.vx, vz: body.vz } : null;
+      },
+      stats() {
+        const render = viewRef.current?.gl.renderer.info.render;
+        const show = showRef.current;
+        return render ? {
+          calls: render.calls, triangles: render.triangles,
+          entrants: show?.entrants.length, inRound: show?.inRound.length, round: show?.round, clock: show?.clock,
+        } : null;
+      },
+    };
+    const win = window as Window & { __wwCapture?: typeof capture };
+    win.__wwCapture = capture;
+    return () => {
+      if (win.__wwCapture === capture) delete win.__wwCapture;
+    };
+  }, []);
 
   if (!initializedRef.current && (mode === 'solo' || (mode === 'online' && room?.isHost))) {
     const seed = seedRef.current;
@@ -821,7 +966,7 @@ function Play() {
       if (keys.pressed('ArrowRight')) cycleWatch(1);
     }
     cameraRef.current.pitch = Math.max(0.05, Math.min(1.1, cameraRef.current.pitch));
-    cameraRef.current.dist = portraitPhone ? 10.5 : 9;
+    cameraRef.current.dist = cameraDistanceOverrideRef.current ?? (portraitPhone ? 10.5 : course.id === 'hoover' ? 11.5 : 9);
 
     if (mode === 'online' && currentRoom && !currentRoom.isHost) {
       const jumpPressed = keys.pressed('Space') || touchJumpRef.current;
@@ -920,12 +1065,16 @@ function Play() {
           const fx = focus?.x ?? 0, fz = focus?.z ?? 0;
           return (ba.x - fx) ** 2 + (ba.z - fz) ** 2 - ((bb.x - fx) ** 2 + (bb.z - fz) ** 2);
         })
-        .slice(0, 8);
-      setTagIds(mine != null && bodiesRef.current.has(mine) ? [mine, ...ids] : ids);
+        .slice(0, mine != null ? 7 : 8);
+      setTagIds(mine != null && bodiesRef.current.has(mine) ? [mine, ...ids] : ids.slice(0, 8));
     }
   }
 
   function focusFor(show: Show): number | null {
+    if (import.meta.env.DEV && captureFocusRef.current === -1) return null;
+    if (import.meta.env.DEV && captureFocusRef.current != null && bodiesRef.current.has(captureFocusRef.current)) {
+      return captureFocusRef.current;
+    }
     const mine = localId(show);
     const spectating = !!room?.watching || mine == null || show.finished.includes(mine) || show.fallen.includes(mine) || show.out.includes(mine);
     if (!spectating && mine != null) return mine;
@@ -957,13 +1106,16 @@ function Play() {
     }
     const focus = focusFor(show);
     view.frame(course, time, bodies, focus, cameraRef.current, renderDtRef.current);
+    const stageRect = ref.current?.getBoundingClientRect();
+    const pillRect = ref.current?.querySelector('.g-wacky-walk-pill')?.getBoundingClientRect();
+    const hudClearance = stageRect && pillRect ? pillRect.bottom - stageRect.top + 24 : shell.touch ? 132 : 108;
     let placedTags = 0;
     for (const id of tagIds) {
       const node = tagNodesRef.current.get(id);
       const body = bodiesRef.current.get(id);
       if (!node) continue;
       const point = body ? view.project(body.x, body.y + (id === localId(show) ? 1.45 : 1.85), body.z) : null;
-      if (!point || point.x < 12 || point.x > size.w - 12 || point.y < 12 || point.y > size.h - 12) {
+      if (!point || point.x < 12 || point.x > size.w - 12 || point.y < hudClearance || point.y > size.h - 12) {
         node.style.visibility = 'hidden';
         continue;
       }
@@ -979,6 +1131,10 @@ function Play() {
         }
       }
       if (labelY < 18) labelY = Math.min(size.h - 8, point.y + 24);
+      if (labelY < hudClearance) {
+        node.style.visibility = 'hidden';
+        continue;
+      }
       const placed = tagLayoutRef.current[placedTags++];
       placed.x = point.x;
       placed.y = labelY;
