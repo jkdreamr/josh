@@ -2,7 +2,7 @@ import type * as T from 'three';
 import type { World } from './logic.ts';
 import { BALL_RADIUS, COURT_LENGTH, DOUBLES_WIDTH, SERVICE_LINE, SINGLES_WIDTH, STEP, clamp, courtWidth, netHeight, pointLabel, serverOf } from './logic.ts';
 import { createGL, damp, disposeTree } from './gl.ts';
-import { makePlayer, updatePlayer } from './player.ts';
+import { makePlayer, updatePlayer, type PoseName } from './player.ts';
 import { ballTexture, courtTextures, netTexture, windscreenTexture } from './textures.ts';
 
 type Three = typeof import('three');
@@ -17,6 +17,8 @@ export type View = {
   bounce: (x: number, z: number, line: boolean) => void;
   netHit: () => void;
   point: (winner: number) => void;
+  debugPose: (seat: number, name: PoseName, progress?: number) => void;
+  debugCamera: (name: 'front' | 'side' | 'back' | 'game', seat?: number) => void;
   dispose: () => void;
 };
 
@@ -680,6 +682,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   const scoreboard = stadium.scoreCtx;
   let scoreRefresh = 0;
   let playerX = 0;
+  let debugCameraMode: 'front' | 'side' | 'back' | null = null;
+  let debugCameraSeat = 0;
   let lastRenderAt = 0;
   let frameEma = 0;
   let qualityTier = 0;
@@ -719,6 +723,22 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   }
 
   function positionCamera(dt: number) {
+    if (debugCameraMode) {
+      const player = players[debugCameraSeat];
+      const target = player?.root.position ?? new THREE.Vector3();
+      const look = target.clone().add(new THREE.Vector3(0, 1.05, 0));
+      const facing = player?.root.rotation.y ?? 0;
+      const forward = new THREE.Vector3(Math.sin(facing), 0, Math.cos(facing));
+      const right = new THREE.Vector3(Math.cos(facing), 0, -Math.sin(facing));
+      const offset = debugCameraMode === 'side'
+        ? right.multiplyScalar(2.6)
+        : forward.multiplyScalar(debugCameraMode === 'front' ? 2.6 : -2.6);
+      offset.y = 0.18;
+      camera.position.copy(look).add(offset);
+      camera.lookAt(look);
+      cameraInitialized = true;
+      return;
+    }
     const portrait = camera.aspect < 0.78;
     const zoom = portrait ? COURT_LENGTH / 2 + 10.5 : COURT_LENGTH / 2 + 7;
     const height = portrait ? 6.4 : 4.5;
@@ -932,6 +952,15 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     canvas: glContext.canvas,
     resize,
     update,
+    debugPose(seat, name, progress = 0) {
+      const model = players[seat];
+      if (model) model.debugPose = { name, progress, position: model.root.position.clone(), rotation: model.root.rotation.y };
+    },
+    debugCamera(name, seat = 0) {
+      debugCameraMode = name === 'game' ? null : name;
+      debugCameraSeat = Math.max(0, Math.min(players.length - 1, seat));
+      cameraInitialized = false;
+    },
     render() {
       if (!glContext.lost()) {
         const now = performance.now();

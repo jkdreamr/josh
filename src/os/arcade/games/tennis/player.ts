@@ -22,12 +22,15 @@ export type PlayerModel = {
   poseAngles: Map<string, [number, number, number]>;
   ownedMaterials: Set<T.Material>;
   racketCorrection: T.Quaternion;
+  debugPose: { name: PoseName; progress: number; position: T.Vector3; rotation: number } | null;
   disposed: boolean;
   wasServingToss: boolean;
   leftPalmWorldPosition: (out?: T.Vector3) => T.Vector3;
   racketHeadWorldPosition: (out?: T.Vector3) => T.Vector3;
   dispose: () => void;
 };
+
+export type PoseName = 'idle' | 'ready' | 'run' | 'shuffle' | 'forehand' | 'backhand' | 'slice' | 'lob' | 'serve-ready' | 'toss' | 'serve-contact' | 'serve-follow';
 
 type BoneBind = {
   bone: T.Bone;
@@ -139,7 +142,8 @@ function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset
   const byName = new Map(bones.map((entry) => [entry.bone.name, entry.bone]));
   const handLeft = byName.get('hand_l');
   const handRight = byName.get('hand_r');
-  if (!handLeft || !handRight) {
+  const forearmRight = byName.get('lowerarm_r');
+  if (!handLeft || !handRight || !forearmRight) {
     body.removeFromParent();
     materials.forEach((material) => material.dispose());
     throw new Error('Tennis player model is missing hand bones');
@@ -152,8 +156,18 @@ function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset
   }
   model.racket.removeFromParent();
   handRight.add(model.racket);
-  model.racket.position.set(0, 0, 0.025);
-  model.racketCorrection.copy(rightBind.bindWorld).invert();
+  model.racket.position.set(0, 0.035, 0);
+  const wrist = handRight.getWorldPosition(new THREE.Vector3());
+  const elbow = forearmRight.getWorldPosition(new THREE.Vector3());
+  const forearmAxis = wrist.sub(elbow).normalize();
+  const handBindWorld = handRight.getWorldQuaternion(new THREE.Quaternion());
+  const thumbSide = new THREE.Vector3(1, 0, 0).applyQuaternion(handBindWorld);
+  const shaft = forearmAxis.addScaledVector(thumbSide, Math.tan(Math.PI / 6)).normalize();
+  const stringsNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(handBindWorld);
+  const racketX = shaft.clone().cross(stringsNormal).normalize();
+  stringsNormal.crossVectors(racketX, shaft).normalize();
+  const racketWorld = new THREE.Matrix4().makeBasis(racketX, shaft, stringsNormal);
+  model.racketCorrection.copy(handBindWorld.invert().multiply(new THREE.Quaternion().setFromRotationMatrix(racketWorld)));
   model.skinnedRoot = body;
   model.handLeft = handLeft;
   model.handRight = handRight;
@@ -400,6 +414,7 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
     poseAngles: new Map(),
     ownedMaterials: new Set(),
     racketCorrection: new THREE.Quaternion(),
+    debugPose: null,
     disposed: false,
     wasServingToss: false,
     leftPalmWorldPosition(out = new THREE.Vector3()) {
@@ -467,6 +482,44 @@ function poseValue(pose: Map<string, [number, number, number]>, name: string, x:
   pose.set(name, [x, y, z]);
 }
 
+export function debugPoseAngles(name: PoseName, progress = 0) {
+  const p = Math.max(0, Math.min(1, progress));
+  const pose = new Map<string, [number, number, number]>();
+  const put = (key: string, value: [number, number, number]) => pose.set(key, value);
+  const between = (stages: [number, number, number][]): [number, number, number] => {
+    const segment = Math.min(1, Math.floor(p * 2));
+    const amount = p * 2 - segment;
+    return [0, 1, 2].map((axis) => stages[segment]![axis]! + (stages[segment + 1]![axis]! - stages[segment]![axis]!) * amount) as [number, number, number];
+  };
+  const arms = (right: [number, number, number], left: [number, number, number], rightElbow: [number, number, number] = [0, 0, 0], leftElbow: [number, number, number] = [0, 0, 0]) => {
+    put('upperarm_r', right); put('upperarm_l', left);
+    put('lowerarm_r', rightElbow); put('lowerarm_l', leftElbow);
+  };
+  switch (name) {
+    case 'idle': arms([0, 0, 1.1], [0, 0, -1.1], [0, 0, 0.15], [0, 0, -0.15]); break;
+    case 'ready': put('thigh_l', [-0.12, 0, 0]); put('thigh_r', [-0.12, 0, 0]); put('calf_l', [0.34, 0, 0]); put('calf_r', [0.34, 0, 0]); put('spine_01', [0.1, 0, 0]); arms([0, 0.6, 0.8], [0, -0.6, -0.8], [0.5, 0, 0.2], [-0.5, 0, -0.2]); break;
+    case 'run': put('thigh_l', [-0.35, 0, 0]); put('thigh_r', [0.35, 0, 0]); put('calf_l', [0.2, 0, 0]); put('calf_r', [0.5, 0, 0]); arms([0.2, 0, 0.7], [-0.2, 0, -0.7], [0.3, 0, 0], [-0.3, 0, 0]); break;
+    case 'shuffle': put('pelvis', [0, 0.15, 0]); put('thigh_l', [-0.1, 0, -0.15]); put('thigh_r', [-0.1, 0, 0.15]); arms([0, 0.3, 0.85], [0, -0.3, -0.85], [0.25, 0, 0.1], [-0.25, 0, -0.1]); break;
+    case 'forehand': {
+      const right: [number, number, number][] = [[0.05, -0.6, 0.65], [0.05, 0.6, 0.45], [-0.4, 1.1, -0.75]];
+      arms(between(right), [0.05, -0.45, -0.7], [0.2, 0, 0.3], [-0.3, 0, -0.25]);
+      put('spine_02', [0.08, -0.25 + p * 0.6, 0]); break;
+    }
+    case 'backhand': {
+      const left: [number, number, number][] = [[0.05, 0.5, -0.65], [0.05, -0.6, -0.45], [-0.4, -1.1, 0.75]];
+      arms([0.05, 0.45, 0.7], between(left), [0.3, 0, 0.25], [0.2, 0, -0.3]);
+      put('spine_02', [0.08, 0.25 - p * 0.6, 0]); break;
+    }
+    case 'slice': arms([0.45, 0.6, 0.45], [-0.2, -0.4, -0.5], [0.2, 0, 0.35], [-0.2, 0, -0.2]); break;
+    case 'lob': arms([-0.8, 0.5, -0.55], [0, -0.4, -0.4], [-0.3, 0, 0.3], [-0.2, 0, -0.2]); break;
+    case 'serve-ready': arms([0, 0, 1.1], [0, 0.18, -0.8], [0, 0, 0.15], [0, 0, -0.2]); break;
+    case 'toss': arms([-0.35, -0.45, -0.9], [0, 0, 1.8], [-0.7, 0, -0.8], [0, 0, 0.15]); put('spine_02', [0.12, 0, 0]); break;
+    case 'serve-contact': arms([-0.4, -0.3, -1.8], [0.1, 0, 0.5], [-0.6, 0, -0.2], [0, 0, 0.2]); break;
+    case 'serve-follow': arms([0.15, 1.1, 0.4], [0, 0.2, -0.4], [0.8, 0, 0.5], [0, 0, -0.2]); put('spine_02', [0.1, 0.5, 0]); break;
+  }
+  return pose;
+}
+
 export function updatePlayer(
   model: PlayerModel,
   player: Player,
@@ -480,8 +533,8 @@ export function updatePlayer(
   phase: World['phase'] = 'rally',
   isServer = false,
 ) {
-  model.root.position.set(x, 0, z);
-  model.root.rotation.y = player.facing;
+  model.root.position.set(model.debugPose?.position.x ?? x, 0, model.debugPose?.position.z ?? z);
+  model.root.rotation.y = model.debugPose?.rotation ?? player.facing;
   model.phase += dt * (4.5 + Math.hypot(player.vx, player.vz) * 1.2);
   const speed = Math.hypot(player.vx, player.vz);
   const running = Math.min(1, speed / 4.2);
@@ -490,7 +543,7 @@ export function updatePlayer(
   const localVx = player.vx * cos - player.vz * sin;
   const localVz = player.vx * sin + player.vz * cos;
   const lateral = Math.abs(localVx) > Math.abs(localVz) * 1.25;
-  const bob = Math.sin(model.phase * 2) * 0.025 * running;
+  const bob = model.debugPose ? 0 : Math.sin(model.phase * 2) * 0.025 * running;
   model.torso.position.y = bob;
   model.torso.rotation.z = Math.max(-0.14, Math.min(0.14, player.vx * -0.025));
   model.torso.rotation.y = -Math.min(0.22, Math.abs(player.vx) * 0.035);
@@ -526,10 +579,10 @@ export function updatePlayer(
     poseValue(pose, 'calf_l', crouch + Math.max(0, -step) * 0.32, 0, 0);
     poseValue(pose, 'calf_r', crouch + Math.max(0, step) * 0.32, 0, 0);
 
-    let rightUpper: [number, number, number] = [0.03 * step, ready ? -0.55 : -0.12, ready ? -0.32 : -0.55];
-    let rightLower: [number, number, number] = [0, 0, ready ? -0.72 : -0.12];
-    let leftUpper: [number, number, number] = [0.03 * -step, ready ? 0.8 : 0.12, ready ? 0.38 : 0.55];
-    let leftLower: [number, number, number] = [0, 0, ready ? 0.78 : 0.12];
+    let rightUpper: [number, number, number] = [0.03 * step, ready ? 0.6 : 0, ready ? 0.8 : 1.1];
+    let rightLower: [number, number, number] = [0, 0, ready ? 0.2 : 0.15];
+    let leftUpper: [number, number, number] = [0.03 * -step, ready ? -0.6 : 0, ready ? -0.8 : -1.1];
+    let leftLower: [number, number, number] = [0, 0, ready ? -0.2 : -0.15];
     poseValue(pose, 'hand_r', 0, 0, 0);
     poseValue(pose, 'hand_l', 0, 0, 0);
 
@@ -555,14 +608,14 @@ export function updatePlayer(
     }
 
     if (serverReady) {
-      leftUpper = [0.06, 0.18, 0.52];
-      leftLower = [0, 0, 0.42];
+      leftUpper = [0.06, 0.18, -0.8];
+      leftLower = [0, 0, -0.2];
     }
     if (tossing) {
-      leftUpper = [0, 0.08, -1.38];
-      leftLower = [0, 0, -0.18];
-      rightUpper = [-0.35, 0.66, -0.22];
-      rightLower = [-0.72, 0, -1.05];
+      leftUpper = [0, 0.08, 1.8];
+      leftLower = [0, 0, 0.15];
+      rightUpper = [-0.35, -0.45, -0.9];
+      rightLower = [-0.7, 0, -0.8];
       poseValue(pose, 'spine_02', 0.12, -0.08, 0);
     } else if (serveFollow) {
       const progress = swingProgress;
@@ -577,6 +630,10 @@ export function updatePlayer(
     poseValue(pose, 'lowerarm_r', ...rightLower);
     poseValue(pose, 'upperarm_l', ...leftUpper);
     poseValue(pose, 'lowerarm_l', ...leftLower);
+    if (model.debugPose) {
+      pose.clear();
+      for (const [bone, angle] of debugPoseAngles(model.debugPose.name, model.debugPose.progress)) pose.set(bone, angle);
+    }
     applyCharacterPose(model, pose, dt);
   } else {
     const swing = player.swing > 0 ? Math.sin(Math.min(1, player.swing / 0.48) * Math.PI) : 0;

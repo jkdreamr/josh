@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import {
   BALL_RADIUS,
@@ -26,7 +27,7 @@ import {
   type Command,
   type Spin3,
 } from '../src/os/arcade/games/tennis/logic.ts';
-import { characterSpaceBoneTarget } from '../src/os/arcade/games/tennis/player.ts';
+import { characterSpaceBoneTarget, debugPoseAngles } from '../src/os/arcade/games/tennis/player.ts';
 import { commandOf, configOf, moveOf, parsePacket, stateOf, swingOf } from '../src/os/arcade/games/tennis/net.ts';
 import { chooseShot } from '../src/os/arcade/games/tennis/ai.ts';
 
@@ -260,6 +261,61 @@ test('character-space upper-arm rotation moves the hand forward and upward despi
   const after = root.worldToLocal(hand.getWorldPosition(new THREE.Vector3()));
   assert.ok(after.y > before.y + 0.3, `hand should move up: ${before.y} → ${after.y}`);
   assert.ok(after.z > before.z + 0.1, `hand should move forward: ${before.z} → ${after.z}`);
+});
+
+test('idle hands hang below the shoulders and toss hand rises above the head on the real rig', () => {
+  const buffer = readFileSync('public/models/tennis/female.glb');
+  const json = JSON.parse(buffer.toString('utf8', 20, 20 + buffer.readUInt32LE(12))) as {
+    nodes: Array<{ name?: string; translation?: number[]; rotation?: number[]; scale?: number[]; children?: number[] }>;
+    skins: Array<{ joints: number[] }>;
+  };
+  const joints = new Set(json.skins[0]!.joints);
+  const objects = json.nodes.map((node, index) => joints.has(index) ? new THREE.Bone() : new THREE.Group());
+  const parents = new Set<number>();
+  json.nodes.forEach((node, index) => {
+    const object = objects[index]!;
+    object.name = node.name ?? '';
+    if (node.translation) object.position.fromArray(node.translation);
+    if (node.rotation) object.quaternion.fromArray(node.rotation);
+    if (node.scale) object.scale.fromArray(node.scale);
+    for (const child of node.children ?? []) { object.add(objects[child]!); parents.add(child); }
+  });
+  const root = new THREE.Group();
+  objects.forEach((object, index) => { if (!parents.has(index)) root.add(object); });
+  const bones = json.skins[0]!.joints.map((index) => objects[index] as THREE.Bone);
+  const depth = (bone: THREE.Bone) => {
+    let value = 0;
+    for (let parent = bone.parent; parent; parent = parent.parent) value++;
+    return value;
+  };
+  bones.sort((a, b) => depth(a) - depth(b));
+  const bindLocals = new Map(bones.map((bone) => [bone.name, bone.quaternion.clone()]));
+  const apply = (name: 'idle' | 'toss') => {
+    for (const bone of bones) bone.quaternion.copy(bindLocals.get(bone.name)!);
+    root.updateMatrixWorld(true);
+    const rootWorld = root.getWorldQuaternion(new THREE.Quaternion());
+    const bind = new Map(bones.map((bone) => [bone.name, rootWorld.clone().invert().multiply(bone.getWorldQuaternion(new THREE.Quaternion()))]));
+    const targets = new Map<string, THREE.Quaternion>();
+    for (const bone of bones) {
+      const parent = bone.parent;
+      const parentName = parent?.isBone ? parent.name : null;
+      const parentBind = parentName ? bind.get(parentName)! : parent ? rootWorld.clone().invert().multiply(parent.getWorldQuaternion(new THREE.Quaternion())) : new THREE.Quaternion();
+      const angle = debugPoseAngles(name).get(bone.name) ?? [0, 0, 0];
+      const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(...angle, 'XYZ'));
+      const target = characterSpaceBoneTarget(bind.get(bone.name)!, parentBind, parentName ? targets.get(parentName) ?? parentBind : null, rotation);
+      targets.set(bone.name, target);
+      const parentWorld = parent?.getWorldQuaternion(new THREE.Quaternion()) ?? rootWorld.clone();
+      bone.quaternion.copy(parentWorld.invert().multiply(rootWorld.clone().multiply(target)));
+      bone.updateMatrixWorld(true);
+    }
+    root.updateMatrixWorld(true);
+  };
+  const get = (name: string) => bones.find((bone) => bone.name === name)!.getWorldPosition(new THREE.Vector3());
+  apply('idle');
+  assert.ok(get('hand_l').y < get('clavicle_l').y);
+  assert.ok(get('hand_r').y < get('clavicle_r').y);
+  apply('toss');
+  assert.ok(get('hand_l').y > get('head').y);
 });
 
 test('net collision blocks the ball and timing maps direction and quality', () => {

@@ -174,6 +174,7 @@ function Play({ mode }: { mode: StageMode }) {
   world.current ??= settingsWorld(mode, format, length, level, online);
   const lastHit = useRef<{ kind: Swing['kind']; clock: number } | null>(null);
   const view = useRef<View | null>(null);
+  const [sceneLoadFailed, setSceneLoadFailed] = useState(false);
   const audio = useRef<ReturnType<typeof createAudio> | null>(null);
   const localCommands = useRef<Command[]>([]);
   const remoteCommands = useRef<Command[]>([]);
@@ -208,14 +209,36 @@ function Play({ mode }: { mode: StageMode }) {
   useEffect(() => {
     const host = ref.current;
     if (!THREE || !host) return;
-    const next = createScene(THREE, host, shell.touch);
-    if (!next) return;
-    view.current = next;
-    next.resize(size.w, size.h);
-    next.update(world.current!, 0, localHumanSeats(), myTeam());
-    shell.invalidate();
+    let cancelled = false;
+    let retryTimer = 0;
+    let next: View | null = null;
+    let attempts = 0;
+    const initialize = () => {
+      if (cancelled) return;
+      try {
+        next = createScene(THREE, host, shell.touch);
+      } catch (error) {
+        if (import.meta.env.DEV) console.warn('Tennis scene initialization failed', error);
+      }
+      if (!next) {
+        if (attempts++ === 0) {
+          retryTimer = window.setTimeout(initialize, 180);
+          return;
+        }
+        setSceneLoadFailed(true);
+        return;
+      }
+      view.current = next;
+      next.resize(size.w, size.h);
+      next.update(world.current!, 0, localHumanSeats(), myTeam());
+      setSceneLoadFailed(false);
+      shell.invalidate();
+    };
+    initialize();
     return () => {
-      next.dispose();
+      cancelled = true;
+      window.clearTimeout(retryTimer);
+      next?.dispose();
       view.current = null;
     };
   }, [THREE, shell.touch]);
@@ -226,7 +249,13 @@ function Play({ mode }: { mode: StageMode }) {
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    const debugWindow = window as Window & { __tennisWorldDebug?: () => object };
+    const debugWindow = window as Window & {
+      __tennisWorldDebug?: () => object;
+      __tennisPoseDebug?: {
+        pose: (seat: number, name: import('./player.ts').PoseName, progress?: number) => void;
+        camera: (name: 'front' | 'side' | 'back' | 'game', seat?: number) => void;
+      };
+    };
     debugWindow.__tennisWorldDebug = () => {
       const current = world.current;
       if (!current) return {};
@@ -251,7 +280,11 @@ function Play({ mode }: { mode: StageMode }) {
         lastHit: lastHit.current,
       };
     };
-    return () => { delete debugWindow.__tennisWorldDebug; };
+    debugWindow.__tennisPoseDebug = {
+      pose: (seat, name, progress) => { view.current?.debugPose(seat, name, progress); shell.invalidate(); },
+      camera: (name, seat) => { view.current?.debugCamera(name, seat); shell.invalidate(); },
+    };
+    return () => { delete debugWindow.__tennisWorldDebug; delete debugWindow.__tennisPoseDebug; };
   }, []);
 
   useEffect(() => {
@@ -587,7 +620,7 @@ function Play({ mode }: { mode: StageMode }) {
       aria-label="Tennis court"
     >
       {!THREE && <div className="g-tennis-error"><strong>Preparing Taube Stadium…</strong></div>}
-      {THREE && !view.current && shell.status === 'playing' && <div className="g-tennis-error"><strong>3D court could not load. Try restarting.</strong></div>}
+      {THREE && sceneLoadFailed && shell.status === 'playing' && <div className="g-tennis-error"><strong>3D court could not load. Try restarting.</strong></div>}
       <Hud {...hud} touch={shell.touch} />
       <TouchControls dpad buttons={[{ key: 'Space', label: 'hit' }, { key: 'KeyK', label: 'slice' }, { key: 'KeyL', label: 'lob' }]} />
     </div>

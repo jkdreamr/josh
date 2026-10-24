@@ -15,7 +15,8 @@ export function createGL(THREE: Three, host: HTMLElement, lite: boolean): GL | n
   let renderer: T.WebGLRenderer;
   try {
     renderer = new THREE.WebGLRenderer({ antialias: !lite, powerPreference: 'high-performance' });
-  } catch {
+  } catch (error) {
+    if (import.meta.env.DEV) console.warn('Tennis WebGL context creation failed', error);
     return null;
   }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lite ? 1.25 : 1.5));
