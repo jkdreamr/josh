@@ -275,7 +275,7 @@ function Play() {
     clockErrorRef.current = 0;
     cameraRef.current.yaw = course.startYaw;
     cameraRef.current.pitch = 0.4;
-    cameraRef.current.dist = portraitPhone ? 10.5 : course.id === 'hoover' ? 11.5 : 9;
+    cameraRef.current.dist = course.id === 'hoover' ? 10 : portraitPhone ? 10.5 : 9;
     cameraRef.current.lookY = 0;
     cameraRef.current.lookAt = undefined;
     cameraDistanceOverrideRef.current = null;
@@ -966,7 +966,7 @@ function Play() {
       if (keys.pressed('ArrowRight')) cycleWatch(1);
     }
     cameraRef.current.pitch = Math.max(0.05, Math.min(1.1, cameraRef.current.pitch));
-    cameraRef.current.dist = cameraDistanceOverrideRef.current ?? (portraitPhone ? 10.5 : course.id === 'hoover' ? 11.5 : 9);
+    cameraRef.current.dist = cameraDistanceOverrideRef.current ?? (course.id === 'hoover' ? 10 : portraitPhone ? 10.5 : 9);
 
     if (mode === 'online' && currentRoom && !currentRoom.isHost) {
       const jumpPressed = keys.pressed('Space') || touchJumpRef.current;

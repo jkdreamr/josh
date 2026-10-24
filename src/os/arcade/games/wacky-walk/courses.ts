@@ -314,7 +314,7 @@ function makeHoover(seed: number): Course {
   course.spawns = course.spawns.map((_, i) => ({
     x: ((i % 5) - 2) * 1.4, y: 0.15, z: 5.6 + Math.floor(i / 5) * 0.18,
   }));
-  course.decor.push({ kind: 'tower', x: -26, y: 0, z: -34, s: 2.8, yaw: 0 });
+  course.decor.push({ kind: 'tower', x: -52, y: 0, z: -20, s: 2.3, yaw: 0 });
   for (let i = 0; i < 24; i++) {
     const a = i / 24 * Math.PI * 2;
     if (i % 3) course.decor.push({ kind: 'arch', x: Math.cos(a) * 22, y: 0, z: Math.sin(a) * 22, s: 1.1, yaw: -a });
