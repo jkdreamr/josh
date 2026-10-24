@@ -2,6 +2,7 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
+  isolation: isolate;
   color: #e7f0fb;
   font-family: inherit;
   pointer-events: none;

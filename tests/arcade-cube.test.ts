@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { apply, create, faceTurn, fmtTime, inferTurn, inverse, isSolved, notation, quarter, mulVec, scramble, tick, undo, type Face } from '../src/os/arcade/games/cube/logic.ts';
+import { apply, create, faceTurn, fmtTime, inferTurn, inverse, isSolved, notation, quarter, mulVec, scramble, seeded, sliceTurn, frameNotation, frameTurn, tick, undo, viewFrame, type Face } from '../src/os/arcade/games/cube/logic.ts';
 
 const seq = (cube: ReturnType<typeof create>, s: string) => {
   for (const tok of s.trim().split(/\s+/)) apply(cube, faceTurn(tok[0] as Face, tok.endsWith("'")));
@@ -122,4 +122,49 @@ test('time formatting', () => {
   assert.equal(fmtTime(0), '0.00');
   assert.equal(fmtTime(12345), '12.34');
   assert.equal(fmtTime(61230), '1:01.23');
+});
+
+test('seeded scrambles match for the same seed and differ for another', () => {
+  const a = scramble(create(), 22, seeded(1234));
+  const b = scramble(create(), 22, seeded(1234));
+  const c = scramble(create(), 22, seeded(99));
+  assert.deepEqual(a, b);
+  assert.notDeepEqual(a, c);
+});
+
+test('keys follow the view: the default view matches standard notation', () => {
+  const f = viewFrame(-0.62);
+  for (const face of ['U', 'D', 'L', 'R', 'F', 'B'] as Face[]) {
+    assert.deepEqual(frameTurn(f, face), faceTurn(face, false));
+    assert.deepEqual(frameTurn(f, face, true), faceTurn(face, true));
+    assert.equal(frameNotation(f, faceTurn(face, false)), face);
+    assert.equal(frameNotation(f, faceTurn(face, true)), `${face}'`);
+  }
+});
+
+test('after a quarter orbit, F is the side now facing the viewer', () => {
+  // turning the rig by -90 degrees brings the cube's right side to the front
+  const f = viewFrame(-0.62 - Math.PI / 2);
+  assert.deepEqual(f.F, { axis: 0, layer: 1 });
+  assert.deepEqual(f.U, { axis: 1, layer: 1 });
+  const c = create();
+  apply(c, frameTurn(f, 'F'));
+  apply(c, faceTurn('R', true));
+  assert.ok(isSolved(c));
+});
+
+test('slice turns move the middle layer the same way as their reference face', () => {
+  const f = viewFrame(-0.62);
+  const m = sliceTurn(f, 'M');
+  assert.equal(m.layer, 0);
+  assert.equal(m.axis, 0);
+  assert.equal(m.dir, faceTurn('L', false).dir);
+  assert.equal(sliceTurn(f, 'E').dir, faceTurn('D', false).dir);
+  assert.equal(sliceTurn(f, 'S', true).dir, faceTurn('F', true).dir);
+  assert.equal(frameNotation(f, m), 'M');
+  assert.equal(frameNotation(f, sliceTurn(f, 'S', true)), "S'");
+  assert.equal(frameNotation(f, faceTurn('U', false), 2), 'U2');
+  const c = create();
+  for (let i = 0; i < 4; i++) apply(c, m);
+  assert.ok(isSolved(c));
 });

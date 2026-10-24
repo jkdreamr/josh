@@ -293,15 +293,32 @@ export function targetPosition(wave: number, slot: number, time: number): Point 
 export function targetsFor(g: RangeState, width: number, height: number): Target[] {
   if (width <= 0 || height <= 0 || g.phase === 'clear' || g.phase === 'over') return [];
   const w = waveAt(g.wave);
-  const full = Math.min(42, Math.max(24, Math.min(width / 9, height / 5.8)), width / 7, height / 4.5);
   // Later waves shrink the targets, but never below a fingertip.
-  const radius = Math.max(Math.min(24, full), full * w.size);
+  const radius = radiusFor(g.wave, width, height);
   const t = motionAt(w, g.motionTime);
   return g.cooldowns.flatMap((cooldown, slot) => {
     if (cooldown > 0) return [];
-    const p = patternPoint(w.patterns[slot], slot, t);
-    return [{ id: slot, x: p.x * width, y: p.y * height, radius }];
+    const p = toCanvas(patternPoint(w.patterns[slot], slot, t), width, height, radius);
+    return [{ id: slot, ...p, radius }];
   });
+}
+
+/** The target radius for a wave on a canvas of this size. */
+export function radiusFor(wave: number, width: number, height: number) {
+  const full = Math.min(54, Math.max(24, Math.min(width / 10, height / 6.5)), width / 7, height / 4.5);
+  return Math.max(Math.min(24, full), full * waveAt(wave).size);
+}
+
+/**
+ * Normalized range space to canvas pixels. Patterns live between 0.2 and 0.8; on a roomy canvas that maps
+ * straight across, and on a short or narrow one the band stretches so a target never pokes past the edge.
+ */
+export function toCanvas(p: Point, width: number, height: number, radius: number): Point {
+  const axis = (v: number, size: number) => {
+    const margin = Math.min(size / 2, Math.max(size * 0.2, radius + 4));
+    return margin + ((v - 0.2) / 0.6) * (size - 2 * margin);
+  };
+  return { x: axis(p.x, width), y: axis(p.y, height) };
 }
 
 export function hitTest(point: Point, targets: readonly Target[]): { target: Target; bullseye: boolean } | null {

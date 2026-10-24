@@ -461,8 +461,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Oil slicks</b> spin you out. Steer round them: they sit right on the best line.
           </li>
           <li>
-            <b>No wall means a drop.</b> Where a striped lip with amber studs takes the place of the wall, run wide and you go over, into water or a pit, and the night
-            crew&apos;s crane fishes you out: about three seconds and three coins on Expert, though you keep your item. Tap drift as you touch down for a boost.
+            <b>No wall means a drop.</b> Where a striped lip with amber studs takes the place of the wall, run wide and you go over, into water, a pit or down the
+            hillside on the Dish, and the crane fishes you out: about three seconds and three coins on Expert (a little less on Hard), though you keep your item.
+            Tap drift as you touch down for a boost.
           </li>
           <li>
             <b>The trench</b> across the causeway at Hoover Nights: jump it off the ramp at speed, or take a steel plate either side of the hole.
@@ -487,10 +488,15 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Pile drivers</b> slam down on the corners every few seconds and sit a moment: the beacon strobes and the head shakes just before it drops. Go under it while it is up, or take the long way round. It flattens you on the way down, it is solid on the ground, and shells break on it there.
           </li>
           <li>
-            <b>Bollards</b> rise across the road in four banks from lap 2, one gap rippling across: green lamps down, amber about to rise, red up. Hit a raised bank and you are squashed and stopped behind it. Shells break on a raised bank.
+            <b>Bollards</b> rise across the road in four banks from lap 2 on Hoover Nights and the Main Quad, one gap rippling across: green lamps down, amber about to rise, red up. Hit a raised bank and you are squashed and stopped behind it. Shells break on a raised bank.
           </li>
           <li>
-            <b>Sprinklers</b> on the sweeper spin a jet round from lap 2: the spray spins you (a hop does not clear it), the hub is solid. Pass on the side the arm has just left.
+            <b>Sprinklers</b> spin a jet round, from lap 2 on Hoover Nights&apos; sweeper and lap 3 on the Main Quad: the spray spins you (a hop does not clear it), the
+            hub is solid. Pass on the side the arm has just left.
+          </li>
+          <li>
+            <b>Boulders</b> roll down off the hillside on the Dish, one down each chute every few seconds: watch for the falling-rocks sign, then the dust and the
+            rumble up the chute. It bounds over the wall and right across the road, and it tumbles you and throws you the way it is rolling.
           </li>
           <li>
             <b>Wet road</b> from lap 3: there is no grip through the sweeper, so you turn less. Drift through it, or ease off.

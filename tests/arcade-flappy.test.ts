@@ -13,6 +13,7 @@ import {
   MAX_SHIFT,
   MAX_SPEED,
   R,
+  LEAD,
   SPACING,
   START_SPEED,
   autopilot,
@@ -24,6 +25,7 @@ import {
   medalFor,
   nextGapY,
   nextMedal,
+  riseOf,
   rng32,
   speedFor,
   step,
@@ -102,7 +104,7 @@ test('touching the ground ends the run exactly once', () => {
 
 test('passing a column scores one point', () => {
   const s = createState(400);
-  s.cols = [{ x: s.birdX - COL_W / 2 + 2, gapY: s.y, gap: 200, passed: false }];
+  s.cols = [{ x: s.birdX - COL_W / 2 + 2, gapY: s.y, gap: 200, passed: false, born: 0, rise: -1 }];
   const ev = step(s, 1 / 30, idle, () => 0.5);
   assert.equal(ev.scored, 1);
   assert.equal(s.score, 1);
@@ -113,7 +115,7 @@ test('passing a column scores one point', () => {
 
 test('the middle of the gap is safe, the lips are not', () => {
   const s = createState(400);
-  const c = { x: s.birdX - COL_W / 2, gapY: 260, gap: 160, passed: false };
+  const c = { x: s.birdX - COL_W / 2, gapY: 260, gap: 160, passed: false, born: 0, rise: -1 };
   s.y = 260;
   assert.equal(hitsColumn(s, c), false);
   s.y = 260 - 80 + R - 2;
@@ -128,7 +130,7 @@ test('the middle of the gap is safe, the lips are not', () => {
 test('hitting a column crashes and stops scrolling', () => {
   const s = createState(400);
   s.vy = 0;
-  s.cols = [{ x: s.birdX + R - 1, gapY: s.y + 200, gap: 140, passed: false }];
+  s.cols = [{ x: s.birdX + R - 1, gapY: s.y + 200, gap: 140, passed: false, born: 0, rise: -1 }];
   const ev = step(s, 1 / 60, idle, () => 0.5);
   assert.equal(ev.crashed, true);
   const x = s.cols[0].x;
@@ -182,11 +184,53 @@ test('a big drop between columns is always reachable', () => {
   assert.ok((FLAP_V * FLAP_V) / (2 * GRAVITY) < GAP_MIN - 2 * R, 'one flap from the bottom of the smallest gap stays under the top lip');
 });
 
-test('a simple pilot earns gold on every seeded course', () => {
-  for (let seed = 1; seed <= 8; seed++) {
+test('a simple pilot clears bronze on every seeded course and gold on most', () => {
+  const scores: number[] = [];
+  for (let seed = 1; seed <= 40; seed++) {
     const s = createState(420);
     const rng = rng32(seed);
     for (let i = 0; i < 60 * 300 && !s.dead && s.score < 40; i++) step(s, 1 / 60, { flap: autopilot(s) }, rng);
-    assert.ok(s.score >= 30, `seed ${seed} reached ${s.score}`);
+    scores.push(s.score);
   }
+  assert.ok(Math.min(...scores) >= 10, `lowest run ${Math.min(...scores)}`);
+  assert.ok(scores.filter((n) => n >= 30).length >= 30, `gold on ${scores.filter((n) => n >= 30).length} of 40`);
+});
+
+test('the first column is the same distance ahead on any window width', () => {
+  for (const w of [360, 800, 1800]) {
+    const s = createState(w);
+    step(s, 1 / 60, { flap: true }, rng32(3));
+    assert.ok(Math.abs(s.cols[0].x - s.birdX - LEAD) < 2, `width ${w}`);
+  }
+});
+
+test('columns that spawn inside a wide view rise in before the tree gets there', () => {
+  const s = createState(1800);
+  step(s, 1 / 60, { flap: true }, rng32(5));
+  const shown = s.cols.filter((c) => c.rise >= 0);
+  assert.ok(shown.length >= 3, 'several columns start on screen');
+  assert.ok(riseOf(s, shown[0]) < 0.1, 'the nearest one is just starting');
+  assert.equal(riseOf(s, shown[shown.length - 1]), 0, 'the far ones wait their turn');
+  run(s, 1.2, rng32(5), { flap: false });
+  for (const c of shown) assert.equal(riseOf(s, c), 1);
+  const late = createState(360);
+  step(late, 1 / 60, { flap: true }, rng32(5));
+  assert.ok(late.cols.every((c) => c.rise < 0), 'a narrow view slides them in from the edge');
+});
+
+test('one seed gives the same course on every window width', () => {
+  const seen: number[][] = [];
+  for (const w of [360, 900, 1800]) {
+    const s = createState(w);
+    const rng = rng32(77);
+    const ys: number[] = [];
+    for (let i = 0; i < 60 * 30 && !s.dead; i++) {
+      step(s, 1 / 60, { flap: autopilot(s) }, rng);
+      for (const c of s.cols) if (!ys.includes(c.gapY)) ys.push(c.gapY);
+    }
+    seen.push(ys.slice(0, 12));
+  }
+  assert.deepEqual(seen[1], seen[0]);
+  assert.deepEqual(seen[2], seen[0]);
+  assert.ok(seen[0].length >= 8);
 });

@@ -1,32 +1,49 @@
+.g-hoops .g-hoops-stage {
+  --u: var(--g-hoops-u, 1);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+}
 .g-hoops .g-hoops-host {
   position: absolute;
   inset: 0;
-  background: radial-gradient(120% 80% at 50% 20%, #2a2d3a 0%, #15161d 70%, #0d0e12 100%);
-  cursor: crosshair;
+  background: #0c0d12;
+  cursor: grab;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.g-hoops .g-hoops-host:active {
+  cursor: grabbing;
 }
 .g-hoops .g-hoops-hud {
   position: absolute;
-  top: 10px;
+  top: calc(10px * var(--u));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 10px;
+  gap: calc(10px * var(--u));
   align-items: center;
-  padding: 5px 12px;
+  padding: calc(5px * var(--u)) calc(12px * var(--u));
   border-radius: 999px;
-  font-size: 12px;
+  font-size: calc(12px * var(--u));
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(20, 20, 26, 0.55);
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.94);
+  background: rgba(16, 17, 22, 0.62);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   pointer-events: none;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  z-index: 2;
 }
 .g-hoops .g-hoops-hud .is-low {
   color: #ff8a7a;
+}
+.g-hoops .g-hoops-hud .is-fire {
+  color: #ffb25a;
 }
 .g-hoops .g-hoops-hud span + span::before {
   content: '';
@@ -35,74 +52,81 @@
   height: 3px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.4);
-  margin-right: 10px;
+  margin-right: calc(10px * var(--u));
   vertical-align: middle;
 }
-.g-hoops .g-hoops-power {
+.g-hoops .g-hoops-meter {
   position: absolute;
-  left: 50%;
-  top: 46px;
-  transform: translateX(-50%);
-  width: 140px;
-  height: 6px;
+  right: calc(16px * var(--u));
+  top: 50%;
+  transform: translateY(-38%);
+  width: calc(10px * var(--u));
+  height: clamp(64px, 42%, 200px);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(16, 17, 22, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
   overflow: hidden;
   pointer-events: none;
 }
-.g-hoops .g-hoops-power i {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: #fff;
-  transition: background 0.1s;
-}
-.g-hoops .g-hoops-power i.is-sweet {
-  background: #5be09a;
-}
-.g-hoops .g-hoops-power b {
+.g-hoops .g-hoops-zone {
   position: absolute;
-  top: -3px;
-  left: calc(100% / 1.7);
-  width: 2px;
-  height: 12px;
-  background: rgba(255, 255, 255, 0.7);
+  left: 0;
+  right: 0;
+  background: rgba(91, 224, 154, 0.45);
+}
+.g-hoops .g-hoops-zone.is-swish {
+  background: rgba(150, 255, 196, 0.9);
+}
+.g-hoops .g-hoops-meter b {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 2px;
+  max-height: calc(100% - 4px);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 -2px 0 #fff;
+}
+.g-hoops .g-hoops-meter b.is-in {
+  box-shadow: 0 -2px 0 #7dffb8;
 }
 .g-hoops .g-hoops-pop {
   position: absolute;
-  left: 50%;
-  top: 30%;
-  transform: translateX(-50%);
-  padding: 5px 14px;
+  padding: calc(4px * var(--u)) calc(12px * var(--u));
   border-radius: 999px;
-  font-size: 14px;
+  font-size: calc(14px * var(--u));
   font-weight: 700;
   color: #fff;
-  background: rgba(255, 255, 255, 0.14);
+  white-space: nowrap;
+  background: rgba(16, 17, 22, 0.6);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   pointer-events: none;
-  animation: g-hoops-pop 1s ease-out forwards;
+  transform: translate(-50%, -50%);
+  animation: g-hoops-pop 1.05s ease-out forwards;
 }
 .g-hoops .g-hoops-pop.is-swish {
-  background: rgba(91, 224, 154, 0.28);
+  background: rgba(40, 150, 96, 0.72);
+}
+.g-hoops .g-hoops-pop.is-fire {
+  background: rgba(214, 92, 24, 0.82);
 }
 @keyframes g-hoops-pop {
   0% {
     opacity: 0;
-    transform: translateX(-50%) translateY(10px) scale(0.9);
+    transform: translate(-50%, -30%) scale(0.9);
   }
   15% {
     opacity: 1;
-    transform: translateX(-50%) translateY(0) scale(1.05);
+    transform: translate(-50%, -50%) scale(1.04);
   }
   70% {
     opacity: 1;
-    transform: translateX(-50%) translateY(0) scale(1);
+    transform: translate(-50%, -60%) scale(1);
   }
   100% {
     opacity: 0;
-    transform: translateX(-50%) translateY(-12px);
+    transform: translate(-50%, -90%);
   }
 }
 .g-hoops .g-hoops-banner {
@@ -113,24 +137,32 @@
   text-align: center;
   color: #fff;
   pointer-events: none;
-  animation: g-hoops-banner 2.2s ease-out forwards;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  animation: g-hoops-banner 2s ease-out forwards;
 }
 .g-hoops .g-hoops-banner strong {
   display: block;
-  font-size: 30px;
+  font-size: calc(30px * var(--u));
   font-weight: 700;
   letter-spacing: -0.02em;
 }
 .g-hoops .g-hoops-banner small {
   display: block;
   margin-top: 4px;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.7);
+  font-size: calc(13px * var(--u));
+  color: rgba(255, 255, 255, 0.8);
+}
+.g-hoops .g-hoops-stage.is-short .g-hoops-banner strong {
+  font-size: calc(20px * var(--u));
+}
+.g-hoops .g-hoops-stage.is-short .g-hoops-banner small {
+  margin-top: 1px;
+  font-size: calc(11px * var(--u));
 }
 @keyframes g-hoops-banner {
   0% {
     opacity: 0;
-    transform: scale(0.92);
+    transform: scale(0.94);
   }
   12% {
     opacity: 1;
@@ -147,22 +179,33 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: 44px;
+  bottom: calc(44px * var(--u));
   text-align: center;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
+  font-size: calc(12px * var(--u));
+  color: rgba(255, 255, 255, 0.78);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
   pointer-events: none;
 }
 
-/* narrow screens: clear the shell's score and control row */
-@media (max-width: 640px) {
-  .g-hoops .g-hoops-hud {
-    top: 48px;
+/* short laptop windows: the HUD moves to the bottom corner, out of the hoop's way */
+.g-hoops .g-hoops-stage.is-short .g-hoops-hud {
+  top: auto;
+  bottom: 8px;
+  left: 8px;
+  transform: none;
+}
+
+/* touch frames: bigger shell buttons, scaled back up inside the iPad frame */
+@media (pointer: coarse) {
+  .g-hoops .arcade-ctrl button {
+    width: calc(44px * var(--g-hoops-u, 1));
+    height: calc(44px * var(--g-hoops-u, 1));
   }
-  .g-hoops .g-hoops-power {
-    top: 84px;
+  .g-hoops .arcade-ctrl svg {
+    width: calc(16px * var(--g-hoops-u, 1));
+    height: calc(16px * var(--g-hoops-u, 1));
   }
-  .g-hoops .g-hoops-hint {
-    top: 82px;
+  .g-hoops .arcade-ov > .arcade-card {
+    zoom: var(--g-hoops-u, 1);
   }
 }

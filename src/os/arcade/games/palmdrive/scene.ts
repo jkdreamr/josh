@@ -6,7 +6,7 @@ import { BALL_FLIGHT, BALL_ROLL, BALL_WARN, BUS_LEN, CURB, awake, ballSince, del
 import { COURSES } from './courses';
 import { buildTraffic, onStreet, streetsOf, wallGaps } from './traffic';
 import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, makeStatue, noise, scatter, swingAt, texture, waterTexture } from './scenery';
-import { COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, RAMP_H, RAMP_LEN, TURBO_AT, gustWarn, hazState, hazardV, hurt, strokeAt, turboLevel, windAt, type Ev, type Hat, type HazPhase, type Kart, type LiveHazard, type Race, type ThingKind } from './logic';
+import { BOULDER, COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, RAMP_H, RAMP_LEN, TURBO_AT, boulderAt, gustWarn, hazState, hazardV, hurt, strokeAt, turboLevel, windAt, type Ev, type Hat, type HazPhase, type Kart, type LiveHazard, type Race, type ThingKind } from './logic';
 import { buildRiver, marshMaterial } from './water';
 import { buildScull, poseScull, scullKit, strokeBody, type Scull, type ScullKit } from './shell';
 import { buildFairway, mowerGaps, onPath } from './fairway';
@@ -877,6 +877,36 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     }),
   );
   const pitMat = new THREE.MeshBasicMaterial({ map: pitTex });
+  // (on the Dish the hillside falls away instead: dry grass at the lip, shading down the slope into the dusk of the gully,
+  // runnels down it)
+  const slopeMat =
+    look.edge === 'slope'
+      ? new THREE.MeshBasicMaterial({
+          map: texture(
+            THREE,
+            canvas(64, 32, (g) => {
+              const grad = g.createLinearGradient(0, 0, 64, 0);
+              grad.addColorStop(0, '#b39a5c');
+              grad.addColorStop(0.1, '#8a7240');
+              grad.addColorStop(0.45, '#58472a');
+              grad.addColorStop(1, '#2b2416');
+              g.fillStyle = grad;
+              g.fillRect(0, 0, 64, 32);
+              const sc = scatter(13);
+              for (let k = 0; k < 9; k++) {
+                g.fillStyle = 'rgba(20,14,8,0.35)';
+                g.fillRect(6 + sc() * 10, sc() * 32, 64, 1 + sc() * 1.5);
+              }
+              for (let k = 0; k < 70; k++) {
+                g.fillStyle = sc() < 0.6 ? 'rgba(200,180,120,0.5)' : 'rgba(30,22,12,0.5)';
+                g.fillRect(sc() * 64, sc() * 32, 1.5, 1.5);
+              }
+            }),
+          ),
+        })
+      : null;
+  const fencePosts: { x: number; z: number; ry: number; lean: number; len: number }[] = [];
+  const leanOf = scatter(5);
   const pondTex = look.edge === 'stakes' ? null : waterTexture(THREE, true);
   const pondMat = pondTex ? new THREE.MeshBasicMaterial({ map: pondTex, color: 0x9fe6f0 }) : null;
   const copingMat = new THREE.MeshLambertMaterial({ color: 0xcdb48a, ...(look.night ? { emissive: 0x2a2214 } : {}) });
@@ -950,6 +980,14 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       let open = true;
       for (let s = s0; s <= s1 && open; s += t.step) open = Math.abs(far(s) - lim(s)) > BEYOND - 0.5;
       if (open) scene.add(new THREE.Mesh(strip(THREE, t, s0, s1, far, (s) => far(s) + side * 0.7, 0.14, 4), copingMat));
+    } else if (past !== 'water' && slopeMat) {
+      // the hillside: the slope past the lip, and an old ranch fence part way down it, leaning, its wire sagging
+      scene.add(new THREE.Mesh(strip(THREE, t, s0, s1, (s) => lim(s) + side * 0.4, far, 0.031, 6), slopeMat));
+      for (let s = s0 + 1.5; s < s1 - 1; s += 4.5) {
+        const a = pointAt(t, s, far(s) - side * 2.2);
+        const b = pointAt(t, s + 4.5, far(s + 4.5) - side * 2.2);
+        fencePosts.push({ x: a.x, z: a.z, ry: Math.atan2(b.x - a.x, b.z - a.z), lean: side * (0.15 + 0.25 * leanOf()), len: s + 4.5 < s1 - 1 ? Math.hypot(b.x - a.x, b.z - a.z) : 0 });
+      }
     } else if (past !== 'water') {
       const g = strip(THREE, t, s0, s1, (s) => lim(s) + side * 0.4, far, 0.031, 4);
       scene.add(new THREE.Mesh(g, pitMat));
@@ -1109,6 +1147,25 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     });
     dummy.rotation.set(0, 0, 0);
     scene.add(net, pole, lamp);
+  }
+  if (fencePosts.length) {
+    const wood = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x6e5236 }), fencePosts.length);
+    const wire = new THREE.InstancedMesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x4d4f52 }), fencePosts.length);
+    fencePosts.forEach((p, k) => {
+      dummy.position.set(p.x, 0.55, p.z);
+      // (leaning out down the hill: about the line of the fence)
+      dummy.rotation.set(0, p.ry, p.lean, 'YXZ');
+      dummy.scale.set(0.15, 1.15, 0.15);
+      dummy.updateMatrix();
+      wood.setMatrixAt(k, dummy.matrix);
+      dummy.rotation.set(0, p.ry, 0);
+      dummy.position.set(p.x + Math.sin(p.ry) * p.len * 0.5, 0.75, p.z + Math.cos(p.ry) * p.len * 0.5);
+      dummy.scale.set(0.035, 0.035, p.len);
+      dummy.updateMatrix();
+      wire.setMatrixAt(k, dummy.matrix);
+    });
+    dummy.rotation.set(0, 0, 0);
+    scene.add(wood, wire);
   }
   // a chevron board on the post where each open run starts, pointing back in toward the road
   const startBoards: { s: number; side: number }[] = look.edge === 'stakes' || boat ? [] : open.map(([side, s0]) => ({ s: s0, side }));
@@ -1821,6 +1878,115 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     scene.add(grate, flame, glow);
     flares.push({ i, grate, gmat, flame, fmat, glow });
   };
+  // the Dish's boulders (see BOULDER): a rough lump of sandstone up a chute of scree between two knolls on the uphill
+  // side, behind a falling-rocks sign. Through its warning it tips over the crest and comes down the chute in a cloud of
+  // dust, then bounds over the wall, rolls right across the road, over the far wall and away down the hill
+  const boulderGeo = new THREE.IcosahedronGeometry(1, 1);
+  {
+    // (lumpy, the same at every copy of a vertex, so the faces still meet)
+    const pos = boulderGeo.getAttribute('position');
+    for (let k = 0; k < pos.count; k++) {
+      const x = pos.getX(k);
+      const y = pos.getY(k);
+      const z = pos.getZ(k);
+      const f = 1 + 0.13 * Math.sin(3.1 * x + 1.7 * y) * Math.cos(2.3 * z + 0.7 * x) + 0.07 * Math.sin(5.3 * y - 2.1 * z);
+      pos.setXYZ(k, x * f * 1.05, y * f * 0.92, z * f);
+    }
+    boulderGeo.computeVertexNormals();
+  }
+  const boulderMat = new THREE.MeshLambertMaterial({ color: 0x9a8466, flatShading: true });
+  const screeTex = texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = '#9c8458';
+      g.fillRect(0, 0, 64, 64);
+      const sc = scatter(29);
+      for (let k = 0; k < 160; k++) {
+        g.fillStyle = sc() < 0.5 ? 'rgba(70,56,36,0.55)' : 'rgba(214,196,150,0.6)';
+        g.beginPath();
+        g.arc(sc() * 64, sc() * 64, 0.8 + sc() * 2.4, 0, Math.PI * 2);
+        g.fill();
+      }
+    }),
+  );
+  const screeMat = new THREE.MeshLambertMaterial({ map: screeTex, transparent: true, depthWrite: false });
+  const knollMat = new THREE.MeshLambertMaterial({ color: 0xbfa463, flatShading: true });
+  const knollGeo = new THREE.SphereGeometry(1, 9, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+  const rockSign = new THREE.MeshBasicMaterial({
+    map: texture(
+      THREE,
+      canvas(64, 64, (g) => {
+        // a yellow diamond, black rim, rocks tumbling down a slope
+        g.translate(32, 32);
+        g.rotate(Math.PI / 4);
+        g.fillStyle = '#141414';
+        g.fillRect(-22, -22, 44, 44);
+        g.fillStyle = '#ffcf1f';
+        g.fillRect(-19, -19, 38, 38);
+        g.rotate(-Math.PI / 4);
+        g.fillStyle = '#141414';
+        g.beginPath();
+        g.moveTo(-17, -12);
+        g.lineTo(-17, 15);
+        g.lineTo(10, 15);
+        g.closePath();
+        g.fill();
+        for (const [x, y, rr] of [[2, -6, 4.5], [10, 4, 3.5], [-4, 4, 2.5]]) {
+          g.beginPath();
+          g.arc(x, y, rr, 0, Math.PI * 2);
+          g.fill();
+        }
+      }),
+    ),
+    transparent: true,
+    side: THREE.DoubleSide,
+  });
+  type BoulderView = { i: number; rock: T.Mesh; shade: T.Mesh; shadeMat: T.MeshBasicMaterial; f: Frame; roll: number; last: number; land: boolean };
+  const boulders: BoulderView[] = [];
+  const buildBoulder = (h: LiveHazard, i: number) => {
+    const side = Math.sign(h.cross ?? -1);
+    const f = frame(h.s);
+    const rock = new THREE.Mesh(boulderGeo, boulderMat);
+    rock.scale.setScalar(h.r);
+    rock.visible = false;
+    const shadeMat = new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0 });
+    const shade = new THREE.Mesh(geo.plane, shadeMat);
+    shade.rotation.x = -Math.PI / 2;
+    shade.renderOrder = 2;
+    scene.add(rock, shade);
+    // the chute: scree from the foot of the wall up between the knolls, stones lying in it
+    const scree = new THREE.Mesh(strip(THREE, t, h.s - 3.2, h.s + 3.2, () => side * (t.edge + 0.4), () => side * (t.edge + 24), 0.04, 6), screeMat);
+    scree.renderOrder = 1;
+    scene.add(scree);
+    for (const [ds, dd, sx, sy, sz] of [[-10, 9, 7, 4.2, 6], [10, 9, 7, 4.6, 6.5], [0, 26, 13, 6.5, 10], [-16, 19, 9, 5.5, 8], [16, 20, 9, 5, 8]]) {
+      const p = pointAt(t, h.s + ds, side * (t.edge + dd));
+      const k = new THREE.Mesh(knollGeo, knollMat);
+      k.position.set(p.x, -0.4, p.z);
+      k.scale.set(sx, sy, sz);
+      k.rotation.y = headingOf(p.tx, p.tz);
+      scene.add(k);
+    }
+    for (let n = 0; n < 7; n++) {
+      const p = pointAt(t, h.s + (rand() - 0.5) * 6, side * (t.edge + 2 + rand() * 18));
+      const st = new THREE.Mesh(rockGeo, rockMat);
+      const sz = 0.3 + rand() * 0.5;
+      st.scale.set(sz * 1.2, sz * 0.8, sz);
+      st.rotation.set(rand(), rand() * 6, rand());
+      st.position.set(p.x, sz * 0.4, p.z);
+      scene.add(st);
+    }
+    // and a falling-rocks sign on the uphill side, well before the chute
+    const sp = pointAt(t, h.s - 32, side * (t.edge + 1.4));
+    const sign = new THREE.Mesh(geo.plane, rockSign);
+    sign.scale.set(2.2, 2.2, 1);
+    sign.position.set(sp.x, 2.7, sp.z);
+    sign.rotation.y = headingOf(sp.tx, sp.tz) + Math.PI;
+    const post = new THREE.Mesh(geo.box, mats.dark);
+    post.scale.set(0.12, 1.8, 0.12);
+    post.position.set(sp.x, 0.9, sp.z);
+    scene.add(sign, post);
+    boulders.push({ i, rock, shade, shadeMat, f, roll: 0, last: NaN, land: false });
+  };
   // frost: a pale crystalline sheet over the stretches where it forms, from its lap (faint the lap before, forming)
   const frostTex = look.glass
     ? texture(
@@ -1871,6 +2037,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     if (h.kind === 'wrecker') return buildWrecker(h, i);
     if (h.kind === 'rotor') return buildRotor(h, i);
     if (h.kind === 'wet') return buildWet(h, i);
+    if (h.kind === 'boulder') return buildBoulder(h, i);
     if (h.kind === 'sand') {
       // a bunker: raked sand with a soft edge
       sandMat ??= new THREE.MeshLambertMaterial({ map: bunkerTexture(THREE, 9), transparent: true, depthWrite: false });
@@ -2514,6 +2681,15 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       for (const { view: cv, i } of cows) {
         const h = race.hazards[i];
         if (!h) continue;
+        if (!awake(h, lapNow)) {
+          // one that wanders on later: grazing the far side of the fence until its lap comes round
+          const by = pointAt(race.track, h.along, race.track.edge + 2.2);
+          cv.g.position.set(by.x, 0, by.z);
+          cv.g.rotation.y = headingOf(by.tx, by.tz) + 0.4;
+          cv.legs.forEach((leg) => (leg.rotation.x = 0));
+          cv.head.rotation.x = 0.9;
+          continue;
+        }
         const at = pointAt(race.track, h.along, h.at);
         const face = headingOf(-at.tz * h.walk, at.tx * h.walk);
         cv.h = dampAngle(cv.h, face, 3, dt);
@@ -2870,6 +3046,61 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
           const g = st.live ? 7 : 2 + 3 * st.warn;
           fv.glow.scale.set(g, g, 1);
         }
+      }
+      for (const bv of boulders) {
+        const h = race.hazards[bv.i];
+        const st = hazState(race, h, race.time, lapNow);
+        const b = boulderAt(race, h, race.time);
+        const edge = race.track.edge;
+        const from = h.cross ?? -(edge + BOULDER.out);
+        const up = Math.sign(from);
+        // down the chute through its warning (tipping over the crest at first), then across as the state has it, bounding
+        // over each wall and dropping away down the hill past the far one
+        let d = b.d;
+        let y = h.r;
+        let size = 1;
+        if (st.phase === 'off') size = 0;
+        else if (b.warn > 0) {
+          d = from + up * 9 * (1 - b.warn);
+          y = h.r + 3.4 * (1 - b.warn) + Math.abs(Math.sin(b.warn * 9)) * 0.35;
+          size = Math.min(1, b.warn * 6);
+        } else if (b.rolling) {
+          const over = (Math.abs(d) - edge) / 2.2;
+          y += Math.max(0, 1 - over * over) * 1.5 + Math.abs(Math.sin(b.u * 17)) * 0.22;
+          // (past the far wall it goes on down the hill, out of sight)
+          if (-Math.sign(d) === up && Math.abs(d) > edge + 1.6) y -= (Math.abs(d) - edge - 1.6) * 1.1;
+        } else size = 0;
+        bv.rock.visible = size > 0;
+        bv.shade.visible = size > 0 && y > -0.2;
+        if (size > 0) {
+          const p = pointAt(race.track, h.s, d);
+          const moved = Number.isNaN(bv.last) ? 0 : d - bv.last;
+          bv.roll += moved / h.r;
+          bv.rock.position.set(p.x, y, p.z);
+          // (it rolls about the line of the road: local z along it, local -x to the right)
+          bv.rock.rotation.set(0, bv.f.h, 0);
+          bv.rock.rotateZ(bv.roll);
+          bv.rock.scale.setScalar(h.r * size);
+          bv.shade.position.set(p.x, 0.09, p.z);
+          bv.shade.scale.set(h.r * 2.4, h.r * 2.4, 1);
+          bv.shadeMat.opacity = Math.max(0, 0.55 - 0.12 * Math.max(0, y - h.r));
+          // dust: down the chute through its warning, kicked up behind it on the road, and a burst each time it lands
+          // off a wall
+          const near = Math.hypot(camera.position.x - p.x, camera.position.z - p.z) < 120;
+          if (near && b.warn > 0 && Math.random() < dt * 14) emit(geo.ball, partMat.dust, p.x + (Math.random() - 0.5) * 3, 0.4 + Math.random(), p.z + (Math.random() - 0.5) * 3, 0, 1 + Math.random(), 0, 0.7, 0.22 + Math.random() * 0.2, -1, true);
+          if (near && b.warn > 0.5 && Math.random() < dt * 10) {
+            const q = pointAt(race.track, h.s + (Math.random() - 0.5) * 4, from - up * (2 + Math.random() * 3));
+            emit(geo.ball, partMat.mud, q.x, 0.3, q.z, 0, 1.5, 0, 0.5, 0.12, 12);
+          }
+          if (near && b.rolling && Math.abs(d) < edge && Math.random() < dt * 12) emit(geo.ball, partMat.dust, p.x, 0.25, p.z, 0, 0.6, 0, 0.6, 0.28, -0.5, true);
+          const landed = b.rolling && Math.abs(Math.abs(d) - edge) > 2.2 && Math.abs(d) < edge;
+          if (near && landed && !bv.land) {
+            burst(geo.ball, [partMat.dust], p.x, 0.3, p.z, 12, 4, 0.45, 0.7, 8);
+            if (meK && Math.hypot(meK.x - p.x, meK.z - p.z) < 25) shake = Math.max(shake, 0.15);
+          }
+          bv.land = landed;
+        }
+        bv.last = size > 0 ? d : NaN;
       }
       for (const f of frosts) f.mat.opacity = lapNow >= f.lap ? 0.75 : lapNow === f.lap - 1 ? 0.18 : 0;
       if (shardMesh) {
@@ -3324,6 +3555,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         // caught by a set piece: sparks off the steel (spray off the jet), and a jolt if it was you
         const k = race.karts[e.k];
         if (!k) return;
+        // (a boulder throws up a cloud of dust and grit as well)
+        if (e.kind === 'boulder') burst(geo.ball, [partMat.dust, partMat.mud], k.x, 0.8, k.z, 18, 6, 0.35, 0.7, 10);
         if (e.kind === 'rotor') burst(geo.ball, [partMat.spray, partMat.white], k.x, 0.8, k.z, 14, 5, 0.25, 0.6, 10);
         else if (e.kind === 'tether' && race.hazards.some((h) => h.kind === 'tether' && h.look === 'goose')) {
           // bowled over by a goose: a flurry of feathers

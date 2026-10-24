@@ -29,6 +29,7 @@ import {
   type Level,
   type Rng,
   type ShotResult,
+  topBarSlot,
 } from '../src/os/arcade/games/battleship/battleship.ts';
 
 function seeded(seed: number): Rng {
@@ -271,4 +272,14 @@ test('a wrapped status pill leaves room for the column labels above the board', 
     // Column labels span 15u to 3u above the board.
     assert.ok(top - 15 * u >= statusBottom + 2, `labels clear the status at u=${u}`);
   }
+});
+
+test('status pill finds a top bar gap beside the online badge', () => {
+  assert.equal(topBarSlot(60, 400, 100), 180);
+  assert.equal(topBarSlot(60, 400, 400), null);
+  const left = topBarSlot(60, 400, 100, [[200, 254]]);
+  assert.ok(left !== null);
+  assert.ok(left + 100 <= 200 - 8 || left >= 254 + 8);
+  assert.equal(topBarSlot(60, 300, 100, [[150, 210]]), null);
+  assert.equal(topBarSlot(0, 300, 50, [[-20, 400]]), null);
 });
