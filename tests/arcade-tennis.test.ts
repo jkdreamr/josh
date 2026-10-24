@@ -1,11 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import {
   BALL_RADIUS,
   COURT_LENGTH,
   DOUBLES_WIDTH,
+  GRAVITY,
   SINGLES_WIDTH,
   STEP,
+  TOSS_START,
   createWorld,
   hitServe,
   isInCourt,
@@ -23,6 +26,7 @@ import {
   type Command,
   type Spin3,
 } from '../src/os/arcade/games/tennis/logic.ts';
+import { characterSpaceBoneTarget } from '../src/os/arcade/games/tennis/player.ts';
 import { commandOf, configOf, moveOf, parsePacket, stateOf, swingOf } from '../src/os/arcade/games/tennis/net.ts';
 import { chooseShot } from '../src/os/arcade/games/tennis/ai.ts';
 
@@ -204,6 +208,58 @@ test('serve boxes, faults, double faults, and a net let behave correctly', () =>
   assert.equal(letBall.phase, 'serve-ready');
   assert.equal(letBall.serveNumber, 1);
   assert.ok(letEvents.some((event) => event.type === 'call' && event.call === 'let'));
+});
+
+test('serve-ready ball follows its moving server and toss follows hand-height trajectory', () => {
+  const moving = createWorld();
+  const server = moving.players[moving.serverSeat]!;
+  const startingX = server.x;
+  stepWorld(moving, [{ seat: server.seat, move: { x: 1, z: 0 } }], 0.1);
+  assert.ok(server.x > startingX);
+  const cos = Math.cos(server.facing);
+  const sin = Math.sin(server.facing);
+  assert.ok(Math.abs(moving.ball.p.x - (server.x - 0.36 * cos + 0.035 * sin)) < 1e-6);
+  assert.ok(Math.abs(moving.ball.p.z - (server.z + 0.36 * sin + 0.035 * cos)) < 1e-6);
+  assert.deepEqual(moving.ball.prev, moving.ball.p);
+
+  const toss = createWorld();
+  assert.equal(tossServe(toss, toss.serverSeat), true);
+  assert.equal(toss.ball.p.y, TOSS_START);
+  for (let i = 0; i < Math.round(0.56 / STEP); i++) stepWorld(toss, [], STEP);
+  const expected = TOSS_START + 5.5 * toss.serveClock - 0.5 * GRAVITY * toss.serveClock ** 2;
+  assert.ok(Math.abs(toss.ball.p.y - expected) < 1e-6);
+  assert.ok(Math.abs(toss.ball.p.y - 2.89) < 0.02);
+});
+
+test('character-space upper-arm rotation moves the hand forward and upward despite model yaw', () => {
+  const root = new THREE.Group();
+  root.rotation.y = 0.47;
+  const shoulder = new THREE.Bone();
+  shoulder.position.set(0, 1.5, 0);
+  const upper = new THREE.Bone();
+  upper.name = 'upperarm_r';
+  upper.position.set(0.2, 0, 0);
+  shoulder.add(upper);
+  root.add(shoulder);
+  const lower = new THREE.Bone();
+  lower.position.set(0, -0.2, -0.35);
+  upper.add(lower);
+  const hand = new THREE.Bone();
+  hand.name = 'hand_r';
+  hand.position.set(0, -0.1, -0.15);
+  lower.add(hand);
+  root.updateMatrixWorld(true);
+  const rootWorld = root.getWorldQuaternion(new THREE.Quaternion());
+  const parentBindWorld = rootWorld.clone().invert().multiply(shoulder.getWorldQuaternion(new THREE.Quaternion()));
+  const bindWorld = rootWorld.clone().invert().multiply(upper.getWorldQuaternion(new THREE.Quaternion()));
+  const before = root.worldToLocal(hand.getWorldPosition(new THREE.Vector3()));
+  const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+  const target = characterSpaceBoneTarget(bindWorld, parentBindWorld, parentBindWorld, rotation);
+  upper.quaternion.copy(shoulder.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(rootWorld.clone().multiply(target)));
+  root.updateMatrixWorld(true);
+  const after = root.worldToLocal(hand.getWorldPosition(new THREE.Vector3()));
+  assert.ok(after.y > before.y + 0.3, `hand should move up: ${before.y} → ${after.y}`);
+  assert.ok(after.z > before.z + 0.1, `hand should move forward: ${before.z} → ${after.z}`);
 });
 
 test('net collision blocks the ball and timing maps direction and quality', () => {

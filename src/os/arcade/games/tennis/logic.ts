@@ -11,6 +11,7 @@ export const BALL_MASS = 0.0577;
 export const SWING_LEAD = 0.12;
 export const SWING_WINDOW = 0.16;
 export const GRAVITY = 9.81;
+export const TOSS_START = 1.35;
 
 export type Format = 'singles' | 'doubles';
 export type MatchLength = 'game' | 'three' | 'set';
@@ -245,12 +246,22 @@ export function scoreText(world: World) {
   return `${sets}${games} · ${pointLabel(match.points[0])}-${pointLabel(match.points[1])}`;
 }
 
+function serveHandPosition(world: World, server: Player): Vec3 {
+  const localX = -0.36;
+  const localZ = 0.035;
+  const cos = Math.cos(server.facing);
+  const sin = Math.sin(server.facing);
+  return {
+    x: server.x + cos * localX + sin * localZ,
+    y: 1.05,
+    z: server.z - sin * localX + cos * localZ,
+  };
+}
+
 function resetBall(world: World) {
   const server = serverOf(world);
   const team = server?.team ?? 0;
-  const half = team === 0 ? 1 : -1;
-  const boxSign = world.serveBox === 0 ? 1 : -1;
-  world.ball.p = { x: (server?.x ?? 0) + boxSign * 0.25, y: 1.05, z: (server?.z ?? half * 10.2) - half * 0.4 };
+  world.ball.p = server ? serveHandPosition(world, server) : { x: 0, y: 1.05, z: 0 };
   world.ball.prev = { ...world.ball.p };
   world.ball.v = { x: 0, y: 0, z: 0 };
   world.ball.spin = { x: 0, y: 0, z: 0 };
@@ -272,7 +283,6 @@ function resetServe(world: World) {
   world.pointWinner = null;
   world.serveBox = serveSide(world);
   world.callClock = Math.max(0, world.callClock);
-  resetBall(world);
   for (const player of world.players) {
     player.vx = 0;
     player.vz = 0;
@@ -300,6 +310,7 @@ function resetServe(world: World) {
     player.prevX = player.x;
     player.prevZ = player.z;
   }
+  resetBall(world);
 }
 
 export function isInCourt(x: number, z: number, format: Format, radius = BALL_RADIUS) {
@@ -528,7 +539,8 @@ export function tossServe(world: World, seat: number) {
   if (world.phase !== 'serve-ready' || world.serverSeat !== seat) return false;
   world.phase = 'serve-toss';
   world.serveClock = 0;
-  world.ball.p.y = 2.05;
+  world.ball.p.y = TOSS_START;
+  world.ball.prev.y = TOSS_START;
   serverOf(world)!.serveToss = 1;
   return true;
 }
@@ -913,10 +925,17 @@ function simulateStep(world: World, commands: readonly Command[], events: Event[
   }
   if (world.phase === 'serve-toss') world.serveClock += STEP;
   if (world.phase === 'serve-toss') {
-    world.ball.p.y = Math.max(BALL_RADIUS, 2.05 + 5.5 * world.serveClock - 0.5 * GRAVITY * world.serveClock ** 2);
+    world.ball.p.y = Math.max(BALL_RADIUS, TOSS_START + 5.5 * world.serveClock - 0.5 * GRAVITY * world.serveClock ** 2);
   }
   for (const command of commands) processCommand(world, command, events);
   movePlayers(world);
+  if (world.phase === 'serve-ready') {
+    const server = serverOf(world);
+    if (server) {
+      world.ball.p = serveHandPosition(world, server);
+      world.ball.prev = { ...world.ball.p };
+    }
+  }
   if (world.phase === 'serve-flight' || world.phase === 'rally') {
     updateBall(world, events);
     if (world.phase === 'serve-flight' && world.ball.p.z * (serverOf(world)?.team === 0 ? -1 : 1) < 0 && world.ball.p.y < BALL_RADIUS + 0.02) {

@@ -115,14 +115,20 @@ function addCourtLine(THREE: Three, parent: T.Object3D, x: number, z: number, wi
 }
 
 function buildCourt(THREE: Three, scene: T.Scene, lite: boolean, anisotropy: number) {
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 170), standard(THREE, '#8b9561', 0.98));
+  const maps = courtTextures(THREE, lite, anisotropy);
+  const surround = new THREE.MeshStandardMaterial({
+    map: maps.surroundColor,
+    normalMap: maps.normal,
+    roughnessMap: maps.roughness,
+    roughness: 0.9,
+  });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 170), surround);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.08;
   ground.receiveShadow = true;
   scene.add(ground);
 
   const court = new THREE.Group();
-  const maps = courtTextures(THREE, lite, anisotropy);
   const surf = new THREE.MeshStandardMaterial({
     map: maps.color,
     normalMap: maps.normal,
@@ -130,7 +136,12 @@ function buildCourt(THREE: Three, scene: T.Scene, lite: boolean, anisotropy: num
     roughness: 0.78,
     metalness: 0.01,
   });
-  const blue = new THREE.Mesh(new THREE.BoxGeometry(DOUBLES_WIDTH + 1.05, 0.12, COURT_LENGTH + 1.1), standard(THREE, '#173b55', 0.84));
+  const blue = new THREE.Mesh(new THREE.BoxGeometry(DOUBLES_WIDTH + 1.05, 0.12, COURT_LENGTH + 1.1), new THREE.MeshStandardMaterial({
+    map: maps.color,
+    normalMap: maps.normal,
+    roughnessMap: maps.roughness,
+    roughness: 0.82,
+  }));
   blue.position.y = -0.01;
   blue.receiveShadow = true;
   court.add(blue);
@@ -154,13 +165,28 @@ function buildCourt(THREE: Three, scene: T.Scene, lite: boolean, anisotropy: num
   addCourtLine(THREE, court, 0, 0, 0.05, COURT_LENGTH - SERVICE_LINE * 2, 0.069);
   for (const side of [-1, 1]) addCourtLine(THREE, court, 0, side * (COURT_LENGTH / 2 - 0.32), 0.13, 0.04, 0.069);
 
-  const apronMaterial = standard(THREE, '#365a58', 0.92);
   for (const side of [-1, 1]) {
-    addBox(THREE, court, [3.4, 0.12, COURT_LENGTH + 2.2], [side * (doublesHalf + 2.2), -0.02, 0], apronMaterial, false, true);
-    addBox(THREE, court, [DOUBLES_WIDTH + 4.4, 0.12, 3], [0, -0.02, side * (COURT_LENGTH / 2 + 2.4)], apronMaterial, false, true);
+    addBox(THREE, court, [3.4, 0.12, COURT_LENGTH + 2.2], [side * (doublesHalf + 2.2), -0.02, 0], surround, false, true);
+    addBox(THREE, court, [DOUBLES_WIDTH + 4.4, 0.12, 3], [0, -0.02, side * (COURT_LENGTH / 2 + 2.4)], surround, false, true);
   }
   scene.add(court);
   return { court, playSurface, singlesHalf, doublesHalf };
+}
+
+function radialShadowTexture(THREE: Three) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 128;
+  const context = canvas.getContext('2d')!;
+  const gradient = context.createRadialGradient(64, 64, 2, 64, 64, 62);
+  gradient.addColorStop(0, 'rgba(10,16,18,0.42)');
+  gradient.addColorStop(0.45, 'rgba(10,16,18,0.2)');
+  gradient.addColorStop(1, 'rgba(10,16,18,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 128, 128);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 1;
+  return texture;
 }
 
 function buildSky(THREE: Three, scene: T.Scene) {
@@ -610,19 +636,28 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS, 16, 12), new THREE.MeshPhysicalMaterial({ map: ballMap, color: '#f6f2ca', roughness: 0.82, sheen: 0.38, clearcoat: 0.12 }));
   ball.castShadow = true;
   scene.add(ball);
+  const shadowTexture = radialShadowTexture(THREE);
+  const ballShadowMaterial = new THREE.MeshBasicMaterial({ map: shadowTexture, transparent: true, opacity: 0.4, depthWrite: false, toneMapped: false });
+  const ballShadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), ballShadowMaterial);
+  ballShadow.rotation.x = -Math.PI / 2;
+  ballShadow.position.y = 0.074;
+  scene.add(ballShadow);
+  const playerShadows = players.map(() => {
+    const shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: shadowTexture, transparent: true, opacity: 0.3, depthWrite: false, toneMapped: false }),
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.068;
+    shadow.scale.set(0.95, 0.62, 1);
+    scene.add(shadow);
+    return shadow;
+  });
   const trail = Array.from({ length: 5 }, (_, index) => {
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS * (0.78 - index * 0.09), 12, 8), new THREE.MeshBasicMaterial({ color: '#e6ed70', transparent: true, opacity: 0.23 - index * 0.035, depthWrite: false }));
     scene.add(mesh);
     return mesh;
   });
-  const ballShadow = new THREE.Mesh(new THREE.CircleGeometry(0.11, 20), new THREE.MeshBasicMaterial({ color: '#15201b', transparent: true, opacity: 0.42, depthWrite: false }));
-  ballShadow.rotation.x = -Math.PI / 2;
-  ballShadow.position.y = 0.074;
-  scene.add(ballShadow);
-  const ballShadowSoft = new THREE.Mesh(new THREE.CircleGeometry(0.34, 24), new THREE.MeshBasicMaterial({ color: '#1b2923', transparent: true, opacity: 0.11, depthWrite: false }));
-  ballShadowSoft.rotation.x = -Math.PI / 2;
-  ballShadowSoft.position.y = 0.071;
-  scene.add(ballShadowSoft);
   const ballTrail = Array.from({ length: trail.length + 1 }, () => ({ x: 0, y: 0, z: 0 }));
   let ballTrailCount = 0;
   const puffs: Puff[] = [];
@@ -741,19 +776,38 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       const model = players[index];
       if (!player || !model) {
         model?.root.visible && (model.root.visible = false);
+        if (playerShadows[index]) playerShadows[index]!.visible = false;
         continue;
       }
       model.root.visible = true;
       const x = player.prevX + (player.x - player.prevX) * alpha;
       const z = player.prevZ + (player.z - player.prevZ) * alpha;
-      updatePlayer(model, player, world.ball, dt, humanSeats.has(player.seat), clamp(x, -half - 1, half + 1), z, ballX, ballY);
+      updatePlayer(model, player, world.ball, dt, humanSeats.has(player.seat), clamp(x, -half - 1, half + 1), z, ballX, ballY, world.phase, player.seat === world.serverSeat);
+      const shadow = playerShadows[index]!;
+      shadow.visible = true;
+      shadow.position.set(x, 0.068, z);
       if (humanSeats.has(player.seat) && player.team === side) {
         playerX = x;
         playerZ = z;
       }
     }
+    const serverModel = players[world.serverSeat];
+    const palm = serverModel?.leftPalmWorldPosition();
+    let visualBallX = ballX;
+    let visualBallY = ballY;
+    let visualBallZ = ballZ;
+    if (world.phase === 'serve-ready' && palm) {
+      visualBallX = palm.x;
+      visualBallY = palm.y;
+      visualBallZ = palm.z;
+    } else if (world.phase === 'serve-toss' && palm) {
+      const blend = clamp(world.serveClock / 0.12, 0, 1);
+      visualBallX = palm.x + (ballX - palm.x) * blend;
+      visualBallY = palm.y + (ballY - palm.y) * blend;
+      visualBallZ = palm.z + (ballZ - palm.z) * blend;
+    }
     ball.visible = world.ball.inPlay || world.phase === 'serve-ready' || world.phase === 'serve-toss';
-    ball.position.set(ballX, ballY + (world.phase === 'serve-toss' ? Math.sin(world.serveClock * 4) * 0.045 : 0), ballZ);
+    ball.position.set(visualBallX, visualBallY, visualBallZ);
     const velocity = world.ball.v;
     const speed = Math.hypot(velocity.x, velocity.y, velocity.z);
     ball.rotation.x += velocity.z * dt * 2.2 + world.ball.spin.x * dt * 0.018;
@@ -775,13 +829,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       mesh.visible = ballTrailCount > 0 && world.ball.inPlay;
       if (point) mesh.position.set(point.x, point.y, point.z);
     }
-    const drop = Math.max(0, ballY - BALL_RADIUS);
-    ballShadow.position.set(ballX, 0.074, ballZ);
-    ballShadow.scale.setScalar(1 + Math.min(1.8, drop * 0.14));
-    (ballShadow.material as T.MeshBasicMaterial).opacity = Math.max(0.06, 0.42 - drop * 0.037);
-    ballShadowSoft.position.set(ballX, 0.071, ballZ);
-    ballShadowSoft.scale.setScalar(1 + Math.min(3, drop * 0.19));
-    (ballShadowSoft.material as T.MeshBasicMaterial).opacity = Math.max(0.025, 0.11 - drop * 0.012);
+    const drop = Math.max(0, visualBallY - BALL_RADIUS);
+    ballShadow.position.set(visualBallX, 0.074, visualBallZ);
+    ballShadow.scale.setScalar(0.22 + Math.min(0.9, drop * 0.13));
+    ballShadowMaterial.opacity = Math.max(0.035, 0.4 / (1 + drop * 0.9));
+    ballShadow.visible = ball.visible;
     if (hitPulse > 0) {
       hitPulse = Math.max(0, hitPulse - dt * 6);
       ball.scale.set(1 + hitPulse * 0.35, 1 - hitPulse * 0.24, 1 + hitPulse * 0.35);
@@ -868,6 +920,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   }
 
   function dispose() {
+    players.forEach((model) => model.dispose());
     disposeTree(scene);
     envTarget.dispose();
     pmrem.dispose();
