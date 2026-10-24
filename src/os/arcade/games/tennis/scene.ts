@@ -1,8 +1,8 @@
 import type * as T from 'three';
-import type { Vec3, World } from './logic.ts';
-import { BALL_RADIUS, COURT_LENGTH, DOUBLES_WIDTH, SERVICE_LINE, SINGLES_WIDTH, clamp, courtWidth, netHeight, pointLabel, serverOf } from './logic.ts';
+import type { World } from './logic.ts';
+import { BALL_RADIUS, COURT_LENGTH, DOUBLES_WIDTH, SERVICE_LINE, SINGLES_WIDTH, STEP, clamp, courtWidth, netHeight, pointLabel, predictLanding, serverOf } from './logic.ts';
 import { createGL, damp, disposeTree } from './gl.ts';
-import { makePlayer, updatePlayer } from './player.ts';
+import { makePlayer, updatePlayer, type PoseName } from './player.ts';
 import { ballTexture, courtTextures, netTexture, windscreenTexture } from './textures.ts';
 
 type Three = typeof import('three');
@@ -17,6 +17,8 @@ export type View = {
   bounce: (x: number, z: number, line: boolean) => void;
   netHit: () => void;
   point: (winner: number) => void;
+  debugPose: (seat: number, name: PoseName, progress?: number) => void;
+  debugCamera: (name: 'front' | 'side' | 'back' | 'game', seat?: number) => void;
   dispose: () => void;
 };
 
@@ -32,19 +34,103 @@ function addBox(THREE: Three, parent: T.Object3D, size: [number, number, number]
   return mesh;
 }
 
+function mergeStaticMeshes(THREE: Three, root: T.Scene) {
+  type Batch = { material: T.Material; cast: boolean; receive: boolean; order: number; meshes: T.Mesh[] };
+  const batches = new Map<string, Batch>();
+  const materialKeys = new Map<string, string>();
+  const materialKey = (material: T.Material) => {
+    const cached = materialKeys.get(material.uuid);
+    if (cached) return cached;
+    const properties = material.toJSON() as unknown as { uuid?: string; name?: string; metadata?: unknown; userData?: unknown; [key: string]: unknown };
+    delete properties.uuid;
+    delete properties.name;
+    delete properties.metadata;
+    delete properties.userData;
+    const key = JSON.stringify(properties);
+    materialKeys.set(material.uuid, key);
+    return key;
+  };
+  root.updateMatrixWorld(true);
+  root.traverse((object) => {
+    const mesh = object as T.Mesh;
+    if (!mesh.isMesh || (mesh as T.InstancedMesh).isInstancedMesh || mesh.userData.keepSeparate
+      || Array.isArray(mesh.material) || mesh.material.transparent || !mesh.geometry.getAttribute('position')) return;
+    const key = `${materialKey(mesh.material)}:${mesh.castShadow}:${mesh.receiveShadow}:${mesh.renderOrder}`;
+    let batch = batches.get(key);
+    if (!batch) {
+      batch = { material: mesh.material, cast: mesh.castShadow, receive: mesh.receiveShadow, order: mesh.renderOrder, meshes: [] };
+      batches.set(key, batch);
+    }
+    batch.meshes.push(mesh);
+  });
+
+  const point = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+  const normalMatrix = new THREE.Matrix3();
+  for (const batch of batches.values()) {
+    if (batch.meshes.length < 2) continue;
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    for (const mesh of batch.meshes) {
+      const geometry = mesh.geometry as T.BufferGeometry;
+      const position = geometry.getAttribute('position');
+      const normalAttribute = geometry.getAttribute('normal');
+      const uvAttribute = geometry.getAttribute('uv');
+      const offset = positions.length / 3;
+      normalMatrix.getNormalMatrix(mesh.matrixWorld);
+      for (let i = 0; i < position.count; i++) {
+        point.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+        positions.push(point.x, point.y, point.z);
+        if (normalAttribute) {
+          normal.fromBufferAttribute(normalAttribute, i).applyMatrix3(normalMatrix).normalize();
+          normals.push(normal.x, normal.y, normal.z);
+        } else normals.push(0, 1, 0);
+        if (uvAttribute) uvs.push(uvAttribute.getX(i), uvAttribute.getY(i));
+        else uvs.push(0, 0);
+      }
+      if (geometry.index) {
+        for (let i = 0; i < geometry.index.count; i++) indices.push(offset + geometry.index.getX(i));
+      } else {
+        for (let i = 0; i < position.count; i++) indices.push(offset + i);
+      }
+      mesh.removeFromParent();
+      geometry.dispose();
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    geometry.computeBoundingSphere();
+    const merged = new THREE.Mesh(geometry, batch.material);
+    merged.castShadow = batch.cast;
+    merged.receiveShadow = batch.receive;
+    merged.renderOrder = batch.order;
+    root.add(merged);
+  }
+}
+
 function addCourtLine(THREE: Three, parent: T.Object3D, x: number, z: number, width: number, length: number, height = 0.019) {
   return addBox(THREE, parent, [width, 0.012, length], [x, height, z], standard(THREE, lineColor, 0.56), false, true);
 }
 
 function buildCourt(THREE: Three, scene: T.Scene, lite: boolean, anisotropy: number) {
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 170), standard(THREE, '#8b9561', 0.98));
+  const maps = courtTextures(THREE, lite, anisotropy);
+  const surround = new THREE.MeshStandardMaterial({
+    map: maps.surroundColor,
+    normalMap: maps.normal,
+    roughnessMap: maps.roughness,
+    roughness: 0.9,
+  });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 170), surround);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.08;
   ground.receiveShadow = true;
   scene.add(ground);
 
   const court = new THREE.Group();
-  const maps = courtTextures(THREE, lite, anisotropy);
   const surf = new THREE.MeshStandardMaterial({
     map: maps.color,
     normalMap: maps.normal,
@@ -52,7 +138,12 @@ function buildCourt(THREE: Three, scene: T.Scene, lite: boolean, anisotropy: num
     roughness: 0.78,
     metalness: 0.01,
   });
-  const blue = new THREE.Mesh(new THREE.BoxGeometry(DOUBLES_WIDTH + 1.05, 0.12, COURT_LENGTH + 1.1), standard(THREE, '#173b55', 0.84));
+  const blue = new THREE.Mesh(new THREE.BoxGeometry(DOUBLES_WIDTH + 1.05, 0.12, COURT_LENGTH + 1.1), new THREE.MeshStandardMaterial({
+    map: maps.color,
+    normalMap: maps.normal,
+    roughnessMap: maps.roughness,
+    roughness: 0.82,
+  }));
   blue.position.y = -0.01;
   blue.receiveShadow = true;
   court.add(blue);
@@ -76,13 +167,28 @@ function buildCourt(THREE: Three, scene: T.Scene, lite: boolean, anisotropy: num
   addCourtLine(THREE, court, 0, 0, 0.05, COURT_LENGTH - SERVICE_LINE * 2, 0.069);
   for (const side of [-1, 1]) addCourtLine(THREE, court, 0, side * (COURT_LENGTH / 2 - 0.32), 0.13, 0.04, 0.069);
 
-  const apronMaterial = standard(THREE, '#365a58', 0.92);
   for (const side of [-1, 1]) {
-    addBox(THREE, court, [3.4, 0.12, COURT_LENGTH + 2.2], [side * (doublesHalf + 2.2), -0.02, 0], apronMaterial, false, true);
-    addBox(THREE, court, [DOUBLES_WIDTH + 4.4, 0.12, 3], [0, -0.02, side * (COURT_LENGTH / 2 + 2.4)], apronMaterial, false, true);
+    addBox(THREE, court, [3.4, 0.12, COURT_LENGTH + 2.2], [side * (doublesHalf + 2.2), -0.02, 0], surround, false, true);
+    addBox(THREE, court, [DOUBLES_WIDTH + 4.4, 0.12, 3], [0, -0.02, side * (COURT_LENGTH / 2 + 2.4)], surround, false, true);
   }
   scene.add(court);
   return { court, playSurface, singlesHalf, doublesHalf };
+}
+
+function radialShadowTexture(THREE: Three) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 128;
+  const context = canvas.getContext('2d')!;
+  const gradient = context.createRadialGradient(64, 64, 2, 64, 64, 62);
+  gradient.addColorStop(0, 'rgba(10,16,18,0.42)');
+  gradient.addColorStop(0.45, 'rgba(10,16,18,0.2)');
+  gradient.addColorStop(1, 'rgba(10,16,18,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 128, 128);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 1;
+  return texture;
 }
 
 function buildSky(THREE: Three, scene: T.Scene) {
@@ -152,16 +258,17 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
     seatDummy.updateMatrix();
     backs.setMatrixAt(index, seatDummy.matrix);
   });
-  seats.castShadow = !lite;
-  seats.receiveShadow = true;
-  backs.castShadow = !lite;
+  seats.castShadow = false;
+  seats.receiveShadow = false;
+  backs.castShadow = false;
+  backs.receiveShadow = false;
   scene.add(seats, backs);
 
   const count = rows.length;
-  const bodies = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.07, 0.19, 5, 10), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.94 }), count);
-  const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.067, 12, 10), standard(THREE, '#c69a78', 0.88), count);
-  const arms = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.025, 0.13, 3, 6), standard(THREE, '#ffffff', 0.91), count * 2);
-  const hats = new THREE.InstancedMesh(new THREE.SphereGeometry(0.073, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.5), standard(THREE, '#ffffff', 0.72), count);
+  const bodies = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.07, 0.19, 2, 6), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.94 }), count);
+  const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.067, 8, 6), standard(THREE, '#c69a78', 0.88), count);
+  const arms = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.025, 0.13, 1, 4), standard(THREE, '#ffffff', 0.91), count * 2);
+  const hats = new THREE.InstancedMesh(new THREE.SphereGeometry(0.073, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.5), standard(THREE, '#ffffff', 0.72), count);
   const crowd: { x: number; y: number; z: number; phase: number; hue: number }[] = [];
   const palette = ['#ece4d4', '#bd293e', '#314c68', '#caa35d', '#406453', '#e4ddd1', '#7e5969', '#b7b8ad'];
   const skinTones = ['#d4a27f', '#b67b5b', '#edc6a3', '#81583f', '#c48d69'];
@@ -201,10 +308,14 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
   heads.instanceMatrix.needsUpdate = true;
   arms.instanceMatrix.needsUpdate = true;
   hats.instanceMatrix.needsUpdate = true;
-  bodies.castShadow = !lite;
-  heads.castShadow = !lite;
-  arms.castShadow = !lite;
-  hats.castShadow = !lite;
+  bodies.castShadow = false;
+  heads.castShadow = false;
+  arms.castShadow = false;
+  hats.castShadow = false;
+  bodies.receiveShadow = false;
+  heads.receiveShadow = false;
+  arms.receiveShadow = false;
+  hats.receiveShadow = false;
   scene.add(bodies, heads, arms, hats);
   const crowdJump = { value: 0 };
 
@@ -256,11 +367,16 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
     const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(1.8 + Math.random(), 1), treeMaterials[i % treeMaterials.length]);
     crown.scale.set(1.2, 0.95, 1.1);
     crown.position.set(x, height + 0.75, z);
-    crown.castShadow = !lite;
+    crown.castShadow = false;
     scene.add(crown);
   }
   const palmBark = standard(THREE, '#786044', 0.96);
   const frondMaterial = standard(THREE, '#527044', 0.9);
+  const leaflets = new THREE.InstancedMesh(new THREE.ConeGeometry(0.075, 0.72, 5), frondMaterial, 216);
+  const leafletDummy = new THREE.Object3D();
+  let leafletIndex = 0;
+  leaflets.castShadow = false;
+  leaflets.receiveShadow = false;
   for (let i = 0; i < 6; i++) {
     const side = i % 2 ? 1 : -1;
     const x = side * (18 + (i % 3) * 3);
@@ -268,7 +384,7 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.22, 7.2, 12), palmBark);
     trunk.position.set(x, 3.6, z);
     trunk.rotation.z = side * 0.035;
-    trunk.castShadow = !lite;
+    trunk.castShadow = false;
     scene.add(trunk);
     for (let frond = 0; frond < 9; frond++) {
       const angle = frond / 9 * Math.PI * 2;
@@ -279,27 +395,28 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
         new THREE.Vector3(x + dx * 0.8, 7.75, z + dz * 0.8),
         new THREE.Vector3(x + dx * 2.5, 7.15, z + dz * 2.5),
       ]);
-      const leaf = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.045, 5, false), frondMaterial);
-      leaf.castShadow = !lite;
+      const leaf = new THREE.Mesh(new THREE.TubeGeometry(curve, 8, 0.045, 3, false), frondMaterial);
+      leaf.castShadow = false;
       scene.add(leaf);
       for (const t of [0.35, 0.53, 0.71, 0.88]) {
         const point = curve.getPoint(t);
-        const leaflet = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.72, 5), frondMaterial);
-        leaflet.position.copy(point).add(new THREE.Vector3(-dz * 0.28, -0.12, dx * 0.28));
-        leaflet.rotation.z = Math.PI / 2 - angle;
-        leaflet.rotation.x = -0.3;
-        leaflet.castShadow = !lite;
-        scene.add(leaflet);
+        leafletDummy.position.copy(point).add(new THREE.Vector3(-dz * 0.28, -0.12, dx * 0.28));
+        leafletDummy.rotation.set(-0.3, 0, Math.PI / 2 - angle);
+        leafletDummy.updateMatrix();
+        leaflets.setMatrixAt(leafletIndex++, leafletDummy.matrix);
       }
     }
   }
+  leaflets.count = leafletIndex;
+  leaflets.instanceMatrix.needsUpdate = true;
+  scene.add(leaflets);
   const towerMetal = standard(THREE, '#505a54', 0.48, 0.6);
   const lampMaterial = new THREE.MeshBasicMaterial({ color: '#fff1cf' });
   for (const x of [-15, 15]) {
     for (const z of [-24, 24]) {
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.18, 9.2, 10), towerMetal);
       pole.position.set(x, 4.6, z);
-      pole.castShadow = true;
+      pole.castShadow = false;
       scene.add(pole);
       addBox(THREE, scene, [1.8, 0.14, 0.18], [x, 9.15, z], towerMetal);
       for (let lamp = 0; lamp < 4; lamp++) {
@@ -380,15 +497,16 @@ function buildNet(THREE: Three, scene: T.Scene) {
   const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ map: netTexture(THREE), color: '#d8ddd3', transparent: true, alphaTest: 0.27, side: THREE.DoubleSide, roughness: 0.84 }));
   mesh.castShadow = true;
   mesh.receiveShadow = true;
+  mesh.userData.keepSeparate = true;
   group.add(mesh);
   const tapeCurve = new THREE.CatmullRomCurve3(Array.from({ length: 15 }, (_, i) => {
     const x = -width / 2 + width * i / 14;
     return new THREE.Vector3(x, netHeight(x) + 0.005, 0);
   }));
-  const tape = new THREE.Mesh(new THREE.TubeGeometry(tapeCurve, 80, 0.046, 6, false), standard(THREE, '#eee9dc', 0.62));
+  const tape = new THREE.Mesh(new THREE.TubeGeometry(tapeCurve, 40, 0.046, 5, false), standard(THREE, '#eee9dc', 0.62));
   tape.castShadow = true;
   group.add(tape);
-  const cord = new THREE.Mesh(new THREE.TubeGeometry(tapeCurve, 80, 0.012, 5, false), standard(THREE, '#f9f5e8', 0.48, 0.1));
+  const cord = new THREE.Mesh(new THREE.TubeGeometry(tapeCurve, 40, 0.012, 4, false), standard(THREE, '#f9f5e8', 0.48, 0.1));
   cord.position.y -= 0.07;
   group.add(cord);
   addBox(THREE, group, [0.075, 0.9, 0.048], [0, 0.47, 0.02], standard(THREE, '#ece8da', 0.85));
@@ -412,6 +530,7 @@ function buildNet(THREE: Three, scene: T.Scene) {
     const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.07, 8), stickMaterial);
     stick.position.set(x, 0.535, 0);
     stick.castShadow = true;
+    stick.userData.keepSeparate = true;
     group.add(stick);
     sticks.push(stick);
   }
@@ -428,6 +547,7 @@ function buildOfficial(THREE: Three, scene: T.Scene, x: number, z: number, color
   for (const side of [-1, 1]) {
     const support = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1.5, 8), metal);
     support.position.set(side * 0.28, 0.52, 0);
+    support.castShadow = true;
     group.add(support);
   }
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.34, 4, 8), standard(THREE, color, 0.75));
@@ -438,10 +558,6 @@ function buildOfficial(THREE: Three, scene: T.Scene, x: number, z: number, color
   group.add(head);
   group.position.set(x, 0, z);
   group.scale.setScalar(scale);
-  group.traverse((object) => {
-    const mesh = object as T.Mesh;
-    mesh.castShadow = true;
-  });
   scene.add(group);
   return group;
 }
@@ -477,15 +593,16 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   sun.position.set(-25, 12, 27);
   sun.target.position.set(0, 0, 0);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(lite ? 1024 : 2048, lite ? 1024 : 2048);
-  sun.shadow.camera.left = -15;
-  sun.shadow.camera.right = 15;
-  sun.shadow.camera.top = 22;
-  sun.shadow.camera.bottom = -22;
+  sun.shadow.mapSize.set(lite ? 512 : 1024, lite ? 512 : 1024);
+  sun.shadow.camera.left = -8;
+  sun.shadow.camera.right = 8;
+  sun.shadow.camera.top = 14;
+  sun.shadow.camera.bottom = -14;
   sun.shadow.camera.near = 0.5;
-  sun.shadow.camera.far = 68;
+  sun.shadow.camera.far = 40;
   sun.shadow.bias = -0.00034;
   sun.shadow.normalBias = 0.026;
+  sun.shadow.camera.updateProjectionMatrix();
   scene.add(sun, sun.target);
   const fill = new THREE.DirectionalLight('#d7e9f2', 0.66);
   fill.position.set(15, 11, -19);
@@ -500,40 +617,65 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   const benches = standard(THREE, '#694d3b', 0.86);
   const towel = standard(THREE, '#f0ede2', 0.94);
   for (const z of [-8.5, 8.5]) {
-    addBox(THREE, scene, [2.7, 0.14, 0.58], [7.5, 0.45, z], benches, true);
-    addBox(THREE, scene, [2.7, 0.56, 0.1], [7.5, 0.77, z - Math.sign(z) * 0.2], benches, true);
+    addBox(THREE, scene, [2.7, 0.14, 0.58], [7.5, 0.45, z], benches);
+    addBox(THREE, scene, [2.7, 0.56, 0.1], [7.5, 0.77, z - Math.sign(z) * 0.2], benches);
     addBox(THREE, scene, [0.56, 0.035, 0.48], [7.3, 0.55, z], towel);
     for (let i = 0; i < 2; i++) buildOfficial(THREE, scene, 6.8 + i * 0.75, z, i === 0 ? '#c8e5dc' : '#d1b269', 0.68);
   }
 
+  mergeStaticMeshes(THREE, scene);
   const players = [0, 1, 2, 3].map((seat) => makePlayer(THREE, seat, lite));
   players.forEach((model) => {
     model.root.traverse((object) => {
       const mesh = object as T.Mesh;
-      mesh.castShadow = !lite;
-      mesh.receiveShadow = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = false;
     });
     scene.add(model.root);
   });
 
   const ballMap = ballTexture(THREE, lite);
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS, 24, 18), new THREE.MeshPhysicalMaterial({ map: ballMap, color: '#f6f2ca', roughness: 0.82, sheen: 0.38, clearcoat: 0.12 }));
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS, 16, 12), new THREE.MeshPhysicalMaterial({ map: ballMap, color: '#f6f2ca', roughness: 0.82, sheen: 0.38, clearcoat: 0.12 }));
   ball.castShadow = true;
   scene.add(ball);
+  const shadowTexture = radialShadowTexture(THREE);
+  const ballShadowMaterial = new THREE.MeshBasicMaterial({ map: shadowTexture, transparent: true, opacity: 0.4, depthWrite: false, toneMapped: false });
+  const ballShadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), ballShadowMaterial);
+  ballShadow.rotation.x = -Math.PI / 2;
+  ballShadow.position.y = 0.074;
+  scene.add(ballShadow);
+  const landingMarkerMaterial = new THREE.MeshBasicMaterial({
+    color: '#e5ed8c',
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  const landingMarker = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.55, 48), landingMarkerMaterial);
+  landingMarker.rotation.x = -Math.PI / 2;
+  landingMarker.position.y = 0.079;
+  landingMarker.visible = false;
+  landingMarker.renderOrder = 2;
+  scene.add(landingMarker);
+  const playerShadows = players.map(() => {
+    const shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: shadowTexture, transparent: true, opacity: 0.3, depthWrite: false, toneMapped: false }),
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.068;
+    shadow.scale.set(0.95, 0.62, 1);
+    scene.add(shadow);
+    return shadow;
+  });
   const trail = Array.from({ length: 5 }, (_, index) => {
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS * (0.78 - index * 0.09), 12, 8), new THREE.MeshBasicMaterial({ color: '#e6ed70', transparent: true, opacity: 0.23 - index * 0.035, depthWrite: false }));
     scene.add(mesh);
     return mesh;
   });
-  const ballShadow = new THREE.Mesh(new THREE.CircleGeometry(0.11, 20), new THREE.MeshBasicMaterial({ color: '#15201b', transparent: true, opacity: 0.42, depthWrite: false }));
-  ballShadow.rotation.x = -Math.PI / 2;
-  ballShadow.position.y = 0.074;
-  scene.add(ballShadow);
-  const ballShadowSoft = new THREE.Mesh(new THREE.CircleGeometry(0.34, 24), new THREE.MeshBasicMaterial({ color: '#1b2923', transparent: true, opacity: 0.11, depthWrite: false }));
-  ballShadowSoft.rotation.x = -Math.PI / 2;
-  ballShadowSoft.position.y = 0.071;
-  scene.add(ballShadowSoft);
-  const ballTrail: Vec3[] = [];
+  const ballTrail = Array.from({ length: trail.length + 1 }, () => ({ x: 0, y: 0, z: 0 }));
+  let ballTrailCount = 0;
   const puffs: Puff[] = [];
   const puffMaterial = new THREE.MeshBasicMaterial({ color: '#e8d9bd', transparent: true, opacity: 0.28, depthWrite: false });
   let hitPulse = 0;
@@ -543,9 +685,26 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   let viewWidth = 1;
   let viewHeight = 1;
   let currentSide = 0;
+  let playerZ = 0;
+  let previousPhase: World['phase'] | null = null;
+  let cameraTransition = 0;
+  let cameraInitialized = false;
+  const cameraTarget = new THREE.Vector3();
+  const cameraFrom = new THREE.Vector3();
+  const cameraLookFrom = new THREE.Vector3();
+  let crowdRefresh = 0;
   const scoreboard = stadium.scoreCtx;
   let scoreRefresh = 0;
   let playerX = 0;
+  let debugCameraMode: 'front' | 'side' | 'back' | 'game-close' | null = null;
+  let debugCameraSeat = 0;
+  let lastRenderAt = 0;
+  let frameEma = 0;
+  let qualityTier = 0;
+  let overBudgetSince = 0;
+  let lastQualityStep = 0;
+  const qualityWarmupAt = performance.now();
+  let currentDpr = Math.min(window.devicePixelRatio || 1, lite ? 1.25 : 1.5);
 
   function updateScoreboard(world: World) {
     const ctx = scoreboard;
@@ -578,57 +737,153 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   }
 
   function positionCamera(dt: number) {
+    if (debugCameraMode) {
+      const player = players[debugCameraSeat];
+      const target = player?.root.position ?? new THREE.Vector3();
+      const closeGameCamera = debugCameraMode === 'game-close';
+      const look = target.clone().add(new THREE.Vector3(0, closeGameCamera ? 1.2 : 1.05, 0));
+      const facing = player?.root.rotation.y ?? 0;
+      const forward = new THREE.Vector3(Math.sin(facing), 0, Math.cos(facing));
+      const right = new THREE.Vector3(Math.cos(facing), 0, -Math.sin(facing));
+      const offset = closeGameCamera
+        ? forward.multiplyScalar(-3.8).addScaledVector(right, 0.55)
+        : debugCameraMode === 'side'
+          ? right.multiplyScalar(2.6)
+          : forward.multiplyScalar(debugCameraMode === 'front' ? 2.6 : -2.6);
+      offset.y = closeGameCamera ? 1.45 : 0.18;
+      camera.position.copy(look).add(offset);
+      camera.lookAt(look);
+      cameraInitialized = true;
+      return;
+    }
     const portrait = camera.aspect < 0.78;
     const zoom = portrait ? COURT_LENGTH / 2 + 10.5 : COURT_LENGTH / 2 + 7;
     const height = portrait ? 6.4 : 4.5;
     const side = currentSide === 0 ? 1 : -1;
     const desiredX = clamp(playerX, -3.2, 3.2);
-    camera.position.x = damp(camera.position.x, desiredX, 2.6, dt || 1);
-    camera.position.y = height;
-    camera.position.z = side * zoom;
-    const targetZ = -side * 1.2;
-    camera.lookAt(desiredX * 0.22, portrait ? 0.8 : 0.5, targetZ);
+    const baseline = side * (COURT_LENGTH / 2 - 0.65);
+    const desiredZ = side * zoom + (playerZ - baseline) * 0.1;
+    const targetZ = -side * 1.2 + (playerZ - baseline) * 0.12;
+    cameraTarget.set(desiredX * 0.22, portrait ? 0.8 : 0.5, targetZ);
+    if (!cameraInitialized) {
+      camera.position.set(desiredX, height, desiredZ);
+      camera.lookAt(cameraTarget);
+      cameraInitialized = true;
+      return;
+    }
+    if (cameraTransition > 0) {
+      cameraTransition = Math.max(0, cameraTransition - dt);
+      const t = 1 - cameraTransition / 0.4;
+      const ease = t * t * (3 - 2 * t);
+      camera.position.set(
+        cameraFrom.x + (desiredX - cameraFrom.x) * ease,
+        cameraFrom.y + (height - cameraFrom.y) * ease,
+        cameraFrom.z + (desiredZ - cameraFrom.z) * ease,
+      );
+      camera.lookAt(
+        cameraLookFrom.x + (cameraTarget.x - cameraLookFrom.x) * ease,
+        cameraLookFrom.y + (cameraTarget.y - cameraLookFrom.y) * ease,
+        cameraLookFrom.z + (cameraTarget.z - cameraLookFrom.z) * ease,
+      );
+      return;
+    }
+    camera.position.x = damp(camera.position.x, desiredX, 4.2, dt);
+    camera.position.y = damp(camera.position.y, height, 4.2, dt);
+    camera.position.z = damp(camera.position.z, desiredZ, 4.2, dt);
+    camera.lookAt(cameraTarget);
   }
 
   function update(world: World, dt: number, humanSeats: ReadonlySet<number>, side: number) {
     time += dt;
     currentSide = side;
+    if (previousPhase === 'point' && world.phase === 'serve-ready') {
+      cameraTransition = 0.4;
+      cameraFrom.copy(camera.position);
+      cameraLookFrom.copy(cameraTarget);
+    }
+    previousPhase = world.phase;
+    const alpha = clamp(world.acc / STEP, 0, 1);
+    const ballX = world.ball.prev.x + (world.ball.p.x - world.ball.prev.x) * alpha;
+    const ballY = world.ball.prev.y + (world.ball.p.y - world.ball.prev.y) * alpha;
+    const ballZ = world.ball.prev.z + (world.ball.p.z - world.ball.prev.z) * alpha;
     const half = courtWidth(world.format) / 2;
-    net.sticks.forEach((stick) => { stick.visible = world.format === 'singles'; });
+    for (const stick of net.sticks) stick.visible = world.format === 'singles';
     for (let index = 0; index < 4; index++) {
       const player = world.players[index];
       const model = players[index];
       if (!player || !model) {
         model?.root.visible && (model.root.visible = false);
+        if (playerShadows[index]) playerShadows[index]!.visible = false;
         continue;
       }
       model.root.visible = true;
-      model.root.position.x = Math.max(-half - 1, Math.min(half + 1, player.x));
-      updatePlayer(model, player, world.ball, dt, humanSeats.has(player.seat));
-      if (humanSeats.has(player.seat) && player.team === side) playerX = player.x;
+      const x = player.prevX + (player.x - player.prevX) * alpha;
+      const z = player.prevZ + (player.z - player.prevZ) * alpha;
+      updatePlayer(model, player, world.ball, dt, humanSeats.has(player.seat), clamp(x, -half - 1, half + 1), z, ballX, ballY, world.phase, player.seat === world.serverSeat);
+      const shadow = playerShadows[index]!;
+      shadow.visible = true;
+      shadow.position.set(x, 0.068, z);
+      if (humanSeats.has(player.seat) && player.team === side) {
+        playerX = x;
+        playerZ = z;
+      }
+    }
+    const serverModel = players[world.serverSeat];
+    const palm = serverModel?.leftPalmWorldPosition();
+    let visualBallX = ballX;
+    let visualBallY = ballY;
+    let visualBallZ = ballZ;
+    if (world.phase === 'serve-ready' && palm) {
+      visualBallX = palm.x;
+      visualBallY = palm.y;
+      visualBallZ = palm.z;
+    } else if (world.phase === 'serve-toss' && palm) {
+      const blend = clamp(world.serveClock / 0.12, 0, 1);
+      visualBallX = palm.x + (ballX - palm.x) * blend;
+      visualBallY = palm.y + (ballY - palm.y) * blend;
+      visualBallZ = palm.z + (ballZ - palm.z) * blend;
     }
     ball.visible = world.ball.inPlay || world.phase === 'serve-ready' || world.phase === 'serve-toss';
-    ball.position.set(world.ball.p.x, world.ball.p.y + (world.phase === 'serve-toss' ? Math.sin(world.serveClock * 4) * 0.045 : 0), world.ball.p.z);
+    ball.position.set(visualBallX, visualBallY, visualBallZ);
     const velocity = world.ball.v;
     const speed = Math.hypot(velocity.x, velocity.y, velocity.z);
     ball.rotation.x += velocity.z * dt * 2.2 + world.ball.spin.x * dt * 0.018;
     ball.rotation.z -= velocity.x * dt * 2.2 + world.ball.spin.z * dt * 0.018;
     if (world.ball.inPlay && speed > 0.6) {
-      ballTrail.unshift({ ...world.ball.p });
-      if (ballTrail.length > trail.length + 1) ballTrail.length = trail.length + 1;
-    } else if (ballTrail.length) ballTrail.length = 0;
-    trail.forEach((mesh, index) => {
-      const point = ballTrail[Math.min(index + 1, ballTrail.length - 1)];
-      mesh.visible = !!point && world.ball.inPlay;
+      for (let index = ballTrail.length - 1; index > 0; index--) {
+        ballTrail[index]!.x = ballTrail[index - 1]!.x;
+        ballTrail[index]!.y = ballTrail[index - 1]!.y;
+        ballTrail[index]!.z = ballTrail[index - 1]!.z;
+      }
+      ballTrail[0]!.x = ballX;
+      ballTrail[0]!.y = ballY;
+      ballTrail[0]!.z = ballZ;
+      ballTrailCount = Math.min(ballTrailCount + 1, ballTrail.length);
+    } else ballTrailCount = 0;
+    for (let index = 0; index < trail.length; index++) {
+      const mesh = trail[index]!;
+      const point = ballTrail[Math.min(index + 1, ballTrailCount - 1)];
+      mesh.visible = ballTrailCount > 0 && world.ball.inPlay;
       if (point) mesh.position.set(point.x, point.y, point.z);
-    });
-    const drop = Math.max(0, world.ball.p.y - BALL_RADIUS);
-    ballShadow.position.set(world.ball.p.x, 0.074, world.ball.p.z);
-    ballShadow.scale.setScalar(1 + Math.min(1.8, drop * 0.14));
-    (ballShadow.material as T.MeshBasicMaterial).opacity = Math.max(0.06, 0.42 - drop * 0.037);
-    ballShadowSoft.position.set(world.ball.p.x, 0.071, world.ball.p.z);
-    ballShadowSoft.scale.setScalar(1 + Math.min(3, drop * 0.19));
-    (ballShadowSoft.material as T.MeshBasicMaterial).opacity = Math.max(0.025, 0.11 - drop * 0.012);
+    }
+    const drop = Math.max(0, visualBallY - BALL_RADIUS);
+    ballShadow.position.set(visualBallX, 0.074, visualBallZ);
+    ballShadow.scale.setScalar(0.22 + Math.min(0.9, drop * 0.13));
+    ballShadowMaterial.opacity = Math.max(0.035, 0.4 / (1 + drop * 0.9));
+    ballShadow.visible = ball.visible;
+    const humanIncoming = world.ball.inPlay && world.ball.bounces === 0 && world.ball.targetTeam === side;
+    const humanServeTarget = world.phase === 'serve-flight' && world.ball.inPlay
+      && world.ball.bounces === 0 && humanSeats.has(world.serverSeat);
+    if (humanIncoming || humanServeTarget) {
+      const landing = predictLanding(world.ball.p, world.ball.v, world.ball.spin);
+      if (landing.clearsNet) {
+        const progress = clamp(1 - landing.time / 6, 0, 1);
+        landingMarker.visible = true;
+        landingMarker.position.set(landing.x, 0.079, landing.z);
+        landingMarker.scale.setScalar(0.65 + (1 - progress) * 0.75);
+        landingMarkerMaterial.opacity = 0.18 + progress * 0.42;
+      } else landingMarker.visible = false;
+    } else landingMarker.visible = false;
     if (hitPulse > 0) {
       hitPulse = Math.max(0, hitPulse - dt * 6);
       ball.scale.set(1 + hitPulse * 0.35, 1 - hitPulse * 0.24, 1 + hitPulse * 0.35);
@@ -650,42 +905,48 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       puff.mesh.scale.setScalar(0.2 + t * 2.2);
       (puff.mesh.material as T.MeshBasicMaterial).opacity = 0.3 * (1 - t);
     }
-    for (const puff of [...puffs]) {
+    for (let i = puffs.length - 1; i >= 0; i--) {
+      const puff = puffs[i]!;
       if (puff.age >= puff.life) {
         puff.mesh.removeFromParent();
         puff.mesh.geometry.dispose();
-        puffs.splice(puffs.indexOf(puff), 1);
+        puffs.splice(i, 1);
       }
     }
     stadium.crowdJump.value = Math.max(0, stadium.crowdJump.value - dt * 0.65);
-    const dummy = stadium.dummy;
-    stadium.crowd.forEach((person, i) => {
-      const jump = Math.max(0, Math.sin(time * 3.5 + person.phase)) * stadium.crowdJump.value * (person.hue > 0.75 ? 0.55 : 0.13);
-      dummy.position.set(person.x, person.y + jump, person.z);
-      dummy.rotation.z = Math.sin(time * 1.1 + person.phase) * 0.035;
-      dummy.updateMatrix();
-      stadium.bodies.setMatrixAt(i, dummy.matrix);
-      dummy.position.set(person.x, person.y + 0.23 + jump, person.z);
-      dummy.rotation.set(0, Math.atan2(world.ball.p.x - person.x, world.ball.p.z - person.z), 0);
-      dummy.updateMatrix();
-      stadium.heads.setMatrixAt(i, dummy.matrix);
-      dummy.rotation.set(0, 0, 0);
-      dummy.position.set(person.x, person.y + 0.32 + jump, person.z);
-      dummy.scale.setScalar(person.hue > 0.82 ? 1 : 0.001);
-      dummy.updateMatrix();
-      stadium.hats.setMatrixAt(i, dummy.matrix);
-      dummy.scale.setScalar(1);
-      for (const side of [-1, 1]) {
-        dummy.position.set(person.x + side * 0.105, person.y - 0.055 + jump, person.z);
-        dummy.rotation.z = side * (0.35 + Math.sin(time * 1.4 + person.phase) * 0.08);
+    crowdRefresh += dt;
+    if (crowdRefresh >= 0.1) {
+      crowdRefresh %= 0.1;
+      const dummy = stadium.dummy;
+      for (let i = 0; i < stadium.crowd.length; i++) {
+        const person = stadium.crowd[i]!;
+        const jump = Math.max(0, Math.sin(time * 3.5 + person.phase)) * stadium.crowdJump.value * (person.hue > 0.75 ? 0.55 : 0.13);
+        dummy.position.set(person.x, person.y + jump, person.z);
+        dummy.rotation.z = Math.sin(time * 1.1 + person.phase) * 0.035;
         dummy.updateMatrix();
-        stadium.arms.setMatrixAt(i * 2 + (side > 0 ? 1 : 0), dummy.matrix);
+        stadium.bodies.setMatrixAt(i, dummy.matrix);
+        dummy.position.set(person.x, person.y + 0.23 + jump, person.z);
+        dummy.rotation.set(0, Math.atan2(ballX - person.x, ballZ - person.z), 0);
+        dummy.updateMatrix();
+        stadium.heads.setMatrixAt(i, dummy.matrix);
+        dummy.rotation.set(0, 0, 0);
+        dummy.position.set(person.x, person.y + 0.32 + jump, person.z);
+        dummy.scale.setScalar(person.hue > 0.82 ? 1 : 0.001);
+        dummy.updateMatrix();
+        stadium.hats.setMatrixAt(i, dummy.matrix);
+        dummy.scale.setScalar(1);
+        for (const side of [-1, 1]) {
+          dummy.position.set(person.x + side * 0.105, person.y - 0.055 + jump, person.z);
+          dummy.rotation.z = side * (0.35 + Math.sin(time * 1.4 + person.phase) * 0.08);
+          dummy.updateMatrix();
+          stadium.arms.setMatrixAt(i * 2 + (side > 0 ? 1 : 0), dummy.matrix);
+        }
       }
-    });
-    stadium.bodies.instanceMatrix.needsUpdate = true;
-    stadium.heads.instanceMatrix.needsUpdate = true;
-    stadium.arms.instanceMatrix.needsUpdate = true;
-    stadium.hats.instanceMatrix.needsUpdate = true;
+      stadium.bodies.instanceMatrix.needsUpdate = true;
+      stadium.heads.instanceMatrix.needsUpdate = true;
+      stadium.arms.instanceMatrix.needsUpdate = true;
+      stadium.hats.instanceMatrix.needsUpdate = true;
+    }
     if (world.match.points[0] + world.match.points[1] !== pointsWon) {
       pointsWon = world.match.points[0] + world.match.points[1];
       stadium.crowdJump.value = 1;
@@ -709,18 +970,71 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   }
 
   function dispose() {
+    players.forEach((model) => model.dispose());
     disposeTree(scene);
     envTarget.dispose();
     pmrem.dispose();
     glContext.dispose();
+    if (import.meta.env.DEV) delete (window as Window & { __tennisRenderStats?: unknown }).__tennisRenderStats;
   }
 
   return {
     canvas: glContext.canvas,
     resize,
     update,
+    debugPose(seat, name, progress = 0) {
+      const model = players[seat];
+      if (model) model.debugPose = { name, progress, position: model.root.position.clone(), rotation: model.root.rotation.y };
+    },
+    debugCamera(name, seat) {
+      debugCameraMode = name === 'game' ? seat === undefined ? null : 'game-close' : name;
+      debugCameraSeat = Math.max(0, Math.min(players.length - 1, seat ?? 0));
+      cameraInitialized = false;
+    },
     render() {
-      if (!glContext.lost()) renderer.render(scene, camera);
+      if (!glContext.lost()) {
+        const now = performance.now();
+        if (lastRenderAt > 0) {
+          const interval = Math.min(now - lastRenderAt, 100);
+          frameEma = frameEma ? frameEma * 0.9 + interval * 0.1 : interval;
+          if (now - qualityWarmupAt >= 1500 && frameEma > 26) {
+            if (!overBudgetSince) overBudgetSince = now;
+            if (now - overBudgetSince >= 1000 && now - lastQualityStep >= 1000 && qualityTier < 3) {
+              qualityTier++;
+              lastQualityStep = now;
+              if (qualityTier === 1) {
+                currentDpr = 1;
+                renderer.setPixelRatio(currentDpr);
+              } else if (qualityTier === 2) {
+                renderer.shadowMap.enabled = false;
+                scene.traverse((object) => {
+                  const mesh = object as T.Mesh;
+                  if (!mesh.isMesh) return;
+                  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+                  materials.forEach((material) => { material.needsUpdate = true; });
+                });
+              } else {
+                currentDpr = 0.75;
+                renderer.setPixelRatio(currentDpr);
+                stadium.arms.visible = false;
+                stadium.hats.visible = false;
+              }
+              overBudgetSince = now;
+            }
+          }
+          else overBudgetSince = 0;
+        }
+        lastRenderAt = now;
+        renderer.render(scene, camera);
+        if (import.meta.env.DEV) {
+          (window as Window & { __tennisRenderStats?: () => object }).__tennisRenderStats = () => ({
+            calls: renderer.info.render.calls,
+            triangles: renderer.info.render.triangles,
+            qualityTier,
+            averageFrameMs: frameEma,
+          });
+        }
+      }
     },
     hit(speed: number) {
       hitPulse = Math.min(1, 0.55 + speed / 210);
