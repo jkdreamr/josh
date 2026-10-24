@@ -133,6 +133,10 @@
 }
 
 .g-wacky-walk .g-wacky-walk-intro {
+  top: 29%;
+  width: min(calc(100% - 28px), 360px);
+  gap: 7px;
+  padding: clamp(14px, 2.4vw, 22px);
   animation: g-wacky-walk-card-in 380ms cubic-bezier(.2, .9, .3, 1.15) both;
 }
 
