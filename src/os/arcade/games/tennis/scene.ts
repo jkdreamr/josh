@@ -1,6 +1,6 @@
 import type * as T from 'three';
 import type { World } from './logic.ts';
-import { BALL_RADIUS, COURT_LENGTH, DOUBLES_WIDTH, SERVICE_LINE, SINGLES_WIDTH, STEP, clamp, courtWidth, netHeight, pointLabel, serverOf } from './logic.ts';
+import { BALL_RADIUS, COURT_LENGTH, DOUBLES_WIDTH, SERVICE_LINE, SINGLES_WIDTH, STEP, clamp, courtWidth, netHeight, pointLabel, predictLanding, serverOf } from './logic.ts';
 import { createGL, damp, disposeTree } from './gl.ts';
 import { makePlayer, updatePlayer, type PoseName } from './player.ts';
 import { ballTexture, courtTextures, netTexture, windscreenTexture } from './textures.ts';
@@ -644,6 +644,20 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   ballShadow.rotation.x = -Math.PI / 2;
   ballShadow.position.y = 0.074;
   scene.add(ballShadow);
+  const landingMarkerMaterial = new THREE.MeshBasicMaterial({
+    color: '#e5ed8c',
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  const landingMarker = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.55, 48), landingMarkerMaterial);
+  landingMarker.rotation.x = -Math.PI / 2;
+  landingMarker.position.y = 0.079;
+  landingMarker.visible = false;
+  landingMarker.renderOrder = 2;
+  scene.add(landingMarker);
   const playerShadows = players.map(() => {
     const shadow = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
@@ -857,6 +871,19 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     ballShadow.scale.setScalar(0.22 + Math.min(0.9, drop * 0.13));
     ballShadowMaterial.opacity = Math.max(0.035, 0.4 / (1 + drop * 0.9));
     ballShadow.visible = ball.visible;
+    const humanIncoming = world.ball.inPlay && world.ball.bounces === 0 && world.ball.targetTeam === side;
+    const humanServeTarget = world.phase === 'serve-flight' && world.ball.inPlay
+      && world.ball.bounces === 0 && humanSeats.has(world.serverSeat);
+    if (humanIncoming || humanServeTarget) {
+      const landing = predictLanding(world.ball.p, world.ball.v, world.ball.spin);
+      if (landing.clearsNet) {
+        const progress = clamp(1 - landing.time / 6, 0, 1);
+        landingMarker.visible = true;
+        landingMarker.position.set(landing.x, 0.079, landing.z);
+        landingMarker.scale.setScalar(0.65 + (1 - progress) * 0.75);
+        landingMarkerMaterial.opacity = 0.18 + progress * 0.42;
+      } else landingMarker.visible = false;
+    } else landingMarker.visible = false;
     if (hitPulse > 0) {
       hitPulse = Math.max(0, hitPulse - dt * 6);
       ball.scale.set(1 + hitPulse * 0.35, 1 - hitPulse * 0.24, 1 + hitPulse * 0.35);

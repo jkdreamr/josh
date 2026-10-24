@@ -46,7 +46,7 @@ function bounded(value: unknown, limit: number): value is number {
 function validState(value: unknown): value is World {
   if (!value || typeof value !== 'object') return false;
   const state = value as Partial<World>;
-  if (!formatOk(state.format) || !lengthOk(state.match?.length) || !phases.includes(state.phase ?? '')) return false;
+  if (!formatOk(state.format) || !levelOk(state.level) || !lengthOk(state.match?.length) || !phases.includes(state.phase ?? '')) return false;
   if (!Array.isArray(state.players) || state.players.length !== (state.format === 'doubles' ? 4 : 2)) return false;
   if (!state.players.every((player) => player && Number.isInteger(player.seat) && player.seat >= 0 && player.seat <= 3
     && (player.team === 0 || player.team === 1)

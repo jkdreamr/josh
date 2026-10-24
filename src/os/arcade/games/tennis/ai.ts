@@ -21,8 +21,8 @@ function predictedIntercept(world: World, player: Player): CourtTarget {
     },
     random: world.random,
   } as World;
-  const delay = player.ai === 0 ? 0.3 : player.ai === 2 ? 0.08 : 0.25;
-  const speed = player.ai === 0 ? 5.2 : player.ai === 1 ? 5.7 : 6;
+  const delay = player.ai === 0 ? 0.3 : player.ai === 2 ? 0.08 : 0.22;
+  const speed = player.ai === 0 ? 4.6 : player.ai === 1 ? 5.4 : 6;
   let target = { x: player.x, z: player.z };
   const events: Event[] = [];
   for (let elapsed = 0; elapsed <= 1.6; elapsed += STEP) {
@@ -69,7 +69,7 @@ export function movementTarget(world: World, player: Player): CourtTarget {
 
 export function chooseShot(world: World, player: Player): Swing {
   const level = player.ai ?? 1;
-  const timing = level === 0 ? (world.random() - 0.5) * 0.4
+  const timing = level === 0 ? (world.random() - 0.5) * 0.34
     : level === 1 ? (world.random() - 0.5) * 0.38
       : (world.random() - 0.5) * 0.36;
   let kind: Swing['kind'] = 'drive';
@@ -88,8 +88,8 @@ export function chooseShot(world: World, player: Player): Swing {
     };
     const left = openness(-1);
     const right = openness(1);
-    if (level === 1 && world.random() < 0.35) return 0;
-    if (level === 1 && world.random() < 0.28) return world.random() < 0.5 ? -1 : 1;
+    if (level === 1 && world.random() < 0.7) return 0;
+    if (level === 1 && world.random() < 0.67) return world.random() < 0.5 ? -1 : 1;
     if (Math.abs(left - right) < 0.22) return world.random() < 0.5 ? -1 : 1;
     return left > right ? -1 : 1;
   })();

@@ -147,9 +147,9 @@ function settingsWorld(mode: StageMode, format: Format, length: MatchLength, lev
   });
 }
 
-function hudCopy(world: World, seat: number | null, watching: boolean, timing: HudModel['timing']): HudModel {
+function hudCopy(world: World, seat: number | null, watching: boolean, timing: HudModel['timing'], bounceCue: boolean): HudModel {
   const copy = { ...world, players: world.players.map((player) => ({ ...player })), ball: { ...world.ball, p: { ...world.ball.p }, v: { ...world.ball.v } }, match: structuredClone(world.match) };
-  return { world: copy, seat, watching, call: world.callClock > 0 ? world.lastCall : '', timing };
+  return { world: copy, seat, watching, call: world.callClock > 0 ? world.lastCall : '', timing, bounceCue };
 }
 
 function Play({ mode }: { mode: StageMode }) {
@@ -188,10 +188,12 @@ function Play({ mode }: { mode: StageMode }) {
   const stopMovementRef = useRef<() => void>(() => {});
   const hudClock = useRef(0);
   const timingClock = useRef(0);
+  const bounceCueClock = useRef(0);
   const [timing, setTiming] = useState<HudModel['timing']>('');
+  const [bounceCue, setBounceCue] = useState(false);
   const timingRef = useRef<HudModel['timing']>('');
   timingRef.current = timing;
-  const [hud, setHud] = useState<HudModel>(() => hudCopy(world.current!, online?.seat ?? null, !!online?.watching, ''));
+  const [hud, setHud] = useState<HudModel>(() => hudCopy(world.current!, online?.seat ?? null, !!online?.watching, '', false));
   const currentSeat = () => mode === 'online' ? onlineRef.current?.seat ?? -1 : 0;
   const myTeam = () => world.current?.players.find((player) => player.seat === currentSeat())?.team ?? 0;
   const localHumanSeats = () => mode === 'online'
@@ -414,6 +416,12 @@ function Play({ mode }: { mode: StageMode }) {
       currentView?.hit(event.speed);
       audio.current?.hit(event.speed, event.kind);
     } else if (event.type === 'bounce') {
+      const current = world.current;
+      const bounceTeam = event.z >= 0 ? 0 : 1;
+      if (event.in && current?.players.some((player) => player.seat === currentSeat() && player.team === bounceTeam)) {
+        bounceCueClock.current = 0.85;
+        setBounceCue(true);
+      }
       currentView?.bounce(event.x, event.z, event.line);
       audio.current?.bounce(event.in, event.line);
     } else if (event.type === 'net') {
@@ -532,12 +540,14 @@ function Play({ mode }: { mode: StageMode }) {
       timingRef.current = '';
       setTiming('');
     }
+    bounceCueClock.current = Math.max(0, bounceCueClock.current - dt);
+    if (bounceCueClock.current <= 0) setBounceCue(false);
     const side = myTeam();
     view.current?.update(current, dt, localHumanSeats(), side);
     hudClock.current += dt;
     if (hudClock.current >= 0.1) {
       hudClock.current = 0;
-      setHud(hudCopy(current, currentSeat(), !!o?.watching, timingClock.current > 0 ? timingRef.current : ''));
+      setHud(hudCopy(current, currentSeat(), !!o?.watching, timingClock.current > 0 ? timingRef.current : '', bounceCueClock.current > 0));
     }
   };
 
