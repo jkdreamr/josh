@@ -169,11 +169,13 @@ function Play() {
   const [courseChoice] = useSetting(COURSE);
   const [hud, setHud] = useState<Hud>(emptyHud);
   const [tagIds, setTagIds] = useState<number[]>([]);
+  const tagLayoutRef = useRef(Array.from({ length: 9 }, () => ({ x: 0, y: 0 })));
   const [stick, setStick] = useState<Stick | null>(null);
   const [watchTarget, setWatchTarget] = useState<number | null>(null);
   const showRef = useRef<Show | null>(null);
   const courseRef = useRef<Course | null>(null);
   const viewRef = useRef<View | null>(null);
+  const renderBodiesRef = useRef<(BodyView | null)[]>(Array.from({ length: 20 }, () => null));
   const bodiesRef = useRef(new Map<number, Body>());
   const brainsRef = useRef(new Map<number, Brain>());
   const interpRef = useRef(new Map<number, Interp>());
@@ -948,12 +950,14 @@ function Play() {
     for (const id of show.inRound) {
       if (!isLocallyStepped(id) && !hiddenRef.current.has(id)) sampleRemote(id, time);
     }
-    const bodies: (BodyView | null)[] = Array.from({ length: 20 }, () => null);
+    const bodies = renderBodiesRef.current;
+    bodies.fill(null);
     for (const id of show.inRound) {
       if (!hiddenRef.current.has(id)) bodies[id] = bodiesRef.current.get(id) ?? null;
     }
     const focus = focusFor(show);
     view.frame(course, time, bodies, focus, cameraRef.current, renderDtRef.current);
+    let placedTags = 0;
     for (const id of tagIds) {
       const node = tagNodesRef.current.get(id);
       const body = bodiesRef.current.get(id);
@@ -963,8 +967,23 @@ function Play() {
         node.style.visibility = 'hidden';
         continue;
       }
+      let labelY = point.y;
+      for (let pass = 0; pass < placedTags; pass++) {
+        for (let i = 0; i < placedTags; i++) {
+          const placed = tagLayoutRef.current[i];
+          if (Math.abs(point.x - placed.x) < 118 && Math.abs(labelY - placed.y) < 22) {
+            labelY = placed.y - 23;
+            pass = -1;
+            break;
+          }
+        }
+      }
+      if (labelY < 18) labelY = Math.min(size.h - 8, point.y + 24);
+      const placed = tagLayoutRef.current[placedTags++];
+      placed.x = point.x;
+      placed.y = labelY;
       node.style.visibility = 'visible';
-      node.style.transform = `translate3d(${point.x}px, ${point.y}px, 0) translate(-50%, -100%)`;
+      node.style.transform = `translate3d(${point.x}px, ${labelY}px, 0) translate(-50%, -100%)`;
     }
     view.render();
   }

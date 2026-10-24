@@ -318,10 +318,10 @@ function makeHoover(seed: number): Course {
   course.spawns = course.spawns.map((_, i) => ({
     x: ((i % 5) - 2) * 1.4, y: 0.15, z: 5.6 + Math.floor(i / 5) * 0.18,
   }));
-  course.decor.push({ kind: 'tower', x: 0, y: 17, z: 32, s: 6, yaw: 0 });
+  course.decor.push({ kind: 'tower', x: -26, y: 0, z: -34, s: 2.8, yaw: 0 });
   for (let i = 0; i < 24; i++) {
     const a = i / 24 * Math.PI * 2;
-    course.decor.push({ kind: i % 3 ? 'arch' : 'flag', x: Math.cos(a) * 12, y: 0, z: Math.sin(a) * 12, s: 1.4, yaw: -a });
+    course.decor.push({ kind: i % 3 ? 'arch' : 'flag', x: Math.cos(a) * 22, y: 0, z: Math.sin(a) * 22, s: 1.1, yaw: -a });
   }
   return course;
 }
