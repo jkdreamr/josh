@@ -290,7 +290,7 @@ test('idle hands hang below the shoulders and toss hand rises above the head on 
   };
   bones.sort((a, b) => depth(a) - depth(b));
   const bindLocals = new Map(bones.map((bone) => [bone.name, bone.quaternion.clone()]));
-  const apply = (name: 'idle' | 'toss') => {
+  const apply = (name: 'idle' | 'toss' | 'forehand' | 'backhand' | 'slice' | 'lob', progress = 0) => {
     for (const bone of bones) bone.quaternion.copy(bindLocals.get(bone.name)!);
     root.updateMatrixWorld(true);
     const rootWorld = root.getWorldQuaternion(new THREE.Quaternion());
@@ -300,7 +300,7 @@ test('idle hands hang below the shoulders and toss hand rises above the head on 
       const parent = bone.parent;
       const parentName = parent?.isBone ? parent.name : null;
       const parentBind = parentName ? bind.get(parentName)! : parent ? rootWorld.clone().invert().multiply(parent.getWorldQuaternion(new THREE.Quaternion())) : new THREE.Quaternion();
-      const angle = debugPoseAngles(name).get(bone.name) ?? [0, 0, 0];
+      const angle = debugPoseAngles(name, progress).get(bone.name) ?? [0, 0, 0];
       const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(...angle, 'XYZ'));
       const target = characterSpaceBoneTarget(bind.get(bone.name)!, parentBind, parentName ? targets.get(parentName) ?? parentBind : null, rotation);
       targets.set(bone.name, target);
@@ -311,11 +311,55 @@ test('idle hands hang below the shoulders and toss hand rises above the head on 
     root.updateMatrixWorld(true);
   };
   const get = (name: string) => bones.find((bone) => bone.name === name)!.getWorldPosition(new THREE.Vector3());
+  const handRight = bones.find((bone) => bone.name === 'hand_r')!;
+  const forearmRight = bones.find((bone) => bone.name === 'lowerarm_r')!;
+  const wrist = handRight.getWorldPosition(new THREE.Vector3());
+  const elbow = forearmRight.getWorldPosition(new THREE.Vector3());
+  const forearmAxis = wrist.sub(elbow).normalize();
+  const handBindWorld = handRight.getWorldQuaternion(new THREE.Quaternion());
+  const thumbSide = new THREE.Vector3(1, 0, 0).applyQuaternion(handBindWorld);
+  const shaft = forearmAxis.addScaledVector(thumbSide, Math.tan(Math.PI / 6)).normalize();
+  const stringsNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(handBindWorld);
+  const racketX = shaft.clone().cross(stringsNormal).normalize();
+  stringsNormal.crossVectors(racketX, shaft).normalize();
+  const racketWorld = new THREE.Matrix4().makeBasis(racketX, shaft, stringsNormal);
+  const racket = new THREE.Group();
+  racket.position.set(0, 0.035, 0);
+  racket.quaternion.copy(handBindWorld.invert().multiply(new THREE.Quaternion().setFromRotationMatrix(racketWorld)));
+  handRight.add(racket);
+  const racketHead = () => racket.localToWorld(new THREE.Vector3(0, 0.64, 0));
   apply('idle');
   assert.ok(get('hand_l').y < get('clavicle_l').y);
   assert.ok(get('hand_r').y < get('clavicle_r').y);
   apply('toss');
   assert.ok(get('hand_l').y > get('head').y);
+
+  apply('forehand', 0.5);
+  const forehandContact = racketHead();
+  assert.ok(forehandContact.y > get('pelvis').y - 0.15, `forehand contact should reach waist height: ${forehandContact.y}`);
+  assert.ok(forehandContact.y < get('pelvis').y + 0.45, `forehand contact should stay near waist height: ${forehandContact.y}`);
+  assert.ok(forehandContact.z > 0.3, `forehand contact should be in front of the player: ${forehandContact.z}`);
+  assert.ok(Math.abs(forehandContact.y - get('hand_r').y) < 0.35, 'forehand shaft should be near horizontal at contact');
+  apply('backhand', 0.5);
+  const backhandContact = racketHead();
+  assert.ok(backhandContact.y > get('pelvis').y - 0.15, `backhand contact should reach waist height: ${backhandContact.y}`);
+  assert.ok(backhandContact.y < get('pelvis').y + 0.45, `backhand contact should stay near waist height: ${backhandContact.y}`);
+  assert.ok(backhandContact.z > 0.3, `backhand contact should be in front of the player: ${backhandContact.z}`);
+  assert.ok(backhandContact.x < -0.2, `backhand contact should be on the opposite hitting side: ${backhandContact.x}`);
+  assert.ok(Math.abs(backhandContact.y - get('hand_r').y) < 0.35, 'backhand shaft should be near horizontal at contact');
+  const backhandGrip = racket.localToWorld(new THREE.Vector3(0, 0.12, 0));
+  assert.ok(get('hand_l').distanceTo(backhandGrip) < 0.35, 'backhand should keep both hands on the racket grip');
+  apply('slice', 0);
+  const sliceStart = racketHead();
+  apply('slice', 1);
+  const sliceFinish = racketHead();
+  assert.ok(sliceStart.y > sliceFinish.y + 0.2);
+  assert.ok(sliceFinish.z > sliceStart.z);
+  apply('lob', 0);
+  const lobStart = racketHead();
+  apply('lob', 1);
+  const lobFinish = racketHead();
+  assert.ok(lobFinish.y > lobStart.y + 0.2);
 });
 
 test('net collision blocks the ball and timing maps direction and quality', () => {

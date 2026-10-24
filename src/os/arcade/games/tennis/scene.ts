@@ -682,7 +682,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   const scoreboard = stadium.scoreCtx;
   let scoreRefresh = 0;
   let playerX = 0;
-  let debugCameraMode: 'front' | 'side' | 'back' | null = null;
+  let debugCameraMode: 'front' | 'side' | 'back' | 'game-close' | null = null;
   let debugCameraSeat = 0;
   let lastRenderAt = 0;
   let frameEma = 0;
@@ -726,14 +726,17 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     if (debugCameraMode) {
       const player = players[debugCameraSeat];
       const target = player?.root.position ?? new THREE.Vector3();
-      const look = target.clone().add(new THREE.Vector3(0, 1.05, 0));
+      const closeGameCamera = debugCameraMode === 'game-close';
+      const look = target.clone().add(new THREE.Vector3(0, closeGameCamera ? 1.2 : 1.05, 0));
       const facing = player?.root.rotation.y ?? 0;
       const forward = new THREE.Vector3(Math.sin(facing), 0, Math.cos(facing));
       const right = new THREE.Vector3(Math.cos(facing), 0, -Math.sin(facing));
-      const offset = debugCameraMode === 'side'
-        ? right.multiplyScalar(2.6)
-        : forward.multiplyScalar(debugCameraMode === 'front' ? 2.6 : -2.6);
-      offset.y = 0.18;
+      const offset = closeGameCamera
+        ? forward.multiplyScalar(-3.8).addScaledVector(right, 0.55)
+        : debugCameraMode === 'side'
+          ? right.multiplyScalar(2.6)
+          : forward.multiplyScalar(debugCameraMode === 'front' ? 2.6 : -2.6);
+      offset.y = closeGameCamera ? 1.45 : 0.18;
       camera.position.copy(look).add(offset);
       camera.lookAt(look);
       cameraInitialized = true;
@@ -956,9 +959,9 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       const model = players[seat];
       if (model) model.debugPose = { name, progress, position: model.root.position.clone(), rotation: model.root.rotation.y };
     },
-    debugCamera(name, seat = 0) {
-      debugCameraMode = name === 'game' ? null : name;
-      debugCameraSeat = Math.max(0, Math.min(players.length - 1, seat));
+    debugCamera(name, seat) {
+      debugCameraMode = name === 'game' ? seat === undefined ? null : 'game-close' : name;
+      debugCameraSeat = Math.max(0, Math.min(players.length - 1, seat ?? 0));
       cameraInitialized = false;
     },
     render() {

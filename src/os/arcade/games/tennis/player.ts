@@ -51,6 +51,7 @@ const teamOutfits = [
   { shirt: '#20324d', shorts: '#f1efe6' },
 ] as const;
 const loadedAssets = new Map<string, Promise<LoadedPlayerAsset>>();
+const hemGeometries = new WeakSet<T.BufferGeometry>();
 let warnedAboutPlayerLoadFailure = false;
 
 function playerAssetUrl(seat: number) {
@@ -116,11 +117,80 @@ export function characterSpaceBoneTarget(
     .multiply(bindWorld);
 }
 
+function groupShortsHem(geometry: T.BufferGeometry) {
+  if (hemGeometries.has(geometry) || !geometry.index) return;
+  const positions = geometry.getAttribute('position');
+  if (!positions) return;
+  const shirtGroup = geometry.groups.find((group) => group.materialIndex === 0);
+  const shortsGroup = geometry.groups.find((group) => group.materialIndex === 1);
+  if (!shirtGroup || !shortsGroup) return;
+  const index = geometry.index;
+  let shortsTop = -Infinity;
+  for (let i = shortsGroup.start; i < shortsGroup.start + shortsGroup.count; i++) {
+    shortsTop = Math.max(shortsTop, positions.getY(index.getX(i)));
+  }
+  const hemHeight = shortsTop - 0.12;
+  const shirtIndices: number[] = [];
+  const shortsIndices: number[] = [];
+  for (let i = shirtGroup.start; i < shirtGroup.start + shirtGroup.count; i += 3) {
+    shirtIndices.push(index.getX(i), index.getX(i + 1), index.getX(i + 2));
+  }
+  for (let i = shortsGroup.start; i < shortsGroup.start + shortsGroup.count; i += 3) {
+    const indices = [index.getX(i), index.getX(i + 1), index.getX(i + 2)];
+    const centerY = indices.reduce((sum, index) => sum + positions.getY(index), 0) / 3;
+    (centerY >= hemHeight ? shirtIndices : shortsIndices).push(...indices);
+  }
+  if (!shirtIndices.length) return;
+  geometry.setIndex([...shirtIndices, ...shortsIndices]);
+  geometry.clearGroups();
+  geometry.addGroup(0, shirtIndices.length, 0);
+  geometry.addGroup(shirtIndices.length, shortsIndices.length, 1);
+  hemGeometries.add(geometry);
+}
+
+function groupSkinHem(geometry: T.BufferGeometry) {
+  if (hemGeometries.has(geometry) || !geometry.index) return;
+  const positions = geometry.getAttribute('position');
+  if (!positions) return;
+  const skinIndices: number[] = [];
+  const shirtIndices: number[] = [];
+  for (let i = 0; i < geometry.index.count; i += 3) {
+    const indices = [geometry.index.getX(i), geometry.index.getX(i + 1), geometry.index.getX(i + 2)];
+    const centerX = indices.reduce((sum, index) => sum + positions.getX(index), 0) / 3;
+    const centerY = indices.reduce((sum, index) => sum + positions.getY(index), 0) / 3;
+    const centerZ = indices.reduce((sum, index) => sum + positions.getZ(index), 0) / 3;
+    const underHem = centerY >= 0.79 && centerY <= 0.91
+      && Math.abs(centerX) < 0.2 && centerZ > -0.1 && centerZ < 0.22;
+    (underHem ? shirtIndices : skinIndices).push(...indices);
+  }
+  if (!shirtIndices.length) return;
+  geometry.setIndex([...skinIndices, ...shirtIndices]);
+  geometry.clearGroups();
+  geometry.addGroup(0, skinIndices.length, 0);
+  geometry.addGroup(skinIndices.length, shirtIndices.length, 1);
+  hemGeometries.add(geometry);
+}
+
 function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset: LoadedPlayerAsset) {
   if (model.disposed) return;
   const body = asset.clone(asset.scene);
   const materials = new Set<T.Material>();
   const tint = teamOutfits[seat % 2]!;
+  const outfitMaterials = new Map<string, T.Material>();
+  asset.scene.traverse((object) => {
+    const mesh = object as T.Mesh;
+    if (!mesh.isMesh) return;
+    const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of source) {
+      if ((material.name !== 'shirt' && material.name !== 'shorts') || outfitMaterials.has(material.name)) continue;
+      const instance = material.clone() as T.MeshStandardMaterial;
+      instance.color.set(material.name === 'shirt' ? tint.shirt : tint.shorts);
+      if (material.name === 'shirt') instance.side = THREE.DoubleSide;
+      instance.needsUpdate = true;
+      outfitMaterials.set(material.name, instance);
+      materials.add(instance);
+    }
+  });
   body.traverse((object) => {
     const mesh = object as T.Mesh;
     if (!mesh.isMesh) return;
@@ -128,14 +198,16 @@ function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset
     mesh.receiveShadow = false;
     if ((mesh as T.SkinnedMesh).isSkinnedMesh) mesh.frustumCulled = false;
     const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    const cloned = source.map((material) => {
-      if (material.name !== 'shirt' && material.name !== 'shorts') return material;
-      const instance = material.clone() as T.MeshStandardMaterial;
-      instance.color.set(material.name === 'shirt' ? tint.shirt : tint.shorts);
-      materials.add(instance);
-      return instance;
-    });
-    mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0]!;
+    if (playerAssetUrl(seat) === '/models/tennis/male.glb' && source.some((material) => material.name === 'skin')) {
+      groupSkinHem(mesh.geometry as T.BufferGeometry);
+      mesh.material = [source.find((material) => material.name === 'skin')!, outfitMaterials.get('shirt')!];
+    } else if (playerAssetUrl(seat) === '/models/tennis/male.glb' && source.some((material) => material.name === 'shorts')) {
+      groupShortsHem(mesh.geometry as T.BufferGeometry);
+      mesh.material = [outfitMaterials.get('shirt')!, outfitMaterials.get('shorts')!];
+    } else {
+      const cloned = source.map((material) => outfitMaterials.get(material.name) ?? material);
+      mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0]!;
+    }
   });
   model.root.add(body);
   const bones = captureBoneBinds(THREE, model.root, body);
@@ -364,24 +436,29 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
   const stringCanvas = document.createElement('canvas');
   stringCanvas.width = stringCanvas.height = 256;
   const stringContext = stringCanvas.getContext('2d')!;
+  stringContext.beginPath();
+  stringContext.ellipse(128, 128, 124, 124, 0, 0, Math.PI * 2);
+  stringContext.clip();
   stringContext.strokeStyle = 'rgba(239,239,223,.78)';
   stringContext.lineWidth = 2;
   for (let i = 1; i < 8; i++) {
     const p = i * 256 / 8;
+    const offset = p - 128;
+    const end = Math.sqrt(124 * 124 - offset * offset);
     stringContext.beginPath();
-    stringContext.moveTo(p, 0);
-    stringContext.lineTo(p, 256);
-    stringContext.moveTo(0, p);
-    stringContext.lineTo(256, p);
+    stringContext.moveTo(p, 128 - end);
+    stringContext.lineTo(p, 128 + end);
+    stringContext.moveTo(128 - end, p);
+    stringContext.lineTo(128 + end, p);
     stringContext.stroke();
   }
   const stringTexture = new THREE.CanvasTexture(stringCanvas);
   stringTexture.colorSpace = THREE.SRGBColorSpace;
   const stringPlane = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.43, 0.57),
+    new THREE.PlaneGeometry(0.39, 0.49),
     new THREE.MeshBasicMaterial({ map: stringTexture, transparent: true, opacity: 0.74, alphaTest: 0.12, side: THREE.DoubleSide, depthWrite: false }),
   );
-  stringPlane.position.set(0, 0.64, 0.024);
+  stringPlane.position.set(0, 0.64, 0.021);
   racket.add(stringPlane);
 
   const markers: T.Mesh[] = [];
@@ -421,10 +498,16 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
       model.root.updateMatrixWorld(true);
       if (model.handLeft) {
         model.handLeft.getWorldPosition(out);
-        const orientation = model.handLeft.getWorldQuaternion(new THREE.Quaternion());
-        return out.add(new THREE.Vector3(0, 0.012, 0.055).applyQuaternion(orientation));
+      } else {
+        model.leadArm.localToWorld(out.set(0, -0.55, 0.055));
       }
-      return model.leadArm.localToWorld(out.set(0, -0.55, 0.055));
+      const rootPosition = model.root.getWorldPosition(new THREE.Vector3());
+      const outward = out.clone().sub(rootPosition);
+      outward.y = 0;
+      if (outward.lengthSq() > 1e-6) outward.normalize().multiplyScalar(0.07);
+      const towardCamera = new THREE.Vector3(0, 0, -1)
+        .applyQuaternion(model.root.getWorldQuaternion(new THREE.Quaternion()));
+      return out.add(outward).addScaledVector(towardCamera, 0.055).add(new THREE.Vector3(0, 0.02, 0));
     },
     racketHeadWorldPosition(out = new THREE.Vector3()) {
       model.root.updateMatrixWorld(true);
@@ -497,21 +580,35 @@ export function debugPoseAngles(name: PoseName, progress = 0) {
   };
   switch (name) {
     case 'idle': arms([0, 0, 1.1], [0, 0, -1.1], [0, 0, 0.15], [0, 0, -0.15]); break;
-    case 'ready': put('thigh_l', [-0.12, 0, 0]); put('thigh_r', [-0.12, 0, 0]); put('calf_l', [0.34, 0, 0]); put('calf_r', [0.34, 0, 0]); put('spine_01', [0.1, 0, 0]); arms([0, 0.6, 0.8], [0, -0.6, -0.8], [0.5, 0, 0.2], [-0.5, 0, -0.2]); break;
+    case 'ready': put('thigh_l', [-0.18, 0, 0]); put('thigh_r', [-0.18, 0, 0]); put('calf_l', [0.44, 0, 0]); put('calf_r', [0.44, 0, 0]); put('spine_01', [0.08, 0, 0]); arms([0.4, 0.8, 0.4], [-0.4, 0.8, -1.2], [-0.8, 0, 0.8], [1.2, 0, 0.4]); break;
     case 'run': put('thigh_l', [-0.35, 0, 0]); put('thigh_r', [0.35, 0, 0]); put('calf_l', [0.2, 0, 0]); put('calf_r', [0.5, 0, 0]); arms([0.2, 0, 0.7], [-0.2, 0, -0.7], [0.3, 0, 0], [-0.3, 0, 0]); break;
     case 'shuffle': put('pelvis', [0, 0.15, 0]); put('thigh_l', [-0.1, 0, -0.15]); put('thigh_r', [-0.1, 0, 0.15]); arms([0, 0.3, 0.85], [0, -0.3, -0.85], [0.25, 0, 0.1], [-0.25, 0, -0.1]); break;
     case 'forehand': {
-      const right: [number, number, number][] = [[0.05, -0.6, 0.65], [0.05, 0.6, 0.45], [-0.4, 1.1, -0.75]];
-      arms(between(right), [0.05, -0.45, -0.7], [0.2, 0, 0.3], [-0.3, 0, -0.25]);
+      const right: [number, number, number][] = [[0, -0.4, -0.8], [0.05, 1.15, -0.2], [-0.4, 1.1, -0.75]];
+      const elbow: [number, number, number][] = [[0.35, 0, 0.15], [0.1, 0, -0.1], [-0.3, 0, -0.5]];
+      arms(between(right), [0.05, -0.45, -0.7], between(elbow), [-0.3, 0, -0.25]);
       put('spine_02', [0.08, -0.25 + p * 0.6, 0]); break;
     }
     case 'backhand': {
-      const left: [number, number, number][] = [[0.05, 0.5, -0.65], [0.05, -0.6, -0.45], [-0.4, -1.1, 0.75]];
-      arms([0.05, 0.45, 0.7], between(left), [0.3, 0, 0.25], [0.2, 0, -0.3]);
+      const right: [number, number, number][] = [[0, -1.2, -0.8], [0.05, 0.4, 0], [-0.4, -1.1, -0.75]];
+      const left: [number, number, number][] = [[0.05, -0.7, -0.45], [-0.475, 0.3, -1.6], [-0.4, -1.1, -0.75]];
+      const rightElbow: [number, number, number][] = [[0.35, 0, 0.15], [0.1, 0, -0.1], [-0.3, 0, -0.5]];
+      const leftElbow: [number, number, number][] = [[0.3, 0, -0.4], [1.275, 0, 0.4], [-0.2, 0, -0.45]];
+      arms(between(right), between(left), between(rightElbow), between(leftElbow));
       put('spine_02', [0.08, 0.25 - p * 0.6, 0]); break;
     }
-    case 'slice': arms([0.45, 0.6, 0.45], [-0.2, -0.4, -0.5], [0.2, 0, 0.35], [-0.2, 0, -0.2]); break;
-    case 'lob': arms([-0.8, 0.5, -0.55], [0, -0.4, -0.4], [-0.3, 0, 0.3], [-0.2, 0, -0.2]); break;
+    case 'slice': {
+      const right: [number, number, number][] = [[-0.35, -0.4, -0.4], [0.15, 0.3, 0], [-0.3, 0.6, 0.2]];
+      const elbow: [number, number, number][] = [[-0.2, 0, -0.2], [0.1, 0, 0], [0.4, 0, 0.35]];
+      arms(between(right), [-0.2, -0.4, -0.5], between(elbow), [-0.2, 0, -0.2]);
+      break;
+    }
+    case 'lob': {
+      const right: [number, number, number][] = [[0.5, 0.7, 0.4], [0, 0.65, -0.1], [-0.8, 0.8, -0.7]];
+      const elbow: [number, number, number][] = [[0.35, 0, 0.35], [0.05, 0, 0], [-0.35, 0, -0.5]];
+      arms(between(right), [0, -0.4, -0.4], between(elbow), [-0.2, 0, -0.2]);
+      break;
+    }
     case 'serve-ready': arms([0, 0, 1.1], [0, 0.18, -0.8], [0, 0, 0.15], [0, 0, -0.2]); break;
     case 'toss': arms([-0.35, -0.45, -0.9], [0, 0, 1.8], [-0.7, 0, -0.8], [0, 0, 0.15]); put('spine_02', [0.12, 0, 0]); break;
     case 'serve-contact': arms([-0.4, -0.3, -1.8], [0.1, 0, 0.5], [-0.6, 0, -0.2], [0, 0, 0.2]); break;
@@ -579,10 +676,11 @@ export function updatePlayer(
     poseValue(pose, 'calf_l', crouch + Math.max(0, -step) * 0.32, 0, 0);
     poseValue(pose, 'calf_r', crouch + Math.max(0, step) * 0.32, 0, 0);
 
-    let rightUpper: [number, number, number] = [0.03 * step, ready ? 0.6 : 0, ready ? 0.8 : 1.1];
-    let rightLower: [number, number, number] = [0, 0, ready ? 0.2 : 0.15];
-    let leftUpper: [number, number, number] = [0.03 * -step, ready ? -0.6 : 0, ready ? -0.8 : -1.1];
-    let leftLower: [number, number, number] = [0, 0, ready ? -0.2 : -0.15];
+    const readyPose = ready ? debugPoseAngles('ready') : null;
+    let rightUpper: [number, number, number] = readyPose?.get('upperarm_r') ?? [0.03 * step, 0, 1.1];
+    let rightLower: [number, number, number] = readyPose?.get('lowerarm_r') ?? [0, 0, 0.15];
+    let leftUpper: [number, number, number] = readyPose?.get('upperarm_l') ?? [0.03 * -step, 0, -1.1];
+    let leftLower: [number, number, number] = readyPose?.get('lowerarm_l') ?? [0, 0, -0.15];
     poseValue(pose, 'hand_r', 0, 0, 0);
     poseValue(pose, 'hand_l', 0, 0, 0);
 
@@ -596,11 +694,11 @@ export function updatePlayer(
       const sign = forehand ? 1 : -1;
       const lob = player.swingKind === 'lob';
       const slice = player.swingKind === 'slice';
-      const arc = lob ? -0.85 + swingProgress * 1.35 : slice ? 0.55 - swingProgress * 0.75 : -0.3 + swingProgress * 0.65;
-      rightUpper = [arc, -0.45 + sign * (0.48 - swingProgress * 0.82), -0.35 + swingProgress * 0.78];
-      rightLower = [lob ? -0.35 + swingProgress * 0.9 : 0.08, 0, -0.85 + swingProgress * 0.9];
-      leftUpper = [0.05, 0.55, 0.4];
-      leftLower = [0, 0, 0.42];
+      const stroke = debugPoseAngles(lob ? 'lob' : slice ? 'slice' : forehand ? 'forehand' : 'backhand', swingProgress);
+      rightUpper = stroke.get('upperarm_r') ?? rightUpper;
+      rightLower = stroke.get('lowerarm_r') ?? rightLower;
+      leftUpper = stroke.get('upperarm_l') ?? leftUpper;
+      leftLower = stroke.get('lowerarm_l') ?? leftLower;
       poseValue(pose, 'pelvis', 0, -sign * (0.18 + swingProgress * 0.12), 0);
       poseValue(pose, 'spine_01', lean, -sign * 0.25, 0);
       poseValue(pose, 'spine_02', lean, sign * (0.42 - swingProgress * 0.72), 0);
