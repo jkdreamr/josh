@@ -186,8 +186,10 @@ export const F_SMOOTHIE = 512;
 export const F_TART = 1024;
 export const F_GHILLIE = 2048;
 export const F_STUN = 4096;
+export const F_DOWN = 8192;
+export const F_REVIVE = 16384;
 /** The highest flag bits there are. */
-export const F_ALL = 8191;
+export const F_ALL = 32767;
 /** `bush` for an egg hiding in a bush grown from a can. */
 export const GROWN = 1_000_000;
 
@@ -195,12 +197,41 @@ export type Level = 'easy' | 'normal' | 'hard';
 export const LEVELS: readonly Level[] = ['easy', 'normal', 'hard'];
 export const isLevel = (v: unknown): v is Level => LEVELS.includes(v as Level);
 export type Role = 'solo' | 'host' | 'guest';
+/** Every egg for itself, or teams of two (duos) or four (squads). */
+export type Mode = 'solo' | 'duos' | 'squads';
+export const MODES: readonly Mode[] = ['solo', 'duos', 'squads'];
+export const isMode = (v: unknown): v is Mode => MODES.includes(v as Mode);
+export const TEAM_SIZE: Record<Mode, number> = { solo: 1, duos: 2, squads: 4 };
+/** The most teams a match has: fifty eggs one each. */
+export const MAX_TEAMS = 50;
+/**
+ * Knocked down (in duos and squads, while a teammate still stands): an egg crawls at CRAWL of its pace, can't shoot,
+ * and bleeds DOWN_HP away over BLEED_T seconds. A teammate holding the interact key within REVIVE_R for REVIVE_T
+ * seconds gets it back up with REVIVE_HP.
+ */
+export const DOWN_HP = 100;
+export const BLEED_T = 30;
+export const CRAWL = 0.32;
+export const REVIVE_T = 5;
+export const REVIVE_R = 2.2;
+export const REVIVE_HP = 30;
+/** How long a ping marks its spot for the team, and the wait between two of one egg's. */
+export const PING_T = 8;
+export const PING_COOL = 0.6;
+/** Each team's color, for its ring, its name tags and its pings. */
+export const TEAM_COLORS = ['#2ee6c9', '#ffb020', '#ff5ca8', '#7c8cff', '#9be22e', '#ff6a3d', '#3fc1ff', '#d97cff'];
+export const teamColor = (team: number) => TEAM_COLORS[((team % TEAM_COLORS.length) + TEAM_COLORS.length) % TEAM_COLORS.length];
 export type Phase = 'bus' | 'drop' | 'ground' | 'out';
 export const PHASES: readonly Phase[] = ['bus', 'drop', 'ground', 'out'];
 export type Kind = 'player' | 'bot' | 'remote';
-/** What dealt a hit: a gun, a melee weapon, a grenade (or a MIRV's), an impulse egg, hot sauce, a barrel, or the storm. */
-export type Cause = WeaponId | MeleeId | 'grenade' | 'mirv' | 'impulse' | 'sauce' | 'barrel' | 'storm' | 'left';
-export const CAUSES: readonly Cause[] = [...WEAPON_IDS, ...MELEE_IDS, 'grenade', 'mirv', 'impulse', 'sauce', 'barrel', 'storm', 'left'];
+/**
+ * What dealt a hit: a gun, a melee weapon, a grenade (or a MIRV's), an impulse egg, hot sauce, a barrel, or the storm.
+ * An egg out from bleeding while knocked down went out to 'bleed'.
+ */
+export type Cause = WeaponId | MeleeId | 'grenade' | 'mirv' | 'impulse' | 'sauce' | 'barrel' | 'storm' | 'left' | 'bleed';
+export const CAUSES: readonly Cause[] = [...WEAPON_IDS, ...MELEE_IDS, 'grenade', 'mirv', 'impulse', 'sauce', 'barrel', 'storm', 'left', 'bleed'];
+/** What the drop key puts down: a slot's gun, melee weapon or one throwable, a consumable, some ammo or material. */
+export type Drop = number | UseId | Ammo | Mat;
 /** What an egg can have in hand. */
 export type Held = WeaponId | MeleeId | ThrowId;
 export const HELD: readonly Held[] = [...WEAPON_IDS, ...MELEE_IDS, ...THROW_IDS];
@@ -238,8 +269,14 @@ export type Input = {
   reach: number;
   /** Take out this kind of throwable. */
   pick: ThrowId | null;
+  /** The interact key held down: reviving a knocked teammate. */
+  hold: boolean;
+  /** Mark this spot for the team. */
+  ping: { x: number; z: number } | null;
+  /** Put this down for a teammate (see Drop). */
+  drop: Drop | null;
 };
-export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null });
+export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null, hold: false, ping: null, drop: null });
 
 /** One position report for an egg another client owns. `at` is our clock when it arrived. */
 export type Snap = { at: number; x: number; z: number; y: number; aim: number; vx: number; vz: number };
@@ -339,6 +376,8 @@ export type Fighter = {
   id: number;
   /** The room seat of a person, or -1 for a computer player. */
   seat: number;
+  /** Its team (in solo, every egg's own). Teammates can't hurt each other. */
+  team: number;
   name: string;
   color: string;
   kind: Kind;
@@ -445,6 +484,18 @@ export type Fighter = {
   outSeen: number;
   /** What computer eggs have let fly at it lately, as in Ai `poured` (see FOCUS). */
   incoming: [number, number][];
+  /** Knocked down (see DOWN_HP), by whom and with what, and the match time it went down. */
+  down: boolean;
+  knockBy: number;
+  knockCause: Cause | null;
+  downAt: number;
+  /** The knocked teammate it's reviving (-1 for none), and for how long so far. */
+  reviving: number;
+  reviveT: number;
+  /** Its last ping for the team, and when (match time). */
+  pingX: number;
+  pingZ: number;
+  pingAt: number;
 };
 
 /**
@@ -507,6 +558,11 @@ export type Ev = (
   | { t: 'use'; f: number; what: UseId }
   | { t: 'used'; f: number; what: UseId }
   | { t: 'out'; f: number; by: number; w: Cause; place: number }
+  | { t: 'knock'; f: number; by: number; w: Cause }
+  | { t: 'revive'; f: number; to: number }
+  | { t: 'ask'; f: number; to: number }
+  | { t: 'revived'; f: number; by: number }
+  | { t: 'ping'; f: number; x: number; z: number }
   | { t: 'drop'; item: LootItem }
   | { t: 'take'; f: number; id: number }
   | { t: 'took'; f: number; id: number; def: LootDef }
@@ -525,6 +581,11 @@ export type Match = {
   /** Settles pickups, chests, crates, barrels, walls and the result (solo and the host). */
   world: boolean;
   level: Level;
+  mode: Mode;
+  /** Fighter ids by team. */
+  teams: number[][];
+  /** When each team was last seen with nobody standing (the host's, for taking out a knocked egg whose owner never does). */
+  wipedAt: Map<number, number>;
   /** Match time in seconds; negative during the countdown. */
   time: number;
   /** This client's own running clock, for timing what arrives over the network. */
@@ -570,7 +631,7 @@ export type Match = {
   frame: number;
 };
 
-export type Entrant = { name: string; color: string; kind: Kind; seat: number };
+export type Entrant = { name: string; color: string; kind: Kind; seat: number; team?: number };
 
 /** The loot on the ground by id, counting every change to it (so what is worked out from it knows to look again). */
 export class LootMap extends Map<number, LootItem> {
@@ -860,12 +921,28 @@ export const alive = (f: Fighter) => f.phase !== 'out';
 export const fighting = (f: Fighter) => f.phase === 'ground';
 export const owned = (f: Fighter) => f.kind !== 'remote';
 export const aliveCount = (m: Match) => m.fighters.reduce((n, f) => n + (alive(f) ? 1 : 0), 0);
+/** In and on its feet: not out, nor knocked down. */
+export const upright = (f: Fighter) => f.phase !== 'out' && !f.down;
+/** On the same team (an egg is on its own). */
+export const mates = (a: Fighter, b: Fighter) => a.team === b.team;
+/** The eggs on a team. */
+export const teamOf = (m: Match, team: number): Fighter[] => (m.teams[team] ?? []).map((id) => m.fighters[id]);
+/** Whether a team has anyone still on their feet, but `skip`. */
+export const teamUp = (m: Match, team: number, skip?: Fighter) => (m.teams[team] ?? []).some((id) => m.fighters[id] !== skip && upright(m.fighters[id]));
+/** Teams with anyone still in (knocked counts), and how many teams there are. */
+export function teamsLeft(m: Match) {
+  let n = 0;
+  for (const ids of m.teams) if (ids.some((id) => alive(m.fighters[id]))) n++;
+  return n;
+}
+export const teamCount = (m: Match) => m.teams.reduce((n, ids) => n + (ids.length ? 1 : 0), 0);
 const none = <K extends string>(keys: readonly K[]) => Object.fromEntries(keys.map((k) => [k, 0])) as Record<K, number>;
 
-function newFighter(id: number, e: Entrant, x: number, z: number): Fighter {
+function newFighter(id: number, e: Entrant, x: number, z: number, team: number): Fighter {
   return {
     id,
     seat: e.seat,
+    team,
     name: e.name,
     color: e.color,
     kind: e.kind,
@@ -945,6 +1022,15 @@ function newFighter(id: number, e: Entrant, x: number, z: number): Fighter {
     dropSeq: 0,
     outSeen: -1,
     incoming: [],
+    down: false,
+    knockBy: -1,
+    knockCause: null,
+    downAt: 0,
+    reviving: -1,
+    reviveT: 0,
+    pingX: 0,
+    pingZ: 0,
+    pingAt: -99,
   };
 }
 
@@ -1035,7 +1121,7 @@ function newAi(m: Match, f: Fighter): Ai {
  * A new match. Fighter ids are entrant indices. `me` is the egg this client plays (-1 to only watch). Remote eggs
  * are moved by the network; computer players by this client.
  */
-export function createMatch(opts: { seed: number; role: Role; level: Level; entrants: Entrant[]; me: number; countdown?: number; map?: GameMap }): Match {
+export function createMatch(opts: { seed: number; role: Role; level: Level; entrants: Entrant[]; me: number; countdown?: number; map?: GameMap; mode?: Mode }): Match {
   const map = opts.map ?? generateMap(opts.seed);
   const start = busAt(map.bus, 0);
   const m: Match = {
@@ -1044,6 +1130,9 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
     role: opts.role,
     world: opts.role !== 'guest',
     level: opts.level,
+    mode: opts.mode ?? 'solo',
+    teams: [],
+    wipedAt: new Map(),
     time: -(opts.countdown ?? COUNTDOWN),
     clock: 0,
     fighters: [],
@@ -1074,11 +1163,16 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
     frame: 0,
   };
   for (const s of map.floor) m.loot.set(s.id, { id: s.id, def: s.def, x: s.x, z: s.z, by: -1, at: 0 });
+  // in solo every egg is a team of its own; in teams, as the entrants say (else in fighter order)
+  const size = TEAM_SIZE[m.mode];
   opts.entrants.slice(0, MAX_FIGHTERS).forEach((e, i) => {
-    const f = newFighter(i, e, start.x, start.z);
+    const team = size === 1 ? i : clamp(Math.floor(e.team ?? i / size), 0, MAX_TEAMS - 1);
+    const f = newFighter(i, e, start.x, start.z, team);
     m.fighters.push(f);
-    if (e.kind === 'bot') f.ai = newAi(m, f);
+    (m.teams[team] ??= []).push(i);
   });
+  for (let t = 0; t < m.teams.length; t++) m.teams[t] ??= [];
+  for (const f of m.fighters) if (f.kind === 'bot') f.ai = newAi(m, f);
   return m;
 }
 
@@ -1101,12 +1195,12 @@ export function autopilot(m: Match, f: Fighter) {
   f.ai = newAi(m, f);
 }
 
-/** A solo match: you and forty-nine computer players. */
-export function soloMatch(seed: number, level: Level, name = 'you', color = FIGHTER_COLORS[0]): Match {
+/** A match on this device: you and forty-nine computer players (in duos and squads, your teammates among them). */
+export function soloMatch(seed: number, level: Level, name = 'you', color = FIGHTER_COLORS[0], mode: Mode = 'solo'): Match {
   const bots = botNames(seed);
   const entrants: Entrant[] = [{ name, color, kind: 'player', seat: -1 }];
   for (let i = 1; i < MAX_FIGHTERS; i++) entrants.push({ name: bots[i - 1], color: FIGHTER_COLORS[i], kind: 'bot', seat: -1 });
-  return createMatch({ seed, role: 'solo', level, entrants, me: 0 });
+  return createMatch({ seed, role: 'solo', level, entrants, me: 0, mode });
 }
 
 const emit = (m: Match, e: Ev) => {
@@ -1228,15 +1322,54 @@ function clearOneShots(inp: Input) {
   inp.pick = null;
 }
 
-/** Ends the match once one egg (or none) is left. */
+/**
+ * Ends the match once one team (or none) is left with anyone on their feet: the whole team wins, and a knocked egg of
+ * any other team still bleeding is second. In teams, the host also takes out a knocked egg whose team has had
+ * nobody standing for a while, should its owner not have done so.
+ */
 function settle(m: Match) {
   if (m.ended || m.time <= 0 || m.fighters.length < 2) return;
-  const left = m.fighters.filter(alive);
-  if (left.length > 1) return;
+  if (m.mode !== 'solo') wipeOut(m);
+  let team = -1;
+  let teams = 0;
+  for (let t = 0; t < m.teams.length; t++)
+    if (teamUp(m, t)) {
+      team = t;
+      if (++teams > 1) return;
+    }
   m.ended = true;
-  m.winner = left[0]?.id ?? -1;
-  if (left[0]) left[0].place = 1;
+  const won = team >= 0 ? teamOf(m, team) : [];
+  m.winner = (won.find(upright) ?? won.find(alive))?.id ?? -1;
+  for (const f of won) f.place = 1;
+  for (const f of m.fighters) if (f.team !== team && alive(f)) f.place = 2;
   emit(m, { t: 'end', winner: m.winner });
+}
+
+/** The host's backstop for a team with nobody standing: its knocked eggs go out two seconds on (with credit to whoever knocked them). */
+function wipeOut(m: Match) {
+  for (let t = 0; t < m.teams.length; t++) {
+    const down = teamOf(m, t).filter((f) => alive(f) && f.down);
+    if (!down.length || teamUp(m, t)) {
+      m.wipedAt.delete(t);
+      continue;
+    }
+    const at = m.wipedAt.get(t);
+    if (at === undefined) m.wipedAt.set(t, m.clock);
+    else if (m.clock - at > 2) for (const f of down) finish(m, f.id, f.knockBy, f.knockCause ?? 'bleed');
+  }
+}
+
+/**
+ * A knocked egg goes out on the host's word: cracked here if it is ours to crack, else out here and the news goes to
+ * everyone (its owner cracks it on hearing).
+ */
+export function finish(m: Match, fid: number, by: number, w: Cause) {
+  const f = m.fighters[fid];
+  if (!f || f.phase === 'out' || m.ended) return;
+  if (owned(f)) return crack(m, f, by, w);
+  applyOut(m, fid, by, w);
+  const e = m.events[m.events.length - 1];
+  if (e && e.t === 'out' && e.f === fid) delete e.net;
 }
 
 /** Ends an online match on the host's word. */
@@ -1246,8 +1379,8 @@ export function endMatch(m: Match, winner: number, places: [number, number, numb
     if (!f) continue;
     f.place = place;
     f.kills = kills;
-    // the host's word is final, even if the news of how an egg went out is still on its way
-    if (fid !== winner && f.phase !== 'out') {
+    // the host's word is final, even if the news of how an egg went out is still on its way (the winners stand)
+    if (place !== 1 && f.phase !== 'out') {
       f.phase = 'out';
       f.outAt = m.time;
     }
@@ -1854,10 +1987,13 @@ export function panBlocks(f: Fighter, dx: number, dz: number) {
 
 /**
  * Damage to an egg this client owns. Armor takes its cut first, then shields soak it, except the storm's. Returns how
- * much landed. Only eggs on the ground can be hurt, and nobody once the match is over.
+ * much landed. Only eggs on the ground can be hurt, never by a teammate, and nobody once the match is over. In teams,
+ * an egg with a teammate still standing is knocked down rather than cracked; one already down is finished off (by
+ * whoever knocked it, if it's the storm or itself that does it).
  */
 export function hurt(m: Match, f: Fighter, d: number, by: number, w: Cause, storm: boolean) {
   if (m.ended || !owned(f) || f.phase !== 'ground' || !(d > 0)) return 0;
+  if (by >= 0 && by !== f.id && m.fighters[by]?.team === f.team) return 0;
   let left = armored(d, w, storm, f);
   const fromShield = storm ? 0 : Math.min(f.shield, left);
   f.shield -= fromShield;
@@ -1870,14 +2006,64 @@ export function hurt(m: Match, f: Fighter, d: number, by: number, w: Cause, stor
     f.lastByAt = m.clock;
   }
   emit(m, { t: 'hurt', f: f.id, d: fromShield + fromHp, by, storm, shield: fromShield > 0 });
-  if (f.hp <= 0.001) crack(m, f, by, w);
+  if (f.hp <= 0.001) {
+    const foe = by >= 0 && by !== f.id;
+    if (f.down) crack(m, f, foe ? by : f.knockBy, foe || f.knockBy < 0 ? w : 'bleed');
+    else if (m.mode !== 'solo' && teamUp(m, f.team, f)) knock(m, f, by, w);
+    else crack(m, f, by, w);
+  }
   return fromShield + fromHp;
+}
+
+/** An egg this client owns is knocked down: its shield gone, whatever it was doing stopped, bleeding from DOWN_HP. */
+function knock(m: Match, f: Fighter, by: number, w: Cause) {
+  f.down = true;
+  f.hp = DOWN_HP;
+  f.shield = 0;
+  f.boost = 0;
+  f.sip = 0;
+  f.knockBy = by >= 0 && by !== f.id ? by : -1;
+  f.knockCause = w;
+  f.downAt = m.time;
+  f.using = null;
+  f.useT = 0;
+  f.reloadT = 0;
+  f.burst = 0;
+  f.spin = 0;
+  f.queued = null;
+  if (f.reviving >= 0) stopReviving(m, f);
+  emit(m, { t: 'knock', f: f.id, by: f.knockBy, w });
+}
+
+/** A knocked egg another client owns, on its owner's word. */
+export function applyKnock(m: Match, fid: number, by: number, w: Cause) {
+  const f = m.fighters[fid];
+  if (!f || owned(f) || f.phase === 'out' || f.down || m.ended) return;
+  f.down = true;
+  f.knockBy = by;
+  f.knockCause = w;
+  f.downAt = m.time;
+  f.reviving = -1;
+  emit(m, { t: 'knock', f: fid, by, w, net: true });
+}
+
+/**
+ * The place an egg going out takes: in solo how many are still in, in teams its team's once its last egg goes (how
+ * many teams are still in), given to every egg on the team; 0 while teammates are still in.
+ */
+function placeOut(m: Match, f: Fighter) {
+  if (teamOf(m, f.team).some((o) => o !== f && alive(o))) return 0;
+  const place = teamsLeft(m);
+  for (const o of teamOf(m, f.team)) o.place = place;
+  return place;
 }
 
 /** An egg this client owns is out: everything it carried spills on the ground. */
 function crack(m: Match, f: Fighter, by: number, w: Cause) {
-  const place = aliveCount(m);
+  const place = placeOut(m, f);
   f.phase = 'out';
+  f.down = false;
+  if (f.reviving >= 0) stopReviving(m, f);
   f.hp = 0;
   f.shield = 0;
   f.boost = 0;
@@ -1934,8 +2120,10 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
 export function applyOut(m: Match, fid: number, by: number, w: Cause) {
   const f = m.fighters[fid];
   if (!f || f.phase === 'out' || m.ended) return;
-  const place = aliveCount(m);
+  const place = placeOut(m, f);
   f.phase = 'out';
+  f.down = false;
+  f.reviving = -1;
   f.place = place;
   f.by = by;
   f.outCause = w;
@@ -1949,8 +2137,10 @@ export function applyOut(m: Match, fid: number, by: number, w: Cause) {
 export function forfeit(m: Match, fid: number) {
   const f = m.fighters[fid];
   if (!f || f.phase === 'out' || m.ended) return;
-  const place = aliveCount(m);
+  const place = placeOut(m, f);
   f.phase = 'out';
+  f.down = false;
+  f.reviving = -1;
   f.place = place;
   f.by = -1;
   f.outCause = 'left';
