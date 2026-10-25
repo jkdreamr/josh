@@ -29,6 +29,8 @@ type Ground = {
   flowers?: [number, number, number][];
   /** Nothing grows inside the loop (it is water). */
   wet?: boolean;
+  /** The ground is paved in sandstone flags (the Quad's courts), the grass only along the walls. */
+  paved?: boolean;
 };
 
 export const GROUNDS: Partial<Record<CourseId, Ground>> = {
@@ -37,7 +39,7 @@ export const GROUNDS: Partial<Record<CourseId, Ground>> = {
   barn: { a: 0xc9b26a, b: 0xa59a58, c: 0x8aa04e, lawn: [0x8cae5c, 0x7d9f50], center: null, edges: null, tufts: 4, tuftBase: [0.24, 0.24, 0.1], tuftTip: [0.78, 0.68, 0.36], flowers: [[0.96, 0.84, 0.3], [0.62, 0.5, 0.86]] },
   dish: { a: 0xcdb46c, b: 0xb49a58, c: 0x8e8a4c, lawn: [0xb3a960, 0xa49b56], center: '#f2c230', edges: '#f4f2ea', tufts: 4, tuftBase: [0.32, 0.27, 0.12], tuftTip: [0.86, 0.74, 0.42], flowers: [[0.95, 0.7, 0.25]] },
   stadium: { a: 0xb9b080, b: 0x8f9a5c, c: 0x6f9050, lawn: [0x5ea64c, 0x519942], center: '#f4f2ea', edges: '#f4f2ea', tufts: 2, tuftBase: [0.16, 0.24, 0.1], tuftTip: [0.5, 0.62, 0.3] },
-  quad: { a: 0xd2bc92, b: 0xb8a77c, c: 0x8f9a5a, lawn: [0x82b05a, 0x74a24e], center: null, edges: null, tufts: 1.5, tuftBase: [0.18, 0.26, 0.1], tuftTip: [0.52, 0.64, 0.3], flowers: [[0.95, 0.4, 0.4], [0.96, 0.84, 0.3]] },
+  quad: { paved: true, a: 0xd8c49a, b: 0xc8b088, c: 0xb8a27c, lawn: [0x82b05a, 0x74a24e], center: null, edges: null, tufts: 1.5, tuftBase: [0.18, 0.26, 0.1], tuftTip: [0.52, 0.64, 0.3], flowers: [[0.95, 0.4, 0.4], [0.96, 0.84, 0.3]] },
   hoover: { a: 0x34402e, b: 0x2c3828, c: 0x3a4630, lawn: [0x3d5a36, 0x35502f], center: '#e8c040', edges: '#d8d8d0', tufts: 2.5, tuftBase: [0.06, 0.09, 0.05], tuftTip: [0.2, 0.26, 0.16] },
   golf: { a: 0x4f8a34, b: 0x427a2c, c: 0x5c9a3c, lawn: [0x72b84e, 0x62a642], center: null, edges: null, tufts: 2.5, tuftBase: [0.1, 0.2, 0.06], tuftTip: [0.36, 0.56, 0.2], flowers: [[0.96, 0.95, 0.9]] },
 };
@@ -73,9 +75,9 @@ const col = (THREE: Three, hex: number) => ({ value: new THREE.Color(hex) });
 export function groundMaterial(THREE: Three, g: Ground) {
   return procedural(
     THREE,
-    `ground-${g.a}-${g.b}`,
-    { uGa: col(THREE, g.a), uGb: col(THREE, g.b), uGc: col(THREE, g.c) },
-    'uniform vec3 uGa, uGb, uGc;',
+    `ground-${g.a}-${g.b}-${g.paved ? 1 : 0}`,
+    { uGa: col(THREE, g.a), uGb: col(THREE, g.b), uGc: col(THREE, g.c), uPaved: { value: g.paved ? 1 : 0 } },
+    'uniform vec3 uGa, uGb, uGc;\nuniform float uPaved;',
     `vec2 p = vPdW.xz;
      float far = smoothstep(30.0, 220.0, length(vPdW - cameraPosition));
      float m = pdFbm(p * 0.011);
@@ -85,6 +87,16 @@ export function groundMaterial(THREE: Three, g: Ground) {
      float f = mix(pdNoise(p * 1.7) * 0.55 + pdNoise(p * 5.3) * 0.45, 0.5, far);
      gc *= 0.8 + 0.36 * f;
      gc *= 0.9 + 0.2 * pdNoise(p * 0.23);
+     if (uPaved > 0.5) {
+       // (flags in courses, each course half a flag over, each flag its own shade, the joints fading off with distance)
+       vec2 q = p / vec2(1.8, 0.9);
+       q.x += floor(q.y) * 0.5;
+       vec2 f = fract(q);
+       float d = min(min(f.x, 1.0 - f.x) * 1.8, min(f.y, 1.0 - f.y) * 0.9);
+       float grout = (1.0 - smoothstep(0.015, 0.045, d)) * (1.0 - smoothstep(25.0, 90.0, length(vPdW - cameraPosition)));
+       gc *= 0.9 + 0.2 * pdHash(floor(q));
+       gc = mix(gc, gc * 0.62, grout);
+     }
      diffuseColor.rgb = gc;`,
   );
 }
@@ -398,7 +410,8 @@ export function grassTufts(THREE: Three, scene: T.Scene, t: Track, g: Ground, du
     }
     return geo;
   };
-  const kinds = [clump(14, 0.38, 0.45, null), clump(12, 0.7, 0.32, null), ...(g.flowers ?? []).map((f) => clump(8, 0.5, 0.3, f))];
+  // (two clumps of grass, and one of wildflowers in the course's first color)
+  const kinds = [clump(14, 0.38, 0.45, null), clump(12, 0.7, 0.32, null), ...(g.flowers ?? []).slice(0, 1).map((f) => clump(8, 0.5, 0.3, f))];
   const sway = { value: 0 };
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   mat.onBeforeCompile = (sh) => {
@@ -415,7 +428,7 @@ export function grassTufts(THREE: Three, scene: T.Scene, t: Track, g: Ground, du
   };
   mat.customProgramCacheKey = () => 'pd-grass-tufts';
   const density = g.tufts * (quality === 'high' ? 1 : 0.4);
-  const PATCH = 48;
+  const PATCH = 80;
   const patches = new Map<string, { k: number; x: number; z: number; s: number; ry: number }[]>();
   const inside = (x: number, z: number) => {
     let r = false;
@@ -433,7 +446,7 @@ export function grassTufts(THREE: Three, scene: T.Scene, t: Track, g: Ground, du
   };
   const pick = () => {
     const q = rnd();
-    if (g.flowers?.length && q < 0.08) return 2 + Math.floor(rnd() * g.flowers.length);
+    if (g.flowers?.length && q < 0.06) return 2;
     return q < 0.6 ? 0 : 1;
   };
   for (let s = 0; s < t.length; s += 1 / density) {
@@ -445,7 +458,7 @@ export function grassTufts(THREE: Three, scene: T.Scene, t: Track, g: Ground, du
         const p = pointAt(t, s + (rnd() - 0.5), side * (t.edge - 0.15 - rnd() * 0.5));
         put(rnd() < 0.8 ? 0 : 1, p.x, p.z, 0.6 + rnd() * 0.4);
       }
-      for (let row = 0; row < 3; row++) {
+      for (let row = 0; row < (g.paved ? 1 : 3); row++) {
         const out = t.edge + 0.6 + row * 1.5 + rnd() * 2 + (row === 2 ? rnd() * 12 : 0);
         const p = pointAt(t, s + (rnd() - 0.5) * 1.2, side * out);
         if (rnd() < 0.25 || !clear(p.x, p.z, 0.4)) continue;
@@ -464,7 +477,7 @@ export function grassTufts(THREE: Three, scene: T.Scene, t: Track, g: Ground, du
     minZ = Math.min(minZ, t.z[i]);
     maxZ = Math.max(maxZ, t.z[i]);
   }
-  const scatterN = Math.round(2500 * density);
+  const scatterN = g.paved ? 0 : Math.round(2500 * density);
   for (let n = 0; n < scatterN; n++) {
     const x = minX - 60 + rnd() * (maxX - minX + 120);
     const z = minZ - 60 + rnd() * (maxZ - minZ + 120);

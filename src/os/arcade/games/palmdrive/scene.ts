@@ -15,6 +15,7 @@ import { skyWater, waterTick } from './skywater';
 import { floraTick } from './flora';
 import { kartDetail, kartRim } from './kart';
 import { knollGeometry } from './dish';
+import { bake, vcMats } from './landmarks';
 import { GROUNDS, asphaltTexture, curbTexture, grassTufts, groundMaterial, lawnMaterial, roadMaterial, wallTexture } from './surfaces';
 
 type Three = typeof import('three');
@@ -566,6 +567,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     tile: new THREE.MeshLambertMaterial({ color: 0xb4553a }),
     dark: new THREE.MeshLambertMaterial({ color: 0x3e3128 }),
   };
+  /** For set pieces that never move, baked into one mesh each (see landmarks.ts). */
+  const bakeMats = vcMats(THREE);
   const kartShared: KartMats = {
     dark: new THREE.MeshLambertMaterial({ color: 0x1b1c22 }),
     skin: new THREE.MeshLambertMaterial({ color: 0xf2c7a0 }),
@@ -2076,7 +2079,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const g = makeStatue(THREE, geo, h.r);
       g.position.set(h.x, 0, h.z);
       g.rotation.y = headingOf(h.tx, h.tz) + Math.PI;
-      scene.add(g);
+      // (one mesh: it never moves, and it is made of many pieces)
+      scene.add(bake(THREE, g, bakeMats));
       return;
     }
     if (h.kind === 'trench') {
@@ -2202,7 +2206,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const planter = makePlanter(THREE, geo, h.r, rand);
       planter.position.set(h.x, 0, h.z);
       planter.rotation.y = rand() * Math.PI * 2;
-      scene.add(planter);
+      scene.add(bake(THREE, planter, bakeMats));
     } else if (h.kind === 'bike') {
       // a cyclist on the way to class, a little bigger than life so it reads at speed
       kit ??= bikeKit(THREE);

@@ -96,19 +96,22 @@ export function arcadeWall(THREE: Three, w: number, h: number, n: number, aw: nu
   return g;
 }
 
+/** A unit quad facing +z, shared by the windows. */
+let pane: T.PlaneGeometry | null = null;
 /** Windows down a face: dark glass in a pale frame with a sill, `n` of them across `w` at height y. */
 function windows(mk: ModelKit, x0: number, z: number, w: number, n: number, y: number, ww: number, wh: number, nx: number, nz: number, lit?: number) {
+  pane ??= new mk.THREE.PlaneGeometry(1, 1);
+  // (the face's outward normal is along x or z: the panes turned to face it)
+  const ry = Math.atan2(nx, nz);
+  const along = Math.abs(nz) > 0.5;
   for (let k = 0; k < n; k++) {
     const u = -w / 2 + (w / n) * (k + 0.5);
     const x = x0 + u * nz;
     const zz = z + u * -nx;
-    // (nx, nz: the face's outward normal, along x or z)
-    const along = Math.abs(nz) > 0.5;
-    const [sx, sz] = along ? [ww, 0.06] : [0.06, ww];
-    mk.box(0xe8dcc4, x + nx * 0.05, y, zz + nz * 0.05, along ? ww + 0.25 : 0.08, wh + 0.25, along ? 0.08 : ww + 0.25);
-    if (lit !== undefined && (k * 7 + Math.round(y)) % 3 === 0) mk.glow(lit, x + nx * 0.1, y, zz + nz * 0.1, sx, wh, sz);
-    else mk.box(GLASS, x + nx * 0.1, y, zz + nz * 0.1, sx, wh, sz);
-    mk.box(0xcdb894, x + nx * 0.16, y - wh / 2 - 0.1, zz + nz * 0.16, along ? ww + 0.4 : 0.22, 0.12, along ? 0.22 : ww + 0.4);
+    mk.geo(pane, 0xe8dcc4, x + nx * 0.03, y, zz + nz * 0.03, ww + 0.25, wh + 0.25, 1, 0, ry, 0);
+    if (lit !== undefined && (k * 7 + Math.round(y)) % 3 === 0) mk.glow(lit, x + nx * 0.05, y, zz + nz * 0.05, along ? ww : 0.02, wh, along ? 0.02 : ww);
+    else mk.geo(pane, GLASS, x + nx * 0.05, y, zz + nz * 0.05, ww, wh, 1, 0, ry, 0);
+    mk.box(0xcdb894, x + nx * 0.1, y - wh / 2 - 0.1, zz + nz * 0.1, along ? ww + 0.4 : 0.2, 0.1, along ? 0.2 : ww + 0.4);
   }
 }
 
@@ -403,4 +406,73 @@ export function addModel(THREE: Three, scene: T.Scene, mk: ModelKit, mats: { vc:
 
 export function vcMats(THREE: Three) {
   return { vc: new THREE.MeshLambertMaterial({ vertexColors: true }), lit: new THREE.MeshBasicMaterial({ vertexColors: true }) };
+}
+
+/**
+ * Bakes a static group of plain-colored meshes (no textures) into one mesh with their colors as vertex colors, in the
+ * group's parent's space, so a parked bike or a statue costs one draw rather than dozens. Meshes it cannot bake (with a
+ * texture, or not Lambert or Basic) are moved over as they are. The group is left empty.
+ */
+export function bake(THREE: Three, root: T.Object3D, mats: { vc: T.Material; lit: T.Material }) {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.parent ? root.parent.matrixWorld : new THREE.Matrix4()).invert();
+  const out = new THREE.Group();
+  const lit: { g: T.BufferGeometry; m: T.Matrix4; color: [number, number, number] }[] = [];
+  const solid: { g: T.BufferGeometry; m: T.Matrix4; color: [number, number, number] }[] = [];
+  const keep: T.Mesh[] = [];
+  root.traverse((o) => {
+    const m = o as T.Mesh;
+    if (!m.isMesh || (m as T.InstancedMesh).isInstancedMesh || !m.visible) return;
+    const mat = m.material as T.MeshLambertMaterial & T.MeshBasicMaterial;
+    if (Array.isArray(m.material) || mat.map || mat.transparent || !(mat.isMeshLambertMaterial || mat.isMeshBasicMaterial)) {
+      keep.push(m);
+      return;
+    }
+    const c = mat.color.clone();
+    if (mat.isMeshLambertMaterial && mat.emissive) c.add(mat.emissive.clone().multiplyScalar(0.6));
+    (mat.isMeshBasicMaterial ? lit : solid).push({ g: m.geometry, m: new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld), color: [c.r, c.g, c.b] });
+  });
+  if (solid.length) out.add(new THREE.Mesh(mergeColored(THREE, solid), mats.vc));
+  if (lit.length) out.add(new THREE.Mesh(mergeColored(THREE, lit), mats.lit));
+  for (const m of keep) {
+    const w = new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld);
+    m.removeFromParent();
+    w.decompose(m.position, m.quaternion, m.scale);
+    out.add(m);
+  }
+  return out;
+}
+
+function mergeColored(THREE: Three, parts: { g: T.BufferGeometry; m: T.Matrix4; color: [number, number, number] }[]) {
+  const pos: number[] = [];
+  const nrm: number[] = [];
+  const col: number[] = [];
+  const v = new THREE.Vector3();
+  const nm = new THREE.Matrix4();
+  for (const part of parts) {
+    const g = part.g.index ? part.g.toNonIndexed() : part.g;
+    const p = g.getAttribute('position');
+    let n = g.getAttribute('normal');
+    if (!n) {
+      g.computeVertexNormals();
+      n = g.getAttribute('normal');
+    }
+    nm.copy(part.m).invert().transpose();
+    // (a mirrored part is wound the other way round)
+    const flip = part.m.determinant() < 0;
+    for (let k = 0; k < p.count; k++) {
+      const kk = flip ? k - (k % 3) + [0, 2, 1][k % 3] : k;
+      v.fromBufferAttribute(p, kk).applyMatrix4(part.m);
+      pos.push(v.x, v.y, v.z);
+      v.fromBufferAttribute(n, kk).transformDirection(nm);
+      nrm.push(v.x, v.y, v.z);
+      col.push(...part.color);
+    }
+    if (g !== part.g) g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return out;
 }

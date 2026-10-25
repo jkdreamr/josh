@@ -5,7 +5,7 @@ import type { CourseId } from './courses';
 import { LANDMARKS, deltaS, fromMap, headingOf, locate, pointAt, type P2, type Track } from './track';
 import type { Race } from './logic';
 import { boatHull, merge, modelKit } from './model';
-import { gumTrees, oakTrees, palmTrees } from './flora';
+import { gumTrees, oakTrees, palmTrees, shrubs as shrubsOf } from './flora';
 import { SKIES } from './sky';
 import { campusExtras } from './campus';
 import { boathouse, lakeLife, lilyPads, reedBeds } from './lake';
@@ -14,7 +14,7 @@ import { holstein, knollGeometry, smallDishes } from './dish';
 import { GROUNDS, groundMaterial } from './surfaces';
 import { crowd, crowdTick, goalpost, lightTower, portal, scoreboard } from './stadium';
 import { skyWater } from './skywater';
-import { church as churchModel, dishTelescope, hall as hallModel, hill, hooverTower, vcMats } from './landmarks';
+import { arcadeWall, bake, church as churchModel, dishTelescope, gableRoof, hall as hallModel, hall, hill, hooverTower, vcMats } from './landmarks';
 
 export type Three = typeof import('three');
 
@@ -193,18 +193,31 @@ export function makeStatue(THREE: Three, geo: { box: T.BoxGeometry; ball: T.Sphe
     return m;
   };
   const w = r * 1.45;
-  add(geo.box, stone, 0, 0.7, 0, w, 1.4, w);
-  add(geo.box, stone, 0, 1.45, 0, w + 0.2, 0.12, w + 0.2);
-  // seated on a rock, leaning forward with his chin on his right hand and his left forearm across his knee
-  add(geo.box, bronze, 0, 1.8, -0.15, 0.9, 0.6, 0.8);
+  // the plinth: a stepped base, the die, its cornice, a bronze plaque on the front
+  const dark = new THREE.MeshLambertMaterial({ color: 0xb59c74, emissive: 0x241a0c });
+  add(geo.box, dark, 0, 0.12, 0, w + 0.3, 0.24, w + 0.3);
+  add(geo.box, stone, 0, 0.75, 0, w, 1.1, w);
+  add(geo.box, dark, 0, 1.33, 0, w + 0.14, 0.08, w + 0.14);
+  add(geo.box, stone, 0, 1.45, 0, w + 0.2, 0.14, w + 0.2);
+  add(geo.box, bronze, 0, 0.8, w / 2 + 0.01, w * 0.45, 0.32, 0.02);
+  // The Thinker: seated on a rock, leaning forward with his chin on his right hand and his left forearm across his
+  // knee; rounded limbs, his back bowed, his feet planted on the rock's ledge
+  add(geo.ball, bronze, 0, 1.78, -0.15, 0.55, 0.32, 0.5);
+  add(geo.box, bronze, 0, 1.62, 0.32, 0.9, 0.22, 0.4);
   for (const sx of [-1, 1]) {
-    add(geo.box, bronze, sx * 0.2, 2.1, 0.25, 0.3, 0.26, 0.85);
-    add(geo.box, bronze, sx * 0.2, 1.78, 0.62, 0.24, 0.66, 0.26);
+    add(geo.ball, bronze, sx * 0.2, 2.1, 0.22, 0.17, 0.15, 0.48);
+    add(geo.ball, bronze, sx * 0.2, 2.06, 0.62, 0.15, 0.15, 0.15);
+    add(geo.ball, bronze, sx * 0.21, 1.8, 0.66, 0.12, 0.34, 0.13, 0.12);
+    add(geo.box, bronze, sx * 0.21, 1.48, 0.76, 0.15, 0.08, 0.3);
   }
-  add(geo.box, bronze, 0, 2.75, 0.05, 0.62, 1.05, 0.42, 0.45);
-  add(geo.ball, bronze, 0.02, 3.28, 0.42, 0.22, 0.25, 0.22);
-  add(geo.box, bronze, 0.2, 2.75, 0.38, 0.14, 0.62, 0.14, -0.2);
-  add(geo.box, bronze, -0.25, 2.42, 0.45, 0.14, 0.14, 0.62, 0.1);
+  add(geo.ball, bronze, 0, 2.66, 0.02, 0.33, 0.5, 0.25, 0.45);
+  add(geo.ball, bronze, 0, 2.9, -0.04, 0.36, 0.22, 0.24, 0.5);
+  add(geo.ball, bronze, 0.02, 3.2, 0.38, 0.17, 0.2, 0.18, 0.3);
+  add(geo.ball, bronze, 0.2, 2.78, 0.36, 0.08, 0.34, 0.08, -0.2);
+  add(geo.ball, bronze, 0.18, 2.96, 0.42, 0.08, 0.1, 0.09);
+  add(geo.ball, bronze, -0.24, 2.48, 0.42, 0.08, 0.08, 0.34, 0.1);
+  add(geo.ball, bronze, 0.27, 2.62, 0.08, 0.1, 0.3, 0.1, 0.6);
+  add(geo.ball, bronze, -0.3, 2.62, 0.08, 0.1, 0.28, 0.1, 0.4);
   // the spotlight: a soft cone down onto him, and the pool it throws round the plinth
   const beam = new THREE.Mesh(geo.cone, new THREE.MeshBasicMaterial({ color: 0xfff1c4, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
   beam.scale.set(2.6, 8, 2.6);
@@ -219,8 +232,10 @@ export function makeStatue(THREE: Three, geo: { box: T.BoxGeometry; ball: T.Sphe
 }
 
 /** A round sandstone planter `r` meters across the middle, with a little tree and some flowers in it. */
-export function makePlanter(THREE: Three, geo: { ball: T.SphereGeometry; wheel: T.CylinderGeometry }, r: number, rand: () => number) {
+export function makePlanter(THREE: Three, geo0: { ball: T.SphereGeometry; wheel: T.CylinderGeometry }, r: number, rand: () => number) {
   const g = new THREE.Group();
+  // (its many leaves and flowers on a lower-poly ball than the karts')
+  const geo = { ...geo0, ball: new THREE.SphereGeometry(1, 8, 6) };
   const stone = new THREE.MeshLambertMaterial({ color: 0xe2c79c });
   const add = (geom: T.BufferGeometry, mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
     const m = new THREE.Mesh(geom, mat);
@@ -233,17 +248,29 @@ export function makePlanter(THREE: Three, geo: { ball: T.SphereGeometry; wheel: 
   add(new THREE.CylinderGeometry(1, 0.86, 1, 20), stone, 0, 0.45, 0, r, 0.9, r);
   add(geo.wheel, stone, 0, 0.92, 0, r * 1.06, 0.12, r * 1.06);
   add(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x4a3423 }), 0, 0.95, 0, r * 0.9, 0.06, r * 0.9);
-  // flowers round the edge and a young oak in the middle
+  // (bands round the bowl, and the drip of shadow under its lip)
+  add(geo.wheel, new THREE.MeshLambertMaterial({ color: 0xcfb284 }), 0, 0.25, 0, r * 0.91, 0.1, r * 0.91);
+  add(geo.wheel, new THREE.MeshLambertMaterial({ color: 0xcfb284 }), 0, 0.68, 0, r * 0.97, 0.08, r * 0.97);
+  // flowers in clumps round the edge, trailing ivy over the lip, and a young oak in the middle
   const bloom = [0xe8486a, 0xf6d24a, 0xf3f0ea, 0xb04ad8][Math.floor(rand() * 4)];
   const flower = new THREE.MeshLambertMaterial({ color: bloom });
-  const leaf = new THREE.MeshLambertMaterial({ color: 0x4f8a3c, flatShading: true });
-  for (let k = 0; k < 9; k++) {
-    const a = (k / 9) * Math.PI * 2 + rand() * 0.3;
-    add(geo.ball, k % 3 ? leaf : flower, Math.cos(a) * r * 0.66, 1.05, Math.sin(a) * r * 0.66, 0.26, 0.2, 0.26);
+  const leaf = new THREE.MeshLambertMaterial({ color: 0x4f8a3c });
+  const ivy = new THREE.MeshLambertMaterial({ color: 0x3a6a2e });
+  for (let k = 0; k < 14; k++) {
+    const a = (k / 14) * Math.PI * 2 + rand() * 0.3;
+    add(geo.ball, leaf, Math.cos(a) * r * 0.68, 1.04, Math.sin(a) * r * 0.68, 0.24, 0.18, 0.24);
+    if (k % 2) add(geo.ball, flower, Math.cos(a + 0.2) * r * 0.7, 1.16, Math.sin(a + 0.2) * r * 0.7, 0.1, 0.08, 0.1);
+    if (k % 3 === 0) add(geo.ball, ivy, Math.cos(a) * r * 1.0, 0.75, Math.sin(a) * r * 1.0, 0.12, 0.3, 0.12);
   }
-  add(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x6b4f37 }), 0, 1.7, 0, 0.12, 1.6, 0.12);
+  const bark = new THREE.MeshLambertMaterial({ color: 0x6b4f37 });
+  add(geo.wheel, bark, 0, 1.7, 0, 0.12, 1.6, 0.12);
+  add(geo.wheel, bark, 0.15, 2.4, 0, 0.05, 0.6, 0.05).rotation.z = -0.6;
+  add(geo.wheel, bark, -0.12, 2.5, 0.05, 0.05, 0.6, 0.05).rotation.z = 0.6;
+  const crown = new THREE.MeshLambertMaterial({ color: 0x5a9442 });
   add(geo.ball, leaf, 0, 2.9, 0, r * 0.7, r * 0.6, r * 0.7);
-  add(geo.ball, leaf, r * 0.25, 3.4, -r * 0.1, r * 0.45, r * 0.4, r * 0.45);
+  add(geo.ball, crown, r * 0.25, 3.4, -r * 0.1, r * 0.45, r * 0.4, r * 0.45);
+  add(geo.ball, crown, -r * 0.3, 3.2, r * 0.2, r * 0.42, r * 0.38, r * 0.42);
+  add(geo.ball, leaf, r * 0.1, 3.0, r * 0.35, r * 0.4, r * 0.35, r * 0.4);
   return g;
 }
 
@@ -1672,7 +1699,8 @@ function burghers(c: Scenery, x: number, z: number, ry: number) {
   }
   g.position.set(x, 0, z);
   g.rotation.y = ry;
-  scene.add(g);
+  // (one mesh: it never moves)
+  scene.add(bake(THREE, g, vcMats(THREE)));
 }
 
 /**
@@ -1762,6 +1790,7 @@ function quad(c: Scenery) {
    * and a tile roof sloping down to the path. Behind it, unless `deep` is 0, a hall that deep and `tall` high, running
    * on past the ends of the arcade by `past` (at a's end and b's end) to fill a corner.
    */
+  const quadKit = modelKit(THREE);
   const arcade = (a: P2, b: P2, ox: number, oz: number, deep: number, tall: number, past: [number, number] = [0, 0]) => {
     let len = Math.hypot(b.x - a.x, b.z - a.z);
     let [ux, uz] = [(b.x - a.x) / len, (b.z - a.z) / len];
@@ -1770,37 +1799,32 @@ function quad(c: Scenery) {
     len = Math.hypot(b.x - a.x, b.z - a.z);
     const bays = Math.max(2, Math.round(len / 4.2));
     const bay = len / bays;
-    const g = new THREE.Group();
-    g.position.set((a.x + b.x) / 2, 0, (a.z + b.z) / 2);
-    g.rotation.y = Math.atan2(-uz, ux);
+    const ry = Math.atan2(-uz, ux);
+    const g = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, ry };
     for (let k = 0; k <= bays; k++) {
       const x = a.x + ux * k * bay;
       const z = a.z + uz * k * bay;
       columns.push({ x, y: COL / 2, z, sx: 0.3, sy: COL, sz: 0.3 });
-      blocks.push({ x, y: COL - 0.15, z, sx: 0.75, sy: 0.3, sz: 0.75, ry: g.rotation.y }, { x, y: 0.15, z, sx: 0.7, sy: 0.3, sz: 0.7, ry: g.rotation.y });
+      blocks.push({ x, y: COL - 0.15, z, sx: 0.75, sy: 0.3, sz: 0.75, ry }, { x, y: 0.15, z, sx: 0.7, sy: 0.3, sz: 0.7, ry });
     }
     const band = 0.75 * bay;
-    const front = new THREE.Mesh(tiled(new THREE.PlaneGeometry(len, band), bays), archMat);
-    front.position.y = COL + band / 2;
     const top = COL + band;
-    const ceiling = new THREE.Mesh(geo.box, soffit);
-    ceiling.scale.set(len, 0.35, 4.2);
-    ceiling.position.set(0, top - 0.17, 2.1);
-    const roof = new THREE.Mesh(geo.box, tile);
-    roof.scale.set(len + 0.6, 0.3, 4.9);
-    roof.position.set(0, top + 0.55, 2.2);
-    roof.rotation.x = -0.25;
-    g.add(front, ceiling, roof);
+    // the front: a sandstone wall with a round arch through it for each bay, springing from the columns' capitals; the
+    // walkway's ceiling behind it, its floor, and the tile roof over it sloping down to the path (see landmarks.ts)
+    quadKit.place(g.x, 0, g.z, ry);
+    quadKit.geo(arcadeWall(THREE, len, top, bays, bay - 0.55, COL, 0.5), 0xe4cfa4, 0, 0, 0);
+    quadKit.box(0xd2b789, 0, top - 0.3, -0.3, len + 0.1, 0.35, 0.2);
+    quadKit.box(0xc9ae80, 0, top - 0.17, 2.1, len, 0.35, 4.2);
+    quadKit.box(0xcdb894, 0, 0.04, 2.1, len, 0.08, 4.2);
+    quadKit.box(0xb4553a, 0, top + 0.55, 2.2, len + 0.6, 0.3, 4.9, -0.25, 0, 0);
+    for (let k = 0; k < Math.round(len / 0.5); k++) quadKit.box(0x9a4530, -len / 2 + 0.25 + k * 0.5, top + 0.72, 2.2, 0.06, 0.12, 4.9, -0.25, 0, 0);
     if (deep > 0) {
       const long = len + past[0] + past[1];
-      const hall = new THREE.Mesh(tiled(new THREE.BoxGeometry(long, tall, deep), Math.max(1, Math.round(long / 4.2))), hallMat);
-      hall.position.set((past[1] - past[0]) / 2, tall / 2, 4.2 + deep / 2);
-      const ridge = new THREE.Mesh(prism, tile);
-      ridge.scale.set(long + 0.4, 3.4, deep * 0.6);
-      ridge.position.set(hall.position.x, tall + 1.55, 4.2 + deep / 2);
-      g.add(hall, ridge);
+      // the hall behind: two floors of framed windows, its doors on the arcade, a tile hip roof (see landmarks.ts)
+      quadKit.place(g.x + Math.cos(ry) * ((past[1] - past[0]) / 2) + Math.sin(ry) * (4.2 + deep / 2), 0, g.z - Math.sin(ry) * ((past[1] - past[0]) / 2) + Math.cos(ry) * (4.2 + deep / 2), ry);
+      hall(THREE, quadKit, long, deep, tall, false);
     }
-    scene.add(g);
+    quadKit.place();
     return { g, top };
   };
 
@@ -1859,16 +1883,15 @@ function quad(c: Scenery) {
     if (!narrow) continue;
     const { g, top } = arcade(front(-half, -out), front(half, -out), -ox, -oz, 0, 0);
     // the roof over the road, from one arcade to the other
-    const ceiling = new THREE.Mesh(geo.box, soffit);
-    ceiling.scale.set(2 * half, 0.45, 2 * off);
-    ceiling.position.set(0, top + 0.1, -off);
-    const cover = new THREE.Mesh(prism, tile);
-    cover.scale.set(2 * half + 0.6, 3.8, off * 1.35);
-    cover.position.set(0, top + 1.8, -off);
-    g.add(ceiling, cover);
+    quadKit.place(g.x, 0, g.z, g.ry);
+    quadKit.box(0xc9ae80, 0, top + 0.1, -off, 2 * half, 0.45, 2 * off);
+    quadKit.geo(gableRoof(THREE, off * 2.7, 2 * half + 0.6, 3.6), 0xb4553a, 0, top + 0.3, -off, 1, 1, 1, 0, Math.PI / 2, 0);
+    quadKit.place();
   }
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 10), stone, columns);
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 12), stone, columns);
   instances(THREE, scene, dummy, geo.box, stone, blocks);
+  const vm = vcMats(THREE);
+  scene.add(quadKit.build(vm.vc, vm.lit));
 
   // Memorial Church at the head of the quad, its gold mosaic looking down the paths
   const church = makeChurch(THREE, geo.box);
@@ -1905,7 +1928,7 @@ function quad(c: Scenery) {
     palms.push({ x: p.x, z: p.z, hgt: 8 + rand() * 4 });
   }
   instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 28), stone, curbs);
-  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 7, 5), new THREE.MeshLambertMaterial({ color: 0x3f7a35, flatShading: true }), shrubs);
+  shrubsOf(THREE, scene, dummy, shrubs.map((b) => ({ x: b.x, z: b.z, r: b.sx * 0.9 })), 0x4f8a3a, 0x1c3a16);
 
   // Memorial Court: two lawns either side of the path in, the Burghers of Calais between them, palms at the corners
   const lawn = new THREE.MeshLambertMaterial({ color: 0x79ad55 });
@@ -1925,6 +1948,9 @@ function quad(c: Scenery) {
   // bikes parked in racks along the court, the way they are outside every building on campus
   const kit = bikeKit(THREE);
   const rack = new THREE.MeshLambertMaterial({ color: 0x8e9398 });
+  // (all of them baked into one mesh: they never move)
+  const parked = new THREE.Group();
+  scene.add(parked);
   for (const [e, n, count] of [[-60, -86, 4], [10, -86, 4], [-27, 56, 3]]) {
     for (let k = 0; k < count; k++) {
       const p = at(e + k, n);
@@ -1932,13 +1958,15 @@ function quad(c: Scenery) {
       const { g } = makeBike(THREE, geo, kit, rand, false);
       g.position.set(p.x, 0, p.z);
       g.rotation.y = (n < 0 ? 0 : Math.PI) + (rand() - 0.5) * 0.15;
-      scene.add(g);
+      parked.add(g);
       const hoop = new THREE.Mesh(geo.box, rack);
       hoop.scale.set(0.06, 0.8, 0.06);
       hoop.position.set(p.x, 0.4, p.z + (n < 0 ? 0.6 : -0.6));
-      scene.add(hoop);
+      parked.add(hoop);
     }
   }
+  scene.add(bake(THREE, parked, vm));
+  scene.remove(parked);
 
   // the Oval out front with palms round it, and Palm Drive running away south
   const oval = at(-14, -170);

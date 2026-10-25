@@ -126,7 +126,7 @@ function plant(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.BufferGeo
   if (!spots.length) return;
   const r = scatter(seed);
   const tint = new THREE.Color();
-  const PATCH = 120;
+  const PATCH = 200;
   const cells = new Map<string, typeof spots>();
   for (const p of spots) {
     const key = `${Math.floor(p.x / PATCH)},${Math.floor(p.z / PATCH)}`;
