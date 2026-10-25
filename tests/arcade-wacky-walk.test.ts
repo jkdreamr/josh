@@ -4,7 +4,7 @@ import { buildCourse, checkpointAt, progressOf, respawnPoint, touchTile, tileFal
 import { createBrain, resetBrain, thinkBot } from '../src/os/arcade/games/wacky-walk/bots.ts';
 import { COLORS, BOT_NAMES, botSkill, offlineEntrants } from '../src/os/arcade/games/wacky-walk/roster.ts';
 import { hash, mulberry32 } from '../src/os/arcade/games/wacky-walk/rng.ts';
-import { cameraRelative, createBody, groundBelow, insideZone, poseOf, rayCast, respawn, setPose, STEP, stepBody, updateCourse, RADIUS, HEIGHT, BIG_HIT } from '../src/os/arcade/games/wacky-walk/physics.ts';
+import { cameraRelative, createBody, groundBelow, insideZone, offsetPoseLocal, poseOf, rayCast, respawn, setPose, STEP, stepBody, updateCourse, RADIUS, HEIGHT, BIG_HIT } from '../src/os/arcade/games/wacky-walk/physics.ts';
 import { COUNT, courseOf, createShow, INTRO, markFall, markFinish, OUTRO, pickRace, placeOf, playTime, quotas, statusOf, stepShow } from '../src/os/arcade/games/wacky-walk/show.ts';
 import { fallPacket, finishPacket, Interp, movePacket, packBody, parsePacket, playersPacket, showOf, showPacket, tilePacket, unpackBody } from '../src/os/arcade/games/wacky-walk/net.ts';
 import { EV } from '../src/os/arcade/games/wacky-walk/types.ts';
@@ -43,6 +43,27 @@ test('camera-relative movement follows the camera forward and screen-right at ev
     const movedRight = cameraRelative(1, 0, yaw);
     const screenRight = { x: -forward.z, z: forward.x };
     assert.ok(Math.abs(movedRight.mx * screenRight.x + movedRight.mz * screenRight.z - 1) < 1e-12);
+  }
+});
+
+test('pitched ramp undersides stay aligned with the collider bottom face', () => {
+  const pose = poseOf(0, 0, 0, 0, -0.16);
+  const hx = 8.2, hy = 0.45, hz = 14, thickness = 3;
+  const oldFlatTopAtRampBottom = pose.y - hy;
+  const rampBottomAtLowEnd = pose.y - pose.m[4] * hy - pose.m[5] * hz;
+  assert.ok(oldFlatTopAtRampBottom > rampBottomAtLowEnd + 1);
+
+  const underside = offsetPoseLocal(pose, 0, -hy - thickness / 2, 0);
+  for (const x of [-hx * 0.96, hx * 0.96]) {
+    for (const z of [-hz * 0.96, hz * 0.96]) {
+      const world = {
+        x: underside.x + pose.m[0] * x + pose.m[1] * (thickness / 2) + pose.m[2] * z,
+        y: underside.y + pose.m[3] * x + pose.m[4] * (thickness / 2) + pose.m[5] * z,
+        z: underside.z + pose.m[6] * x + pose.m[7] * (thickness / 2) + pose.m[8] * z,
+      };
+      const localY = pose.m[1] * world.x + pose.m[4] * world.y + pose.m[7] * world.z;
+      assert.ok(localY <= -hy + 1e-12);
+    }
   }
 });
 

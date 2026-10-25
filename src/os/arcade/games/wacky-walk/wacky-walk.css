@@ -7,9 +7,26 @@
 }
 
 .g-wacky-walk .g-wacky-walk-setup {
-  display: grid;
-  gap: 12px;
-  width: min(100%, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.g-wacky-walk .g-wacky-walk-setup .arcade-field,
+.g-wacky-walk .g-wacky-walk-setup .arcade-seg {
+  width: 100%;
+  min-width: 0;
+}
+
+.g-wacky-walk .g-wacky-walk-setup .arcade-seg {
+  display: flex;
+}
+
+.g-wacky-walk .g-wacky-walk-setup .arcade-seg > button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 6px;
 }
 
 .g-wacky-walk .g-wacky-walk-stage {
