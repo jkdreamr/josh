@@ -123,12 +123,14 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     cyl: keepG(new THREE.CylinderGeometry(1, 1, 1, touch ? 10 : 18, 1).toNonIndexed()),
     cyl6: keepG(new THREE.CylinderGeometry(1, 1, 1, 6, 1).toNonIndexed()),
     cyl8: keepG(new THREE.CylinderGeometry(1, 1, 1, touch ? 7 : 10, 1).toNonIndexed()),
+    taper: keepG(new THREE.CylinderGeometry(0.78, 1, 1, 8, 1).toNonIndexed()),
     cone: keepG(new THREE.ConeGeometry(1, 1, touch ? 6 : 10, 1).toNonIndexed()),
     cone4: keepG(new THREE.ConeGeometry(1, 1, 4, 1).toNonIndexed()),
     prism: keepG(new THREE.CylinderGeometry(1, 1, 1, 3, 1).toNonIndexed()),
     sphere: keepG(new THREE.SphereGeometry(1, touch ? 9 : 16, touch ? 6 : 12).toNonIndexed()),
     ico: keepG(new THREE.IcosahedronGeometry(1, 0)),
     half: keepG(new THREE.TorusGeometry(1, 0.16, 5, 10, Math.PI).toNonIndexed()),
+    arch: keepG(new THREE.TorusGeometry(2.2, 0.42, touch ? 5 : 7, touch ? 16 : 24, Math.PI).toNonIndexed()),
     leaf: keepG((() => {
       const g = new THREE.BufferGeometry();
       const positions: number[] = [];
@@ -194,23 +196,23 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     }
   });
   const sandstoneTex = makeTexture((ctx, size) => {
-    ctx.fillStyle = '#ddc79f';
+    ctx.fillStyle = '#dfcba8';
     ctx.fillRect(0, 0, size, size);
     for (let row = 0; row < 8; row++) {
       const y = row * 32;
       const offset = row % 2 ? -32 : 0;
       for (let col = -1; col < 5; col++) {
         const x = col * 64 + offset;
-        ctx.fillStyle = (row + col) % 3 ? '#ead7b3' : '#e3cda5';
+        ctx.fillStyle = (row + col) % 3 ? '#e5d3b1' : '#e2cda8';
         ctx.fillRect(x + 2, y + 2, 60, 28);
-        ctx.fillStyle = 'rgba(128,94,61,.10)';
+        ctx.fillStyle = 'rgba(128,94,61,.045)';
         ctx.fillRect(x + 2, y + 27, 60, 3);
       }
-      ctx.fillStyle = '#c3aa81';
+      ctx.fillStyle = '#d4bd96';
       ctx.fillRect(0, y, size, 2);
     }
     for (let i = 0; i < 380; i++) {
-      ctx.fillStyle = i % 2 ? 'rgba(110,79,48,.08)' : 'rgba(255,250,224,.18)';
+      ctx.fillStyle = i % 2 ? 'rgba(110,79,48,.035)' : 'rgba(255,250,224,.1)';
       ctx.fillRect((i * 41) % size, (i * 97) % size, 1 + (i % 2), 1 + (i % 3));
     }
   });
@@ -512,8 +514,16 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const flagMat = mat(new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide, roughness: 0.6 }));
   const poleMat = mat(new THREE.MeshStandardMaterial({ color: 0xf7f0e4, roughness: 0.7 }));
   const foamGeo = keepG(new THREE.TorusGeometry(1, 0.12, touch ? 4 : 6, touch ? 12 : 18));
-  const foamMat = mat(new THREE.MeshStandardMaterial({ color: 0xf3ffff, transparent: true, opacity: 0.78, roughness: 0.35, depthWrite: false }));
-  const jetMat = mat(new THREE.MeshBasicMaterial({ color: 0x8ceaff, transparent: true, opacity: 0.76, side: THREE.DoubleSide, depthWrite: false }));
+  const foamMat = mat(new THREE.MeshStandardMaterial({ color: 0xf3ffff, transparent: true, opacity: 0.9, roughness: 0.35, depthWrite: false }));
+  const jetMat = mat(new THREE.MeshBasicMaterial({ color: 0x53cbed, transparent: true, opacity: 0.72, side: THREE.DoubleSide, depthWrite: false }));
+  const jetCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0.18, 0.55, 0),
+    new THREE.Vector3(0.62, 1.15, 0),
+    new THREE.Vector3(1.02, 1.9, 0),
+    new THREE.Vector3(0.9, 2.55, 0),
+  ]);
+  const jetGeo = keepG(new THREE.TubeGeometry(jetCurve, touch ? 12 : 18, 0.14, touch ? 4 : 6, false));
   const fountainArcCurve = new THREE.CatmullRomCurve3([
     new THREE.Vector3(-2.1, 0, 0), new THREE.Vector3(-1.05, 2.35, 0), new THREE.Vector3(0, 3.05, 0),
     new THREE.Vector3(1.05, 2.35, 0), new THREE.Vector3(2.1, 0, 0),
@@ -538,7 +548,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const decorRayFrom = new THREE.Vector3();
   const decorRayTo = new THREE.Vector3();
   let tiles: { mesh: T.InstancedMesh; cracks: T.InstancedMesh; list: Collider[]; base: number[] } | null = null;
-  let jets: { z: Course['zones'][number]; mesh: T.Mesh; foam: T.Mesh }[] = [];
+  let jets: { z: Course['zones'][number]; mesh: T.Group; foam: T.Mesh }[] = [];
   let crown: T.Group | null = null;
   let pads: T.Mesh[] = [];
   let crowdMesh: T.InstancedMesh | null = null;
@@ -684,10 +694,14 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         break;
       }
       case 'arch': {
-        for (const e of [-1, 1]) out.push({ g: unit.box, m: at(e * 2.4, 2, 0, 1, 4, 1.2), c: sand });
-        out.push({ g: unit.half, m: at(0, 4, 0, 2.4, 2.4, 3.2), c: sand });
-        out.push({ g: unit.box, m: at(0, 6.6, 0, 6, 1, 1.4), c: sand });
-        out.push({ g: unit.prism, m: at(0, 7.5, 0, 0.9, 6.4, 0.9, 0, 0, Math.PI / 2).multiply(mtx(0, 0, 0, 1, 1, 1.0)), c: LOOK_COLORS.roof });
+        for (const e of [-1, 1]) {
+          out.push({ g: unit.box, m: at(e * 2.2, 2.3, 0, 0.9, 4.6, 0.9), c: sand });
+          out.push({ g: unit.box, m: at(e * 2.2, 0.12, 0, 1.25, 0.24, 1.25), c: 0xd9bc91 });
+          out.push({ g: unit.box, m: at(e * 2.2, 4.52, 0, 1.15, 0.28, 1.15), c: 0xd9bc91 });
+        }
+        out.push({ g: unit.arch, m: at(0, 4.6, 0, 1, 1, 1), c: sand });
+        out.push({ g: unit.box, m: at(0, 7.3, 0, 5.8, 0.24, 1.35), c: 0xb9483b });
+        out.push({ g: unit.prism, m: at(0, 7.55, 0, 0.38, 5.9, 1.45, 0, 0, Math.PI / 2), c: LOOK_COLORS.roof });
         break;
       }
       case 'arcade': {
@@ -707,26 +721,42 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         break;
       }
       case 'tower': {
-        for (let i = 0; i < 4; i++) {
-          const y = 2.4 + i * 3.1;
-          const width = 5.3 - i * 0.43;
-          out.push({ g: unit.box, m: at(0, y, 0, width, 3.3, width), c: i % 2 ? 0xe4c69a : sand });
+        out.push({ g: unit.cyl8, m: at(0, 0.35, 0, 2.6, 0.7, 2.6), c: 0xd9bf98, surface: 'plain' });
+        for (const [y, radius, height] of [[3.45, 2.45, 6.2], [9.15, 1.98, 5.3], [14.1, 1.62, 4.7], [18, 1.34, 3.2]]) {
+          out.push({ g: unit.taper, m: at(0, y, 0, radius, height, radius), c: sand, surface: 'plain' });
+        }
+        for (const [y, radius] of [[6.6, 1.94], [11.85, 1.58], [16.55, 1.3], [19.72, 1.08]]) {
+          out.push({ g: unit.cyl, m: at(0, y, 0, radius, 0.12, radius), c: 0xe6cfaa, surface: 'plain' });
+        }
+        for (const [y, radius] of [[3.5, 2.45], [8.5, 2.05], [13.3, 1.7], [17.2, 1.42]]) {
           for (let side = 0; side < 4; side++) {
             const a = side * Math.PI / 2;
-            out.push({ g: unit.box, m: at(Math.sin(a) * (width * 0.28), y, Math.cos(a) * (width * 0.51), 0.38, 1.25, 0.08, a), c: 0x71879a });
+            out.push({
+              g: unit.box,
+              m: at(Math.sin(a) * (radius * 0.78), y, Math.cos(a) * radius, 0.25, 1.12, 0.055, a),
+              c: 0x596c73,
+              surface: 'plain',
+            });
           }
         }
-        out.push({ g: unit.box, m: at(0, 15, 0, 3.6, 1.2, 3.6), c: 0xf1d9b0 });
+        out.push({ g: unit.cyl, m: at(0, 20, 0, 1.8, 0.42, 1.8), c: 0xe8d6b8, surface: 'plain' });
+        for (const x of [-0.95, 0.95]) for (const z of [-0.95, 0.95]) {
+          out.push({ g: unit.box, m: at(x, 21.45, z, 0.25, 2.55, 0.25), c: 0xe4cda8, surface: 'plain' });
+        }
         for (let side = 0; side < 4; side++) {
           const a = side * Math.PI / 2;
-          for (const x of [-0.78, 0.78]) out.push({ g: unit.box, m: at(Math.sin(a) * 1.45 + Math.cos(a) * x, 17.2, Math.cos(a) * 1.45 - Math.sin(a) * x, 0.28, 3.6, 0.28, a), c: sand });
-          out.push({ g: unit.half, m: at(0, 18.6, 1.4, 0.9, 1.1, 0.5, a), c: 0x6d8190 });
+          out.push({
+            g: unit.arch,
+            m: at(Math.sin(a) * 1.05, 22.7, Math.cos(a) * 1.05, 0.48, 0.48, 0.48, a),
+            c: 0xe4cda8,
+            surface: 'plain',
+          });
         }
-        out.push({ g: unit.box, m: at(0, 19.2, 0, 4, 0.7, 4), c: 0xf1d9b0 });
-        out.push({ g: unit.sphere, m: at(0, 21.2, 0, 2.4, 2.8, 2.4), c: LOOK_COLORS.roof });
-        out.push({ g: unit.cyl8, m: at(0, 24, 0, 0.42, 1.5, 0.42), c: 0xe8c99a });
-        out.push({ g: unit.cone, m: at(0, 25.1, 0, 0.5, 0.7, 0.5), c: LOOK_COLORS.roof });
-        out.push({ g: unit.cyl8, m: at(0, 26.2, 0, 0.08, 1, 0.08), c: 0xffd35c });
+        out.push({ g: unit.cyl, m: at(0, 22.82, 0, 1.35, 0.22, 1.35), c: 0xd9bf98, surface: 'plain' });
+        out.push({ g: unit.sphere, m: at(0, 24.35, 0, 1.45, 1.7, 1.45), c: LOOK_COLORS.roof, surface: 'roof' });
+        out.push({ g: unit.cyl8, m: at(0, 25.95, 0, 0.35, 1.25, 0.35), c: 0xe8c99a, surface: 'plain' });
+        out.push({ g: unit.cone, m: at(0, 26.8, 0, 0.46, 0.65, 0.46), c: LOOK_COLORS.roof, surface: 'roof' });
+        out.push({ g: unit.cyl8, m: at(0, 27.42, 0, 0.08, 0.7, 0.08), c: 0xffd35c, surface: 'plain' });
         break;
       }
       case 'fountain': {
@@ -1076,6 +1106,18 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       statics.push({ g: unit.cyl, m: mtx(0, -4.2, 0, 27.5, 7.2, 27.5), c: 0xd4b68a, surface: 'sandstone' });
       statics.push({ g: unit.cyl, m: mtx(0, -0.82, 0, 25.8, 1.5, 25.8), c: 0x88b875, surface: 'grass' });
       statics.push({ g: unit.cyl, m: mtx(0, -0.35, 0, 26.2, 0.18, 26.2), c: 0xe9c35d, surface: 'plain' });
+      for (const y of [2, 7.8, 13.6, 19.4, 25.2, 31, 36.2]) statics.push({
+        g: unit.cyl, m: mtx(0, y, 0, 2.24, 0.16, 2.24), c: 0xf0dfbe, surface: 'plain',
+      });
+      for (const y of [2.8, 8.6, 14.4, 20.2, 26, 31.8]) for (let side = 0; side < 4; side++) {
+        const a = side * Math.PI / 2;
+        statics.push({
+          g: unit.box,
+          m: mtx(Math.sin(a) * 2.17, y, Math.cos(a) * 2.17, 0.28, 1.18, 0.09, a),
+          c: 0x52636a,
+          surface: 'plain',
+        });
+      }
     }
     if (course.id === 'oval') {
       const flowerRadius = Math.max(12, center.r - 27);
@@ -1124,7 +1166,8 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     }
     for (const z of course.zones) {
       if (z.kind === 'jet') {
-        const mesh = new THREE.Mesh(unit.cyl8, jetMat);
+        const mesh = new THREE.Group();
+        mesh.add(new THREE.Mesh(jetGeo, jetMat));
         const foam = new THREE.Mesh(foamGeo, foamMat);
         foam.rotation.x = Math.PI / 2;
         courseRoot.add(mesh, foam);
@@ -1157,14 +1200,25 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       }
       if (z.kind === 'finish' && course.kind === 'race') {
         const parts: Part[] = [];
-        for (let i = 0; i < 2; i++) parts.push({ g: unit.box, m: mtx(z.x + (i ? 1 : -1) * (z.hx + 1.45), z.y + 2.5, z.z, 0.72, 5, 0.72), c: 0xffffff });
-        parts.push({ g: unit.box, m: mtx(z.x, z.y + 5.2, z.z, z.hx * 2 + 1.6, 1.2, 0.9), c: CARDINAL });
-        for (let i = 0; i < 12; i++) parts.push({ g: unit.box, m: mtx(z.x - z.hx + (i + 0.5) * (z.hx * 2 / 12), z.y + 5.2, z.z + 0.47, z.hx * 2 / 12 - 0.06, 0.5, 0.04), c: i % 2 ? 0xffffff : 0xffc93c });
+        const gateZ = course.id === 'palm' ? z.z - 6 : z.z;
+        const postX = 9.55;
+        const baseY = (
+          bankSurfaceY(z.x - postX, gateZ, z.y) +
+          bankSurfaceY(z.x + postX, gateZ, z.y)
+        ) / 2;
+        const beamY = baseY + 6.53;
         for (const side of [-1, 1]) {
-          parts.push({ g: unit.cyl, m: mtx(z.x + side * (z.hx + 2.1), z.y + 0.85, z.z - 0.3, 0.28, 1.2, 0.28, 0, 0, -side * 0.58), c: 0x526779 });
-          parts.push({ g: unit.cyl, m: mtx(z.x + side * (z.hx + 2.4), z.y + 1.37, z.z - 0.3, 0.32, 0.12, 0.32, 0, 0, -side * 0.58), c: 0xffd166 });
-          parts.push({ g: unit.cyl8, m: mtx(z.x + side * (z.hx + 2.8), z.y + 0.7, z.z - 0.6, 0.22, 1.1, 0.22, 0, 0, -side * 0.38), c: side < 0 ? CARDINAL : 0xffd166 });
+          const x = z.x + side * postX;
+          parts.push({ g: unit.box, m: mtx(x, baseY + 3.65, gateZ, 0.7, 7.3, 0.78), c: 0xe8d4b3 });
+          parts.push({ g: unit.box, m: mtx(x, baseY + 0.22, gateZ, 1.12, 0.44, 1.15), c: 0xd4b68d });
+          parts.push({ g: unit.box, m: mtx(x, baseY + 7.05, gateZ, 1.05, 0.42, 1.05), c: 0xd4b68d });
         }
+        parts.push({ g: unit.box, m: mtx(z.x, beamY, gateZ, 19.1, 0.78, 0.62), c: CARDINAL });
+        for (let i = 0; i < 24; i++) parts.push({
+          g: unit.box,
+          m: mtx(z.x - 9.55 + (i + 0.5) * (19.1 / 24), baseY + 7.12, gateZ + 0.33, 19.1 / 24 - 0.025, 0.48, 0.045),
+          c: i % 2 ? 0xfffaf2 : CARDINAL,
+        });
         const g = bake(parts);
         courseOwned.push(g);
         courseRoot.add(new THREE.Mesh(g, bakedMat('plain')));
@@ -1754,20 +1808,17 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         const p = z.push ?? { x: 0, y: 0, z: 0 };
         const sideways = Math.abs(p.x) + Math.abs(p.z) > Math.abs(p.y);
         foam.position.set(z.x, z.y - z.hy + 0.08, z.z);
-        const foamSize = Math.min(z.hx, z.hz) * (0.76 + Math.sin(clock * 8) * 0.05);
+        const foamSize = 0.78 + Math.sin(clock * 8 + jetIndex) * 0.05;
         foam.scale.set(foamSize, foamSize, foamSize);
         if (sideways) {
-          const yaw = Math.atan2(p.x, p.z);
-          const len = Math.max(z.hx, z.hz) * 2;
-          mesh.position.set(z.x, z.y - z.hy + 0.9, z.z);
-          mesh.rotation.set(Math.PI / 2, 0, 0);
-          mesh.rotation.y = yaw;
-          mesh.rotation.order = 'YXZ';
-          mesh.scale.set(0.5 + Math.sin(clock * 30) * 0.05, len, 0.5);
+          const yaw = Math.atan2(-p.z, p.x);
+          mesh.position.set(z.x, z.y - z.hy + 0.08, z.z);
+          mesh.rotation.set(0, yaw + Math.sin(clock * 5 + jetIndex) * 0.035, 0);
+          mesh.scale.set(0.85 + Math.sin(clock * 7 + jetIndex) * 0.04, 0.92 + Math.sin(clock * 6 + jetIndex) * 0.08, 0.85);
         } else {
-          mesh.position.set(z.x, z.y, z.z);
+          mesh.position.set(z.x, z.y - z.hy + 0.08, z.z);
           mesh.rotation.set(0, 0, 0);
-          mesh.scale.set(Math.min(z.hx, z.hz) * 0.8, h, Math.min(z.hx, z.hz) * 0.8);
+          mesh.scale.set(0.85, Math.max(0.8, h / 2.55), 0.85);
         }
         if (Math.floor(clock * 5 + jetIndex * 0.23) !== Math.floor((clock - dt) * 5 + jetIndex * 0.23)) {
           const d = drops[nextDrop];

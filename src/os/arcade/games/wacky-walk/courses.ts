@@ -141,7 +141,6 @@ function makeOval(seed: number): Course {
   add(course, { kind: 'box', hx: 2.3, hy: 0.35, hz: 2.4 }, 'stone', 0, -0.15, 83, {
     at: (t, out) => setPose(out, Math.sin(t * 0.9) * 2.2, 0.4, 83, t * 0.35),
   });
-  for (const x of [-12.5, 12.5]) course.decor.push({ kind: 'arch', x, y: -0.08, z: 124, s: 0.5, yaw: 0 });
   course.zones.push({ kind: 'finish', x: 0, y: 1.2, z: 126, hx: 8, hy: 2, hz: 1.5 });
   [0, 30, 52, 91, 113].forEach((z, i) => checkpoint(course, i, z));
   course.path = racePath(course, 124);
@@ -180,7 +179,6 @@ function makeFountain(seed: number): Course {
   });
   add(course, { kind: 'cyl', r: 1.15, hy: 0.35 }, 'stone', 0, 0.35, 91);
   course.decor.push({ kind: 'fountain', x: 17.4, y: 0, z: 63, s: 0.9, yaw: 0 });
-  for (const x of [-12.5, 12.5]) course.decor.push({ kind: 'arch', x, y: -0.08, z: 124, s: 0.5, yaw: 0 });
   course.zones.push({ kind: 'finish', x: 0, y: 1, z: 126, hx: 8, hy: 2, hz: 1.5 });
   [0, 31, 53, 77, 104].forEach((z, i) => checkpoint(course, i, z));
   course.path = racePath(course, 124);
@@ -323,7 +321,7 @@ function makeHoover(seed: number): Course {
   course.spawns = course.spawns.map((_, i) => ({
     x: ((i % 5) - 2) * 1.4, y: 0.15, z: 5.6 + Math.floor(i / 5) * 0.18,
   }));
-  course.decor.push({ kind: 'tower', x: -18, y: 0, z: -25, s: 1.8, yaw: 0 });
+  course.decor.push({ kind: 'tower', x: -18, y: 0, z: -25, s: 1.5, yaw: 0 });
   for (let i = 0; i < 24; i++) {
     const a = i / 24 * Math.PI * 2;
     if (i % 3) course.decor.push({ kind: 'arch', x: Math.cos(a) * 24, y: -0.04, z: Math.sin(a) * 24, s: 0.42, yaw: -a });
