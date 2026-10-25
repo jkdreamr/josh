@@ -101,6 +101,52 @@
 .g-scramble .g-scramble-pop.is-big.is-shield {
   color: #c4e6ff;
 }
+/* a hit mark where your shot landed: a white X, red when it cracked the egg */
+.g-scramble .g-scramble-hitmark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 22px;
+  height: 22px;
+  will-change: transform, opacity;
+}
+.g-scramble .g-scramble-hitmark::before,
+.g-scramble .g-scramble-hitmark::after {
+  content: '';
+  position: absolute;
+  inset: 9px 0;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+.g-scramble .g-scramble-hitmark::after {
+  inset: 0 9px;
+}
+.g-scramble .g-scramble-hitmark.is-kill::before,
+.g-scramble .g-scramble-hitmark.is-kill::after {
+  background: #ff4a3a;
+}
+/* the name of a piece of loot, in its rarity's color */
+.g-scramble .g-scramble-loot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--loot, #fff);
+  background: rgba(14, 15, 22, 0.72);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loot, #fff) 45%, transparent);
+  will-change: transform, opacity;
+}
+/* dazed by a stun grenade's flash */
+.g-scramble .g-scramble-daze {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.92) 25%, rgba(255, 252, 235, 0.75));
+}
 
 /* the heads-up display */
 .g-scramble .g-scramble-hud {
@@ -167,6 +213,24 @@
 }
 .g-scramble .g-scramble-pill.is-gear b {
   font-size: 13px;
+}
+.g-scramble .g-scramble-pill.is-hidden {
+  color: #a8e07a;
+}
+.g-scramble .g-scramble-pill.is-leader {
+  gap: 4px;
+  max-width: 170px;
+  color: #ffd23d;
+}
+.g-scramble .g-scramble-pill.is-leader span {
+  overflow: hidden;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #fff6d6;
+}
+.g-scramble .g-scramble-pill.is-leader.is-mine {
+  box-shadow: var(--g-edge), 0 0 0 2px rgba(255, 210, 61, 0.55), var(--g-drop);
 }
 .g-scramble .g-scramble-pill.is-warm {
   gap: 5px;
@@ -340,7 +404,7 @@
   display: grid;
   justify-items: end;
   gap: 4px;
-  width: min(260px, 60vw);
+  width: min(340px, 45cqw);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -742,6 +806,110 @@
   font-size: 10px;
   opacity: 0.7;
 }
+/* the build bar, bottom left: the three materials (the one picked lit), the pieces (the one Space builds lit) and
+   the edit key (dim with no wall of yours in front) */
+.g-scramble .g-scramble-build {
+  position: absolute;
+  left: 10px;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  display: grid;
+  gap: 5px;
+  padding: 7px 8px;
+  border-radius: 12px;
+  background: var(--g-glass);
+  box-shadow: var(--g-edge), var(--g-drop);
+}
+.g-scramble .g-scramble-matbar,
+.g-scramble .g-scramble-pieces {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.g-scramble .g-scramble-matbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 26px;
+  padding: 0 8px 0 5px;
+  border: 0;
+  border-radius: 999px;
+  font: 800 12px/1 system-ui, sans-serif;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+}
+.g-scramble .g-scramble-matbar button.is-on {
+  background: rgba(255, 255, 255, 0.24);
+  box-shadow: inset 0 0 0 1.5px #fff;
+}
+.g-scramble .g-scramble-matbar button.is-none b {
+  opacity: 0.5;
+}
+.g-scramble .g-scramble-matbar button.is-full b {
+  color: #ffd75e;
+}
+.g-scramble .g-scramble-pieces button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+.g-scramble .g-scramble-pieces button.is-on {
+  background: rgba(127, 212, 255, 0.3);
+  box-shadow: inset 0 0 0 2px #7fd4ff;
+}
+.g-scramble .g-scramble-pieces button.is-edit {
+  background: rgba(255, 215, 94, 0.2);
+}
+.g-scramble .g-scramble-pieces button.is-none {
+  opacity: 0.4;
+}
+.g-scramble .g-scramble-build kbd {
+  min-width: 0;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 13px;
+}
+.g-scramble .g-scramble-pieces kbd {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+}
+.g-scramble .g-scramble-build small {
+  font-size: 10px;
+  opacity: 0.85;
+}
+.g-scramble .g-scramble-pill.is-high {
+  color: #9fe0ff;
+}
+.g-scramble .g-scramble-buttons button.is-on {
+  background: rgba(127, 212, 255, 0.32);
+  box-shadow:
+    inset 0 0 0 2px #7fd4ff,
+    0 3px 10px rgba(8, 10, 24, 0.25);
+}
+/* on a touchscreen, the build menu opens over the buttons on the right */
+.g-scramble .g-scramble-hud.is-touch .g-scramble-build {
+  left: auto;
+  right: 10px;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 300px);
+  z-index: 4;
+  justify-items: end;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-pieces button {
+  width: 44px;
+  height: 44px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-matbar button {
+  height: 32px;
+}
 .g-scramble .g-scramble-stormfx {
   position: absolute;
   inset: 0;
@@ -772,10 +940,12 @@
   padding: 50px 16px 16px;
   background: rgba(8, 8, 12, 0.6);
   cursor: pointer;
+  /* the map fits the game's own box (a phone on its side is far shorter than the screen) */
+  container-type: size;
 }
 .g-scramble .g-scramble-bigmap svg {
-  width: min(78vmin, 560px);
-  height: min(78vmin, 560px);
+  width: min(100cqw, 100cqh - 28px, 560px);
+  height: min(100cqw, 100cqh - 28px, 560px);
   border-radius: 16px;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85);
 }
@@ -966,8 +1136,39 @@
   z-index: 4;
 }
 
+/* a desktop window too narrow for the build bar beside the bottom row: it sits above the row's left end instead */
+@container (max-width: 1320px) {
+  .g-scramble .g-scramble-hud:not(.is-touch) .g-scramble-build {
+    bottom: 96px;
+  }
+}
+
 /* short screens, like a phone on its side: one row along the bottom, buttons in the corner */
 @container (max-height: 460px) {
+  /* the build menu folds into a block in the bottom left corner: the materials down one side, the pieces in two rows */
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-build {
+    left: 10px;
+    right: auto;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    grid-template-columns: auto auto;
+    align-items: center;
+    justify-items: start;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-matbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-matbar button {
+    height: 26px;
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-pieces {
+    display: grid;
+    grid-template-columns: repeat(3, 40px);
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-pieces button {
+    width: 40px;
+    height: 40px;
+  }
   .g-scramble .g-scramble-buttons {
     bottom: 10px;
     grid-template-columns: repeat(3, 52px);
@@ -997,11 +1198,31 @@
   }
 }
 
+/* a short screen has no room to spare over the map */
+@media (max-height: 460px) {
+  .g-scramble .g-scramble-bigmap {
+    padding-top: 10px;
+    padding-bottom: 8px;
+  }
+}
+/* shorter still, the buttons come up to the news: just the newest line */
+@container (max-height: 320px) {
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-feed li:nth-last-child(n + 2) {
+    display: none;
+  }
+}
+
 /* short and narrow, like a phone's browser view: no room for the row and the buttons side by side,
    so the row stays centered and the buttons sit on top of it (a column up the side would reach the map) */
 @container (max-height: 460px) and (max-width: 575px) {
   .g-scramble .g-scramble-buttons {
     bottom: calc(max(10px, env(safe-area-inset-bottom)) + 56px);
+  }
+  /* no room in the corner beside the bottom row: just over the row instead */
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-build {
+    left: 50%;
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 60px);
+    transform: translateX(-50%);
   }
   .g-scramble .g-scramble-hud.is-touch .g-scramble-bottom {
     left: 50%;
@@ -1062,9 +1283,20 @@
   .g-scramble .g-scramble-out {
     top: 36%;
   }
-  /* two rows of three, so they stay low, under the pick-up prompt over your egg */
+  /* the banner sits as low, and the news keeps to its newest few over either, so neither runs into it */
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-banner {
+    top: 36%;
+  }
+  .g-scramble .g-scramble-hud.is-touch:has(> .g-scramble-out) .g-scramble-feed li:nth-last-child(n + 4),
+  .g-scramble .g-scramble-hud.is-touch:has(> .g-scramble-banner) .g-scramble-feed li:nth-last-child(n + 3) {
+    display: none;
+  }
+  /* two rows of three, so they stay low, under the pick-up prompt over your egg, and the build menu just over them */
   .g-scramble .g-scramble-buttons {
     grid-template-columns: repeat(3, 52px);
+  }
+  .g-scramble .g-scramble-hud.is-touch .g-scramble-build {
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 236px);
   }
 }
 

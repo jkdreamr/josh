@@ -25,6 +25,7 @@ import {
   rotateShip,
   shipCells,
   shipLen,
+  topBarSlot,
   type Fleet,
   type Intel,
   type Level,
@@ -216,7 +217,14 @@ function Battleship() {
     if (!stage || !status || !shellRoot) return;
 
     const controls = shellRoot.querySelector<HTMLElement>('.arcade-ctrl');
-    let observedScore: HTMLElement | null = null;
+    const observed = new Set<HTMLElement>();
+    const watch = (el: HTMLElement | null) => {
+      if (el && !observed.has(el)) {
+        resizeObserver.observe(el);
+        observed.add(el);
+      }
+      return el;
+    };
     const update = () => {
       const width = stage.clientWidth;
       const height = stage.clientHeight;
@@ -225,12 +233,8 @@ function Battleship() {
       const scaleX = stageRect.width / width || 1;
       const scaleY = stageRect.height / height || 1;
       const controlRect = controls?.getBoundingClientRect();
-      const score = shellRoot.querySelector<HTMLElement>('.arcade-score');
-      if (score && score !== observedScore) {
-        resizeObserver.observe(score);
-        observedScore = score;
-      }
-      const scoreRect = score?.getBoundingClientRect();
+      const scoreRect = watch(shellRoot.querySelector<HTMLElement>('.arcade-score'))?.getBoundingClientRect();
+      const badgeRect = watch(shellRoot.querySelector<HTMLElement>('.arcade-online-status'))?.getBoundingClientRect();
       const controlLeft = controlRect ? (controlRect.left - stageRect.left) / scaleX : width;
       const scoreRight = scoreRect ? (scoreRect.right - stageRect.left) / scaleX : 0;
       const leftEdge = scoreRect ? scoreRight + 8 : 8;
@@ -239,8 +243,11 @@ function Battleship() {
       const compact = height < 300;
       const regularBoardTop = Math.round((compact ? 40 : 64) * unit);
 
-      if (rightEdge - leftEdge >= statusWidth) {
-        const left = Math.round((leftEdge + (rightEdge - leftEdge - statusWidth) / 2) * 2) / 2;
+      const blocks: Array<[number, number]> = badgeRect
+        ? [[(badgeRect.left - stageRect.left) / scaleX, (badgeRect.right - stageRect.left) / scaleX]]
+        : [];
+      const left = topBarSlot(leftEdge, rightEdge, statusWidth, blocks);
+      if (left !== null) {
         setStatusLayout((current) =>
           current.top === 6 && current.left === left && current.boardTop === regularBoardTop && !current.below
             ? current
@@ -251,7 +258,8 @@ function Battleship() {
 
       const controlBottom = controlRect ? (controlRect.bottom - stageRect.top) / scaleY : 0;
       const scoreBottom = scoreRect ? (scoreRect.bottom - stageRect.top) / scaleY : 0;
-      const top = Math.ceil(Math.max(controlBottom, scoreBottom) + 8);
+      const badgeBottom = badgeRect ? (badgeRect.bottom - stageRect.top) / scaleY : 0;
+      const top = Math.ceil(Math.max(controlBottom, scoreBottom, badgeBottom) + 8);
       const statusHeight = status.getBoundingClientRect().height / scaleY;
       const boardTop = boardTopBelow(top + statusHeight, unit);
       setStatusLayout((current) =>
@@ -304,7 +312,21 @@ function Battleship() {
     if (shell.status === 'ready') reset();
   }, [mode, levelName, shell.status, online?.seat]);
 
+  // A clicked game button often unmounts or disables itself (Start Battle, Ready, Fire), which drops focus to the page; hand it back so keys keep working.
+  const refocusRef = useRef(0);
+  const keepFocus = () => {
+    window.clearTimeout(refocusRef.current);
+    refocusRef.current = window.setTimeout(() => {
+      const root = shell.root.current;
+      const active = document.activeElement;
+      if (root?.isConnected && (!active || active === document.body || (root.contains(active) && (active as HTMLButtonElement).disabled))) {
+        root.focus({ preventScroll: true });
+      }
+    }, 0);
+  };
+
   useEffect(() => () => {
+    window.clearTimeout(refocusRef.current);
     cancelTimer();
     const board = boardRef.current;
     const pointer = pointerRef.current;
@@ -953,7 +975,9 @@ function Battleship() {
   const placementBoardStyle = boardStyle(geometry.placeCell, geometry.placeX, geometry.placeY);
 
   return (
-    <div ref={stageRef} className={stageClass}>
+    <div ref={stageRef} className={stageClass} onClick={(event) => {
+      if ((event.target as HTMLElement).closest('button')) keepFocus();
+    }}>
       <div
         ref={statusRef}
         className="g-battleship-status"

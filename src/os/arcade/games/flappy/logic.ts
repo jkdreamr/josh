@@ -16,8 +16,13 @@ export const GAP_MIN = 128;
 export const MARGIN = 70;
 export const MAX_SHIFT = 160;
 export const STEP = 1 / 120;
+/** The first column always starts this far ahead of the tree, so a wide window doesn't make you wait for it. */
+export const LEAD = 380;
+/** Columns that spawn inside the view rise into place, nearest first. */
+export const RISE = 0.45;
 
-export type Column = { x: number; gapY: number; gap: number; passed: boolean };
+/** born: world time it spawned. rise: seconds before it starts rising in, or -1 when it slid in from offscreen. */
+export type Column = { x: number; gapY: number; gap: number; passed: boolean; born: number; rise: number };
 
 export type State = {
   w: number;
@@ -95,9 +100,10 @@ export function nextGapY(prev: number | null, gap: number, r: number): number {
 
 export function spawn(s: State, rng: () => number) {
   const last = s.cols[s.cols.length - 1];
-  const x = last ? last.x + SPACING : Math.max(s.w + 40, s.birdX + 360);
+  const x = last ? last.x + SPACING : s.birdX + LEAD;
   const gap = gapFor(s.score + s.cols.filter((c) => !c.passed).length);
-  s.cols.push({ x, gapY: nextGapY(last ? last.gapY : null, gap, rng()), gap, passed: false });
+  const rise = x < s.w + 10 ? Math.max(0, x - s.birdX - LEAD) / 2400 : -1;
+  s.cols.push({ x, gapY: nextGapY(last ? last.gapY : null, gap, rng()), gap, passed: false, born: s.time, rise });
 }
 
 /** Circle versus axis aligned rectangle. */
@@ -163,6 +169,12 @@ function sub(s: State, dt: number, rng: () => number, ev: Events) {
   }
   s.cols = s.cols.filter((c) => c.x + COL_W > -40);
   while (!s.cols.length || s.cols[s.cols.length - 1].x < s.w + SPACING) spawn(s, rng);
+}
+
+/** 0 while a column is still hidden, 1 once it stands in place. */
+export function riseOf(s: State, c: Column) {
+  if (c.rise < 0) return 1;
+  return Math.min(1, Math.max(0, (s.time - c.born - c.rise) / RISE));
 }
 
 export function step(s: State, dt: number, input: { flap: boolean }, rng: () => number): Events {

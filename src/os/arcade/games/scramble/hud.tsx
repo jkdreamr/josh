@@ -1,9 +1,10 @@
 // Pictures and sheets for Scramble's interface: weapon and item icons, the island map, and How to Play.
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { AMMO_BOX, ARMOR_CUT, ARMOR_NAMES, BOOST, FLARE_WAIT, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, SIP, THROWS, THROW_IDS, USES, USE_IDS, WALL_COST, WEAPONS, WEAPON_IDS, type Ammo, type ArmorKind, type GunClass, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
+import { AMMO_BOX, ARMOR_CUT, ARMOR_NAMES, BOOST, FLARE_WAIT, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, SIP, THROWS, THROW_IDS, USES, USE_IDS, MAT_SPECS, PIECE_COST, WEAPONS, WEAPON_IDS, type Ammo, type ArmorKind, type GunClass, type Mat, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
+import { LEADER_MIN, VAULT_TIME } from './logic';
 import { CAMP, HALF, PAD, RIVER_HALF, ROAD_HALF, type Building, type Door, type GameMap } from './map';
-import type { Held } from './logic';
+import type { Held, Plan } from './logic';
 
 const Svg = ({ children, size = 28, label }: { children: ReactNode; size?: number; label?: string }) => (
   <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden={label ? undefined : true} role={label ? 'img' : undefined} aria-label={label}>
@@ -109,6 +110,30 @@ export function WeaponIcon({ w, size }: { w: Held | null; size?: number }) {
           <path d="M10 5.5v5M14 5.5v5M18 5.5v5M22 5.5v5" stroke="#e53935" strokeWidth="1.2" />
           <rect x="11" y="15" width="10" height="7.5" rx="1.5" fill="#fff3df" />
           <circle cx="16" cy="18.7" r="2" fill="#a3214a" />
+        </Svg>
+      );
+    case 'mirv':
+      // a red canister with a black band and three bomblets on top, and the scatter they make
+      return (
+        <Svg size={size}>
+          <rect x="10.5" y="12" width="11" height="15" rx="3" fill="#c0392b" />
+          <rect x="10.5" y="17.5" width="11" height="3" fill="#2b2d33" />
+          <circle cx="11.5" cy="9.5" r="2.6" fill="#6f9f45" />
+          <circle cx="16" cy="7.5" r="2.6" fill="#6f9f45" />
+          <circle cx="20.5" cy="9.5" r="2.6" fill="#6f9f45" />
+          <path d="M4 6l2 1.5M28 6l-2 1.5M3.5 12.5h2.4M28.5 12.5h-2.4" stroke="#ffb07a" strokeWidth="1.4" strokeLinecap="round" />
+        </Svg>
+      );
+    case 'stun':
+      // a pale blue can with white bands, a ring pull, and the flash bursting off it
+      return (
+        <Svg size={size}>
+          <path d="M16 2.5v3.5M8 5.5l2 3M24 5.5l-2 3M4.5 12.5h3M27.5 12.5h-3" stroke="#fff6c9" strokeWidth="1.6" strokeLinecap="round" />
+          <rect x="11" y="11" width="10" height="17" rx="2.5" fill="#9fb8d6" />
+          <rect x="11" y="14" width="10" height="2.2" fill="#fff" />
+          <rect x="11" y="23" width="10" height="2.2" fill="#fff" />
+          <rect x="14" y="8" width="4" height="3.5" rx="1" fill="#9aa3ad" />
+          <circle cx="20" cy="8.5" r="2.2" fill="none" stroke="#c9d0d8" strokeWidth="1.3" />
         </Svg>
       );
     case 'bush':
@@ -432,11 +457,129 @@ export function ArmorIcon({ kind, size, lv = 1 }: { kind: ArmorKind; size?: numb
   );
 }
 
+/** A ghillie suit: an egg shape covered in leafy tufts. */
+export function GhillieIcon({ size }: { size?: number }) {
+  return (
+    <Svg size={size}>
+      <path d="M16 4c-5 0-8.5 7.6-8.5 13.2a8.5 8.5 0 0 0 17 0C24.5 11.6 21 4 16 4z" fill="#4c7a2c" />
+      {[
+        [10, 15],
+        [14, 10],
+        [19, 9.5],
+        [22, 15],
+        [12, 21],
+        [17, 18],
+        [21, 22],
+        [15, 25],
+      ].map(([x, y]) => (
+        <path key={`${x},${y}`} d={`M${x - 2.5} ${y + 1.5}q2.5-4 5 0q-2.5 1.6-5 0z`} fill={(x + y) % 3 ? '#7a9a3a' : '#3d6624'} />
+      ))}
+      <path d="M13 4.5l1-3M16 4l0-3.2M19 4.5l-1-3" stroke="#6b7f3a" strokeWidth="1.3" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+/** The kill leader's crown. */
+export function CrownIcon({ size }: { size?: number }) {
+  return (
+    <Svg size={size}>
+      <path d="M5 23l-1.5-12 6.5 5 6-9 6 9 6.5-5L27 23z" fill="#ffc83d" stroke="#a8691c" strokeWidth="1.2" strokeLinejoin="round" />
+      <rect x="5" y="23" width="22" height="4" rx="1" fill="#ffd23d" stroke="#a8691c" strokeWidth="1.2" />
+      <circle cx="16" cy="18.5" r="1.8" fill="#e53935" />
+      <circle cx="10" cy="20" r="1.3" fill="#3f8cff" />
+      <circle cx="22" cy="20" r="1.3" fill="#3f8cff" />
+    </Svg>
+  );
+}
+
 export function WoodIcon({ size }: { size?: number }) {
   return (
     <Svg size={size}>
       <rect x="3" y="18" width="26" height="6" rx="2" fill="#c8935a" stroke="#7a4f22" strokeWidth="1" />
       <rect x="5" y="11" width="22" height="6" rx="2" fill="#d9a46a" stroke="#7a4f22" strokeWidth="1" transform="rotate(-8 16 14)" />
+    </Svg>
+  );
+}
+
+export function StoneIcon({ size }: { size?: number }) {
+  return (
+    <Svg size={size}>
+      <rect x="3" y="17" width="12" height="9" rx="1.5" fill="#a7adb4" stroke="#5b6168" strokeWidth="1" />
+      <rect x="16" y="17" width="13" height="9" rx="1.5" fill="#959ba3" stroke="#5b6168" strokeWidth="1" />
+      <rect x="8" y="7" width="15" height="9" rx="1.5" fill="#b9bfc6" stroke="#5b6168" strokeWidth="1" />
+    </Svg>
+  );
+}
+
+export function MetalIcon({ size }: { size?: number }) {
+  return (
+    <Svg size={size}>
+      <rect x="4" y="8" width="24" height="17" rx="2" fill="#b3bdc7" stroke="#4a5560" strokeWidth="1.2" />
+      <path d="M16 8v17M4 16.5h24" stroke="#4a5560" strokeWidth="1.2" />
+      {[7, 13, 19, 25].map((x) => (
+        <circle key={x} cx={x} cy="11" r="1" fill="#eef3f7" />
+      ))}
+    </Svg>
+  );
+}
+
+/** Wood, stone or metal. */
+export function MatIcon({ mat, size }: { mat: Mat; size?: number }) {
+  return mat === 'wood' ? <WoodIcon size={size} /> : mat === 'stone' ? <StoneIcon size={size} /> : <MetalIcon size={size} />;
+}
+
+/** The pieces on the build bar, seen at an angle: a wall, a ramp, a floor on its posts, a roof, and a box round an egg. */
+export function PieceIcon({ k, size }: { k: Plan; size?: number }) {
+  const face = '#ffd9a6';
+  const edge = '#7a4f22';
+  switch (k) {
+    case 'wall':
+      return (
+        <Svg size={size}>
+          <path d="M5 10l17-4v18l-17 4z" fill={face} stroke={edge} strokeWidth="1.4" strokeLinejoin="round" />
+          <path d="M5 16l17-4M5 22l17-4" stroke={edge} strokeWidth="1" opacity="0.6" />
+          <path d="M22 6l5 2v18l-5-2" fill="#d9a46a" stroke={edge} strokeWidth="1.4" strokeLinejoin="round" />
+        </Svg>
+      );
+    case 'ramp':
+      return (
+        <Svg size={size}>
+          <path d="M3 27h24V7z" fill={face} stroke={edge} strokeWidth="1.4" strokeLinejoin="round" />
+          <path d="M9 22l3 0M14 18l3 0M19 14l3 0M24 10l3 0" stroke={edge} strokeWidth="1.6" strokeLinecap="round" />
+        </Svg>
+      );
+    case 'floor':
+      return (
+        <Svg size={size}>
+          <path d="M4 12l12-5 12 5-12 5z" fill={face} stroke={edge} strokeWidth="1.4" strokeLinejoin="round" />
+          <path d="M4 12v2l12 5 12-5v-2" fill="#d9a46a" stroke={edge} strokeWidth="1.2" strokeLinejoin="round" />
+          <path d="M6 15v12M26 15v12M16 19v9" stroke={edge} strokeWidth="1.8" strokeLinecap="round" />
+        </Svg>
+      );
+    case 'roof':
+      return (
+        <Svg size={size}>
+          <path d="M16 4L3 22l13 6 13-6z" fill={face} stroke={edge} strokeWidth="1.4" strokeLinejoin="round" />
+          <path d="M16 4v24" stroke={edge} strokeWidth="1.2" />
+        </Svg>
+      );
+    default:
+      return (
+        <Svg size={size}>
+          <path d="M5 9l11-4 11 4v14l-11 5-11-5z" fill="none" stroke={edge} strokeWidth="5" strokeLinejoin="round" />
+          <path d="M5 9l11-4 11 4v14l-11 5-11-5z" fill="none" stroke={face} strokeWidth="2.6" strokeLinejoin="round" />
+          <path d="M16 13.5c-1.6 0-2.8 2.6-2.8 4.6a2.8 2.8 0 0 0 5.6 0c0-2-1.2-4.6-2.8-4.6z" fill="#fff6e8" />
+        </Svg>
+      );
+  }
+}
+
+/** The edit key: a wall with a doorway cut in it. */
+export function EditIcon({ size }: { size?: number }) {
+  return (
+    <Svg size={size}>
+      <path d="M4 7h24v20H19v-9h-6v9H4z" fill="#ffd9a6" stroke="#7a4f22" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M22 3l5 5-9 9-6 1 1-6z" fill="#ffd75e" stroke="#3a2a10" strokeWidth="1.2" strokeLinejoin="round" />
     </Svg>
   );
 }
@@ -449,7 +592,7 @@ export function EggIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-const MAP_ROOF: Record<Building['kind'], string> = { house: '#b5523b', farm: '#8b2f23', shed: '#7a5534', warehouse: '#6f7c88', container: '#4f6d8f', ruin: '#a39e93', coop: '#f5b301', diner: '#d64545', mill: '#7a4a2a' };
+const MAP_ROOF: Record<Building['kind'], string> = { house: '#b5523b', farm: '#8b2f23', shed: '#7a5534', warehouse: '#6f7c88', container: '#4f6d8f', ruin: '#a39e93', coop: '#f5b301', diner: '#d64545', mill: '#7a4a2a', police: '#2b3f66', bank: '#4f7d5c' };
 
 /**
  * A doorway on the map: a light tab through the wall that pokes out the way in, or a dark band across a shipping
@@ -468,6 +611,16 @@ function DoorMark({ b, d }: { b: Building; d: Door }) {
   const hd = d.ox ? wide / 2 : (hi - lo) / 2;
   return <rect x={x - hw} y={z - hd} width={hw * 2} height={hd * 2} fill={open ? '#1d2025' : b.kind === 'ruin' ? '#e4dccb' : '#fff6d6'} />;
 }
+
+/** Every window as a light blue mark along its wall, a little wider and thicker than the opening, as one path. */
+const windowMarks = (map: GameMap) =>
+  map.windows
+    .map((p) => {
+      const hw = p.hw + (p.ox ? 0.6 : 0.2);
+      const hd = p.hd + (p.ox ? 0.2 : 0.6);
+      return `M${(p.x - hw).toFixed(1)} ${(p.z - hd).toFixed(1)}h${(hw * 2).toFixed(1)}v${(hd * 2).toFixed(1)}h${(-hw * 2).toFixed(1)}Z`;
+    })
+    .join('');
 
 /** Many round dots as one path (hundreds of trees in one element, not hundreds of elements). */
 const dots = <P extends { x: number; z: number }>(list: P[], r: (p: P) => number) =>
@@ -514,6 +667,7 @@ export function IslandArt({ map }: { map: GameMap }) {
         <rect key={`b${i}`} x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={MAP_ROOF[b.kind]} stroke={b.kind === 'ruin' ? 'none' : '#f1e6d2'} strokeWidth="1" />
       ))}
       {map.buildings.map((b, i) => b.doors.map((d, k) => <DoorMark key={`d${i}-${k}`} b={b} d={d} />))}
+      {map.windows.length > 0 && <path d={windowMarks(map)} fill="#bfe6f5" />}
       {map.cars.map((c, i) => (
         <rect key={`c${i}`} x={c.x - c.hw} y={c.z - c.hd} width={c.hw * 2} height={c.hd * 2} rx="0.6" fill={c.truck ? '#4a4e55' : '#e4e7ec'} stroke="#2b2d33" strokeWidth="0.5" />
       ))}
@@ -652,12 +806,12 @@ const GUN_GROUPS: [GunClass, string][] = [
   ['heavy', 'Heavy'],
 ];
 const MELEE_HELP: Record<MeleeId, string> = {
-  spatula: 'Everyone starts with one. Chops wood from trees and smacks crates.',
+  spatula: 'Everyone starts with one. Gathers wood, stone and metal, and smacks crates.',
   whisk: 'Twice as quick, half the bite.',
   knife: 'Long reach, and you run fastest holding it.',
   cleaver: 'The hardest hitter in the drawer.',
   pan: 'Stops bullets: from the front while you hold it, from behind while it hangs on your back.',
-  pin: 'Chops wood twice as fast and knocks walls and crates flat.',
+  pin: 'Gathers building material twice as fast and knocks walls and crates flat.',
 };
 const THROW_HELP: Record<ThrowId, string> = {
   grenade: `Goes off ${THROWS.grenade.fuse} seconds after you throw it.`,
@@ -666,6 +820,8 @@ const THROW_HELP: Record<ThrowId, string> = {
   sauce: 'Splashes a burning puddle that hurts anyone standing in it, you too.',
   jam: `A sticky puddle that lasts ${THROWS.jam.time} seconds: anyone wading through it slows to a crawl.`,
   bush: `Grows a bush where it lands for ${THROWS.bush.time} seconds. Stand in it and nobody sees you from a distance until you fire.`,
+  mirv: `Goes off ${THROWS.mirv.fuse} seconds after you throw it, then scatters ${THROWS.mirv.split?.n} bomblets that each go off a moment later. Clears a room.`,
+  stun: `A blinding flash ${THROWS.stun.fuse} seconds after you throw it. Every egg that can see it (not you) is dazed for up to ${THROWS.stun.time} seconds: slowed, and its screen washed out.`,
 };
 const USE_HELP: Record<UseId, string> = {
   bandage: `+${USES.bandage.hp} health, up to ${USES.bandage.hpCap}.`,
@@ -682,6 +838,12 @@ const armorLine = (kind: ArmorKind) => `${cap(ARMOR_NAMES[kind].slice(1).join(',
 export const USE_KEYS: Record<UseId, string> = { bandage: '5', medkit: '6', mini: '7', shield: '8', coffee: '9', smoothie: '0', tart: 'T' };
 /** The keyboard code for a key above. */
 export const keyCode = (k: string) => (/^\d$/.test(k) ? `Digit${k}` : `Key${k}`);
+/** The keys that build each piece (and pick it for Space), the material key and the edit key. */
+export const PIECE_KEYS: Record<Plan, string> = { wall: 'Z', ramp: 'X', floor: 'C', roof: 'V', box: 'B' };
+export const MAT_KEY = 'N';
+export const EDIT_KEY = 'F';
+export const PIECE_NAMES: Record<Plan, string> = { wall: 'wall', ramp: 'ramp', floor: 'floor', roof: 'roof', box: 'box up' };
+const [WOOD_SPEC, STONE_SPEC, METAL_SPEC] = [MAT_SPECS.wood, MAT_SPECS.stone, MAT_SPECS.metal];
 
 export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; touch: boolean; onClose: () => void }) {
   return (
@@ -700,14 +862,14 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dd>Leave the bus</dd>
               <dt>slots</dt>
               <dd>Tap a weapon at the bottom to hold it. Tap the throwable again to switch kinds</dd>
-              <dt>wall</dt>
-              <dd>Build a wall in front of you ({WALL_COST} wood)</dd>
+              <dt>build</dt>
+              <dd>Build the piece you picked; tap it twice quickly to box yourself in. The button beside it opens the build menu: pick a wall, ramp, floor, roof or box (it goes up at once), pick wood, stone or metal, and edit a wall of yours</dd>
               <dt>reload</dt>
               <dd>Reload (it also happens on its own when you run dry)</dd>
               <dt>+, shield, coffee</dt>
               <dd>Heal, top up your shield, or drink a coffee. The right item is picked for you (a golden egg tart when you're nearly cracked, a smoothie after the minis)</dd>
               <dt>pick up</dt>
-              <dd>Shows up when you stand on something or next to a chest or a fridge</dd>
+              <dd>Shows up when you stand on something or next to a chest, a fridge, a locker or a door: tap it to pick up, open, or open and shut the door</dd>
             </>
           ) : (
             <>
@@ -716,17 +878,23 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>mouse</dt>
               <dd>Aim; click to shoot, hold for automatic fire. Throwables land where you point</dd>
               <dt>Space</dt>
-              <dd>Jump from the bus, then build a wall where you aim ({WALL_COST} wood). Right click builds too</dd>
-              <dt>E or F</dt>
-              <dd>Pick up, swap, open chests, fridges and supply drops</dd>
+              <dd>Jump from the bus, then build the piece you picked where you aim. Twice quickly boxes you in. Right click builds too</dd>
+              <dt>Z X C V B</dt>
+              <dd>Build a wall, a ramp, a floor, a roof or a box at once (and pick it for Space). The build bar at the bottom left shows them</dd>
+              <dt>{MAT_KEY}</dt>
+              <dd>Switch material: wood, stone or metal</dd>
+              <dt>{EDIT_KEY}</dt>
+              <dd>Edit the wall of yours you face: a doorway, then a window, then solid again</dd>
+              <dt>E</dt>
+              <dd>Pick up, swap, open chests, fridges, lockers and supply drops, and open and shut doors</dd>
               <dt>R</dt>
               <dd>Reload</dd>
               <dt>1 2 3 4</dt>
               <dd>Your two guns, your melee weapon and your throwables (4 again switches kinds). Q or the wheel cycles</dd>
               <dt>5 to 0, T</dt>
               <dd>Bandage, medkit, mini shield, shield potion, coffee, smoothie, and T for a golden egg tart</dd>
-              <dt>H, G, C</dt>
-              <dd>Heal, top up your shield, or drink a coffee, picking the right item for you</dd>
+              <dt>H, G</dt>
+              <dd>Heal or top up your shield, picking the right item for you</dd>
               <dt>M</dt>
               <dd>The island map</dd>
               <dt>← → and Enter</dt>
@@ -760,7 +928,36 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Supply drops.</b> Before the storm moves each of the first three times, two crates float down under balloons inside the circle it will close to (one more before the fourth time), each with a beam of light over it. They're full of epic and legendary gear. Fire a flare gun to call one more down near you.
           </li>
           <li>
-            <b>Walls.</b> Swing at trees or fallen logs for wood, then throw up walls for cover. They take a beating before they break.
+            <b>The kill leader.</b> The egg with the most eliminations ({LEADER_MIN} at least) wears a gold crown everyone can see, and shows on the big map. Everyone hears when it changes hands.
+          </li>
+          <li>
+            <b>Listen.</b> You hear the footsteps of eggs walking nearby, even ones you can't see. When your shots land you hear a soft tick and see a hit mark, red when it cracks the egg. Hover over loot (or stand by it) to see what it is.
+          </li>
+        </ul>
+      </section>
+      <section>
+        <h3>Building</h3>
+        <ul>
+          <li>
+            <b>Materials.</b> Swing your melee weapon at trees and fallen logs for wood, at rocks for stone, and at cars and lamp posts for metal. Every piece takes {PIECE_COST} of one; when the one you picked runs out, the next you have goes in.
+          </li>
+          <li>
+            <b>Building up.</b> A piece goes up at once as a pale blue blueprint and builds up to full strength: wood in {WOOD_SPEC.time} seconds ({WOOD_SPEC.hp} health), stone in {STONE_SPEC.time} ({STONE_SPEC.hp}), metal in {METAL_SPEC.time} ({METAL_SPEC.hp}). It can be shot down while it does.
+          </li>
+          <li>
+            <b>Pieces.</b> Everything snaps to a grid of squares. A wall goes on the side of your square you face, a ramp or a floor on the square in front, a roof over your own square. Box up for four walls round you{touch ? '' : ' (B, or Space twice)'}.
+          </li>
+          <li>
+            <b>Towers.</b> A ramp leads up a storey, and a floor stands on posts of its own. Build a ramp, walk up it, then a floor in front at the top, or another ramp to go up again: two storeys at most. Walls you build up there stand on that level.
+          </li>
+          <li>
+            <b>High ground.</b> Up high you see farther, and your shots go over crates, rocks, cars and walls lower than you. Anyone who can see you can shoot back, and shots from below chip at the floor or ramp you stand on. Walk off the edge, or lose what you stand on, and you drop back down.
+          </li>
+          <li>
+            <b>Editing.</b> {touch ? 'Edit' : `Press ${EDIT_KEY}`} facing a wall of yours to cut a doorway in it (walk and shoot through), again for a window (shoot and look through, but not walk), and again to make it solid.
+          </li>
+          <li>
+            <b>Roofs.</b> Nobody outside sees under your roof until you fire, and anything thrown at it bounces off. Whatever stood on a piece that breaks (a wall on a wall, a roof on a box) comes down with it.
           </li>
         </ul>
       </section>
@@ -771,7 +968,10 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Towns and sites.</b> Every town, farm, camp and yard has a name. They're all on the big map, the little map shows the one you're in, and the name comes up when you walk or land in. Dirt roads link the places near each other, and you walk a little quicker on them.
           </li>
           <li>
-            <b>Houses, farmhouses and sheds.</b> Loot inside, often a chest. The roof lifts off while you're in, and nobody outside can see you.
+            <b>Houses, farmhouses and sheds.</b> Loot inside, often a chest, and a chest of drawers and a bookshelf to go through (a bookshelf mostly holds books). The roof lifts off while you're in, and nobody outside can see you unless they look in through an open door or a window.
+          </li>
+          <li>
+            <b>Windows.</b> Houses, farmhouses, sheds, diners and warehouses have windows (light blue marks along the walls on the map). You can see through the glass, but it stops bullets and throws: the first shot, a swing or a blast nearby breaks it, and then bullets and throws fly through. Nobody climbs through a window, broken or not. Stand by one and the roof thins so you can look in.
           </li>
           <li>
             <b>Furniture.</b> Tables, beds and diner booths only stop your feet; kitchen counters, shelves and flour sacks stop bullets too. Rugs and chairs are just there to look at.
@@ -792,10 +992,19 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Cars and trucks.</b> Parked in driveways, by the warehouses and the container yards. Solid cover: nothing gets through one.
           </li>
           <li>
-            <b>Doors.</b> Every way in has a bright frame, a lamp, a porch and an awning sticking out from the roof, and shows as a light tab on the map. Walk up to a door, or line up with one, and the roof thins so you can peek in.
+            <b>Doors.</b> Every way in has a bright frame, a lamp, a porch and an awning sticking out from the roof, and shows as a light tab on the map. Most have a door, shut to begin with: {touch ? 'tap' : 'press E by'} it to open it (it swings away from you) or shut it again. A shut door stops eggs, bullets and the view; shoot or smash one enough and it comes off its hinges. Walk up to an open door, or line up with one, and the roof thins so you can peek in.
           </li>
           <li>
-            <b>Warehouses.</b> Full of crates, with a chest in a corner and barrels outside.
+            <b>The police station.</b> A lobby with a desk and a row of lockers, a jail cell behind bars (bullets and the eye go through bars, eggs don't) and a stash room with a chest of good guns and armor. The lockers hold guns, armor, ammo and stun grenades. It goes by its own name on the map.
+          </li>
+          <li>
+            <b>The bank.</b> The vault across the back has a heavy steel door: open it and it takes {VAULT_TIME} seconds to grind open (everyone nearby sees the lamp flashing), and it never breaks or shuts. Inside are two safes full of legendary loot and deposit boxes with smaller things. It goes by its own name on the map.
+          </li>
+          <li>
+            <b>Lockers.</b> In the police station, the warehouses and some sheds. Open one like a chest for what's inside.
+          </li>
+          <li>
+            <b>Warehouses.</b> Full of crates, with a chest in a corner, a pair of lockers and barrels outside.
           </li>
           <li>
             <b>Shipping containers.</b> Rows of them, each open at one end, where the doors swing wide and it's dark inside (a dark band on the map). Good cover, and sometimes something inside.
@@ -920,12 +1129,19 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <b>Vests.</b> {armorLine('vest')} The two cuts multiply.
             </span>
           </li>
+          <li>
+            <GhillieIcon size={30} />
+            <span>
+              <b>Ghillie suit.</b> Rare. Stand still out on the grass and nobody sees you from more than a few steps away until you move or fire. Bullets still hit you.
+            </span>
+          </li>
         </ul>
       </section>
       <section>
         <h3>Online</h3>
         <p>Play joins a match with whoever else is starting one, like an .io game: it starts on its own about twenty seconds after the first egg comes in (sooner once twenty people are in), and computer eggs fill the island up to fifty. Arrive once one is under way and you go into the next. Play with Bots is you against forty-nine computer eggs, as sharp as you pick.</p>
         <p>Play with Friends makes a room of your own for up to twenty: the host adds computer eggs with Bots, then picks whether more fill the island up to fifty and how sharp they are.</p>
+        <p>Easy computer eggs are slow to spot you and miss most shots past thirty meters. Normal ones, the kind Play always brings, fight fair. Hard ones see farther, react quicker and aim well up close, but are never dead on far off. At every level they pace their fire and a pack of them takes turns, so none cracks you from full health in a second.</p>
         <p>Cracked? Watch the rest, or press done watching for your result while the match plays on for everyone else. Whoever hosts runs the match, so they can play again (or start the next one, in a room of your own) once it is over; if the host leaves first, the match ends for everyone.</p>
       </section>
     </Sheet>

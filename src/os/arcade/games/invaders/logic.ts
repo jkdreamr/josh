@@ -1,5 +1,5 @@
 export type Alien = { x: number; y: number; col: number; row: number; type: number; points: number };
-export type Shot = { x: number; y: number; vy: number };
+export type Shot = { x: number; y: number; vy: number; kind?: 'zap' | 'wiggle' };
 export type Shield = { x: number; y: number; cell: number; cols: number; rows: number; cells: boolean[][] };
 export type InvadersState = {
   width: number;
@@ -10,6 +10,10 @@ export type InvadersState = {
   stepCount: number;
   animation: number;
   player: { x: number; y: number; speed: number; invulnerable: number };
+  /** Seconds left of the pause after the cannon is hit: the formation holds and the cannon is down. */
+  respawn: number;
+  /** Score that earns the next extra life. */
+  bonusAt: number;
   playerShots: Shot[];
   alienShots: Shot[];
   shields: Shield[];
@@ -24,11 +28,14 @@ export type InvadersState = {
   pointsFlash: { x: number; y: number; value: number; time: number } | null;
   elapsed: number;
   ended: boolean;
-  effects: { type: 'march' | 'alien' | 'player' | 'ufo' | 'shot' | 'wave'; x: number; y: number; points?: number }[];
+  effects: { type: 'march' | 'alien' | 'player' | 'ufo' | 'shot' | 'wave' | 'clash' | 'life' | 'shield'; x: number; y: number; points?: number }[];
 };
 
-const alienWidth = 28;
-const alienHeight = 21;
+export const alienWidth = 28;
+export const alienHeight = 21;
+export const firstBonus = 1500;
+export const bonusEvery = 5000;
+export const maxLives = 5;
 
 function makeAliens(dropSteps = 0) {
   const aliens: Alien[] = [];
@@ -74,6 +81,8 @@ export function createInvaders(wave = 1, lives = 3, score = 0, rng: () => number
     stepCount: 0,
     animation: 0,
     player: { x: 250, y: 646, speed: 300, invulnerable: 0 },
+    respawn: 0,
+    bonusAt: firstBonus,
     playerShots: [],
     alienShots: [],
     shields: makeShields(),
@@ -105,9 +114,16 @@ export function stepFormation(state: InvadersState) {
   state.stepCount++;
   state.animation = 1 - state.animation;
   state.effects.push({ type: 'march', x: 0, y: 0 });
-  if (state.aliens.some((alien) => alien.y + alienHeight >= state.player.y - 12)) state.ended = true;
+  checkInvasion(state);
   eraseAliensThroughShields(state);
   return atEdge;
+}
+
+function checkInvasion(state: InvadersState) {
+  if (state.ended || !state.aliens.some((alien) => alien.y + alienHeight >= state.player.y - 12)) return;
+  state.ended = true;
+  state.lives = 0;
+  state.effects.push({ type: 'player', x: state.player.x, y: state.player.y });
 }
 
 function eraseAliensThroughShields(state: InvadersState) {
@@ -125,22 +141,36 @@ function eraseAliensThroughShields(state: InvadersState) {
 }
 
 export function firePlayerShot(state: InvadersState) {
-  if (state.ended || state.playerShots.length >= 2) return false;
+  if (state.ended || state.respawn > 0 || state.waveBanner > 0 || state.playerShots.length >= 2) return false;
   state.playerShots.push({ x: state.player.x, y: state.player.y - 14, vy: -470 });
   state.effects.push({ type: 'shot', x: state.player.x, y: state.player.y });
   return true;
 }
 
+export function maxAlienShots(wave: number) {
+  return Math.min(5, 2 + Math.floor(wave / 2));
+}
+
+export function aimChance(wave: number) {
+  return Math.min(0.7, 0.25 + 0.09 * (wave - 1));
+}
+
 export function fireAlienShot(state: InvadersState, rng: () => number = Math.random) {
-  if (!state.aliens.length) return false;
+  if (!state.aliens.length || state.alienShots.length >= maxAlienShots(state.wave)) return false;
   const lowest = new Map<number, Alien>();
   for (const alien of state.aliens) {
     const prev = lowest.get(alien.col);
     if (!prev || alien.y > prev.y) lowest.set(alien.col, alien);
   }
   const columns = [...lowest.values()];
-  const source = columns[Math.min(columns.length - 1, Math.floor(rng() * columns.length))];
-  state.alienShots.push({ x: source.x + alienWidth / 2, y: source.y + alienHeight + 2, vy: 225 + state.wave * 15 });
+  let source = columns[Math.min(columns.length - 1, Math.floor(rng() * columns.length))];
+  if (rng() < aimChance(state.wave)) {
+    const cx = (alien: Alien) => alien.x + alienWidth / 2;
+    source = columns.reduce((best, alien) => (Math.abs(cx(alien) - state.player.x) < Math.abs(cx(best) - state.player.x) ? alien : best));
+  }
+  const zap = rng() < Math.min(0.45, 0.12 + 0.06 * state.wave);
+  const speed = 225 + state.wave * 15;
+  state.alienShots.push({ x: source.x + alienWidth / 2, y: source.y + alienHeight + 2, vy: zap ? speed * 1.3 : speed, kind: zap ? 'zap' : 'wiggle' });
   return true;
 }
 
@@ -203,7 +233,15 @@ function updateShots(state: InvadersState, dt: number, rng: () => number) {
         hit = true;
         break;
       }
+      const clash = state.alienShots.findIndex((other) => Math.abs(other.x - shot.x) < 6 && Math.abs(other.y - shot.y) < 10);
+      if (clash >= 0) {
+        state.alienShots.splice(clash, 1);
+        state.effects.push({ type: 'clash', x: shot.x, y: shot.y });
+        hit = true;
+        break;
+      }
       if (damageShieldAt(state, shot.x, shot.y, rng)) {
+        state.effects.push({ type: 'shield', x: shot.x, y: shot.y });
         hit = true;
         break;
       }
@@ -232,14 +270,17 @@ function updateShots(state: InvadersState, dt: number, rng: () => number) {
     for (let i = 0; i < distance; i++) {
       shot.y += shot.vy * dt / distance;
       if (damageShieldAt(state, shot.x, shot.y, rng)) {
+        state.effects.push({ type: 'shield', x: shot.x, y: shot.y });
         hit = true;
         break;
       }
       if (shot.y >= state.player.y - 12 && shot.y <= state.player.y + 8 && Math.abs(shot.x - state.player.x) < 17) {
         hit = true;
-        if (state.player.invulnerable <= 0) {
+        if (state.player.invulnerable <= 0 && state.respawn <= 0) {
           state.lives--;
-          state.player.invulnerable = 1.8;
+          state.player.invulnerable = 2.1;
+          state.respawn = 0.9;
+          state.playerShots = [];
           state.effects.push({ type: 'player', x: state.player.x, y: state.player.y });
           if (state.lives <= 0) state.ended = true;
         }
@@ -252,7 +293,17 @@ function updateShots(state: InvadersState, dt: number, rng: () => number) {
     }
     if (!hit) alienRemaining.push(shot);
   }
-  state.alienShots = alienRemaining;
+  state.alienShots = state.respawn > 0 ? [] : alienRemaining;
+}
+
+function awardLives(state: InvadersState) {
+  while (state.score >= state.bonusAt) {
+    state.bonusAt += state.bonusAt === firstBonus ? bonusEvery - firstBonus : bonusEvery;
+    if (state.lives < maxLives) {
+      state.lives++;
+      state.effects.push({ type: 'life', x: state.player.x, y: state.player.y });
+    }
+  }
 }
 
 export function stepInvaders(state: InvadersState, dt: number, axis = 0, rng: () => number = Math.random) {
@@ -264,6 +315,15 @@ export function stepInvaders(state: InvadersState, dt: number, axis = 0, rng: ()
     state.pointsFlash.time -= dt;
     if (state.pointsFlash.time <= 0) state.pointsFlash = null;
   }
+  if (state.respawn > 0) {
+    state.respawn = Math.max(0, state.respawn - dt);
+    if (state.ufo) {
+      state.ufo.x += state.ufo.direction * 70 * dt;
+      if (state.ufo.x > state.width + 50 || state.ufo.x < -55) state.ufo = null;
+    }
+    return;
+  }
+  state.player.x = Math.max(22, Math.min(state.width - 22, state.player.x + Math.max(-1, Math.min(1, axis)) * state.player.speed * dt));
   if (state.waveBanner > 0) {
     state.waveBanner -= dt;
     if (state.waveBanner <= 0) {
@@ -272,7 +332,6 @@ export function stepInvaders(state: InvadersState, dt: number, axis = 0, rng: ()
     }
     return;
   }
-  state.player.x = Math.max(22, Math.min(state.width - 22, state.player.x + axis * state.player.speed * dt));
   state.stepTimer += dt;
   const interval = stepIntervalForCount(state.aliens.length) / Math.sqrt(state.wave);
   while (state.stepTimer >= interval && state.aliens.length) {
@@ -286,7 +345,7 @@ export function stepInvaders(state: InvadersState, dt: number, axis = 0, rng: ()
     state.shotTimer = Math.max(0.32, 1.45 / Math.sqrt(state.wave) + rng() * 1.2);
   }
   state.ufoTimer -= dt;
-  if (state.ufoTimer <= 0 && !state.ufo) {
+  if (state.ufoTimer <= 0 && !state.ufo && state.aliens.length >= 8) {
     const direction = rng() < 0.5 ? 1 : -1;
     state.ufo = { x: direction === 1 ? -42 : state.width + 4, direction, points: [50, 100, 150, 200, 300][Math.floor(rng() * 5)] };
     state.ufoTimer = 12 + rng() * 12;
@@ -299,7 +358,9 @@ export function stepInvaders(state: InvadersState, dt: number, axis = 0, rng: ()
   if (!state.aliens.length && state.waveBanner <= 0) {
     state.score += 100;
     state.waveBanner = 1.15;
+    state.alienShots = [];
     state.effects.push({ type: 'wave', x: state.width / 2, y: state.height / 2 });
   }
-  if (state.aliens.some((alien) => alien.y + alienHeight >= state.player.y - 12)) state.ended = true;
+  awardLives(state);
+  checkInvasion(state);
 }

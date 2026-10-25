@@ -3,16 +3,21 @@ import { test } from 'node:test';
 import { ANSWERS } from '../src/os/arcade/games/wordguess/answers.ts';
 import { GUESSES } from '../src/os/arcade/games/wordguess/guesses.ts';
 import {
+  currentStreak,
   dailyIndex,
   dayNumber,
   emptyStats,
   formatWait,
+  hardModeMiss,
   letterStates,
   msUntilNextDay,
   pacificDate,
+  pickLayout,
   practiceIndex,
   recordDaily,
   score,
+  shareText,
+  tileFit,
   unpack,
 } from '../src/os/arcade/games/wordguess/logic.ts';
 
@@ -107,4 +112,48 @@ test('daily stats and streaks', () => {
   assert.deepEqual([s.streak, s.max], [1, 2]);
   s = recordDaily(s, 9, 0);
   assert.deepEqual([s.played, s.wins, s.streak, s.max], [4, 3, 0, 2]);
+});
+
+test('the shown streak lapses after a missed day', () => {
+  const s = { ...emptyStats(), streak: 4, max: 4, lastWin: 100 };
+  assert.equal(currentStreak(s, 100), 4);
+  assert.equal(currentStreak(s, 101), 4);
+  assert.equal(currentStreak(s, 102), 0);
+});
+
+test('hard mode keeps greens in place and golds in the guess', () => {
+  const rows = ['crane'];
+  const marks = [score('crane', 'cider')];
+  assert.equal(hardModeMiss('crane', [], []), null);
+  assert.equal(hardModeMiss('moist', rows, marks), 'Spot 1 Must Be C');
+  assert.equal(hardModeMiss('coded', rows, marks), 'Guess Must Use R');
+  assert.equal(hardModeMiss('cider', rows, marks), null);
+  // Two golds of the same letter need two copies; a grey duplicate doesn't add a requirement.
+  const r2 = ['eerie'];
+  const m2 = [score('eerie', 'never')];
+  assert.equal(hardModeMiss('trees', r2, m2), 'Spot 2 Must Be E');
+  assert.equal(hardModeMiss('below', r2, m2), 'Guess Must Use E');
+  assert.equal(hardModeMiss('beech', r2, m2), 'Guess Must Use R');
+  assert.equal(hardModeMiss('lever', r2, m2), null);
+});
+
+test('share text is a spoiler-free grid', () => {
+  assert.equal(shareText(9, ['crane', 'cider'], 'cider'), 'Word Guess 10 2/6\n\n\u{1F7E9}\u{1F7E8}\u2B1B\u2B1B\u{1F7E8}\n\u{1F7E9}\u{1F7E9}\u{1F7E9}\u{1F7E9}\u{1F7E9}');
+  assert.match(shareText(0, Array(6).fill('crane'), 'cider', true), /^Word Guess 1 X\/6\*\n/);
+});
+
+test('short wide areas put the board beside the keyboard', () => {
+  const o = { modesW: 130, ctrlW: 172, top: 52, keysH: 114, cap: 64 };
+  const framed = pickLayout(464, 157, o);
+  assert.equal(framed.side, true);
+  assert.ok(framed.tile >= 16);
+  assert.ok(pickLayout(464, 157, { ...o, ctrlW: 190 }).side);
+  assert.ok(framed.boardW < 464 - 270);
+  const phone = pickLayout(390, 700, o);
+  assert.equal(phone.side, false);
+  assert.ok(phone.tile >= 50);
+  const full = pickLayout(1440, 820, o);
+  assert.equal(full.side, false);
+  assert.equal(full.tile, 64);
+  assert.equal(tileFit(0, 0, 64), 0);
 });

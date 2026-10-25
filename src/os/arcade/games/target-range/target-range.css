@@ -71,6 +71,9 @@
 .g-target-range .g-target-range-time.is-low {
   color: #ffb59c;
 }
+.g-target-range .g-target-range-progress strong span {
+  font-weight: 500;
+}
 .g-target-range .g-target-range-canvas {
   display: block;
   width: 100%;
@@ -79,6 +82,60 @@
   border-radius: 12px;
   touch-action: none;
   cursor: crosshair;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+.g-target-range .is-live .g-target-range-canvas {
+  cursor: none;
+}
+.g-target-range .g-target-range-time.is-low {
+  animation: g-target-range-pulse 1s ease-in-out infinite;
+}
+@keyframes g-target-range-pulse {
+  50% { transform: scale(1.12); }
+}
+/* Short windows (the framed laptop): the HUD rides in the top band between the score pill and the controls. */
+.g-target-range .g-target-range-layout.is-short {
+  padding: 46px 8px 6px;
+  gap: 4px;
+}
+.g-target-range .is-short .g-target-range-hud {
+  position: absolute;
+  top: 10px;
+  left: 84px;
+  right: calc(var(--g-target-range-ctrl, 124px) + 18px);
+  height: 30px;
+  flex: none;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.g-target-range .is-short .g-target-range-wave {
+  display: none;
+}
+.g-target-range .is-short .g-target-range-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  max-width: none;
+  flex: 1;
+  min-width: 0;
+}
+.g-target-range .is-short .g-target-range-progress strong span {
+  display: none;
+}
+.g-target-range .is-short .g-target-range-progress div {
+  flex: 1;
+  min-width: 24px;
+  max-width: 120px;
+  margin: 0;
+}
+.g-target-range .is-short .g-target-range-time {
+  min-width: 34px;
+  font-size: 17px;
+}
+.g-target-range .is-short .g-target-range-stats,
+.g-target-range .is-short .g-target-range-tip {
+  display: none;
 }
 .g-target-range .g-target-range-stats {
   display: flex;
@@ -126,31 +183,47 @@
     width: 108px;
   }
 }
-@container (max-height: 280px) {
-  .g-target-range .g-target-range-layout {
-    gap: 5px;
-    padding-bottom: 6px;
-  }
-  .g-target-range .g-target-range-hud {
-    flex-basis: 36px;
-  }
-  .g-target-range .g-target-range-tip {
-    display: none;
-  }
-}
+/* Touch: --g-target-range-u undoes the phone or iPad frame's scale so text and buttons keep their real size. */
 @media (pointer: coarse) {
-  .g-target-range .g-target-range-layout {
-    padding-top: 62px;
+  .g-target-range .g-target-range-layout,
+  .g-target-range .g-target-range-layout.is-short {
+    padding-top: calc(62px * var(--g-target-range-u, 1));
   }
   .g-target-range .arcade-ctrl button {
-    width: 40px;
-    height: 40px;
+    width: calc(42px * var(--g-target-range-u, 1));
+    height: calc(42px * var(--g-target-range-u, 1));
   }
-  .g-target-range .arcade-btn,
-  .g-target-range .arcade-seg > button {
-    min-height: 40px;
+  .g-target-range .arcade-ctrl svg {
+    width: calc(16px * var(--g-target-range-u, 1));
+    height: calc(16px * var(--g-target-range-u, 1));
   }
-  .g-target-range .arcade-btn-lg {
-    min-height: 44px;
+  .g-target-range .arcade-score {
+    font-size: calc(13px * var(--g-target-range-u, 1));
+  }
+  .g-target-range .arcade-ov > .arcade-card {
+    zoom: var(--g-target-range-u, 1);
+  }
+  .g-target-range .arcade-ov > .arcade-card .arcade-btn,
+  .g-target-range .arcade-ov > .arcade-card .arcade-seg > button {
+    min-height: 42px;
+  }
+  .g-target-range .g-target-range-hud {
+    flex-basis: calc(48px * var(--g-target-range-u, 1));
+    font-size: calc(13px * var(--g-target-range-u, 1));
+  }
+  .g-target-range .g-target-range-wave span,
+  .g-target-range .g-target-range-stats,
+  .g-target-range .g-target-range-tip {
+    font-size: calc(12px * var(--g-target-range-u, 1));
+  }
+  .g-target-range .g-target-range-wave strong {
+    font-size: calc(17px * var(--g-target-range-u, 1));
+  }
+  .g-target-range .g-target-range-time {
+    font-size: calc(22px * var(--g-target-range-u, 1));
+  }
+  .g-target-range .is-short .g-target-range-hud {
+    top: calc(10px * var(--g-target-range-u, 1));
+    height: calc(42px * var(--g-target-range-u, 1));
   }
 }

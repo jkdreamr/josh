@@ -1,23 +1,38 @@
+/* The sky hue eases between levels instead of jumping. */
+@property --g-stack-hue {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 255;
+}
 .g-stack .g-stack-host {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, #1a1630 0%, #2b2a4a 55%, #4a3a5c 100%);
-  transition: background 1.2s ease;
+  background: linear-gradient(
+    180deg,
+    hsl(var(--g-stack-hue) 34% 12%) 0%,
+    hsl(calc(var(--g-stack-hue) + 18) 30% 23%) 55%,
+    hsl(calc(var(--g-stack-hue) + 36) 28% 35%) 100%
+  );
+  transition: --g-stack-hue 1.4s ease;
   cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .g-stack .g-stack-flash {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: #fff;
+  background: radial-gradient(ellipse at 50% 55%, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 70%);
   opacity: 0;
 }
 .g-stack .g-stack-flash.is-on {
-  animation: g-stack-flash 0.32s ease-out;
+  animation: g-stack-flash 0.45s ease-out;
 }
 @keyframes g-stack-flash {
   from {
-    opacity: 0.22;
+    opacity: 0.55;
   }
   to {
     opacity: 0;
@@ -26,16 +41,18 @@
 .g-stack .g-stack-combo {
   position: absolute;
   left: 50%;
-  top: 22%;
-  transform: translateX(-50%);
-  padding: 4px 12px;
+  top: max(52px, 20%);
+  padding: 5px 13px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: calc(13px * var(--g-stack-u, 1));
   font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   color: #fff;
-  background: rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(20, 20, 26, 0.5);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   pointer-events: none;
   animation: g-stack-pop 0.9s ease-out forwards;
 }
@@ -61,9 +78,49 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: 44px;
+  bottom: 14px;
   text-align: center;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
+  font-size: calc(13px * var(--g-stack-u, 1));
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
   pointer-events: none;
+  animation: g-stack-breathe 2.4s ease-in-out infinite;
+}
+@keyframes g-stack-breathe {
+  50% {
+    opacity: 0.55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-stack .g-stack-host {
+    transition: none;
+  }
+  .g-stack .g-stack-hint,
+  .g-stack .g-stack-flash.is-on {
+    animation: none;
+  }
+}
+/* Touch: finger-sized shell controls, grown by --g-stack-u (1 / the phone or iPad frame scale) so they stay that way on screen. */
+@media (pointer: coarse) {
+  .g-stack .arcade-ctrl button {
+    width: calc(44px * var(--g-stack-u, 1));
+    height: calc(44px * var(--g-stack-u, 1));
+  }
+  .g-stack .arcade-ctrl svg {
+    width: calc(16px * var(--g-stack-u, 1));
+    height: calc(16px * var(--g-stack-u, 1));
+  }
+  .g-stack .arcade-score {
+    font-size: calc(14px * var(--g-stack-u, 1));
+    padding: calc(6px * var(--g-stack-u, 1)) calc(12px * var(--g-stack-u, 1));
+  }
+  .g-stack .arcade-ov > .arcade-card {
+    zoom: var(--g-stack-u, 1);
+  }
+  .g-stack .arcade-ov > .arcade-card .arcade-btn,
+  .g-stack .arcade-ov > .arcade-card .arcade-seg > button,
+  .g-stack .arcade-ov > .arcade-card .arcade-input {
+    min-height: 42px;
+  }
 }

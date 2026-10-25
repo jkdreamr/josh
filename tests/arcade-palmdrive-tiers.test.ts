@@ -121,7 +121,7 @@ test('every lap something joins in on has a line for the lap banner, and only th
     const c = COURSES[id];
     // (the set pieces, and the wind, the frost, the swell, a whirlpool that starts to wander and the tide that turns)
     const laps = new Set([
-      ...c.layout(t).hazards.flatMap((h) => [h.lap ?? 1, h.wander?.[2] ?? 1]),
+      ...c.layout(t).hazards.flatMap((h) => [h.lap ?? 1, h.wander?.[2] ?? 1, h.rush?.[0] ?? 1]),
       ...(c.gusts ?? []).map((g) => g.lap ?? 1),
       ...(c.surfaces ?? []).map((f) => f[4] ?? 1),
       ...(c.swells ?? []).map((sw) => sw.lap ?? 1),
@@ -189,8 +189,8 @@ test('until its lap comes round, something that joins in later is not there for 
 test('a kart in the water is out of everyone\'s way: nobody bumps it and it picks nothing up', () => {
   const r = race('golf', 2);
   const [a, b] = r.karts;
-  place(r, a, 470, -7.2, 14);
-  a.h = headingOf(pointAt(r.track, 470).tx, pointAt(r.track, 470).tz) + 0.6;
+  place(r, a, 440, -7.2, 14);
+  a.h = headingOf(pointAt(r.track, 440).tx, pointAt(r.track, 440).tz) + 0.6;
   run(r, 0.6);
   assert.ok(a.sunk > 0);
   const at = { x: a.x, z: a.z };

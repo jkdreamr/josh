@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { COURSES, COURSE_IDS, trackOf } from '../src/os/arcade/games/palmdrive/courses.ts';
-import { BANK, CLASSES, GREEN_V, HAMMER, JET, KART_R, RIVALS, cpuLane, createRace, hazSpans, hazState, hazardD, hazardS, moveHazards, rescue, rightOfWay, spawn, step, type Ev, type Kart, type LiveHazard, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
+import { BANK, CLASSES, GREEN_V, HAMMER, JET, KART_R, RIVALS, cpuLane, createRace, hazSpans, hazState, hazardD, hazardS, moveHazards, rescue, rightOfWay, spanGone, spawn, step, trafficD, type Ev, type Kart, type LiveHazard, type Race } from '../src/os/arcade/games/palmdrive/logic.ts';
 import { BUS_LEN, cycleAt, deltaS, drives, headingOf, lengthOf, locate, pointAt, solid, timed, type Hazard } from '../src/os/arcade/games/palmdrive/track.ts';
 
 const DT = 1 / 60;
@@ -52,7 +52,7 @@ function widest(lo: number, hi: number, spans: [number, number][]) {
   return Math.max(best, hi - edge);
 }
 
-test('Hoover Nights has its set pieces where the plan puts them, and only it and the Cardinal Skyway have any', () => {
+test('Hoover Nights has its set pieces where the plan puts them, and only it, the Skyway, the slough, the golf course and the Hard courses have any', () => {
   const t = trackOf('hoover');
   const lay = COURSES.hoover.layout(t);
   const by = (kind: string) => lay.hazards.filter((h) => h.kind === kind).map((h) => Math.round(h.s));
@@ -60,6 +60,11 @@ test('Hoover Nights has its set pieces where the plan puts them, and only it and
   assert.deepEqual(by('wrecker'), [214, 642]);
   assert.deepEqual(by('rotor'), [440, 468]);
   assert.deepEqual(by('wet'), [445, 459, 474]);
+  // the Claw's fountain jets from lap 4, the Tree, and the Marguerite crossing both ways
+  assert.deepEqual(by('geyser'), [594, 606, 618]);
+  assert.ok(lay.hazards.filter((h) => h.kind === 'geyser').every((h) => h.lap === 4 && h.d === -4.4 && h.every === 2.4 && h.on === 0.8 && h.warn === 0.8));
+  assert.deepEqual(by('tether'), [913]);
+  assert.deepEqual(by('shuttle'), [990, 990]);
   assert.deepEqual(by('bollard'), [100, 100, 100, 100, 548, 548, 548, 548]);
   // a row of banks covers the road wall to wall, rippling across
   for (const s of [100, 548]) {
@@ -79,7 +84,8 @@ test('Hoover Nights has its set pieces where the plan puts them, and only it and
   const h2 = lay.hazards.find((h) => h.kind === 'hammer' && Math.round(h.s) === 360)!;
   const h3 = lay.hazards.find((h) => h.kind === 'hammer' && Math.round(h.s) === 372)!;
   assert.ok(Math.abs(Math.abs((h2.phase ?? 0) - (h3.phase ?? 0)) - 1.8) < 1e-9);
-  for (const id of COURSE_IDS) if (id !== 'hoover' && id !== 'skyway' && id !== 'slough') assert.ok(COURSES[id].layout(trackOf(id)).hazards.every((h) => !timed(h.kind) && h.kind !== 'wet'), `${id} has no set pieces`);
+  // (the golf course has its geese and its mower: see the golf tests)
+  for (const id of COURSE_IDS) if (id !== 'hoover' && id !== 'skyway' && id !== 'slough' && id !== 'golf' && id !== 'dish' && id !== 'quad') assert.ok(COURSES[id].layout(trackOf(id)).hazards.every((h) => !timed(h.kind) && h.kind !== 'wet'), `${id} has no set pieces`);
   assert.ok(timed('hammer') && timed('bollard') && timed('wrecker') && timed('rotor') && !timed('wet') && !timed('bike'));
   assert.ok(solid('hammer') && solid('bollard') && solid('rotor') && solid('wrecker') && !solid('wet'));
 });
@@ -107,7 +113,8 @@ test('A10.1 purity: two races built apart agree about every set piece at every m
 test('A10.2 a way through always exists: at every set piece, at every instant, on every lap, with the buses driving', () => {
   const r = hoover();
   const t = r.track;
-  const pieces = r.hazards.filter((h) => timed(h.kind));
+  // (the Marguerite crossing shuts the road for a moment as it goes over, by design: see the crossing's own test)
+  const pieces = r.hazards.filter((h) => timed(h.kind) && h.kind !== 'shuttle');
   const buses = r.hazards.filter((h) => drives(h));
   /** The lines across the road to check: each piece's own, and a rotor's either side of its hub. */
   const lines = [...new Set(pieces.flatMap((h) => (h.kind === 'rotor' ? [h.s - 4, h.s - 2, h.s, h.s + 2, h.s + 4] : [h.s])))];
@@ -124,8 +131,9 @@ test('A10.2 a way through always exists: at every set piece, at every instant, o
           spans.push(...hazSpans(r, h, time, lap, ds));
         }
         for (const b of buses) {
+          if (b.span && spanGone(b, time)) continue;
           const ds = deltaS(t, hazardS(t, b, time), s);
-          if (Math.abs(ds) < lengthOf(b) / 2) spans.push([b.d - b.r, b.d + b.r]);
+          if (Math.abs(ds) < lengthOf(b) / 2) spans.push([trafficD(b, time) - b.r, trafficD(b, time) + b.r]);
         }
         const gap = widest(t.lo[i], t.hi[i], spans);
         if (gap < narrowest) {
@@ -141,8 +149,9 @@ test('A10.2 a way through always exists: at every set piece, at every instant, o
 test('A10.4 the Marguerite has right of way: a set piece stands aside while a bus is near it', () => {
   const r = hoover();
   const t = r.track;
-  const pieces = r.hazards.filter((h) => timed(h.kind));
-  const buses = r.hazards.filter((h) => drives(h));
+  // (the crossing Marguerite sits out a crossing a bus would meet instead: see its own test)
+  const pieces = r.hazards.filter((h) => timed(h.kind) && h.kind !== 'shuttle');
+  const buses = r.hazards.filter((h) => drives(h) && !h.span);
   let yields = 0;
   for (let time = 0; time <= 240; time += 0.05) {
     for (const h of pieces) {
@@ -153,8 +162,9 @@ test('A10.4 the Marguerite has right of way: a set piece stands aside while a bu
       for (let lap = 1; lap <= 5; lap++) {
         const st = hazState(r, h, time, lap);
         assert.ok(!st.live, `${h.kind} at ${h.s} live with a bus beside it at t=${time}`);
-        // (the rotor's hub still stands; nothing else is in the way)
-        assert.equal(st.solid, h.kind === 'rotor');
+        // (the rotor's hub still stands, and the Tree sits by its post; nothing else is in the way)
+        assert.equal(st.solid, h.kind === 'rotor' || h.kind === 'tether');
+        if (h.kind === 'tether') assert.equal(st.d, h.d + 1.2, 'sat by its post');
         if (h.kind === 'hammer' || h.kind === 'wrecker') assert.equal(st.lift, 1, 'hauled up');
         if (h.kind === 'bollard') assert.equal(st.lift, 0, 'down');
       }
@@ -184,7 +194,8 @@ test('A10.5 lap gating: the banks, the jets, the wet road and the later hammers 
     return false;
   };
   for (const h of r.hazards) {
-    if (!timed(h.kind) && h.kind !== 'wet') continue;
+    // (traffic runs on the clock for everyone alike, whatever lap: see the traffic tests)
+    if ((!timed(h.kind) && h.kind !== 'wet') || h.kind === 'shuttle') continue;
     const from = h.lap ?? 1;
     for (let lap = 1; lap <= 5; lap++) {
       const live = over(h, lap, (st) => st.live);
@@ -195,7 +206,7 @@ test('A10.5 lap gating: the banks, the jets, the wet road and the later hammers 
         // asleep: the hammer parked high, the bank flush, the hub capped but standing
         if (h.kind === 'hammer') assert.equal(st.lift, 1);
         if (h.kind === 'bollard') assert.equal(st.lift, 0);
-        assert.equal(st.solid, h.kind === 'rotor');
+        assert.equal(st.solid, h.kind === 'rotor' || h.kind === 'tether');
       }
     }
   }

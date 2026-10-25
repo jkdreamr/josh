@@ -560,8 +560,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Oil slicks</b> spin you out. Steer round them: they sit right on the best line.
           </li>
           <li>
-            <b>No wall means a drop.</b> Where a striped lip with amber studs takes the place of the wall, run wide and you go over, into water or a pit, and the night
-            crew&apos;s crane fishes you out: about three seconds and three coins on Expert, though you keep your item. Tap drift as you touch down for a boost.
+            <b>No wall means a drop.</b> Where a striped lip with amber studs takes the place of the wall, run wide and you go over, into water, a pit or down the
+            hillside on the Dish, and the crane fishes you out: about three seconds and three coins on Expert (a little less on Hard), though you keep your item.
+            Tap drift as you touch down for a boost.
           </li>
           <li>
             <b>The trench</b> across the causeway at Hoover Nights: jump it off the ramp at speed, or take a steel plate either side of the hole.
@@ -573,28 +574,52 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>Insane, on the water: Redwood Slough.</b> You race a single scull. The water is slick, so carve (drift) through the bends. Tap hop just as the ring closes for a clean
-            catch; ten in a row is a Power Ten. Leave the channel and you run aground in the marsh: the coach&apos;s launch tows you off (about three and a half seconds and three
-            coins). Whirlpools spin up at the bends: when the foam turns, keep wide and keep your speed. Wakes and the Bay swell shove you sideways; hop the crest. The current helps
+            catch; ten in a row is a Power Ten. The channel is narrow: leave it and you run aground in the marsh, and the coach&apos;s launch tows you off (about four seconds and
+            four coins). Whirlpools spin up right on the line out of the bends: when the foam turns, steer round and keep your speed. Wakes, the Bay swell and the wind shove you
+            sideways; hop the crest. Mind the rocks in the rapids and the crane&apos;s load swinging across the Port. The current helps
             downstream and fights you upstream, so hug the bank going up. On the last lap the tide turns and the fog comes in.
           </li>
           <li>
             <b>The Marguerite buses</b> drive their rounds slower than you, both in the right-hand lane. Pass on the left: run into one and you spin out. Shells break on them too.
-            And they have right of way: the pile drivers, bollards, sprinklers and wrecking balls stand aside as a bus comes through.
+            And they have right of way: the pile drivers, bollards, sprinklers, wrecking balls, fountain jets and the Tree stand aside as a bus comes through, and the crossing waits for one to pass.
           </li>
           <li>
             <b>Pile drivers</b> slam down on the corners every few seconds and sit a moment: the beacon strobes and the head shakes just before it drops. Go under it while it is up, or take the long way round. It flattens you on the way down, it is solid on the ground, and shells break on it there.
           </li>
           <li>
-            <b>Bollards</b> rise across the road in four banks from lap 2, one gap rippling across: green lamps down, amber about to rise, red up. Hit a raised bank and you are squashed and stopped behind it. Shells break on a raised bank.
+            <b>Bollards</b> rise across the road in four banks from lap 2 on Hoover Nights and the Main Quad, one gap rippling across: green lamps down, amber about to rise, red up. Hit a raised bank and you are squashed and stopped behind it. Shells break on a raised bank.
           </li>
           <li>
-            <b>Sprinklers</b> on the sweeper spin a jet round from lap 2: the spray spins you (a hop does not clear it), the hub is solid. Pass on the side the arm has just left.
+            <b>Sprinklers</b> spin a jet round, from lap 2 on Hoover Nights&apos; sweeper and lap 3 on the Main Quad: the spray spins you (a hop does not clear it), the
+            hub is solid. Pass on the side the arm has just left.
+          </li>
+          <li>
+            <b>Boulders</b> roll down off the hillside on the Dish, one down each chute every few seconds: watch for the falling-rocks sign, then the dust and the
+            rumble up the chute. It bounds over the wall and right across the road, and it tumbles you and throws you the way it is rolling.
           </li>
           <li>
             <b>Wet road</b> from lap 3: there is no grip through the sweeper, so you turn less. Drift through it, or ease off.
           </li>
           <li>
             <b>Wrecking balls</b> swing across the road on the clock. A hit tumbles you and throws you aside, and beside the Dig that means the drop. Go through fast on the side the ball is leaving.
+          </li>
+          <li>
+            <b>Oncoming traffic</b> down Memorial Church&apos;s straight: cars come at you in the left lane, headlights blazing, and later a delivery van with them. Keep right. Hit one head on and you
+            tumble, and the item in your hand goes flying.
+          </li>
+          <li>
+            <b>The Marguerite crossing</b> on the west straight: the bells ring, the lights flash and the gates come down, then a bendy bus crosses the road. Go behind it, beat it across, or wait.
+            Later in the race one comes the other way too.
+          </li>
+          <li>
+            <b>The Stanford Tree</b> is on a bungee on the inside of the bend after the church. It crouches, its eyes go red, then it lunges across the inside line and bowls you over. The
+            outside, by the ditch, is always clear.
+          </li>
+          <li>
+            <b>Fountain jets</b> blow on the inside of the Claw from lap 4. The water ripples just before one goes up, and it spins you.
+          </li>
+          <li>
+            <b>Lap 5 at Hoover Nights: lights out.</b> Half the street lamps go out and the night closes in. Watch for headlights.
           </li>
           <li>
             <b>Golf carts</b> drive their rounds like the buses, and more cross the road on the cart paths. Run into one and you spin out.
@@ -610,6 +635,17 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>Water</b> on the golf course comes right up to the road behind its red stakes: the same as a drop, and a giant ball retriever fishes you out.
+          </li>
+          <li>
+            <b>Out of bounds</b> is marked with white stakes on the outside of the golf course&apos;s bends: past them the road drops into a gully, the same as water.
+          </li>
+          <li>
+            <b>Canada geese</b> guard the island green&apos;s bank. One crouches and hisses under a <b>!</b>, then flies at you across the inside line and bowls you over.
+            From lap 4 they get angry and come more often. Keep wide of the orange ring while one crouches.
+          </li>
+          <li>
+            <b>The gang mower</b> crosses the end of the first straight, back and forth, from about the second lap: its beacon flashes and it beeps before it sets off. Go
+            round the end it is leaving, or wait for it. Run into it and you spin out (head on, you tumble).
           </li>
           <li>A star, a Mega Mushroom or a Bullet ploughs straight through all of it, and a feather sails over most of it.</li>
         </ul>

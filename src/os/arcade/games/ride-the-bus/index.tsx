@@ -652,7 +652,7 @@ function TableView({
         </Big>
       </div>
     ) : (
-      <Answers key={`answers-${game.deals}-${q}`} q={q} choices={choices} keys={!shell.touch} onAnswer={onAnswer} />
+      <Answers key={`answers-${game.deals}-${q}`} q={q} choices={choices} onAnswer={onAnswer} />
     );
 
   return (
@@ -740,7 +740,7 @@ const keyFor = (n: number, i: number) => (n === 2 ? `${i === 0 ? 'ArrowLeft' : '
  * The answer buttons for one question. Mounted fresh for every question (keyed by hand and card), so a tap that
  * arrives within ANSWER_GUARD of them appearing belongs to the button that was there before, and is dropped.
  */
-function Answers({ q, choices, keys, onAnswer }: { q: number; choices: readonly Guess[]; keys: boolean; onAnswer: (g: Guess) => void }) {
+function Answers({ q, choices, onAnswer }: { q: number; choices: readonly Guess[]; onAnswer: (g: Guess) => void }) {
   const [shownAt] = useState(() => performance.now());
   return (
     <div className={`g-ride-the-bus-answers is-${choices.length}`} role="group" aria-label={TITLES[q]}>
@@ -757,7 +757,6 @@ function Answers({ q, choices, keys, onAnswer }: { q: number; choices: readonly 
         >
           <AnswerIcon guess={g} />
           <span>{ANSWER_LABEL[g]}</span>
-          {keys && <kbd aria-hidden="true">{choices.length === 2 ? (i === 0 ? '←' : '→') : i + 1}</kbd>}
         </button>
       ))}
     </div>
