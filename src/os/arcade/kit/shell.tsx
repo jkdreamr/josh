@@ -47,6 +47,12 @@ export type GameShellProps = {
   quickNote?: string;
   /** Quick play: the Start card's button for playing on this device with the game's own settings (default Play Offline). */
   soloLabel?: string;
+  /**
+   * Quick play: a picker shown with the Start card's Play (a mode, say), and the pool it picks (`useOnline().pool`):
+   * quick play only puts people in the same pool together.
+   */
+  quickSetup?: ReactNode;
+  quickPool?: string;
   className?: string;
   style?: CSSProperties;
 };
@@ -97,7 +103,7 @@ const isTouchDevice = () =>
  * (pause, restart, mute, back to arcade), live score, key capture and auto-pause.
  * Put the game's logic in a child component and read the shell with useShell().
  */
-export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, botNames, defaultBots = 0, quickNote, soloLabel = 'Play Offline', roomCode, className, style }: GameShellProps) {
+export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, botNames, defaultBots = 0, quickNote, soloLabel = 'Play Offline', quickSetup, quickPool, roomCode, className, style }: GameShellProps) {
   const host = useContext(ArcadeHost);
   const invite = useContext(ArcadeInvite);
   const joinCode = roomCode ?? invite;
@@ -156,6 +162,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [quick, setQuick] = useState(false);
   const quickRef = useRef(false);
   quickRef.current = quick;
+  /** The quick-play pool of the room we're in ('' for none). */
+  const [pool, setPool] = useState('');
   const [gatherAt, setGatherAt] = useState<number | null>(null);
   const quickTries = useRef(0);
   const findMatchRef = useRef<() => void>(() => {});
@@ -323,6 +331,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineError('');
     setOnlineInProgress(false);
     setQuick(false);
+    setPool('');
     setGatherAt(null);
     setWatching(false);
     clearBots();
@@ -388,6 +397,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
         quickRef.current = true;
         setQuick(true);
       }
+      setPool(link.pool);
       router.join(message.round);
       raceRef.current.seat = message.seat;
       setOnlineCode(message.code);
@@ -574,14 +584,14 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineBusy(true);
     setOnlineError('');
     try {
-      const code = await quickRoom(meta.id);
+      const code = await quickRoom(meta.id, ARCADE_API, quickPool);
       if (quickRef.current) connectRoom(code, true);
     } catch (error) {
       setOnlineError(error instanceof Error ? error.message : 'Could Not Find A Match');
     } finally {
       setOnlineBusy(false);
     }
-  }, [connectRoom, meta.id]);
+  }, [connectRoom, meta.id, quickPool]);
   findMatchRef.current = () => void findMatch();
   /** The Start card's Play: straight to finding a match, or first a name to play under (kept for next time). */
   const play = useCallback((named = false) => {
@@ -857,6 +867,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       transport={onlineTransport}
       handoffs={onlineHandoffs}
       quick={quick}
+      pool={pool}
       watching={watching}
       watchers={watchers}
     >
@@ -997,6 +1008,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 <h2>{meta.title}</h2>
                 <p>{meta.controls}</p>
                 {setup && !quickOn && <div className="arcade-setup">{setup}</div>}
+                {quickOn && quickSetup && <div className="arcade-setup">{quickSetup}</div>}
                 <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={quickOn ? () => play() : start} ref={autoFocus}>
                   Play
                 </button>

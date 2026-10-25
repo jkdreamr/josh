@@ -7,6 +7,9 @@ export const ROOM_MESSAGE_MAX_BYTES = 8 * 1024;
 /** The seats a new room for a game gets: what its spec asks for, two at least and MAX_SEATS at most. */
 export const seatsFor = (spec: { seats: number }) => Math.max(2, Math.min(MAX_SEATS, Math.floor(spec.seats) || 2));
 
+/** A quick-play pool's name (a game's mode, say): quick play keeps a game's rooms of one pool apart from the others'. */
+export const isPool = (v: unknown): v is string => typeof v === 'string' && /^[a-z0-9-]{1,16}$/.test(v);
+
 export type RoomPlayer = { seat: number; name: string };
 /**
  * started: a round is under way (false again once it ends: see endRound).
@@ -14,11 +17,12 @@ export type RoomPlayer = { seat: number; name: string };
  * allowBots: the game can fill empty seats with bots; bots: how many the host asked for (see botSeats).
  * listed: a public room, which the arcade's Open Rooms lists while someone can join it (see roomListing).
  * inLobby: the room's line is in Open Rooms right now, so only rooms that were listed ever need to take it out.
- * quick: a quick-play room, which gathers people until startAt (epoch ms) and then starts its one round on its own.
+ * quick: a quick-play room, which gathers people until startAt (epoch ms) and then starts its one round on its own;
+ * pool: the quick-play pool it gathers for (see isPool), if any.
  * watch: the game can be watched (spectators see the host's game, take no seat and send nothing); watchable: the host
  * lets them (on unless the host turns it off).
  */
-export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; roundBots?: number; allowBots?: boolean; bots?: number; listed?: boolean; inLobby?: boolean; quick?: boolean; startAt?: number; watch?: boolean; watchable?: boolean };
+export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; roundBots?: number; allowBots?: boolean; bots?: number; listed?: boolean; inLobby?: boolean; quick?: boolean; startAt?: number; pool?: string; watch?: boolean; watchable?: boolean };
 export type ClientRoomMessage =
   | { t: 'start' }
   | { t: 'over'; round: number }
@@ -28,7 +32,7 @@ export type ClientRoomMessage =
   | { t: 'watch'; d: unknown }
   | { t: 'msg'; to?: number; d: unknown }
   | { t: 'signal'; to: number; d: unknown }
-  | { t: 'result'; round: number; winner: number | null };
+  | { t: 'result'; round: number; winner: number | null; team?: number[] };
 
 export const makeRoomCode = (bytes: ArrayLike<number>): string => {
   if (bytes.length < ROOM_CODE_LENGTH) throw new RangeError('four random bytes are required');
@@ -110,7 +114,7 @@ export function roomListing(room: RoomState, players: RoomPlayer[], bots: number
   const open = joinable(room, players.length);
   const watching = !open && room.started && canWatchRoom(room, watchers);
   if (!open && !watching) return null;
-  const quick = room.quick ? { quick: true as const, ...(gathering(room) ? { startAt: room.startAt } : {}) } : {};
+  const quick = room.quick ? { quick: true as const, ...(gathering(room) ? { startAt: room.startAt } : {}), ...(room.pool ? { pool: room.pool } : {}) } : {};
   const watch = room.watch && room.watchable !== false ? { watch: true as const } : {};
   return { code: room.code, game: room.game, host: host.name, players: players.length, bots, seats: room.seats, started: room.started, lateJoin: !!room.lateJoin, ...quick, ...watch, ...(watching ? { watchOnly: true as const } : {}) };
 }
@@ -119,12 +123,12 @@ export function roomListing(room: RoomState, players: RoomPlayer[], bots: number
 export type LobbyRow = { listing: OpenRoom; updated: number };
 
 /**
- * The quick-play room to send someone to: of the ones still gathering with a seat to spare and time left to get
- * there, the fullest (so rooms fill up rather than split), then the one starting soonest.
+ * The quick-play room to send someone to: of the ones in the same pool (none, or `pool`) still gathering with a seat to
+ * spare and time left to get there, the fullest (so rooms fill up rather than split), then the one starting soonest.
  */
-export function pickQuick(rows: LobbyRow[], now: number): OpenRoom | null {
+export function pickQuick(rows: LobbyRow[], now: number, pool?: string): OpenRoom | null {
   const open = rows.map((row) => row.listing).filter((r, i) =>
-    r.quick && !r.started && !r.watchOnly && r.players < r.seats && (r.host !== '' || rows[i].updated > now - QUICK_PENDING_MS) && (r.startAt ?? Infinity) > now + QUICK_LATE_MS,
+    r.quick && !r.started && !r.watchOnly && r.players < r.seats && (r.pool ?? '') === (pool ?? '') && (r.host !== '' || rows[i].updated > now - QUICK_PENDING_MS) && (r.startAt ?? Infinity) > now + QUICK_LATE_MS,
   );
   open.sort((a, b) => b.players - a.players || (a.startAt ?? 0) - (b.startAt ?? 0) || a.code.localeCompare(b.code));
   return open[0] ?? null;
@@ -216,14 +220,18 @@ export function parseRoomMessage(raw: string | ArrayBuffer, seats: number): Clie
     return validSeat(message.to, seats) && Object.hasOwn(message, 'd') ? { t: 'signal', to: message.to, d: message.d } : null;
   }
   if (message.t === 'result') {
-    return Number.isSafeInteger(message.round) && (message.round as number) >= 0 && (message.winner === null || validSeat(message.winner, seats))
-      ? { t: 'result', round: message.round as number, winner: message.winner as number | null }
-      : null;
+    if (!Number.isSafeInteger(message.round) || (message.round as number) < 0 || !(message.winner === null || validSeat(message.winner, seats))) return null;
+    // a winning team: every seat on it, the winner's among them, each once
+    if (message.team === undefined) return { t: 'result', round: message.round as number, winner: message.winner as number | null };
+    const team = message.team;
+    if (message.winner === null || !Array.isArray(team) || !team.length || team.length > seats || !team.every((s) => validSeat(s, seats)) || new Set(team).size !== team.length || !team.includes(message.winner)) return null;
+    return { t: 'result', round: message.round as number, winner: message.winner as number, team: [...(team as number[])].sort((a, b) => a - b) };
   }
   return null;
 }
 
-export type RoundReports = Record<string, Record<string, number | null>>;
+/** What each seat said won each round: a seat, a winning team's seats, or null for nobody. */
+export type RoundReports = Record<string, Record<string, number | number[] | null>>;
 export type RecordedRounds = number[];
 
 export function agreedWinner(
@@ -231,13 +239,20 @@ export function agreedWinner(
   connectedSeats: Iterable<number>,
   round: number,
 ): number | null {
+  return agreedWinners(reports, connectedSeats, round)?.[0] ?? null;
+}
+
+/** The seats every connected seat agrees won a round (one, or a whole team), or null when they don't all agree. */
+export function agreedWinners(reports: RoundReports, connectedSeats: Iterable<number>, round: number): number[] | null {
   const connected = [...new Set(connectedSeats)];
   if (connected.length < 2) return null;
   const roundReports = reports[String(round)];
   if (!roundReports) return null;
   const winners = connected.map((seat) => roundReports[String(seat)]);
   if (winners.some((winner) => winner === undefined || winner === null)) return null;
-  return winners.every((winner) => winner === winners[0]) ? winners[0]! : null;
+  const key = (w: number | number[]) => (Array.isArray(w) ? w : [w]).join();
+  const first = winners[0]!;
+  return winners.every((winner) => key(winner!) === key(first)) ? (Array.isArray(first) ? first : [first]) : null;
 }
 
 export function markRoundRecorded(recorded: RecordedRounds, round: number): boolean {
