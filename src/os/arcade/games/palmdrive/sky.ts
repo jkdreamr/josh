@@ -278,6 +278,8 @@ function horizonHills(THREE: Three, scene: T.Scene, s: SkyLook, cx: number, cz: 
 }
 
 export type Atmosphere = {
+  /** Whether the sun casts real shadows here (so the karts' painted blobs under them can go). */
+  shadows: boolean;
   /** Follows the camera (the dome) and the kart (the sun's shadows); dim darkens the sky (lights out, the blackout). */
   tick: (camera: T.Camera, focus: { x: number; z: number } | null, clock: number, dim: number) => void;
   /** Turns shadows on for everything that stands up, once the scene is built. */
@@ -336,6 +338,7 @@ export function buildAtmosphere(THREE: Three, scene: T.Scene, renderer: T.WebGLR
   const texel = 110 / 2048;
   const at = new THREE.Vector3();
   return {
+    shadows,
     tick(camera, focus, clock, dim) {
       dome.uniforms.uTime.value = clock;
       dome.uniforms.uDim.value = dim;

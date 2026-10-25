@@ -13,7 +13,7 @@ import { buildFairway, mowerGaps, onPath } from './fairway';
 import { SKIES, buildAtmosphere, qualityOf } from './sky';
 import { skyWater, waterTick } from './skywater';
 import { floraTick } from './flora';
-import { kartDetail, kartRim } from './kart';
+import { kartDetail, kartWheel, mergeByMaterial } from './kart';
 import { knollGeometry } from './dish';
 import { bake, bakeInPlace, vcMats } from './landmarks';
 import { GROUNDS, asphaltTexture, curbTexture, grassTufts, groundMaterial, lawnMaterial, roadMaterial, wallTexture } from './surfaces';
@@ -257,8 +257,8 @@ function makeKart(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: K
     pivot.position.set(x, y, z);
     const spin = new THREE.Group();
     pivot.add(spin);
-    add(spin, geo.wheel, dark, 0, 0, 0, r, w, r).rotation.z = Math.PI / 2;
-    spin.add(kartRim(THREE, shared, Math.sign(x) * (w / 2 + 0.01), r));
+    // (the tire, its tread and the rim in one mesh: see kart.ts)
+    spin.add(kartWheel(THREE, shared, r, w, Math.sign(x)));
     body.add(pivot);
     spinners.push(spin);
     if (front) steer.push(pivot);
@@ -317,6 +317,8 @@ function makeKart(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: K
   }
   bullet.visible = false;
   root.add(bullet);
+  // (its static parts merged by material: see kart.ts)
+  mergeByMaterial(THREE, body, new Set(sparks));
   body.scale.setScalar(0.85);
   const shadow = new THREE.Mesh(geo.plane, shared.shadow);
   shadow.rotation.x = -Math.PI / 2;
@@ -2113,6 +2115,9 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     if (h.kind === 'golfer') {
       golfKit ??= golferKit(THREE);
       const v = makeGolfer(THREE, geo, golfKit, rand, 'walk');
+      // (each limb baked into one mesh, the rest of them another: see landmarks.ts)
+      for (const limb of [...v.legs, ...v.arms]) bakeInPlace(THREE, limb);
+      bakeInPlace(THREE, v.g, [...v.legs, ...v.arms]);
       v.g.scale.setScalar(1.15);
       v.g.position.set(h.x, 0, h.z);
       scene.add(v.g);
@@ -2123,6 +2128,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     if (h.kind === 'cart') {
       golfKit ??= golferKit(THREE);
       const v = makeCart(THREE, geo, golfKit, rand);
+      bakeInPlace(THREE, v.g, v.wheels);
       v.g.position.set(h.x, 0, h.z);
       scene.add(v.g);
       const at = pointAt(t, h.along, h.at);
@@ -2150,6 +2156,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         scene.add(marker);
       }
       const golfer = makeGolfer(THREE, geo, golfKit, rand, 'swing');
+      for (const o of golfer.moving) if (o.children.length) bakeInPlace(THREE, o);
+      bakeInPlace(THREE, golfer.g, golfer.moving);
       const ry = Math.atan2(-uz, ux);
       golfer.g.rotation.y = ry;
       golfer.g.position.set(tee.x - Math.sin(ry) * 0.85, 0, tee.z - Math.cos(ry) * 0.85);
@@ -2158,7 +2166,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const bag = golfBag(THREE, geo, golfKit, golfKit.bags[i % golfKit.bags.length]);
       bag.position.set(tee.x - Math.sin(ry) * 2 - ux * 1.2, 0, tee.z - Math.cos(ry) * 2 - uz * 1.2);
       bag.rotation.z = 0.15;
-      scene.add(bag);
+      scene.add(bakeInPlace(THREE, bag));
       const ball = new THREE.Mesh(ballGeo, ballMat);
       ball.visible = false;
       const streak = new THREE.Mesh(streakGeo, streakMat);
@@ -2336,7 +2344,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const waterTex = ponds.length ? waterTexture(THREE) : null;
   if (waterTex) {
     waterTex.repeat.set(1, 1);
-    const waterMat = new THREE.MeshPhongMaterial({ color: 0xffffff, map: waterTex, shininess: 90, specular: 0x6688aa });
+    // (on the road courses the sky mirrored in it, see skywater.ts)
+    const waterMat = sky ? skyWater(THREE, sky, 0x1d4a50, 0x3e7a70) : new THREE.MeshPhongMaterial({ color: 0xffffff, map: waterTex, shininess: 90, specular: 0x6688aa });
     ponds.forEach((p, k) => {
       const disc = new THREE.CircleGeometry(p.r, Math.max(48, Math.round(p.r * 3)));
       disc.rotateX(-Math.PI / 2);
@@ -2697,10 +2706,12 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   // (everything that stands up casts the sun's shadow, where the screen can afford it; of a kart, only its body, its
   // detail and the driver's helmet, which are most of its shadow for a fraction of the draws)
   for (const v of karts) {
+    // (with real shadows the painted blob under each kart is not drawn: the camera never sees layer 2)
+    if (atmos?.shadows) v.shadow.layers.set(2);
     v.root.traverse((o) => (o.userData.noCast = true));
     for (const o of v.body.children) {
       const m = o as T.Mesh;
-      if (o === v.body.children[0] || o.name === 'detail' || (m.geometry === geo.ball && m.material === kartShared.white)) o.userData.noCast = false;
+      if (o.userData.kartBody || o.name === 'detail' || (m.geometry === geo.ball && m.material === kartShared.white)) o.userData.noCast = false;
     }
   }
   atmos?.shade(scene);

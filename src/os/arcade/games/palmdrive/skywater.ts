@@ -122,7 +122,7 @@ export function skyWater(THREE: Three, s: SkyLook, deep: number, shallow: number
         sky = mix(sky, uZenith, smoothstep(0.4, 1.0, h));
         float fres = 0.03 + 0.97 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
         vec3 body = mix(uDeep, uShallow, 0.3 + 0.25 * n.x);
-        vec3 c = mix(body, sky, clamp(0.2 + 0.8 * fres, 0.0, 0.95));
+        vec3 c = mix(body, sky, clamp(0.15 + 0.75 * fres, 0.0, 0.82));
         float m = max(dot(R, uSun), 0.0);
         c += uSunCol * (pow(m, 220.0) * mix(3.0, 1.2, uMoon) + pow(m, 24.0) * 0.18);
         gl_FragColor = vec4(c, 1.0);

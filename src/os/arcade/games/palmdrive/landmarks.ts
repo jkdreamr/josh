@@ -512,3 +512,44 @@ export function bakeInPlace(THREE: Three, g: T.Object3D, moving: T.Object3D[] = 
   }
   return g;
 }
+
+/**
+ * Static batching: everything plain-colored added to the scene since `before` (a snapshot of its children) that does not
+ * move (not under anything in `moving`) is baked into a few meshes per 120 m cell, keeping emissive glow; textured,
+ * see-through and instanced meshes are left as they are. Many small pieces of scenery, a handful of draws.
+ */
+export function batchStatic(THREE: Three, scene: T.Scene, before: Set<T.Object3D>, moving: T.Object3D[]) {
+  scene.updateMatrixWorld(true);
+  const skip = new Set(moving);
+  const CELL = 120;
+  const cells = new Map<string, { basic: boolean; emissive: number; parts: { g: T.BufferGeometry; m: T.Matrix4; color: [number, number, number] }[] }>();
+  const gone: T.Mesh[] = [];
+  const box = new THREE.Box3();
+  const mid = new THREE.Vector3();
+  const walk = (o: T.Object3D) => {
+    if (skip.has(o) || !o.visible) return;
+    const m = o as T.Mesh;
+    if (m.isMesh && !(m as T.InstancedMesh).isInstancedMesh && !m.children.length) {
+      const mat = m.material as T.MeshLambertMaterial & T.MeshBasicMaterial;
+      if (!Array.isArray(m.material) && !mat.map && !mat.transparent && !mat.vertexColors && mat.side !== THREE.DoubleSide && (mat.isMeshLambertMaterial || mat.isMeshBasicMaterial) && !m.userData.flat) {
+        box.setFromObject(m).getCenter(mid);
+        const emissive = mat.isMeshLambertMaterial && mat.emissive ? mat.emissive.getHex() : 0;
+        const key = `${Math.floor(mid.x / CELL)},${Math.floor(mid.z / CELL)},${mat.isMeshBasicMaterial ? 'b' : 'l'}${emissive}`;
+        let grp = cells.get(key);
+        if (!grp) cells.set(key, (grp = { basic: !!mat.isMeshBasicMaterial, emissive, parts: [] }));
+        grp.parts.push({ g: m.geometry, m: m.matrixWorld.clone(), color: [mat.color.r, mat.color.g, mat.color.b] });
+        gone.push(m);
+      }
+    }
+    for (const c of [...o.children]) walk(c);
+  };
+  for (const o of [...scene.children]) if (!before.has(o)) walk(o);
+  for (const m of gone) m.removeFromParent();
+  const mats = new Map<string, T.Material>();
+  for (const grp of cells.values()) {
+    const key = `${grp.basic}${grp.emissive}`;
+    let mat = mats.get(key);
+    if (!mat) mats.set(key, (mat = grp.basic ? new THREE.MeshBasicMaterial({ vertexColors: true }) : new THREE.MeshLambertMaterial({ vertexColors: true, emissive: grp.emissive })));
+    scene.add(new THREE.Mesh(mergeColored(THREE, grp.parts), mat));
+  }
+}

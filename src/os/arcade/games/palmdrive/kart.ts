@@ -80,13 +80,65 @@ function rimGeometry(THREE: Three, prims: Kit['prims']) {
   return build(THREE, parts);
 }
 
-/** A rim for one of a kart's wheels (radius r, its outer face at x), turning with the wheel it is added to. */
-export function kartRim(THREE: Three, key: object, x: number, r: number) {
+const wheels = new WeakMap<object, Map<string, T.BufferGeometry>>();
+/**
+ * One of a kart's wheels, r in radius and w wide, its rim on the outer face (side: -1 left, 1 right): the tire with its
+ * tread and the spoked rim in one mesh, turning with the group it is added to.
+ */
+export function kartWheel(THREE: Three, key: object, r: number, w: number, side: number) {
   const kit = kitOf(THREE, key);
-  const m = new THREE.Mesh(kit.rim, kit.mat);
-  m.position.set(x, 0, 0);
-  m.scale.set(Math.sign(x) || 1, r, r);
-  return m;
+  let cache = wheels.get(key);
+  if (!cache) wheels.set(key, (cache = new Map()));
+  const id = `${r},${w},${side}`;
+  let geo = cache.get(id);
+  if (!geo) {
+    const parts: { g: T.BufferGeometry; m: T.Matrix4; c: RGB }[] = [];
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2));
+    const tire = new THREE.CylinderGeometry(1, 1, 1, 18);
+    parts.push({ g: tire, m: new THREE.Matrix4().compose(new THREE.Vector3(), q, new THREE.Vector3(r, w, r)), c: [0.105, 0.11, 0.13] });
+    // (the tread: blocks round the crown, a shade lighter)
+    for (let k = 0; k < 14; k++) {
+      const a = (k / 14) * Math.PI * 2;
+      parts.push({ g: kit.prims.box, m: new THREE.Matrix4().compose(new THREE.Vector3(0, Math.cos(a) * r, Math.sin(a) * r), new THREE.Quaternion().setFromEuler(new THREE.Euler(a, 0, 0)), new THREE.Vector3(w * 0.8, 0.03, r * 0.18)), c: [0.16, 0.165, 0.18] });
+    }
+    // (the rim on the outer face, mirrored on the left)
+    parts.push({ g: kit.rim, m: new THREE.Matrix4().compose(new THREE.Vector3(side * (w / 2 + 0.01), 0, 0), new THREE.Quaternion(), new THREE.Vector3(side, r, r)), c: [1, 1, 1] });
+    geo = buildColored(THREE, parts);
+    tire.dispose();
+    cache.set(id, geo);
+  }
+  return new THREE.Mesh(geo, kit.mat);
+}
+
+/** Like build, but a part's color multiplies the colors its geometry carries (the rim's own, say), mirrored parts rewound. */
+function buildColored(THREE: Three, parts: { g: T.BufferGeometry; m: T.Matrix4; c: RGB }[]) {
+  const pos: number[] = [];
+  const nrm: number[] = [];
+  const col: number[] = [];
+  const v = new THREE.Vector3();
+  const nm = new THREE.Matrix4();
+  for (const part of parts) {
+    const g = part.g.index ? part.g.toNonIndexed() : part.g;
+    const p = g.getAttribute('position');
+    const n = g.getAttribute('normal');
+    const c = g.getAttribute('color');
+    nm.copy(part.m).invert().transpose();
+    const flip = part.m.determinant() < 0;
+    for (let k = 0; k < p.count; k++) {
+      const kk = flip ? k - (k % 3) + [0, 2, 1][k % 3] : k;
+      v.fromBufferAttribute(p, kk).applyMatrix4(part.m);
+      pos.push(v.x, v.y, v.z);
+      v.fromBufferAttribute(n, kk).transformDirection(nm);
+      nrm.push(v.x, v.y, v.z);
+      col.push(part.c[0] * (c ? c.getX(kk) : 1), part.c[1] * (c ? c.getY(kk) : 1), part.c[2] * (c ? c.getZ(kk) : 1));
+    }
+    if (g !== part.g) g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return out;
 }
 
 /** The detail on a kart in `color` (its driver's suit), in the kart's own frame (+z forward). */
@@ -135,4 +187,48 @@ export function kartDetail(THREE: Three, key: object, color: string) {
   const mesh = new THREE.Mesh(build(THREE, parts), kit.mat);
   mesh.name = 'detail';
   return mesh;
+}
+
+/**
+ * Merges a kart's static body parts that share a material into one mesh each (the paint, the dark parts, the skin, the
+ * helmet), in the body's frame: the same look and the same materials (so a refinish still applies), a fraction of the
+ * draws. Groups and anything in `keep` (the sparks, which blink) are left alone.
+ */
+export function mergeByMaterial(THREE: Three, body: T.Object3D, keep: Set<T.Object3D>) {
+  const byMat = new Map<T.Material, T.Mesh[]>();
+  for (const o of body.children) {
+    const m = o as T.Mesh;
+    if (!m.isMesh || keep.has(o) || o.children.length || Array.isArray(m.material) || o.name === 'detail') continue;
+    let list = byMat.get(m.material);
+    if (!list) byMat.set(m.material, (list = []));
+    list.push(m);
+  }
+  const v = new THREE.Vector3();
+  const nm = new THREE.Matrix4();
+  for (const [mat, list] of byMat) {
+    if (list.length < 2) continue;
+    const pos: number[] = [];
+    const nrm: number[] = [];
+    for (const m of list) {
+      m.updateMatrix();
+      const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry;
+      const p = g.getAttribute('position');
+      const n = g.getAttribute('normal');
+      nm.copy(m.matrix).invert().transpose();
+      for (let k = 0; k < p.count; k++) {
+        v.fromBufferAttribute(p, k).applyMatrix4(m.matrix);
+        pos.push(v.x, v.y, v.z);
+        v.fromBufferAttribute(n, k).transformDirection(nm);
+        nrm.push(v.x, v.y, v.z);
+      }
+      if (g !== m.geometry) g.dispose();
+      m.removeFromParent();
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    const merged = new THREE.Mesh(geo, mat);
+    merged.userData.kartBody = true;
+    body.add(merged);
+  }
 }

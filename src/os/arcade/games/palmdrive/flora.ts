@@ -45,8 +45,8 @@ const rgb = (THREE: Three, hex: number): RGB => {
 };
 
 /** A lump of foliage: an icosphere pushed in and out, darker underneath and on its shaded side, a little ragged. */
-function lump(THREE: Three, seed: number, light: RGB, dark: RGB) {
-  const g = new THREE.IcosahedronGeometry(1, 1);
+function lump(THREE: Three, seed: number, light: RGB, dark: RGB, detail = 1) {
+  const g = new THREE.IcosahedronGeometry(1, detail);
   const p = g.getAttribute('position');
   const r = scatter(seed);
   const bumps = Array.from({ length: 5 }, () => [r() * 6, r() * 6, r() * 6, 0.1 + r() * 0.12]);
@@ -341,4 +341,33 @@ export function shrubs(THREE: Three, scene: T.Scene, dummy: T.Object3D, spots: {
   const g = lump(THREE, 77, rgb(THREE, light), rgb(THREE, dark));
   g.translate(0, 0.45, 0);
   plant(THREE, scene, dummy, g, new THREE.MeshLambertMaterial({ vertexColors: true }), spots.map((s) => ({ x: s.x, z: s.z, s: s.r })), 13);
+}
+
+/**
+ * Pines (Monterey and Aleppo pines on the golf course): a straight trunk, tiers of drooping, ragged needle-clumps
+ * narrowing to a point, dark blue-green; h is each tree's height.
+ */
+export function pineTrees(THREE: Three, scene: T.Scene, dummy: T.Object3D, pines: { x: number; z: number; h: number }[]) {
+  if (!pines.length) return;
+  const r = scatter(97);
+  const bark = rgb(THREE, 0x5a4232);
+  const light = rgb(THREE, 0x4a7a4a);
+  const dark = rgb(THREE, 0x16301e);
+  const parts: { g: T.BufferGeometry; m: T.Matrix4; color?: RGB }[] = [];
+  parts.push(limb(THREE, [0, -0.02, 0], [0, 0.95, 0], 0.035, 0.012, bark));
+  // (tiers of clumps round the trunk, wide low down and narrowing to the top)
+  for (let tier = 0; tier < 6; tier++) {
+    const y = 0.3 + tier * 0.12;
+    const spread = 0.26 * (1 - tier / 6.5);
+    const n = tier < 4 ? 4 : 3;
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + tier * 0.7 + r() * 0.4;
+      const s = 0.07 + spread * 0.35;
+      parts.push({ g: lump(THREE, 500 + tier * 7 + k, light, dark, 0), m: at(THREE, Math.cos(a) * spread * 0.7, y, Math.sin(a) * spread * 0.7, s * 1.3, s * 0.6, s * 1.3) });
+    }
+  }
+  parts.push({ g: lump(THREE, 599, light, dark, 0), m: at(THREE, 0, 0.98, 0, 0.05, 0.1, 0.05) });
+  const g = merge(THREE, parts);
+  for (const p of parts) p.g.dispose();
+  plant(THREE, scene, dummy, g, swaying(THREE, 'pine', 0.4, 0.008), pines.map((p) => ({ x: p.x, z: p.z, s: p.h, sy: p.h })), 17);
 }

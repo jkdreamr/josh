@@ -5,7 +5,7 @@ import type { CourseId } from './courses';
 import { LANDMARKS, deltaS, fromMap, headingOf, locate, pointAt, type P2, type Track } from './track';
 import type { Race } from './logic';
 import { boatHull, merge, modelKit } from './model';
-import { gumTrees, oakTrees, palmTrees, shrubs as shrubsOf } from './flora';
+import { gumTrees, oakTrees, palmTrees, pineTrees, shrubs as shrubsOf } from './flora';
 import { SKIES } from './sky';
 import { campusExtras } from './campus';
 import { boathouse, lakeLife, lilyPads, reedBeds } from './lake';
@@ -14,7 +14,7 @@ import { holstein, knollGeometry, smallDishes } from './dish';
 import { GROUNDS, groundMaterial } from './surfaces';
 import { crowd, crowdTick, goalpost, lightTower, portal, scoreboard } from './stadium';
 import { skyWater } from './skywater';
-import { arcadeWall, bake, church as churchModel, dishTelescope, gableRoof, hall as hallModel, hall, hill, hooverTower, vcMats } from './landmarks';
+import { arcadeWall, bake, batchStatic, church as churchModel, dishTelescope, gableRoof, hall as hallModel, hall, hill, hooverTower, vcMats } from './landmarks';
 
 export type Three = typeof import('three');
 
@@ -627,7 +627,7 @@ export function makeGolfer(THREE: Three, geo: { box: T.BoxGeometry; ball: T.Sphe
     // the shoulders turn with it
     torso.rotation.y = a * 0.25;
   };
-  return { g, legs, arms: arms.children as T.Group[], swing };
+  return { g, legs, arms: arms.children as T.Group[], swing, moving: [swingArms, torso] as T.Object3D[] };
 }
 
 /**
@@ -2442,6 +2442,9 @@ export function greenTexture(THREE: Three) {
  */
 function golf(c: Scenery): SceneryTick {
   const { THREE, scene, t, r, geo, mats, rand, clear, dummy } = c;
+  // (what is already there: everything this adds that never moves is batched at the end, see landmarks.ts)
+  const before = new Set(scene.children);
+  const moving: T.Object3D[] = [];
   const { cx, cz, rx, rz } = bounds(t);
   type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number; rx?: number };
   const flat = -Math.PI / 2;
@@ -2530,6 +2533,7 @@ function golf(c: Scenery): SceneryTick {
     pin.g.position.set(x + off * (rand() - 0.5), 0, z + off * (rand() - 0.5));
     scene.add(pin.g);
     flags.push(pin.flag);
+    moving.push(pin.flag);
     keep(x, z, rad + 2);
   };
 
@@ -2569,6 +2573,7 @@ function golf(c: Scenery): SceneryTick {
     scene.add(ball);
     const dist = Math.hypot(tx - x, tz - z);
     shots.push({ swing: golfer.swing, ball, from: new THREE.Vector3(x, 0.3, z), to: new THREE.Vector3(tx, 0.2, tz), every, phase, flight: 1.6 + dist / 70, high: 10 + dist * 0.18 });
+    moving.push(...golfer.moving, ball);
     keep(x, z, 4);
   };
 
@@ -3019,13 +3024,11 @@ function golf(c: Scenery): SceneryTick {
     else spots.push({ x, z, r: 2.4 + rand() * 2.6 });
   }
   oaks(c, spots);
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.25, 0.4, 1, 6), lambert(0x6b4f37), pines.map((p) => ({ x: p.x, y: p.h * 0.2, z: p.z, sx: 1, sy: p.h * 0.4, sz: 1 })));
-  const cone = new THREE.ConeGeometry(1, 1, 8);
-  const needles = new THREE.MeshLambertMaterial({ color: 0x2f5a35, flatShading: true });
-  for (const [lift, width, tall] of [[0.35, 0.34, 0.45], [0.6, 0.26, 0.38], [0.82, 0.16, 0.3]]) {
-    instances(THREE, scene, dummy, cone, needles, pines.map((p, i) => ({ x: p.x, y: p.h * lift, z: p.z, sx: p.h * width, sy: p.h * tall, sz: p.h * width, ry: i })));
-  }
+  pineTrees(THREE, scene, dummy, pines);
   foothills(c, cx, cz, { x: cx + 260, z: cz - 460 });
+
+  // (all that never moves, a handful of meshes)
+  batchStatic(THREE, scene, before, [...moving, ...flags, ...jets]);
 
   // every frame: golfers swing and their balls fly, the flags flutter and the fountain plays
   const at = new THREE.Vector3();
