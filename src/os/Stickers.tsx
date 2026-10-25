@@ -186,7 +186,7 @@ const UsaFlag = () => {
   );
 };
 
-type Placed = { key: string; label: string; el: ReactNode; left: string; top: string; width: string; rot: number; onClick?: () => void };
+type Placed = { key: string; label: string; el: ReactNode; left: string; top: string; width: string; rot: number; curl?: number; onClick?: () => void };
 
 function Place({ s, interactive }: { s: Placed; interactive?: boolean }) {
   const style = { left: s.left, top: s.top, width: s.width, '--r': `${s.rot}deg` } as CSSProperties;
@@ -211,10 +211,10 @@ function Place({ s, interactive }: { s: Placed; interactive?: boolean }) {
 }
 
 export const lidStickers: Placed[] = [
-  { key: 'stanford', label: 'Stanford', el: <Stanford />, left: '8%', top: '10%', width: '24%', rot: -7 },
+  { key: 'stanford', label: 'Stanford', el: <Stanford />, left: '8%', top: '10%', width: '24%', rot: -7, curl: 0.05 },
   { key: 'near', label: 'NEAR Protocol', el: <Near />, left: '73%', top: '9%', width: '11%', rot: 8 },
   { key: 'stanford-s', label: 'Stanford Cardinal', el: <StanfordS />, left: '14%', top: '40%', width: '8%', rot: 9 },
-  { key: 'korea', label: 'Korea', el: <KoreaFlag />, left: '12%', top: '68%', width: '15%', rot: -9 },
+  { key: 'korea', label: 'Korea', el: <KoreaFlag />, left: '12%', top: '68%', width: '15%', rot: -9, curl: 0.07 },
   { key: 'usa', label: 'USA', el: <UsaFlag />, left: '71%', top: '62%', width: '15%', rot: 7 },
 ];
 
@@ -231,7 +231,7 @@ export function LidStickers() {
 /** Palm-rest stickers for the WebGL laptop: art plus placement on the deck in cm (x from centre, z towards the front). */
 export const palmStickers = [
   { key: 'crv', label: 'CRV - open Work folder', el: <Crv />, x: -11.3, z: 5.6, w: 2.7, rot: -10 },
-  { key: 'cognition', label: 'Cognition - open Work folder', el: <Cognition />, x: 11.1, z: 6.1, w: 5.3, rot: 5 },
+  { key: 'cognition', label: 'Cognition - open Work folder', el: <Cognition />, x: 11.1, z: 6.1, w: 5.3, rot: 5, curl: 0.04 },
 ] as const;
 
 export function PalmStickers({ onCrv, onCognition }: { onCrv: () => void; onCognition: () => void }) {
