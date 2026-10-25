@@ -10,6 +10,11 @@ import { BOULDER, COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, RAMP_H, RAMP_LEN, TU
 import { buildRiver, marshMaterial } from './water';
 import { buildScull, poseScull, scullKit, strokeBody, type Scull, type ScullKit } from './shell';
 import { buildFairway, mowerGaps, onPath } from './fairway';
+import { SKIES, buildAtmosphere, qualityOf } from './sky';
+import { skyWater, waterTick } from './skywater';
+import { floraTick } from './flora';
+import { kartDetail, kartRim } from './kart';
+import { GROUNDS, asphaltTexture, curbTexture, grassTufts, groundMaterial, lawnMaterial, roadMaterial, wallTexture } from './surfaces';
 
 type Three = typeof import('three');
 
@@ -241,6 +246,8 @@ function makeKart(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: K
   add(body, geo.ball, white, 0, 1.3, -0.26, 0.34, 0.32, 0.34);
   add(body, geo.box, paint, 0, 1.36, -0.26, 0.1, 0.36, 0.7);
   add(body, geo.ring, dark, 0, 1.0, 0.3, 0.24, 0.24, 0.24).rotation.x = -0.9;
+  // (its frame, engine, the driver's arms and the rest: see kart.ts)
+  body.add(kartDetail(THREE, shared, color));
   const steer: T.Group[] = [];
   const spinners: T.Group[] = [];
   for (const [x, y, z, r, w, front] of [[-0.8, 0.28, 0.95, 0.28, 0.3, 1], [0.8, 0.28, 0.95, 0.28, 0.3, 1], [-0.84, 0.36, -0.82, 0.36, 0.42, 0], [0.84, 0.36, -0.82, 0.36, 0.42, 0]]) {
@@ -249,7 +256,7 @@ function makeKart(THREE: Three, geo: KartGeo, color: string, hat: Hat, shared: K
     const spin = new THREE.Group();
     pivot.add(spin);
     add(spin, geo.wheel, dark, 0, 0, 0, r, w, r).rotation.z = Math.PI / 2;
-    add(spin, geo.box, white, Math.sign(x) * (w / 2 + 0.01), 0, 0, 0.02, r * 1.3, 0.12);
+    spin.add(kartRim(THREE, shared, Math.sign(x) * (w / 2 + 0.01), r));
     body.add(pivot);
     spinners.push(spin);
     if (front) steer.push(pivot);
@@ -538,6 +545,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const sun = new THREE.DirectionalLight(...look.sun);
   sun.position.set(...(look.sunAt ?? [160, 260, -220]));
   scene.add(sun);
+  // (on the road: the time of day's sky, the hills on the horizon, and the light and shadows to match: see sky.ts)
+  const quality = qualityOf(host);
+  const atmos = r.boat ? null : buildAtmosphere(THREE, scene, gl.renderer, r.course, t, { hemi, sun }, quality);
+  const surf = r.boat ? undefined : GROUNDS[r.course];
 
   const dummy = new THREE.Object3D();
   const geo = {
@@ -599,6 +610,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   ground.position.y = -0.05;
   // (a road in the sky has no ground under it: see skyway() for campus far below; on the water, the marsh all round)
   if (!look.glass) scene.add(ground);
+  if (surf) {
+    (ground.material as T.Material).dispose();
+    field.dispose();
+    ground.material = groundMaterial(THREE, surf);
+  }
   if (r.boat) {
     (ground.material as T.Material).dispose();
     field.dispose();
@@ -616,7 +632,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     }),
   );
   lawn.wrapS = lawn.wrapT = THREE.RepeatWrapping;
-  const lawnMat = new THREE.MeshLambertMaterial({ map: lawn });
+  const lawnMat = surf ? lawnMaterial(THREE, surf) : new THREE.MeshLambertMaterial({ map: lawn });
   // (on the water the channel runs right out to its banks: see water.ts)
   const boat = r.boat;
   if (!look.glass && !boat) {
@@ -625,7 +641,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   }
 
   // the road, curbs, walls and the start
-  const asphalt = texture(
+  const asphalt = surf ? asphaltTexture(THREE, look, surf) : texture(
     THREE,
     canvas(256, 256, (g) => {
       g.fillStyle = look.road;
@@ -691,8 +707,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       if (a > from + 0.1) scene.add(new THREE.Mesh(strip(THREE, t, from, a, lo, hi, 0.04, 6), glassMat));
       from = b;
     }
-  } else if (!boat) scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half, t.half, 0.04, roadLen), new THREE.MeshLambertMaterial({ map: asphalt })));
-  const curbTex = texture(
+  } else if (!boat) scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half, t.half, 0.04, roadLen), surf ? roadMaterial(THREE, look, surf, asphalt) : new THREE.MeshLambertMaterial({ map: asphalt })));
+  const curbTex = surf ? curbTexture(THREE, look) : texture(
     THREE,
     canvas(16, 64, (g) => {
       g.fillStyle = look.curb[0];
@@ -721,7 +737,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half - CURB, -t.half, 0.07, curbLen), curbMat));
   }
   // sandstone walls with a cardinal red band, so the edge of the course always reads
-  const wallTex = texture(
+  const wallTex = surf ? wallTexture(THREE, look) : texture(
     THREE,
     canvas(64, 32, (g) => {
       g.fillStyle = look.wall;
@@ -908,7 +924,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const fencePosts: { x: number; z: number; ry: number; lean: number; len: number }[] = [];
   const leanOf = scatter(5);
   const pondTex = look.edge === 'stakes' ? null : waterTexture(THREE, true);
-  const pondMat = pondTex ? new THREE.MeshBasicMaterial({ map: pondTex, color: 0x9fe6f0 }) : null;
+  const sky = surf ? SKIES[r.course] : undefined;
+  const pondMat = pondTex ? (sky ? skyWater(THREE, sky, look.night ? 0x0a1a2c : 0x1d4458, look.night ? 0x1a3a4c : 0x3c7078) : new THREE.MeshBasicMaterial({ map: pondTex, color: 0x9fe6f0 })) : null;
   const copingMat = new THREE.MeshLambertMaterial({ color: 0xcdb48a, ...(look.night ? { emissive: 0x2a2214 } : {}) });
   const netting: { x: number; z: number; ry: number; len: number }[] = [];
   // (over the sky: a neon lip from the edge of the glass to the brink, lit posts along it and a dark edge under it)
@@ -1399,6 +1416,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     return Math.abs(at.d) > out + margin && !onStreet(t, streets, at.s, at.d, margin + 1) && !onPath(t, r, at.s, at.d, margin + 1);
   };
   const sceneryTick = SCENERY[r.course]({ THREE, scene, t, r, geo, mats, rand, clear, dummy }) || null;
+  // (and the grass along the verges and out across the ground)
+  const tufts = surf ? grassTufts(THREE, scene, t, surf, dummy, clear, quality, !look.joints) : null;
 
   // what the course leaves on the road: mud and oil lie flat, bales, boulders and planters stand in the way, cows
   // and cyclists cross it and buses drive their rounds
@@ -2370,9 +2389,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const boxAge = r.boxes.map(() => 1);
   // (on the water, in the low dawn light, they shine a little brighter, with a rim and a stamped face, or they read as
   // dull brown discs)
-  const coinFace = boat
+  // (and on the road a stamped face too, now)
+  const coinFace = boat || surf
     ? new THREE.MeshLambertMaterial({
-        emissive: 0x7a4c00,
+        emissive: boat ? 0x7a4c00 : 0x5a3800,
         map: texture(
           THREE,
           canvas(64, 64, (g) => {
@@ -2662,6 +2682,16 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   let fovBase = 68;
   let back = 6.6;
 
+  // (everything that stands up casts the sun's shadow, where the screen can afford it; of a kart, only its body, its
+  // detail and the driver's helmet, which are most of its shadow for a fraction of the draws)
+  for (const v of karts) {
+    v.root.traverse((o) => (o.userData.noCast = true));
+    for (const o of v.body.children) {
+      const m = o as T.Mesh;
+      if (o === v.body.children[0] || o.name === 'detail' || (m.geometry === geo.ball && m.material === kartShared.white)) o.userData.noCast = false;
+    }
+  }
+  atmos?.shade(scene);
   const view: View = {
     gl,
     camera,
@@ -3459,6 +3489,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         camera.position.set(cx + jx, cy + jy, cz);
       }
       camera.lookAt(focusX + Math.sin(camYaw + flip) * 4, 1.15 + (pose ? Math.max(-0.5, pose.y) * 0.6 : k.y * 0.3), focusZ + Math.cos(camYaw + flip) * 4);
+      atmos?.tick(camera, { x: focusX + Math.sin(camYaw + flip) * 22, z: focusZ + Math.cos(camYaw + flip) * 22 }, clock, Math.max(dim * 0.55, dark * 0.5));
+      tufts?.tick(clock, camera);
+      floraTick(clock);
+      waterTick(clock);
       const fov = fovBase + (k.boost > 0 ? 9 : 0) + Math.min(5, Math.max(0, k.v - 15) * 0.3);
       if (Math.abs(camera.fov - fov) > 0.05) {
         camera.fov = damp(camera.fov, fov, 4, dt);
