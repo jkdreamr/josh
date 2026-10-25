@@ -9,7 +9,12 @@
 // true where those calls are made (solo and the host). Window glass is simpler: whoever's shot, swing or blast breaks
 // it breaks it on their own screen and tells the host, who tells everyone (glass only ever breaks, so nobody can
 // disagree about it). Doors are the host's to open and shut (a guest asks), and to knock off their hinges.
+//
+// In duos and squads, eggs play in teams that can't hurt each other. An egg's owner knocks it down (rather than
+// cracking it) while a teammate still stands, bleeds it out, and cracks it once nobody on its team is standing. A
+// teammate reviving it says so as it goes, and the host stands it back up once the revive is done.
 import {
+  AMMO_BOX,
   BOOST,
   FLARE_WAIT,
   HP_MAX,
@@ -33,6 +38,9 @@ import {
   ammoCap,
   armorMult,
   damageOf,
+  isAmmo,
+  isMat,
+  isUse,
   isWeapon,
   reloadOf,
   rng32,
@@ -202,12 +210,13 @@ export type Mode = 'solo' | 'duos' | 'squads';
 export const MODES: readonly Mode[] = ['solo', 'duos', 'squads'];
 export const isMode = (v: unknown): v is Mode => MODES.includes(v as Mode);
 export const TEAM_SIZE: Record<Mode, number> = { solo: 1, duos: 2, squads: 4 };
+export const MODE_NAMES: Record<Mode, string> = { solo: 'Solo', duos: 'Duos', squads: 'Squads' };
 /** The most teams a match has: fifty eggs one each. */
 export const MAX_TEAMS = 50;
 /**
  * Knocked down (in duos and squads, while a teammate still stands): an egg crawls at CRAWL of its pace, can't shoot,
- * and bleeds DOWN_HP away over BLEED_T seconds. A teammate holding the interact key within REVIVE_R for REVIVE_T
- * seconds gets it back up with REVIVE_HP.
+ * and bleeds DOWN_HP away over BLEED_T seconds (not while a teammate revives it). A teammate holding the interact key
+ * within REVIVE_R for REVIVE_T seconds gets it back up with REVIVE_HP.
  */
 export const DOWN_HP = 100;
 export const BLEED_T = 30;
@@ -218,9 +227,9 @@ export const REVIVE_HP = 30;
 /** How long a ping marks its spot for the team, and the wait between two of one egg's. */
 export const PING_T = 8;
 export const PING_COOL = 0.6;
-/** Each team's color, for its ring, its name tags and its pings. */
-export const TEAM_COLORS = ['#2ee6c9', '#ffb020', '#ff5ca8', '#7c8cff', '#9be22e', '#ff6a3d', '#3fc1ff', '#d97cff'];
-export const teamColor = (team: number) => TEAM_COLORS[((team % TEAM_COLORS.length) + TEAM_COLORS.length) % TEAM_COLORS.length];
+/** The ring and name tags of the eggs on your team, and each one's own color (by its place on the team) for its pings and on the team panel. */
+export const TEAM_COLOR = '#2ee6c9';
+export const MATE_COLORS = ['#2ee6c9', '#ffb020', '#ff5ca8', '#9b8cff'];
 export type Phase = 'bus' | 'drop' | 'ground' | 'out';
 export const PHASES: readonly Phase[] = ['bus', 'drop', 'ground', 'out'];
 export type Kind = 'player' | 'bot' | 'remote';
@@ -230,8 +239,10 @@ export type Kind = 'player' | 'bot' | 'remote';
  */
 export type Cause = WeaponId | MeleeId | 'grenade' | 'mirv' | 'impulse' | 'sauce' | 'barrel' | 'storm' | 'left' | 'bleed';
 export const CAUSES: readonly Cause[] = [...WEAPON_IDS, ...MELEE_IDS, 'grenade', 'mirv', 'impulse', 'sauce', 'barrel', 'storm', 'left', 'bleed'];
-/** What the drop key puts down: a slot's gun, melee weapon or one throwable, a consumable, some ammo or material. */
+/** What the drop key puts down: a slot's gun, melee weapon or one throwable, one consumable, a box of ammo or some material. */
 export type Drop = number | UseId | Ammo | Mat;
+/** How much of a material one drop puts down. */
+export const MAT_DROP = 30;
 /** What an egg can have in hand. */
 export type Held = WeaponId | MeleeId | ThrowId;
 export const HELD: readonly Held[] = [...WEAPON_IDS, ...MELEE_IDS, ...THROW_IDS];
@@ -273,7 +284,7 @@ export type Input = {
   hold: boolean;
   /** Mark this spot for the team. */
   ping: { x: number; z: number } | null;
-  /** Put this down for a teammate (see Drop). */
+  /** Put this down at our feet, for a teammate (see Drop). */
   drop: Drop | null;
 };
 export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null, hold: false, ping: null, drop: null });
@@ -284,9 +295,10 @@ export type Snap = { at: number; x: number; z: number; y: number; aim: number; v
 export type Ai = {
   /**
    * Where we're off to: loot, a chest (or fridge, or locker) to open, a crate (or toilet, or hay bale) to smash, a
-   * campfire to warm up at, a bank vault's door to open, a tree, rock or car to harvest.
+   * campfire to warm up at, a bank vault's door to open, a tree, rock or car to harvest; in teams, a knocked teammate
+   * to revive (its id in `item`) or the team to catch up with.
    */
-  goal: 'drop' | 'loot' | 'chest' | 'smash' | 'fire' | 'zone' | 'roam' | 'chase' | 'harvest' | 'vault';
+  goal: 'drop' | 'loot' | 'chest' | 'smash' | 'fire' | 'zone' | 'roam' | 'chase' | 'harvest' | 'vault' | 'revive' | 'mate';
   gx: number;
   gz: number;
   item: number;
@@ -370,6 +382,9 @@ export type Ai = {
   harvestCool: number;
   /** An edit to make once we've stopped walking, aimed this way. */
   editA: number;
+  /** In teams: the wait before we next ping a target for the team, and before we next put something down for a teammate. */
+  pingCool: number;
+  shareCool: number;
 };
 
 export type Fighter = {
@@ -489,9 +504,9 @@ export type Fighter = {
   knockBy: number;
   knockCause: Cause | null;
   downAt: number;
-  /** The knocked teammate it's reviving (-1 for none), and for how long so far. */
+  /** The knocked teammate it's reviving (-1 for none), and our clock when it started. */
   reviving: number;
-  reviveT: number;
+  reviveAt: number;
   /** Its last ping for the team, and when (match time). */
   pingX: number;
   pingZ: number;
@@ -525,7 +540,12 @@ export type Zone = { k: 'flour' | 'sauce' | 'jam' | 'bush'; x: number; z: number
 
 export type Thud = 'tree' | 'rock' | 'wall' | 'window' | 'door' | 'bars' | 'crate' | 'chest' | 'barrel' | 'car' | 'fence' | 'table' | 'post' | 'fire' | 'log' | 'shelf' | 'seat' | 'built' | 'egg' | 'pan' | 'ground';
 
-/** Things that happened this frame, for sounds, effects and the network. `net` marks news that came from it. */
+/**
+ * Things that happened this frame, for sounds, effects and the network. `net` marks news that came from it. In teams:
+ * `knock` an egg knocked down, `revive` one starting to revive a knocked teammate (`to` -1: it stopped), `ask` a guest
+ * done reviving asking the host to stand the teammate up, `revived` the host's word that it stands, `ping` a spot marked
+ * for the team. An `out` that was `down` finished off a knocked egg.
+ */
 export type Ev = (
   | { t: 'beep' }
   | { t: 'go' }
@@ -557,7 +577,7 @@ export type Ev = (
   | { t: 'empty'; f: number }
   | { t: 'use'; f: number; what: UseId }
   | { t: 'used'; f: number; what: UseId }
-  | { t: 'out'; f: number; by: number; w: Cause; place: number }
+  | { t: 'out'; f: number; by: number; w: Cause; place: number; down?: boolean }
   | { t: 'knock'; f: number; by: number; w: Cause }
   | { t: 'revive'; f: number; to: number }
   | { t: 'ask'; f: number; to: number }
@@ -584,8 +604,6 @@ export type Match = {
   mode: Mode;
   /** Fighter ids by team. */
   teams: number[][];
-  /** When each team was last seen with nobody standing (the host's, for taking out a knocked egg whose owner never does). */
-  wipedAt: Map<number, number>;
   /** Match time in seconds; negative during the countdown. */
   time: number;
   /** This client's own running clock, for timing what arrives over the network. */
@@ -923,19 +941,23 @@ export const owned = (f: Fighter) => f.kind !== 'remote';
 export const aliveCount = (m: Match) => m.fighters.reduce((n, f) => n + (alive(f) ? 1 : 0), 0);
 /** In and on its feet: not out, nor knocked down. */
 export const upright = (f: Fighter) => f.phase !== 'out' && !f.down;
-/** On the same team (an egg is on its own). */
+/** On the same team (in solo, an egg is on its own). */
 export const mates = (a: Fighter, b: Fighter) => a.team === b.team;
 /** The eggs on a team. */
 export const teamOf = (m: Match, team: number): Fighter[] => (m.teams[team] ?? []).map((id) => m.fighters[id]);
 /** Whether a team has anyone still on their feet, but `skip`. */
 export const teamUp = (m: Match, team: number, skip?: Fighter) => (m.teams[team] ?? []).some((id) => m.fighters[id] !== skip && upright(m.fighters[id]));
-/** Teams with anyone still in (knocked counts), and how many teams there are. */
+/** Teams with anyone still in (knocked counts). */
 export function teamsLeft(m: Match) {
   let n = 0;
   for (const ids of m.teams) if (ids.some((id) => alive(m.fighters[id]))) n++;
   return n;
 }
+/** How many teams there are. */
 export const teamCount = (m: Match) => m.teams.reduce((n, ids) => n + (ids.length ? 1 : 0), 0);
+/** An egg's place on its team (0 for the first), for its color there. */
+export const mateIndex = (m: Match, f: Fighter) => Math.max(0, (m.teams[f.team] ?? []).indexOf(f.id));
+export const mateColor = (m: Match, f: Fighter) => MATE_COLORS[mateIndex(m, f) % MATE_COLORS.length];
 const none = <K extends string>(keys: readonly K[]) => Object.fromEntries(keys.map((k) => [k, 0])) as Record<K, number>;
 
 function newFighter(id: number, e: Entrant, x: number, z: number, team: number): Fighter {
@@ -1027,7 +1049,7 @@ function newFighter(id: number, e: Entrant, x: number, z: number, team: number):
     knockCause: null,
     downAt: 0,
     reviving: -1,
-    reviveT: 0,
+    reviveAt: 0,
     pingX: 0,
     pingZ: 0,
     pingAt: -99,
@@ -1114,6 +1136,8 @@ function newAi(m: Match, f: Fighter): Ai {
     srcR: 0,
     harvestCool: 10 + (f.id % 11) * 2,
     editA: NaN,
+    pingCool: 0,
+    shareCool: 8 + (f.id % 5) * 2,
   };
 }
 
@@ -1132,7 +1156,6 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
     level: opts.level,
     mode: opts.mode ?? 'solo',
     teams: [],
-    wipedAt: new Map(),
     time: -(opts.countdown ?? COUNTDOWN),
     clock: 0,
     fighters: [],
@@ -1173,6 +1196,20 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
   });
   for (let t = 0; t < m.teams.length; t++) m.teams[t] ??= [];
   for (const f of m.fighters) if (f.kind === 'bot') f.ai = newAi(m, f);
+  // computer eggs on a team drop together, where the first of them meant to, one after another
+  if (size > 1)
+    for (const ids of m.teams) {
+      const lead = ids.map((id) => m.fighters[id].ai).find((ai) => !!ai);
+      let k = 0;
+      for (const id of ids) {
+        const ai = m.fighters[id].ai;
+        if (!ai || !lead || ai === lead) continue;
+        k++;
+        ai.gx = lead.gx + DIR_X[k % 4] * 2.5;
+        ai.gz = lead.gz + DIR_Z[k % 4] * 2.5;
+        ai.jumpAt = Math.min(m.map.bus.off - 0.05, lead.jumpAt + k * 0.15);
+      }
+    }
   return m;
 }
 
@@ -1320,16 +1357,16 @@ function clearOneShots(inp: Input) {
   inp.use = null;
   inp.jump = false;
   inp.pick = null;
+  inp.ping = null;
+  inp.drop = null;
 }
 
 /**
- * Ends the match once one team (or none) is left with anyone on their feet: the whole team wins, and a knocked egg of
- * any other team still bleeding is second. In teams, the host also takes out a knocked egg whose team has had
- * nobody standing for a while, should its owner not have done so.
+ * Ends the match once one team (or none) is left with anyone on their feet (in solo, one egg): the whole team wins, and
+ * a knocked egg of any other team still bleeding out is second.
  */
 function settle(m: Match) {
   if (m.ended || m.time <= 0 || m.fighters.length < 2) return;
-  if (m.mode !== 'solo') wipeOut(m);
   let team = -1;
   let teams = 0;
   for (let t = 0; t < m.teams.length; t++)
@@ -1339,37 +1376,10 @@ function settle(m: Match) {
     }
   m.ended = true;
   const won = team >= 0 ? teamOf(m, team) : [];
-  m.winner = (won.find(upright) ?? won.find(alive))?.id ?? -1;
+  m.winner = won.find(upright)?.id ?? -1;
   for (const f of won) f.place = 1;
   for (const f of m.fighters) if (f.team !== team && alive(f)) f.place = 2;
   emit(m, { t: 'end', winner: m.winner });
-}
-
-/** The host's backstop for a team with nobody standing: its knocked eggs go out two seconds on (with credit to whoever knocked them). */
-function wipeOut(m: Match) {
-  for (let t = 0; t < m.teams.length; t++) {
-    const down = teamOf(m, t).filter((f) => alive(f) && f.down);
-    if (!down.length || teamUp(m, t)) {
-      m.wipedAt.delete(t);
-      continue;
-    }
-    const at = m.wipedAt.get(t);
-    if (at === undefined) m.wipedAt.set(t, m.clock);
-    else if (m.clock - at > 2) for (const f of down) finish(m, f.id, f.knockBy, f.knockCause ?? 'bleed');
-  }
-}
-
-/**
- * A knocked egg goes out on the host's word: cracked here if it is ours to crack, else out here and the news goes to
- * everyone (its owner cracks it on hearing).
- */
-export function finish(m: Match, fid: number, by: number, w: Cause) {
-  const f = m.fighters[fid];
-  if (!f || f.phase === 'out' || m.ended) return;
-  if (owned(f)) return crack(m, f, by, w);
-  applyOut(m, fid, by, w);
-  const e = m.events[m.events.length - 1];
-  if (e && e.t === 'out' && e.f === fid) delete e.net;
 }
 
 /** Ends an online match on the host's word. */
@@ -1455,7 +1465,140 @@ function act(m: Match, f: Fighter, dt: number) {
   f.stunT = Math.max(0, f.stunT - dt);
   f.aim = inp.aim;
   if (!usable(f, f.slot)) f.slot = SLOT_MELEE;
+  if (inp.ping) ping(m, f, inp.ping.x, inp.ping.z);
+  if (m.mode !== 'solo') reviveStep(m, f);
+  // knocked down (it crawls) or reviving a teammate (it stands still), it does nothing else
+  if (f.down || f.reviving >= 0) {
+    f.heat = Math.max(0, f.heat - 3 * dt);
+    f.spin = Math.max(0, f.spin - dt / 1.2);
+    f.burst = 0;
+  } else handle(m, f, dt);
+  const hg = f.slot < 2 ? f.guns[f.slot] : null;
+  const hs = hg ? WEAPONS[hg.w] : null;
 
+  // walking: slow through a pond or the river and much slower through jam, a little quicker on a road, slower
+  // spinning a minigun or dazed by a stun grenade, a crawl knocked down. Up on something built, none of the ground's
+  // matters.
+  const afoot = f.y < 0.5;
+  f.wet = afoot && waterAt(m.map, f.x, f.z);
+  const jam = m.zones.length > 0 && zoneAt(m, 'jam', f.x, f.z, f.y) !== null;
+  const spun = f.spin > 0 && hs?.spin ? hs.spin.slow : 1;
+  const dazed = f.stunT > 0 ? (THROWS.stun.slow ?? 1) : 1;
+  const crawl = f.reviving >= 0 ? 0 : f.down ? CRAWL : 1;
+  const speed = SPEED * paceOf(f) * (f.using ? 0.5 : 1) * (f.boost > 0 ? BOOST.speed : 1) * (f.wet ? POND_SLOW : afoot && roadAt(m.map, f.x, f.z) ? ROAD_SPEED : 1) * (jam ? (THROWS.jam.slow ?? 1) : 1) * spun * dazed * crawl;
+  const len = Math.hypot(inp.mx, inp.mz);
+  const tx = len > 0 ? (inp.mx / Math.max(1, len)) * speed : 0;
+  const tz = len > 0 ? (inp.mz / Math.max(1, len)) * speed : 0;
+  const k = 1 - Math.exp(-14 * dt);
+  f.vx += (tx - f.vx) * k;
+  f.vz += (tz - f.vz) * k;
+  const ox = f.x;
+  const oz = f.z;
+  const shoved = f.kx !== 0 || f.kz !== 0;
+  f.x += (f.vx + f.kx) * dt;
+  f.z += (f.vz + f.kz) * dt;
+  resolve(m, f);
+  climb(m, f, dt);
+  // what we bumped into slows us, so we don't keep pushing at a wall (and stops a shove)
+  if (dt > 0) {
+    const mx = (f.x - ox) / dt;
+    const mz = (f.z - oz) / dt;
+    if (shoved) {
+      const want = Math.hypot(f.vx + f.kx, f.vz + f.kz);
+      if (Math.hypot(mx, mz) < want * 0.5) {
+        f.kx *= 0.3;
+        f.kz *= 0.3;
+      }
+      f.vx = mx - f.kx;
+      f.vz = mz - f.kz;
+      const fade = Math.exp(-5 * dt);
+      f.kx *= fade;
+      f.kz *= fade;
+      if (Math.hypot(f.kx, f.kz) < 0.3) {
+        f.kx = 0;
+        f.kz = 0;
+      }
+    } else {
+      f.vx = mx;
+      f.vz = mz;
+    }
+  }
+
+  if (!f.down) autoPickup(m, f);
+  f.stillT = Math.hypot(f.vx, f.vz) < 0.4 ? f.stillT + dt : 0;
+
+  // a bounce pad throws us up for a glide, off the way its arrows point (crawling, an egg only goes over it)
+  const pad = f.y < 0.5 && !f.down ? padAt(m.map, f.x, f.z) : -1;
+  if (pad >= 0) {
+    const p = m.map.pads[pad];
+    f.phase = 'drop';
+    f.y = PAD.y;
+    f.dropAt = m.time;
+    f.flingX = p.dx;
+    f.flingZ = p.dz;
+    f.vx = p.dx * GLIDE;
+    f.vz = p.dz * GLIDE;
+    f.using = null;
+    f.useT = 0;
+    f.reloadT = 0;
+    f.burst = 0;
+    f.stormT = 0;
+    f.burnT = 0;
+    f.bush = -1;
+    f.inside = -1;
+    f.wet = false;
+    f.warm = false;
+    f.on = -1;
+    f.stillT = 0;
+    emit(m, { t: 'bounce', f: f.id });
+    clearOneShots(inp);
+    return;
+  }
+
+  if (f.boost > 0) {
+    f.hp = Math.min(HP_MAX, f.hp + BOOST.heal * Math.min(dt, f.boost / BOOST.drain));
+    f.boost = Math.max(0, f.boost - BOOST.drain * dt);
+  }
+  if (f.sip > 0) {
+    f.shield = Math.min(SHIELD_MAX, f.shield + Math.min(f.sip, SIP * dt));
+    f.sip = Math.max(0, f.sip - SIP * dt);
+  }
+  // a campfire warms you back up, slowly (not knocked down: that's bleeding out)
+  f.warm = f.y < 0.5 && !f.down && fireAt(m.map, f.x, f.z) >= 0;
+  if (f.warm && f.hp < HP_MAX) f.hp = Math.min(HP_MAX, f.hp + CAMP.hps * dt);
+  if (f.down && bleed(m, f, dt)) {
+    clearOneShots(inp);
+    return;
+  }
+
+  const s = m.storm;
+  const sx = f.x - s.x;
+  const sz = f.z - s.z;
+  if (s.dps > 0 && sx * sx + sz * sz > s.r * s.r) {
+    f.stormT += dt;
+    while (f.stormT >= STORM_TICK && f.phase === 'ground') {
+      f.stormT -= STORM_TICK;
+      hurt(m, f, s.dps * STORM_TICK, -1, 'storm', true);
+    }
+  } else f.stormT = 0;
+
+  const burn = zoneAt(m, 'sauce', f.x, f.z, f.y);
+  if (burn) {
+    f.burnT += dt;
+    while (f.burnT >= STORM_TICK && f.phase === 'ground') {
+      f.burnT -= STORM_TICK;
+      hurt(m, f, (THROWS.sauce.dps ?? 0) * STORM_TICK, burn.by, 'sauce', false);
+    }
+  } else f.burnT = 0;
+
+  f.bush = f.y < 0.5 ? coverOf(m, f.x, f.z) : -1;
+  f.inside = f.y < 1 ? buildingAt(m.map, f.x, f.z) : -1;
+  clearOneShots(inp);
+}
+
+/** What an egg on its feet does with its input: weapons, reloading, items, building, editing, the interact key, the trigger and the drop key. */
+function handle(m: Match, f: Fighter, dt: number) {
+  const inp = f.input;
   if (inp.pick && f.throws[inp.pick] > 0) {
     f.pick = inp.pick;
     switchTo(f, SLOT_THROW);
@@ -1521,119 +1664,20 @@ function act(m: Match, f: Fighter, dt: number) {
   if (inp.edit) edit(m, f);
   if (inp.interact) interact(m, f);
   if (inp.fire && f.fireT <= 0 && f.burst <= 0) trigger(m, f);
+  if (inp.drop !== null) dropOut(m, f, inp.drop);
+}
 
-  // walking: slow through a pond or the river and much slower through jam, a little quicker on a road, slower
-  // spinning a minigun or dazed by a stun grenade. Up on something built, none of the ground's matters.
-  const afoot = f.y < 0.5;
-  f.wet = afoot && waterAt(m.map, f.x, f.z);
-  const jam = m.zones.length > 0 && zoneAt(m, 'jam', f.x, f.z, f.y) !== null;
-  const spun = f.spin > 0 && hs?.spin ? hs.spin.slow : 1;
-  const dazed = f.stunT > 0 ? (THROWS.stun.slow ?? 1) : 1;
-  const speed = SPEED * paceOf(f) * (f.using ? 0.5 : 1) * (f.boost > 0 ? BOOST.speed : 1) * (f.wet ? POND_SLOW : afoot && roadAt(m.map, f.x, f.z) ? ROAD_SPEED : 1) * (jam ? (THROWS.jam.slow ?? 1) : 1) * spun * dazed;
-  const len = Math.hypot(inp.mx, inp.mz);
-  const tx = len > 0 ? (inp.mx / Math.max(1, len)) * speed : 0;
-  const tz = len > 0 ? (inp.mz / Math.max(1, len)) * speed : 0;
-  const k = 1 - Math.exp(-14 * dt);
-  f.vx += (tx - f.vx) * k;
-  f.vz += (tz - f.vz) * k;
-  const ox = f.x;
-  const oz = f.z;
-  const shoved = f.kx !== 0 || f.kz !== 0;
-  f.x += (f.vx + f.kx) * dt;
-  f.z += (f.vz + f.kz) * dt;
-  resolve(m, f);
-  climb(m, f, dt);
-  // what we bumped into slows us, so we don't keep pushing at a wall (and stops a shove)
-  if (dt > 0) {
-    const mx = (f.x - ox) / dt;
-    const mz = (f.z - oz) / dt;
-    if (shoved) {
-      const want = Math.hypot(f.vx + f.kx, f.vz + f.kz);
-      if (Math.hypot(mx, mz) < want * 0.5) {
-        f.kx *= 0.3;
-        f.kz *= 0.3;
-      }
-      f.vx = mx - f.kx;
-      f.vz = mz - f.kz;
-      const fade = Math.exp(-5 * dt);
-      f.kx *= fade;
-      f.kz *= fade;
-      if (Math.hypot(f.kx, f.kz) < 0.3) {
-        f.kx = 0;
-        f.kz = 0;
-      }
-    } else {
-      f.vx = mx;
-      f.vz = mz;
-    }
+/**
+ * A knocked egg this client owns bleeds out (not while a teammate revives it), and is cracked once it has, or once
+ * nobody on its team is left standing. True when it's out.
+ */
+function bleed(m: Match, f: Fighter, dt: number) {
+  if (teamUp(m, f.team, f)) {
+    if (!beingRevived(m, f)) f.hp -= (DOWN_HP / BLEED_T) * dt;
+    if (f.hp > 0) return false;
   }
-
-  autoPickup(m, f);
-  f.stillT = Math.hypot(f.vx, f.vz) < 0.4 ? f.stillT + dt : 0;
-
-  // a bounce pad throws us up for a glide, off the way its arrows point
-  const pad = f.y < 0.5 ? padAt(m.map, f.x, f.z) : -1;
-  if (pad >= 0) {
-    const p = m.map.pads[pad];
-    f.phase = 'drop';
-    f.y = PAD.y;
-    f.dropAt = m.time;
-    f.flingX = p.dx;
-    f.flingZ = p.dz;
-    f.vx = p.dx * GLIDE;
-    f.vz = p.dz * GLIDE;
-    f.using = null;
-    f.useT = 0;
-    f.reloadT = 0;
-    f.burst = 0;
-    f.stormT = 0;
-    f.burnT = 0;
-    f.bush = -1;
-    f.inside = -1;
-    f.wet = false;
-    f.warm = false;
-    f.on = -1;
-    f.stillT = 0;
-    emit(m, { t: 'bounce', f: f.id });
-    clearOneShots(inp);
-    return;
-  }
-
-  if (f.boost > 0) {
-    f.hp = Math.min(HP_MAX, f.hp + BOOST.heal * Math.min(dt, f.boost / BOOST.drain));
-    f.boost = Math.max(0, f.boost - BOOST.drain * dt);
-  }
-  if (f.sip > 0) {
-    f.shield = Math.min(SHIELD_MAX, f.shield + Math.min(f.sip, SIP * dt));
-    f.sip = Math.max(0, f.sip - SIP * dt);
-  }
-  // a campfire warms you back up, slowly
-  f.warm = f.y < 0.5 && fireAt(m.map, f.x, f.z) >= 0;
-  if (f.warm && f.hp < HP_MAX) f.hp = Math.min(HP_MAX, f.hp + CAMP.hps * dt);
-
-  const s = m.storm;
-  const sx = f.x - s.x;
-  const sz = f.z - s.z;
-  if (s.dps > 0 && sx * sx + sz * sz > s.r * s.r) {
-    f.stormT += dt;
-    while (f.stormT >= STORM_TICK && f.phase === 'ground') {
-      f.stormT -= STORM_TICK;
-      hurt(m, f, s.dps * STORM_TICK, -1, 'storm', true);
-    }
-  } else f.stormT = 0;
-
-  const burn = zoneAt(m, 'sauce', f.x, f.z, f.y);
-  if (burn) {
-    f.burnT += dt;
-    while (f.burnT >= STORM_TICK && f.phase === 'ground') {
-      f.burnT -= STORM_TICK;
-      hurt(m, f, (THROWS.sauce.dps ?? 0) * STORM_TICK, burn.by, 'sauce', false);
-    }
-  } else f.burnT = 0;
-
-  f.bush = f.y < 0.5 ? coverOf(m, f.x, f.z) : -1;
-  f.inside = f.y < 1 ? buildingAt(m.map, f.x, f.z) : -1;
-  clearOneShots(inp);
+  crack(m, f, f.knockBy, f.hp > 0 ? (f.knockCause ?? 'bleed') : 'bleed');
+  return true;
 }
 
 /** Up a ramp or onto a floor in our stride, else down to whatever is under us (the ground, at worst). */
@@ -1810,7 +1854,7 @@ function aimLevel(m: Match, f: Fighter, range: number) {
   let best = Infinity;
   let at = lv;
   for (const o of m.fighters) {
-    if (o === f || !fighting(o) || Math.abs(o.x - f.x) > range || Math.abs(o.z - f.z) > range) continue;
+    if (o === f || o.team === f.team || !fighting(o) || Math.abs(o.x - f.x) > range || Math.abs(o.z - f.z) > range) continue;
     const t = rayCircle(f.x, f.z, dx, dz, range, o.x, o.z, HIT_R + 0.5);
     if (t < best) {
       best = t;
@@ -1917,7 +1961,7 @@ function swing(m: Match, f: Fighter) {
   let best: Fighter | null = null;
   let bestD = Infinity;
   for (const o of m.fighters) {
-    if (o === f || !fighting(o) || Math.abs(o.y - f.y) > 1.6) continue;
+    if (o === f || o.team === f.team || !fighting(o) || Math.abs(o.y - f.y) > 1.6) continue;
     const d = Math.hypot(o.x - f.x, o.z - f.z);
     if (d > spec.range + FIGHTER_R || d >= bestD) continue;
     if (Math.abs(angleDiff(Math.atan2(o.x - f.x, o.z - f.z), f.aim)) > spec.arc) continue;
@@ -1951,8 +1995,10 @@ function swing(m: Match, f: Fighter) {
 /**
  * A hit on an egg from something this client fired: applied here if we own the egg, else sent to its owner. `d` is
  * the hit as fired, `took` what's left of it after the egg's armor (as its last report has it, for someone else's).
+ * Never a teammate's.
  */
 function strike(m: Match, from: Fighter, o: Fighter, dmg: number, w: Cause, x: number, z: number) {
+  if (o.team === from.team) return;
   const d = Math.max(1, Math.round(dmg));
   const took = armored(d, w, false, o);
   const shield = o.kind === 'remote' ? (o.show.flags & F_SHIELDED) !== 0 : o.shield > 0;
@@ -2017,6 +2063,7 @@ export function hurt(m: Match, f: Fighter, d: number, by: number, w: Cause, stor
 
 /** An egg this client owns is knocked down: its shield gone, whatever it was doing stopped, bleeding from DOWN_HP. */
 function knock(m: Match, f: Fighter, by: number, w: Cause) {
+  stopReviving(m, f);
   f.down = true;
   f.hp = DOWN_HP;
   f.shield = 0;
@@ -2031,20 +2078,207 @@ function knock(m: Match, f: Fighter, by: number, w: Cause) {
   f.burst = 0;
   f.spin = 0;
   f.queued = null;
-  if (f.reviving >= 0) stopReviving(m, f);
+  f.stunT = 0;
   emit(m, { t: 'knock', f: f.id, by: f.knockBy, w });
 }
 
-/** A knocked egg another client owns, on its owner's word. */
+/** A knocked egg another client owns, on its owner's word (its state may have said it was down already). */
 export function applyKnock(m: Match, fid: number, by: number, w: Cause) {
   const f = m.fighters[fid];
-  if (!f || owned(f) || f.phase === 'out' || f.down || m.ended) return;
+  if (!f || owned(f) || f.phase === 'out' || m.ended || (f.down && f.knockCause !== null)) return false;
   f.down = true;
   f.knockBy = by;
   f.knockCause = w;
   f.downAt = m.time;
   f.reviving = -1;
   emit(m, { t: 'knock', f: fid, by, w, net: true });
+  return true;
+}
+
+/** Back on its feet: with REVIVE_HP if it's ours (anyone else's says so in its state). */
+function standUp(m: Match, f: Fighter) {
+  f.down = false;
+  f.knockBy = -1;
+  f.knockCause = null;
+  if (owned(f)) {
+    f.hp = REVIVE_HP;
+    f.shield = 0;
+  }
+  for (const o of m.fighters) if (o.reviving === f.id) o.reviving = -1;
+}
+
+/** The nearest knocked teammate on the ground within reach of an egg (to revive), or null. */
+export function downMate(m: Match, f: Fighter, reach = REVIVE_R): Fighter | null {
+  if (m.mode === 'solo') return null;
+  let best: Fighter | null = null;
+  let bestD = reach;
+  for (const id of m.teams[f.team] ?? []) {
+    const o = m.fighters[id];
+    if (o === f || !o.down || !fighting(o) || Math.abs(o.y - f.y) > 1.2) continue;
+    const d = Math.hypot(o.x - f.x, o.z - f.z);
+    if (d <= bestD) {
+      best = o;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/** Whether a teammate is reviving a knocked egg right now (it doesn't bleed meanwhile). */
+export const beingRevived = (m: Match, f: Fighter) => f.down && m.fighters.some((o) => o.reviving === f.id && o.team === f.team && upright(o));
+
+/** How far along an egg's revive is, 0..1 (by the clock of whoever we heard it from). */
+export const reviveShare = (m: Match, f: Fighter) => (f.reviving >= 0 ? clamp((m.clock - f.reviveAt) / REVIVE_T, 0, 1) : 0);
+
+function startReviving(m: Match, f: Fighter, o: Fighter) {
+  f.reviving = o.id;
+  f.reviveAt = m.clock;
+  f.using = null;
+  f.useT = 0;
+  f.reloadT = 0;
+  f.burst = 0;
+  emit(m, { t: 'revive', f: f.id, to: o.id });
+}
+
+function stopReviving(m: Match, f: Fighter) {
+  if (f.reviving < 0) return;
+  f.reviving = -1;
+  emit(m, { t: 'revive', f: f.id, to: -1 });
+}
+
+/**
+ * Reviving, for an egg this client owns: holding the interact key by a knocked teammate starts it, and it goes on
+ * while the key stays down, we stay up and in reach, and it stays down. Once it has taken REVIVE_T the teammate stands
+ * (solo and the host), or we ask the host to stand it up.
+ */
+function reviveStep(m: Match, f: Fighter) {
+  const o = f.reviving >= 0 ? m.fighters[f.reviving] : undefined;
+  if (!o) {
+    f.reviving = -1;
+    const mate = f.input.hold && f.y < 1.5 ? downMate(m, f) : null;
+    if (mate) startReviving(m, f, mate);
+    return;
+  }
+  if (!f.input.hold || f.down || !o.down || !fighting(o) || Math.hypot(o.x - f.x, o.z - f.z) > REVIVE_R + 0.8) return stopReviving(m, f);
+  if (m.clock - f.reviveAt < REVIVE_T) return;
+  if (m.world) reviveEgg(m, o.id, f.id, true);
+  else {
+    emit(m, { t: 'ask', f: f.id, to: o.id });
+    stopReviving(m, f);
+  }
+}
+
+/**
+ * The host stands a knocked egg up for the teammate that revived it: both on the ground on one team, the reviver up
+ * and near, and (a guest's egg) reviving it as long as a revive takes, give or take the trip. False when not.
+ */
+export function reviveEgg(m: Match, fid: number, by: number, announce: boolean) {
+  const f = m.fighters[fid];
+  const r = m.fighters[by];
+  if (!m.world || m.ended || !f || !r || f === r || !f.down || !fighting(f) || !fighting(r) || r.down || r.team !== f.team) return false;
+  if (Math.hypot(f.x - r.x, f.z - r.z) > REVIVE_R + 3) return false;
+  if (!owned(r) && (r.reviving !== fid || m.clock - r.reviveAt < REVIVE_T - 1.5)) return false;
+  standUp(m, f);
+  emit(m, announce ? { t: 'revived', f: fid, by } : { t: 'revived', f: fid, by, net: true });
+  return true;
+}
+
+/** A revive someone else's egg started (on `to`) or stopped (-1), on its owner's word. */
+export function applyRevive(m: Match, fid: number, to: number) {
+  const f = m.fighters[fid];
+  const o = to >= 0 ? m.fighters[to] : undefined;
+  if (!f || owned(f) || f.phase === 'out' || f.reviving === to || (to >= 0 && (!o || o === f || o.team !== f.team))) return false;
+  f.reviving = to;
+  f.reviveAt = m.clock;
+  emit(m, { t: 'revive', f: fid, to, net: true });
+  return true;
+}
+
+/** A knocked egg stands, on the host's word: ours gets its health back, anyone else's says so in its state. */
+export function applyRevived(m: Match, fid: number, by: number) {
+  const f = m.fighters[fid];
+  if (m.world || !f || !f.down || f.phase === 'out') return false;
+  standUp(m, f);
+  emit(m, { t: 'revived', f: fid, by, net: true });
+  return true;
+}
+
+/** Marks a spot for the team, at most every PING_COOL seconds. */
+function ping(m: Match, f: Fighter, x: number, z: number) {
+  if (m.clock - f.pingAt < PING_COOL) return;
+  setPing(m, f, x, z);
+  emit(m, { t: 'ping', f: f.id, x: f.pingX, z: f.pingZ });
+}
+
+function setPing(m: Match, f: Fighter, x: number, z: number) {
+  f.pingX = r1(clamp(x, -EDGE, EDGE));
+  f.pingZ = r1(clamp(z, -EDGE, EDGE));
+  f.pingAt = m.clock;
+}
+
+/** A spot someone else's egg marked for its team. */
+export function applyPing(m: Match, fid: number, x: number, z: number) {
+  const f = m.fighters[fid];
+  if (!f || owned(f)) return false;
+  setPing(m, f, x, z);
+  emit(m, { t: 'ping', f: fid, x: f.pingX, z: f.pingZ, net: true });
+  return true;
+}
+
+/** The spot an egg has marked for its team while it shows (PING_T seconds), and how long ago, or null. */
+export const pingOf = (m: Match, f: Fighter) => (m.clock - f.pingAt < PING_T ? { x: f.pingX, z: f.pingZ, age: m.clock - f.pingAt } : null);
+
+/**
+ * Puts something down at an egg's feet for a teammate to pick up (it never goes straight back up itself): a gun or the
+ * melee weapon from its slot (not the spatula), one of the throwable in hand, one consumable, a box of ammo or MAT_DROP
+ * of a material. False when there was nothing to put down.
+ */
+export function dropOut(m: Match, f: Fighter, what: Drop) {
+  if (f.phase !== 'ground' || f.down || f.y > 1) return false;
+  let def: LootDef | null = null;
+  if (what === 0 || what === 1) {
+    const g = f.guns[what];
+    if (g) {
+      def = { kind: 'gun', w: g.w, r: g.r, mag: g.mag };
+      f.guns[what] = null;
+      if (f.slot === what) switchTo(f, f.guns[1 - what] ? 1 - what : SLOT_MELEE);
+    }
+  } else if (what === SLOT_MELEE) {
+    if (f.melee !== 'spatula') {
+      def = { kind: 'melee', w: f.melee };
+      f.melee = 'spatula';
+    }
+  } else if (what === SLOT_THROW) {
+    if (f.throws[f.pick] > 0) {
+      def = { kind: 'throw', w: f.pick, n: 1 };
+      f.throws[f.pick]--;
+    }
+  } else if (typeof what === 'number') return false;
+  else if (isUse(what)) {
+    if (f.items[what] > 0) {
+      def = { kind: 'use', w: what, n: 1 };
+      f.items[what]--;
+      if (f.using === what && f.items[what] <= 0) f.using = null;
+    }
+  } else if (isAmmo(what)) {
+    const n = Math.min(f.ammo[what], AMMO_BOX[what]);
+    if (n > 0) {
+      def = { kind: 'ammo', a: what, n };
+      f.ammo[what] -= n;
+    }
+  } else if (isMat(what)) {
+    const n = Math.min(f[what], MAT_DROP);
+    if (n > 0) {
+      def = { kind: what, n };
+      f[what] -= n;
+    }
+  }
+  if (!def) return false;
+  // a step ahead, short of anything solid
+  const hit = castRay(m, f.x, f.z, Math.sin(f.aim), Math.cos(f.aim), 1.2, -1, false, true, levelOf(f.y));
+  const r = hit ? Math.max(0, hit.t - 0.4) : 0.8;
+  dropItem(m, f, def, clamp(f.x + Math.sin(f.aim) * r, -EDGE, EDGE), clamp(f.z + Math.cos(f.aim) * r, -EDGE, EDGE));
+  return true;
 }
 
 /**
@@ -2061,9 +2295,10 @@ function placeOut(m: Match, f: Fighter) {
 /** An egg this client owns is out: everything it carried spills on the ground. */
 function crack(m: Match, f: Fighter, by: number, w: Cause) {
   const place = placeOut(m, f);
+  const down = f.down;
+  if (f.reviving >= 0) stopReviving(m, f);
   f.phase = 'out';
   f.down = false;
-  if (f.reviving >= 0) stopReviving(m, f);
   f.hp = 0;
   f.shield = 0;
   f.boost = 0;
@@ -2113,7 +2348,7 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
     const r = hit ? Math.max(0, hit.t - 0.4) : rad;
     dropItem(m, f, def, clamp(f.x + Math.sin(a) * r, -EDGE, EDGE), clamp(f.z + Math.cos(a) * r, -EDGE, EDGE));
   });
-  emit(m, { t: 'out', f: f.id, by, w, place });
+  emit(m, down ? { t: 'out', f: f.id, by, w, place, down } : { t: 'out', f: f.id, by, w, place });
 }
 
 /** An egg another client owns is out, on its owner's word (or ours, on the host's word that it took us out). */
@@ -2121,6 +2356,7 @@ export function applyOut(m: Match, fid: number, by: number, w: Cause) {
   const f = m.fighters[fid];
   if (!f || f.phase === 'out' || m.ended) return;
   const place = placeOut(m, f);
+  const down = f.down;
   f.phase = 'out';
   f.down = false;
   f.reviving = -1;
@@ -2130,7 +2366,7 @@ export function applyOut(m: Match, fid: number, by: number, w: Cause) {
   f.outAt = m.time;
   const killer = by >= 0 && by !== fid ? m.fighters[by] : undefined;
   if (killer) killer.kills++;
-  emit(m, { t: 'out', f: fid, by, w, place, net: true });
+  emit(m, down ? { t: 'out', f: fid, by, w, place, down, net: true } : { t: 'out', f: fid, by, w, place, net: true });
 }
 
 /** A person left an online match: the host takes their egg out. */
@@ -2152,11 +2388,11 @@ type RayHit = { t: number; what: Thud; ref: number; fighter: Fighter | null };
 
 /**
  * The first thing a ray meets within `len`: trees, rocks, building walls, shut doors, cars, posts, crates and barrels
- * still standing, chests, landed supply drops, built walls, and (when `eggs`) any egg in the fight except `skip`. Low
- * things (fences, tables, fire pits, a jail cell's bars and its barred door) only count when `lows`: bullets and eyes
- * go over or through them, feet and swings don't. A window stops bullets and throws until its glass is broken
- * (`glass`), the eye never (`open`), and feet and swings always (`shut`, and whenever `lows`: there's wall below it).
- * Without `doors`, a shut door is no more in the way than an open one (one could open it).
+ * still standing, chests, landed supply drops, built walls, and (when `eggs`) any egg in the fight but `skip` and its
+ * teammates. Low things (fences, tables, fire pits, a jail cell's bars and its barred door) only count when `lows`:
+ * bullets and eyes go over or through them, feet and swings don't. A window stops bullets and throws until its glass is
+ * broken (`glass`), the eye never (`open`), and feet and swings always (`shut`, and whenever `lows`: there's wall below
+ * it). Without `doors`, a shut door is no more in the way than an open one (one could open it).
  *
  * `lv` is the level the ray runs at. Up high it only meets the tall things on the island and the walls built on that
  * level (a window is wall up there, and a doorway open). A ray between two levels runs at the higher one: an egg up
@@ -2191,9 +2427,11 @@ export function castRay(m: Match, x: number, z: number, dx: number, dz: number, 
     const z0 = Math.min(z, z + dz * len) - HIT_R;
     const z1 = Math.max(z, z + dz * len) + HIT_R;
     const wall = best?.t ?? Infinity;
+    // a shot goes straight past the shooter's teammates
+    const team = m.fighters[skip]?.team ?? -1;
     let egg = null as RayHit | null;
     for (const o of m.fighters) {
-      if (o.x < x0 || o.x > x1 || o.z < z0 || o.z > z1 || o.id === skip || !fighting(o)) continue;
+      if (o.x < x0 || o.x > x1 || o.z < z0 || o.z > z1 || o.id === skip || o.team === team || !fighting(o)) continue;
       const t = rayCircle(x, z, dx, dz, len, o.x, o.z, HIT_R);
       if (t >= (egg?.t ?? Infinity)) continue;
       const ol = levelOf(o.y);
@@ -2322,7 +2560,7 @@ function chipUnder(m: Match, b: Bullet, len: number) {
 
 /**
  * Something this client set off bursts (a launcher egg or a grenade): eggs, walls, crates and barrels nearby take less
- * the farther they are. Never the one who set it off.
+ * the farther they are. Never the one who set it off, nor its teammates.
  */
 function blast(m: Match, fid: number, x: number, z: number, R: number, dmg: number, wallMult: number, cause: Cause, y = 0) {
   const shooter = m.fighters[fid];
@@ -2730,14 +2968,14 @@ function bomblets(m: Match, t: Toss): Toss[] {
 }
 
 /**
- * A stun grenade goes off on every client at once. Each client dazes the eggs it owns (all but the thrower's) that
+ * A stun grenade goes off on every client at once. Each client dazes the eggs it owns (not the thrower's team) that
  * could see the flash: within its radius with nothing solid between, longest up close.
  */
 function flashBang(m: Match, fid: number, x: number, z: number, y = 0) {
   const spec = THROWS.stun;
   emit(m, { t: 'stun', f: fid, x, z, net: true });
   for (const o of m.fighters) {
-    if (o.id === fid || !owned(o) || !fighting(o)) continue;
+    if (o.id === fid || o.team === m.fighters[fid]?.team || !owned(o) || !fighting(o)) continue;
     const d = Math.hypot(o.x - x, o.z - z);
     if (d >= spec.radius || !clearLine(m, o.x, o.z, x, z, Math.max(levelOf(o.y), levelOf(y)))) continue;
     o.stunT = Math.max(o.stunT, (spec.time ?? 0) * (1 - (0.6 * d) / spec.radius));
@@ -2747,14 +2985,14 @@ function flashBang(m: Match, fid: number, x: number, z: number, y = 0) {
 
 /**
  * An impulse egg goes off on every client at once. Each client shoves (and nicks) the eggs it owns, all but the
- * thrower's; the host also shoves the loot nearby and tells everyone where it ended up.
+ * thrower's team; the host also shoves the loot nearby and tells everyone where it ended up.
  */
 function pulse(m: Match, fid: number, x: number, z: number, y = 0) {
   const spec = THROWS.impulse;
   const R = spec.radius;
   emit(m, { t: 'pulse', f: fid, x, z, net: true });
   for (const o of m.fighters) {
-    if (o.id === fid || !owned(o) || !fighting(o) || Math.abs(o.y - y) > 2.5) continue;
+    if (o.id === fid || o.team === m.fighters[fid]?.team || !owned(o) || !fighting(o) || Math.abs(o.y - y) > 2.5) continue;
     const dx = o.x - x;
     const dz = o.z - z;
     const d = Math.hypot(dx, dz);
@@ -3254,10 +3492,14 @@ function containersNear(map: GameMap, x: number, z: number, r: number, visit: (c
 
 /**
  * What the interact key would do right now: open a chest (or a fridge, a locker and the like), pick something up (a
- * gun or melee weapon swaps), or open or shut a door, whichever is nearest (a door only when it is clearly nearer).
+ * gun or melee weapon swaps), or open or shut a door, whichever is nearest (a door only when it is clearly nearer). By
+ * a knocked teammate, holding it down revives them, before anything else. Knocked down, nothing.
  */
-export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootItem; swap: boolean } | { door: number } | null {
-  if (f.phase !== 'ground' || f.y > 1) return null;
+export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootItem; swap: boolean } | { door: number } | { revive: number } | null {
+  if (f.phase !== 'ground' || f.down) return null;
+  const mate = f.reviving >= 0 ? m.fighters[f.reviving] : downMate(m, f);
+  if (mate) return { revive: mate.id };
+  if (f.y > 1) return null;
   // not something we just asked the host for (an ask it turned down expires), nor what we just put down
   const item = nearestLoot(m, f, PICK_R, (l) => wants(f, l.def, true) && !asking(m, f, l.id) && !(l.by === f.id && m.time - l.at < 3));
   const chest = nearestChest(m, f);
@@ -3279,7 +3521,8 @@ const asking = (m: Match, f: Fighter, id: number) => {
 
 function interact(m: Match, f: Fighter) {
   const p = prompt(m, f);
-  if (!p) return;
+  // a revive is the key held down (see reviveStep)
+  if (!p || 'revive' in p) return;
   if ('chest' in p) requestOpen(m, f, p.chest);
   else if ('door' in p) requestDoor(m, f, p.door);
   else requestTake(m, f, p.item, true);
@@ -3455,7 +3698,9 @@ export function flagsOf(f: Fighter) {
     (f.boost > 0 ? F_BOOST : 0) |
     (f.using === 'coffee' ? F_DRINKING : 0) |
     (f.ghillie ? F_GHILLIE : 0) |
-    (f.stunT > 0 ? F_STUN : 0)
+    (f.stunT > 0 ? F_STUN : 0) |
+    (f.down ? F_DOWN : 0) |
+    (f.reviving >= 0 ? F_REVIVE : 0)
   );
 }
 
@@ -3485,6 +3730,17 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
   f.helmet = s.helmet;
   f.vest = s.vest;
   f.ghillie = (s.flags & F_GHILLIE) !== 0;
+  // knocked down, or back up (the news of how may still be on its way), and done reviving (a report from before the
+  // news it started may still come in)
+  const down = (s.flags & F_DOWN) !== 0;
+  if (down !== f.down) {
+    f.down = down;
+    if (!down) {
+      f.knockBy = -1;
+      f.knockCause = null;
+    }
+  }
+  if (!(s.flags & F_REVIVE) && m.clock - f.reviveAt > 0.5) f.reviving = -1;
   f.show = { w: s.w, r: s.r, flags: s.flags };
   f.hitT = s.flags & F_HIT ? 0.2 : 0;
   snaps.push({ at: m.clock, x: s.x, z: s.z, y: s.y, aim: s.aim, vx: s.vx, vz: s.vz });
