@@ -9,6 +9,11 @@
 // door that isn't shut, so a guest who missed the news (or synced late) still has them. Bounce pads and campfires need
 // no packets: a glide and a heal are an owner's own business, and show in its state, as does how high an egg stands
 // on what's been built. Nor does the kill leader: everyone counts the kills.
+//
+// In duos and squads, the host's reliable reports carry the mode and everyone's team. A knocked egg's owner says so
+// (its state says it too, for anyone who missed the news), a reviver says when it starts and stops, a guest asks the
+// host to stand the teammate up once it's done, and the host says when it stands. Pings go to everyone (only the team
+// shows them).
 import { MATS, MAT_SPECS, MAX_ARMOR, MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import { HALF, opens } from './map.ts';
 import { meta } from './meta.ts';
@@ -22,13 +27,19 @@ import {
   LEVEL_H,
   MAX_FIGHTERS,
   MAX_LEVEL,
+  MAX_TEAMS,
   PHASES,
   PIECE_KINDS,
+  TEAM_SIZE,
   addLoot,
   addWall,
   applyCalled,
   applyEdit,
+  applyKnock,
   applyOut,
+  applyPing,
+  applyRevive,
+  applyRevived,
   applyTook,
   breakGlass,
   callDrop,
@@ -41,12 +52,14 @@ import {
   held,
   hurt,
   isLevel,
+  isMode,
   launch,
   makePiece,
   moveLoot,
   openContainer,
   owned,
   removeWall,
+  reviveEgg,
   setDoor,
   slabGap,
   toggleDoor,
@@ -56,6 +69,7 @@ import {
   type Held,
   type Level,
   type Match,
+  type Mode,
   type Phase,
   type PieceKind,
   type Wall,
@@ -93,17 +107,23 @@ export type NetEv =
   | { y: 'we'; f: number; id: number; e: number }
   | { y: 'wg'; id: number }
   | { y: 'lv'; id: number; x: number; z: number }
-  | { y: 'fd'; f: number; c: number; x: number; z: number; at: number };
+  | { y: 'fd'; f: number; c: number; x: number; z: number; at: number }
+  | { y: 'kn'; f: number; by: number; w: Cause }
+  | { y: 'rv'; f: number; to: number }
+  | { y: 'rq'; f: number; to: number }
+  | { y: 'rvd'; f: number; by: number }
+  | { y: 'pg'; f: number; x: number; z: number };
 
 /** Events grouped by the seat they came from, in the order the host applied them. */
 export type Group = [origin: number, events: NetEv[]];
 
 export type Packet =
   | { k: 's'; round: number; state: State; watch: number }
-  | { k: 'S'; round: number; seed: number; time: number; level: Level; roster: number[] | null; states: [number, State][]; glass: number[] | null; doors: number[] | null }
+  | { k: 'S'; round: number; seed: number; time: number; level: Level; roster: number[] | null; states: [number, State][]; glass: number[] | null; doors: number[] | null; mode: Mode; teams: number[] | null }
   | { k: 'e'; round: number; groups: Group[] }
   | { k: 'end'; round: number; winner: number; places: [number, number, number][] }
-  | { k: 'cfg'; round: number; bots: Bots; level: Level };
+  | { k: 'cfg'; round: number; bots: Bots; level: Level; mode: Mode; picks: number[] }
+  | { k: 'tm'; round: number; team: number };
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -239,9 +259,9 @@ export const stateKey = (s: State) => packState(s).join();
 /**
  * The host's report of the eggs: the roster goes with every reliable one (null for the rest), which a guest needs to
  * join, and so do the broken windows (`broken`, by window) and the doors (`doors`, their states by door) once any
- * have changed.
+ * have changed, and in duos and squads the mode and everyone's team (`teams`, by fighter).
  */
-export const hostState = (round: number, seed: number, time: number, level: Level, roster: number[] | null, states: [number, State][], broken: boolean[] = [], doors: number[] = []) => {
+export const hostState = (round: number, seed: number, time: number, level: Level, roster: number[] | null, states: [number, State][], broken: boolean[] = [], doors: number[] = [], mode: Mode = 'solo', teams: number[] = []) => {
   const gl = roster ? packGlass(broken) : '';
   const dz = roster ? packDoors(doors) : '';
   return {
@@ -252,11 +272,20 @@ export const hostState = (round: number, seed: number, time: number, level: Leve
     tm: r2(time),
     lv: level,
     ...(roster ? { ro: roster } : {}),
+    ...(roster && mode !== 'solo' ? { md: mode, te: teams } : {}),
     ...(gl ? { gl } : {}),
     ...(dz ? { dz } : {}),
     c: states.map(([f, s]) => [f, ...packState(s)]),
   };
 };
+
+/** Each fighter's team as a roster's report has it, or null when it isn't one for this many fighters in this mode. */
+export function parseTeams(v: unknown, mode: Mode, n: number): number[] | null {
+  if (!Array.isArray(v) || v.length !== n || !v.every((t) => int(t) && t >= 0 && t < MAX_TEAMS)) return null;
+  const size = new Map<number, number>();
+  for (const t of v as number[]) size.set(t, (size.get(t) ?? 0) + 1);
+  return [...size.values()].every((k) => k <= TEAM_SIZE[mode]) ? (v as number[]) : null;
+}
 
 /** The most doors a report can list (an island has about a hundred). */
 const MAX_DOORS = 2000;
@@ -293,8 +322,14 @@ export function unpackGlass(v: unknown): number[] | null {
 
 export const endOf = (round: number, winner: number, places: [number, number, number][]) => ({ t: 'pk', r: round, k: 'end', w: winner, pl: places });
 
-/** The host's picks for the next match, sent while the room waits so guests can see them. */
-export const configOf = (round: number, bots: Bots, level: Level) => ({ t: 'pk', r: round, k: 'cfg', b: bots, lv: level });
+/**
+ * The host's picks for the next match, sent while the room waits so guests can see them: the bots, the mode, and in
+ * duos and squads the team each seat is on (-1 for wherever there's room, see teamsFor).
+ */
+export const configOf = (round: number, bots: Bots, level: Level, mode: Mode = 'solo', picks: number[] = []) => ({ t: 'pk', r: round, k: 'cfg', b: bots, lv: level, ...(mode !== 'solo' ? { md: mode, tp: picks } : {}) });
+
+/** A guest asking the host, while the room waits, to be put on a team (-1 for wherever there's room). */
+export const teamAsk = (round: number, team: number) => ({ t: 'pk', r: round, k: 'tm', te: team });
 
 // -------------------------------------------------------------------------------------------------------------------
 // Events.
@@ -344,6 +379,16 @@ export function toNet(e: Ev): NetEv | null {
       return { y: 'lv', id: e.id, x: e.x, z: e.z };
     case 'called':
       return { y: 'fd', f: e.f, c: e.c, x: e.x, z: e.z, at: e.at };
+    case 'knock':
+      return { y: 'kn', f: e.f, by: e.by, w: e.w };
+    case 'revive':
+      return { y: 'rv', f: e.f, to: e.to };
+    case 'ask':
+      return { y: 'rq', f: e.f, to: e.to };
+    case 'revived':
+      return { y: 'rvd', f: e.f, by: e.by };
+    case 'ping':
+      return { y: 'pg', f: e.f, x: e.x, z: e.z };
     default:
       return null;
   }
@@ -359,6 +404,7 @@ export function actorOf(e: NetEv) {
     case 'lv':
     case 'fd':
     case 'ds':
+    case 'rvd':
       return -1;
     default:
       return e.f;
@@ -424,6 +470,16 @@ function parseEv(v: unknown): NetEv | null {
       return id(e.id) && onLand(e.x, e.z) ? { y: 'lv', id: e.id, x: e.x as number, z: e.z as number } : null;
     case 'fd':
       return fid(e.f) && int(e.c) && e.c >= 0 && e.c < 10_000 && onLand(e.x, e.z) && num(e.at) && e.at >= 0 && e.at <= 3600 ? { y: 'fd', f: e.f, c: e.c, x: e.x as number, z: e.z as number, at: e.at } : null;
+    case 'kn':
+      return fid(e.f) && int(e.by) && (e.by === -1 || fid(e.by)) && e.by !== e.f && isCause(e.w) ? { y: 'kn', f: e.f, by: e.by, w: e.w } : null;
+    case 'rv':
+      return fid(e.f) && int(e.to) && (e.to === -1 || fid(e.to)) && e.to !== e.f ? { y: 'rv', f: e.f, to: e.to } : null;
+    case 'rq':
+      return fid(e.f) && fid(e.to) && e.to !== e.f ? { y: 'rq', f: e.f, to: e.to } : null;
+    case 'rvd':
+      return fid(e.f) && fid(e.by) && e.by !== e.f ? { y: 'rvd', f: e.f, by: e.by } : null;
+    case 'pg':
+      return fid(e.f) && onLand(e.x, e.z) ? { y: 'pg', f: e.f, x: e.x as number, z: e.z as number } : null;
     default:
       return null;
   }
@@ -521,6 +577,19 @@ export function applyNet(m: Match, e: NetEv): boolean {
     case 'fd':
       if (!m.world) applyCalled(m, e.f, e.c, e.x, e.z, e.at);
       return true;
+    case 'kn':
+      return applyKnock(m, e.f, e.by, e.w);
+    case 'rv':
+      return applyRevive(m, e.f, e.to);
+    case 'rq':
+      // only the host stands an egg up; it tells everyone itself
+      if (m.world) reviveEgg(m, e.to, e.f, true);
+      return false;
+    case 'rvd':
+      if (!m.world) applyRevived(m, e.f, e.by);
+      return true;
+    case 'pg':
+      return applyPing(m, e.f, e.x, e.z);
   }
 }
 
@@ -569,11 +638,15 @@ export function parsePacket(value: unknown): Packet | null {
     const doors = p.dz === undefined ? (p.ro !== undefined ? [] : null) : unpackDoors(p.dz);
     if (p.dz !== undefined && !doors) return null;
     let roster: number[] | null = null;
+    let teams: number[] | null = null;
+    const mode: Mode = p.md === undefined ? 'solo' : isMode(p.md) ? p.md : 'solo';
+    if (p.md !== undefined && (!isMode(p.md) || p.md === 'solo' || !Array.isArray(p.ro))) return null;
     if (Array.isArray(p.ro)) {
       if (p.ro.length < 1 || p.ro.length > MAX_FIGHTERS || !p.ro.every(seat)) return null;
       roster = p.ro as number[];
       const humans = roster.filter((s) => s >= 0);
       if (new Set(humans).size !== humans.length) return null;
+      if (mode !== 'solo' && !(teams = parseTeams(p.te, mode, roster.length))) return null;
     }
     const states: [number, State][] = [];
     for (const raw of p.c.slice(0, MAX_FIGHTERS)) {
@@ -581,7 +654,7 @@ export function parsePacket(value: unknown): Packet | null {
       const s = unpackState(raw.slice(1));
       if (s) states.push([raw[0], s]);
     }
-    return { k: 'S', round, seed: p.sd, time: p.tm, level: p.lv, roster, states, glass, doors };
+    return { k: 'S', round, seed: p.sd, time: p.tm, level: p.lv, roster, states, glass, doors, mode, teams };
   }
   if (p.k === 'e') {
     if (!Array.isArray(p.g)) return null;
@@ -604,13 +677,22 @@ export function parsePacket(value: unknown): Packet | null {
     const places = p.pl.filter((o): o is [number, number, number] => Array.isArray(o) && fid(o[0]) && int(o[1]) && o[1] >= 1 && o[1] <= MAX_FIGHTERS && int(o[2]) && o[2] >= 0).slice(0, MAX_FIGHTERS);
     return { k: 'end', round, winner: p.w, places };
   }
-  if (p.k === 'cfg') return isBots(p.b) && isLevel(p.lv) ? { k: 'cfg', round, bots: p.b, level: p.lv } : null;
+  if (p.k === 'cfg') {
+    if (!isBots(p.b) || !isLevel(p.lv) || (p.md !== undefined && !isMode(p.md))) return null;
+    const mode: Mode = isMode(p.md) ? p.md : 'solo';
+    if (p.tp !== undefined && !(Array.isArray(p.tp) && p.tp.length <= SEATS && p.tp.every((t) => int(t) && t >= -1 && t < MAX_TEAMS))) return null;
+    return { k: 'cfg', round, bots: p.b, level: p.lv, mode, picks: mode === 'solo' ? [] : ((p.tp as number[] | undefined) ?? []) };
+  }
+  if (p.k === 'tm') return int(p.te) && p.te >= -1 && p.te < MAX_TEAMS ? { k: 'tm', round, team: p.te } : null;
   return null;
 }
 
-/** Final places by fighter: the winner first, then everyone else by when they went out. */
+/**
+ * Final places by fighter: the winner (in duos and squads, the winning team) first, then everyone else by when they
+ * (their team) went out.
+ */
 export function placesOf(m: Match): [number, number, number][] {
   return m.fighters
-    .map((f): [number, number, number] => [f.id, f.phase === 'out' ? f.place : 1, f.kills])
+    .map((f): [number, number, number] => [f.id, f.place || 1, f.kills])
     .sort((a, b) => a[1] - b[1] || a[0] - b[0]);
 }

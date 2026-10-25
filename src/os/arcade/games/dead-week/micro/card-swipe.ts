@@ -7,6 +7,24 @@ import { standardDuration, type MicroGame, type MicroInstance } from './types.ts
 const FROM = 30;
 const TO = 70;
 
+export type CardSwipeSchedule = { lo: number; hi: number; meter: (t: number) => number; meterTime: (m: number) => number };
+
+export function cardSwipeSchedule(seed: number, difficulty: number): CardSwipeSchedule {
+  const rng = mulberry32(seed);
+  const mid = range(rng, 0.32, 0.5);
+  const spread = 0.2 - difficulty * 0.1;
+  const lo = mid - spread / 2;
+  const hi = mid + spread / 2;
+  const meterSpeed = 2.2 + difficulty * 2.5;
+  const phase = range(rng, 0, Math.PI * 2);
+  return {
+    lo,
+    hi,
+    meter: (t) => 0.5 + 0.5 * Math.sin(t * meterSpeed + phase),
+    meterTime: (m) => 0.1 + m * 0.8,
+  };
+}
+
 export const cardSwipe: MicroGame = {
   id: 'card-swipe',
   title: 'card swipe',
@@ -16,14 +34,7 @@ export const cardSwipe: MicroGame = {
   hint: { touch: 'drag the card through, steady', keys: 'space when the needle is green' },
   duration: standardDuration(5, 3.5),
   create(seed, difficulty): MicroInstance {
-    const rng = mulberry32(seed);
-    // seconds the card should take to cross the reader
-    const mid = range(rng, 0.32, 0.5);
-    const spread = 0.2 - difficulty * 0.1;
-    const lo = mid - spread / 2;
-    const hi = mid + spread / 2;
-    const meterSpeed = 2.2 + difficulty * 2.5;
-    const phase = range(rng, 0, Math.PI * 2);
+    const { lo, hi, meter, meterTime } = cardSwipeSchedule(seed, difficulty);
     let x = 14;
     let grab = -1;
     let crossAt = -1;
@@ -32,9 +43,6 @@ export const cardSwipe: MicroGame = {
     let msgAt = -9;
     let auto = 0;
     let pass = false;
-    const meter = (t: number) => 0.5 + 0.5 * Math.sin(t * meterSpeed + phase);
-    // meter 0..1 maps to a crossing time from 0.1 s to 0.9 s
-    const meterTime = (m: number) => 0.1 + m * 0.8;
     const judge = (dur: number) => {
       if (dur < lo) {
         msg = 'too fast';

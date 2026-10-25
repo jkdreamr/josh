@@ -655,6 +655,7 @@ function drawHud(c: CanvasRenderingContext2D, w: number, h: number, u: number, s
   c.restore();
 }
 
+
 function drawCup(c: CanvasRenderingContext2D, full: boolean, out: boolean) {
   c.lineWidth = 2.4;
   c.strokeStyle = INK;
@@ -728,3 +729,5 @@ function drawStamp(c: CanvasRenderingContext2D, x: number, y: number, side: numb
   text(c, pass ? 'passed' : 'failed', 0, 0, h * 0.62, { color, weight: 900 });
   c.restore();
 }
+
+

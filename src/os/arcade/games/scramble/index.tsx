@@ -11,6 +11,8 @@ import {
   F_STUN,
   LEVELS,
   MAX_FIGHTERS,
+  MODES,
+  MODE_NAMES,
   PLANS,
   SLOT_MELEE,
   SLOT_THROW,
@@ -20,17 +22,27 @@ import {
   camouflaged,
   concealed,
   createMatch,
+  downMate,
   editable,
   fmtClock,
   held,
   heldGun,
+  isMode,
   levelOf,
   ordinal,
   owned,
   prompt,
+  pingOf,
+  reviveShare,
+  revivedBy,
   scoreOf,
   soloMatch,
   step,
+  teamCount,
+  teamOf,
+  teamsLeft,
+  mateColor,
+  DOWN_HP,
   type Cause,
   type Ev,
   type Fighter,
@@ -38,13 +50,14 @@ import {
   type Level,
   type LootItem,
   type Match,
+  type Mode,
   type Plan,
 } from './logic';
-import { configOf, parsePacket, type Bots } from './net';
-import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Session } from './session';
+import { configOf, parsePacket, teamAsk, type Bots } from './net';
+import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, teamsFor, tick, winnersOf, type Session } from './session';
 import { ARMOR_NAMES, MATS, MAT_MAX, MELEE, PIECE_COST, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, ammoCap, isMelee, isThrow, isWeapon, legendary, lootName, reloadOf, type Ammo, type LootDef, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { HALF, SUPPLY_FALL, placeAt, type ContainerKind } from './map';
-import { AMMO_FILL, AmmoIcon, ArmorIcon, CrownIcon, EDIT_KEY, EditIcon, EggIcon, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PackIcon, PieceIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
+import { AMMO_FILL, AmmoIcon, ArmorIcon, CrownIcon, DROP_KEY, EDIT_KEY, EditIcon, EggIcon, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PING_KEY, PackIcon, PieceIcon, PingIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
 import { meta } from './meta';
 import './scramble.css';
 
@@ -56,6 +69,15 @@ const levelOptions = [
 ] as const;
 /** With computer eggs in the room, whether more of them fill the island up to fifty. */
 const FILL = defineSetting('scramble:fill', ['fill', 'none'] as const, 'fill');
+/** Solo, duos or squads: for Play with Bots and a room you host, and (on its own) for quick play's Play. */
+const MODE = defineSetting('scramble:mode', MODES, 'solo');
+const QUICK_MODE = defineSetting('scramble:quick-mode', MODES, 'solo');
+const modeOptions = MODES.map((m) => [m, MODE_NAMES[m]] as const);
+/**
+ * In a room you host, the team each seat is on (-1 for wherever there's room), as you and the people in the room have
+ * arranged them: kept here so the match you start next lays the teams out that way.
+ */
+const lobbyPicks = { current: [] as number[] };
 /** A Scramble room starts full: nineteen bots with the host, and Fill to 50 adds the rest. */
 const ROOM_BOTS = (meta.online?.seats ?? 8) - 1;
 const fillOptions = [
@@ -63,7 +85,7 @@ const fillOptions = [
   ['none', 'Room Bots Only'],
 ] as const;
 /** Quick play's card, under the people in the match so far. */
-const QUICK_NOTE = `Computer eggs fill the island to ${MAX_FIGHTERS}.`;
+const quickNote = (mode: Mode) => (mode === 'solo' ? `Computer eggs fill the island to ${MAX_FIGHTERS}.` : `${MODE_NAMES[mode]}: you team up with the people here first, and computer eggs fill the teams and the island to ${MAX_FIGHTERS}.`);
 /** Name tags shown at once at most, the nearest eggs' (fifty would bury the screen). */
 const TAGS = 12;
 /** How tall a name tag is on screen: one that would sit on a nearer one's waits till they part. */
@@ -109,11 +131,31 @@ function lootColor(def: LootDef) {
 }
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
+  const [quickMode] = useSetting(QUICK_MODE);
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} defaultBots={ROOM_BOTS} quickNote={QUICK_NOTE} soloLabel="Play with Bots">
+    <GameShell
+      meta={meta}
+      compact={compact}
+      onExit={onExit}
+      roomCode={roomCode}
+      setup={<Setup />}
+      hostSetup={<OnlineSetup />}
+      defaultBots={ROOM_BOTS}
+      quickNote={quickNote(quickMode)}
+      quickSetup={<QuickSetup />}
+      // quick play keeps each mode's matches apart (solo's in the pool quick play always had)
+      quickPool={quickMode === 'solo' ? undefined : quickMode}
+      soloLabel="Play with Bots"
+    >
       <Stage />
     </GameShell>
   );
+}
+
+/** The mode quick play's Play finds a match in. */
+function QuickSetup() {
+  const [mode, setMode] = useSetting(QUICK_MODE);
+  return <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />;
 }
 
 function useBests() {
@@ -125,12 +167,14 @@ function useBests() {
 
 function Setup() {
   const [level, setLevel] = useSetting(LEVEL);
+  const [mode, setMode] = useSetting(MODE);
   const best = useBests()[level].best;
   return (
     <>
+      <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
       <Segmented label="Computer Eggs" value={level} options={levelOptions} onChange={setLevel} />
       <Extras />
-      {best !== null && <small className="g-scramble-best">Best on {level}: {best.toLocaleString('en-US')} pts</small>}
+      {best !== null && <small className="g-scramble-best">Best solo on {level}: {best.toLocaleString('en-US')} pts</small>}
     </>
   );
 }
@@ -158,39 +202,111 @@ function Extras() {
 }
 
 /**
- * Settings for online matches. The room's bots are its computer eggs (the host adds them in the room, and they fill
- * every empty seat unless the host takes some away). With any in the room, the host picks whether more fill the island
- * to fifty, and how sharp they all are, and tells the room. Quick play always fills it, at normal.
+ * Settings for online matches. The host picks the mode, and in duos and squads the people in the room arrange the teams
+ * (the host anyone's, everyone else their own; whoever doesn't pick goes on the first team with room, so friends fill
+ * teams together in seat order, and computer eggs fill the rest). The room's bots are its computer eggs (the host adds
+ * them in the room, and they fill every empty seat unless the host takes some away). With any in the room, the host
+ * picks whether more fill the island to fifty, and how sharp they all are, and tells the room. Quick play always
+ * fills it, at normal, in the mode its Play found.
  */
 function OnlineSetup() {
   const online = useOnline();
   const [level, setLevel] = useSetting(LEVEL);
   const [fill, setFill] = useSetting(FILL);
-  const [picked, setPicked] = useState<{ bots: Bots; level: Level } | null>(null);
+  const [myMode, setMode] = useSetting(MODE);
+  const [picks, setPicks] = useState<number[]>(() => [...lobbyPicks.current]);
+  const [picked, setPicked] = useState<{ bots: Bots; level: Level; mode: Mode; picks: number[] } | null>(null);
   const host = online?.isHost ?? true;
   const bots = online?.bots.length ?? 0;
+  const mode = host ? myMode : (picked?.mode ?? 'solo');
+  const seen = host ? picks : (picked?.picks ?? []);
+  useEffect(() => {
+    lobbyPicks.current = picks;
+  }, [picks]);
+  // someone who leaves gives up their pick (whoever takes the seat next goes wherever there's room)
+  const seatsKey = online?.players.map((p) => p.seat).join() ?? '';
+  useEffect(() => {
+    if (!online?.isHost) return;
+    const here = new Set(online.players.map((p) => p.seat));
+    setPicks((x) => (x.some((t, seat) => t >= 0 && !here.has(seat)) ? x.map((t, seat) => (here.has(seat) ? t : -1)) : x));
+  }, [seatsKey]);
   useEffect(() => {
     if (!online?.isHost || online.quick) return;
-    const say = () => online.send(configOf(online.round, fill, level));
+    const say = () => online.send(configOf(online.round, fill, level, myMode, picks));
     say();
     const timer = window.setInterval(say, 2000);
     return () => window.clearInterval(timer);
-  }, [online, fill, level]);
+  }, [online, fill, level, myMode, picks]);
+  // the host hears who asks for which team (everyone else stays put)
+  const room = useRef({ mode: myMode, seats: [] as number[] });
+  room.current = { mode: myMode, seats: online ? online.players.map((p) => p.seat).sort((a, b) => a - b) : [] };
+  useEffect(() => {
+    if (!online?.isHost || online.quick) return;
+    return online.onMessage((from, d) => {
+      const p = parsePacket(d);
+      const { mode, seats } = room.current;
+      if (p?.k !== 'tm' || from <= 0 || mode === 'solo' || !seats.includes(from)) return;
+      setPicks((x) => pinTeam(mode, seats, x, from, p.team));
+    });
+  }, [online]);
   useEffect(() => {
     if (!online || online.isHost) return;
     return online.onMessage((from, d) => {
       const p = parsePacket(d);
       if (from !== 0 || !p) return;
-      if (p.k === 'cfg') setPicked({ bots: p.bots, level: p.level });
+      if (p.k === 'cfg') setPicked({ bots: p.bots, level: p.level, mode: p.mode, picks: p.picks });
       // joining while a match is on, the host's state says how it was set up
       else if (p.k === 'S' && p.roster) {
         const bots: Bots = p.roster.length >= MAX_FIGHTERS ? 'fill' : 'none';
-        setPicked((x) => (x && x.bots === bots && x.level === p.level ? x : { bots, level: p.level }));
+        setPicked((x) => (x && x.bots === bots && x.level === p.level && x.mode === p.mode ? x : { bots, level: p.level, mode: p.mode, picks: x?.picks ?? [] }));
       }
     });
   }, [online]);
+  const people = online ? [...online.players].sort((a, b) => a.seat - b.seat) : [];
+  // the teams as they stand (numbered from 1), and moving someone to the next one
+  const seats = people.map((p) => p.seat);
+  const teams = mode === 'solo' ? [] : teamsFor(mode, seats, seen, 0);
+  const move = (seat: number) => {
+    if (!online || mode === 'solo') return;
+    const next = nextTeam(mode, teams, seats.indexOf(seat));
+    if (host) setPicks((x) => pinTeam(mode, seats, x, seat, next));
+    else if (seat === online.seat) online.send(teamAsk(online.round, next));
+  };
   return (
     <>
+      {online && !online.quick &&
+        (host ? (
+          <Segmented label="Mode" value={myMode} options={modeOptions} onChange={setMode} />
+        ) : (
+          <div className="arcade-field">
+            <span>Mode</span>
+            <div className="g-scramble-hostpick">
+              <b>{picked ? MODE_NAMES[picked.mode] : '…'}</b>
+              <small>picked by the host</small>
+            </div>
+          </div>
+        ))}
+      {online && !online.quick && mode !== 'solo' && people.length > 0 && (
+        <div className="arcade-field g-scramble-teams">
+          <span>Teams</span>
+          <ul>
+            {people.map((p, i) => {
+              const mine = p.seat === online.seat;
+              // nowhere else to go (every other team full) leaves the button off
+              const can = (host || mine) && nextTeam(mode, teams, i) !== teams[i];
+              return (
+                <li key={p.seat} className={mine ? 'is-mine' : undefined}>
+                  <span>{p.name}</span>
+                  <button type="button" className="arcade-btn" disabled={!can} aria-label={`${p.name}: team ${teams[i] + 1}${can ? ', tap for the next team' : ''}`} onClick={() => move(p.seat)}>
+                    Team {teams[i] + 1}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <small>{host ? 'Tap a team to move someone. Computer eggs fill the rest.' : 'Tap your team to change it. Computer eggs fill the rest.'}</small>
+        </div>
+      )}
       {bots > 0 && !online?.quick &&
         (host ? (
           <>
@@ -211,13 +327,13 @@ function OnlineSetup() {
   );
 }
 
-type Mode = 'idle' | 'solo' | 'online';
+type StageMode = 'idle' | 'solo' | 'online';
 
 /** A fresh match for each solo round and each online round, and the island from above behind the Start card. */
 function Stage() {
   const shell = useShell();
   const online = useOnline();
-  const current = useRef<{ key: string; mode: Mode }>({ key: 'idle', mode: 'idle' });
+  const current = useRef<{ key: string; mode: StageMode }>({ key: 'idle', mode: 'idle' });
   if (shell.status === 'ready') current.current = { key: 'idle', mode: 'idle' };
   else if (shell.status === 'playing') {
     const key = online ? `online:${online.round}` : 'solo';
@@ -283,10 +399,23 @@ type Hud = {
   watching: string | null;
   out: string | null;
   mine: boolean;
+  /**
+   * In duos and squads: the teams still in, and the rest of the team of the egg we see, each in its own color with its
+   * health and shield (knocked down: what it has left to bleed), and how far along a revive of it is (-1 for none).
+   */
+  teams: number;
+  mates: Mate[] | null;
+  /** The egg we see knocked down: what it has left before it bleeds out (0..1), how far along a revive is, and whose. */
+  down: { left: number; revive: number; by: string | null } | null;
+  /** Where the team's eggs and pings are, roughly, so the maps are drawn again as they move. */
+  marks: string;
+  /** The prompt is to revive a teammate (the button is held down for it). */
+  reviving: boolean;
 };
-const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader']);
+type Mate = { id: number; name: string; color: string; hp: number; shield: number; down: boolean; out: boolean; revive: number };
+const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader', 'mates', 'down']);
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false });
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false, teams: 0, mates: null, down: null, marks: '', reviving: false });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
@@ -296,8 +425,8 @@ type Pop = { el: HTMLDivElement | null; x: number; y: number; z: number; age: nu
  * `toss` is how far a touch throw goes, `tossAim` which way, and `tossBy` the match clock it gives up at if it can't go
  * yet. `piece`, `mat` and `edit` are the build menu's (as Input has them).
  */
-type Taps = { build: boolean; piece: Plan | null; mat: number; edit: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number };
-const noTaps = (): Taps => ({ build: false, piece: null, mat: 0, edit: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0 });
+type Taps = { build: boolean; piece: Plan | null; mat: number; edit: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number; ping: boolean; pingAt: { x: number; z: number } | null; drop: Input['drop'] };
+const noTaps = (): Taps => ({ build: false, piece: null, mat: 0, edit: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0, ping: false, pingAt: null, drop: null });
 /** How long the build key's blueprint stays up after a build key, and the edit key's mark after an edit. */
 const PREVIEW = 2.5;
 const EDIT_PREVIEW = 1.5;
@@ -308,6 +437,7 @@ const withA = (name: string) => `${/^[aeiou]|^SMG/.test(name) ? 'an' : 'a'} ${na
 function causeName(w: Cause) {
   if (w === 'storm') return 'the storm';
   if (w === 'left') return '';
+  if (w === 'bleed') return 'a knock';
   if (w === 'sauce') return 'hot sauce';
   if (w === 'grenade' || w === 'barrel') return withA(w);
   if (w === 'mirv') return withA('MIRV grenade');
@@ -316,7 +446,7 @@ function causeName(w: Cause) {
   return withA(WEAPONS[w].name);
 }
 
-function Play({ mode }: { mode: Mode }) {
+function Play({ mode }: { mode: StageMode }) {
   const shell = useShell();
   const shellRef = useRef(shell);
   shellRef.current = shell;
@@ -328,6 +458,7 @@ function Play({ mode }: { mode: Mode }) {
   const live = mode === 'online' && !!online;
   const [level] = useSetting(LEVEL);
   const [fill] = useSetting(FILL);
+  const [teamMode] = useSetting(MODE);
   const bests = useBests();
   const { ref, size } = useCanvas<HTMLDivElement>();
   const sizeRef = useRef(size);
@@ -335,15 +466,16 @@ function Play({ mode }: { mode: Mode }) {
   const view = useRef<View | null>(null);
   const match = useRef<Match | null>(null);
   const net = useRef<Session>(null as unknown as Session);
-  net.current ??= newSession(!live || online!.isHost);
-  if (!match.current) {
+  net.current ??= newSession(!live || online!.isHost);  if (!match.current) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
-    else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0]);
+    else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0], teamMode);
     else if (online!.isHost) {
-      // the room's bots, and with any of them, more to fill the island when the host wants it (quick play always does)
+      // the room's bots, and with any of them, more to fill the island when the host wants it (quick play always does),
+      // in the mode quick play found (else the host's, with the teams as the room arranged them)
       const quick = online!.quick;
       const bots = hostBots(quick, online!.bots.length, fill === 'fill');
-      const h = hostMatch(online!.players, online!.seat, randomSeed(), quick ? QUICK_LEVEL : level, bots, COUNTDOWN + HOST_LEAD);
+      const md: Mode = quick ? (isMode(online!.pool) ? online!.pool : 'solo') : teamMode;
+      const h = hostMatch(online!.players, online!.seat, randomSeed(), quick ? QUICK_LEVEL : level, bots, COUNTDOWN + HOST_LEAD, md, quick ? [] : lobbyPicks.current);
       match.current = h.match;
       net.current.roster = h.roster;
     } else match.current = waitingMatch(level);
@@ -366,7 +498,10 @@ function Play({ mode }: { mode: Mode }) {
   const soloEnd = useRef(-1);
 
   // input that arrives between frames
-  const mouse = useRef({ x: 0, y: 0, inside: false, down: false, clicked: false });
+  const mouse = useRef({ x: 0, y: 0, inside: false, down: false, clicked: false, ping: false });
+  /** The pick up button held down on a touch screen (to revive), and a long press on a slot or an item (to drop it). */
+  const holding = useRef(false);
+  const press = useRef<number | null>(null);
   const taps = useRef<Taps>(noTaps());
   const moveStick = useRef<Stick | null>(null);
   const aimStick = useRef<Stick | null>(null);
@@ -455,17 +590,24 @@ function Play({ mode }: { mode: Mode }) {
     }
   }, [shell.status]);
 
-  /** The egg the camera follows: yours, or once you're out, whoever you're watching. */
+  /** The egg the camera follows: yours, or once you're out, whoever you're watching (your teammates first). */
   function focusOf(m: Match) {
     const me = m.fighters[m.me];
     if (me && me.phase !== 'out') return m.me;
-    const alive = m.fighters.filter((f) => f.phase !== 'out');
+    const alive = watchable(m);
     if (!alive.length) return Math.max(0, m.me);
     if (!alive.some((f) => f.id === spectate.current)) {
       const killer = me && me.by >= 0 ? m.fighters[me.by] : undefined;
-      spectate.current = killer && killer.phase !== 'out' ? killer.id : alive[0].id;
+      spectate.current = alive[0].team === me?.team ? alive[0].id : killer && killer.phase !== 'out' ? killer.id : alive[0].id;
     }
     return spectate.current;
+  }
+
+  /** The eggs still in to watch, your teammates first. */
+  function watchable(m: Match) {
+    const me = m.fighters[m.me];
+    const alive = m.fighters.filter((f) => f.phase !== 'out');
+    return me ? [...alive.filter((f) => f.team === me.team), ...alive.filter((f) => f.team !== me.team)] : alive;
   }
 
   // -------------------------------------------------------------------------------------------------------------
@@ -483,10 +625,12 @@ function Play({ mode }: { mode: Mode }) {
     const n = net.current;
     const o = onlineRef.current;
     const m = match.current!;
-    const winner = m.fighters[m.winner];
     if (report && !n.reported && o) {
       n.reported = true;
-      o.reportResult(o.round, winner && winner.seat >= 0 ? winner.seat : null);
+      // a team's win counts for every person on it
+      const people = winnersOf(m).filter((f) => f.seat >= 0);
+      const winner = people.find((f) => f.id === m.winner) ?? people[0];
+      o.reportResult(o.round, winner ? winner.seat : null, m.mode !== 'solo' && winner ? people.map((f) => f.seat) : undefined);
     }
     if (n.over && !n.early) return;
     const { won, ...card } = resultCard(m, early, hosting.current);
@@ -515,7 +659,7 @@ function Play({ mode }: { mode: Mode }) {
         if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, { title: 'Sitting This One Out', detail: 'You Will Be in the Next Round.' });
         return;
       }
-      const next = receive(n, m, { seat: o.seat, isHost: o.isHost, round: o.round }, from, d, (seed, lvl, time, roster) => guestMatch(o.players, o.seat, seed, lvl, time, roster), performance.now() / 1000);
+      const next = receive(n, m, { seat: o.seat, isHost: o.isHost, round: o.round }, from, d, (seed, lvl, time, roster, md, teams) => guestMatch(o.players, o.seat, seed, lvl, time, roster, md, teams), performance.now() / 1000);
       if (next !== m) {
         match.current = next;
         setViewKey((x) => x + 1);
@@ -633,6 +777,17 @@ function Play({ mode }: { mode: Mode }) {
     if (t.cycle) inp.cycle = t.cycle;
     if (keys.pressed('KeyR') || t.reload) inp.reload = true;
     if (keys.pressed('KeyE') || t.interact) inp.interact = true;
+    // held down by a knocked teammate, it revives them (a button let go of once the prompt has moved on lets go too)
+    if (holding.current && me.reviving < 0 && !downMate(m, me)) holding.current = false;
+    inp.hold = keys.down('KeyE') || holding.current;
+    // a ping where the mouse points (or ahead, where you aim), and the drop key for what's in hand
+    if ((keys.pressed(keyCode(PING_KEY)) || mouse.current.ping || t.ping) && pingable(me)) {
+      const g = t.ping ? null : mouse.current.inside && v && !touchRef.current ? v.ground(mouse.current.x, mouse.current.y, me.y + 1) : null;
+      inp.ping = t.pingAt ?? g ?? { x: me.x + Math.sin(lastAim.current) * 12, z: me.z + Math.cos(lastAim.current) * 12 };
+    }
+    mouse.current.ping = false;
+    if (keys.pressed(keyCode(DROP_KEY))) inp.drop = me.slot;
+    if (t.drop !== null) inp.drop = t.drop;
     USE_IDS.forEach((w) => {
       if (keys.pressed(keyCode(USE_KEYS[w]))) inp.use = w;
     });
@@ -755,7 +910,7 @@ function Play({ mode }: { mode: Mode }) {
     const step = (keys.pressed('right', 'KeyE') ? 1 : 0) - (keys.pressed('left') ? 1 : 0) + taps.current.watch;
     taps.current.watch = 0;
     if (!step) return;
-    const alive = m.fighters.filter((f) => f.phase !== 'out');
+    const alive = watchable(m);
     if (!alive.length) return;
     const at = alive.findIndex((f) => f.id === spectate.current);
     spectate.current = alive[(at + step + alive.length) % alive.length].id;
@@ -775,19 +930,27 @@ function Play({ mode }: { mode: Mode }) {
     else finishRef.current(false, true);
   }
 
+  /**
+   * The result on this device: your place (your team's, in duos and squads) and points. Only solo matches go on the
+   * boards, one a level.
+   */
   function finishSolo(m: Match, me: Fighter) {
     const n = net.current;
     if (n.over) return;
     n.over = true;
-    const won = m.ended && m.winner === me.id;
+    const teams = m.mode !== 'solo';
+    const winners = winnersOf(m);
+    const won = winners.includes(me);
     const score = scoreOf(me, won);
-    const best = bests[m.level];
-    const newBest = score > 0 && best.submit(score);
-    const winner = m.fighters[m.winner];
-    const title = won ? 'Last Egg Standing' : `${ordinal(me.place)} of ${m.fighters.length}`;
-    const how = won ? '' : me.by >= 0 && me.by !== me.id ? ` Cracked by ${m.fighters[me.by]?.name ?? 'someone'}.` : me.outCause === 'storm' ? ' The storm got you.' : '';
-    const detail = `${score.toLocaleString('en-US')} pts${newBest ? ', a new best' : ''}: ${me.kills} ${me.kills === 1 ? 'elimination' : 'eliminations'}, ${Math.round(me.dealt)} damage${won ? ' and the win' : ''}.${how}${!won && winner && m.ended ? ` ${winner.name} won.` : ''}`;
-    shellRef.current.gameOver(undefined, score > 0 ? { title, detail, board: m.level, rank: score } : { title, detail });
+    const board = !teams && score > 0;
+    const newBest = board && bests[m.level].submit(score);
+    const total = teams ? teamCount(m) : m.fighters.length;
+    // left while the rest of the team is still in: no place yet
+    const title = won ? (teams ? 'Last Team Standing' : 'Last Egg Standing') : teams && !me.place ? 'Your Team Is Still In' : `${ordinal(me.place || total)} of ${total}`;
+    const how = won ? '' : me.by >= 0 && me.by !== me.id ? ` Cracked by ${m.fighters[me.by]?.name ?? 'someone'}.` : me.outCause === 'storm' ? ' The storm got you.' : me.outCause === 'bleed' ? ' You bled out.' : '';
+    const them = !won && winners.length && m.ended ? ` ${namesOf(winners)} won.` : '';
+    const detail = `${score.toLocaleString('en-US')} pts${newBest ? ', a new best' : ''}: ${me.kills} ${me.kills === 1 ? 'elimination' : 'eliminations'}, ${Math.round(me.dealt)} damage${won ? ' and the win' : ''}.${how}${them}${teams ? ' Only solo matches go on the board.' : ''}`;
+    shellRef.current.gameOver(undefined, board ? { title, detail, board: m.level, rank: score } : { title, detail });
   }
 
   // -------------------------------------------------------------------------------------------------------------
@@ -1137,15 +1300,21 @@ function Play({ mode }: { mode: Mode }) {
         if (!who) break;
         const yours = e.by === m.me && e.f !== m.me;
         const name = (x: Fighter) => (x.id === m.me ? 'you' : x.name);
+        const kills = (x: Fighter) => `${x.kills} ${x.kills === 1 ? 'kill' : 'kills'}`;
+        // a knocked egg finished off, bled out, or out with the last of its team
         const text =
           e.w === 'left'
             ? `${who.name} left`
-            : e.w === 'storm' || !by
-              ? `${name(who)} ${who.id === m.me ? 'were' : 'was'} lost to the storm`
-              : by === who
-                ? `${name(who)} cracked`
-                : `${name(by)} eliminated ${name(who)} with ${causeName(e.w)} (${by.kills} ${by.kills === 1 ? 'kill' : 'kills'})`;
-        addFeed(text, yours || e.f === m.me);
+            : e.w === 'bleed'
+              ? `${name(who)} bled out${by && by !== who ? ` (knocked by ${name(by)}, ${kills(by)})` : ''}`
+              : e.w === 'storm' || !by
+                ? `${name(who)} ${who.id === m.me ? 'were' : 'was'} lost to the storm`
+                : by === who
+                  ? `${name(who)} cracked`
+                  : e.down
+                    ? `${name(by)} finished ${name(who)} (${kills(by)})`
+                    : `${name(by)} eliminated ${name(who)} with ${causeName(e.w)} (${kills(by)})`;
+        addFeed(text, yours || e.f === m.me || mateOf(m, who));
         if (yours) {
           hitMark(who.x, who.z, true, who.y);
           say(`you cracked ${who.name}`);
@@ -1157,13 +1326,67 @@ function Play({ mode }: { mode: Mode }) {
         } else if (eye && near(who.x, who.z) > 0) sfx.noise(0.12, 0.1 * near(who.x, who.z));
         break;
       }
-      case 'end':
-        if (e.winner === m.me) {
-          say('last egg standing!', 6);
+      case 'knock': {
+        const who = m.fighters[e.f];
+        const by = e.by >= 0 ? m.fighters[e.by] : undefined;
+        if (!who) break;
+        const name = (x: Fighter) => (x.id === m.me ? 'you' : x.name);
+        addFeed(by ? `${name(by)} knocked ${name(who)} down with ${causeName(e.w)}` : `${name(who)} ${who.id === m.me ? 'were' : 'was'} knocked down${e.w === 'storm' ? ' by the storm' : ''}`, e.by === m.me || e.f === m.me || mateOf(m, who));
+        if (e.by === m.me) {
+          hitMark(who.x, who.z, true, who.y);
+          say(`you knocked ${who.name} down`);
+          sfx.play('coin', 1.2);
+          buzz(25);
+        } else if (e.f === m.me) {
+          say('knocked down! crawl to your team', 3);
+          sfx.tone({ freq: 330, to: 110, dur: 0.5, type: 'sawtooth', vol: 0.1 });
+          buzz(90);
+        } else if (mateOf(m, who)) {
+          say(`${who.name} is down`);
+          sfx.tone({ freq: 520, to: 260, dur: 0.3, type: 'triangle', vol: 0.1 });
+        }
+        break;
+      }
+      case 'revive':
+        if (e.to === m.me && e.f !== m.me && m.fighters[e.f]) say(`${m.fighters[e.f].name} is reviving you`);
+        break;
+      case 'revived': {
+        const who = m.fighters[e.f];
+        const by = m.fighters[e.by];
+        if (!who) break;
+        if (mateOf(m, who)) addFeed(`${by ? (by.id === m.me ? 'you' : by.name) : 'someone'} revived ${who.id === m.me ? 'you' : who.name}`, true);
+        if (e.f === m.me) {
+          say('back on your feet', 2.4);
+          sfx.play('coin', 1.1);
+        } else if (e.by === m.me) {
+          say(`${who.name} is back up`);
+          sfx.play('coin', 1.3);
+        }
+        break;
+      }
+      case 'ping':
+        // a teammate marks a spot: a blip (the map and the island show where)
+        if (f && mateOf(m, f)) sfx.tone({ freq: 1180, to: 1560, dur: 0.12, type: 'sine', vol: 0.09 });
+        break;
+      case 'end': {
+        const winners = winnersOf(m);
+        const me = m.fighters[m.me];
+        if (me && winners.includes(me)) {
+          say(m.mode === 'solo' ? 'last egg standing!' : 'last team standing!', 6);
           sfx.play('win');
         }
         break;
+      }
     }
+  }
+
+  /** Whether an egg of ours can ping for its team: in duos and squads, off the bus and still in. */
+  const pingable = (f: Fighter | undefined) => !!f && match.current?.mode !== 'solo' && (f.phase === 'ground' || f.phase === 'drop');
+
+  /** On the team of the egg we see (and not that egg itself): in solo, nobody. */
+  function mateOf(m: Match, f: Fighter) {
+    const eye = m.fighters[focusOf(m)];
+    return m.mode !== 'solo' && !!eye && f !== eye && f.team === eye.team;
   }
 
   /** Name tags (the nearest TAGS of them) and damage numbers, moved straight on the DOM. */
@@ -1174,7 +1397,9 @@ function Play({ mode }: { mode: Mode }) {
     for (const f of m.fighters) {
       if (!eye || f.id === focus || (f.phase !== 'ground' && f.phase !== 'drop')) continue;
       const d = Math.hypot(f.x - eye.x, f.z - eye.z);
-      if (d < 40 && (f.inside < 0 || f.inside === eye.inside) && !concealed(m, f, eye)) near.push([d, f]);
+      // teammates first, from farther off, wherever they are
+      if (m.mode !== 'solo' && f.team === eye.team) near.push([d - 1000, f]);
+      else if (d < 40 && (f.inside < 0 || f.inside === eye.inside) && !concealed(m, f, eye)) near.push([d, f]);
     }
     near.sort((a, b) => a[0] - b[0]);
     // nearest first; one that would cover a name already up stays hidden (sized from its text, not measured)
@@ -1198,6 +1423,8 @@ function Play({ mode }: { mode: Mode }) {
       } else {
         tag.style.opacity = '1';
         tag.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
+        tag.classList.toggle('is-mate', m.mode !== 'solo' && !!eye && f.team === eye.team);
+        tag.classList.toggle('is-down', f.down);
       }
     }
     // hit marks: a quick X that grows a little and fades
@@ -1335,7 +1562,11 @@ function Play({ mode }: { mode: Mode }) {
     else if (focus.phase === 'drop' && focus === me) banner = 'steer to where you want to land';
     let busy = -1;
     let busyText = '';
-    if (own && focus.reloadT > 0 && g) {
+    const teamsOn = m.mode !== 'solo';
+    if (focus.reviving >= 0 && m.fighters[focus.reviving]) {
+      busy = reviveShare(m, focus);
+      busyText = `reviving ${m.fighters[focus.reviving].id === m.me ? 'you' : m.fighters[focus.reviving].name}`;
+    } else if (own && focus.reloadT > 0 && g) {
       busy = 1 - focus.reloadT / reloadOf(g.w, g.r);
       busyText = 'reloading';
     } else if (own && focus.using) {
@@ -1353,21 +1584,37 @@ function Play({ mode }: { mode: Mode }) {
       }
     }
     let promptText: string | null = null;
+    let reviving = false;
     if (me && me === focus && me.phase === 'ground') {
       const p = prompt(m, me);
+      reviving = !!p && 'revive' in p;
       if (p && 'chest' in p) {
         const c = m.map.containers[p.chest];
         promptText = OPEN_TEXT[c.kind] ?? (c.gold ? 'open the golden chest' : 'open chest');
       } else if (p && 'door' in p) {
         const s = m.map.slabs[p.door];
         promptText = s.vault ? 'open the vault' : `${m.doors[p.door] === DOOR_SHUT ? 'open' : 'shut'} the ${s.bars ? 'cell door' : 'door'}`;
-      } else if (p) {
+      } else if (p && 'revive' in p) promptText = me.reviving >= 0 ? 'keep holding' : `hold to revive ${m.fighters[p.revive].name}`;
+      else if (p) {
         const k = p.item.def.kind;
         const have = k === 'melee' ? MELEE[me.melee].name : k === 'helmet' || k === 'vest' ? ARMOR_NAMES[k][me[k]] : 'gun';
         promptText = `${p.swap ? `swap ${have} for` : 'pick up'} ${lootName(p.item.def)}`;
       }
     }
-    const out = me && me.phase === 'out' ? (me.by >= 0 && me.by !== me.id && m.fighters[me.by] ? `cracked by ${m.fighters[me.by].name}` : me.outCause === 'storm' ? 'lost to the storm' : 'out') + ` · ${ordinal(me.place)} of ${m.fighters.length}` : null;
+    // out: how, and where we (our team) placed, once we know
+    const total = teamsOn ? teamCount(m) : m.fighters.length;
+    const out = me && me.phase === 'out' ? (me.outCause === 'bleed' ? 'bled out' : me.by >= 0 && me.by !== me.id && m.fighters[me.by] ? `cracked by ${m.fighters[me.by].name}` : me.outCause === 'storm' ? 'lost to the storm' : 'out') + (me.place ? ` · ${ordinal(me.place)} of ${total}` : ' · your team is still in') : null;
+    // the rest of the team, and what's on the maps for it
+    const mates: Mate[] | null = teamsOn
+      ? teamOf(m, focus.team)
+          .filter((o) => o !== focus)
+          .map((o) => {
+            const r = revivedBy(m, o);
+            return { id: o.id, name: o.id === m.me ? 'you' : o.name, color: mateColor(m, o), hp: Math.max(0, Math.ceil(o.hp)), shield: o.down ? 0 : Math.ceil(o.shield), down: o.down && o.phase !== 'out', out: o.phase === 'out', revive: r ? Math.round(reviveShare(m, r) * 20) / 20 : -1 };
+          })
+      : null;
+    const reviver = focus.down ? revivedBy(m, focus) : undefined;
+    const marks = teamsOn ? teamOf(m, focus.team).map((o) => `${Math.round(o.x / 2)},${Math.round(o.z / 2)},${o.down ? 1 : 0},${pingOf(m, o) ? `${o.pingX},${o.pingZ}` : ''}`).join(';') : '';
     const gw = g ? WEAPONS[g.w] : null;
     const next: Hud = {
       phase: focus.phase,
@@ -1413,6 +1660,11 @@ function Play({ mode }: { mode: Mode }) {
       watching: watching ? watching.name : null,
       out,
       mine: focus === me,
+      teams: teamsOn ? teamsLeft(m) : 0,
+      mates,
+      down: focus.down && focus.phase === 'ground' ? { left: Math.round(Math.max(0, focus.hp / DOWN_HP) * 50) / 50, revive: reviver ? Math.round(reviveShare(m, reviver) * 30) / 30 : -1, by: reviver ? (reviver.id === m.me ? 'you' : reviver.name) : null } : null,
+      marks,
+      reviving,
     };
     setHud((prev) => (sameHud(prev, next) ? prev : next));
   }
@@ -1454,6 +1706,11 @@ function Play({ mode }: { mode: Mode }) {
       mouse.current.clicked = true;
       capture(e);
     } else if (e.button === 2) taps.current.build = true;
+    else if (e.button === 1) {
+      // the middle button pings where it points
+      e.preventDefault();
+      mouse.current.ping = true;
+    }
   };
   const onMouseUp = (e: RPointerEvent<HTMLDivElement>) => {
     if (e.pointerType !== 'mouse') return;
@@ -1545,6 +1802,51 @@ function Play({ mode }: { mode: Mode }) {
     },
     onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault(),
   });
+  /**
+   * A button that also puts something down for a teammate: held a moment on a touch screen, or right clicked. A right
+   * click does nothing else.
+   */
+  const tapOrDrop = (what: Input['drop'], set: (t: Taps) => void) => {
+    const stop = () => {
+      if (press.current !== null) window.clearTimeout(press.current);
+      press.current = null;
+    };
+    return {
+      onPointerDown: (e: RPointerEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.button === 2) return;
+        set(taps.current);
+        stop();
+        if (e.pointerType !== 'mouse')
+          press.current = window.setTimeout(() => {
+            taps.current.drop = what;
+            buzz(30);
+            press.current = null;
+          }, 550);
+      },
+      onPointerUp: stop,
+      onPointerCancel: stop,
+      onPointerLeave: stop,
+      onContextMenu: (e: { preventDefault: () => void }) => {
+        e.preventDefault();
+        if (!touchRef.current) taps.current.drop = what;
+      },
+    };
+  };
+  /** The pick up button while it says to revive: held down, it revives. */
+  const holdDown = {
+    onPointerDown: (e: RPointerEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      holding.current = true;
+      capture(e);
+    },
+    onPointerUp: () => (holding.current = false),
+    onPointerCancel: () => (holding.current = false),
+    onLostPointerCapture: () => (holding.current = false),
+    onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault(),
+  };
 
   const m = match.current!;
   const playing = shell.status === 'playing';
@@ -1556,6 +1858,8 @@ function Play({ mode }: { mode: Mode }) {
   // supply drops show on the map from the moment they're on their way until someone opens them
   const drops = [...map.drops, ...map.flares].map((id) => map.containers[id]).filter((c) => c && m.time >= c.at - SUPPLY_FALL && !m.opened[c.id]);
   const leader = m.fighters[m.leader];
+  // in duos and squads, the rest of the team, and every ping it has up
+  const team = m.mode !== 'solo' && focusFighter ? teamOf(m, focusFighter.team) : [];
   const mapMarks = (big: boolean) => (
     <>
       <path d={stormPath} fill="rgba(122, 60, 240, 0.45)" fillRule="evenodd" />
@@ -1570,6 +1874,20 @@ function Play({ mode }: { mode: Mode }) {
           <circle r="7.5" fill="rgba(20, 16, 4, 0.55)" stroke="#ffd23d" strokeWidth="1.4" />
           <path d="M-5 3l-1-6 3.2 2.6L0 -4.5l2.8 5.1L6 -3l-1 6z" fill="#ffd23d" stroke="#7a4a00" strokeWidth="0.8" strokeLinejoin="round" />
         </g>
+      )}
+      {team.map((o) => {
+        const at = pingOf(m, o);
+        return at ? (
+          <g key={`p${o.id}`} transform={`translate(${at.x} ${at.z}) scale(${big ? 0.55 : 1})`} className="g-scramble-mapping">
+            <circle r={9} fill="none" stroke={mateColor(m, o)} strokeWidth="2.4" />
+            <path d="M0 6L-5.5 -3a6.5 6.5 0 1 1 11 0z" fill={mateColor(m, o)} stroke="#fff" strokeWidth="1.8" strokeLinejoin="round" />
+          </g>
+        ) : null;
+      })}
+      {team.map((o) =>
+        o === focusFighter || o.phase === 'out' || o.phase === 'bus' ? null : (
+          <circle key={`m${o.id}`} cx={o.x.toFixed(1)} cy={o.z.toFixed(1)} r={big ? 4 : 7} fill={o.down ? '#ff4d4d' : mateColor(m, o)} stroke="#fff" strokeWidth={big ? 1.4 : 2.4} className={o.down ? 'is-down' : undefined} />
+        ),
       )}
       {focusFighter && focusFighter.phase !== 'out' && (
         <g transform={`translate(${focusFighter.x.toFixed(1)} ${focusFighter.z.toFixed(1)}) rotate(${((-focusFighter.aim * 180) / Math.PI + 180).toFixed(0)})`}>
@@ -1651,6 +1969,11 @@ function Play({ mode }: { mode: Mode }) {
               <EggIcon />
               <b>{hud.alive}</b> left
             </span>
+            {hud.teams > 0 && (
+              <span className="g-scramble-pill is-teams" aria-label={`${hud.teams} teams left`}>
+                <b>{hud.teams}</b> {hud.teams === 1 ? 'team' : 'teams'}
+              </span>
+            )}
             <span className="g-scramble-pill is-kills" aria-label={`${hud.kills} eliminations`}>
               <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
                 <path d="M12 3v5M12 16v5M3 12h5M16 12h5M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
@@ -1713,6 +2036,24 @@ function Play({ mode }: { mode: Mode }) {
                 </svg>
                 warming up
               </span>
+            )}
+            {hud.mates && hud.mates.length > 0 && hud.phase !== 'none' && (
+              <ul className="g-scramble-team" aria-label="Your team">
+                {hud.mates.map((t) => (
+                  <li key={t.id} className={t.out ? 'is-out' : t.down ? 'is-down' : undefined} style={{ ['--mate' as string]: t.color }} aria-label={`${t.name}: ${t.out ? 'out' : t.down ? `knocked down${t.revive >= 0 ? ', being revived' : ''}` : `${t.hp} health, ${t.shield} shield`}`}>
+                    <span>{t.name}</span>
+                    {t.out ? (
+                      <small>out</small>
+                    ) : (
+                      <i>
+                        <b style={{ width: `${t.hp}%` }} />
+                        {!t.down && t.shield > 0 && <em style={{ width: `${t.shield}%` }} />}
+                        {t.revive >= 0 && <u style={{ width: `${t.revive * 100}%` }} />}
+                      </i>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
           {hud.storm && <div className={`g-scramble-storm${hud.shrinking ? ' is-moving' : ''}`}>{hud.storm}</div>}
@@ -1800,6 +2141,14 @@ function Play({ mode }: { mode: Mode }) {
               jump{!touchMode && <kbd>Space</kbd>}
             </button>
           )}
+          {hud.down && (
+            <div className="g-scramble-down" role="status">
+              <b>{hud.down.revive >= 0 ? `${hud.down.by} ${hud.down.by === 'you' ? 'are' : 'is'} reviving ${hud.mine ? 'you' : hud.watching ?? ''}` : hud.mine ? 'knocked down: crawl to your team' : `${hud.watching ?? 'they'} ${hud.watching ? 'is' : 'are'} knocked down`}</b>
+              <i className={hud.down.revive >= 0 ? 'is-revive' : undefined}>
+                <b style={{ width: `${(hud.down.revive >= 0 ? hud.down.revive : hud.down.left) * 100}%` }} />
+              </i>
+            </div>
+          )}
           {hud.busy >= 0 && (
             <div className="g-scramble-busy" role="status">
               <span>{hud.busyText}</span>
@@ -1807,7 +2156,7 @@ function Play({ mode }: { mode: Mode }) {
             </div>
           )}
           {hud.prompt && hud.phase === 'ground' && (
-            <button type="button" className="g-scramble-prompt" {...tap((t) => (t.interact = true))}>
+            <button type="button" className={`g-scramble-prompt${hud.reviving ? ' is-revive' : ''}`} {...(hud.reviving ? holdDown : tap((t) => (t.interact = true)))}>
               {!touchMode && <kbd>E</kbd>}
               {hud.prompt}
             </button>
@@ -1823,7 +2172,7 @@ function Play({ mode }: { mode: Mode }) {
                     className={`${hud.mat === i ? 'is-on' : ''}${hud.mats![i] < PIECE_COST ? ' is-none' : ''}${hud.mats![i] >= MAT_MAX ? ' is-full' : ''}`}
                     aria-label={`${hud.mats![i]} ${k}`}
                     aria-pressed={hud.mat === i}
-                    {...tap((t) => (t.mat = 10 + i))}
+                    {...tapOrDrop(k, (t) => (t.mat = 10 + i))}
                   >
                     <MatIcon mat={k} size={18} />
                     <b>{hud.mats![i]}</b>
@@ -1884,11 +2233,7 @@ function Play({ mode }: { mode: Mode }) {
                       style={g ? { ['--rarity' as string]: RARITY_COLORS[g.r] } : undefined}
                       aria-label={label}
                       aria-pressed={on}
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        taps.current.slot = i;
-                      }}
+                      {...tapOrDrop(i, (t) => (t.slot = i))}
                     >
                       {slotLabel(i) && <small>{slotLabel(i)}</small>}
                       {i < 2 && g && <WeaponIcon w={g.w} size={34} />}
@@ -1920,7 +2265,7 @@ function Play({ mode }: { mode: Mode }) {
                       className={hud.items![w] ? undefined : 'is-none'}
                       title={USES[w].name}
                       aria-label={`${hud.items![w]} ${hud.items![w] === 1 ? USES[w].name : USES[w].plural}`}
-                      {...tap((t) => (t.use = w))}
+                      {...tapOrDrop(w, (t) => (t.use = w))}
                     >
                       <UseIcon w={w} size={20} />
                       {hud.items![w]}
@@ -1928,11 +2273,11 @@ function Play({ mode }: { mode: Mode }) {
                     </button>
                   ))}
                   {hud.ammo && (
-                    <span className="g-scramble-ammo" title="Ammo">
+                    <button type="button" tabIndex={-1} className="g-scramble-ammo" title="Ammo" aria-label={`${hud.reserve} ammo`} {...tapOrDrop(hud.ammo, () => {})}>
                       <AmmoIcon a={hud.ammo} size={20} />
                       {hud.reserve}
                       <small>/{ammoCap(hud.ammo, hud.pack)}</small>
-                    </span>
+                    </button>
                   )}
                 </div>
               )}
@@ -1946,6 +2291,16 @@ function Play({ mode }: { mode: Mode }) {
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            // in duos and squads, a tap on the island pings that spot for the team (the button closes it)
+            const svg = (e.target as Element).closest?.('svg');
+            const me = m.fighters[m.me];
+            const pt = svg instanceof SVGSVGElement && pingable(me) ? svg.getScreenCTM()?.inverse() : null;
+            if (pt) {
+              const at = new DOMPoint(e.clientX, e.clientY).matrixTransform(pt);
+              taps.current.ping = true;
+              taps.current.pingAt = { x: at.x, z: at.y };
+              return;
+            }
             setBigMap(false);
           }}
         >
@@ -1954,8 +2309,13 @@ function Play({ mode }: { mode: Mode }) {
             <PlaceNames map={map} />
             {mapMarks(true)}
           </svg>
-          <small>{touchMode ? 'tap to close' : 'M or click to close'}</small>
+          <small>{pingable(m.fighters[m.me]) ? (touchMode ? 'tap the island to ping it for your team, or here to close' : 'click the island to ping it for your team, M or here to close') : touchMode ? 'tap to close' : 'M or click to close'}</small>
         </div>
+      )}
+      {touchMode && playing && !net.current.over && hud.mine && hud.mates && (hud.phase === 'ground' || hud.phase === 'drop') && (
+        <button type="button" className="g-scramble-pingbtn" aria-label="Ping where you aim for your team" {...tap((t) => (t.ping = true))}>
+          <PingIcon size={22} />
+        </button>
       )}
       {touchMode && playing && !net.current.over && (
         <div className="g-scramble-touch">

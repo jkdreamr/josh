@@ -2,8 +2,8 @@ import { BLUE, CARDINAL, GREEN, PINK, YELLOW, circle, ellipse, line, rect, text 
 import { mulberry32, range } from '../rng.ts';
 import { standardDuration, type MicroGame, type MicroInstance } from './types.ts';
 
-const JUMP_TIME = 0.92;
-const TELEGRAPH = 0.5;
+export const FOUNTAIN_JUMP_TIME = 1.1;
+export const FOUNTAIN_TELEGRAPH = 0.5;
 
 export type FountainJet = { x: number; at: number; active: number };
 
@@ -11,7 +11,7 @@ export function fountainSchedule(seed: number, difficulty: number): FountainJet[
   const rng = mulberry32(seed);
   const count = 2 + Math.round(difficulty * 2);
   const start = 0.58 + range(rng, 0, 0.1);
-  const gap = 1.2 + range(rng, 0, 0.05);
+  const gap = 1.4 + range(rng, 0, 0.05);
   return Array.from({ length: count }, (_, i) => ({
     x: 50 + range(rng, -8, 8),
     at: start + i * gap,
@@ -36,37 +36,55 @@ export const fountain: MicroGame = {
       outcome: 'pending',
       update(_dt, t) {
         now = t;
-        const airborne = now >= jumpAt && now <= jumpAt + JUMP_TIME;
+        const airborne = now >= jumpAt && now <= jumpAt + FOUNTAIN_JUMP_TIME;
         if (jets.some((jet) => now >= jet.at && now <= jet.at + jet.active && Math.abs(jet.x - 50) < 10) && !airborne) {
           self.outcome = 'fail';
         }
       },
       render(c, t) {
-        line(c, 4, 77, 96, 77, 1.4, CARDINAL);
-        rect(c, 7, 65, 86, 12, '#fffdf6', 2, 0.8);
-        ellipse(c, 50, 73, 34, 9, BLUE, 1);
+        ellipse(c, 50, 54, 36, 14, '#fffdf6', 2.8);
+        ellipse(c, 50, 53, 32, 10, BLUE, 1.2);
+        c.save();
+        c.globalAlpha = 0.75;
+        c.beginPath();
+        c.ellipse(50, 49, 25, 3.5, 0, Math.PI, Math.PI * 2);
+        c.strokeStyle = '#fff';
+        c.lineWidth = 1.4;
+        c.stroke();
+        c.restore();
+        rect(c, 4, 68, 92, 18, '#fffdf6', 3, 0.8);
+        line(c, 6, 68, 94, 68, 1.3, CARDINAL);
         for (const jet of jets) {
-          const warn = t >= jet.at - TELEGRAPH && t < jet.at;
+          const warn = t >= jet.at - FOUNTAIN_TELEGRAPH && t < jet.at;
           const active = t >= jet.at && t <= jet.at + jet.active;
           if (warn) {
-            const progress = (t - (jet.at - TELEGRAPH)) / TELEGRAPH;
-            const wobble = Math.sin(t * 24) * (0.8 + progress * 1.2);
-            circle(c, jet.x + wobble, 74 - progress * 5, 2.2 + progress * 0.7, YELLOW, 0.8);
-            for (let i = 0; i < 2; i++) {
-              const rise = (progress * 2.5 + i * 0.55) % 1;
-              circle(c, jet.x + Math.sin(t * 18 + i) * 1.8, 75 - rise * 8, 1.2, '#fff', 0.7);
+            const progress = (t - (jet.at - FOUNTAIN_TELEGRAPH)) / FOUNTAIN_TELEGRAPH;
+            c.beginPath();
+            c.ellipse(jet.x, 68, 3 + progress * 5, 1.1 + progress * 0.7, 0, 0, Math.PI * 2);
+            c.strokeStyle = BLUE;
+            c.lineWidth = 0.9;
+            c.stroke();
+            for (let i = 0; i < 3; i++) {
+              const rise = (progress * 1.3 + i * 0.29) % 1;
+              const radius = 0.9 + rise * 1.2;
+              circle(c, jet.x + Math.sin(t * 18 + i) * (1.4 + i), 66 - rise * 10, radius, '#fff', 0.7);
             }
-            line(c, jet.x - 4, 68, jet.x + 4, 68, 1, BLUE);
+            text(c, '!', jet.x, 43, 5.2, { color: CARDINAL, weight: 900 });
           }
           if (active) {
-            line(c, jet.x, 76, jet.x, 48, 2.3, BLUE);
-            circle(c, jet.x, 47, 3, BLUE, 0.8);
-            for (let d = 0; d < 3; d++) circle(c, jet.x + (d - 1) * 3, 58 - d * 4, 1.1, '#fff');
+            const rise = Math.min(1, (t - jet.at) / 0.12);
+            const height = 27 * rise;
+            const top = 68 - height;
+            rect(c, jet.x - 3.5, top, 7, height, BLUE, 3.5, 0.7);
+            line(c, jet.x - 1, top + 1, jet.x - 1, 67, 1.2, '#fff');
+            circle(c, jet.x - 4.4, top - 1, 1.5, '#fff', 0.6);
+            circle(c, jet.x, top - 2, 1.8, BLUE, 0.7);
+            circle(c, jet.x + 4.2, top - 1.2, 1.35, '#fff', 0.6);
           }
         }
-        const phase = Math.max(0, Math.min(1, (t - jumpAt) / JUMP_TIME));
-        const lift = t <= jumpAt + JUMP_TIME ? Math.sin(Math.PI * phase) * 16 : 0;
-        drawStudent(c, 50, 72 - lift);
+        const phase = Math.max(0, Math.min(1, (t - jumpAt) / FOUNTAIN_JUMP_TIME));
+        const lift = t <= jumpAt + FOUNTAIN_JUMP_TIME ? Math.sin(Math.PI * phase) * 16 : 0;
+        drawStudent(c, 50, 68 - lift);
         text(c, 'tap when it bubbles', 50, 12, 5.2, { color: PINK });
         if (jumpCount) text(c, 'boing!', 50, 28, 5, { color: GREEN });
       },
@@ -80,7 +98,7 @@ export const fountain: MicroGame = {
     };
     function jump() {
       if (self.outcome !== 'pending' && self.outcome !== 'pass') return;
-      if (now >= jumpAt && now <= jumpAt + JUMP_TIME) return;
+      if (now >= jumpAt && now <= jumpAt + FOUNTAIN_JUMP_TIME) return;
       jumpAt = now;
       jumpCount++;
     }

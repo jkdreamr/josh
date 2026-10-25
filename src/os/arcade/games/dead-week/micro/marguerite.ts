@@ -3,6 +3,17 @@ import { mulberry32, range } from '../rng.ts';
 import { standardDuration, type MicroGame, type MicroInstance } from './types.ts';
 
 // The shuttle pulls up and its doors open for a moment. Tap while they're open to hop on. Too early bonks the door.
+export type MargueriteSchedule = { arrive: number; open: number; window: number; twitch: number };
+
+export function margueriteSchedule(seed: number, difficulty: number): MargueriteSchedule {
+  const rng = mulberry32(seed);
+  const arrive = 0.9 - difficulty * 0.3;
+  const open = arrive + range(rng, 0.4, 1.6 - difficulty * 0.6);
+  const window = 0.75 - difficulty * 0.4;
+  const twitch = difficulty > 0.3 ? arrive + (open - arrive) * range(rng, 0.3, 0.6) : -1;
+  return { arrive, open, window, twitch };
+}
+
 export const marguerite: MicroGame = {
   id: 'marguerite',
   title: 'marguerite',
@@ -12,12 +23,7 @@ export const marguerite: MicroGame = {
   hint: { touch: 'tap when the doors open', keys: 'space when the doors open' },
   duration: standardDuration(5, 3.4),
   create(seed, difficulty): MicroInstance {
-    const rng = mulberry32(seed);
-    const arrive = 0.9 - difficulty * 0.3;
-    const open = arrive + range(rng, 0.4, 1.6 - difficulty * 0.6);
-    const window = 0.75 - difficulty * 0.4;
-    // a fake-out twitch of the doors before they really open
-    const twitch = difficulty > 0.3 ? arrive + (open - arrive) * range(rng, 0.3, 0.6) : -1;
+    const { arrive, open, window, twitch } = margueriteSchedule(seed, difficulty);
     let now = 0;
     let tapped = -1;
     const doorsOpen = (t: number) => t >= open && t <= open + window;
@@ -33,7 +39,7 @@ export const marguerite: MicroGame = {
         line(c, 88, 80, 88, 50, 1);
         rect(c, 82, 42, 14, 9, YELLOW, 2);
         text(c, 'stop', 89, 46.8, 3.4);
-        const busX = t < arrive ? 100 - (t / arrive) * 92 + Math.max(0, 0) : 8;
+        const busX = t < arrive ? -70 + (t / arrive) * 78 : 8;
         const bob = t < arrive ? Math.sin(t * 30) * 0.5 : 0;
         c.save();
         c.translate(busX, bob);
@@ -54,8 +60,9 @@ export const marguerite: MicroGame = {
         c.restore();
         // you, waiting
         const jump = tapped >= 0 && self.outcome === 'pass' ? Math.min(1, (now - tapped) * 4) : 0;
-        const yx = 70 - jump * 12;
+        const yx = 94 - jump * 12;
         circle(c, yx, 70 - jump * 4, 4, '#ffd9b8');
+        circle(c, yx - 2, 69.5 - jump * 4, 0.55, INK);
         rect(c, yx - 3.5, 74 - jump * 4, 7, 6, GREEN, 2);
         if (self.outcome === 'fail' && tapped >= 0) text(c, 'bonk', yx, 60, 5, { color: CARDINAL });
       },
