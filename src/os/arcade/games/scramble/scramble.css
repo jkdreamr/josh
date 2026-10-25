@@ -1449,3 +1449,272 @@
     animation-duration: 0.01s;
   }
 }
+
+/* duos and squads: your teammates' name tags in the team's color, red while knocked down */
+.g-scramble .g-scramble-tag.is-mate {
+  color: #062a24;
+  background: var(--mate);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.85),
+    0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.g-scramble .g-scramble-tag.is-down {
+  color: #fff;
+  background: #d83a3a;
+}
+.g-scramble .g-scramble-tag.is-down::after {
+  content: ' (down)';
+  font-weight: 600;
+}
+.g-scramble .g-scramble-pill.is-teams {
+  padding-left: 11px;
+}
+/* the rest of the team, under the pills: each with a dot in its color, its name, and its health over its shield */
+.g-scramble .g-scramble-top {
+  flex-wrap: wrap;
+}
+.g-scramble .g-scramble-team {
+  flex-basis: 100%;
+  display: grid;
+  gap: 4px;
+  width: 168px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.g-scramble .g-scramble-team li {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 3px;
+  padding: 5px 9px 6px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--g-glass);
+  box-shadow: var(--g-edge), var(--g-drop);
+}
+.g-scramble .g-scramble-team li::before {
+  content: '';
+  grid-row: span 2;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--mate);
+  box-shadow: 0 0 0 1.5px #fff;
+}
+.g-scramble .g-scramble-team span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.g-scramble .g-scramble-team small {
+  font-size: 10px;
+  opacity: 0.75;
+}
+.g-scramble .g-scramble-team i {
+  position: relative;
+  display: block;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.4);
+}
+.g-scramble .g-scramble-team i b,
+.g-scramble .g-scramble-team i em,
+.g-scramble .g-scramble-team i u {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: #5be37d;
+  transition: width 0.2s;
+}
+.g-scramble .g-scramble-team i em {
+  top: auto;
+  height: 2px;
+  bottom: 0;
+  background: #59b8ff;
+}
+.g-scramble .g-scramble-team i u {
+  background: #fff;
+  opacity: 0.85;
+}
+.g-scramble .g-scramble-team li.is-down {
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 90, 90, 0.85),
+    var(--g-drop);
+  animation: g-scramble-downbeat 1s ease-in-out infinite;
+}
+.g-scramble .g-scramble-team li.is-down i b {
+  background: #ff5a5a;
+}
+.g-scramble .g-scramble-team li.is-out {
+  opacity: 0.55;
+}
+.g-scramble .g-scramble-team li.is-out::before {
+  background: #8a8d96;
+}
+.g-scramble .g-scramble-team li.is-out span {
+  text-decoration: line-through;
+}
+@keyframes g-scramble-downbeat {
+  50% {
+    background: linear-gradient(180deg, rgba(120, 30, 34, 0.78), rgba(60, 14, 18, 0.78));
+  }
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-team {
+  width: 128px;
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-team li {
+  padding: 4px 8px 5px;
+  font-size: 11px;
+}
+
+/* knocked down: a red bar for what's left to bleed (a white one while a teammate revives you), over the health bars */
+.g-scramble .g-scramble-down {
+  position: absolute;
+  bottom: 168px;
+  left: 50%;
+  display: grid;
+  gap: 5px;
+  width: min(260px, 80%);
+  transform: translateX(-50%);
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.g-scramble .g-scramble-down i {
+  display: block;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: 0 0 0 2px rgba(255, 90, 90, 0.7);
+}
+.g-scramble .g-scramble-down i b {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ff3b3b, #ff8a5a);
+  transition: width 0.2s linear;
+}
+.g-scramble .g-scramble-down i.is-revive {
+  box-shadow: 0 0 0 2px rgba(91, 227, 125, 0.8);
+}
+.g-scramble .g-scramble-down i.is-revive b {
+  background: linear-gradient(90deg, #5be37d, #e8fff0);
+}
+.g-scramble .g-scramble-hud.is-touch .g-scramble-down {
+  top: calc(50% - 96px);
+  bottom: auto;
+  font-size: 13px;
+}
+.g-scramble .g-scramble-prompt.is-revive {
+  color: #062a24;
+  background: linear-gradient(180deg, #7ff0dc, #2ee6c9);
+  touch-action: none;
+}
+
+/* pings on the maps pulse, and a knocked teammate's dot blinks */
+.g-scramble .g-scramble-mapping circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: g-scramble-ping 1.1s ease-out infinite;
+}
+.g-scramble .g-scramble-map circle.is-down,
+.g-scramble .g-scramble-bigmap circle.is-down {
+  animation: g-scramble-blink 0.8s steps(2) infinite;
+}
+@keyframes g-scramble-ping {
+  from {
+    opacity: 1;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+@keyframes g-scramble-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* the touch ping button, beside the little map */
+.g-scramble .g-scramble-pingbtn {
+  position: absolute;
+  top: 50px;
+  right: 112px;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(44, 46, 60, 0.72), rgba(18, 19, 28, 0.72));
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.28),
+    0 3px 10px rgba(8, 10, 24, 0.25);
+  touch-action: none;
+}
+@container (max-height: 460px) {
+  .g-scramble .g-scramble-pingbtn {
+    right: 92px;
+    width: 36px;
+    height: 36px;
+  }
+}
+
+/* the room's teams, in the lobby: each person and the team they're on */
+.g-scramble .g-scramble-teams {
+  align-items: start;
+}
+.g-scramble .g-scramble-teams ul {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.g-scramble .g-scramble-teams li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+.g-scramble .g-scramble-teams li span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.g-scramble .g-scramble-teams li.is-mine span {
+  font-weight: 800;
+}
+.g-scramble .g-scramble-teams li .arcade-btn {
+  min-width: 76px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.g-scramble .g-scramble-teams small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.65;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-scramble .g-scramble-team li.is-down,
+  .g-scramble .g-scramble-mapping circle,
+  .g-scramble .g-scramble-map circle.is-down,
+  .g-scramble .g-scramble-bigmap circle.is-down {
+    animation: none;
+  }
+}

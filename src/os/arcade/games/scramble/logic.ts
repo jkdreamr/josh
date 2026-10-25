@@ -1442,6 +1442,7 @@ function act(m: Match, f: Fighter, dt: number) {
     f.z = clamp(f.z + f.vz * dt, -EDGE, EDGE);
     f.y -= FALL * dt;
     if (len > 0.1) f.aim = Math.atan2(inp.mx, inp.mz);
+    if (inp.ping) ping(m, f, inp.ping.x, inp.ping.z);
     // down on the ground, or on a floor or a ramp someone built
     const under = m.walls.size ? surfaceAt(m, f.x, f.z, f.y + 0.2) : null;
     if (f.y <= (under?.y ?? 0)) {
@@ -2124,8 +2125,9 @@ export function downMate(m: Match, f: Fighter, reach = REVIVE_R): Fighter | null
   return best;
 }
 
-/** Whether a teammate is reviving a knocked egg right now (it doesn't bleed meanwhile). */
-export const beingRevived = (m: Match, f: Fighter) => f.down && m.fighters.some((o) => o.reviving === f.id && o.team === f.team && upright(o));
+/** The teammate reviving a knocked egg right now (it doesn't bleed meanwhile), if any. */
+export const revivedBy = (m: Match, f: Fighter) => (f.down ? m.fighters.find((o) => o.reviving === f.id && o.team === f.team && upright(o)) : undefined);
+export const beingRevived = (m: Match, f: Fighter) => !!revivedBy(m, f);
 
 /** How far along an egg's revive is, 0..1 (by the clock of whoever we heard it from). */
 export const reviveShare = (m: Match, f: Fighter) => (f.reviving >= 0 ? clamp((m.clock - f.reviveAt) / REVIVE_T, 0, 1) : 0);

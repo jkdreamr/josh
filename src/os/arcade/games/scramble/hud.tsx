@@ -584,6 +584,17 @@ export function EditIcon({ size }: { size?: number }) {
   );
 }
 
+/** A ping: a pin stuck in the ground, in the pinger's color. */
+export function PingIcon({ size = 16, color = '#2ee6c9' }: { size?: number; color?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <ellipse cx="12" cy="20.5" rx="5" ry="1.6" fill="rgba(0, 0, 0, 0.3)" />
+      <path d="M12 2.5a6 6 0 0 0-6 6c0 4.4 6 11.5 6 11.5s6-7.1 6-11.5a6 6 0 0 0-6-6z" fill={color} stroke="#fff" strokeWidth="1.6" strokeLinejoin="round" />
+      <circle cx="12" cy="8.5" r="2.2" fill="#fff" />
+    </svg>
+  );
+}
+
 export function EggIcon({ size = 16 }: { size?: number }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
@@ -842,6 +853,9 @@ export const keyCode = (k: string) => (/^\d$/.test(k) ? `Digit${k}` : `Key${k}`)
 export const PIECE_KEYS: Record<Plan, string> = { wall: 'Z', ramp: 'X', floor: 'C', roof: 'V', box: 'B' };
 export const MAT_KEY = 'N';
 export const EDIT_KEY = 'F';
+/** In duos and squads: the key that pings a spot for the team (so does the middle mouse button), and the one that puts down what's in hand. */
+export const PING_KEY = 'Y';
+export const DROP_KEY = 'U';
 export const PIECE_NAMES: Record<Plan, string> = { wall: 'wall', ramp: 'ramp', floor: 'floor', roof: 'roof', box: 'box up' };
 const [WOOD_SPEC, STONE_SPEC, METAL_SPEC] = [MAT_SPECS.wood, MAT_SPECS.stone, MAT_SPECS.metal];
 
