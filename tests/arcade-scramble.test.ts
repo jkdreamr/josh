@@ -183,9 +183,9 @@ import {
   type Plan,
   type Wall,
 } from '../src/os/arcade/games/scramble/logic.ts';
-import { BLEED_T, CRAWL, DOWN_HP, F_DOWN, PING_T, REVIVE_HP, REVIVE_T, dropOut, isMode, pingOf, reviveEgg, reviveShare, teamCount, type Mode } from '../src/os/arcade/games/scramble/logic.ts';
+import { BLEED_T, CRAWL, DOWN_HP, F_DOWN, F_REVIVE, PING_T, REVIVE_HP, REVIVE_T, dropOut, forfeit, isMode, pingOf, reviveEgg, reviveShare, teamCount, type Mode } from '../src/os/arcade/games/scramble/logic.ts';
 import { actorOf, parseTeams, teamAsk } from '../src/os/arcade/games/scramble/net.ts';
-import { teamsFor, winnersOf } from '../src/os/arcade/games/scramble/session.ts';
+import { nextTeam, pinTeam, teamsFor, winnersOf } from '../src/os/arcade/games/scramble/session.ts';
 import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packDoors, packEvents, packGlass, packPiece, parsePacket, pieceEv, placesOf, stateOf, toNet, unpackDoors, unpackGlass, unpackPiece, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
 import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
@@ -1280,17 +1280,17 @@ test('events pack into packets well under the room limit, in order', () => {
 // A whole room, simulated: the host and its guests passing real packets through a pretend network, with delay and
 // a share of the fast packets lost.
 
-type Client = { seat: number; me: Me; s: Session; m: Match | null; inbox: { at: number; from: number; d: unknown }[]; gone: boolean; call: 'report' | 'quiet' | null; hurtBy: number; heard: number; doneAt: number };
+type Client = { seat: number; me: Me; s: Session; m: Match | null; inbox: { at: number; from: number; d: unknown }[]; gone: boolean; call: 'report' | 'quiet' | null; hurtBy: number; heard: number; doneAt: number; knocks: number; revives: number };
 
 /**
  * `hostDone`: past this time, the host's egg cracks (once it has landed) and the host is done watching: from then on
  * its game draws no frames, and only its timer moves the match on, as index.tsx does.
  */
-function simulate(opts: { humans: number; bots: boolean; seed: number; level: Level; delay: number; loss: number; leave?: { seat: number; at: number }; stall?: { seat: number; at: number; silent: boolean }; hostDone?: number }) {
+function simulate(opts: { humans: number; bots: boolean; seed: number; level: Level; delay: number; loss: number; leave?: { seat: number; at: number }; stall?: { seat: number; at: number; silent: boolean }; hostDone?: number; mode?: Mode }) {
   const players: Player[] = Array.from({ length: opts.humans }, (_, seat) => ({ seat, name: `P${seat + 1}` }));
   const rng = rng32(opts.seed * 7 + 1);
-  const host = hostMatch(players, 0, opts.seed, opts.level, opts.bots ? MAX_FIGHTERS : 0, COUNTDOWN + 1.2);
-  const clients: Client[] = players.map((p) => ({ seat: p.seat, me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], gone: false, call: null, hurtBy: 0, heard: 0, doneAt: -1 }));
+  const host = hostMatch(players, 0, opts.seed, opts.level, opts.bots ? MAX_FIGHTERS : 0, COUNTDOWN + 1.2, opts.mode);
+  const clients: Client[] = players.map((p) => ({ seat: p.seat, me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], gone: false, call: null, hurtBy: 0, heard: 0, doneAt: -1, knocks: 0, revives: 0 }));
   autopilot(host.match, host.match.fighters[host.match.me]);
   let now = 0;
   const post = (from: Client, d: object, fast: boolean, only?: number) => {
@@ -1300,8 +1300,8 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
       c.inbox.push({ at: now + opts.delay, from: from.seat, d: JSON.parse(JSON.stringify(d)) });
     }
   };
-  const join = (c: Client) => (seed: number, level: Level, time: number, roster: number[]) => {
-    const m = guestMatch(players, c.seat, seed, level, time, roster);
+  const join = (c: Client) => (seed: number, level: Level, time: number, roster: number[], mode: Mode, teams: number[] | null) => {
+    const m = guestMatch(players, c.seat, seed, level, time, roster, mode, teams);
     autopilot(m, m.fighters[m.me]);
     return m;
   };
@@ -1343,6 +1343,8 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
       for (const e of c.m.events.splice(0)) {
         if (e.t === 'hurt' && e.f === c.m.me && e.by >= 0 && e.by !== c.m.me) c.hurtBy++;
         if (e.t === 'shot' && e.net) c.heard++;
+        if (e.t === 'knock') c.knocks++;
+        if (e.t === 'revived') c.revives++;
         share(c.s, e, c.seat);
       }
       for (const p of flush(c.s, 1, DT)) post(c, p, false);
@@ -1431,6 +1433,45 @@ for (const [label, opts] of [
       assert.equal(egg.phase, 'out', 'the host took out the egg of someone who stopped playing');
       assert.equal(egg.outCause, 'left');
       assert.notEqual(live[0].s.end!.winner, egg.id);
+    }
+  });
+}
+
+for (const [label, opts] of [
+  ['duos: a host, five guests and computer eggs, one guest leaving halfway, with lag and lost packets', { humans: 6, bots: true, seed: 12, level: 'normal' as Level, delay: 0.08, loss: 0.12, leave: { seat: 3, at: 40 }, mode: 'duos' as Mode }],
+  ['squads: a host, six guests and computer eggs, with lag and lost packets', { humans: 7, bots: true, seed: 27, level: 'hard' as Level, delay: 0.06, loss: 0.1, mode: 'squads' as Mode }],
+] as const) {
+  test(`online ${label}: all agree on the teams, the knocks and revives, and the team that won`, () => {
+    const clients = simulate(opts);
+    const live = clients.filter((c) => !c.gone);
+    const host = live[0].m!;
+    assert.ok(host.ended);
+    for (const c of live) {
+      const m = c.m!;
+      assert.ok(c.s.synced, `seat ${c.seat} synced`);
+      assert.equal(c.call, 'report', `seat ${c.seat} heard the host call it`);
+      assert.equal(m.mode, opts.mode);
+      assert.deepEqual(m.teams, host.teams, `seat ${c.seat}: the same teams`);
+      assert.deepEqual(m.fighters.map((f) => f.phase === 'out'), host.fighters.map((f) => f.phase === 'out'), `seat ${c.seat}: the same eggs are out`);
+      assert.equal(JSON.stringify(c.s.end), JSON.stringify(live[0].s.end), `seat ${c.seat}: one result for everyone`);
+      assert.ok(c.knocks > 0, `seat ${c.seat} heard of knocks (${c.knocks})`);
+    }
+    assert.ok(live.reduce((n, c) => n + c.revives, 0) > 0, 'eggs were revived');
+    // friends fill teams together in seat order
+    const size = opts.mode === 'duos' ? 2 : 4;
+    for (let seat = 0; seat < opts.humans; seat++) assert.equal(host.fighters[seat].team, Math.floor(seat / size));
+    // one place a team, the winners all on one team
+    const end = live[0].s.end!;
+    const places = new Map(end.places.map(([id, place]) => [id, place]));
+    for (const ids of host.teams) assert.equal(new Set(ids.map((id) => places.get(id))).size, 1, 'a team shares its place');
+    const won = host.fighters.filter((f) => places.get(f.id) === 1);
+    assert.ok(won.length && won.every((f) => f.team === won[0].team), 'one team wins');
+    assert.deepEqual([...new Set(end.places.map(([, p]) => p))].sort((a, b) => a - b), Array.from({ length: teamCount(host) }, (_, i) => i + 1));
+    if ('leave' in opts) {
+      // out for leaving, unless it was cracked before
+      const egg = host.fighters.find((f) => f.seat === opts.leave.seat)!;
+      assert.equal(egg.phase, 'out');
+      assert.ok(egg.outCause === 'left' || egg.outAt < opts.leave.at + 1, `the egg of the one who left went out to ${egg.outCause} at ${egg.outAt.toFixed(0)} s`);
     }
   });
 }
@@ -6132,4 +6173,134 @@ test('quick play takes its mode from the room’s pool, and a match the host lay
   assert.deepEqual(teams.slice(0, 4), [0, 0, 0, 0], 'the people together, a computer egg with them');
   assert.equal(teamCount(match), 13);
   assert.ok(isMode('duos') && isMode('squads') && isMode('solo') && !isMode('trios'));
+});
+
+test('once the match is over, a knocked egg of the winning team bleeds no more and keeps its place', () => {
+  const m = teamQuiet('duos', [0, 0, 1, 1]);
+  for (const f of m.fighters) land(f, f.id * 10, 0);
+  const [a, b, c, d] = m.fighters;
+  hurt(m, b, 300, c.id, 'smg', false);
+  hurt(m, c, 300, a.id, 'smg', false);
+  hurt(m, d, 300, a.id, 'smg', false);
+  run(m, 0.1);
+  assert.ok(m.ended && b.down);
+  const evs = run(m, BLEED_T + 5);
+  assert.ok(!evs.some((e) => e.t === 'out'), 'nobody goes out after the end');
+  assert.ok(b.down && b.phase === 'ground' && b.hp > DOWN_HP - 5);
+  assert.deepEqual([a.place, b.place, c.place, d.place], [1, 1, 2, 2]);
+  assert.equal(c.kills, 0);
+});
+
+test('a knocked teammate up on a built floor is revived up there', () => {
+  const m = teamQuiet('duos', [0, 0, 1]);
+  const [a, mate, foe] = m.fighters;
+  put(m, 900, a.id, 'floor', 0, 0, 1, 0);
+  land(a, mid(0) - 0.8, mid(0));
+  land(mate, mid(0) + 0.8, mid(0));
+  a.y = mate.y = LEVEL_H;
+  land(foe, 40, 0);
+  run(m, 0.1);
+  assert.ok(a.y > 2 && mate.y > 2, 'both up on the floor');
+  hurt(m, mate, 300, foe.id, 'smg', false);
+  assert.ok(mate.down);
+  const p = prompt(m, a);
+  assert.ok(p && 'revive' in p);
+  a.input.hold = true;
+  const evs = run(m, REVIVE_T + 0.2);
+  assert.ok(evs.some((e) => e.t === 'revived' && e.f === mate.id), 'revived');
+  assert.ok(!mate.down && mate.hp === REVIVE_HP);
+});
+
+test('in solo, news of knocks, revives and pings is turned away', () => {
+  const g = createMatch({ seed: 7, role: 'guest', level: 'normal', entrants: [0, 1, 2].map((i) => ({ name: `p${i}`, color: '#fff', kind: i === 1 ? ('player' as const) : ('remote' as const), seat: i })), me: 1, countdown: 0 });
+  g.time = 5;
+  for (const f of g.fighters) land(f, f.id * 3, 0);
+  assert.equal(applyNet(g, { y: 'kn', f: 0, by: 2, w: 'smg' }), false);
+  assert.ok(!g.fighters[0].down);
+  assert.equal(applyNet(g, { y: 'rv', f: 0, to: 2 }), false);
+  assert.equal(applyNet(g, { y: 'pg', f: 0, x: 3, z: 4 }), false);
+  assert.equal(pingOf(g, g.fighters[0]), null);
+});
+
+test('a report from before the news of a knock or a revive does not undo it; one from someone who came in late shows a revive under way', () => {
+  const g = teamQuiet('duos', [0, 0, 1, 1], 'guest', ['remote', 'remote', 'player', 'remote']);
+  for (const f of g.fighters) land(f, f.id * 1.5, 0);
+  const [a, b] = g.fighters;
+  const st = (f: Fighter, flags: number) => ({ ...stateOf(f), flags });
+  applyNet(g, { y: 'kn', f: a.id, by: 3, w: 'smg' });
+  applyState(g, a, st(a, 0));
+  assert.ok(a.down && a.knockBy === 3, 'still down: that report set out before the knock');
+  g.clock += 1.2;
+  applyState(g, a, st(a, F_DOWN));
+  assert.ok(a.down);
+  // the reviver's reports say it revives, though no news of it came: it starts here now
+  applyState(g, b, st(b, F_REVIVE));
+  assert.equal(b.reviving, a.id);
+  assert.ok(reviveShare(g, b) < 0.1);
+  // the host stands it up: a report from before says it's down, which it isn't any more
+  applyNet(g, { y: 'rvd', f: a.id, by: b.id });
+  applyState(g, a, st(a, F_DOWN));
+  assert.ok(!a.down, 'up: that report set out before the revive');
+  g.clock += 1.2;
+  applyState(g, a, st(a, 0));
+  assert.ok(!a.down);
+});
+
+test('a knocked egg whose person leaves goes out to whoever knocked it, and the last one standing leaving puts its knocked teammates out', () => {
+  const h = teamQuiet('duos', [0, 0, 1, 1], 'host', ['player', 'remote', 'bot', 'bot']);
+  for (const f of h.fighters) {
+    land(f, f.id * 10, 0);
+    f.ai = null;
+  }
+  const [, guest, foe] = h.fighters;
+  applyNet(h, { y: 'kn', f: guest.id, by: foe.id, w: 'smg' });
+  forfeit(h, guest.id);
+  assert.equal(guest.phase, 'out');
+  assert.equal(guest.by, foe.id);
+  assert.equal(foe.kills, 1, 'the knocker has the elimination');
+  const o = h.events.map(toNet).find((e) => e?.y === 'o');
+  assert.deepEqual(o, { y: 'o', f: guest.id, by: foe.id, w: 'left' });
+  // the other way round: the host's own egg is knocked, and its teammate leaves
+  const k = teamQuiet('duos', [0, 0, 1, 1], 'host', ['player', 'remote', 'bot', 'bot']);
+  for (const f of k.fighters) {
+    land(f, f.id * 10, 0);
+    f.ai = null;
+  }
+  hurt(k, k.fighters[0], 300, 2, 'smg', false);
+  assert.ok(k.fighters[0].down);
+  forfeit(k, 1);
+  run(k, 0.1);
+  assert.equal(k.fighters[0].phase, 'out', 'nobody left standing on the team');
+  assert.equal(k.fighters[0].by, 2);
+  assert.ok(k.ended && k.fighters[k.winner].team === 1);
+  assert.deepEqual(k.fighters.map((f) => f.place), [2, 2, 1, 1]);
+});
+
+test('moving someone in the room’s team list goes round every team with room and one of their own, and nobody else moves', () => {
+  // the host and a friend in duos: off on their own, then back
+  assert.equal(nextTeam('duos', [0, 0], 1), 1);
+  assert.equal(nextTeam('duos', [0, 1], 1), 0);
+  assert.equal(nextTeam('duos', [0, 1], 0), 1);
+  // a full team is skipped
+  assert.equal(nextTeam('duos', [0, 0, 1], 2), 1, 'nowhere else to go');
+  assert.equal(nextTeam('duos', [0, 0, 1], 1), 1);
+  assert.equal(nextTeam('duos', [0, 1, 1], 0), 0);
+  assert.equal(nextTeam('squads', [0, 0, 1, 2], 3), 0);
+  assert.equal(nextTeam('squads', [0, 0, 1, 2], 1), 1);
+  // the rest stay where they are when one moves
+  const picks = pinTeam('duos', [0, 1, 2], [], 1, 1);
+  assert.deepEqual(teamsFor('duos', [0, 1, 2], picks, 0), [0, 1, 1]);
+  const again = pinTeam('duos', [0, 1, 2], picks, 2, nextTeam('duos', [0, 1, 1], 2));
+  assert.deepEqual(teamsFor('duos', [0, 1, 2], again, 0), [0, 1, 2]);
+  // round and round, for each of three friends in squads
+  for (let i = 0; i < 3; i++) {
+    let p: number[] = [];
+    const seen = new Set<string>();
+    for (let k = 0; k < 6; k++) {
+      const now = teamsFor('squads', [0, 1, 2], p, 0);
+      seen.add(now.join());
+      p = pinTeam('squads', [0, 1, 2], p, i, nextTeam('squads', now, i));
+    }
+    assert.ok(seen.size >= 2, `seat ${i} moves (${[...seen].join(' / ')})`);
+  }
 });

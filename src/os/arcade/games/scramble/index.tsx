@@ -43,7 +43,6 @@ import {
   teamsLeft,
   mateColor,
   DOWN_HP,
-  TEAM_SIZE,
   type Cause,
   type Ev,
   type Fighter,
@@ -55,7 +54,7 @@ import {
   type Plan,
 } from './logic';
 import { configOf, parsePacket, teamAsk, type Bots } from './net';
-import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, namesOf, newSession, offscreen, receive, resultCard, share, teamsFor, tick, winnersOf, type Session } from './session';
+import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, teamsFor, tick, winnersOf, type Session } from './session';
 import { ARMOR_NAMES, MATS, MAT_MAX, MELEE, PIECE_COST, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, ammoCap, isMelee, isThrow, isWeapon, legendary, lootName, reloadOf, type Ammo, type LootDef, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { HALF, SUPPLY_FALL, placeAt, type ContainerKind } from './map';
 import { AMMO_FILL, AmmoIcon, ArmorIcon, CrownIcon, DROP_KEY, EDIT_KEY, EditIcon, EggIcon, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PING_KEY, PackIcon, PieceIcon, PingIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
@@ -238,17 +237,16 @@ function OnlineSetup() {
     const timer = window.setInterval(say, 2000);
     return () => window.clearInterval(timer);
   }, [online, fill, level, myMode, picks]);
-  // the host hears who asks for which team
+  // the host hears who asks for which team (everyone else stays put)
+  const room = useRef({ mode: myMode, seats: [] as number[] });
+  room.current = { mode: myMode, seats: online ? online.players.map((p) => p.seat).sort((a, b) => a - b) : [] };
   useEffect(() => {
     if (!online?.isHost || online.quick) return;
     return online.onMessage((from, d) => {
       const p = parsePacket(d);
-      if (p?.k !== 'tm' || from <= 0) return;
-      setPicks((x) => {
-        const next = [...x];
-        next[from] = p.team;
-        return next;
-      });
+      const { mode, seats } = room.current;
+      if (p?.k !== 'tm' || from <= 0 || mode === 'solo' || !seats.includes(from)) return;
+      setPicks((x) => pinTeam(mode, seats, x, from, p.team));
     });
   }, [online]);
   useEffect(() => {
@@ -266,20 +264,13 @@ function OnlineSetup() {
   }, [online]);
   const people = online ? [...online.players].sort((a, b) => a.seat - b.seat) : [];
   // the teams as they stand (numbered from 1), and moving someone to the next one
-  const teams = mode === 'solo' ? [] : teamsFor(mode, people.map((p) => p.seat), seen, 0);
+  const seats = people.map((p) => p.seat);
+  const teams = mode === 'solo' ? [] : teamsFor(mode, seats, seen, 0);
   const move = (seat: number) => {
-    if (!online) return;
-    const i = people.findIndex((p) => p.seat === seat);
-    const next = (teams[i] + 1) % Math.max(2, Math.min(people.length + 1, Math.ceil(MAX_FIGHTERS / TEAM_SIZE[mode])));
-    if (host) {
-      // everyone stays where they are, but this one
-      setPicks(() => {
-        const all: number[] = [];
-        people.forEach((p, k) => (all[p.seat] = teams[k]));
-        all[seat] = next;
-        return all;
-      });
-    } else if (seat === online.seat) online.send(teamAsk(online.round, next));
+    if (!online || mode === 'solo') return;
+    const next = nextTeam(mode, teams, seats.indexOf(seat));
+    if (host) setPicks((x) => pinTeam(mode, seats, x, seat, next));
+    else if (seat === online.seat) online.send(teamAsk(online.round, next));
   };
   return (
     <>

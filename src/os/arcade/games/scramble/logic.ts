@@ -507,6 +507,8 @@ export type Fighter = {
   knockBy: number;
   knockCause: Cause | null;
   downAt: number;
+  /** Someone else's: our clock when the news came that it went down or stood up (a report from before may follow). */
+  flipAt: number;
   /** The knocked teammate it's reviving (-1 for none), and our clock when it started. */
   reviving: number;
   reviveAt: number;
@@ -1051,6 +1053,7 @@ function newFighter(id: number, e: Entrant, x: number, z: number, team: number):
     knockBy: -1,
     knockCause: null,
     downAt: 0,
+    flipAt: -99,
     reviving: -1,
     reviveAt: 0,
     pingX: 0,
@@ -1676,9 +1679,10 @@ function handle(m: Match, f: Fighter, dt: number) {
 
 /**
  * A knocked egg this client owns bleeds out (not while a teammate revives it), and is cracked once it has, or once
- * nobody on its team is left standing. True when it's out.
+ * nobody on its team is left standing. True when it's out. Once the match is over it lies there, its place settled.
  */
 function bleed(m: Match, f: Fighter, dt: number) {
+  if (m.ended) return false;
   if (teamUp(m, f.team, f)) {
     if (!beingRevived(m, f)) f.hp -= (DOWN_HP / BLEED_T) * dt;
     if (f.hp > 0) return false;
@@ -2092,11 +2096,12 @@ function knock(m: Match, f: Fighter, by: number, w: Cause) {
 /** A knocked egg another client owns, on its owner's word (its state may have said it was down already). */
 export function applyKnock(m: Match, fid: number, by: number, w: Cause) {
   const f = m.fighters[fid];
-  if (!f || owned(f) || f.phase === 'out' || m.ended || (f.down && f.knockCause !== null)) return false;
+  if (!f || owned(f) || m.mode === 'solo' || f.phase === 'out' || m.ended || (f.down && f.knockCause !== null)) return false;
   f.down = true;
   f.knockBy = by;
   f.knockCause = w;
   f.downAt = m.time;
+  f.flipAt = m.clock;
   f.reviving = -1;
   emit(m, { t: 'knock', f: fid, by, w, net: true });
   return true;
@@ -2107,6 +2112,7 @@ function standUp(m: Match, f: Fighter) {
   f.down = false;
   f.knockBy = -1;
   f.knockCause = null;
+  f.flipAt = m.clock;
   if (owned(f)) {
     f.hp = REVIVE_HP;
     f.shield = 0;
@@ -2163,7 +2169,7 @@ function reviveStep(m: Match, f: Fighter) {
   const o = f.reviving >= 0 ? m.fighters[f.reviving] : undefined;
   if (!o) {
     f.reviving = -1;
-    const mate = f.input.hold && f.y < 1.5 ? downMate(m, f) : null;
+    const mate = f.input.hold ? downMate(m, f) : null;
     if (mate) startReviving(m, f, mate);
     return;
   }
@@ -2195,7 +2201,7 @@ export function reviveEgg(m: Match, fid: number, by: number, announce: boolean) 
 export function applyRevive(m: Match, fid: number, to: number) {
   const f = m.fighters[fid];
   const o = to >= 0 ? m.fighters[to] : undefined;
-  if (!f || owned(f) || f.phase === 'out' || f.reviving === to || (to >= 0 && (!o || o === f || o.team !== f.team))) return false;
+  if (!f || owned(f) || m.mode === 'solo' || f.phase === 'out' || f.reviving === to || (to >= 0 && (!o || o === f || o.team !== f.team))) return false;
   f.reviving = to;
   f.reviveAt = m.clock;
   emit(m, { t: 'revive', f: fid, to, net: true });
@@ -2227,7 +2233,7 @@ function setPing(m: Match, f: Fighter, x: number, z: number) {
 /** A spot someone else's egg marked for its team. */
 export function applyPing(m: Match, fid: number, x: number, z: number) {
   const f = m.fighters[fid];
-  if (!f || owned(f)) return false;
+  if (!f || owned(f) || m.mode === 'solo') return false;
   setPing(m, f, x, z);
   emit(m, { t: 'ping', f: fid, x: f.pingX, z: f.pingZ, net: true });
   return true;
@@ -2382,14 +2388,17 @@ export function forfeit(m: Match, fid: number) {
   const f = m.fighters[fid];
   if (!f || f.phase === 'out' || m.ended) return;
   const place = placeOut(m, f);
+  // a knocked egg that leaves goes out to whoever knocked it
+  const by = f.down && m.fighters[f.knockBy] ? f.knockBy : -1;
+  if (by >= 0) m.fighters[by].kills++;
   f.phase = 'out';
   f.down = false;
   f.reviving = -1;
   f.place = place;
-  f.by = -1;
+  f.by = by;
   f.outCause = 'left';
   f.outAt = m.time;
-  emit(m, { t: 'out', f: fid, by: -1, w: 'left', place });
+  emit(m, { t: 'out', f: fid, by, w: 'left', place });
 }
 
 type RayHit = { t: number; what: Thud; ref: number; fighter: Fighter | null };
@@ -3738,17 +3747,26 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
   f.helmet = s.helmet;
   f.vest = s.vest;
   f.ghillie = (s.flags & F_GHILLIE) !== 0;
-  // knocked down, or back up (the news of how may still be on its way), and done reviving (a report from before the
-  // news it started may still come in)
+  // knocked down, or back up (the news of how may still be on its way, or have just come ahead of this report), and
+  // reviving or done (a report from before the news it started may still come in; one with no news of it, for someone
+  // who came in late, has it start now on the knocked teammate nearest)
   const down = (s.flags & F_DOWN) !== 0;
-  if (down !== f.down) {
+  if (down !== f.down && m.clock - f.flipAt > 1) {
     f.down = down;
     if (!down) {
       f.knockBy = -1;
       f.knockCause = null;
     }
   }
-  if (!(s.flags & F_REVIVE) && m.clock - f.reviveAt > 0.5) f.reviving = -1;
+  if (!(s.flags & F_REVIVE)) {
+    if (m.clock - f.reviveAt > 0.5) f.reviving = -1;
+  } else if (f.reviving < 0 && !m.world && m.clock - f.reviveAt > 1) {
+    const o = downMate(m, f, REVIVE_R + 1);
+    if (o) {
+      f.reviving = o.id;
+      f.reviveAt = m.clock;
+    }
+  }
   f.show = { w: s.w, r: s.r, flags: s.flags };
   f.hitT = s.flags & F_HIT ? 0.2 : 0;
   snaps.push({ at: m.clock, x: s.x, z: s.z, y: s.y, aim: s.aim, vx: s.vx, vz: s.vz });

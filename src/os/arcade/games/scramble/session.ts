@@ -79,6 +79,32 @@ export function teamsFor(mode: Mode, seats: number[], picks: readonly number[], 
 }
 
 /**
+ * Where the room's team list moves person `i` next (`teams` as teamsFor numbers them): onto the next team of someone
+ * else's with room, or a team of their own, round and round.
+ */
+export function nextTeam(mode: Mode, teams: number[], i: number): number {
+  const size = TEAM_SIZE[mode];
+  const others = teams.filter((_, k) => k !== i);
+  const open = [...new Set(others)].filter((t) => others.filter((o) => o === t).length < size);
+  // on their own already, or a new team at the end (while the island has room for one)
+  const alone = !others.includes(teams[i]) ? teams[i] : new Set(teams).size < Math.ceil(MAX_FIGHTERS / size) ? Math.max(...teams) + 1 : -1;
+  const ways = [...new Set([...open, ...(alone >= 0 ? [alone] : [])])].sort((a, b) => a - b);
+  return ways.find((t) => t > teams[i]) ?? ways[0] ?? teams[i];
+}
+
+/**
+ * The room's picks (by seat) once `seat` moves to `team`: everyone else stays on the team they're on now (so nobody
+ * shuffles along to make room).
+ */
+export function pinTeam(mode: Mode, seats: number[], picks: readonly number[], seat: number, team: number): number[] {
+  const now = teamsFor(mode, seats, picks, 0);
+  const all: number[] = [];
+  seats.forEach((s, k) => (all[s] = now[k]));
+  all[seat] = team;
+  return all;
+}
+
+/**
  * The host's match: everyone in the room by seat, then as many computer eggs as the host asks for (fifty eggs at most),
  * in duos and squads on the teams teamsFor gives them. `roster` is each fighter's seat (-1 for a computer egg) and
  * `teams` its team, which the host sends with every reliable state.
