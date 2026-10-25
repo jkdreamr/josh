@@ -224,6 +224,13 @@ function OnlineSetup() {
   useEffect(() => {
     lobbyPicks.current = picks;
   }, [picks]);
+  // someone who leaves gives up their pick (whoever takes the seat next goes wherever there's room)
+  const seatsKey = online?.players.map((p) => p.seat).join() ?? '';
+  useEffect(() => {
+    if (!online?.isHost) return;
+    const here = new Set(online.players.map((p) => p.seat));
+    setPicks((x) => (x.some((t, seat) => t >= 0 && !here.has(seat)) ? x.map((t, seat) => (here.has(seat) ? t : -1)) : x));
+  }, [seatsKey]);
   useEffect(() => {
     if (!online?.isHost || online.quick) return;
     const say = () => online.send(configOf(online.round, fill, level, myMode, picks));
