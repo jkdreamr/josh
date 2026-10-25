@@ -11,8 +11,8 @@ export type Speaker = 'james' | 'sophie';
 export type Mood = 'calm' | 'normal' | 'up' | 'hype';
 export type Turn = { who: Speaker; mood: Mood; text: string };
 
-/** The voices as Kokoro voices (or a blend). Chatterbox records them from scripts/grand-prix-voices/<speaker>.wav,
- * reference clips made with these Kokoro voices, so no real person's voice is cloned. */
+/** The voices as Kokoro voices (or a blend), for recording with Kokoro. Chatterbox, which records the game's voices,
+ * speaks from scripts/grand-prix-voices/<speaker>.wav instead (see the recording script). */
 export const VOICES: Record<Speaker, Record<string, number>> = {
   james: { bm_fable: 1 },
   sophie: { bf_emma: 0.6, bf_alice: 0.4 },
@@ -288,7 +288,7 @@ const lines: Record<string, Variant[]> = {
   'corner-roggia': [[j('The Roggia chicane coming up.'), s('A big stop, then a quick left and right. Plenty get it wrong here.')]],
   'corner-lesmo': [
     [j('Through the Lesmos now.'), s('Two quick right handers that bite if you get greedy.')],
-    [j('Here come the Lesmo corners.'), s('Carry the speed, but stay off that gravel.')],
+    [j('Here come the Lesmo corners.'), s('Keep the speed up, but stay off that gravel.')],
   ],
   'corner-ascari': [[j('Here is the Ascari chicane.'), s('Left, right, left. Get it right and it feels like flying.')]],
   'corner-parabolica': [
@@ -297,13 +297,69 @@ const lines: Record<string, Variant[]> = {
   ],
 };
 
+// More ways to say the lines heard most, so a long race rarely repeats itself. Looser, the way people actually talk.
+const more: Record<string, Variant[]> = {
+  pass: [j.hype('Oh, look at that! Through!'), j.hype('And it is done!'), j.hype('Gone! Just like that!'), j.up('Oh, very tidy. Very tidy indeed.'), j.hype('Yes! Makes it stick!'), j.up('In they go, and out they come ahead!'), j.hype('Oh, wonderful stuff!'), j.up("That's a lovely bit of driving."), j.hype("And there's the move!"), j.hype('Oh, that is cheeky! Brilliant!')],
+  'passed-by': [j('Ah, and that one slips away.'), j.up("Oh no, that's one lost."), j('And they come through. Nothing to be done.'), j("That's a place handed over, sadly."), j.up('Oh, caught napping there!'), j('Hmm, that one hurts.')],
+  'gets-by': [j.up('nips through!'), j.up('takes the place!'), j.up('sneaks past!'), j.up('pounces!'), j.up('is through, and gone!')],
+  past: [j.up('And that is a move on'), j.up('Look at this, past'), j.up('Oh, and that is by')],
+  pressure: [j("has got company, that's for sure."), j.up('is being hunted down here.'), j('is feeling the heat now.'), j('has a real problem in the mirrors.')],
+  leads: [j('is still out front.'), j('is setting the pace up there.'), j('remains the driver to beat.'), j('is still the one everyone is chasing.'), j('has this race in hand for now.')],
+  'react-pass': [s('Ha! Love it. Absolutely love it.'), s.up('Oh, that was gorgeous. Watch the replay of that later.'), s("See, that's patience. Waited for the right corner."), s('Mm, braver than I would have been, honestly.'), s.up('That is proper racing, James.'), s("Didn't even see that coming. Nor did they, I think!"), s('Nice. Really nice. Clean, decisive, done.')],
+  'react-passed': [s.calm("Ah, that's annoying. Just a fraction late on the brakes."), s.calm('It happens. The tow here is massive, you can only defend so much.'), s.calm('Mm. A bit of a sitting duck down that straight.'), s.calm("Don't panic. Stay with them, and the chance will come back.")],
+  'react-spin': [s.calm('Oh dear. Cold rear tyres and a heavy right foot. Classic.'), s('Ouch. You just hope nothing is flat spotted after that.'), s.calm('The kerb did that. Bit too much of it, and away it went.'), s.calm("It's so easy to do here. One moment it's fine, the next you're a passenger.")],
+  'react-wall': [s.up('Oh, that is a big one. Hope everything is okay in there.'), s('Hmm. That might have done some damage to the suspension.')],
+  'react-contact': [s('They were always going to touch there. Nowhere to go.'), s.calm("That's what happens when nobody wants to back out of it.")],
+  'react-lockup': [s.calm('Ooh, the smoke! Too much brake pressure as the speed came off.'), s.calm('That front right will be square now. It will shake for a few laps.')],
+  'react-wide': [s.calm('Ran out of road, simple as that.'), s.calm('Mm. The stewards are keeping count, you know.')],
+  'react-leads': [s.calm("Just doing enough, isn't it? Really clever driving."), s.calm('Very hard to find a weakness up there today.')],
+  'react-battle': [s.up('Oh, I am glued to this one!'), s('Lovely clean fight, this. Real respect between them.')],
+  'closing-in': [[j('The gap is shrinking every lap now.'), s('And quickly. I give it two laps, maybe three.')], [j.up('Look at this, closing right in!'), s.up("Oh, this is going to get spicy, James.")]],
+  defending: [[j.up('Here comes the pressure!'), s("Positioning is everything now. Don't leave the door open.")], [j('A car looming large in the mirrors.'), s.calm('Breathe, brake late, cover the inside. Easy to say, mind you.')]],
+  'drs-attack': [j.hype('Flap open! Here we go!'), j.up('DRS is open, and the gap is closing fast!')],
+  spin: [j.hype('Whoa! Round it goes!'), j.hype('Oh, and that is a spin!'), j.hype("Oh! Lost it! It's gone around!")],
+  wall: [j.hype('Ooh, a hefty clout on the wall!'), j.hype('Bang! Into the barrier!')],
+  contact: [j.up('Ooh, a little touch there!'), j.up('Oh, they have banged wheels!')],
+  lockup: [j.up('Whoa, locked up!'), j.up('Ooh, plenty of smoke from the fronts there!')],
+  wide: [j("Oh, that's wide. The lap is gone."), j('Over the line, and that one will not count.')],
+  'final-lap': [j.hype('Last lap! Here we go!'), j.up('Into the final lap!'), j.hype('One more lap! Bring it home!')],
+  'top-speed': [j.up('Absolutely flying down this straight!'), j.up('Look at the speed on that!')],
+  purple: [j.up('Purple in that sector! Flying!'), j.up('Oh, that is a quick sector!')],
+  lights: [j.calm("Here come the lights, then."), j.calm('All set. Lights coming on.')],
+  go: [j.hype('And away they go!'), j.hype("They're off! Lights out!")],
+  'status-lead': [[j('Still out in front, and looking very calm about it.'), s.calm('No mistakes so far. That is the job, really.')], [j('Leading the way.'), s("And honestly, it's looking comfortable.")]],
+  'status-podium': [[j('A podium place, right now.'), s.up('And in front of this crowd, too!')]],
+  'status-points': [[j('Holding on to a points place.'), s.calm('Just keep it clean, and they will come.')], [j('In the top ten, which is a solid place to be.'), s('Yeah, steady stuff. Nothing silly.')]],
+  'status-close': [[j('Agonisingly close to the points now.'), s('One car. Just one more car.')]],
+  'status-back': [[j("It's a bit of a tough afternoon so far."), s.calm('There is time, James. Lots of laps left.')], [j('Some work still to do.'), s.calm("It's all about chipping away, one car at a time.")]],
+  banter: [
+    [j('What do the drivers eat before a race like this, Sophie?'), s('Pasta, usually. And then you try very hard not to think about the first chicane.')],
+    [j('Do you miss it? Racing here?'), s.up('Every single day, James. Especially on a day like today.')],
+    [j('Sophie, honestly, what was your best lap here?'), s("Oh, I had one in qualifying that I still dream about. Nobody saw it, it was a wet session. Typical!")],
+    [j('How hot does it get in the cockpit?'), s('Very. You lose a couple of kilos in sweat over a race. Not that I recommend it as a diet.')],
+    [j('The crowd here really get behind everyone, don\'t they?'), s("They do. Even if you're not driving a red car, they'll still cheer you. Well, a little bit.")],
+    [j('What goes through a driver\'s mind on these long straights?'), s('Honestly? Where am I braking, is my battery full, and please let nobody overtake me.')],
+    [j('Quick question for you. Lesmo one or Lesmo two?'), s('Lesmo two. Shorter, tighter, and it bites. I love it and I hate it.')],
+    [j('Is it scary, braking from these speeds?'), s("The first time? Terrifying. After that, you just trust the car. Mostly.")],
+    [j("It's a lovely afternoon here, Sophie."), s.calm("It is. Almost too nice. I'd rather be in the car, if I'm honest.")],
+    [j('Who has impressed you most today?'), s("Everyone, a bit. But I'm watching the midfield. That's where the real racing is.")],
+  ],
+  'banter-trial': [[j('Just the car and the clock, Sophie.'), s.calm("My favourite kind of session, honestly. No excuses, nowhere to hide.")], [j('How do you find time on a lap like this?'), s.calm('Look at the exits. Most of the time is hiding in the first few metres out of each corner.')]],
+  lonely: [[j("Not a lot of company out there right now."), s.calm('Just a time trial against yourself, really. Hit your marks.')]],
+  'react-podium': [s.up('A podium! Oh, that is brilliant. Really brilliant.'), s.up("I'm genuinely thrilled with that, James.")],
+  'react-points': [s('Points in the bag. Good, sensible afternoon.'), s("That'll do. That'll do nicely.")],
+  'react-back': [s.calm("Not one for the highlights reel, but there's plenty to take away."), s.calm('Chin up. Next time.')],
+};
+for (const [k, v] of Object.entries(more)) lines[k] = [...(lines[k] ?? []), ...v];
+
 // numbered lines
-for (let n = 2; n <= 9; n++) lines[`to-go-${n}`] = [j(`${NUMBERS[n][0].toUpperCase()}${NUMBERS[n].slice(1)} laps to go.`)];
+const cap = (w: string) => w[0].toUpperCase() + w.slice(1);
+for (let n = 2; n <= 9; n++) lines[`to-go-${n}`] = [j(`${cap(NUMBERS[n])} laps to go.`), j(`${cap(NUMBERS[n])} to go now.`), j(`And that's ${NUMBERS[n]} laps remaining.`)];
 for (let p = 1; p <= 20; p++) {
   const o = ORDINALS[p - 1];
-  lines[`up-${p}`] = [j.hype(`Up to ${o}!`)];
-  lines[`down-${p}`] = [j(`Down to ${o}.`)];
-  lines[`running-${p}`] = [p === 1 ? j.up('Leading the race!') : j(`Running in ${o}.`)];
+  lines[`up-${p}`] = [j.hype(`Up to ${o}!`), j.hype(`Into ${o} place!`), j.up(`That's ${o} now!`)];
+  lines[`down-${p}`] = [j(`Down to ${o}.`), j(`Back to ${o} now.`), j(`Dropped to ${o}.`)];
+  lines[`running-${p}`] = p === 1 ? [j.up('Leading the race!'), j.up('Still out in front!')] : [j(`Running in ${o}.`), j(`Currently ${o}.`)];
   if (p >= 2) {
     const flavour = p <= 3 ? ' A podium finish!' : p <= 10 ? ' Points on the board.' : '';
     lines[`finish-${p}`] = [(p <= 3 ? j.hype : j.up)(`Chequered flag, and across the line in ${o}!${flavour}`)];
