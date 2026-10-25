@@ -1,6 +1,6 @@
 // The round's beat: a little boom-bap that gets faster with each speed tier. A scheduler over the arcade synth,
 // queued a little ahead against the audio clock (like Palm Drive's soundtrack), so a pause or mute never bunches it up.
-export const bpmOf = (tier: number) => 104 + Math.min(9, tier) * 9;
+export const bpmOf = (tier: number) => 104 + Math.min(12, Math.max(0, tier)) * 8;
 
 export type BeatVoice = { kind: 'kick' | 'snare' | 'hat' | 'bass' | 'blip'; freq: number };
 const BASS = [55, 55, 65.4, 49];

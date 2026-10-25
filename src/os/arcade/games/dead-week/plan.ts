@@ -5,14 +5,14 @@ import { mix, mulberry32, shuffled } from './rng.ts';
 
 export const TIERS_EVERY = 5;
 export const BOSS_EVERY = 10;
-export const MAX_TIER = 9;
+export const MAX_TIER = 12;
 
-export type Plan = { n: number; ids: string[]; tier: number; boss: boolean; seed: number; difficulty: number };
+export type Plan = { n: number; ids: string[]; tier: number; boss: boolean; seed: number; difficulty: number; pace: number };
 
 export const tierOf = (n: number) => Math.min(MAX_TIER, Math.floor(n / TIERS_EVERY));
 export const isBoss = (n: number) => n % BOSS_EVERY === BOSS_EVERY - 1;
-/** 0 for the first games, 1 at top speed (the final exams run a little ahead). */
-export const difficultyOf = (tier: number, boss = false) => Math.min(1, (tier + (boss ? 1 : 0)) / 6);
+export const difficultyOf = (tier: number, boss = false) => Math.min(1, (tier + (boss ? 1 : 0)) / 4);
+export const paceOf = (tier: number) => Math.min(1.75, 1 + Math.max(0, tier - 2) * 0.09);
 
 /** One bag of every micro-game per dozen non-boss games, so nothing repeats until the rest have come up. */
 function fromBag(seed: number, normalN: number) {
@@ -26,7 +26,7 @@ export function planGame(seed: number, n: number): Plan {
   const gameSeed = mix(seed, n, 2);
   const normalN = n - Math.floor(n / BOSS_EVERY);
   const ids = boss ? shuffled(mulberry32(mix(seed, n, 3)), MICRO.map((m) => m.id)).slice(0, 3) : [fromBag(seed, normalN)];
-  return { n, ids, tier, boss, seed: gameSeed, difficulty: difficultyOf(tier, boss) };
+  return { n, ids, tier, boss, seed: gameSeed, difficulty: difficultyOf(tier, boss), pace: paceOf(tier + (boss ? 1 : 0)) };
 }
 
 /** Seconds of play: a final exam is three quick games back to back. */

@@ -67,9 +67,9 @@ export const jailRect = (team: 0 | 1) => FIELD.JAILS[team];
 function jailPosition(team: 0 | 1, slot: number) {
   const jail = jailRect(team);
   const count = 12;
-  const col = slot % 4;
-  const row = Math.floor(slot / 4) % 3;
-  return { x: jail.x + 1 + col * (jail.w - 2) / 3, y: jail.y + 1 + row * (jail.h - 2) / 2, count };
+  const col = slot % 3;
+  const row = Math.floor(slot / 3) % 3;
+  return { x: jail.x + 1 + col * 2, y: jail.y + 1 + row * 2, count };
 }
 
 function playerFrom(config: PlayerConfig, id: number): Player {
@@ -107,7 +107,7 @@ export function spawnAll(world: World) {
   for (const player of world.players) byTeam[player.team].push(player);
   for (const team of [0, 1] as const) {
     byTeam[team].forEach((player, index) => {
-      const y = byTeam[team].length === 1 ? FIELD.W / 2 : 6 + index * (FIELD.W - 12) / (byTeam[team].length - 1);
+      const y = byTeam[team].length === 1 ? FIELD.W / 2 : 9 + index * (FIELD.W - 18) / (byTeam[team].length - 1);
       player.x = team === 0 ? 9 : 51;
       player.y = y;
     });

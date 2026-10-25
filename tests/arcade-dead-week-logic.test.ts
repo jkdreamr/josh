@@ -2,9 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BOT_NAMES, botPasses, passChance, skillOf } from '../src/os/arcade/games/dead-week/bots.ts';
 import { GRACE, INTRO, createDirector, playEnd, report, tick, vote } from '../src/os/arcade/games/dead-week/director.ts';
+import { shown, startLocal, stepLocal } from '../src/os/arcade/games/dead-week/frame.ts';
 import { Beat, bpmOf, stepVoices } from '../src/os/arcade/games/dead-week/music.ts';
+import { MICRO } from '../src/os/arcade/games/dead-week/micro/index.ts';
+import type { MicroInstance } from '../src/os/arcade/games/dead-week/micro/types.ts';
 import { gameOf, parsePacket, reportOf, resultOf, tallyOf, voteOf } from '../src/os/arcade/games/dead-week/net.ts';
-import { BOSS_EVERY, TIERS_EVERY, commandTime, isBoss, planGame, resultsTime, tierOf } from '../src/os/arcade/games/dead-week/plan.ts';
+import { BOSS_EVERY, MAX_TIER, TIERS_EVERY, commandTime, difficultyOf, isBoss, paceOf, planGame, resultsTime, tierOf } from '../src/os/arcade/games/dead-week/plan.ts';
 import { LIVES, botVote, createRoyale, leaders, leave, resolveGame, tallyCurse } from '../src/os/arcade/games/dead-week/rules.ts';
 import type { Curse, Entry } from '../src/os/arcade/games/dead-week/rules.ts';
 
@@ -95,7 +98,8 @@ test('human curse votes override any number of bot votes; ties and bot votes are
 test('plans are deterministic, tier every five games, and boss indexes are explicit', () => {
   assert.deepEqual(planGame(4312, 17), planGame(4312, 17));
   assert.equal(TIERS_EVERY, 5);
-  assert.deepEqual([0, 4, 5, 9, 10, 14, 15].map(tierOf), [0, 0, 1, 1, 2, 2, 3]);
+  assert.equal(MAX_TIER, 12);
+  assert.deepEqual([0, 4, 5, 9, 10, 14, 15, 59, 60, 64].map(tierOf), [0, 0, 1, 1, 2, 2, 3, 11, 12, 12]);
   assert.equal(BOSS_EVERY, 10);
   assert.equal(isBoss(8), false);
   assert.equal(isBoss(9), true);
@@ -103,7 +107,53 @@ test('plans are deterministic, tier every five games, and boss indexes are expli
   assert.equal(isBoss(19), true);
   assert.equal(planGame(4312, 9).boss, true);
   assert.equal(planGame(4312, 9).ids.length, 3);
+  assert.equal(planGame(4312, 39).pace, paceOf(planGame(4312, 39).tier + 1));
   assert.equal(planGame(4312, 10).boss, false);
+});
+
+test('difficulty reaches one at tier four and pace rises monotonically to its cap', () => {
+  assert.equal(difficultyOf(4), 1);
+  assert.equal(difficultyOf(3, true), 1);
+  assert.equal(difficultyOf(12), 1);
+  const paces = Array.from({ length: MAX_TIER + 1 }, (_, tier) => paceOf(tier));
+  assert.equal(paces[0], 1);
+  assert.ok(paces.every((pace, i) => i === 0 || pace >= paces[i - 1]));
+  assert.ok(paces.some((pace, i) => i > 0 && pace > paces[i - 1]));
+  assert.equal(paceOf(MAX_TIER), 1.75);
+  assert.equal(paceOf(MAX_TIER + 1), 1.75);
+});
+
+test('micro clocks use plan pace while part boundaries remain real-time', () => {
+  const local = startLocal(321, 60, 0, null, false, true);
+  const part = local.parts[0];
+  const updates: { dt: number; t: number }[] = [];
+  const instance: MicroInstance = {
+    outcome: 'pending',
+    update(dt, t) {
+      updates.push({ dt, t });
+    },
+    render() {},
+    timeUp: () => 'fail',
+  };
+  const duration = part.game.duration(local.plan.tier);
+  part.game = { ...part.game, create: () => instance };
+  const realT = 0.4;
+  const realDt = 1 / 60;
+  const now = local.start + part.from + realT;
+  stepLocal(local, now, realDt, {} as Parameters<typeof stepLocal>[3]);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].dt, realDt * 1.75);
+  assert.ok(Math.abs(updates[0].t - realT * 1.75) < 1e-12);
+  assert.ok(Math.abs(shown(local, now).t - realT * 1.75) < 1e-12);
+  assert.equal(part.from, local.cmd);
+  assert.equal(part.to, local.cmd + duration);
+});
+
+test('all micro-game durations at tier twelve respect their two-and-a-half-second floor', () => {
+  assert.ok(
+    MICRO.every((game) => game.duration(MAX_TIER) >= 2.5),
+    MICRO.map((game) => `${game.id}:${game.duration(MAX_TIER)}`).join(', '),
+  );
 });
 
 test('the first twelve non-boss plans do not repeat a micro-game', () => {
@@ -130,6 +180,8 @@ test('bot skills are stable and varied; pass chance and pass rolls respond to di
   assert.ok(new Set(skills).size > 1);
   assert.ok(passChance(0.9, 1, false) < passChance(0.9, 0, false));
   assert.ok(passChance(0.9, 0, true) < passChance(0.9, 0, false));
+  assert.equal(passChance(0.01, 12, false), 0.1);
+  assert.equal(passChance(0.01, 12, true), 0.1);
   assert.equal(botPasses(123, 8, 2, 0.9, 3, true), botPasses(123, 8, 2, 0.9, 3, true));
 
   let topPasses = 0;
@@ -236,8 +288,10 @@ test('music voice steps are deterministic and tempo rises with tier', () => {
   for (let step = 0; step < 16; step++) {
     assert.deepEqual(stepVoices(step, 2, 4), stepVoices(step, 2, 4));
   }
-  for (let tier = 0; tier < 9; tier++) assert.ok(bpmOf(tier + 1) >= bpmOf(tier));
+  for (let tier = 0; tier < 12; tier++) assert.ok(bpmOf(tier + 1) > bpmOf(tier));
   assert.ok(bpmOf(1) > bpmOf(0));
+  assert.equal(bpmOf(12), 200);
+  assert.equal(bpmOf(13), 200);
 });
 
 test('beat scheduler emits increasing delays within the requested lookahead', () => {

@@ -7,9 +7,26 @@
 }
 
 .g-wacky-walk .g-wacky-walk-setup {
-  display: grid;
-  gap: 12px;
-  width: min(100%, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.g-wacky-walk .g-wacky-walk-setup .arcade-field,
+.g-wacky-walk .g-wacky-walk-setup .arcade-seg {
+  width: 100%;
+  min-width: 0;
+}
+
+.g-wacky-walk .g-wacky-walk-setup .arcade-seg {
+  display: flex;
+}
+
+.g-wacky-walk .g-wacky-walk-setup .arcade-seg > button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 6px;
 }
 
 .g-wacky-walk .g-wacky-walk-stage {
@@ -133,6 +150,11 @@
 }
 
 .g-wacky-walk .g-wacky-walk-intro {
+  top: 19%;
+  width: min(calc(100% - 24px), 320px);
+  gap: 5px;
+  padding: 12px;
+  transform: translateX(-50%);
   animation: g-wacky-walk-card-in 380ms cubic-bezier(.2, .9, .3, 1.15) both;
 }
 
@@ -146,7 +168,7 @@
 
 .g-wacky-walk .g-wacky-walk-intro strong {
   color: var(--ww-ink);
-  font-size: clamp(24px, 5vw, 36px);
+  font-size: clamp(22px, 4.6vw, 32px);
   font-weight: 950;
   letter-spacing: -.04em;
   line-height: 1;

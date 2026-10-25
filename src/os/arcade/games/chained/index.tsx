@@ -421,6 +421,7 @@ function Play({ kind }: { kind: Kind }) {
   const tickAt = useRef(-1);
   const tap = useRef({ swap: false });
   const clock = useRef(0);
+  const lastNow = useRef(-1);
   /** Frame cost counters, read by the dev hook. */
   const perf = useRef({ frames: 0, dt: 0, step: 0, view: 0, render: 0, hud: 0 });
   const hudTick = useRef(0);
@@ -726,10 +727,16 @@ function Play({ kind }: { kind: Kind }) {
   // The frame loop: input, simulation, sounds, camera, HUD.
 
   useGameLoop(
-    (dt) => {
+    (frameDt) => {
       const g = game.current!;
       const v = view.current;
       const n = net.current;
+      // the simulation runs on the wall clock, so a slow frame costs substeps rather than slowing the game down
+      // (the kit clamps its dt at 50 ms); a long gap, such as a pause, is not caught up
+      const wall = performance.now();
+      const gap = lastNow.current < 0 ? frameDt : (wall - lastNow.current) / 1000;
+      lastNow.current = wall;
+      const dt = gap > 0.5 ? frameDt : Math.min(0.25, gap);
       clock.current += dt;
       if (kind === 'idle') {
         v?.frame(g, focusOf(g), dt, clock.current, team);

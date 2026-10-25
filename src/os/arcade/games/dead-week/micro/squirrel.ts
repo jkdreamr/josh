@@ -3,14 +3,14 @@ import { int, mulberry32 } from '../rng.ts';
 import { standardDuration, type MicroGame, type MicroInstance } from './types.ts';
 
 export type SquirrelPop = { spot: number; at: number; life: number };
-const spots = [{ x: 18, y: 55 }, { x: 43, y: 48 }, { x: 76, y: 56 }, { x: 27, y: 78 }, { x: 57, y: 75 }, { x: 84, y: 79 }];
+export const SQUIRREL_SPOTS = [{ x: 18, y: 55 }, { x: 43, y: 48 }, { x: 76, y: 56 }, { x: 27, y: 78 }, { x: 57, y: 75 }, { x: 84, y: 79 }];
 
 export function squirrelSchedule(seed: number, difficulty: number): SquirrelPop[] {
   const rng = mulberry32(seed);
   const need = 2 + Math.floor(difficulty * 2.99);
   const count = need + 2;
   return Array.from({ length: count }, (_, i) => ({
-    spot: int(rng, 0, spots.length - 1),
+    spot: int(rng, 0, SQUIRREL_SPOTS.length - 1),
     at: 0.25 + i * (0.72 - difficulty * 0.16),
     life: 0.5,
   }));
@@ -37,14 +37,14 @@ export const squirrel: MicroGame = {
       },
       render(c, t) {
         text(c, `bonk ${bonks} / ${need}`, 50, 11, 6);
-        spots.forEach((p, i) => {
+        SQUIRREL_SPOTS.forEach((p, i) => {
           ellipse(c, p.x, p.y + 4, 9, 5, i < 3 ? GREEN : BROWN, 1);
           rect(c, p.x - 7, p.y + 1, 14, 8, i < 3 ? GREEN : ORANGE, 2, 0.8);
           line(c, p.x - 8, p.y + 1, p.x + 8, p.y + 1, 1.2, BROWN);
         });
         pops.forEach((pop, i) => {
           if (hit[i] || t < pop.at || t > pop.at + pop.life) return;
-          const p = spots[pop.spot];
+          const p = SQUIRREL_SPOTS[pop.spot];
           const rise = Math.sin(Math.PI * Math.max(0, Math.min(1, (t - pop.at) / pop.life))) * 8;
           drawSquirrel(c, p.x, p.y - rise);
         });
@@ -55,7 +55,7 @@ export const squirrel: MicroGame = {
         for (let i = 0; i < pops.length; i++) {
           const pop = pops[i];
           if (hit[i] || now < pop.at || now > pop.at + pop.life) continue;
-          const p = spots[pop.spot];
+          const p = SQUIRREL_SPOTS[pop.spot];
           if (Math.hypot(x - p.x, y - (p.y - 3)) <= 11) {
             hit[i] = true;
             bonks++;

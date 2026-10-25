@@ -1,23 +1,130 @@
+.g-run-3d {
+  --g-run-3d-z0: #7d86ff;
+  --g-run-3d-z1: #3fd6bd;
+  --g-run-3d-z2: #ff8547;
+  --g-run-3d-z3: #a9c2ff;
+  --g-run-3d-z4: #ff5ad6;
+  --g-run-3d-z5: #ffc94a;
+}
 .g-run-3d .g-run-3d-host {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   touch-action: none;
-  background:
-    radial-gradient(1px 1px at 12% 18%, rgba(255, 255, 255, 0.9), transparent 60%),
-    radial-gradient(1px 1px at 28% 72%, rgba(255, 255, 255, 0.7), transparent 60%),
-    radial-gradient(1.5px 1.5px at 44% 12%, rgba(255, 255, 255, 0.85), transparent 60%),
-    radial-gradient(1px 1px at 63% 38%, rgba(255, 255, 255, 0.6), transparent 60%),
-    radial-gradient(1.5px 1.5px at 78% 22%, rgba(255, 255, 255, 0.9), transparent 60%),
-    radial-gradient(1px 1px at 88% 64%, rgba(255, 255, 255, 0.7), transparent 60%),
-    radial-gradient(1px 1px at 8% 52%, rgba(255, 255, 255, 0.6), transparent 60%),
-    radial-gradient(1.5px 1.5px at 54% 86%, rgba(255, 255, 255, 0.75), transparent 60%),
-    radial-gradient(1px 1px at 36% 44%, rgba(255, 255, 255, 0.5), transparent 60%),
-    radial-gradient(1px 1px at 94% 8%, rgba(255, 255, 255, 0.8), transparent 60%),
-    radial-gradient(120% 90% at 50% 45%, #141a3e 0%, #0a0d24 55%, #05060f 100%);
+  user-select: none;
+  -webkit-user-select: none;
+  background: radial-gradient(120% 90% at 50% 45%, #141a3e 0%, #0a0d24 55%, #05060f 100%);
 }
-.g-run-3d .g-run-3d-zone {
+.g-run-3d .g-run-3d-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* progress along a level or race */
+.g-run-3d .g-run-3d-bar {
   position: absolute;
   top: 14px;
+  left: 18px;
+  width: min(28%, 300px);
+  height: 22px;
+  pointer-events: none;
+  z-index: 2;
+}
+.g-run-3d .g-run-3d-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 9px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.3);
+}
+.g-run-3d .g-run-3d-dot {
+  position: absolute;
+  top: 5px;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1.5px rgba(10, 12, 30, 0.85),
+    0 1px 4px rgba(0, 0, 0, 0.4);
+}
+.g-run-3d .g-run-3d-dot.is-you {
+  top: 3px;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  box-shadow:
+    0 0 0 2px #fff,
+    0 1px 6px rgba(0, 0, 0, 0.45);
+}
+.g-run-3d .g-run-3d-place,
+.g-run-3d .g-run-3d-cells {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 12px);
+  height: 22px;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+}
+.g-run-3d .g-run-3d-cells {
+  gap: 4px;
+}
+.g-run-3d .g-run-3d-cells i {
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.22);
+}
+.g-run-3d .g-run-3d-cells i.is-got {
+  background: #ffd166;
+  box-shadow: 0 0 8px rgba(255, 209, 102, 0.8);
+}
+
+/* name tags over the other runners */
+.g-run-3d .g-run-3d-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  background: rgba(14, 16, 34, 0.62);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+  will-change: transform;
+  z-index: 1;
+}
+.g-run-3d .g-run-3d-label i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.g-run-3d .g-run-3d-zone {
+  position: absolute;
+  top: 46px;
   left: 50%;
   transform: translateX(-50%);
   padding: 6px 14px;
@@ -25,12 +132,50 @@
   font-size: 14px;
   font-weight: 600;
   color: #fff;
+  white-space: nowrap;
   background: rgba(20, 22, 44, 0.5);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
   pointer-events: none;
-  animation: g-run-3d-zone 2.2s ease forwards;
+  animation: g-run-3d-zone 2.4s ease forwards;
+  z-index: 2;
+}
+.g-run-3d .g-run-3d-count {
+  position: absolute;
+  top: 38%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 64px;
+  font-weight: 800;
+  color: #fff;
+  text-shadow:
+    0 0 24px rgba(160, 170, 255, 0.8),
+    0 2px 8px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  animation: g-run-3d-pop 0.9s ease-out forwards;
+  z-index: 2;
+}
+.g-run-3d .g-run-3d-count.is-wait {
+  font-size: 15px;
+  font-weight: 600;
+  animation: none;
+}
+.g-run-3d .g-run-3d-done {
+  position: absolute;
+  top: 46px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  background: rgba(20, 22, 44, 0.62);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+  pointer-events: none;
+  z-index: 2;
 }
 @keyframes g-run-3d-zone {
   0% {
@@ -46,4 +191,105 @@
     opacity: 0;
     transform: translate(-50%, 0);
   }
+}
+@keyframes g-run-3d-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.6);
+  }
+  25% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+}
+
+/* short framed strips: keep the bar and tags out of the way */
+@media (max-height: 260px) {
+  .g-run-3d .g-run-3d-bar {
+    top: 8px;
+  }
+  .g-run-3d .g-run-3d-zone,
+  .g-run-3d .g-run-3d-done {
+    top: 34px;
+    font-size: 12px;
+    padding: 4px 10px;
+  }
+}
+
+/* level strip on the setup card */
+.g-run-3d .g-run-3d-strip {
+  display: flex;
+  gap: 5px;
+  width: 0;
+  min-width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding: 1px;
+}
+.g-run-3d .g-run-3d-strip::-webkit-scrollbar {
+  display: none;
+}
+.g-run-3d .g-run-3d-pick {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 -2px 0 var(--zone);
+  cursor: pointer;
+}
+.g-run-3d .g-run-3d-pick.is-zone {
+  margin-left: 6px;
+}
+.g-run-3d .g-run-3d-pick:first-child {
+  margin-left: 0;
+}
+.g-run-3d .g-run-3d-pick:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.13);
+}
+.g-run-3d .g-run-3d-pick.is-on {
+  color: #fff;
+  background: var(--accent);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.3),
+    inset 0 -2px 0 var(--zone),
+    0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.g-run-3d .g-run-3d-pick:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.g-run-3d .g-run-3d-dots {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffd166;
+}
+.g-run-3d .g-run-3d-dots[data-n='3'] {
+  box-shadow: 0 0 6px #ffd166;
+}
+.g-run-3d .g-run-3d-about {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.66);
 }
