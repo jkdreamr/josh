@@ -14,6 +14,7 @@ import { SKIES, buildAtmosphere, qualityOf } from './sky';
 import { skyWater, waterTick } from './skywater';
 import { floraTick } from './flora';
 import { kartDetail, kartRim } from './kart';
+import { knollGeometry } from './dish';
 import { GROUNDS, asphaltTexture, curbTexture, grassTufts, groundMaterial, lawnMaterial, roadMaterial, wallTexture } from './surfaces';
 
 type Three = typeof import('three');
@@ -1929,8 +1930,9 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     }),
   );
   const screeMat = new THREE.MeshLambertMaterial({ map: screeTex, transparent: true, depthWrite: false });
-  const knollMat = new THREE.MeshLambertMaterial({ color: 0xbfa463, flatShading: true });
-  const knollGeo = new THREE.SphereGeometry(1, 9, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+  // (smooth, and grassed like the ground round them)
+  const knollMat = surf ? groundMaterial(THREE, surf) : new THREE.MeshLambertMaterial({ color: 0xbfa463, flatShading: true });
+  const knollGeo = surf ? knollGeometry(THREE) : new THREE.SphereGeometry(1, 9, 5, 0, Math.PI * 2, 0, Math.PI / 2);
   const rockSign = new THREE.MeshBasicMaterial({
     map: texture(
       THREE,
@@ -1981,7 +1983,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const p = pointAt(t, h.s + ds, side * (t.edge + dd));
       const k = new THREE.Mesh(knollGeo, knollMat);
       k.position.set(p.x, -0.4, p.z);
-      k.scale.set(sx, sy, sz);
+      k.scale.set(sx * (surf ? 1.25 : 1), sy, sz * (surf ? 1.25 : 1));
       k.rotation.y = headingOf(p.tx, p.tz);
       scene.add(k);
     }

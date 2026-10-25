@@ -10,6 +10,8 @@ import { SKIES } from './sky';
 import { campusExtras } from './campus';
 import { boathouse, lakeLife, lilyPads, reedBeds } from './lake';
 import { horse, paddockFence, redBarn, silo, tractor, windmill } from './barn';
+import { holstein, knollGeometry, smallDishes } from './dish';
+import { GROUNDS, groundMaterial } from './surfaces';
 import { skyWater } from './skywater';
 import { church as churchModel, dishTelescope, hall as hallModel, hill, hooverTower, vcMats } from './landmarks';
 
@@ -1304,72 +1306,36 @@ function dish(c: Scenery) {
   const steel = new THREE.MeshLambertMaterial({ color: 0xb9bcbf });
   const concrete = new THREE.MeshLambertMaterial({ color: 0xc9c3b6 });
 
-  // the Dish: a 30 m white bowl tilted to the sky on its yoke, with the feed held out on a tripod
+  // the Dish: the 150-foot telescope on its yoke, its bowl tipped to the sky, the feed held out on four legs (see
+  // landmarks.ts), as big as fits inside the loop
   const big = roomiest(t, fromMap(90 * K, 150 * K), 60);
-  const d = new THREE.Group();
-  const pedestal = new THREE.Mesh(geo.box, concrete);
-  pedestal.scale.set(10, 6, 10);
-  pedestal.position.y = 3;
-  d.add(pedestal);
-  /** A strut from a to b (in its parent's space). */
-  const strut = (mat: T.Material, w: number, a: T.Vector3, b: T.Vector3) => {
-    const m = new THREE.Mesh(geo.box, mat);
-    m.position.copy(a).add(b).multiplyScalar(0.5);
-    m.scale.set(w, a.distanceTo(b), w);
-    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-    return m;
-  };
-  // the yoke: an arm up from each side of the pedestal to the bowl's pivot
-  for (const side of [-1, 1]) d.add(strut(white, 2, new THREE.Vector3(side * 4, 6, 0), new THREE.Vector3(side * 11, 20, 0)));
-  const reflector = new THREE.Group();
-  const bowl = new THREE.Mesh(new THREE.SphereGeometry(22, 28, 10, 0, Math.PI * 2, 0, 0.75), white);
-  bowl.rotation.x = Math.PI;
-  bowl.position.y = 22;
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(15, 0.5, 6, 40), steel);
-  rim.rotation.x = Math.PI / 2;
-  rim.position.y = 22 - 22 * Math.cos(0.75);
-  reflector.add(bowl, rim);
-  // the feed over the middle of the bowl, held up by three legs from the rim
-  const feed = new THREE.Mesh(geo.box, steel);
-  feed.scale.set(2, 2.4, 2);
-  feed.position.y = rim.position.y + 12;
-  reflector.add(feed);
-  const focus = new THREE.Vector3(0, feed.position.y - 1, 0);
-  for (let k = 0; k < 3; k++) {
-    const a = (k / 3) * Math.PI * 2;
-    reflector.add(strut(steel, 0.4, new THREE.Vector3(Math.cos(a) * 14.6, rim.position.y, Math.sin(a) * 14.6), focus));
+  const vm = vcMats(THREE);
+  {
+    const mk = modelKit(THREE);
+    mk.box(0xc9c3b6, 0, 0.15, 0, 30, 0.3, 30);
+    dishTelescope(THREE, mk, 0.78);
+    const d = mk.build(vm.vc, vm.lit);
+    d.position.set(big.x, 0, big.z);
+    d.rotation.y = 2.2;
+    // (its rim as wide as the old one's was, 15 m out, at most)
+    d.scale.setScalar(Math.min(1, (big.room - t.edge - 6) / 24) * (15 / 23));
+    scene.add(d);
   }
-  reflector.position.y = 18;
-  reflector.rotation.x = -0.75;
-  d.add(reflector);
-  d.position.set(big.x, 0, big.z);
-  d.rotation.y = 2.2;
-  d.scale.setScalar(Math.min(1, (big.room - t.edge - 6) / 24));
-  scene.add(d);
 
   // smaller antennas dotted about the hills outside the loop
-  for (let n = 0, made = 0; made < 4 && n < 200; n++) {
+  const minis: { x: number; z: number; ry: number }[] = [];
+  for (let n = 0; minis.length < 4 && n < 200; n++) {
     const a = rand() * Math.PI * 2;
     const x = cx + Math.cos(a) * (rx + 40 + rand() * 120);
     const z = cz + Math.sin(a) * (rz + 40 + rand() * 120);
-    if (!clear(x, z, 12)) continue;
-    const g = new THREE.Group();
-    const post = new THREE.Mesh(geo.box, white);
-    post.scale.set(1.2, 7, 1.2);
-    post.position.y = 3.5;
-    const small = new THREE.Mesh(new THREE.SphereGeometry(5, 16, 6, 0, Math.PI * 2, 0, 0.8), white);
-    small.rotation.x = Math.PI - 0.9;
-    small.position.y = 9;
-    g.add(post, small);
-    g.position.set(x, 0, z);
-    g.rotation.y = rand() * Math.PI * 2;
-    scene.add(g);
-    made++;
+    if (clear(x, z, 12)) minis.push({ x, z, ry: rand() * Math.PI * 2 });
   }
+  smallDishes(THREE, scene, minis, vm, modelKit);
 
   // rolling golden hills inside the loop and round about, clear of the road
-  const hillMat = new THREE.MeshLambertMaterial({ color: 0xc6ad66, flatShading: true });
-  const hillGeo = new THREE.SphereGeometry(1, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+  // (their grass the ground's own, so they rise out of it: see surfaces.ts)
+  const hillMat = groundMaterial(THREE, GROUNDS.dish!);
+  const hillGeo = knollGeometry(THREE);
   const hills: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number }[] = [];
   for (let n = 0; hills.length < 26 && n < 600; n++) {
     const a = rand() * Math.PI * 2;
@@ -1378,7 +1344,7 @@ function dish(c: Scenery) {
     const z = cz + Math.sin(a) * dist;
     const size = 16 + rand() * 30;
     if (!clear(x, z, size + 4) || Math.hypot(x - big.x, z - big.z) < 34) continue;
-    hills.push({ x, y: -1, z, sx: size, sy: 4 + rand() * size * 0.35, sz: size * (0.7 + rand() * 0.5), ry: rand() * 3 });
+    hills.push({ x, y: -0.6, z, sx: size, sy: 4 + rand() * size * 0.35, sz: size * (0.7 + rand() * 0.5), ry: rand() * 3 });
   }
   instances(THREE, scene, dummy, hillGeo, hillMat, hills);
 
@@ -1395,22 +1361,19 @@ function dish(c: Scenery) {
   }
   oaks(c, spots);
 
-  // cattle grazing off the road
-  const cowMats = cowMaterials(THREE);
+  // Holstein cattle grazing off the road (all one mesh: see dish.ts)
+  const herd = modelKit(THREE);
   for (let n = 0, made = 0; made < 12 && n < 400; n++) {
     const a = rand() * Math.PI * 2;
     const dist = rand() * (Math.max(rx, rz) + 120);
     const x = cx + Math.cos(a) * dist;
     const z = cz + Math.sin(a) * dist;
     if (!clear(x, z, 5) || Math.hypot(x - big.x, z - big.z) < 30) continue;
-    const { g, head } = makeCow(THREE, geo, cowMats);
-    head.rotation.x = 0.9;
-    head.position.y = 1.2;
-    g.position.set(x, 0, z);
-    g.rotation.y = rand() * Math.PI * 2;
-    scene.add(g);
+    holstein(herd, x, z, rand() * Math.PI * 2, rand() < 0.75, made);
     made++;
   }
+  herd.place();
+  if (herd.count()) scene.add(herd.build(vm.vc, vm.lit));
 
   // barbed wire on wooden posts outside the walls
   const posts: { x: number; y: number; z: number; sx: number; sy: number; sz: number }[] = [];

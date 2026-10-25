@@ -308,6 +308,16 @@ export function dishTelescope(THREE: Three, mk: ModelKit, tilt = 0.75, panels = 
   const tiltM = new THREE.Matrix4().makeRotationX(-Math.PI / 2 + tilt);
   const place = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).applyMatrix4(tiltM).add(new THREE.Vector3(0, 21, 0));
   mk.geo(bowl, panels, 0, 21, 0, 1, 1, 1, -Math.PI / 2 + tilt, 0, 0);
+  // (and its inside, the face it turns to the sky: the same surface wound the other way, a hair in front)
+  const inner = bowl.clone();
+  const ix = inner.index!;
+  for (let k = 0; k < ix.count; k += 3) {
+    const a0 = ix.getX(k + 1);
+    ix.setX(k + 1, ix.getX(k + 2));
+    ix.setX(k + 2, a0);
+  }
+  inner.computeVertexNormals();
+  mk.geo(inner, panels, 0, 21.02, 0, 1, 1, 1, -Math.PI / 2 + tilt, 0, 0);
   // (the panel seams: rings and spokes in grey, just proud of the surface)
   for (const rr of [8, 15.5, 22.8]) {
     const c = place(0, (rr * rr) / (R * R) * depth + 0.08, 0);
@@ -342,7 +352,7 @@ export function dishTelescope(THREE: Three, mk: ModelKit, tilt = 0.75, panels = 
  * A smooth hill, r across and h high, its grass golden with darker patches and oaks in its folds: one mesh, vertex
  * colored. Sits on the ground at (x, z).
  */
-export function hill(THREE: Three, x: number, z: number, r: number, h: number, colors: [number, number, number] = [0xc8ad68, 0xa8924e, 0x5a6a34], seed = 3) {
+export function hill(THREE: Three, x: number, z: number, r: number, h: number, colors: [number, number, number] = [0xc8ad68, 0xa8924e, 0x5a6a34], seed = 3, sink = 0.5) {
   const N = 28;
   const g = new THREE.CircleGeometry(1, 48, 0, Math.PI * 2);
   // (a disc subdivided into rings, raised into a mound)
@@ -360,7 +370,7 @@ export function hill(THREE: Three, x: number, z: number, r: number, h: number, c
       const a = (j / A) * Math.PI * 2;
       const wob = 1 + 0.12 * Math.sin(a * 3 + ph[0]) + 0.06 * Math.sin(a * 7 + ph[1]);
       const rr = u * r * wob;
-      const y = h * Math.exp(-((u * 2.1) ** 2)) * (1 + 0.1 * Math.sin(a * 5 + ph[2]) * u) - 0.5;
+      const y = h * Math.exp(-((u * 2.1) ** 2)) * (1 + 0.1 * Math.sin(a * 5 + ph[2]) * u) - sink;
       pos.push(x + Math.cos(a) * rr, y, z + Math.sin(a) * rr);
       const n = 0.5 + 0.5 * Math.sin(a * 6 + u * 9 + ph[1]) * Math.sin(u * 13 + ph[0]);
       tmp.copy(ca).lerp(cb, n);

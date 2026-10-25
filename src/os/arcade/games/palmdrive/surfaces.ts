@@ -49,7 +49,16 @@ function procedural(THREE: Three, key: string, uniforms: Record<string, { value:
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vPdW;\nvarying vec2 vPdUv;')
-      .replace('#include <project_vertex>', '#include <project_vertex>\nvPdW = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvPdUv = uv;');
+      .replace(
+        '#include <project_vertex>',
+        `#include <project_vertex>
+         #ifdef USE_INSTANCING
+         vPdW = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+         #else
+         vPdW = (modelMatrix * vec4(transformed, 1.0)).xyz;
+         #endif
+         vPdUv = uv;`,
+      );
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>\nvarying vec3 vPdW;\nvarying vec2 vPdUv;\n${GLSL_NOISE}\n${decl}`)
       .replace('#include <map_fragment>', `#include <map_fragment>\n${body}`);
