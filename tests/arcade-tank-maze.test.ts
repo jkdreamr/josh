@@ -2,6 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   FIRE_CD,
+  TURN,
+  aimAt,
+  aimAligned,
+  canvasToWorld,
+  rotateToward,
   DIR_TURN,
   FWD,
   MAX_SHELLS,
@@ -32,6 +37,63 @@ import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacke
 
 const fire: TankInput = { turn: 0, move: 0, fire: true };
 const idle: TankInput = { turn: 0, move: 0, fire: false };
+
+test('pointer coordinates invert the maze render transform, including CSS scaling', () => {
+  const size = { w: 820, h: 700 };
+  const fit = fitBoard(touchLayout(size.w, size.h, 1, false).board, 8, 6, size.w);
+  const rect = { left: 70, top: 90, width: 410, height: 350 };
+  for (const pt of [{ x: 0, y: 0 }, { x: 2.5, y: 4.5 }, { x: 8, y: 6 }]) {
+    const canvas = toCanvas(rect.left + (fit.ox + pt.x * fit.cell) / 2, rect.top + (fit.oy + pt.y * fit.cell) / 2, rect, size);
+    const world = canvasToWorld(canvas, fit);
+    assert.ok(Math.abs(world.x - pt.x) < 1e-9 && Math.abs(world.y - pt.y) < 1e-9);
+  }
+  assert.equal(aimAt({ x: 2, y: 2 }, { x: 2, y: 1 }), -Math.PI / 2);
+});
+
+test('rotateToward follows the shortest path and snaps without overshoot', () => {
+  assert.ok(rotateToward(3, -3, 0.1) > 3);
+  assert.ok(rotateToward(-3, 3, 0.1) < -3);
+  assert.ok(Math.abs(rotateToward(0, 1, 0.2) - 0.2) < 1e-9);
+  assert.equal(rotateToward(0.9, 1, 0.2), 1);
+  assert.equal(rotateToward(1.1, 1, 0.2), 1);
+  assert.equal(rotateToward(1, 1, 0.2), 1);
+  assert.equal(rotateToward(3, -3, 0.4), -3);
+  assert.ok(aimAligned(Math.PI, -Math.PI));
+  assert.ok(!aimAligned(0, 0.1));
+});
+
+test('aim rotates at TURN without moving or firing; manual turn and dir take precedence', () => {
+  const w = createWorld({ cols: 8, rows: 6, seed: 5, count: 2, target: 5 });
+  w.phase = 'play';
+  const t = w.tanks[0];
+  t.a = 0;
+  const { x, y } = t;
+  step(w, [{ ...idle, aim: 1 }, idle]);
+  assert.ok(Math.abs(t.a - TURN / 60) < 1e-9);
+  assert.equal(t.x, x);
+  assert.equal(t.y, y);
+  assert.equal(w.shells.length, 0);
+  for (let i = 0; i < 20; i++) step(w, [{ ...idle, aim: 1 }, idle]);
+  assert.equal(t.a, 1);
+  t.a = 0;
+  step(w, [{ ...idle, turn: -1, aim: 1 }, idle]);
+  assert.ok(Math.abs(t.a + TURN / 60) < 1e-9);
+  t.a = 0;
+  step(w, [{ ...idle, dir: -1, aim: 1 }, idle]);
+  assert.ok(t.a < 0);
+  t.a = 0;
+  step(w, [{ ...idle, aim: NaN }, idle]);
+  assert.equal(t.a, 0);
+});
+
+test('aim packets round trip and reject malformed headings', () => {
+  const packet = inputPacket({ k: 'in', roomRound: 1, turn: 0, move: 0, fireCount: 0, aim: -Math.PI / 2 });
+  const parsed = parsePacket(JSON.parse(JSON.stringify(packet)));
+  assert.ok(parsed?.k === 'in' && Math.abs(parsed.aim! + Math.PI / 2) < 0.001);
+  for (const a of [9000, 1.5, '1', null, Infinity]) assert.equal(parsePacket({ ...packet, a }), null);
+  const absent = parsePacket(inputPacket({ k: 'in', roomRound: 1, turn: 0, move: 0, fireCount: 0 }));
+  assert.ok(absent?.k === 'in' && absent.aim === undefined);
+});
 
 /** Count interior walls still standing vs a fresh perfect maze would. */
 const interiorWalls = (m: Maze) => {
