@@ -82,6 +82,42 @@ test('jailbreak frees the whole team, then safe players can walk home', () => {
   assert.ok(prisoner.immuneT > 0);
 });
 
+test('jailed players use spaced 3x3 jail slots', () => {
+  const world = playing('classic', configs(5));
+  const captives = world.players.filter((player) => player.team === 1);
+  captives.forEach((player, slot) => {
+    player.jailed = true;
+    player.jailSlot = slot;
+  });
+
+  tick(world);
+
+  const jail = jailRect(0);
+  assert.deepEqual(captives.map(({ x, y }) => [x, y]), [
+    [jail.x + 1, jail.y + 1],
+    [jail.x + 3, jail.y + 1],
+    [jail.x + 5, jail.y + 1],
+    [jail.x + 1, jail.y + 3],
+    [jail.x + 3, jail.y + 3],
+  ]);
+});
+
+test('classic and big spawns stay between y 9 and 25 outside team jails', () => {
+  for (const mode of ['classic', 'big'] as const) {
+    const world = createWorld(configs(5), mode, 17);
+    for (const team of [0, 1] as const) {
+      const teammates = world.players.filter((player) => player.team === team);
+      assert.equal(teammates[0].y, 9);
+      assert.equal(teammates.at(-1)?.y, 25);
+      const jail = jailRect(team);
+      for (const player of teammates) {
+        assert.ok(player.y >= 9 && player.y <= 25);
+        assert.ok(!(player.x >= jail.x && player.x <= jail.x + jail.w && player.y >= jail.y && player.y <= jail.y + jail.h));
+      }
+    }
+  }
+});
+
 test('tagging a carrier returns its axe home immediately', () => {
   const world = playing();
   near(world, 0, 35, 5, 1, 36.3, 5);
