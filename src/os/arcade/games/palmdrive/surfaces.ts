@@ -32,7 +32,7 @@ type Ground = {
 };
 
 export const GROUNDS: Partial<Record<CourseId, Ground>> = {
-  palm: { a: 0xc2b06a, b: 0x9a9a52, c: 0x7f8c48, lawn: [0x76b052, 0x67a046], center: '#f2c230', edges: '#f4f2ea', tufts: 3, tuftBase: [0.2, 0.26, 0.1], tuftTip: [0.62, 0.62, 0.3], flowers: [[0.96, 0.84, 0.3], [0.95, 0.95, 0.9]] },
+  palm: { a: 0xbfae6a, b: 0x8f9a50, c: 0x6a8c44, lawn: [0x76b052, 0x67a046], center: '#f2c230', edges: '#f4f2ea', tufts: 3, tuftBase: [0.2, 0.26, 0.1], tuftTip: [0.62, 0.62, 0.3], flowers: [[0.96, 0.84, 0.3], [0.95, 0.95, 0.9]] },
   lake: { wet: true, a: 0xb2a462, b: 0x8f9a56, c: 0x6e8a48, lawn: [0x7aab5a, 0x6c9c4e], center: null, edges: '#f4f2ea', tufts: 3, tuftBase: [0.18, 0.24, 0.1], tuftTip: [0.58, 0.6, 0.3], flowers: [[0.95, 0.6, 0.75], [0.96, 0.84, 0.3]] },
   barn: { a: 0xc9b26a, b: 0xa59a58, c: 0x8aa04e, lawn: [0x8cae5c, 0x7d9f50], center: null, edges: null, tufts: 4, tuftBase: [0.24, 0.24, 0.1], tuftTip: [0.78, 0.68, 0.36], flowers: [[0.96, 0.84, 0.3], [0.62, 0.5, 0.86]] },
   dish: { a: 0xcdb46c, b: 0xb49a58, c: 0x8e8a4c, lawn: [0xb3a960, 0xa49b56], center: '#f2c230', edges: '#f4f2ea', tufts: 4, tuftBase: [0.32, 0.27, 0.12], tuftTip: [0.86, 0.74, 0.42], flowers: [[0.95, 0.7, 0.25]] },

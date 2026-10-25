@@ -7,6 +7,7 @@ import type { Race } from './logic';
 import { boatHull, merge, modelKit } from './model';
 import { gumTrees, oakTrees, palmTrees } from './flora';
 import { SKIES } from './sky';
+import { campusExtras } from './campus';
 import { skyWater } from './skywater';
 import { church as churchModel, dishTelescope, hall as hallModel, hill, hooverTower, vcMats } from './landmarks';
 
@@ -879,20 +880,7 @@ function campus(c: Scenery) {
     const z = Math.sin(a) * dist;
     if (clear(x, z, 4) && Math.hypot(x - LANDMARKS.church.x, z - LANDMARKS.church.z) > 60) oaks.push({ x, z, r: 2.5 + rand() * 3 });
   }
-  const oakTrunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.3, 0.45, 1, 6), new THREE.MeshLambertMaterial({ color: 0x6b4f37 }), oaks.length);
-  const oakTop = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 7, 5), new THREE.MeshLambertMaterial({ color: 0x4f7d3a, flatShading: true }), oaks.length);
-  oaks.forEach((o, i) => {
-    dummy.rotation.set(0, i, 0);
-    dummy.position.set(o.x, o.r * 0.6, o.z);
-    dummy.scale.set(1, o.r * 1.2, 1);
-    dummy.updateMatrix();
-    oakTrunk.setMatrixAt(i, dummy.matrix);
-    dummy.position.set(o.x, o.r * 1.5, o.z);
-    dummy.scale.set(o.r * 1.15, o.r * 0.9, o.r * 1.15);
-    dummy.updateMatrix();
-    oakTop.setMatrixAt(i, dummy.matrix);
-  });
-  scene.add(oakTrunk, oakTop);
+  oakTrees(THREE, scene, dummy, oaks);
 
   // landmarks
   const church = makeChurch(THREE, geo.box);
@@ -947,8 +935,10 @@ function campus(c: Scenery) {
     scene.add(s);
   }
 
-  // the Dish up in the foothills (the hills on the horizon all round are the sky's: see sky.ts)
+  // the Dish up in the foothills (the hills on the horizon all round are the sky's: see sky.ts), and the rest of
+  // campus: see campus.ts
   foothills(c, 0, 0, LANDMARKS.dish);
+  campusExtras(c);
 }
 
 /** Whether (x, z) is inside the loop the centerline makes. */

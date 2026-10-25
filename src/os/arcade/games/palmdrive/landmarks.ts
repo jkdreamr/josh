@@ -181,8 +181,9 @@ export function church(THREE: Three) {
   mk.box(0xe8d2a8, 0, 13.9, -3.6, 19.2, 9.2, 0.2);
   mk.box(0xd8b04a, 0, 13.9, -3.75, 18, 8.2, 0.12);
   for (let k = -3; k <= 3; k++) {
-    mk.box([0x2a4a8a, 0x8a2a2a, 0xf2e8d0, 0x2a6a5a][(k + 3) % 4], k * 2.35, 13.2, -3.85, 1.1, 4.4, 0.08);
-    mk.box(0xf2d8b0, k * 2.35, 15.9, -3.85, 0.5, 0.6, 0.08);
+    // (Christ in the middle in white, the others robed in muted blues, reds and greens)
+    mk.box(k === 0 ? 0xf2ead8 : [0x3a5478, 0x7a3a30, 0x4a6a58][(k + 3) % 3], k * 2.35, 13.2, -3.85, k === 0 ? 1.5 : 1.0, k === 0 ? 5 : 4.2, 0.08);
+    mk.box(0xf2d8b0, k * 2.35, k === 0 ? 16.1 : 15.9, -3.85, 0.5, 0.6, 0.08);
     mk.geo(new THREE.CylinderGeometry(1, 1, 1, 16, 1, false, Math.PI / 2, Math.PI), 0xb8902a, k * 2.35, 16.7, -3.85, 1.0, 0.1, 1.0, Math.PI / 2, 0, 0);
   }
   mk.box(0x2a4a8a, 0, 10.4, -3.85, 18, 0.6, 0.08);
