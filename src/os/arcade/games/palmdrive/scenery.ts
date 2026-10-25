@@ -12,6 +12,7 @@ import { boathouse, lakeLife, lilyPads, reedBeds } from './lake';
 import { horse, paddockFence, redBarn, silo, tractor, windmill } from './barn';
 import { holstein, knollGeometry, smallDishes } from './dish';
 import { GROUNDS, groundMaterial } from './surfaces';
+import { crowd, crowdTick, goalpost, lightTower, portal, scoreboard } from './stadium';
 import { skyWater } from './skywater';
 import { church as churchModel, dishTelescope, hall as hallModel, hill, hooverTower, vcMats } from './landmarks';
 
@@ -1423,7 +1424,7 @@ function dish(c: Scenery) {
  * the football field in the middle with its end zones and goalposts, the scoreboard, light towers, a portal over the
  * tunnel, and tailgate tents and palms out on the plaza.
  */
-function stadium(c: Scenery) {
+function stadium(c: Scenery): SceneryTick {
   const { THREE, scene, t, geo, mats, rand, clear, dummy } = c;
   const { cx, cz } = bounds(t);
   const K = 0.85;
@@ -1436,7 +1437,9 @@ function stadium(c: Scenery) {
   type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number };
   const tiers: Item[] = [];
   const seats: Item[] = [];
-  const fans: Item[][] = [[], [], [], []];
+  const fans: { x: number; y: number; z: number; ry: number; color: number }[] = [];
+  const backs: Item[] = [];
+  const aisles: Item[] = [];
   const ROWS = 8;
   const STEP = 5;
   /** A block along the stretch of row `d` from s - STEP/2 to s + STEP/2, sized to that chord so bends leave no gaps. */
@@ -1446,26 +1449,38 @@ function stadium(c: Scenery) {
     return { a, b, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, len: Math.hypot(b.x - a.x, b.z - a.z), ry: headingOf(b.x - a.x, b.z - a.z) };
   };
   // round from the home straight to the tunnel, so the road runs out through the portal
+  let block = 0;
   for (let s = -60; s <= 395; s += STEP) {
+    // (an aisle of steps down the stands every seventh block)
+    const aisle = block++ % 7 === 3;
     for (let row = 0; row < ROWS; row++) {
       const p = chord(s, t.edge + 3.4 + row * 2.6);
       if (!clear(p.x, p.z, 1.5)) continue;
       const h = 1.1 + row * 1.25;
       tiers.push({ x: p.x, y: h / 2, z: p.z, sx: 2.6, sy: h, sz: p.len + 0.3, ry: p.ry });
       const seat = chord(s, t.edge + 2.6 + row * 2.6);
+      if (aisle) {
+        aisles.push({ x: seat.x, y: h + 0.02, z: seat.z, sx: 2.62, sy: 0.06, sz: 1.2, ry: seat.ry });
+        continue;
+      }
       seats.push({ x: seat.x, y: h + 0.15, z: seat.z, sx: 0.9, sy: 0.3, sz: seat.len + 0.3, ry: seat.ry });
+      // (the back wall along the top of the stands, and its rail)
+      if (row === ROWS - 1) backs.push({ x: p.x + Math.cos(p.ry) * 1.3, y: h + 0.9, z: p.z - Math.sin(p.ry) * 1.3, sx: 0.35, sy: 1.8, sz: p.len + 0.3, ry: p.ry });
       const f = chord(s, t.edge + 2.4 + row * 2.6);
       for (let k = 0; k < 3; k++) {
         if (rand() < 0.15) continue;
         const u = (k + 0.3 + rand() * 0.4) / 3;
         const pick = rand();
-        fans[pick < 0.45 ? 0 : pick < 0.75 ? 1 : pick < 0.88 ? 2 : 3].push({ x: f.a.x + (f.b.x - f.a.x) * u, y: h + 0.75, z: f.a.z + (f.b.z - f.a.z) * u, sx: 0.55, sy: 0.9, sz: 0.45, ry: f.ry });
+        // (sitting facing the field)
+        fans.push({ x: f.a.x + (f.b.x - f.a.x) * u, y: h + 0.75, z: f.a.z + (f.b.z - f.a.z) * u, ry: f.ry + Math.PI / 2, color: pick < 0.45 ? 0x8c1515 : pick < 0.75 ? 0xf6f4ef : pick < 0.88 ? 0x2a2a30 : 0xe8b34a });
       }
     }
   }
   instances(THREE, scene, dummy, geo.box, concrete, tiers);
   instances(THREE, scene, dummy, geo.box, cardinal, seats);
-  [0x8c1515, 0xf6f4ef, 0x2a2a30, 0xe8b34a].forEach((color, i) => instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color }), fans[i]));
+  instances(THREE, scene, dummy, geo.box, concrete, backs);
+  instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color: 0xd8d2c6 }), aisles);
+  crowd(THREE, scene, dummy, fans);
 
   // the field in the middle of the bowl, running along the home straight
   const home = pointAt(t, 60, 0);
@@ -1518,39 +1533,19 @@ function stadium(c: Scenery) {
   field.scale.set(len, 44, 1);
   field.position.set(fx, 0.03, fz);
   scene.add(field);
-  // goalposts at both ends
+  // goalposts at both ends (see stadium.ts)
+  const kit = modelKit(THREE);
   for (const end of [-1, 1]) {
     const gx = fx + Math.sin(along) * end * (len / 2 - 1);
     const gz = fz + Math.cos(along) * end * (len / 2 - 1);
-    const post = new THREE.Group();
-    const stem = new THREE.Mesh(geo.box, gold);
-    stem.scale.set(0.3, 3, 0.3);
-    stem.position.y = 1.5;
-    const bar = new THREE.Mesh(geo.box, gold);
-    bar.scale.set(5.6, 0.25, 0.25);
-    bar.position.y = 3;
-    post.add(stem, bar);
-    for (const side of [-1, 1]) {
-      const up = new THREE.Mesh(geo.box, gold);
-      up.scale.set(0.2, 6, 0.2);
-      up.position.set(side * 2.8, 6, 0);
-      post.add(up);
-    }
-    post.position.set(gx, 0, gz);
-    post.rotation.y = along;
-    scene.add(post);
+    goalpost(kit, gx, gz, along + (end > 0 ? 0 : Math.PI));
   }
 
   // the scoreboard over the east end, and light towers round the rim
   const board = pointAt(t, 190, t.edge + 30);
   if (clear(board.x, board.z, 6)) {
     const sb = new THREE.Group();
-    const legs = new THREE.Mesh(geo.box, mats.dark);
-    legs.scale.set(2, 16, 2);
-    legs.position.y = 8;
-    const frame = new THREE.Mesh(geo.box, cardinal);
-    frame.scale.set(26, 11, 1.4);
-    frame.position.y = 21;
+    scoreboard(kit, board.x, board.z, headingOf(board.tz, -board.tx));
     const screen = new THREE.Mesh(
       geo.plane,
       new THREE.MeshBasicMaterial({
@@ -1572,7 +1567,7 @@ function stadium(c: Scenery) {
     );
     screen.scale.set(24, 9.4, 1);
     screen.position.set(0, 21, 0.75);
-    sb.add(legs, frame, screen);
+    sb.add(screen);
     sb.position.set(board.x, 0, board.z);
     sb.rotation.y = headingOf(board.tz, -board.tx);
     scene.add(sb);
@@ -1580,32 +1575,15 @@ function stadium(c: Scenery) {
   for (const s of [-40, 120, 250, 360]) {
     const p = pointAt(t, s, t.edge + 26);
     if (!clear(p.x, p.z, 2)) continue;
-    const pole = new THREE.Mesh(geo.box, mats.dark);
-    pole.scale.set(0.8, 30, 0.8);
-    pole.position.set(p.x, 15, p.z);
-    const lamps = new THREE.Mesh(geo.box, new THREE.MeshBasicMaterial({ color: 0xfff6d8 }));
-    lamps.scale.set(6, 3, 0.6);
-    lamps.position.set(p.x, 30.5, p.z);
-    lamps.rotation.y = headingOf(p.tz, -p.tx);
-    scene.add(pole, lamps);
+    lightTower(kit, p.x, p.z, headingOf(p.tz, -p.tx));
   }
 
   // a portal over the road where it runs out through the tunnel
   const gate = pointAt(t, 392, 0);
-  const portal = new THREE.Group();
-  for (const side of [-1, 1]) {
-    const pillar = new THREE.Mesh(geo.box, concrete);
-    pillar.scale.set(2, 9, 2);
-    pillar.position.set(side * (t.edge + 1), 4.5, 0);
-    portal.add(pillar);
-  }
-  const beam = new THREE.Mesh(geo.box, cardinal);
-  beam.scale.set(t.edge * 2 + 4, 2.4, 1.6);
-  beam.position.y = 9.6;
-  portal.add(beam);
-  portal.position.set(gate.x, 0, gate.z);
-  portal.rotation.y = headingOf(gate.tx, gate.tz);
-  scene.add(portal);
+  portal(THREE, scene, kit, gate.x, gate.z, headingOf(gate.tx, gate.tz), t.edge * 2);
+  kit.place();
+  const vm = vcMats(THREE);
+  scene.add(kit.build(vm.vc, vm.lit));
 
   // tailgate tents and palms out on the plaza
   const legs: Item[] = [];
@@ -1653,6 +1631,7 @@ function stadium(c: Scenery) {
   hoover.scale.setScalar(1.4);
   scene.add(hoover);
   foothills(c, cx, cz, { x: cx - 200, z: cz - 420 });
+  return (_race: Race, clock: number) => crowdTick(clock);
 }
 
 /** Rodin's Burghers of Calais: six weary bronze figures in long robes, standing together on a low plinth. */
