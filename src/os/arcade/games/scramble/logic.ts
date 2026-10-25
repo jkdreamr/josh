@@ -1378,7 +1378,7 @@ function settle(m: Match) {
   const won = team >= 0 ? teamOf(m, team) : [];
   m.winner = won.find(upright)?.id ?? -1;
   for (const f of won) f.place = 1;
-  for (const f of m.fighters) if (f.team !== team && alive(f)) f.place = 2;
+  for (let t = 0; t < m.teams.length; t++) if (t !== team && teamOf(m, t).some(alive)) for (const f of teamOf(m, t)) f.place = 2;
   emit(m, { t: 'end', winner: m.winner });
 }
 
@@ -3533,8 +3533,8 @@ function autoPickup(m: Match, f: Fighter) {
   lootNear(m, f.x, f.z, AUTO_R, (l) => {
     if (Math.abs(l.x - f.x) > AUTO_R || Math.abs(l.z - f.z) > AUTO_R) return;
     if ((l.x - f.x) * (l.x - f.x) + (l.z - f.z) * (l.z - f.z) > AUTO_R * AUTO_R) return;
-    // never straight back up what we just put down (armor we took off stays off until we ask for it)
-    if (l.by === f.id && (m.time - l.at < 3 || l.def.kind === 'helmet' || l.def.kind === 'vest')) return;
+    // never back up what we put down ourselves, swapped away or left for a teammate (the key still takes it, a moment on)
+    if (l.by === f.id) return;
     if (wants(f, l.def, false)) requestTake(m, f, l);
   });
 }
@@ -3930,13 +3930,21 @@ function think(m: Match, f: Fighter, dt: number) {
   inp.mz = 0;
   inp.fire = false;
   inp.reach = 0;
+  inp.hold = false;
+  // in teams, someone on ours who isn't a computer egg leads: off the bus when they jump, and down to where they glide
+  const lead = m.mode === 'solo' ? null : leadOf(m, f);
   if (f.phase === 'bus') {
-    if (m.time >= ai.jumpAt) inp.jump = true;
+    if (lead ? lead.phase !== 'bus' : m.time >= ai.jumpAt) inp.jump = true;
     return;
   }
   if (f.phase === 'drop') {
     // gliding (from the bus, or a bounce pad on the way somewhere): steer for where we meant to go
     ai.pad = -1;
+    if (lead && lead.phase !== 'out' && m.time - f.dropAt < 30) {
+      const k = mateIndex(m, f);
+      ai.gx = lead.x + DIR_X[k % 4] * 3;
+      ai.gz = lead.z + DIR_Z[k % 4] * 3;
+    }
     const dx = ai.gx - f.x;
     const dz = ai.gz - f.z;
     const d = Math.hypot(dx, dz);
@@ -3958,6 +3966,10 @@ function think(m: Match, f: Fighter, dt: number) {
   ai.outT = Math.max(0, ai.outT - dt);
   ai.rampCool -= dt;
   ai.harvestCool -= dt;
+  ai.pingCool -= dt;
+  ai.shareCool -= dt;
+  // knocked down: crawl to the team, never shoot
+  if (f.down) return crawlTo(m, f, ai, dt);
   // who has been hitting us: two eggs at once is a crossfire
   if (f.lastBy >= 0 && f.lastByAt > ai.foeAt) {
     if (f.lastBy !== ai.foe) {
@@ -3971,6 +3983,16 @@ function think(m: Match, f: Fighter, dt: number) {
   if (ai.think <= 0) {
     ai.think = 0.2 + m.rng() * 0.12;
     decide(m, f, ai, L);
+  }
+  // reviving a teammate: keep at it, unless an egg comes close or it gets too hot
+  if (f.reviving >= 0) {
+    const t = ai.target >= 0 ? m.fighters[ai.target] : undefined;
+    const close = !!t && upright(t) && Math.hypot(t.x - f.x, t.z - f.z) < 14;
+    if (!close && !(f.hitT > 0 && f.hp + f.shield < 60)) {
+      inp.hold = true;
+      inp.aim = f.aim;
+      return;
+    }
   }
 
   const s = m.storm;
@@ -4173,7 +4195,7 @@ function think(m: Match, f: Fighter, dt: number) {
     // stand still behind cover while it takes (or out of our box, see goOut)
   } else if (hiding) head(m, f, ai, ai.hideX, ai.hideZ, dt, 0.5);
   else if (via) head(m, f, ai, via.x, via.z, dt, 0);
-  else head(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : ai.goal === 'smash' ? 1.4 : ai.goal === 'vault' ? 0.6 : 0.4);
+  else head(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : ai.goal === 'smash' ? 1.4 : ai.goal === 'vault' ? 0.6 : ai.goal === 'revive' ? REVIVE_R - 0.8 : ai.goal === 'mate' ? 6 : 0.4);
   inp.aim = Math.hypot(f.vx, f.vz) > 0.5 ? Math.atan2(f.vx, f.vz) : f.aim;
   if (!Number.isNaN(ai.editA)) {
     // a doorway in our own wall that stood in the way (see steer)
@@ -4233,6 +4255,87 @@ function think(m: Match, f: Fighter, dt: number) {
       requestOpen(m, f, c.id);
       ai.think = 0;
     }
+  } else if (ai.goal === 'revive') {
+    // by the knocked teammate: hold the key (see reviveStep)
+    const o = m.fighters[ai.item];
+    if (!o || !o.down || !fighting(o)) ai.think = 0;
+    else {
+      ai.gx = o.x;
+      ai.gz = o.z;
+      if (Math.hypot(o.x - f.x, o.z - f.z) < REVIVE_R - 0.4) inp.hold = true;
+    }
+  }
+  if (m.mode !== 'solo' && !inp.hold && !f.using) share(m, f, ai);
+}
+
+/** In teams, the egg on ours a computer egg follows: the first one on the team a person plays, still in, or null. */
+function leadOf(m: Match, f: Fighter): Fighter | null {
+  for (const id of m.teams[f.team] ?? []) {
+    const o = m.fighters[id];
+    if (o !== f && o.kind !== 'bot' && alive(o)) return o;
+  }
+  return null;
+}
+
+/** The nearest egg on our team that's in and on its feet (on the ground), and how far, or null. */
+function nearestMate(m: Match, f: Fighter) {
+  let best: Fighter | null = null;
+  let bestD = Infinity;
+  for (const id of m.teams[f.team] ?? []) {
+    const o = m.fighters[id];
+    if (o === f || !upright(o) || o.phase !== 'ground') continue;
+    const d = Math.hypot(o.x - f.x, o.z - f.z);
+    if (d < bestD) {
+      best = o;
+      bestD = d;
+    }
+  }
+  return best ? { o: best, d: bestD } : null;
+}
+
+/**
+ * A knocked computer egg crawls to the nearest teammate on its feet (out of the storm first), or away from whoever
+ * last hit it, and holds still once it's there.
+ */
+function crawlTo(m: Match, f: Fighter, ai: Ai, dt: number) {
+  const inp = f.input;
+  const s = m.storm;
+  const pal = nearestMate(m, f);
+  const foe = f.lastBy >= 0 ? m.fighters[f.lastBy] : undefined;
+  if (Math.hypot(f.x - s.x, f.z - s.z) > s.r - 1) head(m, f, ai, s.x, s.z, dt, 1);
+  else if (pal && pal.d < 80) head(m, f, ai, pal.o.x, pal.o.z, dt, 1.4);
+  else if (foe && fighting(foe) && m.clock - f.lastByAt < 6) {
+    const d = Math.max(0.1, Math.hypot(f.x - foe.x, f.z - foe.z));
+    head(m, f, ai, f.x + ((f.x - foe.x) / d) * 6, f.z + ((f.z - foe.z) / d) * 6, dt, 0);
+  }
+  inp.aim = Math.hypot(f.vx, f.vz) > 0.2 ? Math.atan2(f.vx, f.vz) : f.aim;
+}
+
+/**
+ * Now and then, with nobody about, a computer egg puts down something a teammate standing by it is short of: a
+ * bandage or medkit for one that's hurt, a mini shield for one without a shield, a box of ammo for a gun with none
+ * left (when it can tell what the teammate carries, a computer egg's).
+ */
+function share(m: Match, f: Fighter, ai: Ai) {
+  if (ai.shareCool > 0 || ai.target >= 0) return;
+  ai.shareCool = 2;
+  for (const id of m.teams[f.team] ?? []) {
+    const o = m.fighters[id];
+    if (o === f || !upright(o) || o.phase !== 'ground' || Math.hypot(o.x - f.x, o.z - f.z) > 4) continue;
+    const bare = owned(o) ? null : o;
+    let what: Drop | null = null;
+    if (o.hp < 50 && (bare || bestUse(o, 'heal') === null)) what = f.items.medkit >= 2 ? 'medkit' : f.items.bandage >= 3 ? 'bandage' : null;
+    if (!what && o.shield < 25 && (bare || bestUse(o, 'shield') === null)) what = f.items.mini >= 3 ? 'mini' : f.items.shield >= 2 ? 'shield' : null;
+    if (!what && !bare)
+      for (const g of o.guns) {
+        const a = g && !WEAPONS[g.w].call ? WEAPONS[g.w].ammo : null;
+        if (a && g!.mag === 0 && o.ammo[a] === 0 && f.ammo[a] >= AMMO_BOX[a] * 2 && !f.guns.some((x) => x && WEAPONS[x.w].ammo === a && f.ammo[a] < AMMO_BOX[a] * 3)) what = a;
+      }
+    if (!what) continue;
+    f.input.aim = Math.atan2(o.x - f.x, o.z - f.z);
+    f.input.drop = what;
+    ai.shareCool = 20 + m.rng() * 15;
+    return;
   }
 }
 
@@ -4305,13 +4408,14 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   let bestScore = Infinity;
   const hunted = huntersOf(m);
   for (const o of m.fighters) {
-    if (o === f || !fighting(o)) continue;
+    if (o === f || o.team === f.team || !fighting(o)) continue;
     const d = Math.hypot(o.x - f.x, o.z - f.z);
     const hitMe = o.id === f.lastBy && m.clock - f.lastByAt < 3;
     if (d > sight + 15 || !canSee(m, f, o, hitMe ? sight + 15 : sight)) continue;
-    // rather one nobody else is on than piling onto one already in a fight; the kill leader is worth going after
+    // rather one nobody else is on than piling onto one already in a fight; the kill leader is worth going after; a
+    // knocked egg can't shoot back, so it waits for the ones that can (unless it's right there)
     const others = hunted[o.id] - (o.id === ai.target ? 1 : 0);
-    const score = d - (o.id === ai.target ? 8 : 0) - (hitMe ? 12 : 0) + (hitMe ? 0 : others * CROWD) - (o.id === m.leader ? 5 : 0);
+    const score = d - (o.id === ai.target ? 8 : 0) - (hitMe ? 12 : 0) + (hitMe ? 0 : others * CROWD) - (o.id === m.leader ? 5 : 0) + (o.down && d > 6 ? 25 : 0);
     if (score < bestScore) {
       best = o;
       bestScore = score;
@@ -4320,9 +4424,17 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   const armed = f.guns.some((x) => fightGun(f, x));
   // unarmed eggs only fight what is right in front of them (not through a window)
   if (best && !armed && (Math.hypot(best.x - f.x, best.z - f.z) > 6 || inWindow(m, f.x, f.z, best.x, best.z))) best = null;
+  // a knocked teammate close by matters more than an egg far off
+  const downed = m.mode === 'solo' ? null : downMate(m, f, 45);
+  if (best && downed && Math.hypot(downed.x - f.x, downed.z - f.z) < 12 && Math.hypot(best.x - f.x, best.z - f.z) > 25 && best.id !== f.lastBy) best = null;
   if ((best?.id ?? -1) !== ai.target) {
     ai.react = best ? L.react * (0.7 + m.rng() * 0.6) : 0;
     ai.sillT = 0;
+    // a new egg in sight: marked for a person on our team
+    if (best && ai.pingCool <= 0 && m.mode !== 'solo' && leadOf(m, f)) {
+      f.input.ping = { x: best.x, z: best.z };
+      ai.pingCool = 15;
+    }
   }
   // the count stays right for the others still to pick this step
   if (ai.target >= 0 && hunted[ai.target] > 0) hunted[ai.target]--;
@@ -4332,6 +4444,14 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     return;
   }
 
+  // a knocked teammate to get back up
+  if (downed) {
+    ai.goal = 'revive';
+    ai.item = downed.id;
+    ai.gx = downed.x;
+    ai.gz = downed.z;
+    return;
+  }
   // somebody shot us from out of sight: go and look
   const s = m.storm;
   const safe = s.shrinking || s.timer < 20 ? s.next : { x: s.x, z: s.z, r: s.r };
@@ -4349,6 +4469,17 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     ai.gx = attacker.x;
     ai.gz = attacker.z;
     return;
+  }
+  // too far from the team: catch up (with a person who leads it, sooner)
+  if (m.mode !== 'solo') {
+    const lead = leadOf(m, f);
+    const pal = lead && upright(lead) && lead.phase === 'ground' ? { o: lead, d: Math.hypot(lead.x - f.x, lead.z - f.z) } : nearestMate(m, f);
+    if (pal && pal.d > (ai.goal === 'mate' ? 10 : pal.o === lead ? 28 : 50)) {
+      ai.goal = 'mate';
+      ai.gx = pal.o.x;
+      ai.gz = pal.o.z;
+      return;
+    }
   }
 
   const inSafe = (x: number, z: number) => Math.hypot(x - safe.x, z - safe.z) < safe.r - 2;
@@ -4418,7 +4549,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
       default:
         useful = false;
     }
-    if (!useful || (l.by === f.id && m.time - l.at < 3)) return;
+    if (!useful || l.by === f.id) return;
     item = l;
     itemD = d;
   });

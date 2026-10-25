@@ -1,7 +1,7 @@
 // One client's side of an online Scramble match: what it does with each message from the room, what it sends on its
 // regular tick, the events it queues and flushes, and when the match is over. Pure, so a whole room can be simulated
 // in a test; index.tsx connects it to the real room.
-import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, type Entrant, type Ev, type Fighter, type Level, type Match } from './logic.ts';
+import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, teamCount, teamsLeft, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
 import { BUS_Y, stormEnd } from './map.ts';
 import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, pieceEv, placesOf, stateKey, stateOf, toNet, type NetEv, type State } from './net.ts';
 
@@ -41,16 +41,57 @@ export type Player = { seat: number; name: string };
 const nameOf = (players: Player[], seat: number) => players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`;
 
 /**
- * The host's match: everyone in the room by seat, then as many computer eggs as the host asks for (fifty eggs at most).
- * `roster` is each fighter's seat (-1 for a computer egg), which the host sends with every state.
+ * The teams of an online match in duos or squads, for `seats` (the people, in seat order) and then `bots` computer
+ * eggs: each person on the team they picked (`picks`, by seat: -1 or nothing for wherever there's room) while it has
+ * room, everyone else in seat order on the first team with room (so friends fill teams together), then the computer
+ * eggs, on the teams people are on first. Teams are numbered from 0 in order. Each entrant's team, people first.
  */
-export function hostMatch(players: Player[], mySeat: number, seed: number, level: Level, bots: number, countdown: number): { match: Match; roster: number[] } {
+export function teamsFor(mode: Mode, seats: number[], picks: readonly number[], bots: number): number[] {
+  const size = TEAM_SIZE[mode];
+  const n = seats.length + bots;
+  if (size <= 1) return Array.from({ length: n }, (_, i) => i);
+  const count: number[] = [];
+  const out: number[] = [];
+  const put = (i: number, t: number) => {
+    out[i] = t;
+    count[t] = (count[t] ?? 0) + 1;
+  };
+  const room = (t: number) => (count[t] ?? 0) < size;
+  seats.forEach((seat, i) => {
+    const t = picks[seat] ?? -1;
+    if (Number.isInteger(t) && t >= 0 && t < MAX_TEAMS && room(t)) put(i, t);
+  });
+  seats.forEach((_, i) => {
+    if (out[i] !== undefined) return;
+    let t = 0;
+    while (!room(t)) t++;
+    put(i, t);
+  });
+  const withPeople = [...new Set(out)].sort((a, b) => a - b);
+  for (let b = seats.length; b < n; b++) {
+    let t = withPeople.find(room) ?? 0;
+    while (t < 0 || !room(t)) t++;
+    put(b, t);
+  }
+  // numbered 0, 1, 2 and so on, in order
+  const order = [...new Set(out)].sort((a, b) => a - b);
+  return out.map((t) => order.indexOf(t));
+}
+
+/**
+ * The host's match: everyone in the room by seat, then as many computer eggs as the host asks for (fifty eggs at most),
+ * in duos and squads on the teams teamsFor gives them. `roster` is each fighter's seat (-1 for a computer egg) and
+ * `teams` its team, which the host sends with every reliable state.
+ */
+export function hostMatch(players: Player[], mySeat: number, seed: number, level: Level, bots: number, countdown: number, mode: Mode = 'solo', picks: readonly number[] = []): { match: Match; roster: number[]; teams: number[] } {
   const seats = players.map((p) => p.seat).sort((a, b) => a - b).slice(0, MAX_FIGHTERS);
   const names = botNames(seed);
   const entrants: Entrant[] = seats.map((seat, i) => ({ name: nameOf(players, seat), color: FIGHTER_COLORS[i], kind: seat === mySeat ? 'player' : 'remote', seat }));
   for (let b = 0; b < bots && entrants.length < MAX_FIGHTERS; b++) entrants.push({ name: names[b], color: FIGHTER_COLORS[entrants.length], kind: 'bot', seat: -1 });
-  const match = createMatch({ seed, role: 'host', level, entrants, me: entrants.findIndex((e) => e.seat === mySeat), countdown });
-  return { match, roster: entrants.map((e) => e.seat) };
+  const teams = teamsFor(mode, seats, picks, entrants.length - seats.length);
+  entrants.forEach((e, i) => (e.team = teams[i]));
+  const match = createMatch({ seed, role: 'host', level, entrants, me: entrants.findIndex((e) => e.seat === mySeat), countdown, mode });
+  return { match, roster: entrants.map((e) => e.seat), teams: match.fighters.map((f) => f.team) };
 }
 
 /**
@@ -61,8 +102,8 @@ export function hostMatch(players: Player[], mySeat: number, seed: number, level
 export const hostBots = (quick: boolean, roomBots: number, fill: boolean) => (quick || (roomBots > 0 && fill) ? MAX_FIGHTERS : roomBots);
 export const QUICK_LEVEL: Level = 'normal';
 
-/** A guest's match, laid out from the host's first state: the same eggs, names and colors, ours to play. */
-export function guestMatch(players: Player[], mySeat: number, seed: number, level: Level, time: number, roster: number[]): Match {
+/** A guest's match, laid out from the host's first state: the same eggs, names, colors and teams, ours to play. */
+export function guestMatch(players: Player[], mySeat: number, seed: number, level: Level, time: number, roster: number[], mode: Mode = 'solo', teams: number[] | null = null): Match {
   const names = botNames(seed);
   let b = 0;
   const entrants: Entrant[] = roster.map((seat, i) => ({
@@ -70,8 +111,9 @@ export function guestMatch(players: Player[], mySeat: number, seed: number, leve
     color: FIGHTER_COLORS[i],
     kind: seat === mySeat ? 'player' : 'remote',
     seat,
+    ...(teams ? { team: teams[i] } : {}),
   }));
-  return createMatch({ seed, role: 'guest', level, entrants, me: roster.indexOf(mySeat), countdown: -time });
+  return createMatch({ seed, role: 'guest', level, entrants, me: roster.indexOf(mySeat), countdown: -time, mode: teams ? mode : 'solo' });
 }
 
 export type Session = {
@@ -116,7 +158,7 @@ export function newSession(synced: boolean, roster: number[] = []): Session {
 }
 
 /** Builds a guest's match from the host's first state. */
-export type Join = (seed: number, level: Level, time: number, roster: number[]) => Match;
+export type Join = (seed: number, level: Level, time: number, roster: number[], mode: Mode, teams: number[] | null) => Match;
 
 /**
  * Applies one message from the room. Returns the match to carry on with: a new one when a guest has just synced.
@@ -139,7 +181,7 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
     if (me.isHost || from !== 0) return m;
     if (!s.synced) {
       if (!p.roster || !p.roster.includes(me.seat)) return m;
-      m = join(p.seed, p.level, p.time, p.roster);
+      m = join(p.seed, p.level, p.time, p.roster, p.mode, p.teams);
       s.roster = p.roster;
       s.synced = true;
     }
@@ -219,6 +261,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
     if (s.left.has(f.seat) || quiet || aloft) forfeit(m, f.id);
   }
   const states: (State | undefined)[] = m.fighters.map((f) => (owned(f) ? stateOf(f) : s.states.get(f.id)));
+  const teams = m.mode === 'solo' ? [] : m.fighters.map((f) => f.team);
   const keys = states.map((st) => (st ? stateKey(st) : undefined));
   // each guest its own report (every reliable one with the roster); someone in the room but not in this match only
   // hears the roster, to know to sit it out
@@ -230,7 +273,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
     let sent = s.sent.get(seat);
     if (!sent) s.sent.set(seat, (sent = []));
     const list = g ? statesFor(m, g, states, keys, sent, s.ticks, s.watching.get(g.id) ?? -1) : [];
-    out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list, m.broken, m.doors), fast, to: seat });
+    out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list, m.broken, m.doors, m.mode, teams), fast, to: seat });
   }
   // a guest that has only now started reporting may have missed pieces built before it was ready: here they all are
   for (const seat of s.fresh) if (present.includes(seat) && m.walls.size) for (const d of packEvents(me.round, [...m.walls.values()].filter((w) => w.dir >= 0).map((w): [number, NetEv] => [me.seat, pieceEv(w)]))) out.push({ d, fast: false, to: seat });
@@ -314,24 +357,37 @@ export function catchUp(s: Session, m: Match, seat: number, seconds: number) {
   }
 }
 
+/** The names on a team, as a list: "Ann", "Ann and Bo", "Ann, Bo and Cy". */
+export function namesOf(fs: Fighter[]) {
+  const names = fs.map((f) => f.name);
+  return names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/** The fighters on the team that won (empty when nobody did). */
+export const winnersOf = (m: Match) => (m.ended && m.fighters[m.winner] ? m.fighters.filter((f) => f.team === m.fighters[m.winner].team) : []);
+
 /**
- * The result card for our egg online: where it placed and what it did, then who won. One that goes up while the match
- * is still going (`early`) says how many eggs are left: a guest's in the detail, the host's in the note under its Play
- * Again, which waits for the end.
+ * The result card for our egg online: where it (in duos and squads, its team) placed and what it did, then who won.
+ * One that goes up while the match is still going (`early`) says how many eggs (teams) are left: a guest's in the
+ * detail, the host's in the note under its Play Again, which waits for the end.
  */
 export function resultCard(m: Match, early: boolean, host: boolean): { title: string; detail: string; wait?: string; won: boolean } {
   const me = m.fighters[m.me];
-  const winner = m.ended ? m.fighters[m.winner] : undefined;
-  const won = !!me && !!winner && winner.id === me.id;
-  const title = won ? 'Last Egg Standing' : me ? `${ordinal(me.place || m.fighters.length)} of ${m.fighters.length}` : 'Match Over';
+  const teams = m.mode !== 'solo';
+  const winners = winnersOf(m);
+  const won = !!me && winners.includes(me);
+  const total = teams ? teamCount(m) : m.fighters.length;
+  const title = won ? (teams ? 'Last Team Standing' : 'Last Egg Standing') : me ? `${ordinal(me.place || total)} of ${total}` : 'Match Over';
   const stats = me ? `${me.kills} ${me.kills === 1 ? 'elimination' : 'eliminations'}, ${Math.round(me.dealt)} damage.` : '';
-  const left = aliveCount(m);
+  const left = teams ? teamsLeft(m) : aliveCount(m);
+  const what = teams ? (left === 1 ? 'team' : 'teams') : left === 1 ? 'egg' : 'eggs';
   const going = early && !m.ended;
   let how = '';
-  if (winner && !won) how = `${winner.name} won.`;
-  else if (m.ended && !winner) how = 'Nobody survived the storm.';
-  else if (going && !host) how = `${left} ${left === 1 ? 'egg' : 'eggs'} still going.`;
+  if (winners.length && !won) how = `${namesOf(winners)} won.`;
+  else if (m.ended && !winners.length) how = 'Nobody survived the storm.';
+  else if (going && !host) how = `${left} ${what} still going.`;
   const detail = `${stats} ${how}`.trim();
   if (!early || !host) return { title, detail, won };
-  return { title, detail, wait: going ? `${left} ${left === 1 ? 'Egg' : 'Eggs'} Still Going. Play Again Once the Match Ends.` : 'The Match Is Over. Play Again in a Moment.', won };
+  const What = what[0].toUpperCase() + what.slice(1);
+  return { title, detail, wait: going ? `${left} ${What} Still Going. Play Again Once the Match Ends.` : 'The Match Is Over. Play Again in a Moment.', won };
 }
