@@ -8,6 +8,7 @@ import { boatHull, merge, modelKit } from './model';
 import { gumTrees, oakTrees, palmTrees } from './flora';
 import { SKIES } from './sky';
 import { campusExtras } from './campus';
+import { boathouse, lakeLife, lilyPads, reedBeds } from './lake';
 import { skyWater } from './skywater';
 import { church as churchModel, dishTelescope, hall as hallModel, hill, hooverTower, vcMats } from './landmarks';
 
@@ -993,7 +994,7 @@ function foothills(c: Scenery, cx: number, cz: number, dish: { x: number; z: num
  * Lake Lagunita: water fills the loop, reeds and lily pads line the shore, sailboats and ducks are out on the water,
  * the boathouse stands on its peninsula inside the hairpin, oaks and foothills all round, and the sun is going down.
  */
-function lake(c: Scenery) {
+function lake(c: Scenery): SceneryTick {
   const { THREE, scene, t, geo, mats, rand, clear, dummy } = c;
   let minX = Infinity;
   let maxX = -Infinity;
@@ -1051,35 +1052,29 @@ function lake(c: Scenery) {
   ripples.dispose();
   scene.add(new THREE.Mesh(waterGeo, skyWater(THREE, SKIES.lake!, 0x1b3a50, 0x3a6474)));
 
-  // reeds and cattails in clumps along the shore, and lily pads just off it
-  const reeds: Parameters<typeof instances>[5] = [];
-  const tops: Parameters<typeof instances>[5] = [];
-  const pads: Parameters<typeof instances>[5] = [];
-  const flowers: Parameters<typeof instances>[5] = [];
+  // reed beds of cattails and rushes along the shore, and lily pads just off it (see lake.ts)
+  const reeds: { x: number; z: number; s: number }[] = [];
+  const pads: { x: number; z: number; s: number }[] = [];
+  const flowers: { x: number; z: number }[] = [];
   for (let s = 0; s < t.length; s += 3.5) {
-    if (rand() < 0.45) continue;
+    if (rand() < 0.4) continue;
     const p = pointAt(t, s, -(t.edge + 1.2 + rand() * 3));
     if (!clear(p.x, p.z, 0.8) || !insideLoop(t, p.x, p.z)) continue;
-    for (let k = 0; k < 3 + Math.floor(rand() * 4); k++) {
-      const x = p.x + (rand() - 0.5) * 2.2;
-      const z = p.z + (rand() - 0.5) * 2.2;
-      const h = 1.3 + rand() * 1.4;
-      reeds.push({ x, y: h / 2, z, sx: 0.09, sy: h, sz: 0.09, rx: (rand() - 0.5) * 0.25 });
-      if (rand() < 0.4) tops.push({ x, y: h * 0.92, z, sx: 0.12, sy: 0.4, sz: 0.12 });
-    }
-    if (rand() < 0.35) {
+    for (let k = 0; k < 2 + Math.floor(rand() * 3); k++) reeds.push({ x: p.x + (rand() - 0.5) * 2.6, z: p.z + (rand() - 0.5) * 2.6, s: 0.8 + rand() * 0.5 });
+    if (rand() < 0.45) {
       const q = pointAt(t, s, -(t.edge + 5 + rand() * 9));
       if (clear(q.x, q.z, 1) && insideLoop(t, q.x, q.z)) {
-        const size = 0.7 + rand() * 0.6;
-        pads.push({ x: q.x, y: 0.01, z: q.z, sx: size, sy: size, sz: size, rx: -Math.PI / 2 });
-        if (rand() < 0.3) flowers.push({ x: q.x + 0.2, y: 0.12, z: q.z, sx: 0.22, sy: 0.16, sz: 0.22 });
+        for (let k = 0; k < 1 + Math.floor(rand() * 4); k++) {
+          const x = q.x + (rand() - 0.5) * 3;
+          const z = q.z + (rand() - 0.5) * 3;
+          pads.push({ x, z, s: 0.5 + rand() * 0.6 });
+          if (rand() < 0.25) flowers.push({ x: x + 0.15, z });
+        }
       }
     }
   }
-  instances(THREE, scene, dummy, new THREE.ConeGeometry(1, 1, 4), new THREE.MeshLambertMaterial({ color: 0x5f7f3a }), reeds);
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 6), new THREE.MeshLambertMaterial({ color: 0x5a3b22 }), tops);
-  instances(THREE, scene, dummy, new THREE.CircleGeometry(1, 10), new THREE.MeshLambertMaterial({ color: 0x4f8f3f, side: THREE.DoubleSide }), pads);
-  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 8, 6), new THREE.MeshLambertMaterial({ color: 0xf6a8c8 }), flowers);
+  reedBeds(THREE, scene, dummy, reeds);
+  lilyPads(THREE, scene, dummy, pads, flowers);
 
   // somewhere out on the open water, well clear of the road
   const onWater = (margin: number) => {
@@ -1090,71 +1085,27 @@ function lake(c: Scenery) {
     }
     return null;
   };
-  // sailboats with cardinal and white sails
-  const sail = new THREE.BufferGeometry();
-  sail.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 1, 0, 0, 0, 1], 3));
-  sail.computeVertexNormals();
-  const hullMat = new THREE.MeshLambertMaterial({ color: 0xf4f1ea });
-  const mastMat = new THREE.MeshLambertMaterial({ color: 0x3e3128 });
-  const sailMats = [new THREE.MeshLambertMaterial({ color: 0xfafafa, side: THREE.DoubleSide }), new THREE.MeshLambertMaterial({ color: 0xb1282a, side: THREE.DoubleSide })];
+  // sailing dinghies with cardinal and white sails, and mallards paddling about, bobbing
+  const boats: { x: number; z: number }[] = [];
   for (let b = 0; b < 6; b++) {
-    const at = onWater(10);
-    if (!at) break;
-    const boat = new THREE.Group();
-    const hull = new THREE.Mesh(geo.box, hullMat);
-    hull.scale.set(1.4, 0.7, 3.6);
-    hull.position.y = 0.3;
-    const mast = new THREE.Mesh(geo.box, mastMat);
-    mast.scale.set(0.12, 5.2, 0.12);
-    mast.position.set(0, 3, 0.4);
-    const sl = new THREE.Mesh(sail, sailMats[b % 2]);
-    sl.scale.set(1, 4.6, -2.6);
-    sl.position.set(0.05, 0.9, 0.35);
-    boat.add(hull, mast, sl);
-    boat.position.set(at.x, 0, at.z);
-    boat.rotation.y = rand() * Math.PI * 2;
-    scene.add(boat);
+    const at = onWater(12);
+    if (at) boats.push(at);
   }
-  // mallards paddling about
-  const duck = { body: new THREE.MeshLambertMaterial({ color: 0x8a6a4a }), head: new THREE.MeshLambertMaterial({ color: 0x2f7d4a }), beak: new THREE.MeshLambertMaterial({ color: 0xf2a531 }) };
-  for (let n = 0; n < 12; n++) {
+  const ducks: { x: number; z: number }[] = [];
+  for (let n = 0; n < 9; n++) {
     const at = onWater(3);
-    if (!at) break;
-    const d = new THREE.Group();
-    const body = new THREE.Mesh(geo.ball, duck.body);
-    body.scale.set(0.32, 0.22, 0.48);
-    body.position.y = 0.12;
-    const head = new THREE.Mesh(geo.ball, duck.head);
-    head.scale.setScalar(0.17);
-    head.position.set(0, 0.38, 0.36);
-    const beak = new THREE.Mesh(geo.cone, duck.beak);
-    beak.scale.set(0.06, 0.16, 0.06);
-    beak.rotation.x = Math.PI / 2;
-    beak.position.set(0, 0.36, 0.55);
-    d.add(body, head, beak);
-    d.position.set(at.x, 0, at.z);
-    d.rotation.y = rand() * Math.PI * 2;
-    scene.add(d);
+    if (at) ducks.push(at);
   }
+  const life = lakeLife(THREE, scene, boats, ducks, rand);
 
   // the boathouse at the middle of the hairpin, on the peninsula it wraps around
   let apex = 0;
   for (let i = 0; i < t.n; i++) if (t.curv[i] > t.curv[apex]) apex = i;
   const mid = pointAt(t, apex * t.step, 1 / t.curv[apex]);
   if (clear(mid.x, mid.z, 3)) {
-    const wood = new THREE.MeshLambertMaterial({ color: 0x9c6b43 });
-    const roofMat = new THREE.MeshLambertMaterial({ color: 0x2f5d3a });
-    const house = makeHall(THREE, geo.box, geo.roof, { stone: wood, tile: roofMat, dark: mats.dark }, 8, 6, 4.5);
-    house.position.set(mid.x, 0, mid.z);
-    house.rotation.y = headingOf(mid.tx, mid.tz);
-    scene.add(house);
-    const pole = new THREE.Mesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xdddddd }));
-    pole.scale.set(0.15, 9, 0.15);
-    pole.position.set(mid.x + 5, 4.5, mid.z);
-    const flag = new THREE.Mesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x8c1515 }));
-    flag.scale.set(0.05, 1.2, 2);
-    flag.position.set(mid.x + 5, 8.2, mid.z + 1);
-    scene.add(pole, flag);
+    const mk = modelKit(THREE);
+    boathouse(THREE, mk, mid.x, mid.z, headingOf(mid.tx, mid.tz) - Math.PI / 2);
+    scene.add(mk.build(new THREE.MeshLambertMaterial({ vertexColors: true }), new THREE.MeshBasicMaterial({ vertexColors: true })));
   }
 
   // oaks all round outside the loop, and a row of palms behind the dam
@@ -1180,6 +1131,7 @@ function lake(c: Scenery) {
   hoover.position.set(cx - 260, 0, cz + 330);
   hoover.scale.setScalar(1.4);
   scene.add(hoover);
+  return (_race: Race, clock: number) => life.tick(clock);
 }
 
 /** The middle and extent of a course's loop. */
