@@ -7,6 +7,11 @@ export const RADIUS = 0.42;
 export const HEIGHT = 1.4;
 export const BIG_HIT = 12;
 
+export function cameraRelative(right: number, forward: number, yaw: number): { mx: number; mz: number } {
+  const cos = Math.cos(yaw), sin = Math.sin(yaw);
+  return { mx: -right * cos + forward * sin, mz: right * sin + forward * cos };
+}
+
 const RUN_SPEED = 7.2;
 const GROUND_ACCEL = 40;
 const AIR_ACCEL = 14;
