@@ -267,11 +267,6 @@ function makeTiles(seed: number): Course {
     const a = (i / 20) * Math.PI * 2;
     course.spawns[i] = { x: Math.cos(a) * 4.6, y: 0.35, z: Math.sin(a) * 4.6 };
   }
-  for (let i = 0; i < 16; i++) {
-    const a = (i / 16) * Math.PI * 2;
-    course.decor.push({ kind: i % 2 ? 'arcade' : 'roof', x: Math.cos(a) * 13, y: 0, z: Math.sin(a) * 13, s: 1.5, yaw: -a });
-  }
-  course.decor.push({ kind: 'tower', x: -25, y: 0, z: -26, s: 6, yaw: 0 });
   course.path = [];
   return course;
 }
@@ -279,6 +274,7 @@ function makeTiles(seed: number): Course {
 function makeHoover(seed: number): Course {
   const course = buildBase('hoover', seed, 'final', 150);
   course.killY = -7;
+  course.startYaw = -2.4;
   course.palette = palette(0x82ad78, 0x87c4ec, 0xffe6c5, 0xb6d4d3);
   add(course, { kind: 'cyl', r: 2.1, hy: 20 }, 'sand', 0, 18, 0);
   add(course, { kind: 'box', hx: 5.5, hy: 0.45, hz: 6.5 }, 'gold', 0, -0.3, 0);
@@ -291,7 +287,7 @@ function makeHoover(seed: number): Course {
     const z = Math.sin(angle) * 4.3;
     const y = i * 1.65;
     const at = i % 3 === 0;
-    add(course, { kind: 'box', hx: 2.8, hy: 0.32, hz: 2.8 }, i % 5 === 0 ? 'pad' : 'stone', x, y, z, {
+    add(course, { kind: 'box', hx: 2.8, hy: 0.32, hz: 2.8 }, 'pad', x, y, z, {
       spring: i % 5 === 0 ? 12 : undefined,
       at: at ? (t, out) => setPose(out, x + Math.sin(t * 0.7 + i) * 0.8, y, z + Math.cos(t * 0.65 + i) * 0.8, t * 0.15) : undefined,
     });
@@ -318,10 +314,10 @@ function makeHoover(seed: number): Course {
   course.spawns = course.spawns.map((_, i) => ({
     x: ((i % 5) - 2) * 1.4, y: 0.15, z: 5.6 + Math.floor(i / 5) * 0.18,
   }));
-  course.decor.push({ kind: 'tower', x: 0, y: 17, z: 32, s: 6, yaw: 0 });
+  course.decor.push({ kind: 'tower', x: -52, y: 0, z: -20, s: 2.3, yaw: 0 });
   for (let i = 0; i < 24; i++) {
     const a = i / 24 * Math.PI * 2;
-    course.decor.push({ kind: i % 3 ? 'arch' : 'flag', x: Math.cos(a) * 12, y: 0, z: Math.sin(a) * 12, s: 1.4, yaw: -a });
+    if (i % 3) course.decor.push({ kind: 'arch', x: Math.cos(a) * 22, y: 0, z: Math.sin(a) * 22, s: 1.1, yaw: -a });
   }
   return course;
 }
