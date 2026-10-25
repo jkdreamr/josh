@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { CSS3DObject, CSS3DRenderer } from 'three/examples/jsm/renderers/CSS3DRenderer.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
@@ -149,8 +148,171 @@ function noise(size: number, lo: number, hi: number) {
   return c;
 }
 
+/**
+ * Product-photography studio for reflections: a dark cyclorama lit by a big overhead softbox, a front key card and
+ * thin rim strips behind, so the aluminium picks up long soft gradients and bright edge highlights instead of a flat grey.
+ */
+function studio() {
+  const s = new THREE.Scene();
+  // softboxes are hottest in the middle and fall off to their edges, which is what draws gradients on metal
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d')!;
+  const grd = g.createRadialGradient(64, 64, 6, 64, 64, 64);
+  grd.addColorStop(0, '#fff');
+  grd.addColorStop(0.6, '#b8b8b8');
+  grd.addColorStop(1, '#3a3a3a');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 128, 128);
+  const falloff = new THREE.CanvasTexture(c);
+  const lit = (w: number, h: number, v: number, tint = '#ffffff', soft = true) => {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, h),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(tint).multiplyScalar(v), map: soft ? falloff : null, side: THREE.DoubleSide }),
+    );
+    s.add(m);
+    return m;
+  };
+  const walls = new THREE.Mesh(new THREE.BoxGeometry(70, 34, 70), new THREE.MeshBasicMaterial({ color: new THREE.Color('#9a9b9e').multiplyScalar(0.62), side: THREE.BackSide }));
+  walls.position.y = 15;
+  s.add(walls);
+  const floor = lit(70, 70, 0.55, '#a9aaad', false);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -1.9;
+  const top = lit(26, 16, 4.2);
+  top.rotation.x = Math.PI / 2;
+  top.position.set(0, 26, 2);
+  const key = lit(12, 18, 3.2, '#fffaf4');
+  key.position.set(-22, 12, 16);
+  key.lookAt(0, 2, 0);
+  const fill = lit(30, 6, 1.6);
+  fill.position.set(0, 5, 30);
+  fill.lookAt(0, 2, 0);
+  for (const [x, v] of [[-24, 6], [24, 7.5]] as const) {
+    const strip = lit(2.2, 26, v, '#f6f8ff');
+    strip.position.set(x, 12, -22);
+    strip.lookAt(0, 4, 0);
+  }
+  const back = lit(34, 12, 2.2);
+  back.position.set(0, 16, -32);
+  back.lookAt(0, 6, 0);
+  return s;
+}
+
+/** Deterministic PRNG so procedural wear is the same on every visit. */
+function rng(seed: number) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const hash = (str: string) => [...str].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619), 2166136261);
+
+/** Tangent-space normal map of blurred noise: the faint orange-peel ripple of a laminated vinyl sticker. */
+function peelNormals(size: number, strength: number) {
+  const src = document.createElement('canvas');
+  src.width = src.height = size;
+  const g = src.getContext('2d')!;
+  const r = rng(7);
+  const img = g.createImageData(size, size);
+  for (let i = 0; i < size * size; i++) {
+    const v = r() * 255;
+    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  // blur by drawing the tile onto itself shifted, which keeps it seamless
+  const h = document.createElement('canvas');
+  h.width = h.height = size;
+  const hg = h.getContext('2d')!;
+  hg.filter = 'blur(2.2px)';
+  for (const dx of [-size, 0, size]) for (const dy of [-size, 0, size]) hg.drawImage(src, dx, dy);
+  const hd = hg.getImageData(0, 0, size, size).data;
+  const at = (x: number, y: number) => hd[(((y + size) % size) * size + ((x + size) % size)) * 4] / 255;
+  const out = g.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const nx = (at(x - 1, y) - at(x + 1, y)) * strength;
+      const ny = (at(x, y - 1) - at(x, y + 1)) * strength;
+      const l = Math.hypot(nx, ny, 1);
+      const i = (y * size + x) * 4;
+      out.data[i] = ((nx / l) * 0.5 + 0.5) * 255;
+      out.data[i + 1] = ((ny / l) * 0.5 + 0.5) * 255;
+      out.data[i + 2] = ((1 / l) * 0.5 + 0.5) * 255;
+      out.data[i + 3] = 255;
+    }
+  }
+  g.putImageData(out, 0, 0);
+  return src;
+}
+
+/** Light handling wear on a sticker: hairline scuffs and a slightly dulled, grubby die-cut edge, clipped to the art. */
+function weather(c: HTMLCanvasElement, seed: number) {
+  const g = c.getContext('2d')!;
+  const r = rng(seed);
+  const S = Math.max(c.width, c.height);
+  g.save();
+  g.globalCompositeOperation = 'source-atop';
+  g.lineCap = 'round';
+  for (let i = 0; i < 26; i++) {
+    const x = r() * c.width;
+    const y = r() * c.height;
+    const a = r() * Math.PI;
+    const len = S * (0.02 + r() * 0.09);
+    g.strokeStyle = r() < 0.7 ? `rgba(255,255,255,${0.05 + r() * 0.1})` : `rgba(0,0,0,${0.04 + r() * 0.06})`;
+    g.lineWidth = S * (0.0012 + r() * 0.0018);
+    g.beginPath();
+    g.moveTo(x, y);
+    g.quadraticCurveTo(x + Math.cos(a) * len * 0.5 + (r() - 0.5) * len * 0.2, y + Math.sin(a) * len * 0.5, x + Math.cos(a) * len, y + Math.sin(a) * len);
+    g.stroke();
+  }
+  // edges collect a little grime and lose some ink
+  const edge = document.createElement('canvas');
+  edge.width = c.width;
+  edge.height = c.height;
+  const eg = edge.getContext('2d')!;
+  eg.drawImage(c, 0, 0);
+  eg.globalCompositeOperation = 'source-in';
+  eg.fillStyle = '#6d6a64';
+  eg.fillRect(0, 0, c.width, c.height);
+  const inner = document.createElement('canvas');
+  inner.width = c.width;
+  inner.height = c.height;
+  const ig = inner.getContext('2d')!;
+  ig.filter = `blur(${S * 0.006}px)`;
+  ig.drawImage(c, 0, 0);
+  eg.globalCompositeOperation = 'destination-out';
+  eg.drawImage(inner, 0, 0);
+  g.globalAlpha = 0.5;
+  g.drawImage(edge, 0, 0);
+  g.restore();
+}
+
+/** Soft contact shadow cut from a sticker's own silhouette; `pad` is the margin added on every side, as a fraction of the art. */
+function contactShadow(c: HTMLCanvasElement, pad: number) {
+  const p = Math.round(Math.max(c.width, c.height) * pad);
+  const out = document.createElement('canvas');
+  out.width = c.width + p * 2;
+  out.height = c.height + p * 2;
+  const g = out.getContext('2d')!;
+  const sil = document.createElement('canvas');
+  sil.width = c.width;
+  sil.height = c.height;
+  const sg = sil.getContext('2d')!;
+  sg.drawImage(c, 0, 0);
+  sg.globalCompositeOperation = 'source-in';
+  sg.fillStyle = '#000';
+  sg.fillRect(0, 0, c.width, c.height);
+  g.filter = `blur(${p * 0.35}px)`;
+  g.drawImage(sil, p, p);
+  return out;
+}
+
 /** Rasterises a sticker's SVG (text drawn with canvas so the page's web fonts are used). */
-async function svgTexture(svg: SVGSVGElement, aniso: number) {
+async function svgTexture(svg: SVGSVGElement, aniso: number, seed: number) {
   const vb = svg.viewBox.baseVal;
   const vw = vb?.width || 100;
   const vh = vb?.height || 100;
@@ -159,6 +321,8 @@ async function svgTexture(svg: SVGSVGElement, aniso: number) {
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.setAttribute('width', String(Math.round(vw * k)));
   clone.setAttribute('height', String(Math.round(vh * k)));
+  // the flat page art fakes its sheen; in 3D the clearcoat catches the real lights instead
+  clone.querySelectorAll('.sticker-gloss').forEach((el) => el.remove());
   const texts = [...clone.querySelectorAll('text')].map((t) => {
     const cs = getComputedStyle(svg.querySelectorAll('text')[[...clone.querySelectorAll('text')].indexOf(t)] ?? t);
     t.remove();
@@ -192,7 +356,9 @@ async function svgTexture(svg: SVGSVGElement, aniso: number) {
       g.textBaseline = 'alphabetic';
       g.fillText(t.s, t.x, t.y);
     }
-    return { tex: canvasTex(c, aniso), aspect: vw / vh };
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    weather(c, seed);
+    return { tex: canvasTex(c, aniso), aspect: vw / vh, canvas: c };
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -229,31 +395,43 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   RectAreaLightUniformsLib.init();
   const scene = new THREE.Scene();
   const pmrem = new THREE.PMREMGenerator(renderer);
-  const room = new RoomEnvironment();
-  const envTex = keep(pmrem.fromScene(room, 0.035).texture);
-  room.dispose();
+  const room = studio();
+  const envTex = keep(pmrem.fromScene(room, 0.02).texture);
+  room.traverse((m) => {
+    if (m instanceof THREE.Mesh) {
+      m.geometry.dispose();
+      (m.material as THREE.MeshBasicMaterial).map?.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+  });
   pmrem.dispose();
   scene.environment = envTex;
-  scene.environmentIntensity = 0.85;
+  scene.environmentIntensity = 1;
 
   const camera = new THREE.PerspectiveCamera(FOV, 1, 1, 2000);
 
   // ---------------------------------------------------------------- materials
-  const grain = keep(canvasTex(noise(256, 205, 255), aniso, false));
+  // bead-blasted anodised aluminium: a fine, slightly uneven sparkle in the roughness
+  const grain = keep(canvasTex(noise(512, 196, 255), aniso, false));
   grain.wrapS = grain.wrapT = THREE.RepeatWrapping;
-  grain.repeat.set(0.3, 0.3);
+  grain.repeat.set(0.45, 0.45);
   const alu = keep(
-    new THREE.MeshPhysicalMaterial({ color: '#bcbcbd', metalness: 1, roughness: 0.46, roughnessMap: grain, envMapIntensity: 0.85 }),
+    new THREE.MeshPhysicalMaterial({ color: '#cfd0d3', metalness: 1, roughness: 0.4, roughnessMap: grain, specularIntensity: 1, envMapIntensity: 1 }),
   );
-  const black = keep(new THREE.MeshStandardMaterial({ color: '#08080a', roughness: 0.75 }));
-  const keyMat = keep(new THREE.MeshStandardMaterial({ color: '#09090b', roughness: 0.62, metalness: 0 }));
+  const black = keep(new THREE.MeshStandardMaterial({ color: '#060608', roughness: 0.8, emissive: '#e4e9ff', emissiveIntensity: 0 }));
+  // PBT-ish caps: matte, with the faint sheen worn into them by fingertips
+  const keyMat = keep(new THREE.MeshPhysicalMaterial({ color: '#0b0b0d', roughness: 0.5, metalness: 0, sheen: 0.25, sheenRoughness: 0.6, sheenColor: '#3a3a44' }));
   // Lit glass picks up the studio environment and reads as silver; the real bezel is a deep black.
   const glass = keep(new THREE.MeshBasicMaterial({ color: '#050506' }));
   const panel = keep(new THREE.MeshStandardMaterial({ color: '#000000', roughness: 0.18, metalness: 0, envMapIntensity: 0.05 }));
-  const hingeMat = keep(new THREE.MeshPhysicalMaterial({ color: '#232428', metalness: 0.8, roughness: 0.36 }));
+  const hingeMat = keep(new THREE.MeshPhysicalMaterial({ color: '#1d1e22', metalness: 0.85, roughness: 0.32, clearcoat: 0.3, clearcoatRoughness: 0.4 }));
+  // etched glass over a silver backing: reads like the body, but smoother and a touch cooler
   const padMat = keep(
-    new THREE.MeshPhysicalMaterial({ color: '#a4a5a8', metalness: 0.7, roughness: 0.34, clearcoat: 0.35, clearcoatRoughness: 0.35, envMapIntensity: 0.75 }),
+    new THREE.MeshPhysicalMaterial({ color: '#b9bbc0', metalness: 0.75, roughness: 0.3, clearcoat: 0.6, clearcoatRoughness: 0.22, envMapIntensity: 0.9 }),
   );
+  const portMat = keep(new THREE.MeshStandardMaterial({ color: '#030304', roughness: 0.9 }));
+  const portInner = keep(new THREE.MeshStandardMaterial({ color: '#16171a', roughness: 0.5, metalness: 0.6 }));
+  const rubber = keep(new THREE.MeshStandardMaterial({ color: '#1a1a1c', roughness: 0.92 }));
 
   const root = new THREE.Group();
   scene.add(root);
@@ -283,7 +461,9 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   const keyDown = keep(keyMat.clone());
   keyDown.color.set('#15151a');
   const legendTex = keep(canvasTex(drawLegends(keys, PX), aniso));
-  const legendMat = keep(new THREE.MeshStandardMaterial({ map: legendTex, transparent: true, roughness: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+  const legendMat = keep(
+    new THREE.MeshStandardMaterial({ map: legendTex, emissiveMap: legendTex, emissive: '#dfe6ff', emissiveIntensity: 0, transparent: true, roughness: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }),
+  );
   for (const k of keys) {
     const id = `${k.w.toFixed(3)}x${k.d.toFixed(3)}`;
     let geo = keyGeos.get(id);
@@ -349,6 +529,45 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   hinge.position.set(0, HY - 0.06, HZ);
   root.add(hinge);
 
+  // ports, as on the 14": MagSafe, two Thunderbolt and the headphone jack on the left; HDMI, Thunderbolt and SDXC on the right
+  {
+    const PY = FOOT + BT * 0.5;
+    const port = (side: -1 | 1, z: number, w: number, h: number, r: number) => {
+      const g = new THREE.Group();
+      const shell = new THREE.Mesh(keep(new THREE.ShapeGeometry(rrect(w, h, r), 12)), portMat);
+      const tongue = new THREE.Mesh(keep(new THREE.ShapeGeometry(rrect(w * 0.62, h * 0.26, h * 0.1), 6)), portInner);
+      tongue.position.z = 0.002;
+      g.add(shell, tongue);
+      g.rotation.y = side * Math.PI / 2;
+      g.position.set(side * (BW / 2 + 0.003), PY, z);
+      root.add(g);
+      return g;
+    };
+    const back = -BD / 2;
+    port(-1, back + 2.4, 1.65, 0.32, 0.16).children[1].visible = false;
+    port(-1, back + 4.7, 0.86, 0.3, 0.15);
+    port(-1, back + 6.2, 0.86, 0.3, 0.15);
+    const jack = new THREE.Mesh(keep(new THREE.CircleGeometry(0.17, 24)), portMat);
+    jack.rotation.y = -Math.PI / 2;
+    jack.position.set(-(BW / 2 + 0.003), PY, back + 14.6);
+    root.add(jack);
+    port(1, back + 3.2, 1.42, 0.42, 0.06);
+    port(1, back + 5.6, 0.86, 0.3, 0.15);
+    port(1, back + 14.2, 2.45, 0.13, 0.06).children[1].visible = false;
+  }
+
+  // rubber feet
+  {
+    const footGeo = keep(new THREE.CylinderGeometry(0.62, 0.66, FOOT + 0.04, 28));
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const f = new THREE.Mesh(footGeo, rubber);
+        f.position.set(sx * (BW / 2 - 2.3), (FOOT + 0.04) / 2, sz * (BD / 2 - 2.3));
+        root.add(f);
+      }
+    }
+  }
+
   // ground: soft contact shadow + cast shadow
   const ao = document.createElement('canvas');
   ao.width = ao.height = 256;
@@ -368,7 +587,14 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   aoMesh.rotation.x = -Math.PI / 2;
   aoMesh.position.y = 0.002;
   root.add(aoMesh);
-  const ground = new THREE.Mesh(keep(new THREE.PlaneGeometry(400, 400)), keep(new THREE.ShadowMaterial({ opacity: 0.3 })));
+  const groundMat = keep(new THREE.ShadowMaterial({ opacity: 0.34 }));
+  groundMat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace('void main() {', 'varying vec2 vFloor;\nvoid main() {\n\tvFloor = position.xy;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('void main() {', 'varying vec2 vFloor;\nvoid main() {')
+      .replace('opacity * ( 1.0 - getShadowMask() )', 'opacity * ( 1.0 - getShadowMask() ) * ( 1.0 - smoothstep( 14.0, 46.0, length( vFloor ) ) )');
+  };
+  const ground = new THREE.Mesh(keep(new THREE.PlaneGeometry(400, 400)), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   root.add(ground);
@@ -394,6 +620,12 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   const bezel = new THREE.Mesh(keep(new THREE.ShapeGeometry(rrect(LW - 0.28, LH - 0.28, 0.84, 0.26, 0, LY0 + LH / 2), 28)), glass);
   bezel.position.z = 0.004;
   lid.add(bezel);
+  // the thin black rubber gasket that cushions the closed lid, just inside the aluminium rim
+  const gasketShape = rrect(LW - 0.2, LH - 0.2, 0.9, 0.3, 0, LY0 + LH / 2);
+  gasketShape.holes.push(rrect(LW - 0.36, LH - 0.36, 0.8, 0.22, 0, LY0 + LH / 2));
+  const gasket = new THREE.Mesh(keep(new THREE.ShapeGeometry(gasketShape, 28)), rubber);
+  gasket.position.z = 0.006;
+  lid.add(gasket);
   const display = new THREE.Mesh(keep(new THREE.ShapeGeometry(rrect(DW, DH, 0.32, 0.06, 0, DCY), 20)), panel);
   display.position.z = 0.007;
   lid.add(display);
@@ -441,36 +673,69 @@ export function createLaptop(o: LaptopOptions): LaptopController {
 
   // ---------------------------------------------------------------- stickers
   const palmMeshes: THREE.Mesh[] = [];
-  const lift = new Map<THREE.Mesh, { cur: number; to: number; y: number }>();
-  const stickerMat = (tex: THREE.Texture) =>
-    keep(
-      new THREE.MeshStandardMaterial({ map: tex, transparent: true, roughness: 0.72, envMapIntensity: 0.35, alphaTest: 0.02, polygonOffset: true, polygonOffsetFactor: -4 }),
+  const lift = new Map<THREE.Mesh, { cur: number; to: number; y: number; shadow: THREE.Mesh }>();
+  const peel = keep(canvasTex(peelNormals(256, 2.4), aniso, false));
+  peel.wrapS = peel.wrapT = THREE.RepeatWrapping;
+  // laminated vinyl: satin print under a thin glossy overlaminate with a faint orange-peel ripple
+  const stickerMat = (tex: THREE.Texture, w: number) => {
+    const t = peel.clone();
+    t.repeat.set(w / 2.2, w / 2.2);
+    t.needsUpdate = true;
+    keep(t);
+    return keep(
+      new THREE.MeshPhysicalMaterial({
+        map: tex,
+        transparent: true,
+        alphaTest: 0.02,
+        roughness: 0.55,
+        clearcoat: 0.65,
+        clearcoatRoughness: 0.2,
+        clearcoatNormalMap: t,
+        clearcoatNormalScale: new THREE.Vector2(0.35, 0.35),
+        envMapIntensity: 0.9,
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+      }),
     );
+  };
+  const SHADOW_PAD = 0.05;
+  const shadowMat = (c: HTMLCanvasElement) =>
+    keep(new THREE.MeshBasicMaterial({ color: '#000', alphaMap: keep(canvasTex(contactShadow(c, SHADOW_PAD), aniso, false)), transparent: true, opacity: 0.38, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 }));
+  /** A sticker and the soft shadow its thickness leaves on the surface beneath it. */
+  const sticker = async (svg: SVGSVGElement, key: string, w: number) => {
+    const { tex, aspect, canvas } = await svgTexture(svg, aniso, hash(key));
+    const h = w / aspect;
+    const m = new THREE.Mesh(keep(new THREE.PlaneGeometry(w, h)), stickerMat(tex, w));
+    const grow = 1 + SHADOW_PAD * 2 * (Math.max(canvas.width, canvas.height) / canvas.width);
+    const growY = 1 + SHADOW_PAD * 2 * (Math.max(canvas.width, canvas.height) / canvas.height);
+    const shadow = new THREE.Mesh(keep(new THREE.PlaneGeometry(w * grow, h * growY)), shadowMat(canvas));
+    return { m, shadow, h };
+  };
   const stickersDone = (async () => {
     await document.fonts?.ready;
     const art = (key: string) => o.stickerSource.querySelector<SVGSVGElement>(`[data-sticker="${key}"] svg`);
     for (const s of o.lid) {
       const svg = art(s.key);
       if (!svg) continue;
-      const { tex, aspect } = await svgTexture(svg, aniso);
       const w = (parseFloat(s.width) / 100) * LW;
-      const h = w / aspect;
-      const m = new THREE.Mesh(keep(new THREE.PlaneGeometry(w, h)), stickerMat(tex));
-      m.rotation.set(Math.PI, 0, -s.rot * DEG);
-      m.position.set(-LW / 2 + (parseFloat(s.left) / 100) * LW + w / 2, LY0 + (parseFloat(s.top) / 100) * LH + h / 2, -LT - 0.004);
-      lid.add(m);
+      const { m, shadow, h } = await sticker(svg, s.key, w);
+      for (const [mesh, z, dy] of [[m, -LT - 0.006, 0], [shadow, -LT - 0.003, -0.05]] as const) {
+        mesh.rotation.set(Math.PI, 0, -s.rot * DEG);
+        mesh.position.set(-LW / 2 + (parseFloat(s.left) / 100) * LW + w / 2, LY0 + (parseFloat(s.top) / 100) * LH + h / 2 + dy, z);
+        lid.add(mesh);
+      }
     }
     for (const s of o.palm) {
       const svg = art(s.key);
       if (!svg) continue;
-      const { tex, aspect } = await svgTexture(svg, aniso);
-      const m = new THREE.Mesh(keep(new THREE.PlaneGeometry(s.w, s.w / aspect)), stickerMat(tex));
-      m.rotation.set(-Math.PI / 2, 0, -s.rot * DEG);
-      m.position.set(s.x, BH + 0.004, s.z);
+      const { m, shadow } = await sticker(svg, s.key, s.w);
+      for (const mesh of [m, shadow]) mesh.rotation.set(-Math.PI / 2, 0, -s.rot * DEG);
+      m.position.set(s.x, BH + 0.006, s.z);
+      shadow.position.set(s.x, BH + 0.003, s.z + 0.05);
       m.userData.key = s.key;
-      root.add(m);
+      root.add(m, shadow);
       palmMeshes.push(m);
-      lift.set(m, { cur: 0, to: 0, y: BH + 0.004 });
+      lift.set(m, { cur: 0, to: 0, y: BH + 0.006, shadow });
     }
     dirty = true;
   })().catch((e) => console.warn('sticker textures', e));
@@ -664,6 +929,9 @@ export function createLaptop(o: LaptopOptions): LaptopController {
     if (Math.abs(light - lightTo) > 0.002) {
       light += (lightTo - light) * 0.08;
       screenLight.intensity = light * 0.7;
+      // keyboard backlight: legends light up and a faint glow escapes around the caps
+      legendMat.emissiveIntensity = light * 0.55;
+      black.emissiveIntensity = light * 0.03;
       dirty = true;
     }
     for (const [m, s] of lift) {
@@ -671,6 +939,9 @@ export function createLaptop(o: LaptopOptions): LaptopController {
         s.cur += (s.to - s.cur) * 0.25;
         m.position.y = s.y + s.cur * 0.05;
         m.scale.setScalar(1 + s.cur * 0.06);
+        s.shadow.scale.setScalar(1 + s.cur * 0.1);
+        s.shadow.position.z = m.position.z + 0.05 + s.cur * 0.12;
+        (s.shadow.material as THREE.MeshBasicMaterial).opacity = 0.38 - s.cur * 0.12;
         dirty = true;
       }
     }
