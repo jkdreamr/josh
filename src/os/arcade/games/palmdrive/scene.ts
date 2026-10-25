@@ -536,6 +536,32 @@ const dampAngle = (a: number, b: number, k: number, dt: number) => {
   return a + d * (1 - Math.exp(-k * dt));
 };
 
+/** Yellow painted steel: the plate, its bracing in diagonals, rows of rivets and a little rust and grime. */
+function girder(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = '#f2b705';
+      g.fillRect(0, 0, 64, 64);
+      g.strokeStyle = 'rgba(120,80,0,0.55)';
+      g.lineWidth = 3;
+      g.strokeRect(2, 2, 60, 60);
+      g.beginPath();
+      g.moveTo(4, 4);
+      g.lineTo(60, 60);
+      g.moveTo(60, 4);
+      g.lineTo(4, 60);
+      g.stroke();
+      g.fillStyle = 'rgba(80,50,0,0.6)';
+      for (let k = 6; k < 64; k += 8) for (const y of [5, 59]) g.fillRect(k - 1, y - 1, 2, 2);
+      for (let k = 0; k < 40; k++) {
+        g.fillStyle = `rgba(${Math.random() < 0.5 ? '120,60,20' : '60,50,40'},${0.05 + Math.random() * 0.15})`;
+        g.fillRect(Math.random() * 64, Math.random() * 64, 2 + Math.random() * 6, 1 + Math.random() * 3);
+      }
+    }),
+  );
+}
+
 export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null {
   const gl = createGL(THREE, host, { alpha: true });
   if (!gl) return null;
@@ -1623,7 +1649,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   // hazState for the lap this screen's kart is on, the state it collides with; before their lap they stand by asleep
   // (the hammer parked high and dark, the bollards flush with green lamps, the sprinkler capped), so the first lap
   // shows where they are.
-  const rigMat = new THREE.MeshLambertMaterial({ color: 0xf2b705, emissive: 0x3a2a00 });
+  // (the yellow steelwork: painted plate with its bracing, rivets and grime, see girder below)
+  const rigMat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x3a2a00, map: girder(THREE) });
   const steelMat = new THREE.MeshLambertMaterial({ color: 0x3a3d46, emissive: 0x0b0c10 });
   const ironMat = new THREE.MeshLambertMaterial({ color: 0x2a2c31, emissive: 0x08090c });
   const chevronTex = stripe('#ffcf1f', '#141414', 3);
@@ -2409,11 +2436,28 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const boxTex = texture(
     THREE,
     canvas(128, 128, (g) => {
-      g.fillStyle = 'rgba(255,255,255,0.5)';
+      // a glassy face: clearer in the middle, frosted toward its bevelled rim, a glint across one corner
+      const core = g.createRadialGradient(64, 64, 10, 64, 64, 80);
+      core.addColorStop(0, 'rgba(255,255,255,0.32)');
+      core.addColorStop(1, 'rgba(255,255,255,0.62)');
+      g.fillStyle = core;
       g.fillRect(0, 0, 128, 128);
       g.strokeStyle = '#fff';
       g.lineWidth = 12;
       g.strokeRect(6, 6, 116, 116);
+      g.strokeStyle = 'rgba(255,255,255,0.55)';
+      g.lineWidth = 3;
+      g.strokeRect(16, 16, 96, 96);
+      const glint = g.createLinearGradient(14, 14, 60, 60);
+      glint.addColorStop(0, 'rgba(255,255,255,0.75)');
+      glint.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = glint;
+      g.beginPath();
+      g.moveTo(12, 12);
+      g.lineTo(70, 12);
+      g.lineTo(12, 70);
+      g.closePath();
+      g.fill();
       g.font = 'bold 86px Inter, Arial, sans-serif';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
