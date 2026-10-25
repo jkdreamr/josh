@@ -3,7 +3,7 @@
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
 import type { BodyState, Collider, Course, Decor, Look, Pose } from './types.ts';
-import { groundBelow, rayCast } from './physics.ts';
+import { groundBelow, offsetPoseLocal, rayCast } from './physics.ts';
 
 type Three = typeof import('three');
 
@@ -782,6 +782,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       }
     }
     const solidDecor = new Set<Decor['kind']>(['tower', 'arcade', 'roof', 'stands', 'arch', 'fountain']);
+    const sceneryIslands = new Set<Decor['kind']>(['palm', 'tree', 'tower', 'stands']);
     for (const d of course.decor) {
       if (d.kind === 'stands') {
         for (let row = 0; row < 4; row++) for (let col = 0; col < 9; col += touch ? 2 : 1) {
@@ -839,6 +840,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     }
     // little grass islands under scenery standing over the lagoon
     for (const d of course.decor) {
+      if (!sceneryIslands.has(d.kind)) continue;
       if (d.kind === 'tower' && d.y > 10) continue;
       statics.push({ g: unit.cyl, m: mtx(d.x, d.y - 0.6, d.z, d.kind === 'arcade' || d.kind === 'stands' ? 10 : d.kind === 'roof' ? 8 : d.kind === 'tower' ? 6 : 3, 1.2, d.kind === 'arcade' || d.kind === 'stands' ? 10 : d.kind === 'roof' ? 8 : d.kind === 'tower' ? 6 : 3), c: pal.ground, surface: 'grass' });
       statics.push({ g: unit.cyl, m: mtx(d.x, d.y - 4, d.z, d.kind === 'arcade' || d.kind === 'stands' ? 9.5 : d.kind === 'roof' ? 7.5 : d.kind === 'tower' ? 5.5 : 2.6, 6.8, d.kind === 'arcade' || d.kind === 'stands' ? 9.5 : d.kind === 'roof' ? 7.5 : d.kind === 'tower' ? 5.5 : 2.6), c: 0xd8b98e, surface: 'sandstone' });
@@ -849,10 +851,17 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       if (!(c.look === 'grass' || c.look === 'path' || c.look === 'start' || c.look === 'finish' || c.look === 'wet')) continue;
       if (c.pose.m[4] < 0.97) continue;
       const s = c.shape;
-      const bottom = c.pose.y - s.hy;
+      const bottom = c.pose.y - Math.abs(c.pose.m[3]) * s.hx - Math.abs(c.pose.m[4]) * s.hy - Math.abs(c.pose.m[5]) * s.hz;
       const depth = bottom - (course.killY + 4);
       if (depth < 1 || s.hx > 40) continue;
-      statics.push({ g: unit.box, m: mtx(c.pose.x, bottom - Math.min(depth, 3) / 2, c.pose.z, s.hx * 2 * 0.96, Math.min(depth, 3), s.hz * 2 * 0.96, Math.atan2(c.pose.m[2], c.pose.m[0]) * -1), c: 0xd9b98c, surface: 'sandstone' });
+      const thickness = Math.min(depth, 3);
+      const underside = offsetPoseLocal(c.pose, 0, -s.hy - thickness / 2, 0);
+      statics.push({
+        g: unit.box,
+        m: poseMatrix(underside, m4).multiply(setMtx(scratchMtx, 0, 0, 0, s.hx * 2 * 0.96, thickness, s.hz * 2 * 0.96)),
+        c: 0xd9b98c,
+        surface: 'sandstone',
+      });
     }
     if (statics.length) {
       const groups = new Map<Surface, Part[]>();

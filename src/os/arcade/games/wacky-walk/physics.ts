@@ -53,6 +53,16 @@ export function poseOf(x: number, y: number, z: number, yaw = 0, pitch = 0, roll
   return pose;
 }
 
+export function offsetPoseLocal(pose: Pose, x: number, y: number, z: number): Pose {
+  const m = pose.m;
+  return {
+    x: pose.x + m[0] * x + m[1] * y + m[2] * z,
+    y: pose.y + m[3] * x + m[4] * y + m[5] * z,
+    z: pose.z + m[6] * x + m[7] * y + m[8] * z,
+    m,
+  };
+}
+
 /** Inverse rotation is applied first, then the pose translation is removed. */
 export function toLocal(pose: Pose, point: Vec3): Vec3 {
   const x = point.x - pose.x, y = point.y - pose.y, z = point.z - pose.z;
