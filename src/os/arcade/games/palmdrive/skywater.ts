@@ -1,7 +1,6 @@
 // Open water on the road courses (Lake Lagunita, the pools past the lip, the fountains' basins): small wind ripples
 // drifting over it, the sky mirrored in it (more of it the flatter you look across the water), the sun's glitter, and
 // the water's own color looking down into it. Redwood Slough's channel, with its reflections, is water.ts.
-import type { T } from './gl';
 import type { SkyLook } from './sky';
 import { canvas, scatter } from './scenery';
 

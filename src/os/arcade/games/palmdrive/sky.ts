@@ -321,7 +321,8 @@ export function buildAtmosphere(THREE: Three, scene: T.Scene, renderer: T.WebGLR
   const shadows = quality === 'high' && !!s.shadows;
   if (shadows) {
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // (soft-edged: in this three.js PCF shadows are filtered softly)
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     const cam = sun.shadow.camera as T.OrthographicCamera;

@@ -40,7 +40,7 @@ export function holstein(mk: ModelKit, x: number, z: number, ry: number, grazing
 
 /** The knolls: a smooth mound, golden, patched darker green and dun, one unit across and high (scaled per knoll). */
 export function knollGeometry(THREE: Three) {
-  return hill(THREE, 0, 0, 1, 1, [0xc9ae66, 0xa8924e, 0x7a7a3c], 11, 0.03);
+  return hill(THREE, 0, 0, 1, 1, [0xc9ae66, 0xa8924e, 0x7a7a3c], 11, 0.03, 12);
 }
 
 /** Smaller dishes about the hills: each the big Dish's model, smaller, on its own pad. */

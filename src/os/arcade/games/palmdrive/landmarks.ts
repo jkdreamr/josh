@@ -355,8 +355,8 @@ export function dishTelescope(THREE: Three, mk: ModelKit, tilt = 0.75, panels = 
  * A smooth hill, r across and h high, its grass golden with darker patches and oaks in its folds: one mesh, vertex
  * colored. Sits on the ground at (x, z).
  */
-export function hill(THREE: Three, x: number, z: number, r: number, h: number, colors: [number, number, number] = [0xc8ad68, 0xa8924e, 0x5a6a34], seed = 3, sink = 0.5) {
-  const N = 28;
+export function hill(THREE: Three, x: number, z: number, r: number, h: number, colors: [number, number, number] = [0xc8ad68, 0xa8924e, 0x5a6a34], seed = 3, sink = 0.5, rings = 28) {
+  const N = rings;
   const g = new THREE.CircleGeometry(1, 48, 0, Math.PI * 2);
   // (a disc subdivided into rings, raised into a mound)
   const pos: number[] = [];
@@ -366,7 +366,7 @@ export function hill(THREE: Three, x: number, z: number, r: number, h: number, c
   const ph = [rnd() * 6, rnd() * 6, rnd() * 6];
   const [ca, cb, cc] = colors.map((c) => new THREE.Color(c));
   const tmp = new THREE.Color();
-  const A = 40;
+  const A = Math.max(20, Math.round(rings * 1.4));
   for (let i = 0; i <= N; i++) {
     const u = i / N;
     for (let j = 0; j < A; j++) {
@@ -395,13 +395,6 @@ export function hill(THREE: Three, x: number, z: number, r: number, h: number, c
   out.setIndex(idx);
   out.computeVertexNormals();
   return out;
-}
-
-/** Builds mk into the scene with the shared vertex-color materials. */
-export function addModel(THREE: Three, scene: T.Scene, mk: ModelKit, mats: { vc: T.Material; lit: T.Material }) {
-  const g = mk.build(mats.vc, mats.lit);
-  scene.add(g);
-  return g;
 }
 
 export function vcMats(THREE: Three) {

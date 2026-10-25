@@ -1027,7 +1027,7 @@ function foothills(c: Scenery, cx: number, cz: number, dish: { x: number; z: num
  * the boathouse stands on its peninsula inside the hairpin, oaks and foothills all round, and the sun is going down.
  */
 function lake(c: Scenery): SceneryTick {
-  const { THREE, scene, t, geo, mats, rand, clear, dummy } = c;
+  const { THREE, scene, t, geo, rand, clear, dummy } = c;
   let minX = Infinity;
   let maxX = -Infinity;
   let minZ = Infinity;
@@ -1201,7 +1201,7 @@ function roomiest(t: Track, p: { x: number; z: number }, radius: number) {
  * Dish up in the foothills.
  */
 function barn(c: Scenery): SceneryTick {
-  const { THREE, scene, t, geo, rand, clear, dummy } = c;
+  const { THREE, scene, t, rand, clear, dummy } = c;
   const { cx, cz, rx, rz } = bounds(t);
   const K = 0.9;
   const at = (e: number, n: number) => fromMap(e * K, n * K);
@@ -1331,9 +1331,7 @@ function dish(c: Scenery) {
   const { THREE, scene, t, geo, rand, clear, dummy } = c;
   const { cx, cz, rx, rz } = bounds(t);
   const K = 0.82;
-  const white = new THREE.MeshLambertMaterial({ color: 0xf1f0ea, side: THREE.DoubleSide });
   const steel = new THREE.MeshLambertMaterial({ color: 0xb9bcbf });
-  const concrete = new THREE.MeshLambertMaterial({ color: 0xc9c3b6 });
 
   // the Dish: the 150-foot telescope on its yoke, its bowl tipped to the sky, the feed held out on four legs (see
   // landmarks.ts), as big as fits inside the loop
@@ -1453,13 +1451,12 @@ function dish(c: Scenery) {
  * tunnel, and tailgate tents and palms out on the plaza.
  */
 function stadium(c: Scenery): SceneryTick {
-  const { THREE, scene, t, geo, mats, rand, clear, dummy } = c;
+  const { THREE, scene, t, geo, rand, clear, dummy } = c;
   const { cx, cz } = bounds(t);
   const K = 0.85;
   const concrete = new THREE.MeshLambertMaterial({ color: 0xbdb6aa });
   const cardinal = new THREE.MeshLambertMaterial({ color: 0x8c1515 });
   const white = new THREE.MeshLambertMaterial({ color: 0xf3f1ec });
-  const gold = new THREE.MeshLambertMaterial({ color: 0xf2c230 });
 
   // the stands: rising tiers on the outside of the bowl, each row with its strip of cardinal seats and a crowd
   type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number };
@@ -1716,74 +1713,10 @@ function quad(c: Scenery) {
   const K = 1.25;
   const at = (e: number, n: number) => fromMap(e * K, n * K);
   const stone = new THREE.MeshLambertMaterial({ color: 0xe4cfa4 });
-  const tile = new THREE.MeshLambertMaterial({ color: 0xb4553a });
-  // the undersides of the arcade roofs, lit by the light bouncing up off the paving
-  const soffit = new THREE.MeshLambertMaterial({ color: 0xc9ae80, emissive: 0x6b5a40 });
   type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number };
   const columns: Item[] = [];
   const blocks: Item[] = [];
   const palms: { x: number; z: number; hgt: number }[] = [];
-
-  // the arcade front: a sandstone band with a round arch cut out of each bay, and the windows of the halls behind
-  const arches = texture(
-    THREE,
-    canvas(128, 96, (g) => {
-      g.fillStyle = '#e4cfa4';
-      g.fillRect(0, 0, 128, 96);
-      noise(g, 128, 96, 300, 0.1, false);
-      g.fillStyle = 'rgba(110,80,45,0.3)';
-      g.fillRect(0, 0, 128, 7);
-      g.strokeStyle = '#cfb07c';
-      g.lineWidth = 8;
-      g.beginPath();
-      g.arc(64, 96, 54, Math.PI, 0);
-      g.stroke();
-      g.globalCompositeOperation = 'destination-out';
-      g.beginPath();
-      g.arc(64, 96, 50, Math.PI, 0);
-      g.fill();
-      g.globalCompositeOperation = 'source-over';
-    }),
-  );
-  arches.wrapS = THREE.RepeatWrapping;
-  const archMat = new THREE.MeshLambertMaterial({ map: arches, alphaTest: 0.5, side: THREE.DoubleSide });
-  const windows = texture(
-    THREE,
-    canvas(64, 152, (g) => {
-      g.fillStyle = '#e4cfa4';
-      g.fillRect(0, 0, 64, 152);
-      noise(g, 64, 152, 300, 0.1, false);
-      g.fillStyle = 'rgba(110,80,45,0.35)';
-      g.fillRect(0, 0, 64, 6);
-      g.fillRect(0, 84, 64, 3);
-      // a window upstairs with its sill, and an arched doorway on the ground floor
-      g.fillStyle = '#d2b789';
-      g.fillRect(19, 26, 26, 44);
-      g.fillStyle = '#3a3330';
-      g.fillRect(22, 29, 20, 37);
-      g.fillStyle = '#5d6f7a';
-      g.fillRect(24, 31, 7, 15);
-      g.fillRect(33, 31, 7, 15);
-      g.fillStyle = '#3a2a22';
-      g.beginPath();
-      g.moveTo(20, 152);
-      g.lineTo(20, 112);
-      g.arc(32, 112, 12, Math.PI, 0);
-      g.lineTo(44, 152);
-      g.fill();
-    }),
-  );
-  windows.wrapS = THREE.RepeatWrapping;
-  const hallMat = [stone, stone, stone, stone, new THREE.MeshLambertMaterial({ map: windows }), new THREE.MeshLambertMaterial({ map: windows })];
-  const prism = new THREE.CylinderGeometry(1, 1, 1, 3);
-  prism.rotateY(Math.PI / 2);
-  prism.rotateZ(Math.PI / 2);
-  /** A geometry with its u texture coordinate run over `n` repeats. */
-  const tiled = <G extends T.BufferGeometry>(g: G, n: number) => {
-    const uv = g.getAttribute('uv');
-    for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * n);
-    return g;
-  };
 
   const COL = 3.6;
   /**
