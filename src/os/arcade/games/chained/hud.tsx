@@ -203,7 +203,8 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
       </section>
       <section>
         <h3>On your own</h3>
-        <p>You climb two souls, one at a time. Take one up a ledge or two, swap, and bring the other along. Or walk on and let the chain haul the second one up behind you. A soul you leave standing stays put, unless something pulls it.</p>
+        <p>With a partner, the game climbs your second soul: it keeps a ledge behind you at most, climbs after you, hauls you up when you hang, and steps back when the chain runs short. You steer one soul and never swap. Partnered climbs keep no board.</p>
+        <p>On your own you climb both souls, one at a time. Take one up a ledge or two, swap, and bring the other along. Or walk on and let the chain haul the second one up behind you. A soul you leave standing stays put, unless something pulls it.</p>
       </section>
       <section>
         <h3>Modes</h3>

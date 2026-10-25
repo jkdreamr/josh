@@ -61,7 +61,7 @@ import {
 } from '../src/os/arcade/games/chained/logic.ts';
 import { configOf, endOf, events, guestState, hostState, parsePacket, reportOf, syncClock, type NetEv } from '../src/os/arcade/games/chained/net.ts';
 import { BPM, SONGS, STEPS, Sequencer, hz, midi } from '../src/os/arcade/games/chained/music.ts';
-import { DT as SHADE_DT, SHADE_INFO, SHADE_LEVELS, attachShades, climb, createShade, driveShade, type ShadeLevel } from '../src/os/arcade/games/chained/shade.ts';
+import { DT as SHADE_DT, SHADE_INFO, SHADE_LEVELS, attachShades, climb, createPartner, createShade, drivePartner, driveShade, type ShadeLevel } from '../src/os/arcade/games/chained/shade.ts';
 
 const DT = 1 / 60;
 const idle: Input = { side: 0, fwd: 0, jump: false, hold: false };
@@ -1279,5 +1279,49 @@ test('onLedge stays inside the ledge and tangentFrame is an orthonormal frame', 
     // tan points along the growing angle
     const ahead = [Math.cos(a + 0.01), 0, Math.sin(a + 0.01)];
     assert.ok(dot(ahead, f.tan) > 0);
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// the partner
+
+test('a partner follows you up the route, hauls when you hang, and never leads', () => {
+  const lv = buildLevel();
+  const spec = (i: number, driver: 'human' | 'shade') => ({ seat: 0, name: `s${i}`, color: '#fff', kind: 'local' as const, team: 0, driver });
+  const g = createGame({ mode: 'normal', souls: [spec(0, 'human'), spec(1, 'shade')], countdown: 0, level: lv, solo: true });
+  const you = g.souls[0];
+  const me = g.souls[1];
+  const p = createPartner(g, 1, 0);
+  g.drivers.push((game, dt) => drivePartner(game, p, dt));
+  const run = (seconds: number, until?: () => boolean) => {
+    for (let t = 0; t < seconds; t += SHADE_DT) {
+      step(g, SHADE_DT);
+      g.events.length = 0;
+      if (until?.()) return true;
+    }
+    return !!until?.();
+  };
+  // standing still together: the partner stays put and never jumps
+  let jumps = 0;
+  for (let t = 0; t < 3; t += SHADE_DT) {
+    step(g, SHADE_DT);
+    for (const e of g.events.splice(0)) if (e.t === 'jump' && e.i === 1) jumps++;
+  }
+  assert.equal(jumps, 0, 'the partner jumped while you stood still');
+  assert.ok(Math.hypot(me.x - you.x, me.z - you.z) < 3, 'the partner wandered off');
+  // you climb the route a step at a time; the partner must reach each ledge you stand on
+  for (let k = 1; k <= 12; k++) {
+    const pl = lv.route[k];
+    const q = pose(pl, g.time);
+    const mid = (pl.r0 + pl.r1) / 2;
+    you.x = Math.cos(q.a) * mid;
+    you.z = Math.sin(q.a) * mid;
+    you.y = q.y;
+    you.vx = you.vz = you.vy = 0;
+    you.grounded = true;
+    you.ground = pl.id;
+    you.hanging = false;
+    const reached = run(20, () => me.grounded && me.ground === pl.id);
+    assert.ok(reached, `the partner never reached route step ${k} (${pl.kind} #${pl.id} at ${pl.y.toFixed(1)} m); it is at ${me.y.toFixed(1)} m, grounded ${me.grounded}, ground ${me.ground}`);
   }
 });
