@@ -119,14 +119,14 @@ export function floraTick(clock: number) {
 type Spot = { x: number; z: number; r: number };
 
 /**
- * Instanced meshes of `geo`, one instance per spot (sized, turned and tinted a little each), in patches 100 m across so
+ * Instanced meshes of `geo`, one instance per spot (sized, turned and tinted a little each), in patches 130 m across so
  * those off screen (and out of the sun's shadow box) are not drawn.
  */
 function plant(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.BufferGeometry, mat: T.Material, spots: { x: number; y?: number; z: number; s: number; sy?: number }[], seed: number) {
   if (!spots.length) return;
   const r = scatter(seed);
   const tint = new THREE.Color();
-  const PATCH = 100;
+  const PATCH = 130;
   const cells = new Map<string, typeof spots>();
   for (const p of spots) {
     const key = `${Math.floor(p.x / PATCH)},${Math.floor(p.z / PATCH)}`;
