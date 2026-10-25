@@ -6,7 +6,7 @@ export const meta: GameMeta = {
   blurb: 'First to seven. Take on the computer or play a friend on the same screen.',
   category: '3d',
   players: '1-2P',
-  controls: 'Drag your mallet with mouse or touch. Keyboard: WASD for the bottom player, arrows for the top player.',
+  controls: 'Move the mouse or drag to steer your mallet. Keyboard: WASD or arrows. Sharing a screen, blue uses WASD and pink the arrows.',
   howTo: [
     "Knock the puck into the goal at the far end. First to seven goals wins.",
     "Each mallet stays on its own half of the table.",
@@ -18,5 +18,5 @@ export const meta: GameMeta = {
   glyph: 'M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM12 5v14M9 12h6M22 10v4M2 10v4',
   order: 5,
   music: 'house',
-  online: { seats: 2 },
+  online: { seats: 2, watch: true },
 };

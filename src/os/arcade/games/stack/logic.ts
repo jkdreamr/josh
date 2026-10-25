@@ -6,7 +6,7 @@ export const BASE = 3;
 export const HEIGHT = 0.5;
 export const PERFECT_TOL = 0.14;
 export const MIN_SIZE = 0.05;
-export const RANGE = 2.6;
+export const RANGE = 3.3;
 export const GROW = 0.3;
 export const STREAK_TO_GROW = 3;
 
@@ -42,10 +42,15 @@ export type State = {
   speed: number;
   streak: number;
   score: number;
+  perfects: number;
+  bestStreak: number;
   over: boolean;
 };
 
-export const speedFor = (score: number) => Math.min(6.5, 2.6 + score * 0.08);
+export const MIN_SPEED = 2.4;
+export const MAX_SPEED = 5.4;
+/** Slab speed for a score: quick to pick up early, easing toward MAX_SPEED around 60 slabs so the perfect window never gets unfair. */
+export const speedFor = (score: number) => MIN_SPEED + (MAX_SPEED - MIN_SPEED) * (1 - Math.exp(-Math.max(0, score) / 28));
 
 function spawn(stack: Slab[], axis: Axis, grow: boolean): Slab {
   const top = stack[stack.length - 1];
@@ -61,10 +66,10 @@ function spawn(stack: Slab[], axis: Axis, grow: boolean): Slab {
 
 export function create(): State {
   const stack = [{ x: 0, z: 0, w: BASE, d: BASE }];
-  return { stack, moving: spawn(stack, 'x', false), axis: 'x', dir: 1, pos: -RANGE, speed: speedFor(0), streak: 0, score: 0, over: false };
+  return { stack, moving: spawn(stack, 'x', false), axis: 'x', dir: 1, pos: -RANGE, speed: speedFor(0), streak: 0, score: 0, perfects: 0, bestStreak: 0, over: false };
 }
 
-/** Advance the moving slab; it bounces between -RANGE and +RANGE. */
+/** Advance the moving slab; it bounces between -RANGE and +RANGE, far enough out that even a full width slab can miss. */
 export function step(s: State, dt: number) {
   if (s.over) return;
   s.pos += s.dir * s.speed * dt;
@@ -93,6 +98,8 @@ export function drop(s: State): DropOutcome {
   s.stack.push(result.slab);
   s.score += 1;
   s.streak = result.kind === 'perfect' ? s.streak + 1 : 0;
+  if (result.kind === 'perfect') s.perfects += 1;
+  s.bestStreak = Math.max(s.bestStreak, s.streak);
   const grew = s.streak >= STREAK_TO_GROW;
   s.axis = s.axis === 'x' ? 'z' : 'x';
   s.dir = s.score % 2 ? -1 : 1;
@@ -109,3 +116,23 @@ export const towerTop = (s: State) => s.stack.length * HEIGHT;
 
 /** Hue for a level: a slow walk around the wheel so neighbors blend. */
 export const hueFor = (level: number, seed = 0) => (seed + level * 6) % 360;
+
+const SCALE = [0, 2, 4, 7, 9];
+/** Frequency of the chime for the nth perfect in a row: climbs a major pentatonic scale, two octaves at most. */
+export function chimeFor(streak: number, root = 523.25) {
+  const i = Math.min(10, Math.max(0, streak - 1));
+  const semis = SCALE[i % 5] + 12 * Math.floor(i / 5);
+  return root * 2 ** (semis / 12);
+}
+
+/**
+ * Camera zoom and aim that fit the whole tower on screen once a round ends (orthographic, isometric view).
+ * `half` is the camera's half height in world units at zoom 1.
+ */
+export function revealView(levels: number, half: number) {
+  const h = levels * HEIGHT;
+  // a vertical run of h shows as h * cos(35.26deg) on screen, a full slab's footprint adds about 2.5 units, plus margin
+  const need = h * 0.8165 + 3.4;
+  const zoom = Math.min(1, (2 * half * 0.92) / need);
+  return { zoom, y: Math.max(h / 2 - 0.6, h - half / zoom + 1.4) };
+}

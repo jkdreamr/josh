@@ -9,6 +9,9 @@
   -webkit-user-select: none;
   user-select: none;
 }
+.g-slither .arcade-score {
+  display: none;
+}
 .g-slither-canvas {
   display: block;
   width: 100%;

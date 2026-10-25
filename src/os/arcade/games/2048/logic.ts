@@ -77,3 +77,111 @@ export function undo(state: UndoState, previous: { grid: Grid; score: number } |
   if (state.used || !previous) return { state: { ...state, used: true }, restored: false };
   return { state: { grid: previous.grid.map((row) => [...row]), score: previous.score, used: true }, restored: true };
 }
+
+export const ONLINE_SECONDS = 180;
+
+/** Small seeded generator, so everyone in an online round gets the same tiles from the same moves. */
+export function seeded(seed: number): () => number {
+  let t = seed >>> 0;
+  return () => {
+    t = (t + 0x6d2b79f5) >>> 0;
+    let x = Math.imul(t ^ (t >>> 15), t | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export const randomSeed = () => (Math.random() * 4294967296) >>> 0;
+
+export function bestTile(grid: Grid): number {
+  return Math.max(0, ...grid.flat());
+}
+
+export function isGrid(v: unknown): v is Grid {
+  return Array.isArray(v) && v.length === 4 && v.every((row) => Array.isArray(row) && row.length === 4 && row.every((n) => Number.isInteger(n) && n >= 0 && n <= 1 << 20 && (n === 0 || (n & (n - 1)) === 0) && n !== 1));
+}
+
+export type Saved = { grid: Grid; score: number; won: boolean; undoUsed: boolean; previous: { grid: Grid; score: number } | null };
+
+/** A game in progress from localStorage, or null when it is missing, finished or not ours. */
+export function parseSave(raw: string | null): Saved | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as Partial<Saved>;
+    if (!isGrid(v.grid) || !Number.isInteger(v.score) || (v.score as number) < 0 || !canMove(v.grid) || !v.grid.flat().some(Boolean)) return null;
+    const previous = v.previous && isGrid(v.previous.grid) && Number.isInteger(v.previous.score) ? { grid: v.previous.grid, score: v.previous.score } : null;
+    return { grid: v.grid, score: v.score as number, won: !!v.won, undoUsed: !!v.undoUsed, previous: v.undoUsed ? null : previous };
+  } catch {
+    return null;
+  }
+}
+
+/** Seed packets: the host deals, guests ask until they have it. */
+export function parseSeed(d: unknown): number | null {
+  const m = d as { t?: unknown; seed?: unknown } | null;
+  return m && m.t === '2048-seed' && Number.isInteger(m.seed) && (m.seed as number) >= 0 && (m.seed as number) < 4294967296 ? (m.seed as number) : null;
+}
+export const isSeedRequest = (d: unknown) => (d as { t?: unknown } | null)?.t === '2048-seed?';
+
+export type Rect = { x: number; y: number; w: number; h: number };
+export type Layout = { mode: 'row' | 'column'; board: Rect; hud: Rect };
+
+/**
+ * Where the board and the score panel go. `ctrl` is the shell's control pill and `status` the online badge
+ * (top center), both kept clear. The panel sits above the board when that leaves the bigger board, otherwise
+ * beside it on the left. `u` scales the panel for the framed iPad.
+ */
+export function layout(w: number, h: number, ctrl: Rect | null, status: Rect | null, u = 1): Layout {
+  const pad = 10;
+  const max = 600;
+  const ctrlBottom = ctrl ? ctrl.y + ctrl.h : 44;
+  const ctrlLeft = ctrl ? ctrl.x : w - 200;
+  const statusBottom = status ? status.y + status.h : 0;
+  // panel above: one row of stats and Undo
+  const rowH = 50 * u;
+  const rowTop = Math.max(ctrlBottom, statusBottom) + 8;
+  const rowSize = Math.max(0, Math.min(w - pad * 2, h - rowTop - rowH - 10 - pad, max));
+  // panel beside: a column on the left
+  const colW = 104 * u;
+  const left = pad + colW + 12;
+  const beside = Math.max(0, Math.min(h - pad * 2 - (status ? statusBottom : 0), ctrlLeft - 8 - left, max));
+  const below = Math.max(0, Math.min(h - Math.max(ctrlBottom + 8, statusBottom + 6) - pad, w - pad - left, max));
+  const colSize = Math.max(beside, below);
+  if (rowSize >= colSize || w < 300) {
+    const size = Math.floor(rowSize);
+    const groupH = rowH + 10 + size;
+    const top = Math.max(rowTop, Math.min((h - groupH) / 2, h - pad - groupH));
+    const x = Math.round((w - size) / 2);
+    const hudW = Math.max(size, Math.min(w - pad * 2, 260 * u));
+    return { mode: 'row', hud: { x: Math.round((w - hudW) / 2), y: Math.round(top), w: hudW, h: rowH }, board: { x, y: Math.round(top + rowH + 10), w: size, h: size } };
+  }
+  const size = Math.floor(colSize);
+  let x: number;
+  let y: number;
+  if (beside >= below) {
+    const top = pad + (status ? statusBottom : 0);
+    x = left + Math.max(0, (ctrlLeft - 8 - left - size) / 2);
+    y = top + Math.max(0, (h - pad - top - size) / 2);
+  } else {
+    const top = Math.max(ctrlBottom + 8, statusBottom + 6);
+    x = left + Math.max(0, (w - pad - left - size) / 2);
+    y = top + Math.max(0, (h - pad - top - size) / 2);
+  }
+  const hudH = Math.min(size, 150 * u);
+  return { mode: 'column', board: { x: Math.round(x), y: Math.round(y), w: size, h: size }, hud: { x: Math.max(pad, Math.round(x - 12 - colW)), y: Math.round(y + (size - hudH) / 2), w: colW, h: hudH } };
+}
+
+/** Merge chime: climbs a pentatonic scale as the tiles grow. */
+export function mergePitch(value: number): number {
+  const n = Math.max(1, Math.round(Math.log2(value)) - 1);
+  const steps = [0, 2, 4, 7, 9];
+  const semi = 12 * Math.floor((n - 1) / 5) + steps[(n - 1) % 5];
+  return 330 * Math.pow(2, semi / 12);
+}
+
+/** Frame scale fix for the iPad and iPhone frames: the inverse of how much they shrink the game, rounded up. */
+export function frameUnit(screenWidth: number, layoutWidth: number): number {
+  if (!(screenWidth > 0) || !(layoutWidth > 0)) return 1;
+  const k = screenWidth / layoutWidth;
+  return k > 0.3 && k < 0.99 ? Math.min(1.8, Math.ceil(100 / k) / 100) : 1;
+}

@@ -47,6 +47,9 @@ export const LAMP_R = 0.18;
 export const MAILBOX_R = 0.22;
 export const TABLE_HW = 1.1;
 export const TABLE_HD = 0.8;
+/** A jail cell's door is narrower than the rest, and its bars this thick. */
+export const CELL_DOOR = 1.6;
+export const BARS_T = 0.14;
 export const FENCE_T = 0.16;
 /** The gap in the middle of each side of a farm's fence. */
 export const GATE = 4;
@@ -121,11 +124,15 @@ export const PLACE_NAMES = [
   'Yolkshire',
   'Cracked Canyon',
 ];
-/** The diner and the windmill go by their own names. */
+/** The diner, the windmill, the police station and the bank go by their own names. */
 export const DINER_NAMES = ['Greasy Spoon', 'Hash House', 'Sunny Side Diner', 'Waffle Stop', 'Short Stack Diner'];
 export const MILL_NAMES = ['Old Mill', 'Windy Mill', 'Millstone Hill', 'Flour Power', 'Grindstone Mill'];
+export const POLICE_NAMES = ['Poach Precinct', 'Yolk Patrol HQ', 'Shell Station', 'Cluckton Police'];
+export const BANK_NAMES = ['Nest Egg Bank', 'Golden Yolk Savings', 'First Omelette Bank', 'Shell Trust'];
 /** How far from its first site a town reaches for the rest. */
 const TOWN = 36;
+/** The kinds that go by a name of their own (and keep their distance from each other). */
+const NAMED: BuildingKind[] = ['diner', 'mill', 'police', 'bank'];
 const CELL = 8;
 const COLS = Math.ceil((2 * HALF) / CELL);
 
@@ -136,38 +143,76 @@ export type Tree = Circle & { kind: TreeKind };
 export type Box = { x: number; z: number; hw: number; hd: number };
 export type Rock = Circle & { look: number };
 /**
- * Houses, farmhouses, sheds, warehouses, shipping containers, ruins, the Golden Coop, and now and then a diner or a
- * windmill. Walls stop eggs and bullets; a roof hides what's inside from anyone outside (ruins have none). `h` is
- * how tall the walls are drawn.
+ * Houses, farmhouses, sheds, warehouses, shipping containers, ruins, the Golden Coop, a diner, a windmill (now and
+ * then a second of one of those), a police station and a bank. Walls stop eggs and bullets; a roof hides what's inside
+ * from anyone outside (ruins have none). `h` is how tall the walls are drawn. `bars` are a jail cell's (they stop
+ * feet, not bullets or the eye). A building of more than one room lists them (`rooms`, inside the walls), with the
+ * doorways between them in `inner`.
  */
-export type BuildingKind = 'house' | 'farm' | 'shed' | 'warehouse' | 'container' | 'ruin' | 'coop' | 'diner' | 'mill';
-export type Building = { kind: BuildingKind; x: number; z: number; w: number; d: number; walls: Box[]; doors: Door[]; inner: Door[]; look: number; roof: boolean; h: number };
+export type BuildingKind = 'house' | 'farm' | 'shed' | 'warehouse' | 'container' | 'ruin' | 'coop' | 'diner' | 'mill' | 'police' | 'bank';
+export type Building = { kind: BuildingKind; x: number; z: number; w: number; d: number; walls: Box[]; doors: Door[]; inner: Door[]; windows: Pane[]; bars: Box[]; rooms: Box[]; look: number; roof: boolean; h: number };
+/**
+ * A window in an outer wall: the glass filling its opening (wall thick), `i` its place in the island's list, `b` its
+ * building and (`ox`, `oz`) the way out. Eggs never get through, glass or no glass (there is wall below it); the glass
+ * lets the view through but stops bullets and throws until something breaks it (see logic.ts).
+ */
+export type Pane = Box & { i: number; b: number; ox: number; oz: number };
 /**
  * A way in through the outer walls: the middle of the opening, the way out (one step along x or z), and how wide it
- * is. A doorway between two rooms (`inner`) points across the wall it is in.
+ * is. A doorway between two rooms (`inner`) points across the wall it is in. `slab` is the door hanging in it (see
+ * Slab), if there is one; `kind` marks a jail cell's barred door and a bank vault's.
  */
-export type Door = { x: number; z: number; ox: number; oz: number; w: number };
+export type Door = { x: number; z: number; ox: number; oz: number; w: number; slab?: number; kind?: 'bars' | 'vault' };
+/**
+ * A door that opens and shuts (see logic.ts): the box it fills shut (the opening, wall thick), `i` its place in the
+ * island's list, `b` its building, and (`ox`, `oz`) the way out of its doorway. A jail cell's door is bars (`bars`:
+ * bullets and the eye go through, feet don't); a bank vault's (`vault`) is heavy steel, takes a while to open, and
+ * never breaks.
+ */
+export type Slab = Box & { i: number; b: number; ox: number; oz: number; bars: boolean; vault: boolean };
 export type LootSpawn = { id: number; def: LootDef; x: number; z: number };
 /**
- * Crates, toilets and hay bales break when shot or smacked, and barrels blow up; chests, fridges and supply drops
- * open with the interact key. A supply drop floats down from the sky and lands at match time `at`. `gold` marks the
- * Golden Coop's chest. `flare` marks a supply drop kept back for a flare gun to call: it lands nowhere (`at` is
- * Infinity) until one does.
+ * Crates, toilets and hay bales break when shot or smacked, and barrels blow up; chests, fridges, supply drops and
+ * the furniture that holds things (chests of drawers, bookshelves, lockers, bank safes and deposit boxes) open with
+ * the interact key. Each faces `face` along z (along x when `ax`). A supply drop floats down from the sky and lands
+ * at match time `at`. `gold` marks the Golden Coop's chest. `flare` marks a supply drop kept back for a flare gun to
+ * call: it lands nowhere (`at` is Infinity) until one does.
  */
-export type ContainerKind = 'crate' | 'chest' | 'barrel' | 'supply' | 'fridge' | 'toilet' | 'hay';
-export type Container = { id: number; kind: ContainerKind; x: number; z: number; face: 1 | -1; loot: LootSpawn[]; solid: number; gold: boolean; at: number; flare: boolean };
+export type ContainerKind = 'crate' | 'chest' | 'barrel' | 'supply' | 'fridge' | 'toilet' | 'hay' | StashKind;
+export type Container = { id: number; kind: ContainerKind; x: number; z: number; face: 1 | -1; ax: boolean; loot: LootSpawn[]; solid: number; gold: boolean; at: number; flare: boolean };
+/** Furniture that opens for what's in it: half its length along the wall it stands against, and half its depth. */
+export type StashKind = 'drawer' | 'books' | 'locker' | 'safe' | 'deposit';
+export const STASH: Record<StashKind, { along: number; deep: number; tier: LootTier }> = {
+  drawer: { along: 0.55, deep: 0.27, tier: 'drawer' },
+  books: { along: 0.8, deep: 0.2, tier: 'books' },
+  locker: { along: 0.3, deep: 0.28, tier: 'locker' },
+  safe: { along: 0.48, deep: 0.42, tier: 'safe' },
+  deposit: { along: 0.6, deep: 0.22, tier: 'deposit' },
+};
+export const isStash = (k: string): k is StashKind => k in STASH;
+/** What opens with the interact key (the rest breaks). */
+export const opens = (k: ContainerKind) => k === 'chest' || k === 'supply' || k === 'fridge' || isStash(k);
+/** Half a container's size along x and along z. */
+export function containerHalf(c: Container): [number, number] {
+  if (isStash(c.kind)) {
+    const s = STASH[c.kind];
+    return c.ax ? [s.deep, s.along] : [s.along, s.deep];
+  }
+  return c.kind === 'chest' ? [CHEST_HW, CHEST_HD] : c.kind === 'fridge' ? [FRIDGE_HW, FRIDGE_HD] : c.kind === 'toilet' ? [TOILET_R, TOILET_R] : c.kind === 'hay' ? [HAY_HW, HAY_HD] : c.kind === 'supply' ? [SUPPLY_HALF, SUPPLY_HALF] : [CRATE_HALF, CRATE_HALF];
+}
 /**
- * Something that stops eggs. `ref` is the tree, rock, building, container, car, yard or prop it belongs to. Toilets
- * and hay bales are `crate` solids and fridges `chest` ones, since they break and open the same way.
+ * Something that stops eggs. `ref` is the tree, rock, building, window, container, car, yard or prop it belongs to.
+ * Toilets and hay bales are `crate` solids and fridges `chest` ones, since they break and open the same way.
  */
 export type Solid =
   | { shape: 'circle'; x: number; z: number; r: number; what: 'tree' | 'rock' | 'barrel' | 'post' | 'fire' | 'log'; ref: number }
-  | { shape: 'box'; x: number; z: number; hw: number; hd: number; what: 'wall' | 'crate' | 'chest' | 'car' | 'fence' | 'table' | 'log' | 'shelf' | 'seat'; ref: number };
+  | { shape: 'box'; x: number; z: number; hw: number; hd: number; what: 'wall' | 'window' | 'door' | 'bars' | 'crate' | 'chest' | 'car' | 'fence' | 'table' | 'log' | 'shelf' | 'seat'; ref: number };
 /**
- * Low things (fences and bridge rails, picnic tables, fire pits, fallen logs and stumps, and beds, tables and booths
- * indoors) stop eggs walking but not bullets, throws or the view.
+ * Low things (fences and bridge rails, picnic tables, fire pits, fallen logs and stumps, beds, tables, benches and
+ * booths indoors) and a jail cell's bars stop eggs walking but not bullets, throws or the view. A door does what a
+ * wall does while it's shut (see logic.ts), and nothing once it's open.
  */
-export const low = (s: Solid) => s.what === 'fence' || s.what === 'table' || s.what === 'fire' || s.what === 'log' || s.what === 'seat';
+export const low = (s: Solid) => s.what === 'fence' || s.what === 'table' || s.what === 'fire' || s.what === 'log' || s.what === 'seat' || s.what === 'bars';
 /** A parked car or truck: solid cover that stops bullets. Axis aligned, nose along x when `alongX`. */
 export type Car = { x: number; z: number; hw: number; hd: number; look: number; truck: boolean; alongX: boolean };
 /** A farm's fenced yard, with a gate in the middle of each side (gates are doors: the way out is `ox`, `oz`). */
@@ -192,11 +237,11 @@ export type Log = Box & { alongX: boolean };
  * booths and benches only stop feet (`seat` solids); rugs, chairs and stools are just there to look at. `face` is the
  * side a bed's head or a seat's back is against (sides as in shell()); `b` the building.
  */
-export type FurnitureKind = 'rug' | 'chair' | 'stool' | 'table' | 'bed' | 'booth' | 'counter' | 'shelf' | 'sacks' | 'millstone';
+export type FurnitureKind = 'rug' | 'chair' | 'stool' | 'table' | 'bed' | 'booth' | 'bench' | 'desk' | 'counter' | 'shelf' | 'sacks' | 'millstone';
 export type Furniture = Box & { kind: FurnitureKind; face: number; b: number; look: number };
 /** What furniture stops: everything, only feet, or nothing. */
 export const furnitureSolid = (k: FurnitureKind): 'shelf' | 'seat' | null =>
-  k === 'counter' || k === 'shelf' || k === 'sacks' || k === 'millstone' ? 'shelf' : k === 'table' || k === 'bed' || k === 'booth' ? 'seat' : null;
+  k === 'counter' || k === 'shelf' || k === 'sacks' || k === 'millstone' || k === 'desk' ? 'shelf' : k === 'table' || k === 'bed' || k === 'booth' || k === 'bench' ? 'seat' : null;
 
 /** The bus's route; `on` and `off` are when it is over land, the only time anyone can jump. */
 export type Bus = { x0: number; z0: number; x1: number; z1: number; len: number; dur: number; on: number; off: number };
@@ -219,6 +264,9 @@ export type GameMap = {
   stumps: Circle[];
   furniture: Furniture[];
   buildings: Building[];
+  /** Every building's windows, in one list (a window's `i` is its place in it), and its doors the same way. */
+  windows: Pane[];
+  slabs: Slab[];
   /** The Golden Coop's building index. */
   coop: number;
   containers: Container[];
@@ -270,13 +318,15 @@ export const FLARE_DROPS = 6;
 
 /**
  * The buildings an island has, placed in this order (the biggest first, so they always fit); `special` is a diner and a
- * windmill, now and then with a second of one of them.
+ * windmill, now and then with a second of one of them, then the police station and the bank.
  */
 const plan = (special: BuildingKind[]): BuildingKind[] => [
   'coop',
   ...Array<BuildingKind>(4).fill('warehouse'),
   ...Array<BuildingKind>(4).fill('farm'),
   ...special,
+  'police',
+  'bank',
   ...Array<BuildingKind>(4).fill('container'),
   ...Array<BuildingKind>(22).fill('house'),
   ...Array<BuildingKind>(16).fill('shed'),
@@ -333,16 +383,17 @@ function wallLine(walls: Box[], alongX: boolean, cx: number, cz: number, len: nu
 
 /**
  * Four walls round a w by d floor, and the doorways through them. Sides: 0 north (-z), 1 south (+z), 2 west (-x),
- * 3 east (+x). A fence round a yard is the same thing, thinner.
+ * 3 east (+x). A fence round a yard is the same thing, thinner. `glass` is the window openings (see glaze()), which
+ * the walls leave room for but which are no way through.
  */
-function shell(walls: Box[], x: number, z: number, w: number, d: number, gaps: Gap[][], thick = WALL_T) {
+function shell(walls: Box[], x: number, z: number, w: number, d: number, gaps: Gap[][], thick = WALL_T, glass: Gap[][] = []) {
   const doors: Door[] = [];
   for (let side = 0; side < 4; side++) {
     const alongX = side < 2;
     const len = alongX ? w + thick : d - thick;
     const cx = alongX ? x : side === 2 ? x - w / 2 : x + w / 2;
     const cz = alongX ? (side === 0 ? z - d / 2 : z + d / 2) : z;
-    wallLine(walls, alongX, cx, cz, len, gaps[side] ?? [], thick);
+    wallLine(walls, alongX, cx, cz, len, [...(gaps[side] ?? []), ...(glass[side] ?? [])], thick);
     // an opening ends where the walls either side of it begin
     const room = ((alongX ? w : d) - thick) / 2;
     for (const [u, width] of gaps[side] ?? []) {
@@ -362,6 +413,82 @@ function doorAt(rng: Rng, span: number, width: number) {
 }
 
 const sides = (): Gap[][] => [[], [], [], []];
+
+/** How wide each kind's windows are and how far apart they stand along a wall; the rest have none. */
+const GLAZING: Partial<Record<BuildingKind, { w: number; gap: number }>> = {
+  house: { w: 1.6, gap: 7 },
+  farm: { w: 1.6, gap: 7 },
+  shed: { w: 1.2, gap: 6 },
+  diner: { w: 2.4, gap: 4.5 },
+  warehouse: { w: 2.4, gap: 7 },
+  police: { w: 1.6, gap: 5 },
+  bank: { w: 2, gap: 4.5 },
+};
+/** The wall a window keeps either side of it, to a corner, a doorway or a wall inside that meets this one. */
+const PIER = 0.9;
+
+/**
+ * Where a kind's windows go along sides `on` of a w by d building (sides as in shell()): spread evenly along each
+ * stretch of wall clear of the corners, the doorways (`gaps`) and the walls inside that meet it (`posts`, along each
+ * side). Only + - * / and floor, so every client lays them out alike.
+ */
+function glaze(kind: BuildingKind, w: number, d: number, gaps: Gap[][], on: number[], posts: number[][] = []): Gap[][] {
+  const out = sides();
+  const spec = GLAZING[kind];
+  if (!spec) return out;
+  for (const side of on) {
+    const room = ((side < 2 ? w : d) - WALL_T) / 2;
+    const cuts: [number, number][] = [
+      ...(gaps[side] ?? []).map(([u, width]): [number, number] => [u - width / 2 - PIER, u + width / 2 + PIER]),
+      ...(posts[side] ?? []).map((u): [number, number] => [u - WALL_T / 2 - PIER, u + WALL_T / 2 + PIER]),
+    ].sort((a, b) => a[0] - b[0]);
+    let at = -room + PIER;
+    for (const [lo, hi] of [...cuts, [room - PIER, Infinity]]) {
+      const span = lo - at;
+      if (span >= spec.w + 1.6) {
+        const n = Math.floor((span - spec.w) / spec.gap) + 1;
+        for (let k = 0; k < n; k++) out[side].push([r1(at + (span * (k + 0.5)) / n), spec.w]);
+      }
+      at = Math.max(at, hi);
+    }
+  }
+  return out;
+}
+
+/** Runs of wall end to end (a window between two counts as wall too) joined into one long box each. */
+function joined(boxes: Box[]): Box[] {
+  const out: Box[] = [];
+  for (const w of [...boxes].sort((p, q) => p.x - p.hw - (q.x - q.hw) || p.z - p.hd - (q.z - q.hd))) {
+    const alongX = w.hw > w.hd;
+    const o = out.find((o) => (alongX ? o.hw > o.hd && o.z === w.z && o.hd === w.hd && Math.abs(o.x + o.hw - (w.x - w.hw)) < 0.01 : o.hd > o.hw && o.x === w.x && o.hw === w.hw && Math.abs(o.z + o.hd - (w.z - w.hd)) < 0.01));
+    if (!o) {
+      out.push({ x: w.x, z: w.z, hw: w.hw, hd: w.hd });
+      continue;
+    }
+    const lo = alongX ? o.x - o.hw : o.z - o.hd;
+    const hi = alongX ? w.x + w.hw : w.z + w.hd;
+    if (alongX) {
+      o.x = (lo + hi) / 2;
+      o.hw = (hi - lo) / 2;
+    } else {
+      o.z = (lo + hi) / 2;
+      o.hd = (hi - lo) / 2;
+    }
+  }
+  return out;
+}
+
+/** The glass filling a w by d building's window openings (as glaze() gives them), not yet numbered. */
+function panesOf(x: number, z: number, w: number, d: number, glass: Gap[][]): Pane[] {
+  const out: Pane[] = [];
+  glass.forEach((list, side) => {
+    for (const [u, width] of list) {
+      if (side < 2) out.push({ x: x + u, z: side === 0 ? z - d / 2 : z + d / 2, hw: width / 2, hd: WALL_T / 2, i: -1, b: -1, ox: 0, oz: side === 0 ? -1 : 1 });
+      else out.push({ x: side === 2 ? x - w / 2 : x + w / 2, z: z + u, hw: WALL_T / 2, hd: width / 2, i: -1, b: -1, ox: side === 2 ? -1 : 1, oz: 0 });
+    }
+  });
+  return out;
+}
 
 // -------------------------------------------------------------------------------------------------------------------
 // What is where. Each grid cell lists, in order, the things whose footprint reaches into it, so asking what stands at
@@ -440,25 +567,39 @@ export function roomAt(map: GameMap, x: number, z: number) {
 /** How far out from a doorway you can still peek in through it. */
 export const PEEK = 8;
 
+/** How far out from a window you can still look in through it (glass or no glass). */
+export const PEEK_GLASS = 4;
+
 /**
  * The roofed building a point outside it looks into through a doorway, or -1: standing at a door, or lined up with one
- * up to PEEK meters out, in a wedge that widens away from it. The nearest door wins. The view thins that roof.
+ * up to PEEK meters out, in a wedge that widens away from it. The nearest door wins, but not one that is shut (`shut`
+ * says which are, by door). Failing a door, the nearest window up to PEEK_GLASS out does. The view thins that roof.
  */
-export function peekAt(map: GameMap, x: number, z: number) {
+export function peekAt(map: GameMap, x: number, z: number, shut?: (slab: number) => boolean) {
   let best = -1;
   let near = Infinity;
+  let glass = -1;
+  let nearGlass = Infinity;
   for (let i = 0; i < map.buildings.length; i++) {
     const b = map.buildings[i];
     if (!b.roof || Math.abs(x - b.x) > b.w / 2 + PEEK || Math.abs(z - b.z) > b.d / 2 + PEEK) continue;
     for (const d of b.doors) {
+      if (shut && d.slab !== undefined && shut(d.slab)) continue;
       const out = (x - d.x) * d.ox + (z - d.z) * d.oz;
       const side = Math.abs((x - d.x) * d.oz - (z - d.z) * d.ox);
       if (out < -0.6 || out > PEEK || out >= near || side > d.w / 2 + 1.2 + Math.max(0, out) * 0.3) continue;
       best = i;
       near = out;
     }
+    for (const p of b.windows) {
+      const out = (x - p.x) * p.ox + (z - p.z) * p.oz;
+      const side = Math.abs((x - p.x) * p.oz - (z - p.z) * p.ox);
+      if (out < 0 || out > PEEK_GLASS || out >= nearGlass || side > Math.max(p.hw, p.hd) + 0.6 + out * 0.3) continue;
+      glass = i;
+      nearGlass = out;
+    }
   }
-  return best;
+  return best >= 0 ? best : glass;
 }
 
 /** The bush hiding a point, or -1. */
@@ -560,6 +701,9 @@ export function riverAt(map: GameMap, x: number, z: number) {
 
 /** Wading: in a pond or the river. */
 export const waterAt = (map: GameMap, x: number, z: number) => pondAt(map, x, z) >= 0 || riverAt(map, x, z);
+
+/** Out on the grass (or in a bush or the corn): not indoors, on a road, a bridge or a bounce pad, nor in the water. */
+export const grassAt = (map: GameMap, x: number, z: number) => roomAt(map, x, z) < 0 && !roadAt(map, x, z) && bridgeAt(map, x, z) < 0 && padAt(map, x, z) < 0 && !waterAt(map, x, z);
 
 /** True when two segments cross. */
 function crosses(ax: number, az: number, bx: number, bz: number, cx: number, cz: number, dx: number, dz: number) {
@@ -814,6 +958,8 @@ export function generateMap(seed: number): GameMap {
     stumps: [],
     furniture: [],
     buildings: [],
+    windows: [],
+    slabs: [],
     coop: -1,
     containers: [],
     drops: [],
@@ -909,18 +1055,19 @@ export function generateMap(seed: number): GameMap {
     const defs = rollLoot(rng, tier);
     map.floor.push(...floorItems(x, z, defs, FLOOR_BASE + map.floor.length * 8));
   };
-  const addContainer = (kind: Container['kind'], x: number, z: number, face: 1 | -1, tier: LootTier | null, at = 0) => {
+  const addContainer = (kind: Container['kind'], x: number, z: number, face: 1 | -1, tier: LootTier | null, at = 0, ax = false) => {
     const id = map.containers.length;
     const defs = tier ? rollLoot(rng, tier) : [];
     const ahead = kind === 'supply' ? 1.7 : 1.3;
-    // what breaks spills where it stood; what opens spills out in front
+    // what breaks spills where it stood; what opens spills out in front (in a row along the wall it stands against)
     const spread = kind === 'crate' || kind === 'toilet' || kind === 'hay';
-    const loot = defs.slice(0, SPREAD.length).map((def, j) =>
-      spread
+    const loot = defs.slice(0, SPREAD.length).map((def, j) => {
+      const u = (j - (defs.length - 1) / 2) * 0.9;
+      return spread
         ? { id: CONTAINER_BASE + id * 8 + j, def, x: r1(x + SPREAD[j][0]), z: r1(z + SPREAD[j][1]) }
-        : { id: CONTAINER_BASE + id * 8 + j, def, x: r1(x + (j - (defs.length - 1) / 2) * 0.9), z: r1(z + face * ahead) },
-    );
-    map.containers.push({ id, kind, x: r1(x), z: r1(z), face, loot, solid: -1, gold: tier === 'gold', at, flare: at === Infinity });
+        : { id: CONTAINER_BASE + id * 8 + j, def, x: r1(x + (ax ? face * ahead : u)), z: r1(z + (ax ? u : face * ahead)) };
+    });
+    map.containers.push({ id, kind, x: r1(x), z: r1(z), face, ax, loot, solid: -1, gold: tier === 'gold', at, flare: at === Infinity });
     return id;
   };
   const quads = (b: { x: number; z: number; w: number; d: number }) =>
@@ -971,23 +1118,29 @@ export function generateMap(seed: number): GameMap {
           }),
       ),
     );
-  const build = (kind: BuildingKind, x: number, z: number, w: number, d: number, walls: Box[], doors: Door[], look: number, h: number) => {
-    map.buildings.push({ kind, x, z, w, d, walls, doors, inner: [], look, roof: kind !== 'ruin', h });
-    return map.buildings[map.buildings.length - 1];
+  const build = (kind: BuildingKind, x: number, z: number, w: number, d: number, walls: Box[], doors: Door[], look: number, h: number, glass: Gap[][] = []) => {
+    const b = map.buildings.length;
+    const windows = panesOf(x, z, w, d, glass).map((p, k) => ({ ...p, i: map.windows.length + k, b }));
+    map.windows.push(...windows);
+    map.buildings.push({ kind, x, z, w, d, walls, doors, inner: [], windows, bars: [], rooms: [], look, roof: kind !== 'ruin', h });
+    return map.buildings[b];
   };
 
   // Furniture. Anything that stops feet stands flush against a wall or something else, or leaves a way past it at
   // least 1.3 m wide, never in the way in through a doorway, and well clear of what's there to loot.
-  const half = (c: Container) =>
-    c.kind === 'chest' ? [CHEST_HW, CHEST_HD] : c.kind === 'fridge' ? [FRIDGE_HW, FRIDGE_HD] : c.kind === 'toilet' ? [TOILET_R, TOILET_R] : c.kind === 'hay' ? [HAY_HW, HAY_HD] : c.kind === 'supply' ? [SUPPLY_HALF, SUPPLY_HALF] : [CRATE_HALF, CRATE_HALF];
   /** The gap between two boxes along whichever axis they are farthest apart (below zero when they overlap). */
   const gap = (a: Box, b: Box) => Math.max(Math.abs(a.x - b.x) - a.hw - b.hw, Math.abs(a.z - b.z) - a.hd - b.hd);
   const roomy = (g: number) => g <= 0.05 || g >= 1.3;
-  const fit = (bi: number, kind: FurnitureKind, x: number, z: number, hw: number, hd: number, face = 0, look = 0) => {
+  /**
+   * Puts a piece of furniture (or, for a stash kind, a container that opens, or a row of `n` of them side by side
+   * along the wall) at (x, z), `face` the side of the wall it stands against, if it fits.
+   */
+  const fit = (bi: number, kind: FurnitureKind | StashKind, x: number, z: number, hw: number, hd: number, face = 0, look = 0, n = 1) => {
     const b = map.buildings[bi];
     const box = { x, z, hw, hd };
     if (Math.abs(box.x - b.x) + hw > b.w / 2 - WALL_T / 2 + 0.01 || Math.abs(box.z - b.z) + hd > b.d / 2 - WALL_T / 2 + 0.01) return false;
-    const stops = furnitureSolid(kind) !== null;
+    const stash = isStash(kind);
+    const stops = stash || furnitureSolid(kind as FurnitureKind) !== null;
     // the way in through every doorway, from either side of a doorway between rooms
     const ways = [...b.doors.map((d) => ({ d, k: 1 })), ...b.inner.flatMap((d) => [{ d, k: 1 }, { d, k: -1 }])];
     for (const { d, k } of ways) {
@@ -996,32 +1149,61 @@ export function generateMap(seed: number): GameMap {
       const zone = { x: d.x - d.ox * k * 1.3, z: d.z - d.oz * k * 1.3, hw: ax * (d.w / 2 + 0.5) + az * 1.3, hd: az * (d.w / 2 + 0.5) + ax * 1.3 };
       if (gap(box, zone) < 0) return false;
     }
-    for (const w of b.walls) if (gap(box, w) < -0.01 || (stops && !roomy(gap(box, w)))) return false;
+    for (const w of b.windows.length ? joined([...b.walls, ...b.windows]) : b.walls) if (gap(box, w) < -0.01 || (stops && !roomy(gap(box, w)))) return false;
+    // a jail cell's bars only need keeping out of (they end at a wall, so nothing squeezes past them)
+    for (const w of b.bars) if (gap(box, w) < -0.01) return false;
     for (const c of map.containers) {
       if (Math.abs(c.x - b.x) > b.w / 2 || Math.abs(c.z - b.z) > b.d / 2) continue;
-      const [chw, chd] = half(c);
+      const [chw, chd] = containerHalf(c);
       const g = gap(box, { x: c.x, z: c.z, hw: chw, hd: chd });
       if (g < (stops ? 1.3 : 0.15)) return false;
     }
     if (stops) {
       for (const l of map.floor) if (Math.abs(l.x - box.x) < hw + 0.6 && Math.abs(l.z - box.z) < hd + 0.6) return false;
-      for (const f of map.furniture) if (f.b === bi && furnitureSolid(f.kind) && !roomy(gap(box, f))) return false;
+      // (and a piece of furniture never into another one)
+      for (const f of map.furniture) if (f.b === bi && furnitureSolid(f.kind) && (!roomy(gap(box, f)) || (!stash && gap(box, f) < -0.01))) return false;
+      // and what it holds spills somewhere an egg can stand, clear of the rest
+      const spill = { x: x + (face === 2 ? 1.3 : face === 3 ? -1.3 : 0), z: z + (face === 0 ? 1.3 : face === 1 ? -1.3 : 0), hw: face >= 2 ? 0.4 : hw + 0.4, hd: face >= 2 ? hd + 0.4 : 0.4 };
+      if (stash && map.furniture.some((f) => f.b === bi && furnitureSolid(f.kind) && gap(spill, f) < 0.2)) return false;
     }
-    map.furniture.push({ ...box, kind, face, b: bi, look });
+    if (stash) {
+      // it faces away from the wall it stands against
+      const ax = face >= 2;
+      const step = (2 * (ax ? hd : hw)) / n;
+      for (let k = 0; k < n; k++) {
+        const u = (k - (n - 1) / 2) * step;
+        const c = map.containers[addContainer(kind, ax ? x : x + u, ax ? z + u : z, face === 1 || face === 3 ? -1 : 1, STASH[kind].tier, 0, ax)];
+        // what it holds stays indoors, even from one in a corner: the row of it slides along the wall
+        const iw = b.w / 2 - WALL_T / 2 - 0.4;
+        const id = b.d / 2 - WALL_T / 2 - 0.4;
+        const slide = (vs: number[], lo: number, hi: number) => (vs.length && Math.min(...vs) < lo ? lo - Math.min(...vs) : vs.length && Math.max(...vs) > hi ? hi - Math.max(...vs) : 0);
+        const sx = slide(c.loot.map((l) => l.x), b.x - iw, b.x + iw);
+        const sz = slide(c.loot.map((l) => l.z), b.z - id, b.z + id);
+        for (const l of c.loot) {
+          l.x = r1(l.x + sx);
+          l.z = r1(l.z + sz);
+        }
+      }
+      return true;
+    }
+    map.furniture.push({ ...box, kind: kind as FurnitureKind, face, b: bi, look });
     return true;
   };
-  /** Up against the inside of wall `side` (sides as in shell()), `l` along it, `deep` out from it and `long` along it. */
-  const against = (bi: number, kind: FurnitureKind, side: number, l: number, deep: number, long: number, look = 0) => {
+  /**
+   * Up against the inside of wall `side` (sides as in shell()), `l` along it, `deep` out from it and `long` along it (a
+   * row of `n` stash pieces in that length).
+   */
+  const against = (bi: number, kind: FurnitureKind | StashKind, side: number, l: number, deep: number, long: number, look = 0, n = 1) => {
     const b = map.buildings[bi];
     const o = (side < 2 ? b.d : b.w) / 2 - WALL_T / 2 - deep / 2;
     const x = side < 2 ? b.x + l : b.x + (side === 2 ? -o : o);
     const z = side < 2 ? b.z + (side === 0 ? -o : o) : b.z + l;
-    return fit(bi, kind, x, z, side < 2 ? long / 2 : deep / 2, side < 2 ? deep / 2 : long / 2, side, look);
+    return fit(bi, kind, x, z, side < 2 ? long / 2 : deep / 2, side < 2 ? deep / 2 : long / 2, side, look, n);
   };
   /** The first of a few spots along a wall that fits. */
-  const along = (bi: number, kind: FurnitureKind, side: number, spots: number[], deep: number, long: number, look = 0) => spots.some((l) => against(bi, kind, side, l, deep, long, look));
+  const along = (bi: number, kind: FurnitureKind | StashKind, side: number, spots: number[], deep: number, long: number, look = 0) => spots.some((l) => against(bi, kind, side, l, deep, long, look));
   /** The longest of a few lengths that fits somewhere along a wall: in the middle, a little off it, or in a corner. */
-  const alongAny = (bi: number, kind: FurnitureKind, side: number, deep: number, lengths: number[], look = 0) => {
+  const alongAny = (bi: number, kind: FurnitureKind | StashKind, side: number, deep: number, lengths: number[], look = 0) => {
     const b = map.buildings[bi];
     const span = (side < 2 ? b.w : b.d) / 2 - WALL_T / 2;
     return lengths.some((long) => along(bi, kind, side, [0, -1.5, 1.5, -(span - long / 2), span - long / 2], deep, long, look));
@@ -1048,12 +1230,18 @@ export function generateMap(seed: number): GameMap {
     const order = (a: number, c: number) => (rng() < 0.5 ? [a, c] : [c, a]);
     if (b.kind === 'shed') {
       for (const side of order(0, 1).concat(order(2, 3))) if (against(bi, 'counter', side, 0, 0.6, 2, look)) break;
+      // now and then a tool locker
+      if (rng() < 0.4) for (const side of order(0, 1).concat(order(2, 3))) if (lockers(bi, side, [1.6, -1.6, 1.2, -1.2], 1)) break;
       return;
     }
     if (b.kind === 'warehouse') {
       const long = b.w > b.d ? [0, 1] : [2, 3];
       const span = (b.w > b.d ? b.w : b.d) / 2;
       for (const side of long) for (const l of [-span + 4, -span + 9.5, span - 9.5, span - 4]) against(bi, 'shelf', side, l, 1, 4.6, look);
+      // the workers' lockers against an end wall
+      const ends = b.w > b.d ? [2, 3] : [0, 1];
+      const across = (b.w > b.d ? b.d : b.w) / 2;
+      for (const side of order(ends[0], ends[1])) if (lockers(bi, side, [across - 2.2, -across + 1.6, across - 3.4], 2)) break;
       return;
     }
     // a house is one room; a farmhouse has a big room and a kitchen beside it
@@ -1070,7 +1258,17 @@ export function generateMap(seed: number): GameMap {
     const end = room ? (rx > b.x ? 3 : 2) : 5 - kitchen;
     along(bi, 'shelf', end, [0, -2, 2, -3, 3], 0.45, 1.8, look);
     if (rw >= 14) along(bi, 'shelf', end, [-3.5, 3.5], 0.45, 1.4, look);
+    // a chest of drawers against a long wall, and a bookshelf wherever one goes
+    const spots = [-3, 3, -1.5, 1.5, -4.5, 4.5, 0].map((u) => rx - b.x + u);
+    for (const side of order(0, 1)) if (along(bi, 'drawer', side, spots, STASH.drawer.deep * 2, STASH.drawer.along * 2, look)) break;
+    for (const side of order(0, 1).concat(room ? [end] : order(2, 3))) if (along(bi, 'books', side, side < 2 ? spots : [0, -1.5, 1.5, -2.5, 2.5], STASH.books.deep * 2, STASH.books.along * 2, look)) break;
   };
+  /** A row of `n` lockers side by side against wall `side`, at the first of `spots` with room for all of them. */
+  const lockers = (bi: number, side: number, spots: number[], n: number) =>
+    spots.some((l) => {
+      const [deep, long] = [STASH.locker.deep * 2, STASH.locker.along * 2];
+      return against(bi, 'locker', side, l + ((n - 1) * long) / 2, deep, long * n, 0, n);
+    });
 
   // everything outdoors keeps its distance from buildings and from each other
   const taken: Circle[] = [];
@@ -1101,7 +1299,7 @@ export function generateMap(seed: number): GameMap {
     return left[Math.floor(rng() * left.length)];
   };
   // far enough apart that each makes a place of its own
-  const apart = (x: number, z: number) => map.buildings.every((o) => (o.kind !== 'diner' && o.kind !== 'mill') || dist(o.x, o.z, x, z) >= 90);
+  const apart = (x: number, z: number) => map.buildings.every((o) => !NAMED.includes(o.kind) || dist(o.x, o.z, x, z) >= 80);
   for (const kind of plan(rng() < 0.5 ? [...special, special[0]] : special)) {
     for (let tries = 0; tries < 200; tries++) {
       if (kind === 'diner') {
@@ -1119,7 +1317,9 @@ export function generateMap(seed: number): GameMap {
         gaps[front].push([Math.round((rng() * 2 - 1) * 3) / 2, DOOR]);
         const back = (rng() < 0.5 ? -1 : 1) * (w / 2 - 3);
         gaps[1 - front].push([back, DOOR]);
-        const b = build('diner', x, z, w, d, walls, shell(walls, x, z, w, d, gaps), Math.floor(rng() * 4), 3.6);
+        // big windows along the front and the ends, none behind the kitchen
+        const glass = glaze('diner', w, d, gaps, [front, 2, 3]);
+        const b = build('diner', x, z, w, d, walls, shell(walls, x, z, w, d, gaps, WALL_T, glass), Math.floor(rng() * 4), 3.6, glass);
         const bi = map.buildings.length - 1;
         ownName.set(bi, nameFrom(DINER_NAMES));
         // the kitchen's stash
@@ -1133,6 +1333,122 @@ export function generateMap(seed: number): GameMap {
         for (const u of [-7.5, -4.5, 4.5, 7.5]) against(bi, 'booth', front, u, 2, 1.6, b.look);
         fit(bi, 'counter', x - 0.5, z - fz * 1.3, 5.5, 0.3, front, b.look);
         for (let u = -5; u <= 4; u += 1.5) fit(bi, 'stool', x + u, z - fz * 0.5, 0.22, 0.22, front, b.look);
+        break;
+      }
+      if (kind === 'police') {
+        // a police station: a lobby with a desk and a row of lockers, and behind it a jail cell (bars along its front,
+        // a bench and a toilet) and the stash room (a chest of the good stuff, more lockers and an ammo crate). In by
+        // the front door, or a side door into the lobby. `fz` points out the front, `sc` toward the cell's end.
+        const w = 20;
+        const d = 14;
+        const { x, z } = roomFor(w / 2, d / 2);
+        if (!clear(x, z, w / 2, d / 2, 10) || !apart(x, z)) continue;
+        lots.push({ x, z, hw: w / 2, hd: d / 2 });
+        const fz = rng() < 0.5 ? 1 : -1;
+        const sc = rng() < 0.5 ? 1 : -1;
+        const front = fz > 0 ? 1 : 0;
+        const back = 1 - front;
+        // the wall between the lobby and the back rooms, and the one between the cell and the stash
+        const zi = z - fz * 1.5;
+        const xd = x + sc * 4;
+        const walls: Box[] = [];
+        const gaps = sides();
+        gaps[front].push([Math.round((rng() * 2 - 1) * 4) / 2, DOOR]);
+        gaps[sc > 0 ? 2 : 3].push([fz * 2.5, DOOR]);
+        // no windows where the lobby's lockers stand, at the cell's end (see below)
+        const posts = [[], [], [zi - z], [zi - z]];
+        posts[sc > 0 ? 3 : 2].push(fz * (fz > 0 ? 0.4 : 4.95));
+        const glass = glaze('police', w, d, gaps, [front, 2, 3], posts);
+        const doors = shell(walls, x, z, w, d, gaps, WALL_T, glass);
+        if (facing(doors)) {
+          lots.pop();
+          continue;
+        }
+        const inner = w / 2 - WALL_T / 2;
+        const xa = x - sc * inner;
+        const xb = x + sc * inner;
+        wallLine(walls, true, (xa + xd) / 2, zi, Math.abs(xd - xa), [[x - sc * 3 - (xa + xd) / 2, DOOR]]);
+        wallLine(walls, false, xd, z - fz * 4.25, 5.5 - WALL_T, []);
+        const bars: Box[] = [];
+        wallLine(bars, true, (xd + xb) / 2, zi, Math.abs(xb - xd), [[x + sc * 7 - (xd + xb) / 2, CELL_DOOR]], BARS_T);
+        const b = build('police', x, z, w, d, walls, doors, Math.floor(rng() * 4), 3.4, glass);
+        const bi = map.buildings.length - 1;
+        ownName.set(bi, nameFrom(POLICE_NAMES));
+        b.bars = bars;
+        b.inner.push({ x: x - sc * 3, z: zi, ox: 0, oz: fz, w: DOOR }, { x: x + sc * 7, z: zi, ox: 0, oz: fz, w: CELL_DOOR, kind: 'bars' });
+        b.rooms = [
+          { x, z: z + fz * 2.75, hw: inner, hd: 4 },
+          { x: x + sc * 7, z: z - fz * 4.25, hw: 2.75, hd: 2.5 },
+          { x: x - sc * 3, z: z - fz * 4.25, hw: 6.75, hd: 2.5 },
+        ];
+        // the stash: its chest against its north wall (the back wall or the lobby's, so it shows from the south), and an
+        // ammo crate
+        const chestZ = fz > 0 ? d / 2 - WALL_T / 2 - CHEST_HD - 0.08 : 1.5 + WALL_T / 2 + CHEST_HD + 0.08;
+        addContainer('chest', x - sc * 7, z - fz * chestZ, 1, 'police');
+        addContainer('crate', x + sc * 0.5, z - fz * 4.4, 1, 'crate');
+        // the cell: a toilet, and whatever the last one in left behind
+        addContainer('toilet', x + sc * 9.2, z - fz * 6.2, fz as 1 | -1, 'crate');
+        addSpot(x + sc * 6.4, z - fz * 3.6, 'crate');
+        // the lobby
+        addSpot(x - sc * 1.5, z + fz * 4.6);
+        addSpot(x + sc * 7.5, z + fz * 4.8);
+        fit(bi, 'bench', x + sc * 6.6, z - fz * (d / 2 - WALL_T / 2 - 0.3), 0.85, 0.3, back, b.look);
+        fit(bi, 'desk', x + sc * 3.5, z + fz * 2.4, 1.4, 0.45, 0, b.look);
+        fit(bi, 'chair', x + sc * 3.5, z + fz * 1.45, 0.22, 0.22, front, b.look);
+        // a row of lockers in the stash against the wall to the cell, and one in the lobby against its end by the cell,
+        // each in the room's north corner (a wall to the north hides nothing behind it from the camera, in the south)
+        const { along: la, deep: ld } = STASH.locker;
+        const toward = sc > 0 ? 3 : 2;
+        const stashRow = fz > 0 ? d / 2 - WALL_T / 2 - la * 3 : 1.5 + WALL_T / 2 + la * 3;
+        const lobbyRow = fz > 0 ? 1.5 - BARS_T / 2 - 0.02 - la * 3 : -(d / 2 - WALL_T / 2 - la * 3);
+        fit(bi, 'locker', xd - sc * (WALL_T / 2 + ld), z - fz * stashRow, ld, la * 3, toward, 0, 3);
+        fit(bi, 'locker', xb - sc * ld, z - fz * lobbyRow, ld, la * 3, toward, 0, 3);
+        break;
+      }
+      if (kind === 'bank') {
+        // a bank: a lobby with the tellers' counter and somewhere to wait, and across the back the vault behind its
+        // heavy door, with two safes and the deposit boxes. In by the front door, or a side door into the lobby.
+        const w = 18;
+        const d = 14;
+        const { x, z } = roomFor(w / 2, d / 2);
+        if (!clear(x, z, w / 2, d / 2, 10) || !apart(x, z)) continue;
+        lots.push({ x, z, hw: w / 2, hd: d / 2 });
+        const fz = rng() < 0.5 ? 1 : -1;
+        const front = fz > 0 ? 1 : 0;
+        const back = 1 - front;
+        const end = rng() < 0.5 ? 2 : 3;
+        // the vault's wall
+        const zv = z - fz;
+        const walls: Box[] = [];
+        const gaps = sides();
+        gaps[front].push([Math.round((rng() * 2 - 1) * 4) / 2, DOOR]);
+        gaps[end].push([fz * 3, DOOR]);
+        const glass = glaze('bank', w, d, gaps, [front, 2, 3], [[], [], [zv - z], [zv - z]]);
+        const doors = shell(walls, x, z, w, d, gaps, WALL_T, glass);
+        if (facing(doors)) {
+          lots.pop();
+          continue;
+        }
+        const vu = Math.round((rng() * 2 - 1) * 4) / 2;
+        wallLine(walls, true, x, zv, w - WALL_T, [[vu, DOOR]]);
+        const b = build('bank', x, z, w, d, walls, doors, Math.floor(rng() * 4), 3.8, glass);
+        const bi = map.buildings.length - 1;
+        ownName.set(bi, nameFrom(BANK_NAMES));
+        b.inner.push({ x: x + vu, z: zv, ox: 0, oz: fz, w: DOOR, kind: 'vault' });
+        const inner = w / 2 - WALL_T / 2;
+        b.rooms = [
+          { x, z: z + fz * 3, hw: inner, hd: 3.75 },
+          { x, z: z - fz * 4, hw: inner, hd: 2.75 },
+        ];
+        addSpot(x - 5, z + fz * 4.4);
+        addSpot(x + 5, z + fz * 4.4);
+        // the vault: a safe at each end of the back wall, deposit boxes between them and on its end walls
+        for (const u of [-6, 6]) against(bi, 'safe', back, u, STASH.safe.deep * 2, STASH.safe.along * 2, b.look);
+        for (const u of [-2.6, 2.6]) against(bi, 'deposit', back, u, STASH.deposit.deep * 2, STASH.deposit.along * 2, b.look);
+        for (const k of [-1, 1]) fit(bi, 'deposit', x + k * (inner - STASH.deposit.deep), z - fz * 4, STASH.deposit.deep, STASH.deposit.along, k < 0 ? 2 : 3, b.look);
+        // the tellers' counter against the far end wall, and a table to wait at
+        alongAny(bi, 'counter', 5 - end, 0.6, [4, 3, 2.4], b.look);
+        dining(bi, x + (end === 2 ? 1 : -1) * 2.5, z + fz * 3.4, true, b.look);
         break;
       }
       if (kind === 'mill') {
@@ -1171,23 +1487,26 @@ export function generateMap(seed: number): GameMap {
           const first = Math.floor(rng() * 4);
           const second = (first + 1 + Math.floor(rng() * 3)) % 4;
           for (const s of [first, second]) gaps[s].push([doorAt(rng, s < 2 ? w : d, DOOR), DOOR]);
-          const doors = shell(walls, x, z, w, d, gaps);
+          const glass = glaze('house', w, d, gaps, [0, 1, 2, 3]);
+          const doors = shell(walls, x, z, w, d, gaps, WALL_T, glass);
           if (facing(doors)) {
             lots.pop();
             continue;
           }
-          build('house', x, z, w, d, walls, doors, Math.floor(rng() * 4), WALL_H);
+          build('house', x, z, w, d, walls, doors, Math.floor(rng() * 4), WALL_H, glass);
           furnish({ x, z, w, d }, true, true);
           decorate(map.buildings.length - 1);
         } else if (kind === 'shed') {
           const s = Math.floor(rng() * 4);
           gaps[s].push([Math.round((rng() * 2 - 1) * 2) / 2, DOOR]);
-          const doors = shell(walls, x, z, w, d, gaps);
+          // a little window in the wall across from the door
+          const glass = glaze('shed', w, d, gaps, [s ^ 1]);
+          const doors = shell(walls, x, z, w, d, gaps, WALL_T, glass);
           if (facing(doors)) {
             lots.pop();
             continue;
           }
-          build('shed', x, z, w, d, walls, doors, Math.floor(rng() * 4), 2.8);
+          build('shed', x, z, w, d, walls, doors, Math.floor(rng() * 4), 2.8, glass);
           if (rng() < 0.5) addContainer('crate', x, z, 1, 'crate');
           else addSpot(x, z);
           decorate(map.buildings.length - 1);
@@ -1235,12 +1554,14 @@ export function generateMap(seed: number): GameMap {
         for (const s of [e0, e1]) gaps[s].push([Math.round((rng() * 2 - 1) * (endSpan / 2 - wide / 2 - 1.5) * 2) / 2, wide]);
         const long = rot ? (rng() < 0.5 ? 2 : 3) : rng() < 0.5 ? 0 : 1;
         gaps[long].push([doorAt(rng, rot ? d : w, DOOR), DOOR]);
-        const doors = shell(walls, x, z, w, d, gaps);
+        // a row of windows high along each long side
+        const glass = glaze('warehouse', w, d, gaps, rot ? [2, 3] : [0, 1]);
+        const doors = shell(walls, x, z, w, d, gaps, WALL_T, glass);
         if (facing(doors)) {
           lots.pop();
           continue;
         }
-        build('warehouse', x, z, w, d, walls, doors, Math.floor(rng() * 4), 4.4);
+        build('warehouse', x, z, w, d, walls, doors, Math.floor(rng() * 4), 4.4, glass);
         // rows of crates with a lane down the middle, loot between, and a chest in one corner
         for (const a of [-7.5, 0, 7.5])
           for (const b of [-4.6, 4.6]) {
@@ -1281,7 +1602,9 @@ export function generateMap(seed: number): GameMap {
         const lo = bigC - x - bigW / 2 + DOOR / 2 + 1;
         const hi = bigC - x + bigW / 2 - DOOR / 2 - 1;
         gaps[rng() < 0.5 ? 0 : 1].push([Math.round((lo + rng() * (hi - lo)) * 2) / 2, DOOR]);
-        const doors = shell(walls, x, z, w, d, gaps);
+        // windows all round, clear of where the wall between the rooms meets the north and south walls
+        const glass = glaze('farm', w, d, gaps, [0, 1, 2, 3], [[px - x], [px - x]]);
+        const doors = shell(walls, x, z, w, d, gaps, WALL_T, glass);
         if (facing(doors)) continue;
         lots.push({ x, z, hw: w / 2, hd: d / 2 }, { x: fx, z, hw: 7, hd: d / 2 }, { x: yx, z, hw: yhw, hd: yhd });
         map.fields.push({ x: fx, z, hw: 7, hd: d / 2 });
@@ -1292,7 +1615,7 @@ export function generateMap(seed: number): GameMap {
         for (const hz of [-d / 2 + 1.5, 0, d / 2 - 1.5]) addContainer('hay', fx + fs * 5.4, z + hz, 1, 'hay');
         const iu = doorAt(rng, d, DOOR);
         wallLine(walls, false, px, z, d - WALL_T, [[iu, DOOR]]);
-        build('farm', x, z, w, d, walls, doors, Math.floor(rng() * 4), 3.4).inner.push({ x: px, z: z + iu, ox: 1, oz: 0, w: DOOR });
+        build('farm', x, z, w, d, walls, doors, Math.floor(rng() * 4), 3.4, glass).inner.push({ x: px, z: z + iu, ox: 1, oz: 0, w: DOOR });
         // the small room is the kitchen: a fridge at one end and a toilet at the other
         const kz = rng() < 0.5 ? -1 : 1;
         addContainer('fridge', smallC, z + (kz * d) / 4, kz > 0 ? -1 : 1, 'fridge');
@@ -1413,7 +1736,8 @@ export function generateMap(seed: number): GameMap {
       const dx = p1.x - p0.x;
       const dz = p1.z - p0.z;
       const l = Math.sqrt(dx * dx + dz * dz);
-      if (l < 6 || (p0.x - a.x) * ux + (p0.z - a.z) * uz > (p1.x - a.x) * ux + (p1.z - a.z) * uz) continue;
+      // 6 m at least, once its ends are rounded
+      if (l < 6.2 || (p0.x - a.x) * ux + (p0.z - a.z) * uz > (p1.x - a.x) * ux + (p1.z - a.z) * uz) continue;
       const blocked = lots.some((lot) => !own(a, lot) && !own(b, lot) && rayBox(p0.x, p0.z, dx / l, dz / l, l, lot.x, lot.z, lot.hw + 1.5, lot.hd + 1.5) < Infinity);
       // and never along or through a fence, a farm's own included
       const fenced = map.yards.some((y) => y.fences.some((fc) => rayBox(p0.x, p0.z, dx / l, dz / l, l, fc.x, fc.z, fc.hw + 0.4, fc.hd + 0.4) < Infinity));
@@ -1439,7 +1763,7 @@ export function generateMap(seed: number): GameMap {
         const dx = p1.x - ex;
         const dz = p1.z - ez;
         const l = Math.sqrt(dx * dx + dz * dz);
-        if (l < 6) continue;
+        if (l < 6.2) continue;
         // from a few steps off the deck on, the road keeps clear of the water
         const sx = ex + (dx / l) * 4;
         const sz = ez + (dz / l) * 4;
@@ -1646,10 +1970,11 @@ export function generateMap(seed: number): GameMap {
   // and the ones a flare gun calls, packed and waiting: they get a place and a time when one is fired
   for (let k = 0; k < FLARE_DROPS; k++) map.flares.push(addContainer('supply', 0, 0, 1, 'supply', Infinity));
 
-  // named places: each special site (the Golden Coop, a diner, a windmill, a farm, a warehouse, a container yard, a
-  // camp), then each house or shed, gathers the sites not yet in a place within TOWN meters of it; a lone house or
-  // shed gets no name. A place with a diner or a windmill in it goes by that one's name.
-  const plain = (s: (typeof sites)[number]) => s.kind === 'building' && s.b !== map.coop && !['warehouse', 'farm', 'diner', 'mill'].includes(map.buildings[s.b!].kind);
+  // named places: each special site (the Golden Coop, a diner, a windmill, the police station, the bank, a farm, a
+  // warehouse, a container yard, a camp), then each house or shed, gathers the sites not yet in a place within TOWN
+  // meters of it; a lone house or shed gets no name. A place with a diner, a windmill, the police station or the bank
+  // in it goes by that one's name.
+  const plain = (s: (typeof sites)[number]) => s.kind === 'building' && s.b !== map.coop && !['warehouse', 'farm', ...NAMED].includes(map.buildings[s.b!].kind);
   const order = sites.map((_, i) => i).sort((a, b) => Number(plain(sites[a])) - Number(plain(sites[b])) || a - b);
   const claimed = sites.map(() => false);
   const towns: number[][] = [];
@@ -1674,9 +1999,21 @@ export function generateMap(seed: number): GameMap {
     map.places.push({ name: site !== undefined ? ownName.get(sites[site].b!)! : names[named++ % names.length], x: cx, z: cz, r: r1(Math.max(18, r)) });
   }
 
+  // a door in every doorway but a warehouse's loading doors (and none in the shipping containers or the ruins)
+  map.buildings.forEach((b, bi) => {
+    if (!b.roof || b.kind === 'container') return;
+    for (const d of [...b.doors, ...b.inner]) {
+      if (d.w > DOOR + 0.01) continue;
+      d.slab = map.slabs.length;
+      map.slabs.push({ x: d.x, z: d.z, hw: d.ox ? WALL_T / 2 : d.w / 2, hd: d.ox ? d.w / 2 : WALL_T / 2, i: map.slabs.length, b: bi, ox: d.ox, oz: d.oz, bars: d.kind === 'bars', vault: d.kind === 'vault' });
+    }
+  });
   map.buildings.forEach((b, i) => {
     for (const w of b.walls) map.solids.push({ shape: 'box', ...w, what: 'wall', ref: i });
+    for (const w of b.bars) map.solids.push({ shape: 'box', ...w, what: 'bars', ref: i });
   });
+  for (const d of map.slabs) map.solids.push({ shape: 'box', x: d.x, z: d.z, hw: d.hw, hd: d.hd, what: 'door', ref: d.i });
+  for (const p of map.windows) map.solids.push({ shape: 'box', x: p.x, z: p.z, hw: p.hw, hd: p.hd, what: 'window', ref: p.i });
   map.trees.forEach((t, i) => map.solids.push({ shape: 'circle', x: t.x, z: t.z, r: t.r, what: 'tree', ref: i }));
   map.rocks.forEach((r, i) => map.solids.push({ shape: 'circle', x: r.x, z: r.z, r: r.r, what: 'rock', ref: i }));
   for (const c of map.containers) {
@@ -1687,8 +2024,11 @@ export function generateMap(seed: number): GameMap {
     else if (c.kind === 'hay') map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: HAY_HW, hd: HAY_HD, what: 'crate', ref: c.id });
     else if (c.kind === 'barrel') map.solids.push({ shape: 'circle', x: c.x, z: c.z, r: BARREL_R, what: 'barrel', ref: c.id });
     else if (c.kind === 'supply') map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: SUPPLY_HALF, hd: SUPPLY_HALF, what: 'chest', ref: c.id });
-    else if (c.kind === 'fridge') map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: FRIDGE_HW, hd: FRIDGE_HD, what: 'chest', ref: c.id });
-    else map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: CHEST_HW, hd: CHEST_HD, what: 'chest', ref: c.id });
+    else {
+      // a chest, a fridge, or furniture that opens
+      const [hw, hd] = containerHalf(c);
+      map.solids.push({ shape: 'box', x: c.x, z: c.z, hw, hd, what: 'chest', ref: c.id });
+    }
   }
   map.yards.forEach((y, i) => {
     for (const f of y.fences) map.solids.push({ shape: 'box', ...f, what: 'fence', ref: i });

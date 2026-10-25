@@ -2,8 +2,9 @@
 // around it. buildView (scene.ts) lays the road and walls and then hands a course's builder here the scene to fill.
 import type { T } from './gl';
 import type { CourseId } from './courses';
-import { LANDMARKS, fromMap, headingOf, locate, pointAt, type P2, type Track } from './track';
+import { LANDMARKS, deltaS, fromMap, headingOf, locate, pointAt, type P2, type Track } from './track';
 import type { Race } from './logic';
+import { boatHull, merge, modelKit } from './model';
 
 export type Three = typeof import('three');
 
@@ -832,10 +833,11 @@ export type Look = {
   /** After dark: the curbs, wall tops, signs and oil slicks glow a little so the edges and hazards always read. */
   night?: boolean;
   /**
-   * Where the road drops away: a striped lip with blinking studs and lit water or a dark pit past it (the default), or
-   * on the golf course just red stakes along the water's edge (the ponds show themselves).
+   * Where the road drops away: a striped lip with blinking studs and lit water or a dark pit past it (the default), on
+   * the golf course just red stakes along the water's edge (the ponds show themselves), or on the Dish the lip with the
+   * hillside falling away past it, a broken-down ranch fence on the slope.
    */
-  edge?: 'lip' | 'stakes';
+  edge?: 'lip' | 'stakes' | 'slope';
   /**
    * What fishes a kart out after a fall: the night crew's crane hook (the default), a giant golf ball retriever, a drone,
    * or on the water the coach's launch, towing you off the mud.
@@ -852,22 +854,26 @@ export type Look = {
   water?: { deep: string; shallow: string; foam: string };
   /** From this lap of your own the fog comes in: near and far, and its color. */
   fogLap?: { lap: number; near: number; far: number; color: number };
+  /** From this lap of your own the night closes in and half the street lamps go out (Hoover Nights' last lap). */
+  lightsOut?: number;
+  /** Where the sun's light comes from (the default is high in the south-west). */
+  sunAt?: [number, number, number];
 };
 export const LOOKS: Record<CourseId, Look> = {
   palm: { fog: [0xf3d6b4, 140, 720], sky: 0xfff3df, ground: 0x6e8a4a, sun: [0xffe4bd, 1.5], field: '#c4b468', lawn: '#6fa94e', curb: ['#f4f1ea', '#d23a2e'], wall: '#e6cfa6', band: '#8c1515', banner: 'PALM DRIVE', road: '#4a4a52' },
   lake: { fog: [0xeeb08e, 120, 640], sky: 0xffd8c2, ground: 0x5d6b4a, sun: [0xffb07a, 1.4], field: '#b8a862', lawn: '#79a85a', curb: ['#f4f1ea', '#2f6fb5'], wall: '#b98b5e', band: '#2f6fb5', banner: 'LAKE LAGUNITA', road: '#4a4a52' },
   barn: { fog: [0xe9e4cf, 150, 720], sky: 0xfff4dd, ground: 0x6b7a44, sun: [0xfff0d0, 1.5], field: '#c9b26a', lawn: '#88ad59', curb: ['#efe6cf', '#9a3a28'], wall: '#f3efe4', band: '#9a3a28', banner: 'RED BARN', road: '#8f6f4d' },
-  dish: { fog: [0xe6e0c8, 160, 760], sky: 0xfff6e6, ground: 0x7a7448, sun: [0xfff2d8, 1.55], field: '#cdb46c', lawn: '#b0a95e', curb: ['#f2efe6', '#5d7a3a'], wall: '#d9cfb8', band: '#5d7a3a', banner: 'THE DISH', road: '#5e5d62' },
+  dish: { fog: [0xe6e0c8, 160, 760], sky: 0xfff6e6, ground: 0x7a7448, sun: [0xfff2d8, 1.55], field: '#cdb46c', lawn: '#b0a95e', curb: ['#f2efe6', '#5d7a3a'], wall: '#d9cfb8', band: '#5d7a3a', banner: 'THE DISH', road: '#5e5d62', edge: 'slope' },
   stadium: { fog: [0xe2e8ef, 170, 760], sky: 0xf4f8ff, ground: 0x5f7a4a, sun: [0xfff4e0, 1.55], field: '#c4b98a', lawn: '#5aa04a', curb: ['#f4f1ea', '#8c1515'], wall: '#ebe6db', band: '#8c1515', banner: 'STANFORD STADIUM', road: '#4c4c54' },
   quad: { fog: [0xf1e3c6, 150, 700], sky: 0xfff4e0, ground: 0x8a7a55, sun: [0xffecc8, 1.55], field: '#d8c39a', lawn: '#7fae58', curb: ['#f4efe4', '#8c1515'], wall: '#efe0bf', band: '#8c1515', banner: 'MAIN QUAD', road: '#c9b089', joints: '#a08766' },
   // cool moonlight, low enough to read as night with the road and karts still clear
-  hoover: { fog: [0x22325e, 80, 470], sky: 0x8d9fdc, ground: 0x2a3150, sun: [0xb4c8ff, 0.8], field: '#33402c', lawn: '#3b5734', curb: ['#f4f1ea', '#d9a52e'], wall: '#c9c0b0', band: '#ffc53d', banner: 'HOOVER NIGHTS', road: '#4e4e58', night: true },
+  hoover: { fog: [0x22325e, 80, 470], sky: 0x8d9fdc, ground: 0x2a3150, sun: [0xb4c8ff, 0.8], field: '#33402c', lawn: '#3b5734', curb: ['#f4f1ea', '#d9a52e'], wall: '#c9c0b0', band: '#ffc53d', banner: 'HOOVER NIGHTS', road: '#4e4e58', night: true, lightsOut: 5 },
   // a bright late afternoon: deep green rough all round, the fairway mown in stripes beside the road
   golf: { fog: [0xf1e2bf, 150, 720], sky: 0xfff2d6, ground: 0x4f7a34, sun: [0xffe0a8, 1.6], field: '#4c8a32', lawn: '#6fb34a', curb: ['#f4f1ea', '#2f7a3a'], wall: '#efe9da', band: '#2f6b3a', banner: 'STANFORD GOLF', road: '#57575f', edge: 'stakes', rescue: 'retriever' },
   // night ninety meters up: a deep blue haze that swallows campus far below, starlight and the glow off the road
   skyway: { fog: [0x0b0d26, 120, 470], sky: 0x8d93d8, ground: 0x2a1030, sun: [0xc8ccff, 0.75], field: '#05060c', lawn: '#14161d', curb: ['#ffffff', '#ff2d6f'], wall: '#9fe8ff', band: '#c8143c', banner: 'CARDINAL SKYWAY', road: '#4a0a18', night: true, rescue: 'drone', glass: true, blackout: 5 },
   // dawn on the sloughs: a peach horizon in the east, violet overhead, low mist, and the water the road
-  slough: { fog: [0xf0c9ad, 140, 620], sky: 0xffd9b8, ground: 0x5d5a38, sun: [0xffc08a, 1.35], field: '#6b6a3c', lawn: '#7a6844', curb: ['#e8e2d0', '#8c1515'], wall: '#b7b0a0', band: '#8c1515', banner: 'HEAD OF THE SLOUGH', road: '#3f6f84', water: { deep: '#2f5d74', shallow: '#5d8f9c', foam: '#f4efe6' }, rescue: 'launch', fogLap: { lap: 5, near: 30, far: 150, color: 0xd8d4cc } },
+  slough: { sunAt: [-460, 190, -160], fog: [0xf0c9ad, 140, 620], sky: 0xffd9b8, ground: 0x5d5a38, sun: [0xffc08a, 1.35], field: '#6b6a3c', lawn: '#7a6844', curb: ['#e8e2d0', '#8c1515'], wall: '#b7b0a0', band: '#8c1515', banner: 'HEAD OF THE SLOUGH', road: '#3f6f84', water: { deep: '#173f4d', shallow: '#3f6e66', foam: '#f4efe6' }, rescue: 'launch', fogLap: { lap: 5, near: 30, far: 150, color: 0xd8d4cc } },
 };
 
 /** What a course's scenery builder gets: the scene, the track and shared helpers. */
@@ -1050,7 +1056,7 @@ function insideLoop(t: Track, x: number, z: number) {
 
 /** Instanced meshes from a list of transforms. */
 function instances(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.BufferGeometry, mat: T.Material, items: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number; rx?: number }[]) {
-  if (!items.length) return;
+  if (!items.length) return null;
   const mesh = new THREE.InstancedMesh(geo, mat, items.length);
   items.forEach((it, i) => {
     dummy.position.set(it.x, it.y, it.z);
@@ -1061,6 +1067,7 @@ function instances(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.Buffe
   });
   dummy.rotation.set(0, 0, 0);
   scene.add(mesh);
+  return mesh;
 }
 
 /** Oaks scattered where there is room. */
@@ -1741,11 +1748,13 @@ function dish(c: Scenery) {
   // barbed wire on wooden posts outside the walls
   const posts: { x: number; y: number; z: number; sx: number; sy: number; sz: number }[] = [];
   const wires: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number }[] = [];
+  // (with a gap where a boulder chute comes down to the road)
+  const chutes = c.r.hazards.filter((h) => h.kind === 'boulder').map((h) => h.s);
   for (const side of [-1, 1]) {
     let last: { x: number; z: number } | null = null;
     for (let s = 0; s <= t.length; s += 7) {
       const p = pointAt(t, s, side * (t.edge + 3));
-      const ok = clear(p.x, p.z, 2);
+      const ok = clear(p.x, p.z, 2) && !chutes.some((at) => Math.abs(deltaS(t, at, s)) < 7);
       if (ok) posts.push({ x: p.x, y: 0.7, z: p.z, sx: 0.16, sy: 1.4, sz: 0.16 });
       if (ok && last) {
         const len = Math.hypot(p.x - last.x, p.z - last.z);
@@ -2551,12 +2560,17 @@ function hoover(c: Scenery): SceneryTick {
   }
   instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x2f6a3a, emissive: 0x0a2010, side: THREE.DoubleSide }), ferns);
 
-  // lamp posts down alternate sides of the road, each with a glowing head and a pool of light across the road
+  // lamp posts down alternate sides of the road, each with a glowing head and a pool of light across the road; on the
+  // last lap every other one down Memorial Church's straight and the west straight goes out (see the tick), leaving the
+  // headlights and the beacons
   const posts: Item[] = [];
   const arms: Item[] = [];
   const heads: Item[] = [];
   const pools: Item[] = [];
+  const outHeads: Item[] = [];
+  const outPools: Item[] = [];
   let side = 1;
+  let dark = 0;
   for (let s = 6; s < t.length - 4; s += 23) {
     side = -side;
     const base = pointAt(t, s, side * (t.edge + 0.9));
@@ -2566,14 +2580,21 @@ function hoover(c: Scenery): SceneryTick {
     const pool = pointAt(t, s, side * (t.edge - 4.5));
     posts.push({ x: base.x, y: 3.2, z: base.z, sx: 0.2, sy: 6.4, sz: 0.2 });
     arms.push({ x: (base.x + head.x) / 2, y: 6.35, z: (base.z + head.z) / 2, sx: 1.8, sy: 0.12, sz: 0.12, ry });
-    heads.push({ x: head.x, y: 6.2, z: head.z, sx: 0.9, sy: 0.2, sz: 0.5, ry });
-    pools.push({ x: pool.x, y: 0.075, z: pool.z, sx: 12, sy: 12, sz: 1, rx: flat });
+    const goes = ((s > 762 && s < 898) || (s > 928 && s < 1052)) && dark++ % 2 === 0;
+    (goes ? outHeads : heads).push({ x: head.x, y: 6.2, z: head.z, sx: 0.9, sy: 0.2, sz: 0.5, ry });
+    (goes ? outPools : pools).push({ x: pool.x, y: 0.075, z: pool.z, sx: 12, sy: 12, sz: 1, rx: flat });
   }
   const metal = new THREE.MeshLambertMaterial({ color: 0x30333c });
   instances(THREE, scene, dummy, geo.box, metal, posts);
   instances(THREE, scene, dummy, geo.box, metal, arms);
-  instances(THREE, scene, dummy, geo.box, new THREE.MeshBasicMaterial({ color: 0xfff0c8 }), heads);
-  instances(THREE, scene, dummy, geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,222,160', 0.34), transparent: true, depthWrite: false }), pools);
+  const headMat = new THREE.MeshBasicMaterial({ color: 0xfff0c8 });
+  const poolMat = new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,222,160', 0.34), transparent: true, depthWrite: false });
+  instances(THREE, scene, dummy, geo.box, headMat, heads);
+  instances(THREE, scene, dummy, geo.plane, poolMat, pools);
+  const goingOut = [instances(THREE, scene, dummy, geo.box, headMat, outHeads), instances(THREE, scene, dummy, geo.plane, poolMat, outPools)];
+  const deadHeads = instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color: 0x3a3a40 }), outHeads);
+  if (deadHeads) deadHeads.visible = false;
+  let outAt = -1;
 
   // sandstone halls round the course with their long sides to the road, most of their windows lit (but none down the
   // start straight, to keep the view of the tower)
@@ -2702,7 +2723,14 @@ function hoover(c: Scenery): SceneryTick {
   }
   instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 6, 4), new THREE.MeshBasicMaterial({ color: 0xeef2ff, fog: false }), stars);
 
-  return (_race, clock) => {
+  return (race, clock) => {
+    // lights out on the last lap (with a flicker as they go)
+    const out = (race.karts[race.me]?.lap ?? 1) >= (LOOKS.hoover.lightsOut ?? 5);
+    if (out && outAt < 0) outAt = clock;
+    if (!out) outAt = -1;
+    const lit = !out || (clock - outAt < 1.4 && Math.floor((clock - outAt) * 9) % 3 === 1);
+    for (const m of goingOut) if (m) m.visible = lit;
+    if (deadHeads) deadHeads.visible = !lit;
     // the fountain's jets dance, the crane's jib swings slowly to and fro and its beacon blinks
     jets.forEach((j, k) => {
       const h = k === 6 ? 5 + Math.sin(clock * 1.7) * 1.2 : 2 + Math.sin(clock * 2.3 + k) * 0.6;
@@ -3392,7 +3420,180 @@ function golf(c: Scenery): SceneryTick {
   };
 }
 
-/** How far below the Cardinal Skyway campus lies. */
+/** Redwood Slough's dawn: where the sun is (a unit vector toward it: just up in the east, world -x) and the sky's colors. */
+export const DAWN = {
+  sun: [-0.94, 0.1, -0.33] as [number, number, number],
+  zenith: 0x1f2c62,
+  mid: 0x5b5fa3,
+  low: 0xd99aa6,
+  horizon: 0xf3c7ad,
+  /** The horizon under the sun: gold. */
+  glowHorizon: 0xffd29a,
+  sunColor: 0xffb070,
+};
+
+/** GLSL value noise and fbm, for the sky, the water and the marsh. */
+export const GLSL_NOISE = /* glsl */ `
+float pdHash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float pdNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(pdHash(i), pdHash(i + vec2(1.0, 0.0)), u.x), mix(pdHash(i + vec2(0.0, 1.0)), pdHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+float pdFbm(vec2 p) {
+  float a = 0.5;
+  float s = 0.0;
+  for (int i = 0; i < 5; i++) { s += a * pdNoise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; }
+  return s;
+}
+`;
+
+/** The slough's dawn sky: a dome that goes where the camera goes (so its reflection in the water is right too). */
+function sloughSky(THREE: Three) {
+  const col = (hex: number) => ({ value: new THREE.Color(hex) });
+  const uniforms = {
+    uSun: { value: new THREE.Vector3(...DAWN.sun).normalize() },
+    uZenith: col(DAWN.zenith),
+    uMid: col(DAWN.mid),
+    uLow: col(DAWN.low),
+    uHorizon: col(DAWN.horizon),
+    uGlowHorizon: col(DAWN.glowHorizon),
+    uSunCol: col(DAWN.sunColor),
+    uTime: { value: 0 },
+  };
+  const mat = new THREE.ShaderMaterial({
+    uniforms,
+    depthWrite: false,
+    side: THREE.BackSide,
+    fog: false,
+    vertexShader: /* glsl */ `
+      varying vec3 vDir;
+      void main() {
+        vDir = position;
+        gl_Position = projectionMatrix * viewMatrix * vec4(cameraPosition + position * 1400.0, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uSun, uZenith, uMid, uLow, uHorizon, uGlowHorizon, uSunCol;
+      uniform float uTime;
+      varying vec3 vDir;
+      ${GLSL_NOISE}
+      void main() {
+        vec3 d = normalize(vDir);
+        float h = d.y;
+        float mu = dot(d, uSun);
+        float az = dot(normalize(d.xz + 1e-5), normalize(uSun.xz)) * 0.5 + 0.5;
+        float hp = max(h, 0.0);
+        vec3 hor = mix(uHorizon, uGlowHorizon, pow(az, 4.0));
+        vec3 c = mix(hor, uLow, smoothstep(0.02, 0.16, hp) * (1.0 - 0.6 * pow(az, 6.0)));
+        c = mix(c, uMid, smoothstep(0.12, 0.42, hp));
+        c = mix(c, uZenith, smoothstep(0.38, 1.0, hp));
+        // the glow round the sun, wide and warm along the horizon
+        float m = max(mu, 0.0);
+        c += uSunCol * (pow(m, 5.0) * 0.32 + pow(m, 40.0) * 0.5 + pow(m, 400.0) * 0.8);
+        c += uSunCol * pow(az, 10.0) * 0.18 * (1.0 - smoothstep(0.0, 0.25, hp));
+        // clouds: a broken deck of altocumulus, lit pink and gold from below by the low sun, and high streaks of cirrus
+        if (h > 0.0) {
+          vec2 p = d.xz / (h + 0.08);
+          float fade = smoothstep(0.015, 0.2, h);
+          float n = pdFbm(p * 1.1 + vec2(uTime * 0.006, uTime * 0.002));
+          float n2 = pdFbm(p * 2.7 - vec2(uTime * 0.004, 0.0));
+          float cov = smoothstep(0.5, 0.74, n * 0.8 + n2 * 0.3) * fade;
+          float lit = pow(m * 0.5 + 0.5, 4.0);
+          vec3 shade = mix(vec3(0.36, 0.3, 0.5), vec3(0.62, 0.4, 0.5), smoothstep(0.0, 0.5, hp));
+          vec3 glow = mix(vec3(1.0, 0.6, 0.55), vec3(1.0, 0.82, 0.55), lit);
+          vec3 cloud = mix(shade, glow, clamp(0.25 + 0.75 * lit + (n2 - 0.5) * 0.6, 0.0, 1.0));
+          // (their thin edges catch the light)
+          cloud += uSunCol * (1.0 - smoothstep(0.5, 0.62, n * 0.8 + n2 * 0.3)) * lit * 0.6;
+          c = mix(c, cloud, cov * 0.88);
+          vec2 q = vec2(p.x * 0.35 + p.y * 0.2, p.y * 3.0 - p.x * 0.4);
+          float ci = smoothstep(0.55, 0.85, pdFbm(q * 1.4 + vec2(uTime * 0.003, 0.0))) * smoothstep(0.08, 0.45, h);
+          c = mix(c, mix(vec3(1.0, 0.78, 0.8), vec3(1.0, 0.86, 0.66), lit), ci * 0.45);
+        }
+        // the sun's disc, and the haze under the horizon
+        c = mix(c, vec3(1.0, 0.95, 0.82) * 1.6, smoothstep(0.99955, 0.99975, mu));
+        c = mix(c, hor * 0.92, 1.0 - smoothstep(-0.06, 0.0, h));
+        gl_FragColor = vec4(c, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), mat);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = -2;
+  return { mesh, tick: (clock: number) => (uniforms.uTime.value = clock) };
+}
+
+/**
+ * The hills on the slough's horizon, in three layers of haze round (cx, cz): the Santa Cruz Mountains dark against the
+ * sunrise in the east, rolling hills north and south, and across the Bay to the west only a low line of hills, pale in
+ * the sun. Each layer is one open cylinder with a painted silhouette.
+ */
+function ridges(THREE: Three, scene: T.Scene, cx: number, cz: number, r: number) {
+  const sun = Math.atan2(DAWN.sun[0], DAWN.sun[2]);
+  const layers = [
+    { R: r + 900, top: 120, base: [170, 150, 190], sunSide: [120, 92, 140], rim: 0.55, seed: 3, rough: 1 },
+    { R: r + 680, top: 70, base: [128, 112, 156], sunSide: [86, 64, 110], rim: 0.75, seed: 8, rough: 1.4 },
+    { R: r + 470, top: 26, base: [92, 84, 108], sunSide: [62, 50, 78], rim: 0.9, seed: 13, rough: 2.4 },
+  ];
+  const W = 2048;
+  const H = 128;
+  return layers.map((L, n) => {
+    const rnd = scatter(L.seed);
+    // a ridgeline from a few octaves of smooth noise round the circle (it joins up where it wraps)
+    const oct = Array.from({ length: 6 }, (_, k) => ({ f: 2 + k * k * 2 + Math.floor(rnd() * 3), a: 1 / (1 + k * L.rough), p: rnd() * Math.PI * 2 }));
+    const ridge = (u: number) => {
+      let v = 0;
+      let tot = 0;
+      for (const o of oct) {
+        v += o.a * (0.5 + 0.5 * Math.sin(u * Math.PI * 2 * o.f + o.p));
+        tot += o.a;
+      }
+      return v / tot;
+    };
+    const c = canvas(W, H, (g) => {
+      const img = g.createImageData(W, H);
+      for (let x = 0; x < W; x++) {
+        const u = x / W;
+        // (the angle round the circle: u = 0 faces +z; the cylinder's vertices go round with sin(θ) on x)
+        const th = u * Math.PI * 2;
+        const dir = Math.atan2(Math.sin(th), Math.cos(th));
+        const toSun = Math.cos(dir - sun) * 0.5 + 0.5;
+        // (west across the Bay: low)
+        const bay = Math.max(0, Math.sin(th));
+        const tall = n === 0 ? 1 - 0.75 * bay ** 1.5 : 1 - bay ** 0.6;
+        const hgt = Math.max(0, (0.25 + 0.75 * ridge(u)) * tall - (n === 2 ? 0.25 * bay : 0));
+        const top = H - 1 - hgt * (H - 4);
+        const k = toSun ** 3;
+        const rgb = L.base.map((b, i) => b + (L.sunSide[i] - b) * k);
+        for (let y = 0; y < H; y++) {
+          const o = (y * W + x) * 4;
+          if (y < top || hgt <= 0.01) {
+            img.data[o + 3] = 0;
+            continue;
+          }
+          // (a lit rim along the crest on the sun's side, and haze thickening toward the foot)
+          const depth = (y - top) / (H - top + 1);
+          const rim = Math.max(0, 1 - (y - top) / 3) * L.rim * k;
+          const haze = depth * 0.35;
+          img.data[o] = Math.min(255, rgb[0] + (243 - rgb[0]) * haze + 255 * rim * 0.6);
+          img.data[o + 1] = Math.min(255, rgb[1] + (199 - rgb[1]) * haze + 190 * rim * 0.6);
+          img.data[o + 2] = Math.min(255, rgb[2] + (173 - rgb[2]) * haze + 120 * rim * 0.6);
+          img.data[o + 3] = 255;
+        }
+      }
+      g.putImageData(img, 0, 0);
+    });
+    const tex = texture(THREE, c);
+    tex.wrapS = THREE.RepeatWrapping;
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(L.R, L.R, L.top, 160, 1, true), new THREE.MeshBasicMaterial({ map: tex, alphaTest: 0.5, side: THREE.BackSide, fog: false }));
+    m.position.set(cx, L.top / 2 - 2, cz);
+    m.renderOrder = -1;
+    scene.add(m);
+    return m;
+  });
+}
+
 /**
  * Redwood Slough at dawn: the sun just up over the East Bay hills, the Bay itself to the west past the salt ponds' pink
  * and orange brines inside the loop, Bair Island's marsh all round with power-line towers marching across it, the
@@ -3410,36 +3611,33 @@ function slough(c: Scenery): SceneryTick {
     return headingOf(p.tx, p.tz);
   };
 
-  // the sun just up in the east (world -x), its glow, and the East Bay hills under it; hills to the south and west too
-  const sun = new THREE.Mesh(new THREE.CircleGeometry(26, 32), new THREE.MeshBasicMaterial({ color: 0xfff1d0, fog: false }));
-  sun.position.set(cx - 880, 46, cz - 120);
-  sun.lookAt(cx, 0, cz);
-  const glow = new THREE.Mesh(new THREE.RingGeometry(30, 110, 40), new THREE.MeshBasicMaterial({ color: 0xffc58a, transparent: true, opacity: 0.32, fog: false, depthWrite: false }));
-  glow.position.copy(sun.position);
-  glow.lookAt(cx, 0, cz);
-  scene.add(sun, glow);
-  const hillGeo = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-  const hills: Item[] = [];
-  for (let a = 0; a < Math.PI * 2; a += Math.PI / 16) {
-    // (the Bay to the west is open water: no hills there, just a low line of the Peninsula far off)
-    const west = Math.cos(a) > 0.55;
-    const dist = 620 + rand() * 180;
-    hills.push({ x: cx + Math.cos(a) * dist * 1.1, y: -6, z: cz + Math.sin(a) * dist, sx: 120 + rand() * 90, sy: west ? 14 : 40 + rand() * 50, sz: 110 + rand() * 80 });
-  }
-  instances(THREE, scene, dummy, hillGeo, new THREE.MeshLambertMaterial({ color: 0x8a7f9a, flatShading: true }), hills);
+  // the dawn sky (a dome round the camera: the gradient, the sun just up in the east over the hills, its glow, and
+  // clouds lit pink and gold from below), and the hills on the horizon in layers of haze
+  const sky = sloughSky(THREE);
+  scene.add(sky.mesh);
+  // (the last lap's fog swallows them)
+  const hills = ridges(THREE, scene, cx, cz, Math.max(rx, rz));
+  const fogLap = LOOKS.slough.fogLap?.lap ?? Infinity;
 
-  // the Bay to the west, past the loop: open water to the horizon
-  const bayTex = waterTexture(THREE);
-  bayTex.repeat.set(30, 30);
-  const bay = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1800, 20, 20), new THREE.MeshLambertMaterial({ map: bayTex, color: 0x9fb8c8 }));
-  bay.rotation.x = -Math.PI / 2;
-  bay.position.set(cx + rx + 60 + 700, -0.02, cz);
-  scene.add(bay);
+  // (the Bay itself, to the west past the loop, is water: see water.ts)
+  const vc = lambert(0xffffff, { vertexColors: true });
+  const vcLit = new THREE.MeshBasicMaterial({ vertexColors: true });
+  /** A spot `d` off the channel at s, turned so that local +x faces back across the channel. */
+  const lot = (s: number, d: number) => {
+    const p = at(s, d);
+    return { x: p.x, z: p.z, ry: face(s) + (d < 0 ? Math.PI : 0) };
+  };
+  const hazards = c.r.hazards;
+  const anchor = (pred: (h: (typeof hazards)[number]) => boolean, fallback: number) => {
+    const hs = hazards.filter(pred);
+    return hs.length ? hs.reduce((a, h) => a + h.s, 0) / hs.length : fallback;
+  };
 
-  // the Cargill salt ponds inside the loop: flat colored brines between low levees
-  const pondColors = [0xe46f8a, 0xf0a35a, 0x8bb36a, 0xd9839a, 0xe8b46a];
+  // the Cargill salt ponds inside the loop: brines in pastel pinks, salmon, ochre and green between dirt levees with a
+  // track along their tops, and a crust of salt round their edges
+  const pondColors = [0xe87a95, 0xf2a46a, 0x9cc08a, 0xd98fb0, 0xe9c06e, 0xc96f8c];
   const ponds: { x: number; z: number; w: number; d: number; c: number }[] = [];
-  for (let n = 0; n < 60 && ponds.length < 7; n++) {
+  for (let n = 0; n < 80 && ponds.length < 8; n++) {
     const x = cx + (rand() - 0.2) * rx * 1.3;
     const z = cz + (rand() - 0.5) * rz * 1.3;
     const w = 40 + rand() * 50;
@@ -3448,162 +3646,376 @@ function slough(c: Scenery): SceneryTick {
     if (ponds.some((p) => Math.abs(p.x - x) < (p.w + w) / 2 + 6 && Math.abs(p.z - z) < (p.d + d) / 2 + 6)) continue;
     ponds.push({ x, z, w, d, c: pondColors[ponds.length % pondColors.length] });
   }
-  for (const p of ponds) {
-    const m = new THREE.Mesh(geo.plane, lambert(p.c));
-    m.rotation.x = -Math.PI / 2;
-    m.scale.set(p.w, p.d, 1);
-    m.position.set(p.x, 0.02, p.z);
+  if (ponds.length) {
+    const brine = texture(
+      THREE,
+      canvas(128, 128, (g) => {
+        const grad = g.createRadialGradient(64, 64, 10, 64, 64, 90);
+        grad.addColorStop(0, '#ffffff');
+        grad.addColorStop(0.7, '#e8e4e4');
+        grad.addColorStop(0.92, '#f8f4ee');
+        grad.addColorStop(1, '#ffffff');
+        g.fillStyle = grad;
+        g.fillRect(0, 0, 128, 128);
+        const r2 = scatter(9);
+        for (let i = 0; i < 70; i++) {
+          g.strokeStyle = `rgba(255,255,255,${0.15 + r2() * 0.25})`;
+          g.lineWidth = 1;
+          g.beginPath();
+          g.ellipse(r2() * 128, r2() * 128, 6 + r2() * 14, 1 + r2() * 2, 0.3, 0, Math.PI * 2);
+          g.stroke();
+        }
+        g.strokeStyle = 'rgba(255,255,255,0.9)';
+        g.lineWidth = 5;
+        g.strokeRect(2, 2, 124, 124);
+      }),
+    );
+    const plane = new THREE.PlaneGeometry(1, 1);
+    const rgbOf = (hex: number): [number, number, number] => {
+      const k = new THREE.Color(hex);
+      return [k.r, k.g, k.b];
+    };
+    const M = (x: number, y: number, z: number, sx: number, sz: number) => new THREE.Matrix4().makeRotationX(-Math.PI / 2).premultiply(new THREE.Matrix4().makeScale(sx, 1, sz)).premultiply(new THREE.Matrix4().makeTranslation(x, y, z));
+    const m = new THREE.Mesh(merge(THREE, ponds.map((p) => ({ g: plane, m: M(p.x, 0.03, p.z, p.w, p.d), color: rgbOf(p.c) }))), lambert(0xffffff, { map: brine, vertexColors: true, emissive: 0x2a1a20 }));
     scene.add(m);
-  }
-  instances(
-    THREE,
-    scene,
-    dummy,
-    geo.box,
-    lambert(0xa89878),
-    ponds.flatMap((p) => [
-      { x: p.x, y: 0.4, z: p.z - p.d / 2 - 1, sx: p.w + 4, sy: 0.8, sz: 2 },
-      { x: p.x, y: 0.4, z: p.z + p.d / 2 + 1, sx: p.w + 4, sy: 0.8, sz: 2 },
-      { x: p.x - p.w / 2 - 1, y: 0.4, z: p.z, sx: 2, sy: 0.8, sz: p.d + 4 },
-      { x: p.x + p.w / 2 + 1, y: 0.4, z: p.z, sx: 2, sy: 0.8, sz: p.d + 4 },
-    ]),
-  );
-
-  // power-line towers marching across the marsh, and the lines between them
-  const towers: Item[] = [];
-  const lines: Item[] = [];
-  for (const [ax, az, bx, bz] of [
-    [cx - rx - 120, cz - rz * 0.4, cx + rx + 80, cz + rz * 0.2],
-    [cx - rx * 0.3, cz - rz - 140, cx + rx * 0.1, cz + rz + 160],
-  ]) {
-    const len = Math.hypot(bx - ax, bz - az);
-    const n = Math.round(len / 70);
-    const ry = Math.atan2(bx - ax, bz - az);
-    let last: { x: number; z: number } | null = null;
-    for (let k = 0; k <= n; k++) {
-      const x = ax + ((bx - ax) * k) / n;
-      const z = az + ((bz - az) * k) / n;
-      if (!clear(x, z, 30)) {
-        last = null;
-        continue;
+    plane.dispose();
+    const levees = modelKit(THREE);
+    for (const p of ponds) {
+      for (const [x, z, sx, sz] of [
+        [p.x, p.z - p.d / 2 - 1.5, p.w + 6, 3],
+        [p.x, p.z + p.d / 2 + 1.5, p.w + 6, 3],
+        [p.x - p.w / 2 - 1.5, p.z, 3, p.d],
+        [p.x + p.w / 2 + 1.5, p.z, 3, p.d],
+      ]) {
+        levees.box(0x8a7458, x, 0.35, z, sx, 0.8, sz);
+        levees.box(0xb8a688, x, 0.76, z, sx > sz ? sx : 1.4, 0.04, sx > sz ? 1.4 : sz);
       }
-      towers.push({ x, y: 12, z, sx: 2.2, sy: 24, sz: 2.2, ry });
-      towers.push({ x, y: 22, z, sx: 9, sy: 0.4, sz: 0.5, ry });
-      if (last) lines.push({ x: (x + last.x) / 2, y: 21.5, z: (z + last.z) / 2, sx: 0.08, sy: 0.08, sz: Math.hypot(x - last.x, z - last.z), ry });
-      last = { x, z };
+    }
+    scene.add(levees.build(vc, vcLit));
+  }
+
+  // power lines marching across the marsh on lattice pylons, the wires sagging between them
+  {
+    const pylon = modelKit(THREE);
+    const steel = 0x8e939a;
+    const spots: { x: number; z: number; ry: number; line: number }[] = [];
+    [
+      [cx - rx - 120, cz - rz * 0.4, cx + rx + 80, cz + rz * 0.2],
+      [cx - rx * 0.3, cz - rz - 140, cx + rx * 0.1, cz + rz + 160],
+    ].forEach(([ax, az, bx, bz], line) => {
+      const len = Math.hypot(bx - ax, bz - az);
+      const n = Math.round(len / 70);
+      const ry = Math.atan2(bx - ax, bz - az);
+      for (let k = 0; k <= n; k++) {
+        const x = ax + ((bx - ax) * k) / n;
+        const z = az + ((bz - az) * k) / n;
+        if (clear(x, z, 30)) spots.push({ x, z, ry, line });
+      }
+    });
+    const H = 26;
+    for (const sp of spots) {
+      pylon.place(sp.x, 0, sp.z, sp.ry);
+      // four legs leaning in to the waist, the body up to the peak, cross-arms with insulators, and the bracing
+      for (const [lx, lz] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
+        pylon.cyl(steel, lx * 1.6, H * 0.3, lz * 1.6, 0.09, H * 0.62, 0.09, lz * 0.1, 0, -lx * 0.1);
+        pylon.cyl(steel, lx * 0.65, H * 0.78, lz * 0.65, 0.07, H * 0.42, 0.07, lz * 0.02, 0, -lx * 0.02);
+      }
+      for (let y = 2; y < H; y += 3.2) {
+        const half = y < H * 0.6 ? 2.2 - (y / (H * 0.6)) * 1.5 : 0.7 - ((y - H * 0.6) / (H * 0.4)) * 0.3;
+        for (const sd of [-1, 1]) {
+          pylon.box(steel, sd * half, y, 0, 0.06, 0.06, half * 2);
+          pylon.box(steel, 0, y, sd * half, half * 2, 0.06, 0.06);
+          pylon.box(steel, sd * half, y + 1.6, 0, 0.05, 3.6, 0.05, 0.7 * sd, 0, 0);
+        }
+      }
+      for (const [y, w] of [[H * 0.72, 7], [H * 0.86, 5.4]]) {
+        pylon.box(steel, 0, y, 0, w * 2, 0.35, 0.5);
+        for (const sd of [-1, 1]) pylon.cyl(0xd8d0c4, sd * (w - 0.3), y - 0.8, 0, 0.12, 1.4, 0.12);
+      }
+      pylon.cone(steel, 0, H + 1, 0, 0.5, 2, 0.5);
+    }
+    pylon.place();
+    if (pylon.count()) scene.add(pylon.build(vc, vcLit));
+    // (the wires: a catenary from each arm to the next tower's)
+    const wire = new THREE.LineBasicMaterial({ color: 0x2b2b30, transparent: true, opacity: 0.8 });
+    for (let k = 1; k < spots.length; k++) {
+      const a = spots[k - 1];
+      const b = spots[k];
+      if (a.line !== b.line || Math.hypot(a.x - b.x, a.z - b.z) > 90) continue;
+      for (const [y, w] of [[H * 0.72, 6.7], [H * 0.86, 5.1]]) {
+        for (const sd of [-1, 1]) {
+          const pts: T.Vector3[] = [];
+          const ox = Math.cos(a.ry) * sd * w;
+          const oz = -Math.sin(a.ry) * sd * w;
+          for (let q = 0; q <= 12; q++) {
+            const u = q / 12;
+            pts.push(new THREE.Vector3(a.x + (b.x - a.x) * u + ox, y - 1.6 - 4 * u * (1 - u) * 3.2, a.z + (b.z - a.z) * u + oz));
+          }
+          scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wire));
+        }
+      }
     }
   }
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.12, 1, 1, 4), lambert(0x7b7f88), towers);
-  instances(THREE, scene, dummy, geo.box, lambert(0x2b2b30), lines);
 
-  // the Stanford Rowing Center: a two-story boathouse with cardinal trim beside the start, its bay doors open on the
-  // racks of shells, and the docks in front
+  // the Stanford Rowing Center by the start: a long two-story boathouse, cream with cardinal trim, its bay doors open on
+  // racks of shells, a glass band of the erg room upstairs behind a balcony, and shells on slings out on the apron
+  const shellColors = [0x8c1515, 0xf2f2f0, 0x2f6fb5, 0xf2c230, 0x8c1515, 0xd0d4da];
   {
-    const s = 1196;
-    const d = t.edge + 14;
-    const p = at(s, d);
-    const h = face(s);
-    const g = new THREE.Group();
-    const add = (geom: T.BufferGeometry, mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
-      const m = new THREE.Mesh(geom, mat);
-      m.position.set(x, y, z);
-      m.scale.set(sx, sy, sz);
-      g.add(m);
-      return m;
-    };
-    const wallMat = lambert(0xe9e1d0);
-    const trim = lambert(0x8c1515);
-    add(geo.box, wallMat, 0, 4.5, 0, 12, 9, 34);
-    add(geo.box, trim, 0, 9.3, 0, 12.6, 0.6, 34.6);
-    const roof = add(geo.roof, lambert(0x5a5f66), 0, 11.2, 0, 9.5, 3.4, 26);
-    roof.rotation.y = Math.PI / 4;
-    // (its front, toward the water: local +x faces back across the channel to the left)
-    for (let k = -1; k <= 1; k++) add(geo.box, lambert(0x2a2622), 6.05, 2.4, k * 10, 0.2, 4.2, 6.5);
-    for (let k = -3; k <= 3; k++) add(geo.box, lambert(0x9cc2d8, { emissive: 0x24343c }), 6.05, 7, k * 4.5, 0.15, 1.6, 2.2);
-    // (racks of shells, end on, through the bay doors)
-    for (let k = -1; k <= 1; k++) for (let j = 0; j < 3; j++) add(geo.box, [trim, lambert(0xf2f2f0), lambert(0x2f6fb5)][(k + j + 3) % 3], 5.6, 1.1 + j * 1.1, k * 10, 1.2, 0.25, 5.5);
-    // a banner on its side: STANFORD ROWING
+    const L = lot(t.length - 26, t.edge + 16);
+    const mk = modelKit(THREE);
+    mk.place(L.x, 0, L.z, L.ry);
+    const cream = 0xe9e1d0;
+    const trim = 0x8c1515;
+    // (the plinth up to the quay, the apron in front)
+    mk.box(0x9d968a, 0, 0.72, 0, 16, 1.5, 38);
+    mk.box(0xb7b0a2, 6.5, 1.47, 0, 5, 0.06, 36);
+    // the hall and its roof: a shallow gable in standing-seam grey
+    mk.box(cream, -1.5, 5.95, 0, 12, 9, 34);
+    mk.box(trim, -1.5, 1.85, 0, 12.1, 0.6, 34.1);
+    mk.box(trim, -1.5, 10.6, 0, 12.6, 0.5, 34.6);
+    for (const sd of [-1, 1]) mk.box(0x5a5f66, -1.5 + sd * 3.3, 11.9, 0, 7.2, 0.3, 35.4, 0, 0, -sd * 0.34);
+    for (let k = -8; k <= 8; k++) for (const sd of [-1, 1]) mk.box(0x6c7178, -1.5 + sd * 3.3, 12.07, k * 2, 7.2, 0.06, 0.08, 0, 0, -sd * 0.34);
+    // the bay doors, open, with racks of shells inside (hull up, in tiers)
+    for (let b = -1; b <= 1; b++) {
+      mk.box(0x1e1c1a, 4.52, 3.6, b * 10.5, 0.1, 3.9, 7);
+      mk.box(trim, 4.56, 5.7, b * 10.5, 0.14, 0.3, 7.4);
+      for (let j = 0; j < 4; j++) for (const sd of [-1, 1]) mk.box(shellColors[(b + 2 + j + (sd > 0 ? 1 : 0)) % shellColors.length], 3.9, 2.3 + j * 0.9, b * 10.5 + sd * 1.6, 1.4, 0.18, 0.42);
+      for (const sd of [-1, 1]) mk.box(0x9aa0a8, 4.0, 3.7, b * 10.5 + sd * 3.2, 0.12, 3.6, 0.12);
+    }
+    // upstairs: a band of glass, the balcony and its rail
+    mk.box(0x2c4a5e, 4.52, 8.1, 0, 0.1, 2.0, 31);
+    for (let k = -7; k <= 7; k++) mk.box(cream, 4.56, 8.1, k * 2.1, 0.12, 2.0, 0.18);
+    mk.box(0xd8d2c4, 5.3, 6.5, 0, 1.6, 0.18, 33);
+    mk.box(0xf2f2f0, 6.05, 7.45, 0, 0.06, 0.06, 33);
+    for (let k = -16; k <= 16; k++) mk.box(0xf2f2f0, 6.05, 7.0, k, 0.04, 0.9, 0.04);
+    // (the gable ends' windows)
+    for (const sd of [-1, 1]) for (let k = -1; k <= 1; k++) mk.box(0x2c4a5e, -1.5 + k * 3, 7.5, sd * 17.03, 1.6, 2.4, 0.08);
+    // shells upside down on slings on the apron, and a coach's launch on its trailer
+    for (let k = 0; k < 3; k++) {
+      const z = -10 + k * 7;
+      for (const sd of [-1, 1]) {
+        mk.box(0x6b7078, 6.3, 0.95 + 1.45, z + sd * 2.2, 0.06, 0.9, 0.06);
+        mk.box(0x2b2b30, 6.3, 1.4 + 1.45, z + sd * 2.2, 0.5, 0.05, 0.05);
+      }
+      mk.ball(shellColors[k * 2 % shellColors.length], 6.3, 2.95, z, 0.24, 0.16, 3.6);
+    }
+    mk.box(0xdfe3e8, 7.2, 2.3, 12, 1.9, 0.8, 5);
+    mk.box(0x8c1515, 7.2, 2.6, 12, 1.92, 0.12, 4);
+    for (const sd of [-1, 1]) mk.cyl(0x141416, 7.2 + sd * 0.95, 1.75, 11, 0.3, 0.2, 0.3, 0, 0, Math.PI / 2);
+    // the flagpole, and the flag
+    mk.cyl(0xe8e8e8, 8.2, 7.5, -15, 0.08, 12, 0.08);
+    mk.box(trim, 8.2, 12.6, -15.9, 0.03, 1.1, 1.8);
+    mk.place();
+    scene.add(mk.build(vc, vcLit));
+    // the banner on its side: STANFORD ROWING CENTER
     const sign = texture(
       THREE,
       canvas(512, 64, (q) => {
         q.fillStyle = '#8c1515';
         q.fillRect(0, 0, 512, 64);
         q.fillStyle = '#ffffff';
-        q.font = 'bold 36px Georgia, serif';
+        q.font = 'bold 34px Georgia, serif';
         q.textAlign = 'center';
         q.textBaseline = 'middle';
         q.fillText('STANFORD ROWING CENTER', 256, 34);
       }),
     );
-    const banner = add(geo.plane, new THREE.MeshLambertMaterial({ map: sign }), 6.12, 8.2, 0, 26, 2.2, 1);
-    banner.rotation.y = Math.PI / 2;
-    g.position.set(p.x, 1.45, p.z);
-    g.rotation.y = h;
-    scene.add(g);
+    const banner = new THREE.Mesh(geo.plane, new THREE.MeshLambertMaterial({ map: sign }));
+    banner.scale.set(20, 2.2, 1);
+    banner.position.set(L.x + Math.cos(L.ry) * 4.65, 10.45 - 1.4, L.z - Math.sin(L.ry) * 4.65);
+    banner.rotation.y = L.ry + Math.PI / 2;
+    scene.add(banner);
   }
 
-  // Docktown's houseboats along Westpoint Slough and outside Docktown Bend: pastel boxes with dark roofs
-  const boats: Item[] = [];
-  const roofs: Item[] = [];
-  const pastel = [0xf2b8a2, 0xa8d0c6, 0xf3dca0, 0xc6b7e2, 0xe6e6dc];
-  const boatMats = pastel.map((c) => lambert(c));
-  const byColor: Item[][] = pastel.map(() => []);
-  for (let s = 1068; s < 1150; s += 9) {
-    const p = at(s, t.edge + 6 + rand() * 3);
-    if (!clear(p.x, p.z, 3)) continue;
-    const it = { x: p.x, y: 1.4, z: p.z, sx: 5, sy: 2.8, sz: 7, ry: face(s) + (rand() - 0.5) * 0.3 };
-    byColor[boats.length % pastel.length].push(it);
-    boats.push(it);
-    roofs.push({ ...it, y: 3.1, sx: 5.6, sy: 0.4, sz: 7.6 });
-  }
-  byColor.forEach((items, n) => instances(THREE, scene, dummy, geo.box, boatMats[n], items));
-  instances(THREE, scene, dummy, geo.box, lambert(0x4a4440), roofs);
-
-  // the Port of Redwood City past the Turning Basin: two gantry cranes and the aggregate piles
+  // Docktown's houseboats along Westpoint Slough: pastel cabins on dark floats, decks with white rails, pitched and flat
+  // roofs, plants in pots, a kayak or two, and a gangway each to the quay; a few windows lit
   {
-    const cranes: Item[] = [];
-    for (const [s, d] of [[345, 58], [400, 50]] as const) {
-      const p = at(s, d);
-      const h = face(s);
-      const ox = Math.cos(h);
-      const oz = -Math.sin(h);
-      for (const side of [-1, 1]) cranes.push({ x: p.x + ox * side * 5, y: 14, z: p.z + oz * side * 5, sx: 1.2, sy: 28, sz: 1.2, ry: h });
-      cranes.push({ x: p.x, y: 27, z: p.z, sx: 12, sy: 2, sz: 2, ry: h });
-      cranes.push({ x: p.x - Math.sin(h) * 6, y: 29, z: p.z - Math.cos(h) * 6, sx: 2.2, sy: 2.2, sz: 30, ry: h });
+    const barge = hazards.find((h) => h.kind === 'barge');
+    const s0 = barge?.span ? barge.span[0] + 3 : 1068;
+    const pastel = [0xf2b8a2, 0xa8d0c6, 0xf3dca0, 0xc6b7e2, 0xe6e6dc, 0xb9d6ef, 0xf0c6d4];
+    const mk = modelKit(THREE);
+    for (let s = s0; s < s0 + 84; s += 9.5) {
+      const L = lot(s, t.edge + 6 + rand() * 2.5);
+      if (!clear(L.x, L.z, 3)) continue;
+      mk.place(L.x, 0, L.z, L.ry + (rand() - 0.5) * 0.2);
+      const w = 4.2 + rand() * 1.2;
+      const l = 6.5 + rand() * 2;
+      const hue = pastel[Math.floor(rand() * pastel.length)];
+      mk.box(0x3a3d42, 0, 0.35, 0, w + 0.8, 0.7, l + 1);
+      mk.box(0x9a8a74, 0, 0.74, 0, w + 0.7, 0.08, l + 0.9);
+      mk.box(hue, -0.2, 1.95, 0, w - 0.6, 2.4, l - 1.6);
+      // (windows on the water side, a door, and the rail round the deck)
+      for (let k = -1; k <= 1; k++) {
+        if (rand() < 0.25) mk.glow(0xffd9a0, (w - 0.6) / 2 - 0.18, 2.1, k * 1.9, 0.04, 0.9, 1.1);
+        else mk.box(0x334a58, (w - 0.6) / 2 - 0.17, 2.1, k * 1.9, 0.04, 0.9, 1.1);
+        mk.box(0xf6f2ea, (w - 0.6) / 2 - 0.16, 2.1, k * 1.9, 0.03, 1.05, 0.08);
+      }
+      mk.box(0x6a4a34, -0.2, 1.55, (l - 1.6) / 2 + 0.01, 0.9, 1.6, 0.05);
+      for (const sd of [-1, 1]) mk.box(0xf6f2ea, sd * ((w + 0.6) / 2), 1.25, 0, 0.05, 0.05, l + 0.8);
+      for (let k = -3; k <= 3; k++) for (const sd of [-1, 1]) mk.box(0xf6f2ea, sd * ((w + 0.6) / 2), 1.0, (k * (l + 0.6)) / 6, 0.05, 0.5, 0.05);
+      if (rand() < 0.55) {
+        for (const sd of [-1, 1]) mk.box(0x4a4440, -0.2 + sd * (w / 4), 3.6, 0, w / 2 + 0.3, 0.12, l - 1.0, 0, 0, -sd * 0.5);
+      } else {
+        mk.box(0x4a4440, -0.2, 3.25, 0, w - 0.2, 0.18, l - 1.1);
+        mk.box(0xf6f2ea, -0.2, 3.55, 0, 0.05, 0.4, l - 1.3);
+      }
+      mk.ball(0x4f7d3a, w / 2 - 0.1, 1.2, l / 2 - 0.3, 0.35, 0.4, 0.35);
+      mk.cyl(0xa0522d, w / 2 - 0.1, 0.95, l / 2 - 0.3, 0.25, 0.4, 0.25);
+      if (rand() < 0.5) mk.ball([0xff8c1a, 0xe63b2e, 0x2fa0c8][Math.floor(rand() * 3)], (w + 0.5) / 2 - 0.1, 0.95, 0, 0.2, 0.14, 1.6);
+      // (the gangway to the quay, and two pilings to moor to)
+      mk.box(0x7a6a58, -(w / 2 + 1.8), 1.2, 0, 3.4, 0.08, 0.9, 0, 0, -0.2);
+      for (const sd of [-1, 1]) mk.cyl(0x4a3a2c, -(w / 2 + 0.7), 1.4, sd * (l / 2 - 0.5), 0.18, 3.2, 0.18);
     }
-    instances(THREE, scene, dummy, geo.box, lambert(0xd8452c), cranes);
-    const piles: Item[] = [];
+    mk.place();
+    if (mk.count()) scene.add(mk.build(vc, vcLit));
+  }
+
+  // the Port of Redwood City past the Turning Basin: gantry cranes over the wharf, mounds of aggregate and the white salt
+  // stack, sheds and silos, and a bulk carrier loading from a conveyor
+  {
+    const sp = anchor((h) => h.kind === 'ferry', 404);
+    const mk = modelKit(THREE);
+    const crane = (s: number, d: number) => {
+      const L = lot(s, d);
+      if (!clear(L.x, L.z, 10)) return;
+      mk.place(L.x, 0, L.z, L.ry);
+      const red = 0xd8452c;
+      // (four legs on rails, the portal beams, the boom out over the water and back over the yard, the machinery house)
+      for (const lx of [-5, 5]) for (const lz of [-4, 4]) mk.box(red, lx, 12, lz, 1.0, 24, 1.0);
+      for (const lx of [-5, 5]) mk.box(red, lx, 23.5, 0, 1.2, 1.4, 9.4);
+      for (const lz of [-4, 4]) mk.box(red, 0, 23.5, lz, 11, 1.4, 1.0);
+      for (const lx of [-5, 5]) mk.box(red, lx, 12, 0, 0.5, 0.5, 8.2, 0.9, 0, 0);
+      mk.box(red, 9, 26, 0, 36, 1.8, 2.2);
+      mk.box(red, -12, 26, 0, 8, 1.6, 2);
+      for (const sd of [-1, 1]) mk.box(red, 2 + sd * 4, 31, 0, 0.5, 9, 0.5, 0, 0, sd * 0.4);
+      mk.box(0xe8e2d4, -2, 28.5, 0, 6, 3.2, 3.6);
+      mk.box(0x2a3d4a, 4, 24.3, 1.8, 1.8, 1.6, 1.4);
+      mk.box(0x2b2b30, 18, 21, 0, 0.08, 9, 0.08);
+      mk.box(0xffc21a, 18, 16.4, 0, 1.4, 0.5, 1.0);
+      mk.glow(0xff3b2a, 27, 27.1, 0, 0.3, 0.3, 0.3);
+    };
+    crane(sp - 59, 58);
+    crane(sp - 4, 50);
+    // mounds of gravel and sand, and the salt stack
+    const mound = (x: number, z: number, r: number, h: number, hex: number) => {
+      const g = new THREE.SphereGeometry(1, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+      const p = g.getAttribute('position');
+      const rr = scatter(Math.round(x * 13 + z * 7));
+      for (let k = 0; k < p.count; k++) {
+        const y = p.getY(k);
+        const j = 1 + (rr() - 0.5) * 0.18 * (1 - y);
+        p.setXYZ(k, p.getX(k) * j, Math.pow(y, 0.8), p.getZ(k) * j);
+      }
+      g.computeVertexNormals();
+      mk.place();
+      mk.geo(g, hex, x, -0.2, z, r, h, r);
+    };
+    // (none of them spilling into the bulk carrier's berth: see water.ts)
+    const berth = lot(sp - 32, 62);
+    const inBerth = (x: number, z: number, r: number) => {
+      const dx = x - berth.x;
+      const dz = z - berth.z;
+      return Math.abs(dx * Math.sin(berth.ry) + dz * Math.cos(berth.ry)) < 50 + r && Math.abs(dx * Math.cos(berth.ry) - dz * Math.sin(berth.ry)) < 14 + r;
+    };
     for (let k = 0; k < 6; k++) {
-      const p = at(330 + k * 15, 70 + rand() * 20);
-      if (clear(p.x, p.z, 10)) piles.push({ x: p.x, y: 5, z: p.z, sx: 9 + rand() * 4, sy: 10 + rand() * 5, sz: 9 + rand() * 4 });
+      const p = at(sp - 74 + k * 15, 72 + rand() * 18);
+      const rr = 8 + rand() * 4;
+      if (clear(p.x, p.z, 12) && !inBerth(p.x, p.z, rr)) mound(p.x, p.z, rr, 7 + rand() * 4, [0xb9aa92, 0x9a8e7a, 0xc9b896][k % 3]);
     }
-    instances(THREE, scene, dummy, geo.cone, lambert(0xb9aa92, { flatShading: true }), piles);
+    {
+      const p = at(sp - 20, 110);
+      if (clear(p.x, p.z, 26)) mound(p.x, p.z, 24, 17, 0xf4f1ec);
+    }
+    // sheds with corrugated roofs, and silos
+    for (let k = 0; k < 3; k++) {
+      const L = lot(sp - 35 + k * 22, 92 + (k % 2) * 6);
+      if (!clear(L.x, L.z, 12)) continue;
+      mk.place(L.x, 0, L.z, L.ry);
+      mk.box([0xc8c2b4, 0xa9b4bb, 0xd2c6ae][k], 0, 3.5, 0, 12, 7, 18);
+      for (const sd of [-1, 1]) mk.box(0x7f878e, sd * 3.2, 7.6, 0, 6.8, 0.2, 18.6, 0, 0, -sd * 0.22);
+      mk.box(0x3a3d42, 6.02, 2.5, 0, 0.1, 4.5, 6);
+    }
+    for (let k = 0; k < 3; k++) {
+      const p = at(sp + 20 + k * 6, 80);
+      if (!clear(p.x, p.z, 5)) continue;
+      mk.place();
+      mk.cyl(0xd8d8d4, p.x, 9, p.z, 2.6, 18, 2.6);
+      mk.cone(0xbfbfba, p.x, 19, p.z, 2.7, 2, 2.7);
+    }
+    // the bulk carrier at the wharf: hull with its boot top, hatch covers, deck cranes, the white house aft and its stack
+    {
+      const L = lot(sp - 32, 62);
+      if (clear(L.x, L.z, 16)) {
+        mk.place(L.x, 0, L.z, L.ry);
+        mk.geo(boatHull(THREE, 80, 14, 8.5, true), 0x2f4256, 0, -0.5, 0);
+        mk.box(0x8c2a1e, 0, 0.5, 0, 13.4, 1.2, 74, 0, 0, 0);
+        for (let k = -2; k <= 2; k++) {
+          mk.box(0x4a5866, 0, 8.6, k * 12 + 8, 10, 1.0, 9);
+          mk.box(0x3a4552, 0, 9.15, k * 12 + 8, 10.2, 0.1, 0.4);
+        }
+        for (let k = 0; k < 3; k++) {
+          const z = -6 + k * 12 + 8;
+          mk.cyl(0xe8d24a, 3, 12, z, 0.5, 7, 0.5);
+          mk.box(0xe8d24a, 3, 15, z + 6, 0.5, 0.5, 13, -0.45, 0, 0);
+        }
+        mk.box(0xf2efe8, 0, 12.5, -30, 12, 8, 10);
+        mk.box(0xf2efe8, 0, 17.5, -30, 10, 3, 8);
+        for (let f = 0; f < 3; f++) mk.box(0x26323c, 0, 10.5 + f * 2.6, -24.95, 10, 0.8, 0.1);
+        mk.box(0x26323c, 0, 18, -25.95, 9.2, 1.0, 0.1);
+        mk.box(0xf2efe8, 0, 19.5, -30, 16, 0.4, 3);
+        mk.cyl(0x23262c, 0, 22, -34, 1.4, 6, 1.4);
+        mk.cyl(0x8c1515, 0, 21.6, -34, 1.45, 1.2, 1.45);
+        mk.glow(0xffe6a0, 0, 25, -26, 0.3, 0.3, 0.3);
+        // (the conveyor from the mounds up over its rail)
+        mk.box(0x8a8f96, -14, 9, 12, 2, 1, 34, -0.25, 0.9, 0);
+        for (let k = 0; k < 4; k++) mk.box(0x6a7076, -6 - k * 4.2, 4, 12 + k * 3.5, 0.4, 8 - k * 1.6, 0.4);
+      }
+    }
+    mk.place();
+    if (mk.count()) scene.add(mk.build(vc, vcLit));
   }
 
-  // the lock-keeper's hut on the Tide Gates
+  // the lock-keeper's hut on the Tide Gates: windows all round, a red roof, a signal mast
   {
-    const p = at(140, edgeAtLim(t, 140, 1) + 4);
-    const hut = new THREE.Mesh(geo.box, lambert(0xd9d2c0));
-    hut.scale.set(4, 3, 5);
-    hut.position.set(p.x, 3, p.z);
-    hut.rotation.y = face(140);
-    const roof = new THREE.Mesh(geo.box, lambert(0x8c1515));
-    roof.scale.set(4.6, 0.4, 5.6);
-    roof.position.set(p.x, 4.7, p.z);
-    roof.rotation.y = face(140);
-    scene.add(hut, roof);
+    const s = anchor((h) => h.kind === 'bollard' && h.look === 'gate', 140);
+    const L = lot(s, edgeAtLim(t, s, 1) + 5);
+    const mk = modelKit(THREE);
+    mk.place(L.x, 1.45, L.z, L.ry);
+    mk.box(0xd9d2c0, 0, 1.5, 0, 4, 3, 5);
+    for (const sd of [-1, 1]) mk.box(0x8c1515, sd * 1.1, 3.55, 0, 2.6, 0.18, 5.8, 0, 0, -sd * 0.42);
+    mk.box(0x2c4a5e, 2.01, 1.9, 0, 0.06, 1.1, 3.6);
+    for (const sd of [-1, 1]) mk.box(0x2c4a5e, 0, 1.9, sd * 2.51, 2.6, 1.1, 0.06);
+    mk.box(0x6a4a34, -2.01, 1.1, 0, 0.06, 2, 1);
+    mk.cyl(0xe8e8e8, -1.5, 4.5, 2, 0.06, 6, 0.06);
+    mk.box(0xe8e8e8, -1.5, 7, 2, 0.06, 0.06, 1.6);
+    mk.place();
+    scene.add(mk.build(vc, vcLit));
   }
 
-  // egrets standing in the marsh here and there
-  const egrets: Item[] = [];
-  for (let n = 0; n < 400 && egrets.length < 24; n++) {
-    const s = rand() * t.length;
-    const side = rand() < 0.5 ? -1 : 1;
-    const p = at(s, side * (t.edge + 4 + rand() * 12));
-    if (!clear(p.x, p.z, 2.5)) continue;
-    egrets.push({ x: p.x, y: 0.7, z: p.z, sx: 0.35, sy: 0.9, sz: 0.5 });
+  // egrets (white) and the odd heron (grey) stalking the marsh edges and the creeks: legs, body, an S of a neck, a bill
+  {
+    const bird = modelKit(THREE);
+    const n0 = { n: 0 };
+    for (let n = 0; n < 900 && n0.n < 34; n++) {
+      const s = rand() * t.length;
+      const side = rand() < 0.5 ? -1 : 1;
+      const p = at(s, side * (edgeAtLim(t, s, side) * side + 3.5 + rand() * 14));
+      if (!clear(p.x, p.z, 2.5)) continue;
+      n0.n++;
+      const heron = rand() < 0.2;
+      const col = heron ? 0x8a8f99 : 0xfbfbf6;
+      const k = heron ? 1.3 : 1;
+      bird.place(p.x, 0, p.z, rand() * Math.PI * 2);
+      for (const sd of [-1, 1]) bird.cyl(0x1b1c22, sd * 0.06 * k, 0.35 * k, 0, 0.018, 0.7 * k, 0.018);
+      bird.ball(col, 0, 0.8 * k, -0.05, 0.16 * k, 0.17 * k, 0.32 * k, -0.4);
+      bird.cyl(col, 0, 1.05 * k, 0.15 * k, 0.045 * k, 0.42 * k, 0.045 * k, 0.5);
+      bird.cyl(col, 0, 1.32 * k, 0.2 * k, 0.04 * k, 0.25 * k, 0.04 * k, -0.4);
+      bird.ball(col, 0, 1.45 * k, 0.26 * k, 0.06 * k, 0.06 * k, 0.08 * k);
+      bird.cone(heron ? 0xd8b84a : 0xf2c230, 0, 1.45 * k, 0.42 * k, 0.025 * k, 0.24 * k, 0.025 * k, Math.PI / 2);
+    }
+    bird.place();
+    if (bird.count()) scene.add(bird.build(vc, vcLit));
   }
-  instances(THREE, scene, dummy, geo.ball, lambert(0xfbfbf6), egrets);
 
   // the Dumbarton Bridge low across the Bay on the horizon, its hump over the shipping channel
   {
@@ -3625,71 +4037,94 @@ function slough(c: Scenery): SceneryTick {
     instances(THREE, scene, dummy, geo.box, lambert(0x9d948f), legs);
   }
 
-  // a bulk carrier at the Port's wharf, loading from the aggregate piles by a conveyor up to its hold
-  {
-    const s = 372;
-    const d = 62;
-    const p = at(s, d);
-    const h = face(s);
-    if (clear(p.x, p.z, 16)) {
-      const g = new THREE.Group();
-      const part = (mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
-        const m = new THREE.Mesh(geo.box, mat);
-        m.position.set(x, y, z);
-        m.scale.set(sx, sy, sz);
-        g.add(m);
-        return m;
-      };
-      const hull = lambert(0x34495e);
-      part(hull, 0, 3.5, 0, 13, 7, 74);
-      part(lambert(0x8c2a1e), 0, 0.6, 0, 13.1, 1.2, 74.2);
-      const bow = new THREE.Mesh(geo.cone, hull);
-      bow.scale.set(6.5, 8, 7);
-      bow.rotation.x = Math.PI / 2;
-      bow.position.set(0, 3.5, 40.5);
-      g.add(bow);
-      for (let k = -2; k <= 2; k++) part(lambert(0x4a5866), 0, 7.4, k * 11 + 6, 10, 0.8, 8);
-      part(lambert(0xf2efe8), 0, 11, -30, 12, 8, 10);
-      part(lambert(0xf2efe8), 0, 16, -31, 9, 3, 7);
-      part(lambert(0x23262c), 0, 19.5, -33, 2, 5, 2);
-      // (the conveyor, from the piles up over its rail)
-      const belt = part(lambert(0x8a8f96), -14, 9, 12, 2, 1, 34);
-      belt.rotation.x = -0.25;
-      belt.rotation.y = 0.9;
-      g.position.set(p.x, 0, p.z);
-      g.rotation.y = h;
-      scene.add(g);
+  // out on the Bay: sailboats heeling in the breeze and a couple of kayakers, drifting along
+  const boats = modelKit(THREE);
+  for (let k = 0; k < 7; k++) {
+    const bx = ((k * 53) % 150) - 75 + rand() * 20;
+    const bz = k * 45 - 150;
+    if (k < 5) {
+      boats.place(bx, 0, bz, rand() * 6);
+      boats.geo(boatHull(THREE, 7, 2.2, 0.8, true), 0xf2f2f0);
+      boats.cyl(0xc8c8c8, 0, 5, 0.5, 0.06, 9, 0.06);
+      boats.geo(sailGeometry(THREE), k % 3 === 1 ? 0xf2c4a8 : 0xfbf8f2, 0, 0.8, 0.5, 1, 1, 1);
+    } else {
+      boats.place(bx - 160, 0, bz, rand() * 6);
+      boats.ball(k % 2 ? 0xff8c1a : 0xe63b2e, 0, 0.15, 0, 0.35, 0.18, 2.4);
+      boats.box(0x2f6fb5, 0, 0.55, 0, 0.36, 0.5, 0.25);
+      boats.ball(0xe8bf98, 0, 0.92, 0, 0.13, 0.14, 0.13);
+      boats.box(0xd9d9d9, 0, 0.6, 0, 2.6, 0.03, 0.08, 0, 0, 0.4);
     }
   }
+  boats.place();
+  const fleet = boats.build(vc, vcLit);
+  // (each boat is its own stretch of the merged mesh: moved together, they drift as one fleet; spread out by its slot)
+  fleet.position.set(cx + rx + 260, 0, cz - 120);
+  fleet.rotation.y = 0.3;
+  scene.add(fleet);
 
-  // pelicans gliding in a line over the marsh, round and round
+  // pelicans gliding in a ragged V over the marsh, and gulls wheeling over the channel
   const birdGeo = new THREE.BoxGeometry(1, 1, 1);
-  const pelicans = new THREE.InstancedMesh(birdGeo, lambert(0xc9c2b4), 15);
-  pelicans.frustumCulled = false;
-  scene.add(pelicans);
-  return (_race, clock) => {
-    for (let n = 0; n < 5; n++) {
-      const a = clock * 0.05 + n * 0.035;
-      const x = cx + Math.cos(a) * rx * 0.75 - n * 2;
-      const z = cz + Math.sin(a) * rz * 0.7 + (n % 2 ? 3 : -3) * n * 0.6;
-      const y = 22 + Math.sin(clock * 0.4 + n) * 1.5;
-      const ry = Math.atan2(-Math.sin(a), Math.cos(a));
-      const flap = Math.sin(clock * 4 + n * 1.3) * 0.35;
-      const set = (i: number, ox: number, sx: number, sy: number, sz: number, rz: number) => {
-        dummy.position.set(x + Math.cos(ry) * ox, y + Math.abs(ox) * Math.sin(rz) * 0.5, z - Math.sin(ry) * ox);
-        dummy.rotation.set(0, ry, rz);
-        dummy.scale.set(sx, sy, sz);
-        dummy.updateMatrix();
-        pelicans.setMatrixAt(i, dummy.matrix);
-      };
-      set(n * 3, 0, 0.45, 0.4, 1.5, 0);
-      set(n * 3 + 1, 1.3, 2.2, 0.08, 0.6, flap);
-      set(n * 3 + 2, -1.3, 2.2, 0.08, 0.6, -flap);
+  const pelicans = new THREE.InstancedMesh(birdGeo, lambert(0x9a8f80), 21);
+  const gulls = new THREE.InstancedMesh(birdGeo, lambert(0xf4f4f0), 24);
+  pelicans.frustumCulled = gulls.frustumCulled = false;
+  scene.add(pelicans, gulls);
+  const flyer = (mesh: T.InstancedMesh, i: number, x: number, y: number, z: number, ry: number, span: number, flap: number) => {
+    const set = (j: number, ox: number, oy: number, oz: number, sx: number, sy: number, sz: number, rz: number) => {
+      dummy.position.set(x + Math.cos(ry) * ox + Math.sin(ry) * oz, y + oy, z - Math.sin(ry) * ox + Math.cos(ry) * oz);
+      dummy.rotation.set(0, ry, rz);
+      dummy.scale.set(sx, sy, sz);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(j, dummy.matrix);
+    };
+    set(i, 0, 0, 0, span * 0.18, span * 0.16, span * 0.55, 0);
+    set(i + 1, span * 0.45, Math.sin(flap) * span * 0.12, -0.05, span * 0.85, 0.05, span * 0.28, flap);
+    set(i + 2, -span * 0.45, Math.sin(flap) * span * 0.12, -0.05, span * 0.85, 0.05, span * 0.28, -flap);
+  };
+  return (race, clock) => {
+    sky.tick(clock);
+    const seen = (race.karts[race.me]?.lap ?? 1) < fogLap;
+    for (const m of hills) m.visible = seen;
+    // the pelicans, in their V
+    for (let n = 0; n < 7; n++) {
+      const a = clock * 0.045;
+      const row = Math.ceil(n / 2) * (n % 2 ? 1 : -1);
+      const x0 = cx + Math.cos(a) * rx * 0.75;
+      const z0 = cz + Math.sin(a) * rz * 0.7;
+      const ry = Math.atan2(-Math.sin(a) * rx * 0.75, Math.cos(a) * rz * 0.7);
+      const back = Math.abs(row) * 3.2;
+      const x = x0 - Math.sin(ry) * back + Math.cos(ry) * row * 3;
+      const z = z0 - Math.cos(ry) * back - Math.sin(ry) * row * 3;
+      const flap = Math.sin(clock * 2.2 - Math.abs(row) * 0.6) * 0.25 * (Math.sin(clock * 0.3 + n) > 0.2 ? 1 : 0.1);
+      flyer(pelicans, n * 3, x, 24 + Math.sin(clock * 0.4 + n) * 0.8, z, ry, 2.6, flap);
     }
+    pelicans.instanceMatrix.needsUpdate = true;
+    // the gulls, circling over where you are
+    const me = race.karts[race.me];
+    const gx = me ? me.x : cx;
+    const gz = me ? me.z : cz;
+    for (let n = 0; n < 8; n++) {
+      const a = clock * (0.25 + (n % 3) * 0.06) * (n % 2 ? 1 : -1) + n * 0.8;
+      const rad = 18 + (n % 4) * 7;
+      const x = gx + Math.cos(a) * rad + Math.sin(n * 1.7) * 20;
+      const z = gz + Math.sin(a) * rad + Math.cos(n * 2.3) * 20;
+      const ry = a + (n % 2 ? 0 : Math.PI);
+      flyer(gulls, n * 3, x, 12 + (n % 3) * 3 + Math.sin(clock + n) * 1.5, z, ry, 1.1, Math.sin(clock * 6 + n * 1.7) * 0.5);
+    }
+    gulls.instanceMatrix.needsUpdate = true;
+    // the boats out on the Bay, drifting with the breeze
+    fleet.position.z = cz - 120 + ((clock * 1.2) % 160) - 80;
     dummy.rotation.set(0, 0, 0);
     dummy.scale.setScalar(1);
-    pelicans.instanceMatrix.needsUpdate = true;
   };
+}
+
+/** A sloop's mainsail and jib: two triangles, a little curved, from the boom up the mast and forward to the bow. */
+function sailGeometry(THREE: Three) {
+  const pos = [0, 0, 0, 0, 8.5, 0.05, 0, 0.2, -3.2, 0, 0.1, 0.4, 0, 7.6, 0.4, 0.05, 0, 3.1];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
 }
 
 /** How far out the edge of the course stands on one side at s (a wall's foot, or the brink of a drop). */

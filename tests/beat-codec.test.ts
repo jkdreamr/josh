@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   changeStepDegree,
+  chordForDegree,
   createBeatState,
   createEmptyState,
   decodeBeatState,
@@ -23,7 +24,7 @@ function normalize(state: BeatState): BeatState {
 
 function busyState(): BeatState {
   let state = createBeatState('trap');
-  state = { ...state, bpm: 173, swing: 33, root: 7, scale: 'dorian', kit: 'acoustic', current: 2, song: [0, 1, 1, 2, 3, 0, 2], songMode: true, fx: { filter: 12, reverb: 77, delay: 100 } };
+  state = { ...state, bpm: 173, swing: 33, root: 7, scale: 'dorian', kit: 'acoustic', current: 2, song: [0, 1, 1, 2, 3, 0, 2], songMode: true, fx: { filter: 12, reverb: 77, delay: 100, pump: 0 } };
   state = updateTrack(state, 'kick', { volume: 100, pitch: -12, decay: 0, muted: true });
   state = updateTrack(state, 'lead', { volume: 0, pitch: 12, decay: 100 });
   const patterns = state.patterns.slice();
@@ -48,25 +49,56 @@ const EMPTY_V2 = 'AlQaCQACADIUAABQDDJQDDJQDDJQDDJQDDJQDDJQDDJQDDIBAAA';
 const BUSY_V2 = 'Aq0hBwQBEgxNZAFkAABQDDJQDDJQDDJQDDJQDDJQDDJQDDIHlCMPAQOAICAAAwADIoYiZgCAAIAAAAACAoAgIIAAgAAgICAgEDIEAUMSMgMQUgQhQ0AyBBA3BCVDFzIJAQOAICQAAwATIoYiZgCAAIAAAAACAoAgIIAAgAAAAAAAEDIEAUMSMgMQUgQhQ0AyBBA5BCVDGTIJAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAQMgQhQxAyBLFDEDIEIUMQEDIEIUMQMgQhQxAyBCFDEBAyBCFDEDIEIUMQMgQhQxAAAAAAAAAAAAAAAAAAAAAAABAyBCEQMgQhEDIEIQ';
 const V1_HOUSE_LINK = 'eyJ2IjoxLCJiIjoxMjQsInMiOjgsImsiOiJEIG1pbm9yIiwicCI6WzQzNjksNDExMiwxNzQ3NiwxNzQ3Niw0MTEyLDE4NzYxLDE3NDc2LDgyMjRdLCJuIjpbIjAxMjM0MDEyMzQwMTIzNDAiLCIwMTIzNDAxMjM0MDEyMzQwIiwiMDEyMzQwMTIzNDAxMjM0MCJdfQ';
 
-test('main-branch v2 links decode and null-groove output stays byte-identical', () => {
-  const busy = busyState();
-  const busyFixtureState = { ...busy, tracks: { ...busy.tracks, lead: createBeatState('trap').tracks.lead } };
-  const fixtures = [
-    [HOUSE_V2, createBeatState('house')],
-    [EMPTY_V2, createEmptyState()],
-    [BUSY_V2, busyFixtureState],
-  ] as const;
-  for (const [fixture, state] of fixtures) {
-    assert.deepEqual(decodeBeatState(fixture), { ...normalize(state), groove: null });
-    assert.equal(encodeBeatState({ ...state, groove: null }), fixture);
+test('main-branch v2 and v3 links still decode, with defaults for the newer settings', () => {
+  const house = decodeBeatState(HOUSE_V2);
+  assert.ok(house);
+  assert.equal(house.bpm, 124);
+  assert.equal(house.kit, 'house');
+  assert.equal(house.groove, null);
+  assert.equal(house.chords, false);
+  assert.equal(house.fx.pump, 0);
+  assert.deepEqual(house.patterns[0].steps.kick.slice(0, 16).flatMap((velocity, step) => velocity ? [step] : []), [0, 4, 8, 12]);
+  for (const settings of Object.values(house.tracks)) {
+    assert.equal(settings.pan, 0);
+    assert.equal(settings.tone, 50);
   }
+  const empty = decodeBeatState(EMPTY_V2);
+  assert.ok(empty);
+  assert.equal(empty.bpm, 84);
+  assert.ok(empty.patterns.every((pattern) => pattern.steps.kick.every((velocity) => velocity === 0)));
+  const busy = decodeBeatState(BUSY_V2);
+  assert.ok(busy);
+  assert.equal(busy.bpm, 173);
+  assert.equal(busy.scale, 'dorian');
+  assert.equal(busy.patterns[2].length, 32);
+  assert.equal(busy.patterns[2].steps.clap[31], 3);
+  assert.deepEqual(busy.song, [0, 1, 1, 2, 3, 0, 2]);
+  for (const fixture of [HOUSE_V2, EMPTY_V2, BUSY_V2]) {
+    const state = decodeBeatState(fixture)!;
+    assert.deepEqual(decodeBeatState(encodeBeatState(state)), state);
+  }
+  const v3 = decodeBytes(EMPTY_V2);
+  v3[0] = 3;
+  assert.equal(decodeBeatState(encodeBytes(Uint8Array.from([...v3, 2])))?.groove, 'boom bap');
 });
 
-test('all starter grooves round-trip with their groove metadata in v3', () => {
+test('pan, tone, pump and chords round-trip in v4 links', () => {
+  let state = createBeatState('techno');
+  state = updateTrack(state, 'hat', { pan: -50, tone: 0 });
+  state = updateTrack(state, 'lead', { pan: 50, tone: 100 });
+  state = { ...state, fx: { ...state.fx, pump: 100 }, chords: true };
+  const encoded = encodeBeatState(state);
+  assert.equal(decodeBytes(encoded)[0], 4);
+  assert.deepEqual(decodeBeatState(encoded), normalize(state));
+  assert.deepEqual(decodeBeatState(encodeBeatState({ ...state, groove: null })), { ...normalize(state), groove: null });
+});
+
+test('all starter grooves round-trip with their groove metadata', () => {
+  assert.equal(GROOVES.length, 7);
   for (const groove of GROOVES) {
     const state = createBeatState(groove);
     const encoded = encodeBeatState(state);
-    assert.equal(decodeBytes(encoded)[0], 3, groove);
+    assert.equal(decodeBytes(encoded)[0], 4, groove);
     assert.deepEqual(decodeBeatState(encoded), normalize(state), groove);
   }
 });
@@ -81,16 +113,27 @@ test('Reggaeton has the specified starter rhythm and sound', () => {
 });
 
 test('codec rejects missing, invalid, or extra groove trailers', () => {
-  const v3 = decodeBytes(encodeBeatState(createBeatState('house')));
-  for (const trailer of [0, 200]) {
-    const damaged = v3.slice();
+  const v4 = decodeBytes(encodeBeatState(createBeatState('house')));
+  for (const trailer of [8, 200]) {
+    const damaged = v4.slice();
     damaged[damaged.length - 1] = trailer;
     assert.equal(decodeBeatState(encodeBytes(damaged)), null);
   }
-  assert.equal(decodeBeatState(encodeBytes(v3.slice(0, -1))), null);
+  assert.equal(decodeBeatState(encodeBytes(v4.slice(0, -1))), null);
+  assert.equal(decodeBeatState(encodeBytes(Uint8Array.from([...v4, 1]))), null);
 
   const v2 = decodeBytes(EMPTY_V2);
   assert.equal(decodeBeatState(encodeBytes(Uint8Array.from([...v2, 1]))), null);
+});
+
+test('chords stay in the scale and in a warm register', () => {
+  const minor = chordForDegree(9, 'minor', 0).map((pitch) => pitch.name);
+  assert.deepEqual(minor, ['A3', 'C4', 'E4', 'G4']);
+  const pentatonic = chordForDegree(9, 'minor pentatonic', 0).map((pitch) => pitch.name);
+  assert.deepEqual(pentatonic, ['A3', 'C4', 'E4']);
+  for (let degree = 0; degree <= MAX_DEGREE; degree += 1) {
+    for (const pitch of chordForDegree(11, 'dorian', degree)) assert.ok(pitch.midi >= 45 && pitch.midi <= 70, `${degree} ${pitch.name}`);
+  }
 });
 
 test('v1 links decode without groove metadata', () => {

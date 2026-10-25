@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { think } from './ai';
 import { CAR_COLORS, createScene, type View } from './scene';
@@ -18,6 +18,10 @@ type ScoreLayout = { bottom: boolean; left: number; width: number };
 const MODE = defineSetting('sumo:mode', PLAY_MODES, 'cpu');
 const RIVALS = defineSetting('sumo:rivals', ['1', '3', '5', '7'] as const, '3');
 const LEVEL = defineSetting('sumo:level', LEVEL_NAMES, 'normal');
+const modeOptions = [
+  ['cpu', 'Vs Computer'],
+  ['2p', '2 Players'],
+] as const;
 const rivalOptions = [
   ['1', '1 Rival'],
   ['3', '3 Rivals'],
@@ -503,7 +507,8 @@ function Play({ mode }: { mode: StageMode }) {
       }
       if (packet.k === 'S' && !o.isHost && from === 0) {
         if (!synced.current) {
-          if (!packet.roster.includes(o.seat)) return;
+          // left out of the host's round (in just as it began) waits for the next; a spectator watches every car
+          if (!packet.roster.includes(o.seat) && !o.watching) return;
           current.cars = packet.roster.map((seat, index) => {
             const player = o.players.find((candidate) => candidate.seat === seat);
             const bot = o.bots.find((candidate) => candidate.seat === seat);
@@ -781,7 +786,7 @@ function Play({ mode }: { mode: StageMode }) {
         );
       })}
 
-      {shell.touch && shell.status === 'playing' && (
+      {shell.touch && shell.status === 'playing' && !online?.watching && (
         <>
           {sticks.map((stick) => (
             <div

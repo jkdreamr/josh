@@ -21,11 +21,86 @@
   height: 100%;
 }
 
+.g-wordguess .g-wordguess-panel {
+  display: contents;
+}
 .g-wordguess .g-wordguess-modes {
   position: absolute;
   top: 10px;
   left: 10px;
   z-index: 3;
+  align-items: stretch;
+}
+.g-wordguess .g-wordguess-modes.is-row {
+  left: 50%;
+  transform: translateX(-50%);
+}
+.g-wordguess .arcade-seg.g-wordguess-modes > button {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.g-wordguess .g-wordguess-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Short, wide game areas (the framed laptop window): board on the left, keyboard on the right. */
+.g-wordguess .g-wordguess-wrap.is-side {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 10px;
+  padding: 6px 10px;
+}
+.g-wordguess .is-side .g-wordguess-board {
+  flex: 0 0 auto;
+  width: auto;
+}
+.g-wordguess .is-side .g-wordguess-panel {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 0 2px;
+}
+.g-wordguess .is-side .g-wordguess-modes {
+  position: static;
+  align-self: flex-start;
+  flex: none;
+}
+.g-wordguess .is-side .arcade-seg.g-wordguess-modes > button {
+  height: auto;
+}
+.g-wordguess .is-side .g-wordguess-keys {
+  flex: 1 1 0;
+  min-height: 0;
+  justify-content: center;
+  gap: 5px;
+}
+.g-wordguess .is-side .g-wordguess-row {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 52px;
+  gap: 4px;
+}
+.g-wordguess .is-side .g-wordguess-row button {
+  height: 100%;
+  font-size: 14px;
+}
+.g-wordguess .is-side .g-wordguess-row button.is-wide {
+  font-size: 12px;
+}
+.g-wordguess .is-side .g-wordguess-done {
+  flex: 1 1 0;
+  justify-content: center;
+  min-height: 0;
+  padding: 8px 12px;
 }
 
 .g-wordguess .g-wordguess-toast {
@@ -46,7 +121,8 @@
   animation: g-wordguess-toast 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 .g-wordguess .g-wordguess-toast.is-sticky {
-  letter-spacing: 0.06em;
+  font-size: 15px;
+  font-weight: 700;
 }
 @keyframes g-wordguess-toast {
   from {
@@ -86,12 +162,15 @@
 .g-wordguess .g-wordguess-row button.is-wide {
   flex: 1.55 1 0;
   max-width: 68px;
-  font-size: 11.5px;
+  font-size: 12px;
+  text-transform: none;
 }
 .g-wordguess .g-wordguess-row button:hover {
   background: rgba(255, 255, 255, 0.2);
 }
-.g-wordguess .g-wordguess-row button:active {
+.g-wordguess .g-wordguess-row button:active,
+.g-wordguess .g-wordguess-row button.is-hit {
+  background: rgba(255, 255, 255, 0.28);
   transform: scale(0.94);
 }
 .g-wordguess .g-wordguess-row button[data-state='correct'] {
@@ -104,14 +183,49 @@
   color: rgba(245, 245, 247, 0.45);
   background: rgba(255, 255, 255, 0.05);
 }
-.g-wordguess .is-touch .g-wordguess-row button {
-  font-size: 17px;
-}
-.g-wordguess .is-touch .g-wordguess-row button.is-wide {
-  font-size: 12px;
-}
 .g-wordguess .g-wordguess-wrap.is-touch {
   padding-bottom: 22px;
+}
+/* Touch: finger-sized keys and controls, grown by --g-wordguess-u (the inverse of the iPad frame's scale). */
+.g-wordguess .is-touch .g-wordguess-keys {
+  width: min(100%, calc(560px * var(--g-wordguess-u, 1)));
+  gap: calc(7px * var(--g-wordguess-u, 1));
+}
+.g-wordguess .is-touch .g-wordguess-row button {
+  max-width: calc(50px * var(--g-wordguess-u, 1));
+  height: clamp(calc(42px * var(--g-wordguess-u, 1)), 8.4cqh, calc(58px * var(--g-wordguess-u, 1)));
+  font-size: calc(18px * var(--g-wordguess-u, 1));
+}
+.g-wordguess .is-touch .g-wordguess-row button.is-wide {
+  max-width: calc(76px * var(--g-wordguess-u, 1));
+  font-size: calc(14px * var(--g-wordguess-u, 1));
+}
+.g-wordguess .is-touch .g-wordguess-toast {
+  font-size: calc(14px * var(--g-wordguess-u, 1));
+}
+.g-wordguess .is-touch .arcade-seg.g-wordguess-modes > button {
+  height: calc(42px * var(--g-wordguess-u, 1));
+  padding: 0 calc(16px * var(--g-wordguess-u, 1));
+  font-size: calc(15px * var(--g-wordguess-u, 1));
+}
+.g-wordguess .is-touch .g-wordguess-done {
+  zoom: var(--g-wordguess-u, 1);
+}
+.g-wordguess .is-touch .g-wordguess-done .arcade-btn {
+  height: 44px;
+}
+@media (hover: none) and (pointer: coarse) {
+  .g-wordguess .arcade-ctrl button {
+    width: calc(42px * var(--g-wordguess-u, 1));
+    height: calc(42px * var(--g-wordguess-u, 1));
+  }
+  .g-wordguess .arcade-ov > .arcade-card {
+    zoom: var(--g-wordguess-u, 1);
+  }
+  .g-wordguess .arcade-card .arcade-btn,
+  .g-wordguess .arcade-card .arcade-seg > button {
+    min-height: 42px;
+  }
 }
 
 .g-wordguess .g-wordguess-done {
@@ -134,6 +248,94 @@
   font-size: 13px;
   color: rgba(245, 245, 247, 0.62);
 }
-.g-wordguess .g-wordguess-cta {
+.g-wordguess .g-wordguess-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+.g-wordguess .g-wordguess-stats > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.g-wordguess .g-wordguess-stats strong {
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.g-wordguess .g-wordguess-stats small {
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.6);
+}
+.g-wordguess .g-wordguess-dist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  margin-top: 4px;
+}
+.g-wordguess .g-wordguess-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.g-wordguess .g-wordguess-bar > span {
+  width: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(245, 245, 247, 0.7);
+}
+.g-wordguess .g-wordguess-bar > i {
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255, 255, 255, 0.14);
+  transform-origin: left;
+  animation: g-wordguess-grow 0.5s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+.g-wordguess .g-wordguess-bar.is-today > i {
+  background: #248a3d;
+}
+@keyframes g-wordguess-grow {
+  from {
+    transform: scaleX(0.2);
+    opacity: 0;
+  }
+}
+.g-wordguess .g-wordguess-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
   margin-top: 6px;
+}
+@container (max-height: 560px) {
+  .g-wordguess .g-wordguess-dist {
+    display: none;
+  }
+}
+@container (max-height: 250px) {
+  .g-wordguess .g-wordguess-stats {
+    display: none;
+  }
+  .g-wordguess .g-wordguess-done {
+    gap: 4px;
+  }
+  .g-wordguess .g-wordguess-actions {
+    margin-top: 2px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-wordguess .g-wordguess-toast,
+  .g-wordguess .g-wordguess-bar > i {
+    animation: none;
+  }
 }

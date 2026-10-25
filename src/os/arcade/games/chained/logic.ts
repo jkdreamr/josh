@@ -45,7 +45,7 @@ export const RANKED_MODES = ['normal', 'beginner', 'lava'] as const;
 
 export const SUB = 1 / 120;
 export const COYOTE = 0.1;
-export const JUMP_BUFFER = 0.12;
+export const JUMP_BUFFER = 0.15;
 export const JUMP_CUT = 4;
 /** A jump keeps full thrust this long after it fires: a held press briefly, a press that was already let go (buffered) long enough to still rise. */
 export const JUMP_MIN = 0.04;
@@ -112,6 +112,13 @@ export const MAX_TEAMS = 2;
 
 export type Surface = 'stone' | 'ice' | 'metal' | 'none';
 export type Input = { side: -1 | 0 | 1; fwd: -1 | 0 | 1; jump: boolean; hold: boolean };
+
+/** A mantle glide: from where the rim was caught to the spot on the ledge, over dur seconds, then landing on p. */
+export type Glide = { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; t: number; dur: number; p: number; grab: boolean };
+/** How long a mantle takes: a pull up over the rim, or the short hop of a grab from just under the top. */
+export const MANTLE_T = 0.16;
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+export const GRAB_T = 0.1;
 export const idle = (): Input => ({ side: 0, fwd: 0, jump: false, hold: false });
 
 export type SoulKind = 'local' | 'remote';
@@ -171,6 +178,8 @@ export type Soul = {
   yanked: number;
   /** When the soul last pulled itself up over a rim. */
   mantled: number;
+  /** A mantle in progress: the soul glides from where it caught the rim to its spot on the ledge over a few frames. */
+  glide: Glide | null;
   /** Where the substep started, for keeping out of the sides of ledges. */
   px: number;
   pz: number;
@@ -292,6 +301,7 @@ export function createGame(opts: { mode: Mode; souls: SoulSpec[]; authority?: bo
       pulled: false,
       yanked: -9,
       mantled: -9,
+      glide: null,
       px: at.x,
       pz: at.z,
       rx: at.x,
@@ -465,6 +475,7 @@ export function doRespawn(g: Game, cp: number, team = 0) {
     s.ry = s.y;
     s.rz = s.z;
     s.heldUntil = -9;
+    s.glide = null;
     s.rideVx = s.rideVy = s.rideVz = 0;
     s.onPad = false;
     s.squash = 0;
@@ -518,6 +529,33 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
   s.px = s.x;
   s.pz = s.z;
   const wasGrounded = s.grounded;
+  // a mantle in progress: up over the rim and a step in, then the landing; nothing else moves the soul meanwhile
+  if (s.glide) {
+    const gl = s.glide;
+    gl.t += dt;
+    // up the face first, then the step in over the top, so the soul never passes through the slab
+    const k = Math.min(1, gl.t / gl.dur);
+    const up = Math.min(1, k * 1.8);
+    const inK = Math.max(0, (k - 0.4) / 0.6);
+    s.y = lerp(gl.y0, gl.y1, up * up * (3 - 2 * up));
+    s.x = lerp(gl.x0, gl.x1, inK * inK * (3 - 2 * inK));
+    s.z = lerp(gl.z0, gl.z1, inK * inK * (3 - 2 * inK));
+    s.vx = s.vz = s.vy = 0;
+    s.squash = Math.max(0, s.squash - dt * 4);
+    // a jump pressed during the pull up is kept, so mashing the key keeps hopping on landing
+    // the buffer holds through the glide, so a press on the way up hops the moment the soul lands
+    if (s.input.jump && g.time >= 0) s.buffer = JUMP_BUFFER;
+    if (k >= 1) {
+      s.glide = null;
+      const p = level.platforms[gl.p];
+      s.fallFrom = s.y;
+      landOn(g, s, p, t1, true, true);
+      s.rx = s.x;
+      s.ry = s.y;
+      s.rz = s.z;
+    }
+    return;
+  }
   const standing = s.grounded ? level.platforms[s.ground] : undefined;
   s.surface = surfaceOf(standing);
 
@@ -668,15 +706,12 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
     else if (moving) mantle(g, s, dx, dz);
   }
   // a jump that tops out just inside a slab lands on it rather than falling back through: a generous ledge
-  if (!s.grounded && s.vy <= 0 && s.vy > -4 && s.burned < 0) {
+  if (!s.grounded && !s.glide && s.vy <= 0 && s.vy > -4 && s.burned < 0) {
     for (const p of level.platforms) {
       if (p.kind === 'floor' || p.y + p.amp < s.y || p.y - p.amp - LEDGE_GRAB > s.y || !landable(g, p)) continue;
       const q = pose(p, t1, scratch);
       if (s.y >= q.y || s.y < q.y - LEDGE_GRAB || !over(p, q.a, s.x, s.z)) continue;
-      s.y = q.y;
-      s.mantled = g.time;
-      landOn(g, s, p, t1, moving, true);
-      ev.push({ t: 'mantle', i: s.idx, grab: true });
+      startGlide(g, s, p, s.x, q.y, s.z, GRAB_T, true);
       break;
     }
   }
@@ -760,6 +795,18 @@ function landOn(g: Game, s: Soul, p: Platform, t1: number, _moving: boolean, was
   if (p.cp >= 0) g.lit[p.cp] = true;
 }
 
+/** Begins a mantle: the soul lets go of its speed and glides to its spot on the ledge, landing when it gets there. */
+function startGlide(g: Game, s: Soul, p: Platform, x1: number, y1: number, z1: number, dur: number, grab: boolean) {
+  s.glide = { x0: s.x, y0: s.y, z0: s.z, x1, y1, z1, t: 0, dur, p: p.id, grab };
+  s.vx = s.vz = s.vy = 0;
+  s.grounded = false;
+  s.ground = -1;
+  s.hanging = false;
+  s.mantled = g.time;
+  s.coyote = 0;
+  g.events.push(grab ? { t: 'mantle', i: s.idx, grab: true } : { t: 'mantle', i: s.idx });
+}
+
 /**
  * A soul in the air just below a rim pulls itself up onto the ledge when the chain is carrying it there or it is
  * pushing toward the rim (dx, dz is its input direction). Falling fast, it just falls.
@@ -799,18 +846,7 @@ function mantle(g: Game, s: Soul, dx: number, dz: number): boolean {
     const ix = Math.cos(q.a) * mid - ex;
     const iz = Math.sin(q.a) * mid - ez;
     const il = Math.hypot(ix, iz) || 1;
-    s.x = ex + (ix / il) * 0.45;
-    s.z = ez + (iz / il) * 0.45;
-    s.y = q.y + 0.01;
-    s.vx = s.vz = 0;
-    s.vy = 0;
-    s.mantled = g.time;
-    s.fallFrom = s.y;
-    landOn(g, s, p, g.time, true, true);
-    s.rx = s.x;
-    s.ry = s.y;
-    s.rz = s.z;
-    g.events.push({ t: 'mantle', i: s.idx });
+    startGlide(g, s, p, ex + (ix / il) * 0.45, q.y + 0.01, ez + (iz / il) * 0.45, MANTLE_T, false);
     return true;
   }
   return false;
@@ -1280,10 +1316,12 @@ function substep(g: Game, dt: number) {
 
 /** Advances the game by dt seconds in fixed substeps. Events pile up in g.events for the caller to drain. */
 export function step(g: Game, dt: number) {
-  for (const drive of g.drivers) drive(g, dt);
   g.acc += Math.min(dt, 0.25);
   let n = 0;
   while (g.acc >= SUB && n++ < 40) {
+    // the drivers (the shades) decide at 60 Hz whatever the frame rate, every other substep, so a slow frame never
+    // hands them one long step
+    if (n % 2 === 1) for (const drive of g.drivers) drive(g, 2 * SUB);
     g.acc -= SUB;
     substep(g, SUB);
   }

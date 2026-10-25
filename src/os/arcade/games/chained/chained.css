@@ -19,8 +19,8 @@
   --ink: #ff9e6e;
   --display: 'Fraunces', Georgia, serif;
   --voice: 'Instrument Serif', Georgia, serif;
-  --glass: rgba(14, 10, 18, 0.56);
-  --glass-blur: 12px;
+  /* no backdrop blur: it re-composites the live canvas every frame; a deeper tint carries the glass instead */
+  --glass: rgba(14, 10, 18, 0.72);
   --hairline: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
   --shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
   --label: 600 11px/1 system-ui, -apple-system, 'Inter', sans-serif;
@@ -111,8 +111,6 @@
   padding: 0 14px 0 13px;
   border-radius: 999px;
   background: var(--glass);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
   box-shadow: var(--hairline), var(--shadow);
   pointer-events: none;
 }
@@ -296,8 +294,6 @@
   inset: 0;
   border-radius: 13px;
   background: var(--glass);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
   box-shadow: var(--hairline), var(--shadow);
   overflow: hidden;
 }
@@ -410,8 +406,6 @@
   padding: 0 9px 0 7px;
   border-radius: 999px;
   background: var(--glass);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
   box-shadow: var(--hairline), var(--shadow);
   color: #fff;
   font-size: 12px;
@@ -489,8 +483,6 @@
   padding: 6px 13px;
   border-radius: 999px;
   background: var(--glass);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
   box-shadow: var(--hairline), var(--shadow);
   color: #fff;
   font-size: 12px;

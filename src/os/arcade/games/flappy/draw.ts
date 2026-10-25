@@ -162,17 +162,96 @@ function cap(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: nu
   c.fill();
 }
 
-/** A cardinal red column pair with a gap centered on gapY. */
-export function column(c: CanvasRenderingContext2D, x: number, gapY: number, gap: number, groundY: number) {
+/** A cardinal red column pair with a gap centered on gapY. `open` pushes both halves out of view while it rises in. */
+export function column(c: CanvasRenderingContext2D, x: number, gapY: number, gap: number, groundY: number, open = 0) {
   const top = gapY - gap / 2;
   const bot = gapY + gap / 2;
-  pillar(c, x, -20, COL_W, top - CAP + 20);
+  c.save();
+  c.translate(0, -open);
+  pillar(c, x, -20 - open, COL_W, top - CAP + 20 + open);
   cap(c, x - 4, top - CAP, COL_W + 8, CAP);
-  pillar(c, x, bot + CAP, COL_W, groundY - bot - CAP);
-  cap(c, x - 4, bot, COL_W + 8, CAP);
   c.fillStyle = 'rgba(60,0,0,0.18)';
   c.fillRect(x, top - 1, COL_W, 1);
-  c.fillRect(x, bot + CAP, COL_W, 3);
+  c.restore();
+  if (open > 0) {
+    c.save();
+    c.beginPath();
+    c.rect(x - 10, -1000, COL_W + 20, groundY + 1000);
+    c.clip();
+  }
+  pillar(c, x, bot + CAP + open, COL_W, groundY - bot - CAP);
+  cap(c, x - 4, bot + open, COL_W + 8, CAP);
+  c.fillStyle = 'rgba(60,0,0,0.18)';
+  c.fillRect(x, bot + CAP + open, COL_W, 3);
+  if (open > 0) c.restore();
+}
+
+/** Sky and scenery colors from morning (0) through golden hour (1) and sunset (2) to night (3). */
+export type Palette = { top: string; mid: string; low: string; sun: string; far: string; dish: string; near: string; pines: string; cloud: string; dusk: number; night: number };
+
+const SKIES: Omit<Palette, 'dusk' | 'night'>[] = [
+  { top: '#bcdcf2', mid: '#e4f0f4', low: '#f8efdf', sun: '#fff8e2', far: '#c2dacb', dish: '#eef2ee', near: '#a3cba9', pines: '#86b58e', cloud: '#ffffff' },
+  { top: '#9cc7e6', mid: '#f1e3c8', low: '#ffd8a3', sun: '#ffe7b0', far: '#c6cfa6', dish: '#f6ecd6', near: '#a2bd86', pines: '#86a573', cloud: '#fff3df' },
+  { top: '#6b78b4', mid: '#e7a39d', low: '#ffbd80', sun: '#ffb070', far: '#a597a6', dish: '#e8cfc8', near: '#869a7f', pines: '#6a8566', cloud: '#ffd6c4' },
+  { top: '#111a38', mid: '#25336a', low: '#45548a', sun: '#ffd27a', far: '#36456a', dish: '#5d6c94', near: '#2c474e', pines: '#21403e', cloud: '#7b88b4' },
+];
+
+const rgb = (h: string) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+export function mix(a: string, b: string, t: number) {
+  const x = rgb(a);
+  const y = rgb(b);
+  const ch = (i: number) => Math.round(x[i] + (y[i] - x[i]) * t).toString(16).padStart(2, '0');
+  return `#${ch(0)}${ch(1)}${ch(2)}`;
+}
+
+export function palette(tod: number): Palette {
+  const t = Math.min(3, Math.max(0, tod));
+  const i = Math.min(2, Math.floor(t));
+  const f = t - i;
+  const a = SKIES[i];
+  const b = SKIES[i + 1];
+  const out = {} as Palette;
+  for (const k of Object.keys(a) as (keyof typeof a)[]) out[k] = mix(a[k], b[k], f);
+  out.dusk = Math.min(1, Math.max(0, t - 1));
+  out.night = Math.min(1, Math.max(0, t - 2));
+  return out;
+}
+
+/** A field of twinkling stars for the night sky, fixed to the view. */
+export function stars(c: CanvasRenderingContext2D, vw: number, t: number, alpha: number) {
+  if (alpha <= 0) return;
+  c.fillStyle = '#ffffff';
+  const n = Math.round(vw / 14);
+  for (let i = 0; i < n; i++) {
+    const h = hash(i * 31 + 7);
+    const x = (h % 10000) / 10000 * vw;
+    const y = ((h >>> 12) % 1000) / 1000 * 360;
+    const tw = 0.55 + 0.45 * Math.sin(t * (1.2 + (h % 7) * 0.3) + i);
+    c.globalAlpha = alpha * tw * (0.35 + ((h >>> 22) % 10) / 15);
+    c.fillRect(x, y, 1.6 + (h % 3) * 0.5, 1.6 + (h % 3) * 0.5);
+  }
+  c.globalAlpha = 1;
+}
+
+export function moon(c: CanvasRenderingContext2D, x: number, y: number, alpha: number) {
+  if (alpha <= 0) return;
+  c.save();
+  c.globalAlpha = alpha;
+  const glow = c.createRadialGradient(x, y, 10, x, y, 70);
+  glow.addColorStop(0, 'rgba(220,230,255,0.35)');
+  glow.addColorStop(1, 'rgba(220,230,255,0)');
+  c.fillStyle = glow;
+  c.fillRect(x - 70, y - 70, 140, 140);
+  c.fillStyle = '#f4f1e4';
+  c.beginPath();
+  c.arc(x, y, 17, 0, Math.PI * 2);
+  c.fill();
+  c.fillStyle = 'rgba(190,190,175,0.5)';
+  c.beginPath();
+  c.arc(x - 5, y - 4, 3.6, 0, Math.PI * 2);
+  c.arc(x + 6, y + 5, 2.6, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
 }
 
 export function cloud(c: CanvasRenderingContext2D, x: number, y: number, s: number) {

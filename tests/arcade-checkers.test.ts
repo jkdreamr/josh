@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BLACK, KING, RED, applyMove, bestMove, count, legalMoves, newGame, parse, play, sq, startBoard } from '../src/os/arcade/games/checkers/checkers.ts';
+import { BLACK, KING, RED, applyMove, bestMove, count, evaluate, legalMoves, newGame, parse, play, sq, startBoard } from '../src/os/arcade/games/checkers/checkers.ts';
 
 test('start position: 12 men each, red has 7 opening moves', () => {
   const b = startBoard();
@@ -95,7 +95,7 @@ test('computer takes the forced capture and finds a two-for-one shot', () => {
   assert.equal(bestMove(b, RED, 0, () => 0)!.captured.length, 1);
   // Red gives up the man on (4,3) so that whichever black man takes it gets double-jumped.
   const shot = parse(['........', '........', '...b.b..', '........', '...r....', '....r.r.', '...r.r.r', '........']);
-  const m = bestMove(shot, RED, 2)!;
+  const m = bestMove(shot, RED, 2, Math.random, { timeMs: 400 })!;
   assert.deepEqual([m.from, m.to], [sq(4, 3), sq(3, 4)]);
   const after = applyMove(shot, m);
   for (const reply of legalMoves(after, BLACK)) {
@@ -111,9 +111,43 @@ test('hard computer beats easy computer in self play', () => {
   let g = newGame();
   let plies = 0;
   while (g.status === 'playing' && plies < 300) {
-    const m = bestMove(g.board, g.turn, g.turn === RED ? 2 : 0, rng)!;
+    const m = bestMove(g.board, g.turn, g.turn === RED ? 2 : 0, rng, { timeMs: 40 })!;
     g = play(g, m);
     plies++;
   }
   assert.equal(g.status, 'red', `status ${g.status} after ${plies} plies`);
+});
+
+test('evaluation is zero-sum and the start is level', () => {
+  const b = startBoard();
+  assert.equal(evaluate(b, RED), 0);
+  const odd = parse(['.b.b....', '........', '.....b..', '..r.....', '...R....', '........', '..r.....', '........']);
+  assert.equal(evaluate(odd, RED), -evaluate(odd, BLACK));
+  assert.ok(evaluate(odd, RED) > 0);
+});
+
+test('computer does not walk into a capture that a shallow look would miss', () => {
+  // Stepping to (3,4) loses the man to the black man on (2,5) or (2,3); the quiet step on the far left is safe.
+  const b = parse(['........', '........', '...b.b..', '........', '...r....', '........', 'r.......', '........']);
+  for (let i = 0; i < 6; i++) {
+    const m = bestMove(b, RED, 1)!;
+    const reply = legalMoves(applyMove(b, m), BLACK);
+    assert.ok(!reply.some((x) => x.captured.length), `played ${m.from}-${m.to}`);
+  }
+});
+
+test('hard computer finishes a won king endgame instead of shuffling', () => {
+  // Two kings against one: hard should win well inside the forty-move draw rule.
+  const b = parse(['........', '........', '.....b..', '...R....', '........', '....R...', '........', '........']);
+  let g = { ...newGame(), board: b, turn: RED as 1 | 2, legal: legalMoves(b, RED), status: 'playing' as const, quietPlies: 0 };
+  let seed = 3;
+  const rng = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+  while (g.status === 'playing' && g.history.length < 120) g = play(g, bestMove(g.board, g.turn, g.turn === RED ? 2 : 0, rng, { timeMs: 60 })!);
+  assert.equal(g.status, 'red', `status ${g.status} after ${g.history.length} plies`);
+});
+
+test('search answers inside its time budget', () => {
+  const t = performance.now();
+  assert.ok(bestMove(startBoard(), RED, 2, Math.random, { timeMs: 80 }));
+  assert.ok(performance.now() - t < 600);
 });

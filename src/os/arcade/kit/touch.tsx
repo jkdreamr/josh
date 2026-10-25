@@ -1,5 +1,6 @@
 import { useContext, type PointerEvent as RPointerEvent } from 'react';
 import { ShellContext } from './context';
+import { useOnline } from './online';
 
 export type TouchButton = { key: string; label: string };
 export type TouchControlsProps = {
@@ -17,7 +18,9 @@ type Dir = keyof typeof arrow;
 /** On-screen controls that feed the same key state useKeys() reads. Only visible while playing. */
 export function TouchControls({ dpad, buttons = [], always }: TouchControlsProps) {
   const shell = useContext(ShellContext);
-  if (!shell || (!shell.touch && !always) || shell.status !== 'playing') return null;
+  // a spectator has nothing to steer
+  const watching = !!useOnline()?.watching;
+  if (!shell || (!shell.touch && !always) || shell.status !== 'playing' || watching) return null;
   const { keys } = shell;
   const bind = (code: string) => ({
     onPointerDown: (e: RPointerEvent<HTMLButtonElement>) => {

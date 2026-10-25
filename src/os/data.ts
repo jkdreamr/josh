@@ -8,7 +8,7 @@ export type Entry = {
   blurb?: string;
 };
 
-export type FolderId = 'school' | 'work' | 'projects' | 'music';
+export type FolderId = 'work' | 'projects' | 'music';
 
 export type Folder = {
   id: FolderId;
@@ -45,24 +45,21 @@ export const embeds = {
 
 export const soundcloudAvatar = 'https://i1.sndcdn.com/avatars-XdpKzxkUvnfkeqjI-9cI96Q-t500x500.jpg';
 
+export const school = {
+  current: ['Stanford Men’s Rowing', 'Kappa Sigma'],
+  past: [
+    'Treehacks (Organizer)',
+    'Stanford Blockchain Club (Head of Growth)',
+    'BASES (Frosh Battalion)',
+    'Stanford Math Tournament (Organizer)',
+    'TEDxStanford (Public Outreach)',
+    'AASA (Financial Officer)',
+    'Stanford Concert Network (Intern)',
+    'Stanford Badminton Club',
+  ],
+};
+
 export const folders: Folder[] = [
-  {
-    id: 'school',
-    label: 'School',
-    entries: [
-      { role: 'undergrad', name: 'Stanford University', meta: 'CS + Math', href: 'https://www.stanford.edu/' },
-      { role: 'student athlete', name: 'Stanford Varsity Rowing', meta: 'coxswain', href: 'https://gostanford.com/sports/mens-rowing' },
-      { role: 'organizer', name: 'TreeHacks', meta: 'Stanford Hackathon', href: 'https://www.treehacks.com/' },
-      { role: 'head of growth', name: 'Stanford Blockchain' },
-      { role: 'organizer', name: 'Stanford Math Tournament' },
-      { role: 'frosh battalion', name: 'BASES' },
-      { role: 'financial officer', name: 'AASA' },
-      { role: 'public outreach', name: 'TEDxStanford' },
-      { role: 'intern', name: 'Stanford Concert Network' },
-      { role: 'member', name: 'Stanford Badminton' },
-      { role: 'member', name: 'Kappa Sigma' },
-    ],
-  },
   {
     id: 'work',
     label: 'Work',

@@ -158,11 +158,27 @@ export function movesFrom(legal: Move[], from: number) {
   return legal.filter((m) => m.from === from);
 }
 
-// Evaluation: material, advancement for men, back-rank guards, and a little centre and mobility.
+// Computer player: iterative deepening negamax with alpha-beta, a transposition table and capture extension
+// (a position with a jump pending is never scored, since the jump is forced). The evaluation counts material,
+// prefers trades when ahead, keeps the back rank, and in the endgame drives kings at what is left instead of shuffling.
 const MAN = 100;
-const KING_V = 165;
-function evaluate(b: Board, me: Color): number {
-  let s = 0;
+const KING_V = 145;
+const WIN = 100000;
+const DOUBLE_CORNERS = new Set([sq(0, 1), sq(1, 0), sq(7, 6), sq(6, 7)]);
+const BACK_GUARD: Record<Color, number[]> = { [RED]: [sq(7, 2), sq(7, 6)], [BLACK]: [sq(0, 1), sq(0, 5)] };
+
+/** Static score from `me`'s side. */
+export function evaluate(b: Board, me: Color): number {
+  let mat = 0;
+  let pos = 0;
+  let mine = 0;
+  let theirs = 0;
+  let theirMen = 0;
+  let myMen = 0;
+  const kingsAt: number[] = [];
+  const enemyKingsAt: number[] = [];
+  const enemyAt: number[] = [];
+  const myAt: number[] = [];
   for (let i = 0; i < 64; i++) {
     const p = b[i];
     if (!p) continue;
@@ -170,64 +186,167 @@ function evaluate(b: Board, me: Color): number {
     const sign = c === me ? 1 : -1;
     const r = rowOf(i);
     const col = colOf(i);
-    let v: number;
-    if (isKing(p)) v = KING_V;
-    else {
-      const adv = c === RED ? 7 - r : r;
-      v = MAN + adv * 4;
-      if ((c === RED && r === 7) || (c === BLACK && r === 0)) v += 6;
+    if (c === me) {
+      mine++;
+      myAt.push(i);
+    } else {
+      theirs++;
+      enemyAt.push(i);
     }
-    if (col === 0 || col === 7) v -= 3;
-    else if (col >= 2 && col <= 5 && r >= 2 && r <= 5) v += 3;
-    s += sign * v;
+    if (isKing(p)) {
+      mat += sign * KING_V;
+      // Kings belong in the middle, not on the rim.
+      pos += sign * (6 - (Math.abs(3.5 - r) + Math.abs(3.5 - col))) * 3;
+      if (c === me) kingsAt.push(i);
+      else enemyKingsAt.push(i);
+    } else {
+      mat += sign * MAN;
+      if (c === me) myMen++;
+      else theirMen++;
+      const adv = c === RED ? 7 - r : r;
+      pos += sign * (adv * adv * 0.6);
+      if (col >= 2 && col <= 5 && r >= 2 && r <= 5) pos += sign * 4;
+      if (col === 0 || col === 7) pos -= sign * 2;
+    }
   }
-  return s;
+  for (const c of [RED, BLACK] as Color[]) {
+    const sign = c === me ? 1 : -1;
+    for (const g of BACK_GUARD[c]) if (b[g] && b[g] === c) pos += sign * 7;
+  }
+  // Trade down when ahead: the same lead is worth more with fewer pieces on the board.
+  const total = mine + theirs;
+  if (mat !== 0 && total) mat += Math.round((mat * 6) / total);
+  // Endgame: the side ahead walks its kings at what is left and keeps the loser out of the double corners.
+  if (total <= 10 && mine && theirs && Math.abs(mat) > 40) {
+    const lead = mat > 0 ? 1 : -1;
+    const strongKings = lead > 0 ? kingsAt : enemyKingsAt;
+    const weak = lead > 0 ? enemyAt : myAt;
+    for (const k of strongKings) {
+      let near = 99;
+      for (const e of weak) near = Math.min(near, Math.max(Math.abs(rowOf(k) - rowOf(e)), Math.abs(colOf(k) - colOf(e))));
+      pos -= lead * near * 6;
+    }
+    for (const e of weak) if (DOUBLE_CORNERS.has(e)) pos -= lead * 10;
+    if (!myMen && !theirMen) pos += lead * 20;
+  }
+  return mat + pos;
 }
 
-const WIN = 100000;
+// 32-bit Zobrist keys from a fixed seed, so a search is repeatable.
+const ZOBRIST = (() => {
+  let s = 0x9e3779b9;
+  const next = () => {
+    s ^= s << 13;
+    s ^= s >>> 17;
+    s ^= s << 5;
+    return s >>> 0;
+  };
+  const keys = new Uint32Array(64 * 8 + 1);
+  for (let i = 0; i < keys.length; i++) keys[i] = next();
+  return keys;
+})();
+function hashOf(b: Board, side: Color) {
+  let h = side === RED ? ZOBRIST[64 * 8] : 0;
+  for (let i = 0; i < 64; i++) if (b[i]) h ^= ZOBRIST[i * 8 + b[i]];
+  return h >>> 0;
+}
 
-function search(b: Board, side: Color, me: Color, depth: number, alpha: number, beta: number, ply: number): number {
+type Entry = { depth: number; score: number; flag: 0 | 1 | 2; best: number };
+const EXACT = 0;
+const LOWER = 1;
+const UPPER = 2;
+const MAX_PLY = 64;
+class Timeout extends Error {}
+type Search = { deadline: number; nodes: number; tt: Map<number, Entry>; now: () => number };
+
+const moveKey = (m: Move) => m.from * 64 + m.to + m.captured.length * 4096;
+
+function negamax(b: Board, side: Color, depth: number, alpha: number, beta: number, ply: number, s: Search): number {
+  if ((++s.nodes & 1023) === 0 && s.now() > s.deadline) throw new Timeout();
   const moves = legalMoves(b, side);
-  if (moves.length === 0) return side === me ? -(WIN - ply) : WIN - ply;
-  // Forced single capture sequences do not count toward depth, so tactics resolve fully.
-  if (depth <= 0 && !(moves.length === 1 && moves[0].captured.length)) return evaluate(b, me);
-  if (moves.length > 1) moves.sort((x, y) => y.captured.length - x.captured.length);
-  const maximizing = side === me;
-  let best = maximizing ? -Infinity : Infinity;
+  if (moves.length === 0) return -(WIN - ply);
+  const jumping = moves[0].captured.length > 0;
+  // Never stop with a capture pending: it would be scored before the forced trade happens.
+  if ((depth <= 0 && !jumping) || ply >= MAX_PLY) return evaluate(b, side);
+  const key = hashOf(b, side);
+  const hit = s.tt.get(key);
+  if (hit && hit.depth >= depth && ply > 0) {
+    if (hit.flag === EXACT) return hit.score;
+    if (hit.flag === LOWER && hit.score >= beta) return hit.score;
+    if (hit.flag === UPPER && hit.score <= alpha) return hit.score;
+  }
+  if (moves.length > 1) {
+    const best = hit?.best ?? -1;
+    moves.sort((x, y) => (moveKey(y) === best ? 1 : 0) - (moveKey(x) === best ? 1 : 0) || y.captured.length - x.captured.length);
+  }
+  // A single forced reply costs no depth.
+  const next = moves.length === 1 ? depth : depth - 1;
+  const alpha0 = alpha;
+  let bestV = -Infinity;
+  let bestK = -1;
   for (const m of moves) {
-    const v = search(applyMove(b, m), other(side), me, depth - 1, alpha, beta, ply + 1);
-    if (maximizing) {
-      best = Math.max(best, v);
-      alpha = Math.max(alpha, v);
-    } else {
-      best = Math.min(best, v);
-      beta = Math.min(beta, v);
+    const v = -negamax(applyMove(b, m), other(side), next, -beta, -alpha, ply + 1, s);
+    if (v > bestV) {
+      bestV = v;
+      bestK = moveKey(m);
     }
+    if (v > alpha) alpha = v;
     if (alpha >= beta) break;
   }
-  return best;
+  if (s.tt.size > 400_000) s.tt.clear();
+  s.tt.set(key, { depth, score: bestV, flag: bestV <= alpha0 ? UPPER : bestV >= beta ? LOWER : EXACT, best: bestK });
+  return bestV;
 }
 
-const DEPTH: Record<Level, number> = { 0: 2, 1: 5, 2: 8 };
+/** How far each level looks, and how long it may think (ms). Easy also misplays on purpose. */
+export const LEVELS: Record<Level, { depth: number; timeMs: number; slip: number }> = {
+  0: { depth: 2, timeMs: 200, slip: 0.25 },
+  1: { depth: 4, timeMs: 400, slip: 0 },
+  2: { depth: 30, timeMs: 900, slip: 0 },
+};
 export type Rng = () => number;
+export type SearchOptions = { timeMs?: number; maxDepth?: number };
 
-/** Best move for the side to move. Easy mode occasionally plays a random legal move. */
-export function bestMove(b: Board, side: Color, level: Level, rng: Rng = Math.random): Move | null {
+const clock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+/** Best move for the side to move. Easy sometimes plays a random legal move; ties are broken at random. */
+export function bestMove(b: Board, side: Color, level: Level, rng: Rng = Math.random, opts: SearchOptions = {}): Move | null {
   const moves = legalMoves(b, side);
   if (moves.length === 0) return null;
   if (moves.length === 1) return moves[0];
-  if (level === 0 && rng() < 0.25) return moves[Math.floor(rng() * moves.length)];
-  moves.sort((x, y) => y.captured.length - x.captured.length);
+  const spec = LEVELS[level];
+  if (spec.slip && rng() < spec.slip) return moves[Math.floor(rng() * moves.length)];
+  // Shuffle first so equal moves vary from game to game.
+  for (let i = moves.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [moves[i], moves[j]] = [moves[j], moves[i]];
+  }
+  const s: Search = { deadline: clock() + (opts.timeMs ?? spec.timeMs), nodes: 0, tt: new Map(), now: clock };
+  const maxDepth = opts.maxDepth ?? spec.depth;
+  let order = moves;
   let best = moves[0];
-  let bestV = -Infinity;
-  let alpha = -Infinity;
-  for (const m of moves) {
-    const v = search(applyMove(b, m), other(side), side, DEPTH[level] - 1, alpha, Infinity, 1);
-    if (v > bestV || (v === bestV && rng() < 0.5)) {
-      bestV = v;
-      best = m;
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    const scored: { m: Move; v: number }[] = [];
+    let alpha = -Infinity;
+    try {
+      for (const m of order) {
+        // Each root move gets a window just above the best so far; a fail-low is enough to rank it below.
+        const v = -negamax(applyMove(b, m), other(side), depth - 1, -Infinity, -alpha, 1, s);
+        scored.push({ m, v });
+        if (v > alpha) alpha = v;
+      }
+    } catch (e) {
+      if (!(e instanceof Timeout)) throw e;
+      // Keep the deeper answer if this iteration already found something better than the last best.
+      const lead = scored.reduce<{ m: Move; v: number } | null>((a, x) => (!a || x.v > a.v ? x : a), null);
+      if (lead && lead.m !== best && scored[0]?.m === best && lead.v > scored[0].v) best = lead.m;
+      break;
     }
-    alpha = Math.max(alpha, v);
+    scored.sort((x, y) => y.v - x.v);
+    order = scored.map((x) => x.m);
+    best = order[0];
+    // A forced win found: no need to look further.
+    if (Math.abs(scored[0].v) > WIN - MAX_PLY * 2) break;
   }
   return best;
 }

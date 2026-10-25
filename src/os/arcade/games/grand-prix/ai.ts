@@ -1,7 +1,7 @@
 // The racing line and the computer drivers. The line is a minimum curvature path inside the track limits, its speed
 // profile comes from the car's grip and power (corner speeds, then a braking pass backwards and an acceleration pass
 // forwards), and each AI drives the same physics as the player through steering, throttle and brake only.
-import { G, RHO, SPEC, type Car, type Input } from './car.ts';
+import { G, RHO, SPEC, tempGrip, type Car, type Input } from './car.ts';
 import { deltaS, wrapS, type Circuit } from './track.ts';
 
 export type Line = {
@@ -202,8 +202,29 @@ export function drive(drv: Driver, car: Car, c: Circuit, line: Line, rivals: Riv
       drv.sideTarget = Math.max(-(c.hw[i] - 1.5), Math.min(c.hw[i] - 1.5, r.d + side * 3.4)) - line.off[i];
       drv.sideHold = 2.5;
     }
-    // don't drive into the back of it while still lined up
-    if (gap < 14 + v * 0.25) limit = Math.min(limit, r.v + (gap - 8) * 0.6);
+    // don't drive into the back of it while still lined up: hold a following distance that grows with speed (cars
+    // only 8 m apart on the grid still launch together, then string out)
+    const keep = 6 + v * 0.3;
+    if (gap < keep + 10) limit = Math.min(limit, Math.max(0, r.v + (gap - keep) * 1.2));
+  }
+  // a car alongside: leave it a car's width, and if this one is behind with no room to move over, lift
+  for (const r of rivals) {
+    const gap = deltaS(c, car.s, r.s);
+    if (Math.abs(gap) > 5.6 || Math.abs(r.d - car.d) > 2.5) continue;
+    const lim = c.hw[i] - 1.2;
+    let away = Math.sign(car.d - r.d) || (car.d < 0 ? -1 : 1);
+    let want = r.d + away * 2.6;
+    // no room on that side: the only way out is behind it
+    if (Math.abs(want) > lim) {
+      away = -away;
+      want = r.d + away * 2.6;
+    }
+    if (Math.abs(want) <= lim) {
+      drv.sideTarget = want - line.off[i];
+      drv.sideHold = Math.max(drv.sideHold, 0.8);
+      blocked = true;
+    }
+    if (gap > 0) limit = Math.min(limit, r.v - 0.5);
   }
   if (!blocked && drv.sideHold <= 0) drv.sideTarget = 0;
   drv.side += Math.max(-dt * 2.2, Math.min(dt * 2.2, drv.sideTarget - drv.side));
@@ -236,6 +257,9 @@ export function drive(drv: Driver, car: Car, c: Circuit, line: Line, rivals: Riv
   // speed: aim for this driver's profile a little ahead
   const preview = mod(i + Math.round((v * 0.18) / c.ds), n);
   let target = Math.min(drv.v[preview], drv.v[i]);
+  // cold or overheated tyres give less grip than the line assumes; corner speed goes with the square root of grip
+  const grip = Math.min(...car.wheels.map((w) => tempGrip(w.temp)));
+  target *= Math.sqrt(grip);
   // off the line costs grip, so slow a touch when running wide or side by side
   target *= 1 - Math.min(0.08, Math.abs(car.d - line.off[i]) * 0.006);
   target = Math.min(target, limit);
@@ -253,6 +277,8 @@ export function drive(drv: Driver, car: Car, c: Circuit, line: Line, rivals: Riv
   if (rearSlip > SPEC.slipY * 0.85) throttle *= 0.4;
   // stuck facing the wrong way or nearly stopped off line: just get going toward the line
   if (v < 3 && Math.abs(car.d - line.off[i]) > 2) throttle = Math.max(throttle, 0.4);
+  // nearly stopped, the car holds itself still: braking here would make the auto gearbox select reverse
+  if (v < 2) brake = 0;
 
   return { steer, throttle, brake, drs: true };
 }

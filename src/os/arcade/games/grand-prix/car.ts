@@ -224,9 +224,9 @@ function wheelRpm(car: Car) {
 export const speedOf = (car: Car) => Math.hypot(car.vx, car.vy);
 export const kmh = (car: Car) => Math.abs(car.vx) * 3.6;
 
-/** Grip factor from tread temperature: best between about 90 and 110 C. */
+/** Grip factor from tread temperature: full grip in the working window of about 90 to 114 C. */
 export function tempGrip(t: number) {
-  const off = Math.max(0, Math.abs(t - 100) - 8);
+  const off = Math.max(0, Math.abs(t - 102) - 12);
   return Math.max(0.72, 1 - (off / 55) ** 2);
 }
 
@@ -479,7 +479,9 @@ function substep(car: Car, input: Input, h: number, c: Circuit, assists: Assists
     const rear = k >= 2;
     const inertia = S.wheelI + (rear && car.clutch > 0.5 && gear !== 0 ? (S.engineI * ratio * ratio) / 2 : 0);
     const torque = rear ? driveTorque / 2 - (k === 2 ? 1 : -1) * rearDiff * S.diffLock * 0.5 : 0;
-    const stiff = (peak * Math.max(0, curveSlope(ns))) / S.slipX;
+    // past the peak the slope turns negative; the secant (force over slip) keeps the update damped there, so a
+    // spinning or locked wheel settles instead of overshooting between the two
+    const stiff = (peak * Math.max(curveSlope(ns), curve(ns) / Math.max(ns, 1e-3))) / S.slipX;
     const denom = 1 + (h * S.radius * S.radius * stiff) / (inertia * den);
     let w1 = wh.w + ((h / inertia) * (torque - S.radius * fx)) / denom;
     let bt = brakeT[k];
@@ -496,7 +498,7 @@ function substep(car: Car, input: Input, h: number, c: Circuit, assists: Assists
     const slideV = Math.hypot(slideX, wvy);
     wh.slide = slideV;
     const heat = (Math.abs(fx * slideX) + Math.abs(fy * wvy)) * 0.000016 + fz * Math.abs(wvx) * 0.0000017;
-    const cool = (wh.temp - 26) * (0.004 + Math.abs(wvx) * 0.00012);
+    const cool = (wh.temp - 26) * (0.0036 + Math.abs(wvx) * 0.000105);
     wh.temp += (heat - cool) * h;
 
     // back to the body frame
