@@ -503,7 +503,7 @@ function Play({ mode }: { mode: StageMode }) {
   const mouse = useRef({ x: 0, y: 0, inside: false, down: false, clicked: false, ping: false });
   /** The pick up button held down on a touch screen (to revive), and a long press on a slot or an item (to drop it). */
   const holding = useRef(false);
-  const press = useRef<{ timer: number; what: Input['drop'] } | null>(null);
+  const press = useRef<number | null>(null);
   const taps = useRef<Taps>(noTaps());
   const moveStick = useRef<Stick | null>(null);
   const aimStick = useRef<Stick | null>(null);
@@ -783,7 +783,7 @@ function Play({ mode }: { mode: StageMode }) {
     if (holding.current && me.reviving < 0 && !downMate(m, me)) holding.current = false;
     inp.hold = keys.down('KeyE') || holding.current;
     // a ping where the mouse points (or ahead, where you aim), and the drop key for what's in hand
-    if (keys.pressed(keyCode(PING_KEY)) || mouse.current.ping || t.ping) {
+    if ((keys.pressed(keyCode(PING_KEY)) || mouse.current.ping || t.ping) && pingable(me)) {
       const g = t.ping ? null : mouse.current.inside && v && !touchRef.current ? v.ground(mouse.current.x, mouse.current.y, me.y + 1) : null;
       inp.ping = t.pingAt ?? g ?? { x: me.x + Math.sin(lastAim.current) * 12, z: me.z + Math.cos(lastAim.current) * 12 };
     }
@@ -1809,7 +1809,7 @@ function Play({ mode }: { mode: StageMode }) {
    */
   const tapOrDrop = (what: Input['drop'], set: (t: Taps) => void) => {
     const stop = () => {
-      if (press.current) window.clearTimeout(press.current.timer);
+      if (press.current !== null) window.clearTimeout(press.current);
       press.current = null;
     };
     return {
@@ -1820,14 +1820,11 @@ function Play({ mode }: { mode: StageMode }) {
         set(taps.current);
         stop();
         if (e.pointerType !== 'mouse')
-          press.current = {
-            what,
-            timer: window.setTimeout(() => {
-              taps.current.drop = what;
-              buzz(30);
-              press.current = null;
-            }, 550),
-          };
+          press.current = window.setTimeout(() => {
+            taps.current.drop = what;
+            buzz(30);
+            press.current = null;
+          }, 550);
       },
       onPointerUp: stop,
       onPointerCancel: stop,
