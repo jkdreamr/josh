@@ -240,13 +240,8 @@ function drawField(c: CanvasRenderingContext2D, view: View, world: World, t: num
     c.textBaseline = 'middle';
     c.font = `900 ${view.rotate ? 2.2 : 3.2}px ${FONT}`;
     const word = TEAM_NAMES[team];
-    if (view.rotate) {
-      c.fillText(word, 0, -9);
-      c.fillText(word, 0, 9);
-    } else {
-      c.fillText(word, -9, 0);
-      c.fillText(word, 9, 0);
-    }
+    c.fillText(word, -9, 0, 15);
+    c.fillText(word, 9, 0, 15);
     c.restore();
   }
   // yard lines
@@ -738,7 +733,7 @@ function chip(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: n
 }
 
 function pillText(c: CanvasRenderingContext2D, text: string, x: number, y: number, color: string) {
-  const height = 17;
+  const height = 15;
   const width = c.measureText(text).width + 12;
   rr(c, x - 6, y - height / 2, width, height, height / 2);
   c.fillStyle = 'rgba(10,14,20,0.55)';
