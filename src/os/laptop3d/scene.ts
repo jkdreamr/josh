@@ -16,7 +16,7 @@ const LH = 21.3;
 const LT = 0.48;
 const LY0 = 0.5;
 const HZ = -BD / 2 + 0.42;
-const HY = BH + 0.02;
+const HY = BH + 0.08;
 const DW = 30.24;
 export const DA = 3024 / 1964;
 const DH = DW / DA;
@@ -30,8 +30,9 @@ const TPZ = BD / 2 - 1.15 - TPD / 2;
 const DEG = Math.PI / 180;
 const PX = 110;
 
-export type StickerPlacement = { key: string; left: string; top: string; width: string; rot: number };
-export type PalmPlacement = { key: string; x: number; z: number; w: number; rot: number };
+/** `curl` lifts one corner of the sticker off the surface by that many cm, the way a well-loved sticker starts to peel. */
+export type StickerPlacement = { key: string; left: string; top: string; width: string; rot: number; curl?: number };
+export type PalmPlacement = { key: string; x: number; z: number; w: number; rot: number; curl?: number };
 
 export type LaptopOptions = {
   container: HTMLElement;
@@ -125,6 +126,29 @@ function rrect(w: number, h: number, r: number, rb = r, cx = 0, cy = 0) {
   s.lineTo(x0, y0 + rb);
   s.absarc(x0 + rb, y0 + rb, rb, Math.PI, Math.PI * 1.5, false);
   return s;
+}
+
+/** `rrect` whose bottom edge dips in by `nd` over `nw`: the thumb scoop at the front of the palm rest. */
+function notched(w: number, h: number, r: number, nw: number, nd: number) {
+  const s = new THREE.Shape();
+  const x0 = -w / 2, x1 = w / 2, y0 = -h / 2, y1 = h / 2;
+  s.moveTo(x0 + r, y0);
+  scoop(s, y0, nw, nd);
+  s.lineTo(x1 - r, y0);
+  s.absarc(x1 - r, y0 + r, r, -Math.PI / 2, 0, false);
+  s.lineTo(x1, y1 - r);
+  s.absarc(x1 - r, y1 - r, r, 0, Math.PI / 2, false);
+  s.lineTo(x0 + r, y1);
+  s.absarc(x0 + r, y1 - r, r, Math.PI / 2, Math.PI, false);
+  s.lineTo(x0, y0 + r);
+  s.absarc(x0 + r, y0 + r, r, Math.PI, Math.PI * 1.5, false);
+  return s;
+}
+
+function scoop(s: THREE.Path, y0: number, nw: number, nd: number) {
+  s.lineTo(-nw / 2, y0);
+  s.bezierCurveTo(-nw * 0.3, y0, -nw * 0.28, y0 + nd, 0, y0 + nd);
+  s.bezierCurveTo(nw * 0.28, y0 + nd, nw * 0.3, y0, nw / 2, y0);
 }
 
 function canvasTex(c: HTMLCanvasElement, aniso: number, srgb = true) {
@@ -422,13 +446,46 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   // PBT-ish caps: matte, with the faint sheen worn into them by fingertips
   const keyMat = keep(new THREE.MeshPhysicalMaterial({ color: '#0b0b0d', roughness: 0.5, metalness: 0, sheen: 0.25, sheenRoughness: 0.6, sheenColor: '#3a3a44' }));
   // Lit glass picks up the studio environment and reads as silver; the real bezel is a deep black.
-  const glass = keep(new THREE.MeshBasicMaterial({ color: '#050506' }));
+  const glass = keep(new THREE.MeshPhysicalMaterial({ color: '#010102', roughness: 0.06, metalness: 0, envMapIntensity: 0.55 }));
   const panel = keep(new THREE.MeshStandardMaterial({ color: '#000000', roughness: 0.18, metalness: 0, envMapIntensity: 0.05 }));
   const hingeMat = keep(new THREE.MeshPhysicalMaterial({ color: '#1d1e22', metalness: 0.85, roughness: 0.32, clearcoat: 0.3, clearcoatRoughness: 0.4 }));
   // etched glass over a silver backing: reads like the body, but smoother and a touch cooler
   const padMat = keep(
     new THREE.MeshPhysicalMaterial({ color: '#b9bbc0', metalness: 0.75, roughness: 0.3, clearcoat: 0.6, clearcoatRoughness: 0.22, envMapIntensity: 0.9 }),
   );
+  {
+    // a day's worth of fingertips: oily smudges and swipe arcs only show where they catch a highlight
+    const c = document.createElement('canvas');
+    c.width = 512;
+    c.height = 300;
+    const g = c.getContext('2d')!;
+    g.fillStyle = 'rgb(0,74,0)';
+    g.fillRect(0, 0, 512, 300);
+    const r = rng(31);
+    g.filter = 'blur(9px)';
+    for (let i = 0; i < 22; i++) {
+      g.fillStyle = `rgba(0,${92 + r() * 18},0,${0.2 + r() * 0.25})`;
+      g.beginPath();
+      g.ellipse(80 + r() * 352, 50 + r() * 200, 10 + r() * 16, 13 + r() * 18, r() * Math.PI, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.filter = 'blur(5px)';
+    g.lineCap = 'round';
+    for (let i = 0; i < 9; i++) {
+      g.strokeStyle = `rgba(0,100,0,${0.12 + r() * 0.12})`;
+      g.lineWidth = 8 + r() * 10;
+      g.beginPath();
+      const x = 120 + r() * 270, y = 70 + r() * 160;
+      g.arc(x, y, 60 + r() * 120, r() * Math.PI * 2, r() * Math.PI * 2 + 0.6 + r() * 0.8);
+      g.stroke();
+    }
+    const t = keep(canvasTex(c, aniso, false));
+    t.repeat.set(1 / TPW, 1 / TPD);
+    t.offset.set(0.5, 0.5);
+    padMat.roughness = 1;
+    padMat.roughnessMap = t;
+    padMat.clearcoatRoughnessMap = t;
+  }
   const portMat = keep(new THREE.MeshStandardMaterial({ color: '#030304', roughness: 0.9 }));
   const portInner = keep(new THREE.MeshStandardMaterial({ color: '#16171a', roughness: 0.5, metalness: 0.6 }));
   const rubber = keep(new THREE.MeshStandardMaterial({ color: '#1a1a1c', roughness: 0.92 }));
@@ -439,7 +496,9 @@ export function createLaptop(o: LaptopOptions): LaptopController {
 
   // ---------------------------------------------------------------- base
   const bev = 0.14;
-  const baseShape = rrect(BW - 2 * bev, BD - 2 * bev, 0.95);
+  const NW = 6.6;
+  const ND = 0.42;
+  const baseShape = notched(BW - 2 * bev, BD - 2 * bev, 0.95, NW, ND);
   baseShape.holes.push(rrect(KW + 0.36, KD + 0.36, 0.32, 0.32, 0, -(KZ0 + KD / 2)));
   const baseGeo = keep(
     new THREE.ExtrudeGeometry(baseShape, { depth: BT - 2 * bev, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 6, curveSegments: 28 }),
@@ -448,6 +507,64 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   baseGeo.translate(0, FOOT + bev, 0);
   const base = shadowed(new THREE.Mesh(baseGeo, alu));
   root.add(base);
+  // the scoop only cuts the top of the edge; its floor is a rounded ledge halfway down the edge
+  {
+    const y0 = -(BD / 2 - bev);
+    // same bevel as the case so the bottom edge runs on unbroken; the bevel grows the outline by `fb`, so the front
+    // line starts that far in to land flush
+    const fb = bev;
+    const floorH = BT * 0.5;
+    const fill = new THREE.Shape();
+    fill.moveTo(-NW / 2, y0 - bev + fb);
+    fill.lineTo(-NW / 2, y0);
+    scoop(fill, y0, NW, ND);
+    fill.lineTo(NW / 2, y0 - bev + fb);
+    fill.closePath();
+    const geo = keep(new THREE.ExtrudeGeometry(fill, { depth: floorH - 2 * fb, bevelEnabled: true, bevelThickness: fb, bevelSize: fb, bevelSegments: 4, curveSegments: 20 }));
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(0, FOOT + fb, 0);
+    root.add(shadowed(new THREE.Mesh(geo, alu)));
+  }
+
+  // baked occlusion on the palm rest: the open lid hides the sky near the hinge, and the keyboard cutout and scoop
+  // gather a little shadow at their lips
+  {
+    const S = 40;
+    const c = document.createElement('canvas');
+    c.width = Math.round(BW * S);
+    c.height = Math.round(BD * S);
+    const g = c.getContext('2d')!;
+    g.scale(S, S);
+    g.translate(BW / 2, BD / 2);
+    const grd = g.createLinearGradient(0, -BD / 2, 0, -BD / 2 + 5);
+    grd.addColorStop(0, 'rgba(0,0,0,0.5)');
+    grd.addColorStop(0.35, 'rgba(0,0,0,0.16)');
+    grd.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grd;
+    g.fillRect(-BW / 2, -BD / 2, BW, 5);
+    g.filter = `blur(${0.18 * S}px)`;
+    g.strokeStyle = 'rgba(0,0,0,0.3)';
+    g.lineWidth = 0.22;
+    const lip = rrect(KW + 0.36, KD + 0.36, 0.32, 0.32, 0, KZ0 + KD / 2);
+    g.beginPath();
+    for (const p of lip.getPoints(12)) g.lineTo(p.x, p.y);
+    g.closePath();
+    g.stroke();
+    g.strokeStyle = 'rgba(0,0,0,0.22)';
+    g.lineWidth = 0.16;
+    g.beginPath();
+    g.ellipse(0, BD / 2 - bev - ND, NW * 0.36, ND * 1.3, 0, Math.PI, 0);
+    g.stroke();
+    const t = keep(canvasTex(c, aniso, false));
+    const occ = new THREE.Mesh(
+      keep(new THREE.PlaneGeometry(BW, BD)),
+      keep(new THREE.MeshBasicMaterial({ color: '#000', alphaMap: t, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 })),
+    );
+    occ.rotation.x = -Math.PI / 2;
+    occ.position.y = BH + 0.0006;
+    occ.raycast = () => {};
+    root.add(occ);
+  }
 
   const well = new THREE.Mesh(keep(new THREE.PlaneGeometry(KW + 0.4, KD + 0.4)), black);
   well.rotation.x = -Math.PI / 2;
@@ -570,15 +687,22 @@ export function createLaptop(o: LaptopOptions): LaptopController {
 
   // ground: soft contact shadow + cast shadow
   const ao = document.createElement('canvas');
-  ao.width = ao.height = 256;
+  ao.width = 512;
+  ao.height = Math.round((512 * BD * 1.25) / (BW * 1.18));
   {
+    // tight and dark where the case nearly touches the desk, with a broad soft falloff around it
     const g = ao.getContext('2d')!;
-    const grd = g.createRadialGradient(128, 128, 30, 128, 128, 128);
-    grd.addColorStop(0, 'rgba(0,0,0,0.8)');
-    grd.addColorStop(0.55, 'rgba(0,0,0,0.5)');
-    grd.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = grd;
-    g.fillRect(0, 0, 256, 256);
+    const k = 512 / (BW * 1.18);
+    g.translate(256, ao.height / 2);
+    g.scale(k, k);
+    for (const [grow, blur, a] of [[3.2, 2.4, 0.35], [0.6, 0.7, 0.55], [-0.2, 0.18, 0.75]] as const) {
+      g.filter = `blur(${blur * k}px)`;
+      g.fillStyle = `rgba(0,0,0,${a})`;
+      const sh = rrect(BW + grow, BD + grow, 1 + grow / 2);
+      g.beginPath();
+      for (const p of sh.getPoints(16)) g.lineTo(p.x, p.y);
+      g.fill();
+    }
   }
   const aoMesh = new THREE.Mesh(
     keep(new THREE.PlaneGeometry(BW * 1.18, BD * 1.25)),
@@ -702,10 +826,23 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   const shadowMat = (c: HTMLCanvasElement) =>
     keep(new THREE.MeshBasicMaterial({ color: '#000', alphaMap: keep(canvasTex(contactShadow(c, SHADOW_PAD), aniso, false)), transparent: true, opacity: 0.38, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 }));
   /** A sticker and the soft shadow its thickness leaves on the surface beneath it. */
-  const sticker = async (svg: SVGSVGElement, key: string, w: number) => {
+  const sticker = async (svg: SVGSVGElement, key: string, w: number, curl = 0) => {
     const { tex, aspect, canvas } = await svgTexture(svg, aniso, hash(key));
     const h = w / aspect;
-    const m = new THREE.Mesh(keep(new THREE.PlaneGeometry(w, h)), stickerMat(tex, w));
+    const geo = keep(new THREE.PlaneGeometry(w, h, curl ? 28 : 1, curl ? 28 : 1));
+    if (curl) {
+      // peel one corner up along a straight fold line, rising faster towards the tip
+      const pos = geo.attributes.position;
+      const reach = Math.min(w, h) * 0.32;
+      const dx = Math.SQRT1_2, dy = Math.SQRT1_2;
+      for (let i = 0; i < pos.count; i++) {
+        const s = (w / 2 - pos.getX(i)) * dx + (h / 2 - pos.getY(i)) * dy;
+        const t = Math.max(0, 1 - s / reach);
+        pos.setZ(i, curl * t * t);
+      }
+      geo.computeVertexNormals();
+    }
+    const m = new THREE.Mesh(geo, stickerMat(tex, w));
     const grow = 1 + SHADOW_PAD * 2 * (Math.max(canvas.width, canvas.height) / canvas.width);
     const growY = 1 + SHADOW_PAD * 2 * (Math.max(canvas.width, canvas.height) / canvas.height);
     const shadow = new THREE.Mesh(keep(new THREE.PlaneGeometry(w * grow, h * growY)), shadowMat(canvas));
@@ -714,21 +851,22 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   const stickersDone = (async () => {
     await document.fonts?.ready;
     const art = (key: string) => o.stickerSource.querySelector<SVGSVGElement>(`[data-sticker="${key}"] svg`);
-    for (const s of o.lid) {
+    // decode every sticker at once so a busy main thread cannot leave the lid half-dressed when the intro starts
+    const lidDone = o.lid.map(async (s) => {
       const svg = art(s.key);
-      if (!svg) continue;
+      if (!svg) return;
       const w = (parseFloat(s.width) / 100) * LW;
-      const { m, shadow, h } = await sticker(svg, s.key, w);
+      const { m, shadow, h } = await sticker(svg, s.key, w, s.curl);
       for (const [mesh, z, dy] of [[m, -LT - 0.006, 0], [shadow, -LT - 0.003, -0.05]] as const) {
         mesh.rotation.set(Math.PI, 0, -s.rot * DEG);
         mesh.position.set(-LW / 2 + (parseFloat(s.left) / 100) * LW + w / 2, LY0 + (parseFloat(s.top) / 100) * LH + h / 2 + dy, z);
         lid.add(mesh);
       }
-    }
-    for (const s of o.palm) {
+    });
+    const palmDone = o.palm.map(async (s) => {
       const svg = art(s.key);
-      if (!svg) continue;
-      const { m, shadow } = await sticker(svg, s.key, s.w);
+      if (!svg) return;
+      const { m, shadow } = await sticker(svg, s.key, s.w, s.curl);
       for (const mesh of [m, shadow]) mesh.rotation.set(-Math.PI / 2, 0, -s.rot * DEG);
       m.position.set(s.x, BH + 0.006, s.z);
       shadow.position.set(s.x, BH + 0.003, s.z + 0.05);
@@ -736,7 +874,8 @@ export function createLaptop(o: LaptopOptions): LaptopController {
       root.add(m, shadow);
       palmMeshes.push(m);
       lift.set(m, { cur: 0, to: 0, y: BH + 0.006, shadow });
-    }
+    });
+    await Promise.all([...lidDone, ...palmDone]);
     dirty = true;
   })().catch((e) => console.warn('sticker textures', e));
   let disposed = false;
