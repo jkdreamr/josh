@@ -740,7 +740,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       if (a > from + 0.1) scene.add(new THREE.Mesh(strip(THREE, t, from, a, lo, hi, 0.04, 6), glassMat));
       from = b;
     }
-  } else if (!boat) scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half, t.half, 0.04, roadLen), surf ? roadMaterial(THREE, look, surf, asphalt) : new THREE.MeshLambertMaterial({ map: asphalt })));
+  } else if (!boat) scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half, t.half, 0.04, roadLen), surf ? roadMaterial(THREE, look, asphalt) : new THREE.MeshLambertMaterial({ map: asphalt })));
   const curbTex = surf ? curbTexture(THREE, look) : texture(
     THREE,
     canvas(16, 64, (g) => {

@@ -122,7 +122,7 @@ export function lawnMaterial(THREE: Three, g: Ground) {
  * The asphalt (or the Quad's paving, or the barn's dirt): its texture across the road (u) and along it (v), laid over
  * with variation from where it is so its repeats never line up, the lines worn dark by tires, and patches.
  */
-export function roadMaterial(THREE: Three, look: Look, g: Ground | undefined, map: T.Texture) {
+export function roadMaterial(THREE: Three, look: Look, map: T.Texture) {
   const dirt = look.road === '#8f6f4d';
   return procedural(
     THREE,
