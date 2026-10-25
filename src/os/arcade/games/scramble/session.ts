@@ -403,7 +403,8 @@ export function resultCard(m: Match, early: boolean, host: boolean): { title: st
   const winners = winnersOf(m);
   const won = !!me && winners.includes(me);
   const total = teams ? teamCount(m) : m.fighters.length;
-  const title = won ? (teams ? 'Last Team Standing' : 'Last Egg Standing') : me ? `${ordinal(me.place || total)} of ${total}` : 'Match Over';
+  // out while the rest of our team is still in: no place yet
+  const title = won ? (teams ? 'Last Team Standing' : 'Last Egg Standing') : me && teams && !me.place ? 'Your Team Is Still In' : me ? `${ordinal(me.place || total)} of ${total}` : 'Match Over';
   const stats = me ? `${me.kills} ${me.kills === 1 ? 'elimination' : 'eliminations'}, ${Math.round(me.dealt)} damage.` : '';
   const left = teams ? teamsLeft(m) : aliveCount(m);
   const what = teams ? (left === 1 ? 'team' : 'teams') : left === 1 ? 'egg' : 'eggs';

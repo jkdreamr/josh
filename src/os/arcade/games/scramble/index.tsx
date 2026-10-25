@@ -292,7 +292,8 @@ function OnlineSetup() {
           <ul>
             {people.map((p, i) => {
               const mine = p.seat === online.seat;
-              const can = host || mine;
+              // nowhere else to go (every other team full) leaves the button off
+              const can = (host || mine) && nextTeam(mode, teams, i) !== teams[i];
               return (
                 <li key={p.seat} className={mine ? 'is-mine' : undefined}>
                   <span>{p.name}</span>
@@ -465,8 +466,7 @@ function Play({ mode }: { mode: StageMode }) {
   const view = useRef<View | null>(null);
   const match = useRef<Match | null>(null);
   const net = useRef<Session>(null as unknown as Session);
-  net.current ??= newSession(!live || online!.isHost);
-  if (!match.current) {
+  net.current ??= newSession(!live || online!.isHost);  if (!match.current) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
     else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0], teamMode);
     else if (online!.isHost) {
@@ -945,7 +945,8 @@ function Play({ mode }: { mode: StageMode }) {
     const board = !teams && score > 0;
     const newBest = board && bests[m.level].submit(score);
     const total = teams ? teamCount(m) : m.fighters.length;
-    const title = won ? (teams ? 'Last Team Standing' : 'Last Egg Standing') : `${ordinal(me.place || total)} of ${total}`;
+    // left while the rest of the team is still in: no place yet
+    const title = won ? (teams ? 'Last Team Standing' : 'Last Egg Standing') : teams && !me.place ? 'Your Team Is Still In' : `${ordinal(me.place || total)} of ${total}`;
     const how = won ? '' : me.by >= 0 && me.by !== me.id ? ` Cracked by ${m.fighters[me.by]?.name ?? 'someone'}.` : me.outCause === 'storm' ? ' The storm got you.' : me.outCause === 'bleed' ? ' You bled out.' : '';
     const them = !won && winners.length && m.ended ? ` ${namesOf(winners)} won.` : '';
     const detail = `${score.toLocaleString('en-US')} pts${newBest ? ', a new best' : ''}: ${me.kills} ${me.kills === 1 ? 'elimination' : 'eliminations'}, ${Math.round(me.dealt)} damage${won ? ' and the win' : ''}.${how}${them}${teams ? ' Only solo matches go on the board.' : ''}`;

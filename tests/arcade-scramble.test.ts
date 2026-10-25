@@ -6304,3 +6304,14 @@ test('moving someone in the room’s team list goes round every team with room a
     assert.ok(seen.size >= 2, `seat ${i} moves (${[...seen].join(' / ')})`);
   }
 });
+
+test('cracked while the rest of the team is still in, the card says so rather than a place', () => {
+  const m = teamQuiet('duos', [0, 0, 1, 1, 2, 2]);
+  for (const f of m.fighters) land(f, f.id * 10, 0);
+  hurt(m, m.fighters[0], 300, 2, 'smg', false);
+  hurt(m, m.fighters[0], 300, 2, 'smg', false);
+  assert.equal(m.fighters[0].phase, 'out');
+  const card = resultCard(m, true, false);
+  assert.equal(card.title, 'Your Team Is Still In');
+  assert.match(card.detail, /3 teams still going/);
+});
