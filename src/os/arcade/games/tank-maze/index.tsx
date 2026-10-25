@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { createWorld, fitBoard, keyHeading, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
+import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, keyHeading, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket, type NetEvent, type RoundPacket } from './net.ts';
 import { finalLine, freeSpans, packChips, rosterLine, type Span } from './hud.ts';
@@ -131,11 +131,12 @@ function TankMaze() {
   const [targetName] = useSetting(TARGET);
   const m = useRef<Match | null>(null);
   const sticks = useRef(new Map<number, Stick>());
+  const aims = useRef(new Map<number, { x: number; y: number }>());
   const fireQueued = useRef<boolean[]>([false, false, false, false]);
   const fireHeld = useRef<boolean[]>([false, false, false, false]);
   const guestFireCount = useRef(0);
-  const guestLastSent = useRef<{ turn: number; move: number; dir: number | undefined; t: number }>({ turn: 0, move: 0, dir: undefined, t: 0 });
-  const hostIn = useRef(new Map<number, { turn: -1 | 0 | 1; move: -1 | 0 | 1; dir: number | undefined; fc: number; lastFc: number }>());
+  const guestLastSent = useRef<{ turn: number; move: number; dir: number | undefined; aim?: number; t: number }>({ turn: 0, move: 0, dir: undefined, t: 0 });
+  const hostIn = useRef(new Map<number, { turn: -1 | 0 | 1; move: -1 | 0 | 1; dir: number | undefined; aim?: number; fc: number; lastFc: number }>());
   const bounceTick = useRef(0);
   const sizeRef = useRef(size);
   sizeRef.current = size;
@@ -270,6 +271,7 @@ function TankMaze() {
   };
 
   const reset = () => {
+    aims.current.clear();
     cfg.current = { mode: effMode, rivals: Number(rivals) as 1 | 2 | 3, level: levelIndex(levelName), target: Number(targetName) };
     const { w, h } = sizeRef.current;
     const lay = layout(w || 800, h || 500);
@@ -366,10 +368,21 @@ function TankMaze() {
   };
 
   const onPointerDown = (e: RPointerEvent<HTMLCanvasElement>) => {
-    if (!touch) return;
+    const match = m.current;
+    if (!match) return;
     const { x, y } = canvasPoint(e);
-    const zi = zoneFor(x, y);
-    if (zi < 0) return;
+    const zi = touch ? zoneFor(x, y) : -1;
+    if (zi < 0) {
+      const { w, h } = sizeRef.current;
+      const { cols, rows } = match.world.maze;
+      const fit = fitBoard(layout(w, h).board, cols, rows, w);
+      if (fit.cell <= 0) return;
+      const pt = canvasToWorld({ x, y }, fit);
+      if (pt.x < 0 || pt.x >= cols || pt.y < 0 || pt.y >= rows) return;
+      const player = online ? mine() : humanIds(match)[0];
+      if (player !== undefined && player >= 0) aims.current.set(player, pt);
+      return;
+    }
     const player = humanIds(m.current!)[zi];
     if (player === undefined) return;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -390,7 +403,10 @@ function TankMaze() {
   const onPointerEnd = (e: RPointerEvent<HTMLCanvasElement>) => {
     sticks.current.delete(e.pointerId);
   };
-  useEffect(() => () => sticks.current.clear(), []);
+  useEffect(() => () => {
+    sticks.current.clear();
+    aims.current.clear();
+  }, []);
 
   const stickFor = (player: number): Stick | null => {
     for (const s of sticks.current.values()) if (s.player === player) return s;
@@ -402,6 +418,14 @@ function TankMaze() {
     const input = keyInput(id);
     const match = m.current;
     const stick = match ? stickFor(id) : null;
+    const tank = isGuest ? match?.snaps.at(-1)?.tanks[id] : match?.world.tanks[id];
+    if (!tank?.alive || input.turn !== 0 || input.move !== 0 || input.dir !== undefined || stick) aims.current.delete(id);
+    const target = aims.current.get(id);
+    if (target && tank?.alive) {
+      const angle = aimAt(tank, target);
+      if (aimAligned(tank.a, angle)) aims.current.delete(id);
+      else input.aim = angle;
+    }
     if (match && stick) {
       const dx = stick.x - stick.ox;
       const dy = stick.y - stick.oy;
@@ -464,7 +488,7 @@ function TankMaze() {
         if (!match) return;
         if (pkt.k === 'in' && online.seat === 0) {
           const cur = hostIn.current.get(from) ?? { turn: 0 as const, move: 0 as const, dir: undefined, fc: 0, lastFc: -1 };
-          hostIn.current.set(from, { turn: pkt.turn, move: pkt.move, dir: pkt.dir, fc: pkt.fireCount, lastFc: cur.lastFc });
+          hostIn.current.set(from, { turn: pkt.turn, move: pkt.move, dir: pkt.dir, aim: pkt.aim, fc: pkt.fireCount, lastFc: cur.lastFc });
           return;
         }
         if (online.seat === 0) return;
@@ -522,6 +546,7 @@ function TankMaze() {
   };
 
   const applyRoundPacket = (match: Match, pkt: RoundPacket) => {
+    aims.current.clear();
     const world = createWorld({ cols: pkt.cols, rows: pkt.rows, seed: pkt.seed, count: pkt.seats.length, target: pkt.target });
     world.round = pkt.round;
     world.scores = pkt.scores.slice();
@@ -661,12 +686,12 @@ function TankMaze() {
       const last = guestLastSent.current;
       const now = performance.now();
       const changed =
-        input.turn !== last.turn || input.move !== last.move || (input.dir === undefined) !== (last.dir === undefined) || (input.dir !== undefined && Math.abs(input.dir - last.dir!) > 0.02);
+        input.turn !== last.turn || input.move !== last.move || input.aim !== last.aim || (input.dir === undefined) !== (last.dir === undefined) || (input.dir !== undefined && Math.abs(input.dir - last.dir!) > 0.02);
       const fireNow = input.fire;
       if (fireNow) guestFireCount.current++;
       if (online && (changed || fireNow || now - last.t > 33)) {
-        guestLastSent.current = { turn: input.turn, move: input.move, dir: input.dir, t: now };
-        online.send(inputPacket({ k: 'in', roomRound: online.round, turn: input.turn, move: input.move, dir: input.dir, fireCount: guestFireCount.current }), { fast: true });
+        guestLastSent.current = { turn: input.turn, move: input.move, dir: input.dir, aim: input.aim, t: now };
+        online.send(inputPacket({ k: 'in', roomRound: online.round, turn: input.turn, move: input.move, dir: input.dir, aim: input.aim, fireCount: guestFireCount.current }), { fast: true });
       }
       return;
     }
@@ -700,7 +725,7 @@ function TankMaze() {
           if (g) {
             const fire = g.fc > g.lastFc;
             if (fire) g.lastFc = g.fc;
-            inputs[t.id] = g.dir === undefined ? { turn: g.turn, move: g.move, fire } : { turn: 0, move: 0, fire, dir: g.dir };
+            inputs[t.id] = { turn: g.turn, move: g.move, fire, dir: g.dir, aim: g.aim };
           }
         } else {
           inputs[t.id] = humanInput(t.id);
@@ -738,6 +763,7 @@ function TankMaze() {
       }
       match.prevPhase = w.phase;
       if (w.round !== sentRound) {
+        aims.current.clear();
         sentRound = w.round;
         // Local rounds use the maze dims that fit the stage as it is right now.
         if (!online) {

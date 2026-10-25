@@ -47,15 +47,14 @@ import {
   turboLevel,
   type Cc,
   type Ev,
-  type Hat,
   type Item,
   type Kart,
   type Race,
   type Racer,
 } from './logic';
 import { applyFlags, carOf, configOf, endOf, events, finishOrder, guestState, hostState, parsePacket, winnerOf, type Car, type NetEv } from './net';
-import { deposit, freshGarage, fromLook, loadGarage, lookOf, paintColor, payout, saveGarage, subscribeGarage, type Garage } from './garage';
-import { CoinIcon, GarageSheet, HowToPlay, ItemIcon } from './hud';
+import { deposit, freshGarage, fromLook, loadGarage, lookFor, lookOf, payout, saveGarage, subscribeGarage, type Look } from './garage';
+import { CoinIcon, GarageSheet, HowToPlay, ItemIcon, paintFill } from './hud';
 import { BPM, JINGLE_DONE, JINGLE_WIN, Sequencer, hz, type Note } from './music';
 import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf, type CourseId } from './courses';
 import { meta } from './meta';
@@ -195,9 +194,8 @@ function Setup() {
 }
 
 const SERVER_GARAGE = freshGarage();
-/** The saved garage (bank, paint, hats), shared by the cards and the race. */
+/** The saved garage (bank, paint, hats, wheels, boost trails), shared by the cards and the race. */
 const useGarage = () => useSyncExternalStore(subscribeGarage, loadGarage, () => SERVER_GARAGE);
-const lookFor = (g: Garage): { color: string; hat: Hat } => ({ color: paintColor(g.paint), hat: g.hat });
 
 /** How to Play and the Garage, and the sheets they open over the cards. */
 function Extras() {
@@ -214,7 +212,7 @@ function Extras() {
         How to Play
       </button>
       <button type="button" className="arcade-btn" onClick={() => setOpen('garage')} aria-label={`Garage, ${garage.bank} coins to spend`}>
-        <i className="g-palmdrive-paintdot" style={{ background: paintColor(garage.paint) }} />
+        <i className="g-palmdrive-paintdot" style={{ background: paintFill(garage.paint) }} />
         Garage
         <span className="g-palmdrive-bankpill">
           <CoinIcon size={13} />
@@ -300,10 +298,10 @@ type OnlineApi = NonNullable<ReturnType<typeof useOnline>>;
 const racersOf = (o: OnlineApi) => [...new Set([...o.players.map((p) => p.seat), ...o.bots.map((b) => b.seat)])].sort((a, b) => a - b);
 
 /**
- * Everyone online starts in their seat's color; karts take their owner's paint and hat once their first state arrives.
+ * Everyone online starts in their seat's color; karts take their owner's look once their first state arrives.
  * Bots race as the CPU drivers they are named after: the host drives them and everyone else sees them through its packets.
  */
-function onlineRace(o: OnlineApi, cc: Cc, course: CourseId, roster: number[], countdown: number, look: { color: string; hat: Hat }): Race {
+function onlineRace(o: OnlineApi, cc: Cc, course: CourseId, roster: number[], countdown: number, look: Look): Race {
   const racers: Racer[] = roster.map((seat) => {
     const bot = o.bots.findIndex((b) => b.seat === seat);
     if (bot >= 0) return { ...RIVALS[bot % RIVALS.length], name: o.bots[bot].name, kind: o.isHost ? 'cpu' : 'remote', seat };
@@ -311,6 +309,7 @@ function onlineRace(o: OnlineApi, cc: Cc, course: CourseId, roster: number[], co
       name: o.players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`,
       color: seat === o.seat ? look.color : SEAT_COLORS[seat % SEAT_COLORS.length],
       hat: seat === o.seat ? look.hat : 'cap',
+      gear: seat === o.seat ? look.gear : undefined,
       kind: seat === o.seat ? 'player' : 'remote',
       seat,
     };
@@ -405,7 +404,7 @@ function Play({ mode }: { mode: Mode }) {
   const [cc] = useSetting(CLASS);
   const [course] = useSetting(COURSE);
   const [music] = useSetting(MUSIC);
-  // your paint and hat: on your kart now (changes on the Pause card show at once) and in what you send online
+  // your look: on your kart now (changes on the Pause card show at once) and in what you send online
   const garage = useGarage();
   const lookRef = useRef(lookOf(garage));
   const musicRef = useRef(music);
@@ -531,8 +530,7 @@ function Play({ mode }: { mode: Mode }) {
     const r = race.current;
     const me = r?.karts[r.me];
     if (!me) return;
-    me.color = paintColor(garage.paint);
-    me.hat = garage.hat;
+    Object.assign(me, lookFor(garage));
   }, [garage, raceKey]);
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -577,10 +575,7 @@ function Play({ mode }: { mode: Mode }) {
     k.y = car.y;
     applyFlags(k, car.f);
     const look = car.look >= 0 ? fromLook(car.look) : null;
-    if (look) {
-      k.color = look.color;
-      k.hat = look.hat;
-    }
+    if (look) Object.assign(k, look);
   };
 
   const applyEvent = (r: Race, from: number, ev: NetEv) => {

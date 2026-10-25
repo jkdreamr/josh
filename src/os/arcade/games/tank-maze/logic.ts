@@ -202,7 +202,7 @@ export type Phase = 'ready' | 'play' | 'settle' | 'done';
  * `turn`/`move` steer relative to the barrel (bots). `dir` is a screen heading in radians (players):
  * the tank swings to face it and drives that way, so it overrides turn/move when set.
  */
-export type TankInput = { turn: -1 | 0 | 1; move: -1 | 0 | 1; fire: boolean; dir?: number };
+export type TankInput = { turn: -1 | 0 | 1; move: -1 | 0 | 1; fire: boolean; dir?: number; aim?: number };
 export const noInput: TankInput = { turn: 0, move: 0, fire: false };
 
 export type Tank = {
@@ -291,6 +291,15 @@ export const MAX_PICKUPS = 2;
 export const PICKUP_EVERY = 7;
 
 const wrapA = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+
+export function rotateToward(a: number, target: number, maxStep: number): number {
+  const err = wrapA(target - a);
+  return Math.abs(err) <= maxStep ? target : wrapA(a + Math.sign(err) * maxStep);
+}
+
+export const aimAligned = (a: number, target: number, eps = 0.002) => Math.abs(wrapA(target - a)) <= eps;
+export const aimAt = (tank: { x: number; y: number }, pt: { x: number; y: number }) => Math.atan2(pt.y - tank.y, pt.x - tank.x);
+export const canvasToWorld = (pt: { x: number; y: number }, fit: { cell: number; ox: number; oy: number }) => ({ x: (pt.x - fit.ox) / fit.cell, y: (pt.y - fit.oy) / fit.cell });
 
 /** Spawn cells spread far apart: greedy picks maximizing the min BFS distance to tanks already placed. */
 export function pickSpawns(m: Maze, count: number, rng: Rng): { cx: number; cy: number }[] {
@@ -542,10 +551,9 @@ const applyInput = (w: World, t: Tank, input: TankInput, dt: number) => {
   t.recoil = Math.max(0, t.recoil - dt * 6);
   const direct = input.dir !== undefined && Number.isFinite(input.dir);
   if (direct) {
-    const err = wrapA(input.dir! - t.a);
-    const swing = DIR_TURN * dt;
-    t.a = Math.abs(err) <= swing ? wrapA(input.dir!) : wrapA(t.a + Math.sign(err) * swing);
-  } else t.a = wrapA(t.a + input.turn * TURN * dt);
+    t.a = rotateToward(t.a, input.dir!, DIR_TURN * dt);
+  } else if (input.turn !== 0) t.a = wrapA(t.a + input.turn * TURN * dt);
+  else if (input.aim !== undefined && Number.isFinite(input.aim)) t.a = rotateToward(t.a, input.aim, TURN * dt);
   if (direct || input.move !== 0) {
     const sp = direct ? FWD : input.move > 0 ? FWD : REV;
     const heading = direct ? input.dir! : t.a;
