@@ -1,9 +1,9 @@
 // Canvas renderer for Moto Trials. Draws the world, bike, ghosts, particles and HUD.
-import { HEAD_R, TOP_SPEED, WHEEL_R, segActive, type PhysWorld, type Seg } from './physics.ts';
+import { HEAD_R, TOP_SPEED, WHEEL_R, sawAt, segActive, type PhysWorld, type Seg } from './physics.ts';
 import type { Run } from './logic.ts';
 import type { Level, Theme } from './levels.ts';
 
-export type Cam = { x: number; y: number; scale: number };
+export type Cam = { x: number; y: number; scale: number; drop: number };
 
 export type Ghost = {
   x: number;
@@ -24,7 +24,7 @@ const FONT = '-apple-system, system-ui, sans-serif';
 const OUTLINE = 'rgba(16,14,18,0.85)';
 
 export function newCam(): Cam {
-  return { x: 0, y: 0, scale: 0 };
+  return { x: 0, y: 0, scale: 0, drop: 0 };
 }
 
 /** How the frame should look for this canvas size. The bike stays big. */
@@ -51,15 +51,19 @@ export function render(
   const th = level.theme;
   const fit = viewFit(w, h);
   const spd = Math.hypot(bike.v.x, bike.v.y);
-  const targetScale = fit.scale / (1 + Math.max(0, bike.v.x - 7) * 0.022);
+  const lookX = clamp(bike.v.x * 0.4, 0, 5.5) + 1.4;
+  // big air: zoom out and lead down so the landing stays in view
+  const air = !bike.fw.on && !bike.rw.on;
+  const drop = air ? clamp(bike.p.y - levelBaseY(level, bike.p.x + lookX + 3) - 2, 0, 9) : 0;
+  cam.drop = lerp(cam.drop, drop, Math.min(1, dt * 2));
+  const targetScale = fit.scale / (1 + Math.max(0, bike.v.x - 7) * 0.022) / (1 + cam.drop * 0.07);
   cam.scale = cam.scale ? lerp(cam.scale, targetScale, Math.min(1, dt * 3)) : targetScale;
   const scale = cam.scale;
 
   // camera: lookahead down the track, soft vertical follow, bike sits left of center
-  const lookX = clamp(bike.v.x * 0.4, 0, 5.5) + 1.4;
   const tx = bike.p.x + lookX;
   // on descents the camera lags above the dive line, so lead downward a little
-  const ty = bike.p.y + 1.5 + clamp(-bike.v.y * 0.22, 0, 2.4);
+  const ty = bike.p.y + 1.5 + clamp(-bike.v.y * 0.22, 0, 2.4) - cam.drop * 0.35;
   cam.x = cam.x ? lerp(cam.x, tx, Math.min(1, dt * 5)) : tx;
   cam.y = cam.y ? lerp(cam.y, ty, Math.min(1, dt * 2.5)) : ty;
   const shake = run.shake;
@@ -561,9 +565,23 @@ function props(c: CanvasRenderingContext2D, level: Level, sx: (x: number) => num
 
 function saws(c: CanvasRenderingContext2D, world: PhysWorld, run: Run, sx: (x: number) => number, sy: (y: number) => number, scale: number) {
   for (const s of world.saws) {
-    const cx = sx(s.x);
-    const cy = sy(s.y);
+    const at = sawAt(s, world.clock);
+    if (s.kind === 'mine') {
+      mine(c, sx(at.x), sy(at.y), s.r * scale, scale, run.t + s.x);
+      continue;
+    }
+    const cx = sx(at.x);
+    const cy = sy(at.y);
     const r = s.r * scale;
+    if (s.period) {
+      // the rail a moving saw rides on
+      c.strokeStyle = 'rgba(0,0,0,0.35)';
+      c.lineWidth = Math.max(2, 0.12 * scale);
+      c.beginPath();
+      c.moveTo(sx(s.x - (s.mx ?? 0)), sy(s.y - (s.my ?? 0)) + (s.my ? r * 1.2 : 0));
+      c.lineTo(sx(s.x + (s.mx ?? 0)), sy(s.y + (s.my ?? 0)) - (s.my ? r * 1.2 : 0));
+      c.stroke();
+    }
     // motion blur halo
     c.strokeStyle = 'rgba(220,220,230,0.28)';
     c.lineWidth = Math.max(2, 0.16 * scale);
@@ -602,6 +620,36 @@ function saws(c: CanvasRenderingContext2D, world: PhysWorld, run: Run, sx: (x: n
     c.moveTo(cx, cy - r * 1.1);
     c.lineTo(cx, cy - r * 1.1 - 2.2 * scale);
     c.stroke();
+  }
+}
+
+/** A round mine sitting on the ground, with a blinking light on top. */
+function mine(c: CanvasRenderingContext2D, cx: number, cy: number, r: number, scale: number, t: number) {
+  c.fillStyle = '#2b2b33';
+  c.strokeStyle = OUTLINE;
+  c.lineWidth = Math.max(1, 0.04 * scale);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    c.beginPath();
+    c.arc(cx + Math.cos(a) * r * 0.95, cy + Math.sin(a) * r * 0.95, r * 0.2, 0, Math.PI * 2);
+    c.fill();
+  }
+  c.beginPath();
+  c.arc(cx, cy, r, 0, Math.PI * 2);
+  c.fill();
+  c.stroke();
+  c.fillStyle = '#d9473a';
+  c.fillRect(cx - r, cy - r * 0.18, r * 2, r * 0.36);
+  const on = Math.sin(t * 7) > 0;
+  c.fillStyle = on ? '#ff5a4a' : '#7a2a24';
+  c.beginPath();
+  c.arc(cx, cy - r * 0.95, r * 0.22, 0, Math.PI * 2);
+  c.fill();
+  if (on) {
+    c.fillStyle = 'rgba(255,90,74,0.25)';
+    c.beginPath();
+    c.arc(cx, cy - r * 0.95, r * 0.6, 0, Math.PI * 2);
+    c.fill();
   }
 }
 
