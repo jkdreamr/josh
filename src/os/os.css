@@ -4292,6 +4292,18 @@ kbd {
 .l3d-display > .screen {
   border-radius: calc(var(--lw) * 0.0105) calc(var(--lw) * 0.0105) calc(var(--lw) * 0.002) calc(var(--lw) * 0.002);
 }
+/* the faint sheen of the studio's softbox across the display glass */
+.l3d-display::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.025) 34%, rgba(255, 255, 255, 0) 52%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 18%);
+}
 .l3d-fs {
   position: fixed;
   inset: 0;
