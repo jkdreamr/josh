@@ -10,7 +10,7 @@ import { Chat, type ChatEnv } from './chat';
 import { Lobby } from './lobby';
 import { Lounge, type LoungeEnv } from './lounge';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
-import { agreedWinners, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_MS, gatherFull, gathering, isPool, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, seatsFor, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
+import { agreedWinners, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_MS, gatherFull, gathering, isPool, isRelayMessage, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, seatsFor, type RecordedRounds, type RelayRoomMessage, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
 export { Chat, Lobby, Lounge };
 
@@ -185,6 +185,7 @@ type RoomResults = { reports: RoundReports; recorded: RecordedRounds };
 
 export class Room extends DurableObject<Env> {
   private operations: Promise<unknown> = Promise.resolve();
+  private seatsCache: number | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -198,8 +199,13 @@ export class Room extends DurableObject<Env> {
    */
   open(code: string, game: string, spec: OnlineSpec, listed = false, quick = false, pool?: string): Promise<boolean> {
     return this.exclusive(async () => {
-      if (await this.ctx.storage.get<RoomState>('room')) return false;
+      const existing = await this.ctx.storage.get<RoomState>('room');
+      if (existing) {
+        this.seatsCache = existing.seats;
+        return false;
+      }
       const seats = seatsFor(spec);
+      this.seatsCache = seats;
       const gather = quick ? { quick: true, startAt: Date.now() + GATHER_MS, ...(pool ? { pool } : {}) } : {};
       await this.ctx.storage.put<RoomState>('room', { code, game, seats, started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: quick ? seats - 1 : 0 } : {}), ...(listed || quick ? { listed: true } : {}), ...(spec.watch ? { watch: true, watchable: true } : {}), ...gather });
       await this.ctx.storage.put<RoomResults>('results', { reports: {}, recorded: [] });
@@ -213,6 +219,13 @@ export class Room extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
+    if (this.seatsCache !== null) {
+      const parsed = parseRoomMessage(message, this.seatsCache);
+      if (isRelayMessage(parsed)) {
+        this.handleRelayMessage(ws, parsed);
+        return;
+      }
+    }
     return this.exclusive(() => this.handleMessage(ws, message));
   }
 
@@ -224,6 +237,7 @@ export class Room extends DurableObject<Env> {
     await this.exclusive(async () => {
       const room = await this.ctx.storage.get<RoomState>('room');
       if (!room) return;
+      this.seatsCache = room.seats;
       if (gathering(room) && room.startAt! <= Date.now()) {
         const players = this.players();
         if (!players.length) return this.close();
@@ -252,6 +266,7 @@ export class Room extends DurableObject<Env> {
     if (!attachment || attachment.watch) return;
     const room = await this.ctx.storage.get<RoomState>('room');
     if (!room) return;
+    this.seatsCache = room.seats;
     const parsed = parseRoomMessage(message, room.seats);
     if (!parsed) return;
 
@@ -271,11 +286,8 @@ export class Room extends DurableObject<Env> {
       return;
     }
 
-    // The host's game shares what it broadcasts with the spectators too (the players get it over their direct links).
-    if (parsed.t === 'watch') {
-      if (attachment.seat !== 0) return;
-      const data = JSON.stringify({ t: 'msg', from: 0, d: parsed.d });
-      for (const socket of this.watchers()) this.trySend(socket, data);
+    if (isRelayMessage(parsed)) {
+      this.handleRelayMessage(ws, parsed);
       return;
     }
 
@@ -302,13 +314,6 @@ export class Room extends DurableObject<Env> {
       return;
     }
 
-    if (parsed.t === 'msg' || parsed.t === 'signal') {
-      const packet = { t: parsed.t, from: attachment.seat, d: parsed.d };
-      if (parsed.to === undefined) this.broadcast(packet, ws, true);
-      else this.sendTo(parsed.to, packet, ws);
-      return;
-    }
-
     const connected = this.players();
     const resultState = (await this.ctx.storage.get<RoomResults>('results')) ?? { reports: {}, recorded: [] };
     const roundKey = String(parsed.round);
@@ -328,6 +333,20 @@ export class Room extends DurableObject<Env> {
       return;
     }
     await this.ctx.storage.put('results', resultState);
+  }
+
+  private handleRelayMessage(ws: WebSocket, parsed: RelayRoomMessage) {
+    const attachment = ws.deserializeAttachment() as Attachment | null;
+    if (!attachment || attachment.watch) return;
+    if (parsed.t === 'watch') {
+      if (attachment.seat !== 0) return;
+      const data = JSON.stringify({ t: 'msg', from: 0, d: parsed.d });
+      for (const socket of this.watchers()) this.trySend(socket, data);
+      return;
+    }
+    const packet = { t: parsed.t, from: attachment.seat, d: parsed.d };
+    if (parsed.to === undefined) this.broadcast(packet, ws, true);
+    else this.sendTo(parsed.to, packet, ws);
   }
 
   async webSocketClose(ws: WebSocket) {
@@ -356,6 +375,7 @@ export class Room extends DurableObject<Env> {
     const explains = Number.isSafeInteger(version) && version >= WATCH_VERSION;
     const room = await this.ctx.storage.get<RoomState>('room');
     if (!room) return explains ? refuse('not-found') : json({ error: 'room not found' }, 404);
+    this.seatsCache = room.seats;
     const watchers = this.watchers().length;
     if (url.searchParams.get('watch') === '1') {
       if (!canWatchRoom(room, watchers)) return explains ? refuse(room.watch && room.watchable !== false ? 'full' : 'no-watching') : json({ error: 'not watchable' }, 409);
@@ -497,6 +517,7 @@ export class Room extends DurableObject<Env> {
       .map((socket) => ({ socket, seat: socket.deserializeAttachment() as Attachment | null }))
       .filter((entry): entry is { socket: WebSocket; seat: Attachment } => !!entry.seat && !entry.seat.watch);
     const room = await this.ctx.storage.get<RoomState>('room');
+    if (room) this.seatsCache = room.seats;
     if (!seated.length || !room) {
       // the last player is gone, so there is nothing left to watch
       for (const socket of remaining) {
@@ -541,6 +562,7 @@ export class Room extends DurableObject<Env> {
   /** The room is over: off Open Rooms, and everything it kept is gone. */
   private async close() {
     const room = await this.ctx.storage.get<RoomState>('room');
+    if (room) this.seatsCache = room.seats;
     if (room?.code && room.inLobby) {
       try {
         await this.env.LOBBY.get(this.env.LOBBY.idFromName('global')).drop(room.code);
@@ -550,6 +572,7 @@ export class Room extends DurableObject<Env> {
     }
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
+    this.seatsCache = null;
   }
 }
 

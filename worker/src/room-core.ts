@@ -34,6 +34,10 @@ export type ClientRoomMessage =
   | { t: 'signal'; to: number; d: unknown }
   | { t: 'result'; round: number; winner: number | null; team?: number[] };
 
+export type RelayRoomMessage = Extract<ClientRoomMessage, { t: 'msg' | 'signal' | 'watch' }>;
+export const isRelayMessage = (message: ClientRoomMessage | null): message is RelayRoomMessage =>
+  message?.t === 'msg' || message?.t === 'signal' || message?.t === 'watch';
+
 export const makeRoomCode = (bytes: ArrayLike<number>): string => {
   if (bytes.length < ROOM_CODE_LENGTH) throw new RangeError('four random bytes are required');
   return Array.from({ length: ROOM_CODE_LENGTH }, (_, i) => ROOM_CODE_ALPHABET[bytes[i] % ROOM_CODE_ALPHABET.length]).join('');

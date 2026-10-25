@@ -5,6 +5,15 @@ export function advanceOnlineRound(round: number) {
 /** The most seats a room has: a game's own room holds as many as its meta says, never more than this. */
 export const MAX_SEATS = 20;
 
+export type RelayPlan = { direct: number[]; relay: number[]; relayAll: boolean };
+
+export function relayPlan(recipients: number[], open: (seat: number) => boolean, broadcast: boolean): RelayPlan {
+  const direct: number[] = [];
+  const relay: number[] = [];
+  for (const seat of recipients) (open(seat) ? direct : relay).push(seat);
+  return { direct, relay, relayAll: broadcast && recipients.length >= 2 && relay.length === recipients.length };
+}
+
 /**
  * A public room as the arcade's Open Rooms lists it (GET /rooms). players counts people; bots fill other seats. quick:
  * a quick-play room, gathering people until it starts on its own (at startAt, epoch ms on the Worker's clock), for the
