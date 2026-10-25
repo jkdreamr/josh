@@ -3,7 +3,7 @@
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
 import { BARREL_R, BEACH, BRIDGE_HALF, BUSH_R, BUS_Y, CAMP, CHEST_HD, CHEST_HW, CRATE_HALF, FENCE_T, FRIDGE_HD, FRIDGE_HW, HALF, HAY_HD, HAY_HW, LAMP_R, LOG_R, PAD, RIVER_HALF, ROAD_HALF, STASH, SUPPLY_FALL, SUPPLY_HALF, TABLE_HD, TABLE_HW, TOILET_R, WALL_T, bridgeAt, busAt, fieldAt, isStash, padAt, peekAt, riverDist2, roadAt, type Building, type BuildingKind, type Container } from './map';
-import { BARREL, BUILD_START, CELL_B, CRATE_HP, DIR_X, DIR_Z, DOOR_GONE, DOOR_IN, DOOR_OPENING, DOOR_OUT, F_DRINKING, F_GHILLIE, F_HEALING, F_PAN, F_RELOAD, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_STUN, F_TART, GAP, HAY_HP, LEVEL_H, TOILET_HP, clearLine, concealed, editable, gridOf, held, levelOf, makePiece, owned, pieceIn, planPiece, roofOver, shut, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Plan, type Toss, type Wall, type Zone } from './logic';
+import { BARREL, BUILD_START, CELL_B, CRATE_HP, DIR_X, DIR_Z, DOOR_GONE, DOOR_IN, DOOR_OPENING, DOOR_OUT, F_DRINKING, F_GHILLIE, F_HEALING, F_PAN, F_RELOAD, F_REVIVE, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_STUN, F_TART, GAP, HAY_HP, LEVEL_H, MATE_COLORS, PING_T, TEAM_COLOR, TOILET_HP, clearLine, concealed, editable, gridOf, held, levelOf, makePiece, mateIndex, owned, pieceIn, pingOf, planPiece, reviveShare, revivedBy, roofOver, shut, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Plan, type Toss, type Wall, type Zone } from './logic';
 import { MATS, MAT_SPECS, MELEE, RARITY_COLORS, THROWS, WEAPONS, isMelee, isThrow, isWeapon, legendary, type LootDef, type Mat, type UseId } from './items';
 
 type Three = typeof import('three');
@@ -3699,6 +3699,38 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   }
   let kingOn = -1;
 
+  // duos and squads: a ring on the ground under each egg on the team you see, a red one pulsing under any knocked egg
+  // (and a white one growing while a teammate revives it), the team's outlines through whatever stands in front of
+  // them, and the team's pings: a pin over the spot with a beam of light, in the pinger's color
+  const groundRings = many(G.ring, basic(0xffffff, { transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }), N * 2);
+  groundRings.frustumCulled = false;
+  groundRings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const RING_MATE = new THREE.Color(TEAM_COLOR);
+  const RING_DOWN = new THREE.Color(0xff3b3b);
+  const RING_UP = new THREE.Color(0xeafff2);
+  for (let i = 0; i < N * 2; i++) groundRings.setColorAt(i, RING_MATE);
+  groundRings.count = 0;
+  scene.add(groundRings);
+  const mateGhost = basic(parseInt(TEAM_COLOR.slice(1), 16), { transparent: true, opacity: 0.55, depthWrite: false, depthFunc: GREATER_DEPTH });
+  const pingViews = MATE_COLORS.map((c) => {
+    const col = parseInt(c.slice(1), 16);
+    const g = new THREE.Group();
+    const glow = basic(col, { transparent: true, opacity: 0.3, depthWrite: false });
+    add(g, G.cyl, glow, 0, 6, 0, 0.14, 12, 0.14);
+    const pin = new THREE.Group();
+    add(pin, G.ball, basic(col), 0, 0.5, 0, 0.55, 0.55, 0.55);
+    add(pin, G.ball, basic(0xffffff), 0, 0.5, 0.42, 0.2, 0.2, 0.2);
+    const tip = add(pin, G.pine, basic(col), 0, -0.15, 0, 0.42, 1, 0.42);
+    tip.rotation.x = Math.PI;
+    pin.position.y = 2.2;
+    g.add(pin);
+    const ring = add(g, G.ring, basic(col, { transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide }), 0, 0.09, 0, 1.4, 1.4, 1);
+    ring.rotation.x = -Math.PI / 2;
+    g.visible = false;
+    scene.add(g);
+    return { g, pin, ring, glow };
+  });
+
   // the aim line from your gun, and where you'll land while gliding
   const aimLine = new THREE.Mesh(G.plane, M.aim);
   aimLine.rotation.x = -Math.PI / 2;
@@ -4209,7 +4241,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const vec = new THREE.Vector3();
   const vec2 = new THREE.Vector3();
 
-  function syncEgg(v: EggView, f: Fighter, dt: number, clock: number, focus: boolean, hidden: boolean) {
+  function syncEgg(v: EggView, f: Fighter, dt: number, clock: number, focus: boolean, hidden: boolean, mate = false) {
     const shown = f.phase !== 'out' && f.phase !== 'bus' && !hidden;
     v.root.visible = shown;
     if (!shown) return false;
@@ -4228,6 +4260,16 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const fz = Math.cos(f.aim);
     v.body.rotation.x = (mx * fx + mz * fz) * v.lean;
     v.body.rotation.z = -(mx * fz - mz * fx) * v.lean;
+    // knocked down: flat on its front, wriggling along; reviving a teammate: bent low over it
+    const reviving = f.kind === 'remote' ? (f.show.flags & F_REVIVE) !== 0 : f.reviving >= 0;
+    if (f.down && f.phase === 'ground') {
+      v.body.rotation.x = 1.3;
+      v.body.rotation.z = Math.sin(v.walk * 1.5) * 0.2;
+      v.body.position.y = 0.34 + Math.abs(Math.sin(v.walk * 1.5)) * 0.05;
+    } else if (reviving && f.phase === 'ground') {
+      v.body.rotation.x = 0.5;
+      v.body.position.y = -0.1;
+    }
     // squash on landing and stretch on a bounce, sprung back (in small steps, so a slow frame can't fling it), and a
     // little give in every step
     for (let k = 0, step = Math.min(dt, 0.05) / 2; k < 2; k++) {
@@ -4282,7 +4324,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const h = held(f);
     const key = h.w;
     const look = `${key}:${h.r}`;
-    for (const [k, g] of v.guns) g.group.visible = k === look && f.phase === 'ground';
+    for (const [k, g] of v.guns) g.group.visible = k === look && f.phase === 'ground' && !f.down;
     let gun = v.guns.get(look);
     if (!gun && f.phase === 'ground') {
       gun = gunModel(key, h.r);
@@ -4349,7 +4391,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       v.ring.position.y = 0.4 + ((clock * 1.4) % 1) * 1.3;
       v.ring.scale.setScalar(0.85 - ((clock * 1.4) % 1) * 0.25);
     }
-    v.ghost.visible = focus && f.phase === 'ground';
+    v.ghost.visible = (focus || mate) && f.phase === 'ground';
+    v.ghost.material = focus ? M.ghost : mateGhost;
     return true;
   }
 
@@ -4658,16 +4701,55 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       const eggS = dist * FRAME_S + 6;
       const eggW = dist * FRAME_W * aspect + 6;
       drawn.eggs = drawn.hats = drawn.light = drawn.heavy = drawn.shadows = drawn.gliders = 0;
+      // the team we see (none in solo): its eggs show wherever they are in view
+      const team = m.mode !== 'solo' && focus ? focus.team : -1;
+      let rings = 0;
+      const ring = (f: Fighter, color: T.Color, r: number) => {
+        dummy.position.set(f.x, f.y + 0.06, f.z);
+        dummy.rotation.set(-Math.PI / 2, 0, 0);
+        dummy.scale.setScalar(r);
+        dummy.updateMatrix();
+        groundRings.setMatrixAt(rings, dummy.matrix);
+        groundRings.setColorAt(rings++, color);
+      };
       m.fighters.forEach((f, i) => {
         const v = eggs[i];
         if (!v) return;
         const isFocus = i === focusId;
+        const mate = team >= 0 && f.team === team && !isFocus;
         const inView = Math.abs(f.x - cam.x) < eggW && f.z - cam.z > -eggN - f.y && f.z - cam.z < eggS;
         const walled = inView && peek >= 0 && !!focus && f.inside === peek && !clearLine(m, focus.x, focus.z, f.x, f.z);
         // flash red when hit
         const dazed = f.kind === 'remote' ? (f.show.flags & F_STUN) !== 0 : f.stunT > 0;
-        if (syncEgg(v, f, dt, clock, isFocus, !isFocus && (!inView || concealed(m, f, focus) || walled))) placeEgg(v, f.hitT > 0, hatColors[i], f.ghillie || (f.kind === 'remote' && (f.show.flags & F_GHILLIE) !== 0), dazed && f.phase === 'ground', clock);
+        if (!syncEgg(v, f, dt, clock, isFocus, !isFocus && (!inView || (!mate && (concealed(m, f, focus) || walled))), mate)) return;
+        placeEgg(v, f.hitT > 0, hatColors[i], f.ghillie || (f.kind === 'remote' && (f.show.flags & F_GHILLIE) !== 0), dazed && f.phase === 'ground', clock);
+        if (f.phase !== 'ground' || rings > N * 2 - 2) return;
+        if (mate && !f.down) ring(f, RING_MATE, 0.95);
+        if (f.down) {
+          ring(f, RING_DOWN, 1.05 + Math.sin(clock * 6) * 0.12);
+          const r = revivedBy(m, f);
+          if (r) ring(f, RING_UP, 0.45 + reviveShare(m, r) * 0.85);
+        }
       });
+      groundRings.count = rings;
+      groundRings.instanceMatrix.needsUpdate = true;
+      if (groundRings.instanceColor) groundRings.instanceColor.needsUpdate = true;
+      // the team's pings, fading out at the end
+      for (const pv of pingViews) pv.g.visible = false;
+      if (team >= 0)
+        for (const id of m.teams[team] ?? []) {
+          const o = m.fighters[id];
+          const at = pingOf(m, o);
+          const pv = pingViews[mateIndex(m, o) % pingViews.length];
+          if (!at || !pv) continue;
+          pv.g.visible = true;
+          pv.g.position.set(at.x, 0, at.z);
+          pv.pin.position.y = 2.2 + Math.sin(clock * 4) * 0.2;
+          pv.pin.rotation.y = clock * 2;
+          const k = (clock * 1.2) % 1;
+          pv.ring.scale.set(0.8 + k * 1.6, 0.8 + k * 1.6, 1);
+          pv.glow.opacity = 0.3 * Math.min(1, (PING_T - at.age) / 1.5);
+        }
       eggBits.ghillie.count = drawn.ghillies;
       eggBits.dizzy.count = drawn.dazed;
       // the kill leader's crown, on its head (shown wherever its egg is)
@@ -5167,6 +5249,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             ripple(f.x, 0.07, f.z, 3.2, 0.9, 0xe6f7ff);
             ripple(f.x, 0.07, f.z, 1.8, 0.7, 0xe6f7ff);
           } else dustRing(f.x, f.z, 9, 0.7, 0.55, 0xd9cfae, 0.65, 3.2);
+          break;
+        }
+        case 'knock': {
+          // knocked down: a few bits of shell, and a puff of dust as it hits the ground
+          const f = m.fighters[e.f];
+          if (!f || !near(f.x, f.z)) break;
+          burst(f.x, 0.8, f.z, 8, 3, 0.12, 0.6, [partMat.shell]);
+          dustRing(f.x, f.z, 4, 0.6, 0.5, 0xfff3df, 0.5, 2.5);
           break;
         }
         case 'out': {

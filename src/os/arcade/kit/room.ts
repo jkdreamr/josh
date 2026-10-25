@@ -70,12 +70,13 @@ export async function createRoom(game: string, { listed = false }: { listed?: bo
 }
 
 /**
- * Quick play: the code of a room of this game that is gathering people for a match that starts on its own, a new one
- * when there is none. Throws when the Worker can't find one (or is from before quick play).
+ * Quick play: the code of a room of this game (in `pool`, if given: a game's mode, say, kept apart from its others)
+ * that is gathering people for a match that starts on its own, a new one when there is none. Throws when the Worker
+ * can't find one (or is from before quick play).
  */
-export async function quickRoom(game: string, api = ARCADE_API): Promise<string> {
+export async function quickRoom(game: string, api = ARCADE_API, pool?: string): Promise<string> {
   if (!api) throw new Error('Online Play Is Unavailable');
-  const response = await fetch(`${api.replace(/\/+$/, '')}/rooms/quick?game=${encodeURIComponent(game)}`, { method: 'POST' });
+  const response = await fetch(`${api.replace(/\/+$/, '')}/rooms/quick?game=${encodeURIComponent(game)}${pool ? `&pool=${encodeURIComponent(pool)}` : ''}`, { method: 'POST' });
   if (!response.ok) throw new Error('Could Not Find A Match');
   const body = (await response.json()) as { code?: unknown };
   if (typeof body.code !== 'string' || !/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/.test(body.code)) throw new Error('Invalid Room Code');
@@ -101,8 +102,9 @@ export class RoomLink {
   bots: number[] | null = null;
   /** Whether the room is public, or null from a server that does not say. */
   listed: boolean | null = null;
-  /** A quick-play room, which starts on its own. */
+  /** A quick-play room, which starts on its own, and the quick-play pool it gathered for ('' for none). */
   quick = false;
+  pool = '';
   /** In as a spectator: no seat, and nothing is sent. */
   readonly watching: boolean;
   /** Spectators by name, and whether the host lets people watch (null: a game nobody can watch, or an older server). */
@@ -165,8 +167,9 @@ export class RoomLink {
     this.sendSocket({ t: 'watchable', on });
   }
 
-  reportResult(round: number, winner: number | null) {
-    this.sendSocket({ t: 'result', round, winner });
+  /** Who won the round: a seat (and, for a winning team, every seat on it), or null for nobody. */
+  reportResult(round: number, winner: number | null, team?: number[]) {
+    this.sendSocket(team && winner !== null ? { t: 'result', round, winner, team } : { t: 'result', round, winner });
   }
 
   /** Host only: the round is over, so the room takes people again (and a public one goes back on Open Rooms). */
@@ -245,6 +248,7 @@ export class RoomLink {
       this.bots = Array.isArray(message.bots) ? this.asSeats(message.bots) : null;
       const round = Number.isSafeInteger(message.round) && (message.round as number) > 0 ? message.round as number : 0;
       this.quick = message.quick === true;
+      this.pool = this.quick && typeof message.pool === 'string' && /^[a-z0-9-]{1,16}$/.test(message.pool) ? message.pool : '';
       const startIn = this.startIn(message);
       const roundBots = watching && Array.isArray(message.roundBots) ? this.asSeats(message.roundBots) : [];
       this.emit('welcome', { seat: watching ? -1 : this.seat!, code: this.code, game: this.game, seats: this.seats, players: this.players, started: message.started === true, round, bots: this.bots, quick: this.quick, startIn, watching, roundBots, watchable: message.watchable === true });

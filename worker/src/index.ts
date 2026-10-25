@@ -10,7 +10,7 @@ import { Chat, type ChatEnv } from './chat';
 import { Lobby } from './lobby';
 import { Lounge, type LoungeEnv } from './lounge';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
-import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_MS, gatherFull, gathering, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, seatsFor, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
+import { agreedWinners, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_MS, gatherFull, gathering, isPool, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, seatsFor, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
 export { Chat, Lobby, Lounge };
 
@@ -193,13 +193,14 @@ export class Room extends DurableObject<Env> {
 
   /**
    * listed: a public room, shown in the arcade's Open Rooms once its host is in. quick: a quick-play room (public, with
-   * bots in every seat nobody holds), which starts on its own GATHER_MS from now, or closes then if nobody came.
+   * bots in every seat nobody holds), which starts on its own GATHER_MS from now, or closes then if nobody came; pool:
+   * the quick-play pool it gathers for.
    */
-  open(code: string, game: string, spec: OnlineSpec, listed = false, quick = false): Promise<boolean> {
+  open(code: string, game: string, spec: OnlineSpec, listed = false, quick = false, pool?: string): Promise<boolean> {
     return this.exclusive(async () => {
       if (await this.ctx.storage.get<RoomState>('room')) return false;
       const seats = seatsFor(spec);
-      const gather = quick ? { quick: true, startAt: Date.now() + GATHER_MS } : {};
+      const gather = quick ? { quick: true, startAt: Date.now() + GATHER_MS, ...(pool ? { pool } : {}) } : {};
       await this.ctx.storage.put<RoomState>('room', { code, game, seats, started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: quick ? seats - 1 : 0 } : {}), ...(listed || quick ? { listed: true } : {}), ...(spec.watch ? { watch: true, watchable: true } : {}), ...gather });
       await this.ctx.storage.put<RoomResults>('results', { reports: {}, recorded: [] });
       if (quick) await this.ctx.storage.setAlarm(gather.startAt!);
@@ -312,18 +313,17 @@ export class Room extends DurableObject<Env> {
     const resultState = (await this.ctx.storage.get<RoomResults>('results')) ?? { reports: {}, recorded: [] };
     const roundKey = String(parsed.round);
     const roundReports = resultState.reports[roundKey] ?? {};
-    roundReports[String(attachment.seat)] = parsed.winner;
+    roundReports[String(attachment.seat)] = parsed.team ?? parsed.winner;
     resultState.reports[roundKey] = roundReports;
-    const winner = agreedWinner(resultState.reports, roundSeats(room, connected.map(({ seat }) => seat), parsed.round), parsed.round);
-    if (winner !== null && connected.some(({ seat }) => seat === winner) && markRoundRecorded(resultState.recorded, parsed.round)) {
+    const winners = agreedWinners(resultState.reports, roundSeats(room, connected.map(({ seat }) => seat), parsed.round), parsed.round);
+    // a winning team: a win for each person on it who is still here
+    const names = (winners ?? []).map((seat) => connected.find((player) => player.seat === seat)?.name).filter((name): name is string => !!name);
+    if (names.length && markRoundRecorded(resultState.recorded, parsed.round)) {
       await this.ctx.storage.put('results', resultState);
-      const winnerName = connected.find(({ seat }) => seat === winner)?.name;
-      if (winnerName) {
-        try {
-          await this.env.BOARDS.get(this.env.BOARDS.idFromName('global')).recordWin(room.game, winnerName);
-        } catch {
-          return;
-        }
+      try {
+        for (const name of names) await this.env.BOARDS.get(this.env.BOARDS.idFromName('global')).recordWin(room.game, name);
+      } catch {
+        return;
       }
       return;
     }
@@ -381,7 +381,7 @@ export class Room extends DurableObject<Env> {
     if (room.started) benchSeat(room, seat);
     if (room.started || gatherFull(room, existingPlayers.length + 1, Date.now())) await this.ctx.storage.put('room', room);
     const lineup = this.lineup(room, [...existingPlayers, { seat, name }].sort((a, b) => a.seat - b.seat));
-    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, ...lineup, started: room.started, round: room.round ?? 0 }));
+    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, ...lineup, started: room.started, round: room.round ?? 0, ...(room.pool ? { pool: room.pool } : {}) }));
     this.broadcast({ t: 'players', ...lineup, started: room.started });
     await this.publish(room, lineup.players);
     return new Response(null, { status: 101, webSocket: client });
@@ -398,7 +398,7 @@ export class Room extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server);
     const players = this.players();
     const lineup = this.lineup(room, players);
-    server.send(JSON.stringify({ t: 'welcome', seat: -1, watch: true, code, game: room.game, seats: room.seats, ...lineup, started: room.started, round: room.round ?? 0, ...(room.started ? { roundBots: botSeats(room.seats, players.map(({ seat }) => seat), room.roundBots ?? 0) } : {}) }));
+    server.send(JSON.stringify({ t: 'welcome', seat: -1, watch: true, code, game: room.game, seats: room.seats, ...lineup, started: room.started, round: room.round ?? 0, ...(room.pool ? { pool: room.pool } : {}), ...(room.started ? { roundBots: botSeats(room.seats, players.map(({ seat }) => seat), room.roundBots ?? 0) } : {}) }));
     this.broadcast({ t: 'players', ...lineup, started: room.started }, server);
     await this.publish(room, players);
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -789,17 +789,20 @@ export default {
         return withCors(json({ error: 'unavailable' }, 503));
       }
     }
-    // Quick play: a quick-play room of the game that is still gathering people, or a new one.
+    // Quick play: a quick-play room of the game (and the pool asked for, a game's mode say) that is still gathering
+    // people, or a new one.
     if (url.pathname === '/rooms/quick' && request.method === 'POST') {
       const game = url.searchParams.get('game') ?? '';
       const spec = Object.hasOwn(ONLINE_SPECS, game) ? ONLINE_SPECS[game] : undefined;
       if (!spec?.quick) return withCors(json({ error: 'unknown game' }, 404));
+      const pool = url.searchParams.get('pool') ?? undefined;
+      if (pool !== undefined && !isPool(pool)) return withCors(json({ error: 'unknown pool' }, 400));
       try {
         const lobby = env.LOBBY.get(env.LOBBY.idFromName('global'));
         for (let attempt = 0; attempt < 5; attempt++) {
           const fresh = makeRoomCode(crypto.getRandomValues(new Uint8Array(4)));
-          const code = await lobby.quick(game, fresh, seatsFor(spec), !!spec.lateJoin);
-          if (code !== fresh || (await env.ROOMS.get(env.ROOMS.idFromName(fresh)).open(fresh, game, spec, true, true))) return withCors(json({ code }));
+          const code = await lobby.quick(game, fresh, seatsFor(spec), !!spec.lateJoin, pool);
+          if (code !== fresh || (await env.ROOMS.get(env.ROOMS.idFromName(fresh)).open(fresh, game, spec, true, true, pool))) return withCors(json({ code }));
           await lobby.drop(fresh);
         }
       } catch {

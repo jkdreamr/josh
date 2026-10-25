@@ -22,6 +22,8 @@ type OnlineValue = {
   handoffs: number;
   /** A quick-play room: it started on its own, and the game sets the match up the same way every time. */
   quick: boolean;
+  /** The quick-play pool the room gathered for (a game's mode, see GameShell's quickPool), or '' for none. */
+  pool: string;
   /**
    * Watching as a spectator (seat is -1): the game draws what the host broadcasts, with no player of this person's own,
    * and sends nothing (send and reportResult do nothing).
@@ -44,13 +46,14 @@ export function OnlineProvider({
   transport,
   handoffs,
   quick,
+  pool,
   watching,
   watchers,
   children,
 }: Omit<OnlineValue, 'seat' | 'link' | 'isHost'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
   const value = useMemo(
-    () => link && seat !== null ? { link, router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs, quick, watching, watchers } : null,
-    [link, router, seat, seats, round, players, bots, transport, handoffs, quick, watching, watchers],
+    () => link && seat !== null ? { link, router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs, quick, pool, watching, watchers } : null,
+    [link, router, seat, seats, round, players, bots, transport, handoffs, quick, pool, watching, watchers],
   );
   return <OnlineContext.Provider value={value}>{children}</OnlineContext.Provider>;
 }
@@ -69,12 +72,14 @@ export function useOnline() {
       transport: room.transport,
       handoffs: room.handoffs,
       quick: room.quick,
+      pool: room.pool,
       watching: room.watching,
       watchers: room.watchers,
       // Tagged with the round this player is in at the moment it's sent, which a game that kept an old handle still gets.
       send: (d: unknown, options?: { to?: number; fast?: boolean }) => room.link.send(tagRound(room.router.round, d), options),
       onMessage: (listener: (from: number, d: unknown) => void) => room.router.listen(listener),
-      reportResult: (round: number, winner: number | null) => room.link.reportResult(round, winner),
+      /** Who won: a seat, with every seat on its team for a team game, or null. */
+      reportResult: (round: number, winner: number | null, team?: number[]) => room.link.reportResult(round, winner, team),
     };
   }, [room]);
 }

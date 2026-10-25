@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AMMO_BOX, ARMOR_CUT, ARMOR_NAMES, BOOST, FLARE_WAIT, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, SIP, THROWS, THROW_IDS, USES, USE_IDS, MAT_SPECS, PIECE_COST, WEAPONS, WEAPON_IDS, type Ammo, type ArmorKind, type GunClass, type Mat, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
-import { LEADER_MIN, VAULT_TIME } from './logic';
+import { BLEED_T, LEADER_MIN, MAT_DROP, REVIVE_HP, REVIVE_T, VAULT_TIME } from './logic';
 import { CAMP, HALF, PAD, RIVER_HALF, ROAD_HALF, type Building, type Door, type GameMap } from './map';
 import type { Held, Plan } from './logic';
 
@@ -584,6 +584,17 @@ export function EditIcon({ size }: { size?: number }) {
   );
 }
 
+/** A ping: a pin stuck in the ground, in the pinger's color. */
+export function PingIcon({ size = 16, color = '#2ee6c9' }: { size?: number; color?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <ellipse cx="12" cy="20.5" rx="5" ry="1.6" fill="rgba(0, 0, 0, 0.3)" />
+      <path d="M12 2.5a6 6 0 0 0-6 6c0 4.4 6 11.5 6 11.5s6-7.1 6-11.5a6 6 0 0 0-6-6z" fill={color} stroke="#fff" strokeWidth="1.6" strokeLinejoin="round" />
+      <circle cx="12" cy="8.5" r="2.2" fill="#fff" />
+    </svg>
+  );
+}
+
 export function EggIcon({ size = 16 }: { size?: number }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
@@ -838,10 +849,18 @@ const armorLine = (kind: ArmorKind) => `${cap(ARMOR_NAMES[kind].slice(1).join(',
 export const USE_KEYS: Record<UseId, string> = { bandage: '5', medkit: '6', mini: '7', shield: '8', coffee: '9', smoothie: '0', tart: 'T' };
 /** The keyboard code for a key above. */
 export const keyCode = (k: string) => (/^\d$/.test(k) ? `Digit${k}` : `Key${k}`);
+/** What your team's ring, name tags and outlines look like. */
+const TEAM_COLOR_NAME = 'teal';
 /** The keys that build each piece (and pick it for Space), the material key and the edit key. */
 export const PIECE_KEYS: Record<Plan, string> = { wall: 'Z', ramp: 'X', floor: 'C', roof: 'V', box: 'B' };
 export const MAT_KEY = 'N';
 export const EDIT_KEY = 'F';
+/**
+ * In duos and squads: the key that pings a spot for the team (so does the middle mouse button), and the one that puts
+ * down what's in hand.
+ */
+export const PING_KEY = 'Y';
+export const DROP_KEY = 'U';
 export const PIECE_NAMES: Record<Plan, string> = { wall: 'wall', ramp: 'ramp', floor: 'floor', roof: 'roof', box: 'box up' };
 const [WOOD_SPEC, STONE_SPEC, METAL_SPEC] = [MAT_SPECS.wood, MAT_SPECS.stone, MAT_SPECS.metal];
 
@@ -869,7 +888,11 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>+, shield, coffee</dt>
               <dd>Heal, top up your shield, or drink a coffee. The right item is picked for you (a golden egg tart when you're nearly cracked, a smoothie after the minis)</dd>
               <dt>pick up</dt>
-              <dd>Shows up when you stand on something or next to a chest, a fridge, a locker or a door: tap it to pick up, open, or open and shut the door</dd>
+              <dd>Shows up when you stand on something or next to a chest, a fridge, a locker or a door: tap it to pick up, open, or open and shut the door. By a knocked teammate it says revive: hold it down</dd>
+              <dt>ping</dt>
+              <dd>In duos and squads, the pin by the little map marks where you aim for your team, and so does a tap on the big map</dd>
+              <dt>hold a slot</dt>
+              <dd>Hold a weapon, an item or a material in the build menu a moment to put one down for a teammate</dd>
             </>
           ) : (
             <>
@@ -886,7 +909,11 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>{EDIT_KEY}</dt>
               <dd>Edit the wall of yours you face: a doorway, then a window, then solid again</dd>
               <dt>E</dt>
-              <dd>Pick up, swap, open chests, fridges, lockers and supply drops, and open and shut doors</dd>
+              <dd>Pick up, swap, open chests, fridges, lockers and supply drops, and open and shut doors. Hold it by a knocked teammate to revive them</dd>
+              <dt>{PING_KEY}, middle click</dt>
+              <dd>In duos and squads, ping where the mouse points for your team (a click on the big map pings there too)</dd>
+              <dt>{DROP_KEY}, right click</dt>
+              <dd>Put down what's in your hand for a teammate, or right click a weapon, an item, the ammo or a material to put one down</dd>
               <dt>R</dt>
               <dd>Reload</dd>
               <dt>1 2 3 4</dt>
@@ -1138,9 +1165,32 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         </ul>
       </section>
       <section>
+        <h3>Duos and squads</h3>
+        <ul>
+          <li>
+            <b>Teams.</b> In duos you play in teams of two (twenty five teams), in squads teams of four (twelve of four and one of two). Pick the mode by Play, on the Play with Bots card, or as host of a room. Your teammates have a {TEAM_COLOR_NAME} ring under them, a {TEAM_COLOR_NAME} name tag and outline you can see through walls, and show on both maps in their own colors. Nobody can hurt a teammate: shots go past them, and swings, blasts, barrels, hot sauce, stun grenades and impulse eggs leave them be. The storm hurts everyone.
+          </li>
+          <li>
+            <b>Knocked down.</b> Run out of health while a teammate still stands and you're knocked down, not out: you crawl, can't shoot or use anything, and bleed out over {BLEED_T} seconds. Anyone who hits you meanwhile finishes you off sooner.
+          </li>
+          <li>
+            <b>Reviving.</b> {touch ? 'Hold the pick up button' : 'Hold E'} by a knocked teammate for {REVIVE_T} seconds to get them back up with {REVIVE_HP} health (you stand still while you do, and they stop bleeding). The team panel under the pills shows how everyone is doing.
+          </li>
+          <li>
+            <b>Out.</b> Once nobody on a team is left standing, its knocked eggs are out too. The last team with anyone standing wins, and places go by team. Cracked? You watch your teammates first.
+          </li>
+          <li>
+            <b>Pings and sharing.</b> Ping a spot to mark it for your team on the island and both maps for a few seconds. Put a weapon, one throwable or item, a box of ammo or {MAT_DROP} of a material down at your feet for a teammate: you never pick back up what you put down unless you ask for it.
+          </li>
+          <li>
+            <b>Computer teammates.</b> In Play with Bots your teammates are computer eggs. They jump with you, stay near you, ping eggs they spot, revive you when it's safe, share what you're short of and finish knocked eggs only when nothing else is shooting at them. Only solo matches go on the boards.
+          </li>
+        </ul>
+      </section>
+      <section>
         <h3>Online</h3>
-        <p>Play joins a match with whoever else is starting one, like an .io game: it starts on its own about twenty seconds after the first egg comes in (sooner once twenty people are in), and computer eggs fill the island up to fifty. Arrive once one is under way and you go into the next. Play with Bots is you against forty-nine computer eggs, as sharp as you pick.</p>
-        <p>Play with Friends makes a room of your own for up to twenty: the host adds computer eggs with Bots, then picks whether more fill the island up to fifty and how sharp they are.</p>
+        <p>Play joins a match with whoever else is starting one in the mode you pick beside it (solo, duos or squads), like an .io game: it starts on its own about twenty seconds after the first egg comes in (sooner once twenty people are in), people go on teams together first, and computer eggs fill the teams and the island up to fifty. Arrive once one is under way and you go into the next. Play with Bots is you against forty-nine computer eggs (some of them your teammates in duos and squads), as sharp as you pick.</p>
+        <p>Play with Friends makes a room of your own for up to twenty: the host picks the mode, and in duos and squads friends fill teams together in seat order until someone moves (the host can move anyone, everyone else themselves). The host adds computer eggs with Bots, then picks whether more fill the island up to fifty and how sharp they are. A team's win counts for everyone on it.</p>
         <p>Easy computer eggs are slow to spot you and miss most shots past thirty meters. Normal ones, the kind Play always brings, fight fair. Hard ones see farther, react quicker and aim well up close, but are never dead on far off. At every level they pace their fire and a pack of them takes turns, so none cracks you from full health in a second.</p>
         <p>Cracked? Watch the rest, or press done watching for your result while the match plays on for everyone else. Whoever hosts runs the match, so they can play again (or start the next one, in a room of your own) once it is over; if the host leaves first, the match ends for everyone.</p>
       </section>

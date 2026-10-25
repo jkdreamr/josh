@@ -183,6 +183,9 @@ import {
   type Plan,
   type Wall,
 } from '../src/os/arcade/games/scramble/logic.ts';
+import { BLEED_T, CRAWL, DOWN_HP, F_DOWN, F_REVIVE, PING_T, REVIVE_HP, REVIVE_T, dropOut, forfeit, isMode, pingOf, reviveEgg, reviveShare, teamCount, type Mode } from '../src/os/arcade/games/scramble/logic.ts';
+import { actorOf, parseTeams, teamAsk } from '../src/os/arcade/games/scramble/net.ts';
+import { nextTeam, pinTeam, teamsFor, winnersOf } from '../src/os/arcade/games/scramble/session.ts';
 import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packDoors, packEvents, packGlass, packPiece, parsePacket, pieceEv, placesOf, stateOf, toNet, unpackDoors, unpackGlass, unpackPiece, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
 import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
@@ -1174,12 +1177,12 @@ test('packets survive the trip and anything malformed is turned away', () => {
   assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(4, s, 7)))), { k: 's', round: 4, state: s, watch: 7 });
   assert.equal(parsePacket({ ...guestState(4, s), v: MAX_FIGHTERS }), null);
   const host = parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, -2.5, 'hard', [0, 1, -1], [[0, s], [2, s]]))));
-  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: [] });
+  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: [], mode: 'solo', teams: null });
   // the roster only goes with some of the host's reports
-  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null });
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null, mode: 'solo', teams: null });
   assert.equal(parsePacket({ ...hostState(4, 99, 3, 'hard', null, []), ro: 'all' }), null);
   assert.deepEqual(parsePacket(endOf(4, 2, [[2, 1, 3], [0, 2, 1]])), { k: 'end', round: 4, winner: 2, places: [[2, 1, 3], [0, 2, 1]] });
-  assert.deepEqual(parsePacket(configOf(4, 'none', 'easy')), { k: 'cfg', round: 4, bots: 'none', level: 'easy' });
+  assert.deepEqual(parsePacket(configOf(4, 'none', 'easy')), { k: 'cfg', round: 4, bots: 'none', level: 'easy', mode: 'solo', picks: [] });
   for (const bad of [null, 1, 'x', {}, { t: 'pk', r: 1.5, k: 's', c: [] }, { t: 'pk', r: 1, k: 's', c: [1, 2] }, { t: 'pk', r: 1, k: 'S', sd: 1, tm: 0, lv: 'brutal', ro: [0], c: [] }, { t: 'pk', r: 1, k: 'S', sd: 1, tm: 0, lv: 'easy', ro: [0, 0], c: [] }, { t: 'pk', r: 1, k: 'end', w: MAX_FIGHTERS, pl: [] }, { t: 'pk', r: 1, k: 'cfg', b: 'lots', lv: 'easy' }])
     assert.equal(parsePacket(bad), null, JSON.stringify(bad));
   // states out of any sane range
@@ -1277,17 +1280,17 @@ test('events pack into packets well under the room limit, in order', () => {
 // A whole room, simulated: the host and its guests passing real packets through a pretend network, with delay and
 // a share of the fast packets lost.
 
-type Client = { seat: number; me: Me; s: Session; m: Match | null; inbox: { at: number; from: number; d: unknown }[]; gone: boolean; call: 'report' | 'quiet' | null; hurtBy: number; heard: number; doneAt: number };
+type Client = { seat: number; me: Me; s: Session; m: Match | null; inbox: { at: number; from: number; d: unknown }[]; gone: boolean; call: 'report' | 'quiet' | null; hurtBy: number; heard: number; doneAt: number; knocks: number; revives: number };
 
 /**
  * `hostDone`: past this time, the host's egg cracks (once it has landed) and the host is done watching: from then on
  * its game draws no frames, and only its timer moves the match on, as index.tsx does.
  */
-function simulate(opts: { humans: number; bots: boolean; seed: number; level: Level; delay: number; loss: number; leave?: { seat: number; at: number }; stall?: { seat: number; at: number; silent: boolean }; hostDone?: number }) {
+function simulate(opts: { humans: number; bots: boolean; seed: number; level: Level; delay: number; loss: number; leave?: { seat: number; at: number }; stall?: { seat: number; at: number; silent: boolean }; hostDone?: number; mode?: Mode }) {
   const players: Player[] = Array.from({ length: opts.humans }, (_, seat) => ({ seat, name: `P${seat + 1}` }));
   const rng = rng32(opts.seed * 7 + 1);
-  const host = hostMatch(players, 0, opts.seed, opts.level, opts.bots ? MAX_FIGHTERS : 0, COUNTDOWN + 1.2);
-  const clients: Client[] = players.map((p) => ({ seat: p.seat, me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], gone: false, call: null, hurtBy: 0, heard: 0, doneAt: -1 }));
+  const host = hostMatch(players, 0, opts.seed, opts.level, opts.bots ? MAX_FIGHTERS : 0, COUNTDOWN + 1.2, opts.mode);
+  const clients: Client[] = players.map((p) => ({ seat: p.seat, me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], gone: false, call: null, hurtBy: 0, heard: 0, doneAt: -1, knocks: 0, revives: 0 }));
   autopilot(host.match, host.match.fighters[host.match.me]);
   let now = 0;
   const post = (from: Client, d: object, fast: boolean, only?: number) => {
@@ -1297,8 +1300,8 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
       c.inbox.push({ at: now + opts.delay, from: from.seat, d: JSON.parse(JSON.stringify(d)) });
     }
   };
-  const join = (c: Client) => (seed: number, level: Level, time: number, roster: number[]) => {
-    const m = guestMatch(players, c.seat, seed, level, time, roster);
+  const join = (c: Client) => (seed: number, level: Level, time: number, roster: number[], mode: Mode, teams: number[] | null) => {
+    const m = guestMatch(players, c.seat, seed, level, time, roster, mode, teams);
     autopilot(m, m.fighters[m.me]);
     return m;
   };
@@ -1340,6 +1343,8 @@ function simulate(opts: { humans: number; bots: boolean; seed: number; level: Le
       for (const e of c.m.events.splice(0)) {
         if (e.t === 'hurt' && e.f === c.m.me && e.by >= 0 && e.by !== c.m.me) c.hurtBy++;
         if (e.t === 'shot' && e.net) c.heard++;
+        if (e.t === 'knock') c.knocks++;
+        if (e.t === 'revived') c.revives++;
         share(c.s, e, c.seat);
       }
       for (const p of flush(c.s, 1, DT)) post(c, p, false);
@@ -1428,6 +1433,45 @@ for (const [label, opts] of [
       assert.equal(egg.phase, 'out', 'the host took out the egg of someone who stopped playing');
       assert.equal(egg.outCause, 'left');
       assert.notEqual(live[0].s.end!.winner, egg.id);
+    }
+  });
+}
+
+for (const [label, opts] of [
+  ['duos: a host, five guests and computer eggs, one guest leaving halfway, with lag and lost packets', { humans: 6, bots: true, seed: 12, level: 'normal' as Level, delay: 0.08, loss: 0.12, leave: { seat: 3, at: 40 }, mode: 'duos' as Mode }],
+  ['squads: a host, six guests and computer eggs, with lag and lost packets', { humans: 7, bots: true, seed: 27, level: 'hard' as Level, delay: 0.06, loss: 0.1, mode: 'squads' as Mode }],
+] as const) {
+  test(`online ${label}: all agree on the teams, the knocks and revives, and the team that won`, () => {
+    const clients = simulate(opts);
+    const live = clients.filter((c) => !c.gone);
+    const host = live[0].m!;
+    assert.ok(host.ended);
+    for (const c of live) {
+      const m = c.m!;
+      assert.ok(c.s.synced, `seat ${c.seat} synced`);
+      assert.equal(c.call, 'report', `seat ${c.seat} heard the host call it`);
+      assert.equal(m.mode, opts.mode);
+      assert.deepEqual(m.teams, host.teams, `seat ${c.seat}: the same teams`);
+      assert.deepEqual(m.fighters.map((f) => f.phase === 'out'), host.fighters.map((f) => f.phase === 'out'), `seat ${c.seat}: the same eggs are out`);
+      assert.equal(JSON.stringify(c.s.end), JSON.stringify(live[0].s.end), `seat ${c.seat}: one result for everyone`);
+      assert.ok(c.knocks > 0, `seat ${c.seat} heard of knocks (${c.knocks})`);
+    }
+    assert.ok(live.reduce((n, c) => n + c.revives, 0) > 0, 'eggs were revived');
+    // friends fill teams together in seat order
+    const size = opts.mode === 'duos' ? 2 : 4;
+    for (let seat = 0; seat < opts.humans; seat++) assert.equal(host.fighters[seat].team, Math.floor(seat / size));
+    // one place a team, the winners all on one team
+    const end = live[0].s.end!;
+    const places = new Map(end.places.map(([id, place]) => [id, place]));
+    for (const ids of host.teams) assert.equal(new Set(ids.map((id) => places.get(id))).size, 1, 'a team shares its place');
+    const won = host.fighters.filter((f) => places.get(f.id) === 1);
+    assert.ok(won.length && won.every((f) => f.team === won[0].team), 'one team wins');
+    assert.deepEqual([...new Set(end.places.map(([, p]) => p))].sort((a, b) => a - b), Array.from({ length: teamCount(host) }, (_, i) => i + 1));
+    if ('leave' in opts) {
+      // out for leaving, unless it was cracked before
+      const egg = host.fighters.find((f) => f.seat === opts.leave.seat)!;
+      assert.equal(egg.phase, 'out');
+      assert.ok(egg.outCause === 'left' || egg.outAt < opts.leave.at + 1, `the egg of the one who left went out to ${egg.outCause} at ${egg.outAt.toFixed(0)} s`);
     }
   });
 }
@@ -5657,4 +5701,617 @@ test('a computer egg holds a line through a window a while, then moves on', () =
   assert.ok(first < 1, `held still (${first.toFixed(2)} m)`);
   const then = hold(6);
   assert.ok(then > 2, `then moved (${then.toFixed(2)} m)`);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Duos and squads.
+
+/** A match on this device with no computer eggs, `teams` saying each egg's team, a few seconds past the countdown. */
+function teamQuiet(mode: Mode, teams: number[], role: 'solo' | 'host' | 'guest' = 'solo', kinds: Entrant['kind'][] = []): Match {
+  const entrants: Entrant[] = teams.map((team, i) => ({ name: `p${i}`, color: '#fff', kind: kinds[i] ?? 'player', seat: kinds[i] === 'bot' ? -1 : i, team }));
+  const m = createMatch({ seed: 7, role, level: 'normal', entrants, me: Math.max(0, entrants.findIndex((e) => e.kind === 'player')), countdown: 0, mode });
+  m.time = 5;
+  openSpot(m);
+  return m;
+}
+
+test('duos and squads: fifty eggs on teams of two or four, with you on the first, and the computer eggs on a team drop together', () => {
+  const duos = soloMatch(3, 'normal', 'you', FIGHTER_COLORS[0], 'duos');
+  assert.equal(duos.fighters.length, MAX_FIGHTERS);
+  assert.equal(teamCount(duos), 25);
+  assert.ok(duos.teams.every((t) => t.length === 2));
+  assert.deepEqual(duos.teams[0], [0, 1], 'you and a computer egg');
+  const squads = soloMatch(3, 'normal', 'you', FIGHTER_COLORS[0], 'squads');
+  assert.equal(teamCount(squads), 13);
+  assert.deepEqual(squads.teams.map((t) => t.length), [...Array(12).fill(4), 2], 'twelve of four, and one of two');
+  for (const f of squads.fighters) assert.ok(squads.teams[f.team].includes(f.id));
+  assert.equal(teamCount(soloMatch(3, 'normal')), MAX_FIGHTERS, 'in solo every egg is its own team');
+  // the computer eggs of a team (with no person on it) aim for one place, and jump one after another
+  const [a, b, c, d] = squads.teams[2].map((id) => squads.fighters[id].ai!);
+  for (const o of [b, c, d]) {
+    assert.ok(Math.hypot(o.gx - a.gx, o.gz - a.gz) < 4);
+    assert.ok(o.jumpAt >= a.jumpAt && o.jumpAt < a.jumpAt + 1);
+  }
+});
+
+test('teammates can’t hurt each other: shots go past them, swings and blasts leave them be; the storm hurts everyone', () => {
+  const m = teamQuiet('duos', [0, 0, 1]);
+  const [a, mate, foe] = m.fighters;
+  land(a, 0, 0);
+  land(mate, 0, 4);
+  land(foe, 0, 9);
+  a.guns[0] = { w: 'pistol', r: 0, mag: 14 };
+  a.slot = 0;
+  a.input.aim = 0;
+  a.input.fire = true;
+  const evs = run(m, 0.3);
+  a.input.fire = false;
+  assert.equal(mate.hp, 100, 'the shot went past the teammate in the way');
+  assert.ok(foe.hp < 100, 'and on into the egg behind');
+  assert.ok(!evs.some((e) => e.t === 'hit' && e.to === mate.id));
+  // a swing at a teammate up close does nothing to it
+  land(mate, 0, 1);
+  a.slot = SLOT_MELEE;
+  a.fireT = 0;
+  a.input.fire = true;
+  run(m, 0.1);
+  a.input.fire = false;
+  assert.equal(mate.hp, 100);
+  // a grenade at its feet neither
+  a.throws.grenade = 1;
+  launch(m, a.id, 'grenade', 0, 0, 0, 1, 0.3, true);
+  run(m, THROWS.grenade.fuse! + 0.2);
+  assert.equal(mate.hp, 100);
+  // nor anything else of a teammate's, while the storm and an egg's own barrel still hurt
+  assert.equal(hurt(m, mate, 30, a.id, 'barrel', false), 0);
+  assert.equal(hurt(m, mate, 30, a.id, 'sauce', false), 0);
+  assert.ok(hurt(m, mate, 5, -1, 'storm', true) > 0);
+  assert.ok(hurt(m, mate, 5, mate.id, 'barrel', false) > 0);
+  // and in solo, everyone is fair game
+  const s = quiet(7, 2);
+  land(s.fighters[1], 0, 0);
+  assert.ok(hurt(s, s.fighters[1], 10, 0, 'smg', false) > 0);
+});
+
+test('knocked down with a teammate standing: a crawl, no shooting, bleeding out to the knocker; a hit finishes it sooner', () => {
+  const m = teamQuiet('duos', [0, 0, 1, 1]);
+  const [a, mate, foe, foe2] = m.fighters;
+  land(a, 0, 0);
+  land(mate, 20, 0);
+  land(foe, 0, 10);
+  land(foe2, -20, 0);
+  a.shield = 40;
+  a.guns[0] = { w: 'smg', r: 0, mag: 20 };
+  a.slot = 0;
+  hurt(m, a, 300, foe.id, 'shotgun', false);
+  assert.equal(a.phase, 'ground', 'not out');
+  assert.ok(a.down && a.hp === DOWN_HP && a.shield === 0);
+  const knock = m.events.find((e) => e.t === 'knock');
+  assert.ok(knock && knock.t === 'knock' && knock.f === a.id && knock.by === foe.id && knock.w === 'shotgun');
+  assert.equal(a.kills + foe.kills, 0, 'a knock is no elimination');
+  assert.ok(flagsOf(a) & F_DOWN);
+  // it crawls, and can't shoot, build or heal
+  a.input.mx = 1;
+  a.input.fire = true;
+  a.input.piece = 'wall';
+  a.items.bandage = 2;
+  a.input.use = 'bandage';
+  const before = a.x;
+  const evs = run(m, 1);
+  a.input.mx = 0;
+  a.input.fire = false;
+  const moved = a.x - before;
+  assert.ok(moved > SPEED * CRAWL * 0.6 && moved < SPEED * CRAWL * 1.1, `a crawl (${moved.toFixed(2)} m in a second)`);
+  assert.ok(!evs.some((e) => e.t === 'shot' || e.t === 'wall' || e.t === 'use'));
+  assert.ok(Math.abs(a.hp - (DOWN_HP - DOWN_HP / BLEED_T)) < 0.5, 'bleeding');
+  assert.equal(prompt(m, a), null, 'nothing to pick up down there');
+  // left alone, it bleeds out, and the knocker gets the elimination
+  const out = run(m, BLEED_T).find((e) => e.t === 'out');
+  assert.ok(out && out.t === 'out' && out.f === a.id && out.w === 'bleed' && out.by === foe.id && out.down);
+  assert.equal(foe.kills, 1);
+  assert.equal(a.place, 0, 'the team is still in');
+  // the teammate knocked in turn: nobody of theirs is standing, so it is out at once, with the team's place
+  hurt(m, mate, 300, foe2.id, 'rifle', false);
+  assert.equal(mate.phase, 'out');
+  assert.equal(foe2.kills, 1);
+  run(m, 0.05);
+  assert.ok(m.ended && m.fighters[m.winner].team === foe.team);
+  assert.deepEqual([a.place, mate.place, foe.place, foe2.place], [2, 2, 1, 1]);
+  // a knocked egg that's hit again goes out to whoever hit it
+  const n = teamQuiet('duos', [0, 0, 1, 1]);
+  for (const f of n.fighters) land(f, f.id * 8, 0);
+  hurt(n, n.fighters[0], 300, 2, 'smg', false);
+  n.events.length = 0;
+  hurt(n, n.fighters[0], 200, 3, 'pistol', false);
+  const fin = n.events.find((e) => e.t === 'out');
+  assert.ok(fin && fin.t === 'out' && fin.by === 3 && fin.w === 'pistol' && fin.down, 'finished off');
+  // in solo nobody is knocked down: they crack
+  const s = quiet(7, 2);
+  for (const f of s.fighters) land(f, f.id * 8, 0);
+  hurt(s, s.fighters[0], 300, 1, 'smg', false);
+  assert.equal(s.fighters[0].phase, 'out');
+});
+
+test('holding the interact key by a knocked teammate revives it in five seconds, to thirty health; it doesn’t bleed meanwhile, and letting go stops it', () => {
+  const m = teamQuiet('squads', [0, 0, 1]);
+  const [a, mate, foe] = m.fighters;
+  land(a, 0, 0);
+  land(mate, 1.5, 0);
+  land(foe, 30, 0);
+  hurt(m, mate, 300, foe.id, 'smg', false);
+  assert.ok(mate.down);
+  const p = prompt(m, a);
+  assert.ok(p && 'revive' in p && p.revive === mate.id, 'the prompt says to revive');
+  a.input.hold = true;
+  a.input.mx = 1;
+  let evs = run(m, 1);
+  assert.equal(a.reviving, mate.id);
+  assert.ok(Math.abs(a.x) < 0.01, 'standing still while it does');
+  assert.ok(evs.some((e) => e.t === 'revive' && e.f === a.id && e.to === mate.id));
+  const hp = mate.hp;
+  run(m, 1);
+  assert.equal(mate.hp, hp, 'no bleeding while revived');
+  assert.ok(Math.abs(reviveShare(m, a) - 0.4) < 0.05);
+  // let go: it stops, and starts over next time
+  a.input.hold = false;
+  evs = run(m, 0.1);
+  assert.equal(a.reviving, -1);
+  assert.ok(evs.some((e) => e.t === 'revive' && e.f === a.id && e.to === -1));
+  assert.ok(mate.down);
+  a.input.hold = true;
+  evs = run(m, REVIVE_T + 0.1);
+  const rv = evs.find((e) => e.t === 'revived');
+  assert.ok(rv && rv.t === 'revived' && rv.f === mate.id && rv.by === a.id);
+  assert.ok(!mate.down && mate.hp === REVIVE_HP);
+  assert.equal(a.reviving, -1);
+  assert.ok(!(flagsOf(mate) & F_DOWN));
+  // a knocked egg can't revive anyone, and an egg out of reach isn't revived
+  a.input.hold = false;
+  hurt(m, mate, 300, foe.id, 'smg', false);
+  land(a, 10, 0);
+  a.input.hold = true;
+  run(m, 0.5);
+  assert.equal(a.reviving, -1);
+});
+
+test('online, a guest’s revive of the host’s computer egg is the host’s to grant, after a whole revive, and everyone hears it stands', () => {
+  // the host: its own egg, a guest's egg and its teammate (a computer egg), against a computer egg
+  const h = teamQuiet('duos', [0, 1, 1, 0], 'host', ['player', 'remote', 'bot', 'bot']);
+  const [, g, bot] = h.fighters;
+  for (const f of h.fighters) land(f, f.id * 2, 0);
+  for (const f of h.fighters) f.ai = null;
+  hurt(h, bot, 300, 3, 'smg', false);
+  assert.ok(bot.down);
+  const kn = h.events.map(toNet).find((e) => e?.y === 'kn');
+  assert.deepEqual(kn, { y: 'kn', f: bot.id, by: 3, w: 'smg' });
+  // a guest's ask that comes too soon after it started is turned down
+  assert.equal(applyNet(h, { y: 'rv', f: g.id, to: bot.id }), true);
+  assert.equal(g.reviving, bot.id);
+  assert.equal(applyNet(h, { y: 'rq', f: g.id, to: bot.id }), false, 'the ask goes no further');
+  assert.ok(bot.down, 'too soon');
+  h.clock += REVIVE_T;
+  applyNet(h, { y: 'rq', f: g.id, to: bot.id });
+  assert.ok(!bot.down && bot.hp === REVIVE_HP, 'the host stands it up');
+  const rvd = h.events.map(toNet).find((e) => e?.y === 'rvd');
+  assert.deepEqual(rvd, { y: 'rvd', f: bot.id, by: g.id });
+  // only the host's word stands an egg up: a guest hears it
+  const gm = teamQuiet('duos', [0, 1, 1, 0], 'guest', ['remote', 'player', 'remote', 'remote']);
+  for (const f of gm.fighters) land(f, f.id * 2, 0);
+  applyNet(gm, { y: 'kn', f: 2, by: 3, w: 'smg' });
+  assert.ok(gm.fighters[2].down && gm.fighters[2].knockBy === 3);
+  assert.ok(gm.events.some((e) => e.t === 'knock' && e.net), 'the kill feed hears of it');
+  applyNet(gm, { y: 'rvd', f: 2, by: 1 });
+  assert.ok(!gm.fighters[2].down);
+  // the host turns down a revive between eggs on different teams, or of an egg that isn't down
+  hurt(h, bot, 300, 3, 'smg', false);
+  h.clock += 10;
+  h.fighters[3].reviving = bot.id;
+  assert.equal(reviveEgg(h, bot.id, 0, true), false, 'not a teammate');
+  assert.equal(reviveEgg(h, g.id, bot.id, true), false, 'not down');
+});
+
+test('a guest owns its own knock: it bleeds out on its own screen, and a guest done reviving asks the host', () => {
+  const gm = teamQuiet('duos', [0, 1, 1, 0], 'guest', ['remote', 'player', 'remote', 'remote']);
+  const [, me, mate, foe] = gm.fighters;
+  for (const f of gm.fighters) land(f, f.id * 2, 0);
+  // knocked by a hit from the host's computer egg
+  applyNet(gm, { y: 'd', f: foe.id, to: mate.id, d: 50, w: 'smg', x: 0, z: 0 });
+  assert.ok(!mate.down, 'not ours to knock');
+  applyNet(gm, { y: 'd', f: foe.id, to: me.id, d: 300, w: 'smg', x: 0, z: 0 });
+  assert.ok(me.down);
+  assert.deepEqual(gm.events.map(toNet).find((e) => e?.y === 'kn'), { y: 'kn', f: me.id, by: foe.id, w: 'smg' });
+  // our state says so, for anyone who missed the news
+  const st = parsePacket(JSON.parse(JSON.stringify(guestState(1, stateOf(me)))));
+  assert.ok(st && st.k === 's' && st.state.flags & F_DOWN);
+  // reviving the teammate: once it's done, we ask the host (and stop)
+  me.down = false;
+  me.hp = 100;
+  mate.down = true;
+  land(me, mate.x + 1, mate.z);
+  me.input.hold = true;
+  const evs = run(gm, REVIVE_T + 0.1);
+  const ask = evs.map(toNet).filter((e) => e?.y === 'rq');
+  assert.deepEqual(ask, [{ y: 'rq', f: me.id, to: mate.id }]);
+  assert.ok(mate.down, 'it waits for the host');
+});
+
+test('the team that has anyone standing last wins; places go by team, and the host’s places say so', () => {
+  const m = teamQuiet('duos', [0, 0, 1, 1, 2, 2]);
+  for (const f of m.fighters) land(f, f.id * 10, 0);
+  const [a, b, c, d, e, f] = m.fighters;
+  hurt(m, e, 300, a.id, 'smg', false);
+  assert.ok(e.down);
+  hurt(m, f, 300, a.id, 'smg', false);
+  assert.equal(f.phase, 'out', 'nobody else standing: out at once');
+  run(m, 0.05);
+  assert.ok(e.phase === 'out', 'and the knocked one with it');
+  assert.deepEqual([e.place, f.place], [3, 3]);
+  assert.ok(!m.ended);
+  // a team with one knocked egg is beaten once the rest of it is
+  hurt(m, c, 300, a.id, 'smg', false);
+  hurt(m, d, 300, b.id, 'smg', false);
+  run(m, 0.05);
+  assert.ok(m.ended);
+  assert.equal(m.fighters[m.winner].team, a.team);
+  assert.deepEqual([a.place, b.place, c.place, d.place], [1, 1, 2, 2]);
+  const places = new Map(placesOf(m).map(([id, place]) => [id, place]));
+  assert.deepEqual([0, 1, 2, 3, 4, 5].map((id) => places.get(id)), [1, 1, 2, 2, 3, 3]);
+  assert.deepEqual(winnersOf(m), [a, b]);
+  m.me = c.id;
+  assert.equal(resultCard(m, false, false).title, '2nd of 3');
+  assert.equal(resultCard(m, false, false).detail, '0 eliminations, 0 damage. p0 and p1 won.');
+  m.me = b.id;
+  assert.equal(resultCard(m, false, false).title, 'Last Team Standing');
+});
+
+test('team packets: the mode and everyone’s team with the roster, knocks, revives and pings, every field checked', () => {
+  const s = stateOf(quiet().fighters[0]);
+  const host = parsePacket(JSON.parse(JSON.stringify(hostState(2, 9, 4, 'normal', [0, 1, -1, -1], [[0, s]], [], [], 'duos', [0, 0, 1, 1]))));
+  assert.ok(host && host.k === 'S');
+  assert.equal(host.mode, 'duos');
+  assert.deepEqual(host.teams, [0, 0, 1, 1]);
+  // left off the reports without the roster, and in solo
+  const fast = hostState(2, 9, 4, 'normal', null, [[0, s]], [], [], 'duos', [0, 0, 1, 1]);
+  assert.equal('md' in fast, false);
+  assert.equal('md' in hostState(2, 9, 4, 'normal', [0], [[0, s]]), false);
+  // a team too big for the mode, the wrong count or a nonsense mode is turned away
+  const base = JSON.parse(JSON.stringify(hostState(2, 9, 4, 'normal', [0, 1, -1, -1], [[0, s]], [], [], 'duos', [0, 0, 1, 1])));
+  for (const bad of [{ te: [0, 0, 0, 1] }, { te: [0, 0, 1] }, { te: [0, 0, 1, 99] }, { te: [0, 0, 1, 1.5] }, { md: 'trios' }, { md: 'solo' }])
+    assert.equal(parsePacket({ ...base, ...bad }), null, JSON.stringify(bad));
+  assert.deepEqual(parseTeams([0, 1, 1, 2, 2, 2, 2], 'squads', 7), [0, 1, 1, 2, 2, 2, 2]);
+  assert.equal(parseTeams([0, 0, 0], 'duos', 3), null);
+  // the host's picks while the room waits, and a guest asking for a team
+  assert.deepEqual(parsePacket(configOf(3, 'fill', 'hard', 'squads', [-1, 1, 0])), { k: 'cfg', round: 3, bots: 'fill', level: 'hard', mode: 'squads', picks: [-1, 1, 0] });
+  assert.deepEqual(parsePacket(teamAsk(3, 2)), { k: 'tm', round: 3, team: 2 });
+  for (const bad of [{ ...configOf(3, 'fill', 'hard', 'squads', [-2]) }, { ...configOf(3, 'fill', 'hard'), md: 'trios' }, { ...teamAsk(3, 2), te: 'x' }, { ...teamAsk(3, 2), te: -5 }])
+    assert.equal(parsePacket(bad), null, JSON.stringify(bad));
+  // knocks, revives and pings, there and back
+  const evs: Ev[] = [
+    { t: 'knock', f: 2, by: 5, w: 'shotgun' },
+    { t: 'knock', f: 2, by: -1, w: 'storm' },
+    { t: 'revive', f: 3, to: 2 },
+    { t: 'revive', f: 3, to: -1 },
+    { t: 'ask', f: 3, to: 2 },
+    { t: 'revived', f: 2, by: 3 },
+    { t: 'ping', f: 3, x: 12.5, z: -40 },
+  ];
+  const nets = evs.map(toNet);
+  assert.deepEqual(nets.map((e) => e?.y), ['kn', 'kn', 'rv', 'rv', 'rq', 'rvd', 'pg']);
+  const back = parsePacket(JSON.parse(JSON.stringify({ t: 'pk', r: 1, k: 'e', g: [[1, nets]] })));
+  assert.ok(back && back.k === 'e');
+  assert.deepEqual(back.groups[0][1], nets);
+  const bad = [
+    { y: 'kn', f: 2, by: 2, w: 'smg' },
+    { y: 'kn', f: 2, by: 5, w: 'laser' },
+    { y: 'kn', f: MAX_FIGHTERS, by: 5, w: 'smg' },
+    { y: 'rv', f: 3, to: 3 },
+    { y: 'rv', f: 3, to: -2 },
+    { y: 'rq', f: 3, to: -1 },
+    { y: 'rvd', f: 2, by: 2 },
+    { y: 'pg', f: 3, x: 9999, z: 0 },
+    { y: 'pg', f: 3, x: 'a', z: 0 },
+  ];
+  const none = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, bad]] });
+  assert.ok(none && none.k === 'e' && none.groups.length === 0);
+  // only the host says an egg stands: a guest's word for it isn't the guest's to give
+  assert.equal(actorOf({ y: 'rvd', f: 2, by: 3 }), -1);
+  assert.equal(actorOf({ y: 'rq', f: 3, to: 2 }), 3);
+  // a compact report: fifty eggs in duos still well under the room's limit
+  const fifty = Array.from({ length: MAX_FIGHTERS }, (_, i): [number, typeof s] => [i, s]);
+  const big = JSON.stringify(hostState(2, 9, 4, 'normal', Array(MAX_FIGHTERS).fill(-1), fifty, [], [], 'duos', Array.from({ length: MAX_FIGHTERS }, (_, i) => Math.floor(i / 2))));
+  assert.ok(big.length < 6000, `${big.length} bytes`);
+});
+
+test('the host lays out teams: picks first, then friends together in seat order, then computer eggs on the people’s teams first', () => {
+  assert.deepEqual(teamsFor('duos', [0, 1, 2], [], 3), [0, 0, 1, 1, 2, 2]);
+  assert.deepEqual(teamsFor('squads', [0, 1, 2], [], 5), [0, 0, 0, 0, 1, 1, 1, 1]);
+  // picked teams: two friends apart, each with computer eggs to fill
+  assert.deepEqual(teamsFor('duos', [0, 1], [0, 1], 2), [0, 1, 0, 1]);
+  const picks: number[] = [];
+  picks[0] = 1;
+  picks[5] = 1;
+  assert.deepEqual(teamsFor('squads', [0, 3, 5], picks, 5), [1, 0, 1, 0, 0, 0, 1, 1]);
+  // a full team sends the next to the first with room
+  assert.deepEqual(teamsFor('duos', [0, 1, 2], [0, 0, 0], 1), [0, 0, 1, 1]);
+  assert.deepEqual(teamsFor('solo', [0, 1], [5, 5], 2), [0, 1, 2, 3]);
+  const players = [0, 1, 2].map((seat) => ({ seat, name: `p${seat}` }));
+  const { match, teams } = hostMatch(players, 0, 5, 'normal', MAX_FIGHTERS, 0, 'duos', [-1, 1, 1]);
+  assert.equal(match.mode, 'duos');
+  assert.equal(match.fighters.length, MAX_FIGHTERS);
+  assert.deepEqual(teams.slice(0, 3), [0, 1, 1]);
+  assert.equal(teams.filter((t) => t === 0).length, 2, 'the host gets a computer egg for a teammate');
+  // a guest lays out the same teams from the host's report
+  const g = guestMatch(players, 1, 5, 'normal', 0, match.fighters.map((f) => f.seat), 'duos', teams);
+  assert.deepEqual(g.fighters.map((f) => f.team), teams);
+  assert.equal(g.mode, 'duos');
+});
+
+test('computer eggs play duos and squads to the end as teams: never at a teammate, reviving each other, and few lost to the storm indoors', () => {
+  for (const mode of ['duos', 'squads'] as Mode[])
+    for (const seed of [1, 2]) {
+      const names = botNames(seed);
+      const entrants: Entrant[] = names.slice(0, MAX_FIGHTERS).map((name) => ({ name, color: '#fff', kind: 'bot', seat: -1 }));
+      const m = createMatch({ seed, role: 'solo', level: 'normal', entrants, me: -1, mode });
+      let knocks = 0;
+      let revives = 0;
+      let indoors = 0;
+      const outs = new Set<number>();
+      while (!m.ended && m.time < stormEnd(m.map.storm) + 60) {
+        step(m, 1 / 30);
+        for (const e of m.events.splice(0)) {
+          if (e.t === 'hit') assert.notEqual(m.fighters[e.f].team, m.fighters[e.to].team, 'never a teammate');
+          if (e.t === 'knock') knocks++;
+          if (e.t === 'revived') revives++;
+          if (e.t === 'out') {
+            assert.ok(!outs.has(e.f), 'nobody cracks twice');
+            outs.add(e.f);
+            if (e.w === 'storm' && buildingAt(m.map, m.fighters[e.f].x, m.fighters[e.f].z) >= 0) indoors++;
+          }
+        }
+      }
+      assert.ok(m.ended, `${mode} seed ${seed} ended`);
+      assert.ok(knocks > 10, `${mode} seed ${seed}: knocks (${knocks})`);
+      assert.ok(revives > 2, `${mode} seed ${seed}: revives (${revives})`);
+      assert.ok(indoors <= 2, `${mode} seed ${seed}: lost to the storm indoors (${indoors})`);
+      const won = m.fighters.filter((f) => f.place === 1);
+      assert.ok(won.length && won.every((f) => f.team === won[0].team), 'one team wins');
+      const teamPlaces = new Map<number, Set<number>>();
+      for (const f of m.fighters) teamPlaces.set(f.team, (teamPlaces.get(f.team) ?? new Set()).add(f.place));
+      assert.ok([...teamPlaces.values()].every((p) => p.size === 1 && !p.has(0)), 'every egg has its team’s place');
+      assert.equal(new Set([...teamPlaces.values()].map((p) => [...p][0])).size, teamCount(m), 'one of each place');
+    }
+});
+
+test('a computer egg revives a knocked person on its team, jumps from the bus with them and glides down after them', () => {
+  const m = teamQuiet('duos', [0, 0, 1], 'solo', ['player', 'bot', 'player']);
+  const [me, bot, far] = m.fighters;
+  land(me, 0, 0);
+  land(bot, 12, 0);
+  land(far, 0, 150);
+  bot.ai!.goal = 'roam';
+  me.down = true;
+  me.hp = 60;
+  const evs = run(m, REVIVE_T + 6);
+  assert.ok(evs.some((e) => e.t === 'revived' && e.f === me.id && e.by === bot.id), 'stood back up');
+  assert.ok(!me.down);
+  // on the bus it waits for us, then follows us down
+  const b = createMatch({ seed: 4, role: 'solo', level: 'normal', entrants: [{ name: 'me', color: '#fff', kind: 'player', seat: -1 }, { name: 'bot', color: '#fff', kind: 'bot', seat: -1 }, { name: 'x', color: '#fff', kind: 'bot', seat: -1 }, { name: 'y', color: '#fff', kind: 'bot', seat: -1 }], me: 0, countdown: 0, mode: 'duos' });
+  const [p, mate] = b.fighters;
+  while (b.time < b.map.bus.on + 2) step(b, 1 / 30);
+  assert.equal(mate.phase, 'bus', 'waiting for us');
+  p.input.jump = true;
+  step(b, 1 / 30);
+  step(b, 1 / 30);
+  step(b, 1 / 30);
+  assert.equal(mate.phase, 'drop', 'off right after us');
+  p.input.mx = 1;
+  while (p.phase === 'drop') step(b, 1 / 30);
+  while (mate.phase === 'drop') step(b, 1 / 30);
+  assert.ok(Math.hypot(mate.x - p.x, mate.z - p.z) < 25, `landed near us (${Math.hypot(mate.x - p.x, mate.z - p.z).toFixed(1)} m)`);
+});
+
+test('putting something down for a teammate: it lands at your feet, you never take it back up by walking over it, and they do', () => {
+  const m = teamQuiet('duos', [0, 0, 1]);
+  const [a, mate] = m.fighters;
+  land(a, 0, 0);
+  land(mate, 6, 0);
+  a.items.medkit = 2;
+  a.ammo.light = 50;
+  a.guns[0] = { w: 'smg', r: 2, mag: 11 };
+  a.slot = 0;
+  a.input.drop = 0;
+  let evs = run(m, 0.05);
+  const gun = evs.find((e) => e.t === 'drop');
+  assert.ok(gun && gun.t === 'drop' && gun.item.def.kind === 'gun' && gun.item.by === a.id);
+  assert.equal(a.guns[0], null);
+  assert.equal(a.slot, SLOT_MELEE);
+  assert.ok(Math.hypot(gun.item.x - a.x, gun.item.z - a.z) < 1.3);
+  assert.equal(dropOut(m, a, 'medkit'), true);
+  assert.equal(a.items.medkit, 1);
+  assert.equal(dropOut(m, a, 'light'), true);
+  assert.equal(a.ammo.light, 50 - AMMO_BOX.light);
+  assert.equal(dropOut(m, a, 'wood'), true);
+  assert.equal(a.wood, 0, 'thirty wood, all we had');
+  assert.equal(dropOut(m, a, 'stone'), false, 'none to put down');
+  assert.equal(dropOut(m, a, SLOT_MELEE), false, 'the spatula stays');
+  // walk over all of it a while: nothing goes back in our pockets
+  evs = run(m, 4);
+  assert.ok(!evs.some((e) => e.t === 'took' && e.f === a.id));
+  assert.equal(a.items.medkit, 1);
+  // the teammate walks over and takes it
+  land(mate, a.x + 0.4, a.z + 0.4);
+  evs = run(m, 0.3);
+  assert.ok(evs.some((e) => e.t === 'took' && e.f === mate.id));
+  assert.ok(mate.items.medkit === 1 || mate.ammo.light > 0);
+});
+
+test('a ping marks a spot for a few seconds, a moment apart at most, and travels to the team', () => {
+  const m = teamQuiet('duos', [0, 0, 1]);
+  const a = m.fighters[0];
+  land(a, 0, 0);
+  a.input.ping = { x: 30.04, z: -12.06 };
+  let evs = run(m, 0.05);
+  const pg = evs.find((e) => e.t === 'ping');
+  assert.ok(pg && pg.t === 'ping' && pg.x === 30 && pg.z === -12.1);
+  assert.deepEqual(toNet(pg), { y: 'pg', f: 0, x: 30, z: -12.1 });
+  assert.ok(pingOf(m, a));
+  a.input.ping = { x: 0, z: 0 };
+  evs = run(m, 0.05);
+  assert.ok(!evs.some((e) => e.t === 'ping'), 'not again so soon');
+  run(m, PING_T);
+  assert.equal(pingOf(m, a), null, 'gone after a while');
+  // another client's ping shows here
+  const g = teamQuiet('duos', [0, 0], 'guest', ['player', 'remote']);
+  assert.equal(applyNet(g, { y: 'pg', f: 1, x: 5, z: 6 }), true);
+  assert.deepEqual(pingOf(g, g.fighters[1])?.x, 5);
+});
+
+test('quick play takes its mode from the room’s pool, and a match the host lays out from it is in that mode', () => {
+  const people = [0, 1, 2].map((seat) => ({ seat, name: `p${seat}` }));
+  const { match, teams } = hostMatch(people, 0, 77, QUICK_LEVEL, hostBots(true, 0, true), 3, 'squads');
+  assert.equal(match.mode, 'squads');
+  assert.deepEqual(teams.slice(0, 4), [0, 0, 0, 0], 'the people together, a computer egg with them');
+  assert.equal(teamCount(match), 13);
+  assert.ok(isMode('duos') && isMode('squads') && isMode('solo') && !isMode('trios'));
+});
+
+test('once the match is over, a knocked egg of the winning team bleeds no more and keeps its place', () => {
+  const m = teamQuiet('duos', [0, 0, 1, 1]);
+  for (const f of m.fighters) land(f, f.id * 10, 0);
+  const [a, b, c, d] = m.fighters;
+  hurt(m, b, 300, c.id, 'smg', false);
+  hurt(m, c, 300, a.id, 'smg', false);
+  hurt(m, d, 300, a.id, 'smg', false);
+  run(m, 0.1);
+  assert.ok(m.ended && b.down);
+  const evs = run(m, BLEED_T + 5);
+  assert.ok(!evs.some((e) => e.t === 'out'), 'nobody goes out after the end');
+  assert.ok(b.down && b.phase === 'ground' && b.hp > DOWN_HP - 5);
+  assert.deepEqual([a.place, b.place, c.place, d.place], [1, 1, 2, 2]);
+  assert.equal(c.kills, 0);
+});
+
+test('a knocked teammate up on a built floor is revived up there', () => {
+  const m = teamQuiet('duos', [0, 0, 1]);
+  const [a, mate, foe] = m.fighters;
+  put(m, 900, a.id, 'floor', 0, 0, 1, 0);
+  land(a, mid(0) - 0.8, mid(0));
+  land(mate, mid(0) + 0.8, mid(0));
+  a.y = mate.y = LEVEL_H;
+  land(foe, 40, 0);
+  run(m, 0.1);
+  assert.ok(a.y > 2 && mate.y > 2, 'both up on the floor');
+  hurt(m, mate, 300, foe.id, 'smg', false);
+  assert.ok(mate.down);
+  const p = prompt(m, a);
+  assert.ok(p && 'revive' in p);
+  a.input.hold = true;
+  const evs = run(m, REVIVE_T + 0.2);
+  assert.ok(evs.some((e) => e.t === 'revived' && e.f === mate.id), 'revived');
+  assert.ok(!mate.down && mate.hp === REVIVE_HP);
+});
+
+test('in solo, news of knocks, revives and pings is turned away', () => {
+  const g = createMatch({ seed: 7, role: 'guest', level: 'normal', entrants: [0, 1, 2].map((i) => ({ name: `p${i}`, color: '#fff', kind: i === 1 ? ('player' as const) : ('remote' as const), seat: i })), me: 1, countdown: 0 });
+  g.time = 5;
+  for (const f of g.fighters) land(f, f.id * 3, 0);
+  assert.equal(applyNet(g, { y: 'kn', f: 0, by: 2, w: 'smg' }), false);
+  assert.ok(!g.fighters[0].down);
+  assert.equal(applyNet(g, { y: 'rv', f: 0, to: 2 }), false);
+  assert.equal(applyNet(g, { y: 'pg', f: 0, x: 3, z: 4 }), false);
+  assert.equal(pingOf(g, g.fighters[0]), null);
+});
+
+test('a report from before the news of a knock or a revive does not undo it; one from someone who came in late shows a revive under way', () => {
+  const g = teamQuiet('duos', [0, 0, 1, 1], 'guest', ['remote', 'remote', 'player', 'remote']);
+  for (const f of g.fighters) land(f, f.id * 1.5, 0);
+  const [a, b] = g.fighters;
+  const st = (f: Fighter, flags: number) => ({ ...stateOf(f), flags });
+  applyNet(g, { y: 'kn', f: a.id, by: 3, w: 'smg' });
+  applyState(g, a, st(a, 0));
+  assert.ok(a.down && a.knockBy === 3, 'still down: that report set out before the knock');
+  g.clock += 1.2;
+  applyState(g, a, st(a, F_DOWN));
+  assert.ok(a.down);
+  // the reviver's reports say it revives, though no news of it came: it starts here now
+  applyState(g, b, st(b, F_REVIVE));
+  assert.equal(b.reviving, a.id);
+  assert.ok(reviveShare(g, b) < 0.1);
+  // the host stands it up: a report from before says it's down, which it isn't any more
+  applyNet(g, { y: 'rvd', f: a.id, by: b.id });
+  applyState(g, a, st(a, F_DOWN));
+  assert.ok(!a.down, 'up: that report set out before the revive');
+  g.clock += 1.2;
+  applyState(g, a, st(a, 0));
+  assert.ok(!a.down);
+});
+
+test('a knocked egg whose person leaves goes out to whoever knocked it, and the last one standing leaving puts its knocked teammates out', () => {
+  const h = teamQuiet('duos', [0, 0, 1, 1], 'host', ['player', 'remote', 'bot', 'bot']);
+  for (const f of h.fighters) {
+    land(f, f.id * 10, 0);
+    f.ai = null;
+  }
+  const [, guest, foe] = h.fighters;
+  applyNet(h, { y: 'kn', f: guest.id, by: foe.id, w: 'smg' });
+  forfeit(h, guest.id);
+  assert.equal(guest.phase, 'out');
+  assert.equal(guest.by, foe.id);
+  assert.equal(foe.kills, 1, 'the knocker has the elimination');
+  const o = h.events.map(toNet).find((e) => e?.y === 'o');
+  assert.deepEqual(o, { y: 'o', f: guest.id, by: foe.id, w: 'left' });
+  // the other way round: the host's own egg is knocked, and its teammate leaves
+  const k = teamQuiet('duos', [0, 0, 1, 1], 'host', ['player', 'remote', 'bot', 'bot']);
+  for (const f of k.fighters) {
+    land(f, f.id * 10, 0);
+    f.ai = null;
+  }
+  hurt(k, k.fighters[0], 300, 2, 'smg', false);
+  assert.ok(k.fighters[0].down);
+  forfeit(k, 1);
+  run(k, 0.1);
+  assert.equal(k.fighters[0].phase, 'out', 'nobody left standing on the team');
+  assert.equal(k.fighters[0].by, 2);
+  assert.ok(k.ended && k.fighters[k.winner].team === 1);
+  assert.deepEqual(k.fighters.map((f) => f.place), [2, 2, 1, 1]);
+});
+
+test('moving someone in the room’s team list goes round every team with room and one of their own, and nobody else moves', () => {
+  // the host and a friend in duos: off on their own, then back
+  assert.equal(nextTeam('duos', [0, 0], 1), 1);
+  assert.equal(nextTeam('duos', [0, 1], 1), 0);
+  assert.equal(nextTeam('duos', [0, 1], 0), 1);
+  // a full team is skipped
+  assert.equal(nextTeam('duos', [0, 0, 1], 2), 1, 'nowhere else to go');
+  assert.equal(nextTeam('duos', [0, 0, 1], 1), 1);
+  assert.equal(nextTeam('duos', [0, 1, 1], 0), 0);
+  assert.equal(nextTeam('squads', [0, 0, 1, 2], 3), 0);
+  assert.equal(nextTeam('squads', [0, 0, 1, 2], 1), 1);
+  // the rest stay where they are when one moves
+  const picks = pinTeam('duos', [0, 1, 2], [], 1, 1);
+  assert.deepEqual(teamsFor('duos', [0, 1, 2], picks, 0), [0, 1, 1]);
+  const again = pinTeam('duos', [0, 1, 2], picks, 2, nextTeam('duos', [0, 1, 1], 2));
+  assert.deepEqual(teamsFor('duos', [0, 1, 2], again, 0), [0, 1, 2]);
+  // round and round, for each of three friends in squads
+  for (let i = 0; i < 3; i++) {
+    let p: number[] = [];
+    const seen = new Set<string>();
+    for (let k = 0; k < 6; k++) {
+      const now = teamsFor('squads', [0, 1, 2], p, 0);
+      seen.add(now.join());
+      p = pinTeam('squads', [0, 1, 2], p, i, nextTeam('squads', now, i));
+    }
+    assert.ok(seen.size >= 2, `seat ${i} moves (${[...seen].join(' / ')})`);
+  }
+});
+
+test('cracked while the rest of the team is still in, the card says so rather than a place', () => {
+  const m = teamQuiet('duos', [0, 0, 1, 1, 2, 2]);
+  for (const f of m.fighters) land(f, f.id * 10, 0);
+  hurt(m, m.fighters[0], 300, 2, 'smg', false);
+  hurt(m, m.fighters[0], 300, 2, 'smg', false);
+  assert.equal(m.fighters[0].phase, 'out');
+  const card = resultCard(m, true, false);
+  assert.equal(card.title, 'Your Team Is Still In');
+  assert.match(card.detail, /3 teams still going/);
 });
