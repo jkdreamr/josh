@@ -119,6 +119,8 @@ export function skyWater(THREE: Three, s: SkyLook, deep: number, shallow: number
         vec3 sky = mix(uHorizon, uLow, smoothstep(0.02, 0.18, h));
         sky = mix(sky, uMid, smoothstep(0.14, 0.45, h));
         sky = mix(sky, uZenith, smoothstep(0.4, 1.0, h));
+        // (a little darker than the sky itself, as water's reflection is)
+        sky *= 0.84;
         float fres = 0.03 + 0.97 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
         vec3 body = mix(uDeep, uShallow, 0.3 + 0.25 * n.x);
         vec3 c = mix(body, sky, clamp(0.15 + 0.75 * fres, 0.0, 0.82));

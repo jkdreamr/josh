@@ -119,14 +119,14 @@ export function floraTick(clock: number) {
 type Spot = { x: number; z: number; r: number };
 
 /**
- * Instanced meshes of `geo`, one instance per spot (sized, turned and tinted a little each), in patches 120 m across so
+ * Instanced meshes of `geo`, one instance per spot (sized, turned and tinted a little each), in patches 100 m across so
  * those off screen (and out of the sun's shadow box) are not drawn.
  */
 function plant(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.BufferGeometry, mat: T.Material, spots: { x: number; y?: number; z: number; s: number; sy?: number }[], seed: number) {
   if (!spots.length) return;
   const r = scatter(seed);
   const tint = new THREE.Color();
-  const PATCH = 200;
+  const PATCH = 100;
   const cells = new Map<string, typeof spots>();
   for (const p of spots) {
     const key = `${Math.floor(p.x / PATCH)},${Math.floor(p.z / PATCH)}`;
@@ -317,18 +317,25 @@ export function gumTrees(THREE: Three, scene: T.Scene, dummy: T.Object3D, gums: 
   const parts: { g: T.BufferGeometry; m: T.Matrix4; color?: RGB }[] = [];
   // (a unit-high tree)
   parts.push(limb(THREE, [0, -0.02, 0], [0.03, 0.62, 0], 0.03, 0.02, pale));
-  for (let k = 0; k < 4; k++) {
-    const a = (k / 4) * Math.PI * 2 + 0.4;
-    parts.push(limb(THREE, [0.03, 0.55, 0], [0.03 + Math.cos(a) * 0.12, 0.8, Math.sin(a) * 0.12], 0.012, 0.006, pale));
+  // (the limbs fork out wide and the crown hangs from them in loose, drooping clumps: an open, ragged crown, not a
+  // column)
+  const ends: [number, number, number][] = [];
+  for (let k = 0; k < 5; k++) {
+    const a = (k / 5) * Math.PI * 2 + 0.4;
+    const reach = 0.1 + r() * 0.07;
+    const end: [number, number, number] = [0.03 + Math.cos(a) * reach, 0.74 + r() * 0.14, Math.sin(a) * reach];
+    parts.push(limb(THREE, [0.03, 0.5 + r() * 0.1, 0], end, 0.012, 0.005, pale));
+    ends.push(end);
   }
   const light = rgb(THREE, 0x8fa682);
   const dark = rgb(THREE, 0x34452e);
-  for (let k = 0; k < 9; k++) {
-    const a = (k / 9) * Math.PI * 2 + r();
-    const d = k ? 0.05 + r() * 0.06 : 0;
-    const s = 0.08 + r() * 0.05;
-    parts.push({ g: lump(THREE, 300 + k, light, dark), m: at(THREE, 0.03 + Math.cos(a) * d, 0.68 + r() * 0.26, Math.sin(a) * d, s, s * 1.4, s) });
-  }
+  ends.forEach((e, k) => {
+    for (let j = 0; j < 2; j++) {
+      const s = 0.055 + r() * 0.035;
+      parts.push({ g: lump(THREE, 300 + k * 2 + j, light, dark), m: at(THREE, e[0] + (r() - 0.5) * 0.06, e[1] - 0.02 - j * 0.07, e[2] + (r() - 0.5) * 0.06, s * 1.2, s * 0.9, s * 1.2) });
+    }
+  });
+  parts.push({ g: lump(THREE, 299, light, dark), m: at(THREE, 0.03, 0.9, 0, 0.06, 0.05, 0.06) });
   const g = merge(THREE, parts);
   for (const p of parts) p.g.dispose();
   // (the crown's lumps were sized for a unit-high tree: scaled across with its height too, it would be too broad on the
