@@ -1,4 +1,4 @@
-import { CARDINAL, GREY, INK, PINK, WHITE, YELLOW, circle, eyes, line, rect, text } from '../draw.ts';
+import { CARDINAL, DISPLAY, GREY, INK, PINK, WHITE, YELLOW, circle, eyes, line, rect, text } from '../draw.ts';
 import { mulberry32, pick, range } from '../rng.ts';
 import { standardDuration, type MicroGame, type MicroInstance } from './types.ts';
 
@@ -15,12 +15,29 @@ export const snooze: MicroGame = {
   duration: standardDuration(4.5, 3),
   create(seed, difficulty): MicroInstance {
     const rng = mulberry32(seed);
-    const baits = Array.from({ length: 2 + Math.round(difficulty * 3) }, (_, i) => ({
-      at: 0.3 + i * range(rng, 0.5, 0.8),
-      x: range(rng, 18, 82),
-      y: range(rng, 62, 88),
-      word: pick(rng, BAIT),
-    }));
+    const count = 2 + Math.round(difficulty * 3);
+    const baits = Array.from({ length: count }, (_, i) => {
+      const at = 0.3 + i * range(rng, 0.5, 0.8);
+      range(rng, 18, 82);
+      range(rng, 62, 88);
+      return { at, x: 0, y: 0, word: pick(rng, BAIT) };
+    });
+    const slots = [
+      { x: 18, y: 71 },
+      { x: 50, y: 71 },
+      { x: 82, y: 71 },
+      { x: 18, y: 88 },
+      { x: 50, y: 88 },
+      { x: 82, y: 88 },
+    ];
+    for (let i = slots.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [slots[i], slots[j]] = [slots[j], slots[i]];
+    }
+    baits.forEach((bait, i) => {
+      bait.x = slots[i].x;
+      bait.y = slots[i].y;
+    });
     let woke = -1;
     const self: MicroInstance = {
       outcome: 'pending',
@@ -58,16 +75,22 @@ export const snooze: MicroGame = {
         for (const b of baits) {
           if (t < b.at) continue;
           const k = Math.min(1, (t - b.at) * 5);
+          const fontSize = 4.2;
+          c.save();
+          c.font = `800 ${fontSize}px ${DISPLAY}`;
+          const measured = c.measureText?.(b.word)?.width ?? b.word.length * fontSize * 0.58;
+          const bubbleWidth = Math.max(24, measured + 8);
+          c.restore();
           c.save();
           c.translate(b.x, b.y);
           c.scale(k, k);
           c.rotate(Math.sin(t * 6 + b.x) * 0.08);
-          rect(c, -12, -5, 24, 10, PINK, 5);
-          text(c, b.word, 0, 0.3, 4.2, { color: INK });
+          rect(c, -bubbleWidth / 2, -5.5, bubbleWidth, 11, PINK, 5);
+          text(c, b.word, 0, 0.3, fontSize, { color: INK });
           c.restore();
         }
-        if (woke >= 0) text(c, 'you woke up', 50, 96, 5, { color: CARDINAL });
-        else text(c, 'shh', 50, 96, 4, { color: GREY });
+        if (woke >= 0) text(c, 'you woke up', 50, 39, 5, { color: CARDINAL });
+        else text(c, 'shh', 50, 39, 4, { color: GREY });
       },
       down() {
         if (self.outcome === 'pending') {

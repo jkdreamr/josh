@@ -72,7 +72,7 @@ export function stepLocal(L: Local, now: number, dt: number, held: Held): Outcom
   const inst = ensure(L, at.index);
   const e = elapsed(L, now);
   const local = e - at.part.from;
-  if (inst.outcome === 'pending') inst.update(dt, local, held);
+  if (inst.outcome === 'pending') inst.update(dt * L.plan.pace, local * L.plan.pace, held);
   if (inst.outcome === 'pending' && e >= at.part.to) inst.outcome = inst.timeUp();
   if (inst.outcome === 'fail') return decide(L, 'fail', now);
   const last = at.index === L.parts.length - 1;
@@ -97,7 +97,7 @@ export function active(L: Local, now: number): MicroInstance | null {
 /** The micro-game whose arena should be drawn now (the next one during the command flash). */
 export function shown(L: Local, now: number): { part: Part; index: number; t: number } {
   const at = partAt(L, now) ?? { part: L.parts[0], index: 0 };
-  return { ...at, t: Math.max(0, elapsed(L, now) - at.part.from) };
+  return { ...at, t: Math.max(0, elapsed(L, now) - at.part.from) * L.plan.pace };
 }
 
 export const mirrorKey = (k: Key, flip: boolean): Key => (!flip ? k : k === 'left' ? 'right' : k === 'right' ? 'left' : k);

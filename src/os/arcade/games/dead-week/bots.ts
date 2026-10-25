@@ -24,7 +24,7 @@ export function skillOf(name: string, seat = 0) {
 }
 
 export function passChance(skill: number, tier: number, boss: boolean) {
-  return Math.max(0.2, Math.min(0.98, skill - tier * 0.06 - (boss ? 0.15 : 0)));
+  return Math.max(0.1, Math.min(0.98, skill - tier * 0.07 - (boss ? 0.15 : 0)));
 }
 
 /** Whether a bot passes game n, the same on any machine given the round's seed. */
