@@ -560,7 +560,7 @@ function Play({ mode }: { mode: StageMode }) {
   };
 
   return (
-    <div className="g-dead-week">
+    <div className="g-dead-week-root">
       <canvas ref={ref} className="g-dead-week-canvas" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onContextMenu={(e) => e.preventDefault()} />
       {showTiles && (
         <div className={`g-dead-week-board${showResults ? ' is-results' : ' is-ghost'}`}>
@@ -729,5 +729,4 @@ function drawStamp(c: CanvasRenderingContext2D, x: number, y: number, side: numb
   text(c, pass ? 'passed' : 'failed', 0, 0, h * 0.62, { color, weight: 900 });
   c.restore();
 }
-
 

@@ -115,7 +115,7 @@ export default function Game({ compact, onExit, roomCode }: GameProps) {
       compact={compact}
       onExit={onExit}
       roomCode={roomCode}
-      className="g-wacky-walk"
+      className="g-wacky-walk-root"
       setup={<Setup />}
       hostSetup={<HostSetup />}
       botNames={BOT_NAMES}
