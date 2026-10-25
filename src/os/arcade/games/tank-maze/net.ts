@@ -52,7 +52,7 @@ export type StatePacket = {
 
 export type EndPacket = { k: 'end'; roomRound: number; winner: number | null; champ: number | null; scores: number[]; rounds: number };
 /** `dir` is the player's screen heading (see TankInput), sent as milliradians in `d`. */
-export type InputPacket = { k: 'in'; roomRound: number; turn: -1 | 0 | 1; move: -1 | 0 | 1; fireCount: number; dir?: number };
+export type InputPacket = { k: 'in'; roomRound: number; turn: -1 | 0 | 1; move: -1 | 0 | 1; fireCount: number; dir?: number; aim?: number };
 
 export type Packet = RoundPacket | StatePacket | EndPacket | InputPacket;
 
@@ -102,6 +102,7 @@ export const inputPacket = (p: InputPacket) => ({
   move: p.move,
   fc: p.fireCount,
   ...(p.dir !== undefined && Number.isFinite(p.dir) ? { d: Math.round(p.dir * 1000) } : {}),
+  ...(p.aim !== undefined && Number.isFinite(p.aim) ? { a: Math.round(p.aim * 1000) } : {}),
 });
 
 // -----------------------------------------------------------------------------------------------------------------
@@ -214,7 +215,9 @@ export function parsePacket(value: unknown): Packet | null {
       if (turn < -1 || turn > 1 || move < -1 || move > 1 || fc < 0 || fc > 1e9) return null;
       if (p.d !== undefined && (!int(p.d) || Math.abs(p.d as number) > 3200)) return null;
       const dir = p.d === undefined ? undefined : (p.d as number) / 1000;
-      return { k: 'in', roomRound, turn: turn as -1 | 0 | 1, move: move as -1 | 0 | 1, fireCount: fc, ...(dir === undefined ? {} : { dir }) };
+      if (p.a !== undefined && (!int(p.a) || Math.abs(p.a as number) > 3200)) return null;
+      const aim = p.a === undefined ? undefined : (p.a as number) / 1000;
+      return { k: 'in', roomRound, turn: turn as -1 | 0 | 1, move: move as -1 | 0 | 1, fireCount: fc, ...(dir === undefined ? {} : { dir }), ...(aim === undefined ? {} : { aim }) };
     }
   }
   return null;
