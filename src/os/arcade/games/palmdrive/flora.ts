@@ -46,7 +46,7 @@ const rgb = (THREE: Three, hex: number): RGB => {
 
 /** A lump of foliage: an icosphere pushed in and out, darker underneath and on its shaded side, a little ragged. */
 function lump(THREE: Three, seed: number, light: RGB, dark: RGB) {
-  const g = new THREE.IcosahedronGeometry(1, 1).toNonIndexed();
+  const g = new THREE.IcosahedronGeometry(1, 1);
   const p = g.getAttribute('position');
   const r = scatter(seed);
   const bumps = Array.from({ length: 5 }, () => [r() * 6, r() * 6, r() * 6, 0.1 + r() * 0.12]);

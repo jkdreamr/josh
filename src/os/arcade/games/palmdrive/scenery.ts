@@ -9,6 +9,7 @@ import { gumTrees, oakTrees, palmTrees } from './flora';
 import { SKIES } from './sky';
 import { campusExtras } from './campus';
 import { boathouse, lakeLife, lilyPads, reedBeds } from './lake';
+import { horse, paddockFence, redBarn, silo, tractor, windmill } from './barn';
 import { skyWater } from './skywater';
 import { church as churchModel, dishTelescope, hall as hallModel, hill, hooverTower, vcMats } from './landmarks';
 
@@ -1163,150 +1164,46 @@ function roomiest(t: Track, p: { x: number; z: number }, radius: number) {
   return best;
 }
 
-/** A white post-and-rail fence round a w by d rectangle centered at (x, z), turned ry. */
-function paddock(c: Scenery, x: number, z: number, w: number, d: number, ry: number, mat: T.Material) {
-  const { THREE, scene, geo } = c;
-  const g = new THREE.Group();
-  for (const [len, px, pz, rot] of [[w, 0, d / 2, 0], [w, 0, -d / 2, 0], [d, w / 2, 0, Math.PI / 2], [d, -w / 2, 0, Math.PI / 2]] as const) {
-    for (const y of [0.55, 1.1]) {
-      const rail = new THREE.Mesh(geo.box, mat);
-      rail.scale.set(len, 0.14, 0.08);
-      rail.position.set(px, y, pz);
-      rail.rotation.y = rot;
-      g.add(rail);
-    }
-    for (let k = -len / 2; k <= len / 2 + 0.01; k += 3) {
-      const post = new THREE.Mesh(geo.box, mat);
-      post.scale.set(0.18, 1.35, 0.18);
-      post.position.set(rot ? px : px + k, 0.67, rot ? pz + k : pz);
-      g.add(post);
-    }
-  }
-  g.position.set(x, 0, z);
-  g.rotation.y = ry;
-  scene.add(g);
-}
-
-/** A horse, grazing or with its head up. */
-function horse(c: Scenery, x: number, z: number, ry: number, coat: T.Material, mane: T.Material, grazing: boolean) {
-  const { THREE, scene, geo } = c;
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(geo.box, coat);
-  body.scale.set(0.8, 0.85, 2);
-  body.position.y = 1.45;
-  g.add(body);
-  for (const [lx, lz] of [[-0.28, 0.75], [0.28, 0.75], [-0.28, -0.75], [0.28, -0.75]]) {
-    const leg = new THREE.Mesh(geo.box, coat);
-    leg.scale.set(0.18, 1.1, 0.2);
-    leg.position.set(lx, 0.55, lz);
-    g.add(leg);
-  }
-  const neck = new THREE.Group();
-  const n = new THREE.Mesh(geo.box, coat);
-  n.scale.set(0.38, 1.1, 0.5);
-  n.position.y = 0.5;
-  const head = new THREE.Mesh(geo.box, coat);
-  head.scale.set(0.34, 0.36, 0.8);
-  head.position.set(0, 1.05, 0.25);
-  const m = new THREE.Mesh(geo.box, mane);
-  m.scale.set(0.12, 1.1, 0.2);
-  m.position.set(0, 0.55, -0.22);
-  neck.add(n, head, m);
-  neck.position.set(0, 1.6, 0.95);
-  neck.rotation.x = grazing ? 2.2 : 0.35;
-  const tail = new THREE.Mesh(geo.box, mane);
-  tail.scale.set(0.14, 0.9, 0.14);
-  tail.position.set(0, 1.25, -1.05);
-  tail.rotation.x = 0.35;
-  g.add(neck, tail);
-  g.position.set(x, 0, z);
-  g.rotation.y = ry;
-  scene.add(g);
-}
-
 /**
  * The Red Barn: the big red barn and its silo along the front straight, white-railed paddocks with horses grazing,
  * the riding arena inside the hairpin, a windmill, a tractor, round bales stacked up, eucalyptus windbreaks and the
  * Dish up in the foothills.
  */
-function barn(c: Scenery) {
-  const { THREE, scene, t, geo, mats, rand, clear, dummy } = c;
+function barn(c: Scenery): SceneryTick {
+  const { THREE, scene, t, geo, rand, clear, dummy } = c;
   const { cx, cz, rx, rz } = bounds(t);
   const K = 0.9;
   const at = (e: number, n: number) => fromMap(e * K, n * K);
-  const red = new THREE.MeshLambertMaterial({ color: 0xa3322a });
   const white = new THREE.MeshLambertMaterial({ color: 0xf3efe4 });
-  const shingle = new THREE.MeshLambertMaterial({ color: 0x4a4646 });
-  const straw = new THREE.MeshLambertMaterial({ color: 0xdcb553 });
-  const prism = new THREE.CylinderGeometry(1, 1, 1, 3);
-  prism.rotateY(Math.PI / 2);
-  prism.rotateZ(Math.PI / 2);
+  const vm = vcMats(THREE);
+  const farm = modelKit(THREE);
 
-  // the barn itself, set back from the front straight and facing the road
+  // the barn itself, set back from the front straight and facing the road; the silo beside it (see barn.ts)
   const front = pointAt(t, 110, -(t.edge + 24));
-  const b = new THREE.Group();
-  const walls = new THREE.Mesh(geo.box, red);
-  walls.scale.set(24, 9, 15);
-  walls.position.y = 4.5;
-  const roof = new THREE.Mesh(prism, shingle);
-  roof.scale.set(25, 5.5, 9.4);
-  roof.position.y = 9 + 2.6;
-  b.add(walls, roof);
-  // white trim: corners, the big doors with their cross braces, and the hayloft door above
-  for (const side of [-1, 1]) {
-    const corner = new THREE.Mesh(geo.box, white);
-    corner.scale.set(0.5, 9, 0.5);
-    corner.position.set(side * 12, 4.5, 7.55);
-    b.add(corner);
-  }
-  const door = new THREE.Group();
-  const frame = new THREE.Mesh(geo.box, white);
-  frame.scale.set(8, 6.4, 0.2);
-  const panel = new THREE.Mesh(geo.box, red);
-  panel.scale.set(7.2, 5.8, 0.3);
-  door.add(frame, panel);
-  for (const side of [-1, 1]) {
-    for (const lean of [-1, 1]) {
-      const brace = new THREE.Mesh(geo.box, white);
-      brace.scale.set(0.35, 6.6, 0.4);
-      brace.position.x = side * 1.9;
-      brace.rotation.z = lean * 0.55;
-      door.add(brace);
-    }
-  }
-  door.position.set(0, 3.2, 7.5);
-  const loft = new THREE.Mesh(geo.box, white);
-  loft.scale.set(3.2, 2.4, 0.3);
-  loft.position.set(0, 8.6, 7.5);
-  const loftIn = new THREE.Mesh(geo.box, mats.dark);
-  loftIn.scale.set(2.6, 1.9, 0.35);
-  loftIn.position.set(0, 8.6, 7.5);
-  // a cupola on the ridge with a weathervane
-  const cupola = new THREE.Mesh(geo.box, white);
-  cupola.scale.set(2.4, 2.2, 2.4);
-  cupola.position.y = 15.4;
-  const cap = new THREE.Mesh(geo.roof, shingle);
-  cap.scale.set(2.4, 1.6, 2.4);
-  cap.rotation.y = Math.PI / 4;
-  cap.position.y = 17.3;
-  const vane = new THREE.Mesh(geo.box, mats.dark);
-  vane.scale.set(0.08, 2, 0.08);
-  vane.position.y = 18.6;
-  const arrow = new THREE.Mesh(geo.box, mats.dark);
-  arrow.scale.set(1.6, 0.1, 0.1);
-  arrow.position.y = 19.2;
-  b.add(door, loft, loftIn, cupola, cap, vane, arrow);
-  b.position.set(front.x, 0, front.z);
-  b.rotation.y = headingOf(-front.tz, front.tx);
-  scene.add(b);
-
-  // the silo beside it, and round bales stacked up by the door
+  farm.place(front.x, 0, front.z, headingOf(-front.tz, front.tx));
+  redBarn(THREE, farm);
   const siloAt = pointAt(t, 72, -(t.edge + 22));
-  const silo = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.2, 18, 16), new THREE.MeshLambertMaterial({ color: 0x9fb0b6 }));
-  silo.position.set(siloAt.x, 9, siloAt.z);
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(3.25, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xc9d2d4 }));
-  dome.position.set(siloAt.x, 18, siloAt.z);
-  scene.add(silo, dome);
+  silo(farm, siloAt.x, siloAt.z);
+
+  // round bales stacked up by the door, their straw wrapped round
+  const straw = new THREE.MeshLambertMaterial({
+    map: texture(
+      THREE,
+      canvas(64, 64, (g) => {
+        g.fillStyle = '#d8b450';
+        g.fillRect(0, 0, 64, 64);
+        for (let i = 0; i < 90; i++) {
+          g.strokeStyle = i % 3 ? 'rgba(150,110,30,0.45)' : 'rgba(255,240,170,0.6)';
+          g.lineWidth = 1;
+          g.beginPath();
+          const y = Math.random() * 64;
+          g.moveTo(0, y);
+          g.lineTo(64, y + (Math.random() - 0.5) * 6);
+          g.stroke();
+        }
+      }),
+    ),
+  });
   const bales: { x: number; y: number; z: number; sx: number; sy: number; sz: number; rx?: number; ry?: number }[] = [];
   const stack = pointAt(t, 150, -(t.edge + 13));
   const along = headingOf(stack.tx, stack.tz);
@@ -1316,52 +1213,22 @@ function barn(c: Scenery) {
       bales.push({ x: stack.x + stack.tx * off, y: 1.2 + row * 2.1, z: stack.z + stack.tz * off, sx: 1.2, sy: 1.5, sz: 1.2, rx: Math.PI / 2, ry: along + Math.PI / 2 });
     }
   }
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 14), straw, bales);
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 18), straw, bales);
 
   // a green tractor parked by the barn
   const tractorAt = pointAt(t, 60, -(t.edge + 9));
-  const tractor = new THREE.Group();
-  const green = new THREE.MeshLambertMaterial({ color: 0x2f7a3a });
-  const yellow = new THREE.MeshLambertMaterial({ color: 0xf2c230 });
-  const hood = new THREE.Mesh(geo.box, green);
-  hood.scale.set(1.3, 1.2, 2.6);
-  hood.position.set(0, 1.4, 0.6);
-  const cab = new THREE.Mesh(geo.box, mats.dark);
-  cab.scale.set(1.7, 1.6, 1.5);
-  cab.position.set(0, 2.6, -0.9);
-  const top = new THREE.Mesh(geo.box, green);
-  top.scale.set(1.9, 0.15, 1.7);
-  top.position.set(0, 3.45, -0.9);
-  tractor.add(hood, cab, top);
-  for (const side of [-1, 1]) {
-    const big = new THREE.Mesh(geo.wheel, mats.dark);
-    big.scale.set(1.5, 0.55, 1.5);
-    big.rotation.z = Math.PI / 2;
-    big.position.set(side * 1.25, 1.5, -1);
-    const hub = new THREE.Mesh(geo.wheel, yellow);
-    hub.scale.set(0.8, 0.58, 0.8);
-    hub.rotation.z = Math.PI / 2;
-    hub.position.copy(big.position);
-    const small = new THREE.Mesh(geo.wheel, mats.dark);
-    small.scale.set(0.75, 0.4, 0.75);
-    small.rotation.z = Math.PI / 2;
-    small.position.set(side * 0.95, 0.75, 1.5);
-    tractor.add(big, hub, small);
-  }
-  tractor.position.set(tractorAt.x, 0, tractorAt.z);
-  tractor.rotation.y = headingOf(tractorAt.tx, tractorAt.tz) + 0.4;
-  scene.add(tractor);
+  tractor(farm, tractorAt.x, tractorAt.z, headingOf(tractorAt.tx, tractorAt.tz) + 0.4);
 
   // paddocks inside the loop with horses grazing
-  const coats = [0x7a4a2a, 0xa0522d, 0x2a2420, 0xe8e2d6, 0x5c3a24, 0xb98b5e].map((color) => new THREE.MeshLambertMaterial({ color }));
-  const manes = [new THREE.MeshLambertMaterial({ color: 0x1f1a17 }), new THREE.MeshLambertMaterial({ color: 0xe9dcc0 })];
+  const coats = [0x7a4a2a, 0xa0522d, 0x2a2420, 0xe8e2d6, 0x5c3a24, 0xb98b5e];
+  const manes = [0x1f1a17, 0xe9dcc0];
   const fits = (x: number, z: number, w: number, d: number) => [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]].every(([a, b2]) => clear(x + (a * w) / 2, z + (b2 * d) / 2, 3));
   for (const [e, n, w, d] of [[130, -60, 60, 44], [-110, -50, 70, 50], [-20, -30, 44, 34]] as const) {
     const p = at(e, n);
     if (!fits(p.x, p.z, w, d)) continue;
-    paddock(c, p.x, p.z, w, d, 0, white);
+    paddockFence(farm, p.x, p.z, w, d, 0);
     for (let k = 0; k < 3; k++) {
-      horse(c, p.x + (rand() - 0.5) * (w - 10), p.z + (rand() - 0.5) * (d - 10), rand() * Math.PI * 2, coats[Math.floor(rand() * coats.length)], manes[k % 2], rand() < 0.6);
+      horse(farm, p.x + (rand() - 0.5) * (w - 10), p.z + (rand() - 0.5) * (d - 10), rand() * Math.PI * 2, coats[Math.floor(rand() * coats.length)], manes[k % 2], rand() < 0.6, rand() < 0.4);
     }
   }
 
@@ -1370,66 +1237,36 @@ function barn(c: Scenery) {
   const ar = Math.min(20, arena.room - t.edge - 3);
   if (ar > 9) {
     const az = ar * 0.7;
-    const sand = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshLambertMaterial({ color: 0xd9c49a }));
+    const sand = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshLambertMaterial({ map: bunkerTexture(THREE, 5) }));
     sand.rotation.x = -Math.PI / 2;
     sand.scale.set(ar, az, 1);
     sand.position.set(arena.x, 0.03, arena.z);
+    sand.userData.flat = true;
     scene.add(sand);
-    const posts: { x: number; y: number; z: number; sx: number; sy: number; sz: number }[] = [];
-    for (let a = 0; a < Math.PI * 2; a += Math.PI / 18) posts.push({ x: arena.x + Math.cos(a) * ar, y: 0.7, z: arena.z + Math.sin(a) * az, sx: 0.2, sy: 1.4, sz: 0.2 });
-    instances(THREE, scene, dummy, geo.box, white, posts);
+    farm.place();
+    for (let a = 0; a < Math.PI * 2; a += Math.PI / 18) farm.box(0xe8e2d4, arena.x + Math.cos(a) * ar, 0.7, arena.z + Math.sin(a) * az, 0.2, 1.4, 0.2);
     const rail = new THREE.Mesh(new THREE.TorusGeometry(1, 0.012, 4, 48), white);
     rail.rotation.x = Math.PI / 2;
     rail.scale.set(ar, az, 6);
     rail.position.set(arena.x, 1.15, arena.z);
     scene.add(rail);
-    const stripe = new THREE.MeshLambertMaterial({ color: 0xc8352b });
     for (const [ox, oz] of [[-ar * 0.35, 0], [ar * 0.3, az * 0.2]]) {
-      const pole = new THREE.Mesh(geo.box, stripe);
-      pole.scale.set(4, 0.18, 0.18);
-      pole.position.set(arena.x + ox, 1, arena.z + oz);
-      scene.add(pole);
-      for (const side of [-1, 1]) {
-        const stand = new THREE.Mesh(geo.box, white);
-        stand.scale.set(0.25, 1.6, 0.25);
-        stand.position.set(arena.x + ox + side * 2, 0.8, arena.z + oz);
-        scene.add(stand);
-      }
+      for (let k = 0; k < 4; k++) farm.box(k % 2 ? 0xf3efe4 : 0xc8352b, arena.x + ox - 1.5 + k, 1, arena.z + oz, 1, 0.16, 0.16);
+      for (const side of [-1, 1]) farm.box(0xf3efe4, arena.x + ox + side * 2, 0.8, arena.z + oz, 0.25, 1.6, 0.25);
     }
-    horse(c, arena.x + 3, arena.z - 4, 1.2, coats[3], manes[0], false);
+    horse(farm, arena.x + 3, arena.z - 4, 1.2, coats[3], manes[0], false, false);
   }
 
-  // a windmill out in the field
+  // a windmill out in the field, its fan turning
   const mill = at(-175, -10);
+  let fan: T.Group | null = null;
   if (clear(mill.x, mill.z, 6)) {
-    const steel = new THREE.MeshLambertMaterial({ color: 0x8b9196 });
-    const g = new THREE.Group();
-    for (const [a, b2] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-      const leg = new THREE.Mesh(geo.box, steel);
-      leg.scale.set(0.16, 15, 0.16);
-      leg.position.set(a * 0.9, 7.4, b2 * 0.9);
-      leg.rotation.set(-b2 * 0.1, 0, a * 0.1);
-      g.add(leg);
-    }
-    const wheel = new THREE.Group();
-    for (let k = 0; k < 12; k++) {
-      const blade = new THREE.Mesh(geo.box, steel);
-      blade.scale.set(0.5, 2.6, 0.06);
-      blade.position.y = 1.6;
-      const arm = new THREE.Group();
-      arm.add(blade);
-      arm.rotation.z = (k / 12) * Math.PI * 2;
-      wheel.add(arm);
-    }
-    wheel.position.set(0, 15.2, 0.6);
-    const tail = new THREE.Mesh(geo.box, red);
-    tail.scale.set(0.06, 1.6, 2.6);
-    tail.position.set(0, 15.2, -1.8);
-    g.add(wheel, tail);
-    g.position.set(mill.x, 0, mill.z);
-    g.rotation.y = 2.4;
-    scene.add(g);
+    const wm = windmill(THREE, mill.x, mill.z, 2.4, vm);
+    scene.add(wm.tower, wm.hub);
+    fan = wm.fan;
   }
+  farm.place();
+  scene.add(farm.build(vm.vc, vm.lit));
 
   // eucalyptus windbreaks outside the loop, and oaks further out
   const gums: { x: number; z: number; h: number }[] = [];
@@ -1450,6 +1287,9 @@ function barn(c: Scenery) {
 
   // the foothills behind, with the Dish up on one of them
   foothills(c, cx, cz, { x: cx + 120, z: cz + 420 });
+  return (_race: Race, clock: number) => {
+    if (fan) fan.rotation.z = clock * 1.6;
+  };
 }
 
 /**
