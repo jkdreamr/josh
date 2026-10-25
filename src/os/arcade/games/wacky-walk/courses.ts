@@ -87,7 +87,6 @@ function racePath(course: Course, finishZ: number, yAt: (z: number) => number = 
 }
 
 function campusDecor(course: Course, finishZ: number, kind: 'oval' | 'fountain' | 'palm' = 'oval') {
-  const colors = [0xb13a42, 0xdaa949, 0x718fc9, 0x75ad81];
   for (let z = kind === 'palm' ? 7 : -4, i = 0; z <= finishZ + 4; z += kind === 'palm' ? 10 : 12, i++) {
     if (kind === 'fountain' && Math.abs(z - 63) < 13) continue;
     const y = kind === 'palm' ? (z - 7) * 0.16 : 0;
@@ -95,15 +94,8 @@ function campusDecor(course: Course, finishZ: number, kind: 'oval' | 'fountain' 
     const rightKind = kind === 'palm' ? 'palm' : i % 3 === 1 ? 'palm' : 'tree';
     course.decor.push({ kind: leftKind, x: -13.4, y, z, s: kind === 'palm' ? 1.2 : 1.1, yaw: 0 });
     course.decor.push({ kind: rightKind, x: 13.4, y: kind === 'palm' ? y + 0.8 : 0, z: z + (kind === 'palm' ? 0 : 5), s: kind === 'palm' ? 1.2 : 1.2, yaw: 0 });
-    if (kind !== 'palm') {
-      course.decor.push({ kind: 'lamp', x: -10.4, y: 0, z: z + 4, s: 0.85, yaw: 0 });
-      course.decor.push({ kind: 'lamp', x: 10.4, y: 0, z: z + 9, s: 0.85, yaw: 0 });
-    }
-    if (i % 2 === 0) {
-      course.decor.push({ kind: 'banner', x: i % 4 ? -12.5 : 12.5, y: 3.2, z: z + 2, s: 1, yaw: i % 4 ? 0 : Math.PI, color: colors[i % colors.length] });
-    }
   }
-  if (kind !== 'palm') course.decor.push({ kind: 'tower', x: -32, y: 0, z: finishZ + 50, s: 7, yaw: 0 });
+  if (kind !== 'palm') course.decor.push({ kind: 'tower', x: -40, y: 0, z: finishZ + 64, s: 1.3, yaw: 0 });
   if (kind === 'palm') {
     course.decor.push({ kind: 'arcade', x: 0, y: 0, z: finishZ + 32, s: 1.2, yaw: 0 });
     course.decor.push({ kind: 'roof', x: 0, y: 0, z: finishZ + 32, s: 1.2, yaw: 0 });

@@ -26,13 +26,13 @@ export type View = {
 };
 
 const MAX_PLAYERS = 20;
-const CARDINAL = 0x9b1c1f;
+const CARDINAL = 0xb1040e;
 const CAMERA_ORBITS = [Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, Math.PI];
 
 const LOOK_COLORS: Record<Look, number> = {
-  grass: 0x8fd18a, path: 0xf2dfb8, sand: 0xe8c99a, stone: 0xd9cbb5, roof: 0xd9654b, wood: 0xc08a5a, tube: 0xfffaf0,
-  bar: 0xc0302f, bumper: 0xff8fa3, water: 0x7fd3e6, wet: 0x9fd8ea, hex: 0xeacb98, gold: 0xffc93c, coconut: 0xc2915c,
-  frond: 0x5fbf5a, pad: 0xffb84a, start: 0x7fd6c4, finish: 0xffe27a, hidden: 0xffffff,
+  grass: 0xa8ecc4, path: 0xfff1d6, sand: 0xcdb8ff, stone: 0xd8c7f2, roof: 0xd75a48, wood: 0xb77b45, tube: 0xfffaf0,
+  bar: 0xff4fa3, bumper: 0xff4fa3, water: 0x3fd0ff, wet: 0x9ceaff, hex: 0x8a5cff, gold: 0xffd23f, coconut: 0x8f5637,
+  frond: 0x58b85f, pad: 0xff8a3d, start: 0x3fd0ff, finish: 0xffd23f, hidden: 0xffffff,
 };
 
 type Surface = 'plain' | 'grass' | 'sandstone' | 'pavers' | 'roof' | 'paper' | 'pad' | 'coconut' | 'water';
@@ -98,18 +98,15 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   if (!gl) return null;
   const { renderer } = gl;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMapping = 0 as T.ToneMapping;
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 420);
-  const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x8fbf7a, 1.2);
-  const sun = new THREE.DirectionalLight(0xffdba8, 2.25);
-  const rim = new THREE.DirectionalLight(0xb9d9ff, 0.48);
+  const camera = new THREE.PerspectiveCamera(65, 1, 0.1, 420);
+  const hemi = new THREE.HemisphereLight(0xd8f3ff, 0x78a86f, 1.55);
+  const sun = new THREE.DirectionalLight(0xffd09a, 2.4);
   sun.position.set(-44, 62, -38);
-  rim.position.set(36, 24, 44);
-  scene.add(hemi, sun, rim);
-  const CONFETTI = touch ? 220 : 360;
+  scene.add(hemi, sun);
+  const CONFETTI = touch ? 80 : 140;
   const DROPS = touch ? 72 : 120;
 
   // shared unit geometries (non indexed, so they bake straight into merged meshes)
@@ -150,21 +147,46 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       g.computeVertexNormals();
       return g;
     })()),
-    flag: keepG((() => {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0.52, -0.82, 0], 3));
-      g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 1, 1, 1, 0.52, 0], 2));
-      g.computeVertexNormals();
-      return g;
-    })()),
   };
-  const lambert = (color: number, extra: T.MeshLambertMaterialParameters = {}) => new THREE.MeshLambertMaterial({ color, flatShading: false, ...extra });
   const mats: T.Material[] = [];
   const mat = <M extends T.Material>(m: M) => {
     mats.push(m);
     return m;
   };
-  const textures: T.CanvasTexture[] = [];
+  const textures: T.Texture[] = [];
+  const toonGradient = new THREE.CanvasTexture(document.createElement('canvas'));
+  Object.assign(toonGradient, {
+    isDataTexture: true,
+    image: {
+      data: new Uint8Array([115, 115, 115, 255, 191, 191, 191, 255, 255, 255, 255, 255]),
+      width: 3,
+      height: 1,
+    },
+    flipY: false,
+    unpackAlignment: 4,
+  });
+  toonGradient.minFilter = THREE.NearestFilter;
+  toonGradient.magFilter = THREE.NearestFilter;
+  toonGradient.generateMipmaps = false;
+  toonGradient.needsUpdate = true;
+  textures.push(toonGradient);
+  const toon = (color: number, extra: T.MeshLambertMaterialParameters = {}) => {
+    const material = new THREE.MeshLambertMaterial({ color, flatShading: true, ...extra });
+    material.onBeforeCompile = (shader) => {
+      shader.uniforms.wwToonGradient = { value: toonGradient };
+      shader.fragmentShader = shader.fragmentShader
+        .replace('void main() {', 'uniform sampler2D wwToonGradient;\nvoid main() {')
+        .replace(
+          '#include <opaque_fragment>',
+          `float wwLight = clamp(dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722)) / max(dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722)), 0.0001), 0.0, 1.0);
+          float wwBand = wwLight < 0.45 ? 0.1666667 : (wwLight < 0.75 ? 0.5 : 0.8333333);
+          outgoingLight = diffuseColor.rgb * texture2D(wwToonGradient, vec2(wwBand, 0.5)).r;
+          #include <opaque_fragment>`,
+        );
+    };
+    material.customProgramCacheKey = () => 'wacky-walk-toon-v1';
+    return material;
+  };
   const makeTexture = (paint: (ctx: CanvasRenderingContext2D, size: number) => void) => {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 256;
@@ -181,131 +203,6 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     textures.push(texture);
     return texture;
   };
-  const grassTex = makeTexture((ctx, size) => {
-    ctx.fillStyle = '#72b966';
-    ctx.fillRect(0, 0, size, size);
-    for (let i = 0; i < 4; i++) {
-      ctx.fillStyle = i % 2 ? '#7fbe6c' : '#75b761';
-      ctx.fillRect(i * 64, 0, 64, size);
-    }
-    for (let i = 0; i < 620; i++) {
-      const x = (i * 73) % size;
-      const y = (i * 151) % size;
-      ctx.fillStyle = i % 2 ? 'rgba(35,87,43,.10)' : 'rgba(235,255,207,.12)';
-      ctx.fillRect(x, y, 1 + (i % 3), 1 + (i % 2));
-    }
-  });
-  const sandstoneTex = makeTexture((ctx, size) => {
-    ctx.fillStyle = '#dfcba8';
-    ctx.fillRect(0, 0, size, size);
-    for (let row = 0; row < 8; row++) {
-      const y = row * 32;
-      const offset = row % 2 ? -32 : 0;
-      for (let col = -1; col < 5; col++) {
-        const x = col * 64 + offset;
-        ctx.fillStyle = (row + col) % 3 ? '#e5d3b1' : '#e2cda8';
-        ctx.fillRect(x + 2, y + 2, 60, 28);
-        ctx.fillStyle = 'rgba(128,94,61,.045)';
-        ctx.fillRect(x + 2, y + 27, 60, 3);
-      }
-      ctx.fillStyle = '#d4bd96';
-      ctx.fillRect(0, y, size, 2);
-    }
-    for (let i = 0; i < 380; i++) {
-      ctx.fillStyle = i % 2 ? 'rgba(110,79,48,.035)' : 'rgba(255,250,224,.1)';
-      ctx.fillRect((i * 41) % size, (i * 97) % size, 1 + (i % 2), 1 + (i % 3));
-    }
-  });
-  const roofTex = makeTexture((ctx, size) => {
-    ctx.fillStyle = '#a74739';
-    ctx.fillRect(0, 0, size, size);
-    for (let row = 0; row < 8; row++) {
-      for (let col = -1; col < 9; col++) {
-        const x = col * 32 + (row % 2) * 16;
-        const y = row * 32;
-        ctx.fillStyle = row % 2 ? '#c85b43' : '#b94d3b';
-        ctx.beginPath();
-        ctx.roundRect(x + 1, y + 1, 30, 29, [8, 8, 2, 2]);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(91,42,38,.55)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(x + 2, y + 27);
-        ctx.lineTo(x + 30, y + 27);
-        ctx.stroke();
-        ctx.strokeStyle = 'rgba(255,185,129,.22)';
-        ctx.beginPath();
-        ctx.moveTo(x + 5, y + 4);
-        ctx.lineTo(x + 26, y + 4);
-        ctx.stroke();
-      }
-    }
-  });
-  const paperTex = makeTexture((ctx, size) => {
-    ctx.fillStyle = '#fff3d8';
-    ctx.fillRect(0, 0, size, size);
-    for (let i = 0; i < 900; i++) {
-      ctx.fillStyle = i % 2 ? 'rgba(117,81,48,.08)' : 'rgba(255,255,255,.35)';
-      ctx.fillRect((i * 47) % size, (i * 113) % size, 1, 1);
-    }
-  });
-  const paverTex = makeTexture((ctx, size) => {
-    const colors = ['#ead8b9', '#e4cfaa', '#efdebf', '#e7d2ae'];
-    ctx.fillStyle = colors[0];
-    ctx.fillRect(0, 0, size, size);
-    for (let row = 0; row < 4; row++) {
-      const y = row * 64;
-      const offset = row % 2 ? -32 : 0;
-      for (let col = -1; col < 5; col++) {
-        const x = col * 64 + offset;
-        ctx.fillStyle = colors[(row * 3 + col + 12) % colors.length];
-        ctx.fillRect(x + 2, y + 2, 60, 60);
-        ctx.strokeStyle = 'rgba(126,94,60,.22)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x + 2, y + 2, 60, 60);
-      }
-    }
-  });
-  const coconutTex = makeTexture((ctx, size) => {
-    ctx.fillStyle = '#bd8047';
-    ctx.fillRect(0, 0, size, size);
-    for (let i = 0; i < 880; i++) {
-      const x = (i * 67) % size;
-      const y = (i * 137) % size;
-      ctx.strokeStyle = i % 3 ? 'rgba(75,43,20,.55)' : 'rgba(230,179,111,.52)';
-      ctx.lineWidth = i % 4 === 0 ? 2 : 1;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + (i % 7) - 3, y + 3 + (i % 6));
-      ctx.stroke();
-    }
-  });
-  const waterTex = makeTexture((ctx, size) => {
-    ctx.fillStyle = '#80cfdf';
-    ctx.fillRect(0, 0, size, size);
-    for (let row = 0; row < 8; row++) {
-      const y = row * 34 + 8;
-      for (let col = 0; col < 5; col++) {
-        const x = col * 62 + (row % 2) * 27;
-        ctx.strokeStyle = 'rgba(230,255,255,.2)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.ellipse(x, y, 18 + (col % 3) * 6, 4, -0.15, 0.15, Math.PI * 0.92);
-        ctx.stroke();
-      }
-    }
-    ctx.strokeStyle = 'rgba(61,170,194,.25)';
-    ctx.lineWidth = 2;
-    for (let row = 0; row < 5; row++) {
-      ctx.beginPath();
-      ctx.moveTo(0, row * 58 + 30);
-      ctx.bezierCurveTo(80, row * 58 + 8, 170, row * 58 + 55, size, row * 58 + 26);
-      ctx.stroke();
-    }
-  });
-  grassTex.repeat.set(2.5, 2.5);
-  sandstoneTex.repeat.set(14, 14);
-  paverTex.repeat.set(2.5, 2.5);
   const shadowTex = makeTexture((ctx, size) => {
     const gradient = ctx.createRadialGradient(size / 2, size / 2, size * 0.08, size / 2, size / 2, size * 0.5);
     gradient.addColorStop(0, 'rgba(25,34,38,.38)');
@@ -335,9 +232,6 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       ctx.stroke();
     }
   });
-  const surfaceMaps: Partial<Record<Surface, T.CanvasTexture>> = {
-    grass: grassTex, sandstone: sandstoneTex, pavers: paverTex, roof: roofTex, paper: paperTex, coconut: coconutTex, water: waterTex,
-  };
   const surfaceForLook = (look: Look): Surface => {
     if (look === 'grass') return 'grass';
     if (look === 'wet') return 'water';
@@ -355,12 +249,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const bakedMat = (surface: Surface) => {
     let material = bakedMats.get(surface);
     if (!material) {
-      material = mat(new THREE.MeshStandardMaterial({
-        color: 0xffffff, ...(surfaceMaps[surface] ? { map: surfaceMaps[surface] } : {}), vertexColors: true,
-        roughness: surface === 'pad' ? 0.52 : surface === 'paper' ? 0.3 : surface === 'water' ? 0.64 : 0.78,
-        metalness: surface === 'water' ? 0 : surface === 'paper' ? 0.08 : 0,
-        side: THREE.DoubleSide,
-      }));
+      material = mat(toon(0xffffff, { vertexColors: true, side: THREE.DoubleSide }));
       bakedMats.set(surface, material);
     }
     return material;
@@ -390,7 +279,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       const ps = p.g.attributes.position;
       const ns = p.g.attributes.normal;
       const surface = p.surface ?? 'plain';
-      tmpC.setHex(surface === 'grass' ? 0xffffff : p.c);
+      tmpC.setHex(p.c);
       const scale = surface === 'grass' ? 0.24 : surface === 'sandstone' ? 2 : surface === 'pavers' ? 0.8 : surface === 'roof' ? 0.42 :
         surface === 'paper' ? 0.6 : surface === 'pad' ? 0.3 : surface === 'coconut' ? 0.8 : 1;
       for (let i = 0; i < ps.count; i++) {
@@ -436,9 +325,8 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   sky.renderOrder = -1;
   scene.add(sky);
   scene.fog = new THREE.Fog(0xffffff, 90, 330);
-  waterTex.repeat.set(20, 20);
-  const waterMat = mat(new THREE.MeshStandardMaterial({
-    color: 0x8bcbd9, map: waterTex, transparent: true, opacity: 0.82, roughness: 0.72, metalness: 0, depthWrite: false,
+  const waterMat = mat(new THREE.MeshBasicMaterial({
+    color: 0x37c6d6, transparent: true, opacity: 0.96, depthWrite: false,
   }));
   const water = new THREE.Mesh(keepG(new THREE.PlaneGeometry(900, 900, 1, 1)), waterMat);
   water.rotation.x = -Math.PI / 2;
@@ -449,7 +337,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   );
   depthRing.rotation.x = -Math.PI / 2;
   scene.add(depthRing);
-  const shoreMat = mat(new THREE.MeshStandardMaterial({ color: 0xffffff, map: grassTex, roughness: 1 }));
+  const shoreMat = mat(toon(0xa8ecc4));
   const shore = new THREE.Mesh(keepG(new THREE.RingGeometry(1, 3.2, 48, 1)), shoreMat);
   shore.rotation.x = -Math.PI / 2;
   scene.add(shore);
@@ -460,14 +348,14 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   foamRing.rotation.x = -Math.PI / 2;
   scene.add(foamRing);
   const flowerCount = touch ? 36 : 64;
-  const flowerMat = mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72 }));
+  const flowerMat = mat(toon(0xffffff));
   const flowerMesh = new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(0.16, touch ? 5 : 7, touch ? 3 : 5)), flowerMat, flowerCount);
-  const flowerCenterMesh = new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(0.07, touch ? 5 : 6, touch ? 3 : 4)), mat(new THREE.MeshStandardMaterial({ color: 0xffdc68, roughness: 0.66 })), flowerCount);
-  const bushMesh = new THREE.InstancedMesh(unit.sphere, mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 })), touch ? 10 : 18);
+  const flowerCenterMesh = new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(0.07, touch ? 5 : 6, touch ? 3 : 4)), mat(toon(0xffdc68)), flowerCount);
+  const bushMesh = new THREE.InstancedMesh(unit.sphere, mat(toon(0xffffff)), touch ? 10 : 18);
   flowerMesh.frustumCulled = flowerCenterMesh.frustumCulled = bushMesh.frustumCulled = false;
   const hillCount = touch ? 12 : 20;
-  const hillGeo = keepG(new THREE.SphereGeometry(1, touch ? 9 : 14, touch ? 6 : 10));
-  const hillMesh = new THREE.InstancedMesh(hillGeo, mat(new THREE.MeshBasicMaterial({ color: 0xffffff })), hillCount);
+  const hillGeo = keepG(new THREE.IcosahedronGeometry(1, 0));
+  const hillMesh = new THREE.InstancedMesh(hillGeo, mat(toon(0x79bf78)), hillCount);
   hillMesh.frustumCulled = false;
   scene.add(hillMesh);
   const hillColors = [0x91c584, 0x80b978, 0xa4ce91, 0x77ad70];
@@ -502,19 +390,17 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   }));
   tileGeo.translate(0, 0, -0.5);
   tileGeo.rotateX(-Math.PI / 2);
-  const tileTopMat = mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.62 }));
-  const tileSideMat = mat(new THREE.MeshStandardMaterial({ color: 0x9b766b, roughness: 0.82 }));
+  const tileTopMat = mat(toon(0xffffff));
+  const tileSideMat = mat(toon(0x76516f));
   const crackGeo = keepG(new THREE.CircleGeometry(1, 6));
   crackGeo.rotateX(-Math.PI / 2);
   const crackMat = mat(new THREE.MeshBasicMaterial({
     color: 0xffffff, map: crackTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1,
   }));
   const crowdGeo = keepG(new THREE.CapsuleGeometry(0.18, 0.28, touch ? 2 : 3, touch ? 7 : 10));
-  const crowdMat = mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.42 }));
-  const flagMat = mat(new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide, roughness: 0.6 }));
-  const poleMat = mat(new THREE.MeshStandardMaterial({ color: 0xf7f0e4, roughness: 0.7 }));
+  const crowdMat = mat(toon(0xffffff));
   const foamGeo = keepG(new THREE.TorusGeometry(1, 0.12, touch ? 4 : 6, touch ? 12 : 18));
-  const foamMat = mat(new THREE.MeshStandardMaterial({ color: 0xf3ffff, transparent: true, opacity: 0.9, roughness: 0.35, depthWrite: false }));
+  const foamMat = mat(new THREE.MeshBasicMaterial({ color: 0xe6ffff, transparent: true, opacity: 0.88, depthWrite: false }));
   const jetMat = mat(new THREE.MeshBasicMaterial({ color: 0x53cbed, transparent: true, opacity: 0.72, side: THREE.DoubleSide, depthWrite: false }));
   const jetCurve = new THREE.CatmullRomCurve3([
     new THREE.Vector3(0, 0, 0),
@@ -532,10 +418,8 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const fountainArcMat = mat(new THREE.MeshBasicMaterial({
     color: 0xa7f3ff, transparent: true, opacity: 0.84, side: THREE.DoubleSide, depthWrite: false,
   }));
-  const crownGoldMat = mat(new THREE.MeshStandardMaterial({
-    color: 0xffd23f, emissive: 0xffa800, emissiveIntensity: 0.85, metalness: 0.55, roughness: 0.22,
-  }));
-  const crownPaperMat = mat(lambert(0xfffaf0));
+  const crownGoldMat = mat(toon(0xffd23f, { emissive: 0xffa800, emissiveIntensity: 0.85 }));
+  const crownPaperMat = mat(toon(0xfffaf0));
 
   // ---------------------------------------------------------------- course
   const courseRoot = new THREE.Group();
@@ -553,9 +437,6 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   let pads: T.Mesh[] = [];
   let crowdMesh: T.InstancedMesh | null = null;
   let crowdPeople: { x: number; y: number; z: number; phase: number; color: number; scale: number }[] = [];
-  let buntingMesh: T.InstancedMesh | null = null;
-  let buntingPoles: T.InstancedMesh | null = null;
-  let bunting: { x: number; y: number; z: number; yaw: number; phase: number; color: number }[] = [];
   let waterY = -6;
   let center = { x: 0, z: 0, r: 80 };
 
@@ -824,9 +705,6 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     pads = [];
     crowdMesh = null;
     crowdPeople = [];
-    buntingMesh = null;
-    buntingPoles = null;
-    bunting = [];
     flowerMesh.count = 0;
     flowerCenterMesh.count = 0;
     bushMesh.count = 0;
@@ -837,10 +715,10 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     const key = surfaceForLook(look);
     let m = movingMats.get(key);
     if (!m) {
-      m = mat(new THREE.MeshStandardMaterial({
-        color: 0xffffff, ...(surfaceMaps[key] ? { map: surfaceMaps[key] } : {}), vertexColors: true, roughness: key === 'pad' ? 0.52 : 0.78,
-        ...(key === 'paper' ? { roughness: 0.3, metalness: 0.08 } : key === 'water' ? { roughness: 0.64, metalness: 0 } : {}),
-        emissive: key === 'pad' ? 0x553300 : 0x000000, side: THREE.DoubleSide,
+      m = mat(toon(0xffffff, {
+        vertexColors: true,
+        emissive: key === 'pad' ? 0x553300 : 0x000000,
+        side: THREE.DoubleSide,
       }));
       movingMats.set(key, m);
     }
@@ -860,10 +738,8 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       skyColors.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
     }
     skyGeo.attributes.color.needsUpdate = true;
-    (scene.fog as T.Fog).color.setHex(pal.fog);
-    tmpC.setHex(0xffe6c7);
-    (scene.fog as T.Fog).color.lerp(tmpC, 0.38);
-    shoreMat.color.setHex(0xffffff);
+    (scene.fog as T.Fog).color.setHex(0xffe6c7);
+    shoreMat.color.setHex(0xa8ecc4);
 
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     const statics: Part[] = [];
@@ -930,12 +806,44 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       ['grass', 'path', 'sand', 'start', 'finish', 'wet'].includes(c.look) &&
       c.shape.hx >= 7 && c.shape.hz >= 4,
     );
+    let lastSupportX = Infinity, lastSupportZ = Infinity;
+    for (const c of bankFloors) {
+      if (c.shape.kind !== 'box') continue;
+      const dx = c.pose.x - lastSupportX, dz = c.pose.z - lastSupportZ;
+      if (Math.hypot(dx, dz) < 18) continue;
+      lastSupportX = c.pose.x;
+      lastSupportZ = c.pose.z;
+      const depth = Math.max(8, c.pose.y + 7);
+      statics.push({
+        g: unit.box,
+        m: poseMatrix(c.pose, m4).clone().multiply(mtx(
+          0, -c.shape.hy - depth / 2 - 0.08, 0,
+          Math.min(1.4, c.shape.hx * 0.18), depth / 2, Math.min(1.4, c.shape.hz * 0.18),
+        )),
+        c: 0x8a5cff,
+        surface: 'plain',
+      });
+    }
     for (const c of bankFloors) {
       if (c.shape.kind !== 'box') continue;
       const shape = c.shape;
       const floorMatrix = poseMatrix(c.pose, m4).clone();
       const halfZ = shape.hz + 0.12;
       const topY = shape.hy - 0.08;
+      const longZ = shape.hz >= shape.hx;
+      for (const side of [-1, 1]) statics.push({
+        g: unit.sphere,
+        m: floorMatrix.clone().multiply(mtx(
+          longZ ? side * (shape.hx - 0.1) : 0,
+          shape.hy - 0.12,
+          longZ ? 0 : side * (shape.hz - 0.1),
+          longZ ? 0.22 : shape.hx * 0.94,
+          0.12,
+          longZ ? shape.hz * 0.94 : 0.22,
+        )),
+        c: 0xfffaf0,
+        surface: 'plain',
+      });
       for (const side of [-1, 1]) {
         statics.push({
           g: unit.box,
@@ -978,6 +886,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     const solidDecor = new Set<Decor['kind']>(['tower', 'arcade', 'roof', 'stands', 'arch', 'fountain']);
     const sceneryIslands = new Set<Decor['kind']>(['tower', 'stands']);
     for (const d of course.decor) {
+      if (d.kind === 'lamp' || d.kind === 'banner' || d.kind === 'flag') continue;
       if (d.kind === 'stands') {
         for (let row = 0; row < 4; row++) for (let col = 0; col < 9; col += touch ? 2 : 1) {
           const lx = -6 + col * 1.5 + (row % 2) * 0.5;
@@ -993,7 +902,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         }
       }
       const first = statics.length;
-      const renderDecor = d.kind === 'palm' || d.kind === 'tree' || d.kind === 'lamp'
+      const renderDecor = d.kind === 'palm' || d.kind === 'tree'
         ? { ...d, y: bankSurfaceY(d.x, d.z, d.y) }
         : d;
       decorParts(renderDecor, statics);
@@ -1153,7 +1062,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       crackMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       crackMesh.frustumCulled = false;
       const base: number[] = [];
-      const layerColors = [0xf0cf9c, 0xf2b8a0, 0xbfd8f0, 0xd4c4f0];
+      const layerColors = [0xffd23f, 0xff4fa3, 0x8a5cff, 0x3fd0ff];
       tileList.forEach((c, i) => {
         const b = layerColors[(c.tile?.layer ?? 0) % layerColors.length];
         tmpC.setHex(b).offsetHSL(0, 0, ((i * 37) % 7) * 0.008 - 0.02);
@@ -1232,7 +1141,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       const a = (i / hillCount) * Math.PI * 2;
       const radius = center.r + 52 + (i % 3) * 9;
       const sx = 13 + (i % 4) * 4;
-      setMtx(scratchMtx, center.x + Math.cos(a) * radius, 1.2 + (i % 3) * 0.5, center.z + Math.sin(a) * radius, sx, 8 + (i % 3) * 2, 11 + (i % 4) * 2, -a);
+      setMtx(scratchMtx, center.x + Math.cos(a) * radius, -0.4 + (i % 3) * 0.3, center.z + Math.sin(a) * radius, sx, 3.2 + (i % 3) * 0.6, 15 + (i % 4) * 3, -a);
       hillMesh.setMatrixAt(i, scratchMtx);
     }
     hillMesh.instanceMatrix.needsUpdate = true;
@@ -1246,36 +1155,6 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       });
       if (crowdMesh.instanceColor) crowdMesh.instanceColor.needsUpdate = true;
       courseRoot.add(crowdMesh);
-    }
-    const flagColors = [0xb12e3e, 0xffcf58, 0x56b99c, 0x7a9dd9, 0xf0eef0];
-    if (course.id !== 'hoover' && course.path.length > 0) {
-      for (let i = 0; i < course.path.length; i += 2) {
-        const point = course.path[i];
-        const before = course.path[Math.max(0, i - 1)];
-        const after = course.path[Math.min(course.path.length - 1, i + 1)];
-        const dx = after.x - before.x, dz = after.z - before.z;
-        const length = Math.hypot(dx, dz) || 1;
-        const nx = dz / length, nz = -dx / length;
-        for (const side of [-1, 1]) bunting.push({
-          x: point.x + nx * side * 9.6, y: point.y + 3.3, z: point.z + nz * side * 9.6,
-          yaw: Math.atan2(-nx * side, nz * side), phase: i * 0.9 + side, color: flagColors[(i + (side > 0 ? 1 : 0)) % flagColors.length],
-        });
-      }
-    }
-    if (bunting.length) {
-      buntingMesh = new THREE.InstancedMesh(unit.flag, flagMat, bunting.length);
-      buntingPoles = new THREE.InstancedMesh(unit.cyl8, poleMat, bunting.length);
-      buntingMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      buntingPoles.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      bunting.forEach((flag, i) => {
-        buntingMesh!.setColorAt(i, tmpC.setHex(flag.color));
-        setMtx(scratchMtx, flag.x, flag.y, flag.z, 0.95, 1.35, 0.05, flag.yaw);
-        buntingMesh!.setMatrixAt(i, scratchMtx);
-        setMtx(scratchMtx, flag.x, flag.y - 1.55, flag.z, 0.035, 1.7, 0.035);
-        buntingPoles!.setMatrixAt(i, scratchMtx);
-      });
-      if (buntingMesh.instanceColor) buntingMesh.instanceColor.needsUpdate = true;
-      courseRoot.add(buntingPoles, buntingMesh);
     }
     const bloomColors = [0x9b1c1f, 0xfffaf0, 0xc8424c, 0xffffff, 0xf3e4cb];
     let flowerIndex = 0;
@@ -1336,60 +1215,29 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     new THREE.Vector2(0, 1.1),
   ];
   const gownGeo = keepG(new THREE.LatheGeometry(gownProfile, touch ? 12 : 18));
-  const profileRadius = (profile: typeof beanProfile, y: number) => {
-    for (let i = 1; i < profile.length; i++) {
-      if (y <= profile[i].y) {
-        const before = profile[i - 1], after = profile[i];
-        const t = (y - before.y) / (after.y - before.y);
-        return before.x + (after.x - before.x) * Math.max(0, Math.min(1, t));
-      }
-    }
-    return 0;
-  };
-  const stoleGeo = keepG(new THREE.BufferGeometry());
-  const stolePositions: number[] = [];
-  const stoleIndices: number[] = [];
-  const stoleRows = touch ? 8 : 14;
-  for (const facing of [-1, 1]) {
-    for (const side of [-1, 1]) {
-      const base = stolePositions.length / 3;
-      for (let row = 0; row <= stoleRows; row++) {
-        const t = row / stoleRows;
-        const y = 0.48 + t * 0.72;
-        const centerX = side * (0.17 - t * 0.055);
-        const radius = Math.max(profileRadius(gownProfile, y), profileRadius(beanProfile, y - 0.86) * 1.2);
-        for (const edge of [-1, 1]) {
-          const x = centerX + edge * 0.027;
-          const z = facing * (Math.sqrt(Math.max(0, radius * radius - x * x)) + 0.018);
-          stolePositions.push(x, y, z);
-        }
-        if (row < stoleRows) {
-          const a = base + row * 2;
-          stoleIndices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-        }
-      }
-    }
-  }
-  stoleGeo.setAttribute('position', new THREE.Float32BufferAttribute(stolePositions, 3));
-  stoleGeo.setIndex(stoleIndices);
-  stoleGeo.computeVertexNormals();
-  const beanMat = mat(new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.31, clearcoat: 0.75, clearcoatRoughness: 0.2 }));
-  const robeMat = mat(new THREE.MeshStandardMaterial({ color: 0xa51d2a, roughness: 0.58, side: THREE.DoubleSide }));
+  const beanMat = mat(toon(0xffffff));
+  const robeMat = mat(toon(CARDINAL, { side: THREE.DoubleSide }));
+  const hoodMat = mat(toon(0xfff1d6));
+  const outlineMat = mat(toon(0x2a1e3a, { side: THREE.BackSide }));
+  const boardMat = mat(toon(0x1d1d26));
+  const goldMat = mat(toon(0xffd23f));
+  const faceTint = new THREE.Color(0xfff4e6);
   const parts = {
     bean: new THREE.InstancedMesh(beanGeo, beanMat, MAX_PLAYERS),
     gown: new THREE.InstancedMesh(gownGeo, robeMat, MAX_PLAYERS),
-    collar: new THREE.InstancedMesh(keepG(new THREE.TorusGeometry(0.55, 0.035, touch ? 5 : 8, touch ? 12 : 18)), mat(new THREE.MeshStandardMaterial({ color: 0xffcf58, roughness: 0.52 })), MAX_PLAYERS),
-    hood: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 8 : 12, touch ? 6 : 9)), mat(new THREE.MeshStandardMaterial({ color: 0xf1c761, roughness: 0.55 })), MAX_PLAYERS),
-    board: new THREE.InstancedMesh(keepG(new THREE.BoxGeometry(0.86, 0.11, 0.86)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.43 })), MAX_PLAYERS),
-    button: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(0.08, touch ? 6 : 9, touch ? 4 : 6)), mat(new THREE.MeshStandardMaterial({ color: 0xffd45d, metalness: 0.3, roughness: 0.28 })), MAX_PLAYERS),
-    skull: new THREE.InstancedMesh(keepG(new THREE.CylinderGeometry(0.29, 0.34, 0.16, touch ? 9 : 14)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55 })), MAX_PLAYERS),
-    tassel: new THREE.InstancedMesh(keepG(new THREE.CapsuleGeometry(0.055, 0.52, 2, touch ? 6 : 9)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 })), MAX_PLAYERS),
-    arm: new THREE.InstancedMesh(keepG(new THREE.CapsuleGeometry(0.1, 0.3, 3, touch ? 7 : 10)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.42 })), MAX_PLAYERS * 2),
+    hood: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 8 : 12, touch ? 5 : 8)), hoodMat, MAX_PLAYERS),
+    beanOutline: new THREE.InstancedMesh(beanGeo, outlineMat, MAX_PLAYERS),
+    gownOutline: new THREE.InstancedMesh(gownGeo, outlineMat, MAX_PLAYERS),
+    face: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 9 : 14, touch ? 6 : 10)), mat(toon(0xffffff)), MAX_PLAYERS),
+    board: new THREE.InstancedMesh(keepG(new THREE.BoxGeometry(0.64, 0.06, 0.64)), boardMat, MAX_PLAYERS),
+    button: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(0.055, touch ? 6 : 9, touch ? 4 : 6)), goldMat, MAX_PLAYERS),
+    skull: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 8 : 12, touch ? 5 : 8)), boardMat, MAX_PLAYERS),
+    tassel: new THREE.InstancedMesh(keepG(new THREE.CapsuleGeometry(0.045, 0.42, 2, touch ? 6 : 9)), mat(toon(0xffffff)), MAX_PLAYERS),
+    arm: new THREE.InstancedMesh(keepG(new THREE.CapsuleGeometry(0.1, 0.3, 3, touch ? 7 : 10)), mat(toon(0xffffff)), MAX_PLAYERS * 2),
     sleeve: new THREE.InstancedMesh(keepG(new THREE.CapsuleGeometry(0.13, 0.28, 2, touch ? 6 : 9)), robeMat, MAX_PLAYERS * 2),
     hand: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(0.13, touch ? 6 : 9, touch ? 5 : 7)), beanMat, MAX_PLAYERS * 2),
-    foot: new THREE.InstancedMesh(keepG(new THREE.CapsuleGeometry(0.11, 0.18, 2, touch ? 7 : 10)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.62 })), MAX_PLAYERS * 2),
-    stole: new THREE.InstancedMesh(stoleGeo, mat(new THREE.MeshStandardMaterial({ color: 0xffcf58, roughness: 0.58, side: THREE.DoubleSide })), MAX_PLAYERS),
-    eye: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 8 : 12, touch ? 6 : 9)), mat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.24 })), MAX_PLAYERS * 2),
+    foot: new THREE.InstancedMesh(keepG(new THREE.CapsuleGeometry(0.11, 0.18, 2, touch ? 7 : 10)), mat(toon(0x242536)), MAX_PLAYERS * 2),
+    eye: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 8 : 12, touch ? 6 : 9)), mat(new THREE.MeshBasicMaterial({ color: 0xffffff })), MAX_PLAYERS * 2),
     pupil: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 6 : 9, touch ? 5 : 7)), mat(new THREE.MeshBasicMaterial({ color: 0x1b1b22 })), MAX_PLAYERS * 2),
     smile: new THREE.InstancedMesh(keepG(new THREE.TorusGeometry(0.085, 0.016, 4, touch ? 9 : 14, Math.PI)), mat(new THREE.MeshBasicMaterial({ color: 0x542c36 })), MAX_PLAYERS),
     shadow: new THREE.InstancedMesh(keepG(new THREE.CircleGeometry(0.72, touch ? 12 : 18)), mat(new THREE.MeshBasicMaterial({ color: 0xffffff, map: shadowTex, transparent: true, opacity: 1, depthWrite: false })), MAX_PLAYERS),
@@ -1403,15 +1251,13 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   let looks: PlayerLook[] = [];
   const anim = Array.from({ length: MAX_PLAYERS }, () => ({ pitch: 0, roll: 0, lift: 0, bob: 0, swing: 0, spin: 0, state: 'run', squash: 0 }));
   const white = new THREE.Color(0xffffff);
-  const tasselGold = new THREE.Color(0xffcf48);
   function setPlayers(list: PlayerLook[]) {
     looks = list.slice(0, MAX_PLAYERS);
     looks.forEach((l, i) => {
       tmpC.setHex(l.color);
       parts.bean.setColorAt(i, tmpC);
-      parts.tassel.setColorAt(i, tmpC2.copy(tmpC).lerp(tasselGold, 0.32));
-      parts.board.setColorAt(i, tmpC);
-      parts.skull.setColorAt(i, tmpC);
+      parts.tassel.setColorAt(i, tmpC);
+      parts.face.setColorAt(i, tmpC2.copy(tmpC).lerp(faceTint, 0.55));
       parts.arm.setColorAt(i * 2, tmpC);
       parts.arm.setColorAt(i * 2 + 1, tmpC);
       parts.hand.setColorAt(i * 2, tmpC);
@@ -1425,8 +1271,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     }
     if (parts.bean.instanceColor) parts.bean.instanceColor.needsUpdate = true;
     if (parts.tassel.instanceColor) parts.tassel.instanceColor.needsUpdate = true;
-    if (parts.board.instanceColor) parts.board.instanceColor.needsUpdate = true;
-    if (parts.skull.instanceColor) parts.skull.instanceColor.needsUpdate = true;
+    if (parts.face.instanceColor) parts.face.instanceColor.needsUpdate = true;
     if (parts.arm.instanceColor) parts.arm.instanceColor.needsUpdate = true;
     if (parts.hand.instanceColor) parts.hand.instanceColor.needsUpdate = true;
     if (parts.foot.instanceColor) parts.foot.instanceColor.needsUpdate = true;
@@ -1439,16 +1284,16 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const L = {
     bean: local(0, 0.9, 0, 1.13, 1.04, 1.13),
     gown: local(0, 0.14, 0, 1.08, 1.08, 1.08),
-    collar: local(0, 1.05, 0, 1, 1, 1, 0, Math.PI / 2),
-    hood: local(0, 0.9, -0.54, 0.36, 0.2, 0.065),
-    board: local(0, 1.62, 0, 1, 1, 1, Math.PI / 4, -0.08),
+    hood: local(0, 1.13, -0.4, 0.26, 0.3, 0.09),
+    face: local(0, 1.12, 0.43, 0.31, 0.43, 0.09),
+    board: local(0, 1.65, 0, 1, 1, 1, 0, -0.08),
     button: local(0, 1.69, 0, 1, 1, 1),
-    skull: local(0, 1.47, 0, 1, 1, 1, 0, -0.08),
-    eyeL: local(-0.16, 1.11, 0.39, 0.13, 0.15, 0.09),
-    eyeR: local(0.16, 1.11, 0.39, 0.13, 0.15, 0.09),
-    pupL: local(-0.16, 1.105, 0.47, 0.06, 0.077, 0.045),
-    pupR: local(0.16, 1.105, 0.47, 0.06, 0.077, 0.045),
-    smile: local(0, 0.93, 0.45, 1, 1, 1, 0, 0, Math.PI),
+    skull: local(0, 1.52, 0, 0.29, 0.12, 0.29, 0, -0.08),
+    eyeL: local(-0.13, 1.15, 0.5, 0.02, 0.025, 0.014),
+    eyeR: local(0.13, 1.15, 0.5, 0.02, 0.025, 0.014),
+    pupL: local(-0.13, 1.15, 0.485, 0.055, 0.075, 0.03),
+    pupR: local(0.13, 1.15, 0.485, 0.055, 0.075, 0.03),
+    smile: local(0, 1.03, 0.515, 0.82, 0.8, 0.8, 0, 0, Math.PI),
   };
   let clock = 0;
   function placePlayers(course: Course, bodies: readonly (BodyView | null)[], dt: number) {
@@ -1481,14 +1326,15 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       bodyM.multiply(setMtx(scratchMtx, 0, a.lift, 0, 1, 1, 1, 0, a.pitch, a.roll + Math.sin(a.spin) * 0.6))
         .multiply(setMtx(scratchMtx, 0, 0, 0, sxz, sy, sxz));
       parts.bean.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.bean));
+      parts.beanOutline.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.bean).multiply(setMtx(scratchMtx, 0, 0, 0, 1.04, 1.04, 1.04)));
       parts.gown.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.gown));
-      parts.collar.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.collar));
+      parts.gownOutline.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.gown).multiply(setMtx(scratchMtx, 0, 0, 0, 1.04, 1.04, 1.04)));
       parts.hood.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.hood));
-      parts.stole.setMatrixAt(n, bodyM);
+      parts.face.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.face));
       parts.board.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.board));
       parts.button.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.button));
       parts.skull.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.skull));
-      parts.tassel.setMatrixAt(n, partM.multiplyMatrices(bodyM, setMtx(scratchMtx, 0.44, 1.4, 0.11, 1, 1.55, 1, 0, 0, -a.swing * 1.45)));
+      parts.tassel.setMatrixAt(n, partM.multiplyMatrices(bodyM, setMtx(scratchMtx, 0.3, 1.5, 0.08, 1, 1.25, 1, 0, 0, -a.swing * 1.45)));
       const armsUp = b.state === 'air' || b.state === 'dive';
       const armAngle = lying || b.state === 'stun' ? Math.sin(a.spin * 2.2) * 1.05 : armsUp ? 0.85 : Math.sin(a.bob) * 0.48;
       const footKick = lying || b.state === 'stun' ? Math.sin(a.spin * 2.7) * 0.6 : 0;
@@ -1511,9 +1357,8 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       if (parts.bean.instanceColor) {
         tmpC.setHex(looks[i].color);
         parts.bean.setColorAt(n, tmpC);
-        parts.tassel.setColorAt(n, tmpC2.copy(tmpC).lerp(tasselGold, 0.32));
-        parts.board.setColorAt(n, tmpC);
-        parts.skull.setColorAt(n, tmpC);
+        parts.tassel.setColorAt(n, tmpC);
+        parts.face.setColorAt(n, tmpC2.copy(tmpC).lerp(faceTint, 0.55));
         parts.arm.setColorAt(n * 2, tmpC);
         parts.arm.setColorAt(n * 2 + 1, tmpC);
         parts.hand.setColorAt(n * 2, tmpC);
@@ -1535,8 +1380,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     }
     if (parts.bean.instanceColor) parts.bean.instanceColor.needsUpdate = true;
     if (parts.tassel.instanceColor) parts.tassel.instanceColor.needsUpdate = true;
-    if (parts.board.instanceColor) parts.board.instanceColor.needsUpdate = true;
-    if (parts.skull.instanceColor) parts.skull.instanceColor.needsUpdate = true;
+    if (parts.face.instanceColor) parts.face.instanceColor.needsUpdate = true;
     if (parts.arm.instanceColor) parts.arm.instanceColor.needsUpdate = true;
     if (parts.hand.instanceColor) parts.hand.instanceColor.needsUpdate = true;
     if (parts.foot.instanceColor) parts.foot.instanceColor.needsUpdate = true;
@@ -1553,7 +1397,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   for (let i = 0; i < CONFETTI; i++) confettiMesh.setMatrixAt(i, setMtx(scratchMtx, 0, -999, 0, 0, 0, 0));
   confettiMesh.instanceMatrix.needsUpdate = true;
   let nextBit = 0;
-  const dropMesh = new THREE.InstancedMesh(keepG(new THREE.IcosahedronGeometry(0.16, 0)), mat(lambert(0xd6f6ff)), DROPS);
+  const dropMesh = new THREE.InstancedMesh(keepG(new THREE.IcosahedronGeometry(0.16, 0)), mat(toon(0xd6f6ff)), DROPS);
   dropMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   dropMesh.frustumCulled = false;
   scene.add(dropMesh);
@@ -1745,7 +1589,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       if (c.on) poseMatrix(c.pose, mesh.matrix);
       mesh.matrixWorldNeedsUpdate = true;
     }
-    for (const p of pads) (p.material as T.MeshStandardMaterial).emissive.setRGB(0.3 + Math.sin(clock * 6) * 0.15, 0.18, 0);
+    for (const p of pads) (p.material as T.MeshLambertMaterial).emissive.setRGB(0.3 + Math.sin(clock * 6) * 0.15, 0.18, 0);
     if (crowdMesh) {
       for (let i = 0; i < crowdPeople.length; i++) {
         const person = crowdPeople[i];
@@ -1754,16 +1598,6 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         crowdMesh.setMatrixAt(i, scratchMtx);
       }
       crowdMesh.instanceMatrix.needsUpdate = true;
-    }
-    if (buntingMesh) {
-      for (let i = 0; i < bunting.length; i++) {
-        const flag = bunting[i];
-        const wave = Math.sin(clock * 3.2 + flag.phase) * 0.16;
-        setMtx(scratchMtx, flag.x + Math.sin(clock * 2.5 + flag.phase) * 0.06, flag.y, flag.z,
-          0.95, 1.35, 0.05, flag.yaw + wave, 0, wave * 0.3);
-        buntingMesh.setMatrixAt(i, scratchMtx);
-      }
-      buntingMesh.instanceMatrix.needsUpdate = true;
     }
     if (tiles) {
       const { mesh, cracks, list, base } = tiles;
@@ -1840,19 +1674,21 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       crown.position.y = (course.zones.find((z) => z.kind === 'crown')?.y ?? 0) + 0.8 + Math.sin(clock * 2) * 0.15;
     }
     water.position.y = waterY + Math.sin(clock * 0.8) * 0.05;
-    waterTex.offset.x = clock * 0.006;
-    waterTex.offset.y = clock * 0.0025;
     placePlayers(course, bodies, dt);
     stepParticles(dt);
 
     const target = focus !== null ? bodies[focus] : null;
-    const devLookAt = !target && import.meta.env.DEV ? cam.lookAt : undefined;
-    const cameraDistance = course.id === 'hoover' ? Math.min(cam.dist, devLookAt ? 36 : 10) : cam.dist;
+    const devLookAt = !target ? cam.lookAt : undefined;
+    const cameraDistance = course.id === 'hoover' ? Math.min(cam.dist, devLookAt ? 36 : 12) : cam.dist;
     if (target || devLookAt) {
       const cp = Math.cos(cam.pitch);
       if (target) {
-        const lookY = (import.meta.env.DEV ? cam.lookY ?? 0 : 0) + (course.id === 'hoover' ? 0.25 : 0);
-        look.set(target.x, target.y + 1.6 + lookY, target.z);
+        const lookY = (import.meta.env.DEV ? cam.lookY ?? 0 : 0) + (course.id === 'hoover' ? 1.5 : 0);
+        look.set(
+          target.x + Math.sin(course.startYaw) * 3,
+          target.y + 1.2 + lookY,
+          target.z + Math.cos(course.startYaw) * 3,
+        );
       } else if (devLookAt) {
         look.set(devLookAt.x, devLookAt.y, devLookAt.z);
       }
@@ -1915,7 +1751,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       h = Math.max(1, nh);
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
-      camera.fov = w / h < 0.8 ? 72 : 60;
+      camera.fov = w / h < 0.8 ? 75 : 65;
       camera.updateProjectionMatrix();
     },
     setCourse,
