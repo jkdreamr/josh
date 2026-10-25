@@ -27,7 +27,18 @@ export type Seg = {
 };
 
 /** A spinning blade; touching it with any part of the bike is a crash. */
-export type Saw = { x: number; y: number; r: number };
+/**
+ * A hazard circle: a spinning saw blade, or a mine (`kind: 'mine'`) sitting on the ground. A saw with
+ * `mx`/`my` swings that far either side of its rest spot, once every `period` seconds.
+ */
+export type Saw = { x: number; y: number; r: number; kind?: 'saw' | 'mine'; mx?: number; my?: number; period?: number; phase?: number };
+
+/** Where a saw is at world clock `t`. Still saws ignore the clock. */
+export function sawAt(s: Saw, t: number): { x: number; y: number } {
+  if (!s.period) return s;
+  const k = Math.sin(((t / s.period) + (s.phase ?? 0)) * Math.PI * 2);
+  return { x: s.x + (s.mx ?? 0) * k, y: s.y + (s.my ?? 0) * k };
+}
 
 export type LoopGate = {
   cx: number;
@@ -41,6 +52,8 @@ export type LoopGate = {
 export type PhysWorld = {
   segs: Seg[];
   saws: Saw[];
+  /** Seconds this world has been stepped; moving saws read it. */
+  clock: number;
   loops: LoopGate[];
   killY: number;
   /** Segment index by 4 m column for cheap queries. */
@@ -115,10 +128,12 @@ const REST = 0.12;
 const MU = 1.05;
 
 /** Lean torque (N*m), stronger and freer in the air so a flip takes about a second of held lean. */
-const T_LEAN_GROUND = 95;
+const T_LEAN_GROUND = 150;
 const T_LEAN_AIR = 180;
 const DAMP_W_GROUND = 4.5;
 const DAMP_W_AIR = 1.0;
+const GAS_LIFT = 300;
+const BRAKE_DIVE = 30;
 
 export function buildWorld(segs: Seg[], saws: Saw[], loops: LoopGate[], killY: number): PhysWorld {
   const grid = new Map<number, number[]>();
@@ -131,7 +146,7 @@ export function buildWorld(segs: Seg[], saws: Saw[], loops: LoopGate[], killY: n
       else grid.set(g, [i]);
     }
   });
-  return { segs, saws, loops, killY, grid };
+  return { segs, saws, loops, killY, grid, clock: 0 };
 }
 
 /** Segment ids that could touch a circle at x with radius pad. */
@@ -297,6 +312,8 @@ function substep(bike: Bike, world: PhysWorld, input: Input, h: number) {
   bike.w -= bike.w * (air ? DAMP_W_AIR : DAMP_W_GROUND) * h;
   // leaning against the spin bleeds it off fast: this is how riders level out
   if (air && input.lean * bike.w > 0) bike.w -= bike.w * 4.5 * h;
+  // gas while leaning back pulls the front wheel up (a wheelie); the front brake pitches the nose down
+  if (bike.rw.on) bike.w += ((input.gas * Math.max(0, -input.lean) * GAS_LIFT - (bike.fw.on ? input.brake * BRAKE_DIVE : 0)) / INERTIA) * h;
 
   // drive and brakes on wheel spin
   for (const [wh, rear] of [
@@ -343,6 +360,7 @@ function substep(bike: Bike, world: PhysWorld, input: Input, h: number) {
 /** Advances the bike by dt seconds. Returns what hit this step (crash checks live in logic.ts). */
 export function step(bike: Bike, world: PhysWorld, input: Input, dt: number): StepHits {
   const hits = { head: false, saw: false, fell: false };
+  world.clock += dt;
   let acc = dt;
   while (acc > 1e-9) {
     const h = Math.min(SUB, acc);
@@ -380,7 +398,9 @@ export function step(bike: Bike, world: PhysWorld, input: Input, dt: number): St
     if (wh.on && -s * wh.n.x + c * wh.n.y < -0.2) hits.head = true;
   }
   // saws touch any of head, chassis or wheels
-  for (const saw of world.saws) {
+  for (const hz of world.saws) {
+    const saw = sawAt(hz, world.clock);
+    const r = hz.r + 0.25;
     for (const p of [
       { x: hx, y: hy },
       bike.p,
@@ -389,7 +409,7 @@ export function step(bike: Bike, world: PhysWorld, input: Input, dt: number): St
     ]) {
       const dx = p.x - saw.x;
       const dy = p.y - saw.y;
-      if (dx * dx + dy * dy < (saw.r + 0.25) * (saw.r + 0.25)) {
+      if (dx * dx + dy * dy < r * r) {
         hits.saw = true;
         break;
       }
