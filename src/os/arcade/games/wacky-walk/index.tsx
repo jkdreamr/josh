@@ -30,9 +30,9 @@ const FIELD_OPTIONS = [
 ] as const;
 const COURSE_OPTIONS = [
   ['random', 'random'],
-  ['oval', 'the oval'],
-  ['fountain', 'claw fountain'],
-  ['palm', 'palm drive'],
+  ['oval', 'oval'],
+  ['fountain', 'fountain'],
+  ['palm', 'palm'],
 ] as const;
 
 type Mode = 'idle' | 'solo' | 'online';
@@ -294,6 +294,14 @@ function Play() {
       course() {
         return courseRef.current?.id ?? null;
       },
+      hideDecor(kind: Course['decor'][number]['kind']) {
+        const course = courseRef.current;
+        if (!course) return false;
+        course.decor = course.decor.filter((decor) => decor.kind !== kind);
+        syncSceneCourse(course);
+        shell.invalidate();
+        return true;
+      },
       forceCourse(id: CourseId) {
         const show = showRef.current;
         if (!show) return false;
@@ -405,7 +413,11 @@ function Play() {
       player() {
         const id = localId();
         const body = id == null ? undefined : bodiesRef.current.get(id);
-        return body ? { x: body.x, y: body.y, z: body.z, vx: body.vx, vz: body.vz } : null;
+        return body ? { x: body.x, y: body.y, z: body.z, vx: body.vx, vz: body.vz, ground: body.ground, state: body.state } : null;
+      },
+      body(id: number) {
+        const body = bodiesRef.current.get(id);
+        return body ? { x: body.x, y: body.y, z: body.z, ground: body.ground, state: body.state } : null;
       },
       stats() {
         const render = viewRef.current?.gl.renderer.info.render;

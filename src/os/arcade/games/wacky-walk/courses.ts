@@ -96,10 +96,10 @@ function campusDecor(course: Course, finishZ: number, kind: 'oval' | 'fountain' 
       course.decor.push({ kind: 'lamp', x: 10.4, y: 0, z: z + 9, s: 0.85, yaw: 0 });
     }
     if (i % 2 === 0) {
-      course.decor.push({ kind: 'banner', x: i % 4 ? -10.8 : 10.8, y: 3.2, z: z + 2, s: 1, yaw: i % 4 ? 0 : Math.PI, color: colors[i % colors.length] });
+      course.decor.push({ kind: 'banner', x: i % 4 ? -12.5 : 12.5, y: 3.2, z: z + 2, s: 1, yaw: i % 4 ? 0 : Math.PI, color: colors[i % colors.length] });
     }
   }
-  course.decor.push({ kind: 'tower', x: -32, y: 0, z: finishZ + 50, s: 7, yaw: 0 });
+  if (kind !== 'palm') course.decor.push({ kind: 'tower', x: -32, y: 0, z: finishZ + 50, s: 7, yaw: 0 });
   course.decor.push({ kind: 'stands', x: 40, y: 0, z: 4, s: 1.4, yaw: 0 });
 }
 
@@ -216,7 +216,6 @@ function makePalm(seed: number): Course {
       at: (t, out) => setPose(out, 0, y, z, Math.sin(t * 1.1 + i) * 0.65, Math.sin(t * 1.7 + i) * 0.2),
     });
   }
-  course.decor.push({ kind: 'arch', x: 0, y: 18.5, z: 124, s: 1.6, yaw: 0 });
   course.zones.push({ kind: 'finish', x: 0, y: 20, z: 126, hx: 8, hy: 3, hz: 1.7 });
   for (let i = 0; i < 7; i++) checkpoint(course, i, i * 21, 0, i * 3.4);
   course.path = Array.from({ length: 16 }, (_, i) => {
