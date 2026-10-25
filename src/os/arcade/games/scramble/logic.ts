@@ -4297,10 +4297,11 @@ function nearestMate(m: Match, f: Fighter) {
 
 /**
  * A knocked computer egg crawls to the nearest teammate on its feet (out of the storm first), or away from whoever
- * last hit it, and holds still once it's there.
+ * last hit it, and holds still once it's there, or while a teammate revives it.
  */
 function crawlTo(m: Match, f: Fighter, ai: Ai, dt: number) {
   const inp = f.input;
+  if (beingRevived(m, f)) return;
   const s = m.storm;
   const pal = nearestMate(m, f);
   const foe = f.lastBy >= 0 ? m.fighters[f.lastBy] : undefined;

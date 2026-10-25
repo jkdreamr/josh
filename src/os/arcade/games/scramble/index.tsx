@@ -785,7 +785,7 @@ function Play({ mode }: { mode: StageMode }) {
     // a ping where the mouse points (or ahead, where you aim), and the drop key for what's in hand
     if (keys.pressed(keyCode(PING_KEY)) || mouse.current.ping || t.ping) {
       const g = t.ping ? null : mouse.current.inside && v && !touchRef.current ? v.ground(mouse.current.x, mouse.current.y, me.y + 1) : null;
-      inp.ping = t.pingAt ?? g ?? { x: me.x + Math.sin(lastAim.current) * 20, z: me.z + Math.cos(lastAim.current) * 20 };
+      inp.ping = t.pingAt ?? g ?? { x: me.x + Math.sin(lastAim.current) * 12, z: me.z + Math.cos(lastAim.current) * 12 };
     }
     mouse.current.ping = false;
     if (keys.pressed(keyCode(DROP_KEY))) inp.drop = me.slot;
@@ -1595,7 +1595,7 @@ function Play({ mode }: { mode: StageMode }) {
       } else if (p && 'door' in p) {
         const s = m.map.slabs[p.door];
         promptText = s.vault ? 'open the vault' : `${m.doors[p.door] === DOOR_SHUT ? 'open' : 'shut'} the ${s.bars ? 'cell door' : 'door'}`;
-      } else if (p && 'revive' in p) promptText = `${me.reviving >= 0 ? 'reviving' : 'hold to revive'} ${m.fighters[p.revive].name}`;
+      } else if (p && 'revive' in p) promptText = me.reviving >= 0 ? 'keep holding' : `hold to revive ${m.fighters[p.revive].name}`;
       else if (p) {
         const k = p.item.def.kind;
         const have = k === 'melee' ? MELEE[me.melee].name : k === 'helmet' || k === 'vest' ? ARMOR_NAMES[k][me[k]] : 'gun';
@@ -1925,7 +1925,7 @@ function Play({ mode }: { mode: StageMode }) {
               else tags.current.delete(f.id);
             }}
             className="g-scramble-tag"
-            style={{ ['--tag' as string]: f.color, ['--mate' as string]: m.mode !== 'solo' ? mateColor(m, f) : f.color, opacity: 0 }}
+            style={{ ['--tag' as string]: f.color, opacity: 0 }}
           >
             {f.name}
           </div>

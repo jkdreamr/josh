@@ -1453,7 +1453,7 @@
 /* duos and squads: your teammates' name tags in the team's color, red while knocked down */
 .g-scramble .g-scramble-tag.is-mate {
   color: #062a24;
-  background: var(--mate);
+  background: #2ee6c9;
   box-shadow:
     0 0 0 2px rgba(255, 255, 255, 0.85),
     0 1px 3px rgba(0, 0, 0, 0.3);
@@ -1476,13 +1476,15 @@
 .g-scramble .g-scramble-team {
   flex-basis: 100%;
   display: grid;
+  justify-items: start;
   gap: 4px;
-  width: 168px;
   margin: 2px 0 0;
   padding: 0;
   list-style: none;
 }
 .g-scramble .g-scramble-team li {
+  box-sizing: border-box;
+  width: 168px;
   display: grid;
   grid-template-columns: 10px 1fr;
   align-items: center;
@@ -1565,10 +1567,8 @@
     background: linear-gradient(180deg, rgba(120, 30, 34, 0.78), rgba(60, 14, 18, 0.78));
   }
 }
-.g-scramble .g-scramble-hud.is-touch .g-scramble-team {
-  width: 128px;
-}
 .g-scramble .g-scramble-hud.is-touch .g-scramble-team li {
+  width: 128px;
   padding: 4px 8px 5px;
   font-size: 11px;
 }
@@ -1608,7 +1608,8 @@
   background: linear-gradient(90deg, #5be37d, #e8fff0);
 }
 .g-scramble .g-scramble-hud.is-touch .g-scramble-down {
-  top: calc(50% - 96px);
+  /* just under your egg, clear of the banner over it */
+  top: calc(50% + 34px);
   bottom: auto;
   font-size: 13px;
 }

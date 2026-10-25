@@ -3716,7 +3716,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const col = parseInt(c.slice(1), 16);
     const g = new THREE.Group();
     const glow = basic(col, { transparent: true, opacity: 0.3, depthWrite: false });
-    add(g, G.cyl, glow, 0, 22, 0, 0.16, 40, 0.16);
+    add(g, G.cyl, glow, 0, 6, 0, 0.14, 12, 0.14);
     const pin = new THREE.Group();
     add(pin, G.ball, basic(col), 0, 0.5, 0, 0.55, 0.55, 0.55);
     add(pin, G.ball, basic(0xffffff), 0, 0.5, 0.42, 0.2, 0.2, 0.2);
