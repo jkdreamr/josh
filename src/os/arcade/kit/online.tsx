@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useId, useMemo, useState, type Re
 import { Segmented } from './controls';
 import { defineSetting } from './settings';
 import { ARCADE_API } from './leaderboard';
-import { openRoomLine, tagRound, type OpenRoom, type RoundRouter } from './online-core';
+import { openRoomAction, openRoomLine, tagRound, type OpenRoom, type RoundRouter } from './online-core';
 import { listRooms, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { sfx } from './sfx';
 
@@ -22,6 +22,15 @@ type OnlineValue = {
   handoffs: number;
   /** A quick-play room: it started on its own, and the game sets the match up the same way every time. */
   quick: boolean;
+  /** The quick-play pool the room gathered for (a game's mode, see GameShell's quickPool), or '' for none. */
+  pool: string;
+  /**
+   * Watching as a spectator (seat is -1): the game draws what the host broadcasts, with no player of this person's own,
+   * and sends nothing (send and reportResult do nothing).
+   */
+  watching: boolean;
+  /** Who is watching the room, by name. */
+  watchers: string[];
 };
 
 const OnlineContext = createContext<OnlineValue | null>(null);
@@ -37,11 +46,14 @@ export function OnlineProvider({
   transport,
   handoffs,
   quick,
+  pool,
+  watching,
+  watchers,
   children,
 }: Omit<OnlineValue, 'seat' | 'link' | 'isHost'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
   const value = useMemo(
-    () => link && seat !== null ? { link, router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs, quick } : null,
-    [link, router, seat, seats, round, players, bots, transport, handoffs, quick],
+    () => link && seat !== null ? { link, router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs, quick, pool, watching, watchers } : null,
+    [link, router, seat, seats, round, players, bots, transport, handoffs, quick, pool, watching, watchers],
   );
   return <OnlineContext.Provider value={value}>{children}</OnlineContext.Provider>;
 }
@@ -60,10 +72,14 @@ export function useOnline() {
       transport: room.transport,
       handoffs: room.handoffs,
       quick: room.quick,
+      pool: room.pool,
+      watching: room.watching,
+      watchers: room.watchers,
       // Tagged with the round this player is in at the moment it's sent, which a game that kept an old handle still gets.
       send: (d: unknown, options?: { to?: number; fast?: boolean }) => room.link.send(tagRound(room.router.round, d), options),
       onMessage: (listener: (from: number, d: unknown) => void) => room.router.listen(listener),
-      reportResult: (round: number, winner: number | null) => room.link.reportResult(round, winner),
+      /** Who won: a seat, with every seat on its team for a team game, or null. */
+      reportResult: (round: number, winner: number | null, team?: number[]) => room.link.reportResult(round, winner, team),
     };
   }, [room]);
 }
@@ -117,7 +133,56 @@ export function VisibilityPicker({ value, onChange }: { value: RoomVisibility; o
   );
 }
 
-/** This game's open rooms, each with a Join button. Hidden until Open Rooms answers. */
+export type WatchSetting = 'on' | 'off';
+/** Whether the rooms this player hosts let people watch, remembered on this device for every game (on by default). */
+export const ROOM_WATCHERS = defineSetting<WatchSetting>('online:watchers', ['on', 'off'], 'on');
+const watchOptions = [
+  ['on', 'Allowed'],
+  ['off', 'Off'],
+] as const satisfies readonly (readonly [WatchSetting, string])[];
+
+/** The host's switch for spectators: allowed (anyone in the room's code or Open Rooms can watch a round), or off. */
+export function WatchPicker({ value, onChange }: { value: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <>
+      <Segmented label="Spectators" value={value ? 'on' : 'off'} options={watchOptions} onChange={(v) => onChange(v === 'on')} />
+      <p className="arcade-online-hint">{value ? 'People Can Watch Your Rounds Without Playing.' : 'Nobody Can Watch. Anyone Watching Now Is Sent Away.'}</p>
+    </>
+  );
+}
+
+/**
+ * Who is in the room: each person (the host and you marked), the bots on one line, and who is watching. On the online
+ * Game Over card, so everyone sees who is still here for the next round.
+ */
+export function RoomRoster({ players, bots, watchers, seat, seats, label = 'In the Room' }: { players: RoomPlayer[]; bots: RoomPlayer[]; watchers: string[]; seat: number | null; seats: number; label?: string }) {
+  return (
+    <div className="arcade-online-players arcade-online-roster">
+      <strong>{label}{seats > 2 && ` ${players.length + bots.length}/${seats}`}</strong>
+      {players.map((player) => (
+        <div key={player.seat} className="arcade-online-player">
+          <span>{player.name}</span>
+          {player.seat === 0 && <small>Host</small>}
+          {player.seat === seat && <small>You</small>}
+        </div>
+      ))}
+      {!!bots.length && (
+        <div className="arcade-online-player is-bot" title={bots.map((bot) => bot.name).join(', ')}>
+          <span>{bots.map((bot) => bot.name).join(', ')}</span>
+          <small>{bots.length === 1 ? 'Bot' : `${bots.length} Bots`}</small>
+        </div>
+      )}
+      {!!watchers.length && (
+        <div className="arcade-online-player is-watching" title={watchers.join(', ')}>
+          <span>{watchers.join(', ')}</span>
+          <small>{watchers.length} Watching</small>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** This game's open rooms, each with a Join button (Watch, for a round under way nobody can join). Hidden until Open Rooms answers. */
 function OpenRoomList({ game, busy, onJoin }: { game: string; busy: boolean; onJoin: (code: string) => void }) {
   const rooms = useOpenRooms(game);
   if (!rooms) return null;
@@ -128,8 +193,8 @@ function OpenRoomList({ game, busy, onJoin }: { game: string; busy: boolean; onJ
         <div key={room.code} className="arcade-online-player">
           <span>{room.host}</span>
           <small>{openRoomLine(room)}</small>
-          <button type="button" className="arcade-btn" disabled={busy} aria-label={`Join ${room.host}'s Room`} onClick={() => onJoin(room.code)}>
-            Join
+          <button type="button" className="arcade-btn" disabled={busy} aria-label={`${openRoomAction(room)} ${room.host}'s Room`} onClick={() => onJoin(room.code)}>
+            {openRoomAction(room)}
           </button>
         </div>
       ))}
@@ -336,6 +401,12 @@ export function OnlinePanel({
   note,
   setup,
   lastCode = '',
+  watching = false,
+  watchers = [],
+  watchable = null,
+  onWatchable,
+  onTakeSeat,
+  onWatchRound,
 }: {
   game: string;
   code: string;
@@ -372,11 +443,24 @@ export function OnlinePanel({
   setup?: ReactNode;
   /** The room this player just lost touch with, filled in so they can join it again. */
   lastCode?: string;
+  /** In as a spectator: the room's people and what happens next, with nothing to start. */
+  watching?: boolean;
+  /** Who is watching, and whether the host lets people watch (null: a game nobody can watch). */
+  watchers?: string[];
+  watchable?: boolean | null;
+  /** Host only: let people watch, or not. */
+  onWatchable?: (on: boolean) => void;
+  /** A spectator takes a free seat for the next round. */
+  onTakeSeat?: () => void;
+  /** Someone waiting for the next round watches the one under way instead (their seat goes back to the room). */
+  onWatchRound?: () => void;
 }) {
   const host = seat === 0;
   const botCount = bots?.length ?? 0;
   const stepper = host && bots && onBots ? <BotStepper count={botCount} max={Math.max(0, seats - players.length)} onChange={onBots} disabled={busy} /> : null;
   const publicity = host && listed !== null && onListed ? <VisibilityPicker value={listed ? 'public' : 'private'} onChange={(v) => onListed(v === 'public')} /> : null;
+  const spectators = host && watchable !== null && onWatchable ? <WatchPicker value={watchable} onChange={onWatchable} /> : null;
+  const freeSeat = players.length < seats;
   const [joinCode, setJoinCode] = useState(lastCode);
   useEffect(() => {
     if (lastCode) setJoinCode(lastCode);
@@ -385,7 +469,7 @@ export function OnlinePanel({
   return (
     <div className="arcade-ov">
       <div className="arcade-card arcade-online-card">
-        <h2>{code ? 'Online Room' : 'Play Online'}</h2>
+        <h2>{watching ? 'Watching' : code ? 'Online Room' : 'Play Online'}</h2>
         {note && !code && <p className="arcade-online-note">{note}</p>}
         {!code ? (
           <>
@@ -450,22 +534,45 @@ export function OnlinePanel({
                   <small>{botCount === 1 ? 'Bot' : `${botCount} Bots`}</small>
                 </div>
               )}
+              {!!watchers.length && (
+                <div className="arcade-online-player is-watching" title={watchers.join(', ')}>
+                  <span>{watchers.join(', ')}</span>
+                  <small>{watchers.length} Watching</small>
+                </div>
+              )}
               {players.length + botCount < 2 && <p>{stepper ? 'Waiting For Another Player, Or Add A Bot' : 'Waiting For Another Player'}</p>}
-              {!host && listed && <p>A Public Room: Anyone Can Join From Open Rooms.</p>}
+              {!host && !watching && listed && <p>A Public Room: Anyone Can Join From Open Rooms.</p>}
             </div>
-            {(publicity || stepper || setup) && (
+            {(publicity || spectators || stepper || (setup && !watching)) && (
               <div className="arcade-setup">
                 {publicity}
+                {spectators}
                 {stepper}
-                {setup}
+                {!watching && setup}
               </div>
             )}
-            {host ? (
+            {watching ? (
+              <>
+                <p>{inProgress ? 'A Round Is Under Way. It Shows Here in a Moment.' : 'You Are Watching. The Round Shows Here When the Host Starts It.'}</p>
+                {onTakeSeat && freeSeat && !inProgress && (
+                  <button type="button" className="arcade-btn arcade-btn-primary" disabled={busy} onClick={onTakeSeat}>
+                    Play Instead
+                  </button>
+                )}
+              </>
+            ) : host ? (
               <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" disabled={busy || players.length + botCount < 2} onClick={onStart}>
                 Start Game
               </button>
             ) : (
-              <p>{inProgress ? 'A Round Is In Progress. You Will Join The Next One.' : 'Waiting For The Host To Start'}</p>
+              <>
+                <p>{inProgress ? 'A Round Is In Progress. You Will Join The Next One.' : 'Waiting For The Host To Start'}</p>
+                {inProgress && watchable && onWatchRound && (
+                  <button type="button" className="arcade-btn" onClick={onWatchRound}>
+                    Watch This Round
+                  </button>
+                )}
+              </>
             )}
           </>
         )}

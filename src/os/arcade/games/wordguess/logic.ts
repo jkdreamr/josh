@@ -138,3 +138,60 @@ export function recordDaily(prev: Stats, day: number, tries: number): Stats {
   } else s.streak = 0;
   return s;
 }
+
+/** The streak as of `day`: a win today or yesterday keeps it alive, anything older has lapsed. */
+export const currentStreak = (s: Stats, day: number): number => (s.lastWin >= day - 1 ? s.streak : 0);
+
+/**
+ * Hard Mode: every hint so far has to be used. Greens stay in their spot and golds appear somewhere.
+ * Returns what the guess is missing, or null when it's allowed.
+ */
+export function hardModeMiss(guess: string, rows: string[], marks: Mark[][]): string | null {
+  const need = new Map<string, number>();
+  for (let r = 0; r < rows.length; r++) {
+    const have = new Map<string, number>();
+    for (let i = 0; i < WORD; i++) {
+      const l = rows[r][i];
+      if (marks[r][i] === 'correct' && guess[i] !== l) return `Spot ${i + 1} Must Be ${l.toUpperCase()}`;
+      if (marks[r][i] !== 'absent') have.set(l, (have.get(l) ?? 0) + 1);
+    }
+    for (const [l, n] of have) need.set(l, Math.max(need.get(l) ?? 0, n));
+  }
+  for (const [l, n] of need) {
+    let count = 0;
+    for (const ch of guess) if (ch === l) count++;
+    if (count < n) return `Guess Must Use ${l.toUpperCase()}`;
+  }
+  return null;
+}
+
+const SQUARE: Record<Mark, string> = { correct: '\u{1F7E9}', present: '\u{1F7E8}', absent: '\u2B1B' };
+
+/** The spoiler-free result grid people paste into a chat. */
+export function shareText(day: number, rows: string[], answer: string, hard = false): string {
+  const solved = rows.includes(answer);
+  const head = `Word Guess ${day + 1} ${solved ? rows.length : 'X'}/${TRIES}${hard ? '*' : ''}`;
+  return [head, '', ...rows.map((g) => score(g, answer).map((m) => SQUARE[m]).join(''))].join('\n');
+}
+
+/** Board tile size that fits a w by h box, with room for the gaps and a little air. */
+export const tileFit = (w: number, h: number, cap: number) => Math.max(0, Math.floor(Math.min((w - 8) / (WORD + 0.48), (h - 8) / (TRIES + 0.6), cap)));
+
+export type Layout = { side: boolean; modesRow: boolean; boardW: number; tile: number };
+
+/**
+ * Stacked (board over keyboard) or side by side (board left, keyboard right) for a w by h game area.
+ * Side by side wins on short, wide areas like the framed laptop window, where stacking leaves a sliver of a board.
+ * `top` is the height of the top band (mode switch and shell controls), `keysH` the stacked keyboard's height.
+ */
+export function pickLayout(w: number, h: number, o: { modesW: number; ctrlW: number; top: number; keysH: number; cap: number; minKeys?: number }): Layout {
+  const modesRow = w - 20 < o.modesW + o.ctrlW + 12;
+  const stackTop = o.top + (modesRow ? o.top - 8 : 0);
+  const stackTile = tileFit(w - 16, h - stackTop - o.keysH - 22, o.cap);
+  // Beside the keyboard the board takes the full height, but leaves the panel room for the keys and the top row.
+  const need = Math.max(o.modesW + o.ctrlW + 12, o.minKeys ?? 270);
+  const sideTile = Math.min(tileFit(Infinity, h - 12, o.cap), tileFit(w - 30 - need, Infinity, o.cap));
+  const boardW = Math.ceil(sideTile * (WORD + 0.48) + 8);
+  if (sideTile >= 14 && sideTile > stackTile * 1.2) return { side: true, modesRow: false, boardW, tile: sideTile };
+  return { side: false, modesRow, boardW: w, tile: stackTile };
+}

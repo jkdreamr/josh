@@ -54,9 +54,33 @@ export default function Game({ compact, onExit, roomCode }: GameProps) {
 function useTargetSize() {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState(44);
+  // The phone and iPad app-open animation scales the window up from its icon, so a size measured
+  // mid-animation is far too big. Measure again whenever an animation, transition or resize settles.
   useLayoutEffect(() => {
-    const field = ref.current?.querySelector<HTMLElement>('.arcade-seg');
-    if (field) setSize(touchTarget(field.getBoundingClientRect().width, field.offsetWidth));
+    const root = ref.current;
+    if (!root) return;
+    let raf = 0;
+    const read = () => {
+      const field = root.querySelector<HTMLElement>('.arcade-seg');
+      if (field) setSize(touchTarget(field.getBoundingClientRect().width, field.offsetWidth));
+    };
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(read);
+    };
+    read();
+    const resize = new ResizeObserver(measure);
+    resize.observe(root.closest('.arcade-shell') ?? root);
+    window.addEventListener('resize', measure);
+    window.addEventListener('animationend', measure, true);
+    window.addEventListener('transitionend', measure, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      resize.disconnect();
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('animationend', measure, true);
+      window.removeEventListener('transitionend', measure, true);
+    };
   }, []);
   return { ref, style: { '--g-slither-target': `${size}px` } as CSSProperties };
 }

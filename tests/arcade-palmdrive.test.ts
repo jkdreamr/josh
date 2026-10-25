@@ -15,6 +15,7 @@ import {
   RIVALS,
   ROLL_T,
   TURBO_AT,
+  TURBO_DV,
   TURBO_T,
   coinTop,
   createRace,
@@ -198,8 +199,27 @@ test('hop into a drift, hold it to charge the sparks, let go for a mini-turbo', 
   const out = run(r, 1 / 60);
   assert.equal(k.drift, 0);
   assert.deepEqual(out.filter((e) => e.t === 'turbo').map((e) => (e as { level: number }).level), [2]);
-  assert.ok(Math.abs(k.boost - TURBO_T[2]) < 1e-6);
+  assert.ok(Math.abs(k.turbo - TURBO_T[2]) < 1e-6 && k.boost > 0);
   assert.ok(!evs.some((e) => e.t === 'turbo'));
+});
+
+test('a mini-turbo is a gentler boost, and a mushroom on top of one goes at full strength', () => {
+  const r = race();
+  const k = r.karts[0];
+  const top = CLASSES['100cc'].top + coinTop(k.coins);
+  place(r, k, 20, 0, top);
+  k.drift = 1;
+  k.charge = TURBO_AT[3] + 0.01;
+  k.input.drift = false;
+  run(r, 0.8);
+  assert.ok(k.turbo > 0 && k.boost > 0, 'still on the purple mini-turbo');
+  assert.ok(Math.abs(k.v - (top + TURBO_DV)) < 0.3, `mini-turbo speed ${k.v}`);
+  giveItem(r, k, 'mushroom', 0);
+  useItem(r, k);
+  run(r, 0.6);
+  assert.ok(k.turbo > 0 && k.v > top + TURBO_DV + 2, `mushroom speed ${k.v}`);
+  run(r, 1.5);
+  assert.ok(k.turbo === 0 && k.boost === 0, 'and both run out');
 });
 
 test('laps count only going forward, and three laps finish the race', () => {

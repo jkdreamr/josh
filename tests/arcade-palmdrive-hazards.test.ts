@@ -657,7 +657,10 @@ test('flying over the edge of a pond keeps you dry, and a pond never reaches a k
   // right on the curb on the inside of the loop, all the way round: dry
   const s = golf();
   const t = s.karts[0];
+  // (but where a goose sits by the water's edge: run into one there and it can knock you in)
+  const geese = s.hazards.filter((h) => h.kind === 'tether');
   for (let at = 395; at < 610; at += 5) {
+    if (geese.some((h) => Math.abs(h.s - at) < 4)) continue;
     place(s, t, at, -s.track.half - 0.5, 18);
     assert.ok(!run(s, 2 * DT).some((e) => e.t === 'splash'), `wet on the curb at s=${at}`);
   }

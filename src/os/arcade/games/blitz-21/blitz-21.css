@@ -59,6 +59,52 @@
 .g-blitz-21 .g-blitz-21-lane.is-cursor {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, #30a46c 75%, #fff);
 }
+.g-blitz-21 .g-blitz-21-lane.is-aim.is-will-place {
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.42);
+}
+.g-blitz-21 .g-blitz-21-lane.is-aim.is-will-clear {
+  background: rgba(48, 164, 108, 0.16);
+  box-shadow: inset 0 0 0 2px #3dd68c;
+}
+.g-blitz-21 .g-blitz-21-lane.is-aim.is-will-bust {
+  background: rgba(255, 69, 58, 0.1);
+  box-shadow: inset 0 0 0 2px rgba(255, 105, 97, 0.85);
+}
+.g-blitz-21 .g-blitz-21-lane.is-clearing {
+  animation: g-blitz-21-glow-clear 0.6s ease-out;
+}
+.g-blitz-21 .g-blitz-21-lane.is-busting {
+  animation: g-blitz-21-glow-bust 0.6s ease-out;
+}
+.g-blitz-21 .g-blitz-21-hint {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  z-index: 3;
+  min-width: max-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 16px;
+  color: #fff;
+  background: rgba(22, 24, 28, 0.9);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.2);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.g-blitz-21 .g-blitz-21-hint.is-clear {
+  color: #0d2b1c;
+  background: #3dd68c;
+}
+.g-blitz-21 .g-blitz-21-hint.is-bust {
+  background: #e5484d;
+}
+.g-blitz-21 .g-blitz-21-wait {
+  margin: auto;
+  font-size: 14px;
+  color: rgba(245, 245, 247, 0.6);
+}
 .g-blitz-21 .g-blitz-21-total {
   height: 24px;
   font-size: 15px;
@@ -75,7 +121,7 @@
 .g-blitz-21 .g-blitz-21-slot {
   position: relative;
   width: var(--cw);
-  height: calc(var(--ch) * 1.81);
+  height: var(--slot-h);
   margin-top: 4px;
 }
 .g-blitz-21 .g-blitz-21-hole {
@@ -172,9 +218,6 @@
 .g-blitz-21 .g-blitz-21-court svg {
   width: calc(var(--cw) * 0.2);
   height: calc(var(--cw) * 0.2);
-}
-.g-blitz-21 .g-blitz-21-card.is-drop {
-  animation: g-blitz-21-drop 0.17s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 .g-blitz-21 .g-blitz-21-card.is-deal {
   animation: g-blitz-21-deal 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.1);
@@ -311,6 +354,7 @@
 .g-blitz-21 .g-blitz-21-left {
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
   color: rgba(245, 245, 247, 0.6);
 }
 .g-blitz-21 .g-blitz-21-next .g-blitz-21-card,
@@ -353,6 +397,7 @@
 }
 .g-blitz-21 .g-blitz-21-time.is-low b {
   color: #ff6961;
+  animation: g-blitz-21-beat 1s ease-out infinite;
 }
 .g-blitz-21 .g-blitz-21-bar {
   display: block;
@@ -444,6 +489,27 @@
   opacity: 0.5;
 }
 
+@keyframes g-blitz-21-beat {
+  0% {
+    transform: scale(1.12);
+  }
+  40%,
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes g-blitz-21-glow-clear {
+  0% {
+    background: rgba(61, 214, 140, 0.34);
+    box-shadow: inset 0 0 0 2px #3dd68c, 0 0 22px rgba(61, 214, 140, 0.45);
+  }
+}
+@keyframes g-blitz-21-glow-bust {
+  0% {
+    background: rgba(255, 69, 58, 0.26);
+    box-shadow: inset 0 0 0 2px #ff6961, 0 0 18px rgba(255, 69, 58, 0.4);
+  }
+}
 @keyframes g-blitz-21-pop {
   from {
     transform: scale(0.8);
@@ -452,16 +518,10 @@
     transform: scale(1.12);
   }
 }
-@keyframes g-blitz-21-drop {
-  from {
-    transform: translateY(-22px) scale(1.06);
-    opacity: 0.4;
-  }
-}
 @keyframes g-blitz-21-deal {
   from {
-    transform: translate(-6px, -10px) rotate(-5deg) scale(0.92);
-    opacity: 0;
+    transform: translate(46%, -4%) rotate(4deg) scale(0.6);
+    opacity: 0.4;
   }
 }
 @keyframes g-blitz-21-clear {
@@ -516,8 +576,10 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .g-blitz-21 .g-blitz-21-card.is-drop,
   .g-blitz-21 .g-blitz-21-card.is-deal,
+  .g-blitz-21 .g-blitz-21-time.is-low b,
+  .g-blitz-21 .g-blitz-21-lane.is-clearing,
+  .g-blitz-21 .g-blitz-21-lane.is-busting,
   .g-blitz-21 .g-blitz-21-total,
   .g-blitz-21 .g-blitz-21-streak.is-on,
   .g-blitz-21 .g-blitz-21-busts i.is-on {
@@ -525,38 +587,83 @@
   }
 }
 
-/* Short wide windows: HUD sits in the top bar between the score and the controls */
+/* Short wide windows (the framed laptop): the HUD gets its own column beside the deck */
 .g-blitz-21 .is-short {
   padding: 44px 12px 6px;
 }
+.g-blitz-21 .is-short .g-blitz-21-play {
+  gap: 14px;
+}
 .g-blitz-21 .is-short .g-blitz-21-hud {
-  position: absolute;
-  top: 8px;
-  left: 86px;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  width: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 92px;
 }
 .g-blitz-21 .is-short .g-blitz-21-time {
-  width: 64px;
+  width: 100%;
 }
 .g-blitz-21 .is-short .g-blitz-21-time b {
-  font-size: 18px;
+  font-size: 20px;
+}
+.g-blitz-21 .is-short .g-blitz-21-busts {
+  gap: 5px;
+}
+.g-blitz-21 .is-short .g-blitz-21-streak {
+  min-width: 0;
 }
 .g-blitz-21 .is-short .g-blitz-21-dealer {
   width: auto;
+}
+.g-blitz-21 .is-short .g-blitz-21-lanes {
+  gap: 8px;
+}
+.g-blitz-21 .is-short .g-blitz-21-lane {
+  border-radius: 10px;
 }
 .g-blitz-21 .is-short .g-blitz-21-total {
   height: 20px;
   font-size: 14px;
   line-height: 20px;
 }
-.g-blitz-21 .is-short .g-blitz-21-count {
-  gap: 2px;
-  padding-bottom: 4px;
+.g-blitz-21 .is-short .g-blitz-21-lane.is-soft .g-blitz-21-total {
+  font-size: 12px;
 }
-.g-blitz-21 .is-short .g-blitz-21-count i {
-  width: 4px;
-  height: 4px;
+.g-blitz-21 .is-short .g-blitz-21-count {
+  display: none;
+}
+.g-blitz-21 .is-short .g-blitz-21-hint {
+  bottom: 4px;
+}
+
+/* Touch: a scaled device frame would shrink text and buttons, so they grow back by the frame scale */
+@media (pointer: coarse) {
+  .g-blitz-21 .g-blitz-21-stage.is-tall {
+    padding-top: calc(60px * var(--g-blitz-21-u, 1));
+  }
+  .g-blitz-21 .arcade-ctrl button {
+    width: calc(40px * var(--g-blitz-21-u, 1));
+    height: calc(40px * var(--g-blitz-21-u, 1));
+  }
+  .g-blitz-21 .arcade-score,
+  .g-blitz-21 .g-blitz-21-hud,
+  .g-blitz-21 .g-blitz-21-float,
+  .g-blitz-21 .arcade-ov > .arcade-card {
+    zoom: var(--g-blitz-21-u, 1);
+  }
+  .g-blitz-21 .g-blitz-21-next > span,
+  .g-blitz-21 .g-blitz-21-left {
+    font-size: calc(12px * var(--g-blitz-21-u, 1));
+  }
+  .g-blitz-21 .g-blitz-21-total {
+    height: calc(24px * var(--g-blitz-21-u, 1));
+    font-size: calc(15px * var(--g-blitz-21-u, 1));
+    line-height: calc(24px * var(--g-blitz-21-u, 1));
+  }
+  .g-blitz-21 .g-blitz-21-lane.is-soft .g-blitz-21-total {
+    font-size: calc(13px * var(--g-blitz-21-u, 1));
+  }
+  .g-blitz-21 .g-blitz-21-count {
+    padding-bottom: 4px;
+  }
 }

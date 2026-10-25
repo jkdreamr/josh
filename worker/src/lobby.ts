@@ -38,21 +38,22 @@ export class Lobby extends DurableObject<object> {
   }
 
   /**
-   * Quick play: the code of a quick room of this game still gathering people, or else `fresh`, which is kept as a new
-   * one (with no host until its first person comes in) for the Worker to open. One call at a time, so two people
-   * pressing Play together get the same room. Each one sent to a room counts in its line until the room says otherwise.
+   * Quick play: the code of a quick room of this game (and `pool`, if any: a game's modes keep apart) still gathering
+   * people, or else `fresh`, which is kept as a new one (with no host until its first person comes in) for the Worker
+   * to open. One call at a time, so two people pressing Play together get the same room. Each one sent to a room counts
+   * in its line until the room says otherwise.
    */
-  quick(game: string, fresh: string, seats: number, lateJoin: boolean): string {
+  quick(game: string, fresh: string, seats: number, lateJoin: boolean, pool?: string): string {
     const sql = this.ctx.storage.sql;
     const now = Date.now();
     sql.exec('DELETE FROM rooms WHERE updated < ?', now - LISTING_TTL_MS);
     const rows = sql.exec<{ listing: string; updated: number }>('SELECT listing, updated FROM rooms WHERE game = ?', game).toArray();
-    const pick = pickQuick(rows.map((row) => ({ listing: JSON.parse(row.listing) as OpenRoom, updated: row.updated })), now);
+    const pick = pickQuick(rows.map((row) => ({ listing: JSON.parse(row.listing) as OpenRoom, updated: row.updated })), now, pool);
     if (pick) {
       sql.exec('UPDATE rooms SET listing = ? WHERE code = ?', JSON.stringify({ ...pick, players: pick.players + 1 }), pick.code);
       return pick.code;
     }
-    this.put({ code: fresh, game, host: '', players: 1, bots: 0, seats, started: false, lateJoin, quick: true, startAt: now + GATHER_MS });
+    this.put({ code: fresh, game, host: '', players: 1, bots: 0, seats, started: false, lateJoin, quick: true, startAt: now + GATHER_MS, ...(pool ? { pool } : {}) });
     return fresh;
   }
 }

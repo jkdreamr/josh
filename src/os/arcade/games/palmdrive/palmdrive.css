@@ -227,6 +227,12 @@
   stroke: #8c1515;
   stroke-width: 4;
 }
+/* a car or a van on Hoover Nights: dark with its headlights' amber edge */
+.g-palmdrive .g-palmdrive-map-car {
+  fill: #50525c;
+  stroke: #ffd36a;
+  stroke-width: 3;
+}
 /* a golf cart: white with a green edge */
 .g-palmdrive .g-palmdrive-map-cart {
   fill: #f4f3ee;
@@ -577,6 +583,12 @@
 }
 .g-palmdrive .g-palmdrive-flash.is-bolt {
   background: rgba(220, 235, 255, 0.85);
+}
+.g-palmdrive .g-palmdrive-flash.is-ice {
+  background: rgba(190, 235, 255, 0.55);
+}
+.g-palmdrive .g-palmdrive-flash.is-cloud {
+  background: rgba(40, 44, 60, 0.4);
 }
 @keyframes g-palmdrive-flash {
   from {
@@ -1146,4 +1158,28 @@
   bottom: 150px;
   width: 72px;
   height: 72px;
+}
+/* the fire flower burns while it lasts */
+.g-palmdrive .g-palmdrive-item.is-fire {
+  box-shadow: inset 0 0 0 3px #ff7a1a, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 20px rgba(255, 90, 20, 0.9);
+  animation: g-palmdrive-fire 0.4s ease-in-out infinite alternate;
+}
+@keyframes g-palmdrive-fire {
+  to {
+    box-shadow: inset 0 0 0 3px #ffd23f, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 8px rgba(255, 90, 20, 0.5);
+  }
+}
+/* frost creeping in from the edges while an ice ball has you frozen */
+.g-palmdrive .g-palmdrive-frost {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(200, 240, 255, 0) 45%, rgba(200, 240, 255, 0.35) 75%, rgba(235, 250, 255, 0.8) 100%);
+  box-shadow: inset 0 0 6vmin rgba(255, 255, 255, 0.6);
+  animation: g-palmdrive-frost 0.25s ease-out;
+}
+@keyframes g-palmdrive-frost {
+  from {
+    opacity: 0;
+  }
 }

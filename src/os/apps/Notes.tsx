@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { folders, linkedin, links, profile } from '../data';
+import { folders, linkedin, links, profile, school } from '../data';
 import { useOS, type AppProps } from '../types';
 
 type Note = { id: string; title: string; preview: string; body: () => ReactNode };
@@ -9,23 +9,17 @@ const work = folders.find((f) => f.id === 'work')!.entries;
 const notes: Note[] = [
   {
     id: 'about',
-    title: 'about me',
+    title: 'About me',
     preview: 'hi, i’m joshua koo.',
     body: () => (
       <>
         <h1>hi, i’m joshua koo.</h1>
         <p>{profile.tagline}</p>
-        <p>
-          i study <b>cs + math at Stanford</b>, cox the varsity rowing team, and spend the rest of my time somewhere between startups, investing and
-          music.
-        </p>
-        <ul>
-          <li>currently leading Cognition’s Korea efforts</li>
-          <li>investment intern at CRV</li>
-          <li>debuted as an artist with “Fairytale” (Dejavu Group)</li>
-          <li>building side projects i actually use</li>
-        </ul>
-        <p className="note-muted">tip: everything on this desktop is clickable. try the terminal, or text me in Messages.</p>
+        <p><strong>
+          I study cs + math at Stanford, walked on to the men’s varsity rowing team as a coxswain, and spend the rest of my time somewhere
+          between startups, investing and music.
+        </strong></p>
+        <p className="note-muted"><strong>tip: everything on this desktop is clickable. try the terminal, or text me in Messages.</strong></p>
       </>
     ),
   },
@@ -70,51 +64,35 @@ const notes: Note[] = [
     ),
   },
   {
-    id: 'rowing',
-    title: 'rowing',
-    preview: 'coxswain, stanford varsity',
+    id: 'school',
+    title: 'School',
+    preview: 'Stanford Men’s Rowing, Kappa Sigma',
     body: () => (
       <>
-        <h1>rowing</h1>
-        <p>i’m a coxswain for Stanford Varsity Rowing, steering the boat, calling the race, keeping eight people in rhythm.</p>
-        <p className="note-muted">want a taste? open Cox Box and row to my calls. the faster you type, the faster the boat goes.</p>
+        <h1>School</h1>
+        <p><b>Currently:</b> {school.current.join(', ')}</p>
+        <p><b>Past:</b> {school.past.join(', ')}</p>
       </>
     ),
   },
   {
     id: 'misc',
-    title: 'awards, languages, papers',
-    preview: 'USACO Platinum, M3 Challenge…',
+    title: 'Other things I like',
+    preview: 'Go, sports, lifting, music, cooking…',
     body: () => (
       <>
-        <h1>awards, languages, papers</h1>
-        <h2>honors</h2>
+        <h1>Other things I like</h1>
         <ul>
-          {linkedin.awards.map((a) => (
-            <li key={a.title}>
-              {a.title} <span className="note-muted">· {a.meta}</span>
-            </li>
-          ))}
-        </ul>
-        <h2>languages</h2>
-        <ul>
-          {linkedin.languages.map((l) => (
-            <li key={l.name}>
-              {l.name} <span className="note-muted">· {l.level}</span>
-            </li>
-          ))}
-        </ul>
-        <h2>writing</h2>
-        <ul>
-          {linkedin.publications.map((p) => (
-            <li key={p.title}>
-              {p.title} <span className="note-muted">· {p.meta}</span>
-            </li>
-          ))}
-        </ul>
-        <h2>also</h2>
-        <ul>
-          <li>{linkedin.projects[1].title}: {linkedin.projects[1].blurb.toLowerCase()}</li>
+          <li>Go (board game)</li>
+          <li>I love watching and playing sports like badminton, basketball, football (go 49ers!), golf, tennis, squash, running, swimming.</li>
+          <li>Lifting (a lot)</li>
+          <li>Making music</li>
+          <li>Cooking</li>
+          <li>I can speak Korean and Mandarin</li>
+          <li>algorithmic coding (USACO Plat my freshman year of high school)</li>
+          <li>crypto</li>
+          <li>eating (literally everything)</li>
+          <li>clash of clans (prev. top 6 in the US), I stopped playing now lol</li>
         </ul>
       </>
     ),

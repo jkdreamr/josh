@@ -44,7 +44,7 @@ export const dressPit: Dresser = (d: Dress) => {
   // the instanced pools: flames, one additive glow pool (wall light, vents, cracks), chain links, rings and balls
 
   const fire = flames(d, 64);
-  const glowMat = d.basic('#ffffff', { transparent: true, opacity: 0.3, depthWrite: false });
+  const glowMat = d.basic('#ffffff', { transparent: true, opacity: 0.8, depthWrite: false, alphaMap: geo.soft });
   const glow = new Instancer(THREE, geo.disc, glowMat, 220);
   const links = new Instancer(THREE, geo.link, mats.chain, 420);
   const rings = new Instancer(THREE, geo.ring, mats.darkIron, 48);
@@ -74,8 +74,8 @@ export const dressPit: Dresser = (d: Dress) => {
     const r = coreR(y) + 0.42;
     fire.add(Math.cos(a) * r, y + 0.6, Math.sin(a) * r, 1.25);
     // a wide faint pool and a hot centre behind the flame
-    wallGlow(a, y + 0.8, 0.75, [0.8, 0.38, 0.15]);
-    wallGlow(a, y + 0.85, 0.38, [1, 0.6, 0.25], 0.03);
+    wallGlow(a, y + 0.8, 1.1, [1, 0.5, 0.2]);
+    wallGlow(a, y + 0.85, 0.5, [1, 0.72, 0.35], 0.03);
   };
 
   /** a grille in the wall with heat behind it */
@@ -297,6 +297,6 @@ export const dressPit: Dresser = (d: Dress) => {
         h.inst.set(h.idx, c.ax + c.tx * h.dy * s, c.ay - h.dy * k, c.az + c.tz * h.dy * s, swayRot, swaySc);
       }
     }
-    glowMat.opacity = 0.32 + Math.sin(t * 2.3) * 0.03 + Math.sin(t * 5.1) * 0.02;
+    glowMat.opacity = 0.82 + Math.sin(t * 2.3) * 0.06 + Math.sin(t * 5.1) * 0.04;
   });
 };

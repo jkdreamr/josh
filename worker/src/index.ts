@@ -10,7 +10,7 @@ import { Chat, type ChatEnv } from './chat';
 import { Lobby } from './lobby';
 import { Lounge, type LoungeEnv } from './lounge';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
-import { agreedWinner, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, endRound, GATHER_MS, gatherFull, gathering, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, seatsFor, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
+import { agreedWinners, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_MS, gatherFull, gathering, isPool, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, seatsFor, type RecordedRounds, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
 
 export { Chat, Lobby, Lounge };
 
@@ -152,10 +152,35 @@ export class Boards extends DurableObject<Env> {
   }
 }
 
-/** v: the room protocol the client speaks; 2 and up follow a host hand-off (older clients only know the room closing). */
-type Attachment = { seat: number; name: string; v?: number };
+/**
+ * v: the room protocol the client speaks; 2 and up follow a host hand-off (older clients only know the room closing).
+ * watch: a spectator, with no seat (seat -1): it gets what the room says and the host's game shares, and sends nothing.
+ */
+type Attachment = { seat: number; name: string; v?: number; watch?: true };
 /** Clients that follow a host hand-off: when one of these is left without a host, the next one takes over. */
 const HANDOFF_VERSION = 2;
+/** Clients that know spectators, and are told why a room can't take them on the socket rather than by a refused request. */
+const WATCH_VERSION = 3;
+
+/**
+ * Turns someone away with a reason they can show (not-found, started, full, no-watching), and whether they could watch
+ * the room instead: the socket opens just long enough to say so.
+ */
+function refuse(reason: string, watch = false): Response {
+  const pair = new WebSocketPair();
+  const server = pair[1];
+  server.accept();
+  server.send(JSON.stringify({ t: 'closed', reason, ...(watch ? { watch: true } : {}) }));
+  // The client closes it once it has read why (closing at once can lose the message on its way); this is the backstop.
+  setTimeout(() => {
+    try {
+      server.close(1000, reason);
+    } catch {
+      /* already closed */
+    }
+  }, 5000);
+  return new Response(null, { status: 101, webSocket: pair[0] });
+}
 type RoomResults = { reports: RoundReports; recorded: RecordedRounds };
 
 export class Room extends DurableObject<Env> {
@@ -168,14 +193,15 @@ export class Room extends DurableObject<Env> {
 
   /**
    * listed: a public room, shown in the arcade's Open Rooms once its host is in. quick: a quick-play room (public, with
-   * bots in every seat nobody holds), which starts on its own GATHER_MS from now, or closes then if nobody came.
+   * bots in every seat nobody holds), which starts on its own GATHER_MS from now, or closes then if nobody came; pool:
+   * the quick-play pool it gathers for.
    */
-  open(code: string, game: string, spec: OnlineSpec, listed = false, quick = false): Promise<boolean> {
+  open(code: string, game: string, spec: OnlineSpec, listed = false, quick = false, pool?: string): Promise<boolean> {
     return this.exclusive(async () => {
       if (await this.ctx.storage.get<RoomState>('room')) return false;
       const seats = seatsFor(spec);
-      const gather = quick ? { quick: true, startAt: Date.now() + GATHER_MS } : {};
-      await this.ctx.storage.put<RoomState>('room', { code, game, seats, started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: quick ? seats - 1 : 0 } : {}), ...(listed || quick ? { listed: true } : {}), ...gather });
+      const gather = quick ? { quick: true, startAt: Date.now() + GATHER_MS, ...(pool ? { pool } : {}) } : {};
+      await this.ctx.storage.put<RoomState>('room', { code, game, seats, started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: quick ? seats - 1 : 0 } : {}), ...(listed || quick ? { listed: true } : {}), ...(spec.watch ? { watch: true, watchable: true } : {}), ...gather });
       await this.ctx.storage.put<RoomResults>('results', { reports: {}, recorded: [] });
       if (quick) await this.ctx.storage.setAlarm(gather.startAt!);
       return true;
@@ -222,7 +248,8 @@ export class Room extends DurableObject<Env> {
 
   private async handleMessage(ws: WebSocket, message: string | ArrayBuffer) {
     const attachment = ws.deserializeAttachment() as Attachment | null;
-    if (!attachment) return;
+    // spectators only watch
+    if (!attachment || attachment.watch) return;
     const room = await this.ctx.storage.get<RoomState>('room');
     if (!room) return;
     const parsed = parseRoomMessage(message, room.seats);
@@ -244,11 +271,29 @@ export class Room extends DurableObject<Env> {
       return;
     }
 
-    if (parsed.t === 'bots' || parsed.t === 'listed') {
+    // The host's game shares what it broadcasts with the spectators too (the players get it over their direct links).
+    if (parsed.t === 'watch') {
+      if (attachment.seat !== 0) return;
+      const data = JSON.stringify({ t: 'msg', from: 0, d: parsed.d });
+      for (const socket of this.watchers()) this.trySend(socket, data);
+      return;
+    }
+
+    if (parsed.t === 'bots' || parsed.t === 'listed' || parsed.t === 'watchable') {
       if (attachment.seat !== 0) return;
       if (parsed.t === 'bots') {
         if (!room.allowBots) return;
         room.bots = parsed.n;
+      } else if (parsed.t === 'watchable') {
+        if (!room.watch) return;
+        room.watchable = parsed.on;
+        // turned off: whoever is watching has to go
+        if (!parsed.on) {
+          for (const socket of this.watchers()) {
+            this.trySend(socket, JSON.stringify({ t: 'closed', reason: 'no-watching' }));
+            socket.close(1000, 'no-watching');
+          }
+        }
       } else room.listed = parsed.on;
       await this.ctx.storage.put('room', room);
       const lineup = this.lineup(room, this.players());
@@ -259,7 +304,7 @@ export class Room extends DurableObject<Env> {
 
     if (parsed.t === 'msg' || parsed.t === 'signal') {
       const packet = { t: parsed.t, from: attachment.seat, d: parsed.d };
-      if (parsed.to === undefined) this.broadcast(packet, ws);
+      if (parsed.to === undefined) this.broadcast(packet, ws, true);
       else this.sendTo(parsed.to, packet, ws);
       return;
     }
@@ -268,18 +313,17 @@ export class Room extends DurableObject<Env> {
     const resultState = (await this.ctx.storage.get<RoomResults>('results')) ?? { reports: {}, recorded: [] };
     const roundKey = String(parsed.round);
     const roundReports = resultState.reports[roundKey] ?? {};
-    roundReports[String(attachment.seat)] = parsed.winner;
+    roundReports[String(attachment.seat)] = parsed.team ?? parsed.winner;
     resultState.reports[roundKey] = roundReports;
-    const winner = agreedWinner(resultState.reports, roundSeats(room, connected.map(({ seat }) => seat), parsed.round), parsed.round);
-    if (winner !== null && connected.some(({ seat }) => seat === winner) && markRoundRecorded(resultState.recorded, parsed.round)) {
+    const winners = agreedWinners(resultState.reports, roundSeats(room, connected.map(({ seat }) => seat), parsed.round), parsed.round);
+    // a winning team: a win for each person on it who is still here
+    const names = (winners ?? []).map((seat) => connected.find((player) => player.seat === seat)?.name).filter((name): name is string => !!name);
+    if (names.length && markRoundRecorded(resultState.recorded, parsed.round)) {
       await this.ctx.storage.put('results', resultState);
-      const winnerName = connected.find(({ seat }) => seat === winner)?.name;
-      if (winnerName) {
-        try {
-          await this.env.BOARDS.get(this.env.BOARDS.idFromName('global')).recordWin(room.game, winnerName);
-        } catch {
-          return;
-        }
+      try {
+        for (const name of names) await this.env.BOARDS.get(this.env.BOARDS.idFromName('global')).recordWin(room.game, name);
+      } catch {
+        return;
       }
       return;
     }
@@ -306,19 +350,28 @@ export class Room extends DurableObject<Env> {
     if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return json({ error: 'websocket upgrade required' }, 400);
     }
+    const url = new URL(request.url);
+    const version = Number(url.searchParams.get('v'));
+    // Clients from before spectators only understand a refused HTTP request; newer ones are told why on the socket.
+    const explains = Number.isSafeInteger(version) && version >= WATCH_VERSION;
     const room = await this.ctx.storage.get<RoomState>('room');
-    if (!room) return json({ error: 'room not found' }, 404);
-    if (!canJoinRoom(room)) return json({ error: 'room already started' }, 409);
+    if (!room) return explains ? refuse('not-found') : json({ error: 'room not found' }, 404);
+    const watchers = this.watchers().length;
+    if (url.searchParams.get('watch') === '1') {
+      if (!canWatchRoom(room, watchers)) return explains ? refuse(room.watch && room.watchable !== false ? 'full' : 'no-watching') : json({ error: 'not watchable' }, 409);
+      return this.watch(room, url, version);
+    }
+    // a spectator, or anyone who reaches a room they can't take a seat in, is told whether they could watch instead
+    const watch = canWatchRoom(room, watchers);
+    if (!canJoinRoom(room)) return explains ? refuse('started', watch) : json({ error: 'room already started' }, 409);
     // A socket on its way out keeps its seat until it has gone, so nobody is ever given a seat someone still holds.
     const sockets = this.ctx.getWebSockets();
-    const seat = lowestFreeSeat(room.seats, sockets.map((socket) => (socket.deserializeAttachment() as Attachment | null)?.seat).filter((value): value is number => value !== undefined));
-    if (seat === null) return json({ error: 'room is full' }, 409);
+    const seat = lowestFreeSeat(room.seats, sockets.map((socket) => (socket.deserializeAttachment() as Attachment | null)).filter((value): value is Attachment => !!value && !value.watch).map((value) => value.seat));
+    if (seat === null) return explains ? refuse('full', watch) : json({ error: 'room is full' }, 409);
     const existingPlayers = this.players();
 
-    const url = new URL(request.url);
     const cleaned = cleanName(url.searchParams.get('name') ?? '');
     const name = nameLength(cleaned) >= 1 && nameLength(cleaned) <= 16 ? cleaned : `Player ${seat + 1}`;
-    const version = Number(url.searchParams.get('v'));
     const code = /\/rooms\/([ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4})\/ws$/.exec(url.pathname)?.[1] ?? '';
     const pair = new WebSocketPair();
     const client = pair[0];
@@ -328,20 +381,44 @@ export class Room extends DurableObject<Env> {
     if (room.started) benchSeat(room, seat);
     if (room.started || gatherFull(room, existingPlayers.length + 1, Date.now())) await this.ctx.storage.put('room', room);
     const lineup = this.lineup(room, [...existingPlayers, { seat, name }].sort((a, b) => a.seat - b.seat));
-    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, ...lineup, started: room.started, round: room.round ?? 0 }));
+    server.send(JSON.stringify({ t: 'welcome', seat, code, game: room.game, seats: room.seats, ...lineup, started: room.started, round: room.round ?? 0, ...(room.pool ? { pool: room.pool } : {}) }));
     this.broadcast({ t: 'players', ...lineup, started: room.started });
     await this.publish(room, lineup.players);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** A spectator comes in: no seat, the room as it is (a round under way included), and everyone hears they're here. */
+  private async watch(room: RoomState, url: URL, version: number): Promise<Response> {
+    const cleaned = cleanName(url.searchParams.get('name') ?? '');
+    const name = nameLength(cleaned) >= 1 && nameLength(cleaned) <= 16 ? cleaned : 'Spectator';
+    const code = /\/rooms\/([ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4})\/ws$/.exec(url.pathname)?.[1] ?? '';
+    const pair = new WebSocketPair();
+    const server = pair[1];
+    server.serializeAttachment({ seat: -1, name, watch: true, ...(Number.isSafeInteger(version) && version > 1 ? { v: version } : {}) } satisfies Attachment);
+    this.ctx.acceptWebSocket(server);
+    const players = this.players();
+    const lineup = this.lineup(room, players);
+    server.send(JSON.stringify({ t: 'welcome', seat: -1, watch: true, code, game: room.game, seats: room.seats, ...lineup, started: room.started, round: room.round ?? 0, ...(room.pool ? { pool: room.pool } : {}), ...(room.started ? { roundBots: botSeats(room.seats, players.map(({ seat }) => seat), room.roundBots ?? 0) } : {}) }));
+    this.broadcast({ t: 'players', ...lineup, started: room.started }, server);
+    await this.publish(room, players);
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  /** Spectators in the room: open sockets without a seat. */
+  private watchers(): WebSocket[] {
+    return this.ctx.getWebSockets().filter((socket) => socket.readyState === WebSocket.OPEN && (socket.deserializeAttachment() as Attachment | null)?.watch);
   }
 
   /**
    * Who is in the room, the seats bots would take if the host started now (rooms that allow bots), whether the room is
    * public, and for a quick-play room that it is one and, while it gathers, how many milliseconds until it starts.
    */
-  private lineup(room: RoomState, players: RoomPlayer[]): { players: RoomPlayer[]; bots?: number[]; listed: boolean; quick?: true; startIn?: number } {
+  private lineup(room: RoomState, players: RoomPlayer[]): { players: RoomPlayer[]; bots?: number[]; listed: boolean; quick?: true; startIn?: number; watchers?: string[]; watchable?: boolean } {
     const listed = !!room.listed;
     const quick = room.quick ? { quick: true as const, ...(gathering(room) ? { startIn: Math.max(0, room.startAt! - Date.now()) } : {}) } : {};
-    return room.allowBots ? { players, bots: botSeats(room.seats, players.map(({ seat }) => seat), room.bots ?? 0), listed, ...quick } : { players, listed, ...quick };
+    // games people can watch say who is watching, and whether the host lets them
+    const watch = room.watch ? { watchers: this.watchers().map((socket) => (socket.deserializeAttachment() as Attachment).name), watchable: room.watchable !== false } : {};
+    return room.allowBots ? { players, bots: botSeats(room.seats, players.map(({ seat }) => seat), room.bots ?? 0), listed, ...quick, ...watch } : { players, listed, ...quick, ...watch };
   }
 
   /**
@@ -351,7 +428,7 @@ export class Room extends DurableObject<Env> {
    */
   private async publish(room: RoomState, players: RoomPlayer[]) {
     if (!room.code) return;
-    const listing = roomListing(room, players, this.lineup(room, players).bots?.length ?? 0);
+    const listing = roomListing(room, players, this.lineup(room, players).bots?.length ?? 0, this.watchers().length);
     if (!listing && !room.inLobby && !gathering(room)) return;
     try {
       const lobby = this.env.LOBBY.get(this.env.LOBBY.idFromName('global'));
@@ -375,20 +452,26 @@ export class Room extends DurableObject<Env> {
     return this.ctx.getWebSockets()
       .filter((socket) => socket.readyState === WebSocket.OPEN)
       .map((socket) => socket.deserializeAttachment() as Attachment | null)
-      .filter((value): value is Attachment => !!value)
+      .filter((value): value is Attachment => !!value && !value.watch)
       .map(({ seat, name }) => ({ seat, name }))
       .sort((a, b) => a.seat - b.seat);
   }
 
-  private broadcast(message: unknown, except?: WebSocket) {
+  /** To everyone in the room, spectators included unless `seated` (game messages: the host shares its own with them). */
+  private broadcast(message: unknown, except?: WebSocket, seated = false) {
     const data = JSON.stringify(message);
     for (const socket of this.ctx.getWebSockets()) {
       if (socket === except || socket.readyState !== WebSocket.OPEN) continue;
-      try {
-        socket.send(data);
-      } catch {
-        socket.close(1011, 'send failed');
-      }
+      if (seated && (socket.deserializeAttachment() as Attachment | null)?.watch) continue;
+      this.trySend(socket, data);
+    }
+  }
+
+  private trySend(socket: WebSocket, data: string) {
+    try {
+      socket.send(data);
+    } catch {
+      socket.close(1011, 'send failed');
     }
   }
 
@@ -412,13 +495,25 @@ export class Room extends DurableObject<Env> {
     const remaining = this.ctx.getWebSockets().filter((socket) => socket !== ws && socket.readyState === WebSocket.OPEN);
     const seated = remaining
       .map((socket) => ({ socket, seat: socket.deserializeAttachment() as Attachment | null }))
-      .filter((entry): entry is { socket: WebSocket; seat: Attachment } => !!entry.seat);
+      .filter((entry): entry is { socket: WebSocket; seat: Attachment } => !!entry.seat && !entry.seat.watch);
     const room = await this.ctx.storage.get<RoomState>('room');
     if (!seated.length || !room) {
+      // the last player is gone, so there is nothing left to watch
+      for (const socket of remaining) {
+        this.trySend(socket, JSON.stringify({ t: 'closed', reason: 'room-closed' }));
+        socket.close(1000, 'room-closed');
+      }
       await this.close();
       return;
     }
-    if (attachment?.seat === 0 && seated.some(({ seat }) => (seat.v ?? 1) < HANDOFF_VERSION)) {
+    // a spectator left: everyone just hears who is still watching
+    if (attachment?.watch) {
+      const players = this.players();
+      this.broadcast({ t: 'players', ...this.lineup(room, players), started: room.started }, ws);
+      await this.publish(room, players);
+      return;
+    }
+    if (attachment?.seat === 0 && remaining.some((socket) => ((socket.deserializeAttachment() as Attachment | null)?.v ?? 1) < HANDOFF_VERSION)) {
       this.broadcast({ t: 'closed', reason: 'host-left' }, ws);
       for (const socket of this.ctx.getWebSockets()) socket.close(1000, 'host-left');
       await this.close();
@@ -694,17 +789,20 @@ export default {
         return withCors(json({ error: 'unavailable' }, 503));
       }
     }
-    // Quick play: a quick-play room of the game that is still gathering people, or a new one.
+    // Quick play: a quick-play room of the game (and the pool asked for, a game's mode say) that is still gathering
+    // people, or a new one.
     if (url.pathname === '/rooms/quick' && request.method === 'POST') {
       const game = url.searchParams.get('game') ?? '';
       const spec = Object.hasOwn(ONLINE_SPECS, game) ? ONLINE_SPECS[game] : undefined;
       if (!spec?.quick) return withCors(json({ error: 'unknown game' }, 404));
+      const pool = url.searchParams.get('pool') ?? undefined;
+      if (pool !== undefined && !isPool(pool)) return withCors(json({ error: 'unknown pool' }, 400));
       try {
         const lobby = env.LOBBY.get(env.LOBBY.idFromName('global'));
         for (let attempt = 0; attempt < 5; attempt++) {
           const fresh = makeRoomCode(crypto.getRandomValues(new Uint8Array(4)));
-          const code = await lobby.quick(game, fresh, seatsFor(spec), !!spec.lateJoin);
-          if (code !== fresh || (await env.ROOMS.get(env.ROOMS.idFromName(fresh)).open(fresh, game, spec, true, true))) return withCors(json({ code }));
+          const code = await lobby.quick(game, fresh, seatsFor(spec), !!spec.lateJoin, pool);
+          if (code !== fresh || (await env.ROOMS.get(env.ROOMS.idFromName(fresh)).open(fresh, game, spec, true, true, pool))) return withCors(json({ code }));
           await lobby.drop(fresh);
         }
       } catch {

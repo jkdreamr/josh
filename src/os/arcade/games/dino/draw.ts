@@ -241,3 +241,86 @@ export function mix(a: string, b: string, t: number) {
   const ch = (s: number) => Math.round(((pa >> s) & 255) * (1 - t) + ((pb >> s) & 255) * t);
   return `rgb(${ch(16)}, ${ch(8)}, ${ch(0)})`;
 }
+
+/**
+ * Far desert backdrop: flat-topped mesas that scroll slowly. `scroll` is in world units already divided by the
+ * parallax factor; heights come from the hash of each cell so the skyline never repeats in a way you notice.
+ */
+export function mesas(c: C, W: number, ground: number, k: number, scroll: number, cell: number, maxH: number, seed: number) {
+  const first = Math.floor(scroll / cell) - 1;
+  const n = Math.ceil(W / k / cell) + 3;
+  c.beginPath();
+  c.moveTo(0, ground);
+  for (let i = first; i < first + n; i++) {
+    const hv = hash(i * 131 + seed);
+    const x0 = (i * cell - scroll) * k;
+    const x1 = x0 + cell * k;
+    if (hv % 5 < 2) {
+      c.lineTo(x0, ground);
+      c.lineTo(x1, ground);
+      continue;
+    }
+    const h = (0.35 + ((hv >> 4) % 100) / 160) * maxH * k;
+    const slope = cell * k * (0.12 + ((hv >> 12) % 10) / 80);
+    const notch = (hv >> 20) % 3 === 0;
+    c.lineTo(x0, ground);
+    c.lineTo(x0 + slope, ground - h);
+    if (notch) {
+      const mid = (x0 + x1) / 2;
+      c.lineTo(mid - slope * 0.3, ground - h);
+      c.lineTo(mid, ground - h * 0.78);
+      c.lineTo(mid + slope * 0.25, ground - h * 0.78);
+      c.lineTo(mid + slope * 0.5, ground - h * 0.92);
+    }
+    c.lineTo(x1 - slope, ground - h * (notch ? 0.92 : 1));
+    c.lineTo(x1, ground);
+  }
+  c.lineTo(W, ground);
+  c.closePath();
+  c.fill();
+}
+
+/** Low rolling dunes in front of the mesas, a smooth curve through hashed heights. */
+export function dunes(c: C, W: number, ground: number, k: number, scroll: number, cell: number, maxH: number, seed: number) {
+  const first = Math.floor(scroll / cell) - 1;
+  const n = Math.ceil(W / k / cell) + 3;
+  const pt = (i: number) => [(i * cell - scroll) * k, ground - (0.25 + (hash(i * 71 + seed) % 100) / 133) * maxH * k] as const;
+  c.beginPath();
+  let [px, py] = pt(first);
+  c.moveTo(px, ground);
+  c.lineTo(px, py);
+  for (let i = first + 1; i < first + n; i++) {
+    const [x, y] = pt(i);
+    c.quadraticCurveTo(px, py, (px + x) / 2, (py + y) / 2);
+    px = x;
+    py = y;
+  }
+  c.lineTo(px, py);
+  c.lineTo(px, ground);
+  c.closePath();
+  c.fill();
+}
+
+/** A small tuft of desert grass, base at (0, 0), for the foreground. */
+export function tuft(c: C, s: number) {
+  c.beginPath();
+  c.moveTo(-3 * s, 0);
+  c.lineTo(-2.2 * s, -4 * s);
+  c.lineTo(-0.8 * s, -0.6 * s);
+  c.lineTo(0, -6 * s);
+  c.lineTo(0.9 * s, -0.6 * s);
+  c.lineTo(2.4 * s, -3.6 * s);
+  c.lineTo(3 * s, 0);
+  c.closePath();
+  c.fill();
+}
+
+export function sun(c: C, x: number, y: number, r: number) {
+  c.beginPath();
+  c.arc(x, y, r, 0, Math.PI * 2);
+  c.fill();
+  c.globalAlpha *= 0.45;
+  c.beginPath();
+  c.arc(x, y, r * 1.55, 0, Math.PI * 2);
+  c.fill();
+}
