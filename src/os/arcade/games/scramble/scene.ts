@@ -5251,6 +5251,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           } else dustRing(f.x, f.z, 9, 0.7, 0.55, 0xd9cfae, 0.65, 3.2);
           break;
         }
+        case 'knock': {
+          // knocked down: a few bits of shell, and a puff of dust as it hits the ground
+          const f = m.fighters[e.f];
+          if (!f || !near(f.x, f.z)) break;
+          burst(f.x, 0.8, f.z, 8, 3, 0.12, 0.6, [partMat.shell]);
+          dustRing(f.x, f.z, 4, 0.6, 0.5, 0xfff3df, 0.5, 2.5);
+          break;
+        }
         case 'out': {
           const f = m.fighters[e.f];
           if (!f) break;

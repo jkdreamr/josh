@@ -855,7 +855,10 @@ const TEAM_COLOR_NAME = 'teal';
 export const PIECE_KEYS: Record<Plan, string> = { wall: 'Z', ramp: 'X', floor: 'C', roof: 'V', box: 'B' };
 export const MAT_KEY = 'N';
 export const EDIT_KEY = 'F';
-/** In duos and squads: the key that pings a spot for the team (so does the middle mouse button), and the one that puts down what's in hand. */
+/**
+ * In duos and squads: the key that pings a spot for the team (so does the middle mouse button), and the one that puts
+ * down what's in hand.
+ */
 export const PING_KEY = 'Y';
 export const DROP_KEY = 'U';
 export const PIECE_NAMES: Record<Plan, string> = { wall: 'wall', ramp: 'ramp', floor: 'floor', roof: 'roof', box: 'box up' };

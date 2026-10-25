@@ -7,7 +7,7 @@ export const ROOM_MESSAGE_MAX_BYTES = 8 * 1024;
 /** The seats a new room for a game gets: what its spec asks for, two at least and MAX_SEATS at most. */
 export const seatsFor = (spec: { seats: number }) => Math.max(2, Math.min(MAX_SEATS, Math.floor(spec.seats) || 2));
 
-/** A quick-play pool's name (a game's mode, say): quick play keeps a game's rooms of one pool apart from the others'. */
+/** A quick-play pool's name (a game's mode, say): quick play keeps a game's rooms of one pool apart from the rest. */
 export const isPool = (v: unknown): v is string => typeof v === 'string' && /^[a-z0-9-]{1,16}$/.test(v);
 
 export type RoomPlayer = { seat: number; name: string };

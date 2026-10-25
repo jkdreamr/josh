@@ -406,7 +406,7 @@ type Hud = {
    */
   teams: number;
   mates: Mate[] | null;
-  /** The egg we see is knocked down: what it has left before it bleeds out (0..1), how far along a revive is, and whose. */
+  /** The egg we see knocked down: what it has left before it bleeds out (0..1), how far along a revive is, and whose. */
   down: { left: number; revive: number; by: string | null } | null;
   /** Where the team's eggs and pings are, roughly, so the maps are drawn again as they move. */
   marks: string;

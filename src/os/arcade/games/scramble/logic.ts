@@ -227,7 +227,10 @@ export const REVIVE_HP = 30;
 /** How long a ping marks its spot for the team, and the wait between two of one egg's. */
 export const PING_T = 8;
 export const PING_COOL = 0.6;
-/** The ring and name tags of the eggs on your team, and each one's own color (by its place on the team) for its pings and on the team panel. */
+/**
+ * The ring and name tags of the eggs on your team, and each one's own color (by its place on the team) for its pings
+ * and on the team panel.
+ */
 export const TEAM_COLOR = '#2ee6c9';
 export const MATE_COLORS = ['#2ee6c9', '#ffb020', '#ff5ca8', '#9b8cff'];
 export type Phase = 'bus' | 'drop' | 'ground' | 'out';
@@ -239,7 +242,7 @@ export type Kind = 'player' | 'bot' | 'remote';
  */
 export type Cause = WeaponId | MeleeId | 'grenade' | 'mirv' | 'impulse' | 'sauce' | 'barrel' | 'storm' | 'left' | 'bleed';
 export const CAUSES: readonly Cause[] = [...WEAPON_IDS, ...MELEE_IDS, 'grenade', 'mirv', 'impulse', 'sauce', 'barrel', 'storm', 'left', 'bleed'];
-/** What the drop key puts down: a slot's gun, melee weapon or one throwable, one consumable, a box of ammo or some material. */
+/** What the drop key puts down: a slot's gun, melee weapon or one throwable, a consumable, a box of ammo or material. */
 export type Drop = number | UseId | Ammo | Mat;
 /** How much of a material one drop puts down. */
 export const MAT_DROP = 30;
@@ -382,7 +385,7 @@ export type Ai = {
   harvestCool: number;
   /** An edit to make once we've stopped walking, aimed this way. */
   editA: number;
-  /** In teams: the wait before we next ping a target for the team, and before we next put something down for a teammate. */
+  /** In teams: the wait before we next ping a target for the team, and before we next put something down for one. */
   pingCool: number;
   shareCool: number;
 };
@@ -1597,7 +1600,10 @@ function act(m: Match, f: Fighter, dt: number) {
   clearOneShots(inp);
 }
 
-/** What an egg on its feet does with its input: weapons, reloading, items, building, editing, the interact key, the trigger and the drop key. */
+/**
+ * What an egg on its feet does with its input: weapons, reloading, items, building, editing, the interact key, the
+ * trigger and the drop key.
+ */
 function handle(m: Match, f: Fighter, dt: number) {
   const inp = f.input;
   if (inp.pick && f.throws[inp.pick] > 0) {
@@ -3535,7 +3541,7 @@ function autoPickup(m: Match, f: Fighter) {
   lootNear(m, f.x, f.z, AUTO_R, (l) => {
     if (Math.abs(l.x - f.x) > AUTO_R || Math.abs(l.z - f.z) > AUTO_R) return;
     if ((l.x - f.x) * (l.x - f.x) + (l.z - f.z) * (l.z - f.z) > AUTO_R * AUTO_R) return;
-    // never back up what we put down ourselves, swapped away or left for a teammate (the key still takes it, a moment on)
+    // never back up what we put down ourselves, swapped or left for a teammate (the key still takes it, a moment on)
     if (l.by === f.id) return;
     if (wants(f, l.def, false)) requestTake(m, f, l);
   });

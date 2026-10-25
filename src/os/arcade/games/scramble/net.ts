@@ -687,7 +687,10 @@ export function parsePacket(value: unknown): Packet | null {
   return null;
 }
 
-/** Final places by fighter: the winner (in duos and squads, the winning team) first, then everyone else by when they (their team) went out. */
+/**
+ * Final places by fighter: the winner (in duos and squads, the winning team) first, then everyone else by when they
+ * (their team) went out.
+ */
 export function placesOf(m: Match): [number, number, number][] {
   return m.fighters
     .map((f): [number, number, number] => [f.id, f.place || 1, f.kills])
