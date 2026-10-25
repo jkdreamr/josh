@@ -238,13 +238,15 @@ function drawField(c: CanvasRenderingContext2D, view: View, world: World, t: num
     c.globalAlpha = 0.22;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
-    c.font = `900 ${view.rotate ? 2.6 : 3.2}px ${FONT}`;
+    c.font = `900 ${view.rotate ? 2.2 : 3.2}px ${FONT}`;
     const word = TEAM_NAMES[team];
     if (view.rotate) {
-      c.fillText(word, -7.5, 0);
-      c.fillText(word, 7.5, 0);
-    } else c.fillText(word, 0, -9);
-    if (!view.rotate) c.fillText(word, 0, 9);
+      c.fillText(word, 0, -9);
+      c.fillText(word, 0, 9);
+    } else {
+      c.fillText(word, -9, 0);
+      c.fillText(word, 9, 0);
+    }
     c.restore();
   }
   // yard lines
@@ -719,6 +721,7 @@ function drawNames(c: CanvasRenderingContext2D, view: View, world: World, opts: 
   c.textBaseline = 'bottom';
   const many = world.players.length > 6 && view.scale < 13;
   for (const p of world.players) {
+    if (p.jailed && !me.has(p.id)) continue;
     if (many && !me.has(p.id) && p.ai !== null && p.carrying < 0 && !(world.mode === 'tree' && world.tree === p.id)) continue;
     const s = toScreen(view, p.x, p.y);
     const lift = world.mode === 'tree' && world.tree === p.id ? 3.4 : p.carrying >= 0 ? 2.9 : 1.25;
@@ -732,6 +735,15 @@ function chip(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: n
   rr(c, x, y, w, h, h / 2);
   c.fillStyle = bg;
   c.fill();
+}
+
+function pillText(c: CanvasRenderingContext2D, text: string, x: number, y: number, color: string) {
+  const height = 17;
+  const width = c.measureText(text).width + 12;
+  rr(c, x - 6, y - height / 2, width, height, height / 2);
+  c.fillStyle = 'rgba(10,14,20,0.55)';
+  c.fill();
+  outlined(c, text, x, y, color);
 }
 
 function drawArrowTo(c: CanvasRenderingContext2D, view: View, from: { x: number; y: number }, to: { x: number; y: number }, color: string, t: number) {
@@ -790,6 +802,7 @@ function drawHud(c: CanvasRenderingContext2D, view: View, world: World, fx: Fx, 
   const barH = small ? 30 : 34;
   const top = w < 560 ? 52 : 8;
   const fs = small ? 14 : 16;
+  let jailNoteCount = 0;
   c.textBaseline = 'middle';
   if (world.mode === 'tree') {
     const clock = clockText(world.clock);
@@ -844,16 +857,17 @@ function drawHud(c: CanvasRenderingContext2D, view: View, world: World, fx: Fx, 
     const notes: string[] = [];
     if (jailed[0]) notes.push(`${jailed[0]} stanford in jail`);
     if (jailed[1]) notes.push(`${jailed[1]} cal in jail`);
-    notes.forEach((n, i) => outlined(c, n, 12, top + barH + 13 + i * 16, i === 0 && jailed[0] ? '#ffb3b3' : '#ffe39a'));
+    jailNoteCount = notes.length;
+    notes.forEach((n, i) => pillText(c, n, 12, top + barH + 13 + i * 16, i === 0 && jailed[0] ? '#ffb3b3' : '#ffe39a'));
   }
 
   // feed (under the top bar on the left, or under the jail notes)
   c.font = `700 ${small ? 12 : 13}px ${FONT}`;
   c.textAlign = 'left';
-  const feedTop = top + barH + (world.mode === 'tree' ? 70 : 44);
+  const feedTop = top + barH + (world.mode === 'tree' ? 70 : 13 + jailNoteCount * 16);
   fx.feed.forEach((n, i) => {
     c.globalAlpha = Math.min(1, n.life / 0.6);
-    outlined(c, n.text, 12, feedTop + i * 17, n.color);
+    pillText(c, n.text, 12, feedTop + i * 17, n.color);
   });
   c.globalAlpha = 1;
 

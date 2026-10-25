@@ -199,15 +199,17 @@ function routeAround(world: World, from: Player, target: { x: number; y: number 
   if (!found) return target;
   const path: number[] = [];
   for (let node = goal.id; node !== start.id && node >= 0; node = previous[node]) path.push(node);
-  let step = path[0];
+  let step: number | undefined;
+  let fallback: number | undefined;
   for (let i = path.length - 1; i >= 0; i--) {
     const node = path[i];
-    if (distance(from, { x: node % 60, y: Math.floor(node / 60) }) > 4) {
-      step = node;
-      break;
-    }
+    const point = { x: node % 60, y: Math.floor(node / 60) };
+    if (lineBlocked(world, from, point)) continue;
+    fallback = node;
+    if (distance(from, point) > 4) step = node;
   }
-  return step === undefined ? target : { x: step % 60, y: Math.floor(step / 60) };
+  const waypoint = step ?? fallback;
+  return waypoint === undefined ? target : { x: waypoint % 60, y: Math.floor(waypoint / 60) };
 }
 
 function targetFor(world: World, player: Player, role: BotRole, memory: BotMemory) {

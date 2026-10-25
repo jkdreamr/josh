@@ -27,7 +27,7 @@
   border: calc(3px * var(--g-the-axe-u, 1)) solid rgba(255, 255, 255, 0.84);
   border-radius: 50%;
   background:
-    radial-gradient(circle, #101713 65%, transparent 67%),
+    radial-gradient(circle, rgba(16,23,19,0.62) 65%, transparent 67%),
     conic-gradient(#f1d477 var(--g-the-axe-stamina, 100%), rgba(255, 255, 255, 0.2) 0);
   color: #fff;
   font: 700 calc(11px * var(--g-the-axe-u, 1)) / 1 sans-serif;
