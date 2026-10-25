@@ -38,6 +38,7 @@ function hullGeometry(THREE: Three) {
   const STATIONS = 40;
   const AROUND = 10;
   const pos: number[] = [];
+  const uv: number[] = [];
   const idx: number[] = [];
   for (let i = 0; i <= STATIONS; i++) {
     const z = HULL.stern + ((HULL.bow - HULL.stern) * i) / STATIONS;
@@ -48,6 +49,8 @@ function hullGeometry(THREE: Three) {
     for (let j = 0; j <= AROUND; j++) {
       const a = (j / AROUND) * Math.PI;
       pos.push(-Math.cos(a) * w, top - Math.sin(a) * (top - keel), z);
+      // (u along the hull from the stern to the bow, v round it from the -x gunwale under the keel to the +x one)
+      uv.push(i / STATIONS, j / AROUND);
     }
   }
   for (let i = 0; i < STATIONS; i++) {
@@ -55,6 +58,54 @@ function hullGeometry(THREE: Three) {
       const a = i * (AROUND + 1) + j;
       const b = a + AROUND + 1;
       idx.push(a, a + 1, b, a + 1, b + 1, b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** The hull's shape again, with its texture coordinates (see hullGeometry), for a decal painted over it. */
+export const hullSkin = (THREE: Three) => hullGeometry(THREE);
+
+/** The deck's height at x across it, z along it (crowned along the middle; see deckGeometry). */
+const deckTop = (x: number, z: number) => {
+  const w = halfBeam(z) * 1.02;
+  const top = HULL.sheer + (z > 0 ? 0.03 * (z / HULL.bow) : 0);
+  return top + 0.035 * Math.min(1, w / 0.1) * Math.max(0, 1 - Math.abs(x) / w);
+};
+
+/**
+ * A strip w wide lying along both decks at x0 across them (a racing stripe), from as near the bow and the stern as the
+ * decks are wide enough there, just over them.
+ */
+export function deckStripe(THREE: Three, x0: number, w: number) {
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const N = 24;
+  const edge = Math.abs(x0) + w / 2;
+  // (where the deck is wide enough: halfBeam falls away toward each end)
+  const reach = (from: number, to: number) => {
+    let z = from;
+    const step = (to - from) / 200;
+    while (Math.abs(z - from) < Math.abs(to - from) && halfBeam(z + step) > edge * 1.15) z += step;
+    return z;
+  };
+  for (const [z0, z1] of [
+    [COCKPIT.to + 0.05, reach(COCKPIT.to, HULL.bow)],
+    [reach(COCKPIT.from, HULL.stern), COCKPIT.from - 0.05],
+  ]) {
+    const base = pos.length / 3;
+    for (let i = 0; i <= N; i++) {
+      const z = z0 + ((z1 - z0) * i) / N;
+      for (const x of [x0 - w / 2, x0 + w / 2]) pos.push(x, deckTop(x, z) + 0.005, z);
+      if (i < N) {
+        const a = base + 2 * i;
+        idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+      }
     }
   }
   const g = new THREE.BufferGeometry();
@@ -111,6 +162,8 @@ export type Scull = {
   looms: T.Mesh[];
   /** Where each blade's tip is, in the shell's frame, after posing (for the splashes). */
   tips: T.Vector3[];
+  /** How many of the vertices at the end of each oar's mesh are the blade's painted tip (see tintTips). */
+  tipVerts: number;
 };
 
 /** Shared by every shell in a race: the materials that do not take the racer's color. */
@@ -127,22 +180,23 @@ export function scullKit(THREE: Three) {
 export type ScullKit = ReturnType<typeof scullKit>;
 
 /**
- * Builds the scull into `body` (the kart view's body group) in the racer's color: `paint` (the hull and the unisuit) and
- * `skin`. `blade` is the blade's color and `head` the group the racer's hat goes on.
+ * Builds the scull into `body` (the kart view's body group) in the racer's color: `paint` (the hull and the unisuit),
+ * `deck` (the decks fore and aft: the paint unless given) and `skin`. `blade` is the blade's color and `head` the group the
+ * racer's hat goes on.
  */
-export function buildScull(THREE: Three, body: T.Group, kit: ScullKit, paint: T.Material, skin: T.Material, blade: string): Scull {
+export function buildScull(THREE: Three, body: T.Group, kit: ScullKit, paint: T.Material, skin: T.Material, blade: string, deck: T.Material = paint): Scull {
   const M = (x: number, y: number, z: number, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0) =>
     new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
   const box = new THREE.BoxGeometry(1, 1, 1);
   const cyl = new THREE.CylinderGeometry(1, 1, 1, 8);
   const ball = new THREE.SphereGeometry(1, 10, 8);
-  // the hull and its decks fore and aft, in the racer's paint
-  const hull = new THREE.Mesh(merge(THREE, [
-    { g: hullGeometry(THREE), m: M(0, 0, 0) },
+  // the hull in the racer's paint, and its decks fore and aft
+  body.add(new THREE.Mesh(hullGeometry(THREE), paint));
+  const decks = new THREE.Mesh(merge(THREE, [
     { g: deckGeometry(THREE, COCKPIT.to, HULL.bow), m: M(0, 0, 0) },
     { g: deckGeometry(THREE, HULL.stern, COCKPIT.from), m: M(0, 0, 0) },
-  ]), paint);
-  body.add(hull);
+  ]), deck);
+  body.add(decks);
   // the white parts: a pinstripe down each deck, the bow ball, the washbox in front of the cockpit, and the shoes
   const white = merge(THREE, [
     { g: box, m: M(0, HULL.sheer + 0.04, (COCKPIT.to + HULL.bow) / 2 - 0.2, 0.025, 0.012, HULL.bow - COCKPIT.to - 0.5) },
@@ -199,6 +253,8 @@ export function buildScull(THREE: Three, body: T.Group, kit: ScullKit, paint: T.
   const bc: [number, number, number] = [c.r, c.g, c.b];
   const oars: T.Group[] = [];
   const looms: T.Mesh[] = [];
+  // (the tip is the last part of each oar's mesh: a box, unindexed)
+  const tipVerts = box.index ? box.index.count : box.getAttribute('position').count;
   for (const sd of [-1, 1]) {
     const loom = merge(THREE, [
       { g: cyl, m: M(sd * (OUTBOARD - INBOARD) / 2 - sd * 0.12, 0, 0, 0.022, OUTBOARD + INBOARD - 0.5, 0.022, 0, 0, Math.PI / 2), color: [0.94, 0.94, 0.92] },
@@ -218,7 +274,17 @@ export function buildScull(THREE: Three, body: T.Group, kit: ScullKit, paint: T.
   box.dispose();
   cyl.dispose();
   ball.dispose();
-  return { seat, torso, head, limbs, oars, looms, tips: [new THREE.Vector3(), new THREE.Vector3()] };
+  return { seat, torso, head, limbs, oars, looms, tips: [new THREE.Vector3(), new THREE.Vector3()], tipVerts };
+}
+
+/** Paints the tips of a scull's blades (white to start with) in `color`. */
+export function tintTips(THREE: Three, s: Scull, color: string) {
+  const c = new THREE.Color(color);
+  for (const loom of s.looms) {
+    const col = loom.geometry.getAttribute('color') as T.BufferAttribute;
+    for (let k = col.count - s.tipVerts; k < col.count; k++) col.setXYZ(k, c.r, c.g, c.b);
+    col.needsUpdate = true;
+  }
 }
 
 const ease = (u: number) => u * u * (3 - 2 * u);
