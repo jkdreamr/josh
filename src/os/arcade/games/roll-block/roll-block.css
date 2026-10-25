@@ -192,6 +192,7 @@
   }
   .g-roll-block .g-roll-block-bar > .arcade-btn,
   .g-roll-block .g-roll-block-card-btns > .arcade-btn,
+  .g-roll-block .arcade-card .arcade-btn,
   .g-roll-block .g-roll-block-panel-head > .arcade-btn {
     height: calc(44px * var(--g-roll-block-u, 1));
     padding: 0 calc(16px * var(--g-roll-block-u, 1));
@@ -222,6 +223,25 @@
   }
   .g-roll-block .g-roll-block-grid {
     grid-template-columns: repeat(auto-fill, minmax(calc(56px * var(--g-roll-block-u, 1)), 1fr));
+  }
+}
+/* Short touch stages (phone in landscape): lay the shell card out in rows so finger-sized buttons still fit. */
+@media (pointer: coarse) {
+  @container arcade-ov (max-height: 260px) {
+    .g-roll-block .arcade-ov .arcade-card {
+      flex-flow: row wrap;
+      justify-content: center;
+      width: min(560px, 100%);
+      margin-top: 48px;
+      padding: 12px 16px;
+    }
+    .g-roll-block .arcade-ov .arcade-card > h2 {
+      flex-basis: 100%;
+    }
+    .g-roll-block .arcade-ov .arcade-card > p,
+    .g-roll-block .arcade-ov .arcade-card > .arcade-glyph {
+      display: none;
+    }
   }
 }
 @media (prefers-reduced-motion: reduce) {

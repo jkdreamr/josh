@@ -554,6 +554,15 @@
   .g-grand-prix .g-grand-prix-map {
     display: none;
   }
+  /* below the tower, timing and touch buttons, which fill the top of a narrow view */
+  .g-grand-prix .g-grand-prix-lights {
+    top: max(14%, 230px);
+    gap: 6px;
+  }
+  .g-grand-prix .g-grand-prix-light {
+    width: 20px;
+    height: 20px;
+  }
 }
 
 .g-grand-prix .g-grand-prix-touchbtns {

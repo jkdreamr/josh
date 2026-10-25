@@ -5,14 +5,14 @@ import { SPEC, type Input } from './car.ts';
 
 export type Binding = { left: string[]; right: string[]; throttle: string[]; brake: string[]; up: string[]; down: string[]; drs: string[]; cam: string[]; back: string[]; reset: string[] };
 
-/** One player alone: arrows or WASD, gears on E and Q (or Shift and Ctrl), DRS on Space. */
+/** One player alone: arrows or WASD, gears on E and Q (or left Shift for up), DRS on Space. */
 export const SOLO: Binding = {
   left: ['ArrowLeft', 'KeyA'],
   right: ['ArrowRight', 'KeyD'],
   throttle: ['ArrowUp', 'KeyW'],
   brake: ['ArrowDown', 'KeyS'],
   up: ['KeyE', 'ShiftLeft'],
-  down: ['KeyQ', 'ControlLeft'],
+  down: ['KeyQ'],
   drs: ['Space'],
   cam: ['KeyC'],
   back: ['KeyV'],
@@ -31,7 +31,7 @@ export const P2: Binding = {
   drs: ['ShiftRight', 'Slash'],
   cam: ['KeyL'],
   back: ['KeyK'],
-  reset: ['KeyP'],
+  reset: ['KeyO'],
 };
 
 export type Keys = { down: (...names: string[]) => boolean; pressed: (...names: string[]) => boolean };

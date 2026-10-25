@@ -1,6 +1,20 @@
 .g-snake .g-snake-canvas {
   width: 100%;
   height: 100%;
-  background: #142019;
+  background: #09100c;
   touch-action: none;
+}
+
+/* In the scaled phone and iPad frames, the toolbar and cards grow back to finger size. */
+@media (pointer: coarse) {
+  .g-snake .arcade-ctrl button {
+    width: calc(40px * var(--g-snake-u, 1));
+    height: calc(40px * var(--g-snake-u, 1));
+  }
+  .g-snake .arcade-ctrl button svg {
+    scale: var(--g-snake-u, 1);
+  }
+  .g-snake .arcade-card {
+    zoom: var(--g-snake-u, 1);
+  }
 }

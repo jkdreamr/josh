@@ -1,11 +1,15 @@
 .g-blocks {
-  background: color-mix(in srgb, #bf5af2 14%, #111116);
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, #bf5af2 22%, transparent), transparent 70%),
+    color-mix(in srgb, #bf5af2 10%, #0e0d14);
 }
 .g-blocks .g-blocks-canvas {
   display: block;
   width: 100%;
   height: 100%;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .g-blocks .g-blocks-touch {
   position: absolute;
@@ -13,18 +17,50 @@
   bottom: max(12px, env(safe-area-inset-bottom));
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
-  border: 1px solid rgba(255,255,255,.15);
-  border-radius: 15px;
+  width: calc(56px * var(--g-blocks-u, 1));
+  height: calc(56px * var(--g-blocks-u, 1));
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: calc(16px * var(--g-blocks-u, 1));
   color: #f5f5f7;
-  background: rgba(255,255,255,.09);
-  box-shadow: 0 8px 24px rgba(0,0,0,.24), inset 0 1px rgba(255,255,255,.12);
-  font: 600 12px Inter, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  background: rgba(255, 255, 255, .1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .24), inset 0 1px rgba(255, 255, 255, .12);
+  font: 600 calc(14px * var(--g-blocks-u, 1)) Inter, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   backdrop-filter: blur(12px);
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.g-blocks .g-blocks-touch:active {
+  background: rgba(255, 255, 255, .2);
+  transform: scale(.96);
+}
+.g-blocks .g-blocks-touch svg {
+  width: calc(22px * var(--g-blocks-u, 1));
+  height: calc(22px * var(--g-blocks-u, 1));
 }
 .g-blocks .g-blocks-touch-left { left: 12px; }
 .g-blocks .g-blocks-touch-right { right: 12px; }
 @media (hover: hover) and (pointer: fine) {
   .g-blocks .g-blocks-touch { display: none; }
+}
+/* Touch: finger-sized shell controls and cards, grown by --g-blocks-u (the inverse of an iPad frame's scale). */
+@media (pointer: coarse) {
+  .g-blocks .arcade-ctrl button {
+    width: calc(40px * var(--g-blocks-u, 1));
+    height: calc(40px * var(--g-blocks-u, 1));
+  }
+  .g-blocks .arcade-ctrl svg {
+    width: calc(16px * var(--g-blocks-u, 1));
+    height: calc(16px * var(--g-blocks-u, 1));
+  }
+  .g-blocks .arcade-ov > .arcade-card {
+    zoom: var(--g-blocks-u, 1);
+  }
+  .g-blocks .arcade-ov > .arcade-card .arcade-btn,
+  .g-blocks .arcade-ov > .arcade-card .arcade-seg > button,
+  .g-blocks .arcade-ov > .arcade-card .arcade-input {
+    min-height: 42px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-blocks .g-blocks-touch:active { transform: none; }
 }

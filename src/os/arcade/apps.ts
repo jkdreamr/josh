@@ -63,8 +63,8 @@ export const appGames: AppGame[] = [
     id: 'badminton',
     title: 'Badminton',
     app: 'badminton',
-    leaderboard: { order: 'desc', min: 1, max: 63, unit: 'pts', measure: 'Point Margin in a Win vs Computer', variants: { easy: 'Easy', normal: 'Normal', hard: 'Hard' } },
-    online: { seats: 2 },
+    leaderboard: { order: 'desc', min: 1, max: 63, unit: 'pts', measure: 'Point Margin in a Win vs Computer', variants: { easy: 'Easy', normal: 'Normal', hard: 'Hard', pro: 'Pro' } },
+    online: { seats: 2, watch: true },
     accent: '#2f7a6d',
     // A shuttlecock.
     glyph: 'M9 16h6M9 16 5.5 4M15 16l3.5-12M12 16V4.5M5.5 4c4.3 1.4 8.7 1.4 13 0M9.5 16v1.5a2.5 2.5 0 0 0 5 0V16',

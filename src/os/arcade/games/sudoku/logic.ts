@@ -206,10 +206,11 @@ export function grade(grid: Grid): number {
 }
 
 const TARGET: Record<Level, number> = { easy: 38, medium: 30, hard: 0 };
+const WANT: Record<Level, number> = { easy: 1, medium: 2, hard: 3 };
 
 /**
  * Generates a puzzle with exactly one solution. Removal is 180-degree symmetric.
- * easy: ~38 clues, singles only. medium: ~30 clues, singles only. hard: as few clues as uniqueness allows
+ * easy: ~38 clues, naked singles. medium: ~30 clues, needs hidden singles. hard: as few clues as uniqueness allows
  * and needs locked candidates or naked pairs. Each attempt takes about a millisecond.
  */
 export function generate(level: Level, rand: () => number = Math.random): Puzzle {
@@ -235,8 +236,9 @@ export function generate(level: Level, rand: () => number = Math.random): Puzzle
     }
     const gr = grade(puzzle);
     const result: Puzzle = { puzzle, solution, level, grade: gr, clues };
-    if (level === 'hard' ? gr === 3 : gr <= 2) return result;
-    const better = !fallback || (level === 'hard' ? fallback.grade < 3 && gr > fallback.grade : gr < fallback.grade);
+    const want = WANT[level];
+    if (gr === want) return result;
+    const better = !fallback || (gr <= 3 && Math.abs(gr - want) < Math.abs(fallback.grade - want));
     if (better) fallback = result;
   }
   return fallback!;
@@ -265,6 +267,29 @@ export function completedUnits(grid: Grid, i: number): number[] {
     if (vals.every((v) => v) && new Set(vals).size === 9) out.push(u);
   });
   return out;
+}
+
+/**
+ * The cell a hint should fill: the selected cell if it is open and not yet right, else a wrong entry,
+ * else the open cell with the fewest candidates. -1 when nothing is left.
+ */
+export function hintCell(grid: Grid, solution: Grid, locked: boolean[], sel: number): number {
+  if (sel >= 0 && !locked[sel] && grid[sel] !== solution[sel]) return sel;
+  const wrong = grid.findIndex((v, i) => v && v !== solution[i] && !locked[i]);
+  if (wrong >= 0) return wrong;
+  let best = -1;
+  let bestN = 10;
+  for (let i = 0; i < 81; i++) {
+    if (grid[i]) continue;
+    let m = ALL;
+    for (const p of PEERS[i]) if (grid[p] && grid[p] === solution[p]) m &= ~(1 << grid[p]);
+    const n = popcount(m);
+    if (n < bestN) {
+      bestN = n;
+      best = i;
+    }
+  }
+  return best;
 }
 
 /** Seeded PRNG (mulberry32) for tests and reproducible boards. */

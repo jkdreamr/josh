@@ -609,7 +609,6 @@ function Boom({
   onNext: () => void;
   onSetup: () => void;
 }) {
-  const { touch } = useShell();
   const [armed, setArmed] = useState(again);
   const waited = useRef(0);
   const named = table.length > 0;
@@ -681,7 +680,6 @@ function Boom({
                     <button key={p} type="button" onClick={() => armed && onPick(i)}>
                       <Avatar name={p} index={i} size={30} />
                       <span>{p}</span>
-                      {!touch && i < 9 && <kbd aria-hidden="true">{i + 1}</kbd>}
                     </button>
                   ))}
                 </div>

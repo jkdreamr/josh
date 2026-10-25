@@ -6,8 +6,6 @@ export type GameStatus = 'ready' | 'playing' | 'paused' | 'over';
 export type GameOverInfo = {
   title?: string;
   detail?: string;
-  /** Keep the detail on the card in short windows, where the shell otherwise hides it (e.g. a final score). */
-  keepDetail?: boolean;
   /** Which of meta.leaderboard.variants this round counts for (a level or pace). */
   board?: string;
   /** Score to rank on the leaderboard when the round shows no score of its own (games that track bests per level). */

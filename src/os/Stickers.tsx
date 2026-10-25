@@ -17,13 +17,13 @@ const BORDER = 5;
 /** Die-cut vinyl sticker: white border, coloured face, clipped artwork and a gloss pass. */
 function Art({ shape, w = 100, h = 100, bg, children }: StickerProps) {
   const id = useId().replace(/:/g, '');
-  const outer = (fill: string) =>
+  const outer = (fill: string, className?: string) =>
     shape === 'circle' ? (
-      <circle cx={w / 2} cy={h / 2} r={w / 2} fill={fill} />
+      <circle cx={w / 2} cy={h / 2} r={w / 2} fill={fill} className={className} />
     ) : shape === 'hex' ? (
-      <polygon points={hex(w, h, 0)} fill={fill} />
+      <polygon points={hex(w, h, 0)} fill={fill} className={className} />
     ) : (
-      <rect width={w} height={h} rx={Math.min(w, h) * 0.16} fill={fill} />
+      <rect width={w} height={h} rx={Math.min(w, h) * 0.16} fill={fill} className={className} />
     );
   const inner =
     shape === 'circle' ? (
@@ -49,7 +49,7 @@ function Art({ shape, w = 100, h = 100, bg, children }: StickerProps) {
         <rect width={w} height={h} fill={bg} />
         {children}
       </g>
-      {outer(`url(#g${id})`)}
+      {outer(`url(#g${id})`, 'sticker-gloss')}
     </svg>
   );
 }
@@ -103,49 +103,90 @@ const Near = () => (
   </Art>
 );
 
-function Trigram({ bars, x, y, rot }: { bars: [number, number, number]; x: number; y: number; rot: number }) {
+/** One of the flag's four trigrams, drawn to the official construction sheet (in units of the flag's height). */
+function Trigram({ bars, x, y, rot, u }: { bars: [number, number, number]; x: number; y: number; rot: number; u: number }) {
+  const bw = u / 4;
+  const bh = u / 24;
+  const gap = u / 48;
+  const split = u / 48;
   return (
-    <g transform={`translate(${x} ${y}) rotate(${rot})`} fill="#111">
-      {bars.map((solid, i) =>
-        solid ? (
-          <rect key={i} x={-12} y={-11 + i * 8} width={24} height={5} />
+    <g transform={`translate(${x} ${y}) rotate(${rot})`} fill="#000">
+      {bars.map((solid, i) => {
+        const by = -(bh * 1.5 + gap) + i * (bh + gap);
+        return solid ? (
+          <rect key={i} x={-bw / 2} y={by} width={bw} height={bh} />
         ) : (
           <g key={i}>
-            <rect x={-12} y={-11 + i * 8} width={10.5} height={5} />
-            <rect x={1.5} y={-11 + i * 8} width={10.5} height={5} />
+            <rect x={-bw / 2} y={by} width={(bw - split) / 2} height={bh} />
+            <rect x={split / 2} y={by} width={(bw - split) / 2} height={bh} />
           </g>
-        ),
-      )}
+        );
+      })}
     </g>
   );
 }
 
-const KoreaFlag = () => (
-  <Art shape="rect" w={150} h={100} bg="#fff">
-    <g transform="translate(75 50) rotate(33.7)">
-      <path d="M-24 0a24 24 0 0 1 48 0a12 12 0 0 1-24 0a12 12 0 0 0-24 0z" fill="#cd2e3a" />
-      <path d="M24 0a24 24 0 0 1-48 0a12 12 0 0 1 24 0a12 12 0 0 0 24 0z" fill="#0047a0" />
-    </g>
-    <Trigram bars={[1, 1, 1]} x={32} y={24} rot={-56.3} />
-    <Trigram bars={[0, 0, 0]} x={118} y={76} rot={-56.3} />
-    <Trigram bars={[1, 0, 1]} x={32} y={76} rot={56.3} />
-    <Trigram bars={[0, 1, 0]} x={118} y={24} rot={56.3} />
-  </Art>
-);
+/** Taegukgi at 3:2: red over blue taegeuk on the diagonal, geon/gon/gam/ri trigrams in their corners. */
+const KoreaFlag = () => {
+  const u = 90;
+  const cx = 72.5;
+  const cy = 50;
+  const a = (Math.atan2(2, 3) * 180) / Math.PI;
+  const r = u / 4;
+  // trigrams sit an eighth of the hoist off the taegeuk
+  const d = (u * 11) / 24;
+  const at = (deg: number) => [cx + Math.cos((deg * Math.PI) / 180) * d, cy + Math.sin((deg * Math.PI) / 180) * d] as const;
+  const [tlx, tly] = at(180 + a);
+  const [brx, bry] = at(a);
+  const [trx, try_] = at(-a);
+  const [blx, bly] = at(180 - a);
+  return (
+    <Art shape="rect" w={145} h={100} bg="#fff">
+      <g transform={`translate(${cx} ${cy}) rotate(${a})`}>
+        <circle r={r} fill="#cd2e3a" />
+        <path d={`M${r} 0A${r} ${r} 0 0 1 ${-r} 0A${r / 2} ${r / 2} 0 0 0 0 0A${r / 2} ${r / 2} 0 0 1 ${r} 0z`} fill="#0047a0" />
+      </g>
+      <Trigram bars={[1, 1, 1]} x={tlx} y={tly} rot={a - 90} u={u} />
+      <Trigram bars={[0, 0, 0]} x={brx} y={bry} rot={a - 90} u={u} />
+      <Trigram bars={[1, 0, 1]} x={blx} y={bly} rot={90 - a} u={u} />
+      <Trigram bars={[0, 1, 0]} x={trx} y={try_} rot={90 - a} u={u} />
+    </Art>
+  );
+};
 
-const UsaFlag = () => (
-  <Art shape="rect" w={152} h={100} bg="#fff">
-    {Array.from({ length: 7 }, (_, i) => (
-      <rect key={i} y={i * (200 / 13)} width={152} height={100 / 13} fill="#b22234" />
-    ))}
-    <rect width={68} height={54} fill="#3c3b6e" />
-    {Array.from({ length: 5 }, (_, r) =>
-      Array.from({ length: r % 2 ? 5 : 6 }, (_, c) => <circle key={`${r}-${c}`} cx={(r % 2 ? 13 : 7) + c * 11} cy={9 + r * 9.5} r={2.3} fill="#fff" />),
-    )}
-  </Art>
-);
+/** Stars and Stripes to the federal spec (1.9:1, canton 7 stripes deep and 0.76 of the hoist wide, 50 stars in 9 rows). */
+const UsaFlag = () => {
+  const A = 95;
+  const B = A * 1.9;
+  const x0 = 5;
+  const y0 = 5;
+  const stripe = A / 13;
+  const C = stripe * 7;
+  const D = A * 0.76;
+  const star = (cx: number, cy: number, rr: number) =>
+    Array.from({ length: 10 }, (_, i) => {
+      const a = -Math.PI / 2 + (i * Math.PI) / 5;
+      const k = i % 2 ? rr * 0.382 : rr;
+      return `${(cx + Math.cos(a) * k).toFixed(2)},${(cy + Math.sin(a) * k).toFixed(2)}`;
+    }).join(' ');
+  return (
+    <Art shape="rect" w={B + 10} h={A + 10} bg="#fff">
+      <g transform={`translate(${x0} ${y0})`}>
+        {Array.from({ length: 7 }, (_, i) => (
+          <rect key={i} y={i * 2 * stripe} width={B} height={stripe} fill="#b31942" />
+        ))}
+        <rect width={D} height={C} fill="#0a3161" />
+        {Array.from({ length: 9 }, (_, r) =>
+          Array.from({ length: r % 2 ? 5 : 6 }, (_, c) => (
+            <polygon key={`${r}-${c}`} points={star(A * (0.063 + (r % 2 ? 0.063 : 0) + c * 0.126), A * (0.054 + r * 0.054), A * 0.0308)} fill="#fff" />
+          )),
+        )}
+      </g>
+    </Art>
+  );
+};
 
-type Placed = { key: string; label: string; el: ReactNode; left: string; top: string; width: string; rot: number; onClick?: () => void };
+type Placed = { key: string; label: string; el: ReactNode; left: string; top: string; width: string; rot: number; curl?: number; onClick?: () => void };
 
 function Place({ s, interactive }: { s: Placed; interactive?: boolean }) {
   const style = { left: s.left, top: s.top, width: s.width, '--r': `${s.rot}deg` } as CSSProperties;
@@ -170,10 +211,10 @@ function Place({ s, interactive }: { s: Placed; interactive?: boolean }) {
 }
 
 export const lidStickers: Placed[] = [
-  { key: 'stanford', label: 'Stanford', el: <Stanford />, left: '8%', top: '10%', width: '24%', rot: -7 },
+  { key: 'stanford', label: 'Stanford', el: <Stanford />, left: '8%', top: '10%', width: '24%', rot: -7, curl: 0.05 },
   { key: 'near', label: 'NEAR Protocol', el: <Near />, left: '73%', top: '9%', width: '11%', rot: 8 },
   { key: 'stanford-s', label: 'Stanford Cardinal', el: <StanfordS />, left: '14%', top: '40%', width: '8%', rot: 9 },
-  { key: 'korea', label: 'Korea', el: <KoreaFlag />, left: '12%', top: '68%', width: '15%', rot: -9 },
+  { key: 'korea', label: 'Korea', el: <KoreaFlag />, left: '12%', top: '68%', width: '15%', rot: -9, curl: 0.07 },
   { key: 'usa', label: 'USA', el: <UsaFlag />, left: '71%', top: '62%', width: '15%', rot: 7 },
 ];
 
@@ -190,7 +231,7 @@ export function LidStickers() {
 /** Palm-rest stickers for the WebGL laptop: art plus placement on the deck in cm (x from centre, z towards the front). */
 export const palmStickers = [
   { key: 'crv', label: 'CRV - open Work folder', el: <Crv />, x: -11.3, z: 5.6, w: 2.7, rot: -10 },
-  { key: 'cognition', label: 'Cognition - open Work folder', el: <Cognition />, x: 11.1, z: 6.1, w: 5.3, rot: 5 },
+  { key: 'cognition', label: 'Cognition - open Work folder', el: <Cognition />, x: 11.1, z: 6.1, w: 5.3, rot: 5, curl: 0.04 },
 ] as const;
 
 export function PalmStickers({ onCrv, onCognition }: { onCrv: () => void; onCognition: () => void }) {

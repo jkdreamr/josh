@@ -113,7 +113,7 @@ export function Hud({ circuit, split, tower, touch, apiRef }: Props) {
       const showLights = r.mode === 'race' && r.time < 0.8 && r.time > r.lightsFrom - 1.5;
       const lightsBox = q('.g-grand-prix-lights');
       if (lightsBox) lightsBox.dataset.show = showLights ? '1' : '';
-      lights.forEach((l, k) => (l.dataset.on = r.lights > k ? '1' : ''));
+      lights.forEach((l, k) => (l.dataset.on = r.lights > Math.floor(k / 2) ? '1' : ''));
 
       // minimap dots
       const g = dotsRef.current;

@@ -27,3 +27,40 @@
   outline-offset: -3px;
   border-radius: 16px;
 }
+/* Touch only: hold to duck. Tapping anywhere else on the canvas jumps. */
+.g-dino .g-dino-duck {
+  position: absolute;
+  z-index: 3;
+  left: 16px;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  width: 96px;
+  height: 64px;
+  border-radius: 32px;
+  border: 1px solid rgba(74, 74, 80, 0.18);
+  background: rgba(74, 74, 80, 0.1);
+  color: #4a4a50;
+  font: 600 15px/1 Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.12s, transform 0.12s, color 0.6s, border-color 0.6s;
+}
+.g-dino .g-dino-duck:active {
+  background: rgba(74, 74, 80, 0.22);
+  transform: scale(0.96);
+}
+.g-dino .g-dino-duck.is-night {
+  border-color: rgba(222, 222, 227, 0.2);
+  background: rgba(222, 222, 227, 0.1);
+  color: #dedee3;
+}
+.g-dino .g-dino-duck.is-night:active {
+  background: rgba(222, 222, 227, 0.22);
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-dino .g-dino-duck {
+    transition: none;
+  }
+}

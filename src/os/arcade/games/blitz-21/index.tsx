@@ -1,5 +1,5 @@
-import { useEffect, useReducer, useRef, useState, type CSSProperties } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useShell } from '../../kit';
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from 'react';
+import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useOnline, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import {
   FIVE_CARDS,
@@ -13,12 +13,15 @@ import {
   currentCard,
   isRed,
   laneTotal,
+  mulberry32,
   play,
+  preview,
   rankLabel,
   tick,
   upcomingCard,
   type Breakdown,
   type Card,
+  type PlayKind,
   type PlayResult,
   type State,
   type Suit,
@@ -49,9 +52,15 @@ export default function Game({ compact, onExit }: GameProps) {
   const [summary, setSummary] = useState<Summary | null>(null);
   return (
     <GameShell meta={meta} compact={compact} onExit={onExit} setup={summary ? <Results b={summary} /> : undefined}>
-      <Play onSummary={setSummary} />
+      <Table onSummary={setSummary} />
     </GameShell>
   );
+}
+
+/** Every online round gets a fresh table, so a player who joins from the Start card never keeps a lobby deal. */
+function Table({ onSummary }: { onSummary: (s: Summary | null) => void }) {
+  const online = useOnline();
+  return <Play key={online ? `round-${online.round}` : 'solo'} onSummary={onSummary} />;
 }
 
 function Results({ b }: { b: Breakdown }) {
@@ -79,10 +88,10 @@ function Results({ b }: { b: Breakdown }) {
   );
 }
 
-function CardFace({ card, className = '', style }: { card: Card; className?: string; style?: CSSProperties }) {
+function CardFace({ card, className = '', style, id }: { card: Card; className?: string; style?: CSSProperties; id?: number }) {
   const face = card.rank > 10;
   return (
-    <div className={`g-blitz-21-card ${isRed(card) ? 'is-red' : ''} ${className}`} style={style} aria-hidden="true">
+    <div className={`g-blitz-21-card ${isRed(card) ? 'is-red' : ''} ${className}`} style={style} data-card={id} aria-hidden="true">
       <span className="g-blitz-21-corner">
         <b>{rankLabel(card.rank)}</b>
         <Suit suit={card.suit} />
@@ -111,53 +120,87 @@ const Suit = ({ suit }: { suit: Suit }) => (
   </svg>
 );
 
-function totalLabel(cards: Card[]) {
+function totalLabel(cards: Card[], tight: boolean) {
   if (!cards.length) return '0';
   const t = laneTotal(cards);
-  return t.soft !== null ? `${t.hard} or ${t.soft}` : String(t.hard);
+  if (t.soft === null) return String(t.hard);
+  return tight ? `${t.hard}/${t.soft}` : `${t.hard} or ${t.soft}`;
 }
+
+/** What a column would become with the card on it, for the hover and keyboard preview. */
+function hintFor(cards: Card[], card: Card): { kind: PlayKind; text: string } {
+  const kind = preview(cards, card);
+  const t = laneTotal([...cards, card]);
+  if (kind === 'bust') return { kind, text: 'Bust' };
+  if (kind === 'clear') return { kind, text: t.best === 21 ? '21' : 'Five Card' };
+  return { kind, text: String(t.best) };
+}
+
+// A column fans up to four cards; the fifth always clears it.
+const FAN_MIN = 0.27;
+const FAN_MAX = 0.42;
+const SHORT_HUD = 92;
+const stackH = (fan: number) => 1.4 * (1 + fan * (FIVE_CARDS - 2));
 
 function layout(w: number, h: number) {
   const wide = w >= h * 1.12;
-  // Short windows move the HUD into the top bar so the columns get the height.
+  // Short windows (the framed laptop) put the HUD in its own column beside the deck, clear of the shell's top bar.
   const short = wide && h < 330;
-  // A column holds up to four fanned cards plus its total and card count.
-  const laneH = (cw: number) => cw * 1.4 * (1 + 0.27 * (FIVE_CARDS - 2)) + 46;
   let cw: number;
+  let room: number;
   if (short) {
-    const byW = (w - 24 - 18 - 3 * 10) / (LANES * 1.16 + 1.8);
-    const byH = (h - 44 - 6 - 36) / (1.4 * (1 + 0.27 * (FIVE_CARDS - 2)));
-    const byDealer = (h - 54) / 1.54;
-    cw = Math.min(byW, byH, byDealer);
+    room = h - 44 - 6 - 30;
+    const byW = (w - 24 - SHORT_HUD - 2 * 14 - 3 * 8) / (LANES * 1.16 + 1.75);
+    const byDealer = (h - 50 - 20) / 1.54;
+    cw = Math.min(byW, room / stackH(FAN_MIN), byDealer);
   } else if (wide) {
+    room = h - 56 - 46 - 14;
     const byW = (w - 40 - 18 - 3 * 10) / (LANES * 1.16 + 1.8);
-    const byH = (h - 56 - 46 - 14) / (1.4 * (1 + 0.27 * (FIVE_CARDS - 2)));
     // The dealer column stacks the HUD above the current card.
     const byDealer = (h - 60 - 110) / 1.54;
-    cw = Math.min(byW, byH, byDealer);
+    cw = Math.min(byW, room / stackH(FAN_MIN), byDealer);
   } else {
     const byW = (w - 24 - 3 * 8) / (LANES * 1.16);
-    const byH = (h - 56 - 40 - 46 - 24 - 28) / (1.4 * (1 + 0.27 * (FIVE_CARDS - 2)) + 1.4 * 0.95);
+    const byH = (h - 56 - 40 - 46 - 24 - 28) / (stackH(FAN_MIN) + 1.4 * 0.95);
     cw = Math.min(byW, byH);
+    room = h - 56 - 40 - 46 - 24 - 28 - Math.floor(cw) * 1.33;
   }
-  cw = Math.max(short ? 26 : 30, Math.min(128, Math.floor(cw)));
-  return { wide, short, cw, laneH: Math.round(short ? laneH(cw) - 10 : laneH(cw)) };
+  cw = Math.max(short ? 26 : 30, Math.min(150, Math.floor(cw)));
+  const ch = Math.round(cw * 1.4);
+  // Height left over in a column goes to a wider fan, so more of each card shows.
+  const fan = Math.max(FAN_MIN, Math.min(FAN_MAX, (room / ch - 1) / (FIVE_CARDS - 2)));
+  const slotH = Math.ceil(ch * (1 + fan * (FIVE_CARDS - 2)));
+  return { wide, short, cw, ch, fan, slotH, laneH: slotH + (short ? 30 : 46), tight: cw * 1.16 < 60 };
 }
+
+type Deal = { t: 'deal'; seed: number };
+const parseDeal = (d: unknown): Deal | null => {
+  const m = d as { t?: unknown; seed?: unknown } | null;
+  return m && m.t === 'deal' && Number.isInteger(m.seed) && (m.seed as number) >= 0 && (m.seed as number) < 2 ** 32 ? { t: 'deal', seed: m.seed as number } : null;
+};
+const isDealAsk = (d: unknown) => !!d && typeof d === 'object' && (d as { t?: unknown }).t === 'deal?';
+const randomSeed = () => (Math.random() * 2 ** 32) >>> 0;
+const dealFrom = (seed: number) => createGame(mulberry32(seed));
+const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
   const shell = useShell();
+  const online = useOnline();
   const { ref, size } = useCanvas<HTMLDivElement>();
   const board = useRef<HTMLDivElement | null>(null);
-  const st = useRef<State>(createGame());
+  // Online, the host shuffles and everyone in the race plays the same deck. A guest waits for it.
+  const seed = useRef(randomSeed());
+  const st = useRef<State | null>(online && !online.isHost ? null : dealFrom(seed.current));
   const [, render] = useReducer((n: number) => n + 1, 0);
   const [ghosts, setGhosts] = useState<Ghost[]>([]);
   const [floaters, setFloaters] = useState<Floater[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
-  const [lastPlaced, setLastPlaced] = useState<number | null>(null);
+  const [hover, setHover] = useState<number | null>(null);
   const fxId = useRef(0);
   const lastNow = useRef<number | null>(null);
   const shownSecond = useRef(Math.ceil(ROUND_SECONDS));
   const endDelay = useRef<number | null>(null);
+  const flight = useRef<{ id: number; from: DOMRect } | null>(null);
 
   useEffect(() => onSummary(null), [onSummary]);
   useEffect(() => {
@@ -168,8 +211,99 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
     setScore(0);
   }, [setScore]);
 
+  const onlineRef = useRef(online);
+  onlineRef.current = online;
+  const isOnline = !!online;
+  const isHost = !!online?.isHost;
+  useEffect(() => {
+    const room = onlineRef.current;
+    if (!room) return;
+    const off = room.onMessage((from, d) => {
+      if (room.isHost) {
+        if (isDealAsk(d)) room.send({ t: 'deal', seed: seed.current }, { to: from });
+        return;
+      }
+      const m = parseDeal(d);
+      const cur = st.current;
+      if (!m || from !== 0 || (cur && (cur.tally.placed > 0 || seed.current === m.seed))) return;
+      seed.current = m.seed;
+      st.current = dealFrom(m.seed);
+      render();
+    });
+    if (room.isHost) {
+      room.send({ t: 'deal', seed: seed.current });
+      return off;
+    }
+    room.send({ t: 'deal?' }, { to: 0 });
+    const ask = window.setInterval(() => {
+      if (!st.current) onlineRef.current?.send({ t: 'deal?' }, { to: 0 });
+    }, 1200);
+    // If the host never answers, play a shuffle of our own rather than sit at an empty table.
+    const fallback = window.setTimeout(() => {
+      if (st.current) return;
+      st.current = dealFrom(seed.current);
+      render();
+    }, 5000);
+    return () => {
+      off();
+      window.clearInterval(ask);
+      window.clearTimeout(fallback);
+    };
+  }, [isOnline, isHost]);
+
+  // A phone or iPad frame scales the game down; text and touch targets grow by the inverse so they stay full size.
+  useEffect(() => {
+    const el = shell.root.current;
+    if (!el) return;
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+        const u = shell.touch && k > 0.3 && k < 0.98 ? Math.min(1.6, Math.ceil(100 / k) / 100) : 1;
+        el.style.setProperty('--g-blitz-21-u', String(u));
+      });
+    };
+    measure();
+    const late = window.setTimeout(measure, 700);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(late);
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+      el.style.removeProperty('--g-blitz-21-u');
+    };
+  }, [shell.root, shell.touch, shell.status]);
+
+  // The placed card flies from the deck to its column.
+  useLayoutEffect(() => {
+    const f = flight.current;
+    const root = ref.current;
+    flight.current = null;
+    if (!f || !root) return;
+    const el = root.querySelector<HTMLElement>(`[data-card="${f.id}"]`);
+    if (!el?.animate) return;
+    const to = el.getBoundingClientRect();
+    const k = root.offsetWidth ? root.getBoundingClientRect().width / root.offsetWidth : 1;
+    if (!to.width || !k) return;
+    const dx = (f.from.left - to.left) / k;
+    const dy = (f.from.top - to.top) / k;
+    const sc = f.from.width / to.width;
+    el.animate(
+      [
+        { transform: `translate(${dx}px, ${dy}px) scale(${sc})`, transformOrigin: '0 0', zIndex: 6 },
+        { transform: 'translate(0, 0) scale(1)', transformOrigin: '0 0', zIndex: 6 },
+      ],
+      { duration: 190, easing: 'cubic-bezier(0.2, 0.75, 0.25, 1)' },
+    );
+  });
+
   const finish = () => {
     const s = st.current;
+    if (!s) return;
     const b = breakdown(s);
     onSummary(b);
     const title = s.over === 'deck' ? 'Deck Cleared' : s.over === 'time' ? 'Time Is Up' : 'Three Busts';
@@ -191,7 +325,7 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
     const id = ++fxId.current;
     setGhosts((g) => [...g.filter((x) => x.lane !== r.lane), { id, lane: r.lane, kind: r.kind as 'clear' | 'bust', cards: r.cards }]);
     if (r.kind === 'bust') {
-      setFloaters((f) => [...f, { id, lane: r.lane, kind: 'bust', title: 'Bust', points: 0, streak: 0 }]);
+      setFloaters((f) => [...f.filter((x) => x.lane !== r.lane), { id, lane: r.lane, kind: 'bust', title: 'Bust', points: 0, streak: 0 }]);
       sfx.play('hit');
       sfx.noise(0.14, 0.16);
       board.current?.animate?.(
@@ -201,18 +335,20 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
       return;
     }
     const title = r.blackjack ? 'Blackjack' : r.fiveCard && r.total !== 21 ? 'Five Card' : r.fiveCard ? 'Five Card 21' : '21';
-    setFloaters((f) => [...f, { id, lane: r.lane, kind: 'clear', title, points: r.points, streak: r.streak }]);
+    setFloaters((f) => [...f.filter((x) => x.lane !== r.lane), { id, lane: r.lane, kind: 'clear', title, points: r.points, streak: r.streak }]);
     const pitch = 1 + Math.min(6, r.streak - 1) * 0.08;
     sfx.play('coin', pitch);
     if (r.fiveCard || r.blackjack) sfx.tone({ freq: 1568 * pitch, dur: 0.18, type: 'triangle', vol: 0.12, delay: 0.14 });
   };
 
   const place = (lane: number) => {
-    if (shell.status !== 'playing') return;
-    const out = play(st.current, lane);
+    const cur = st.current;
+    if (shell.status !== 'playing' || !cur) return;
+    const out = play(cur, lane);
     if (!out) return;
+    const from = ref.current?.querySelector('.g-blitz-21-current .g-blitz-21-card');
+    flight.current = from && !reducedMotion() ? { id: out.result.card.id, from: from.getBoundingClientRect() } : null;
     st.current = out.state;
-    setLastPlaced(out.result.card.id);
     feedback(out.result);
     shell.setScore(out.state.score);
     if (out.state.over) endDelay.current = 0.75;
@@ -229,6 +365,7 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
     } else if (code === 'ArrowLeft' || code === 'KeyA') setCursor((c) => (c === null ? 0 : (c + LANES - 1) % LANES));
     else if (code === 'ArrowRight' || code === 'KeyD') setCursor((c) => (c === null ? 0 : (c + 1) % LANES));
     else if (code === 'Space' || code === 'Enter' || code === 'ArrowDown' || code === 'KeyS') {
+      e?.preventDefault();
       if (cursor === null) setCursor(0);
       else place(cursor);
     }
@@ -238,6 +375,8 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
     const now = performance.now();
     const dt = lastNow.current === null ? 0 : Math.min(0.25, (now - lastNow.current) / 1000);
     lastNow.current = now;
+    const before = st.current;
+    if (!before) return;
     if (endDelay.current !== null) {
       endDelay.current -= dt;
       if (endDelay.current <= 0) {
@@ -246,7 +385,6 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
       }
       return;
     }
-    const before = st.current;
     st.current = tick(before, dt);
     const sec = Math.ceil(st.current.timeLeft);
     if (sec !== shownSecond.current) {
@@ -261,11 +399,29 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
   });
 
   const s = st.current;
+  const L = layout(size.w, size.h);
+  const { wide, short, cw } = L;
+  const vars = {
+    '--cw0': `${cw}px`,
+    '--cw': `${cw}px`,
+    '--ch': `${L.ch}px`,
+    '--fan': L.fan,
+    '--slot-h': `${L.slotH}px`,
+    '--lane-h': `${L.laneH}px`,
+  } as CSSProperties;
+  const stageClass = `g-blitz-21-stage ${wide ? 'is-wide' : 'is-tall'}${short ? ' is-short' : ''}`;
+
+  if (!s)
+    return (
+      <div ref={ref} className={stageClass} style={vars}>
+        <p className="g-blitz-21-wait">Shuffling the host's deck</p>
+      </div>
+    );
+
   const card = currentCard(s);
   const upcoming = upcomingCard(s);
-  const { wide, short, cw, laneH } = layout(size.w, size.h);
-  const vars = { '--cw0': `${cw}px`, '--cw': `${cw}px`, '--ch': `${Math.round(cw * 1.4)}px`, '--lane-h': `${laneH}px` } as CSSProperties;
   const low = s.timeLeft <= 10;
+  const aim = hover ?? cursor;
 
   const hud = (
     <div className="g-blitz-21-hud">
@@ -310,35 +466,47 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
   );
 
   return (
-    <div ref={ref} className={`g-blitz-21-stage ${wide ? 'is-wide' : 'is-tall'}${short ? ' is-short' : ''}`} style={vars}>
-      {(!wide || short) && hud}
+    <div ref={ref} className={stageClass} style={vars}>
+      {!wide && hud}
       <div className="g-blitz-21-play">
+        {short && hud}
         {wide && dealer}
         <div className="g-blitz-21-lanes" ref={board}>
           {s.lanes.map((cards, i) => {
             const ghost = ghosts.find((g) => g.lane === i);
             const t = laneTotal(cards);
+            const hint = aim === i && card && shell.status === 'playing' ? hintFor(cards, card) : null;
             return (
               <div
                 key={i}
                 role="button"
-                aria-label={`Column ${i + 1}, total ${totalLabel(cards)}`}
-                className={`g-blitz-21-lane ${cursor === i ? 'is-cursor' : ''} ${t.soft !== null ? 'is-soft' : ''}`}
+                aria-label={`Column ${i + 1}, total ${totalLabel(cards, false)}`}
+                className={[
+                  'g-blitz-21-lane',
+                  cursor === i ? 'is-cursor' : '',
+                  t.soft !== null ? 'is-soft' : '',
+                  hint ? `is-aim is-will-${hint.kind}` : '',
+                  ghost ? `is-${ghost.kind}ing` : '',
+                ].join(' ')}
                 onPointerDown={(e) => {
                   if (e.button !== 0) return;
                   e.preventDefault();
                   setCursor(null);
                   place(i);
                 }}
+                onPointerEnter={(e) => {
+                  if (e.pointerType === 'mouse') setHover(i);
+                }}
+                onPointerLeave={() => setHover((h) => (h === i ? null : h))}
                 onContextMenu={(e) => e.preventDefault()}
               >
                 <div className="g-blitz-21-total" key={`t-${cards.length}`}>
-                  {totalLabel(cards)}
+                  {totalLabel(cards, L.tight)}
                 </div>
                 <div className="g-blitz-21-slot">
                   {!cards.length && <div className="g-blitz-21-hole" />}
                   {cards.map((c, k) => (
-                    <CardFace key={c.id} card={c} className={c.id === lastPlaced ? 'is-drop' : ''} style={{ top: `calc(var(--ch) * ${0.27 * k})` }} />
+                    <CardFace key={c.id} card={c} id={c.id} style={{ top: `calc(var(--ch) * var(--fan) * ${k})` }} />
                   ))}
                   {ghost && (
                     <div
@@ -349,7 +517,7 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
                       }}
                     >
                       {ghost.cards.map((c, k) => (
-                        <CardFace key={c.id} card={c} style={{ top: `calc(var(--ch) * ${0.27 * Math.min(k, FIVE_CARDS - 2)})` }} />
+                        <CardFace key={c.id} card={c} id={c.id} style={{ top: `calc(var(--ch) * var(--fan) * ${Math.min(k, FIVE_CARDS - 2)})` }} />
                       ))}
                     </div>
                   )}
@@ -369,6 +537,7 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
                       </div>
                     ))}
                 </div>
+                {hint && <div className={`g-blitz-21-hint is-${hint.kind}`}>{hint.text}</div>}
                 <div className="g-blitz-21-count" aria-hidden="true">
                   {Array.from({ length: FIVE_CARDS }, (_, k) => (
                     <i key={k} className={k < cards.length ? 'is-on' : ''} />

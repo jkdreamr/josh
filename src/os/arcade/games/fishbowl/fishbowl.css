@@ -695,17 +695,11 @@
 .g-fishbowl .g-fishbowl-keys .g-fishbowl-skip {
   font-size: 19px;
 }
-.g-fishbowl .g-fishbowl-keys kbd {
-  font-family: Inter, system-ui, sans-serif;
-  font-size: 11px;
-  font-weight: 600;
-  opacity: 0.6;
-}
 
 /* Review */
 .g-fishbowl .g-fishbowl-list > span small {
   margin-left: auto;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 500;
   color: var(--party-faint);
 }
@@ -960,7 +954,7 @@
   background: var(--party-tile);
 }
 .g-fishbowl .g-fishbowl-notes small {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--party-faint);
 }

@@ -4,7 +4,7 @@
 // the host). Items travel as events: whoever throws something announces it, every client simulates it, and only
 // the kart it hits decides that it was hit, then says the item is gone. The host picks the class, the GO time and
 // the grid, and calls the result once everyone is home.
-import { turboLevel, type Item, type Kart, type ThingKind } from './logic.ts';
+import { CLOUD_T, ITEMS, turboLevel, type Item, type Kart, type ThingKind } from './logic.ts';
 
 export const F_SPIN = 1;
 export const F_TUMBLE = 2;
@@ -24,6 +24,13 @@ export const F_BULLET = 1 << 17;
 export const F_INK = 1 << 18;
 /** In a pond, waiting to be fished out. */
 export const F_SUNK = 1 << 19;
+/** See-through under a Boo, a thunder cloud overhead, frozen in ice, and a piranha plant riding up front. */
+export const F_BOO = 1 << 20;
+export const F_CLOUD = 1 << 21;
+export const F_FROZEN = 1 << 22;
+export const F_PIRANHA = 1 << 23;
+/** Bits 24-28 hold the item in hand once the roulette has stopped (0 none, else its place in ITEMS plus one): a Boo needs to know. */
+const ITEM_SHIFT = 24;
 const TRAILS = [null, 'banana', 'green', 'red'] as const;
 /** What a held-out item looks like from outside: three bananas are a banana, three greens a green. */
 const trailKind = (item: Item | null) => (item === 'bananas' ? 'banana' : item === 'greens' ? 'green' : item);
@@ -39,7 +46,11 @@ export type NetEv =
   | { y: 'stole'; to: number }
   /** Ink from the sender over everyone ahead of it, and the sender's horn going off at (x, z). */
   | { y: 'ink' }
-  | { y: 'horn'; x: number; z: number };
+  | { y: 'horn'; x: number; z: number }
+  /** The sender's Boo took seat `to`'s item, the sender's thunder cloud bumped onto seat `to` with `left` seconds to go, and the sender's POW block used at race time `at`. */
+  | { y: 'boo'; to: number }
+  | { y: 'cloud'; to: number; left: number }
+  | { y: 'pow'; at: number };
 
 export type Packet =
   | { k: 'S'; round: number; go: number; cc: string; course: string; roster: number[]; cars: Car[] }
@@ -53,7 +64,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const seatOk = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) < 16;
-const KINDS: readonly ThingKind[] = ['banana', 'green', 'red', 'blue', 'bomb'];
+const KINDS: readonly ThingKind[] = ['banana', 'green', 'red', 'blue', 'bomb', 'boomerang', 'fire', 'ice'];
 
 export function flagsOf(k: Kart) {
   return (
@@ -74,7 +85,12 @@ export function flagsOf(k: Kart) {
     (k.mega > 0 ? F_MEGA : 0) |
     (k.bullet > 0 ? F_BULLET : 0) |
     (k.ink > 0 ? F_INK : 0) |
-    (k.sunk > 0 ? F_SUNK : 0)
+    (k.sunk > 0 ? F_SUNK : 0) |
+    (k.boo > 0 ? F_BOO : 0) |
+    (k.cloud > 0 ? F_CLOUD : 0) |
+    (k.frozen > 0 ? F_FROZEN : 0) |
+    (k.piranha > 0 ? F_PIRANHA : 0) |
+    ((k.item && k.roll === 0 ? ITEMS.indexOf(k.item) + 1 : 0) << ITEM_SHIFT)
   );
 }
 
@@ -90,7 +106,9 @@ export function applyFlags(k: Kart, f: number) {
   k.charge = [0, 0.8, 1.7, 2.7][(f >> 8) & 3];
   const trail = TRAILS[(f >> 10) & 3];
   k.trail = trail !== null;
-  if (trail) k.item = trail;
+  // (what it holds: older clients only ever said, by what was held out behind)
+  const held = (f >> ITEM_SHIFT) & 31;
+  k.item = held ? (ITEMS[held - 1] ?? null) : trail;
   // a remote slam is live while its owner says so, and lands on us at most once
   if (f & F_SLAM) {
     if (k.slamT <= 0) k.slamHit = false;
@@ -105,6 +123,10 @@ export function applyFlags(k: Kart, f: number) {
   k.mega = f & F_MEGA ? 1 : 0;
   k.bullet = f & F_BULLET ? 1 : 0;
   k.ink = f & F_INK ? 1 : 0;
+  k.boo = f & F_BOO ? 1 : 0;
+  k.cloud = f & F_CLOUD ? 1 : 0;
+  k.frozen = f & F_FROZEN ? 0.5 : 0;
+  k.piranha = f & F_PIRANHA ? 1 : 0;
   // in the water: the fall plays out here from when we first hear of it (glide counts it down)
   if (!(f & F_SUNK)) k.sunk = 0;
   else if (k.sunk <= 0) k.sunk = Infinity;
@@ -147,6 +169,9 @@ function parseEv(v: unknown): NetEv | null {
   if (e.y === 'stole') return seatOk(e.to) ? { y: 'stole', to: e.to } : null;
   if (e.y === 'ink') return { y: 'ink' };
   if (e.y === 'horn') return num(e.x) && num(e.z) ? { y: 'horn', x: e.x, z: e.z } : null;
+  if (e.y === 'boo') return seatOk(e.to) ? { y: 'boo', to: e.to } : null;
+  if (e.y === 'cloud') return seatOk(e.to) && num(e.left) ? { y: 'cloud', to: e.to, left: Math.min(CLOUD_T, Math.max(0, e.left)) } : null;
+  if (e.y === 'pow') return num(e.at) ? { y: 'pow', at: e.at } : null;
   if (e.y !== 'spawn' || !KINDS.includes(e.kind as ThingKind)) return null;
   const keys = ['id', 'x', 'z', 'vx', 'vz', 'vy', 'yy', 'tg', 'pg', 'gr'] as const;
   if (!keys.every((key) => num(e[key]))) return null;

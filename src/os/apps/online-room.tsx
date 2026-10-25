@@ -1,10 +1,10 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { BoardList, BoardScopeNote, useRoundBoard, validName } from '../arcade/kit/board';
 import { ARCADE_API, NAME_MAX, formatBoardScore, savedName, saveName, type BoardInfo } from '../arcade/kit/leaderboard';
-import { ROOM_VISIBILITY, useOpenRooms, type RoomVisibility } from '../arcade/kit/online';
-import { nextOnlineRound, openRoomLine } from '../arcade/kit/online-core';
+import { ROOM_VISIBILITY, ROOM_WATCHERS, useOpenRooms, type RoomVisibility } from '../arcade/kit/online';
+import { nextOnlineRound, openRoomAction, openRoomLine } from '../arcade/kit/online-core';
 import { createRoom, RoomLink, type RoomPlayer, type RoomTransport } from '../arcade/kit/room';
-import { useSetting } from '../arcade/kit/settings';
+import { getSetting, useSetting } from '../arcade/kit/settings';
 import { usePlayingReport } from '../arcade/playing';
 import { OSContext } from '../types';
 import './online-room.css';
@@ -18,7 +18,7 @@ export type AppRoomStatus = 'idle' | 'lobby' | 'playing';
 export type AppRoom = ReturnType<typeof useAppRoom>;
 
 type Handlers = {
-  /** A round began (first start or a rematch). Seat 0 is the host. */
+  /** A round began (first start or a rematch), or a spectator came in on one under way. Seat 0 is the host, -1 a spectator. */
   onStart?: (round: number, seat: number, players: RoomPlayer[]) => void;
   /**
    * The game stopped: 'opponent-left' or 'host-left' (someone else hosts now) while you stay in the room, back in its
@@ -44,6 +44,11 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
   /** Whether the room is public (null: the server doesn't say), and the kind of room Create Room makes. */
   const [listed, setListedState] = useState<boolean | null>(null);
   const [visibility, setVisibility] = useSetting(ROOM_VISIBILITY);
+  /** Spectating: in as a spectator, who is watching, and whether the host lets people watch (null: they can't). */
+  const [watching, setWatching] = useState(false);
+  const [watchers, setWatchers] = useState<string[]>([]);
+  const [watchable, setWatchableState] = useState<boolean | null>(null);
+  const [, setWatchSetting] = useSetting(ROOM_WATCHERS);
   const linkRef = useRef<RoomLink | null>(null);
   const roundRef = useRef(0);
   const statusRef = useRef<AppRoomStatus>('idle');
@@ -63,15 +68,21 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
     setRoomGame('');
     setTransport('relay');
     setListedState(null);
+    setWatching(false);
+    setWatchers([]);
+    setWatchableState(null);
     setError(message);
   }, []);
 
-  const connect = useCallback((roomCode: string) => {
+  const connect = useCallback((roomCode: string, watch = false) => {
     linkRef.current?.close();
     setError('');
     const clean = name.trim();
     if (clean) saveName(clean);
-    const link = new RoomLink(roomCode.toUpperCase(), clean || 'Player');
+    const link = new RoomLink(roomCode.toUpperCase(), clean || 'Player', ARCADE_API, { watch });
+    setWatching(watch);
+    setWatchers([]);
+    setWatchableState(null);
     linkRef.current = link;
     roundRef.current = 0;
     statusRef.current = 'lobby';
@@ -85,6 +96,22 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
       setRoomGame(message.game);
       setCode(message.code);
       setPlayers(message.players);
+      // a spectator who comes in mid-round watches it from here
+      if (message.watching && message.started) {
+        roundRef.current = message.round;
+        statusRef.current = 'playing';
+        setStatus('playing');
+        setRound(message.round);
+        handlersRef.current.onStart?.(message.round, -1, message.players);
+      }
+    });
+    let watchSaid = false;
+    link.on('watchers', ({ names, on }) => {
+      if (linkRef.current !== link) return;
+      setWatchers(names);
+      setWatchableState(on);
+      if (!watchSaid && link.seat === 0 && on && getSetting(ROOM_WATCHERS) === 'off') link.setWatchable(false);
+      watchSaid = true;
     });
     // Whoever stays keeps the room: back in its lobby, where someone else can join and the host can start again.
     const toLobby = (message: string, reason: string) => {
@@ -96,7 +123,7 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
     link.on('players', (list) => {
       if (linkRef.current !== link) return;
       setPlayers(list);
-      if (statusRef.current === 'playing' && list.length < 2) toLobby('Your opponent left the room.', 'opponent-left');
+      if (statusRef.current === 'playing' && list.length < 2) toLobby(link.watching ? 'A player left the room.' : 'Your opponent left the room.', 'opponent-left');
     });
     link.on('host', ({ seat: next }) => {
       if (linkRef.current !== link) return;
@@ -107,21 +134,28 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
     link.on('transport', setTransport);
     link.on('listed', (on) => linkRef.current === link && setListedState(on));
     link.on('start', ({ players: list, round: serverRound }) => {
-      if (linkRef.current !== link || link.seat === null) return;
+      if (linkRef.current !== link || (link.seat === null && !link.watching)) return;
       setError('');
       roundRef.current = nextOnlineRound(roundRef.current, serverRound);
       statusRef.current = 'playing';
       setStatus('playing');
       setPlayers(list);
       setRound(roundRef.current);
-      handlersRef.current.onStart?.(roundRef.current, link.seat, list);
+      handlersRef.current.onStart?.(roundRef.current, link.seat ?? -1, list);
     });
-    link.on('closed', ({ reason }) => {
+    link.on('closed', ({ reason, watch: canWatch }) => {
       if (linkRef.current !== link) return;
-      reset(reason === 'host-left' ? 'The host left the room.' : 'The connection was lost.');
+      // a match under way (or a full room) that people can watch: watch it, and take a seat when one opens up
+      if (!link.watching && (reason === 'started' || reason === 'full') && canWatch) {
+        connectRef.current(link.code, true);
+        return;
+      }
+      reset(closedNotes[reason] ?? 'The connection was lost.');
       handlersRef.current.onEnd?.(reason);
     });
   }, [name, reset]);
+  const connectRef = useRef(connect);
+  connectRef.current = connect;
 
   const create = useCallback(async () => {
     setBusy(true);
@@ -146,6 +180,15 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
   const leave = useCallback(() => reset(''), [reset]);
   const start = useCallback(() => linkRef.current?.start(), []);
   const setListed = useCallback((on: boolean) => linkRef.current?.setListed(on), []);
+  const setWatchable = useCallback((on: boolean) => {
+    setWatchSetting(on ? 'on' : 'off');
+    linkRef.current?.setWatchable(on);
+  }, [setWatchSetting]);
+  /** A spectator takes a free seat: back into the room to play. */
+  const takeSeat = useCallback(() => {
+    const roomCode = linkRef.current?.code;
+    if (roomCode) connect(roomCode);
+  }, [connect]);
   const send = useCallback((d: unknown, options?: { fast?: boolean }) => linkRef.current?.send(d, options), []);
   const onMessage = useCallback((listener: (from: number, d: unknown) => void) => {
     const link = linkRef.current;
@@ -155,6 +198,7 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
   // The result ends the game: the host also tells the room, so someone new can join before the next one.
   const reportResult = useCallback((winner: number | null) => {
     const link = linkRef.current;
+    if (link?.watching) return;
     link?.reportResult(roundRef.current, winner);
     if (link?.seat === 0) link.endRound(roundRef.current);
   }, []);
@@ -162,7 +206,7 @@ export function useAppRoom(game: string, handlers: Handlers = {}) {
   useEffect(() => () => linkRef.current?.close(), []);
 
   const opponent = players.find((player) => player.seat !== seat);
-  return { game, roomGame, status, code, seat, players, opponent, round, transport, busy, error, name, setName, visibility, setVisibility, listed, setListed, create, join, leave, start, send, onMessage, reportResult, isHost: seat === 0, linked: !!code };
+  return { game, roomGame, status, code, seat, players, opponent, round, transport, busy, error, name, setName, visibility, setVisibility, listed, setListed, watching, watchers, watchable, setWatchable, takeSeat, create, join, leave, start, send, onMessage, reportResult, isHost: seat === 0, linked: !!code };
 }
 
 /** Joins a room once, from an invite link the OS passed in as app args. */
@@ -178,6 +222,16 @@ export function useInvite(room: AppRoom, inviteCode: string | undefined, nonce: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inviteCode, nonce]);
 }
+
+/** What to say when the room is gone, or turned this player away (see RoomLink's closed event). */
+const closedNotes: Record<string, string> = {
+  'host-left': 'The host left the room.',
+  'room-closed': 'The room closed.',
+  'not-found': 'No room has that code.',
+  started: 'That room is already playing.',
+  full: 'That room is full.',
+  'no-watching': 'The host turned watching off.',
+};
 
 const visibilityNotes: Record<RoomVisibility, string> = {
   private: 'Only people with the code or link can join.',
@@ -198,7 +252,21 @@ function VisibilitySeg({ value, onChange }: { value: RoomVisibility; onChange: (
   );
 }
 
-/** Open rooms for this app's game, each with a Join button. Hidden until Open Rooms answers. */
+/** The host's switch for spectators, in the apps' own controls. */
+function WatchSeg({ value, onChange }: { value: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <div className="oroom-field">
+      <span className="glabel">Spectators</span>
+      <div className="gseg" role="group" aria-label="Spectators">
+        <button type="button" aria-pressed={value} onClick={() => onChange(true)}>Allowed</button>
+        <button type="button" aria-pressed={!value} onClick={() => onChange(false)}>Off</button>
+      </div>
+      <span className="ghelp">{value ? 'People can watch your matches without playing.' : 'Nobody can watch. Anyone watching now is sent away.'}</span>
+    </div>
+  );
+}
+
+/** Open rooms for this app's game, each with a Join button (Watch, for a match under way). Hidden until Open Rooms answers. */
 function OpenRoomRows({ room }: { room: AppRoom }) {
   const rooms = useOpenRooms(room.game);
   if (!rooms) return null;
@@ -211,8 +279,8 @@ function OpenRoomRows({ room }: { room: AppRoom }) {
             <li key={open.code}>
               <span>{open.host}</span>
               <small>{openRoomLine(open)}</small>
-              <button type="button" className="gbtn gbtn-sm" disabled={!validName(room.name)} aria-label={`Join ${open.host}'s Room`} onClick={() => room.join(open.code)}>
-                Join
+              <button type="button" className="gbtn gbtn-sm" disabled={!validName(room.name)} aria-label={`${openRoomAction(open)} ${open.host}'s Room`} onClick={() => room.join(open.code)}>
+                {openRoomAction(open)}
               </button>
             </li>
           ))}
@@ -304,10 +372,26 @@ export function RoomPanel({ room, title, note, startLabel = 'Start Game' }: { ro
                 {player.seat === room.seat && <small>You</small>}
               </li>
             ))}
+            {!!room.watchers.length && (
+              <li className="is-watching" title={room.watchers.join(', ')}>
+                <span>{room.watchers.join(', ')}</span>
+                <small>{room.watchers.length} Watching</small>
+              </li>
+            )}
           </ul>
           {room.isHost && room.listed !== null && room.status !== 'playing' && <VisibilitySeg value={room.listed ? 'public' : 'private'} onChange={(v) => room.setListed(v === 'public')} />}
-          {!room.isHost && room.listed && <p className="oroom-note">A public room: anyone can join from Open Rooms.</p>}
-          {room.players.length < 2 ? (
+          {room.isHost && room.watchable !== null && room.status !== 'playing' && <WatchSeg value={room.watchable} onChange={room.setWatchable} />}
+          {!room.isHost && !room.watching && room.listed && <p className="oroom-note">A public room: anyone can join from Open Rooms.</p>}
+          {room.watching ? (
+            <>
+              <p className="oroom-note">You're watching. The match shows here when the host starts it.</p>
+              {room.players.length < 2 && room.status !== 'playing' && (
+                <button type="button" className="gbtn gbtn-primary" onClick={room.takeSeat}>
+                  Play Instead
+                </button>
+              )}
+            </>
+          ) : room.players.length < 2 ? (
             <p className="oroom-note">{room.listed ? 'Waiting for another player. Anyone can find this room in Open Rooms.' : 'Waiting for another player. Share the code or the link.'}</p>
           ) : room.isHost ? (
             room.status !== 'playing' && (

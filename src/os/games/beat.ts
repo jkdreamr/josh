@@ -5,9 +5,9 @@ export type TrackId = (typeof TRACKS)[number];
 export type DrumTrack = (typeof DRUM_TRACKS)[number];
 export type SynthTrack = (typeof SYNTH_TRACKS)[number];
 
-export const KITS = ['808', 'acoustic', 'lofi', 'house'] as const;
+export const KITS = ['808', 'acoustic', 'lofi', 'house', 'techno', 'breaks'] as const;
 export type KitId = (typeof KITS)[number];
-export const KIT_NAMES: Record<KitId, string> = { '808': '808', acoustic: 'Acoustic', lofi: 'Lo-Fi', house: 'House' };
+export const KIT_NAMES: Record<KitId, string> = { '808': '808', acoustic: 'Acoustic', lofi: 'Lo-Fi', house: 'House', techno: 'Techno', breaks: 'Breaks' };
 
 export const SCALES = ['minor pentatonic', 'major pentatonic', 'minor', 'major', 'dorian', 'blues'] as const;
 export type ScaleId = (typeof SCALES)[number];
@@ -41,7 +41,7 @@ export const BPM_MIN = 50;
 export const BPM_MAX = 220;
 export const SWING_MAX = 60;
 
-export type PresetName = 'kelix lofi' | 'boom bap' | 'house' | 'trap' | 'reggaeton';
+export type PresetName = 'kelix lofi' | 'boom bap' | 'house' | 'trap' | 'reggaeton' | 'techno' | 'drum and bass';
 export type Pitch = { name: string; frequency: number; midi: number };
 /** 0 off, 1 soft, 2 normal, 3 accent */
 export type Velocity = 0 | 1 | 2 | 3;
@@ -52,8 +52,10 @@ export type BeatPattern = {
   notes: Record<SynthTrack, number[]>;
 };
 
-export type TrackSettings = { volume: number; pitch: number; decay: number; muted: boolean };
-export type Effects = { filter: number; reverb: number; delay: number };
+/** Pan runs -50 (left) to 50 (right). Tone runs 0 (dark) to 100 (bright), 50 is the kit's own sound. */
+export type TrackSettings = { volume: number; pitch: number; decay: number; muted: boolean; pan: number; tone: number };
+/** Pump ducks everything but the kick on each kick hit, like sidechain compression. */
+export type Effects = { filter: number; reverb: number; delay: number; pump: number };
 
 export type BeatState = {
   bpm: number;
@@ -68,6 +70,8 @@ export type BeatState = {
   tracks: Record<TrackId, TrackSettings>;
   fx: Effects;
   groove: PresetName | null;
+  /** Keys play full chords built from the scale instead of single notes. */
+  chords: boolean;
 };
 
 export type Position = { pattern: number; step: number; songIndex: number };
@@ -103,6 +107,20 @@ export function scaleNotes(track: SynthTrack, root: number, scale: ScaleId): Pit
   return Array.from({ length: degreeCount(scale) }, (_, degree) => pitchForDegree(track, root, scale, degree));
 }
 
+/** A chord on a scale degree for the keys: triads (sevenths in seven-note scales), kept in a warm middle register. */
+export function chordForDegree(root: number, scale: ScaleId, degree: number): Pitch[] {
+  const steps = SCALE_STEPS[scale];
+  const size = steps.length;
+  const d = Math.max(0, Math.min(degreeCount(scale) - 1, degree));
+  const stack = size === 7 ? [0, 2, 4, 6] : size === 5 ? [0, 1, 3] : [0, 2, 4];
+  let notes = stack.map((offset) => {
+    const index = d + offset;
+    return TRACK_OCTAVE.keys + root + Math.floor(index / size) * 12 + steps[index % size];
+  });
+  while (notes[notes.length - 1] > 70) notes = notes.map((midi, index) => (index === notes.length - 1 || midi > 62 ? midi - 12 : midi)).sort((a, b) => a - b);
+  return notes.map(pitchForMidi);
+}
+
 function emptySteps(): Record<TrackId, number[]> {
   return Object.fromEntries(TRACKS.map((track) => [track, new Array<number>(MAX_STEPS).fill(0)])) as Record<TrackId, number[]>;
 }
@@ -116,7 +134,7 @@ export function emptyPattern(length: PatternLength = 16): BeatPattern {
 }
 
 export function defaultTrackSettings(): Record<TrackId, TrackSettings> {
-  return Object.fromEntries(TRACKS.map((track) => [track, { volume: 80, pitch: 0, decay: 50, muted: false }])) as Record<TrackId, TrackSettings>;
+  return Object.fromEntries(TRACKS.map((track) => [track, { volume: 80, pitch: 0, decay: 50, muted: false, pan: 0, tone: 50 }])) as Record<TrackId, TrackSettings>;
 }
 
 export function isPatternEmpty(pattern: BeatPattern): boolean {
@@ -130,6 +148,8 @@ type PresetSpec = {
   scale: ScaleId;
   kit: KitId;
   fx: Effects;
+  chords?: boolean;
+  mix?: Partial<Record<TrackId, Partial<TrackSettings>>>;
   steps: Record<TrackId, number[]>;
   accents?: Partial<Record<TrackId, number[]>>;
   ghosts?: Partial<Record<TrackId, number[]>>;
@@ -138,88 +158,118 @@ type PresetSpec = {
 
 const PRESETS: Record<PresetName, PresetSpec> = {
   'kelix lofi': {
-    bpm: 84,
-    swing: 26,
+    bpm: 82,
+    swing: 40,
     root: 9,
-    scale: 'minor pentatonic',
+    scale: 'dorian',
     kit: 'lofi',
-    fx: { filter: 44, reverb: 28, delay: 14 },
+    chords: true,
+    fx: { filter: 40, reverb: 30, delay: 12, pump: 16 },
+    mix: { hat: { volume: 62, tone: 40 }, keys: { volume: 74 }, lead: { volume: 62 } },
     steps: {
       kick: [0, 7, 10],
-      snare: [4, 12],
-      hat: [0, 2, 4, 6, 8, 10, 12, 14, 15],
-      'open hat': [14],
-      clap: [12],
-      bass: [0, 7, 10],
-      keys: [2, 6, 10, 14],
-      lead: [3, 11],
-    },
-    accents: { kick: [0], hat: [0, 8] },
-    ghosts: { hat: [15], snare: [] },
-    notes: { bass: { 0: 0, 7: 3, 10: 2 }, keys: { 2: 2, 6: 4, 10: 3, 14: 5 }, lead: { 3: 7, 11: 5 } },
-  },
-  'boom bap': {
-    bpm: 92,
-    swing: 20,
-    root: 0,
-    scale: 'minor pentatonic',
-    kit: 'acoustic',
-    fx: { filter: 50, reverb: 18, delay: 0 },
-    steps: {
-      kick: [0, 6, 10],
-      snare: [4, 12],
+      snare: [4, 12, 15],
       hat: [0, 2, 4, 6, 8, 10, 12, 14],
-      'open hat': [14],
-      clap: [4, 12],
-      bass: [0, 6, 10, 14],
-      keys: [2, 6, 10],
-      lead: [7, 15],
+      'open hat': [],
+      clap: [],
+      bass: [0, 7, 10],
+      keys: [0, 8],
+      lead: [3, 6, 11, 14],
     },
     accents: { kick: [0], snare: [4, 12] },
-    ghosts: { hat: [2, 6, 10, 14], clap: [4, 12] },
-    notes: { bass: { 0: 0, 6: 0, 10: 2, 14: 3 }, keys: { 2: 4, 6: 2, 10: 3 }, lead: { 7: 6, 15: 4 } },
+    ghosts: { hat: [2, 6, 10, 14], snare: [15] },
+    notes: { bass: { 0: 0, 7: 3, 10: 3 }, keys: { 0: 0, 8: 3 }, lead: { 3: 9, 6: 7, 11: 8, 14: 6 } },
+  },
+  'boom bap': {
+    bpm: 90,
+    swing: 32,
+    root: 2,
+    scale: 'minor',
+    kit: 'acoustic',
+    chords: true,
+    fx: { filter: 50, reverb: 16, delay: 0, pump: 0 },
+    mix: { hat: { volume: 66 }, keys: { volume: 70 }, lead: { volume: 60 } },
+    steps: {
+      kick: [0, 7, 10, 15],
+      snare: [4, 12, 14],
+      hat: [0, 2, 4, 6, 8, 10, 12, 14],
+      'open hat': [],
+      clap: [],
+      bass: [0, 7, 10],
+      keys: [0, 10],
+      lead: [3, 14],
+    },
+    accents: { kick: [0], snare: [4, 12] },
+    ghosts: { hat: [2, 6, 10, 14], snare: [14], kick: [15] },
+    notes: { bass: { 0: 0, 7: 0, 10: 5 }, keys: { 0: 0, 10: 5 }, lead: { 3: 9, 14: 7 } },
   },
   house: {
     bpm: 124,
-    swing: 6,
-    root: 2,
+    swing: 14,
+    root: 5,
     scale: 'minor',
     kit: 'house',
-    fx: { filter: 50, reverb: 22, delay: 20 },
+    chords: true,
+    fx: { filter: 50, reverb: 20, delay: 22, pump: 40 },
+    mix: { hat: { volume: 58 }, 'open hat': { volume: 70 }, keys: { volume: 70 }, lead: { volume: 58 } },
     steps: {
       kick: [0, 4, 8, 12],
       snare: [],
-      hat: [2, 6, 10, 14],
+      hat: [1, 3, 5, 7, 9, 11, 13, 15],
       'open hat': [2, 6, 10, 14],
       clap: [4, 12],
-      bass: [0, 3, 6, 8, 11, 14],
-      keys: [2, 6, 10, 14],
-      lead: [5, 13],
+      bass: [2, 6, 10, 14],
+      keys: [3, 10],
+      lead: [6, 14],
     },
     accents: { kick: [0, 4, 8, 12] },
-    ghosts: { hat: [2, 6, 10, 14] },
-    notes: { bass: { 0: 0, 3: 0, 6: 4, 8: 0, 11: 2, 14: 5 }, keys: { 2: 2, 6: 4, 10: 6, 14: 4 }, lead: { 5: 9, 13: 7 } },
+    ghosts: { hat: [1, 5, 9, 13] },
+    notes: { bass: { 2: 0, 6: 0, 10: 5, 14: 5 }, keys: { 3: 0, 10: 5 }, lead: { 6: 9, 14: 7 } },
+  },
+  techno: {
+    bpm: 130,
+    swing: 6,
+    root: 9,
+    scale: 'minor',
+    kit: 'techno',
+    fx: { filter: 50, reverb: 26, delay: 28, pump: 30 },
+    mix: { hat: { volume: 56, pan: 18 }, 'open hat': { volume: 66 }, bass: { volume: 74 }, lead: { volume: 64, tone: 62 } },
+    steps: {
+      kick: [0, 4, 8, 12],
+      snare: [15],
+      hat: [0, 1, 3, 4, 5, 7, 8, 9, 11, 12, 13, 15],
+      'open hat': [2, 6, 10, 14],
+      clap: [4, 12],
+      bass: [2, 3, 6, 7, 10, 11, 14, 15],
+      keys: [],
+      lead: [0, 3, 6, 8, 11, 14],
+    },
+    accents: { kick: [0, 4, 8, 12], lead: [3, 11] },
+    ghosts: { hat: [1, 5, 9, 13, 3, 7, 11, 15], snare: [15], bass: [3, 7, 11, 15] },
+    notes: { bass: { 2: 0, 3: 0, 6: 0, 7: 7, 10: 0, 11: 0, 14: 0, 15: 6 }, lead: { 0: 0, 3: 7, 6: 2, 8: 0, 11: 6, 14: 3 } },
   },
   trap: {
-    bpm: 142,
-    swing: 10,
+    bpm: 140,
+    swing: 0,
     root: 4,
-    scale: 'minor pentatonic',
+    scale: 'minor',
     kit: '808',
-    fx: { filter: 50, reverb: 16, delay: 24 },
+    chords: true,
+    fx: { filter: 50, reverb: 18, delay: 20, pump: 0 },
+    mix: { hat: { volume: 62 }, keys: { volume: 58 }, lead: { volume: 62 } },
     steps: {
-      kick: [0, 7, 10, 14],
-      snare: [4, 12],
-      hat: [0, 2, 4, 5, 7, 8, 10, 12, 13, 14, 15],
-      'open hat': [7, 15],
-      clap: [12],
-      bass: [0, 7, 10, 14],
-      keys: [3, 11],
-      lead: [2, 6, 10, 14],
+      kick: [0, 3, 10],
+      snare: [8],
+      hat: [0, 2, 4, 6, 8, 10, 12, 13, 14, 15],
+      'open hat': [],
+      clap: [8],
+      bass: [0, 3, 10],
+      keys: [0, 8],
+      lead: [0, 3, 6, 8, 11, 14],
     },
-    accents: { kick: [0], snare: [4, 12] },
-    ghosts: { hat: [5, 13, 15] },
-    notes: { bass: { 0: 0, 7: 0, 10: 2, 14: 3 }, keys: { 3: 5, 11: 4 }, lead: { 2: 7, 6: 5, 10: 7, 14: 9 } },
+    accents: { kick: [0], snare: [8], hat: [0, 8] },
+    ghosts: { hat: [13, 15] },
+    notes: { bass: { 0: 0, 3: 0, 10: 5 }, keys: { 0: 0, 8: 5 }, lead: { 0: 7, 3: 9, 6: 11, 8: 10, 11: 9, 14: 7 } },
   },
   reggaeton: {
     bpm: 94,
@@ -227,7 +277,9 @@ const PRESETS: Record<PresetName, PresetSpec> = {
     root: 7,
     scale: 'minor',
     kit: '808',
-    fx: { filter: 50, reverb: 14, delay: 18 },
+    chords: true,
+    fx: { filter: 50, reverb: 14, delay: 18, pump: 0 },
+    mix: { hat: { volume: 60 }, keys: { volume: 60 }, lead: { volume: 62 } },
     steps: {
       kick: [0, 4, 8, 12],
       snare: [3, 6, 11, 14],
@@ -235,18 +287,58 @@ const PRESETS: Record<PresetName, PresetSpec> = {
       'open hat': [],
       clap: [],
       bass: [0, 3, 6, 8, 11, 14],
-      keys: [0, 3, 8, 11],
+      keys: [0, 8],
       lead: [2, 10, 13],
     },
     accents: { kick: [0, 8], snare: [3, 11] },
     ghosts: { hat: [2, 6, 10, 14] },
-    notes: { bass: { 0: 0, 3: 0, 6: 4, 8: 5, 11: 5, 14: 4 }, keys: { 0: 2, 3: 4, 8: 3, 11: 4 }, lead: { 2: 7, 10: 9, 13: 7 } },
+    notes: { bass: { 0: 0, 3: 0, 6: 0, 8: 5, 11: 5, 14: 5 }, keys: { 0: 0, 8: 5 }, lead: { 2: 7, 10: 9, 13: 7 } },
+  },
+  'drum and bass': {
+    bpm: 172,
+    swing: 8,
+    root: 2,
+    scale: 'minor',
+    kit: 'breaks',
+    chords: true,
+    fx: { filter: 50, reverb: 24, delay: 16, pump: 20 },
+    mix: { hat: { volume: 60 }, keys: { volume: 56 }, lead: { volume: 56 } },
+    steps: {
+      kick: [0, 10],
+      snare: [4, 7, 12, 15],
+      hat: [0, 2, 4, 6, 8, 10, 12, 14],
+      'open hat': [],
+      clap: [],
+      bass: [0, 10],
+      keys: [0, 8],
+      lead: [6, 14],
+    },
+    accents: { kick: [0], snare: [4, 12] },
+    ghosts: { snare: [7, 15], hat: [2, 6, 10, 14] },
+    notes: { bass: { 0: 0, 10: 5 }, keys: { 0: 0, 8: 5 }, lead: { 6: 9, 14: 11 } },
   },
 };
 
-export const PRESET_NAMES: Record<PresetName, string> = { 'kelix lofi': 'Lo-Fi', 'boom bap': 'Boom Bap', house: 'House', trap: 'Trap', reggaeton: 'Reggaeton' };
-export const GROOVES: readonly PresetName[] = ['boom bap', 'house', 'kelix lofi', 'trap', 'reggaeton'];
-const GROOVE_CODES: readonly PresetName[] = ['kelix lofi', 'boom bap', 'house', 'trap', 'reggaeton'];
+export const PRESET_NAMES: Record<PresetName, string> = {
+  'boom bap': 'Boom Bap',
+  'kelix lofi': 'Lo-Fi',
+  house: 'House',
+  techno: 'Techno',
+  trap: 'Trap',
+  reggaeton: 'Reggaeton',
+  'drum and bass': 'Drum and Bass',
+};
+export const GROOVES: readonly PresetName[] = ['boom bap', 'kelix lofi', 'house', 'techno', 'trap', 'reggaeton', 'drum and bass'];
+/** Link codes, in the order they were added. Only ever append. */
+const GROOVE_CODES: readonly PresetName[] = ['kelix lofi', 'boom bap', 'house', 'trap', 'reggaeton', 'techno', 'drum and bass'];
+
+/** A little width so templates do not sound mono: hats and keys lean left, the lead leans right. */
+const BASE_MIX: Partial<Record<TrackId, Partial<TrackSettings>>> = {
+  hat: { pan: 12 },
+  'open hat': { pan: -10 },
+  keys: { pan: -14 },
+  lead: { pan: 16 },
+};
 
 function patternFromSpec(spec: PresetSpec): BeatPattern {
   const pattern = emptyPattern(16);
@@ -292,6 +384,12 @@ export function clonePattern(pattern: BeatPattern): BeatPattern {
   };
 }
 
+function presetTracks(spec: PresetSpec): Record<TrackId, TrackSettings> {
+  const tracks = defaultTrackSettings();
+  for (const track of TRACKS) tracks[track] = { ...tracks[track], ...BASE_MIX[track], ...spec.mix?.[track] };
+  return tracks;
+}
+
 export function createBeatState(preset: PresetName = 'kelix lofi'): BeatState {
   const spec = PRESETS[preset];
   const a = patternFromSpec(spec);
@@ -305,9 +403,10 @@ export function createBeatState(preset: PresetName = 'kelix lofi'): BeatState {
     current: 0,
     song: [0, 0, 0, 1],
     songMode: false,
-    tracks: defaultTrackSettings(),
+    tracks: presetTracks(spec),
     fx: { ...spec.fx },
     groove: preset,
+    chords: spec.chords ?? false,
   };
 }
 
@@ -316,8 +415,10 @@ export function createEmptyState(): BeatState {
     ...createBeatState('kelix lofi'),
     patterns: [emptyPattern(16), emptyPattern(16), emptyPattern(16), emptyPattern(16)],
     song: [0],
-    fx: { filter: 50, reverb: 20, delay: 0 },
+    tracks: defaultTrackSettings(),
+    fx: { filter: 50, reverb: 20, delay: 0, pump: 0 },
     groove: null,
+    chords: false,
   };
 }
 
@@ -546,7 +647,7 @@ export function randomizePattern(state: BeatState, pattern: BeatPattern, rng: Rn
     const span = Math.min(16, length - base);
     const inBar = (step: number) => step < span;
 
-    if (kit === 'house') {
+    if (kit === 'house' || kit === 'techno') {
       for (const step of [0, 4, 8, 12]) if (inBar(step)) on('kick', base + step, 3);
       for (const step of [4, 12]) if (inBar(step)) on('clap', base + step, 2);
       for (const step of [2, 6, 10, 14]) if (inBar(step)) on(chance(rng, 0.7) ? 'open hat' : 'hat', base + step, 1);
@@ -554,7 +655,7 @@ export function randomizePattern(state: BeatState, pattern: BeatPattern, rng: Rn
       if (chance(rng, 0.4) && inBar(14)) on('snare', base + 14, 1);
     } else {
       on('kick', base, 3);
-      const kickPool = kit === '808' ? [6, 7, 10, 11, 14] : kit === 'acoustic' ? [6, 7, 8, 10, 11] : [7, 8, 10, 11, 13];
+      const kickPool = kit === '808' ? [6, 7, 10, 11, 14] : kit === 'acoustic' ? [6, 7, 8, 10, 11] : kit === 'breaks' ? [10, 11, 14] : [7, 8, 10, 11, 13];
       const extraKicks = 1 + Math.floor(rng() * 2) + (kit === '808' && chance(rng, 0.5) ? 1 : 0);
       for (let index = 0; index < extraKicks; index += 1) {
         const step = pick(rng, kickPool);
@@ -590,7 +691,7 @@ export function randomizePattern(state: BeatState, pattern: BeatPattern, rng: Rn
       }
     }
 
-    const keysSteps = kit === 'house' ? [2, 6, 10, 14] : pick(rng, [[2, 6, 10, 14], [0, 6, 10], [3, 11], [2, 10]]);
+    const keysSteps = kit === 'house' || kit === 'techno' ? [2, 6, 10, 14] : pick(rng, [[2, 6, 10, 14], [0, 6, 10], [3, 11], [2, 10]]);
     let chordDegree = pick(rng, chord);
     for (const step of keysSteps) {
       if (!inBar(step) || !chance(rng, 0.85)) continue;
@@ -636,8 +737,13 @@ export function remixPattern(state: BeatState, pattern: BeatPattern, rng: Rng): 
       if (next.steps.hat[step] === 0 && chance(rng, step % 2 === 0 ? 0.5 : 0.25)) next.steps.hat[step] = 1;
     }
   } else if (mode === 'thin') {
-    for (let step = 1; step < fillStart; step += 2) {
-      if (next.steps.hat[step] > 0 && chance(rng, 0.5)) next.steps.hat[step] = 0;
+    // Thin out at most a third of the hats so offbeat grooves like house keep their pulse.
+    let removable = Math.floor(next.steps.hat.slice(0, fillStart).filter(Boolean).length / 3);
+    for (let step = 1; step < fillStart && removable > 0; step += 2) {
+      if (next.steps.hat[step] > 0 && chance(rng, 0.5)) {
+        next.steps.hat[step] = 0;
+        removable -= 1;
+      }
     }
   } else {
     for (let step = 0; step < fillStart; step += 1) {
@@ -811,13 +917,13 @@ function lengthCode(length: PatternLength): number {
 
 export function encodeBeatState(state: BeatState): string {
   const bytes: number[] = [];
-  bytes.push(state.groove === null ? 2 : 3, clampBpm(state.bpm), Math.max(0, Math.min(SWING_MAX, Math.round(state.swing))), state.root & 15, SCALES.indexOf(state.scale), KITS.indexOf(state.kit));
-  bytes.push((state.current & 3) | (state.songMode ? 16 : 0));
-  bytes.push(Math.round(state.fx.filter), Math.round(state.fx.reverb), Math.round(state.fx.delay));
+  bytes.push(4, clampBpm(state.bpm), Math.max(0, Math.min(SWING_MAX, Math.round(state.swing))), state.root & 15, SCALES.indexOf(state.scale), KITS.indexOf(state.kit));
+  bytes.push((state.current & 3) | (state.songMode ? 16 : 0) | (state.chords ? 32 : 0));
+  bytes.push(Math.round(state.fx.filter), Math.round(state.fx.reverb), Math.round(state.fx.delay), Math.round(state.fx.pump));
   bytes.push(TRACKS.reduce((mask, track, index) => mask | (state.tracks[track].muted ? 1 << index : 0), 0));
   for (const track of TRACKS) {
     const settings = state.tracks[track];
-    bytes.push(Math.round(settings.volume), Math.round(settings.pitch) + 12, Math.round(settings.decay));
+    bytes.push(Math.round(settings.volume), Math.round(settings.pitch) + 12, Math.round(settings.decay), Math.round(settings.pan) + 50, Math.round(settings.tone));
   }
   const song = state.song.slice(0, MAX_SONG);
   bytes.push(song.length);
@@ -844,7 +950,7 @@ export function encodeBeatState(state: BeatState): string {
       }
     }
   });
-  if (state.groove !== null) bytes.push(GROOVE_CODES.indexOf(state.groove) + 1);
+  bytes.push(state.groove === null ? 0 : GROOVE_CODES.indexOf(state.groove) + 1);
   return bytesToBase64Url(Uint8Array.from(bytes));
 }
 
@@ -872,18 +978,24 @@ function decodeV2(bytes: Uint8Array): BeatState | null {
   try {
     const reader = new Reader(bytes);
     const version = reader.byte();
-    if (version !== 2 && version !== 3) return null;
+    if (version < 2 || version > 4) return null;
+    const v4 = version === 4;
     const bpm = reader.range(BPM_MIN, BPM_MAX);
     const swing = reader.range(0, SWING_MAX);
     const root = reader.range(0, 11);
     const scale = SCALES[reader.range(0, SCALES.length - 1)];
     const kit = KITS[reader.range(0, KITS.length - 1)];
-    const flags = reader.range(0, 31);
-    const fx = { filter: reader.range(0, 100), reverb: reader.range(0, 100), delay: reader.range(0, 100) };
+    const flags = reader.range(0, v4 ? 63 : 31);
+    const fx = { filter: reader.range(0, 100), reverb: reader.range(0, 100), delay: reader.range(0, 100), pump: v4 ? reader.range(0, 100) : 0 };
     const mutes = reader.byte();
     const tracks = defaultTrackSettings();
     TRACKS.forEach((track, index) => {
-      tracks[track] = { volume: reader.range(0, 100), pitch: reader.range(0, 24) - 12, decay: reader.range(0, 100), muted: (mutes & (1 << index)) !== 0 };
+      const volume = reader.range(0, 100);
+      const pitch = reader.range(0, 24) - 12;
+      const decay = reader.range(0, 100);
+      const pan = v4 ? reader.range(0, 100) - 50 : 0;
+      const tone = v4 ? reader.range(0, 100) : 50;
+      tracks[track] = { volume, pitch, decay, muted: (mutes & (1 << index)) !== 0, pan, tone };
     });
     const songLength = reader.range(0, MAX_SONG);
     const song: number[] = [];
@@ -912,9 +1024,14 @@ function decodeV2(bytes: Uint8Array): BeatState | null {
       }
       patterns[index] = pattern;
     }
-    const groove = version === 3 ? GROOVE_CODES[reader.range(1, GROOVE_CODES.length) - 1] : null;
+    let groove: PresetName | null = null;
+    if (version === 3) groove = GROOVE_CODES[reader.range(1, 5) - 1];
+    if (v4) {
+      const code = reader.range(0, GROOVE_CODES.length);
+      groove = code ? GROOVE_CODES[code - 1] : null;
+    }
     if (!reader.done()) return null;
-    return { bpm, swing, root, scale, kit, patterns, current: flags & 3, song: song.length ? song : [0], songMode: (flags & 16) !== 0, tracks, fx, groove };
+    return { bpm, swing, root, scale, kit, patterns, current: flags & 3, song: song.length ? song : [0], songMode: (flags & 16) !== 0, tracks, fx, groove, chords: (flags & 32) !== 0 };
   } catch {
     return null;
   }

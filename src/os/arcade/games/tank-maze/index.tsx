@@ -559,8 +559,7 @@ function TankMaze() {
 
   const showOver = (match: Match, title: string, scores: number[], rounds: number) => {
     lastEnd.current = { title, scores: scores.slice(), rounds };
-    // keepDetail: the score stays on the card even in the short framed windows, where the shell hides details
-    shell.gameOver(undefined, { title, detail: overDetail(match, scores, rounds), keepDetail: true });
+    shell.gameOver(undefined, { title, detail: overDetail(match, scores, rounds) });
   };
 
   // Online: say when someone leaves. Mid-round a bot takes their tank and the round goes on; on the Game Over card the
@@ -582,7 +581,7 @@ function TankMaze() {
       setNotice({ text: `${names.join(' and ')} Left`, sub: 'A bot takes over their tank.', id: performance.now() });
     } else if (shell.status === 'over' && lastEnd.current) {
       const e = lastEnd.current;
-      shell.updateOver({ title: e.title, detail: overDetail(match, e.scores, e.rounds), keepDetail: true });
+      shell.updateOver({ title: e.title, detail: overDetail(match, e.scores, e.rounds) });
     }
   }, [online?.players]);
 

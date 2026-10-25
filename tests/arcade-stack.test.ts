@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BASE, PERFECT_TOL, RANGE, create, drop, hueFor, place, speedFor, step, towerTop } from '../src/os/arcade/games/stack/logic.ts';
+import { BASE, MAX_SPEED, MIN_SPEED, PERFECT_TOL, RANGE, create, drop, hueFor, place, speedFor, step, towerTop } from '../src/os/arcade/games/stack/logic.ts';
 
 const base = { x: 0, z: 0, w: BASE, d: BASE };
 
@@ -34,6 +34,11 @@ test('slicing works on the z axis too', () => {
     assert.ok(Math.abs(r.slab.d - 2.2) < 1e-9);
     assert.ok(Math.abs(r.cuts[0].z - (-1.9)) < 1e-9);
   }
+});
+
+test('the slide reaches far enough to miss a full width slab', () => {
+  const r = place({ ...base, x: RANGE }, base, 'x');
+  assert.equal(r.kind, 'miss');
 });
 
 test('no overlap is a miss', () => {
@@ -110,7 +115,35 @@ test('a miss ends the game and keeps the score', () => {
   assert.equal(s.pos, before, 'nothing moves after game over');
 });
 
-test('speed is capped and hues wrap', () => {
-  assert.equal(speedFor(1000), 6.5);
+test('speed rises smoothly and stays under the cap', () => {
+  assert.equal(speedFor(0), MIN_SPEED);
+  let last = speedFor(0);
+  for (let n = 1; n <= 400; n++) {
+    const v = speedFor(n);
+    assert.ok(v > last - 1e-12 && v <= MAX_SPEED, `speed at ${n}`);
+    last = v;
+  }
+  assert.ok(speedFor(10) < 3.5, 'the first ten slabs stay gentle');
+  assert.ok(MAX_SPEED - speedFor(400) < 1e-3);
+  // the perfect window in time never drops under 50ms
+  assert.ok((2 * PERFECT_TOL) / MAX_SPEED >= 0.05);
+});
+
+test('perfects and the best streak are counted', () => {
+  const s = create();
+  for (let i = 0; i < 4; i++) {
+    const top = s.stack[s.stack.length - 1];
+    s.moving.x = top.x;
+    s.moving.z = top.z;
+    drop(s);
+  }
+  s.moving.x = 0.5;
+  drop(s);
+  assert.equal(s.perfects, 4);
+  assert.equal(s.bestStreak, 4);
+  assert.equal(s.streak, 0);
+});
+
+test('hues wrap', () => {
   assert.ok(hueFor(100, 300) < 360);
 });
