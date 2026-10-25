@@ -655,6 +655,20 @@ function drawHud(c: CanvasRenderingContext2D, w: number, h: number, u: number, s
   c.restore();
 }
 
+export function drawHudSample(c: CanvasRenderingContext2D, w: number, h: number, u = 1) {
+  const sample = {
+    clk: 1,
+    endless: false,
+    me: 0,
+    st: [{ s: 0, l: 3, p: -1 }],
+    L: { n: 6, plan: { tier: 5 } },
+    res: null,
+    gp: { sudden: true },
+    spillAt: -10,
+  } as unknown as Sim;
+  drawHud(c, w, h, u, sample);
+}
+
 function drawCup(c: CanvasRenderingContext2D, full: boolean, out: boolean) {
   c.lineWidth = 2.4;
   c.strokeStyle = INK;
@@ -727,4 +741,12 @@ function drawStamp(c: CanvasRenderingContext2D, x: number, y: number, side: numb
   c.strokeRect(-w / 2 + h * 0.1, -h / 2 + h * 0.1, w - h * 0.2, h - h * 0.2);
   text(c, pass ? 'passed' : 'failed', 0, 0, h * 0.62, { color, weight: 900 });
   c.restore();
+}
+
+export function drawCommandSample(c: CanvasRenderingContext2D, w: number, h: number) {
+  drawWord(c, w / 2, h / 2, 'swerve!', Math.min(w, h) * 0.18, 0.3);
+}
+
+export function drawStampSample(c: CanvasRenderingContext2D, w: number, h: number, pass: boolean) {
+  drawStamp(c, w / 2, h / 2, Math.min(w, h), pass, 0.18);
 }

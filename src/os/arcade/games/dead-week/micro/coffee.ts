@@ -3,6 +3,20 @@ import { mulberry32, range } from '../rng.ts';
 import { standardDuration, type MicroGame, type MicroInstance } from './types.ts';
 
 // Hold to pour, let go inside the band. Overflow spills; stop short and you fail at time up.
+export type CoffeePlan = { mid: number; lo: number; hi: number; rate: number };
+
+export function coffeePlan(seed: number, difficulty: number): CoffeePlan {
+  const rng = mulberry32(seed);
+  const mid = range(rng, 0.55, 0.82);
+  const band = 0.14 - difficulty * 0.07;
+  return {
+    mid,
+    lo: mid - band / 2,
+    hi: mid + band / 2,
+    rate: 0.32 + difficulty * 0.32 + range(rng, 0, 0.08),
+  };
+}
+
 export const coffee: MicroGame = {
   id: 'coffee',
   title: 'pour coffee',
@@ -12,12 +26,7 @@ export const coffee: MicroGame = {
   hint: { touch: 'hold to pour, let go on the line', keys: 'hold space, let go on the line' },
   duration: standardDuration(5, 3.2),
   create(seed, difficulty): MicroInstance {
-    const rng = mulberry32(seed);
-    const mid = range(rng, 0.55, 0.82);
-    const band = 0.14 - difficulty * 0.07;
-    const lo = mid - band / 2;
-    const hi = mid + band / 2;
-    const rate = 0.32 + difficulty * 0.32 + range(rng, 0, 0.08);
+    const { mid, lo, hi, rate } = coffeePlan(seed, difficulty);
     let fill = 0;
     let pouring = false;
     let poured = false;

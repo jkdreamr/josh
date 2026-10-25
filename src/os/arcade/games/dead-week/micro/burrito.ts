@@ -5,6 +5,21 @@ import { standardDuration, type MicroGame, type MicroInstance } from './types.ts
 // Burritos drop from the dining hall ceiling; slide the tray under them. Catch the number on the order slip.
 type Drop = { x: number; y: number; v: number; at: number; got: boolean; gone: boolean; spin: number };
 
+export type BurritoDropSchedule = Pick<Drop, 'x' | 'v' | 'at' | 'spin'>;
+
+export function burritoSchedule(seed: number, difficulty: number): BurritoDropSchedule[] {
+  const rng = mulberry32(seed);
+  const need = difficulty < 0.35 ? 2 : 3;
+  const count = need + 1 + (difficulty > 0.7 ? 1 : 0);
+  const span = 2.6 - difficulty * 0.8;
+  return Array.from({ length: count }, (_, i) => ({
+    x: range(rng, 12, 88),
+    v: 38 + difficulty * 40 + range(rng, 0, 10),
+    at: 0.25 + (i * span) / count + range(rng, 0, 0.2),
+    spin: range(rng, -2, 2),
+  }));
+}
+
 export const burrito: MicroGame = {
   id: 'burrito',
   title: 'burrito catch',
@@ -14,18 +29,12 @@ export const burrito: MicroGame = {
   hint: { touch: 'drag the tray', keys: 'arrows slide the tray' },
   duration: standardDuration(5, 3.4),
   create(seed, difficulty): MicroInstance {
-    const rng = mulberry32(seed);
     const need = difficulty < 0.35 ? 2 : 3;
-    const count = need + 1 + (difficulty > 0.7 ? 1 : 0);
-    const span = 2.6 - difficulty * 0.8;
-    const drops: Drop[] = Array.from({ length: count }, (_, i) => ({
-      x: range(rng, 12, 88),
+    const drops: Drop[] = burritoSchedule(seed, difficulty).map((drop) => ({
+      ...drop,
       y: -10,
-      v: 38 + difficulty * 40 + range(rng, 0, 10),
-      at: 0.25 + (i * span) / count + range(rng, 0, 0.2),
       got: false,
       gone: false,
-      spin: range(rng, -2, 2),
     }));
     const trayW = 24 - difficulty * 6;
     let tray = 50;
