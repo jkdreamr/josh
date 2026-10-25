@@ -45,7 +45,7 @@ export const RANKED_MODES = ['normal', 'beginner', 'lava'] as const;
 
 export const SUB = 1 / 120;
 export const COYOTE = 0.1;
-export const JUMP_BUFFER = 0.12;
+export const JUMP_BUFFER = 0.15;
 export const JUMP_CUT = 4;
 /** A jump keeps full thrust this long after it fires: a held press briefly, a press that was already let go (buffered) long enough to still rise. */
 export const JUMP_MIN = 0.04;
@@ -543,8 +543,8 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
     s.vx = s.vz = s.vy = 0;
     s.squash = Math.max(0, s.squash - dt * 4);
     // a jump pressed during the pull up is kept, so mashing the key keeps hopping on landing
+    // the buffer holds through the glide, so a press on the way up hops the moment the soul lands
     if (s.input.jump && g.time >= 0) s.buffer = JUMP_BUFFER;
-    else s.buffer = Math.max(0, s.buffer - dt);
     if (k >= 1) {
       s.glide = null;
       const p = level.platforms[gl.p];
@@ -1316,10 +1316,12 @@ function substep(g: Game, dt: number) {
 
 /** Advances the game by dt seconds in fixed substeps. Events pile up in g.events for the caller to drain. */
 export function step(g: Game, dt: number) {
-  for (const drive of g.drivers) drive(g, dt);
   g.acc += Math.min(dt, 0.25);
   let n = 0;
   while (g.acc >= SUB && n++ < 40) {
+    // the drivers (the shades) decide at 60 Hz whatever the frame rate, every other substep, so a slow frame never
+    // hands them one long step
+    if (n % 2 === 1) for (const drive of g.drivers) drive(g, 2 * SUB);
     g.acc -= SUB;
     substep(g, SUB);
   }
