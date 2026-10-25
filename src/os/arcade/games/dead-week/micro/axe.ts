@@ -54,11 +54,6 @@ export const axe: MicroGame = {
         // the bear (left)
         const bx = 14 - Math.max(0, -p) * 2;
         ellipse(c, bx, 60, 10, 14, BROWN);
-        circle(c, bx - 6, 40, 3.5, BROWN);
-        circle(c, bx + 6, 40, 3.5, BROWN);
-        circle(c, bx, 46, 8, BROWN);
-        eyes(c, bx, 44, 3, 1.8, 1, 0);
-        ellipse(c, bx, 49.5, 3, 2, '#d8b48c', 0.6);
         // you (right)
         const yx = 86 + (shake > 0 ? Math.sin(t * 90) * shake : 0);
         rect(c, yx - 7, 52, 14, 20, CARDINAL, 4);
@@ -68,6 +63,7 @@ export const axe: MicroGame = {
         line(c, yx - 7, 58, handleRight, 56, 2.2, CARDINAL);
         c.save();
         c.translate(axeX, 56);
+        c.scale(0.8, 0.8);
         c.rotate(shake > 0 ? Math.sin(t * 110) * shake * 0.035 : 0);
         rect(c, -27, -2.8, 54, 5.6, BROWN, 2.5, 1.3);
         line(c, -25, -1.3, 25, -1.3, 0.8, '#d8b48c');
@@ -90,6 +86,11 @@ export const axe: MicroGame = {
         line(c, -14, -25, -21, -18, 2.2, CARDINAL);
         line(c, -5, -18, 7, -21, 0.9, WHITE);
         c.restore();
+        circle(c, bx - 6, 40, 3.5, BROWN);
+        circle(c, bx + 6, 40, 3.5, BROWN);
+        circle(c, bx, 46, 8, BROWN);
+        eyes(c, bx, 44, 3, 1.8, 1, 0);
+        ellipse(c, bx, 49.5, 3, 2, '#d8b48c', 0.6);
         circle(c, handleLeft, 56, 2.8, BROWN, 0.8);
         circle(c, handleRight, 56, 2.8, '#ffd9b8', 0.8);
         text(c, `mash ${taps}`, 86, 82, 4.6, { color: INK });
