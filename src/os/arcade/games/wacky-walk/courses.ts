@@ -88,9 +88,13 @@ function racePath(course: Course, finishZ: number, yAt: (z: number) => number = 
 
 function campusDecor(course: Course, finishZ: number, kind: 'oval' | 'fountain' | 'palm' = 'oval') {
   const colors = [0xb13a42, 0xdaa949, 0x718fc9, 0x75ad81];
-  for (let z = -4, i = 0; z <= finishZ + 4; z += 12, i++) {
-    course.decor.push({ kind: i % 3 === 0 ? 'palm' : 'tree', x: -13.5, y: 0, z, s: 1.1, yaw: 0 });
-    course.decor.push({ kind: i % 3 === 1 ? 'palm' : 'tree', x: 13.5, y: 0, z: z + 5, s: 1.2, yaw: 0 });
+  for (let z = kind === 'palm' ? 7 : -4, i = 0; z <= finishZ + 4; z += kind === 'palm' ? 10 : 12, i++) {
+    if (kind === 'fountain' && Math.abs(z - 63) < 13) continue;
+    const y = kind === 'palm' ? (z - 7) * 0.16 : 0;
+    const leftKind = kind === 'palm' ? 'palm' : i % 3 === 0 ? 'palm' : 'tree';
+    const rightKind = kind === 'palm' ? 'palm' : i % 3 === 1 ? 'palm' : 'tree';
+    course.decor.push({ kind: leftKind, x: -13.4, y, z, s: kind === 'palm' ? 1.2 : 1.1, yaw: 0 });
+    course.decor.push({ kind: rightKind, x: 13.4, y: kind === 'palm' ? y + 0.8 : 0, z: z + (kind === 'palm' ? 0 : 5), s: kind === 'palm' ? 1.2 : 1.2, yaw: 0 });
     if (kind !== 'palm') {
       course.decor.push({ kind: 'lamp', x: -10.4, y: 0, z: z + 4, s: 0.85, yaw: 0 });
       course.decor.push({ kind: 'lamp', x: 10.4, y: 0, z: z + 9, s: 0.85, yaw: 0 });
@@ -100,6 +104,10 @@ function campusDecor(course: Course, finishZ: number, kind: 'oval' | 'fountain' 
     }
   }
   if (kind !== 'palm') course.decor.push({ kind: 'tower', x: -32, y: 0, z: finishZ + 50, s: 7, yaw: 0 });
+  if (kind === 'palm') {
+    course.decor.push({ kind: 'arcade', x: 0, y: 0, z: finishZ + 32, s: 1.2, yaw: 0 });
+    course.decor.push({ kind: 'roof', x: 0, y: 0, z: finishZ + 32, s: 1.2, yaw: 0 });
+  }
   course.decor.push({ kind: 'stands', x: 40, y: 0, z: 4, s: 1.4, yaw: 0 });
 }
 
@@ -133,7 +141,6 @@ function makeOval(seed: number): Course {
   add(course, { kind: 'box', hx: 2.3, hy: 0.35, hz: 2.4 }, 'stone', 0, -0.15, 83, {
     at: (t, out) => setPose(out, Math.sin(t * 0.9) * 2.2, 0.4, 83, t * 0.35),
   });
-  course.decor.push({ kind: 'arch', x: 0, y: 0, z: 124, s: 1.6, yaw: 0 });
   course.zones.push({ kind: 'finish', x: 0, y: 1.2, z: 126, hx: 8, hy: 2, hz: 1.5 });
   [0, 30, 52, 91, 113].forEach((z, i) => checkpoint(course, i, z));
   course.path = racePath(course, 124);
@@ -171,8 +178,7 @@ function makeFountain(seed: number): Course {
     at: (t, out) => setPose(out, 0, 1.1, 91, t * 1.25),
   });
   add(course, { kind: 'cyl', r: 1.15, hy: 0.35 }, 'stone', 0, 0.35, 91);
-  course.decor.push({ kind: 'fountain', x: 0, y: 0, z: 63, s: 2.4, yaw: 0 });
-  course.decor.push({ kind: 'arch', x: 0, y: 0, z: 124, s: 1.7, yaw: 0 });
+  course.decor.push({ kind: 'fountain', x: 17.4, y: 0, z: 63, s: 0.9, yaw: 0 });
   course.zones.push({ kind: 'finish', x: 0, y: 1, z: 126, hx: 8, hy: 2, hz: 1.5 });
   [0, 31, 53, 77, 104].forEach((z, i) => checkpoint(course, i, z));
   course.path = racePath(course, 124);
@@ -275,11 +281,12 @@ function makeHoover(seed: number): Course {
   course.killY = -7;
   course.startYaw = -2.4;
   course.palette = palette(0x82ad78, 0x87c4ec, 0xffe6c5, 0xb6d4d3);
-  add(course, { kind: 'cyl', r: 2.1, hy: 20 }, 'sand', 0, 18, 0);
-  add(course, { kind: 'box', hx: 5.5, hy: 0.45, hz: 6.5 }, 'gold', 0, -0.3, 0);
+  add(course, { kind: 'cyl', r: 2.1, hy: 20 }, 'sand', 0, 18, 0, { tint: 0xffd5a3 });
+  add(course, { kind: 'box', hx: 5.5, hy: 0.45, hz: 6.5 }, 'sand', 0, -0.3, 0, { tint: 0xe8d5b7 });
   const nodes: Waypoint[] = [];
   const platformLevels = 23;
   const checkpointLevels = new Set([0, 6, 12, 18]);
+  const platformColors = [0xb8daf1, 0xf5cbd4, 0xf4dfaa, 0xc2dfc6, 0xd6d0f0];
   for (let i = 1; i <= platformLevels; i++) {
     const angle = i * 0.47;
     const x = Math.cos(angle) * 4.3;
@@ -288,6 +295,7 @@ function makeHoover(seed: number): Course {
     const at = i % 3 === 0;
     add(course, { kind: 'box', hx: 2.8, hy: 0.32, hz: 2.8 }, 'pad', x, y, z, {
       spring: i % 5 === 0 ? 12 : undefined,
+      tint: platformColors[(i - 1) % platformColors.length],
       at: at ? (t, out) => setPose(out, x + Math.sin(t * 0.7 + i) * 0.8, y, z + Math.cos(t * 0.65 + i) * 0.8, t * 0.15) : undefined,
     });
     nodes.push({ x, y: y + 0.5, z, r: 2.6, jump: true, dive: i % 4 === 0, lane: 1.8 });
@@ -313,10 +321,10 @@ function makeHoover(seed: number): Course {
   course.spawns = course.spawns.map((_, i) => ({
     x: ((i % 5) - 2) * 1.4, y: 0.15, z: 5.6 + Math.floor(i / 5) * 0.18,
   }));
-  course.decor.push({ kind: 'tower', x: -52, y: 0, z: -20, s: 2.3, yaw: 0 });
+  course.decor.push({ kind: 'tower', x: -18, y: 0, z: -25, s: 1.5, yaw: 0 });
   for (let i = 0; i < 24; i++) {
     const a = i / 24 * Math.PI * 2;
-    if (i % 3) course.decor.push({ kind: 'arch', x: Math.cos(a) * 22, y: 0, z: Math.sin(a) * 22, s: 1.1, yaw: -a });
+    if (i % 3) course.decor.push({ kind: 'arch', x: Math.cos(a) * 24, y: -0.04, z: Math.sin(a) * 24, s: 0.42, yaw: -a });
   }
   return course;
 }
