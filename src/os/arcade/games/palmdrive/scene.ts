@@ -16,7 +16,7 @@ import { floraTick } from './flora';
 import { kartDetail, kartWheel, mergeByMaterial } from './kart';
 import { knollGeometry } from './dish';
 import { bake, bakeInPlace, vcMats } from './landmarks';
-import { GROUNDS, asphaltTexture, curbTexture, grassTufts, groundMaterial, lawnMaterial, roadMaterial, wallTexture } from './surfaces';
+import { GROUNDS, asphaltTexture, curbTexture, glassDeck, glassTick, grassTufts, groundMaterial, lawnMaterial, roadMaterial, wallTexture } from './surfaces';
 
 type Three = typeof import('three');
 
@@ -699,7 +699,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         }),
       )
     : null;
-  const glassMat = glassTex ? new THREE.MeshBasicMaterial({ map: glassTex }) : null;
+  // (the night sky mirrored in it and a sheen sliding across it: see surfaces.ts)
+  const glassMat = glassTex ? (SKIES[r.course] ? glassDeck(THREE, new THREE.MeshBasicMaterial({ map: glassTex }), SKIES[r.course]!) : new THREE.MeshBasicMaterial({ map: glassTex })) : null;
   if (glassTex) glassTex.wrapS = glassTex.wrapT = THREE.RepeatWrapping;
   /** Where the glass road has no glass of its own: the Gap, and the panes of the Blink. */
   const gaps: [number, number][] = [];
@@ -802,7 +803,30 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const posts: { x: number; z: number; ry: number }[] = [];
   const open = runs.filter((run) => run[3] !== 'wall');
   // (in the sky: brushed steel decking out to glass rails, wherever they stand)
-  const deckMat = look.glass ? new THREE.MeshLambertMaterial({ color: 0x5d6270, emissive: 0x23262e }) : null;
+  const deckMat = look.glass
+    ? new THREE.MeshLambertMaterial({
+        color: 0x5d6270,
+        emissive: 0x23262e,
+        // (brushed steel plates, their seams and bolts)
+        map: texture(
+          THREE,
+          canvas(64, 64, (g) => {
+            g.fillStyle = '#9aa0aa';
+            g.fillRect(0, 0, 64, 64);
+            for (let y = 0; y < 64; y += 2) {
+              g.fillStyle = `rgba(${y % 4 ? '255,255,255' : '0,0,0'},0.05)`;
+              g.fillRect(0, y, 64, 1);
+            }
+            g.fillStyle = 'rgba(20,22,28,0.6)';
+            g.fillRect(0, 0, 64, 2);
+            g.fillRect(0, 0, 2, 64);
+            g.fillStyle = 'rgba(230,235,245,0.7)';
+            for (const [x, y] of [[6, 6], [58, 6], [6, 58], [58, 58]]) g.fillRect(x - 1, y - 1, 3, 3);
+          }),
+          [1, 1],
+        ),
+      })
+    : null;
   const railMat = look.glass ? new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }) : null;
   const railTop = look.glass ? new THREE.MeshBasicMaterial({ color: 0xdff8ff }) : null;
   // (the walls open for the side streets the traffic comes and goes by, and for the golf course's mower path, drawn but
@@ -3516,6 +3540,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       tufts?.tick(clock, camera);
       floraTick(clock);
       waterTick(clock);
+      glassTick(clock);
       const fov = fovBase + (k.boost > 0 ? 9 : 0) + Math.min(5, Math.max(0, k.v - 15) * 0.3);
       if (Math.abs(camera.fov - fov) > 0.05) {
         camera.fov = damp(camera.fov, fov, 4, dt);

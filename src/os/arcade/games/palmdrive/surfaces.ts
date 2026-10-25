@@ -522,3 +522,36 @@ export function grassTufts(THREE: Three, scene: T.Scene, t: Track, g: Ground, du
     },
   };
 }
+
+/**
+ * The Skyway's glass road: its own texture, with the night sky mirrored in it the flatter you look along it, and a
+ * sheen of light sliding slowly across the panes; all of it dimming with the material's color (the last lap's blackout).
+ */
+export function glassDeck(THREE: Three, mat: T.MeshBasicMaterial, sky: { low: number; mid: number; horizon: number; glowHorizon: number }) {
+  const uniforms = { uGlassLow: col(THREE, sky.low), uGlassMid: col(THREE, sky.mid), uGlassHor: col(THREE, sky.glowHorizon), uGlassTime: glassClock };
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, uniforms);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vPdW;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvPdW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vPdW;\nuniform vec3 uGlassLow, uGlassMid, uGlassHor;\nuniform float uGlassTime;')
+      .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+         vec3 gV = normalize(cameraPosition - vPdW);
+         float gF = pow(1.0 - abs(gV.y), 3.0);
+         vec3 gSky = mix(uGlassHor, mix(uGlassLow, uGlassMid, smoothstep(0.1, 0.5, abs(gV.y))), smoothstep(0.0, 0.12, abs(gV.y)));
+         float gOn = max(max(diffuse.r, diffuse.g), diffuse.b);
+         float gSheen = smoothstep(0.985, 1.0, sin((vPdW.x * 0.7 + vPdW.z) * 0.09 - uGlassTime * 0.6) * 0.5 + 0.5);
+         diffuseColor.rgb = mix(diffuseColor.rgb, gSky * 2.2 * gOn, gF * 0.55) + vec3(1.0, 0.75, 0.85) * gSheen * 0.22 * gOn;`,
+      );
+  };
+  mat.customProgramCacheKey = () => 'pd-glass-deck';
+  return mat;
+}
+const glassClock = { value: 0 };
+/** The glass's sheen clock (set once a frame). */
+export function glassTick(clock: number) {
+  glassClock.value = clock;
+}
