@@ -30,7 +30,7 @@ export type PlayerModel = {
   dispose: () => void;
 };
 
-export type PoseName = 'idle' | 'ready' | 'run' | 'shuffle' | 'forehand' | 'backhand' | 'slice' | 'lob' | 'serve-ready' | 'toss' | 'serve-contact' | 'serve-follow';
+export type PoseName = 'idle' | 'ready' | 'run' | 'shuffle' | 'forehand' | 'backhand' | 'slice' | 'lob' | 'smash' | 'volley' | 'serve-ready' | 'toss' | 'serve-contact' | 'serve-follow';
 
 type BoneBind = {
   bone: T.Bone;
@@ -194,7 +194,7 @@ function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset
   body.traverse((object) => {
     const mesh = object as T.Mesh;
     if (!mesh.isMesh) return;
-    mesh.castShadow = true;
+    mesh.castShadow = false;
     mesh.receiveShadow = false;
     if ((mesh as T.SkinnedMesh).isSkinnedMesh) mesh.frustumCulled = false;
     const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -609,6 +609,14 @@ export function debugPoseAngles(name: PoseName, progress = 0) {
       arms(between(right), [0, -0.4, -0.4], between(elbow), [-0.2, 0, -0.2]);
       break;
     }
+    case 'smash':
+      arms([-0.35, -0.45, -1.8], [-0.2, 0.2, 0.85], [-0.7, 0, -0.5], [0.2, 0, 0.25]);
+      put('spine_02', [0.1, -0.28, 0]);
+      break;
+    case 'volley':
+      arms([0.2, 0.45, 0.5], [-0.1, -0.35, -0.45], [-0.1, 0, 0.3], [0.2, 0, -0.1]);
+      put('spine_02', [0.08, -0.12, 0]);
+      break;
     case 'serve-ready': arms([0, 0, 1.1], [0, 0.18, -0.8], [0, 0, 0.15], [0, 0, -0.2]); break;
     case 'toss': arms([-0.35, -0.45, -0.9], [0, 0, 1.8], [-0.7, 0, -0.8], [0, 0, 0.15]); put('spine_02', [0.12, 0, 0]); break;
     case 'serve-contact': arms([-0.4, -0.3, -1.8], [0.1, 0, 0.5], [-0.6, 0, -0.2], [0, 0, 0.2]); break;
@@ -694,7 +702,7 @@ export function updatePlayer(
       const sign = forehand ? 1 : -1;
       const lob = player.swingKind === 'lob';
       const slice = player.swingKind === 'slice';
-      const stroke = debugPoseAngles(lob ? 'lob' : slice ? 'slice' : forehand ? 'forehand' : 'backhand', swingProgress);
+      const stroke = debugPoseAngles(player.swingKind === 'smash' ? 'smash' : player.swingKind === 'volley' ? 'volley' : lob ? 'lob' : slice ? 'slice' : forehand ? 'forehand' : 'backhand', swingProgress);
       rightUpper = stroke.get('upperarm_r') ?? rightUpper;
       rightLower = stroke.get('lowerarm_r') ?? rightLower;
       leftUpper = stroke.get('upperarm_l') ?? leftUpper;

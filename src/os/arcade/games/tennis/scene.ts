@@ -13,12 +13,16 @@ export type View = {
   resize: (width: number, height: number) => void;
   update: (world: World, dt: number, humanSeats: ReadonlySet<number>, side: number) => void;
   render: () => void;
-  hit: (speed: number) => void;
+  hit: (speed: number, perfect?: boolean) => void;
+  replayCamera: (active: boolean) => void;
   bounce: (x: number, z: number, line: boolean) => void;
   netHit: () => void;
-  point: (winner: number) => void;
+  point: (winner: number, longRally?: boolean) => void;
+  crowdOoh: (shots: number) => void;
   debugPose: (seat: number, name: PoseName, progress?: number) => void;
   debugCamera: (name: 'front' | 'side' | 'back' | 'game', seat?: number) => void;
+  debugForceHighQuality?: () => void;
+  debugCrowdExcitement?: () => void;
   dispose: () => void;
 };
 
@@ -113,7 +117,7 @@ function mergeStaticMeshes(THREE: Three, root: T.Scene) {
 }
 
 function addCourtLine(THREE: Three, parent: T.Object3D, x: number, z: number, width: number, length: number, height = 0.019) {
-  return addBox(THREE, parent, [width, 0.012, length], [x, height, z], standard(THREE, lineColor, 0.56), false, true);
+  return addBox(THREE, parent, [width, 0.012, length], [x, height, z], standard(THREE, lineColor, 0.4), false, true);
 }
 
 function buildCourt(THREE: Three, scene: T.Scene, lite: boolean, anisotropy: number) {
@@ -171,6 +175,21 @@ function buildCourt(THREE: Three, scene: T.Scene, lite: boolean, anisotropy: num
     addBox(THREE, court, [3.4, 0.12, COURT_LENGTH + 2.2], [side * (doublesHalf + 2.2), -0.02, 0], surround, false, true);
     addBox(THREE, court, [DOUBLES_WIDTH + 4.4, 0.12, 3], [0, -0.02, side * (COURT_LENGTH / 2 + 2.4)], surround, false, true);
   }
+  const scuffTexture = courtScuffTexture(THREE);
+  const scuffs = new THREE.InstancedMesh(
+    new THREE.PlaneGeometry(0.9, 0.075),
+    new THREE.MeshBasicMaterial({ map: scuffTexture, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
+    8,
+  );
+  const scuff = new THREE.Object3D();
+  for (let index = 0; index < 8; index++) {
+    scuff.position.set((index % 4 - 1.5) * 1.3, 0.061, (index < 4 ? -1 : 1) * 10.5);
+    scuff.rotation.set(-Math.PI / 2, (index % 4 - 1.5) * 0.12, 0);
+    scuff.scale.set(0.75 + index % 3 * 0.18, 0.85 + index % 2 * 0.12, 1);
+    scuff.updateMatrix();
+    scuffs.setMatrixAt(index, scuff.matrix);
+  }
+  scene.add(scuffs);
   scene.add(court);
   return { court, playSurface, singlesHalf, doublesHalf };
 }
@@ -188,6 +207,48 @@ function radialShadowTexture(THREE: Three) {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 1;
+  return texture;
+}
+
+function courtScuffTexture(THREE: Three) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 32;
+  const context = canvas.getContext('2d')!;
+  const length = context.createLinearGradient(0, 0, canvas.width, 0);
+  length.addColorStop(0, 'rgba(62,67,66,0)');
+  length.addColorStop(0.18, 'rgba(62,67,66,0.5)');
+  length.addColorStop(0.76, 'rgba(62,67,66,0.5)');
+  length.addColorStop(1, 'rgba(62,67,66,0)');
+  context.fillStyle = length;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.globalCompositeOperation = 'destination-in';
+  const width = context.createLinearGradient(0, 0, 0, canvas.height);
+  width.addColorStop(0, 'rgba(0,0,0,0)');
+  width.addColorStop(0.32, 'rgba(0,0,0,0.62)');
+  width.addColorStop(0.68, 'rgba(0,0,0,0.62)');
+  width.addColorStop(1, 'rgba(0,0,0,0)');
+  context.fillStyle = width;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 1;
+  return texture;
+}
+
+function glareTexture(THREE: Three) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 128;
+  const context = canvas.getContext('2d')!;
+  const gradient = context.createRadialGradient(64, 64, 2, 64, 64, 64);
+  gradient.addColorStop(0, 'rgba(255,248,210,0.9)');
+  gradient.addColorStop(0.12, 'rgba(255,210,140,0.62)');
+  gradient.addColorStop(0.45, 'rgba(255,175,100,0.16)');
+  gradient.addColorStop(1, 'rgba(255,160,80,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 128, 128);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
 
@@ -221,7 +282,7 @@ function buildSky(THREE: Three, scene: T.Scene) {
   haze.scale.set(1, 0.65, 1);
   scene.add(haze);
   const environmentScene = new THREE.Scene();
-  environmentScene.background = new THREE.Color('#95aeba');
+  environmentScene.add(new THREE.Mesh(sky.geometry, sky.material.clone()));
   const environmentSun = new THREE.HemisphereLight('#fff2d7', '#546456', 1.1);
   environmentScene.add(environmentSun);
   return { sky, haze, environmentScene };
@@ -587,6 +648,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   pmrem.compileEquirectangularShader();
   const envTarget = pmrem.fromScene(sky.environmentScene);
   scene.environment = envTarget.texture;
+  renderer.toneMappingExposure = 1.08;
   const hemi = new THREE.HemisphereLight('#ffe7c6', '#53695f', lite ? 1.3 : 1.45);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight('#ffd2a0', 2.7);
@@ -604,6 +666,17 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   sun.shadow.normalBias = 0.026;
   sun.shadow.camera.updateProjectionMatrix();
   scene.add(sun, sun.target);
+  const rim = new THREE.DirectionalLight('#ffad70', 1.25);
+  rim.position.set(12, 8, -22);
+  scene.add(rim);
+  const sunDirection = new THREE.Vector3(-0.58, 0.34, 0.74).normalize();
+  const sunDisc = new THREE.Mesh(new THREE.SphereGeometry(2.1, 18, 12), new THREE.MeshBasicMaterial({ color: '#fff1c7', toneMapped: false }));
+  sunDisc.position.copy(sunDirection).multiplyScalar(108);
+  scene.add(sunDisc);
+  const flare = new THREE.Sprite(new THREE.SpriteMaterial({ map: glareTexture(THREE), color: '#ffe0ac', transparent: true, opacity: 0.52, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+  flare.position.copy(sunDisc.position);
+  flare.scale.set(16, 16, 1);
+  scene.add(flare);
   const fill = new THREE.DirectionalLight('#d7e9f2', 0.66);
   fill.position.set(15, 11, -19);
   scene.add(fill);
@@ -628,14 +701,15 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   players.forEach((model) => {
     model.root.traverse((object) => {
       const mesh = object as T.Mesh;
-      mesh.castShadow = true;
+      mesh.castShadow = false;
       mesh.receiveShadow = false;
     });
     scene.add(model.root);
   });
 
   const ballMap = ballTexture(THREE, lite);
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS, 16, 12), new THREE.MeshPhysicalMaterial({ map: ballMap, color: '#f6f2ca', roughness: 0.82, sheen: 0.38, clearcoat: 0.12 }));
+  const ballMaterial = new THREE.MeshPhysicalMaterial({ map: ballMap, color: '#f6f2ca', roughness: 0.82, sheen: 0.38, clearcoat: 0.12 });
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS, 16, 12), ballMaterial);
   ball.castShadow = true;
   scene.add(ball);
   const shadowTexture = radialShadowTexture(THREE);
@@ -669,16 +743,25 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     scene.add(shadow);
     return shadow;
   });
-  const trail = Array.from({ length: 5 }, (_, index) => {
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS * (0.78 - index * 0.09), 12, 8), new THREE.MeshBasicMaterial({ color: '#e6ed70', transparent: true, opacity: 0.23 - index * 0.035, depthWrite: false }));
-    scene.add(mesh);
-    return mesh;
-  });
-  const ballTrail = Array.from({ length: trail.length + 1 }, () => ({ x: 0, y: 0, z: 0 }));
+  const trailSamples = 12;
+  const trailMaterial = new THREE.MeshBasicMaterial({ color: '#fff2ad', transparent: true, opacity: 0.75, depthWrite: false, toneMapped: false });
+  const trail = new THREE.InstancedMesh(new THREE.SphereGeometry(BALL_RADIUS, 12, 8), trailMaterial, trailSamples);
+  trail.count = lite ? 0 : trailSamples;
+  trail.visible = !lite;
+  trail.frustumCulled = false;
+  trail.renderOrder = 4;
+  const trailDummy = new THREE.Object3D();
+  const trailAxis = new THREE.Vector3(0, 0, 1);
+  const trailDirection = new THREE.Vector3();
+  const trailColor = new THREE.Color();
+  scene.add(trail);
+  const ballTrail = Array.from({ length: trailSamples + 1 }, () => ({ x: 0, y: 0, z: 0 }));
   let ballTrailCount = 0;
   const puffs: Puff[] = [];
   const puffMaterial = new THREE.MeshBasicMaterial({ color: '#e8d9bd', transparent: true, opacity: 0.28, depthWrite: false });
   let hitPulse = 0;
+  let ballFlash = 0;
+  let cameraKick = 0;
   let netRipple = 0;
   let pointsWon = -1;
   let time = 0;
@@ -697,10 +780,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   let scoreRefresh = 0;
   let playerX = 0;
   let debugCameraMode: 'front' | 'side' | 'back' | 'game-close' | null = null;
+  let replayCameraActive = false;
   let debugCameraSeat = 0;
   let lastRenderAt = 0;
   let frameEma = 0;
   let qualityTier = 0;
+  let forceHighQuality = false;
   let overBudgetSince = 0;
   let lastQualityStep = 0;
   const qualityWarmupAt = performance.now();
@@ -737,6 +822,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   }
 
   function positionCamera(dt: number) {
+    if (replayCameraActive) {
+      camera.position.set(27, 14, 0);
+      camera.lookAt(0, 1.1, 0);
+      cameraInitialized = true;
+      return;
+    }
     if (debugCameraMode) {
       const player = players[debugCameraSeat];
       const target = player?.root.position ?? new THREE.Vector3();
@@ -860,12 +951,27 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       ballTrail[0]!.z = ballZ;
       ballTrailCount = Math.min(ballTrailCount + 1, ballTrail.length);
     } else ballTrailCount = 0;
-    for (let index = 0; index < trail.length; index++) {
-      const mesh = trail[index]!;
-      const point = ballTrail[Math.min(index + 1, ballTrailCount - 1)];
-      mesh.visible = ballTrailCount > 0 && world.ball.inPlay;
-      if (point) mesh.position.set(point.x, point.y, point.z);
+    const visibleTrailSamples = lite ? 0 : Math.min(trailSamples, ballTrailCount - 1);
+    trail.count = visibleTrailSamples;
+    trail.visible = !lite && qualityTier < 3 && visibleTrailSamples > 0 && world.ball.inPlay;
+    trailMaterial.opacity = 0.78 * Math.min(1.4, 0.72 + speed / 36 + hitPulse * 0.4);
+    trailDirection.set(velocity.x, velocity.y, velocity.z).normalize();
+    for (let index = 0; index < visibleTrailSamples; index++) {
+      const point = ballTrail[index + 1];
+      if (point) {
+        trailDummy.position.set(point.x, point.y, point.z);
+        const taper = 1.1 - index * 0.055;
+        trailDummy.quaternion.setFromUnitVectors(trailAxis, trailDirection);
+        trailDummy.scale.set(taper, taper, taper * (4 + Math.min(3, speed * 0.1)));
+        trailDummy.updateMatrix();
+        trail.setMatrixAt(index, trailDummy.matrix);
+        const fade = 1 - index / trailSamples * 0.78;
+        trailColor.setRGB(fade, fade * 0.96, fade * 0.78);
+        trail.setColorAt(index, trailColor);
+      }
     }
+    trail.instanceMatrix.needsUpdate = true;
+    if (trail.instanceColor) trail.instanceColor.needsUpdate = true;
     const drop = Math.max(0, visualBallY - BALL_RADIUS);
     ballShadow.position.set(visualBallX, 0.074, visualBallZ);
     ballShadow.scale.setScalar(0.22 + Math.min(0.9, drop * 0.13));
@@ -888,6 +994,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       hitPulse = Math.max(0, hitPulse - dt * 6);
       ball.scale.set(1 + hitPulse * 0.35, 1 - hitPulse * 0.24, 1 + hitPulse * 0.35);
     } else ball.scale.setScalar(1);
+    ballFlash = Math.max(0, ballFlash - dt * 8);
+    ballMaterial.emissive.setRGB(ballFlash, ballFlash, ballFlash);
     if (netRipple > 0) {
       netRipple = Math.max(0, netRipple - dt * 1.5);
       const attribute = net.geometry.getAttribute('position') as T.BufferAttribute;
@@ -913,9 +1021,9 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
         puffs.splice(i, 1);
       }
     }
-    stadium.crowdJump.value = Math.max(0, stadium.crowdJump.value - dt * 0.65);
+    if (qualityTier < 3) stadium.crowdJump.value = Math.max(0, stadium.crowdJump.value - dt * 0.65);
     crowdRefresh += dt;
-    if (crowdRefresh >= 0.1) {
+    if (qualityTier < 3 && crowdRefresh >= 0.1) {
       crowdRefresh %= 0.1;
       const dummy = stadium.dummy;
       for (let i = 0; i < stadium.crowd.length; i++) {
@@ -937,7 +1045,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
         dummy.scale.setScalar(1);
         for (const side of [-1, 1]) {
           dummy.position.set(person.x + side * 0.105, person.y - 0.055 + jump, person.z);
-          dummy.rotation.z = side * (0.35 + Math.sin(time * 1.4 + person.phase) * 0.08);
+          const clap = stadium.crowdJump.value > 0.45;
+          dummy.rotation.z = side * (clap ? 1.05 + Math.sin(time * 14 + person.phase) * 0.22 : 0.35 + Math.sin(time * 1.4 + person.phase) * 0.08);
           dummy.updateMatrix();
           stadium.arms.setMatrixAt(i * 2 + (side > 0 ? 1 : 0), dummy.matrix);
         }
@@ -957,6 +1066,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       updateScoreboard(world);
     }
     positionCamera(dt);
+    if (cameraKick > 0) {
+      cameraKick = Math.max(0, cameraKick - dt * 2.8);
+      camera.position.x += Math.sin(time * 82) * cameraKick * 0.12;
+      camera.position.y += Math.cos(time * 64) * cameraKick * 0.08;
+    }
   }
 
   function burst(x: number, z: number, line: boolean) {
@@ -991,13 +1105,41 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       debugCameraSeat = Math.max(0, Math.min(players.length - 1, seat ?? 0));
       cameraInitialized = false;
     },
+    ...(import.meta.env.DEV ? {
+      debugForceHighQuality() {
+        lite = false;
+        forceHighQuality = true;
+        qualityTier = 0;
+        currentDpr = Math.min(window.devicePixelRatio || 1, 1.5);
+        renderer.setPixelRatio(currentDpr);
+        renderer.shadowMap.enabled = true;
+        sun.shadow.mapSize.set(1024, 1024);
+        sun.shadow.needsUpdate = true;
+        stadium.arms.visible = true;
+        stadium.hats.visible = true;
+        trail.visible = false;
+        flare.visible = true;
+        frameEma = 0;
+        lastRenderAt = 0;
+        overBudgetSince = 0;
+      },
+      debugCrowdExcitement() {
+        stadium.crowdJump.value = 1.45;
+        crowdRefresh = 1;
+      },
+    } : {}),
+    replayCamera(active) {
+      replayCameraActive = active;
+      cameraInitialized = false;
+      cameraTransition = 0;
+    },
     render() {
       if (!glContext.lost()) {
         const now = performance.now();
         if (lastRenderAt > 0) {
           const interval = Math.min(now - lastRenderAt, 100);
           frameEma = frameEma ? frameEma * 0.9 + interval * 0.1 : interval;
-          if (now - qualityWarmupAt >= 1500 && frameEma > 26) {
+          if ((!import.meta.env.DEV || !forceHighQuality) && now - qualityWarmupAt >= 1500 && frameEma > 26) {
             if (!overBudgetSince) overBudgetSince = now;
             if (now - overBudgetSince >= 1000 && now - lastQualityStep >= 1000 && qualityTier < 3) {
               qualityTier++;
@@ -1018,6 +1160,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
                 renderer.setPixelRatio(currentDpr);
                 stadium.arms.visible = false;
                 stadium.hats.visible = false;
+                trail.visible = false;
+                flare.visible = false;
               }
               overBudgetSince = now;
             }
@@ -1031,13 +1175,26 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
             calls: renderer.info.render.calls,
             triangles: renderer.info.render.triangles,
             qualityTier,
+            lite,
+            trailSamples: ballTrailCount,
+            trailCount: trail.count,
+            trailVisible: trail.visible,
+            trailEndpoints: [ballTrail[0], ballTrail[Math.max(0, ballTrailCount - 1)]],
+            replayCameraActive,
+            debugCameraMode,
+            cameraPosition: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
             averageFrameMs: frameEma,
           });
         }
       }
     },
-    hit(speed: number) {
+    hit(speed: number, perfect = false) {
       hitPulse = Math.min(1, 0.55 + speed / 210);
+      if (perfect) hitPulse = 1;
+      if (perfect) {
+        ballFlash = 0.9;
+        cameraKick = 0.16;
+      }
       sfxCrowd(stadium.crowdJump, 0.12);
     },
     bounce(x: number, z: number, line: boolean) {
@@ -1047,8 +1204,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     netHit() {
       netRipple = 1;
     },
-    point(winner: number) {
-      stadium.crowdJump.value = Math.max(stadium.crowdJump.value, winner === currentSide ? 1 : 0.55);
+    point(winner: number, longRally = false) {
+      stadium.crowdJump.value = Math.max(stadium.crowdJump.value, longRally ? 1.45 : winner === currentSide ? 1 : 0.55);
+    },
+    crowdOoh(shots: number) {
+      if (qualityTier < 3 && shots >= 8) stadium.crowdJump.value = Math.max(stadium.crowdJump.value, Math.min(0.7, 0.18 + (shots - 8) * 0.035));
     },
     dispose,
   };

@@ -11,6 +11,7 @@ import {
   STEP,
   STRIKE_RADIUS,
   TOSS_START,
+  classifyShot,
   createWorld,
   hitServe,
   isInCourt,
@@ -20,6 +21,7 @@ import {
   predictLanding,
   scorePoint,
   serveSide,
+  shouldSmash,
   solveShot,
   stepWorld,
   timingLabel,
@@ -32,6 +34,7 @@ import {
 import { characterSpaceBoneTarget, debugPoseAngles } from '../src/os/arcade/games/tennis/player.ts';
 import { commandOf, configOf, moveOf, parsePacket, stateOf, swingOf } from '../src/os/arcade/games/tennis/net.ts';
 import { chooseShot } from '../src/os/arcade/games/tennis/ai.ts';
+import { rallyCounterLabel } from '../src/os/arcade/games/tennis/replay.ts';
 
 function instrumentedHumanPoints(level: Level, seed: number, targetPoints = 100) {
   let completed = 0;
@@ -749,6 +752,68 @@ test('hard CPU aims away from opponents and favors deep drives', () => {
   assert.equal(chooseShot(world, cpu).aim, 0);
 });
 
+test('smash trigger and volley classification use the intended strike conditions', () => {
+  assert.equal(shouldSmash(2.19), false);
+  assert.equal(shouldSmash(2.2), true);
+  assert.equal(shouldSmash(2.6, false), false);
+  assert.equal(classifyShot('drive', 2.4, 9), 'smash');
+  assert.equal(classifyShot('drive', 1.2, 5.9), 'volley');
+  assert.equal(classifyShot('slice', 1.2, 5.9), 'slice');
+});
+
+test('Easy and Normal assisted smashes land inside the court', () => {
+  for (const level of [0, 1] as const) {
+    const world = createWorld({ level, players: [{ ai: null }, { ai: null }], seed: level + 300 });
+    const player = world.players[0]!;
+    world.phase = 'rally';
+    world.ball.inPlay = true;
+    world.ball.canHitTeam = player.team;
+    world.ball.targetTeam = player.team;
+    world.ball.p = { x: player.x, y: 2.4, z: player.z - 0.4 };
+    world.ball.prev = { ...world.ball.p };
+    world.ball.v = { x: 0, y: 0, z: -1 };
+    player.pending = { kind: 'drive', at: world.clock, aim: 0 };
+    const events = stepWorld(world, [], STEP);
+    assert.ok(events.some((event) => event.type === 'hit' && event.kind === 'smash'), `level ${level} did not classify a floating ball as a smash`);
+    const landing = predictLanding(world.ball.p, world.ball.v, world.ball.spin);
+    assert.equal(landing.clearsNet, true);
+    assert.equal(isInCourt(landing.x, landing.z, 'singles'), true);
+  }
+});
+
+test('CPU shot variety varies by level and Normal/Hard tell lob, drop, crosscourt, and smash shots', () => {
+  for (const level of [0, 1, 2] as const) {
+    const world = createWorld({ level, players: [{ ai: level }, { ai: null }], seed: 800 + level });
+    const cpu = world.players[0]!;
+    world.players[1]!.z = 0;
+    world.ball.p.y = 1;
+    const counts = { drive: 0, slice: 0, lob: 0, smash: 0, volley: 0, angled: 0 };
+    for (let index = 0; index < 800; index++) {
+      const shot = chooseShot(world, cpu);
+      counts[shot.kind]++;
+      if (shot.aim !== 0) counts.angled++;
+    }
+    assert.ok(counts.drive > 0);
+    if (level === 0) {
+      assert.equal(counts.lob, 0);
+      assert.equal(counts.smash, 0);
+      assert.ok(counts.slice > 30);
+    } else {
+      assert.ok(counts.lob > 50, `level ${level} produced too few net lobs`);
+      assert.ok(counts.slice > 35, `level ${level} produced too few drop shots`);
+      assert.ok(counts.angled > 200, `level ${level} produced too few crosscourts`);
+      world.ball.p.y = 2.4;
+      assert.equal(chooseShot(world, cpu).kind, 'smash');
+    }
+  }
+});
+
+test('rally counter threshold is four shots', () => {
+  assert.equal(rallyCounterLabel(3), '');
+  assert.equal(rallyCounterLabel(4), 'Rally 4');
+  assert.equal(rallyCounterLabel(11), 'Rally 11');
+});
+
 test('packets round-trip valid settings, swings, and host snapshots and reject bad ranges', () => {
   const config = configOf(4, 'doubles', 'three', 2);
   assert.deepEqual(parsePacket(config), { k: 'cfg', r: 4, format: 'doubles', length: 'three', level: 2 });
@@ -757,7 +822,9 @@ test('packets round-trip valid settings, swings, and host snapshots and reject b
   assert.equal(parsePacket({ ...swing, delta: 3 }), null);
   assert.equal(parsePacket({ ...swing, shot: -1 }), null);
   assert.equal(parsePacket({ t: 'tennis', k: 'cfg', r: 1, format: 'trios', length: 'game', level: 1 }), null);
-  assert.equal(parsePacket({ t: 'tennis', k: 'sw', r: 1, shot: 1, delta: 0, kind: 'smash', aim: 0, swipe: 0 }), null);
+  const smashPacket = parsePacket(swingOf(4, 8, { kind: 'smash', aim: 1, delta: 0 }));
+  assert.equal(smashPacket?.k, 'sw');
+  if (smashPacket?.k === 'sw') assert.equal(commandOf(smashPacket, 0)?.swing?.kind, 'smash');
   const snapshot = JSON.parse(JSON.stringify(stateOf(4, createWorld({ format: 'doubles' }))));
   const parsed = parsePacket(snapshot);
   assert.equal(parsed?.k, 'S');
@@ -828,7 +895,10 @@ test('instrumented 300-point human playability targets', () => {
   assert.equal(normal.completed, 300);
   assert.equal(hard.completed, 300);
   assert.ok(easy.winRate >= 0.55, `easy win rate was ${(easy.winRate * 100).toFixed(1)}%`);
-  assert.ok(normal.winRate >= 0.4, `normal win rate was ${(normal.winRate * 100).toFixed(1)}%`);
+  assert.ok(normal.winRate >= 0.4 && normal.winRate <= 0.7,
+    `normal win rate was ${(normal.winRate * 100).toFixed(1)}%`);
   assert.ok(easy.averageRally >= 5, `easy average rally was ${easy.averageRally.toFixed(2)} shots`);
   assert.ok(normal.averageRally >= 5, `normal average rally was ${normal.averageRally.toFixed(2)} shots`);
+  assert.ok(easy.winRate >= normal.winRate, 'Easy should be at least as winnable as Normal');
+  assert.ok(normal.winRate >= hard.winRate, 'Normal should be at least as winnable as Hard');
 });

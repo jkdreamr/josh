@@ -1,4 +1,4 @@
-import { COURT_LENGTH, DOUBLES_WIDTH, SINGLES_WIDTH, STEP, STRIKE_RADIUS, clamp, timingQuality, updateBall, type Command, type Event, type Player, type Swing, type World } from './logic.ts';
+import { COURT_LENGTH, DOUBLES_WIDTH, SINGLES_WIDTH, STEP, STRIKE_RADIUS, clamp, shouldSmash, timingQuality, updateBall, type Command, type Event, type Player, type Swing, type World } from './logic.ts';
 
 export type CourtTarget = { x: number; z: number };
 
@@ -21,15 +21,15 @@ function predictedIntercept(world: World, player: Player): CourtTarget {
     },
     random: world.random,
   } as World;
-  const delay = player.ai === 0 ? 0.3 : player.ai === 2 ? 0.08 : 0.22;
-  const speed = player.ai === 0 ? 4.6 : player.ai === 1 ? 5.4 : 6;
+  const delay = player.ai === 0 ? 0.32 : player.ai === 2 ? 0.08 : 0.15;
+  const speed = player.ai === 0 ? 4.6 : player.ai === 1 ? 5.8 : 6;
   let target = { x: player.x, z: player.z };
   const events: Event[] = [];
   for (let elapsed = 0; elapsed <= 1.6; elapsed += STEP) {
     updateBall(sim, events);
     if (sim.phase !== 'rally' && sim.phase !== 'serve-flight') break;
     const ball = sim.ball;
-    if (ball.bounces > 0 && ball.p.y >= 0.5 && ball.p.y <= 1.4 && (player.team === 0 ? ball.p.z > 0 : ball.p.z < 0)) {
+    if (ball.bounces > 0 && ball.p.y >= 0.5 && ball.p.y <= 2.7 && (player.team === 0 ? ball.p.z > 0 : ball.p.z < 0)) {
       const distance = Math.hypot(ball.p.x - player.x, ball.p.z - player.z);
       if (distance <= speed * Math.max(0, elapsed - delay) + STRIKE_RADIUS) {
         target = { x: ball.p.x, z: ball.p.z };
@@ -73,8 +73,18 @@ export function chooseShot(world: World, player: Player): Swing {
     : level === 1 ? (world.random() - 0.5) * 0.38
       : (world.random() - 0.5) * 0.36;
   let kind: Swing['kind'] = 'drive';
+  let depth: Swing['depth'];
+  const humans = world.players.filter((other) => other.team !== player.team && other.ai === null);
+  const humanAtNet = humans.some((human) => Math.abs(human.z) < 6);
   if (level === 0 && world.random() < 0.18) kind = 'slice';
-  if (level === 2 && world.random() < 0.16 && world.ball.p.y < 0.8) kind = 'lob';
+  if (level > 0) {
+    if (shouldSmash(world.ball.p.y)) kind = 'smash';
+    else if (humanAtNet && world.random() < 0.3) kind = 'lob';
+    else if (world.random() < (level === 1 ? 0.15 : 0.2)) {
+      kind = 'slice';
+      depth = -1;
+    }
+  }
   const aim: Swing['aim'] = level === 0 ? 0 : (() => {
     const width = (world.format === 'singles' ? SINGLES_WIDTH : DOUBLES_WIDTH) / 2;
     const opponents = world.players.filter((other) => other.team !== player.team);
@@ -88,19 +98,18 @@ export function chooseShot(world: World, player: Player): Swing {
     };
     const left = openness(-1);
     const right = openness(1);
-    if (level === 1 && world.random() < 0.7) return 0;
-    if (level === 1 && world.random() < 0.67) return world.random() < 0.5 ? -1 : 1;
+    if (level === 1 && world.random() < 0.28) return 0;
     if (Math.abs(left - right) < 0.22) return world.random() < 0.5 ? -1 : 1;
     return left > right ? -1 : 1;
   })();
   if (level === 2 && world.format === 'doubles' && Math.abs(player.z) < COURT_LENGTH / 2 - 4) kind = 'drive';
-  return { kind, aim, delta: timing };
+  return { kind, aim, delta: timing, depth };
 }
 
 export function cpuSwing(world: World, player: Player): Command | null {
   const ball = world.ball;
-  if (player.ai === null || !player.connected || player.swing > 0 || world.phase !== 'rally' || !ball.inPlay || player.team !== ball.canHitTeam) return null;
-  const side = ball.p.x >= player.x ? 1 : -1;
-  if (Math.hypot(ball.p.x - (player.x + side * 0.75), ball.p.z - player.z) > STRIKE_RADIUS || ball.p.y < 0.2 || ball.p.y > 2.6) return null;
+  if (player.ai === null || !player.connected || player.swing > 0 || (world.phase !== 'rally' && world.phase !== 'serve-flight') || !ball.inPlay || player.team !== ball.canHitTeam) return null;
+  const reach = STRIKE_RADIUS + (player.ai === 1 ? 0.25 : 0);
+  if (Math.hypot(ball.p.x - player.x, ball.p.z - player.z) > reach || ball.p.y < 0.15 || ball.p.y > 2.9) return null;
   return { seat: player.seat, swing: chooseShot(world, player) };
 }

@@ -4,10 +4,11 @@ import type { GameProps } from '../../types';
 import { createAudio } from './audio.ts';
 import { Hud } from './hud.tsx';
 import type { HudModel } from './hud.tsx';
-import { createWorld, movePlayer, STEP, stepWorld, teamSeats, timingLabel, type Command, type Format, type Level, type MatchLength, type MoveInput, type Player, type Swing, type World } from './logic.ts';
+import { createWorld, movePlayer, STEP, stepWorld, teamSeats, timingLabel, type Command, type Format, type Level, type MatchLength, type MoveInput, type Player, type PointCall, type Swing, type World } from './logic.ts';
 import { configOf, commandOf, eventOf, moveOf, parsePacket, serveOf, stateOf, swingOf } from './net.ts';
 import { meta } from './meta.ts';
 import { createScene, type View } from './scene.ts';
+import { appendReplayFrame, REPLAY_DURATION, sampleReplay, selectReplay, type ReplaySelection } from './replay.ts';
 import './tennis.css';
 
 type LevelName = (typeof LEVEL_NAMES)[number];
@@ -147,9 +148,9 @@ function settingsWorld(mode: StageMode, format: Format, length: MatchLength, lev
   });
 }
 
-function hudCopy(world: World, seat: number | null, watching: boolean, timing: HudModel['timing'], bounceCue: boolean): HudModel {
+function hudCopy(world: World, seat: number | null, watching: boolean, timing: HudModel['timing'], bounceCue: boolean, rallyShots = 0, replaying = false, feedback: HudModel['feedback'] = ''): HudModel {
   const copy = { ...world, players: world.players.map((player) => ({ ...player })), ball: { ...world.ball, p: { ...world.ball.p }, v: { ...world.ball.v } }, match: structuredClone(world.match) };
-  return { world: copy, seat, watching, call: world.callClock > 0 ? world.lastCall : '', timing, bounceCue };
+  return { world: copy, seat, watching, call: world.callClock > 0 ? world.lastCall : '', timing, bounceCue, rallyShots, replaying, feedback };
 }
 
 function Play({ mode }: { mode: StageMode }) {
@@ -174,8 +175,22 @@ function Play({ mode }: { mode: StageMode }) {
   world.current ??= settingsWorld(mode, format, length, level, online);
   const lastHit = useRef<{ kind: Swing['kind']; clock: number } | null>(null);
   const view = useRef<View | null>(null);
+  const debugFreezeWorld = useRef(false);
   const [sceneLoadFailed, setSceneLoadFailed] = useState(false);
   const audio = useRef<ReturnType<typeof createAudio> | null>(null);
+  const replayFrames = useRef<ReturnType<typeof appendReplayFrame>>([]);
+  const replayState = useRef<{ selection: ReplaySelection; elapsed: number } | null>(null);
+  const replayingRef = useRef(false);
+  const pointShots = useRef(0);
+  const rallyShots = useRef(0);
+  const lastHitterTeam = useRef<number | null>(null);
+  const oohPlayed = useRef(false);
+  const feedbackClock = useRef(0);
+  const feedbackRef = useRef<HudModel['feedback']>('');
+  const hitStopUntil = useRef(0);
+  const [, setReplaying] = useState(false);
+  const [, setFeedback] = useState<HudModel['feedback']>('');
+  const skipReplayRef = useRef<() => void>(() => {});
   const localCommands = useRef<Command[]>([]);
   const remoteCommands = useRef<Command[]>([]);
   const guestSnapshots = useRef<{ at: number; state: World }[]>([]);
@@ -199,6 +214,15 @@ function Play({ mode }: { mode: StageMode }) {
   const localHumanSeats = () => mode === 'online'
     ? new Set((onlineRef.current?.players ?? []).map((player) => player.seat).filter((seat) => seat >= 0))
     : new Set([0]);
+
+  const skipReplay = () => {
+    if (!replayState.current) return;
+    replayState.current = null;
+    replayingRef.current = false;
+    setReplaying(false);
+    view.current?.replayCamera(false);
+  };
+  skipReplayRef.current = skipReplay;
 
   useEffect(() => {
     audio.current = createAudio();
@@ -256,6 +280,12 @@ function Play({ mode }: { mode: StageMode }) {
       __tennisPoseDebug?: {
         pose: (seat: number, name: import('./player.ts').PoseName, progress?: number) => void;
         camera: (name: 'front' | 'side' | 'back' | 'game', seat?: number) => void;
+        forceHighQuality: () => void;
+        perfect: () => void;
+        replay: () => void;
+        crowd: () => void;
+        trail: () => void;
+        freeze: (active?: boolean) => void;
       };
     };
     debugWindow.__tennisWorldDebug = () => {
@@ -284,7 +314,114 @@ function Play({ mode }: { mode: StageMode }) {
     };
     debugWindow.__tennisPoseDebug = {
       pose: (seat, name, progress) => { view.current?.debugPose(seat, name, progress); shell.invalidate(); },
-      camera: (name, seat) => { view.current?.debugCamera(name, seat); shell.invalidate(); },
+      camera: (name, seat) => {
+        if (name === 'game') {
+          replayState.current = null;
+          replayingRef.current = false;
+          setReplaying(false);
+          view.current?.replayCamera(false);
+        }
+        view.current?.debugCamera(name, seat);
+        shell.invalidate();
+      },
+      forceHighQuality: () => { view.current?.debugForceHighQuality?.(); shell.invalidate(); },
+      perfect: () => {
+        if (mode === 'online') return;
+        timingRef.current = 'perfect';
+        setTiming('perfect');
+        timingClock.current = 0.9;
+        feedbackRef.current = 'PERFECT!';
+        setFeedback('PERFECT!');
+        feedbackClock.current = 0.72;
+        hitStopUntil.current = performance.now() + 70;
+        view.current?.hit(155, true);
+        const current = world.current;
+        if (current) view.current?.update(current, 0, localHumanSeats(), myTeam());
+        debugFreezeWorld.current = true;
+        shell.invalidate();
+      },
+      replay: () => {
+        const current = world.current;
+        if (!current) return;
+        const duration = REPLAY_DURATION * 0.35;
+        let staged: typeof replayFrames.current = [];
+        for (let index = 0; index < 24; index++) {
+          const progress = index / 23;
+          const at = current.clock - duration + progress * duration;
+          const p = { x: -3 + progress * 6, y: 0.7 + Math.sin(progress * Math.PI) * 1.8, z: 8 - progress * 16 };
+          staged = appendReplayFrame(staged, {
+            ...current,
+            clock: at,
+            phase: 'rally',
+            ball: { ...current.ball, prev: p, p, v: { x: 7, y: 2, z: -18 } },
+          });
+        }
+        const selection = selectReplay(staged, {
+          call: 'out',
+          rallyShots: 6,
+          pointWinner: 0,
+          lastHitter: 1,
+        }, current.clock);
+        if (!selection) return;
+        replayState.current = { selection, elapsed: 0 };
+        replayingRef.current = true;
+        setReplaying(true);
+        view.current?.replayCamera(true);
+        view.current?.update(sampleReplay(selection, 0), 0, localHumanSeats(), myTeam());
+        debugFreezeWorld.current = true;
+        shell.invalidate();
+      },
+      crowd: () => {
+        view.current?.debugCrowdExcitement?.();
+        const current = world.current;
+        if (current) view.current?.update(current, 0, localHumanSeats(), myTeam());
+        debugFreezeWorld.current = true;
+        shell.invalidate();
+      },
+      trail: () => {
+        const current = world.current;
+        if (!current || mode === 'online') return;
+        const p = { x: 2.5, y: 2.4, z: 8.5 };
+        const v = { x: -5, y: 0.5, z: 0 };
+        current.phase = 'rally';
+        current.ball = {
+          ...current.ball,
+          p,
+          prev: { x: p.x - v.x * 0.025, y: p.y - v.y * 0.025, z: p.z - v.z * 0.025 },
+          v,
+          inPlay: true,
+          hitByTeam: 1,
+          canHitTeam: 0,
+          bounces: 0,
+          lastBounceTeam: -1,
+          targetTeam: 0,
+          rallyShot: 6,
+          netCord: false,
+        };
+        lastHit.current = { kind: 'drive', clock: current.clock };
+        rallyShots.current = 6;
+        pointShots.current = 6;
+        const stagedBall = current.ball;
+        for (let sample = 12; sample >= 1; sample--) {
+          const lag = sample * 0.025;
+          const trailPoint = {
+            x: p.x - stagedBall.v.x * lag,
+            y: p.y - stagedBall.v.y * lag,
+            z: p.z - stagedBall.v.z * lag,
+          };
+          current.ball = { ...stagedBall, p: trailPoint, prev: trailPoint };
+          view.current?.update(current, 0, localHumanSeats(), myTeam());
+        }
+        current.ball = stagedBall;
+        view.current?.update(current, 0, localHumanSeats(), myTeam());
+        debugFreezeWorld.current = true;
+        shell.invalidate();
+      },
+      freeze: (active = true) => {
+        debugFreezeWorld.current = active;
+        lastWorldFrameAt.current = performance.now();
+        shell.invalidate();
+      },
     };
     return () => { delete debugWindow.__tennisWorldDebug; delete debugWindow.__tennisPoseDebug; };
   }, []);
@@ -293,6 +430,12 @@ function Play({ mode }: { mode: StageMode }) {
     const reset = () => { lastWorldFrameAt.current = null; };
     document.addEventListener('visibilitychange', reset);
     return () => document.removeEventListener('visibilitychange', reset);
+  }, []);
+
+  useEffect(() => {
+    const skip = () => skipReplayRef.current();
+    document.addEventListener('pointerdown', skip);
+    return () => document.removeEventListener('pointerdown', skip);
   }, []);
 
   useEffect(() => {
@@ -305,6 +448,22 @@ function Play({ mode }: { mode: StageMode }) {
     timingRef.current = state;
     setTiming(state);
     timingClock.current = 0.9;
+  };
+
+  const startReplay = (winner: number, call: PointCall) => {
+    const current = world.current;
+    if (!current) return;
+    const selection = selectReplay(replayFrames.current, {
+      call,
+      rallyShots: pointShots.current,
+      pointWinner: winner,
+      lastHitter: lastHitterTeam.current ?? -1,
+    }, current.clock);
+    if (!selection) return;
+    replayState.current = { selection, elapsed: 0 };
+    replayingRef.current = true;
+    setReplaying(true);
+    view.current?.replayCamera(true);
   };
 
   const sendCommand = (command: Command) => {
@@ -356,6 +515,7 @@ function Play({ mode }: { mode: StageMode }) {
   const shotPress = (kind: Swing['kind']) => {
     const current = world.current;
     if (!current || shellRef.current.status !== 'playing') return;
+    if (import.meta.env.DEV && debugFreezeWorld.current) return;
     const seat = currentSeat();
     const player = current.players.find((entry) => entry.seat === seat);
     if (!player || player.ai !== null || !player.connected) return;
@@ -374,6 +534,10 @@ function Play({ mode }: { mode: StageMode }) {
 
   keyPress.current = (code, event) => {
     if (event?.repeat) return;
+    if (replayState.current) {
+      skipReplayRef.current();
+      return;
+    }
     if (code === 'Space' || code === 'Enter' || code === 'KeyJ') shotPress('drive');
     else if (code === 'KeyK') shotPress('slice');
     else if (code === 'KeyL') shotPress('lob');
@@ -412,9 +576,25 @@ function Play({ mode }: { mode: StageMode }) {
     const currentView = view.current;
     if (event.type === 'hit') {
       if (import.meta.env.DEV) lastHit.current = { kind: event.kind, clock: world.current?.clock ?? 0 };
-      if (event.delta !== undefined) setTimingResult(event.delta);
-      currentView?.hit(event.speed);
-      audio.current?.hit(event.speed, event.kind);
+      pointShots.current++;
+      rallyShots.current++;
+      const hitter = world.current?.players.find((player) => player.seat === event.seat);
+      lastHitterTeam.current = hitter?.team ?? null;
+      if (rallyShots.current >= 8 && !oohPlayed.current) {
+        oohPlayed.current = true;
+        audio.current?.ooh();
+      }
+      currentView?.crowdOoh(rallyShots.current);
+      const perfect = event.delta !== undefined && timingLabel(event.delta) === 'perfect';
+      if (event.delta !== undefined) {
+        setTimingResult(event.delta);
+        feedbackRef.current = perfect ? 'PERFECT!' : 'NICE!';
+        setFeedback(feedbackRef.current);
+        feedbackClock.current = 0.72;
+      }
+      currentView?.hit(event.speed, perfect);
+      if (perfect && mode === 'offline' && event.seat === currentSeat()) hitStopUntil.current = performance.now() + 70;
+      audio.current?.hit(event.speed, event.kind, perfect);
     } else if (event.type === 'bounce') {
       const current = world.current;
       const bounceTeam = event.z >= 0 ? 0 : 1;
@@ -430,7 +610,13 @@ function Play({ mode }: { mode: StageMode }) {
     } else if (event.type === 'call') {
       audio.current?.call(event.call);
     } else if (event.type === 'point') {
-      currentView?.point(event.winner);
+      currentView?.point(event.winner, rallyShots.current >= 8);
+      startReplay(event.winner, world.current?.lastCall || 'point');
+      if (rallyShots.current >= 8) audio.current?.cheer();
+      rallyShots.current = 0;
+      pointShots.current = 0;
+      lastHitterTeam.current = null;
+      oohPlayed.current = false;
     } else if (event.type === 'end') {
       if (mode === 'online' && !onlineRef.current?.isHost) finishGame(event.winner);
     }
@@ -542,16 +728,40 @@ function Play({ mode }: { mode: StageMode }) {
     }
     bounceCueClock.current = Math.max(0, bounceCueClock.current - dt);
     if (bounceCueClock.current <= 0) setBounceCue(false);
+    feedbackClock.current = Math.max(0, feedbackClock.current - dt);
+    if (feedbackClock.current <= 0 && feedbackRef.current) {
+      feedbackRef.current = '';
+      setFeedback('');
+    }
     const side = myTeam();
-    view.current?.update(current, dt, localHumanSeats(), side);
+    const activeReplay = replayState.current;
+    if (activeReplay) {
+      activeReplay.elapsed += dt;
+      if (activeReplay.elapsed >= REPLAY_DURATION) {
+        replayState.current = null;
+        replayingRef.current = false;
+        setReplaying(false);
+        view.current?.replayCamera(false);
+        view.current?.update(current, dt, localHumanSeats(), side);
+        replayFrames.current = appendReplayFrame(replayFrames.current, current);
+      } else {
+        view.current?.update(sampleReplay(activeReplay.selection, activeReplay.elapsed), dt, localHumanSeats(), side);
+      }
+    } else {
+      view.current?.update(current, dt, localHumanSeats(), side);
+      replayFrames.current = appendReplayFrame(replayFrames.current, current);
+    }
     hudClock.current += dt;
     if (hudClock.current >= 0.1) {
       hudClock.current = 0;
-      setHud(hudCopy(current, currentSeat(), !!o?.watching, timingClock.current > 0 ? timingRef.current : '', bounceCueClock.current > 0));
+      setHud(hudCopy(current, currentSeat(), !!o?.watching, timingClock.current > 0 ? timingRef.current : '', bounceCue, rallyShots.current, replayingRef.current, feedbackRef.current));
     }
   };
 
-  useGameLoop(updateWorld, () => view.current?.render());
+  useGameLoop(updateWorld, () => {
+    if (mode === 'offline' && performance.now() < hitStopUntil.current) return;
+    view.current?.render();
+  });
 
   useEffect(() => {
     if (mode !== 'online' || !online) return;

@@ -1,5 +1,6 @@
 import type { World } from './logic.ts';
 import { pointLabel, scoreText, serverOf } from './logic.ts';
+import { rallyCounterLabel } from './replay.ts';
 
 export type HudModel = {
   world: World;
@@ -8,6 +9,9 @@ export type HudModel = {
   call: string;
   timing: 'early' | 'perfect' | 'late' | '';
   bounceCue: boolean;
+  rallyShots?: number;
+  replaying?: boolean;
+  feedback?: 'PERFECT!' | 'NICE!' | '';
   touch?: boolean;
 };
 
@@ -18,8 +22,9 @@ function teamNames(world: World, team: number, seat: number | null, watching: bo
     .join(' + ') || `team ${team === 0 ? 'a' : 'b'}`;
 }
 
-export function Hud({ world, seat, watching, call, timing, bounceCue, touch = false }: HudModel) {
+export function Hud({ world, seat, watching, call, timing, bounceCue, rallyShots = 0, replaying = false, feedback = '', touch = false }: HudModel) {
   const server = serverOf(world);
+  const rally = rallyCounterLabel(rallyShots);
   const pointA = world.match.tiebreak ? String(world.match.tbPoints[0]) : world.match.points[0] >= 3 && world.match.points[1] >= 3 ? world.match.points[0] === world.match.points[1] ? '40' : world.match.points[0] > world.match.points[1] ? 'AD' : '40' : pointLabel(world.match.points[0]);
   const pointB = world.match.tiebreak ? String(world.match.tbPoints[1]) : world.match.points[0] >= 3 && world.match.points[1] >= 3 ? world.match.points[0] === world.match.points[1] ? '40' : world.match.points[1] > world.match.points[0] ? 'AD' : '40' : pointLabel(world.match.points[1]);
   const meTeam = world.players.find((player) => player.seat === seat)?.team;
@@ -45,7 +50,10 @@ export function Hud({ world, seat, watching, call, timing, bounceCue, touch = fa
         <div className="g-tennis-call" aria-live="assertive">{call || (world.phase === 'serve-ready' ? 'first serve' : world.phase === 'serve-toss' ? 'time your serve' : world.phase === 'rally' || world.phase === 'serve-flight' ? scoreText(world) : '')}</div>
         {world.serveSpeed > 0 && world.callClock > 0.05 && <div className="g-tennis-speed">{world.serveSpeed}<small> km/h</small></div>}
       </div>
+      {replaying && <div className="g-tennis-replay-tag">REPLAY</div>}
+      {rally && <div className="g-tennis-rally-chip">{rally}</div>}
       {bounceCue && <div className="g-tennis-bounce-cue" role="status">Bounce! Swing!</div>}
+      {feedback && <div className={`g-tennis-feedback g-tennis-feedback-${feedback === 'PERFECT!' ? 'perfect' : 'nice'}`}>{feedback}</div>}
       {timing && <div className={`g-tennis-timing g-tennis-timing-${timing}`}><span className="g-tennis-timing-ring" />{timing}</div>}
       <div className="g-tennis-controls-hint">
         {touch

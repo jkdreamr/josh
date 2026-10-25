@@ -13,7 +13,7 @@ const roundOk = (value: unknown): value is number => Number.isSafeInteger(value)
 const levelOk = (value: unknown): value is Level => value === 0 || value === 1 || value === 2;
 const formatOk = (value: unknown): value is Format => value === 'singles' || value === 'doubles';
 const lengthOk = (value: unknown): value is MatchLength => value === 'game' || value === 'three' || value === 'set';
-const kindOk = (value: unknown): value is Swing['kind'] => value === 'drive' || value === 'slice' || value === 'lob';
+const kindOk = (value: unknown): value is Swing['kind'] => value === 'drive' || value === 'slice' || value === 'lob' || value === 'smash' || value === 'volley';
 const aimOk = (value: unknown): value is -1 | 0 | 1 => value === -1 || value === 0 || value === 1;
 const pointCalls = ['fault', 'double fault', 'let', 'out', 'net', 'point', 'game', 'set', 'match'];
 const phases = ['serve-ready', 'serve-toss', 'serve-flight', 'rally', 'point', 'done'];

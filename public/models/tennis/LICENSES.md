@@ -22,7 +22,7 @@ The MakeHuman base mesh, macro targets, skin textures, eye assets, and eyebrow a
 | `eyebrow001` mesh, material, and alpha texture | Female and male | `eyebrows/eyebrow001/`; CC0 |
 | `ponytail01` mesh, material, and alpha texture | Female | `hair/ponytail01/`; CC0 |
 | `short04` mesh, material, and alpha texture | Male | `hair/short04/`; CC0 |
-| `female_sportsuit01` clothing mesh and material | Female | `clothes/female_sportsuit01/`; trimmed to a sports top and shorts; CC0 |
+| `female_sportsuit01` clothing mesh and material | Female | `clothes/female_sportsuit01/`; trimmed to a sports top and shorts with the shoulder seams and exposed waist masked in the matching shirt material for full coverage; CC0 |
 | `male_casualsuit01` clothing mesh and material | Male | `clothes/male_casualsuit01/`; sleeves and trouser legs trimmed; CC0 |
 | `shoes06` shoe mesh and material | Female and male | `clothes/shoes06/`; CC0 |
 | `game_engine` rig weights | Female and male | MPFB `weights.game_engine.json`; declares CC0 |
