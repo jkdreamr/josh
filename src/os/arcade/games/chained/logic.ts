@@ -542,6 +542,9 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
     s.z = lerp(gl.z0, gl.z1, inK * inK * (3 - 2 * inK));
     s.vx = s.vz = s.vy = 0;
     s.squash = Math.max(0, s.squash - dt * 4);
+    // a jump pressed during the pull up is kept, so mashing the key keeps hopping on landing
+    if (s.input.jump && g.time >= 0) s.buffer = JUMP_BUFFER;
+    else s.buffer = Math.max(0, s.buffer - dt);
     if (k >= 1) {
       s.glide = null;
       const p = level.platforms[gl.p];
@@ -801,7 +804,6 @@ function startGlide(g: Game, s: Soul, p: Platform, x1: number, y1: number, z1: n
   s.hanging = false;
   s.mantled = g.time;
   s.coyote = 0;
-  s.buffer = 0;
   g.events.push(grab ? { t: 'mantle', i: s.idx, grab: true } : { t: 'mantle', i: s.idx });
 }
 
