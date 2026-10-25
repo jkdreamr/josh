@@ -348,6 +348,42 @@
   font-size: calc(12px * var(--g-sumo-u, 1));
 }
 
+/* The room's Direct/Relayed pill sits under the round badge so it never covers the score row. */
+.g-sumo .arcade-online-status {
+  top: 48px;
+  left: 12px;
+  transform: none;
+}
+
+/* Finger-sized controls on touch. Cards are already zoomed by --g-sumo-u; the toolbar is not. */
+@media (pointer: coarse) {
+  .g-sumo .arcade-ctrl button {
+    width: calc(44px * var(--g-sumo-u, 1));
+    height: calc(44px * var(--g-sumo-u, 1));
+  }
+
+  .g-sumo .arcade-ctrl svg {
+    width: calc(16px * var(--g-sumo-u, 1));
+    height: calc(16px * var(--g-sumo-u, 1));
+  }
+
+  .g-sumo .arcade-card .arcade-btn,
+  .g-sumo .arcade-card .arcade-seg > button {
+    min-height: 40px;
+  }
+
+  /* Keep cards clear of the taller toolbar; on a phone the Start card drops its icon to make room. */
+  .g-sumo .arcade-ov:not(.arcade-ov-compact) {
+    padding-top: calc(66px * var(--g-sumo-u, 1));
+  }
+
+  @container arcade-ov (max-height: 640px) {
+    .g-sumo .arcade-card:has(.arcade-setup) > .arcade-glyph {
+      display: none;
+    }
+  }
+}
+
 .g-sumo .g-sumo-round {
   font-size: calc(12px * var(--g-sumo-u, 1));
 }

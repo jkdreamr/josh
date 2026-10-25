@@ -8,6 +8,10 @@ export const SERVE_MAX_HEIGHT = 1.15;
 export const SMASH_MIN_HEIGHT = 2;
 export const OVERHEAD_HEIGHT = 1.75;
 export const LOW_HEIGHT = 1;
+export const PLAYER_RUN_SPEED = 5.3;
+export const PLAYER_MAX_ACCURACY = 1;
+export const PLAYER_MAX_POWER = 1;
+export const RACKET_REACH = 0.95;
 
 /** The two competitors. Side a starts on the left end and is always the first human. */
 export type Side = 'a' | 'b';
@@ -20,7 +24,7 @@ export type FlightStatus = 'flying' | 'landed' | 'fault';
 export type FlightFault = 'net' | 'out' | 'own-side' | 'short-service';
 export type MatchLength = 'quick' | 'game' | 'match';
 export type ServiceCourt = 'right' | 'left';
-export type Difficulty = 'easy' | 'normal' | 'hard';
+export type Difficulty = 'easy' | 'normal' | 'hard' | 'pro' | 'olympic' | 'impossible';
 
 export type Shuttle = Point2D & { vx: number; vy: number };
 
@@ -71,13 +75,78 @@ export type MatchStats = { a: SideStats; b: SideStats; longestRally: number; ral
 export type RallyCause = 'in' | FlightFault | 'serve-fault';
 export type RallyOutcome = { winner: Side; cause: RallyCause; shots: number; seconds: number };
 
-export type CpuProfile = { label: string; reactionMs: number; speed: number; accuracy: number; dropChance: number };
+/**
+ * tactics: plays to the open court and picks power by situation, instead of the club habits in cpuChooseShot.
+ * ruthless: kills every short lift at full power and plays to whichever end is open (ruthlessChooseShot).
+ * anticipates: runs to the first point it can intercept the shuttle, with this much slack in metres, instead of the landing.
+ * home: metres from the net it recovers to between shots, instead of the default base.
+ * unforcedMiss: chance of fluffing any return, so even a superhuman level is never infallible.
+ */
+export type CpuProfile = { label: string; reactionMs: number; speed: number; accuracy: number; dropChance: number; tactics?: boolean; ruthless?: boolean; anticipates?: number; home?: number; unforcedMiss?: number };
 
 export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
   easy: { label: 'Easy', reactionMs: 260, speed: 3, accuracy: 0.72, dropChance: 0.15 },
   normal: { label: 'Normal', reactionMs: 170, speed: 4.1, accuracy: 0.88, dropChance: 0.3 },
   hard: { label: 'Hard', reactionMs: 110, speed: 5, accuracy: 1, dropChance: 0.42 },
+  // Quicker first step and feet than Hard, but no faster than a human runs (5.3 m/s) by much, and the same reach and jump.
+  pro: { label: 'Pro', reactionMs: 80, speed: 5.6, accuracy: 1.12, dropChance: 0.5, tactics: true },
+  olympic: { label: 'Olympic', reactionMs: 20, speed: PLAYER_RUN_SPEED, accuracy: PLAYER_MAX_ACCURACY, dropChance: 0.7, tactics: true },
+  // Superhuman on purpose: near-instant reads, faster feet than any player and the tightest aim, with the same flight, reach and jump.
+  impossible: { label: 'Impossible', reactionMs: 15, speed: 6.2, accuracy: 1.15, dropChance: 0.7, tactics: true, ruthless: true, anticipates: 0.35, home: 2.4, unforcedMiss: 0.0015 },
 };
+
+/**
+ * How often the computer fails to get a strong smash back: miss is a whiff, block is a short block to the net.
+ * Both scale with smashPressure, so a slow half smash rarely troubles anyone.
+ */
+export const SMASH_DEFENSE: Record<Exclude<Difficulty, 'olympic'>, { miss: number; block: number }> = {
+  easy: { miss: 0.5, block: 0.32 },
+  normal: { miss: 0.36, block: 0.32 },
+  hard: { miss: 0.24, block: 0.3 },
+  pro: { miss: 0.14, block: 0.26 },
+  impossible: { miss: 0.01, block: 0.05 },
+};
+
+/** A tap is a half smash; a full charge is everything the hitter has. */
+export const HALF_SMASH_POWER = 0.25;
+
+/** Power from how long the hit input was held before release: 80 ms of slack, full after 600 ms. */
+export function chargePower(heldMs: number): number {
+  const amount = Math.max(0, Math.min(1, (heldMs - 80) / 520));
+  return HALF_SMASH_POWER + (PLAYER_MAX_POWER - HALF_SMASH_POWER) * amount;
+}
+
+/** 0..1, how far past a half smash this power is: 0 for a tap, 1 for a full charge. */
+export function smashCharge(power: number): number {
+  return Math.max(0, Math.min(1, (power - HALF_SMASH_POWER) / (1 - HALF_SMASH_POWER)));
+}
+
+/** Smash initial speed in m/s: about 36 to 40 for a half smash, 90 to 94 for a full one. */
+export function smashSpeed(power: number, roll: number): number {
+  return 36 + 54 * smashCharge(power) + roll * 4;
+}
+
+/** How long a smash leaves the hitter off balance and slow, in ms. A full jump smash takes longest to recover from. */
+export function smashRecoveryMs(power: number): number {
+  return 100 + 450 * smashCharge(power);
+}
+
+/** 0..1, how little time the receiver had: a smash that reaches them in 0.35 s or less is full pressure. */
+export function smashPressure(incoming: ShotType | null | undefined, flightSeconds: number): number {
+  if (incoming !== 'smash') return 0;
+  return Math.max(0, Math.min(1, (0.8 - flightSeconds) / 0.45));
+}
+
+/** Contact quality when digging out a smash under pressure. */
+export function pressuredAccuracy(accuracy: number, pressure: number): number {
+  return accuracy * (1 - 0.3 * pressure);
+}
+
+export function smashLabel(power: number): string {
+  if (power >= 0.7) return 'Full Smash';
+  if (power <= 0.35) return 'Half Smash';
+  return 'Smash';
+}
 
 export function opposite(side: Side): Side {
   return side === 'a' ? 'b' : 'a';
@@ -279,23 +348,38 @@ export function chooseShot(intent: Intent, contact: Point2D): ShotType {
   return fromNet > 2.2 ? 'lift' : 'net';
 }
 
+export type ShotOptions = {
+  /** 0..1 smash power, half smash to full smash. */
+  power?: number;
+  /** 0..1 from short to deep. Set when the hitter aims; otherwise depth is left to chance. */
+  depth?: number;
+};
+
 /**
  * Plans a stroke from the contact point. accuracy (0..1) widens the landing scatter,
- * so late or stretched contacts drift long or into the net.
+ * so late or stretched contacts drift long or into the net. Above 1 it tightens it.
  */
-export function planShot(type: ShotType, direction: Direction, start: Point2D, random: () => number = Math.random, accuracy = 1): ShotPlan {
-  const spread = 1 + (1 - Math.max(0, Math.min(1, accuracy))) * 3.2;
+export function planShot(type: ShotType, direction: Direction, start: Point2D, random: () => number = Math.random, accuracy = 1, options: ShotOptions = {}): ShotPlan {
+  const spread = 1 + (1 - Math.max(0, Math.min(1.15, accuracy))) * 3.2;
   const scatter = (amount: number) => (random() - 0.5) * 2 * amount * spread;
   let actualType = type;
   if (type === 'smash' && start.y < SMASH_MIN_HEIGHT) actualType = 'drive';
   if (type === 'drop' && start.y < LOW_HEIGHT) actualType = 'net';
 
+  const roll = (deep = false) => (options.depth === undefined ? random() : deep ? 1 - options.depth : options.depth);
+
   if (actualType === 'smash') {
-    // Pros exceed 100 m/s; 42 to 58 m/s keeps this playable.
-    const power = 42 + random() * 16;
-    const depthRoll = random();
+    // Pros exceed 100 m/s off the racket; 36 to 94 m/s keeps this playable. Drag bleeds most of it over a long flight,
+    // so a smash from the back reaches the receiver far slower than a kill from the front.
+    const power = Math.max(0, Math.min(1, options.power ?? 0.5));
+    const pace = smashSpeed(power, random());
+    const depthRoll = roll();
+    // Swinging all out punishes a mistimed contact more than a controlled half smash does.
+    const swingAccuracy = accuracy >= 1 ? accuracy : 1 - (1 - Math.max(0, accuracy)) * (0.8 + 0.5 * power);
+    const smashSpread = 1 + (1 - Math.max(0, Math.min(1.15, swingAccuracy))) * 3.2;
+    const smashScatter = (amount: number) => (random() - 0.5) * 2 * amount * smashSpread;
     // When the tape and the baseline leave no room at this pace, the nearest pace that fits is used.
-    const paces = [power, ...[42, 46, 50, 54, 58].sort((a, b) => Math.abs(a - power) - Math.abs(b - power))];
+    const paces = [pace, ...[36, 40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84, 88, 92].sort((a, b) => Math.abs(a - pace) - Math.abs(b - pace))];
     for (const speed of paces) {
       const steepest = steepestClearingSmash(start, direction, speed);
       if (steepest === null) continue;
@@ -305,8 +389,9 @@ export function planShot(type: ShotType, direction: Direction, start: Point2D, r
       const flattest = direction * simulateLanding(start, smashVelocity(direction, speed, SMASH_FLATTEST)).x;
       const longest = Math.min(COURT_HALF_LENGTH - 0.45, flattest);
       if (shortest > longest - 0.4) continue;
-      const aim = Math.min(longest - 0.15, Math.max(shortest, 0.9) + 0.3 + depthRoll * 1.5);
-      const targetX = direction * Math.min(flattest, aim + scatter(0.25));
+      // A half smash is played steep and short; a full smash can be sent anywhere from mid court to deep.
+      const aim = Math.min(longest - 0.15, Math.max(shortest, 0.9) + 0.3 + depthRoll * (0.6 + 1.2 * power));
+      const targetX = direction * Math.min(flattest, aim + smashScatter(0.25));
       const velocity = smashVelocity(direction, speed, solveSmashAngle(start, direction, speed, targetX));
       return { type: 'smash', targetX, velocity };
     }
@@ -317,19 +402,19 @@ export function planShot(type: ShotType, direction: Direction, start: Point2D, r
   let angle: number;
   switch (actualType) {
     case 'drop':
-      targetX = direction * (0.9 + random() * 0.8 + scatter(0.25));
+      targetX = direction * (0.9 + roll() * 0.8 + scatter(0.25));
       angle = Math.abs(start.x) > 3.5 ? 22 : 12;
       break;
     case 'net':
-      targetX = direction * (0.4 + random() * 0.5 + scatter(0.2));
+      targetX = direction * (0.4 + roll() * 0.5 + scatter(0.2));
       angle = 50;
       break;
     case 'drive':
-      targetX = direction * (3.6 + random() * 1.9 + scatter(0.35));
+      targetX = direction * (3.6 + roll() * 1.9 + scatter(0.35));
       angle = 7;
       break;
     case 'lift':
-      targetX = direction * (COURT_HALF_LENGTH - (0.5 + random() * 0.7) + scatter(0.3));
+      targetX = direction * (COURT_HALF_LENGTH - (0.5 + roll(true) * 0.7) + scatter(0.3));
       angle = 58;
       break;
     case 'serve':
@@ -343,7 +428,7 @@ export function planShot(type: ShotType, direction: Direction, start: Point2D, r
     case 'clear':
     default:
       actualType = 'clear';
-      targetX = direction * (COURT_HALF_LENGTH - (0.4 + random() * 0.6) + scatter(0.28));
+      targetX = direction * (COURT_HALF_LENGTH - (0.4 + roll(true) * 0.6) + scatter(0.28));
       angle = Math.abs(start.x) > 4.5 ? 46 : 40;
       break;
   }
@@ -582,5 +667,100 @@ export function cpuChooseShot(contact: Point2D, opponentDistanceFromNet: number,
 /** How precisely a stroke lands, from how far the shuttle was from the racket's sweet spot. */
 export function contactAccuracy(distance: number, reach: number): number {
   const ratio = Math.max(0, Math.min(1, distance / reach));
-  return 1 - ratio * ratio * 0.9;
+  return PLAYER_MAX_ACCURACY - ratio * ratio * 0.9;
+}
+
+/** The Pro's stroke choice: smash every high lift, kill at the net, and play to whichever end of the court is open. */
+export function proChooseShot(contact: Point2D, opponentDistanceFromNet: number, profile: CpuProfile, random: () => number = Math.random): ShotType {
+  const fromNet = Math.abs(contact.x);
+  const opponentDeep = opponentDistanceFromNet > 4;
+  const opponentForward = opponentDistanceFromNet < 2.6;
+  if (contact.y >= 2.25 || (contact.y >= SMASH_MIN_HEIGHT && fromNet < 3)) return 'smash';
+  if (contact.y >= OVERHEAD_HEIGHT) {
+    if (opponentForward) return 'clear';
+    if (opponentDeep || random() < profile.dropChance) return 'drop';
+    return 'clear';
+  }
+  if (contact.y < 0.95) return fromNet < 2.2 && !opponentForward ? 'net' : 'lift';
+  if (fromNet < 1.6) return opponentDeep ? 'net' : 'drive';
+  if (fromNet > 4.8) return opponentForward ? 'clear' : 'drop';
+  return 'drive';
+}
+
+/** Impossible's stroke choice: smash anything high enough, and otherwise play to whichever end the opponent has left open. */
+export function ruthlessChooseShot(contact: Point2D, opponentDistanceFromNet: number, random: () => number = Math.random): ShotType {
+  const fromNet = Math.abs(contact.x);
+  const opponentDeep = opponentDistanceFromNet > 3.5;
+  if (contact.y >= SMASH_MIN_HEIGHT) return 'smash';
+  if (contact.y >= OVERHEAD_HEIGHT) return opponentDeep ? (random() < 0.8 ? 'drop' : 'smash') : 'clear';
+  if (fromNet < 2.2) return opponentDeep ? 'net' : 'lift';
+  return opponentDeep ? 'drop' : 'clear';
+}
+
+export function parseDifficulty(value: unknown): Difficulty {
+  return typeof value === 'string' && Object.hasOwn(CPU_PROFILES, value) ? value as Difficulty : 'normal';
+}
+
+export type CpuReturn = { kind: 'miss' } | { kind: 'hit'; type: ShotType; accuracy: number; options: ShotOptions };
+
+/**
+ * What the computer does with a shuttle in reach: a fast smash can beat it outright or force a short block,
+ * more often on the lower levels and far more often off a full smash than a half one. Anything else is its normal stroke choice.
+ */
+export function cpuReturn(
+  contact: Point2D,
+  incoming: ShotType | null,
+  flightSeconds: number,
+  opponentDistanceFromNet: number,
+  difficulty: Difficulty,
+  random: () => number = Math.random,
+  incomingPower = 0.5,
+  contactDistance = 0,
+): CpuReturn {
+  const profile = CPU_PROFILES[difficulty];
+  if (difficulty === 'olympic' && random() < 0.002) return { kind: 'miss' };
+  if (profile.unforcedMiss && random() < profile.unforcedMiss) return { kind: 'miss' };
+  const pressure = smashPressure(incoming, flightSeconds);
+  if (pressure > 0 && difficulty !== 'olympic') {
+    const defense = SMASH_DEFENSE[difficulty];
+    // A half smash beats the receiver half as often as the table says, a full one half again as often.
+    const weight = 0.5 + smashCharge(incomingPower);
+    const miss = defense.miss * pressure * weight;
+    const block = Math.min(0.95 - miss, defense.block * pressure * (0.7 + 0.6 * smashCharge(incomingPower)));
+    const roll = random();
+    if (roll < miss) return { kind: 'miss' };
+    if (roll < miss + block) {
+      return { kind: 'hit', type: 'net', accuracy: pressuredAccuracy(Math.min(1, profile.accuracy), pressure), options: {} };
+    }
+  }
+  const accuracy = pressuredAccuracy(profile.accuracy, pressure);
+  if (difficulty === 'olympic') {
+    const fromNet = Math.abs(contact.x);
+    const opponentDeep = opponentDistanceFromNet > 3.5;
+    const intent: Intent = contact.y >= SMASH_MIN_HEIGHT && fromNet < 3.5 ? 'power'
+      : opponentDeep ? 'soft' : contact.y < LOW_HEIGHT ? 'power' : 'normal';
+    return {
+      kind: 'hit', type: chooseShot(intent, contact),
+      accuracy: pressuredAccuracy(contactAccuracy(contactDistance, RACKET_REACH), pressure),
+      options: { power: HALF_SMASH_POWER },
+    };
+  }
+  if (profile.ruthless) {
+    const type = ruthlessChooseShot(contact, opponentDistanceFromNet, random);
+    const short = type === 'net' || type === 'drop';
+    return { kind: 'hit', type, accuracy, options: { depth: short ? 0 : 1, ...(type === 'smash' ? { power: Math.abs(contact.x) < 3.5 ? 1 : 0.65 } : {}) } };
+  }
+  if (!profile.tactics) {
+    const type = cpuChooseShot(contact, opponentDistanceFromNet, profile, random);
+    return { kind: 'hit', type, accuracy, options: type === 'smash' ? { power: 0.3 + random() * 0.6 } : {} };
+  }
+  const type = proChooseShot(contact, opponentDistanceFromNet, profile, random);
+  const opponentDeep = opponentDistanceFromNet > 3.6;
+  if (type === 'smash') {
+    const fromNet = Math.abs(contact.x);
+    const power = fromNet < 3 || contact.y >= 2.6 ? 0.85 + random() * 0.15 : 0.6 + random() * 0.3;
+    return { kind: 'hit', type, accuracy, options: { power, depth: opponentDeep ? 0.15 : 0.85 } };
+  }
+  const short = type === 'drop' || type === 'net';
+  return { kind: 'hit', type, accuracy, options: { depth: short ? 0.2 : 0.75 } };
 }

@@ -8,3 +8,32 @@
 .g-flappy.st-over .g-flappy-canvas {
   touch-action: manipulation;
 }
+@media (hover: none) and (pointer: coarse) {
+  .g-flappy .arcade-ctrl button {
+    width: 40px;
+    height: 40px;
+  }
+  .g-flappy .arcade-btn,
+  .g-flappy .arcade-btn-lg {
+    height: 42px;
+  }
+  /* The iPad frame scales the whole screen down; this scales the shell back up so controls stay 40px or more. */
+  .g-flappy .arcade-ctrl,
+  .g-flappy .arcade-ov .arcade-card {
+    zoom: var(--g-flappy-u, 1);
+  }
+}
+/* A tap meant for the tree can land on the Game Over card as it appears; ignore taps for a moment. */
+.g-flappy.st-over .arcade-ov {
+  animation:
+    arcadeFade 0.18s ease,
+    g-flappy-guard 0.45s step-end;
+}
+@keyframes g-flappy-guard {
+  from {
+    pointer-events: none;
+  }
+  to {
+    pointer-events: auto;
+  }
+}

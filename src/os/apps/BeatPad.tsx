@@ -6,6 +6,7 @@ import {
   clampBpm,
   clearPattern,
   clearTrack,
+  clonePattern,
   createBeatState,
   createHistory,
   cycleVelocity,
@@ -74,6 +75,7 @@ const DRUM_KEYS: Record<string, TrackId> = { KeyQ: 'kick', KeyW: 'snare', KeyE: 
 const KEYS_KEYS = ['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyJ', 'KeyK'];
 const BASS_KEYS = ['KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB', 'KeyN', 'KeyM'];
 const VELOCITY_NAMES = ['Off', 'Soft', 'Normal', 'Accent'];
+const REPEATS = [{ steps: 4, label: 'Beat' }, { steps: 2, label: 'Half' }, { steps: 1, label: 'Quarter' }];
 
 function isSynth(track: TrackId): track is SynthTrack {
   return (SYNTH_TRACKS as readonly string[]).includes(track);
@@ -92,6 +94,16 @@ function loadSaved(): BeatState | null {
 function filterLabel(amount: number): string {
   if (amount === 50) return 'Open';
   return amount < 50 ? `Low ${50 - amount}` : `High ${amount - 50}`;
+}
+
+function toneLabel(tone: number): string {
+  if (tone === 50) return 'Natural';
+  return tone < 50 ? `Dark ${50 - tone}` : `Bright ${tone - 50}`;
+}
+
+function panLabel(pan: number): string {
+  if (pan === 0) return 'Center';
+  return pan < 0 ? `Left ${-pan}` : `Right ${pan}`;
 }
 
 function signed(value: number): string {
@@ -145,6 +157,8 @@ export default function BeatPad({ args }: AppProps) {
   const [playhead, setPlayhead] = useState<{ pattern: number; step: number; songIndex: number } | null>(null);
   const [copied, setCopied] = useState<'idle' | 'done' | 'failed'>('idle');
   const [padLit, setPadLit] = useState<Partial<Record<TrackId, boolean>>>({});
+  const [live, setLive] = useState<{ x: number; y: number } | null>(null);
+  const [repeat, setRepeat] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [width, setWidth] = useState(800);
   const [visualizerReady, setVisualizerReady] = useState(true);
@@ -251,7 +265,7 @@ export default function BeatPad({ args }: AppProps) {
     if (visualizerAttemptedRef.current) return false;
     visualizerAttemptedRef.current = true;
     try {
-      const tap = (engine as unknown as { filter?: AudioNode }).filter;
+      const tap = engine.tap;
       if (!tap) {
         setVisualizerReady(false);
         return false;
@@ -340,7 +354,9 @@ export default function BeatPad({ args }: AppProps) {
   const stopPlayback = useCallback(() => {
     const engine = engineRef.current;
     engine?.stop();
+    engine?.setRepeat(null);
     if (engine) engine.recording = false;
+    setRepeat(null);
     cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
     setPlaying(false);
@@ -366,6 +382,29 @@ export default function BeatPad({ args }: AppProps) {
     if (engineRef.current?.playing) stopPlayback();
     else startPlayback();
   }, [startPlayback, stopPlayback]);
+
+  const onXyPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (event.clientX - box.left) / Math.max(1, box.width)));
+    const y = Math.max(0, Math.min(1, 1 - (event.clientY - box.top) / Math.max(1, box.height)));
+    if (event.type === 'pointerdown') {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    ensureEngine().setLive(x, y);
+    setLive({ x, y });
+  };
+
+  const endXy = () => {
+    engineRef.current?.setLive(null);
+    setLive(null);
+  };
+
+  const holdRepeat = (steps: number | null) => {
+    const engine = steps === null ? engineRef.current : ensureEngine();
+    engine?.setRepeat(steps);
+    setRepeat(steps);
+  };
 
   const hit = useCallback((track: TrackId, degree?: number) => {
     const engine = ensureEngine();
@@ -645,6 +684,19 @@ export default function BeatPad({ args }: AppProps) {
     editPattern((p) => randomizePattern(stateRef.current, p, seededRng(Math.floor(Math.random() * 2 ** 32) >>> 0)));
   };
 
+  const newMelody = () => {
+    const seed = Math.floor(Math.random() * 2 ** 32) >>> 0;
+    editPattern((p) => {
+      const fresh = randomizePattern(stateRef.current, p, seededRng(seed));
+      const next = clonePattern(p);
+      for (const track of SYNTH_TRACKS) {
+        next.steps[track] = fresh.steps[track];
+        next.notes[track] = fresh.notes[track];
+      }
+      return next;
+    }, 'melody');
+  };
+
   const remix = () => {
     const seed = Math.floor(Math.random() * 2 ** 32) >>> 0;
     editPattern((p) => remixPattern(state, p, seededRng(seed)), 'remix');
@@ -827,12 +879,13 @@ export default function BeatPad({ args }: AppProps) {
       </header>
 
       <section className="beatpad-groove-row">
-        <span className="beatpad-section-label">Grooves</span>
-        <div className="gseg beatpad-grooves" role="group" aria-label="Grooves">
-          {GROOVES.map((groove) => (
-            <button key={groove} aria-pressed={state.groove === groove} onClick={() => chooseGroove(groove)}>{PRESET_NAMES[groove]}</button>
-          ))}
-        </div>
+        <label className="beatpad-groove-field">
+          <span className="beatpad-section-label">Groove</span>
+          <select className="ginput beatpad-select beatpad-groove-select" aria-label="Groove" value={state.groove ?? ''} onChange={(event) => { if (event.target.value) chooseGroove(event.target.value as PresetName); }}>
+            {state.groove === null && <option value="">Custom</option>}
+            {GROOVES.map((groove) => <option key={groove} value={groove}>{PRESET_NAMES[groove]}</option>)}
+          </select>
+        </label>
         <div className="beatpad-groove-actions">
           <button className="gbtn" onClick={remix}>Remix</button>
           <button className="gbtn" disabled={isPatternEmpty(pattern)} onClick={clearCurrent}>Clear</button>
@@ -890,6 +943,14 @@ export default function BeatPad({ args }: AppProps) {
                 {SCALES.map((scale) => <option key={scale} value={scale}>{SCALE_NAMES[scale]}</option>)}
               </select>
             </label>
+            <div className="beatpad-select-field">
+              <span className="beatpad-section-label">Keys Play</span>
+              <div className="gseg beatpad-control-segment" role="group" aria-label="Keys play">
+                <button aria-pressed={!state.chords} onClick={() => commit((current) => ({ ...current, chords: false }))}>Notes</button>
+                <button aria-pressed={state.chords} onClick={() => commit((current) => ({ ...current, chords: true }))}>Chords</button>
+              </div>
+            </div>
+            <button className="gbtn beatpad-new-melody" onClick={newMelody}>New Melody</button>
           </div>
           {paged && (
             <div className="beatpad-pages">
@@ -927,8 +988,45 @@ export default function BeatPad({ args }: AppProps) {
               >{TRACK_NAMES[track]}</button>
             ))}
           </div>
-          <div className="beatpad-pads-foot">
-            <button className={`gbtn ${recording ? 'is-recording' : ''}`} aria-pressed={recording} onClick={toggleRecording}>{recording ? 'Recording' : 'Record'}</button>
+          <div className="beatpad-perform">
+            <div
+              className={`beatpad-xy ${live ? 'is-live' : ''}`}
+              role="slider"
+              aria-label="Filter pad"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round((live?.x ?? state.fx.filter / 100) * 100)}
+              aria-valuetext={live ? filterLabel(Math.round(live.x * 100)) : 'Not touched'}
+              onPointerDown={onXyPointer}
+              onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) onXyPointer(event); }}
+              onPointerUp={endXy}
+              onPointerCancel={endXy}
+              onLostPointerCapture={endXy}
+            >
+              <span className="beatpad-xy-label">{live ? filterLabel(Math.round(live.x * 100)) : 'Filter'}</span>
+              <span className="beatpad-xy-help">Drag to sweep. Up adds resonance.</span>
+              {live && <span className="beatpad-xy-dot" style={{ left: `${live.x * 100}%`, top: `${(1 - live.y) * 100}%` }} />}
+            </div>
+            <div className="beatpad-perform-side">
+              <div className="beatpad-select-field">
+                <span className="beatpad-section-label">Hold to Repeat</span>
+                <div className="gseg beatpad-repeat" role="group" aria-label="Hold to repeat">
+                  {REPEATS.map((item) => (
+                    <button
+                      key={item.steps}
+                      aria-pressed={repeat === item.steps}
+                      onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); holdRepeat(item.steps); }}
+                      onPointerUp={() => holdRepeat(null)}
+                      onPointerCancel={() => holdRepeat(null)}
+                      onLostPointerCapture={() => holdRepeat(null)}
+                      onKeyDown={(event) => { if ((event.code === 'Enter' || event.code === 'Space') && !event.repeat) { event.preventDefault(); holdRepeat(item.steps); } }}
+                      onKeyUp={(event) => { if (event.code === 'Enter' || event.code === 'Space') holdRepeat(null); }}
+                    >{item.label}</button>
+                  ))}
+                </div>
+              </div>
+              <button className={`gbtn ${recording ? 'is-recording' : ''}`} aria-pressed={recording} onClick={toggleRecording}>{recording ? 'Recording' : 'Record'}</button>
+            </div>
           </div>
         </main>
       )}
@@ -1006,6 +1104,7 @@ export default function BeatPad({ args }: AppProps) {
             <Slider label="Swing" value={state.swing} display={state.swing ? `${state.swing}%` : 'Off'} min={0} max={SWING_MAX} onChange={(swing) => commit((current) => ({ ...current, swing }), 'swing')} onSettle={settle} />
             <Slider label="Filter" value={state.fx.filter} display={filterLabel(state.fx.filter)} min={0} max={100} onChange={(filter) => commit((current) => ({ ...current, fx: { ...current.fx, filter } }), 'filter')} onSettle={settle} />
             <Slider label="Reverb" value={state.fx.reverb} display={state.fx.reverb ? `${state.fx.reverb}%` : 'Off'} min={0} max={100} onChange={(reverb) => commit((current) => ({ ...current, fx: { ...current.fx, reverb } }), 'reverb')} onSettle={settle} />
+            <Slider label="Pump" value={state.fx.pump} display={state.fx.pump ? `${state.fx.pump}%` : 'Off'} min={0} max={100} onChange={(pump) => commit((current) => ({ ...current, fx: { ...current.fx, pump } }), 'pump')} onSettle={settle} />
             <Slider label="Delay" value={state.fx.delay} display={state.fx.delay ? `${state.fx.delay}%` : 'Off'} min={0} max={100} onChange={(delay) => commit((current) => ({ ...current, fx: { ...current.fx, delay } }), 'delay')} onSettle={settle} />
           </div>
           <div className="beatpad-mix-list">{TRACKS.map(renderMixTrack)}</div>
@@ -1017,6 +1116,8 @@ export default function BeatPad({ args }: AppProps) {
             <div className="beatpad-track-detail-sliders">
               <Slider label="Pitch" value={trackSettings.pitch} display={trackSettings.pitch === 0 ? '0' : `${signed(trackSettings.pitch)} st`} min={-12} max={12} onChange={(pitch) => commit((current) => updateTrack(current, selectedTrack, { pitch }), `pitch-${selectedTrack}`)} onSettle={settle} />
               <Slider label="Decay" value={trackSettings.decay} display={`${trackSettings.decay}%`} min={0} max={100} onChange={(decay) => commit((current) => updateTrack(current, selectedTrack, { decay }), `decay-${selectedTrack}`)} onSettle={settle} />
+              <Slider label="Tone" value={trackSettings.tone} display={toneLabel(trackSettings.tone)} min={0} max={100} onChange={(tone) => commit((current) => updateTrack(current, selectedTrack, { tone }), `tone-${selectedTrack}`)} onSettle={settle} />
+              <Slider label="Pan" value={trackSettings.pan} display={panLabel(trackSettings.pan)} min={-50} max={50} onChange={(pan) => commit((current) => updateTrack(current, selectedTrack, { pan }), `pan-${selectedTrack}`)} onSettle={settle} />
             </div>
             {selected ? (
               <div className="beatpad-selected-cell">

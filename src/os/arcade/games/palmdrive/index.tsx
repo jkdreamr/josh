@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type Pointe
 import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
-import { cycleAt, gripAt, openRuns, pointAt, timed, type Past, type Track } from './track';
+import { cycleAt, gripAt, openRuns, pointAt, timed, traffic, type Past, type Track } from './track';
+import { bearingDown } from './traffic';
 import {
   BANK,
   CASH_COST,
@@ -14,6 +15,7 @@ import {
   ITEMS,
   gustWarn,
   hazState,
+  boulderAt,
   beatAt,
   strokeAt,
   swellWarn,
@@ -22,13 +24,16 @@ import {
   TIDE_LAP,
   hazardV,
   boom,
+  catchCloud,
   createRace,
   fmtTime,
   isCc,
   lapOf,
   ordinal,
+  powFrom,
   pressGas,
   removeThing,
+  robbed,
   RIVALS,
   soloRace,
   spawn,
@@ -42,15 +47,14 @@ import {
   turboLevel,
   type Cc,
   type Ev,
-  type Hat,
   type Item,
   type Kart,
   type Race,
   type Racer,
 } from './logic';
 import { applyFlags, carOf, configOf, endOf, events, finishOrder, guestState, hostState, parsePacket, winnerOf, type Car, type NetEv } from './net';
-import { deposit, freshGarage, fromLook, loadGarage, lookOf, paintColor, payout, saveGarage, subscribeGarage, type Garage } from './garage';
-import { CoinIcon, GarageSheet, HowToPlay, ItemIcon } from './hud';
+import { deposit, freshGarage, fromLook, loadGarage, lookFor, lookOf, payout, saveGarage, subscribeGarage, type Look } from './garage';
+import { CoinIcon, GarageSheet, HowToPlay, ItemIcon, paintFill } from './hud';
 import { BPM, JINGLE_DONE, JINGLE_WIN, Sequencer, hz, type Note } from './music';
 import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf, type CourseId } from './courses';
 import { meta } from './meta';
@@ -190,9 +194,8 @@ function Setup() {
 }
 
 const SERVER_GARAGE = freshGarage();
-/** The saved garage (bank, paint, hats), shared by the cards and the race. */
+/** The saved garage (bank, paint, hats, wheels, boost trails), shared by the cards and the race. */
 const useGarage = () => useSyncExternalStore(subscribeGarage, loadGarage, () => SERVER_GARAGE);
-const lookFor = (g: Garage): { color: string; hat: Hat } => ({ color: paintColor(g.paint), hat: g.hat });
 
 /** How to Play and the Garage, and the sheets they open over the cards. */
 function Extras() {
@@ -209,7 +212,7 @@ function Extras() {
         How to Play
       </button>
       <button type="button" className="arcade-btn" onClick={() => setOpen('garage')} aria-label={`Garage, ${garage.bank} coins to spend`}>
-        <i className="g-palmdrive-paintdot" style={{ background: paintColor(garage.paint) }} />
+        <i className="g-palmdrive-paintdot" style={{ background: paintFill(garage.paint) }} />
         Garage
         <span className="g-palmdrive-bankpill">
           <CoinIcon size={13} />
@@ -295,10 +298,10 @@ type OnlineApi = NonNullable<ReturnType<typeof useOnline>>;
 const racersOf = (o: OnlineApi) => [...new Set([...o.players.map((p) => p.seat), ...o.bots.map((b) => b.seat)])].sort((a, b) => a - b);
 
 /**
- * Everyone online starts in their seat's color; karts take their owner's paint and hat once their first state arrives.
+ * Everyone online starts in their seat's color; karts take their owner's look once their first state arrives.
  * Bots race as the CPU drivers they are named after: the host drives them and everyone else sees them through its packets.
  */
-function onlineRace(o: OnlineApi, cc: Cc, course: CourseId, roster: number[], countdown: number, look: { color: string; hat: Hat }): Race {
+function onlineRace(o: OnlineApi, cc: Cc, course: CourseId, roster: number[], countdown: number, look: Look): Race {
   const racers: Racer[] = roster.map((seat) => {
     const bot = o.bots.findIndex((b) => b.seat === seat);
     if (bot >= 0) return { ...RIVALS[bot % RIVALS.length], name: o.bots[bot].name, kind: o.isHost ? 'cpu' : 'remote', seat };
@@ -306,6 +309,7 @@ function onlineRace(o: OnlineApi, cc: Cc, course: CourseId, roster: number[], co
       name: o.players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`,
       color: seat === o.seat ? look.color : SEAT_COLORS[seat % SEAT_COLORS.length],
       hat: seat === o.seat ? look.hat : 'cap',
+      gear: seat === o.seat ? look.gear : undefined,
       kind: seat === o.seat ? 'player' : 'remote',
       seat,
     };
@@ -358,9 +362,11 @@ type Hud = {
   /** Enough coins to cash in for a boost. */
   cashReady: boolean;
   item: Item | null;
-  /** Ink over your view (0 to 1) and a golden mushroom still running. */
+  /** Ink over your view (0 to 1), a golden mushroom or a fire flower still running, and frozen in ice. */
   ink: number;
   golden: boolean;
+  fire: boolean;
+  frozen: boolean;
   uses: number;
   rolling: boolean;
   /** The banana or shell is held out behind as a shield. */
@@ -398,7 +404,7 @@ function Play({ mode }: { mode: Mode }) {
   const [cc] = useSetting(CLASS);
   const [course] = useSetting(COURSE);
   const [music] = useSetting(MUSIC);
-  // your paint and hat: on your kart now (changes on the Pause card show at once) and in what you send online
+  // your look: on your kart now (changes on the Pause card show at once) and in what you send online
   const garage = useGarage();
   const lookRef = useRef(lookOf(garage));
   const musicRef = useRef(music);
@@ -441,7 +447,7 @@ function Play({ mode }: { mode: Mode }) {
   const tap = useRef({ back: false, gas: false, cash: false, slam: false });
   /** The item button was holding a banana or shell out behind last frame. */
   const holding = useRef(false);
-  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, note: null, wrong: false, results: false, gust: 0, swell: 0 });
+  const [hud, setHud] = useState<Hud>({ place: 8, field: 8, lap: 1, laps: race.current.laps, coins: 0, cashReady: false, item: null, ink: 0, golden: false, fire: false, frozen: false, uses: 0, rolling: false, trailing: false, rear: false, boosting: false, podium: false, time: '0:00.00', lights: 0, banner: null, note: null, wrong: false, results: false, gust: 0, swell: 0 });
   const [flash, setFlash] = useState<{ id: number; kind: string } | null>(null);
   const [lapNote, setLapNote] = useState<{ id: number; text: string } | null>(null);
   const hudTick = useRef(0);
@@ -473,6 +479,8 @@ function Play({ mode }: { mode: Mode }) {
   /** The set pieces' clocks last frame (by hazard index), for the sounds they make as they go off; and the tyres' hiss. */
   const pieceCyc = useRef(new Map<number, number>());
   const pieceTick = useRef(0);
+  /** When each car or van last honked at you, by hazard index. */
+  const honked = useRef(new Map<number, number>());
   const hissT = useRef(0);
   /** The wind warning last time round (for the whoosh as a gust starts to blow), and the swell's. */
   const gustWas = useRef(0);
@@ -522,8 +530,7 @@ function Play({ mode }: { mode: Mode }) {
     const r = race.current;
     const me = r?.karts[r.me];
     if (!me) return;
-    me.color = paintColor(garage.paint);
-    me.hat = garage.hat;
+    Object.assign(me, lookFor(garage));
   }, [garage, raceKey]);
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -552,20 +559,23 @@ function Play({ mode }: { mode: Mode }) {
     if (me.done !== null) bests[r.course][r.cc].submit(Math.round(me.done * 1000));
     shellRef.current.gameOver(undefined, me.done === null ? { title, detail: head + tail } : { title, detail: head + tail, board: boardOf(r.course, r.cc), rank: Math.round(me.done * 1000) });
   };
+  const leave = (k: Kart) => {
+    k.left = true;
+    k.net = null;
+    k.x = k.z = 1e5;
+    k.v = 0;
+  };
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
 
   const applyCar = (r: Race, seat: number, car: Omit<Car, 'seat'>) => {
     const k = r.karts.find((x) => x.seat === seat && x.kind === 'remote');
-    if (!k) return;
+    if (!k || k.left) return;
     k.net = { x: car.x, z: car.z, h: car.h, v: car.v, prog: car.p, done: car.fin >= 0 ? car.fin : null, flags: car.f, at: r.time };
     k.y = car.y;
     applyFlags(k, car.f);
     const look = car.look >= 0 ? fromLook(car.look) : null;
-    if (look) {
-      k.color = look.color;
-      k.hat = look.hat;
-    }
+    if (look) Object.assign(k, look);
   };
 
   const applyEvent = (r: Race, from: number, ev: NetEv) => {
@@ -581,7 +591,16 @@ function Play({ mode }: { mode: Mode }) {
       // the coin goes to the kart whose slam it was, if this client drives it: this player's, or a bot on the host
       const k = r.karts.find((x) => x.seat === ev.to);
       if (k && (k.idx === r.me || k.kind === 'cpu')) stolen(r, k);
-    }
+    } else if (ev.y === 'boo' || ev.y === 'cloud') {
+      // someone's Boo took the item of a kart we drive, or their thunder cloud jumped onto it
+      const k = r.karts.find((x) => x.seat === ev.to);
+      if (!k || (k.idx !== r.me && k.kind !== 'cpu')) return;
+      if (ev.y === 'cloud') catchCloud(r, k, ev.left, idx(from));
+      else {
+        if (k.item) r.events.push({ t: 'boo', k: k.idx, by: idx(from), item: k.item });
+        robbed(r, k);
+      }
+    } else if (ev.y === 'pow') powFrom(r, idx(from), ev.at);
   };
 
   useEffect(() => {
@@ -628,6 +647,8 @@ function Play({ mode }: { mode: Mode }) {
       const me = r.karts[r.me];
       const car = carOf(me, lookRef.current);
       const mine = { ...car, fin: n.dnf ? -2 : car.fin };
+      // a kart whose driver left the room is parked out of sight, rather than frozen on the track
+      for (const k of r.karts) if (k.kind === 'remote' && !k.left && !o.players.some((p) => p.seat === k.seat) && !o.bots.some((b) => b.seat === k.seat)) leave(k);
       if (!o.isHost) {
         o.send(guestState(o.round, mine), { fast: n.ticks % 5 !== 0 && mine.fin === -1 });
         return;
@@ -873,17 +894,77 @@ function Play({ mode }: { mode: Mode }) {
       sfx.tone({ freq: 1700 + Math.random() * 300, dur: 0.1, type: 'sawtooth', vol: 0.025 });
     }
     r.hazards.forEach((h, i) => {
+      // an oncoming car or van bearing down on you leans on its horn (no more than every couple of seconds)
+      if (traffic(h.kind)) {
+        if (me.done === null && bearingDown(h, me) && r.time - (honked.current.get(i) ?? -99) > 2) {
+          honked.current.set(i, r.time);
+          const [a, b] = h.kind === 'van' ? [330, 415] : [440, 554];
+          sfx.tone({ freq: a, dur: 0.45, type: 'square', vol: 0.05 });
+          sfx.tone({ freq: b, dur: 0.45, type: 'square', vol: 0.045 });
+        }
+        return;
+      }
       if (!timed(h.kind)) return;
       const dist = Math.hypot(h.x - me.x, h.z - me.z);
+      if (h.kind === 'shuttle') {
+        // the crossing's bells while a bus is due or across, and the bus's diesel as it goes over
+        if (dist > 110) return;
+        const st = hazState(r, h, r.time, me.lap);
+        // (one set of bells for the crossing, whichever bus is due)
+        const key = -1 - Math.round(h.s);
+        const beat = Math.floor(r.time / 0.45);
+        const near = 1 - dist / 110;
+        if (st.warn > 0 && beat !== (pieceCyc.current.get(key) ?? beat - 1)) {
+          pieceCyc.current.set(key, beat);
+          sfx.tone({ freq: beat % 2 ? 1180 : 940, dur: 0.22, type: 'triangle', vol: 0.06 * near });
+        }
+        if (st.live && tick && dist < 45) sfx.tone({ freq: 55, dur: 0.18, type: 'sawtooth', vol: 0.05 * (1 - dist / 45) });
+        return;
+      }
       if (dist > 70) return;
       const vol = 1 - dist / 70;
       const st = hazState(r, h, r.time, me.lap);
+      if (h.kind === 'tether' && h.look !== 'goose') {
+        // the Tree: a creak of the bungee as it crouches, a kazoo whoop as it springs
+        const now = st.live ? 2 : st.warn > 0 ? 1 : 0;
+        const was = pieceCyc.current.get(i) ?? 0;
+        pieceCyc.current.set(i, now);
+        if (now === 1 && was === 0) sfx.tone({ freq: 160, to: 110, dur: 0.5, type: 'triangle', vol: 0.06 * vol });
+        if (now === 2 && was !== 2) {
+          sfx.tone({ freq: 330, to: 780, dur: 0.22, type: 'square', vol: 0.05 * vol });
+          sfx.tone({ freq: 780, to: 520, dur: 0.3, type: 'square', vol: 0.05 * vol, delay: 0.2 });
+        }
+        return;
+      }
       if (h.kind === 'wrecker') {
         // the ball passing through the middle of its swing, close by
         const v = hazardV(h, r.time);
         const was = pieceCyc.current.get(i) ?? v;
         pieceCyc.current.set(i, v);
         if (st.live && dist < 20 && Math.sign(v) !== Math.sign(was)) sfx.noise(0.3, 0.09 * (1 - dist / 20) + 0.02);
+        return;
+      }
+      if (h.kind === 'mower') {
+        // the gang mower: a reversing beeper before it sets off across, and the rattle of its reels while it is across
+        const beat = Math.floor(r.time / 0.45);
+        const was = pieceCyc.current.get(i) ?? beat;
+        pieceCyc.current.set(i, beat);
+        if (beat !== was && st.warn > 0 && !st.live && beat % 2 === 0) sfx.tone({ freq: 1180, dur: 0.16, type: 'square', vol: 0.05 * vol });
+        if (st.live && tick && dist < 45) sfx.noise(0.16, 0.035 * (1 - dist / 45));
+        return;
+      }
+      if (h.kind === 'tether') {
+        // a goose: a hiss as it crouches, and a honk as it goes for you
+        const was = pieceCyc.current.get(i) ?? 0;
+        const now = st.live ? 2 : st.warn > 0 ? 1 : 0;
+        pieceCyc.current.set(i, now);
+        if (dist > 45 || st.phase === 'off') return;
+        const near = 1 - dist / 45;
+        if (now === 1 && was === 0) sfx.noise(0.45, 0.04 * near, 0.01);
+        if (now === 2 && was !== 2) {
+          sfx.tone({ freq: 330, to: 250, dur: 0.16, type: 'sawtooth', vol: 0.07 * near });
+          sfx.tone({ freq: 340, to: 240, dur: 0.22, type: 'sawtooth', vol: 0.07 * near, delay: 0.2 });
+        }
         return;
       }
       if (h.kind === 'whirl') {
@@ -922,6 +1003,23 @@ function Play({ mode }: { mode: Mode }) {
         if (st.live && tick && dist < 40) sfx.tone({ freq: 2400, dur: 0.012, type: 'square', vol: 0.03 * (1 - dist / 40) });
         return;
       }
+      if (h.kind === 'boulder') {
+        // a boulder: a low rumble as it works loose and comes down its chute, and a thud each time it lands off a wall
+        const b = boulderAt(r, h, r.time);
+        const was = pieceCyc.current.get(i) ?? 0;
+        const now = b.rolling ? 2 : b.warn > 0 ? 1 : 0;
+        pieceCyc.current.set(i, now);
+        if (now === 1 && was === 0) {
+          sfx.tone({ freq: 48, to: 38, dur: 1.3, type: 'sawtooth', vol: 0.05 * vol });
+          sfx.noise(1.1, 0.05 * vol);
+        }
+        if (now === 2 && was !== 2) {
+          sfx.tone({ freq: 62, to: 34, dur: 0.4, type: 'sine', vol: 0.16 * vol });
+          sfx.noise(0.25, 0.08 * vol);
+        }
+        if (now === 2 && tick && Math.abs(b.d) < r.track.edge && Math.random() < 0.5) sfx.tone({ freq: 55 + Math.random() * 20, dur: 0.12, type: 'triangle', vol: 0.06 * vol });
+        return;
+      }
       if (h.kind === 'panel' || h.kind === 'geyser') {
         // a pane: a rising chime through its warning, a tinkle of glass as it goes and a shing as it comes back; a flare:
         // a crackle as its grate glows and a whoomph as it blows
@@ -935,6 +1033,13 @@ function Play({ mode }: { mode: Mode }) {
             sfx.noise(0.12, 0.05 * vol);
             sfx.tone({ freq: 3400, to: 1700, dur: 0.18, type: 'triangle', vol: 0.05 * vol });
           } else if (was === 2) sfx.tone({ freq: 1800, to: 3600, dur: 0.12, type: 'sine', vol: 0.04 * vol });
+        } else if (h.look === 'fountain') {
+          // a fountain jet: a gurgle as the water ripples, a rushing whoosh as it blows
+          if (now === 1) sfx.tone({ freq: 140, to: 260, dur: 0.5, type: 'sine', vol: 0.04 * vol });
+          else if (now === 2) {
+            sfx.noise(0.6, 0.1 * vol);
+            sfx.tone({ freq: 520, to: 260, dur: 0.4, type: 'sine', vol: 0.04 * vol });
+          }
         } else if (now === 1) sfx.noise(0.3, 0.025 * vol);
         else if (now === 2) {
           sfx.noise(0.5, 0.12 * vol);
@@ -1008,6 +1113,12 @@ function Play({ mode }: { mode: Mode }) {
     else if (e.t === 'boom') send(me, { y: 'boom', x: round(e.x), z: round(e.z) });
     // a kart we drive was slammed by someone else's: tell them they won its coin
     else if (e.t === 'slammed' && e.coin && (e.k === r.me || r.karts[e.k]?.kind === 'cpu') && r.karts[e.by]?.kind === 'remote') send(by(e.k), { y: 'stole', to: r.karts[e.by].seat });
+    else if (e.t === 'pow') send(by(e.k), { y: 'pow', at: round(e.at) });
+    // a kart we drive took someone else's item with a Boo, or bumped its thunder cloud onto them: their client takes it
+    // from here
+    else if ((e.t === 'boo' || e.t === 'cloud') && (e.by === r.me || r.karts[e.by]?.kind === 'cpu') && r.karts[e.k]?.kind === 'remote') {
+      send(by(e.by), e.t === 'boo' ? { y: 'boo', to: r.karts[e.k].seat } : { y: 'cloud', to: r.karts[e.k].seat, left: round(e.left) });
+    }
   }
 
   function react(r: Race, e: Ev) {
@@ -1047,7 +1158,62 @@ function Play({ mode }: { mode: Mode }) {
           sfx.tone({ freq: 160, to: 90, dur: 0.6, type: 'sawtooth', vol: 0.12 });
         } else if (e.item === 'ink') sfx.tone({ freq: 500, to: 180, dur: 0.25, type: 'sine', vol: 0.15 });
         else if (e.item === 'horn') [349, 440, 523].forEach((f) => sfx.tone({ freq: f, dur: 0.45, type: 'sawtooth', vol: 0.07 }));
-        else if (e.item !== 'bolt' && e.item !== 'coin') sfx.tone({ freq: 700, to: 300, dur: 0.18, type: 'triangle', vol: 0.15 });
+        else if (e.item === 'fire') {
+          // a whoosh
+          sfx.noise(0.12, 0.08);
+          sfx.tone({ freq: 620, to: 240, dur: 0.16, type: 'sawtooth', vol: 0.08 });
+        } else if (e.item === 'ice') sfx.tone({ freq: 1500, to: 900, dur: 0.18, type: 'triangle', vol: 0.12 });
+        else if (e.item === 'boomerang') sfx.tone({ freq: 380, to: 760, dur: 0.3, type: 'triangle', vol: 0.12 });
+        else if (e.item === 'boo') {
+          // the Boo's giggle, down and away
+          sfx.tone({ freq: 620, to: 300, dur: 0.5, type: 'sine', vol: 0.13 });
+          sfx.tone({ freq: 880, to: 520, dur: 0.18, type: 'sine', vol: 0.06, delay: 0.12 });
+        } else if (e.item === 'feather') sfx.tone({ freq: 400, to: 1400, dur: 0.35, type: 'sine', vol: 0.12 });
+        else if (e.item === 'piranha') [196, 247, 294].forEach((f, i) => sfx.tone({ freq: f, dur: 0.12, type: 'square', vol: 0.07, delay: i * 0.08 }));
+        else if (e.item === 'cloud') {
+          // thunder rumbling overhead
+          sfx.noise(0.6, 0.06);
+          sfx.tone({ freq: 70, to: 50, dur: 0.7, type: 'sawtooth', vol: 0.08 });
+          setFlash({ id: Date.now(), kind: 'cloud' });
+        } else if (e.item !== 'bolt' && e.item !== 'coin' && e.item !== 'pow') sfx.tone({ freq: 700, to: 300, dur: 0.18, type: 'triangle', vol: 0.15 });
+        break;
+      case 'chomp': {
+        // your own plant snapping, or someone else's snapping right at you
+        const you = r.karts[r.me];
+        if (mine || (you && Math.hypot(e.x - you.x, e.z - you.z) < 4)) sfx.tone({ freq: 240, to: 110, dur: 0.1, type: 'square', vol: 0.11 });
+        break;
+      }
+      case 'boo':
+        // your item taken by someone's Boo, or someone's taken by yours
+        if (mine) sfx.tone({ freq: 520, to: 200, dur: 0.6, type: 'sine', vol: 0.14 });
+        else if (e.by === r.me) sfx.tone({ freq: 500, to: 1000, dur: 0.25, type: 'triangle', vol: 0.1, delay: 0.2 });
+        break;
+      case 'cloud':
+        // a thunder cloud lands over you, or you got rid of yours
+        if (mine) {
+          sfx.noise(0.5, 0.06);
+          sfx.tone({ freq: 70, to: 50, dur: 0.6, type: 'sawtooth', vol: 0.08 });
+          setFlash({ id: Date.now(), kind: 'cloud' });
+        } else if (e.by === r.me) sfx.tone({ freq: 300, to: 900, dur: 0.25, type: 'triangle', vol: 0.1 });
+        break;
+      case 'zap':
+        if (!mine) break;
+        sfx.play('boom', 1.6);
+        setFlash({ id: Date.now(), kind: 'bolt' });
+        buzz(120);
+        break;
+      case 'thump': {
+        // the POW block's warning, louder each time for whoever it is coming for
+        const you = r.karts[r.me];
+        const user = r.karts[e.by];
+        const coming = !!you && !!user && you !== user && you.place < user.place && you.done === null;
+        sfx.tone({ freq: 70, to: 45, dur: 0.18, type: 'sine', vol: (coming ? 0.12 : 0.05) + e.n * 0.04 });
+        sfx.noise(0.06, (coming ? 0.05 : 0.02) + e.n * 0.02);
+        if (coming && e.n === 1) showHint('pow', 'A POW block! Hop with Space on the fourth beat to ride it out.', 'A POW block! Tap drift on the fourth beat to ride it out.');
+        break;
+      }
+      case 'quake':
+        sfx.play('boom', 0.5);
         break;
       case 'inked':
         if (!mine) break;
@@ -1109,7 +1275,11 @@ function Play({ mode }: { mode: Mode }) {
           sfx.noise(0.08, 0.12);
           sfx.tone({ freq: 240, to: 110, dur: 0.2, type: 'sawtooth', vol: 0.14 });
         } else if (e.kind === 'rotor') sfx.noise(0.35, 0.14);
-        else if (e.kind === 'launch') {
+        else if (e.kind === 'boulder') {
+          // a boulder: a deep crunch
+          sfx.tone({ freq: 70, to: 30, dur: 0.45, type: 'sine', vol: 0.26 });
+          sfx.noise(0.35, 0.18);
+        } else if (e.kind === 'launch') {
           // the launch's horn
           sfx.tone({ freq: 392, dur: 0.22, type: 'square', vol: 0.08 });
           sfx.tone({ freq: 330, dur: 0.35, type: 'square', vol: 0.08, delay: 0.2 });
@@ -1120,6 +1290,27 @@ function Play({ mode }: { mode: Mode }) {
         } else if (e.kind === 'log') {
           sfx.tone({ freq: 130, to: 70, dur: 0.25, type: 'sine', vol: 0.2 });
           sfx.noise(0.12, 0.1);
+        } else if (e.kind === 'car' || e.kind === 'van' || e.kind === 'shuttle') {
+          // a crunch, and the horn held down
+          sfx.noise(0.35, 0.2);
+          sfx.tone({ freq: 140, to: 60, dur: 0.3, type: 'sawtooth', vol: 0.14 });
+          const [a, b] = e.kind === 'shuttle' ? [415, 330] : e.kind === 'van' ? [330, 415] : [440, 554];
+          sfx.tone({ freq: a, dur: 0.7, type: 'square', vol: 0.06, delay: 0.1 });
+          sfx.tone({ freq: b, dur: 0.7, type: 'square', vol: 0.05, delay: 0.1 });
+        } else if (e.kind === 'tether' && !r.hazards.some((h) => h.kind === 'tether' && h.look === 'goose')) {
+          // bowled over by the Tree (a tether on the golf course is a goose, below): boing
+          sfx.tone({ freq: 220, to: 660, dur: 0.18, type: 'sine', vol: 0.16 });
+          sfx.tone({ freq: 660, to: 180, dur: 0.35, type: 'triangle', vol: 0.12, delay: 0.16 });
+        } else if (e.kind === 'tether') {
+          // a goose: HONK, and a flap of wings
+          sfx.tone({ freq: 360, to: 260, dur: 0.2, type: 'sawtooth', vol: 0.14 });
+          sfx.tone({ freq: 380, to: 250, dur: 0.26, type: 'sawtooth', vol: 0.12, delay: 0.22 });
+          sfx.noise(0.25, 0.08);
+        } else if (e.kind === 'mower') {
+          // into the mower: a crunch and the groundskeeper's horn
+          sfx.noise(0.3, 0.18);
+          sfx.tone({ freq: 140, to: 60, dur: 0.3, type: 'sawtooth', vol: 0.14 });
+          sfx.tone({ freq: 440, dur: 0.35, type: 'square', vol: 0.06, delay: 0.1 });
         } else {
           sfx.tone({ freq: 520, to: 180, dur: 0.3, type: 'sawtooth', vol: 0.14 });
           sfx.noise(0.2, 0.1);
@@ -1173,6 +1364,14 @@ function Play({ mode }: { mode: Mode }) {
         if (mine && e.kind === 'void') {
           sfx.tone({ freq: 1200, to: 300, dur: 0.6, type: 'sine', vol: 0.16 });
           buzz(90);
+          break;
+        }
+        // out of bounds on the golf course: a referee's whistle (two blasts) and a thud into the gully
+        if (mine && e.kind === 'ob') {
+          sfx.tone({ freq: 2300, to: 2200, dur: 0.18, type: 'sine', vol: 0.1 });
+          sfx.tone({ freq: 2300, to: 2150, dur: 0.38, type: 'sine', vol: 0.1, delay: 0.24 });
+          sfx.tone({ freq: 110, to: 45, dur: 0.35, type: 'sine', vol: 0.18 });
+          buzz(80);
           break;
         }
         // run aground in the marsh: a squelch
@@ -1231,14 +1430,18 @@ function Play({ mode }: { mode: Mode }) {
         break;
       case 'hit':
         if (mine) {
-          buzz(e.how === 'spin' || e.how === 'squash' ? 60 : 120);
-          sfx.play(e.how === 'spin' || e.how === 'squash' ? 'hit' : 'boom');
+          buzz(e.how === 'spin' || e.how === 'squash' || e.how === 'freeze' ? 60 : 120);
+          // (iced over: a crackle of frost)
+          if (e.how === 'freeze') {
+            sfx.tone({ freq: 1800, to: 500, dur: 0.4, type: 'triangle', vol: 0.12 });
+            sfx.noise(0.15, 0.06);
+          } else sfx.play(e.how === 'spin' || e.how === 'squash' ? 'hit' : 'boom');
           // (on the water a spin is a crab: the oar's clack in its gate and a splash)
           if (r.boat && e.how === 'spin') {
             sfx.tone({ freq: 1100, to: 700, dur: 0.05, type: 'square', vol: 0.08 });
             sfx.noise(0.3, 0.09, 0.05);
           }
-          setFlash({ id: Date.now(), kind: 'hit' });
+          setFlash({ id: Date.now(), kind: e.how === 'freeze' ? 'ice' : 'hit' });
         }
         break;
       case 'bump':
@@ -1359,6 +1562,8 @@ function Play({ mode }: { mode: Mode }) {
       item: me.roll > 0 ? ITEMS[Math.floor(clock.current * 12) % ITEMS.length] : me.item,
       ink: me.done === null ? Math.round(Math.min(1, me.ink / 1.5) * 10) / 10 : 0,
       golden: me.goldT > 0,
+      fire: me.fireT > 0,
+      frozen: me.frozen > 0 && me.done === null,
       uses: me.uses,
       rolling: me.roll > 0,
       trailing: me.trail,
@@ -1454,7 +1659,7 @@ function Play({ mode }: { mode: Mode }) {
       {shell.status !== 'ready' && !shell.compact && (
         <div className={`g-palmdrive-hud${shell.touch ? ' is-touch' : ''}`}>
           {hud.boosting && <div className="g-palmdrive-speed" aria-hidden="true" />}
-          <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}${hud.trailing ? ' is-trailing' : ''}${hud.golden ? ' is-golden' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}${hud.trailing ? ' behind you' : ''}` : 'No item'}>
+          <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}${hud.trailing ? ' is-trailing' : ''}${hud.golden ? ' is-golden' : ''}${hud.fire ? ' is-fire' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}${hud.trailing ? ' behind you' : ''}` : 'No item'}>
             {hud.item ? <ItemIcon item={hud.item} /> : null}
             {!hud.rolling && hud.uses > 1 && <b>{hud.uses}</b>}
           </div>
@@ -1474,7 +1679,7 @@ function Play({ mode }: { mode: Mode }) {
             <path d={minimap.d} className="g-palmdrive-map-line" />
             {r.hazards.map(
               (h, i) =>
-                (h.kind === 'bus' || h.kind === 'cart' || h.kind === 'launch' || h.kind === 'barge') && (
+                (h.kind === 'bus' || h.kind === 'cart' || h.kind === 'launch' || h.kind === 'barge' || h.kind === 'car' || h.kind === 'van') && (
                   <rect
                     key={`bus${i}`}
                     ref={(el) => {
@@ -1487,7 +1692,7 @@ function Play({ mode }: { mode: Mode }) {
                     height={h.kind === 'bus' || h.kind === 'barge' ? 16 : 12}
                     rx={3}
                     transform={`translate(${-h.x} ${-h.z})`}
-                    className={h.kind === 'bus' ? 'g-palmdrive-map-bus' : h.kind === 'cart' ? 'g-palmdrive-map-cart' : `g-palmdrive-map-vessel is-${h.kind}`}
+                    className={h.kind === 'bus' ? 'g-palmdrive-map-bus' : h.kind === 'cart' ? 'g-palmdrive-map-cart' : h.kind === 'car' || h.kind === 'van' ? 'g-palmdrive-map-car' : `g-palmdrive-map-vessel is-${h.kind}`}
                   />
                 ),
             )}
@@ -1619,6 +1824,7 @@ function Play({ mode }: { mode: Mode }) {
         </div>
       )}
       {flash && <div key={flash.id} className={`g-palmdrive-flash is-${flash.kind}`} onAnimationEnd={() => setFlash(null)} />}
+      {hud.frozen && <div className="g-palmdrive-frost" aria-hidden="true" />}
       {hud.ink > 0 && (
         <div className="g-palmdrive-ink" style={{ opacity: hud.ink }} aria-hidden="true">
           {INK_BLOTS.map(([x, y, size], i) => (
@@ -1736,6 +1942,14 @@ const ITEM_NAMES: Record<Item, string> = {
   horn: 'a horn',
   bolt: 'lightning',
   blue: 'a blue shell',
+  boomerang: 'a boomerang',
+  fire: 'a fire flower',
+  ice: 'an ice flower',
+  piranha: 'a piranha plant',
+  boo: 'a Boo',
+  feather: 'a feather',
+  cloud: 'a thunder cloud',
+  pow: 'a POW block',
 };
 const itemName = (item: Item) => ITEM_NAMES[item];
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createSnake, queueDirection, spawnFood, speedForLength, stepSnake, type SnakeState } from '../src/os/arcade/games/snake/logic.ts';
+import { createSnake, fitBoard, GRID, gridFor, MAX_SPEED, MIN_SPEED, queueDirection, spawnFood, speedForLength, stepSnake, wouldDie, type SnakeState } from '../src/os/arcade/games/snake/logic.ts';
 
 test('snake advances one cell in its current direction', () => {
   const state = createSnake(12, 10, () => 0);
@@ -58,8 +58,45 @@ test('food spawning never overlaps the snake and returns null on a full board', 
   assert.equal(spawnFood(state, () => 0), null);
 });
 
-test('speed increases with length and has a cap', () => {
+test('speed starts gentle, rises with length and eases toward a cap', () => {
+  assert.equal(speedForLength(3), MIN_SPEED);
   assert.ok(speedForLength(8) > speedForLength(3));
-  assert.ok(speedForLength(50) >= speedForLength(8));
-  assert.equal(speedForLength(100), 16);
+  assert.ok(speedForLength(50) > speedForLength(8));
+  assert.ok(speedForLength(8) - speedForLength(3) > speedForLength(53) - speedForLength(48));
+  assert.ok(speedForLength(400) <= MAX_SPEED);
+  assert.ok(speedForLength(400) > MAX_SPEED - 0.01);
+});
+
+test('every screen plays the same number of cells', () => {
+  assert.deepEqual(gridFor(1440, 800), { cols: GRID.long, rows: GRID.short });
+  assert.deepEqual(gridFor(390, 650), { cols: GRID.short, rows: GRID.long });
+});
+
+test('wouldDie looks one step ahead, including the next queued turn', () => {
+  const state = createSnake(8, 8, () => 0);
+  state.segments = [{ x: 7, y: 2 }, { x: 6, y: 2 }, { x: 5, y: 2 }];
+  state.direction = 'right';
+  assert.equal(wouldDie(state), true);
+  queueDirection(state, 'down');
+  assert.equal(wouldDie(state), false);
+  state.queue = [];
+  state.segments = [{ x: 3, y: 3 }, { x: 4, y: 3 }, { x: 4, y: 4 }, { x: 3, y: 4 }, { x: 2, y: 4 }];
+  state.direction = 'down';
+  assert.equal(wouldDie(state), true);
+});
+
+test('fitBoard keeps whole pixel cells clear of the toolbar', () => {
+  const pill = { x: 10, y: 10, w: 62, h: 34 };
+  const ctrl = { x: 282, y: 10, w: 172, h: 34 };
+  const small = fitBoard(464, 157, 21, 13, [pill, ctrl]);
+  assert.ok(Number.isInteger(small.cell) && small.cell >= 8);
+  for (const r of [pill, ctrl]) {
+    const overlaps = small.x < r.x + r.w && small.x + small.width > r.x && small.y < r.y + r.h && small.y + small.height > r.y;
+    assert.equal(overlaps, false);
+  }
+  const phone = fitBoard(390, 648, 13, 21, [pill, { x: 124, y: 10, w: 256, h: 46 }]);
+  assert.ok(phone.y >= 56 && phone.y + phone.height <= 648);
+  assert.ok(phone.cell >= 26);
+  const big = fitBoard(1440, 820, 21, 13, [pill, { x: 1250, y: 10, w: 180, h: 34 }]);
+  assert.ok(big.cell <= 56 && big.x + big.width <= 1440);
 });

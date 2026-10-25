@@ -97,6 +97,12 @@ export class BadmintonAudio {
         break;
     }
     if (speed > 30) this.burst(300, 0.5, 0.12, Math.min(0.5, (speed - 30) / 50));
+    // A full smash adds a deep thump and a sharp crack on top.
+    if (type === 'smash' && speed > 60) {
+      const weight = Math.min(1, (speed - 60) / 30);
+      this.tone(95, 0.2, 0.6 * weight, 'sine', 0, 42);
+      this.burst(3600, 0.6, 0.06, 0.35 * weight);
+    }
   }
 
   land() {

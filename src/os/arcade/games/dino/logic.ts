@@ -234,4 +234,9 @@ export function rng32(seed: number) {
   };
 }
 
-export const pad = (n: number) => String(Math.floor(n)).padStart(5, '0');
+/** One course seed for everyone in an online round: the round number plus the roster, in any order. */
+export function courseSeed(round: number, names: readonly string[]) {
+  let h = 2166136261 ^ round;
+  for (const ch of [...names].sort().join('|')) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return h >>> 0;
+}

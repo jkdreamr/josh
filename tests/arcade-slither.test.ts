@@ -11,7 +11,7 @@ import {
 } from '../src/os/arcade/games/slither/world.ts';
 import {
   applyHeadState, applyOps, loadSnapshot, makeRoster, peopleLine, peopleResults, resultRows, rosterChanges, rosterNotice, standings, startsSoloRound,
-  syncRoster, touchTarget, takeOverSeats, winnerSeat,
+  syncRoster, touchTarget, takeOverSeats, winnerSeat, fillerNames,
 } from '../src/os/arcade/games/slither/session.ts';
 import { overlayLayout } from '../src/os/arcade/games/slither/render.ts';
 
@@ -374,6 +374,29 @@ test('touch targets grow to stay 44px on screen when the device frame scales dow
   assert.equal(touchTarget(245.24, 300), 54);
   assert.equal(touchTarget(600, 300), 44);
   assert.equal(touchTarget(0, 0), 44);
+  // Measured mid app-open animation, when the window is still icon sized.
+  assert.equal(touchTarget(18, 300), 64);
+});
+
+test('arena filler noodles never reuse a room bot or person name', () => {
+  const bots = ['Orzo', 'Penne', 'Fusilli'].map((name, i) => ({ seat: i + 1, name, bot: true }));
+  const roster = makeRoster([{ seat: 0, name: 'Ziti' }], bots, 16);
+  const names = roster.map((entry) => entry.name.toLowerCase());
+  assert.equal(roster.length, 16);
+  assert.equal(new Set(names).size, names.length);
+  const full = makeRoster([{ seat: 0, name: 'Host' }], ['Orzo', 'Penne', 'Fusilli', 'Udon', 'Ramen', 'Ziti', 'Soba'].map((name, i) => ({ seat: i + 1, name, bot: true })), 16);
+  assert.equal(new Set(full.map((entry) => entry.name)).size, 16);
+  assert.deepEqual(fillerNames(['ziti', 'Rigatoni'], 2), ['Fusilli', 'Orzo']);
+  const clash = makeRoster([{ seat: 0, name: 'Orzo' }, { seat: 1, name: 'penne' }], ['Orzo', 'Penne', 'Fusilli'].map((name, i) => ({ seat: i + 2, name, bot: true })), 16);
+  assert.equal(clash[0].name, 'Orzo');
+  assert.equal(clash[1].name, 'penne');
+  assert.equal(new Set(clash.map((entry) => entry.name.toLowerCase())).size, 16);
+  // The host re-syncs the roster every render; the renamed bot must keep its new name.
+  const players = [{ seat: 0, name: 'Orzo' }, { seat: 1, name: 'penne' }];
+  const roomBots = ['Orzo', 'Penne', 'Fusilli'].map((name, i) => ({ seat: i + 2, name, bot: true }));
+  assert.deepEqual(syncRoster(clash, players, roomBots), clash);
+  assert.equal(fillerNames([], 30).length, 30);
+  assert.equal(new Set(fillerNames([], 30)).size, 30);
 });
 
 test('a person who joins mid-round takes the bot seat the round still lists, and steers that noodle', () => {

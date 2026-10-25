@@ -16,7 +16,7 @@ import {
 import { getAppGame, roomApp } from '../arcade/apps';
 import { savedName, saveName } from '../arcade/kit/leaderboard';
 import { useOpenRooms } from '../arcade/kit/online';
-import { openRoomDetail, openRoomLine, type OpenRoom } from '../arcade/kit/online-core';
+import { openRoomAction, openRoomDetail, openRoomLine, type OpenRoom } from '../arcade/kit/online-core';
 import {
   CHANNELS,
   cleanLine,
@@ -275,8 +275,8 @@ function OpenRoomsPanel({ rooms, mine, onJoin }: { rooms: OpenRoom[] | null; min
                   {room.code === mine ? (
                     <span className="lounge-room-yours">Your Room</span>
                   ) : (
-                    <button type="button" className="lounge-join is-small" aria-label={`Join ${room.host}'s ${title} room`} onClick={() => onJoin({ game: room.game, code: room.code })}>
-                      Join
+                    <button type="button" className="lounge-join is-small" aria-label={`${openRoomAction(room)} ${room.host}'s ${title} room`} onClick={() => onJoin({ game: room.game, code: room.code })}>
+                      {openRoomAction(room)}
                     </button>
                   )}
                 </li>

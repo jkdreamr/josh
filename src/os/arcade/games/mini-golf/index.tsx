@@ -187,7 +187,7 @@ function Golf() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [THREE]);
 
-  // Phone and iPad frames scale the game down; grow the game's own buttons back so they stay finger sized.
+  // Phone and iPad frames scale the game down; grow the game's own buttons and text back so they stay finger sized and readable.
   useEffect(() => {
     const el = shell.root.current;
     if (!el || !shell.touch) return;
@@ -196,7 +196,7 @@ function Golf() {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
-        el.style.setProperty('--g-mini-golf-u', (k > 0.2 && k < 0.99 ? Math.min(2, 1 / k) : 1).toFixed(3));
+        el.style.setProperty('--g-mini-golf-u', String(k > 0.4 && k < 0.99 ? Math.min(1.6, Math.ceil(100 / k) / 100) : 1));
       });
     };
     measure();
@@ -209,7 +209,7 @@ function Golf() {
       window.removeEventListener('resize', measure);
       el.style.removeProperty('--g-mini-golf-u');
     };
-  }, [shell.touch, shell.root]);
+  }, [shell.touch, shell.root, shell.status]);
 
   useEffect(() => {
     world.current?.resize(size.w, size.h);

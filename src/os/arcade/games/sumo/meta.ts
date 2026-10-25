@@ -18,5 +18,5 @@ export const meta: GameMeta = {
   glyph: 'M7 4.5h10l3 5.5v7h-2v2h-2v-2H8v2H6v-2H4v-7l3-5.5zM7 10h10M8 7.5h.01M16 7.5h.01M7 14h2M15 14h2',
   order: 7,
   music: 'bouncy',
-  online: { seats: 8, lateJoin: true, bots: true },
+  online: { seats: 8, lateJoin: true, bots: true, quick: true, watch: true },
 };

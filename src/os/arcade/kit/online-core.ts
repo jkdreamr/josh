@@ -7,9 +7,14 @@ export const MAX_SEATS = 20;
 
 /**
  * A public room as the arcade's Open Rooms lists it (GET /rooms). players counts people; bots fill other seats. quick:
- * a quick-play room, gathering people until it starts on its own (at startAt, epoch ms on the Worker's clock).
+ * a quick-play room, gathering people until it starts on its own (at startAt, epoch ms on the Worker's clock), for the
+ * quick-play pool `pool` (a game's mode, say) if it has one. watch: people can watch it; watchOnly: nobody can join it
+ * right now (a round is under way, or it is full), only watch.
  */
-export type OpenRoom = { code: string; game: string; host: string; players: number; bots: number; seats: number; started: boolean; lateJoin: boolean; quick?: true; startAt?: number };
+export type OpenRoom = { code: string; game: string; host: string; players: number; bots: number; seats: number; started: boolean; lateJoin: boolean; quick?: true; startAt?: number; pool?: string; watch?: true; watchOnly?: true };
+
+/** A quick-play pool's name as Open Rooms shows it: "duos" is Duos. */
+const poolName = (pool: string) => pool.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 /** The most open rooms listed at once. */
 export const OPEN_ROOMS_MAX = 40;
 
@@ -26,22 +31,29 @@ export function parseOpenRooms(body: unknown): OpenRoom[] {
     if (typeof r.code !== 'string' || !/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/.test(r.code)) continue;
     if (typeof r.game !== 'string' || !/^[a-z0-9-]{1,40}$/.test(r.game) || typeof r.host !== 'string') continue;
     if (!count(r.seats, MAX_SEATS) || r.seats < 2 || !count(r.players, r.seats) || !count(r.bots, r.seats)) continue;
-    rooms.push({ code: r.code, game: r.game, host: r.host.slice(0, 32), players: r.players, bots: r.bots, seats: r.seats, started: r.started === true, lateJoin: r.lateJoin === true, ...(r.quick === true ? { quick: true as const } : {}) });
+    const pool = r.quick === true && typeof r.pool === 'string' && /^[a-z0-9-]{1,16}$/.test(r.pool) ? { pool: r.pool } : {};
+    rooms.push({ code: r.code, game: r.game, host: r.host.slice(0, 32), players: r.players, bots: r.bots, seats: r.seats, started: r.started === true, lateJoin: r.lateJoin === true, ...(r.quick === true ? { quick: true as const } : {}), ...pool, ...(r.watch === true ? { watch: true as const } : {}), ...(r.watch === true && r.watchOnly === true ? { watchOnly: true as const } : {}) });
   }
   return rooms;
 }
 
 const botCount = (room: OpenRoom) => (room.bots ? (room.bots === 1 ? '1 Bot' : `${room.bots} Bots`) : '');
 
+/** A quick-play room's kind, with its pool: "Quick Play", or "Quick Play Duos". */
+const quickKind = (room: OpenRoom) => (room.quick ? (room.pool ? `Quick Play ${poolName(room.pool)}` : 'Quick Play') : '');
+
 /** How full an open room is, for its line in Open Rooms: "2/8 · 3 Bots · Playing", or "Quick Play · 2/20 · 18 Bots". */
 export function openRoomLine(room: OpenRoom): string {
-  return [room.quick ? 'Quick Play' : '', `${room.players}/${room.seats}`, botCount(room), room.started ? 'Playing' : ''].filter(Boolean).join(' · ');
+  return [quickKind(room), `${room.players}/${room.seats}`, botCount(room), room.started ? 'Playing' : ''].filter(Boolean).join(' · ');
 }
+
+/** What the button on an open room does: join it, or only watch the round under way. */
+export const openRoomAction = (room: OpenRoom) => (room.watchOnly ? 'Watch' : 'Join');
 
 /** An open room's line in the Lounge's list, saying what joining it means: "1/4 · 2 Bots · Waiting for players". */
 export function openRoomDetail(room: OpenRoom): string {
-  const what = room.quick ? 'Starting soon' : room.started ? 'Playing, join for the next round' : 'Waiting for players';
-  return [room.quick ? 'Quick Play' : '', `${room.players}/${room.seats}`, botCount(room), what].filter(Boolean).join(' · ');
+  const what = room.watchOnly ? 'Playing, watch it live' : room.quick ? 'Starting soon' : room.started ? 'Playing, join for the next round' : 'Waiting for players';
+  return [quickKind(room), `${room.players}/${room.seats}`, botCount(room), what].filter(Boolean).join(' · ');
 }
 
 /** Bots in seat order, named from the game's list or Bot 1, Bot 2 and so on, so every player sees the same names. */

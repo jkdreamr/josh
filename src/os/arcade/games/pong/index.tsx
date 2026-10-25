@@ -145,7 +145,8 @@ function Pong() {
       st.remoteTarget = message.y;
     } else if (online.seat !== 0 && from === 0 && message.type === 'snapshot' && message.match && typeof message.match === 'object') {
       const before = st.match.ball;
-      const next = mergeGuestSnapshot(st.match, message.match as typeof st.match);
+      // a spectator steers nothing, so both paddles are the host's
+      const next = online.watching ? (message.match as typeof st.match) : mergeGuestSnapshot(st.match, message.match as typeof st.match);
       // Ease out the jump between our prediction and the host's ball, unless it just changed direction.
       const dx = before.x + st.ballErr.x - next.ball.x;
       const dy = before.y + st.ballErr.y - next.ball.y;
@@ -232,10 +233,20 @@ function Pong() {
     }
   };
 
+  /** Short name: what the Game Over title uses, and the court label when the long one doesn't fit. */
   const nameFor = (side: Side) => {
-    if (online) return side === online.seat ? 'You' : online.players.find((p) => p.seat === side)?.name ?? 'Opponent';
+    if (online) return side === online.seat ? 'You' : online.players.find((p) => p.seat === side)?.name ?? `Player ${side + 1}`;
     if (st.mode === 'cpu') return side === 0 ? 'You' : 'Computer';
     return `Player ${side + 1}`;
+  };
+  /** Court label. Online, each side is the person playing it (a spectator, in mid-round, never saw the lobby set the mode). */
+  const labelFor = (side: Side) => {
+    if (online) {
+      const name = online.players.find((player) => player.seat === side)?.name ?? `Player ${side + 1}`;
+      return side === online.seat ? `${name} (You)` : name;
+    }
+    if (side === 1 && st.mode === 'cpu') return `Computer · ${levelLabel(LEVEL_NAMES[st.level])}`;
+    return nameFor(side);
   };
 
   useGameLoop(
@@ -244,7 +255,7 @@ function Pong() {
       const m = st.match;
       const now = performance.now();
       const guest = !!online && online.seat !== 0;
-      const sides: Side[] = guest ? [1] : online ? [0] : st.mode === '2p' ? [0, 1] : [0];
+      const sides: Side[] = online?.watching ? [] : guest ? [1] : online ? [0] : st.mode === '2p' ? [0, 1] : [0];
       st.sendAt += dt;
       st.snapshotAt += dt;
       st.measureIn -= dt;
@@ -269,7 +280,7 @@ function Pong() {
         else if (along !== 0) movePaddle(m.paddles[side], along * KEY_SPEED * dt, dt);
         else m.paddles[side].vy *= Math.max(0, 1 - dt * 14);
       }
-      if (guest && st.sendAt >= 0.05) {
+      if (guest && !online!.watching && st.sendAt >= 0.05) {
         online!.send({ game: 'pong', type: 'paddle', y: m.paddles[1].y }, { fast: true });
         st.sendAt %= 0.05;
       }
@@ -494,8 +505,7 @@ function Pong() {
         c.fillStyle = pop > 0 ? mix('#3a3f4c', P_COLORS[side], pop) : 'rgba(255,255,255,0.22)';
         c.textAlign = portrait ? 'center' : side === 0 ? 'right' : 'left';
         c.fillText(String(m.score[side]), at.x, at.y);
-        let name = nameFor(side);
-        if (side === 1 && st.mode === 'cpu' && !online) name = `${name} · ${levelLabel(LEVEL_NAMES[st.level])}`;
+        let name = labelFor(side);
         c.font = `500 ${namePx}px ${FONT}`;
         c.fillStyle = 'rgba(255,255,255,0.42)';
         if (portrait) {

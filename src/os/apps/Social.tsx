@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { siGithub, siInstagram, siX } from 'simple-icons';
-import { folders, linkedin, links, profile } from '../data';
+import { folders, linkedin, links, profile, school } from '../data';
 import { useOS, type AppProps } from '../types';
 import { ExternalIcon, Favicon, openExternal } from '../util';
 
@@ -112,7 +112,6 @@ export function XApp(_: AppProps) {
 /* ---------------------------------- linkedin ---------------------------------- */
 
 const work = folders.find((f) => f.id === 'work')!.entries;
-const school = folders.find((f) => f.id === 'school')!.entries;
 
 export function LinkedIn(_: AppProps) {
   return (
@@ -158,7 +157,7 @@ export function LinkedIn(_: AppProps) {
           <div>
             <b>Stanford University</b>
             <span>Computer Science + Mathematics</span>
-            <small>Activities: {school.slice(1).map((s) => s.name).join(', ')}</small>
+            <small>Activities: {[...school.current, ...school.past].join(', ')}</small>
           </div>
         </div>
       </section>

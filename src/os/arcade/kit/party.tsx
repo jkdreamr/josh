@@ -73,7 +73,7 @@ export const playerColor = (i: number) => AVATAR_COLORS[((i % AVATAR_COLORS.leng
 
 export function Avatar({ name, index, size = 28 }: { name: string; index: number; size?: number }) {
   return (
-    <span className="arcade-party-avatar" style={{ background: playerColor(index), width: size, height: size, fontSize: Math.round(size * 0.44) }} aria-hidden="true">
+    <span className="arcade-party-avatar" style={{ background: playerColor(index), width: size, height: size, fontSize: Math.max(11, Math.round(size * 0.44)) }} aria-hidden="true">
       {Array.from(name)[0]?.toLocaleUpperCase() ?? '?'}
     </span>
   );

@@ -166,7 +166,7 @@ export type Glows = Instancer & { add(x: number, y: number, z: number, normalYaw
  * wall facing out at the given angle.
  */
 export function glows(d: Dress, colour: string, opacity: number, max = 96): Glows {
-  const inst = new Instancer(d.THREE, d.geo.disc, d.basic(colour, { transparent: true, opacity, depthWrite: false }), max) as Glows;
+  const inst = new Instancer(d.THREE, d.geo.disc, d.basic(colour, { transparent: true, opacity: Math.min(1, opacity * 2), depthWrite: false, alphaMap: d.geo.soft }), max) as Glows;
   d.group.add(inst.mesh);
   const rot: [number, number, number] = [0, 0, 0];
   inst.add = (x, y, z, normalYaw = 0, radius = 1, flat = true) => {

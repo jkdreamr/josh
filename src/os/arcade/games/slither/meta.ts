@@ -20,5 +20,5 @@ export const meta: GameMeta = {
   order: 0.7,
   music: 'house',
   leaderboard: { order: 'desc', min: 0, max: 100000, measure: 'Best Length vs Computer', variants: { easy: 'Easy', normal: 'Normal', hard: 'Hard' } },
-  online: { seats: 8, lateJoin: true, bots: true },
+  online: { seats: 8, lateJoin: true, bots: true, quick: true },
 };
