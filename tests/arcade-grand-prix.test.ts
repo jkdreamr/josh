@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync, existsSync } from 'node:fs';
-import { createCommentary } from '../src/os/arcade/games/grand-prix/commentary.ts';
-import { CORNERS, EXCITED, LINES, clipFile, nameKey, spoken } from '../src/os/arcade/games/grand-prix/lines.ts';
+import { createCommentary, type Part } from '../src/os/arcade/games/grand-prix/commentary.ts';
+import { CORNERS, LINES, clipFile, nameKey, spoken } from '../src/os/arcade/games/grand-prix/lines.ts';
 import { CYLINDERS, OFF_TONE, ON_TONE, renderEngineLoop } from '../src/os/arcade/games/grand-prix/engine.ts';
 import { buildLine, createDriver, drive, profileTime, speedProfile } from '../src/os/arcade/games/grand-prix/ai.ts';
 import { NO_ASSISTS, SPEC, createCar, curve, engineTorque, kmh, stepCar, tempGrip, type Assists } from '../src/os/arcade/games/grand-prix/car.ts';
@@ -490,18 +490,19 @@ test('recorded engine loops crossfade by rpm and throttle and pitch to the rpm',
   assert.ok(layersFor(bank.slice(0, 3), 9000, 0).some((l) => l.gain > 0.99));
 });
 
-test('every commentary line has a recording of exactly its words', () => {
+test('every commentary turn has a recording of exactly its words, voice and mood', () => {
   const dir = 'public/sounds/grand-prix/commentary/';
   const manifest = JSON.parse(readFileSync(dir + 'manifest.json', 'utf8')) as Record<string, string>;
   let clips = 0;
   for (const [key, variants] of Object.entries(LINES)) {
-    variants.forEach((text, n) => {
-      clips++;
-      assert.ok(existsSync(dir + clipFile(key, n)), `${key} ${n} is recorded`);
-      const tag = manifest[`${key}-${n}`] ?? '';
-      assert.ok(tag.endsWith(`|${spoken(text)}`), `${key} ${n} was recorded from its current text`);
-      assert.ok(tag.includes(EXCITED.has(key) ? '|1.16|' : '|1.08|'), `${key} ${n} at its pace`);
-    });
+    variants.forEach((turns, v) =>
+      turns.forEach((turn, t) => {
+        clips++;
+        assert.ok(existsSync(dir + clipFile(key, v, t)), `${key} ${v} ${t} is recorded`);
+        const tag = manifest[`${key}-${v}-${t}`] ?? '';
+        assert.ok(tag.endsWith(`|${turn.who}|${turn.mood}|${spoken(turn.text)}`), `${key} ${v} ${t} was recorded from its current words, voice and mood`);
+      }),
+    );
   }
   assert.equal(Object.keys(manifest).length, clips, 'no recordings left over');
   // the numbered and named lines the commentator builds keys for
@@ -516,6 +517,8 @@ test('every commentary line has a recording of exactly its words', () => {
   for (const [, key] of source.matchAll(/(?:say|about)\((?:me, )?\[([^\]]*)\]/g)) {
     for (const [, k] of key.matchAll(/'([a-z0-9-]+)'/g)) if (!notKeys.has(k) || LINES[k]) assert.ok(LINES[k], `line ${k}`);
   }
+  // and Sophie's replies, named in the reply table and passed to say()
+  for (const [, k] of source.matchAll(/'((?:react|banter)-[a-z-]+|banter)'/g)) assert.ok(LINES[k], `line ${k}`);
 });
 
 test('the commentator calls the race like a broadcaster', () => {
@@ -527,10 +530,11 @@ test('the commentator calls the race like a broadcaster', () => {
   const A: Assists = { ...NO_ASSISTS, tc: true, abs: true, autoGears: true };
   const r = createRace({ mode: 'race', laps: 5, entries, assists: [A, A, A], lead: 6.5, hold: 0.2 });
   const me = r.runners[1];
-  const said: { clips: string[]; priority: number }[] = [];
+  const said: { parts: Part[]; priority: number }[] = [];
   let quiet = 0;
-  const com = createCommentary({ locals: () => [me], speak: (clips, priority) => said.push({ clips, priority }), quiet: () => quiet, random: () => 0.9 });
-  const keys = () => said.splice(0).map((s) => s.clips.map((c) => c.replace(/-\d+$/, '')).join(' '));
+  const com = createCommentary({ locals: () => [me], speak: (parts, priority) => said.push({ parts, priority }), quiet: () => quiet, random: () => 0.9 });
+  // each exchange as its line keys (a two-turn line is one key)
+  const keys = () => said.splice(0).map((s) => s.parts.map((p) => p.clip.replace(/-\d+-\d+$/, '')).filter((k, i, a) => k !== a[i - 1]).join(' '));
   // the welcome before the lights, then lights out cutting in
   com.update(r, 0.016);
   assert.deepEqual(keys(), ['intro-race']);
@@ -587,9 +591,11 @@ test('the commentator calls the race like a broadcaster', () => {
   com.event(r, { t: 'lap', idx: 1, lap: me.laps[2], best: false, overall: true });
   assert.deepEqual(keys(), ['fastest-mine', 'final-lap running-2']);
   com.event(r, { t: 'finish', idx: 1, place: 1, penalty: 0 });
+  // James calls it, Sophie answers straight away in the excitement
+  assert.deepEqual(said[0].parts.map((p) => p.gap), [0, 0.12]);
   assert.deepEqual(keys(), ['win']);
   com.event(r, { t: 'finish', idx: 1, place: 7, penalty: 0 });
-  assert.deepEqual(keys(), ['finish-7']);
+  assert.deepEqual(keys(), ['finish-7 react-points']);
   // the quiet moments get colour, but never over the commentator talking
   me.car.s = 100;
   com.update(r, 0.1);
@@ -605,18 +611,19 @@ test('the commentator works through every variant of a line before repeating one
   const r = createRace({ mode: 'trial', laps: 3, entries: [{ name: 'You', team: 0, kind: 'player', seat: -1, pad: 0 }], assists: [NO_ASSISTS] });
   const said: string[] = [];
   let quiet = 0;
-  const com = createCommentary({ locals: () => [r.runners[0]], speak: (clips) => said.push(...clips), quiet: () => quiet });
+  // the first turn of each exchange
+  const com = createCommentary({ locals: () => [r.runners[0]], speak: (parts) => said.push(parts[0].clip), quiet: () => quiet });
   com.update(r, 0.016);
-  assert.match(said.pop()!, /^intro-trial-\d$/);
-  const n = LINES.colour.length + LINES['colour-trial'].length;
+  assert.match(said.pop()!, /^intro-trial-\d-0$/);
+  const n = LINES.banter.length + LINES['banter-trial'].length;
   quiet = 100;
   r.runners[0].car.s = 100;
   for (let k = 0; k < n * 3; k++) {
     r.time += 1;
     com.update(r, 0.016);
   }
-  const colour = said.filter((c) => c.startsWith('colour-'));
-  const first = colour.filter((c) => /^colour-\d+$/.test(c)).slice(0, LINES.colour.length);
+  const colour = said.filter((c) => c.startsWith('banter-'));
+  const first = colour.filter((c) => /^banter-\d+-0$/.test(c)).slice(0, LINES.banter.length);
   assert.equal(new Set(first).size, first.length, 'no repeats within a cycle');
   assert.ok(colour.length >= n);
 });

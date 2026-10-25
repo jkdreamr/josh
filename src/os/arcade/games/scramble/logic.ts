@@ -6,14 +6,20 @@
 // client sees them, then sent to the egg's owner; grenades and launcher eggs work the same way. Things the whole
 // island sees (a barrel going up, a puddle of hot sauce) are felt by each client on the eggs it owns. The host settles
 // everything shared: who got a pickup, when a chest opens or a crate, barrel or wall breaks, and who won. `world` is
-// true where those calls are made (solo and the host).
+// true where those calls are made (solo and the host). Window glass is simpler: whoever's shot, swing or blast breaks
+// it breaks it on their own screen and tells the host, who tells everyone (glass only ever breaks, so nobody can
+// disagree about it). Doors are the host's to open and shut (a guest asks), and to knock off their hinges.
 import {
   BOOST,
   FLARE_WAIT,
   HP_MAX,
+  MATS,
+  MAT_MAX,
+  MAT_SPECS,
   MELEE,
   MELEE_IDS,
   PAN_ARC,
+  PIECE_COST,
   SCOPE_VIEW,
   SHIELD_MAX,
   SIP,
@@ -22,10 +28,8 @@ import {
   THROW_IDS,
   USES,
   USE_IDS,
-  WALL_COST,
   WEAPONS,
   WEAPON_IDS,
-  WOOD_MAX,
   ammoCap,
   armorMult,
   damageOf,
@@ -36,6 +40,7 @@ import {
   useCap,
   type Ammo,
   type LootDef,
+  type Mat,
   type MeleeId,
   type Rng,
   type ThrowId,
@@ -65,7 +70,9 @@ import {
   fireAt,
   furnitureSolid,
   generateMap,
+  grassAt,
   low,
+  opens,
   padAt,
   placeDrop,
   pushBox,
@@ -85,6 +92,7 @@ import {
   yardAt,
   type Box,
   type Bridge,
+  type Building,
   type Container,
   type Door,
   type GameMap,
@@ -106,15 +114,53 @@ export const AUTO_R = 1.25;
 export const CHEST_R = 2.3;
 export const WALL_HALF = 1.7;
 export const WALL_THICK = 0.2;
-export const WALL_HP = 150;
-export const WALL_DIST = 2.1;
+/** A wood wall's health once built. */
+export const WALL_HP = MAT_SPECS.wood.hp;
 export const BUILD_COOL = 0.3;
+/** The wait between edits; a build key pressed while the last piece is still going up waits for its turn this long. */
+export const EDIT_COOL = 0.15;
+export const BUILD_WAIT = 0.5;
+/** Two presses of the build key closer than this box you in. */
+export const BOX_TAP = 0.35;
+/**
+ * Building: pieces stand on a grid of squares CELL_B meters across (a wall spans one side of one), one storey
+ * (LEVEL_H meters) apart, from the ground (level 0) up to MAX_LEVEL. A piece starts at BUILD_START of its health
+ * and builds up to all of it.
+ */
+export const CELL_B = WALL_HALF * 2;
+export const LEVEL_H = 3;
+export const MAX_LEVEL = 2;
+export const BUILD_START = 0.1;
+/** The most pieces standing in a match. */
+export const MAX_PIECES = 1500;
+/** Half the width of the gap a doorway or a window cuts in a wall. */
+export const GAP = 0.9;
+/** How far up a step an egg takes in its stride, and how fast it drops when there is nothing under it. */
+export const STEP_UP = 0.6;
+export const DROP_V = 11;
+/** Extra meters of view an egg gets for each level it stands up high. */
+export const HIGH_VIEW = 6;
 export const STORM_TICK = 0.5;
 export const CRATE_HP = 60;
 export const TOILET_HP = 35;
 export const HAY_HP = 50;
 /** A barrel takes this much before it goes up, then hurts everything within `radius`. */
 export const BARREL = { hp: 40, radius: 5, dmg: 75 };
+/** What a door takes before it comes off its hinges, how near its doorway an egg reaches it, and a vault door's wait. */
+export const DOOR_HP = 120;
+export const DOOR_R = 1.3;
+export const VAULT_TIME = 8;
+/** A door's state: shut, open (swung out of its doorway, or in), knocked off its hinges, or (a vault door) opening. */
+export const DOOR_SHUT = 0;
+export const DOOR_OUT = 1;
+export const DOOR_IN = -1;
+export const DOOR_GONE = 2;
+export const DOOR_OPENING = 3;
+export const DOOR_STATES = [DOOR_SHUT, DOOR_OUT, DOOR_IN, DOOR_GONE, DOOR_OPENING] as const;
+/** A ghillie suit hides an egg that has kept still this long on grass, from anyone farther off than `near`. */
+export const GHILLIE = { still: 0.6, near: 4 };
+/** Kills it takes to be the kill leader. */
+export const LEADER_MIN = 3;
 /** About how far a bounce pad carries an egg that glides straight on. */
 export const PAD_FLY = Math.round((PAD.y / FALL) * GLIDE);
 /** Remote eggs are drawn this far in the past, between the last two updates. */
@@ -138,8 +184,10 @@ export const F_DRINKING = 128;
 export const F_SPIN = 256;
 export const F_SMOOTHIE = 512;
 export const F_TART = 1024;
+export const F_GHILLIE = 2048;
+export const F_STUN = 4096;
 /** The highest flag bits there are. */
-export const F_ALL = 2047;
+export const F_ALL = 8191;
 /** `bush` for an egg hiding in a bush grown from a can. */
 export const GROWN = 1_000_000;
 
@@ -150,13 +198,19 @@ export type Role = 'solo' | 'host' | 'guest';
 export type Phase = 'bus' | 'drop' | 'ground' | 'out';
 export const PHASES: readonly Phase[] = ['bus', 'drop', 'ground', 'out'];
 export type Kind = 'player' | 'bot' | 'remote';
-/** What dealt a hit: a gun, a melee weapon, a grenade, an impulse egg, hot sauce, a barrel, or the storm. */
-export type Cause = WeaponId | MeleeId | 'grenade' | 'impulse' | 'sauce' | 'barrel' | 'storm' | 'left';
-export const CAUSES: readonly Cause[] = [...WEAPON_IDS, ...MELEE_IDS, 'grenade', 'impulse', 'sauce', 'barrel', 'storm', 'left'];
+/** What dealt a hit: a gun, a melee weapon, a grenade (or a MIRV's), an impulse egg, hot sauce, a barrel, or the storm. */
+export type Cause = WeaponId | MeleeId | 'grenade' | 'mirv' | 'impulse' | 'sauce' | 'barrel' | 'storm' | 'left';
+export const CAUSES: readonly Cause[] = [...WEAPON_IDS, ...MELEE_IDS, 'grenade', 'mirv', 'impulse', 'sauce', 'barrel', 'storm', 'left'];
 /** What an egg can have in hand. */
 export type Held = WeaponId | MeleeId | ThrowId;
 export const HELD: readonly Held[] = [...WEAPON_IDS, ...MELEE_IDS, ...THROW_IDS];
 export type Gun = { w: WeaponId; r: number; mag: number };
+
+export type PieceKind = 'wall' | 'ramp' | 'floor' | 'roof';
+export const PIECE_KINDS: readonly PieceKind[] = ['wall', 'ramp', 'floor', 'roof'];
+/** What the build key makes: a piece, or a box of four walls. */
+export type Plan = PieceKind | 'box';
+export const PLANS: readonly Plan[] = ['wall', 'ramp', 'floor', 'roof', 'box'];
 
 /** What a player or the computer wants this frame. The one-shot fields are cleared once read. */
 export type Input = {
@@ -169,7 +223,14 @@ export type Input = {
   slot: number;
   cycle: number;
   interact: boolean;
+  /** Build the piece picked (twice quickly: box up). */
   build: boolean;
+  /** Pick this and build it at once. */
+  piece: Plan | null;
+  /** 1 for the next material, or a material by number plus 10. */
+  mat: number;
+  /** Cut a doorway or a window into our wall in front, or put it back. */
+  edit: boolean;
   /** A consumable to start on: one by name, or the right one for health or for shield. */
   use: UseId | 'bestHeal' | 'bestShield' | null;
   jump: boolean;
@@ -178,18 +239,21 @@ export type Input = {
   /** Take out this kind of throwable. */
   pick: ThrowId | null;
 };
-export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, use: null, jump: false, reach: 0, pick: null });
+export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null });
 
 /** One position report for an egg another client owns. `at` is our clock when it arrived. */
 export type Snap = { at: number; x: number; z: number; y: number; aim: number; vx: number; vz: number };
 
 export type Ai = {
-  /** Where we're off to: loot, a chest (or fridge) to open, a crate (or toilet, or hay bale) to smash, a campfire to warm up at. */
-  goal: 'drop' | 'loot' | 'chest' | 'smash' | 'fire' | 'zone' | 'roam' | 'chase';
+  /**
+   * Where we're off to: loot, a chest (or fridge, or locker) to open, a crate (or toilet, or hay bale) to smash, a
+   * campfire to warm up at, a bank vault's door to open, a tree, rock or car to harvest.
+   */
+  goal: 'drop' | 'loot' | 'chest' | 'smash' | 'fire' | 'zone' | 'roam' | 'chase' | 'harvest' | 'vault';
   gx: number;
   gz: number;
   item: number;
-  /** The container (for chest and smash goals) or the campfire (fire) we're going to. */
+  /** The container (for chest and smash goals), the campfire (fire) or the vault door (vault) we're going to. */
   chest: number;
   /** A bounce pad on the way to somewhere far, or -1. */
   pad: number;
@@ -205,6 +269,8 @@ export type Ai = {
   react: number;
   strafe: number;
   strafeT: number;
+  /** How long we've stood holding a line through a window (a while, then we move on). */
+  sillT: number;
   think: number;
   jumpAt: number;
   stuckT: number;
@@ -224,6 +290,10 @@ export type Ai = {
   steady: number;
   burst: number;
   rest: number;
+  /** What we've let fly lately: [clock, damage if it all lands] for each shot or swing (see LevelSpec `pour`). */
+  poured: [number, number][];
+  /** When the last of it went. */
+  pouredAt: number;
   buildCool: number;
   swapCool: number;
   /** A throw in progress: what, how far, how long it may take, and how many there were before it. `tossA` is the way
@@ -238,6 +308,31 @@ export type Ai = {
   hideT: number;
   hideX: number;
   hideZ: number;
+  /** Boxed in on grid square (boxCx, boxCz) for this long, patching up (under a roof, once `roofed`); then out by side `outQ` for `outT`. */
+  boxT: number;
+  boxCx: number;
+  boxCz: number;
+  roofed: boolean;
+  outT: number;
+  outQ: number;
+  /** Ramping up for the high ground: ramps still to build, the way they rise, how long we may take, how long to hold the top. */
+  climb: number;
+  climbQ: number;
+  climbT: number;
+  highT: number;
+  rampCool: number;
+  /** The last two eggs to hit us and when: both at once is a crossfire. */
+  foe: number;
+  foeAt: number;
+  foe2: number;
+  foe2At: number;
+  /** A tree, rock, car or post to swing at for building material (`harvest` goal), and the wait before the next. */
+  srcX: number;
+  srcZ: number;
+  srcR: number;
+  harvestCool: number;
+  /** An edit to make once we've stopped walking, aimed this way. */
+  editA: number;
 };
 
 export type Fighter = {
@@ -273,9 +368,23 @@ export type Fighter = {
   /** Helmet and vest levels 0..3: each takes a cut of bullets, swings and blasts. */
   helmet: number;
   vest: number;
+  /** Wearing a ghillie suit, and seconds stood still (see GHILLIE). */
+  ghillie: boolean;
+  stillT: number;
+  /** Seconds left dazed by a stun grenade's flash. */
+  stunT: number;
   /** Shield a smoothie still has to give, SIP a second. */
   sip: number;
   wood: number;
+  stone: number;
+  metal: number;
+  /** The material to build with (an index into MATS), and the piece the build key makes. */
+  mat: number;
+  piece: Plan;
+  /** Our clock when the build key was last pressed, for a double press. */
+  buildAt: number;
+  /** The piece we stand on, or -1 (the ground, or someone else's egg, whose owner knows). */
+  on: number;
   /** How far a heavy SMG's spread has grown with the shots just fired, and how far a minigun has spun up (0..1). */
   heat: number;
   spin: number;
@@ -291,6 +400,10 @@ export type Fighter = {
   using: UseId | null;
   useT: number;
   buildT: number;
+  editT: number;
+  /** A build key pressed during the wait between pieces, and when: it builds once the wait is over. */
+  queued: Plan | null;
+  queuedAt: number;
   stormT: number;
   burnT: number;
   /** Seconds left on the hit flash. */
@@ -330,20 +443,36 @@ export type Fighter = {
   dropSeq: number;
   /** Remote eggs whose owner says they are out, though the news of how hasn't arrived yet. */
   outSeen: number;
+  /** What computer eggs have let fly at it lately, as in Ai `poured` (see FOCUS). */
+  incoming: [number, number][];
 };
 
-export type Bullet = { f: number; w: WeaponId; r: number; x: number; z: number; dx: number; dz: number; speed: number; left: number; traveled: number; dmg: number; local: boolean };
+/**
+ * A bullet flies at level `lv` (see aimLevel), fired from level `from` at (ox, oz); `chip` is the last piece it chipped on
+ * its way up.
+ */
+export type Bullet = { f: number; w: WeaponId; r: number; x: number; z: number; dx: number; dz: number; speed: number; left: number; traveled: number; dmg: number; local: boolean; lv: number; from: number; ox: number; oz: number; chip: number };
 export type LootItem = { id: number; def: LootDef; x: number; z: number; by: number; at: number };
-export type Wall = Obb & { id: number; f: number; a: number; hp: number };
-/** Something thrown, flying from (x, z) to (lx, lz) over `ft` seconds from match time `t0`. A grenade goes off at `fuse`. */
-export type Toss = { f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; t0: number; ft: number; fuse: number; local: boolean; landed: boolean };
+/**
+ * A built piece: a wall, a ramp, a floor or a roof, of wood, stone or metal. `cx`, `cz` is its grid square (a wall
+ * stands on its south side when `dir` is 2, its west side when 3), `lv` the level it stands on (a floor or a roof: the
+ * level it lies at), and `dir` the way a ramp rises (0 north, 1 east, 2 south, 3 west). It builds up to `max` health
+ * over the `left` seconds it has still to go. A wall's edit `e` is 0 for solid, 1 for a doorway, 2 for a window.
+ * `parts` are the two sides left standing either side of the gap an edit cuts.
+ */
+export type Wall = Obb & { id: number; f: number; a: number; hp: number; k: PieceKind; mat: Mat; max: number; left: number; cx: number; cz: number; lv: number; dir: number; e: number; parts: Obb[] | null; mark: number };
+/**
+ * Something thrown, flying from (x, z) to (lx, lz) over `ft` seconds from match time `t0`. A grenade goes off at `fuse`.
+ * `small` marks one of the bomblets a MIRV grenade splits into.
+ */
+export type Toss = { f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; t0: number; ft: number; fuse: number; local: boolean; landed: boolean; y0: number; ly: number; small?: boolean };
 /**
  * Something a throw leaves until `until`: a flour cloud (hides whoever is in it), a puddle of hot sauce (burns
  * whoever stands in it) or jam (slows them), or a bush grown from a can (hides whoever stands in it, like any bush).
  */
-export type Zone = { k: 'flour' | 'sauce' | 'jam' | 'bush'; x: number; z: number; r: number; from: number; until: number; by: number };
+export type Zone = { k: 'flour' | 'sauce' | 'jam' | 'bush'; x: number; z: number; y: number; r: number; from: number; until: number; by: number };
 
-export type Thud = 'tree' | 'rock' | 'wall' | 'crate' | 'chest' | 'barrel' | 'car' | 'fence' | 'table' | 'post' | 'fire' | 'log' | 'shelf' | 'seat' | 'built' | 'egg' | 'pan' | 'ground';
+export type Thud = 'tree' | 'rock' | 'wall' | 'window' | 'door' | 'bars' | 'crate' | 'chest' | 'barrel' | 'car' | 'fence' | 'table' | 'post' | 'fire' | 'log' | 'shelf' | 'seat' | 'built' | 'egg' | 'pan' | 'ground';
 
 /** Things that happened this frame, for sounds, effects and the network. `net` marks news that came from it. */
 export type Ev = (
@@ -354,19 +483,24 @@ export type Ev = (
   | { t: 'jump'; f: number }
   | { t: 'bounce'; f: number }
   | { t: 'land'; f: number }
-  | { t: 'shot'; f: number; w: WeaponId; r: number; x: number; z: number; a: number; s: number; k: number }
+  | { t: 'shot'; f: number; w: WeaponId; r: number; x: number; z: number; a: number; s: number; k: number; h: number }
   | { t: 'swing'; f: number }
-  | { t: 'throw'; f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; ft: number }
-  | { t: 'zone'; k: Zone['k']; x: number; z: number }
+  | { t: 'throw'; f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; ft: number; y0: number; ly: number }
+  | { t: 'zone'; k: Zone['k']; x: number; z: number; y: number }
   | { t: 'hit'; f: number; to: number; d: number; took: number; w: Cause; x: number; z: number; shield: boolean; local: boolean }
   | { t: 'hurt'; f: number; d: number; by: number; storm: boolean; shield: boolean }
   | { t: 'thud'; x: number; z: number; what: Thud }
-  | { t: 'smash'; f: number; kind: 'wall' | 'crate'; id: number; d: number; x: number; z: number }
-  | { t: 'boom'; f: number; x: number; z: number }
+  | { t: 'smash'; f: number; kind: 'wall' | 'crate' | 'door'; id: number; d: number; x: number; z: number }
+  | { t: 'glass'; f: number; i: number }
+  | { t: 'latch'; f: number; i: number }
+  | { t: 'door'; f: number; i: number; s: number }
+  | { t: 'stun'; f: number; x: number; z: number }
+  | { t: 'leader'; f: number; kills: number }
+  | { t: 'boom'; f: number; x: number; z: number; y?: number; r?: number }
   | { t: 'pulse'; f: number; x: number; z: number }
   | { t: 'moved'; id: number; x: number; z: number }
   | { t: 'called'; f: number; c: number; x: number; z: number; at: number }
-  | { t: 'harvest'; f: number; x: number; z: number; n: number }
+  | { t: 'harvest'; f: number; x: number; z: number; n: number; mat: Mat }
   | { t: 'reload'; f: number }
   | { t: 'reloaded'; f: number }
   | { t: 'empty'; f: number }
@@ -380,6 +514,7 @@ export type Ev = (
   | { t: 'opened'; c: number; f: number }
   | { t: 'wall'; wall: Wall }
   | { t: 'wallgone'; id: number }
+  | { t: 'edit'; f: number; id: number; e: number }
   | { t: 'end'; winner: number }
 ) & { net?: boolean };
 
@@ -401,13 +536,29 @@ export type Match = {
   tosses: Toss[];
   zones: Zone[];
   loot: Map<number, LootItem>;
-  walls: Map<number, Wall>;
+  /** Everything built (walls, ramps, floors and roofs) by id, found by grid square too. */
+  walls: PieceMap;
   /** Loot and walls already gone, so news that arrives late can't bring them back. */
   gone: Set<number>;
   goneWalls: Set<number>;
   opened: boolean[];
   /** What crates and barrels have left before they break. */
   crateHp: number[];
+  /** Which windows have had their glass broken, by window. */
+  broken: boolean[];
+  /**
+   * Each door's state (DOOR_SHUT and the rest), what it has left before it comes off its hinges, our clock when it last
+   * changed, and (the host's) when a vault door that's opening is open. `vaults` lists the vault doors, and `locked`
+   * the vault door each container is shut behind (-1 for none).
+   */
+  doors: number[];
+  doorHp: number[];
+  doorAt: number[];
+  doorT: number[];
+  vaults: number[];
+  locked: number[];
+  /** The kill leader (the most kills, LEADER_MIN at least, and still in), or -1. */
+  leader: number;
   /** When each egg last called a supply drop with a flare (the host's record). */
   calls: Map<number, number>;
   storm: StormNow;
@@ -435,6 +586,114 @@ export class LootMap extends Map<number, LootItem> {
   clear() {
     this.changes++;
     super.clear();
+  }
+}
+
+/** The grid square a coordinate lies in, and the key a square goes by. */
+export const gridOf = (v: number) => Math.floor(v / CELL_B);
+const cellKey = (cx: number, cz: number) => (cx + 512) * 1024 + cz + 512;
+
+/**
+ * Pieces by id, each also listed under every grid square it covers (a wall under both squares either side of it), so
+ * a ray or an egg only looks at the pieces near it.
+ */
+export class PieceMap extends Map<number, Wall> {
+  cells = new Map<number, Wall[]>();
+  /** For visiting each piece once. */
+  mark = 0;
+  private each(w: Wall, visit: (key: number) => void) {
+    const ext = obbExtent(w);
+    for (let cz = gridOf(w.z - ext.z + 0.01); cz <= gridOf(w.z + ext.z - 0.01); cz++) for (let cx = gridOf(w.x - ext.x + 0.01); cx <= gridOf(w.x + ext.x - 0.01); cx++) visit(cellKey(cx, cz));
+  }
+  set(id: number, w: Wall) {
+    if (this.has(id)) this.delete(id);
+    super.set(id, w);
+    this.each(w, (k) => {
+      const list = this.cells.get(k);
+      if (list) list.push(w);
+      else this.cells.set(k, [w]);
+    });
+    return this;
+  }
+  delete(id: number) {
+    const w = this.get(id);
+    if (!w) return false;
+    this.each(w, (k) => {
+      const list = this.cells.get(k);
+      const at = list ? list.indexOf(w) : -1;
+      if (at >= 0) list!.splice(at, 1);
+      if (list && !list.length) this.cells.delete(k);
+    });
+    return super.delete(id);
+  }
+  clear() {
+    this.cells.clear();
+    super.clear();
+  }
+  /** The pieces listed under one grid square. */
+  at(cx: number, cz: number): readonly Wall[] {
+    return this.cells.get(cellKey(cx, cz)) ?? NO_PIECES;
+  }
+  /** Each piece in the grid squares a box covers, once. */
+  near(x0: number, z0: number, x1: number, z1: number, visit: (w: Wall) => void) {
+    if (!this.size) return;
+    const mark = ++this.mark;
+    for (let cz = gridOf(z0); cz <= gridOf(z1); cz++)
+      for (let cx = gridOf(x0); cx <= gridOf(x1); cx++)
+        for (const w of this.at(cx, cz)) {
+          if (w.mark === mark) continue;
+          w.mark = mark;
+          visit(w);
+        }
+  }
+  /** Each piece in the grid squares a segment crosses, once, from its start on. */
+  along(x0: number, z0: number, x1: number, z1: number, visit: (w: Wall) => void) {
+    if (!this.size) return;
+    const mark = ++this.mark;
+    gridWalk(x0, z0, x1, z1, (cx, cz) => {
+      for (const w of this.at(cx, cz)) {
+        if (w.mark === mark) continue;
+        w.mark = mark;
+        visit(w);
+      }
+    });
+  }
+}
+const NO_PIECES: readonly Wall[] = [];
+
+/** How far a turned box reaches along x and along z from its middle. */
+function obbExtent(o: Obb) {
+  const ca = Math.abs(o.ca);
+  const sa = Math.abs(o.sa);
+  return { x: o.hw * ca + o.hd * sa, z: o.hw * sa + o.hd * ca };
+}
+
+/** Visits the build grid squares a segment crosses, in order. */
+function gridWalk(x0: number, z0: number, x1: number, z1: number, visit: (cx: number, cz: number) => void) {
+  const fx0 = x0 / CELL_B;
+  const fz0 = z0 / CELL_B;
+  let ix = Math.floor(fx0);
+  let iz = Math.floor(fz0);
+  const ex = Math.floor(x1 / CELL_B);
+  const ez = Math.floor(z1 / CELL_B);
+  const dx = x1 / CELL_B - fx0;
+  const dz = z1 / CELL_B - fz0;
+  const sx = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+  const sz = dz > 0 ? 1 : dz < 0 ? -1 : 0;
+  const tdx = sx ? Math.abs(1 / dx) : Infinity;
+  const tdz = sz ? Math.abs(1 / dz) : Infinity;
+  let tmx = sx > 0 ? (ix + 1 - fx0) * tdx : sx < 0 ? (fx0 - ix) * tdx : Infinity;
+  let tmz = sz > 0 ? (iz + 1 - fz0) * tdz : sz < 0 ? (fz0 - iz) * tdz : Infinity;
+  const steps = Math.abs(ex - ix) + Math.abs(ez - iz);
+  for (let i = 0; i <= steps; i++) {
+    visit(ix, iz);
+    if (tmx < tmz) {
+      tmx += tdx;
+      ix += sx;
+    } else {
+      tmz += tdz;
+      iz += sz;
+    }
   }
 }
 
@@ -565,15 +824,26 @@ export function botNames(seed: number): string[] {
 }
 
 /**
- * How sharp the computer players are. `toss` is the seconds between throws (0: never); `build` between walls. `far` is
- * how much wider the aim gets for every 10 meters past 20, and `settle` the seconds a scoped shot waits for a steady aim.
+ * How sharp the computer players are. `toss` is the seconds between throws (0: never); `build` between walls and boxes,
+ * `ramp` between ramping up for the high ground (0: never). `far` is how much wider the aim gets for every 10 meters
+ * past 20, and `settle` the seconds a scoped shot waits for a steady aim. `pour` is the most damage it lets fly in any
+ * POUR_T seconds (every shot landing, and one shot bigger than that waits as much longer), under a full egg's health,
+ * so none cracks an egg from full in about a second.
  */
-type LevelSpec = { err: number; react: number; turn: number; sight: number; lead: number; burst: number; rest: number; build: number; heal: number; toss: number; far: number; settle: number };
+type LevelSpec = { err: number; react: number; turn: number; sight: number; lead: number; burst: number; rest: number; build: number; ramp: number; heal: number; toss: number; far: number; settle: number; pour: number };
 export const LEVEL_SPECS: Record<Level, LevelSpec> = {
-  easy: { err: 0.2, react: 0.85, turn: 3.2, sight: 32, lead: 0, burst: 0.45, rest: 0.6, build: 0, heal: 45, toss: 22, far: 0.5, settle: 1.1 },
-  normal: { err: 0.11, react: 0.5, turn: 6, sight: 42, lead: 0.5, burst: 0.8, rest: 0.35, build: 12, heal: 60, toss: 11, far: 0.35, settle: 0.7 },
-  hard: { err: 0.055, react: 0.28, turn: 9, sight: 52, lead: 1, burst: 1.4, rest: 0.2, build: 5, heal: 70, toss: 6, far: 0.15, settle: 0.4 },
+  easy: { err: 0.2, react: 0.85, turn: 3.2, sight: 32, lead: 0, burst: 0.45, rest: 0.6, build: 24, ramp: 0, heal: 45, toss: 22, far: 0.9, settle: 1.1, pour: 60 },
+  normal: { err: 0.11, react: 0.5, turn: 6, sight: 42, lead: 0.5, burst: 0.8, rest: 0.35, build: 12, ramp: 18, heal: 60, toss: 11, far: 0.9, settle: 0.7, pour: 75 },
+  hard: { err: 0.055, react: 0.28, turn: 9, sight: 52, lead: 1, burst: 1.4, rest: 0.2, build: 5, ramp: 9, heal: 70, toss: 6, far: 0.25, settle: 0.4, pour: 90 },
 };
+
+/** The seconds a computer egg's `pour`, and a pack's FOCUS, are counted over. */
+export const POUR_T = 1.2;
+/**
+ * The most every computer egg together lets fly at one egg in POUR_T seconds: a pack takes turns, and doesn't crack
+ * it from full in about a second either.
+ */
+export const FOCUS = 95;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -620,8 +890,17 @@ function newFighter(id: number, e: Entrant, x: number, z: number): Fighter {
     pack: 0,
     helmet: 0,
     vest: 0,
+    ghillie: false,
+    stillT: 0,
+    stunT: 0,
     sip: 0,
     wood: 30,
+    stone: 0,
+    metal: 0,
+    mat: 0,
+    piece: 'wall',
+    buildAt: -99,
+    on: -1,
     heat: 0,
     spin: 0,
     kx: 0,
@@ -634,6 +913,9 @@ function newFighter(id: number, e: Entrant, x: number, z: number): Fighter {
     using: null,
     useT: 0,
     buildT: 0,
+    editT: 0,
+    queued: null,
+    queuedAt: 0,
     stormT: 0,
     burnT: 0,
     hitT: 0,
@@ -662,6 +944,7 @@ function newFighter(id: number, e: Entrant, x: number, z: number): Fighter {
     wallSeq: 0,
     dropSeq: 0,
     outSeen: -1,
+    incoming: [],
   };
 }
 
@@ -695,6 +978,7 @@ function newAi(m: Match, f: Fighter): Ai {
     react: 0,
     strafe: rng() < 0.5 ? 1 : -1,
     strafeT: 0,
+    sillT: 0,
     think: 0,
     jumpAt,
     stuckT: 0,
@@ -711,6 +995,8 @@ function newAi(m: Match, f: Fighter): Ai {
     steady: 0,
     burst: 0,
     rest: 0,
+    poured: [],
+    pouredAt: -99,
     buildCool: 0,
     swapCool: 0,
     toss: null,
@@ -722,6 +1008,26 @@ function newAi(m: Match, f: Fighter): Ai {
     hideT: 0,
     hideX: 0,
     hideZ: 0,
+    boxT: 0,
+    boxCx: 0,
+    boxCz: 0,
+    roofed: false,
+    outT: 0,
+    outQ: 0,
+    climb: 0,
+    climbQ: 0,
+    climbT: 0,
+    highT: 0,
+    rampCool: 6 + (f.id % 7) * 1.5,
+    foe: -1,
+    foeAt: -99,
+    foe2: -1,
+    foe2At: -99,
+    srcX: 0,
+    srcZ: 0,
+    srcR: 0,
+    harvestCool: 10 + (f.id % 11) * 2,
+    editA: NaN,
   };
 }
 
@@ -746,11 +1052,19 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
     tosses: [],
     zones: [],
     loot: new LootMap(),
-    walls: new Map(),
+    walls: new PieceMap(),
     gone: new Set(),
     goneWalls: new Set(),
     opened: map.containers.map(() => false),
     crateHp: map.containers.map((c) => (c.kind === 'barrel' ? BARREL.hp : c.kind === 'toilet' ? TOILET_HP : c.kind === 'hay' ? HAY_HP : CRATE_HP)),
+    broken: map.windows.map(() => false),
+    doors: map.slabs.map(() => DOOR_SHUT),
+    doorHp: map.slabs.map(() => DOOR_HP),
+    doorAt: map.slabs.map(() => -99),
+    doorT: map.slabs.map(() => Infinity),
+    vaults: map.slabs.filter((s) => s.vault).map((s) => s.i),
+    locked: lockedBy(map),
+    leader: -1,
     calls: new Map(),
     storm: stormAt(map.storm, 0),
     events: [],
@@ -766,6 +1080,20 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
     if (e.kind === 'bot') f.ai = newAi(m, f);
   });
   return m;
+}
+
+/** The vault door each container is shut behind (one in a bank's vault), or -1. */
+function lockedBy(map: GameMap) {
+  const out = map.containers.map(() => -1);
+  for (const s of map.slabs) {
+    if (!s.vault) continue;
+    const b = map.buildings[s.b];
+    // the vault is the room on the inside of its door
+    const vault = b.rooms.find((r) => Math.abs(s.x - s.ox * 1.2 - r.x) < r.hw && Math.abs(s.z - s.oz * 1.2 - r.z) < r.hd);
+    if (!vault) continue;
+    for (const c of map.containers) if (Math.abs(c.x - vault.x) < vault.hw && Math.abs(c.z - vault.z) < vault.hd) out[c.id] = s.i;
+  }
+  return out;
 }
 
 /** Lets the computer play an egg this client owns (tests use it to stand in for people). */
@@ -800,23 +1128,28 @@ export function heldGun(f: Fighter): WeaponId | null {
   return isWeapon(w) ? w : null;
 }
 
-/** Meters of view past the usual: the better of the scope and the gun in hand. */
+/** Meters of view past the usual: the better of the scope and the gun in hand, and more up high. */
 export function viewOf(f: Fighter) {
   const g = heldGun(f);
-  return Math.max(SCOPE_VIEW[clamp(f.scope, 0, 3)] ?? 0, g ? WEAPONS[g].zoom : 0);
+  return Math.max(SCOPE_VIEW[clamp(f.scope, 0, 3)] ?? 0, g ? WEAPONS[g].zoom : 0) + (f.phase === 'ground' ? levelOf(f.y) * HIGH_VIEW : 0);
 }
 
-/** Is a crate, barrel, chest or supply drop there to bump into right now? */
+/** Is a crate, barrel, chest, supply drop or shut door there to bump into right now? */
 export function standing(m: Match, s: Solid) {
   if (s.what === 'crate' || s.what === 'barrel') return !m.opened[s.ref];
   if (s.what === 'chest') return landed(m, m.map.containers[s.ref]);
+  if (s.what === 'door') return shut(m, s.ref);
   return true;
 }
 
+/** A door that's in the way: shut, or a vault door still opening. */
+export const shut = (m: Match, i: number) => m.doors[i] === DOOR_SHUT || m.doors[i] === DOOR_OPENING;
 /** A supply drop is down once its time comes; everything else always is. */
 export const landed = (m: Match, c: Container | undefined) => !!c && (c.kind !== 'supply' || m.time >= c.at);
-/** Chests, fridges and landed supply drops open with the interact key. */
-export const openable = (m: Match, c: Container | undefined) => !!c && (c.kind === 'chest' || c.kind === 'supply' || c.kind === 'fridge') && landed(m, c) && !m.opened[c.id];
+/** Chests, fridges, landed supply drops and the furniture that holds things open with the interact key. */
+export const openable = (m: Match, c: Container | undefined) => !!c && opens(c.kind) && landed(m, c) && !m.opened[c.id];
+/** Shut in a bank vault whose door isn't open yet. */
+export const lockedIn = (m: Match, c: Container) => (m.locked[c.id] ?? -1) >= 0 && shut(m, m.locked[c.id]);
 /** Crates, toilets, hay bales and barrels break when hit. */
 export const breakable = (c: Container | undefined) => !!c && (c.kind === 'crate' || c.kind === 'barrel' || c.kind === 'toilet' || c.kind === 'hay');
 
@@ -838,10 +1171,12 @@ export function step(m: Match, dt: number) {
   if (m.storm.phase !== prev.phase || m.storm.shrinking !== prev.shrinking) emit(m, { t: 'storm', phase: m.storm.phase, shrinking: m.storm.shrinking });
   for (const c of m.map.drops) supplyDue(m, c, before);
   for (const c of m.map.flares) supplyDue(m, c, before);
+  // a vault door that has ground open stays open (the host's call)
+  if (m.world) for (const i of m.vaults) if (m.doors[i] === DOOR_OPENING && m.time >= m.doorT[i]) setDoor(m, i, DOOR_OUT, -1, true);
 
   for (const f of m.fighters) {
     if (f.kind === 'remote') {
-      follow(m, f);
+      follow(m, f, dt);
       continue;
     }
     if (f.phase === 'out') {
@@ -851,10 +1186,26 @@ export function step(m: Match, dt: number) {
     if (f.ai) think(m, f, dt);
     act(m, f, dt);
   }
+  if (m.walls.size) growPieces(m, dt);
   moveBullets(m, dt);
   moveTosses(m);
   if (m.zones.length && m.zones.some((z) => z.until <= m.time)) m.zones = m.zones.filter((z) => z.until > m.time);
+  crown(m);
   if (m.world) settle(m);
+}
+
+/**
+ * Who wears the kill leader's crown: the egg still in with the most kills, LEADER_MIN at least, keeping it until
+ * someone has more. Every client works it out from the kills it has heard of, and says so when it changes.
+ */
+function crown(m: Match) {
+  const was = m.fighters[m.leader];
+  let best = was && alive(was) && was.kills >= LEADER_MIN ? was : null;
+  for (const f of m.fighters) if (alive(f) && f.kills >= LEADER_MIN && f.kills > (best?.kills ?? 0)) best = f;
+  const id = best?.id ?? -1;
+  if (id === m.leader) return;
+  m.leader = id;
+  if (best) emit(m, { t: 'leader', f: id, kills: best.kills, net: true });
 }
 
 /** Everyone hears a supply drop coming as it starts down. */
@@ -869,6 +1220,9 @@ function clearOneShots(inp: Input) {
   inp.cycle = 0;
   inp.interact = false;
   inp.build = false;
+  inp.piece = null;
+  inp.mat = 0;
+  inp.edit = false;
   inp.use = null;
   inp.jump = false;
   inp.pick = null;
@@ -945,8 +1299,11 @@ function act(m: Match, f: Fighter, dt: number) {
     f.z = clamp(f.z + f.vz * dt, -EDGE, EDGE);
     f.y -= FALL * dt;
     if (len > 0.1) f.aim = Math.atan2(inp.mx, inp.mz);
-    if (f.y <= 0) {
-      f.y = 0;
+    // down on the ground, or on a floor or a ramp someone built
+    const under = m.walls.size ? surfaceAt(m, f.x, f.z, f.y + 0.2) : null;
+    if (f.y <= (under?.y ?? 0)) {
+      f.y = under?.y ?? 0;
+      f.on = under?.id ?? -1;
       f.phase = 'ground';
       f.vx *= 0.3;
       f.vz *= 0.3;
@@ -960,7 +1317,9 @@ function act(m: Match, f: Fighter, dt: number) {
   // on the ground
   f.fireT = Math.max(0, f.fireT - dt);
   f.buildT = Math.max(0, f.buildT - dt);
+  f.editT = Math.max(0, f.editT - dt);
   f.hitT = Math.max(0, f.hitT - dt);
+  f.stunT = Math.max(0, f.stunT - dt);
   f.aim = inp.aim;
   if (!usable(f, f.slot)) f.slot = SLOT_MELEE;
 
@@ -1009,16 +1368,35 @@ function act(m: Match, f: Fighter, dt: number) {
     const what = inp.use === 'bestHeal' ? bestUse(f, 'heal') : inp.use === 'bestShield' ? bestUse(f, 'shield') : inp.use;
     if (what) startUse(m, f, what);
   }
-  if (inp.build) build(m, f);
+  if (inp.mat) switchMat(f, inp.mat);
+  if (f.queued && f.buildT <= 0) {
+    const plan = f.queued;
+    f.queued = null;
+    if (m.clock - f.queuedAt < BUILD_WAIT) build(m, f, plan);
+  }
+  if (inp.piece) {
+    // a piece by its own key: picked for the build key, and built at once
+    f.piece = inp.piece;
+    f.buildAt = m.clock;
+    build(m, f, inp.piece);
+  } else if (inp.build) {
+    // the build key twice in quick succession boxes us in (the first press has built its piece already)
+    const twice = m.clock - f.buildAt < BOX_TAP;
+    f.buildAt = twice ? -99 : m.clock;
+    build(m, f, twice ? 'box' : f.piece, twice);
+  }
+  if (inp.edit) edit(m, f);
   if (inp.interact) interact(m, f);
   if (inp.fire && f.fireT <= 0 && f.burst <= 0) trigger(m, f);
 
   // walking: slow through a pond or the river and much slower through jam, a little quicker on a road, slower
-  // spinning a minigun
-  f.wet = waterAt(m.map, f.x, f.z);
-  const jam = m.zones.length > 0 && zoneAt(m, 'jam', f.x, f.z) !== null;
+  // spinning a minigun or dazed by a stun grenade. Up on something built, none of the ground's matters.
+  const afoot = f.y < 0.5;
+  f.wet = afoot && waterAt(m.map, f.x, f.z);
+  const jam = m.zones.length > 0 && zoneAt(m, 'jam', f.x, f.z, f.y) !== null;
   const spun = f.spin > 0 && hs?.spin ? hs.spin.slow : 1;
-  const speed = SPEED * paceOf(f) * (f.using ? 0.5 : 1) * (f.boost > 0 ? BOOST.speed : 1) * (f.wet ? POND_SLOW : roadAt(m.map, f.x, f.z) ? ROAD_SPEED : 1) * (jam ? (THROWS.jam.slow ?? 1) : 1) * spun;
+  const dazed = f.stunT > 0 ? (THROWS.stun.slow ?? 1) : 1;
+  const speed = SPEED * paceOf(f) * (f.using ? 0.5 : 1) * (f.boost > 0 ? BOOST.speed : 1) * (f.wet ? POND_SLOW : afoot && roadAt(m.map, f.x, f.z) ? ROAD_SPEED : 1) * (jam ? (THROWS.jam.slow ?? 1) : 1) * spun * dazed;
   const len = Math.hypot(inp.mx, inp.mz);
   const tx = len > 0 ? (inp.mx / Math.max(1, len)) * speed : 0;
   const tz = len > 0 ? (inp.mz / Math.max(1, len)) * speed : 0;
@@ -1031,6 +1409,7 @@ function act(m: Match, f: Fighter, dt: number) {
   f.x += (f.vx + f.kx) * dt;
   f.z += (f.vz + f.kz) * dt;
   resolve(m, f);
+  climb(m, f, dt);
   // what we bumped into slows us, so we don't keep pushing at a wall (and stops a shove)
   if (dt > 0) {
     const mx = (f.x - ox) / dt;
@@ -1057,9 +1436,10 @@ function act(m: Match, f: Fighter, dt: number) {
   }
 
   autoPickup(m, f);
+  f.stillT = Math.hypot(f.vx, f.vz) < 0.4 ? f.stillT + dt : 0;
 
   // a bounce pad throws us up for a glide, off the way its arrows point
-  const pad = padAt(m.map, f.x, f.z);
+  const pad = f.y < 0.5 ? padAt(m.map, f.x, f.z) : -1;
   if (pad >= 0) {
     const p = m.map.pads[pad];
     f.phase = 'drop';
@@ -1079,6 +1459,8 @@ function act(m: Match, f: Fighter, dt: number) {
     f.inside = -1;
     f.wet = false;
     f.warm = false;
+    f.on = -1;
+    f.stillT = 0;
     emit(m, { t: 'bounce', f: f.id });
     clearOneShots(inp);
     return;
@@ -1093,7 +1475,7 @@ function act(m: Match, f: Fighter, dt: number) {
     f.sip = Math.max(0, f.sip - SIP * dt);
   }
   // a campfire warms you back up, slowly
-  f.warm = fireAt(m.map, f.x, f.z) >= 0;
+  f.warm = f.y < 0.5 && fireAt(m.map, f.x, f.z) >= 0;
   if (f.warm && f.hp < HP_MAX) f.hp = Math.min(HP_MAX, f.hp + CAMP.hps * dt);
 
   const s = m.storm;
@@ -1107,7 +1489,7 @@ function act(m: Match, f: Fighter, dt: number) {
     }
   } else f.stormT = 0;
 
-  const burn = zoneAt(m, 'sauce', f.x, f.z);
+  const burn = zoneAt(m, 'sauce', f.x, f.z, f.y);
   if (burn) {
     f.burnT += dt;
     while (f.burnT >= STORM_TICK && f.phase === 'ground') {
@@ -1116,16 +1498,27 @@ function act(m: Match, f: Fighter, dt: number) {
     }
   } else f.burnT = 0;
 
-  f.bush = coverOf(m, f.x, f.z);
-  f.inside = buildingAt(m.map, f.x, f.z);
+  f.bush = f.y < 0.5 ? coverOf(m, f.x, f.z) : -1;
+  f.inside = f.y < 1 ? buildingAt(m.map, f.x, f.z) : -1;
   clearOneShots(inp);
+}
+
+/** Up a ramp or onto a floor in our stride, else down to whatever is under us (the ground, at worst). */
+function climb(m: Match, f: Fighter, dt: number) {
+  if (!m.walls.size && f.y <= 0) {
+    f.on = -1;
+    return;
+  }
+  const under = surfaceAt(m, f.x, f.z, f.y + STEP_UP);
+  f.y = under.y >= f.y ? under.y : Math.max(under.y, f.y - DROP_V * dt);
+  f.on = under.y >= f.y - 0.01 ? under.id : -1;
 }
 
 /** Cover hiding a point: a bush or a cornfield on the island, or a bush grown from a can (GROWN), else -1. */
 export function coverOf(m: Match, x: number, z: number) {
   const c = coverAt(m.map, x, z);
   if (c >= 0 || !m.zones.length) return c;
-  return zoneAt(m, 'bush', x, z) ? GROWN : -1;
+  return zoneAt(m, 'bush', x, z, 0) ? GROWN : -1;
 }
 
 /** How quick an egg is on its feet with what it holds. */
@@ -1149,27 +1542,33 @@ function switchTo(f: Fighter, slot: number) {
 
 /** Pushes an egg out of everything solid and keeps it on the island. */
 function resolve(m: Match, f: Fighter) {
+  // up on something built, only the tall things on the island and the walls built on our level stand in the way
+  const lv = levelOf(f.y);
   for (let pass = 0; pass < 2; pass++) {
     const ox = f.x;
     const oz = f.z;
     solidsNear(m.map, f.x, f.z, FIGHTER_R + 2.5, (_i, s) => {
-      if (!standing(m, s)) return;
+      if (!standing(m, s) || (lv > 0 && !tall(s, lv))) return;
       const p = s.shape === 'circle' ? pushCircle(f.x, f.z, FIGHTER_R, s.x, s.z, s.r) : pushBox(f.x, f.z, FIGHTER_R, s.x, s.z, s.hw, s.hd);
       if (p) {
         f.x += p.x;
         f.z += p.z;
       }
     });
-    for (const w of m.walls.values()) {
-      if (Math.abs(w.x - f.x) > 3 || Math.abs(w.z - f.z) > 3) continue;
-      const p = pushObb(f.x, f.z, FIGHTER_R, w);
-      if (p) {
-        f.x += p.x;
-        f.z += p.z;
+    const r = FIGHTER_R + WALL_THICK + 0.05;
+    m.walls.near(f.x - r, f.z - r, f.x + r, f.z + r, (w) => {
+      if (w.k !== 'wall' || w.lv !== lv) return;
+      // a doorway lets us through between its two sides
+      for (const o of w.e === 1 && w.parts ? w.parts : [w]) {
+        const p = pushObb(f.x, f.z, FIGHTER_R, o);
+        if (p) {
+          f.x += p.x;
+          f.z += p.z;
+        }
       }
-    }
+    });
     for (const o of m.fighters) {
-      if (o === f || Math.abs(o.x - f.x) >= 2 * FIGHTER_R || Math.abs(o.z - f.z) >= 2 * FIGHTER_R || !fighting(o)) continue;
+      if (o === f || Math.abs(o.x - f.x) >= 2 * FIGHTER_R || Math.abs(o.z - f.z) >= 2 * FIGHTER_R || !fighting(o) || Math.abs(o.y - f.y) > 1.5) continue;
       const p = pushCircle(f.x, f.z, FIGHTER_R, o.x, o.z, FIGHTER_R);
       if (p) {
         f.x += p.x * 0.5;
@@ -1235,6 +1634,7 @@ function shoot(m: Match, f: Fighter, g: Gun) {
   const spec = WEAPONS[g.w];
   g.mag--;
   if (!spec.silent) f.firedAt = m.clock;
+  if (f.ai) pour(m, f.ai, damageOf(g.w, g.r) * spec.pellets);
   const moving = clamp(Math.hypot(f.vx, f.vz) / SPEED, 0, 1);
   // a heavy SMG climbs: each shot wider than the last until you let it settle
   const k = r2(1 + moving * 0.6 + f.heat);
@@ -1243,8 +1643,9 @@ function shoot(m: Match, f: Fighter, g: Gun) {
   const a = r2(f.aim);
   const x = r2(f.x);
   const z = r2(f.z);
-  fire(m, f.id, g.w, g.r, x, z, a, s, k, true);
-  emit(m, { t: 'shot', f: f.id, w: g.w, r: g.r, x, z, a, s, k });
+  const h = aimLevel(m, f, spec.range);
+  fire(m, f.id, g.w, g.r, x, z, a, s, k, true, h, levelOf(f.y));
+  emit(m, { t: 'shot', f: f.id, w: g.w, r: g.r, x, z, a, s, k, h });
   if (spec.call) {
     // the flare goes up and the gun is spent; the host sends a supply drop to land near here
     f.guns[f.slot] = null;
@@ -1264,8 +1665,41 @@ function shoot(m: Match, f: Fighter, g: Gun) {
   }
 }
 
-/** Puts a shot's bullets in the air. The same seed gives the same pellets on every client. */
-export function fire(m: Match, fid: number, w: WeaponId, r: number, x: number, z: number, a: number, seed: number, k: number, local: boolean) {
+/**
+ * The level a shot flies at: our own, or higher when it's aimed up at an egg up high (or, with no egg in its way, at
+ * something built up high), so it goes over what's lower than that (see castRay).
+ */
+function aimLevel(m: Match, f: Fighter, range: number) {
+  const lv = levelOf(f.y);
+  if (lv >= MAX_LEVEL || (!m.walls.size && f.y <= 0)) return lv;
+  const dx = Math.sin(f.aim);
+  const dz = Math.cos(f.aim);
+  let best = Infinity;
+  let at = lv;
+  for (const o of m.fighters) {
+    if (o === f || !fighting(o) || Math.abs(o.x - f.x) > range || Math.abs(o.z - f.z) > range) continue;
+    const t = rayCircle(f.x, f.z, dx, dz, range, o.x, o.z, HIT_R + 0.5);
+    if (t < best) {
+      best = t;
+      at = Math.max(lv, levelOf(o.y));
+    }
+  }
+  if (best < Infinity) return at;
+  const cx = gridOf(f.x);
+  const cz = gridOf(f.z);
+  m.walls.along(f.x, f.z, f.x + dx * range, f.z + dz * range, (w) => {
+    if (w.k === 'wall' || (w.cx === cx && w.cz === cz) || (w.k === 'ramp' ? w.lv < lv : w.lv <= lv)) return;
+    const t = rayObb(f.x, f.z, dx, dz, range, w);
+    if (t < best) {
+      best = t;
+      at = Math.min(MAX_LEVEL, w.lv);
+    }
+  });
+  return at;
+}
+
+/** Puts a shot's bullets in the air, at level `lv` (fired from level `from`). The same seed gives the same pellets on every client. */
+export function fire(m: Match, fid: number, w: WeaponId, r: number, x: number, z: number, a: number, seed: number, k: number, local: boolean, lv = 0, from = lv) {
   const spec = WEAPONS[w];
   const rng = rng32(seed);
   const dmg = damageOf(w, r);
@@ -1273,7 +1707,7 @@ export function fire(m: Match, fid: number, w: WeaponId, r: number, x: number, z
     // pellets spread evenly across the cone, each jittered a little
     const u = spec.pellets > 1 ? ((p + rng()) / spec.pellets) * 2 - 1 : rng() * 2 - 1;
     const ang = a + u * spec.spread * k;
-    m.bullets.push({ f: fid, w, r, x, z, dx: Math.sin(ang), dz: Math.cos(ang), speed: spec.speed * (spec.pellets > 1 ? 0.92 + rng() * 0.16 : 1), left: spec.range, traveled: 0, dmg, local });
+    m.bullets.push({ f: fid, w, r, x, z, dx: Math.sin(ang), dz: Math.cos(ang), speed: spec.speed * (spec.pellets > 1 ? 0.92 + rng() * 0.16 : 1), left: spec.range, traveled: 0, dmg, local, lv, from, ox: x, oz: z, chip: -1 });
   }
   if (m.bullets.length > 900) m.bullets.splice(0, m.bullets.length - 900);
 }
@@ -1344,12 +1778,13 @@ function swing(m: Match, f: Fighter) {
   const spec = MELEE[f.melee];
   f.fireT = 1 / spec.rate;
   f.firedAt = m.clock;
+  if (f.ai) pour(m, f.ai, spec.dmg);
   emit(m, { t: 'swing', f: f.id });
   // an egg in front of us first
   let best: Fighter | null = null;
   let bestD = Infinity;
   for (const o of m.fighters) {
-    if (o === f || !fighting(o)) continue;
+    if (o === f || !fighting(o) || Math.abs(o.y - f.y) > 1.6) continue;
     const d = Math.hypot(o.x - f.x, o.z - f.z);
     if (d > spec.range + FIGHTER_R || d >= bestD) continue;
     if (Math.abs(angleDiff(Math.atan2(o.x - f.x, o.z - f.z), f.aim)) > spec.arc) continue;
@@ -1357,19 +1792,26 @@ function swing(m: Match, f: Fighter) {
     bestD = d;
   }
   if (best) return strike(m, f, best, spec.dmg, f.melee, best.x, best.z);
-  // then a wall, crate, barrel, tree or fallen log just ahead (a fence or a table too, for the bonk)
+  // then a wall, ramp, crate, barrel, tree, rock, car or fallen log just ahead (a fence or a table too, for the bonk)
   const fx = Math.sin(f.aim);
   const fz = Math.cos(f.aim);
-  const hit = castRay(m, f.x, f.z, fx, fz, spec.range, -1, false, true);
+  const lv = levelOf(f.y);
+  let hit = castRay(m, f.x, f.z, fx, fz, spec.range, -1, false, true, lv);
+  const ramp = rampAhead(m, f, fx, fz, Math.min(spec.range, hit?.t ?? Infinity));
+  if (ramp) hit = ramp;
   if (!hit) return;
   const x = f.x + fx * hit.t;
   const z = f.z + fz * hit.t;
-  if (hit.what === 'tree' || hit.what === 'log') {
-    const n = Math.min(spec.wood, WOOD_MAX - f.wood);
-    f.wood += n;
-    emit(m, { t: 'harvest', f: f.id, x, z, n });
+  const mat = MAT_OF[hit.what];
+  if (mat !== undefined) {
+    // wood from a tree or a log, stone from a rock, metal from a car or a lamp post
+    const n = Math.min(Math.max(1, Math.round(spec.wood * MAT_SPECS[mat].yield)), MAT_MAX - f[mat]);
+    f[mat] += n;
+    emit(m, { t: 'harvest', f: f.id, x, z, n, mat });
   } else if (hit.what === 'crate' || hit.what === 'barrel') smashCrate(m, f, hit.ref, spec.dmg * spec.wallMult, x, z);
   else if (hit.what === 'built') smashWall(m, f, hit.ref, spec.dmg * spec.wallMult, x, z);
+  else if (hit.what === 'window' && !m.broken[hit.ref]) breakGlass(m, hit.ref, f.id, true);
+  else if (hit.what === 'door') smashDoor(m, f, hit.ref, spec.dmg * spec.wallMult, x, z);
   else emit(m, { t: 'thud', x, z, what: hit.what });
 }
 
@@ -1461,7 +1903,8 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   if (f.pack > 0) spill.push({ kind: 'pack', lv: f.pack });
   if (f.helmet > 0) spill.push({ kind: 'helmet', lv: f.helmet });
   if (f.vest > 0) spill.push({ kind: 'vest', lv: f.vest });
-  if (f.wood >= 10) spill.push({ kind: 'wood', n: Math.floor(f.wood / 2) });
+  for (const mat of MATS) if (f[mat] >= 10) spill.push({ kind: mat, n: Math.floor(f[mat] / 2) });
+  if (f.ghillie) spill.push({ kind: 'ghillie' });
   f.guns = [null, null];
   f.melee = 'spatula';
   f.ammo = { light: 0, heavy: 0, shells: 0, rockets: 0 };
@@ -1471,12 +1914,16 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   f.pack = 0;
   f.helmet = 0;
   f.vest = 0;
+  f.ghillie = false;
+  f.stunT = 0;
   f.wood = 0;
+  f.stone = 0;
+  f.metal = 0;
   const rad = spill.length > 1 ? 1 + spill.length * 0.07 : 0;
   spill.forEach((def, i) => {
     const a = (i / spill.length) * Math.PI * 2;
     // in a ring round the egg, short of anything solid (never through a wall, or under a bed out of reach)
-    const hit = rad > 0 ? castRay(m, f.x, f.z, Math.sin(a), Math.cos(a), rad + 0.4, -1, false, true) : null;
+    const hit = rad > 0 ? castRay(m, f.x, f.z, Math.sin(a), Math.cos(a), rad + 0.4, -1, false, true, levelOf(f.y)) : null;
     const r = hit ? Math.max(0, hit.t - 0.4) : rad;
     dropItem(m, f, def, clamp(f.x + Math.sin(a) * r, -EDGE, EDGE), clamp(f.z + Math.cos(a) * r, -EDGE, EDGE));
   });
@@ -1514,47 +1961,109 @@ export function forfeit(m: Match, fid: number) {
 type RayHit = { t: number; what: Thud; ref: number; fighter: Fighter | null };
 
 /**
- * The first thing a ray meets within `len`: trees, rocks, building walls, cars, posts, crates and barrels still
- * standing, chests, landed supply drops, built walls, and (when `eggs`) any egg in the fight except `skip`. Low
- * things (fences, tables, fire pits) only count when `lows`: bullets and eyes go over them, feet and swings don't.
+ * The first thing a ray meets within `len`: trees, rocks, building walls, shut doors, cars, posts, crates and barrels
+ * still standing, chests, landed supply drops, built walls, and (when `eggs`) any egg in the fight except `skip`. Low
+ * things (fences, tables, fire pits, a jail cell's bars and its barred door) only count when `lows`: bullets and eyes
+ * go over or through them, feet and swings don't. A window stops bullets and throws until its glass is broken
+ * (`glass`), the eye never (`open`), and feet and swings always (`shut`, and whenever `lows`: there's wall below it).
+ * Without `doors`, a shut door is no more in the way than an open one (one could open it).
+ *
+ * `lv` is the level the ray runs at. Up high it only meets the tall things on the island and the walls built on that
+ * level (a window is wall up there, and a doorway open). A ray between two levels runs at the higher one: an egg up
+ * high sees and shoots over everything lower than it, and anyone it can see can shoot back. So a ray from `lv` meets
+ * an egg higher up past whatever is in the way at `lv`, if nothing is in the way at the egg's level. The gap a doorway
+ * or a window cuts in a built wall lets rays through (only a doorway lets feet through: `lows` rays are feet).
  */
-export function castRay(m: Match, x: number, z: number, dx: number, dz: number, len: number, skip: number, eggs: boolean, lows = false): RayHit | null {
+export function castRay(m: Match, x: number, z: number, dx: number, dz: number, len: number, skip: number, eggs: boolean, lows = false, lv = 0, windows: 'glass' | 'open' | 'shut' = 'glass', doors = true): RayHit | null {
   let best = null as RayHit | null;
+  const glass = lows ? 'shut' : windows;
   solidsAlong(m.map, x, z, x + dx * len, z + dz * len, (_i, s) => {
-    if (!standing(m, s) || (!lows && low(s))) return;
+    if (lv > 0) {
+      if (s.what === 'door' || !tall(s, lv)) return;
+    } else if (s.what === 'window') {
+      if (glass === 'open' || (glass === 'glass' && m.broken[s.ref])) return;
+    } else if (s.what === 'door') {
+      if (!doors || !shut(m, s.ref) || (!lows && m.map.slabs[s.ref]?.bars)) return;
+    } else if (!standing(m, s) || (!lows && low(s))) return;
     const t = raySolid(s, x, z, dx, dz, len);
-    if (t < (best?.t ?? Infinity)) best = { t, what: s.what, ref: s.ref, fighter: null };
+    // up high a window is just wall
+    if (t < (best?.t ?? Infinity)) best = { t, what: lv > 0 && s.what === 'window' ? 'wall' : s.what, ref: s.ref, fighter: null };
   });
-  for (const w of m.walls.values()) {
-    // a cheap reach test before the exact one
-    const ex = w.x - x;
-    const ez = w.z - z;
-    const along = ex * dx + ez * dz;
-    if (along < -WALL_HALF - 1 || along > len + WALL_HALF + 1) continue;
-    if (Math.abs(ex * dz - ez * dx) > WALL_HALF + 1) continue;
-    const t = rayObb(x, z, dx, dz, len, w);
+  m.walls.along(x, z, x + dx * len, z + dz * len, (w) => {
+    if (w.k !== 'wall' || w.lv !== lv) return;
+    const t = rayWall(x, z, dx, dz, len, w, lows);
     if (t < (best?.t ?? Infinity)) best = { t, what: 'built', ref: w.id, fighter: null };
-  }
+  });
   if (eggs) {
     // the box round the ray, for a cheap miss first
     const x0 = Math.min(x, x + dx * len) - HIT_R;
     const x1 = Math.max(x, x + dx * len) + HIT_R;
     const z0 = Math.min(z, z + dz * len) - HIT_R;
     const z1 = Math.max(z, z + dz * len) + HIT_R;
+    const wall = best?.t ?? Infinity;
+    let egg = null as RayHit | null;
     for (const o of m.fighters) {
       if (o.x < x0 || o.x > x1 || o.z < z0 || o.z > z1 || o.id === skip || !fighting(o)) continue;
       const t = rayCircle(x, z, dx, dz, len, o.x, o.z, HIT_R);
-      if (t < (best?.t ?? Infinity)) best = { t, what: 'egg', ref: o.id, fighter: o };
+      if (t >= (egg?.t ?? Infinity)) continue;
+      const ol = levelOf(o.y);
+      if (ol <= lv ? t >= wall : castRay(m, x, z, dx, dz, t, skip, false, false, ol, windows, doors)) continue;
+      egg = { t, what: 'egg', ref: o.id, fighter: o };
     }
+    if (egg) return egg;
   }
   return best;
 }
 
-/** True when nothing solid stands between two points. */
-export function clearLine(m: Match, x0: number, z0: number, x1: number, z1: number) {
+/** True when nothing solid stands between two points (at level `lv`, see castRay): the line of sight, which goes through windows. */
+export function clearLine(m: Match, x0: number, z0: number, x1: number, z1: number, lv = 0) {
   const len = Math.hypot(x1 - x0, z1 - z0);
   if (len < 1e-6) return true;
-  return castRay(m, x0, z0, (x1 - x0) / len, (z1 - z0) / len, len, -1, false) === null;
+  return castRay(m, x0, z0, (x1 - x0) / len, (z1 - z0) / len, len, -1, false, false, lv, 'open') === null;
+}
+
+/** True when nothing stands between two eggs, at the higher one's level. */
+export const clearBetween = (m: Match, a: Fighter, b: Fighter) => clearLine(m, a.x, a.z, b.x, b.z, Math.max(levelOf(a.y), levelOf(b.y)));
+
+/** The things on the island that stand taller than a storey: trees and lamp posts always, buildings (windows too) below the top level. */
+const tall = (s: Solid, lv: number) => s.what === 'tree' || s.what === 'post' || ((s.what === 'wall' || s.what === 'window') && lv < MAX_LEVEL);
+
+/** The material a swing at a thing gathers. */
+const MAT_OF: Partial<Record<Thud, Mat>> = { tree: 'wood', log: 'wood', rock: 'stone', car: 'metal', post: 'metal' };
+
+/** Distance along a ray to a built wall: through the gap of a doorway, or of a window unless it's feet (`lows`). */
+function rayWall(x: number, z: number, dx: number, dz: number, len: number, w: Wall, lows: boolean) {
+  if (!w.parts || (lows && w.e === 2)) return rayObb(x, z, dx, dz, len, w);
+  return Math.min(rayObb(x, z, dx, dz, len, w.parts[0]), rayObb(x, z, dx, dz, len, w.parts[1]));
+}
+
+/** The ramp on our level a swing from `f` meets within `len` (not one we stand on), as a ray hit. */
+function rampAhead(m: Match, f: Fighter, dx: number, dz: number, len: number): RayHit | null {
+  const lv = levelOf(f.y);
+  let best = null as RayHit | null;
+  m.walls.along(f.x, f.z, f.x + dx * len, f.z + dz * len, (w) => {
+    if (w.k !== 'ramp' || w.lv !== lv || w.id === f.on || (w.cx === gridOf(f.x) && w.cz === gridOf(f.z))) return;
+    const t = rayObb(f.x, f.z, dx, dz, len, w);
+    if (t < (best?.t ?? Infinity)) best = { t, what: 'built', ref: w.id, fighter: null };
+  });
+  return best;
+}
+
+/** True when the line between two points is clear to the eye, but only through a window (broken or not). */
+function inWindow(m: Match, x0: number, z0: number, x1: number, z1: number) {
+  const len = Math.hypot(x1 - x0, z1 - z0);
+  if (len < 1e-6 || !clearLine(m, x0, z0, x1, z1)) return false;
+  return castRay(m, x0, z0, (x1 - x0) / len, (z1 - z0) / len, len, -1, false, false, 0, 'shut')?.what === 'window';
+}
+
+/**
+ * True when nothing that stops bullets stands between two points, nor a window (a way you could walk, give or take a
+ * fence, opening any door on the way).
+ */
+function openWay(m: Match, x0: number, z0: number, x1: number, z1: number) {
+  const len = Math.hypot(x1 - x0, z1 - z0);
+  if (len < 1e-6) return true;
+  return castRay(m, x0, z0, (x1 - x0) / len, (z1 - z0) / len, len, -1, false, false, 0, 'shut', false) === null;
 }
 
 const falloff = (w: WeaponId, dist: number) => {
@@ -1567,26 +2076,28 @@ function moveBullets(m: Match, dt: number) {
   const keep: Bullet[] = [];
   for (const b of m.bullets) {
     const reach = Math.min(b.speed * dt, b.left);
-    const hit = castRay(m, b.x, b.z, b.dx, b.dz, reach, b.f, true);
+    const hit = castRay(m, b.x, b.z, b.dx, b.dz, reach, b.f, true, false, b.lv);
+    // a bullet passing under a floor or a roof, or through a ramp, chips it on the way (not one the shooter stood in)
+    if (b.local && m.walls.size) chipUnder(m, b, hit ? hit.t : reach);
     if (!hit) {
       b.x += b.dx * reach;
       b.z += b.dz * reach;
       b.left -= reach;
       b.traveled += reach;
       if (b.left > 1e-6) keep.push(b);
-      else if (b.w === 'launcher' && b.local) blast(m, b.f, b.x, b.z, WEAPONS.launcher.splash ?? 4, b.dmg, WEAPONS.launcher.wallMult, 'launcher');
+      else if (b.w === 'launcher' && b.local) blast(m, b.f, b.x, b.z, WEAPONS.launcher.splash ?? 4, b.dmg, WEAPONS.launcher.wallMult, 'launcher', b.lv * LEVEL_H);
       continue;
     }
     const x = b.x + b.dx * hit.t;
     const z = b.z + b.dz * hit.t;
     const pan = !!hit.fighter && b.w !== 'launcher' && panBlocks(hit.fighter, b.dx, b.dz);
     if (!b.local) {
-      // someone else's bullet: their client decides what it did, we only draw where it stopped
+      // someone else's bullet: their client decides what it did (glass too), we only draw where it stopped
       if (b.w !== 'launcher') emit(m, { t: 'thud', x, z, what: pan ? 'pan' : hit.what, net: true });
       continue;
     }
     if (b.w === 'launcher') {
-      blast(m, b.f, x - b.dx * 0.3, z - b.dz * 0.3, WEAPONS.launcher.splash ?? 4, b.dmg, WEAPONS.launcher.wallMult, 'launcher');
+      blast(m, b.f, x - b.dx * 0.3, z - b.dz * 0.3, WEAPONS.launcher.splash ?? 4, b.dmg, WEAPONS.launcher.wallMult, 'launcher', hit.fighter ? hit.fighter.y : b.lv * LEVEL_H);
       continue;
     }
     const shooter = m.fighters[b.f];
@@ -1595,25 +2106,45 @@ function moveBullets(m: Match, dt: number) {
     else if (hit.fighter && shooter) strike(m, shooter, hit.fighter, d, b.w, x, z);
     else if ((hit.what === 'crate' || hit.what === 'barrel') && shooter) smashCrate(m, shooter, hit.ref, d * WEAPONS[b.w].wallMult, x, z);
     else if (hit.what === 'built' && shooter) smashWall(m, shooter, hit.ref, d * WEAPONS[b.w].wallMult, x, z);
+    // the first bullet through a window breaks the glass and stops there; the next goes through
+    else if (hit.what === 'window') breakGlass(m, hit.ref, b.f, true);
+    else if (hit.what === 'door' && shooter) smashDoor(m, shooter, hit.ref, d * WEAPONS[b.w].wallMult, x, z);
     else emit(m, { t: 'thud', x, z, what: hit.what });
   }
   m.bullets = keep;
 }
 
 /**
+ * Bullet damage to the floors, roofs and ramps a bullet aimed up from lower down passes under (or through) within
+ * `len`, up to the level it flies at: shooting up at an egg on a tower chips the tower.
+ */
+function chipUnder(m: Match, b: Bullet, len: number) {
+  const shooter = m.fighters[b.f];
+  if (!shooter) return;
+  m.walls.along(b.x, b.z, b.x + b.dx * len, b.z + b.dz * len, (w) => {
+    if (w.id === b.chip || w.k === 'wall' || w.lv > b.lv || (w.k === 'ramp' ? w.lv < b.from : w.lv <= b.from)) return;
+    if (gridOf(b.ox) === w.cx && gridOf(b.oz) === w.cz) return;
+    if (rayObb(b.x, b.z, b.dx, b.dz, len, w) === Infinity) return;
+    b.chip = w.id;
+    smashWall(m, shooter, w.id, b.dmg * falloff(b.w, b.traveled) * WEAPONS[b.w].wallMult, b.x, b.z);
+  });
+}
+
+/**
  * Something this client set off bursts (a launcher egg or a grenade): eggs, walls, crates and barrels nearby take less
  * the farther they are. Never the one who set it off.
  */
-function blast(m: Match, fid: number, x: number, z: number, R: number, dmg: number, wallMult: number, cause: Cause) {
+function blast(m: Match, fid: number, x: number, z: number, R: number, dmg: number, wallMult: number, cause: Cause, y = 0) {
   const shooter = m.fighters[fid];
-  emit(m, { t: 'boom', f: fid, x: r2(x), z: r2(z) });
+  // a small one (a MIRV's bomblet) says how small, for its bang
+  emit(m, R < 4 ? { t: 'boom', f: fid, x: r2(x), z: r2(z), y: r1(y), r: r1(R) } : { t: 'boom', f: fid, x: r2(x), z: r2(z), y: r1(y) });
   if (!shooter) return;
   for (const o of m.fighters) {
-    if (o.id === fid || !fighting(o)) continue;
+    if (o.id === fid || !fighting(o) || Math.abs(o.y - y) > 2.5) continue;
     const d = Math.max(0, Math.hypot(o.x - x, o.z - z) - HIT_R);
     if (d < R) strike(m, shooter, o, dmg * (1 - (0.6 * d) / R), cause, o.x, o.z);
   }
-  for (const w of [...m.walls.values()]) {
+  for (const w of piecesIn(m, x, z, y, R)) {
     const d = Math.max(0, Math.hypot(w.x - x, w.z - z) - WALL_HALF);
     if (d < R) smashWall(m, shooter, w.id, dmg * wallMult * (1 - (0.6 * d) / R), w.x, w.z);
   }
@@ -1622,6 +2153,123 @@ function blast(m: Match, fid: number, x: number, z: number, R: number, dmg: numb
     const d = Math.max(0, Math.hypot(c.x - x, c.z - z) - 0.7);
     if (d < R) smashCrate(m, shooter, c.id, dmg * wallMult * (1 - (0.6 * d) / R), c.x, c.z);
   }
+  for (const s of doorsNear(m, x, z, R)) smashDoor(m, shooter, s.i, dmg * wallMult * (1 - (0.6 * s.d) / R), s.x, s.z);
+  shatter(m, fid, x, z, R);
+}
+
+/** The shut doors (not vault doors, which never break) within `R` of a point, and how far each is. */
+function doorsNear(m: Match, x: number, z: number, R: number) {
+  const out: { i: number; d: number; x: number; z: number }[] = [];
+  for (const s of m.map.slabs) {
+    if (s.vault || m.doors[s.i] !== DOOR_SHUT || Math.abs(s.x - x) > R + 2 || Math.abs(s.z - z) > R + 2) continue;
+    const d = Math.hypot(Math.max(0, Math.abs(x - s.x) - s.hw), Math.max(0, Math.abs(z - s.z) - s.hd));
+    if (d < R) out.push({ i: s.i, d, x: s.x, z: s.z });
+  }
+  return out;
+}
+
+/** Every window whose glass is within `R` of a blast breaks. */
+function shatter(m: Match, by: number, x: number, z: number, R: number) {
+  for (const p of m.map.windows) {
+    if (m.broken[p.i] || Math.abs(p.x - x) > R + 2 || Math.abs(p.z - z) > R + 2) continue;
+    const dx = Math.max(0, Math.abs(x - p.x) - p.hw);
+    const dz = Math.max(0, Math.abs(z - p.z) - p.hd);
+    if (dx * dx + dz * dz < R * R) breakGlass(m, p.i, by, true);
+  }
+}
+
+/**
+ * A window's glass breaks, on this client's word (`announce`: what it hit, for the network) or on the news. Glass only
+ * ever breaks, so whoever breaks it first is right. False when it was already broken.
+ */
+export function breakGlass(m: Match, i: number, by: number, announce: boolean) {
+  if (i < 0 || i >= m.broken.length || m.broken[i]) return false;
+  m.broken[i] = true;
+  emit(m, announce ? { t: 'glass', f: by, i } : { t: 'glass', f: by, i, net: true });
+  return true;
+}
+
+/** Damage to a shut door from something this client did. A vault door only takes the dent. */
+function smashDoor(m: Match, by: Fighter, i: number, dmg: number, x: number, z: number) {
+  const s = m.map.slabs[i];
+  if (!s || s.vault || m.doors[i] !== DOOR_SHUT) {
+    emit(m, { t: 'thud', x, z, what: 'door' });
+    return;
+  }
+  const d = Math.max(1, Math.round(dmg));
+  emit(m, { t: 'smash', f: by.id, kind: 'door', id: i, d, x: r2(x), z: r2(z) });
+  damageDoor(m, i, d, by.id, true);
+}
+
+/** Door damage from anyone. Only the host (or a solo game) knocks a door off its hinges. */
+export function damageDoor(m: Match, i: number, d: number, by: number, announce: boolean) {
+  const s = m.map.slabs[i];
+  if (!s || s.vault || m.doors[i] !== DOOR_SHUT) return;
+  m.doorHp[i] -= d;
+  if (m.world && m.doorHp[i] <= 0) setDoor(m, i, DOOR_GONE, by, announce);
+}
+
+/**
+ * The nearest door within reach of an egg (from where it stands to the doorway) that it can open or shut: not one
+ * knocked off its hinges, nor a vault door that's opening or open. -1 for none.
+ */
+export function doorNear(m: Match, f: Fighter, reach = DOOR_R) {
+  let best = -1;
+  let bestD = reach;
+  for (const s of m.map.slabs) {
+    if (Math.abs(s.x - f.x) > reach + 2 || Math.abs(s.z - f.z) > reach + 2) continue;
+    const st = m.doors[s.i];
+    if (st === DOOR_GONE || st === DOOR_OPENING || (s.vault && st !== DOOR_SHUT)) continue;
+    const d = slabGap(s, f.x, f.z);
+    if (d <= bestD) {
+      best = s.i;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/** How far a point is from a doorway (0 in it). */
+export const slabGap = (s: Box, x: number, z: number) => Math.hypot(Math.max(0, Math.abs(x - s.x) - s.hw), Math.max(0, Math.abs(z - s.z) - s.hd));
+
+/** Opens or shuts a door: here (solo and the host), or by asking the host. */
+export function requestDoor(m: Match, f: Fighter, i: number) {
+  if (m.world) return toggleDoor(m, i, f.id, f.x, f.z, true);
+  const asked = f.pending.get(-1_000_000 - i);
+  if (asked !== undefined && m.clock - asked < 1) return false;
+  f.pending.set(-1_000_000 - i, m.clock);
+  emit(m, { t: 'latch', f: f.id, i });
+  return true;
+}
+
+/**
+ * The host opens or shuts a door for an egg standing at (x, z): it swings open away from that egg, and shut again; a
+ * vault door starts grinding open and stays open once it is (see step). One knocked off its hinges stays gone, and a
+ * door just moved waits a moment. Returns false when nothing happened.
+ */
+export function toggleDoor(m: Match, i: number, fid: number, x: number, z: number, announce: boolean) {
+  const s = m.map.slabs[i];
+  const now = m.doors[i];
+  if (!m.world || !s || now === DOOR_GONE || now === DOOR_OPENING || m.clock - m.doorAt[i] < 0.3) return false;
+  if (s.vault) {
+    if (now !== DOOR_SHUT) return false;
+    m.doorT[i] = m.time + VAULT_TIME;
+    setDoor(m, i, DOOR_OPENING, fid, announce);
+    return true;
+  }
+  const side = (x - s.x) * s.ox + (z - s.z) * s.oz >= 0 ? 1 : -1;
+  setDoor(m, i, now === DOOR_SHUT ? (side > 0 ? DOOR_IN : DOOR_OUT) : DOOR_SHUT, fid, announce);
+  return true;
+}
+
+/** A door's new state, on this client's word (`announce`, the host) or on the host's. */
+export function setDoor(m: Match, i: number, s: number, by: number, announce: boolean) {
+  if (i < 0 || i >= m.doors.length || m.doors[i] === s) return;
+  m.doors[i] = s;
+  m.doorAt[i] = m.clock;
+  if (s === DOOR_GONE) m.doorHp[i] = 0;
+  for (const f of m.fighters) f.pending.delete(-1_000_000 - i);
+  emit(m, announce ? { t: 'door', f: by, i, s } : { t: 'door', f: by, i, s, net: true });
 }
 
 function smashWall(m: Match, by: Fighter, id: number, dmg: number, x: number, z: number) {
@@ -1650,8 +2298,15 @@ export function damageWall(m: Match, id: number, d: number, announce: boolean) {
 
 export function removeWall(m: Match, id: number, announce: boolean) {
   m.goneWalls.add(id);
-  if (!m.walls.delete(id)) return;
+  const w = m.walls.get(id);
+  if (!w || !m.walls.delete(id)) return;
   emit(m, announce ? { t: 'wallgone', id } : { t: 'wallgone', id, net: true });
+  if (!m.world) return;
+  // the host also brings down whatever stood on it and now stands on nothing
+  touching(m, w, (o) => {
+    const fall = m.walls.has(o.id) ? adrift(m, o) : null;
+    if (fall) for (const p of fall) removeWall(m, p.id, true);
+  });
 }
 
 /** Crate or barrel damage from anyone. Only the host (or a solo game) breaks one. */
@@ -1683,12 +2338,12 @@ function explode(m: Match, box: Container, by: number) {
   // every client draws its own bang, so it isn't news for the network
   emit(m, { t: 'boom', f: by, x: box.x, z: box.z, net: true });
   for (const o of m.fighters) {
-    if (!owned(o) || !fighting(o)) continue;
+    if (!owned(o) || !fighting(o) || o.y > 2.5) continue;
     const d = Math.max(0, Math.hypot(o.x - box.x, o.z - box.z) - HIT_R);
     if (d < R) hurt(m, o, BARREL.dmg * (1 - (0.6 * d) / R), by, 'barrel', false);
   }
   if (!m.world) return;
-  for (const w of [...m.walls.values()]) {
+  for (const w of piecesIn(m, box.x, box.z, 0, R)) {
     const d = Math.max(0, Math.hypot(w.x - box.x, w.z - box.z) - WALL_HALF);
     if (d < R) damageWall(m, w.id, Math.round(BARREL.dmg * 2 * (1 - (0.6 * d) / R)), true);
   }
@@ -1697,6 +2352,8 @@ function explode(m: Match, box: Container, by: number) {
     const d = Math.max(0, Math.hypot(c.x - box.x, c.z - box.z) - 0.7);
     if (d < R) damageCrate(m, c.id, Math.round(BARREL.dmg * (1 - (0.6 * d) / R)), by, true);
   }
+  for (const s of doorsNear(m, box.x, box.z, R)) damageDoor(m, s.i, Math.round(BARREL.dmg * 2 * (1 - (0.6 * s.d) / R)), by, true);
+  shatter(m, by, box.x, box.z, R);
 }
 
 /** Eight ways round a point, a step apart, for looking for room. */
@@ -1767,16 +2424,21 @@ function toss(m: Match, f: Fighter) {
   const dz = Math.cos(a);
   const x = r2(f.x);
   const z = r2(f.z);
-  const hit = castRay(m, x, z, dx, dz, dist, f.id, false);
-  const reach = hit ? Math.max(0, hit.t - 0.6) : dist;
+  const hit = castRay(m, x, z, dx, dz, dist, f.id, false, false, levelOf(f.y));
+  let reach = hit ? Math.max(0, hit.t - 0.6) : dist;
+  // a roof we aren't under turns it away: it lands short, off the roof's edge
+  if (m.walls.size) reach = offRoofs(m, f, x, z, dx, dz, reach);
   const lx = r2(clamp(x + dx * reach, -EDGE, EDGE));
   const lz = r2(clamp(z + dz * reach, -EDGE, EDGE));
   const ft = r2(Math.max(0.25, reach / THROW.speed));
+  // it comes down on a floor or a ramp no higher than us, else the ground
+  const y0 = r1(f.y);
+  const ly = m.walls.size ? r1(surfaceAt(m, lx, lz, f.y + 0.5).y) : 0;
   f.throws[k]--;
   f.fireT = THROW.cool;
   f.firedAt = m.clock;
-  launch(m, f.id, k, x, z, lx, lz, ft, true);
-  emit(m, { t: 'throw', f: f.id, k, x, z, lx, lz, ft });
+  launch(m, f.id, k, x, z, lx, lz, ft, true, y0, ly);
+  emit(m, { t: 'throw', f: f.id, k, x, z, lx, lz, ft, y0, ly });
   if (f.throws[k] <= 0) {
     const next = THROW_IDS.find((t) => f.throws[t] > 0);
     if (next) f.pick = next;
@@ -1785,55 +2447,124 @@ function toss(m: Match, f: Fighter) {
 }
 
 /** Puts something thrown in the air. Every client flies it the same way from the same numbers. */
-export function launch(m: Match, fid: number, k: ThrowId, x: number, z: number, lx: number, lz: number, ft: number, local: boolean) {
-  m.tosses.push({ f: fid, k, x, z, lx, lz, t0: m.time, ft, fuse: m.time + Math.max(ft, THROWS[k].fuse ?? 0), local, landed: false });
+export function launch(m: Match, fid: number, k: ThrowId, x: number, z: number, lx: number, lz: number, ft: number, local: boolean, y0 = 0, ly = 0) {
+  m.tosses.push({ f: fid, k, x, z, lx, lz, t0: m.time, ft, fuse: m.time + Math.max(ft, THROWS[k].fuse ?? 0), local, landed: false, y0, ly });
 }
 
 /** Where something thrown is right now, and how high. */
 export function tossAt(t: Toss, time: number) {
   const u = clamp((time - t.t0) / t.ft, 0, 1);
   const peak = 1.5 + Math.hypot(t.lx - t.x, t.lz - t.z) * 0.12;
-  return { x: t.x + (t.lx - t.x) * u, z: t.z + (t.lz - t.z) * u, y: 1 + (0.25 - 1) * u + 4 * peak * u * (1 - u) };
+  return { x: t.x + (t.lx - t.x) * u, z: t.z + (t.lz - t.z) * u, y: t.y0 + 1 + (t.ly + 0.25 - t.y0 - 1) * u + 4 * peak * u * (1 - u) };
+}
+
+/**
+ * How far a throw from (x, z) along (dx, dz) goes before a roof turns it away: one over a square we aren't under,
+ * higher than where the throw would come down. It drops off the edge, short of the square.
+ */
+function offRoofs(m: Match, f: Fighter, x: number, z: number, dx: number, dz: number, reach: number) {
+  const mine = roofOver(m, f.x, f.z, f.y);
+  for (let tries = 0; tries < 4; tries++) {
+    const lx = x + dx * reach;
+    const lz = z + dz * reach;
+    const roof = roofOver(m, lx, lz, surfaceAt(m, lx, lz, f.y + 0.5).y);
+    if (roof < 0 || roof === mine) break;
+    const w = m.walls.get(roof)!;
+    const t = rayBox(x, z, dx, dz, reach, w.x, w.z, CELL_B / 2, CELL_B / 2);
+    reach = Math.max(0, (t === Infinity ? reach : t) - 0.5);
+  }
+  return reach;
 }
 
 function moveTosses(m: Match) {
   if (!m.tosses.length) return;
   const keep: Toss[] = [];
+  // bomblets a MIRV splits into this frame fly from the next
+  const split: Toss[] = [];
   for (const t of m.tosses) {
     if (!t.landed && m.time >= t.t0 + t.ft) {
       t.landed = true;
-      if (t.k !== 'grenade' && t.k !== 'impulse') {
+      if (t.k === 'flour' || t.k === 'sauce' || t.k === 'jam' || t.k === 'bush') {
         const spec = THROWS[t.k];
-        m.zones.push({ k: t.k, x: t.lx, z: t.lz, r: spec.radius, from: m.time, until: m.time + (spec.time ?? 0), by: t.f });
-        emit(m, { t: 'zone', k: t.k, x: t.lx, z: t.lz });
+        m.zones.push({ k: t.k, x: t.lx, z: t.lz, y: t.ly, r: spec.radius, from: m.time, until: m.time + (spec.time ?? 0), by: t.f });
+        emit(m, { t: 'zone', k: t.k, x: t.lx, z: t.lz, y: t.ly });
         continue;
       }
     }
     if (t.k === 'grenade' && m.time >= t.fuse) {
       // the thrower's client decides what it did, like any shot; everyone else hears the bang from it
       const spec = THROWS.grenade;
-      if (t.local) blast(m, t.f, t.lx, t.lz, spec.radius, spec.dmg ?? 0, 2.5, 'grenade');
+      if (t.local) blast(m, t.f, t.lx, t.lz, spec.radius, spec.dmg ?? 0, 2.5, 'grenade', t.ly);
+      continue;
+    }
+    if (t.k === 'mirv' && m.time >= t.fuse) {
+      // a small bang, then (the grenade itself) a scatter of bomblets that each go off a moment later
+      const spec = THROWS.mirv;
+      const s = spec.split!;
+      if (t.local) blast(m, t.f, t.lx, t.lz, t.small ? s.radius : spec.radius, t.small ? s.dmg : (spec.dmg ?? 0), 1.5, 'mirv');
+      if (!t.small) split.push(...bomblets(m, t));
+      continue;
+    }
+    if (t.k === 'stun' && m.time >= t.fuse) {
+      flashBang(m, t.f, t.lx, t.lz, t.ly);
       continue;
     }
     if (t.k === 'impulse' && m.time >= t.fuse) {
-      pulse(m, t.f, t.lx, t.lz);
+      pulse(m, t.f, t.lx, t.lz, t.ly);
       continue;
     }
     keep.push(t);
   }
-  m.tosses = keep;
+  m.tosses = split.length ? [...keep, ...split] : keep;
+}
+
+/**
+ * The bomblets a MIRV grenade that went off at (lx, lz) scatters: the same ones on every client, from where it burst
+ * and who threw it, each short of anything solid in its way.
+ */
+function bomblets(m: Match, t: Toss): Toss[] {
+  const s = THROWS.mirv.split!;
+  const rng = rng32((Math.round(t.lx * 100) * 73856093) ^ (Math.round(t.lz * 100) * 19349663) ^ (t.f * 83492791));
+  const out: Toss[] = [];
+  for (let k = 0; k < s.n; k++) {
+    const a = ((k + rng() * 0.6) / s.n) * Math.PI * 2;
+    const dx = Math.sin(a);
+    const dz = Math.cos(a);
+    const want = s.reach * (0.45 + rng() * 0.55);
+    const hit = castRay(m, t.lx, t.lz, dx, dz, want, -1, false, false, levelOf(t.ly));
+    const go = hit ? Math.max(0, hit.t - 0.4) : want;
+    const ft = r2(0.35 + rng() * 0.3);
+    out.push({ f: t.f, k: 'mirv', x: t.lx, z: t.lz, lx: r2(clamp(t.lx + dx * go, -EDGE, EDGE)), lz: r2(clamp(t.lz + dz * go, -EDGE, EDGE)), t0: m.time, ft, fuse: m.time + ft + 0.15 + rng() * 0.45, local: t.local, landed: false, y0: t.ly, ly: t.ly, small: true });
+  }
+  return out;
+}
+
+/**
+ * A stun grenade goes off on every client at once. Each client dazes the eggs it owns (all but the thrower's) that
+ * could see the flash: within its radius with nothing solid between, longest up close.
+ */
+function flashBang(m: Match, fid: number, x: number, z: number, y = 0) {
+  const spec = THROWS.stun;
+  emit(m, { t: 'stun', f: fid, x, z, net: true });
+  for (const o of m.fighters) {
+    if (o.id === fid || !owned(o) || !fighting(o)) continue;
+    const d = Math.hypot(o.x - x, o.z - z);
+    if (d >= spec.radius || !clearLine(m, o.x, o.z, x, z, Math.max(levelOf(o.y), levelOf(y)))) continue;
+    o.stunT = Math.max(o.stunT, (spec.time ?? 0) * (1 - (0.6 * d) / spec.radius));
+    if (o.ai) o.ai.react = Math.max(o.ai.react, o.stunT * 0.5);
+  }
 }
 
 /**
  * An impulse egg goes off on every client at once. Each client shoves (and nicks) the eggs it owns, all but the
  * thrower's; the host also shoves the loot nearby and tells everyone where it ended up.
  */
-function pulse(m: Match, fid: number, x: number, z: number) {
+function pulse(m: Match, fid: number, x: number, z: number, y = 0) {
   const spec = THROWS.impulse;
   const R = spec.radius;
   emit(m, { t: 'pulse', f: fid, x, z, net: true });
   for (const o of m.fighters) {
-    if (o.id === fid || !owned(o) || !fighting(o)) continue;
+    if (o.id === fid || !owned(o) || !fighting(o) || Math.abs(o.y - y) > 2.5) continue;
     const dx = o.x - x;
     const dz = o.z - z;
     const d = Math.hypot(dx, dz);
@@ -1845,7 +2576,7 @@ function pulse(m: Match, fid: number, x: number, z: number) {
     o.kz += uz * (spec.push ?? 0) * k;
     hurt(m, o, (spec.dmg ?? 0) * k, fid, 'impulse', false);
   }
-  if (!m.world) return;
+  if (!m.world || y > 0.5) return;
   for (const l of [...m.loot.values()]) {
     const dx = l.x - x;
     const dz = l.z - z;
@@ -1873,11 +2604,11 @@ export function moveLoot(m: Match, id: number, x: number, z: number, announce: b
   emit(m, announce ? { t: 'moved', id, x: l.x, z: l.z } : { t: 'moved', id, x: l.x, z: l.z, net: true });
 }
 
-/** The newest cloud or puddle of a kind over a point, or null. */
-export function zoneAt(m: Match, k: Zone['k'], x: number, z: number) {
+/** The newest cloud or puddle of a kind over a point (at height `y`: one on a floor up high, or on the ground), or null. */
+export function zoneAt(m: Match, k: Zone['k'], x: number, z: number, y?: number) {
   for (let i = m.zones.length - 1; i >= 0; i--) {
     const zn = m.zones[i];
-    if (zn.k === k && zn.until > m.time && (zn.x - x) * (zn.x - x) + (zn.z - z) * (zn.z - z) < zn.r * zn.r) return zn;
+    if (zn.k === k && zn.until > m.time && (zn.x - x) * (zn.x - x) + (zn.z - z) * (zn.z - z) < zn.r * zn.r && (y === undefined || Math.abs(zn.y - y) < (k === 'flour' ? 3 : 1.5))) return zn;
   }
   return null;
 }
@@ -1894,35 +2625,292 @@ function flourBetween(m: Match, x0: number, z0: number, x1: number, z1: number) 
 // -------------------------------------------------------------------------------------------------------------------
 // Building.
 
-/** Where a wall built from (x, z) stands: WALL_DIST ahead, square to the aim (snapped to eighths of a turn). */
-function wallSpot(x: number, z: number, aim: number) {
-  const a = r2(Math.round(aim / (Math.PI / 4)) * (Math.PI / 4));
-  return { a, x: r2(x + Math.sin(a) * WALL_DIST), z: r2(z + Math.cos(a) * WALL_DIST) };
+/** One step north, east, south and west (`dir` 0 to 3). */
+export const DIR_X = [0, 1, 0, -1] as const;
+export const DIR_Z = [1, 0, -1, 0] as const;
+
+/** The way (0 to 3) nearest an aim. */
+export const dirOf = (aim: number) => (((Math.round(aim / (Math.PI / 2)) % 4) + 4) % 4);
+
+/** The level an egg stands on, from how high it is (partway up a ramp, the one it's nearer). */
+export const levelOf = (y: number) => clamp(Math.floor((y + 0.8) / LEVEL_H), 0, MAX_LEVEL);
+
+/** A piece to build: what, on which grid square, on what level and which way (see Wall). */
+export type Slot = { k: PieceKind; cx: number; cz: number; lv: number; dir: number };
+
+/** The wall on side `dir` of a square, as walls are kept: on the south (2) or the west (3) side of a square. */
+export function wallSlot(cx: number, cz: number, dir: number, lv: number): Slot {
+  if (dir === 0) return { k: 'wall', cx, cz: cz + 1, lv, dir: 2 };
+  if (dir === 1) return { k: 'wall', cx: cx + 1, cz, lv, dir: 3 };
+  return { k: 'wall', cx, cz, lv, dir };
 }
 
-/** Builds a wall in front of an egg. */
-function build(m: Match, f: Fighter) {
-  if (f.wood < WALL_COST || f.buildT > 0) return null;
-  const { a, x, z } = wallSpot(f.x, f.z, f.aim);
-  if (Math.abs(x) > EDGE || Math.abs(z) > EDGE) return null;
-  f.wood -= WALL_COST;
-  f.buildT = BUILD_COOL;
-  const wall = makeWall(wallId(f.id, f.wallSeq++), f.id, x, z, a, WALL_HP);
-  m.walls.set(wall.id, wall);
-  // a copy, so the news goes out with the wall as built, whatever hits it later this frame
-  emit(m, { t: 'wall', wall: { ...wall } });
-  return wall;
+/** What can't share a place: two walls on one side of a square, two ramps on one square and level, or a floor and a roof. */
+const slotKey = (s: Slot) => (cellKey(s.cx, s.cz) * 4 + (s.k === 'wall' ? s.dir - 2 : s.k === 'ramp' ? 2 : 3)) * 4 + s.lv;
+
+/** The piece in a slot, if there is one. */
+export function pieceIn(m: Match, s: Slot) {
+  const key = slotKey(s);
+  return m.walls.at(s.cx, s.cz).find((w) => w.dir >= 0 && slotKey(w) === key);
 }
 
+/** A piece on the grid, building up from a tenth of its health unless told otherwise. */
+export function makePiece(id: number, f: number, k: PieceKind, mat: Mat, cx: number, cz: number, lv: number, dir: number, hp?: number, left?: number, e = 0): Wall {
+  const max = MAT_SPECS[mat].hp;
+  const start = { hp: hp ?? Math.round(max * BUILD_START), left: left ?? MAT_SPECS[mat].time };
+  if (k === 'wall') {
+    const south = dir === 2;
+    const w: Wall = { id, f, x: (cx + (south ? 0.5 : 0)) * CELL_B, z: (cz + (south ? 0 : 0.5)) * CELL_B, a: south ? 0 : Math.PI / 2, sa: south ? 0 : 1, ca: south ? 1 : 0, hw: WALL_HALF, hd: WALL_THICK, ...start, k, mat, max, cx, cz, lv, dir, e: 0, parts: null, mark: 0 };
+    if (e) setEdit(w, e);
+    return w;
+  }
+  return { id, f, x: (cx + 0.5) * CELL_B, z: (cz + 0.5) * CELL_B, a: (dir * Math.PI) / 2, sa: DIR_X[dir], ca: DIR_Z[dir], hw: CELL_B / 2, hd: CELL_B / 2, ...start, k, mat, max, cx, cz, lv, dir, e: 0, parts: null, mark: 0 };
+}
+
+/** A wood wall anywhere, at any angle, already built (tests put them where walls came up in matches). */
 export function makeWall(id: number, f: number, x: number, z: number, a: number, hp: number): Wall {
-  return { id, f, x, z, a, sa: Math.sin(a), ca: Math.cos(a), hw: WALL_HALF, hd: WALL_THICK, hp };
+  return { id, f, x, z, a, sa: Math.sin(a), ca: Math.cos(a), hw: WALL_HALF, hd: WALL_THICK, hp, k: 'wall', mat: 'wood', max: Math.max(hp, WALL_HP), left: 0, cx: gridOf(x), cz: gridOf(z), lv: 0, dir: -1, e: 0, parts: null, mark: 0 };
 }
 
-/** A wall someone else built. */
+/**
+ * Where the build key puts what it makes for an egg, by the way it faces and how high it stands: a wall on the side of
+ * its square it faces, a box on all four, a roof over its square a storey up, and a ramp or a floor on the square in
+ * front. A ramp starts from how high our side of that square is (the top of the ramp we're on, the floor we stand
+ * on), a floor lies there too but never lower than the first level. Empty where there's no room up there.
+ */
+export function planPiece(m: Match, f: Fighter, k: Plan, aim = f.aim): Slot[] {
+  const q = dirOf(aim);
+  const cx = gridOf(f.x);
+  const cz = gridOf(f.z);
+  const lv = levelOf(f.y);
+  if (k === 'box') return [0, 1, 2, 3].map((i) => wallSlot(cx, cz, (q + i) % 4, lv));
+  if (k === 'wall') return [wallSlot(cx, cz, q, lv)];
+  if (k === 'roof') return [{ k, cx, cz, lv: lv + 1, dir: 0 }];
+  const on = f.on >= 0 ? m.walls.get(f.on) : undefined;
+  const edge = on && on.k === 'ramp' && on.cx === cx && on.cz === cz ? levelOf(rampY(on, (cx + 0.5 + DIR_X[q] * 0.49) * CELL_B, (cz + 0.5 + DIR_Z[q] * 0.49) * CELL_B)) : lv;
+  const fx = cx + DIR_X[q];
+  const fz = cz + DIR_Z[q];
+  if (k === 'ramp') return edge < MAX_LEVEL ? [{ k, cx: fx, cz: fz, lv: edge, dir: q }] : [];
+  return [{ k, cx: fx, cz: fz, lv: Math.max(1, edge), dir: 0 }];
+}
+
+/** The box a piece fills, across the island and up from the ground. */
+function boxOf(w: Wall) {
+  const ext = obbExtent(w);
+  const y = w.lv * LEVEL_H;
+  return { x0: w.x - ext.x, x1: w.x + ext.x, z0: w.z - ext.z, z1: w.z + ext.z, y0: w.k === 'floor' ? y - 0.2 : y, y1: w.k === 'floor' ? y : w.k === 'roof' ? y + 1.4 : y + LEVEL_H };
+}
+type Bounds = ReturnType<typeof boxOf>;
+const touches = (a: Bounds, b: Bounds) => a.x0 <= b.x1 + 0.06 && b.x0 <= a.x1 + 0.06 && a.z0 <= b.z1 + 0.06 && b.z0 <= a.z1 + 0.06 && a.y0 <= b.y1 + 0.06 && b.y0 <= a.y1 + 0.06;
+
+/** Stands on the ground: a wall or a ramp on the bottom level, or a floor, which stands on posts of its own. */
+const grounded = (w: Wall) => w.k === 'floor' || ((w.k === 'wall' || w.k === 'ramp') && w.lv === 0);
+
+/** Each piece touching `w`. */
+function touching(m: Match, w: Wall, visit: (o: Wall) => void) {
+  const b = boxOf(w);
+  const found: Wall[] = [];
+  m.walls.near(b.x0 - 0.1, b.z0 - 0.1, b.x1 + 0.1, b.z1 + 0.1, (o) => {
+    if (o !== w && touches(b, boxOf(o))) found.push(o);
+  });
+  for (const o of found) visit(o);
+}
+
+/** Can a piece go up: on the island, where nothing else is, and on the ground or against something that is. */
+function canBuild(m: Match, w: Wall) {
+  if (Math.abs(w.x) > EDGE || Math.abs(w.z) > EDGE || m.walls.size >= MAX_PIECES || pieceIn(m, w)) return false;
+  if (grounded(w)) return true;
+  let held = false;
+  touching(m, w, () => (held = true));
+  return held;
+}
+
+/** The material to build with: the one picked, or the next with enough left for a piece (which becomes the one picked). */
+function matFor(f: Fighter): Mat | null {
+  for (let i = 0; i < MATS.length; i++) {
+    const at = (f.mat + i) % MATS.length;
+    if (f[MATS[at]] >= PIECE_COST) {
+      f.mat = at;
+      return MATS[at];
+    }
+  }
+  return null;
+}
+
+/** The next material, or one by number (plus 10). */
+function switchMat(f: Fighter, v: number) {
+  f.mat = v >= 10 ? clamp(v - 10, 0, MATS.length - 1) : (f.mat + 1) % MATS.length;
+}
+
+/** Builds what the build key makes for an egg (`force` for a box, which needn't wait for the last piece). */
+function build(m: Match, f: Fighter, plan: Plan, force = false) {
+  const built: Wall[] = [];
+  if (f.phase !== 'ground') return built;
+  if (f.buildT > 0 && !force) {
+    f.queued = plan;
+    f.queuedAt = m.clock;
+    return built;
+  }
+  for (const s of planPiece(m, f, plan)) {
+    const mat = matFor(f);
+    if (!mat) break;
+    const w = makePiece(wallId(f.id, f.wallSeq), f.id, s.k, mat, s.cx, s.cz, s.lv, s.dir);
+    if (!canBuild(m, w)) continue;
+    f.wallSeq++;
+    f[mat] -= PIECE_COST;
+    m.walls.set(w.id, w);
+    built.push(w);
+    // a copy, so the news goes out with the piece as built, whatever hits it later this frame
+    emit(m, { t: 'wall', wall: { ...w } });
+  }
+  if (built.length) f.buildT = BUILD_COOL;
+  return built;
+}
+
+/** Pieces going up build toward their full health (less whatever hit them meanwhile). */
+function growPieces(m: Match, dt: number) {
+  for (const w of m.walls.values()) {
+    if (w.left <= 0) continue;
+    const d = Math.min(dt, w.left);
+    w.left = Math.max(0, w.left - dt);
+    w.hp = Math.min(w.max, w.hp + (d * w.max * (1 - BUILD_START)) / MAT_SPECS[w.mat].time);
+    if (w.left <= 0) w.hp = Math.round(w.hp * 100) / 100;
+  }
+}
+
+/** How high a ramp is at a point over its square. */
+export function rampY(w: Wall, x: number, z: number) {
+  const u = w.dir === 0 ? z / CELL_B - w.cz : w.dir === 1 ? x / CELL_B - w.cx : w.dir === 2 ? w.cz + 1 - z / CELL_B : w.cx + 1 - x / CELL_B;
+  return (w.lv + clamp(u, 0, 1)) * LEVEL_H;
+}
+
+/** The highest floor or ramp under a point no higher than `top`, and which piece (else the ground, -1). */
+export function surfaceAt(m: Match, x: number, z: number, top: number) {
+  let y = 0;
+  let id = -1;
+  for (const w of m.walls.at(gridOf(x), gridOf(z))) {
+    if (w.k !== 'floor' && w.k !== 'ramp') continue;
+    const h = w.k === 'floor' ? w.lv * LEVEL_H : rampY(w, x, z);
+    if (h <= top && h > y) {
+      y = h;
+      id = w.id;
+    }
+  }
+  return { y, id };
+}
+
+/** The roof over a point at height `y` (no more than a storey above it), or -1. */
+export function roofOver(m: Match, x: number, z: number, y: number) {
+  let best = -1;
+  let low = Infinity;
+  for (const w of m.walls.at(gridOf(x), gridOf(z))) {
+    if (w.k !== 'roof') continue;
+    const h = w.lv * LEVEL_H;
+    if (h > y + 0.5 && h <= y + LEVEL_H + 0.5 && h < low) {
+      best = w.id;
+      low = h;
+    }
+  }
+  return best;
+}
+
+/** The pieces a blast at (x, y, z) of radius R might reach. */
+function piecesIn(m: Match, x: number, z: number, y: number, R: number) {
+  const out: Wall[] = [];
+  const r = R + CELL_B;
+  m.walls.near(x - r, z - r, x + r, z + r, (w) => {
+    const b = boxOf(w);
+    if (b.y0 <= y + R * 0.6 && b.y1 >= y - R * 0.6) out.push(w);
+  });
+  return out;
+}
+
+/** Cuts the gap for an edit (or fills it back in): the wall's two sides either side of it. */
+function setEdit(w: Wall, e: number) {
+  w.e = e;
+  if (!e) {
+    w.parts = null;
+    return;
+  }
+  const half = (w.hw - GAP) / 2;
+  const off = GAP + half;
+  // along the wall is (ca, -sa)
+  w.parts = [-1, 1].map((k) => ({ x: w.x + w.ca * off * k, z: w.z - w.sa * off * k, sa: w.sa, ca: w.ca, hw: half, hd: w.hd }));
+}
+
+/** The wall of ours the edit key works on: the side of our square we face, else one of ours just ahead. */
+export function editable(m: Match, f: Fighter) {
+  const lv = levelOf(f.y);
+  const side = pieceIn(m, wallSlot(gridOf(f.x), gridOf(f.z), dirOf(f.aim), lv));
+  if (side && side.f === f.id) return side;
+  const dx = Math.sin(f.aim);
+  const dz = Math.cos(f.aim);
+  let best: Wall | undefined;
+  let near = 2.6;
+  m.walls.along(f.x, f.z, f.x + dx * near, f.z + dz * near, (w) => {
+    if (w.k !== 'wall' || w.lv !== lv || w.f !== f.id) return;
+    const t = rayObb(f.x, f.z, dx, dz, 2.6, w);
+    if (t < near) {
+      best = w;
+      near = t;
+    }
+  });
+  return best;
+}
+
+/** Cuts a doorway into the wall of ours in front of us, then a window in place of it, then fills it back in. */
+function edit(m: Match, f: Fighter) {
+  if (f.editT > 0 || f.phase !== 'ground') return;
+  const w = editable(m, f);
+  if (!w) return;
+  const e = (w.e + 1) % 3;
+  setEdit(w, e);
+  f.editT = EDIT_COOL;
+  emit(m, { t: 'edit', f: f.id, id: w.id, e });
+}
+
+/** An edit someone else made to a wall of theirs. Returns false for one that isn't theirs (or isn't here). */
+export function applyEdit(m: Match, fid: number, id: number, e: number) {
+  const w = m.walls.get(id);
+  if (!w || w.k !== 'wall' || w.f !== fid) return false;
+  if (w.e !== e) setEdit(w, e);
+  emit(m, { t: 'edit', f: fid, id, e, net: true });
+  return true;
+}
+
+/**
+ * A piece someone else built. The host turns one down where another already stands (two eggs built in one place at
+ * once): it is gone for everyone, as if it broke. Returns false for one turned down, or already here (or gone).
+ */
 export function addWall(m: Match, wall: Wall) {
-  if (m.walls.has(wall.id) || m.goneWalls.has(wall.id)) return;
+  if (m.walls.has(wall.id) || m.goneWalls.has(wall.id)) return false;
+  if (m.world && wall.dir >= 0 && pieceIn(m, wall)) {
+    m.goneWalls.add(wall.id);
+    emit(m, { t: 'wallgone', id: wall.id });
+    return false;
+  }
   m.walls.set(wall.id, wall);
   emit(m, { t: 'wall', wall, net: true });
+  return true;
+}
+
+/**
+ * The pieces joined to `w` when none of them reaches the ground (they would fall), else null. Gives up (and says they
+ * stand) past a few hundred, which no tower reaches.
+ */
+function adrift(m: Match, w: Wall): Wall[] | null {
+  const seen = new Set<Wall>([w]);
+  const queue = [w];
+  while (queue.length) {
+    const p = queue.pop()!;
+    if (grounded(p) || seen.size > 300) return null;
+    touching(m, p, (o) => {
+      if (seen.has(o)) return;
+      seen.add(o);
+      queue.push(o);
+    });
+  }
+  return [...seen];
 }
 
 // -------------------------------------------------------------------------------------------------------------------
@@ -1953,8 +2941,12 @@ export function wants(f: Fighter, def: LootDef, manual: boolean) {
       return def.lv > f.scope;
     case 'pack':
       return def.lv > f.pack;
+    case 'ghillie':
+      return !f.ghillie;
     case 'wood':
-      return f.wood < WOOD_MAX;
+    case 'stone':
+    case 'metal':
+      return f[def.kind] < MAT_MAX;
   }
 }
 
@@ -1981,12 +2973,20 @@ export function nearestChest(m: Match, f: Fighter, reach = CHEST_R) {
     // a supply drop is a bigger box, so it can be opened from a little farther off
     const r = c.kind === 'supply' ? reach + 0.4 : reach;
     const d = (c.x - f.x) * (c.x - f.x) + (c.z - f.z) * (c.z - f.z);
-    if (d <= r * r && d < bestD) {
+    if (d <= r * r && d < bestD && inReach(m, f, c)) {
       best = c.id;
       bestD = d;
     }
   }
   return best;
+}
+
+/** Nothing solid between an egg and a container but the container itself: no reaching through a wall or a shut door. */
+function inReach(m: Match, f: Fighter, c: Container) {
+  const d = Math.hypot(c.x - f.x, c.z - f.z);
+  if (d < 0.05) return true;
+  const hit = castRay(m, f.x, f.z, (c.x - f.x) / d, (c.z - f.z) / d, d, f.id, false, false, 0, 'shut');
+  return !hit || (hit.what === 'chest' && hit.ref === c.id);
 }
 
 /** Loot and containers are looked up by where they lie, in cells this many meters square. */
@@ -2062,16 +3062,20 @@ function containersNear(map: GameMap, x: number, z: number, r: number, visit: (c
   for (let cz = spotOf(z - r); cz <= spotOf(z + r); cz++) for (let cx = spotOf(x - r); cx <= spotOf(x + r); cx++) for (const id of got.cells[cx + cz * SPOTS]) visit(map.containers[id]);
 }
 
-/** What the interact key would do right now: open a chest, or pick something up (a gun or melee weapon swaps). */
-export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootItem; swap: boolean } | null {
-  if (f.phase !== 'ground') return null;
+/**
+ * What the interact key would do right now: open a chest (or a fridge, a locker and the like), pick something up (a
+ * gun or melee weapon swaps), or open or shut a door, whichever is nearest (a door only when it is clearly nearer).
+ */
+export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootItem; swap: boolean } | { door: number } | null {
+  if (f.phase !== 'ground' || f.y > 1) return null;
   // not something we just asked the host for (an ask it turned down expires), nor what we just put down
   const item = nearestLoot(m, f, PICK_R, (l) => wants(f, l.def, true) && !asking(m, f, l.id) && !(l.by === f.id && m.time - l.at < 3));
   const chest = nearestChest(m, f);
-  if (chest >= 0) {
-    const c = m.map.containers[chest];
-    if (!item || Math.hypot(c.x - f.x, c.z - f.z) < Math.hypot(item.x - f.x, item.z - f.z)) return { chest };
-  }
+  const door = doorNear(m, f);
+  const itemD = item ? Math.hypot(item.x - f.x, item.z - f.z) : Infinity;
+  const chestD = chest >= 0 ? Math.hypot(m.map.containers[chest].x - f.x, m.map.containers[chest].z - f.z) : Infinity;
+  if (door >= 0 && !asking(m, f, -1_000_000 - door) && slabGap(m.map.slabs[door], f.x, f.z) + 1 < Math.min(itemD, chestD)) return { door };
+  if (chest >= 0 && chestD < itemD) return { chest };
   if (!item) return null;
   const def = item.def;
   return { item, swap: (def.kind === 'gun' && f.guns[0] !== null && f.guns[1] !== null) || (def.kind === 'melee' && f.melee !== 'spatula') || (def.kind === 'helmet' && f.helmet > 0) || (def.kind === 'vest' && f.vest > 0) };
@@ -2087,10 +3091,12 @@ function interact(m: Match, f: Fighter) {
   const p = prompt(m, f);
   if (!p) return;
   if ('chest' in p) requestOpen(m, f, p.chest);
+  else if ('door' in p) requestDoor(m, f, p.door);
   else requestTake(m, f, p.item, true);
 }
 
 function autoPickup(m: Match, f: Fighter) {
+  if (f.y > 1) return;
   lootNear(m, f.x, f.z, AUTO_R, (l) => {
     if (Math.abs(l.x - f.x) > AUTO_R || Math.abs(l.z - f.z) > AUTO_R) return;
     if ((l.x - f.x) * (l.x - f.x) + (l.z - f.z) * (l.z - f.z) > AUTO_R * AUTO_R) return;
@@ -2212,9 +3218,17 @@ function give(m: Match, f: Fighter, def: LootDef, key: boolean) {
       }
       break;
     }
-    case 'wood':
-      f.wood = fill(f.wood, WOOD_MAX, def.n, (n) => ({ kind: 'wood', n }));
+    case 'ghillie':
+      if (f.ghillie) dropItem(m, f, def, f.x, f.z);
+      f.ghillie = true;
       break;
+    case 'wood':
+    case 'stone':
+    case 'metal': {
+      const mat = def.kind;
+      f[mat] = fill(f[mat], MAT_MAX, def.n, (n) => ({ kind: mat, n }));
+      break;
+    }
   }
 }
 
@@ -2249,7 +3263,9 @@ export function flagsOf(f: Fighter) {
     (f.hitT > 0 ? F_HIT : 0) |
     (MELEE[f.melee].blocks ? F_PAN : 0) |
     (f.boost > 0 ? F_BOOST : 0) |
-    (f.using === 'coffee' ? F_DRINKING : 0)
+    (f.using === 'coffee' ? F_DRINKING : 0) |
+    (f.ghillie ? F_GHILLIE : 0) |
+    (f.stunT > 0 ? F_STUN : 0)
   );
 }
 
@@ -2278,6 +3294,7 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
   f.shield = s.shield;
   f.helmet = s.helmet;
   f.vest = s.vest;
+  f.ghillie = (s.flags & F_GHILLIE) !== 0;
   f.show = { w: s.w, r: s.r, flags: s.flags };
   f.hitT = s.flags & F_HIT ? 0.2 : 0;
   snaps.push({ at: m.clock, x: s.x, z: s.z, y: s.y, aim: s.aim, vx: s.vx, vz: s.vz });
@@ -2291,7 +3308,7 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
 }
 
 /** Moves a remote egg to where it was INTERP seconds ago, between the reports either side of then. */
-function follow(m: Match, f: Fighter) {
+function follow(m: Match, f: Fighter, dt: number) {
   const snaps = f.snaps;
   if (!snaps.length || f.phase === 'out') return;
   const t = m.clock - INTERP;
@@ -2310,11 +3327,12 @@ function follow(m: Match, f: Fighter) {
     const u = clamp((t - a.at) / Math.max(1e-6, b.at - a.at), 0, 1);
     place(f, b, a.x + (b.x - a.x) * u, a.z + (b.z - a.z) * u, a.y + (b.y - a.y) * u, a.aim + angleDiff(b.aim, a.aim) * u);
   }
-  if (f.phase === 'ground') {
+  if (f.phase === 'ground' && f.y < 0.5) {
     f.bush = coverOf(m, f.x, f.z);
     f.inside = buildingAt(m.map, f.x, f.z);
     f.wet = waterAt(m.map, f.x, f.z);
     f.warm = fireAt(m.map, f.x, f.z) >= 0;
+    f.stillT = Math.hypot(f.vx, f.vz) < 0.4 ? f.stillT + dt : 0;
   } else {
     f.bush = -1;
     f.inside = -1;
@@ -2343,19 +3361,31 @@ const GUN_VALUE: Record<WeaponId, number> = { pistol: 10, revolver: 18, flare: 5
 const gunValue = (g: Gun | null) => (g ? (WEAPONS[g.w].call ? 60 : GUN_VALUE[g.w] + g.r * 7) : -1);
 
 /**
- * Hidden from a viewer more than a few steps away: in a bush or cornfield until it fires, or in a flour cloud the
- * viewer is outside of.
+ * Hidden from a viewer more than a few steps away: in a bush or cornfield until it fires, in a ghillie suit keeping
+ * still and quiet out on the grass, or in a flour cloud the viewer is outside of.
  */
 export function concealed(m: Match, f: Fighter, viewer: Fighter | undefined) {
   if (!viewer || f === viewer) return false;
-  if (Math.hypot(f.x - viewer.x, f.z - viewer.z) <= 4) return false;
+  if (Math.hypot(f.x - viewer.x, f.z - viewer.z) <= GHILLIE.near) return false;
   if (f.bush >= 0 && m.clock - f.firedAt > 1.2) return true;
+  if (camouflaged(m, f)) return true;
+  // under a roof someone built, from anyone not under the same one, until it fires
+  if (m.walls.size && m.clock - f.firedAt > 1.2) {
+    const roof = roofOver(m, f.x, f.z, f.y);
+    if (roof >= 0 && roof !== roofOver(m, viewer.x, viewer.z, viewer.y)) return true;
+  }
   if (!m.zones.length) return false;
   const cloud = zoneAt(m, 'flour', f.x, f.z);
   return !!cloud && cloud !== zoneAt(m, 'flour', viewer.x, viewer.z);
 }
 
-/** Can `a` see `b`? Cover hides an egg that keeps still and quiet until you're close; walls and flour hide everyone. */
+/** In a ghillie suit, still and quiet on the grass: hard to make out from more than a few steps away. */
+export const camouflaged = (m: Match, f: Fighter) => f.ghillie && f.phase === 'ground' && f.y < 0.5 && f.stillT >= GHILLIE.still && m.clock - f.firedAt > 1.2 && grassAt(m.map, f.x, f.z);
+
+/**
+ * Can `a` see `b`? Cover hides an egg that keeps still and quiet until you're close; walls and flour hide everyone,
+ * and an egg up high sees over what's lower than it (see castRay).
+ */
 export function canSee(m: Match, a: Fighter, b: Fighter, sight: number) {
   if (!fighting(b) || b === a) return false;
   const d = Math.hypot(b.x - a.x, b.z - a.z);
@@ -2366,7 +3396,7 @@ export function canSee(m: Match, a: Fighter, b: Fighter, sight: number) {
     const cloud = zoneAt(m, 'flour', a.x, a.z);
     if (!(cloud && cloud === zoneAt(m, 'flour', b.x, b.z)) && flourBetween(m, a.x, a.z, b.x, b.z)) return false;
   }
-  return clearLine(m, a.x, a.z, b.x, b.z);
+  return clearBetween(m, a, b);
 }
 
 function hasAmmo(f: Fighter, g: Gun | null) {
@@ -2377,6 +3407,45 @@ function hasAmmo(f: Fighter, g: Gun | null) {
 const fightGun = (f: Fighter, g: Gun | null) => hasAmmo(f, g) && !WEAPONS[g!.w].call;
 
 const scopedGun = (g: Gun | null) => !!g && WEAPONS[g.w].cls === 'sniper';
+
+/** What one pull of the trigger lets fly if it all lands: every pellet of every shot of a burst, or a swing. */
+function pullOf(f: Fighter, g: Gun | null) {
+  if (!g) return MELEE[f.melee].dmg;
+  const spec = WEAPONS[g.w];
+  return damageOf(g.w, g.r) * spec.pellets * (spec.burst?.n ?? 1);
+}
+
+/** What a list of [clock, damage] let fly in the last POUR_T seconds (dropping what's older). */
+function lately(m: Match, p: [number, number][]) {
+  while (p.length && m.clock - p[0][0] >= POUR_T) p.shift();
+  let sum = 0;
+  for (const [, d] of p) sum += d;
+  return sum;
+}
+
+/** A shot or swing a computer egg let fly, on its own tally and its target's. */
+function pour(m: Match, ai: Ai, d: number) {
+  lately(m, ai.poured);
+  ai.poured.push([m.clock, d]);
+  ai.pouredAt = m.clock;
+  const t = m.fighters[ai.target];
+  if (!t) return;
+  lately(m, t.incoming);
+  t.incoming.push([m.clock, d]);
+}
+
+/**
+ * Room for another pull of the trigger: what we let fly in the last POUR_T seconds and this pull stay within the
+ * level's `pour`, and what every computer egg let fly at the target within FOCUS. A pull bigger than the pour on its
+ * own (a pump shotgun on easy, a sniper) needs a quiet as much longer than POUR_T before it.
+ */
+function room(m: Match, f: Fighter, ai: Ai, L: LevelSpec, g: Gun | null, tgt: Fighter) {
+  const pull = pullOf(f, g);
+  if (pull > L.pour && m.clock - ai.pouredAt < (POUR_T * pull) / L.pour) return false;
+  const mine = lately(m, ai.poured);
+  const all = lately(m, tgt.incoming);
+  return (!mine || mine + pull <= L.pour) && (!all || all + pull <= FOCUS);
+}
 
 /** A loaded gun other than `g` for closer in than a scope, or null. */
 const closerGun = (f: Fighter, g: Gun | null) => f.guns.find((x) => x && x !== g && !scopedGun(x) && fightGun(f, x)) ?? null;
@@ -2439,6 +3508,19 @@ function think(m: Match, f: Fighter, dt: number) {
   ai.smashT = Math.max(0, ai.smashT - dt);
   ai.tossCool -= dt;
   ai.hideT = Math.max(0, ai.hideT - dt);
+  ai.boxT = Math.max(0, ai.boxT - dt);
+  ai.outT = Math.max(0, ai.outT - dt);
+  ai.rampCool -= dt;
+  ai.harvestCool -= dt;
+  // who has been hitting us: two eggs at once is a crossfire
+  if (f.lastBy >= 0 && f.lastByAt > ai.foeAt) {
+    if (f.lastBy !== ai.foe) {
+      ai.foe2 = ai.foe;
+      ai.foe2At = ai.foeAt;
+      ai.foe = f.lastBy;
+    }
+    ai.foeAt = f.lastByAt;
+  }
   ai.think -= dt;
   if (ai.think <= 0) {
     ai.think = 0.2 + m.rng() * 0.12;
@@ -2460,6 +3542,14 @@ function think(m: Match, f: Fighter, dt: number) {
     const d = Math.hypot(dx, dz) || 1;
     steer(m, f, ai, zn.x + (dx / d) * (zn.r + 2.5), zn.z + (dz / d) * (zn.r + 2.5), dt, 0);
   };
+  // in the box we built (we may shoot out of it, but stay put), or on our way out of it
+  const boxed = ai.boxT > 0 && gridOf(f.x) === ai.boxCx && gridOf(f.z) === ai.boxCz;
+  const leaving = ai.outT > 0 && goOut(f, ai);
+  // a roof on the box too (but on easy), so nothing thrown gets in and nobody sees in
+  if (boxed && !ai.roofed && f.buildT <= 0 && m.level !== 'easy') {
+    inp.piece = 'roof';
+    ai.roofed = true;
+  }
   const tgt = ai.target >= 0 ? m.fighters[ai.target] : null;
   if (tgt && fighting(tgt)) {
     const dx = tgt.x - f.x;
@@ -2476,15 +3566,18 @@ function think(m: Match, f: Fighter, dt: number) {
       ai.errT = 0.3 + m.rng() * 0.4;
       // the farther off and the quicker it moves, the wider the miss
       const moving = Math.min(1, Math.hypot(tgt.vx, tgt.vz) / SPEED);
-      ai.err = (m.rng() * 2 - 1) * L.err * (0.6 + moving * 0.8) * (1 + (Math.max(0, d - 20) / 10) * L.far);
+      ai.err = clamp((m.rng() * 2 - 1) * L.err * (0.6 + moving * 0.8) * (1 + (Math.max(0, d - 20) / 10) * L.far), -MISS, MISS);
     }
     // a throw away from the target (a bush to hide in) turns that way instead
     const aside = !!ai.toss && !Number.isNaN(ai.tossA);
-    const turn = angleDiff(aside ? ai.tossA : ideal + ai.err, f.aim);
-    const maxTurn = L.turn * dt;
+    // dazed by a stun grenade, it aims wide and turns slowly
+    const daze = f.stunT > 0 ? 3 : 1;
+    const turn = angleDiff(aside ? ai.tossA : ideal + ai.err * daze, f.aim);
+    const maxTurn = (L.turn * dt) / daze;
     inp.aim = f.aim + clamp(turn, -maxTurn, maxTurn);
     ai.steady = scoped && f.fireT <= 0 && f.hitT <= 0 && Math.abs(angleDiff(inp.aim, ideal + ai.err)) < 0.03 ? ai.steady + dt : 0;
-    const aligned = Math.abs(angleDiff(inp.aim, ideal)) < 0.22 + (g ? WEAPONS[g.w].spread : 0.4) && (!scoped || ai.steady >= L.settle);
+    // on the aim it means to take, miss and all (so a wide aim far off really does miss, and doesn't just wait)
+    const aligned = Math.abs(angleDiff(inp.aim, ideal + ai.err)) < 0.12 + (g ? WEAPONS[g.w].spread : 0.4) && (!scoped || ai.steady >= L.settle);
     // a minigun keeps up its fire rather than bursts, or it would never spin up
     const spinner = !!g && !!WEAPONS[g.w].spin;
     // bursts: shoot a while, rest a beat (a scoped gun keeps its own beat, the settle)
@@ -2512,15 +3605,18 @@ function think(m: Match, f: Fighter, dt: number) {
       if (f.throws[ai.toss] < ai.tossHad || f.throws[ai.toss] <= 0 || ai.tossT <= 0) ai.toss = null;
     } else {
       if (L.toss > 0 && ai.tossCool <= 0 && ai.react <= 0) {
-        // something to throw and a target in reach: an impulse egg to shove off one too close, or a bomb to lob
-        // (always at one behind cover); hurt, a bush to back off into or flour to vanish in. Then wait a while, or if
-        // nothing fits, look again in a moment.
-        const bomb: ThrowId | null = f.throws.grenade > 0 ? 'grenade' : f.throws.sauce > 0 ? 'sauce' : f.throws.jam > 0 ? 'jam' : null;
+        // something to throw and a target in reach: an impulse egg to shove off one too close, a stun grenade to daze
+        // one in the open before pushing in, or a bomb to lob (always at one behind cover); hurt, a bush to back off
+        // into or flour to vanish in. Then wait a while, or if nothing fits, look again in a moment.
+        const bomb: ThrowId | null = f.throws.grenade > 0 ? 'grenade' : f.throws.mirv > 0 ? 'mirv' : f.throws.sauce > 0 ? 'sauce' : f.throws.jam > 0 ? 'jam' : null;
         const cool = () => (ai.tossCool = L.toss * (0.7 + m.rng() * 0.6));
         if (f.throws.impulse > 0 && d >= THROW.min && d < 6.5) {
           startToss(ai, f, 'impulse', d);
           cool();
-        } else if (bomb && d >= 5 && d <= THROW.max + 1 && (!clearLine(m, f.x, f.z, tgt.x, tgt.z) || m.rng() < 0.6)) {
+        } else if (f.throws.stun > 0 && d >= 10 && d <= 18 && tgt.stunT <= 0 && clearBetween(m, f, tgt) && m.rng() < 0.5) {
+          startToss(ai, f, 'stun', d);
+          cool();
+        } else if (bomb && d >= 5 && d <= THROW.max + 1 && (!clearBetween(m, f, tgt) || m.rng() < 0.6)) {
           startToss(ai, f, bomb, d);
           cool();
         } else if (f.throws.bush > 0 && f.hp + f.shield < 50 && d > 8 && d < 35 && f.inside < 0 && f.bush < 0 && !hiding) {
@@ -2539,25 +3635,26 @@ function think(m: Match, f: Fighter, dt: number) {
       const reach = g ? WEAPONS[g.w].range * 0.95 : MELEE[f.melee].range + 0.4;
       // hiding, it holds its fire unless the target is right on top of it
       const hold = hiding && d > 6;
-      if (f.slot !== SLOT_THROW && !hold && ai.react <= 0 && aligned && d < reach && (ai.burst > 0 || scoped || spinner) && clearLine(m, f.x, f.z, tgt.x, tgt.z)) {
-        inp.fire = true;
-        // after a scoped shot, aim afresh and settle again
-        if (scoped && f.fireT <= 0) {
-          ai.steady = 0;
-          ai.errT = 0;
-        }
+      if (f.slot !== SLOT_THROW && !hold && ai.react <= 0 && aligned && d < reach && (ai.burst > 0 || scoped || spinner) && clearBetween(m, f, tgt)) {
+        if (room(m, f, ai, L, g, tgt)) {
+          inp.fire = true;
+          // after a scoped shot, aim afresh and settle again
+          if (scoped && f.fireT <= 0) {
+            ai.steady = 0;
+            ai.errT = 0;
+          }
+        } else if (spinner && f.spin < 0.9) inp.fire = true; // waiting our turn, the barrels keep turning (short of firing)
       }
     }
-    // a wall between us when it gets hot
-    if (L.build && !ai.toss && ai.buildCool <= 0 && f.wood >= WALL_COST && f.hitT > 0 && f.hp + f.shield < 130 && d > 7 && !shutsIn(m, f, ideal)) {
-      inp.build = true;
-      inp.aim = ideal;
-      ai.buildCool = L.build * (0.7 + m.rng() * 0.6);
-    }
+    if (L.build && !ai.toss && ai.buildCool <= 0 && f.y < 0.5 && !boxed && !leaving && ai.climbT <= 0 && ai.highT <= 0 && !outside) buildInFight(m, f, ai, L, d, ideal);
     if (outside) {
       head(m, f, ai, s.x, s.z, dt, 1);
     } else if (burn) {
       away(burn);
+    } else if (leaving || boxed) {
+      // out of our box (see goOut), or in it, shooting out of any opening it has
+    } else if (ai.climbT > 0 || ai.highT > 0) {
+      climbUp(m, f, ai, dt);
     } else if (hiding) {
       // into the bush, then still, patching up while nobody can see us
       head(m, f, ai, ai.hideX, ai.hideZ, dt, 0.5);
@@ -2565,11 +3662,17 @@ function think(m: Match, f: Fighter, dt: number) {
         if (f.hp < 90 && bestUse(f, 'heal')) inp.use = 'bestHeal';
         else if (bestUse(f, 'shield')) inp.use = 'bestShield';
       }
+    } else if (ai.sillT < SILL && d < fightRange(f, g) + 4 && inWindow(m, f.x, f.z, tgt.x, tgt.z)) {
+      // seen through a window in reach: stand and hold the line (a step aside loses it), shooting out the glass if
+      // need be, for a while (farther off, close in rather than trade misses all day)
+      ai.sillT += dt;
+    } else if (f.ghillie && f.y < 0.5 && d > 16 && g && WEAPONS[g.w].range > d && grassAt(m.map, f.x, f.z) && m.clock - f.lastByAt > 2) {
+      // in a ghillie suit out on the grass, far off: keep still (and so hard to see) and shoot from there, until hit
     } else {
       const pref = fightRange(f, g);
       let mx = 0;
       let mz = 0;
-      if (d > pref + 4 || !clearLine(m, f.x, f.z, tgt.x, tgt.z)) {
+      if (d > pref + 4 || !clearBetween(m, f, tgt)) {
         mx += dx / d;
         mz += dz / d;
       } else if (d < pref - 3) {
@@ -2591,11 +3694,15 @@ function think(m: Match, f: Fighter, dt: number) {
     return;
   }
   ai.toss = null;
+  ai.climbT = 0;
+  ai.highT = 0;
 
-  // nobody in sight: patch up, reload, then go where we mean to
+  // nobody in sight: patch up, reload, then go where we mean to (boxed in, patch up all the way first)
   const g = f.slot < 2 ? f.guns[f.slot] : null;
   if (!f.using) {
-    if (f.hp < L.heal && bestUse(f, 'heal')) inp.use = 'bestHeal';
+    if (boxed && f.hp < 95 && bestUse(f, 'heal')) inp.use = 'bestHeal';
+    else if (boxed && f.shield < 95 && bestUse(f, 'shield')) inp.use = 'bestShield';
+    else if (f.hp < L.heal && bestUse(f, 'heal')) inp.use = 'bestHeal';
     else if (f.shield < 50 && bestUse(f, 'shield')) inp.use = 'bestShield';
     else if (f.items.coffee > 0 && f.boost < 20 && f.hp < 90) inp.use = 'coffee';
     else if (f.shield < 100 && f.items.shield > 0) inp.use = 'shield';
@@ -2613,14 +3720,21 @@ function think(m: Match, f: Fighter, dt: number) {
     else if (pick < 0 && f.slot === SLOT_THROW) inp.slot = SLOT_MELEE;
   }
   const via = ai.pad >= 0 ? m.map.pads[ai.pad] : null;
+  // patched up (or the storm is coming): out of the box by the side toward where we're going
+  if (boxed && (outside || (!f.using && !inp.use))) leaveBox(m, f, ai, outside ? s.x : ai.gx, outside ? s.z : ai.gz);
   if (burn) away(burn);
-  else if (f.using && !outside) {
-    // stand still behind cover while it takes
+  else if (leaving || (f.using && !outside) || (boxed && ai.boxT > 0)) {
+    // stand still behind cover while it takes (or out of our box, see goOut)
   } else if (hiding) head(m, f, ai, ai.hideX, ai.hideZ, dt, 0.5);
   else if (via) head(m, f, ai, via.x, via.z, dt, 0);
-  else head(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : ai.goal === 'smash' ? 1.4 : 0.4);
+  else head(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : ai.goal === 'smash' ? 1.4 : ai.goal === 'vault' ? 0.6 : 0.4);
   inp.aim = Math.hypot(f.vx, f.vz) > 0.5 ? Math.atan2(f.vx, f.vz) : f.aim;
-  if (ai.smashT > 0) {
+  if (!Number.isNaN(ai.editA)) {
+    // a doorway in our own wall that stood in the way (see steer)
+    inp.aim = ai.editA;
+    inp.edit = true;
+    ai.editA = NaN;
+  } else if (ai.smashT > 0) {
     // knock down what's in the way (or what we came to break)
     inp.slot = SLOT_MELEE;
     inp.aim = ai.smashA;
@@ -2653,11 +3767,24 @@ function think(m: Match, f: Fighter, dt: number) {
         ai.think = 0;
       }
     }
+  } else if (ai.goal === 'harvest') {
+    if (m.time > ai.until) {
+      ai.harvestCool = 25 + m.rng() * 25;
+      ai.think = 0;
+    } else if (Math.hypot(ai.srcX - f.x, ai.srcZ - f.z) < ai.srcR + MELEE[f.melee].range - 0.3) {
+      ai.smashT = 0.3;
+      ai.smashA = Math.atan2(ai.srcX - f.x, ai.srcZ - f.z);
+    }
+  } else if (ai.goal === 'vault') {
+    // at the vault door: set it grinding open, then wait for it
+    if (m.doors[ai.chest] !== DOOR_SHUT && m.doors[ai.chest] !== DOOR_OPENING) ai.think = 0;
+    else if (Math.hypot(ai.gx - f.x, ai.gz - f.z) < 1.4 && m.doors[ai.chest] === DOOR_SHUT) requestDoor(m, f, ai.chest);
   } else if (ai.goal === 'chest') {
     const c = m.map.containers[ai.chest];
     if (!openable(m, c)) ai.think = 0;
-    else if (Math.hypot(c.x - f.x, c.z - f.z) < CHEST_R - 0.3) {
-      inp.interact = true;
+    else if (Math.hypot(c.x - f.x, c.z - f.z) < CHEST_R - 0.3 && inReach(m, f, c)) {
+      // straight for it (the key might take a door that happens to be nearer)
+      requestOpen(m, f, c.id);
       ai.think = 0;
     }
   }
@@ -2703,29 +3830,61 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   });
 }
 
+/** The widest a computer egg's aim strays (radians), however far off and quick the target. */
+const MISS = 0.35;
+/** The longest a computer egg holds still at a window on one target (seconds). */
+const SILL = 8;
+
+/** Meters farther off a target seems for every other computer egg already fighting it. */
+const CROWD = 12;
+const hunters = new WeakMap<Match, { frame: number; n: number[] }>();
+/** How many computer eggs have each egg for their target, counted once a step. */
+function huntersOf(m: Match) {
+  let got = hunters.get(m);
+  if (!got) hunters.set(m, (got = { frame: -1, n: [] }));
+  if (got.frame !== m.frame) {
+    got.frame = m.frame;
+    got.n.length = m.fighters.length;
+    got.n.fill(0);
+    for (const f of m.fighters) if (f.ai && f.ai.target >= 0 && fighting(f)) got.n[f.ai.target]++;
+  }
+  return got.n;
+}
+
 function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   // a target: the nearest egg we can see, sticking with the one we have, and turning on whoever just shot us
   const far = f.guns.some((x) => x && WEAPONS[x.w].cls === 'sniper' && hasAmmo(f, x));
-  const sight = L.sight + (far ? 20 : 0) + SCOPE_VIEW[f.scope];
+  const sight = L.sight + (far ? 20 : 0) + SCOPE_VIEW[f.scope] + levelOf(f.y) * HIGH_VIEW;
   let best: Fighter | null = null;
   let bestScore = Infinity;
+  const hunted = huntersOf(m);
   for (const o of m.fighters) {
     if (o === f || !fighting(o)) continue;
     const d = Math.hypot(o.x - f.x, o.z - f.z);
     const hitMe = o.id === f.lastBy && m.clock - f.lastByAt < 3;
     if (d > sight + 15 || !canSee(m, f, o, hitMe ? sight + 15 : sight)) continue;
-    const score = d - (o.id === ai.target ? 8 : 0) - (hitMe ? 12 : 0);
+    // rather one nobody else is on than piling onto one already in a fight; the kill leader is worth going after
+    const others = hunted[o.id] - (o.id === ai.target ? 1 : 0);
+    const score = d - (o.id === ai.target ? 8 : 0) - (hitMe ? 12 : 0) + (hitMe ? 0 : others * CROWD) - (o.id === m.leader ? 5 : 0);
     if (score < bestScore) {
       best = o;
       bestScore = score;
     }
   }
   const armed = f.guns.some((x) => fightGun(f, x));
-  // unarmed eggs only fight what is right in front of them
-  if (best && !armed && Math.hypot(best.x - f.x, best.z - f.z) > 6) best = null;
-  if ((best?.id ?? -1) !== ai.target) ai.react = best ? L.react * (0.7 + m.rng() * 0.6) : 0;
+  // unarmed eggs only fight what is right in front of them (not through a window)
+  if (best && !armed && (Math.hypot(best.x - f.x, best.z - f.z) > 6 || inWindow(m, f.x, f.z, best.x, best.z))) best = null;
+  if ((best?.id ?? -1) !== ai.target) {
+    ai.react = best ? L.react * (0.7 + m.rng() * 0.6) : 0;
+    ai.sillT = 0;
+  }
+  // the count stays right for the others still to pick this step
+  if (ai.target >= 0 && hunted[ai.target] > 0) hunted[ai.target]--;
   ai.target = best?.id ?? -1;
-  if (best) return;
+  if (best) {
+    hunted[best.id]++;
+    return;
+  }
 
   // somebody shot us from out of sight: go and look
   const s = m.storm;
@@ -2807,6 +3966,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
       case 'pack':
       case 'helmet':
       case 'vest':
+      case 'ghillie':
         useful = wants(f, def, false);
         break;
       default:
@@ -2819,7 +3979,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   let chest = -1;
   let chestD = armed ? 30 : 45;
   const tryChest = (c: Container) => {
-    if (!openable(m, c) || !inSafe(c.x, c.z)) return;
+    if (!openable(m, c) || !inSafe(c.x, c.z) || lockedIn(m, c)) return;
     // a supply drop is worth the walk from farther off
     const d = Math.hypot(c.x - f.x, c.z - f.z) - (c.kind === 'supply' ? 40 : 0);
     if (d < chestD) {
@@ -2829,6 +3989,20 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   };
   containersNear(m.map, f.x, f.z, chestD, tryChest);
   for (const list of [m.map.drops, m.map.flares]) for (const id of list) tryChest(m.map.containers[id]);
+  // a bank vault's door, shut on safes nobody has opened: worth the wait for it to open (and while it opens, stay by it)
+  let vault = -1;
+  for (const i of m.vaults) {
+    const s = m.map.slabs[i];
+    const st = m.doors[i];
+    if ((st !== DOOR_SHUT && !(st === DOOR_OPENING && ai.goal === 'vault' && ai.chest === i)) || !inSafe(s.x, s.z)) continue;
+    if (!m.locked.some((v, c) => v === i && !m.opened[c])) continue;
+    const d = Math.hypot(s.x - f.x, s.z - f.z) - (st === DOOR_OPENING ? 40 : 10);
+    if (d < chestD) {
+      vault = i;
+      chestD = d;
+      chest = -1;
+    }
+  }
   if (item && (chest < 0 || itemD < chestD + 6)) {
     if (ai.goal !== 'loot' || ai.item !== item.id) ai.until = m.time + 20;
     ai.goal = 'loot';
@@ -2837,12 +4011,22 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     ai.gz = item.z;
     return;
   }
+  if (vault >= 0 && !item) {
+    // in front of it, on the lobby side (which its way out points to)
+    const s = m.map.slabs[vault];
+    ai.goal = 'vault';
+    ai.chest = vault;
+    ai.gx = s.x + s.ox * 1.2;
+    ai.gz = s.z + s.oz * 1.2;
+    return;
+  }
   if (chest >= 0) {
     const c = m.map.containers[chest];
+    const ahead = c.kind === 'supply' ? 1.5 : 1.1;
     ai.goal = 'chest';
     ai.chest = chest;
-    ai.gx = c.x;
-    ai.gz = c.z + c.face * (c.kind === 'supply' ? 1.5 : 1.1);
+    ai.gx = c.x + (c.ax ? c.face * ahead : 0);
+    ai.gz = c.z + (c.ax ? 0 : c.face * ahead);
     return;
   }
   // a crate, toilet or hay bale nearby to break open for whatever's in it (from farther off when we're unarmed)
@@ -2865,6 +4049,9 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     ai.gz = c.z;
     return;
   }
+  // low on building material, with nothing better to do: a few swings at a tree, a rock or a car for some
+  if (ai.goal === 'harvest' && m.time < ai.until) return;
+  if (L.build && ai.harvestCool <= 0 && f.wood + f.stone + f.metal < 160 && harvestSpot(m, f, ai, inSafe)) return;
   if (ai.goal !== 'roam' || Math.hypot(ai.gx - f.x, ai.gz - f.z) < 3 || !inSafe(ai.gx, ai.gz)) {
     ai.goal = 'roam';
     const r = Math.max(2, safe.r * 0.7);
@@ -2879,15 +4066,208 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   }
 }
 
-/** Would a wall built aiming this way shut us in or block a way in? Never indoors, on a building, or by a doorway. */
-function shutsIn(m: Match, f: Fighter, aim: number) {
-  const w = wallSpot(f.x, f.z, aim);
-  return m.map.buildings.some(
-    (b) =>
-      (Math.abs(f.x - b.x) < b.w / 2 && Math.abs(f.z - b.z) < b.d / 2) ||
-      (Math.abs(w.x - b.x) < b.w / 2 + 1 && Math.abs(w.z - b.z) < b.d / 2 + 1) ||
-      b.doors.some((dr) => Math.hypot(w.x - dr.x, w.z - dr.z) < WALL_HALF + dr.w / 2 + 1.2),
+/** Where a wall in a slot stands. */
+const wallXZ = (s: Slot) => (s.dir === 2 ? { x: (s.cx + 0.5) * CELL_B, z: s.cz * CELL_B } : { x: s.cx * CELL_B, z: (s.cz + 0.5) * CELL_B });
+
+/** Would a wall at (x, z) shut us in or block a way in? Never indoors, on a building, by a doorway or a gate, or on a bridge. */
+function blocksWay(m: Match, f: Fighter, x: number, z: number) {
+  return (
+    bridgeAt(m.map, x, z) >= 0 ||
+    m.map.yards.some((y) => y.gates.some((g) => Math.hypot(x - g.x, z - g.z) < WALL_HALF + g.w / 2 + 1)) ||
+    m.map.buildings.some(
+      (b) =>
+        (Math.abs(f.x - b.x) < b.w / 2 && Math.abs(f.z - b.z) < b.d / 2) ||
+        (Math.abs(x - b.x) < b.w / 2 + 1 && Math.abs(z - b.z) < b.d / 2 + 1) ||
+        b.doors.some((dr) => Math.hypot(x - dr.x, z - dr.z) < WALL_HALF + dr.w / 2 + 1.2),
+    )
   );
+}
+
+/** Would a wall built aiming this way shut us in or block a way in? */
+function shutsIn(m: Match, f: Fighter, aim: number) {
+  const w = wallXZ(wallSlot(gridOf(f.x), gridOf(f.z), dirOf(aim), levelOf(f.y)));
+  return blocksWay(m, f, w.x, w.z);
+}
+
+/** Would boxing in here block a way in, or make no sense (indoors, or in the water)? */
+const boxBlocked = (m: Match, f: Fighter) =>
+  f.wet ||
+  f.inside >= 0 ||
+  planPiece(m, f, 'box').some((s) => {
+    const w = wallXZ(s);
+    return blocksWay(m, f, w.x, w.z);
+  });
+
+/** The material to box up in: the toughest we have four pieces of (else the one we have picked). */
+function toughest(f: Fighter) {
+  for (let i = MATS.length - 1; i >= 0; i--) if (f[MATS[i]] >= 4 * PIECE_COST) return i;
+  return f.mat;
+}
+
+/** Is there room ahead (the way `q`) for two ramps: nothing in the way of our feet, no building, yard or water? */
+function rampRoom(m: Match, f: Fighter, q: number) {
+  const ex = DIR_X[q];
+  const ez = DIR_Z[q];
+  for (const side of [-SIDE, 0, SIDE]) if (castRay(m, f.x + ez * side, f.z - ex * side, ex, ez, CELL_B * 2.6, f.id, false, true) !== null) return false;
+  for (let k = 1; k <= 2; k++) {
+    const x = f.x + ex * CELL_B * k;
+    const z = f.z + ez * CELL_B * k;
+    if (roomAt(m.map, x, z) >= 0 || yardAt(m.map, x, z) >= 0 || waterAt(m.map, x, z) || blocksWay(m, f, x, z)) return false;
+  }
+  return true;
+}
+
+/**
+ * A computer egg builds in a fight: a box round it to patch up in when it's hurt or shot at from two sides at once, a
+ * wall between us when it gets hot out in the open, and now and then a ramp up toward the target for the high ground.
+ */
+function buildInFight(m: Match, f: Fighter, ai: Ai, L: LevelSpec, d: number, ideal: number) {
+  const inp = f.input;
+  const mats = f.wood + f.stone + f.metal;
+  const cross = ai.foe2 >= 0 && ai.foe2 !== ai.foe && m.clock - ai.foe2At < 3 && m.clock - ai.foeAt < 3;
+  const cool = () => (ai.buildCool = L.build * (0.7 + m.rng() * 0.6));
+  if ((cross || (f.hitT > 0 && f.hp + f.shield < 70)) && mats >= 4 * PIECE_COST && !boxBlocked(m, f)) {
+    inp.mat = 10 + toughest(f);
+    inp.piece = 'box';
+    ai.boxT = 7 + m.rng() * 3;
+    ai.boxCx = gridOf(f.x);
+    ai.boxCz = gridOf(f.z);
+    ai.roofed = false;
+    cool();
+  } else if (f.hitT > 0 && f.hp + f.shield < 130 && d > 7 && mats >= PIECE_COST && !shutsIn(m, f, ideal)) {
+    // a wall goes up quickest in wood
+    if (f.wood >= PIECE_COST) inp.mat = 10;
+    inp.piece = 'wall';
+    inp.aim = ideal;
+    cool();
+  } else if (L.ramp && ai.rampCool <= 0 && d > 10 && d < 34 && mats >= 3 * PIECE_COST && f.inside < 0 && !f.wet && f.hp + f.shield > 60) {
+    const q = dirOf(ideal);
+    if (m.rng() < 0.5 && rampRoom(m, f, q)) {
+      ai.climb = m.level === 'hard' ? 2 : 1;
+      ai.climbQ = q;
+      ai.climbT = 7;
+      ai.highT = 0;
+      ai.rampCool = L.ramp * (0.7 + m.rng() * 0.6);
+    } else ai.rampCool = 2;
+  }
+}
+
+/**
+ * Ramping up for the high ground: a ramp the way of the target, up it, another from near its top (on hard), a floor
+ * at the top to stand on, then hold it a while and fight from up there. Gives up when it takes too long, when a ramp
+ * won't go up, or when what we're on goes and we drop; once the while is up, it's back to fighting as usual, which
+ * walks it off and down.
+ */
+function climbUp(m: Match, f: Fighter, ai: Ai, dt: number) {
+  const inp = f.input;
+  const q = ai.climbQ;
+  const on = f.on >= 0 ? m.walls.get(f.on) : undefined;
+  const ramp = on?.k === 'ramp' && on.dir === q ? on : undefined;
+  const aim = (q * Math.PI) / 2;
+  ai.climbT -= dt;
+  if (ai.highT > 0) {
+    ai.highT = f.y > 0.5 ? ai.highT - dt : 0;
+    // off the top of the ramp onto the floor there, if one went up, then stand
+    const floor = ramp ? planPiece(m, f, 'floor', aim)[0] : undefined;
+    if (floor && pieceIn(m, floor)) {
+      inp.mx = DIR_X[q];
+      inp.mz = DIR_Z[q];
+    }
+    return;
+  }
+  const front = planPiece(m, f, 'ramp', aim)[0];
+  const ahead = front ? pieceIn(m, front) : undefined;
+  const up = ramp ? rampY(ramp, f.x, f.z) - ramp.lv * LEVEL_H : 0;
+  if (ai.climbT <= 0 || (!ramp && (f.y > 0.5 || (!ahead && ai.climb <= 0)))) {
+    ai.climbT = 0;
+    return;
+  }
+  if ((!ramp || up > 2) && !ahead && ai.climb > 0) {
+    // the next ramp: from the ground, or from near the top of this one
+    if (f.buildT > 0) return;
+    inp.piece = 'ramp';
+    inp.aim = aim;
+    inp.fire = false;
+    ai.climb--;
+    return;
+  }
+  if (ramp && up > 2.5 && !ahead) {
+    // the top: a floor ahead to stand on, and hold it
+    ai.highT = 5 + m.rng() * 4;
+    ai.climbT = 0;
+    if (f.buildT <= 0) {
+      inp.piece = 'floor';
+      inp.aim = aim;
+      inp.fire = false;
+    }
+    return;
+  }
+  inp.mx = DIR_X[q];
+  inp.mz = DIR_Z[q];
+}
+
+/** Patched up: out of our box by the side toward (tx, tz), through a doorway cut in it when the wall there is ours. */
+function leaveBox(m: Match, f: Fighter, ai: Ai, tx: number, tz: number) {
+  const q = dirOf(Math.atan2(tx - f.x, tz - f.z));
+  const w = pieceIn(m, wallSlot(ai.boxCx, ai.boxCz, q, levelOf(f.y)));
+  ai.boxT = 0;
+  ai.outT = 3;
+  ai.outQ = q;
+  if (w && w.f === f.id && w.e === 0) ai.editA = (q * Math.PI) / 2;
+}
+
+/** On the way out of our box: lined up with the middle of the side we leave by, then straight on out. */
+function goOut(f: Fighter, ai: Ai) {
+  const nx = DIR_X[ai.outQ];
+  const nz = DIR_Z[ai.outQ];
+  const cx = (ai.boxCx + 0.5 + nx * 0.5) * CELL_B;
+  const cz = (ai.boxCz + 0.5 + nz * 0.5) * CELL_B;
+  const out = (f.x - cx) * nx + (f.z - cz) * nz;
+  if (out > 1.3) {
+    ai.outT = 0;
+    return false;
+  }
+  const side = (f.x - cx) * nz - (f.z - cz) * nx;
+  const k = Math.abs(side) > 0.15 && out < -0.2 ? -Math.sign(side) : 0;
+  f.input.mx = nx * 0.6 + nz * k;
+  f.input.mz = nz * 0.6 - nx * k;
+  return true;
+}
+
+/**
+ * A tree, rock, car or lamp post nearby in the circle to swing at for building material: stone or metal now and then
+ * when we're short of both, else wood. Sets the `harvest` goal and returns true, or waits a while and returns false.
+ */
+function harvestSpot(m: Match, f: Fighter, ai: Ai, inSafe: (x: number, z: number) => boolean) {
+  const want: Mat = f.stone + f.metal < 40 && m.rng() < 0.6 ? (m.rng() < 0.5 ? 'stone' : 'metal') : 'wood';
+  let best: Solid | null = null;
+  let bestD = 16;
+  solidsNear(m.map, f.x, f.z, 16, (_i, s) => {
+    if (MAT_OF[s.what] !== want) return;
+    const d = Math.hypot(s.x - f.x, s.z - f.z);
+    if (d < bestD && inSafe(s.x, s.z) && roomAt(m.map, s.x, s.z) < 0 && yardAt(m.map, s.x, s.z) < 0) {
+      best = s;
+      bestD = d;
+    }
+  });
+  const s = best as Solid | null;
+  if (!s) {
+    ai.harvestCool = 6 + m.rng() * 6;
+    return false;
+  }
+  // stand off it on our side, a swing away
+  const d = Math.max(0.1, bestD);
+  const ux = (f.x - s.x) / d;
+  const uz = (f.z - s.z) / d;
+  const reach = s.shape === 'circle' ? s.r : Math.abs(ux) * s.hw + Math.abs(uz) * s.hd;
+  ai.goal = 'harvest';
+  ai.srcX = s.x;
+  ai.srcZ = s.z;
+  ai.srcR = reach;
+  ai.gx = s.x + ux * (reach + 1.1);
+  ai.gz = s.z + uz * (reach + 1.1);
+  ai.until = m.time + 6;
+  return true;
 }
 
 /**
@@ -2903,7 +4283,7 @@ function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, 
   const pick = (list: Door[], inward: boolean) => {
     let best = Infinity;
     for (const dr of list) {
-      const d = Math.hypot(dr.x - f.x, dr.z - f.z) + Math.hypot(tx - dr.x, tz - dr.z) + (clearLine(m, f.x, f.z, dr.x + dr.ox * (inward ? 1 : -1), dr.z + dr.oz * (inward ? 1 : -1)) ? 0 : 20);
+      const d = Math.hypot(dr.x - f.x, dr.z - f.z) + Math.hypot(tx - dr.x, tz - dr.z) + (openWay(m, f.x, f.z, dr.x + dr.ox * (inward ? 1 : -1), dr.z + dr.oz * (inward ? 1 : -1)) ? 0 : 20);
       if (d < best) {
         ai.exit = dr;
         best = d;
@@ -2936,11 +4316,18 @@ function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, 
   // outdoors, with a building or a fenced yard across the way: round it by a corner
   const c = b ? null : around(m, f.x, f.z, px, pz, yard);
   if (c) return steer(m, f, ai, c.x, c.z, dt, 0);
-  // inside, with where we're going on the far side of the wall between two rooms: through the doorway in it first
+  // inside, with where we're going in another room: through the doorway to the next room on the way first
   let wx = px;
   let wz = pz;
   let via = false;
-  if (b)
+  const next = b && b.rooms.length ? roomWay(b, f.x, f.z, px, pz, door && !ai.inward ? door : null) : null;
+  if (next) {
+    const dr = next.door;
+    const k = Math.abs((f.x - dr.x) * dr.oz - (f.z - dr.z) * dr.ox) < Math.max(0.3, dr.w / 2 - FIGHTER_R - 0.1) ? 1.5 : -1.2;
+    wx = dr.x + dr.ox * next.s * k;
+    wz = dr.z + dr.oz * next.s * k;
+    via = true;
+  } else if (b && !b.rooms.length)
     for (const dr of b.inner) {
       const there = (px - dr.x) * dr.ox + (pz - dr.z) * dr.oz;
       const here = (f.x - dr.x) * dr.ox + (f.z - dr.z) * dr.oz;
@@ -2956,6 +4343,49 @@ function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, 
   const r = b && (via || door || Math.hypot(px - f.x, pz - f.z) > stop) ? roundFurniture(m, f.inside, f.x, f.z, wx, wz) : null;
   if (r) return steer(m, f, ai, r.x, r.z, dt, 0);
   steer(m, f, ai, wx, wz, dt, via || door || over ? 0 : stop);
+}
+
+/** The room of a building a point is in (a little past its walls, so a doorway counts), or -1. */
+const roomOf = (b: Building, x: number, z: number) => b.rooms.findIndex((r) => Math.abs(x - r.x) < r.hw + 0.3 && Math.abs(z - r.z) < r.hd + 0.3);
+
+/**
+ * In a building of rooms, the doorway to go through first on the way from (x, z) to (tx, tz) in another room (or, for
+ * somewhere outside, to the room of the way out `exit`), and which way through it (1 along its way out): found
+ * breadth first over the rooms, each doorway joining the two either side of it. Null in the same room.
+ */
+function roomWay(b: Building, x: number, z: number, tx: number, tz: number, exit: Door | null) {
+  const here = roomOf(b, x, z);
+  let goal = roomOf(b, tx, tz);
+  if (goal < 0 && exit) goal = roomOf(b, exit.x - exit.ox * 0.9, exit.z - exit.oz * 0.9);
+  if (here < 0 || goal < 0 || here === goal) return null;
+  const links = b.inner.map((d) => [roomOf(b, d.x - d.ox * 0.9, d.z - d.oz * 0.9), roomOf(b, d.x + d.ox * 0.9, d.z + d.oz * 0.9)]);
+  // the doorway each room was first reached through
+  const from = b.rooms.map(() => -1);
+  const seen = b.rooms.map((_, i) => i === here);
+  const queue = [here];
+  while (queue.length) {
+    const r = queue.shift()!;
+    links.forEach(([p, q], k) => {
+      const o = p === r ? q : q === r ? p : -1;
+      if (o < 0 || seen[o]) return;
+      seen[o] = true;
+      from[o] = k;
+      queue.push(o);
+    });
+  }
+  if (!seen[goal]) return null;
+  // back from the goal to the first step
+  let at = goal;
+  let k = from[at];
+  for (;;) {
+    const [p, q] = links[k];
+    const prev = p === at ? q : p;
+    if (prev === here) break;
+    at = prev;
+    k = from[at];
+  }
+  const [, out] = links[k];
+  return { door: b.inner[k], s: out === at ? 1 : -1 };
 }
 
 /** The furniture that stops feet in each building, worked out once (and again should the list be swapped). */
@@ -3167,6 +4597,9 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
     ai.stuckT = 0;
     return;
   }
+  // a shut door just ahead: open it (it swings away from us)
+  const ahead = castRay(m, f.x, f.z, dx / d, dz / d, Math.min(d, 2), f.id, false, true, levelOf(f.y));
+  if (ahead?.what === 'door' && m.doors[ahead.ref] === DOOR_SHUT) requestDoor(m, f, ahead.ref);
   let a = Math.atan2(dx, dz);
   if (ai.detourT > 0) {
     ai.detourT -= dt;
@@ -3179,6 +4612,7 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
     const intoYard = yardAt(m.map, tx, tz);
     const fromYard = yardAt(m.map, f.x, f.z);
     const onPad = padAt(m.map, tx, tz);
+    const lv = levelOf(f.y);
     for (const turn of TURNS) {
       const b = a + turn;
       const ex = Math.sin(b);
@@ -3189,9 +4623,9 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
         (room >= 0 && room !== f.inside && room !== into) ||
         (yard >= 0 && yard !== fromYard && yard !== intoYard) ||
         m.map.pads.some((p, i) => i !== onPad && rayCircle(f.x, f.z, ex, ez, look, p.x, p.z, PAD.r + FIGHTER_R * 0.5) < Infinity) ||
-        castRay(m, f.x, f.z, ex, ez, look, f.id, false, true) !== null ||
-        castRay(m, f.x + ez * SIDE, f.z - ex * SIDE, ex, ez, look, f.id, false, true) !== null ||
-        castRay(m, f.x - ez * SIDE, f.z + ex * SIDE, ex, ez, look, f.id, false, true) !== null;
+        castRay(m, f.x, f.z, ex, ez, look, f.id, false, true, lv) !== null ||
+        castRay(m, f.x + ez * SIDE, f.z - ex * SIDE, ex, ez, look, f.id, false, true, lv) !== null ||
+        castRay(m, f.x - ez * SIDE, f.z + ex * SIDE, ex, ez, look, f.id, false, true, lv) !== null;
       if (!blocked) {
         a = b;
         break;
@@ -3208,20 +4642,43 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
     ai.lastX = f.x;
     ai.lastZ = f.z;
     if (moved < 0.8 && ai.detourT <= 0) {
-      // a wall someone built or a crate, this way or straight on: break through it; anything else, go round
+      // a wall someone built or a crate, this way or straight on: break through it (a wall of ours, cut a doorway in
+      // it); anything else, go round
       const ahead = Math.atan2(dx, dz);
+      const lv = levelOf(f.y);
       const breaks = (h: ReturnType<typeof castRay>) => !!h && (h.what === 'built' || h.what === 'crate');
-      const hit = castRay(m, f.x, f.z, inp.mx, inp.mz, 1.8, f.id, false, true);
-      const front = breaks(hit) ? null : castRay(m, f.x, f.z, Math.sin(ahead), Math.cos(ahead), Math.min(1.8, d), f.id, false, true);
-      if (breaks(hit) || breaks(front)) {
+      const hit = castRay(m, f.x, f.z, inp.mx, inp.mz, 1.8, f.id, false, true, lv);
+      const front = breaks(hit) ? null : castRay(m, f.x, f.z, Math.sin(ahead), Math.cos(ahead), Math.min(1.8, d), f.id, false, true, lv);
+      const wall = breaks(hit) ? hit : breaks(front) ? front : null;
+      const ours = wall?.what === 'built' ? m.walls.get(wall.ref) : undefined;
+      // wedged against a built wall some other way (say a tree in our own box), now and then break out through it
+      let side = wall ? -1 : builtBeside(m, f, lv);
+      if (side >= 0 && m.rng() < 0.5) side = -1;
+      if (ours && ours.f === f.id && ours.e === 0 && f.editT <= 0) ai.editA = wall === hit ? a : ahead;
+      else if (wall || side >= 0) {
         ai.smashT = 1;
-        ai.smashA = breaks(hit) ? a : ahead;
+        ai.smashA = wall ? (wall === hit ? a : ahead) : side;
       } else {
         ai.detourT = 0.7 + m.rng() * 0.6;
         ai.detourA = a + (m.rng() < 0.5 ? 1 : -1) * (1.2 + m.rng() * 1.4);
       }
     }
   }
+}
+
+/** The way to the nearest built wall within a swing round an egg, on its level, or -1. */
+function builtBeside(m: Match, f: Fighter, lv: number) {
+  let best = -1;
+  let bestT = 1.4;
+  for (let k = 0; k < 8; k++) {
+    const b = (k / 8) * Math.PI * 2;
+    const hit = castRay(m, f.x, f.z, Math.sin(b), Math.cos(b), bestT, f.id, false, true, lv);
+    if (hit?.what === 'built' && hit.t < bestT) {
+      best = b;
+      bestT = hit.t;
+    }
+  }
+  return best;
 }
 
 // -------------------------------------------------------------------------------------------------------------------

@@ -62,6 +62,21 @@ const Banana = () => (
   </>
 );
 
+/** A fire or ice flower: petals in three rings round a face, on a leafy stem. */
+function Flower({ outer, edge, middle, inner }: { outer: string; edge: string; middle: string; inner: string }) {
+  return (
+    <>
+      <path d="M12 13.5v8" stroke="#2f8a3c" strokeWidth="2" strokeLinecap="round" />
+      <path d="M12 19.5c-1.6-2.8-4.6-3.4-6.8-2.4 1.6 2.3 4.4 3.3 6.8 2.4zM12 19.5c1.6-2.8 4.6-3.4 6.8-2.4-1.6 2.3-4.4 3.3-6.8 2.4z" fill="#3fae4a" stroke="#1b5524" strokeWidth="0.7" />
+      <ellipse cx="12" cy="8.6" rx="9" ry="6.6" fill={outer} stroke={edge} strokeWidth="1" />
+      <ellipse cx="12" cy="8.6" rx="6.2" ry="4.4" fill={middle} />
+      <ellipse cx="12" cy="8.6" rx="3.8" ry="2.7" fill={inner} />
+      <rect x="10.3" y="7.3" width="1.1" height="2.4" rx="0.55" fill="#222" />
+      <rect x="12.6" y="7.3" width="1.1" height="2.4" rx="0.55" fill="#222" />
+    </>
+  );
+}
+
 /** Three of something, arranged like the triple mushroom. */
 const Three = ({ children }: { children: ReactNode }) => (
   <>
@@ -211,6 +226,82 @@ export function ItemIcon({ item, size }: { item: Item; size?: number }) {
       return (
         <Svg size={size}>
           <path d="M13.5 2L5 13.5h6L9.5 22 19 9.5h-6.2z" fill="#ffe14d" stroke="#c98a00" strokeWidth="1.2" strokeLinejoin="round" />
+        </Svg>
+      );
+    case 'boomerang':
+      return (
+        <Svg size={size}>
+          <path d="M4.5 18.5L11 5.5l8.5 11.5" fill="none" stroke="#8a4b0f" strokeWidth="6.2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M4.5 18.5L11 5.5l8.5 11.5" fill="none" stroke="#f2a33a" strokeWidth="4.4" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M5.6 16.4L11 5.9l7.2 9.8" fill="none" stroke="#ffe0a0" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="4.5" cy="18.5" r="1.4" fill="#2f6fe4" />
+          <circle cx="19.5" cy="17" r="1.4" fill="#2f6fe4" />
+        </Svg>
+      );
+    case 'fire':
+      return (
+        <Svg size={size}>
+          <Flower outer="#e53935" edge="#7a1512" middle="#ffb02e" inner="#fff3c4" />
+        </Svg>
+      );
+    case 'ice':
+      return (
+        <Svg size={size}>
+          <Flower outer="#4fb3ff" edge="#1c5f9c" middle="#bfe8ff" inner="#ffffff" />
+        </Svg>
+      );
+    case 'piranha':
+      return (
+        <Svg size={size}>
+          <path d="M12 16.5v6" stroke="#2f8a3c" strokeWidth="2" strokeLinecap="round" />
+          <path d="M12 21c-1.5-2.4-4.4-2.8-6.4-1.8 1.5 2 4.2 2.8 6.4 1.8zM12 21c1.5-2.4 4.4-2.8 6.4-1.8-1.5 2-4.2 2.8-6.4 1.8z" fill="#3fae4a" stroke="#1b5524" strokeWidth="0.7" />
+          <path d="M5.5 12.5h13a6.5 4.6 0 0 1-13 0z" fill="#d8312a" stroke="#7a1512" strokeWidth="1" />
+          <path d="M6.5 12.5l1 1.6 1-1.6 1 1.6 1-1.6 1 1.6 1-1.6 1 1.6 1-1.6 1 1.6 1-1.6" fill="#fff" stroke="#fff" strokeWidth="0.5" strokeLinejoin="round" />
+          <path d="M3 10a9 7.5 0 0 1 18 0z" fill="#d8312a" stroke="#7a1512" strokeWidth="1" />
+          <path d="M4 10l1.1-1.7 1.1 1.7 1.1-1.7 1.1 1.7 1.1-1.7 1.1 1.7 1.1-1.7 1.1 1.7 1.1-1.7 1.1 1.7 1.1-1.7 1.1 1.7 1.1-1.7 1.1 1.7" fill="#fff" stroke="#fff" strokeWidth="0.5" strokeLinejoin="round" />
+          <circle cx="8" cy="5.6" r="1.5" fill="#fff" />
+          <circle cx="13" cy="4.4" r="1.3" fill="#fff" />
+          <circle cx="16.8" cy="7" r="1.1" fill="#fff" />
+        </Svg>
+      );
+    case 'boo':
+      return (
+        <Svg size={size}>
+          <path d="M17.6 6.2l4.2-2.8-1.1 5.1" fill="#f6f6fa" stroke="#7a7a88" strokeWidth="1" strokeLinejoin="round" />
+          <circle cx="11.5" cy="12.5" r="8.5" fill="#f6f6fa" stroke="#7a7a88" strokeWidth="1" />
+          <ellipse cx="3.6" cy="14.2" rx="1.9" ry="1.2" fill="#f6f6fa" stroke="#7a7a88" strokeWidth="0.8" />
+          <ellipse cx="19.4" cy="15.2" rx="1.9" ry="1.2" fill="#f6f6fa" stroke="#7a7a88" strokeWidth="0.8" />
+          <ellipse cx="9" cy="9.6" rx="1.1" ry="2" fill="#222" />
+          <ellipse cx="13.8" cy="9.6" rx="1.1" ry="2" fill="#222" />
+          <path d="M7.4 13.4h8.4a4.2 3.8 0 0 1-8.4 0z" fill="#8c1515" />
+          <path d="M8.6 13.4l.8 1.2.8-1.2M13 13.4l.8 1.2.8-1.2" fill="#fff" />
+          <path d="M10.2 16.4c.6-1.3 2.6-1.3 3 0-.7.8-2.4.8-3 0z" fill="#ff7aa8" />
+        </Svg>
+      );
+    case 'feather':
+      return (
+        <Svg size={size}>
+          <path d="M19.5 2.5C11.5 3.5 5.5 10 5.2 18.8l1.4 1.4C15 19.5 20.8 12 19.5 2.5z" fill="#fffbe8" stroke="#b9a35a" strokeWidth="1" strokeLinejoin="round" />
+          <path d="M3.5 21.5L17.5 5.5" stroke="#b9a35a" strokeWidth="1.2" strokeLinecap="round" />
+          <path d="M9.5 10.8l-.4-3M12.3 8.2l-.3-2.6M8.6 14.6l3.4.4M11.5 11.2l3.6.3" stroke="#d8c88a" strokeWidth="0.9" strokeLinecap="round" />
+        </Svg>
+      );
+    case 'cloud':
+      return (
+        <Svg size={size}>
+          <path d="M6.2 15.5a4.2 4.2 0 0 1 .3-8.4 5.6 5.6 0 0 1 10.7-1 4.7 4.7 0 0 1 .8 9.4z" fill="#5b6070" stroke="#2f3340" strokeWidth="1" strokeLinejoin="round" />
+          <path d="M8.5 10.2l2 .8M15.5 10.2l-2 .8" stroke="#fff" strokeWidth="1.2" strokeLinecap="round" />
+          <path d="M12.8 13.2l-3.2 5h2.6l-1.6 4.6 5.2-6.6h-2.7l1.7-3z" fill="#ffe14d" stroke="#c98a00" strokeWidth="0.8" strokeLinejoin="round" />
+        </Svg>
+      );
+    case 'pow':
+      return (
+        <Svg size={size}>
+          <rect x="2.5" y="3.5" width="19" height="17" rx="2.5" fill="#1e5fd8" stroke="#0d2f73" strokeWidth="1.2" />
+          <rect x="4.2" y="5.2" width="15.6" height="13.6" rx="1.5" fill="none" stroke="#7fb2ff" strokeWidth="0.9" />
+          <text x="12" y="14.4" textAnchor="middle" fontSize="6.3" fontWeight="900" fontFamily="Arial, sans-serif" fill="#fff" stroke="#0d2f73" strokeWidth="0.4">
+            POW
+          </text>
         </Svg>
       );
   }
@@ -618,6 +709,14 @@ const itemHelp = (touch: boolean): [Item, string][] => [
   ['horn', 'A shockwave that knocks over karts close by and wipes out items, blue shells included.'],
   ['bolt', 'Lightning shrinks every other kart and knocks their items away. Run them over while they are tiny.'],
   ['blue', 'Flies over the course and blows up whoever is in first.'],
+  ['boomerang', 'Thrown ahead, it flies out, turns round and comes back past you, hitting karts both ways. Three throws.'],
+  ['fire', `A few seconds of fireballs: press again and again to throw them (back with ${touch ? '▼' : 'Z'}). They bounce along and spin out whoever they touch.`],
+  ['ice', `Two ice balls (back with ${touch ? '▼' : 'Z'}). Whoever one hits is frozen solid and slides on helplessly for a moment.`],
+  ['piranha', 'A plant rides on your nose for a few seconds, eating items and biting karts just ahead, with a little boost every bite.'],
+  ['boo', 'Steals the item of someone ahead of you, and you turn see-through for a few seconds: items and karts pass right through you.'],
+  ['feather', 'A big jump over bananas, shells, mud and anything else in the way. Time it right and a blue shell goes off underneath you.'],
+  ['cloud', 'Settles over your head the moment you get it: extra speed that ignores the grass, until it zaps you small. Bump another kart to pass it on!'],
+  ['pow', `Thumps three times, then everyone ahead of you on the ground spins out and drops their item. ${touch ? 'Tap drift' : 'Hop (Space)'} on the fourth beat to ride it out.`],
 ];
 
 export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; touch: boolean; onClose: () => void }) {
@@ -730,8 +829,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Oil slicks</b> spin you out. Steer round them: they sit right on the best line.
           </li>
           <li>
-            <b>No wall means a drop.</b> Where a striped lip with amber studs takes the place of the wall, run wide and you go over, into water or a pit, and the night
-            crew&apos;s crane fishes you out: about three seconds and three coins on Expert, though you keep your item. Tap drift as you touch down for a boost.
+            <b>No wall means a drop.</b> Where a striped lip with amber studs takes the place of the wall, run wide and you go over, into water, a pit or down the
+            hillside on the Dish, and the crane fishes you out: about three seconds and three coins on Expert (a little less on Hard), though you keep your item.
+            Tap drift as you touch down for a boost.
           </li>
           <li>
             <b>The trench</b> across the causeway at Hoover Nights: jump it off the ramp at speed, or take a steel plate either side of the hole.
@@ -743,28 +843,52 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>Insane, on the water: Redwood Slough.</b> You race a single scull. The water is slick, so carve (drift) through the bends. Tap hop just as the ring closes for a clean
-            catch; ten in a row is a Power Ten. Leave the channel and you run aground in the marsh: the coach&apos;s launch tows you off (about three and a half seconds and three
-            coins). Whirlpools spin up at the bends: when the foam turns, keep wide and keep your speed. Wakes and the Bay swell shove you sideways; hop the crest. The current helps
+            catch; ten in a row is a Power Ten. The channel is narrow: leave it and you run aground in the marsh, and the coach&apos;s launch tows you off (about four seconds and
+            four coins). Whirlpools spin up right on the line out of the bends: when the foam turns, steer round and keep your speed. Wakes, the Bay swell and the wind shove you
+            sideways; hop the crest. Mind the rocks in the rapids and the crane&apos;s load swinging across the Port. The current helps
             downstream and fights you upstream, so hug the bank going up. On the last lap the tide turns and the fog comes in.
           </li>
           <li>
             <b>The Marguerite buses</b> drive their rounds slower than you, both in the right-hand lane. Pass on the left: run into one and you spin out. Shells break on them too.
-            And they have right of way: the pile drivers, bollards, sprinklers and wrecking balls stand aside as a bus comes through.
+            And they have right of way: the pile drivers, bollards, sprinklers, wrecking balls, fountain jets and the Tree stand aside as a bus comes through, and the crossing waits for one to pass.
           </li>
           <li>
             <b>Pile drivers</b> slam down on the corners every few seconds and sit a moment: the beacon strobes and the head shakes just before it drops. Go under it while it is up, or take the long way round. It flattens you on the way down, it is solid on the ground, and shells break on it there.
           </li>
           <li>
-            <b>Bollards</b> rise across the road in four banks from lap 2, one gap rippling across: green lamps down, amber about to rise, red up. Hit a raised bank and you are squashed and stopped behind it. Shells break on a raised bank.
+            <b>Bollards</b> rise across the road in four banks from lap 2 on Hoover Nights and the Main Quad, one gap rippling across: green lamps down, amber about to rise, red up. Hit a raised bank and you are squashed and stopped behind it. Shells break on a raised bank.
           </li>
           <li>
-            <b>Sprinklers</b> on the sweeper spin a jet round from lap 2: the spray spins you (a hop does not clear it), the hub is solid. Pass on the side the arm has just left.
+            <b>Sprinklers</b> spin a jet round, from lap 2 on Hoover Nights&apos; sweeper and lap 3 on the Main Quad: the spray spins you (a hop does not clear it), the
+            hub is solid. Pass on the side the arm has just left.
+          </li>
+          <li>
+            <b>Boulders</b> roll down off the hillside on the Dish, one down each chute every few seconds: watch for the falling-rocks sign, then the dust and the
+            rumble up the chute. It bounds over the wall and right across the road, and it tumbles you and throws you the way it is rolling.
           </li>
           <li>
             <b>Wet road</b> from lap 3: there is no grip through the sweeper, so you turn less. Drift through it, or ease off.
           </li>
           <li>
             <b>Wrecking balls</b> swing across the road on the clock. A hit tumbles you and throws you aside, and beside the Dig that means the drop. Go through fast on the side the ball is leaving.
+          </li>
+          <li>
+            <b>Oncoming traffic</b> down Memorial Church&apos;s straight: cars come at you in the left lane, headlights blazing, and later a delivery van with them. Keep right. Hit one head on and you
+            tumble, and the item in your hand goes flying.
+          </li>
+          <li>
+            <b>The Marguerite crossing</b> on the west straight: the bells ring, the lights flash and the gates come down, then a bendy bus crosses the road. Go behind it, beat it across, or wait.
+            Later in the race one comes the other way too.
+          </li>
+          <li>
+            <b>The Stanford Tree</b> is on a bungee on the inside of the bend after the church. It crouches, its eyes go red, then it lunges across the inside line and bowls you over. The
+            outside, by the ditch, is always clear.
+          </li>
+          <li>
+            <b>Fountain jets</b> blow on the inside of the Claw from lap 4. The water ripples just before one goes up, and it spins you.
+          </li>
+          <li>
+            <b>Lap 5 at Hoover Nights: lights out.</b> Half the street lamps go out and the night closes in. Watch for headlights.
           </li>
           <li>
             <b>Golf carts</b> drive their rounds like the buses, and more cross the road on the cart paths. Run into one and you spin out.
@@ -781,7 +905,18 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           <li>
             <b>Water</b> on the golf course comes right up to the road behind its red stakes: the same as a drop, and a giant ball retriever fishes you out.
           </li>
-          <li>A star, a Mega Mushroom or a Bullet ploughs straight through all of it.</li>
+          <li>
+            <b>Out of bounds</b> is marked with white stakes on the outside of the golf course&apos;s bends: past them the road drops into a gully, the same as water.
+          </li>
+          <li>
+            <b>Canada geese</b> guard the island green&apos;s bank. One crouches and hisses under a <b>!</b>, then flies at you across the inside line and bowls you over.
+            From lap 4 they get angry and come more often. Keep wide of the orange ring while one crouches.
+          </li>
+          <li>
+            <b>The gang mower</b> crosses the end of the first straight, back and forth, from about the second lap: its beacon flashes and it beeps before it sets off. Go
+            round the end it is leaving, or wait for it. Run into it and you spin out (head on, you tumble).
+          </li>
+          <li>A star, a Mega Mushroom or a Bullet ploughs straight through all of it, and a feather sails over most of it.</li>
         </ul>
       </section>
       <section>

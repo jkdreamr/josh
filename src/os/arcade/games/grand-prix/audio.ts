@@ -16,8 +16,9 @@ export type RaceAudio = {
   update: (r: Race, listener: number, cam: CamMode, dt: number) => void;
   /** A hit (wall or car), strength in m/s. */
   impact: (speed: number) => void;
-  /** Fades everything out (pause, game over); the next update brings it back. */
-  silence: () => void;
+  /** Fades everything out (pause, game over); the next update brings it back. `keepVoice` leaves the commentators
+   * talking (they wrap up over the results). */
+  silence: (keepVoice?: boolean) => void;
   setMuted: (muted: boolean) => void;
   /** Where the commentator's voice plays, and a dip of everything else while it talks (the broadcast mix). */
   voice: { ctx: BaseAudioContext; out: AudioNode; duck: (on: boolean) => void };
@@ -92,6 +93,8 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
   const voiceBus = ctx.createGain();
   voiceBus.connect(ctx.destination);
   let muted = false;
+  // while the commentators talk the sound stays on even when the frames stop (over the results screen)
+  let talking = false;
 
   // shared noise: two seconds of white noise looped by every noisy layer
   const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
@@ -392,7 +395,7 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
   // the frame loop stops when the game is hidden or paused; this keeps the engines from droning on alone
   const watchdog = live
     ? window.setInterval(() => {
-        if (performance.now() - lastTick > 250 && live.state === 'running') {
+        if (performance.now() - lastTick > 250 && live.state === 'running' && !talking) {
           smooth(master.gain, 0, 0.02);
           void live.suspend().catch(() => {});
         }
@@ -495,9 +498,9 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
       burst({ dur: 0.35, vol, freq: 120, q: 0.6, type: 'lowpass', tone: 70 });
       burst({ dur: 0.18, vol: vol * 0.6, freq: 2400, q: 0.5 });
     },
-    silence() {
+    silence(keepVoice) {
       smooth(master.gain, 0, 0.05);
-      smooth(voiceBus.gain, 0, 0.05);
+      if (!keepVoice) smooth(voiceBus.gain, 0, 0.05);
       lastTick = 0;
     },
     setMuted(m) {
@@ -507,7 +510,14 @@ export function createRaceAudio(opts: { context?: BaseAudioContext } = {}): Race
         smooth(voiceBus.gain, 0, 0.02);
       }
     },
-    voice: { ctx, out: voiceBus, duck: (on) => smooth(duckGain.gain, on ? 0.6 : 1, on ? 0.08 : 0.35) },
+    voice: {
+      ctx,
+      out: voiceBus,
+      duck: (on) => {
+        talking = on;
+        smooth(duckGain.gain, on ? 0.6 : 1, on ? 0.08 : 0.35);
+      },
+    },
     dispose() {
       disposed = true;
       if (watchdog) window.clearInterval(watchdog);

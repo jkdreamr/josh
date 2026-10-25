@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DIFF, GOAL_W, L, MAX_SPEED, PUCK_R, TO_WIN, W, aiTarget, clampMallet, create, moveMalletTo, nudgeMallet, placePuck, step, stepAI } from '../src/os/arcade/games/airhockey/logic.ts';
+import { DIFF, GOAL_W, L, MALLET_R, MAX_SPEED, PUCK_R, TO_WIN, W, aiHit, aiTarget, clampMallet, create, moveMalletTo, newAiMem, nudgeMallet, placePuck, predictX, step, stepAI, type Difficulty } from '../src/os/arcade/games/airhockey/logic.ts';
 
 const DT = 1 / 120;
 const live = () => {
@@ -175,4 +175,82 @@ test('the computer never crosses the centre line and is slower on easy', () => {
   const da = Math.hypot(a.mallets[1].x, a.mallets[1].z + (L / 2 - 0.35));
   const db = Math.hypot(b.mallets[1].x, b.mallets[1].z + (L / 2 - 0.35));
   assert.ok(db > da, 'hard moves further in the same time');
+});
+
+test('a mallet pressing the puck into a corner gives way instead of pinning it', () => {
+  const s = live();
+  s.puck.x = W / 2 - PUCK_R;
+  s.puck.z = -(L / 2 - PUCK_R);
+  s.puck.vx = 0;
+  s.puck.vz = 0;
+  let hits = 0;
+  for (let i = 0; i < 240; i++) {
+    moveMalletTo(s, 1, { x: W / 2, z: -L / 2 }, DT, 3);
+    const e = step(s, DT);
+    if (e.hit !== undefined && (e.power ?? 0) > 0.3) hits++;
+    const d = Math.hypot(s.puck.x - s.mallets[1].x, s.puck.z - s.mallets[1].z);
+    assert.ok(d >= PUCK_R + MALLET_R - 1e-3, 'mallet and puck never overlap');
+    assert.ok(Math.abs(s.puck.x) <= W / 2 - PUCK_R + 1e-9);
+  }
+  assert.ok(hits < 60, `no machine-gun hits while pinned (${hits})`);
+});
+
+test('predictX follows the puck off the side walls', () => {
+  assert.equal(predictX(0, 0, 0, -1, -1), 0);
+  assert.ok(Math.abs(predictX(0, 0, 1, -1, -0.5) - 0.5) < 1e-9);
+  const lim = W / 2 - PUCK_R;
+  const x = predictX(0, 0, 1, -1, -(lim + 0.2));
+  assert.ok(Math.abs(x - (lim - 0.2)) < 1e-9, 'one bounce off the right wall');
+  assert.equal(predictX(0.3, 0, 1, 1, -1), 0.3, 'a puck moving away keeps its x');
+});
+
+test('the computer can play the bottom side too, mirrored', () => {
+  const s = live();
+  const mem = newAiMem(0);
+  s.puck.x = 0.2;
+  s.puck.z = -1;
+  s.puck.vz = 3;
+  const t = aiTarget(s, () => 0.5, 0, mem);
+  assert.ok(t.z > 1, 'blocks near its own goal at the bottom');
+  assert.ok(Math.abs(t.x - 0.2) < 0.3);
+  s.puck.z = 0.8;
+  s.puck.vz = 0;
+  for (let i = 0; i < 240; i++) {
+    stepAI(s, DT, () => 0.5, 0, mem);
+    assert.ok(s.mallets[0].z >= 0);
+  }
+});
+
+test('harder computers win more often, and every level lets the puck reach a goal', () => {
+  let seed = 11;
+  const rng = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const play = (top: Difficulty, bottom: Difficulty) => {
+    const s = create('cpu', top);
+    const mem = newAiMem(0);
+    for (let t = 0; t < 240 && s.winner === null; t += DT) {
+      stepAI(s, DT, rng);
+      s.difficulty = bottom;
+      stepAI(s, DT, rng, 0, mem);
+      s.difficulty = top;
+      const e = step(s, DT);
+      if (e.hit === 1 && (e.power ?? 0) > 0.3) aiHit(s);
+      if (e.hit === 0 && (e.power ?? 0) > 0.3) aiHit(mem);
+    }
+    return s.score;
+  };
+  const tally = (top: Difficulty, bottom: Difficulty) => {
+    let a = 0;
+    let b = 0;
+    for (let i = 0; i < 4; i++) {
+      const [x, y] = play(top, bottom);
+      a += y;
+      b += x;
+    }
+    return { top: a, bottom: b };
+  };
+  const hardVsEasy = tally('hard', 'easy');
+  assert.ok(hardVsEasy.top > hardVsEasy.bottom * 2, `hard beats easy (${hardVsEasy.top}-${hardVsEasy.bottom})`);
+  assert.ok(hardVsEasy.top + hardVsEasy.bottom >= 20, 'matches move along');
+  const normalVsEasy = tally('normal', 'easy');
+  assert.ok(normalVsEasy.top > normalVsEasy.bottom, `normal beats easy (${normalVsEasy.top}-${normalVsEasy.bottom})`);
 });

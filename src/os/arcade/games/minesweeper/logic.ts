@@ -1,3 +1,5 @@
+import { generate } from './solver.ts';
+
 export type Level = 'beginner' | 'intermediate' | 'expert';
 export type Position = [number, number];
 export type Cell = { mine: boolean; adjacent: number; revealed: boolean; flagged: boolean; wrongFlag: boolean };
@@ -60,14 +62,8 @@ export function neighbors(game: Pick<MinesGame, 'rows' | 'cols'>, row: number, c
 }
 
 function placeMines(game: MinesGame, safeRow: number, safeCol: number, rand: () => number) {
-  const protectedCells = new Set([`${safeRow}:${safeCol}`, ...neighbors(game, safeRow, safeCol).map(([r, c]) => `${r}:${c}`)]);
-  const available: Position[] = [];
-  for (let r = 0; r < game.rows; r++) for (let c = 0; c < game.cols; c++) if (!protectedCells.has(`${r}:${c}`)) available.push([r, c]);
-  for (let i = available.length - 1; i > 0; i--) {
-    const j = Math.min(i, Math.max(0, Math.floor(rand() * (i + 1))));
-    [available[i], available[j]] = [available[j], available[i]];
-  }
-  for (const [r, c] of available.slice(0, game.mineTotal)) game.board[r][c].mine = true;
+  const { mines } = generate(game.rows, game.cols, game.mineTotal, safeRow, safeCol, { rand });
+  for (let r = 0; r < game.rows; r++) for (let c = 0; c < game.cols; c++) game.board[r][c].mine = mines[r * game.cols + c] === 1;
   for (let r = 0; r < game.rows; r++) for (let c = 0; c < game.cols; c++) {
     game.board[r][c].adjacent = neighbors(game, r, c).filter(([nr, nc]) => game.board[nr][nc].mine).length;
   }
@@ -167,4 +163,10 @@ export function toggleFlag(game: MinesGame, row: number, col: number): boolean {
 
 export function tick(game: MinesGame, dt: number): void {
   if (game.started && !game.over) game.seconds += Math.max(0, dt);
+}
+
+/** Share of the safe squares uncovered so far, 0 to 1. */
+export function cleared(game: Pick<MinesGame, 'rows' | 'cols' | 'mineTotal' | 'revealed'>): number {
+  const safe = game.rows * game.cols - game.mineTotal;
+  return safe > 0 ? Math.min(1, game.revealed / safe) : 0;
 }

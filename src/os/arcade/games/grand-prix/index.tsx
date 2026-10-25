@@ -375,7 +375,11 @@ function Play({ mode }: { mode: StageMode }) {
     });
   }, [raceKey]);
   useEffect(() => {
-    if (shell.status !== 'playing') {
+    // paused: everything stops; over: the engines fade and the commentators finish what they are saying
+    if (shell.status === 'over') {
+      audio.current?.silence(true);
+      voice.current?.finish();
+    } else if (shell.status !== 'playing') {
       audio.current?.silence();
       voice.current?.silence();
     }

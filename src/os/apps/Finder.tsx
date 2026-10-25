@@ -4,7 +4,7 @@ import { AppIcon } from '../icons';
 import { useOS, type AppProps } from '../types';
 import { ExternalIcon, Favicon, hostOf } from '../util';
 
-const folderTint: Record<FolderId, string> = { school: '#8c1515', work: '#2f6fed', projects: '#7c5cff', music: '#ff5500' };
+const folderTint: Record<FolderId, string> = { work: '#2f6fed', projects: '#7c5cff', music: '#ff5500' };
 
 export default function Finder({ args }: AppProps) {
   const os = useOS();

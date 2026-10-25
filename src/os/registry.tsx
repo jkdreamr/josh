@@ -38,7 +38,7 @@ export type AppDef = {
 };
 
 export const apps: Record<AppId, AppDef> = {
-  finder: { id: 'finder', title: 'Finder', icon: 'finder', Component: Finder, w: 780, h: 470, frame: 'overlay', dock: true, laptopOnly: true, keywords: 'files folders school work projects' },
+  finder: { id: 'finder', title: 'Finder', icon: 'finder', Component: Finder, w: 780, h: 470, frame: 'overlay', dock: true, laptopOnly: true, keywords: 'files folders work projects' },
   chrome: { id: 'chrome', title: 'Chrome', icon: 'chrome', Component: Chrome, w: 1000, h: 640, frame: 'overlay', dock: true, keywords: 'browser web internet games arcade' },
   messages: { id: 'messages', title: 'Messages', icon: 'messages', Component: Messages, w: 430, h: 580, frame: 'overlay', dock: true, keywords: 'chat text imessage talk' },
   lounge: { id: 'lounge', title: 'Lounge', icon: 'lounge', Component: Lounge, w: 900, h: 600, side: 380, theme: 'dark', dock: true, keywords: 'chat global arcade lounge channels players friends find a game lfg ideas talk' },

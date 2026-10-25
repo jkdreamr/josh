@@ -10,6 +10,7 @@ import {
   generate,
   grade,
   hasUniqueSolution,
+  hintCell,
   isSolved,
   mulberry32,
   solve,
@@ -54,6 +55,7 @@ test('grader: the classic puzzle needs only singles', () => {
 
 for (const level of LEVELS) {
   test(`generate ${level}: unique, consistent, graded, fast`, () => {
+    const grades: number[] = [];
     for (let seed = 1; seed <= 25; seed++) {
       const t = performance.now();
       const p = generate(level, mulberry32(seed * 7919));
@@ -68,8 +70,10 @@ for (const level of LEVELS) {
       if (level === 'easy') {
         assert.ok(p.clues >= 36, `easy has ${p.clues} clues`);
         assert.ok(p.grade <= 2);
+        grades.push(p.grade);
       }
       if (level === 'medium') {
+        grades.push(p.grade);
         assert.ok(p.clues <= 34 && p.clues >= 28, `medium has ${p.clues} clues`);
         assert.ok(p.grade <= 2);
       }
@@ -78,6 +82,8 @@ for (const level of LEVELS) {
         assert.ok(p.grade >= 3, 'hard needs more than singles');
       }
     }
+    // easy is naked singles and medium needs hidden singles, so the two levels feel different
+    if (level !== 'hard') assert.ok(grades.filter((g) => g === (level === 'easy' ? 1 : 2)).length >= 23, `${level} grades ${grades}`);
   });
 }
 
@@ -104,4 +110,47 @@ test('completed units and solved detection', () => {
   assert.deepEqual(completedUnits(g, 0), [9]);
   assert.ok(!isSolved(g, EASY_SOLUTION));
   assert.ok(isSolved(EASY_SOLUTION.slice(), EASY_SOLUTION));
+});
+
+test('hint picks the selected cell, then wrong entries, then the most constrained open cell', () => {
+  const locked = EASY.map((v) => v > 0);
+  const g = EASY.slice();
+  assert.equal(hintCell(g, EASY_SOLUTION, locked, 2), 2);
+  assert.equal(hintCell(g, EASY_SOLUTION, locked, 0), hintCell(g, EASY_SOLUTION, locked, -1), 'a given cell is never the hint');
+  g[3] = EASY_SOLUTION[3] === 1 ? 2 : 1; // a wrong entry
+  assert.equal(hintCell(g, EASY_SOLUTION, locked, 0), 3);
+  const open = hintCell(EASY, EASY_SOLUTION, locked, -1);
+  assert.equal(EASY[open], 0);
+  assert.equal(hintCell(EASY_SOLUTION, EASY_SOLUTION, locked, 5), -1);
+});
+
+test('layout keeps every part inside the game area and clear of the shell controls', async () => {
+  const { layout } = await import('../src/os/arcade/games/sudoku/layout.ts');
+  const sizes: [number, number, boolean, number][] = [
+    [464, 157, false, 1],
+    [601, 260, false, 1],
+    [1000, 560, false, 1],
+    [1440, 820, false, 1],
+    [390, 648, true, 1],
+    [820, 998, true, 1.224],
+    [540, 360, false, 1],
+  ];
+  for (const [W, H, touch, u] of sizes) {
+    const pill = { left: W - 110, bottom: 40 };
+    const L = layout(W, H, pill, touch, u);
+    const parts = [L.board, L.info, L.tools, L.pad];
+    for (const b of parts) {
+      assert.ok(b.x >= 0 && b.y >= 0 && b.x + b.w <= W && b.y + b.h <= H, `${W}x${H} ${L.kind} ${JSON.stringify(b)}`);
+      assert.ok(!(b.x + b.w > pill.left && b.y < pill.bottom), `${W}x${H} ${L.kind} under the pill ${JSON.stringify(b)}`);
+    }
+    for (let a = 0; a < parts.length; a++)
+      for (let b = a + 1; b < parts.length; b++) {
+        const p = parts[a];
+        const q = parts[b];
+        assert.ok(p.x + p.w <= q.x || q.x + q.w <= p.x || p.y + p.h <= q.y || q.y + q.h <= p.y, `${W}x${H} ${L.kind} overlap ${a} ${b}`);
+      }
+    const key = Math.min(L.pad.w / L.padCols, L.pad.h / Math.ceil(9 / L.padCols));
+    assert.ok(key >= (touch ? 40 : 24), `${W}x${H} pad key ${key}`);
+    assert.ok(L.board.w >= 120, `${W}x${H} board ${L.board.w}`);
+  }
 });

@@ -335,6 +335,24 @@ export function frameUnit(screenWidth: number, layoutWidth: number): number {
   return scale > 0.2 && scale < 0.99 ? Math.min(2, 1 / scale) : 1;
 }
 
+/** Left edge for a pill of `width` centered in the widest free gap of [left, right] once `blocks` (plus `gap` each side) are cut out; null if none fits. */
+export function topBarSlot(left: number, right: number, width: number, blocks: Array<[number, number]> = [], gap = 8): number | null {
+  let free: Array<[number, number]> = [[left, right]];
+  for (const [a, b] of blocks) {
+    free = free.flatMap(([l, r]): Array<[number, number]> => {
+      if (b + gap <= l || a - gap >= r) return [[l, r]];
+      const parts: Array<[number, number]> = [];
+      if (a - gap > l) parts.push([l, a - gap]);
+      if (b + gap < r) parts.push([b + gap, r]);
+      return parts;
+    });
+  }
+  const fits = free.filter(([l, r]) => r - l >= width).sort((x, y) => (y[1] - y[0]) - (x[1] - x[0]));
+  if (!fits.length) return null;
+  const [l, r] = fits[0];
+  return Math.round((l + (r - l - width) / 2) * 2) / 2;
+}
+
 /** Board top under a status pill that wrapped below the toolbar; the column labels sit 15 units above the board. */
 export function boardTopBelow(statusBottom: number, u = 1): number {
   return Math.ceil(statusBottom + 18 * u);

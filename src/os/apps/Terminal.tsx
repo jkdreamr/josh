@@ -10,7 +10,7 @@ const PROMPT = (cwd: string) => (
   </span>
 );
 
-const dirMap: Record<string, FolderId> = { school: 'school', work: 'work', projects: 'projects', 'side-projects': 'projects', music: 'music' };
+const dirMap: Record<string, FolderId> = { work: 'work', projects: 'projects', 'side-projects': 'projects', music: 'music' };
 const appNames: Record<string, AppId> = {
   finder: 'finder', chrome: 'chrome', browser: 'chrome', messages: 'messages', notes: 'notes', spotify: 'spotify', soundcloud: 'soundcloud',
   instagram: 'instagram', ig: 'instagram', x: 'x', twitter: 'x', linkedin: 'linkedin', github: 'github', mail: 'mail', email: 'mail',
@@ -19,7 +19,7 @@ const appNames: Record<string, AppId> = {
   photobooth: 'photobooth', camera: 'photobooth', trash: 'trash', about: 'about',
 };
 
-const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'school', 'projects', 'music', 'socials', 'contact', 'neofetch', 'arcade', 'row', 'baduk', 'go', 'omok', 'badminton', 'beatpad', 'beats', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
+const commands = ['help', 'whoami', 'about', 'ls', 'cd', 'cat', 'open', 'work', 'projects', 'music', 'socials', 'contact', 'neofetch', 'arcade', 'row', 'baduk', 'go', 'omok', 'badminton', 'beatpad', 'beats', 'date', 'echo', 'history', 'clear', 'exit', 'sudo'];
 
 const ART = String.raw`
        _ _
@@ -77,9 +77,9 @@ export default function Terminal(_: AppProps) {
           <div className="t-grid">
             {[
               ['whoami', 'who is josh?'],
-              ['ls / cd <dir>', 'look around (school, work, projects, music)'],
+              ['ls / cd <dir>', 'look around (work, projects, music)'],
               ['open <app>', 'open any app, e.g. open spotify'],
-              ['work · school · projects · music', 'shortcuts'],
+              ['work · projects · music', 'shortcuts'],
               ['socials · contact', 'where to find me'],
               ['neofetch', 'system info'],
               ['arcade', 'play the arcade'],
@@ -105,7 +105,7 @@ export default function Terminal(_: AppProps) {
         );
       case 'ls': {
         const target = (arg || (cwd === '~' ? '' : cwd.replace('~/', ''))).replace(/\/$/, '').toLowerCase();
-        if (!target) return print(<span className="t-row">{['school/', 'work/', 'projects/', 'music/', 'about-me.txt'].map((n) => <span key={n} className={n.endsWith('/') ? 't-dir' : 't-file'}>{n}</span>)}</span>);
+        if (!target) return print(<span className="t-row">{['work/', 'projects/', 'music/', 'about-me.txt'].map((n) => <span key={n} className={n.endsWith('/') ? 't-dir' : 't-file'}>{n}</span>)}</span>);
         const id = dirMap[target];
         return id ? print(...list(id)) : print(<span className="t-err">ls: {arg}: No such file or directory</span>);
       }
@@ -119,7 +119,6 @@ export default function Terminal(_: AppProps) {
         if (/about/.test(arg)) return run('whoami', api);
         return print(<span className="t-err">cat: {arg || 'missing operand'}: try about-me.txt</span>);
       case 'work':
-      case 'school':
       case 'music':
       case 'projects':
         return print(...list(c as FolderId));
