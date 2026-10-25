@@ -95,9 +95,10 @@ function makeHoover(THREE: Three, box: T.BoxGeometry, lit = false) {
 function makeHall(THREE: Three, box: T.BoxGeometry, roof: T.BufferGeometry, mats: { stone: T.Material; tile: T.Material; dark: T.Material }, w: number, d: number, h: number) {
   void box;
   void roof;
-  void mats;
+  // (after dark, given lit windows: a basic material for them, most of them lit)
+  const lit = (mats.dark as T.MeshBasicMaterial).isMeshBasicMaterial ? (mats.dark as T.MeshBasicMaterial).color.getHex() : undefined;
   const mk = modelKit(THREE);
-  hallModel(THREE, mk, w, d, h, w > 14);
+  hallModel(THREE, mk, w, d, h, w > 14, lit);
   const m = vcMats(THREE);
   return mk.build(m.vc, m.lit);
 }
@@ -388,7 +389,7 @@ export function makeBike(THREE: Three, geo: { box: T.BoxGeometry; ball: T.Sphere
     });
   };
   pedal(rand() * Math.PI * 2);
-  return { g, wheels, pedal };
+  return { g, wheels, pedal, cranks, legs };
 }
 
 /**
@@ -2219,9 +2220,20 @@ function hoover(c: Scenery): SceneryTick {
     (goes ? outHeads : heads).push({ x: head.x, y: 6.2, z: head.z, sx: 0.9, sy: 0.2, sz: 0.5, ry });
     (goes ? outPools : pools).push({ x: pool.x, y: 0.075, z: pool.z, sx: 12, sy: 12, sz: 1, rx: flat });
   }
-  const metal = new THREE.MeshLambertMaterial({ color: 0x30333c });
-  instances(THREE, scene, dummy, geo.box, metal, posts);
-  instances(THREE, scene, dummy, geo.box, metal, arms);
+  // (the poles: a flared cast base, a tapering shaft, the arm out over the road on its bracket; one mesh)
+  const poles = modelKit(THREE);
+  for (const [k, p] of posts.entries()) {
+    const a = arms[k];
+    poles.place(p.x, 0, p.z, 0);
+    poles.cyl(0x2a2d34, 0, 0.35, 0, 0.32, 0.7, 0.32);
+    poles.cyl(0x30333c, 0, 3.4, 0, 0.1, 5.8, 0.1);
+    poles.cyl(0x2a2d34, 0, 6.3, 0, 0.13, 0.25, 0.13);
+    poles.place(a.x, 0, a.z, a.ry ?? 0);
+    poles.box(0x30333c, 0, 6.35, 0, a.sx, 0.1, 0.1);
+    poles.box(0x30333c, 0, 6.0, 0, a.sx * 0.5, 0.06, 0.06, 0, 0, 0.45);
+  }
+  poles.place();
+  if (poles.count()) scene.add(poles.build(new THREE.MeshLambertMaterial({ vertexColors: true }), new THREE.MeshBasicMaterial({ vertexColors: true })));
   const headMat = new THREE.MeshBasicMaterial({ color: 0xfff0c8 });
   const poolMat = new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,222,160', 0.34), transparent: true, depthWrite: false });
   instances(THREE, scene, dummy, geo.box, headMat, heads);
@@ -2240,9 +2252,7 @@ function hoover(c: Scenery): SceneryTick {
     [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]].every(([a, b]) => clear(x + (ax * a * w) / 2 - (az * b * d) / 2, z + (az * a * w) / 2 + (ax * b * d) / 2, 2.5)) && Math.hypot(x - foot.x, z - foot.z) > 30 && Math.hypot(x - craneAt.x, z - craneAt.z) > 14;
   const hall = (x: number, z: number, ry: number, w: number, d: number, h: number) => {
     const g = makeHall(THREE, geo.box, geo.roof, hallMats, w, d, h);
-    g.children.forEach((o) => {
-      if ((o as T.Mesh).material === lit && rand() < 0.3) (o as T.Mesh).material = unlit;
-    });
+    void unlit;
     g.position.set(x, 0, z);
     g.rotation.y = ry;
     scene.add(g);

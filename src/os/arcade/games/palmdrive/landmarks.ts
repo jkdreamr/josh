@@ -109,7 +109,7 @@ function windows(mk: ModelKit, x0: number, z: number, w: number, n: number, y: n
     const x = x0 + u * nz;
     const zz = z + u * -nx;
     mk.geo(pane, 0xe8dcc4, x + nx * 0.03, y, zz + nz * 0.03, ww + 0.25, wh + 0.25, 1, 0, ry, 0);
-    if (lit !== undefined && (k * 7 + Math.round(y)) % 3 === 0) mk.glow(lit, x + nx * 0.05, y, zz + nz * 0.05, along ? ww : 0.02, wh, along ? 0.02 : ww);
+    if (lit !== undefined && ((k * 7 + Math.round(y * 3) + Math.round(x0 * 13 + z * 7)) % 10) < 7) mk.glow(lit, x + nx * 0.05, y, zz + nz * 0.05, along ? ww : 0.02, wh, along ? 0.02 : ww);
     else mk.geo(pane, GLASS, x + nx * 0.05, y, zz + nz * 0.05, ww, wh, 1, 0, ry, 0);
     mk.box(0xcdb894, x + nx * 0.1, y - wh / 2 - 0.1, zz + nz * 0.1, along ? ww + 0.4 : 0.2, 0.1, along ? 0.2 : ww + 0.4);
   }
@@ -475,4 +475,40 @@ function mergeColored(THREE: Three, parts: { g: T.BufferGeometry; m: T.Matrix4; 
   out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   return out;
+}
+
+/**
+ * Bakes the plain-colored parts of a group that moves as a whole (a car, a bus) into a mesh or two in the group's own
+ * space, leaving alone what animates by itself (`moving`, and everything under it) and what cannot be baked (textured,
+ * see-through, sprites). Parts glowing with an emissive keep it: one mesh per emissive color.
+ */
+export function bakeInPlace(THREE: Three, g: T.Object3D, moving: T.Object3D[] = []) {
+  g.updateMatrixWorld(true);
+  const inv = g.matrixWorld.clone().invert();
+  const skip = new Set(moving);
+  const groups = new Map<string, { basic: boolean; emissive: number; parts: { g: T.BufferGeometry; m: T.Matrix4; color: [number, number, number] }[] }>();
+  const gone: T.Mesh[] = [];
+  const walk = (o: T.Object3D) => {
+    if (skip.has(o)) return;
+    const m = o as T.Mesh;
+    if (m.isMesh && !(m as T.InstancedMesh).isInstancedMesh && m.visible) {
+      const mat = m.material as T.MeshLambertMaterial & T.MeshBasicMaterial;
+      if (!m.children.length && !Array.isArray(m.material) && !mat.map && !mat.transparent && (mat.isMeshLambertMaterial || mat.isMeshBasicMaterial)) {
+        const emissive = mat.isMeshLambertMaterial && mat.emissive ? mat.emissive.getHex() : 0;
+        const key = `${mat.isMeshBasicMaterial ? 'b' : 'l'}${emissive}`;
+        let grp = groups.get(key);
+        if (!grp) groups.set(key, (grp = { basic: !!mat.isMeshBasicMaterial, emissive, parts: [] }));
+        grp.parts.push({ g: m.geometry, m: new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld), color: [mat.color.r, mat.color.g, mat.color.b] });
+        gone.push(m);
+      }
+    }
+    for (const c of [...o.children]) walk(c);
+  };
+  walk(g);
+  for (const m of gone) m.removeFromParent();
+  for (const grp of groups.values()) {
+    const mat = grp.basic ? new THREE.MeshBasicMaterial({ vertexColors: true }) : new THREE.MeshLambertMaterial({ vertexColors: true, emissive: grp.emissive });
+    g.add(new THREE.Mesh(mergeColored(THREE, grp.parts), mat));
+  }
+  return g;
 }

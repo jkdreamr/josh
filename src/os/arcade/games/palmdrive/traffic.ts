@@ -5,6 +5,7 @@
 import type { T } from './gl';
 import { KART_R, cycleAt, headingOf, lengthOf, pointAt, traffic, wrapAngle, type Track } from './track';
 import { canvas, makeBus, texture } from './scenery';
+import { bakeInPlace } from './landmarks';
 import { TREE, hazState, hazardS, shuttleRun, shuttleSkips, spanGone, trafficD, type LiveHazard, type Race } from './logic';
 
 type Three = typeof import('three');
@@ -182,6 +183,8 @@ export function buildTraffic(THREE: Three, scene: T.Scene, r: Race, geo: Geo): T
     ),
   });
   const amberMat = new THREE.MeshBasicMaterial({ color: 0xffa31a });
+  const trimMat = new THREE.MeshLambertMaterial({ color: 0x1c1d22 });
+  const plateMat = new THREE.MeshLambertMaterial({ color: 0xf2f2ec, emissive: 0x202020 });
   const cars: CarView[] = [];
   r.hazards.forEach((h, i) => {
     if (!traffic(h.kind)) return;
@@ -234,6 +237,19 @@ export function buildTraffic(THREE: Three, scene: T.Scene, r: Race, geo: Geo): T
     beam.renderOrder = 2;
     g.add(beam);
     const beacon = van ? box(g, amberMat, 0, 2.7, len / 2 - 1.4, 0.4, 0.22, 0.4) : null;
+    // its trim: bumpers, the plates, wheel arches, mirrors, door seams and the grille (all baked in with the body)
+    box(g, trimMat, 0, 0.4, len / 2 + 0.06, w + 0.04, 0.22, 0.14);
+    box(g, trimMat, 0, 0.4, -len / 2 - 0.06, w + 0.04, 0.22, 0.14);
+    box(g, plateMat, 0, 0.42, len / 2 + 0.14, 0.5, 0.14, 0.02);
+    box(g, plateMat, 0, 0.5, -len / 2 - 0.14, 0.5, 0.14, 0.02);
+    box(g, trimMat, 0, 0.62, len / 2 + 0.02, w * 0.5, 0.16, 0.04);
+    for (const [x, z] of [[-1, 1], [1, 1], [-1, -1], [1, -1]]) box(g, trimMat, x * (h.r - 0.02), 0.62, z * (len / 2 - 0.85), 0.08, 0.16, 0.8);
+    for (const side of [-1, 1]) {
+      box(g, paint, side * (h.r + 0.12), van ? 1.5 : 1.12, van ? len / 2 - 0.95 : len * 0.2, 0.12, 0.12, 0.18);
+      box(g, trimMat, side * (h.r + 0.005), van ? 1.0 : 0.62, van ? len / 2 - 1.25 : -0.1, 0.02, van ? 0.9 : 0.45, 0.03);
+    }
+    // (one mesh or two for all of that: only the wheels, the beacon and the lights' glow are separate)
+    bakeInPlace(THREE, g, [...wheels, ...(beacon ? [beacon] : [])]);
     g.visible = false;
     scene.add(g);
     cars.push({ i, g, wheels, h: 0, roll: 0, beacon, len });
@@ -286,6 +302,7 @@ export function buildTraffic(THREE: Three, scene: T.Scene, r: Race, geo: Geo): T
       const bus = makeBus(THREE, geo, half, h.r);
       // (the back half's lights and the pool of light ahead of it would show at the joint)
       if (side < 0) for (const o of [...bus.g.children]) if (o.position.z > half / 2 - 0.2 && (o.position.y < 1.2 || o.position.z > half / 2 + 0.5)) bus.g.remove(o);
+      bakeInPlace(THREE, bus.g, bus.wheels);
       bus.g.position.z = side * (half / 2 + 0.4);
       g.add(bus.g);
       wheels.push(...bus.wheels);

@@ -15,7 +15,7 @@ import { skyWater, waterTick } from './skywater';
 import { floraTick } from './flora';
 import { kartDetail, kartRim } from './kart';
 import { knollGeometry } from './dish';
-import { bake, vcMats } from './landmarks';
+import { bake, bakeInPlace, vcMats } from './landmarks';
 import { GROUNDS, asphaltTexture, curbTexture, grassTufts, groundMaterial, lawnMaterial, roadMaterial, wallTexture } from './surfaces';
 
 type Three = typeof import('three');
@@ -2210,7 +2210,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     } else if (h.kind === 'bike') {
       // a cyclist on the way to class, a little bigger than life so it reads at speed
       kit ??= bikeKit(THREE);
-      const { g, wheels, pedal } = makeBike(THREE, geo, kit, rand);
+      const { g, wheels, pedal, cranks, legs } = makeBike(THREE, geo, kit, rand);
+      // (each part that turns baked into one mesh, and the rest of it into another: a few draws, not dozens)
+      for (const w of wheels) bakeInPlace(THREE, w);
+      bakeInPlace(THREE, cranks);
+      bakeInPlace(THREE, g, [...wheels, cranks, ...legs]);
       const at = pointAt(t, h.along, h.at);
       const face = headingOf(-at.tz * h.walk, at.tx * h.walk);
       g.scale.setScalar(1.15);
@@ -2220,6 +2224,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       bikes.push({ view: { g, wheels, pedal, h: face, crank: 0 }, i });
     } else if (h.kind === 'bus') {
       const bus = makeBus(THREE, geo, BUS_LEN, h.r);
+      // (its body one mesh or three, the wheels still turning: see landmarks.ts)
+      bakeInPlace(THREE, bus.g, bus.wheels);
       bus.g.position.set(h.x, 0, h.z);
       bus.g.rotation.y = headingOf(h.tx, h.tz);
       scene.add(bus.g);
