@@ -94,13 +94,16 @@ test('triple bananas and triple greens give three goes and can be held out behin
     const kind = item === 'bananas' ? 'banana' : 'green';
     assert.equal(only(spawned, 'spawn').filter((e) => e.thing.kind === kind).length, 3, `${item}: three, then nothing`);
   }
-  // held out behind, three bananas look like a banana to everyone else
+  // held out behind, three bananas look like a banana to everyone else (and what is in hand travels too)
   giveItem(r, k, 'bananas', 0);
   k.input.hold = true;
   run(r, 0.1);
   assert.ok(k.trail);
   const copy = race(1).karts[0];
   applyFlags(copy, flagsOf(k));
+  assert.ok(copy.trail && copy.item === 'bananas');
+  // (from a client that only says what is held out behind, it reads as a banana)
+  applyFlags(copy, flagsOf(k) & ((1 << 24) - 1));
   assert.ok(copy.trail && copy.item === 'banana');
 });
 
