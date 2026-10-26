@@ -1,3 +1,6 @@
+.g-pong {
+  container: g-pong-host / inline-size;
+}
 .g-pong .g-pong-canvas {
   background: radial-gradient(120% 90% at 50% 45%, #151a28 0%, #0c0e15 62%, #08090e 100%);
   touch-action: none;
@@ -23,5 +26,17 @@
   .g-pong .arcade-ov > .arcade-card .arcade-seg > button,
   .g-pong .arcade-ov > .arcade-card .arcade-input {
     min-height: 42px;
+  }
+}
+
+/* Narrow touch screens: the bigger toolbar spans the top, so the online pill and the cards drop below it. */
+@media (pointer: coarse) {
+  @container g-pong-host (max-width: 620px) {
+    .g-pong .arcade-online-status {
+      top: calc(22px + 44px * var(--g-pong-u, 1));
+    }
+    .g-pong .arcade-ov {
+      padding-top: calc(22px + 44px * var(--g-pong-u, 1));
+    }
   }
 }
