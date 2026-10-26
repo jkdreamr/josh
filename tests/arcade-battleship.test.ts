@@ -30,6 +30,8 @@ import {
   type Rng,
   type ShotResult,
   topBarSlot,
+  ZOOM_PAD,
+  ZOOM_PAD_END,
 } from '../src/os/arcade/games/battleship/battleship.ts';
 
 function seeded(seed: number): Rng {
@@ -228,18 +230,22 @@ test('board geometry is unchanged at unit scale', () => {
   assert.deepEqual(boardGeometry(820, 997, true, 64), {
     portrait: true, targetCell: 79, targetX: 0, targetY: 0, ownCell: 79, ownX: 0, ownY: 0,
     placeCell: 79, placeX: 16, placeY: 96, toolsX: 245, toolsY: 907, fireX: 0, fireY: 0,
+    targetViewW: 0, targetViewH: 0, zoomed: false,
   });
   assert.deepEqual(boardGeometry(820, 997, false, 64), {
     portrait: true, targetCell: 52, targetX: 145.5, targetY: 69.5, ownCell: 30, ownX: 255.5, ownY: 674.5,
     placeCell: 52, placeX: 0, placeY: 0, toolsX: 0, toolsY: 0, fireX: 350, fireY: 606.5,
+    targetViewW: 529, targetViewH: 529, zoomed: false,
   });
   assert.deepEqual(boardGeometry(464, 157, false, 40), {
     portrait: false, targetCell: 10, targetX: 132, targetY: 42, ownCell: 7, ownX: 253, ownY: 57,
     placeCell: 10, placeX: 0, placeY: 0, toolsX: 0, toolsY: 0, fireX: 232.5, fireY: 103,
+    targetViewW: 109, targetViewH: 109, zoomed: false,
   });
   assert.deepEqual(boardGeometry(390, 700, true, 88), {
     portrait: true, targetCell: 36, targetX: 0, targetY: 0, ownCell: 36, ownX: 0, ownY: 0,
     placeCell: 36, placeX: 16, placeY: 174.5, toolsX: 30, toolsY: 555.5, fireX: 0, fireY: 0,
+    targetViewW: 0, targetViewH: 0, zoomed: false,
   });
 });
 
@@ -263,6 +269,31 @@ test('scaled board geometry leaves room for the scaled labels, fire button and t
   assert.ok(battle.ownY - 15 * u >= battle.fireY + 50 * u, 'own column labels stay clear of Fire');
   assert.ok(battle.ownY + ownSide <= h);
   assert.ok(Math.abs(battle.fireX + 60 * u - w / 2) < 1e-9, 'fire is centered');
+});
+
+test('touch battle boards keep 40px enemy squares and Fire clear of both boards', () => {
+  const overlaps = (a: number[], b: number[]) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+  // Stage sizes measured on a 390x844 phone (portrait and landscape) and the framed iPad.
+  for (const [w, h, top, u] of [[390, 728, 64, 1], [844, 274, 40, 1], [670, 881, 78, 1 / 0.8175], [820, 997, 78, 1 / 0.8175]]) {
+    const minCell = Math.ceil(40 * u);
+    const g = boardGeometry(w, h, false, top, u, minCell);
+    assert.ok(g.targetCell / u >= 40, `${w}x${h}: enemy squares render at least 40px`);
+    const ownSide = g.ownCell * 10 + 9;
+    const target = [g.targetX, g.targetY, g.targetX + g.targetViewW, g.targetY + g.targetViewH];
+    const own = [g.ownX, g.ownY, g.ownX + ownSide, g.ownY + ownSide];
+    const fire = [g.fireX, g.fireY, g.fireX + 120 * u, g.fireY + 50 * u];
+    assert.ok(!overlaps(fire, target) && !overlaps(fire, own) && !overlaps(target, own), `${w}x${h}: Fire and boards stay apart`);
+    for (const box of [target, own, fire]) {
+      assert.ok(box[0] >= 0 && box[2] <= w + 1e-9 && box[1] >= top - 1e-9 && box[3] <= h + 1e-9, `${w}x${h}: everything stays on the stage`);
+    }
+    if (g.zoomed) {
+      assert.ok(g.targetViewW < (ZOOM_PAD + ZOOM_PAD_END) * u + g.targetCell * 10 + 9 + 1e-9);
+      assert.ok(g.targetViewH >= g.targetCell * 4, `${w}x${h}: at least four rows show at once`);
+    }
+  }
+  // Without a minimum (mouse), nothing zooms.
+  assert.equal(boardGeometry(844, 274, false, 40).zoomed, false);
+  assert.equal(boardGeometry(844, 274, false, 40).targetCell, 21);
 });
 
 test('a wrapped status pill leaves room for the column labels above the board', () => {

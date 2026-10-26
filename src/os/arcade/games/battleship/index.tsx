@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type Ref } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type Ref } from 'react';
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelIndex, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import {
@@ -26,6 +26,8 @@ import {
   shipCells,
   shipLen,
   topBarSlot,
+  ZOOM_PAD,
+  ZOOM_PAD_END,
   type Fleet,
   type Intel,
   type Level,
@@ -954,7 +956,9 @@ function Battleship() {
     }
   });
 
-  const geometry = boardGeometry(size.w, size.h, state.phase === 'place', statusLayout.boardTop, unit);
+  // On touch, enemy squares keep at least 40px on screen; a board that can't fit at that size pans inside its view.
+  const minTouchCell = shell.touch ? Math.ceil(40 * unit) : 0;
+  const geometry = boardGeometry(size.w, size.h, state.phase === 'place', statusLayout.boardTop, unit, minTouchCell);
   const localFleet = state.fleets[state.placementSeat];
   const drag = state.drag;
   const targetSeat = state.mode === 'online' ? localSeat : state.viewer;
@@ -1028,6 +1032,7 @@ function Battleship() {
         <>
           <Board
             style={targetBoardStyle}
+            view={geometry.zoomed ? { w: geometry.targetViewW, h: geometry.targetViewH, pad: ZOOM_PAD * unit, padEnd: ZOOM_PAD_END * unit } : undefined}
             caption={boardTargetLabel}
             fleet={renderTargetShips}
             intel={targetIntel}
@@ -1088,6 +1093,7 @@ function Battleship() {
 type BoardProps = {
   refBoard?: Ref<HTMLDivElement>;
   style: CSSProperties;
+  view?: { w: number; h: number; pad: number; padEnd: number };
   caption: string;
   fleet: Fleet;
   intel: Intel;
@@ -1112,6 +1118,7 @@ type BoardProps = {
 function Board({
   refBoard,
   style,
+  view,
   caption,
   fleet,
   intel,
@@ -1140,88 +1147,109 @@ function Board({
     ghost ? ghostValid ? 'ghost-valid' : 'ghost-invalid' : '',
     lastHit !== null && lastHit !== undefined && (intel.cells[lastHit] === HIT || intel.cells[lastHit] === SUNK) ? 'has-hit' : '',
   ].filter(Boolean).join(' ');
+  const viewRef = useRef<HTMLDivElement | null>(null);
+  const zoomed = !!view;
+  useLayoutEffect(() => {
+    const el = viewRef.current;
+    if (!el || !zoomed) return;
+    el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2;
+    el.scrollTop = (el.scrollHeight - el.clientHeight) / 2;
+  }, [zoomed]);
+  const side = Number(style.width) || 0;
   return (
-    <div className={`g-battleship-board-wrap${own ? ' own' : ''}`} style={{ left: style.left, top: style.top, width: style.width, height: style.height }}>
+    <div
+      className={`g-battleship-board-wrap${own ? ' own' : ''}`}
+      style={{ left: style.left, top: style.top, width: view ? view.w : style.width, height: view ? view.h : style.height }}
+    >
       <div className="g-battleship-caption">{caption}</div>
-      <div
-        ref={refBoard}
-        className={boardClass}
-        style={{ ...style, left: 0, top: 0 }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerCancel}
-        aria-label={caption}
-      >
-        {Array.from({ length: SIZE * SIZE }, (_, cell) => {
-          const row = Math.floor(cell / SIZE);
-          const col = cell % SIZE;
-          const value = intel.cells[cell];
-          const labels = `${String.fromCharCode(65 + row)}${col + 1}`;
-          const marker = value === MISS ? 'miss' : value === HIT ? 'hit' : value === SUNK ? 'sunk' : '';
-          const classes = [
-            'g-battleship-cell',
-            marker,
-            cell === last ? 'last' : '',
-            cell === aimed || cell === cursor ? 'aimed' : '',
-            cell === hover ? 'hovered' : '',
-            row === 0 ? 'first-row' : '',
-            col === 0 ? 'first-col' : '',
-          ].filter(Boolean).join(' ');
-          return (
-            <button
-              type="button"
-              key={cell}
-              className={classes}
-              style={{ gridRow: row + 1, gridColumn: col + 1 }}
-              data-cell={cell}
-              data-label={labels}
-              data-row={String.fromCharCode(65 + row)}
-              data-col={col + 1}
-              aria-label={`${labels}${marker ? `, ${marker}` : ''}`}
-              tabIndex={-1}
-              disabled={!active}
-            >
-              <span className="g-battleship-marker" aria-hidden="true" />
-              {row === 0 && <span className="g-battleship-coordinate-col" aria-hidden="true">{col + 1}</span>}
-              {col === 0 && <span className="g-battleship-coordinate-row" aria-hidden="true">{String.fromCharCode(65 + row)}</span>}
-            </button>
-          );
-        })}
-        {ships.map((ship) => {
-          const hitShip = intel.sunk.includes(ship.id);
-          const length = shipLen(ship.id);
-          const shipClass = [
-            'g-battleship-hull',
-            ship.horiz ? 'horizontal' : 'vertical',
-            length >= 3 ? 'detailed' : '',
-            placement && selected === ship.id ? 'selected' : '',
-            drag?.id === ship.id ? 'dragging' : '',
-            hitShip ? 'sunk' : '',
-            ghost?.id === ship.id ? 'ghost' : '',
-            ghost?.id === ship.id && !ghostValid ? 'invalid' : '',
-          ].filter(Boolean).join(' ');
-          return (
-            <div
-              key={ship.id}
-              className={shipClass}
-              style={{
-                gridRow: `${ship.r + 1} / span ${ship.horiz ? 1 : shipLen(ship.id)}`,
-                gridColumn: `${ship.c + 1} / span ${ship.horiz ? shipLen(ship.id) : 1}`,
-              }}
-              aria-label={FLEET.find((item) => item.id === ship.id)?.name}
-            >
-              <span className="g-battleship-deck">
-                {length >= 3 && (
-                  <>
-                    <span className="g-battleship-superstructure forward" />
-                    <span className="g-battleship-superstructure aft" />
-                  </>
-                )}
-              </span>
-            </div>
-          );
-        })}
+      <div ref={viewRef} className={`g-battleship-board-view${zoomed ? ' zoomed' : ''}`}>
+        {view && (
+          <div
+            className="g-battleship-board-extent"
+            style={{ width: view.pad + side + view.padEnd, height: view.pad + side + view.padEnd }}
+            aria-hidden="true"
+          />
+        )}
+        <div
+          ref={refBoard}
+          className={boardClass}
+          style={{ ...style, left: view ? view.pad : 0, top: view ? view.pad : 0 }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerCancel}
+          aria-label={caption}
+        >
+          {Array.from({ length: SIZE * SIZE }, (_, cell) => {
+            const row = Math.floor(cell / SIZE);
+            const col = cell % SIZE;
+            const value = intel.cells[cell];
+            const labels = `${String.fromCharCode(65 + row)}${col + 1}`;
+            const marker = value === MISS ? 'miss' : value === HIT ? 'hit' : value === SUNK ? 'sunk' : '';
+            const classes = [
+              'g-battleship-cell',
+              marker,
+              cell === last ? 'last' : '',
+              cell === aimed || cell === cursor ? 'aimed' : '',
+              cell === hover ? 'hovered' : '',
+              row === 0 ? 'first-row' : '',
+              col === 0 ? 'first-col' : '',
+            ].filter(Boolean).join(' ');
+            return (
+              <button
+                type="button"
+                key={cell}
+                className={classes}
+                style={{ gridRow: row + 1, gridColumn: col + 1 }}
+                data-cell={cell}
+                data-label={labels}
+                data-row={String.fromCharCode(65 + row)}
+                data-col={col + 1}
+                aria-label={`${labels}${marker ? `, ${marker}` : ''}`}
+                tabIndex={-1}
+                disabled={!active}
+              >
+                <span className="g-battleship-marker" aria-hidden="true" />
+                {row === 0 && <span className="g-battleship-coordinate-col" aria-hidden="true">{col + 1}</span>}
+                {col === 0 && <span className="g-battleship-coordinate-row" aria-hidden="true">{String.fromCharCode(65 + row)}</span>}
+              </button>
+            );
+          })}
+          {ships.map((ship) => {
+            const hitShip = intel.sunk.includes(ship.id);
+            const length = shipLen(ship.id);
+            const shipClass = [
+              'g-battleship-hull',
+              ship.horiz ? 'horizontal' : 'vertical',
+              length >= 3 ? 'detailed' : '',
+              placement && selected === ship.id ? 'selected' : '',
+              drag?.id === ship.id ? 'dragging' : '',
+              hitShip ? 'sunk' : '',
+              ghost?.id === ship.id ? 'ghost' : '',
+              ghost?.id === ship.id && !ghostValid ? 'invalid' : '',
+            ].filter(Boolean).join(' ');
+            return (
+              <div
+                key={ship.id}
+                className={shipClass}
+                style={{
+                  gridRow: `${ship.r + 1} / span ${ship.horiz ? 1 : shipLen(ship.id)}`,
+                  gridColumn: `${ship.c + 1} / span ${ship.horiz ? shipLen(ship.id) : 1}`,
+                }}
+                aria-label={FLEET.find((item) => item.id === ship.id)?.name}
+              >
+                <span className="g-battleship-deck">
+                  {length >= 3 && (
+                    <>
+                      <span className="g-battleship-superstructure forward" />
+                      <span className="g-battleship-superstructure aft" />
+                    </>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
