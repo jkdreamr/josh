@@ -114,7 +114,21 @@ export type Surface = 'stone' | 'ice' | 'metal' | 'none';
 export type Input = { side: -1 | 0 | 1; fwd: -1 | 0 | 1; jump: boolean; hold: boolean };
 
 /** A mantle glide: from where the rim was caught to the spot on the ledge, over dur seconds, then landing on p. */
-export type Glide = { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; t: number; dur: number; p: number; grab: boolean };
+export type Glide = {
+  x0: number;
+  y0: number;
+  z0: number;
+  x1: number;
+  y1: number;
+  z1: number;
+  t: number;
+  dur: number;
+  p: number;
+  grab: boolean;
+  /** The run kept through a toe catch at the rim, given back on landing. */
+  kx: number;
+  kz: number;
+};
 /** How long a mantle takes: a pull up over the rim, or the short hop of a grab from just under the top. */
 export const MANTLE_T = 0.16;
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -541,9 +555,12 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
     const up = Math.min(1, k * 1.8);
     const inK = Math.max(0, (k - 0.4) / 0.6);
     s.y = lerp(gl.y0, gl.y1, up * up * (3 - 2 * up));
-    s.x = lerp(gl.x0, gl.x1, inK * inK * (3 - 2 * inK));
-    s.z = lerp(gl.z0, gl.z1, inK * inK * (3 - 2 * inK));
-    s.vx = s.vz = s.vy = 0;
+    // a toe catch keeps the run going through the catch, so the soul never stalls at the rim
+    s.x = lerp(gl.x0, gl.x1, inK * inK * (3 - 2 * inK)) + gl.kx * gl.t;
+    s.z = lerp(gl.z0, gl.z1, inK * inK * (3 - 2 * inK)) + gl.kz * gl.t;
+    s.vx = gl.kx;
+    s.vz = gl.kz;
+    s.vy = 0;
     s.squash = Math.max(0, s.squash - dt * 4);
     // a jump pressed during the pull up is kept, so mashing the key keeps hopping on landing
     // the buffer holds through the glide, so a press on the way up hops the moment the soul lands
@@ -553,6 +570,8 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
       const p = level.platforms[gl.p];
       s.fallFrom = s.y;
       landOn(g, s, p, t1, true, true);
+      s.vx = gl.kx;
+      s.vz = gl.kz;
       s.rx = s.x;
       s.ry = s.y;
       s.rz = s.z;
@@ -714,7 +733,8 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
       if (p.kind === 'floor' || p.y + p.amp < s.y || p.y - p.amp - LEDGE_GRAB > s.y || !landable(g, p)) continue;
       const q = pose(p, t1, scratch);
       if (s.y >= q.y || s.y < q.y - LEDGE_GRAB || !over(p, q.a, s.x, s.z)) continue;
-      startGlide(g, s, p, s.x, q.y, s.z, GRAB_T, true);
+      // the shallower the catch, the quicker it is, and the run carries on over the top
+      startGlide(g, s, p, s.x, q.y, s.z, lerp(0.03, GRAB_T, (q.y - s.y) / LEDGE_GRAB), true, true);
       break;
     }
   }
@@ -798,9 +818,12 @@ function landOn(g: Game, s: Soul, p: Platform, t1: number, _moving: boolean, was
   if (p.cp >= 0) g.lit[p.cp] = true;
 }
 
-/** Begins a mantle: the soul lets go of its speed and glides to its spot on the ledge, landing when it gets there. */
-function startGlide(g: Game, s: Soul, p: Platform, x1: number, y1: number, z1: number, dur: number, grab: boolean) {
-  s.glide = { x0: s.x, y0: s.y, z0: s.z, x1, y1, z1, t: 0, dur, p: p.id, grab };
+/**
+ * Begins a mantle: the soul glides to its spot on the ledge and lands when it gets there. A pull up lets go of its
+ * speed; a toe catch (keep) gives the run back on landing, so a jump that just reaches a rim keeps going.
+ */
+function startGlide(g: Game, s: Soul, p: Platform, x1: number, y1: number, z1: number, dur: number, grab: boolean, keep = false) {
+  s.glide = { x0: s.x, y0: s.y, z0: s.z, x1, y1, z1, t: 0, dur, p: p.id, grab, kx: keep ? s.vx : 0, kz: keep ? s.vz : 0 };
   s.vx = s.vz = s.vy = 0;
   s.grounded = false;
   s.ground = -1;
@@ -846,12 +869,17 @@ function mantle(g: Game, s: Soul, dx: number, dz: number): boolean {
     const dist = Math.hypot(ex - s.x, ez - s.z);
     if (dist > (inside ? MANTLE_REACH + 0.6 : MANTLE_REACH) || (!inside && dist < 0.02)) continue;
     if (!hauled && (dx * (ex - s.x) + dz * (ez - s.z)) / Math.max(dist, 1e-3) < 0.4) continue;
-    // up and a step in from the rim
+    // up and a step in from the rim. A free jumper whose feet come down just under the rim catches it in a step
+    // and keeps its run; the deeper below the top it is, the more of a pull up it becomes
+    const depth = hauled ? MANTLE_H : Math.min(MANTLE_H, Math.max(0, q.y - s.y));
+    const k = Math.min(1, Math.max(0, (depth - 0.2) / (MANTLE_H - 0.2)));
     const mid = (p.r0 + p.r1) / 2;
     const ix = Math.cos(q.a) * mid - ex;
     const iz = Math.sin(q.a) * mid - ez;
     const il = Math.hypot(ix, iz) || 1;
-    startGlide(g, s, p, ex + (ix / il) * 0.45, q.y + 0.01, ez + (iz / il) * 0.45, MANTLE_T, false);
+    const stepIn = lerp(0.15, 0.45, k);
+    const dur = Math.max(lerp(0.04, MANTLE_T, k), (dist + stepIn) / 9);
+    startGlide(g, s, p, ex + (ix / il) * stepIn, q.y + 0.01, ez + (iz / il) * stepIn, dur, k < 0.5, k < 1);
     return true;
   }
   return false;
