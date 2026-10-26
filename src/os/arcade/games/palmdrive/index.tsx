@@ -17,9 +17,9 @@ import {
   hazState,
   boulderAt,
   beatAt,
-  strokeAt,
   swellWarn,
   CATCH_WIN,
+  POWER_TEN,
   STROKE_T,
   TIDE_LAP,
   hazardV,
@@ -560,10 +560,9 @@ function Play({ mode }: { mode: Mode }) {
   /** The wind warning last time round (for the whoosh as a gust starts to blow), and the swell's. */
   const gustWas = useRef(0);
   const swellWas = useRef(0);
-  /** On the water: the stroke ring under your shell (moved every frame), and the last beat it clicked. */
-  const strokeRing = useRef<SVGCircleElement | null>(null);
-  const strokeTarget = useRef<SVGCircleElement | null>(null);
-  const strokeTicks = useRef<(SVGRectElement | null)[]>([]);
+  /** On the water: the stroke light by the lap counter (it lights up through the catch window) and its pips, the catches in a row. */
+  const strokeLight = useRef<HTMLSpanElement | null>(null);
+  const strokePips = useRef<(HTMLElement | null)[]>([]);
   /** On a touch screen: the drift button (on the water it glows through the catch window), and the steering pad. */
   const driftBtn = useRef<HTMLButtonElement | null>(null);
   const steerPad = useRef<HTMLDivElement | null>(null);
@@ -846,12 +845,12 @@ function Play({ mode }: { mode: Mode }) {
       if (me) pieceSounds(r, me, dt);
       // on the water: the weir roaring as you come down to it, gulls over the Port, and on the last lap the foghorn
       if (me && r.boat && r.time > 0) boatSounds(r, me, dt);
-      // on the water, the cox-box clicking the beat
+      // on the water, the cox-box clicking the beat (on it or just after, so a slow frame does not skip a click)
       if (me && r.boat && r.time > 0 && me.done === null && me.sunk === 0) {
-        const beat = beatAt(r.time).beat;
-        if (beat !== lastBeat.current && Math.abs(beatAt(r.time).off) < 0.05) {
+        const { beat, off } = beatAt(r.time);
+        if (beat !== lastBeat.current && off > -0.02 && off < 0.1) {
           lastBeat.current = beat;
-          sfx.tone({ freq: 1900, dur: 0.018, type: 'square', vol: 0.02 });
+          sfx.tone({ freq: 1900, dur: 0.02, type: 'square', vol: 0.035 });
         }
       }
       const level = me && me.drift ? turboLevel(me.charge) : 0;
@@ -1220,7 +1219,7 @@ function Play({ mode }: { mode: Mode }) {
           hints.current!.counted = true;
           countRace();
         }
-        if (r.boat) showHint('row', 'Tap Space just as the ring closes for a clean catch. Hold it through the bends to carve.', 'Tap row just as the ring closes for a clean catch. Hold it through the bends to carve.');
+        if (r.boat) showHint('row', 'Tap Space on the click, as your blades go in, for a clean catch. Hold it through the bends to carve.', 'Tap row as it lights up, on the click, for a clean catch. Hold it through the bends to carve.');
         else showHint('drift', 'Hold Space while you turn to drift. Let go for a boost!', 'Hold drift while you turn to slide. Let go for a boost!');
         break;
       case 'rocket':
@@ -1586,18 +1585,19 @@ function Play({ mode }: { mode: Mode }) {
         el.style.display = h.gone ? 'none' : '';
       }
     }
-    // the stroke ring: closing onto the beat, bright through the catch window, the run of catches round it
+    // the stroke light: warming up as the catch comes, bright through the catch window, its pips the run of catches
     const me = r.karts[r.me];
-    if (r.boat && me && strokeRing.current && strokeTarget.current) {
+    if (r.boat && me) {
       const { off } = beatAt(r.time);
-      const toBeat = off < 0 ? -off : STROKE_T - off;
-      strokeRing.current.setAttribute('r', String(20 + 26 * Math.min(1, toBeat / (STROKE_T * 0.8))));
-      strokeRing.current.style.opacity = String(toBeat < STROKE_T * 0.8 ? 1 : 0.25);
-      const open = Math.abs(off) <= CATCH_WIN;
-      strokeTarget.current.setAttribute('class', open ? 'is-open' : '');
-      strokeTicks.current.forEach((el, n) => el?.setAttribute('class', n < me.streak ? 'is-on' : ''));
-      void strokeAt;
-      driftBtn.current?.classList.toggle('is-catch', open && r.time > 0 && me.done === null);
+      const live = r.time > 0 && me.done === null;
+      const open = live && Math.abs(off) <= CATCH_WIN;
+      const el = strokeLight.current;
+      if (el) {
+        el.classList.toggle('is-open', open);
+        el.classList.toggle('is-near', live && !open && off < 0 && off > -STROKE_T * 0.3);
+        strokePips.current.forEach((pip, n) => pip?.classList.toggle('is-on', n < me.streak));
+      }
+      driftBtn.current?.classList.toggle('is-catch', open);
     }
     for (const k of r.karts) {
       const dot = dots.current.get(k.idx);
@@ -1888,6 +1888,18 @@ function Play({ mode }: { mode: Mode }) {
                 )}
               </span>
             )}
+            {r.boat && (
+              <span ref={strokeLight} className="g-palmdrive-strokes" title={`Catches in a row: ${POWER_TEN} is a Power Ten`} aria-hidden="true">
+                {Array.from({ length: POWER_TEN }, (_, n) => (
+                  <i
+                    key={n}
+                    ref={(el) => {
+                      strokePips.current[n] = el;
+                    }}
+                  />
+                ))}
+              </span>
+            )}
           </div>
           {/* keys share one namespace with the banner and hint beside it, so each gets a prefix */}
           <div key={`place-${hud.place}`} className="g-palmdrive-place">
@@ -1924,26 +1936,6 @@ function Play({ mode }: { mode: Mode }) {
               </div>
             )}
           </div>
-          {r.boat && hud.lights === 0 && !hud.results && (
-            <svg className="g-palmdrive-stroke" viewBox="-50 -50 100 100" aria-hidden="true">
-              <circle ref={strokeTarget} r="20" />
-              <circle ref={strokeRing} className="g-palmdrive-stroke-ring" r="40" />
-              {Array.from({ length: 10 }, (_, n) => (
-                <rect
-                  key={n}
-                  ref={(el) => {
-                    strokeTicks.current[n] = el;
-                  }}
-                  x="-2.5"
-                  y="-30"
-                  width="5"
-                  height="6"
-                  rx="1.5"
-                  transform={`rotate(${n * 36})`}
-                />
-              ))}
-            </svg>
-          )}
           {hud.rear && <div className="g-palmdrive-rear">behind you</div>}
           {hint && (
             <div key={`hint-${hint.id}`} className="g-palmdrive-hint" role="status" onAnimationEnd={() => setHint(null)}>
@@ -2029,7 +2021,7 @@ function Play({ mode }: { mode: Mode }) {
             <button type="button" tabIndex={-1} className={`g-palmdrive-use${hud.trailing ? ' is-trailing' : ''}`} aria-label="Use item (hold to keep it behind you)" {...hold('KeyX')}>
               {hud.item && !hud.rolling ? <ItemIcon item={hud.item} size={34} /> : 'item'}
             </button>
-            <button type="button" tabIndex={-1} ref={driftBtn} className={`g-palmdrive-drift${r.boat ? ' is-row' : ''}`} aria-label={r.boat ? 'Row: tap as the ring closes, hold through the bends to carve' : 'Drift'} {...hold('Space')}>
+            <button type="button" tabIndex={-1} ref={driftBtn} className={`g-palmdrive-drift${r.boat ? ' is-row' : ''}`} aria-label={r.boat ? 'Row: tap as it lights up, on the catch; hold through the bends to carve' : 'Drift'} {...hold('Space')}>
               {r.boat ? 'row' : 'drift'}
             </button>
           </div>

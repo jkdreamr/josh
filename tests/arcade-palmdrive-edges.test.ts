@@ -364,6 +364,17 @@ test('Hoover Nights has its own leaderboards, the old ones left as they were', (
   }
 });
 
+test('the Dish and the Main Quad have fresh leaderboards since the Hard pass, the old ones left as they were', () => {
+  const variants = meta.leaderboard?.variants ?? {};
+  for (const [id, board] of [['dish', 'dish2'], ['quad', 'quad2']] as const) {
+    assert.equal(COURSES[id].board, board);
+    for (const cc of ['50cc', '100cc', '150cc', '200cc']) {
+      assert.equal(variants[`${board}-${cc}`], `${COURSES[id].name} ${cc}`);
+      assert.equal(variants[`${id}-${cc}`], undefined);
+    }
+  }
+});
+
 test('rescue() on its own still puts a stuck kart back where it is', () => {
   const r = race();
   const k = r.karts[0];

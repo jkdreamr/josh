@@ -14,7 +14,7 @@ import { holstein, knollGeometry, smallDishes } from './dish';
 import { GROUNDS, groundMaterial } from './surfaces';
 import { crowd, crowdTick, goalpost, lightTower, portal, scoreboard } from './stadium';
 import { skyWater } from './skywater';
-import { arcadeWall, bake, batchStatic, church as churchModel, dishTelescope, gableRoof, hall as hallModel, hall, hill, hooverTower, vcMats } from './landmarks';
+import { arcadeWall, bake, batchStatic, mergeAlike, church as churchModel, dishTelescope, gableRoof, hall as hallModel, hall, hill, hooverTower, vcMats } from './landmarks';
 
 export type Three = typeof import('three');
 
@@ -738,6 +738,100 @@ export function makePin(THREE: Three, geo: { box: T.BoxGeometry; wheel: T.Cylind
   flag.add(sheet);
   g.add(flag);
   return { g, flag };
+}
+
+/**
+ * Flagsticks' flags (makePin's `flag` groups) drawn as one mesh, their cloths in one texture, not a draw and a texture
+ * each: the flag groups stay where they are (empty now) to be waved as ever, and tick() then moves each cloth to its
+ * group's place. Call it after the groups are waved each frame.
+ */
+export function flagBatch(THREE: Three, scene: T.Scene, flags: T.Group[]) {
+  const sheets = flags.map((f) => f.children.find((c): c is T.Mesh => (c as T.Mesh).isMesh && !!((c as T.Mesh).material as T.MeshLambertMaterial).map));
+  const list = flags.flatMap((f, i) => (sheets[i] ? [{ f, sheet: sheets[i]! }] : []));
+  if (list.length < 2) return null;
+  // (each cloth in a cell of the atlas, its edges run out into a border so the smaller mipmaps do not bleed between them)
+  const W = 64;
+  const H = 48;
+  const PAD = 4;
+  const cols = 8;
+  const rows = Math.ceil(list.length / cols);
+  const cw = W + 2 * PAD;
+  const ch = H + 2 * PAD;
+  const atlas = texture(
+    THREE,
+    canvas(cols * cw, rows * ch, (g) => {
+      list.forEach(({ sheet }, i) => {
+        const img = ((sheet.material as T.MeshLambertMaterial).map!.image ?? null) as CanvasImageSource | null;
+        if (!img) return;
+        const x = (i % cols) * cw;
+        const y = Math.floor(i / cols) * ch;
+        g.drawImage(img, x, y, cw, ch);
+        g.drawImage(img, x + PAD, y + PAD, W, H);
+      });
+    }),
+  );
+  const n = list.length;
+  const pos = new Float32Array(n * 12);
+  const nrm = new Float32Array(n * 12);
+  const uv = new Float32Array(n * 8);
+  const idx: number[] = [];
+  list.forEach((_, i) => {
+    const u0 = ((i % cols) * cw + PAD) / (cols * cw);
+    const u1 = u0 + W / (cols * cw);
+    const v1 = 1 - (Math.floor(i / cols) * ch + PAD) / (rows * ch);
+    const v0 = v1 - H / (rows * ch);
+    // (as PlaneGeometry's corners: top left, top right, bottom left, bottom right)
+    uv.set([u0, v1, u1, v1, u0, v0, u1, v0], i * 8);
+    const b = i * 4;
+    idx.push(b, b + 2, b + 1, b + 2, b + 3, b + 1);
+  });
+  const g = new THREE.BufferGeometry();
+  const posAttr = new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage);
+  const nrmAttr = new THREE.BufferAttribute(nrm, 3).setUsage(THREE.DynamicDrawUsage);
+  g.setAttribute('position', posAttr);
+  g.setAttribute('normal', nrmAttr);
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  const mat = new THREE.MeshLambertMaterial({ map: atlas, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(g, mat);
+  // the cloths' places in their groups, and the groups emptied
+  const local = list.map(({ sheet }) => {
+    sheet.updateMatrix();
+    const m = sheet.matrix.clone();
+    sheet.removeFromParent();
+    return m;
+  });
+  const m = new THREE.Matrix4();
+  const nm = new THREE.Matrix4();
+  const v = new THREE.Vector3();
+  const q = new THREE.Vector3();
+  const corners = [
+    [-0.5, 0.5],
+    [0.5, 0.5],
+    [-0.5, -0.5],
+    [0.5, -0.5],
+  ];
+  const tick = () => {
+    list.forEach(({ f }, i) => {
+      f.updateWorldMatrix(true, false);
+      m.multiplyMatrices(f.matrixWorld, local[i]);
+      nm.copy(m).invert().transpose();
+      v.set(0, 0, 1).transformDirection(nm);
+      for (let c = 0; c < 4; c++) {
+        nrm.set([v.x, v.y, v.z], (i * 4 + c) * 3);
+        q.set(corners[c][0], corners[c][1], 0).applyMatrix4(m);
+        pos.set([q.x, q.y, q.z], (i * 4 + c) * 3);
+      }
+    });
+    posAttr.needsUpdate = true;
+    nrmAttr.needsUpdate = true;
+  };
+  tick();
+  // (the cloths only flutter about their poles: their bounds as they first stand, with a little room)
+  g.computeBoundingSphere();
+  g.boundingSphere!.radius += 2;
+  scene.add(mesh);
+  return { tick };
 }
 
 /** Raked white sand with a soft, lumpy edge: a bunker seen from above. */
@@ -2402,6 +2496,8 @@ function golf(c: Scenery): SceneryTick {
     scene.add(o);
     return o;
   };
+  /** The decals, mown strips and net panels: textured, so batchStatic leaves them, but merged by material at the end. */
+  const alike: T.Mesh[] = [];
   const decal = (m: T.Material, x: number, z: number, w: number, d: number, y: number, ry = 0, order = 1) => {
     const o = new THREE.Mesh(geo.plane, m);
     o.rotation.set(flat, 0, ry);
@@ -2409,6 +2505,7 @@ function golf(c: Scenery): SceneryTick {
     o.position.set(x, y, z);
     o.renderOrder = order;
     scene.add(o);
+    alike.push(o);
     return o;
   };
 
@@ -2436,6 +2533,7 @@ function golf(c: Scenery): SceneryTick {
     g.computeVertexNormals();
     const o = new THREE.Mesh(g, m);
     scene.add(o);
+    alike.push(o);
     return o;
   };
   const mown = texture(
@@ -2713,11 +2811,15 @@ function golf(c: Scenery): SceneryTick {
           }),
         ),
       });
+    // (one material a board, not six: its edges take their green from inside the face's border)
+    const boardGeo = geo.box.clone();
+    const buv = boardGeo.getAttribute('uv');
+    for (let k = 0; k < 16; k++) buv.setXY(k, 0.1, 0.5);
+    boardGeo.clearGroups();
     for (const [s, d, n] of [[14, -38, 100], [14, -62, 150], [14, -86, 200]]) {
       const p = pointAt(t, s, d);
       // facing across the road at the tee line
-      const face = yard(n);
-      mesh(geo.box, [lambert(0x2f6b3a), lambert(0x2f6b3a), lambert(0x2f6b3a), lambert(0x2f6b3a), face, face], p.x, 2.2, p.z, 3.4, 1.7, 0.15, toRoad(s, d));
+      mesh(boardGeo, yard(n), p.x, 2.2, p.z, 3.4, 1.7, 0.15, toRoad(s, d));
       mesh(geo.box, lambert(0x6b4f37), p.x, 0.7, p.z, 0.15, 1.4, 0.15);
     }
     // tall poles along the far side and the end of the range, with the net strung between them
@@ -2744,6 +2846,7 @@ function golf(c: Scenery): SceneryTick {
         panel.position.set((a.x + b.x) / 2, 8.3, (a.z + b.z) / 2);
         panel.rotation.y = Math.atan2(-(b.z - a.z), b.x - a.x);
         scene.add(panel);
+        alike.push(panel);
       }
     };
     along(4, 158, farSide - 4);
@@ -2960,7 +3063,9 @@ function golf(c: Scenery): SceneryTick {
   pineTrees(THREE, scene, dummy, pines);
   foothills(c, cx, cz, { x: cx + 260, z: cz - 460 });
 
-  // (all that never moves, a handful of meshes)
+  // (all that never moves, a handful of meshes; the flags' cloths one more)
+  mergeAlike(THREE, scene, alike);
+  const cloths = flagBatch(THREE, scene, flags);
   batchStatic(THREE, scene, before, [...moving, ...flags, ...jets]);
 
   // every frame: golfers swing and their balls fly, the flags flutter and the fountain plays
@@ -2984,6 +3089,7 @@ function golf(c: Scenery): SceneryTick {
       f.rotation.y = Math.sin(clock * 2.1 + i * 1.7) * 0.35;
       f.scale.x = 0.9 + Math.sin(clock * 5.3 + i) * 0.1;
     });
+    cloths?.tick();
     jets.forEach((j, k) => {
       const h = (k ? 2.2 : 7) + Math.sin(clock * 3 + k) * (k ? 0.3 : 0.6);
       j.scale.y = h;
