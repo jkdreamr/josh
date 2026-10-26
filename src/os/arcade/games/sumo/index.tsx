@@ -32,10 +32,11 @@ const BOT_NAMES = ['Nudge', 'Pebble', 'Biscuit', 'Tango', 'Wobble', 'Fizz', 'Ras
 const modeOf = (mode: Mode, rivals: string) => ({ mode, rivals: Number(rivals) });
 const difficulty = (level: LevelName): Level => level === 'easy' ? 0 : level === 'hard' ? 2 : 1;
 const emptyInput = (): Input => ({ x: 0, y: 0, dash: false });
+const nameAt = (world: World, seat: number) => world.cars.find((car) => car.seat === seat)?.name ?? 'Player';
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} botNames={BOT_NAMES} defaultBots={3}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} botNames={BOT_NAMES} defaultBots={3} handlesLeavers>
       <Stage />
     </GameShell>
   );
@@ -323,7 +324,7 @@ function Play({ mode }: { mode: StageMode }) {
     return current.cars.map((car) => {
       if (car.ai !== null) return think(current, car.id, car.ai);
       if (mode === 'online' && o && !o.isHost && car.seat !== o.seat) return emptyInput();
-      if (mode === 'online' && o?.isHost && car.seat !== o.seat) return remoteInput.current.get(car.seat) ?? emptyInput();
+      if (mode === 'online' && o?.isHost && car.seat !== o.seat) return car.left ? emptyInput() : remoteInput.current.get(car.seat) ?? emptyInput();
       return readKeys(car.id);
     });
   };
@@ -371,16 +372,30 @@ function Play({ mode }: { mode: StageMode }) {
     }
   };
 
+  const notice = (text: string) => {
+    setToast(text);
+    toastTimer.current = 3;
+  };
+
   const updateWorld = (dt: number) => {
     const current = world.current;
     if (!current || shellRef.current.status !== 'playing') return;
     const o = onlineRef.current;
-    if (mode === 'online' && o?.isHost) {
-      const departed = takeoverDeparted(current, o.players.map((player) => player.seat), level);
-      if (departed.length) {
-        const name = current.cars.find((car) => car.seat === departed[0])?.name ?? 'Player';
-        setToast(`${name} Left, a Bot Took Over`);
-        toastTimer.current = 3;
+    if (mode === 'online' && o) {
+      const present = o.players.map((player) => player.seat);
+      if (o.isHost) {
+        const { left, bots } = takeoverDeparted(current, present, level);
+        const seat = bots[0] ?? left[0];
+        if (seat !== undefined) {
+          const name = nameAt(current, seat);
+          notice(left.includes(seat) && bots.includes(seat) ? `${name} Left, a Bot Took Over` : bots.length ? `A Bot Took ${name}'s Seat` : `${name} Left`);
+        }
+      } else {
+        for (const car of current.cars) {
+          if (car.seat < 0 || car.ai !== null || car.left || present.includes(car.seat)) continue;
+          car.left = true;
+          notice(`${car.name} Left`);
+        }
       }
     }
     const authoritative = mode !== 'online' || o?.isHost === true;
@@ -502,7 +517,7 @@ function Play({ mode }: { mode: StageMode }) {
       const current = world.current!;
       if (packet.k === 'i' && o.isHost) {
         const car = current.cars.find((candidate) => candidate.seat === from);
-        if (car && car.ai === null) remoteInput.current.set(from, { x: packet.x, y: packet.y, dash: packet.d });
+        if (car && car.ai === null && !car.left) remoteInput.current.set(from, { x: packet.x, y: packet.y, dash: packet.d });
         return;
       }
       if (packet.k === 'S' && !o.isHost && from === 0) {
@@ -562,7 +577,10 @@ function Play({ mode }: { mode: StageMode }) {
           car.out = !!(packed.flags & 4);
           if (!wasOut && car.out) view.current?.splash(packed.x, packed.z);
           car.dashT = packed.flags & 8 ? 0.2 : 0;
-          if (packed.flags & 16) car.ai = packet.lv;
+          if (packed.flags & 16) {
+            if (car.ai === null && car.left) notice(`A Bot Took ${car.name}'s Seat`);
+            car.ai = packet.lv;
+          }
         }
         return;
       }

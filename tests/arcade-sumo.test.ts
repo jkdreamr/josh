@@ -329,17 +329,35 @@ test('sumo packets round-trip and reject malformed numbers, types, seats, and ov
   assert.equal(parsePacket({ ...state, cars: Array.from({ length: 9 }, () => [0, 0, 0, 0, 0, 0, 0, 0]) }), null);
 });
 
-test('departed human seats are taken over by bots without changing active players', () => {
+test('a departed car idles mid-round and a bot takes its seat between rounds', () => {
   const world = createWorld([
     { seat: 0, color: 0, ai: null, name: 'Host' },
     { seat: 1, color: 1, ai: null, name: 'Guest' },
     { seat: 2, color: 2, ai: 0, name: 'Bot' },
   ], 10);
-  assert.deepEqual(takeoverDeparted(world, [0, 2], 1), [1]);
-  assert.equal(world.cars[1].ai, 1);
+  world.phase = 'fight';
+  assert.deepEqual(takeoverDeparted(world, [0, 2], 1), { left: [1], bots: [] });
+  assert.equal(world.cars[1].ai, null);
   assert.equal(world.cars[1].left, true);
+  assert.deepEqual(takeoverDeparted(world, [0, 2], 1), { left: [], bots: [] });
+  // someone new in that seat mid-match still doesn't drive the departed car
+  assert.deepEqual(takeoverDeparted(world, [0, 1, 2], 1), { left: [], bots: [] });
+  world.phase = 'over';
+  assert.deepEqual(takeoverDeparted(world, [0, 1, 2], 1), { left: [], bots: [1] });
+  assert.equal(world.cars[1].ai, 1);
   assert.equal(world.cars[0].ai, null);
-  assert.deepEqual(takeoverDeparted(world, [0, 1, 2], 2), []);
+  assert.equal(world.cars[0].left, false);
+  assert.deepEqual(takeoverDeparted(world, [0, 2], 2), { left: [], bots: [] });
+});
+
+test('leaving between rounds hands the car to a bot right away', () => {
+  const world = createWorld([
+    { seat: 0, color: 0, ai: null, name: 'Host' },
+    { seat: 1, color: 1, ai: null, name: 'Guest' },
+  ], 4);
+  world.phase = 'over';
+  assert.deepEqual(takeoverDeparted(world, [0], 2), { left: [1], bots: [1] });
+  assert.equal(world.cars[1].ai, 2);
 });
 
 test('round banner agrees with the winner name', () => {

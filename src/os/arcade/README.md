@@ -58,6 +58,7 @@ function GameShell(props: {
   hostSetup?: ReactNode;          // settings for online rooms, in the lobby and on the online Game Over card
   botNames?: readonly string[];   // names for online bots in seat order (default Bot 1, Bot 2...)
   defaultBots?: number;           // bots a host's room starts with until they pick their own number
+  handlesLeavers?: boolean;       // the game hands a departed player's seat to a bot, so the shell never ends a round for a leave
   className?: string; style?: CSSProperties;
 }): JSX.Element;
 
@@ -200,7 +201,7 @@ Add `bots: true` to `online` and the lobby (and the online Game Over card, betwe
 
 ### Quick Play
 
-Add `quick: true` (with `bots`) and the Start card's Play finds a match like an .io game: it joins a public quick-play room of the game that is gathering people, or opens one, and the room starts on its own about 20 seconds later (3 once people fill it) with bots in every seat nobody holds. Whoever came in first hosts. The game's own settings move next to the second button, `soloLabel` (Play Offline by default, Scramble's says Play with Bots), and Play with Friends makes rooms of your own as before. `useOnline().quick` is true in a quick match. The shell never ends a quick round because someone left, so the game must cope: the host hands a departed player's car, snake or rider to a bot, or takes it off the field. Play Again after a quick match finds the next one. A game with modes that shouldn't mix (Scramble's solo, duos and squads) passes `quickPool` (the mode picked) and `quickSetup` (its picker, shown by Play): quick play only puts people in the same pool together, and `useOnline().pool` says which pool the room gathered for ('' for none). Scramble, Slither, Sumo, Tank Maze, Cox Box, Mini Golf, Grand Prix, Palm Drive and Light Cycles have it.
+Add `quick: true` (with `bots`) and the Start card's Play finds a match like an .io game: it joins a public quick-play room of the game that is gathering people, or opens one, and the room starts on its own about 20 seconds later (3 once people fill it) with bots in every seat nobody holds. Whoever came in first hosts. The game's own settings move next to the second button, `soloLabel` (Play Offline by default, Scramble's says Play with Bots), and Play with Friends makes rooms of your own as before. `useOnline().quick` is true in a quick match. The shell never ends a quick round because someone left, so the game must cope: the host hands a departed player's car, snake or rider to a bot, or takes it off the field. A game that copes this way in every online room passes `handlesLeavers` to GameShell, so its rooms work the same (Sumo leaves a departed car idle for the rest of the round and seats a bot in it between rounds). Play Again after a quick match finds the next one. A game with modes that shouldn't mix (Scramble's solo, duos and squads) passes `quickPool` (the mode picked) and `quickSetup` (its picker, shown by Play): quick play only puts people in the same pool together, and `useOnline().pool` says which pool the room gathered for ('' for none). Scramble, Slither, Sumo, Tank Maze, Cox Box, Mini Golf, Grand Prix, Palm Drive and Light Cycles have it.
 
 ### Spectators
 

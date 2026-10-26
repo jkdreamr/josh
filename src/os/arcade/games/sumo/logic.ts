@@ -162,16 +162,26 @@ export function roundBanner(winner: string | null) {
   return winner === 'You' ? 'You Take the Round' : `${winner} Takes the Round`;
 }
 
-export function takeoverDeparted(world: World, present: readonly number[], level: Level): number[] {
-  const changed: number[] = [];
+/**
+ * Online: people who left the room. Mid-round their car just sits idle (marked `left`) until the round ends; between
+ * rounds a bot takes over every departed car. Returns the seats that just left and the seats a bot just took.
+ */
+export function takeoverDeparted(world: World, present: readonly number[], level: Level): { left: number[]; bots: number[] } {
+  const left: number[] = [];
+  const bots: number[] = [];
+  const between = world.phase === 'over' || world.phase === 'done';
   for (const car of world.cars) {
-    if (car.seat >= 0 && car.ai === null && !present.includes(car.seat)) {
-      car.ai = level;
+    if (car.seat < 0 || car.ai !== null) continue;
+    if (!car.left && !present.includes(car.seat)) {
       car.left = true;
-      changed.push(car.seat);
+      left.push(car.seat);
+    }
+    if (car.left && between) {
+      car.ai = level;
+      bots.push(car.seat);
     }
   }
-  return changed;
+  return { left, bots };
 }
 
 function radiusAt(world: World) {
