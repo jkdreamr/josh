@@ -83,8 +83,9 @@ export type RallyOutcome = { winner: Side; cause: RallyCause; shots: number; sec
  * unforcedMiss: chance of fluffing any return, so even a superhuman level is never infallible.
  * acceleration / predictionMs: footwork acceleration and time between intercept reads.
  * pressureResistance: fraction of smash pressure ignored for aim; smashPower overrides situational power.
+ * punishNetRush: clear or lift over a net-rusher rather than smash from the back court.
  */
-export type CpuProfile = { label: string; reactionMs: number; speed: number; accuracy: number; dropChance: number; tactics?: boolean; ruthless?: boolean; anticipates?: number; home?: number; unforcedMiss?: number; acceleration?: number; predictionMs?: number; pressureResistance?: number; smashPower?: number };
+export type CpuProfile = { label: string; reactionMs: number; speed: number; accuracy: number; dropChance: number; tactics?: boolean; ruthless?: boolean; anticipates?: number; home?: number; unforcedMiss?: number; acceleration?: number; predictionMs?: number; pressureResistance?: number; smashPower?: number; punishNetRush?: boolean };
 
 export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
   easy: { label: 'Easy', reactionMs: 260, speed: 3, accuracy: 0.72, dropChance: 0.15 },
@@ -95,7 +96,7 @@ export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
   olympic: { label: 'Olympic', reactionMs: 20, speed: PLAYER_RUN_SPEED, accuracy: PLAYER_MAX_ACCURACY, dropChance: 0.7, tactics: true },
   // Superhuman on purpose: near-instant reads, faster feet than any player and the tightest aim, with the same flight, reach and jump.
   impossible: { label: 'Impossible', reactionMs: 15, speed: 6.2, accuracy: 1.15, dropChance: 0.7, tactics: true, ruthless: true, anticipates: 0.35, home: 2.4, unforcedMiss: 0.0015 },
-  nirvaan: { label: 'Nirvaan', reactionMs: 1, speed: 16, accuracy: 1.15, dropChance: 0.7, tactics: true, ruthless: true, anticipates: 0.05, home: 2.4, unforcedMiss: 0.0005, acceleration: 200, predictionMs: 12, pressureResistance: 1, smashPower: 1 },
+  nirvaan: { label: 'Nirvaan', reactionMs: 1, speed: 16, accuracy: 1.15, dropChance: 0.7, tactics: true, ruthless: true, anticipates: 0.05, home: 2.4, unforcedMiss: 0.0003, acceleration: 200, predictionMs: 12, pressureResistance: 1, smashPower: 1, punishNetRush: true },
 };
 
 /**
@@ -108,7 +109,7 @@ export const SMASH_DEFENSE: Record<Exclude<Difficulty, 'olympic'>, { miss: numbe
   hard: { miss: 0.24, block: 0.3 },
   pro: { miss: 0.14, block: 0.26 },
   impossible: { miss: 0.01, block: 0.05 },
-  nirvaan: { miss: 0.0003, block: 0.001 },
+  nirvaan: { miss: 0.00015, block: 0.001 },
 };
 
 /** A tap is a half smash; a full charge is everything the hitter has. */
@@ -750,7 +751,9 @@ export function cpuReturn(
     };
   }
   if (profile.ruthless) {
-    const type = ruthlessChooseShot(contact, opponentDistanceFromNet, random);
+    const type = profile.punishNetRush && Math.abs(contact.x) > 3.5 && opponentDistanceFromNet < 2.2
+      ? contact.y >= OVERHEAD_HEIGHT ? 'clear' : 'lift'
+      : ruthlessChooseShot(contact, opponentDistanceFromNet, random);
     const short = type === 'net' || type === 'drop';
     return { kind: 'hit', type, accuracy, options: { depth: short ? 0 : 1, ...(type === 'smash' ? { power: profile.smashPower ?? (Math.abs(contact.x) < 3.5 ? 1 : 0.65) } : {}) } };
   }
