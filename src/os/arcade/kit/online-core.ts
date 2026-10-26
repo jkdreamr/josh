@@ -75,6 +75,17 @@ export function canStartNext(next: { ready: boolean; waiting: boolean; racing: b
   return next.ready && !next.waiting && (!next.racing || force);
 }
 
+/**
+ * The room after a host hand-off: whoever sat in `from` is the host now (seat 0) and the old host is gone. Moves
+ * seat-keyed race state to the new numbering, so a finished player's score stays theirs.
+ */
+export function handOffSeat(seat: number, from: number) {
+  return seat === from ? 0 : seat === 0 ? from : seat;
+}
+export function handOffScores<T>(scores: Record<number, T>, from: number): Record<number, T> {
+  return Object.fromEntries(Object.entries(scores).map(([seat, value]) => [handOffSeat(Number(seat), from), value]));
+}
+
 /** Final scores of a score race by seat. null means the player finished without a score. */
 export type RaceScores = Record<number, number | null>;
 export type RaceStanding = { seat: number; score: number | null; place: number | null };

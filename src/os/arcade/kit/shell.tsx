@@ -13,6 +13,7 @@ import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, 
 import { BotStepper, OnlinePanel, OnlineProvider, QuickPanel, ROOM_VISIBILITY, ROOM_WATCHERS, RoomCode, RoomRoster, VisibilityPicker, WatchPicker } from './online';
 import { MAX_SEATS, botPlayers, canStartNext, nextOnlineRound, parseRacePacket, raceStandings, RoundRouter, type RaceScores } from './online-core';
 import { createRoom, quickRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
+import { handOffScores, handOffSeat } from './online-core';
 import { countPlay } from '../../stats';
 import { useBadge } from '../../badges';
 import { usePlayingReport } from '../playing';
@@ -441,8 +442,13 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       if (!onlineModeRef.current) setOnlineInProgress(started);
     });
     // The host left and someone took over. Their game ran the round, so it's over; everyone stays in the room.
-    link.on('host', ({ seat, players }) => {
+    link.on('host', ({ from, seat, players }) => {
       raceRef.current.seat = seat;
+      // the room renumbered its seats: race scores and the round's lineup follow, so nobody's result moves to someone else
+      roundSeatsRef.current = roundSeatsRef.current.map((s) => handOffSeat(s, from));
+      setRoundSeats(roundSeatsRef.current);
+      raceRef.current.scores = handOffScores(raceRef.current.scores, from);
+      setRaceScores(raceRef.current.scores);
       setOnlineSeat(seat);
       setOnlineInProgress(false);
       const host = players.find((player) => player.seat === 0);

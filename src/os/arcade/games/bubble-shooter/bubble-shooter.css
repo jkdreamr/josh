@@ -98,8 +98,8 @@
 /* touch: finger sized buttons and readable text, grown by --g-bubble-shooter-u (1 / the phone or iPad frame scale) */
 @media (pointer: coarse) {
   .g-bubble-shooter .g-bubble-shooter-pick {
-    width: calc(40px * var(--g-bubble-shooter-u, 1));
-    height: calc(40px * var(--g-bubble-shooter-u, 1));
+    width: calc(44px * var(--g-bubble-shooter-u, 1));
+    height: calc(44px * var(--g-bubble-shooter-u, 1));
     border-radius: calc(9px * var(--g-bubble-shooter-u, 1));
     font-size: calc(13px * var(--g-bubble-shooter-u, 1));
   }

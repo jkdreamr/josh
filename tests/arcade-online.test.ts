@@ -5,6 +5,7 @@ import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRoun
 import { createRoom, listRooms, quickRoom, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
 import { agreedWinner, agreedWinners, isPool, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, joinable, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, WATCHERS_MAX, type LobbyRow, type RoomState } from '../worker/src/room-core.ts';
 import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
+import { handOffScores, handOffSeat } from '../src/os/arcade/kit/online-core.ts';
 
 /** A stand-in for the browser's WebSocket: records what RoomLink sends and lets a test play the server's side. */
 class FakeWebSocket {
@@ -749,4 +750,16 @@ test('a team’s win: every seat on it is reported, and once everyone agrees eac
     assert.deepEqual(JSON.parse(socket.sent.at(-1)!), { t: 'result', round: 1, winner: 1 });
     link.close();
   });
+});
+
+test('a host hand-off keeps each finished racer on their own score', () => {
+  // the host (seat 0) scored 0 and left; the guest in seat 1 scored 110 and is seat 0 now
+  const scores = handOffScores({ 0: 0, 1: 110 }, 1);
+  assert.equal(scores[0], 110, 'the new host keeps their score');
+  assert.equal(scores[1], 0, "the old host's score moves to the seat they left");
+  assert.deepEqual(handOffScores({ 0: 5, 1: 7, 2: null }, 1), { 0: 7, 1: 5, 2: null }, 'other seats stay put');
+  assert.deepEqual(handOffScores({ 0: 5, 2: 9 }, 2), { 0: 9, 2: 5 }, 'a host from a higher seat');
+  assert.deepEqual([0, 1, 2].map((s) => handOffSeat(s, 2)), [2, 1, 0]);
+  const after = raceStandings(scores, [0]);
+  assert.deepEqual(after.standings.map((s) => [s.seat, s.score]), [[0, 110]]);
 });
