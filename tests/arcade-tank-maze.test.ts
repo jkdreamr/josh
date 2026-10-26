@@ -33,7 +33,7 @@ import {
   type Maze,
 } from '../src/os/arcade/games/tank-maze/logic.ts';
 import { makeMemory, STANDOFF, think } from '../src/os/arcade/games/tank-maze/bots.ts';
-import { endPacket, inputPacket, parsePacket, rosterPacket, roundPacket, seatNames, statePacket, tankName } from '../src/os/arcade/games/tank-maze/net.ts';
+import { endPacket, inputPacket, parsePacket, rosterPacket, roundPacket, seatNames, statePacket, tankHolders, holdersLeft, tankName } from '../src/os/arcade/games/tank-maze/net.ts';
 import { clipName, finalLine, freeSpans, layoutChips, listNames, packChipRows, packChips, rosterLine, type Span } from '../src/os/arcade/games/tank-maze/hud.ts';
 
 const fire: TankInput = { turn: 0, move: 0, fire: true };
@@ -1011,4 +1011,38 @@ test('game over copy labels every score and lists the people in the room', () =>
   assert.equal(rosterLine(['You', 'Green Tester']), '2 people here: You and Green Tester.');
   assert.equal(rosterLine(['You']), 'Just you here.');
   assert.equal(listNames(['A', 'B', 'C']), 'A, B and C');
+});
+
+test('only someone who drove a tank this match is announced as having left', () => {
+  // Host 0, guest 1, bots 2 and 3.
+  const roster = { seats: [0, 1, 2, 3], bots: [2, 3], departed: new Set<number>() };
+  let holders = tankHolders([0, 1], roster);
+  assert.deepEqual([...holders], [0, 1]);
+
+  // The guest leaves mid-round: announced, and a bot keeps their tank.
+  let step = holdersLeft(holders, [0], roster, 0);
+  assert.deepEqual(step.left, [1]);
+  holders = step.holders;
+  roster.departed.add(1);
+
+  // A fresh phone takes the vacated seat as a waiting player, then switches to Watch: nobody is announced.
+  step = holdersLeft(holders, [0, 1], roster, 0);
+  assert.deepEqual(step.left, []);
+  holders = step.holders;
+  assert.deepEqual([...holders], [0]);
+  step = holdersLeft(holders, [0], roster, 0);
+  assert.deepEqual(step.left, []);
+
+  // The same holds on a watcher's client, and even if the departure hadn't reached its roster yet.
+  const late = { seats: [0, 1, 2, 3], bots: [2, 3], departed: new Set<number>() };
+  const watcher = holdersLeft(tankHolders([0, 1], late), [0], late, -1);
+  assert.deepEqual(watcher.left, [1]);
+  assert.deepEqual(holdersLeft(watcher.holders, [0, 1], late, -1).left, []);
+  assert.deepEqual(holdersLeft(holdersLeft(watcher.holders, [0, 1], late, -1).holders, [0], late, -1).left, []);
+
+  // Next match the newcomer does drive seat 1, so leaving then is announced.
+  const next = { seats: [0, 1, 2, 3], bots: [2, 3], departed: new Set<number>() };
+  assert.deepEqual(holdersLeft(tankHolders([0, 1], next), [0], next, 0).left, [1]);
+  // Bots and seats already handed to a bot never count.
+  assert.deepEqual([...tankHolders([0, 1, 2], { seats: [0, 1, 2], bots: [2], departed: new Set([1]) })], [0]);
 });

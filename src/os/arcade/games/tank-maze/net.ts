@@ -328,3 +328,15 @@ export function tankName(base: string, seat: number, roster: { bots: readonly nu
   if (roster.departed.has(seat)) return live === base ? `${base} (Bot)` : `${base} (Left)`;
   return base;
 }
+
+type Roster = { seats: readonly number[]; bots: readonly number[]; departed: ReadonlySet<number> };
+
+/** Seats still driving their own tank this match. A vacated seat never gets its tank back (a bot keeps it), so with `prev` the set only shrinks. */
+export function tankHolders(present: readonly number[], roster: Roster, prev?: ReadonlySet<number>): Set<number> {
+  return new Set(present.filter((s) => roster.seats.includes(s) && !roster.bots.includes(s) && !roster.departed.has(s) && (!prev || prev.has(s))));
+}
+
+/** Who gave up a tank since the last players update. Someone who only waited in a seat (or watched) never held one. */
+export function holdersLeft(prev: ReadonlySet<number>, present: readonly number[], roster: Roster, self: number): { left: number[]; holders: Set<number> } {
+  return { left: [...prev].filter((s) => s !== self && !present.includes(s)), holders: tankHolders(present, roster, prev) };
+}

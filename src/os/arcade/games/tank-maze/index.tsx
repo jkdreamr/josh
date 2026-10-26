@@ -3,7 +3,7 @@ import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOpti
 import type { GameProps } from '../../types';
 import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, hudRow, keyHeading, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
-import { endPacket, inputPacket, parsePacket, rosterPacket, roundPacket, seatNames, statePacket, tankName, type NetEvent, type RosterPacket, type RoundPacket } from './net.ts';
+import { endPacket, inputPacket, parsePacket, rosterPacket, roundPacket, seatNames, statePacket, tankHolders, holdersLeft, tankName, type NetEvent, type RosterPacket, type RoundPacket } from './net.ts';
 import { finalLine, freeSpans, layoutChips, rosterLine, type ChipLayout, type Span } from './hud.ts';
 import { meta } from './meta';
 import './tank-maze.css';
@@ -78,6 +78,8 @@ type Match = {
   seats: number[];
   bots: number[];
   departed: Set<number>;
+  /** Seats whose player still drives their own tank this match. */
+  holders: Set<number>;
   minds: (BotMemory | null)[];
   rngs: (() => number)[];
   names: string[];
@@ -237,6 +239,7 @@ function TankMaze() {
       seats: [],
       bots: [],
       departed: new Set(),
+      holders: new Set(),
       minds: world.tanks.map(() => null),
       rngs: world.tanks.map((_, i) => mulberry32(seed ^ (i + 1) * 7919)),
       names: [],
@@ -344,6 +347,7 @@ function TankMaze() {
       match.seats = seats;
       match.bots = bots;
       for (const s of carried) if (seats.includes(s)) match.departed.add(s);
+      match.holders = tankHolders(online.players.map((p) => p.seat), match);
       // The host fixes every tank's name for the match; guests take them from its round packet.
       if (!isGuest) match.names = seatNames(seats, [...online.players, ...carried.map((s) => ({ seat: s, name: known.current.get(s) ?? `Seat ${s}` }))], online.bots);
       match.level = cfg.current.level;
@@ -628,6 +632,7 @@ function TankMaze() {
     match.guestMines = [];
     match.guestPickups = [];
     match.onlineRound = pkt.roomRound;
+    match.holders = tankHolders(online?.players.map((p) => p.seat) ?? [], match, match.synced ? match.holders : undefined);
     match.synced = true;
     startBanner(match);
   };
@@ -652,6 +657,7 @@ function TankMaze() {
     match.bots = pkt.bots;
     match.departed = new Set(pkt.departed);
     match.names = pkt.names;
+    match.holders = tankHolders(online?.players.map((p) => p.seat) ?? [], match, same ? match.holders : undefined);
   };
 
   /** Labeled final score, plus (online) who is in the room. */
@@ -687,8 +693,11 @@ function TankMaze() {
     prevPlayers.current = now.map((p) => p.seat);
     const match = m.current;
     if (!gone.length || !match) return;
-    const names = gone.map((s) => known.current.get(s) ?? `Seat ${s}`);
-    if (shell.status === 'playing' && !match.ended && gone.some((s) => match.seats.includes(s))) {
+    // Only someone who drove a tank this match hands it to a bot; a newcomer waiting in a seat (or watching) never did.
+    const { left, holders } = holdersLeft(match.holders, prevPlayers.current, match, online.seat);
+    match.holders = holders;
+    const names = left.map((s) => known.current.get(s) ?? `Seat ${s}`);
+    if (shell.status === 'playing' && !match.ended && left.length) {
       setNotice({ text: `${names.join(' and ')} Left`, sub: 'A bot takes over their tank.', id: performance.now() });
     } else if (shell.status === 'over' && lastEnd.current) {
       const e = lastEnd.current;
@@ -787,12 +796,12 @@ function TankMaze() {
       return;
     }
 
-    // Host: a seat whose player left is taken over by a bot for the rest of the match.
+    // Host: a seat whose player left is taken over by a bot for the rest of the match (even if a newcomer has since taken the seat).
     if (online && !match.ended) {
       for (let i = 0; i < match.seats.length; i++) {
         const seat = match.seats[i];
         if (match.bots.includes(seat) || match.departed.has(seat)) continue;
-        if (!online.players.some((p) => p.seat === seat)) {
+        if (!match.holders.has(seat) || !online.players.some((p) => p.seat === seat)) {
           match.departed.add(seat);
           match.minds[i] = makeMemory();
         }
