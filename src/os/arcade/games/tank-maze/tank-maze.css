@@ -1,3 +1,6 @@
+.g-tank-maze {
+  container: g-tank-maze-host / inline-size;
+}
 .g-tank-maze .arcade-card p.arcade-detail {
   display: block;
   margin: 0;
@@ -111,11 +114,20 @@
     height: calc(16px * var(--g-tank-maze-u, 1));
   }
 }
-/* Portrait phones: the larger touch controls reach the middle of the top row, so the online badge moves to the
-   top-left corner (the score chips are laid out around wherever it is). */
-@media (pointer: coarse) and (max-width: 600px) {
+/* Narrow game areas (portrait phones, framed or full screen): the toolbar reaches the middle of the top row, so the
+   online badge moves to the top-left corner (the score chips are laid out around wherever it is). Sized by the game
+   root, not the viewport, and wider for the larger touch controls. */
+@container g-tank-maze-host (max-width: 440px) {
   .g-tank-maze .arcade-online-status {
     left: 12px;
     transform: none;
+  }
+}
+@media (pointer: coarse) {
+  @container g-tank-maze-host (max-width: 620px) {
+    .g-tank-maze .arcade-online-status {
+      left: 12px;
+      transform: none;
+    }
   }
 }
