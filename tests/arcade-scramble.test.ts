@@ -62,9 +62,16 @@ import {
   roomAt,
   STASH,
   grassAt,
+  DEEP,
+  STAIR,
+  basementAt,
+  isDeep,
   isStash,
   opens,
+  topX,
   solidsNear,
+  stairAt,
+  stairOut,
   stormAt,
   stormEnd,
   walkCells,
@@ -75,6 +82,7 @@ import {
   type GameMap,
   type Pane,
   type Slab,
+  type Stair,
 } from '../src/os/arcade/games/scramble/map.ts';
 import {
   BARREL,
@@ -84,6 +92,7 @@ import {
   CELL_B,
   CHEST_R,
   COUNTDOWN,
+  DEEP_VIEW,
   GAP,
   HIGH_VIEW,
   LEVEL_H,
@@ -285,6 +294,8 @@ test('every island has all its buildings, each with the doorways it should have,
     assert.equal(m.fields.length, 4, 'a cornfield beside each farm');
     assert.equal(m.ponds.length, 7);
     for (const b of m.buildings) {
+      // (the cellars and bunkers underground have tests of their own)
+      if (isDeep(b.x)) continue;
       assert.ok(Math.abs(b.x) + b.w / 2 < HALF - BEACH && Math.abs(b.z) + b.d / 2 < HALF - BEACH, 'buildings stand on grass');
       assert.equal(b.roof, b.kind !== 'ruin', 'everything but ruins has a roof');
       const gaps = fullWalls(b) - wallLength(b);
@@ -303,7 +314,7 @@ test('every island has all its buildings, each with the doorways it should have,
       if (b.kind === 'bank') assert.ok(b.inner.some((d) => d.kind === 'vault'), `seed ${seed}: a vault`);
       if (b.kind !== 'ruin') assert.equal(b.doors.length, DOOR_COUNTS[b.kind], `seed ${seed}: the ways out of a ${b.kind} are on record`);
     }
-    const roofed = m.buildings.filter((b) => b.kind !== 'container');
+    const roofed = m.buildings.filter((b) => b.kind !== 'container' && !isDeep(b.x));
     for (const [i, a] of roofed.entries()) for (const b of roofed.slice(i + 1)) assert.ok(Math.abs(a.x - b.x) >= (a.w + b.w) / 2 + 7 || Math.abs(a.z - b.z) >= (a.d + b.d) / 2 + 7, 'buildings keep apart');
     const inside = (x: number, z: number) => m.buildings.some((b) => Math.abs(x - b.x) < b.w / 2 + 1 && Math.abs(z - b.z) < b.d / 2 + 1) || m.fields.some((f) => Math.abs(x - f.x) < f.hw + 1 && Math.abs(z - f.z) < f.hd + 1);
     const wet = (x: number, z: number, r: number) => m.ponds.some((p) => Math.hypot(x - p.x, z - p.z) < p.r + r);
@@ -313,7 +324,8 @@ test('every island has all its buildings, each with the doorways it should have,
     }
     for (const l of m.floor) assert.ok(!wet(l.x, l.z, 0), 'no loot lies in a pond');
     assert.ok(m.trees.length >= 540 && m.rocks.length >= 150 && m.bushes.length >= 240, `seed ${seed} scenery`);
-    const kinds = (k: string) => m.containers.filter((c) => c.kind === k);
+    // (on the island: what's underground is counted on its own)
+    const kinds = (k: string) => m.containers.filter((c) => c.kind === k && !isDeep(c.x));
     assert.ok(kinds('chest').length >= 48, 'a chest in every house and farm, and more besides');
     assert.equal(kinds('chest').filter((c) => c.gold).length, 1, 'one golden chest, in the Golden Coop');
     assert.ok(kinds('barrel').length >= 40, 'barrels about');
@@ -443,7 +455,7 @@ function walkable(m: GameMap, x0: number, z0: number, x1: number, z1: number, op
     for (let i = 0; i < nx; i++) {
       const x = x0 + i * step;
       const z = z0 + j * step;
-      let ok = Math.abs(x) <= EDGE && Math.abs(z) <= EDGE && !(opts.dry && riverAt(m, x, z));
+      let ok = Math.abs(topX(x)) <= EDGE && Math.abs(z) <= EDGE && !(opts.dry && riverAt(m, x, z));
       if (ok)
         solidsNear(m, x, z, 3, (_k, s) => {
           if (s.what === 'door' && !opts.shut) return;
@@ -492,7 +504,7 @@ test('every building and farmyard can be walked into, furniture and all, and eve
   for (let seed = 1; seed <= 30; seed++) {
     const m = generateMap(seed);
     // a farm's lot is its whole fenced yard: the way in is through a gate
-    const lots = [...m.buildings.map((b) => ({ kind: b.kind, x: b.x, z: b.z, hw: b.w / 2, hd: b.d / 2, b })), ...m.yards.map((y) => ({ kind: 'yard', x: y.x, z: y.z, hw: y.hw, hd: y.hd, b: null }))];
+    const lots = [...m.buildings.filter((b) => !isDeep(b.x)).map((b) => ({ kind: b.kind, x: b.x, z: b.z, hw: b.w / 2, hd: b.d / 2, b })), ...m.yards.map((y) => ({ kind: 'yard', x: y.x, z: y.z, hw: y.hw, hd: y.hd, b: null }))];
     for (const b of lots) {
       const reach = walkable(m, b.x - b.hw - 4, b.z - b.hd - 4, b.x + b.hw + 4, b.z + b.hd + 4);
       // every doorway stays open from the inside too, both sides of a doorway between rooms (a ruin's gaps are just
@@ -522,7 +534,8 @@ test('loot ids never collide, stay below the dropped range, and every item lies 
     assert.equal(new Set(ids).size, ids.length);
     for (const l of items) {
       assert.ok(l.id >= 0 && l.id < DROP_BASE);
-      assert.ok(Math.abs(l.x) < EDGE && Math.abs(l.z) < EDGE);
+      // (underground, under the island)
+      assert.ok(Math.abs(topX(l.x)) < EDGE && Math.abs(l.z) < EDGE);
       assert.ok(parseLoot(l.def), `valid loot ${JSON.stringify(l.def)}`);
     }
     assert.ok(m.floor.some((l) => l.def.kind === 'gun'), 'guns on the floor');
@@ -1134,7 +1147,7 @@ test('computer eggs play whole matches to the end at every level, and never leav
           if (e.t === 'shot') shots++;
           if (e.t === 'out') outs.push(e.f);
         }
-        for (const f of m.fighters) if (f.phase === 'ground' || f.phase === 'drop') assert.ok(Math.abs(f.x) <= EDGE + 1e-9 && Math.abs(f.z) <= EDGE + 1e-9, 'on the island');
+        for (const f of m.fighters) if (f.phase === 'ground' || f.phase === 'drop') assert.ok(Math.abs(topX(f.x)) <= EDGE + 1e-9 && Math.abs(f.z) <= EDGE + 1e-9, 'on the island (or under it)');
       }
       assert.ok(m.ended, `${level} seed ${seed} ended`);
       assert.equal(new Set(outs).size, outs.length, 'nobody cracks twice');
@@ -3225,7 +3238,7 @@ test('computer eggs raid the fridges, break the toilets and hay bales, loot the 
   for (const seed of [1, 2, 3, 4]) {
     const base = generateMap(seed);
     const special = (c: { x: number; z: number }) => base.buildings.some((b) => (b.kind === 'diner' || b.kind === 'mill') && Math.abs(c.x - b.x) < b.w / 2 && Math.abs(c.z - b.z) < b.d / 2);
-    const jobs = [...base.containers.filter((c) => c.kind === 'fridge' || c.kind === 'toilet' || c.kind === 'hay' || (c.kind === 'chest' && special(c))).map((c) => ({ kind: c.kind, x: c.x, z: c.z, c: c.id })), ...base.fires.map((f) => ({ kind: 'fire', x: f.x, z: f.z, c: -1 }))];
+    const jobs = [...base.containers.filter((c) => !isDeep(c.x) && (c.kind === 'fridge' || c.kind === 'toilet' || c.kind === 'hay' || (c.kind === 'chest' && special(c)))).map((c) => ({ kind: c.kind, x: c.x, z: c.z, c: c.id })), ...base.fires.map((f) => ({ kind: 'fire', x: f.x, z: f.z, c: -1 }))];
     for (const job of jobs) {
       const m = quiet(seed);
       const a = alone(m);
@@ -3593,7 +3606,7 @@ test('a called supply drop always comes down on open grass, clear of buildings a
   for (let seed = 1; seed <= 10; seed++) {
     const m = createMatch({ seed, role: 'solo', level: 'normal', entrants: [{ name: 'a', color: '#fff', kind: 'player', seat: -1 }], me: 0, countdown: 0 });
     // fired from inside every building, from the middle of the ponds and the cornfields, and from the very corner
-    const from = [...m.map.buildings, ...m.map.ponds, ...m.map.fields, { x: EDGE, z: -EDGE }];
+    const from = [...m.map.buildings.filter((b) => !isDeep(b.x)), ...m.map.ponds, ...m.map.fields, { x: EDGE, z: -EDGE }];
     for (const p of from) {
       const s = dropSpot(m, p.x, p.z);
       assert.ok(s, `seed ${seed}: room near ${p.x},${p.z}`);
@@ -5133,8 +5146,9 @@ test('a bank vault door grinds open slowly and stays open, and the safes behind 
     const r = quiet(seed);
     const vault = r.vaults[0];
     assert.ok(vault >= 0 && r.map.slabs[vault].vault, `seed ${seed}: a vault`);
-    const safes = r.map.containers.filter((c) => c.kind === 'safe');
-    const boxes = r.map.containers.filter((c) => c.kind === 'deposit');
+    // (and the strongroom under the bank holds more, behind no door)
+    const safes = r.map.containers.filter((c) => c.kind === 'safe' && !isDeep(c.x));
+    const boxes = r.map.containers.filter((c) => c.kind === 'deposit' && !isDeep(c.x));
     assert.equal(safes.length, 2, `seed ${seed}: two safes`);
     assert.equal(boxes.length, 4, `seed ${seed}: four deposit boxes`);
     for (const c of [...safes, ...boxes]) {
@@ -6447,4 +6461,305 @@ test('a computer egg looks through a small scope in a close fight and its bigges
   b.phase = 'out';
   run(m, 0.6);
   assert.equal(a.scope, 3, 'and nobody about, the biggest');
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Underground.
+
+/** The point a little way onto a stairway (up top from its top end, below from its foot), where an egg goes over. */
+const onto = (s: Stair, deep: boolean) => {
+  const k = (s.dx ? s.hw : s.hd) - 0.8;
+  return deep ? { x: s.x + DEEP + s.dx * k, z: s.z + s.dz * k } : { x: s.x - s.dx * k, z: s.z - s.dz * k };
+};
+/** Nothing solid within an egg's reach of a point. */
+const clearAt = (m: GameMap, x: number, z: number) => {
+  let ok = true;
+  solidsNear(m, x, z, 3, (_k, s) => {
+    if (s.what !== 'door' && (s.shape === 'circle' ? pushCircle(x, z, FIGHTER_R, s.x, s.z, s.r) : pushBox(x, z, FIGHTER_R, s.x, s.z, s.hw, s.hd))) ok = false;
+  });
+  return ok;
+};
+/** A seed whose island has a stairway down from somewhere of this kind, and that stairway. */
+function stairsFrom(above: string) {
+  for (let seed = 1; seed < 60; seed++) {
+    const map = generateMap(seed);
+    const s = map.stairs.find((s) => (s.b >= 0 ? map.buildings[s.b].kind : 'hatch') === above);
+    if (s) return { seed, i: s.i };
+  }
+  throw new Error(`no stairs from a ${above}`);
+}
+
+test('the underground: cellars under a few houses, bunkers under the police station, now and then the bank, and two hatches, each down a stairway', () => {
+  let police = 0;
+  for (let seed = 1; seed <= 30; seed++) {
+    const m = generateMap(seed);
+    assert.equal(m.stairs.filter((s) => s.b < 0).length, 2, `seed ${seed}: two hatches out in the open`);
+    assert.ok(m.stairs.filter((s) => s.b >= 0 && m.buildings[s.b].kind === 'house').length <= 4, 'a few cellars');
+    const dug: Building[] = [];
+    for (const s of m.stairs) {
+      const u = m.buildings[s.u];
+      const above = s.b >= 0 ? m.buildings[s.b] : null;
+      assert.ok(isDeep(u.x) && !isDeep(s.x), 'a basement lies underground, its stairs start up top');
+      assert.equal(u.kind, above?.kind === 'house' ? 'cellar' : 'bunker', `seed ${seed}: a ${u.kind} under a ${above?.kind ?? 'hatch'}`);
+      if (above) {
+        assert.ok(above.kind === 'house' || above.kind === 'police' || above.kind === 'bank');
+        assert.ok(Math.abs(topX(u.x) - above.x) < 0.01 && Math.abs(u.z - above.z) < 0.01 && u.w === above.w && u.d === above.d, 'right under its building');
+        assert.ok(Math.abs(s.x - above.x) + s.hw <= above.w / 2 && Math.abs(s.z - above.z) + s.hd <= above.d / 2, 'its stairs indoors');
+      }
+      if (above?.kind === 'police') police++;
+      // the stairs come down inside it, rails along their open sides and across the far end, on both levels
+      assert.ok(Math.abs(s.x + DEEP - u.x) + s.hw <= u.w / 2 && Math.abs(s.z - u.z) + s.hd <= u.d / 2, 'its stairs come down inside it');
+      assert.ok(s.rails.length >= 2 && s.rails.length <= 3 && s.deepRails.length === s.rails.length);
+      assert.ok(Math.abs(Math.hypot(s.dx, s.dz) - 1) < 1e-9 && (s.dx === 0 || s.dz === 0));
+      assert.ok(Math.max(s.hw, s.hd) === STAIR.run && Math.min(s.hw, s.hd) === STAIR.half);
+      // no way in but the stairs, no doors in its doorways, and walls all round
+      assert.equal(u.doors.length, 0);
+      assert.ok(u.rooms.length >= 1 && u.inner.length === u.rooms.length - 1);
+      assert.ok(Math.abs(fullWalls(u) - outerLength(u)) < 0.31, `seed ${seed}: walls all round a ${u.kind}`);
+      assert.ok(m.slabs.every((d) => d.b !== s.u), 'no doors underground');
+      // and room to step off the stairs at either end
+      for (const deep of [false, true]) {
+        const p = stairOut(s, deep);
+        assert.ok(clearAt(m, p.x, p.z), `seed ${seed}: room off the ${deep ? 'foot' : 'top'} of the stairs at ${p.x},${p.z}`);
+        assert.equal(stairAt(m, p.x, p.z), -1, 'not back onto them');
+        const q = onto(s, deep);
+        assert.equal(stairAt(m, q.x, q.z), s.i, 'onto them a step in');
+      }
+      // what's down there: things to open, and loot better than up top
+      const inside = (x: number, z: number) => Math.abs(x - u.x) < u.w / 2 && Math.abs(z - u.z) < u.d / 2;
+      const boxes = m.containers.filter((c) => inside(c.x, c.z));
+      assert.ok(boxes.filter((c) => opens(c.kind)).length >= 3, `seed ${seed}: things to open in a ${u.kind}`);
+      if (!above) {
+        const loot = [...boxes.flatMap((c) => c.loot), ...m.floor.filter((l) => inside(l.x, l.z))];
+        assert.ok(loot.some((l) => l.def.kind === 'gun' && l.def.r >= 2), `seed ${seed}: a bunker's chest as good as a supply drop`);
+      }
+      for (const o of dug) assert.ok(Math.abs(o.x - u.x) >= (o.w + u.w) / 2 || Math.abs(o.z - u.z) >= (o.d + u.d) / 2, 'basements keep apart');
+      dug.push(u);
+    }
+  }
+  assert.ok(police >= 25, `the police station nearly always has its armory (${police} of 30)`);
+});
+
+test('every basement can be walked through from the foot of its stairs and everything in it reached, and every stairway walked onto from outside', () => {
+  for (let seed = 1; seed <= 30; seed++) {
+    const m = generateMap(seed);
+    for (const s of m.stairs) {
+      const u = m.buildings[s.u];
+      const foot = stairOut(s, true);
+      const reach = walkable(m, u.x - u.w / 2 - 2, u.z - u.d / 2 - 2, u.x + u.w / 2 + 2, u.z + u.d / 2 + 2, { from: foot });
+      for (const d of u.inner) for (const k of [-1, 1]) assert.ok(reach(d.x + d.ox * k * 1.1, d.z + d.oz * k * 1.1, 0.45), `seed ${seed}: through a ${u.kind}'s doorway at ${d.x},${d.z}`);
+      for (const r of u.rooms) assert.ok(reach(r.x, r.z, Math.min(r.hw, r.hd)), `seed ${seed}: into every room of a ${u.kind}`);
+      const inside = (x: number, z: number) => Math.abs(x - u.x) < u.w / 2 && Math.abs(z - u.z) < u.d / 2;
+      for (const l of m.floor) if (inside(l.x, l.z)) assert.ok(reach(l.x, l.z, PICK_R - 0.1), `seed ${seed}: loot at ${l.x},${l.z} in a ${u.kind}`);
+      for (const c of m.containers) {
+        if (!inside(c.x, c.z)) continue;
+        if (opens(c.kind)) assert.ok(reach(c.x, c.z, CHEST_R - 0.1), `seed ${seed}: the ${c.kind} in a ${u.kind}`);
+        else assert.ok(reach(c.x, c.z, PICK_R + 0.7), `seed ${seed}: the ${c.kind} in a ${u.kind}`);
+        for (const l of c.loot) assert.ok(inside(l.x, l.z) && reach(l.x, l.z, PICK_R - 0.1), `seed ${seed}: what the ${c.kind} holds spills where it can be picked up`);
+      }
+      const up = onto(s, true);
+      assert.ok(reach(up.x, up.z, 0.5), `seed ${seed}: back onto the stairs up from a ${u.kind}`);
+      // up top: onto the stairs from outside the building, in through its doors (or up to the hatch)
+      const b = s.b >= 0 ? m.buildings[s.b] : { x: s.x, z: s.z, w: 8, d: 8 };
+      const top = walkable(m, b.x - b.w / 2 - 4, b.z - b.d / 2 - 4, b.x + b.w / 2 + 4, b.z + b.d / 2 + 4);
+      const down = onto(s, false);
+      assert.ok(top(down.x, down.z, 0.5), `seed ${seed}: onto the stairs down at ${s.x},${s.z}`);
+    }
+  }
+});
+
+test('walking onto a stairway takes an egg down to the basement, still walking the same way, and back onto it takes it up', () => {
+  const { seed, i } = stairsFrom('house');
+  const m = quiet(seed);
+  const a = m.fighters[0];
+  const s = m.map.stairs[i];
+  const top = stairOut(s, false);
+  land(a, top.x - s.dx, top.z - s.dz);
+  a.input.mx = s.dx;
+  a.input.mz = s.dz;
+  let evs: Ev[] = [];
+  for (let t = 0; t < 3 && !isDeep(a.x); t += DT) evs.push(...run(m, DT));
+  assert.ok(isDeep(a.x), 'down');
+  assert.equal(basementAt(m.map, a.x, a.z), s.u);
+  assert.ok(evs.some((e) => e.t === 'stairs' && e.f === a.id && e.down));
+  // off the foot, and on along the way down
+  run(m, 0.3);
+  assert.ok((a.x - (s.x + DEEP)) * s.dx + (a.z - s.z) * s.dz > (s.dx ? s.hw : s.hd), 'past the foot');
+  assert.equal(a.inside, s.u, 'in the cellar');
+  // nothing is built down here
+  a.input.piece = 'wall';
+  a.wood = 100;
+  run(m, 0.1);
+  assert.equal(m.walls.size, 0);
+  // and back up
+  a.input.mx = -s.dx;
+  a.input.mz = -s.dz;
+  evs = [];
+  for (let t = 0; t < 4 && isDeep(a.x); t += DT) evs.push(...run(m, DT));
+  assert.ok(!isDeep(a.x), 'up');
+  assert.ok(evs.some((e) => e.t === 'stairs' && e.f === a.id && !e.down));
+  assert.ok(Math.hypot(a.x - top.x, a.z - top.z) < 1.2, 'off the top end of the stairs');
+  assert.equal(a.inside, s.b, 'in the house again');
+});
+
+test('nobody up top and nobody below can see, shoot, throw at or hurt each other: the stairs are the only way between', () => {
+  const { seed, i } = stairsFrom('house');
+  const m = quiet(seed, 3);
+  const [a, b, c] = m.fighters;
+  const s = m.map.stairs[i];
+  const u = m.map.buildings[s.u];
+  const room = u.rooms[0];
+  land(a, room.x, room.z);
+  land(b, topX(room.x), room.z);
+  land(c, room.x + 1.5, room.z);
+  for (const f of [a, b, c]) f.shield = 0;
+  assert.ok(!canSee(m, a, b, 999) && !canSee(m, b, a, 999), 'out of sight');
+  assert.ok(canSee(m, a, c, 999), 'but those down there see each other');
+  assert.equal(viewOf(a), 0);
+  a.scopes = 7;
+  a.scope = 3;
+  assert.equal(viewOf(a), DEEP_VIEW, 'and no scope sees far in the gloom');
+  // shots from up top, whichever way, never come down
+  b.guns[0] = { w: 'sniper', r: 4, mag: 5 };
+  b.ammo.heavy = 50;
+  b.slot = 0;
+  for (const aim of [0, Math.PI / 2, Math.atan2(a.x - b.x, a.z - b.z)]) {
+    b.input.aim = aim;
+    b.input.fire = true;
+    run(m, 0.6);
+  }
+  b.input.fire = false;
+  run(m, 1);
+  assert.equal(a.hp, 100);
+  // nor a grenade at the top of the stairs, or right over us
+  for (const [x, z] of [
+    [b.x, b.z],
+    [s.x, s.z],
+  ]) {
+    launch(m, b.id, 'grenade', x, z, x, z, 0.3, true);
+    run(m, 3);
+  }
+  assert.equal(a.hp, 100);
+  // down here a grenade does what it does
+  c.hp = 100;
+  launch(m, a.id, 'grenade', c.x, c.z, c.x, c.z, 0.3, true);
+  run(m, 3);
+  assert.ok(c.hp < 100, 'a grenade below hurts whoever is below');
+  // and a swing up top at the spot over us hits nothing
+  land(b, topX(a.x) - 0.8, a.z);
+  b.slot = SLOT_MELEE;
+  b.input.aim = Math.PI / 2;
+  b.input.fire = true;
+  run(m, 0.5);
+  b.input.fire = false;
+  assert.equal(a.hp, 100);
+  assert.equal(castRay(m, a.x, a.z, 0, -1, 30, a.id, false)?.what, 'wall', 'walls below stop shots');
+});
+
+test('the storm still reaches an egg underground, by the ground over it', () => {
+  const { seed, i } = stairsFrom('hatch');
+  const m = quiet(seed, 2);
+  const a = m.fighters[0];
+  const s = m.map.stairs[i];
+  const u = m.map.buildings[s.u];
+  land(a, u.rooms[0].x, u.rooms[0].z);
+  // the last circle, closed far from here
+  m.map.storm.circles = m.map.storm.circles.map(() => ({ x: topX(u.x) + 200, z: u.z, r: 10 }));
+  m.time = stormEnd(m.map.storm) + 1;
+  run(m, 2);
+  assert.ok(a.hp < 100, `hurt by the storm underground (${a.hp})`);
+  // and none when the ground over it is safe
+  const hp = a.hp;
+  m.map.storm.circles = m.map.storm.circles.map(() => ({ x: topX(u.x), z: u.z, r: 30 }));
+  run(m, 2);
+  assert.equal(a.hp, hp);
+});
+
+test('an egg underground travels in its state like anywhere else, what it drops lands below, and a guest sees it go over at once', () => {
+  const { seed, i } = stairsFrom('house');
+  const m = quiet(seed);
+  const a = m.fighters[0];
+  const s = m.map.stairs[i];
+  const foot = stairOut(s, true);
+  land(a, foot.x, foot.z);
+  const st = stateOf(a);
+  const back = parsePacket(JSON.parse(JSON.stringify(guestState(1, st))));
+  assert.ok(back && back.k === 's' && Math.abs(back.state.x - foot.x) < 0.05 && isDeep(back.state.x));
+  assert.equal(parsePacket(guestState(1, { ...st, x: DEEP + HALF + 200 })), null, 'nowhere under the island');
+  assert.equal(parsePacket(guestState(1, { ...st, x: DEEP / 2 + 20 })), null, 'nor out at sea');
+  // drops and moved loot land below, and nowhere else
+  const ok = (ev: object) => {
+    const p = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, [ev]]] });
+    return !!p && p.k === 'e' && p.groups.length === 1;
+  };
+  assert.ok(ok({ y: 'dr', id: DROP_BASE + 5, x: foot.x, z: foot.z, by: 1, it: { kind: 'scope', lv: 2 } }));
+  assert.ok(!ok({ y: 'dr', id: DROP_BASE + 5, x: 700, z: 0, by: 1, it: { kind: 'scope', lv: 2 } }));
+  assert.ok(ok({ y: 'lv', id: 77, x: foot.x, z: foot.z }));
+  // a crack below spills below
+  a.guns[0] = { w: 'rifle', r: 1, mag: 10 };
+  a.hp = 1;
+  hurt(m, a, 40, -1, 'storm', true);
+  const spilled = [...m.loot.values()].filter((l) => l.by === a.id);
+  assert.ok(spilled.length > 0 && spilled.every((l) => isDeep(l.x) && basementAt(m.map, l.x, l.z) === s.u));
+  // a guest: the host's reports of an egg going down the stairs put it below at once, with no glide across between
+  const players = [
+    { seat: 0, name: 'host' },
+    { seat: 1, name: 'guest' },
+  ];
+  const h = hostMatch(players, 0, seed, 'normal', 0, 0);
+  const g = guestMatch(players, 1, seed, 'normal', 10, h.roster);
+  const r = g.fighters[0];
+  const top = stairOut(s, false);
+  const rep = (x: number, z: number) => ({ x, z, y: 0, aim: 0, vx: 0, vz: 0, phase: 'ground' as const, hp: 100, shield: 0, w: null, r: 0, flags: 0, helmet: 0, vest: 0, scope: 0, scopes: 0 });
+  applyState(g, r, rep(top.x, top.z));
+  run(g, 0.2);
+  applyState(g, r, rep(foot.x, foot.z));
+  const evs = run(g, 0.02);
+  assert.ok(isDeep(r.x) && Math.abs(r.x - foot.x) < 0.5, `below at once (${r.x})`);
+  assert.ok(evs.some((e) => e.t === 'stairs' && e.f === r.id && e.down));
+});
+
+test('a computer egg goes down to loot a basement nearby and comes back up, and gets out ahead of the storm', () => {
+  const { seed, i } = stairsFrom('hatch');
+  const m = quiet(seed);
+  const a = alone(m);
+  const s = m.map.stairs[i];
+  // nothing else worth the walk up top
+  m.loot.clear();
+  const u = m.map.buildings[s.u];
+  const below = (x: number, z: number) => Math.abs(x - u.x) < u.w / 2 && Math.abs(z - u.z) < u.d / 2;
+  m.opened = m.opened.map((_, c) => !below(m.map.containers[c].x, m.map.containers[c].z));
+  const top = stairOut(s, false);
+  const at = startNear(m, top.x, top.z, 12) ?? startNear(m, top.x, top.z, 18);
+  assert.ok(at);
+  land(a, at.x, at.z);
+  let down = -1;
+  let up = -1;
+  let opened = 0;
+  for (let t = 0; t < 120 && up < 0; t += 1 / 30) {
+    step(m, 1 / 30);
+    for (const e of m.events.splice(0)) {
+      if (e.t === 'stairs' && e.f === a.id) {
+        if (e.down && down < 0) down = m.time;
+        if (!e.down && down >= 0) up = m.time;
+      }
+      if (e.t === 'opened' && e.f === a.id && below(m.map.containers[e.c].x, m.map.containers[e.c].z)) opened++;
+    }
+  }
+  assert.ok(down >= 0, 'went down');
+  assert.ok(opened >= 2, `opened what's down there (${opened})`);
+  assert.ok(up > down, 'and came back up');
+  // underground with the storm about to close over the ground above: up and away in good time
+  const n = quiet(seed);
+  const b = alone(n);
+  land(b, u.rooms[u.rooms.length - 1].x, u.rooms[u.rooms.length - 1].z);
+  n.map.storm.circles = n.map.storm.circles.map((c, k) => (k === 0 ? c : { x: topX(u.x) + 120, z: u.z, r: 40 }));
+  n.time = n.map.storm.starts[0] - 5;
+  let out = -1;
+  for (let t = 0; t < 30 && out < 0; t += 1 / 30) {
+    step(n, 1 / 30);
+    n.events.length = 0;
+    if (!isDeep(b.x)) out = t;
+  }
+  assert.ok(out >= 0 && b.phase === 'ground', `up the stairs before the storm (${out.toFixed(1)} s)`);
 });

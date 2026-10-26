@@ -11,6 +11,24 @@ export const HALF = 240;
 export const BEACH = 8;
 /** Fighters stop this far inside the shore. */
 export const EDGE = HALF - 0.8;
+/**
+ * The underground: every cellar and bunker lies this far east of the ground over it, out past the sea where nothing up
+ * top reaches (no gun shoots so far, and nobody sees so far), so a basement under (x, z) is at (x + DEEP, z). Anything
+ * east of DEEP / 2 is underground.
+ */
+export const DEEP = 1000;
+export const isDeep = (x: number) => x > DEEP / 2;
+/** Where on the island a point is, underground or not: the ground over a basement. */
+export const topX = (x: number) => (x > DEEP / 2 ? x - DEEP : x);
+/** Keeps a point `pad` past the shore at most, on its own level. */
+export const clampX = (x: number, pad = 0) => (x > DEEP / 2 ? Math.max(DEEP - EDGE - pad, Math.min(DEEP + EDGE + pad, x)) : Math.max(-EDGE - pad, Math.min(EDGE + pad, x)));
+/**
+ * A stairway's half width across (rails and all) and half its run along the way down. A basement's walls are this
+ * tall, and its doorways this wide.
+ */
+export const STAIR = { half: 1, run: 1.7 };
+export const DEEP_H = 2.8;
+export const DEEP_DOOR = 2.2;
 export const WALL_T = 0.5;
 export const WALL_H = 3.2;
 export const DOOR = 2.8;
@@ -148,8 +166,11 @@ export type Rock = Circle & { look: number };
  * from anyone outside (ruins have none). `h` is how tall the walls are drawn. `bars` are a jail cell's (they stop
  * feet, not bullets or the eye). A building of more than one room lists them (`rooms`, inside the walls), with the
  * doorways between them in `inner`.
+ *
+ * Underground (see DEEP), a cellar (under a house) or a bunker (under the police station or the bank, or a hatch out
+ * in the open) is a building too, with no way in but its stairway (see Stair) and no doors in its doorways.
  */
-export type BuildingKind = 'house' | 'farm' | 'shed' | 'warehouse' | 'container' | 'ruin' | 'coop' | 'diner' | 'mill' | 'police' | 'bank';
+export type BuildingKind = 'house' | 'farm' | 'shed' | 'warehouse' | 'container' | 'ruin' | 'coop' | 'diner' | 'mill' | 'police' | 'bank' | 'cellar' | 'bunker';
 export type Building = { kind: BuildingKind; x: number; z: number; w: number; d: number; walls: Box[]; doors: Door[]; inner: Door[]; windows: Pane[]; bars: Box[]; rooms: Box[]; look: number; roof: boolean; h: number };
 /**
  * A window in an outer wall: the glass filling its opening (wall thick), `i` its place in the island's list, `b` its
@@ -170,6 +191,14 @@ export type Door = { x: number; z: number; ox: number; oz: number; w: number; sl
  * never breaks.
  */
 export type Slab = Box & { i: number; b: number; ox: number; oz: number; bars: boolean; vault: boolean };
+/**
+ * A stairway down to a basement: the box it fills on the ground (rails and all; the same box at x + DEEP below), the
+ * way down (`dx`, `dz`: one step along x or z), the building it is in (`b`, -1 for a hatch out in the open) and the
+ * basement it leads to (`u`, a building). On the ground an egg walks onto it from its top end and comes out below past
+ * its foot; below it walks onto it from its foot and comes out up top, back off its top. `rails` stop feet along its
+ * open sides and at its far end up top, `deepRails` the same below (the far end there is its top).
+ */
+export type Stair = Box & { i: number; b: number; u: number; dx: number; dz: number; rails: Box[]; deepRails: Box[] };
 export type LootSpawn = { id: number; def: LootDef; x: number; z: number };
 /**
  * Crates, toilets and hay bales break when shot or smacked, and barrels blow up; chests, fridges, supply drops and
@@ -267,6 +296,8 @@ export type GameMap = {
   /** Every building's windows, in one list (a window's `i` is its place in it), and its doors the same way. */
   windows: Pane[];
   slabs: Slab[];
+  /** The stairways down to the basements. */
+  stairs: Stair[];
   /** The Golden Coop's building index. */
   coop: number;
   containers: Container[];
@@ -286,8 +317,9 @@ export type GameMap = {
   places: Place[];
   floor: LootSpawn[];
   solids: Solid[];
-  /** Solid indices per grid cell. */
+  /** Solid indices per grid cell, on the island and (`under`) underground. */
   grid: number[][];
+  under: number[][];
   bus: Bus;
   storm: Storm;
   /** Scratch for de-duplicating grid queries. */
@@ -927,24 +959,29 @@ export function busAt(bus: Bus, time: number) {
 
 const cellOf = (v: number) => Math.max(0, Math.min(COLS - 1, Math.floor((v + HALF) / CELL)));
 
-/** Rebuilds the grid over the solids (after the island is made, or a test has changed it). */
+/** Rebuilds the grids over the solids (after the island is made, or a test has changed it). */
 export function reindex(map: GameMap) {
   map.grid = Array.from({ length: COLS * COLS }, () => []);
+  map.under = Array.from({ length: COLS * COLS }, () => []);
   // a supply drop no flare has called yet is nowhere
   const waiting = new Set(map.flares.filter((id) => map.containers[id].at === Infinity).map((id) => map.containers[id].solid));
   map.solids.forEach((s, i) => {
     if (waiting.has(i)) return;
-    // a little margin, so a ray grazing a cell corner still meets everything near it
+    // a little margin, so a ray grazing a cell corner still meets everything near it; what's underground goes in a
+    // grid of its own, laid over the island it lies under
+    const grid = isDeep(s.x) ? map.under : map.grid;
+    const x = topX(s.x);
     const rx = (s.shape === 'circle' ? s.r : s.hw) + 0.5;
     const rz = (s.shape === 'circle' ? s.r : s.hd) + 0.5;
-    for (let cz = cellOf(s.z - rz); cz <= cellOf(s.z + rz); cz++) for (let cx = cellOf(s.x - rx); cx <= cellOf(s.x + rx); cx++) map.grid[cx + cz * COLS].push(i);
+    for (let cz = cellOf(s.z - rz); cz <= cellOf(s.z + rz); cz++) for (let cx = cellOf(x - rx); cx <= cellOf(x + rx); cx++) grid[cx + cz * COLS].push(i);
   });
   map.stamp = new Uint32Array(map.solids.length);
   map.mark = 0;
 }
 
 export function generateMap(seed: number): GameMap {
-  const rng = rng32(seed);
+  // (swapped for a generator of its own for the underground, at the end)
+  let rng = rng32(seed);
   const map: GameMap = {
     seed,
     trees: [],
@@ -960,6 +997,7 @@ export function generateMap(seed: number): GameMap {
     buildings: [],
     windows: [],
     slabs: [],
+    stairs: [],
     coop: -1,
     containers: [],
     drops: [],
@@ -976,6 +1014,7 @@ export function generateMap(seed: number): GameMap {
     floor: [],
     solids: [],
     grid: [],
+    under: [],
     bus: planBus(rng),
     storm: planStorm(rng),
     stamp: new Uint32Array(0),
@@ -1131,16 +1170,17 @@ export function generateMap(seed: number): GameMap {
   /** The gap between two boxes along whichever axis they are farthest apart (below zero when they overlap). */
   const gap = (a: Box, b: Box) => Math.max(Math.abs(a.x - b.x) - a.hw - b.hw, Math.abs(a.z - b.z) - a.hd - b.hd);
   const roomy = (g: number) => g <= 0.05 || g >= 1.3;
+  /** The places in a building nothing else may stand: a stairway down and the way onto it. */
+  const keepOut = new Map<number, Box[]>();
   /**
-   * Puts a piece of furniture (or, for a stash kind, a container that opens, or a row of `n` of them side by side
-   * along the wall) at (x, z), `face` the side of the wall it stands against, if it fits.
+   * Whether a box (`stops`: something that stops feet; `stash`: furniture that opens, against wall `face`) fits in
+   * building `bi`: indoors, out of the way in through every doorway, against a wall or well clear of it, and clear of
+   * what's there to loot, of the other furniture (unless `furniture` is false) and of the stairs (see keepOut).
    */
-  const fit = (bi: number, kind: FurnitureKind | StashKind, x: number, z: number, hw: number, hd: number, face = 0, look = 0, n = 1) => {
+  const fits = (bi: number, box: Box, stops: boolean, stash: boolean, face: number, furniture = true) => {
     const b = map.buildings[bi];
-    const box = { x, z, hw, hd };
+    const { x, z, hw, hd } = box;
     if (Math.abs(box.x - b.x) + hw > b.w / 2 - WALL_T / 2 + 0.01 || Math.abs(box.z - b.z) + hd > b.d / 2 - WALL_T / 2 + 0.01) return false;
-    const stash = isStash(kind);
-    const stops = stash || furnitureSolid(kind as FurnitureKind) !== null;
     // the way in through every doorway, from either side of a doorway between rooms
     const ways = [...b.doors.map((d) => ({ d, k: 1 })), ...b.inner.flatMap((d) => [{ d, k: 1 }, { d, k: -1 }])];
     for (const { d, k } of ways) {
@@ -1161,11 +1201,23 @@ export function generateMap(seed: number): GameMap {
     if (stops) {
       for (const l of map.floor) if (Math.abs(l.x - box.x) < hw + 0.6 && Math.abs(l.z - box.z) < hd + 0.6) return false;
       // (and a piece of furniture never into another one)
-      for (const f of map.furniture) if (f.b === bi && furnitureSolid(f.kind) && (!roomy(gap(box, f)) || (!stash && gap(box, f) < -0.01))) return false;
+      if (furniture) for (const f of map.furniture) if (f.b === bi && furnitureSolid(f.kind) && (!roomy(gap(box, f)) || (!stash && gap(box, f) < -0.01))) return false;
       // and what it holds spills somewhere an egg can stand, clear of the rest
       const spill = { x: x + (face === 2 ? 1.3 : face === 3 ? -1.3 : 0), z: z + (face === 0 ? 1.3 : face === 1 ? -1.3 : 0), hw: face >= 2 ? 0.4 : hw + 0.4, hd: face >= 2 ? hd + 0.4 : 0.4 };
       if (stash && map.furniture.some((f) => f.b === bi && furnitureSolid(f.kind) && gap(spill, f) < 0.2)) return false;
     }
+    for (const k of keepOut.get(bi) ?? []) if (gap(box, k) < (stops ? 1.3 : 0.15)) return false;
+    return true;
+  };
+  /**
+   * Puts a piece of furniture (or, for a stash kind, a container that opens, or a row of `n` of them side by side
+   * along the wall) at (x, z), `face` the side of the wall it stands against, if it fits.
+   */
+  const fit = (bi: number, kind: FurnitureKind | StashKind, x: number, z: number, hw: number, hd: number, face = 0, look = 0, n = 1) => {
+    const b = map.buildings[bi];
+    const box = { x, z, hw, hd };
+    const stash = isStash(kind);
+    if (!fits(bi, box, stash || furnitureSolid(kind as FurnitureKind) !== null, stash, face)) return false;
     if (stash) {
       // it faces away from the wall it stands against
       const ax = face >= 2;
@@ -2008,6 +2060,307 @@ export function generateMap(seed: number): GameMap {
       map.slabs.push({ x: d.x, z: d.z, hw: d.ox ? WALL_T / 2 : d.w / 2, hd: d.ox ? d.w / 2 : WALL_T / 2, i: map.slabs.length, b: bi, ox: d.ox, oz: d.oz, bars: d.kind === 'bars', vault: d.kind === 'vault' });
     }
   });
+  // -----------------------------------------------------------------------------------------------------------------
+  // The underground: a cellar under some of the houses, an armory under the police station and a strongroom under the
+  // bank, and a couple of bunkers under hatches out in the open, each down a stairway (see Stair) and better stocked
+  // than anything up top. It rolls from a generator of its own, so the island above is the same with it or without it.
+  rng = rng32((seed ^ 0x5ca1ab1e) >>> 0);
+  const shuffled = <T>(list: T[]) => {
+    const out = [...list];
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  };
+  /**
+   * A stairway's box (rails and all) at (x, z) running along x (`alongX`) or z, down the way `dir` (1 or -1 along that
+   * axis), with a wall on side `wall` of it across (-1 the low side, 1 the high side, 0 none): its rails up top and
+   * below, the way onto it up top (`top`) and the way off its foot below (`foot`, underground).
+   */
+  const stairway = (x: number, z: number, alongX: boolean, dir: number, wall: number) => {
+    const { half, run } = STAIR;
+    const t = FENCE_T / 2;
+    const box: Box = { x, z, hw: alongX ? run : half, hd: alongX ? half : run };
+    const side = (k: number, ox: number): Box => (alongX ? { x: x + ox, z: z + k * (half - t), hw: run, hd: t } : { x: x + ox + k * (half - t), z, hw: t, hd: run });
+    const end = (k: number, ox: number): Box => (alongX ? { x: x + ox + k * (run - t), z, hw: t, hd: half } : { x: x + ox, z: z + k * (run - t), hw: half, hd: t });
+    const open = [-1, 1].filter((k) => k !== wall);
+    const ahead = (k: number, ox: number): Box => (alongX ? { x: x + ox + k * (run + 0.9), z, hw: 0.9, hd: half } : { x: x + ox, z: z + k * (run + 0.9), hw: half, hd: 0.9 });
+    return {
+      box,
+      dx: alongX ? dir : 0,
+      dz: alongX ? 0 : dir,
+      rails: [...open.map((k) => side(k, 0)), end(dir, 0)],
+      deepRails: [...open.map((k) => side(k, DEEP)), end(-dir, DEEP)],
+      top: ahead(-dir, 0),
+      foot: ahead(dir, DEEP),
+    };
+  };
+  type Way = ReturnType<typeof stairway>;
+  /** The furniture of building `bi` a stairway would be in the way of (which goes, to make room for it). */
+  const inTheWay = (bi: number, st: Way) =>
+    map.furniture.filter((f) => f.b === bi && (gap(st.box, f) < 0.05 || (furnitureSolid(f.kind) && (!roomy(gap(st.box, f)) || gap(st.top, f) < 1.6))));
+  /**
+   * What may make way for the stairs: a bed, a shelf, a chair, a stool or a bench, and in the police station and the
+   * bank the table to wait at and its rug (but never a house's table, its rug or the kitchen counter).
+   */
+  const spared = (f: Furniture) => {
+    const kind = map.buildings[f.b]?.kind;
+    return f.kind === 'bed' || f.kind === 'shelf' || f.kind === 'chair' || f.kind === 'stool' || f.kind === 'bench' || ((kind === 'police' || kind === 'bank') && (f.kind === 'table' || f.kind === 'rug'));
+  };
+  /**
+   * Whether a stairway, its rails and the way onto it fit in building `bi` as it stands, but for furniture (see
+   * inTheWay): in one room, out of the doorways' way, flush against its wall or well clear of the rest, clear of
+   * everything there is to loot (with room to walk round it onto them), and with room off their foot below.
+   */
+  const stairFits = (bi: number, st: Way) => {
+    const b = map.buildings[bi];
+    const { box, top } = st;
+    const inside = (q: Box) => Math.abs(q.x - b.x) + q.hw <= b.w / 2 - WALL_T / 2 + 0.01 && Math.abs(q.z - b.z) + q.hd <= b.d / 2 - WALL_T / 2 + 0.01;
+    if (!inside(box) || !inside(top) || !inside({ ...st.foot, x: st.foot.x - DEEP })) return false;
+    // in the police station and the bank, in the lobby: not behind bars or a vault door
+    const rooms = b.kind === 'police' || b.kind === 'bank' ? b.rooms.slice(0, 1) : b.rooms;
+    if (b.rooms.length && !rooms.some((r) => [box, top].every((q) => Math.abs(q.x - r.x) + q.hw <= r.hw + 0.01 && Math.abs(q.z - r.z) + q.hd <= r.hd + 0.01))) return false;
+    if (!fits(bi, box, true, false, -1, false)) return false;
+    for (const w of [...b.walls, ...b.windows, ...b.bars]) if (gap(top, w) < 0) return false;
+    for (const c of map.containers) {
+      if (Math.abs(c.x - b.x) > b.w / 2 || Math.abs(c.z - b.z) > b.d / 2) continue;
+      const [chw, chd] = containerHalf(c);
+      const cb = { x: c.x, z: c.z, hw: chw, hd: chd };
+      if (gap(top, cb) < 1.6 || !roomy(gap(box, cb))) return false;
+      // nothing spills where stepping to pick it up takes you down the stairs
+      if (c.loot.some((l) => Math.abs(l.x - box.x) < box.hw + 0.4 && Math.abs(l.z - box.z) < box.hd + 0.4)) return false;
+    }
+    return true;
+  };
+  /** A stairway against the inside of one of a building's walls, the first of its places (in a shuffled order) that fits, or null. */
+  const stairIn = (bi: number): Way | null => {
+    const b = map.buildings[bi];
+    const { half, run } = STAIR;
+    const tries: Way[] = [];
+    for (let side = 0; side < 4; side++) {
+      const alongX = side < 2;
+      const span = (alongX ? b.w : b.d) / 2 - WALL_T / 2 - run;
+      const o = (alongX ? b.d : b.w) / 2 - WALL_T / 2 - half - 0.02;
+      for (let u = -Math.floor(span * 2) / 2; u <= span; u += 0.5)
+        for (const dir of [-1, 1]) {
+          const x = alongX ? b.x + u : b.x + (side === 2 ? -o : o);
+          const z = alongX ? b.z + (side === 0 ? -o : o) : b.z + u;
+          tries.push(stairway(x, z, alongX, dir, side === 0 || side === 2 ? -1 : 1));
+        }
+    }
+    // the place that moves the least furniture out of the way (two pieces at most), against the south wall only when
+    // nothing else will do (that wall hides what's beside it from the camera, which looks north)
+    let best: Way | null = null;
+    let cost = 3;
+    const south = (st: Way) => st.dx !== 0 && st.box.z > b.z;
+    for (const st of [...shuffled(tries.filter((t) => !south(t))), ...shuffled(tries.filter(south))]) {
+      if (!stairFits(bi, st)) continue;
+      const way = inTheWay(bi, st);
+      if (!way.every(spared)) continue;
+      const n = way.length + (south(st) ? 0.5 : 0);
+      if (n < cost) {
+        best = st;
+        cost = n;
+        if (!n) break;
+      }
+    }
+    if (best) {
+      const gone = new Set(inTheWay(bi, best));
+      map.furniture = map.furniture.filter((f) => !gone.has(f));
+    }
+    return best;
+  };
+  /** The footprints of the basements so far (on the island's coordinates), so no two overlap underground. */
+  const dug: Box[] = [];
+  /**
+   * Digs a basement of `kind` under the w by d footprint at (x, z) on the ground, the stairway `st` coming down into
+   * it: four walls round it, `cuts` walls across it (one or two, each with a doorway, none across the stairs or the
+   * way off their foot) and a room either side of each. Returns its building index, or -1 when the walls won't go.
+   */
+  const dig = (kind: 'cellar' | 'bunker', x: number, z: number, w: number, d: number, st: Way, cuts: number, above: number) => {
+    const bx = x + DEEP;
+    const alongX = w >= d;
+    const long = (alongX ? w : d) - WALL_T;
+    const across = (alongX ? d : w) - WALL_T;
+    const keep = [{ ...st.box, x: st.box.x + DEEP }, st.foot];
+    const walls: Box[] = [];
+    const inner: Door[] = [];
+    // where each wall across goes (along the long way, from the middle), first try first
+    const plans = (n: number) => (n === 2 ? [[-1 / 6, 1 / 6], [-0.2, 0.15], [-0.15, 0.2], [-0.24, 0.1], [-0.1, 0.24]] : n === 1 ? [[0], [-0.15], [0.15], [-0.28], [0.28]] : [[]]);
+    let at: number[] | null = null;
+    // fewer walls across when that many won't go, down to one big room
+    for (let n = cuts; n >= 0 && !at; n--) {
+      for (const plan of shuffled(plans(n))) {
+        const ps = plan.map((k) => r1(k * long));
+        const bounds = [-long / 2, ...ps, long / 2];
+        if (bounds.some((p, i) => i > 0 && p - bounds[i - 1] < 4.6)) continue;
+        // clear of the stairs and the way off them, a doorway each with room either side of it
+        const wallBox = (p: number): Box => (alongX ? { x: bx + p, z, hw: WALL_T / 2, hd: across / 2 } : { x: bx, z: z + p, hw: across / 2, hd: WALL_T / 2 });
+        if (ps.some((p) => keep.some((k) => gap(wallBox(p), k) < 0.5))) continue;
+        const doors: number[] = [];
+        for (const p of ps) {
+          const room = across / 2 - DEEP_DOOR / 2 - 0.8;
+          const u = shuffled([0, r1(room), r1(-room)]).find((u) => {
+            const zone: Box = alongX ? { x: bx + p, z: z + u, hw: 1.4, hd: DEEP_DOOR / 2 + 0.4 } : { x: bx + u, z: z + p, hw: DEEP_DOOR / 2 + 0.4, hd: 1.4 };
+            return keep.every((k) => gap(zone, k) >= 0.2);
+          });
+          if (u === undefined) break;
+          doors.push(u);
+        }
+        if (doors.length < ps.length) continue;
+        at = ps;
+        ps.forEach((p, i) => {
+          wallLine(walls, !alongX, alongX ? bx + p : bx, alongX ? z : z + p, across, [[doors[i], DEEP_DOOR]]);
+          inner.push(alongX ? { x: bx + p, z: z + doors[i], ox: 1, oz: 0, w: DEEP_DOOR } : { x: bx + doors[i], z: z + p, ox: 0, oz: 1, w: DEEP_DOOR });
+        });
+        break;
+      }
+    }
+    if (!at) return -1;
+    shell(walls, bx, z, w, d, sides());
+    const bi = map.buildings.length;
+    const b = build(kind, bx, z, w, d, walls, [], Math.floor(rng() * 4), DEEP_H);
+    b.inner = inner;
+    const bounds = [-long / 2, ...at, long / 2];
+    b.rooms = bounds.slice(1).map((hi, i) => {
+      const lo = bounds[i] + (i > 0 ? WALL_T / 2 : 0);
+      const top = hi - (i < bounds.length - 2 ? WALL_T / 2 : 0);
+      const mid = (lo + top) / 2;
+      return alongX ? { x: bx + mid, z, hw: (top - lo) / 2, hd: across / 2 } : { x: bx, z: z + mid, hw: across / 2, hd: (top - lo) / 2 };
+    });
+    keepOut.set(bi, keep);
+    dug.push({ x, z, hw: w / 2, hd: d / 2 });
+    const s = map.stairs.length;
+    map.stairs.push({ ...st.box, i: s, b: above, u: bi, dx: st.dx, dz: st.dz, rails: st.rails, deepRails: st.deepRails });
+    return bi;
+  };
+  /** A chest or a fridge against the north or south wall of a basement (facing in), the first of a few places that fits. */
+  const boxOn = (bi: number, kind: 'chest' | 'fridge', tier: LootTier, sides: number[], spots: number[]) => {
+    const b = map.buildings[bi];
+    const [hw, hd] = kind === 'chest' ? [CHEST_HW, CHEST_HD] : [FRIDGE_HW, FRIDGE_HD];
+    for (const side of sides) {
+      // flush against the wall's inside, on a tenth of a meter (where every container stands)
+      const k = side === 0 ? -1 : 1;
+      const face = b.z + k * (b.d / 2 - WALL_T / 2);
+      const z = [Math.floor((face - k * hd) * 10) / 10, Math.ceil((face - k * hd) * 10) / 10].find((v) => k * (face - v) - hd >= 0 && k * (face - v) - hd <= 0.05);
+      if (z === undefined) continue;
+      for (const u of spots) {
+        const box = { x: r1(b.x + u), z, hw, hd };
+        // with room in front for what it holds
+        const front = { x: box.x, z: box.z + (side === 0 ? 1 : -1) * (hd + 0.9), hw: hw + 0.5, hd: 0.8 };
+        if (!fits(bi, box, true, false, -1) || !fits(bi, front, false, false, -1)) continue;
+        addContainer(kind, box.x, box.z, side === 0 ? 1 : -1, tier);
+        return true;
+      }
+    }
+    return false;
+  };
+  /** A crate (or a spot of loot on the floor, `spot`) out in a basement's rooms, clear of everything, if one fits. */
+  const looseIn = (bi: number, tier: LootTier, spot = false) => {
+    const b = map.buildings[bi];
+    const spots = shuffled(b.rooms.flatMap((r) => [-0.5, 0, 0.5].flatMap((a) => [-0.5, 0, 0.5].map((c) => ({ x: r1(r.x + a * r.hw), z: r1(r.z + c * r.hd) })))));
+    for (const p of spots) {
+      // what spills out lands in reach and indoors
+      if (!fits(bi, { x: p.x, z: p.z, hw: 1.3, hd: 1.8 }, false, false, -1)) continue;
+      if (!spot && !fits(bi, { x: p.x, z: p.z, hw: CRATE_HALF, hd: CRATE_HALF }, true, false, -1)) continue;
+      if (spot && map.furniture.some((f) => f.b === bi && furnitureSolid(f.kind) && gap({ x: p.x, z: p.z, hw: 1.2, hd: 1.7 }, f) < 0.2)) continue;
+      if (spot && map.floor.some((l) => Math.abs(l.x - p.x) < 2.4 && Math.abs(l.z - p.z) < 3)) continue;
+      if (spot) addSpot(p.x, p.z, tier);
+      else addContainer('crate', p.x, p.z, 1, tier);
+      return true;
+    }
+    return false;
+  };
+  /** The sides of a basement in a shuffled order, and spots along its walls to try (middle first, then the corners). */
+  const wallSpots = (bi: number, side: number) => {
+    const b = map.buildings[bi];
+    const span = (side < 2 ? b.w : b.d) / 2 - WALL_T / 2;
+    return [0, -span / 2, span / 2, -span + 1.6, span - 1.6, -span / 4, span / 4].map(r1);
+  };
+  const anySide = () => shuffled([0, 1, 2, 3]);
+  /** What a cellar keeps: racks of jars, the old fridge, a chest, a chest of drawers, a bookshelf, crates and odds and ends. */
+  const stockCellar = (bi: number) => {
+    const b = map.buildings[bi];
+    const look = b.look;
+    boxOn(bi, 'chest', 'chest', [0, 1], wallSpots(bi, 0));
+    boxOn(bi, 'fridge', 'fridge', [0, 1], wallSpots(bi, 0));
+    for (const side of anySide()) if (along(bi, 'drawer', side, wallSpots(bi, side), STASH.drawer.deep * 2, STASH.drawer.along * 2, look)) break;
+    for (const side of anySide()) if (along(bi, 'books', side, wallSpots(bi, side), STASH.books.deep * 2, STASH.books.along * 2, look)) break;
+    // (the racks after what opens, which keeps its distance from them)
+    let racks = 0;
+    for (const side of anySide()) if (racks < 2 && alongAny(bi, 'shelf', side, 0.45, [3, 2.4, 1.8], look)) racks++;
+    looseIn(bi, 'crate');
+    looseIn(bi, 'crate');
+    looseIn(bi, 'floor', true);
+  };
+  /**
+   * What a bunker keeps, by where it is: out in the open, a chest as good as a supply drop, lockers, bunks and a table;
+   * under the police station, the armory (its stash, rows of lockers and a workbench); under the bank, the strongroom
+   * (a safe and deposit boxes). Crates and something on the floor in all of them.
+   */
+  const stockBunker = (bi: number, under: 'wild' | 'police' | 'bank') => {
+    const b = map.buildings[bi];
+    const look = b.look;
+    const chest = under === 'wild' ? 'supply' : under === 'police' ? 'police' : 'chest';
+    // against the north wall if it fits (the south one hides it from the camera)
+    if (!boxOn(bi, 'chest', chest, [0, 1], wallSpots(bi, 0))) looseIn(bi, chest, true);
+    if (under === 'bank') {
+      for (const side of anySide()) if (along(bi, 'safe', side, wallSpots(bi, side), STASH.safe.deep * 2, STASH.safe.along * 2, look)) break;
+      let boxes = 0;
+      for (const side of anySide()) for (const u of wallSpots(bi, side)) if (boxes < 3 && against(bi, 'deposit', side, u, STASH.deposit.deep * 2, STASH.deposit.along * 2, look)) boxes++;
+    } else {
+      let rows = 0;
+      for (const side of anySide()) if (rows < 2 && lockers(bi, side, wallSpots(bi, side), under === 'police' ? 3 : 2)) rows++;
+    }
+    if (under === 'police') for (const side of anySide()) if (alongAny(bi, 'counter', side, 0.6, [2.6, 1.8], look)) break;
+    if (under === 'wild') {
+      let bunks = 0;
+      for (const side of anySide()) if (bunks < 2 && along(bi, 'bed', side, wallSpots(bi, side), 2.1, 1.1, look)) bunks++;
+      const r = b.rooms[Math.floor(rng() * b.rooms.length)];
+      dining(bi, r.x, r.z, r.hw >= r.hd, look);
+    }
+    looseIn(bi, 'crate');
+    looseIn(bi, 'crate');
+    looseIn(bi, under === 'wild' ? 'crate' : 'floor', true);
+  };
+  // a cellar under a few of the houses (where the stairs fit), and the police station's and the bank's basements
+  let cellars = 0;
+  for (const bi of shuffled(map.buildings.map((_, i) => i))) {
+    const b = map.buildings[bi];
+    if (b.kind !== 'police' && b.kind !== 'bank' && (b.kind !== 'house' || cellars >= 4)) continue;
+    const st = stairIn(bi);
+    if (!st) continue;
+    const u = b.kind === 'house' ? dig('cellar', b.x, b.z, b.w, b.d, st, 1, bi) : dig('bunker', b.x, b.z, b.w, b.d, st, b.w >= 18 ? 2 : 1, bi);
+    if (u < 0) continue;
+    if (b.kind === 'house') {
+      cellars++;
+      stockCellar(u);
+    } else stockBunker(u, b.kind === 'police' ? 'police' : 'bank');
+  }
+  // and two hatches out in the open, each down to a bunker that reaches off past the foot of its stairs
+  for (let k = 0, tries = 0; k < 2 && tries < 300; tries++) {
+    const x = r1((rng() * 2 - 1) * (HALF - BEACH - 24));
+    const z = r1((rng() * 2 - 1) * (HALF - BEACH - 24));
+    const q = Math.floor(rng() * 4);
+    const alongX = q % 2 === 1;
+    const dir = q < 2 ? 1 : -1;
+    // the bunker: 20 m along the way down, 12 across, its end wall just behind the top of the stairs
+    const back = STAIR.run + 0.4 + WALL_T / 2;
+    const cx = alongX ? r1(x + dir * (10 - back)) : x;
+    const cz = alongX ? z : r1(z + dir * (10 - back));
+    const [w, d] = alongX ? [20, 12] : [12, 20];
+    if (nearLot(x, z, 12) || !free(x, z, 7) || nearRoad(x, z, 4) || !offDoors(x, z, 6)) continue;
+    if (dug.some((o) => Math.abs(o.x - cx) < o.hw + w / 2 + 3 && Math.abs(o.z - cz) < o.hd + d / 2 + 3)) continue;
+    const st = stairway(x, z, alongX, dir, 0);
+    const u = dig('bunker', cx, cz, w, d, st, 2, -1);
+    if (u < 0) continue;
+    taken.push({ x, z, r: 6 });
+    lots.push({ x, z, hw: STAIR.run + 1, hd: STAIR.run + 1 });
+    stockBunker(u, 'wild');
+    k++;
+  }
+
   map.buildings.forEach((b, i) => {
     for (const w of b.walls) map.solids.push({ shape: 'box', ...w, what: 'wall', ref: i });
     for (const w of b.bars) map.solids.push({ shape: 'box', ...w, what: 'bars', ref: i });
@@ -2047,6 +2400,8 @@ export function generateMap(seed: number): GameMap {
     const what = furnitureSolid(f.kind);
     if (what) map.solids.push({ shape: 'box', x: f.x, z: f.z, hw: f.hw, hd: f.hd, what, ref: i });
   });
+  // a stairway's rails, up top and below
+  for (const s of map.stairs) for (const r of [...s.rails, ...s.deepRails]) map.solids.push({ shape: 'box', ...r, what: 'fence', ref: s.i });
   map.lamps.forEach((p, i) => map.solids.push({ shape: 'circle', x: p.x, z: p.z, r: LAMP_R, what: 'post', ref: i }));
   map.mailboxes.forEach((p, i) => map.solids.push({ shape: 'circle', x: p.x, z: p.z, r: MAILBOX_R, what: 'post', ref: i }));
   map.tables.forEach((t, i) => map.solids.push({ shape: 'box', x: t.x, z: t.z, hw: t.alongX ? TABLE_HW : TABLE_HD, hd: t.alongX ? TABLE_HD : TABLE_HW, what: 'table', ref: i }));
@@ -2240,23 +2595,28 @@ export function walkCells(x0: number, z0: number, x1: number, z1: number, visit:
   }
 }
 
-/** Each solid whose grid cells touch the square around a point, once. */
+/** Each solid whose grid cells touch the square around a point, once (on the point's own level). */
 export function solidsNear(map: GameMap, x: number, z: number, r: number, visit: (i: number, s: Solid) => void) {
   const mark = nextMark(map);
+  const grid = isDeep(x) ? map.under : map.grid;
+  const tx = topX(x);
   for (let cz = cellOf(z - r); cz <= cellOf(z + r); cz++)
-    for (let cx = cellOf(x - r); cx <= cellOf(x + r); cx++)
-      for (const i of map.grid[cx + cz * COLS]) {
+    for (let cx = cellOf(tx - r); cx <= cellOf(tx + r); cx++)
+      for (const i of grid[cx + cz * COLS]) {
         if (map.stamp[i] === mark) continue;
         map.stamp[i] = mark;
         visit(i, map.solids[i]);
       }
 }
 
-/** Each solid in the cells along a segment, once, in roughly near-to-far order. */
+/** Each solid in the cells along a segment, once, in roughly near-to-far order (on the level it starts on). */
 export function solidsAlong(map: GameMap, x0: number, z0: number, x1: number, z1: number, visit: (i: number, s: Solid) => void) {
   const mark = nextMark(map);
-  walkCells(x0, z0, x1, z1, (cell) => {
-    for (const i of map.grid[cell]) {
+  const deep = isDeep(x0);
+  const grid = deep ? map.under : map.grid;
+  const ox = deep ? DEEP : 0;
+  walkCells(x0 - ox, z0, x1 - ox, z1, (cell) => {
+    for (const i of grid[cell]) {
       if (map.stamp[i] === mark) continue;
       map.stamp[i] = mark;
       visit(i, map.solids[i]);
@@ -2272,6 +2632,45 @@ function nextMark(map: GameMap) {
   }
   return map.mark;
 }
+
+/**
+ * The stairway an egg standing at (x, z) has stepped onto, or -1: up top, a little way in from its top end; below, a
+ * little way in from its foot.
+ */
+export function stairAt(map: GameMap, x: number, z: number) {
+  const deep = isDeep(x);
+  const tx = topX(x);
+  for (const s of map.stairs) {
+    if (Math.abs(tx - s.x) > 3 || Math.abs(z - s.z) > 3) continue;
+    const run = s.dx ? s.hw : s.hd;
+    const half = s.dx ? s.hd : s.hw;
+    // along the way down from the middle, and how far off to the side
+    const along = (tx - s.x) * s.dx + (z - s.z) * s.dz;
+    const across = Math.abs((tx - s.x) * s.dz - (z - s.z) * s.dx);
+    if (across > half - 0.2 || Math.abs(along) > run) continue;
+    if (deep ? along < run - 0.5 : along > -run + 0.5) return s.i;
+  }
+  return -1;
+}
+
+/** Where an egg comes out at the other end of a stairway: below, past its foot; up top, back off its top end. */
+export function stairOut(s: Stair, down: boolean) {
+  const run = (s.dx ? s.hw : s.hd) + 0.95;
+  return down ? { x: s.x + DEEP + s.dx * run, z: s.z + s.dz * run } : { x: s.x - s.dx * run, z: s.z - s.dz * run };
+}
+
+/** The basement (a building) a point underground is in, or -1. */
+export function basementAt(map: GameMap, x: number, z: number) {
+  if (!isDeep(x)) return -1;
+  for (const s of map.stairs) {
+    const b = map.buildings[s.u];
+    if (b && Math.abs(x - b.x) < b.w / 2 + 0.5 && Math.abs(z - b.z) < b.d / 2 + 0.5) return s.u;
+  }
+  return -1;
+}
+
+/** The stairway down to a basement, or -1. */
+export const stairOf = (map: GameMap, u: number) => map.stairs.findIndex((s) => s.u === u);
 
 /** Distance along a ray to a solid. */
 export function raySolid(s: Solid, ox: number, oz: number, dx: number, dz: number, len: number) {

@@ -1755,3 +1755,25 @@
   height: 26px;
   line-height: 26px;
 }
+
+/* underground: a dark rim round the view, the black a stairway fades through, the pill saying where, and the name over the stairs */
+.g-scramble .g-scramble-underfx {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 42%, rgba(6, 5, 4, 0.72));
+}
+.g-scramble .g-scramble-fade {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: #050404;
+  opacity: 0;
+  pointer-events: none;
+}
+.g-scramble .g-scramble-pill.is-deep {
+  gap: 5px;
+  color: #ffcf7a;
+}
+.g-scramble .g-scramble-loot.is-stairs {
+  --loot: #f2c230;
+}

@@ -8,14 +8,16 @@
 // tells everyone. Broken windows travel as news too, and every reliable report from the host lists them all, and every
 // door that isn't shut, so a guest who missed the news (or synced late) still has them. Bounce pads and campfires need
 // no packets: a glide and a heal are an owner's own business, and show in its state, as does how high an egg stands
-// on what's been built. Nor does the kill leader: everyone counts the kills.
+// on what's been built. Nor does the kill leader: everyone counts the kills. Nor do the stairs down to the basements:
+// which level an egg is on goes with where it is (underground lies far off east of the ground over it), and so does
+// where each thing it drops lands.
 //
 // In duos and squads, the host's reliable reports carry the mode and everyone's team. A knocked egg's owner says so
 // (its state says it too, for anyone who missed the news), a reviver says when it starts and stops, a guest asks the
 // host to stand the teammate up once it's done, and the host says when it stands. Pings go to everyone (only the team
 // shows them).
 import { MATS, MAT_SPECS, MAX_ARMOR, MAX_RARITY, MAX_SCOPE, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
-import { HALF, opens } from './map.ts';
+import { HALF, opens, topX } from './map.ts';
 import { meta } from './meta.ts';
 import {
   CAUSES,
@@ -152,6 +154,8 @@ export function hitCap(w: Cause) {
 const id = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) < 1e9;
 /** A point on the island. */
 const onLand = (x: unknown, z: unknown) => num(x) && num(z) && Math.abs(x) <= HALF && Math.abs(z) <= HALF;
+/** A point on the island or under it (see map.ts DEEP). */
+const onLevel = (x: unknown, z: unknown) => num(x) && num(z) && Math.abs(topX(x)) <= HALF && Math.abs(z) <= HALF;
 /** The most a shot's spread can be widened: on the move, with a heavy SMG climbing as far as it goes. */
 export const MAX_KICK = r2(1.6 + Math.max(...Object.values(WEAPONS).map((w) => w.kick?.max ?? 0)));
 /** The highest anything thrown starts or comes down: the top level. */
@@ -256,7 +260,7 @@ function unpackState(a: unknown): State | null {
   const scope = Math.floor(code / 65536) % 4;
   const scopes = Math.floor(code / 262144);
   if (w >= HELD_CODES.length || r > MAX_RARITY || helmet > MAX_ARMOR || vest > MAX_ARMOR || !hasScope({ scopes }, scope)) return null;
-  if (Math.abs(x) > 8000 || Math.abs(z) > 8000 || y < -10 || y > 1000 || Math.abs(aim) > 10_000 || hp < 0 || hp > 1000 || shield < 0 || shield > 1000) return null;
+  if (Math.abs(topX(x / 20)) > 400 || Math.abs(z) > 8000 || y < -10 || y > 1000 || Math.abs(aim) > 10_000 || hp < 0 || hp > 1000 || shield < 0 || shield > 1000) return null;
   const clampV = (v: number) => Math.max(-40, Math.min(40, v / 10));
   return { x: x / 20, z: z / 20, y: y / 10, aim: aim / 100, vx: clampV(vx), vz: clampV(vz), phase, hp: hp / 10, shield: shield / 10, w: HELD_CODES[w], r, flags, helmet, vest, scope, scopes };
 }
@@ -456,7 +460,7 @@ function parseEv(v: unknown): NetEv | null {
       return fid(e.f) && int(e.by) && (e.by === -1 || fid(e.by)) && isCause(e.w) ? { y: 'o', f: e.f, by: e.by, w: e.w } : null;
     case 'dr': {
       const it = parseLoot(e.it);
-      return it && id(e.id) && num(e.x) && num(e.z) && fid(e.by) ? { y: 'dr', id: e.id, x: e.x, z: e.z, by: e.by, it } : null;
+      return it && id(e.id) && onLevel(e.x, e.z) && fid(e.by) ? { y: 'dr', id: e.id, x: e.x as number, z: e.z as number, by: e.by, it } : null;
     }
     case 'tk':
       return fid(e.f) && id(e.id) ? { y: 'tk', f: e.f, id: e.id } : null;
@@ -478,7 +482,7 @@ function parseEv(v: unknown): NetEv | null {
     case 'wg':
       return id(e.id) ? { y: 'wg', id: e.id } : null;
     case 'lv':
-      return id(e.id) && onLand(e.x, e.z) ? { y: 'lv', id: e.id, x: e.x as number, z: e.z as number } : null;
+      return id(e.id) && onLevel(e.x, e.z) ? { y: 'lv', id: e.id, x: e.x as number, z: e.z as number } : null;
     case 'fd':
       return fid(e.f) && int(e.c) && e.c >= 0 && e.c < 10_000 && onLand(e.x, e.z) && num(e.at) && e.at >= 0 && e.at <= 3600 ? { y: 'fd', f: e.f, c: e.c, x: e.x as number, z: e.z as number, at: e.at } : null;
     case 'kn':

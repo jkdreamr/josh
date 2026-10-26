@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AMMO_BOX, ARMOR_CUT, ARMOR_NAMES, BOOST, FLARE_WAIT, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, SIP, THROWS, THROW_IDS, USES, USE_IDS, MAT_SPECS, PIECE_COST, WEAPONS, WEAPON_IDS, type Ammo, type ArmorKind, type GunClass, type Mat, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { BLEED_T, LEADER_MIN, MAT_DROP, REVIVE_HP, REVIVE_T, VAULT_TIME } from './logic';
-import { CAMP, HALF, PAD, RIVER_HALF, ROAD_HALF, type Building, type Door, type GameMap } from './map';
+import { CAMP, DEEP, HALF, PAD, RIVER_HALF, ROAD_HALF, containerHalf, furnitureSolid, isDeep, type Building, type Door, type GameMap } from './map';
 import type { Held, Plan } from './logic';
 
 const Svg = ({ children, size = 28, label }: { children: ReactNode; size?: number; label?: string }) => (
@@ -603,7 +603,7 @@ export function EggIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-const MAP_ROOF: Record<Building['kind'], string> = { house: '#b5523b', farm: '#8b2f23', shed: '#7a5534', warehouse: '#6f7c88', container: '#4f6d8f', ruin: '#a39e93', coop: '#f5b301', diner: '#d64545', mill: '#7a4a2a', police: '#2b3f66', bank: '#4f7d5c' };
+const MAP_ROOF: Record<Building['kind'], string> = { house: '#b5523b', farm: '#8b2f23', shed: '#7a5534', warehouse: '#6f7c88', container: '#4f6d8f', ruin: '#a39e93', coop: '#f5b301', diner: '#d64545', mill: '#7a4a2a', police: '#2b3f66', bank: '#4f7d5c', cellar: '#3a3530', bunker: '#3a3f45' };
 
 /**
  * A doorway on the map: a light tab through the wall that pokes out the way in, or a dark band across a shipping
@@ -674,9 +674,9 @@ export function IslandArt({ map }: { map: GameMap }) {
       ))}
       <path d={dots(map.trees, () => 2)} fill="#3f8f3a" />
       <path d={dots(map.rocks, (r) => r.r)} fill="#9aa0a6" />
-      {map.buildings.map((b, i) => (
-        <rect key={`b${i}`} x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={MAP_ROOF[b.kind]} stroke={b.kind === 'ruin' ? 'none' : '#f1e6d2'} strokeWidth="1" />
-      ))}
+      {map.buildings.map((b, i) =>
+        isDeep(b.x) ? null : <rect key={`b${i}`} x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={MAP_ROOF[b.kind]} stroke={b.kind === 'ruin' ? 'none' : '#f1e6d2'} strokeWidth="1" />,
+      )}
       {map.buildings.map((b, i) => b.doors.map((d, k) => <DoorMark key={`d${i}-${k}`} b={b} d={d} />))}
       {map.windows.length > 0 && <path d={windowMarks(map)} fill="#bfe6f5" />}
       {map.cars.map((c, i) => (
@@ -692,6 +692,63 @@ export function IslandArt({ map }: { map: GameMap }) {
         </g>
       ))}
       {coop && <path d={star(coop.x, coop.z, 9)} fill="#ffd23d" stroke="#7a4a00" strokeWidth="1.4" strokeLinejoin="round" />}
+      {map.stairs.map((st, i) => (
+        <HatchMark key={`h${i}`} x={st.x} z={st.z} r={4} wild={st.b < 0} />
+      ))}
+    </>
+  );
+}
+
+/** A stairway down on the map: a dark square with steps going down, ringed yellow (out in the open, striped). */
+function HatchMark({ x, z, r, wild }: { x: number; z: number; r: number; wild: boolean }) {
+  return (
+    <g transform={`translate(${x.toFixed(1)} ${z.toFixed(1)})`}>
+      <rect x={-r} y={-r} width={r * 2} height={r * 2} rx={r * 0.2} fill="#1d2025" stroke="#f2c230" strokeWidth={r * 0.32} strokeDasharray={wild ? `${(r * 0.5).toFixed(1)} ${(r * 0.35).toFixed(1)}` : undefined} />
+      <path d={`M${-r * 0.55} ${-r * 0.5}h${r * 0.5}v${r * 0.5}h${r * 0.5}v${r * 0.5}h${r * 0.1}`} fill="none" stroke="#f2c230" strokeWidth={r * 0.2} strokeLinejoin="round" />
+    </g>
+  );
+}
+
+/** What each kind of container shows as on a basement's map. */
+const BOX_MARK: Record<string, string> = { chest: '#ffc83d', fridge: '#e8f4ff', crate: '#c08a4a', locker: '#7f9bb8', safe: '#e2b33c', deposit: '#c9a24a', drawer: '#9a6a3a', books: '#8e5a3a' };
+
+/**
+ * The basement `b` (a cellar or a bunker) drawn in the island's coordinates, over the ground above it: its floor, walls,
+ * furniture, what there is to open (dimmed once opened) and its stairs, for the maps while you're down there.
+ */
+export function BasementArt({ map, b, opened }: { map: GameMap; b: Building; opened: boolean[] }) {
+  const ox = b.x - DEEP;
+  const inside = (x: number, z: number) => Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2;
+  const bi = map.buildings.indexOf(b);
+  const st = map.stairs.find((s) => s.u === bi);
+  return (
+    <>
+      <rect x={ox - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} fill={b.kind === 'cellar' ? '#5e5346' : '#4c545b'} />
+      {b.rooms.map((r, i) => (
+        <circle key={`l${i}`} cx={r.x - DEEP} cy={r.z} r={Math.min(r.hw, r.hd) * 0.9} fill="rgba(255, 190, 110, 0.18)" />
+      ))}
+      {map.furniture.map((f, i) =>
+        f.b === bi && furnitureSolid(f.kind) ? <rect key={`f${i}`} x={f.x - DEEP - f.hw} y={f.z - f.hd} width={f.hw * 2} height={f.hd * 2} fill="#7a6a58" /> : null,
+      )}
+      {map.containers.map((c) => {
+        if (!inside(c.x, c.z)) return null;
+        const [hw, hd] = containerHalf(c);
+        return <rect key={`c${c.id}`} x={c.x - DEEP - hw} y={c.z - hd} width={hw * 2} height={hd * 2} rx="0.15" fill={BOX_MARK[c.kind] ?? '#c08a4a'} opacity={opened[c.id] ? 0.3 : 1} />;
+      })}
+      {b.walls.map((w, i) => (
+        <rect key={`w${i}`} x={w.x - DEEP - w.hw} y={w.z - w.hd} width={w.hw * 2} height={w.hd * 2} fill="#d9d2c4" />
+      ))}
+      {st && (
+        <g>
+          <rect x={st.x - st.hw} y={st.z - st.hd} width={st.hw * 2} height={st.hd * 2} fill="#bfb7a8" />
+          {[0, 1, 2, 3, 4, 5].map((k) => {
+            const u = (k + 0.5) / 6;
+            const run = st.dx ? st.hw : st.hd;
+            const a = run - u * 2 * run;
+            return <rect key={k} x={st.x + st.dx * a - (st.dx ? 0.12 : st.hw - 0.2)} y={st.z + st.dz * a - (st.dx ? st.hd - 0.2 : 0.12)} width={st.dx ? 0.24 : st.hw * 2 - 0.4} height={st.dx ? st.hd * 2 - 0.4 : 0.24} fill="#5e574c" />;
+          })}
+        </g>
+      )}
     </>
   );
 }
@@ -1035,6 +1092,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>Lockers.</b> In the police station, the warehouses and some sheds. Open one like a chest for what's inside.
+          </li>
+          <li>
+            <b>Cellars and bunkers.</b> A few houses have a cellar, the police station an armory and the bank (now and then) a strongroom underneath, and a couple of hatches out in the open lead down to bunkers: a dark square ringed yellow on the map. Walk onto the stairs to go down, and back onto them to come up. It's dark down there but for the lamps, and the loot is better than up top: a cellar keeps a chest, an old fridge, drawers and shelves, a bunker rows of lockers, and the one under a hatch a chest as good as a supply drop. Nothing gets between the two levels but eggs on the stairs: nobody up top can see, shoot, throw at or hurt anyone below, or the other way round. The storm still reaches you underground, no scope sees farther than 2x in the gloom, and nothing can be built there. While you're below, both maps show its rooms.
           </li>
           <li>
             <b>Warehouses.</b> Full of crates, with a chest in a corner, a pair of lockers and barrels outside.
