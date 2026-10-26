@@ -19,9 +19,10 @@ Run from the repo root:
   python3 scripts/grand-prix-commentary.py --engine kokoro --models <dir with the two files> [--force]
   python3 scripts/grand-prix-commentary.py --check <whisper dir>      # check what is recorded, record nothing
 
-Chatterbox speaks from scripts/grand-prix-voices/<speaker>.wav. Both come from Chatterbox's own built-in voice, so no
-real person's voice is cloned: James is that voice; Sophie is it raised into a female range (pitch up 62%, resonance
-up 12%), and Chatterbox fills in the rest. Chatterbox is MIT licensed (https://github.com/resemble-ai/chatterbox);
+Chatterbox speaks from scripts/grand-prix-voices/<speaker>.wav, so no real person's voice is cloned: James is
+Chatterbox's own built-in voice; Sophie is a clip of the Kokoro voice blend in lines.ts. (After changing a reference,
+clear that speaker's entries from manifest.json so their lines are recorded again.)
+Chatterbox is MIT licensed (https://github.com/resemble-ai/chatterbox);
 Kokoro is Apache 2.0 (https://huggingface.co/hexgrad/Kokoro-82M).
 """
 
