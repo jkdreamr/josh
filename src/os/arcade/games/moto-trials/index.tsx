@@ -78,8 +78,15 @@ function useFrameScale() {
 function LevelPicker({ value, onChange, all }: { value: string; onChange?: (id: string) => void; all?: boolean }) {
   const prog = loadProgress();
   const rowRef = useRef<HTMLDivElement>(null);
+  // center the pick by scrolling the strip only: scrollIntoView would also scroll the card and hide a result heading
   useEffect(() => {
-    rowRef.current?.querySelector('.is-on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+    const row = rowRef.current;
+    const on = row?.querySelector<HTMLElement>('.is-on');
+    if (!row || !on) return;
+    const rr = row.getBoundingClientRect();
+    const or = on.getBoundingClientRect();
+    const k = row.offsetWidth ? rr.width / row.offsetWidth : 1;
+    row.scrollLeft += (or.left + or.width / 2 - (rr.left + rr.width / 2)) / (k || 1);
   }, []);
   const [world, setWorld] = useState(() => worldIndexOf(value));
   useEffect(() => setWorld(worldIndexOf(value)), [value]);

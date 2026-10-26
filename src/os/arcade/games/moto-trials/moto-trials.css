@@ -109,11 +109,9 @@
 /* touch: finger sized buttons and readable text, grown by --g-moto-trials-u (1 / the phone or iPad frame scale) */
 @media (pointer: coarse) {
   .g-moto-trials .g-moto-trials-pick {
-    /* six buttons share a narrow phone card, never under 40px */
-    flex: 1 1 0;
-    width: auto;
-    min-width: calc(40px * var(--g-moto-trials-u, 1));
-    max-width: calc(44px * var(--g-moto-trials-u, 1));
+    /* 44px on screen, so the iPad frame's rounding can't take it under 40; the strip scrolls */
+    flex: none;
+    width: calc(44px * var(--g-moto-trials-u, 1));
     height: calc(44px * var(--g-moto-trials-u, 1));
     border-radius: calc(9px * var(--g-moto-trials-u, 1));
     font-size: calc(13px * var(--g-moto-trials-u, 1));
@@ -241,5 +239,17 @@
     .g-moto-trials .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) {
       margin-top: calc(10px + 50px * var(--g-moto-trials-u, 1) - 16px);
     }
+  }
+}
+
+/* narrow touch screens: the bigger toolbar spans the top, so the online badge and the cards drop below it */
+@media (pointer: coarse) and (max-width: 560px) {
+  .g-moto-trials .arcade-online-status {
+    top: calc(22px + 44px * var(--g-moto-trials-u, 1));
+    left: 16px;
+    transform: none;
+  }
+  .g-moto-trials.arcade-shell .arcade-ov:not(.arcade-ov-compact) {
+    padding-top: calc(22px + 44px * var(--g-moto-trials-u, 1));
   }
 }
