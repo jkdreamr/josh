@@ -208,4 +208,9 @@
   .g-hoops .arcade-ov > .arcade-card {
     zoom: var(--g-hoops-u, 1);
   }
+  .g-hoops .arcade-ov > .arcade-card .arcade-btn,
+  .g-hoops .arcade-ov > .arcade-card .arcade-seg > button,
+  .g-hoops .arcade-ov > .arcade-card .arcade-input {
+    min-height: 42px;
+  }
 }
