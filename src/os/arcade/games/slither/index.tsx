@@ -16,7 +16,7 @@ import {
 } from './world.ts';
 import {
   applyHeadState, applyOps, loadSnapshot, makeRoster, ordinal, peopleLine, peopleResults, resultRows, rosterChanges, rosterNotice,
-  startsSoloRound, syncRoster, touchTarget, winnerOf, winnerSeat, type PersonResult,
+  startsSoloRound, syncRoster, frameUnit, touchTarget, winnerOf, winnerSeat, type PersonResult,
 } from './session.ts';
 import './slither.css';
 
@@ -83,6 +83,35 @@ function useTargetSize() {
     };
   }, []);
   return { ref, style: { '--g-slither-target': `${size}px` } as CSSProperties };
+}
+
+/** Sets --g-slither-fu on the shell root: 1 / the phone or iPad frame scale, measured again once the app-open animation settles. */
+function useFrameUnit() {
+  const { root, touch } = useShell();
+  useEffect(() => {
+    const el = root.current;
+    if (!el || !touch) return;
+    let raf = 0;
+    const read = () => el.style.setProperty('--g-slither-fu', frameUnit(el.getBoundingClientRect().width, el.offsetWidth).toFixed(3));
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(read);
+    };
+    read();
+    const resize = new ResizeObserver(measure);
+    resize.observe(el);
+    window.addEventListener('resize', measure);
+    window.addEventListener('animationend', measure, true);
+    window.addEventListener('transitionend', measure, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      resize.disconnect();
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('animationend', measure, true);
+      window.removeEventListener('transitionend', measure, true);
+      el.style.removeProperty('--g-slither-fu');
+    };
+  }, [root, touch]);
 }
 
 function Setup() {
@@ -163,6 +192,7 @@ function interpolateStates(before: RemoteSample, after: RemoteSample, alpha: num
 
 function Play() {
   const shell = useShell();
+  useFrameUnit();
   const shellRef = useRef(shell);
   shellRef.current = shell;
   const keys = useKeys();

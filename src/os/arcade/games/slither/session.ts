@@ -281,6 +281,12 @@ export function touchTarget(renderedWidth: number, layoutWidth: number, min = 44
   return Math.min(max, Math.ceil(min / Math.min(1, scale)));
 }
 
+/** 1 / the scale a framed phone or iPad draws the screen at, so touch styles stay finger sized; 1 while unscaled or mid app-open animation. */
+export function frameUnit(renderedWidth: number, layoutWidth: number, max = 1.6): number {
+  const scale = layoutWidth > 0 && renderedWidth > 0 ? renderedWidth / layoutWidth : 1;
+  return scale > 0.2 && scale < 0.99 ? Math.min(max, 1 / scale) : 1;
+}
+
 /** Who left (a person's noodle now steered by a bot) and who joined (a person now steering one) between two rosters. */
 export function rosterChanges(before: readonly RosterEntry[], after: readonly RosterEntry[], mySeat = -1): { left: string[]; joined: string[] } {
   const left: string[] = [];
