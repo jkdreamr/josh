@@ -150,7 +150,9 @@ function Table() {
     const el = shell.root.current;
     if (!el) return;
     el.style.setProperty('--g-crazy-eights-u', String(u));
-    return () => el.style.removeProperty('--g-crazy-eights-u');
+    return () => {
+      el.style.removeProperty('--g-crazy-eights-u');
+    };
   }, [shell.root, u]);
 
   // The top rival's label and your bar set how much height is left for the cards.
