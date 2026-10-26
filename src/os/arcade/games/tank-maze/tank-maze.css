@@ -100,3 +100,14 @@
 .g-tank-maze .g-tank-maze-toasts .g-tank-maze-toast strong {
   font-size: calc(14px * var(--g-tank-maze-u, 1));
 }
+/* Touch: shell controls at 40px on screen (--g-tank-maze-u undoes a framed iPad's ~0.82 scale). */
+@media (pointer: coarse) {
+  .g-tank-maze .arcade-ctrl button {
+    width: calc(40px * var(--g-tank-maze-u, 1));
+    height: calc(40px * var(--g-tank-maze-u, 1));
+  }
+  .g-tank-maze .arcade-ctrl svg {
+    width: calc(16px * var(--g-tank-maze-u, 1));
+    height: calc(16px * var(--g-tank-maze-u, 1));
+  }
+}

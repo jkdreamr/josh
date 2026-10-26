@@ -821,30 +821,36 @@ const TOOLBAR = { w: 176, h: 50 };
  * Fit the maze inside a board rect (canvas CSS px): pads the board 8px on every side, then
  * letterboxes the maze inside. When the fitted maze would slide under the top-right control pill,
  * it refits either against a narrower region (right edge kept clear of the pill) or a lower one
- * (below the pill), whichever leaves the bigger cells. w is the full canvas width.
+ * (below the pill), whichever leaves the bigger cells. w is the full canvas width; `toolbar` is the
+ * pill's reach from the top-right corner (it only grows past the default, e.g. for larger touch buttons).
  */
 export function fitBoard(
   board: { x: number; y: number; w: number; h: number },
   cols: number,
   rows: number,
   w: number,
+  toolbar?: { w: number; h: number },
 ): { cell: number; ox: number; oy: number } {
+  const bar = { w: Math.max(TOOLBAR.w, toolbar?.w ?? 0), h: Math.max(TOOLBAR.h, toolbar?.h ?? 0) };
   const pad = 8;
   const b = { x: board.x + pad, y: board.y + pad, w: Math.max(0, board.w - pad * 2), h: Math.max(0, board.h - pad * 2) };
-  const rx = w - TOOLBAR.w;
+  const rx = w - bar.w;
   const fit = (x: number, y: number, bw: number, bh: number) => {
     const cell = Math.min(bw / cols, bh / rows);
     return { cell, ox: x + (bw - cell * cols) / 2, oy: y + (bh - cell * rows) / 2 };
   };
   const overlaps = (f: { cell: number; ox: number; oy: number }) =>
-    f.ox + f.cell * cols > rx && f.ox < w && f.oy + f.cell * rows > 0 && f.oy < TOOLBAR.h;
+    f.ox + f.cell * cols > rx && f.ox < w && f.oy + f.cell * rows > 0 && f.oy < bar.h;
   const base = fit(b.x, b.y, b.w, b.h);
   if (!overlaps(base) || base.cell <= 0) return base;
   // (a) keep the maze left of the pill; (b) drop it below the pill.
   const narrow = fit(b.x, b.y, Math.max(0, rx - pad - b.x), b.h);
-  const low = fit(b.x, TOOLBAR.h, b.w, Math.max(0, b.y + b.h - TOOLBAR.h));
+  const low = fit(b.x, bar.h, b.w, Math.max(0, b.y + b.h - bar.h));
   return narrow.cell >= low.cell ? narrow : low;
 }
+
+/** Height of one row of HUD chips. */
+export const hudRow = (h: number) => (h < 200 ? 26 : 34);
 
 export type TouchZone = { x: number; y: number; w: number; h: number; flip: boolean };
 
@@ -852,15 +858,17 @@ export type TouchZone = { x: number; y: number; w: number; h: number; flip: bool
  * Stage layout in canvas CSS px: the HUD band, the board the maze letterboxes into, and one
  * touch zone per human (max 2). Zones always sit beside or above/below the board, never over it:
  * 1P gets a bottom band, portrait 2P splits top/bottom (the top player's zone renders flipped),
- * and landscape 2P gets slim side columns flanking the board.
+ * and landscape 2P gets slim side columns flanking the board. `hudH` grows the HUD band when the
+ * score chips need a second row.
  */
 export function touchLayout(
   w: number,
   h: number,
   humans: number,
   touch: boolean,
+  hudH = 0,
 ): { hud: number; board: { x: number; y: number; w: number; h: number }; zones: TouchZone[]; portrait: boolean } {
-  const hud = h < 200 ? 26 : 34;
+  const hud = Math.max(hudRow(h), hudH);
   const touchN = touch ? Math.min(humans, 2) : 0;
   const portrait = h > w;
   let board = { x: 0, y: hud, w, h: h - hud };

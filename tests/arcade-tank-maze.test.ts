@@ -34,7 +34,7 @@ import {
 } from '../src/os/arcade/games/tank-maze/logic.ts';
 import { makeMemory, STANDOFF, think } from '../src/os/arcade/games/tank-maze/bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket } from '../src/os/arcade/games/tank-maze/net.ts';
-import { finalLine, freeSpans, listNames, packChips, rosterLine } from '../src/os/arcade/games/tank-maze/hud.ts';
+import { finalLine, freeSpans, listNames, packChipRows, packChips, rosterLine } from '../src/os/arcade/games/tank-maze/hud.ts';
 
 const fire: TankInput = { turn: 0, move: 0, fire: true };
 const idle: TankInput = { turn: 0, move: 0, fire: false };
@@ -845,6 +845,40 @@ test('hud chips skip the online badge and the shell controls', () => {
     assert.ok(inside, `chip ${i} at ${xs[i]} overlaps a blocked span`);
   }
   assert.equal(packChips([200, 200, 200], spans, 8), null);
+});
+
+test('hud chips that miss the row beside the controls wrap to a second row', () => {
+  // phone portrait: four chips, only ~100px left of the 40px touch controls
+  const row1 = freeSpans(12, 116, []);
+  const row2 = freeSpans(12, 378, []);
+  const ws = [70, 84, 76, 74];
+  assert.equal(packChips(ws, row1, 14), null);
+  const placed = packChipRows(ws, [row1, row2], 14);
+  assert.ok(placed);
+  assert.deepEqual(placed.map((p) => p.row), [0, 1, 1, 1]);
+  const rowSpans = [row1, row2];
+  placed.forEach((p, i) => {
+    assert.ok(rowSpans[p.row].some((s) => p.x >= s.x0 - 1e-9 && p.x + ws[i] <= s.x1 + 1e-9), `chip ${i} leaves its row`);
+  });
+  // a row with room keeps everything on row 0
+  assert.ok(packChipRows(ws, [freeSpans(12, 600, []), row2], 14)?.every((p) => p.row === 0));
+  assert.equal(packChipRows([400], [row1, row2], 14), null);
+});
+
+test('a taller hud band and larger touch controls push the board down', () => {
+  const one = touchLayout(390, 728, 1, true);
+  const two = touchLayout(390, 728, 1, true, 94);
+  assert.equal(two.hud, 94);
+  assert.equal(two.board.y, 94);
+  assert.equal(two.board.y + two.board.h, one.board.y + one.board.h);
+  // the default pill reach still applies when the measured one is smaller
+  const land = touchLayout(844, 274, 1, true).board;
+  const small = fitBoard(land, 12, 6, 844, { w: 100, h: 20 });
+  assert.deepEqual(small, fitBoard(land, 12, 6, 844));
+  // 40px touch controls: 272px wide, 62px tall from the top-right corner
+  const big = fitBoard(land, 12, 6, 844, { w: 272, h: 62 });
+  const right = big.ox + big.cell * 12;
+  assert.ok(right <= 844 - 272 + 1e-9 || big.oy >= 62 - 1e-9, 'maze slides under the controls');
 });
 
 test('game over copy labels every score and lists the people in the room', () => {

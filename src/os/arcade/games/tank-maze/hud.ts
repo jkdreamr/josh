@@ -26,6 +26,20 @@ export function freeSpans(x0: number, x1: number, blocked: readonly Span[], marg
  * Returns each chip's left x, or null when they don't all fit.
  */
 export function packChips(widths: readonly number[], spans: readonly Span[], gap: number): number[] | null {
+  return packSpans(widths, spans, gap)?.xs ?? null;
+}
+
+/**
+ * Like packChips over rows of spans (row 0 first): returns each chip's left x and its row, or null when they don't all fit.
+ */
+export function packChipRows(widths: readonly number[], rows: readonly (readonly Span[])[], gap: number): { x: number; row: number }[] | null {
+  const spans = rows.flat();
+  const rowOf = rows.flatMap((r, ri) => r.map(() => ri));
+  const packed = packSpans(widths, spans, gap);
+  return packed ? packed.xs.map((x, i) => ({ x, row: rowOf[packed.span[i]] })) : null;
+}
+
+function packSpans(widths: readonly number[], spans: readonly Span[], gap: number): { xs: number[]; span: number[] } | null {
   const groups: number[][] = spans.map(() => []);
   let s = 0;
   let used = 0;
@@ -43,15 +57,17 @@ export function packChips(widths: readonly number[], spans: readonly Span[], gap
     if (s >= spans.length) return null;
   }
   const xs = new Array<number>(widths.length).fill(0);
+  const span = new Array<number>(widths.length).fill(0);
   groups.forEach((g, gi) => {
     const total = g.reduce((a, i) => a + widths[i], 0) + gap * Math.max(0, g.length - 1);
     let x = spans[gi].x0 + Math.max(0, (spans[gi].x1 - spans[gi].x0 - total) / 2);
     for (const i of g) {
       xs[i] = x;
+      span[i] = gi;
       x += widths[i] + gap;
     }
   });
-  return xs;
+  return { xs, span };
 }
 
 /** "and"-joined list: "A", "A and B", "A, B and C". */

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, keyHeading, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
+import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, hudRow, keyHeading, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket, type NetEvent, type RoundPacket } from './net.ts';
-import { finalLine, freeSpans, packChips, rosterLine, type Span } from './hud.ts';
+import { finalLine, freeSpans, packChipRows, rosterLine, type Span } from './hud.ts';
 import { meta } from './meta';
 import './tank-maze.css';
 
@@ -124,7 +124,10 @@ function TankMaze() {
   /** The Game Over card this game put up (null when the shell's own card is up), redrawn when someone leaves. */
   const lastEnd = useRef<{ title: string; scores: number[]; rounds: number } | null>(null);
   /** On-screen scale of the canvas (framed iPads draw it at ~0.82) and the shell pills that sit over the HUD row. */
-  const view = useRef<{ at: number; u: number; badge: Span | null; ctrlX: number | null }>({ at: -1e9, u: 1, badge: null, ctrlX: null });
+  const view = useRef<{ at: number; u: number; badge: Span | null; ctrl: { x0: number; y0: number; y1: number } | null }>({ at: -1e9, u: 1, badge: null, ctrl: null });
+  /** HUD band height when the score chips wrap to a second row below the shell controls (0 = one row). */
+  const hudRef = useRef(0);
+  const [, setHudH] = useState(0);
   const [mode] = useSetting(MODE);
   const [rivals] = useSetting(RIVALS);
   const [levelName] = useSetting(LEVEL);
@@ -158,7 +161,12 @@ function TankMaze() {
   };
 
   /** Maze/board layout: the board rect plus the touch zone each human gets. */
-  const layout = (w: number, h: number) => touchLayout(w, h, online ? 1 : effMode === '3p' ? 3 : effMode === '2p' ? 2 : 1, touch);
+  const layout = (w: number, h: number) => touchLayout(w, h, online ? 1 : effMode === '3p' ? 3 : effMode === '2p' ? 2 : 1, touch, hudRef.current);
+  /** fitBoard, kept clear of the shell controls as measured (touch makes them larger than the default). */
+  const fitTo = (board: { x: number; y: number; w: number; h: number }, cols: number, rows: number, w: number) => {
+    const ctrl = view.current.ctrl;
+    return fitBoard(board, cols, rows, w, ctrl ? { w: w - ctrl.x0 + 6, h: ctrl.y1 + 6 } : undefined);
+  };
 
   const mazeSize = (board: { w: number; h: number }) => {
     if (board.w >= board.h) {
@@ -375,7 +383,7 @@ function TankMaze() {
     if (zi < 0) {
       const { w, h } = sizeRef.current;
       const { cols, rows } = match.world.maze;
-      const fit = fitBoard(layout(w, h).board, cols, rows, w);
+      const fit = fitTo(layout(w, h).board, cols, rows, w);
       if (fit.cell <= 0) return;
       const pt = canvasToWorld({ x, y }, fit);
       if (pt.x < 0 || pt.x >= cols || pt.y < 0 || pt.y >= rows) return;
@@ -807,7 +815,7 @@ function TankMaze() {
   // Render
 
   /** Re-measured a few times a second: the canvas's on-screen scale and the shell pills over the HUD row, in canvas px. */
-  const measureView = (hudH: number) => {
+  const measureView = (bandH: number) => {
     const v = view.current;
     const now = performance.now();
     if (now - v.at < 400) return v;
@@ -818,17 +826,19 @@ function TankMaze() {
     const r = cv.getBoundingClientRect();
     const k = r.width / cv.offsetWidth;
     if (!(k > 0.2)) return v;
-    const u = Math.max(1, 1 / k);
+    // clamped: mid scale-in animation k reads tiny
+    const u = Math.min(1.5, Math.max(1, 1 / k));
     if (u !== v.u) root?.style.setProperty('--g-tank-maze-u', String(u));
     v.u = u;
     const rel = (el: Element | null | undefined) => {
       if (!el) return null;
       const b = el.getBoundingClientRect();
-      if (!b.width || (b.top - r.top) / k > hudH) return null;
-      return { x0: (b.left - r.left) / k, x1: (b.right - r.left) / k };
+      if (!b.width || (b.top - r.top) / k > bandH) return null;
+      return { x0: (b.left - r.left) / k, x1: (b.right - r.left) / k, y0: (b.top - r.top) / k, y1: (b.bottom - r.top) / k };
     };
-    v.badge = rel(root?.querySelector('.arcade-online-status'));
-    v.ctrlX = rel(root?.querySelector('.arcade-ctrl'))?.x0 ?? null;
+    const badge = rel(root?.querySelector('.arcade-online-status'));
+    v.badge = badge && { x0: badge.x0, x1: badge.x1 };
+    v.ctrl = rel(root?.querySelector('.arcade-ctrl'));
     return v;
   };
 
@@ -843,7 +853,7 @@ function TankMaze() {
     if (!match) return;
     const world = match.world;
     const lay = layout(w, h);
-    const fit = fitBoard(lay.board, world.maze.cols, world.maze.rows, w);
+    const fit = fitTo(lay.board, world.maze.cols, world.maze.rows, w);
     const cell = fit.cell;
     const bw = cell * world.maze.cols;
     const bh = cell * world.maze.rows;
@@ -1136,15 +1146,19 @@ function TankMaze() {
     }
 
     // HUD chips
-    const hudH = lay.hud;
-    const compactHud = hudH < 30;
+    const rowH = hudRow(h);
+    const compactHud = rowH < 30;
     const scores = isGuest ? match.guestScores : world.scores;
     const chips = viewTanks.map((_, i) => i);
     // Chips stay out of the shell's top-right controls and, online, the centered Direct/Relayed badge (both measured).
-    const v = measureView(hudH);
+    // When they can't fit beside the controls (four chips on a phone), the rest wrap to a row below them.
+    const v = measureView(Math.max(lay.hud, rowH));
     const u = v.u;
-    const ctrlX = v.ctrlX !== null && v.ctrlX > w / 2 ? v.ctrlX : w - 176;
-    const spans = freeSpans(12, ctrlX - 8, online && v.badge ? [v.badge] : []);
+    const ctrl = v.ctrl;
+    const ctrlX = ctrl ? ctrl.x0 : w - 176;
+    const row1 = freeSpans(12, ctrlX - 8, online && v.badge ? [v.badge] : []);
+    const row2Top = Math.max(rowH, (ctrl?.y1 ?? 44) + 4);
+    const row2 = freeSpans(12, w - 12, []);
     const fontOf = (f: number, weight: number) => `${weight} ${f}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
     // A seat's "(Left)" or "(Bot)" tag survives the clip; only the name is shortened.
     const clip = (label: string, max: number) => {
@@ -1154,7 +1168,7 @@ function TankMaze() {
     };
     const maxFont = 13 * u;
     const minFont = 11.25 * u;
-    let chipFont = Math.max(minFont, Math.min(maxFont, hudH * 0.4 * u));
+    let chipFont = Math.max(minFont, Math.min(maxFont, rowH * 0.4 * u));
     let gap = (compactHud ? 8 : 14) * u;
     let maxName = 24;
     const labels = () => chips.map((i) => clip(nameOf(match, i), maxName));
@@ -1170,47 +1184,74 @@ function TankMaze() {
       });
     };
     let widths = widthsFor();
-    let xs = packChips(widths, spans, gap);
-    if (!xs && gap > 4 * u) {
+    let rows = [row1];
+    const pack = () => packChipRows(widths, rows, gap);
+    let placed = pack();
+    if (!placed && gap > 4 * u) {
       gap = 4 * u;
-      widths = widthsFor();
-      xs = packChips(widths, spans, gap);
+      placed = pack();
     }
-    while (!xs && chipFont > minFont) {
+    while (!placed && chipFont > minFont) {
       chipFont = Math.max(minFont, chipFont - 1);
       widths = widthsFor();
-      xs = packChips(widths, spans, gap);
+      placed = pack();
     }
-    while (!xs && maxName > 4) {
+    // Tall stages wrap; short ones (framed laptop windows) keep one row and shorten names instead.
+    if (!placed && h >= 320) {
+      rows = [row1, row2];
+      chipFont = Math.max(minFont, Math.min(maxFont, rowH * 0.4 * u));
+      gap = (compactHud ? 8 : 14) * u;
+      widths = widthsFor();
+      placed = pack();
+      if (!placed && gap > 4 * u) {
+        gap = 4 * u;
+        placed = pack();
+      }
+      while (!placed && chipFont > minFont) {
+        chipFont = Math.max(minFont, chipFont - 1);
+        widths = widthsFor();
+        placed = pack();
+      }
+    }
+    while (!placed && maxName > 4) {
       maxName--;
       widths = widthsFor();
-      xs = packChips(widths, spans, gap);
+      placed = pack();
     }
-    if (!xs) {
+    if (!placed) {
       let x = 12;
-      xs = widths.map((cw) => ((x += cw + gap), x - cw - gap));
+      placed = widths.map((cw) => ({ x: (x += cw + gap) - cw - gap, row: 0 }));
     }
+    const wrapped = rows.length > 1 && placed.some((p) => p.row === 1);
+    const needHud = wrapped ? Math.ceil(row2Top + rowH) : 0;
+    if (needHud !== hudRef.current) {
+      hudRef.current = needHud;
+      setHudH(needHud);
+    }
+    // Wrapped: the first row lines up with the controls beside it.
+    const rowY = [wrapped && ctrl ? (ctrl.y0 + ctrl.y1) / 2 : rowH / 2, row2Top + rowH / 2];
     const names = labels();
-    const pillH = Math.max(hudH * 0.64, chipFont + 6 * u);
+    const pillH = Math.max(rowH * 0.64, chipFont + 6 * u);
     for (let ci = 0; ci < chips.length; ci++) {
       const i = chips[ci];
       const cw = widths[ci];
-      const cx = xs[ci];
+      const cx = placed[ci].x;
+      const cy = rowY[placed[ci].row];
       c.fillStyle = 'rgba(255,255,255,0.65)';
       c.beginPath();
-      c.roundRect(cx, hudH / 2 - pillH / 2, cw, pillH, pillH / 2);
+      c.roundRect(cx, cy - pillH / 2, cw, pillH, pillH / 2);
       c.fill();
       c.fillStyle = COLORS[i % COLORS.length];
       c.beginPath();
-      c.arc(cx + 9 * u, hudH / 2, 4 * u, 0, Math.PI * 2);
+      c.arc(cx + 9 * u, cy, 4 * u, 0, Math.PI * 2);
       c.fill();
       c.font = fontOf(chipFont, 600);
       c.fillStyle = '#2e2d2a';
-      c.fillText(names[ci], cx + 17 * u, hudH / 2 + chipFont * 0.36);
+      c.fillText(names[ci], cx + 17 * u, cy + chipFont * 0.36);
       const nw = c.measureText(names[ci]).width;
       c.font = fontOf(chipFont, 700);
       c.fillStyle = '#1d1c19';
-      c.fillText(`${scores[i] ?? 0}`, cx + 17 * u + nw + 8 * u, hudH / 2 + chipFont * 0.36);
+      c.fillText(`${scores[i] ?? 0}`, cx + 17 * u + nw + 8 * u, cy + chipFont * 0.36);
     }
 
     // touch sticks
