@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { LEVELS, LEVEL_IDS, WORLDS, getLevel, propsFor, worldOf } from '../src/os/arcade/games/moto-trials/levels.ts';
+import { LEVELS, LEVEL_IDS, WORLDS, getLevel, propsFor, track, worldOf } from '../src/os/arcade/games/moto-trials/levels.ts';
 import { BRUSH, FLIP_MIN, SETTLE_BOTH, autoInput, currentMs, flipsIn, newRun, nextStarMs, startRun, stepRun, trackAir } from '../src/os/arcade/games/moto-trials/logic.ts';
 import { buildWorld, newBike, sawAt, segActive, step, type Seg } from '../src/os/arcade/games/moto-trials/physics.ts';
 import { parseProgress, tourLeft, tourTotal, unlocked } from '../src/os/arcade/games/moto-trials/progress.ts';
@@ -527,4 +527,36 @@ test('a crash before the landing settles takes the announced flip back', () => {
   assert.equal(run.flips, 0);
   assert.equal(run.bonusMs, 0);
   assert.ok(!run.toasts.some((t) => t.text.includes('flip')));
+});
+
+/** A run on a little level built with the track DSL, already past the countdown. */
+function builtRun(built: ReturnType<ReturnType<typeof track>['done']>) {
+  const run = newRun({ id: 't', name: 'Test', theme: {} as never, stars: [1, 2, 3], props: [], ...built });
+  while (run.phase === 'count') stepRun(run, { gas: 0, brake: 0, lean: 0 }, DT);
+  return run;
+}
+
+test('a crumbling bridge holds a rider at speed and drops one who stops, then rebuilds on respawn', () => {
+  const mk = () => track().flat(30).bridge(16).flat(20).finish().flat(10).done();
+  const fast = builtRun(mk());
+  for (let i = 0; i < 60 * 20 && fast.phase === 'run'; i++) stepRun(fast, { gas: 1, brake: 0, lean: 0 }, DT);
+  assert.equal(fast.phase, 'done', `gas over the bridge: ${fast.phase} ${fast.crashKind}`);
+  assert.ok(fast.world.crumbles.every((t) => t >= 0), 'every plank was ridden');
+  const slow = builtRun(mk());
+  for (let i = 0; i < 60 * 20 && slow.bike.p.x < 36; i++) stepRun(slow, { gas: 1, brake: 0, lean: 0 }, DT);
+  for (let i = 0; i < 60 * 6 && slow.phase === 'run'; i++) stepRun(slow, { gas: 0, brake: 1, lean: 0 }, DT);
+  assert.equal(slow.phase, 'crash');
+  assert.equal(slow.crashKind, 'fell');
+  for (let i = 0; i < 60 * 3 && slow.phase === 'crash'; i++) stepRun(slow, { gas: 0, brake: 0, lean: 0 }, DT);
+  assert.equal(slow.phase, 'run');
+  assert.ok(slow.world.crumbles.every((t) => t < 0), 'planks back after the respawn');
+});
+
+test('riding into a TNT barrel blows the bike up', () => {
+  const run = builtRun(track().flat(20).tnt(-4).flat(30).finish().flat(10).done());
+  for (let i = 0; i < 60 * 10 && run.phase === 'run'; i++) stepRun(run, { gas: 1, brake: 0, lean: 0 }, DT);
+  assert.equal(run.phase, 'crash');
+  assert.equal(run.crashKind, 'saw');
+  assert.ok(run.fx.some((p) => p.kind === 'fire'));
+  assert.ok(run.toasts.some((t) => t.text === 'Boom'));
 });

@@ -1,6 +1,6 @@
 // Run state machine for Moto Trials: countdown, timer, flips, checkpoints, crashes, finish.
 // Pure: tests drive it under node. Drawing reads the same state.
-import { groundAt, newBike, step, wrapAngle, type Bike, type Input, type PhysWorld } from './physics.ts';
+import { groundAt, newBike, resetCrumbles, sawAt, step, wrapAngle, type Bike, type Input, type PhysWorld } from './physics.ts';
 import { worldOf, type Level } from './levels.ts';
 
 export const COUNTDOWN = 3;
@@ -49,7 +49,7 @@ export function flipsIn(accum: number): number {
 }
 
 export type Toast = { id: number; text: string; t: number };
-export type Particle = { x: number; y: number; vx: number; vy: number; t: number; life: number; kind: 'dust' | 'puff' | 'debris' | 'confetti'; c?: string };
+export type Particle = { x: number; y: number; vx: number; vy: number; t: number; life: number; kind: 'dust' | 'puff' | 'debris' | 'confetti' | 'fire'; c?: string };
 
 export type Run = {
   level: Level;
@@ -147,6 +147,14 @@ function crash(run: Run, kind: 'head' | 'saw' | 'fell') {
   if (run.air.on) revokeFlips(run);
   run.air = noAir();
   const b = run.bike;
+  const boom = kind === 'saw' && run.world.saws.find((h) => h.kind === 'tnt' && Math.hypot(sawAt(h, run.world.clock).x - b.p.x, h.y - b.p.y) < h.r + 1.6);
+  if (boom) {
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2;
+      run.fx.push({ x: boom.x, y: boom.y, vx: Math.cos(a) * (3 + (i % 4)), vy: Math.sin(a) * (3 + (i % 3)) + 4, t: run.t, life: 0.7, kind: 'fire', c: i % 3 ? '#ff8a2a' : '#ffd25a' });
+    }
+    toast(run, 'Boom');
+  }
   // fling a few debris bits and the rider's helmet from where it happened
   for (let i = 0; i < 10; i++) {
     const a = (i / 10) * Math.PI * 2;
@@ -278,6 +286,7 @@ export function stepRun(run: Run, input: Input, dt: number) {
       p.y += p.vy * dt;
     }
     if (run.crashT >= RESPAWN_DELAY) {
+      resetCrumbles(run.world);
       const s = spawnAt(run.world, run.spawn.x);
       run.bike = newBike(s.x, s.y);
       run.bike.a = run.spawn.a;
@@ -409,7 +418,7 @@ function copyRun(run: Run): Run {
   const wh = (x: typeof b.fw) => ({ p: { ...x.p }, v: { ...x.v }, spin: x.spin, rot: x.rot, on: x.on, n: { ...x.n } });
   return {
     ...run,
-    world: { ...run.world, loops: run.world.loops.map((l) => ({ ...l })) },
+    world: { ...run.world, loops: run.world.loops.map((l) => ({ ...l })), crumbles: run.world.crumbles.slice() },
     bike: { p: { ...b.p }, v: { ...b.v }, a: b.a, w: b.w, fw: wh(b.fw), rw: wh(b.rw), crashed: b.crashed },
     air: { ...run.air },
     spawn: { ...run.spawn },
