@@ -546,3 +546,66 @@ export function batchStatic(THREE: Three, scene: T.Scene, before: Set<T.Object3D
     scene.add(new THREE.Mesh(mergeColored(THREE, grp.parts), mat));
   }
 }
+
+/**
+ * Meshes that never move and share a material merged into one mesh each (keeping their texture coordinates, so a map
+ * still lays as it did): the decals on the ground, net panels and the like that batchStatic leaves alone because they are
+ * textured, see-through or two-sided. Each merged mesh sits at its parts' middle, so it still sorts among the other
+ * see-through things about where they did. Parts in a different draw order stay apart.
+ */
+export function mergeAlike(THREE: Three, scene: T.Scene, meshes: T.Mesh[]) {
+  scene.updateMatrixWorld(true);
+  const groups = new Map<string, { mat: T.Material; order: number; parts: T.Mesh[] }>();
+  for (const m of meshes) {
+    if (Array.isArray(m.material) || !m.geometry.getAttribute('uv') || !m.geometry.getAttribute('normal')) continue;
+    const key = `${m.material.uuid} ${m.renderOrder}`;
+    let grp = groups.get(key);
+    if (!grp) groups.set(key, (grp = { mat: m.material, order: m.renderOrder, parts: [] }));
+    grp.parts.push(m);
+  }
+  const v = new THREE.Vector3();
+  const nm = new THREE.Matrix4();
+  for (const { mat, order, parts } of groups.values()) {
+    if (parts.length < 2) continue;
+    const pos: number[] = [];
+    const nrm: number[] = [];
+    const uv: number[] = [];
+    const idx: number[] = [];
+    for (const m of parts) {
+      const g = m.geometry;
+      const p = g.getAttribute('position');
+      const n = g.getAttribute('normal');
+      const u = g.getAttribute('uv');
+      const base = pos.length / 3;
+      nm.copy(m.matrixWorld).invert().transpose();
+      for (let k = 0; k < p.count; k++) {
+        v.fromBufferAttribute(p, k).applyMatrix4(m.matrixWorld);
+        pos.push(v.x, v.y, v.z);
+        v.fromBufferAttribute(n, k).transformDirection(nm);
+        nrm.push(v.x, v.y, v.z);
+        uv.push(u.getX(k), u.getY(k));
+      }
+      // (a mirrored part is wound the other way round)
+      const flip = m.matrixWorld.determinant() < 0;
+      const tri = g.index ? Array.from(g.index.array as ArrayLike<number>) : Array.from({ length: p.count }, (_, k) => k);
+      for (let k = 0; k + 2 < tri.length; k += 3) {
+        if (flip) idx.push(base + tri[k], base + tri[k + 2], base + tri[k + 1]);
+        else idx.push(base + tri[k], base + tri[k + 1], base + tri[k + 2]);
+      }
+    }
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    out.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    out.setIndex(idx);
+    out.computeBoundingBox();
+    const mid = out.boundingBox!.getCenter(new THREE.Vector3());
+    out.translate(-mid.x, -mid.y, -mid.z);
+    const merged = new THREE.Mesh(out, mat);
+    merged.position.copy(mid);
+    merged.renderOrder = order;
+    scene.add(merged);
+    // (before the first frame: nothing of the parts was ever on the GPU)
+    for (const m of parts) m.removeFromParent();
+  }
+}

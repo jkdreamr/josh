@@ -214,35 +214,33 @@
 }
 /* the stroke ring under your shell: the outer ring closes onto the beat, the inner one lights up in the catch window,
    and the run of catches toward a Power Ten fills round it */
-.g-palmdrive .g-palmdrive-stroke {
-  position: absolute;
-  left: 50%;
-  bottom: 14px;
-  width: 92px;
-  height: 92px;
-  transform: translateX(-50%);
-  pointer-events: none;
-  overflow: visible;
+.g-palmdrive .g-palmdrive-strokes {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(20, 20, 26, 0.45);
+  transition: background-color 0.12s, box-shadow 0.12s;
 }
-.g-palmdrive .g-palmdrive-stroke circle {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.55);
-  stroke-width: 3;
+.g-palmdrive .g-palmdrive-strokes i {
+  width: 5px;
+  height: 10px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.3);
 }
-.g-palmdrive .g-palmdrive-stroke circle.is-open {
-  stroke: #ffe14d;
-  stroke-width: 5;
-  fill: rgba(255, 225, 77, 0.25);
+.g-palmdrive .g-palmdrive-strokes i.is-on {
+  background: #ff5a3c;
 }
-.g-palmdrive .g-palmdrive-stroke .g-palmdrive-stroke-ring {
-  stroke: #ffffff;
-  stroke-width: 2.5;
+/* the catch coming: warming up; the catch window: lit */
+.g-palmdrive .g-palmdrive-strokes.is-near {
+  background: rgba(255, 225, 77, 0.2);
 }
-.g-palmdrive .g-palmdrive-stroke rect {
-  fill: rgba(255, 255, 255, 0.25);
-}
-.g-palmdrive .g-palmdrive-stroke rect.is-on {
-  fill: #ff5a3c;
+.g-palmdrive .g-palmdrive-strokes.is-open {
+  transition: none;
+  background: rgba(255, 225, 77, 0.5);
+  box-shadow: 0 0 0 2px #ffe14d, 0 0 16px rgba(255, 225, 77, 0.8);
 }
 /* a Marguerite bus: white with a cardinal edge */
 .g-palmdrive .g-palmdrive-map-bus {
@@ -346,6 +344,13 @@
 .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-lap {
   top: calc(82px + var(--pd-sat));
   bottom: auto;
+}
+/* (on a phone the lap line is full: the stroke light goes under it) */
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-strokes {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 8px;
 }
 .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-place {
   top: calc(186px + var(--pd-sat));
@@ -1294,11 +1299,6 @@
   transform: rotate(-24deg);
 }
 /* (on a touch screen, up clear of the buttons) */
-.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-stroke {
-  bottom: calc(118px + var(--pd-sab));
-  width: 72px;
-  height: 72px;
-}
 /* the fire flower burns while it lasts */
 .g-palmdrive .g-palmdrive-item.is-fire {
   box-shadow: inset 0 0 0 3px #ff7a1a, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 20px rgba(255, 90, 20, 0.9);
