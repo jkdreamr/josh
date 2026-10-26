@@ -11,8 +11,9 @@ import { sfx, useMusicOn, useMuted } from './sfx';
 import { useBackgroundMusic } from './music';
 import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange, useSetting } from './settings';
 import { BotStepper, OnlinePanel, OnlineProvider, QuickPanel, ROOM_VISIBILITY, ROOM_WATCHERS, RoomCode, RoomRoster, VisibilityPicker, WatchPicker } from './online';
-import { MAX_SEATS, botPlayers, canStartNext, nextOnlineRound, parseRacePacket, raceSeats, raceStandings, RoundRouter, type RaceScores, type SettledRace } from './online-core';
+import { MAX_SEATS, botPlayers, canStartNext, handOffSettled, nextOnlineRound, parseRacePacket, raceSeats, raceStandings, raceVerdict, RoundRouter, type RaceScores, type SettledRace } from './online-core';
 import { createRoom, quickRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
+import { handOffScores, handOffSeat } from './online-core';
 import { countPlay } from '../../stats';
 import { useBadge } from '../../badges';
 import { usePlayingReport } from '../playing';
@@ -444,11 +445,18 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       if (!onlineModeRef.current) setOnlineInProgress(started);
     });
     // The host left and someone took over. Their game ran the round, so it's over; everyone stays in the room.
-    link.on('host', ({ seat, players }) => {
+    link.on('host', ({ from, seat, players }) => {
       raceRef.current.seat = seat;
+      // the room renumbered its seats: race scores and the round's lineup follow, so nobody's result moves to someone else
+      roundSeatsRef.current = roundSeatsRef.current.map((s) => handOffSeat(s, from));
+      setRoundSeats(roundSeatsRef.current);
+      raceRef.current.scores = handOffScores(raceRef.current.scores, from);
+      setRaceScores(raceRef.current.scores);
       setOnlineSeat(seat);
       setOnlineInProgress(false);
       const host = players.find((player) => player.seat === 0);
+      // a finished race keeps its standings and names, now under the new seat numbers
+      setRaceSettled((settled) => settled && handOffSettled(settled, from));
       setOnlineHandoffs((n) => n + 1);
       // a card waiting on the round the old host ran waits no more
       setResult((r) => (r?.wait ? { ...r, wait: undefined } : r));
@@ -1165,7 +1173,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 )}
                 {raceNow && (
                   <small>
-                    {!raceDone ? 'Waiting For Everyone to Finish' : raceAlone ? 'Everyone Else Left Before Finishing' : raceWinner === null ? 'A Tie' : raceWinner === onlineSeat ? 'You Win the Race' : `${racerName(raceWinner) ?? 'Someone'} Wins the Race`}
+                    {raceVerdict(raceNow, raceAlone, onlineSeat, racerName)}
                   </small>
                 )}
                 {board.canSubmit && (
