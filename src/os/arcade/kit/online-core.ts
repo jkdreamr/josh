@@ -82,9 +82,10 @@ export type RaceStanding = { seat: number; score: number | null; place: number |
 /**
  * Standings of a score race among the seats still in the room. The best score places first;
  * players without a score place last. `done` once every seat has finished, and `winner` is the
- * single best seat (null for a tie or when nobody scored).
+ * single best seat (null for a tie or when nobody scored). `minSeats` is how many seats a finished race needs; 1 lets the
+ * last racer still here settle a race that the others left before finishing.
  */
-export function raceStandings(scores: RaceScores, seats: number[], lowerIsBetter = false): { done: boolean; winner: number | null; standings: RaceStanding[] } {
+export function raceStandings(scores: RaceScores, seats: number[], lowerIsBetter = false, minSeats = 2): { done: boolean; winner: number | null; standings: RaceStanding[] } {
   const finished = seats.filter((seat) => Object.hasOwn(scores, seat));
   const better = (a: number, b: number) => (lowerIsBetter ? a - b : b - a);
   const ranked = finished
@@ -96,7 +97,7 @@ export function raceStandings(scores: RaceScores, seats: number[], lowerIsBetter
     place: score === null ? null : 1 + ranked.filter((other) => other.score !== null && better(other.score, score) < 0).length,
   }));
   for (const seat of seats) if (!Object.hasOwn(scores, seat)) standings.push({ seat, score: null, place: null });
-  const done = seats.length >= 2 && finished.length === seats.length;
+  const done = seats.length >= Math.max(1, minSeats) && finished.length === seats.length;
   const leaders = standings.filter((entry) => entry.place === 1);
   return { done, winner: done && leaders.length === 1 ? leaders[0].seat : null, standings };
 }

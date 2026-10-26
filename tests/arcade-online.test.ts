@@ -298,6 +298,17 @@ test('a settled race keeps its result after someone leaves', () => {
   assert.deepEqual(after.standings.map((s) => [s.seat, s.score]), [[0, 6], [1, 6]]);
 });
 
+test('the last racer still here settles a race the others left before finishing', () => {
+  assert.equal(raceStandings({ 0: 12 }, [0]).done, false, 'by default a race needs two players');
+  const alone = raceStandings({ 0: 12 }, [0], false, 1);
+  assert.equal(alone.done, true);
+  assert.equal(alone.winner, 0);
+  assert.deepEqual(alone.standings.map((s) => [s.seat, s.score, s.place]), [[0, 12, 1]]);
+  assert.equal(raceStandings({}, [0], false, 1).done, false, 'still playing');
+  assert.equal(raceStandings({ 0: null }, [0], false, 1).winner, null, 'cut short without a score');
+  assert.equal(raceStandings({}, [], false, 1).done, false, 'nobody to settle');
+});
+
 test('the host starts the next round only once it is over for everyone', () => {
   const free = { ready: true, waiting: false, racing: false };
   assert.equal(canStartNext(free), true);
