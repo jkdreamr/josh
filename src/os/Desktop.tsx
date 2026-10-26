@@ -900,6 +900,37 @@ function MenuBar({
       offEscape();
     };
   }, [openId]);
+  // On the notched laptop display nothing may sit under the camera housing. Like macOS, the status items first give up
+  // the date and their text labels ("when space allows"), then the full screen toggle (also in the jk and View menus);
+  // whatever still runs under the notch is hidden. Hidden items keep their place (visibility, not display), so hiding
+  // one never moves the others.
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const fit = () => {
+      const left = bar.querySelectorAll<HTMLElement>(':scope > .mb-left > *');
+      const right = bar.querySelectorAll<HTMLElement>(':scope > .mb-right > *');
+      delete bar.dataset.fit;
+      for (const el of [...left, ...right]) el.style.visibility = '';
+      // the WebGL laptop draws its notch on the screen itself; the CSS laptop puts it in the bezel around the screen
+      const screen = bar.closest('.screen');
+      const notch = screen?.querySelector<HTMLElement>(':scope > .notch') ?? screen?.parentElement?.querySelector<HTMLElement>(':scope > .notch');
+      const half = notch && getComputedStyle(notch).visibility === 'visible' ? notch.offsetWidth / 2 + 6 : 0;
+      if (!half) return;
+      const l = bar.offsetWidth / 2 - half;
+      const r = bar.offsetWidth / 2 + half;
+      // items the compact levels take out of the layout have no box (offsetLeft 0) and never count as under the notch
+      const under = (el: HTMLElement) => el.offsetWidth > 0 && el.offsetLeft < r;
+      for (const level of ['compact', 'tight']) if ([...right].some(under)) bar.dataset.fit = level;
+      for (const el of left) if (el.offsetWidth > 0 && el.offsetLeft + el.offsetWidth > l) el.style.visibility = 'hidden';
+      for (const el of right) if (under(el)) el.style.visibility = 'hidden';
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    for (const el of [bar, ...bar.children]) ro.observe(el);
+    return () => ro.disconnect();
+  });
+  const top = openWins.length ? openWins.reduce((a, b) => (a.z > b.z ? a : b)) : null;
   const shared = { openId, setOpenId, focusOnOpen };
   return (
     <div className="menubar" ref={barRef}>
@@ -921,6 +952,15 @@ function MenuBar({
           ]}
         />
         <Menu id="app" {...shared} bold label={title} items={[{ label: `About ${title}`, action: () => os.open('about') }, 'sep', { label: 'Hide Others' }, { label: 'Quit', action: () => wins.length && onClose(wins.reduce((a, b) => (a.z > b.z ? a : b)).id) }]} />
+        <Menu id="file" {...shared} className="mb-hide-md" label="File" items={[{ label: 'Close Window', action: top ? () => onClose(top.id) : undefined }, 'sep', { label: 'Get Info', action: () => os.open('about') }]} />
+        <Menu
+          id="edit"
+          {...shared}
+          className="mb-hide-md"
+          label="Edit"
+          items={[{ label: 'Undo', hint: '⌘Z' }, { label: 'Redo', hint: '⇧⌘Z' }, 'sep', { label: 'Cut', hint: '⌘X' }, { label: 'Copy', hint: '⌘C' }, { label: 'Paste', hint: '⌘V' }, { label: 'Select All', hint: '⌘A' }]}
+        />
+        <Menu id="view" {...shared} className="mb-hide-md" label="View" items={[{ label: os.fullscreen ? 'Exit Full Screen' : 'Enter Full Screen', hint: os.fullscreen ? 'esc' : undefined, action: os.toggleFullscreen }]} />
         <Menu
           id="go"
           {...shared}
@@ -955,7 +995,7 @@ function MenuBar({
       <div className="mb-right">
         <StatsMenu {...shared} />
         <WeatherMenu {...shared} />
-        <button className="mb-item mb-icon" onClick={os.toggleFullscreen} aria-label={os.fullscreen ? 'Exit full screen' : 'Full screen'} title={os.fullscreen ? 'Exit full screen (esc)' : 'Full screen'}>
+        <button className="mb-item mb-icon mb-optional" onClick={os.toggleFullscreen} aria-label={os.fullscreen ? 'Exit full screen' : 'Full screen'} title={os.fullscreen ? 'Exit full screen (esc)' : 'Full screen'}>
           {os.fullscreen ? (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
           ) : (
@@ -1506,7 +1546,7 @@ function ClockMenu({
   onShow,
   ...slot
 }: MenuSlot & { now: Date; notices: Notice[]; onOpenNotice: (id: string) => void; onClearNotice: (id: string) => void; onShow: () => void }) {
-  const date = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const date = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).replace(',', '');
   const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   return (
     <StatusMenu

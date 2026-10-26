@@ -84,6 +84,25 @@ export function movePaddle(p: Paddle, dy: number, dt: number) {
   p.vy = dt > 0 ? (p.y - before) / dt : 0;
 }
 
+export function advanceGuest(m: Match, dt: number) {
+  if (dt <= 0 || m.serveIn > 0 || m.winner !== null) return;
+  const { ball } = m;
+  ball.x += ball.vx * dt;
+  ball.y += ball.vy * dt;
+  if (ball.y < BALL_R) {
+    ball.y = BALL_R + (BALL_R - ball.y);
+    ball.vy = Math.abs(ball.vy);
+  } else if (ball.y > COURT.h - BALL_R) {
+    ball.y = COURT.h - BALL_R - (ball.y - (COURT.h - BALL_R));
+    ball.vy = -Math.abs(ball.vy);
+  }
+  const leftFace = paddleX(0) + PADDLE.w / 2 + BALL_R;
+  const rightFace = paddleX(1) - PADDLE.w / 2 - BALL_R;
+  ball.x = clamp(ball.x, leftFace, rightFace);
+  const hostPaddle = m.paddles[0];
+  movePaddle(hostPaddle, hostPaddle.vy * dt, dt);
+}
+
 /** Steer a paddle toward a target y with the paddle speed limit (used by pointer and computer input). */
 export function steerPaddle(p: Paddle, targetY: number, dt: number, speed = PADDLE_SPEED) {
   const d = targetY - p.y;

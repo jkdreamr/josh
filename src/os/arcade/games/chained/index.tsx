@@ -20,8 +20,8 @@ const modeOptions = MODES.map((m) => [m, MODE_INFO[m].label] as const);
 const shadeOptions = SHADE_LEVELS.map((l) => [l, SHADE_INFO[l].label] as const);
 type RankedMode = (typeof RANKED_MODES)[number];
 const partyOptions = [
-  ['partner', 'With a Partner'],
-  ['solo', 'On Your Own'],
+  ['partner', 'Partner'],
+  ['solo', 'Solo'],
   ['local', 'Two Players'],
 ] as const;
 /** On touch there is no second keyboard, so no two player option. */

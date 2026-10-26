@@ -231,6 +231,29 @@ kbd {
   transform: translateX(-50%);
   background: radial-gradient(circle at 35% 35%, #3b4a66, #0a0d14 70%);
 }
+/* On the WebGL laptop the notch is the camera housing cut into the panel. macOS makes the menu bar exactly as tall as the
+   notch, so it runs the full height of the bar, and its top corners flare out into the screen edge. */
+.stage-3d .notch {
+  top: 0;
+  width: max(calc(var(--lw) * 0.13), 80px);
+  height: 26px;
+  border-radius: 0 0 8px 8px;
+}
+.stage-3d .notch::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -4px;
+  right: -4px;
+  height: 4px;
+  background:
+    radial-gradient(circle at 0 100%, transparent 3.5px, #0c0c0e 4px) left top / 4px 4px no-repeat,
+    radial-gradient(circle at 100% 100%, transparent 3.5px, #0c0c0e 4px) right top / 4px 4px no-repeat;
+}
+.stage-3d .notch::after {
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
 /* camera in use: the green LED beside the lens */
 .cam-led {
   position: absolute;
@@ -1059,7 +1082,8 @@ kbd {
   height: 54%;
 }
 .icon-finder > svg,
-.icon-notes > svg {
+.icon-notes > svg,
+.icon-terminal > svg {
   width: 100%;
   height: 100%;
 }
@@ -4292,18 +4316,6 @@ kbd {
 .l3d-display > .screen {
   border-radius: calc(var(--lw) * 0.0105) calc(var(--lw) * 0.0105) calc(var(--lw) * 0.002) calc(var(--lw) * 0.002);
 }
-/* the faint sheen of the studio's softbox across the display glass */
-.l3d-display::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  border-radius: inherit;
-  pointer-events: none;
-  background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.025) 34%, rgba(255, 255, 255, 0) 52%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 18%);
-}
 .l3d-fs {
   position: fixed;
   inset: 0;
@@ -4723,6 +4735,21 @@ kbd {
 }
 @container menubar (max-width: 640px) {
   .desktop .menubar .mb-hide-sm {
+    display: none !important;
+  }
+}
+/* beside the notch the status items drop the date and their text labels, then optional items, before anything is
+   hidden (see MenuBar) */
+.desktop .menubar[data-fit] .mb-right .mb-hide-sm,
+.desktop .menubar[data-fit='tight'] .mb-optional {
+  display: none !important;
+}
+.desktop .menubar[data-fit='tight'] .mb-right .mb-item {
+  padding: 0 5px;
+}
+/* File, Edit and View only fit beside the app's own menus on a wide bar */
+@container menubar (max-width: 999px) {
+  .desktop .menubar .mb-hide-md {
     display: none !important;
   }
 }
