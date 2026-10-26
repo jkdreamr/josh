@@ -729,3 +729,8 @@
 .g-grand-prix .g-grand-prix-keys dd {
   margin: 0;
 }
+
+/* five Rivals levels: tighter pills so every label fits on a phone */
+.g-grand-prix .g-grand-prix-setup .arcade-seg > button {
+  padding: 0 5px;
+}

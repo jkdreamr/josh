@@ -138,13 +138,14 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         <h4>Laps</h4>
         <p>How long the race is: 3, 5 or 10 laps. In Time Trial it is how many timed laps you get before the session ends (your fastest one counts).</p>
         <h4>Rivals</h4>
-        <p>How fast the computer drivers are. They all drive the same car as you; the level sets how hard they push in the corners. The times are a clean lap for the fastest car in the field, the rest are up to about 3% slower.</p>
+        <p>How fast the computer drivers are. They all drive the same car as you; the level sets how hard they push in the corners. The times are a clean lap for the fastest car in the field, the rest are up to about 3% slower (1.5% on Alien).</p>
         <Keys
           rows={[
             ['Easy', 'About 1:38 a lap. Brakes early and takes corners gently.'],
             ['Medium', 'About 1:30. A good target for a tidy lap with assists on.'],
             ['Hard', 'About 1:28. Needs late braking and clean exits.'],
             ['Legend', 'About 1:27, right on the limit of grip.'],
+            ['Alien', 'About 1:25, and the whole field is that quick. Beyond the limit most humans can reach.'],
           ]}
         />
         <h4>Start</h4>

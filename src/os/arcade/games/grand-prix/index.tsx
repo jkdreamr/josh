@@ -17,8 +17,8 @@ import './grand-prix.css';
 type Mode = 'trial' | 'race' | 'split';
 const MODE = defineSetting<Mode>('grand-prix:mode', ['trial', 'race', 'split'], 'race');
 const LAPS = defineSetting<'3' | '5' | '10'>('grand-prix:laps', ['3', '5', '10'], '3');
-type Level = 'easy' | 'medium' | 'hard' | 'legend';
-const AI = defineSetting<Level>('grand-prix:ai', ['easy', 'medium', 'hard', 'legend'], 'medium');
+type Level = 'easy' | 'medium' | 'hard' | 'legend' | 'alien';
+const AI = defineSetting<Level>('grand-prix:ai', ['easy', 'medium', 'hard', 'legend', 'alien'], 'medium');
 const GRID = defineSetting<'pole' | 'mid' | 'back'>('grand-prix:grid', ['pole', 'mid', 'back'], 'mid');
 type Aids = 'none' | 'tc' | 'full';
 const AIDS = defineSetting<Aids>('grand-prix:aids', ['none', 'tc', 'full'], 'full');
@@ -27,8 +27,13 @@ const CAM = defineSetting<CamMode>('grand-prix:cam', CAM_MODES, 'chase', { live:
 const CAM2 = defineSetting<CamMode>('grand-prix:cam2', CAM_MODES, 'chase', { live: true });
 const VOICE = defineSetting<'on' | 'off'>('grand-prix:commentary', ['on', 'off'], 'on');
 
-/** Share of the racing line's grip each level dares to use: clean laps of about 1:38, 1:30, 1:28 and 1:27. */
-const PACE: Record<Level, number> = { easy: 0.7, medium: 0.86, hard: 0.95, legend: 1 };
+/**
+ * Share of the racing line's grip each level dares to use: clean laps of about 1:38, 1:30, 1:28, 1:27 and 1:25.
+ * Alien drives past the line's planned grip into what the tyres have in reserve (1.09 starts crashing).
+ */
+const PACE: Record<Level, number> = { easy: 0.7, medium: 0.86, hard: 0.95, legend: 1, alien: 1.06 };
+/** How much slower the last computer car is than the first: on Alien the whole field is quick. */
+const SPREAD: Record<Level, number> = { easy: 0.035, medium: 0.035, hard: 0.035, legend: 0.035, alien: 0.015 };
 const modeOptions = [
   ['trial', 'Time Trial'],
   ['race', 'Race'],
@@ -44,6 +49,7 @@ const aiOptions = [
   ['medium', 'Medium'],
   ['hard', 'Hard'],
   ['legend', 'Legend'],
+  ['alien', 'Alien'],
 ] as const;
 const gridOptions = [
   ['pole', 'Pole'],
@@ -260,7 +266,7 @@ function makeRace(mode: StageMode, s: { mode: Mode; laps: number; ai: Level; gri
     const k = ai++;
     const [team, d] = pool[k % pool.length];
     // the faster drivers start further up, with a little spread through the field
-    return { name: DRIVERS[d], team, kind: 'ai', seat: -1, pad: -1, pace: base * (1 - (k / field) * 0.035) };
+    return { name: DRIVERS[d], team, kind: 'ai', seat: -1, pad: -1, pace: base * (1 - (k / field) * SPREAD[s.ai]) };
   });
   // with commentary on, a longer wait before the lights gives the commentator time to welcome everyone
   return createRace({ mode: 'race', laps: s.laps, entries, assists: entries.map((e) => (e.kind === 'player' ? s.assists : assistsOf('full', 'auto'))), lead: s.talk ? 6.5 : undefined });
