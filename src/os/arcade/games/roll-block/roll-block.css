@@ -221,6 +221,17 @@
   .g-roll-block .g-roll-block-cell {
     min-height: calc(48px * var(--g-roll-block-u, 1));
   }
+  .g-roll-block .arcade-card p,
+  .g-roll-block .arcade-howto ol {
+    font-size: calc(13.5px * var(--g-roll-block-u, 1));
+  }
+  .g-roll-block .arcade-card small,
+  .g-roll-block .arcade-card .arcade-howto-controls {
+    font-size: calc(13px * var(--g-roll-block-u, 1));
+  }
+  .g-roll-block .arcade-howto-controls b {
+    font-size: calc(12px * var(--g-roll-block-u, 1));
+  }
   .g-roll-block .g-roll-block-grid {
     grid-template-columns: repeat(auto-fill, minmax(calc(56px * var(--g-roll-block-u, 1)), 1fr));
   }

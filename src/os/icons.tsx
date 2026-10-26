@@ -162,6 +162,9 @@ export function Glyph({ kind }: { kind: IconKind }): ReactNode {
         <svg viewBox="0 0 48 48" width="100%" height="100%" aria-hidden="true">
           <rect width="48" height="48" fill="#fffdf6" />
           <rect width="48" height="13" fill="#ffd54a" />
+          {Array.from({ length: 18 }, (_, i) => (
+            <circle key={i} cx={2.2 + i * 2.6} cy="12.4" r=".55" fill="#fff6cf" />
+          ))}
           {[20, 26, 32, 38].map((y) => (
             <rect key={y} x="8" y={y} width="32" height="1.4" fill="#d9d4c3" />
           ))}
@@ -292,7 +295,7 @@ const tiles: Partial<Record<IconKind, CSSProperties>> = {
   github: tile('linear-gradient(180deg,#30363d,#0d1117)'),
   coffee: tile('#FFDD00'),
   mail: tile('linear-gradient(180deg,#5ab8ff,#1d6ff2)'),
-  terminal: tile('linear-gradient(180deg,#8b8d92,#56585d)', { boxShadow: 'inset 0 0 0 .5px rgba(255,255,255,.35)' }),
+  terminal: tile('linear-gradient(180deg,#8b8d92,#56585d)'),
   arcade: tile('linear-gradient(180deg,#9271ff,#5b34e0)'),
   coxbox: tile('linear-gradient(180deg,#d63b45,#8c1515)'),
   baduk: tile('linear-gradient(145deg,#cfaa70,#8f6338)'),
