@@ -371,6 +371,25 @@ function Play() {
         cameraDistanceOverrideRef.current = dist;
         shell.invalidate();
       },
+      teleportPlayer(x: number, y: number, z: number) {
+        const course = courseRef.current;
+        const id = localId();
+        const body = id == null ? undefined : bodiesRef.current.get(id);
+        if (!course || !body) return false;
+        const ground = course.colliders.findIndex((collider) =>
+          collider.on && collider.shape.kind === 'box' &&
+          Math.abs(collider.pose.y + collider.shape.hy - y) < 0.1 &&
+          Math.abs(collider.pose.x - x) <= collider.shape.hx &&
+          Math.abs(collider.pose.z - z) <= collider.shape.hz);
+        if (ground < 0) return false;
+        body.x = x; body.y = y; body.z = z;
+        body.vx = 0; body.vy = 0; body.vz = 0; body.yaw = course.startYaw;
+        body.state = 'run'; body.stateT = 0; body.ground = ground;
+        body.coyote = 0; body.buffer = 0; body.slip = 0;
+        body.squash = 0; body.squashV = 0; body.ev = 0;
+        shell.invalidate();
+        return true;
+      },
       spectate(dist = 9, pitch = 0.45, lookY = 0) {
         const show = showRef.current;
         const course = courseRef.current;
@@ -1157,7 +1176,9 @@ function Play() {
     view.frame(course, time, bodies, focus, camera, renderDtRef.current);
     const stageRect = ref.current?.getBoundingClientRect();
     const pillRect = ref.current?.querySelector('.g-wacky-walk-pill')?.getBoundingClientRect();
-    const hudClearance = stageRect && pillRect ? pillRect.bottom - stageRect.top + 24 : shell.touch ? 132 : 108;
+    const progressRect = ref.current?.querySelector('.g-wacky-walk-progress')?.getBoundingClientRect();
+    const hudBottom = Math.max(pillRect?.bottom ?? 0, progressRect?.bottom ?? 0);
+    const hudClearance = stageRect && (pillRect || progressRect) ? hudBottom - stageRect.top + 16 : shell.touch ? 132 : 108;
     let placedTags = 0;
     for (const id of tagIds) {
       const node = tagNodesRef.current.get(id);

@@ -125,6 +125,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     cone4: keepG(new THREE.ConeGeometry(1, 1, 4, 1).toNonIndexed()),
     prism: keepG(new THREE.CylinderGeometry(1, 1, 1, 3, 1).toNonIndexed()),
     sphere: keepG(new THREE.SphereGeometry(1, touch ? 9 : 16, touch ? 6 : 12).toNonIndexed()),
+    flower: keepG(new THREE.SphereGeometry(1, 6, 4).toNonIndexed()),
     ico: keepG(new THREE.IcosahedronGeometry(1, 0)),
     half: keepG(new THREE.TorusGeometry(1, 0.16, 5, 10, Math.PI).toNonIndexed()),
     arch: keepG(new THREE.TorusGeometry(2.2, 0.42, touch ? 5 : 7, touch ? 16 : 24, Math.PI).toNonIndexed()),
@@ -171,16 +172,20 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   toonGradient.needsUpdate = true;
   textures.push(toonGradient);
   const toon = (color: number, extra: T.MeshLambertMaterialParameters = {}) => {
-    const material = new THREE.MeshLambertMaterial({ color, flatShading: true, ...extra });
+    const material = new THREE.MeshLambertMaterial({ color, flatShading: false, ...extra });
     material.onBeforeCompile = (shader) => {
       shader.uniforms.wwToonGradient = { value: toonGradient };
       shader.fragmentShader = shader.fragmentShader
         .replace('void main() {', 'uniform sampler2D wwToonGradient;\nvoid main() {')
         .replace(
           '#include <opaque_fragment>',
-          `float wwLight = clamp(dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722)) / max(dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722)), 0.0001), 0.0, 1.0);
-          float wwBand = wwLight < 0.45 ? 0.1666667 : (wwLight < 0.75 ? 0.5 : 0.8333333);
-          outgoingLight = diffuseColor.rgb * texture2D(wwToonGradient, vec2(wwBand, 0.5)).r;
+          `float wwIntensity = clamp(dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722)) / max(dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722)), 0.0001), 0.0, 1.0);
+          float wwShadow = texture2D(wwToonGradient, vec2(0.1666667, 0.5)).r;
+          float wwMid = texture2D(wwToonGradient, vec2(0.5, 0.5)).r;
+          float wwBright = texture2D(wwToonGradient, vec2(0.8333333, 0.5)).r;
+          float wwTone = mix(wwShadow, wwMid, smoothstep(0.34, 0.55, wwIntensity));
+          wwTone = mix(wwTone, wwBright, smoothstep(0.68, 0.88, wwIntensity));
+          outgoingLight = diffuseColor.rgb * wwTone;
           #include <opaque_fragment>`,
         );
     };
@@ -464,6 +469,19 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
             surface: 'plain',
           });
         }
+      } else if (c.look === 'stone' && c.tint === 0xff4fa3) {
+        out.push({
+          g: unit.sphere,
+          m: m.clone().multiply(mtx(0, 0, 0, s.hx, s.hy, s.hz)),
+          c: color,
+          surface: 'plain',
+        });
+        out.push({
+          g: unit.cyl,
+          m: m.clone().multiply(mtx(0, 0, 0, Math.max(s.hx, s.hz) * 1.015, s.hy * 0.16, Math.max(s.hx, s.hz) * 1.015)),
+          c: 0xfffaf0,
+          surface: 'plain',
+        });
       } else if (c.look === 'tube' && s.hx > s.hz * 2) {
         const radius = Math.min(s.hy, s.hz) * 0.88;
         const halfLength = s.hx - radius;
@@ -478,7 +496,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         for (const side of [-1, 1]) {
           out.push({
             g: unit.sphere, m: m.clone().multiply(mtx(side * halfLength, 0, 0, radius, radius, radius)),
-            c: 0xe9dcc0, surface: 'plain',
+            c: LOOK_COLORS.gold, surface: 'plain',
           });
         }
       } else if (c.look === 'bar') {
@@ -486,7 +504,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         const halfLength = s.hx - radius;
         out.push({
           g: unit.cyl, m: m.clone().multiply(mtx(0, 0, 0, radius, halfLength, radius, 0, 0, Math.PI / 2)),
-          c: CARDINAL, surface: 'plain',
+          c: LOOK_COLORS.bar, surface: 'plain',
         });
         for (let i = 1; i < 8; i++) out.push({
           g: unit.cyl,
@@ -495,7 +513,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
         });
         for (const side of [-1, 1]) out.push({
           g: unit.sphere, m: m.clone().multiply(mtx(side * halfLength, 0, 0, radius, radius, radius)),
-          c: 0xfffaf0, surface: 'plain',
+          c: LOOK_COLORS.bar, surface: 'plain',
         });
       } else out.push({ g: unit.box, m: m.clone().multiply(mtx(0, 0, 0, s.hx * 2, s.hy * 2, s.hz * 2)), c: color });
     } else if (s.kind === 'cyl') {
@@ -772,96 +790,70 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       courseRoot.add(mesh);
       moving.push({ c, mesh });
     }
-    for (let i = 1; i < course.path.length; i += 2) {
-      const a = course.path[i - 1], b = course.path[i];
-      const dx = b.x - a.x, dz = b.z - a.z;
-      const length = Math.hypot(dx, dz);
-      if (length < 0.1) continue;
-      const nx = dz / length, nz = -dx / length;
-      const yaw = -Math.atan2(dz, dx);
-      for (const side of [-1, 1]) {
-        if (course.id === 'oval') {
-          const sections = Math.ceil(length / 5);
-          for (let section = 0; section < sections; section++) {
-            const t0 = section / sections;
-            const t1 = (section + 1) / sections;
-            const mid = (t0 + t1) / 2;
-            statics.push({
-              g: unit.box,
-              m: mtx(
-                a.x + dx * mid + nx * side * 10.25, (a.y + b.y) / 2 + 0.035,
-                a.z + dz * mid + nz * side * 10.25,
-                length / sections * 0.48, 0.045, 0.14, yaw,
-              ),
-              c: section % 2 ? 0xfffaf0 : CARDINAL,
-              surface: 'plain',
-            });
-          }
-        }
-      }
-    }
     const vergeWidth = 6;
     const bankFloors = course.colliders.filter((c) =>
       c.shape.kind === 'box' && !c.at && !c.tile &&
       ['grass', 'path', 'sand', 'start', 'finish', 'wet'].includes(c.look) &&
       c.shape.hx >= 7 && c.shape.hz >= 4,
     );
-    let lastSupportX = Infinity, lastSupportZ = Infinity;
     for (const c of bankFloors) {
-      if (c.shape.kind !== 'box') continue;
-      const dx = c.pose.x - lastSupportX, dz = c.pose.z - lastSupportZ;
-      if (Math.hypot(dx, dz) < 18) continue;
-      lastSupportX = c.pose.x;
-      lastSupportZ = c.pose.z;
-      const depth = Math.max(8, c.pose.y + 7);
-      statics.push({
-        g: unit.box,
-        m: poseMatrix(c.pose, m4).clone().multiply(mtx(
-          0, -c.shape.hy - depth / 2 - 0.08, 0,
-          Math.min(1.4, c.shape.hx * 0.18), depth / 2, Math.min(1.4, c.shape.hz * 0.18),
-        )),
-        c: 0x8a5cff,
-        surface: 'plain',
-      });
+      if (c.shape.kind !== 'box' || c.pose.m[4] < 0.97) continue;
+      const shape = c.shape;
+      const supportCount = Math.max(1, Math.ceil((shape.hz * 2) / 15));
+      const bankBottom = shape.hy - 1.0;
+      const depth = Math.max(4.5, c.pose.y + bankBottom - waterY + 0.8);
+      const floorMatrix = poseMatrix(c.pose, m4).clone();
+      for (let i = 0; i < supportCount; i++) {
+        const z = -shape.hz + ((i + 0.5) * shape.hz * 2) / supportCount;
+        for (const side of [-1, 1]) statics.push({
+          g: unit.box,
+          m: floorMatrix.clone().multiply(mtx(
+            side * (shape.hx + vergeWidth / 2), bankBottom - depth / 2, z,
+            0.62, depth / 2, 0.62,
+          )),
+          c: 0x8a5cff,
+          surface: 'plain',
+        });
+      }
     }
     for (const c of bankFloors) {
       if (c.shape.kind !== 'box') continue;
       const shape = c.shape;
       const floorMatrix = poseMatrix(c.pose, m4).clone();
-      const halfZ = shape.hz + 0.12;
+      const halfZ = shape.hz + 0.16;
       const topY = shape.hy - 0.08;
       const longZ = shape.hz >= shape.hx;
       for (const side of [-1, 1]) statics.push({
         g: unit.sphere,
         m: floorMatrix.clone().multiply(mtx(
-          longZ ? side * (shape.hx - 0.1) : 0,
-          shape.hy - 0.12,
-          longZ ? 0 : side * (shape.hz - 0.1),
-          longZ ? 0.22 : shape.hx * 0.94,
-          0.12,
-          longZ ? shape.hz * 0.94 : 0.22,
+          longZ ? side * (shape.hx + 0.02) : 0,
+          shape.hy - 0.07,
+          longZ ? 0 : side * (shape.hz + 0.02),
+          longZ ? 0.3 : shape.hx * 0.98,
+          0.2,
+          longZ ? shape.hz * 0.98 : 0.3,
         )),
-        c: 0xfffaf0,
+        c: 0xffd23f,
         surface: 'plain',
       });
       for (const side of [-1, 1]) {
         statics.push({
           g: unit.box,
           m: floorMatrix.clone().multiply(mtx(
-            side * (shape.hx + vergeWidth / 2), topY - 0.08, 0,
-            vergeWidth / 2, 0.08, halfZ,
+            side * (shape.hx + vergeWidth / 2), topY - 0.22, 0,
+            vergeWidth / 2, 0.22, halfZ,
           )),
           c: pal.ground,
           surface: 'grass',
         });
-        for (const edge of [0.12, vergeWidth - 0.12]) statics.push({
+        statics.push({
           g: unit.box,
           m: floorMatrix.clone().multiply(mtx(
-            side * (shape.hx + edge), topY - 0.28, 0,
-            0.12, 0.28, halfZ,
+            side * (shape.hx + vergeWidth / 2), topY - 0.56, 0,
+            vergeWidth / 2 + 0.24, 0.36, halfZ,
           )),
-          c: 0xd2b58c,
-          surface: 'sandstone',
+          c: 0xb99268,
+          surface: 'plain',
         });
       }
     }
@@ -977,8 +969,8 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       statics.push({
         g: unit.box,
         m: poseMatrix(underside, m4).multiply(setMtx(scratchMtx, 0, 0, 0, s.hx * 2 * 0.96, thickness, s.hz * 2 * 0.96)),
-        c: 0xd9b98c,
-        surface: 'sandstone',
+        c: tmpC.setHex(c.tint ?? LOOK_COLORS[c.look]).multiplyScalar(0.68).getHex(),
+        surface: 'plain',
       });
     }
     center = { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2, r: Math.max(maxX - minX, maxZ - minZ) / 2 + 30 };
@@ -1027,16 +1019,41 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
           surface: 'plain',
         });
       }
+      statics.push({ g: unit.cyl, m: mtx(0, 36.55, 0, 2.5, 0.18, 2.5), c: 0xe8d6b8, surface: 'plain' });
+      for (let side = 0; side < 4; side++) {
+        const a = side * Math.PI / 2;
+        const cx = Math.sin(a) * 2.05, cz = Math.cos(a) * 2.05;
+        statics.push({
+          g: unit.arch,
+          m: mtx(cx, 36.5, cz, 0.68, 0.68, 0.68, a),
+          c: 0xe4cda8,
+          surface: 'plain',
+        });
+        for (const edge of [-1, 1]) statics.push({
+          g: unit.box,
+          m: mtx(cx + Math.cos(a) * edge * 1.42, 37.42, cz - Math.sin(a) * edge * 1.42, 0.18, 0.92, 0.2, a),
+          c: 0xe4cda8,
+          surface: 'plain',
+        });
+      }
+      statics.push({ g: unit.cyl, m: mtx(0, 39.88, 0, 2.38, 0.18, 2.38), c: 0xe8d6b8, surface: 'plain' });
+      statics.push({ g: unit.sphere, m: mtx(0, 41.42, 0, 2.28, 1.35, 2.28), c: LOOK_COLORS.roof, surface: 'plain' });
+      statics.push({ g: unit.cyl8, m: mtx(0, 42.94, 0, 0.56, 0.46, 0.56), c: 0xe6cfaa, surface: 'plain' });
+      statics.push({ g: unit.cone, m: mtx(0, 43.9, 0, 0.56, 0.76, 0.56), c: LOOK_COLORS.roof, surface: 'plain' });
     }
     if (course.id === 'oval') {
-      const flowerRadius = Math.max(12, center.r - 27);
-      for (let i = 0; i < 56; i++) {
-        const a = (i / 56) * Math.PI * 2;
-        const r = flowerRadius + (i % 2) * 0.42;
+      for (let i = 0; i < 16; i++) for (const side of [-1, 1]) {
+        const x = side * 11.5, z = 2 + i * 8;
+        for (const petal of [-1, 1]) statics.push({
+          g: unit.flower,
+          m: mtx(x + petal * 0.16, 0.06, z, 0.18, 0.14, 0.18),
+          c: petal < 0 ? 0xff4fa3 : 0xffd23f,
+          surface: 'plain',
+        });
         statics.push({
-          g: unit.sphere,
-          m: mtx(center.x + Math.cos(a) * r, 0.24, center.z + Math.sin(a) * r, 0.35, 0.22, 0.35, -a),
-          c: i % 2 ? 0xfffaf0 : CARDINAL,
+          g: unit.flower,
+          m: mtx(x, 0.19, z, 0.08, 0.08, 0.08),
+          c: 0xfffaf0,
           surface: 'plain',
         });
       }
@@ -1208,6 +1225,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     new THREE.Vector2(0.07, 0.66), new THREE.Vector2(0, 0.67),
   ];
   const beanGeo = keepG(new THREE.LatheGeometry(beanProfile, touch ? 16 : 24));
+  beanGeo.computeVertexNormals();
   const gownProfile = [
     new THREE.Vector2(0, 0), new THREE.Vector2(0.39, 0.025), new THREE.Vector2(0.5, 0.12),
     new THREE.Vector2(0.55, 0.27), new THREE.Vector2(0.53, 0.45), new THREE.Vector2(0.48, 0.65),
@@ -1215,20 +1233,18 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     new THREE.Vector2(0, 1.1),
   ];
   const gownGeo = keepG(new THREE.LatheGeometry(gownProfile, touch ? 12 : 18));
-  const beanMat = mat(toon(0xffffff));
-  const robeMat = mat(toon(CARDINAL, { side: THREE.DoubleSide }));
-  const hoodMat = mat(toon(0xfff1d6));
+  gownGeo.computeVertexNormals();
+  const beanMat = mat(toon(0xffffff, { flatShading: false }));
+  const robeMat = mat(toon(CARDINAL, { side: THREE.DoubleSide, flatShading: false }));
   const outlineMat = mat(toon(0x2a1e3a, { side: THREE.BackSide }));
   const boardMat = mat(toon(0x1d1d26));
   const goldMat = mat(toon(0xffd23f));
-  const faceTint = new THREE.Color(0xfff4e6);
   const parts = {
     bean: new THREE.InstancedMesh(beanGeo, beanMat, MAX_PLAYERS),
     gown: new THREE.InstancedMesh(gownGeo, robeMat, MAX_PLAYERS),
-    hood: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 8 : 12, touch ? 5 : 8)), hoodMat, MAX_PLAYERS),
     beanOutline: new THREE.InstancedMesh(beanGeo, outlineMat, MAX_PLAYERS),
     gownOutline: new THREE.InstancedMesh(gownGeo, outlineMat, MAX_PLAYERS),
-    face: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 9 : 14, touch ? 6 : 10)), mat(toon(0xffffff)), MAX_PLAYERS),
+    face: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 9 : 14, touch ? 6 : 10)), mat(toon(0xfff4e6)), MAX_PLAYERS),
     board: new THREE.InstancedMesh(keepG(new THREE.BoxGeometry(0.64, 0.06, 0.64)), boardMat, MAX_PLAYERS),
     button: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(0.055, touch ? 6 : 9, touch ? 4 : 6)), goldMat, MAX_PLAYERS),
     skull: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 8 : 12, touch ? 5 : 8)), boardMat, MAX_PLAYERS),
@@ -1239,6 +1255,7 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     foot: new THREE.InstancedMesh(keepG(new THREE.CapsuleGeometry(0.11, 0.18, 2, touch ? 7 : 10)), mat(toon(0x242536)), MAX_PLAYERS * 2),
     eye: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 8 : 12, touch ? 6 : 9)), mat(new THREE.MeshBasicMaterial({ color: 0xffffff })), MAX_PLAYERS * 2),
     pupil: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 6 : 9, touch ? 5 : 7)), mat(new THREE.MeshBasicMaterial({ color: 0x1b1b22 })), MAX_PLAYERS * 2),
+    highlight: new THREE.InstancedMesh(keepG(new THREE.SphereGeometry(1, touch ? 6 : 8, touch ? 4 : 6)), mat(new THREE.MeshBasicMaterial({ color: 0xffffff })), MAX_PLAYERS * 2),
     smile: new THREE.InstancedMesh(keepG(new THREE.TorusGeometry(0.085, 0.016, 4, touch ? 9 : 14, Math.PI)), mat(new THREE.MeshBasicMaterial({ color: 0x542c36 })), MAX_PLAYERS),
     shadow: new THREE.InstancedMesh(keepG(new THREE.CircleGeometry(0.72, touch ? 12 : 18)), mat(new THREE.MeshBasicMaterial({ color: 0xffffff, map: shadowTex, transparent: true, opacity: 1, depthWrite: false })), MAX_PLAYERS),
   };
@@ -1257,7 +1274,6 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       tmpC.setHex(l.color);
       parts.bean.setColorAt(i, tmpC);
       parts.tassel.setColorAt(i, tmpC);
-      parts.face.setColorAt(i, tmpC2.copy(tmpC).lerp(faceTint, 0.55));
       parts.arm.setColorAt(i * 2, tmpC);
       parts.arm.setColorAt(i * 2 + 1, tmpC);
       parts.hand.setColorAt(i * 2, tmpC);
@@ -1271,7 +1287,6 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
     }
     if (parts.bean.instanceColor) parts.bean.instanceColor.needsUpdate = true;
     if (parts.tassel.instanceColor) parts.tassel.instanceColor.needsUpdate = true;
-    if (parts.face.instanceColor) parts.face.instanceColor.needsUpdate = true;
     if (parts.arm.instanceColor) parts.arm.instanceColor.needsUpdate = true;
     if (parts.hand.instanceColor) parts.hand.instanceColor.needsUpdate = true;
     if (parts.foot.instanceColor) parts.foot.instanceColor.needsUpdate = true;
@@ -1284,16 +1299,17 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
   const L = {
     bean: local(0, 0.9, 0, 1.13, 1.04, 1.13),
     gown: local(0, 0.14, 0, 1.08, 1.08, 1.08),
-    hood: local(0, 1.13, -0.4, 0.26, 0.3, 0.09),
-    face: local(0, 1.12, 0.43, 0.31, 0.43, 0.09),
+    face: local(0, 1.12, 0.48, 0.34, 0.39, 0.05),
     board: local(0, 1.65, 0, 1, 1, 1, 0, -0.08),
     button: local(0, 1.69, 0, 1, 1, 1),
     skull: local(0, 1.52, 0, 0.29, 0.12, 0.29, 0, -0.08),
-    eyeL: local(-0.13, 1.15, 0.5, 0.02, 0.025, 0.014),
-    eyeR: local(0.13, 1.15, 0.5, 0.02, 0.025, 0.014),
-    pupL: local(-0.13, 1.15, 0.485, 0.055, 0.075, 0.03),
-    pupR: local(0.13, 1.15, 0.485, 0.055, 0.075, 0.03),
-    smile: local(0, 1.03, 0.515, 0.82, 0.8, 0.8, 0, 0, Math.PI),
+    eyeL: local(-0.13, 1.15, 0.515, 0.075, 0.095, 0.025),
+    eyeR: local(0.13, 1.15, 0.515, 0.075, 0.095, 0.025),
+    pupL: local(-0.13, 1.15, 0.54, 0.055, 0.075, 0.025),
+    pupR: local(0.13, 1.15, 0.54, 0.055, 0.075, 0.025),
+    hiL: local(-0.15, 1.18, 0.564, 0.018, 0.024, 0.01),
+    hiR: local(0.11, 1.18, 0.564, 0.018, 0.024, 0.01),
+    smile: local(0, 1.03, 0.55, 0.82, 0.8, 0.8, 0, 0, Math.PI),
   };
   let clock = 0;
   function placePlayers(course: Course, bodies: readonly (BodyView | null)[], dt: number) {
@@ -1326,10 +1342,9 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       bodyM.multiply(setMtx(scratchMtx, 0, a.lift, 0, 1, 1, 1, 0, a.pitch, a.roll + Math.sin(a.spin) * 0.6))
         .multiply(setMtx(scratchMtx, 0, 0, 0, sxz, sy, sxz));
       parts.bean.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.bean));
-      parts.beanOutline.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.bean).multiply(setMtx(scratchMtx, 0, 0, 0, 1.04, 1.04, 1.04)));
+      parts.beanOutline.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.bean).multiply(setMtx(scratchMtx, 0, 0, 0, 1.025, 1.025, 1.025)));
       parts.gown.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.gown));
-      parts.gownOutline.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.gown).multiply(setMtx(scratchMtx, 0, 0, 0, 1.04, 1.04, 1.04)));
-      parts.hood.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.hood));
+      parts.gownOutline.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.gown).multiply(setMtx(scratchMtx, 0, 0, 0, 1.025, 1.025, 1.025)));
       parts.face.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.face));
       parts.board.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.board));
       parts.button.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.button));
@@ -1353,12 +1368,13 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       parts.eye.setMatrixAt(n * 2 + 1, partM.multiplyMatrices(bodyM, L.eyeR).multiply(setMtx(scratchMtx, 0, 0, 0, 1, blink, 1)));
       parts.pupil.setMatrixAt(n * 2, partM.multiplyMatrices(bodyM, L.pupL).multiply(setMtx(scratchMtx, 0, 0, 0, 1, blink, 1)));
       parts.pupil.setMatrixAt(n * 2 + 1, partM.multiplyMatrices(bodyM, L.pupR).multiply(setMtx(scratchMtx, 0, 0, 0, 1, blink, 1)));
+      parts.highlight.setMatrixAt(n * 2, partM.multiplyMatrices(bodyM, L.hiL));
+      parts.highlight.setMatrixAt(n * 2 + 1, partM.multiplyMatrices(bodyM, L.hiR));
       parts.smile.setMatrixAt(n, partM.multiplyMatrices(bodyM, L.smile));
       if (parts.bean.instanceColor) {
         tmpC.setHex(looks[i].color);
         parts.bean.setColorAt(n, tmpC);
         parts.tassel.setColorAt(n, tmpC);
-        parts.face.setColorAt(n, tmpC2.copy(tmpC).lerp(faceTint, 0.55));
         parts.arm.setColorAt(n * 2, tmpC);
         parts.arm.setColorAt(n * 2 + 1, tmpC);
         parts.hand.setColorAt(n * 2, tmpC);
@@ -1375,12 +1391,11 @@ function build(THREE: Three, host: HTMLElement, touch: boolean): View | null {
       n++;
     }
     for (const p of Object.values(parts)) {
-      p.count = p === parts.eye || p === parts.pupil || p === parts.arm || p === parts.sleeve || p === parts.hand || p === parts.foot ? n * 2 : n;
+      p.count = p === parts.eye || p === parts.pupil || p === parts.highlight || p === parts.arm || p === parts.sleeve || p === parts.hand || p === parts.foot ? n * 2 : n;
       p.instanceMatrix.needsUpdate = true;
     }
     if (parts.bean.instanceColor) parts.bean.instanceColor.needsUpdate = true;
     if (parts.tassel.instanceColor) parts.tassel.instanceColor.needsUpdate = true;
-    if (parts.face.instanceColor) parts.face.instanceColor.needsUpdate = true;
     if (parts.arm.instanceColor) parts.arm.instanceColor.needsUpdate = true;
     if (parts.hand.instanceColor) parts.hand.instanceColor.needsUpdate = true;
     if (parts.foot.instanceColor) parts.foot.instanceColor.needsUpdate = true;

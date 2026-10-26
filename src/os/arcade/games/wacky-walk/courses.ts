@@ -131,6 +131,7 @@ function makeOval(seed: number): Course {
   }
   add(course, { kind: 'box', hx: 3.2, hy: 0.12, hz: 1.6 }, 'pad', 0, 0.12, 78, { spring: 13 });
   add(course, { kind: 'box', hx: 2.3, hy: 0.35, hz: 2.4 }, 'stone', 0, -0.15, 83, {
+    tint: 0xff4fa3,
     at: (t, out) => setPose(out, Math.sin(t * 0.9) * 2.2, 0.4, 83, t * 0.35),
   });
   course.zones.push({ kind: 'finish', x: 0, y: 1.2, z: 126, hx: 8, hy: 2, hz: 1.5 });
@@ -313,11 +314,6 @@ function makeHoover(seed: number): Course {
   course.spawns = course.spawns.map((_, i) => ({
     x: ((i % 5) - 2) * 1.4, y: 0.15, z: 5.6 + Math.floor(i / 5) * 0.18,
   }));
-  course.decor.push({ kind: 'tower', x: -18, y: 0, z: -25, s: 1.5, yaw: 0 });
-  for (let i = 0; i < 24; i++) {
-    const a = i / 24 * Math.PI * 2;
-    if (i % 3) course.decor.push({ kind: 'arch', x: Math.cos(a) * 24, y: -0.04, z: Math.sin(a) * 24, s: 0.42, yaw: -a });
-  }
   return course;
 }
 
