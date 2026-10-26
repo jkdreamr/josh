@@ -11,7 +11,7 @@ const seeded = (seed: number) => () => {
 test('saved difficulty accepts Impossible, listed after Olympic', () => {
   assert.equal(parseDifficulty(JSON.parse('{"difficulty":"impossible"}').difficulty), 'impossible');
   assert.equal(parseDifficulty('Impossible'), 'normal');
-  assert.deepEqual(Object.keys(CPU_PROFILES).slice(-2), ['olympic', 'impossible']);
+  assert.deepEqual(Object.keys(CPU_PROFILES).slice(-3), ['olympic', 'impossible', 'nirvaan']);
   assert.equal(CPU_PROFILES.impossible.label, 'Impossible');
 });
 
