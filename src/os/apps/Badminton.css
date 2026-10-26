@@ -92,7 +92,7 @@
   padding-right: 6px;
 }
 
-/* six levels: size each segment to its label so the longest ones still fit */
+/* Size each segment to its label so the longest ones still fit. */
 .bd .gseg.bd-seg-fit button {
   flex: 1 1 auto;
   padding-left: 4px;
