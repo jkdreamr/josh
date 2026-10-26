@@ -53,6 +53,14 @@ export function riderSeats(people: readonly number[], bots: readonly number[], m
   return [...new Set([...people, ...bots])].sort((a, b) => a - b).slice(0, max);
 }
 
+/**
+ * Online: the seats riding this match whose player has just left the room. Only people seen in the room count (bots
+ * never leave), each seat once, and never your own or the host's (seat 0): the host leaving ends the round.
+ */
+export function departedSeats(seats: readonly number[], self: number, known: ReadonlyMap<number, string>, announced: ReadonlySet<number>, people: readonly number[], bots: readonly number[]): number[] {
+  return seats.filter((seat) => seat !== 0 && seat !== self && known.has(seat) && !announced.has(seat) && !people.includes(seat) && !bots.includes(seat));
+}
+
 /** Queue a turn. Reversing into your own trail is ignored. */
 export function steer(r: Rider, d: Dir) {
   if (!r.alive || d === opposite(r.dir)) return;

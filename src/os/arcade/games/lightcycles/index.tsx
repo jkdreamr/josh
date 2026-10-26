@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelIndex, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { alive, cell, createArena, fitGrid, frameUnit, riderSeats, roundOver, steer, step, swipeDir, tapDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
+import { alive, cell, createArena, departedSeats, fitGrid, frameUnit, riderSeats, roundOver, steer, step, swipeDir, tapDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
 import { meta } from './meta';
 import './lightcycles.css';
 
@@ -93,6 +93,12 @@ function Cycles() {
   const online = useOnline();
   const { ref, size, ctx } = useCanvas();
   const [banner, setBanner] = useState<{ text: string; sub: string; count?: number; toast?: boolean } | null>(null);
+  /** Online: who just left mid-match, shown apart from the round banners. */
+  const [notice, setNotice] = useState<{ text: string; sub: string; id: number } | null>(null);
+  /** Online: everyone seen in the room by seat, so a rider whose player left still goes by their name. */
+  const known = useRef(new Map<number, string>());
+  /** Online: seats already announced as left in this match. */
+  const gone = useRef(new Set<number>());
   const [playMode] = useSetting(MODE);
   const [rivals] = useSetting(RIVALS);
   const [levelName] = useSetting(LEVEL);
@@ -144,7 +150,7 @@ function Cycles() {
     if (!online) return cfg.current.mode === '2p' ? NAMES[id] : CPU_NAMES[id];
     const seat = match.seats[id];
     if (seat === online.seat) return 'You';
-    return online.players.find((p) => p.seat === seat)?.name ?? online.bots.find((b) => b.seat === seat)?.name ?? NAMES[id];
+    return online.players.find((p) => p.seat === seat)?.name ?? online.bots.find((b) => b.seat === seat)?.name ?? known.current.get(seat) ?? NAMES[id];
   };
   const scoreLine = (match: Match) => match.wins.length === 2 ? match.wins.join(' to ') : match.wins.map((w, i) => `${nameOf(match, i)} ${w}`).join(', ');
   /** Who is in the room, people only: bots are named in the score line. */
@@ -219,6 +225,8 @@ function Cycles() {
       onlineRound: online?.round ?? 0,
     };
     m.current = match;
+    gone.current.clear();
+    setNotice(null);
     startRound(match);
   };
   // A fresh match on mount, and again when setup or the room changes on the Start card. Online, the host sets the
@@ -252,6 +260,25 @@ function Cycles() {
       if (rider) rider.cpu = true;
     }
   }, [online?.isHost, online?.players, online?.round]);
+
+  // Online: say when someone leaves mid-match. Every client spots it from the room, while the round rides on with a
+  // bot in their seat. The host leaving ends the round in the shell, which says so itself.
+  useEffect(() => {
+    if (!online) return;
+    for (const p of online.players) known.current.set(p.seat, p.name);
+    const match = m.current;
+    if (!match || match.onlineRound !== online.round || (shell.status !== 'playing' && shell.status !== 'paused')) return;
+    const left = departedSeats(match.seats, online.seat, known.current, gone.current, online.players.map((p) => p.seat), online.bots.map((b) => b.seat));
+    if (!left.length) return;
+    for (const seat of left) gone.current.add(seat);
+    const names = left.map((seat) => known.current.get(seat) as string);
+    setNotice({ text: `${names.join(' and ')} Left`, sub: left.length > 1 ? 'Bots take over their riders.' : 'A bot takes over their rider.', id: performance.now() });
+  }, [online?.players, online?.round, shell.status]);
+  useEffect(() => {
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [notice]);
 
   const push = (rider: number, d: Dir) => {
     const match = m.current;
@@ -753,6 +780,12 @@ function Cycles() {
           <strong>{banner.text}</strong>
           {banner.count != null && <b key={banner.count}>{banner.count}</b>}
           {banner.sub && <span>{banner.sub}</span>}
+        </div>
+      )}
+      {notice && (
+        <div className="g-lightcycles-banner is-toast is-notice" key={notice.id} style={{ top: top + 8 }} role="status">
+          <strong>{notice.text}</strong>
+          <span>{notice.sub}</span>
         </div>
       )}
     </div>

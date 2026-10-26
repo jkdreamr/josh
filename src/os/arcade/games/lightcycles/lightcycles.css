@@ -60,6 +60,17 @@
     transform: translate(-50%, 6px);
   }
 }
+/* Someone left: at the top of the arena, clear of the round banners and the Fast Forward toast. */
+.g-lightcycles .g-lightcycles-banner.is-notice {
+  bottom: auto;
+  animation-name: g-lightcycles-drop;
+}
+@keyframes g-lightcycles-drop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+}
 .g-lightcycles .g-lightcycles-banner.is-toast strong {
   font-size: calc(13px * var(--g-lightcycles-u, 1));
   font-weight: 600;

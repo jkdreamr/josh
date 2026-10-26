@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alive, createArena, fitGrid, frameUnit, lookahead, reachable, riderSeats, roundOver, steer, step, swipeDir, tapDir, territory, think, type Dir, type Level } from '../src/os/arcade/games/lightcycles/cycles.ts';
+import { alive, createArena, departedSeats, fitGrid, frameUnit, lookahead, reachable, riderSeats, roundOver, steer, step, swipeDir, tapDir, territory, think, type Dir, type Level } from '../src/os/arcade/games/lightcycles/cycles.ts';
 
 test('riders start apart, facing the centre, with their start cells claimed', () => {
   const a = createArena(40, 30, 2, 1);
@@ -196,4 +196,13 @@ test('frame unit undoes a phone or iPad frame scale and rounds up', () => {
   assert.equal(frameUnit(0, 820), 1);
   assert.ok(frameUnit(670.35, 820) * (670.35 / 820) >= 1);
   assert.equal(frameUnit(400, 1000), 2);
+});
+
+test('online: a rider whose player left is announced once, never bots, yourself or the host', () => {
+  const known = new Map([[0, 'Host'], [1, 'Ana'], [2, 'Ben']]);
+  assert.deepEqual(departedSeats([0, 1, 2, 3], 0, known, new Set(), [0, 1, 2], [3]), [], 'everyone still here');
+  assert.deepEqual(departedSeats([0, 1, 2, 3], 0, known, new Set(), [0, 2], [3]), [1]);
+  assert.deepEqual(departedSeats([0, 1, 2, 3], 0, known, new Set([1]), [0, 2], [3]), [], 'already announced');
+  assert.deepEqual(departedSeats([0, 1, 2, 3], 0, known, new Set(), [0], []), [1, 2], 'bots never seen as people are not announced');
+  assert.deepEqual(departedSeats([0, 1, 2], 2, known, new Set(), [2], []), [1], 'a guest sees others leave, not the host');
 });
