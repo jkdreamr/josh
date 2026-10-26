@@ -1011,6 +1011,9 @@ function girder(THREE: Three) {
   );
 }
 
+/** The most pixels the low quality tier draws a frame at (a phone at twice its size fits; an iPad draws a little under). */
+const LOW_PIXELS = 1.7e6;
+
 export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null {
   const gl = createGL(THREE, host, { alpha: true });
   if (!gl) return null;
@@ -3333,11 +3336,16 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     }
   }
   atmos?.shade(scene);
+  let reflTick = 0;
   const view: View = {
     gl,
     camera,
     resize(w, h) {
       if (w <= 0 || h <= 0) return;
+      // (a phone or iPad draws at most LOW_PIXELS: an iPad's retina screen at full resolution is three times a phone's,
+      // for little you can see at speed)
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      gl.renderer.setPixelRatio(quality === 'low' ? Math.max(1, Math.min(dpr, Math.sqrt(LOW_PIXELS / (w * h)))) : dpr);
       gl.renderer.setSize(w, h, false);
       camera.aspect = w / h;
       fovBase = camera.aspect < 0.8 ? 84 : camera.aspect < 1.2 ? 74 : 66;
@@ -4348,8 +4356,9 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     },
     render() {
       if (gl.lost()) return;
-      // (on the water, what it mirrors first)
-      river?.reflect(gl.renderer, scene, camera);
+      // (on the water, what it mirrors first: on a phone every other frame, which the ripples hide, as the mirror holds
+      // a second pass of everything on the banks)
+      if (river && (quality === 'high' || (reflTick++ & 1) === 0)) river.reflect(gl.renderer, scene, camera);
       gl.renderer.render(scene, camera);
     },
     dispose() {
