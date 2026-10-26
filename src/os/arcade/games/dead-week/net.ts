@@ -7,7 +7,8 @@ export type Packet =
   | ({ k: 'R' } & ResultPacket)
   | { k: 'P'; n: number; pass: boolean }
   | { k: 'V'; n: number; c: Curse }
-  | { k: 'T'; n: number; done: [number, 0 | 1][]; votes: [number, number, number] };
+  | { k: 'T'; n: number; done: [number, 0 | 1][]; votes: [number, number, number] }
+  | { k: 'C'; c: number; h?: number };
 
 const T = 'dw';
 export const gameOf = (g: GamePacket) => ({ t: T, k: 'G', ...g });
@@ -15,6 +16,8 @@ export const resultOf = (r: ResultPacket) => ({ t: T, k: 'R', ...r });
 export const reportOf = (n: number, pass: boolean) => ({ t: T, k: 'P', n, pass });
 export const voteOf = (n: number, c: Curse) => ({ t: T, k: 'V', n, c });
 export const tallyOf = (n: number, done: [number, 0 | 1][], votes: [number, number, number]) => ({ t: T, k: 'T', n, done, votes });
+export const clockProbeOf = (c: number) => ({ t: T, k: 'C', c });
+export const clockReplyOf = (c: number, h: number) => ({ t: T, k: 'C', c, h });
 
 const int = (v: unknown, lo: number, hi: number): v is number => Number.isInteger(v) && (v as number) >= lo && (v as number) <= hi;
 const seat = (v: unknown): v is number => int(v, 0, 31);
@@ -38,7 +41,15 @@ const pairs = (v: unknown): v is [number, 0 | 1][] => Array.isArray(v) && v.leng
 export function parsePacket(value: unknown): Packet | null {
   if (!value || typeof value !== 'object') return null;
   const p = value as Record<string, unknown>;
-  if (p.t !== T || !n(p.n)) return null;
+  if (p.t !== T) return null;
+  if (p.k === 'C') {
+    if (!Number.isFinite(p.c)) return null;
+    if (Object.prototype.hasOwnProperty.call(p, 'h')) {
+      return Number.isFinite(p.h) ? { k: 'C', c: p.c as number, h: p.h as number } : null;
+    }
+    return { k: 'C', c: p.c as number };
+  }
+  if (!n(p.n)) return null;
   if (p.k === 'P') return typeof p.pass === 'boolean' ? { k: 'P', n: p.n, pass: p.pass } : null;
   if (p.k === 'V') return isCurse(p.c) ? { k: 'V', n: p.n, c: p.c } : null;
   if (p.k === 'T') {
@@ -49,8 +60,8 @@ export function parsePacket(value: unknown): Packet | null {
   const st = standingsOf(p.st);
   if (!st || typeof p.sudden !== 'boolean') return null;
   if (p.k === 'G') {
-    if (!int(p.seed, 0, 0xffffffff) || !(p.curse === null || isCurse(p.curse)) || !seats(p.cursed)) return null;
-    return { k: 'G', n: p.n, seed: p.seed, curse: p.curse as Curse | null, cursed: p.cursed, sudden: p.sudden, st };
+    if (!int(p.seed, 0, 0xffffffff) || !Number.isFinite(p.at) || !(p.curse === null || isCurse(p.curse)) || !seats(p.cursed)) return null;
+    return { k: 'G', n: p.n, seed: p.seed, at: p.at as number, curse: p.curse as Curse | null, cursed: p.cursed, sudden: p.sudden, st };
   }
   if (p.k === 'R') {
     if (!pairs(p.res) || typeof p.shared !== 'boolean' || !seats(p.lost) || !seats(p.elim) || typeof p.over !== 'boolean' || !(p.winner === null || seat(p.winner))) return null;

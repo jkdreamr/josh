@@ -80,6 +80,23 @@ export function stepLocal(L: Local, now: number, dt: number, held: Held): Outcom
   return null;
 }
 
+export function advanceLocal(L: Local, from: number, to: number, held: Held, maxStep = 1 / 20): Outcome | null {
+  if (to <= from) return null;
+  const step = Number.isFinite(maxStep) && maxStep > 0 ? maxStep : 1 / 20;
+  let now = to - from > 1.5 ? to - 1.5 : from;
+  if (now > from) {
+    const decided = stepLocal(L, now, 0, held);
+    if (decided) return decided;
+  }
+  while (now < to) {
+    const next = Math.min(to, now + step);
+    const decided = stepLocal(L, next, next - now, held);
+    if (decided) return decided;
+    now = next;
+  }
+  return null;
+}
+
 function decide(L: Local, o: 'pass' | 'fail', now: number) {
   L.outcome = o;
   L.decidedAt = now;
