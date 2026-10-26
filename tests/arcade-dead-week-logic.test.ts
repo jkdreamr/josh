@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BOT_NAMES, botPasses, passChance, skillOf } from '../src/os/arcade/games/dead-week/bots.ts';
 import { GRACE, INTRO, createDirector, playEnd, report, tick, vote } from '../src/os/arcade/games/dead-week/director.ts';
-import { shown, startLocal, stepLocal } from '../src/os/arcade/games/dead-week/frame.ts';
+import { advanceLocal, partAt, shown, startLocal, stepLocal } from '../src/os/arcade/games/dead-week/frame.ts';
 import { Beat, bpmOf, stepVoices } from '../src/os/arcade/games/dead-week/music.ts';
 import { MICRO } from '../src/os/arcade/games/dead-week/micro/index.ts';
 import type { MicroInstance } from '../src/os/arcade/games/dead-week/micro/types.ts';
@@ -147,6 +147,33 @@ test('micro clocks use plan pace while part boundaries remain real-time', () => 
   assert.ok(Math.abs(shown(local, now).t - realT * 1.75) < 1e-12);
   assert.equal(part.from, local.cmd);
   assert.equal(part.to, local.cmd + duration);
+});
+
+test('delayed local advances match 1/60 steps across no-input games', () => {
+  const held = { left: false, right: false, up: false, down: false, action: false };
+  for (const seed of [17, 4312, 98765]) {
+    for (const n of [0, 4, 9, 19]) {
+      const coarse = startLocal(seed, n, 0, null, false, true);
+      const fine = startLocal(seed, n, 0, null, false, true);
+      let coarseAt = 0;
+      let fineAt = 0;
+      while (coarseAt < coarse.end) {
+        const next = Math.min(coarse.end, coarseAt + 0.3);
+        advanceLocal(coarse, coarseAt, next, held);
+        coarseAt = next;
+      }
+      while (fineAt < fine.end) {
+        const next = Math.min(fine.end, fineAt + 1 / 60);
+        stepLocal(fine, next, next - fineAt, held);
+        fineAt = next;
+      }
+      assert.equal(coarse.outcome, fine.outcome, `seed ${seed}, game ${n}`);
+      assert.equal(partAt(coarse, coarse.end)?.index, partAt(fine, fine.end)?.index, `seed ${seed}, game ${n}`);
+      for (let now = 0; now <= coarse.end; now += 0.3) {
+        assert.equal(partAt(coarse, now)?.index, partAt(fine, now)?.index, `seed ${seed}, game ${n}, time ${now}`);
+      }
+    }
+  }
 });
 
 test('all micro-game durations at tier twelve respect their two-and-a-half-second floor', () => {

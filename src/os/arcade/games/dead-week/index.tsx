@@ -8,7 +8,7 @@ import { meta } from './meta';
 import { BOT_NAMES, botPasses, botRevealAt, skillOf } from './bots';
 import { createDirector, report, standings, tick, vote, voteCounts, type Director, type GamePacket, type Out, type ResultPacket, type Standing } from './director';
 import { CARDINAL, DISPLAY, GREEN, INK, PAPER, PINK, YELLOW, BROWN, WHITE, fuse, highlight, paper, rect, text } from './draw';
-import { active, elapsed, mirrorHeld, mirrorKey, partAt, shown, startLocal, stepLocal, type Local } from './frame';
+import { active, advanceLocal, elapsed, mirrorHeld, mirrorKey, partAt, shown, startLocal, stepLocal, type Local } from './frame';
 import type { Held, Key } from './micro/types';
 import { Beat, type BeatVoice } from './music';
 import { gameOf, parsePacket, reportOf, resultOf, tallyOf, voteOf } from './net';
@@ -78,6 +78,7 @@ function Stage() {
 }
 
 type Sim = {
+  t0: number;
   clk: number;
   dir: Director | null;
   endless: boolean;
@@ -124,6 +125,7 @@ function Play({ mode }: { mode: StageMode }) {
   const sim = useRef<Sim | null>(null);
   const layoutScale = useRef({ w: -1, h: -1, u: 1 });
   if (!sim.current) {
+    const t0 = performance.now() / 1000;
     const endless = mode === 'solo' && modeSetting === 'endless';
     const me = isOnline ? online!.seat : 0;
     let dir: Director | null = null;
@@ -141,18 +143,19 @@ function Play({ mode }: { mode: StageMode }) {
         ...online!.players.map((p) => ({ seat: p.seat, name: p.name, bot: false })),
         ...online!.bots.map((b) => ({ seat: b.seat, name: b.name, bot: true })),
       ].sort((a, b) => a.seat - b.seat);
-      dir = createDirector(seed, entries, performance.now() / 1000);
+      dir = createDirector(seed, entries, 0);
     }
     if (dir) st = standings(dir.royale);
     sim.current = {
-      clk: 0, dir, endless, me, st, gp: null, L: null, res: null, resAt: -9, done: new Map(), votes: [0, 0, 0], myVote: null,
+      t0, clk: 0, dir, endless, me, st, gp: null, L: null, res: null, resAt: -9, done: new Map(), votes: [0, 0, 0], myVote: null,
       spillAt: -9, overAt: -1, finished: false, introUntil: 2.2, cursor: { x: 50, y: 60, at: -9 }, held: noKeys(), pointer: null, part: -1,
       arena: { x: 0, y: 0, s: 1 }, beat: new Beat(),
     };
   }
   const s = sim.current;
 
-  const dirNow = () => (isOnline ? performance.now() / 1000 : s.clk);
+  const wallClk = () => performance.now() / 1000 - s.t0;
+  const dirNow = () => (isOnline ? wallClk() : s.clk);
   const mine = () => s.st.find((e) => e.s === s.me);
   const amAlive = () => {
     const e = mine();
@@ -171,6 +174,7 @@ function Play({ mode }: { mode: StageMode }) {
   };
 
   const applyGame = (g: GamePacket) => {
+    if (isOnline) s.clk = wallClk();
     s.gp = g;
     s.st = g.st;
     s.res = null;
@@ -209,6 +213,14 @@ function Play({ mode }: { mode: StageMode }) {
   };
 
   const applyResult = (r: ResultPacket) => {
+    const prev = s.clk;
+    if (isOnline) {
+      s.clk = wallClk();
+      if (s.L) {
+        const flip = s.L.cursedMe && s.L.curse === 'flip';
+        advanceLocal(s.L, prev, s.clk, mirrorHeld(s.held, flip));
+      }
+    }
     s.res = r;
     s.resAt = s.clk;
     s.st = r.st;
@@ -350,7 +362,9 @@ function Play({ mode }: { mode: StageMode }) {
 
   const update = (dt: number) => {
     if (!live || s.finished) return;
-    s.clk += dt;
+    const prev = s.clk;
+    if (isOnline) s.clk = wallClk();
+    else s.clk += dt;
     if (!isOnline) hostTick();
     else if (online?.isHost) hostTick();
     if (s.overAt >= 0 && s.clk >= s.overAt) {
@@ -396,7 +410,9 @@ function Play({ mode }: { mode: StageMode }) {
       }
     }
     s.held = now;
-    const decided = stepLocal(L, s.clk, dt, mirrorHeld(now, flip));
+    const decided = isOnline
+      ? advanceLocal(L, prev, s.clk, mirrorHeld(now, flip))
+      : stepLocal(L, s.clk, dt, mirrorHeld(now, flip));
     if (decided) sendReport(decided === 'pass');
     if (s.endless) shellRef.current.setScore(passedOf(s) + (L.outcome === 'pass' && !s.res ? 1 : 0));
   };
@@ -729,4 +745,3 @@ function drawStamp(c: CanvasRenderingContext2D, x: number, y: number, side: numb
   text(c, pass ? 'passed' : 'failed', 0, 0, h * 0.62, { color, weight: 900 });
   c.restore();
 }
-
