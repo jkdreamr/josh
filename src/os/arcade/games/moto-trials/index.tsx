@@ -45,7 +45,7 @@ function Lock() {
 
 /**
  * A phone or iPad frame is scaled down to fit the screen. Publish 1 / that scale as --g-moto-trials-u on the shell
- * root so touch styles can keep the level buttons finger sized and the text readable on screen.
+ * root so touch styles can keep the buttons (the shell's too) finger sized and the text readable on screen.
  */
 function useFrameScale() {
   const shell = useShell();
@@ -78,7 +78,6 @@ function useFrameScale() {
 function LevelPicker({ value, onChange, all }: { value: string; onChange?: (id: string) => void; all?: boolean }) {
   const prog = loadProgress();
   const rowRef = useRef<HTMLDivElement>(null);
-  useFrameScale();
   useEffect(() => {
     rowRef.current?.querySelector('.is-on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
   }, []);
@@ -173,6 +172,7 @@ const shortestAngle = (d: number) => Math.atan2(Math.sin(d), Math.cos(d));
 function Stage() {
   const shell = useShell();
   const online = useOnline();
+  useFrameScale();
   const [levelId] = useSetting(LEVEL);
   const current = useRef({ key: 'idle', level: levelId });
   // behind the start card, show the picked level; each round remounts fresh
