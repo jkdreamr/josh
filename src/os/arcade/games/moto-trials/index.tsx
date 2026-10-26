@@ -6,6 +6,7 @@ import { LEVEL_IDS, WORLDS, getLevel, worldIndexOf } from './levels.ts';
 import { currentMs, newRun, nextStarMs, starsFor, startRun, stepRun, type Run } from './logic.ts';
 import { newCam, render, type Cam, type Ghost } from './draw.ts';
 import { loadProgress, saveProgress, tourLeft, tourTotal, unlocked } from './progress.ts';
+import { strayCardClick } from './taps.ts';
 import './moto-trials.css';
 
 const LEVEL = defineSetting('moto-trials:level', LEVEL_IDS, 'level-1');
@@ -74,19 +75,70 @@ function useFrameScale() {
   }, [root, touch]);
 }
 
+/** Card buttons ignore a click whose press began elsewhere, such as a finger held on Gas through the finish. */
+function useCardTapGuard() {
+  const { root } = useShell();
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    let pressedOn: EventTarget | null = null;
+    const down = (e: PointerEvent) => {
+      pressedOn = e.target;
+    };
+    const click = (e: MouseEvent) => {
+      const button = (e.target as Element | null)?.closest?.('.arcade-ov button, button.arcade-ov') ?? null;
+      if (!button || !el.contains(button) || !strayCardClick(e as MouseEvent & { pointerType?: string }, button, pressedOn)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener('pointerdown', down, true);
+    el.addEventListener('click', click, true);
+    return () => {
+      window.removeEventListener('pointerdown', down, true);
+      el.removeEventListener('click', click, true);
+    };
+  }, [root]);
+}
+
 /** The level strip: one row of square number buttons, then a line about the pick. */
 function LevelPicker({ value, onChange, all }: { value: string; onChange?: (id: string) => void; all?: boolean }) {
   const prog = loadProgress();
   const rowRef = useRef<HTMLDivElement>(null);
-  // center the pick by scrolling the strip only: scrollIntoView would also scroll the card and hide a result heading
+  // center the pick by scrolling the strip only: scrollIntoView would also scroll the card and hide a result heading.
+  // Wait for layout, and center again while the frame scale settles and resizes the strip or the picks.
   useEffect(() => {
     const row = rowRef.current;
     const on = row?.querySelector<HTMLElement>('.is-on');
     if (!row || !on) return;
-    const rr = row.getBoundingClientRect();
-    const or = on.getBoundingClientRect();
-    const k = row.offsetWidth ? rr.width / row.offsetWidth : 1;
-    row.scrollLeft += (or.left + or.width / 2 - (rr.left + rr.width / 2)) / (k || 1);
+    let raf = 0;
+    let touched = false;
+    const center = () => {
+      const rr = row.getBoundingClientRect();
+      const or = on.getBoundingClientRect();
+      if (!rr.width || !or.width) return;
+      const k = row.offsetWidth ? rr.width / row.offsetWidth : 1;
+      row.scrollLeft += (or.left + or.width / 2 - (rr.left + rr.width / 2)) / (k || 1);
+    };
+    const later = () => {
+      if (touched) return;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(center);
+    };
+    const stop = () => {
+      touched = true;
+    };
+    later();
+    const ro = new ResizeObserver(later);
+    ro.observe(row);
+    ro.observe(on);
+    row.addEventListener('pointerdown', stop);
+    row.addEventListener('wheel', stop, { passive: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      row.removeEventListener('pointerdown', stop);
+      row.removeEventListener('wheel', stop);
+    };
   }, []);
   const [world, setWorld] = useState(() => worldIndexOf(value));
   useEffect(() => setWorld(worldIndexOf(value)), [value]);
@@ -180,6 +232,7 @@ function Stage() {
   const shell = useShell();
   const online = useOnline();
   useFrameScale();
+  useCardTapGuard();
   const [levelId] = useSetting(LEVEL);
   const current = useRef({ key: 'idle', level: levelId });
   // behind the start card, show the picked level; each round remounts fresh
