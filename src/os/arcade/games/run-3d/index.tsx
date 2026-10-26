@@ -132,7 +132,36 @@ function LevelPicker({ value, onChange }: { value: string; onChange: (id: string
 
 function Stage() {
   const online = useOnline();
+  useFrameScale();
   return <Play key={online ? `on-${online.round}` : 'solo'} />;
+}
+
+/** 1 / the phone or iPad frame scale on the shell root, so touch styles keep buttons finger sized on screen. */
+function useFrameScale() {
+  const { root, touch } = useShell();
+  useEffect(() => {
+    const el = root.current;
+    if (!el || !touch) return;
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+        const u = k > 0.2 && k < 0.99 ? Math.min(2, 1 / k) : 1;
+        el.style.setProperty('--g-run-3d-u', u.toFixed(3));
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+      el.style.removeProperty('--g-run-3d-u');
+    };
+  }, [root, touch]);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

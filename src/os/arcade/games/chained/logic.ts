@@ -491,6 +491,9 @@ export function burn(g: Game, s: Soul) {
   s.vx = s.vy = s.vz = 0;
   s.grounded = false;
   s.ground = -1;
+  // the chain lets go of a burned soul: nothing hangs, pulls or glides until the respawn
+  s.taut = s.hanging = false;
+  s.glide = null;
   g.events.push({ t: 'burn', i: s.idx });
   if (g.mode === 'lava') lose(g);
   else if (g.authority) scheduleRespawn(g, g.mode === 'beginner' ? g.cp : 0, g.time + RESPAWN_T, s.team);
@@ -812,10 +815,12 @@ function startGlide(g: Game, s: Soul, p: Platform, x1: number, y1: number, z1: n
  * pushing toward the rim (dx, dz is its input direction). Falling fast, it just falls.
  */
 function mantle(g: Game, s: Soul, dx: number, dz: number): boolean {
-  // a free jumper only mantles near the top of its arc; a soul on the chain mantles however fast it is being hauled
-  if ((s.vy > 1.5 && !s.hanging && !s.taut) || s.vy < -9) return false;
+  // a free jumper only mantles near the top of its arc; a soul on the chain mantles however fast it is being hauled.
+  // hauled means a neighbour at least level with it holds the rope: one yanked off a rim by a partner below is falling
+  const hauled = s.hanging || (s.taut && neighbours(g, s.idx).some((n) => n.burned < 0 && n.y > s.y - 0.5));
+  if ((s.vy > 1.5 && !hauled) || s.vy < -9) return false;
   const pushing = Math.hypot(dx, dz) > 0.3;
-  if (!s.hanging && !s.taut && !pushing) return false;
+  if (!hauled && !pushing) return false;
   const r = Math.hypot(s.x, s.z);
   const ang = Math.atan2(s.z, s.x);
   for (const p of g.level.platforms) {
@@ -828,7 +833,7 @@ function mantle(g: Game, s: Soul, dx: number, dz: number): boolean {
     const inside = r >= p.r0 && r <= p.r1 && Math.abs(angDiff(ang, q.a)) <= p.span;
     if (inside) {
       // under the slab (swung in on the chain): the way up is over the nearest rim
-      if (!s.hanging && !s.taut) continue;
+      if (!hauled) continue;
       const dOut = p.r1 - r;
       const dIn = p.r0 > R_CORE + 0.5 ? r - p.r0 : Infinity;
       const dSide = (p.span - Math.abs(da)) * r;
@@ -840,7 +845,7 @@ function mantle(g: Game, s: Soul, dx: number, dz: number): boolean {
     const ez = Math.sin(q.a + da) * rr;
     const dist = Math.hypot(ex - s.x, ez - s.z);
     if (dist > (inside ? MANTLE_REACH + 0.6 : MANTLE_REACH) || (!inside && dist < 0.02)) continue;
-    if (!s.hanging && !s.taut && (dx * (ex - s.x) + dz * (ez - s.z)) / Math.max(dist, 1e-3) < 0.4) continue;
+    if (!hauled && (dx * (ex - s.x) + dz * (ez - s.z)) / Math.max(dist, 1e-3) < 0.4) continue;
     // up and a step in from the rim
     const mid = (p.r0 + p.r1) / 2;
     const ix = Math.cos(q.a) * mid - ex;
@@ -982,6 +987,10 @@ function solveLinks(g: Game, live: number[], dt: number) {
     s.pulled = false;
   }
   const tautNow = new Set<string>();
+  // how fast each soul may be kicked this substep: how fast the ends of its ropes were parting. A stretch that was
+  // already there (a teleport, a late packet, the rope bending over a rim the moment a partner lands) is closed by
+  // position alone, so taking it up over a few substeps never flings anyone.
+  const budget = new Map<number, number>();
   for (let iter = 0; iter < 2; iter++) {
     for (let k = 0; k + 1 < live.length; k++) {
       const a = g.souls[live[k]];
@@ -1050,10 +1059,22 @@ function solveLinks(g: Game, live: number[], dt: number) {
       const wa = a.kind === 'remote' ? 0 : fullA;
       const wb = b.kind === 'remote' ? 0 : fullB;
       if (wa + wb === 0) continue;
-      // online, each side moves only its own share and trusts the other to move theirs
+      // online, each side moves only its own share and trusts the other to move theirs, and nobody moves more
+      // than CHAIN_STEP in one substep over all its links and iterations
       const total = Math.max(1e-6, fullA + fullB);
-      const sa = Math.min(CHAIN_STEP, (stretch * wa) / total);
-      const sb = Math.min(CHAIN_STEP, (stretch * wb) / total);
+      const sa = Math.min(Math.max(0, CHAIN_STEP - Math.hypot(a.cx, a.cy, a.cz)), (stretch * wa) / total);
+      const sb = Math.min(Math.max(0, CHAIN_STEP - Math.hypot(b.cx, b.cy, b.cz)), (stretch * wb) / total);
+      if (iter === 0) {
+        // the ends part by their speeds and by whatever the chain has already moved them this substep, counting
+        // only as much of that as was itself driven by speed, so a catch-up never passes down the chain as one
+        const movedA = Math.max(-(budget.get(a.idx) ?? 0) * dt, a.cx * ax + a.cy * ay + a.cz * az);
+        const movedB = Math.max(-(budget.get(b.idx) ?? 0) * dt, b.cx * bx + b.cy * by + b.cz * bz);
+        const part = parting - (movedA + movedB) / dt;
+        if (part > 0) {
+          budget.set(a.idx, (budget.get(a.idx) ?? 0) + part);
+          budget.set(b.idx, (budget.get(b.idx) ?? 0) + part);
+        }
+      }
       // the ledge takes the vertical part of a pull on a standing soul
       if (sa > 0) {
         const ky = a.grounded ? 0 : 1;
@@ -1106,7 +1127,7 @@ function solveLinks(g: Game, live: number[], dt: number) {
     if (s.kind !== 'local') continue;
     const c = Math.hypot(s.cx, s.cy, s.cz);
     if (c === 0) continue;
-    const k = Math.min(s.grounded ? YANK_K : 1, (CHAIN_KICK * dt) / c);
+    const k = Math.min(s.grounded ? YANK_K : 1, (Math.min(CHAIN_KICK, budget.get(s.idx) ?? 0) * dt) / c);
     s.vx += (s.cx / dt) * k;
     s.vz += (s.cz / dt) * k;
     if (!s.grounded) s.vy += (s.cy / dt) * k;
@@ -1165,17 +1186,31 @@ function solveLinks(g: Game, live: number[], dt: number) {
     let tx = n.x;
     let tz = n.z;
     if (rimPoint(g, p, n, rim)) {
-      tx = rim.x;
-      tz = rim.z;
+      // the slide aims a little past the rim, out from the middle of the ledge, so it ends with a step off
+      const q = pose(p, g.time, scratch);
+      const mid = (p.r0 + p.r1) / 2;
+      const ox = rim.x - Math.cos(q.a) * mid;
+      const oz = rim.z - Math.sin(q.a) * mid;
+      const ol = Math.hypot(ox, oz) || 1;
+      tx = rim.x + (ox / ol) * (EDGE_TOL + 0.3);
+      tz = rim.z + (oz / ol) * (EDGE_TOL + 0.3);
     }
     const dx = tx - s.x;
     const dz = tz - s.z;
     const dl = Math.hypot(dx, dz);
     if (dl < 1e-3) continue;
-    const slide = Math.min(dl + 0.3, OVERLOAD * dt);
+    const slide = Math.min(dl, OVERLOAD * dt);
     s.x += (dx / dl) * slide;
     s.z += (dz / dl) * slide;
     s.pulled = true;
+    // over the edge it keeps the slide's speed, so it clears the rim instead of landing back on it every substep
+    if (!over(p, pose(p, g.time, scratch).a, s.x, s.z)) {
+      const v = (s.vx * dx + s.vz * dz) / dl;
+      if (v < OVERLOAD) {
+        s.vx += ((OVERLOAD - v) * dx) / dl;
+        s.vz += ((OVERLOAD - v) * dz) / dl;
+      }
+    }
   }
 
   // souls standing on one ledge keep a little room between them, never at the cost of stepping off it

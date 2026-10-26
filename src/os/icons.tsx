@@ -58,23 +58,24 @@ function Chrome() {
   );
 }
 
+// The two Finder faces share one profile line: the light face on the right looks left, its nose jutting into the blue.
 function Finder() {
   return (
     <svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true">
       <defs>
         <linearGradient id="fl" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#6fd3ff" />
-          <stop offset="1" stopColor="#1a7bf2" />
+          <stop offset="0" stopColor="#5cc4ff" />
+          <stop offset="1" stopColor="#1572ea" />
         </linearGradient>
         <linearGradient id="fr" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#f4f8fc" />
-          <stop offset="1" stopColor="#cfdcec" />
+          <stop offset="0" stopColor="#f6f9fc" />
+          <stop offset="1" stopColor="#d3dde9" />
         </linearGradient>
       </defs>
       <rect width="64" height="64" fill="url(#fr)" />
-      <path d="M0 0h36c-4 10-6 20-6 32 0 12 2 22 6 32H0z" fill="url(#fl)" />
-      <path d="M20 20v6M44 20v6" stroke="#10213a" strokeWidth="3.4" strokeLinecap="round" />
-      <path d="M16 42c9 7 23 7 32 0" stroke="#10213a" strokeWidth="3.4" fill="none" strokeLinecap="round" />
+      <path d="M0 0h35.5c-1.5 10-3 19-4 27.5l-4 9.6c-.5 1.4.3 2.2 1.6 2.1l3.4-.2c.7 8 1.9 16.4 3.5 25H0z" fill="url(#fl)" />
+      <path d="M19.5 19v8M44.5 19v8" stroke="#0f2340" strokeWidth="3.4" strokeLinecap="round" />
+      <path d="M15.5 44c9.5 6.6 23.5 6.6 33 0" stroke="#0f2340" strokeWidth="3.2" fill="none" strokeLinecap="round" />
     </svg>
   );
 }
@@ -167,10 +168,18 @@ export function Glyph({ kind }: { kind: IconKind }): ReactNode {
         </svg>
       );
     case 'terminal':
+      // a black screen set in a grey frame, with the prompt at its top left
       return (
-        <svg viewBox="0 0 48 48" width="62%" height="62%" aria-hidden="true">
-          <path d="M8 14l10 9-10 9" stroke="#e6e6e6" strokeWidth="3.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-          <rect x="22" y="31" width="16" height="3.6" rx="1.8" fill="#e6e6e6" />
+        <svg viewBox="0 0 48 48" width="100%" height="100%" aria-hidden="true">
+          <defs>
+            <linearGradient id="tm" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#232326" />
+              <stop offset="1" stopColor="#0b0b0c" />
+            </linearGradient>
+          </defs>
+          <rect x="4.5" y="5.5" width="39" height="37" rx="4.5" fill="url(#tm)" stroke="rgba(0,0,0,.45)" strokeWidth=".6" />
+          <path d="M10 13.5l5.5 4.5-5.5 4.5" stroke="#f2f2f2" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          <rect x="18" y="20.6" width="8.5" height="2.4" rx="1.2" fill="#f2f2f2" />
         </svg>
       );
     case 'arcade':
@@ -233,13 +242,30 @@ export function Glyph({ kind }: { kind: IconKind }): ReactNode {
         </svg>
       );
     case 'trash':
+      // the translucent ribbed can, seen a little from above so the open top shows
       return (
         <svg viewBox="0 0 48 56" width="70%" height="70%" aria-hidden="true">
-          <path d="M6 12h36l-3 40a3 3 0 0 1-3 3H12a3 3 0 0 1-3-3z" fill="rgba(255,255,255,.75)" stroke="rgba(255,255,255,.95)" />
-          {[15, 22, 29, 36].map((x) => (
-            <path key={x} d={`M${x - 0.5} 18v30`} stroke="rgba(120,130,150,.55)" strokeWidth="1.6" />
+          <defs>
+            <linearGradient id="tb" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stopColor="#fff" stopOpacity=".62" />
+              <stop offset=".45" stopColor="#fff" stopOpacity=".9" />
+              <stop offset="1" stopColor="#e6e9ee" stopOpacity=".7" />
+            </linearGradient>
+          </defs>
+          <path d="M5 9.5l4.6 41.2a3.4 3.4 0 0 0 3.4 3h22a3.4 3.4 0 0 0 3.4-3L43 9.5z" fill="url(#tb)" stroke="rgba(255,255,255,.95)" strokeWidth=".8" />
+          {[
+            [12.5, 15],
+            [18.3, 19.5],
+            [24, 24],
+            [29.7, 28.5],
+            [35.5, 33],
+          ].map(([x0, x1]) => (
+            <g key={x0}>
+              <path d={`M${x0} 15.5L${x1} 49`} stroke="rgba(112,122,140,.5)" strokeWidth="1.5" strokeLinecap="round" />
+              <path d={`M${x0 + 1.1} 15.5L${x1 + 0.9} 49`} stroke="rgba(255,255,255,.75)" strokeWidth=".7" strokeLinecap="round" />
+            </g>
           ))}
-          <rect x="3" y="6" width="42" height="7" rx="3" fill="rgba(255,255,255,.9)" />
+          <ellipse cx="24" cy="9.5" rx="19" ry="4.4" fill="rgba(98,106,120,.55)" stroke="rgba(255,255,255,.95)" strokeWidth="1.6" />
         </svg>
       );
     case 'about':
@@ -266,7 +292,7 @@ const tiles: Partial<Record<IconKind, CSSProperties>> = {
   github: tile('linear-gradient(180deg,#30363d,#0d1117)'),
   coffee: tile('#FFDD00'),
   mail: tile('linear-gradient(180deg,#5ab8ff,#1d6ff2)'),
-  terminal: tile('linear-gradient(180deg,#3a3a3c,#121214)', { boxShadow: 'inset 0 0 0 1.5px rgba(255,255,255,.18)' }),
+  terminal: tile('linear-gradient(180deg,#8b8d92,#56585d)', { boxShadow: 'inset 0 0 0 .5px rgba(255,255,255,.35)' }),
   arcade: tile('linear-gradient(180deg,#9271ff,#5b34e0)'),
   coxbox: tile('linear-gradient(180deg,#d63b45,#8c1515)'),
   baduk: tile('linear-gradient(145deg,#cfaa70,#8f6338)'),

@@ -5,24 +5,27 @@ import { TOP, ZONES, buildLevel, zoneIndex } from './level';
 import { COUNTDOWN, FALL_TOO_FAR, LAVA_DELAY, MODES, MODE_INFO, RANKED_MODES, RESPAWN_T, applyRemote, createGame, doRespawn, fmtTime, liveOf, lose, scheduleRespawn, seatSouls, step, teamHeight, win, type Ev, type Game, type Input, type Mode, type Seating, type Soul, type SoulSpec } from './logic';
 import { JINGLE_BEACON, JINGLE_BURN, JINGLE_OUT, Sequencer, hz, type Note } from './music';
 import { configOf, endOf, events, guestState, hostState, parsePacket, reportOf, syncClock, type NetEv, type SoulReport } from './net';
-import { SHADE_INFO, SHADE_LEVELS, SHADE_NAMES, attachShades, createShade, driveShade, type ShadeLevel } from './shade';
+import { PARTNER_NAME, SHADE_INFO, SHADE_LEVELS, SHADE_NAMES, attachShades, createPartner, createShade, drivePartner, driveShade, type ShadeLevel } from './shade';
 import { buildView, type View } from './scene';
 import { Altimeter, HowToPlay, TeamStrip, ZoneCard, type SoulChip } from './hud';
 import { meta } from './meta';
 import './chained.css';
 
 const MODE = defineSetting('chained:mode', MODES, 'normal');
-const PARTIES = ['solo', 'local'] as const;
-const PARTY = defineSetting('chained:party', PARTIES, 'solo');
+const PARTIES = ['partner', 'solo', 'local'] as const;
+const PARTY = defineSetting('chained:party', PARTIES, 'partner');
 const MUSIC = defineSetting('chained:music', ['on', 'off'] as const, 'on', { live: true });
 const SHADES = defineSetting('chained:shades', SHADE_LEVELS, 'even');
 const modeOptions = MODES.map((m) => [m, MODE_INFO[m].label] as const);
 const shadeOptions = SHADE_LEVELS.map((l) => [l, SHADE_INFO[l].label] as const);
 type RankedMode = (typeof RANKED_MODES)[number];
 const partyOptions = [
-  ['solo', 'One Player'],
+  ['partner', 'Partner'],
+  ['solo', 'Solo'],
   ['local', 'Two Players'],
 ] as const;
+/** On touch there is no second keyboard, so no two player option. */
+const touchPartyOptions = partyOptions.filter(([k]) => k !== 'local');
 const musicOptions = [
   ['on', 'On'],
   ['off', 'Off'],
@@ -126,12 +129,13 @@ function Setup() {
   const [shades, setShades] = useSetting(SHADES);
   const bests = useBests();
   const team = party === 'local' && !shell.touch;
-  const best = isRanked(mode) ? bests[boardOf(team, mode)].best : null;
+  const best = isRanked(mode) && party !== 'partner' ? bests[boardOf(team, mode)].best : null;
   const rows = (
     <>
       <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
       {mode !== 'race' && <small className="g-chained-note">{MODE_INFO[mode].blurb}</small>}
-      {!shell.touch && <Segmented label="Souls" value={party} options={partyOptions} onChange={setParty} />}
+      <Segmented label="Souls" value={party} options={shell.touch ? touchPartyOptions : partyOptions} onChange={setParty} />
+      {party === 'partner' && mode !== 'race' && <small className="g-chained-note">{PARTNER_NAME} climbs behind you, hauls when you hang, and keeps out of your way. Partnered climbs keep no board.</small>}
       {mode === 'race' && (
         <>
           <Segmented label="Shades" value={shades} options={shadeOptions} onChange={setShades} />
@@ -381,6 +385,7 @@ function Play({ kind }: { kind: Kind }) {
   musicRef.current = music;
   /** Two people on this keyboard (or, online, more than one soul on the chain): the lava gives a lone climber more time. */
   const team = live || (party === 'local' && !shell.touch);
+  const partner = !live && party === 'partner';
   const bests = useBests();
   const { ref, size } = useCanvas<HTMLDivElement>();
   const sizeRef = useRef(size);
@@ -392,8 +397,14 @@ function Play({ kind }: { kind: Kind }) {
     if (!live) {
       // a climb is two souls on one chain; a race seats two souls per team, the shades on the other chain
       const souls = mode === 'race' ? localSouls(seatSouls(team ? [0, 1] : [0], mode), team, shades) : [0, 1].map((i) => ({ seat: i, name: (team ? LOCAL_NAMES : SOLO_NAMES)[i], color: TEAM_COLORS[0][i], kind: 'local' as const }));
+      // with a partner, the game climbs your second soul: a shade that follows you rather than leads
+      if (partner) souls[1] = { ...souls[1], name: PARTNER_NAME, driver: 'shade' as const };
       game.current = createGame({ mode, souls, level: LEVEL, countdown: mode === 'race' ? RACE_COUNTDOWN : COUNTDOWN, solo: !team });
       attachShades(game.current, shades, 7 + shell.round);
+      if (partner) {
+        const p = createPartner(game.current, 1, 0, 11 + shell.round);
+        game.current.drivers.push((g, dt) => drivePartner(g, p, dt));
+      }
     } else {
       const roster = [...online!.players].map((p) => p.seat).sort((a, b) => a - b);
       game.current = createGame({ mode, souls: onlineSouls(online!, seatSouls(roster, mode), shades), level: LEVEL, authority: online!.isHost, countdown: online!.isHost ? (mode === 'race' ? RACE_COUNTDOWN : COUNTDOWN) + HOST_LEAD : 60 });
@@ -588,16 +599,16 @@ function Play({ kind }: { kind: Kind }) {
       if (live && onlineRef.current) onlineRef.current.reportResult(onlineRef.current.round, winner >= 0 ? winnerSeat(g, winner) : null);
       return;
     }
-    if (won && isRanked(g.mode)) {
-      const newBest = bests[boardOf(team, g.mode)].submit(ms);
+    if (won) {
+      const ranked = isRanked(g.mode) && !partner;
+      const newBest = ranked ? bests[boardOf(team, g.mode)].submit(ms) : false;
       playJingle(JINGLE_OUT);
       lastOver.big = fmtTime(time);
       lastOver.sub = newBest ? 'a new best' : 'from the pit to the stars';
       showCard({
         title: 'You Climbed Out',
-        detail: team ? 'Nobody let go.' : 'Both souls made it.',
-        board: boardOf(team, g.mode),
-        rank: ms,
+        detail: team ? 'Nobody let go.' : partner ? `${PARTNER_NAME} kept up.` : 'Both souls made it.',
+        ...(ranked ? { board: boardOf(team, g.mode), rank: ms } : {}),
       });
     } else {
       const z = ZONES[zoneIndex(height)];

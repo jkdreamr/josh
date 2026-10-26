@@ -200,7 +200,8 @@ function studio() {
   const walls = new THREE.Mesh(new THREE.BoxGeometry(70, 34, 70), new THREE.MeshBasicMaterial({ color: new THREE.Color('#9a9b9e').multiplyScalar(0.62), side: THREE.BackSide }));
   walls.position.y = 15;
   s.add(walls);
-  const floor = lit(70, 70, 0.55, '#a9aaad', false);
+  // a sweep that is brightest under the laptop and dims away from it, so down-facing metal shades from light to dark
+  const floor = lit(70, 70, 0.95, '#a9aaad');
   floor.rotation.x = -Math.PI / 2;
   floor.position.y = -1.9;
   const top = lit(26, 16, 4.2);
@@ -440,52 +441,21 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   grain.wrapS = grain.wrapT = THREE.RepeatWrapping;
   grain.repeat.set(0.45, 0.45);
   const alu = keep(
-    new THREE.MeshPhysicalMaterial({ color: '#cfd0d3', metalness: 1, roughness: 0.4, roughnessMap: grain, specularIntensity: 1, envMapIntensity: 1 }),
+    new THREE.MeshPhysicalMaterial({ color: '#cfd0d3', metalness: 1, roughness: 0.4, roughnessMap: grain, specularIntensity: 1 }),
   );
   const black = keep(new THREE.MeshStandardMaterial({ color: '#060608', roughness: 0.8, emissive: '#e4e9ff', emissiveIntensity: 0 }));
   // PBT-ish caps: matte, with the faint sheen worn into them by fingertips
   const keyMat = keep(new THREE.MeshPhysicalMaterial({ color: '#0b0b0d', roughness: 0.5, metalness: 0, sheen: 0.25, sheenRoughness: 0.6, sheenColor: '#3a3a44' }));
-  // Lit glass picks up the studio environment and reads as silver; the real bezel is a deep black.
-  const glass = keep(new THREE.MeshPhysicalMaterial({ color: '#010102', roughness: 0.06, metalness: 0, envMapIntensity: 0.55 }));
-  const panel = keep(new THREE.MeshStandardMaterial({ color: '#000000', roughness: 0.18, metalness: 0, envMapIntensity: 0.05 }));
+  // One sheet of cover glass over the bezel and the panel. Turned down so it stays a deep black and only the bright
+  // softboxes register in it, the way a real bezel photographs. three.js applies `envMapIntensity` only to a material's
+  // own `envMap` (with `scene.environment` it uses `scene.environmentIntensity`), so these carry the map explicitly.
+  const glass = keep(new THREE.MeshPhysicalMaterial({ color: '#010102', roughness: 0.05, metalness: 0, envMap: envTex, envMapIntensity: 0.18 }));
+  const panel = keep(new THREE.MeshPhysicalMaterial({ color: '#030304', roughness: 0.05, metalness: 0, envMap: envTex, envMapIntensity: 0.18 }));
   const hingeMat = keep(new THREE.MeshPhysicalMaterial({ color: '#1d1e22', metalness: 0.85, roughness: 0.32, clearcoat: 0.3, clearcoatRoughness: 0.4 }));
   // etched glass over a silver backing: reads like the body, but smoother and a touch cooler
   const padMat = keep(
-    new THREE.MeshPhysicalMaterial({ color: '#b9bbc0', metalness: 0.75, roughness: 0.3, clearcoat: 0.6, clearcoatRoughness: 0.22, envMapIntensity: 0.9 }),
+    new THREE.MeshPhysicalMaterial({ color: '#c3c5c9', metalness: 0.85, roughness: 0.3, clearcoat: 0.5, clearcoatRoughness: 0.22 }),
   );
-  {
-    // a day's worth of fingertips: oily smudges and swipe arcs only show where they catch a highlight
-    const c = document.createElement('canvas');
-    c.width = 512;
-    c.height = 300;
-    const g = c.getContext('2d')!;
-    g.fillStyle = 'rgb(0,74,0)';
-    g.fillRect(0, 0, 512, 300);
-    const r = rng(31);
-    g.filter = 'blur(9px)';
-    for (let i = 0; i < 22; i++) {
-      g.fillStyle = `rgba(0,${92 + r() * 18},0,${0.2 + r() * 0.25})`;
-      g.beginPath();
-      g.ellipse(80 + r() * 352, 50 + r() * 200, 10 + r() * 16, 13 + r() * 18, r() * Math.PI, 0, Math.PI * 2);
-      g.fill();
-    }
-    g.filter = 'blur(5px)';
-    g.lineCap = 'round';
-    for (let i = 0; i < 9; i++) {
-      g.strokeStyle = `rgba(0,100,0,${0.12 + r() * 0.12})`;
-      g.lineWidth = 8 + r() * 10;
-      g.beginPath();
-      const x = 120 + r() * 270, y = 70 + r() * 160;
-      g.arc(x, y, 60 + r() * 120, r() * Math.PI * 2, r() * Math.PI * 2 + 0.6 + r() * 0.8);
-      g.stroke();
-    }
-    const t = keep(canvasTex(c, aniso, false));
-    t.repeat.set(1 / TPW, 1 / TPD);
-    t.offset.set(0.5, 0.5);
-    padMat.roughness = 1;
-    padMat.roughnessMap = t;
-    padMat.clearcoatRoughnessMap = t;
-  }
   const portMat = keep(new THREE.MeshStandardMaterial({ color: '#030304', roughness: 0.9 }));
   const portInner = keep(new THREE.MeshStandardMaterial({ color: '#16171a', roughness: 0.5, metalness: 0.6 }));
   const rubber = keep(new THREE.MeshStandardMaterial({ color: '#1a1a1c', roughness: 0.92 }));
@@ -577,6 +547,8 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   const keyMeshes = new Map<string, THREE.Mesh>();
   const keyDown = keep(keyMat.clone());
   keyDown.color.set('#15151a');
+  // Touch ID sits under a sapphire crystal: a touch glossier than the surrounding caps, but still reading black
+  const touchMat = keep(new THREE.MeshPhysicalMaterial({ color: '#08080a', roughness: 0.3, metalness: 0, envMap: envTex, envMapIntensity: 0.45 }));
   const legendTex = keep(canvasTex(drawLegends(keys, PX), aniso));
   const legendMat = keep(
     new THREE.MeshStandardMaterial({ map: legendTex, emissiveMap: legendTex, emissive: '#dfe6ff', emissiveIntensity: 0, transparent: true, roughness: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }),
@@ -585,9 +557,11 @@ export function createLaptop(o: LaptopOptions): LaptopController {
     const id = `${k.w.toFixed(3)}x${k.d.toFixed(3)}`;
     let geo = keyGeos.get(id);
     if (!geo) keyGeos.set(id, (geo = keep(new RoundedBoxGeometry(k.w, 0.12, k.d, 3, 0.06))));
-    const m = new THREE.Mesh(geo, keyMat);
+    const rest = k.k === 'touch' ? touchMat : keyMat;
+    const m = new THREE.Mesh(geo, rest);
     m.position.set(-KW / 2 + k.x, KEY_Y, KZ0 + k.z);
     m.userData.key = k;
+    m.userData.rest = rest;
     // each key carries its own slice of the legend sheet so the print travels with the cap
     const lg = keep(new THREE.PlaneGeometry(k.w, k.d));
     const u0 = (k.x - k.w / 2) / KW, u1 = (k.x + k.w / 2) / KW;
@@ -673,6 +647,32 @@ export function createLaptop(o: LaptopOptions): LaptopController {
     port(1, back + 14.2, 2.45, 0.13, 0.06).children[1].visible = false;
   }
 
+  // exhaust slots along the back of the case, under the hinge
+  {
+    const VW = LW - 4.6;
+    const VH = 0.2;
+    const S = 60;
+    const c = document.createElement('canvas');
+    c.width = Math.round(VW * S);
+    c.height = Math.round(VH * S);
+    const g = c.getContext('2d')!;
+    g.fillStyle = '#fff';
+    const pitch = 0.22 * S;
+    const sw = 0.1 * S;
+    for (let x = (c.width % pitch) / 2; x + sw <= c.width; x += pitch) {
+      g.beginPath();
+      g.roundRect(x, 0, sw, c.height, sw / 2);
+      g.fill();
+    }
+    const vents = new THREE.Mesh(
+      keep(new THREE.PlaneGeometry(VW, VH)),
+      keep(new THREE.MeshStandardMaterial({ color: '#050506', roughness: 0.9, alphaMap: keep(canvasTex(c, aniso, false)), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 })),
+    );
+    vents.rotation.y = Math.PI;
+    vents.position.set(0, FOOT + bev + 0.2, -BD / 2 - 0.002);
+    root.add(vents);
+  }
+
   // rubber feet
   {
     const footGeo = keep(new THREE.CylinderGeometry(0.62, 0.66, FOOT + 0.04, 28));
@@ -756,7 +756,7 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   const anchor = new THREE.Object3D();
   anchor.position.set(0, DCY, 0.012);
   lid.add(anchor);
-  const screenLight = new THREE.RectAreaLight('#e8eeff', 0, DW, DH);
+  const screenLight = new THREE.RectAreaLight('#f0f3ff', 0, DW, DH);
   screenLight.rotation.y = Math.PI;
   anchor.add(screenLight);
 
@@ -800,7 +800,7 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   const lift = new Map<THREE.Mesh, { cur: number; to: number; y: number; shadow: THREE.Mesh }>();
   const peel = keep(canvasTex(peelNormals(256, 2.4), aniso, false));
   peel.wrapS = peel.wrapT = THREE.RepeatWrapping;
-  // laminated vinyl: satin print under a thin glossy overlaminate with a faint orange-peel ripple
+  // laminated vinyl: satin print under a thin satin overlaminate with a faint orange-peel ripple
   const stickerMat = (tex: THREE.Texture, w: number) => {
     const t = peel.clone();
     t.repeat.set(w / 2.2, w / 2.2);
@@ -812,11 +812,10 @@ export function createLaptop(o: LaptopOptions): LaptopController {
         transparent: true,
         alphaTest: 0.02,
         roughness: 0.55,
-        clearcoat: 0.65,
-        clearcoatRoughness: 0.2,
+        clearcoat: 0.4,
+        clearcoatRoughness: 0.28,
         clearcoatNormalMap: t,
         clearcoatNormalScale: new THREE.Vector2(0.35, 0.35),
-        envMapIntensity: 0.9,
         polygonOffset: true,
         polygonOffsetFactor: -4,
       }),
@@ -1090,11 +1089,11 @@ export function createLaptop(o: LaptopOptions): LaptopController {
       if (Math.abs(s.cur - to) > 0.004) {
         s.cur += (to - s.cur) * (to > s.cur ? 0.6 : 0.28);
         m.position.y = KEY_Y - s.cur * KEY_TRAVEL;
-        m.material = s.cur > 0.3 ? keyDown : keyMat;
+        m.material = s.cur > 0.3 ? keyDown : (m.userData.rest as THREE.Material);
         dirty = true;
       } else if (to === 0 && s.to === 0) {
         m.position.y = KEY_Y;
-        m.material = keyMat;
+        m.material = m.userData.rest as THREE.Material;
         press.delete(code);
         dirty = true;
       }
