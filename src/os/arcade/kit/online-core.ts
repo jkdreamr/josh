@@ -75,30 +75,63 @@ export function canStartNext(next: { ready: boolean; waiting: boolean; racing: b
   return next.ready && !next.waiting && (!next.racing || force);
 }
 
+/**
+ * The room after a host hand-off: whoever sat in `from` is the host now (seat 0) and the old host is gone. Moves
+ * seat-keyed race state to the new numbering, so a finished player's score stays theirs.
+ */
+export function handOffSeat(seat: number, from: number) {
+  return seat === from ? 0 : seat === 0 ? from : seat;
+}
+export function handOffScores<T>(scores: Record<number, T>, from: number): Record<number, T> {
+  return Object.fromEntries(Object.entries(scores).map(([seat, value]) => [handOffSeat(Number(seat), from), value]));
+}
+
 /** Final scores of a score race by seat. null means the player finished without a score. */
 export type RaceScores = Record<number, number | null>;
 export type RaceStanding = { seat: number; score: number | null; place: number | null };
 
 /**
  * Standings of a score race among the seats still in the room. The best score places first;
- * players without a score place last. `done` once every seat has finished, and `winner` is the
- * single best seat (null for a tie or when nobody scored).
+ * players without a score place last, and tied seats keep the order of `seats`. `done` once every seat has finished,
+ * and `winner` is the single best seat (null for a tie or when nobody scored). `minSeats` is how many seats a finished
+ * race needs; 1 lets the last racer still here settle a race that the others left before finishing.
  */
-export function raceStandings(scores: RaceScores, seats: number[], lowerIsBetter = false): { done: boolean; winner: number | null; standings: RaceStanding[] } {
+export function raceStandings(scores: RaceScores, seats: number[], lowerIsBetter = false, minSeats = 2): { done: boolean; winner: number | null; standings: RaceStanding[] } {
   const finished = seats.filter((seat) => Object.hasOwn(scores, seat));
   const better = (a: number, b: number) => (lowerIsBetter ? a - b : b - a);
   const ranked = finished
     .map((seat) => ({ seat, score: scores[seat] }))
-    .sort((a, b) => (a.score === null ? 1 : 0) - (b.score === null ? 1 : 0) || (a.score !== null && b.score !== null ? better(a.score, b.score) : 0) || a.seat - b.seat);
+    .sort((a, b) => (a.score === null ? 1 : 0) - (b.score === null ? 1 : 0) || (a.score !== null && b.score !== null ? better(a.score, b.score) : 0) || seats.indexOf(a.seat) - seats.indexOf(b.seat));
   const standings: RaceStanding[] = ranked.map(({ seat, score }) => ({
     seat,
     score,
     place: score === null ? null : 1 + ranked.filter((other) => other.score !== null && better(other.score, score) < 0).length,
   }));
   for (const seat of seats) if (!Object.hasOwn(scores, seat)) standings.push({ seat, score: null, place: null });
-  const done = seats.length >= 2 && finished.length === seats.length;
+  const done = seats.length >= Math.max(1, minSeats) && finished.length === seats.length;
   const leaders = standings.filter((entry) => entry.place === 1);
   return { done, winner: done && leaders.length === 1 ? leaders[0].seat : null, standings };
+}
+
+/** A race once everyone in it has finished: its seats and their names, so leaving afterwards keeps the result. */
+export type SettledRace = { round: number; seats: number[]; names: Record<number, string> };
+
+/** A settled race in the room's numbering after a host hand-off (see handOffSeat): everyone keeps their own result. */
+export function handOffSettled(settled: SettledRace, from: number): SettledRace {
+  return { round: settled.round, seats: settled.seats.map((seat) => handOffSeat(seat, from)), names: handOffScores(settled.names, from) };
+}
+
+/** The seats this round's race is between: the settled lineup once it is decided, else the people still here. */
+export function raceSeats(present: number[], settled: SettledRace | null, round: number) {
+  return settled && settled.round === round ? settled.seats : present;
+}
+
+/** The line under a race's standings, as seen from seat `mine`. `alone`: everyone else left before finishing. */
+export function raceVerdict(race: { done: boolean; winner: number | null }, alone: boolean, mine: number | null, name: (seat: number) => string | undefined) {
+  if (!race.done) return 'Waiting For Everyone to Finish';
+  if (alone) return 'Everyone Else Left Before Finishing';
+  if (race.winner === null) return 'A Tie';
+  return race.winner === mine ? 'You Win the Race' : `${name(race.winner) ?? 'Someone'} Wins the Race`;
 }
 
 /** Parses a race packet from the room. Guests send their own score; the host sends everyone's. */
