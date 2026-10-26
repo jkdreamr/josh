@@ -54,6 +54,11 @@ export type GameShellProps = {
    */
   quickSetup?: ReactNode;
   quickPool?: string;
+  /**
+   * Online: the game copes with people leaving itself (it hands their seat to a bot between rounds), so the shell
+   * doesn't end a round when nobody is left to play against, as with quick play.
+   */
+  handlesLeavers?: boolean;
   className?: string;
   style?: CSSProperties;
 };
@@ -104,7 +109,7 @@ const isTouchDevice = () =>
  * (pause, restart, mute, back to arcade), live score, key capture and auto-pause.
  * Put the game's logic in a child component and read the shell with useShell().
  */
-export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, botNames, defaultBots = 0, quickNote, soloLabel = 'Play Offline', quickSetup, quickPool, roomCode, className, style }: GameShellProps) {
+export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, botNames, defaultBots = 0, quickNote, soloLabel = 'Play Offline', quickSetup, quickPool, handlesLeavers = false, roomCode, className, style }: GameShellProps) {
   const host = useContext(ArcadeHost);
   const invite = useContext(ArcadeInvite);
   const joinCode = roomCode ?? invite;
@@ -163,6 +168,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [quick, setQuick] = useState(false);
   const quickRef = useRef(false);
   quickRef.current = quick;
+  const handlesLeaversRef = useRef(handlesLeavers);
+  handlesLeaversRef.current = handlesLeavers;
   /** The quick-play pool of the room we're in ('' for none). */
   const [pool, setPool] = useState('');
   const [gatherAt, setGatherAt] = useState<number | null>(null);
@@ -469,8 +476,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlinePlayers(players);
       // Bots keep playing a round that someone leaves; it ends only when nobody is left to play against. Everyone stays
       // in the room, so someone else can join and the host can start the next round.
-      // (quick play's game fills every empty place with bots of its own)
-      if (!onlineModeRef.current || statusRef.current !== 'playing' || quickRef.current) return;
+      // (quick play's game, or one with handlesLeavers, fills every empty place with bots of its own)
+      if (!onlineModeRef.current || statusRef.current !== 'playing' || quickRef.current || handlesLeaversRef.current) return;
       const left = players.filter((player) => roundSeatsRef.current.includes(player.seat)).length;
       if (left + roundBotsRef.current.length >= 2) return;
       if (link.watching) gameOver(undefined, { title: 'Round Over', detail: 'A Player Left, So Nobody Is Left to Play This Round.' });
