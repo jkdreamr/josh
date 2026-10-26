@@ -6863,6 +6863,70 @@ test('a computer egg on a person\'s team keeps out of the basements while they s
   assert.ok(evs.some((e) => e.t === 'stairs' && e.f === bot.id && e.down), 'down after us');
 });
 
+test('online: a guest walks down a stairway and opens a chest below; the host sees it there with its scope, settles the chest, and sees it come back up', () => {
+  const { h, g, hs, gs, hMe, gMe, toHost, toGuest } = pair(false);
+  const mine = g.fighters[1];
+  const s = g.map.stairs.find((st) => st.b < 0) ?? g.map.stairs[0];
+  assert.ok(s, 'stairs on this island');
+  const run0 = s.dx ? s.hw : s.hd;
+  // its state goes to the host on every tick, as it would over the room
+  let clock = 0;
+  const report = () => {
+    clock += 0.05;
+    for (const p of tick(gs, g, gMe, [0, 1], clock)) receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(p.d)), () => h, clock);
+    step(h, DT);
+    h.events.length = 0;
+  };
+  mine.scopes = 3;
+  mine.scope = 1;
+  land(mine, s.x - s.dx * (run0 + 1), s.z - s.dz * (run0 + 1));
+  mine.input.mx = s.dx;
+  mine.input.mz = s.dz;
+  for (let t = 0; t < 3 && !isDeep(mine.x); t += DT) {
+    step(g, DT);
+    g.events.length = 0;
+    report();
+  }
+  assert.ok(isDeep(mine.x), 'down on its own screen');
+  mine.input.mx = 0;
+  mine.input.mz = 0;
+  mine.input.scope = 12;
+  for (let k = 0; k < 20; k++) {
+    step(g, DT);
+    g.events.length = 0;
+    report();
+  }
+  const there = h.fighters[1];
+  assert.equal(basementAt(h.map, there.x, there.z), s.u, 'and below on the host');
+  assert.equal(there.scope, 2);
+  assert.equal(there.scopes, 3);
+  // a chest (or whatever opens) down there: the guest asks, the host opens it, both see it open
+  const u = h.map.buildings[s.u];
+  const c = h.map.containers.find((c) => c.kind !== 'crate' && Math.abs(c.x - u.x) < u.w / 2 && Math.abs(c.z - u.z) < u.d / 2)!;
+  assert.ok(c);
+  const fx = c.x + (c.ax ? c.face * 1.1 : 0);
+  const fz = c.z + (c.ax ? 0 : c.face * 1.1);
+  land(mine, fx, fz);
+  for (let k = 0; k < 30; k++) report();
+  mine.input.interact = true;
+  step(g, DT);
+  toHost(clock);
+  toGuest(clock);
+  assert.ok(h.opened[c.id] && g.opened[c.id], 'opened on both');
+  assert.ok([...g.loot.values()].some((l) => isDeep(l.x) && Math.hypot(l.x - c.x, l.z - c.z) < 4), 'its loot spilled below');
+  // and back up the stairs
+  land(mine, s.x + DEEP + s.dx * (run0 + 1), s.z + s.dz * (run0 + 1));
+  mine.input.mx = -s.dx;
+  mine.input.mz = -s.dz;
+  for (let t = 0; t < 3 && isDeep(mine.x); t += DT) {
+    step(g, DT);
+    g.events.length = 0;
+    report();
+  }
+  for (let k = 0; k < 10; k++) report();
+  assert.ok(!isDeep(h.fighters[1].x) && Math.hypot(h.fighters[1].x - s.x, h.fighters[1].z - s.z) < 6, 'up top again on the host');
+});
+
 test('loot that ends up down a stairway lands off the end you walk onto it from, on its level', () => {
   const { seed, i } = stairsFrom('hatch');
   const m = quiet(seed);
