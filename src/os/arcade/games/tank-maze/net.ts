@@ -3,6 +3,8 @@
 // Rooms are a star around the host (seat 0). The host simulates everything and guests send inputs:
 //   round  host -> all,   reliable   a new round: seed, size, seats, bots, scores, spawns, target
 //   s      host -> all,   fast       snapshot ~25 Hz: tanks, shells, pickups, mines, beams, scores, events
+//   roster host -> all,   reliable   every ~2 s and when someone joins or leaves: the round's maze, seats, bots, departed
+//                                    seats, names and scores, so a spectator who arrives mid-round sees what the host sees
 //   end    host -> all,   reliable   the match is over: winner seat (or null), champ seat (null only on a draw), scores, rounds
 //   in     guest -> host, fast       this guest's input, with a monotonic fireCount so dropped packets
 //                                    don't drop shots (the host fires once per increment)
@@ -52,11 +54,29 @@ export type StatePacket = {
   events: NetEvent[];
 };
 
-export type EndPacket = { k: 'end'; roomRound: number; winner: number | null; champ: number | null; scores: number[]; rounds: number; names?: string[] };
+/** The host's whole match roster, by tank slot. A spectator who joined mid-round never saw this round's round packet. */
+export type RosterPacket = {
+  k: 'roster';
+  roomRound: number;
+  round: number;
+  seed: number;
+  cols: number;
+  rows: number;
+  target: number;
+  level: number;
+  seats: number[];
+  bots: number[];
+  departed: number[];
+  names: string[];
+  scores: number[];
+};
+
+/** `seats`/`bots` (by tank slot) let a guest that never got a round packet still match names and scores to tanks. */
+export type EndPacket = { k: 'end'; roomRound: number; winner: number | null; champ: number | null; scores: number[]; rounds: number; names?: string[]; seats?: number[]; bots?: number[] };
 /** `dir` is the player's screen heading (see TankInput), sent as milliradians in `d`. */
 export type InputPacket = { k: 'in'; roomRound: number; turn: -1 | 0 | 1; move: -1 | 0 | 1; fireCount: number; dir?: number; aim?: number };
 
-export type Packet = RoundPacket | StatePacket | EndPacket | InputPacket;
+export type Packet = RoundPacket | RosterPacket | StatePacket | EndPacket | InputPacket;
 
 const q = (n: number) => Math.round(n * 100);
 const NAME_MAX = 48;
@@ -100,7 +120,35 @@ export const statePacket = (p: Omit<StatePacket, 'k'>) => ({
   ev: p.events.map((e) => (e.pts ? [e.id, e.k, e.a, e.b, q(e.x), q(e.y), e.pts.map(q)] : [e.id, e.k, e.a, e.b, q(e.x), q(e.y)])),
 });
 
-export const endPacket = (p: EndPacket) => ({ game: 'tank-maze', type: 'end', room: p.roomRound, winner: p.winner, champ: p.champ, scores: p.scores, rounds: p.rounds, ...(p.names ? { names: p.names.map((n) => n.slice(0, NAME_MAX)) } : {}) });
+export const rosterPacket = (p: Omit<RosterPacket, 'k'>) => ({
+  game: 'tank-maze',
+  type: 'roster',
+  room: p.roomRound,
+  round: p.round,
+  seed: p.seed >>> 0,
+  cols: p.cols,
+  rows: p.rows,
+  target: p.target,
+  level: p.level,
+  seats: p.seats,
+  bots: p.bots,
+  departed: p.departed,
+  names: p.names.map((n) => n.slice(0, NAME_MAX)),
+  scores: p.scores,
+});
+
+export const endPacket = (p: EndPacket) => ({
+  game: 'tank-maze',
+  type: 'end',
+  room: p.roomRound,
+  winner: p.winner,
+  champ: p.champ,
+  scores: p.scores,
+  rounds: p.rounds,
+  ...(p.names ? { names: p.names.map((n) => n.slice(0, NAME_MAX)) } : {}),
+  ...(p.seats ? { seats: p.seats } : {}),
+  ...(p.bots ? { bots: p.bots } : {}),
+});
 export const inputPacket = (p: InputPacket) => ({
   game: 'tank-maze',
   type: 'in',
@@ -160,6 +208,21 @@ export function parsePacket(value: unknown): Packet | null {
       const names = nameList(p.names, seats.length);
       return { k: 'round', roomRound, round: p.round as number, seed: p.seed as number, cols, rows, seats, bots, scores, target, level: p.level as number, spawns, ...(names ? { names } : {}) };
     }
+    case 'roster': {
+      if (!int(p.round) || !int(p.seed) || !int(p.cols) || !int(p.rows) || !int(p.target) || !int(p.level)) return null;
+      const cols = p.cols as number;
+      const rows = p.rows as number;
+      const target = p.target as number;
+      if (cols < 3 || cols > 24 || rows < 3 || rows > 24 || target < 1 || target > 50 || p.level < 0 || p.level > 2) return null;
+      const seats = seatList(p.seats);
+      const bots = seatList(p.bots);
+      const departed = seatList(p.departed);
+      if (!seats || !bots || !departed || seats.length < 1 || !seats.includes(0)) return null;
+      const names = nameList(p.names, seats.length);
+      const scores = scoreList(p.scores, seats.length);
+      if (!names || !scores) return null;
+      return { k: 'roster', roomRound, round: p.round as number, seed: p.seed as number, cols, rows, target, level: p.level as number, seats, bots, departed, names, scores };
+    }
     case 's': {
       if (!int(p.tick) || !int(p.pt) || !Array.isArray(p.tanks) || !Array.isArray(p.shells) || !Array.isArray(p.scores)) return null;
       const phase = (PHASES as readonly string[]).includes(p.phase as string) ? (p.phase as StatePacket['phase']) : null;
@@ -215,7 +278,10 @@ export function parsePacket(value: unknown): Packet | null {
       const champ = (p.champ ?? null) as number | null;
       const scores = (p.scores as number[]).slice(0, 4);
       const names = nameList(p.names, scores.length);
-      return { k: 'end', roomRound, winner: p.winner as number | null, champ, scores, rounds: p.rounds as number, ...(names ? { names } : {}) };
+      const seats = seatList(p.seats);
+      const bots = seatList(p.bots);
+      const roster = seats && seats.length === scores.length ? { seats, ...(bots ? { bots } : {}) } : {};
+      return { k: 'end', roomRound, winner: p.winner as number | null, champ, scores, rounds: p.rounds as number, ...(names ? { names } : {}), ...roster };
     }
     case 'in': {
       if (!int(p.turn) || !int(p.move) || !int(p.fc)) return null;
@@ -249,4 +315,16 @@ export function seatNames(seats: readonly number[], players: readonly { seat: nu
     used.add(fresh);
     return fresh;
   });
+}
+
+/**
+ * A tank's label on any client, given the host's name for it (`base`): a bot's seat and a name the host already tagged
+ * stay as they are; a person who has gone since reads as left, and a seat a bot took over while someone sits in it
+ * again reads as a bot. `live` is the name of the player in that seat now, if any.
+ */
+export function tankName(base: string, seat: number, roster: { bots: readonly number[]; departed: ReadonlySet<number> }, live: string | undefined): string {
+  if (/\s\((Left|Bot)\)$/.test(base) || roster.bots.includes(seat)) return base;
+  if (live === undefined) return `${base} (Left)`;
+  if (roster.departed.has(seat)) return live === base ? `${base} (Bot)` : `${base} (Left)`;
+  return base;
 }

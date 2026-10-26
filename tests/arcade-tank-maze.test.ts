@@ -33,7 +33,7 @@ import {
   type Maze,
 } from '../src/os/arcade/games/tank-maze/logic.ts';
 import { makeMemory, STANDOFF, think } from '../src/os/arcade/games/tank-maze/bots.ts';
-import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket } from '../src/os/arcade/games/tank-maze/net.ts';
+import { endPacket, inputPacket, parsePacket, rosterPacket, roundPacket, seatNames, statePacket, tankName } from '../src/os/arcade/games/tank-maze/net.ts';
 import { clipName, finalLine, freeSpans, layoutChips, listNames, packChipRows, packChips, rosterLine, type Span } from '../src/os/arcade/games/tank-maze/hud.ts';
 
 const fire: TankInput = { turn: 0, move: 0, fire: true };
@@ -723,6 +723,78 @@ test('seatNames gives a bot that takes over a departed seat a fresh number', () 
   const two = seatNames([0, 1, 2, 3], [{ seat: 0, name: 'Bot 3' }], [{ seat: 3, name: 'Bot 1' }]);
   assert.deepEqual(two, ['Bot 3', 'Bot 2', 'Bot 4', 'Bot 1']);
   assert.deepEqual(seatNames([0, 1], [{ seat: 0, name: 'A' }, { seat: 1, name: 'B' }], []), ['A', 'B']);
+});
+
+// Host, a guest who left mid-match (their tank now driven by a bot) and two room bots; First To 3, seven rounds in.
+const hostRoster = {
+  roomRound: 4,
+  round: 7,
+  seed: 123456789,
+  cols: 10,
+  rows: 6,
+  target: 3,
+  level: 1,
+  seats: [0, 1, 2, 3],
+  bots: [2, 3],
+  departed: [1],
+  names: ['Host-R3', 'Guest-R3 (Left)', 'Bot 1', 'Bot 2'],
+  scores: [1, 1, 3, 0],
+};
+
+/** What a client's Game Over line says, given its roster, the room's live players, and which seat is "You". */
+const overLine = (r: { seats: number[]; bots: number[]; departed: number[]; names: string[] }, scores: number[], players: { seat: number; name: string }[], me: number, rounds: number) =>
+  finalLine(
+    r.seats.map((seat, i) => (seat === me ? 'You' : tankName(r.names[i], seat, { bots: r.bots, departed: new Set(r.departed) }, players.find((p) => p.seat === seat)?.name))),
+    scores,
+    rounds,
+  );
+
+test('roster packets round trip and carry the whole match roster', () => {
+  const r = parsePacket(JSON.parse(JSON.stringify(rosterPacket(hostRoster))));
+  assert.ok(r && r.k === 'roster');
+  assert.deepEqual(r, { k: 'roster', ...hostRoster });
+  // names and scores must cover every seat; bad seat lists are rejected
+  const raw = JSON.parse(JSON.stringify(rosterPacket(hostRoster)));
+  assert.equal(parsePacket({ ...raw, names: ['A', 'B'] }), null);
+  assert.equal(parsePacket({ ...raw, scores: [1, 2, 3] }), null);
+  assert.equal(parsePacket({ ...raw, departed: [9] }), null);
+  assert.equal(parsePacket({ ...raw, seats: [1, 2] }), null);
+  assert.equal(parsePacket({ ...raw, cols: 99 }), null);
+});
+
+test('a spectator who joined mid-round maps every name to the same score as the host', () => {
+  // the room after the guest left: only the host is a player, and the room renumbered its bots
+  const players = [{ seat: 0, name: 'Host-R3' }];
+  const host = overLine(hostRoster, hostRoster.scores, players, 0, 7);
+  assert.equal(host, 'Bot 1 3, You 1, Guest-R3 (Left) 1 and Bot 2 0 after 7 rounds.');
+  // a fresh phone watcher (seat -1) knows nothing but what the host sent it
+  const r = parsePacket(JSON.parse(JSON.stringify(rosterPacket(hostRoster))));
+  assert.ok(r && r.k === 'roster');
+  const watcher = overLine(r, r.scores, players, -1, 7);
+  assert.equal(watcher, 'Bot 1 3, Host-R3 1, Guest-R3 (Left) 1 and Bot 2 0 after 7 rounds.');
+  // bots never read as left, and no score is dropped
+  assert.ok(!/Bot \d \(Left\)/.test(watcher));
+  assert.ok(watcher.includes('Bot 2 0'));
+  // the Game Over packet carries the same seats, so a watcher that missed the roster still matches the champ seat
+  const e = parsePacket(JSON.parse(JSON.stringify(endPacket({ k: 'end', roomRound: 4, winner: null, champ: 2, scores: hostRoster.scores, rounds: 7, names: hostRoster.names, seats: hostRoster.seats, bots: hostRoster.bots }))));
+  assert.ok(e && e.k === 'end' && e.seats && e.bots && e.names);
+  assert.equal(e.names[e.seats.indexOf(e.champ!)], 'Bot 1');
+  assert.equal(overLine({ seats: e.seats, bots: e.bots, departed: [], names: e.names }, e.scores, players, -1, e.rounds), watcher);
+  // an older host's end packet without seats still parses
+  const old = parsePacket({ game: 'tank-maze', type: 'end', room: 4, winner: null, champ: 2, scores: [1, 1, 3, 0], rounds: 7 });
+  assert.ok(old && old.k === 'end' && old.seats === undefined);
+});
+
+test('tankName tags people who have gone, never bots', () => {
+  const roster = { bots: [2, 3], departed: new Set([1]) };
+  assert.equal(tankName('Bot 1', 2, roster, undefined), 'Bot 1');
+  assert.equal(tankName('Guest (Left)', 1, roster, undefined), 'Guest (Left)');
+  assert.equal(tankName('Host', 0, roster, 'Host'), 'Host');
+  // someone who left after the last roster
+  assert.equal(tankName('Host', 0, roster, undefined), 'Host (Left)');
+  // the departed seat's player is back in the room while a bot still drives the tank
+  assert.equal(tankName('Guest', 1, roster, 'Guest'), 'Guest (Bot)');
+  assert.equal(tankName('Guest', 1, roster, 'Someone Else'), 'Guest (Left)');
 });
 
 test('malformed packets are rejected', () => {

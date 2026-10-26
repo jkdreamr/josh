@@ -3,7 +3,7 @@ import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOpti
 import type { GameProps } from '../../types';
 import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, hudRow, keyHeading, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
-import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket, type NetEvent, type RoundPacket } from './net.ts';
+import { endPacket, inputPacket, parsePacket, rosterPacket, roundPacket, seatNames, statePacket, tankName, type NetEvent, type RosterPacket, type RoundPacket } from './net.ts';
 import { finalLine, freeSpans, layoutChips, rosterLine, type ChipLayout, type Span } from './hud.ts';
 import { meta } from './meta';
 import './tank-maze.css';
@@ -107,6 +107,10 @@ type Match = {
   lastNetAt: number;
   /** Local match built before the canvas had a real size; rebuild round 1 once it does. */
   fixDims: boolean;
+  /** Guest side: the world, seats and names come from the host (a round or roster packet), not the placeholder. */
+  synced: boolean;
+  /** Host side: when the roster last went out (late spectators build their view from it). */
+  lastRosterAt: number;
 };
 
 const STEP = 1 / 60;
@@ -186,6 +190,7 @@ function TankMaze() {
   const nameOf = (match: Match, id: number) => {
     if (!online) return NAMES[id];
     const seat = match.seats[id];
+    if (seat === undefined) return match.names[id] ?? NAMES[id] ?? `Tank ${id + 1}`;
     const live = online.players.find((pl) => pl.seat === seat);
     const base = match.names[id];
     if (base === undefined) {
@@ -194,11 +199,7 @@ function TankMaze() {
       const name = seatNames(match.seats, online.players, online.bots)[id] ?? `Seat ${seat}`;
       return match.departed.has(seat) && live ? `${name} (Bot)` : name;
     }
-    // already tagged by the host, or a bot's seat
-    if (/\s\((Left|Bot)\)$/.test(base) || match.bots.includes(seat)) return base;
-    if (!live) return `${base} (Left)`;
-    if (match.departed.has(seat)) return live.name === base ? `${base} (Bot)` : `${base} (Left)`;
-    return base;
+    return tankName(base, seat, match, live?.name);
   };
 
   const applyEvents = (match: Match, events: NetEvent[]) => {
@@ -263,6 +264,8 @@ function TankMaze() {
       prevPhase: 'ready',
       lastNetAt: 0,
       fixDims: false,
+      synced: false,
+      lastRosterAt: -1e9,
     };
     return match;
   };
@@ -290,6 +293,28 @@ function TankMaze() {
         level: match.level,
         spawns: match.world.tanks.map((t) => ({ x: t.x, y: t.y, a: t.a })),
         names: match.seats.map((_, i) => nameOf(match, i)),
+      }),
+    );
+  };
+
+  const hostSendRoster = (match: Match) => {
+    if (!online || online.seat !== 0) return;
+    match.lastRosterAt = performance.now();
+    const w = match.world;
+    online.send(
+      rosterPacket({
+        roomRound: online.round,
+        round: w.round,
+        seed: w.seed,
+        cols: w.maze.cols,
+        rows: w.maze.rows,
+        target: w.target,
+        level: match.level,
+        seats: match.seats,
+        bots: match.bots,
+        departed: [...match.departed].filter((s) => match.seats.includes(s)),
+        names: match.seats.map((_, i) => nameOf(match, i)),
+        scores: w.scores,
       }),
     );
   };
@@ -522,6 +547,10 @@ function TankMaze() {
           applyRoundPacket(match, pkt);
           return;
         }
+        if (pkt.k === 'roster') {
+          applyRoster(match, pkt);
+          return;
+        }
         if (pkt.k === 's') {
           match.lastStateAt = performance.now();
           const snap: Snapshot = {
@@ -554,6 +583,10 @@ function TankMaze() {
         if (pkt.k === 'end' && !match.reported) {
           match.reported = true;
           match.ended = true;
+          if (pkt.seats) {
+            match.seats = pkt.seats;
+            if (pkt.bots) match.bots = pkt.bots;
+          }
           if (pkt.names) match.names = pkt.names;
           online.reportResult(online.round, pkt.winner);
           // champ is the seat whose tank actually won the match (bots and departed seats count);
@@ -595,16 +628,41 @@ function TankMaze() {
     match.guestMines = [];
     match.guestPickups = [];
     match.onlineRound = pkt.roomRound;
+    match.synced = true;
     startBanner(match);
+  };
+
+  /** A spectator who joined mid-round builds this round's maze and the host's roster from it; everyone else just refreshes names. */
+  const applyRoster = (match: Match, pkt: RosterPacket) => {
+    if (match.ended) return;
+    const w = match.world;
+    const same = match.synced && match.onlineRound === pkt.roomRound && w.round === pkt.round && w.seed === pkt.seed && w.maze.cols === pkt.cols && w.maze.rows === pkt.rows && w.tanks.length === pkt.seats.length;
+    if (!same) {
+      const world = createWorld({ cols: pkt.cols, rows: pkt.rows, seed: pkt.seed, count: pkt.seats.length, target: pkt.target });
+      world.round = pkt.round;
+      world.scores = pkt.scores.slice();
+      match.world = world;
+      match.guestScores = pkt.scores.slice();
+      match.particles = [];
+      match.level = pkt.level as 0 | 1 | 2;
+      match.onlineRound = pkt.roomRound;
+      match.synced = true;
+    }
+    match.seats = pkt.seats;
+    match.bots = pkt.bots;
+    match.departed = new Set(pkt.departed);
+    match.names = pkt.names;
   };
 
   /** Labeled final score, plus (online) who is in the room. */
   const overDetail = (match: Match, scores: number[], rounds: number) => {
-    const ids = match.world.tanks.map((t) => t.id);
     if (!online) {
+      const ids = match.world.tanks.map((t) => t.id);
       const cpu = cfg.current.mode === 'cpu';
       return finalLine(ids.map((i) => (cpu && i === 0 ? 'You' : NAMES[i])), scores, rounds);
     }
+    // Every score the host sent gets a name, even if this client's world was built with fewer tanks.
+    const ids = scores.map((_, i) => i);
     const names = ids.map((i) => (match.seats[i] === online.seat ? 'You' : nameOf(match, i)));
     const people = [...online.players].sort((a, b) => (a.seat === online.seat ? -1 : b.seat === online.seat ? 1 : a.seat - b.seat)).map((p) => (p.seat === online.seat ? 'You' : p.name));
     return `${finalLine(names, scores, rounds)} ${rosterLine(people)}`.trim();
@@ -638,6 +696,11 @@ function TankMaze() {
     }
   }, [online?.players]);
 
+  // Host: someone new is watching (or the room changed), so send the roster now rather than at the next tick.
+  useEffect(() => {
+    if (online?.isHost && m.current) m.current.lastRosterAt = -1e9;
+  }, [online?.isHost, online?.watchers, online?.players]);
+
   useEffect(() => {
     if (!notice) return;
     const t = window.setTimeout(() => setNotice(null), 4000);
@@ -660,7 +723,7 @@ function TankMaze() {
       if (!match.reported) {
         match.reported = true;
         online.reportResult(online.round, winnerSeat);
-        online.send(endPacket({ k: 'end', roomRound: online.round, winner: winnerSeat, champ: winner >= 0 ? (match.seats[winner] ?? null) : null, scores: w.scores, rounds: w.round, names: match.seats.map((_, i) => nameOf(match, i)) }));
+        online.send(endPacket({ k: 'end', roomRound: online.round, winner: winnerSeat, champ: winner >= 0 ? (match.seats[winner] ?? null) : null, scores: w.scores, rounds: w.round, names: match.seats.map((_, i) => nameOf(match, i)), seats: match.seats, bots: match.bots }));
       }
       title = winnerSeat === null ? (winner >= 0 ? `${nameOf(match, winner)} Wins` : 'Draw') : winnerSeat === online.seat ? 'You Win' : `${seatName(match, winnerSeat)} Wins`;
       if (winner >= 0 && winnerSeat === null) title = `${nameOf(match, winner)} Wins`;
@@ -804,9 +867,10 @@ function TankMaze() {
       if (w.phase === 'done' && !match.ended) endMatch(match);
     }
 
-    // Host state broadcast ~25 Hz.
+    // Host state broadcast ~25 Hz, and the roster every couple of seconds for anyone who just started watching.
     if (online && online.seat === 0) {
       const now = performance.now();
+      if (!match.ended && now - match.lastRosterAt > 2000) hostSendRoster(match);
       if (now - (match.lastNetAt ?? 0) > 40 && match.world.phase !== 'ready') {
         match.lastNetAt = now;
         const w = match.world;
