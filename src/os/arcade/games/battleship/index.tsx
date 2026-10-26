@@ -371,7 +371,8 @@ function Battleship() {
   };
 
   const resultStatus = (shooter: number, result: ShotResult) => {
-    const fromLocal = stateRef.current!.mode === 'online' ? shooter === localSeat : shooter === 0;
+    const mode = stateRef.current!.mode;
+    const fromLocal = mode === '2p' || (mode === 'online' ? shooter === localSeat : shooter === 0);
     if (result.all) return fromLocal ? 'you sank their fleet' : 'they sank your fleet';
     if (result.sunk) {
       const name = FLEET.find((ship) => ship.id === result.sunk)?.name.toLowerCase() ?? 'ship';
@@ -466,6 +467,7 @@ function Battleship() {
         });
         refresh();
       });
+      refresh();
       return;
     }
     if (s.mode === 'cpu' && s.turn === 1) {
