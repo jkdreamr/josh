@@ -19,3 +19,22 @@ export function sidePanel(screen: { w: number; top: number; bottom: number }, wi
   }
   return { panel, moves };
 }
+
+/**
+ * Where a window goes when the screen changes size, from `prev` to `next`. A window that sat fully on screen and clear of
+ * the dock stays that way (shrinking if it must, like a freshly opened one); one the visitor dragged partly off screen
+ * only stays reachable.
+ */
+export function refit(win: Rect, prev: { w: number; h: number }, next: { w: number; h: number }, top: number, dockSpace: number): Rect {
+  const inside = win.x >= 0 && win.x + win.w <= prev.w + 1 && win.y + win.h <= prev.h + 1;
+  const clearOfDock = inside && win.y + win.h <= prev.h - dockSpace + 1;
+  const w = Math.min(win.w, next.w - 16);
+  let h = Math.min(win.h, next.h - top - 12);
+  if (clearOfDock) h = Math.min(h, Math.max(next.h - top - dockSpace - 10, Math.min(h, 160)));
+  const x = inside
+    ? Math.max(Math.min(win.x, PANEL_GAP), Math.min(win.x, next.w - w - PANEL_GAP))
+    : Math.min(Math.max(win.x, PANEL_GAP - w / 2), next.w - w / 2);
+  const bottom = clearOfDock ? next.h - dockSpace : inside ? next.h - 4 : next.h - 60 + h;
+  const y = Math.max(top + 4, Math.min(win.y, bottom - h));
+  return { x, y, w, h };
+}
