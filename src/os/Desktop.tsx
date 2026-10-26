@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react';
 import { apps, dockOrder, games, mobileDock, tabletDock } from './registry';
 import { AppIcon, type IconKind } from './icons';
 import { OSContext, useOS as useOSLocal, WinContext, type AppId, type OpenArgs, type Origin, type OSApi } from './types';
@@ -24,7 +24,7 @@ const DOCK_AMP = 0.5;
 const DOCK_RADIUS = 2.6;
 const DOCK_PAD_Y = 5;
 const DOCK_BOTTOM = 6;
-const DOCK_MAX_BASE = 46;
+const DOCK_MAX_BASE = 52;
 
 /** Resting icon size of the Mac Dock for a given display width (the Dock shrinks on narrow displays). */
 function dockBaseFor(screenW: number, count: number, kSum: number) {
@@ -901,9 +901,8 @@ function MenuBar({
     };
   }, [openId]);
   // On the notched laptop display nothing may sit under the camera housing. Like macOS, the status items first give up
-  // the date and their text labels ("when space allows"), then the full screen toggle (also in the jk and View menus);
-  // whatever still runs under the notch is hidden. Hidden items keep their place (visibility, not display), so hiding
-  // one never moves the others.
+  // the date and their text labels ("when space allows"), then pack closer together; whatever still runs under the
+  // notch is hidden. Hidden items keep their place (visibility, not display), so hiding one never moves the others.
   useLayoutEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
@@ -931,6 +930,9 @@ function MenuBar({
     return () => ro.disconnect();
   });
   const top = openWins.length ? openWins.reduce((a, b) => (a.z > b.z ? a : b)) : null;
+  const [wifiOn, setWifiOn] = useState(true);
+  const [network, setNetwork] = useState(WIFI_NETWORKS[0]);
+  const wifi = { on: wifiOn, setOn: setWifiOn, network, setNetwork };
   const shared = { openId, setOpenId, focusOnOpen };
   return (
     <div className="menubar" ref={barRef}>
@@ -995,18 +997,12 @@ function MenuBar({
       <div className="mb-right">
         <StatsMenu {...shared} />
         <WeatherMenu {...shared} />
-        <button className="mb-item mb-icon mb-optional" onClick={os.toggleFullscreen} aria-label={os.fullscreen ? 'Exit full screen' : 'Full screen'} title={os.fullscreen ? 'Exit full screen (esc)' : 'Full screen'}>
-          {os.fullscreen ? (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
-          ) : (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
-          )}
-        </button>
-        <WifiMenu {...shared} />
         <BatteryMenu {...shared} />
+        <WifiMenu {...shared} wifi={wifi} />
         <button className="mb-item mb-icon" onClick={os.openLauncher} aria-label="Search">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M20 20l-4.5-4.5" /></svg>
         </button>
+        <ControlCenterMenu {...shared} wifi={wifi} />
         <ClockMenu {...shared} now={now} notices={notices} onOpenNotice={onOpenNotice} onClearNotice={onClearNotice} onShow={onShowNotices} />
       </div>
     </div>
@@ -1156,17 +1152,29 @@ function CheckGlyph() {
   );
 }
 
-const WIFI_PATH =
-  'M12 3.5c3.6 0 6.9 1.4 9.4 3.7l1.6-1.7A15.8 15.8 0 0 0 12 1.2 15.8 15.8 0 0 0 1 5.5l1.6 1.7A13.4 13.4 0 0 1 12 3.5zm0 4.6c2.4 0 4.6.9 6.2 2.4l1.6-1.7A11.3 11.3 0 0 0 12 5.8c-3 0-5.8 1.2-7.8 3l1.6 1.7A9 9 0 0 1 12 8.1zm0 4.6c1.2 0 2.2.4 3 1.1L12 17l-3-3.2c.8-.7 1.8-1.1 3-1.1z';
+const WIFI_SPREAD = (47 * Math.PI) / 180;
+/** A point `r` from the Wi-Fi fan's apex, WIFI_SPREAD to one side of straight up. */
+const wifiAt = (r: number, side: -1 | 1) => `${(12 + side * r * Math.sin(WIFI_SPREAD)).toFixed(2)} ${(16.4 - r * Math.cos(WIFI_SPREAD)).toFixed(2)}`;
+const wifiArc = (r: number) => `M${wifiAt(r, -1)}A${r} ${r} 0 0 1 ${wifiAt(r, 1)}`;
+/** SF Symbols' wifi: a rounded wedge and two round-capped arcs fanning out from one point. */
+const WIFI_PARTS = { wedge: `M12 16.4L${wifiAt(4.3, -1)}A4.3 4.3 0 0 1 ${wifiAt(4.3, 1)}Z`, mid: wifiArc(8.4), outer: wifiArc(12.7) };
 
 function WifiGlyph({ on, size = 16 }: { on: boolean; size?: number }) {
+  const mask = useId().replace(/[^\w-]/g, '');
   return (
     <svg width={size} height={(size * 3) / 4} viewBox="0 0 24 18" aria-hidden="true">
-      {on ? (
-        <path d={WIFI_PATH} fill="currentColor" />
-      ) : (
-        <path d="M12 16.4L1.9 5.9a14.6 14.6 0 0 1 20.2 0z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+      {!on && (
+        <mask id={mask}>
+          <rect width="24" height="18" fill="#fff" />
+          <path d="M4.6 1.2L20 16.8" stroke="#000" strokeWidth="4.4" strokeLinecap="round" />
+        </mask>
       )}
+      <g mask={on ? undefined : `url(#${mask})`}>
+        <path d={WIFI_PARTS.wedge} fill="currentColor" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
+        <path d={WIFI_PARTS.mid} fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" />
+        <path d={WIFI_PARTS.outer} fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" />
+      </g>
+      {!on && <path d="M4.6 1.2L20 16.8" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />}
     </svg>
   );
 }
@@ -1181,9 +1189,9 @@ function Toggle({ on, label, onChange }: { on: boolean; label: string; onChange:
 
 const WIFI_NETWORKS = ['Stanford', 'eduroam', 'Stanford Visitor'];
 
-function WifiMenu(slot: MenuSlot) {
-  const [on, setOn] = useState(true);
-  const [network, setNetwork] = useState(WIFI_NETWORKS[0]);
+type WifiState = { on: boolean; setOn: (on: boolean) => void; network: string; setNetwork: (network: string) => void };
+
+function WifiMenu({ wifi: { on, setOn, network, setNetwork }, ...slot }: MenuSlot & { wifi: WifiState }) {
   return (
     <StatusMenu
       id="wifi"
@@ -1221,6 +1229,128 @@ function WifiMenu(slot: MenuSlot) {
               ))}
             </>
           )}
+        </>
+      )}
+    </StatusMenu>
+  );
+}
+
+/** SF Symbols' switch.2, the Control Center item: two switches, one on each side. */
+function ControlCenterGlyph() {
+  return (
+    <svg width="17" height="14" viewBox="0 0 20 16" fill="none" stroke="currentColor" aria-hidden="true">
+      <rect x="1" y="1.4" width="18" height="5.6" rx="2.8" strokeWidth="1.4" />
+      <circle cx="4.3" cy="4.2" r="2.3" fill="currentColor" stroke="none" />
+      <rect x="1" y="9" width="18" height="5.6" rx="2.8" strokeWidth="1.4" />
+      <circle cx="15.7" cy="11.8" r="2.3" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+const CC_ICONS = {
+  bluetooth: 'M7 7.5l10 9-5 4.5V3l5 4.5-10 9',
+  airdrop: 'M12 21v-6.5M7.4 16.6a6.5 6.5 0 1 1 9.2 0M4.6 19.4a10.5 10.5 0 1 1 14.8 0',
+  moon: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z',
+  expand: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
+  shrink: 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5',
+  sun: 'M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM12 3v2M12 19v2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M3 12h2M19 12h2M5.6 18.4L7 17M17 7l1.4-1.4',
+};
+
+function CcIcon({ d, fill }: { d: string; fill?: boolean }) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill={fill ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
+/**
+ * Control Center, the two-switch item beside the clock: Wi-Fi (the same switch as the Wi-Fi menu), Bluetooth, AirDrop,
+ * Focus, Full Screen and a Display slider that really dims the screen, laid out in macOS's rounded modules.
+ */
+function ControlCenterMenu({ wifi, ...slot }: MenuSlot & { wifi: WifiState }) {
+  const os = useOSLocal();
+  const [bluetooth, setBluetooth] = useState(true);
+  const [airdrop, setAirdrop] = useState(true);
+  const [focus, setFocus] = useState(false);
+  const [brightness, setBrightness] = useState(100);
+  const anchor = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const desk = anchor.current?.closest<HTMLElement>('.desktop');
+    if (!desk || brightness >= 100) return;
+    desk.dataset.dim = '';
+    desk.style.setProperty('--cc-dim', String(((100 - brightness) / 100) * 0.72));
+    return () => {
+      delete desk.dataset.dim;
+      desk.style.removeProperty('--cc-dim');
+    };
+  }, [brightness]);
+  const row = (on: boolean, d: string, title: string, sub: string, toggle: () => void) => (
+    <button className={`cc-row ${on ? 'is-on' : ''}`} aria-pressed={on} onClick={toggle}>
+      <span className="cc-ic">
+        <CcIcon d={d} />
+      </span>
+      <span className="cc-text">
+        <b>{title}</b>
+        <small>{sub}</small>
+      </span>
+    </button>
+  );
+  return (
+    <StatusMenu
+      id="control-center"
+      {...slot}
+      triggerClass="mb-icon"
+      ariaLabel="Control Center"
+      label={
+        <span ref={anchor}>
+          <ControlCenterGlyph />
+        </span>
+      }
+      popClass="sm-panel sm-cc"
+      popRole="dialog"
+    >
+      {(close) => (
+        <>
+          <div className="cc-mod cc-net">
+            <button className={`cc-row ${wifi.on ? 'is-on' : ''}`} aria-pressed={wifi.on} onClick={() => wifi.setOn(!wifi.on)}>
+              <span className="cc-ic">
+                <WifiGlyph on={wifi.on} size={14} />
+              </span>
+              <span className="cc-text">
+                <b>Wi-Fi</b>
+                <small>{wifi.on ? wifi.network : 'Off'}</small>
+              </span>
+            </button>
+            {row(bluetooth, CC_ICONS.bluetooth, 'Bluetooth', bluetooth ? 'On' : 'Off', () => setBluetooth(!bluetooth))}
+            {row(airdrop, CC_ICONS.airdrop, 'AirDrop', airdrop ? 'Contacts Only' : 'Off', () => setAirdrop(!airdrop))}
+          </div>
+          <button className={`cc-mod cc-tile cc-focus ${focus ? 'is-on' : ''}`} aria-pressed={focus} onClick={() => setFocus(!focus)}>
+            <span className="cc-ic">
+              <CcIcon d={CC_ICONS.moon} fill />
+            </span>
+            <b>Focus</b>
+          </button>
+          <button
+            className={`cc-mod cc-tile ${os.fullscreen ? 'is-on' : ''}`}
+            aria-pressed={os.fullscreen}
+            onClick={() => {
+              close();
+              os.toggleFullscreen();
+            }}
+          >
+            <span className="cc-ic">
+              <CcIcon d={os.fullscreen ? CC_ICONS.shrink : CC_ICONS.expand} />
+            </span>
+            <b>Full Screen</b>
+          </button>
+          <div className="cc-mod cc-wide">
+            <b>Display</b>
+            <label className="cc-slider" style={{ '--v': `${brightness}%` } as CSSProperties}>
+              <CcIcon d={CC_ICONS.sun} />
+              <input type="range" min={10} max={100} value={brightness} aria-label="Display brightness" onChange={(e) => setBrightness(Number(e.target.value))} />
+            </label>
+          </div>
         </>
       )}
     </StatusMenu>
