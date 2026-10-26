@@ -33,6 +33,8 @@ export type RoundPacket = {
   target: number;
   level: number;
   spawns: { x: number; y: number; a: number }[];
+  /** The host's label for each tank, so everyone (late watchers too) names the tanks the same way. */
+  names?: string[];
 };
 
 export type StatePacket = {
@@ -50,13 +52,17 @@ export type StatePacket = {
   events: NetEvent[];
 };
 
-export type EndPacket = { k: 'end'; roomRound: number; winner: number | null; champ: number | null; scores: number[]; rounds: number };
+export type EndPacket = { k: 'end'; roomRound: number; winner: number | null; champ: number | null; scores: number[]; rounds: number; names?: string[] };
 /** `dir` is the player's screen heading (see TankInput), sent as milliradians in `d`. */
 export type InputPacket = { k: 'in'; roomRound: number; turn: -1 | 0 | 1; move: -1 | 0 | 1; fireCount: number; dir?: number; aim?: number };
 
 export type Packet = RoundPacket | StatePacket | EndPacket | InputPacket;
 
 const q = (n: number) => Math.round(n * 100);
+const NAME_MAX = 48;
+/** An optional list of `n` tank names; anything else reads as absent. */
+const nameList = (v: unknown, n: number): string[] | undefined =>
+  Array.isArray(v) && v.length === n && v.every((s) => typeof s === 'string') ? (v as string[]).map((s) => s.slice(0, NAME_MAX)) : undefined;
 
 // -----------------------------------------------------------------------------------------------------------------
 // Builders
@@ -75,6 +81,7 @@ export const roundPacket = (p: Omit<RoundPacket, 'k'>) => ({
   target: p.target,
   level: p.level,
   spawns: p.spawns.map((s) => [q(s.x), q(s.y), Math.round(s.a * 1000)]),
+  ...(p.names ? { names: p.names.map((n) => n.slice(0, NAME_MAX)) } : {}),
 });
 
 export const statePacket = (p: Omit<StatePacket, 'k'>) => ({
@@ -93,7 +100,7 @@ export const statePacket = (p: Omit<StatePacket, 'k'>) => ({
   ev: p.events.map((e) => (e.pts ? [e.id, e.k, e.a, e.b, q(e.x), q(e.y), e.pts.map(q)] : [e.id, e.k, e.a, e.b, q(e.x), q(e.y)])),
 });
 
-export const endPacket = (p: EndPacket) => ({ game: 'tank-maze', type: 'end', room: p.roomRound, winner: p.winner, champ: p.champ, scores: p.scores, rounds: p.rounds });
+export const endPacket = (p: EndPacket) => ({ game: 'tank-maze', type: 'end', room: p.roomRound, winner: p.winner, champ: p.champ, scores: p.scores, rounds: p.rounds, ...(p.names ? { names: p.names.map((n) => n.slice(0, NAME_MAX)) } : {}) });
 export const inputPacket = (p: InputPacket) => ({
   game: 'tank-maze',
   type: 'in',
@@ -150,7 +157,8 @@ export function parsePacket(value: unknown): Packet | null {
         if (!Array.isArray(s) || !int(s[0]) || !int(s[1]) || !int(s[2])) return null;
         spawns.push({ x: (s[0] as number) / 100, y: (s[1] as number) / 100, a: (s[2] as number) / 1000 });
       }
-      return { k: 'round', roomRound, round: p.round as number, seed: p.seed as number, cols, rows, seats, bots, scores, target, level: p.level as number, spawns };
+      const names = nameList(p.names, seats.length);
+      return { k: 'round', roomRound, round: p.round as number, seed: p.seed as number, cols, rows, seats, bots, scores, target, level: p.level as number, spawns, ...(names ? { names } : {}) };
     }
     case 's': {
       if (!int(p.tick) || !int(p.pt) || !Array.isArray(p.tanks) || !Array.isArray(p.shells) || !Array.isArray(p.scores)) return null;
@@ -205,7 +213,9 @@ export function parsePacket(value: unknown): Packet | null {
       if (!(p.scores as unknown[]).every((s) => int(s) && s >= 0 && s < 100)) return null;
       if (p.champ !== undefined && !(p.champ === null || seatOk(p.champ))) return null;
       const champ = (p.champ ?? null) as number | null;
-      return { k: 'end', roomRound, winner: p.winner as number | null, champ, scores: (p.scores as number[]).slice(0, 4), rounds: p.rounds as number };
+      const scores = (p.scores as number[]).slice(0, 4);
+      const names = nameList(p.names, scores.length);
+      return { k: 'end', roomRound, winner: p.winner as number | null, champ, scores, rounds: p.rounds as number, ...(names ? { names } : {}) };
     }
     case 'in': {
       if (!int(p.turn) || !int(p.move) || !int(p.fc)) return null;

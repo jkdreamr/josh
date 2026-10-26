@@ -34,7 +34,7 @@ import {
 } from '../src/os/arcade/games/tank-maze/logic.ts';
 import { makeMemory, STANDOFF, think } from '../src/os/arcade/games/tank-maze/bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket } from '../src/os/arcade/games/tank-maze/net.ts';
-import { finalLine, freeSpans, listNames, packChipRows, packChips, rosterLine } from '../src/os/arcade/games/tank-maze/hud.ts';
+import { clipName, finalLine, freeSpans, layoutChips, listNames, packChipRows, packChips, rosterLine, type Span } from '../src/os/arcade/games/tank-maze/hud.ts';
 
 const fire: TankInput = { turn: 0, move: 0, fire: true };
 const idle: TankInput = { turn: 0, move: 0, fire: false };
@@ -680,7 +680,23 @@ test('state and input packets round trip', () => {
   const di = parsePacket(inputPacket({ k: 'in', roomRound: 1, turn: 0, move: 0, fireCount: 0, dir: -Math.PI / 2 }));
   assert.ok(di && di.k === 'in' && Math.abs(di.dir! + Math.PI / 2) < 0.001);
   const e = parsePacket(endPacket({ k: 'end', roomRound: 1, winner: 2, champ: 2, scores: [5, 3], rounds: 9 }));
-  assert.ok(e && e.k === 'end' && e.winner === 2);
+  assert.ok(e && e.k === 'end' && e.winner === 2 && e.names === undefined);
+});
+
+test('round and end packets carry the host tank names', () => {
+  const base = { roomRound: 2, round: 1, seed: 7, cols: 10, rows: 6, seats: [0, 1, 3], bots: [3], scores: [0, 0, 0], target: 3, level: 1 as const };
+  const spawns = [0, 1, 2].map((i) => ({ x: i + 0.5, y: 0.5, a: 0 }));
+  const names = ['R2Host', 'R2Guest (Left)', 'Bot 1'];
+  const r = parsePacket(JSON.parse(JSON.stringify(roundPacket({ ...base, spawns, names }))));
+  assert.ok(r && r.k === 'round');
+  assert.deepEqual(r.names, names);
+  // a wrong-length or malformed list reads as absent
+  const bad = parsePacket({ ...JSON.parse(JSON.stringify(roundPacket({ ...base, spawns }))), names: ['A', 'B'] });
+  assert.ok(bad && bad.k === 'round' && bad.names === undefined);
+  const e = parsePacket(JSON.parse(JSON.stringify(endPacket({ k: 'end', roomRound: 2, winner: null, champ: 3, scores: [1, 2, 3], rounds: 6, names }))));
+  assert.ok(e && e.k === 'end');
+  assert.deepEqual(e.names, names);
+  assert.equal(parsePacket({ ...endPacket({ k: 'end', roomRound: 2, winner: null, champ: 3, scores: [1, 2, 3], rounds: 6 }), names: [1, 2, 3] })?.k, 'end');
 });
 
 test('end packet champ rides along while winner stays null', () => {
@@ -863,6 +879,42 @@ test('hud chips that miss the row beside the controls wrap to a second row', () 
   // a row with room keeps everything on row 0
   assert.ok(packChipRows(ws, [freeSpans(12, 600, []), row2], 14)?.every((p) => p.row === 0));
   assert.equal(packChipRows([400], [row1, row2], 14), null);
+});
+
+// rough text metrics: about 0.56em per character
+const measure = (text: string, px: number) => text.length * px * 0.56;
+const inSpans = (x: number, w: number, spans: readonly Span[]) => spans.some((s) => x >= s.x0 - 1e-9 && x + w <= s.x1 + 1e-9);
+
+test('score chips in a short framed window stay clear of the controls', () => {
+  // 1280x720 framed laptop: a 464x198 stage, controls from x270
+  const row1 = freeSpans(12, 262, []);
+  const row2 = freeSpans(12, 452, []);
+  const labels = ['You', 'Green', 'Blue', 'Gold'].map((name, i) => ({ name, score: `${i}` }));
+  const fit = layoutChips(labels, row1, row2, { u: 1, rowH: 26, wrap: false, measure });
+  assert.ok(fit.fits);
+  assert.ok(fit.placed.every((p) => p.row === 0));
+  fit.placed.forEach((p, i) => assert.ok(inSpans(p.x, fit.widths[i], row1), `chip ${i} runs under the controls`));
+  assert.ok(fit.font >= 11.25);
+});
+
+test('score chips go around the online badge, shortening long names', () => {
+  // desktop guest: a 523px stage, controls from x335, the badge at x150-205
+  const row1 = freeSpans(12, 327, [{ x0: 150, x1: 205 }]);
+  const row2 = freeSpans(12, 511, []);
+  const labels = ['R2Guest', 'R2Host Longname', 'Bot 1', 'Bot 2'].map((name) => ({ name, score: '2' }));
+  const fit = layoutChips(labels, row1, row2, { u: 1, rowH: 26, wrap: false, measure });
+  fit.placed.forEach((p, i) => assert.ok(inSpans(p.x, fit.widths[i], fit.placed[i].row ? row2 : row1), `chip ${i} overlaps`));
+  // tall stages wrap to a second row before clipping names
+  const tall = layoutChips(labels, freeSpans(12, 116, []), freeSpans(12, 378, []), { u: 1, rowH: 44, wrap: true, measure });
+  assert.ok(tall.fits);
+  assert.deepEqual(tall.names, labels.map((l) => l.name));
+  assert.ok(tall.placed.some((p) => p.row === 1));
+});
+
+test('clipped chip names keep their Left or Bot tag', () => {
+  assert.equal(clipName('Bot 1', 5), 'Bot 1');
+  assert.equal(clipName('Green Tester (Left)', 6), 'Green… (Left)');
+  assert.equal(clipName('Somebody (Bot)', 24), 'Somebody (Bot)');
 });
 
 test('a taller hud band and larger touch controls push the board down', () => {

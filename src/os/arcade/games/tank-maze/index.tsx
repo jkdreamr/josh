@@ -4,7 +4,7 @@ import type { GameProps } from '../../types';
 import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, hudRow, keyHeading, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket, type NetEvent, type RoundPacket } from './net.ts';
-import { finalLine, freeSpans, packChipRows, rosterLine, type Span } from './hud.ts';
+import { finalLine, freeSpans, layoutChips, rosterLine, type ChipLayout, type Span } from './hud.ts';
 import { meta } from './meta';
 import './tank-maze.css';
 
@@ -124,7 +124,9 @@ function TankMaze() {
   /** The Game Over card this game put up (null when the shell's own card is up), redrawn when someone leaves. */
   const lastEnd = useRef<{ title: string; scores: number[]; rounds: number } | null>(null);
   /** On-screen scale of the canvas (framed iPads draw it at ~0.82) and the shell pills that sit over the HUD row. */
-  const view = useRef<{ at: number; u: number; badge: Span | null; ctrl: { x0: number; y0: number; y1: number } | null }>({ at: -1e9, u: 1, badge: null, ctrl: null });
+  const view = useRef<{ at: number; u: number; badge: (Span & { y0: number; y1: number }) | null; ctrl: { x0: number; y0: number; y1: number } | null }>({ at: -1e9, u: 1, badge: null, ctrl: null });
+  /** The last chip layout and what it was laid out for (layoutChips measures text, so it only reruns on a change). */
+  const chipCache = useRef<{ key: string; fit: ChipLayout } | null>(null);
   /** HUD band height when the score chips wrap to a second row below the shell controls (0 = one row). */
   const hudRef = useRef(0);
   const [, setHudH] = useState(0);
@@ -177,13 +179,26 @@ function TankMaze() {
     return { cols, rows: Math.max(7, Math.min(11, Math.round((6 * board.h) / board.w))) };
   };
 
+  /**
+   * A tank's label. Online it comes from the names the match started with (the host's, sent to guests in its round
+   * and end packets), not the live bot list: the room renumbers its bots when someone leaves.
+   */
   const nameOf = (match: Match, id: number) => {
     if (!online) return NAMES[id];
     const seat = match.seats[id];
-    const gone = !online.players.some((pl) => pl.seat === seat) && !online.bots.some((b) => b.seat === seat);
-    if (gone && known.current.has(seat)) return `${known.current.get(seat)} (Left)`;
-    const name = seatNames(match.seats, online.players, online.bots)[id] ?? `Seat ${seat}`;
-    return match.departed.has(seat) && online.players.some((pl) => pl.seat === seat) ? `${name} (Bot)` : name;
+    const live = online.players.find((pl) => pl.seat === seat);
+    const base = match.names[id];
+    if (base === undefined) {
+      const gone = !live && !online.bots.some((b) => b.seat === seat);
+      if (gone && known.current.has(seat)) return `${known.current.get(seat)} (Left)`;
+      const name = seatNames(match.seats, online.players, online.bots)[id] ?? `Seat ${seat}`;
+      return match.departed.has(seat) && live ? `${name} (Bot)` : name;
+    }
+    // already tagged by the host, or a bot's seat
+    if (/\s\((Left|Bot)\)$/.test(base) || match.bots.includes(seat)) return base;
+    if (!live) return `${base} (Left)`;
+    if (match.departed.has(seat)) return live.name === base ? `${base} (Bot)` : `${base} (Left)`;
+    return base;
   };
 
   const applyEvents = (match: Match, events: NetEvent[]) => {
@@ -274,6 +289,7 @@ function TankMaze() {
         target: match.world.target,
         level: match.level,
         spawns: match.world.tanks.map((t) => ({ x: t.x, y: t.y, a: t.a })),
+        names: match.seats.map((_, i) => nameOf(match, i)),
       }),
     );
   };
@@ -303,6 +319,8 @@ function TankMaze() {
       match.seats = seats;
       match.bots = bots;
       for (const s of carried) if (seats.includes(s)) match.departed.add(s);
+      // The host fixes every tank's name for the match; guests take them from its round packet.
+      if (!isGuest) match.names = seatNames(seats, [...online.players, ...carried.map((s) => ({ seat: s, name: known.current.get(s) ?? `Seat ${s}` }))], online.bots);
       match.level = cfg.current.level;
       for (let i = 0; i < match.world.tanks.length; i++) match.minds[i] = makeMemory();
       if (!isGuest) hostSendRound(match);
@@ -536,6 +554,7 @@ function TankMaze() {
         if (pkt.k === 'end' && !match.reported) {
           match.reported = true;
           match.ended = true;
+          if (pkt.names) match.names = pkt.names;
           online.reportResult(online.round, pkt.winner);
           // champ is the seat whose tank actually won the match (bots and departed seats count);
           // winner stays null for them because nobody scores the room win.
@@ -566,6 +585,7 @@ function TankMaze() {
     match.world = world;
     match.seats = pkt.seats;
     match.bots = pkt.bots;
+    match.names = pkt.names ?? [];
     match.guestScores = pkt.scores.slice();
     match.snaps = [];
     match.particles = [];
@@ -640,7 +660,7 @@ function TankMaze() {
       if (!match.reported) {
         match.reported = true;
         online.reportResult(online.round, winnerSeat);
-        online.send(endPacket({ k: 'end', roomRound: online.round, winner: winnerSeat, champ: winner >= 0 ? (match.seats[winner] ?? null) : null, scores: w.scores, rounds: w.round }));
+        online.send(endPacket({ k: 'end', roomRound: online.round, winner: winnerSeat, champ: winner >= 0 ? (match.seats[winner] ?? null) : null, scores: w.scores, rounds: w.round, names: match.seats.map((_, i) => nameOf(match, i)) }));
       }
       title = winnerSeat === null ? (winner >= 0 ? `${nameOf(match, winner)} Wins` : 'Draw') : winnerSeat === online.seat ? 'You Win' : `${seatName(match, winnerSeat)} Wins`;
       if (winner >= 0 && winnerSeat === null) title = `${nameOf(match, winner)} Wins`;
@@ -837,7 +857,7 @@ function TankMaze() {
       return { x0: (b.left - r.left) / k, x1: (b.right - r.left) / k, y0: (b.top - r.top) / k, y1: (b.bottom - r.top) / k };
     };
     const badge = rel(root?.querySelector('.arcade-online-status'));
-    v.badge = badge && { x0: badge.x0, x1: badge.x1 };
+    v.badge = badge;
     v.ctrl = rel(root?.querySelector('.arcade-ctrl'));
     return v;
   };
@@ -1147,82 +1167,32 @@ function TankMaze() {
 
     // HUD chips
     const rowH = hudRow(h);
-    const compactHud = rowH < 30;
     const scores = isGuest ? match.guestScores : world.scores;
     const chips = viewTanks.map((_, i) => i);
-    // Chips stay out of the shell's top-right controls and, online, the centered Direct/Relayed badge (both measured).
+    // Chips stay out of the shell's top-right controls and, online, the Direct/Relayed badge (both measured).
     // When they can't fit beside the controls (four chips on a phone), the rest wrap to a row below them.
     const v = measureView(Math.max(lay.hud, rowH));
     const u = v.u;
     const ctrl = v.ctrl;
     const ctrlX = ctrl ? ctrl.x0 : w - 176;
-    const row1 = freeSpans(12, ctrlX - 8, online && v.badge ? [v.badge] : []);
+    const row1Bottom = Math.max(rowH, ctrl?.y1 ?? 0);
     const row2Top = Math.max(rowH, (ctrl?.y1 ?? 44) + 4);
-    const row2 = freeSpans(12, w - 12, []);
+    const badgeIn = (y0: number, y1: number) => (online && v.badge && v.badge.y0 < y1 && v.badge.y1 > y0 ? [v.badge] : []);
+    const row1 = freeSpans(12, ctrlX - 8, badgeIn(0, row1Bottom));
+    const row2 = freeSpans(12, w - 12, badgeIn(row2Top, row2Top + rowH));
     const fontOf = (f: number, weight: number) => `${weight} ${f}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-    // A seat's "(Left)" or "(Bot)" tag survives the clip; only the name is shortened.
-    const clip = (label: string, max: number) => {
-      const tag = /\s\((Left|Bot)\)$/.exec(label)?.[0] ?? '';
-      const name = label.slice(0, label.length - tag.length);
-      return name.length > Math.max(max, 5) ? `${name.slice(0, Math.max(1, max - 1)).trimEnd()}…${tag}` : label;
-    };
-    const maxFont = 13 * u;
-    const minFont = 11.25 * u;
-    let chipFont = Math.max(minFont, Math.min(maxFont, rowH * 0.4 * u));
-    let gap = (compactHud ? 8 : 14) * u;
-    let maxName = 24;
-    const labels = () => chips.map((i) => clip(nameOf(match, i), maxName));
-    const widthsFor = () => {
-      c.font = fontOf(chipFont, 600);
-      const names = labels();
-      return chips.map((i, ci) => {
-        const nw = c.measureText(names[ci]).width;
-        c.font = fontOf(chipFont, 700);
-        const sw = c.measureText(`${scores[i] ?? 0}`).width;
-        c.font = fontOf(chipFont, 600);
-        return 17 * u + nw + 8 * u + sw + 7 * u;
-      });
-    };
-    let widths = widthsFor();
-    let rows = [row1];
-    const pack = () => packChipRows(widths, rows, gap);
-    let placed = pack();
-    if (!placed && gap > 4 * u) {
-      gap = 4 * u;
-      placed = pack();
+    const labels = chips.map((i) => ({ name: nameOf(match, i), score: `${scores[i] ?? 0}` }));
+    const key = JSON.stringify([labels, row1, row2, u, rowH, h >= 320]);
+    if (chipCache.current?.key !== key) {
+      const measure = (text: string, px: number, weight: 600 | 700) => {
+        c.font = fontOf(px, weight);
+        return c.measureText(text).width;
+      };
+      // Tall stages wrap; short ones (framed laptop windows) tighten the chips and shorten names first.
+      chipCache.current = { key, fit: layoutChips(labels, row1, row2, { u, rowH, wrap: h >= 320, measure }) };
     }
-    while (!placed && chipFont > minFont) {
-      chipFont = Math.max(minFont, chipFont - 1);
-      widths = widthsFor();
-      placed = pack();
-    }
-    // Tall stages wrap; short ones (framed laptop windows) keep one row and shorten names instead.
-    if (!placed && h >= 320) {
-      rows = [row1, row2];
-      chipFont = Math.max(minFont, Math.min(maxFont, rowH * 0.4 * u));
-      gap = (compactHud ? 8 : 14) * u;
-      widths = widthsFor();
-      placed = pack();
-      if (!placed && gap > 4 * u) {
-        gap = 4 * u;
-        placed = pack();
-      }
-      while (!placed && chipFont > minFont) {
-        chipFont = Math.max(minFont, chipFont - 1);
-        widths = widthsFor();
-        placed = pack();
-      }
-    }
-    while (!placed && maxName > 4) {
-      maxName--;
-      widths = widthsFor();
-      placed = pack();
-    }
-    if (!placed) {
-      let x = 12;
-      placed = widths.map((cw) => ({ x: (x += cw + gap) - cw - gap, row: 0 }));
-    }
-    const wrapped = rows.length > 1 && placed.some((p) => p.row === 1);
+    const chipFit = chipCache.current.fit;
+    const wrapped = chipFit.placed.some((p) => p.row === 1);
     const needHud = wrapped ? Math.ceil(row2Top + rowH) : 0;
     if (needHud !== hudRef.current) {
       hudRef.current = needHud;
@@ -1230,28 +1200,32 @@ function TankMaze() {
     }
     // Wrapped: the first row lines up with the controls beside it.
     const rowY = [wrapped && ctrl ? (ctrl.y0 + ctrl.y1) / 2 : rowH / 2, row2Top + rowH / 2];
-    const names = labels();
+    const chipFont = chipFit.font;
     const pillH = Math.max(rowH * 0.64, chipFont + 6 * u);
     for (let ci = 0; ci < chips.length; ci++) {
       const i = chips[ci];
-      const cw = widths[ci];
-      const cx = placed[ci].x;
-      const cy = rowY[placed[ci].row];
+      const cw = chipFit.widths[ci];
+      const cx = chipFit.placed[ci].x;
+      const cy = rowY[chipFit.placed[ci].row];
+      const name = chipFit.names[ci];
       c.fillStyle = 'rgba(255,255,255,0.65)';
       c.beginPath();
       c.roundRect(cx, cy - pillH / 2, cw, pillH, pillH / 2);
       c.fill();
       c.fillStyle = COLORS[i % COLORS.length];
       c.beginPath();
-      c.arc(cx + 9 * u, cy, 4 * u, 0, Math.PI * 2);
+      c.arc(cx + chipFit.dot, cy, 4 * u, 0, Math.PI * 2);
       c.fill();
-      c.font = fontOf(chipFont, 600);
-      c.fillStyle = '#2e2d2a';
-      c.fillText(names[ci], cx + 17 * u, cy + chipFont * 0.36);
-      const nw = c.measureText(names[ci]).width;
+      let tx = cx + chipFit.padL;
+      if (name) {
+        c.font = fontOf(chipFont, 600);
+        c.fillStyle = '#2e2d2a';
+        c.fillText(name, tx, cy + chipFont * 0.36);
+        tx += c.measureText(name).width + chipFit.nameGap;
+      }
       c.font = fontOf(chipFont, 700);
       c.fillStyle = '#1d1c19';
-      c.fillText(`${scores[i] ?? 0}`, cx + 17 * u + nw + 8 * u, cy + chipFont * 0.36);
+      c.fillText(labels[ci].score, tx, cy + chipFont * 0.36);
     }
 
     // touch sticks

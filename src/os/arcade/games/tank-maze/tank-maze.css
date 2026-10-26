@@ -111,3 +111,11 @@
     height: calc(16px * var(--g-tank-maze-u, 1));
   }
 }
+/* Portrait phones: the larger touch controls reach the middle of the top row, so the online badge moves to the
+   top-left corner (the score chips are laid out around wherever it is). */
+@media (pointer: coarse) and (max-width: 600px) {
+  .g-tank-maze .arcade-online-status {
+    left: 12px;
+    transform: none;
+  }
+}
